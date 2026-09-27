@@ -1,0 +1,57 @@
+# Лестница цены проверки границ на настоящем x86-64 и arm64.
+#
+# Локально лестница снимается на Apple M4 и в контейнере linux/arm64; x86-64
+# там доступен только через эмуляцию QEMU, где время ничего не значит. Здесь —
+# живые машины GitHub. Что и как считается — impl/docs/FINDING-61-bounds-ladder.md.
+#
+# ⚠ Машины общие и виртуальные: соседи, частота и модель процессора меняются
+# от прогона к прогону. Значат отношения к `none` внутри одного прогона, а не
+# наносекунды. Модель процессора пишется в шапку результатов.
+name: ladder
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'impl/bench/ladder/**'
+      - 'impl/tools/gen_bounds_bench.py'
+      - '.github/workflows/ladder.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  ladder:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            label: ci-linux-x86_64
+          - runner: ubuntu-24.04-arm
+            label: ci-linux-arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # clang и gcc в образах есть. rustc в образах arm64 бывал не всегда —
+      # ставим минимальный stable, если его нет.
+      - name: Инструменты
+        run: |
+          if ! command -v rustc >/dev/null; then
+            curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          fi
+
+      - name: Лестница
+        run: |
+          python3 impl/bench/ladder/ladder.py --label '${{ matrix.label }}' \
+            --note 'машина: GitHub Actions `${{ matrix.runner }}`, общая виртуальная'
+          cat 'impl/bench/ladder/results/${{ matrix.label }}.md' >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ladder-${{ matrix.label }}
+          path: |
+            impl/bench/ladder/results/${{ matrix.label }}.md
+            impl/build/ladder/${{ matrix.label }}/
