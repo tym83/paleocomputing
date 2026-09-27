@@ -76,6 +76,13 @@ sixth of that cost (15.5%), because the check itself is two cheap instructions
 rather than work with memory.</p>
 <p>The same 2.19% was obtained independently, by decomposing four builds in a
 two-by-two arrangement. Two different methods gave one number.</p>
+<p>That number belongs to one workload. What a check costs in <strong>your</strong>
+loop depends on how much other work the loop does: the hardware saves exactly
+one instruction and one cycle per indexing, and the rest decides the share. In
+lab 12 you measure it on your own module: build it with the stock compiler,
+then with a compiler that knows the hardware instruction, and compare the time
+from <code>Kernel.Time</code>. The machine's timer counts cycles (25,000 per
+millisecond), so a repeat gives the same number to the millisecond.</p>
 <h2>The hardware check: where to fit it</h2>
 <p>Measuring the third row meant adding an instruction to the processor. That is
 instructive in itself.</p>
