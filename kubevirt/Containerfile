@@ -17,11 +17,17 @@
 # ⚠ Основы прибиты дайджестом индекса (многоархитектурного), тег оставлен для
 # читателя. По одному тегу `stream9` через месяц приезжает другая система, а
 # `v1.8.4` технически можно переставить — и тот же коммит собирал бы другой
-# образ. Обновлять дайджест вместе с тегом:
+# образ. Обновлять дайджест вместе с тегом: у centos — здесь, у launcher — в
+# kubevirt/versions.txt, рядом с его версией:
 #
 #   docker buildx imagetools inspect quay.io/kubevirt/virt-launcher:v1.8.4
-#
-# Версию KubeVirt для тега образа publish.yml и launcher.yml вырезают до `@`.
+
+# Версия KubeVirt, под которую собирается образ, и дайджест индекса её
+# штатного launcher — строка из kubevirt/versions.txt, их передаёт build.sh.
+# Объявлены до первого FROM, чтобы их видела основа готового образа.
+# Значения здесь — для версии по умолчанию.
+ARG KUBEVIRT_VERSION=v1.8.4
+ARG LAUNCHER_DIGEST=sha256:c89f733b1fdcc810d0b4326bbfc652a4cf3d25bc56cc8545f124d5cb71a1ce20
 
 # ── Сборка libvirt ─────────────────────────────────────────────────────────
 FROM quay.io/centos/centos:stream9@sha256:0996d37c69b3a8c33042932d415ad7bf5a8122270264e835e5c0153615aef0e4 AS libvirt-build
@@ -95,7 +101,7 @@ RUN /src/qemu-target/graft.sh /src/qemu \
  && ninja -C build qemu-system-risc5
 
 # ── Готовый образ ──────────────────────────────────────────────────────────
-FROM quay.io/kubevirt/virt-launcher:v1.8.4@sha256:c89f733b1fdcc810d0b4326bbfc652a4cf3d25bc56cc8545f124d5cb71a1ce20
+FROM quay.io/kubevirt/virt-launcher:${KUBEVIRT_VERSION}@${LAUNCHER_DIGEST}
 
 # Подменяем только библиотеки libvirt: всё остальное в образе штатное.
 COPY --from=libvirt-build /out/usr/lib64/libvirt.so.* /usr/lib64/

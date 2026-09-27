@@ -7,8 +7,8 @@
 # проверки. Иначе в кластер уезжает не та машина, что сверена с RTL.
 #
 # Версия KubeVirt — из --kubevirt или KUBEVIRT_VERSION, иначе первая строка
-# kubevirt/versions.txt. Версия libvirt к ней берётся оттуда же: руками её
-# не задать, чтобы не собрать launcher с чужими библиотеками.
+# kubevirt/versions.txt. Версия libvirt и дайджест основы берутся оттуда же:
+# руками их не задать, чтобы не собрать launcher с чужими библиотеками.
 set -eu
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 VERSIONS="$ROOT/kubevirt/versions.txt"
@@ -19,10 +19,15 @@ fi
 IMAGE="${1:?укажите образ:тег}"; shift
 
 KUBEVIRT_VERSION="${KUBEVIRT_VERSION:-$(awk '!/^#/ && NF { print $1; exit }' "$VERSIONS")}"
-LIBVIRT_VERSION=$(awk -v kv="$KUBEVIRT_VERSION" '!/^#/ && $1 == kv { print $2 }' "$VERSIONS")
-[ -n "$LIBVIRT_VERSION" ] || {
-  echo "KubeVirt $KUBEVIRT_VERSION нет в kubevirt/versions.txt" >&2; exit 1; }
-echo "KubeVirt: $KUBEVIRT_VERSION, libvirt: $LIBVIRT_VERSION"
+ROW=$(awk -v kv="$KUBEVIRT_VERSION" '!/^#/ && $1 == kv { print $2, $3 }' "$VERSIONS")
+LIBVIRT_VERSION=${ROW% *}
+LAUNCHER_DIGEST=${ROW#* }
+case "$LAUNCHER_DIGEST" in
+  sha256:*) ;;
+  *) echo "KubeVirt $KUBEVIRT_VERSION нет в kubevirt/versions.txt или у строки нет дайджеста" >&2
+     exit 1 ;;
+esac
+echo "KubeVirt: $KUBEVIRT_VERSION ($LAUNCHER_DIGEST), libvirt: $LIBVIRT_VERSION"
 
 QEMU_REF=$(sed -n 's/^QEMU_REF ?= *//p' "$ROOT/qemu/Makefile")
 [ -n "$QEMU_REF" ] || { echo "в qemu/Makefile не найден QEMU_REF" >&2; exit 1; }
@@ -30,5 +35,6 @@ echo "QEMU: $QEMU_REF"
 
 exec docker build -f "$ROOT/kubevirt/Containerfile" \
   --build-arg KUBEVIRT_VERSION="$KUBEVIRT_VERSION" \
+  --build-arg LAUNCHER_DIGEST="$LAUNCHER_DIGEST" \
   --build-arg LIBVIRT_VERSION="$LIBVIRT_VERSION" \
   --build-arg QEMU_REF="$QEMU_REF" -t "$IMAGE" "$@" "$ROOT"
