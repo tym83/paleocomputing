@@ -1,0 +1,16 @@
+##
+## @section Что и как часто сверяется
+##
+
+## @param {string} kubevirtName=kubevirt - Имя ресурса KubeVirt. Он обязан
+## лежать в том же пространстве имён, куда ставится компонент (в Cozystack —
+## cozy-kubevirt): права выдаются Role'ю там же, без прав уровня кластера.
+kubevirtName: kubevirt
+
+## @param {int} interval=30 - Секунд между проходами. Столько же, в худшем
+## случае, после обновления KubeVirt держится launcher прежней версии —
+## если правку не сбросило само обновление.
+interval: 30
+
+## @param {string} image - Образ с kubectl, jq и sh, прибит дайджестом индекса.
+image: docker.io/alpine/k8s:1.35.9@sha256:b9cb6db0091a2327c0a56ecda69d37fa830c7a96ea669e7382b3ee778aa07a24

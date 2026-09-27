@@ -1,0 +1,89 @@
+{{- /*
+  Цикл сверки: одно развёртывание, одна реплика, Recreate.
+
+  Почему не CronJob. Писатель у правки должен быть один, а у CronJob прогоны
+  могут наложиться (Forbid это лечит, но не для задачи, застрявшей в
+  Terminating), шаг — не меньше минуты, и каждый прогон — новый под:
+  планирование, образ, журнал в новом месте. И удаление: хуку пришлось бы
+  сначала приостанавливать расписание и ждать уже запущенные задачи.
+  Развёртывание — один долгоживущий процесс, реагирует за INTERVAL секунд,
+  журнал в одном месте, останавливается одним scale.
+
+  Почему Recreate. RollingUpdate на время обновления держит старый и новый под
+  одновременно — два писателя. Recreate сначала гасит старый. Запись всё
+  равно идёт с предусловием на resourceVersion, так что даже два писателя не
+  затёрли бы друг друга молча, — но и спорить им незачем.
+
+  Метка выхода к API: в cozy-kubevirt сетевых политик Cilium нет (политики
+  allow-to-apiserver ставит чарт тенанта, и только в пространства тенантов),
+  так что сегодня она ничего не открывает. Стоит на случай, если политики
+  придут и в системные пространства: без неё kubectl молча висел бы, а не
+  получал отказ (находка 58).
+*/ -}}
+{{- $name := include "paleo-launcher.name" . }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels: {{- include "paleo-launcher.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  revisionHistoryLimit: 2
+  selector:
+    matchLabels: {{- include "paleo-launcher.selector" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "paleo-launcher.labels" . | nindent 8 }}
+        policy.cozystack.io/allow-to-apiserver: "true"
+      annotations:
+        # Новая таблица или сценарий — новый под: ConfigMap в томе
+        # обновляется с задержкой, а таблица должна смениться вместе с релизом.
+        checksum/scripts: {{ include (print $.Template.BasePath "/scripts.yaml") . | sha256sum }}
+    spec:
+      serviceAccountName: {{ $name }}
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 10
+      securityContext: {{- include "paleo-launcher.podSecurity" . | nindent 8 }}
+      containers:
+      - name: reconcile
+        image: {{ .Values.image }}
+        imagePullPolicy: IfNotPresent
+        command: ["/bin/sh", "/opt/paleo/reconcile.sh", "loop"]
+        env:
+        - name: KUBEVIRT_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: KUBEVIRT_NAME
+          value: {{ .Values.kubevirtName | quote }}
+        - name: LAUNCHER_TABLE
+          value: /opt/paleo/launchers.txt
+        - name: STATUS_CONFIGMAP
+          value: {{ include "paleo-launcher.status" . }}
+        - name: INTERVAL
+          value: {{ .Values.interval | quote }}
+        - name: HOME
+          value: /tmp
+        securityContext: {{- include "paleo-launcher.containerSecurity" . | nindent 10 }}
+        resources:
+          requests:
+            cpu: 10m
+            memory: 32Mi
+          limits:
+            memory: 128Mi
+        volumeMounts:
+        - name: scripts
+          mountPath: /opt/paleo
+          readOnly: true
+        - name: tmp
+          mountPath: /tmp
+      volumes:
+      - name: scripts
+        configMap:
+          name: {{ $name }}
+      - name: tmp
+        emptyDir:
+          sizeLimit: 16Mi

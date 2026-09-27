@@ -1,0 +1,9 @@
+# Собрано marketplace/tools/gen-launcher-table.py из kubevirt/versions.txt.
+# Руками не править: check.py сверяет с источником, publish.yml пересобирает
+# под тег выпуска.
+# release: dev
+# registry: ghcr.io/tym83/paleocomputing
+#
+# версия KubeVirt   образ virt-launcher (семейство paleo, тот же дайджест, что -risc5-)
+v1.8.4 ghcr.io/tym83/paleocomputing/virt-launcher:v1.8.4-paleo-dev
+v1.9.0 ghcr.io/tym83/paleocomputing/virt-launcher:v1.9.0-paleo-dev

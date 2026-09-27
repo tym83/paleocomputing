@@ -1,0 +1,51 @@
+{{- /*
+  Права цикла — только в этом пространстве имён и только по именам. ClusterRole
+  нет: ресурс KubeVirt, virt-controller и ConfigMap состояния лежат здесь же.
+*/ -}}
+{{- $name := include "paleo-launcher.name" . }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $name }}
+  labels: {{- include "paleo-launcher.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $name }}
+  labels: {{- include "paleo-launcher.labels" . | nindent 4 }}
+rules:
+# Свою запись в spec.customizeComponents.patches — чтение и merge patch с
+# предусловием на resourceVersion.
+- apiGroups: [kubevirt.io]
+  resources: [kubevirts]
+  resourceNames: [{{ .Values.kubevirtName }}]
+  verbs: [get, list, watch, patch]
+# Сверка версии и раскладки аргументов у живого virt-controller.
+- apiGroups: [apps]
+  resources: [deployments]
+  resourceNames: [virt-controller]
+  verbs: [get]
+- apiGroups: [""]
+  resources: [configmaps]
+  resourceNames: [{{ include "paleo-launcher.status" . }}]
+  verbs: [get, patch]
+# События на ресурсе KubeVirt при смене состояния. create по имени не
+# ограничить — имя события выдаёт сервер.
+- apiGroups: [""]
+  resources: [events]
+  verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $name }}
+  labels: {{- include "paleo-launcher.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $name }}
+subjects:
+- kind: ServiceAccount
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}

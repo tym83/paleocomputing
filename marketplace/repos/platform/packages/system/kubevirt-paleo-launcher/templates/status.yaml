@@ -1,0 +1,12 @@
+{{- /*
+  Состояние сверки: state, reason, kubevirtVersion, launcherImage, updated.
+  Ключи пишет сам цикл; Helm создаёт ConfigMap пустым и потому при обновлении
+  их не трогает, а при удалении убирает вместе с релизом.
+
+    kubectl -n cozy-kubevirt get configmap kubevirt-paleo-launcher-status -o yaml
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "paleo-launcher.status" . }}
+  labels: {{- include "paleo-launcher.labels" . | nindent 4 }}

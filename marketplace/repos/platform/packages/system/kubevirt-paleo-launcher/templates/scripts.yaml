@@ -1,0 +1,15 @@
+{{- /*
+  Сценарий сверки и таблица launcher'ов. Таблица — копия, собранная
+  tools/gen-launcher-table.py из kubevirt/versions.txt (Helm не читает файлы
+  вне чарта), с тегом выпуска, подставленным при публикации.
+*/ -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "paleo-launcher.name" . }}
+  labels: {{- include "paleo-launcher.labels" . | nindent 4 }}
+data:
+  reconcile.sh: |-
+{{ .Files.Get "files/reconcile.sh" | indent 4 }}
+  launchers.txt: |-
+{{ .Files.Get "files/launchers.txt" | indent 4 }}
