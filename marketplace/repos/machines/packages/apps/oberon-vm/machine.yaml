@@ -14,7 +14,7 @@ name: oberon
 
 # Откуда берутся ПЗУ и образ системы. Эмулятора в этом образе нет — он в
 # образе virt-launcher, рядом с libvirt, который его опрашивает.
-image: ghcr.io/tym83/paleocomputing/oberon-run:v0.1.4
+image: ghcr.io/tym83/paleocomputing/oberon-run:dev
 
 domain:
   arch: risc5

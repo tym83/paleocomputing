@@ -902,6 +902,9 @@ def check_platform_launcher() -> None:
     r = run([sys.executable, str(ROOT / "tools/gen-launcher-table.py"), "--check"])
     report(r.returncode == 0, "таблица launcher'ов совпадает с kubevirt/versions.txt"
            + ("" if r.returncode == 0 else f": {(r.stdout + r.stderr).strip()}"))
+    r = run([sys.executable, str(ROOT / "tools/pin-images.py"), "--check"])
+    report(r.returncode == 0, "образы с файлами машин помечены тем же выпуском, что таблица launcher'ов"
+           + ("" if r.returncode == 0 else f": {r.stdout.strip()}"))
     r = run([sys.executable, str(ROOT / "tools/launcher_test.py")])
     tail = (r.stdout.strip().splitlines() or ["—"])[-1]
     report(r.returncode == 0, f"проход реконсайлера на поддельном API: {tail}")
