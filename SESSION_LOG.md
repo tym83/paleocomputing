@@ -12,12 +12,12 @@
 - Диск: было 100% занято (журнал QEMU в контейнере), вычищено, свободно ~60 ГБ.
 
 ## Следующий шаг
-PR #16 влит. Пользователь запускает `gh workflow run publish.yml --ref main -f tag=dev`
-(классификатор режет). После зелёного `launcher` — подмена в кластере `workshop`
-(`~/eng-cluster-admin.kubeconfig`, контекст `admin@workshop`): в KubeVirt
-`cozy-kubevirt/kubevirt` → `customizeComponents` → аргумент `--launcher-image`
-`...virt-launcher:v1.8.4-risc5` → `...:v1.8.4-risc5-dev`. Пользователь одобрил.
-**Откат:** вернуть `v1.8.4-risc5` в том же аргументе.
+Launcher в `workshop` подменён на `virt-launcher:v1.8.4-risc5-dev` (откат —
+`scratchpad/cc-before.json`, или вернуть тег `v1.8.4-risc5` в аргументе
+`--launcher-image`). Дальше: каталог `tap-paleocomputing-machines` v0.1.7 → dev
+(классификатор режет — делает пользователь), затем `OberonVM wirth-chk` с
+`hardware: chk` в `tenant-sandbox`, проверка `-machine ...chk=on` в домене.
+Потом тег `v0.1.8` и перевод launcher/каталога с `dev` на него.
 
 ## Хвосты
 1. **Лаборатория в браузере не проверена глазами.** Переведена на компонент с
@@ -63,3 +63,10 @@ CHK в QEMU (декодер + транслятор), свойство машин
   qemu-build нет /src → `mkdir -p`. После правки стадия собралась, `chk` есть.
 - Финальная стадия (FROM virt-launcher:v1.8.4, amd64) локально не собиралась —
   проверит CI.
+
+### 27.09 — publish зелёный, launcher подменён
+- Прогон 1: `oberon-web` падал (стадия сборки без tools/ и tests/) → PR #17.
+  `launcher` — `write_package`: пакет выложен руками, к репо не привязан;
+  пользователь выдал Actions-доступ Write в настройках пакета.
+- Прогон 36253092554: все пять заданий зелёные.
+- `customizeComponents` в `cozy-kubevirt/kubevirt` → `-dev`, virt-controller раскатан.
