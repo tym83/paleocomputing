@@ -100,10 +100,17 @@ spec:
       # принадлежащим root — записать в него нечего. fsGroup отдаёт том группе
       # контейнера; менять пользователя нельзя, ограничения тенанта root не
       # пустят.
+      #
+      # ⚠ Группа тома — 107, как у пода машины. virt-launcher работает от
+      # qemu (107) и монтирует тот же том с fsGroup 107; задача с другой
+      # группой при одновременном монтировании проигрывала — kubelet отдавал
+      # том группе 107, и запись падала с Permission denied. Найдено
+      # сквозной проверкой в тенанте. Пользователь образа остаётся своим:
+      # группа тома приходит дополнительной.
       securityContext:
-        fsGroup: 10001
+        fsGroup: 107
         runAsUser: 10001
-        runAsGroup: 10001
+        runAsGroup: 107
         runAsNonRoot: true
         seccompProfile:
           type: RuntimeDefault
@@ -131,6 +138,8 @@ spec:
         args:
           - |
             set -eu
+            # Файлы — с правом записи для группы: диск машина пишет от qemu.
+            umask 002
             put() { cp "$1" "$2.tmp"; mv -f "$2.tmp" "$2"; }
             {{- range $f := $m.payload.files }}
             {{- $dst := printf "%s/%s" $base $f.name }}
