@@ -222,7 +222,6 @@ function render() {
   });
 }
 
-let lastCrc = -1;
 $('pick').onchange = e => { lab = LABS[+e.target.value]; m.forget(lab.id); render(); };
 // Масштаб экрана. Выбор запоминается: человек настраивает его один раз.
 const stage = document.querySelector('.stage'), zoom = $('zoom');
