@@ -2,7 +2,7 @@
 # поэтому тип записи выражен тегами.
 name: paleocomputing-platform
 ociRef: oci://ghcr.io/tym83/paleocomputing/platform
-version: v0.1.10
+version: v0.1.11
 description: Уровень кластера для чужих машин каталога — держит virt-launcher в паре с версией KubeVirt
 homepage: https://github.com/tym83/paleocomputing
 maintainer: tym83

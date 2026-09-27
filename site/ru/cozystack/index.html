@@ -64,8 +64,8 @@
       Делается один раз администратором кластера, утилитой <code>cozypkg</code>
       из <a href="https://github.com/cozystack/cozystack">репозитория Cozystack</a>:
     </p>
-    <pre><code>cozypkg tap oci://ghcr.io/tym83/paleocomputing/machines:v0.1.10
-cozypkg tap oci://ghcr.io/tym83/paleocomputing/languages:v0.1.10</code></pre>
+    <pre><code>cozypkg tap oci://ghcr.io/tym83/paleocomputing/machines:v0.1.11
+cozypkg tap oci://ghcr.io/tym83/paleocomputing/languages:v0.1.11</code></pre>
     <p>
       Проверяйте, что источник прочитал все компоненты, а не только что он готов:
     </p>
@@ -98,7 +98,7 @@ cozypkg tap oci://ghcr.io/tym83/paleocomputing/languages:v0.1.10</code></pre>
       четвёртый репозиторий и поставьте <code>kubevirt-paleo-launcher</code>; он
       привилегированный, поэтому нужно явное согласие оператора:
     </p>
-    <pre><code>cozypkg tap oci://ghcr.io/tym83/paleocomputing/platform:v0.1.10
+    <pre><code>cozypkg tap oci://ghcr.io/tym83/paleocomputing/platform:v0.1.11
 cozypkg add paleocomputing.platform --allow-privileged</code></pre>
     <p>
       Он следит за версией KubeVirt в кластере и держит launcher в паре с ней.
@@ -129,7 +129,7 @@ spec:
         [{"op": "replace",
           "path": "/spec/template/spec/containers/0/args",
           "value": ["--launcher-image",
-                    "ghcr.io/tym83/paleocomputing/virt-launcher:v1.8.4-risc5-v0.1.10",
+                    "ghcr.io/tym83/paleocomputing/virt-launcher:v1.8.4-risc5-v0.1.11",
                     "--exporter-image", "quay.io/kubevirt/virt-exportserver:v1.8.4",
                     "--port", "8443", "-v", "2"]}]'</code></pre>
     <p>
