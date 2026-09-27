@@ -9,13 +9,23 @@
 # не доверяя нам на слово.
 name: publish
 
+#
+# ⚠ Выпуск запускается ВРУЧНУЮ из main, а не пушем тега:
+#
+#   gh workflow run publish.yml --ref main -f tag=v0.1.8
+#
+# Личность подписи — это файл процесса И ссылка, с которой он запущен:
+# `publish.yml@refs/heads/main` и `publish.yml@refs/tags/v0.1.8` — разные
+# личности. Шлюз community-индекса сверяет её с записью ТОЧНО, и она обязана
+# быть одной на все версии записи. По пушу тега каждая версия подписывалась
+# бы новой личностью, и ни одна не совпала бы с `@refs/heads/main` в
+# marketplace/index/. Поэтому процесс всегда идёт из main, а дерево для
+# сборки берётся из тега.
 on:
-  push:
-    tags: ['v*']
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Тег образов (по умолчанию dev)'
+        description: 'Тег выпуска (vX.Y.Z — должен уже существовать) или dev'
         required: false
         default: dev
 
@@ -28,7 +38,34 @@ env:
   REGISTRY: ghcr.io
 
 jobs:
+  # Что собирать и под каким именем. Выпуск берёт дерево из своего тега, dev —
+  # текущий main. Запуск не из main отвергается: подпись вышла бы чужой.
+  source:
+    runs-on: ubuntu-latest
+    outputs:
+      ref: ${{ steps.pick.outputs.ref }}
+      tag: ${{ steps.pick.outputs.tag }}
+    steps:
+      - id: pick
+        run: |
+          set -euo pipefail
+          [ "$GITHUB_REF" = refs/heads/main ] \
+            || { echo "❌ выпуск запускается из main, а не из $GITHUB_REF"; exit 1; }
+          tag="${{ github.event.inputs.tag }}"
+          if [ "$tag" = dev ]; then
+            ref="$GITHUB_SHA"
+          else
+            git ls-remote --exit-code --tags \
+              "https://github.com/${{ github.repository }}" "refs/tags/$tag" >/dev/null \
+              || { echo "❌ тега $tag нет: сначала тег, потом выпуск"; exit 1; }
+            ref="refs/tags/$tag"
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "собираем $ref как $tag"
+
   images:
+    needs: source
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -44,6 +81,8 @@ jobs:
             file: deploy/Containerfile.oberon-run
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.source.outputs.ref }}
 
       - uses: docker/setup-buildx-action@v3
 
@@ -57,9 +96,7 @@ jobs:
 
       - id: meta
         run: |
-          tag="${{ github.event.inputs.tag }}"
-          [ -n "$tag" ] || tag="${GITHUB_REF##*/}"
-          [ "$tag" != "$GITHUB_REF" ] || tag=dev
+          tag="${{ needs.source.outputs.tag }}"
           owner=$(echo "${{ github.repository_owner }}" | tr 'A-Z' 'a-z')
           echo "image=${{ env.REGISTRY }}/$owner/paleocomputing/${{ matrix.name }}" >> "$GITHUB_OUTPUT"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
@@ -86,7 +123,7 @@ jobs:
       - name: Проверить, что подпись действительно легла
         run: |
           cosign verify \
-            --certificate-identity-regexp "^https://github.com/${{ github.repository }}/" \
+            --certificate-identity "https://github.com/${{ github.repository }}/.github/workflows/publish.yml@refs/heads/main" \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
             "${{ steps.meta.outputs.image }}@${{ steps.build.outputs.digest }}"
 
@@ -132,10 +169,13 @@ jobs:
   #
   # Тег несёт версию KubeVirt: launcher обязан совпадать с ней (находка 44).
   launcher:
+    needs: source
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.source.outputs.ref }}
 
       # install: true — чтобы `docker build` внутри build.sh шёл через buildx
       # и умел кэш, подпись происхождения и выкладку.
@@ -153,9 +193,7 @@ jobs:
 
       - id: meta
         run: |
-          tag="${{ github.event.inputs.tag }}"
-          [ -n "$tag" ] || tag="${GITHUB_REF##*/}"
-          [ "$tag" != "$GITHUB_REF" ] || tag=dev
+          tag="${{ needs.source.outputs.tag }}"
           kv=$(sed -n 's|^FROM quay.io/kubevirt/virt-launcher:||p' kubevirt/Containerfile)
           [ -n "$kv" ] || { echo "не найдена версия KubeVirt в Containerfile"; exit 1; }
           owner=$(echo "${{ github.repository_owner }}" | tr 'A-Z' 'a-z')
@@ -203,10 +241,12 @@ jobs:
   #
   # Оба инструмента ставятся в раннер и живут только на время сборки.
   catalog:
+    needs: source
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ needs.source.outputs.ref }}
           fetch-depth: 0     # cozypkg берёт из git источник и ревизию артефакта
 
       - name: Поставить flux
@@ -258,9 +298,7 @@ jobs:
       - name: Выложить и подписать
         run: |
           set -euo pipefail
-          tag="${{ github.event.inputs.tag }}"
-          [ -n "$tag" ] || tag="${GITHUB_REF##*/}"
-          [ "$tag" != "$GITHUB_REF" ] || tag=dev
+          tag="${{ needs.source.outputs.tag }}"
           owner=$(echo "${{ github.repository_owner }}" | tr 'A-Z' 'a-z')
           echo "### Каталог" >> "$GITHUB_STEP_SUMMARY"
           for r in machines languages images; do
@@ -269,7 +307,7 @@ jobs:
             # Подписывается дайджест: cosign сам разрешает тег в него.
             cosign sign --yes "$ref"
             cosign verify \
-              --certificate-identity-regexp "^https://github.com/${{ github.repository }}/" \
+              --certificate-identity "https://github.com/${{ github.repository }}/.github/workflows/publish.yml@refs/heads/main" \
               --certificate-oidc-issuer https://token.actions.githubusercontent.com \
               "$ref" >/dev/null
             echo "- \`$ref\` — выложен и подпись проверена" >> "$GITHUB_STEP_SUMMARY"
