@@ -1,0 +1,59 @@
+# Паспорт машины Вирта. Всё, чем OberonVM отличается от любой другой машины
+# каталога, — здесь; шаблоны общие (library/retro-machine), перехватчик тоже.
+#
+# Это файл чарта, а не values: значения тенант может переписать через API
+# (корень схемы открыт для ключей движка), а паспорт решает, какой эмулятор
+# и с какими аргументами запустится в virt-launcher. Поэтому паспорт меняет
+# только выпуск каталога.
+#
+# Схема: library/retro-machine/machine.schema.json. Проверки каталога сверяют
+# паспорт со схемой и с формой приложения (values.yaml, values.schema.json).
+apiVersion: paleocomputing.io/v1alpha1
+kind: Machine
+name: oberon
+
+# Откуда берутся ПЗУ и образ системы. Эмулятора в этом образе нет — он в
+# образе virt-launcher, рядом с libvirt, который его опрашивает.
+image: ghcr.io/tym83/paleocomputing/oberon-run:v0.1.4
+
+domain:
+  arch: risc5
+  machine: oberon
+  emulator: /usr/local/bin/qemu-system-risc5
+  # Процессор у машины Вирта один, и больше быть не может.
+  vcpus: 1
+  # Экран — встроенный кадровый буфер; его показывает консоль VNC.
+  graphics: vnc
+  # ACPI у машины нет, просьбу выключиться она не услышит: KubeVirt ждал бы
+  # впустую полминуты на каждом перезапуске.
+  terminationGracePeriodSeconds: 0
+
+payload:
+  path: /payload
+  files:
+    # ПЗУ: прошивка, переписывается из образа при каждом обновлении.
+    - name: prom.bin
+      from: /opt/oberon/payload/prom.bin
+      role: firmware
+      qemu: ["-bios", "{path}"]
+    # Диск системы: здесь живут файлы пользователя. Кладётся один раз.
+    - name: oberon.dsk
+      from: /opt/oberon/payload/oberon.dsk
+      role: disk
+      qemu: ["-drive", "if=none,id=sd0,file={path},format=raw"]
+
+# Вариант железа — свойство машины, а не режим эмулятора. chk — процессор с
+# аппаратной проверкой границ массива: в RTL это -DWITH_CHK, на странице
+# проекта — переключатель железа.
+variants:
+  base: {}
+  chk:
+    chk: "on"
+defaultVariant: base
+
+# Самой машине хватает шестнадцати мегабайт: больше её адресная шина не
+# видит, остальное — обвязка KubeVirt. Меньше 128Mi не проверялось.
+memory:
+  default: 128Mi
+  min: 128Mi
+  max: 1Gi

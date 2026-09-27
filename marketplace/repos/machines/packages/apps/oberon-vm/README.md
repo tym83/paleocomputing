@@ -39,7 +39,9 @@ Two things, set once by whoever runs the cluster — a tenant cannot set them:
 
 That image is the carrier for the whole family of machines. A cluster opts in
 once, and from then on any tenant installs any machine from the catalogue —
-much like a driver package.
+much like a driver package. The platform component `kubevirt-paleo-launcher`
+(repository `platform`) keeps that image matched to the cluster's KubeVirt
+version.
 
 ## How it works
 
@@ -49,4 +51,11 @@ is involved, and no sidecar image either — the stock shim runs the script this
 chart supplies through a ConfigMap.
 
 The emulator lives in the launcher image; the PROM and the system image arrive
-on a volume shared with the container where libvirt runs.
+on a volume shared with the container where libvirt runs. The PROM is
+refreshed from each release; the system disk is copied once and then belongs
+to the user.
+
+The machine is a `VirtualMachine`, so it can be stopped, started and
+restarted from the dashboard. Everything that makes it Oberon is data in
+`machine.yaml` — the templates and the hook are shared by every machine in
+the catalogue (`packages/library/retro-machine`).

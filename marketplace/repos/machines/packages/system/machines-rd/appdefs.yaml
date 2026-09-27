@@ -70,4 +70,4 @@ apps:
       icon: logos/oberon-vm.svg
       tags: [machine, kubevirt, architecture, retrocomputing]
       weight: 20
-      keysOrder: [["apiVersion"], ["kind"], ["metadata"], ["metadata", "name"], ["spec", "memory"], ["spec", "running"], ["spec", "emulatorImage"], ["spec", "storageClass"], ["spec", "storage"]]
+      keysOrder: [["apiVersion"], ["kind"], ["metadata"], ["metadata", "name"], ["spec", "memory"], ["spec", "running"], ["spec", "hardware"], ["spec", "storageClass"], ["spec", "storage"]]

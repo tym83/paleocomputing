@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import pathlib
 import re
 import shutil
@@ -406,10 +407,12 @@ def check_no_volume_upgrade_hooks() -> None:
 
     Без явной политики удаления Helm применяет к хуку before-hook-creation:
     на каждом обновлении удаляет ресурс и создаёт заново. Том занят
-    работающей машиной, зависает в Terminating, обновление висит до таймаута.
-    Поймано первым обновлением каталога поверх живых машин в песочнице.
+    работающей машиной, зависает в Terminating, обновление висит до
+    таймаута. Поймано первым обновлением каталога поверх живых машин в
+    песочнице. Шаблоны машин живут в библиотеке — смотрим и туда.
     """
-    tpls = sorted(ROOT.glob("repos/*/packages/apps/*/templates/*.yaml"))
+    tpls = sorted(ROOT.glob("repos/*/packages/apps/*/templates/*.yaml")) + \
+        sorted(ROOT.glob("repos/*/packages/library/*/templates/*.tpl"))
     bad_tpls = [str(t.relative_to(ROOT / "repos")) for t in tpls
                 if "PersistentVolumeClaim" in upgrade_hook_kinds(t.read_text(encoding="utf-8"))]
     report(not bad_tpls,
@@ -427,96 +430,398 @@ def _hook_set(doc: dict, key: str) -> set[str]:
     return {p.strip() for p in str(ann.get(key, "")).split(",") if p.strip()}
 
 
-def _cleans(job: dict, roles: list[dict], kind: str, name: str) -> bool:
-    """Убирает ли задача post-delete ресурс kind/name — и не повиснет ли сама."""
-    spec = job["spec"]
-    if not spec.get("activeDeadlineSeconds"):
-        return False
-    argv = [str(a) for c in spec["template"]["spec"]["containers"]
-            for a in (c.get("command") or []) + (c.get("args") or [])]
-    if "--wait=false" not in argv:
-        return False
-    # Выборка по метке без метки релиза задела бы соседние машины тенанта.
-    if any(a in ("-l", "--selector") or a.startswith(("-l=", "--selector=")) for a in argv) \
-            and "app.kubernetes.io/instance=" not in " ".join(argv):
-        return False
-    plural = kind.lower() + "s"
-    if not any(a.split("/", 1)[0].split(".")[0] in (kind.lower(), plural) and a.endswith("/" + name)
-               for a in argv):
-        return False
-    # И права на это удаление — у самой уборки, тоже хуком post-delete.
-    return any(plural in r.get("resources", []) and "delete" in r.get("verbs", [])
-               and name in r.get("resourceNames", [name])
-               for role in roles for r in role.get("rules", []))
+# ─── Машины по паспортам (library/retro-machine) ────────────────────────────
+#
+# Машина каталога — паспорт machine.yaml и форма; шаблоны и перехватчик общие.
+# Здесь проверяется то, что при добавлении машины легко испортить данными, и
+# то, что прежняя схема (том и наполнение хуками pre-install, голый VMI,
+# уборка post-delete с правами и меткой выхода к API) ломала на живом
+# кластере. Находка 64.
+
+LIBRARY = ROOT / "repos/machines/packages/library/retro-machine"
+MACHINE_SCHEMA = LIBRARY / "machine.schema.json"
+MACHINE_ANNOTATION = "paleocomputing.io/machine"
+HOOK_SRC = ROOT.parent / "kubevirt/onDefineDomain.py"
 
 
-def leaked_hook_resources(docs: list[dict]) -> list[str]:
-    """Ресурсы хуков, которые переживут удаление релиза.
+def machine_charts() -> list[pathlib.Path]:
+    return sorted(p.parent for p in ROOT.glob("repos/*/packages/apps/*/machine.yaml"))
 
-    Helm сам удаляет хук только по политике hook-succeeded. Остальные
-    остаются, если их не убирает задача post-delete; хук post-delete без
-    hook-succeeded не убирает уже никто.
+
+def schema_errors(schema: pathlib.Path, doc: object) -> str | None:
+    """Проверяет doc по JSON-схеме тем же валидатором, что Helm — values.
+
+    Отдельной библиотеки jsonschema в окружении проверок может не быть, а
+    helm есть всегда: временный чарт, у которого схема значений — наша
+    схема, а значения — проверяемый документ.
     """
-    hooks = [d for d in docs if isinstance(d, dict) and _hook_set(d, "helm.sh/hook")]
-    post = [d for d in hooks if "post-delete" in _hook_set(d, "helm.sh/hook")]
-    jobs = [d for d in post if d["kind"] == "Job"]
-    roles = [d for d in post if d["kind"] == "Role"]
-    leaked = []
-    for d in hooks:
-        if "hook-succeeded" in _hook_set(d, "helm.sh/hook-delete-policy"):
+    with tempfile.TemporaryDirectory() as d:
+        c = pathlib.Path(d)
+        (c / "Chart.yaml").write_text("apiVersion: v2\nname: probe\nversion: 0.0.0\n", encoding="utf-8")
+        (c / "values.schema.json").write_text(schema.read_text(encoding="utf-8"), encoding="utf-8")
+        (c / "values.yaml").write_text(json.dumps(doc), encoding="utf-8")
+        r = run(["helm", "template", "p", str(c)])
+    return None if r.returncode == 0 else (r.stderr.strip().splitlines() or ["?"])[-1]
+
+
+def render(chart: pathlib.Path, *overrides: str) -> tuple[list[dict], str]:
+    args = ["helm", "template", "t", str(chart), "--namespace", "ns"]
+    for o in overrides:
+        args += ["--set", o]
+    r = run(args)
+    if r.returncode != 0:
+        return [], r.stderr.strip()
+    return [d for d in yaml.safe_load_all(r.stdout) if isinstance(d, dict)], ""
+
+
+def fill_script(docs: list[dict]) -> str:
+    job = next(d for d in docs if d["kind"] == "Job" and d["metadata"]["name"].endswith("-fill"))
+    return job["spec"]["template"]["spec"]["containers"][0]["args"][0]
+
+
+def disk_overwrites(script: str, disks: list[str]) -> list[str]:
+    """Строки задачи наполнения, которые могут переписать диск пользователя.
+
+    Файл роли disk разрешено упоминать ровно в одной форме:
+    `[ -s <путь> ] || put <источник> <путь>` — положить, только если его нет
+    или он пуст. Любая другая строка с его путём — возможная перезапись.
+    """
+    guarded = re.compile(r"^\[ -s (\S+) \] \|\| put \S+ (\S+)$")
+    bad = []
+    for line in (l.strip() for l in script.splitlines()):
+        for disk in disks:
+            if disk not in line.split():
+                continue
+            m = guarded.match(line)
+            if not (m and m.group(1) == disk and m.group(2) == disk):
+                bad.append(line)
+    return bad
+
+
+def run_fill(script: str, base: str, files: list[dict], root: pathlib.Path) -> None:
+    """Исполняет задачу наполнения на диске: пути тома и образа — во временных каталогах."""
+    # Сначала пути в образе: они сами могут содержать имя каталога тома.
+    s = script
+    for f in files:
+        s = s.replace(f" {f['from']} ", f" {root}/image/{f['name']} ")
+    s = s.replace(f" {base}/", f" {root}/payload/")
+    subprocess.run(["sh", "-c", s], check=True, capture_output=True)
+
+
+def hook_leaks(docs: list[dict]) -> list[str]:
+    """Ресурсы хуков, которые могут пережить удаление машины.
+
+    Ресурсы хуков Helm при удалении релиза не трогает. Поэтому хуком может
+    быть только задача, и только такая, чья жизнь ограничена при любом
+    исходе: удачную удаляет Helm (hook-succeeded), неудачную или зависшую —
+    Kubernetes (activeDeadlineSeconds доводит её до конца,
+    ttlSecondsAfterFinished убирает). Том-хук — ровно то, что прежде
+    оставалось в тенанте и требовало уборки с правами.
+    """
+    leaks = []
+    for d in docs:
+        if not _hook_set(d, "helm.sh/hook"):
             continue
-        kind, name = d["kind"], d["metadata"]["name"]
-        if any(d is p for p in post) or not any(_cleans(j, roles, kind, name) for j in jobs):
-            leaked.append(f"{kind}/{name}")
-    return leaked
+        name = f"{d['kind']}/{d['metadata']['name']}"
+        spec = d.get("spec") or {}
+        if d["kind"] != "Job":
+            leaks.append(f"{name}: хуком может быть только задача")
+        elif "hook-succeeded" not in _hook_set(d, "helm.sh/hook-delete-policy"):
+            leaks.append(f"{name}: нет hook-succeeded")
+        elif not spec.get("activeDeadlineSeconds"):
+            leaks.append(f"{name}: нет activeDeadlineSeconds")
+        elif spec.get("ttlSecondsAfterFinished") is None:
+            leaks.append(f"{name}: нет ttlSecondsAfterFinished")
+    return leaks
 
 
-def check_hook_cleanup() -> None:
-    """Том-хук установки убирается при удалении машины.
+def machine_problems(docs: list[dict], running: bool = True) -> list[str]:
+    """Инварианты отрисованной машины, кроме наполнения и хуков."""
+    out = []
+    kinds = sorted(d["kind"] for d in docs)
+    if kinds != ["ConfigMap", "Job", "PersistentVolumeClaim", "VirtualMachine"]:
+        out.append(f"состав: {kinds}")
+    vms = [d for d in docs if d["kind"] == "VirtualMachine"]
+    if len(vms) != 1:
+        return out + ["нет VirtualMachine"]
+    vm = vms[0]
+    want = "Always" if running else "Halted"
+    if vm["spec"].get("runStrategy") != want or "running" in vm["spec"]:
+        out.append(f"runStrategy {vm['spec'].get('runStrategy')} вместо {want}")
+    for pvc in (d for d in docs if d["kind"] == "PersistentVolumeClaim"):
+        if _hook_set(pvc, "helm.sh/hook"):
+            out.append(f"том {pvc['metadata']['name']} — хук, а не ресурс релиза")
+    ann = vm["spec"]["template"]["metadata"].get("annotations") or {}
+    if "hooks.kubevirt.io/hookSidecars" not in ann:
+        out.append("перехватчик не объявлен на шаблоне машины")
+    return out
 
-    Ресурсы хуков Helm при удалении релиза не трогает: удалённая машина
-    оставляла в тенанте свой том, и повторная установка под тем же именем
-    упиралась в него. Проверяем отрисованные чарты, а не текст шаблонов:
-    имена, которые удаляет уборка, должны совпасть с настоящими.
+
+def gets_library(variant: dict, component: str) -> bool:
+    """Получит ли компонент библиотеку retro-machine при сборке платформой."""
+    libs = {(l.get("name") or pathlib.Path(l["path"]).name): l["path"] for l in variant.get("libraries", [])}
+    comp = next((c for c in variant["components"] if c["name"] == component), {})
+    return libs.get("retro-machine") == "library/retro-machine" and "retro-machine" in comp.get("libraries", [])
+
+
+def render_as_published(chart: pathlib.Path, with_library: bool) -> subprocess.CompletedProcess:
+    """Отрисовка чарта в том виде, в каком его соберёт платформа.
+
+    flux push artifact отбрасывает символические ссылки (проверено
+    `flux build artifact`: charts/ и files/ приезжают пустыми), а
+    ArtifactGenerator кладёт библиотеку в charts/<имя> компонента, который её
+    назвал (internal/operator/packagesource_reconciler.go).
     """
-    print("\nУборка хуков при удалении")
-    charts = sorted({t.parent.parent for t in ROOT.glob("repos/*/packages/apps/*/templates/*.yaml")
-                     if "helm.sh/hook" in t.read_text(encoding="utf-8")})
-    vm_docs: list[dict] = []
+    with tempfile.TemporaryDirectory() as t:
+        staged = pathlib.Path(t) / chart.name
+        shutil.copytree(chart, staged, symlinks=True,
+                        ignore=lambda d, names: [n for n in names if (pathlib.Path(d) / n).is_symlink()])
+        if with_library:
+            shutil.copytree(LIBRARY, staged / "charts/retro-machine")
+        return run(["helm", "template", "t", str(staged), "--namespace", "ns"])
+
+
+def form_problems(preset: dict, values: dict, vschema: dict) -> list[str]:
+    """Расхождения формы приложения (values.yaml, values.schema.json) с паспортом.
+
+    Форма — то, что тенант видит в дашборде; паспорт — то, что машина умеет.
+    Вариант, которого нет в паспорте, отвергнет отрисовка; вариант паспорта,
+    которого нет в форме, тенант не сможет выбрать.
+    """
+    out = []
+    hw = vschema.get("hardware", {})
+    if sorted(hw.get("enum", [])) != sorted(preset["variants"]):
+        out.append(f"варианты формы {sorted(hw.get('enum', []))}")
+    if not values.get("hardware") == hw.get("default") == preset["defaultVariant"]:
+        out.append(f"вариант по умолчанию {values.get('hardware')}/{hw.get('default')}")
+    if not values.get("memory") == vschema.get("memory", {}).get("default") == preset["memory"]["default"]:
+        out.append(f"память по умолчанию {values.get('memory')}/{vschema.get('memory', {}).get('default')}")
+    return out
+
+
+def check_machines() -> None:
+    print("\nМашины по паспортам")
+    charts = machine_charts()
+    report(bool(charts), f"машин с паспортом: {len(charts)} ({', '.join(c.name for c in charts)})")
+
+    # ── Перехватчик: одна копия на все машины ──────────────────────────────
+    lib_hook = LIBRARY / "files/onDefineDomain.py"
+    same = HOOK_SRC.read_bytes() == lib_hook.read_bytes()
+    report(same, "перехватчик в библиотеке совпадает с kubevirt/onDefineDomain.py")
+    report(HOOK_SRC.read_bytes() + b"#" != lib_hook.read_bytes(),
+           "отрицательный контроль: отличие в байт замечается")
+
+    schema = MACHINE_SCHEMA
+    source = load_source("machines")
+    variant = source["spec"]["variants"][0]
+
     for chart in charts:
-        r = run(["helm", "template", "t", str(chart), "--namespace", "ns"])
-        docs = [d for d in yaml.safe_load_all(r.stdout) if isinstance(d, dict)] if r.returncode == 0 else []
-        vols = [d for d in docs if d.get("kind") == "PersistentVolumeClaim"
-                and "pre-install" in _hook_set(d, "helm.sh/hook")]
-        leaked = leaked_hook_resources(docs)
-        report(r.returncode == 0 and not leaked,
-               f"{chart.name}: хуки не переживают удаление (томов-хуков: {len(vols)})"
-               + (f": {', '.join(leaked)}" if leaked else "")
-               + ("" if r.returncode == 0 else f": helm template упал: {r.stderr.strip()}"))
-        if chart.name == "oberon-vm":
-            vm_docs = docs
-    report(bool(vm_docs), "oberon-vm среди проверенных чартов")
+        name = chart.name
+        preset = yaml.safe_load((chart / "machine.yaml").read_text(encoding="utf-8"))
 
-    # Отрицательный контроль: ломаем уборку тремя способами, которыми она уже
-    # ломалась или могла сломаться, — проверка обязана увидеть каждый.
-    def mutated(fn) -> list[str]:
-        docs = copy.deepcopy(vm_docs)
-        for d in docs:
-            if d["kind"] == "Job" and "post-delete" in _hook_set(d, "helm.sh/hook"):
-                fn(d)
-        return leaked_hook_resources([d for d in docs if d.get("kind") != "drop"])
+        # Паспорт — по схеме. И схема не пропускает очевидной порчи.
+        err = schema_errors(schema, preset)
+        report(err is None, f"{name}: паспорт соответствует machine.schema.json" + (f": {err}" if err else ""))
 
-    def drop(d): d["kind"] = "drop"
-    def no_deadline(d): d["spec"].pop("activeDeadlineSeconds", None)
-    def waits(d):
-        c = d["spec"]["template"]["spec"]["containers"][0]
-        c["args"] = [a for a in c["args"] if a != "--wait=false"]
+        # Платформа кладёт библиотеку в чарт только если компонент её назвал.
+        # В дереве её подставляет ссылка — собранное платформой обязано
+        # совпасть с тем, что проверяется здесь.
+        report(gets_library(variant, name),
+               f"{name}: компонент источника получает библиотеку retro-machine")
+        link = chart / "charts/retro-machine"
+        report(link.is_symlink() and link.resolve() == LIBRARY.resolve(),
+               f"{name}: charts/retro-machine в дереве — ссылка на библиотеку")
 
-    for fn, what in [(drop, "без задачи уборки том остаётся"),
-                     (no_deadline, "уборка без activeDeadlineSeconds не засчитывается"),
-                     (waits, "уборка, ждущая удаления тома, не засчитывается")]:
-        report(any(x.startswith("PersistentVolumeClaim/") for x in mutated(fn)),
-               f"отрицательный контроль: {what}")
+        # Форма приложения согласована с паспортом.
+        values = yaml.safe_load((chart / "values.yaml").read_text(encoding="utf-8"))
+        vschema = json.loads((chart / "values.schema.json").read_text(encoding="utf-8"))["properties"]
+        probs = form_problems(preset, values, vschema)
+        report(not probs, f"{name}: форма согласована с паспортом (варианты {sorted(preset['variants'])}, "
+               f"умолчания {preset['defaultVariant']}, {preset['memory']['default']})"
+               + (f": {'; '.join(probs)}" if probs else ""))
+
+        # ── Отрисовка по умолчанию ─────────────────────────────────────────
+        docs, err = render(chart)
+        probs = machine_problems(docs) if docs else [err]
+        report(not probs, f"{name}: VirtualMachine со стратегией Always, том — ресурс релиза"
+               + (f": {'; '.join(probs)}" if probs else ""))
+        if not docs:
+            continue
+        halted, err = render(chart, "running=false")
+        probs = machine_problems(halted, running=False) if halted else [err]
+        report(not probs, f"{name}: running=false — стратегия Halted" + (f": {'; '.join(probs)}" if probs else ""))
+        job = next(d for d in halted if d["kind"] == "Job")
+        report("affinity" not in job["spec"]["template"]["spec"],
+               f"{name}: у остановленной машины задача наполнения не ждёт её пода")
+        job = next(d for d in docs if d["kind"] == "Job")
+        aff = job["spec"]["template"]["spec"].get("affinity", {}).get("podAffinity", {})
+        sel = (aff.get("requiredDuringSchedulingIgnoredDuringExecution") or [{}])[0]
+        report(sel.get("topologyKey") == "kubernetes.io/hostname"
+               and sel.get("labelSelector", {}).get("matchLabels", {}).get("kubevirt.io") == "virt-launcher",
+               f"{name}: у запущенной машины наполнение идёт на узел её пода (том RWO)")
+
+        leaks = hook_leaks(docs)
+        report(not leaks, f"{name}: ресурсы хуков не переживают машину" + (f": {'; '.join(leaks)}" if leaks else ""))
+
+        vm = next(d for d in docs if d["kind"] == "VirtualMachine")
+        cm = next(d for d in docs if d["kind"] == "ConfigMap")
+        report(cm["data"]["onDefineDomain"] == lib_hook.read_text(encoding="utf-8"),
+               f"{name}: в ConfigMap уезжает перехватчик библиотеки байт в байт")
+
+        # Паспорт в аннотации: JSON, по схеме, с выбранным вариантом.
+        for hwv in sorted(preset["variants"]):
+            d, _ = render(chart, f"hardware={hwv}")
+            v = next(x for x in d if x["kind"] == "VirtualMachine") if d else vm
+            raw = v["spec"]["template"]["metadata"]["annotations"].get(MACHINE_ANNOTATION, "")
+            try:
+                passport = json.loads(raw)
+            except ValueError as e:
+                report(False, f"{name}: hardware={hwv}: аннотация паспорта — не JSON: {e}")
+                continue
+            err = schema_errors(schema, passport)
+            report(err is None and passport.get("variant") == hwv
+                   and {k: passport[k] for k in preset} == preset,
+                   f"{name}: hardware={hwv}: аннотация — паспорт по схеме с variant={passport.get('variant')}"
+                   + (f": {err}" if err else ""))
+
+        # ── Наполнение: прошивка всегда, диск пользователя — никогда ─────────
+        script = fill_script(docs)
+        base = preset["payload"]["path"].rstrip("/")
+        disks = [f"{base}/{f['name']}" for f in preset["payload"]["files"] if f["role"] == "disk"]
+        firmware = [f"{base}/{f['name']}" for f in preset["payload"]["files"] if f["role"] == "firmware"]
+        over = disk_overwrites(script, disks)
+        report(not over, f"{name}: задача наполнения не перезаписывает диск ({', '.join(disks)})"
+               + (f": {over}" if over else ""))
+        report(all(re.search(rf"^\s*put \S+ {re.escape(p)}$", script, re.M) for p in firmware),
+               f"{name}: прошивку задача переписывает всегда ({', '.join(firmware)})")
+
+        # То же — исполнением: второй прогон поверх изменённого диска его не
+        # трогает, а прошивку обновляет.
+        with tempfile.TemporaryDirectory() as t:
+            root = pathlib.Path(t)
+            (root / "payload").mkdir()
+            (root / "image").mkdir()
+            for f in preset["payload"]["files"]:
+                (root / "image" / f["name"]).write_text("v1", encoding="utf-8")
+            run_fill(script, base, preset["payload"]["files"], root)
+            first = all((root / "payload" / f["name"]).read_text() == "v1" for f in preset["payload"]["files"])
+            for f in preset["payload"]["files"]:
+                (root / "image" / f["name"]).write_text("v2", encoding="utf-8")
+                if f["role"] == "disk":
+                    (root / "payload" / f["name"]).write_text("работа пользователя", encoding="utf-8")
+            run_fill(script, base, preset["payload"]["files"], root)
+            kept = all((root / "payload" / f["name"]).read_text(encoding="utf-8") ==
+                       ("работа пользователя" if f["role"] == "disk" else "v2")
+                       for f in preset["payload"]["files"])
+            clean = not list((root / "payload").glob("*.tmp"))
+        report(first and kept and clean,
+               f"{name}: прогон наполнения — первый кладёт всё, повторный обновляет прошивку и не трогает диск")
+
+        # ── Форма, которую собирает платформа ──────────────────────────────
+        # flux push artifact отбрасывает ссылки, платформа кладёт библиотеку
+        # в charts/ сама. Повторяем это и сравниваем с отрисовкой дерева.
+        r = render_as_published(chart, with_library=True)
+        tree = run(["helm", "template", "t", str(chart), "--namespace", "ns"])
+        report(r.returncode == 0 and r.stdout == tree.stdout,
+               f"{name}: собранное платформой (без ссылок, библиотека в charts/) рисуется так же")
+        report(render_as_published(chart, with_library=False).returncode != 0,
+               f"{name}: отрицательный контроль: без библиотеки в charts/ чарт не рисуется")
+
+        # Память — в пределах паспорта.
+        over_max, _ = render(chart, f"memory={int(preset['memory']['max'][:-2]) * 2}{preset['memory']['max'][-2:]}")
+        report(not over_max, f"{name}: память больше предела паспорта отвергается")
+
+    # ── Отрицательные контроли: каждая проверка обязана узнать поломку ─────
+    if not charts:
+        return
+    chart = charts[0]
+    preset = yaml.safe_load((chart / "machine.yaml").read_text(encoding="utf-8"))
+    docs, _ = render(chart)
+
+    for what, fn in [
+        ("роль файла вне списка", lambda p: p["payload"]["files"][0].update(role="rom")),
+        ("файл, не переданный эмулятору", lambda p: p["payload"]["files"][0].update(qemu=["-bios", "/x"])),
+        ("лишнее поле паспорта", lambda p: p.update(arch="risc5")),
+        ("нет вариантов железа", lambda p: p.update(variants={})),
+        ("свойство варианта с запятой", lambda p: p["variants"].update(x={"a": "b,c=d"})),
+    ]:
+        p = copy.deepcopy(preset)
+        fn(p)
+        report(schema_errors(schema, p) is not None, f"отрицательный контроль: схема отвергает паспорт — {what}")
+
+    base = preset["payload"]["path"].rstrip("/")
+    disks = [f"{base}/{f['name']}" for f in preset["payload"]["files"] if f["role"] == "disk"]
+    script = fill_script(docs)
+    unguarded = re.sub(r"^(\s*)\[ -s \S+ \] \|\| ", r"\1", script, flags=re.M)
+    report(bool(disk_overwrites(unguarded, disks)),
+           "отрицательный контроль: наполнение без защиты диска распознаётся")
+    report(bool(disk_overwrites(script + f"\ncp /x {disks[0]}\n", disks)),
+           "отрицательный контроль: лишняя запись в диск распознаётся")
+    with tempfile.TemporaryDirectory() as t:
+        root = pathlib.Path(t)
+        (root / "payload").mkdir()
+        (root / "image").mkdir()
+        for f in preset["payload"]["files"]:
+            (root / "image" / f["name"]).write_text("v2", encoding="utf-8")
+            (root / "payload" / f["name"]).write_text("работа пользователя", encoding="utf-8")
+        run_fill(unguarded, base, preset["payload"]["files"], root)
+        lost = any((root / "payload" / f["name"]).read_text(encoding="utf-8") != "работа пользователя"
+                   for f in preset["payload"]["files"] if f["role"] == "disk")
+    report(lost, "отрицательный контроль: прогон без защиты действительно затирает диск")
+
+    def mutated(fn) -> list[dict]:
+        d = copy.deepcopy(docs)
+        for x in d:
+            fn(x)
+        return d
+
+    def pvc_hook(x):
+        if x["kind"] == "PersistentVolumeClaim":
+            x["metadata"].setdefault("annotations", {})["helm.sh/hook"] = "pre-install"
+
+    def job_no(key):
+        def f(x):
+            if x["kind"] == "Job":
+                x["spec"].pop(key, None)
+        return f
+
+    def job_keeps(x):
+        if x["kind"] == "Job":
+            x["metadata"]["annotations"]["helm.sh/hook-delete-policy"] = "before-hook-creation"
+
+    for fn, what in [(pvc_hook, "том-хук"), (job_no("activeDeadlineSeconds"), "задача без срока"),
+                     (job_no("ttlSecondsAfterFinished"), "задача без срока жизни"),
+                     (job_keeps, "задача без hook-succeeded")]:
+        report(bool(hook_leaks(mutated(fn))), f"отрицательный контроль: утечка хука распознаётся — {what}")
+    report(bool(machine_problems(mutated(pvc_hook))), "отрицательный контроль: том-хук вместо ресурса распознаётся")
+
+    def bare_vmi(x):
+        if x["kind"] == "VirtualMachine":
+            x["kind"] = "VirtualMachineInstance"
+    report(bool(machine_problems(mutated(bare_vmi))), "отрицательный контроль: голый VMI вместо VirtualMachine распознаётся")
+
+    def old_running(x):
+        if x["kind"] == "VirtualMachine":
+            x["spec"].pop("runStrategy")
+            x["spec"]["running"] = True
+    report(bool(machine_problems(mutated(old_running))), "отрицательный контроль: машина без runStrategy распознаётся")
+
+    variant = copy.deepcopy(load_source("machines")["spec"]["variants"][0])
+    for c in variant["components"]:
+        c.pop("libraries", None)
+    report(not gets_library(variant, chart.name),
+           "отрицательный контроль: компонент без libraries библиотеку не получит")
+
+    values = yaml.safe_load((chart / "values.yaml").read_text(encoding="utf-8"))
+    vschema = json.loads((chart / "values.schema.json").read_text(encoding="utf-8"))["properties"]
+    bad = copy.deepcopy(preset)
+    bad["variants"]["extra"] = {}
+    report(bool(form_problems(bad, values, vschema)),
+           "отрицательный контроль: вариант паспорта, которого нет в форме, замечается")
+    bad = copy.deepcopy(preset)
+    bad["memory"]["default"] = "256Mi"
+    report(bool(form_problems(bad, values, vschema)),
+           "отрицательный контроль: разные умолчания памяти в форме и паспорте замечаются")
 
 
 APISERVER_LABEL = "policy.cozystack.io/allow-to-apiserver"
@@ -580,6 +885,49 @@ def check_platform_launcher() -> None:
     report(r.returncode == 0, f"проход реконсайлера на поддельном API: {tail}")
 
 
+def artifact_missing(repo_dir: pathlib.Path, art_src: pathlib.Path) -> list[str]:
+    """Файлы, достижимые в дереве репозитория по ссылкам, которых нет в артефакте."""
+    want = set()
+    for dp, _, fs in os.walk(repo_dir / "packages", followlinks=True):
+        for f in fs:
+            want.add(str((pathlib.Path(dp) / f).relative_to(repo_dir)))
+    with tempfile.TemporaryDirectory() as t:
+        art = pathlib.Path(t) / "a.tgz"
+        r = run(["flux", "build", "artifact", "--path", str(art_src), "--output", str(art)])
+        if r.returncode != 0:
+            return [f"flux build artifact упал: {r.stderr.strip()}"]
+        import tarfile
+        with tarfile.open(art) as tf:
+            have = {m.name for m in tf.getmembers() if m.isfile()}
+    return sorted(want - have)
+
+
+def check_artifact_contents() -> None:
+    """В кластер уезжает всё, что видит чарт, — в том числе через ссылки.
+
+    Библиотека машин подключена ссылкой, а flux ссылки в архив не кладёт.
+    Публикуется копия stage.sh с разыменованными ссылками; здесь та же копия
+    собирается в артефакт тем же flux, и в нём обязан оказаться каждый файл,
+    который видно в дереве.
+    """
+    print("\nСодержимое артефакта каталога")
+    if not shutil.which("flux"):
+        report(False, "flux не найден — артефакт собрать нечем")
+        return
+    with tempfile.TemporaryDirectory() as t:
+        stage = pathlib.Path(t)
+        r = run(["sh", str(ROOT / "tools/stage.sh"), str(stage)])
+        report(r.returncode == 0, "копия каталога без ссылок собрана")
+        for repo in REPOS:
+            lost = artifact_missing(ROOT / "repos" / repo, stage / repo)
+            report(not lost, f"{repo}: в артефакте все файлы дерева"
+                   + (f" — нет: {', '.join(lost[:5])}" if lost else ""))
+    # Отрицательный контроль: артефакт прямо из дерева, со ссылками.
+    lost = artifact_missing(ROOT / "repos" / "machines", ROOT / "repos" / "machines")
+    report(any("retro-machine" in l or "onDefineDomain" in l for l in lost),
+           "отрицательный контроль: без копии библиотека машин из артефакта пропадает")
+
+
 def main() -> None:
     print("Проверки каталога «Забытые системы»")
     check_index()
@@ -595,7 +943,8 @@ def main() -> None:
     check_no_volume_upgrade_hooks()
     check_apiserver_egress()
     check_platform_launcher()
-    check_hook_cleanup()
+    check_machines()
+    check_artifact_contents()
     print(f"\nИтог: успешно {ok_count}, провалено {fail_count}")
     sys.exit(1 if fail_count else 0)
 

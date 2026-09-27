@@ -312,12 +312,18 @@ jobs:
       - name: Таблица launcher'ов под выпуск
         run: python3 marketplace/tools/gen-launcher-table.py --release "${{ needs.source.outputs.tag }}"
 
+      # Публикуется копия с разыменованными ссылками: flux ссылки в архив не
+      # кладёт, а распаковщик каталога в кластере их пропускает — библиотека
+      # машин, подключённая ссылкой, до кластера бы не доехала.
+      - name: Копия каталога без ссылок
+        run: marketplace/tools/stage.sh "$RUNNER_TEMP/catalog"
+
       - name: Проверить каталог перед публикацией
         run: |
           set -euo pipefail
           for r in machines languages images platform; do
             echo "── repos/$r"
-            cozypkg validate "marketplace/repos/$r"
+            cozypkg validate "$RUNNER_TEMP/catalog/$r"
           done
 
       # Свои проверки каталога — поверх штатного валидатора. До сих пор они
@@ -336,7 +342,11 @@ jobs:
           echo "### Каталог" >> "$GITHUB_STEP_SUMMARY"
           for r in machines languages images platform; do
             ref="ghcr.io/$owner/paleocomputing/$r:$tag"
-            cozypkg push "oci://$ref" --path "marketplace/repos/$r"
+            # Копия вне git: источник и ревизию передаём сами, в том же виде,
+            # в каком cozypkg вывел бы их из дерева.
+            cozypkg push "oci://$ref" --path "$RUNNER_TEMP/catalog/$r" \
+              --source "$(git remote get-url origin)" \
+              --revision "$(git describe --tags --always):$(git rev-parse HEAD)"
             # Подписывается дайджест: cosign сам разрешает тег в него.
             cosign sign --yes "$ref"
             cosign verify \
