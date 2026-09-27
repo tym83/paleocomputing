@@ -7,7 +7,7 @@
 COZYPKG ?= /tmp/cozypkg
 REGISTRY ?= ghcr.io/tym83/paleocomputing
 TAG      ?= v0.1.0
-REPOS    := machines languages images
+REPOS    := machines languages images platform
 
 .PHONY: help check validate gen search push clean-check
 
