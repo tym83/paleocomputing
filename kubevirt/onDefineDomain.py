@@ -32,11 +32,13 @@ import json
 import sys
 import xml.etree.ElementTree as ET
 
-# Пути внутри контейнера, куда общий том приносит эмулятор и образы.
-# Он же монтируется в контейнер с libvirt через sharedComputePath.
-EMULATOR = '/var/run/risc5/qemu-system-risc5'
-PROM     = '/var/run/risc5/prom.bin'
-DISK     = '/var/run/risc5/oberon.dsk'
+# Эмулятор лежит в образе virt-launcher, ПЗУ и диск приносит общий том:
+# он монтируется и в перехватчик, и в контейнер с libvirt через
+# sharedComputePath. Пути те же, что в пакете каталога — это один и тот же
+# файл, пакет несёт его копию.
+EMULATOR = '/usr/local/bin/qemu-system-risc5'
+PROM     = '/payload/prom.bin'
+DISK     = '/payload/oberon.dsk'
 
 QEMU_NS = 'http://libvirt.org/schemas/domain/qemu/1.0'
 

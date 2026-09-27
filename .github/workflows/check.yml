@@ -28,6 +28,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      # Перехватчик живёт в двух местах: kubevirt/ и пакет каталога (Helm не
+      # читает файлы вне чарта). В кластер уезжает копия из пакета, и однажды
+      # она отстала: каталог просил chk, машина запускалась базовой.
+      - name: Перехватчик
+        run: |
+          cmp kubevirt/onDefineDomain.py \
+              marketplace/repos/machines/packages/apps/oberon-vm/files/onDefineDomain.py \
+            || { echo "❌ копия перехватчика в пакете разошлась с kubevirt/"; exit 1; }
+          python3 kubevirt/hook_test.py \
+            marketplace/repos/machines/packages/apps/oberon-vm/files/onDefineDomain.py
       - uses: actions/setup-node@v4
         with:
           node-version: '22'

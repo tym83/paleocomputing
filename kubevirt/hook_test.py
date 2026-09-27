@@ -5,10 +5,13 @@
 с каждым утверждением стоит мутация: подаём описание без нужной черты и
 убеждаемся, что проверка краснеет.
 """
-import subprocess, sys, pathlib
+import json, subprocess, sys, pathlib
 import xml.etree.ElementTree as ET
 
 HERE = pathlib.Path(__file__).resolve().parent
+# Какой файл проверять: по умолчанию свой, но CI гоняет и копию из пакета
+# каталога — в кластер уезжает именно она.
+HOOK = pathlib.Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else HERE / 'onDefineDomain.py'
 QEMU_NS = 'http://libvirt.org/schemas/domain/qemu/1.0'
 ok = bad = 0
 
@@ -21,11 +24,21 @@ def report(passed, text):
         bad += 1; print(f'  ❌ {text}')
 
 
-def run(domain_xml):
-    r = subprocess.run([sys.executable, str(HERE / 'onDefineDomain.py'),
-                        '--domain', domain_xml],
-                       capture_output=True, text=True)
+def run(domain_xml, annotations=None):
+    cmd = [sys.executable, str(HOOK), '--domain', domain_xml]
+    if annotations is not None:
+        cmd += ['--vmi', json.dumps({'metadata': {'annotations': annotations}})]
+    r = subprocess.run(cmd, capture_output=True, text=True)
     return ET.fromstring(r.stdout) if r.returncode == 0 else None
+
+
+def qemu_args(root):
+    cl = root.find('{%s}commandline' % QEMU_NS)
+    return [a.get('value') for a in cl] if cl is not None else []
+
+
+def has_chk(args):
+    return any(a == '-machine' and b == 'chk=on' for a, b in zip(args, args[1:]))
 
 
 def main():
@@ -56,10 +69,22 @@ def main():
     report({'controller', 'memballoon', 'video'} <= stubs,
            'поставлены заглушки вместо устройств по умолчанию')
 
-    cl = root.find('{%s}commandline' % QEMU_NS)
-    args = [a.get('value') for a in cl] if cl is not None else []
+    args = qemu_args(root)
     report('-bios' in args and any('format=raw' in a for a in args),
            'ПЗУ и образ диска переданы напрямую')
+
+    # ── Вариант железа ────────────────────────────────────────────────────
+    #
+    # Аннотация приходит из пакета каталога (`hardware: chk`). Однажды пакет
+    # уехал в кластер со старой копией перехватчика: аннотация стояла,
+    # машина запускалась базовой, и всё выглядело зелёным.
+    chk = run(src, {'oberon.paleocomputing/chk': 'on'})
+    report(chk is not None and has_chk(qemu_args(chk)),
+           'с аннотацией chk машина получает -machine chk=on')
+    report(not has_chk(args), 'без аннотации машина базовая')
+    off = run(src, {'oberon.paleocomputing/chk': 'off'})
+    report(off is not None and not has_chk(qemu_args(off)),
+           'аннотация chk=off не включает проверку')
 
     # ── Мутации ───────────────────────────────────────────────────────────
     #
