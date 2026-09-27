@@ -1,0 +1,5 @@
+apiVersion: v2
+name: retro-machine
+description: Shared templates for machines of architectures KubeVirt does not know — a machine is a descriptor, not a chart
+type: library
+version: 0.1.0

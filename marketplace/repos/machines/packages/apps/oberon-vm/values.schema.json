@@ -2,37 +2,32 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "oberon-vm",
   "type": "object",
-  "$comment": "Корень схемы НЕ закрыт намеренно: cozystack-engine подмешивает в values любого приложения тенанта свои ключи (_cluster, _namespace), и при additionalProperties:false Helm отвергает значения целиком — приложение не разворачивается. Ни один чарт платформы корень не закрывает. Вложенные объекты закрыты: туда движок ничего не кладёт.",
+  "$comment": "Корень схемы НЕ закрыт намеренно: cozystack-engine подмешивает в values любого приложения тенанта свои ключи (_cluster, _namespace), и при additionalProperties:false Helm отвергает значения целиком — приложение не разворачивается. Ни один чарт платформы корень не закрывает. Вложенные объекты закрыты: туда движок ничего не кладёт. Умолчания memory и hardware и перечень hardware обязаны совпадать с паспортом machine.yaml — это сверяют проверки каталога.",
   "required": [
     "memory",
-    "emulatorImage",
     "storageClass",
     "storage"
   ],
   "properties": {
     "memory": {
       "type": "string",
-      "minLength": 1,
+      "description": "Память машины: целое число Mi или Gi, от 128Mi до 1Gi",
+      "pattern": "^[1-9][0-9]*(Mi|Gi)$",
       "default": "128Mi"
     },
     "running": {
       "type": "boolean",
+      "description": "Держать машину запущенной",
       "default": true
     },
-    "emulatorImage": {
+    "hardware": {
       "type": "string",
-      "minLength": 1,
-      "default": "ghcr.io/tym83/paleocomputing/oberon-run:v0.1.4"
-    },
-    "prom": {
-      "type": "string",
-      "pattern": "^/.*",
-      "default": "/payload/prom.bin"
-    },
-    "disk": {
-      "type": "string",
-      "pattern": "^/.*",
-      "default": "/payload/oberon.dsk"
+      "description": "Вариант железа: base — ядро Вирта как есть, chk — с аппаратной проверкой границ массива",
+      "enum": [
+        "base",
+        "chk"
+      ],
+      "default": "base"
     },
     "storageClass": {
       "type": "string",
@@ -43,15 +38,6 @@
       "type": "string",
       "minLength": 1,
       "default": "1Gi"
-    },
-    "hardware": {
-      "type": "string",
-      "description": "Вариант железа: base — ядро Вирта как есть, chk — с аппаратной проверкой границ массива",
-      "enum": [
-        "base",
-        "chk"
-      ],
-      "default": "base"
     }
   }
 }

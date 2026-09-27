@@ -1,0 +1,133 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Паспорт машины",
+  "description": "Всё, чем одна машина отличается от другой: архитектура, файлы, варианты железа. Лежит файлом machine.yaml в чарте машины и доходит до перехватчика аннотацией paleocomputing.io/machine. Корень закрыт: паспорт — не values, движок Cozystack сюда ничего не подмешивает, и лишнее поле почти всегда опечатка.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["apiVersion", "kind", "name", "image", "domain", "payload", "variants", "defaultVariant", "memory"],
+  "properties": {
+    "apiVersion": { "const": "paleocomputing.io/v1alpha1" },
+    "kind": { "const": "Machine" },
+    "name": {
+      "description": "Короткое имя машины.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*$"
+    },
+    "image": {
+      "description": "Образ, который несёт файлы машины (ПЗУ, диск). Эмулятор в нём не нужен: он живёт в образе virt-launcher.",
+      "type": "string",
+      "pattern": "^[a-z0-9.-]+(:[0-9]+)?/[a-z0-9._/-]+(:[A-Za-z0-9._-]+)?(@sha256:[0-9a-f]{64})?$"
+    },
+    "domain": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["arch", "machine", "emulator", "vcpus", "graphics", "terminationGracePeriodSeconds"],
+      "properties": {
+        "arch": {
+          "description": "Архитектура, как её знает libvirt (os/type@arch). Должна быть вкомпилирована в libvirt образа virt-launcher.",
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$"
+        },
+        "machine": {
+          "description": "Тип машины QEMU (os/type@machine).",
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$"
+        },
+        "emulator": {
+          "description": "Путь к эмулятору ВНУТРИ образа virt-launcher.",
+          "type": "string",
+          "pattern": "^/[A-Za-z0-9/._-]+$"
+        },
+        "vcpus": {
+          "description": "Число процессоров машины. libvirt отвергает больше, чем умеет машина.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "graphics": {
+          "description": "vnc — экран виден в консоли KubeVirt и через virtctl vnc; none — машина без экрана.",
+          "enum": ["vnc", "none"]
+        },
+        "terminationGracePeriodSeconds": {
+          "description": "Сколько KubeVirt ждёт, пока машина выключится сама. У машины без ACPI просьбу выключиться услышать некому — 0 значит «гасить сразу».",
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "files"],
+      "properties": {
+        "path": {
+          "description": "Куда монтируется том с файлами — и в перехватчик, и в контейнер с libvirt.",
+          "type": "string",
+          "pattern": "^/[A-Za-z0-9/._-]+$"
+        },
+        "files": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "from", "role", "qemu"],
+            "properties": {
+              "name": {
+                "description": "Имя файла на томе, без каталогов.",
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+              },
+              "from": {
+                "description": "Путь к файлу внутри image.",
+                "type": "string",
+                "pattern": "^/[A-Za-z0-9/._-]+$"
+              },
+              "role": {
+                "description": "firmware — переписывается из образа при каждой установке и обновлении; disk — данные пользователя, кладётся только если файла нет или он пуст.",
+                "enum": ["firmware", "disk"]
+              },
+              "qemu": {
+                "description": "Аргументы эмулятора для этого файла; {path} заменяется полным путём на томе.",
+                "type": "array",
+                "minItems": 1,
+                "items": { "type": "string", "minLength": 1 },
+                "contains": { "type": "string", "pattern": "\\{path\\}" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "variants": {
+      "description": "Варианты железа: имя → свойства -machine. Пустой объект — машина как есть.",
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "pattern": "^[a-z][a-z0-9-]*$" },
+      "additionalProperties": {
+        "type": "object",
+        "propertyNames": { "pattern": "^[A-Za-z0-9_.-]+$" },
+        "additionalProperties": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+$" }
+      }
+    },
+    "defaultVariant": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*$"
+    },
+    "variant": {
+      "description": "Выбранный вариант. В паспорте чарта его нет — его дописывает библиотека в аннотацию из значения hardware.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*$"
+    },
+    "memory": {
+      "description": "Память машины в KubeVirt: умолчание и пределы. Только Mi и Gi — библиотека сравнивает их при отрисовке.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["default", "min", "max"],
+      "properties": {
+        "default": { "type": "string", "pattern": "^[1-9][0-9]*(Mi|Gi)$" },
+        "min": { "type": "string", "pattern": "^[1-9][0-9]*(Mi|Gi)$" },
+        "max": { "type": "string", "pattern": "^[1-9][0-9]*(Mi|Gi)$" }
+      }
+    }
+  }
+}

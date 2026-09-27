@@ -1,0 +1,7 @@
+{{/*
+  Вся машина — из паспорта machine.yaml по общим шаблонам библиотеки
+  retro-machine (packages/library/retro-machine). Здесь ничего не
+  дописывается: новая машина каталога — это новый паспорт, а не копия
+  шаблонов.
+*/}}
+{{ include "retro-machine.render" . }}

@@ -1,0 +1,260 @@
+{{/*
+  Машина архитектуры, которой нет в KubeVirt, — общие шаблоны.
+
+  Чарт машины несёт только данные: паспорт machine.yaml (схема —
+  machine.schema.json рядом), форму values.yaml/values.schema.json, иконку и
+  README. Его единственный шаблон — `{{ include "retro-machine.render" . }}`.
+  Всё остальное здесь, и перехватчик тоже: files/onDefineDomain.py.
+
+  Что получается из одного паспорта:
+
+    * ConfigMap с перехватчиком — он переписывает домен KubeVirt по
+      паспорту из аннотации машины;
+    * том с файлами машины — ОБЫЧНЫЙ ресурс релиза: создаётся при любой
+      удачной установке или обновлении, удаляется вместе с машиной;
+    * VirtualMachine со стратегией запуска из `running`: перезапуск из
+      дашборда, `virtctl restart`, самовосстановление после сбоя;
+    * задача наполнения — хук post-install/post-upgrade: прошивку
+      переписывает всегда, диск пользователя — только если его нет.
+
+  Почему не хуки для тома и не голый VMI — находка 64.
+*/}}
+
+{{- define "retro-machine.fullname" -}}
+{{ .Chart.Name }}-{{ .Release.Name }}
+{{- end }}
+
+{{- define "retro-machine.labels" -}}
+app.kubernetes.io/name: {{ .Chart.Name }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end }}
+
+{{/* Под-селектор подов virt-launcher этой машины: метки шаблона машины
+     KubeVirt переносит на VMI и дальше на под, а kubevirt.io=virt-launcher
+     ставит сам. У задачи наполнения этой метки нет — она себя не выберет. */}}
+{{- define "retro-machine.launcherSelector" -}}
+kubevirt.io: virt-launcher
+app.kubernetes.io/name: {{ .Chart.Name }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}
+
+{{/* Количество памяти в Mi: паспорт и форма разрешают только Mi и Gi. */}}
+{{- define "retro-machine.mi" -}}
+{{- if not (regexMatch "^[1-9][0-9]*(Mi|Gi)$" .) }}
+{{- fail (printf "retro-machine: память %q — нужно целое число Mi или Gi" .) }}
+{{- end }}
+{{- if hasSuffix "Gi" . }}{{ mul (trimSuffix "Gi" . | atoi) 1024 }}{{ else }}{{ trimSuffix "Mi" . | atoi }}{{ end }}
+{{- end }}
+
+{{/*
+  Паспорт машины. Проверяется при каждой отрисовке — не полной схемой (её
+  держат проверки каталога), а тем, без чего шаблоны ниже собрали бы
+  неправду: не тот вариант железа, путь с пробелом в команде оболочки.
+*/}}
+{{- define "retro-machine.descriptor" -}}
+{{- $raw := .Files.Get "machine.yaml" }}
+{{- if not $raw }}
+{{- fail (printf "retro-machine: у чарта %s нет machine.yaml — паспорт машины обязателен" .Chart.Name) }}
+{{- end }}
+{{- $m := fromYaml $raw }}
+{{- if hasKey $m "Error" }}
+{{- fail (printf "retro-machine: machine.yaml не разбирается: %s" $m.Error) }}
+{{- end }}
+{{- if or (ne (toString $m.apiVersion) "paleocomputing.io/v1alpha1") (ne (toString $m.kind) "Machine") }}
+{{- fail "retro-machine: machine.yaml — не паспорт (apiVersion paleocomputing.io/v1alpha1, kind Machine)" }}
+{{- end }}
+{{- range $f := $m.payload.files }}
+{{- if not (and (regexMatch "^[A-Za-z0-9][A-Za-z0-9._-]*$" (toString $f.name)) (regexMatch "^/[A-Za-z0-9/._-]+$" (toString $f.from)) (has (toString $f.role) (list "firmware" "disk"))) }}
+{{- fail (printf "retro-machine: файл машины %v — имя, путь в образе или роль недопустимы" $f) }}
+{{- end }}
+{{- end }}
+{{- if not (regexMatch "^/[A-Za-z0-9/._-]+$" (toString $m.payload.path)) }}
+{{- fail "retro-machine: payload.path — нужен абсолютный путь без пробелов" }}
+{{- end }}
+{{- toJson $m }}
+{{- end }}
+
+{{- define "retro-machine.render" -}}
+{{- $m := include "retro-machine.descriptor" . | fromJson }}
+{{- $fn := include "retro-machine.fullname" . }}
+{{- $base := trimSuffix "/" $m.payload.path }}
+
+{{- /* Вариант железа: значение hardware формы, иначе умолчание паспорта. */}}
+{{- $variant := .Values.hardware | default $m.defaultVariant | toString }}
+{{- if not (hasKey $m.variants $variant) }}
+{{- fail (printf "%s: вариант железа %q не описан; есть: %s" .Chart.Name $variant (keys $m.variants | sortAlpha | join ", ")) }}
+{{- end }}
+
+{{- /* Память: в пределах паспорта. */}}
+{{- $memory := .Values.memory | default $m.memory.default | toString }}
+{{- $mem := include "retro-machine.mi" $memory | atoi }}
+{{- if or (lt $mem (include "retro-machine.mi" $m.memory.min | atoi)) (gt $mem (include "retro-machine.mi" $m.memory.max | atoi)) }}
+{{- fail (printf "%s: память %s вне пределов машины %s…%s" .Chart.Name $memory $m.memory.min $m.memory.max) }}
+{{- end }}
+
+{{- /* ⚠ `default true` здесь нельзя: false для default — пустое значение, и
+       остановленная машина молча запустилась бы. */}}
+{{- $running := true }}
+{{- if hasKey .Values "running" }}
+{{- if not (kindIs "bool" .Values.running) }}
+{{- fail (printf "%s: running — true или false" .Chart.Name) }}
+{{- end }}
+{{- $running = .Values.running }}
+{{- end }}
+
+{{- $hook := (index .Subcharts "retro-machine").Files.Get "files/onDefineDomain.py" }}
+{{- if not $hook }}
+{{- fail "retro-machine: в библиотеке нет files/onDefineDomain.py" }}
+{{- end }}
+
+{{- /* Перехватчик: штатная обёртка sidecar-shim исполняет скрипт из
+       ConfigMap, своего образа перехватчика не нужно. Том с файлами
+       монтируется И в перехватчик, И в контейнер с libvirt
+       (sharedComputePath) — по одному и тому же пути, поэтому перехватчик
+       может проверить, что файлы уже на месте. */}}
+{{- $sidecars := list (dict
+      "args" (list "--version" "v1alpha2")
+      "configMap" (dict "name" (printf "%s-hook" $fn) "key" "onDefineDomain" "hookPath" "/usr/bin/onDefineDomain")
+      "pvc" (dict "name" (printf "%s-payload" $fn) "volumePath" $base "sharedComputePath" $base)) }}
+{{- $passport := set (deepCopy $m) "variant" $variant }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $fn }}-hook
+  labels: {{- include "retro-machine.labels" . | nindent 4 }}
+data:
+  onDefineDomain: |
+{{ $hook | indent 4 }}
+---
+# Том с файлами машины. Обычный ресурс релиза: создаётся любой удачной
+# установкой или обновлением — в том числе обновлением, которым flux
+# повторяет неудавшуюся установку, — и удаляется вместе с машиной. Раньше он
+# был хуком pre-install: на повторе как обновлении его не было вовсе, а при
+# удалении Helm его не трогал (находки 58 и 64).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $fn }}-payload
+  labels: {{- include "retro-machine.labels" . | nindent 4 }}
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: {{ .Values.storageClass | quote }}
+  resources:
+    requests:
+      storage: {{ .Values.storage | quote }}
+---
+# Сама машина. VirtualMachine, а не голый VirtualMachineInstance: у неё есть
+# стратегия запуска, а значит перезапуск (`virtctl restart`, кнопки
+# дашборда) и повторный запуск после сбоя с нарастающей паузой.
+#
+# Описание намеренно бедное: почти всё перехватчик заменит. KubeVirt требует
+# заполнить поля, чтобы собрать домен, — а мы потом его переписываем.
+apiVersion: kubevirt.io/v1
+kind: VirtualMachine
+metadata:
+  name: {{ $fn }}
+  labels: {{- include "retro-machine.labels" . | nindent 4 }}
+spec:
+  runStrategy: {{ ternary "Always" "Halted" $running }}
+  template:
+    metadata:
+      labels: {{- include "retro-machine.labels" . | nindent 8 }}
+      # Метаданные шаблона KubeVirt копирует в каждый новый VMI целиком
+      # (SetupVMIFromVM), поэтому паспорт и перехватчик — здесь.
+      annotations:
+        paleocomputing.io/machine: {{ toJson $passport | quote }}
+        hooks.kubevirt.io/hookSidecars: {{ toJson $sidecars | quote }}
+    spec:
+      terminationGracePeriodSeconds: {{ $m.domain.terminationGracePeriodSeconds }}
+      domain:
+        resources:
+          requests:
+            memory: {{ $memory }}
+        devices: {}
+      volumes: []
+---
+# Наполнение тома. Хук post-install И post-upgrade: запускается на каждой
+# установке и каждом обновлении, в том числе на обновлении, которым flux
+# повторяет упавшую установку.
+#
+# Идемпотентна по ролям: прошивку переписывает всегда (новый выпуск каталога
+# — новое ПЗУ), диск пользователя кладёт, только если его нет или он пуст.
+# Каждый файл пишется во временный и переименовывается: машина, которая
+# стартует параллельно, увидит либо старый файл, либо новый целиком.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $fn }}-fill
+  labels: {{- include "retro-machine.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    # Удачная задача удаляется сразу; неудачная остаётся для разбора до
+    # следующей попытки или до ttlSecondsAfterFinished — ресурс хука Helm при
+    # удалении релиза не трогает, и без срока жизни она пережила бы машину.
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 3
+  # Задача, которой не достался под (машина остановлена руками, узел
+  # переполнен), иначе держит установку до таймаута релиза. Срок больше
+  # предельной паузы KubeVirt между попытками запуска (300 с).
+  activeDeadlineSeconds: 480
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels: {{- include "retro-machine.labels" . | nindent 8 }}
+    spec:
+      restartPolicy: OnFailure
+      # ⚠ Образ работает от непривилегированного пользователя, а том приходит
+      # принадлежащим root — записать в него нечего. fsGroup отдаёт том группе
+      # контейнера; менять пользователя нельзя, ограничения тенанта root не
+      # пустят.
+      securityContext:
+        fsGroup: 10001
+        runAsUser: 10001
+        runAsGroup: 10001
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      {{- if $running }}
+      # ⚠ Том ReadWriteOnce, и его уже держит под машины: на другом узле
+      # задача упёрлась бы в Multi-Attach и ждала, пока машина, которой не
+      # хватает файлов, не отпустит том. Поэтому — на тот же узел. У
+      # остановленной машины пода нет, и задача ставится куда угодно.
+      affinity:
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - topologyKey: kubernetes.io/hostname
+            labelSelector:
+              matchLabels: {{- include "retro-machine.launcherSelector" . | nindent 16 }}
+      {{- end }}
+      containers:
+      - name: fill
+        image: {{ $m.image }}
+        command: ["sh", "-c"]
+        args:
+          - |
+            set -eu
+            put() { cp "$1" "$2.tmp"; mv -f "$2.tmp" "$2"; }
+            {{- range $f := $m.payload.files }}
+            {{- $dst := printf "%s/%s" $base $f.name }}
+            {{- if eq $f.role "disk" }}
+            [ -s {{ $dst }} ] || put {{ $f.from }} {{ $dst }}
+            {{- else }}
+            put {{ $f.from }} {{ $dst }}
+            {{- end }}
+            {{- end }}
+            ls -la {{ $base }}/
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: [ALL]
+        volumeMounts:
+        - name: payload
+          mountPath: {{ $base }}
+      volumes:
+      - name: payload
+        persistentVolumeClaim:
+          claimName: {{ $fn }}-payload
+{{- end }}

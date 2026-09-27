@@ -24,6 +24,14 @@ spec:
         # Отсюда приезжает CRD для ApplicationDefinition, которую рендерит
         # компонент machines-rd ниже.
         - cozystack.cozystack-engine
+      # Общие шаблоны машин чужих архитектур. Платформа кладёт библиотеку в
+      # charts/ каждого компонента, который её назвал
+      # (internal/operator/packagesource_reconciler.go) — так же, как свой
+      # cozy-lib. В дереве на неё смотрит ссылка charts/retro-machine, чтобы
+      # helm template и проверки видели то же, что соберёт платформа.
+      libraries:
+        - name: retro-machine
+          path: library/retro-machine
       components:
         # Компонент без блока install публикуется артефактом и НЕ ставится
         # релизом (internal/operator/package_reconciler.go: «Skip components
@@ -35,8 +43,10 @@ spec:
           path: apps/handbook
         - name: workbench
           path: apps/workbench
+        # Машина = паспорт machine.yaml + форма; шаблоны — из библиотеки.
         - name: oberon-vm
           path: apps/oberon-vm
+          libraries: ["retro-machine"]
 
         # А вот описания приложений для каталога ставятся один раз.
         - name: machines-rd
