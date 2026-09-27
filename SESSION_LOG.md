@@ -70,3 +70,15 @@ CHK в QEMU (декодер + транслятор), свойство машин
   пользователь выдал Actions-доступ Write в настройках пакета.
 - Прогон 36253092554: все пять заданий зелёные.
 - `customizeComponents` в `cozy-kubevirt/kubevirt` → `-dev`, virt-controller раскатан.
+
+### 27.09 — живой прогон chk в кластере нашёл отставшую копию перехватчика
+- Каталог `tap-paleocomputing-machines` → `dev` (5 артефактов), `OberonVM wirth-chk`
+  с `hardware: chk` в `tenant-sandbox`: под 2/2, launcher `-dev`, аннотация на VMI
+  есть — а в аргументах QEMU `chk=on` НЕТ.
+- Причина: в #15 правился `kubevirt/onDefineDomain.py`, а пакет несёт свою копию
+  `files/onDefineDomain.py` (Helm не читает вне чарта) — без CHK. Тест перехватчика
+  chk не проверял и в CI не гонялся.
+- Ветка `fix/hook-chk-in-catalog`: одна копия (пути кластера `/usr/local/bin`,
+  `/payload`), `cmp` в CI, тест на chk + отрицательный контроль (старая копия
+  краснеет ровно на chk).
+- Дальше: мерж → publish `dev` → перечитать каталог → пересоздать `wirth-chk`.
