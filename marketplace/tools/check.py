@@ -475,7 +475,7 @@ def render(chart: pathlib.Path, *overrides: str) -> tuple[list[dict], str]:
 
 
 def fill_script(docs: list[dict]) -> str:
-    job = next(d for d in docs if d["kind"] == "Job" and d["metadata"]["name"].endswith("-fill"))
+    job = next(d for d in docs if d["kind"] == "Job" and "-fill" in d["metadata"]["name"])
     return job["spec"]["template"]["spec"]["containers"][0]["args"][0]
 
 
@@ -779,14 +779,23 @@ def check_machines() -> None:
         if x["kind"] == "PersistentVolumeClaim":
             x["metadata"].setdefault("annotations", {})["helm.sh/hook"] = "pre-install"
 
+    # Задача наполнения — обычный ресурс релиза; чтобы проверить, что утечку
+    # хука ловят, сначала делаем её хуком, потом портим.
+    def as_hook(x):
+        x["metadata"].setdefault("annotations", {}).update({
+            "helm.sh/hook": "post-install,post-upgrade",
+            "helm.sh/hook-delete-policy": "before-hook-creation,hook-succeeded"})
+
     def job_no(key):
         def f(x):
             if x["kind"] == "Job":
+                as_hook(x)
                 x["spec"].pop(key, None)
         return f
 
     def job_keeps(x):
         if x["kind"] == "Job":
+            as_hook(x)
             x["metadata"]["annotations"]["helm.sh/hook-delete-policy"] = "before-hook-creation"
 
     for fn, what in [(pvc_hook, "том-хук"), (job_no("activeDeadlineSeconds"), "задача без срока"),
@@ -928,6 +937,38 @@ def check_artifact_contents() -> None:
            "отрицательный контроль: без копии библиотека машин из артефакта пропадает")
 
 
+def fill_is_blocking_hook(docs: list[dict]) -> bool:
+    """Задача наполнения — хук post-install/upgrade рядом с машиной."""
+    for d in docs:
+        if d.get("kind") == "Job" and "-fill" in d["metadata"]["name"]:
+            hook = ((d["metadata"].get("annotations") or {}).get("helm.sh/hook") or "")
+            if "post-install" in hook or "post-upgrade" in hook:
+                return any(x.get("kind") == "VirtualMachine" for x in docs)
+    return False
+
+
+def check_fill_not_blocking() -> None:
+    """Наполнение тома не может ждать готовности машины.
+
+    Cozystack ставит релиз с ожиданием готовности, а хук post-install Helm
+    запускает после неё. Машина не готова, пока том пуст, — задача-хук не
+    появилась бы никогда. Поймано в живом тенанте.
+    """
+    print("\nНаполнение тома и готовность машины")
+    for chart in sorted(ROOT.glob("repos/*/packages/apps/*")):
+        if not (chart / "machine.yaml").exists():
+            continue
+        r = run(["helm", "template", "t", str(chart), "--namespace", "ns"])
+        docs = [d for d in yaml.safe_load_all(r.stdout) if isinstance(d, dict)] if r.returncode == 0 else []
+        report(bool(docs) and not fill_is_blocking_hook(docs),
+               f"{chart.name}: наполнение — ресурс релиза, а не хук после готовности")
+    probe = [{"kind": "VirtualMachine", "metadata": {"name": "m"}},
+             {"kind": "Job", "metadata": {"name": "m-fill-x",
+              "annotations": {"helm.sh/hook": "post-install,post-upgrade"}}}]
+    report(fill_is_blocking_hook(probe),
+           "отрицательный контроль: наполнение-хук рядом с машиной распознаётся")
+
+
 def main() -> None:
     print("Проверки каталога «Забытые системы»")
     check_index()
@@ -944,6 +985,7 @@ def main() -> None:
     check_apiserver_egress()
     check_platform_launcher()
     check_machines()
+    check_fill_not_blocking()
     check_artifact_contents()
     print(f"\nИтог: успешно {ok_count}, провалено {fail_count}")
     sys.exit(1 if fail_count else 0)
