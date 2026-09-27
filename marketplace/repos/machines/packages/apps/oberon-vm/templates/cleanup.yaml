@@ -83,7 +83,14 @@ spec:
   activeDeadlineSeconds: 120
   template:
     metadata:
-      labels: {{- include "oberon-vm.labels" . | nindent 8 }}
+      labels:
+        {{- include "oberon-vm.labels" . | nindent 8 }}
+        # ⚠ Без этой метки под тенанта до kube-apiserver не достучится: политика
+        # Cozystack allow-to-apiserver пускает только помеченные поды, прочих
+        # Cilium молча отбрасывает. kubectl тогда висит до activeDeadlineSeconds,
+        # удаление приложения падает, том остаётся. Найдено в живом тенанте —
+        # helm template и локальный прогон этого не видят.
+        policy.cozystack.io/allow-to-apiserver: "true"
     spec:
       restartPolicy: Never
       serviceAccountName: {{ $fullname }}-cleanup

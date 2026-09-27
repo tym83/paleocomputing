@@ -518,6 +518,51 @@ def check_hook_cleanup() -> None:
                f"отрицательный контроль: {what}")
 
 
+APISERVER_LABEL = "policy.cozystack.io/allow-to-apiserver"
+
+
+def pods_without_apiserver_egress(docs: list[dict]) -> list[str]:
+    """Поды со своим ServiceAccount, которым не открыт путь к kube-apiserver."""
+    bad = []
+    for d in docs:
+        tpl = (d.get("spec") or {}).get("template") or {}
+        pod = tpl.get("spec") or {}
+        sa = pod.get("serviceAccountName")
+        if not sa or sa == "default":
+            continue
+        labels = (tpl.get("metadata") or {}).get("labels") or {}
+        if str(labels.get(APISERVER_LABEL)) != "true":
+            bad.append(f"{d.get('kind')}/{d['metadata']['name']}")
+    return bad
+
+
+def check_apiserver_egress() -> None:
+    """Под, которому выдан доступ к API, должен до API и доехать.
+
+    В тенанте Cozystack до kube-apiserver пускают только поды с меткой
+    policy.cozystack.io/allow-to-apiserver=true (политика allow-to-apiserver),
+    остальных Cilium молча отбрасывает. Задача уборки тома висела до
+    таймаута, удаление приложения падало — и ни helm template, ни прогон
+    на столе этого не показывали. Свой ServiceAccount у пода — признак, что
+    он собирается ходить в API: значит, метка обязательна.
+    """
+    print("\nДоступ к API из тенанта")
+    for chart in sorted({t.parent.parent for t in ROOT.glob("repos/*/packages/apps/*/templates/*.yaml")}):
+        r = run(["helm", "template", "t", str(chart), "--namespace", "ns"])
+        if r.returncode != 0:
+            continue  # чарты с обязательными значениями проверяются своими проверками
+        docs = [d for d in yaml.safe_load_all(r.stdout) if isinstance(d, dict)]
+        bad = pods_without_apiserver_egress(docs)
+        report(not bad, f"{chart.name}: поды с доступом к API помечены для выхода к нему"
+               + (f": {', '.join(bad)}" if bad else ""))
+    # Отрицательный контроль: под со своим ServiceAccount и без метки.
+    probe = [{"kind": "Job", "metadata": {"name": "probe"},
+              "spec": {"template": {"metadata": {"labels": {}},
+                                    "spec": {"serviceAccountName": "probe"}}}}]
+    report(pods_without_apiserver_egress(probe) == ["Job/probe"],
+           "отрицательный контроль: под без метки выхода к API распознаётся")
+
+
 def main() -> None:
     print("Проверки каталога «Забытые системы»")
     check_index()
@@ -531,6 +576,7 @@ def main() -> None:
     check_nginx_workers()
     check_components_declared_twice()
     check_no_volume_upgrade_hooks()
+    check_apiserver_egress()
     check_hook_cleanup()
     print(f"\nИтог: успешно {ok_count}, провалено {fail_count}")
     sys.exit(1 if fail_count else 0)
