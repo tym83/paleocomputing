@@ -91,7 +91,7 @@ cozypkg tap oci://ghcr.io/tym83/paleocomputing/languages:v0.1.8</code></pre>
     </p>
     <ol class="steps">
       <li><h3>The <code>Sidecar</code> feature gate</h3><p>In the KubeVirt resource. Without it the hook never runs.</p></li>
-      <li><h3>A <code>virt-launcher</code> image that knows RISC5</h3><p>It carries our QEMU target and a libvirt with the architecture compiled in — libvirt asks the emulator what it is rather than trusting the domain. The image is published per catalog release as <code>ghcr.io/tym83/paleocomputing/virt-launcher:v1.8.4-risc5-&lt;release&gt;</code> and is built for KubeVirt 1.8.4 only: the launcher must match the KubeVirt version exactly.</p></li>
+      <li><h3>A <code>virt-launcher</code> image that knows RISC5</h3><p>It carries our QEMU target and a libvirt with the architecture compiled in — libvirt asks the emulator what it is rather than trusting the domain. The image is published per catalog release as <code>ghcr.io/tym83/paleocomputing/virt-launcher:&lt;kubevirt&gt;-risc5-&lt;release&gt;</code> and is built for KubeVirt 1.8.4 (current Cozystack releases) and 1.9.0 (Cozystack main), one image per version with the KubeVirt version in the tag: the launcher must match the KubeVirt version exactly.</p></li>
     </ol>
     <p>
       The launcher image is switched on the KubeVirt resource, through

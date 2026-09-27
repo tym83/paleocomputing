@@ -23,4 +23,12 @@ docker run --rm --entrypoint sh "$ref" -c 'test -x /usr/bin/onDefineDomain' \
 docker run --rm --entrypoint sh "$ref" -c 'test -s /usr/local/share/qemu/keymaps/en-us' \
   || { echo "❌ в образе нет раскладок клавиатуры для VNC"; exit 1; }
 
-echo "✅ образ $ref: chk, перехватчик и раскладки на месте"
+# ⚠ Если libvirt в kubevirt/versions.txt не тот, что в штатном образе, наша
+# библиотека ляжет рядом со штатной под другим именем, а не вместо неё, — и
+# образ соберётся без единой ошибки (находка 60).
+libs=$(docker run --rm --entrypoint sh "$ref" -c 'ls /usr/lib64/libvirt.so.0.*')
+echo "$libs"
+[ "$(echo "$libs" | wc -l)" -eq 1 ] \
+  || { echo "❌ libvirt не совпал со штатным: пара в kubevirt/versions.txt неверна"; exit 1; }
+
+echo "✅ образ $ref: chk, перехватчик, раскладки и libvirt на месте"

@@ -6,7 +6,9 @@
 # Cozystack форка не требует.
 #
 # Собирается под ту же основу, что у штатного образа — CentOS Stream 9 и
-# libvirt 11.9.0. Взять сборку с другой основы нельзя: разойдутся библиотеки.
+# ту же версию libvirt. Взять сборку с другой основы нельзя: разойдутся
+# библиотеки. Какой libvirt в какой версии KubeVirt — в kubevirt/versions.txt,
+# и build.sh передаёт обе версии парой.
 #
 # Контекст сборки — корень репозитория, а коммит QEMU передаётся снаружи:
 # он записан один раз, в qemu/Makefile. Собирать через kubevirt/build.sh —
@@ -15,11 +17,17 @@
 # ⚠ Основы прибиты дайджестом индекса (многоархитектурного), тег оставлен для
 # читателя. По одному тегу `stream9` через месяц приезжает другая система, а
 # `v1.8.4` технически можно переставить — и тот же коммит собирал бы другой
-# образ. Обновлять дайджест вместе с тегом:
+# образ. Обновлять дайджест вместе с тегом: у centos — здесь, у launcher — в
+# kubevirt/versions.txt, рядом с его версией:
 #
 #   docker buildx imagetools inspect quay.io/kubevirt/virt-launcher:v1.8.4
-#
-# Версию KubeVirt для тега образа publish.yml и launcher.yml вырезают до `@`.
+
+# Версия KubeVirt, под которую собирается образ, и дайджест индекса её
+# штатного launcher — строка из kubevirt/versions.txt, их передаёт build.sh.
+# Объявлены до первого FROM, чтобы их видела основа готового образа.
+# Значения здесь — для версии по умолчанию.
+ARG KUBEVIRT_VERSION=v1.8.4
+ARG LAUNCHER_DIGEST=sha256:c89f733b1fdcc810d0b4326bbfc652a4cf3d25bc56cc8545f124d5cb71a1ce20
 
 # ── Сборка libvirt ─────────────────────────────────────────────────────────
 FROM quay.io/centos/centos:stream9@sha256:0996d37c69b3a8c33042932d415ad7bf5a8122270264e835e5c0153615aef0e4 AS libvirt-build
@@ -34,6 +42,8 @@ RUN dnf install -y --setopt=install_weak_deps=False dnf-plugins-core \
  && dnf builddep -y --setopt=install_weak_deps=False libvirt \
  && dnf clean all
 
+# Пара к KUBEVIRT_VERSION из kubevirt/versions.txt; значение здесь — для
+# версии по умолчанию.
 ARG LIBVIRT_VERSION=v11.9.0
 RUN git clone --depth 1 -b ${LIBVIRT_VERSION} \
       https://github.com/libvirt/libvirt.git /src
@@ -91,7 +101,7 @@ RUN /src/qemu-target/graft.sh /src/qemu \
  && ninja -C build qemu-system-risc5
 
 # ── Готовый образ ──────────────────────────────────────────────────────────
-FROM quay.io/kubevirt/virt-launcher:v1.8.4@sha256:c89f733b1fdcc810d0b4326bbfc652a4cf3d25bc56cc8545f124d5cb71a1ce20
+FROM quay.io/kubevirt/virt-launcher:${KUBEVIRT_VERSION}@${LAUNCHER_DIGEST}
 
 # Подменяем только библиотеки libvirt: всё остальное в образе штатное.
 COPY --from=libvirt-build /out/usr/lib64/libvirt.so.* /usr/lib64/
