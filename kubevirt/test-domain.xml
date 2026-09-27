@@ -18,6 +18,8 @@
       <model type="virtio"/>
     </interface>
     <serial type="unix"><target port="0"/></serial>
+    <graphics type="vnc"><listen type="socket" socket="/var/run/kubevirt-private/0000/virt-vnc"/></graphics>
+    <graphics type="spice" autoport="yes"/>
     <console type="unix"><target type="serial" port="0"/></console>
     <channel type="unix">
       <target name="org.qemu.guest_agent.0" type="virtio"/>
