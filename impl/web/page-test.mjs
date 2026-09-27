@@ -52,9 +52,15 @@ for (const page of PAGES) {
       `${page}: импорты на месте (${imports.length})` + (lost.length ? ` — нет: ${lost.join(', ')}` : ''));
 
   // 4. Встроенные модули вообще разбираются.
-  // Закрывающий тег браузер прощает — значит, и проверка не должна на него
-  // рассчитывать: без него модуль тянется до конца файла.
   const inline = [...src.matchAll(/<script type="module">([\s\S]*?)(?:<\/script>|$(?![\s\S]))/g)].map(m => m[1]);
+
+  // 5. Каждый <script> закрыт. Без закрывающего тега браузер НЕ прощает, как
+  //    мы думали сначала: по спецификации HTML скрипт, на котором кончился
+  //    файл, помечается «уже запущенным» и не выполняется вовсе. Молча — ни
+  //    ошибки, ни предупреждения. Так лаборатория на сайте стояла мёртвой.
+  const opened = (src.match(/<script\b/g) || []).length;
+  const closed = (src.match(/<\/script>/g) || []).length;
+  say(opened === closed, `${page}: все <script> закрыты (${opened} открыто, ${closed} закрыто)`);
   const broken = inline.map(syntaxError).filter(Boolean);
   say(broken.length === 0,
       `${page}: встроенные модули разбираются (${inline.length})` + (broken.length ? ` — ${broken.join('; ')}` : ''));
