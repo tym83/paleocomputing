@@ -1,0 +1,5 @@
+board: ibex-safe-simulator
+clang version 23.1.0 (CHERIoT-Platform/llvm-project ce4b09eb5084c923b6cc31a2af4aa9f6b7d4f748)
+xmake v3.0.9+20260519, A cross-platform build utility based on Lua
+image: ghcr.io/cheriot-platform/devcontainer@sha256:555261efaa1fe3c9e852252becb92c776b0400c60a67272a5517b09de4c36398 (arm64)
+cheriot-rtos: 17ae734ba98e4f084bfaa2bf07f0447ca4d7e127

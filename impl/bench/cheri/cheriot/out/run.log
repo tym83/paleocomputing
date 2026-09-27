@@ -1,0 +1,26 @@
+Remapping priority of thread 1 from 1 to 0
+Enabling sub-object bounds for bounds_bench.scheduler
+Enabling sub-object bounds for cheriot.loader
+Enabling sub-object bounds for cheriot.allocator
+Patched board file will be saved as "/tmp/work/cheriot/build/board.json"
+Using /cheriot-tools/bin//llvm-objcopy...
+Reading firmware/cpu0_irom.vhx
+%Warning: firmware/cpu0_irom.vhx:33: $readmem file ended before specified final address (IEEE 1800-2023 21.4)
+%Warning: firmware/cpu0_iram.vhx:10936: $readmem file ended before specified final address (IEEE 1800-2023 21.4)
+bench: array capability: 0x20047d38 (v:1 0x20047d38-0x20047e38 l:0x100 o:0x0 p: G RWcgm- -- ---)
+bench: A (hw only) rep 0: n=100000 cycles=900001 instret=800003 mcyc/iter=9000 mins/iter=8000 sum=3249488 (overhead c=15 i=18)
+bench: A (hw only) rep 1: n=100000 cycles=900001 instret=800003 mcyc/iter=9000 mins/iter=8000 sum=3249488 (overhead c=15 i=18)
+bench: A (hw only) rep 2: n=100000 cycles=900001 instret=800003 mcyc/iter=9000 mins/iter=8000 sum=3249488 (overhead c=15 i=18)
+bench: B (hw + sw) rep 0: n=100000 cycles=1000000 instret=900003 mcyc/iter=10000 mins/iter=9000 sum=3249488 (overhead c=17 i=19)
+bench: B (hw + sw) rep 1: n=100000 cycles=1000000 instret=900003 mcyc/iter=10000 mins/iter=9000 sum=3249488 (overhead c=17 i=19)
+bench: B (hw + sw) rep 2: n=100000 cycles=1000000 instret=900003 mcyc/iter=10000 mins/iter=9000 sum=3249488 (overhead c=17 i=19)
+probe: probe_hw: pointer 0x20047e40 (v:1 0x20047e40-0x20047ec0 l:0x80 o:0x0 p: G RWcgm- -- ---)
+probe: trap: CHERI BoundsViolation(0x1) in register CA5(0xf) = 0x20047ec0 (v:1 0x20047e40-0x20047ec0 l:0x80 o:0x0 p: G RWcgm- -- ---)
+bench: C1 hw control, bounds 32 words: returned -1
+                   0: Illegal instruction (hart 0) at PC 0x2004674c: 0x00000000
+probe: trap: mcause 0x2 (2 = illegal instruction) at 0x2004674c (v:0 0x20046240-0x20046df0 l:0xbb0 o:0x0 p: G R-cgm- X- ---)
+bench: C2 sw control, lim 32:          returned -1
+probe: probe_hw: pointer 0x20047e40 (v:1 0x20047e40-0x20047f40 l:0x100 o:0x0 p: G RWcgm- -- ---)
+bench: C0 sanity, bounds 64 words:      returned 1000
+swci_main exiting with return code 00
+warning: $(buildir) has been deprecated, please use $(builddir)
