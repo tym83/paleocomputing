@@ -194,8 +194,11 @@ jobs:
       - id: meta
         run: |
           tag="${{ needs.source.outputs.tag }}"
-          kv=$(sed -n 's|^FROM quay.io/kubevirt/virt-launcher:||p' kubevirt/Containerfile)
-          [ -n "$kv" ] || { echo "не найдена версия KubeVirt в Containerfile"; exit 1; }
+          # Основа прибита дайджестом — `v1.8.4@sha256:...`, — а в тег идёт
+          # только версия.
+          kv=$(sed -n 's|^FROM quay.io/kubevirt/virt-launcher:\([^@[:space:]]*\).*|\1|p' kubevirt/Containerfile)
+          echo "$kv" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+            || { echo "не найдена версия KubeVirt в Containerfile: '$kv'"; exit 1; }
           owner=$(echo "${{ github.repository_owner }}" | tr 'A-Z' 'a-z')
           echo "image=${{ env.REGISTRY }}/$owner/paleocomputing/virt-launcher" >> "$GITHUB_OUTPUT"
           echo "tag=$kv-risc5-$tag" >> "$GITHUB_OUTPUT"
