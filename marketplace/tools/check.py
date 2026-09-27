@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import pathlib
 import re
 import shutil
@@ -884,6 +885,49 @@ def check_platform_launcher() -> None:
     report(r.returncode == 0, f"проход реконсайлера на поддельном API: {tail}")
 
 
+def artifact_missing(repo_dir: pathlib.Path, art_src: pathlib.Path) -> list[str]:
+    """Файлы, достижимые в дереве репозитория по ссылкам, которых нет в артефакте."""
+    want = set()
+    for dp, _, fs in os.walk(repo_dir / "packages", followlinks=True):
+        for f in fs:
+            want.add(str((pathlib.Path(dp) / f).relative_to(repo_dir)))
+    with tempfile.TemporaryDirectory() as t:
+        art = pathlib.Path(t) / "a.tgz"
+        r = run(["flux", "build", "artifact", "--path", str(art_src), "--output", str(art)])
+        if r.returncode != 0:
+            return [f"flux build artifact упал: {r.stderr.strip()}"]
+        import tarfile
+        with tarfile.open(art) as tf:
+            have = {m.name for m in tf.getmembers() if m.isfile()}
+    return sorted(want - have)
+
+
+def check_artifact_contents() -> None:
+    """В кластер уезжает всё, что видит чарт, — в том числе через ссылки.
+
+    Библиотека машин подключена ссылкой, а flux ссылки в архив не кладёт.
+    Публикуется копия stage.sh с разыменованными ссылками; здесь та же копия
+    собирается в артефакт тем же flux, и в нём обязан оказаться каждый файл,
+    который видно в дереве.
+    """
+    print("\nСодержимое артефакта каталога")
+    if not shutil.which("flux"):
+        report(False, "flux не найден — артефакт собрать нечем")
+        return
+    with tempfile.TemporaryDirectory() as t:
+        stage = pathlib.Path(t)
+        r = run(["sh", str(ROOT / "tools/stage.sh"), str(stage)])
+        report(r.returncode == 0, "копия каталога без ссылок собрана")
+        for repo in REPOS:
+            lost = artifact_missing(ROOT / "repos" / repo, stage / repo)
+            report(not lost, f"{repo}: в артефакте все файлы дерева"
+                   + (f" — нет: {', '.join(lost[:5])}" if lost else ""))
+    # Отрицательный контроль: артефакт прямо из дерева, со ссылками.
+    lost = artifact_missing(ROOT / "repos" / "machines", ROOT / "repos" / "machines")
+    report(any("retro-machine" in l or "onDefineDomain" in l for l in lost),
+           "отрицательный контроль: без копии библиотека машин из артефакта пропадает")
+
+
 def main() -> None:
     print("Проверки каталога «Забытые системы»")
     check_index()
@@ -900,6 +944,7 @@ def main() -> None:
     check_apiserver_egress()
     check_platform_launcher()
     check_machines()
+    check_artifact_contents()
     print(f"\nИтог: успешно {ok_count}, провалено {fail_count}")
     sys.exit(1 if fail_count else 0)
 
