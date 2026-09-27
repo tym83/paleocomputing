@@ -39,6 +39,12 @@ jobs:
             || { echo "❌ копия перехватчика в пакете разошлась с kubevirt/"; exit 1; }
           python3 kubevirt/hook_test.py \
             marketplace/repos/machines/packages/apps/oberon-vm/files/onDefineDomain.py
+      # Архитектуры в libvirt — данные из kubevirt/targets.txt. Проверка на
+      # игрушечном дереве: для RISC5 правки прежние, вторая архитектура
+      # встаёт одной строкой списка.
+      - name: Патч libvirt
+        run: python3 qemu/libvirt/patch_test.py
+
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
