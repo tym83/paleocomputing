@@ -19,5 +19,32 @@ export const SOURCES = {
   END Make;
 END Junk.
 `,
+  Tick: `MODULE Tick;
+  IMPORT Kernel, Display, Oberon;
+  VAR n*, gap*, last: INTEGER; T: Oberon.Task;
+  PROCEDURE Step;
+    VAR t: INTEGER;
+  BEGIN t := Kernel.Time();
+    IF (n > 0) & (t - last > gap) THEN gap := t - last END;
+    last := t; INC(n);
+    Display.ReplConst(Display.white, 600, 10, 24, 24, Display.invert)
+  END Step;
+  PROCEDURE Start*;
+  BEGIN Oberon.Install(T)
+  END Start;
+  PROCEDURE Spin*;
+    VAR t: INTEGER;
+  BEGIN t := Kernel.Time() + 1000;
+    REPEAT UNTIL Kernel.Time() > t
+  END Spin;
+  PROCEDURE Stuck;
+  BEGIN REPEAT UNTIL FALSE
+  END Stuck;
+  PROCEDURE Break*;
+  BEGIN Oberon.Install(Oberon.NewTask(Stuck, 0))
+  END Break;
+BEGIN T := Oberon.NewTask(Step, 100)
+END Tick.
+`,
 };
 export const pre = s => `<pre>${s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>`;

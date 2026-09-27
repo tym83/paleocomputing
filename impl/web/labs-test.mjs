@@ -238,6 +238,26 @@ await lab(10, async (m, L) => {
   say(k5.allocated < 100000, `через секунду без System.Collect в куче ${k5.allocated} байт — сборщик пришёл сам`);
 });
 
+// ── Лаба 11: одна задача за раз ─────────────────────────────────────────────
+await lab(11, async (m, L) => {
+  const c = { state: {}, answer: '' };
+  go(m, 12);
+  say(!L.steps[0].check(m, c).ok, 'шаг 1 до сборки — не пройден');
+  await makeFile(m, 'Tick.Mod', SOURCES.Tick);
+  typeLines(m, ['ORP.Compile Tick.Mod ~', 'Tick.Start', 'Tick.Spin', 'Tick.Break']);
+  m.click(690, LINE(0), 2); go(m, 20);
+  const r1 = L.steps[0].check(m, c); say(r1.ok, 'шаг 1: ' + r1.msg);
+  say(!L.steps[1].check(m, c).ok, 'шаг 2 до Tick.Start — не пройден');
+  m.click(665, LINE(1), 2); go(m, 3);
+  const r2 = L.steps[1].check(m, c); say(r2.ok, 'шаг 2: ' + r2.msg);
+  say(!L.steps[2].check(m, c).ok, 'шаг 3 до Tick.Spin — не пройден');
+  m.click(665, LINE(2), 2); go(m, 30);
+  const r3 = L.steps[2].check(m, c); say(r3.ok, 'шаг 3: ' + r3.msg);
+  say(!L.steps[3].check(m, c).ok, 'шаг 4 до Tick.Break — не пройден');
+  m.click(665, LINE(3), 2); go(m, 3);
+  const r4 = L.steps[3].check(m, c); say(r4.ok, 'шаг 4: ' + r4.msg);
+});
+
 // ── статическая проверка страницы-оболочки ──────────────────────────────────
 // Браузер здесь не поднять, поэтому хотя бы убеждаемся, что разметка и скрипт
 // не разошлись: каждый getElementById должен находить свой элемент, а каждый

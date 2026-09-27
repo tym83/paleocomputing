@@ -267,4 +267,43 @@ END Idx.</pre>
     already clean at step 3, you managed twenty actions and it came by itself;
     run <code>Junk.Make</code> again.`,
 
+  // ── 11: one task at a time ───────────────────────────────────────────────
+  '11.title': 'One task at a time',
+  '11.intro': `Oberon has no threads and no preemption. There is one loop,
+    <code>Oberon.Loop</code>: it reads the mouse and keyboard and, when there is
+    no input, calls the <b>tasks</b> (<code>Oberon.Task</code>) in a circle. A
+    task is just a procedure the loop calls, and it must hand control back
+    quickly. Here you will write a task, starve it, and kill the system with
+    it.`,
+  '11.step.0': `<code>Edit.Open Tick.Mod ~</code>, type it, save it and build
+    it with <code>ORP.Compile Tick.Mod ~</code>:
+    ${pre(SOURCES.Tick)}
+    <code>Step</code> is the task: it counts its calls in <code>n</code>,
+    remembers the longest pause between them in <code>gap</code> (in
+    milliseconds) and blinks a small square at the bottom of the left track.`,
+  '11.step.1': `Add three lines to <code>System.Tool</code> —
+    <code>Tick.Start</code>, <code>Tick.Spin</code>, <code>Tick.Break</code> —
+    and run the first. A square starts blinking at the bottom left, and
+    <code>System.Watch</code> shows <code>Tasks 2</code>: the garbage collector
+    and yours.`,
+  '11.step.2': `Run <code>Tick.Spin</code>: the command spins in an empty loop
+    for a second. All that time the square does not blink, the mouse pointer
+    does not move, the collector does not come — only your command runs.`,
+  '11.step.3': `Now <code>Tick.Break</code>. The command itself is instant: it
+    only puts a second task, <code>Stuck</code>, into the circle, and that one
+    never returns. Its first call — and the system is dead. Only "Reset" helps.`,
+  '11.payoff': `All of Oberon's "multitasking" is a loop that calls procedures
+   in turn. No threads, no timer interrupts, no scheduler — and so no locks and
+   no races: while your code runs, <b>nothing else happens at all</b>, and there
+   is nobody to protect your data from.
+   <br><br>
+   The price is visible in steps 3 and 4: the system's responsiveness rests on
+   the politeness of every procedure. A second in one command is a second of
+   frozen mouse; an endless loop in one task is a dead machine. Windows 3.x and
+   classic Mac OS lived the same way; the difference is that Oberon does not
+   pretend it could do otherwise.`,
+  '11.hint': `Type each line to run on a new line of its own and run it with a
+    middle click. If you cannot see the square, it is at the very bottom of the
+    left track, near its right edge.`,
+
 };
