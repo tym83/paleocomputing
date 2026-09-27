@@ -91,7 +91,7 @@ cozypkg tap oci://ghcr.io/tym83/paleocomputing/languages:v0.1.8</code></pre>
     </p>
     <ol class="steps">
       <li><h3>Признак <code>Sidecar</code></h3><p>В ресурсе KubeVirt. Без него перехватчик не запускается.</p></li>
-      <li><h3>Образ <code>virt-launcher</code>, знающий RISC5</h3><p>В нём наша цель QEMU и libvirt со вкомпилированной архитектурой — libvirt спрашивает архитектуру у эмулятора, а не верит описанию. Образ выкладывается к каждому выпуску каталога как <code>ghcr.io/tym83/paleocomputing/virt-launcher:v1.8.4-risc5-&lt;выпуск&gt;</code> и собран только под KubeVirt 1.8.4: launcher обязан совпадать с версией KubeVirt в точности.</p></li>
+      <li><h3>Образ <code>virt-launcher</code>, знающий RISC5</h3><p>В нём наша цель QEMU и libvirt со вкомпилированной архитектурой — libvirt спрашивает архитектуру у эмулятора, а не верит описанию. Образ выкладывается к каждому выпуску каталога как <code>ghcr.io/tym83/paleocomputing/virt-launcher:v1.8.4-risc5-&lt;выпуск&gt;</code> и собирается под KubeVirt 1.8.4 (нынешние выпуски Cozystack) и 1.9.0 (Cozystack main) — по образу на версию, с версией KubeVirt в теге: launcher обязан совпадать с версией KubeVirt в точности.</p></li>
     </ol>
     <p>
       Образ переключается на ресурсе KubeVirt, через
