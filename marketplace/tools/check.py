@@ -655,10 +655,13 @@ def check_machines() -> None:
                f"{name}: у остановленной машины задача наполнения не ждёт её пода")
         job = next(d for d in docs if d["kind"] == "Job")
         aff = job["spec"]["template"]["spec"].get("affinity", {}).get("podAffinity", {})
-        sel = (aff.get("requiredDuringSchedulingIgnoredDuringExecution") or [{}])[0]
-        report(sel.get("topologyKey") == "kubernetes.io/hostname"
-               and sel.get("labelSelector", {}).get("matchLabels", {}).get("kubevirt.io") == "virt-launcher",
-               f"{name}: у запущенной машины наполнение идёт на узел её пода (том RWO)")
+        # Мягко, не жёстко: под машины без файлов живёт секунды, и жёсткая
+        # привязка не давала задаче встать вовсе (найдено в живом тенанте).
+        pref = (aff.get("preferredDuringSchedulingIgnoredDuringExecution") or [{}])[0].get("podAffinityTerm", {})
+        report(pref.get("topologyKey") == "kubernetes.io/hostname"
+               and pref.get("labelSelector", {}).get("matchLabels", {}).get("kubevirt.io") == "virt-launcher"
+               and not aff.get("requiredDuringSchedulingIgnoredDuringExecution"),
+               f"{name}: наполнение предпочитает узел пода машины, но не обязано ждать его (том RWO)")
 
         leaks = hook_leaks(docs)
         report(not leaks, f"{name}: ресурсы хуков не переживают машину" + (f": {'; '.join(leaks)}" if leaks else ""))
@@ -937,6 +940,10 @@ def check_artifact_contents() -> None:
            "отрицательный контроль: без копии библиотека машин из артефакта пропадает")
 
 
+# virt-launcher работает от qemu и монтирует тома с этой группой.
+LAUNCHER_GID = 107
+
+
 def fill_is_blocking_hook(docs: list[dict]) -> bool:
     """Задача наполнения — хук post-install/upgrade рядом с машиной."""
     for d in docs:
@@ -962,6 +969,12 @@ def check_fill_not_blocking() -> None:
         docs = [d for d in yaml.safe_load_all(r.stdout) if isinstance(d, dict)] if r.returncode == 0 else []
         report(bool(docs) and not fill_is_blocking_hook(docs),
                f"{chart.name}: наполнение — ресурс релиза, а не хук после готовности")
+        # Группа тома — как у пода машины (qemu, 107): иначе при одновременном
+        # монтировании запись падает с Permission denied (найдено в тенанте).
+        fs = [((d["spec"]["template"]["spec"].get("securityContext") or {}).get("fsGroup"))
+              for d in docs if d.get("kind") == "Job" and "-fill" in d["metadata"]["name"]]
+        report(fs == [LAUNCHER_GID], f"{chart.name}: наполнение пишет в том группой пода машины ({LAUNCHER_GID})"
+               + ("" if fs == [LAUNCHER_GID] else f": {fs}"))
     probe = [{"kind": "VirtualMachine", "metadata": {"name": "m"}},
              {"kind": "Job", "metadata": {"name": "m-fill-x",
               "annotations": {"helm.sh/hook": "post-install,post-upgrade"}}}]

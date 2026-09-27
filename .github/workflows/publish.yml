@@ -45,13 +45,19 @@ jobs:
     outputs:
       ref: ${{ steps.pick.outputs.ref }}
       tag: ${{ steps.pick.outputs.tag }}
+      identity: ${{ steps.pick.outputs.identity }}
     steps:
       - id: pick
         run: |
           set -euo pipefail
-          [ "$GITHUB_REF" = refs/heads/main ] \
-            || { echo "❌ выпуск запускается из main, а не из $GITHUB_REF"; exit 1; }
           tag="${{ github.event.inputs.tag }}"
+          # Выпуск — только из main: его подпись сверяет шлюз индекса, и
+          # личность обязана быть одной (находка 57). dev — из любой ветки:
+          # это проверочная сборка для песочницы до тега, а не выпуск.
+          if [ "$tag" != dev ] && [ "$GITHUB_REF" != refs/heads/main ]; then
+            echo "❌ выпуск запускается из main, а не из $GITHUB_REF"; exit 1
+          fi
+          echo "identity=https://github.com/${{ github.repository }}/.github/workflows/publish.yml@$GITHUB_REF" >> "$GITHUB_OUTPUT"
           if [ "$tag" = dev ]; then
             ref="$GITHUB_SHA"
           else
@@ -123,7 +129,7 @@ jobs:
       - name: Проверить, что подпись действительно легла
         run: |
           cosign verify \
-            --certificate-identity "https://github.com/${{ github.repository }}/.github/workflows/publish.yml@refs/heads/main" \
+            --certificate-identity "${{ needs.source.outputs.identity }}" \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
             "${{ steps.meta.outputs.image }}@${{ steps.build.outputs.digest }}"
 
@@ -350,7 +356,7 @@ jobs:
             # Подписывается дайджест: cosign сам разрешает тег в него.
             cosign sign --yes "$ref"
             cosign verify \
-              --certificate-identity "https://github.com/${{ github.repository }}/.github/workflows/publish.yml@refs/heads/main" \
+              --certificate-identity "${{ needs.source.outputs.identity }}" \
               --certificate-oidc-issuer https://token.actions.githubusercontent.com \
               "$ref" >/dev/null
             echo "- \`$ref\` — выложен и подпись проверена" >> "$GITHUB_STEP_SUMMARY"
