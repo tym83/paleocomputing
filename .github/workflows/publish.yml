@@ -168,10 +168,31 @@ jobs:
   # от кода — свойства chk в нём не было, хотя каталог уже умел его просить.
   #
   # Тег несёт версию KubeVirt: launcher обязан совпадать с ней (находка 44).
-  launcher:
+  # Поэтому образ собирается под каждую версию из kubevirt/versions.txt
+  # (находка 60) — список берётся из дерева выпуска, а не из этого файла.
+  launcher-versions:
     needs: source
     runs-on: ubuntu-latest
+    outputs:
+      list: ${{ steps.list.outputs.list }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.source.outputs.ref }}
+      - id: list
+        run: |
+          list=$(awk '!/^#/ && NF { print $1 }' kubevirt/versions.txt | jq -Rnc '[inputs]')
+          [ "$list" != "[]" ] || { echo "в kubevirt/versions.txt нет версий"; exit 1; }
+          echo "list=$list" >> "$GITHUB_OUTPUT"
+
+  launcher:
+    needs: [source, launcher-versions]
+    runs-on: ubuntu-latest
     timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        kubevirt: ${{ fromJSON(needs.launcher-versions.outputs.list) }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -200,11 +221,7 @@ jobs:
       - id: meta
         run: |
           tag="${{ needs.source.outputs.tag }}"
-          # Основа прибита дайджестом — `v1.8.4@sha256:...`, — а в тег идёт
-          # только версия. Та же строка — в launcher.yml.
-          kv=$(sed -n 's|^FROM quay.io/kubevirt/virt-launcher:\([^@[:space:]]*\).*|\1|p' kubevirt/Containerfile)
-          echo "$kv" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' \
-            || { echo "не найдена версия KubeVirt в Containerfile: '$kv'"; exit 1; }
+          kv="${{ matrix.kubevirt }}"
           owner=$(echo "${{ github.repository_owner }}" | tr 'A-Z' 'a-z')
           echo "image=${{ env.REGISTRY }}/$owner/paleocomputing/virt-launcher" >> "$GITHUB_OUTPUT"
           echo "tag=$kv-risc5-$tag" >> "$GITHUB_OUTPUT"
@@ -212,10 +229,11 @@ jobs:
       - id: build
         run: |
           set -euo pipefail
-          kubevirt/build.sh "${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}" \
+          kubevirt/build.sh --kubevirt "${{ matrix.kubevirt }}" \
+            "${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}" \
             --push --provenance=true --sbom=true \
-            --cache-from type=gha,scope=launcher \
-            --cache-to type=gha,scope=launcher,mode=max \
+            --cache-from type=gha,scope=launcher-${{ matrix.kubevirt }} \
+            --cache-to type=gha,scope=launcher-${{ matrix.kubevirt }},mode=max \
             --metadata-file /tmp/meta.json
           echo "digest=$(jq -r '."containerimage.digest"' /tmp/meta.json)" >> "$GITHUB_OUTPUT"
 
@@ -228,7 +246,7 @@ jobs:
 
       - name: Итог
         run: |
-          echo "### virt-launcher" >> "$GITHUB_STEP_SUMMARY"
+          echo "### virt-launcher ${{ matrix.kubevirt }}" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
           echo "${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}" >> "$GITHUB_STEP_SUMMARY"
           echo "${{ steps.build.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"
