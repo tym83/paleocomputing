@@ -554,6 +554,10 @@ def machine_problems(docs: list[dict], running: bool = True) -> list[str]:
     ann = vm["spec"]["template"]["metadata"].get("annotations") or {}
     if "hooks.kubevirt.io/hookSidecars" not in ann:
         out.append("перехватчик не объявлен на шаблоне машины")
+    # Чужая машина не мигрирует: при кластерной LiveMigrate её под нельзя
+    # было бы выселить, и слив узла встал бы на ней.
+    if vm["spec"]["template"]["spec"].get("evictionStrategy") != "None":
+        out.append(f"evictionStrategy {vm['spec']['template']['spec'].get('evictionStrategy')!r} вместо None")
     return out
 
 
@@ -806,6 +810,12 @@ def check_machines() -> None:
                      (job_keeps, "задача без hook-succeeded")]:
         report(bool(hook_leaks(mutated(fn))), f"отрицательный контроль: утечка хука распознаётся — {what}")
     report(bool(machine_problems(mutated(pvc_hook))), "отрицательный контроль: том-хук вместо ресурса распознаётся")
+
+    def migrate_eviction(x):
+        if x["kind"] == "VirtualMachine":
+            x["spec"]["template"]["spec"]["evictionStrategy"] = "LiveMigrate"
+    report(bool(machine_problems(mutated(migrate_eviction))),
+           "отрицательный контроль: выселение миграцией у немигрируемой машины распознаётся")
 
     def bare_vmi(x):
         if x["kind"] == "VirtualMachine":
