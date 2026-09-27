@@ -247,6 +247,14 @@ jobs:
             cozypkg validate "marketplace/repos/$r"
           done
 
+      # Свои проверки каталога — поверх штатного валидатора. До сих пор они
+      # жили только в ручном `make check`, и в кластер уезжало то, что они бы
+      # поймали.
+      - name: Проверки каталога
+        run: |
+          pip install --quiet pyyaml
+          python3 marketplace/tools/check.py
+
       - name: Выложить и подписать
         run: |
           set -euo pipefail
