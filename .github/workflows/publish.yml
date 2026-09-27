@@ -161,15 +161,20 @@ jobs:
           echo "${{ steps.build.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
-  # ── Образ virt-launcher с машиной RISC5 ───────────────────────────────────
+  # ── Образ virt-launcher с чужими машинами ─────────────────────────────────
   #
-  # Эмулятор в кластере живёт здесь, а не в oberon-run: тот несёт только ПЗУ
-  # и диск. Раньше этот образ собирался руками на стенде, и выложенный отставал
+  # Эмуляторы в кластере живут здесь, а не в oberon-run: тот несёт только ПЗУ
+  # и диск. Какие машины — kubevirt/targets.txt (сегодня RISC5). Раньше этот образ собирался руками на стенде, и выложенный отставал
   # от кода — свойства chk в нём не было, хотя каталог уже умел его просить.
   #
   # Тег несёт версию KubeVirt: launcher обязан совпадать с ней (находка 44).
   # Поэтому образ собирается под каждую версию из kubevirt/versions.txt
   # (находка 60) — список берётся из дерева выпуска, а не из этого файла.
+  #
+  # Тегов два на один дайджест: `<kubevirt>-paleo-<выпуск>` — имя семейства,
+  # которое не меняется от того, сколько машин в образе (его берёт компонент
+  # платформы, находка 65), и прежний `<kubevirt>-risc5-<выпуск>` — чтобы не
+  # сломать тех, у кого он уже записан в ресурсе KubeVirt.
   launcher-versions:
     needs: source
     runs-on: ubuntu-latest
@@ -225,12 +230,14 @@ jobs:
           owner=$(echo "${{ github.repository_owner }}" | tr 'A-Z' 'a-z')
           echo "image=${{ env.REGISTRY }}/$owner/paleocomputing/virt-launcher" >> "$GITHUB_OUTPUT"
           echo "tag=$kv-risc5-$tag" >> "$GITHUB_OUTPUT"
+          echo "family=$kv-paleo-$tag" >> "$GITHUB_OUTPUT"
 
       - id: build
         run: |
           set -euo pipefail
           kubevirt/build.sh --kubevirt "${{ matrix.kubevirt }}" \
             "${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}" \
+            -t "${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.family }}" \
             --push --provenance=true --sbom=true \
             --cache-from type=gha,scope=launcher-${{ matrix.kubevirt }} \
             --cache-to type=gha,scope=launcher-${{ matrix.kubevirt }},mode=max \
@@ -241,13 +248,14 @@ jobs:
         run: cosign sign --yes "${{ steps.meta.outputs.image }}@${{ steps.build.outputs.digest }}"
 
       # Содержимое, а не факт сборки. Та же проверка идёт на PR (launcher.yml).
-      - name: Проверить, что эмулятор знает chk
+      - name: Проверить машины в образе
         run: kubevirt/check_image.sh "${{ steps.meta.outputs.image }}@${{ steps.build.outputs.digest }}"
 
       - name: Итог
         run: |
           echo "### virt-launcher ${{ matrix.kubevirt }}" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.family }}" >> "$GITHUB_STEP_SUMMARY"
           echo "${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}" >> "$GITHUB_STEP_SUMMARY"
           echo "${{ steps.build.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
@@ -260,7 +268,7 @@ jobs:
   #
   # Оба инструмента ставятся в раннер и живут только на время сборки.
   catalog:
-    needs: source
+    needs: [source, launcher]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -298,10 +306,16 @@ jobs:
 
       - uses: sigstore/cosign-installer@v3
 
+      # Таблица launcher'ов компонента платформы — под тег ЭТОГО выпуска.
+      # Задание ждёт launcher, так что таблица не может сослаться на образ,
+      # которого ещё нет в реестре.
+      - name: Таблица launcher'ов под выпуск
+        run: python3 marketplace/tools/gen-launcher-table.py --release "${{ needs.source.outputs.tag }}"
+
       - name: Проверить каталог перед публикацией
         run: |
           set -euo pipefail
-          for r in machines languages images; do
+          for r in machines languages images platform; do
             echo "── repos/$r"
             cozypkg validate "marketplace/repos/$r"
           done
@@ -320,7 +334,7 @@ jobs:
           tag="${{ needs.source.outputs.tag }}"
           owner=$(echo "${{ github.repository_owner }}" | tr 'A-Z' 'a-z')
           echo "### Каталог" >> "$GITHUB_STEP_SUMMARY"
-          for r in machines languages images; do
+          for r in machines languages images platform; do
             ref="ghcr.io/$owner/paleocomputing/$r:$tag"
             cozypkg push "oci://$ref" --path "marketplace/repos/$r"
             # Подписывается дайджест: cosign сам разрешает тег в него.

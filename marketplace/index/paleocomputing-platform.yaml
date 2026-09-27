@@ -1,0 +1,15 @@
+# Запись метаиндекса. Набор полей задан жёстко (cmd/cozypkg/cmd/index.go),
+# поэтому тип записи выражен тегами.
+name: paleocomputing-platform
+ociRef: oci://ghcr.io/tym83/paleocomputing/platform
+version: v0.1.10
+description: Уровень кластера для чужих машин каталога — держит virt-launcher в паре с версией KubeVirt
+homepage: https://github.com/tym83/paleocomputing
+maintainer: tym83
+tags:
+  - platform
+  - kubevirt
+  - privileged
+signing:
+  identity: https://github.com/tym83/paleocomputing/.github/workflows/publish.yml@refs/heads/main
+  issuer: https://token.actions.githubusercontent.com

@@ -53,6 +53,23 @@ cozypkg tap --index index paleocomputing-machines              # то же по�
 месте: список компонентов живёт в `PackageSource` и за тегом не следует
 (находка 46).
 
+### Платформа
+
+Четвёртый репозиторий, `platform`, — не приложение для тенанта, а уровень
+кластера, без которого чужие машины каталога не стартуют. Его компонент
+`kubevirt-paleo-launcher` держит образ virt-launcher в паре с версией KubeVirt
+(находка 65). Он привилегированный: ставится с явного согласия оператора.
+
+```
+cozypkg tap oci://ghcr.io/tym83/paleocomputing/platform:<версия>
+cozypkg add paleocomputing.platform --allow-privileged
+```
+
+Семейство машин растёт данными, а не кодом: новая архитектура — строка в
+`kubevirt/targets.txt` (цель QEMU, правки libvirt и проверки образа строятся
+из неё), новая версия KubeVirt — строка в `kubevirt/versions.txt` (из неё же
+собирается таблица компонента платформы).
+
 ## Как выражены нужные типы записей
 
 Схема записи метаиндекса закрыта: разбор идёт строгим `UnmarshalStrict`, и

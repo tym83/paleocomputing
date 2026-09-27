@@ -30,7 +30,7 @@ import yaml
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 COZYPKG = shutil.which("cozypkg") or "/tmp/cozypkg"
-REPOS = ["machines", "languages", "images"]
+REPOS = ["machines", "languages", "images", "platform"]
 
 ok_count = 0
 fail_count = 0
@@ -76,8 +76,9 @@ def check_index() -> None:
     print("\nМетаиндекс")
     r = run([COZYPKG, "search", "--index", "index"])
     entries = [l for l in r.stdout.splitlines()[1:] if l.strip()]
-    report(r.returncode == 0 and len(entries) == 3,
-           f"cozypkg читает индекс, записей: {len(entries)}")
+    files = len(list((ROOT / "index").glob("*.yaml")))
+    report(r.returncode == 0 and len(entries) == files,
+           f"cozypkg читает индекс, записей: {len(entries)} из {files}")
 
     # Мутация: индекс разбирается строго, лишнее поле должно ломать разбор.
     victim = ROOT / "index" / "paleocomputing-images.yaml"
@@ -563,6 +564,22 @@ def check_apiserver_egress() -> None:
            "отрицательный контроль: под без метки выхода к API распознаётся")
 
 
+def check_platform_launcher() -> None:
+    """Компонент платформы: таблица launcher'ов и логика прохода.
+
+    Таблица собирается из kubevirt/versions.txt и не правится руками — сверяем.
+    Логику прохода гоняем на поддельном kubectl (launcher_test.py): добавить,
+    не трогать, убрать, сохранить чужие правки, отказать при сомнении.
+    """
+    print("\nКомпонент платформы")
+    r = run([sys.executable, str(ROOT / "tools/gen-launcher-table.py"), "--check"])
+    report(r.returncode == 0, "таблица launcher'ов совпадает с kubevirt/versions.txt"
+           + ("" if r.returncode == 0 else f": {(r.stdout + r.stderr).strip()}"))
+    r = run([sys.executable, str(ROOT / "tools/launcher_test.py")])
+    tail = (r.stdout.strip().splitlines() or ["—"])[-1]
+    report(r.returncode == 0, f"проход реконсайлера на поддельном API: {tail}")
+
+
 def main() -> None:
     print("Проверки каталога «Забытые системы»")
     check_index()
@@ -577,6 +594,7 @@ def main() -> None:
     check_components_declared_twice()
     check_no_volume_upgrade_hooks()
     check_apiserver_egress()
+    check_platform_launcher()
     check_hook_cleanup()
     print(f"\nИтог: успешно {ok_count}, провалено {fail_count}")
     sys.exit(1 if fail_count else 0)

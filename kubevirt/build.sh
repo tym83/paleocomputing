@@ -1,5 +1,5 @@
 #!/bin/sh
-# Сборка образа virt-launcher с машиной RISC5.
+# Сборка образа virt-launcher с чужими машинами (kubevirt/targets.txt).
 #
 #   kubevirt/build.sh [--kubevirt vX.Y.Z] <образ:тег> [аргументы docker build...]
 #

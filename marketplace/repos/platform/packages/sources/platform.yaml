@@ -1,0 +1,38 @@
+# Репозиторий «платформа» — то, что нужно кластеру, чтобы чужие машины из
+# каталога вообще могли в нём работать.
+#
+# Сегодня здесь один компонент: kubevirt-paleo-launcher держит образ
+# virt-launcher кластера в паре с версией KubeVirt. Образ несёт libvirt и
+# эмуляторы всех чужих архитектур каталога (kubevirt/targets.txt), поэтому
+# компонент один на всё семейство машин, а не по компоненту на машину.
+#
+# Доверие уровня кластера: компонент меняет ресурс KubeVirt, то есть образ,
+# на котором стартует КАЖДАЯ виртуальная машина кластера. Поэтому он помечен
+# privileged — ставится только с явным согласием оператора
+# (`cozypkg add --allow-privileged`), а валидатор Cozystack об этом
+# предупреждает. Пространство имён cozy-kubevirt и так privileged (его держит
+# компонент kubevirt самой платформы): метка ничего не расширяет.
+apiVersion: cozystack.io/v1alpha1
+kind: PackageSource
+metadata:
+  name: paleocomputing.platform
+spec:
+  sourceRef:
+    kind: OCIRepository
+    name: paleocomputing-platform
+    namespace: cozy-system
+    path: /
+  variants:
+    - name: default
+      dependsOn:
+        # Ресурс KubeVirt и virt-controller приезжают отсюда.
+        - cozystack.kubevirt
+      components:
+        - name: kubevirt-paleo-launcher
+          path: system/kubevirt-paleo-launcher
+          install:
+            # Там же, где ресурс KubeVirt: все права — Role в этом
+            # пространстве имён, без ClusterRole.
+            namespace: cozy-kubevirt
+            releaseName: kubevirt-paleo-launcher
+            privileged: true

@@ -1,6 +1,11 @@
-# Образ virt-launcher с libvirt, знающим архитектуру RISC5.
+# Образ virt-launcher с libvirt, знающим архитектуры чужих машин.
 #
-# Форкается ТОЛЬКО libvirt, и патч в нём — шесть строк в четырёх таблицах.
+# Какие машины он несёт — kubevirt/targets.txt, по строке на архитектуру
+# (сегодня одна: RISC5). Образ один на всё семейство: новая машина — строка
+# там, а не новый образ.
+#
+# Форкается ТОЛЬКО libvirt, и патч в нём — шесть строк в четырёх таблицах на
+# каждую архитектуру.
 # Сам KubeVirt не трогаем: перехватчик OnDefineDomain — штатная точка, а
 # реестр образов переключается настройкой на ресурсе KubeVirt, так что и
 # Cozystack форка не требует.
@@ -48,7 +53,8 @@ ARG LIBVIRT_VERSION=v11.9.0
 RUN git clone --depth 1 -b ${LIBVIRT_VERSION} \
       https://github.com/libvirt/libvirt.git /src
 
-COPY qemu/libvirt/patch_libvirt.py /src/
+# Список архитектур кладётся рядом со скриптом: там он его и ищет.
+COPY qemu/libvirt/patch_libvirt.py kubevirt/targets.txt /src/
 WORKDIR /src
 RUN python3 patch_libvirt.py
 
@@ -92,13 +98,22 @@ COPY qemu/graft.sh      /src/qemu-target/
 COPY qemu/target        /src/qemu-target/target
 COPY qemu/hw            /src/qemu-target/hw
 COPY qemu/configs       /src/qemu-target/configs
+COPY kubevirt/targets.txt /src/targets.txt
+# Цели и бинари — из kubevirt/targets.txt: <арх.>-softmmu и qemu-system-<арх.>.
+# Готовые эмуляторы собираются в /out/bin, чтобы последняя стадия взяла их
+# одной строкой, сколько бы их ни было.
 RUN /src/qemu-target/graft.sh /src/qemu \
+ && archs=$(awk '!/^#/ && NF { print $1 }' /src/targets.txt) \
+ && test -n "$archs" \
  && cd /src/qemu \
- && ./configure --target-list=risc5-softmmu --disable-docs --disable-tools \
+ && ./configure --target-list=$(printf '%s-softmmu,' $archs | sed 's/,$//') \
+      --disable-docs --disable-tools \
       --disable-guest-agent --without-default-features \
       --python=/usr/bin/python3.12 \
       --enable-vnc --enable-pixman --enable-png \
- && ninja -C build qemu-system-risc5
+ && ninja -C build $(printf 'qemu-system-%s ' $archs) \
+ && mkdir -p /out/bin \
+ && for a in $archs; do cp build/qemu-system-$a /out/bin/; done
 
 # ── Готовый образ ──────────────────────────────────────────────────────────
 FROM quay.io/kubevirt/virt-launcher:${KUBEVIRT_VERSION}@${LAUNCHER_DIGEST}
@@ -110,7 +125,7 @@ COPY --from=libvirt-build /out/usr/lib64/libvirt/connection-driver/libvirt_drive
 
 # Эмулятор кладём сюда же: так он есть и без общего тома, а том остаётся
 # способом принести машину, которой в образе нет.
-COPY --from=qemu-build /src/qemu/build/qemu-system-risc5 /usr/local/bin/
+COPY --from=qemu-build /out/bin/ /usr/local/bin/
 # Раскладки клавиатуры для VNC. Без них QEMU с `-vnc` не стартует вовсе
 # («could not find keymap file for language 'en-us'»), а консоль в дашборде
 # идёт именно через VNC. Ищет он их в <prefix>/share/qemu/keymaps.

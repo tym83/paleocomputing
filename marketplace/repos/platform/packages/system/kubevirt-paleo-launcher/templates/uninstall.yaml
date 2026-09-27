@@ -1,0 +1,140 @@
+{{- /*
+  Удаление: убрать свою правку из ресурса KubeVirt, чужие не трогать.
+
+  Хук pre-delete, а не post-delete: задаче нужен сценарий из ConfigMap
+  релиза, а после удаления релиза его уже нет. Но в pre-delete ещё жив цикл —
+  он вернул бы правку между хуком и удалением развёртывания. Поэтому задача
+  сначала гасит цикл (scale до нуля и ждёт, пока уйдёт под), потом убирает
+  правку.
+
+  Права — свои, тоже хуки pre-delete с меньшим весом. Всё удаляется по
+  hook-succeeded; упавшая задача остаётся для разбора, а повторное удаление
+  убирает её через before-hook-creation. activeDeadlineSeconds — чтобы
+  задача, которой не достался образ или права, не держала удаление релиза
+  бесконечно. Упадёт — удаление релиза остановится с ошибкой, и правка
+  останется видна; молча оставить её нельзя: после следующего обновления
+  KubeVirt она сломала бы все машины кластера.
+*/ -}}
+{{- $name := include "paleo-launcher.name" . }}
+{{- $hook := printf "%s-uninstall" $name }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $hook }}
+  labels: {{- include "paleo-launcher.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-delete
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $hook }}
+  labels: {{- include "paleo-launcher.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-delete
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+rules:
+- apiGroups: [kubevirt.io]
+  resources: [kubevirts]
+  resourceNames: [{{ .Values.kubevirtName }}]
+  verbs: [get, patch]
+- apiGroups: [apps]
+  resources: [deployments]
+  resourceNames: [virt-controller, {{ $name }}]
+  verbs: [get]
+# Остановить цикл — только своё развёртывание.
+- apiGroups: [apps]
+  resources: [deployments/scale]
+  resourceNames: [{{ $name }}]
+  verbs: [get, patch, update]
+# Дождаться, пока уйдёт под цикла. list по имени не ограничить.
+- apiGroups: [""]
+  resources: [pods]
+  verbs: [list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $hook }}
+  labels: {{- include "paleo-launcher.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-delete
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $hook }}
+subjects:
+- kind: ServiceAccount
+  name: {{ $hook }}
+  namespace: {{ .Release.Namespace }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $hook }}
+  labels: {{- include "paleo-launcher.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-delete
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  activeDeadlineSeconds: 120
+  backoffLimit: 1
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: kubevirt-paleo-launcher-uninstall
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        policy.cozystack.io/allow-to-apiserver: "true"
+    spec:
+      serviceAccountName: {{ $hook }}
+      restartPolicy: Never
+      enableServiceLinks: false
+      securityContext: {{- include "paleo-launcher.podSecurity" . | nindent 8 }}
+      containers:
+      - name: uninstall
+        image: {{ .Values.image }}
+        imagePullPolicy: IfNotPresent
+        command: ["/bin/sh", "/opt/paleo/reconcile.sh", "uninstall"]
+        env:
+        - name: KUBEVIRT_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: KUBEVIRT_NAME
+          value: {{ .Values.kubevirtName | quote }}
+        - name: LAUNCHER_TABLE
+          value: /opt/paleo/launchers.txt
+        - name: SELF_DEPLOYMENT
+          value: {{ $name }}
+        - name: SELF_SELECTOR
+          value: "app.kubernetes.io/name=kubevirt-paleo-launcher,app.kubernetes.io/instance={{ .Release.Name }}"
+        - name: STOP_TIMEOUT
+          value: "60"
+        - name: HOME
+          value: /tmp
+        securityContext: {{- include "paleo-launcher.containerSecurity" . | nindent 10 }}
+        resources:
+          requests:
+            cpu: 10m
+            memory: 32Mi
+          limits:
+            memory: 128Mi
+        volumeMounts:
+        - name: scripts
+          mountPath: /opt/paleo
+          readOnly: true
+        - name: tmp
+          mountPath: /tmp
+      volumes:
+      - name: scripts
+        configMap:
+          name: {{ $name }}
+      - name: tmp
+        emptyDir:
+          sizeLimit: 16Mi
