@@ -385,6 +385,41 @@ def check_components_declared_twice():
                        f"{repo.name}: {name} объявлен и в каталоге, и в источнике")
 
 
+HOOK_LINE = re.compile(r'"?helm\.sh/hook"?\s*:\s*"?([^"\n]+)')
+
+
+def upgrade_hook_kinds(text: str) -> list[str]:
+    """Какие ресурсы шаблона объявлены хуком обновления (pre/post-upgrade)."""
+    found = []
+    for doc in re.split(r"^---\s*$", text, flags=re.M):
+        m = HOOK_LINE.search(doc)
+        kind = re.search(r"^kind:\s*(\S+)", doc, flags=re.M)
+        if m and kind and "upgrade" in m.group(1):
+            found.append(kind.group(1))
+    return found
+
+
+def check_no_volume_upgrade_hooks() -> None:
+    """Том не может быть хуком обновления.
+
+    Без явной политики удаления Helm применяет к хуку before-hook-creation:
+    на каждом обновлении удаляет ресурс и создаёт заново. Том занят
+    работающей машиной, зависает в Terminating, обновление висит до таймаута.
+    Поймано первым обновлением каталога поверх живых машин в песочнице.
+    """
+    tpls = sorted(ROOT.glob("repos/*/packages/apps/*/templates/*.yaml"))
+    bad_tpls = [str(t.relative_to(ROOT / "repos")) for t in tpls
+                if "PersistentVolumeClaim" in upgrade_hook_kinds(t.read_text(encoding="utf-8"))]
+    report(not bad_tpls,
+           f"ни один том не пересоздаётся при обновлении ({len(tpls)} шаблонов)"
+           + (f": {', '.join(bad_tpls)}" if bad_tpls else ""))
+    # Отрицательный контроль: проверка обязана узнать ту самую ошибку.
+    bad = ('kind: PersistentVolumeClaim\nmetadata:\n  annotations:\n'
+           '    "helm.sh/hook": pre-install,pre-upgrade\n')
+    report("PersistentVolumeClaim" in upgrade_hook_kinds(bad),
+           "отрицательный контроль: том-хук обновления распознаётся")
+
+
 def main() -> None:
     print("Проверки каталога «Забытые системы»")
     check_index()
@@ -397,6 +432,7 @@ def main() -> None:
     check_schema_roots()
     check_nginx_workers()
     check_components_declared_twice()
+    check_no_volume_upgrade_hooks()
     print(f"\nИтог: успешно {ok_count}, провалено {fail_count}")
     sys.exit(1 if fail_count else 0)
 
