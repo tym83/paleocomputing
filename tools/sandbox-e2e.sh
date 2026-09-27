@@ -99,6 +99,20 @@ fi
 pvc_uid=$(a get pvc "$vmi-payload" -o jsonpath='{.metadata.uid}' 2>/dev/null)
 [ -n "$pvc_uid" ] && say ok "том $vmi-payload в составе релиза" || say no "тома нет"
 
+step "слив узла не упирается в машину"
+# Пробный слив (--dry-run=server) только пода машины: узел не трогается, а
+# проверка выселения идёт настоящая. Кластер в LiveMigrate, чужая машина не
+# мигрирует — без evictionStrategy None выселение было бы отклонено.
+node=$(a get vmi "$vmi" -o jsonpath='{.status.nodeName}' 2>/dev/null)
+drain_out=$(kubectl --kubeconfig "$ADMIN_KUBECONFIG" --context "$ADMIN_CONTEXT" drain "$node" \
+  --dry-run=server --pod-selector="kubevirt.io=virt-launcher,app.kubernetes.io/instance=oberon-vm-$NAME" \
+  --ignore-daemonsets --delete-emptydir-data --timeout=60s 2>&1)
+if printf '%s' "$drain_out" | grep -q "evicted"; then
+  say ok "под машины выселяется при сливе узла $node"
+else
+  say no "слив узла $node упирается в машину: $(printf '%s' "$drain_out" | tail -2 | tr '\n' ' ' | cut -c1-200)"
+fi
+
 step "экран через консоль тенанта"
 d=$(screen_ok) && say ok "кадр — эталон ($d тёмных точек)" || say no "кадр не эталон: $d (ждали $REF_DARK)"
 
