@@ -50,4 +50,6 @@ document.getElementById('stop').onclick  = () => m.stop();
 document.getElementById('reset').onclick = () => m.reset();
 m.addEventListener('oberon-frame', e =>
   stat.textContent = `${(e.detail.insns / 1e6).toFixed(1)}M · ${e.detail.mhz.toFixed(2)} MHz`);
+// Модуль дошёл до конца: это видит дымовая проверка в браузере.
+document.documentElement.dataset.scriptOk = '1';
 </script>
