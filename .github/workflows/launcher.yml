@@ -69,9 +69,10 @@ jobs:
       # дают, и buildx выбрасывает --cache-from/--cache-to без предупреждения.
       - uses: crazy-max/ghaction-github-runtime@v4
 
-      # Имя — как у выпуска, только вместо версии выпуска `pr`.
+      # Имя — как у выпуска (семейство, а не одна машина), только вместо
+      # версии выпуска `pr`.
       - id: meta
-        run: echo "image=virt-launcher:${{ matrix.kubevirt }}-risc5-pr" >> "$GITHUB_OUTPUT"
+        run: echo "image=virt-launcher:${{ matrix.kubevirt }}-paleo-pr" >> "$GITHUB_OUTPUT"
 
       # --load, а не --push: образ нужен только здесь, для проверки.
       # Подпись происхождения в локальный docker не ложится — отключена.
@@ -82,5 +83,5 @@ jobs:
             --cache-from type=gha,scope=launcher-${{ matrix.kubevirt }} \
             --cache-to type=gha,scope=launcher-${{ matrix.kubevirt }},mode=max
 
-      - name: Проверить, что эмулятор знает chk
+      - name: Проверить машины в образе
         run: kubevirt/check_image.sh "${{ steps.meta.outputs.image }}"
