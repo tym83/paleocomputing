@@ -64,8 +64,8 @@
       Делается один раз администратором кластера, утилитой <code>cozypkg</code>
       из <a href="https://github.com/cozystack/cozystack">репозитория Cozystack</a>:
     </p>
-    <pre><code>cozypkg tap oci://ghcr.io/tym83/paleocomputing/machines:v0.1.11
-cozypkg tap oci://ghcr.io/tym83/paleocomputing/languages:v0.1.11</code></pre>
+    <pre><code>cozypkg tap oci://ghcr.io/tym83/paleocomputing/machines:v0.1.12
+cozypkg tap oci://ghcr.io/tym83/paleocomputing/languages:v0.1.12</code></pre>
     <p>
       Проверяйте, что источник прочитал все компоненты, а не только что он готов:
     </p>
@@ -98,7 +98,7 @@ cozypkg tap oci://ghcr.io/tym83/paleocomputing/languages:v0.1.11</code></pre>
       четвёртый репозиторий и поставьте <code>kubevirt-paleo-launcher</code>; он
       привилегированный, поэтому нужно явное согласие оператора:
     </p>
-    <pre><code>cozypkg tap oci://ghcr.io/tym83/paleocomputing/platform:v0.1.11
+    <pre><code>cozypkg tap oci://ghcr.io/tym83/paleocomputing/platform:v0.1.12
 cozypkg add paleocomputing.platform --allow-privileged</code></pre>
     <p>
       Он следит за версией KubeVirt в кластере и держит launcher в паре с ней.
@@ -129,7 +129,7 @@ spec:
         [{"op": "replace",
           "path": "/spec/template/spec/containers/0/args",
           "value": ["--launcher-image",
-                    "ghcr.io/tym83/paleocomputing/virt-launcher:v1.8.4-risc5-v0.1.11",
+                    "ghcr.io/tym83/paleocomputing/virt-launcher:v1.8.4-risc5-v0.1.12",
                     "--exporter-image", "quay.io/kubevirt/virt-exportserver:v1.8.4",
                     "--port", "8443", "-v", "2"]}]'</code></pre>
     <p>
@@ -180,7 +180,7 @@ spec:
     <h2>Известные ограничения</h2>
     <ol class="steps">
       <li><p><strong>Машина не мигрирует.</strong> При выводе узла на обслуживание она останавливается, а не переезжает.</p></li>
-      <li><p><strong>Машины, поставленные версией v0.1.10 и раньше, перед обновлением нужно переустановить.</strong> Их том создан хуком установки и в релиз не входит; обновление до v0.1.11 падает на нём («already exists»). Удалите такую машину и поставьте заново.</p></li>
+      <li><p><strong>Машины, поставленные версией v0.1.10 и раньше, перед обновлением нужно переустановить.</strong> Их том создан хуком установки и в релиз не входит; обновление до v0.1.12 падает на нём («already exists»). Удалите такую машину и поставьте заново.</p></li>
       <li><p><strong>Версии до v0.1.9 включительно оставляют том после удаления машины.</strong> Он создаётся один раз при установке, и такие ресурсы Helm при удалении не убирает. В следующих версиях его убирает задача, которая запускается при удалении; машина, удалённая ещё на v0.1.9 или раньше, оставляет <code>oberon-vm-&lt;имя&gt;-payload</code> — его удалите вручную.</p></li>
       <li><p><strong>Версии до v0.1.7 включительно нельзя обновить под работающей машиной.</strong> Обновление пересоздавало том машины, и он зависал в <code>Terminating</code>. Исправлено в v0.1.8; при переходе с более ранней версии такие машины удалите и поставьте заново.</p></li>
     </ol>
