@@ -17,6 +17,7 @@ ApplicationDefinition. Он не знает про две вещи, которы
 """
 from __future__ import annotations
 
+import copy
 import json
 import pathlib
 import re
@@ -420,6 +421,103 @@ def check_no_volume_upgrade_hooks() -> None:
            "отрицательный контроль: том-хук обновления распознаётся")
 
 
+def _hook_set(doc: dict, key: str) -> set[str]:
+    ann = (doc.get("metadata") or {}).get("annotations") or {}
+    return {p.strip() for p in str(ann.get(key, "")).split(",") if p.strip()}
+
+
+def _cleans(job: dict, roles: list[dict], kind: str, name: str) -> bool:
+    """Убирает ли задача post-delete ресурс kind/name — и не повиснет ли сама."""
+    spec = job["spec"]
+    if not spec.get("activeDeadlineSeconds"):
+        return False
+    argv = [str(a) for c in spec["template"]["spec"]["containers"]
+            for a in (c.get("command") or []) + (c.get("args") or [])]
+    if "--wait=false" not in argv:
+        return False
+    # Выборка по метке без метки релиза задела бы соседние машины тенанта.
+    if any(a in ("-l", "--selector") or a.startswith(("-l=", "--selector=")) for a in argv) \
+            and "app.kubernetes.io/instance=" not in " ".join(argv):
+        return False
+    plural = kind.lower() + "s"
+    if not any(a.split("/", 1)[0].split(".")[0] in (kind.lower(), plural) and a.endswith("/" + name)
+               for a in argv):
+        return False
+    # И права на это удаление — у самой уборки, тоже хуком post-delete.
+    return any(plural in r.get("resources", []) and "delete" in r.get("verbs", [])
+               and name in r.get("resourceNames", [name])
+               for role in roles for r in role.get("rules", []))
+
+
+def leaked_hook_resources(docs: list[dict]) -> list[str]:
+    """Ресурсы хуков, которые переживут удаление релиза.
+
+    Helm сам удаляет хук только по политике hook-succeeded. Остальные
+    остаются, если их не убирает задача post-delete; хук post-delete без
+    hook-succeeded не убирает уже никто.
+    """
+    hooks = [d for d in docs if isinstance(d, dict) and _hook_set(d, "helm.sh/hook")]
+    post = [d for d in hooks if "post-delete" in _hook_set(d, "helm.sh/hook")]
+    jobs = [d for d in post if d["kind"] == "Job"]
+    roles = [d for d in post if d["kind"] == "Role"]
+    leaked = []
+    for d in hooks:
+        if "hook-succeeded" in _hook_set(d, "helm.sh/hook-delete-policy"):
+            continue
+        kind, name = d["kind"], d["metadata"]["name"]
+        if any(d is p for p in post) or not any(_cleans(j, roles, kind, name) for j in jobs):
+            leaked.append(f"{kind}/{name}")
+    return leaked
+
+
+def check_hook_cleanup() -> None:
+    """Том-хук установки убирается при удалении машины.
+
+    Ресурсы хуков Helm при удалении релиза не трогает: удалённая машина
+    оставляла в тенанте свой том, и повторная установка под тем же именем
+    упиралась в него. Проверяем отрисованные чарты, а не текст шаблонов:
+    имена, которые удаляет уборка, должны совпасть с настоящими.
+    """
+    print("\nУборка хуков при удалении")
+    charts = sorted({t.parent.parent for t in ROOT.glob("repos/*/packages/apps/*/templates/*.yaml")
+                     if "helm.sh/hook" in t.read_text(encoding="utf-8")})
+    vm_docs: list[dict] = []
+    for chart in charts:
+        r = run(["helm", "template", "t", str(chart), "--namespace", "ns"])
+        docs = [d for d in yaml.safe_load_all(r.stdout) if isinstance(d, dict)] if r.returncode == 0 else []
+        vols = [d for d in docs if d.get("kind") == "PersistentVolumeClaim"
+                and "pre-install" in _hook_set(d, "helm.sh/hook")]
+        leaked = leaked_hook_resources(docs)
+        report(r.returncode == 0 and not leaked,
+               f"{chart.name}: хуки не переживают удаление (томов-хуков: {len(vols)})"
+               + (f": {', '.join(leaked)}" if leaked else "")
+               + ("" if r.returncode == 0 else f": helm template упал: {r.stderr.strip()}"))
+        if chart.name == "oberon-vm":
+            vm_docs = docs
+    report(bool(vm_docs), "oberon-vm среди проверенных чартов")
+
+    # Отрицательный контроль: ломаем уборку тремя способами, которыми она уже
+    # ломалась или могла сломаться, — проверка обязана увидеть каждый.
+    def mutated(fn) -> list[str]:
+        docs = copy.deepcopy(vm_docs)
+        for d in docs:
+            if d["kind"] == "Job" and "post-delete" in _hook_set(d, "helm.sh/hook"):
+                fn(d)
+        return leaked_hook_resources([d for d in docs if d.get("kind") != "drop"])
+
+    def drop(d): d["kind"] = "drop"
+    def no_deadline(d): d["spec"].pop("activeDeadlineSeconds", None)
+    def waits(d):
+        c = d["spec"]["template"]["spec"]["containers"][0]
+        c["args"] = [a for a in c["args"] if a != "--wait=false"]
+
+    for fn, what in [(drop, "без задачи уборки том остаётся"),
+                     (no_deadline, "уборка без activeDeadlineSeconds не засчитывается"),
+                     (waits, "уборка, ждущая удаления тома, не засчитывается")]:
+        report(any(x.startswith("PersistentVolumeClaim/") for x in mutated(fn)),
+               f"отрицательный контроль: {what}")
+
+
 def main() -> None:
     print("Проверки каталога «Забытые системы»")
     check_index()
@@ -433,6 +531,7 @@ def main() -> None:
     check_nginx_workers()
     check_components_declared_twice()
     check_no_volume_upgrade_hooks()
+    check_hook_cleanup()
     print(f"\nИтог: успешно {ok_count}, провалено {fail_count}")
     sys.exit(1 if fail_count else 0)
 

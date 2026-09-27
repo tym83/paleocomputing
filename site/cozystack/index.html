@@ -159,7 +159,7 @@ spec:
     <h2>Known limits</h2>
     <ol class="steps">
       <li><p><strong>The machine does not migrate.</strong> When a node is drained, it stops rather than moves.</p></li>
-      <li><p><strong>The volume stays after the machine is deleted.</strong> It is created once, at install time, and Helm does not remove such resources on uninstall. Remove <code>oberon-vm-&lt;name&gt;-payload</code> by hand.</p></li>
+      <li><p><strong>Versions up to v0.1.8 leave the machine's volume behind when it is deleted.</strong> The volume is created once, at install time, and Helm does not remove such resources on uninstall. Later versions clean it up with a job that runs on deletion; a machine deleted while still on v0.1.8 or earlier leaves <code>oberon-vm-&lt;name&gt;-payload</code> to be removed by hand.</p></li>
       <li><p><strong>Versions up to v0.1.7 cannot be upgraded under a running machine.</strong> Upgrading recreated the machine's volume, which hung in <code>Terminating</code>. Fixed in v0.1.8; when coming from an earlier version, delete such machines and install them again.</p></li>
     </ol>
   </section>
