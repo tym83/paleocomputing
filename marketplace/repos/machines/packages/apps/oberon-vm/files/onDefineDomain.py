@@ -148,9 +148,23 @@ def convert(domain_xml, chk=False):
     # тоже привяжет к PCI.
     for tag in ('controller', 'video', 'memballoon', 'sound', 'channel',
                 'rng', 'watchdog', 'redirdev', 'hostdev', 'input',
-                'interface', 'disk', 'serial', 'console', 'graphics',
+                'interface', 'disk', 'serial', 'console',
                 'tpm', 'smartcard', 'filesystem'):
         for el in devices.findall(tag):
+            devices.remove(el)
+
+    # ── Экран ─────────────────────────────────────────────────────────────
+    #
+    # graphics — не устройство на шине, а способ показать экран: libvirt
+    # превращает его в `-vnc unix:<сокет>`, а к этому сокету KubeVirt
+    # подключает консоль дашборда и `virtctl vnc`. Раньше он уходил вместе
+    # с устройствами PCI, машина запускалась с `-display none`, и экран
+    # Оберона в кластере не видел никто. Своя видеокарта у машины Вирта
+    # встроенная, отдельное устройство video ей не нужно.
+    #
+    # Оставляем только VNC: у SPICE своя шина каналов, которой здесь нет.
+    for el in devices.findall('graphics'):
+        if el.get('type') != 'vnc':
             devices.remove(el)
 
     # Взамен — явные заглушки там, где libvirt иначе подставит своё.

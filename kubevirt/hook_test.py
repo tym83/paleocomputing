@@ -62,8 +62,20 @@ def main():
     d = root.find('devices')
     pci = [e.tag for e in d if e.tag in
            ('disk', 'interface', 'serial', 'console', 'channel', 'rng',
-            'sound', 'watchdog', 'input', 'graphics')]
+            'sound', 'watchdog', 'input')]
     report(not pci, f'убрано всё, чему нужна шина PCI (осталось: {pci})')
+
+    # Экран: VNC остаётся (через него работает консоль дашборда), всё прочее
+    # уходит. Проверка на сокет — чтобы не прошёл голый <graphics/> без адреса.
+    gfx = d.findall('graphics')
+    vnc = [g for g in gfx if g.get('type') == 'vnc']
+    report(len(vnc) == 1 and vnc[0].find('listen') is not None
+           and vnc[0].find('listen').get('socket', '').endswith('/virt-vnc'),
+           'VNC оставлен вместе с сокетом KubeVirt')
+    report(all(g.get('type') == 'vnc' for g in gfx),
+           f"прочие виды экрана убраны (осталось: {[g.get('type') for g in gfx]})")
+    report(any(g.get('type') == 'spice' for g in ET.fromstring(src).find('devices').findall('graphics')),
+           'мутация: во входе действительно есть SPICE, который надо убрать')
 
     stubs = {e.tag for e in d}
     report({'controller', 'memballoon', 'video'} <= stubs,

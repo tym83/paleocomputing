@@ -92,6 +92,10 @@ COPY --from=libvirt-build /out/usr/lib64/libvirt/connection-driver/libvirt_drive
 # Эмулятор кладём сюда же: так он есть и без общего тома, а том остаётся
 # способом принести машину, которой в образе нет.
 COPY --from=qemu-build /src/qemu/build/qemu-system-risc5 /usr/local/bin/
+# Раскладки клавиатуры для VNC. Без них QEMU с `-vnc` не стартует вовсе
+# («could not find keymap file for language 'en-us'»), а консоль в дашборде
+# идёт именно через VNC. Ищет он их в <prefix>/share/qemu/keymaps.
+COPY --from=qemu-build /src/qemu/pc-bios/keymaps/ /usr/local/share/qemu/keymaps/
 
 # Перехватчик может прийти скриптом из ConfigMap, но пусть будет и в образе.
 COPY kubevirt/onDefineDomain.py /usr/bin/onDefineDomain
