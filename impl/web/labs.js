@@ -2,11 +2,13 @@
 // проверки это демонстрация, а не задание.
 //
 // Уровни из плана серии: смотреть / менять / ломать / измерять / строить.
-// Здесь первые три; каждая опирается на то, что уже доказано в impl/docs.
+// Каждая опирается на то, что уже доказано в impl/docs.
 
-import { OberonFS, parseRsc, readText } from './oberonfs.js';
+import { OberonFS, parseRsc, readText, isChk } from './oberonfs.js';
 import { LANG } from './i18n.js';
 import { EN } from './labs.en.js';
+import { SOURCES, pre } from './lab-sources.js';
+export { SOURCES };
 
 
 // Служебная запись файла меняется при каждой перезаписи: Files.Register
@@ -19,10 +21,77 @@ const rsc = (m, name) => {
   return h ? parseRsc(F.read(h)) : null;
 };
 const near = (a, b, eps) => Math.abs(a - b) <= eps;
+// Число с согласованным существительным: 1 слово, 2 слова, 5 слов.
+const pl = (n, one, few, many) => `${n} ${(n % 10 === 1 && n % 100 !== 11) ? one
+  : ([2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100)) ? few : many}`;
 const text = (m, name) => {
   const F = new OberonFS(m), h = F.files().get(name);
   return h ? readText(F.read(h)) : null;
 };
+
+/*
+ * Загруженные модули — из памяти машины, а не с экрана.
+ *
+ * Дескриптор модуля (Modules.ModDesc): name[32], next, key, num, size, refcnt,
+ * data, code, imp, cmd, ent, ptr — смещения 0, 32, …, 52 (data), 56 (code),
+ * 60 (imp). Голова списка — переменная Modules.root, первая в области данных
+ * Modules после его дескрипторов типов. Сам дескриптор Modules лежит по адресу,
+ * который загрузчик кладёт в слово 20 (Modules.Init читает его оттуда же), а
+ * дескриптор Kernel — всегда 100H: ядро компонуется первым.
+ *
+ * Глобальные переменные модуля лежат в области данных ПОСЛЕ дескрипторов
+ * типов (Modules.Load), в порядке объявления. Размер дескрипторов берётся из
+ * .rsc на диске.
+ */
+const KERNEL_DESC = 0x100;
+const modName = (m, a) => {
+  let s = '';
+  for (let i = 0; i < 32; i++) {
+    const c = (m.ram(a + (i & ~3)) >>> ((i & 3) * 8)) & 0xFF;
+    if (!c) break;
+    s += String.fromCharCode(c);
+  }
+  return s;
+};
+function loaded(m, name) {
+  const mods = rsc(m, 'Modules.rsc');
+  if (!mods) return null;
+  const root = m.ram(m.ram(m.ram(20) + 52) + mods.tdBytes);
+  for (let r = root, n = 0; r && n < 64; r = m.ram(r + 32), n++)
+    if (modName(m, r) === name)
+      return { desc: r, data: m.ram(r + 52), code: m.ram(r + 56), imp: m.ram(r + 60) };
+  return null;
+}
+/** k-я по порядку переменная (слово) загруженного модуля или null. */
+function modVar(m, name, k) {
+  const M = loaded(m, name), r = rsc(m, name + '.rsc');
+  return M && r ? m.ram(M.data + r.tdBytes + 4 * k) | 0 : null;
+}
+/** Переменные Kernel: allocated, NofSectors, heapOrg, heapLim, …, MemLim.
+    Раскладка сверяется с тем, что загрузчик оставил в словах 12 и 24: если
+    адрес угадан неверно, проверка скажет об этом, а не соврёт числом. */
+function heap(m) {
+  const d = m.ram(KERNEL_DESC + 52);
+  const k = { allocated: m.ram(d), heapOrg: m.ram(d + 8), heapLim: m.ram(d + 12), memLim: m.ram(d + 24) };
+  k.ok = modName(m, KERNEL_DESC) === 'Kernel' && k.heapOrg === m.ram(24) && k.memLim === m.ram(12);
+  return k;
+}
+/** Сколько команд CHK в коде загруженного модуля. */
+function chkInMemory(m, name) {
+  const M = loaded(m, name);
+  if (!M) return null;
+  let n = 0;
+  for (let a = M.code; a < M.imp; a += 4) if (isChk(m.ram(a))) n++;
+  return n;
+}
+
+
+// Таймер машины (Kernel.Time) — не часы хоста, а счётчик тактов: 25 000
+// тактов на миллисекунду (tb/wasm_main.cpp, как у платы на 25 МГц). Поэтому
+// миллисекунды в лабораторных точны и повторяемы до такта.
+const CYCLES_PER_MS = 25000;
+// Выход из ORG.Mod на эталонном образе: сколько слов кода в поставляемом ORG.rsc.
+const ORG_STOCK_WORDS = 6650;
 
 const ALL = [
 {
@@ -481,6 +550,277 @@ END Idx.</pre>
    своё, и на коротком модуле это съедает всю экономию.`,
   hint: 'Щёлкать надо левее первого символа второй строки, но внутри рамки окна. Если звёздочка попала внутрь слова, компилятор скажет «must start with MODULE».',
 },
+{
+  id: 10, level: 'смотреть',
+  title: 'Сборщик мусора изнутри',
+  read: [['04-sistema.html', 'Система: текст вместо кнопок'],
+         ['03-yazyk.html', 'Язык: Оберон за одну главу']],
+  intro: `В лабораторной 6 куча кончалась внутри команды. Здесь вы откроете
+    сам сборщик: найдёте, откуда его зовут, наберёте модуль, который сорит,
+    и посмотрите на кучу до и после уборки. Число занятых байт проверка читает
+    не с экрана, а из памяти машины — из переменной <code>Kernel.allocated</code>,
+    ту же самую, что печатает <code>System.Watch</code>.`,
+  steps: [
+    { text: `Откройте исходник главного цикла: наберите в конце
+        <code>System.Tool</code> <code>Edit.Open Oberon.Mod ~</code> и запустите.
+        Найдите в нём <code>PROCEDURE GC</code> и последние строки модуля:
+        <pre>ActCnt := 0; CurTask := NewTask(GC, 1000); Install(CurTask);</pre>
+        Сборщик — это <b>обычная задача</b> главного цикла, раз в секунду. Но
+        убирает он не каждый раз: только если счётчик действий
+        <code>ActCnt</code> дошёл до нуля или куча почти полна. Каждое
+        нажатие клавиши и каждый щелчок уменьшают <code>ActCnt</code> на
+        единицу, а после уборки он снова становится равен константе
+        <code>BasicCycle</code>. Найдите её в начале файла и введите значение.`,
+      answer: 'число',
+      check: (m, c) => {
+        const t = text(m, 'Oberon.Mod');
+        const want = t && t.match(/BasicCycle\s*=\s*(\d+)/);
+        if (!want) return { ok: false, msg: 'Oberon.Mod не читается' };
+        const got = parseInt((c.answer || '').trim(), 10);
+        if (!isFinite(got)) return { ok: false, msg: 'введите число' };
+        return got === +want[1]
+          ? { ok: true, msg: `верно: BasicCycle = ${want[1]}. Сборщик убирает не по часам, а по вашим действиям: раз в ${want[1]} нажатий и щелчков — или когда до конца кучи остаётся меньше 64 КБ.` }
+          : { ok: false, msg: `в Oberon.Mod на диске стоит другое число` };
+      } },
+    { text: `Теперь модуль, который сорит. <code>Edit.Open Junk.Mod ~</code>,
+        наберите, сохраните (<code>Edit.Store</code>) и соберите
+        <code>ORP.Compile Junk.Mod ~</code>:
+        ${pre(SOURCES.Junk)}
+        Тип записи нужен именованный (<code>BlockDesc</code>), а не
+        <code>POINTER TO RECORD … END</code> прямо в объявлении указателя —
+        почему, скажет проверка.`,
+      check: m => {
+        const r = rsc(m, 'Junk.rsc');
+        if (!r) return { ok: false, msg: 'Junk.rsc пока нет' };
+        if (r.tdBytes === 0)
+          return { ok: false, msg: 'у записи нет дескриптора типа: компилятор этой версии строит его только для именованной записи, и NEW для безымянной берёт размер неизвестно откуда — куча не растёт вовсе. Объявите BlockDesc отдельно.' };
+        return { ok: true, msg: `Junk.rsc собран: ${pl(r.codeWords, 'слово', 'слова', 'слов')} кода, дескриптор типа ${r.tdBytes} байт. Блок — 240 байт данных и 8 служебных, ядро выдаёт его из списка кусков по 256.` };
+      } },
+    { text: `Допишите в <code>System.Tool</code> строку <code>Junk.Make</code> и
+        запустите её, затем <code>System.Watch</code> (верхняя строка
+        <code>System.Tool</code>). В журнале — строка <code>Heap speace</code>
+        (опечатка Вирта): куча выросла на четверть мегабайта. Все эти блоки —
+        мусор: указатель на них жил в локальной переменной <code>p</code>, а
+        команда уже кончилась.`,
+      check: (m, c) => {
+        const k = heap(m);
+        if (!k.ok) return { ok: false, msg: 'переменные Kernel не нашлись по ожидаемым адресам — проверке верить нельзя' };
+        const size = k.heapLim - k.heapOrg;
+        if (k.allocated < 200000)
+          return { ok: false, msg: `в куче ${k.allocated} байт из ${size} — Junk.Make ещё не запускали (или сборщик уже прошёл: запустите ещё раз)` };
+        c.state.peak = k.allocated;
+        return { ok: true, msg: `Kernel.allocated = ${k.allocated} байт (${Math.round(k.allocated * 100 / size)}% кучи). Сборщик раз в секунду просыпается и уходит: повода нет — действий мало, куча не полна.` };
+      } },
+    { text: `Щёлкните <code>System.Collect</code> — он стоит в той же верхней
+        строке. Это не уборка, а только <code>ActCnt := 0</code>: сама уборка
+        случится, когда главный цикл в следующий раз дойдёт до задачи
+        <code>GC</code>, то есть в пределах секунды. Подождите и снова
+        <code>System.Watch</code>.`,
+      check: (m, c) => {
+        if (c.state.peak === undefined) return { ok: false, msg: 'сначала шаг 3' };
+        const k = heap(m);
+        if (!k.ok) return { ok: false, msg: 'переменные Kernel не нашлись по ожидаемым адресам' };
+        const freed = c.state.peak - k.allocated;
+        return freed > 200000
+          ? { ok: true, msg: `сборщик вернул ${freed} байт: было ${c.state.peak}, стало ${k.allocated}. Kernel.allocated уменьшается только в одном месте — в Kernel.Scan, значит уборка прошла.` }
+          : { ok: false, msg: `в куче по-прежнему ${k.allocated} байт — уборки ещё не было` };
+      } },
+    { text: `И последнее: запустите <code>Junk.Make</code> <b>два раза подряд</b>,
+        без <code>System.Collect</code> между ними. Две команды по 256 000 байт
+        в кучу на ${Math.round((0xE7EF0 - 0x80000) / 1000)} КБ не влезают, хотя
+        первая половина к началу второй команды — уже мусор.`,
+      check: m => {
+        const lost = modVar(m, 'Junk', 0);
+        if (lost === null) return { ok: false, msg: 'модуль Junk не загружен' };
+        const k = heap(m);
+        return lost > 0
+          ? { ok: true, msg: `NEW вернул NIL ${pl(lost, 'раз', 'раза', 'раз')}: куча кончилась внутри команды. Сейчас в ней ${k.allocated} байт. `
+              + (k.allocated >= k.heapLim - k.heapOrg - 0x10000
+                ? 'До конца меньше 64 КБ — это второй повод, и в пределах секунды сборщик придёт сам, без System.Collect: проверьте System.Watch.'
+                : 'Сборщик уже прошёл сам, без System.Collect: до конца кучи оставалось меньше 64 КБ — второй повод.') }
+          : { ok: false, msg: 'Junk.lost = 0: все блоки пока выделились' };
+      } },
+  ],
+  payoff: `Сборщик Оберона — не поток и не прерывание, а <b>обычная задача
+   главного цикла</b>, одна из списка, установленная при загрузке строкой
+   <code>NewTask(GC, 1000)</code>. И убирает он по двум поводам: вы сделали
+   двадцать действий или куча почти полна.
+   <br><br>
+   Почему только между командами? Посмотрите, что он отмечает:
+   <code>Kernel.Mark(mod.ptr)</code> для каждого модуля — то есть только
+   <b>глобальные</b> указатели. Стек он не просматривает вовсе. Пока команда
+   идёт, живые объекты держатся её локальными переменными, и уборка посреди
+   команды выбросила бы их. Между командами стек пуст — и глобальных корней
+   достаточно. Вся точность сборщика куплена одним правилом: убирать, когда
+   никто ничего не держит.`,
+  hint: `Сборщик работает, только когда главный цикл свободен. Если на шаге 3
+    куча уже чиста — значит вы успели сделать двадцать действий и он
+    прошёл сам; запустите <code>Junk.Make</code> ещё раз.`,
+},
+{
+  id: 11, level: 'ломать',
+  title: 'Одна задача за раз',
+  read: [['04-sistema.html', 'Система: текст вместо кнопок'],
+         ['03-yazyk.html', 'Язык: Оберон за одну главу']],
+  intro: `В Обероне нет потоков и нет вытеснения. Есть один цикл
+    <code>Oberon.Loop</code>: он читает мышь и клавиатуру, а когда ввода нет —
+    по кругу вызывает <b>задачи</b> (<code>Oberon.Task</code>). Задача — просто
+    процедура, которую цикл вызывает, а она обязана быстро вернуть управление.
+    Здесь вы напишете задачу, заморите её голодом и убьёте ею систему.`,
+  steps: [
+    { text: `<code>Edit.Open Tick.Mod ~</code>, наберите, сохраните и соберите
+        <code>ORP.Compile Tick.Mod ~</code>:
+        ${pre(SOURCES.Tick)}
+        <code>Step</code> — задача: считает вызовы в <code>n</code>, запоминает
+        самый долгий перерыв между ними в <code>gap</code> (в миллисекундах) и
+        мигает квадратиком внизу левой дорожки.`,
+      check: m => {
+        const r = rsc(m, 'Tick.rsc');
+        return r
+          ? { ok: true, msg: `Tick.rsc собран: ${pl(r.codeWords, 'слово', 'слова', 'слов')} кода` }
+          : { ok: false, msg: 'Tick.rsc пока нет' };
+      } },
+    { text: `Допишите в <code>System.Tool</code> три строки —
+        <code>Tick.Start</code>, <code>Tick.Spin</code>,
+        <code>Tick.Break</code> — и запустите первую. Внизу слева замигает
+        квадратик, а <code>System.Watch</code> покажет <code>Tasks 2</code>:
+        сборщик мусора и ваша.`,
+      check: m => {
+        const n = modVar(m, 'Tick', 0);
+        if (n === null) return { ok: false, msg: 'модуль Tick не загружен' };
+        return n > 0
+          ? { ok: true, msg: `задачу вызвали уже ${pl(n, 'раз', 'раза', 'раз')}; самый долгий перерыв — ${modVar(m, 'Tick', 1)} мс` }
+          : { ok: false, msg: 'Tick загружен, но задача ещё ни разу не вызывалась — Tick.Start запускали?' };
+      } },
+    { text: `Запустите <code>Tick.Spin</code>: команда секунду крутится в
+        пустом цикле. Всё это время квадратик не мигает, указатель мыши не
+        движется, сборщик не приходит — работает только ваша команда.`,
+      check: m => {
+        const gap = modVar(m, 'Tick', 1);
+        if (gap === null) return { ok: false, msg: 'модуль Tick не загружен' };
+        return gap >= 900
+          ? { ok: true, msg: `задачу не вызывали ${gap} мс подряд — ровно пока шла команда. Никто её не вытеснил: вытеснять нечем.` }
+          : { ok: false, msg: `самый долгий перерыв пока ${gap} мс — Tick.Spin ещё не запускали` };
+      } },
+    { text: `А теперь <code>Tick.Break</code>. Команда сама по себе мгновенная:
+        она лишь ставит в круг вторую задачу, <code>Stuck</code>, которая не
+        возвращается никогда. Первый же её вызов — и система мертва. Спасёт
+        только «Откатить».`,
+      check: m => {
+        const M = loaded(m, 'Tick'), n0 = modVar(m, 'Tick', 0);
+        if (!M) return { ok: false, msg: 'модуль Tick не загружен' };
+        const pcs = new Set();
+        for (let i = 0; i < 5; i++) { m.run(200000); pcs.add(m.pc); }
+        const inside = [...pcs].every(pc => pc >= M.code && pc < M.imp);
+        const n1 = modVar(m, 'Tick', 0);
+        return inside && n1 === n0
+          ? { ok: true, msg: `машина крутится в вашем коде по адресу ${[...pcs].map(x => x.toString(16).toUpperCase()).join(', ')} (модуль Tick: ${M.code.toString(16).toUpperCase()}–${M.imp.toString(16).toUpperCase()}), счётчик n замер на ${n1}. Ни мыши, ни сборщика, ни вашей первой задачи больше не будет.` }
+          : { ok: false, msg: `система жива: задача вызывается (n = ${n1})` };
+      } },
+  ],
+  payoff: `Вся «многозадачность» Оберона — это цикл, который по очереди
+   вызывает процедуры. Ни потоков, ни прерываний таймера, ни планировщика —
+   а значит ни блокировок, ни гонок: пока работает ваш код, <b>ничего другого
+   не происходит вообще</b>, и защищать данные не от кого.
+   <br><br>
+   Цена видна на шагах 3 и 4: отзывчивость системы держится на вежливости
+   каждой процедуры. Секунда в одной команде — секунда замершей мыши;
+   бесконечный цикл в одной задаче — мёртвая машина. Так же жили
+   Windows 3.x и классическая Mac OS; разница в том, что Оберон и не
+   притворяется, будто может иначе.`,
+  hint: `Строки для запуска набирайте с новой строки, каждую отдельно, и
+    запускайте средним щелчком. Если квадратик не виден — он в самом низу
+    левой дорожки, у её правого края.`,
+},
+{
+  id: 12, level: 'измерять',
+  title: 'Цена проверки своими руками',
+  read: [['08-izmereno.html', 'Что мы измерили'],
+         ['06-kompilyator.html', 'Компилятор изнутри']],
+  machine: { variant: 'chk', files: ['ORG.Chk.Mod'] },
+  intro: `Главное число проекта — во что обходится проверка границ массива.
+    Здесь вы получите его <b>на своём коде</b>. Для этой лабораторной машина
+    переключена на <b>ядро с командой CHK</b> (как на странице
+    <a href="checks.html">цены проверки</a>), а на диск положен
+    <code>ORG.Chk.Mod</code> — кодогенератор, который вместо сравнения и
+    перехода ставит одну CHK. Стоковая система на этом ядре работает так же,
+    как на обычном, такт в такт.`,
+  steps: [
+    { text: `<code>Edit.Open Cost.Mod ~</code>, наберите, сохраните, соберите
+        <code>ORP.Compile Cost.Mod ~</code> и запустите <code>Cost.Run</code>:
+        ${pre(SOURCES.Cost)}
+        Цикл делает 300 000 индексаций <code>a[i]</code>, и перед каждой
+        стоковый компилятор ставит две команды: сравнение и условный переход.
+        Время — по <code>Kernel.Time</code>, в миллисекундах; оно появится в
+        журнале.`,
+      check: (m, c) => {
+        if (m.variant !== 'chk') return { ok: false, msg: 'машина не на ядре с CHK — выберите лабораторную заново' };
+        const t = modVar(m, 'Cost', 0), k = chkInMemory(m, 'Cost');
+        if (t === null) return { ok: false, msg: 'модуль Cost не загружен — Cost.Run запускали?' };
+        if (t <= 0) return { ok: false, msg: 'Cost.t = 0: цикл ещё не отработал' };
+        if (k > 0) return { ok: false, msg: `в загруженном Cost уже ${k} команд CHK — это шаг 3; начните с отката` };
+        const org = rsc(m, 'ORG.rsc');
+        Object.assign(c.state, { tB: t, orgHdr: hdr(m, 'ORG.rsc'), orgKey: org.key, tE: undefined });
+        return { ok: true, msg: `программная проверка: ${t} мс, в коде ни одной CHK. Это ${(t * CYCLES_PER_MS / 300000).toFixed(1)} такта на оборот цикла.` };
+      } },
+    { text: `Соберите кодогенератор, знающий CHK:
+        <code>ORP.Compile ORG.Chk.Mod ~</code>. Имя файла другое, но модуль в
+        нём называется <code>ORG</code>, поэтому на диске заменится
+        <code>ORG.rsc</code>. Интерфейс тот же — и ключ тот же, так что
+        <code>ORP</code> загрузит новый кодогенератор, не заметив подмены.
+        Это самый большой модуль компилятора, но на этой машине он собирается
+        за два десятка миллионов команд — секунды.`,
+      check: (m, c) => {
+        if (c.state.tB === undefined) return { ok: false, msg: 'сначала шаг 1' };
+        const r = rsc(m, 'ORG.rsc');
+        if (hdr(m, 'ORG.rsc') === c.state.orgHdr) return { ok: false, msg: 'ORG.rsc ещё не пересобран' };
+        if (r.key !== c.state.orgKey)
+          return { ok: false, msg: `ключ ORG изменился (${r.key.toString(16).toUpperCase()}): ORP с таким не загрузится — собран не тот файл?` };
+        return r.codeWords > ORG_STOCK_WORDS
+          ? { ok: true, msg: `ORG.rsc пересобран: ${pl(r.codeWords, 'слово', 'слова', 'слов')} вместо ${ORG_STOCK_WORDS}, ключ прежний ${r.key.toString(16).toUpperCase()}` }
+          : { ok: false, msg: `ORG.rsc пересобран, но это стоковый ORG (${r.codeWords} слов)` };
+      } },
+    { text: `Выгрузите старый код из памяти: <code>System.Free Cost ORP ORG ~</code>.
+        Затем снова <code>ORP.Compile Cost.Mod ~</code> и <code>Cost.Run</code>.
+        Теперь перед <code>a[i]</code> стоит одна команда CHK, и проверяет
+        границу само железо.`,
+      check: (m, c) => {
+        if (c.state.tB === undefined) return { ok: false, msg: 'сначала шаг 1' };
+        const t = modVar(m, 'Cost', 0), k = chkInMemory(m, 'Cost');
+        if (t === null || k === null) return { ok: false, msg: 'модуль Cost не загружен' };
+        if (k === 0) return { ok: false, msg: 'в загруженном Cost нет ни одной CHK — старый код ещё в памяти (System.Free) или собран стоковым ORG' };
+        if (t <= 0 || t === c.state.tB) return { ok: false, msg: 'Cost.Run с новым кодом ещё не запускали' };
+        c.state.tE = t;
+        const d = c.state.tB - t;
+        return { ok: true, msg: `аппаратная проверка: ${t} мс против ${c.state.tB}. В коде ${k} CHK. Разница ${d} мс = ${(d * CYCLES_PER_MS / 300000).toFixed(2)} такта на индексацию.` };
+      } },
+    { text: `Ваше число: на сколько процентов быстрее стал цикл? Введите с одним
+        знаком после запятой.`,
+      answer: 'например 4.0',
+      check: (m, c) => {
+        if (c.state.tE === undefined) return { ok: false, msg: 'сначала шаг 3' };
+        const real = (c.state.tB - c.state.tE) * 100 / c.state.tB;
+        const got = parseFloat((c.answer || '').replace(',', '.'));
+        if (!isFinite(got)) return { ok: false, msg: 'введите число' };
+        return near(got, real, 0.3)
+          ? { ok: true, msg: `верно: ${real.toFixed(2)}%. Такт на индексацию из примерно ${(c.state.tB * CYCLES_PER_MS / 300000).toFixed(0)} на оборот цикла.` }
+          : { ok: false, msg: `получается ${real.toFixed(2)}%, а введено ${got}` };
+      } },
+  ],
+  payoff: `Железо экономит ровно одну команду и один такт на индексацию — не
+   больше. Доля зависит от того, сколько ещё работы в цикле: на голом цикле
+   страницы <a href="checks.html">цены проверки</a> это 9%, в вашем — около
+   четырёх, а на компиляторе, компилирующем систему, проверки целиком стоят
+   2,2% тактов (находка 21).
+   <br><br>
+   Поэтому и спор «проверки дорогие» не решается одним числом: его надо
+   мерить на своём коде. На этой машине это можно сделать честно — таймер
+   считает такты, кэша и предсказателя нет, и повтор даёт то же число до
+   миллисекунды.`,
+  hint: `Если на шаге 3 CHK не появилась — в памяти остался старый ORG: в
+    <code>System.Free</code> важен порядок, сначала те, кто импортирует
+    (<code>ORP</code>), потом импортируемый (<code>ORG</code>).`,
+},
 ];
 
 // Порядок в интерфейсе — по номеру из программы курса, а не по времени
@@ -514,3 +854,7 @@ function localise(lab) {
 }
 
 export const LABS = ALL.sort((a, b) => a.id - b.id).map(localise);
+
+// Чтение памяти машины — для прогона labs-test.mjs: он сверяет числа
+// лабораторных с тем, что видно в обход их проверок.
+export const MEM = { loaded, modVar, heap, chkInMemory };

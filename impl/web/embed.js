@@ -17,6 +17,9 @@
  *   start-label подпись кнопки запуска (по умолчанию английская)
  *   variant    какое железо: `base` (сток) или `chk` (с аппаратной проверкой
  *              границ массива). Меняется на лету — машина поднимается заново
+ *   files      файлы через пробел (относительно base), которые кладутся на
+ *              образ диска ДО загрузки: лабораторной нужен файл, которого на
+ *              эталонном образе нет. Смена тоже поднимает машину заново
  *   width      ширина канвы в CSS (по умолчанию 100%)
  *
  * Свойства и события: `.start()`, `.stop()`, `.reset()`, `.setButton(n)`,
@@ -26,6 +29,7 @@
  * `oberon-buttons` (состояние кнопок мыши), `oberon-error`.
  */
 import { makeRenderer, bindInput } from './machine.js';
+import { addFile } from './oberonfs.js';
 
 const HERE = new URL('.', import.meta.url);
 
@@ -62,12 +66,21 @@ async function loadProm(base) {
 class OberonMachine extends HTMLElement {
   // Подпись кнопки может приехать позже разметки: страница узнаёт свой язык
   // уже после того, как элемент поднялся.
-  static observedAttributes = ['start-label', 'variant'];
+  static observedAttributes = ['start-label', 'variant', 'files'];
   attributeChangedCallback(name, old, value) {
     if (name === 'start-label' && this._button) this._button.textContent = value;
-    // Смена железа = новая машина. Поток поднимается заново, образ грузится из
-    // кэша, так что переключение стоит доли секунды.
-    if (name === 'variant' && old !== null && old !== value && this._worker) this._reboot();
+    // Смена железа или состава диска = новая машина. Поток поднимается заново,
+    // образ грузится из кэша, так что переключение стоит доли секунды.
+    // Отсутствующий атрибут равен умолчанию: `variant` без значения — это base,
+    // и появление variant="base" на уже работающей машине ничего не меняет.
+    const norm = v => (name === 'variant' ? (v || 'base') : (v || '').trim());
+    if ((name === 'variant' || name === 'files') && norm(old) !== norm(value) && this._worker) {
+      // Лаборатория меняет оба атрибута подряд — машина поднимается один раз.
+      if (!this._rebootQueued) {
+        this._rebootQueued = true;
+        queueMicrotask(() => { this._rebootQueued = false; this._reboot(); });
+      }
+    }
   }
 
   async _reboot() {
@@ -149,11 +162,19 @@ class OberonMachine extends HTMLElement {
 
   async _boot() {
     if (this._worker) return;
-    this._worker = new Worker(new URL('worker.js', HERE), { type: 'module' });
-    this._worker.onmessage = e => this._onMessage(e.data);
-    const [prom, img] = await Promise.all([loadProm(this._base), loadDisk(this._base)]);
+    const w = this._worker = new Worker(new URL('worker.js', HERE), { type: 'module' });
+    w.onmessage = e => this._onMessage(e.data);
+    const [prom, disk] = await Promise.all([loadProm(this._base), loadDisk(this._base)]);
+    let img = disk;
+    for (const f of (this.getAttribute('files') || '').split(/\s+/).filter(Boolean)) {
+      const bytes = new Uint8Array(await (await fetch(new URL(f, this._base))).arrayBuffer());
+      img = addFile(img, f.split('/').pop(), bytes);
+    }
+    // Пока образ грузился, машину могли поднять заново (лаборатория сменила
+    // железо): этот поток уже снят, слать ему нечего.
+    if (this._worker !== w) return;
     // Образы уезжают с передачей владения: копировать мегабайт незачем.
-    this._worker.postMessage({ t: 'init', variant: this.getAttribute('variant') || 'base',
+    w.postMessage({ t: 'init', variant: this.getAttribute('variant') || 'base',
                               prom: prom.buffer, img: img.buffer },
                              [prom.buffer, img.buffer]);
   }

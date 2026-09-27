@@ -8,6 +8,8 @@
  * Ключи: <номер>.<поле> — intro, hint, payoff, title, level,
  *        <номер>.step.<индекс> для текста шага.
  */
+import { SOURCES, pre } from './lab-sources.js';
+
 export const EN = {
   // Названия глав методички: одни и те же у разных лабораторий, поэтому
   // ключом служит имя файла, а не номер задания.
@@ -208,4 +210,142 @@ END Idx.</pre>
   '7.title': 'The system rebuilds itself',
   '8.title': 'Fixed point: two generations',
   '9.title': 'Inside the code generator',
+
+  // ── 10: the garbage collector from inside ────────────────────────────────
+  '10.title': 'The garbage collector from inside',
+  '10.intro': `In lab 6 the heap ran out inside a command. Here you open the
+    collector itself: find where it is called from, type a module that makes
+    garbage, and look at the heap before and after the sweep. The check reads
+    the number of allocated bytes not from the screen but from the machine's
+    memory — from the variable <code>Kernel.allocated</code>, the same one
+    <code>System.Watch</code> prints.`,
+  '10.step.0': `Open the source of the main loop: type
+    <code>Edit.Open Oberon.Mod ~</code> at the end of <code>System.Tool</code>
+    and run it. Find <code>PROCEDURE GC</code> in it and the last lines of the
+    module:
+    <pre>ActCnt := 0; CurTask := NewTask(GC, 1000); Install(CurTask);</pre>
+    The collector is an <b>ordinary task</b> of the main loop, once a second.
+    But it does not sweep every time: only when the action counter
+    <code>ActCnt</code> has reached zero or the heap is nearly full. Every
+    keystroke and every click decrements <code>ActCnt</code>, and after a sweep
+    it is reset to the constant <code>BasicCycle</code>. Find it near the top of
+    the file and enter its value.`,
+  '10.step.1': `Now a module that makes garbage. <code>Edit.Open Junk.Mod ~</code>,
+    type it, save it (<code>Edit.Store</code>) and build it with
+    <code>ORP.Compile Junk.Mod ~</code>:
+    ${pre(SOURCES.Junk)}
+    The record type has to be named (<code>BlockDesc</code>), not a
+    <code>POINTER TO RECORD … END</code> right in the pointer declaration — the
+    check will tell you why.`,
+  '10.step.2': `Add the line <code>Junk.Make</code> to <code>System.Tool</code>
+    and run it, then <code>System.Watch</code> (top line of
+    <code>System.Tool</code>). The log shows <code>Heap speace</code> (Wirth's
+    typo): the heap grew by a quarter of a megabyte. All those blocks are
+    garbage: the pointer to them lived in the local variable <code>p</code>, and
+    the command is over.`,
+  '10.step.3': `Click <code>System.Collect</code> — it is on the same top line.
+    It does not sweep; it only sets <code>ActCnt := 0</code>. The sweep happens
+    when the main loop next reaches the <code>GC</code> task, within a second.
+    Wait, then <code>System.Watch</code> again.`,
+  '10.step.4': `One last thing: run <code>Junk.Make</code> <b>twice in a
+    row</b>, with no <code>System.Collect</code> in between. Two commands of
+    256,000 bytes do not fit into a 426 KB heap, even though the first half is
+    already garbage by the time the second command starts.`,
+  '10.payoff': `Oberon's collector is not a thread and not an interrupt but an
+   <b>ordinary task of the main loop</b>, one in the list, installed at boot by
+   <code>NewTask(GC, 1000)</code>. And it sweeps for one of two reasons: you
+   made twenty actions, or the heap is nearly full.
+   <br><br>
+   Why only between commands? Look at what it marks:
+   <code>Kernel.Mark(mod.ptr)</code> for every module — <b>global</b> pointers
+   only. It never scans the stack. While a command runs, live objects are held
+   by its local variables, and a sweep in the middle of the command would throw
+   them away. Between commands the stack is empty, and the global roots are
+   enough. The collector's whole precision is bought with one rule: sweep when
+   nobody is holding anything.`,
+  '10.hint': `The collector only runs when the main loop is free. If the heap is
+    already clean at step 3, you managed twenty actions and it came by itself;
+    run <code>Junk.Make</code> again.`,
+
+  // ── 11: one task at a time ───────────────────────────────────────────────
+  '11.title': 'One task at a time',
+  '11.intro': `Oberon has no threads and no preemption. There is one loop,
+    <code>Oberon.Loop</code>: it reads the mouse and keyboard and, when there is
+    no input, calls the <b>tasks</b> (<code>Oberon.Task</code>) in a circle. A
+    task is just a procedure the loop calls, and it must hand control back
+    quickly. Here you will write a task, starve it, and kill the system with
+    it.`,
+  '11.step.0': `<code>Edit.Open Tick.Mod ~</code>, type it, save it and build
+    it with <code>ORP.Compile Tick.Mod ~</code>:
+    ${pre(SOURCES.Tick)}
+    <code>Step</code> is the task: it counts its calls in <code>n</code>,
+    remembers the longest pause between them in <code>gap</code> (in
+    milliseconds) and blinks a small square at the bottom of the left track.`,
+  '11.step.1': `Add three lines to <code>System.Tool</code> —
+    <code>Tick.Start</code>, <code>Tick.Spin</code>, <code>Tick.Break</code> —
+    and run the first. A square starts blinking at the bottom left, and
+    <code>System.Watch</code> shows <code>Tasks 2</code>: the garbage collector
+    and yours.`,
+  '11.step.2': `Run <code>Tick.Spin</code>: the command spins in an empty loop
+    for a second. All that time the square does not blink, the mouse pointer
+    does not move, the collector does not come — only your command runs.`,
+  '11.step.3': `Now <code>Tick.Break</code>. The command itself is instant: it
+    only puts a second task, <code>Stuck</code>, into the circle, and that one
+    never returns. Its first call — and the system is dead. Only "Reset" helps.`,
+  '11.payoff': `All of Oberon's "multitasking" is a loop that calls procedures
+   in turn. No threads, no timer interrupts, no scheduler — and so no locks and
+   no races: while your code runs, <b>nothing else happens at all</b>, and there
+   is nobody to protect your data from.
+   <br><br>
+   The price is visible in steps 3 and 4: the system's responsiveness rests on
+   the politeness of every procedure. A second in one command is a second of
+   frozen mouse; an endless loop in one task is a dead machine. Windows 3.x and
+   classic Mac OS lived the same way; the difference is that Oberon does not
+   pretend it could do otherwise.`,
+  '11.hint': `Type each line to run on a new line of its own and run it with a
+    middle click. If you cannot see the square, it is at the very bottom of the
+    left track, near its right edge.`,
+
+  // ── 12: the cost of a check, by hand ─────────────────────────────────────
+  '12.title': 'The cost of a check, by hand',
+  '12.intro': `The project's central number is what an array bounds check
+    costs. Here you get it <b>on your own code</b>. For this lab the machine is
+    switched to the <b>core with the CHK instruction</b> (as on the
+    <a href="checks.html">cost of a check</a> page), and the disk carries
+    <code>ORG.Chk.Mod</code> — a code generator that emits a single CHK instead
+    of a compare and a branch. The stock system runs on this core exactly as on
+    the ordinary one, cycle for cycle.`,
+  '12.step.0': `<code>Edit.Open Cost.Mod ~</code>, type it, save it, build it
+    with <code>ORP.Compile Cost.Mod ~</code> and run <code>Cost.Run</code>:
+    ${pre(SOURCES.Cost)}
+    The loop does 300,000 indexings <code>a[i]</code>, and before each the
+    stock compiler puts two instructions: a compare and a conditional branch.
+    The time comes from <code>Kernel.Time</code>, in milliseconds; it appears
+    in the log.`,
+  '12.step.1': `Build the code generator that knows CHK:
+    <code>ORP.Compile ORG.Chk.Mod ~</code>. The file name differs, but the
+    module inside is called <code>ORG</code>, so <code>ORG.rsc</code> is
+    replaced on disk. The interface is the same — and so is the key, so
+    <code>ORP</code> will load the new code generator without noticing the
+    swap. It is the compiler's largest module, yet it builds in about twenty
+    million instructions — seconds.`,
+  '12.step.2': `Unload the old code from memory:
+    <code>System.Free Cost ORP ORG ~</code>. Then <code>ORP.Compile Cost.Mod ~</code>
+    and <code>Cost.Run</code> again. Now a single CHK stands before
+    <code>a[i]</code>, and the hardware itself checks the bound.`,
+  '12.step.3': `Your number: by how many percent did the loop get faster? Enter
+    it with one decimal.`,
+  '12.payoff': `The hardware saves exactly one instruction and one cycle per
+   indexing — no more. The share depends on how much other work the loop does:
+   on the bare loop of the <a href="checks.html">cost of a check</a> page it is
+   9%, in yours about four, and on the compiler compiling the system the checks
+   cost 2.2% of cycles altogether (finding 21).
+   <br><br>
+   That is why the "checks are expensive" argument is not settled by one
+   number: it has to be measured on your own code. On this machine that can be
+   done honestly — the timer counts cycles, there is no cache and no predictor,
+   and a repeat gives the same number to the millisecond.`,
+  '12.hint': `If no CHK appears at step 3, the old ORG is still in memory: order
+    matters in <code>System.Free</code> — importers first (<code>ORP</code>),
+    then the imported (<code>ORG</code>).`,
 };

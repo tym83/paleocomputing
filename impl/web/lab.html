@@ -222,7 +222,17 @@ function render() {
   });
 }
 
-$('pick').onchange = e => { lab = LABS[+e.target.value]; m.forget(lab.id); render(); };
+// Машина под лабораторную. Большинству нужен стоковый процессор и эталонный
+// диск; лаборатории, которой нужно другое железо или файл сверх эталона, это
+// объявляют полем `machine`, и машина поднимается заново — как на checks.html.
+function applyMachine(l) {
+  const want = l.machine || {};
+  m.setAttribute('variant', want.variant || 'base');
+  if (want.files && want.files.length) m.setAttribute('files', want.files.join(' '));
+  else m.removeAttribute('files');
+}
+applyMachine(lab);
+$('pick').onchange = e => { lab = LABS[+e.target.value]; applyMachine(lab); m.forget(lab.id); render(); };
 // Масштаб экрана. Выбор запоминается: человек настраивает его один раз.
 const stage = document.querySelector('.stage'), zoom = $('zoom');
 function applyZoom(k) {

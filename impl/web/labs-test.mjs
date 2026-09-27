@@ -3,8 +3,8 @@
 // всегда зелёная или всегда красная, бесполезна и должна ломать сборку.
 import fs from 'node:fs';
 import { Machine } from './machine.js';
-import { LABS } from './labs.js';
-import { OberonFS, readText } from './oberonfs.js';
+import { LABS, SOURCES, MEM } from './labs.js';
+import { OberonFS, readText, addFile } from './oberonfs.js';
 
 const prom = new Uint32Array(
   fs.readFileSync('prom_sd.mem', 'utf8').trim().split('\n').map(l => parseInt(l, 16)));
@@ -13,9 +13,23 @@ const img = new Uint8Array(fs.readFileSync('oberon.dsk'));
 let bad = 0;
 const say = (ok, s) => { console.log(`    ${ok ? '✅' : '❌'} ${s}`); if (!ok) bad++; };
 
+// `node labs-test.mjs 10 12` — прогнать только названные лабораторные (весь
+// набор идёт четверть часа). Статическая проверка страницы идёт всегда.
+const ONLY = new Set(process.argv.slice(2).map(Number));
+
+// Машина под лабораторную: железо и файлы сверх эталона — из её поля
+// `machine`, ровно как их поднимает страница (embed.js).
+async function machineFor(L, variant) {
+  const want = L.machine || {};
+  let disk = img;
+  for (const f of want.files || []) disk = addFile(disk, f, new Uint8Array(fs.readFileSync(f)));
+  return Machine.create(prom, disk, variant || want.variant || 'base');
+}
+
 async function lab(id, script) {
   const L = LABS.find(l => l.id === id);
-  const m = await Machine.create(prom, img);
+  if (ONLY.size && !ONLY.has(id)) return null;
+  const m = await machineFor(L);
   console.log(`\n  Лаба ${L.id} «${L.title}» (${L.level})`);
   await script(m, L);
   return m;
@@ -174,6 +188,119 @@ await lab(9, async (m, L) => {
   const r2 = L.steps[1].check(m, c); say(r2.ok, 'шаг 2: ' + r2.msg);
 });
 
+// Строки команд, набранные после makeFile. Курсор ставится щелчком ПРАВЕЕ
+// конца текста: щелчок по (700, 620) попадает в последнюю строку на x = 700,
+// то есть в середину «Edit.Open …», и хвост этой строки прилипает к
+// набранному («Junk.Make» превращался в «Junk.Makeen Junk.Mod ~», и команда
+// не находилась). Набор медленнее обычного: в длинной строке с заглавными
+// теряется Shift.
+const LINE = y => 581 + 12 * y;           // 0 — первая строка после Edit.Open
+function typeLines(m, lines) {
+  m.click(1010, 620, 4);
+  for (const l of lines) { m.type('\n' + l, 10000); m.run(1e6); }
+}
+const go = (m, n) => { for (let i = 0; i < n; i++) m.run(1e6); };
+
+// ── Лаба 10: сборщик мусора изнутри ─────────────────────────────────────────
+await lab(10, async (m, L) => {
+  const c = { state: {}, answer: '' };
+  go(m, 12);
+  c.answer = '7';
+  say(!L.steps[0].check(m, c).ok, 'шаг 1 с неверным числом — не пройден');
+  c.answer = '20';
+  const r0 = L.steps[0].check(m, c); say(r0.ok, 'шаг 1: ' + r0.msg);
+  const k0 = MEM.heap(m);
+  say(k0.ok && k0.allocated > 0 && k0.allocated < 100000,
+      `Kernel.allocated найден по адресу из дескриптора Kernel: ${k0.allocated} байт после загрузки`);
+  say(!L.steps[1].check(m, c).ok, 'шаг 2 до сборки — не пройден');
+  await makeFile(m, 'Junk.Mod', SOURCES.Junk);
+  say(readText(new OberonFS(m).read(new OberonFS(m).files().get('Junk.Mod'))) === SOURCES.Junk,
+      'Junk.Mod набран посимвольно');
+  typeLines(m, ['ORP.Compile Junk.Mod ~', 'Junk.Make']);
+  m.click(690, LINE(0), 2); go(m, 20);
+  const r1 = L.steps[1].check(m, c); say(r1.ok, 'шаг 2: ' + r1.msg);
+  say(!L.steps[2].check(m, c).ok, 'шаг 3 до Junk.Make — не пройден');
+  m.click(670, LINE(1), 2); go(m, 3);
+  m.click(845, 282, 2); go(m, 3);                // System.Watch
+  const r2 = L.steps[2].check(m, c); say(r2.ok, 'шаг 3: ' + r2.msg);
+  // Сборщик просыпается раз в секунду (≈16 млн команд) — и ничего не делает.
+  go(m, 30);
+  say(!L.steps[3].check(m, c).ok, 'шаг 4: две секунды простоя — мусор на месте, уборки не было');
+  m.click(940, 282, 2); go(m, 20);               // System.Collect
+  const r3 = L.steps[3].check(m, c); say(r3.ok, 'шаг 4 после System.Collect: ' + r3.msg);
+  say(!L.steps[4].check(m, c).ok, 'шаг 5 до двойного Junk.Make — не пройден');
+  m.click(670, LINE(1), 2); go(m, 3);
+  m.click(670, LINE(1), 2); go(m, 3);
+  const r4 = L.steps[4].check(m, c); say(r4.ok, 'шаг 5: ' + r4.msg);
+  // Обещание из проверки: по второму поводу сборщик приходит сам.
+  go(m, 20);
+  const k5 = MEM.heap(m);
+  say(k5.allocated < 100000, `через секунду без System.Collect в куче ${k5.allocated} байт — сборщик пришёл сам`);
+});
+
+// ── Лаба 11: одна задача за раз ─────────────────────────────────────────────
+await lab(11, async (m, L) => {
+  const c = { state: {}, answer: '' };
+  go(m, 12);
+  say(!L.steps[0].check(m, c).ok, 'шаг 1 до сборки — не пройден');
+  await makeFile(m, 'Tick.Mod', SOURCES.Tick);
+  typeLines(m, ['ORP.Compile Tick.Mod ~', 'Tick.Start', 'Tick.Spin', 'Tick.Break']);
+  m.click(690, LINE(0), 2); go(m, 20);
+  const r1 = L.steps[0].check(m, c); say(r1.ok, 'шаг 1: ' + r1.msg);
+  say(!L.steps[1].check(m, c).ok, 'шаг 2 до Tick.Start — не пройден');
+  m.click(665, LINE(1), 2); go(m, 3);
+  const r2 = L.steps[1].check(m, c); say(r2.ok, 'шаг 2: ' + r2.msg);
+  say(!L.steps[2].check(m, c).ok, 'шаг 3 до Tick.Spin — не пройден');
+  m.click(665, LINE(2), 2); go(m, 30);
+  const r3 = L.steps[2].check(m, c); say(r3.ok, 'шаг 3: ' + r3.msg);
+  say(!L.steps[3].check(m, c).ok, 'шаг 4 до Tick.Break — не пройден');
+  m.click(665, LINE(3), 2); go(m, 3);
+  const r4 = L.steps[3].check(m, c); say(r4.ok, 'шаг 4: ' + r4.msg);
+});
+
+// ── Лаба 12: цена проверки своими руками ────────────────────────────────────
+const costOnce = async (m) => {
+  await makeFile(m, 'Cost.Mod', SOURCES.Cost);
+  typeLines(m, ['ORP.Compile Cost.Mod ~', 'Cost.Run', 'ORP.Compile ORG.Chk.Mod ~', 'System.Free Cost ORP ORG ~']);
+  m.click(690, LINE(0), 2); go(m, 25);
+  m.click(670, LINE(1), 2); go(m, 10);
+};
+let tBase = null;
+await lab(12, async (m, L) => {
+  // Сначала то же самое на СТОКОВОМ ядре: лаборатория утверждает, что
+  // стоковая система на ядре с CHK работает такт в такт так же.
+  const b = await machineFor(L, 'base');
+  go(b, 12); await costOnce(b);
+  tBase = MEM.modVar(b, 'Cost', 0);
+
+  const c = { state: {}, answer: '' };
+  go(m, 12);
+  say(m.variant === 'chk' && new OberonFS(m).files().has('ORG.Chk.Mod'),
+      'машина на ядре с CHK, ORG.Chk.Mod лежит на диске и виден системе');
+  say(!L.steps[0].check(m, c).ok, 'шаг 1 до Cost.Run — не пройден');
+  await costOnce(m);
+  const r1 = L.steps[0].check(m, c); say(r1.ok, 'шаг 1: ' + r1.msg);
+  say(c.state.tB === tBase, `стоковое ядро дало то же время: ${tBase} мс против ${c.state.tB}`);
+  say(!L.steps[1].check(m, c).ok, 'шаг 2 до сборки ORG.Chk.Mod — не пройден');
+  const F = () => new OberonFS(m), h0 = F().files().get('ORG.rsc');
+  m.click(690, LINE(2), 2);
+  let n = 0;
+  while (F().files().get('ORG.rsc') === h0 && n < 300) { go(m, 5); n += 5; }
+  go(m, 5);
+  const r2 = L.steps[1].check(m, c); say(r2.ok, `шаг 2 (компиляция ORG ≈ ${n} млн команд): ` + r2.msg);
+  say(!L.steps[2].check(m, c).ok, 'шаг 3 до пересборки Cost — не пройден');
+  m.click(690, LINE(3), 2); go(m, 5);            // System.Free
+  m.click(690, LINE(0), 2); go(m, 30);           // ORP.Compile Cost.Mod
+  m.click(670, LINE(1), 2); go(m, 10);           // Cost.Run
+  const r3 = L.steps[2].check(m, c); say(r3.ok, 'шаг 3: ' + r3.msg);
+  c.answer = 'мусор';
+  say(!L.steps[3].check(m, c).ok, 'шаг 4 с нечисловым ответом — не пройден');
+  c.answer = '50';
+  say(!L.steps[3].check(m, c).ok, 'шаг 4 с неверным числом — не пройден');
+  c.answer = ((c.state.tB - c.state.tE) * 100 / c.state.tB).toFixed(1);
+  const r4 = L.steps[3].check(m, c); say(r4.ok, 'шаг 4: ' + r4.msg);
+});
+
 // ── статическая проверка страницы-оболочки ──────────────────────────────────
 // Браузер здесь не поднять, поэтому хотя бы убеждаемся, что разметка и скрипт
 // не разошлись: каждый getElementById должен находить свой элемент, а каждый
@@ -190,6 +317,21 @@ await lab(9, async (m, L) => {
   const imports = [...html.matchAll(/from '(\.[^']+)'/g)].map(m => m[1]);
   const lost = imports.filter(f => !fs.existsSync(f));
   say(lost.length === 0, lost.length ? `нет файлов: ${lost.join(', ')}` : `импорты на месте: ${imports.join(', ')}`);
+  // Кодогенератор лабораторной 12 — принятая конфигурация E из patches/, и
+  // отличаться от неё он вправе только штампом версии: иначе лаборатория
+  // меряет не ту проверку, что главный опыт проекта.
+  {
+    const lines = s => s.replace(/\r\n?/g, '\n').split('\n');
+    const lab = lines(fs.readFileSync('ORG.Chk.Mod', 'latin1'));
+    const cfg = lines(fs.readFileSync('../patches/ORG-cfgE.Mod', 'latin1'));
+    const i = cfg.findIndex(x => x.includes('(*CONFIG E: modules using the CHK instruction'));
+    const k = lab.findIndex(x => x.includes('(*LAB VARIANT'));
+    const same = (a, b) => a.length === b.length && a.every((x, n) => x === b[n]);
+    say(i > 0 && k === i && same(cfg.slice(0, i), lab.slice(0, k))
+        && same(cfg.slice(i + 6), lab.slice(k + 5))
+        && lab[k + 4].trim() === 'Files.WriteByte(R, version);',
+        'ORG.Chk.Mod = patches/ORG-cfgE.Mod, кроме штампа версии');
+  }
   const labIds = LABS.map(l => l.id);
   say(new Set(labIds).size === labIds.length, `номера лабораторий уникальны: ${labIds.join(', ')}`);
   for (const L of LABS) {

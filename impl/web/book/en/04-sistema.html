@@ -128,7 +128,31 @@ the heap runs out. You get</p>
 dereference, and <code>NIL</code> is what the allocation returned. The same modules, built
 one per command, go through without a complaint.</p>
 <p>We walked into this twice: first building the compiler, then rebuilding the
-whole system. The rule is simple — <strong>one large module per command</strong>.</p><div class="foot"><span><a href="03-yazyk.html">← The language: Oberon in one chapter</a></span><span><a href="05-moduli.html">Modules, symbol files and keys →</a></span></div>
+whole system. The rule is simple — <strong>one large module per command</strong>.</p>
+<h2>Tasks instead of threads</h2>
+<p>Why between commands? Because the system has neither threads nor timer
+interrupts — there is one loop, <code>Oberon.Loop</code>. It reads the mouse
+and keyboard and, when there is no input, calls the <strong>tasks</strong> in a
+circle: procedures put into the circle with <code>Oberon.Install</code>. A task
+must hand control back quickly — nothing can take it away. While a command or
+a task runs, nothing else happens: the mouse pointer does not move, the caret
+does not blink, other tasks do not run. An endless loop in a task kills the
+whole system. You will do all of this yourself in lab 11.</p>
+<p>The garbage collector is a task too. The last lines of
+<code>Oberon.Mod</code>:</p>
+<pre><code>ActCnt := 0; CurTask := NewTask(GC, 1000); Install(CurTask);
+</code></pre>
+<p>Once a second the loop calls <code>GC</code>, but it sweeps only for one of
+two reasons: <code>BasicCycle</code> = 20 human actions (keystrokes and clicks)
+have passed since the last sweep, or less than 64 KB is left in the heap.
+<code>System.Collect</code> sweeps nothing itself — it only zeroes the action
+counter.</p>
+<p>And the main point: the collector marks from the modules'
+<strong>global</strong> pointers (<code>Kernel.Mark(mod.ptr)</code>) and never
+scans the stack. In the middle of a command live objects are held by its local
+variables, and a sweep would throw them away. Hence only between commands,
+when the stack is empty. You will watch the heap before and after a sweep,
+through the variable <code>Kernel.allocated</code>, in lab 10.</p><div class="foot"><span><a href="03-yazyk.html">← The language: Oberon in one chapter</a></span><span><a href="05-moduli.html">Modules, symbol files and keys →</a></span></div>
 
 </article>
 </div>
