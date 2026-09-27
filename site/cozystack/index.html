@@ -94,7 +94,24 @@ cozypkg tap oci://ghcr.io/tym83/paleocomputing/languages:v0.1.10</code></pre>
       <li><h3>A <code>virt-launcher</code> image that knows RISC5</h3><p>It carries our QEMU target and a libvirt with the architecture compiled in — libvirt asks the emulator what it is rather than trusting the domain. The image is published per catalog release as <code>ghcr.io/tym83/paleocomputing/virt-launcher:&lt;kubevirt&gt;-risc5-&lt;release&gt;</code> and is built for KubeVirt 1.8.4 (current Cozystack releases) and 1.9.0 (Cozystack main), one image per version with the KubeVirt version in the tag: the launcher must match the KubeVirt version exactly.</p></li>
     </ol>
     <p>
-      The launcher image is switched on the KubeVirt resource, through
+      <strong>The recommended way is the platform component.</strong> Tap the
+      fourth repository and install <code>kubevirt-paleo-launcher</code> — it is
+      privileged, so it needs the operator's explicit consent:
+    </p>
+    <pre><code>cozypkg tap oci://ghcr.io/tym83/paleocomputing/platform:v0.1.10
+cozypkg add paleocomputing.platform --allow-privileged</code></pre>
+    <p>
+      It watches the cluster's KubeVirt version and keeps the launcher matched to
+      it. It changes one argument only — the image after
+      <code>--launcher-image</code> — and leaves every other argument and every
+      other customization alone. On a KubeVirt version it has no image for, or
+      on any doubt, it removes its change: foreign machines stop, every other VM
+      keeps working. Uninstalling it removes the change as well. The launcher
+      carries every foreign architecture in the catalog, so one component
+      serves the whole family.
+    </p>
+    <p>
+      To do the same by hand: the launcher image is switched on the KubeVirt resource, through
       <code>customizeComponents</code>. The patch replaces the whole argument
       list of <code>virt-controller</code>, so start from the current one and
       change only the launcher image:

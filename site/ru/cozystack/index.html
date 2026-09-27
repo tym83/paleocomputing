@@ -94,7 +94,23 @@ cozypkg tap oci://ghcr.io/tym83/paleocomputing/languages:v0.1.10</code></pre>
       <li><h3>Образ <code>virt-launcher</code>, знающий RISC5</h3><p>В нём наша цель QEMU и libvirt со вкомпилированной архитектурой — libvirt спрашивает архитектуру у эмулятора, а не верит описанию. Образ выкладывается к каждому выпуску каталога как <code>ghcr.io/tym83/paleocomputing/virt-launcher:&lt;kubevirt&gt;-risc5-&lt;выпуск&gt;</code> и собирается под KubeVirt 1.8.4 (нынешние выпуски Cozystack) и 1.9.0 (Cozystack main) — по образу на версию, с версией KubeVirt в теге: launcher обязан совпадать с версией KubeVirt в точности.</p></li>
     </ol>
     <p>
-      Образ переключается на ресурсе KubeVirt, через
+      <strong>Рекомендуемый путь — компонент платформы.</strong> Подключите
+      четвёртый репозиторий и поставьте <code>kubevirt-paleo-launcher</code>; он
+      привилегированный, поэтому нужно явное согласие оператора:
+    </p>
+    <pre><code>cozypkg tap oci://ghcr.io/tym83/paleocomputing/platform:v0.1.10
+cozypkg add paleocomputing.platform --allow-privileged</code></pre>
+    <p>
+      Он следит за версией KubeVirt в кластере и держит launcher в паре с ней.
+      Меняет ровно один аргумент — образ после <code>--launcher-image</code>, —
+      остальные аргументы и чужие настройки не трогает. На версии KubeVirt, под
+      которую образа нет, или при любом сомнении снимает свою правку: чужие
+      машины останавливаются, все прочие работают. При удалении правка тоже
+      снимается. Launcher несёт все чужие архитектуры каталога, поэтому
+      компонент один на всё семейство.
+    </p>
+    <p>
+      То же руками: образ переключается на ресурсе KubeVirt, через
       <code>customizeComponents</code>. Правка заменяет весь список аргументов
       <code>virt-controller</code>, поэтому возьмите текущий и поменяйте только
       образ launcher:
