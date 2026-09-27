@@ -183,6 +183,12 @@ jobs:
         with:
           install: true
 
+      # ⚠ Без этого кэш type=gha молча не работает. buildx берёт токен кэша
+      # из ACTIONS_RUNTIME_TOKEN, а шагу `run` его не дают — только самим
+      # действиям. Нет токена — buildx выбрасывает --cache-from/--cache-to без
+      # единого слова, и сборка каждый раз идёт с нуля.
+      - uses: crazy-max/ghaction-github-runtime@v4
+
       - uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -194,8 +200,11 @@ jobs:
       - id: meta
         run: |
           tag="${{ needs.source.outputs.tag }}"
-          kv=$(sed -n 's|^FROM quay.io/kubevirt/virt-launcher:||p' kubevirt/Containerfile)
-          [ -n "$kv" ] || { echo "не найдена версия KubeVirt в Containerfile"; exit 1; }
+          # Основа прибита дайджестом — `v1.8.4@sha256:...`, — а в тег идёт
+          # только версия. Та же строка — в launcher.yml.
+          kv=$(sed -n 's|^FROM quay.io/kubevirt/virt-launcher:\([^@[:space:]]*\).*|\1|p' kubevirt/Containerfile)
+          echo "$kv" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+            || { echo "не найдена версия KubeVirt в Containerfile: '$kv'"; exit 1; }
           owner=$(echo "${{ github.repository_owner }}" | tr 'A-Z' 'a-z')
           echo "image=${{ env.REGISTRY }}/$owner/paleocomputing/virt-launcher" >> "$GITHUB_OUTPUT"
           echo "tag=$kv-risc5-$tag" >> "$GITHUB_OUTPUT"
@@ -213,20 +222,9 @@ jobs:
       - name: Подписать образ
         run: cosign sign --yes "${{ steps.meta.outputs.image }}@${{ steps.build.outputs.digest }}"
 
-      # Содержимое, а не факт сборки: машина в образе должна знать chk —
-      # ради этого образ и пересобирается.
+      # Содержимое, а не факт сборки. Та же проверка идёт на PR (launcher.yml).
       - name: Проверить, что эмулятор знает chk
-        run: |
-          set -euo pipefail
-          ref="${{ steps.meta.outputs.image }}@${{ steps.build.outputs.digest }}"
-          docker run --rm --entrypoint /usr/local/bin/qemu-system-risc5 "$ref" \
-            -machine oberon,help | tee /tmp/props.txt
-          grep -q '^ *chk=' /tmp/props.txt || { echo "❌ у машины нет свойства chk"; exit 1; }
-          docker run --rm --entrypoint sh "$ref" -c 'test -x /usr/bin/onDefineDomain' \
-            || { echo "❌ в образе нет перехватчика"; exit 1; }
-          # Без раскладки QEMU с -vnc не стартует, а консоль дашборда — это VNC.
-          docker run --rm --entrypoint sh "$ref" -c 'test -s /usr/local/share/qemu/keymaps/en-us' \
-            || { echo "❌ в образе нет раскладок клавиатуры для VNC"; exit 1; }
+        run: kubevirt/check_image.sh "${{ steps.meta.outputs.image }}@${{ steps.build.outputs.digest }}"
 
       - name: Итог
         run: |
