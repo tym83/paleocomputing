@@ -1,0 +1,84 @@
+
+build/cheriot/cheriot/release/bounds_bench:	file format elf32-littleriscv
+
+Disassembly of section .bench_code:
+
+20045a28 <sum_a>:
+20045a28:      	beqz	a1, 0x20045a4c <sum_a+0x24>
+20045a2a:      	li	a3, 0x0
+20045a2c:      	li	a4, 0x0
+20045a2e:      	li	a2, 0x0
+20045a30:      	slli	a5, a4, 0x2
+20045a34:      	ct.cincoffset	a5, a0, a5
+20045a38:      	ct.clw	a5, 0x0(a5)
+20045a3a:      	addi	a4, a4, 0x1
+20045a3c:      	addi	a3, a3, 0x1
+20045a3e:      	add	a2, a2, a5
+20045a40:      	andi	a4, a4, 0x3f
+20045a44:      	bne	a3, a1, 0x20045a30 <sum_a+0x8>
+20045a48:      	mv	a0, a2
+20045a4a:      	ct.cret
+20045a4c:      	li	a0, 0x0
+20045a4e:      	ct.cret
+
+20045a50 <sum_b>:
+20045a50:      	ct.clw	a3, -0x84(gp)
+20045a54:      	beqz	a1, 0x20045a7e <sum_b+0x2e>
+20045a56:      	li	a4, 0x0
+20045a58:      	li	a2, 0x0
+20045a5a:      	li	a5, 0x0
+20045a5c:      	bgeu	a5, a3, 0x20045a82 <sum_b+0x32>
+20045a60:      	slli	t0, a5, 0x2
+20045a64:      	ct.cincoffset	t0, a0, t0
+20045a68:      	ct.clw	t0, 0x0(t0)
+20045a6c:      	addi	a5, a5, 0x1
+20045a6e:      	addi	a4, a4, 0x1
+20045a70:      	add	a2, a2, t0
+20045a72:      	andi	a5, a5, 0x3f
+20045a76:      	bne	a4, a1, 0x20045a5c <sum_b+0xc>
+20045a7a:      	mv	a0, a2
+20045a7c:      	ct.cret
+20045a7e:      	li	a0, 0x0
+20045a80:      	ct.cret
+20045a82:      	unimp
+
+Disassembly of section .probe_code:
+
+200466f2 <sum_a>:
+200466f2:      	beqz	a1, 0x20046716 <sum_a+0x24>
+200466f4:      	li	a3, 0x0
+200466f6:      	li	a4, 0x0
+200466f8:      	li	a2, 0x0
+200466fa:      	slli	a5, a4, 0x2
+200466fe:      	ct.cincoffset	a5, a0, a5
+20046702:      	ct.clw	a5, 0x0(a5)
+20046704:      	addi	a4, a4, 0x1
+20046706:      	addi	a3, a3, 0x1
+20046708:      	add	a2, a2, a5
+2004670a:      	andi	a4, a4, 0x3f
+2004670e:      	bne	a3, a1, 0x200466fa <sum_a+0x8>
+20046712:      	mv	a0, a2
+20046714:      	ct.cret
+20046716:      	li	a0, 0x0
+20046718:      	ct.cret
+
+2004671a <sum_b>:
+2004671a:      	ct.clw	a3, -0x84(gp)
+2004671e:      	beqz	a1, 0x20046748 <sum_b+0x2e>
+20046720:      	li	a4, 0x0
+20046722:      	li	a2, 0x0
+20046724:      	li	a5, 0x0
+20046726:      	bgeu	a5, a3, 0x2004674c <sum_b+0x32>
+2004672a:      	slli	t0, a5, 0x2
+2004672e:      	ct.cincoffset	t0, a0, t0
+20046732:      	ct.clw	t0, 0x0(t0)
+20046736:      	addi	a5, a5, 0x1
+20046738:      	addi	a4, a4, 0x1
+2004673a:      	add	a2, a2, t0
+2004673c:      	andi	a5, a5, 0x3f
+20046740:      	bne	a4, a1, 0x20046726 <sum_b+0xc>
+20046744:      	mv	a0, a2
+20046746:      	ct.cret
+20046748:      	li	a0, 0x0
+2004674a:      	ct.cret
+2004674c:      	unimp
