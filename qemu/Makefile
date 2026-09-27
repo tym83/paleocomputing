@@ -1,12 +1,13 @@
 # Цель RISC5 для QEMU — своя сборка.
 QEMU_DECODETREE ?= /tmp/decodetree.py
 
-.PHONY: check decodetree help build diff
+.PHONY: check decodetree help build diff fp
 
 help:
 	@echo "  make check   проверить декодер генератором самого QEMU"
 	@echo "  make build   собрать qemu-system-risc5 в контейнере"
 	@echo "  make diff    сверить QEMU с моделью, снятой с настоящего RTL"
+	@echo "  make fp      сверить плавающую точку с эталоном risc-fp.c"
 
 # Скачиваем генератор, если его нет: он маленький и лежит в дереве QEMU.
 $(QEMU_DECODETREE):
@@ -51,3 +52,9 @@ build:
 # Главная проверка цели: не «собралось», а «считает то же, что железо».
 diff:
 	@python3 test/compare.py $(abspath $(QEMU_SRC))
+
+# Плавающая точка против эталона risc-fp.c: таблица, ПЗУ, прогон, сверка и
+# отрицательный контроль — одной целью. Раньше это было сделано один раз
+# руками, и правка fp.c могла сломать арифметику молча.
+fp:
+	@python3 test/fp_check.py $(abspath $(QEMU_SRC))
