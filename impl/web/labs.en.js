@@ -306,4 +306,46 @@ END Idx.</pre>
     middle click. If you cannot see the square, it is at the very bottom of the
     left track, near its right edge.`,
 
+  // ── 12: the cost of a check, by hand ─────────────────────────────────────
+  '12.title': 'The cost of a check, by hand',
+  '12.intro': `The project's central number is what an array bounds check
+    costs. Here you get it <b>on your own code</b>. For this lab the machine is
+    switched to the <b>core with the CHK instruction</b> (as on the
+    <a href="checks.html">cost of a check</a> page), and the disk carries
+    <code>ORG.Chk.Mod</code> — a code generator that emits a single CHK instead
+    of a compare and a branch. The stock system runs on this core exactly as on
+    the ordinary one, cycle for cycle.`,
+  '12.step.0': `<code>Edit.Open Cost.Mod ~</code>, type it, save it, build it
+    with <code>ORP.Compile Cost.Mod ~</code> and run <code>Cost.Run</code>:
+    ${pre(SOURCES.Cost)}
+    The loop does 300,000 indexings <code>a[i]</code>, and before each the
+    stock compiler puts two instructions: a compare and a conditional branch.
+    The time comes from <code>Kernel.Time</code>, in milliseconds; it appears
+    in the log.`,
+  '12.step.1': `Build the code generator that knows CHK:
+    <code>ORP.Compile ORG.Chk.Mod ~</code>. The file name differs, but the
+    module inside is called <code>ORG</code>, so <code>ORG.rsc</code> is
+    replaced on disk. The interface is the same — and so is the key, so
+    <code>ORP</code> will load the new code generator without noticing the
+    swap. It is the compiler's largest module, yet it builds in about twenty
+    million instructions — seconds.`,
+  '12.step.2': `Unload the old code from memory:
+    <code>System.Free Cost ORP ORG ~</code>. Then <code>ORP.Compile Cost.Mod ~</code>
+    and <code>Cost.Run</code> again. Now a single CHK stands before
+    <code>a[i]</code>, and the hardware itself checks the bound.`,
+  '12.step.3': `Your number: by how many percent did the loop get faster? Enter
+    it with one decimal.`,
+  '12.payoff': `The hardware saves exactly one instruction and one cycle per
+   indexing — no more. The share depends on how much other work the loop does:
+   on the bare loop of the <a href="checks.html">cost of a check</a> page it is
+   9%, in yours about four, and on the compiler compiling the system the checks
+   cost 2.2% of cycles altogether (finding 21).
+   <br><br>
+   That is why the "checks are expensive" argument is not settled by one
+   number: it has to be measured on your own code. On this machine that can be
+   done honestly — the timer counts cycles, there is no cache and no predictor,
+   and a repeat gives the same number to the millisecond.`,
+  '12.hint': `If no CHK appears at step 3, the old ORG is still in memory: order
+    matters in <code>System.Free</code> — importers first (<code>ORP</code>),
+    then the imported (<code>ORG</code>).`,
 };

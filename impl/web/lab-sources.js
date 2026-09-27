@@ -46,5 +46,21 @@ END Junk.
 BEGIN T := Oberon.NewTask(Step, 100)
 END Tick.
 `,
+  Cost: `MODULE Cost;
+  IMPORT Kernel, Texts, Oberon;
+  VAR t*: INTEGER; a: ARRAY 1000 OF INTEGER; W: Texts.Writer;
+  PROCEDURE Run*;
+    VAR i, k, s: INTEGER;
+  BEGIN t := Kernel.Time(); s := 0;
+    FOR k := 1 TO 300 DO
+      FOR i := 0 TO 999 DO s := s + a[i] END
+    END;
+    t := Kernel.Time() - t;
+    Texts.WriteString(W, "Cost.Run ms"); Texts.WriteInt(W, t, 6);
+    Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf)
+  END Run;
+BEGIN Texts.OpenWriter(W)
+END Cost.
+`,
 };
 export const pre = s => `<pre>${s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>`;

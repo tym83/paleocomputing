@@ -4,7 +4,7 @@
 // Уровни из плана серии: смотреть / менять / ломать / измерять / строить.
 // Каждая опирается на то, что уже доказано в impl/docs.
 
-import { OberonFS, parseRsc, readText } from './oberonfs.js';
+import { OberonFS, parseRsc, readText, isChk } from './oberonfs.js';
 import { LANG } from './i18n.js';
 import { EN } from './labs.en.js';
 import { SOURCES, pre } from './lab-sources.js';
@@ -76,6 +76,22 @@ function heap(m) {
   k.ok = modName(m, KERNEL_DESC) === 'Kernel' && k.heapOrg === m.ram(24) && k.memLim === m.ram(12);
   return k;
 }
+/** Сколько команд CHK в коде загруженного модуля. */
+function chkInMemory(m, name) {
+  const M = loaded(m, name);
+  if (!M) return null;
+  let n = 0;
+  for (let a = M.code; a < M.imp; a += 4) if (isChk(m.ram(a))) n++;
+  return n;
+}
+
+
+// Таймер машины (Kernel.Time) — не часы хоста, а счётчик тактов: 25 000
+// тактов на миллисекунду (tb/wasm_main.cpp, как у платы на 25 МГц). Поэтому
+// миллисекунды в лабораторных точны и повторяемы до такта.
+const CYCLES_PER_MS = 25000;
+// Выход из ORG.Mod на эталонном образе: сколько слов кода в поставляемом ORG.rsc.
+const ORG_STOCK_WORDS = 6650;
 
 const ALL = [
 {
@@ -716,6 +732,95 @@ END Idx.</pre>
     запускайте средним щелчком. Если квадратик не виден — он в самом низу
     левой дорожки, у её правого края.`,
 },
+{
+  id: 12, level: 'измерять',
+  title: 'Цена проверки своими руками',
+  read: [['08-izmereno.html', 'Что мы измерили'],
+         ['06-kompilyator.html', 'Компилятор изнутри']],
+  machine: { variant: 'chk', files: ['ORG.Chk.Mod'] },
+  intro: `Главное число проекта — во что обходится проверка границ массива.
+    Здесь вы получите его <b>на своём коде</b>. Для этой лабораторной машина
+    переключена на <b>ядро с командой CHK</b> (как на странице
+    <a href="checks.html">цены проверки</a>), а на диск положен
+    <code>ORG.Chk.Mod</code> — кодогенератор, который вместо сравнения и
+    перехода ставит одну CHK. Стоковая система на этом ядре работает так же,
+    как на обычном, такт в такт.`,
+  steps: [
+    { text: `<code>Edit.Open Cost.Mod ~</code>, наберите, сохраните, соберите
+        <code>ORP.Compile Cost.Mod ~</code> и запустите <code>Cost.Run</code>:
+        ${pre(SOURCES.Cost)}
+        Цикл делает 300 000 индексаций <code>a[i]</code>, и перед каждой
+        стоковый компилятор ставит две команды: сравнение и условный переход.
+        Время — по <code>Kernel.Time</code>, в миллисекундах; оно появится в
+        журнале.`,
+      check: (m, c) => {
+        if (m.variant !== 'chk') return { ok: false, msg: 'машина не на ядре с CHK — выберите лабораторную заново' };
+        const t = modVar(m, 'Cost', 0), k = chkInMemory(m, 'Cost');
+        if (t === null) return { ok: false, msg: 'модуль Cost не загружен — Cost.Run запускали?' };
+        if (t <= 0) return { ok: false, msg: 'Cost.t = 0: цикл ещё не отработал' };
+        if (k > 0) return { ok: false, msg: `в загруженном Cost уже ${k} команд CHK — это шаг 3; начните с отката` };
+        const org = rsc(m, 'ORG.rsc');
+        Object.assign(c.state, { tB: t, orgHdr: hdr(m, 'ORG.rsc'), orgKey: org.key, tE: undefined });
+        return { ok: true, msg: `программная проверка: ${t} мс, в коде ни одной CHK. Это ${(t * CYCLES_PER_MS / 300000).toFixed(1)} такта на оборот цикла.` };
+      } },
+    { text: `Соберите кодогенератор, знающий CHK:
+        <code>ORP.Compile ORG.Chk.Mod ~</code>. Имя файла другое, но модуль в
+        нём называется <code>ORG</code>, поэтому на диске заменится
+        <code>ORG.rsc</code>. Интерфейс тот же — и ключ тот же, так что
+        <code>ORP</code> загрузит новый кодогенератор, не заметив подмены.
+        Это самый большой модуль компилятора, но на этой машине он собирается
+        за два десятка миллионов команд — секунды.`,
+      check: (m, c) => {
+        if (c.state.tB === undefined) return { ok: false, msg: 'сначала шаг 1' };
+        const r = rsc(m, 'ORG.rsc');
+        if (hdr(m, 'ORG.rsc') === c.state.orgHdr) return { ok: false, msg: 'ORG.rsc ещё не пересобран' };
+        if (r.key !== c.state.orgKey)
+          return { ok: false, msg: `ключ ORG изменился (${r.key.toString(16).toUpperCase()}): ORP с таким не загрузится — собран не тот файл?` };
+        return r.codeWords > ORG_STOCK_WORDS
+          ? { ok: true, msg: `ORG.rsc пересобран: ${pl(r.codeWords, 'слово', 'слова', 'слов')} вместо ${ORG_STOCK_WORDS}, ключ прежний ${r.key.toString(16).toUpperCase()}` }
+          : { ok: false, msg: `ORG.rsc пересобран, но это стоковый ORG (${r.codeWords} слов)` };
+      } },
+    { text: `Выгрузите старый код из памяти: <code>System.Free Cost ORP ORG ~</code>.
+        Затем снова <code>ORP.Compile Cost.Mod ~</code> и <code>Cost.Run</code>.
+        Теперь перед <code>a[i]</code> стоит одна команда CHK, и проверяет
+        границу само железо.`,
+      check: (m, c) => {
+        if (c.state.tB === undefined) return { ok: false, msg: 'сначала шаг 1' };
+        const t = modVar(m, 'Cost', 0), k = chkInMemory(m, 'Cost');
+        if (t === null || k === null) return { ok: false, msg: 'модуль Cost не загружен' };
+        if (k === 0) return { ok: false, msg: 'в загруженном Cost нет ни одной CHK — старый код ещё в памяти (System.Free) или собран стоковым ORG' };
+        if (t <= 0 || t === c.state.tB) return { ok: false, msg: 'Cost.Run с новым кодом ещё не запускали' };
+        c.state.tE = t;
+        const d = c.state.tB - t;
+        return { ok: true, msg: `аппаратная проверка: ${t} мс против ${c.state.tB}. В коде ${k} CHK. Разница ${d} мс = ${(d * CYCLES_PER_MS / 300000).toFixed(2)} такта на индексацию.` };
+      } },
+    { text: `Ваше число: на сколько процентов быстрее стал цикл? Введите с одним
+        знаком после запятой.`,
+      answer: 'например 4.0',
+      check: (m, c) => {
+        if (c.state.tE === undefined) return { ok: false, msg: 'сначала шаг 3' };
+        const real = (c.state.tB - c.state.tE) * 100 / c.state.tB;
+        const got = parseFloat((c.answer || '').replace(',', '.'));
+        if (!isFinite(got)) return { ok: false, msg: 'введите число' };
+        return near(got, real, 0.3)
+          ? { ok: true, msg: `верно: ${real.toFixed(2)}%. Такт на индексацию из примерно ${(c.state.tB * CYCLES_PER_MS / 300000).toFixed(0)} на оборот цикла.` }
+          : { ok: false, msg: `получается ${real.toFixed(2)}%, а введено ${got}` };
+      } },
+  ],
+  payoff: `Железо экономит ровно одну команду и один такт на индексацию — не
+   больше. Доля зависит от того, сколько ещё работы в цикле: на голом цикле
+   страницы <a href="checks.html">цены проверки</a> это 9%, в вашем — около
+   четырёх, а на компиляторе, компилирующем систему, проверки целиком стоят
+   2,2% тактов (находка 21).
+   <br><br>
+   Поэтому и спор «проверки дорогие» не решается одним числом: его надо
+   мерить на своём коде. На этой машине это можно сделать честно — таймер
+   считает такты, кэша и предсказателя нет, и повтор даёт то же число до
+   миллисекунды.`,
+  hint: `Если на шаге 3 CHK не появилась — в памяти остался старый ORG: в
+    <code>System.Free</code> важен порядок, сначала те, кто импортирует
+    (<code>ORP</code>), потом импортируемый (<code>ORG</code>).`,
+},
 ];
 
 // Порядок в интерфейсе — по номеру из программы курса, а не по времени
@@ -752,4 +857,4 @@ export const LABS = ALL.sort((a, b) => a.id - b.id).map(localise);
 
 // Чтение памяти машины — для прогона labs-test.mjs: он сверяет числа
 // лабораторных с тем, что видно в обход их проверок.
-export const MEM = { loaded, modVar, heap };
+export const MEM = { loaded, modVar, heap, chkInMemory };
