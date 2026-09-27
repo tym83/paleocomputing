@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Каталог для Cozystack — Палеокомпьютинг</title>
+<meta name="description" content="Как подключить каталог Палеокомпьютинга к кластеру Cozystack: машина Вирта RISC5 как виртуальная машина, лабораторные по Оберону, методичка и окружения для языков — ставятся из дашборда.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&display=swap">
+<link rel="stylesheet" href="../../style.css">
+</head>
+<body>
+<div class="sheet">
+
+  <header class="masthead">
+    <p class="eyebrow"><a href="../">← Палеокомпьютинг</a> · <a href="../oberon/">Оберон</a> · <a href="../../cozystack/">English</a></p>
+    <h1>Каталог для Cozystack</h1>
+    <p class="standfirst">
+      Всё из проекта про Оберон ставится в кластер Cozystack так же, как Postgres
+      или Kubernetes: форма в дашборде и кнопка. В том числе — виртуальная машина
+      с архитектурой, которой в платформе нет.
+    </p>
+  </header>
+
+  <section>
+    <h2>Что вы получаете</h2>
+    <p>
+      Каталог подключается снаружи, штатным механизмом пакетов Cozystack. После
+      этого у тенантов в дашборде появляются новые приложения:
+    </p>
+    <ol class="steps">
+      <li><h3>OberonVM</h3><p>Машина Вирта RISC5 как настоящая виртуальная машина в KubeVirt, в ней загружается система Оберон 1986 года. Поля: <code>memory</code> и <code>hardware</code> — <code>base</code> или <code>chk</code>, процессор с аппаратной проверкой границ массива; та же машина, на которую переключает <a href="../../oberon/checks.html">страница о цене проверки</a>.</p></li>
+      <li><h3>OberonLab</h3><p><a href="../../oberon/lab.html">Девять лабораторных</a> и методичка, раздаются изнутри кластера. По желанию — разовый прогон заданий, которым нужно пересобрать схему или компилятор: <code>task</code> — <code>isa</code>, <code>compiler</code> или <code>check</code>.</p></li>
+      <li><h3>Handbook</h3><p>Документация, которая раздаётся рядом с приложением, которое она описывает.</p></li>
+      <li><h3>Workbench</h3><p>Машина, лабораторные и методичка одной установкой.</p></li>
+      <li><h3>LangPack</h3><p>Окружение для языка: компилятор Оберона без операционной системы — разовый прогон программы или постоянная служба.</p></li>
+    </ol>
+  </section>
+
+  <section>
+    <h2>Как это устроено</h2>
+    <p>
+      Каталог — три репозитория, каждый один OCI-артефакт в
+      <code>ghcr.io/tym83/paleocomputing</code>. Разделены по тому, какого
+      доверия просят:
+    </p>
+    <ul class="chapters">
+      <li><code>machines</code> — OberonVM, OberonLab, Handbook, Workbench;</li>
+      <li><code>languages</code> — LangPack;</li>
+      <li><code>images</code> — загрузочные образы для обычных дисков KubeVirt. Единственная часть, которая пишет за пределы тенанта, в <code>cozy-public</code>; помечена <code>privileged</code>, и валидатор Cozystack об этом предупреждает.</li>
+    </ul>
+    <p>
+      Тег репозитория — это его версия: обновление — переход на другой тег,
+      откат — на прежний. Всё собирает, подписывает и выкладывает CI; подпись
+      без ключа — её личность сам
+      <a href="https://github.com/tym83/paleocomputing/blob/main/.github/workflows/publish.yml">процесс сборки</a>, проверить её может кто угодно.
+    </p>
+  </section>
+
+  <section>
+    <h2>Подключение</h2>
+    <p>
+      Делается один раз администратором кластера, утилитой <code>cozypkg</code>
+      из <a href="https://github.com/cozystack/cozystack">репозитория Cozystack</a>:
+    </p>
+    <pre><code>cozypkg tap oci://ghcr.io/tym83/paleocomputing/machines:v0.1.8
+cozypkg tap oci://ghcr.io/tym83/paleocomputing/languages:v0.1.8</code></pre>
+    <p>
+      Проверяйте, что источник прочитал все компоненты, а не только что он готов:
+    </p>
+    <pre><code>kubectl get packagesource paleocomputing.machines
+# reconciliation succeeded, generated 5 artifact(s)</code></pre>
+    <div class="note">
+      <strong>Обновлять повторным подключением, а не правкой тега.</strong> Тег
+      живёт в <code>OCIRepository</code>, а список компонентов — в
+      <code>PackageSource</code>, и за тегом он не следует. Приложение, добавленное
+      в новой версии, появится в дашборде и не развернётся.
+      <code>cozypkg tap</code> с новым тегом обновляет оба места.
+    </div>
+  </section>
+
+  <section>
+    <h2>Что OberonVM нужно от кластера</h2>
+    <p>
+      Всё остальное в каталоге — обычные приложения. OberonVM — нет: KubeVirt
+      знает четыре архитектуры, и RISC5 среди них нет. Форков KubeVirt и
+      Cozystack не нужно — описание машины переписывает перехватчик
+      <code>OnDefineDomain</code>, штатная точка расширения. Но две вещи
+      задаются один раз на уровне кластера, и тенант задать их не может:
+    </p>
+    <ol class="steps">
+      <li><h3>Признак <code>Sidecar</code></h3><p>В ресурсе KubeVirt. Без него перехватчик не запускается.</p></li>
+      <li><h3>Образ <code>virt-launcher</code>, знающий RISC5</h3><p>В нём наша цель QEMU и libvirt со вкомпилированной архитектурой — libvirt спрашивает архитектуру у эмулятора, а не верит описанию. Образ выкладывается к каждому выпуску каталога как <code>ghcr.io/tym83/paleocomputing/virt-launcher:v1.8.4-risc5-&lt;выпуск&gt;</code> и собран только под KubeVirt 1.8.4: launcher обязан совпадать с версией KubeVirt в точности.</p></li>
+    </ol>
+    <p>
+      Образ переключается на ресурсе KubeVirt, через
+      <code>customizeComponents</code>. Правка заменяет весь список аргументов
+      <code>virt-controller</code>, поэтому возьмите текущий и поменяйте только
+      образ launcher:
+    </p>
+    <pre><code>kubectl -n cozy-kubevirt get deploy virt-controller \
+  -o jsonpath='{.spec.template.spec.containers[0].args}'
+
+kubectl -n cozy-kubevirt patch kubevirt kubevirt --type=merge -p '
+spec:
+  customizeComponents:
+    patches:
+    - resourceType: Deployment
+      resourceName: virt-controller
+      type: json
+      patch: |-
+        [{"op": "replace",
+          "path": "/spec/template/spec/containers/0/args",
+          "value": ["--launcher-image",
+                    "ghcr.io/tym83/paleocomputing/virt-launcher:v1.8.4-risc5-v0.1.8",
+                    "--exporter-image", "quay.io/kubevirt/virt-exportserver:v1.8.4",
+                    "--port", "8443", "-v", "2"]}]'</code></pre>
+    <p>
+      Откат — убрать правку: KubeVirt вернётся к штатному launcher.
+    </p>
+    <div class="note">
+      <strong>Это касается всех виртуальных машин кластера, а не только
+      Оберона.</strong> Образ — штатный <code>virt-launcher</code>, к которому
+      добавлены библиотеки libvirt и один эмулятор; обычные машины на нём
+      работают, загрузку Ubuntu мы проверили. Но после обновления Cozystack,
+      которое переводит KubeVirt на другую версию, правку надо снять первым же
+      делом — launcher от другой версии ломает все машины.
+    </div>
+  </section>
+
+  <section>
+    <h2>Установка машины</h2>
+    <p>
+      Из дашборда — форма OberonVM — или ресурсом:
+    </p>
+    <pre><code>apiVersion: apps.cozystack.io/v1alpha1
+kind: OberonVM
+metadata:
+  name: wirth
+spec:
+  memory: 128Mi
+  hardware: chk     # или base</code></pre>
+    <p>
+      Самой машине хватает шестнадцати мегабайт, остальное уходит на обвязку
+      KubeVirt. ПЗУ и системный диск приходят на томе, который наполняется один
+      раз, при установке.
+    </p>
+  </section>
+
+  <section>
+    <h2>Известные ограничения</h2>
+    <ol class="steps">
+      <li><p><strong>Машина не мигрирует.</strong> При выводе узла на обслуживание она останавливается, а не переезжает.</p></li>
+      <li><p><strong>Том остаётся после удаления машины.</strong> Он создаётся один раз при установке, и такие ресурсы Helm при удалении не убирает. Удалите <code>oberon-vm-&lt;имя&gt;-payload</code> вручную.</p></li>
+      <li><p><strong>Версии до v0.1.7 включительно нельзя обновить под работающей машиной.</strong> Обновление пересоздавало том машины, и он зависал в <code>Terminating</code>. Исправлено в v0.1.8; при переходе с более ранней версии такие машины удалите и поставьте заново.</p></li>
+    </ol>
+  </section>
+
+  <footer>
+    Исходники каталога и его проверки —
+    <a href="https://github.com/tym83/paleocomputing/tree/main/marketplace">marketplace/</a><br>
+    Построено по предложению <code>cozymarketplace</code> из
+    <a href="https://github.com/cozystack/community">cozystack/community</a>. Наша часть — Apache-2.0.
+  </footer>
+
+</div>
+</body>
+</html>

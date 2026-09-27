@@ -41,7 +41,7 @@ cp impl/web/index.html "$out/oberon/run.html"
 
 # Обязательный состав. Пустой файл — тоже отсутствие: собранный wasm умеет
 # получиться нулевым, и один раз уже получился.
-need="index.html style.css ru/index.html ru/oberon/index.html
+need="index.html style.css ru/index.html ru/oberon/index.html cozystack/index.html ru/cozystack/index.html
       oberon/index.html oberon/run.html oberon/lab.html oberon/embed.html oberon/checks.html
       oberon/i18n.js oberon/labs.js oberon/labs.en.js
       oberon/machine.js oberon/oberonfs.js
