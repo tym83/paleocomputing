@@ -6,7 +6,9 @@
 # Cozystack форка не требует.
 #
 # Собирается под ту же основу, что у штатного образа — CentOS Stream 9 и
-# libvirt 11.9.0. Взять сборку с другой основы нельзя: разойдутся библиотеки.
+# ту же версию libvirt. Взять сборку с другой основы нельзя: разойдутся
+# библиотеки. Какой libvirt в какой версии KubeVirt — в kubevirt/versions.txt,
+# и build.sh передаёт обе версии парой.
 #
 # Контекст сборки — корень репозитория, а коммит QEMU передаётся снаружи:
 # он записан один раз, в qemu/Makefile. Собирать через kubevirt/build.sh —
@@ -34,6 +36,8 @@ RUN dnf install -y --setopt=install_weak_deps=False dnf-plugins-core \
  && dnf builddep -y --setopt=install_weak_deps=False libvirt \
  && dnf clean all
 
+# Пара к KUBEVIRT_VERSION из kubevirt/versions.txt; значение здесь — для
+# версии по умолчанию.
 ARG LIBVIRT_VERSION=v11.9.0
 RUN git clone --depth 1 -b ${LIBVIRT_VERSION} \
       https://github.com/libvirt/libvirt.git /src
