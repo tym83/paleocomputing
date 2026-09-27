@@ -32,8 +32,20 @@ CHART = HERE.parent / "repos/platform/packages/system/kubevirt-paleo-launcher"
 SCRIPT = CHART / "files/reconcile.sh"
 TABLE = CHART / "files/launchers.txt"
 
-IMG184 = "ghcr.io/tym83/paleocomputing/virt-launcher:v1.8.4-paleo-dev"
-IMG190 = "ghcr.io/tym83/paleocomputing/virt-launcher:v1.9.0-paleo-dev"
+# Образы берём из той же таблицы, что проверяем: при выпуске publish.yml
+# пересобирает её под тег, и ожидания, зашитые под dev, валили проверку
+# перед публикацией настоящего выпуска.
+def _table_images() -> dict[str, str]:
+    out = {}
+    for line in TABLE.read_text(encoding="utf-8").splitlines():
+        parts = line.split()
+        if len(parts) == 2 and not line.startswith("#"):
+            out[parts[0]] = parts[1]
+    return out
+
+
+IMG184 = _table_images()["v1.8.4"]
+IMG190 = _table_images()["v1.9.0"]
 
 # Правка, которую Cozystack main сам кладёт в ресурс KubeVirt (ресурсы
 # virt-handler), — образец чужой записи, которую трогать нельзя.
