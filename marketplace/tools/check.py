@@ -655,10 +655,13 @@ def check_machines() -> None:
                f"{name}: у остановленной машины задача наполнения не ждёт её пода")
         job = next(d for d in docs if d["kind"] == "Job")
         aff = job["spec"]["template"]["spec"].get("affinity", {}).get("podAffinity", {})
-        sel = (aff.get("requiredDuringSchedulingIgnoredDuringExecution") or [{}])[0]
-        report(sel.get("topologyKey") == "kubernetes.io/hostname"
-               and sel.get("labelSelector", {}).get("matchLabels", {}).get("kubevirt.io") == "virt-launcher",
-               f"{name}: у запущенной машины наполнение идёт на узел её пода (том RWO)")
+        # Мягко, не жёстко: под машины без файлов живёт секунды, и жёсткая
+        # привязка не давала задаче встать вовсе (найдено в живом тенанте).
+        pref = (aff.get("preferredDuringSchedulingIgnoredDuringExecution") or [{}])[0].get("podAffinityTerm", {})
+        report(pref.get("topologyKey") == "kubernetes.io/hostname"
+               and pref.get("labelSelector", {}).get("matchLabels", {}).get("kubevirt.io") == "virt-launcher"
+               and not aff.get("requiredDuringSchedulingIgnoredDuringExecution"),
+               f"{name}: наполнение предпочитает узел пода машины, но не обязано ждать его (том RWO)")
 
         leaks = hook_leaks(docs)
         report(not leaks, f"{name}: ресурсы хуков не переживают машину" + (f": {'; '.join(leaks)}" if leaks else ""))

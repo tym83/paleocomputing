@@ -76,6 +76,84 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- toJson $m }}
 {{- end }}
 
+{{/*
+  Спецификация задачи наполнения. Отдельно — чтобы имя задачи несло хэш
+  ВСЕЙ спецификации: шаблон Job неизменяем, и любая правка задачи (образ,
+  паспорт, привязка, сроки) обязана давать новое имя, иначе обновление
+  упрётся в «field is immutable».
+*/}}
+{{- define "retro-machine.fillJobSpec" -}}
+{{- $ctx := .ctx }}{{- $m := .m }}{{- $fn := .fn }}{{- $base := .base }}{{- $running := .running }}
+spec:
+  backoffLimit: 10
+  # Задача, которой не достался под (машина остановлена руками, узел
+  # переполнен), иначе держит установку до таймаута релиза. Срок больше
+  # предельной паузы KubeVirt между попытками запуска (300 с).
+  activeDeadlineSeconds: 1800
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels: {{- include "retro-machine.labels" $ctx | nindent 8 }}
+    spec:
+      restartPolicy: OnFailure
+      # ⚠ Образ работает от непривилегированного пользователя, а том приходит
+      # принадлежащим root — записать в него нечего. fsGroup отдаёт том группе
+      # контейнера; менять пользователя нельзя, ограничения тенанта root не
+      # пустят.
+      securityContext:
+        fsGroup: 10001
+        runAsUser: 10001
+        runAsGroup: 10001
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      {{- if $running }}
+      # Том ReadWriteOnce: лучше на тот же узел, что под машины. Но только
+      # «лучше», не «обязательно». Жёсткая привязка не давала задаче встать
+      # вовсе: без файлов машина падает сразу, и её под живёт секунды между
+      # паузами KubeVirt — задаче не к чему привязаться, срок истекал, а
+      # упавшую задачу никто не повторяет. Найдено в живом тенанте. На другом
+      # узле задача дождётся, пока очередная неудачная попытка машины отпустит
+      # том, и наполнит его.
+      affinity:
+        podAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchLabels: {{- include "retro-machine.launcherSelector" $ctx | nindent 18 }}
+      {{- end }}
+      containers:
+      - name: fill
+        image: {{ $m.image }}
+        command: ["sh", "-c"]
+        args:
+          - |
+            set -eu
+            put() { cp "$1" "$2.tmp"; mv -f "$2.tmp" "$2"; }
+            {{- range $f := $m.payload.files }}
+            {{- $dst := printf "%s/%s" $base $f.name }}
+            {{- if eq $f.role "disk" }}
+            [ -s {{ $dst }} ] || put {{ $f.from }} {{ $dst }}
+            {{- else }}
+            put {{ $f.from }} {{ $dst }}
+            {{- end }}
+            {{- end }}
+            ls -la {{ $base }}/
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: [ALL]
+        volumeMounts:
+        - name: payload
+          mountPath: {{ $base }}
+      volumes:
+      - name: payload
+        persistentVolumeClaim:
+          claimName: {{ $fn }}-payload
+{{- end }}
+
 {{- define "retro-machine.render" -}}
 {{- $m := include "retro-machine.descriptor" . | fromJson }}
 {{- $fn := include "retro-machine.fullname" . }}
@@ -195,72 +273,11 @@ spec:
 # Шаблон Job неизменяем, поэтому в имени — хэш образа и паспорта: новый
 # выпуск даёт новую задачу (она обновит прошивку, диск не тронет), прежнюю
 # Helm удаляет как ушедшую из релиза.
+{{- $fillSpec := include "retro-machine.fillJobSpec" (dict "ctx" . "m" $m "fn" $fn "base" $base "running" $running) }}
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: {{ $fn }}-fill-{{ printf "%s %s" $m.image (toJson $m.payload) | sha256sum | trunc 8 }}
+  name: {{ $fn }}-fill-{{ $fillSpec | sha256sum | trunc 8 }}
   labels: {{- include "retro-machine.labels" . | nindent 4 }}
-spec:
-  backoffLimit: 3
-  # Задача, которой не достался под (машина остановлена руками, узел
-  # переполнен), иначе держит установку до таймаута релиза. Срок больше
-  # предельной паузы KubeVirt между попытками запуска (300 с).
-  activeDeadlineSeconds: 480
-  ttlSecondsAfterFinished: 3600
-  template:
-    metadata:
-      labels: {{- include "retro-machine.labels" . | nindent 8 }}
-    spec:
-      restartPolicy: OnFailure
-      # ⚠ Образ работает от непривилегированного пользователя, а том приходит
-      # принадлежащим root — записать в него нечего. fsGroup отдаёт том группе
-      # контейнера; менять пользователя нельзя, ограничения тенанта root не
-      # пустят.
-      securityContext:
-        fsGroup: 10001
-        runAsUser: 10001
-        runAsGroup: 10001
-        runAsNonRoot: true
-        seccompProfile:
-          type: RuntimeDefault
-      {{- if $running }}
-      # ⚠ Том ReadWriteOnce, и его уже держит под машины: на другом узле
-      # задача упёрлась бы в Multi-Attach и ждала, пока машина, которой не
-      # хватает файлов, не отпустит том. Поэтому — на тот же узел. У
-      # остановленной машины пода нет, и задача ставится куда угодно.
-      affinity:
-        podAffinity:
-          requiredDuringSchedulingIgnoredDuringExecution:
-          - topologyKey: kubernetes.io/hostname
-            labelSelector:
-              matchLabels: {{- include "retro-machine.launcherSelector" . | nindent 16 }}
-      {{- end }}
-      containers:
-      - name: fill
-        image: {{ $m.image }}
-        command: ["sh", "-c"]
-        args:
-          - |
-            set -eu
-            put() { cp "$1" "$2.tmp"; mv -f "$2.tmp" "$2"; }
-            {{- range $f := $m.payload.files }}
-            {{- $dst := printf "%s/%s" $base $f.name }}
-            {{- if eq $f.role "disk" }}
-            [ -s {{ $dst }} ] || put {{ $f.from }} {{ $dst }}
-            {{- else }}
-            put {{ $f.from }} {{ $dst }}
-            {{- end }}
-            {{- end }}
-            ls -la {{ $base }}/
-        securityContext:
-          allowPrivilegeEscalation: false
-          capabilities:
-            drop: [ALL]
-        volumeMounts:
-        - name: payload
-          mountPath: {{ $base }}
-      volumes:
-      - name: payload
-        persistentVolumeClaim:
-          claimName: {{ $fn }}-payload
+{{ $fillSpec }}
 {{- end }}
