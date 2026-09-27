@@ -170,12 +170,20 @@ spec:
       buttons; the middle one, which runs commands, is <kbd>Alt</kbd> with a left
       click, and the machine says so on its own screen for the first half minute.
     </p>
+    <p>
+      The machine is an ordinary KubeVirt <code>VirtualMachine</code>: a tenant
+      with the usual <code>use</code> role can stop, start and restart it from
+      the dashboard or with <code>virtctl restart</code>. The system disk keeps
+      the user's files across restarts and upgrades — only the firmware is
+      refreshed from the release.
+    </p>
   </section>
 
   <section>
     <h2>Known limits</h2>
     <ol class="steps">
       <li><p><strong>The machine does not migrate.</strong> When a node is drained, it stops rather than moves.</p></li>
+      <li><p><strong>Machines installed with v0.1.10 or earlier must be reinstalled before upgrading.</strong> Their volume was created by an install hook and is not part of the release; upgrading them to v0.1.11 fails on that volume ("already exists"). Delete such a machine and install it again.</p></li>
       <li><p><strong>Versions up to v0.1.9 leave the machine's volume behind when it is deleted.</strong> The volume is created once, at install time, and Helm does not remove such resources on uninstall. Later versions clean it up with a job that runs on deletion; a machine deleted while still on v0.1.9 or earlier leaves <code>oberon-vm-&lt;name&gt;-payload</code> to be removed by hand.</p></li>
       <li><p><strong>Versions up to v0.1.7 cannot be upgraded under a running machine.</strong> Upgrading recreated the machine's volume, which hung in <code>Terminating</code>. Fixed in v0.1.8; when coming from an earlier version, delete such machines and install them again.</p></li>
     </ol>
