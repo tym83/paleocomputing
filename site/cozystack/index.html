@@ -64,8 +64,8 @@
       Done once, by the cluster administrator, with <code>cozypkg</code> from
       the <a href="https://github.com/cozystack/cozystack">Cozystack repository</a>:
     </p>
-    <pre><code>cozypkg tap oci://ghcr.io/tym83/paleocomputing/machines:v0.1.13
-cozypkg tap oci://ghcr.io/tym83/paleocomputing/languages:v0.1.13</code></pre>
+    <pre><code>cozypkg tap oci://ghcr.io/tym83/paleocomputing/machines:v0.1.14
+cozypkg tap oci://ghcr.io/tym83/paleocomputing/languages:v0.1.14</code></pre>
     <p>
       Check that the source has read every component, not just that it is ready:
     </p>
@@ -98,7 +98,7 @@ cozypkg tap oci://ghcr.io/tym83/paleocomputing/languages:v0.1.13</code></pre>
       fourth repository and install <code>kubevirt-paleo-launcher</code> — it is
       privileged, so it needs the operator's explicit consent:
     </p>
-    <pre><code>cozypkg tap oci://ghcr.io/tym83/paleocomputing/platform:v0.1.13
+    <pre><code>cozypkg tap oci://ghcr.io/tym83/paleocomputing/platform:v0.1.14
 cozypkg add paleocomputing.platform --allow-privileged</code></pre>
     <p>
       It watches the cluster's KubeVirt version and keeps the launcher matched to
@@ -130,7 +130,7 @@ spec:
         [{"op": "replace",
           "path": "/spec/template/spec/containers/0/args",
           "value": ["--launcher-image",
-                    "ghcr.io/tym83/paleocomputing/virt-launcher:v1.8.4-risc5-v0.1.13",
+                    "ghcr.io/tym83/paleocomputing/virt-launcher:v1.8.4-risc5-v0.1.14",
                     "--exporter-image", "quay.io/kubevirt/virt-exportserver:v1.8.4",
                     "--port", "8443", "-v", "2"]}]'</code></pre>
     <p>
@@ -183,7 +183,7 @@ spec:
     <h2>Known limits</h2>
     <ol class="steps">
       <li><p><strong>The machine does not migrate.</strong> When a node is drained, it stops rather than moves.</p></li>
-      <li><p><strong>Machines installed with v0.1.10 or earlier must be reinstalled before upgrading.</strong> Their volume was created by an install hook and is not part of the release; upgrading them to v0.1.13 fails on that volume ("already exists"). Delete such a machine and install it again.</p></li>
+      <li><p><strong>Machines installed with v0.1.10 or earlier must be reinstalled before upgrading.</strong> Their volume was created by an install hook and is not part of the release; upgrading them to v0.1.14 fails on that volume ("already exists"). Delete such a machine and install it again.</p></li>
       <li><p><strong>Versions up to v0.1.9 leave the machine's volume behind when it is deleted.</strong> The volume is created once, at install time, and Helm does not remove such resources on uninstall. Later versions clean it up with a job that runs on deletion; a machine deleted while still on v0.1.9 or earlier leaves <code>oberon-vm-&lt;name&gt;-payload</code> to be removed by hand.</p></li>
       <li><p><strong>Versions up to v0.1.7 cannot be upgraded under a running machine.</strong> Upgrading recreated the machine's volume, which hung in <code>Terminating</code>. Fixed in v0.1.8; when coming from an earlier version, delete such machines and install them again.</p></li>
     </ol>
