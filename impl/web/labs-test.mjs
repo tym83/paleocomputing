@@ -3,8 +3,8 @@
 // всегда зелёная или всегда красная, бесполезна и должна ломать сборку.
 import fs from 'node:fs';
 import { Machine } from './machine.js';
-import { LABS } from './labs.js';
-import { OberonFS, readText } from './oberonfs.js';
+import { LABS, SOURCES, MEM } from './labs.js';
+import { OberonFS, readText, addFile } from './oberonfs.js';
 
 const prom = new Uint32Array(
   fs.readFileSync('prom_sd.mem', 'utf8').trim().split('\n').map(l => parseInt(l, 16)));
@@ -13,9 +13,23 @@ const img = new Uint8Array(fs.readFileSync('oberon.dsk'));
 let bad = 0;
 const say = (ok, s) => { console.log(`    ${ok ? '✅' : '❌'} ${s}`); if (!ok) bad++; };
 
+// `node labs-test.mjs 10 12` — прогнать только названные лабораторные (весь
+// набор идёт четверть часа). Статическая проверка страницы идёт всегда.
+const ONLY = new Set(process.argv.slice(2).map(Number));
+
+// Машина под лабораторную: железо и файлы сверх эталона — из её поля
+// `machine`, ровно как их поднимает страница (embed.js).
+async function machineFor(L, variant) {
+  const want = L.machine || {};
+  let disk = img;
+  for (const f of want.files || []) disk = addFile(disk, f, new Uint8Array(fs.readFileSync(f)));
+  return Machine.create(prom, disk, variant || want.variant || 'base');
+}
+
 async function lab(id, script) {
   const L = LABS.find(l => l.id === id);
-  const m = await Machine.create(prom, img);
+  if (ONLY.size && !ONLY.has(id)) return null;
+  const m = await machineFor(L);
   console.log(`\n  Лаба ${L.id} «${L.title}» (${L.level})`);
   await script(m, L);
   return m;
@@ -172,6 +186,56 @@ await lab(9, async (m, L) => {
   m.click(...EDIT.store, 2); for (let i = 0; i < 8; i++) m.run(1e6);
   m.click(690, 581, 2); for (let i = 0; i < 30; i++) m.run(1e6);
   const r2 = L.steps[1].check(m, c); say(r2.ok, 'шаг 2: ' + r2.msg);
+});
+
+// Строки команд, набранные после makeFile. Курсор ставится щелчком ПРАВЕЕ
+// конца текста: щелчок по (700, 620) попадает в последнюю строку на x = 700,
+// то есть в середину «Edit.Open …», и хвост этой строки прилипает к
+// набранному («Junk.Make» превращался в «Junk.Makeen Junk.Mod ~», и команда
+// не находилась). Набор медленнее обычного: в длинной строке с заглавными
+// теряется Shift.
+const LINE = y => 581 + 12 * y;           // 0 — первая строка после Edit.Open
+function typeLines(m, lines) {
+  m.click(1010, 620, 4);
+  for (const l of lines) { m.type('\n' + l, 10000); m.run(1e6); }
+}
+const go = (m, n) => { for (let i = 0; i < n; i++) m.run(1e6); };
+
+// ── Лаба 10: сборщик мусора изнутри ─────────────────────────────────────────
+await lab(10, async (m, L) => {
+  const c = { state: {}, answer: '' };
+  go(m, 12);
+  c.answer = '7';
+  say(!L.steps[0].check(m, c).ok, 'шаг 1 с неверным числом — не пройден');
+  c.answer = '20';
+  const r0 = L.steps[0].check(m, c); say(r0.ok, 'шаг 1: ' + r0.msg);
+  const k0 = MEM.heap(m);
+  say(k0.ok && k0.allocated > 0 && k0.allocated < 100000,
+      `Kernel.allocated найден по адресу из дескриптора Kernel: ${k0.allocated} байт после загрузки`);
+  say(!L.steps[1].check(m, c).ok, 'шаг 2 до сборки — не пройден');
+  await makeFile(m, 'Junk.Mod', SOURCES.Junk);
+  say(readText(new OberonFS(m).read(new OberonFS(m).files().get('Junk.Mod'))) === SOURCES.Junk,
+      'Junk.Mod набран посимвольно');
+  typeLines(m, ['ORP.Compile Junk.Mod ~', 'Junk.Make']);
+  m.click(690, LINE(0), 2); go(m, 20);
+  const r1 = L.steps[1].check(m, c); say(r1.ok, 'шаг 2: ' + r1.msg);
+  say(!L.steps[2].check(m, c).ok, 'шаг 3 до Junk.Make — не пройден');
+  m.click(670, LINE(1), 2); go(m, 3);
+  m.click(845, 282, 2); go(m, 3);                // System.Watch
+  const r2 = L.steps[2].check(m, c); say(r2.ok, 'шаг 3: ' + r2.msg);
+  // Сборщик просыпается раз в секунду (≈16 млн команд) — и ничего не делает.
+  go(m, 30);
+  say(!L.steps[3].check(m, c).ok, 'шаг 4: две секунды простоя — мусор на месте, уборки не было');
+  m.click(940, 282, 2); go(m, 20);               // System.Collect
+  const r3 = L.steps[3].check(m, c); say(r3.ok, 'шаг 4 после System.Collect: ' + r3.msg);
+  say(!L.steps[4].check(m, c).ok, 'шаг 5 до двойного Junk.Make — не пройден');
+  m.click(670, LINE(1), 2); go(m, 3);
+  m.click(670, LINE(1), 2); go(m, 3);
+  const r4 = L.steps[4].check(m, c); say(r4.ok, 'шаг 5: ' + r4.msg);
+  // Обещание из проверки: по второму поводу сборщик приходит сам.
+  go(m, 20);
+  const k5 = MEM.heap(m);
+  say(k5.allocated < 100000, `через секунду без System.Collect в куче ${k5.allocated} байт — сборщик пришёл сам`);
 });
 
 // ── статическая проверка страницы-оболочки ──────────────────────────────────

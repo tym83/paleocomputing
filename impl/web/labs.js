@@ -2,11 +2,13 @@
 // проверки это демонстрация, а не задание.
 //
 // Уровни из плана серии: смотреть / менять / ломать / измерять / строить.
-// Здесь первые три; каждая опирается на то, что уже доказано в impl/docs.
+// Каждая опирается на то, что уже доказано в impl/docs.
 
 import { OberonFS, parseRsc, readText } from './oberonfs.js';
 import { LANG } from './i18n.js';
 import { EN } from './labs.en.js';
+import { SOURCES, pre } from './lab-sources.js';
+export { SOURCES };
 
 
 // Служебная запись файла меняется при каждой перезаписи: Files.Register
@@ -19,10 +21,61 @@ const rsc = (m, name) => {
   return h ? parseRsc(F.read(h)) : null;
 };
 const near = (a, b, eps) => Math.abs(a - b) <= eps;
+// Число с согласованным существительным: 1 слово, 2 слова, 5 слов.
+const pl = (n, one, few, many) => `${n} ${(n % 10 === 1 && n % 100 !== 11) ? one
+  : ([2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100)) ? few : many}`;
 const text = (m, name) => {
   const F = new OberonFS(m), h = F.files().get(name);
   return h ? readText(F.read(h)) : null;
 };
+
+/*
+ * Загруженные модули — из памяти машины, а не с экрана.
+ *
+ * Дескриптор модуля (Modules.ModDesc): name[32], next, key, num, size, refcnt,
+ * data, code, imp, cmd, ent, ptr — смещения 0, 32, …, 52 (data), 56 (code),
+ * 60 (imp). Голова списка — переменная Modules.root, первая в области данных
+ * Modules после его дескрипторов типов. Сам дескриптор Modules лежит по адресу,
+ * который загрузчик кладёт в слово 20 (Modules.Init читает его оттуда же), а
+ * дескриптор Kernel — всегда 100H: ядро компонуется первым.
+ *
+ * Глобальные переменные модуля лежат в области данных ПОСЛЕ дескрипторов
+ * типов (Modules.Load), в порядке объявления. Размер дескрипторов берётся из
+ * .rsc на диске.
+ */
+const KERNEL_DESC = 0x100;
+const modName = (m, a) => {
+  let s = '';
+  for (let i = 0; i < 32; i++) {
+    const c = (m.ram(a + (i & ~3)) >>> ((i & 3) * 8)) & 0xFF;
+    if (!c) break;
+    s += String.fromCharCode(c);
+  }
+  return s;
+};
+function loaded(m, name) {
+  const mods = rsc(m, 'Modules.rsc');
+  if (!mods) return null;
+  const root = m.ram(m.ram(m.ram(20) + 52) + mods.tdBytes);
+  for (let r = root, n = 0; r && n < 64; r = m.ram(r + 32), n++)
+    if (modName(m, r) === name)
+      return { desc: r, data: m.ram(r + 52), code: m.ram(r + 56), imp: m.ram(r + 60) };
+  return null;
+}
+/** k-я по порядку переменная (слово) загруженного модуля или null. */
+function modVar(m, name, k) {
+  const M = loaded(m, name), r = rsc(m, name + '.rsc');
+  return M && r ? m.ram(M.data + r.tdBytes + 4 * k) | 0 : null;
+}
+/** Переменные Kernel: allocated, NofSectors, heapOrg, heapLim, …, MemLim.
+    Раскладка сверяется с тем, что загрузчик оставил в словах 12 и 24: если
+    адрес угадан неверно, проверка скажет об этом, а не соврёт числом. */
+function heap(m) {
+  const d = m.ram(KERNEL_DESC + 52);
+  const k = { allocated: m.ram(d), heapOrg: m.ram(d + 8), heapLim: m.ram(d + 12), memLim: m.ram(d + 24) };
+  k.ok = modName(m, KERNEL_DESC) === 'Kernel' && k.heapOrg === m.ram(24) && k.memLim === m.ram(12);
+  return k;
+}
 
 const ALL = [
 {
@@ -481,6 +534,113 @@ END Idx.</pre>
    своё, и на коротком модуле это съедает всю экономию.`,
   hint: 'Щёлкать надо левее первого символа второй строки, но внутри рамки окна. Если звёздочка попала внутрь слова, компилятор скажет «must start with MODULE».',
 },
+{
+  id: 10, level: 'смотреть',
+  title: 'Сборщик мусора изнутри',
+  read: [['04-sistema.html', 'Система: текст вместо кнопок'],
+         ['03-yazyk.html', 'Язык: Оберон за одну главу']],
+  intro: `В лабораторной 6 куча кончалась внутри команды. Здесь вы откроете
+    сам сборщик: найдёте, откуда его зовут, наберёте модуль, который сорит,
+    и посмотрите на кучу до и после уборки. Число занятых байт проверка читает
+    не с экрана, а из памяти машины — из переменной <code>Kernel.allocated</code>,
+    ту же самую, что печатает <code>System.Watch</code>.`,
+  steps: [
+    { text: `Откройте исходник главного цикла: наберите в конце
+        <code>System.Tool</code> <code>Edit.Open Oberon.Mod ~</code> и запустите.
+        Найдите в нём <code>PROCEDURE GC</code> и последние строки модуля:
+        <pre>ActCnt := 0; CurTask := NewTask(GC, 1000); Install(CurTask);</pre>
+        Сборщик — это <b>обычная задача</b> главного цикла, раз в секунду. Но
+        убирает он не каждый раз: только если счётчик действий
+        <code>ActCnt</code> дошёл до нуля или куча почти полна. Каждое
+        нажатие клавиши и каждый щелчок уменьшают <code>ActCnt</code> на
+        единицу, а после уборки он снова становится равен константе
+        <code>BasicCycle</code>. Найдите её в начале файла и введите значение.`,
+      answer: 'число',
+      check: (m, c) => {
+        const t = text(m, 'Oberon.Mod');
+        const want = t && t.match(/BasicCycle\s*=\s*(\d+)/);
+        if (!want) return { ok: false, msg: 'Oberon.Mod не читается' };
+        const got = parseInt((c.answer || '').trim(), 10);
+        if (!isFinite(got)) return { ok: false, msg: 'введите число' };
+        return got === +want[1]
+          ? { ok: true, msg: `верно: BasicCycle = ${want[1]}. Сборщик убирает не по часам, а по вашим действиям: раз в ${want[1]} нажатий и щелчков — или когда до конца кучи остаётся меньше 64 КБ.` }
+          : { ok: false, msg: `в Oberon.Mod на диске стоит другое число` };
+      } },
+    { text: `Теперь модуль, который сорит. <code>Edit.Open Junk.Mod ~</code>,
+        наберите, сохраните (<code>Edit.Store</code>) и соберите
+        <code>ORP.Compile Junk.Mod ~</code>:
+        ${pre(SOURCES.Junk)}
+        Тип записи нужен именованный (<code>BlockDesc</code>), а не
+        <code>POINTER TO RECORD … END</code> прямо в объявлении указателя —
+        почему, скажет проверка.`,
+      check: m => {
+        const r = rsc(m, 'Junk.rsc');
+        if (!r) return { ok: false, msg: 'Junk.rsc пока нет' };
+        if (r.tdBytes === 0)
+          return { ok: false, msg: 'у записи нет дескриптора типа: компилятор этой версии строит его только для именованной записи, и NEW для безымянной берёт размер неизвестно откуда — куча не растёт вовсе. Объявите BlockDesc отдельно.' };
+        return { ok: true, msg: `Junk.rsc собран: ${pl(r.codeWords, 'слово', 'слова', 'слов')} кода, дескриптор типа ${r.tdBytes} байт. Блок — 240 байт данных и 8 служебных, ядро выдаёт его из списка кусков по 256.` };
+      } },
+    { text: `Допишите в <code>System.Tool</code> строку <code>Junk.Make</code> и
+        запустите её, затем <code>System.Watch</code> (верхняя строка
+        <code>System.Tool</code>). В журнале — строка <code>Heap speace</code>
+        (опечатка Вирта): куча выросла на четверть мегабайта. Все эти блоки —
+        мусор: указатель на них жил в локальной переменной <code>p</code>, а
+        команда уже кончилась.`,
+      check: (m, c) => {
+        const k = heap(m);
+        if (!k.ok) return { ok: false, msg: 'переменные Kernel не нашлись по ожидаемым адресам — проверке верить нельзя' };
+        const size = k.heapLim - k.heapOrg;
+        if (k.allocated < 200000)
+          return { ok: false, msg: `в куче ${k.allocated} байт из ${size} — Junk.Make ещё не запускали (или сборщик уже прошёл: запустите ещё раз)` };
+        c.state.peak = k.allocated;
+        return { ok: true, msg: `Kernel.allocated = ${k.allocated} байт (${Math.round(k.allocated * 100 / size)}% кучи). Сборщик раз в секунду просыпается и уходит: повода нет — действий мало, куча не полна.` };
+      } },
+    { text: `Щёлкните <code>System.Collect</code> — он стоит в той же верхней
+        строке. Это не уборка, а только <code>ActCnt := 0</code>: сама уборка
+        случится, когда главный цикл в следующий раз дойдёт до задачи
+        <code>GC</code>, то есть в пределах секунды. Подождите и снова
+        <code>System.Watch</code>.`,
+      check: (m, c) => {
+        if (c.state.peak === undefined) return { ok: false, msg: 'сначала шаг 3' };
+        const k = heap(m);
+        if (!k.ok) return { ok: false, msg: 'переменные Kernel не нашлись по ожидаемым адресам' };
+        const freed = c.state.peak - k.allocated;
+        return freed > 200000
+          ? { ok: true, msg: `сборщик вернул ${freed} байт: было ${c.state.peak}, стало ${k.allocated}. Kernel.allocated уменьшается только в одном месте — в Kernel.Scan, значит уборка прошла.` }
+          : { ok: false, msg: `в куче по-прежнему ${k.allocated} байт — уборки ещё не было` };
+      } },
+    { text: `И последнее: запустите <code>Junk.Make</code> <b>два раза подряд</b>,
+        без <code>System.Collect</code> между ними. Две команды по 256 000 байт
+        в кучу на ${Math.round((0xE7EF0 - 0x80000) / 1000)} КБ не влезают, хотя
+        первая половина к началу второй команды — уже мусор.`,
+      check: m => {
+        const lost = modVar(m, 'Junk', 0);
+        if (lost === null) return { ok: false, msg: 'модуль Junk не загружен' };
+        const k = heap(m);
+        return lost > 0
+          ? { ok: true, msg: `NEW вернул NIL ${pl(lost, 'раз', 'раза', 'раз')}: куча кончилась внутри команды. Сейчас в ней ${k.allocated} байт. `
+              + (k.allocated >= k.heapLim - k.heapOrg - 0x10000
+                ? 'До конца меньше 64 КБ — это второй повод, и в пределах секунды сборщик придёт сам, без System.Collect: проверьте System.Watch.'
+                : 'Сборщик уже прошёл сам, без System.Collect: до конца кучи оставалось меньше 64 КБ — второй повод.') }
+          : { ok: false, msg: 'Junk.lost = 0: все блоки пока выделились' };
+      } },
+  ],
+  payoff: `Сборщик Оберона — не поток и не прерывание, а <b>обычная задача
+   главного цикла</b>, одна из списка, установленная при загрузке строкой
+   <code>NewTask(GC, 1000)</code>. И убирает он по двум поводам: вы сделали
+   двадцать действий или куча почти полна.
+   <br><br>
+   Почему только между командами? Посмотрите, что он отмечает:
+   <code>Kernel.Mark(mod.ptr)</code> для каждого модуля — то есть только
+   <b>глобальные</b> указатели. Стек он не просматривает вовсе. Пока команда
+   идёт, живые объекты держатся её локальными переменными, и уборка посреди
+   команды выбросила бы их. Между командами стек пуст — и глобальных корней
+   достаточно. Вся точность сборщика куплена одним правилом: убирать, когда
+   никто ничего не держит.`,
+  hint: `Сборщик работает, только когда главный цикл свободен. Если на шаге 3
+    куча уже чиста — значит вы успели сделать двадцать действий и он
+    прошёл сам; запустите <code>Junk.Make</code> ещё раз.`,
+},
 ];
 
 // Порядок в интерфейсе — по номеру из программы курса, а не по времени
@@ -514,3 +674,7 @@ function localise(lab) {
 }
 
 export const LABS = ALL.sort((a, b) => a.id - b.id).map(localise);
+
+// Чтение памяти машины — для прогона labs-test.mjs: он сверяет числа
+// лабораторных с тем, что видно в обход их проверок.
+export const MEM = { loaded, modVar, heap };

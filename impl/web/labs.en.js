@@ -8,6 +8,8 @@
  * Ключи: <номер>.<поле> — intro, hint, payoff, title, level,
  *        <номер>.step.<индекс> для текста шага.
  */
+import { SOURCES, pre } from './lab-sources.js';
+
 export const EN = {
   // Названия глав методички: одни и те же у разных лабораторий, поэтому
   // ключом служит имя файла, а не номер задания.
@@ -208,4 +210,61 @@ END Idx.</pre>
   '7.title': 'The system rebuilds itself',
   '8.title': 'Fixed point: two generations',
   '9.title': 'Inside the code generator',
+
+  // ── 10: the garbage collector from inside ────────────────────────────────
+  '10.title': 'The garbage collector from inside',
+  '10.intro': `In lab 6 the heap ran out inside a command. Here you open the
+    collector itself: find where it is called from, type a module that makes
+    garbage, and look at the heap before and after the sweep. The check reads
+    the number of allocated bytes not from the screen but from the machine's
+    memory — from the variable <code>Kernel.allocated</code>, the same one
+    <code>System.Watch</code> prints.`,
+  '10.step.0': `Open the source of the main loop: type
+    <code>Edit.Open Oberon.Mod ~</code> at the end of <code>System.Tool</code>
+    and run it. Find <code>PROCEDURE GC</code> in it and the last lines of the
+    module:
+    <pre>ActCnt := 0; CurTask := NewTask(GC, 1000); Install(CurTask);</pre>
+    The collector is an <b>ordinary task</b> of the main loop, once a second.
+    But it does not sweep every time: only when the action counter
+    <code>ActCnt</code> has reached zero or the heap is nearly full. Every
+    keystroke and every click decrements <code>ActCnt</code>, and after a sweep
+    it is reset to the constant <code>BasicCycle</code>. Find it near the top of
+    the file and enter its value.`,
+  '10.step.1': `Now a module that makes garbage. <code>Edit.Open Junk.Mod ~</code>,
+    type it, save it (<code>Edit.Store</code>) and build it with
+    <code>ORP.Compile Junk.Mod ~</code>:
+    ${pre(SOURCES.Junk)}
+    The record type has to be named (<code>BlockDesc</code>), not a
+    <code>POINTER TO RECORD … END</code> right in the pointer declaration — the
+    check will tell you why.`,
+  '10.step.2': `Add the line <code>Junk.Make</code> to <code>System.Tool</code>
+    and run it, then <code>System.Watch</code> (top line of
+    <code>System.Tool</code>). The log shows <code>Heap speace</code> (Wirth's
+    typo): the heap grew by a quarter of a megabyte. All those blocks are
+    garbage: the pointer to them lived in the local variable <code>p</code>, and
+    the command is over.`,
+  '10.step.3': `Click <code>System.Collect</code> — it is on the same top line.
+    It does not sweep; it only sets <code>ActCnt := 0</code>. The sweep happens
+    when the main loop next reaches the <code>GC</code> task, within a second.
+    Wait, then <code>System.Watch</code> again.`,
+  '10.step.4': `One last thing: run <code>Junk.Make</code> <b>twice in a
+    row</b>, with no <code>System.Collect</code> in between. Two commands of
+    256,000 bytes do not fit into a 426 KB heap, even though the first half is
+    already garbage by the time the second command starts.`,
+  '10.payoff': `Oberon's collector is not a thread and not an interrupt but an
+   <b>ordinary task of the main loop</b>, one in the list, installed at boot by
+   <code>NewTask(GC, 1000)</code>. And it sweeps for one of two reasons: you
+   made twenty actions, or the heap is nearly full.
+   <br><br>
+   Why only between commands? Look at what it marks:
+   <code>Kernel.Mark(mod.ptr)</code> for every module — <b>global</b> pointers
+   only. It never scans the stack. While a command runs, live objects are held
+   by its local variables, and a sweep in the middle of the command would throw
+   them away. Between commands the stack is empty, and the global roots are
+   enough. The collector's whole precision is bought with one rule: sweep when
+   nobody is holding anything.`,
+  '10.hint': `The collector only runs when the main loop is free. If the heap is
+    already clean at step 3, you managed twenty actions and it came by itself;
+    run <code>Junk.Make</code> again.`,
+
 };
