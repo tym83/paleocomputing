@@ -38,8 +38,8 @@ metadata:
         },
         "pvc": {
           "name": "risc5-payload",
-          "volumePath": "/var/run/risc5",
-          "sharedComputePath": "/var/run/risc5"
+          "volumePath": "/payload",
+          "sharedComputePath": "/payload"
         }
       }]
 spec:
