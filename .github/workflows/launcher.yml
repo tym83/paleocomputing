@@ -1,0 +1,71 @@
+# Сборка образа virt-launcher на каждую правку, которая его касается.
+#
+# ⚠ До этого kubevirt/Containerfile собирался только в publish.yml, то есть
+# при выпуске. Сломанная правка — однажды это был пропавший `mkdir -p
+# /src/qemu` — проходила разбор, вливалась и всплывала уже на выпуске, когда
+# чинить надо срочно.
+#
+# Почему отдельный процесс, а не задача в hardware.yml: фильтр путей там общий
+# на весь файл. Добавь туда kubevirt/** — и правка перехватчика тянула бы за
+# собой RTL и QEMU на полтора-два часа. Здесь — только образ.
+#
+# Ничего не выкладывается: образ собирается, загружается в docker раннера и
+# проверяется тем же сценарием, что и при выпуске. Кэш — тот же, что у
+# publish.yml (scope=launcher): пуши в main его наполняют, PR им пользуются.
+name: launcher
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'kubevirt/**'
+      - 'qemu/**'
+      - '.github/workflows/launcher.yml'
+  pull_request:
+    paths:
+      - 'kubevirt/**'
+      - 'qemu/**'
+      - '.github/workflows/launcher.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      # install: true — чтобы `docker build` внутри build.sh шёл через buildx
+      # и умел кэш GitHub Actions.
+      - uses: docker/setup-buildx-action@v3
+        with:
+          install: true
+
+      # ⚠ Без этого кэш type=gha молча не работает: токен кэша шагу `run` не
+      # дают, и buildx выбрасывает --cache-from/--cache-to без предупреждения.
+      - uses: crazy-max/ghaction-github-runtime@v4
+
+      # Имя — как у выпуска, только вместо версии выпуска `pr`. Версия KubeVirt
+      # вырезается той же строкой, что в publish.yml: основа прибита
+      # дайджестом, в тег идёт только версия.
+      - id: meta
+        run: |
+          kv=$(sed -n 's|^FROM quay.io/kubevirt/virt-launcher:\([^@[:space:]]*\).*|\1|p' kubevirt/Containerfile)
+          echo "$kv" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+            || { echo "не найдена версия KubeVirt в Containerfile: '$kv'"; exit 1; }
+          echo "image=virt-launcher:$kv-risc5-pr" >> "$GITHUB_OUTPUT"
+
+      # --load, а не --push: образ нужен только здесь, для проверки.
+      # Подпись происхождения в локальный docker не ложится — отключена.
+      - name: Сборка
+        run: |
+          kubevirt/build.sh "${{ steps.meta.outputs.image }}" \
+            --load --provenance=false \
+            --cache-from type=gha,scope=launcher \
+            --cache-to type=gha,scope=launcher,mode=max
+
+      - name: Проверить, что эмулятор знает chk
+        run: kubevirt/check_image.sh "${{ steps.meta.outputs.image }}"
