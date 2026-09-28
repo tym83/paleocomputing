@@ -3,7 +3,7 @@
 // всегда зелёная или всегда красная, бесполезна и должна ломать сборку.
 import fs from 'node:fs';
 import { Machine } from './machine.js';
-import { LABS, SOURCES, MEM } from './labs.js';
+import { LABS, SOURCES, BUILTIN, MEM } from './labs.js';
 import { OberonFS, readText, addFile } from './oberonfs.js';
 
 const prom = new Uint32Array(
@@ -261,7 +261,8 @@ await lab(11, async (m, L) => {
 // ── Лаба 12: цена проверки своими руками ────────────────────────────────────
 const costOnce = async (m) => {
   await makeFile(m, 'Cost.Mod', SOURCES.Cost);
-  typeLines(m, ['ORP.Compile Cost.Mod ~', 'Cost.Run', 'ORP.Compile ORG.Chk.Mod ~', 'System.Free Cost ORP ORG ~']);
+  typeLines(m, ['ORP.Compile Cost.Mod ~', 'Cost.Run', 'ORP.Compile ORG.Chk.Mod ~', 'System.Free Cost ORP ORG ~',
+                'ORP.Compile ORG.NoChk.Mod ~']);
   m.click(690, LINE(0), 2); go(m, 25);
   m.click(670, LINE(1), 2); go(m, 10);
 };
@@ -299,7 +300,110 @@ await lab(12, async (m, L) => {
   say(!L.steps[3].check(m, c).ok, 'шаг 4 с неверным числом — не пройден');
   c.answer = ((c.state.tB - c.state.tE) * 100 / c.state.tB).toFixed(1);
   const r4 = L.steps[3].check(m, c); say(r4.ok, 'шаг 4: ' + r4.msg);
+  // Конфигурация A: тот же круг с ORG.NoChk.Mod.
+  const cB = c.state.codeB, cE = c.state.codeE;
+  say(cB.traps > 0 && cB.chk === 0 && cE.traps === 0 && cE.chk > 0,
+      `машинный признак различает B и E: B — ${cB.traps} ловушек, ${cB.chk} CHK; E — ${cE.traps} ловушек, ${cE.chk} CHK`);
+  say(!L.steps[4].check(m, c).ok, 'шаг 5 до сборки ORG.NoChk.Mod — не пройден');
+  const h1 = F().files().get('ORG.rsc');
+  m.click(690, LINE(4), 2);
+  n = 0;
+  while (F().files().get('ORG.rsc') === h1 && n < 300) { go(m, 5); n += 5; }
+  go(m, 5);
+  const r5 = L.steps[4].check(m, c); say(r5.ok, `шаг 5 (≈ ${n} млн команд): ` + r5.msg);
+  say(!L.steps[5].check(m, c).ok, 'шаг 6 до пересборки Cost — не пройден');
+  m.click(690, LINE(3), 2); go(m, 5);            // System.Free
+  m.click(690, LINE(0), 2); go(m, 30);           // ORP.Compile Cost.Mod
+  m.click(670, LINE(1), 2); go(m, 10);           // Cost.Run
+  const r6 = L.steps[5].check(m, c); say(r6.ok, 'шаг 6: ' + r6.msg);
+  const cA = MEM.codeInMemory(m, 'Cost');
+  say(r6.ok && cA.words === cE.words - cE.chk && cE.words === cB.words - cB.traps,
+      `размеры сходятся по командам: B ${cB.words} = E ${cE.words} + ${cB.traps} ловушка(и), E = A ${cA.words} + ${cE.chk} CHK`);
 });
+
+// ── Лаба 13: своя встроенная процедура ──────────────────────────────────────
+// Правка компилятора — теми же руками, что у человека: образец набирается в
+// System.Tool, выделяется протяжкой правой кнопки, Edit.Search в заголовке
+// файла ставит курсор за образцом, туда набирается вставка, Edit.Store.
+const MENU = { close: [95, 6], search: [285, 6], store: [345, 6] };
+function selectLine(m, y) {
+  m.mouse(1000, 767 - 740, 0); m.run(300000);          // стрелку — с глаз долой
+  let a = 9999, b = -1;
+  for (let x = 645; x < 1015; x++) if (m.ink(x, y - 5, x + 1, y + 3)) { a = Math.min(a, x); b = x; }
+  const Y = 767 - y;
+  m.mouse(a + 1, Y, 0); m.run(150000); m.mouse(a + 1, Y, 1); m.run(150000);
+  for (let x = a + 5; x < b; x += 6) { m.mouse(x, Y, 1); m.run(100000); }
+  m.mouse(b, Y, 1); m.run(150000); m.mouse(b, Y, 0); m.run(150000);
+}
+async function patchFile(m, k, edit) {            // k — строка «Edit.Open …»
+  // Сроки — с запасом на самый длинный файл: ORG.Mod почти 1900 строк, и
+  // четырёх миллионов команд поиску в нём не хватало — вставка набиралась
+  // туда, где курсор стоял до поиска.
+  m.click(680, LINE(k), 2); go(m, 20);
+  selectLine(m, LINE(k + 1) - 3); go(m, 1);
+  m.click(...MENU.search, 2); go(m, 30);
+  // Шаг набора — 30 тысяч команд на символ. На десяти тысячах клавиатура
+  // модели теряла нажатия в плотной серии символов с Shift: «(VAR x» ложилось
+  // в файл как «(VX» — пропадали буквы, и Shift оставался нажатым.
+  m.type(edit.insert, 30000); go(m, 1);
+  m.click(...MENU.store, 2); go(m, 40);
+  m.click(...MENU.close, 2); go(m, 3);
+}
+await lab(13, async (m, L) => {
+  const c = { state: {}, answer: '' };
+  go(m, 12);
+  say(!L.steps[0].check(m, c).ok, 'шаг 1 до правки — не пройден');
+  typeLines(m, [
+    ...BUILTIN.flatMap(e => [`Edit.Open ${e.file}`, e.after]),
+    'ORP.Compile ORB.Mod/s ORG.Mod/s ORP.Mod/s ~', 'System.Free ORP ORG ORB ~',
+    'Edit.Open Sq.Mod', 'ORP.Compile Sq.Mod ~', 'Sq.Run']);
+  await patchFile(m, 0, BUILTIN[0]);
+  const r0 = L.steps[0].check(m, c);
+  say(!r0.ok, 'шаг 1 после одной вставки из трёх — не пройден: ' + r0.msg);
+  await patchFile(m, 2, BUILTIN[1]);
+  await patchFile(m, 4, BUILTIN[2]);
+  for (const e of BUILTIN) {
+    const t = readText(new OberonFS(m).read(new OberonFS(m).files().get(e.file))).replace(/\r/g, '\n');
+    say(t.includes(e.after + e.insert), `${e.file}: вставка легла сразу за «${e.after}»`);
+    if (process.env.DEBUG_BUILTIN && !t.includes(e.after + e.insert)) {
+      const i = t.indexOf(e.after), j = t.indexOf('Sqr');
+      console.log(`      [${e.file}] за образцом: ${JSON.stringify(t.slice(i, i + 160))}`);
+      console.log(`      [${e.file}] Sqr: ${j < 0 ? 'нет' : JSON.stringify(t.slice(Math.max(0, j - 80), j + 120))}`);
+    }
+  }
+  const r1 = L.steps[0].check(m, c); say(r1.ok, 'шаг 1: ' + r1.msg);
+  say(!L.steps[1].check(m, c).ok, 'шаг 2 до пересборки — не пройден');
+  const F = () => new OberonFS(m), h0 = F().files().get('ORP.rsc');
+  m.click(690, LINE(6), 2);
+  let n = 0;
+  while (F().files().get('ORP.rsc') === h0 && n < 400) { go(m, 5); n += 5; }
+  go(m, 5);
+  const r2 = L.steps[1].check(m, c); say(r2.ok, `шаг 2 (≈ ${n} млн команд): ` + r2.msg);
+  // Sq старым компилятором, ещё не выгруженным: SQR ему неизвестна.
+  await makeSq(m);
+  m.click(690, LINE(9), 2); go(m, 20);
+  say(!new OberonFS(m).files().has('Sq.rsc'), 'старый компилятор в памяти Sq.Mod не собирает: SQR ему неизвестна');
+  say(!L.steps[2].check(m, c).ok, 'шаг 3 до System.Free — не пройден');
+  m.click(690, LINE(7), 2); go(m, 5);            // System.Free ORP ORG ORB
+  m.click(690, LINE(9), 2); go(m, 30);           // ORP.Compile Sq.Mod
+  m.click(665, LINE(10), 2); go(m, 5);           // Sq.Run
+  const r3 = L.steps[2].check(m, c); say(r3.ok, 'шаг 3: ' + r3.msg);
+  say(!L.steps[3].check(m, c).ok, 'шаг 4 до пересборки новым компилятором — не пройден');
+  const h1 = F().files().get('ORP.rsc');
+  m.click(690, LINE(6), 2);
+  n = 0;
+  while (F().files().get('ORP.rsc') === h1 && n < 400) { go(m, 5); n += 5; }
+  go(m, 5);
+  const r4 = L.steps[3].check(m, c); say(r4.ok, `шаг 4 (≈ ${n} млн команд): ` + r4.msg);
+});
+async function makeSq(m) {
+  m.click(680, LINE(8), 2); go(m, 8);
+  m.click(...EDIT.area, 4); m.run(500000);
+  m.type(SOURCES.Sq, 6000); m.run(2e6);
+  m.click(...EDIT.store, 2); go(m, 10);
+  say(readText(new OberonFS(m).read(new OberonFS(m).files().get('Sq.Mod'))) === SOURCES.Sq,
+      'Sq.Mod набран посимвольно');
+}
 
 // ── статическая проверка страницы-оболочки ──────────────────────────────────
 // Браузер здесь не поднять, поэтому хотя бы убеждаемся, что разметка и скрипт
@@ -331,6 +435,14 @@ await lab(12, async (m, L) => {
         && same(cfg.slice(i + 6), lab.slice(k + 5))
         && lab[k + 4].trim() === 'Files.WriteByte(R, version);',
         'ORG.Chk.Mod = patches/ORG-cfgE.Mod, кроме штампа версии');
+    // Конфигурация A лабораторной — patches/ORG-cfgA.Mod плюс комментарий о
+    // штампе версии, и ничего больше.
+    const noc = lines(fs.readFileSync('ORG.NoChk.Mod', 'latin1'));
+    const cfa = lines(fs.readFileSync('../patches/ORG-cfgA.Mod', 'latin1'));
+    const a = noc.findIndex(x => x.includes('(*LAB VARIANT'));
+    const z = noc.findIndex((x, n) => n >= a && x.trim().endsWith('*)'));
+    say(a > 0 && z > a && same(noc.slice(0, a).concat(noc.slice(z + 1)), cfa),
+        'ORG.NoChk.Mod = patches/ORG-cfgA.Mod, кроме комментария о штампе версии');
   }
   const labIds = LABS.map(l => l.id);
   say(new Set(labIds).size === labIds.length, `номера лабораторий уникальны: ${labIds.join(', ')}`);
