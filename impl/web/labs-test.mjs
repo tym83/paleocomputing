@@ -355,11 +355,17 @@ function selectLine(m, y) {
   m.mouse(b, Y, 1); m.run(150000); m.mouse(b, Y, 0); m.run(150000);
 }
 async function patchFile(m, k, edit) {            // k — строка «Edit.Open …»
-  m.click(680, LINE(k), 2); go(m, 8);
+  // Сроки — с запасом на самый длинный файл: ORG.Mod почти 1900 строк, и
+  // четырёх миллионов команд поиску в нём не хватало — вставка набиралась
+  // туда, где курсор стоял до поиска.
+  m.click(680, LINE(k), 2); go(m, 20);
   selectLine(m, LINE(k + 1) - 3); go(m, 1);
-  m.click(...MENU.search, 2); go(m, 4);
-  m.type(edit.insert, 10000); go(m, 1);
-  m.click(...MENU.store, 2); go(m, 10);
+  m.click(...MENU.search, 2); go(m, 30);
+  // Шаг набора — 30 тысяч команд на символ. На десяти тысячах клавиатура
+  // модели теряла нажатия в плотной серии символов с Shift: «(VAR x» ложилось
+  // в файл как «(VX» — пропадали буквы, и Shift оставался нажатым.
+  m.type(edit.insert, 30000); go(m, 1);
+  m.click(...MENU.store, 2); go(m, 40);
   m.click(...MENU.close, 2); go(m, 3);
 }
 await lab(13, async (m, L) => {
@@ -378,6 +384,11 @@ await lab(13, async (m, L) => {
   for (const e of BUILTIN) {
     const t = readText(new OberonFS(m).read(new OberonFS(m).files().get(e.file))).replace(/\r/g, '\n');
     say(t.includes(e.after + e.insert), `${e.file}: вставка легла сразу за «${e.after}»`);
+    if (process.env.DEBUG_BUILTIN && !t.includes(e.after + e.insert)) {
+      const i = t.indexOf(e.after), j = t.indexOf('Sqr');
+      console.log(`      [${e.file}] за образцом: ${JSON.stringify(t.slice(i, i + 160))}`);
+      console.log(`      [${e.file}] Sqr: ${j < 0 ? 'нет' : JSON.stringify(t.slice(Math.max(0, j - 80), j + 120))}`);
+    }
   }
   const r1 = L.steps[0].check(m, c); say(r1.ok, 'шаг 1: ' + r1.msg);
   say(!L.steps[1].check(m, c).ok, 'шаг 2 до пересборки — не пройден');
