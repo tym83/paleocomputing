@@ -170,7 +170,10 @@ jobs:
           esac
           [ -n "$want" ] || { echo "для ${{ matrix.image.name }} проверки содержимого нет"; exit 0; }
           for f in $want; do
-            docker run --rm --entrypoint sh "$ref" -c "test -s $dir/$f" \
+            # --platform: образ, собранный на amd64 под arm64 (host-build),
+            # без него не запустился бы вовсе — и отказ docker run выглядел
+            # бы как «файла нет».
+            docker run --rm --platform linux/${{ matrix.platform.arch }} --entrypoint sh "$ref" -c "test -s $dir/$f" \
               || { echo "❌ в образе нет $dir/$f"; exit 1; }
             echo "  ✅ $f"
           done
