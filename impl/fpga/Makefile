@@ -1,6 +1,7 @@
 # Тайминг ядра RISC5 на ткани Lattice ECP5 (ULX3S, LFE5U-85F-6BG381C).
 #
-# VARIANT — ядро: base (как у Вирта) или chk (с -DWITH_CHK -DCHK_SPLIT).
+# VARIANT — ядро: base (как у Вирта), chk (с -DWITH_CHK -DCHK_SPLIT),
+#           fmul / fmul2 (быстрый FP-умножитель за 1 / 2 такта, выпуск №2).
 # WRAP    — обёртка: soc (ядро + ПЗУ на ~clk, как в RISC5Top.v) или
 #           core (только ядро, код из регистра; -DCORE_ONLY).
 #
@@ -11,6 +12,7 @@
 #                                  упаковки; система из него не грузится)
 #   make all                       synth+pnr+timing для 2 ядер x 2 обёрток + сводка
 #   make docker-all                то же внутри прибитого образа (Dockerfile)
+#   make fmul / docker-fmul        base, fmul, fmul2 x 2 обёртки + сводка (находка 76)
 #
 # Инструменты вызываются напрямую; версии — те, что в образе. Результаты,
 # снятые другими версиями, с results.md не сравнивать.
@@ -25,19 +27,22 @@ IMAGE      ?= paleo-fpga:local
 
 RTL  := ../rtl
 SRCS := $(addprefix $(RTL)/,RISC5.v Registers.v Multiplier.v Divider.v \
-          LeftShifter.v RightShifter.v FPAdder.v FPMultiplier.v FPDivider.v PROM.v) \
+          LeftShifter.v RightShifter.v FPAdder.v FPMultiplier.v FPMultiplierFast.v FPDivider.v PROM.v) \
         core_timing_top.v
 LPF  := ulx3s_core.lpf
 TOP  := core_timing_top
 
 DEFS_base :=
 DEFS_chk  := -DWITH_CHK -DCHK_SPLIT
+# выпуск №2: быстрый FP-умножитель, однотактный и с регистром произведения
+DEFS_fmul  := -DFPMUL_FAST
+DEFS_fmul2 := -DFPMUL_FAST -DFPMUL_FAST_REG
 WDEFS_soc :=
 WDEFS_core := -DCORE_ONLY
 
 B := build/$(WRAP)-$(VARIANT)
 
-.PHONY: synth pnr timing bit all summary docker-image docker-all
+.PHONY: synth pnr timing bit all fmul summary docker-image docker-all docker-fmul
 
 synth: $(B)/synth.json
 
@@ -88,3 +93,14 @@ docker-image:
 docker-all: docker-image
 	docker run --rm -v $(abspath ../..):/work -w /work/impl/fpga $(IMAGE) \
 	  make all SEEDS="$(SEEDS)" TARGET_MHZ=$(TARGET_MHZ)
+
+# Цена быстрого умножителя (находка 76). В all не входит: удваивает время
+# задания CI, а вопрос разовый — пересчитывать при правке умножителя.
+fmul:
+	@st=0; for w in soc core; do for v in base fmul fmul2; do \
+	  $(MAKE) timing WRAP=$$w VARIANT=$$v || st=1; done; done; \
+	$(MAKE) summary; exit $$st
+
+docker-fmul: docker-image
+	docker run --rm -v $(abspath ../..):/work -w /work/impl/fpga $(IMAGE) \
+	  make fmul SEEDS="$(SEEDS)" TARGET_MHZ=$(TARGET_MHZ)

@@ -13,7 +13,7 @@ TESTS  := t1_latency t1_flags t1_fpb2b t1_fp t1_arith t1_umul t1_probe_flags \
           t1_branch t1_branch_width t1_logic t1_dontcare t1_prime t1_alu_diff1 t1_alu_diff2 t1_shift t1_mem t1_movspec t1_irq
 ASM    := $(patsubst %,tests/%.bin,$(TESTS) t2_chk t2_chk_hi)
 
-.PHONY: boot-fast fpmul-diff lm lm-profile lm-check site all check test roundtrip pristine bootstrap rebuild book labs image lab image-check equiv lockstep lockstep-chk boot boot-chk selfhost syn configs tools web deps clean
+.PHONY: boot-fast fpmul-diff lm lm-profile lm-check lm-stock lm-system lm-qemu site all check test roundtrip pristine bootstrap rebuild book labs image lab image-check equiv lockstep lockstep-chk boot boot-chk selfhost syn configs tools web deps clean
 all: tools build/obj_tests/run_tests build/obj_chk/run_tests_chk $(ASM)
 
 # ───────────────────────────────────────────────────────────────────────────
@@ -231,6 +231,47 @@ boot-fast:
 	@mkdir -p build
 	@verilator $(VFLAGS) -DFPMUL_FAST -CFLAGS -DFPMUL_FAST -o soc_tb_fast --top-module RISC5 --Mdir build/obj_soc_fast $(RTL) $(TB)/soc_tb.cpp $(TB)/disk/disk.c > build/soc_fast.log 2>&1 || { cat build/soc_fast.log; exit 1; }
 	@./build/obj_soc_fast/soc_tb_fast --prom=rtl/prom_sd.mem --max=12000000 --expect-crc=$(BOOT_CRC)
+
+# ───────────────────────────────────────────────────────────────────────────
+# Выпуск №2: языковая модель на RISC5 (13-episode-lm-on-risc5.md, находки 72–78)
+# ───────────────────────────────────────────────────────────────────────────
+# Дешёвая проверка: веса = манифест, модуль на эмуляторе Norebo даёт ровно
+# эталонный текст (арифметика risc-fp.c). Секунды — годится в CI.
+lm-check: $(NOREBO)
+	@python3 lm/train.py --check
+	@python3 lm/compare.py emu 64 1 2 3
+
+# Та же сверка на RTL Вирта (Norebo поверх Verilator).
+lm: $(NOREBO) build/obj_nb/norebo_tb
+	@python3 lm/train.py --check
+	@python3 lm/compare.py rtl 16 1 7
+
+# Главные числа: такты на символ, профиль, ускорение, потолок FMAC. ~3 минуты.
+LM_N ?= 32
+lm-profile: $(NOREBO) build/obj_nb/norebo_tb build/obj_nbf/norebo_tb build/obj_nbr/norebo_tb
+	@python3 lm/profile.py $(LM_N)
+
+# Стоковая нагрузка на трёх ядрах: компилятор собирает сам себя. ~2 минуты.
+lm-stock: build/obj_nb/norebo_tb build/obj_nbf/norebo_tb build/obj_nbr/norebo_tb
+	@bash lm/stock.sh
+
+# Модель внутри настоящей системы (1 МБ ОЗУ, диск, окна) на RTL: система сама
+# компилирует LM.Mod и исполняет команду средней кнопкой. ~4 минуты.
+lm-system: $(NOREBO) scripts/lm.txt
+	@mkdir -p build
+	@verilator $(VFLAGS) -o soc_tb --top-module RISC5 --Mdir build/obj_soc $(RTL) $(TB)/soc_tb.cpp $(TB)/disk/disk.c > build/soc.log 2>&1 || { cat build/soc.log; exit 1; }
+	@bash lm/mkdisk.sh
+	@cp -f build/lm/oberon-lm.dsk build/lm/oberon-lm-run.dsk
+	@./build/obj_soc/soc_tb --prom=rtl/prom_sd.mem --max=130000000 --disk=build/lm/oberon-lm-run.dsk \
+	  --persist --script=scripts/lm.txt | grep -E "экран выгружен: build/lm|расхождений"
+	@python3 lm/outcheck.py build/lm/oberon-lm-run.dsk
+
+# То же в QEMU — только функциональная сверка (тактов QEMU не моделирует).
+lm-qemu: $(NOREBO)
+	@python3 lm/qemu_run.py
+
+scripts/lm.txt: scripts/lm.src tools/mkscript.py tools/keymap.py
+	@PYTHONPATH=tools python3 tools/mkscript.py $< > $@
 
 # ───────────────────────────────────────────────────────────────────────────
 # Полная проверка. Раньше сильнейшие проверки (диффстенд, загрузка системы)

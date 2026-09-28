@@ -114,26 +114,31 @@ MODULE LM;  (*символьная языковая модель: MLP Бенжи
     RETURN i
   END Step;
 
-  (* LM.Generate n seed "затравка" — n символов после затравки *)
+  (* LM.Generate n seed "затравка" — n символов после затравки. Текст идёт в
+     журнал и, для автоматической сверки с эталоном, в файл LM.Out: с экрана
+     текст не прочитать, а файл снимается с образа диска на хосте. *)
   PROCEDURE Generate*;
-    VAR S: Texts.Scanner; n, i, c: INTEGER;
+    VAR S: Texts.Scanner; n, i, c: INTEGER; f: Files.File; r: Files.Rider;
   BEGIN Texts.OpenScanner(S, Oberon.Par.text, Oberon.Par.pos); Texts.Scan(S);
     IF S.class = Texts.Int THEN n := S.i; Texts.Scan(S);
       IF S.class = Texts.Int THEN seed := S.i; Texts.Scan(S) ELSE seed := 1 END ;
       IF Load("LM.Weights") THEN
+        f := Files.New("LM.Out"); Files.Set(r, f, 0);
         FOR i := 0 TO C-1 DO ctx[i] := 0 END ;
         IF S.class = Texts.String THEN i := 0;
-          WHILE S.s[i] # 0X DO Push(Index(S.s[i])); Texts.Write(W, S.s[i]); INC(i) END
+          WHILE S.s[i] # 0X DO
+            Push(Index(S.s[i])); Texts.Write(W, S.s[i]); Files.Write(r, S.s[i]); INC(i)
+          END
         END ;
         Texts.Append(Oberon.Log, W.buf);
         FOR i := 1 TO n DO
           LED(1); c := Step(); LED(0);
-          Push(c); Texts.Write(W, vocab[c]);
+          Push(c); Texts.Write(W, vocab[c]); Files.Write(r, vocab[c]);
           IF i MOD 64 = 0 THEN Texts.WriteLn(W) END ;
           Texts.Append(Oberon.Log, W.buf)
         END ;
-        Texts.WriteLn(W)
-      ELSE Texts.WriteString(W, "LM: no LM.Weights"); Texts.WriteLn(W)
+        Files.Register(f); Texts.WriteLn(W)
+      ELSE Texts.WriteString(W, "LM: no LM.Weights or no memory"); Texts.WriteLn(W)
       END ;
       Texts.Append(Oberon.Log, W.buf)
     END
