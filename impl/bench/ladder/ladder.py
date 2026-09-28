@@ -382,7 +382,8 @@ def loop_body(asm_text, arch, name='ladder_kernel'):
     # Единственное чтение памяти в цикле — a[i]. Два чтения и больше значат, что
     # цикл развёрнут или векторизован и сравнивать тела с RISC5 нельзя.
     if arch == 'x86_64':
-        loads = sum(1 for v in body if '(' in v)
+        # lea считает адрес, но память не читает
+        loads = sum(1 for v in body if '(' in v and not v.split()[0].lower().startswith('lea'))
     else:
         loads = sum(1 for v in body if v.split()[0].lower().startswith('ld'))
     return {'count': len(body), 'text': '\n'.join(shown), 'exits': exits,

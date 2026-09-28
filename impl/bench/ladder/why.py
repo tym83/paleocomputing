@@ -146,22 +146,27 @@ int main(int argc, char **argv)
         arr[k] = k * 2654435761u + 1u;
     const uint32_t *p = arr;
     __asm__ volatile("" : "+r"(p) : : "memory");   /* содержимое неизвестно оптимизатору */
-    if (strcmp(argv[1], "why_calib") == 0) {{
-        why_calib(p, n / 16 + 1);
-        double t0 = now_ns();
-        uint64_t x = why_calib(p, n);
-        double t1 = now_ns();
-        printf("%llu %.6f\\n", (unsigned long long)x, (t1 - t0) / (double)n);
-        return 0;
-    }}
+    /* Калибровка в том же процессе, до и после замера: n зависимых сложений. */
+    uint64_t nc = n / {adds} + 1;
+    why_calib(p, nc / 16 + 1);
     for (size_t k = 0; k < sizeof kernels / sizeof kernels[0]; k++) {{
         if (strcmp(argv[1], kernels[k].name) != 0)
             continue;
+        double c0 = now_ns();
+        uint64_t x = why_calib(p, nc);
+        double c1 = now_ns();
         kernels[k].fn(p, n / 16 + 1);              /* прогрев */
         double t0 = now_ns();
         uint32_t s = kernels[k].fn(p, n);
         double t1 = now_ns();
-        printf("%u %.6f\\n", s, (t1 - t0) / (double)n);
+        x += why_calib(p, nc);
+        double c2 = now_ns();
+        if (x != 2 * nc * {adds}) {{
+            fprintf(stderr, "калибровка посчитана неверно\\n");
+            return 3;
+        }}
+        double a0 = (c1 - c0) / (double)(nc * {adds}), a1 = (c2 - t1) / (double)(nc * {adds});
+        printf("%u %.6f %.6f\\n", s, (t1 - t0) / (double)n, a0 < a1 ? a0 : a1);
         return 0;
     }}
     fprintf(stderr, "нет ядра %s\\n", argv[1]);
@@ -210,13 +215,22 @@ def emit(arch):
     adds = '"' + '\\n\\t'.join([ASM[arch]['one']] * CALIB_ADDS) + '"'
     table = ''.join(f'    {{"{v[0]}", {v[0]}}},\n' for v in vs)
     return (HEAD.format(lim=LIM) + ''.join(emit_kernel(arch, *v) for v in vs)
-            + CALIB.format(adds=adds) + MAIN.format(table=table))
+            + CALIB.format(adds=adds) + MAIN.format(table=table, adds=CALIB_ADDS))
 
 
-def count_links(text, arch):
-    imm = '$64' if arch == 'x86_64' else '#64'
-    return sum(1 for l in text.splitlines()
-               if l.strip().startswith('add') and l.rstrip().endswith(imm))
+def count_imm_adds(text, arch, imm):
+    """Сколько в теле сложений с непосредственным imm: `add x, x, #imm` или `addq $imm, %r`."""
+    n = 0
+    for line in text.splitlines():
+        parts = line.strip().split(None, 1)
+        if len(parts) < 2 or not parts[0].lower().startswith('add'):
+            continue
+        ops = [o.strip() for o in parts[1].split(',')]
+        if arch == 'x86_64':
+            n += ops[0] == f'${imm}'
+        else:
+            n += ops[-1] in (f'#{imm}', f'#{imm:#x}')
+    return n
 
 
 def verify(asm_text, arch, name, c, k, pos):
@@ -228,8 +242,8 @@ def verify(asm_text, arch, name, c, k, pos):
         errs.append(f'{lb["loads"]} чтений памяти вместо одного')
     if len(lb['exits']) != want_exits:
         errs.append(f'{len(lb["exits"])} боковых выходов вместо {want_exits}')
-    if count_links(lb['text'], arch) != k:
-        errs.append(f'{count_links(lb["text"], arch)} звеньев цепочки вместо {k}')
+    if count_imm_adds(lb['text'], arch, 64) != k:
+        errs.append(f'{count_imm_adds(lb["text"], arch, 64)} звеньев цепочки вместо {k}')
     if pos in ('mask', 'chain') and not any(s in lb['text'] for s in ASM[arch]['sel']):
         errs.append('нет csel/cmov')
     if errs:
@@ -239,9 +253,7 @@ def verify(asm_text, arch, name, c, k, pos):
 
 def verify_calib(asm_text, arch):
     lb = loop_body(asm_text, arch, 'why_calib')
-    imm = '$1' if arch == 'x86_64' else '#1'
-    adds = sum(1 for l in lb['text'].splitlines()
-               if l.strip().startswith('add') and l.rstrip().endswith(imm))
+    adds = count_imm_adds(lb['text'], arch, 1)
     if adds != CALIB_ADDS:
         sys.exit(f'❌ why_calib: {adds} сложений вместо {CALIB_ADDS}\n{lb["text"]}')
     return lb
@@ -258,8 +270,9 @@ def build(tc, arch, outdir):
 
 
 def time_one(binary, kernel, n):
+    """(сумма, нс/итер, нс/сложение по калибровке в том же процессе)."""
     out = run([str(binary), kernel, str(n)]).stdout.split()
-    return int(out[0]), float(out[1])
+    return int(out[0]), float(out[1]), float(out[2])
 
 
 def main():
@@ -290,12 +303,9 @@ def main():
         binary, asm = build(tc, arch, outdir)
         bins[tc[0]] = binary
         verify_calib(asm, arch)
-        got, _ = time_one(binary, 'why_calib', args.iter)
-        if got != args.iter * CALIB_ADDS % 2 ** 64:
-            sys.exit(f'❌ {tc[0]} why_calib: {got} вместо {args.iter * CALIB_ADDS}')
         for name, c, k, pos in variants():
             lb = verify(asm, arch, name, c, k, pos)
-            got, _ = time_one(binary, name, args.iter)
+            got = time_one(binary, name, args.iter)[0]
             if got != want:
                 sys.exit(f'❌ {tc[0]} {name}: сумма {got}, ожидалась {want}')
             rows.append({'tc': tc[0], 'name': name, 'c': c, 'k': k, 'pos': pos,
@@ -304,12 +314,10 @@ def main():
         print(f'  {tc[0]}: {len(variants())} ядер, форма тел проверена', flush=True)
 
     if not args.emulated:
-        # По кругу; перед каждым замером — своя калибровка.
-        n_cal = max(1, args.iter // CALIB_ADDS)
+        # По кругу; калибровка — в том же процессе, до и после замера.
         for rep in range(args.reps):
             for r in rows:
-                cal = time_one(bins[r['tc']], 'why_calib', n_cal)[1] / CALIB_ADDS
-                ns = time_one(bins[r['tc']], r['name'], args.iter)[1]
+                _, ns, cal = time_one(bins[r['tc']], r['name'], args.iter)
                 r['ns'].append(ns)
                 r['nsadd'].append(cal)
                 r['cyc'].append(ns / cal)
