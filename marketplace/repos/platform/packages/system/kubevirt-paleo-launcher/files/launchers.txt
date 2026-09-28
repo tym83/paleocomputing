@@ -3,6 +3,10 @@
 # под тег выпуска.
 # release: dev
 # registry: ghcr.io/tym83/paleocomputing
+# arch: amd64 arm64
+#
+# arch — процессоры узлов, под которые собран образ (kubevirt/platforms.txt).
+# На кластере с узлом другой архитектуры компонент launcher не трогает.
 #
 # версия KubeVirt   образ virt-launcher (семейство paleo, тот же дайджест, что -risc5-)
 v1.8.4 ghcr.io/tym83/paleocomputing/virt-launcher:v1.8.4-paleo-dev
