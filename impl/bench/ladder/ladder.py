@@ -396,20 +396,73 @@ def host_arch():
     return 'x86_64' if m in ('x86_64', 'amd64') else 'aarch64' if m in ('arm64', 'aarch64') else m
 
 
-def cpu_name():
+# Номера ядер по MIDR_EL1: implementer → {part → имя}. Источник — Linux
+# arch/arm64/include/asm/cputype.h (ARM_CPU_IMP_*, *_CPU_PART_*), сверено
+# с master 2026-09-28. Неизвестный номер печатается как есть, без догадок.
+ARM_IMPLEMENTERS = {0x41: 'Arm', 0x61: 'Apple', 0x6D: 'Microsoft', 0xC0: 'Ampere'}
+ARM_PARTS = {
+    0x41: {0xD03: 'Cortex-A53', 0xD05: 'Cortex-A55', 0xD07: 'Cortex-A57',
+           0xD08: 'Cortex-A72', 0xD0B: 'Cortex-A76', 0xD0C: 'Neoverse N1',
+           0xD0D: 'Cortex-A77', 0xD40: 'Neoverse V1', 0xD41: 'Cortex-A78',
+           0xD44: 'Cortex-X1', 0xD46: 'Cortex-A510', 0xD47: 'Cortex-A710',
+           0xD48: 'Cortex-X2', 0xD49: 'Neoverse N2', 0xD4D: 'Cortex-A715',
+           0xD4E: 'Cortex-X3', 0xD4F: 'Neoverse V2', 0xD80: 'Cortex-A520',
+           0xD81: 'Cortex-A720', 0xD82: 'Cortex-X4', 0xD83: 'Neoverse V3AE',
+           0xD84: 'Neoverse V3', 0xD85: 'Cortex-X925', 0xD87: 'Cortex-A725',
+           0xD8E: 'Neoverse N3'},
+    0x6D: {0xD49: 'Azure Cobalt 100 (на основе Neoverse N2 r0p0)'},
+    0xC0: {0xAC3: 'AmpereOne', 0xAC4: 'AmpereOne A'},
+}
+
+
+def arm_core_name(implementer, part):
+    """Имя ядра по implementer и part из /proc/cpuinfo (строки вида '0x41')."""
+    try:
+        imp, prt = int(implementer, 16), int(part, 16)
+    except (TypeError, ValueError):
+        return None
+    name = ARM_PARTS.get(imp, {}).get(prt)
+    if name:
+        return name
+    return f'{ARM_IMPLEMENTERS.get(imp, f"implementer {implementer}")}, part {part} — нет в таблице'
+
+
+def cpu_info():
+    """Строки о процессоре для шапки: модель, семейство/модель/степпинг или MIDR, lscpu."""
     try:
         if sys.platform == 'darwin':
-            return run(['sysctl', '-n', 'machdep.cpu.brand_string']).stdout.strip()
+            return [run(['sysctl', '-n', 'machdep.cpu.brand_string']).stdout.strip()]
         info = pathlib.Path('/proc/cpuinfo').read_text()
-        for key in ('model name', 'Model', 'CPU implementer', 'CPU part'):
-            m = re.search(rf'^{key}\s*:\s*(.+)$', info, re.M)
-            # Виртуальная машина на Apple сообщает implementer и part нулями.
-            if m and m.group(1).strip() not in ('0x00', '0x000'):
-                return f'{key}: {m.group(1).strip()}'
-        return 'не сообщается (виртуальная машина)'
     except (OSError, subprocess.CalledProcessError):
-        pass
-    return 'неизвестен'
+        return ['неизвестен']
+
+    def field(key):
+        m = re.search(rf'^{key}\s*:\s*(.+)$', info, re.M)
+        return m.group(1).strip() if m else None
+
+    lines = []
+    if field('model name'):
+        lines.append(field('model name'))
+        fam = [f'{k} {field(k)}' for k in ('vendor_id', 'cpu family', 'model', 'stepping')
+               if field(k)]
+        if fam:
+            lines.append(', '.join(fam))
+    imp, part = field('CPU implementer'), field('CPU part')
+    # Виртуальная машина на Apple сообщает implementer и part нулями.
+    if imp and imp not in ('0x00', '0x0'):
+        midr = [f'{k.split()[1]} {field(k)}' for k in
+                ('CPU implementer', 'CPU architecture', 'CPU variant', 'CPU part',
+                 'CPU revision') if field(k)]
+        lines.append(f'ядро: **{arm_core_name(imp, part)}** (MIDR: {", ".join(midr)}; '
+                     'имена — Linux `arch/arm64/include/asm/cputype.h`)')
+    if shutil.which('lscpu'):
+        p = subprocess.run(['lscpu'], capture_output=True, text=True)
+        keep = [l.split(':', 1) for l in p.stdout.splitlines()
+                if re.match(r'\s*(Vendor ID|Model name|BIOS Model name|CPU max MHz|'
+                            r'Hypervisor vendor)\s*:', l)]
+        if keep:
+            lines.append('lscpu: ' + '; '.join(f'{k.strip()} = {v.strip()}' for k, v in keep))
+    return lines or ['не сообщается (виртуальная машина)']
 
 
 def time_one(binary, n):
@@ -501,8 +554,11 @@ def report(args, arch, tcs, rows):
     w('')
     w(f'* дата: {datetime.date.today().isoformat()}')
     w(f'* система: `{platform.system()} {platform.release()}`, архитектура `{arch}`')
-    cpu = 'эмулируется; /proc/cpuinfo принадлежит хосту' if args.emulated else cpu_name()
-    w(f'* процессор: {cpu}')
+    if args.emulated:
+        w('* процессор: эмулируется; /proc/cpuinfo принадлежит хосту')
+    else:
+        for line in cpu_info():
+            w(f'* процессор: {line}')
     if args.note:
         w(f'* {args.note}')
     w(f'* массив: {LIM} × u32, индекс `i = (i + 1) & {MASK}`; итераций на прогон: '
