@@ -1,5 +1,5 @@
 /*
- * Исходники, которые человек набирает в лабораторных 10–12. Одна копия на
+ * Исходники, которые человек набирает в лабораторных 10–13. Одна копия на
  * текст задания и на прогон labs-test.mjs: набранное в прогоне обязано
  * совпадать с показанным на странице, иначе проверяется не то задание.
  *
@@ -62,5 +62,31 @@ END Tick.
 BEGIN Texts.OpenWriter(W)
 END Cost.
 `,
+  Sq: `MODULE Sq;
+  IMPORT Texts, Oberon;
+  VAR r*: INTEGER; W: Texts.Writer;
+  PROCEDURE Run*;
+    VAR i: INTEGER;
+  BEGIN r := 0;
+    FOR i := 1 TO 10 DO r := r + SQR(i) END;
+    Texts.WriteString(W, "Sq.Run"); Texts.WriteInt(W, r, 6);
+    Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf)
+  END Run;
+BEGIN Texts.OpenWriter(W)
+END Sq.
+`,
 };
+
+// Лабораторная 13: три вставки в компилятор. \`after\` — образец для
+// Edit.Search (курсор встаёт сразу за ним), \`insert\` — что набрать там.
+// Образцы выбраны так, чтобы встречаться в файле один раз (для ORB — первым:
+// второе «(*functions*)» стоит в разделе SYSTEM).
+export const BUILTIN = [
+  { file: 'ORB.Mod', after: '(*functions*)',
+    insert: '\n  enter("SQR", SFunc, intType, 211);' },
+  { file: 'ORG.Mod', after: 'END Odd;',
+    insert: '\n\n  PROCEDURE Sqr*(VAR x: Item);\n  BEGIN load(x); Put0(Mul, x.r, x.r, x.r)\n  END Sqr;' },
+  { file: 'ORP.Mod', after: 'ORG.H(x)',
+    insert: '\n      ELSIF fct = 21 THEN (*SQR*) CheckInt(x); ORG.Sqr(x)' },
+];
 export const pre = s => `<pre>${s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>`;

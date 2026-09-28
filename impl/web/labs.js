@@ -7,8 +7,8 @@
 import { OberonFS, parseRsc, readText, isChk, isIndexTrap } from './oberonfs.js';
 import { LANG } from './i18n.js';
 import { EN } from './labs.en.js';
-import { SOURCES, pre } from './lab-sources.js';
-export { SOURCES };
+import { SOURCES, BUILTIN, pre } from './lab-sources.js';
+export { SOURCES, BUILTIN };
 
 
 // Служебная запись файла меняется при каждой перезаписи: Files.Register
@@ -100,6 +100,21 @@ function codeInMemory(m, name) {
   return r;
 }
 
+
+/** Содержимое файла с диска, байтами; null — файла нет. */
+const bytes = (m, name) => {
+  const F = new OberonFS(m), h = F.files().get(name);
+  return h ? F.read(h) : null;
+};
+const sameBytes = (a, b) => !!a && !!b && a.length === b.length && a.every((x, i) => x === b[i]);
+/** Ключ загруженного модуля — из его дескриптора в памяти (смещение 36). */
+const loadedKey = (m, name) => { const M = loaded(m, name); return M ? m.ram(M.desc + 36) >>> 0 : null; };
+/** MUL Ri, Ri, Ri: F0 (p = q = u = v = 0), op = 10, a = b = c. Стоковый ORG
+    такого не порождает: MulOp грузит множители в два РАЗНЫХ регистра, а
+    умножение на константу — формат F1. Это подпись ORG.Sqr из лабораторной 13. */
+const isSquare = w => (w >>> 28) === 0 && ((w >>> 16) & 15) === 10 && (w & 0xFFF0) === 0
+  && ((w >>> 24) & 15) === ((w >>> 20) & 15) && ((w >>> 20) & 15) === (w & 15);
+const hex = k => k.toString(16).toUpperCase();
 
 // Таймер машины (Kernel.Time) — не часы хоста, а счётчик тактов: 25 000
 // тактов на миллисекунду (tb/wasm_main.cpp, как у платы на 25 МГц). Поэтому
@@ -886,6 +901,143 @@ END Idx.</pre>
   hint: `Если на шаге 3 CHK не появилась — в памяти остался старый ORG: в
     <code>System.Free</code> важен порядок, сначала те, кто импортирует
     (<code>ORP</code>), потом импортируемый (<code>ORG</code>).`,
+},{
+  id: 13, level: 'строить',
+  title: 'Своя встроенная процедура',
+  read: [['06-kompilyator.html', 'Компилятор изнутри'],
+         ['05-moduli.html', 'Модули, символьные файлы и ключи']],
+  intro: `В Паскале была функция <code>SQR</code> — квадрат числа. В Обероне
+    Вирт её убрал. Здесь вы вернёте её сами: научите компилятор новой
+    встроенной функции, пересоберёте компилятор <b>внутри системы</b> и
+    соберёте им модуль, который ею пользуется. Та же работа, что задание
+    <code>compiler</code> в контейнере лабораторных, только без хоста.
+    <br><br>
+    Встроенная функция живёт в трёх модулях компилятора сразу:
+    <code>ORB</code> знает её имя, <code>ORP</code> разбирает вызов,
+    <code>ORG</code> порождает команды.`,
+  steps: [
+    { text: `Три вставки. Каждый файл открывайте <code>Edit.Open ORB.Mod ~</code>
+        (и так далее). Нужное место ищет <code>Edit.Search</code>: наберите
+        образец на свободной строке <code>System.Tool</code>, выделите его
+        протяжкой <b>правой</b> кнопкой и щёлкните средней
+        <code>Edit.Search</code> в заголовке окна с файлом — курсор встанет
+        сразу за образцом. Там наберите вставку, затем
+        <code>Edit.Store</code> в том же заголовке.
+        <ul style="margin:6px 0 0 -18px">
+          <li><code>ORB.Mod</code>, образец <code>(*functions*)</code> — первое
+            вхождение, в списке встроенных функций. Вставка:
+            ${pre(BUILTIN[0].insert.trim())}
+            Число — код функции: десятки — её номер в <code>ORP</code> (21,
+            следующий свободный), единицы — число параметров.</li>
+          <li><code>ORG.Mod</code>, образец <code>END Odd;</code>. Вставка:
+            ${pre(BUILTIN[1].insert.trim())}
+            Аргумент — в регистр, и одна команда умножает его сам на себя.</li>
+          <li><code>ORP.Mod</code>, образец <code>ORG.H(x)</code> — последняя
+            ветка разбора встроенных функций. Вставка:
+            ${pre(BUILTIN[2].insert.trim())}</li>
+        </ul>`,
+      check: (m, c) => {
+        const orb = text(m, 'ORB.Mod') || '', org = text(m, 'ORG.Mod') || '', orp = text(m, 'ORP.Mod') || '';
+        const e = /enter\("SQR",\s*SFunc,\s*intType,\s*(\d+)\)/.exec(orb);
+        if (!e) return { ok: false, msg: 'в ORB.Mod на диске нет enter("SQR", SFunc, intType, …) — вставлено и сохранено (Edit.Store)?' };
+        const code = +e[1], fct = Math.floor(code / 10);
+        if (code % 10 !== 1) return { ok: false, msg: `код ${code}: единицы — число параметров, у SQR он один` };
+        const taken = [...orb.matchAll(/enter\("(\w+)",\s*SFunc,\s*\w+,\s*(\d+)\)/g)]
+          .filter(x => x[1] !== 'SQR' && Math.floor(+x[2] / 10) === fct);
+        if (taken.length) return { ok: false, msg: `номер ${fct} уже занят функцией ${taken[0][1]}` };
+        if (!/PROCEDURE\s+Sqr\*\s*\(\s*VAR\s+x\s*:\s*Item\s*\)/.test(org))
+          return { ok: false, msg: 'в ORG.Mod на диске нет PROCEDURE Sqr*(VAR x: Item)' };
+        if (!new RegExp(`fct\\s*=\\s*${fct}\\s+THEN[^\\r\\n]*ORG\\.Sqr\\(x\\)`).test(orp))
+          return { ok: false, msg: `в ORP.Mod на диске нет ветки «fct = ${fct} THEN … ORG.Sqr(x)»` };
+        const snap = {};
+        for (const n of ['ORB', 'ORG', 'ORP']) snap[n] = { hdr: hdr(m, n + '.rsc'), key: rsc(m, n + '.rsc').key };
+        Object.assign(c.state, { fct, snap, built: undefined, ran: undefined });
+        return { ok: true, msg: `все три вставки на диске: SQR с номером ${fct}, ORG.Sqr, ветка в ORP` };
+      } },
+    { text: `Пересоберите компилятор им самим, старым:
+        <code>ORP.Compile ORB.Mod/s ORG.Mod/s ORP.Mod/s ~</code>. Ключ
+        <code>/s</code> разрешает переписать символьный файл: у <code>ORG</code>
+        появилось новое экспортированное имя <code>Sqr</code>, а значит новый
+        ключ (лабораторная 3). У <code>ORB</code> интерфейс прежний — и ключ
+        прежний.`,
+      check: (m, c) => {
+        const s = c.state.snap;
+        if (!s) return { ok: false, msg: 'сначала шаг 1' };
+        const r = {};
+        for (const n of ['ORB', 'ORG', 'ORP']) {
+          if (hdr(m, n + '.rsc') === s[n].hdr) return { ok: false, msg: `${n}.rsc ещё не пересобран` };
+          r[n] = rsc(m, n + '.rsc');
+        }
+        if (r.ORB.key !== s.ORB.key)
+          return { ok: false, msg: `ключ ORB изменился (${hex(r.ORB.key)}): интерфейс ORB трогать не нужно` };
+        if (r.ORG.key === s.ORG.key)
+          return { ok: false, msg: 'ключ ORG прежний — экспортированной Sqr в собранном ORG нет?' };
+        const imp = Object.fromEntries(r.ORP.imports);
+        if (imp.ORG !== r.ORG.key || imp.ORB !== r.ORB.key)
+          return { ok: false, msg: 'ORP.rsc собран против другого ORG — соберите ORG раньше ORP, одной командой' };
+        c.state.built = { ORB: bytes(m, 'ORB.rsc'), ORG: bytes(m, 'ORG.rsc'), ORP: bytes(m, 'ORP.rsc'),
+                          hdr: { ORB: hdr(m, 'ORB.rsc'), ORG: hdr(m, 'ORG.rsc'), ORP: hdr(m, 'ORP.rsc') } };
+        return { ok: true, msg: `компилятор пересобран. Ключ ORB прежний ${hex(r.ORB.key)}, ключ ORG `
+          + `${hex(s.ORG.key)} → ${hex(r.ORG.key)}, и ORP.rsc импортирует уже новый. `
+          + `В памяти пока работает старый компилятор.` };
+      } },
+    { text: `Выгрузите старый компилятор: <code>System.Free ORP ORG ORB ~</code>
+        (сначала импортёры). Затем <code>Edit.Open Sq.Mod ~</code>, наберите,
+        сохраните, соберите <code>ORP.Compile Sq.Mod ~</code> и запустите
+        <code>Sq.Run</code>:
+        ${pre(SOURCES.Sq)}`,
+      check: (m, c) => {
+        if (!c.state.built) return { ok: false, msg: 'сначала шаг 2' };
+        const org = rsc(m, 'ORG.rsc'), k = loadedKey(m, 'ORG');
+        if (k !== null && k !== org.key)
+          return { ok: false, msg: `в памяти старый ORG (ключ ${hex(k)}) — System.Free ORP ORG ORB` };
+        if (!rsc(m, 'Sq.rsc')) return { ok: false, msg: 'Sq.rsc нет: Sq.Mod не собран (старый компилятор скажет, что SQR не определён)' };
+        const M = loaded(m, 'Sq');
+        if (!M) return { ok: false, msg: 'модуль Sq не загружен — Sq.Run запускали?' };
+        const r = modVar(m, 'Sq', 0);
+        let sq = 0;
+        for (let a = M.code; a < M.imp; a += 4) if (isSquare(m.ram(a))) sq++;
+        if (!sq) return { ok: false, msg: 'в коде Sq нет MUL Ri, Ri, Ri — SQR собран не через ORG.Sqr?' };
+        if (r !== 385) return { ok: false, msg: `Sq.r = ${r}, а сумма квадратов от 1 до 10 — 385` };
+        c.state.ran = true;
+        return { ok: true, msg: `Sq.r = 385, и в загруженном коде Sq ${sq === 1 ? 'одна команда' : sq + ' команды'} `
+          + `MUL Ri, Ri, Ri — та, что порождает ваш ORG.Sqr. Компилятор в памяти — новый (ключ ORG ${hex(org.key)}).` };
+      } },
+    { text: `Последняя проверка — та же, что у задания <code>compiler</code> на
+        хосте: новый компилятор обязан собрать сам себя в <b>те же байты</b>.
+        Ещё раз <code>ORP.Compile ORB.Mod/s ORG.Mod/s ORP.Mod/s ~</code> —
+        теперь им работает уже новый компилятор.`,
+      check: (m, c) => {
+        const b = c.state.built;
+        if (!b || !c.state.ran) return { ok: false, msg: 'сначала шаги 2 и 3' };
+        const diff = [];
+        for (const n of ['ORB', 'ORG', 'ORP']) {
+          if (hdr(m, n + '.rsc') === b.hdr[n]) return { ok: false, msg: `${n}.rsc ещё не пересобран новым компилятором` };
+          if (!sameBytes(bytes(m, n + '.rsc'), b[n])) diff.push(n);
+        }
+        return diff.length
+          ? { ok: false, msg: `${diff.join(', ')}.rsc отличается от собранного старым компилятором: новая функция задела чужой код` }
+          : { ok: true, msg: `неподвижная точка: ORB.rsc, ORG.rsc, ORP.rsc побайтово те же (${b.ORB.length + b.ORG.length + b.ORP.length} байт). SQR ничего, кроме себя, не поменяла.` };
+      } },
+  ],
+  payoff: `Вы расширили язык. Не библиотекой — компилятором: <code>SQR</code>
+   теперь такое же встроенное имя, как <code>ABS</code> и <code>ODD</code>, и
+   разворачивается в одну команду прямо на месте вызова, без вызова процедуры.
+   <br><br>
+   Три модуля, три вставки, полтора десятка строк. Имя — в таблице символов
+   (<code>ORB</code>), разбор — в <code>ORP</code>, команды — в
+   <code>ORG</code>. Система при этом ни разу не перезапускалась: компилятор
+   пересобран и заменён в работающей памяти, а ключи проследили, чтобы
+   старый <code>ORP</code> не встретился с новым <code>ORG</code>.
+   <br><br>
+   Последний шаг — неподвижная точка лабораторной 8: новый компилятор собрал
+   себя в те же байты, что старый. Ровно это проверяет задание
+   <code>compiler</code> на хосте (<code>make selfhost</code>: сборка на RTL
+   побайтово сверяется с эмулятором).`,
+  hint: `Если <code>ORP.Compile Sq.Mod</code> пишет про неизвестный
+    <code>SQR</code> — в памяти старый компилятор: <code>System.Free ORP ORG ORB ~</code>,
+    именно в этом порядке. Если пересборка компилятора ругается на ключ —
+    не хватает <code>/s</code>.`,
 },
 ];
 

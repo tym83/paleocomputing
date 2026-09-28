@@ -8,7 +8,7 @@
  * Ключи: <номер>.<поле> — intro, hint, payoff, title, level,
  *        <номер>.step.<индекс> для текста шага.
  */
-import { SOURCES, pre } from './lab-sources.js';
+import { SOURCES, BUILTIN, pre } from './lab-sources.js';
 
 export const EN = {
   // Названия глав методички: одни и те же у разных лабораторий, поэтому
@@ -374,4 +374,73 @@ END Idx.</pre>
   '12.hint': `If no CHK appears at step 3, the old ORG is still in memory: order
     matters in <code>System.Free</code> — importers first (<code>ORP</code>),
     then the imported (<code>ORG</code>).`,
+
+  // ── 13: a built-in of your own ───────────────────────────────────────────
+  '13.title': 'A built-in function of your own',
+  '13.intro': `Pascal had <code>SQR</code>, the square of a number. Wirth
+    dropped it from Oberon. Here you bring it back yourself: teach the compiler
+    a new built-in function, rebuild the compiler <b>inside the system</b> and
+    build a module that uses it with the new compiler. The same work as the
+    <code>compiler</code> task in the lab container, without a host.
+    <br><br>
+    A built-in function lives in three compiler modules at once:
+    <code>ORB</code> knows its name, <code>ORP</code> parses the call,
+    <code>ORG</code> emits the instructions.`,
+  '13.step.0': `Three insertions. Open each file with
+    <code>Edit.Open ORB.Mod ~</code> (and so on). <code>Edit.Search</code>
+    finds the place: type the pattern on a free line of
+    <code>System.Tool</code>, select it by dragging with the <b>right</b>
+    button, and middle-click <code>Edit.Search</code> in the title bar of the
+    file's viewer — the caret lands right after the pattern. Type the insertion
+    there, then <code>Edit.Store</code> in the same title bar.
+    <ul style="margin:6px 0 0 -18px">
+      <li><code>ORB.Mod</code>, pattern <code>(*functions*)</code> — the first
+        occurrence, in the list of built-in functions. Insert:
+        ${pre(BUILTIN[0].insert.trim())}
+        The number is the function's code: the tens are its number in
+        <code>ORP</code> (21, the next free one), the units the number of
+        parameters.</li>
+      <li><code>ORG.Mod</code>, pattern <code>END Odd;</code>. Insert:
+        ${pre(BUILTIN[1].insert.trim())}
+        The argument goes into a register, and one instruction multiplies it by
+        itself.</li>
+      <li><code>ORP.Mod</code>, pattern <code>ORG.H(x)</code> — the last branch
+        of built-in function parsing. Insert:
+        ${pre(BUILTIN[2].insert.trim())}</li>
+    </ul>`,
+  '13.step.1': `Rebuild the compiler with itself, the old one:
+    <code>ORP.Compile ORB.Mod/s ORG.Mod/s ORP.Mod/s ~</code>. The
+    <code>/s</code> switch allows overwriting the symbol file:
+    <code>ORG</code> gained a new exported name, <code>Sqr</code>, and with it
+    a new key (lab 3). <code>ORB</code>'s interface is unchanged — and so is
+    its key.`,
+  '13.step.2': `Unload the old compiler: <code>System.Free ORP ORG ORB ~</code>
+    (importers first). Then <code>Edit.Open Sq.Mod ~</code>, type it, save it,
+    build it with <code>ORP.Compile Sq.Mod ~</code> and run
+    <code>Sq.Run</code>:
+    ${pre(SOURCES.Sq)}`,
+  '13.step.3': `The last check is the one the host's <code>compiler</code>
+    task makes: the new compiler must build itself into <b>the same
+    bytes</b>. Once more <code>ORP.Compile ORB.Mod/s ORG.Mod/s ORP.Mod/s ~</code>
+    — this time it is the new compiler doing the work.`,
+  '13.payoff': `You extended the language. Not with a library — with the
+   compiler: <code>SQR</code> is now a built-in name just like
+   <code>ABS</code> and <code>ODD</code>, and it expands into a single
+   instruction right at the call site, with no procedure call.
+   <br><br>
+   Three modules, three insertions, a dozen and a half lines. The name goes
+   into the symbol table (<code>ORB</code>), the parsing into
+   <code>ORP</code>, the instructions into <code>ORG</code>. The system was
+   never restarted: the compiler was rebuilt and replaced in running memory,
+   and the keys made sure the old <code>ORP</code> never met the new
+   <code>ORG</code>.
+   <br><br>
+   The last step is lab 8's fixed point: the new compiler built itself into
+   the same bytes as the old one. That is exactly what the host's
+   <code>compiler</code> task checks (<code>make selfhost</code>: the build on
+   the RTL is compared byte for byte with the emulator).`,
+  '13.hint': `If <code>ORP.Compile Sq.Mod</code> reports an unknown
+    <code>SQR</code>, the old compiler is still in memory:
+    <code>System.Free ORP ORG ORB ~</code>, in exactly that order. If the
+    compiler rebuild complains about a key, the <code>/s</code> is missing.`,
 };
