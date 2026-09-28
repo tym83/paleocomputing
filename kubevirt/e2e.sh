@@ -89,6 +89,9 @@ os_arch() {
 # ── Шаги ────────────────────────────────────────────────────────────────────
 
 step_tools() {
+  if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+    printf '| KubeVirt | шаг | время |\n|---|---|---|\n' >> "$GITHUB_STEP_SUMMARY"
+  fi
   os_arch
   curl -fsSL -o "$BIN/kind" "https://github.com/kubernetes-sigs/kind/releases/download/$KIND_VERSION/kind-$os-$arch"
   # virtctl — той же версии, что KubeVirt: подресурс vnc версионирован.
