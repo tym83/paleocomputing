@@ -16,6 +16,10 @@
 #
 # Собирается под каждую версию KubeVirt из kubevirt/versions.txt, как и при
 # выпуске (находка 60): иначе сломанная пара версий всплыла бы только там.
+#
+# И под каждую архитектуру узла из kubevirt/platforms.txt — на родном
+# раннере: образ, который собирается только под amd64, на узле arm64 не
+# запустит ни одной виртуалки.
 name: launcher
 
 on:
@@ -44,18 +48,27 @@ jobs:
       - uses: actions/checkout@v4
       - id: list
         run: |
-          list=$(awk '!/^#/ && NF { print $1 }' kubevirt/versions.txt | jq -Rnc '[inputs]')
-          [ "$list" != "[]" ] || { echo "в kubevirt/versions.txt нет версий"; exit 1; }
+          versions=$(awk '!/^#/ && NF { print $1 }' kubevirt/versions.txt | jq -Rnc '[inputs]')
+          platforms=$(awk '!/^#/ && NF { print $1, $2 }' kubevirt/platforms.txt \
+            | jq -Rnc '[inputs | split(" ") | {arch: .[0], runner: .[1]}]')
+          [ "$versions" != "[]" ] || { echo "в kubevirt/versions.txt нет версий"; exit 1; }
+          [ "$platforms" != "[]" ] || { echo "в kubevirt/platforms.txt нет архитектур"; exit 1; }
+          # Версия KubeVirt × архитектура узла: сборка на каждую пару — на
+          # родном процессоре (kubevirt/platforms.txt).
+          list=$(jq -nc --argjson v "$versions" --argjson p "$platforms" '[$v[] as $k | $p[] | . + {kubevirt: $k}]')
           echo "list=$list" >> "$GITHUB_OUTPUT"
+          echo "versions=$versions" >> "$GITHUB_OUTPUT"
 
   build:
     needs: versions
-    runs-on: ubuntu-latest
-    timeout-minutes: 90
+    name: build (${{ matrix.kubevirt }}, ${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    # С холодным кэшем libvirt и QEMU собираются до полутора часов.
+    timeout-minutes: 150
     strategy:
       fail-fast: false
       matrix:
-        kubevirt: ${{ fromJSON(needs.versions.outputs.list) }}
+        include: ${{ fromJSON(needs.versions.outputs.list) }}
     steps:
       - uses: actions/checkout@v4
 
@@ -72,7 +85,7 @@ jobs:
       # Имя — как у выпуска (семейство, а не одна машина), только вместо
       # версии выпуска `pr`.
       - id: meta
-        run: echo "image=virt-launcher:${{ matrix.kubevirt }}-paleo-pr" >> "$GITHUB_OUTPUT"
+        run: echo "image=virt-launcher:${{ matrix.kubevirt }}-paleo-pr-${{ matrix.arch }}" >> "$GITHUB_OUTPUT"
 
       # --load, а не --push: образ нужен только здесь, для проверки.
       # Подпись происхождения в локальный docker не ложится — отключена.
@@ -80,8 +93,9 @@ jobs:
         run: |
           kubevirt/build.sh --kubevirt "${{ matrix.kubevirt }}" "${{ steps.meta.outputs.image }}" \
             --load --provenance=false \
-            --cache-from type=gha,scope=launcher-${{ matrix.kubevirt }} \
-            --cache-to type=gha,scope=launcher-${{ matrix.kubevirt }},mode=max
+            --platform linux/${{ matrix.arch }} \
+            --cache-from type=gha,scope=launcher-${{ matrix.kubevirt }}-${{ matrix.arch }} \
+            --cache-to type=gha,scope=launcher-${{ matrix.kubevirt }}-${{ matrix.arch }},mode=max
 
       - name: Проверить машины в образе
         run: kubevirt/check_image.sh "${{ steps.meta.outputs.image }}"

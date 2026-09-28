@@ -181,29 +181,41 @@ jobs:
   # которое не меняется от того, сколько машин в образе (его берёт компонент
   # платформы, находка 65), и прежний `<kubevirt>-risc5-<выпуск>` — чтобы не
   # сломать тех, у кого он уже записан в ресурсе KubeVirt.
+  #
+  # Образ многоархитектурный (kubevirt/platforms.txt, находка 71): каждая
+  # архитектура собирается на родном раннере под своим тегом
+  # `<kubevirt>-paleo-<выпуск>-<арх.>`, а launcher-index склеивает их в один
+  # индекс под обоими именами выше. Узел сам берёт из индекса свою сборку.
   launcher-versions:
     needs: source
     runs-on: ubuntu-latest
     outputs:
       list: ${{ steps.list.outputs.list }}
+      versions: ${{ steps.list.outputs.versions }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.source.outputs.ref }}
       - id: list
         run: |
-          list=$(awk '!/^#/ && NF { print $1 }' kubevirt/versions.txt | jq -Rnc '[inputs]')
-          [ "$list" != "[]" ] || { echo "в kubevirt/versions.txt нет версий"; exit 1; }
+          versions=$(awk '!/^#/ && NF { print $1 }' kubevirt/versions.txt | jq -Rnc '[inputs]')
+          platforms=$(awk '!/^#/ && NF { print $1, $2 }' kubevirt/platforms.txt \
+            | jq -Rnc '[inputs | split(" ") | {arch: .[0], runner: .[1]}]')
+          [ "$versions" != "[]" ] || { echo "в kubevirt/versions.txt нет версий"; exit 1; }
+          [ "$platforms" != "[]" ] || { echo "в kubevirt/platforms.txt нет архитектур"; exit 1; }
+          list=$(jq -nc --argjson v "$versions" --argjson p "$platforms" '[$v[] as $k | $p[] | . + {kubevirt: $k}]')
           echo "list=$list" >> "$GITHUB_OUTPUT"
+          echo "versions=$versions" >> "$GITHUB_OUTPUT"
 
   launcher:
     needs: [source, launcher-versions]
-    runs-on: ubuntu-latest
-    timeout-minutes: 90
+    name: launcher (${{ matrix.kubevirt }}, ${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 150
     strategy:
       fail-fast: false
       matrix:
-        kubevirt: ${{ fromJSON(needs.launcher-versions.outputs.list) }}
+        include: ${{ fromJSON(needs.launcher-versions.outputs.list) }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -235,18 +247,17 @@ jobs:
           kv="${{ matrix.kubevirt }}"
           owner=$(echo "${{ github.repository_owner }}" | tr 'A-Z' 'a-z')
           echo "image=${{ env.REGISTRY }}/$owner/paleocomputing/virt-launcher" >> "$GITHUB_OUTPUT"
-          echo "tag=$kv-risc5-$tag" >> "$GITHUB_OUTPUT"
-          echo "family=$kv-paleo-$tag" >> "$GITHUB_OUTPUT"
+          echo "tag=$kv-paleo-$tag-${{ matrix.arch }}" >> "$GITHUB_OUTPUT"
 
       - id: build
         run: |
           set -euo pipefail
           kubevirt/build.sh --kubevirt "${{ matrix.kubevirt }}" \
             "${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}" \
-            -t "${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.family }}" \
+            --platform linux/${{ matrix.arch }} \
             --push --provenance=true --sbom=true \
-            --cache-from type=gha,scope=launcher-${{ matrix.kubevirt }} \
-            --cache-to type=gha,scope=launcher-${{ matrix.kubevirt }},mode=max \
+            --cache-from type=gha,scope=launcher-${{ matrix.kubevirt }}-${{ matrix.arch }} \
+            --cache-to type=gha,scope=launcher-${{ matrix.kubevirt }}-${{ matrix.arch }},mode=max \
             --metadata-file /tmp/meta.json
           echo "digest=$(jq -r '."containerimage.digest"' /tmp/meta.json)" >> "$GITHUB_OUTPUT"
 
@@ -259,12 +270,62 @@ jobs:
 
       - name: Итог
         run: |
-          echo "### virt-launcher ${{ matrix.kubevirt }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "### virt-launcher ${{ matrix.kubevirt }} ${{ matrix.arch }}" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
-          echo "${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.family }}" >> "$GITHUB_STEP_SUMMARY"
           echo "${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}" >> "$GITHUB_STEP_SUMMARY"
           echo "${{ steps.build.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+  # Сборки всех архитектур одной версии KubeVirt — в один индекс под именами,
+  # которые берут кластеры. Индекс подписывается отдельно: cosign verify по
+  # тегу проверяет именно его.
+  launcher-index:
+    needs: [source, launcher-versions, launcher]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        kubevirt: ${{ fromJSON(needs.launcher-versions.outputs.versions) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.source.outputs.ref }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: sigstore/cosign-installer@v3
+
+      - name: Индекс
+        run: |
+          set -euo pipefail
+          tag="${{ needs.source.outputs.tag }}"
+          kv="${{ matrix.kubevirt }}"
+          owner=$(echo "${{ github.repository_owner }}" | tr 'A-Z' 'a-z')
+          image="${{ env.REGISTRY }}/$owner/paleocomputing/virt-launcher"
+          sources=$(awk -v i="$image" -v s="$kv-paleo-$tag" '!/^#/ && NF { printf "%s:%s-%s ", i, s, $1 }' kubevirt/platforms.txt)
+          docker buildx imagetools create -t "$image:$kv-paleo-$tag" -t "$image:$kv-risc5-$tag" $sources
+          docker buildx imagetools inspect "$image:$kv-paleo-$tag"
+          # Каждая архитектура из platforms.txt обязана оказаться в индексе.
+          have=$(docker buildx imagetools inspect "$image:$kv-paleo-$tag" --raw \
+            | jq -r '[.manifests[] | .platform.architecture | select(. != "unknown")] | unique | join(" ")')
+          want=$(awk '!/^#/ && NF { print $1 }' kubevirt/platforms.txt | sort -u | tr '\n' ' ' | sed 's/ $//')
+          [ "$have" = "$want" ] || { echo "в индексе $have, ждали $want"; exit 1; }
+          digest=$(docker buildx imagetools inspect "$image:$kv-paleo-$tag" --format '{{json .Manifest}}' | jq -r .digest)
+          cosign sign --yes "$image@$digest"
+          {
+            echo "### virt-launcher $kv ($want)"
+            echo '```'
+            echo "$image:$kv-paleo-$tag"
+            echo "$image:$kv-risc5-$tag"
+            echo "$digest"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
   # ── Три репозитория каталога как OCI-артефакты ────────────────────────────
   #
@@ -274,7 +335,7 @@ jobs:
   #
   # Оба инструмента ставятся в раннер и живут только на время сборки.
   catalog:
-    needs: [source, launcher]
+    needs: [source, launcher-index]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
