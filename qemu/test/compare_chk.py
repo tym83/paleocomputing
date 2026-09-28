@@ -45,11 +45,11 @@ console.log(JSON.stringify({{
     return json.loads(out.stdout.strip().splitlines()[-1])
 
 
-def in_qemu(binpath, budget, chk):
+def in_qemu(binpath, budget, chk, extra=""):
     """То же самое в QEMU: гоняем с журналом команд и берём состояние на той же команде."""
     data = pathlib.Path(binpath).read_bytes()
     (QEMU / "prog.bin").write_bytes(data)
-    flag = ",chk=on" if chk else ""
+    flag = (",chk=on" if chk else "") + extra   # extra: ",desc=on" для IDX
     # ⚠ Журнал НЕ ложится на диск. `-d cpu` с one-insn-per-tb пишет ~230 байт
     # на команду, а программа после полезной части крутится в пустом цикле —
     # за минуту это десятки гигабайт. Один раз так и вышло: журнал забил диск

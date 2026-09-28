@@ -28,7 +28,7 @@ def load32(r, v):
     return [f'MOV  R{r}, 0', f'MHI  R{r}, 0x{v >> 16:04X}', f'IOR  R{r}, R{r}, 0x{v & 0xFFFF:04X}']
 
 
-def main(n=150, seed=14):   # 150 случаев — 1666 слов, от ORG помещается 2048
+def main(n=150, seed=14, out=OUT):   # 150 случаев — 1666 слов, от ORG помещается 2048
     rnd = random.Random(seed)
     body, exps = [], {}
     def emit(line, *e):
@@ -71,9 +71,13 @@ def main(n=150, seed=14):   # 150 случаев — 1666 слов, от ORG п�
               'handler:', '        MOV  R5, 0x2222',
               '; EXPECT R5 = 8738', '; EXPECT R4 = 0', '; EXPECT R3 = 7',
               f'; EXPECT R15 = {ORG + 4 * (head + idx_pos) + 4}', '        HALT']
-    OUT.write_text('\n'.join(lines) + '\n', encoding='utf-8')
-    print(f'  {OUT.name}: {n} случаев')
+    out = pathlib.Path(out)
+    out.write_text('\n'.join(lines) + '\n', encoding='utf-8')
+    print(f'  {out.name}: {n} случаев')
 
 
 if __name__ == '__main__':
-    main(*(int(a) for a in sys.argv[1:]))
+    # аргументы: [число случаев [зерно [файл]]] — QEMU берёт ПЗУ на 512 слов,
+    # поэтому его сверка (qemu/test/compare_idx.py) порождает свой короткий вариант
+    a = sys.argv[1:]
+    main(*(int(x) for x in a[:2]), *(a[2:3]))

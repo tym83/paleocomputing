@@ -137,6 +137,10 @@ int main(int argc, char** argv) {
         for (long long k = 0; k < budget; k++) if (c.step() < 0) return 1;
         printf("BUDGET insns %llu cycles %llu R5 %u\n", (unsigned long long)c.insns,
                (unsigned long long)c.cycles, c.reg(5));
+        // Все регистры и PC — для сверки с QEMU (qemu/test/compare_idx.py).
+        printf("REGS");
+        for (int i = 0; i < 16; i++) printf(" %08X", c.reg(i));
+        printf(" PC %08X\n", c.pc() * 4);
         return 0;
     }
 

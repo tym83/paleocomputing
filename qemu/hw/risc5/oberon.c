@@ -51,6 +51,17 @@
  * Свойство статическое: машина в процессе одна, а выбор делается до запуска.
  */
 static bool oberon_chk;
+static bool oberon_desc;   /* IDX, выпуск 14: как -DWITH_DESC в RTL */
+
+static bool oberon_get_desc(Object *obj, Error **errp)
+{
+    return oberon_desc;
+}
+
+static void oberon_set_desc(Object *obj, bool value, Error **errp)
+{
+    oberon_desc = value;
+}
 
 static bool oberon_get_chk(Object *obj, Error **errp)
 {
@@ -71,6 +82,7 @@ static void oberon_init(MachineState *machine)
 
     cpu = RISC5_CPU(cpu_create(machine->cpu_type));
     cpu->env.chk = oberon_chk;
+    cpu->env.desc = oberon_desc;
 
     memory_region_init_ram(ram, NULL, "oberon.ram", OBERON_RAM_SIZE,
                            &error_fatal);
@@ -152,6 +164,10 @@ static void oberon_machine_init(MachineClass *mc)
                                    oberon_get_chk, oberon_set_chk);
     object_class_property_set_description(OBJECT_CLASS(mc), "chk",
         "аппаратная проверка границ массива (как -DWITH_CHK в RTL)");
+    object_class_property_add_bool(OBJECT_CLASS(mc), "desc",
+                                   oberon_get_desc, oberon_set_desc);
+    object_class_property_set_description(OBJECT_CLASS(mc), "desc",
+        "индексация через дескриптор IDX (как -DWITH_DESC в RTL)");
 }
 
 DEFINE_MACHINE("oberon", oberon_machine_init)

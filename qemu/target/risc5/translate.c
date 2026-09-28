@@ -34,6 +34,7 @@ typedef struct DisasContext {
     uint32_t npc_w;
     /* Вариант железа: есть ли аппаратная проверка границ (см. cpu.h). */
     bool chk;
+    bool desc;
 } DisasContext;
 
 /*
@@ -330,6 +331,55 @@ static bool trans_CHK(DisasContext *ctx, arg_chk *r)
     return true;
 }
 
+/*
+ * IDX — индексация через дескриптор (выпуск 14, 14-episode-descriptors.md).
+ *
+ * Семантика снята с RISC5.v (-DWITH_DESC):
+ *   idxFault = IDX & (C0 >= B[31:20])      беззнаково, все 32 бита индекса
+ *   без срабатывания: Ra := {8'b0, B[19:0] + (C0[11:0] << sh)}, N и Z по
+ *     результату, C и OV не трогаются (сигнал ADD для IDX снят)
+ *   при срабатывании RTL стоит такт и исполняет BLR MT: R15 := PC+4,
+ *     PC := R[12]; признаки — по записи R15, как у CHK
+ *
+ * Лишний такт простоя QEMU не моделирует: тактов в нём нет вообще.
+ * На ядре без расширения та же кодировка — ADD с v=1, то есть просто ADD.
+ */
+static bool trans_IDX(DisasContext *ctx, arg_idx *r)
+{
+    TCGLabel *ok;
+    TCGv len, res;
+    uint32_t lnk;
+
+    if (!ctx->desc) {
+        gen_alu(ctx, r->a, r->b, 8, 0, 1, false, r->c, 0);
+        return true;
+    }
+
+    ok = gen_new_label();
+    len = tcg_temp_new_i32();
+    tcg_gen_shri_i32(len, cpu_r[r->b], 20);
+    tcg_gen_brcond_i32(TCG_COND_LTU, cpu_r[r->c], len, ok);
+
+    lnk = (ctx->npc_w * 4) & 0x00FFFFFF;
+    tcg_gen_movi_i32(cpu_r[RISC5_REG_LNK], lnk);
+    tcg_gen_movi_i32(cpu_n, 0);
+    tcg_gen_movi_i32(cpu_z, lnk == 0);
+    tcg_gen_shri_i32(cpu_pc, cpu_r[12], 2);
+    tcg_gen_exit_tb(NULL, 0);
+
+    gen_set_label(ok);
+    res = tcg_temp_new_i32();
+    tcg_gen_andi_i32(res, cpu_r[r->c], 0xFFF);
+    tcg_gen_shli_i32(res, res, r->sh);
+    tcg_gen_andi_i32(len, cpu_r[r->b], 0xFFFFF);
+    tcg_gen_add_i32(res, res, len);
+    tcg_gen_andi_i32(res, res, 0xFFFFFF);
+    tcg_gen_mov_i32(cpu_r[r->a], res);
+    tcg_gen_movi_i32(cpu_n, 0);
+    tcg_gen_setcondi_i32(TCG_COND_EQ, cpu_z, res, 0);
+    return true;
+}
+
 static bool trans_F1_rri(DisasContext *ctx, arg_F1_rri *r)
 {
     gen_alu(ctx, r->a, r->b, r->op, r->u, r->v, true, 0, r->imm);
@@ -469,6 +519,7 @@ static void risc5_tr_init_disas_context(DisasContextBase *dcbase, CPUState *cs)
     DisasContext *ctx = container_of(dcbase, DisasContext, base);
     ctx->npc_w = ctx->base.pc_first / 4;
     ctx->chk = cpu_env(cs)->chk;
+    ctx->desc = cpu_env(cs)->desc;
 }
 
 static void risc5_tr_tb_start(DisasContextBase *db, CPUState *cs)

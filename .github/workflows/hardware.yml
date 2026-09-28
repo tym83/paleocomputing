@@ -96,3 +96,14 @@ jobs:
       # собранной (risc5-chk.wasm) — её же отдаёт страница читателю.
       - name: Сверка расширения ISA
         run: python3 qemu/test/compare_chk.py
+
+      # Индексация через дескриптор (выпуск 14): QEMU с chk=on,desc=on против
+      # нативной модели RTL с -DWITH_DESC — WASM-сборки этого ядра нет, поэтому
+      # здесь нужен Verilator. Цикл центрального номера и случайные IDX с
+      # ловушкой; отрицательный контроль — chk=on без desc=on.
+      - name: Сверка дескрипторов
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends verilator >/dev/null
+          make -C impl build/obj_desc/run_tests_desc
+          python3 qemu/test/compare_idx.py
