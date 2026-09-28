@@ -143,6 +143,7 @@ def generate(A, n, seed, prompt, stats=None):
             for j in range(H):
                 s = add(s, mul(h[j], row[j]))
             z.append(s)
+        logits = list(z)
         mx = z[0]
         for i in range(1, V):
             if A.gt(z[i], mx):
@@ -165,7 +166,7 @@ def generate(A, n, seed, prompt, stats=None):
         ctx = ctx[1:] + [i]
         out.append(vocab[i])
         if stats is not None:
-            stats.append((z, r))
+            stats.append((logits, z, r, t))
     return "".join(out)
 
 
