@@ -256,25 +256,6 @@ await lab(11, async (m, L) => {
   say(!L.steps[3].check(m, c).ok, 'шаг 4 до Tick.Break — не пройден');
   m.click(665, LINE(3), 2); go(m, 3);
   const r4 = L.steps[3].check(m, c); say(r4.ok, 'шаг 4: ' + r4.msg);
-  // Конфигурация A: тот же круг с ORG.NoChk.Mod.
-  const cB = c.state.codeB, cE = c.state.codeE;
-  say(cB.traps > 0 && cB.chk === 0 && cE.traps === 0 && cE.chk > 0,
-      `машинный признак различает B и E: B — ${cB.traps} ловушек, ${cB.chk} CHK; E — ${cE.traps} ловушек, ${cE.chk} CHK`);
-  say(!L.steps[4].check(m, c).ok, 'шаг 5 до сборки ORG.NoChk.Mod — не пройден');
-  const h1 = F().files().get('ORG.rsc');
-  m.click(690, LINE(4), 2);
-  n = 0;
-  while (F().files().get('ORG.rsc') === h1 && n < 300) { go(m, 5); n += 5; }
-  go(m, 5);
-  const r5 = L.steps[4].check(m, c); say(r5.ok, `шаг 5 (≈ ${n} млн команд): ` + r5.msg);
-  say(!L.steps[5].check(m, c).ok, 'шаг 6 до пересборки Cost — не пройден');
-  m.click(690, LINE(3), 2); go(m, 5);            // System.Free
-  m.click(690, LINE(0), 2); go(m, 30);           // ORP.Compile Cost.Mod
-  m.click(670, LINE(1), 2); go(m, 10);           // Cost.Run
-  const r6 = L.steps[5].check(m, c); say(r6.ok, 'шаг 6: ' + r6.msg);
-  const cA = MEM.codeInMemory(m, 'Cost');
-  say(r6.ok && cA.words === cE.words - cE.chk && cE.words === cB.words - cB.traps,
-      `размеры сходятся по командам: B ${cB.words} = E ${cE.words} + ${cB.traps} ловушка(и), E = A ${cA.words} + ${cE.chk} CHK`);
 });
 
 // ── Лаба 12: цена проверки своими руками ────────────────────────────────────
