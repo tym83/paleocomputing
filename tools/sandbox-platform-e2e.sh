@@ -135,8 +135,12 @@ pvmi=vm-instance-plain
 # (первый прогон так и провалил шаг при работающей Ubuntu).
 booted() {
   [ "$(a -n "$NS" get vmi "$pvmi" -o jsonpath='{.status.phase}' 2>/dev/null)" = Running ] || return 1
-  printf '\r' | perl -e 'alarm 25; exec @ARGV' virtctl --kubeconfig "$TENANT_KUBECONFIG" \
-    --context "$TENANT_CONTEXT" -n "$NS" console "$pvmi" 2>/dev/null | grep -q "login:"
+  # virtctl console без терминала молчит — второй прогон так и не увидел
+  # login: у работающей Ubuntu. script даёт ему псевдотерминал; журнала
+  # последовательной консоли в этом кластере нет (disableSerialConsoleLog).
+  printf '\r' | perl -e 'alarm 25; exec @ARGV' script -q /dev/null virtctl \
+    --kubeconfig "$TENANT_KUBECONFIG" --context "$TENANT_CONTEXT" -n "$NS" console "$pvmi" \
+    2>/dev/null | tr -d '\r' | grep -q "login:"
 }
 wait_for 1200 "Ubuntu загрузилась" booted \
   && say ok "Ubuntu загрузилась (приглашение login: в консоли) на $(a -n "$NS" get vmi "$pvmi" -o jsonpath='{.status.launcherContainerImageVersion}')" \
