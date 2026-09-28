@@ -16,7 +16,7 @@ Cozystack users do not need this page: the catalog does all of it
 | | |
 |---|---|
 | KubeVirt | a version listed in [`versions.txt`](versions.txt): **v1.8.4** or **v1.9.0**. The launcher image must match the cluster version exactly (finding 44) |
-| Nodes | **linux/amd64** — the published launcher images are built for amd64 only. KVM is not required: a foreign architecture is emulated in software anyway |
+| Nodes | **linux/amd64** or **linux/arm64** — the published images are built for both from v0.1.16 on, v0.1.15 and earlier are amd64 only ([`platforms.txt`](platforms.txt)); on arm64 KubeVirt declares UEFI firmware, which the hook removes (finding 71). KVM is not required: a foreign architecture is emulated in software anyway |
 | Tools | `kubectl`, `helm` 3, `jq`, `git`, `python3`; `virtctl` of the same version as KubeVirt (the VNC subresource is versioned) |
 | Storage | any StorageClass with `ReadWriteOnce` |
 
@@ -209,7 +209,7 @@ for s in tools cluster kubevirt launcher machine screen; do kubevirt/e2e.sh $s |
 kubevirt/e2e.sh down
 ```
 
-amd64 host only, for the same reason as above.
+amd64 and arm64 hosts; CI runs it on native Linux runners of both.
 
 ## Another KubeVirt version, or your own build
 
@@ -223,8 +223,8 @@ kubevirt/build.sh --kubevirt v1.9.0 registry.example.com/virt-launcher:v1.9.0-pa
 kubevirt/check_image.sh registry.example.com/virt-launcher:v1.9.0-paleo
 ```
 
-`--platform linux/arm64` is passed through to `docker build` for arm64 nodes;
-that combination is not tested.
+`--platform linux/arm64` is passed through to `docker build`; CI builds and runs
+both architectures on native runners.
 
 ## How it works
 
