@@ -17,7 +17,7 @@ ASM    := $(patsubst %,tests/%.bin,$(TESTS) t2_chk t2_chk_hi $(IDXT))
 # компилятора эмитит и CHK (массивы известной длины), и IDX (открытые массивы).
 DESCDEF := -DWITH_CHK -DCHK_SPLIT -DWITH_DESC
 
-.PHONY: idx-diff idx-mutate
+.PHONY: idx-diff idx-mutate boot-desc lockstep-desc
 .PHONY: site all check test roundtrip pristine bootstrap rebuild book labs image lab image-check equiv lockstep lockstep-chk boot boot-chk selfhost syn configs tools web deps clean
 all: tools build/obj_tests/run_tests build/obj_chk/run_tests_chk build/obj_desc/run_tests_desc $(ASM)
 
@@ -275,11 +275,28 @@ boot-chk:
 	@verilator $(VFLAGS) -DWITH_CHK -DCHK_SPLIT -o soc_tb_chk --top-module RISC5 --Mdir build/obj_soc_chk $(RTL) $(TB)/soc_tb.cpp $(TB)/disk/disk.c
 	@./build/obj_soc_chk/soc_tb_chk --prom=rtl/prom_sd.mem --max=12000000 --expect-crc=$(BOOT_CRC)
 
+# Те же системные прогоны на ядре с дескрипторами (выпуск 14): стоковая система
+# обязана грузиться с тем же CRC экрана и идти с эталоном шаг в шаг — IDX
+# занимает кодировку, которую стоковый код не эмитит.
+lockstep-desc: $(REFOBJ)
+	@cp -f ext/disk/Oberon-2016-08-02.dsk build/disk_rtl.dsk
+	@cp -f ext/disk/Oberon-2016-08-02.dsk build/disk_ref.dsk
+	@verilator $(VFLAGS) $(DESCDEF) -CFLAGS "-I../../ext/refemu" -o lockstep_desc \
+	  --top-module RISC5 --Mdir build/obj_ls_desc $(RTL) $(TB)/lockstep.cpp \
+	  ../../build/refobj/risc.o ../../build/refobj/risc-fp.o ../../build/refobj/disk.o \
+	  2>&1 | grep -E "error:" || true
+	@./build/obj_ls_desc/lockstep_desc --max=15000000
+
+boot-desc:
+	@mkdir -p build
+	@verilator $(VFLAGS) $(DESCDEF) -o soc_tb_desc --top-module RISC5 --Mdir build/obj_soc_desc $(RTL) $(TB)/soc_tb.cpp $(TB)/disk/disk.c
+	@./build/obj_soc_desc/soc_tb_desc --prom=rtl/prom_sd.mem --max=12000000 --expect-crc=$(BOOT_CRC)
+
 # ───────────────────────────────────────────────────────────────────────────
 # Полная проверка. Раньше сильнейшие проверки (диффстенд, загрузка системы)
 # были отдельными целями и ни от чего не зависели — то есть в гейт не входили.
 # ───────────────────────────────────────────────────────────────────────────
-check: pristine test boot boot-chk lockstep selfhost roundtrip bootstrap rebuild book labs
+check: pristine test boot boot-chk boot-desc lockstep lockstep-desc selfhost roundtrip bootstrap rebuild book labs
 	@echo
 	@echo "═══ ПОЛНАЯ ПРОВЕРКА ПРОЙДЕНА ═══"
 
