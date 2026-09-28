@@ -19,6 +19,7 @@ on:
       - 'impl/rtl/**'
       - 'impl/tb/**'
       - 'impl/tools/asm.py'
+      - 'impl/lm/**'
       - 'qemu/**'
       - '.github/workflows/hardware.yml'
 
@@ -54,6 +55,17 @@ jobs:
         run: make lockstep
         working-directory: impl
 
+      # Выпуск №2: быстрый FP-умножитель побитово равен исходному (миллион
+      # случайных пар сверх перебора порядков), система на нём грузится с тем
+      # же экраном, модель на RTL печатает эталонный текст.
+      - name: Быстрый FP-умножитель
+        run: make fpmul-diff FPMUL_N=1000000 boot-fast
+        working-directory: impl
+
+      - name: Языковая модель на RTL
+        run: make lm
+        working-directory: impl
+
   qemu:
     runs-on: ubuntu-latest
     timeout-minutes: 120
@@ -87,3 +99,11 @@ jobs:
       # собранной (risc5-chk.wasm) — её же отдаёт страница читателю.
       - name: Сверка расширения ISA
         run: python3 qemu/test/compare_chk.py
+
+      # Выпуск №2: система в QEMU сама компилирует модуль модели и печатает
+      # текст; он снимается с диска и сверяется с эталоном. Заодно проверяет
+      # запись на диск в QEMU (находка 77).
+      - name: Языковая модель в системе
+        run: |
+          make -C impl tools
+          python3 impl/lm/qemu_run.py

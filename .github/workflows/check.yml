@@ -45,6 +45,13 @@ jobs:
       - name: Патч libvirt
         run: python3 qemu/libvirt/patch_test.py
 
+      # Выпуск №2: веса совпадают с манифестом, модуль модели на эмуляторе
+      # Norebo печатает побайтово тот же текст, что эталон в арифметике
+      # RISC5. Секунды: эмулятор на C, три зерна по 64 символа.
+      - name: Языковая модель (эмулятор против эталона)
+        run: make lm-check
+        working-directory: impl
+
       - uses: actions/setup-node@v4
         with:
           node-version: '22'

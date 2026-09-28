@@ -13,7 +13,9 @@
 на закоммиченном файле весов — вывод модели определяется им однозначно.
 """
 import hashlib, json, pathlib, struct, sys
-import numpy as np
+
+# numpy нужен только для обучения: проверка манифеста (--check) идёт в CI без него
+np = None
 
 HERE = pathlib.Path(__file__).resolve().parent
 TEXT = HERE / "alice.txt"
@@ -165,4 +167,7 @@ def check():
 
 
 if __name__ == "__main__":
-    sys.exit(check() if "--check" in sys.argv else train())
+    if "--check" in sys.argv:
+        sys.exit(check())
+    import numpy as np
+    sys.exit(train())
