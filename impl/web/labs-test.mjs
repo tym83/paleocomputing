@@ -256,12 +256,32 @@ await lab(11, async (m, L) => {
   say(!L.steps[3].check(m, c).ok, 'шаг 4 до Tick.Break — не пройден');
   m.click(665, LINE(3), 2); go(m, 3);
   const r4 = L.steps[3].check(m, c); say(r4.ok, 'шаг 4: ' + r4.msg);
+  // Конфигурация A: тот же круг с ORG.NoChk.Mod.
+  const cB = c.state.codeB, cE = c.state.codeE;
+  say(cB.traps > 0 && cB.chk === 0 && cE.traps === 0 && cE.chk > 0,
+      `машинный признак различает B и E: B — ${cB.traps} ловушек, ${cB.chk} CHK; E — ${cE.traps} ловушек, ${cE.chk} CHK`);
+  say(!L.steps[4].check(m, c).ok, 'шаг 5 до сборки ORG.NoChk.Mod — не пройден');
+  const h1 = F().files().get('ORG.rsc');
+  m.click(690, LINE(4), 2);
+  n = 0;
+  while (F().files().get('ORG.rsc') === h1 && n < 300) { go(m, 5); n += 5; }
+  go(m, 5);
+  const r5 = L.steps[4].check(m, c); say(r5.ok, `шаг 5 (≈ ${n} млн команд): ` + r5.msg);
+  say(!L.steps[5].check(m, c).ok, 'шаг 6 до пересборки Cost — не пройден');
+  m.click(690, LINE(3), 2); go(m, 5);            // System.Free
+  m.click(690, LINE(0), 2); go(m, 30);           // ORP.Compile Cost.Mod
+  m.click(670, LINE(1), 2); go(m, 10);           // Cost.Run
+  const r6 = L.steps[5].check(m, c); say(r6.ok, 'шаг 6: ' + r6.msg);
+  const cA = MEM.codeInMemory(m, 'Cost');
+  say(r6.ok && cA.words === cE.words - cE.chk && cE.words === cB.words - cB.traps,
+      `размеры сходятся по командам: B ${cB.words} = E ${cE.words} + ${cB.traps} ловушка(и), E = A ${cA.words} + ${cE.chk} CHK`);
 });
 
 // ── Лаба 12: цена проверки своими руками ────────────────────────────────────
 const costOnce = async (m) => {
   await makeFile(m, 'Cost.Mod', SOURCES.Cost);
-  typeLines(m, ['ORP.Compile Cost.Mod ~', 'Cost.Run', 'ORP.Compile ORG.Chk.Mod ~', 'System.Free Cost ORP ORG ~']);
+  typeLines(m, ['ORP.Compile Cost.Mod ~', 'Cost.Run', 'ORP.Compile ORG.Chk.Mod ~', 'System.Free Cost ORP ORG ~',
+                'ORP.Compile ORG.NoChk.Mod ~']);
   m.click(690, LINE(0), 2); go(m, 25);
   m.click(670, LINE(1), 2); go(m, 10);
 };
@@ -299,6 +319,25 @@ await lab(12, async (m, L) => {
   say(!L.steps[3].check(m, c).ok, 'шаг 4 с неверным числом — не пройден');
   c.answer = ((c.state.tB - c.state.tE) * 100 / c.state.tB).toFixed(1);
   const r4 = L.steps[3].check(m, c); say(r4.ok, 'шаг 4: ' + r4.msg);
+  // Конфигурация A: тот же круг с ORG.NoChk.Mod.
+  const cB = c.state.codeB, cE = c.state.codeE;
+  say(cB.traps > 0 && cB.chk === 0 && cE.traps === 0 && cE.chk > 0,
+      `машинный признак различает B и E: B — ${cB.traps} ловушек, ${cB.chk} CHK; E — ${cE.traps} ловушек, ${cE.chk} CHK`);
+  say(!L.steps[4].check(m, c).ok, 'шаг 5 до сборки ORG.NoChk.Mod — не пройден');
+  const h1 = F().files().get('ORG.rsc');
+  m.click(690, LINE(4), 2);
+  n = 0;
+  while (F().files().get('ORG.rsc') === h1 && n < 300) { go(m, 5); n += 5; }
+  go(m, 5);
+  const r5 = L.steps[4].check(m, c); say(r5.ok, `шаг 5 (≈ ${n} млн команд): ` + r5.msg);
+  say(!L.steps[5].check(m, c).ok, 'шаг 6 до пересборки Cost — не пройден');
+  m.click(690, LINE(3), 2); go(m, 5);            // System.Free
+  m.click(690, LINE(0), 2); go(m, 30);           // ORP.Compile Cost.Mod
+  m.click(670, LINE(1), 2); go(m, 10);           // Cost.Run
+  const r6 = L.steps[5].check(m, c); say(r6.ok, 'шаг 6: ' + r6.msg);
+  const cA = MEM.codeInMemory(m, 'Cost');
+  say(r6.ok && cA.words === cE.words - cE.chk && cE.words === cB.words - cB.traps,
+      `размеры сходятся по командам: B ${cB.words} = E ${cE.words} + ${cB.traps} ловушка(и), E = A ${cA.words} + ${cE.chk} CHK`);
 });
 
 // ── статическая проверка страницы-оболочки ──────────────────────────────────
@@ -331,6 +370,14 @@ await lab(12, async (m, L) => {
         && same(cfg.slice(i + 6), lab.slice(k + 5))
         && lab[k + 4].trim() === 'Files.WriteByte(R, version);',
         'ORG.Chk.Mod = patches/ORG-cfgE.Mod, кроме штампа версии');
+    // Конфигурация A лабораторной — patches/ORG-cfgA.Mod плюс комментарий о
+    // штампе версии, и ничего больше.
+    const noc = lines(fs.readFileSync('ORG.NoChk.Mod', 'latin1'));
+    const cfa = lines(fs.readFileSync('../patches/ORG-cfgA.Mod', 'latin1'));
+    const a = noc.findIndex(x => x.includes('(*LAB VARIANT'));
+    const z = noc.findIndex((x, n) => n >= a && x.trim().endsWith('*)'));
+    say(a > 0 && z > a && same(noc.slice(0, a).concat(noc.slice(z + 1)), cfa),
+        'ORG.NoChk.Mod = patches/ORG-cfgA.Mod, кроме комментария о штампе версии');
   }
   const labIds = LABS.map(l => l.id);
   say(new Set(labIds).size === labIds.length, `номера лабораторий уникальны: ${labIds.join(', ')}`);

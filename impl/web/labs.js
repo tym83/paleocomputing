@@ -4,7 +4,7 @@
 // Уровни из плана серии: смотреть / менять / ломать / измерять / строить.
 // Каждая опирается на то, что уже доказано в impl/docs.
 
-import { OberonFS, parseRsc, readText, isChk } from './oberonfs.js';
+import { OberonFS, parseRsc, readText, isChk, isIndexTrap } from './oberonfs.js';
 import { LANG } from './i18n.js';
 import { EN } from './labs.en.js';
 import { SOURCES, pre } from './lab-sources.js';
@@ -83,6 +83,21 @@ function chkInMemory(m, name) {
   let n = 0;
   for (let a = M.code; a < M.imp; a += 4) if (isChk(m.ram(a))) n++;
   return n;
+}
+/** Код загруженного модуля целиком: сколько в нём слов, команд CHK и
+    программных ловушек индекса (isIndexTrap). Три конфигурации различаются
+    именно этим: B — ловушки есть, CHK нет; E — наоборот; A — ни того, ни
+    другого, и слов меньше, чем у обеих. */
+function codeInMemory(m, name) {
+  const M = loaded(m, name);
+  if (!M) return null;
+  const r = { words: (M.imp - M.code) / 4, chk: 0, traps: 0 };
+  for (let a = M.code; a < M.imp; a += 4) {
+    const w = m.ram(a);
+    if (isChk(w)) r.chk++;
+    if (isIndexTrap(w)) r.traps++;
+  }
+  return r;
 }
 
 
@@ -737,13 +752,14 @@ END Idx.</pre>
   title: 'Цена проверки своими руками',
   read: [['08-izmereno.html', 'Что мы измерили'],
          ['06-kompilyator.html', 'Компилятор изнутри']],
-  machine: { variant: 'chk', files: ['ORG.Chk.Mod'] },
+  machine: { variant: 'chk', files: ['ORG.Chk.Mod', 'ORG.NoChk.Mod'] },
   intro: `Главное число проекта — во что обходится проверка границ массива.
     Здесь вы получите его <b>на своём коде</b>. Для этой лабораторной машина
     переключена на <b>ядро с командой CHK</b> (как на странице
     <a href="checks.html">цены проверки</a>), а на диск положен
     <code>ORG.Chk.Mod</code> — кодогенератор, который вместо сравнения и
-    перехода ставит одну CHK. Стоковая система на этом ядре работает так же,
+    перехода ставит одну CHK, и <code>ORG.NoChk.Mod</code> — кодогенератор,
+    который не ставит ничего. Стоковая система на этом ядре работает так же,
     как на обычном, такт в такт.`,
   steps: [
     { text: `<code>Edit.Open Cost.Mod ~</code>, наберите, сохраните, соберите
@@ -760,7 +776,8 @@ END Idx.</pre>
         if (t <= 0) return { ok: false, msg: 'Cost.t = 0: цикл ещё не отработал' };
         if (k > 0) return { ok: false, msg: `в загруженном Cost уже ${k} команд CHK — это шаг 3; начните с отката` };
         const org = rsc(m, 'ORG.rsc');
-        Object.assign(c.state, { tB: t, orgHdr: hdr(m, 'ORG.rsc'), orgKey: org.key, tE: undefined });
+        Object.assign(c.state, { tB: t, codeB: codeInMemory(m, 'Cost'), orgHdr: hdr(m, 'ORG.rsc'),
+                                 orgKey: org.key, tE: undefined, orgHdrE: undefined, tA: undefined });
         return { ok: true, msg: `программная проверка: ${t} мс, в коде ни одной CHK. Это ${(t * CYCLES_PER_MS / 300000).toFixed(1)} такта на оборот цикла.` };
       } },
     { text: `Соберите кодогенератор, знающий CHK:
@@ -790,7 +807,7 @@ END Idx.</pre>
         if (t === null || k === null) return { ok: false, msg: 'модуль Cost не загружен' };
         if (k === 0) return { ok: false, msg: 'в загруженном Cost нет ни одной CHK — старый код ещё в памяти (System.Free) или собран стоковым ORG' };
         if (t <= 0 || t === c.state.tB) return { ok: false, msg: 'Cost.Run с новым кодом ещё не запускали' };
-        c.state.tE = t;
+        Object.assign(c.state, { tE: t, codeE: codeInMemory(m, 'Cost'), orgHdrE: hdr(m, 'ORG.rsc') });
         const d = c.state.tB - t;
         return { ok: true, msg: `аппаратная проверка: ${t} мс против ${c.state.tB}. В коде ${k} CHK. Разница ${d} мс = ${(d * CYCLES_PER_MS / 300000).toFixed(2)} такта на индексацию.` };
       } },
@@ -806,12 +823,61 @@ END Idx.</pre>
           ? { ok: true, msg: `верно: ${real.toFixed(2)}%. Такт на индексацию из примерно ${(c.state.tB * CYCLES_PER_MS / 300000).toFixed(0)} на оборот цикла.` }
           : { ok: false, msg: `получается ${real.toFixed(2)}%, а введено ${got}` };
       } },
+    { text: `Третье число — конфигурация <b>A</b>: проверки нет совсем. На диске
+        лежит и <code>ORG.NoChk.Mod</code> — стоковый кодогенератор с одной
+        правкой: <code>check := FALSE</code> в <code>ORG.Open</code>. Соберите
+        его: <code>ORP.Compile ORG.NoChk.Mod ~</code>. Модуль в файле опять
+        называется <code>ORG</code>, и <code>ORG.rsc</code> заменится в третий
+        раз, с тем же ключом.
+        <br><br>
+        Честно о штампе версии. Байт версии в <code>.rsc</code> говорит
+        загрузчику, <i>какие команды</i> нужны коду: 1 — стоковый RISC5, 2 —
+        CHK. Код без проверок обходится стоковыми командами, поэтому пишется 1,
+        как у обычного модуля, и пойдёт на любом ядре. А вот того, что проверки
+        выключены, не записывает ни один байт: ни загрузчик, ни ключ, ни
+        импортёры отличить A от B не могут. Здесь это безопасно — диск
+        лаборатории сбрасывается откатом.`,
+      check: (m, c) => {
+        if (c.state.tE === undefined) return { ok: false, msg: 'сначала шаги 1–3' };
+        const r = rsc(m, 'ORG.rsc'), h = hdr(m, 'ORG.rsc');
+        if (h === c.state.orgHdr || h === c.state.orgHdrE) return { ok: false, msg: 'ORG.rsc после шага 3 ещё не пересобран' };
+        if (r.key !== c.state.orgKey)
+          return { ok: false, msg: `ключ ORG изменился (${r.key.toString(16).toUpperCase()}): собран не тот файл?` };
+        if (r.version !== 1) return { ok: false, msg: `версия ORG.rsc ${r.version}, а не 1` };
+        return { ok: true, msg: `ORG.rsc пересобран в третий раз: версия 1, ключ прежний ${r.key.toString(16).toUpperCase()}` };
+      } },
+    { text: `Снова <code>System.Free Cost ORP ORG ~</code>, <code>ORP.Compile Cost.Mod ~</code>
+        и <code>Cost.Run</code>. Перед <code>a[i]</code> теперь не стоит
+        ничего.`,
+      check: (m, c) => {
+        if (c.state.tE === undefined) return { ok: false, msg: 'сначала шаги 1–3' };
+        const t = modVar(m, 'Cost', 0), k = codeInMemory(m, 'Cost');
+        if (t === null || k === null) return { ok: false, msg: 'модуль Cost не загружен' };
+        const { tB, tE, codeB: B, codeE: E } = c.state;
+        if (k.chk > 0) return { ok: false, msg: `в загруженном Cost ${k.chk} CHK — это ещё код шага 3 (System.Free) или ORG.NoChk не собран` };
+        if (k.traps > 0) return { ok: false, msg: `в загруженном Cost ${k.traps} программных ловушек индекса — работает стоковый ORG` };
+        if (t <= 0 || t === tE) return { ok: false, msg: 'Cost.Run с новым кодом ещё не запускали' };
+        if (!(k.words < E.words && E.words < B.words))
+          return { ok: false, msg: `размеры кода не выстроились: A ${k.words}, E ${E.words}, B ${B.words} слов` };
+        c.state.tA = t;
+        const cy = d => (d * CYCLES_PER_MS / 300000).toFixed(2);
+        return { ok: true, msg: `без проверки: ${t} мс, в коде ни CHK, ни ловушек, ${pl(k.words, 'слово', 'слова', 'слов')} `
+          + `(E ${E.words}, B ${B.words}). Три числа: B ${tB} мс, E ${tE} мс, A ${t} мс. `
+          + `Программная проверка стоит ${cy(tB - t)} такта на индексацию, аппаратная — ${cy(tE - t)}; `
+          + `железо вернуло ${Math.round((tB - tE) * 100 / (tB - t))}% цены проверки.` };
+      } },
   ],
-  payoff: `Железо экономит ровно одну команду и один такт на индексацию — не
-   больше. Доля зависит от того, сколько ещё работы в цикле: на голом цикле
+  payoff: `Три числа на одном цикле: B (сравнение и переход) — 276 мс, E (CHK) —
+   около 264, A (ничего) — 252. Программная проверка стоит <b>два</b> такта на
+   индексацию, аппаратная — <b>один</b>. Железо возвращает половину цены, но не
+   всю: CHK — тоже команда, и её такт остаётся. Убрать проверку совсем дешевле
+   ещё на такт — и ценой того, что выход за границу тихо читает чужую память,
+   а в объектном файле об этом не остаётся ни следа.
+   <br><br>
+   Доля, которую экономит CHK, зависит от того, сколько ещё работы в цикле: на голом цикле
    страницы <a href="checks.html">цены проверки</a> это 9%, в вашем — около
    четырёх, а на компиляторе, компилирующем систему, проверки целиком стоят
-   2,2% тактов (находка 21).
+   2,2% тактов (находка 21) — выключив их, больше этого не выиграть.
    <br><br>
    Поэтому и спор «проверки дорогие» не решается одним числом: его надо
    мерить на своём коде. На этой машине это можно сделать честно — таймер
@@ -857,4 +923,4 @@ export const LABS = ALL.sort((a, b) => a.id - b.id).map(localise);
 
 // Чтение памяти машины — для прогона labs-test.mjs: он сверяет числа
 // лабораторных с тем, что видно в обход их проверок.
-export const MEM = { loaded, modVar, heap, chkInMemory };
+export const MEM = { loaded, modVar, heap, chkInMemory, codeInMemory };

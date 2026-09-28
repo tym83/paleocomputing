@@ -313,7 +313,8 @@ END Idx.</pre>
     switched to the <b>core with the CHK instruction</b> (as on the
     <a href="checks.html">cost of a check</a> page), and the disk carries
     <code>ORG.Chk.Mod</code> — a code generator that emits a single CHK instead
-    of a compare and a branch. The stock system runs on this core exactly as on
+    of a compare and a branch, and <code>ORG.NoChk.Mod</code> — one that emits
+    nothing at all. The stock system runs on this core exactly as on
     the ordinary one, cycle for cycle.`,
   '12.step.0': `<code>Edit.Open Cost.Mod ~</code>, type it, save it, build it
     with <code>ORP.Compile Cost.Mod ~</code> and run <code>Cost.Run</code>:
@@ -335,11 +336,36 @@ END Idx.</pre>
     <code>a[i]</code>, and the hardware itself checks the bound.`,
   '12.step.3': `Your number: by how many percent did the loop get faster? Enter
     it with one decimal.`,
-  '12.payoff': `The hardware saves exactly one instruction and one cycle per
-   indexing — no more. The share depends on how much other work the loop does:
+  '12.step.4': `The third number is configuration <b>A</b>: no check at all. The
+    disk also carries <code>ORG.NoChk.Mod</code> — the stock code generator
+    with one change: <code>check := FALSE</code> in <code>ORG.Open</code>. Build
+    it: <code>ORP.Compile ORG.NoChk.Mod ~</code>. The module in the file is
+    again called <code>ORG</code>, and <code>ORG.rsc</code> is replaced a third
+    time, with the same key.
+    <br><br>
+    To be honest about the version stamp. The version byte in a
+    <code>.rsc</code> tells the loader <i>which instructions</i> the code
+    needs: 1 is stock RISC5, 2 is CHK. Code without checks gets by with stock
+    instructions, so it is stamped 1 like any ordinary module and runs on any
+    core. But no byte records that the checks are switched off: neither the
+    loader, nor the key, nor the importers can tell A from B. It is safe here
+    — the lab's disk is thrown away on reset.`,
+  '12.step.5': `Again <code>System.Free Cost ORP ORG ~</code>,
+    <code>ORP.Compile Cost.Mod ~</code> and <code>Cost.Run</code>. Nothing
+    stands before <code>a[i]</code> now.`,
+  '12.payoff': `Three numbers on one loop: B (compare and branch) — 276 ms, E
+   (CHK) — about 264, A (nothing) — 252. The software check costs <b>two</b>
+   cycles per indexing, the hardware one costs <b>one</b>. The hardware gives
+   back half the price, not all of it: CHK is an instruction too, and its cycle
+   stays. Removing the check altogether saves one more cycle — at the price of
+   an out-of-range index quietly reading someone else's memory, with no trace
+   of it left in the object file.
+   <br><br>
+   The share CHK saves depends on how much other work the loop does:
    on the bare loop of the <a href="checks.html">cost of a check</a> page it is
    9%, in yours about four, and on the compiler compiling the system the checks
-   cost 2.2% of cycles altogether (finding 21).
+   cost 2.2% of cycles altogether (finding 21) — switching them off cannot
+   win more than that.
    <br><br>
    That is why the "checks are expensive" argument is not settled by one
    number: it has to be measured on your own code. On this machine that can be
