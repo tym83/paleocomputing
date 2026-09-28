@@ -100,17 +100,20 @@ pvc_uid=$(a get pvc "$vmi-payload" -o jsonpath='{.metadata.uid}' 2>/dev/null)
 [ -n "$pvc_uid" ] && say ok "том $vmi-payload в составе релиза" || say no "тома нет"
 
 step "слив узла не упирается в машину"
-# Пробный слив (--dry-run=server) только пода машины: узел не трогается, а
-# проверка выселения идёт настоящая. Кластер в LiveMigrate, чужая машина не
-# мигрирует — без evictionStrategy None выселение было бы отклонено.
+# Кластер в LiveMigrate, чужая машина не мигрирует — без evictionStrategy None
+# выселение её пода было бы отклонено, и слив узла встал бы. Проверяем прямо
+# настройку машины и дополнительно пробный слив (--dry-run=server) только её
+# пода: узел не трогается. Отклоняет ли KubeVirt пробное выселение так же, как
+# настоящее, не проверено — поэтому решающая проверка первая.
 node=$(a get vmi "$vmi" -o jsonpath='{.status.nodeName}' 2>/dev/null)
-drain_out=$(kubectl --kubeconfig "$ADMIN_KUBECONFIG" --context "$ADMIN_CONTEXT" drain "$node" \
-  --dry-run=server --pod-selector="kubevirt.io=virt-launcher,app.kubernetes.io/instance=oberon-vm-$NAME" \
-  --ignore-daemonsets --delete-emptydir-data --timeout=60s 2>&1)
-if printf '%s' "$drain_out" | grep -q "evicted"; then
-  say ok "под машины выселяется при сливе узла $node"
+es=$(a get vmi "$vmi" -o jsonpath='{.spec.evictionStrategy}' 2>/dev/null)
+[ "$es" = None ] && say ok "у машины evictionStrategy None" || say no "у машины evictionStrategy ${es:-не задан} — при кластерной LiveMigrate слив встанет"
+if drain_out=$(kubectl --kubeconfig "$ADMIN_KUBECONFIG" --context "$ADMIN_CONTEXT" drain "$node" \
+     --dry-run=server --pod-selector="kubevirt.io=virt-launcher,app.kubernetes.io/instance=oberon-vm-$NAME" \
+     --ignore-daemonsets --delete-emptydir-data --timeout=60s 2>&1); then
+  say ok "пробный слив узла $node проходит"
 else
-  say no "слив узла $node упирается в машину: $(printf '%s' "$drain_out" | tail -2 | tr '\n' ' ' | cut -c1-200)"
+  say no "пробный слив узла $node упирается в машину: $(printf '%s' "$drain_out" | tail -2 | tr '\n' ' ' | cut -c1-200)"
 fi
 
 step "экран через консоль тенанта"
