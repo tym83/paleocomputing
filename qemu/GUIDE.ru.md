@@ -1,0 +1,129 @@
+# Оберон в обычном QEMU
+
+*English: [GUIDE.md](GUIDE.md)*
+
+`qemu-system-risc5` — наша собственная цель QEMU для машины RISC5 Вирта. В
+апстримном QEMU её нет; этот каталог вживляет её в прибитый коммит QEMU. На ней
+идёт неизменённая система Оберон: кадровый буфер после загрузки совпадает с
+машиной на RTL побайтово (находка 38), клавиатура и мышь ведут себя как на RTL
+(находка 39), плавающая точка сверена с эталонным `risc-fp.c` (`make fp`).
+
+## Сборка
+
+Нужны Docker (или Podman под именем `docker`), `git` и `make`. Зависимости
+сборки QEMU остаются в контейнере:
+
+```sh
+git clone https://github.com/tym83/paleocomputing
+cd paleocomputing
+make -C qemu build
+```
+
+Это клонирует QEMU на коммите `QEMU_REF` (прибит в [`Makefile`](Makefile)) в
+`.qemu-work/`, вживляет цель через [`graft.sh`](graft.sh) и собирает в
+контейнере Debian. Результат — `.qemu-work/build/qemu-system-risc5`.
+
+* Это бинарь **Linux** под архитектуру вашего процессора, собранный на Debian
+  trixie. На другом Linux или на macOS запускайте его в том же контейнере —
+  см. ниже.
+* Дерево настраивается один раз. `.qemu-work/build`, оставшийся от старого
+  выкачивания, хранит старые параметры (в ранних не было VNC: `-vnc: invalid
+  option`); удалите `.qemu-work/build`, чтобы настроить заново.
+* На macOS с Colima в контейнеры виден только домашний каталог: держите
+  выкачанный репозиторий (или `QEMU_SRC=...`) внутри `~`.
+
+Можно и своим инструментарием: возьмите QEMU того же коммита, выполните
+`qemu/graft.sh <дерево qemu>`, затем
+
+```sh
+./configure --target-list=risc5-softmmu --enable-vnc --enable-pixman
+ninja -C build qemu-system-risc5
+```
+
+Выпущенные версии QEMU не собираются: цель написана под раскладку заголовков
+прибитого коммита (`hw/core/`, `system/`), которой в 10.2 и старше нет.
+
+## ПЗУ и диск
+
+Машине нужны два файла: загрузочное ПЗУ `prom.bin` (2 КБ) и образ диска системы
+Оберон `oberon.dsk`. Оба есть в этом репозитории:
+
+```sh
+python3 -c "import struct; \
+  ws=[int(x,16) for x in open('impl/rtl/prom_sd.mem').read().split()]; \
+  open('prom.bin','wb').write(b''.join(struct.pack('<I',w) for w in ws))"
+cp impl/ext/disk/Oberon-2016-08-02.dsk oberon.dsk
+```
+
+или готовыми — из опубликованного образа:
+
+```sh
+docker create --name oberon-payload ghcr.io/tym83/paleocomputing/oberon-run:v0.1.15
+docker cp oberon-payload:/opt/oberon/payload/prom.bin .
+docker cp oberon-payload:/opt/oberon/payload/oberon.dsk .
+docker rm oberon-payload
+```
+
+Машина пишет в `oberon.dsk`: сохраните копию, если захотите начать заново.
+
+## Запуск
+
+```sh
+qemu-system-risc5 -machine oberon -bios prom.bin \
+  -drive if=none,id=sd0,file=oberon.dsk,format=raw \
+  -vnc :0
+```
+
+и подключите VNC-клиент к `127.0.0.1:5900`. Экран 1024×768, чёрным по белому.
+Оконного вывода (GTK, SDL) в нашей сборке нет, экран — только через VNC.
+
+В контейнере сборки, из корня репозитория:
+
+```sh
+docker run --rm -p 127.0.0.1:5900:5900 \
+  -v "$PWD/.qemu-work:/src" -v "$PWD:/work" -w /work \
+  qemu-build:risc5 \
+  '/src/build/qemu-system-risc5 -machine oberon -bios prom.bin -drive if=none,id=sd0,file=oberon.dsk,format=raw -vnc :0'
+```
+
+| параметр | |
+|---|---|
+| `-machine oberon,chk=on` | процессор с аппаратной проверкой границ массива (CHK); стоковая система работает на обоих |
+| `-bios prom.bin` | загрузочное ПЗУ |
+| `-drive if=none,id=sd0,...` | SD-карта; плата ищет её по id `sd0` |
+| `-vnc :0` | экран, клавиатура и мышь |
+
+Память задана платой: всё 24-битное адресное пространство ниже страницы
+ввода-вывода, чуть меньше 16 МБ. `-m` не нужен.
+
+Мышь абсолютная; средний щелчок по имени команды выполняет её — попробуйте
+`System.ShowModules` в окне инструментов.
+
+Проверить, что запустилось настоящее, не глядя: подключите вместо клиента
+[`../kubevirt/vnc_snapshot.py`](../kubevirt/vnc_snapshot.py). После загрузки он
+печатает `dark_pixels=18607` — то же число, что у машины на RTL. Загрузка
+в программной эмуляции занимает до минуты; снимок раньше покажет этап
+загрузки и другое число:
+
+```sh
+python3 kubevirt/vnc_snapshot.py 127.0.0.1 5900 screen.ppm
+```
+
+## Под libvirt
+
+libvirt спрашивает архитектуру у самого эмулятора и незнакомую отвергает,
+поэтому ему нужен патч из [`libvirt/`](libvirt/) — около десяти строк, они
+собираются из [`../kubevirt/targets.txt`](../kubevirt/targets.txt). Рабочее
+описание домена — в [`../kubevirt/test-in-image.sh`](../kubevirt/test-in-image.sh);
+образ, который собирает [`../kubevirt/build.sh`](../kubevirt/build.sh), несёт
+патченый libvirt вместе с эмулятором и запускает его.
+
+В Kubernetes — [`../kubevirt/GUIDE.ru.md`](../kubevirt/GUIDE.ru.md).
+
+## Проверки
+
+| | |
+|---|---|
+| `make -C qemu check` | декодер команд принят генератором самого QEMU |
+| `make -C qemu diff` | QEMU против модели, снятой с настоящего RTL, команда за командой |
+| `make -C qemu fp` | плавающая точка против `risc-fp.c` |
