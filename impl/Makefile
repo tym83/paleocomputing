@@ -11,10 +11,15 @@ export PYTHONDONTWRITEBYTECODE := 1
 VFLAGS := -Wno-fatal --cc --build --exe --public-flat-rw -CFLAGS "-O2 -I../../tb"
 TESTS  := t1_latency t1_flags t1_fpb2b t1_fp t1_arith t1_umul t1_probe_flags \
           t1_branch t1_branch_width t1_logic t1_dontcare t1_prime t1_alu_diff1 t1_alu_diff2 t1_shift t1_mem t1_movspec t1_irq
-ASM    := $(patsubst %,tests/%.bin,$(TESTS) t2_chk t2_chk_hi)
+IDXT   := t3_idx t3_idx_neg t3_idx_hi t3_idx_zero t3_idx_max t3_idx_rand
+ASM    := $(patsubst %,tests/%.bin,$(TESTS) t2_chk t2_chk_hi $(IDXT))
+# Ядро с дескрипторами (выпуск 14) — это ядро E плюс команда IDX: конфигурация F
+# компилятора эмитит и CHK (массивы известной длины), и IDX (открытые массивы).
+DESCDEF := -DWITH_CHK -DCHK_SPLIT -DWITH_DESC
 
 .PHONY: boot-fast fpmul-diff lm lm-profile lm-check lm-stock lm-system lm-qemu site all check test roundtrip pristine bootstrap rebuild book labs image lab image-check equiv lockstep lockstep-chk boot boot-chk selfhost syn configs tools web deps clean
-all: tools build/obj_tests/run_tests build/obj_chk/run_tests_chk $(ASM)
+.PHONY: idx-diff idx-mutate boot-desc lockstep-desc desc-loop desc-measure desc-cross desc-profile
+all: tools build/obj_tests/run_tests build/obj_chk/run_tests_chk build/obj_desc/run_tests_desc $(ASM)
 
 # ───────────────────────────────────────────────────────────────────────────
 # Внешние инструменты. Раньше лежали в дереве как готовые бинарники без единого
@@ -131,6 +136,51 @@ tests/t1_dontcare.s: tools/gen_dontcare_test.py
 tests/t1_branch.s: tools/gen_branch_test.py
 	@python3 tools/gen_branch_test.py
 
+$(patsubst %,tests/%.s,$(filter-out t3_idx_rand,$(IDXT))): tools/gen_idx_tests.py
+	@python3 tools/gen_idx_tests.py > /dev/null
+
+tests/t3_idx_rand.s: tools/gen_idx_diff.py
+	@python3 tools/gen_idx_diff.py > /dev/null
+
+# Дифференциал IDX: те же тесты на процессоре Norebo — эмуляторе, на котором
+# сняты замеры компиляции. RTL их проходит в `make test`; здесь — эмулятор.
+build/emu_tests: tb/emu_tests.c ext/norebo/Runtime/risc-cpu.c ext/norebo/Runtime/risc-cpu.h
+	@mkdir -p build && $(CC) -O2 -std=c99 -w -o $@ tb/emu_tests.c
+
+idx-diff: build/emu_tests $(patsubst %,tests/%.bin,$(IDXT) t2_chk t2_chk_hi)
+	@fail=0; for t in $(IDXT) t2_chk t2_chk_hi; do \
+	  out=$$(build/emu_tests tests/$$t); rc=$$?; \
+	  printf "  %-12s %s\n" "$$t" "$$(echo "$$out" | tail -1)"; [ $$rc -eq 0 ] || fail=1; \
+	done; [ $$fail -eq 0 ] || { echo "  ❌ эмулятор расходится с тестами"; exit 1; }
+
+# Ступень «дескрипторы» (выпуск 14). Числа находок 80–84 воспроизводятся этими
+# целями; каждая пишет свои таблицы в build/.
+#   desc-loop     цикл центрального номера на RTL: A, B, E, D (секунды)
+#   desc-measure  три нагрузки × четыре однородные среды A/B/E/F (~10 минут:
+#                 сборка четырёх сред Norebo в три ступени)
+#   desc-cross    разложение F против E на компиляции 2×2 (после desc-measure)
+#   desc-profile  динамический профиль открытых массивов (после desc-measure)
+desc-loop: build/obj_tests/run_tests build/obj_chk/run_tests_chk build/obj_desc/run_tests_desc \
+           $(patsubst %,tests/bench_bounds_%.bin,a b e d)
+	@bash tools/measure_loop_desc.sh
+
+tests/bench_bounds_a.s tests/bench_bounds_d.s: tools/gen_bounds_bench.py
+	@python3 tools/gen_bounds_bench.py > /dev/null
+
+desc-measure: $(NOREBO)
+	@bash tools/measure_desc.sh
+
+desc-cross: $(NOREBO)
+	@bash tools/measure_desc_cross.sh
+
+desc-profile: $(NOREBO)
+	@bash tools/profile_desc.sh
+
+# Мутационная проверка тестов IDX: шесть мутаций RTL, каждая обязана быть
+# поймана. Около пяти минут (шесть сборок верилятором).
+idx-mutate:
+	@bash tools/mutate_idx.sh
+
 tests/%.bin tests/%.chk: tests/%.s tools/asm.py
 	@python3 tools/asm.py $<
 
@@ -146,6 +196,11 @@ build/obj_chk/run_tests_chk: $(RTL) tb/run_tests.cpp tb/soc_mem.h
 	@verilator $(VFLAGS) -DWITH_CHK -DCHK_SPLIT -o run_tests_chk --top-module RISC5 --Mdir build/obj_chk $(RTL) $(TB)/run_tests.cpp
 	@test -x $@ || { echo "СБОРКА НЕ ДАЛА БИНАРНИКА: $@"; exit 1; }
 
+build/obj_desc/run_tests_desc: $(RTL) tb/run_tests.cpp tb/soc_mem.h
+	@mkdir -p build
+	@verilator $(VFLAGS) $(DESCDEF) -o run_tests_desc --top-module RISC5 --Mdir build/obj_desc $(RTL) $(TB)/run_tests.cpp
+	@test -x $@ || { echo "СБОРКА НЕ ДАЛА БИНАРНИКА: $@"; exit 1; }
+
 # Полная регрессия. Базовые тесты обязаны давать ИДЕНТИЧНЫЕ такты на обоих ядрах —
 # это и есть проверка «расширение ISA не меняет поведение существующего кода».
 test: all
@@ -159,7 +214,7 @@ test: all
 	@head -2 build/sweep.txt
 	@fail=0; \
 	for t in $(TESTS); do \
-	  for v in "build/obj_tests/run_tests:базовое" "build/obj_chk/run_tests_chk:с CHK"; do \
+	  for v in "build/obj_tests/run_tests:базовое" "build/obj_chk/run_tests_chk:с CHK" "build/obj_desc/run_tests_desc:с IDX"; do \
 	    bin=$${v%%:*}; name=$${v##*:}; \
 	    out=$$($$bin tests/$$t); rc=$$?; \
 	    printf "  %-12s %-9s %s\n" "$$t" "$$name" "$$(echo "$$out" | tail -1)"; \
@@ -167,11 +222,25 @@ test: all
 	  done; \
 	done; \
 	for t in t2_chk t2_chk_hi; do \
-	  out=$$(build/obj_chk/run_tests_chk tests/$$t); rc=$$?; \
-	  printf "  %-12s %-9s %s\n" "$$t" "с CHK" "$$(echo "$$out" | tail -1)"; \
+	  for v in "build/obj_chk/run_tests_chk:с CHK" "build/obj_desc/run_tests_desc:с IDX"; do \
+	    bin=$${v%%:*}; name=$${v##*:}; \
+	    out=$$($$bin tests/$$t); rc=$$?; \
+	    printf "  %-12s %-9s %s\n" "$$t" "$$name" "$$(echo "$$out" | tail -1)"; \
+	    [ $$rc -eq 0 ] || fail=1; \
+	  done; \
+	done; \
+	for t in $(IDXT); do \
+	  out=$$(build/obj_desc/run_tests_desc tests/$$t); rc=$$?; \
+	  printf "  %-12s %-9s %s\n" "$$t" "с IDX" "$$(echo "$$out" | tail -1)"; \
 	  [ $$rc -eq 0 ] || fail=1; \
 	done; \
+	for t in $(IDXT); do \
+	  if build/obj_chk/run_tests_chk tests/$$t > /dev/null 2>&1; then \
+	    echo "  ❌ $$t прошёл на ядре БЕЗ IDX — тест ничего не проверяет"; fail=1; \
+	  else printf "  %-12s %-9s %s\n" "$$t" "с CHK" "провален, как и должен (IDX нет) ✅"; fi; \
+	done; \
 	echo; [ $$fail -eq 0 ] || { echo "ЕСТЬ ПРОВАЛЫ ❌"; exit 1; }; \
+	$(MAKE) --no-print-directory idx-diff && \
 	$(MAKE) --no-print-directory equiv && echo && echo "ВСЁ ЗЕЛЁНОЕ ✅"
 
 # Проверка эквивалентности декодера: все 256 комбинаций {IR[31:28] x op}
@@ -184,6 +253,10 @@ equiv:
 	@./build/obj_deqb/deq_base > build/deq_base.txt
 	@./build/obj_deqc/deq_chk  > build/deq_chk.txt
 	@python3 tools/cmp_decoder.py build/deq_base.txt build/deq_chk.txt
+	@verilator $(VFLAGS) $(DESCDEF) -o deq_desc --top-module RISC5 --Mdir build/obj_deqd $(RTL) $(TB)/decoder_equiv.cpp 2>&1 | grep -E "error:" || true
+	@./build/obj_deqd/deq_desc > build/deq_desc.txt
+	@echo "  ядро с дескрипторами:"
+	@python3 tools/cmp_decoder.py build/deq_base.txt build/deq_desc.txt 1:1,1:8
 
 # Дифференциальный стенд: RTL против эталонного эмулятора, инструкция за
 # инструкцией, на загрузке настоящей системы Оберон.
@@ -274,12 +347,28 @@ lm-qemu: $(NOREBO)
 
 scripts/lm.txt: scripts/lm.src tools/mkscript.py tools/keymap.py
 	@PYTHONPATH=tools python3 tools/mkscript.py $< > $@
+# Те же системные прогоны на ядре с дескрипторами (выпуск 14): стоковая система
+# обязана грузиться с тем же CRC экрана и идти с эталоном шаг в шаг — IDX
+# занимает кодировку, которую стоковый код не эмитит.
+lockstep-desc: $(REFOBJ)
+	@cp -f ext/disk/Oberon-2016-08-02.dsk build/disk_rtl.dsk
+	@cp -f ext/disk/Oberon-2016-08-02.dsk build/disk_ref.dsk
+	@verilator $(VFLAGS) $(DESCDEF) -CFLAGS "-I../../ext/refemu" -o lockstep_desc \
+	  --top-module RISC5 --Mdir build/obj_ls_desc $(RTL) $(TB)/lockstep.cpp \
+	  ../../build/refobj/risc.o ../../build/refobj/risc-fp.o ../../build/refobj/disk.o \
+	  2>&1 | grep -E "error:" || true
+	@./build/obj_ls_desc/lockstep_desc --max=15000000
+
+boot-desc:
+	@mkdir -p build
+	@verilator $(VFLAGS) $(DESCDEF) -o soc_tb_desc --top-module RISC5 --Mdir build/obj_soc_desc $(RTL) $(TB)/soc_tb.cpp $(TB)/disk/disk.c
+	@./build/obj_soc_desc/soc_tb_desc --prom=rtl/prom_sd.mem --max=12000000 --expect-crc=$(BOOT_CRC)
 
 # ───────────────────────────────────────────────────────────────────────────
 # Полная проверка. Раньше сильнейшие проверки (диффстенд, загрузка системы)
 # были отдельными целями и ни от чего не зависели — то есть в гейт не входили.
 # ───────────────────────────────────────────────────────────────────────────
-check: pristine test boot boot-chk lockstep selfhost roundtrip bootstrap rebuild book labs
+check: pristine test boot boot-chk boot-desc lockstep lockstep-desc selfhost roundtrip bootstrap rebuild book labs
 	@echo
 	@echo "═══ ПОЛНАЯ ПРОВЕРКА ПРОЙДЕНА ═══"
 

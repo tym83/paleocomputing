@@ -20,6 +20,8 @@ wire [21:0] pcmux, pcmux0, nxpc;
 wire cond, S;
 wire CHK, chkFail;
 wire [31:0] chkLim;
+wire IDX, idxFault;
+wire [23:0] idxRes;
 wire sa, sb, sc;
 
 wire p, q, u, v;  // instruction fields
@@ -89,7 +91,7 @@ assign imm = IR[15:0];   // reg instr.
 assign off = IR[19:0];   // mem instr.
 assign disp = IR[21:0];  // branch instr.
 
-assign ADD = ~p & (op == 8);
+assign ADD = ~p & (op == 8) & ~IDX;  // IDX (алиас ADD с v=1) флаги C/OV не трогает
 assign SUB = ~p & (op == 9);
 assign MUL = ~p & (op == 10);
 assign DIV = ~p & (op == 11);
@@ -145,6 +147,33 @@ assign chkLim  = 32'b0;
 assign chkFail = 1'b0;
 `endif
 
+// ─── IDX: индексация через дескриптор (выпуск 14, 14-episode-descriptors.md) ─
+// Дескриптор — одно 32-битное слово: {длина[31:20], адрес[19:0]}.
+// Кодировка: F0 (p=0, q=0), u=0, v=1, op=8 — алиас ADD, который компилятор
+// не эмитит (бит v у F0-ADD декодером игнорируется, docs/decoder-map.txt).
+//   31:28  27:24  23:20   19:16  15:10   9:8   7:4   3:0
+//   0001    Rd    Rdesc   1000   0       sh    0001  Ri
+// Rdesc читается портом b, индекс Ri — портом c (C0). Результат:
+//   Rd := адрес + (Ri << sh), если Ri < длина (беззнаково, все 32 бита Ri).
+// Иначе — ловушка. Вектор ловушки (R12 = MT) прочитать нечем: все три порта
+// заняты (a — приёмник, b — дескриптор, c — индекс). Поэтому один такт
+// простоя: IR заменяется словом BLR MT (0xD700000C), PC стоит, и на следующем
+// такте это слово исполняется как обычный BLR: R15 := адрес IDX + 4,
+// PC := R[12]. Kernel.Trap читает номер ловушки из слова по R15-4, то есть из
+// самой IDX: IR[7:4] = 1, «index out of range». Петли нет: idxFault управляет
+// только записью IR и простоем, но не адресами портов.
+// Обычный адрес (старшие 12 бит — нули) как дескриптор имеет длину 0:
+// индексация через него — всегда ловушка. Нет дескриптора — нет доступа.
+`ifdef WITH_DESC
+assign IDX      = ~p & ~q & ~u & v & (op == 8);
+assign idxFault = IDX & ((C0[31:12] != 0) | (C0[11:0] >= B[31:20]));
+assign idxRes   = {4'b0, B[19:0]} + ({12'b0, C0[11:0]} << IR[9:8]);
+`else
+assign IDX      = 1'b0;
+assign idxFault = 1'b0;
+assign idxRes   = 24'b0;
+`endif
+
 // Arithmetic-logical unit (ALU)
 assign ira0 = (BR | chkFail) ? 15 : ira;
 assign C1 = q ? {{16{v}}, imm} : C0;
@@ -179,7 +208,12 @@ assign regwr = (~p & ~CHK & ~stall) | (LDR & ~stallX & ~stallL1)
 assign inbus1 = ~ben ? inbus :
   {24'b0, (adr[1] ? (adr[0] ? inbus[31:24] : inbus[23:16]) :
           (adr[0] ? inbus[15:8] : inbus[7:0]))};
+`ifdef WITH_DESC
+assign regmux = LDR ? inbus1 : ((BR & v) | chkFail) ? {8'b0, nxpc, 2'b0} :
+                IDX ? {8'b0, idxRes} : aluRes;
+`else
 assign regmux = LDR ? inbus1 : ((BR & v) | chkFail) ? {8'b0, nxpc, 2'b0} : aluRes;
+`endif
 assign outbus = ~ben ? A :
   adr[1] ? (adr[0] ? {A[7:0], 24'b0} : {8'b0, A[7:0], 16'b0}) :
            (adr[0] ? {16'b0, A[7:0], 8'b0} : {24'b0, A[7:0]});
@@ -218,11 +252,19 @@ assign vv = RTI ? SPC[22] :
 	 SUB ? (sa&~sb&sc) | (~sa&sb&~sc) : OV;
 	 
 assign stallL0 = (LDR|STR) & ~stallL1;
+`ifdef WITH_DESC
+assign stall = stallL0 | stallM | stallD | stallX | stallFA | stallFM | stallFD | idxFault;
+`else
 assign stall = stallL0 | stallM | stallD | stallX | stallFA | stallFM | stallFD;
+`endif
 
 always @ (posedge clk) begin
   PC <= pcmux;
+`ifdef WITH_DESC
+  IR <= idxFault ? 32'hD700000C : stall ? IR : codebus;  // ловушка IDX -> BLR MT
+`else
   IR <= stall ? IR : codebus;
+`endif
   stallL1 <= stallX ? stallL1 : stallL0;
   N <= nn; Z <= zz; C <= cx; OV <= vv;
   H <= MUL ? product[63:32] : DIV ? remainder : H;

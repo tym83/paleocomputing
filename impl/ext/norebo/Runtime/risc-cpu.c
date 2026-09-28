@@ -43,7 +43,26 @@ uint64_t risc_chk_dyn_total;
 static const uint32_t prof_hi[PROF_BUCKETS] = {15,63,127,255,1023,4095,65535,0xFFFFFFFFu};
 static uint32_t prof_prev_insn;            /* предыдущая инструкция */
 
+/* ─── Профиль дескрипторов (выпуск 14) ─────────────────────────────────────
+   Что исполняется вокруг открытых массивов, по конфигурациям:
+     idx      — исполнено IDX (F: индексация открытых массивов)
+     openchk  — программных проверок с пределом в РЕГИСТРЕ: F0 CMP + BLR-ловушка
+                индекса (B и E: открытые массивы; CHK их покрыть не может)
+     strip    — пар LSL R,R,12 + ROR R,R,12 (F: дескриптор -> голый адрес)
+     mhiior   — пар MHI RH,k<<4 + IOR r,r,RH (F: сборка дескриптора; в прочих
+                конфигурациях — большие константы, фон для вычитания)        */
+uint64_t risc_desc_prof[4];
+
 static void profile_check(uint32_t ir, uint32_t prev) {
+  if ((ir >> 28) == 0x1 && ((ir >> 16) & 0xF) == 8) risc_desc_prof[0]++;
+  if ((ir >> 28) == 0xD && (ir & 0xF) == 12 && ((ir >> 4) & 0xF) == 1
+      && (prev >> 28) == 0x0 && ((prev >> 16) & 0xF) == 9) risc_desc_prof[1]++;
+  if ((ir & 0xF00FFFFF) == (0x40030000 | 12) && (prev & 0xF00FFFFF) == (0x40010000 | 12)
+      && ((ir >> 24) & 0xF) == ((ir >> 20) & 0xF) && ((prev >> 24) & 0xF) == ((prev >> 20) & 0xF)
+      && ((ir >> 24) & 0xF) == ((prev >> 24) & 0xF)) risc_desc_prof[2]++;
+  if ((ir >> 28) == 0x0 && ((ir >> 16) & 0xF) == 6 && ((prev >> 28) & 0xE) == 0x6
+      && ((prev >> 16) & 0xF) == 0 && (prev & 0xF) == 0 && ((prev >> 24) & 0xF) == (ir & 0xF))
+    risc_desc_prof[3]++;
   /* ловушка индекса массива: BLR (нибл 1101), cond=10, номер 1, c = MT = 12 */
   if ((ir >> 28) != 0xD || (ir & 0xF) != 12 || ((ir >> 4) & 0xF) != 1) return;
   /* предшествующее слово: F1 SUB с непосредственным пределом */
@@ -142,6 +161,27 @@ static void risc_single_step(const struct RISC_IO *io, struct RISC *risc) {
       if (risc->R[b] >= lim) {
         risc_set_register(risc, 15, risc->PC * 4);   /* PC уже инкрементирован */
         risc->PC = risc->R[c] / 4;
+      }
+      return;
+    }
+
+    /* ─── IDX: индексация через дескриптор (выпуск 14) ───────────────────
+       Кодировка: F0, u=0, v=1, op=8 (алиас ADD). Дескриптор в R[b]:
+       {длина[31:20], адрес[19:0]}; индекс в R[c]; масштаб IR[9:8].
+       R[a] := адрес + (индекс << масштаб), N/Z по результату, C/OV не трогаются.
+       Индекс >= длины (беззнаково) -- ловушка как у BLR MT: R15 := адрес
+       следующей команды, PC := R[12]. В RTL это на такт дольше (такт простоя,
+       в котором IR заменяется словом BLR MT) -- модель тактов добавляет его.
+       Семантика совпадает с RTL: impl/tests/t3_idx*.s, дифференциально --
+       impl/tools/idx_diff.sh. См. 14-episode-descriptors.md.              */
+    if ((ir & qbit) == 0 && (ir & ubit) == 0 && (ir & vbit) != 0 && op == ADD) {
+      uint32_t d = risc->R[b], i = risc->R[c];
+      if (i >= (d >> 20)) {
+        risc_cycles++;                                /* такт простоя */
+        risc_set_register(risc, 15, risc->PC * 4);    /* PC уже инкрементирован */
+        risc->PC = risc->R[12] / 4;
+      } else {
+        risc_set_register(risc, a, ((d & 0xFFFFF) + (i << ((ir >> 8) & 3))) & 0xFFFFFF);
       }
       return;
     }

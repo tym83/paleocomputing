@@ -1,6 +1,7 @@
 # Тайминг ядра RISC5 на ткани Lattice ECP5 (ULX3S, LFE5U-85F-6BG381C).
 #
-# VARIANT — ядро: base (как у Вирта), chk (с -DWITH_CHK -DCHK_SPLIT),
+# VARIANT — ядро: base (как у Вирта), chk (с -DWITH_CHK -DCHK_SPLIT), desc
+#           (chk + команда IDX, -DWITH_DESC; выпуск 14, дескрипторы) или
 #           fmul / fmul2 (быстрый FP-умножитель за 1 / 2 такта, выпуск №2).
 # WRAP    — обёртка: soc (ядро + ПЗУ на ~clk, как в RISC5Top.v) или
 #           core (только ядро, код из регистра; -DCORE_ONLY).
@@ -37,6 +38,7 @@ DEFS_chk  := -DWITH_CHK -DCHK_SPLIT
 # выпуск №2: быстрый FP-умножитель, однотактный и с регистром произведения
 DEFS_fmul  := -DFPMUL_FAST
 DEFS_fmul2 := -DFPMUL_FAST -DFPMUL_FAST_REG
+DEFS_desc := -DWITH_CHK -DCHK_SPLIT -DWITH_DESC
 WDEFS_soc :=
 WDEFS_core := -DCORE_ONLY
 
@@ -76,10 +78,10 @@ timing: pnr
 bit: $(B)/seed1/report.json
 	ecppack --compress $(B)/seed1/out.config $(B)/$(TOP).bit
 
-# Все четыре сочетания прогоняются до конца и сводка пишется даже при
+# Все шесть сочетаний прогоняются до конца и сводка пишется даже при
 # провале одного из них: по сводке и видно, что именно упало.
 all:
-	@st=0; for w in soc core; do for v in base chk; do \
+	@st=0; for w in soc core; do for v in base chk desc; do \
 	  $(MAKE) timing WRAP=$$w VARIANT=$$v || st=1; done; done; \
 	$(MAKE) summary; exit $$st
 

@@ -46,6 +46,10 @@ def chks(words):
     return [k for k, w in enumerate(words)
             if (w >> 28) == 0b0001 and ((w >> 16) & 0xF) == 1 and (w & 0xF) == 12]
 
+def idxs(words):
+    """Индексация через дескриптор IDX (выпуск 14): F0, биты 31:28 = 0001, op=8."""
+    return [k for k, w in enumerate(words) if (w >> 28) == 0b0001 and ((w >> 16) & 0xF) == 8]
+
 def traps(words):
     out = []
     for k, w in enumerate(words):
@@ -66,4 +70,6 @@ for p in sys.argv[1:]:
     det = ", ".join(f"{TRAPNAME.get(k, k)}: {v}" for k, v in sorted(by.items()))
     ch = chks(ws)
     chs = f"   CHK {len(ch):>4}" if ch else ""
+    ix = idxs(ws)
+    chs += f"   IDX {len(ix):>4}" if ix else ""
     print(f"{name:<14} слов кода {len(ws):>6}   ловушек {len(t):>5}{chs}   {det}")

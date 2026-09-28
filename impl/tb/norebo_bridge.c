@@ -24,6 +24,8 @@
    сам стенд, эти нужны лишь для того, чтобы слинковался print_cycle_stats(). */
 uint64_t risc_cycles = 0, risc_insns = 0;
 uint64_t risc_chk_hits[8] = {0}, risc_chk_dyn_total = 0;
+/* Профиль IDX (выпуск 14, дескрипторы) — тоже из risc-cpu.c. */
+uint64_t risc_desc_prof[4] = {0};
 
 /* Заголовок включаем ПЕРВЫМ, до подмены: иначе #define risc_run испортит
    объявление функции в risc-cpu.h. */

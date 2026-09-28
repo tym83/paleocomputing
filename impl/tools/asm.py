@@ -260,6 +260,20 @@ class Assembler:
                 raise AsmError(f'предел CHKS {lim} не влезает в 12 бит (максимум 4095)')
             return base | ((lim >> 8) << 24) | ((lim & 0xFF) << 8) | (1 << 4)
 
+        # --- IDX: индексация через дескриптор (выпуск 14, 14-episode-descriptors.md)
+        # F0 | v=1 | op=8 (алиас ADD) | a=приёмник | b=дескриптор | c=индекс |
+        # IR[9:8] = масштаб (сдвиг 0..3) | IR[7:4] = 1 (номер ловушки)
+        #   IDX Rd, Rdesc, Ri, sh   ->  Rd := desc[19:0] + (Ri << sh),
+        #   ловушка, если Ri >= desc[31:20] (беззнаково)
+        if mn == 'IDX':
+            if len(args) != 4:
+                raise AsmError('IDX требует: приёмник, дескриптор, индекс, сдвиг 0..3')
+            sh = int(args[3], 0)
+            if not 0 <= sh <= 3:
+                raise AsmError(f'сдвиг IDX {sh} вне 0..3 (масштаб 1, 2, 4, 8 байт)')
+            return ((0b0001 << 28) | (reg(args[0]) << 24) | (reg(args[1]) << 20)
+                    | (8 << 16) | (sh << 8) | (1 << 4) | reg(args[2]))
+
         if mn == 'FMAC':
             raise AsmError('FMAC вынесена в выпуск №2 (ускорение опровергнуто измерением)')
 
@@ -433,6 +447,8 @@ def _selftest():
     chk('FLT R1,R1,R2', assemble('        FLT R1, R1, R2\n')[0][0], 0x211C0002)
     chk('B +2097151',  assemble('        B 2097151\n')[0][0],  0xE71FFFFF)
     chk('B -2097152',  assemble('        B -2097152\n')[0][0], 0xE7E00000)
+    chk('IDX R3,R2,R1,2', assemble('        IDX R3, R2, R1, 2\n')[0][0], 0x13280211)
+    must_fail('IDX сдвиг 4', '        IDX R3, R2, R1, 4\n')
 
     # Разбор кодирования: [31:28] формат | [27:24] a | [23:20] b | [19:16] op | остальное
     # MOV R0,0    F1 u=0 v=0 -> 0100 | a=0 | b=0 | op=0 | n=0
