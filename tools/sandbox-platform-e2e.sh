@@ -29,6 +29,9 @@ NS=${NS:-tenant-sandbox}
 KVNS=cozy-kubevirt
 COZYPKG=${COZYPKG:-/tmp/cozypkg}
 UNINSTALL=${UNINSTALL:-1}
+# ONLY=4 — прогнать один шаг (по номеру), не трогая остальные: например,
+# проверить обычную машину, не переключая launcher общего кластера.
+ONLY=${ONLY:-}
 
 t()  { kubectl --kubeconfig "$TENANT_KUBECONFIG" --context "$TENANT_CONTEXT" -n "$NS" "$@"; }
 a()  { kubectl --kubeconfig "$ADMIN_KUBECONFIG" --context "$ADMIN_CONTEXT" "$@"; }
@@ -51,7 +54,9 @@ rolled()   { kv rollout status deploy/virt-controller --timeout=5s; }
 ours_arg() { args | grep -q 'paleocomputing/virt-launcher'; }
 stock_arg(){ args | grep -q 'quay.io/kubevirt/virt-launcher'; }
 is()       { [ "$(state)" = "$1" ]; }
+want()     { [ -z "$ONLY" ] || [ "$ONLY" = "$1" ]; }
 
+if want 1; then
 step "1. правка компонента"
 is Applied && say ok "состояние Applied, образ $(img)" || say no "состояние $(state)"
 python3 - "$(args)" <<'EOF' && say ok "в аргументах virt-controller заменён только образ launcher" || say no "аргументы virt-controller не в той форме: $(args)"
@@ -62,7 +67,9 @@ assert "--exporter-image" in a and "--port" in a
 EOF
 n=$(kv get kubevirt kubevirt -o json | python3 -c "import json,sys;print(len(json.load(sys.stdin)['spec'].get('customizeComponents',{}).get('patches',[])))")
 [ "$n" = 1 ] && say ok "в customizeComponents ровно одна запись" || say no "записей в customizeComponents: $n"
+fi
 
+if want 2; then
 step "2. неизвестная версия KubeVirt"
 saved=$(kv get cm kubevirt-paleo-launcher -o jsonpath='{.data.launchers\.txt}')
 ver=$(kv get kubevirt kubevirt -o jsonpath='{.status.observedKubeVirtVersion}')
@@ -75,7 +82,9 @@ wait_for 240 "штатный launcher" stock_arg && say ok "правка сня�
 kv create cm kubevirt-paleo-launcher --from-literal=launchers.txt="$saved" --dry-run=client -o yaml \
   | kv patch cm kubevirt-paleo-launcher --type=merge --patch-file=/dev/stdin >/dev/null
 echo "  таблица возвращена"
+fi
 
+if want 3; then
 step "3. гонка: машина сразу после возврата launcher"
 t apply -f - <<EOF >/dev/null
 apiVersion: apps.cozystack.io/v1alpha1
@@ -93,7 +102,9 @@ wait_for 900 "машина на нашем launcher" on_ours \
   && say ok "машина дожила до нашего launcher: $(a -n "$NS" get vmi "$vmi" -o jsonpath='{.status.launcherContainerImageVersion}')" \
   || say no "машина не поднялась на нашем launcher: $(a -n "$NS" get vmi "$vmi" -o jsonpath='{.status.phase} {.status.launcherContainerImageVersion}' 2>/dev/null)"
 t delete oberonvms.apps.cozystack.io race --wait=false >/dev/null
+fi
 
+if want 4; then
 step "4. обычная машина на текущем launcher"
 wait_for 300 "virt-controller перекатился" rolled
 t apply -f - <<'EOF' >/dev/null
@@ -118,16 +129,23 @@ spec:
   disks: [{name: plain}]
 EOF
 pvmi=vm-instance-plain
+# Загрузилась ли ОС — по приглашению login: в последовательной консоли, с
+# правами тенанта. Сигнал агента гостя здесь не годится: в чистом облачном
+# образе без cloud-init агента нет, и машина «не загружалась» бы вечно
+# (первый прогон так и провалил шаг при работающей Ubuntu).
 booted() {
-  [ "$(a -n "$NS" get vmi "$pvmi" -o jsonpath='{.status.conditions[?(@.type=="AgentConnected")].status}' 2>/dev/null)" = True ]
+  [ "$(a -n "$NS" get vmi "$pvmi" -o jsonpath='{.status.phase}' 2>/dev/null)" = Running ] || return 1
+  printf '\r' | perl -e 'alarm 25; exec @ARGV' virtctl --kubeconfig "$TENANT_KUBECONFIG" \
+    --context "$TENANT_CONTEXT" -n "$NS" console "$pvmi" 2>/dev/null | grep -q "login:"
 }
 wait_for 1200 "Ubuntu загрузилась" booted \
-  && say ok "Ubuntu загрузилась (агент гостя на связи) на $(a -n "$NS" get vmi "$pvmi" -o jsonpath='{.status.launcherContainerImageVersion}')" \
+  && say ok "Ubuntu загрузилась (приглашение login: в консоли) на $(a -n "$NS" get vmi "$pvmi" -o jsonpath='{.status.launcherContainerImageVersion}')" \
   || say no "Ubuntu не загрузилась: $(a -n "$NS" get vmi "$pvmi" -o jsonpath='{.status.phase}' 2>/dev/null)"
 t delete vminstances.apps.cozystack.io plain --wait=false >/dev/null
 t delete vmdisks.apps.cozystack.io plain --wait=false >/dev/null
+fi
 
-if [ "$UNINSTALL" = 1 ]; then
+if [ "$UNINSTALL" = 1 ] && want 5; then
   step "5. удаление и повторная установка компонента"
   a delete packages.cozystack.io paleocomputing.platform --wait=false >/dev/null
   wait_for 300 "штатный launcher" stock_arg && say ok "после удаления — штатный launcher" || say no "после удаления аргументы: $(args)"
