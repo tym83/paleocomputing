@@ -47,7 +47,9 @@ ext/refemu/reftrace: ext/refemu/trace.c ext/refemu/risc.c ext/refemu/risc-fp.c e
 # в свежих версиях путь разрешается правильно.
 TB := $(abspath tb)
 
-VINC := $(shell verilator --getenv VERILATOR_ROOT)/include
+# ⚠ Отложенное присваивание: с `:=` make звал verilator при КАЖДОМ запуске,
+# и там, где его нет (быстрое задание CI), любая цель печатала ошибку.
+VINC = $(shell verilator --getenv VERILATOR_ROOT)/include
 WASM_SRC := $$(ls build/obj_wasm/*.cpp | grep -v "__Dpi\.cpp$$")
 
 BENCH := web/bench_bounds_b.bin web/bench_bounds_e.bin web/bench_bounds.json
@@ -283,20 +285,27 @@ check: pristine test boot boot-chk lockstep selfhost roundtrip bootstrap rebuild
 
 # Замыкание круга: компилятор Оберона работает на настоящем RTL, а не на
 # эмуляторе, и порождает побайтово тот же код.
-build/obj_nb/norebo_tb: $(RTL) tb/norebo_tb.cpp tb/norebo_bridge.cpp
+# Мост к Norebo — код на C, и собирается как C, отдельным объектом: внутри
+# него norebo.c целиком, а в том стоят назначенные инициализаторы массива,
+# которых нет в C++. g++ на Linux на этом падал, clang на macOS — прощал.
+NBOBJ := build/nbobj/norebo_bridge.o
+$(NBOBJ): tb/norebo_bridge.c ext/norebo/Runtime/norebo.c ext/norebo/Runtime/risc-cpu.h
+	@mkdir -p $(@D) && $(CC) -O2 -std=gnu99 -w -c $< -o $@
+
+build/obj_nb/norebo_tb: $(RTL) tb/norebo_tb.cpp $(NBOBJ)
 	@mkdir -p build
-	@verilator $(VFLAGS) -o norebo_tb --top-module RISC5 --Mdir build/obj_nb $(RTL) $(TB)/norebo_tb.cpp $(TB)/norebo_bridge.cpp
+	@verilator $(VFLAGS) -o norebo_tb --top-module RISC5 --Mdir build/obj_nb $(RTL) $(TB)/norebo_tb.cpp ../../$(NBOBJ)
 	@test -x $@ || { echo "СБОРКА НЕ ДАЛА БИНАРНИКА: $@"; exit 1; }
 
 # Те же ядра с быстрым FP-умножителем (выпуск №2): однотактным и двухтактным.
-build/obj_nbf/norebo_tb: $(RTL) tb/norebo_tb.cpp tb/norebo_bridge.cpp
+build/obj_nbf/norebo_tb: $(RTL) tb/norebo_tb.cpp $(NBOBJ)
 	@mkdir -p build
-	@verilator $(VFLAGS) -DFPMUL_FAST -o norebo_tb --top-module RISC5 --Mdir build/obj_nbf $(RTL) $(TB)/norebo_tb.cpp $(TB)/norebo_bridge.cpp
+	@verilator $(VFLAGS) -DFPMUL_FAST -o norebo_tb --top-module RISC5 --Mdir build/obj_nbf $(RTL) $(TB)/norebo_tb.cpp ../../$(NBOBJ)
 	@test -x $@ || { echo "СБОРКА НЕ ДАЛА БИНАРНИКА: $@"; exit 1; }
 
-build/obj_nbr/norebo_tb: $(RTL) tb/norebo_tb.cpp tb/norebo_bridge.cpp
+build/obj_nbr/norebo_tb: $(RTL) tb/norebo_tb.cpp $(NBOBJ)
 	@mkdir -p build
-	@verilator $(VFLAGS) -DFPMUL_FAST -DFPMUL_FAST_REG -o norebo_tb --top-module RISC5 --Mdir build/obj_nbr $(RTL) $(TB)/norebo_tb.cpp $(TB)/norebo_bridge.cpp
+	@verilator $(VFLAGS) -DFPMUL_FAST -DFPMUL_FAST_REG -o norebo_tb --top-module RISC5 --Mdir build/obj_nbr $(RTL) $(TB)/norebo_tb.cpp ../../$(NBOBJ)
 	@test -x $@ || { echo "СБОРКА НЕ ДАЛА БИНАРНИКА: $@"; exit 1; }
 
 # Быстрый FP-умножитель против исходного, побитово (находка 73). FPMUL_N —
