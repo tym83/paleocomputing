@@ -5,7 +5,11 @@
 // проводов) частоту ядра RISC5 и ядра с CHK. Полная система с памятью, видео и
 // SD-картой здесь не собирается — что для неё нужно, см. README.md.
 //
-// Что внутри кристалла совпадает с RISC5Top.v:
+// Два режима (Makefile, WRAP=soc|core):
+//   soc  — ядро + ПЗУ на ~clk + мультиплексор кода, как в RISC5Top.v;
+//   core — -DCORE_ONLY: только ядро, код тоже из регистра.
+//
+// Что внутри кристалла в режиме soc совпадает с RISC5Top.v:
 //   - ядро RISC5 (impl/rtl/RISC5.v, с -DWITH_CHK -DCHK_SPLIT или без);
 //   - загрузочное ПЗУ PROM на ~clk, как в оригинале (полутактовые пути
 //     posedge -> negedge -> posedge через ПЗУ сохраняются и попадают в отчёт);
@@ -33,8 +37,13 @@ module core_timing_top(
 
 wire clk = clk_25mhz;
 
-// Сдвиговый регистр входов: 32 бита данных памяти + rst + irq + stallX.
+// Сдвиговый регистр входов: 32 бита данных памяти + rst + irq + stallX
+// (+ 32 бита кода в режиме CORE_ONLY).
+`ifdef CORE_ONLY
+localparam NIN = 67;
+`else
 localparam NIN = 35;
+`endif
 reg [NIN-1:0] sin;
 always @(posedge clk) sin <= {sin[NIN-2:0], ftdi_txd};
 
@@ -52,10 +61,18 @@ RISC5 riscx(.clk(clk), .rst(rst), .irq(irq),
    .adr(adr), .codebus(codebus), .inbus(inbus0),
    .outbus(outbus));
 
+`ifdef CORE_ONLY
+// Режим «только ядро»: ПЗУ нет, код приходит из регистра. Так виден
+// собственный путь ядра posedge -> posedge, не заслонённый полутактовым
+// путём до ПЗУ.
+assign romout  = 32'b0;
+assign codebus = sin[66:35];
+`else
 // Как в RISC5Top.v: ПЗУ тактуется инвертированным клоком.
 PROM PM (.adr(adr[10:2]), .data(romout), .clk(~clk));
 
 assign codebus = (adr[23:14] == 10'h3FF) ? romout : inbus0;
+`endif
 
 // Выходы ядра: защёлкнуть, затем свернуть. Свёртка идёт от регистра к
 // регистру и к путям ядра отношения не имеет.
