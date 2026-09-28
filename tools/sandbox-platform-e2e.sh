@@ -102,7 +102,10 @@ kind: VMDisk
 metadata: {name: plain}
 spec:
   source: {image: {name: ubuntu-24.04}}
-  storage: 10Gi
+  # Диск клонируется из общего образа, а клон не может быть меньше
+  # источника: у ubuntu-24.04 в cozy-public это 20Gi (CDI отклоняет меньший —
+  # CloneValidationFailed, первый прогон на этом и встал).
+  storage: 20Gi
   storageClass: replicated
 ---
 apiVersion: apps.cozystack.io/v1alpha1
