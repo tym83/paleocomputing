@@ -13,7 +13,7 @@ TESTS  := t1_latency t1_flags t1_fpb2b t1_fp t1_arith t1_umul t1_probe_flags \
           t1_branch t1_branch_width t1_logic t1_dontcare t1_prime t1_alu_diff1 t1_alu_diff2 t1_shift t1_mem t1_movspec t1_irq
 ASM    := $(patsubst %,tests/%.bin,$(TESTS) t2_chk t2_chk_hi)
 
-.PHONY: fpmul-diff lm lm-profile lm-check site all check test roundtrip pristine bootstrap rebuild book labs image lab image-check equiv lockstep lockstep-chk boot boot-chk selfhost syn configs tools web deps clean
+.PHONY: boot-fast fpmul-diff lm lm-profile lm-check site all check test roundtrip pristine bootstrap rebuild book labs image lab image-check equiv lockstep lockstep-chk boot boot-chk selfhost syn configs tools web deps clean
 all: tools build/obj_tests/run_tests build/obj_chk/run_tests_chk $(ASM)
 
 # ───────────────────────────────────────────────────────────────────────────
@@ -224,6 +224,13 @@ boot-chk:
 	@mkdir -p build
 	@verilator $(VFLAGS) -DWITH_CHK -DCHK_SPLIT -o soc_tb_chk --top-module RISC5 --Mdir build/obj_soc_chk $(RTL) $(TB)/soc_tb.cpp $(TB)/disk/disk.c
 	@./build/obj_soc_chk/soc_tb_chk --prom=rtl/prom_sd.mem --max=12000000 --expect-crc=$(BOOT_CRC)
+
+# Загрузка системы на ядре с быстрым FP-умножителем (выпуск №2): экран обязан
+# совпасть с тем же эталоном, модель тактов — с RTL (в ней вариант учтён).
+boot-fast:
+	@mkdir -p build
+	@verilator $(VFLAGS) -DFPMUL_FAST -CFLAGS -DFPMUL_FAST -o soc_tb_fast --top-module RISC5 --Mdir build/obj_soc_fast $(RTL) $(TB)/soc_tb.cpp $(TB)/disk/disk.c > build/soc_fast.log 2>&1 || { cat build/soc_fast.log; exit 1; }
+	@./build/obj_soc_fast/soc_tb_fast --prom=rtl/prom_sd.mem --max=12000000 --expect-crc=$(BOOT_CRC)
 
 # ───────────────────────────────────────────────────────────────────────────
 # Полная проверка. Раньше сильнейшие проверки (диффстенд, загрузка системы)
