@@ -87,4 +87,37 @@
 
 ## Время
 
-<!-- TIMINGS -->
+Каждый шаг пишет свою длительность в журнал и в сводку задачи — первый прогон
+на PR даст цифры по обеим версиям. Ожидание: сборка launcher из тёплого кэша —
+минуты, из холодного — до полутора часов (как у `launcher.yml`, поэтому срок
+задачи 150 минут); кластер — пара минут; KubeVirt — до пяти; машина — сколько
+займёт задача наполнения плюс пауза KubeVirt между попытками запуска (до 300
+с); сам Оберон загружается за секунды. Сроки ожидания в `e2e.sh` щедрые и
+переопределяются переменными (`KUBEVIRT_TIMEOUT`, `MACHINE_TIMEOUT`,
+`SCREEN_TIMEOUT`).
+
+## Проверено здесь
+
+Локально, colima на arm64, 2 CPU, 2 ГБ памяти, launcher 1.8.4 под arm64 из
+прежней сборки:
+
+* `e2e.sh tools` — kind v0.33.0 и virtctl v1.8.4 скачаны, 18 с; ссылки
+  на virtctl и `kubevirt-operator.yaml` для v1.9.0 и kind под linux-amd64
+  отвечают 200;
+* `e2e.sh cluster` — кластер kind на `kindest/node:v1.35.8` поднят, образ
+  `paleo.local/...` загружен на узел, класс `standard` на месте — 232 с;
+* `e2e.sh kubevirt` — оператор 1.8.4 встал, ресурс KubeVirt с
+  `useEmulation`, `Sidecar` и `infra.replicas: 1` принят вебхуком
+  оператора; у virt-controller `args[0]` — `--launcher-image`, аннотация
+  `install-strategy-version` — `v1.8.4`, как и ждёт `reconcile.sh`;
+* `e2e.sh launcher`, пока KubeVirt не развернулся, — проход через обёртку
+  `kubectl-e2e` отработал и честно ответил `Doubt: нет
+  status.observedKubeVirtVersion`, ничего не записав;
+* `helm template` чарта `oberon-vm` с `storageClass=standard` отрисовывается;
+* shellcheck (`-s sh`) и actionlint — чисто.
+
+Дальше двух гигабайт не хватило: virt-api (500Mi) и virt-operator (450Mi)
+заняли узел, virt-controller и virt-handler остались в `Pending` на
+`Insufficient memory`, API-сервер kind начал отвечать таймаутами. Шаги
+`machine` и `screen` локально **не запускались** — впервые они пройдут на
+раннере (4 CPU, 16 ГБ). Образ `oberon-run` в реестре к тому же только amd64.
