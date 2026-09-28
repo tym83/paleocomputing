@@ -130,6 +130,11 @@ metadata:
   name: kubevirt
   namespace: $KV_NS
 spec:
+  # Узел один: вторые реплики virt-api и virt-controller только съели бы
+  # память раннера. Аренду лидера (шаг launcher) это не упрощает — её всё
+  # равно ждём явно.
+  infra:
+    replicas: 1
   configuration:
     developerConfiguration:
       useEmulation: true
