@@ -134,4 +134,6 @@ document.getElementById('btn').onchange = e => m.setButton(+e.target.value);
   apply(z.value);
   z.onchange = () => { apply(z.value); try { localStorage.setItem('oberon-zoom', z.value); } catch (e) {} };
 }
+// Модуль дошёл до конца: это видит дымовая проверка в браузере.
+document.documentElement.dataset.scriptOk = '1';
 </script>

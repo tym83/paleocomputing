@@ -41,14 +41,27 @@ say() { if [ "$1" = ok ]; then echo "  ✅ $2"; else echo "  ❌ $2"; bad=1; fi;
 # Сколько лабораторных должно быть — считаем по тому же labs.js, что уехал на сайт.
 labs=$(python3 -c "import re,sys;print(len(re.findall(r'^  id: \d+', open(sys.argv[1]).read(), re.M)))" \
   "$site/oberon/labs.js")
-for page in "oberon/lab.html" "oberon/lab.html?lang=ru"; do
-  got=$(dom "$page" | python3 -c "
+# Каждая страница с машиной ставит в конце своего модуля data-script-ok="1":
+# отметка появляется, только если модуль выполнился до конца.
+for page in "oberon/run.html" "oberon/checks.html" "oberon/embed.html" \
+            "oberon/lab.html" "oberon/lab.html?lang=ru"; do
+  out=$(dom "$page")
+  if printf '%s' "$out" | grep -q 'data-script-ok="1"'; then
+    say ok "$page: скрипт страницы отработал до конца"
+  else
+    say no "$page: скрипт страницы не отработал"
+  fi
+  case "$page" in
+    oberon/lab.html*)
+      got=$(printf '%s' "$out" | python3 -c "
 import re,sys
 s=sys.stdin.read()
 m=re.search(r'<select[^>]*id=\"pick\"[^>]*>(.*?)</select>', s, re.S)
 print(len(re.findall('<option', m.group(1))) if m else 0)")
-  [ "$got" = "$labs" ] && say ok "$page: в списке все $labs лабораторных" \
-                       || say no "$page: в списке $got из $labs — скрипт страницы не отработал"
+      [ "$got" = "$labs" ] && say ok "$page: в списке все $labs лабораторных" \
+                           || say no "$page: в списке $got из $labs"
+      ;;
+  esac
 done
 
 exit $bad

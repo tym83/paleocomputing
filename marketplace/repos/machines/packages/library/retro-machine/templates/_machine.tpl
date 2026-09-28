@@ -254,6 +254,12 @@ spec:
         paleocomputing.io/machine: {{ toJson $passport | quote }}
         hooks.kubevirt.io/hookSidecars: {{ toJson $sidecars | quote }}
     spec:
+      # ⚠ Выселение — остановкой, а не миграцией. В кластере стратегия
+      # LiveMigrate, а чужую машину мигрировать нечем: KubeVirt отказал бы в
+      # выселении её пода, и слив узла встал бы на ней — чужие люди не смогли
+      # бы обслужить общий кластер. С None под выселяется, а VirtualMachine
+      # поднимает машину на другом узле; диск на томе переживает переезд.
+      evictionStrategy: None
       terminationGracePeriodSeconds: {{ $m.domain.terminationGracePeriodSeconds }}
       domain:
         resources:
