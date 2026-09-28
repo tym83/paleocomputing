@@ -19,6 +19,7 @@ on:
       - 'impl/rtl/**'
       - 'impl/tb/**'
       - 'impl/tools/asm.py'
+      - 'impl/ext/norebo/Runtime/**'
       - 'qemu/**'
       - '.github/workflows/hardware.yml'
 
@@ -43,15 +44,23 @@ jobs:
         working-directory: impl
 
       # Система грузится на настоящем RTL, и контрольная сумма экрана обязана
-      # совпасть с эталонной — на базовом ядре и на ядре с расширением.
+      # совпасть с эталонной — на базовом ядре, на ядре с CHK и на ядре с
+      # дескрипторами (выпуск 14).
       - name: Загрузка системы
-        run: make boot boot-chk
+        run: make boot boot-chk boot-desc
+        working-directory: impl
+
+      # Ступень «дескрипторы»: цикл центрального номера на четырёх ступенях и
+      # отрицательный контроль (дескриптор короче массива обязан остановить
+      # цикл). Секунды.
+      - name: Цикл с дескриптором
+        run: make desc-loop
         working-directory: impl
 
       # Дифференциальный стенд: RTL против эталонного эмулятора, инструкция за
       # инструкцией, на загрузке настоящей системы.
       - name: Дифференциальный стенд
-        run: make lockstep
+        run: make lockstep lockstep-desc
         working-directory: impl
 
   qemu:
