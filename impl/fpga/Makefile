@@ -71,12 +71,12 @@ timing: pnr
 bit: $(B)/seed1/report.json
 	ecppack --compress $(B)/seed1/out.config $(B)/$(TOP).bit
 
+# Все четыре сочетания прогоняются до конца и сводка пишется даже при
+# провале одного из них: по сводке и видно, что именно упало.
 all:
-	$(MAKE) timing WRAP=soc  VARIANT=base
-	$(MAKE) timing WRAP=soc  VARIANT=chk
-	$(MAKE) timing WRAP=core VARIANT=base
-	$(MAKE) timing WRAP=core VARIANT=chk
-	$(MAKE) summary
+	@st=0; for w in soc core; do for v in base chk; do \
+	  $(MAKE) timing WRAP=$$w VARIANT=$$v || st=1; done; done; \
+	$(MAKE) summary; exit $$st
 
 summary:
 	python3 check_timing.py --summary --target $(TARGET_MHZ) build
