@@ -59,6 +59,7 @@ HERE = pathlib.Path(__file__).resolve().parent
 CHECKS = (0, 1, 2, 4)
 LINKS = (0, 1, 2, 4)
 CALIB_ADDS = 32
+CHUNKS = 16          # кусков на замер: калибровка и ядро чередуются
 DEFAULT_ITER = 200_000_000
 
 # Встроенный ассемблер по архитектурам: звено цепочки, калибровка, выбор.
@@ -146,27 +147,31 @@ int main(int argc, char **argv)
         arr[k] = k * 2654435761u + 1u;
     const uint32_t *p = arr;
     __asm__ volatile("" : "+r"(p) : : "memory");   /* содержимое неизвестно оптимизатору */
-    /* Калибровка в том же процессе, до и после замера: n зависимых сложений. */
+    /* Замер кусками: калибровка и ядро чередуются CHUNKS раз в одном процессе,
+     * от каждого берётся лучший кусок — оба при одной, наибольшей частоте. */
     uint64_t nc = n / {adds} + 1;
-    why_calib(p, nc / 16 + 1);
     for (size_t k = 0; k < sizeof kernels / sizeof kernels[0]; k++) {{
         if (strcmp(argv[1], kernels[k].name) != 0)
             continue;
-        double c0 = now_ns();
-        uint64_t x = why_calib(p, nc);
-        double c1 = now_ns();
-        kernels[k].fn(p, n / 16 + 1);              /* прогрев */
-        double t0 = now_ns();
-        uint32_t s = kernels[k].fn(p, n);
-        double t1 = now_ns();
-        x += why_calib(p, nc);
-        double c2 = now_ns();
-        if (x != 2 * nc * {adds}) {{
-            fprintf(stderr, "калибровка посчитана неверно\\n");
-            return 3;
+        why_calib(p, nc);                          /* прогрев */
+        kernels[k].fn(p, n);
+        uint32_t s = 0;
+        double best_t = 1e300, best_a = 1e300;
+        for (int c = 0; c < {chunks}; c++) {{
+            double c0 = now_ns();
+            uint64_t x = why_calib(p, nc);
+            double c1 = now_ns();
+            s += kernels[k].fn(p, n);
+            double t1 = now_ns();
+            if (x != nc * {adds}) {{
+                fprintf(stderr, "калибровка посчитана неверно\\n");
+                return 3;
+            }}
+            double a = (c1 - c0) / (double)(nc * {adds}), t = (t1 - c1) / (double)n;
+            if (a < best_a) best_a = a;
+            if (t < best_t) best_t = t;
         }}
-        double a0 = (c1 - c0) / (double)(nc * {adds}), a1 = (c2 - t1) / (double)(nc * {adds});
-        printf("%u %.6f %.6f\\n", s, (t1 - t0) / (double)n, a0 < a1 ? a0 : a1);
+        printf("%u %.6f %.6f\\n", s, best_t, best_a);
         return 0;
     }}
     fprintf(stderr, "нет ядра %s\\n", argv[1]);
@@ -215,7 +220,7 @@ def emit(arch):
     adds = '"' + '\\n\\t'.join([ASM[arch]['one']] * CALIB_ADDS) + '"'
     table = ''.join(f'    {{"{v[0]}", {v[0]}}},\n' for v in vs)
     return (HEAD.format(lim=LIM) + ''.join(emit_kernel(arch, *v) for v in vs)
-            + CALIB.format(adds=adds) + MAIN.format(table=table, adds=CALIB_ADDS))
+            + CALIB.format(adds=adds) + MAIN.format(table=table, adds=CALIB_ADDS, chunks=CHUNKS))
 
 
 def count_imm_adds(text, arch, imm):
@@ -297,7 +302,8 @@ def main():
     outdir = pathlib.Path(args.build_dir) / f'why-{args.label}'
     outdir.mkdir(parents=True, exist_ok=True)
 
-    want = expected_sum(args.iter)
+    chunk = max(1, args.iter // CHUNKS)
+    want = CHUNKS * expected_sum(chunk) % 2 ** 32
     rows, bins, bodies = [], {}, {}
     for tc in tcs:
         binary, asm = build(tc, arch, outdir)
@@ -305,7 +311,7 @@ def main():
         verify_calib(asm, arch)
         for name, c, k, pos in variants():
             lb = verify(asm, arch, name, c, k, pos)
-            got = time_one(binary, name, args.iter)[0]
+            got = time_one(binary, name, chunk)[0]
             if got != want:
                 sys.exit(f'❌ {tc[0]} {name}: сумма {got}, ожидалась {want}')
             rows.append({'tc': tc[0], 'name': name, 'c': c, 'k': k, 'pos': pos,
@@ -317,7 +323,7 @@ def main():
         # По кругу; калибровка — в том же процессе, до и после замера.
         for rep in range(args.reps):
             for r in rows:
-                _, ns, cal = time_one(bins[r['tc']], r['name'], args.iter)
+                _, ns, cal = time_one(bins[r['tc']], r['name'], chunk)
                 r['ns'].append(ns)
                 r['nsadd'].append(cal)
                 r['cyc'].append(ns / cal)
@@ -360,9 +366,10 @@ def report(args, arch, tcs, rows, bodies):
         w(f'* {args.note}')
     w(f'* цикл: `sum += a[i]; i = i + 1; [k × add #64]; i &= {MASK}` над {LIM} × u32; '
       f'итераций на замер: ' + f'{args.iter:,}'.replace(',', ' '))
-    w(f'* кругов: {args.reps}; перед каждым замером — калибровка {CALIB_ADDS} зависимыми '
-      'сложениями (1 сложение = 1 такт); такты = нс/итер ÷ нс/сложение того же круга; '
-      'берётся лучший круг')
+    w(f'* кругов: {args.reps}, по кругу; в каждом замере {CHUNKS} кусков, где калибровка '
+      f'{CALIB_ADDS} зависимыми сложениями (1 сложение = 1 такт) чередуется с ядром в одном '
+      'процессе; такты замера = лучший кусок ядра (нс/итер) ÷ лучший кусок калибровки '
+      '(нс/сложение); в таблицах — медиана по кругам')
     w('')
     w('| компилятор | версия | флаги |')
     w('|---|---|---|')
@@ -380,20 +387,20 @@ def report(args, arch, tcs, rows, bodies):
             w('')
             w(f'Частота по калибровке (медиана): **{ghz:.2f} ГГц**.')
             w('')
-            w('Такты на итерацию (лучший круг), в скобках — добавка от проверок '
+            w('Такты на итерацию (медиана по кругам), в скобках — добавка от проверок '
               'Δ = такты(c, k) − такты(0, k):')
             w('')
             w('| цепочка индекса | ' + ' | '.join(f'c = {c}' for c in CHECKS) + ' |')
             w('|---|' + '---:|' * len(CHECKS))
             for k in LINKS:
-                base = cell(rows, t, f'why_c0_k{k}')['best']
+                base = cell(rows, t, f'why_c0_k{k}')['median']
                 cells = []
                 for c in CHECKS:
-                    v = cell(rows, t, f'why_c{c}_k{k}')['best']
+                    v = cell(rows, t, f'why_c{c}_k{k}')['median']
                     cells.append(f'{v:.2f}' if c == 0 else f'{v:.2f} ({v - base:+.2f})')
                 w(f'| k = {k} (2 + {k} = {2 + k} такта) | ' + ' | '.join(cells) + ' |')
             w('')
-            base = cell(rows, t, 'why_c0_k0')['best']
+            base = cell(rows, t, 'why_c0_k0')['median']
             w('Положение одной проверки (k = 0):')
             w('')
             w('| вариант | что | команд в теле | такты | Δ к c = 0 |')
@@ -405,16 +412,16 @@ def report(args, arch, tcs, rows, bodies):
                     'why_chain': 'chain: cmp + csel/cmov в цепочке индекса'}
             for nm, desc in what.items():
                 r = cell(rows, t, nm)
-                w(f'| `{nm}` | {desc} | {r["count"]} | {r["best"]:.2f} | {r["best"] - base:+.2f} |')
+                w(f'| `{nm}` | {desc} | {r["count"]} | {r["median"]:.2f} | {r["median"] - base:+.2f} |')
             w('')
         w('Полная таблица (все круги):')
         w('')
-        w('| компилятор | ядро | c | k | положение | команд | такты (лучший) | медиана | '
+        w('| компилятор | ядро | c | k | положение | команд | такты: медиана | мин | макс | '
           'нс/итер (лучшее) |')
-        w('|---|---|---:|---:|---|---:|---:|---:|---:|')
+        w('|---|---|---:|---:|---|---:|---:|---:|---:|---:|')
         for r in rows:
             w(f'| {r["tc"]} | `{r["name"]}` | {r["c"]} | {r["k"]} | {r["pos"]} | {r["count"]} | '
-              f'{r["best"]:.3f} | {r["median"]:.3f} | {r["nsbest"]:.3f} |')
+              f'{r["median"]:.3f} | {r["best"]:.3f} | {max(r["cyc"]):.3f} | {r["nsbest"]:.3f} |')
         w('')
     w('## Тела циклов')
     w('')
