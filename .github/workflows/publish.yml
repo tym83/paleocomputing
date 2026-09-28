@@ -78,7 +78,11 @@ jobs:
   images:
     needs: [source, launcher-versions]
     name: images (${{ matrix.image.name }}, ${{ matrix.platform.arch }})
-    runs-on: ${{ matrix.platform.runner }}
+    # host-build: образ, у которого под архитектуру узла собирается только
+    # тонкий последний слой, а тяжёлая сборка идёт на процессоре сборщика
+    # (oberon-web: emsdk есть только под amd64). Такой образ собирается на
+    # amd64 под все архитектуры, последний слой — через эмуляцию.
+    runs-on: ${{ matrix.image.host-build && 'ubuntu-latest' || matrix.platform.runner }}
     strategy:
       fail-fast: false
       matrix:
@@ -86,6 +90,7 @@ jobs:
         image:
           - name: oberon-web
             file: deploy/Containerfile.web
+            host-build: true
           - name: oberon-lab
             file: deploy/Containerfile
           # Среда языка: компилятор Вирта без операционной системы. Это то,
@@ -96,6 +101,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.source.outputs.ref }}
+
+      - uses: docker/setup-qemu-action@v3
+        if: matrix.image.host-build
 
       - uses: docker/setup-buildx-action@v3
 
