@@ -1,6 +1,6 @@
 # Oberon-lab: RISC5 под Verilator + тесты + синтез
 RTL  := rtl/RISC5.v rtl/Registers.v rtl/Multiplier.v rtl/Divider.v \
-        rtl/FPAdder.v rtl/FPMultiplier.v rtl/FPDivider.v \
+        rtl/FPAdder.v rtl/FPMultiplier.v rtl/FPMultiplierFast.v rtl/FPDivider.v \
         rtl/LeftShifter.v rtl/RightShifter.v
 # Кэш байт-кода Python опасен для воспроизводимости: время файлов на macOS
 # имеет секундную гранулярность, и правка инструмента в ту же секунду, в
@@ -13,7 +13,7 @@ TESTS  := t1_latency t1_flags t1_fpb2b t1_fp t1_arith t1_umul t1_probe_flags \
           t1_branch t1_branch_width t1_logic t1_dontcare t1_prime t1_alu_diff1 t1_alu_diff2 t1_shift t1_mem t1_movspec t1_irq
 ASM    := $(patsubst %,tests/%.bin,$(TESTS) t2_chk t2_chk_hi)
 
-.PHONY: site all check test roundtrip pristine bootstrap rebuild book labs image lab image-check equiv lockstep lockstep-chk boot boot-chk selfhost syn configs tools web deps clean
+.PHONY: fpmul-diff lm lm-profile lm-check site all check test roundtrip pristine bootstrap rebuild book labs image lab image-check equiv lockstep lockstep-chk boot boot-chk selfhost syn configs tools web deps clean
 all: tools build/obj_tests/run_tests build/obj_chk/run_tests_chk $(ASM)
 
 # ───────────────────────────────────────────────────────────────────────────
@@ -239,6 +239,31 @@ build/obj_nb/norebo_tb: $(RTL) tb/norebo_tb.cpp tb/norebo_bridge.cpp
 	@mkdir -p build
 	@verilator $(VFLAGS) -o norebo_tb --top-module RISC5 --Mdir build/obj_nb $(RTL) $(TB)/norebo_tb.cpp $(TB)/norebo_bridge.cpp
 	@test -x $@ || { echo "СБОРКА НЕ ДАЛА БИНАРНИКА: $@"; exit 1; }
+
+# Те же ядра с быстрым FP-умножителем (выпуск №2): однотактным и двухтактным.
+build/obj_nbf/norebo_tb: $(RTL) tb/norebo_tb.cpp tb/norebo_bridge.cpp
+	@mkdir -p build
+	@verilator $(VFLAGS) -DFPMUL_FAST -o norebo_tb --top-module RISC5 --Mdir build/obj_nbf $(RTL) $(TB)/norebo_tb.cpp $(TB)/norebo_bridge.cpp
+	@test -x $@ || { echo "СБОРКА НЕ ДАЛА БИНАРНИКА: $@"; exit 1; }
+
+build/obj_nbr/norebo_tb: $(RTL) tb/norebo_tb.cpp tb/norebo_bridge.cpp
+	@mkdir -p build
+	@verilator $(VFLAGS) -DFPMUL_FAST -DFPMUL_FAST_REG -o norebo_tb --top-module RISC5 --Mdir build/obj_nbr $(RTL) $(TB)/norebo_tb.cpp $(TB)/norebo_bridge.cpp
+	@test -x $@ || { echo "СБОРКА НЕ ДАЛА БИНАРНИКА: $@"; exit 1; }
+
+# Быстрый FP-умножитель против исходного, побитово (находка 73). FPMUL_N —
+# сколько случайных пар сверх полного перебора порядков и граничных мантисс.
+FPMUL_N ?= 10000000
+fpmul-diff: build/refobj/risc-fp.o
+	@mkdir -p build
+	@verilator $(VFLAGS) -CFLAGS "-I../../ext/refemu" -o fpmul_diff --top-module fpmul_diff_top \
+	  --Mdir build/obj_fmd rtl/FPMultiplier.v rtl/FPMultiplierFast.v tb/fpmul_diff_top.v \
+	  $(TB)/fpmul_diff.cpp ../../build/refobj/risc-fp.o > build/fmd.log 2>&1 || { cat build/fmd.log; exit 1; }
+	@verilator $(VFLAGS) -DFPMUL_FAST_REG -CFLAGS "-I../../ext/refemu -DFPMUL_FAST_REG" -o fpmul_diff \
+	  --top-module fpmul_diff_top --Mdir build/obj_fmr rtl/FPMultiplier.v rtl/FPMultiplierFast.v \
+	  tb/fpmul_diff_top.v $(TB)/fpmul_diff.cpp ../../build/refobj/risc-fp.o > build/fmr.log 2>&1 || { cat build/fmr.log; exit 1; }
+	@echo "  однотактный вариант:"; ./build/obj_fmd/fpmul_diff $(FPMUL_N)
+	@echo "  двухтактный вариант (FPMUL_FAST_REG):"; ./build/obj_fmr/fpmul_diff $(FPMUL_N)
 
 selfhost: build/obj_nb/norebo_tb $(NOREBO)
 	@bash tools/selfhost_rtl.sh

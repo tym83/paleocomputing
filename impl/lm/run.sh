@@ -3,7 +3,8 @@
 #   lm/run.sh ДВИЖОК N ЗЕРНО "затравка"
 # ДВИЖОК: emu — эмулятор Norebo на C (быстро, такты по модели);
 #         rtl — Norebo на RTL Вирта (build/obj_nb/norebo_tb);
-#         rtl-fast — то же на ядре с быстрым FP-умножителем (build/obj_nbf/norebo_tb).
+#         rtl-fast — то же на ядре с однотактным FP-умножителем (build/obj_nbf/norebo_tb);
+#         rtl-fast2 — с двухтактным (FPMUL_FAST_REG, build/obj_nbr/norebo_tb).
 # Компилирует всегда эмулятор: объектный файл от движка не зависит (находка 22).
 set -e
 P="$(cd "$(dirname "$0")/.." && pwd)"; NB="$P/ext/norebo"
@@ -18,7 +19,8 @@ case "$eng" in
   emu)      bin="$NB/norebo.bin" ;;
   rtl)      bin="$P/build/obj_nb/norebo_tb" ;;
   rtl-fast) bin="$P/build/obj_nbf/norebo_tb" ;;
-  *) echo "движок: emu | rtl | rtl-fast"; exit 2 ;;
+  rtl-fast2) bin="$P/build/obj_nbr/norebo_tb" ;;
+  *) echo "движок: emu | rtl | rtl-fast | rtl-fast2"; exit 2 ;;
 esac
 # порт светодиодов — метки окна замера; эмулятор печатает каждую, прячем
 NOREBO_CYCLES=1 "$bin" LM.Generate "$n" "$seed" "\"$prompt\"" 2>&1 | grep -v "^\[LEDs:"

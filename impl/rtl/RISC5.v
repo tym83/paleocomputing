@@ -63,8 +63,15 @@ RightShifter RSUnit(.x(B), .y(rshout), .sc(C1[4:0]), .md(IR[16]));
 FPAdder fpaddx (.clk(clk), .run(FAD|FSB), .u(u), .v(v), .stall(stallFA),
    .x(B), .y({FSB^C0[31], C0[30:0]}), .z(fsum));
 
+// Вариант железа для выпуска №2: умножитель за 1 (или 2 с FPMUL_FAST_REG) такта
+// вместо 26, результат побитово тот же (tb/fpmul_diff.cpp). Без define — сток.
+`ifdef FPMUL_FAST
+FPMultiplierFast fpmulx (.clk(clk), .run(FML), .stall(stallFM),
+   .x(B), .y(C0), .z(fprod));
+`else
 FPMultiplier fpmulx (.clk(clk), .run(FML), .stall(stallFM),
    .x(B), .y(C0), .z(fprod));
+`endif
 
 FPDivider fpdivx (.clk(clk), .run(FDV), .stall(stallFD),
    .x(B), .y(C0), .z(fquot));
