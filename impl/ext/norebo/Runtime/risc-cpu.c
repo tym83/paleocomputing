@@ -146,6 +146,27 @@ static void risc_single_step(const struct RISC_IO *io, struct RISC *risc) {
       return;
     }
 
+    /* ─── IDX: индексация через дескриптор (выпуск 14) ───────────────────
+       Кодировка: F0, u=0, v=1, op=8 (алиас ADD). Дескриптор в R[b]:
+       {длина[31:20], адрес[19:0]}; индекс в R[c]; масштаб IR[9:8].
+       R[a] := адрес + (индекс << масштаб), N/Z по результату, C/OV не трогаются.
+       Индекс >= длины (беззнаково) -- ловушка как у BLR MT: R15 := адрес
+       следующей команды, PC := R[12]. В RTL это на такт дольше (такт простоя,
+       в котором IR заменяется словом BLR MT) -- модель тактов добавляет его.
+       Семантика совпадает с RTL: impl/tests/t3_idx*.s, дифференциально --
+       impl/tools/idx_diff.sh. См. 14-episode-descriptors.md.              */
+    if ((ir & qbit) == 0 && (ir & ubit) == 0 && (ir & vbit) != 0 && op == ADD) {
+      uint32_t d = risc->R[b], i = risc->R[c];
+      if (i >= (d >> 20)) {
+        risc_cycles++;                                /* такт простоя */
+        risc_set_register(risc, 15, risc->PC * 4);    /* PC уже инкрементирован */
+        risc->PC = risc->R[12] / 4;
+      } else {
+        risc_set_register(risc, a, ((d & 0xFFFFF) + (i << ((ir >> 8) & 3))) & 0xFFFFFF);
+      }
+      return;
+    }
+
     uint32_t a_val, b_val, c_val;
     b_val = risc->R[b];
     if ((ir & qbit) == 0) {

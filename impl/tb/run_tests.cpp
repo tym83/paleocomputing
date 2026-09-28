@@ -146,6 +146,13 @@ int main(int argc, char** argv) {
         int n = c.step();
         if (n < 0) { fails++; break; }
         last_cycles = n;
+        // Сработавшая IDX (выпуск 14) стоит на такт больше: такт простоя, в
+        // котором IR заменяется на BLR MT. По слову команды модель этого знать
+        // не может — зависит от операндов. Принимаем +1 только вместе с
+        // признаком ловушки: R15 = адрес IDX + 4.
+        if ((insn_word & 0xF00F0000u) == 0x10080000u && n == predicted + 1
+            && c.reg(15) == before_pc * 4 + 4)
+            predicted = n;
         if (predicted != n) {
             if (model_fails < 6)
                 printf("  ⚠ модель: PC=%06X insn=%08X предсказано %d, реально %d\n",
