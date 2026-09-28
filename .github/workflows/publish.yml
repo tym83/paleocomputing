@@ -70,13 +70,20 @@ jobs:
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "собираем $ref как $tag"
 
+  # Каждый образ — под каждую архитектуру узла из kubevirt/platforms.txt, на
+  # родном раннере, под тегом `<выпуск>-<арх.>`; images-index склеивает их в
+  # один индекс под тегом выпуска. oberon-run берёт задача наполнения тома
+  # машины: без сборки под arm64 машина на таком узле не получала ни ПЗУ, ни
+  # диска (находка 71).
   images:
-    needs: source
-    runs-on: ubuntu-latest
+    needs: [source, launcher-versions]
+    name: images (${{ matrix.image.name }}, ${{ matrix.platform.arch }})
+    runs-on: ${{ matrix.platform.runner }}
     strategy:
       fail-fast: false
       matrix:
-        include:
+        platform: ${{ fromJSON(needs.launcher-versions.outputs.platforms) }}
+        image:
           - name: oberon-web
             file: deploy/Containerfile.web
           - name: oberon-lab
@@ -104,8 +111,8 @@ jobs:
         run: |
           tag="${{ needs.source.outputs.tag }}"
           owner=$(echo "${{ github.repository_owner }}" | tr 'A-Z' 'a-z')
-          echo "image=${{ env.REGISTRY }}/$owner/paleocomputing/${{ matrix.name }}" >> "$GITHUB_OUTPUT"
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "image=${{ env.REGISTRY }}/$owner/paleocomputing/${{ matrix.image.name }}" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag-${{ matrix.platform.arch }}" >> "$GITHUB_OUTPUT"
 
       # Контекст сборки — impl/: оба описания копируют rtl/, web/, tools/ и
       # прочее относительно него.
@@ -113,13 +120,14 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: impl
-          file: impl/${{ matrix.file }}
+          file: impl/${{ matrix.image.file }}
           push: true
           tags: ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}
+          platforms: linux/${{ matrix.platform.arch }}
           provenance: true
           sbom: true
-          cache-from: type=gha,scope=${{ matrix.name }}
-          cache-to: type=gha,scope=${{ matrix.name }},mode=max
+          cache-from: type=gha,scope=${{ matrix.image.name }}-${{ matrix.platform.arch }}
+          cache-to: type=gha,scope=${{ matrix.image.name }}-${{ matrix.platform.arch }},mode=max
 
       # Подписывается дайджест, а не тег: тег можно переставить на другой
       # образ, дайджест — нет.
@@ -145,14 +153,14 @@ jobs:
         run: |
           set -euo pipefail
           ref="${{ steps.meta.outputs.image }}@${{ steps.build.outputs.digest }}"
-          case "${{ matrix.name }}" in
+          case "${{ matrix.image.name }}" in
             oberon-web) want="risc5.wasm risc5.js risc5-chk.wasm risc5-chk.js bench_bounds.json oberon.dsk prom_sd.mem lab.html checks.html"
                         dir=/usr/share/nginx/html ;;
             oberon-run) want="prom.bin oberon.dsk"
                         dir=/opt/oberon/payload ;;
             *)          want=""; dir="" ;;
           esac
-          [ -n "$want" ] || { echo "для ${{ matrix.name }} проверки содержимого нет"; exit 0; }
+          [ -n "$want" ] || { echo "для ${{ matrix.image.name }} проверки содержимого нет"; exit 0; }
           for f in $want; do
             docker run --rm --entrypoint sh "$ref" -c "test -s $dir/$f" \
               || { echo "❌ в образе нет $dir/$f"; exit 1; }
@@ -161,11 +169,38 @@ jobs:
 
       - name: Итог
         run: |
-          echo "### ${{ matrix.name }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "### ${{ matrix.image.name }} ${{ matrix.platform.arch }}" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
           echo "${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}" >> "$GITHUB_STEP_SUMMARY"
           echo "${{ steps.build.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+  # Сборки всех архитектур образа — в один индекс под тегом выпуска: его
+  # берут каталог и кластеры. Подписывается сам индекс.
+  images-index:
+    needs: [source, launcher-versions, images]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        name: [oberon-web, oberon-lab, oberon-run]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.source.outputs.ref }}
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: sigstore/cosign-installer@v3
+      - name: Индекс
+        run: |
+          set -euo pipefail
+          owner=$(echo "${{ github.repository_owner }}" | tr 'A-Z' 'a-z')
+          tools/image-index.sh "${{ env.REGISTRY }}/$owner/paleocomputing/${{ matrix.name }}" \
+            "${{ needs.source.outputs.tag }}" "${{ needs.source.outputs.tag }}"
 
   # ── Образ virt-launcher с чужими машинами ─────────────────────────────────
   #
@@ -192,6 +227,7 @@ jobs:
     outputs:
       list: ${{ steps.list.outputs.list }}
       versions: ${{ steps.list.outputs.versions }}
+      platforms: ${{ steps.list.outputs.platforms }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -206,6 +242,7 @@ jobs:
           list=$(jq -nc --argjson v "$versions" --argjson p "$platforms" '[$v[] as $k | $p[] | . + {kubevirt: $k}]')
           echo "list=$list" >> "$GITHUB_OUTPUT"
           echo "versions=$versions" >> "$GITHUB_OUTPUT"
+          echo "platforms=$platforms" >> "$GITHUB_OUTPUT"
 
   launcher:
     needs: [source, launcher-versions]
@@ -307,25 +344,9 @@ jobs:
           tag="${{ needs.source.outputs.tag }}"
           kv="${{ matrix.kubevirt }}"
           owner=$(echo "${{ github.repository_owner }}" | tr 'A-Z' 'a-z')
-          image="${{ env.REGISTRY }}/$owner/paleocomputing/virt-launcher"
-          sources=$(awk -v i="$image" -v s="$kv-paleo-$tag" '!/^#/ && NF { printf "%s:%s-%s ", i, s, $1 }' kubevirt/platforms.txt)
-          docker buildx imagetools create -t "$image:$kv-paleo-$tag" -t "$image:$kv-risc5-$tag" $sources
-          docker buildx imagetools inspect "$image:$kv-paleo-$tag"
-          # Каждая архитектура из platforms.txt обязана оказаться в индексе.
-          have=$(docker buildx imagetools inspect "$image:$kv-paleo-$tag" --raw \
-            | jq -r '[.manifests[] | .platform.architecture | select(. != "unknown")] | unique | join(" ")')
-          want=$(awk '!/^#/ && NF { print $1 }' kubevirt/platforms.txt | sort -u | tr '\n' ' ' | sed 's/ $//')
-          [ "$have" = "$want" ] || { echo "в индексе $have, ждали $want"; exit 1; }
-          digest=$(docker buildx imagetools inspect "$image:$kv-paleo-$tag" --format '{{json .Manifest}}' | jq -r .digest)
-          cosign sign --yes "$image@$digest"
-          {
-            echo "### virt-launcher $kv ($want)"
-            echo '```'
-            echo "$image:$kv-paleo-$tag"
-            echo "$image:$kv-risc5-$tag"
-            echo "$digest"
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
+          # Прежнее имя -risc5- — тем же индексом, для тех, у кого оно записано.
+          tools/image-index.sh "${{ env.REGISTRY }}/$owner/paleocomputing/virt-launcher" \
+            "$kv-paleo-$tag" "$kv-paleo-$tag" "$kv-risc5-$tag"
 
   # ── Три репозитория каталога как OCI-артефакты ────────────────────────────
   #
@@ -335,7 +356,7 @@ jobs:
   #
   # Оба инструмента ставятся в раннер и живут только на время сборки.
   catalog:
-    needs: [source, launcher-index]
+    needs: [source, launcher-index, images-index]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
