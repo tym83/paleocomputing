@@ -1,6 +1,7 @@
 # Тайминг ядра RISC5 на ткани Lattice ECP5 (ULX3S, LFE5U-85F-6BG381C).
 #
-# VARIANT — ядро: base (как у Вирта) или chk (с -DWITH_CHK -DCHK_SPLIT).
+# VARIANT — ядро: base (как у Вирта), chk (с -DWITH_CHK -DCHK_SPLIT) или desc
+#           (chk + команда IDX, -DWITH_DESC; выпуск 14, дескрипторы).
 # WRAP    — обёртка: soc (ядро + ПЗУ на ~clk, как в RISC5Top.v) или
 #           core (только ядро, код из регистра; -DCORE_ONLY).
 #
@@ -32,6 +33,7 @@ TOP  := core_timing_top
 
 DEFS_base :=
 DEFS_chk  := -DWITH_CHK -DCHK_SPLIT
+DEFS_desc := -DWITH_CHK -DCHK_SPLIT -DWITH_DESC
 WDEFS_soc :=
 WDEFS_core := -DCORE_ONLY
 
@@ -71,10 +73,10 @@ timing: pnr
 bit: $(B)/seed1/report.json
 	ecppack --compress $(B)/seed1/out.config $(B)/$(TOP).bit
 
-# Все четыре сочетания прогоняются до конца и сводка пишется даже при
+# Все шесть сочетаний прогоняются до конца и сводка пишется даже при
 # провале одного из них: по сводке и видно, что именно упало.
 all:
-	@st=0; for w in soc core; do for v in base chk; do \
+	@st=0; for w in soc core; do for v in base chk desc; do \
 	  $(MAKE) timing WRAP=$$w VARIANT=$$v || st=1; done; done; \
 	$(MAKE) summary; exit $$st
 

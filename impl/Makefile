@@ -17,7 +17,7 @@ ASM    := $(patsubst %,tests/%.bin,$(TESTS) t2_chk t2_chk_hi $(IDXT))
 # компилятора эмитит и CHK (массивы известной длины), и IDX (открытые массивы).
 DESCDEF := -DWITH_CHK -DCHK_SPLIT -DWITH_DESC
 
-.PHONY: idx-diff idx-mutate boot-desc lockstep-desc
+.PHONY: idx-diff idx-mutate boot-desc lockstep-desc desc-loop desc-measure desc-cross desc-profile
 .PHONY: site all check test roundtrip pristine bootstrap rebuild book labs image lab image-check equiv lockstep lockstep-chk boot boot-chk selfhost syn configs tools web deps clean
 all: tools build/obj_tests/run_tests build/obj_chk/run_tests_chk build/obj_desc/run_tests_desc $(ASM)
 
@@ -150,6 +150,29 @@ idx-diff: build/emu_tests $(patsubst %,tests/%.bin,$(IDXT) t2_chk t2_chk_hi)
 	  out=$$(build/emu_tests tests/$$t); rc=$$?; \
 	  printf "  %-12s %s\n" "$$t" "$$(echo "$$out" | tail -1)"; [ $$rc -eq 0 ] || fail=1; \
 	done; [ $$fail -eq 0 ] || { echo "  ❌ эмулятор расходится с тестами"; exit 1; }
+
+# Ступень «дескрипторы» (выпуск 14). Числа находок 80–84 воспроизводятся этими
+# целями; каждая пишет свои таблицы в build/.
+#   desc-loop     цикл центрального номера на RTL: A, B, E, D (секунды)
+#   desc-measure  три нагрузки × четыре однородные среды A/B/E/F (~10 минут:
+#                 сборка четырёх сред Norebo в три ступени)
+#   desc-cross    разложение F против E на компиляции 2×2 (после desc-measure)
+#   desc-profile  динамический профиль открытых массивов (после desc-measure)
+desc-loop: build/obj_tests/run_tests build/obj_chk/run_tests_chk build/obj_desc/run_tests_desc \
+           $(patsubst %,tests/bench_bounds_%.bin,a b e d)
+	@bash tools/measure_loop_desc.sh
+
+tests/bench_bounds_a.s tests/bench_bounds_d.s: tools/gen_bounds_bench.py
+	@python3 tools/gen_bounds_bench.py > /dev/null
+
+desc-measure: $(NOREBO)
+	@bash tools/measure_desc.sh
+
+desc-cross: $(NOREBO)
+	@bash tools/measure_desc_cross.sh
+
+desc-profile: $(NOREBO)
+	@bash tools/profile_desc.sh
 
 # Мутационная проверка тестов IDX: шесть мутаций RTL, каждая обязана быть
 # поймана. Около пяти минут (шесть сборок верилятором).

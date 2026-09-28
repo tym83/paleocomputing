@@ -42,7 +42,7 @@ jobs:
           docker run --rm paleo-fpga:local sh -c \
             'yosys -V; nextpnr-ecp5 --version; openFPGALoader -V; dpkg-query -W fpga-trellis'
 
-      # Два ядра (base, chk) x две обёртки (soc, core) x пять зёрен.
+      # Три ядра (base, chk, desc) x две обёртки (soc, core) x пять зёрен.
       # make all завершается с ошибкой, если хоть одно зерно ниже 25 МГц.
       - name: Синтез, размещение, тайминг
         run: |

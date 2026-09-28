@@ -16,7 +16,7 @@
 #include "risc-cpu.h"
 #include <stdio.h>
 extern uint64_t risc_cycles, risc_insns;
-extern uint64_t risc_chk_hits[8], risc_chk_dyn_total;
+extern uint64_t risc_chk_hits[8], risc_chk_dyn_total, risc_desc_prof[4];
 static void print_cycle_stats(void) {
   if (getenv("NOREBO_CYCLES"))
     fprintf(stderr, "CYCLES %llu INSNS %llu\n",
@@ -27,6 +27,9 @@ static void print_cycle_stats(void) {
     fprintf(stderr, "CHKPROF total %llu\n", (unsigned long long)risc_chk_dyn_total);
     for (int i = 0; i < 8; i++)
       fprintf(stderr, "CHKPROF %s %llu\n", nm[i], (unsigned long long)risc_chk_hits[i]);
+    fprintf(stderr, "DESCPROF idx %llu openchk %llu strip %llu mhiior %llu\n",
+            (unsigned long long)risc_desc_prof[0], (unsigned long long)risc_desc_prof[1],
+            (unsigned long long)risc_desc_prof[2], (unsigned long long)risc_desc_prof[3]);
   }
 }
 

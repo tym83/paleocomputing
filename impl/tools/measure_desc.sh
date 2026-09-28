@@ -21,7 +21,9 @@ for c in A B E F; do
 done
 run() {  # $1 каталог, $2 ступень-бинарники, остальное — команда
   local d="$1" bin="$2"; shift 2
-  cd "$d"; NOREBO_CYCLES=1 NOREBO_PATH="$d:$bin:$NB/Norebo:$NB/Oberon" \
+  # build2 — последним и только ради .smb: ступень 1 символьных файлов не
+  # пишет (интерфейсы те же, что у стока), а .rsc находятся раньше, в $bin.
+  cd "$d"; NOREBO_CYCLES=1 NOREBO_PATH="$d:$bin:$NB/Norebo:$NB/Oberon:$NB/build2" \
     perl -e 'alarm 120; exec @ARGV' "$NB/norebo.bin" "$@" > run.log 2>&1 || true
   grep -oE "CYCLES [0-9]+ INSNS [0-9]+" run.log || echo "CYCLES 0 INSNS 0"
 }
@@ -40,9 +42,12 @@ for c in A B E F; do
   for w in ArrBench OpenBench; do
     d="$OUT/$c-$w"; mkdir -p "$d"; cp "$P/bench/$w.Mod" "$d/"
     run "$d" "$S2" ORP.Compile $w.Mod/s > /dev/null; mv run.log compile.log
+    # E и F штампуют версию 2 и 3 — загрузчик Norebo их отвергает (как и
+    # системный). Для стенда, на копии, возвращаем 1 (как находка 21).
+    python3 "$P/tools/rsc_setversion.py" 1 $w.rsc > /dev/null
     k=$(python3 "$P/tools/count_traps.py" $w.rsc | tr -s ' ')
     r=$(run "$d" "$S2" $w.Run)
-    bad=$(grep -ciE "trap|assert|halt|index" run.log || true)
+    bad=$(grep -vcE "^CYCLES" run.log || true)   # всё, кроме строки счётчика, — сбой
     printf "%-4s %-8s %s  %s%s\n" $c $w "$r" "$k" "$( [ "$bad" = 0 ] || echo '  ❌ ловушка при исполнении')"
   done
 done | tee "$OUT/summary.txt"
