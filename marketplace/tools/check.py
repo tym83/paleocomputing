@@ -482,18 +482,21 @@ def fill_script(docs: list[dict]) -> str:
 def disk_overwrites(script: str, disks: list[str]) -> list[str]:
     """Строки задачи наполнения, которые могут переписать диск пользователя.
 
-    Файл роли disk разрешено упоминать ровно в одной форме:
+    Файл роли disk разрешено упоминать ровно в двух формах:
     `[ -s <путь> ] || put <источник> <путь>` — положить, только если его нет
-    или он пуст. Любая другая строка с его путём — возможная перезапись.
+    или он пуст, и `chmod 664 <путь>` — права, содержимого не касаются. Любая
+    другая строка с его путём — возможная перезапись.
     """
     guarded = re.compile(r"^\[ -s (\S+) \] \|\| put \S+ (\S+)$")
+    mode = re.compile(r"^chmod 664 (\S+)$")
     bad = []
     for line in (l.strip() for l in script.splitlines()):
         for disk in disks:
             if disk not in line.split():
                 continue
             m = guarded.match(line)
-            if not (m and m.group(1) == disk and m.group(2) == disk):
+            c = mode.match(line)
+            if not ((m and m.group(1) == disk and m.group(2) == disk) or (c and c.group(1) == disk)):
                 bad.append(line)
     return bad
 
@@ -710,19 +713,30 @@ def check_machines() -> None:
             (root / "image").mkdir()
             for f in preset["payload"]["files"]:
                 (root / "image" / f["name"]).write_text("v1", encoding="utf-8")
+                # Как в образе: 644. umask этого не исправит — только chmod.
+                (root / "image" / f["name"]).chmod(0o644)
             run_fill(script, base, preset["payload"]["files"], root)
             first = all((root / "payload" / f["name"]).read_text() == "v1" for f in preset["payload"]["files"])
+            gw = lambda: all((root / "payload" / f["name"]).stat().st_mode & 0o020
+                             for f in preset["payload"]["files"] if f["role"] == "disk")
+            writable_new = gw()
             for f in preset["payload"]["files"]:
                 (root / "image" / f["name"]).write_text("v2", encoding="utf-8")
                 if f["role"] == "disk":
                     (root / "payload" / f["name"]).write_text("работа пользователя", encoding="utf-8")
+                    # Диск, положенный выпуском до правки прав: rw-r--r--.
+                    (root / "payload" / f["name"]).chmod(0o644)
             run_fill(script, base, preset["payload"]["files"], root)
+            writable_old = gw()
             kept = all((root / "payload" / f["name"]).read_text(encoding="utf-8") ==
                        ("работа пользователя" if f["role"] == "disk" else "v2")
                        for f in preset["payload"]["files"])
             clean = not list((root / "payload").glob("*.tmp"))
         report(first and kept and clean,
                f"{name}: прогон наполнения — первый кладёт всё, повторный обновляет прошивку и не трогает диск")
+        # QEMU пишет диск от группы 107: без g+w машина не стартует.
+        report(writable_new and writable_old,
+               f"{name}: диск доступен группе на запись — и новый, и оставшийся от прежнего выпуска")
 
         # ── Форма, которую собирает платформа ──────────────────────────────
         # flux push artifact отбрасывает ссылки, платформа кладёт библиотеку
