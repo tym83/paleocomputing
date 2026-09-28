@@ -40,11 +40,13 @@ kv() { a -n "$KVNS" "$@"; }
 bad=0
 say()  { if [ "$1" = ok ]; then echo "  ✅ $2"; else echo "  ❌ $2"; bad=1; fi; }
 step() { echo; echo "── $*"; }
+# Срок — по часам, а не по сумме пауз: попытка сама может идти десятки секунд
+# (консоль ждёт до 25 с), и счёт одних пауз растягивал 1200 с до двух часов.
 wait_for() {
-  local limit=$1 what=$2; shift 2; local s=0
+  local limit=$1 what=$2; shift 2; local end=$((SECONDS + limit))
   until "$@" >/dev/null 2>&1; do
-    [ $s -ge "$limit" ] && { echo "  … $what: не дождались за ${limit} с"; return 1; }
-    sleep 5; s=$((s+5))
+    [ $SECONDS -ge $end ] && { echo "  … $what: не дождались за ${limit} с"; return 1; }
+    sleep 5
   done
 }
 state()    { kv get cm kubevirt-paleo-launcher-status -o jsonpath='{.data.state}' 2>/dev/null; }
@@ -138,9 +140,16 @@ booted() {
   # virtctl console без терминала молчит — второй прогон так и не увидел
   # login: у работающей Ubuntu. script даёт ему псевдотерминал; журнала
   # последовательной консоли в этом кластере нет (disableSerialConsoleLog).
-  printf '\r' | perl -e 'alarm 25; exec @ARGV' script -q /dev/null virtctl \
+  #
+  # ⚠ Вывод сначала в переменную, потом grep. Под pipefail конвейер с
+  # `grep -q` в конце проваливается и при найденном login:: консоль
+  # заканчивается будильником или SIGPIPE, и её ненулевой код побеждает —
+  # третий прогон так и ждал у загрузившейся Ubuntu.
+  local out
+  out=$(printf '\r' | perl -e 'alarm 25; exec @ARGV' script -q /dev/null virtctl \
     --kubeconfig "$TENANT_KUBECONFIG" --context "$TENANT_CONTEXT" -n "$NS" console "$pvmi" \
-    2>/dev/null | tr -d '\r' | grep -q "login:"
+    2>/dev/null | tr -d '\r') || true
+  grep -q "login:" <<<"$out"
 }
 wait_for 1200 "Ubuntu загрузилась" booted \
   && say ok "Ubuntu загрузилась (приглашение login: в консоли) на $(a -n "$NS" get vmi "$pvmi" -o jsonpath='{.status.launcherContainerImageVersion}')" \
