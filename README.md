@@ -50,6 +50,8 @@ make check    # около восьми минут
 | `impl/docs/FINDING-*.md` | 57 находок: что измерено, что нашлось, что оказалось не так |
 | `impl/README.md` | устройство измерительной оснастки, цели Makefile, что чьё |
 | `marketplace/` | подключаемый каталог для Cozystack: те же машины как приложения |
+| `kubevirt/GUIDE.ru.md` | та же машина в своём KubeVirt, без Cozystack ([English](kubevirt/GUIDE.md)) |
+| `qemu/GUIDE.ru.md` | та же машина в обычном QEMU ([English](qemu/GUIDE.md)) |
 | `BACKLOG.md` | что в серии дальше и в каком порядке |
 
 ---
