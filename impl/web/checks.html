@@ -134,4 +134,6 @@ document.getElementById('measure').onclick = async () => {
   };
   w.postMessage({ params, progB: pb, progE: pe });
 };
+// Модуль дошёл до конца: это видит дымовая проверка в браузере.
+document.documentElement.dataset.scriptOk = '1';
 </script>

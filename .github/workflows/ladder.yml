@@ -2,7 +2,8 @@
 #
 # Локально лестница снимается на Apple M4 и в контейнере linux/arm64; x86-64
 # там доступен только через эмуляцию QEMU, где время ничего не значит. Здесь —
-# живые машины GitHub. Что и как считается — impl/docs/FINDING-61-bounds-ladder.md.
+# живые машины GitHub. Что и как считается — impl/docs/FINDING-61-bounds-ladder.md;
+# опыт «почему так» (why.py) — там же, раздел «Почему так: эксперимент».
 #
 # ⚠ Машины общие и виртуальные: соседи, частота и модель процессора меняются
 # от прогона к прогону. Значат отношения к `none` внутри одного прогона, а не
@@ -49,9 +50,20 @@ jobs:
             --note 'машина: GitHub Actions `${{ matrix.runner }}`, общая виртуальная'
           cat 'impl/bench/ladder/results/${{ matrix.label }}.md' >> "$GITHUB_STEP_SUMMARY"
 
+      # Почему проверка то бесплатна, то нет: цепочка индекса удлиняется на k
+      # звеньев, проверок c штук, такты — по калибровке зависимыми сложениями.
+      # Только C (clang, gcc); около минуты на машину.
+      - name: Почему так
+        run: |
+          python3 impl/bench/ladder/why.py --label '${{ matrix.label }}' \
+            --note 'машина: GitHub Actions `${{ matrix.runner }}`, общая виртуальная'
+          cat 'impl/bench/ladder/results/why-${{ matrix.label }}.md' >> "$GITHUB_STEP_SUMMARY"
+
       - uses: actions/upload-artifact@v4
         with:
           name: ladder-${{ matrix.label }}
           path: |
             impl/bench/ladder/results/${{ matrix.label }}.md
+            impl/bench/ladder/results/why-${{ matrix.label }}.md
             impl/build/ladder/${{ matrix.label }}/
+            impl/build/ladder/why-${{ matrix.label }}/

@@ -316,7 +316,10 @@ jobs:
       # Задание ждёт launcher, так что таблица не может сослаться на образ,
       # которого ещё нет в реестре.
       - name: Таблица launcher'ов под выпуск
-        run: python3 marketplace/tools/gen-launcher-table.py --release "${{ needs.source.outputs.tag }}"
+        run: |
+          python3 marketplace/tools/gen-launcher-table.py --release "${{ needs.source.outputs.tag }}"
+          # И образы с файлами машин — туда же: паспорт не должен отставать от выпуска.
+          python3 marketplace/tools/pin-images.py --release "${{ needs.source.outputs.tag }}"
 
       # Публикуется копия с разыменованными ссылками: flux ссылки в архив не
       # кладёт, а распаковщик каталога в кластере их пропускает — библиотека
