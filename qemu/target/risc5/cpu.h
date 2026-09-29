@@ -78,6 +78,12 @@ typedef struct CPUArchState {
      * недействительными.
      */
     bool chk;
+    /*
+     * Индексация через дескриптор (IDX, выпуск 14). Такой же вариант железа,
+     * как chk: то же, что собрать RTL с -DWITH_DESC. Ядро RTL с IDX включает
+     * и CHK, поэтому его двойник в QEMU — chk=on,desc=on.
+     */
+    bool desc;
 } CPURISC5State;
 
 struct ArchCPU {

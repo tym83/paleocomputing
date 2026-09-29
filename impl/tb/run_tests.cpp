@@ -88,9 +88,14 @@ int main(int argc, char** argv) {
     Verilated::commandArgs(argc, argv);
     if (argc < 2) { fprintf(stderr, "использование: run_tests БАЗА (без расширения)\n"); return 1; }
     std::string base = argv[1];
-    int trace = 0;
-    for (int i = 2; i < argc; i++)
+    int trace = 0; long long budget = 0;
+    for (int i = 2; i < argc; i++) {
         if (std::string(argv[i]).rfind("--trace=", 0) == 0) trace = atoi(argv[i] + 8);
+        // Режим замера (выпуск 14): ровно N команд со сброса, без ожиданий, затем
+        // такты, команды и счётчик итераций R5 — та же постановка, что у
+        // страницы центрального номера (находка 55): бюджет короче цикла.
+        if (std::string(argv[i]).rfind("--budget=", 0) == 0) budget = atoll(argv[i] + 9);
+    }
 
     // .bin
     FILE* f = fopen((base + ".bin").c_str(), "rb");
@@ -128,6 +133,16 @@ int main(int argc, char** argv) {
     }
     c.mem.load_words(ORG, prog.data(), prog.size());
     c.reset();
+    if (budget > 0) {
+        for (long long k = 0; k < budget; k++) if (c.step() < 0) return 1;
+        printf("BUDGET insns %llu cycles %llu R5 %u\n", (unsigned long long)c.insns,
+               (unsigned long long)c.cycles, c.reg(5));
+        // Все регистры и PC — для сверки с QEMU (qemu/test/compare_idx.py).
+        printf("REGS");
+        for (int i = 0; i < 16; i++) printf(" %08X", c.reg(i));
+        printf(" PC %08X\n", c.pc() * 4);
+        return 0;
+    }
 
     printf("=== %s: %zu инструкций, %zu проверок ===\n", base.c_str(), prog.size(), exps.size());
     int fails = 0, done = 0;
@@ -146,6 +161,13 @@ int main(int argc, char** argv) {
         int n = c.step();
         if (n < 0) { fails++; break; }
         last_cycles = n;
+        // Сработавшая IDX (выпуск 14) стоит на такт больше: такт простоя, в
+        // котором IR заменяется на BLR MT. По слову команды модель этого знать
+        // не может — зависит от операндов. Принимаем +1 только вместе с
+        // признаком ловушки: R15 = адрес IDX + 4.
+        if ((insn_word & 0xF00F0000u) == 0x10080000u && n == predicted + 1
+            && c.reg(15) == before_pc * 4 + 4)
+            predicted = n;
         if (predicted != n) {
             if (model_fails < 6)
                 printf("  ⚠ модель: PC=%06X insn=%08X предсказано %d, реально %d\n",

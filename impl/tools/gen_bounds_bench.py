@@ -41,7 +41,7 @@ start:
         MOV  R0, 0
         MOV  R1, 0             ; индекс
         MOV  R2, 0x1000        ; база массива
-        MOV  R4, 0             ; накопитель
+{desc}        MOV  R4, 0             ; накопитель
         MOV  R5, 0             ; счётчик итераций
         MHI  R5, 0x{iterhi:04X}
         IOR  R5, R5, 0x{iterlo:04X}
@@ -57,10 +57,22 @@ CHECK = {
     'E': "        CHKS R1, {lim}         ; то же самое одной командой\n",
 }
 
-TAIL = """        LSL  R10, R1, 2        ; адрес элемента
+# Конфигурация D (выпуск 14): предел едет в указателе. R2 держит не адрес, а
+# дескриптор {длина[31:20], адрес[19:0]} — он строится один раз, вне цикла, как
+# у CHERI. IDX проверяет индекс и сразу даёт адрес элемента: LSL + ADD уходят
+# внутрь команды. Поэтому D сравнивается не только с B и E, но и с A — и
+# разность D − A называется своим именем: это слияние адресной арифметики,
+# а не цена проверки (проверка внутри IDX тактов не добавляет).
+D_BODY = """        IDX  R10, R2, R1, 2    ; проверка + адрес элемента одной командой
+        LD   R3, R10, 0
+"""
+
+ADDR = """        LSL  R10, R1, 2        ; адрес элемента
         ADD  R10, R2, R10
         LD   R3, R10, 0
-        ADD  R4, R4, R3        ; полезная работа
+"""
+
+TAIL = """        ADD  R4, R4, R3        ; полезная работа
         ADD  R1, R1, 1         ; следующий индекс, с заворотом
         AND  R1, R1, {mask}
         SUB  R5, R5, 1
@@ -70,22 +82,30 @@ TAIL = """        LSL  R10, R1, 2        ; адрес элемента
 done:   B    done
 """
 
-WHAT = {'B': 'проверка границ программная (SUB + BCC)',
-        'E': 'проверка границ аппаратная (CHKS)'}
+WHAT = {'A': 'проверки нет (выведенная строка находки 61 — здесь замерена)',
+        'B': 'проверка границ программная (SUB + BCC)',
+        'E': 'проверка границ аппаратная (CHKS)',
+        'D': 'дескриптор: проверка и адрес в одной IDX'}
 
 
 def emit(cfg):
     body = HEAD.format(iter=ITER, lim=LIM, cfg=cfg, what=WHAT[cfg],
                        done_bad=DONE + 4, hi=HANDLER >> 16, lo=HANDLER & 0xFFFF,
-                       iterhi=ITER >> 16, iterlo=ITER & 0xFFFF)
-    body += CHECK[cfg].format(lim=LIM)
+                       iterhi=ITER >> 16, iterlo=ITER & 0xFFFF,
+                       desc=f"        MHI  R11, 0x{LIM << 4:04X}      ; длина в старших 12 битах\n"
+                            f"        IOR  R2, R2, R11       ; R2 — дескриптор\n" if cfg == 'D' else '')
+    if cfg == 'D':
+        body += D_BODY
+    else:
+        body += CHECK.get(cfg, '').format(lim=LIM) + ADDR
     body += TAIL.format(mask=LIM - 1, magic=MAGIC, done=DONE)
     return body
 
 
 def main():
     out = pathlib.Path(__file__).resolve().parent.parent / 'tests'
-    for cfg, name in (('B', 'bench_bounds_b'), ('E', 'bench_bounds_e')):
+    for cfg, name in (('B', 'bench_bounds_b'), ('E', 'bench_bounds_e'),
+                      ('A', 'bench_bounds_a'), ('D', 'bench_bounds_d')):
         (out / f'{name}.s').write_text(emit(cfg), encoding='utf-8')
         print(f'  {name}.s — конфигурация {cfg}')
     # Параметры нужны и странице: держим их в одном месте, а не в двух.
