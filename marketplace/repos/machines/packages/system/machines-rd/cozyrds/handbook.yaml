@@ -22,7 +22,7 @@ spec:
   dashboard:
     singular: Handbook
     plural: Handbooks
-    category: PaaS
+    category: Paleocomputing
     description: Documentation served next to the application it documents
     tags:
     - paleocomputing

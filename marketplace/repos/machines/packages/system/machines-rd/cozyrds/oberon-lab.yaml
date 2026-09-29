@@ -22,7 +22,7 @@ spec:
   dashboard:
     singular: Oberon Lab
     plural: Oberon Labs
-    category: PaaS
+    category: Paleocomputing
     description: Oberon on Wirth's own Verilog, in the browser — thirteen labs and a handbook
     tags:
     - paleocomputing

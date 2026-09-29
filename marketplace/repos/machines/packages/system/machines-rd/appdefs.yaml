@@ -16,7 +16,7 @@ apps:
     dashboard:
       singular: Oberon Lab
       plural: Oberon Labs
-      category: PaaS
+      category: Paleocomputing
       description: Oberon on Wirth's own Verilog, in the browser — thirteen labs and a handbook
       icon: logos/oberon-lab.svg
       tags: [paleocomputing, education, emulation, retrocomputing, machine]
@@ -31,7 +31,7 @@ apps:
     dashboard:
       singular: Handbook
       plural: Handbooks
-      category: PaaS
+      category: Paleocomputing
       description: Documentation served next to the application it documents
       icon: logos/handbook.svg
       tags: [paleocomputing, documentation, education]
@@ -46,7 +46,7 @@ apps:
     dashboard:
       singular: Workbench
       plural: Workbenches
-      category: PaaS
+      category: Paleocomputing
       description: The Wirth machine, its labs and its handbook installed as one thing
       icon: logos/workbench.svg
       tags: [paleocomputing, environment, meta, education]
@@ -65,7 +65,7 @@ apps:
     dashboard:
       singular: Oberon VM
       plural: Oberon VMs
-      category: IaaS
+      category: Paleocomputing
       description: Wirth's RISC5 as a real virtual machine, an architecture KubeVirt does not have
       icon: logos/oberon-vm.svg
       tags: [paleocomputing, machine, kubevirt, architecture, retrocomputing]

@@ -12,7 +12,7 @@ apps:
     dashboard:
       singular: Language Pack
       plural: Language Packs
-      category: PaaS
+      category: Paleocomputing
       description: The Oberon compiler without an OS, for one-off runs or a standing service
       icon: logos/langpack.svg
       tags: [paleocomputing, language, environment, runtime]
