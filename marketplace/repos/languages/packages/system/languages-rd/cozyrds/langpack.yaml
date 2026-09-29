@@ -22,9 +22,10 @@ spec:
   dashboard:
     singular: Language Pack
     plural: Language Packs
-    category: Forgotten Systems
-    description: Окружение для языка — постоянная среда или разовый прогон
+    category: PaaS
+    description: The Oberon compiler without an OS, for one-off runs or a standing service
     tags:
+    - paleocomputing
     - language
     - environment
     - runtime

@@ -22,9 +22,10 @@ spec:
   dashboard:
     singular: Workbench
     plural: Workbenches
-    category: Forgotten Systems
-    description: Готовое окружение — машина и её методичка ставятся одной вещью
+    category: PaaS
+    description: The Wirth machine, its labs and its handbook installed as one thing
     tags:
+    - paleocomputing
     - environment
     - meta
     - education

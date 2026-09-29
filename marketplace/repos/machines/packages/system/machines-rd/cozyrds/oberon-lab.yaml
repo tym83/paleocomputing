@@ -22,9 +22,10 @@ spec:
   dashboard:
     singular: Oberon Lab
     plural: Oberon Labs
-    category: Forgotten Systems
-    description: Оберон на настоящем Verilog Вирта — тринадцать лабораторных и методичка
+    category: PaaS
+    description: Oberon on Wirth's own Verilog, in the browser — thirteen labs and a handbook
     tags:
+    - paleocomputing
     - education
     - emulation
     - retrocomputing

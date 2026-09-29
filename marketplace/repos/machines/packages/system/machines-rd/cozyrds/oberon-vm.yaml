@@ -22,9 +22,10 @@ spec:
   dashboard:
     singular: Oberon VM
     plural: Oberon VMs
-    category: Forgotten Systems
-    description: Машина Вирта RISC5 как виртуалка — архитектура, подключённая снаружи
+    category: IaaS
+    description: Wirth's RISC5 as a real virtual machine, an architecture KubeVirt does not have
     tags:
+    - paleocomputing
     - machine
     - kubevirt
     - architecture
