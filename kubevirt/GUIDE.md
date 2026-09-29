@@ -73,11 +73,11 @@ The images are published per release and per KubeVirt version:
 ghcr.io/tym83/paleocomputing/virt-launcher:<KubeVirt version>-paleo-<release>
 ```
 
-for example `virt-launcher:v1.8.4-paleo-v0.1.16`. They are signed by the
+for example `virt-launcher:v1.8.4-paleo-v0.1.17`. They are signed by the
 release workflow; to check before use:
 
 ```sh
-cosign verify ghcr.io/tym83/paleocomputing/virt-launcher:v1.8.4-paleo-v0.1.16 \
+cosign verify ghcr.io/tym83/paleocomputing/virt-launcher:v1.8.4-paleo-v0.1.17 \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   --certificate-identity https://github.com/tym83/paleocomputing/.github/workflows/publish.yml@refs/heads/main
 ```
@@ -90,11 +90,11 @@ refuses to touch a `virt-controller` whose argument layout it does not
 recognise, and removes its entry cleanly.
 
 ```sh
-git clone --depth 1 -b v0.1.16 https://github.com/tym83/paleocomputing
+git clone --depth 1 -b v0.1.17 https://github.com/tym83/paleocomputing
 cd paleocomputing
 
 KV_VERSION=$(kubectl -n $KV_NS get kubevirt kubevirt -o jsonpath='{.status.observedKubeVirtVersion}')
-echo "$KV_VERSION ghcr.io/tym83/paleocomputing/virt-launcher:$KV_VERSION-paleo-v0.1.16" > /tmp/launchers.txt
+echo "$KV_VERSION ghcr.io/tym83/paleocomputing/virt-launcher:$KV_VERSION-paleo-v0.1.17" > /tmp/launchers.txt
 
 # Optional: the script reports its state here.
 kubectl -n $KV_NS create configmap kubevirt-paleo-launcher-status
@@ -128,7 +128,7 @@ spec:
           [{"op":"test","path":"/spec/template/spec/containers/0/name","value":"virt-controller"},
            {"op":"test","path":"/spec/template/spec/containers/0/args/0","value":"--launcher-image"},
            {"op":"replace","path":"/spec/template/spec/containers/0/args/1",
-            "value":"ghcr.io/tym83/paleocomputing/virt-launcher:v1.8.4-paleo-v0.1.16"}]
+            "value":"ghcr.io/tym83/paleocomputing/virt-launcher:v1.8.4-paleo-v0.1.17"}]
 ```
 
 ⚠ **Upgrading KubeVirt**: the launcher must follow. Change the tag to the new
@@ -147,7 +147,7 @@ In the source tree the chart points at the `dev` image with the ROM and disk,
 so pin it to the release first:
 
 ```sh
-python3 marketplace/tools/pin-images.py --release v0.1.16
+python3 marketplace/tools/pin-images.py --release v0.1.17
 
 helm install wirth marketplace/repos/machines/packages/apps/oberon-vm \
   --namespace oberon --create-namespace \
@@ -218,9 +218,9 @@ KubeVirt, launcher switch, machine, screen check. It expects the launcher
 image in the local Docker; the published one works:
 
 ```sh
-docker pull ghcr.io/tym83/paleocomputing/virt-launcher:v1.8.4-paleo-v0.1.16
-python3 marketplace/tools/pin-images.py --release v0.1.16
-export KUBEVIRT_VERSION=v1.8.4 LAUNCHER_IMAGE=ghcr.io/tym83/paleocomputing/virt-launcher:v1.8.4-paleo-v0.1.16
+docker pull ghcr.io/tym83/paleocomputing/virt-launcher:v1.8.4-paleo-v0.1.17
+python3 marketplace/tools/pin-images.py --release v0.1.17
+export KUBEVIRT_VERSION=v1.8.4 LAUNCHER_IMAGE=ghcr.io/tym83/paleocomputing/virt-launcher:v1.8.4-paleo-v0.1.17
 for s in tools cluster kubevirt launcher machine screen; do kubevirt/e2e.sh $s || break; done
 kubevirt/e2e.sh down
 ```
