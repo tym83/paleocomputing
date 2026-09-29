@@ -78,9 +78,9 @@ k() {
 
 # ── Решение ─────────────────────────────────────────────────────────────────
 #
-# Вход: ресурс KubeVirt (stdin), развёртывание virt-controller ($vc), узлы,
-# где KubeVirt запускает виртуалки ($nodes), таблица ($table), режим
-# ($mode: reconcile | uninstall).
+# Вход: ресурс KubeVirt (stdin), развёртывание virt-controller ($vc),
+# архитектуры узлов, где KubeVirt запускает виртуалки ($node_archs — список
+# строк), таблица ($table), режим ($mode: reconcile | uninstall).
 # Выход: {action: write|none, state, reason, version, image, patches, rv}.
 DECIDE='
 def shape: [
@@ -126,7 +126,7 @@ def tag_of:
 | ($rows | map({key: .[0], value: .[1]}) | from_entries) as $tbl
 | ($table | split("\n") | map(select(test("^# arch:"))) | first
           | if . == null then null else sub("^# arch:"; "") | split(" ") | map(select(length > 0)) end) as $archs
-| ([$nodes.items[]? | .metadata.labels["kubernetes.io/arch"] // "неизвестная"] | unique) as $node_archs
+| ($node_archs | unique) as $node_archs
 | (if $archs == null then [] else $node_archs - $archs end) as $alien
 | .metadata.resourceVersion as $rv
 | .spec.customizeComponents.patches as $raw
@@ -198,16 +198,27 @@ def tag_of:
   end
 '
 
-decide() {  # kv vc nodes mode
-  printf '%s' "$1" | jq -c --argjson vc "$2" --argjson nodes "$3" --arg mode "$4" \
+decide() {  # kv vc node_archs mode
+  printf '%s' "$1" | jq -c --argjson vc "$2" --argjson node_archs "$3" --arg mode "$4" \
     --rawfile table "$TABLE" "$DECIDE"
 }
 
 # Узлы, на которых KubeVirt запускает виртуалки (их метит virt-handler). Нужны,
 # только если таблица говорит, под какие процессоры собран образ.
-nodes_json() {
-  grep -q '^# arch:' "$TABLE" 2>/dev/null || { echo '{"items":[]}'; return 0; }
-  "$KUBECTL" get nodes -l kubevirt.io/schedulable=true -o json
+#
+# ⚠ Наружу — только список архитектур, не сами узлы. Объекты узлов на живом
+# кластере огромные (списки образов, статусы), и переданные в jq аргументом
+# они не влезали в предел длины командной строки: «Argument list too long»,
+# решение не вычислялось, и компонент стоял. Поддельный API в тестах отдавал
+# крошечные узлы — нашлось только проверкой в песочнице.
+node_archs() {
+  grep -q '^# arch:' "$TABLE" 2>/dev/null || { echo '[]'; return 0; }
+  f=$(mktemp) || return 1
+  if ! "$KUBECTL" get nodes -l kubevirt.io/schedulable=true -o json > "$f"; then
+    rm -f "$f"; return 1
+  fi
+  jq -c '[.items[]? | .metadata.labels["kubernetes.io/arch"] // "неизвестная"]' "$f"
+  rc=$?; rm -f "$f"; return $rc
 }
 
 # Запись с предусловием на resourceVersion: конфликт — не ошибка, а повод
@@ -267,8 +278,8 @@ once() {  # mode
   fi
   # При удалении узлы не нужны: своя запись убирается на любом кластере.
   if [ "$mode" = uninstall ]; then
-    nodes='{"items":[]}'
-  elif ! nodes=$(nodes_json); then
+    nodes='[]'
+  elif ! nodes=$(node_archs); then
     log_once "Unknown: узлы не прочитаны — ничего не пишу"; return 1
   fi
   d=$(decide "$kv" "$vc" "$nodes" "$mode") || { log_once "Unknown: решение не вычислено (ответ API не разобран) — ничего не пишу"; return 1; }

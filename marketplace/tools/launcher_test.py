@@ -396,6 +396,17 @@ def main() -> None:
         c.run("uninstall")
         report(c.rc == 0 and c.patches() == [HANDLER], "удаление узлы не читает и работает без них")
 
+        # 12. Живой кластер: объекты узлов большие (списки образов, статусы).
+        # Переданные в jq аргументом, они не влезали в предел длины командной
+        # строки — решение не вычислялось. Нашлось только в песочнице.
+        big = nodes(*(["amd64"] * 3000))
+        for nd in big["items"]:
+            nd["status"] = {"images": [{"names": [f"registry.example/some/image-{i}:v1.0.0"],
+                                        "sizeBytes": 123456789} for i in range(12)]}
+        c = cluster(kubevirt(patches=None), node_list=big).run()
+        report(c.rc == 0 and c.patches() == [ours(IMG184)],
+               f"кластер на 3000 узлов ({len(json.dumps(big)) // 1024} КБ): решение вычислено, правка ставится")
+
         # Отрицательный контроль: подделка обязана ловить запись без предусловия.
         c = cluster(kubevirt(patches=None))
         kv = c.get("kubevirt.json"); kv["metadata"]["resourceVersion"] = "999"; c.put("kubevirt.json", kv)
