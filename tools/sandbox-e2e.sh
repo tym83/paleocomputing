@@ -96,6 +96,22 @@ echo "$args" | grep -q '^-vnc$' && say ok "экран отдаётся по VNC"
 if [ "$HARDWARE" = chk ]; then
   echo "$args" | grep -qx 'chk=on' && say ok "-machine chk=on" || say no "нет -machine chk=on"
 fi
+# Диск пользователя — на запись. Раньше это не проверялось: загрузка только
+# читает, и диск с правами rw-r--r-- проходил все проверки, пока сохранение
+# файла внутри Оберона не роняло машину. Смотрим двумя способами: право
+# записи у пользователя контейнера (qemu) и режим, с которым эмулятор держит
+# файл открытым (флаг O_RDWR в fdinfo).
+# shellcheck disable=SC2016 # раскрывается в поде
+a exec "$pod" -c compute -- sh -c 'test -w /payload/oberon.dsk' \
+  && say ok "диск доступен эмулятору на запись" || say no "диск только для чтения"
+# shellcheck disable=SC2016
+rw=$(a exec "$pod" -c compute -- sh -c '
+  pid=$(pgrep -f "qemu-system-" | head -1)
+  for fd in /proc/$pid/fd/*; do
+    [ "$(readlink "$fd")" = /payload/oberon.dsk ] || continue
+    awk "/^flags:/ { print (int(substr(\$2, length(\$2)) ) % 4 == 2) ? \"rw\" : \"ro\" }" /proc/$pid/fdinfo/${fd##*/}
+  done' 2>/dev/null | sort -u)
+[ "$rw" = rw ] && say ok "эмулятор держит диск открытым на запись" || say no "эмулятор держит диск: ${rw:-не открыт}"
 pvc_uid=$(a get pvc "$vmi-payload" -o jsonpath='{.metadata.uid}' 2>/dev/null)
 [ -n "$pvc_uid" ] && say ok "том $vmi-payload в составе релиза" || say no "тома нет"
 
