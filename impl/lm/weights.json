@@ -1,0 +1,20 @@
+{
+ "text": "lm/alice.txt — Lewis Carroll, Alice's Adventures in Wonderland (1865), Project Gutenberg eBook #11, public domain; служебные шапка и подвал Project Gutenberg удалены",
+ "source_url": "https://www.gutenberg.org/cache/epub/11/pg11.txt",
+ "chars_after_normalize": 142560,
+ "vocab": " abcdefghijklmnopqrstuvwxyz.,;:!?'\"-",
+ "C": 8,
+ "E": 16,
+ "H": 256,
+ "V": 36,
+ "params": 42852,
+ "seed": 1,
+ "epochs": 12,
+ "batch": 256,
+ "lr": 0.002,
+ "train_loss_nats": 1.2405,
+ "val_loss_nats": 1.5661,
+ "subnormals_flushed": 0,
+ "bytes": 171572,
+ "sha256": "403c02df73ec172731762ef02f2b56f4e1e032b1ab0189c6d76da88e33ef8d6d"
+}

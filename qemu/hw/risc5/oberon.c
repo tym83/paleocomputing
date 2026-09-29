@@ -25,6 +25,7 @@
 #include "cpu.h"
 #include "oberon-io.h"
 #include "system/blockdev.h"
+#include "system/block-backend.h"
 #include "hw/core/qdev-properties-system.h"
 
 /*
@@ -132,6 +133,18 @@ static void oberon_init(MachineState *machine)
 
         if (!blk) {
             warn_report("образ диска не задан: добавьте -drive if=none,id=sd0,file=<образ>,format=raw");
+        } else {
+            /*
+             * Разрешения на запись надо попросить явно. Устройство qdev
+             * получает их при подключении привода, а мы берём привод по
+             * имени — и без этой строки ПЕРВАЯ ЖЕ запись на диск роняет
+             * QEMU проверкой BLK_PERM_WRITE в block/io.c. До выпуска №2
+             * на диск в QEMU никто не писал: загрузка только читает.
+             * Компиляция внутри системы пишет .rsc — и упала.
+             */
+            blk_set_perm(blk, BLK_PERM_CONSISTENT_READ |
+                         (blk_supports_write_perm(blk) ? BLK_PERM_WRITE : 0),
+                         BLK_PERM_ALL, &error_fatal);
         }
         OberonIOState *io = g_new0(OberonIOState, 1);
         oberon_io_init(io, sys, OBERON_IO_BASE, blk);

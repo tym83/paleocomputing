@@ -37,7 +37,15 @@ struct CycleModel {
                 case 10: unit = U_MUL;   lat = 34; period = 64; break;   // MUL
                 case 11: unit = U_DIV;   lat = 34; period = 64; break;   // DIV
                 case 12: case 13: unit = U_FPADD; lat = 4;  period = 4;  break; // FAD/FSB
+#if defined(FPMUL_FAST_REG)
+                // быстрый умножитель с регистром произведения (rtl/FPMultiplierFast.v):
+                // 2 такта, и подряд тоже 2 — счётчик однобитный и сбрасывается сам
+                case 14: unit = U_FPMUL; lat = 2;  period = 2;  break;   // FML
+#elif defined(FPMUL_FAST)
+                case 14: unit = U_NONE;  lat = 1;  period = 1;  break;   // FML, однотактный
+#else
                 case 14: unit = U_FPMUL; lat = 26; period = 32; break;   // FML
+#endif
                 case 15: unit = U_FPDIV; lat = 27; period = 32; break;   // FDV
                 default: unit = U_NONE;  lat = 1;  period = 1;  break;
             }

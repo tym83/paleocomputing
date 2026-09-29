@@ -1,6 +1,6 @@
 # Oberon-lab: RISC5 под Verilator + тесты + синтез
 RTL  := rtl/RISC5.v rtl/Registers.v rtl/Multiplier.v rtl/Divider.v \
-        rtl/FPAdder.v rtl/FPMultiplier.v rtl/FPDivider.v \
+        rtl/FPAdder.v rtl/FPMultiplier.v rtl/FPMultiplierFast.v rtl/FPDivider.v \
         rtl/LeftShifter.v rtl/RightShifter.v
 # Кэш байт-кода Python опасен для воспроизводимости: время файлов на macOS
 # имеет секундную гранулярность, и правка инструмента в ту же секунду, в
@@ -17,8 +17,8 @@ ASM    := $(patsubst %,tests/%.bin,$(TESTS) t2_chk t2_chk_hi $(IDXT))
 # компилятора эмитит и CHK (массивы известной длины), и IDX (открытые массивы).
 DESCDEF := -DWITH_CHK -DCHK_SPLIT -DWITH_DESC
 
+.PHONY: boot-fast fpmul-diff lm lm-profile lm-check lm-stock lm-system lm-qemu site all check test roundtrip pristine bootstrap rebuild book labs image lab image-check equiv lockstep lockstep-chk boot boot-chk selfhost syn configs tools web deps clean
 .PHONY: idx-diff idx-mutate boot-desc lockstep-desc desc-loop desc-measure desc-cross desc-profile
-.PHONY: site all check test roundtrip pristine bootstrap rebuild book labs image lab image-check equiv lockstep lockstep-chk boot boot-chk selfhost syn configs tools web deps clean
 all: tools build/obj_tests/run_tests build/obj_chk/run_tests_chk build/obj_desc/run_tests_desc $(ASM)
 
 # ───────────────────────────────────────────────────────────────────────────
@@ -52,7 +52,9 @@ ext/refemu/reftrace: ext/refemu/trace.c ext/refemu/risc.c ext/refemu/risc-fp.c e
 # в свежих версиях путь разрешается правильно.
 TB := $(abspath tb)
 
-VINC := $(shell verilator --getenv VERILATOR_ROOT)/include
+# ⚠ Отложенное присваивание: с `:=` make звал verilator при КАЖДОМ запуске,
+# и там, где его нет (быстрое задание CI), любая цель печатала ошибку.
+VINC = $(shell verilator --getenv VERILATOR_ROOT)/include
 WASM_SRC := $$(ls build/obj_wasm/*.cpp | grep -v "__Dpi\.cpp$$")
 
 BENCH := web/bench_bounds_b.bin web/bench_bounds_e.bin web/bench_bounds.json
@@ -298,6 +300,53 @@ boot-chk:
 	@verilator $(VFLAGS) -DWITH_CHK -DCHK_SPLIT -o soc_tb_chk --top-module RISC5 --Mdir build/obj_soc_chk $(RTL) $(TB)/soc_tb.cpp $(TB)/disk/disk.c
 	@./build/obj_soc_chk/soc_tb_chk --prom=rtl/prom_sd.mem --max=12000000 --expect-crc=$(BOOT_CRC)
 
+# Загрузка системы на ядре с быстрым FP-умножителем (выпуск №2): экран обязан
+# совпасть с тем же эталоном, модель тактов — с RTL (в ней вариант учтён).
+boot-fast:
+	@mkdir -p build
+	@verilator $(VFLAGS) -DFPMUL_FAST -CFLAGS -DFPMUL_FAST -o soc_tb_fast --top-module RISC5 --Mdir build/obj_soc_fast $(RTL) $(TB)/soc_tb.cpp $(TB)/disk/disk.c > build/soc_fast.log 2>&1 || { cat build/soc_fast.log; exit 1; }
+	@./build/obj_soc_fast/soc_tb_fast --prom=rtl/prom_sd.mem --max=12000000 --expect-crc=$(BOOT_CRC)
+
+# ───────────────────────────────────────────────────────────────────────────
+# Выпуск №2: языковая модель на RISC5 (13-episode-lm-on-risc5.md, находки 72–78)
+# ───────────────────────────────────────────────────────────────────────────
+# Дешёвая проверка: веса = манифест, модуль на эмуляторе Norebo даёт ровно
+# эталонный текст (арифметика risc-fp.c). Секунды — годится в CI.
+lm-check: $(NOREBO)
+	@python3 lm/train.py --check
+	@python3 lm/compare.py emu 64 1 2 3
+
+# Та же сверка на RTL Вирта (Norebo поверх Verilator).
+lm: $(NOREBO) build/obj_nb/norebo_tb
+	@python3 lm/train.py --check
+	@python3 lm/compare.py rtl 16 1 7
+
+# Главные числа: такты на символ, профиль, ускорение, потолок FMAC. ~3 минуты.
+LM_N ?= 32
+lm-profile: $(NOREBO) build/obj_nb/norebo_tb build/obj_nbf/norebo_tb build/obj_nbr/norebo_tb
+	@python3 lm/profile.py $(LM_N)
+
+# Стоковая нагрузка на трёх ядрах: компилятор собирает сам себя. ~2 минуты.
+lm-stock: build/obj_nb/norebo_tb build/obj_nbf/norebo_tb build/obj_nbr/norebo_tb
+	@bash lm/stock.sh
+
+# Модель внутри настоящей системы (1 МБ ОЗУ, диск, окна) на RTL: система сама
+# компилирует LM.Mod и исполняет команду средней кнопкой. ~4 минуты.
+lm-system: $(NOREBO) scripts/lm.txt
+	@mkdir -p build
+	@verilator $(VFLAGS) -o soc_tb --top-module RISC5 --Mdir build/obj_soc $(RTL) $(TB)/soc_tb.cpp $(TB)/disk/disk.c > build/soc.log 2>&1 || { cat build/soc.log; exit 1; }
+	@bash lm/mkdisk.sh
+	@cp -f build/lm/oberon-lm.dsk build/lm/oberon-lm-run.dsk
+	@./build/obj_soc/soc_tb --prom=rtl/prom_sd.mem --max=130000000 --disk=build/lm/oberon-lm-run.dsk \
+	  --persist --script=scripts/lm.txt | grep -E "экран выгружен: build/lm|расхождений"
+	@python3 lm/outcheck.py build/lm/oberon-lm-run.dsk
+
+# То же в QEMU — только функциональная сверка (тактов QEMU не моделирует).
+lm-qemu: $(NOREBO)
+	@python3 lm/qemu_run.py
+
+scripts/lm.txt: scripts/lm.src tools/mkscript.py tools/keymap.py
+	@PYTHONPATH=tools python3 tools/mkscript.py $< > $@
 # Те же системные прогоны на ядре с дескрипторами (выпуск 14): стоковая система
 # обязана грузиться с тем же CRC экрана и идти с эталоном шаг в шаг — IDX
 # занимает кодировку, которую стоковый код не эмитит.
@@ -325,10 +374,42 @@ check: pristine test boot boot-chk boot-desc lockstep lockstep-desc selfhost rou
 
 # Замыкание круга: компилятор Оберона работает на настоящем RTL, а не на
 # эмуляторе, и порождает побайтово тот же код.
-build/obj_nb/norebo_tb: $(RTL) tb/norebo_tb.cpp tb/norebo_bridge.cpp
+# Мост к Norebo — код на C, и собирается как C, отдельным объектом: внутри
+# него norebo.c целиком, а в том стоят назначенные инициализаторы массива,
+# которых нет в C++. g++ на Linux на этом падал, clang на macOS — прощал.
+NBOBJ := build/nbobj/norebo_bridge.o
+$(NBOBJ): tb/norebo_bridge.c ext/norebo/Runtime/norebo.c ext/norebo/Runtime/risc-cpu.h
+	@mkdir -p $(@D) && $(CC) -O2 -std=gnu99 -w -c $< -o $@
+
+build/obj_nb/norebo_tb: $(RTL) tb/norebo_tb.cpp $(NBOBJ)
 	@mkdir -p build
-	@verilator $(VFLAGS) -o norebo_tb --top-module RISC5 --Mdir build/obj_nb $(RTL) $(TB)/norebo_tb.cpp $(TB)/norebo_bridge.cpp
+	@verilator $(VFLAGS) -o norebo_tb --top-module RISC5 --Mdir build/obj_nb $(RTL) $(TB)/norebo_tb.cpp ../../$(NBOBJ)
 	@test -x $@ || { echo "СБОРКА НЕ ДАЛА БИНАРНИКА: $@"; exit 1; }
+
+# Те же ядра с быстрым FP-умножителем (выпуск №2): однотактным и двухтактным.
+build/obj_nbf/norebo_tb: $(RTL) tb/norebo_tb.cpp $(NBOBJ)
+	@mkdir -p build
+	@verilator $(VFLAGS) -DFPMUL_FAST -o norebo_tb --top-module RISC5 --Mdir build/obj_nbf $(RTL) $(TB)/norebo_tb.cpp ../../$(NBOBJ)
+	@test -x $@ || { echo "СБОРКА НЕ ДАЛА БИНАРНИКА: $@"; exit 1; }
+
+build/obj_nbr/norebo_tb: $(RTL) tb/norebo_tb.cpp $(NBOBJ)
+	@mkdir -p build
+	@verilator $(VFLAGS) -DFPMUL_FAST -DFPMUL_FAST_REG -o norebo_tb --top-module RISC5 --Mdir build/obj_nbr $(RTL) $(TB)/norebo_tb.cpp ../../$(NBOBJ)
+	@test -x $@ || { echo "СБОРКА НЕ ДАЛА БИНАРНИКА: $@"; exit 1; }
+
+# Быстрый FP-умножитель против исходного, побитово (находка 73). FPMUL_N —
+# сколько случайных пар сверх полного перебора порядков и граничных мантисс.
+FPMUL_N ?= 10000000
+fpmul-diff: build/refobj/risc-fp.o
+	@mkdir -p build
+	@verilator $(VFLAGS) -CFLAGS "-I../../ext/refemu" -o fpmul_diff --top-module fpmul_diff_top \
+	  --Mdir build/obj_fmd rtl/FPMultiplier.v rtl/FPMultiplierFast.v tb/fpmul_diff_top.v \
+	  $(TB)/fpmul_diff.cpp ../../build/refobj/risc-fp.o > build/fmd.log 2>&1 || { cat build/fmd.log; exit 1; }
+	@verilator $(VFLAGS) -DFPMUL_FAST_REG -CFLAGS "-I../../ext/refemu -DFPMUL_FAST_REG" -o fpmul_diff \
+	  --top-module fpmul_diff_top --Mdir build/obj_fmr rtl/FPMultiplier.v rtl/FPMultiplierFast.v \
+	  tb/fpmul_diff_top.v $(TB)/fpmul_diff.cpp ../../build/refobj/risc-fp.o > build/fmr.log 2>&1 || { cat build/fmr.log; exit 1; }
+	@echo "  однотактный вариант:"; ./build/obj_fmd/fpmul_diff $(FPMUL_N)
+	@echo "  двухтактный вариант (FPMUL_FAST_REG):"; ./build/obj_fmr/fpmul_diff $(FPMUL_N)
 
 selfhost: build/obj_nb/norebo_tb $(NOREBO)
 	@bash tools/selfhost_rtl.sh

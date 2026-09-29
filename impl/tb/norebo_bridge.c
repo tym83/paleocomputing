@@ -7,10 +7,14 @@
  *
  * Что скрыто: main() и вызов risc_run(). Вместо них процессор крутит Verilator.
  */
-/* norebo.c — код на C. Verilator собирает всё как C++, поэтому:
-   - включаем его внутрь extern "C", чтобы имена не искажались
-   - подменяем main(): его тело зовёт risc_run(), которого здесь нет
-     (процессор крутит Verilator), и он всё равно не нужен */
+/* norebo.c — код на C, и собирается этот файл тоже как C (cc, отдельным
+   объектом — правило в Makefile), а не как C++ в составе Verilator.
+   ⚠ Раньше мост был .cpp и включал norebo.c внутрь extern "C". clang на macOS
+   это прощал, а g++ на Linux — нет: в main() у Norebo стоят назначенные
+   инициализаторы массива (`.R[12] = 0x20`), которых в C++ нет. Упало в CI.
+   Код Norebo при этом не правим — меняется только то, чем его собирают.
+   Подменяем main(): его тело зовёт risc_run(), которого здесь нет
+   (процессор крутит Verilator), и он всё равно не нужен. */
 /* risc-cpu.h не включает <stdint.h> сам — рассчитывает, что это сделали до него. */
 #include <stdint.h>
 #include <stdbool.h>
@@ -18,12 +22,11 @@
 /* Счётчики, которые в оригинале живут в risc-cpu.c. Мы его не подключаем —
    процессор крутит Verilator, — поэтому определяем здесь. Такты на RTL считает
    сам стенд, эти нужны лишь для того, чтобы слинковался print_cycle_stats(). */
-extern "C" {
 uint64_t risc_cycles = 0, risc_insns = 0;
 uint64_t risc_chk_hits[8] = {0}, risc_chk_dyn_total = 0;
-}
+/* Профиль IDX (выпуск 14, дескрипторы) — тоже из risc-cpu.c. */
+uint64_t risc_desc_prof[4] = {0};
 
-extern "C" {
 /* Заголовок включаем ПЕРВЫМ, до подмены: иначе #define risc_run испортит
    объявление функции в risc-cpu.h. */
 #include "../ext/norebo/Runtime/risc-cpu.h"
@@ -32,7 +35,6 @@ extern "C" {
 #include "../ext/norebo/Runtime/norebo.c"
 #undef risc_run
 #undef main
-}
 
 #include <stdint.h>
 
@@ -40,8 +42,6 @@ extern "C" {
    mem_write_word(), nargc, nargv — всё это пришло из norebo.c выше. */
 
 static int halted = 0;
-
-extern "C" {
 
 void nb_init(int argc, char **argv) {
     nargc = argc - 1;
@@ -81,5 +81,3 @@ uint32_t  nb_ram_size(void) { return MemBytes; }
 uint32_t *nb_ram(void)      { return (uint32_t *)mem; }
 
 uint32_t nb_stack_org(void) { return StackOrg; }
-
-}  /* extern "C" */
