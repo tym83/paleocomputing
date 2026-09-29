@@ -65,6 +65,14 @@ cozypkg tap oci://ghcr.io/tym83/paleocomputing/platform:<версия>
 cozypkg add paleocomputing.platform --allow-privileged
 ```
 
+⚠ Смена launcher — это обновление нагрузки для KubeVirt: при
+`workloadUpdateMethods: [LiveMigrate, Evict]` (так по умолчанию в Cozystack) он
+перевозит на новый образ **все** виртуалки кластера (находка 49). Поэтому
+компонент при включённом автопереводе свою правку не ставит и не меняет без
+явного согласия — значение `allowWorkloadUpdate: true` или аннотация
+`paleocomputing.io/allow-workload-update=true` на ресурсе KubeVirt; до тех пор
+его состояние `NeedsConsent`. Снятие правки согласия не ждёт.
+
 Семейство машин растёт данными, а не кодом: новая архитектура — строка в
 `kubevirt/targets.txt` (цель QEMU, правки libvirt и проверки образа строятся
 из неё), новая версия KubeVirt — строка в `kubevirt/versions.txt` (из неё же

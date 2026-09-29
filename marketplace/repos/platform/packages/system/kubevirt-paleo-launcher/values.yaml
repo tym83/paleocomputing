@@ -12,5 +12,16 @@ kubevirtName: kubevirt
 ## если правку не сбросило само обновление.
 interval: 30
 
+## @param {bool} allowWorkloadUpdate=false - Разрешить смену launcher, когда в
+## KubeVirt включён автоперевод машин (workloadUpdateMethods не пуст).
+## ⚠ Наш launcher заменяет штатный для ВСЕХ виртуалок кластера, и при
+## включённом автопереводе KubeVirt перевезёт на новый образ каждую из них:
+## живой миграцией, а что не мигрирует — перезапуском (находка 49). В
+## Cozystack по умолчанию автоперевод включён. Без согласия компонент свою
+## правку не ставит и не меняет (состояние NeedsConsent); снимает — всегда.
+## Согласие можно дать и аннотацией paleocomputing.io/allow-workload-update=true
+## на ресурсе KubeVirt.
+allowWorkloadUpdate: false
+
 ## @param {string} image - Образ с kubectl, jq и sh, прибит дайджестом индекса.
 image: docker.io/alpine/k8s:1.35.9@sha256:b9cb6db0091a2327c0a56ecda69d37fa830c7a96ea669e7382b3ee778aa07a24

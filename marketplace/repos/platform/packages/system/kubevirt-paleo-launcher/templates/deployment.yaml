@@ -65,6 +65,8 @@ spec:
           value: {{ include "paleo-launcher.status" . }}
         - name: INTERVAL
           value: {{ .Values.interval | quote }}
+        - name: ALLOW_WORKLOAD_UPDATE
+          value: {{ .Values.allowWorkloadUpdate | quote }}
         - name: HOME
           value: /tmp
         securityContext: {{- include "paleo-launcher.containerSecurity" . | nindent 10 }}

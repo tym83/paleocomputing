@@ -90,60 +90,67 @@ cozypkg tap oci://ghcr.io/tym83/paleocomputing/languages:v0.1.16</code></pre>
       things are set once, at the cluster level, and a tenant cannot set them:
     </p>
     <ol class="steps">
-      <li><h3>The <code>Sidecar</code> feature gate</h3><p>In the KubeVirt resource. Without it the hook never runs.</p></li>
-      <li><h3>A <code>virt-launcher</code> image that knows RISC5</h3><p>It carries our QEMU target and a libvirt with the architecture compiled in — libvirt asks the emulator what it is rather than trusting the domain. The image is published per catalog release as <code>ghcr.io/tym83/paleocomputing/virt-launcher:&lt;kubevirt&gt;-risc5-&lt;release&gt;</code> and is built for KubeVirt 1.8.4 (current Cozystack releases) and 1.9.0 (Cozystack main), one image per version with the KubeVirt version in the tag: the launcher must match the KubeVirt version exactly.</p></li>
+      <li><h3>The <code>Sidecar</code> feature gate</h3><p>In the KubeVirt resource. Without it the hook never runs. It is cluster-wide: anyone who can create VMs directly can then attach a hook of their own — weigh that on a shared cluster.</p></li>
+      <li><h3>A <code>virt-launcher</code> image that knows RISC5</h3><p>It carries our QEMU target and a libvirt with the architecture compiled in — libvirt asks the emulator what it is rather than trusting the domain. The image is published per catalog release as <code>ghcr.io/tym83/paleocomputing/virt-launcher:&lt;kubevirt&gt;-paleo-&lt;release&gt;</code> for KubeVirt 1.8.4 and 1.9.0, on amd64 and arm64 nodes. The launcher must match the KubeVirt version.</p></li>
     </ol>
+    <div class="note">
+      <strong>Switching the launcher moves every virtual machine in the
+      cluster.</strong> KubeVirt treats a new launcher image as a workload
+      update. With <code>workloadUpdateMethods: [LiveMigrate, Evict]</code> —
+      the Cozystack default — it live-migrates every VM to the new image and
+      restarts the ones that cannot migrate. That happens when the launcher is
+      switched on, when it is switched back, and on every KubeVirt upgrade.
+      Check it first:
+      <pre><code>kubectl -n cozy-kubevirt get kubevirt kubevirt \
+  -o jsonpath='{.spec.workloadUpdateStrategy}'</code></pre>
+      We learned it the hard way: 16 seconds after the first switch, KubeVirt
+      started migrating the whole cluster.
+    </div>
     <p>
       <strong>The recommended way is the platform component.</strong> Tap the
-      fourth repository and install <code>kubevirt-paleo-launcher</code> — it is
-      privileged, so it needs the operator's explicit consent:
+      platform repository and install <code>kubevirt-paleo-launcher</code> — it
+      is privileged, so it needs the operator's explicit consent:
     </p>
     <pre><code>cozypkg tap oci://ghcr.io/tym83/paleocomputing/platform:v0.1.16
 cozypkg add paleocomputing.platform --allow-privileged</code></pre>
     <p>
       It watches the cluster's KubeVirt version and keeps the launcher matched to
       it. It changes one argument only — the image after
-      <code>--launcher-image</code> — and leaves every other argument and every
-      other customization alone. On a KubeVirt version it has no image for, or
-      on any doubt, it removes its change: foreign machines stop, every other VM
-      keeps working. Uninstalling it removes the change as well. The launcher
-      carries every foreign architecture in the catalog, so one component
-      serves the whole family.
+      <code>--launcher-image</code>, as a JSON patch with two tests before the
+      replace — and leaves every other argument and customization alone. On a
+      KubeVirt version it has no image for, on nodes of an architecture it has
+      no image for, or on any doubt, it removes its change: foreign machines
+      stop, every other VM keeps working. Uninstalling it removes the change as
+      well.
     </p>
     <p>
-      To do the same by hand: the launcher image is switched on the KubeVirt resource, through
-      <code>customizeComponents</code>. The patch replaces the whole argument
-      list of <code>virt-controller</code>, so start from the current one and
-      change only the launcher image:
+      <strong>If automatic workload updates are on, the component waits for
+      consent.</strong> It will not put in or change its launcher until you
+      allow the migration explicitly; its state is then
+      <code>NeedsConsent</code>, with an event on the KubeVirt resource.
+      Allow it with the component value <code>allowWorkloadUpdate: true</code>
+      or with an annotation on the KubeVirt resource:
     </p>
-    <pre><code>kubectl -n cozy-kubevirt get deploy virt-controller \
-  -o jsonpath='{.spec.template.spec.containers[0].args}'
-
-kubectl -n cozy-kubevirt patch kubevirt kubevirt --type=merge -p '
-spec:
-  customizeComponents:
-    patches:
-    - resourceType: Deployment
-      resourceName: virt-controller
-      type: json
-      patch: |-
-        [{"op": "replace",
-          "path": "/spec/template/spec/containers/0/args",
-          "value": ["--launcher-image",
-                    "ghcr.io/tym83/paleocomputing/virt-launcher:v1.8.4-risc5-v0.1.16",
-                    "--exporter-image", "quay.io/kubevirt/virt-exportserver:v1.8.4",
-                    "--port", "8443", "-v", "2"]}]'</code></pre>
+    <pre><code>kubectl -n cozy-kubevirt annotate kubevirt kubevirt \
+  paleocomputing.io/allow-workload-update=true
+kubectl -n cozy-kubevirt get cm kubevirt-paleo-launcher-status \
+  -o jsonpath='{.data.state} {.data.reason}'</code></pre>
     <p>
-      Rolling back is removing the patch: KubeVirt returns to its stock launcher.
+      Removing its change never waits for consent: that is the safe direction.
+      To do the same by hand, without the component, put the same single
+      replacement into <code>customizeComponents</code>; the exact patch and the
+      removal are in the
+      <a href="https://github.com/tym83/paleocomputing/blob/main/kubevirt/GUIDE.md">KubeVirt guide</a>.
+      Do not replace the whole argument list: it would freeze the exporter
+      image, port and log level of <code>virt-controller</code> too.
     </p>
     <div class="note">
       <strong>This affects every virtual machine in the cluster, not only
       Oberon.</strong> The image is the stock <code>virt-launcher</code> with
       the libvirt libraries and one emulator added; ordinary machines keep
-      working on it, and we checked that an Ubuntu VM boots. But after a
-      Cozystack upgrade that moves KubeVirt to another version, remove the patch
-      before anything else — a launcher from a different version breaks every
-      machine.
+      working on it, and every release is checked by booting an Ubuntu VM on it.
+      Set by hand, the patch must follow KubeVirt upgrades — a launcher from a
+      different version breaks every machine. The component does this for you.
     </div>
   </section>
 

@@ -85,63 +85,69 @@ cozypkg tap oci://ghcr.io/tym83/paleocomputing/languages:v0.1.16</code></pre>
     <p>
       Всё остальное в каталоге — обычные приложения. OberonVM — нет: KubeVirt
       знает четыре архитектуры, и RISC5 среди них нет. Форков KubeVirt и
-      Cozystack не нужно — описание машины переписывает перехватчик
+      Cozystack здесь нет — описание домена переписывает перехватчик
       <code>OnDefineDomain</code>, штатная точка расширения. Но две вещи
       задаются один раз на уровне кластера, и тенант задать их не может:
     </p>
     <ol class="steps">
-      <li><h3>Признак <code>Sidecar</code></h3><p>В ресурсе KubeVirt. Без него перехватчик не запускается.</p></li>
-      <li><h3>Образ <code>virt-launcher</code>, знающий RISC5</h3><p>В нём наша цель QEMU и libvirt со вкомпилированной архитектурой — libvirt спрашивает архитектуру у эмулятора, а не верит описанию. Образ выкладывается к каждому выпуску каталога как <code>ghcr.io/tym83/paleocomputing/virt-launcher:&lt;kubevirt&gt;-risc5-&lt;выпуск&gt;</code> и собирается под KubeVirt 1.8.4 (нынешние выпуски Cozystack) и 1.9.0 (Cozystack main) — по образу на версию, с версией KubeVirt в теге: launcher обязан совпадать с версией KubeVirt в точности.</p></li>
+      <li><h3>Признак <code>Sidecar</code></h3><p>В ресурсе KubeVirt. Без него перехватчик не запускается. Он включается на весь кластер: любой, кто может создавать виртуалки напрямую, сможет подключить к ним свой перехватчик — на общем кластере это стоит взвесить.</p></li>
+      <li><h3>Образ <code>virt-launcher</code>, который знает RISC5</h3><p>В нём наша цель QEMU и libvirt с вкомпилированной архитектурой — libvirt спрашивает эмулятор, что он такое, а не верит описанию домена. Образ публикуется в каждом релизе каталога как <code>ghcr.io/tym83/paleocomputing/virt-launcher:&lt;kubevirt&gt;-paleo-&lt;релиз&gt;</code> для KubeVirt 1.8.4 и 1.9.0, на узлах amd64 и arm64. Launcher обязан совпадать с версией KubeVirt.</p></li>
     </ol>
+    <div class="note">
+      <strong>Смена launcher перевозит все виртуалки кластера.</strong> Новый
+      образ launcher KubeVirt считает обновлением нагрузки. При
+      <code>workloadUpdateMethods: [LiveMigrate, Evict]</code> — а в Cozystack
+      так по умолчанию — он живьём мигрирует каждую виртуалку на новый образ, а
+      те, что мигрировать не могут, перезапускает. Это происходит при включении
+      launcher, при возврате штатного и при каждом обновлении KubeVirt.
+      Проверьте заранее:
+      <pre><code>kubectl -n cozy-kubevirt get kubevirt kubevirt \
+  -o jsonpath='{.spec.workloadUpdateStrategy}'</code></pre>
+      Мы узнали это на себе: через 16 секунд после первой подмены KubeVirt
+      начал переносить весь кластер.
+    </div>
     <p>
       <strong>Рекомендуемый путь — компонент платформы.</strong> Подключите
-      четвёртый репозиторий и поставьте <code>kubevirt-paleo-launcher</code>; он
+      репозиторий platform и поставьте <code>kubevirt-paleo-launcher</code> — он
       привилегированный, поэтому нужно явное согласие оператора:
     </p>
     <pre><code>cozypkg tap oci://ghcr.io/tym83/paleocomputing/platform:v0.1.16
 cozypkg add paleocomputing.platform --allow-privileged</code></pre>
     <p>
       Он следит за версией KubeVirt в кластере и держит launcher в паре с ней.
-      Меняет ровно один аргумент — образ после <code>--launcher-image</code>, —
-      остальные аргументы и чужие настройки не трогает. На версии KubeVirt, под
-      которую образа нет, или при любом сомнении снимает свою правку: чужие
-      машины останавливаются, все прочие работают. При удалении правка тоже
-      снимается. Launcher несёт все чужие архитектуры каталога, поэтому
-      компонент один на всё семейство.
+      Меняет он ровно один аргумент — образ после <code>--launcher-image</code>,
+      JSON-патчем с двумя проверками перед заменой, — и не трогает остальные
+      аргументы и чужие настройки. На версии KubeVirt, под которую образа нет,
+      на узлах архитектуры, под которую образа нет, и при любом сомнении он свою
+      правку снимает: чужие машины останавливаются, все остальные работают.
+      Удаление компонента правку тоже снимает.
     </p>
     <p>
-      То же руками: образ переключается на ресурсе KubeVirt, через
-      <code>customizeComponents</code>. Правка заменяет весь список аргументов
-      <code>virt-controller</code>, поэтому возьмите текущий и поменяйте только
-      образ launcher:
+      <strong>Если автоперевод машин включён, компонент ждёт согласия.</strong>
+      Свою правку он не поставит и не поменяет, пока переезд не разрешён явно;
+      состояние у него тогда <code>NeedsConsent</code>, с событием на ресурсе
+      KubeVirt. Разрешить можно значением компонента
+      <code>allowWorkloadUpdate: true</code> или аннотацией на ресурсе KubeVirt:
     </p>
-    <pre><code>kubectl -n cozy-kubevirt get deploy virt-controller \
-  -o jsonpath='{.spec.template.spec.containers[0].args}'
-
-kubectl -n cozy-kubevirt patch kubevirt kubevirt --type=merge -p '
-spec:
-  customizeComponents:
-    patches:
-    - resourceType: Deployment
-      resourceName: virt-controller
-      type: json
-      patch: |-
-        [{"op": "replace",
-          "path": "/spec/template/spec/containers/0/args",
-          "value": ["--launcher-image",
-                    "ghcr.io/tym83/paleocomputing/virt-launcher:v1.8.4-risc5-v0.1.16",
-                    "--exporter-image", "quay.io/kubevirt/virt-exportserver:v1.8.4",
-                    "--port", "8443", "-v", "2"]}]'</code></pre>
+    <pre><code>kubectl -n cozy-kubevirt annotate kubevirt kubevirt \
+  paleocomputing.io/allow-workload-update=true
+kubectl -n cozy-kubevirt get cm kubevirt-paleo-launcher-status \
+  -o jsonpath='{.data.state} {.data.reason}'</code></pre>
     <p>
-      Откат — убрать правку: KubeVirt вернётся к штатному launcher.
+      Снятие правки согласия не ждёт: это безопасное направление. Чтобы сделать
+      то же руками, без компонента, положите ту же единственную замену в
+      <code>customizeComponents</code>; точный патч и откат — в
+      <a href="https://github.com/tym83/paleocomputing/blob/main/kubevirt/GUIDE.ru.md">инструкции для KubeVirt</a>.
+      Не заменяйте весь список аргументов: заодно замёрзнут образ экспорта, порт
+      и уровень журнала <code>virt-controller</code>.
     </p>
     <div class="note">
-      <strong>Это касается всех виртуальных машин кластера, а не только
-      Оберона.</strong> Образ — штатный <code>virt-launcher</code>, к которому
-      добавлены библиотеки libvirt и один эмулятор; обычные машины на нём
-      работают, загрузку Ubuntu мы проверили. Но после обновления Cozystack,
-      которое переводит KubeVirt на другую версию, правку надо снять первым же
-      делом — launcher от другой версии ломает все машины.
+      <strong>Это касается всех виртуалок кластера, а не только Оберона.</strong>
+      Образ — штатный <code>virt-launcher</code>, в который добавлены библиотеки
+      libvirt и один эмулятор; обычные машины на нём работают, и каждый релиз
+      проверяется загрузкой Ubuntu на нём. Выставленная руками правка обязана
+      следовать за обновлениями KubeVirt — launcher другой версии ломает все
+      машины. Компонент делает это за вас.
     </div>
   </section>
 

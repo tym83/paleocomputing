@@ -13,6 +13,13 @@
 #   версия есть в таблице  → запись есть и ставит образ launcher этой версии;
 #   версии нет в таблице   → записи нет: штатный launcher, чужие машины не
 #                            стартуют, все остальные работают;
+#   смена образа при включённом в KubeVirt автопереводе машин
+#   (workloadUpdateMethods не пуст) без явного согласия → записи не ставим и
+#   не меняем, состояние NeedsConsent: KubeVirt перевёз бы на новый launcher
+#   ВСЕ виртуалки кластера (находка 49). Согласие — ALLOW_WORKLOAD_UPDATE=true
+#   (значение чарта allowWorkloadUpdate) или аннотация
+#   paleocomputing.io/allow-workload-update=true на ресурсе KubeVirt. Снятие
+#   своей записи согласия не ждёт: оно возвращает штатный launcher;
 #   узел с виртуалками той архитектуры, под которую образа нет (строка
 #   `# arch:` таблицы), → записи нет: наш образ заменяет launcher ВСЕМ
 #                            виртуалкам, и на таком узле не запустилась бы ни
@@ -53,6 +60,7 @@ CTRL=virt-controller
 TABLE=${LAUNCHER_TABLE:-/etc/kubevirt-paleo-launcher/launchers.txt}
 STATUS=${STATUS_CONFIGMAP:-kubevirt-paleo-launcher-status}
 INTERVAL=${INTERVAL:-30}
+ALLOW_WORKLOAD_UPDATE=${ALLOW_WORKLOAD_UPDATE:-false}
 KUBECTL=${KUBECTL:-kubectl}
 # Для uninstall: своё развёртывание и выборка его подов.
 SELF_DEPLOYMENT=${SELF_DEPLOYMENT:-}
@@ -139,6 +147,9 @@ def tag_of:
   | ([$patches[] | select((is_ours | not) and hits_ctrl and touches_launcher)]
      + [(.spec.customizeComponents.flags.controller // {}) | keys[]
         | select(ascii_downcase | test("launcher"))]) as $foreign
+  | ((.spec.workloadUpdateStrategy.workloadUpdateMethods // []) | map(tostring)) as $wum
+  | ($allow or ($wum | length) == 0
+     or ((.metadata.annotations // {})["paleocomputing.io/allow-workload-update"] == "true")) as $consent
   | (.status // {}) as $st
   | $st.observedKubeVirtVersion as $obs
   | $st.targetKubeVirtVersion as $tgt
@@ -185,12 +196,20 @@ def tag_of:
               else {action: "none", state: "Rolling", reason: "правка стоит, virt-controller ещё не перекатился"} end)
          else
            ($patches | map(is_ours) | index(true)) as $i
-           | {action: "write", state: "Applying", reason: "ставлю launcher для KubeVirt \($obs)",
-              patches: (if $i == null then $patches + [entry($img)]
-                        else [$patches | to_entries[]
-                              | if (.value | is_ours)
-                                then (if .key == $i then entry($img) else empty end)
-                                else .value end] end)}
+           | ((($mine | length) == 0) or (($mine[0] | ops[2].value) != $img)) as $switch
+           | if $switch and ($consent | not) then
+               {action: "none", state: "NeedsConsent",
+                reason: ("смена launcher перевезёт все виртуалки кластера (workloadUpdateMethods: \($wum | join(", "))) — "
+                         + "разрешите явно: allowWorkloadUpdate: true в значениях компонента или аннотация "
+                         + "paleocomputing.io/allow-workload-update=true на ресурсе KubeVirt, либо очистите workloadUpdateMethods")}
+             else
+               {action: "write", state: "Applying", reason: "ставлю launcher для KubeVirt \($obs)",
+                patches: (if $i == null then $patches + [entry($img)]
+                          else [$patches | to_entries[]
+                                | if (.value | is_ours)
+                                  then (if .key == $i then entry($img) else empty end)
+                                  else .value end] end)}
+             end
          end
        | .image = $img
      end)
@@ -199,7 +218,8 @@ def tag_of:
 '
 
 decide() {  # kv vc node_archs mode
-  printf '%s' "$1" | jq -c --argjson vc "$2" --argjson node_archs "$3" --arg mode "$4" \
+  case "$ALLOW_WORKLOAD_UPDATE" in true|1|yes) allow=true ;; *) allow=false ;; esac
+  printf '%s' "$1" | jq -c --argjson vc "$2" --argjson node_archs "$3" --arg mode "$4" --argjson allow "$allow" \
     --rawfile table "$TABLE" "$DECIDE"
 }
 
