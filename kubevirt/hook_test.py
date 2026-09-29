@@ -198,6 +198,29 @@ def second_machine(src, tmp):
            'общая часть (qemu, без ACPI) та же, что у Оберона')
 
 
+def arm64(src, tmp):
+    """Описание, какое KubeVirt даёт виртуалке на узле arm64."""
+    print('\nУзел arm64: KubeVirt объявляет прошивку UEFI')
+    x = src.replace('<type arch="x86_64" machine="q35">hvm</type>',
+                    '<type arch="aarch64" machine="virt">hvm</type>\n'
+                    '    <loader readonly="yes" secure="no" type="pflash">/usr/share/AAVMF/AAVMF_CODE.fd</loader>\n'
+                    '    <nvram template="/usr/share/AAVMF/AAVMF_VARS.fd">/var/run/kubevirt-private/libvirt/qemu/nvram/vm_VARS.fd</nvram>')
+    x = x.replace('<os>', '<os firmware="efi">')
+    src_root = ET.fromstring(x)
+    report(src_root.find('os/loader') is not None and src_root.find('os/nvram') is not None
+           and src_root.find('os').get('firmware') == 'efi',
+           'мутация: во входе действительно загрузчик, NVRAM и firmware=efi')
+    preset = yaml.safe_load(PRESET.read_text(encoding='utf-8'))
+    root, _, err = run(x, with_payload(preset, tmp))
+    report(root is not None, 'перехватчик отработал' + (f': {err.strip()}' if root is None else ''))
+    if root is None:
+        return
+    o = root.find('os')
+    report(o.find('loader') is None and o.find('nvram') is None and 'firmware' not in o.attrib,
+           'прошивка UEFI убрана: иначе -machine oberon,pflash0=… и QEMU выходит')
+    report(o.find('type').get('arch') == 'risc5', 'архитектура из паспорта и здесь')
+
+
 def must_fail(src, text, **kw):
     root, out, err = run(src, **kw)
     report(root is None and not out.strip() and err.strip(),
@@ -258,6 +281,8 @@ def main():
         oberon(src, pathlib.Path(a))
         second_machine(src, pathlib.Path(b))
         negatives(src, pathlib.Path(c))
+        with tempfile.TemporaryDirectory() as d:
+            arm64(src, pathlib.Path(d))
     print(f'\nИтог: успешно {ok}, провалено {bad}')
     return 1 if bad else 0
 

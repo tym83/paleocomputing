@@ -16,7 +16,7 @@
 | | |
 |---|---|
 | KubeVirt | версия из [`versions.txt`](versions.txt): **v1.8.4** или **v1.9.0**. Образ launcher обязан совпадать с версией кластера в точности (находка 44) |
-| Узлы | **linux/amd64** — опубликованные образы launcher собраны только под amd64. KVM не нужен: чужая архитектура всё равно исполняется программно |
+| Узлы | **linux/amd64** или **linux/arm64** — опубликованные образы собраны под обе начиная с v0.1.16, v0.1.15 и раньше — только amd64 ([`platforms.txt`](platforms.txt)); на arm64 KubeVirt объявляет прошивку UEFI, её убирает перехватчик (находка 71). KVM не нужен: чужая архитектура всё равно исполняется программно |
 | Инструменты | `kubectl`, `helm` 3, `jq`, `git`, `python3`; `virtctl` той же версии, что KubeVirt (подресурс VNC версионирован) |
 | Хранилище | любой StorageClass с `ReadWriteOnce` |
 
@@ -206,7 +206,7 @@ for s in tools cluster kubevirt launcher machine screen; do kubevirt/e2e.sh $s |
 kubevirt/e2e.sh down
 ```
 
-Только на хосте amd64 — по той же причине, что выше.
+Хосты amd64 и arm64; CI гоняет его на родных Linux-раннерах обеих.
 
 ## Другая версия KubeVirt или своя сборка
 
@@ -219,8 +219,8 @@ kubevirt/build.sh --kubevirt v1.9.0 registry.example.com/virt-launcher:v1.9.0-pa
 kubevirt/check_image.sh registry.example.com/virt-launcher:v1.9.0-paleo
 ```
 
-`--platform linux/arm64` передаётся в `docker build` для узлов arm64; такое
-сочетание не проверялось.
+`--platform linux/arm64` передаётся в `docker build`; CI собирает и гоняет
+обе архитектуры на родных раннерах.
 
 ## Как это устроено
 

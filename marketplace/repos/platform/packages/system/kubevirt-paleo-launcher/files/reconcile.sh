@@ -13,6 +13,10 @@
 #   версия есть в таблице  → запись есть и ставит образ launcher этой версии;
 #   версии нет в таблице   → записи нет: штатный launcher, чужие машины не
 #                            стартуют, все остальные работают;
+#   узел с виртуалками той архитектуры, под которую образа нет (строка
+#   `# arch:` таблицы), → записи нет: наш образ заменяет launcher ВСЕМ
+#                            виртуалкам, и на таком узле не запустилась бы ни
+#                            одна. Без строки `# arch:` узлы не сверяются;
 #   хоть что-то сомнительно → записи нет (штатный launcher — безопасная сторона);
 #   не удалось прочитать   → ничего не пишется вовсе.
 #
@@ -74,8 +78,9 @@ k() {
 
 # ── Решение ─────────────────────────────────────────────────────────────────
 #
-# Вход: ресурс KubeVirt (stdin), развёртывание virt-controller ($vc), таблица
-# ($table), режим ($mode: reconcile | uninstall).
+# Вход: ресурс KubeVirt (stdin), развёртывание virt-controller ($vc), узлы,
+# где KubeVirt запускает виртуалки ($nodes), таблица ($table), режим
+# ($mode: reconcile | uninstall).
 # Выход: {action: write|none, state, reason, version, image, patches, rv}.
 DECIDE='
 def shape: [
@@ -119,6 +124,10 @@ def tag_of:
         | map(select(length > 0))) as $rows
 | ($rows | all(length == 2 and (.[0] | semver) and (.[1] | test("^[^ ]+:[^ ]+$")))) as $table_ok
 | ($rows | map({key: .[0], value: .[1]}) | from_entries) as $tbl
+| ($table | split("\n") | map(select(test("^# arch:"))) | first
+          | if . == null then null else sub("^# arch:"; "") | split(" ") | map(select(length > 0)) end) as $archs
+| ([$nodes.items[]? | .metadata.labels["kubernetes.io/arch"] // "неизвестная"] | unique) as $node_archs
+| (if $archs == null then [] else $node_archs - $archs end) as $alien
 | .metadata.resourceVersion as $rv
 | .spec.customizeComponents.patches as $raw
 | if $raw != null and ($raw | type) != "array" then
@@ -156,6 +165,8 @@ def tag_of:
       else {action: "none", state: $state, reason: $reason} end;
     (if $mode == "uninstall" then away("Removed"; "компонент удаляется")
      elif ($doubts | length) > 0 then away("Doubt"; $doubts | join("; "))
+     elif ($alien | length) > 0 then
+       away("Unsupported"; "узлы с архитектурой \($alien | join(", ")): образ launcher собран только под \($archs | join(", ")) — штатный launcher")
      elif $tbl[$obs] == null then
        away("Unsupported"; "KubeVirt \($obs) нет в таблице этого выпуска (\($tbl | keys | join(", "))) — штатный launcher")
      elif ($foreign | length) > 0 then
@@ -187,8 +198,16 @@ def tag_of:
   end
 '
 
-decide() {  # kv vc mode
-  printf '%s' "$1" | jq -c --argjson vc "$2" --arg mode "$3" --rawfile table "$TABLE" "$DECIDE"
+decide() {  # kv vc nodes mode
+  printf '%s' "$1" | jq -c --argjson vc "$2" --argjson nodes "$3" --arg mode "$4" \
+    --rawfile table "$TABLE" "$DECIDE"
+}
+
+# Узлы, на которых KubeVirt запускает виртуалки (их метит virt-handler). Нужны,
+# только если таблица говорит, под какие процессоры собран образ.
+nodes_json() {
+  grep -q '^# arch:' "$TABLE" 2>/dev/null || { echo '{"items":[]}'; return 0; }
+  "$KUBECTL" get nodes -l kubevirt.io/schedulable=true -o json
 }
 
 # Запись с предусловием на resourceVersion: конфликт — не ошибка, а повод
@@ -246,7 +265,13 @@ once() {  # mode
     [ "$mode" = uninstall ] || { log_once "Unknown: $NS/$CTRL не прочитан — ничего не пишу"; return 1; }
     vc='{}'
   fi
-  d=$(decide "$kv" "$vc" "$mode") || { log_once "Unknown: решение не вычислено (ответ API не разобран) — ничего не пишу"; return 1; }
+  # При удалении узлы не нужны: своя запись убирается на любом кластере.
+  if [ "$mode" = uninstall ]; then
+    nodes='{"items":[]}'
+  elif ! nodes=$(nodes_json); then
+    log_once "Unknown: узлы не прочитаны — ничего не пишу"; return 1
+  fi
+  d=$(decide "$kv" "$vc" "$nodes" "$mode") || { log_once "Unknown: решение не вычислено (ответ API не разобран) — ничего не пишу"; return 1; }
   state=$(printf '%s' "$d" | jq -r .state)
   reason=$(printf '%s' "$d" | jq -r .reason)
   if [ "$(printf '%s' "$d" | jq -r .action)" = write ]; then

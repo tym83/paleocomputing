@@ -87,7 +87,8 @@ def record(kind, body):
     with open(S / "writes.log", "a") as f:
         f.write(json.dumps({"kind": kind, "body": body}) + "\n")
 
-FILES = {"kubevirt": "kubevirt.json", "deployment": "virt-controller.json", "configmap": "status.json"}
+FILES = {"kubevirt": "kubevirt.json", "deployment": "virt-controller.json", "configmap": "status.json",
+         "nodes": "nodes.json"}
 verb = argv[0]
 if verb == "get" and argv[1] in FILES:
     if (S / ("fail-get-" + argv[1])).exists():
@@ -152,6 +153,17 @@ def kubevirt(version="v1.8.4", target=None, patches=None, status=True):
     return kv
 
 
+def nodes(*archs):
+    """Узлы, помеченные virt-handler; None вместо архитектуры — узел без метки."""
+    items = []
+    for i, a in enumerate(archs):
+        labels = {"kubevirt.io/schedulable": "true"}
+        if a is not None:
+            labels["kubernetes.io/arch"] = a
+        items.append({"metadata": {"name": f"node{i}", "labels": labels}})
+    return {"apiVersion": "v1", "kind": "List", "items": items}
+
+
 def controller(version="v1.8.4", launcher=None, args0="--launcher-image", rolled=True):
     launcher = launcher or f"quay.io/kubevirt/virt-launcher:{version}"
     st = {"observedGeneration": 5, "replicas": 2, "updatedReplicas": 2, "readyReplicas": 2} if rolled \
@@ -166,7 +178,8 @@ def controller(version="v1.8.4", launcher=None, args0="--launcher-image", rolled
 
 
 class Cluster:
-    def __init__(self, root: pathlib.Path, kv: dict | None, vc: dict | None, status: dict | None = None):
+    def __init__(self, root: pathlib.Path, kv: dict | None, vc: dict | None, status: dict | None = None,
+                 node_list: dict | None = None):
         self.s = root
         root.mkdir(parents=True)
         self.kubectl = root / "kubectl"
@@ -176,6 +189,7 @@ class Cluster:
             self.put("kubevirt.json", kv)
         if vc is not None:
             self.put("virt-controller.json", vc)
+        self.put("nodes.json", node_list or nodes("amd64", "amd64"))
         self.put("status.json", status or {"metadata": {"name": "kubevirt-paleo-launcher-status",
                                                         "resourceVersion": "1"}})
 
@@ -207,6 +221,9 @@ class Cluster:
         vc = self.get("virt-controller.json")
         vc["spec"]["template"]["spec"]["containers"][0]["args"][1] = img
         self.put("virt-controller.json", vc)
+
+    def calls(self) -> list:
+        return [json.loads(l) for l in (self.s / "calls.log").read_text().splitlines()]
 
     def state(self):
         return self.get("status.json").get("data", {}).get("state")
@@ -352,6 +369,32 @@ def main() -> None:
         report(c.rc == 0 and c.patches() is None, "удаление работает и без virt-controller, и без status")
         c = cluster(None).run("uninstall")
         report(c.rc == 0 and not c.writes(), "удаление без ресурса KubeVirt: успех, убирать нечего")
+
+        # 11. Архитектура узлов: образ заменяет launcher всем виртуалкам.
+        c = cluster(kubevirt(patches=None), node_list=nodes("arm64", "arm64")).run()
+        report(c.patches() == [ours(IMG184)] and c.state() == "Applying",
+               "узлы arm64, образ собран под arm64: правка ставится")
+        c = cluster(kubevirt(patches=[HANDLER, ours(IMG184)]), node_list=nodes("amd64", "s390x")).run()
+        report(c.patches() == [HANDLER] and c.state() == "Unsupported" and "s390x" in c.out,
+               "узел s390x, под который образа нет: своя правка снята, штатный launcher")
+        c = cluster(kubevirt(patches=None), node_list=nodes("amd64", None)).run()
+        report(not c.writes("kubevirt") and c.state() == "Unsupported",
+               "узел без метки архитектуры: правка не ставится")
+        c = cluster(kubevirt(patches=None), node_list=nodes()).run()
+        report(c.patches() == [ours(IMG184)], "ни одного узла с виртуалками: сверять нечего, правка ставится")
+        no_arch = tmp / "no-arch-table.txt"
+        no_arch.write_text("".join(l + "\n" for l in TABLE.read_text().splitlines() if not l.startswith("# arch:")))
+        c = cluster(kubevirt(patches=None), node_list=nodes("s390x")).run(table=no_arch)
+        report(c.patches() == [ours(IMG184)] and not any("nodes" in a for a in c.calls()),
+               "таблица без строки arch (ручная, прежняя): узлы не читаются и не сверяются")
+        c = cluster(kubevirt(patches=[ours(IMG184)]))
+        (c.s / "fail-get-nodes").write_text("")
+        c.run()
+        report(c.rc != 0 and not c.writes(), "узлы не прочитаны: ни одной записи")
+        c = cluster(kubevirt(patches=[HANDLER, ours(IMG184)]))
+        (c.s / "fail-get-nodes").write_text("")
+        c.run("uninstall")
+        report(c.rc == 0 and c.patches() == [HANDLER], "удаление узлы не читает и работает без них")
 
         # Отрицательный контроль: подделка обязана ловить запись без предусловия.
         c = cluster(kubevirt(patches=None))

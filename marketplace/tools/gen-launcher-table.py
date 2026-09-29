@@ -22,12 +22,14 @@ import sys
 
 MARKET = pathlib.Path(__file__).resolve().parent.parent
 VERSIONS = MARKET.parent / "kubevirt" / "versions.txt"
+PLATFORMS = MARKET.parent / "kubevirt" / "platforms.txt"
 TABLE = MARKET / "repos/platform/packages/system/kubevirt-paleo-launcher/files/launchers.txt"
 REGISTRY = "ghcr.io/tym83/paleocomputing"
 
 SEMVER = re.compile(r"^v\d+\.\d+\.\d+$")
 RELEASE = re.compile(r"^(v\d+\.\d+\.\d+|dev)$")
 REGISTRY_RE = re.compile(r"^[a-z0-9.-]+(:\d+)?(/[a-z0-9._-]+)+$")
+ARCH = re.compile(r"^[a-z0-9_]+$")
 
 
 def kubevirt_versions(path: pathlib.Path = VERSIONS) -> list[str]:
@@ -44,7 +46,22 @@ def kubevirt_versions(path: pathlib.Path = VERSIONS) -> list[str]:
     return out
 
 
-def render(release: str, registry: str, versions: list[str]) -> str:
+def architectures(path: pathlib.Path = PLATFORMS) -> list[str]:
+    """Под какие процессоры узлов собран образ — первая колонка platforms.txt."""
+    out = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip() or line.startswith("#"):
+            continue
+        a = line.split()[0]
+        if not ARCH.match(a):
+            sys.exit(f"{path}: архитектура {a!r} — не имя вида amd64")
+        out.append(a)
+    if not out:
+        sys.exit(f"{path}: ни одной архитектуры")
+    return out
+
+
+def render(release: str, registry: str, versions: list[str], archs: list[str]) -> str:
     if not RELEASE.match(release):
         sys.exit(f"выпуск {release!r} — нужен vX.Y.Z или dev")
     if not REGISTRY_RE.match(registry):
@@ -55,6 +72,10 @@ def render(release: str, registry: str, versions: list[str]) -> str:
         "# под тег выпуска.",
         f"# release: {release}",
         f"# registry: {registry}",
+        f"# arch: {' '.join(archs)}",
+        "#",
+        "# arch — процессоры узлов, под которые собран образ (kubevirt/platforms.txt).",
+        "# На кластере с узлом другой архитектуры компонент launcher не трогает.",
         "#",
         "# версия KubeVirt   образ virt-launcher (семейство paleo, тот же дайджест, что -risc5-)",
     ]
@@ -81,13 +102,13 @@ def main() -> None:
         have = out.read_text(encoding="utf-8") if out.is_file() else ""
         release = a.release or header(have, "release") or "?"
         registry = a.registry or header(have, "registry") or "?"
-        want = render(release, registry, kubevirt_versions())
+        want = render(release, registry, kubevirt_versions(), architectures())
         if have != want:
-            sys.exit(f"{out} расходится с kubevirt/versions.txt — make gen")
+            sys.exit(f"{out} расходится с kubevirt/versions.txt или platforms.txt — make gen")
         print(f"таблица совпадает с kubevirt/versions.txt (выпуск {release})")
         return
 
-    text = render(a.release or "dev", a.registry or REGISTRY, kubevirt_versions())
+    text = render(a.release or "dev", a.registry or REGISTRY, kubevirt_versions(), architectures())
     out.write_text(text, encoding="utf-8")
     print(f"записано {out}")
 

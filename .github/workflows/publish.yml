@@ -70,15 +70,27 @@ jobs:
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "собираем $ref как $tag"
 
+  # Каждый образ — под каждую архитектуру узла из kubevirt/platforms.txt, на
+  # родном раннере, под тегом `<выпуск>-<арх.>`; images-index склеивает их в
+  # один индекс под тегом выпуска. oberon-run берёт задача наполнения тома
+  # машины: без сборки под arm64 машина на таком узле не получала ни ПЗУ, ни
+  # диска (находка 71).
   images:
-    needs: source
-    runs-on: ubuntu-latest
+    needs: [source, launcher-versions]
+    name: images (${{ matrix.image.name }}, ${{ matrix.platform.arch }})
+    # host-build: образ, у которого под архитектуру узла собирается только
+    # тонкий последний слой, а тяжёлая сборка идёт на процессоре сборщика
+    # (oberon-web: emsdk есть только под amd64). Такой образ собирается на
+    # amd64 под все архитектуры, последний слой — через эмуляцию.
+    runs-on: ${{ matrix.image.host-build && 'ubuntu-latest' || matrix.platform.runner }}
     strategy:
       fail-fast: false
       matrix:
-        include:
+        platform: ${{ fromJSON(needs.launcher-versions.outputs.platforms) }}
+        image:
           - name: oberon-web
             file: deploy/Containerfile.web
+            host-build: true
           - name: oberon-lab
             file: deploy/Containerfile
           # Среда языка: компилятор Вирта без операционной системы. Это то,
@@ -89,6 +101,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.source.outputs.ref }}
+
+      - uses: docker/setup-qemu-action@v3
+        if: matrix.image.host-build
 
       - uses: docker/setup-buildx-action@v3
 
@@ -104,8 +119,8 @@ jobs:
         run: |
           tag="${{ needs.source.outputs.tag }}"
           owner=$(echo "${{ github.repository_owner }}" | tr 'A-Z' 'a-z')
-          echo "image=${{ env.REGISTRY }}/$owner/paleocomputing/${{ matrix.name }}" >> "$GITHUB_OUTPUT"
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "image=${{ env.REGISTRY }}/$owner/paleocomputing/${{ matrix.image.name }}" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag-${{ matrix.platform.arch }}" >> "$GITHUB_OUTPUT"
 
       # Контекст сборки — impl/: оба описания копируют rtl/, web/, tools/ и
       # прочее относительно него.
@@ -113,13 +128,14 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: impl
-          file: impl/${{ matrix.file }}
+          file: impl/${{ matrix.image.file }}
           push: true
           tags: ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}
+          platforms: linux/${{ matrix.platform.arch }}
           provenance: true
           sbom: true
-          cache-from: type=gha,scope=${{ matrix.name }}
-          cache-to: type=gha,scope=${{ matrix.name }},mode=max
+          cache-from: type=gha,scope=${{ matrix.image.name }}-${{ matrix.platform.arch }}
+          cache-to: type=gha,scope=${{ matrix.image.name }}-${{ matrix.platform.arch }},mode=max
 
       # Подписывается дайджест, а не тег: тег можно переставить на другой
       # образ, дайджест — нет.
@@ -145,27 +161,57 @@ jobs:
         run: |
           set -euo pipefail
           ref="${{ steps.meta.outputs.image }}@${{ steps.build.outputs.digest }}"
-          case "${{ matrix.name }}" in
+          case "${{ matrix.image.name }}" in
             oberon-web) want="risc5.wasm risc5.js risc5-chk.wasm risc5-chk.js bench_bounds.json oberon.dsk prom_sd.mem lab.html checks.html"
                         dir=/usr/share/nginx/html ;;
             oberon-run) want="prom.bin oberon.dsk"
                         dir=/opt/oberon/payload ;;
             *)          want=""; dir="" ;;
           esac
-          [ -n "$want" ] || { echo "для ${{ matrix.name }} проверки содержимого нет"; exit 0; }
+          [ -n "$want" ] || { echo "для ${{ matrix.image.name }} проверки содержимого нет"; exit 0; }
           for f in $want; do
-            docker run --rm --entrypoint sh "$ref" -c "test -s $dir/$f" \
+            # --platform: образ, собранный на amd64 под arm64 (host-build),
+            # без него не запустился бы вовсе — и отказ docker run выглядел
+            # бы как «файла нет».
+            docker run --rm --platform linux/${{ matrix.platform.arch }} --entrypoint sh "$ref" -c "test -s $dir/$f" \
               || { echo "❌ в образе нет $dir/$f"; exit 1; }
             echo "  ✅ $f"
           done
 
       - name: Итог
         run: |
-          echo "### ${{ matrix.name }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "### ${{ matrix.image.name }} ${{ matrix.platform.arch }}" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
           echo "${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}" >> "$GITHUB_STEP_SUMMARY"
           echo "${{ steps.build.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+  # Сборки всех архитектур образа — в один индекс под тегом выпуска: его
+  # берут каталог и кластеры. Подписывается сам индекс.
+  images-index:
+    needs: [source, launcher-versions, images]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        name: [oberon-web, oberon-lab, oberon-run]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.source.outputs.ref }}
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: sigstore/cosign-installer@v3
+      - name: Индекс
+        run: |
+          set -euo pipefail
+          owner=$(echo "${{ github.repository_owner }}" | tr 'A-Z' 'a-z')
+          tools/image-index.sh "${{ env.REGISTRY }}/$owner/paleocomputing/${{ matrix.name }}" \
+            "${{ needs.source.outputs.tag }}" "${{ needs.source.outputs.tag }}"
 
   # ── Образ virt-launcher с чужими машинами ─────────────────────────────────
   #
@@ -181,29 +227,43 @@ jobs:
   # которое не меняется от того, сколько машин в образе (его берёт компонент
   # платформы, находка 65), и прежний `<kubevirt>-risc5-<выпуск>` — чтобы не
   # сломать тех, у кого он уже записан в ресурсе KubeVirt.
+  #
+  # Образ многоархитектурный (kubevirt/platforms.txt, находка 71): каждая
+  # архитектура собирается на родном раннере под своим тегом
+  # `<kubevirt>-paleo-<выпуск>-<арх.>`, а launcher-index склеивает их в один
+  # индекс под обоими именами выше. Узел сам берёт из индекса свою сборку.
   launcher-versions:
     needs: source
     runs-on: ubuntu-latest
     outputs:
       list: ${{ steps.list.outputs.list }}
+      versions: ${{ steps.list.outputs.versions }}
+      platforms: ${{ steps.list.outputs.platforms }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.source.outputs.ref }}
       - id: list
         run: |
-          list=$(awk '!/^#/ && NF { print $1 }' kubevirt/versions.txt | jq -Rnc '[inputs]')
-          [ "$list" != "[]" ] || { echo "в kubevirt/versions.txt нет версий"; exit 1; }
+          versions=$(awk '!/^#/ && NF { print $1 }' kubevirt/versions.txt | jq -Rnc '[inputs]')
+          platforms=$(awk '!/^#/ && NF { print $1, $2 }' kubevirt/platforms.txt \
+            | jq -Rnc '[inputs | split(" ") | {arch: .[0], runner: .[1]}]')
+          [ "$versions" != "[]" ] || { echo "в kubevirt/versions.txt нет версий"; exit 1; }
+          [ "$platforms" != "[]" ] || { echo "в kubevirt/platforms.txt нет архитектур"; exit 1; }
+          list=$(jq -nc --argjson v "$versions" --argjson p "$platforms" '[$v[] as $k | $p[] | . + {kubevirt: $k}]')
           echo "list=$list" >> "$GITHUB_OUTPUT"
+          echo "versions=$versions" >> "$GITHUB_OUTPUT"
+          echo "platforms=$platforms" >> "$GITHUB_OUTPUT"
 
   launcher:
     needs: [source, launcher-versions]
-    runs-on: ubuntu-latest
-    timeout-minutes: 90
+    name: launcher (${{ matrix.kubevirt }}, ${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 150
     strategy:
       fail-fast: false
       matrix:
-        kubevirt: ${{ fromJSON(needs.launcher-versions.outputs.list) }}
+        include: ${{ fromJSON(needs.launcher-versions.outputs.list) }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -235,18 +295,17 @@ jobs:
           kv="${{ matrix.kubevirt }}"
           owner=$(echo "${{ github.repository_owner }}" | tr 'A-Z' 'a-z')
           echo "image=${{ env.REGISTRY }}/$owner/paleocomputing/virt-launcher" >> "$GITHUB_OUTPUT"
-          echo "tag=$kv-risc5-$tag" >> "$GITHUB_OUTPUT"
-          echo "family=$kv-paleo-$tag" >> "$GITHUB_OUTPUT"
+          echo "tag=$kv-paleo-$tag-${{ matrix.arch }}" >> "$GITHUB_OUTPUT"
 
       - id: build
         run: |
           set -euo pipefail
           kubevirt/build.sh --kubevirt "${{ matrix.kubevirt }}" \
             "${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}" \
-            -t "${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.family }}" \
+            --platform linux/${{ matrix.arch }} \
             --push --provenance=true --sbom=true \
-            --cache-from type=gha,scope=launcher-${{ matrix.kubevirt }} \
-            --cache-to type=gha,scope=launcher-${{ matrix.kubevirt }},mode=max \
+            --cache-from type=gha,scope=launcher-${{ matrix.kubevirt }}-${{ matrix.arch }} \
+            --cache-to type=gha,scope=launcher-${{ matrix.kubevirt }}-${{ matrix.arch }},mode=max \
             --metadata-file /tmp/meta.json
           echo "digest=$(jq -r '."containerimage.digest"' /tmp/meta.json)" >> "$GITHUB_OUTPUT"
 
@@ -259,12 +318,46 @@ jobs:
 
       - name: Итог
         run: |
-          echo "### virt-launcher ${{ matrix.kubevirt }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "### virt-launcher ${{ matrix.kubevirt }} ${{ matrix.arch }}" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
-          echo "${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.family }}" >> "$GITHUB_STEP_SUMMARY"
           echo "${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}" >> "$GITHUB_STEP_SUMMARY"
           echo "${{ steps.build.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+  # Сборки всех архитектур одной версии KubeVirt — в один индекс под именами,
+  # которые берут кластеры. Индекс подписывается отдельно: cosign verify по
+  # тегу проверяет именно его.
+  launcher-index:
+    needs: [source, launcher-versions, launcher]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        kubevirt: ${{ fromJSON(needs.launcher-versions.outputs.versions) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.source.outputs.ref }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: sigstore/cosign-installer@v3
+
+      - name: Индекс
+        run: |
+          set -euo pipefail
+          tag="${{ needs.source.outputs.tag }}"
+          kv="${{ matrix.kubevirt }}"
+          owner=$(echo "${{ github.repository_owner }}" | tr 'A-Z' 'a-z')
+          # Прежнее имя -risc5- — тем же индексом, для тех, у кого оно записано.
+          tools/image-index.sh "${{ env.REGISTRY }}/$owner/paleocomputing/virt-launcher" \
+            "$kv-paleo-$tag" "$kv-paleo-$tag" "$kv-risc5-$tag"
 
   # ── Три репозитория каталога как OCI-артефакты ────────────────────────────
   #
@@ -274,7 +367,7 @@ jobs:
   #
   # Оба инструмента ставятся в раннер и живут только на время сборки.
   catalog:
-    needs: [source, launcher]
+    needs: [source, launcher-index, images-index]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
