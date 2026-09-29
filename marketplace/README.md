@@ -33,7 +33,7 @@ tools/          генератор описаний каталога и пров
 Подключение идёт штатным путём:
 
 ```
-cozypkg tap oci://ghcr.io/tym83/paleocomputing/machines:v0.1.15   # подключить репозиторий
+cozypkg tap oci://ghcr.io/tym83/paleocomputing/machines:v0.1.16   # подключить репозиторий
 cozypkg add <пакет>                                            # поставить из него
 ```
 
