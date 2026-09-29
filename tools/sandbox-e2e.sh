@@ -106,7 +106,7 @@ a exec "$pod" -c compute -- sh -c 'test -w /payload/oberon.dsk' \
   && say ok "диск доступен эмулятору на запись" || say no "диск только для чтения"
 # shellcheck disable=SC2016
 rw=$(a exec "$pod" -c compute -- sh -c '
-  pid=$(pgrep -f "qemu-system-" | head -1)
+  pid=$(ps -eo pid,args | awk "/[q]emu-system-/ { print \$1; exit }")
   for fd in /proc/$pid/fd/*; do
     [ "$(readlink "$fd")" = /payload/oberon.dsk ] || continue
     awk "/^flags:/ { print (int(substr(\$2, length(\$2)) ) % 4 == 2) ? \"rw\" : \"ro\" }" /proc/$pid/fdinfo/${fd##*/}
