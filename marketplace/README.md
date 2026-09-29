@@ -34,7 +34,7 @@ tools/          генератор описаний каталога и пров
 
 ```
 cozypkg tap oci://ghcr.io/tym83/paleocomputing/machines:v0.1.16   # подключить репозиторий
-cozypkg add <пакет>                                            # поставить из него
+cozypkg add paleocomputing.machines                            # поставить из него (без add приложений в каталоге тенанта нет)
 ```
 
 Можно и по короткому имени через метаиндекс:

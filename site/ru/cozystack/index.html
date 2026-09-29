@@ -65,7 +65,10 @@
       из <a href="https://github.com/cozystack/cozystack">репозитория Cozystack</a>:
     </p>
     <pre><code>cozypkg tap oci://ghcr.io/tym83/paleocomputing/machines:v0.1.16
-cozypkg tap oci://ghcr.io/tym83/paleocomputing/languages:v0.1.16</code></pre>
+cozypkg tap oci://ghcr.io/tym83/paleocomputing/languages:v0.1.16
+# tap подключает репозиторий, add ставит из него приложения
+cozypkg add paleocomputing.machines
+cozypkg add paleocomputing.languages</code></pre>
     <p>
       Проверяйте, что источник прочитал все компоненты, а не только что он готов:
     </p>
