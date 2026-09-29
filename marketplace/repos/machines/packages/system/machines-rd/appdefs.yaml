@@ -17,7 +17,7 @@ apps:
       singular: Oberon Lab
       plural: Oberon Labs
       category: Forgotten Systems
-      description: Оберон на настоящем Verilog Вирта — девять лабораторных и методичка
+      description: Оберон на настоящем Verilog Вирта — тринадцать лабораторных и методичка
       icon: logos/oberon-lab.svg
       tags: [education, emulation, retrocomputing, machine]
       keysOrder: [["apiVersion"], ["kind"], ["metadata"], ["metadata", "name"], ["spec", "web"], ["spec", "replicas"], ["spec", "host"], ["spec", "runner"], ["spec", "task"], ["spec", "patch"]]

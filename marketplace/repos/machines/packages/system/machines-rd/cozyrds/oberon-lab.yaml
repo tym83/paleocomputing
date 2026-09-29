@@ -23,7 +23,7 @@ spec:
     singular: Oberon Lab
     plural: Oberon Labs
     category: Forgotten Systems
-    description: Оберон на настоящем Verilog Вирта — девять лабораторных и методичка
+    description: Оберон на настоящем Verilog Вирта — тринадцать лабораторных и методичка
     tags:
     - education
     - emulation
