@@ -16,10 +16,10 @@ apps:
     dashboard:
       singular: Oberon Lab
       plural: Oberon Labs
-      category: Forgotten Systems
-      description: Оберон на настоящем Verilog Вирта — девять лабораторных и методичка
+      category: Paleocomputing
+      description: Oberon on Wirth's own Verilog, in the browser — thirteen labs and a handbook
       icon: logos/oberon-lab.svg
-      tags: [education, emulation, retrocomputing, machine]
+      tags: [paleocomputing, education, emulation, retrocomputing, machine]
       keysOrder: [["apiVersion"], ["kind"], ["metadata"], ["metadata", "name"], ["spec", "web"], ["spec", "replicas"], ["spec", "host"], ["spec", "runner"], ["spec", "task"], ["spec", "patch"]]
 
   - component: handbook
@@ -31,10 +31,10 @@ apps:
     dashboard:
       singular: Handbook
       plural: Handbooks
-      category: Forgotten Systems
-      description: Документация, которая разворачивается рядом с приложением
+      category: Paleocomputing
+      description: Documentation served next to the application it documents
       icon: logos/handbook.svg
-      tags: [documentation, education]
+      tags: [paleocomputing, documentation, education]
       keysOrder: [["apiVersion"], ["kind"], ["metadata"], ["metadata", "name"], ["spec", "title"], ["spec", "pages"], ["spec", "image"], ["spec", "host"]]
 
   - component: workbench
@@ -46,10 +46,10 @@ apps:
     dashboard:
       singular: Workbench
       plural: Workbenches
-      category: Forgotten Systems
-      description: Готовое окружение — машина и её методичка ставятся одной вещью
+      category: Paleocomputing
+      description: The Wirth machine, its labs and its handbook installed as one thing
       icon: logos/workbench.svg
-      tags: [environment, meta, education]
+      tags: [paleocomputing, environment, meta, education]
       weight: 10
       keysOrder: [["apiVersion"], ["kind"], ["metadata"], ["metadata", "name"], ["spec", "machine"], ["spec", "manual"], ["spec", "host"], ["spec", "manualHost"]]
 
@@ -65,9 +65,9 @@ apps:
     dashboard:
       singular: Oberon VM
       plural: Oberon VMs
-      category: Forgotten Systems
-      description: Машина Вирта RISC5 как виртуалка — архитектура, подключённая снаружи
+      category: Paleocomputing
+      description: Wirth's RISC5 as a real virtual machine, an architecture KubeVirt does not have
       icon: logos/oberon-vm.svg
-      tags: [machine, kubevirt, architecture, retrocomputing]
+      tags: [paleocomputing, machine, kubevirt, architecture, retrocomputing]
       weight: 20
       keysOrder: [["apiVersion"], ["kind"], ["metadata"], ["metadata", "name"], ["spec", "memory"], ["spec", "running"], ["spec", "hardware"], ["spec", "storageClass"], ["spec", "storage"]]

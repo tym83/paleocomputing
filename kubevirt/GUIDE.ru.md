@@ -51,6 +51,22 @@ kubectl -n $KV_NS get kubevirt kubevirt -o json \
 
 ## 2. Подменить virt-launcher
 
+⚠ **Сначала посмотрите на `workloadUpdateStrategy`.** Новый образ launcher
+KubeVirt считает обновлением нагрузки. Если
+`spec.workloadUpdateStrategy.workloadUpdateMethods` не пуст (в Cozystack там
+`[LiveMigrate, Evict]`, в апстримном KubeVirt — пусто), подмена launcher живьём
+перевозит **все виртуалки кластера**, а те, что не мигрируют, перезапускает —
+при подмене, при возврате и при каждом обновлении KubeVirt (находка 49):
+
+```sh
+kubectl -n $KV_NS get kubevirt kubevirt -o jsonpath='{.spec.workloadUpdateStrategy}'
+```
+
+`reconcile.sh` в таком случае свою правку не ставит и не меняет, пока вы не
+разрешите явно: `ALLOW_WORKLOAD_UPDATE=true` или аннотация
+`paleocomputing.io/allow-workload-update=true` на ресурсе KubeVirt. Состояние
+у него тогда `NeedsConsent`. Снятие правки согласия не ждёт.
+
 Образы публикуются на каждый выпуск и каждую версию KubeVirt:
 
 ```

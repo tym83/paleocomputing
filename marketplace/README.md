@@ -34,7 +34,7 @@ tools/          генератор описаний каталога и пров
 
 ```
 cozypkg tap oci://ghcr.io/tym83/paleocomputing/machines:v0.1.16   # подключить репозиторий
-cozypkg add <пакет>                                            # поставить из него
+cozypkg add paleocomputing.machines                            # поставить из него (без add приложений в каталоге тенанта нет)
 ```
 
 Можно и по короткому имени через метаиндекс:
@@ -64,6 +64,14 @@ cozypkg tap --index index paleocomputing-machines              # то же по�
 cozypkg tap oci://ghcr.io/tym83/paleocomputing/platform:<версия>
 cozypkg add paleocomputing.platform --allow-privileged
 ```
+
+⚠ Смена launcher — это обновление нагрузки для KubeVirt: при
+`workloadUpdateMethods: [LiveMigrate, Evict]` (так по умолчанию в Cozystack) он
+перевозит на новый образ **все** виртуалки кластера (находка 49). Поэтому
+компонент при включённом автопереводе свою правку не ставит и не меняет без
+явного согласия — значение `allowWorkloadUpdate: true` или аннотация
+`paleocomputing.io/allow-workload-update=true` на ресурсе KubeVirt; до тех пор
+его состояние `NeedsConsent`. Снятие правки согласия не ждёт.
 
 Семейство машин растёт данными, а не кодом: новая архитектура — строка в
 `kubevirt/targets.txt` (цель QEMU, правки libvirt и проверки образа строятся

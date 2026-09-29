@@ -396,6 +396,40 @@ def main() -> None:
         c.run("uninstall")
         report(c.rc == 0 and c.patches() == [HANDLER], "удаление узлы не читает и работает без них")
 
+        # 13. Автоперевод машин включён: смена launcher перевезла бы ВСЕ
+        # виртуалки кластера (находка 49). Без согласия — не ставим и не меняем.
+        def migrating(kv):
+            kv["spec"]["workloadUpdateStrategy"] = {"workloadUpdateMethods": ["LiveMigrate", "Evict"]}
+            return kv
+        c = cluster(migrating(kubevirt(patches=[HANDLER]))).run()
+        report(not c.writes("kubevirt") and c.state() == "NeedsConsent" and "LiveMigrate" in c.out,
+               "автоперевод включён, согласия нет: правка не ставится, состояние NeedsConsent")
+        report(any(x["body"]["type"] == "Warning" for x in c.writes("event")),
+               "без согласия — предупреждающее событие на ресурсе KubeVirt")
+        c = cluster(migrating(kubevirt(patches=[HANDLER]))).run(ALLOW_WORKLOAD_UPDATE="true")
+        report(c.patches() == [HANDLER, ours(IMG184)], "согласие значением чарта: правка ставится")
+        kv = migrating(kubevirt(patches=None))
+        kv["metadata"]["annotations"] = {"paleocomputing.io/allow-workload-update": "true"}
+        c = cluster(kv).run()
+        report(c.patches() == [ours(IMG184)], "согласие аннотацией на ресурсе KubeVirt: правка ставится")
+        kv = migrating(kubevirt(patches=None))
+        kv["spec"]["workloadUpdateStrategy"]["workloadUpdateMethods"] = []
+        c = cluster(kv).run()
+        report(c.patches() == [ours(IMG184)], "автоперевод выключен (пустой список): согласие не нужно")
+        c = cluster(migrating(kubevirt("v1.9.0", patches=[ours(IMG184)])), controller("v1.9.0")).run()
+        report(not c.writes("kubevirt") and c.state() == "NeedsConsent",
+               "смена образа при обновлении релиза без согласия: прежняя правка остаётся, новая не ставится")
+        c = cluster(migrating(kubevirt(patches=[ours(IMG184)])))
+        c.roll_out(IMG184)
+        c.run()
+        report(not c.writes("kubevirt") and c.state() == "Applied",
+               "правка уже стоит и образ не меняется: согласие не нужно, Applied")
+        c = cluster(migrating(kubevirt("v1.7.0", patches=[HANDLER, ours(IMG184)])), controller("v1.7.0")).run()
+        report(c.patches() == [HANDLER] and c.state() == "Unsupported",
+               "снятие своей правки согласия не ждёт: возвращает штатный launcher")
+        c = cluster(migrating(kubevirt(patches=[HANDLER, ours(IMG184)]))).run("uninstall")
+        report(c.rc == 0 and c.patches() == [HANDLER], "удаление компонента согласия не ждёт")
+
         # 12. Живой кластер: объекты узлов большие (списки образов, статусы).
         # Переданные в jq аргументом, они не влезали в предел длины командной
         # строки — решение не вычислялось. Нашлось только в песочнице.

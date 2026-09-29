@@ -51,6 +51,22 @@ nothing to do with Oberon, ordinary VMs need it there too.
 
 ## 2. Switch virt-launcher
 
+⚠ **Check `workloadUpdateStrategy` first.** KubeVirt treats a new launcher
+image as a workload update. If `spec.workloadUpdateStrategy.workloadUpdateMethods`
+is not empty (Cozystack sets `[LiveMigrate, Evict]`; upstream KubeVirt leaves
+it empty), switching the launcher live-migrates **every VM in the cluster**
+and restarts the ones that cannot migrate — on the switch, on the switch
+back, and on every KubeVirt upgrade (finding 49):
+
+```sh
+kubectl -n $KV_NS get kubevirt kubevirt -o jsonpath='{.spec.workloadUpdateStrategy}'
+```
+
+`reconcile.sh` refuses to put in or change its launcher in that case until
+you allow it: `ALLOW_WORKLOAD_UPDATE=true`, or the annotation
+`paleocomputing.io/allow-workload-update=true` on the KubeVirt resource. Its
+state is `NeedsConsent` meanwhile. Removing its entry never waits.
+
 The images are published per release and per KubeVirt version:
 
 ```

@@ -22,9 +22,10 @@ spec:
   dashboard:
     singular: Handbook
     plural: Handbooks
-    category: Forgotten Systems
-    description: Документация, которая разворачивается рядом с приложением
+    category: Paleocomputing
+    description: Documentation served next to the application it documents
     tags:
+    - paleocomputing
     - documentation
     - education
     keysOrder:

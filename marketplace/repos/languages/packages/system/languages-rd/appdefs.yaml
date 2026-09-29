@@ -12,8 +12,8 @@ apps:
     dashboard:
       singular: Language Pack
       plural: Language Packs
-      category: Forgotten Systems
-      description: Окружение для языка — постоянная среда или разовый прогон
+      category: Paleocomputing
+      description: The Oberon compiler without an OS, for one-off runs or a standing service
       icon: logos/langpack.svg
-      tags: [language, environment, runtime]
+      tags: [paleocomputing, language, environment, runtime]
       keysOrder: [["apiVersion"], ["kind"], ["metadata"], ["metadata", "name"], ["spec", "language"], ["spec", "image"], ["spec", "mode"], ["spec", "program"], ["spec", "command"], ["spec", "args"], ["spec", "host"]]
