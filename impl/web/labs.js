@@ -1,8 +1,8 @@
-// Лаборатории. Каждая описывает шаги и МАШИННУЮ проверку — лаборатория без
-// проверки это демонстрация, а не задание.
+// Labs. Each one describes steps and a MACHINE check: a lab without a
+// check is a demonstration, not an assignment.
 //
-// Уровни из плана серии: смотреть / менять / ломать / измерять / строить.
-// Каждая опирается на то, что уже доказано в impl/docs.
+// Levels from the series plan: observe / modify / break / measure / build.
+// Each one builds on what has already been proven in impl/docs.
 
 import { OberonFS, parseRsc, readText, isChk, isIndexTrap } from './oberonfs.js';
 import { LANG } from './i18n.js';
@@ -11,17 +11,17 @@ import { SOURCES, BUILTIN, pre } from './lab-sources.js';
 export { SOURCES, BUILTIN };
 
 
-// Служебная запись файла меняется при каждой перезаписи: Files.Register
-// заводит новый файл и подменяет запись в каталоге. Это честный признак
-// «файл пересобран», не зависящий от того, совпало ли содержимое, — а
-// побайтовое сравнение эти два случая не различает.
+// A file's directory entry changes on every rewrite: Files.Register
+// creates a new file and replaces the entry in the directory. That is an honest
+// sign of "the file was rebuilt" that does not depend on whether the content
+// matched, while a byte comparison cannot tell these two cases apart.
 const hdr = (m, name) => new OberonFS(m).files().get(name);
 const rsc = (m, name) => {
   const F = new OberonFS(m), h = F.files().get(name);
   return h ? parseRsc(F.read(h)) : null;
 };
 const near = (a, b, eps) => Math.abs(a - b) <= eps;
-// Число с согласованным существительным: 1 слово, 2 слова, 5 слов.
+// A number with an agreeing Russian noun: 1 слово, 2 слова, 5 слов.
 const pl = (n, one, few, many) => `${n} ${(n % 10 === 1 && n % 100 !== 11) ? one
   : ([2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100)) ? few : many}`;
 const text = (m, name) => {
@@ -30,18 +30,18 @@ const text = (m, name) => {
 };
 
 /*
- * Загруженные модули — из памяти машины, а не с экрана.
+ * Loaded modules, read from the machine's memory rather than from the screen.
  *
- * Дескриптор модуля (Modules.ModDesc): name[32], next, key, num, size, refcnt,
- * data, code, imp, cmd, ent, ptr — смещения 0, 32, …, 52 (data), 56 (code),
- * 60 (imp). Голова списка — переменная Modules.root, первая в области данных
- * Modules после его дескрипторов типов. Сам дескриптор Modules лежит по адресу,
- * который загрузчик кладёт в слово 20 (Modules.Init читает его оттуда же), а
- * дескриптор Kernel — всегда 100H: ядро компонуется первым.
+ * Module descriptor (Modules.ModDesc): name[32], next, key, num, size, refcnt,
+ * data, code, imp, cmd, ent, ptr, at offsets 0, 32, …, 52 (data), 56 (code),
+ * 60 (imp). The list head is the variable Modules.root, the first in Modules'
+ * data area after its type descriptors. The Modules descriptor itself is at the
+ * address the boot loader puts in word 20 (Modules.Init reads it from there too),
+ * and the Kernel descriptor is always at 100H: the kernel is linked first.
  *
- * Глобальные переменные модуля лежат в области данных ПОСЛЕ дескрипторов
- * типов (Modules.Load), в порядке объявления. Размер дескрипторов берётся из
- * .rsc на диске.
+ * A module's global variables are in the data area AFTER the type descriptors
+ * (Modules.Load), in declaration order. The descriptor size is taken from the
+ * .rsc on disk.
  */
 const KERNEL_DESC = 0x100;
 const modName = (m, a) => {
@@ -62,21 +62,22 @@ function loaded(m, name) {
       return { desc: r, data: m.ram(r + 52), code: m.ram(r + 56), imp: m.ram(r + 60) };
   return null;
 }
-/** k-я по порядку переменная (слово) загруженного модуля или null. */
+/** The k-th variable (word) of a loaded module, or null. */
 function modVar(m, name, k) {
   const M = loaded(m, name), r = rsc(m, name + '.rsc');
   return M && r ? m.ram(M.data + r.tdBytes + 4 * k) | 0 : null;
 }
-/** Переменные Kernel: allocated, NofSectors, heapOrg, heapLim, …, MemLim.
-    Раскладка сверяется с тем, что загрузчик оставил в словах 12 и 24: если
-    адрес угадан неверно, проверка скажет об этом, а не соврёт числом. */
+/** Kernel variables: allocated, NofSectors, heapOrg, heapLim, …, MemLim.
+    The layout is cross-checked against what the boot loader left in words 12
+    and 24: if the address is guessed wrong, the check says so instead of lying
+    with a number. */
 function heap(m) {
   const d = m.ram(KERNEL_DESC + 52);
   const k = { allocated: m.ram(d), heapOrg: m.ram(d + 8), heapLim: m.ram(d + 12), memLim: m.ram(d + 24) };
   k.ok = modName(m, KERNEL_DESC) === 'Kernel' && k.heapOrg === m.ram(24) && k.memLim === m.ram(12);
   return k;
 }
-/** Сколько команд CHK в коде загруженного модуля. */
+/** How many CHK instructions are in a loaded module's code. */
 function chkInMemory(m, name) {
   const M = loaded(m, name);
   if (!M) return null;
@@ -84,10 +85,10 @@ function chkInMemory(m, name) {
   for (let a = M.code; a < M.imp; a += 4) if (isChk(m.ram(a))) n++;
   return n;
 }
-/** Код загруженного модуля целиком: сколько в нём слов, команд CHK и
-    программных ловушек индекса (isIndexTrap). Три конфигурации различаются
-    именно этим: B — ловушки есть, CHK нет; E — наоборот; A — ни того, ни
-    другого, и слов меньше, чем у обеих. */
+/** A loaded module's whole code: how many words, CHK instructions and software
+    index traps (isIndexTrap) it has. The three configurations differ exactly in
+    this: B has traps and no CHK; E the reverse; A has neither, and fewer words
+    than both. */
 function codeInMemory(m, name) {
   const M = loaded(m, name);
   if (!M) return null;
@@ -101,26 +102,27 @@ function codeInMemory(m, name) {
 }
 
 
-/** Содержимое файла с диска, байтами; null — файла нет. */
+/** A file's contents from disk, as bytes; null if the file does not exist. */
 const bytes = (m, name) => {
   const F = new OberonFS(m), h = F.files().get(name);
   return h ? F.read(h) : null;
 };
 const sameBytes = (a, b) => !!a && !!b && a.length === b.length && a.every((x, i) => x === b[i]);
-/** Ключ загруженного модуля — из его дескриптора в памяти (смещение 36). */
+/** A loaded module's key, from its descriptor in memory (offset 36). */
 const loadedKey = (m, name) => { const M = loaded(m, name); return M ? m.ram(M.desc + 36) >>> 0 : null; };
-/** MUL Ri, Ri, Ri: F0 (p = q = u = v = 0), op = 10, a = b = c. Стоковый ORG
-    такого не порождает: MulOp грузит множители в два РАЗНЫХ регистра, а
-    умножение на константу — формат F1. Это подпись ORG.Sqr из лабораторной 13. */
+/** MUL Ri, Ri, Ri: F0 (p = q = u = v = 0), op = 10, a = b = c. The stock ORG
+    never emits this: MulOp loads the factors into two DIFFERENT registers, and
+    multiplication by a constant is format F1. This is the signature of ORG.Sqr
+    from lab 13. */
 const isSquare = w => (w >>> 28) === 0 && ((w >>> 16) & 15) === 10 && (w & 0xFFF0) === 0
   && ((w >>> 24) & 15) === ((w >>> 20) & 15) && ((w >>> 20) & 15) === (w & 15);
 const hex = k => k.toString(16).toUpperCase();
 
-// Таймер машины (Kernel.Time) — не часы хоста, а счётчик тактов: 25 000
-// тактов на миллисекунду (tb/wasm_main.cpp, как у платы на 25 МГц). Поэтому
-// миллисекунды в лабораторных точны и повторяемы до такта.
+// The machine timer (Kernel.Time) is not the host clock but a cycle counter: 25 000
+// cycles per millisecond (tb/wasm_main.cpp, like a board at 25 MHz). So
+// milliseconds in the labs are exact and repeatable to the cycle.
 const CYCLES_PER_MS = 25000;
-// Выход из ORG.Mod на эталонном образе: сколько слов кода в поставляемом ORG.rsc.
+// ORG.Mod output on the reference image: how many code words the shipped ORG.rsc has.
 const ORG_STOCK_WORDS = 6650;
 
 const ALL = [
@@ -148,13 +150,13 @@ const ALL = [
           <li><b>Слева пусто, и это не ошибка.</b> Экран поделён на вертикальные дорожки. Левая — свободное место, куда открываются окна. Пока ничего не открыли, она белая.</li>
         </ul>`,
       check: m => {
-        // ⚠ Здесь стояла сверка полной контрольной суммы экрана с эталоном
-        // загрузки. Она не могла сработать: в кадровый буфер входит курсор
-        // мыши, и первое же её движение меняло сумму навсегда — а шаг 2
-        // требует щёлкнуть, то есть подвести мышь. Проверяем не картинку
-        // целиком, а то, что на ней должно быть.
-        const log = m.ink(655, 10, 1015, 120);      // журнал: заголовок и строка версии
-        const tool = m.ink(655, 255, 1015, 580);    // System.Tool: список команд
+        // ⚠ This used to compare the full screen checksum with the boot
+        // reference. It could never pass: the framebuffer includes the mouse
+        // cursor, and the first mouse move changed the sum for good, while step 2
+        // requires a click, that is, moving the mouse. We check not the whole
+        // picture but what must be on it.
+        const log = m.ink(655, 10, 1015, 120);      // log: title and version line
+        const tool = m.ink(655, 255, 1015, 580);    // System.Tool: list of commands
         if (log > 500 && tool > 5000)
           return { ok: true, msg: `рабочий стол на месте: ${log} точек в журнале, ${tool} в System.Tool` };
         return { ok: false, msg: `ещё не догрузилось (в журнале ${log} точек, в System.Tool ${tool}, инструкций ${(m.insns/1e6).toFixed(1)} млн)` };
@@ -186,7 +188,7 @@ Kernel        00000100 00002184  4</pre>
         Не получилось — скорее всего щёлкнули мимо слова либо обычной левой
         кнопкой. Левая просто ставит курсор, она ничего не запускает.`,
       check: m => {
-        const n = m.ink(655, 530, 1015, 700);       // полоса, где открывается вьюер
+        const n = m.ink(655, 530, 1015, 700);       // the strip where the viewer opens
         return n > 2000
           ? { ok: true, msg: `вьюер модулей открыт (${n} точек текста в нижней полосе)` }
           : { ok: false, msg: `в нижней полосе ${n} точек — вьюера пока нет` };
@@ -206,7 +208,7 @@ Kernel        00000100 00002184  4</pre>
           <li><code>@</code> — команда работает с текстом в помеченном окне.</li>
         </ul>`,
       check: m => {
-        const n = m.ink(10, 10, 620, 760);          // левая дорожка
+        const n = m.ink(10, 10, 620, 760);          // left track
         return n > 5000
           ? { ok: true, msg: `дорожка слева занята: ${n} точек рисунка` }
           : { ok: false, msg: `слева ещё пусто (${n} точек)` };
@@ -243,11 +245,11 @@ Kernel        00000100 00002184  4</pre>
     { text: 'Дождитесь загрузки и впишите мусор в кадровый буфер: адрес <code>E7F00</code>, значение <code>FFFFFFFF</code>. Экран испортится, а система уцелеет — потому что портить экран ей не запрещено.',
       check: m => {
         if (m.insns < 12e6) return { ok: false, msg: 'система ещё не загрузилась' };
-        // ⚠ Здесь сравнивалась полная сумма экрана с эталоном загрузки, и
-        // «сумма изменилась» считалось выполнением задания. Любое движение
-        // мышью меняет сумму — шаг проходил сам собой, ничего не проверяя.
-        // Адрес E7F00 — первое слово кадрового буфера, а это нижняя строка
-        // экрана: запись FFFFFFFF обязана зачернить ровно 32 точки слева внизу.
+        // ⚠ This used to compare the full screen checksum with the boot reference,
+        // and "the sum changed" counted as completing the task. Any mouse move
+        // changes the sum, so the step passed by itself without checking anything.
+        // Address E7F00 is the first word of the framebuffer, which is the bottom row
+        // of the screen: writing FFFFFFFF must blacken exactly 32 pixels at bottom left.
         const poked = m.ink(0, 767, 32, 768);
         if (poked < 32) return { ok: false, msg: `по адресу E7F00 записи не видно: в нижней строке слева ${poked} точек из 32` };
         const pcs = new Set(); for (let i = 0; i < 5; i++) { m.run(50000); pcs.add(m.pc); }
@@ -1041,15 +1043,15 @@ END Idx.</pre>
 },
 ];
 
-// Порядок в интерфейсе — по номеру из программы курса, а не по времени
-// написания.
+// Order in the UI follows the number in the course syllabus, not the order
+// they were written in.
 /*
- * Наложение перевода. Русский написан прямо в записях выше; английский лежит
- * отдельным файлом и подменяет поля по ключу «<номер>.<поле>».
+ * Translation overlay. Russian is written directly in the entries above; English
+ * lives in a separate file and replaces fields by the key "<number>.<field>".
  *
- * Чего в наложении нет — остаётся как есть. Это позволяет переводить
- * постепенно, ничего не ломая: непереведённое просто останется русским, а не
- * исчезнет.
+ * Whatever the overlay lacks stays as is. This allows translating gradually
+ * without breaking anything: untranslated text simply stays Russian instead of
+ * disappearing.
  */
 function localise(lab) {
   if (LANG === 'ru') return lab;
@@ -1073,6 +1075,6 @@ function localise(lab) {
 
 export const LABS = ALL.sort((a, b) => a.id - b.id).map(localise);
 
-// Чтение памяти машины — для прогона labs-test.mjs: он сверяет числа
-// лабораторных с тем, что видно в обход их проверок.
+// Reads the machine's memory, for the labs-test.mjs run: it checks the labs'
+// numbers against what is visible bypassing their checks.
 export const MEM = { loaded, modVar, heap, chkInMemory, codeInMemory };

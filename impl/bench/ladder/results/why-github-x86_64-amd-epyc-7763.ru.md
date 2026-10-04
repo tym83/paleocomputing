@@ -1,72 +1,72 @@
-[Русская версия](why-github-x86_64-amd-epyc-7763.ru.md)
+[English version](why-github-x86_64-amd-epyc-7763.md)
 
-# Why the check is free - ci-linux-x86_64
+# Почему проверка бесплатна — ci-linux-x86_64
 
-GENERATED FILE: `impl/bench/ladder/why.py`. How to read it: `impl/docs/FINDING-61-bounds-ladder.md`, the "why" experiment section.
+ПОРОЖДЁННЫЙ ФАЙЛ — `impl/bench/ladder/why.py`. Как читать — `impl/docs/FINDING-61-bounds-ladder.md`, раздел «Почему так: эксперимент».
 
-* date: 2026-09-28
-* system: `Linux 6.17.0-1022-azure`, architecture `x86_64`
-* processor: AMD EPYC 7763 64-Core Processor
-* processor: vendor_id AuthenticAMD, cpu family 25, model 1, stepping 1
-* processor: lscpu: Vendor ID = AuthenticAMD; Model name = AMD EPYC 7763 64-Core Processor; Hypervisor vendor = Microsoft
-* machine: GitHub Actions `ubuntu-latest`, shared virtual
-* loop: `sum += a[i]; i = i + 1; [k × add #64]; i &= 63` over 64 × u32; iterations per measurement: 64 000 000
-* rounds: 5, round-robin; each measurement has 64 chunks in which calibration with 32 dependent additions (1 addition = 1 cycle) alternates with the kernel in one process; cycles of a measurement = best kernel chunk (ns/iter) ÷ best calibration chunk (ns/add); the tables show the median over rounds
+* дата: 2026-09-28
+* система: `Linux 6.17.0-1022-azure`, архитектура `x86_64`
+* процессор: AMD EPYC 7763 64-Core Processor
+* процессор: vendor_id AuthenticAMD, cpu family 25, model 1, stepping 1
+* процессор: lscpu: Vendor ID = AuthenticAMD; Model name = AMD EPYC 7763 64-Core Processor; Hypervisor vendor = Microsoft
+* машина: GitHub Actions `ubuntu-latest`, общая виртуальная
+* цикл: `sum += a[i]; i = i + 1; [k × add #64]; i &= 63` над 64 × u32; итераций на замер: 64 000 000
+* кругов: 5, по кругу; в каждом замере 64 кусков, где калибровка 32 зависимыми сложениями (1 сложение = 1 такт) чередуется с ядром в одном процессе; такты замера = лучший кусок ядра (нс/итер) ÷ лучший кусок калибровки (нс/сложение); в таблицах — медиана по кругам
 
-| compiler | version | flags |
+| компилятор | версия | флаги |
 |---|---|---|
 | C (clang) | `Ubuntu clang version 18.1.3 (1ubuntu1)` | `-O2 -fno-unroll-loops -fno-vectorize -fno-slp-vectorize` |
 | C (gcc) | `gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0` | `-O2 -fno-unroll-loops -fno-tree-vectorize -fno-tree-slp-vectorize` |
 
-## C (clang): cycles per iteration
+## C (clang): такты на итерацию
 
-Frequency from calibration (median): **3.24 GHz**.
+Частота по калибровке (медиана): **3.24 ГГц**.
 
-Cycles per iteration (median over rounds); in parentheses, the cost of the checks Δ = cycles(c, k) − cycles(0, k):
+Такты на итерацию (медиана по кругам), в скобках — добавка от проверок Δ = такты(c, k) − такты(0, k):
 
-| index chain | c = 0 | c = 1 | c = 2 | c = 4 |
+| цепочка индекса | c = 0 | c = 1 | c = 2 | c = 4 |
 |---|---:|---:|---:|---:|
-| k = 0 (2 + 0 = 2 cycles) | 2.00 | 2.00 (+0.00) | 2.00 (+0.00) | 2.50 (+0.50) |
-| k = 1 (2 + 1 = 3 cycles) | 3.14 | 3.00 (-0.14) | 3.27 (+0.14) | 3.00 (-0.14) |
-| k = 2 (2 + 2 = 4 cycles) | 4.02 | 4.02 (-0.00) | 4.02 (-0.00) | 4.02 (+0.00) |
-| k = 4 (2 + 4 = 6 cycles) | 6.03 | 6.03 (-0.00) | 6.03 (-0.00) | 6.03 (-0.00) |
+| k = 0 (2 + 0 = 2 такта) | 2.00 | 2.00 (+0.00) | 2.00 (+0.00) | 2.50 (+0.50) |
+| k = 1 (2 + 1 = 3 такта) | 3.14 | 3.00 (-0.14) | 3.27 (+0.14) | 3.00 (-0.14) |
+| k = 2 (2 + 2 = 4 такта) | 4.02 | 4.02 (-0.00) | 4.02 (-0.00) | 4.02 (+0.00) |
+| k = 4 (2 + 4 = 6 такта) | 6.03 | 6.03 (-0.00) | 6.03 (-0.00) | 6.03 (-0.00) |
 
-Position of a single check (k = 0):
+Положение одной проверки (k = 0):
 
-| variant | what | instructions in body | cycles | Δ vs c = 0 |
+| вариант | что | команд в теле | такты | Δ к c = 0 |
 |---|---|---:|---:|---:|
-| `why_c0_k0` | no check | 5 | 2.00 | +0.00 |
-| `why_c1_k0` | pre: cmp + branch, index before the addition | 7 | 2.00 | +0.00 |
-| `why_post` | post: cmp + branch, index after the mask | 8 | 2.00 | +0.00 |
-| `why_mask` | mask: cmp + csel/cmov on the load index, outside the chain | 8 | 2.00 | +0.00 |
-| `why_chain` | chain: cmp + csel/cmov in the index chain | 7 | 4.36 | +2.36 |
+| `why_c0_k0` | без проверки | 5 | 2.00 | +0.00 |
+| `why_c1_k0` | pre: cmp + переход, индекс до сложения | 7 | 2.00 | +0.00 |
+| `why_post` | post: cmp + переход, индекс после маски | 8 | 2.00 | +0.00 |
+| `why_mask` | mask: cmp + csel/cmov на индексе чтения, вне цепочки | 8 | 2.00 | +0.00 |
+| `why_chain` | chain: cmp + csel/cmov в цепочке индекса | 7 | 4.36 | +2.36 |
 
-## C (gcc): cycles per iteration
+## C (gcc): такты на итерацию
 
-Frequency from calibration (median): **3.24 GHz**.
+Частота по калибровке (медиана): **3.24 ГГц**.
 
-Cycles per iteration (median over rounds); in parentheses, the cost of the checks Δ = cycles(c, k) − cycles(0, k):
+Такты на итерацию (медиана по кругам), в скобках — добавка от проверок Δ = такты(c, k) − такты(0, k):
 
-| index chain | c = 0 | c = 1 | c = 2 | c = 4 |
+| цепочка индекса | c = 0 | c = 1 | c = 2 | c = 4 |
 |---|---:|---:|---:|---:|
-| k = 0 (2 + 0 = 2 cycles) | 2.00 | 2.24 (+0.24) | 2.00 (+0.00) | 2.50 (+0.50) |
-| k = 1 (2 + 1 = 3 cycles) | 3.14 | 3.00 (-0.14) | 3.20 (+0.07) | 3.55 (+0.42) |
-| k = 2 (2 + 2 = 4 cycles) | 4.15 | 4.02 (-0.13) | 4.03 (-0.13) | 4.03 (-0.13) |
-| k = 4 (2 + 4 = 6 cycles) | 6.03 | 6.50 (+0.47) | 6.03 (+0.00) | 6.03 (+0.00) |
+| k = 0 (2 + 0 = 2 такта) | 2.00 | 2.24 (+0.24) | 2.00 (+0.00) | 2.50 (+0.50) |
+| k = 1 (2 + 1 = 3 такта) | 3.14 | 3.00 (-0.14) | 3.20 (+0.07) | 3.55 (+0.42) |
+| k = 2 (2 + 2 = 4 такта) | 4.15 | 4.02 (-0.13) | 4.03 (-0.13) | 4.03 (-0.13) |
+| k = 4 (2 + 4 = 6 такта) | 6.03 | 6.50 (+0.47) | 6.03 (+0.00) | 6.03 (+0.00) |
 
-Position of a single check (k = 0):
+Положение одной проверки (k = 0):
 
-| variant | what | instructions in body | cycles | Δ vs c = 0 |
+| вариант | что | команд в теле | такты | Δ к c = 0 |
 |---|---|---:|---:|---:|
-| `why_c0_k0` | no check | 5 | 2.00 | +0.00 |
-| `why_c1_k0` | pre: cmp + branch, index before the addition | 7 | 2.24 | +0.24 |
-| `why_post` | post: cmp + branch, index after the mask | 7 | 2.00 | +0.00 |
-| `why_mask` | mask: cmp + csel/cmov on the load index, outside the chain | 8 | 2.00 | +0.00 |
-| `why_chain` | chain: cmp + csel/cmov in the index chain | 7 | 4.28 | +2.28 |
+| `why_c0_k0` | без проверки | 5 | 2.00 | +0.00 |
+| `why_c1_k0` | pre: cmp + переход, индекс до сложения | 7 | 2.24 | +0.24 |
+| `why_post` | post: cmp + переход, индекс после маски | 7 | 2.00 | +0.00 |
+| `why_mask` | mask: cmp + csel/cmov на индексе чтения, вне цепочки | 8 | 2.00 | +0.00 |
+| `why_chain` | chain: cmp + csel/cmov в цепочке индекса | 7 | 4.28 | +2.28 |
 
-Full table (all rounds):
+Полная таблица (все круги):
 
-| compiler | kernel | c | k | position | instructions | cycles: median | min | max | ns/iter (best) |
+| компилятор | ядро | c | k | положение | команд | такты: медиана | мин | макс | нс/итер (лучшее) |
 |---|---|---:|---:|---|---:|---:|---:|---:|---:|
 | C (clang) | `why_c0_k0` | 0 | 0 | pre | 5 | 2.000 | 2.000 | 2.000 | 0.617 |
 | C (clang) | `why_c1_k0` | 1 | 0 | pre | 7 | 2.000 | 2.000 | 2.000 | 0.617 |
@@ -107,9 +107,9 @@ Full table (all rounds):
 | C (gcc) | `why_mask` | 1 | 0 | mask | 8 | 2.000 | 2.000 | 2.000 | 0.617 |
 | C (gcc) | `why_chain` | 1 | 0 | chain | 7 | 4.283 | 4.268 | 4.292 | 1.316 |
 
-## Loop bodies
+## Тела циклов
 
-### C (clang) - `why_c0_k0` (5 instructions)
+### C (clang) — `why_c0_k0` (5 команд)
 
 ```asm
 .LBB1_1:
@@ -120,7 +120,7 @@ Full table (all rounds):
         jne	.LBB1_1
 ```
 
-### C (clang) - `why_c1_k0` (7 instructions)
+### C (clang) — `why_c1_k0` (7 команд)
 
 ```asm
 .LBB2_1:
@@ -133,7 +133,7 @@ Full table (all rounds):
         jne	.LBB2_1
 ```
 
-### C (clang) - `why_c2_k0` (9 instructions)
+### C (clang) — `why_c2_k0` (9 команд)
 
 ```asm
 .LBB3_1:
@@ -148,7 +148,7 @@ Full table (all rounds):
         jne	.LBB3_1
 ```
 
-### C (clang) - `why_c4_k0` (13 instructions)
+### C (clang) — `why_c4_k0` (13 команд)
 
 ```asm
 .LBB4_1:
@@ -167,7 +167,7 @@ Full table (all rounds):
         jne	.LBB4_1
 ```
 
-### C (clang) - `why_c0_k1` (6 instructions)
+### C (clang) — `why_c0_k1` (6 команд)
 
 ```asm
 .LBB5_1:
@@ -179,7 +179,7 @@ Full table (all rounds):
         jne	.LBB5_1
 ```
 
-### C (clang) - `why_c1_k1` (8 instructions)
+### C (clang) — `why_c1_k1` (8 команд)
 
 ```asm
 .LBB6_1:
@@ -193,7 +193,7 @@ Full table (all rounds):
         jne	.LBB6_1
 ```
 
-### C (clang) - `why_c2_k1` (10 instructions)
+### C (clang) — `why_c2_k1` (10 команд)
 
 ```asm
 .LBB7_1:
@@ -209,7 +209,7 @@ Full table (all rounds):
         jne	.LBB7_1
 ```
 
-### C (clang) - `why_c4_k1` (14 instructions)
+### C (clang) — `why_c4_k1` (14 команд)
 
 ```asm
 .LBB8_1:
@@ -229,7 +229,7 @@ Full table (all rounds):
         jne	.LBB8_1
 ```
 
-### C (clang) - `why_c0_k2` (7 instructions)
+### C (clang) — `why_c0_k2` (7 команд)
 
 ```asm
 .LBB9_1:
@@ -242,7 +242,7 @@ Full table (all rounds):
         jne	.LBB9_1
 ```
 
-### C (clang) - `why_c1_k2` (9 instructions)
+### C (clang) — `why_c1_k2` (9 команд)
 
 ```asm
 .LBB10_1:
@@ -257,7 +257,7 @@ Full table (all rounds):
         jne	.LBB10_1
 ```
 
-### C (clang) - `why_c2_k2` (11 instructions)
+### C (clang) — `why_c2_k2` (11 команд)
 
 ```asm
 .LBB11_1:
@@ -274,7 +274,7 @@ Full table (all rounds):
         jne	.LBB11_1
 ```
 
-### C (clang) - `why_c4_k2` (15 instructions)
+### C (clang) — `why_c4_k2` (15 команд)
 
 ```asm
 .LBB12_1:
@@ -295,7 +295,7 @@ Full table (all rounds):
         jne	.LBB12_1
 ```
 
-### C (clang) - `why_c0_k4` (9 instructions)
+### C (clang) — `why_c0_k4` (9 команд)
 
 ```asm
 .LBB13_1:
@@ -310,7 +310,7 @@ Full table (all rounds):
         jne	.LBB13_1
 ```
 
-### C (clang) - `why_c1_k4` (11 instructions)
+### C (clang) — `why_c1_k4` (11 команд)
 
 ```asm
 .LBB14_1:
@@ -327,7 +327,7 @@ Full table (all rounds):
         jne	.LBB14_1
 ```
 
-### C (clang) - `why_c2_k4` (13 instructions)
+### C (clang) — `why_c2_k4` (13 команд)
 
 ```asm
 .LBB15_1:
@@ -346,7 +346,7 @@ Full table (all rounds):
         jne	.LBB15_1
 ```
 
-### C (clang) - `why_c4_k4` (17 instructions)
+### C (clang) — `why_c4_k4` (17 команд)
 
 ```asm
 .LBB16_1:
@@ -369,7 +369,7 @@ Full table (all rounds):
         jne	.LBB16_1
 ```
 
-### C (clang) - `why_post` (8 instructions)
+### C (clang) — `why_post` (8 команд)
 
 ```asm
 .LBB17_1:
@@ -383,7 +383,7 @@ Full table (all rounds):
         jne	.LBB17_1
 ```
 
-### C (clang) - `why_mask` (8 instructions)
+### C (clang) — `why_mask` (8 команд)
 
 ```asm
 .LBB18_1:
@@ -397,7 +397,7 @@ Full table (all rounds):
         jne	.LBB18_1
 ```
 
-### C (clang) - `why_chain` (7 instructions)
+### C (clang) — `why_chain` (7 команд)
 
 ```asm
 .LBB19_1:
@@ -410,7 +410,7 @@ Full table (all rounds):
         jne	.LBB19_1
 ```
 
-### C (gcc) - `why_c0_k0` (5 instructions)
+### C (gcc) — `why_c0_k0` (5 команд)
 
 ```asm
 .L2:
@@ -421,7 +421,7 @@ Full table (all rounds):
         jne	.L2
 ```
 
-### C (gcc) - `why_c1_k0` (7 instructions)
+### C (gcc) — `why_c1_k0` (7 команд)
 
 ```asm
 .L24:
@@ -434,7 +434,7 @@ Full table (all rounds):
         jne	.L24
 ```
 
-### C (gcc) - `why_c2_k0` (9 instructions)
+### C (gcc) — `why_c2_k0` (9 команд)
 
 ```asm
 .L32:
@@ -449,7 +449,7 @@ Full table (all rounds):
         jne	.L32
 ```
 
-### C (gcc) - `why_c4_k0` (13 instructions)
+### C (gcc) — `why_c4_k0` (13 команд)
 
 ```asm
 .L42:
@@ -468,7 +468,7 @@ Full table (all rounds):
         jne	.L42
 ```
 
-### C (gcc) - `why_c0_k1` (6 instructions)
+### C (gcc) — `why_c0_k1` (6 команд)
 
 ```asm
 .L6:
@@ -480,7 +480,7 @@ Full table (all rounds):
         jne	.L6
 ```
 
-### C (gcc) - `why_c1_k1` (8 instructions)
+### C (gcc) — `why_c1_k1` (8 команд)
 
 ```asm
 .L51:
@@ -494,7 +494,7 @@ Full table (all rounds):
         jne	.L51
 ```
 
-### C (gcc) - `why_c2_k1` (10 instructions)
+### C (gcc) — `why_c2_k1` (10 команд)
 
 ```asm
 .L59:
@@ -510,7 +510,7 @@ Full table (all rounds):
         jne	.L59
 ```
 
-### C (gcc) - `why_c4_k1` (14 instructions)
+### C (gcc) — `why_c4_k1` (14 команд)
 
 ```asm
 .L69:
@@ -530,7 +530,7 @@ Full table (all rounds):
         jne	.L69
 ```
 
-### C (gcc) - `why_c0_k2` (7 instructions)
+### C (gcc) — `why_c0_k2` (7 команд)
 
 ```asm
 .L9:
@@ -543,7 +543,7 @@ Full table (all rounds):
         jne	.L9
 ```
 
-### C (gcc) - `why_c1_k2` (9 instructions)
+### C (gcc) — `why_c1_k2` (9 команд)
 
 ```asm
 .L78:
@@ -558,7 +558,7 @@ Full table (all rounds):
         jne	.L78
 ```
 
-### C (gcc) - `why_c2_k2` (11 instructions)
+### C (gcc) — `why_c2_k2` (11 команд)
 
 ```asm
 .L86:
@@ -575,7 +575,7 @@ Full table (all rounds):
         jne	.L86
 ```
 
-### C (gcc) - `why_c4_k2` (15 instructions)
+### C (gcc) — `why_c4_k2` (15 команд)
 
 ```asm
 .L96:
@@ -596,7 +596,7 @@ Full table (all rounds):
         jne	.L96
 ```
 
-### C (gcc) - `why_c0_k4` (9 instructions)
+### C (gcc) — `why_c0_k4` (9 команд)
 
 ```asm
 .L12:
@@ -611,7 +611,7 @@ Full table (all rounds):
         jne	.L12
 ```
 
-### C (gcc) - `why_c1_k4` (11 instructions)
+### C (gcc) — `why_c1_k4` (11 команд)
 
 ```asm
 .L105:
@@ -628,7 +628,7 @@ Full table (all rounds):
         jne	.L105
 ```
 
-### C (gcc) - `why_c2_k4` (13 instructions)
+### C (gcc) — `why_c2_k4` (13 команд)
 
 ```asm
 .L113:
@@ -647,7 +647,7 @@ Full table (all rounds):
         jne	.L113
 ```
 
-### C (gcc) - `why_c4_k4` (17 instructions)
+### C (gcc) — `why_c4_k4` (17 команд)
 
 ```asm
 .L123:
@@ -670,7 +670,7 @@ Full table (all rounds):
         jne	.L123
 ```
 
-### C (gcc) - `why_post` (7 instructions)
+### C (gcc) — `why_post` (7 команд)
 
 ```asm
 .L132:
@@ -683,7 +683,7 @@ Full table (all rounds):
         jne	.L132
 ```
 
-### C (gcc) - `why_mask` (8 instructions)
+### C (gcc) — `why_mask` (8 команд)
 
 ```asm
 .L15:
@@ -697,7 +697,7 @@ Full table (all rounds):
         jne	.L15
 ```
 
-### C (gcc) - `why_chain` (7 instructions)
+### C (gcc) — `why_chain` (7 команд)
 
 ```asm
 .L18:

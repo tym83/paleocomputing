@@ -1,14 +1,15 @@
-// Замер цены проверки границ на CHERIoT-Ibex.
+// Measures the cost of a bounds check on CHERIoT-Ibex.
 //
-// Цикл — ../loop.c (sum += a[i]; i = (i+1) & 63 по u32[64]), тот же, что на
-// RISC5. Две конфигурации:
-//   A — sum_a: только аппаратная проверка границ капабилити при чтении;
-//   B — sum_b: A плюс программная проверка «беззнаковое i >= lim -> ловушка».
-// Конфигурации «без проверки вовсе» здесь нет и быть не может: на CHERIoT
-// любое чтение через капабилити проверяется железом.
+// The loop is ../loop.c (sum += a[i]; i = (i+1) & 63 over u32[64]), the same as on
+// RISC5. Two configurations:
+//   A - sum_a: only the hardware capability bounds check on each load;
+//   B - sum_b: A plus a software check "unsigned i >= lim -> trap".
+// There is no "no check at all" configuration here, and there cannot be: on CHERIoT
+// every load through a capability is checked by the hardware.
 //
-// Счёт: mcycle и minstret до и после, прерывания запрещены на время замера,
-// итераций много (ITER), повторов несколько (REPS) — видно, стабилен ли счёт.
+// Counting: mcycle and minstret before and after, interrupts disabled during the
+// measurement, many iterations (ITER) and several repetitions (REPS) to show
+// whether the count is stable.
 
 #include <compartment.h>
 #include <debug.hh>
@@ -21,8 +22,8 @@ using Debug = ConditionalDebug<true, "bench">;
 extern "C" unsigned sum_a(const unsigned *a, unsigned n);
 extern "C" unsigned sum_b(const unsigned *a, unsigned n);
 
-// Предел программной проверки. volatile — компилятор не видит значения и не
-// может доказать, что проверка лишняя.
+// Limit for the software check. volatile: the compiler cannot see the value and
+// cannot prove the check redundant.
 extern "C" volatile unsigned lim = 64;
 
 int __cheri_compartment("probe") probe_hw(unsigned elems);
@@ -35,8 +36,8 @@ namespace
 
 	unsigned arr[64];
 
-	// Число итераций — тоже из памяти: иначе компилятор знает n и волен
-	// переписать цикл.
+	// The iteration count also comes from memory: otherwise the compiler knows n
+	// and is free to rewrite the loop.
 	volatile unsigned iterations = ITER;
 
 	struct Sample
@@ -46,8 +47,8 @@ namespace
 		unsigned sum;
 	};
 
-	// Debug::log печатает беззнаковые в шестнадцатеричном виде, знаковые —
-	// в десятичном. Все значения здесь заведомо меньше 2^31.
+	// Debug::log prints unsigned values in hex and signed ones in decimal.
+	// All values here are known to be below 2^31.
 	int32_t D(uint64_t v)
 	{
 		return static_cast<int32_t>(v);
@@ -60,7 +61,7 @@ namespace
 		return r;
 	}
 
-	// Прерывания запрещены на время замера — в счёт не попадёт таймер.
+	// Interrupts are disabled during the measurement so the timer does not get counted.
 	[[cheriot::interrupt_state(disabled)]] __noinline Sample
 	measure(unsigned (*kernel)(const unsigned *, unsigned),
 	        const unsigned *a,
@@ -74,8 +75,8 @@ namespace
 		return {c1 - c0, i1 - i0, s};
 	}
 
-	// Пустой прогон (n = 0): накладные расходы самого замера — вызов,
-	// пролог, чтение счётчиков. Вычитаются из результатов.
+	// Empty run (n = 0): the overhead of the measurement itself (call,
+	// prologue, counter reads). It is subtracted from the results.
 	void report(const char *name, unsigned (*kernel)(const unsigned *, unsigned))
 	{
 		Sample empty = measure(kernel, arr, 0);
@@ -85,7 +86,7 @@ namespace
 			Sample   s = measure(kernel, arr, n);
 			uint64_t c = s.cycles - empty.cycles;
 			uint32_t i = s.instret - empty.instret;
-			// На итерацию — в тысячных долях (mcyc = 1/1000 такта): 9000 = 9.000.
+			// Per iteration, in thousandths (mcyc = 1/1000 of a cycle): 9000 = 9.000.
 			Debug::log("{} rep {}: n={} cycles={} instret={} "
 			           "mcyc/iter={} mins/iter={} sum={} (overhead c={} i={})",
 			           name,
@@ -108,14 +109,14 @@ int __cheri_compartment("bench") run()
 	{
 		arr[k] = k + 1;
 	}
-	// Границы указателя, который уходит в цикл: ровно 64 слова.
+	// Bounds of the pointer passed into the loop: exactly 64 words.
 	Debug::log("array capability: {}", static_cast<void *>(arr));
 
 	report("A (hw only)", sum_a);
 	report("B (hw + sw)", sum_b);
 
-	// Отрицательный контроль: тот же код цикла, узкие границы / узкий предел.
-	// Ловушка обязана сработать; при успехе вызов вернёт -1 (разгрузка).
+	// Negative control: the same loop code, narrow bounds / narrow limit.
+	// The trap must fire; if it does, the call returns -1 (unwind).
 	Debug::log("C1 hw control, bounds 32 words: returned {}", probe_hw(32));
 	Debug::log("C2 sw control, lim 32:          returned {}", probe_sw(32));
 	Debug::log("C0 sanity, bounds 64 words:      returned {}", probe_hw(64));

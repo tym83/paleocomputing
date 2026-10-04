@@ -11,5 +11,5 @@ let n = 0; for (let i=0;i<12;i++) n += M._soc_run(1000000);
 const dt = (performance.now()-t0)/1000;
 const fb = new Uint32Array(M.HEAPU32.buffer, M._soc_framebuffer(), M._soc_fb_words());
 let crc=0; for (let k=0;k<fb.length;k++) crc=((Math.imul(crc,31)+fb[k])>>>0);
-console.log(`ES-модуль: ${n} инструкций за ${dt.toFixed(2)} с = ${(M._soc_cycles()/dt/1e6).toFixed(2)} МГц-экв`);
-console.log(`контрольная сумма экрана ${crc.toString(16).toUpperCase().padStart(8,'0')} (нативная B5DFC933)`);
+console.log(`ES module: ${n} instructions in ${dt.toFixed(2)} s = ${(M._soc_cycles()/dt/1e6).toFixed(2)} MHz-equiv`);
+console.log(`screen checksum ${crc.toString(16).toUpperCase().padStart(8,'0')} (native B5DFC933)`);

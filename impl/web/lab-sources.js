@@ -1,10 +1,10 @@
 /*
- * Исходники, которые человек набирает в лабораторных 10–13. Одна копия на
- * текст задания и на прогон labs-test.mjs: набранное в прогоне обязано
- * совпадать с показанным на странице, иначе проверяется не то задание.
+ * Sources the user types in labs 10–13. One copy serves both the task text and
+ * the labs-test.mjs run: what the run types must match what the page shows,
+ * otherwise the wrong task is being tested.
  *
- * Отдельным файлом, потому что нужны и русскому тексту (labs.js), и
- * английскому (labs.en.js), а labs.js сам импортирует labs.en.js.
+ * A separate file because both the Russian text (labs.js) and the English one
+ * (labs.en.js) need them, and labs.js itself imports labs.en.js.
  */
 export const SOURCES = {
   Junk: `MODULE Junk;
@@ -77,10 +77,10 @@ END Sq.
 `,
 };
 
-// Лабораторная 13: три вставки в компилятор. \`after\` — образец для
-// Edit.Search (курсор встаёт сразу за ним), \`insert\` — что набрать там.
-// Образцы выбраны так, чтобы встречаться в файле один раз (для ORB — первым:
-// второе «(*functions*)» стоит в разделе SYSTEM).
+// Lab 13: three insertions into the compiler. \`after\` is the pattern for
+// Edit.Search (the caret lands right after it), \`insert\` is what to type there.
+// The patterns are chosen to occur once in the file (for ORB, the first one:
+// the second "(*functions*)" is in the SYSTEM section).
 export const BUILTIN = [
   { file: 'ORB.Mod', after: '(*functions*)',
     insert: '\n  enter("SQR", SFunc, intType, 211);' },

@@ -76,7 +76,7 @@ const WHAT = {
   chk:  { en: 'Core with CHK: the same check is one instruction, and it traps exactly like BLR does.',
           ru: 'Ядро с CHK: та же проверка одной командой, а ловушка срабатывает ровно как у BLR.' },
 };
-// Комментарии в листинге — на языке страницы: сам листинг одинаковый.
+// Comments in the listing follow the page language; the listing itself is the same.
 const ASM = variant => {
   const c1 = t({ en: 'compare, for the flags', ru: 'сравнение ради флагов' });
   const c2 = t({ en: 'i >= lim -> trap', ru: 'i >= lim -> ловушка' });
@@ -104,7 +104,7 @@ document.getElementById('pick-base').onclick = () => { variant = 'base'; show();
 document.getElementById('pick-chk').onclick  = () => { variant = 'chk';  show(); };
 show();
 
-// ── замер ───────────────────────────────────────────────────────────────────
+// ── measure ─────────────────────────────────────────────────────────────────
 const state = document.getElementById('state'), tbl = document.getElementById('tbl');
 document.getElementById('measure').onclick = async () => {
   state.textContent = t({ en: ' measuring…', ru: ' считаю…' });
@@ -134,6 +134,6 @@ document.getElementById('measure').onclick = async () => {
   };
   w.postMessage({ params, progB: pb, progE: pe });
 };
-// Модуль дошёл до конца: это видит дымовая проверка в браузере.
+// The module ran to the end: the in-browser smoke test sees this.
 document.documentElement.dataset.scriptOk = '1';
 </script>

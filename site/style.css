@@ -1,5 +1,5 @@
-/* Забытые системы — общий слой оформления.
-   Ссылка на шрифты стоит в самих страницах: так первая отрисовка не ждёт CSS. */
+/* Forgotten Systems: the shared styling layer.
+   The font link lives in the pages themselves, so the first paint does not wait for CSS. */
 
 :root {
   --ground:    #F7F7F4;
@@ -52,7 +52,7 @@ body {
 .sheet { max-width: 54rem; margin: 0 auto; padding: 0 2rem 6rem; }
 @media (max-width: 40rem) { .sheet { padding: 0 1.25rem 4rem; } }
 
-/* ─── Шапка ─── */
+/* ─── Header ─── */
 .masthead { padding: 4rem 0 2.5rem; }
 .eyebrow {
   font-family: var(--f-mono);
@@ -125,7 +125,7 @@ pre code { background: none; padding: 0; font-size: 1em; }
 
 section { border-top: 1px solid var(--rule); padding: 2.75rem 0; }
 
-/* ─── Полоса чисел ─── */
+/* ─── Numbers strip ─── */
 .figures {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
@@ -154,7 +154,7 @@ section { border-top: 1px solid var(--rule); padding: 2.75rem 0; }
   display: block;
 }
 
-/* ─── Главная кнопка ─── */
+/* ─── Main button ─── */
 .cta {
   display: inline-flex;
   align-items: baseline;
@@ -180,7 +180,7 @@ section { border-top: 1px solid var(--rule); padding: 2.75rem 0; }
 .cta.ghost { background: transparent; color: var(--ink); border-color: var(--rule); }
 .cta.ghost:hover { background: transparent; border-color: var(--blue); color: var(--blue); }
 
-/* ─── Список проектов серии ─── */
+/* ─── Series project list ─── */
 .projects { display: flex; flex-direction: column; gap: 0; margin: 0; padding: 0; list-style: none; }
 .project {
   display: grid;
@@ -213,7 +213,7 @@ section { border-top: 1px solid var(--rule); padding: 2.75rem 0; }
   .status { grid-column: 1; grid-row: auto; justify-self: start; }
 }
 
-/* ─── Нумерованный список шагов ─── */
+/* ─── Numbered step list ─── */
 ol.steps { list-style: none; margin: 0; padding: 0; counter-reset: s; }
 ol.steps > li {
   counter-increment: s;

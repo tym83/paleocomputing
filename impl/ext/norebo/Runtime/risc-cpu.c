@@ -18,39 +18,39 @@ static uint32_t fp_mul(uint32_t x, uint32_t y);
 static uint32_t fp_div(uint32_t x, uint32_t y);
 static struct idiv { uint32_t quot, rem; } idiv(uint32_t x, uint32_t y, bool signed_div);
 
-/* ─── Счётчик тактов ────────────────────────────────────────────────────────
-   Модель латентностей ВЫВЕДЕНА ИЗ ИЗМЕРЕНИЙ на настоящем RTL Вирта под Verilator
-   и проверена против него потактово на 61 инструкции (расхождений 0).
-   См. impl/tb/cycle_model.h и docs/FINDING-01-counter-period.md.
+/* ─── Cycle counter ─────────────────────────────────────────────────────────
+   The latency model was DERIVED FROM MEASUREMENTS on Wirth's real RTL under
+   Verilator and checked against it cycle by cycle on 61 instructions (0 mismatches).
+   See impl/tb/cycle_model.h and docs/FINDING-01-counter-period.md.
 
-   Латентности: 1 такт обычные; 2 — LD/ST (одна шина на код и данные);
-   4 — FAD/FSB; 26 — FML; 27 — FDV; 34 — MUL/DIV.
-   Подряд идущая операция ТОГО ЖЕ блока стоит период счётчика (2^разрядность):
+   Latencies: 1 cycle for ordinary ones; 2 for LD/ST (one bus for code and data);
+   4 for FAD/FSB; 26 for FML; 27 for FDV; 34 for MUL/DIV.
+   A back-to-back operation on the SAME unit costs the counter period (2^width):
    FPAdder 4, FPMultiplier 32, FPDivider 32, Multiplier 64, Divider 64.        */
 uint64_t risc_cycles = 0;
 uint64_t risc_insns  = 0;
 
-/* ─── Динамический профиль проверок границ ───────────────────────────────────
-   Зачем: решение о кодировании CHK принималось по распределению МЕСТ проверки
-   (медиана предела 32), и это оказалось плохим предиктором — горячие циклы
-   гоняют крупные массивы. См. docs/FINDING-09. Здесь считается, сколько РАЗ
-   исполняется проверка каждого класса длин, а не сколько их в коде.
-   Работает на конфигурации B (программные проверки): пара
-   SUB RH, idx, #lim  +  BLR CC, ...MT  -- ловим по второму слову.            */
+/* ─── Dynamic profile of bounds checks ──────────────────────────────────────
+   Why: the CHK encoding decision was made from the distribution of check SITES
+   (median limit 32), and that turned out to be a poor predictor: hot loops
+   walk large arrays. See docs/FINDING-09. This counts how many TIMES a check
+   of each length class executes, not how many of them are in the code.
+   Works on configuration B (software checks): the pair
+   SUB RH, idx, #lim  +  BLR CC, ...MT  -- caught on the second word.          */
 #define PROF_BUCKETS 8
-uint64_t risc_chk_hits[PROF_BUCKETS];      /* исполнений по классам предела */
+uint64_t risc_chk_hits[PROF_BUCKETS];      /* executions per limit class */
 uint64_t risc_chk_dyn_total;
 static const uint32_t prof_hi[PROF_BUCKETS] = {15,63,127,255,1023,4095,65535,0xFFFFFFFFu};
-static uint32_t prof_prev_insn;            /* предыдущая инструкция */
+static uint32_t prof_prev_insn;            /* previous instruction */
 
-/* ─── Профиль дескрипторов (выпуск 14) ─────────────────────────────────────
-   Что исполняется вокруг открытых массивов, по конфигурациям:
-     idx      — исполнено IDX (F: индексация открытых массивов)
-     openchk  — программных проверок с пределом в РЕГИСТРЕ: F0 CMP + BLR-ловушка
-                индекса (B и E: открытые массивы; CHK их покрыть не может)
-     strip    — пар LSL R,R,12 + ROR R,R,12 (F: дескриптор -> голый адрес)
-     mhiior   — пар MHI RH,k<<4 + IOR r,r,RH (F: сборка дескриптора; в прочих
-                конфигурациях — большие константы, фон для вычитания)        */
+/* ─── Descriptor profile (episode 14) ──────────────────────────────────────
+   What executes around open arrays, per configuration:
+     idx      — IDX executed (F: open array indexing)
+     openchk  — software checks with the limit in a REGISTER: F0 CMP + BLR index
+                trap (B and E: open arrays; CHK cannot cover them)
+     strip    — LSL R,R,12 + ROR R,R,12 pairs (F: descriptor -> bare address)
+     mhiior   — MHI RH,k<<4 + IOR r,r,RH pairs (F: descriptor assembly; in other
+                configurations, large constants, the background to subtract)  */
 uint64_t risc_desc_prof[4];
 
 static void profile_check(uint32_t ir, uint32_t prev) {
@@ -63,9 +63,9 @@ static void profile_check(uint32_t ir, uint32_t prev) {
   if ((ir >> 28) == 0x0 && ((ir >> 16) & 0xF) == 6 && ((prev >> 28) & 0xE) == 0x6
       && ((prev >> 16) & 0xF) == 0 && (prev & 0xF) == 0 && ((prev >> 24) & 0xF) == (ir & 0xF))
     risc_desc_prof[3]++;
-  /* ловушка индекса массива: BLR (нибл 1101), cond=10, номер 1, c = MT = 12 */
+  /* array index trap: BLR (nibble 1101), cond=10, number 1, c = MT = 12 */
   if ((ir >> 28) != 0xD || (ir & 0xF) != 12 || ((ir >> 4) & 0xF) != 1) return;
-  /* предшествующее слово: F1 SUB с непосредственным пределом */
+  /* preceding word: F1 SUB with an immediate limit */
   if ((prev >> 28) != 0x4 || ((prev >> 16) & 0xF) != 9) return;
   uint32_t lim = prev & 0xFFFF;
   for (int i = 0; i < PROF_BUCKETS; i++)
@@ -121,32 +121,32 @@ static void risc_single_step(const struct RISC_IO *io, struct RISC *risc) {
     uint32_t im =  ir & 0x0000FFFF;
     uint32_t c  =  ir & 0x0000000F;
 
-    /* ─── CHK: аппаратная проверка границ массива ────────────────────────
-       Кодировка: F0 (p=0, q=0), v=1, op=1 -- алиас LSL, который компилятор
-       никогда не эмитит (доказано зондом декодера: impl/tb/decoder_probe.cpp).
-       Индекс в поле b, предел в IR[15:4] (12 бит), регистр c = 12 (MT).
-       При срабатывании делает то же, что BLR: R15 := адрес следующей команды,
-       PC := R[12]. Иначе -- ничего: ни записи регистра, ни флагов.
-       Семантика совпадает с RTL (impl/tests/t2_chk.s, 5/5).                */
-    /* Бит u проверяется явно: иначе CHK заняла бы и кодировку 0011. */
+    /* ─── CHK: hardware array bounds check ───────────────────────────────
+       Encoding: F0 (p=0, q=0), v=1, op=1 -- an LSL alias the compiler never
+       emits (proven by the decoder probe: impl/tb/decoder_probe.cpp).
+       Index in field b, limit in IR[15:4] (12 bits), register c = 12 (MT).
+       When it fires it does the same as BLR: R15 := address of the next
+       instruction, PC := R[12]. Otherwise nothing: no register write, no flags.
+       Semantics match the RTL (impl/tests/t2_chk.s, 5/5).                  */
+    /* The u bit is checked explicitly: otherwise CHK would also take encoding 0011. */
     if ((ir & qbit) == 0 && (ir & ubit) == 0 && (ir & vbit) != 0 && op == LSL) {
-      /* Предел -- IR[15:8], 8 бит. Биты IR[7:4] СОХРАНЕНЫ под номером ловушки,
-         который Kernel.Trap читает по R15-4 (Kernel.Mod:256), а IR[23:16] под
-         позицию в исходнике. Решение принято по данным: медианный массив в системе
-         32 элемента, 8 бит покрывают 70-85% проверок, а 12 бит ломают диагностику
-         полностью (измерено: "unknown trap 8"). См. docs/FINDING-08. */
-      /* Кодировка предела выбирается переменной окружения NOREBO_CHK.
-         Раньше здесь было жёстко зашито только SPLIT, из-за чего конфигурация C
-         (предел 12 бит в IR[15:4]) не запускалась вовсе: декодер читал предел
-         как lim DIV 16, проверка срабатывала на законных индексах и компилятор
-         падал через ~1.7 млн тактов. Найдено аудитом.
+      /* Limit -- IR[15:8], 8 bits. Bits IR[7:4] are KEPT for the trap number,
+         which Kernel.Trap reads at R15-4 (Kernel.Mod:256), and IR[23:16] for
+         the source position. The decision was made from data: the median array
+         in the system has 32 elements, 8 bits cover 70-85% of checks, and 12 bits
+         break diagnostics completely (measured: "unknown trap 8"). See docs/FINDING-08. */
+      /* The limit encoding is selected by the NOREBO_CHK environment variable.
+         Previously only SPLIT was hard-coded here, so configuration C
+         (12-bit limit in IR[15:4]) did not run at all: the decoder read the limit
+         as lim DIV 16, the check fired on legal indices and the compiler
+         crashed after ~1.7 million cycles. Found by an audit.
 
-           NOREBO_CHK=split  (по умолчанию) — ПРИНЯТЫЙ вариант E:
-               предел из двух кусков {IR[27:24], IR[15:8]}, 12 бит,
-               номер ловушки цел в IR[7:4]
-           NOREBO_CHK=wide   — отвергнутый вариант C: предел IR[15:4], 12 бит,
-               перекрывает номер ловушки и позицию
-           NOREBO_CHK=narrow — отвергнутый вариант D: предел IR[15:8], 8 бит  */
+           NOREBO_CHK=split  (default) — the ACCEPTED variant E:
+               limit from two pieces {IR[27:24], IR[15:8]}, 12 bits,
+               trap number intact in IR[7:4]
+           NOREBO_CHK=wide   — rejected variant C: limit IR[15:4], 12 bits,
+               overlaps the trap number and position
+           NOREBO_CHK=narrow — rejected variant D: limit IR[15:8], 8 bits     */
       uint32_t lim;
       {
         static int mode = -1;
@@ -159,26 +159,26 @@ static void risc_single_step(const struct RISC_IO *io, struct RISC *risc) {
         else                lim = (((ir >> 24) & 0xF) << 8) | ((ir >> 8) & 0xFF);
       }
       if (risc->R[b] >= lim) {
-        risc_set_register(risc, 15, risc->PC * 4);   /* PC уже инкрементирован */
+        risc_set_register(risc, 15, risc->PC * 4);   /* PC already incremented */
         risc->PC = risc->R[c] / 4;
       }
       return;
     }
 
-    /* ─── IDX: индексация через дескриптор (выпуск 14) ───────────────────
-       Кодировка: F0, u=0, v=1, op=8 (алиас ADD). Дескриптор в R[b]:
-       {длина[31:20], адрес[19:0]}; индекс в R[c]; масштаб IR[9:8].
-       R[a] := адрес + (индекс << масштаб), N/Z по результату, C/OV не трогаются.
-       Индекс >= длины (беззнаково) -- ловушка как у BLR MT: R15 := адрес
-       следующей команды, PC := R[12]. В RTL это на такт дольше (такт простоя,
-       в котором IR заменяется словом BLR MT) -- модель тактов добавляет его.
-       Семантика совпадает с RTL: impl/tests/t3_idx*.s, дифференциально --
-       impl/tools/idx_diff.sh. См. 14-episode-descriptors.md.              */
+    /* ─── IDX: indexing through a descriptor (episode 14) ─────────────────
+       Encoding: F0, u=0, v=1, op=8 (ADD alias). Descriptor in R[b]:
+       {length[31:20], address[19:0]}; index in R[c]; scale IR[9:8].
+       R[a] := address + (index << scale), N/Z from the result, C/OV untouched.
+       Index >= length (unsigned) -- a trap like BLR MT: R15 := address of the
+       next instruction, PC := R[12]. In the RTL this takes one cycle longer (a
+       stall cycle in which IR is replaced by the BLR MT word); the cycle model
+       adds it. Semantics match the RTL: impl/tests/t3_idx*.s, differentially
+       via impl/tools/idx_diff.sh. See 14-episode-descriptors.md.            */
     if ((ir & qbit) == 0 && (ir & ubit) == 0 && (ir & vbit) != 0 && op == ADD) {
       uint32_t d = risc->R[b], i = risc->R[c];
       if (i >= (d >> 20)) {
-        risc_cycles++;                                /* такт простоя */
-        risc_set_register(risc, 15, risc->PC * 4);    /* PC уже инкрементирован */
+        risc_cycles++;                                /* stall cycle */
+        risc_set_register(risc, 15, risc->PC * 4);    /* PC already incremented */
         risc->PC = risc->R[12] / 4;
       } else {
         risc_set_register(risc, a, ((d & 0xFFFFF) + (i << ((ir >> 8) & 3))) & 0xFFFFFF);

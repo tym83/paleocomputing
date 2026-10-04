@@ -1,11 +1,11 @@
 MODULE OpenBench;
-(* Счётная нагрузка на ОТКРЫТЫХ массивах (выпуск 14, дескрипторы).
-   Те же ядра, что ArrBench (сортировка, свёртка), но массив приходит в процедуру
-   параметром ARRAY OF T. Длина здесь известна только во время исполнения, и
-   CHK (предел в команде) её не покрывает: в E проверка остаётся программной,
-   в F её делает IDX по дескриптору. Плюс ARRAY OF CHAR — строки, главный
-   источник открытых массивов в системе.
-   Результат проверяется ASSERT: неверный код не должен дать правдоподобных тактов. *)
+(* Compute workload on OPEN arrays (episode 14, descriptors).
+   The same kernels as ArrBench (sorting, reduction), but the array is passed to the
+   procedure as an ARRAY OF T parameter. Its length is known only at run time, and
+   CHK (limit in the instruction) cannot cover it: in E the check stays in software,
+   in F it is done by IDX through the descriptor. Plus ARRAY OF CHAR: strings, the
+   main source of open arrays in the system.
+   The result is checked with ASSERT: wrong code must not produce plausible cycle counts. *)
   IMPORT Norebo;
 
   CONST N = 1000; L = 1000;
@@ -20,7 +20,7 @@ MODULE OpenBench;
     t[LEN(t) - 1] := 0X
   END Fill;
 
-  (* Пузырьковая сортировка: две индексации на сравнение, четыре на обмен *)
+  (* Bubble sort: two indexings per comparison, four per swap *)
   PROCEDURE Sort(VAR x: ARRAY OF INTEGER);
     VAR i, j, t, n: INTEGER;
   BEGIN n := LEN(x); i := 0;
@@ -39,7 +39,7 @@ MODULE OpenBench;
     RETURN r
   END Sum;
 
-  (* Строка: подсчёт символа до 0X — как Texts/ORS ходят по именам *)
+  (* String: count a character up to 0X, the way Texts/ORS walk names *)
   PROCEDURE Count(t: ARRAY OF CHAR; c: CHAR): INTEGER;
     VAR i, k: INTEGER;
   BEGIN i := 0; k := 0;
@@ -53,7 +53,7 @@ MODULE OpenBench;
     FOR i := 0 TO N - 2 DO ASSERT(a[i] <= a[i+1]) END ;
     ASSERT(Sum(a) = r);
     k := 0; FOR i := 1 TO 200 DO k := k + Count(s, "e") END ;
-    ASSERT(k = 200 * 39);   (* 999 символов, "e" на позициях 4, 30, ...: 39 раз *)
+    ASSERT(k = 200 * 39);   (* 999 characters, "e" at positions 4, 30, ...: 39 times *)
     total := r + k
   END Run;
 

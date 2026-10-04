@@ -1,14 +1,14 @@
 MODULE ArrBench;
-(* Счётная нагрузка с ПЛОТНОЙ индексацией массивов.
-   Все пределы меньше 4096, значит конфигурация C задействует CHK на каждой индексации.
-   Назначение: верхняя граница того, что аппаратная проверка границ вообще может дать.
-   Ни одного указателя, ни одного NIL — в отличие от компиляторной нагрузки. *)
+(* Compute workload with DENSE array indexing.
+   All limits are below 4096, so configuration C uses CHK on every indexing.
+   Purpose: an upper bound on what a hardware bounds check can deliver at all.
+   Not a single pointer, not a single NIL, unlike the compiler workload. *)
   IMPORT Norebo;
 
-  CONST N = 1000; M = 60; R = M*M;   (* R -- размер результата матрицы *)
+  CONST N = 1000; M = 60; R = M*M;   (* R -- size of the result matrix *)
 
   VAR a, b: ARRAY N OF INTEGER;
-      r: ARRAY R OF INTEGER;   (* был баг: писал в b[i*M+j] до 3599 при N=1000 *)
+      r: ARRAY R OF INTEGER;   (* there was a bug: it wrote b[i*M+j] up to 3599 with N=1000 *)
       m: ARRAY M, M OF INTEGER;
 
   PROCEDURE Fill;
@@ -22,7 +22,7 @@ MODULE ArrBench;
     END
   END Fill;
 
-  (* Пузырьковая сортировка: две индексации на сравнение, четыре на обмен *)
+  (* Bubble sort: two indexings per comparison, four per swap *)
   PROCEDURE Sort;
     VAR i, j, t: INTEGER;
   BEGIN i := 0;
@@ -35,7 +35,7 @@ MODULE ArrBench;
     END
   END Sort;
 
-  (* Умножение матриц: три индексации на итерацию внутреннего цикла *)
+  (* Matrix multiplication: three indexings per inner-loop iteration *)
   PROCEDURE MatMul;
     VAR i, j, k, s: INTEGER;
   BEGIN i := 0;

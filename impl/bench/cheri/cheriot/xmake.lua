@@ -1,11 +1,11 @@
--- Замер цены проверки границ на CHERIoT-Ibex (ступень CHERI, находка 63).
+-- Measures the cost of a bounds check on CHERIoT-Ibex (CHERI rung, finding 63).
 --
--- Сборка внутри контейнера CHERIoT (см. run.sh):
+-- Build inside the CHERIoT container (see run.sh):
 --   xmake config --sdk=/cheriot-tools/ --board=ibex-safe-simulator
 --   xmake && xmake run
 --
--- SDK: клон cheriot-rtos в ../cheriot-rtos (его делает run.sh, в git не идёт)
--- или путь в переменной CHERIOT_RTOS.
+-- SDK: a cheriot-rtos clone in ../cheriot-rtos (made by run.sh, not tracked in git)
+-- or a path in the CHERIOT_RTOS variable.
 set_project("CHERIoT bounds-check cost")
 sdkdir = path.join(os.getenv("CHERIOT_RTOS") or "../cheriot-rtos", "sdk")
 includes(sdkdir)
@@ -14,20 +14,20 @@ set_toolchains("cheriot-clang")
 option("board")
     set_default("ibex-safe-simulator")
 
--- Тело цикла — ../loop.c, тот же файл, что уходит в Compiler Explorer.
--- SDK по умолчанию собирает -Oz; поверх ставим -O2 без развёртки,
--- как для остальных целей (флаг позже в строке — он и действует,
--- проверяется дизассемблером, а не верой).
+-- The loop body is ../loop.c, the same file that goes to Compiler Explorer.
+-- The SDK builds with -Oz by default; on top of that we set -O2 without unrolling,
+-- as for the other targets (the later flag on the command line wins; this is
+-- verified with the disassembler, not taken on faith).
 local kernel_flags = {"-O2", "-fno-unroll-loops", "-fno-vectorize", "-fno-slp-vectorize"}
 
--- Замер: конфигурации A и B.
+-- Measurement: configurations A and B.
 compartment("bench")
     add_deps("freestanding", "debug")
     add_files("bench.cc", "../loop.c")
     add_cflags(kernel_flags, {force = true})
     add_cxflags(kernel_flags, {force = true})
 
--- Отрицательный контроль: тот же машинный код, заведомо узкие границы.
+-- Negative control: the same machine code, deliberately narrow bounds.
 compartment("probe")
     add_deps("freestanding", "debug")
     add_files("probe.cc", "../loop.c")

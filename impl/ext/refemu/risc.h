@@ -37,7 +37,7 @@ struct Damage risc_get_framebuffer_damage(struct RISC *risc);
 
 uint32_t risc_get_pc(struct RISC *risc);
 
-/* Доступ к архитектурному состоянию для дифференциального стенда. */
+/* Access to architectural state for the differential test bench. */
 uint32_t risc_get_reg(struct RISC *risc, int i);
 uint32_t risc_get_h(struct RISC *risc);
 const uint32_t *risc_get_ram(struct RISC *risc, uint32_t *words);

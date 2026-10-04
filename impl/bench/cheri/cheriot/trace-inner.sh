@@ -1,7 +1,7 @@
 #!/bin/sh
-# Внутренняя часть trace.sh: исполняется В КОНТЕЙНЕРЕ. Собирает образ, гоняет
-# его в варианте симулятора SAFE с трассой ядра Ibex и вырезает из трассы
-# несколько итераций из середины замеров A и B — такты по командам.
+# Inner part of trace.sh: runs INSIDE THE CONTAINER. Builds the image, runs it
+# in the SAFE simulator variant with the Ibex core trace, and cuts a few iterations
+# from the middle of the A and B measurements out of the trace: cycles per instruction.
 set -eu
 cp -r /cheri /tmp/work
 cd /tmp/work/cheriot

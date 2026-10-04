@@ -1,48 +1,47 @@
 #!/usr/bin/env python3
-"""Почему проверка границ ничего не стоит на M4 и EPYC и стоит 2–6% на Arm-ядре GitHub.
+"""Why a bounds check costs nothing on M4 and EPYC but costs 2-6% on GitHub's Arm core.
 
-Лестница (ladder.py, находка 61) дала гипотезу: на широком ядре цикл упирается
-в цепочку зависимостей индекса `add → and` (2 такта на итерацию), а сравнение
-с переходом исполняются в свободных слотах под этой цепочкой. Этот скрипт
-проверяет гипотезу управляемыми опытами — без счётчиков производительности,
-которых нет ни на общих машинах GitHub, ни на macOS без root.
+The ladder (ladder.py, finding 61) produced a hypothesis: on a wide core the loop is bound
+by the index dependency chain `add → and` (2 cycles per iteration), and the compare and
+branch execute in free slots underneath that chain. This script tests the hypothesis with
+controlled experiments, without performance counters, which are available neither on
+GitHub's shared machines nor on macOS without root.
 
-ОДИН шаблон порождает все ядра опыта. Тело — тот же цикл, что в лестнице:
+ONE template produces all kernels of the experiment. The body is the same loop as in the ladder:
 
-    [c проверок]  sum += a[i];  i = i + 1;  [k звеньев]  i &= 63;
+    [c checks]  sum += a[i];  i = i + 1;  [k links]  i &= 63;
 
-  * k звеньев — k зависимых сложений `add i, i, #64` во встроенном ассемблере.
-    Маска их стирает, сумма та же, а компилятор выбросить их не может: для него
-    это чёрный ящик. Цепочка индекса удлиняется с 2 до 2 + k тактов.
-  * c проверок — c пар «сравнение + условный переход» против c независимых
-    пределов, спрятанных от оптимизатора. Каждая уходит в свою холодную ловушку
-    ladder_fail(j): общих целей нет, слить переходы компилятор не может.
-  * положение проверки (k = 0, c = 1):
-      pre   — сравнивается индекс до сложения (как forced в лестнице);
-      post  — индекс после маски; переход по-прежнему вне цепочки данных;
-      mask  — та же проверка без перехода: cmp + csel/cmov обнуляет индекс
-              чтения при выходе за предел (как array_index_nospec в Linux),
-              цепочка индекса не затронута;
-      chain — то же обнуление, но индекс следующей итерации считается из
-              обнулённого: cmp + csel встают в цепочку зависимостей.
+  * k links: k dependent additions `add i, i, #64` in inline assembly.
+    The mask erases them and the sum is unchanged, but the compiler cannot drop them:
+    to it they are a black box. The index chain grows from 2 to 2 + k cycles.
+  * c checks: c "compare + conditional branch" pairs against c independent limits
+    hidden from the optimizer. Each goes to its own cold trap ladder_fail(j): there are
+    no shared targets, so the compiler cannot merge the branches.
+  * check position (k = 0, c = 1):
+      pre   - the index is compared before the addition (like forced in the ladder);
+      post  - the index after the mask; the branch is still outside the data chain;
+      mask  - the same check without a branch: cmp + csel/cmov zeroes the load index
+              when it is out of bounds (like array_index_nospec in Linux);
+              the index chain is untouched;
+      chain - the same zeroing, but the next iteration's index is computed from the
+              zeroed one: cmp + csel join the dependency chain.
 
-Такты без счётчиков. Ядро калибровки — 32 зависимых `add x, x, #1` на
-итерацию: задержка целочисленного сложения на всех проверенных ядрах — один
-такт, значит нс на сложение ≈ длительность такта. Калибровка идёт парой перед
-каждым замером, такты = нс/итер ÷ нс/сложение того же круга: дрейф частоты
-между кругами сокращается.
+Cycles without counters. The calibration kernel is 32 dependent `add x, x, #1` per
+iteration: integer add latency is one cycle on every core tested, so ns per add ≈
+the cycle time. Calibration runs paired before each measurement, and cycles =
+ns/iter ÷ ns/add of the same round, so frequency drift between rounds cancels out.
 
-Форма тела проверяется, а не предполагается: одно чтение памяти, ровно c боковых
-выходов, ровно k звеньев, csel/cmov в вариантах mask и chain. Иначе — падение.
+The body shape is verified, not assumed: one memory load, exactly c side exits,
+exactly k links, csel/cmov in the mask and chain variants. Otherwise the script fails.
 
-Предсказания гипотезы:
-  * такты(c=0, k) ≈ 2 + k — цикл упирается в цепочку;
-  * добавка от проверок Δ(c, k) = такты(c, k) − такты(0, k) убывает до нуля
-    с ростом k: чем длиннее цепочка, тем больше свободных слотов под ней;
-  * chain стоит ≈ +2 такта везде (сравнение и выбор — в цепочке), mask — как pre.
-Если Δ не зависит от k — гипотеза опровергнута: цена не прячется под задержкой.
+Predictions of the hypothesis:
+  * cycles(c=0, k) ≈ 2 + k: the loop is bound by the chain;
+  * the cost of checks Δ(c, k) = cycles(c, k) − cycles(0, k) decreases to zero
+    as k grows: the longer the chain, the more free slots underneath it;
+  * chain costs ≈ +2 cycles everywhere (compare and select are in the chain), mask the same as pre.
+If Δ does not depend on k, the hypothesis is refuted: the cost does not hide under the latency.
 
-Запуск:
+Usage:
     python3 impl/bench/ladder/why.py --label macos-arm64-apple-m4
 """
 import argparse
@@ -59,10 +58,10 @@ HERE = pathlib.Path(__file__).resolve().parent
 CHECKS = (0, 1, 2, 4)
 LINKS = (0, 1, 2, 4)
 CALIB_ADDS = 32
-CHUNKS = 64          # кусков на замер: калибровка и ядро чередуются
+CHUNKS = 64          # chunks per measurement: calibration and kernel alternate
 DEFAULT_ITER = 64_000_000
 
-# Встроенный ассемблер по архитектурам: звено цепочки, калибровка, выбор.
+# Inline assembly per architecture: chain link, calibration, select.
 ASM = {
     'aarch64': {
         'link': 'add %x0, %x0, #64',
@@ -78,7 +77,7 @@ ASM = {
     },
 }
 
-HEAD = """/* ПОРОЖДЁННЫЙ ФАЙЛ — правится impl/bench/ladder/why.py, не руками. */
+HEAD = """/* GENERATED FILE - edit impl/bench/ladder/why.py, not by hand. */
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -90,7 +89,7 @@ HEAD = """/* ПОРОЖДЁННЫЙ ФАЙЛ — правится impl/bench/lad
 __attribute__((noinline, noreturn, cold))
 void ladder_fail(int j)
 {{
-    fprintf(stderr, "проверка %d сработала\\n", j);
+    fprintf(stderr, "check %d fired\\n", j);
     abort();
 }}
 """
@@ -146,14 +145,14 @@ int main(int argc, char **argv)
     for (uint32_t k = 0; k < LIM; k++)
         arr[k] = k * 2654435761u + 1u;
     const uint32_t *p = arr;
-    __asm__ volatile("" : "+r"(p) : : "memory");   /* содержимое неизвестно оптимизатору */
-    /* Замер кусками: калибровка и ядро чередуются CHUNKS раз в одном процессе,
-     * от каждого берётся лучший кусок — оба при одной, наибольшей частоте. */
+    __asm__ volatile("" : "+r"(p) : : "memory");   /* contents unknown to the optimizer */
+    /* Measured in chunks: calibration and kernel alternate CHUNKS times in one process,
+     * and the best chunk of each is taken, so both are at the same, highest frequency. */
     uint64_t nc = n / {adds} + 1;
     for (size_t k = 0; k < sizeof kernels / sizeof kernels[0]; k++) {{
         if (strcmp(argv[1], kernels[k].name) != 0)
             continue;
-        why_calib(p, nc);                          /* прогрев */
+        why_calib(p, nc);                          /* warm-up */
         kernels[k].fn(p, n);
         uint32_t s = 0;
         double best_t = 1e300, best_a = 1e300;
@@ -164,7 +163,7 @@ int main(int argc, char **argv)
             s += kernels[k].fn(p, n);
             double t1 = now_ns();
             if (x != nc * {adds}) {{
-                fprintf(stderr, "калибровка посчитана неверно\\n");
+                fprintf(stderr, "calibration computed the wrong result\\n");
                 return 3;
             }}
             double a = (c1 - c0) / (double)(nc * {adds}), t = (t1 - c1) / (double)n;
@@ -174,14 +173,14 @@ int main(int argc, char **argv)
         printf("%u %.6f %.6f\\n", s, best_t, best_a);
         return 0;
     }}
-    fprintf(stderr, "нет ядра %s\\n", argv[1]);
+    fprintf(stderr, "no kernel %s\\n", argv[1]);
     return 2;
 }}
 """
 
 
 def variants():
-    """(имя, c, k, положение): сетка c × k с проверкой pre и три варианта положения."""
+    """(name, c, k, position): the c × k grid with a pre check, plus three position variants."""
     out = [(f'why_c{c}_k{k}', c, k, 'pre') for k in LINKS for c in CHECKS]
     out += [(f'why_{pos}', 1, 0, pos) for pos in ('post', 'mask', 'chain')]
     return out
@@ -193,14 +192,14 @@ def emit_kernel(arch, name, c, k, pos):
     prologue = ''.join(f'    size_t lim{j} = LIM;\n' for j in lims)
     if c:
         regs = ', '.join(f'"+r"(lim{j})' for j in lims)
-        prologue += f'    __asm__ volatile("" : {regs});   /* пределы неизвестны оптимизатору */\n'
+        prologue += f'    __asm__ volatile("" : {regs});   /* limits unknown to the optimizer */\n'
     checks = ''.join(f'        if (i >= lim{j}) ladder_fail({j});\n' for j in lims)
     pre, post, idx, nxt = '', '', 'i', 'i'
     if pos == 'pre':
         pre = checks
     elif pos == 'post':
         post = checks
-    else:                                   # mask, chain: без перехода
+    else:                                   # mask, chain: no branch
         prologue += ('    size_t zero = 0;\n'
                      '    __asm__ volatile("" : "+r"(zero));\n')
         pre = ('        size_t j = i;\n'
@@ -224,7 +223,7 @@ def emit(arch):
 
 
 def count_imm_adds(text, arch, imm):
-    """Сколько в теле сложений с непосредственным imm: `add x, x, #imm` или `addq $imm, %r`."""
+    """How many additions with immediate imm the body has: `add x, x, #imm` or `addq $imm, %r`."""
     n = 0
     for line in text.splitlines():
         parts = line.strip().split(None, 1)
@@ -239,18 +238,18 @@ def count_imm_adds(text, arch, imm):
 
 
 def verify(asm_text, arch, name, c, k, pos):
-    """Форма тела по ассемблеру; бросает SystemExit с телом, если она не та."""
+    """Body shape from the assembly; raises SystemExit with the body if it is wrong."""
     lb = loop_body(asm_text, arch, name)
     want_exits = 0 if pos in ('mask', 'chain') else c
     errs = []
     if lb['loads'] != 1:
-        errs.append(f'{lb["loads"]} чтений памяти вместо одного')
+        errs.append(f'{lb["loads"]} memory loads instead of one')
     if len(lb['exits']) != want_exits:
-        errs.append(f'{len(lb["exits"])} боковых выходов вместо {want_exits}')
+        errs.append(f'{len(lb["exits"])} side exits instead of {want_exits}')
     if count_imm_adds(lb['text'], arch, 64) != k:
-        errs.append(f'{count_imm_adds(lb["text"], arch, 64)} звеньев цепочки вместо {k}')
+        errs.append(f'{count_imm_adds(lb["text"], arch, 64)} chain links instead of {k}')
     if pos in ('mask', 'chain') and not any(s in lb['text'] for s in ASM[arch]['sel']):
-        errs.append('нет csel/cmov')
+        errs.append('no csel/cmov')
     if errs:
         sys.exit(f'❌ {name}: ' + '; '.join(errs) + f'\n{lb["text"]}')
     return lb
@@ -260,7 +259,7 @@ def verify_calib(asm_text, arch):
     lb = loop_body(asm_text, arch, 'why_calib')
     adds = count_imm_adds(lb['text'], arch, 1)
     if adds != CALIB_ADDS:
-        sys.exit(f'❌ why_calib: {adds} сложений вместо {CALIB_ADDS}\n{lb["text"]}')
+        sys.exit(f'❌ why_calib: {adds} additions instead of {CALIB_ADDS}\n{lb["text"]}')
     return lb
 
 
@@ -275,7 +274,7 @@ def build(tc, arch, outdir):
 
 
 def time_one(binary, kernel, n):
-    """(сумма, нс/итер, нс/сложение по калибровке в том же процессе)."""
+    """(sum, ns/iter, ns/add from the calibration in the same process)."""
     out = run([str(binary), kernel, str(n)]).stdout.split()
     return int(out[0]), float(out[1]), float(out[2])
 
@@ -283,10 +282,10 @@ def time_one(binary, kernel, n):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     ap.add_argument('--label', required=True)
-    ap.add_argument('--iter', type=int, default=DEFAULT_ITER, help='итераций на прогон')
-    ap.add_argument('--reps', type=int, default=5, help='кругов')
+    ap.add_argument('--iter', type=int, default=DEFAULT_ITER, help='iterations per run')
+    ap.add_argument('--reps', type=int, default=5, help='rounds')
     ap.add_argument('--emulated', action='store_true',
-                    help='машина эмулируется: проверяется только форма тел, время не пишется')
+                    help='the machine is emulated: only body shapes are checked, no timings are written')
     ap.add_argument('--note', default='')
     ap.add_argument('--build-dir', default=str(ladder.IMPL / 'build' / 'ladder'))
     ap.add_argument('--out', default=None)
@@ -295,10 +294,10 @@ def main():
         ladder.RETRIES = 5
     arch = host_arch()
     if arch not in ASM:
-        sys.exit(f'архитектура {arch} не поддерживается')
+        sys.exit(f'architecture {arch} is not supported')
     tcs = find_toolchains({'c'})
     if not tcs:
-        sys.exit('компилятора C нет')
+        sys.exit('no C compiler')
     outdir = pathlib.Path(args.build_dir) / f'why-{args.label}'
     outdir.mkdir(parents=True, exist_ok=True)
 
@@ -313,21 +312,21 @@ def main():
             lb = verify(asm, arch, name, c, k, pos)
             got = time_one(binary, name, chunk)[0]
             if got != want:
-                sys.exit(f'❌ {tc[0]} {name}: сумма {got}, ожидалась {want}')
+                sys.exit(f'❌ {tc[0]} {name}: sum {got}, expected {want}')
             rows.append({'tc': tc[0], 'name': name, 'c': c, 'k': k, 'pos': pos,
                          'count': lb['count'], 'cyc': [], 'ns': [], 'nsadd': []})
             bodies[(tc[0], name)] = lb['text']
-        print(f'  {tc[0]}: {len(variants())} ядер, форма тел проверена', flush=True)
+        print(f'  {tc[0]}: {len(variants())} kernels, body shapes verified', flush=True)
 
     if not args.emulated:
-        # По кругу; калибровка — в том же процессе, до и после замера.
+        # Round-robin; calibration runs in the same process, before and after the measurement.
         for rep in range(args.reps):
             for r in rows:
                 _, ns, cal = time_one(bins[r['tc']], r['name'], chunk)
                 r['ns'].append(ns)
                 r['nsadd'].append(cal)
                 r['cyc'].append(ns / cal)
-            print(f'  круг {rep + 1}/{args.reps}', flush=True)
+            print(f'  round {rep + 1}/{args.reps}', flush=True)
         for r in rows:
             r['best'] = min(r['cyc'])
             r['median'] = statistics.median(r['cyc'])
@@ -350,47 +349,47 @@ def cell(rows, tc, name, key='best'):
 def report(args, arch, tcs, rows, bodies):
     L = []
     w = L.append
-    w(f'# Почему проверка бесплатна — {args.label}')
+    w(f'# Why the check is free - {args.label}')
     w('')
-    w('ПОРОЖДЁННЫЙ ФАЙЛ — `impl/bench/ladder/why.py`. Как читать — '
-      '`impl/docs/FINDING-61-bounds-ladder.md`, раздел «Почему так: эксперимент».')
+    w('GENERATED FILE: `impl/bench/ladder/why.py`. How to read it: '
+      '`impl/docs/FINDING-61-bounds-ladder.md`, the "why" experiment section.')
     w('')
-    w(f'* дата: {datetime.date.today().isoformat()}')
-    w(f'* система: `{platform.system()} {platform.release()}`, архитектура `{arch}`')
+    w(f'* date: {datetime.date.today().isoformat()}')
+    w(f'* system: `{platform.system()} {platform.release()}`, architecture `{arch}`')
     if args.emulated:
-        w('* процессор: эмулируется; /proc/cpuinfo принадлежит хосту')
+        w('* processor: emulated; /proc/cpuinfo belongs to the host')
     else:
         for line in ladder.cpu_info():
-            w(f'* процессор: {line}')
+            w(f'* processor: {line}')
     if args.note:
         w(f'* {args.note}')
-    w(f'* цикл: `sum += a[i]; i = i + 1; [k × add #64]; i &= {MASK}` над {LIM} × u32; '
-      f'итераций на замер: ' + f'{args.iter:,}'.replace(',', ' '))
-    w(f'* кругов: {args.reps}, по кругу; в каждом замере {CHUNKS} кусков, где калибровка '
-      f'{CALIB_ADDS} зависимыми сложениями (1 сложение = 1 такт) чередуется с ядром в одном '
-      'процессе; такты замера = лучший кусок ядра (нс/итер) ÷ лучший кусок калибровки '
-      '(нс/сложение); в таблицах — медиана по кругам')
+    w(f'* loop: `sum += a[i]; i = i + 1; [k × add #64]; i &= {MASK}` over {LIM} × u32; '
+      f'iterations per measurement: ' + f'{args.iter:,}'.replace(',', ' '))
+    w(f'* rounds: {args.reps}, round-robin; each measurement has {CHUNKS} chunks in which calibration '
+      f'with {CALIB_ADDS} dependent additions (1 addition = 1 cycle) alternates with the kernel in one '
+      'process; cycles of a measurement = best kernel chunk (ns/iter) ÷ best calibration chunk '
+      '(ns/add); the tables show the median over rounds')
     w('')
-    w('| компилятор | версия | флаги |')
+    w('| compiler | version | flags |')
     w('|---|---|---|')
     for name, _, _, flags, ver in tcs:
         w(f'| {name} | `{ver}` | `{" ".join(flags)}` |')
     w('')
     if args.emulated:
-        w('> ⚠ **Машина эмулируется.** Проверена только форма тел и суммы; времени нет.')
+        w('> ⚠ **The machine is emulated.** Only body shapes and sums are checked; no timings.')
         w('')
     else:
         for tc in tcs:
             t = tc[0]
             ghz = statistics.median(r['ghz'] for r in rows if r['tc'] == t)
-            w(f'## {t}: такты на итерацию')
+            w(f'## {t}: cycles per iteration')
             w('')
-            w(f'Частота по калибровке (медиана): **{ghz:.2f} ГГц**.')
+            w(f'Frequency from calibration (median): **{ghz:.2f} GHz**.')
             w('')
-            w('Такты на итерацию (медиана по кругам), в скобках — добавка от проверок '
-              'Δ = такты(c, k) − такты(0, k):')
+            w('Cycles per iteration (median over rounds); in parentheses, the cost of the checks '
+              'Δ = cycles(c, k) − cycles(0, k):')
             w('')
-            w('| цепочка индекса | ' + ' | '.join(f'c = {c}' for c in CHECKS) + ' |')
+            w('| index chain | ' + ' | '.join(f'c = {c}' for c in CHECKS) + ' |')
             w('|---|' + '---:|' * len(CHECKS))
             for k in LINKS:
                 base = cell(rows, t, f'why_c0_k{k}')['median']
@@ -398,35 +397,35 @@ def report(args, arch, tcs, rows, bodies):
                 for c in CHECKS:
                     v = cell(rows, t, f'why_c{c}_k{k}')['median']
                     cells.append(f'{v:.2f}' if c == 0 else f'{v:.2f} ({v - base:+.2f})')
-                w(f'| k = {k} (2 + {k} = {2 + k} такта) | ' + ' | '.join(cells) + ' |')
+                w(f'| k = {k} (2 + {k} = {2 + k} cycles) | ' + ' | '.join(cells) + ' |')
             w('')
             base = cell(rows, t, 'why_c0_k0')['median']
-            w('Положение одной проверки (k = 0):')
+            w('Position of a single check (k = 0):')
             w('')
-            w('| вариант | что | команд в теле | такты | Δ к c = 0 |')
+            w('| variant | what | instructions in body | cycles | Δ vs c = 0 |')
             w('|---|---|---:|---:|---:|')
-            what = {'why_c0_k0': 'без проверки',
-                    'why_c1_k0': 'pre: cmp + переход, индекс до сложения',
-                    'why_post': 'post: cmp + переход, индекс после маски',
-                    'why_mask': 'mask: cmp + csel/cmov на индексе чтения, вне цепочки',
-                    'why_chain': 'chain: cmp + csel/cmov в цепочке индекса'}
+            what = {'why_c0_k0': 'no check',
+                    'why_c1_k0': 'pre: cmp + branch, index before the addition',
+                    'why_post': 'post: cmp + branch, index after the mask',
+                    'why_mask': 'mask: cmp + csel/cmov on the load index, outside the chain',
+                    'why_chain': 'chain: cmp + csel/cmov in the index chain'}
             for nm, desc in what.items():
                 r = cell(rows, t, nm)
                 w(f'| `{nm}` | {desc} | {r["count"]} | {r["median"]:.2f} | {r["median"] - base:+.2f} |')
             w('')
-        w('Полная таблица (все круги):')
+        w('Full table (all rounds):')
         w('')
-        w('| компилятор | ядро | c | k | положение | команд | такты: медиана | мин | макс | '
-          'нс/итер (лучшее) |')
+        w('| compiler | kernel | c | k | position | instructions | cycles: median | min | max | '
+          'ns/iter (best) |')
         w('|---|---|---:|---:|---|---:|---:|---:|---:|---:|')
         for r in rows:
             w(f'| {r["tc"]} | `{r["name"]}` | {r["c"]} | {r["k"]} | {r["pos"]} | {r["count"]} | '
               f'{r["median"]:.3f} | {r["best"]:.3f} | {max(r["cyc"]):.3f} | {r["nsbest"]:.3f} |')
         w('')
-    w('## Тела циклов')
+    w('## Loop bodies')
     w('')
     for r in rows:
-        w(f'### {r["tc"]} — `{r["name"]}` ({r["count"]} команд)')
+        w(f'### {r["tc"]} - `{r["name"]}` ({r["count"]} instructions)')
         w('')
         w('```asm')
         w(bodies[(r['tc'], r['name'])])

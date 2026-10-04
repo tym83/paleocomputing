@@ -1,5 +1,5 @@
-// Замер центрального номера в отдельном потоке: страница не замирает на
-// нескольких миллионах тактов.
+// The headline benchmark runs in a separate thread, so the page does not freeze
+// for several million cycles.
 import { runBench, perCheck } from './bench.js';
 import { loadVariant } from './machine.js';
 

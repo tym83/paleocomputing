@@ -1,19 +1,19 @@
-// Чтение файловой системы Оберона прямо из образа, лежащего в памяти машины.
-// Порт tools/oberonfs.py; раскладка снята с исходников системы:
-//   Kernel.Mod:  сектор adr лежит по смещению (adr DIV 29 - 1) * 1024
-//   FileDir.Mod: DirPage = mark, m, p0, fill[52], e[24]; запись = имя 32, adr, p
+// Reads the Oberon file system straight from the image in the machine's memory.
+// A port of tools/oberonfs.py; the layout is taken from the system sources:
+//   Kernel.Mod:  sector adr is at offset (adr DIV 29 - 1) * 1024
+//   FileDir.Mod: DirPage = mark, m, p0, fill[52], e[24]; entry = name 32, adr, p
 //                FileHeader = mark, name[32], aleng, bleng, date, ext[12], sec[64]
-//   Files.Mod:   длина = aleng * 1024 + bleng - 352
+//   Files.Mod:   length = aleng * 1024 + bleng - 352
 //
-// Нужен лабораториям, чтобы проверять результат по ДИСКУ, а не по надписи
-// на экране: «скомпилировалось» и «файл на диске изменился» — разные вещи.
+// The labs need it to check the result on the DISK rather than by a message on
+// the screen: "it compiled" and "the file on disk changed" are different things.
 
 const SS = 1024, HS = 352, DIRROOT = 29;
 
-/** Разбор объектного файла (.rsc). Раскладка та же, что в tools/rsc.py,
-    снята с ORTool.DecObj: имя, ключ, версия, размер, импорты, дескрипторы
-    типов, размер данных, строки, КОД. Нужен лабораториям, чтобы сравнивать
-    размер порождённого кода и ключ интерфейса. */
+/** Parses an object file (.rsc). Same layout as in tools/rsc.py, taken from
+    ORTool.DecObj: name, key, version, size, imports, type descriptors, data
+    size, strings, CODE. The labs need it to compare the size of the generated
+    code and the interface key. */
 export function parseRsc(bytes) {
   let i = 0;
   const str = () => { let s = ''; while (bytes[i]) s += String.fromCharCode(bytes[i++]); i++; return s; };
@@ -30,51 +30,51 @@ export function parseRsc(bytes) {
   return { name, key, version, size, imports, tdBytes, datasize, codeWords: nwords, code };
 }
 
-/** Команда CHK ядра с аппаратной проверкой границ (RISC5.v, WITH_CHK +
-    CHK_SPLIT): F0, v=1, op=1, регистр c = MT (12), номер ловушки 1 в IR[7:4].
-    Стоковый компилятор LSL с v=1 не порождает никогда, поэтому в стоковом
-    коде таких слов ноль — счёт отличает код двух компиляторов. */
+/** The CHK instruction of the core with hardware bounds checking (RISC5.v,
+    WITH_CHK + CHK_SPLIT): F0, v=1, op=1, register c = MT (12), trap number 1
+    in IR[7:4]. The stock compiler never emits LSL with v=1, so stock code
+    contains zero such words: the count tells the two compilers' code apart. */
 export const isChk = w => (w >>> 28) === 1 && ((w >>> 16) & 15) === 1
                           && ((w >>> 4) & 15) === 1 && (w & 15) === 12;
 
-/** Ловушка проверки индекса, которую ставит СТОКОВЫЙ ORG: ORG.Trap(10, 1) =
-    Put3(BLR, 10, pos*100H + 1*10H + MT) — условный переход по регистру MT
-    (старший байт DA: F3, u = 0, BLR, условие 10) с номером ловушки 1 в IR[7:4].
-    Вызовы процедур так не выглядят: у BL с адресом u = 1 (F7), у вызова по
-    регистру условие 7 (D7); у других ловушек другой номер (NIL — 4, тип — 2).
-    Перед ней всегда стоит сравнение, так что одна такая команда = одна
-    программная проверка в два слова. */
+/** The index check trap emitted by the STOCK ORG: ORG.Trap(10, 1) =
+    Put3(BLR, 10, pos*100H + 1*10H + MT), a conditional branch via register MT
+    (top byte DA: F3, u = 0, BLR, condition 10) with trap number 1 in IR[7:4].
+    Procedure calls do not look like this: BL with an address has u = 1 (F7), a
+    call via register has condition 7 (D7); other traps have other numbers
+    (NIL is 4, type is 2). It is always preceded by a comparison, so one such
+    instruction = one two-word software check. */
 export const isIndexTrap = w => (w >>> 24) === 0xDA && ((w >>> 4) & 15) === 1
                                 && (w & 15) === 12;
 
 /**
- * Положить файл в образ диска ДО загрузки системы.
+ * Puts a file into the disk image BEFORE the system boots.
  *
- * Зачем. Лаборатории нужен файл, которого на эталонном образе нет (исходник
- * компилятора, знающего команду CHK), а набирать сорок килобайт с клавиатуры
- * бессмысленно. Писать в диск работающей системы нельзя: карта занятых
- * секторов живёт у неё в памяти (Kernel.sectorMap), и чужая запись рано или
- * поздно легла бы поверх её собственной. А ДО загрузки карты ещё нет:
- * FileDir.Init строит её обходом каталога, и добавленный сюда файл система
- * найдёт и пометит сама, как любой другой.
+ * Why. A lab needs a file that the reference image does not have (the source of
+ * a compiler that knows the CHK instruction), and typing forty kilobytes on the
+ * keyboard is pointless. Writing to the disk of a running system is not allowed:
+ * its map of used sectors lives in its memory (Kernel.sectorMap), and a foreign
+ * write would sooner or later land on top of its own. BEFORE boot the map does
+ * not exist yet: FileDir.Init builds it by walking the directory, and the system
+ * finds and marks a file added here by itself, like any other.
  *
- * Раскладка — по FileDir.Mod: заголовок = mark, name[32], aleng, bleng, date,
- * ext[12], sec[64] (352 байта), первые 672 байта данных лежат в том же
- * секторе; sec[0] — сам заголовок. Каталог — B-дерево, запись вставляется в
- * лист. Деление переполненной страницы не реализовано сознательно: на
- * эталонном образе в нужном листе есть место, а если его нет — лучше громкая
- * ошибка, чем тихо испорченный каталог.
+ * The layout follows FileDir.Mod: header = mark, name[32], aleng, bleng, date,
+ * ext[12], sec[64] (352 bytes); the first 672 bytes of data are in the same
+ * sector; sec[0] is the header itself. The directory is a B-tree; the entry is
+ * inserted into a leaf. Splitting an overflowing page is deliberately not
+ * implemented: on the reference image the target leaf has room, and if it does
+ * not, a loud error is better than a silently corrupted directory.
  *
- * Возвращает НОВЫЙ массив (образ может вырасти); исходный не трогает.
+ * Returns a NEW array (the image may grow); the original is not touched.
  */
 export function addFile(img, name, bytes, date = 0) {
   const DIRMARK = 0x9B1EA38D, HDRMARK = 0x9BA71D86, PGSIZE = 24;
-  if (name.length >= 32) throw new Error(`имя длиннее 31 знака: ${name}`);
+  if (name.length >= 32) throw new Error(`name longer than 31 characters: ${name}`);
   const total = bytes.length + HS;
   let aleng = Math.floor(total / SS), bleng = total % SS;
-  // Files.Mod не ждёт пустого последнего сектора: bleng = 0 — длина-граница.
-  if (bleng === 0) throw new Error(`длина ${bytes.length} кратна сектору: добавьте байт`);
-  if (aleng >= 64) throw new Error(`файл ${name} длиннее 64 секторов: таблицы расширения не поддержаны`);
+  // Files.Mod does not expect an empty last sector: bleng = 0 is a boundary length.
+  if (bleng === 0) throw new Error(`length ${bytes.length} is a multiple of the sector size: add a byte`);
+  if (aleng >= 64) throw new Error(`file ${name} is longer than 64 sectors: extension tables are not supported`);
 
   let d = new Uint8Array(img);
   const dv = () => new DataView(d.buffer);
@@ -83,11 +83,11 @@ export function addFile(img, name, bytes, date = 0) {
   const wr = (o, v) => dv().setUint32(o, v >>> 0, true);
   const nameAt = o => { let s = ''; for (let i = 0; i < 32 && d[o + i]; i++) s += String.fromCharCode(d[o + i]); return s; };
 
-  // Занятые секторы — тем же обходом, что FileDir.Init.
+  // Used sectors, by the same walk as FileDir.Init.
   const used = new Set();
   const markFile = hdr => {
     const b = off(hdr), al = rd(b + 36) | 0;
-    if (rd(b) !== HDRMARK) throw new Error(`испорчен заголовок файла в секторе ${hdr / DIRROOT}`);
+    if (rd(b) !== HDRMARK) throw new Error(`corrupt file header in sector ${hdr / DIRROOT}`);
     for (let j = 0; j <= Math.min(al, 63); j++) used.add(rd(b + 96 + j * 4) / DIRROOT);
     if (al >= 64) {
       const n = ((al - 64) / 256) | 0;
@@ -100,7 +100,7 @@ export function addFile(img, name, bytes, date = 0) {
   };
   const walk = pg => {
     const b = off(pg);
-    if (rd(b) !== DIRMARK) throw new Error(`испорчена страница каталога ${pg / DIRROOT}`);
+    if (rd(b) !== DIRMARK) throw new Error(`corrupt directory page ${pg / DIRROOT}`);
     used.add(pg / DIRROOT);
     const m = rd(b + 4) | 0, p0 = rd(b + 8);
     for (let i = 0; i < m; i++) markFile(rd(b + 64 + i * 40 + 32));
@@ -108,20 +108,20 @@ export function addFile(img, name, bytes, date = 0) {
   };
   walk(DIRROOT);
 
-  // Лист, куда ляжет имя: спуск, как в FileDir.Search. Сравнение — побайтовое.
+  // The leaf the name goes into: descend as in FileDir.Search. Comparison is bytewise.
   let pg = DIRROOT, R = 0;
   for (;;) {
     const b = off(pg), m = rd(b + 4) | 0;
     R = 0; while (R < m && nameAt(b + 64 + R * 40) < name) R++;
-    if (R < m && nameAt(b + 64 + R * 40) === name) throw new Error(`файл ${name} на образе уже есть`);
+    if (R < m && nameAt(b + 64 + R * 40) === name) throw new Error(`file ${name} already exists on the image`);
     const next = R === 0 ? rd(b + 8) : rd(b + 64 + (R - 1) * 40 + 36);
     if (!next) break;
     pg = next;
   }
-  if ((rd(off(pg) + 4) | 0) >= PGSIZE) throw new Error(`лист каталога для ${name} полон`);
+  if ((rd(off(pg) + 4) | 0) >= PGSIZE) throw new Error(`directory leaf for ${name} is full`);
 
-  // Свободные секторы. Номера ниже 64 система не выдаёт никогда
-  // (Kernel.InitSecMap помечает их занятыми), держимся того же.
+  // Free sectors. The system never allocates numbers below 64
+  // (Kernel.InitSecMap marks them as used); we do the same.
   const secs = [];
   for (let s = 64; secs.length < aleng + 1; s++) if (!used.has(s)) secs.push(s);
   const need = secs[secs.length - 1] * SS;
@@ -140,7 +140,7 @@ export function addFile(img, name, bytes, date = 0) {
     d.set(bytes.subarray(SS - HS + (j - 1) * SS, SS - HS + j * SS), o);
   }
 
-  // Запись в лист: сдвиг вправо и вставка на место R.
+  // Write to the leaf: shift right and insert at position R.
   const b = off(pg), m = rd(b + 4) | 0;
   d.copyWithin(b + 64 + (R + 1) * 40, b + 64 + R * 40, b + 64 + m * 40);
   const e = b + 64 + R * 40;
@@ -151,15 +151,15 @@ export function addFile(img, name, bytes, date = 0) {
   return d;
 }
 
-/** Текст Оберона из файла.
+/** Oberon text from a file.
 
-    Файлы, сохранённые редактором, лежат НЕ в виде голого ASCII: первый байт —
-    метка формата (F1H), затем смещение текста, затем описания кусков со
-    шрифтами. Наивное чтение даёт мусор в начале, а концы строк — возврат
-    каретки, а не перевод. Разбор по Texts.Mod: Open читает метку, Load —
-    смещение и куски. */
+    Files saved by the editor are NOT plain ASCII: the first byte is a format
+    tag (F1H), then the text offset, then piece descriptors with fonts. A naive
+    read yields garbage at the start, and line ends are carriage returns, not
+    line feeds. Parsed per Texts.Mod: Open reads the tag, Load reads the offset
+    and the pieces. */
 export function readText(bytes) {
-  if (bytes[0] !== 0xF1) return new TextDecoder('latin1').decode(bytes);   // простой ASCII
+  if (bytes[0] !== 0xF1) return new TextDecoder('latin1').decode(bytes);   // plain ASCII
   const off = bytes[1] | bytes[2] << 8 | bytes[3] << 16 | bytes[4] << 24;
   return new TextDecoder('latin1').decode(bytes.subarray(off)).replace(/\r/g, '\n');
 }

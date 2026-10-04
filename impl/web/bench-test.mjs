@@ -1,20 +1,20 @@
-// Проверка центрального номера: числа, которые увидит читатель, считаются здесь.
+// Test of the headline benchmark: the numbers the reader will see are computed here.
 //
-// Проверка, которая просто печатает числа, бесполезна — поэтому здесь заявлены
-// ожидания: программы обязаны дойти до конца, аппаратная проверка обязана
-// экономить ровно одну команду и один такт на индексацию, а полезная работа
-// обязана совпасть (накопитель — в R4).
+// A test that just prints numbers is useless, so expectations are stated here:
+// the programs must run to completion, the hardware check must save exactly one
+// instruction and one cycle per indexing, and the useful work must match
+// (the accumulator is in R4).
 import fs from 'node:fs';
 import { runBench, perCheck } from './bench.js';
 
-// ⚠ Читаем то, что уезжает ЧИТАТЕЛЮ, а не порождаемое в tests/: там файлы
-// собираются на месте и в свежем дереве их нет вовсе. Проверка должна считать
-// ровно те же байты, что страница.
+// ⚠ We read what ships to the READER, not what is generated in tests/: those files
+// are built in place and do not exist at all in a fresh tree. The test must count
+// exactly the same bytes as the page.
 const P = JSON.parse(fs.readFileSync('bench_bounds.json', 'utf8'));
-// ⚠ `fs.readFileSync` для мелких файлов отдаёт ВИД на общий пул node, а не
-// собственный буфер: `.buffer` там — весь пул, и второе чтение подряд даёт
-// чужие байты. Программа при этом собирается из мусора и просто не доходит до
-// конца — молча, без единой ошибки. Берём ровно своё окно.
+// ⚠ For small files `fs.readFileSync` returns a VIEW into node's shared pool, not
+// its own buffer: `.buffer` there is the whole pool, and a second read in a row
+// gives someone else's bytes. The program is then assembled from garbage and simply
+// never finishes, silently, without a single error. We take exactly our own window.
 const load = n => {
   const b = fs.readFileSync(`bench_bounds_${n}.bin`);
   return new Uint32Array(b.buffer, b.byteOffset, b.length / 4);
@@ -27,19 +27,19 @@ const b = await runBench((await import('./risc5.js')).default, load('b'), P);
 const e = await runBench((await import('./risc5-chk.js')).default, load('e'), P);
 
 say(b.iterations > 1000 && !b.trapped,
-    `B: ${b.iterations} итераций за ${b.insns} инструкций, ${b.cycles} тактов`);
+    `B: ${b.iterations} iterations in ${b.insns} instructions, ${b.cycles} cycles`);
 say(e.iterations > 1000 && !e.trapped,
-    `E: ${e.iterations} итераций за ${e.insns} инструкций, ${e.cycles} тактов`);
+    `E: ${e.iterations} iterations in ${e.insns} instructions, ${e.cycles} cycles`);
 
 const d = perCheck(b, e);
-say(Math.abs(d.insnsB - 10) < 0.01, `итерация B стоит ${d.insnsB.toFixed(3)} команд (ожидалось 10)`);
-say(Math.abs(d.insnsE - 9) < 0.01,  `итерация E стоит ${d.insnsE.toFixed(3)} команд (ожидалось 9)`);
+say(Math.abs(d.insnsB - 10) < 0.01, `a B iteration costs ${d.insnsB.toFixed(3)} instructions (expected 10)`);
+say(Math.abs(d.insnsE - 9) < 0.01,  `an E iteration costs ${d.insnsE.toFixed(3)} instructions (expected 9)`);
 say(Math.abs(d.insnsPer - 1) < 0.01,
-    `аппаратная проверка экономит ${d.insnsPer.toFixed(3)} команды на индексацию`);
+    `the hardware check saves ${d.insnsPer.toFixed(3)} instructions per indexing`);
 say(d.cyclesPer > 0.9 && d.cyclesPer < 1.1,
-    `и ${d.cyclesPer.toFixed(3)} такта: ${d.cyclesB.toFixed(2)} → ${d.cyclesE.toFixed(2)}`);
+    `and ${d.cyclesPer.toFixed(3)} cycles: ${d.cyclesB.toFixed(2)} → ${d.cyclesE.toFixed(2)}`);
 say(d.percent > 5 && d.percent < 20,
-    `на этой нагрузке проверка границ стоит ${d.percent.toFixed(1)}% тактов`);
+    `on this workload bounds checking costs ${d.percent.toFixed(1)}% of cycles`);
 
-console.log(bad ? `\n❌ центральный номер: ${bad} расхождений` : '\n✅ числа центрального номера сходятся');
+console.log(bad ? `\n❌ headline benchmark: ${bad} mismatches` : '\n✅ headline benchmark numbers agree');
 process.exit(bad ? 1 : 0);
