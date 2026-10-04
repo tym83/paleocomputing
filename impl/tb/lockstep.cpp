@@ -1,17 +1,17 @@
-// Дифференциальный стенд: настоящее RTL против эталонного эмулятора, инструкция
-// за инструкцией, на РЕАЛЬНОЙ нагрузке — загрузке системы Оберон.
+// Differential testbench: the real RTL against the reference emulator, instruction
+// by instruction, on a REAL workload: booting the Oberon system.
 //
-// Это сильнейшая проверка, какая тут возможна: синтетические тесты покрывают то,
-// что придумал автор, а загрузка системы исполняет то, что реально написал Вирт.
+// This is the strongest check possible here: synthetic tests cover what the author
+// thought of, while booting the system executes what Wirth actually wrote.
 //
-// Источники недетерминизма, которые пришлось устранить (все указаны ревью):
-//   1. Разрядность PC: у RTL 22 бита, у эталона 32-битный индекс слова -> маска
-//   2. Таймер: у обеих моделей свой счётчик -> ведём эталон от нашего
-//   3. Служебная запись эталона на DisplayStart ("Sizg" + размеры экрана) ->
-//      воспроизводим её и у себя, иначе память разойдётся на нулевом шаге
-//   4. Эвристика progress в risc_run -> сбрасывается при каждом вызове, а мы
-//      вызываем по одной инструкции
-//   5. Диск: у каждой модели своя копия образа, иначе записи перемешаются
+// Sources of nondeterminism that had to be removed (all named by the review):
+//   1. PC width: 22 bits in RTL, a 32-bit word index in the reference -> mask
+//   2. Timer: each model has its own counter -> drive the reference from ours
+//   3. The reference's bookkeeping write at DisplayStart ("Sizg" + screen size) ->
+//      reproduce it on our side too, otherwise memory diverges at step zero
+//   4. The progress heuristic in risc_run -> it resets on every call, and we
+//      call it one instruction at a time
+//   5. Disk: each model has its own copy of the image, otherwise writes get mixed
 #include "VRISC5.h"
 #include "VRISC5___024root.h"
 #include "VRISC5_RISC5.h"
@@ -61,7 +61,7 @@ struct Dut {
         if ((a >> 6) == (IO_BASE >> 6)) {
             switch ((a >> 2) & 15) {
                 case 0: return ms;
-                case 3: return 0;                              // как у эталона без serial
+                case 3: return 0;                              // as in the reference without serial
                 case 4: return spi ? spi->read_data(spi) : 255;
                 case 5: return 1;
                 default: return 0;
@@ -88,14 +88,14 @@ struct Dut {
         }
         top->rst = 1; top->clk = 0; top->eval();
         top->codebus = read_code(top->adr); top->inbus = read_data(top->adr); top->eval();
-        // ВЫРАВНИВАНИЕ НАЧАЛЬНОГО СОСТОЯНИЯ.
-        // В RISC5 сброс НЕ блокирует запись в регистры: regwr = ~p & ~stall | ...
-        // не зависит от rst. Поэтому на первом же такте исполняется то, что
-        // случайно оказалось в регистре команд (в симуляции — ноль, то есть
-        // MOV R0,R0), и это ставит Z=1. У эталонного эмулятора состояние после
-        // сброса определено и равно нулю.
-        // Расхождение реальное, но относится к неопределённому состоянию железа,
-        // а не к семантике инструкций, поэтому выравниваем явно.
+        // ALIGNING THE INITIAL STATE.
+        // In RISC5 reset does NOT block register writes: regwr = ~p & ~stall | ...
+        // does not depend on rst. So the very first cycle executes whatever
+        // happens to be in the instruction register (zero in simulation, i.e.
+        // MOV R0,R0), and that sets Z=1. In the reference emulator the state after
+        // reset is defined and equal to zero.
+        // The divergence is real, but it concerns the undefined state of the hardware,
+        // not instruction semantics, so we align it explicitly.
         top->rootp->RISC5->N = 0; top->rootp->RISC5->Z = 0;
         top->rootp->RISC5->C = 0; top->rootp->RISC5->OV = 0;
         for (int i = 0; i < 16; i++) top->rootp->RISC5->regs->R[i] = 0;
@@ -117,8 +117,8 @@ struct Dut {
     }
 };
 
-// Один и тот же адрес в разных картах ПЗУ: RTL держит ПЗУ по 00FFE000,
-// эталон — по FFFFF800. Сравниваем по смещению внутри окна.
+// The same address in different ROM maps: RTL keeps the ROM at 00FFE000,
+// the reference at FFFFF800. Compare by the offset inside the window.
 static bool ADDR_EQ(uint32_t a, uint32_t b) {
     bool ar = (a >> 14) == (ROM_BASE >> 14);
     bool br = (b >= 0xFFFFF800u);
@@ -129,8 +129,8 @@ static bool ADDR_EQ(uint32_t a, uint32_t b) {
 int main(int argc, char** argv) {
     Verilated::commandArgs(argc, argv);
     uint64_t maxi = 12000000; int verbose = 0;
-    // Как часто сверять ОЗУ целиком. Мегабайт памяти — 262144 слова; на каждой
-    // сверке это лишний проход, поэтому не на каждой инструкции.
+    // How often to compare the whole RAM. A megabyte of memory is 262144 words; every
+    // comparison is an extra pass, so not on every instruction.
     const uint64_t RAM_CHECK = 250000;
     uint64_t ram_checks = 0, rom_addr_waivers = 0;
     std::string prom = "rtl/prom_sd.mem";
@@ -142,38 +142,38 @@ int main(int argc, char** argv) {
     }
 
     Dut d;
-    if (!d.load_prom(prom.c_str())) { fprintf(stderr, "нет ПЗУ\n"); return 1; }
+    if (!d.load_prom(prom.c_str())) { fprintf(stderr, "no ROM\n"); return 1; }
     d.spi = disk_new("build/disk_rtl.dsk");
-    // ⚠ Здесь я сам создал расхождение, предвосхищая ловушку из ревью.
-    // Эталон действительно кладёт на DisplayStart сигнатуру "Sizg" и размеры
-    // экрана — но делает это в risc_configure_memory(), которую этот запуск
-    // НЕ вызывает. Поэтому у эталона там нули, и если вписать сигнатуру у себя,
-    // модели разойдутся ровно в тот момент, когда система её прочитает
-    // (обнаружено на шаге 2 101 536: R0 = 53697A67 против нуля).
-    // Правильно — не писать ничего: обе модели видят нули.
+    // ⚠ Here I created a divergence myself while anticipating a trap from the review.
+    // The reference does put the "Sizg" signature and the screen size at
+    // DisplayStart, but it does so in risc_configure_memory(), which this run
+    // does NOT call. So the reference has zeros there, and writing the signature on our
+    // side makes the models diverge exactly when the system reads it
+    // (found at step 2 101 536: R0 = 53697A67 versus zero).
+    // The right thing is to write nothing: both models see zeros.
     d.reset();
 
     struct RISC* r = risc_new();
     risc_set_serial(r, NULL);
     risc_set_spi(r, 1, disk_new("build/disk_ref.dsk"));
 
-    printf("дифференциальный прогон: RTL против эталона, до %llu инструкций\n\n",
+    printf("differential run: RTL against the reference, up to %llu instructions\n\n",
            (unsigned long long)maxi);
 
-    // ── ФАЗА ПРОГРЕВА ────────────────────────────────────────────────────────
-    // Пока исполняется загрузчик, обе модели живут в ПЗУ, но карты памяти у них
-    // РАЗНЫЕ: у RTL адрес сброса 0xFFE000 и адреса 24-битные, у эталона ПЗУ по
-    // 0xFFFFF800 и адреса 32-битные. Поэтому регистр ссылки и любые адресные
-    // величины внутри загрузчика законно различаются на константу.
-    // Строгое сравнение начинаем с момента, когда ОБЕ модели ушли в ОЗУ.
+    // ── WARM-UP PHASE ────────────────────────────────────────────────────────
+    // While the boot loader runs, both models live in ROM, but their memory maps
+    // DIFFER: in RTL the reset address is 0xFFE000 and addresses are 24-bit, in the
+    // reference the ROM is at 0xFFFFF800 and addresses are 32-bit. So the link register
+    // and any address values inside the boot loader legitimately differ by a constant.
+    // Strict comparison starts once BOTH models have moved to RAM.
     bool warm = false;
     uint64_t warm_at = 0;
     uint64_t k = 0;
     for (; k < maxi; k++) {
-        // Нормализация PC. Адреса сброса РАЗНЫЕ: у RTL StartAdr = 22'h3FF800
-        // (байт 0xFFE000), у эталона ROMStart = 0xFFFFF800. Оба попадают в нулевое
-        // слово ПЗУ, потому что ПЗУ на 512 слов алиасится. Поэтому внутри ПЗУ
-        // сравниваем индекс слова, вне — сам адрес.
+        // PC normalisation. The reset addresses DIFFER: in RTL StartAdr = 22'h3FF800
+        // (byte 0xFFE000), in the reference ROMStart = 0xFFFFF800. Both land on word
+        // zero of the ROM, because the 512-word ROM is aliased. So inside the ROM
+        // we compare the word index, outside it the address itself.
         auto norm = [](uint32_t pcw, bool in_rom) {
             return in_rom ? (pcw & 511) : (pcw & PC_MASK);
         };
@@ -185,39 +185,39 @@ int main(int argc, char** argv) {
         if (!warm) {
             if (!d_rom && !r_rom) {
                 warm = true; warm_at = k;
-                printf("  обе модели вышли в ОЗУ на шаге %llu (PC=%06X) — "
-                       "начинаю строгое сравнение\n\n", (unsigned long long)k, dpc * 4);
+                printf("  both models reached RAM at step %llu (PC=%06X); "
+                       "starting strict comparison\n\n", (unsigned long long)k, dpc * 4);
             } else {
-                // в фазе прогрева сверяем только положение в ПЗУ и его индекс
+                // during warm-up only the position in ROM and its index are compared
                 if (d_rom != r_rom || (d_rom && pc_before != ref_pc_before)) {
-                    printf("❌ РАСХОЖДЕНИЕ В ЗАГРУЗЧИКЕ на шаге %llu\n", (unsigned long long)k);
-                    printf("   RTL    PC = %06X (ПЗУ: %s, слово %u)\n", dpc * 4, d_rom ? "да" : "нет", pc_before);
-                    printf("   эталон PC = %08X (ПЗУ: %s, слово %u)\n", rpc * 4, r_rom ? "да" : "нет", ref_pc_before);
+                    printf("❌ DIVERGENCE IN THE BOOT LOADER at step %llu\n", (unsigned long long)k);
+                    printf("   RTL       PC = %06X (ROM: %s, word %u)\n", dpc * 4, d_rom ? "yes" : "no", pc_before);
+                    printf("   reference PC = %08X (ROM: %s, word %u)\n", rpc * 4, r_rom ? "yes" : "no", ref_pc_before);
                     return 1;
                 }
                 risc_set_time(r, d.ms);
                 int nn = d.step();
-                if (nn < 0) { printf("❌ RTL завис в загрузчике на PC=%06X\n", dpc * 4); return 1; }
+                if (nn < 0) { printf("❌ RTL hung in the boot loader at PC=%06X\n", dpc * 4); return 1; }
                 risc_run(r, 1);
                 continue;
             }
         }
         if (d_rom != r_rom || pc_before != ref_pc_before) {
-            printf("❌ РАСХОЖДЕНИЕ ПО PC на шаге %llu\n", (unsigned long long)k);
-            printf("   RTL    PC = %06X (в ПЗУ: %s)\n", dpc * 4, d_rom ? "да" : "нет");
-            printf("   эталон PC = %08X (в ПЗУ: %s)\n", rpc * 4, r_rom ? "да" : "нет");
+            printf("❌ PC DIVERGENCE at step %llu\n", (unsigned long long)k);
+            printf("   RTL       PC = %06X (in ROM: %s)\n", dpc * 4, d_rom ? "yes" : "no");
+            printf("   reference PC = %08X (in ROM: %s)\n", rpc * 4, r_rom ? "yes" : "no");
             return 1;
         }
-        risc_set_time(r, d.ms);                 // ведём таймер эталона от нашего
+        risc_set_time(r, d.ms);                 // drive the reference's timer from ours
         int n = d.step();
-        if (n < 0) { printf("❌ RTL завис на PC=%06X\n", dpc * 4); return 1; }
+        if (n < 0) { printf("❌ RTL hung at PC=%06X\n", dpc * 4); return 1; }
         risc_run(r, 1);
 
-        // сверка архитектурного состояния
-        // Регистр ссылки (R15) — АДРЕС, и после выхода из загрузчика в нём ещё
-        // лежит адрес возврата в ПЗУ. Карты памяти ПЗУ у моделей разные, поэтому
-        // сравниваем его так же, как счётчик команд: если оба значения указывают
-        // в окно ПЗУ — по индексу слова, иначе напрямую.
+        // compare the architectural state
+        // The link register (R15) is an ADDRESS, and after leaving the boot loader it still
+        // holds a return address into ROM. The models' ROM maps differ, so
+        // we compare it the same way as the program counter: if both values point
+        // into the ROM window, by word index, otherwise directly.
         auto addr_eq = ADDR_EQ;
         bool bad = false; std::string why;
         for (int i = 0; i < 16; i++) {
@@ -227,52 +227,51 @@ int main(int argc, char** argv) {
             bad = true; why = "R" + std::to_string(i); break;
         }
         if (!bad && d.H() != risc_get_h(r)) { bad = true; why = "H"; }
-        if (!bad && d.flags() != risc_get_flags(r)) { bad = true; why = "флаги"; }
+        if (!bad && d.flags() != risc_get_flags(r)) { bad = true; why = "flags"; }
         if (bad) {
-            printf("❌ РАСХОЖДЕНИЕ (%s) на шаге %llu, PC=%06X\n",
+            printf("❌ DIVERGENCE (%s) at step %llu, PC=%06X\n",
                    why.c_str(), (unsigned long long)k, dpc * 4);
-            printf("   %-6s %-10s %-10s\n", "", "RTL", "эталон");
+            printf("   %-6s %-10s %-10s\n", "", "RTL", "reference");
             for (int i = 0; i < 16; i++)
                 printf("   R%-4d %08X   %08X %s\n", i, d.reg(i), risc_get_reg(r, i),
                        d.reg(i) != risc_get_reg(r, i) ? "<<<" : "");
             printf("   H     %08X   %08X\n", d.H(), risc_get_h(r));
-            printf("   флаги %X          %X   (NZCV)\n", d.flags(), risc_get_flags(r));
+            printf("   flags %X          %X   (NZCV)\n", d.flags(), risc_get_flags(r));
             return 1;
         }
         if (verbose && k < 40)
             printf("  [%6llu] PC=%06X ✓\n", (unsigned long long)k, dpc * 4);
-        // ⚠ Сравнение шло только по регистрам, флагам и H. Неверная запись в
-        // память оставалась невидимой до тех пор, пока значение оттуда не
-        // прочитают обратно в регистр — то есть расхождение могло уехать на
-        // миллионы инструкций от места, где возникло. Периодически сверяем ОЗУ
-        // целиком. Кадровый буфер в сравнение входит: обе модели исполняют один
-        // и тот же код и обязаны рисовать одинаково.
+        // ⚠ The comparison used to cover only registers, flags and H. A wrong write to
+        // memory stayed invisible until the value was read back into a register,
+        // i.e. the divergence could surface millions of instructions away from
+        // where it arose. Periodically compare the whole RAM. The framebuffer is
+        // included: both models execute the same code and must draw the same.
         if ((k % RAM_CHECK) == 0 && k) {
             uint32_t rwords = 0;
             const uint32_t* rram = risc_get_ram(r, &rwords);
             uint32_t n = rwords < (uint32_t)MEM_WORDS ? rwords : (uint32_t)MEM_WORDS;
             for (uint32_t i = 0; i < n; i++) {
                 if (d.ram[i] == rram[i]) continue;
-                // Адреса возврата в ПЗУ различаются законно: карты ПЗУ у моделей
-                // разные (RTL 00FFE000, эталон FFFFF800). Сравниваем по смещению
-                // внутри окна — то же правило, что уже применяется к R15.
+                // Return addresses into ROM legitimately differ: the models' ROM maps
+                // differ (RTL 00FFE000, reference FFFFF800). Compare by the offset
+                // inside the window, the same rule already applied to R15.
                 if (ADDR_EQ(d.ram[i], rram[i])) { rom_addr_waivers++; continue; }
-                printf("❌ РАСХОЖДЕНИЕ В ПАМЯТИ на шаге %llu: слово %06X "
-                       "RTL %08X, эталон %08X\n",
+                printf("❌ MEMORY DIVERGENCE at step %llu: word %06X "
+                       "RTL %08X, reference %08X\n",
                        (unsigned long long)k, i * 4, d.ram[i], rram[i]);
                 return 1;
             }
             ram_checks++;
         }
         if ((k % 1000000) == 0 && k)
-            printf("  %llu млн инструкций — совпадение (сверок ОЗУ: %llu)\n",
+            printf("  %llu million instructions: match (RAM comparisons: %llu)\n",
                    (unsigned long long)k / 1000000, (unsigned long long)ram_checks);
     }
-    if (!warm) printf("\n⚠ строгая фаза не началась: обе модели всё ещё в загрузчике\n");
-    printf("  полных сверок ОЗУ: %llu, поблажек на адреса ПЗУ: %llu\n",
+    if (!warm) printf("\n⚠ strict phase did not start: both models are still in the boot loader\n");
+    printf("  full RAM comparisons: %llu, ROM address waivers: %llu\n",
            (unsigned long long)ram_checks, (unsigned long long)rom_addr_waivers);
-    printf("\n✅ СОВПАДЕНИЕ: %llu инструкций строгого сравнения "
-           "(прогрев в загрузчике: %llu), %llu тактов RTL\n",
+    printf("\n✅ MATCH: %llu instructions of strict comparison "
+           "(warm-up in the boot loader: %llu), %llu RTL cycles\n",
            (unsigned long long)(warm ? k - warm_at : 0), (unsigned long long)(warm ? warm_at : k),
            (unsigned long long)d.cycles);
     return 0;

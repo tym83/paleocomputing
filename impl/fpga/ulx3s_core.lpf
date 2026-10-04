@@ -1,15 +1,15 @@
-# ULX3S (LFE5U-85F-6BG381C): только выводы, нужные тайминг-обёртке.
+# ULX3S (LFE5U-85F-6BG381C): only the pins the timing wrapper needs.
 #
-# Номера выводов — факты разводки платы ULX3S v2.x/v3.x. Сверено с
-# emard/ulx3s-misc, constraints/ulx3s_v20.lpf (коммит d0c6f15), и со схемой
-# emard/ulx3s (лицензия MIT-подобная, LICENSE.md). Файл ограничений из
-# ulx3s-misc не скопирован: у того репозитория нет лицензии. Строки ниже
-# написаны заново и содержат только номера выводов и электрические стандарты.
+# Pin numbers are facts of the ULX3S v2.x/v3.x board layout. Checked against
+# emard/ulx3s-misc, constraints/ulx3s_v20.lpf (commit d0c6f15), and the schematic
+# emard/ulx3s (MIT-like license, LICENSE.md). The constraints file from
+# ulx3s-misc was not copied: that repository has no license. The lines below
+# were written from scratch and contain only pin numbers and I/O standards.
 #
-# Частота 25 МГц — не выбор, а частота исходного дизайна Вирта: RISC5Top.v
-# делит 50 МГц пополам (always @(posedge CLK50M) clk <= ~clk), и счётчик
-# миллисекунд отсчитывает 25000 тактов (limit = cnt0 == 24999). На ULX3S
-# генератор ровно 25 МГц, и порт EMARD гонит процессор тоже на 25 МГц.
+# 25 MHz is not a choice but the frequency of Wirth's original design: RISC5Top.v
+# halves 50 MHz (always @(posedge CLK50M) clk <= ~clk), and the millisecond
+# counter counts 25000 cycles (limit = cnt0 == 24999). The ULX3S
+# oscillator is exactly 25 MHz, and the EMARD port also runs the CPU at 25 MHz.
 
 LOCATE COMP "clk_25mhz" SITE "G2";
 IOBUF  PORT "clk_25mhz" PULLMODE=NONE IO_TYPE=LVCMOS33;

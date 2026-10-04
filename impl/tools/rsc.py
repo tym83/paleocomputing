@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Разбор объектного файла Оберона (.rsc).
+"""Parser for an Oberon object file (.rsc).
 
-Раскладка снята с `ORTool.DecObj` из ext/po2013-src/ORTool.Mod — то есть с
-собственного средства чтения объектных файлов в Project Oberon, а не угадана.
-Порядок полей: имя, ключ, версия, размер, импорты, дескрипторы типов, размер
-данных, область строк, КОД, команды, входы, ссылки на указатели, фиксапы.
+The layout is taken from `ORTool.DecObj` in ext/po2013-src/ORTool.Mod, i.e. from
+Project Oberon's own object file reader, not guessed.
+Field order: name, key, version, size, imports, type descriptors, data
+size, string area, CODE, commands, entries, pointer references, fixups.
 """
 import struct, sys
 
@@ -46,6 +46,6 @@ def parse(path):
 if __name__ == "__main__":
     for p in sys.argv[1:]:
         m = parse(p)
-        print(f"{p}: модуль {m['name']}, ключ {m['key'] & 0xFFFFFFFF:08X}, "
-              f"версия {m['version']}, слов кода {len(m['code'])}, "
-              f"импортов {len(m['imports'])}, команд {len(m['commands'])}")
+        print(f"{p}: module {m['name']}, key {m['key'] & 0xFFFFFFFF:08X}, "
+              f"version {m['version']}, code words {len(m['code'])}, "
+              f"imports {len(m['imports'])}, commands {len(m['commands'])}")

@@ -1,6 +1,6 @@
-// Точка входа для браузера: ядро RISC5 на настоящем RTL, скомпилированное
-// Verilator -> C++ -> Emscripten -> WASM. Периферия — регистровые заглушки,
-// диск в памяти (образ приходит из JS).
+// Browser entry point: the RISC5 core on the real RTL, compiled
+// Verilator -> C++ -> Emscripten -> WASM. Peripherals are register stubs,
+// the disk is in memory (the image comes from JS).
 #include "VRISC5.h"
 #include "VRISC5___024root.h"
 #include "VRISC5_RISC5.h"
@@ -24,8 +24,8 @@ static uint32_t rom[512];
 static MemDisk disk;
 static uint32_t ms = 0;
 static uint64_t g_cycles = 0, g_insns = 0;
-// Ввод
-static uint32_t mouse_reg = 0;            // X | Y<<12 | кнопки в 26/25/24
+// Input
+static uint32_t mouse_reg = 0;            // X | Y<<12 | buttons in 26/25/24
 static uint8_t  kbd_buf[64]; static int kbd_head = 0, kbd_tail = 0;
 
 static inline uint32_t read_code(uint32_t a) {
@@ -70,11 +70,11 @@ void soc_init(const uint8_t* prom_words, int prom_n, const uint8_t* img, int img
     ms = 0; g_cycles = g_insns = 0;
     kbd_head = kbd_tail = 0; mouse_reg = 0;
 
-    // ⚠ Прямое следствие находки 19: в RISC5.v НЕТ сброса у регистрового файла,
-    // флагов, H и IR. При первом создании модели Verilator обнуляет их сам, а при
-    // повторном пуске (кнопка «Откатить» в лабораторной) там остаётся грязь от
-    // прошлого прогона, и система не загружается — экран остаётся пустым.
-    // Здесь состояние обнуляется явно. На настоящей ПЛИС этого сброса не будет.
+    // ⚠ A direct consequence of finding 19: RISC5.v has NO reset for the register file,
+    // flags, H and IR. When the model is first created Verilator clears them itself, but on
+    // a restart (the "Roll back" button in a lab) leftovers from the previous run
+    // remain there, and the system does not boot: the screen stays blank.
+    // Here the state is cleared explicitly. A real FPGA will not have this reset.
     {
         auto* R = top->rootp->RISC5;
         for (int i = 0; i < 16; i++) R->regs->R[i] = 0;
@@ -92,7 +92,7 @@ void soc_init(const uint8_t* prom_words, int prom_n, const uint8_t* img, int img
     top->codebus = read_code(top->adr); top->inbus = read_data(top->adr); top->eval();
 }
 
-// Отработать не более n инструкций. Возвращает, сколько выполнено.
+// Run at most n instructions. Returns how many were executed.
 EMSCRIPTEN_KEEPALIVE
 int soc_run(int n) {
     int done = 0;
@@ -120,10 +120,10 @@ EMSCRIPTEN_KEEPALIVE double soc_cycles() { return (double)g_cycles; }
 EMSCRIPTEN_KEEPALIVE double soc_insns()  { return (double)g_insns; }
 EMSCRIPTEN_KEEPALIVE uint32_t soc_pc()   { return top->rootp->RISC5->PC * 4; }
 
-/* ── доступ к состоянию машины для лабораторных ──────────────────────────────
-   Лаборатория без проверки — это демонстрация, а не задание. Чтобы проверка
-   была настоящей, ей нужно видеть то же, что видит отладчик: регистры, флаги,
-   память и содержимое диска. Всё только на чтение. */
+/* ── machine state access for the labs ───────────────────────────────────────
+   A lab without a check is a demonstration, not an assignment. For the check
+   to be real it must see what a debugger sees: registers, flags,
+   memory and disk contents. All read-only. */
 EMSCRIPTEN_KEEPALIVE uint32_t soc_reg(int i) {
     return top->rootp->RISC5->regs->R[i & 15];
 }
@@ -138,24 +138,24 @@ EMSCRIPTEN_KEEPALIVE uint32_t soc_ram(uint32_t adr) {
     return ram[(adr >> 2) & (MEM_WORDS - 1)];
 }
 
-/* Контрольная сумма кадрового буфера: тот же полином, что в нативном стенде,
-   чтобы числа в лабораторной и в make boot совпадали. */
+/* Framebuffer checksum: the same polynomial as in the native testbench,
+   so that the numbers in the lab and in make boot agree. */
 EMSCRIPTEN_KEEPALIVE uint32_t soc_fb_crc() {
     uint32_t c = 0;
     for (uint32_t i = 0; i < FB_WORDS; i++) c = c * 31 + ram[(DISPLAY_ORG >> 2) + i];
     return c;
 }
 
-/* Диск лежит в памяти (memdisk), поэтому лаборатория может проверить, что
-   файл на образе действительно изменился, — а не верить надписи на экране. */
+/* The disk is in memory (memdisk), so a lab can check that a file
+   in the image really changed, rather than trust what the screen says. */
 EMSCRIPTEN_KEEPALIVE uint32_t soc_disk_word(uint32_t byteoff) {
     return disk.word(byteoff);
 }
 EMSCRIPTEN_KEEPALIVE uint32_t soc_disk_size() { return disk.size(); }
 
-/* Запись в ОЗУ снаружи. Нужна уровню «ломать»: в этой машине нет ни защиты
-   памяти, ни разделения привилегий, и самый честный способ это показать —
-   дать испортить любое слово и посмотреть, что станет с системой. */
+/* Writing to RAM from outside. Needed by the "break it" level: this machine has neither
+   memory protection nor privilege separation, and the most honest way to show that
+   is to let any word be corrupted and see what happens to the system. */
 EMSCRIPTEN_KEEPALIVE void soc_poke(uint32_t adr, uint32_t val) {
     ram[(adr >> 2) & (MEM_WORDS - 1)] = val;
 }
@@ -164,7 +164,7 @@ EMSCRIPTEN_KEEPALIVE void soc_key(int scancode) {
     int n = (kbd_head + 1) & 63;
     if (n != kbd_tail) { kbd_buf[kbd_head] = (uint8_t)scancode; kbd_head = n; }
 }
-// Кнопки мыши -- биты 26/25/24 (левая/средняя/правая), координаты в младших полях
+// Mouse buttons -- bits 26/25/24 (left/middle/right), coordinates in the low fields
 EMSCRIPTEN_KEEPALIVE void soc_mouse(int x, int y, int buttons) {
     if (x < 0) x = 0; if (x > 1023) x = 1023;
     if (y < 0) y = 0; if (y > 767) y = 767;

@@ -1,12 +1,12 @@
-// SoC-стенд: настоящее ядро RISC5 на RTL плюс память, ПЗУ и устройства из C++.
+// SoC testbench: the real RISC5 core in RTL plus memory, ROM and devices in C++.
 //
-// Почему так, а не полная схема из RISC5Top.v: у RTL проводные интерфейсы
-// (пиксельный поток VGA, битовый PS/2, битовый SPI с автоматом SD-карты), и их
-// эмуляция — несколько дней работы с осциллограммами, которые ничего не добавляют
-// к предмету исследования. Ядро — вот оно, настоящее; периферия подменена
-// заглушками с ТЕМ ЖЕ регистровым интерфейсом к шине (адреса те же).
-// Логика SD-карты взята из эталонного эмулятора (tb/disk/disk.c) — она словная,
-// а не битовая, и ложится на регистры напрямую.
+// Why this and not the full design from RISC5Top.v: the RTL has wire-level interfaces
+// (VGA pixel stream, bit-level PS/2, bit-level SPI with the SD card state machine), and
+// emulating them is several days of work with waveforms that add nothing
+// to the subject of the study. The core is here, and it is the real one; the peripherals
+// are replaced by stubs with the SAME register interface to the bus (same addresses).
+// The SD card logic is taken from the reference emulator (tb/disk/disk.c): it works on words,
+// not bits, and maps onto the registers directly.
 #include "VRISC5.h"
 #include "VRISC5___024root.h"
 #include "VRISC5_RISC5.h"
@@ -16,39 +16,39 @@
 #include <cstring>
 #include <vector>
 #include <string>
-// disk.c собирается Verilator'ом как C++, поэтому extern "C" не нужен —
-// иначе объявления и определения разойдутся по манглингу.
+// Verilator builds disk.c as C++, so extern "C" is not needed;
+// otherwise the declarations and definitions would disagree on name mangling.
 #include "disk/risc-io.h"
 #include "disk/disk.h"
 #include "memdisk.h"
 #include "scenario.h"
 #include "cycle_model.h"
 
-static const uint32_t MEM_WORDS   = 1 << 18;        // 1 МБ
-static const uint32_t ROM_BASE    = 0x00FFC000;     // окно ПЗУ на шине КОДА
-static const uint32_t IO_BASE     = 0x00FFFFC0;     // верхние 64 байта
-static const uint32_t DISPLAY_ORG = 0x000E7F00;     // кадровый буфер
+static const uint32_t MEM_WORDS   = 1 << 18;        // 1 MB
+static const uint32_t ROM_BASE    = 0x00FFC000;     // ROM window on the CODE bus
+static const uint32_t IO_BASE     = 0x00FFFFC0;     // top 64 bytes
+static const uint32_t DISPLAY_ORG = 0x000E7F00;     // framebuffer
 
 struct SoC {
     VRISC5* top;
     std::vector<uint32_t> ram;
     std::vector<uint32_t> rom;
     const struct RISC_SPI* spi = nullptr;
-    MemDisk* mdisk = nullptr;          // альтернативный диск в памяти
+    MemDisk* mdisk = nullptr;          // alternative in-memory disk
     uint32_t spi_selected = 0;
     uint64_t cycles = 0, insns = 0;
-    uint64_t model_cycles = 0, model_fails = 0;   // сверка модели тактов с RTL
+    uint64_t model_cycles = 0, model_fails = 0;   // cycle model check against RTL
     CycleModel model;
-    uint32_t ms = 0;                // миллисекундный счётчик
+    uint32_t ms = 0;                // millisecond counter
     uint32_t leds = 0;
-    // ── ввод ────────────────────────────────────────────────────────────
-    // Формат регистра мыши берётся из Input.Mod:
-    //   keys = w DIV 1000000H MOD 8   -> биты 24..26
+    // ── input ───────────────────────────────────────────────────────────
+    // The mouse register format is taken from Input.Mod:
+    //   keys = w DIV 1000000H MOD 8   -> bits 24..26
     //   x = w MOD 1000H, y = (w DIV 1000H) MOD 1000H
-    // В множестве keys: элемент 2 (бит 26) — левая, 1 (бит 25) — средняя,
-    // 0 (бит 24) — правая. Готовность клавиатуры — бит 28 того же слова.
+    // In the keys set: element 2 (bit 26) is left, 1 (bit 25) is middle,
+    // 0 (bit 24) is right. Keyboard ready is bit 28 of the same word.
     uint32_t mouse_reg = 0;
-    uint8_t  kbd[1024]; int kbd_head = 0, kbd_tail = 0;   // длинные командные строки
+    uint8_t  kbd[1024]; int kbd_head = 0, kbd_tail = 0;   // long command lines
 
     void set_mouse(int x, int y, int keys) {
         if (x < 0) x = 0; if (x > 1023) x = 1023;
@@ -76,16 +76,16 @@ struct SoC {
         while (i < rom.size() && fgets(line, sizeof line, f))
             rom[i++] = (uint32_t)strtoul(line, nullptr, 16);
         fclose(f);
-        printf("  ПЗУ: %zu слов из %s\n", i, path);
+        printf("  ROM: %zu words from %s\n", i, path);
         return i > 0;
     }
 
-    // Шина КОДА: окно ПЗУ или ОЗУ (RISC5Top.v:84)
+    // CODE bus: ROM window or RAM (RISC5Top.v:84)
     uint32_t read_code(uint32_t a) {
         if ((a >> 14) == (ROM_BASE >> 14)) return rom[(a >> 2) & 511];
         return ram[(a >> 2) & (MEM_WORDS - 1)];
     }
-    // Шина ДАННЫХ: ОЗУ или регистры устройств. ПЗУ на шине данных НЕДОСТУПНО.
+    // DATA bus: RAM or device registers. The ROM is NOT ACCESSIBLE on the data bus.
     uint32_t read_data(uint32_t a) {
         if ((a & 0xFFFFC0u) == (IO_BASE & 0xFFFFC0u) && (a >> 6) == (IO_BASE >> 6))
             return read_io((a >> 2) & 15);
@@ -100,12 +100,12 @@ struct SoC {
     }
     uint32_t read_io(uint32_t w) {
         switch (w) {
-            case 0: return ms;                       // миллисекунды
-            case 1: return 0;                        // кнопки и переключатели
-            case 2: return 0;                        // RS-232 данные
-            case 3: return 2;                        // RS-232: передатчик готов
+            case 0: return ms;                       // milliseconds
+            case 1: return 0;                        // buttons and switches
+            case 2: return 0;                        // RS-232 data
+            case 3: return 2;                        // RS-232: transmitter ready
             case 4: return mdisk ? mdisk->read() : (spi ? spi->read_data(spi) : 0xFFFFFFFFu);
-            case 5: return 1;                        // SPI готов всегда
+            case 5: return 1;                        // SPI always ready
             case 6: return mouse_reg | (kbd_head != kbd_tail ? 0x10000000u : 0u);
             case 7: {
                 if (kbd_head == kbd_tail) return 0;
@@ -123,10 +123,10 @@ struct SoC {
         }
     }
     void reset() {
-        // Во время сброса шину тоже надо обслуживать из памяти: регистр команд
-        // защёлкивается каждый такт (RISC5.v:173 IR <= stall ? IR : codebus),
-        // и если подавать нули, первая же инструкция выполнится как MOV R0,R0
-        // вместо перехода из загрузчика. Ровно на этом я и споткнулся.
+        // The bus must be served from memory during reset too: the instruction register
+        // latches every cycle (RISC5.v:173 IR <= stall ? IR : codebus),
+        // and if zeros are supplied, the very first instruction executes as MOV R0,R0
+        // instead of the jump out of the boot loader. This is exactly what tripped me up.
         top->rst = 0; top->irq = 0; top->stallX = 0;
         for (int i = 0; i < 4; i++) {
             top->clk = 0; top->eval();
@@ -139,21 +139,21 @@ struct SoC {
         top->codebus = read_code(top->adr); top->inbus = read_data(top->adr);
         top->eval();
     }
-    // Шаг до завершения инструкции. Возвращает число тактов.
+    // Step until the instruction retires. Returns the number of cycles.
     int step() {
         int n = 0;
-        // Модель тактов (tb/cycle_model.h) раньше сверялась только на 61 инструкции
-        // синтетических тестов. Здесь она сверяется с RTL на РЕАЛЬНОЙ нагрузке —
-        // загрузке системы, то есть на коде, который писал Вирт.
-        // ⚠ Читать по top->adr ЗДЕСЬ нельзя: шина установится только после
-        // clk=0 + eval(). До этого там адрес прошлого такта. Берём PC напрямую,
-        // как это делает tb/run_tests.cpp, где модель сходилась с нулём расхождений.
+        // The cycle model (tb/cycle_model.h) used to be checked only on 61 instructions
+        // of synthetic tests. Here it is checked against RTL on a REAL workload:
+        // booting the system, i.e. on code that Wirth wrote.
+        // ⚠ Reading via top->adr HERE is wrong: the bus settles only after
+        // clk=0 + eval(). Until then it holds the previous cycle's address. Take PC directly,
+        // as tb/run_tests.cpp does, where the model agreed with zero mismatches.
         uint32_t insn_for_model = read_code(top->rootp->RISC5->PC * 4);
         int predicted = model.cycles(insn_for_model);
         for (;;) {
             top->clk = 0; top->eval();
             uint32_t a = top->adr;
-            // Одна шина адреса: во время stallL0 это данные, иначе следующий PC.
+            // One address bus: during stallL0 it carries data, otherwise the next PC.
             top->codebus = read_code(a);
             top->inbus   = read_data(a);
             top->eval();
@@ -161,7 +161,7 @@ struct SoC {
             if (top->wr) write_data(a, top->outbus, top->ben);
             top->clk = 1; top->eval();
             cycles++; n++;
-            if ((cycles % 25000) == 0) ms++;          // 25 МГц -> 1 кГц
+            if ((cycles % 25000) == 0) ms++;          // 25 MHz -> 1 kHz
             if (ret) {
                 insns++;
                 model_cycles += predicted;
@@ -171,7 +171,7 @@ struct SoC {
             if (n > 400) return -1;
         }
     }
-    // Контрольная сумма кадрового буфера — признак, что система рисует
+    // Framebuffer checksum: a sign that the system is drawing
     uint32_t fb_crc() const {
         uint32_t c = 0;
         for (uint32_t i = 0; i < 1024 * 768 / 32; i++)
@@ -180,24 +180,24 @@ struct SoC {
     }
 };
 
-// Сценарий ввода: строки вида «<инструкция> <действие> <аргументы>».
-//   M x y keys   — поставить мышь (keys: 4 левая, 2 средняя, 1 правая, 0 отпущено)
-//   K code       — послать скан-код PS/2
-//   S file       — выгрузить экран в файл
-// Экран этой машины для переносимого каркаса (tb/scenario.h).
-// Единственное, что здесь специфично: где лежит кадровый буфер, какого он
-// размера и то, что строки хранятся СНИЗУ ВВЕРХ (VID.v: vidadr = Org +
-// {3'b0, ~vcnt, hword}) — наивная выкладка даёт перевёрнутый экран.
+// Input script: lines of the form "<instruction> <action> <arguments>".
+//   M x y keys   - set the mouse (keys: 4 left, 2 middle, 1 right, 0 released)
+//   K code       - send a PS/2 scan code
+//   S file       - dump the screen to a file
+// This machine's screen for the portable skeleton (tb/scenario.h).
+// The only machine-specific parts: where the framebuffer is, how large it is,
+// and that lines are stored BOTTOM UP (VID.v: vidadr = Org +
+// {3'b0, ~vcnt, hword}); a naive dump gives an upside-down screen.
 static harness::Screen soc_screen(SoC& s) {
     return { &s.ram[DISPLAY_ORG >> 2], 1024, 768, /*bottom_up=*/true };
 }
 
 static void dump_screen(SoC& s, const char* path) {
     if (harness::dump_pbm(soc_screen(s), path))
-        printf("  экран выгружен: %s\n", path);
+        printf("  screen dumped: %s\n", path);
 }
 
-// Адаптер машины: три действия, больше переносимому каркасу ничего не нужно.
+// Machine adapter: three actions; the portable skeleton needs nothing more.
 struct SoCHost : harness::Host {
     SoC& s;
     explicit SoCHost(SoC& m) : s(m) {}
@@ -211,13 +211,13 @@ int main(int argc, char** argv) {
     SoC s;
     std::string prom = "rtl/prom.mem", dsk = "ext/disk/Oberon-2016-08-02.dsk";
     uint64_t maxi = 50000000; int trace = 0;
-    uint32_t expect_crc = 0;      // если задана — сверяем и возвращаем код ошибки
+    uint32_t expect_crc = 0;      // if set, compare and return an error code
     std::string script_path;
-    // ⚠ Найдено при работе над самораскруткой: эмулятор диска открывает образ
-    // как "rb+" и пишет в него настоящие сектора. Раньше стенд по умолчанию
-    // брал ЭТАЛОННЫЙ образ из ext/ — то есть каждая загрузка системы молча
-    // правила источник истины. Теперь по умолчанию работаем на копии в build/,
-    // а писать в указанный файл разрешает только явный --persist.
+    // ⚠ Found while working on the bootstrap: the disk emulator opens the image
+    // as "rb+" and writes real sectors into it. The testbench used to take the
+    // REFERENCE image from ext/ by default, so every system boot silently
+    // modified the source of truth. Now it works on a copy in build/ by default,
+    // and only an explicit --persist allows writing to the given file.
     bool persist = false;
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
@@ -229,38 +229,38 @@ int main(int argc, char** argv) {
             expect_crc = (uint32_t)strtoul(a.c_str() + 13, nullptr, 16);
         else if (a.rfind("--script=", 0) == 0) script_path = a.substr(9);
         else if (a == "--persist") persist = true;
-        else if (a == "--memdisk") { /* см. ниже */ }
+        else if (a == "--memdisk") { /* see below */ }
     }
-    if (!s.load_prom(prom.c_str())) { fprintf(stderr, "нет ПЗУ %s\n", prom.c_str()); return 1; }
+    if (!s.load_prom(prom.c_str())) { fprintf(stderr, "no ROM %s\n", prom.c_str()); return 1; }
     bool use_mem = false;
     for (int i = 1; i < argc; i++) if (std::string(argv[i]) == "--memdisk") use_mem = true;
     if (use_mem) {
         FILE* f = fopen(dsk.c_str(), "rb");
-        if (!f) { fprintf(stderr, "нет образа %s\n", dsk.c_str()); return 1; }
+        if (!f) { fprintf(stderr, "no image %s\n", dsk.c_str()); return 1; }
         fseek(f, 0, SEEK_END); long n = ftell(f); fseek(f, 0, SEEK_SET);
         std::vector<uint8_t> buf(n); fread(buf.data(), 1, n, f); fclose(f);
         s.mdisk = new MemDisk(); s.mdisk->init(buf.data(), buf.size());
-        printf("  диск в памяти: %ld байт\n", n);
+        printf("  in-memory disk: %ld bytes\n", n);
     } else {
         if (!persist) {
             std::string base = dsk.substr(dsk.find_last_of('/') + 1);
             std::string work = "build/" + base + ".work";
             FILE* in = fopen(dsk.c_str(), "rb");
-            if (!in) { fprintf(stderr, "нет образа %s\n", dsk.c_str()); return 1; }
+            if (!in) { fprintf(stderr, "no image %s\n", dsk.c_str()); return 1; }
             FILE* out = fopen(work.c_str(), "wb");
-            if (!out) { fprintf(stderr, "не создать %s\n", work.c_str()); return 1; }
+            if (!out) { fprintf(stderr, "cannot create %s\n", work.c_str()); return 1; }
             char buf[65536]; size_t n;
             while ((n = fread(buf, 1, sizeof buf, in)) > 0) fwrite(buf, 1, n, out);
             fclose(in); fclose(out);
             dsk = work;
         }
         s.spi = disk_new(dsk.c_str());
-        if (!s.spi) { fprintf(stderr, "нет образа диска %s\n", dsk.c_str()); return 1; }
+        if (!s.spi) { fprintf(stderr, "no disk image %s\n", dsk.c_str()); return 1; }
     }
-    printf("  диск: %s\n", dsk.c_str());
+    printf("  disk: %s\n", dsk.c_str());
 
     s.reset();
-    printf("  PC после сброса: %06X (ожидается FFE000)\n\n", s.pc() * 4);
+    printf("  PC after reset: %06X (expected FFE000)\n\n", s.pc() * 4);
 
     harness::Player player;
     SoCHost host(s);
@@ -273,44 +273,44 @@ int main(int argc, char** argv) {
         if (trace && (int)k < trace)
             printf("    [%6llu] PC=%06X IR=%08X\n", (unsigned long long)k, before * 4, s.read_code(before * 4));
         int n = s.step();
-        if (n < 0) { printf("  ЗАВИС на PC=%06X IR=%08X\n", before * 4, s.ir()); break; }
+        if (n < 0) { printf("  HUNG at PC=%06X IR=%08X\n", before * 4, s.ir()); break; }
         if (!first_draw && (k & 0xFFFF) == 0) {
             uint32_t c = s.fb_crc();
             if (c != last_crc && k > 0) { first_draw = k; }
             last_crc = c;
         }
-        if (s.pc() == before && n == 1) { printf("  ОСТАНОВ (переход на себя) на PC=%06X\n", before * 4); break; }
+        if (s.pc() == before && n == 1) { printf("  HALT (branch to itself) at PC=%06X\n", before * 4); break; }
     }
-    printf("\n  инструкций %llu, тактов %llu\n",
+    printf("\n  instructions %llu, cycles %llu\n",
            (unsigned long long)s.insns, (unsigned long long)s.cycles);
-    printf("  модель тактов: предсказано %llu, расхождений %llu (%.4f%%)  %s\n",
+    printf("  cycle model: predicted %llu, mismatches %llu (%.4f%%)  %s\n",
            (unsigned long long)s.model_cycles, (unsigned long long)s.model_fails,
            s.insns ? 100.0 * s.model_fails / s.insns : 0.0,
            s.model_fails ? "❌" : "✅");
     if (s.model_cycles != s.cycles)
-        printf("  ⚠ суммарно модель %llu против RTL %llu: расхождение %+lld тактов (%+.4f%%)\n",
+        printf("  ⚠ model total %llu vs RTL %llu: off by %+lld cycles (%+.4f%%)\n",
                (unsigned long long)s.model_cycles, (unsigned long long)s.cycles,
                (long long)s.model_cycles - (long long)s.cycles,
                100.0 * ((double)s.model_cycles - (double)s.cycles) / (double)s.cycles);
-    printf("  PC=%06X  контрольная сумма кадрового буфера %08X\n", s.pc() * 4, s.fb_crc());
-    // Выгрузка кадрового буфера в PBM. ВАЖНО: строки хранятся СНИЗУ ВВЕРХ
-    // (VID.v: vidadr = Org + {3'b0, ~vcnt, hword}), наивная выкладка даёт
-    // перевёрнутый экран.
+    printf("  PC=%06X  framebuffer checksum %08X\n", s.pc() * 4, s.fb_crc());
+    // Dump the framebuffer to PBM. IMPORTANT: lines are stored BOTTOM UP
+    // (VID.v: vidadr = Org + {3'b0, ~vcnt, hword}); a naive dump gives an
+    // upside-down screen.
     dump_screen(s, "build/screen.pbm");
-    if (first_draw) printf("  первая запись в кадровый буфер около инструкции %llu\n",
+    if (first_draw) printf("  first framebuffer write near instruction %llu\n",
                            (unsigned long long)first_draw);
 
-    // ⚠ Найдено аудитом: раньше контрольная сумма печаталась и ни с чем не
-    // сравнивалась, а программа всегда возвращала 0. Машина, застрявшая в ПЗУ
-    // с пустым экраном, рапортовала успех.
+    // ⚠ Found by the audit: the checksum used to be printed and compared with
+    // nothing, and the program always returned 0. A machine stuck in ROM
+    // with a blank screen reported success.
     if (expect_crc) {
         uint32_t got = s.fb_crc();
         if (got != expect_crc) {
-            printf("\n  ❌ ЭКРАН НЕ СОВПАЛ: %08X, ожидалось %08X\n", got, expect_crc);
+            printf("\n  ❌ SCREEN MISMATCH: %08X, expected %08X\n", got, expect_crc);
             return 1;
         }
-        printf("  ✅ экран совпал с эталоном (%08X)\n", got);
-        if (s.model_fails) { printf("  ❌ модель тактов разошлась\n"); return 1; }
+        printf("  ✅ screen matches the reference (%08X)\n", got);
+        if (s.model_fails) { printf("  ❌ cycle model diverged\n"); return 1; }
     }
     return 0;
 }

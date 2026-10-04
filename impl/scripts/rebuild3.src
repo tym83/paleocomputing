@@ -1,5 +1,5 @@
-# Сессия 3: модули, упавшие в ловушку 4 при сборке пачками (исчерпание кучи),
-# и последняя команда, не уместившаяся в бюджет сессии 2. По одному на команду.
+# Session 3: modules that fell into trap 4 when built in batches (heap exhaustion),
+# and the last command that did not fit into the session 2 budget. One per command.
 at 12000000
 click 700 620 L
 type ORP.Compile Checkers.Mod/s ~

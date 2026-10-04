@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Сборка методички: docs/book/*.md -> web/book/*.html.
+"""Builds the study guide: docs/book/*.md -> web/book/*.html.
 
-Источник истины — Markdown в репозитории: его можно читать и рецензировать
-в гите. Вывод — страницы рядом с лабораториями, чтобы читать и делать задания
-в одном месте.
+The source of truth is the Markdown in the repository: it can be read and reviewed
+in git. The output is pages next to the labs, so reading and doing the exercises
+happen in one place.
 
-Проверяется то, что ломается чаще всего: битые ссылки между главами и ссылки
-на несуществующие лабораторные. Битая ссылка в учебнике хуже отсутствующей
-главы, потому что выглядит рабочей.
+We check what breaks most often: broken links between chapters and links
+to nonexistent labs. A broken link in a textbook is worse than a missing
+chapter, because it looks like it works.
 """
 import pathlib, re, sys
 import markdown
@@ -69,9 +69,9 @@ TPL = """<!doctype html>
 
 
 def lab_ids():
-    """Номера существующих лабораторных — из самого web/labs.js, а не списком
-    здесь: иначе проверка ссылок разъедется с реальностью при первой же новой
-    лабораторной."""
+    """Numbers of the existing labs, taken from web/labs.js itself rather than listed
+    here: otherwise the link check would drift from reality with the very first new
+    lab."""
     src = pathlib.Path("web/labs.js").read_text(encoding="utf-8")
     return set(re.findall(r"^\s*id: (\d+),", src, re.M))
 
@@ -90,7 +90,7 @@ def title_of(path):
 def main():
     files = chapters()
     if not files:
-        sys.exit("нет глав в docs/book")
+        sys.exit("no chapters in docs/book")
     OUT.mkdir(parents=True, exist_ok=True)
     names = [f.stem + ".html" for f in files]
     titles = [title_of(f) for f in files]
@@ -101,14 +101,14 @@ def main():
 
     for i, f in enumerate(files):
         text = open(f, encoding="utf-8").read()
-        # ссылки между главами пишутся на .md, а в вывод идут на .html
+        # links between chapters are written to .md, and go to .html in the output
         for target in re.findall(r"\]\((\d[\w-]*)\.md\)", text):
             if target + ".md" not in [x.name for x in files]:
-                problems.append(f"{f.name}: ссылка на несуществующую главу {target}.md")
+                problems.append(f"{f.name}: link to a nonexistent chapter {target}.md")
         text = re.sub(r"\]\((\d[\w-]*)\.md", r"](\1.html", text)
         for lab in re.findall(r"лаб\w*\s+№(\d+)", text):
             if lab not in LABS:
-                problems.append(f"{f.name}: ссылка на лабораторную №{lab}, которой нет")
+                problems.append(f"{f.name}: link to lab №{lab}, which does not exist")
         md.reset()
         body = md.convert(text)
         toc = "".join(
@@ -128,15 +128,15 @@ def main():
 
     words = sum(len(re.findall(r"[А-Яа-яЁёA-Za-z]+", open(f, encoding="utf-8").read()))
                 for f in files)
-    print(f"  глав: {len(files)}, слов: {words}")
+    print(f"  chapters: {len(files)}, words: {words}")
     for j, t in enumerate(titles):
         print(f"    {j+1}. {t}")
     if problems:
-        print("\n❌ битые ссылки:")
+        print("\n❌ broken links:")
         for p in problems:
             print("   ", p)
         return 1
-    print("\n✅ методичка собрана, ссылки целы")
+    print("\n✅ study guide built, links intact")
     return 0
 
 

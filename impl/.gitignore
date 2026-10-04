@@ -3,14 +3,14 @@ __pycache__/
 *.pyc
 tests/*.bin
 tests/*.chk
-# Собираемые артефакты — правила в Makefile (цели tools, web)
+# Build artifacts; rules are in the Makefile (targets tools, web)
 ext/norebo/norebo.bin
 ext/norebo/norebo.orig.bin
 ext/refemu/refboot
 ext/refemu/reftrace
 
-# ⚠ risc5.js, risc5.wasm, oberon.dsk и prom_sd.mem НЕ игнорируются: GitHub Pages
-# раздаёт статику как есть, а собрать wasm на раскладке нечем — нужны verilator и
-# emsdk. Пересобираются целью `web`, изменения видны в diff'е. Раньше они
-# игнорировались здесь и жили руками скопированными в site/oberon/ — копия
-# устарела молча.
+# ⚠ risc5.js, risc5.wasm, oberon.dsk and prom_sd.mem are NOT ignored: GitHub Pages
+# serves static files as is, and there is nothing to build wasm with at deploy time
+# (it needs verilator and emsdk). They are rebuilt by the `web` target, and changes
+# show up in the diff. They used to be ignored here and lived as hand-made copies in
+# site/oberon/; the copy went stale silently.

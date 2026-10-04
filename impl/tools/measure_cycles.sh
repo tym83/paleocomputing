@@ -1,31 +1,31 @@
 #!/bin/bash
-# ДИНАМИЧЕСКАЯ цена проверок времени исполнения.
+# The DYNAMIC cost of run-time checks.
 #
-# Ловушка, в которую я сначала попал: если прогнать компиляторы cfgA и cfgB,
-# то разница в тактах отражает лишь то, что cfgA НЕ ГЕНЕРИРУЕТ проверки,
-# то есть делает меньше работы. Это не цена проверок при исполнении.
+# The trap I fell into first: if you run the cfgA and cfgB compilers,
+# the cycle difference only reflects that cfgA does NOT GENERATE checks,
+# i.e. does less work. That is not the cost of checks at run time.
 #
-# Правильно: нужна ВТОРАЯ стадия. Компилятором cfgA собрать компилятор заново ->
-# получится двоичный код БЕЗ проверок внутри. Тем же способом через cfgB -> С проверками.
-# Затем обоими полученными компиляторами скомпилировать ОДНУ И ТУ ЖЕ нагрузку
-# и сравнить такты. Тогда разница — это ровно исполнение проверок.
+# The right way: a SECOND stage is needed. Use cfgA to rebuild the compiler ->
+# that gives binary code WITHOUT checks inside. The same way via cfgB -> WITH checks.
+# Then compile THE SAME workload with both resulting compilers
+# and compare the cycles. Then the difference is exactly the execution of the checks.
 set -e
 P="$(cd "$(dirname "$0")/.." && pwd)"; NB="$P/ext/norebo"
 COMP="ORS.Mod ORB.Mod ORG.Mod ORP.Mod"
 LOAD="${*:-Texts.Mod Fonts.Mod Files.Mod Modules.Mod Oberon.Mod}"
 
-# --- стадия 2: пересобрать компилятор компилятором из cfgX
+# --- stage 2: rebuild the compiler with the compiler from cfgX
 for cfg in A B; do
   d="$P/build/stage2$cfg"; rm -rf "$d"; mkdir -p "$d"; cd "$d"
-  # ORG.Mod берём тот же, что использовался в cfgX (для A — пропатченный)
+  # take the same ORG.Mod that was used in cfgX (patched for A)
   [ "$cfg" = A ] && cp "$P/build/cfgA/ORG.Mod" . || true
   args=""; for m in $COMP; do args="$args $m/s"; done
   NOREBO_PATH="$d:$P/build/cfg$cfg:$NB/Norebo:$NB/Oberon:$NB/build2" \
     "$NB/norebo.bin" ORP.Compile $args > "$d/build.log" 2>&1
 done
 
-# --- прогон одной нагрузки обоими компиляторами стадии 2
-echo "нагрузка: $LOAD"
+# --- run one workload with both stage 2 compilers
+echo "workload: $LOAD"
 for cfg in A B; do
   d="$P/build/run2$cfg"; rm -rf "$d"; mkdir -p "$d"; cd "$d"
   args=""; for m in $LOAD; do args="$args $m/s"; done
@@ -41,9 +41,9 @@ def cyc(p):
     m = re.search(r"CYCLES (\d+) INSNS (\d+)", t)
     return (int(m.group(1)), int(m.group(2))) if m else (None, None)
 ca, ia = cyc("run2A"); cb, ib = cyc("run2B")
-if not cb: print("нет данных, смотри build/run2B/run.log"); sys.exit(1)
-print(f"\n  компилятор СО проверками   {cb:>13,} тактов  {ib:>12,} инстр.")
-print(f"  компилятор БЕЗ проверок    {ca:>13,} тактов  {ia:>12,} инстр.")
-print(f"  Δ                          {cb-ca:>13,} тактов  {ib-ia:>12,} инстр.")
-print(f"\n  ДИНАМИЧЕСКАЯ цена проверок: {100*(cb-ca)/cb:.2f}% тактов, {100*(ib-ia)/ib:.2f}% инструкций")
+if not cb: print("no data, see build/run2B/run.log"); sys.exit(1)
+print(f"\n  compiler WITH checks       {cb:>13,} cycles  {ib:>12,} instr.")
+print(f"  compiler WITHOUT checks    {ca:>13,} cycles  {ia:>12,} instr.")
+print(f"  Δ                          {cb-ca:>13,} cycles  {ib-ia:>12,} instr.")
+print(f"\n  DYNAMIC cost of checks: {100*(cb-ca)/cb:.2f}% of cycles, {100*(ib-ia)/ib:.2f}% of instructions")
 PY

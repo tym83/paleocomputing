@@ -1,14 +1,14 @@
-// Модель памяти для стенда ядра RISC5.
-// Одна плоская RAM обслуживает и codebus, и inbus — ровно как настоящий SoC:
-// adr либо следующий PC, либо адрес данных (во время stallL0), никогда оба сразу.
-// Это и есть фон-неймановское стойло, из-за которого LD/ST стоят 2 такта.
+// Memory model for the RISC5 core testbench.
+// One flat RAM serves both codebus and inbus, exactly like the real SoC:
+// adr is either the next PC or a data address (during stallL0), never both at once.
+// This is the von Neumann stall that makes LD/ST cost 2 cycles.
 #pragma once
 #include <cstdint>
 #include <cstring>
 #include <vector>
 
 struct Mem {
-    static constexpr uint32_t WORDS = 1u << 18;      // 1 МБ
+    static constexpr uint32_t WORDS = 1u << 18;      // 1 MB
     std::vector<uint32_t> w;
     Mem() : w(WORDS, 0) {}
 
@@ -16,8 +16,8 @@ struct Mem {
         uint32_t i = (byteaddr >> 2) & (WORDS - 1);
         return w[i];
     }
-    // ben=0 — слово; ben=1 — байт, выбираемый adr[1:0].
-    // Ядро уже разложило байт по нужной полосе outbus (см. RISC5.v assign outbus).
+    // ben=0: word; ben=1: byte selected by adr[1:0].
+    // The core has already placed the byte on the right outbus lane (see RISC5.v assign outbus).
     void write(uint32_t byteaddr, uint32_t data, bool ben) {
         uint32_t i = (byteaddr >> 2) & (WORDS - 1);
         if (!ben) { w[i] = data; return; }

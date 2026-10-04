@@ -1,23 +1,23 @@
 #!/usr/bin/env python3
-"""Модель целочисленного ядра RISC5, написанная по RISC5.v.
+"""Model of the RISC5 integer core, written from RISC5.v.
 
-Нужна для семантического дифференциала: круг «ассемблер → дизассемблер →
-ассемблер» пользуется одной раскладкой полей в обе стороны и общую ошибку в
-ней не видит. Модель раскладку НЕ разделяет — она написана отдельно, по тексту
-верилога, и сверяется с железом по результату и флагам.
+Needed for a semantic differential: the round trip "assembler -> disassembler ->
+assembler" uses one field layout in both directions and cannot see a shared bug
+in it. The model does NOT share the layout: it is written separately, from the
+Verilog text, and is checked against the hardware by result and flags.
 
-Источники в RISC5.v:
-  aluRes — таблица операций;
-  nn = regwr ? aluRes[31] : N          — знак
-  zz = regwr ? (aluRes == 0) : Z       — ноль
+Sources in RISC5.v:
+  aluRes — the operation table;
+  nn = regwr ? aluRes[31] : N          — sign
+  zz = regwr ? (aluRes == 0) : Z       — zero
   cx = ADD ? (~sb&sc&~sa)|(sb&sc&sa)|(sb&~sa)
      : SUB ? (~sb&sc&~sa)|(sb&sc&sa)|(~sb&sa) : C
   vv = ADD ? (sa&~sb&~sc)|(~sa&sb&sc)
      : SUB ? (sa&~sb&sc)|(~sa&sb&~sc) : OV
-  где sa = aluRes[31], sb = B[31], sc = C1[31]
+  where sa = aluRes[31], sb = B[31], sc = C1[31]
   H <= MUL ? product[63:32] : DIV ? remainder : H
-Умножитель и делитель получают ИНВЕРТИРОВАННОЕ u (RISC5.v:54,57), поэтому
-u=0 — знаковые операции, u=1 — беззнаковая (делитель) и смешанная (умножитель).
+The multiplier and divider receive an INVERTED u (RISC5.v:54,57), so
+u=0 means signed operations, u=1 unsigned (divider) and mixed (multiplier).
 """
 M32 = 0xFFFFFFFF
 
@@ -37,20 +37,20 @@ OPNAME = ['MOV','LSL','ASR','ROR','AND','ANN','IOR','XOR',
 
 
 def decode(w):
-    """Имя операции и признаки — по полям, прочитанным независимо от ассемблера."""
+    """Operation name and flags, from fields read independently of the assembler."""
     w &= M32
     if (w >> 31) & 1:
         return None
     return (OPNAME[(w >> 16) & 0xF], (w >> 29) & 1, (w >> 28) & 1,
-            (w >> 30) & 1, (w >> 24) & 0xF)          # op, u, v, q(непосредств.), a
+            (w >> 30) & 1, (w >> 24) & 0xF)          # op, u, v, q(immediate), a
 
 
 def step(st, w):
-    """Исполнить одно слово формата F0/F1. Возвращает False, если не поддержано."""
+    """Execute one word of format F0/F1. Returns False if unsupported."""
     w &= M32
     p, q, u, v = (w >> 31) & 1, (w >> 30) & 1, (w >> 29) & 1, (w >> 28) & 1
     if p:
-        return False                                   # память и переходы вне модели
+        return False                                   # memory and branches are outside the model
     a, b, op, c = (w >> 24) & 0xF, (w >> 20) & 0xF, (w >> 16) & 0xF, w & 0xF
     imm = w & 0xFFFF
 
@@ -80,23 +80,23 @@ def step(st, w):
     elif op == 8: res = (B + C1 + (st.C if u else 0)) & M32          # ADD / ADC
     elif op == 9: res = (B - C1 - (st.C if u else 0)) & M32          # SUB / SBC
     elif op == 10:                                                   # MUL / UMUL
-        # умножитель складывает по битам x сдвинутое y со ЗНАКОМ, а при u=1
-        # (инструкция u=0) вычитает поправку на знак x -> знаковое умножение
+        # the multiplier adds x shifted y bit by bit WITH SIGN, and with u=1
+        # (instruction u=0) subtracts a correction for the sign of x -> signed multiplication
         prod = (s32(B) if not u else B) * s32(C1)
         res = prod & M32
         st.H = (prod >> 32) & M32
     elif op == 11:                                                   # DIV / UDIV
         if C1 == 0:
-            return False                                # деление на ноль вне модели
+            return False                                # division by zero is outside the model
         if u:
             res, st.H = (B // C1) & M32, (B % C1) & M32
         else:
             x, y = s32(B), s32(C1)
             if y <= 0:
-                return False                            # делитель рассчитан на y > 0
-            res, st.H = (x // y) & M32, (x % y) & M32   # деление с округлением вниз
+                return False                            # the divider assumes y > 0
+            res, st.H = (x // y) & M32, (x % y) & M32   # division rounding down
     else:
-        return False                                    # плавающая точка вне модели
+        return False                                    # floating point is outside the model
 
     sa, sb, sc_ = (res >> 31) & 1, (B >> 31) & 1, (C1 >> 31) & 1
     if op == 8:

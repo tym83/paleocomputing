@@ -1,8 +1,8 @@
 #!/bin/bash
-# Замер цены проверок времени исполнения в Обероне.
-# Конфигурация B — сток (проверки всегда включены, выключить штатно нельзя).
-# Конфигурация A — тот же компилятор с патчем check := FALSE.
-# Сравнивается размер порождаемого КОДА на одной и той же нагрузке.
+# Measures the cost of run-time checks in Oberon.
+# Configuration B is stock (checks are always on and cannot be turned off normally).
+# Configuration A is the same compiler with the patch check := FALSE.
+# The size of the generated CODE is compared on the same workload.
 set -e
 P="$(cd "$(dirname "$0")/.." && pwd)"; NB="$P/ext/norebo"
 WORK="$P/build/measure"; rm -rf "$WORK"; mkdir -p "$WORK/A" "$WORK/B"
@@ -18,8 +18,8 @@ run() {  # $1 = A|B
   NOREBO_CYCLES=1 NOREBO_PATH="$P/build/cfg$cfg:$NB/Norebo:$NB/Oberon:$NB/build2" \
     "$NB/norebo.bin" ORP.Compile $args 2>&1
 }
-# ⚠ Ловушка Norebo: если исходник не найден по NOREBO_PATH, он УХОДИТ В ВЕЧНЫЙ ЦИКЛ
-# вместо сообщения об ошибке. Порядок путей ниже проверен и работает — не трогать.
+# ⚠ A Norebo trap: if a source is not found via NOREBO_PATH, it GOES INTO AN ENDLESS LOOP
+# instead of reporting an error. The path order below is verified and works; do not touch it.
 run B > "$WORK/B.log" 2>&1
 run A > "$WORK/A.log" 2>&1
 
@@ -33,7 +33,7 @@ def parse(p):
         if m: d[m.group(1)] = (int(m.group(2)), int(m.group(3)))
     return d
 B, A = parse("B.log"), parse("A.log")
-print(f"{'модуль':<12}{'B код':>8}{'A код':>8}{'Δ слов':>8}{'Δ %':>8}")
+print(f"{'module':<12}{'B code':>8}{'A code':>8}{'Δ words':>8}{'Δ %':>8}")
 print("-"*44)
 tb = ta = 0
 for m in B:
@@ -41,10 +41,10 @@ for m in B:
     b, a = B[m][0], A[m][0]; tb += b; ta += a
     print(f"{m:<12}{b:>8}{a:>8}{a-b:>8}{100*(b-a)/b:>7.1f}%")
 print("-"*44)
-print(f"{'ИТОГО':<12}{tb:>8}{ta:>8}{ta-tb:>8}{100*(tb-ta)/tb:>7.1f}%")
-print(f"\nРАЗМЕР КОДА: проверки занимают {100*(tb-ta)/tb:.1f}% ({tb-ta} слов из {tb})")
+print(f"{'TOTAL':<12}{tb:>8}{ta:>8}{ta-tb:>8}{100*(tb-ta)/tb:>7.1f}%")
+print(f"\nCODE SIZE: checks take {100*(tb-ta)/tb:.1f}% ({tb-ta} words of {tb})")
 
-# Такты компиляции (модель латентностей проверена против RTL потактово)
+# Compilation cycles (the latency model is verified against RTL cycle by cycle)
 def cyc(p):
     for line in (w/p).read_text(errors="replace").splitlines():
         m = re.match(r"CYCLES (\d+) INSNS (\d+)", line)
@@ -52,10 +52,10 @@ def cyc(p):
     return None, None
 cb, ib = cyc("B.log"); ca, ia = cyc("A.log")
 if cb and ca:
-    print(f"\nТАКТЫ на самой нагрузке (компилятор компилирует {len(B)} модулей):")
-    print(f"  B (сток)        {cb:>12,} тактов, {ib:>11,} инструкций")
-    print(f"  A (без проверок){ca:>12,} тактов, {ia:>11,} инструкций")
-    print(f"  Δ               {cb-ca:>12,} тактов  =  {100*(cb-ca)/cb:.2f}%")
-    print(f"  Δ инструкций    {ib-ia:>12,}         =  {100*(ib-ia)/ib:.2f}%")
-    print(f"  тактов на инструкцию: B {cb/ib:.3f}, A {ca/ia:.3f}")
+    print(f"\nCYCLES on the workload itself (the compiler compiles {len(B)} modules):")
+    print(f"  B (stock)       {cb:>12,} cycles, {ib:>11,} instructions")
+    print(f"  A (no checks)   {ca:>12,} cycles, {ia:>11,} instructions")
+    print(f"  Δ               {cb-ca:>12,} cycles  =  {100*(cb-ca)/cb:.2f}%")
+    print(f"  Δ instructions  {ib-ia:>12,}         =  {100*(ib-ia)/ib:.2f}%")
+    print(f"  cycles per instruction: B {cb/ib:.3f}, A {ca/ia:.3f}")
 PY

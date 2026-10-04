@@ -1,25 +1,25 @@
-# Открытый поток для Lattice ECP5: yosys -> nextpnr-ecp5 -> ecppack.
+# Open flow for Lattice ECP5: yosys -> nextpnr-ecp5 -> ecppack.
 #
-# Почему Debian, а не ночная сборка OSS CAD Suite: ночные релизы живут
-# ограниченное время и удаляются, а пакеты Debian и снимок образа по дайджесту
-# остаются. Плюс образ многоархитектурный — на arm64 поток идёт без эмуляции.
+# Why Debian and not a nightly OSS CAD Suite build: nightly releases live
+# for a limited time and get deleted, while Debian packages and an image snapshot
+# by digest stay. Also the image is multi-arch, so on arm64 the flow runs without emulation.
 #
-# Версии прибиты. Если в trixie пакет обновится, установка упадёт громко —
-# это и нужно: тихая смена инструмента сдвигает fmax, а смотреть на сдвиг
-# без знания его причины бессмысленно. Поднимать версии — отдельным коммитом
-# вместе с перемером results.md.
+# Versions are pinned. If a package is updated in trixie, the install fails loudly,
+# which is the point: a silent tool change shifts fmax, and looking at the shift
+# without knowing its cause is pointless. Bump versions in a separate commit
+# together with re-measuring results.md.
 FROM debian:trixie-slim@sha256:a99cfc517144bc59b1978475ec53b46ecabec7e43635402ee5b77cc54cd1b20a
 
-# ⚠ Версии пересобранных пакетов (+bN) у Debian свои на каждой архитектуре:
-# исходник один (nextpnr 0.7-1, trellis 1.4-2), а суффикс на arm64 и amd64
-# разный. Прибитая arm64-версия уронила сборку в CI на amd64. Поэтому суффикс
-# выбирается по архитектуре образа — dpkg, а не TARGETARCH: старый сборщик
-# Docker его не задаёт.
+# ⚠ Debian's rebuilt-package versions (+bN) differ per architecture:
+# the source is the same (nextpnr 0.7-1, trellis 1.4-2), but the suffix differs on arm64 and amd64.
+# A pinned arm64 version broke the amd64 build in CI. So the suffix
+# is chosen by the image architecture via dpkg, not TARGETARCH: the legacy Docker
+# builder does not set it.
 RUN set -e; arch=$(dpkg --print-architecture); \
     case "$arch" in \
       amd64) npr=0.7-1+b2; trl=1.4-2+b4 ;; \
       arm64) npr=0.7-1+b3; trl=1.4-2+b5 ;; \
-      *) echo "архитектура $arch: версии не прибиты"; exit 1 ;; \
+      *) echo "architecture $arch: versions not pinned"; exit 1 ;; \
     esac; \
     apt-get update -qq \
  && apt-get install -y --no-install-recommends \

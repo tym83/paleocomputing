@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""Проверка тайминга по отчётам nextpnr-ecp5 (--report) и сводка.
+"""Timing check from nextpnr-ecp5 reports (--report), and a summary.
 
-Режим проверки:
+Check mode:
     check_timing.py --target 25 --variant soc-base build/soc-base/seed*/report.json
-  печатает fmax каждого зерна, ресурсы и критический путь, пишет
-  build/<variant>/timing.json и завершается с кодом 1, если хоть одно зерно
-  не держит целевую частоту. Это и есть проверка в CI: тайминг — условие
-  прохождения, а не украшение.
+  prints the fmax of each seed, the resources and the critical path, writes
+  build/<variant>/timing.json and exits with code 1 if even one seed
+  does not hold the target frequency. This is the CI check: timing is a pass
+  condition, not decoration.
 
-Режим сводки:
+Summary mode:
     check_timing.py --summary --target 25 build
-  собирает build/*/timing.json в таблицу Markdown (build/summary.md).
+  collects build/*/timing.json into a Markdown table (build/summary.md).
 """
 import argparse
 import glob
@@ -20,23 +20,23 @@ import re
 import statistics
 import sys
 
-# Ячейки yosys/nextpnr, которые считаются логическими уровнями пути.
+# yosys/nextpnr cells that count as logic levels of a path.
 CELL_SUFFIX = re.compile(r"_(LUT4|TRELLIS|CCU2C|PFUMX|L6MUX21|DP16KD|DPR16X4)\b.*$")
 
 
 def short(name):
-    """Имя цепи без хвоста, который yosys наращивает при отображении."""
+    """Net name without the suffix that yosys appends during mapping."""
     return CELL_SUFFIX.sub("", name)
 
 
 def clock_fmax(report):
-    """Худшая достигнутая частота по всем тактовым доменам отчёта."""
+    """Worst achieved frequency across all clock domains in the report."""
     vals = [v["achieved"] for v in report["fmax"].values()]
     return min(vals) if vals else 0.0
 
 
 def worst_clock_path(report):
-    """Критический путь внутри тактового домена (не вводы-выводы <async>)."""
+    """Critical path within a clock domain (not <async> I/O)."""
     paths = [p for p in report["critical_paths"]
              if "<async>" not in (p["from"], p["to"])]
     best = None
@@ -104,22 +104,22 @@ def check(args):
     with open(os.path.join(vdir, "timing.json"), "w", encoding="utf-8") as f:
         json.dump(out, f, indent=1, ensure_ascii=False)
 
-    print(f"== {args.variant}: цель {args.target} МГц")
+    print(f"== {args.variant}: target {args.target} MHz")
     for r in runs:
         mark = "OK  " if r["fmax"] >= args.target else "FAIL"
-        print(f"  {mark} seed {r['seed']}: fmax {r['fmax']:.2f} МГц")
-    print(f"  ресурсы nextpnr: {runs[0]['util']}")
-    print(f"  ячейки yosys: {out['yosys']}")
+        print(f"  {mark} seed {r['seed']}: fmax {r['fmax']:.2f} MHz")
+    print(f"  nextpnr resources: {runs[0]['util']}")
+    print(f"  yosys cells: {out['yosys']}")
     p = runs[0]["path"]
     if p:
-        print(f"  критический путь (seed {runs[0]['seed']}, {p['edges']}): "
-              f"{p['total_ns']} нс = логика {p['logic_ns']} + провода {p['routing_ns']}, "
-              f"{p['levels']} уровней")
-        print(f"    от {p['start']} до {p['end']}")
-        print("    цепи: " + " -> ".join(p["nets"]))
+        print(f"  critical path (seed {runs[0]['seed']}, {p['edges']}): "
+              f"{p['total_ns']} ns = logic {p['logic_ns']} + routing {p['routing_ns']}, "
+              f"{p['levels']} levels")
+        print(f"    from {p['start']} to {p['end']}")
+        print("    nets: " + " -> ".join(p["nets"]))
     failed = [r for r in runs if r["fmax"] < args.target]
     if failed:
-        print(f"ПРОВАЛ: {len(failed)} из {len(runs)} зёрен ниже {args.target} МГц",
+        print(f"FAIL: {len(failed)} of {len(runs)} seeds below {args.target} MHz",
               file=sys.stderr)
         return 1
     return 0
@@ -130,9 +130,9 @@ def summary(args):
     for path in sorted(glob.glob(os.path.join(args.build, "*", "timing.json"))):
         rows.append(json.load(open(path, encoding="utf-8")))
     lines = [
-        f"| вариант | fmax min / медиана / max, МГц | запас к {args.target} МГц | "
+        f"| variant | fmax min / median / max, MHz | margin over {args.target} MHz | "
         "LUT4 | CCU2C | FF | LUTRAM (DPR16X4) | BRAM (DP16KD) | DSP | "
-        "критический путь (seed 1) |",
+        "critical path (seed 1) |",
         "|---|---|---|---|---|---|---|---|---|---|",
     ]
     for r in rows:
@@ -143,8 +143,8 @@ def summary(args):
             f"{r['fmax_max']:.2f} | {r['fmax_min'] / r['target_mhz']:.2f}x | "
             f"{y['LUT4']} | {y['CCU2C']} | {y['TRELLIS_FF']} | {y['TRELLIS_DPR16X4']} | "
             f"{y['DP16KD']} | {y['MULT18X18D']} | "
-            f"{p.get('edges', '')}, {p.get('total_ns', '')} нс "
-            f"(провода {p.get('routing_ns', '')}): {p.get('start', '')} -> {p.get('end', '')} |")
+            f"{p.get('edges', '')}, {p.get('total_ns', '')} ns "
+            f"(routing {p.get('routing_ns', '')}): {p.get('start', '')} -> {p.get('end', '')} |")
     text = "\n".join(lines) + "\n"
     with open(os.path.join(args.build, "summary.md"), "w", encoding="utf-8") as f:
         f.write(text)
@@ -163,7 +163,7 @@ def main():
         args.build = args.reports[0] if args.reports else "build"
         return summary(args)
     if not args.reports:
-        ap.error("нет отчётов")
+        ap.error("no reports")
     return check(args)
 
 

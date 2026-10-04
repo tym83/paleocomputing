@@ -1,4 +1,4 @@
-MODULE OvProbe;  (*находка 78: сравнение плавающих читает флаг OV, который ставит только целочисленный ADD/SUB*)
+MODULE OvProbe;  (*finding 78: floating-point comparison reads the OV flag, which only integer ADD/SUB sets*)
   IMPORT Texts, Oberon;
   VAR W: Texts.Writer; i, k: INTEGER; x, y: REAL;
   PROCEDURE Run*;

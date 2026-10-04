@@ -1,22 +1,22 @@
 #!/bin/bash
-# Компилирует все исходники PO2013 компилятором конфигурации (по умолчанию F) и
-# выводит места, где открытому массиву передаётся массив, для которого нельзя
-# построить дескриптор. Код не исполняется — нужен только разбор.
+# Compiles all PO2013 sources with a configuration's compiler (F by default) and
+# prints the places where an open array receives an array for which no
+# descriptor can be built. No code is executed; only parsing is needed.
 set -u
 cfg="${1:-F}"; P="$(cd "$(dirname "$0")/.." && pwd)"; D="$P/build/tc/scan$cfg"
 rm -rf "$D"; mkdir -p "$D"; cd "$D"
 ORD=$(cd "$P" && python3 tools/modorder.py 2>/dev/null)
 ok=0; bad=0
 for m in $ORD; do
-  case "$m" in *.Orig|BootLoad) continue;; esac   # загрузчик живёт до системы
+  case "$m" in *.Orig|BootLoad) continue;; esac   # the boot loader lives before the system
   cp "$P/ext/po2013-src/$m.Mod" .
-  # Norebo при ненайденном импорте уходит в вечный цикл — таймаут обязателен
+  # When an import is not found, Norebo goes into an endless loop, so the timeout is mandatory
   NOREBO_PATH="$D:$P/build/tc/$cfg/s1" perl -e 'alarm 15; exec @ARGV' \
     "$P/ext/norebo/norebo.bin" ORP.Compile $m.Mod/s >> scan.log 2>&1
-  # .rsc убираем из пути: иначе собранные здесь Kernel/Modules/Files заслонят
-  # модули самой среды Norebo, и следующий запуск компилятора не загрузится
-  # (LED(2) и вечный цикл в Modules). Импорту нужны только .smb.
-  if [ -f "$m.rsc" ]; then mv "$m.rsc" "$m.rsx"; ok=$((ok+1)); else bad=$((bad+1)); echo "    не собран: $m"; fi
+  # .rsc files are moved off the path: otherwise the Kernel/Modules/Files built here would shadow
+  # the Norebo environment's own modules, and the next compiler run would not load
+  # (LED(2) and an endless loop in Modules). Imports need only the .smb files.
+  if [ -f "$m.rsc" ]; then mv "$m.rsc" "$m.rsx"; ok=$((ok+1)); else bad=$((bad+1)); echo "    not built: $m"; fi
 done
-echo "  $cfg: собрано модулей $ok, не собрано $bad"
+echo "  $cfg: modules built $ok, not built $bad"
 grep -B2 "descriptor" scan.log || true

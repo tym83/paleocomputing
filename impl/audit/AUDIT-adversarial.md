@@ -1,54 +1,56 @@
-# Аудит: враждебный читатель — ВЕРДИКТ: НЕ ПРИНИМАЮ
+[Русская версия](AUDIT-adversarial.ru.md)
 
-Полный отчёт в переписке. Ниже — блокирующие пункты и статус исправления.
+# Audit: hostile reader. VERDICT: NOT ACCEPTED
 
-## Фактические ошибки (публиковать нельзя, исправить обязательно)
+The full report is in the correspondence. Below are the blocking items and their fix status.
 
-| # | Что неверно | Статус |
+## Factual errors (cannot be published, must be fixed)
+
+| # | What is wrong | Status |
 |---|---|---|
-| Ф1 | **FINDING-16: «дельта зависит от маршрута вчетверо при идентичном RTL» — RTL НЕ идентичен.** +30.06 снято без `CHK_SPLIT` (предел в `IR[15:4]`), +123.16 — с `CHK_SPLIT` (предел из двух кусков). Две разные схемы | 🔴 |
-| Ф2 | **«Kernel — это `MODULE*` (RISC-0)»** — в исходнике `MODULE Kernel;` без звёздочки. Ноль там по другой причине. Ошибка стоит в валидации замера | 🔴 |
-| Ф3 | **UMUL: «не поймали раньше»** — поймали в рассылке Oberon 4.03.2018 (Hellwig Geisse, подтвердил Jörg Straube, с фиксом). Наш вклад — механизм и измерение, не обнаружение | 🔴 |
-| Ф4 | **`docs/decoder-map.txt` содержит сообщение об ошибке shell**, а не вывод зонда. Главное доказательство находки 2 приложено как ошибка | 🔴 |
-| Ф5 | **Принятая кодировка E портит регистр, номер которого задаётся длиной массива.** На стоковом ядре слово CHK выполняется как `LSL` с полем `a` = старшие биты предела. Предел 1000 → портится R3. Раньше портился R0 | 🔴 |
-| Ф6 | **Эталоны реализуют UMUL честно беззнаково** (`(uint64_t)a * b`), то есть расходятся с RTL по семантике. Lockstep этого не покрыл — просто не встретилось | 🔴 |
+| F1 | **FINDING-16: "the delta depends on the flow by a factor of four with identical RTL": the RTL is NOT identical.** +30.06 was taken without `CHK_SPLIT` (limit in `IR[15:4]`), +123.16 with `CHK_SPLIT` (limit from two parts). Two different circuits | 🔴 |
+| F2 | **"Kernel is `MODULE*` (RISC-0)"**: the source says `MODULE Kernel;` with no asterisk. The zero there has a different cause. The error sits in the validation of the measurement | 🔴 |
+| F3 | **UMUL: "not caught before"**: it was caught on the Oberon mailing list on 4.03.2018 (Hellwig Geisse, confirmed by Jörg Straube, with a fix). Our contribution is the mechanism and the measurement, not the discovery | 🔴 |
+| F4 | **`docs/decoder-map.txt` contains a shell error message**, not the probe output. The main evidence for finding 2 is attached as an error | 🔴 |
+| F5 | **The adopted encoding E clobbers a register whose number is set by the array length.** On the stock core the CHK word executes as `LSL` with field `a` = the high bits of the limit. Limit 1000 → R3 is clobbered. Previously R0 was clobbered | 🔴 |
+| F6 | **The reference models implement UMUL as honestly unsigned** (`(uint64_t)a * b`), i.e. they diverge from the RTL in semantics. Lockstep did not cover this: it simply never came up | 🔴 |
 
-## Методологические блокеры
+## Methodological blockers
 
-| # | Проблема | Статус |
+| # | Problem | Status |
 |---|---|---|
-| М1 | **Конфаунд кодогенерации не устранён.** В финальном прогоне A по-прежнему не эмитит проверок → разница = исполнение + порождение. ~0.4 из 2.74 п.п. | 🔴 |
-| М2 | **Числа тактов сняты с модели, не с RTL.** Ядро с CHK ни разу не грузило систему; `make boot`/`lockstep` собираются без `-DWITH_CHK` | 🟠 частично закрыто находкой 17 |
-| М3 | **FINDING-04 сам себе противоречит:** доказывает неаддитивность шума и тут же предлагает вычитать постоянное смещение | 🔴 |
-| М4 | **`+0.21%` относится к ОТВЕРГНУТОЙ кодировке**, кочует во все сводки. Принятый E в защитимом маршруте не измерен | 🔴 |
-| М5 | **«Ровно 50%» — тождество, а не измерение.** 2 инструкции → 1, потолок задан конструкцией | 🔴 |
-| М6 | **ArrBench написан под ответ:** пределы объявлены < 4096, профиль «обнаруживает» 68.3% в 256…1023, под это подгоняется кодировка. При N=5000 вывод переворачивается | 🔴 |
-| М7 | **CPI конфигурации A = 2.43**, >40% тактов — 34-тактный умножитель на адресной арифметике. «10.16%» — про умножитель, не про проверки | 🔴 |
-| М8 | **2.67 против 2.74 — смена знаменателя без объяснения.** То же с 14 / 13.9 / 13.7 / 15.8 / 0.37 | 🔴 |
-| М9 | **Fmax: при цели 5000 пс дельта −6.5%, публикуется −1.81% с тугой цели.** Точку надо обосновать или показать обе | 🔴 |
-| М10 | **Сравнение с Morello/MTE/MPX** — разные свойства безопасности, разные микроархитектуры, соломенное чучело baseline (кодогенератор без BCE) | 🔴 |
-| М11 | **Ни У1, ни У3 не закрыты по собственным критериям дизайна:** нет медианы и IQR по популяции программ, нет разброса по прогонам, «4.27 МГц» измерены в Node, не в браузере | 🔴 |
+| M1 | **The code generation confound is not removed.** In the final run A still emits no checks → the difference = execution + generation. ~0.4 of 2.74 p.p. | 🔴 |
+| M2 | **Cycle counts were taken from the model, not from the RTL.** The CHK core has never booted the system; `make boot`/`lockstep` are built without `-DWITH_CHK` | 🟠 partly closed by finding 17 |
+| M3 | **FINDING-04 contradicts itself:** it proves that the noise is non-additive and then proposes subtracting a constant offset | 🔴 |
+| M4 | **`+0.21%` refers to the REJECTED encoding** and travels through every summary. The adopted E has not been measured in the defensible flow | 🔴 |
+| M5 | **"Exactly 50%" is an identity, not a measurement.** 2 instructions → 1; the ceiling is set by construction | 🔴 |
+| M6 | **ArrBench is written to fit the answer:** the limits are declared < 4096, the profile "discovers" 68.3% in 256…1023, and the encoding is fitted to that. At N=5000 the conclusion flips | 🔴 |
+| M7 | **The CPI of configuration A = 2.43**, >40% of cycles are the 34-cycle multiplier on address arithmetic. "10.16%" is about the multiplier, not about the checks | 🔴 |
+| M8 | **2.67 versus 2.74: a change of denominator without explanation.** The same with 14 / 13.9 / 13.7 / 15.8 / 0.37 | 🔴 |
+| M9 | **Fmax: at a 5000 ps target the delta is −6.5%, while −1.81% from a tight target is published.** The point must be justified, or both shown | 🔴 |
+| M10 | **Comparison with Morello/MTE/MPX**: different security properties, different microarchitectures, a straw-man baseline (a code generator without BCE) | 🔴 |
+| M11 | **Neither U1 nor U3 is closed by the design's own criteria:** no median and IQR over a population of programs, no spread across runs, "4.27 MHz" was measured in Node, not in a browser | 🔴 |
 
-## Воспроизводимость
+## Reproducibility
 
-- `measure_checks.sh` воспроизводит **опровергнутое** число (первая стадия), а не опубликованное
-- `measure3.sh` жёстко гоняет `A B D` — отвергнутый вариант; принятого E в скрипте нет
-- Счётной нагрузки нет в виде скрипта, числа FINDING-07 сняты вручную
-- Логов E-прогонов нет в дереве
-- Браузерной сборки нет ни в одной цели Makefile
+- `measure_checks.sh` reproduces the **refuted** number (the first stage), not the published one
+- `measure3.sh` hard-codes `A B D`, the rejected variant; the adopted E is not in the script
+- The compute workload does not exist as a script; the FINDING-07 numbers were taken by hand
+- The logs of the E runs are not in the tree
+- No Makefile target has a browser build
 
-## Незакрытые оговорки
+## Unresolved caveats
 
-VID выброшен (~7% тактов), SPI/SD словный (дисковый обмен = 0 тактов), PS/2 регистрами,
-регистровый файл переписан в триггеры (512 из 993 — база не ядро Вирта),
-открытые массивы исключены из обеих выборок покрытия, 6.2% — 10 модулей без оконной части,
-защиты `.rsc versionkey = 2X` нет, теста CHK × прерывание нет, покрытия Verilator нет.
+VID is thrown out (~7% of cycles), SPI/SD is word-level (disk transfer = 0 cycles), PS/2 is done with registers,
+the register file is rewritten into flip-flops (512 of 993: the baseline is not Wirth's core),
+open arrays are excluded from both coverage samples, 6.2% are 10 modules without a window part,
+there is no `.rsc versionkey = 2X` protection, no CHK × interrupt test, no Verilator coverage.
 
-## Опровергнутые заявки на новизну
+## Refuted novelty claims
 
-| Заявка | Что нашлось |
+| Claim | What was found |
 |---|---|
-| «цена проверок — числа нет в литературе» | Eggert, «Runtime Checking for ISO Standard Pascal», IEEE TSE 1981 |
-| «UMUL не поймали раньше» | рассылка Oberon, 4.03.2018, тред «Bug in multiplier?» |
-| «надбавку никто не измерял» | базовая латентность — рассылка 2016; про механизм не нашлось, но поиск неполон |
-| «buildworld не измерен никем» | корпус CHERI за пейволом, не проверено |
+| "the cost of checks: the number is not in the literature" | Eggert, "Runtime Checking for ISO Standard Pascal", IEEE TSE 1981 |
+| "UMUL was not caught before" | Oberon mailing list, 4.03.2018, thread "Bug in multiplier?" |
+| "nobody has measured the surcharge" | the base latency: mailing list, 2016; nothing found about the mechanism, but the search is incomplete |
+| "nobody has measured buildworld" | the CHERI corpus is behind a paywall, not checked |

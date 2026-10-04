@@ -1,44 +1,44 @@
 `timescale 1ns / 1ps
-// ТАЙМИНГ-ОБЁРТКА ЯДРА. НЕ СИСТЕМА И НЕ ЗАГРУЖАЕМЫЙ ДИЗАЙН.
+// CORE TIMING WRAPPER. NOT A SYSTEM AND NOT A BOOTABLE DESIGN.
 //
-// Зачем: измерить на настоящей ткани ECP5 (с трассировкой и задержками
-// проводов) частоту ядра RISC5 и ядра с CHK. Полная система с памятью, видео и
-// SD-картой здесь не собирается — что для неё нужно, см. README.md.
+// Purpose: measure on real ECP5 fabric (with routing and wire delays) the
+// frequency of the RISC5 core and of the core with CHK. The full system with
+// memory, video and SD card is not built here; for what it would need, see README.md.
 //
-// Два режима (Makefile, WRAP=soc|core):
-//   soc  — ядро + ПЗУ на ~clk + мультиплексор кода, как в RISC5Top.v;
-//   core — -DCORE_ONLY: только ядро, код тоже из регистра.
+// Two modes (Makefile, WRAP=soc|core):
+//   soc  — core + ROM on ~clk + code multiplexer, as in RISC5Top.v;
+//   core — -DCORE_ONLY: core only, code also comes from a register.
 //
-// Что внутри кристалла в режиме soc совпадает с RISC5Top.v:
-//   - ядро RISC5 (impl/rtl/RISC5.v, с -DWITH_CHK -DCHK_SPLIT или без);
-//   - загрузочное ПЗУ PROM на ~clk, как в оригинале (полутактовые пути
-//     posedge -> negedge -> posedge через ПЗУ сохраняются и попадают в отчёт);
-//   - мультиплексор codebus: ПЗУ по адресам 0xFFC000..., иначе шина памяти.
+// What is on the die in soc mode matches RISC5Top.v:
+//   - the RISC5 core (impl/rtl/RISC5.v, with -DWITH_CHK -DCHK_SPLIT or without);
+//   - the PROM boot ROM on ~clk, as in the original (the half-cycle paths
+//     posedge -> negedge -> posedge through the ROM are kept and appear in the report);
+//   - the codebus multiplexer: ROM at addresses 0xFFC000..., otherwise the memory bus.
 //
-// Что заменено и почему:
-//   - внешнее ОЗУ. В оригинале это асинхронная SRAM ВНЕ кристалла: адрес уходит
-//     на выводы, данные возвращаются в ядро в том же такте. Этот путь проходит
-//     через контактные площадки и время доступа микросхемы, и измерить его без
-//     платы нельзя. Здесь данные памяти приходят из регистра, адрес и данные
-//     записи уходят в регистр. Поэтому fmax ниже — это fmax ЯДРА внутри
-//     кристалла, а не частота системы с внешней SRAM;
-//   - входы (данные памяти, rst, irq, stallX) идут из сдвигового регистра,
-//     заполняемого с одного вывода: константы синтезатор бы свернул;
-//   - выходы ядра защёлкиваются и сворачиваются исключающим ИЛИ в светодиод:
-//     иначе синтезатор выбросил бы логику, у которой нет потребителя.
-// Регистры на входах и выходах стоят вне путей ядра и укорачивать их не могут:
-// путь «регистр -> ядро -> регистр» начинается и кончается там же, где
-// начинался бы у ядра в системе, только без внешних выводов.
+// What is replaced and why:
+//   - external RAM. In the original this is asynchronous SRAM OFF the die: the address goes
+//     out to the pins, and data returns to the core in the same cycle. That path goes
+//     through the I/O pads and the chip's access time, and it cannot be measured without
+//     a board. Here memory data comes from a register, and the address and write data
+//     go into a register. So the fmax below is the fmax of the CORE on
+//     the die, not the frequency of a system with external SRAM;
+//   - inputs (memory data, rst, irq, stallX) come from a shift register
+//     filled from a single pin: the synthesizer would fold constants away;
+//   - core outputs are latched and XOR-reduced into an LED:
+//     otherwise the synthesizer would remove logic that has no consumer.
+// The registers on inputs and outputs sit outside the core paths and cannot shorten them:
+// a "register -> core -> register" path starts and ends where it
+// would start and end for the core in the system, just without external pins.
 
 module core_timing_top(
-  input  clk_25mhz,   // G2, генератор 25 МГц на ULX3S
-  input  ftdi_txd,    // M1, последовательный вход (UART от FTDI)
+  input  clk_25mhz,   // G2, 25 MHz oscillator on ULX3S
+  input  ftdi_txd,    // M1, serial input (UART from FTDI)
   output [7:0] led);
 
 wire clk = clk_25mhz;
 
-// Сдвиговый регистр входов: 32 бита данных памяти + rst + irq + stallX
-// (+ 32 бита кода в режиме CORE_ONLY).
+// Input shift register: 32 bits of memory data + rst + irq + stallX
+// (+ 32 bits of code in CORE_ONLY mode).
 `ifdef CORE_ONLY
 localparam NIN = 67;
 `else
@@ -62,20 +62,20 @@ RISC5 riscx(.clk(clk), .rst(rst), .irq(irq),
    .outbus(outbus));
 
 `ifdef CORE_ONLY
-// Режим «только ядро»: ПЗУ нет, код приходит из регистра. Так виден
-// собственный путь ядра posedge -> posedge, не заслонённый полутактовым
-// путём до ПЗУ.
+// "Core only" mode: no ROM, code comes from a register. This exposes
+// the core's own posedge -> posedge path, not hidden behind the half-cycle
+// path to the ROM.
 assign romout  = 32'b0;
 assign codebus = sin[66:35];
 `else
-// Как в RISC5Top.v: ПЗУ тактуется инвертированным клоком.
+// As in RISC5Top.v: the ROM is clocked by the inverted clock.
 PROM PM (.adr(adr[10:2]), .data(romout), .clk(~clk));
 
 assign codebus = (adr[23:14] == 10'h3FF) ? romout : inbus0;
 `endif
 
-// Выходы ядра: защёлкнуть, затем свернуть. Свёртка идёт от регистра к
-// регистру и к путям ядра отношения не имеет.
+// Core outputs: latch, then reduce. The reduction runs from register to
+// register and has nothing to do with the core paths.
 reg [23:0] adr_q;
 reg [31:0] out_q;
 reg [2:0]  ctl_q;

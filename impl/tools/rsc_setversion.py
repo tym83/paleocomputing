@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""Переписать байт версии в объектном файле Оберона.
+"""Rewrites the version byte in an Oberon object file.
 
-Зачем. Конфигурация E ставит в свой вывод версию 2 — это намеренная блокировка:
-загрузчик Оберона проверяет `IF ch = versionkey` при `versionkey = 1X`, поэтому
-код с аппаратной CHK в старую систему просто не загрузится.
+Why. Configuration E stamps version 2 into its output; this is a deliberate lock:
+the Oberon loader checks `IF ch = versionkey` with `versionkey = 1X`, so
+code with hardware CHK simply will not load into the old system.
 
-Блокировка работает, и ломать её нельзя. Но для ЗАМЕРА нужно запустить такой
-компилятор на эмуляторе, который CHK как раз понимает. Поэтому здесь версия
-возвращается в 1 — осознанно, только для измерительного стенда, и только на
-копиях в build/.
+The lock works, and it must not be broken. But for a MEASUREMENT we need to run such a
+compiler on an emulator that does understand CHK. So here the version
+is set back to 1, deliberately, only for the measurement bench, and only on
+copies in build/.
 
-Раскладка байта: строка имени с нулём, затем 4 байта ключа, затем версия.
+Byte layout: the name string with a terminating zero, then 4 key bytes, then the version.
 """
 import sys
 
@@ -27,4 +27,4 @@ def setver(path, ver):
 if __name__ == "__main__":
     ver = int(sys.argv[1])
     for p in sys.argv[2:]:
-        print(f"  {p}: версия {setver(p, ver)} -> {ver}")
+        print(f"  {p}: version {setver(p, ver)} -> {ver}")

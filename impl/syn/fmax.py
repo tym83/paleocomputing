@@ -1,27 +1,27 @@
 #!/usr/bin/env python3
-"""Свип задержки: площадь против достижимого критического пути.
+"""Delay sweep: area versus achievable critical path.
 
-Что это меряет: оценку abc для СКОМБИНИРОВАННОЙ логики после технологического
-отображения, при WireLoad = "none" — то есть БЕЗ задержек проводов вообще.
-Это оптимистичная оценка, пригодная для ОТНОСИТЕЛЬНОГО сравнения конфигураций,
-а не как абсолютная частота кремния. Полноценный статический анализ требует
-OpenSTA по нетлисту; его в маршруте нет.
+What it measures: abc's estimate for the COMBINED logic after technology
+mapping, with WireLoad = "none", i.e. with NO wire delays at all.
+It is an optimistic estimate, suitable for a RELATIVE comparison of configurations,
+not as an absolute silicon frequency. Proper static timing analysis requires
+OpenSTA on the netlist; the flow does not have it.
 
-Библиотека ячеек — Sky130 (SkyWater 130 нм), Apache-2.0.
+Cell library: Sky130 (SkyWater 130 nm), Apache-2.0.
 
-Почему не Nangate45, на которой мерилось раньше: её шапка прямо запрещает
-публикацию — «provided pursuant to a License Agreement containing restrictions
-on its use», «does not indicate actual or intended publication of this file».
-Из-за этого синтез не работал из чистого клона, и в репозиторий её класть
-нельзя.
+Why not Nangate45, which was used for measurements before: its header explicitly forbids
+publication: "provided pursuant to a License Agreement containing restrictions
+on its use", "does not indicate actual or intended publication of this file".
+Because of that, synthesis did not work from a clean clone, and the library may not
+be committed to the repository.
 
-Sky130 — настоящий техпроцесс, на нём физически делают чипы, и она свободна.
-Абсолютные числа из-за смены техпроцесса другие (130 нм против 45 нм), но наши
-утверждения — относительные дельты, и они переход переживают: цена команды
-проверки границ по площади +1.04% против +0.32…0.85% на Nangate45. Порядок и
-знак те же.
+Sky130 is a real process node, chips are physically made on it, and it is free.
+Absolute numbers differ because of the process change (130 nm versus 45 nm), but our
+claims are relative deltas, and they survive the switch: the area cost of the bounds
+check instruction is +1.04% versus +0.32…0.85% on Nangate45. Same order of magnitude
+and same sign.
 
-Файл тянется целью `make lib`, в репозиторий не кладётся: 12 МБ.
+The file is fetched by the `make lib` target and is not committed: 12 MB.
 """
 import re, subprocess, sys, csv, pathlib
 
@@ -52,17 +52,17 @@ stat -liberty {LIB}
     return (float(d[-1]) if d else None, float(a.group(1)) if a else None)
 
 def main():
-    cfgs = [("базовое", ""), ("с CHK", "-DWITH_CHK -DCHK_SPLIT")]
+    cfgs = [("base", ""), ("with CHK", "-DWITH_CHK -DCHK_SPLIT")]
     periods = [int(x) for x in (sys.argv[1:] or
                ["5000","3000","2000","1500","1200","1000","800"])]
     rows = []
     for name, d in cfgs:
         print(f"\n=== {name} ===")
-        print(f"{'цель,пс':>9}{'достигнуто,пс':>15}{'Fmax,МГц':>11}{'площадь,мкм²':>15}")
+        print(f"{'target,ps':>9}{'achieved,ps':>15}{'Fmax,MHz':>11}{'area,um²':>15}")
         print("-" * 50)
         for p in periods:
             delay, area = run(p, d)
-            if delay is None: print(f"{p:>9}   нет данных"); continue
+            if delay is None: print(f"{p:>9}   no data"); continue
             f = 1e6 / delay
             print(f"{p:>9}{delay:>15.1f}{f:>11.1f}{area:>15.2f}")
             rows.append([name, p, delay, round(f,1), area])

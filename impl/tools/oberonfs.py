@@ -1,23 +1,23 @@
 #!/usr/bin/env python3
-"""Чтение файловой системы Оберона прямо из образа диска.
+"""Reads the Oberon file system straight from a disk image.
 
-Раскладка снята с исходников системы, а не угадана:
+The layout is taken from the system sources, not guessed:
 
-  Kernel.Mod:  GetSector(src) -> src DIV 29, затем *2 + FSoffset (80000H) в
-               512-байтных блоках SD. Эмулятор диска вычитает 80002H
-               (tb/disk/disk.c), поэтому сектор adr лежит в образе по
-               смещению (adr DIV 29 - 1) * 1024.
+  Kernel.Mod:  GetSector(src) -> src DIV 29, then *2 + FSoffset (80000H) in
+               512-byte SD blocks. The disk emulator subtracts 80002H
+               (tb/disk/disk.c), so sector adr lies in the image at
+               offset (adr DIV 29 - 1) * 1024.
 
-  FileDir.Mod: DirPage = mark, m, p0, fill[52], e[24] — 64 байта заголовка и
-               24 записи по 40 байт (имя 32, adr 4, p 4). Это B-дерево:
-               p0 — левый потомок, p каждой записи — правый.
+  FileDir.Mod: DirPage = mark, m, p0, fill[52], e[24]: a 64-byte header and
+               24 entries of 40 bytes (name 32, adr 4, p 4). This is a B-tree:
+               p0 is the left child, p of each entry is the right one.
                FileHeader = mark, name[32], aleng, bleng, date, ext[12],
-               sec[64] — ровно 352 байта (HeaderSize), дальше данные.
+               sec[64]: exactly 352 bytes (HeaderSize), then the data.
 
   Files.Mod:   Length(f) = aleng * 1024 + bleng - 352.
 
-Нужен, чтобы доказать неподвижную точку пересборки: сравнить объектные файлы
-до и после побайтово, а не по числам на экране.
+Needed to prove the rebuild fixed point: compare object files
+before and after byte for byte, not by numbers on the screen.
 """
 import struct, sys
 
@@ -34,7 +34,7 @@ class Image:
         return self.d[off:off + SS]
 
     def entries(self, adr=DIRROOT):
-        """Обход B-дерева каталога: имя -> адрес заголовка файла."""
+        """Walks the directory B-tree: name -> file header address."""
         if adr == 0:
             return
         s = self.sector(adr)
@@ -48,11 +48,11 @@ class Image:
             yield from self.entries(p)
 
     def date(self, hdr):
-        """Отметка времени из заголовка файла (FileDir.Mod: поле date).
+        """Timestamp from the file header (FileDir.Mod: field date).
 
-        Отличает «пересобрано и совпало побайтово» от «файл не трогали»:
-        побайтовое сравнение эти два случая не различает, а это ровно та
-        разница, из-за которой проверка могла бы тихо пройти на несобранном.
+        Distinguishes "rebuilt and matched byte for byte" from "file never touched":
+        a byte-for-byte comparison cannot tell these two cases apart, and that is exactly the
+        difference that could let the check pass silently on an unbuilt system.
         """
         return struct.unpack_from("<i", self.sector(hdr), 44)[0]
 
@@ -61,11 +61,11 @@ class Image:
         aleng, bleng = struct.unpack_from("<ii", h, 36)
         sec = struct.unpack_from("<64i", h, 96)
         length = aleng * SS + bleng - HS
-        out = bytearray(h[HS:])                       # хвост первого сектора
+        out = bytearray(h[HS:])                       # tail of the first sector
         for i in range(1, aleng + 1):
             if i < 64:
                 a = sec[i]
-            else:                                     # длинные файлы: индексные страницы
+            else:                                     # long files: index pages
                 ext = struct.unpack_from("<12i", h, 48)
                 page = self.sector(ext[(i - 64) // 256])
                 a = struct.unpack_from("<i", page, ((i - 64) % 256) * 4)[0]
@@ -83,6 +83,6 @@ if __name__ == "__main__":
         for name in sys.argv[2:]:
             sys.stdout.buffer.write(img.read(fs[name]))
     else:
-        print(f"файлов: {len(fs)}")
+        print(f"files: {len(fs)}")
         for n in sorted(fs)[:8]:
-            print(f"  {n:24s} {len(img.read(fs[n])):8d} байт")
+            print(f"  {n:24s} {len(img.read(fs[n])):8d} bytes")

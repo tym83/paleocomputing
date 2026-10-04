@@ -1,16 +1,16 @@
 `timescale 1ns / 1ps
-// register file, triple-port -- ПОВЕДЕНЧЕСКАЯ ЗАМЕНА примитивов Xilinx RAM16X1D.
+// register file, triple-port -- BEHAVIOURAL REPLACEMENT for the Xilinx RAM16X1D primitives.
 //
-// Оригинал (Registers.xilinx.v.orig, 1.2.2018) построен на 64 примитивах RAM16X1D
-// распределённой памяти Xilinx: запись синхронная по WCLK при WE, чтение асинхронное
-// (SPO по адресу A, DPO по адресу DPRA). Здесь та же семантика на поведенческом Verilog,
-// портируемая в Verilator / yosys / любой ASIC-поток.
+// The original (Registers.xilinx.v.orig, 1.2.2018) is built from 64 RAM16X1D primitives
+// of Xilinx distributed memory: synchronous write on WCLK when WE, asynchronous read
+// (SPO at address A, DPO at address DPRA). Here is the same semantics in behavioural Verilog,
+// portable to Verilator / yosys / any ASIC flow.
 //
-// Интерфейс идентичен оригиналу -- drop-in.
+// The interface is identical to the original -- drop-in.
 //
-// ⚠ ДОЛГ для пути в кремний: RAM16X1D имел .INIT(16'h0000), то есть регистровый файл
-// обнулялся битстримом. В кремнии этого не будет. Порта сброса в интерфейсе нет;
-// добавление потребует правки RISC5.v. Пока -- initial для симуляции.
+// ⚠ DEBT on the path to silicon: RAM16X1D had .INIT(16'h0000), i.e. the register file
+// was zeroed by the bitstream. Silicon will not do that. The interface has no reset port;
+// adding one requires editing RISC5.v. For now -- initial, for simulation.
 
 module Registers(
   input clk, wr,

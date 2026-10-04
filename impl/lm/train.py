@@ -1,22 +1,22 @@
 #!/usr/bin/env python3
-"""Обучение символьной модели для выпуска №2: MLP Бенжио на тексте «Алисы».
+"""Training the character model for episode 2: a Bengio MLP on the text of "Alice".
 
-Только numpy, без GPU, зерно фиксировано. Результат — файл весов в том виде,
-в каком его читает модуль Оберона (lm/LM.Mod): 32-битные слова, младший байт
-первым, числа в представлении RISC5.
+numpy only, no GPU, fixed seed. The result is a weights file in the form
+the Oberon module (lm/LM.Mod) reads it: 32-bit words, least significant byte
+first, numbers in RISC5 representation.
 
-  python3 lm/train.py              # обучить и записать lm/LM.Weights
-  python3 lm/train.py --check      # только проверить, что файл весов = манифест
+  python3 lm/train.py              # train and write lm/LM.Weights
+  python3 lm/train.py --check      # only check that the weights file matches the manifest
 
-Побитовой воспроизводимости обучения на другой машине не обещаем: порядок
-суммирования в BLAS зависит от библиотеки. Воспроизводимость выпуска держится
-на закоммиченном файле весов — вывод модели определяется им однозначно.
+We do not promise bit-exact reproducibility of training on another machine: the order
+of summation in BLAS depends on the library. Reproducibility of the episode rests
+on the committed weights file: the model's output is fully determined by it.
 """
-from __future__ import annotations   # аннотации np.ndarray не вычисляются: numpy может не быть
+from __future__ import annotations   # np.ndarray annotations are not evaluated: numpy may be absent
 
 import hashlib, json, pathlib, struct, sys
 
-# numpy нужен только для обучения: проверка манифеста (--check) идёт в CI без него
+# numpy is needed only for training: the manifest check (--check) runs in CI without it
 np = None
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -24,8 +24,8 @@ TEXT = HERE / "alice.txt"
 WEIGHTS = HERE / "LM.Weights"
 MANIFEST = HERE / "weights.json"
 
-# Размеры модели. Менять только вместе с CONST в LM.Mod.
-C, E, H = 8, 16, 256          # контекст, вложение, скрытый слой
+# Model sizes. Change only together with CONST in LM.Mod.
+C, E, H = 8, 16, 256          # context, embedding, hidden layer
 VOCAB = " abcdefghijklmnopqrstuvwxyz.,;:!?'\"-"
 V = len(VOCAB)
 MAGIC = 0x314D4C  # "LM1"
@@ -34,8 +34,8 @@ EPOCHS, BATCH, LR = 12, 256, 2e-3
 
 
 def normalize(raw: str) -> str:
-    """Текст → строка из символов VOCAB: строчные, типографика к ASCII,
-    всё прочее и любые пробельные — в один пробел."""
+    """Text → a string of VOCAB characters: lowercase, typography to ASCII,
+    everything else and any whitespace to a single space."""
     t = raw.lower()
     for a, b in (("‘", "'"), ("’", "'"), ("“", '"'), ("”", '"'), ("—", "-"), ("ù", "u")):
         t = t.replace(a, b)
@@ -51,7 +51,7 @@ def normalize(raw: str) -> str:
 def dataset():
     s = normalize(TEXT.read_text(encoding="utf-8"))
     ids = np.array([VOCAB.index(ch) for ch in s], dtype=np.int64)
-    # контекст в начале текста — пробелы, как и при генерации с короткой затравки
+    # the context at the start of the text is spaces, as when generating from a short prompt
     pad = np.concatenate([np.zeros(C, dtype=np.int64), ids])
     X = np.stack([pad[i:i + len(ids)] for i in range(C)], axis=1)
     return s, X, ids
@@ -98,12 +98,12 @@ def eval_loss(p, X, Y):
 
 
 def to_risc5_bits(a: np.ndarray):
-    """float32 → слова RISC5. Для нормальных чисел биты совпадают с IEEE;
-    подпороговых у Вирта нет (они обращаются в ноль) — обнуляем явно и считаем."""
+    """float32 → RISC5 words. For normal numbers the bits match IEEE;
+    Wirth has no subnormals (they become zero), so we zero them explicitly and count them."""
     b = np.asarray(a, dtype=np.float32).ravel().view(np.uint32).copy()
     sub = ((b & 0x7F800000) == 0) & ((b & 0x7FFFFF) != 0)
     b[sub] = 0
-    b[(b & 0x7FFFFFFF) == 0] = 0          # и -0.0 в +0.0: загрузка -0.0 ставит флаг N
+    b[(b & 0x7FFFFFFF) == 0] = 0          # and -0.0 to +0.0: loading -0.0 sets the N flag
     return b, int(sub.sum())
 
 
@@ -138,14 +138,14 @@ def train():
                 v2[k] = 0.999 * v2[k] + 0.001 * g[k] ** 2
                 mh = m[k] / (1 - 0.9 ** t); vh = v2[k] / (1 - 0.999 ** t)
                 p[k] -= lr * mh / (np.sqrt(vh) + 1e-8)
-        print(f"эпоха {ep + 1:2d}: обучение {tot / cut:.3f}, проверка {eval_loss(p, Xva, Yva):.3f} нат/символ",
+        print(f"epoch {ep + 1:2d}: train {tot / cut:.3f}, validation {eval_loss(p, Xva, Yva):.3f} nats/char",
               flush=True)
     data, nsub = export(p)
     WEIGHTS.write_bytes(data)
     params = V * E + H * C * E + H + V * H + V
     man = {
         "text": "lm/alice.txt — Lewis Carroll, Alice's Adventures in Wonderland (1865), "
-                "Project Gutenberg eBook #11, public domain; служебные шапка и подвал Project Gutenberg удалены",
+                "Project Gutenberg eBook #11, public domain; Project Gutenberg header and footer boilerplate removed",
         "source_url": "https://www.gutenberg.org/cache/epub/11/pg11.txt",
         "chars_after_normalize": len(s),
         "vocab": VOCAB, "C": C, "E": E, "H": H, "V": V, "params": params,
@@ -163,8 +163,8 @@ def check():
     man = json.loads(MANIFEST.read_text())
     h = hashlib.sha256(WEIGHTS.read_bytes()).hexdigest()
     ok = h == man["sha256"]
-    print(f"  веса {WEIGHTS.name}: {man['params']} параметров, {man['bytes']} Б, "
-          f"sha256 {'совпадает ✅' if ok else 'НЕ совпадает ❌'}")
+    print(f"  weights {WEIGHTS.name}: {man['params']} parameters, {man['bytes']} B, "
+          f"sha256 {'matches ✅' if ok else 'does NOT match ❌'}")
     return 0 if ok else 1
 
 

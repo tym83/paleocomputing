@@ -1,11 +1,11 @@
-# Образ с инструментарием для лабораторных, которым не хватает браузера:
-# правка процессора и правка компилятора. Внутри — Verilator, сборка C++,
-# Python и Node, то есть ровно то, чем проверяется работа на хосте.
+# Toolchain image for the labs that a browser is not enough for: changing the
+# processor and changing the compiler. Inside are Verilator, a C++ toolchain,
+# Python and Node, i.e. exactly what checks the work on the host.
 #
-# Зачем контейнер. Задания isa и compiler требуют пересборки
-# Verilog и компилятора Оберона; в браузере это невозможно. Зато это обычная
-# пакетная нагрузка: дал правку — получил вердикт. Такое запускается и локально,
-# и заданием в кластере.
+# Why a container. The isa and compiler assignments require rebuilding the
+# Verilog and the Oberon compiler, which is impossible in a browser. But it is
+# an ordinary batch workload: submit a change, get a verdict. It runs both
+# locally and as a cluster job.
 FROM debian:trixie-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -14,8 +14,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /lab
-# Копируется только то, что нужно для сборки и проверок: build/ не переносится,
-# иначе образ тащит сто мегабайт чужих артефактов и ломает воспроизводимость.
+# Only what the build and checks need is copied: build/ is left out, otherwise
+# the image drags in a hundred megabytes of unrelated artifacts and breaks
+# reproducibility.
 COPY rtl/     rtl/
 COPY tb/      tb/
 COPY tools/   tools/

@@ -1,5 +1,5 @@
 {
- "text": "lm/alice.txt — Lewis Carroll, Alice's Adventures in Wonderland (1865), Project Gutenberg eBook #11, public domain; служебные шапка и подвал Project Gutenberg удалены",
+ "text": "lm/alice.txt — Lewis Carroll, Alice's Adventures in Wonderland (1865), Project Gutenberg eBook #11, public domain; Project Gutenberg header and footer boilerplate removed",
  "source_url": "https://www.gutenberg.org/cache/epub/11/pg11.txt",
  "chars_after_normalize": 142560,
  "vocab": " abcdefghijklmnopqrstuvwxyz.,;:!?'\"-",

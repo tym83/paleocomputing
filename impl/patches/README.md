@@ -1,41 +1,42 @@
-# Патчи кодогенератора Оберона
+[Русская версия](README.ru.md)
 
-⚠ **Найдено аудитом:** единственные копии этих файлов лежали в `build/cfg*/`, который
-уничтожается командой `make clean`. Одна команда — и исчезали все пять конфигураций
-вместе со всей серией измерений. Теперь они живут здесь, а `build/` действительно
-производный.
+# Oberon code generator patches
 
-| Файл | Конфигурация | Что меняет в `ORG.Mod` |
+⚠ **Found by audit:** the only copies of these files lived in `build/cfg*/`, which
+is wiped by `make clean`. One command, and all five configurations disappeared
+together with the whole series of measurements. Now they live here, and `build/` is truly
+derived.
+
+| File | Configuration | What it changes in `ORG.Mod` |
 |---|---|---|
-| `ORG-cfgA.Mod` | **A** — проверок нет | `check := FALSE` в `ORG.Open` |
-| `ORG-cfgC.Mod` | **C** — ОТВЕРГНУТА | CHK с пределом 12 бит в `IR[15:4]`; ломает диагностику |
-| `ORG-cfgD.Mod` | **D** — ОТВЕРГНУТА | CHK с пределом 8 бит в `IR[15:8]`; мало покрытия |
-| `ORG-cfgE.Mod` | **E** — ПРИНЯТА | CHK с пределом из двух кусков + байт версии `.rsc` = 2 |
+| `ORG-cfgA.Mod` | **A**: no checks | `check := FALSE` in `ORG.Open` |
+| `ORG-cfgC.Mod` | **C**: REJECTED | CHK with a 12-bit limit in `IR[15:4]`; breaks diagnostics |
+| `ORG-cfgD.Mod` | **D**: REJECTED | CHK with an 8-bit limit in `IR[15:8]`; too little coverage |
+| `ORG-cfgE.Mod` | **E**: ADOPTED | CHK with a limit from two parts + `.rsc` version byte = 2 |
 
-Конфигурация **B** — сток, без патча: `ext/norebo/Oberon/ORG.Mod` как есть.
+Configuration **B** is stock, with no patch: `ext/norebo/Oberon/ORG.Mod` as is.
 
-`web/ORG.Chk.Mod` — копия `ORG-cfgE.Mod` для лабораторной 12, отличается ровно
-штампом версии: пишет 1, а не 2, потому что стоковый загрузчик в образе
-загрузки версию 2 отвергает, а пересобрать его в браузере нельзя. Безопасно
-только там: смена ядра поднимает машину с чистым диском, и модуль с CHK на
-стоковое ядро не попадает. Совпадение с `ORG-cfgE.Mod` во всём остальном
-проверяет `web/labs-test.mjs`.
+`web/ORG.Chk.Mod` is a copy of `ORG-cfgE.Mod` for lab 12 that differs only in
+the version stamp: it writes 1, not 2, because the stock loader in the boot
+image rejects version 2, and it cannot be rebuilt in the browser. This is safe
+only there: switching the core brings the machine up with a clean disk, and a module with CHK never reaches
+the stock core. `web/labs-test.mjs` checks that it matches `ORG-cfgE.Mod` in everything else.
 
-`web/ORG.NoChk.Mod` — копия `ORG-cfgA.Mod` для той же лабораторной (третье
-число, конфигурация A), отличается ровно комментарием после `check := FALSE`.
-Штамп версии в ней не тронут и остаётся стоковым (1): версия говорит загрузчику,
-какие команды нужны коду, а код без проверок обходится стоковыми. Что проверки
-выключены, не записывает ни версия, ни ключ — это и сказано в комментарии.
-Совпадение с `ORG-cfgA.Mod` тоже проверяет `web/labs-test.mjs`.
+`web/ORG.NoChk.Mod` is a copy of `ORG-cfgA.Mod` for the same lab (the third
+number, configuration A) that differs only in the comment after `check := FALSE`.
+Its version stamp is untouched and stays stock (1): the version tells the loader
+which instructions the code needs, and code without checks gets by with the stock ones. That checks
+are off is recorded neither by the version nor by the key, which is what the comment says.
+`web/labs-test.mjs` also checks that it matches `ORG-cfgA.Mod`.
 
-Рядом лежат `.diff` от оригинала — для чтения. Скрипты используют `.Mod` целиком,
-потому что Norebo компилирует файлы, а не применяет патчи.
+Next to them are `.diff` files against the original, for reading. The scripts use the whole `.Mod`,
+because Norebo compiles files rather than applying patches.
 
-## ⚠ Конфигурация C сейчас нерабочая
+## ⚠ Configuration C is currently broken
 
-`ext/norebo/Runtime/risc-cpu.c` декодирует CHK **жёстко по кодировке варианта E**
-(предел из двух кусков), без условной компиляции. Конфигурация C эмитит предел
-в `IR[15:4]`, и декодер читает его как `lim DIV 16` — проверка срабатывает на законных
-индексах, компилятор падает через ~1.7 млн тактов.
+`ext/norebo/Runtime/risc-cpu.c` decodes CHK **hard-wired to the encoding of variant E**
+(limit from two parts), with no conditional compilation. Configuration C emits the limit
+in `IR[15:4]`, and the decoder reads it as `lim DIV 16`: the check fires on legitimate
+indices, and the compiler crashes after ~1.7 million cycles.
 
-Это значит, что **находка 6 в текущем дереве не воспроизводится**. Сохранена для истории.
+This means that **finding 6 does not reproduce in the current tree**. It is kept for history.

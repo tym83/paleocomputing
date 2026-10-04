@@ -1,18 +1,18 @@
 `timescale 1ns / 1ps
-// Быстрый вариант FPMultiplier Вирта (выпуск №2, находки 72–79).
+// Fast variant of Wirth's FPMultiplier (episode 2, findings 72–79).
 //
-// Исходный блок считает произведение мантисс сдвигом со сложением: 24 шага,
-// операция стоит 26 тактов, а подряд идущая — 32 (счётчик докручивается до
-// переполнения, находка 01). Здесь то же произведение 24×24 берётся одним
-// умножением, а округление, нормализация и насыщение ПОВТОРЕНЫ СТРОКА В СТРОКУ
-// из FPMultiplier.v: результат обязан совпадать побитово, это проверяет
-// tb/fpmul_diff.cpp на исходном модуле как эталоне.
+// The original block computes the mantissa product by shift-and-add: 24 steps,
+// an operation costs 26 cycles and a back-to-back one 32 (the counter spins up to
+// overflow, finding 01). Here the same 24×24 product is taken with a single
+// multiplication, while rounding, normalization and saturation are REPEATED LINE FOR LINE
+// from FPMultiplier.v: the result must match bit for bit, which is checked by
+// tb/fpmul_diff.cpp with the original module as the reference.
 //
-// Два варианта:
-//   по умолчанию     — комбинационный: FML исполняется за 1 такт, без стойла;
-//   FPMUL_FAST_REG   — произведение защёлкивается в регистр: FML за 2 такта,
-//                      путь умножителя отрезан от записи в регистровый файл.
-// Подключается в RISC5.v по define FPMUL_FAST (по образцу WITH_CHK).
+// Two variants:
+//   default          — combinational: FML executes in 1 cycle, no stall;
+//   FPMUL_FAST_REG   — the product is latched in a register: FML in 2 cycles,
+//                      the multiplier path is cut off from the register file write.
+// Wired into RISC5.v by the FPMUL_FAST define (following the WITH_CHK pattern).
 module FPMultiplierFast(
   input clk, run,
   input [31:0] x, y,
@@ -29,11 +29,11 @@ assign sign = x[31] ^ y[31];
 assign xe = x[30:23];
 assign ye = y[30:23];
 assign e0 = xe + ye;
-// то же произведение, что копится в P у исходного блока после 24 шагов
+// the same product that accumulates in P in the original block after 24 steps
 assign prod = {24'b0, 1'b1, x[22:0]} * {24'b0, 1'b1, y[22:0]};
 
 `ifdef FPMUL_FAST_REG
-reg S;          // 0 — такт умножения (стойло), 1 — результат готов
+reg S;          // 0 — multiply cycle (stall), 1 — result ready
 reg [47:0] Pr;
 assign P = Pr;
 assign stall = run & ~S;
@@ -47,7 +47,7 @@ assign stall = 1'b0;
 `endif
 
 assign e1 = e0 - 127 + P[47];
-assign z0 = P[47] ? P[47:23]+1 : P[46:22]+1;  // округление и нормализация — как у Вирта
+assign z0 = P[47] ? P[47:23]+1 : P[46:22]+1;  // rounding and normalization — as in Wirth's
 assign z = (xe == 0) | (ye == 0) ? 0 :
    (~e1[8]) ? {sign, e1[7:0], z0[23:1]} :
    (~e1[7]) ? {sign, 8'b11111111, z0[23:1]} : 0;
