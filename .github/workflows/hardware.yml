@@ -112,6 +112,12 @@ jobs:
       # Выпуск №2: система в QEMU сама компилирует модуль модели и печатает
       # текст; он снимается с диска и сверяется с эталоном. Заодно проверяет
       # запись на диск в QEMU (находка 77).
+      # Keyboard end to end: a command typed into System.Tool and run by a
+      # middle click. Byte loads from the key port used to be rejected and
+      # the first key press hung the system (finding 86).
+      - name: Keyboard
+        run: python3 qemu/test/keyboard_check.py
+
       - name: Языковая модель в системе
         run: |
           make -C impl tools
