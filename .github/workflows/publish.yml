@@ -410,7 +410,7 @@ jobs:
       # которого ещё нет в реестре.
       - name: Таблица launcher'ов под выпуск
         run: |
-          python3 marketplace/tools/gen-launcher-table.py --release "${{ needs.source.outputs.tag }}"
+          python3 marketplace/tools/gen-launcher-table.py --release "${{ needs.source.outputs.tag }}" --pin
           # И образы с файлами машин — туда же: паспорт не должен отставать от выпуска.
           python3 marketplace/tools/pin-images.py --release "${{ needs.source.outputs.tag }}"
 
