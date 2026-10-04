@@ -100,7 +100,7 @@ buildx берёт токен кэша из `ACTIONS_RUNTIME_TOKEN`, а шагу 
 
 | основа | дайджест индекса |
 |---|---|
-| `quay.io/centos/centos:stream9` | `sha256:0996d37c69b3a8c33042932d415ad7bf5a8122270264e835e5c0153615aef0e4` |
+| `quay.io/centos/centos:stream9` | `sha256:63e8d0c2a4a4b67c8bd7456283d12106bedf815d8c27d1a72498ebcf173baf09` |
 | `quay.io/kubevirt/virt-launcher:v1.8.4` | `sha256:c89f733b1fdcc810d0b4326bbfc652a4cf3d25bc56cc8545f124d5cb71a1ce20` |
 
 Дайджесты сняты с реестра напрямую (заголовок `Docker-Content-Digest` на

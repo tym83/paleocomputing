@@ -44,8 +44,14 @@ void     oberon_disk_init(OberonDisk *d, BlockBackend *blk);
 void     oberon_disk_write(OberonDisk *d, uint32_t value);
 uint32_t oberon_disk_read(OberonDisk *d);
 
-/* Очередь клавиатуры — 16 байт, как fifo[15:0] в PS2.v. */
-#define OBERON_KBD_FIFO 16
+/*
+ * Keyboard queue. PS2.v holds 16 bytes, but there a keyboard cannot send
+ * faster than a person types. QMP input-send-event or a VNC client can, and
+ * with 16 bytes a fast stream lost keys (a key with Shift takes six bytes).
+ * The size is not visible to the system otherwise: Input.Mod drains the
+ * queue byte by byte and only asks whether it is empty.
+ */
+#define OBERON_KBD_FIFO 4096
 
 typedef struct OberonIOState {
     MemoryRegion mr;

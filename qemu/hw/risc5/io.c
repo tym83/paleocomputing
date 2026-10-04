@@ -99,10 +99,15 @@ static const MemoryRegionOps io_ops = {
     .read = io_read,
     .write = io_write,
     /*
-     * Порты читаются и пишутся только словами: адресуются они adr[5:2],
-     * младшие два бита в декодировании не участвуют.
+     * The ports are decoded by adr[5:2] only, so the hardware answers byte
+     * accesses too. The system relies on it: Input.Peek reads the key code
+     * into a BYTE variable, which compiles to a byte load. Rejecting byte
+     * accesses left the code in the queue forever and hung the system on the
+     * first key press. Accept any size and let the memory core widen it to
+     * the word the handlers expect.
      */
-    .valid = { .min_access_size = 4, .max_access_size = 4 },
+    .valid = { .min_access_size = 1, .max_access_size = 4 },
+    .impl = { .min_access_size = 4, .max_access_size = 4 },
     .endianness = DEVICE_LITTLE_ENDIAN,
 };
 

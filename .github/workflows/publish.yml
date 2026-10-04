@@ -410,9 +410,9 @@ jobs:
       # которого ещё нет в реестре.
       - name: Таблица launcher'ов под выпуск
         run: |
-          python3 marketplace/tools/gen-launcher-table.py --release "${{ needs.source.outputs.tag }}"
+          python3 marketplace/tools/gen-launcher-table.py --release "${{ needs.source.outputs.tag }}" --pin
           # И образы с файлами машин — туда же: паспорт не должен отставать от выпуска.
-          python3 marketplace/tools/pin-images.py --release "${{ needs.source.outputs.tag }}"
+          python3 marketplace/tools/pin-images.py --release "${{ needs.source.outputs.tag }}" --pin
 
       # Публикуется копия с разыменованными ссылками: flux ссылки в архив не
       # кладёт, а распаковщик каталога в кластере их пропускает — библиотека

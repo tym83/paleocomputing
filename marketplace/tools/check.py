@@ -480,15 +480,17 @@ def fill_script(docs: list[dict]) -> str:
 
 
 def disk_overwrites(script: str, disks: list[str]) -> list[str]:
-    """Строки задачи наполнения, которые могут переписать диск пользователя.
+    """Lines of the fill job that could overwrite the user's disk.
 
-    Файл роли disk разрешено упоминать ровно в двух формах:
-    `[ -s <путь> ] || put <источник> <путь>` — положить, только если его нет
-    или он пуст, и `chmod 664 <путь>` — права, содержимого не касаются. Любая
-    другая строка с его путём — возможная перезапись.
+    A disk-role file may appear in three forms only: `[ -s <path> ] || put
+    <source> <path>` (place it only if it is missing or empty), `chmod 664
+    <path>` (permissions, not content), and growing it to a size only when it
+    is smaller (truncate past the end adds zeros and keeps every byte). Any
+    other line with its path may overwrite it.
     """
     guarded = re.compile(r"^\[ -s (\S+) \] \|\| put \S+ (\S+)$")
     mode = re.compile(r"^chmod 664 (\S+)$")
+    grow = re.compile(r'^\[ "\$\(wc -c < (\S+)\)" -ge (\d+) \] \|\| truncate -s (\d+) (\S+)$')
     bad = []
     for line in (l.strip() for l in script.splitlines()):
         for disk in disks:
@@ -496,7 +498,9 @@ def disk_overwrites(script: str, disks: list[str]) -> list[str]:
                 continue
             m = guarded.match(line)
             c = mode.match(line)
-            if not ((m and m.group(1) == disk and m.group(2) == disk) or (c and c.group(1) == disk)):
+            g = grow.match(line)
+            if not ((m and m.group(1) == disk and m.group(2) == disk) or (c and c.group(1) == disk)
+                    or (g and g.group(1) == disk == g.group(4) and g.group(2) == g.group(3))):
                 bad.append(line)
     return bad
 
@@ -716,7 +720,12 @@ def check_machines() -> None:
                 # Как в образе: 644. umask этого не исправит — только chmod.
                 (root / "image" / f["name"]).chmod(0o644)
             run_fill(script, base, preset["payload"]["files"], root)
-            first = all((root / "payload" / f["name"]).read_text() == "v1" for f in preset["payload"]["files"])
+            # A disk with a size grows with zeros; the content is what precedes them.
+            body = lambda f: (root / "payload" / f["name"]).read_bytes().rstrip(b"\0").decode("utf-8")
+            grown = lambda: all((root / "payload" / f["name"]).stat().st_size >= f["size"]
+                                for f in preset["payload"]["files"] if f["role"] == "disk" and "size" in f)
+            first = all(body(f) == "v1" for f in preset["payload"]["files"])
+            grown_new = grown()
             gw = lambda: all((root / "payload" / f["name"]).stat().st_mode & 0o020
                              for f in preset["payload"]["files"] if f["role"] == "disk")
             writable_new = gw()
@@ -728,13 +737,17 @@ def check_machines() -> None:
                     (root / "payload" / f["name"]).chmod(0o644)
             run_fill(script, base, preset["payload"]["files"], root)
             writable_old = gw()
-            kept = all((root / "payload" / f["name"]).read_text(encoding="utf-8") ==
-                       ("работа пользователя" if f["role"] == "disk" else "v2")
+            grown_old = grown()
+            kept = all(body(f) == ("работа пользователя" if f["role"] == "disk" else "v2")
                        for f in preset["payload"]["files"])
             clean = not list((root / "payload").glob("*.tmp"))
         report(first and kept and clean,
                f"{name}: прогон наполнения — первый кладёт всё, повторный обновляет прошивку и не трогает диск")
         # QEMU пишет диск от группы 107: без g+w машина не стартует.
+        # The file system writes past the end of the shipped image: a disk with a
+        # size reaches it, the new one and the one left by an earlier release.
+        report(grown_new and grown_old,
+               f"{name}: диск дорастает до размера из паспорта — и новый, и оставшийся от прежнего выпуска")
         report(writable_new and writable_old,
                f"{name}: диск доступен группе на запись — и новый, и оставшийся от прежнего выпуска")
 

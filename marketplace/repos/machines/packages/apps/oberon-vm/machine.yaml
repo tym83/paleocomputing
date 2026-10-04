@@ -40,6 +40,10 @@ payload:
     - name: oberon.dsk
       from: /opt/oberon/payload/oberon.dsk
       role: disk
+      # The Oberon file system takes new sectors past the end of the shipped
+      # image (about 1 MB), and QEMU refuses writes beyond a raw image, so a
+      # larger saved file or a compiler output trapped in Files (finding 77).
+      size: 8388608
       qemu: ["-drive", "if=none,id=sd0,file={path},format=raw"]
 
 # Вариант железа — свойство машины, а не режим эмулятора. chk — процессор с

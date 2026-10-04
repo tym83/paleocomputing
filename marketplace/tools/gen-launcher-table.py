@@ -16,9 +16,11 @@ publish.yml перед выкладкой каталога: тот же прог
 from __future__ import annotations
 
 import argparse
+import json
 import pathlib
 import re
 import sys
+import urllib.request
 
 MARKET = pathlib.Path(__file__).resolve().parent.parent
 VERSIONS = MARKET.parent / "kubevirt" / "versions.txt"
@@ -61,7 +63,26 @@ def architectures(path: pathlib.Path = PLATFORMS) -> list[str]:
     return out
 
 
-def render(release: str, registry: str, versions: list[str], archs: list[str]) -> str:
+def registry_digest(ref: str) -> str:
+    """Digest of the image index a tag points to, asked from ghcr anonymously."""
+    host, rest = ref.split("/", 1)
+    repo, tag = rest.rsplit(":", 1)
+    with urllib.request.urlopen(f"https://{host}/token?scope=repository:{repo}:pull") as r:
+        token = json.load(r)["token"]
+    req = urllib.request.Request(
+        f"https://{host}/v2/{repo}/manifests/{tag}", method="HEAD",
+        headers={"Authorization": f"Bearer {token}",
+                 "Accept": "application/vnd.oci.image.index.v1+json,"
+                           "application/vnd.docker.distribution.manifest.list.v2+json"})
+    with urllib.request.urlopen(req) as r:
+        digest = r.headers["Docker-Content-Digest"]
+    if not re.match(r"^sha256:[0-9a-f]{64}$", digest or ""):
+        sys.exit(f"{ref}: реестр не отдал дайджест")
+    return digest
+
+
+def render(release: str, registry: str, versions: list[str], archs: list[str],
+           pin: bool = False) -> str:
     if not RELEASE.match(release):
         sys.exit(f"выпуск {release!r} — нужен vX.Y.Z или dev")
     if not REGISTRY_RE.match(registry):
@@ -79,7 +100,13 @@ def render(release: str, registry: str, versions: list[str], archs: list[str]) -
         "#",
         "# версия KubeVirt   образ virt-launcher (семейство paleo, тот же дайджест, что -risc5-)",
     ]
-    lines += [f"{v} {registry}/virt-launcher:{v}-paleo-{release}" for v in versions]
+    # With pin the reference carries the digest as well. The dev tag is rewritten
+    # by every check build, and nodes pull launchers with IfNotPresent, so a node
+    # that saw an older dev kept running it: the sandbox check tested a stale
+    # emulator (finding 86). A digest makes the node fetch exactly this build.
+    for v in versions:
+        ref = f"{registry}/virt-launcher:{v}-paleo-{release}"
+        lines.append(f"{v} {ref}@{registry_digest(ref)}" if pin else f"{v} {ref}")
     return "\n".join(lines) + "\n"
 
 
@@ -94,12 +121,16 @@ def main() -> None:
     ap.add_argument("--registry")
     ap.add_argument("--check", action="store_true",
                     help="сверить лежащую таблицу с kubevirt/versions.txt, ничего не писать")
+    ap.add_argument("--pin", action="store_true",
+                    help="дописать к образам дайджест из реестра (при публикации)")
     ap.add_argument("--out", default=str(TABLE))
     a = ap.parse_args()
     out = pathlib.Path(a.out)
 
     if a.check:
         have = out.read_text(encoding="utf-8") if out.is_file() else ""
+        # A published table carries digests; the tree copy and the source do not.
+        have = re.sub(r"@sha256:[0-9a-f]{64}$", "", have, flags=re.M)
         release = a.release or header(have, "release") or "?"
         registry = a.registry or header(have, "registry") or "?"
         want = render(release, registry, kubevirt_versions(), architectures())
@@ -108,7 +139,8 @@ def main() -> None:
         print(f"таблица совпадает с kubevirt/versions.txt (выпуск {release})")
         return
 
-    text = render(a.release or "dev", a.registry or REGISTRY, kubevirt_versions(), architectures())
+    text = render(a.release or "dev", a.registry or REGISTRY, kubevirt_versions(), architectures(),
+                  pin=a.pin)
     out.write_text(text, encoding="utf-8")
     print(f"записано {out}")
 

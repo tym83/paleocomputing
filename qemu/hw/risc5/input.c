@@ -46,15 +46,15 @@
 #define LNX_RIGHTALT   100
 #define LNX_RIGHTSHIFT 54
 
+static int kbd_free(OberonIOState *s)
+{
+    return (s->kbd_tail - s->kbd_head - 1 + OBERON_KBD_FIFO) % OBERON_KBD_FIFO;
+}
+
 static void kbd_push(OberonIOState *s, uint8_t code)
 {
-    int next = (s->kbd_head + 1) % OBERON_KBD_FIFO;
-
-    if (next == s->kbd_tail) {
-        return;                     /* очередь переполнена — как в железе */
-    }
     s->kbd_fifo[s->kbd_head] = code;
-    s->kbd_head = next;
+    s->kbd_head = (s->kbd_head + 1) % OBERON_KBD_FIFO;
 }
 
 static void oberon_key_event(DeviceState *dev, QemuConsole *src,
@@ -91,6 +91,14 @@ static void oberon_key_event(DeviceState *dev, QemuConsole *src,
      * самим кодом. Порядок важен: приставка расширения раньше признака
      * отпускания, иначе Input.Mod разберёт не ту клавишу.
      */
+    /*
+     * A key goes into the queue whole or not at all. Half a key (a release
+     * without its 0xF0, say) would leave Input.Mod believing Shift is still
+     * held.
+     */
+    if (kbd_free(s) < 3) {
+        return;
+    }
     if (set2 & 0xFF00) {
         kbd_push(s, set2 >> 8);
     }
