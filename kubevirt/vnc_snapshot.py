@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Снимок экрана машины через VNC — тем путём, которым идёт пользователь.
+"""Machine screenshot over VNC, along the same path a user takes.
 
-Минимальный клиент RFB: подключиться, попросить один полный кадр, сохранить
-PPM и посчитать тёмные точки. Эталон экрана загруженного Оберона — 18607
-(находка 48), так что совпадение числа и есть проверка.
+A minimal RFB client: connect, request one full frame, save a PPM and count
+the dark pixels. The reference for a booted Oberon screen is 18607
+(finding 48), so a matching count is the check itself.
 
   virtctl -n <ns> vnc <vmi> --proxy-only --port 5978 &
   kubevirt/vnc_snapshot.py 127.0.0.1 5978 screen.ppm
 
-⚠ Прокси virtctl принимает ОДНО подключение и выходит: не проверяйте порт
-посторонним соединением (nc -z), оно съест его.
+⚠ The virtctl proxy accepts ONE connection and exits: do not probe the port
+with an unrelated connection (nc -z), it will consume it.
 """
 import socket, struct, sys
 

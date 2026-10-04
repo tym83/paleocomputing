@@ -1,8 +1,8 @@
 #!/bin/bash
-# Динамический профиль открытых массивов на нагрузке компиляции (выпуск 14):
-# сколько раз исполняются IDX, программные проверки с регистровым пределом,
-# очистки дескриптора и сборки дескриптора — по конфигурациям B, E, F.
-# Требует build/tc/<cfg> (tools/build_cfg_toolchain.sh) — его строит measure_desc.sh.
+# Dynamic profile of open arrays on the compilation workload (episode 14):
+# how many times IDX, software checks with a register limit,
+# descriptor clears and descriptor builds execute, for configurations B, E, F.
+# Requires build/tc/<cfg> (tools/build_cfg_toolchain.sh); measure_desc.sh builds it.
 set -e
 P="$(cd "$(dirname "$0")/.." && pwd)"; NB="$P/ext/norebo"
 LOAD="${*:-Texts.Mod Fonts.Mod Files.Mod Modules.Mod Oberon.Mod}"

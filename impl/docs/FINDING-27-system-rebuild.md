@@ -1,87 +1,89 @@
-# Находка 27. Система пересобирает себя целиком — и образ оказывается не вполне согласованным
+[Русская версия](FINDING-27-system-rebuild.ru.md)
 
-## Что сделано
+# Finding 27. The system rebuilds itself completely, and the image turns out not to be fully consistent
 
-Находка 23 показала самораскрутку компилятора: четыре модуля, два поколения,
-неподвижная точка. Здесь то же самое сделано для **всей системы**: 42 модуля,
-от `Kernel` и `Display` до `Edit` и `Draw`, собраны компилятором Оберона внутри
-самой системы, работающей на ядре `RISC5.v`. Вход — только мышь и клавиатура.
+## What was done
 
-Порядок сборки не взят из памяти и не списан из чужого скрипта: он выведен
-топологической сортировкой по `IMPORT` из исходников, **лежащих на самом
-образе**. Для этого написан `tools/oberonfs.py` — чтение файловой системы
-Оберона прямо из образа диска, по раскладке из `Kernel.Mod`, `FileDir.Mod` и
+Finding 23 showed the compiler bootstrapping itself: four modules, two generations,
+a fixed point. Here the same thing is done for **the whole system**: 42 modules,
+from `Kernel` and `Display` to `Edit` and `Draw`, built by the Oberon compiler inside
+the system itself, running on the `RISC5.v` core. The only input is the mouse and keyboard.
+
+The build order was not taken from memory or copied from someone else's script: it was derived
+by a topological sort over `IMPORT` from the sources **on the image
+itself**. For this `tools/oberonfs.py` was written: it reads the Oberon file system
+straight from the disk image, following the layout in `Kernel.Mod`, `FileDir.Mod` and
 `Files.Mod`.
 
-Читатель проверен перекрёстно: извлечённый с образа `ORP.rsc` имеет ключ
-`E6FCC519` и 6188 слов кода — ровно то, что печатала система на экране и что
-дал прогон самораскрутки. Три независимых пути сошлись.
+The reader was cross-checked: `ORP.rsc` extracted from the image has key
+`E6FCC519` and 6188 words of code, exactly what the system printed on screen and what
+the bootstrap run gave. Three independent paths agreed.
 
-## Результат
+## Result
 
-**37 объектных файлов пересобраны побайтово идентично.** Система — неподвижная
-точка собственного компилятора. Пересобранный образ загружается и даёт ту же
-контрольную сумму экрана `B5DFC933`.
+**37 object files rebuilt byte-for-byte identical.** The system is a fixed
+point of its own compiler. The rebuilt image boots and gives the same
+screen checksum `B5DFC933`.
 
-## Образ Project Oberon 2016 не вполне согласован
+## The Project Oberon 2016 image is not fully consistent
 
-Из 42 модулей **три не компилируются компилятором с того же образа**:
+Of the 42 modules, **three do not compile with the compiler from the same image**:
 
-| модуль | ошибка | причина |
+| module | error | cause |
 |--------|--------|---------|
-| `RISC` | `pos 926 bad divisor` | `IR DIV 80000000H` — константа как знаковый INTEGER отрицательна, а `ORG.Mod` требует положительный делитель |
-| `ORC` | `pos 95 import not available` | импортирует `V24`, которого на образе нет ни исходником, ни символьным файлом |
-| `Net` | девять `incompatible parameters` | сигнатуры вызовов `SCC` разошлись с `SCC.Mod` того же образа |
+| `RISC` | `pos 926 bad divisor` | `IR DIV 80000000H`: the constant is negative as a signed INTEGER, and `ORG.Mod` requires a positive divisor |
+| `ORC` | `pos 95 import not available` | imports `V24`, which is on the image neither as source nor as a symbol file |
+| `Net` | nine `incompatible parameters` | the signatures of `SCC` calls diverged from `SCC.Mod` on the same image |
 
-И два расхождения в двоичных файлах:
+And two discrepancies in binary files:
 
-* **`Math.rsc` устарел.** Поставляемый файл содержит 449 слов кода, пересборка
-  даёт 447 — при одинаковом ключе `32C32F12`. То есть интерфейс тот же, а код
-  порождён другой версией компилятора, чем лежит на образе.
-* **`PIO.rsc` и `PIO.smb` отсутствовали вовсе** и создаются пересборкой.
+* **`Math.rsc` is stale.** The shipped file contains 449 words of code; the rebuild
+  gives 447, with the same key `32C32F12`. That is, the interface is the same, but the code
+  was produced by a different version of the compiler than the one on the image.
+* **`PIO.rsc` and `PIO.smb` were missing entirely** and are created by the rebuild.
 
-Это свойство распространяемого образа, а не нашей машины: все три отказа —
-диагностика самого компилятора Оберона, а расхождение в `Math.rsc` видно
-побайтовым сравнением.
+This is a property of the distributed image, not of our machine: all three failures are
+diagnostics of the Oberon compiler itself, and the discrepancy in `Math.rsc` is visible
+by a byte-for-byte comparison.
 
-## Ловушка 4 снова, и снова та же
+## Trap 4 again, and again the same one
 
-Сборка пачками по три модуля роняла третий в `TRAP 4` — `Checkers`,
-`GraphicFrames`, `Net`. Причина та же, что в находке 23: внутри одной команды
-управление не возвращается в `Oberon.Loop`, сборщик мусора не работает, и
-таблицы символов копятся до исчерпания кучи. Поодиночке те же модули проходят.
+Building in batches of three modules dropped the third into `TRAP 4`: `Checkers`,
+`GraphicFrames`, `Net`. The cause is the same as in finding 23: within one command
+control does not return to `Oberon.Loop`, the garbage collector does not run, and the
+symbol tables pile up until the heap is exhausted. One at a time, the same modules go through.
 
-Ограничение устойчивое и воспроизводимое: **компилятор Оберона надо вызывать
-по одному модулю за команду**, если модули крупные.
+The limitation is stable and reproducible: **the Oberon compiler has to be invoked
+one module per command** if the modules are large.
 
-## Журнал не прокручивается — и это чуть не спрятало результат
+## The log does not scroll, and that nearly hid the result
 
-Вьюер `System.Log` вмещает около 18 строк и сам не прокручивается. Первый
-прогон показал на экране 14 успешных компиляций и обрыв на ошибке `RISC` —
-а остальные шесть команд просто не были видны. Снаружи «не видно» и «не
-выполнялось» неразличимы.
+The `System.Log` viewer holds about 18 lines and does not scroll by itself. The first
+run showed 14 successful compilations on screen and a stop at the `RISC` error,
+while the remaining six commands were simply not visible. From the outside "not visible" and "not
+executed" are indistinguishable.
 
-Починено: сценарий чистит журнал после каждой команды и снимает кадр, а
-`tools/stitch_log.py` сшивает области журнала в одну картинку.
+Fixed: the script clears the log after each command and captures a frame, and
+`tools/stitch_log.py` stitches the log regions into one picture.
 
-## Проверка чуть не оказалась зелёной на поломке
+## The check nearly came out green on a breakage
 
-Первая версия `tools/check_rebuild.py` сравнивала образы побайтово и
-**проходила на нетронутом образе**: побайтовое сравнение само по себе не
-отличает «пересобрано и совпало» от «не трогали вовсе».
+The first version of `tools/check_rebuild.py` compared the images byte for byte and
+**passed on an untouched image**: a byte-for-byte comparison on its own does not
+distinguish "rebuilt and matched" from "not touched at all".
 
-Даты файлов не помогают — на этом образе они все нулевые, часов у машины нет.
+File dates do not help: on this image they are all zero, the machine has no clock.
 
-Починено положительными признаками, без которых сравнение ничего не
-доказывает: `PIO.rsc` и `PIO.smb` ОБЯЗАНЫ появиться (на исходном образе их
-нет), а `Math.rsc` ОБЯЗАН отличаться. Их отсутствие — провал, а не послабление.
-Проверено: на нетронутом образе проверка падает, на пересобранном проходит.
+Fixed with positive markers, without which the comparison proves
+nothing: `PIO.rsc` and `PIO.smb` MUST appear (they are not on the original
+image), and `Math.rsc` MUST differ. Their absence is a failure, not a relaxation.
+Verified: on an untouched image the check fails, on a rebuilt one it passes.
 
-## Как воспроизвести
+## How to reproduce
 
 ```
 make rebuild
 ```
 
-Три сессии, около миллиарда инструкций, порядка восьми минут. Цель входит
-в `make check`.
+Three sessions, about a billion instructions, around eight minutes. The target is part
+of `make check`.

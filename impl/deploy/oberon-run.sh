@@ -1,13 +1,13 @@
 #!/bin/sh
-# Компилирует модули Оберона и запускает команду.
+# Compiles Oberon modules and runs a command.
 #
-# Исходники приходят только на чтение (это ConfigMap), поэтому копируем их к
-# себе: компилятор кладёт .rsc и .smb рядом с .Mod.
+# Sources arrive read-only (they are a ConfigMap), so we copy them locally:
+# the compiler writes .rsc and .smb next to the .Mod.
 #
-#   oberon-run <Модуль.Mod> [ещё.Mod ...] -- <Модуль.Команда> [аргументы]
+#   oberon-run <Module.Mod> [more.Mod ...] -- <Module.Command> [arguments]
 #
-# Без «--» всё считается модулями, и после сборки запускается первая команда
-# вида <Первый>.Go, если она есть.
+# Without "--" every argument is a module, and after the build the command
+# <First>.Go is run, if it exists.
 set -e
 SRC=${SRCDIR:-/src}
 LIB=/opt/oberon
@@ -25,7 +25,7 @@ done
 [ -n "$mods" ] || mods=$(ls *.Mod 2>/dev/null | tr '\n' ' ')
 
 if [ -n "$mods" ]; then
-  # Ключ /s разрешает компилятору обновить символьный файл.
+  # The /s switch lets the compiler update the symbol file.
   args=""
   for m in $mods; do args="$args $m/s"; done
   # shellcheck disable=SC2086
@@ -36,6 +36,6 @@ if [ -z "$cmd" ]; then
   first=$(echo $mods | awk '{print $1}' | sed 's/\.Mod$//')
   [ -n "$first" ] && cmd="$first.Go"
 fi
-[ -n "$cmd" ] || { echo "нечего запускать: не задана команда"; exit 2; }
+[ -n "$cmd" ] || { echo "nothing to run: no command given"; exit 2; }
 # shellcheck disable=SC2086
 exec norebo $cmd

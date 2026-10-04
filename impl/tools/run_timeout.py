@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Запуск команды с ограничением по времени (на macOS нет timeout)."""
+"""Runs a command with a time limit (macOS has no timeout)."""
 import subprocess, sys
 t = float(sys.argv[1])
 try:
@@ -8,6 +8,6 @@ try:
     sys.exit(r.returncode)
 except subprocess.TimeoutExpired as e:
     out = (e.stdout or b"")[-1000:]
-    print(f"⏱ ЗАВИС: превышено {t}с", file=sys.stderr)
-    if out: print("последний вывод:", out.decode(errors="replace"), file=sys.stderr)
+    print(f"⏱ HUNG: exceeded {t}s", file=sys.stderr)
+    if out: print("last output:", out.decode(errors="replace"), file=sys.stderr)
     sys.exit(124)

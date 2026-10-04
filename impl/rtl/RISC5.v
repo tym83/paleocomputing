@@ -65,8 +65,8 @@ RightShifter RSUnit(.x(B), .y(rshout), .sc(C1[4:0]), .md(IR[16]));
 FPAdder fpaddx (.clk(clk), .run(FAD|FSB), .u(u), .v(v), .stall(stallFA),
    .x(B), .y({FSB^C0[31], C0[30:0]}), .z(fsum));
 
-// Вариант железа для выпуска №2: умножитель за 1 (или 2 с FPMUL_FAST_REG) такта
-// вместо 26, результат побитово тот же (tb/fpmul_diff.cpp). Без define — сток.
+// Hardware variant for episode 2: the multiplier takes 1 cycle (or 2 with FPMUL_FAST_REG)
+// instead of 26, bit-identical result (tb/fpmul_diff.cpp). Without the define — stock.
 `ifdef FPMUL_FAST
 FPMultiplierFast fpmulx (.clk(clk), .run(FML), .stall(stallFM),
    .x(B), .y(C0), .z(fprod));
@@ -91,7 +91,7 @@ assign imm = IR[15:0];   // reg instr.
 assign off = IR[19:0];   // mem instr.
 assign disp = IR[21:0];  // branch instr.
 
-assign ADD = ~p & (op == 8) & ~IDX;  // IDX (алиас ADD с v=1) флаги C/OV не трогает
+assign ADD = ~p & (op == 8) & ~IDX;  // IDX (an ADD alias with v=1) does not touch the C/OV flags
 assign SUB = ~p & (op == 9);
 assign MUL = ~p & (op == 10);
 assign DIV = ~p & (op == 11);
@@ -106,38 +106,38 @@ assign STR = p & ~q & u;
 assign BR = p & q;
 assign RTI = BR & ~u & ~v & IR[4];
 
-// ─── CHK: аппаратная проверка границ массива ───────────────────────────────
-// Кодировка: F0 (p=0, q=0), v=1, op=1 — алиас LSL, который компилятор никогда
-// не эмитит (Put0/Put1 для Lsl всегда дают v=0; доказано зондом декодера).
+// ─── CHK: hardware array bounds check ─────────────────────────────────────
+// Encoding: F0 (p=0, q=0), v=1, op=1 — an LSL alias that the compiler never
+// emits (Put0/Put1 for Lsl always give v=0; proven by the decoder probe).
 //   31:28  27:24  23:20  19:16   15:4    3:0
-//   0001   (не исп) индекс  0001   предел  1100(=MT)
-// Индекс читается через порт b, а НЕ через a: порт a выбирается сигналом ira0,
-// который сам зависит от chkFail -> была бы комбинационная петля.
-// Предел — 12 бит без знака (до 4095). Регистр c = 12 (MT), поэтому C0 = R[12]
-// и аппаратный переход берёт вектор ловушек Оберона без лишнего чтения.
-// Семантика: если B >= предел (беззнаково) — то же, что делает BLR:
-//   R15 := PC+4 ; PC := R[12].  Иначе НИЧЕГО: ни записи регистра, ни флагов.
+//   0001   (unused) index   0001   limit   1100(=MT)
+// The index is read through port b, NOT through a: port a is selected by ira0,
+// which itself depends on chkFail -> that would be a combinational loop.
+// The limit is 12 bits unsigned (up to 4095). Register c = 12 (MT), so C0 = R[12]
+// and the hardware branch takes the Oberon trap vector without an extra read.
+// Semantics: if B >= limit (unsigned), do what BLR does:
+//   R15 := PC+4 ; PC := R[12].  Otherwise NOTHING: no register write, no flags.
 `ifdef WITH_CHK
-// Бит u проверяется ЯВНО: без этого CHK декодировалась бы и в кодировке 0011
-// (u=1, v=1), то есть занимала бы ДВА слота вместо одного. Поймано проверкой
-// эквивалентности декодера (tb/decoder_equiv.cpp).
+// Bit u is checked EXPLICITLY: without it CHK would also decode in encoding 0011
+// (u=1, v=1), i.e. it would take TWO slots instead of one. Caught by the decoder
+// equivalence check (tb/decoder_equiv.cpp).
 assign CHK     = ~p & ~q & ~u & v & (op == 1);
 `ifdef CHK_SPLIT
-// ПРИНЯТЫЙ ВАРИАНТ. Предел собирается из двух кусков: {IR[27:24], IR[15:8]} = 12 бит.
-// Поле a (IR[27:24]) инструкции CHK не нужно — при срабатывании ira0 принудительно
-// равен 15 (регистр ссылки), а при несрабатывании регистр не пишется вовсе.
-// При этом IR[27:24] лежит ВНЕ поля позиции (Kernel читает биты 23:8) и ВНЕ поля
-// номера ловушки (биты 7:4). Итог: покрытие как у 12-битного варианта,
-// номер ошибки как у 8-битного. Теряется только позиция в исходнике.
-// Выведено из динамического профиля: на счётной нагрузке 68.3% исполнений проверок
-// приходится на массивы 256…1023, которые 8 бит не покрывают. См. docs/FINDING-10.
+// ADOPTED VARIANT. The limit is assembled from two parts: {IR[27:24], IR[15:8]} = 12 bits.
+// CHK does not need field a (IR[27:24]): when it fires, ira0 is forced
+// to 15 (the link register), and when it does not fire no register is written at all.
+// IR[27:24] also lies OUTSIDE the position field (Kernel reads bits 23:8) and OUTSIDE the
+// trap number field (bits 7:4). Net result: coverage as with the 12-bit variant,
+// error number as with the 8-bit one. Only the source position is lost.
+// Derived from a dynamic profile: on the compute workload 68.3% of check executions
+// fall on arrays of 256…1023, which 8 bits do not cover. See docs/FINDING-10.
 assign chkLim  = {20'b0, IR[27:24], IR[15:8]};
 `elsif CHK_NARROW
-// Предел 8 бит (IR[15:8]); номер ловушки цел, покрытие мало.
+// 8-bit limit (IR[15:8]); the trap number is intact, coverage is small.
 assign chkLim  = {24'b0, IR[15:8]};
 `else
-// Предел 12 бит в IR[15:4]: максимальное покрытие, но поле перекрывает и номер
-// ловушки, и позицию -> система сообщает НЕ ТУ ошибку (измерено).
+// 12-bit limit in IR[15:4]: maximum coverage, but the field overlaps both the trap
+// number and the position -> the system reports the WRONG error (measured).
 assign chkLim  = {20'b0, IR[15:4]};
 `endif
 assign chkFail = CHK & (B >= chkLim);
@@ -147,23 +147,23 @@ assign chkLim  = 32'b0;
 assign chkFail = 1'b0;
 `endif
 
-// ─── IDX: индексация через дескриптор (выпуск 14, 14-episode-descriptors.md) ─
-// Дескриптор — одно 32-битное слово: {длина[31:20], адрес[19:0]}.
-// Кодировка: F0 (p=0, q=0), u=0, v=1, op=8 — алиас ADD, который компилятор
-// не эмитит (бит v у F0-ADD декодером игнорируется, docs/decoder-map.txt).
+// ─── IDX: indexing through a descriptor (episode 14, 14-episode-descriptors.md) ─
+// A descriptor is a single 32-bit word: {length[31:20], address[19:0]}.
+// Encoding: F0 (p=0, q=0), u=0, v=1, op=8 — an ADD alias that the compiler
+// does not emit (the decoder ignores bit v of F0-ADD, docs/decoder-map.txt).
 //   31:28  27:24  23:20   19:16  15:10   9:8   7:4   3:0
 //   0001    Rd    Rdesc   1000   0       sh    0001  Ri
-// Rdesc читается портом b, индекс Ri — портом c (C0). Результат:
-//   Rd := адрес + (Ri << sh), если Ri < длина (беззнаково, все 32 бита Ri).
-// Иначе — ловушка. Вектор ловушки (R12 = MT) прочитать нечем: все три порта
-// заняты (a — приёмник, b — дескриптор, c — индекс). Поэтому один такт
-// простоя: IR заменяется словом BLR MT (0xD700000C), PC стоит, и на следующем
-// такте это слово исполняется как обычный BLR: R15 := адрес IDX + 4,
-// PC := R[12]. Kernel.Trap читает номер ловушки из слова по R15-4, то есть из
-// самой IDX: IR[7:4] = 1, «index out of range». Петли нет: idxFault управляет
-// только записью IR и простоем, но не адресами портов.
-// Обычный адрес (старшие 12 бит — нули) как дескриптор имеет длину 0:
-// индексация через него — всегда ловушка. Нет дескриптора — нет доступа.
+// Rdesc is read by port b, index Ri by port c (C0). Result:
+//   Rd := address + (Ri << sh), if Ri < length (unsigned, all 32 bits of Ri).
+// Otherwise a trap. There is no port left to read the trap vector (R12 = MT): all three
+// are busy (a is the destination, b the descriptor, c the index). Hence one stall
+// cycle: IR is replaced by the word BLR MT (0xD700000C), PC holds, and on the next
+// cycle that word executes as an ordinary BLR: R15 := IDX address + 4,
+// PC := R[12]. Kernel.Trap reads the trap number from the word at R15-4, i.e. from
+// the IDX itself: IR[7:4] = 1, "index out of range". There is no loop: idxFault drives
+// only the IR write and the stall, not the port addresses.
+// An ordinary address (top 12 bits zero) used as a descriptor has length 0:
+// indexing through it always traps. No descriptor, no access.
 `ifdef WITH_DESC
 assign IDX      = ~p & ~q & ~u & v & (op == 8);
 assign idxFault = IDX & ((C0[31:12] != 0) | (C0[11:0] >= B[31:20]));
@@ -261,7 +261,7 @@ assign stall = stallL0 | stallM | stallD | stallX | stallFA | stallFM | stallFD;
 always @ (posedge clk) begin
   PC <= pcmux;
 `ifdef WITH_DESC
-  IR <= idxFault ? 32'hD700000C : stall ? IR : codebus;  // ловушка IDX -> BLR MT
+  IR <= idxFault ? 32'hD700000C : stall ? IR : codebus;  // IDX trap -> BLR MT
 `else
   IR <= stall ? IR : codebus;
 `endif

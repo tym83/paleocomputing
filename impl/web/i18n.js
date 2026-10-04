@@ -1,29 +1,29 @@
 /*
- * Выбор языка для лабораторий и оболочки.
+ * Language selection for the labs and the shell.
  *
- * По умолчанию английский: это то, что увидит человек, пришедший со стороны.
- * Русский включается явно — переключателем или `?lang=ru` в адресе, и выбор
- * запоминается.
+ * English by default: that is what a visitor from outside will see.
+ * Russian is enabled explicitly, with the switch or `?lang=ru` in the URL, and the
+ * choice is remembered.
  *
- * Тексты хранятся объектами `{en, ru}`. Обычная строка тоже допустима: она
- * считается одинаковой на всех языках. Это позволяет переводить постепенно и
- * не ломать то, что ещё не переведено.
+ * Texts are stored as `{en, ru}` objects. A plain string is also allowed: it is
+ * treated as the same in every language. This allows translating gradually
+ * without breaking what has not been translated yet.
  */
 export const LANGS = { en: 'English', ru: 'Русский' };
 
 const KEY = 'paleo.lang';
 
 function pick() {
-  // Вне браузера (безголовый прогон лабораторных в node) выбирать нечем и не
-  // из чего: `location` там нет вовсе, и обращение к нему валит весь набор
-  // тестов ещё до первой проверки.
+  // Outside the browser (the headless lab run in node) there is nothing to choose
+  // with or from: `location` does not exist there at all, and touching it crashes
+  // the whole test suite before the first check.
   if (typeof location === 'undefined') return 'en';
   const q = new URLSearchParams(location.search).get('lang');
   if (q && q in LANGS) return q;
   try {
     const s = localStorage.getItem(KEY);
     if (s && s in LANGS) return s;
-  } catch { /* приватный режим — просто берём язык по умолчанию */ }
+  } catch { /* private mode: just use the default language */ }
   return 'en';
 }
 
@@ -32,13 +32,13 @@ export let LANG = pick();
 export function setLang(code) {
   if (!(code in LANGS)) return;
   LANG = code;
-  try { localStorage.setItem(KEY, code); } catch { /* не беда */ }
+  try { localStorage.setItem(KEY, code); } catch { /* not a problem */ }
   location.reload();
 }
 
 /**
- * Достаёт текст на текущем языке.
- * Если перевода нет — отдаёт английский, потом русский, потом что есть.
+ * Returns the text in the current language.
+ * If there is no translation, falls back to English, then Russian, then whatever exists.
  */
 export function t(v) {
   if (v == null) return '';
@@ -46,11 +46,11 @@ export function t(v) {
   return v[LANG] ?? v.en ?? v.ru ?? '';
 }
 
-/** Перевод всех подписей в разметке: <span data-i18n-en="..." data-i18n-ru="..."> */
+/** Translates all labels in the markup: <span data-i18n-en="..." data-i18n-ru="..."> */
 export function applyMarkup(root = document) {
-  // Язык документа и заголовок вкладки. На самой странице их не видно, поэтому
-  // они и оставались русскими, когда языком по умолчанию стал английский, —
-  // а видит их закладка, превью ссылки в мессенджере, поиск и экранная читалка.
+  // The document language and the tab title. They are not visible on the page itself,
+  // which is why they stayed Russian after English became the default language,
+  // yet bookmarks, link previews in messengers, search and screen readers see them.
   if (typeof document !== 'undefined' && (root === document || root === document.documentElement)) {
     document.documentElement.lang = LANG;
   }

@@ -1,6 +1,6 @@
-// Рантайм Verilator тянет функции привязки потоков к ядрам, которых нет в
-// wasm-sysroot. Ревью предупреждало ровно об этом. Сигнатуры должны совпадать
-// с теми, что видит verilated.cpp, иначе wasm-ld ругается на несовпадение типов.
+// The Verilator runtime pulls in thread-to-core affinity functions that the
+// wasm sysroot lacks. The review warned about exactly this. The signatures must match
+// those verilated.cpp sees, otherwise wasm-ld complains about a type mismatch.
 #include <cerrno>
 extern "C" {
 int pthread_getaffinity_np(unsigned long, unsigned long, void*) { return ENOSYS; }

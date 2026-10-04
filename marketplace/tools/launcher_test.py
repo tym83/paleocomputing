@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
-"""Проверка цикла kubevirt-paleo-launcher без кластера.
+"""Test of the kubevirt-paleo-launcher loop without a cluster.
 
-Сценарий files/reconcile.sh гоняется против поддельного kubectl: тот отдаёт
-заготовленный JSON (ресурс KubeVirt, virt-controller, ConfigMap состояния),
-а каждую запись записывает в журнал и применяет к своему состоянию — как
-merge patch с предусловием на resourceVersion, как это делает API.
+The files/reconcile.sh script runs against a fake kubectl: it returns prepared
+JSON (the KubeVirt resource, virt-controller, the status ConfigMap), records
+every write in a log and applies it to its own state as a merge patch with a
+resourceVersion precondition, the way the API does.
 
-Каждый случай — утверждение о том, что пишется и чего НЕ пишется:
-поддерживаемая версия добавляет правку; то, что уже верно, не пишется вовсе;
-неподдерживаемая убирает свою правку; чужие правки сохраняются в том же
-порядке; сомнительное и нечитаемое закрывает дверь; удаление убирает только
-своё.
+Each case is a statement about what is written and what is NOT written:
+a supported version adds the patch; what is already correct is not written at
+all; an unsupported one removes our patch; other patches are kept in the same
+order; anything doubtful or unreadable closes the door; uninstall removes only
+our own.
 
-Нужны sh и jq (как в образе цикла).
+Requires sh and jq (as in the loop image).
 
     python3 marketplace/tools/launcher_test.py
 """
@@ -32,9 +32,9 @@ CHART = HERE.parent / "repos/platform/packages/system/kubevirt-paleo-launcher"
 SCRIPT = CHART / "files/reconcile.sh"
 TABLE = CHART / "files/launchers.txt"
 
-# Образы берём из той же таблицы, что проверяем: при выпуске publish.yml
-# пересобирает её под тег, и ожидания, зашитые под dev, валили проверку
-# перед публикацией настоящего выпуска.
+# Images are taken from the same table being tested: on release publish.yml
+# rebuilds it for the tag, and expectations hard-coded for dev broke the check
+# before publishing a real release.
 def _table_images() -> dict[str, str]:
     out = {}
     for line in TABLE.read_text(encoding="utf-8").splitlines():
@@ -47,14 +47,14 @@ def _table_images() -> dict[str, str]:
 IMG184 = _table_images()["v1.8.4"]
 IMG190 = _table_images()["v1.9.0"]
 
-# Правка, которую Cozystack main сам кладёт в ресурс KubeVirt (ресурсы
-# virt-handler), — образец чужой записи, которую трогать нельзя.
+# The patch Cozystack main itself puts into the KubeVirt resource (virt-handler
+# resources): a sample of a foreign entry that must not be touched.
 HANDLER = {
     "resourceName": "virt-handler", "resourceType": "DaemonSet", "type": "strategic",
     "patch": '{"spec":{"template":{"spec":{"containers":[{"name":"virt-handler",'
              '"resources":{"requests":{"cpu":"100m","memory":"128Mi"}}}]}}}}\n',
 }
-# Прежняя ручная правка с сайта: весь список аргументов целиком.
+# The earlier manual patch from the website: the whole argument list at once.
 MANUAL = {
     "resourceName": "virt-controller", "resourceType": "Deployment", "type": "json",
     "patch": json.dumps([{"op": "replace", "path": "/spec/template/spec/containers/0/args",
@@ -121,7 +121,7 @@ if verb == "create":
     record("event", json.loads(sys.stdin.read())); sys.exit(0)
 if verb == "scale":
     record("scale", argv); sys.exit(0)
-sys.stderr.write("fake kubectl: не знаю " + " ".join(argv) + "\n"); sys.exit(3)
+sys.stderr.write("fake kubectl: unknown command " + " ".join(argv) + "\n"); sys.exit(3)
 '''
 
 ok = fail = 0
@@ -134,7 +134,7 @@ def report(passed: bool, text: str) -> None:
 
 
 def ours(img: str) -> dict:
-    """Запись, которую цикл обязан поставить, — ровно в его форме."""
+    """The entry the loop must set, in exactly its form."""
     ops = [{"op": "test", "path": "/spec/template/spec/containers/0/name", "value": "virt-controller"},
            {"op": "test", "path": "/spec/template/spec/containers/0/args/0", "value": "--launcher-image"},
            {"op": "replace", "path": "/spec/template/spec/containers/0/args/1", "value": img}]
@@ -154,7 +154,7 @@ def kubevirt(version="v1.8.4", target=None, patches=None, status=True):
 
 
 def nodes(*archs):
-    """Узлы, помеченные virt-handler; None вместо архитектуры — узел без метки."""
+    """Nodes labeled by virt-handler; None instead of an architecture means a node without the label."""
     items = []
     for i, a in enumerate(archs):
         labels = {"kubevirt.io/schedulable": "true"}
@@ -217,7 +217,7 @@ class Cluster:
         return self.get("kubevirt.json")["spec"].get("customizeComponents", {}).get("patches")
 
     def roll_out(self, img: str) -> None:
-        """Что сделал бы virt-operator: перекатить virt-controller на новый образ."""
+        """What virt-operator would do: roll virt-controller out to the new image."""
         vc = self.get("virt-controller.json")
         vc["spec"]["template"]["spec"]["containers"][0]["args"][1] = img
         self.put("virt-controller.json", vc)
@@ -231,9 +231,9 @@ class Cluster:
 
 def main() -> None:
     if not shutil.which("jq"):
-        print("  ❌ нет jq — цикл без него не работает")
+        print("  ❌ no jq; the loop does not work without it")
         sys.exit(1)
-    print("Цикл kubevirt-paleo-launcher на поддельном kubectl")
+    print("kubevirt-paleo-launcher loop on a fake kubectl")
     tmp = pathlib.Path(tempfile.mkdtemp())
     n = iter(range(1000))
 
@@ -241,217 +241,217 @@ def main() -> None:
         return Cluster(tmp / str(next(n)), kv, controller() if vc is None else vc, **kw)
 
     try:
-        # 1. Поддерживаемая версия, правок нет → одна запись, наша, с предусловием.
+        # 1. Supported version, no patches → one entry, ours, with a precondition.
         c = cluster(kubevirt(patches=None)).run()
         w = c.writes("kubevirt")
         report(c.rc == 0 and len(w) == 1 and c.patches() == [ours(IMG184)],
-               "поддерживаемая версия: ставится ровно своя правка с образом этой версии")
+               "supported version: exactly our patch with this version's image is set")
         report(w and w[0]["body"]["metadata"].get("resourceVersion") == "100",
-               "запись идёт с предусловием на resourceVersion")
+               "the write carries a resourceVersion precondition")
         report(c.state() == "Applying" and any(x["body"]["reason"] == "LauncherApplying"
                                                for x in c.writes("event")),
-               "состояние Applying в ConfigMap и событие на ресурсе KubeVirt")
-        report("пересоздайте" in c.out, "в журнале — предупреждение про окно старого launcher (находка 58)")
+               "state Applying in the ConfigMap and an event on the KubeVirt resource")
+        report("recreate them" in c.out, "the log warns about the old launcher window (finding 58)")
 
-        # 2. Уже верно → ни одной записи в ресурс KubeVirt.
+        # 2. Already correct → no writes to the KubeVirt resource.
         c.roll_out(IMG184)
         c.run()
-        report(c.rc == 0 and not c.writes("kubevirt"), "правка уже стоит: ресурс KubeVirt не пишется")
-        report(c.state() == "Applied", "после перекатки virt-controller состояние Applied")
+        report(c.rc == 0 and not c.writes("kubevirt"), "patch already in place: the KubeVirt resource is not written")
+        report(c.state() == "Applied", "after virt-controller rolls out the state is Applied")
         c.run()
-        report(not c.writes(), "третий проход: не пишется вообще ничего, даже состояние")
+        report(not c.writes(), "third pass: nothing is written at all, not even the status")
 
-        # 2б. Правка стоит, но virt-controller ещё не перекатился → Rolling, без записи.
+        # 2b. Patch in place but virt-controller has not rolled out yet → Rolling, no write.
         c = cluster(kubevirt(patches=[ours(IMG184)]), controller(rolled=False)).run()
         report(not c.writes("kubevirt") and c.state() == "Rolling",
-               "правка стоит, перекатка не закончена: Rolling, без записи")
+               "patch in place, rollout not finished: Rolling, no write")
 
-        # 3. Чужие правки сохраняются, своя встаёт в конец.
+        # 3. Other patches are kept, ours goes to the end.
         c = cluster(kubevirt(patches=[HANDLER])).run()
-        report(c.patches() == [HANDLER, ours(IMG184)], "чужая правка (virt-handler) сохранена, своя — в конце")
+        report(c.patches() == [HANDLER, ours(IMG184)], "the foreign patch (virt-handler) is kept, ours is at the end")
 
-        # 4. Своя правка от прежней версии → меняется на месте, порядок прежний.
+        # 4. Our patch from a previous version → changed in place, order unchanged.
         c = cluster(kubevirt("v1.9.0", patches=[ours(IMG184), HANDLER]), controller("v1.9.0")).run()
         report(c.patches() == [ours(IMG190), HANDLER],
-               "образ прежней версии заменён на месте, чужая правка не сдвинулась")
+               "the previous version's image is replaced in place, the foreign patch did not move")
 
-        # 4б. Своя правка дважды → остаётся одна.
+        # 4b. Our patch twice → one remains.
         c = cluster(kubevirt(patches=[ours(IMG190), HANDLER, ours(IMG184)])).run()
-        report(c.patches() == [ours(IMG184), HANDLER], "дубль своей правки схлопывается в одну")
+        report(c.patches() == [ours(IMG184), HANDLER], "a duplicate of our patch collapses into one")
 
-        # 5. Неподдерживаемая версия → своя убрана, чужая осталась.
+        # 5. Unsupported version → ours removed, the foreign one stays.
         c = cluster(kubevirt("v1.7.0", patches=[HANDLER, ours(IMG184)]), controller("v1.7.0")).run()
         report(c.patches() == [HANDLER] and c.state() == "Unsupported",
-               "неподдерживаемая версия: своя правка убрана, чужая на месте, состояние Unsupported")
+               "unsupported version: our patch removed, the foreign one in place, state Unsupported")
         report(any(x["body"]["type"] == "Warning" for x in c.writes("event")),
-               "неподдерживаемая версия: предупреждающее событие")
+               "unsupported version: a warning event")
         c = cluster(kubevirt("v1.7.0", patches=[ours(IMG184)]), controller("v1.7.0")).run()
         report(c.patches() is None and c.writes("kubevirt")[0]["body"]["spec"]["customizeComponents"]["patches"] is None,
-               "своя правка была единственной: список убран целиком, а не оставлен пустым")
+               "our patch was the only one: the list is removed entirely, not left empty")
         c = cluster(kubevirt("v1.7.0", patches=[HANDLER]), controller("v1.7.0")).run()
-        report(not c.writes("kubevirt"), "неподдерживаемая версия без своей правки: ничего не пишется")
+        report(not c.writes("kubevirt"), "unsupported version without our patch: nothing is written")
 
-        # 6. Сомнения: закрыто — своя правка не ставится, а стоящая убирается.
+        # 6. Doubts: closed; our patch is not set, and an existing one is removed.
         c = cluster(kubevirt(status=False, patches=[HANDLER])).run()
         report(not c.writes("kubevirt") and c.state() == "Doubt",
-               "нет status: правка не ставится, ничего не пишется")
+               "no status: the patch is not set, nothing is written")
         c = cluster(kubevirt(status=False, patches=[HANDLER, ours(IMG184)])).run()
-        report(c.patches() == [HANDLER], "нет status, а своя правка стоит: убирается (штатный launcher)")
+        report(c.patches() == [HANDLER], "no status while our patch is in place: it is removed (stock launcher)")
         c = cluster(kubevirt("v1.8", patches=None)).run()
-        report(not c.writes("kubevirt"), "испорченная версия в status: ничего не ставится")
+        report(not c.writes("kubevirt"), "corrupted version in status: nothing is set")
         c = cluster(kubevirt("v1.8.4", target="v1.9.0", patches=[ours(IMG184)])).run()
-        report(c.patches() is None and "обновляется" in c.out,
-               "KubeVirt посреди обновления: своя правка снята до его конца")
+        report(c.patches() is None and "is updating" in c.out,
+               "KubeVirt in the middle of an update: our patch is removed until it finishes")
         c = cluster(kubevirt(patches=None), controller("v1.9.0")).run()
-        report(not c.writes("kubevirt") and "virt-controller помечен" in c.out,
-               "версия virt-controller расходится с KubeVirt: ничего не ставится")
+        report(not c.writes("kubevirt") and "virt-controller is labeled" in c.out,
+               "virt-controller version differs from KubeVirt: nothing is set")
         c = cluster(kubevirt(patches=None), controller(args0="--port")).run()
         report(not c.writes("kubevirt") and "args[0]" in c.out,
-               "раскладка аргументов virt-controller другая: правка не ставится")
+               "virt-controller argument layout differs: the patch is not set")
         kv = kubevirt(patches=None)
         kv["spec"]["customizeComponents"]["patches"] = {"not": "a list"}
         c = cluster(kv).run()
-        report(not c.writes("kubevirt") and c.state() == "Unknown", "patches не список: ничего не пишется")
+        report(not c.writes("kubevirt") and c.state() == "Unknown", "patches is not a list: nothing is written")
         c = cluster(kubevirt(patches=None)).run(table=tmp / "nonexistent")
-        report(c.rc != 0 and not c.writes(), "нет таблицы версий: ни одной записи")
+        report(c.rc != 0 and not c.writes(), "no version table: no writes")
         bad = tmp / "bad-table.txt"
         bad.write_text("v1.8.4\n")
         c = cluster(kubevirt(patches=[ours(IMG184)])).run(table=bad)
-        report(c.patches() is None and "таблица версий испорчена" in c.out,
-               "испорченная таблица: своя правка снята, новая не ставится")
+        report(c.patches() is None and "version table is corrupted" in c.out,
+               "corrupted table: our patch is removed, a new one is not set")
 
-        # 7. Не прочитали → не пишем вообще.
+        # 7. Could not read → write nothing at all.
         c = cluster(kubevirt(patches=[ours(IMG184)]))
         (c.s / "fail-get-kubevirt").write_text("")
         c.run()
-        report(c.rc != 0 and not c.writes(), "ресурс KubeVirt не прочитан: ни одной записи")
+        report(c.rc != 0 and not c.writes(), "KubeVirt resource not read: no writes")
         c = cluster(kubevirt(patches=None), vc={})
         (c.s / "virt-controller.json").unlink()
         c.run()
-        report(c.rc != 0 and not c.writes(), "virt-controller не прочитан: ни одной записи")
+        report(c.rc != 0 and not c.writes(), "virt-controller not read: no writes")
         c = cluster(None).run()
-        report(c.rc != 0 and not c.writes(), "ресурса KubeVirt нет: ни одной записи")
+        report(c.rc != 0 and not c.writes(), "no KubeVirt resource: no writes")
 
-        # 8. Чужая правка образа launcher → конфликт, не перебиваем.
+        # 8. A foreign patch of the launcher image → conflict, we do not override it.
         c = cluster(kubevirt(patches=[MANUAL])).run()
         report(not c.writes("kubevirt") and c.state() == "Conflict" and c.patches() == [MANUAL],
-               "ручная правка аргументов virt-controller: Conflict, ничего не пишется")
+               "manual patch of virt-controller arguments: Conflict, nothing is written")
         kv = kubevirt(patches=None)
         kv["spec"]["customizeComponents"]["flags"] = {"controller": {"launcher-image": "x"}}
         c = cluster(kv).run()
-        report(not c.writes("kubevirt") and c.state() == "Conflict", "launcher через flags: тоже Conflict")
+        report(not c.writes("kubevirt") and c.state() == "Conflict", "launcher via flags: also Conflict")
 
-        # 9. Конфликт записи → ошибка прохода, следующий проход доводит.
+        # 9. Write conflict → the pass fails, the next pass completes it.
         c = cluster(kubevirt(patches=[HANDLER]))
         (c.s / "conflict").write_text("")
         c.run()
-        report(c.rc != 0 and c.patches() == [HANDLER], "конфликт resourceVersion: запись не легла, проход с ошибкой")
+        report(c.rc != 0 and c.patches() == [HANDLER], "resourceVersion conflict: the write did not land, the pass fails")
         c.run()
-        report(c.rc == 0 and c.patches() == [HANDLER, ours(IMG184)], "следующий проход на свежем чтении доводит")
+        report(c.rc == 0 and c.patches() == [HANDLER, ours(IMG184)], "the next pass on a fresh read completes it")
 
-        # 10. Удаление: только своя правка, цикл сначала остановлен.
+        # 10. Uninstall: only our patch, the loop is stopped first.
         c = cluster(kubevirt(patches=[HANDLER, ours(IMG184), MANUAL]))
         c.run("uninstall", SELF_DEPLOYMENT="kubevirt-paleo-launcher",
               SELF_SELECTOR="app.kubernetes.io/name=kubevirt-paleo-launcher,app.kubernetes.io/instance=r")
         calls = [json.loads(l) for l in (c.s / "calls.log").read_text().splitlines()]
         first_scale = next((i for i, a in enumerate(calls) if "scale" in a), None)
         first_patch = next((i for i, a in enumerate(calls) if "patch" in a), None)
-        report(c.rc == 0 and c.patches() == [HANDLER, MANUAL], "удаление убирает только свою правку")
+        report(c.rc == 0 and c.patches() == [HANDLER, MANUAL], "uninstall removes only our patch")
         report(first_scale is not None and first_patch is not None and first_scale < first_patch,
-               "удаление сначала гасит цикл, потом пишет")
+               "uninstall stops the loop first, then writes")
         report(not c.writes("configmap") and not c.writes("event"),
-               "удаление не трогает ConfigMap состояния (его уберёт Helm)")
+               "uninstall does not touch the status ConfigMap (Helm removes it)")
         c = cluster(kubevirt(patches=[HANDLER])).run("uninstall")
-        report(c.rc == 0 and not c.writes("kubevirt"), "удаление без своей правки: ничего не пишется")
+        report(c.rc == 0 and not c.writes("kubevirt"), "uninstall without our patch: nothing is written")
         c = cluster(kubevirt("v1.7.0", status=False, patches=[ours(IMG184)]), vc={})
         (c.s / "virt-controller.json").unlink()
         c.run("uninstall")
-        report(c.rc == 0 and c.patches() is None, "удаление работает и без virt-controller, и без status")
+        report(c.rc == 0 and c.patches() is None, "uninstall works without virt-controller and without status")
         c = cluster(None).run("uninstall")
-        report(c.rc == 0 and not c.writes(), "удаление без ресурса KubeVirt: успех, убирать нечего")
+        report(c.rc == 0 and not c.writes(), "uninstall without a KubeVirt resource: success, nothing to remove")
 
-        # 11. Архитектура узлов: образ заменяет launcher всем виртуалкам.
+        # 11. Node architecture: the image replaces the launcher for all VMs.
         c = cluster(kubevirt(patches=None), node_list=nodes("arm64", "arm64")).run()
         report(c.patches() == [ours(IMG184)] and c.state() == "Applying",
-               "узлы arm64, образ собран под arm64: правка ставится")
+               "arm64 nodes, image built for arm64: the patch is set")
         c = cluster(kubevirt(patches=[HANDLER, ours(IMG184)]), node_list=nodes("amd64", "s390x")).run()
         report(c.patches() == [HANDLER] and c.state() == "Unsupported" and "s390x" in c.out,
-               "узел s390x, под который образа нет: своя правка снята, штатный launcher")
+               "an s390x node with no image for it: our patch removed, stock launcher")
         c = cluster(kubevirt(patches=None), node_list=nodes("amd64", None)).run()
         report(not c.writes("kubevirt") and c.state() == "Unsupported",
-               "узел без метки архитектуры: правка не ставится")
+               "a node without an architecture label: the patch is not set")
         c = cluster(kubevirt(patches=None), node_list=nodes()).run()
-        report(c.patches() == [ours(IMG184)], "ни одного узла с виртуалками: сверять нечего, правка ставится")
+        report(c.patches() == [ours(IMG184)], "no nodes with VMs: nothing to check, the patch is set")
         no_arch = tmp / "no-arch-table.txt"
         no_arch.write_text("".join(l + "\n" for l in TABLE.read_text().splitlines() if not l.startswith("# arch:")))
         c = cluster(kubevirt(patches=None), node_list=nodes("s390x")).run(table=no_arch)
         report(c.patches() == [ours(IMG184)] and not any("nodes" in a for a in c.calls()),
-               "таблица без строки arch (ручная, прежняя): узлы не читаются и не сверяются")
+               "table without an arch line (manual, older): nodes are neither read nor checked")
         c = cluster(kubevirt(patches=[ours(IMG184)]))
         (c.s / "fail-get-nodes").write_text("")
         c.run()
-        report(c.rc != 0 and not c.writes(), "узлы не прочитаны: ни одной записи")
+        report(c.rc != 0 and not c.writes(), "nodes not read: no writes")
         c = cluster(kubevirt(patches=[HANDLER, ours(IMG184)]))
         (c.s / "fail-get-nodes").write_text("")
         c.run("uninstall")
-        report(c.rc == 0 and c.patches() == [HANDLER], "удаление узлы не читает и работает без них")
+        report(c.rc == 0 and c.patches() == [HANDLER], "uninstall does not read nodes and works without them")
 
-        # 13. Автоперевод машин включён: смена launcher перевезла бы ВСЕ
-        # виртуалки кластера (находка 49). Без согласия — не ставим и не меняем.
+        # 13. Automatic workload updates are on: changing the launcher would move
+        # ALL VMs of the cluster (finding 49). Without consent we neither set nor change it.
         def migrating(kv):
             kv["spec"]["workloadUpdateStrategy"] = {"workloadUpdateMethods": ["LiveMigrate", "Evict"]}
             return kv
         c = cluster(migrating(kubevirt(patches=[HANDLER]))).run()
         report(not c.writes("kubevirt") and c.state() == "NeedsConsent" and "LiveMigrate" in c.out,
-               "автоперевод включён, согласия нет: правка не ставится, состояние NeedsConsent")
+               "automatic updates on, no consent: the patch is not set, state NeedsConsent")
         report(any(x["body"]["type"] == "Warning" for x in c.writes("event")),
-               "без согласия — предупреждающее событие на ресурсе KubeVirt")
+               "without consent: a warning event on the KubeVirt resource")
         c = cluster(migrating(kubevirt(patches=[HANDLER]))).run(ALLOW_WORKLOAD_UPDATE="true")
-        report(c.patches() == [HANDLER, ours(IMG184)], "согласие значением чарта: правка ставится")
+        report(c.patches() == [HANDLER, ours(IMG184)], "consent via chart value: the patch is set")
         kv = migrating(kubevirt(patches=None))
         kv["metadata"]["annotations"] = {"paleocomputing.io/allow-workload-update": "true"}
         c = cluster(kv).run()
-        report(c.patches() == [ours(IMG184)], "согласие аннотацией на ресурсе KubeVirt: правка ставится")
+        report(c.patches() == [ours(IMG184)], "consent via annotation on the KubeVirt resource: the patch is set")
         kv = migrating(kubevirt(patches=None))
         kv["spec"]["workloadUpdateStrategy"]["workloadUpdateMethods"] = []
         c = cluster(kv).run()
-        report(c.patches() == [ours(IMG184)], "автоперевод выключен (пустой список): согласие не нужно")
+        report(c.patches() == [ours(IMG184)], "automatic updates off (empty list): no consent needed")
         c = cluster(migrating(kubevirt("v1.9.0", patches=[ours(IMG184)])), controller("v1.9.0")).run()
         report(not c.writes("kubevirt") and c.state() == "NeedsConsent",
-               "смена образа при обновлении релиза без согласия: прежняя правка остаётся, новая не ставится")
+               "image change on release upgrade without consent: the previous patch stays, the new one is not set")
         c = cluster(migrating(kubevirt(patches=[ours(IMG184)])))
         c.roll_out(IMG184)
         c.run()
         report(not c.writes("kubevirt") and c.state() == "Applied",
-               "правка уже стоит и образ не меняется: согласие не нужно, Applied")
+               "patch already in place and the image does not change: no consent needed, Applied")
         c = cluster(migrating(kubevirt("v1.7.0", patches=[HANDLER, ours(IMG184)])), controller("v1.7.0")).run()
         report(c.patches() == [HANDLER] and c.state() == "Unsupported",
-               "снятие своей правки согласия не ждёт: возвращает штатный launcher")
+               "removing our patch does not wait for consent: it restores the stock launcher")
         c = cluster(migrating(kubevirt(patches=[HANDLER, ours(IMG184)]))).run("uninstall")
-        report(c.rc == 0 and c.patches() == [HANDLER], "удаление компонента согласия не ждёт")
+        report(c.rc == 0 and c.patches() == [HANDLER], "component uninstall does not wait for consent")
 
-        # 12. Живой кластер: объекты узлов большие (списки образов, статусы).
-        # Переданные в jq аргументом, они не влезали в предел длины командной
-        # строки — решение не вычислялось. Нашлось только в песочнице.
+        # 12. A live cluster: node objects are large (image lists, statuses).
+        # Passed to jq as an argument, they exceeded the command line length
+        # limit and the decision was not computed. Found only in the sandbox.
         big = nodes(*(["amd64"] * 3000))
         for nd in big["items"]:
             nd["status"] = {"images": [{"names": [f"registry.example/some/image-{i}:v1.0.0"],
                                         "sizeBytes": 123456789} for i in range(12)]}
         c = cluster(kubevirt(patches=None), node_list=big).run()
         report(c.rc == 0 and c.patches() == [ours(IMG184)],
-               f"кластер на 3000 узлов ({len(json.dumps(big)) // 1024} КБ): решение вычислено, правка ставится")
+               f"cluster of 3000 nodes ({len(json.dumps(big)) // 1024} KB): decision computed, the patch is set")
 
-        # Отрицательный контроль: подделка обязана ловить запись без предусловия.
+        # Negative control: the fake must catch a write without a precondition.
         c = cluster(kubevirt(patches=None))
         kv = c.get("kubevirt.json"); kv["metadata"]["resourceVersion"] = "999"; c.put("kubevirt.json", kv)
         body = json.dumps({"metadata": {"resourceVersion": "100"}, "spec": {}})
         r = subprocess.run([str(c.kubectl), "-n", "x", "patch", "kubevirt", "kubevirt", "--type=merge", "-p", body],
                            env=dict(os.environ, FAKE_STATE=str(c.s)), capture_output=True, text=True)
-        report(r.returncode != 0, "отрицательный контроль: поддельный API отвергает устаревший resourceVersion")
+        report(r.returncode != 0, "negative control: the fake API rejects a stale resourceVersion")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
-    print(f"Итог: успешно {ok}, провалено {fail}")
+    print(f"Total: passed {ok}, failed {fail}")
     sys.exit(1 if fail else 0)
 
 

@@ -1,42 +1,44 @@
-# Паспорт машины Вирта. Всё, чем OberonVM отличается от любой другой машины
-# каталога, — здесь; шаблоны общие (library/retro-machine), перехватчик тоже.
+# Passport of Wirth's machine. Everything that sets OberonVM apart from any other
+# catalog machine is here; the templates are shared (library/retro-machine), and
+# so is the hook.
 #
-# Это файл чарта, а не values: значения тенант может переписать через API
-# (корень схемы открыт для ключей движка), а паспорт решает, какой эмулятор
-# и с какими аргументами запустится в virt-launcher. Поэтому паспорт меняет
-# только выпуск каталога.
+# This is a chart file, not values: the tenant can rewrite values through the API
+# (the schema root is open for engine keys), while the passport decides which
+# emulator starts in virt-launcher and with which arguments. So only a catalog
+# release changes the passport.
 #
-# Схема: library/retro-machine/machine.schema.json. Проверки каталога сверяют
-# паспорт со схемой и с формой приложения (values.yaml, values.schema.json).
+# Schema: library/retro-machine/machine.schema.json. The catalog checks compare
+# the passport with the schema and with the application form (values.yaml,
+# values.schema.json).
 apiVersion: paleocomputing.io/v1alpha1
 kind: Machine
 name: oberon
 
-# Откуда берутся ПЗУ и образ системы. Эмулятора в этом образе нет — он в
-# образе virt-launcher, рядом с libvirt, который его опрашивает.
+# Where the ROM and the system image come from. The emulator is not in this
+# image: it is in the virt-launcher image, next to libvirt, which probes it.
 image: ghcr.io/tym83/paleocomputing/oberon-run:dev
 
 domain:
   arch: risc5
   machine: oberon
   emulator: /usr/local/bin/qemu-system-risc5
-  # Процессор у машины Вирта один, и больше быть не может.
+  # Wirth's machine has one CPU, and there cannot be more.
   vcpus: 1
-  # Экран — встроенный кадровый буфер; его показывает консоль VNC.
+  # The screen is the built-in framebuffer; the VNC console shows it.
   graphics: vnc
-  # ACPI у машины нет, просьбу выключиться она не услышит: KubeVirt ждал бы
-  # впустую полминуты на каждом перезапуске.
+  # The machine has no ACPI and will not hear a shutdown request: KubeVirt would
+  # wait half a minute in vain on every restart.
   terminationGracePeriodSeconds: 0
 
 payload:
   path: /payload
   files:
-    # ПЗУ: прошивка, переписывается из образа при каждом обновлении.
+    # ROM: firmware, rewritten from the image on every update.
     - name: prom.bin
       from: /opt/oberon/payload/prom.bin
       role: firmware
       qemu: ["-bios", "{path}"]
-    # Диск системы: здесь живут файлы пользователя. Кладётся один раз.
+    # System disk: the user's files live here. Placed once.
     - name: oberon.dsk
       from: /opt/oberon/payload/oberon.dsk
       role: disk
@@ -46,17 +48,17 @@ payload:
       size: 8388608
       qemu: ["-drive", "if=none,id=sd0,file={path},format=raw"]
 
-# Вариант железа — свойство машины, а не режим эмулятора. chk — процессор с
-# аппаратной проверкой границ массива: в RTL это -DWITH_CHK, на странице
-# проекта — переключатель железа.
+# The hardware variant is a property of the machine, not an emulator mode. chk is
+# a CPU with hardware array bounds checking: in RTL it is -DWITH_CHK, on the
+# project page it is the hardware switch.
 variants:
   base: {}
   chk:
     chk: "on"
 defaultVariant: base
 
-# Самой машине хватает шестнадцати мегабайт: больше её адресная шина не
-# видит, остальное — обвязка KubeVirt. Меньше 128Mi не проверялось.
+# The machine itself needs sixteen megabytes: its address bus sees no more, the
+# rest is KubeVirt overhead. Less than 128Mi has not been tested.
 memory:
   default: 128Mi
   min: 128Mi

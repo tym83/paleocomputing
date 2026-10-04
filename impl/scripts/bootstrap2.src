@@ -1,7 +1,7 @@
-# Двухпоколенная самораскрутка компилятора Оберона внутри самой системы.
-# Никакого моста к хосту: мышь и клавиатура, всё остальное — на RTL.
+# Two-generation bootstrap of the Oberon compiler inside the system itself.
+# No bridge to the host: mouse and keyboard, everything else runs on the RTL.
 at 12000000
-click 700 620 L                                        # курсор в конец System.Tool
+click 700 620 L                                        # cursor to the end of System.Tool
 type ORP.Compile ORS.Mod/s ORB.Mod/s ORG.Mod/s ORP.Mod/s ~
 enter
 type System.Free ORP ORG ORB ORS ~
@@ -9,11 +9,11 @@ enter
 type ORP.Compile ORS.Mod/s ORB.Mod/s ORG.Mod/s ORP.Mod/s ~
 wait 2000000
 shot build/bs_typed.pbm
-click 690 569 M          # поколение 1: компилятор с диска собирает сам себя
+click 690 569 M          # generation 1: the compiler from disk compiles itself
 wait 90000000
 shot build/bs_gen1.pbm
-click 685 581 M          # выгрузить все четыре модуля из памяти
+click 685 581 M          # unload all four modules from memory
 wait 8000000
-click 690 593 M          # поколение 2: собирает уже свежесобранный компилятор
+click 690 593 M          # generation 2: compiles with the freshly built compiler
 wait 90000000
 shot build/bs_gen2.pbm

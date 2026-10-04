@@ -1,203 +1,205 @@
-# Направление: от одной машины к платформе
+[Русская версия](11-roadmap-platform.ru.md)
 
-Записано 2026-09-22 по итогам первой реализации (`impl/`). Пять аудиторов, 21 находка,
-работающее ядро в браузере. Дальше — из единичного эксперимента сделать платформу.
+# Direction: from one machine to a platform
+
+Written on 2026-09-22 after the first implementation (`impl/`). Five auditors, 21 findings,
+a working core in the browser. Next: turn a one-off experiment into a platform.
 
 ---
 
-> **Культуртрегерский слой — в `12-labs-and-archive.md`:** лаборатории и архив
-> поверх каждой машины. Артефакт → лаборатория → архив.
+> **The cultural outreach layer is in `12-labs-and-archive.md`:** labs and an archive
+> on top of every machine. Artifact → lab → archive.
 
-## 0. Поправка к посылке: компилятор Оберона УЖЕ на Обероне
+## 0. A correction to the premise: the Oberon compiler is ALREADY in Oberon
 
-Проверено в дереве, не по памяти:
+Checked in the tree, not from memory:
 
-| Модуль | Язык | Комментарий в заголовке |
+| Module | Language | Comment in the header |
 |---|---|---|
-| `ORS.Mod` (сканер) | Оберон | «Scanner in Oberon-07» |
-| `ORB.Mod` (таблица имён) | Оберон | «in Oberon-07» |
-| `ORG.Mod` (кодогенератор) | Оберон | «code generator in Oberon-07» |
-| `ORP.Mod` (парсер) | Оберон | «Oberon compiler for RISC» |
+| `ORS.Mod` (scanner) | Oberon | "Scanner in Oberon-07" |
+| `ORB.Mod` (symbol table) | Oberon | "in Oberon-07" |
+| `ORG.Mod` (code generator) | Oberon | "code generator in Oberon-07" |
+| `ORP.Mod` (parser) | Oberon | "Oberon compiler for RISC" |
 
-**Компилятор самораскручивается**, неподвижная точка проверена побитово
-(`Stage 2 == Stage 3`), причём она держится даже после инструментирования эмулятора.
+**The compiler bootstraps itself**, the fixed point has been checked bit for bit
+(`Stage 2 == Stage 3`), and it holds even after the emulator is instrumented.
 
-**На C написано другое — рантайм Norebo**, 1091 строка:
-- `risc-cpu.c` — эмулятор RISC5
-- `norebo.c` — интерфейс к Unix: файлы, аргументы, вывод
+**What is written in C is something else: the Norebo runtime**, 1091 lines:
+- `risc-cpu.c`: the RISC5 emulator
+- `norebo.c`: the interface to Unix: files, arguments, output
 
-То есть задача не «переписать компилятор на Оберон» (он там и есть), а:
+So the task is not "rewrite the compiler in Oberon" (it already is), but:
 
-### 0a. Убрать C из-под компилятора
+### 0a. Remove C from underneath the compiler
 
-Три пути, по возрастанию чистоты:
+Three paths, in increasing order of purity:
 
-1. **Рантайм на Обероне поверх своего же RTL.** Наш SoC-стенд уже грузит настоящую
-   систему. Значит компилятор может работать на нашем ядре без всякого C-эмулятора —
-   нужен только мост «файлы хоста ↔ образ диска». Это ближайшая цель и она почти закрыта.
-2. **Самохостинг в браузере.** Ядро уже в WASM. Компилятор внутри него уже работает.
-   Остаётся редактор и файловая система — то есть полный цикл разработки на Обероне
-   в браузере, без единой строки C в продукте.
-3. **Свой эмулятор на Обероне.** Оберон, интерпретирующий RISC5, работающий на RISC5.
-   Чистая рефлексия, практической ценности мало, но как номер в статье — сильно.
+1. **A runtime in Oberon on top of our own RTL.** Our SoC bench already boots the real
+   system. So the compiler can run on our core without any C emulator;
+   only a "host files ↔ disk image" bridge is needed. This is the nearest goal and it is almost done.
+2. **Self-hosting in the browser.** The core is already in WASM. The compiler already works inside it.
+   What remains is an editor and a file system, that is, a full development cycle in Oberon
+   in the browser, without a single line of C in the product.
+3. **Our own emulator in Oberon.** Oberon interpreting RISC5, running on RISC5.
+   Pure reflection, little practical value, but strong as an act in an article.
 
 ---
 
-## 1. Виртуальные машины никогда не реализованных архитектур
+## 1. Virtual machines for never-implemented architectures
 
-Главная линия. Из каталога `01-os-catalog.md` и `03-language-machines.md` — те, где
-спецификация есть, а железа никогда не было или оно не сохранилось.
+The main line. From the catalogs `01-os-catalog.md` and `03-language-machines.md`, the ones where
+a specification exists but the hardware never did or has not survived.
 
-| Архитектура | Что даёт | Артефакты | Сложность |
+| Architecture | What it gives | Artifacts | Difficulty |
 |---|---|---|---|
-| **iAPX 432** | объекты и права доступа в кремнии; документация Intel самодостаточна | ✅ bitsavers | высокая |
-| **Transputer T414/T800** | CSP в железе, планировщик и каналы аппаратно | ✅ ISA INMOS | средняя |
-| **Lilith (M-code)** | машина под Модулу-2, прямой пролог к Оберону | ✅ описана | **низкая** |
-| **Кронос** | советский ответ Lilith, материал почти не оцифрован | частично | средняя |
-| **Rekursiv** | объекты в железе, язык Lingo; не знает почти никто | мало | высокая |
-| **Reduceron** | графовая редукция аппаратно, живой и документирован | ✅ | средняя |
-| **WAM в железе** | абстрактная машина Пролога как конвейер | ✅ книга | средняя |
-| **Эльбрус-1/2** | теговая архитектура, Эль-76 | ❌ только книги | очень высокая |
+| **iAPX 432** | objects and access rights in silicon; Intel's documentation is self-sufficient | ✅ bitsavers | high |
+| **Transputer T414/T800** | CSP in hardware, the scheduler and channels in hardware | ✅ INMOS ISA | medium |
+| **Lilith (M-code)** | a machine for Modula-2, a direct prologue to Oberon | ✅ described | **low** |
+| **Kronos** | the Soviet answer to Lilith, the material is almost undigitized | partial | medium |
+| **Rekursiv** | objects in hardware, the Lingo language; almost nobody knows it | little | high |
+| **Reduceron** | graph reduction in hardware, alive and documented | ✅ | medium |
+| **WAM in hardware** | Prolog's abstract machine as a pipeline | ✅ book | medium |
+| **Elbrus-1/2** | tagged architecture, El-76 | ❌ books only | very high |
 
-**Начинать с Lilith.** Причины: M-code документирован, объём сравним с RISC5, и это
-**прямой предок** того, что уже сделано — та же школа, тот же автор, то же устройство
-мысли. Переиспользуется вся инфраструктура: ассемблер, дифференциальный стенд,
-проверка эквивалентности декодера, модель тактов.
+**Start with Lilith.** Reasons: M-code is documented, the size is comparable to RISC5, and it is
+the **direct ancestor** of what has already been done: the same school, the same author, the same way
+of thinking. All the infrastructure is reused: the assembler, the differential bench,
+the decoder equivalence check, the cycle model.
 
-**Ключевой вывод из первого проекта:** дорога не архитектура, а **оснастка**. На RISC5
-ушло больше сил на измерительную инфраструктуру, чем на само ядро. Вторая машина будет
-кратно дешевле, если сделать оснастку переносимой — см. пункт 5.
+**The key lesson from the first project:** the expensive part is not the architecture but the **harness**. On RISC5
+more effort went into the measurement infrastructure than into the core itself. The second machine will be
+many times cheaper if the harness is made portable; see item 5.
 
 ---
 
-## 2. Портирование мёртвых ОС на эти архитектуры
+## 2. Porting dead OSes to these architectures
 
-Крест-накрест: система, написанная под одну машину, на машине, которой не было.
+Crosswise: a system written for one machine, on a machine that never existed.
 
-| Система | Родная машина | Куда портировать | Зачем |
+| System | Native machine | Port to | Why |
 |---|---|---|---|
-| **Oberon** | RISC5 | Lilith, Кронос | обе — машины Вирта, портирование почти тривиально |
-| **Medos-2** | Lilith | RISC5 | обратное направление: предок на потомке |
-| **THE** (Дейкстра) | Electrologica X8 | любая | пять слоёв, есть только статья |
-| **Helios** | транспьютер | сетка транспьютеров | CSP-ОС на честной CSP-машине |
-| **iMAX 432** | iAPX 432 | — | если найдутся ленты |
+| **Oberon** | RISC5 | Lilith, Kronos | both are Wirth machines, porting is almost trivial |
+| **Medos-2** | Lilith | RISC5 | the reverse direction: the ancestor on the descendant |
+| **THE** (Dijkstra) | Electrologica X8 | any | five layers, only the paper exists |
+| **Helios** | transputer | transputer grid | a CSP OS on an honest CSP machine |
+| **iMAX 432** | iAPX 432 | — | if the tapes turn up |
 
-Сильнейший номер — **Oberon на Lilith**: система 1988 года на машине 1980-го, обе Вирта,
-и видно, что именно он изменил в мышлении за восемь лет.
+The strongest act is **Oberon on Lilith**: a 1988 system on a 1980 machine, both Wirth's,
+and you can see exactly what changed in his thinking over eight years.
 
 ---
 
-## 3. Всё это как лаборатория в Cozystack
+## 3. All of this as a lab in Cozystack
 
-Здесь появляется продуктовая часть, и она отдельно ценна.
+Here the product part appears, and it is valuable in its own right.
 
-### 3a. Serverless / FaaS для запуска машин
+### 3a. Serverless / FaaS for running machines
 
-Каждая виртуальная машина — функция: подал исходник или образ, получил результат.
-Естественно ложится на FaaS, потому что прогон конечен и детерминирован.
+Every virtual machine is a function: submit a source or an image, get a result.
+It maps naturally onto FaaS, because a run is finite and deterministic.
 
-Что нужно:
-- рантайм-образ на машину (ядро + оснастка + образ системы)
-- контракт вызова: вход, лимиты по тактам и времени, выход (экран, лог, артефакты)
-- изоляция: **публичная песочница, исполняющая чужой код, — настоящий тест
-  мультитенантности**, а не синтетический. Это уже отмечено в `04-infra-layer.md`
+What is needed:
+- a runtime image per machine (core + harness + system image)
+- an invocation contract: input, cycle and time limits, output (screen, log, artifacts)
+- isolation: **a public sandbox executing other people's code is a real test of
+  multi-tenancy**, not a synthetic one. This is already noted in `04-infra-layer.md`
 
-### 3b. Свои архитектуры в KubeVirt — прямого пути нет, обходной пройден
+### 3b. Custom architectures in KubeVirt: there is no direct path, the workaround is done
 
-⚠ Проверено по коду 24.09.2026 (`docs/FINDING-34`): список архитектур в KubeVirt
-закрыт. В CRD ресурса `KubeVirt` поле `architectureConfiguration` имеет ровно
-четыре ветки — `amd64`, `arm64`, `ppc64le` (устаревшая) и `s390x`. Пятую не
-добавить, не меняя саму KubeVirt, и никакой пакет каталога этого не может.
+⚠ Checked in the code on 24.09.2026 (`docs/FINDING-34`): the list of architectures in KubeVirt
+is closed. In the CRD of the `KubeVirt` resource, the `architectureConfiguration` field has exactly
+four branches: `amd64`, `arm64`, `ppc64le` (deprecated) and `s390x`. A fifth cannot be
+added without changing KubeVirt itself, and no catalog package can do it.
 
-**Обновлено 25.09.2026: из этого не следует, что архитектуру нельзя запустить.**
-Следует только, что о ней не надо рассказывать KubeVirt. Виртуальная машина
-объявляется обычной, а домен переписывается перед стартом — и libvirt запускает
-на ней наш процессор (находки 40–44):
+**Updated 25.09.2026: it does not follow that the architecture cannot be run.**
+It only follows that KubeVirt should not be told about it. The virtual machine
+is declared as an ordinary one, and the domain is rewritten before start, and libvirt runs
+our processor on it (findings 40–44):
 
-| Слой | Что сделано | Объём |
+| Layer | What was done | Size |
 |---|---|---|
-| QEMU | цель `risc5`: ядро, SPI-диск, экран, ввод, плавающая точка | новая цель |
-| libvirt | пять мест: таблица архитектур, машина по умолчанию, проверка PCI | **~10 строк** |
-| образ `virt-launcher` | свой, со своими QEMU и libvirt; обычные ВМ на нём работают как прежде | сборка |
-| KubeVirt | хук `OnDefineDomain` из ConfigMap: `arch=risc5`, `machine=oberon`, вычищены устройства, которым нужен PCI | **без форка** |
+| QEMU | the `risc5` target: core, SPI disk, screen, input, floating point | a new target |
+| libvirt | five places: architecture table, default machine, PCI check | **~10 lines** |
+| `virt-launcher` image | our own, with our own QEMU and libvirt; ordinary VMs work on it as before | a build |
+| KubeVirt | an `OnDefineDomain` hook from a ConfigMap: `arch=risc5`, `machine=oberon`, devices that need PCI removed | **no fork** |
 
-Машина Оберона крутится в кластере настоящей ВМ под KubeVirt и ставится из
-каталога в тенант. То есть путей не два, а три, и третий — рабочий:
+The Oberon machine runs in the cluster as a real VM under KubeVirt and installs from the
+catalog into a tenant. So there are not two paths but three, and the third one works:
 
-1. **домен переписывается хуком, эмулятор свой** — настоящая ВМ, настоящая
-   архитектура, KubeVirt не тронут; цена — свой образ `virt-launcher`;
-2. загрузочный образ с эмулятором внутри — машина в кластере обычная, необычно
-   то, что она изображает;
-3. контейнер с эмулятором — не требует ни доверия уровня кластера, ни готового
-   загрузочного образа.
+1. **the domain is rewritten by a hook, the emulator is our own**: a real VM, a real
+   architecture, KubeVirt untouched; the price is our own `virt-launcher` image;
+2. a boot image with an emulator inside: the machine in the cluster is ordinary, what is unusual
+   is what it imitates;
+3. a container with an emulator: requires neither cluster-level trust nor a ready
+   boot image.
 
-Сюжет от этого не ослаб, а стал точнее: «список архитектур закрыт, и всё равно
-кластер запускает процессор, которого не существует — вот чем именно».
+The story did not get weaker from this but more precise: "the list of architectures is closed, and still
+the cluster runs a processor that does not exist; here is exactly how".
 
-Единственное, что осталось вне нашей власти, — сделать это **без своего образа
-`virt-launcher`**: для этого нужен патч в саму KubeVirt.
+The only thing that remains out of our control is doing this **without our own
+`virt-launcher` image**: that needs a patch to KubeVirt itself.
 
-### 3c. Как паковать своё приложение и serverless для Cozystack
+### 3c. How to package your application and serverless for Cozystack
 
-Методический материал, который нужен platform-команде безотносительно ретро-темы.
-Наши машины — просто честный непридуманный пример.
+Methodological material that a platform team needs regardless of the retro theme.
+Our machines are simply an honest, non-invented example.
 
-### 3d. Маркетплейс
+### 3d. Marketplace
 
-Два уровня, и их надо разделять:
+Two levels, which must be kept apart:
 
-1. **Подключаемый маркетплейс со стороны** — механизм, позволяющий любому
-   подключить свой каталог приложений к своей инсталляции Cozystack. Это продуктовая
-   фича платформы
-2. **Официальный community-маркетплейс** — сам каталог, который ведёт сообщество
+1. **A pluggable third-party marketplace**: a mechanism that lets anyone
+   connect their own application catalog to their Cozystack installation. This is a product
+   feature of the platform
+2. **The official community marketplace**: the catalog itself, maintained by the community
 
-Лаборатория забытых машин становится первым нетривиальным наполнением каталога.
+The lab of forgotten machines becomes the first non-trivial content of the catalog.
 
-**Состояние на 24.09.2026:** уровень 1 сделан — `marketplace/` разложен на три
-репозитория по влитому проекту `cozymarketplace`, цепочка обнаружения проверена
-настоящим `cozypkg`. Уровень 2 не начат: он требует публикации и разговора с
-сообществом, а не кода. Подробности — `impl/docs/FINDING-34`.
+**State as of 24.09.2026:** level 1 is done: `marketplace/` is split into three
+repositories following the merged `cozymarketplace` project, and the discovery chain was verified with
+the real `cozypkg`. Level 2 has not started: it requires publication and a conversation with
+the community, not code. Details in `impl/docs/FINDING-34`.
 
 ---
 
-## 4. Порядок, в котором это имеет смысл делать
+## 4. The order in which it makes sense to do this
 
-| Шаг | Что | Почему сейчас |
+| Step | What | Why now |
 |---|---|---|
-| 1 | вынести оснастку RISC5 в переносимый каркас | без этого вторая машина стоит столько же, сколько первая |
-| 2 | Lilith как вторая машина на том же каркасе | проверка, что каркас действительно переносим |
-| 3 | FaaS-обёртка для одной машины | минимальный продуктовый артефакт |
-| 4 | Oberon на Lilith | первый кросс-номер |
-| 5 | KubeVirt запускает свою архитектуру | ✅ сделано 25.09.2026 обходом: хук `OnDefineDomain` + свой `virt-launcher`, KubeVirt не форкали (находки 40–44). Прямой путь по-прежнему закрыт, см. 3b |
-| 6 | ~~механизм подключаемого маркетплейса~~ | ✅ сделано 24.09.2026, `marketplace/` |
-| 7 | community-каталог и наполнение | упирается не в код, а в публикацию и сообщество |
+| 1 | extract the RISC5 harness into a portable framework | without it the second machine costs as much as the first |
+| 2 | Lilith as the second machine on the same framework | proof that the framework really is portable |
+| 3 | a FaaS wrapper for one machine | the minimal product artifact |
+| 4 | Oberon on Lilith | the first cross act |
+| 5 | KubeVirt runs our own architecture | ✅ done on 25.09.2026 via a workaround: an `OnDefineDomain` hook + our own `virt-launcher`, KubeVirt not forked (findings 40–44). The direct path is still closed, see 3b |
+| 6 | ~~the pluggable marketplace mechanism~~ | ✅ done on 24.09.2026, `marketplace/` |
+| 7 | the community catalog and its content | blocked not by code but by publication and community |
 
 ---
 
-## 5. Что переиспользуется из первого проекта
+## 5. What is reused from the first project
 
-Это и есть главный актив, а не само ядро:
+This is the main asset, not the core itself:
 
-- **ассемблер** — параметризуется таблицей кодирования
-- **дифференциальный стенд** — методика с каталогом источников недетерминизма
-- **проверка эквивалентности декодера** — перебор всего пространства кодов
-- **модель тактов** и её сверка с RTL на реальной нагрузке
-- **мутационное тестирование оснастки** — 21 находка получена именно им
-- **перекрёстная сборка 2×2** для разделения цены исполнения и цены порождения
-- **измерение шумового пола маршрута синтеза перед публикацией дельты**
+- **the assembler**: parameterized by an encoding table
+- **the differential bench**: a methodology with a catalog of sources of nondeterminism
+- **the decoder equivalence check**: enumerating the entire code space
+- **the cycle model** and its cross-check against the RTL on a real workload
+- **mutation testing of the harness**: the 21 findings were obtained precisely with it
+- **2×2 cross-building** to separate the cost of execution from the cost of generation
+- **measuring the noise floor of the synthesis flow before publishing a delta**
 
-Последние три — методические ноу-хау, переносимые за пределы ретро-темы вообще.
+The last three are methodological know-how that carries beyond the retro theme altogether.
 
 ---
 
-## 6. Риски, записанные заранее
+## 6. Risks, written down in advance
 
-- **Оснастка дороже машины.** Проверено на RISC5. Если не вынести её в каркас до второй
-  машины, проект встанет
-- **Артефакты решают.** iAPX 432 и Эльбрус упираются не в сложность, а в наличие
-  документации. Проверять до начала, а не после
-- **Продуктовая часть может съесть исследовательскую.** Маркетплейс и FaaS — работа
-  другого рода и другого объёма. Держать их как отдельный трек, а не как «приложение
-  к статье»
-- **Публичная песочница = публичная ответственность.** Чужой код в своём кластере
-  требует изоляции, которую надо доказывать, а не декларировать
+- **The harness costs more than the machine.** Verified on RISC5. If it is not extracted into a framework before the second
+  machine, the project will stall
+- **Artifacts decide.** The iAPX 432 and Elbrus are blocked not by complexity but by the availability of
+  documentation. Check before starting, not after
+- **The product part can eat the research part.** The marketplace and FaaS are work
+  of a different kind and size. Keep them as a separate track, not as an "appendix
+  to the article"
+- **A public sandbox = public responsibility.** Other people's code in your own cluster
+  requires isolation that has to be proven, not declared

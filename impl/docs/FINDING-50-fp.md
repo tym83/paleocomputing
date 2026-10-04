@@ -1,77 +1,83 @@
-# Находка 50. Плавающая точка: последняя дыра закрыта
+[Русская версия](FINDING-50-fp.ru.md)
 
-Цель QEMU считает дробные числа так же, как схема Вирта. **1056 случаев,
-ноль расхождений** с эталоном, который сверен с настоящим описанием схемы.
+# Finding 50. Floating point: the last gap is closed
 
-## Почему не softfloat
+The QEMU target computes fractional numbers exactly as Wirth's circuit does.
+**1056 cases, zero mismatches** against a reference that was checked against
+the real circuit description.
 
-В QEMU есть готовая реализация IEEE 754, и соблазн взять её велик. Нельзя:
-блок Вирта считает **иначе**.
+## Why not softfloat
 
-| | IEEE 754 | схема Вирта |
+QEMU has a ready-made IEEE 754 implementation, and the temptation to use it is
+strong. It cannot be used: Wirth's unit computes **differently**.
+
+| | IEEE 754 | Wirth's circuit |
 |---|---|---|
-| округление | к ближайшему чётному | **прибавлением единицы** |
-| подпороговые числа | постепенная потеря точности | **обращаются в ноль** |
-| бесконечность | от переполнения и деления на ноль | **только от деления на ноль** |
+| rounding | to nearest even | **by adding one** |
+| subnormal numbers | gradual loss of precision | **flushed to zero** |
+| infinity | from overflow and division by zero | **only from division by zero** |
 
-Подставить softfloat значило бы получить правдоподобные, но другие числа — и
-не заметить этого, пока кто-нибудь не сравнил бы вывод компилятора.
+Substituting softfloat would have meant getting plausible but different
+numbers, and not noticing until someone compared the compiler's output.
 
-Поэтому логика перенесена с эталонной реализации дословно, включая места,
-которые выглядят как описки. Они не описки: это свойства схемы.
+So the logic was carried over from the reference implementation verbatim,
+including places that look like typos. They are not typos: they are properties
+of the circuit.
 
-## Как устроено в системе команд
+## How it fits into the instruction set
 
-Кодов четыре (RISC5.v:90-93): 12 сложение, 13 вычитание, 14 умножение,
-15 деление. Две тонкости:
+There are four opcodes (RISC5.v:90-93): 12 addition, 13 subtraction,
+14 multiplication, 15 division. Two subtleties:
 
-**Вычитания нет.** В железе это сложение с перевёрнутым знаком второго
-слагаемого — `{FSB^C0[31], C0[30:0]}` подаётся в тот же сумматор (RISC5.v:64).
-Отдельного вычитателя в схеме не существует.
+**There is no subtraction.** In hardware it is addition with the sign of the
+second operand flipped: `{FSB^C0[31], C0[30:0]}` is fed into the same adder
+(RISC5.v:64). The circuit has no separate subtractor.
 
-**У сложения два признака меняют операцию целиком:** `u` превращает его в
-перевод целого в дробное, `v` — в округление вниз до целого. То есть под одним
-кодом живут четыре разные операции.
+**For addition, two flags change the operation entirely:** `u` turns it into
+integer-to-float conversion, and `v` into rounding down to an integer. So four
+different operations live under one opcode.
 
-## Что показала сверка
+## What the comparison showed
 
-Первый прогон дал 24 расхождения из 1056 — все в переводах. Причина оказалась
-**в проверке, а не в реализации**: эталон считает перевод со вторым операндом
-ноль, а программа сверки подавала одно и то же число дважды.
+The first run gave 24 mismatches out of 1056, all in conversions. The cause
+turned out to be **in the check, not in the implementation**: the reference
+computes a conversion with the second operand equal to zero, while the
+comparison program fed the same number twice.
 
-Поучительно вот что: арифметика сошлась с первого раза вся, а ошиблась
-проверка. Если бы я поверил ей и начал править реализацию, сломал бы
-работающее.
+The instructive part: all of the arithmetic matched on the first try, and it was
+the check that was wrong. Had I trusted it and started fixing the
+implementation, I would have broken working code.
 
-## Состояние цели
+## State of the target
 
-Написано и сверено: целочисленное ядро, память, переходы, порты, счётчик
-времени, диск по SPI, экран, клавиатура, мышь, **плавающая точка**.
+Written and verified: integer core, memory, branches, ports, timer, SPI disk,
+display, keyboard, mouse, **floating point**.
 
-Дыр не осталось.
+No gaps remain.
 
-## Как повторить
+## How to reproduce
 
-Первая сверка была сделана руками, и повторить её было нечем: ни эталонной
-таблицы, ни образа ПЗУ в репозитории не лежало. Теперь это одна цель:
+The first comparison was done by hand, and there was nothing to repeat it with:
+neither the reference table nor the ROM image was in the repository. Now it is
+a single target:
 
 ```
 make -C qemu build
 make -C qemu fp
 ```
 
-Она строит таблицу из того же `risc-fp.c` (`qemu/test/fp_ref.c`), собирает
-`fp.s` с операндами в слове 64, гоняет QEMU без экрана, снимает память с
-`0x10000` и сличает через `fp_diff.py`. Операнды живут в одном месте — `VALS`
-в `fp_diff.py`, — так что таблица и ПЗУ разойтись не могут.
+It builds the table from the same `risc-fp.c` (`qemu/test/fp_ref.c`), assembles
+`fp.s` with operands at word 64, runs QEMU headless, dumps memory from
+`0x10000`, and compares via `fp_diff.py`. The operands live in one place,
+`VALS` in `fp_diff.py`, so the table and the ROM cannot diverge.
 
-Что программа дошла до конца, видно не по времени, а по метке, которую `fp.s`
-кладёт сразу за результатами: человеческого монитора в нашей сборке нет.
+That the program has run to completion is detected not by time but by a marker
+that `fp.s` writes right after the results: our build has no human monitor.
 
-Проверка обязана уметь падать. Внутри цели та же сверка гоняется на
-испорченном выводе и на испорченном эталоне и должна оба раза покраснеть.
-Проверено и на самой цели: без прибавления единицы при округлении в
-умножении `fp.c` дал 4 расхождения из 1056.
+A check must be able to fail. Inside the target, the same comparison is run on
+corrupted output and on a corrupted reference, and it must turn red both times.
+This was also verified on the target itself: without adding one during rounding
+in multiplication, `fp.c` gave 4 mismatches out of 1056.
 
-Сверка идёт в CI, в задании `qemu` workflow `hardware`, сразу после сверки с
-моделью, снятой с RTL.
+The comparison runs in CI, in the `qemu` job of the `hardware` workflow, right
+after the comparison against the model extracted from RTL.

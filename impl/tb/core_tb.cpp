@@ -1,8 +1,8 @@
-// Стенд ядра RISC5. Даёт пошаговое исполнение с ДЕТЕКТОРОМ РЕТАЙРА.
+// RISC5 core testbench. Provides step-by-step execution with a RETIREMENT DETECTOR.
 //
-// Ключевой момент, из-за которого наивный стенд не работает: такт != инструкция.
-// LD/ST = 2 такта, FAD/FSB = 4, FML = 26, FDV = 27, MUL/DIV = 34.
-// Инструкция завершается на фронте, когда stall == 0 (RISC5.v:173 IR <= stall ? IR : codebus).
+// The key point that breaks a naive testbench: cycle != instruction.
+// LD/ST = 2 cycles, FAD/FSB = 4, FML = 26, FDV = 27, MUL/DIV = 34.
+// An instruction retires on the clock edge where stall == 0 (RISC5.v:173 IR <= stall ? IR : codebus).
 #include "VRISC5.h"
 #include "VRISC5___024root.h"
 #include "VRISC5_RISC5.h"
@@ -20,9 +20,9 @@ struct Core {
     Core() { top = new VRISC5; }
     ~Core() { top->final(); delete top; }
 
-    // внутренние сигналы через --public-flat-rw
+    // internal signals via --public-flat-rw
     bool     stall() const { return top->rootp->RISC5->stall; }
-    uint32_t pc()    const { return top->rootp->RISC5->PC; }       // словный, 22 бита
+    uint32_t pc()    const { return top->rootp->RISC5->PC; }       // word address, 22 bits
     uint32_t ir()    const { return top->rootp->RISC5->IR; }
     uint32_t H()     const { return top->rootp->RISC5->H; }
     bool N() const { return top->rootp->RISC5->N; }
@@ -35,23 +35,23 @@ struct Core {
         top->rst = 0; top->irq = 0; top->stallX = 0;
         top->inbus = 0; top->codebus = 0;
         for (int i = 0; i < 4; i++) { top->clk = 0; top->eval(); top->clk = 1; top->eval(); }
-        top->rst = 1;                       // rst активен НИЗКИМ: ~rst -> StartAdr
+        top->rst = 1;                       // rst is active LOW: ~rst -> StartAdr
         top->clk = 0; top->eval();
     }
 
     void tick() {
         top->clk = 0; top->eval();
-        uint32_t a = top->adr;              // адрес установился комбинационно
+        uint32_t a = top->adr;              // the address has settled combinationally
         uint32_t d = mem.read(a);
         top->inbus = d; top->codebus = d;
         top->eval();
-        if (top->wr) mem.write(a, top->outbus, top->ben);   // SRwe = ~wr | clk -> пишем на низком
+        if (top->wr) mem.write(a, top->outbus, top->ben);   // SRwe = ~wr | clk -> write on the low phase
         top->clk = 1; top->eval();
         cycles++;
     }
 
-    // Один шаг = такты до завершения текущей инструкции включительно.
-    // Возвращает число потраченных тактов.
+    // One step = the cycles up to and including retirement of the current instruction.
+    // Returns the number of cycles spent.
     int step() {
         int n = 0;
         for (;;) {
@@ -64,7 +64,7 @@ struct Core {
             top->clk = 1; top->eval();
             cycles++; n++;
             if (retiring) { insns++; return n; }
-            if (n > 200) { fprintf(stderr, "ЗАВИС: >200 тактов без ретайра, PC=%06X IR=%08X\n", pc()*4, ir()); exit(2); }
+            if (n > 200) { fprintf(stderr, "HUNG: >200 cycles without retirement, PC=%06X IR=%08X\n", pc()*4, ir()); exit(2); }
         }
     }
     void dump() const {
@@ -75,30 +75,30 @@ struct Core {
     }
 };
 
-// ── проверки ────────────────────────────────────────────────────────────────
+// ── checks ───────────────────────────────────────────────────────────────────
 static int fails = 0, checks = 0;
 static void chk(const char* what, uint32_t got, uint32_t want) {
     checks++;
-    if (got != want) { printf("  ❌ %-28s получено %08X, ожидалось %08X\n", what, got, want); fails++; }
+    if (got != want) { printf("  ❌ %-28s got %08X, expected %08X\n", what, got, want); fails++; }
 }
 static void chkc(const char* what, int got, int want) {
     checks++;
-    if (got != want) { printf("  ❌ %-28s получено %d, ожидалось %d\n", what, got, want); fails++; }
+    if (got != want) { printf("  ❌ %-28s got %d, expected %d\n", what, got, want); fails++; }
 }
 
 int main(int argc, char** argv) {
     Verilated::commandArgs(argc, argv);
     Core c;
 
-    // Программа грузится по адресу сброса: StartAdr = 22'h3FF800 (словный) = 0xFFE000 байтовый
+    // The program is loaded at the reset address: StartAdr = 22'h3FF800 (word) = 0xFFE000 (byte)
     const uint32_t ORG = 0x00FFE000;
-    // Кодирование см. tests/asm.py
+    // For the encoding see tests/asm.py
     const uint32_t prog[] = {
         0x40000000,  // MOV R0, 0
         0x41000064,  // MOV R1, 100
         0x5200FFFF,  // MOV R2, -1
         0x04380001,  // ADD R4, R3, R1     (R3=0) -> 100
-        0x061A0001,  // MUL R6, R1, R1     -> 10000, 34 такта
+        0x061A0001,  // MUL R6, R1, R1     -> 10000, 34 cycles
         0x4A110004,  // LSL R10, R1, 4     -> 1600
         0x4B120002,  // ASR R11, R1, 2     -> 25
         0xE7FFFFFF,  // HALT (B .)
@@ -106,8 +106,8 @@ int main(int argc, char** argv) {
     c.mem.load_words(ORG, prog, sizeof(prog)/sizeof(prog[0]));
     c.reset();
 
-    printf("=== T0: базовая работоспособность ядра ===\n");
-    chk("PC после сброса", c.pc() * 4, ORG);
+    printf("=== T0: basic core sanity ===\n");
+    chk("PC after reset", c.pc() * 4, ORG);
 
     struct { const char* name; int want_cycles; } exp[] = {
         {"MOV R0,0",    1}, {"MOV R1,100", 1}, {"MOV R2,-1", 1},
@@ -115,21 +115,21 @@ int main(int argc, char** argv) {
     };
     for (auto& e : exp) {
         int n = c.step();
-        printf("  %-14s %3d такт%s\n", e.name, n, n==1?"":"ов");
+        printf("  %-14s %3d cycle%s\n", e.name, n, n==1?"":"s");
         chkc(e.name, n, e.want_cycles);
     }
 
-    printf("\n--- состояние ---\n"); c.dump();
+    printf("\n--- state ---\n"); c.dump();
     chk("R1", c.reg(1), 100);
     chk("R2", c.reg(2), 0xFFFFFFFF);
     chk("R4 = R3+R1", c.reg(4), 100);
     chk("R6 = 100*100", c.reg(6), 10000);
-    chk("H после MUL", c.H(), 0);
+    chk("H after MUL", c.H(), 0);
     chk("R10 = 100<<4", c.reg(10), 1600);
     chk("R11 = 100>>2", c.reg(11), 25);
 
-    printf("\nтактов всего: %llu, инструкций: %llu\n",
+    printf("\ntotal cycles: %llu, instructions: %llu\n",
            (unsigned long long)c.cycles, (unsigned long long)c.insns);
-    printf("проверок: %d, провалов: %d  %s\n", checks, fails, fails ? "❌" : "✅");
+    printf("checks: %d, failures: %d  %s\n", checks, fails, fails ? "❌" : "✅");
     return fails ? 1 : 0;
 }

@@ -1,12 +1,12 @@
 /*
- * Параметры машины RISC5 для QEMU.
+ * RISC5 machine parameters for QEMU.
  *
- * Значения взяты из RISC5.v и RISC5Top.v Никлауса Вирта, а не из описаний:
- *   RISC5.v:13      reg [21:0] PC        счётчик команд — 22 бита В СЛОВАХ
- *   RISC5Top.v:39   wire [23:0] adr      адресная шина — 24 бита, байтовая
+ * The values come from Niklaus Wirth's RISC5.v and RISC5Top.v, not from descriptions:
+ *   RISC5.v:13      reg [21:0] PC        program counter, 22 bits, IN WORDS
+ *   RISC5Top.v:39   wire [23:0] adr      address bus, 24 bits, byte-addressed
  *
- * Отсюда адресное пространство ровно 16 МБ. Слово 32 бита, выравнивание по
- * слову: счётчик команд считает слова, поэтому байтовый адрес есть PC * 4.
+ * Hence the address space is exactly 16 MB. The word is 32 bits, word-aligned:
+ * the program counter counts words, so the byte address is PC * 4.
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
@@ -19,9 +19,9 @@
 #define TARGET_VIRT_ADDR_SPACE_BITS 24
 
 /*
- * Блока управления памятью у машины нет: физический адрес равен
- * виртуальному, привилегий и трансляции не существует. Это не упрощение
- * нашей модели, а свойство железа — см. лабораторную «Защиты памяти здесь
- * нет».
+ * The machine has no memory management unit: the physical address equals the
+ * virtual one, and there are no privileges or translation. This is not a
+ * simplification in our model but a property of the hardware; see the lab "There is
+ * no memory protection here".
  */
 #endif

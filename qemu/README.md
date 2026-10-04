@@ -1,60 +1,65 @@
-# RISC5 как цель QEMU
+[Русская версия](README.ru.md)
 
-Машина Вирта, которую можно будет запустить не контейнером и не симуляцией
-схемы, а обычной виртуалкой — с консолью, устройствами и всем, что даёт
-нормальный гипервизор.
+# RISC5 as a QEMU target
 
-## Это своя сборка, а не заявка наверх
+Wirth's machine, runnable not as a container and not as a circuit simulation,
+but as an ordinary virtual machine, with a console, devices and everything a
+proper hypervisor provides.
 
-QEMU и libvirt **отклоняют любой вклад, к которому причастна языковая модель**,
-и Claude назван в их правилах поимённо
+## This is our own build, not an upstream submission
+
+QEMU and libvirt **reject any contribution that a language model was involved
+in**, and Claude is named in their rules explicitly
 (`qemu/docs/devel/code-provenance.rst`, `libvirt/docs/hacking.rst`).
-Формулировка «known or suspected» решает дело: репозиторий публичный, помощь
-модели задокументирована, подозрение возникнет само.
+The wording "known or suspected" settles it: the repository is public, the
+model's help is documented, and the suspicion arises by itself.
 
-Поэтому цель строится **для собственной сборки**. GPL это прямо разрешает.
-Если однажды захочется отдать её в апстрим, писать придётся своими руками — а
-наша работа останется спецификацией и оракулом, и это самая трудная часть.
+So the target is built **for our own build**. The GPL explicitly allows this.
+If one day we want to send it upstream, it will have to be written by hand,
+and our work will remain the specification and the oracle, which is the
+hardest part.
 
-## Чем мы отличаемся от всех, кто пишет цели для QEMU
+## How we differ from everyone else who writes QEMU targets
 
-У них проблема — **чем доказать правильность**. Обычно сверяются с
-документацией и гоняют наборы тестов.
+Their problem is **how to prove correctness**. Usually they check against the
+documentation and run test suites.
 
-У нас есть само железо: настоящий Verilog Вирта под Verilator и уже построенный
-дифференциальный стенд, прогнавший 15 млн инструкций с нулём расхождений. Мы
-сверяем не с бумагой, а **с описанием схемы, команда за командой**.
+We have the hardware itself: Wirth's real Verilog under Verilator and an
+already built differential test bench that ran 15 million instructions with
+zero mismatches. We check not against paper but **against the circuit
+description, instruction by instruction**.
 
-## Собрать и запустить
+## Build and run
 
-Пошагово — [GUIDE.ru.md](GUIDE.ru.md) (English: [GUIDE.md](GUIDE.md)): сборка
-`make -C qemu build`, откуда взять ПЗУ и диск, команда запуска, работа под
-libvirt.
+Step by step: [GUIDE.md](GUIDE.md) (Russian: [GUIDE.ru.md](GUIDE.ru.md)): the
+`make -C qemu build` build, where to get the ROM and the disk, the run
+command, running under libvirt.
 
-## Из чего состоит
+## What it consists of
 
-| файл | что |
+| file | what |
 |---|---|
-| `target/risc5/insn.decode` | декодер, принят генератором QEMU |
-| `target/risc5/cpu-param.h` | адрес 24 бита, слово 32 |
-| `target/risc5/cpu-qom.h`, `cpu.h` | тип и состояние: регистры, флаги, H, прерывания |
-| `target/risc5/cpu.c` | регистрация, сброс, печать состояния |
-| `target/risc5/translate.c` | трансляция шестнадцати операций в TCG, CHK |
-| `target/risc5/helper.c`, `fp.c` | деление и плавающая точка |
-| `target/risc5/qmp-cmds.c` | список моделей процессора — без него libvirt падает при опросе |
-| `hw/risc5/` | плата: память, SPI-диск, PS/2, мышь, кадровый буфер |
-| `graft.sh` | вживляет всё это в дерево QEMU |
+| `target/risc5/insn.decode` | decoder, accepted by the QEMU generator |
+| `target/risc5/cpu-param.h` | 24-bit address, 32-bit word |
+| `target/risc5/cpu-qom.h`, `cpu.h` | type and state: registers, flags, H, interrupts |
+| `target/risc5/cpu.c` | registration, reset, state dump |
+| `target/risc5/translate.c` | translation of the sixteen operations into TCG, CHK |
+| `target/risc5/helper.c`, `fp.c` | division and floating point |
+| `target/risc5/qmp-cmds.c` | CPU model list; without it libvirt crashes when probing |
+| `hw/risc5/` | the board: memory, SPI disk, PS/2, mouse, framebuffer |
+| `graft.sh` | grafts all of this into the QEMU tree |
 
-Ничего из этого не набрано с документации: поля сняты с `RISC5.v`, кодировка
-взята из наших же таблиц, проверенных сплошным перебором пространства команд.
-Сверено с железом: команда за командой (находка 37), экран побайтово (38),
-клавиатура и мышь (39), плавающая точка (`make fp`).
+None of this was typed from documentation: the fields are taken from
+`RISC5.v`, the encoding comes from our own tables, verified by exhaustively
+enumerating the instruction space. Checked against the hardware: instruction
+by instruction (finding 37), the screen byte for byte (38), keyboard and mouse
+(39), floating point (`make fp`).
 
-## Проверка
+## Checks
 
 ```
 make -C qemu check
 ```
 
-Прогоняет `insn.decode` через генератор самого QEMU: если тот не примет файл
-или перестанет покрывать все биты, проверка покраснеет.
+Runs `insn.decode` through QEMU's own generator: if it rejects the file or
+stops covering all the bits, the check turns red.

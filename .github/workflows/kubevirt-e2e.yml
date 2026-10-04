@@ -1,22 +1,22 @@
-# Сквозная проверка launcher на настоящем KubeVirt — каждой версии из
-# kubevirt/versions.txt (находка 67).
+# End-to-end check of the launcher on real KubeVirt, for every version from
+# kubevirt/versions.txt (finding 67).
 #
-# launcher.yml доказывает, что образ собирается и несёт машины. Этого мало:
-# launcher разговаривает с virt-handler по версионированному протоколу, и
-# работает ли он с данной версией KubeVirt, видно только в кластере. Для 1.9.0
-# до сих пор проверялся лишь запуск Оберона внутри образа (test-in-image.sh).
+# launcher.yml proves that the image builds and carries the machines. That is not enough:
+# the launcher talks to virt-handler over a versioned protocol, and
+# whether it works with a given KubeVirt version is visible only in a cluster. For 1.9.0
+# only booting Oberon inside the image (test-in-image.sh) had been checked so far.
 #
-# Здесь на раннере — кластер kind, в нём KubeVirt той же версии с эмуляцией
-# (KVM на раннере нет), launcher подменяется проходом компонента платформы
-# kubevirt-paleo-launcher (его reconcile.sh), ставится чарт oberon-vm из
-# каталога, и экран машины снимается через `virtctl vnc` — тем путём, которым
-# идёт пользователь. Проверка — совпадение с эталоном: dark_pixels=18607.
+# Here the runner hosts a kind cluster with KubeVirt of the same version in emulation
+# (there is no KVM on the runner), the launcher is swapped by a pass of the
+# kubevirt-paleo-launcher platform component (its reconcile.sh), the oberon-vm chart is
+# installed from the catalog, and the machine's screen is captured through `virtctl vnc`, the path
+# a user takes. The check is a match with the reference: dark_pixels=18607.
 #
-# Шаги — kubevirt/e2e.sh: тот же сценарий гоняется и руками.
+# The steps are kubevirt/e2e.sh: the same scenario is also run by hand.
 #
-# И на каждой архитектуре узла из kubevirt/platforms.txt, на родном раннере:
-# на arm64 KubeVirt ведёт себя иначе (по умолчанию машина virt и UEFI), и
-# собранный образ ещё не значит работающую машину (находка 71).
+# And on every node architecture from kubevirt/platforms.txt, on a native runner:
+# on arm64 KubeVirt behaves differently (the virt machine type and UEFI by default), and
+# a built image does not yet mean a working machine (finding 71).
 name: kubevirt-e2e
 
 on:
@@ -56,8 +56,8 @@ jobs:
           versions=$(awk '!/^#/ && NF { print $1 }' kubevirt/versions.txt | jq -Rnc '[inputs]')
           platforms=$(awk '!/^#/ && NF { print $1, $2 }' kubevirt/platforms.txt \
             | jq -Rnc '[inputs | split(" ") | {arch: .[0], runner: .[1]}]')
-          [ "$versions" != "[]" ] || { echo "в kubevirt/versions.txt нет версий"; exit 1; }
-          [ "$platforms" != "[]" ] || { echo "в kubevirt/platforms.txt нет архитектур"; exit 1; }
+          [ "$versions" != "[]" ] || { echo "kubevirt/versions.txt lists no versions"; exit 1; }
+          [ "$platforms" != "[]" ] || { echo "kubevirt/platforms.txt lists no architectures"; exit 1; }
           list=$(jq -nc --argjson v "$versions" --argjson p "$platforms" '[$v[] as $k | $p[] | . + {kubevirt: $k}]')
           echo "list=$list" >> "$GITHUB_OUTPUT"
 
@@ -65,8 +65,8 @@ jobs:
     needs: versions
     name: e2e (${{ matrix.kubevirt }}, ${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
-    # Сборка с холодным кэшем — до полутора часов (как в launcher.yml), сама
-    # проверка — минуты.
+    # A build with a cold cache takes up to an hour and a half (as in launcher.yml), the
+    # check itself takes minutes.
     timeout-minutes: 150
     strategy:
       fail-fast: false
@@ -74,31 +74,31 @@ jobs:
         include: ${{ fromJSON(needs.versions.outputs.list) }}
     env:
       KUBEVIRT_VERSION: ${{ matrix.kubevirt }}
-      # paleo.local — не реестр: образ только локальный, в кластер его
-      # приносит `kind load`, скачать его неоткуда.
+      # paleo.local is not a registry: the image is local only, `kind load` brings it
+      # into the cluster, and there is nowhere to pull it from.
       LAUNCHER_IMAGE: paleo.local/virt-launcher:${{ matrix.kubevirt }}-paleo-e2e-${{ matrix.arch }}
     steps:
       - uses: actions/checkout@v4
 
-      # Образ launcher, его кэш сборки, образы KubeVirt и они же на узле kind
-      # не помещаются в свободное место раннера с запасом.
-      - name: Освободить место
+      # The launcher image, its build cache, the KubeVirt images and their copies on the kind node
+      # do not fit into the runner's free space with a margin.
+      - name: Free up disk space
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
           df -h /
 
-      # Сборщик buildx (docker-container) — ради кэша GitHub Actions; `docker
-      # build` внутри build.sh идёт через него по BUILDX_BUILDER.
+      # The buildx builder (docker-container) is there for the GitHub Actions cache; `docker
+      # build` inside build.sh goes through it via BUILDX_BUILDER.
       - id: buildx
         uses: docker/setup-buildx-action@v3
 
-      # ⚠ Без этого кэш type=gha молча не работает (см. launcher.yml).
+      # ⚠ Without this the type=gha cache silently does not work (see launcher.yml).
       - uses: crazy-max/ghaction-github-runtime@v4
 
-      # Кэш — тот же, что у launcher.yml и publish.yml (scope=launcher-<версия>-<арх.>),
-      # только на чтение: наполняют его они, второй писатель в ту же область
-      # лишь удлинил бы задачу.
-      - name: Сборка launcher
+      # The cache is the same as for launcher.yml and publish.yml (scope=launcher-<version>-<arch>),
+      # read only: they fill it, and a second writer to the same scope
+      # would only make the job longer.
+      - name: Build the launcher
         env:
           BUILDX_BUILDER: ${{ steps.buildx.outputs.name }}
         run: |
@@ -106,29 +106,29 @@ jobs:
             --load --provenance=false --platform linux/${{ matrix.arch }} \
             --cache-from type=gha,scope=launcher-${{ matrix.kubevirt }}-${{ matrix.arch }}
 
-      - name: kind и virtctl
+      - name: kind and virtctl
         run: kubevirt/e2e.sh tools
 
-      - name: Кластер kind
+      - name: kind cluster
         run: kubevirt/e2e.sh cluster
 
       - name: KubeVirt ${{ matrix.kubevirt }}
         run: kubevirt/e2e.sh kubevirt
 
-      - name: Подмена launcher проходом компонента платформы
+      - name: Swap the launcher via the platform component pass
         run: kubevirt/e2e.sh launcher
 
-      - name: Машина oberon-vm из каталога
+      - name: oberon-vm machine from the catalog
         run: kubevirt/e2e.sh machine
 
-      - name: Экран через virtctl vnc
+      - name: Screen through virtctl vnc
         run: kubevirt/e2e.sh screen
 
-      - name: Разбор отказа
+      - name: Failure diagnostics
         if: failure()
         run: kubevirt/e2e.sh diag
 
-      - name: Снимок экрана
+      - name: Screenshot
         if: always()
         uses: actions/upload-artifact@v4
         with:

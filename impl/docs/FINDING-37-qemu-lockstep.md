@@ -1,20 +1,22 @@
-# Находка 37. Цель QEMU совпала с эталоном на полутора миллионах команд
+[Русская версия](FINDING-37-qemu-lockstep.ru.md)
 
-`qemu-system-risc5` — наша собственная цель для QEMU — исполняет настоящий
-загрузчик из ПЗУ, читает систему Оберон с образа диска по SPI и идёт дальше её
-кодом. Пошаговая сверка с эталонным эмулятором: **1 500 000 команд, ноль
-расхождений**. Из них 1 100 503 — уже в оперативной памяти, то есть код самой
-системы, а не загрузчика.
+# Finding 37. The QEMU target matched the reference over one and a half million instructions
 
-Эталон здесь не произвольный: это тот же эмулятор, который у нас сверен с
-настоящим RTL на 15 млн инструкций (находка 14). Поэтому совпадение с ним
-означает совпадение с железом, а не самосогласованность.
+`qemu-system-risc5`, our own QEMU target, executes the real
+boot loader from ROM, reads the Oberon system from the disk image over SPI, and continues with its
+code. A step-by-step comparison with the reference emulator: **1 500 000 instructions, zero
+mismatches**. Of them, 1 100 503 are already in RAM, that is, the code of the system itself,
+not of the boot loader.
 
-## Баг, который сверка нашла
+The reference here is not arbitrary: it is the same emulator that we checked against
+the real RTL over 15 million instructions (finding 14). So agreement with it
+means agreement with the hardware, not self-consistency.
 
-До исправления загрузчик не доходил даже до первого чтения сектора. Расхождение
-обнаружилось на **224-й команде**, и причина оказалась в правиле, которого нет
-ни в одном описании системы команд:
+## The bug the comparison found
+
+Before the fix the boot loader did not even reach the first sector read. The mismatch
+appeared at **instruction 224**, and the cause turned out to be a rule that is not in
+any description of the instruction set:
 
 ```
 regwr = (~p & ~CHK) | LDR | (BR & v)        RISC5.v:170
@@ -22,40 +24,40 @@ nn    = regwr ? regmux[31] : N              RISC5.v:204
 zz    = regwr ? (regmux == 0) : Z           RISC5.v:205
 ```
 
-**Признаки N и Z ставит любая запись в регистр** — не только арифметика, но и
-загрузка из памяти, и переход со ссылкой возврата. У нас не ставила ни одна из
-двух. В загрузчике идёт `LD`, сразу за ним `BNE`, и переход уходил не туда.
+**The N and Z flags are set by any register write**: not only arithmetic, but also
+a load from memory and a branch with a return link. Ours set them for neither
+of the two. The boot loader has `LD` followed immediately by `BNE`, and the branch went the wrong way.
 
-Это ровно тот класс ошибки, ради которого стенд и строился: по документации
-такое не ловится, а по коду железа — за один прогон.
+This is exactly the class of bug the testbench was built for: it is not caught from the documentation,
+but from the hardware's code it is caught in a single run.
 
-## Две ловушки самой сверки
+## Two traps of the comparison itself
 
-Обе однажды дали ложный результат, и обе теперь описаны в `qemu/test/trace_diff.py`.
+Both once gave a false result, and both are now described in `qemu/test/trace_diff.py`.
 
-**Разные адреса ПЗУ.** У эталона оно по `0xFFFFF800`, у нас по `0xFFE000` —
-записано находкой 14. Сравнивать надо смещения от начала ПЗУ, иначе трассы
-расходятся с первой же команды.
+**Different ROM addresses.** The reference has it at `0xFFFFF800`, ours at `0xFFE000`,
+recorded in finding 14. Offsets from the start of the ROM have to be compared, otherwise the traces
+diverge from the very first instruction.
 
-**Блоки трансляции.** QEMU по умолчанию пишет состояние перед входом в *блок*, а
-блок бывает длиннее одной команды. В плотном на переходы коде ПЗУ блоки выходили
-по одной команде, и всё сходилось; в коде системы трасса начала «пропускать»
-команды, и я потратил заход на поиск несуществующего расхождения. Нужен режим
-`one-insn-per-tb=on`.
+**Translation blocks.** By default QEMU logs the state before entering a *block*, and
+a block can be longer than one instruction. In the branch-dense ROM code the blocks came out
+one instruction each, and everything matched; in the system's code the trace started "skipping"
+instructions, and I spent a round looking for a nonexistent mismatch. The
+`one-insn-per-tb=on` mode is needed.
 
-**Журнал.** При таком режиме он растёт очень быстро: прогон без ограничения съел
-12 ГБ за минуты и заклинил стенд. Обрезать надо на лету, прямо в конвейере.
+**The log.** In that mode it grows very fast: a run without a limit ate
+12 GB in minutes and jammed the machine. It has to be truncated on the fly, right in the pipeline.
 
-## Где это считалось
+## Where this was computed
 
-Собственный стенд: виртуальная машина в Cozystack, 8 ядер, 16 Ги. Сборка идёт
-нативно, скрипт вживления цели в дерево QEMU отработал с первого раза.
+Our own test machine: a virtual machine in Cozystack, 8 cores, 16 Gi. The build runs
+natively; the script that grafts the target into the QEMU tree worked the first time.
 
-## Что это значит
+## What this means
 
-Целочисленное ядро, память, переходы, порты, счётчик времени и диск по SPI
-воспроизведены верно — на полутора миллионах команд настоящей системы, а не на
-тестах, которые мы придумали сами.
+The integer core, memory, branches, ports, the timer and the SPI disk
+are reproduced correctly, over one and a half million instructions of the real system, not on
+tests we made up ourselves.
 
-Не написано: кадровый буфер (система пока рисует в никуда), клавиатура, мышь,
-плавающая точка. После кадрового буфера Оберон должен показать экран уже в QEMU.
+Not yet written: the framebuffer (the system currently draws into nowhere), keyboard, mouse,
+floating point. Once there is a framebuffer, Oberon should show its screen in QEMU too.

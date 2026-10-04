@@ -1,30 +1,30 @@
-; ПОРОЖДЁННЫЙ ФАЙЛ — правится tools/gen_bounds_bench.py, не руками.
+; GENERATED FILE: edit tools/gen_bounds_bench.py, not by hand.
 ;
-; Индексация массива в цикле, 1000000 итераций, предел 64.
-; Конфигурация D: дескриптор: проверка и адрес в одной IDX
+; Array indexing in a loop, 1000000 iterations, limit 64.
+; Configuration D: descriptor: check and address in a single IDX
         B    start
-handler:                       ; ловушка: сюда не должны попасть ни разу
+handler:                       ; trap: must never get here
         MOV  R7, 0x0BAD
         ST   R7, R0, 260
 spin:   B    spin
 start:
         MOV  R0, 0
-        MOV  R1, 0             ; индекс
-        MOV  R2, 0x1000        ; база массива
-        MHI  R11, 0x0400      ; длина в старших 12 битах
-        IOR  R2, R2, R11       ; R2 — дескриптор
-        MOV  R4, 0             ; накопитель
-        MOV  R5, 0             ; счётчик итераций
+        MOV  R1, 0             ; index
+        MOV  R2, 0x1000        ; array base
+        MHI  R11, 0x0400      ; length in the upper 12 bits
+        IOR  R2, R2, R11       ; R2 is the descriptor
+        MOV  R4, 0             ; accumulator
+        MOV  R5, 0             ; iteration counter
         MHI  R5, 0x000F
         IOR  R5, R5, 0x4240
-        MOV  R12, 0            ; MT — адрес обработчика ловушек
+        MOV  R12, 0            ; MT: trap handler address
         MHI  R12, 0x00FF
         IOR  R12, R12, 0xE004
 loop:
-        IDX  R10, R2, R1, 2    ; проверка + адрес элемента одной командой
+        IDX  R10, R2, R1, 2    ; check + element address in one instruction
         LD   R3, R10, 0
-        ADD  R4, R4, R3        ; полезная работа
-        ADD  R1, R1, 1         ; следующий индекс, с заворотом
+        ADD  R4, R4, R3        ; useful work
+        ADD  R1, R1, 1         ; next index, with wraparound
         AND  R1, R1, 63
         SUB  R5, R5, 1
         BNE  loop

@@ -1,80 +1,83 @@
-# Трек 2. Языки и компиляторы
+[Русская версия](02-languages.ru.md)
 
-Расклад благополучнее, чем с ОС: язык описывается отчётом, а отчёты переживают железо.
-«Никогда не реализован» для языка почти всегда означает «можно реализовать сегодня».
+# Track 2. Languages and compilers
 
----
-
-## Клад: спецификация есть, реализации не было или её бросили
-
-- **Три проигравших конкурса Ada** (1977–79). Green победил → Ada. **Red** (Intermetrics), **Blue** (SofTech), **Yellow** (SRI) остались опубликованными спецификациями и никогда не компилировались. Лучший сюжет трека: три полностью описанных языка того же класса, которых никто не видел работающими.
-- **CPL** — слишком амбициозен для машин своего времени, полностью не реализован. Из урезанной версии → BCPL → B → C. Вся линия C — побочный продукт неудачи.
-- **Plankalkül** (Цузе, 1942–45) — первый высокоуровневый язык, написан в стол, полноценная реализация появилась только в наши дни.
-- **Fortress** (Sun, Гай Стил, закрыт 2012) — математическая нотация как синтаксис, единицы измерения в системе типов, параллелизм по умолчанию. Спецификация 1.0 опубликована целиком. Самый «современный» заброшенный язык.
-- **Id и Val** — для машин потоков данных (Monsoon, Tagged-Token, MIT). Реализаций вне того железа почти нет → смыкается с треком эмуляторов.
-- **Sisal** — функциональный для суперкомпьютеров, на ряде задач обгонял Fortran.
-- **Napier88 и PS-algol** — ортогональная персистентность на уровне языка: структура данных просто существует после завершения программы. Пара к KeyKOS и Grasshopper.
-- **Argus** (Лисков) — guardian как единица распределения, атомарные действия в языке. Durable execution и саги описаны в восьмидесятых.
-- **Emerald** — объект мигрирует по сети как свойство языка. Пара к Magic Cap и Amoeba.
-- **Hermes** (IBM, наследник NIL) — безопасный распределённый язык с типизированными процессами.
+The situation is better than with operating systems: a language is described by a report,
+and reports outlive hardware. "Never implemented" for a language almost always means "can be
+implemented today".
 
 ---
 
-## Реализованы, но забыты — жанр обзора с современной параллелью
+## The treasure: a specification exists, an implementation never did or was abandoned
 
-- **Self** — прототипы вместо классов, родина полиморфных инлайн-кэшей; на этой технике стоит V8.
-- **Oz / Mozart** — dataflow-переменные, ограничения, многопарадигменность. Учебник Van Roy & Haridi — лучший текст по моделям вычислений.
-- **BETA** — единый конструкт «паттерн» вместо классов, методов и функций. Скандинавская линия от Simula.
-- **Simula 67** — откуда всё ООП; компилятор доступен (GNU Cim).
-- **Icon** — целенаправленное вычисление и генераторы как базовая семантика. Массово не повторено нигде.
-- **SNOBOL4** — сопоставление с образцом с откатами до регекспов.
-- **Concurrent Clean** — типы уникальности = линейные типы и заимствование за 15 лет до Rust.
-- **Mesa и Cedar** (PARC) — мониторы Mesa как каноническая модель синхронизации; первый системный язык со сборкой мусора в продакшене.
-- **Modula-3** — исключения, потоки, модули, безопасность в одном продуманном целом. Повлиял на Java и C#, сам исчез.
-- **Newsqueak и Alef** (Пайк, Уинтерботтом) — каналы и goroutine до Go. Newsqueak крошечный, интерпретатор пишется за вечер.
-- **Prograph** — визуальный dataflow, коммерческий продукт. Все нынешние узловые редакторы переоткрывают его грабли.
-- **K и A+** — APL-линия, выжившая только в финансах.
-- **Lucid** — интенсиональное программирование, значение зависит от контекста-измерения.
-- **Pict** (пи-исчисление, Пирс и Тёрнер) — умер. Join-исчисление → JoCaml, Cω; идеи просочились в мейнстрим без атрибуции.
+- **The three losing Ada contestants** (1977–79). Green won → Ada. **Red** (Intermetrics), **Blue** (SofTech) and **Yellow** (SRI) remained published specifications and were never compiled. The best story of the track: three fully described languages of the same class that nobody has ever seen running.
+- **CPL**: too ambitious for the machines of its time, never fully implemented. From a cut-down version → BCPL → B → C. The whole C lineage is a by-product of a failure.
+- **Plankalkül** (Zuse, 1942–45): the first high-level language, written for the drawer; a full implementation appeared only in our time.
+- **Fortress** (Sun, Guy Steele, shut down in 2012): mathematical notation as syntax, units of measure in the type system, parallelism by default. The 1.0 specification was published in full. The most "modern" abandoned language.
+- **Id and Val**: for dataflow machines (Monsoon, Tagged-Token, MIT). There are almost no implementations outside that hardware → connects to the emulator track.
+- **Sisal**: a functional language for supercomputers that outran Fortran on a number of problems.
+- **Napier88 and PS-algol**: orthogonal persistence at the language level: a data structure simply exists after the program ends. A pair for KeyKOS and Grasshopper.
+- **Argus** (Liskov): the guardian as the unit of distribution, atomic actions in the language. Durable execution and sagas, described in the eighties.
+- **Emerald**: an object migrates across the network as a property of the language. A pair for Magic Cap and Amoeba.
+- **Hermes** (IBM, successor of NIL): a safe distributed language with typed processes.
 
 ---
 
-## Отечественная линия
+## Implemented but forgotten: the overview genre with a modern parallel
 
-- **Рефал** (Турчин) — и вместе с ним **суперкомпиляция**, техника оптимизации сильнее всего, что есть в промышленных компиляторах. Живые реализации Рефала-5 есть и поддерживаются. Суперкомпилятор SCP4 существует.
-- **Аналитик** (МИР-2, 1969, Киев) — символьное дифференцирование и преобразование формул **аппаратно**. Реализаций нет, писать с нуля.
-- **Рапира и Робик** (линия Ершова) — школьные языки с русскоязычным синтаксисом и продуманной дидактикой. Интерпретаторов практически не осталось.
-- **Эль-76** — смыкается с треком ОС: язык, который был системой команд машины.
+- **Self**: prototypes instead of classes, the birthplace of polymorphic inline caches; V8 is built on this technique.
+- **Oz / Mozart**: dataflow variables, constraints, multiple paradigms. The Van Roy & Haridi textbook is the best text on models of computation.
+- **BETA**: a single "pattern" construct instead of classes, methods and functions. The Scandinavian line from Simula.
+- **Simula 67**: where all of OOP comes from; a compiler is available (GNU Cim).
+- **Icon**: goal-directed evaluation and generators as the base semantics. Not repeated at scale anywhere.
+- **SNOBOL4**: pattern matching with backtracking, before regular expressions.
+- **Concurrent Clean**: uniqueness types = linear types and borrowing 15 years before Rust.
+- **Mesa and Cedar** (PARC): Mesa monitors as the canonical synchronization model; the first systems language with garbage collection in production.
+- **Modula-3**: exceptions, threads, modules and safety in one well-thought-out whole. Influenced Java and C#, then vanished itself.
+- **Newsqueak and Alef** (Pike, Winterbottom): channels and goroutines before Go. Newsqueak is tiny; an interpreter can be written in an evening.
+- **Prograph**: visual dataflow, a commercial product. Every node editor today rediscovers its pitfalls.
+- **K and A+**: the APL line that survived only in finance.
+- **Lucid**: intensional programming, a value depends on a context dimension.
+- **Pict** (pi-calculus, Pierce and Turner): dead. The join calculus → JoCaml, Cω; the ideas seeped into the mainstream without attribution.
 
 ---
 
-## Эзотерика и шутки
+## The domestic (Soviet) line
 
-- **INTERCAL** — оператор COME FROM, обязательное PLEASE (не слишком мало и не слишком много).
-- **Malbolge** — спроектирован так, чтобы писать было невозможно; первую программу нашли перебором. Компилятор для него до сих пор подвиг.
-- **Befunge** — двумерный поток управления.
+- **Refal** (Turchin), and with it **supercompilation**, an optimization technique more powerful than anything in industrial compilers. Live implementations of Refal-5 exist and are maintained. The SCP4 supercompiler exists.
+- **Analitik** (MIR-2, 1969, Kyiv): symbolic differentiation and formula transformation **in hardware**. No implementations; must be written from scratch.
+- **Rapira and Robik** (Ershov's line): school languages with Russian-language syntax and well-designed didactics. Practically no interpreters are left.
+- **El-76**: connects to the OS track: a language that was the machine's instruction set.
+
+---
+
+## Esoterica and jokes
+
+- **INTERCAL**: the COME FROM statement, the mandatory PLEASE (neither too rarely nor too often).
+- **Malbolge**: designed so that writing in it is impossible; the first program was found by brute-force search. A compiler for it is still a feat.
+- **Befunge**: two-dimensional control flow.
 - **Unlambda, Thue, Whitespace, Piet, Shakespeare, Chef, LOLCODE**.
-- **Subleq** и машины с единственной инструкцией — связка с треком эмуляторов; финальный номер: написать на одной инструкции что-нибудь неприлично большое.
+- **Subleq** and one-instruction machines: a link to the emulator track; the finale: write something indecently large using a single instruction.
 
 ---
 
-## Подтрек: компиляторные техники
+## Sub-track: compiler techniques
 
-Самые практичные выпуски — всё воспроизводимо на ноутбуке.
+The most practical episodes: everything is reproducible on a laptop.
 
-- **Проекции Футамуры** (1971) — получить компилятор из интерпретатора автоматической специализацией. Связь с JIT прямая, знает почти никто. Выпуск с работающей демонстрацией бьёт наповал.
-- **Warren Abstract Machine** — абстрактная машина Пролога, разобрана Айт-Каси до инструкции в отдельной книге. Классический сильный проект.
-- **Абстрактные машины редукции**: SECD, машина Кривина, G-machine, STG. Реализуются по статьям, вместе дают картину «как исполняются функциональные языки».
-- **Суперкомпиляция** — см. Рефал.
-- **Reflections on Trusting Trust** — воспроизвести атаку Томпсона на своём компиляторе, затем защиту через diverse double-compiling и bootstrappable builds. Не ретро, а действующая повестка безопасности цепочки поставок → разойдётся за пределами ретро-аудитории.
-- **Однопроходные компиляторы Burroughs**, компилировавшие быстрее, чем считыватель подавал перфокарты.
+- **Futamura projections** (1971): get a compiler from an interpreter by automatic specialization. The connection to JIT is direct, and almost nobody knows it. An episode with a working demonstration is a knockout.
+- **Warren Abstract Machine**: Prolog's abstract machine, dissected by Aït-Kaci down to the instruction in a separate book. A classic strong project.
+- **Abstract reduction machines**: SECD, the Krivine machine, the G-machine, STG. Implementable from the papers; together they give a picture of "how functional languages execute".
+- **Supercompilation**: see Refal.
+- **Reflections on Trusting Trust**: reproduce Thompson's attack on our own compiler, then the defense through diverse double-compiling and bootstrappable builds. Not retro but a live supply chain security agenda → will spread beyond the retro audience.
+- **Burroughs one-pass compilers**, which compiled faster than the card reader could feed the punched cards.
 
 ---
 
-## Связки с другими треками
+## Links to other tracks
 
-- Napier88 ↔ Grasshopper/KeyKOS ↔ тезис о ненужности reconcile-цикла (трек 4)
-- Argus, Emerald ↔ durable execution и миграция задач (трек 4)
-- occam ↔ Newsqueak ↔ Alef ↔ Helios ↔ транспьютер (трек 3)
-- Taos VP-код ↔ TIMI (AS/400) ↔ WASM — и язык, и ответ на гетерогенность
-- Рефал + суперкомпиляция ↔ контроллеры как правила переписывания (трек 4)
+- Napier88 ↔ Grasshopper/KeyKOS ↔ the thesis that the reconcile loop is unnecessary (track 4)
+- Argus, Emerald ↔ durable execution and task migration (track 4)
+- occam ↔ Newsqueak ↔ Alef ↔ Helios ↔ the transputer (track 3)
+- Taos VP code ↔ TIMI (AS/400) ↔ WASM: both a language and an answer to heterogeneity
+- Refal + supercompilation ↔ controllers as rewriting rules (track 4)

@@ -1,8 +1,10 @@
-# Находка 11: UMUL в RISC5 — не беззнаковое умножение, а смешанное
+[Русская версия](FINDING-11-umul-is-mixed.ru.md)
 
-Тест: `tests/t1_umul.s`, 6/6 на настоящем RTL.
+# Finding 11: UMUL in RISC5 is not an unsigned multiplication but a mixed one
 
-## Что в коде
+Test: `tests/t1_umul.s`, 6/6 on the real RTL.
+
+## What the code says
 
 `Multiplier.v`:
 ```verilog
@@ -11,45 +13,45 @@ assign w1 = (S == 32) & u ? {P[63], P[63:32]} - {w0[31], w0}
                           : {P[63], P[63:32]} + {w0[31], w0};
 ```
 
-Слагаемое `{w0[31], w0}` расширяется **знаком всегда**, независимо от `u`.
-Флаг `u` управляет только последним шагом (`S == 32`), то есть обработкой знака `x`.
+The addend `{w0[31], w0}` is **always sign-extended**, regardless of `u`.
+The flag `u` controls only the last step (`S == 32`), that is, the handling of the sign of `x`.
 
-Подключение (`RISC5.v:53`): `.u(~u)` — инвертирован, поэтому
-- инструкция `MUL` (u=0) → `mulUnit.u = 1` → на последнем шаге вычитание → знаковое умножение
-- инструкция `UMUL` (u=1) → `mulUnit.u = 0` → на последнем шаге сложение → `x` беззнаково
+Wiring (`RISC5.v:53`): `.u(~u)` is inverted, so
+- the `MUL` instruction (u=0) → `mulUnit.u = 1` → subtraction on the last step → signed multiplication
+- the `UMUL` instruction (u=1) → `mulUnit.u = 0` → addition on the last step → `x` unsigned
 
-**Но `y` остаётся знаковым в обоих случаях.**
+**But `y` remains signed in both cases.**
 
-## Измерение
+## Measurement
 
-В формате F0 `UMUL a, b, c` даёт `x = R[b]`, `y = R[c]` — знаковым трактуется **второй** операнд.
+In format F0, `UMUL a, b, c` gives `x = R[b]`, `y = R[c]`: the **second** operand is treated as signed.
 
-| Операция | Ожидалось (истинно беззнаково) | Измерено | Совпадает с моделью |
+| Operation | Expected (truly unsigned) | Measured | Matches the model |
 |---|---|---|---|
-| `UMUL R, 2, 0xFFFFFFFF` | H = 1 (2 × 4294967295) | **H = 0xFFFFFFFF** | 2 × (−1) = −2 ✅ смешанная |
-| `UMUL R, 0xFFFFFFFF, 2` | H = 1 | H = 1 | обе модели совпадают |
-| `MUL R, 0xFFFFFFFF, 2` | H = 0xFFFFFFFF (−2) | H = 0xFFFFFFFF | ✅ знаковое |
+| `UMUL R, 2, 0xFFFFFFFF` | H = 1 (2 × 4294967295) | **H = 0xFFFFFFFF** | 2 × (−1) = −2 ✅ mixed |
+| `UMUL R, 0xFFFFFFFF, 2` | H = 1 | H = 1 | both models agree |
+| `MUL R, 0xFFFFFFFF, 2` | H = 0xFFFFFFFF (−2) | H = 0xFFFFFFFF | ✅ signed |
 
-Первая строка различает модели однозначно: **истинно беззнаковое умножение дало бы H = 1,
-измерено H = 0xFFFFFFFF.** То есть `UMUL` вычисляет
-**x (беззнаково) × y (знаково)**.
+The first row distinguishes the models unambiguously: **a truly unsigned multiplication would give H = 1;
+H = 0xFFFFFFFF was measured.** That is, `UMUL` computes
+**x (unsigned) × y (signed)**.
 
-Дополнительно: `UMUL 0xFFFFFFFF, 0xFFFFFFFF` даёт H = 0xFFFFFFFF, а истинно беззнаковое
-умножение дало бы 0xFFFFFFFE. Эта разница и вскрыла находку.
+In addition: `UMUL 0xFFFFFFFF, 0xFFFFFFFF` gives H = 0xFFFFFFFF, whereas a truly unsigned
+multiplication would give 0xFFFFFFFE. This difference is what exposed the finding.
 
-## Почему это не поймали раньше
+## Why this was not caught earlier
 
-Компилятор Оберона эмитит `UMUL` крайне ограниченно, и в тех местах второй операнд
-всегда положителен — там смешанная и беззнаковая семантика совпадают. Ошибка проявляется
-только когда второй операнд имеет установленный старший бит.
+The Oberon compiler emits `UMUL` very sparingly, and in those places the second operand
+is always positive, where mixed and unsigned semantics coincide. The error shows up
+only when the second operand has its top bit set.
 
-## Практическое следствие
+## Practical consequence
 
-Название вводит в заблуждение. Если писать на Обероне код, полагающийся на беззнаковое
-умножение больших величин, нужно **следить за порядком операндов**: беззнаковым
-трактуется только тот, что в поле `b`.
+The name is misleading. If you write Oberon code that relies on unsigned
+multiplication of large values, you have to **watch the order of operands**: only the one in field `b`
+is treated as unsigned.
 
-Для дифференциального стенда это означает, что эталонная модель обязана воспроизводить
-именно эту семантику, а не «правильную» беззнаковую. В `pdewacht/oberon-risc-emu`
-реализация через `idiv`/64-битное умножение — **это отдельная точка для сверки**,
-и расхождение здесь было бы принято за баг RTL, а не за особенность.
+For the differential testbench this means that the reference model must reproduce
+exactly this semantics, not the "correct" unsigned one. In `pdewacht/oberon-risc-emu`
+the implementation via `idiv`/64-bit multiplication is **a separate point to cross-check**,
+and a discrepancy here would be taken for an RTL bug rather than a quirk.

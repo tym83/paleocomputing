@@ -1,121 +1,123 @@
-# Выпуск про Burroughs B5500: «переполнения буфера не существует»
+[Русская версия](10-episode-burroughs.ru.md)
 
-Статус: второй/третий выпуск. Стоит вечер (минимальная версия). Эмулятор и ALGOL-компилятор
-готовы — см. `07-browser-embed.md`.
+# The Burroughs B5500 episode: "buffer overflow does not exist"
 
-## Что это за машина (контекст для статьи)
+Status: second/third episode. Costs an evening (minimal version). The emulator and the ALGOL compiler
+are ready; see `07-browser-embed.md`.
 
-Начало шестидесятых. IBM доминирует, вокруг пять компаний поменьше (BUNCH), Burroughs среди
-них — вообще-то производитель арифмометров, конкурировать с IBM ни деньгами, ни каналами
-продаж не может.
+## What this machine is (context for the article)
 
-И вместо «как IBM, но дешевле» делает ставку, невозможную сегодня для коммерческой компании:
-**спроектировать машину не под железо, а под язык программирования.** Причём под ALGOL 60 —
-академический европейский язык, который в американском бизнесе не использует почти никто.
+The early sixties. IBM dominates, with five smaller companies around it (the BUNCH); Burroughs is among
+them, and is actually a maker of adding machines that cannot compete with IBM in money or in sales
+channels.
 
-Архитектор — **Роберт Бартон**. Принцип: машину надо проектировать исходя из того, как люди
-хотят выражать задачи, а не из того, что удобно собрать из вентилей. Бартон позже сильно
-повлиял на Алана Кея; линия рассуждений, из которой вырос Smalltalk, частично отсюда.
+And instead of "like IBM, but cheaper" it makes a bet impossible today for a commercial company:
+**design the machine not around the hardware but around a programming language.** And around ALGOL 60 at that,
+an academic European language that almost nobody in American business uses.
 
-Результат — **B5000** (объявлен 1961) и ускоренный наследник **B5500**.
+The architect is **Robert Barton**. The principle: a machine should be designed from how people
+want to express problems, not from what is convenient to build out of gates. Barton later strongly
+influenced Alan Kay; the line of reasoning from which Smalltalk grew partly comes from here.
 
-### Что было дикого
+The result is the **B5000** (announced in 1961) and its faster successor, the **B5500**.
 
-- **Ассемблера нет.** Не «не рекомендуется» — его не поставляли. Система команд такая, что писать руками бессмысленно.
-- **ОС написана на языке высокого уровня.** MCP (Master Control Program) написана на ESPOL, диалекте ALGOL. Unix на C появится через десять с лишним лет и будет считаться прорывом. Злодей из «Трона» назван в честь этой традиции.
-- **Машина стековая.** Регистров общего назначения, видимых программисту, нет. Отсюда бесплатно блочная структура и рекурсия — тогда как машины под FORTRAN рекурсию не умели вовсе.
-- **Массив доступен только через дескриптор** с базой и длиной. Индексация — аппаратная операция со сверкой. Проверка границ не опция компилятора, а единственный способ обратиться к элементу.
-- **Память типизирована.** Служебный признак в слове отличает данные от управляющего слова. В старших машинах линии признак расширили до трёхразрядного тега.
-- **Виртуальная память** через признак присутствия в дескрипторе.
-- **Мультипроцессорность** изначально, MCP работала на двух процессорах.
-- **Однопроходные компиляторы**, порождавшие стековый код почти напрямую из выражения, без распределения регистров.
+### What was wild about it
 
-Итого: в 1961 году существовала машина, где невозможно повредить чужую память, нельзя
-написать ни строчки на ассемблере, работают виртуальная память и мультипрограммирование,
-а ОС написана на человеческом языке.
+- **There is no assembler.** Not "not recommended": it was not shipped. The instruction set is such that writing by hand is pointless.
+- **The OS is written in a high-level language.** The MCP (Master Control Program) is written in ESPOL, a dialect of ALGOL. Unix in C would appear more than ten years later and be considered a breakthrough. The villain of "Tron" is named after this tradition.
+- **The machine is stack-based.** There are no general-purpose registers visible to the programmer. Hence block structure and recursion come for free, while machines built for FORTRAN could not do recursion at all.
+- **An array is accessible only through a descriptor** with a base and a length. Indexing is a hardware operation with a check. Bounds checking is not a compiler option but the only way to access an element.
+- **Memory is typed.** A flag bit in the word distinguishes data from a control word. In the later machines of the line the flag was extended to a three-bit tag.
+- **Virtual memory** through a presence bit in the descriptor.
+- **Multiprocessing** from the start; the MCP ran on two processors.
+- **One-pass compilers** that generated stack code almost directly from the expression, without register allocation.
 
-### Почему проиграла
+In sum: in 1961 there was a machine where it was impossible to corrupt someone else's memory, impossible to
+write a single line of assembly, with working virtual memory and multiprogramming,
+and with the OS written in a human language.
 
-1964 — **System/360**: семейство с совместимостью снизу вверх, и IBM продаёт его так, как
-Burroughs не умеет. **Стековые машины проиграли регистровым**: вершина стека — узкое место,
-конвейеризация лучше ложится на регистры. **Проверки стоили тактов**, а такты были дороги.
-Плюс: быть непохожим — значит не иметь чужого софта.
+### Why it lost
 
-Ни одна из причин не про качество архитектуры.
+1964: the **System/360**, a family with upward compatibility, and IBM sells it the way
+Burroughs cannot. **Stack machines lost to register machines**: the top of the stack is a bottleneck,
+and pipelining fits registers better. **Checks cost cycles**, and cycles were expensive.
+Plus: being different means not having anyone else's software.
 
-### Почему не умерла
+None of the reasons is about the quality of the architecture.
 
-Линия B5000 → B5500 → B6500 → B6700 → B7700 не прерывалась и превратилась в **Unisys
-ClearPath MCP**, который **продают до сих пор**; на нём работают банки. Возможно, самая
-долгоживущая архитектура в истории — старше System/360.
+### Why it did not die
 
-Финальная ирония: сегодня она исполняется **эмулятором поверх x86**, то есть поверх
-архитектуры, которая её победила. Машина пережила собственный кремний.
+The line B5000 → B5500 → B6500 → B6700 → B7700 never broke and turned into **Unisys
+ClearPath MCP**, which **is still sold**; banks run on it. Possibly the longest-lived
+architecture in history, older than the System/360.
 
-## Тезис выпуска
+The final irony: today it runs **on an emulator on top of x86**, that is, on top of the
+architecture that defeated it. The machine has outlived its own silicon.
 
-Слабая версия («массив с проверкой границ») легко обесценивается: ALGOL 60 и так требует
-проверки индексов, многие реализации делали это программно, скептик скажет, что железо ни при чём.
+## The thesis of the episode
 
-**Сильная версия: на B5500 указатель невозможно изготовить в принципе.**
+The weak version ("an array with bounds checking") is easily dismissed: ALGOL 60 requires
+index checks anyway, many implementations did it in software, and a skeptic will say the hardware has nothing to do with it.
 
-Служебный признак **не записывается из обычного состояния машины**. Нельзя объявить
-переменную, положить в неё число, похожее на дескриптор, и воспользоваться им как
-указателем. Арифметика указателей не запрещена правилом — она **невыразима**.
+**The strong version: on the B5500 a pointer cannot be manufactured, in principle.**
 
-Точная параллель: то, что CHERI вводит как теги capability в памяти (неподделываемые,
-сбрасываемые при произвольной записи) — это тот же служебный признак, шестьдесят с лишним
-лет спустя.
+The flag bit **cannot be written from the ordinary state of the machine**. You cannot declare
+a variable, put a number that looks like a descriptor into it, and use it as a
+pointer. Pointer arithmetic is not forbidden by a rule; it is **inexpressible**.
 
-**Аккуратная формулировка, которую не собьют:** B5500 не был «безопасным» в современном
-понимании — у него была своя модель доверия, привилегированный режим, и системный язык
-умел больше, чем прикладной ALGOL. Защищаемое утверждение: *на этой машине не существовало
-режима, в котором проверка выключена, и не существовало способа выразить необработанный
-указатель из прикладной программы.* Этого достаточно, и это неопровержимо.
+The exact parallel: what CHERI introduces as capability tags in memory (unforgeable,
+cleared on an arbitrary write) is the same flag bit, more than sixty
+years later.
 
-## Состав демо
+**A careful formulation that cannot be knocked down:** the B5500 was not "secure" in the modern
+sense; it had its own trust model, a privileged mode, and the systems language
+could do more than application ALGOL. The defensible claim: *on this machine there was no
+mode in which the check was turned off, and there was no way to express a raw
+pointer from an application program.* That is enough, and it is irrefutable.
 
-**Часть 1.** Выход за границу массива → машина останавливает программу аппаратно.
-**Часть 2 (важнее).** Попытка подделать дескриптор → не проходит вообще.
-Первая впечатляет, вторая доказывает.
+## Contents of the demo
 
-**Контрольный эксперимент на x86 — не сегфолт.** Падение читатель спишет на «защита
-сработала». Нужна **молчаливая порча**: запись за границу попадает в соседнюю переменную,
-расчёт продолжается, программа печатает **правдоподобный неверный ответ**. Без санитайзера,
-со штатной оптимизацией — как собирают в продакшене. Неверный ответ убеждает несравнимо
-лучше падения.
+**Part 1.** Going past the end of an array → the machine stops the program in hardware.
+**Part 2 (more important).** An attempt to forge a descriptor → does not get through at all.
+The first impresses, the second proves.
 
-**Третья машина: CHERI** через эмулятор с CheriBSD — та же программа на C, аппаратный отказ
-по границам capability. Дороже (день-два на окружение), но замыкает тезис: 1961 → сегодня →
-снова 1961 на новом витке. Минимальная версия живёт и на двух машинах.
+**The control experiment on x86 is not a segfault.** The reader will write off a crash as "the protection
+worked". What is needed is **silent corruption**: a write past the bound lands in the neighboring variable,
+the computation continues, the program prints a **plausible wrong answer**. No sanitizer,
+standard optimization, the way production builds are made. A wrong answer is incomparably more
+convincing than a crash.
 
-## Структура текста
+**A third machine: CHERI** via an emulator with CheriBSD: the same C program, a hardware fault
+on capability bounds. More expensive (a day or two for the environment), but it closes the thesis: 1961 → today →
+1961 again on a new turn of the spiral. The minimal version also works with two machines.
 
-1. Контрольный эксперимент на современной машине: короткая программа на C, штатная сборка, правдоподобный неверный ответ. Читатель узнаёт свою повседневность.
-2. Та же задача на машине 1961 года — машина отказывается выполнять. Без флагов и санитайзеров.
-3. Механизм: дескриптор, длина внутри, аппаратная индексация, неподделываемый признак, отсутствие ассемблера. Здесь же часть 2 демо.
-4. Почему линия проиграла — честно: не потому что хуже, а потому что универсальный кристалл дешевле, а проверки стоили тактов.
-5. CHERI, MTE, PAC, регуляторное давление вокруг безопасности памяти. Индустрия шестьдесят лет шла к тому, что уже было.
+## Structure of the text
 
-**Позвоночник статьи:** WebAssembly — стековая машина, где память адресуется через
-конструкцию с проверкой границ, а необработанный указатель на память хоста невыразим.
-Ответ 2017 года структурно выглядит как ответ 1961-го.
+1. The control experiment on a modern machine: a short C program, a standard build, a plausible wrong answer. The reader recognizes their everyday life.
+2. The same task on a 1961 machine: the machine refuses to execute. No flags, no sanitizers.
+3. The mechanism: the descriptor, the length inside it, hardware indexing, the unforgeable flag, the absence of an assembler. Part 2 of the demo goes here.
+4. Why the line lost, honestly: not because it was worse, but because the general-purpose chip was cheaper and checks cost cycles.
+5. CHERI, MTE, PAC, regulatory pressure around memory safety. The industry spent sixty years arriving at what already existed.
 
-## Что уточнить до написания
+**The spine of the article:** WebAssembly is a stack machine where memory is addressed through a
+bounds-checked construct and a raw pointer into host memory is inexpressible.
+The 2017 answer structurally looks like the 1961 answer.
 
-1. **Точный синтаксис управляющих карт** для «компилировать и выполнить». Источники: вики проекта, блог Кимпеля (запись о подготовке исходников ALGOL-компилятора), гугл-группа retro-b5500.
-2. **Точная формулировка отказа**, которую печатает MCP — пойдёт скриншотом и в заголовок.
-3. **Можно ли избавить читателя от холодного старта** (предзаполненный IndexedDB / сохранённое состояние). Помнить: Safari чистит хранилище через 7 дней → подъём из образа обязан работать всегда.
-4. Примет ли ALGOL-компилятор программу в том виде, в каком напишем, и читаема ли диагностика.
+## What to clarify before writing
 
-## Этика
+1. **The exact syntax of the control cards** for "compile and execute". Sources: the project wiki, Kimpel's blog (a post about preparing the ALGOL compiler sources), the retro-b5500 Google group.
+2. **The exact wording of the fault** that the MCP prints: it will go in as a screenshot and into the headline.
+3. **Whether the reader can be spared the cold start** (a prefilled IndexedDB / saved state). Remember: Safari clears storage after 7 days → coming up from the image must always work.
+4. Whether the ALGOL compiler will accept the program in the form we write it, and whether the diagnostics are readable.
 
-Эмулятор — многолетняя работа Пола Кимпеля, у проекта живое сообщество в гугл-группе.
-Когда материал готов — написать им: и как благодарность, и потому что люди, восстановившие
-машину, дадут поправки. **Только после согласия пользователя и не от имени ассистента.**
+## Ethics
 
-## Что почитать
+The emulator is years of work by Paul Kimpel, and the project has a live community in its Google group.
+When the material is ready, write to them, both as thanks and because the people who restored the
+machine will offer corrections. **Only with the user's consent and not on behalf of the assistant.**
 
-Справочное руководство B5500 на bitsavers (дескрипторы и формат слова). Книга Элиота
-Органика по старшим машинам линии. Работа Бартона начала шестидесятых о новом подходе к
-функциональному проектированию вычислительной машины.
+## Further reading
+
+The B5500 reference manual on bitsavers (descriptors and the word format). Elliott
+Organick's book on the later machines of the line. Barton's early-sixties paper on a new approach to
+the functional design of a digital computer.

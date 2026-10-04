@@ -1,5 +1,5 @@
-# Поколение 1: каждый модуль — отдельной командой, чтобы между ними
-# управление вернулось в Oberon.Loop и отработал сборщик мусора.
+# Generation 1: each module as a separate command, so that between them
+# control returns to Oberon.Loop and the garbage collector runs.
 at 12000000
 click 700 620 L
 type ORP.Compile ORS.Mod/s ~

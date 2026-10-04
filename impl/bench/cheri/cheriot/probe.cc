@@ -1,13 +1,13 @@
-// Отрицательный контроль: проверки настоящие.
+// Negative control: the checks are real.
 //
-// probe_hw — ТОТ ЖЕ машинный код sum_a, но указатель сужен до elems слов.
-//            Индекс доходит до elems, и чтение обязано упасть по границам
-//            капабилити — без единой программной проверки.
-// probe_sw — тот же код sum_b с пределом limit < 64: обязана сработать
-//            программная ловушка (__builtin_trap, недопустимая команда).
+// probe_hw - THE SAME machine code as sum_a, but the pointer is narrowed to elems words.
+//            The index reaches elems, and the load must fault on the capability
+//            bounds, without a single software check.
+// probe_sw - the same code as sum_b with limit < 64: the software trap must fire
+//            (__builtin_trap, an illegal instruction).
 //
-// Обработчик ошибок печатает причину и разгружает компартмент: вызывающий
-// получает -1. Возврат суммы значит, что ловушки не было.
+// The error handler prints the cause and unwinds the compartment: the caller
+// gets -1. Returning a sum means no trap happened.
 
 #include <cheri.hh>
 #include <compartment.h>
@@ -25,7 +25,7 @@ namespace
 	unsigned          arr[64];
 	volatile unsigned iterations = 1000;
 
-	// Каждый элемент — 1: без ловушки сумма равна числу итераций (1000).
+	// Every element is 1: without a trap the sum equals the iteration count (1000).
 	void fill()
 	{
 		for (auto &x : arr)

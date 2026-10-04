@@ -1,32 +1,32 @@
 /*
- * <oberon-machine> — машина Вирта, которую можно вставить в любую страницу.
+ * <oberon-machine>: Wirth's machine, embeddable in any page.
  *
  *   <script type="module" src="https://…/embed.js"></script>
  *   <oberon-machine base="https://…/" autostart></oberon-machine>
  *
- * Требований к принимающей странице нет: ни заголовков, ни сборки, ни
- * фреймворка. Это осознанное ограничение дизайна — SharedArrayBuffer потребовал
- * бы COOP/COEP, а GitHub Pages заголовков не ставит вовсе, и тогда встроить
- * машину в чужой блог стало бы нельзя.
+ * The host page has no requirements: no headers, no build step, no framework.
+ * This is a deliberate design constraint: SharedArrayBuffer would require
+ * COOP/COEP, GitHub Pages sets no headers at all, and then the machine could
+ * not be embedded in someone else's blog.
  *
- * Атрибуты:
- *   base       откуда брать risc5.js, prom_sd.mem и образ диска (по умолчанию —
- *              каталог этого файла)
- *   autostart  запускать сразу, не дожидаясь щелчка
- *   quota      тактов на кадр (по умолчанию 70000 ≈ 4.2 МГц при 60 кадрах)
- *   start-label подпись кнопки запуска (по умолчанию английская)
- *   variant    какое железо: `base` (сток) или `chk` (с аппаратной проверкой
- *              границ массива). Меняется на лету — машина поднимается заново
- *   files      файлы через пробел (относительно base), которые кладутся на
- *              образ диска ДО загрузки: лабораторной нужен файл, которого на
- *              эталонном образе нет. Смена тоже поднимает машину заново
- *   width      ширина канвы в CSS (по умолчанию 100%)
+ * Attributes:
+ *   base       where to load risc5.js, prom_sd.mem and the disk image from
+ *              (default: this file's directory)
+ *   autostart  start immediately, without waiting for a click
+ *   quota      cycles per frame (default 70000 ≈ 4.2 MHz at 60 fps)
+ *   start-label label of the start button (English by default)
+ *   variant    which hardware: `base` (stock) or `chk` (hardware array bounds
+ *              checking). Changes on the fly; the machine is restarted
+ *   files      space-separated files (relative to base) put onto the disk
+ *              image BEFORE boot: a lab needs a file the reference image does
+ *              not have. Changing it also restarts the machine
+ *   width      CSS width of the canvas (default 100%)
  *
- * Свойства и события: `.start()`, `.stop()`, `.reset()`, `.setButton(n)`,
- * `.poke(адрес, значение)`, `.check(лаба, шаг, ответ)` — последнее исполняется
- * рядом с машиной, в потоке, и возвращает обещание;
- * события: `oberon-ready`, `oberon-frame` (раз в полсекунды, с темпом),
- * `oberon-buttons` (состояние кнопок мыши), `oberon-error`.
+ * Methods and events: `.start()`, `.stop()`, `.reset()`, `.setButton(n)`,
+ * `.poke(address, value)`, `.check(lab, step, answer)`; the last one runs next
+ * to the machine, in the worker, and returns a promise;
+ * events: `oberon-ready`, `oberon-frame` (twice a second, with the speed),
+ * `oberon-buttons` (mouse button state), `oberon-error`.
  */
 import { makeRenderer, bindInput } from './machine.js';
 import { addFile } from './oberonfs.js';
@@ -34,14 +34,14 @@ import { addFile } from './oberonfs.js';
 const HERE = new URL('.', import.meta.url);
 
 /**
- * Образ диска: сначала пробуем сжатый, потом обычный. Распакованное кладём в
- * Cache API — иначе мегабайт тянется заново на каждый заход, а GitHub Pages
- * отдаёт его без brotli и с коротким max-age.
+ * Disk image: try the compressed one first, then the plain one. The unpacked
+ * image goes into the Cache API; otherwise the megabyte is downloaded again on
+ * every visit, and GitHub Pages serves it without brotli and with a short max-age.
  */
 async function loadDisk(base) {
   const key = new URL('oberon.dsk', base).href;
   let cache = null;
-  try { cache = await caches.open('oberon-v1'); } catch { /* приватный режим */ }
+  try { cache = await caches.open('oberon-v1'); } catch { /* private mode */ }
   if (cache) {
     const hit = await cache.match(key);
     if (hit) return new Uint8Array(await hit.arrayBuffer());
@@ -54,7 +54,7 @@ async function loadDisk(base) {
   } else {
     bytes = new Uint8Array(await (await fetch(new URL('oberon.dsk', base))).arrayBuffer());
   }
-  if (cache) { try { await cache.put(key, new Response(bytes)); } catch { /* квота */ } }
+  if (cache) { try { await cache.put(key, new Response(bytes)); } catch { /* quota */ } }
   return bytes;
 }
 
@@ -64,18 +64,18 @@ async function loadProm(base) {
 }
 
 class OberonMachine extends HTMLElement {
-  // Подпись кнопки может приехать позже разметки: страница узнаёт свой язык
-  // уже после того, как элемент поднялся.
+  // The button label may arrive after the markup: the page learns its language
+  // only after the element is up.
   static observedAttributes = ['start-label', 'variant', 'files'];
   attributeChangedCallback(name, old, value) {
     if (name === 'start-label' && this._button) this._button.textContent = value;
-    // Смена железа или состава диска = новая машина. Поток поднимается заново,
-    // образ грузится из кэша, так что переключение стоит доли секунды.
-    // Отсутствующий атрибут равен умолчанию: `variant` без значения — это base,
-    // и появление variant="base" на уже работающей машине ничего не меняет.
+    // Changing the hardware or the disk contents = a new machine. The worker is
+    // restarted and the image loads from cache, so a switch takes a fraction of
+    // a second. A missing attribute equals the default: `variant` without a value
+    // is base, and adding variant="base" to a running machine changes nothing.
     const norm = v => (name === 'variant' ? (v || 'base') : (v || '').trim());
     if ((name === 'variant' || name === 'files') && norm(old) !== norm(value) && this._worker) {
-      // Лаборатория меняет оба атрибута подряд — машина поднимается один раз.
+      // A lab changes both attributes in a row; the machine restarts only once.
       if (!this._rebootQueued) {
         this._rebootQueued = true;
         queueMicrotask(() => { this._rebootQueued = false; this._reboot(); });
@@ -115,8 +115,9 @@ class OberonMachine extends HTMLElement {
       <div class="veil"><button part="start"></button></div>`;
     this._canvas = root.querySelector('canvas');
     this._veil = root.querySelector('.veil');
-    // Подпись кнопки — снаружи: компонент встраивается в чужую страницу и не
-    // знает её языка. По умолчанию английский, как и везде в проекте.
+    // The button label comes from outside: the component is embedded in someone
+    // else's page and does not know its language. English by default, as
+    // everywhere in the project.
     this._button = root.querySelector('button');
     this._button.textContent = this.getAttribute('start-label') || 'Start the machine';
     this._veil.onclick = () => this.start();
@@ -128,8 +129,9 @@ class OberonMachine extends HTMLElement {
     this._askId = 0;
     this._waiting = new Map();
 
-    // Машина не обязана считать, пока её не видно: вкладка скрыта или элемент
-    // ушёл за край окна. Модель RTL не умеет простаивать и жжёт ядро ровно.
+    // The machine need not compute while it is not visible: the tab is hidden or
+    // the element has scrolled out of view. The RTL model cannot idle and burns
+    // a core steadily.
     this._visible = true;
     if (typeof IntersectionObserver === 'function') {
       new IntersectionObserver(([e]) => {
@@ -142,8 +144,8 @@ class OberonMachine extends HTMLElement {
     this._input = bindInput(this._canvas, {
       mouse: (x, y, btn) => {
         this._send({ t: 'mouse', x, y, btn });
-        // Наружу — чтобы страница могла подсветить нажатые кнопки: на трекпаде
-        // человеку иначе не видно, какую из трёх кнопок Оберона он подаёт.
+        // Report outward so the page can highlight pressed buttons: on a trackpad
+        // a person otherwise cannot see which of Oberon's three buttons they send.
         if (btn !== this._btn) {
           this._btn = btn;
           this.dispatchEvent(new CustomEvent('oberon-buttons', { detail: btn }));
@@ -170,10 +172,10 @@ class OberonMachine extends HTMLElement {
       const bytes = new Uint8Array(await (await fetch(new URL(f, this._base))).arrayBuffer());
       img = addFile(img, f.split('/').pop(), bytes);
     }
-    // Пока образ грузился, машину могли поднять заново (лаборатория сменила
-    // железо): этот поток уже снят, слать ему нечего.
+    // While the image was loading, the machine may have been restarted (a lab
+    // switched the hardware): this worker is already gone, nothing to send.
     if (this._worker !== w) return;
-    // Образы уезжают с передачей владения: копировать мегабайт незачем.
+    // Images are sent with ownership transfer: no reason to copy a megabyte.
     w.postMessage({ t: 'init', variant: this.getAttribute('variant') || 'base',
                               prom: prom.buffer, img: img.buffer },
                              [prom.buffer, img.buffer]);
@@ -190,7 +192,7 @@ class OberonMachine extends HTMLElement {
     if (msg.t === 'frame') {
       const fb = new Uint32Array(msg.buf);
       this._draw(fb);
-      // Буфер возвращаем потоку: на кадр их нужно всего два.
+      // Return the buffer to the worker: only two are needed for frames.
       this._worker.postMessage({ t: 'recycle', buf: msg.buf }, [msg.buf]);
       this._pending = false;
       this._stat(msg);
@@ -219,9 +221,9 @@ class OberonMachine extends HTMLElement {
   }
 
   /*
-   * Сообщения, посланные до готовности машины, НЕ выбрасываются, а ждут её.
-   * Иначе щелчок «Проверить» в первые секунды уходил бы в никуда: обещание
-   * не разрешилось бы никогда, и кнопка молча переставала бы работать.
+   * Messages sent before the machine is ready are NOT dropped; they wait for it.
+   * Otherwise a "Check" click in the first seconds would go nowhere: the promise
+   * would never resolve, and the button would silently stop working.
    */
   _send(msg) {
     if (!this._worker) { (this._queued ??= []).push(msg); return; }
@@ -236,8 +238,8 @@ class OberonMachine extends HTMLElement {
   }
 
   /**
-   * Запрос с ответом. Нужен там, где странице недостаточно кадра: проверка
-   * задания читает состояние машины, а машина живёт в потоке.
+   * A request with a reply. Needed where a frame is not enough for the page: a
+   * task check reads the machine's state, and the machine lives in the worker.
    */
   _ask(msg) {
     return new Promise(resolve => {
@@ -247,16 +249,16 @@ class OberonMachine extends HTMLElement {
     });
   }
 
-  /** Проверить шаг лабораторной. Считает поток, рядом с машиной. */
+  /** Check a lab step. Computed by the worker, next to the machine. */
   check(lab, step, answer) { return this._ask({ t: 'check', lab, step, answer }); }
 
-  /** Забыть накопленное состояние лабораторной. */
+  /** Forget a lab's accumulated state. */
   forget(lab) { this._send({ t: 'forget', lab }); }
 
-  /** Записать слово в память машины. */
+  /** Write a word to the machine's memory. */
   poke(adr, val) { this._send({ t: 'poke', adr, val }); }
 
-  /** Просит у потока следующий кадр — если есть кому смотреть. */
+  /** Asks the worker for the next frame, if anyone is watching. */
   _kick() {
     cancelAnimationFrame(this._raf);
     if (!this._running || !this._ready || this._pending) return;

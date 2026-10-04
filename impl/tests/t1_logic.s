@@ -1,5 +1,5 @@
-; T1.16 — логические операции, включая ANN и XOR, не покрытые ничем.
-; Семантика взята из aluRes в RISC5.v:
+; T1.16 — logical operations, including ANN and XOR, which nothing covered.
+; Semantics taken from aluRes in RISC5.v:
 ;   AND (op=4) B & C1 | ANN (op=5) B & ~C1 | IOR (op=6) B | C1 | XOR (op=7) B ^ C1
         MOV  R1, 0
         MHI  R1, 0xF0F0
@@ -7,7 +7,7 @@
         MOV  R2, 0
         MHI  R2, 0xFF00
         IOR  R2, R2, 0xFF00      ; R2 = FF00FF00
-; ──────── регистровые формы ────────
+; ──────── register forms ────────
         AND  R3, R1, R2
 ; EXPECT R3 = 0xF000F000
         ANN  R3, R1, R2
@@ -16,7 +16,7 @@
 ; EXPECT R3 = 0xFFF0FFF0
         XOR  R3, R1, R2
 ; EXPECT R3 = 0x0FF00FF0
-; ──────── непосредственные формы (v=0, дополнение нулями) ────────
+; ──────── immediate forms (v=0, zero-extended) ────────
         AND  R4, R1, 0xFF00
 ; EXPECT R4 = 0x0000F000
         ANN  R4, R1, 0xFF00
@@ -25,7 +25,7 @@
 ; EXPECT R4 = 0xF0F0FFF0
         XOR  R4, R1, 0xFF00
 ; EXPECT R4 = 0xF0F00FF0
-; ──────── ANN как отрицание: b AND NOT b = 0, b ANN 0 = b ────────
+; ──────── ANN as negation: b AND NOT b = 0, b ANN 0 = b ────────
         ANN  R5, R1, R1
 ; EXPECT R5 = 0
         ANN  R5, R1, 0

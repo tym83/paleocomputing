@@ -1,26 +1,26 @@
-; T1.15 — ширина смещения перехода.
-; RTL объявляет disp = IR[21:0], то есть 22 бита, а дизассемблер Вирта ORTool
-; печатает 20. Наш ассемблер маскировал 24. Проверяем не чтением верилога,
-; а исполнением: два одинаковых перехода, различающихся ТОЛЬКО битами 23:22,
-; обязаны привести в одну и ту же точку, если эти биты железо игнорирует.
+; T1.15 — branch displacement width.
+; The RTL declares disp = IR[21:0], i.e. 22 bits, while Wirth's disassembler ORTool
+; prints 20. Our assembler masked 24. We check by execution, not by reading the Verilog:
+; two identical branches that differ ONLY in bits 23:22 must land at the same
+; point if the hardware ignores those bits.
         MOV  R5, 0
-        WORD 0xE7000001         ; B +1 — безусловный, смещение 1 слово
-        MOV  R5, 1              ; должно быть пропущено
+        WORD 0xE7000001         ; B +1 — unconditional, displacement 1 word
+        MOV  R5, 1              ; must be skipped
         MOV  R5, 2
 ; EXPECT R5 = 2
         MOV  R5, 0
-        WORD 0xE7C00001         ; то же самое, но с единицами в битах 23:22
-        MOV  R5, 1              ; должно быть пропущено так же
+        WORD 0xE7C00001         ; the same, but with ones in bits 23:22
+        MOV  R5, 1              ; must be skipped as well
         MOV  R5, 3
 ; EXPECT R5 = 3
-; ──────── безразличное поле b у MOV ────────
-; В aluRes ветка op=0 не обращается к B вовсе, то есть поле b (23:20) при MOV
-; не читается. Найдено систематическим перебором кодировок (tools/sweep_encoding.py):
-; слово с непустым b не воспроизводилось буквально. Проверяем исполнением.
+; ──────── don't-care field b of MOV ────────
+; In aluRes the op=0 branch never touches B, so field b (23:20) of MOV
+; is not read. Found by a systematic sweep of encodings (tools/sweep_encoding.py):
+; a word with nonzero b did not round-trip literally. We check by execution.
         MOV  R1, 0x1234
-        WORD 0x05000001         ; MOV R5, R1 — поле b = 0
+        WORD 0x05000001         ; MOV R5, R1 — field b = 0
 ; EXPECT R5 = 0x1234
         MOV  R5, 0
-        WORD 0x05700001         ; то же самое, но поле b = 7
+        WORD 0x05700001         ; the same, but field b = 7
 ; EXPECT R5 = 0x1234
         HALT

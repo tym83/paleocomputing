@@ -1,6 +1,6 @@
 {{- $prefix := .Values.namePrefix | default "" }}
 {{- if not $prefix }}
-{{- fail "machine-images: namePrefix обязателен — без него запись каталога перезапишет образ платформы" }}
+{{- fail "machine-images: namePrefix is required; without it a catalog entry would overwrite a platform image" }}
 {{- end }}
 {{- $platform := dict }}
 {{- range (include "machine-images.platformNames" . | splitList " ") }}
@@ -11,10 +11,10 @@
 {{- range .Values.images }}
 {{- $full := printf "%s%s" $prefix .name }}
 {{- if hasKey $platform $full }}
-  {{- fail (printf "machine-images: имя %q занято образом платформы — возьмите другое имя или другую приставку" $full) }}
+  {{- fail (printf "machine-images: name %q is taken by a platform image; pick another name or another prefix" $full) }}
 {{- end }}
 {{- if hasKey $seen $full }}
-  {{- fail (printf "machine-images: имя %q встречается в списке дважды" $full) }}
+  {{- fail (printf "machine-images: name %q appears twice in the list" $full) }}
 {{- end }}
 {{- $_ := set $seen $full true }}
 ---

@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Сшить области журнала System.Log из нескольких снимков в одну картинку.
+"""Stitches the System.Log regions from several snapshots into one picture.
 
-Вьюер журнала вмещает около 18 строк и сам не прокручивается, поэтому сценарий
-чистит его после каждой команды и снимает кадр. Здесь эти области склеиваются
-вертикально, чтобы весь вывод читался разом.
+The log viewer holds about 18 lines and does not scroll by itself, so the script
+clears it after every command and takes a frame. Here those regions are glued
+vertically so the whole output can be read at once.
 """
 import sys
 from PIL import Image as PILImage
 
 X0, X1 = 655, 1020
-Y0, Y1 = 16, 152          # заголовок журнала и первые строк десять
+Y0, Y1 = 16, 152          # log title bar and the first ten or so lines
 
 
 def load(path):
@@ -29,4 +29,4 @@ if __name__ == "__main__":
     for i, t in enumerate(tiles):
         big.paste(t, (0, i * H))
     big.save(out)
-    print(f"{out}: {len(tiles)} областей, {W}x{H*len(tiles)}")
+    print(f"{out}: {len(tiles)} regions, {W}x{H*len(tiles)}")

@@ -1,16 +1,17 @@
-/* Прогон направленных тестов (tests/*.bin + .chk) на процессоре Norebo —
-   эмуляторе, на котором сняты все замеры компиляции (ext/norebo/Runtime/
-   risc-cpu.c). Та же программа и те же ожидания, что у tb/run_tests.cpp на
-   RTL: так три описания команды — модель генератора, RTL и эмулятор — сверяются
-   на одних числах. Нужен прежде всего для IDX (выпуск 14): замеры компиляции
-   с дескрипторами верны, только если эмулятор исполняет IDX как железо.
+/* Runs the directed tests (tests/*.bin + .chk) on the Norebo processor, the
+   emulator all compilation measurements were taken on (ext/norebo/Runtime/
+   risc-cpu.c). Same program and same expectations as tb/run_tests.cpp on
+   RTL: this way three descriptions of an instruction (the generator's model, RTL
+   and the emulator) are checked against the same numbers. Needed above all for IDX
+   (episode 14): compilation measurements with descriptors are valid only if the
+   emulator executes IDX the way the hardware does.
 
-   risc-cpu.c включается целиком: risc_single_step в нём статическая.        */
+   risc-cpu.c is included whole: risc_single_step in it is static.           */
 #include "../ext/norebo/Runtime/risc-cpu.c"
 #include <stdio.h>
 
 #define ORG 0x00FFE000u
-#define MEMW (1u << 22)                         /* 16 МБ словами: весь 24-битный адрес */
+#define MEMW (1u << 22)                         /* 16 MB in words: the whole 24-bit address */
 static uint32_t *mem;
 
 static uint32_t rp(struct RISC *r, uint32_t a) { (void)r; return mem[a & (MEMW - 1)]; }
@@ -23,10 +24,10 @@ static void wb(struct RISC *r, uint32_t a, uint32_t v) {
 }
 
 int main(int argc, char **argv) {
-  if (argc < 2) { fprintf(stderr, "использование: emu_tests tests/NAME\n"); return 2; }
+  if (argc < 2) { fprintf(stderr, "usage: emu_tests tests/NAME\n"); return 2; }
   char path[512]; mem = calloc(MEMW, 4);
   snprintf(path, sizeof path, "%s.bin", argv[1]);
-  FILE *f = fopen(path, "rb"); if (!f) { printf("нет %s\n", path); return 1; }
+  FILE *f = fopen(path, "rb"); if (!f) { printf("no %s\n", path); return 1; }
   size_t n = fread(&mem[ORG >> 2], 4, 0x800, f); fclose(f);
   struct { int at; char nm[64]; uint32_t v; int fired; } e[4096]; int ne = 0;
   snprintf(path, sizeof path, "%s.chk", argv[1]);
@@ -53,14 +54,14 @@ int main(int argc, char **argv) {
       else if (!strcmp(m, "C")) got = r.C; else if (!strcmp(m, "V")) got = r.V;
       else if (!strcmp(m, "H")) got = r.H;
       else if (m[0] == 'R') got = r.R[atoi(m + 1) & 15];
-      else { printf("  ⚠ %s эмулятором не проверяется\n", m); continue; }
+      else { printf("  ⚠ %s is not checked by the emulator\n", m); continue; }
       if (got != e[i].v) {
-        printf("  ❌ слово %d: %s = %u, ожидалось %u\n", e[i].at, m, got, e[i].v); fails++;
+        printf("  ❌ word %d: %s = %u, expected %u\n", e[i].at, m, got, e[i].v); fails++;
       }
     }
     if (r.PC == pc0) break;                      /* HALT = B . */
   }
-  if (done != ne) { printf("  ❌ сработало %d ожиданий из %d\n", done, ne); fails += ne - done; }
-  printf("  эмулятор Norebo: проверено %d/%d | провалов %d  %s\n", done, ne, fails, fails ? "❌" : "✅");
+  if (done != ne) { printf("  ❌ %d of %d expectations fired\n", done, ne); fails += ne - done; }
+  printf("  Norebo emulator: checked %d/%d | failures %d  %s\n", done, ne, fails, fails ? "❌" : "✅");
   return fails ? 1 : 0;
 }

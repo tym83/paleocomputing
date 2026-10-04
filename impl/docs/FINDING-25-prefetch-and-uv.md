@@ -1,95 +1,97 @@
-# Находка 25. Первое слово программы терялось, и 34% пространства оказались не пустыми
+[Русская версия](FINDING-25-prefetch-and-uv.ru.md)
 
-## С чего началось
+# Finding 25. The first word of every program was lost, and 34% of the space turned out not to be empty
 
-После находки 24 оставались открытыми два честных пункта: не проверены формы,
-которым дизассемблер не даёт имени (93 568 слов, 34% структурного
-пространства), и круг «ассемблер → дизассемблер → ассемблер» слеп к общей
-ошибке раскладки полей. Взялись за первый.
+## How it started
 
-## Что это за 34%
+After finding 24 two honest items remained open: the forms to which the disassembler gives no
+name were not checked (93 568 words, 34% of the structural
+space), and the circle "assembler → disassembler → assembler" is blind to a shared
+error in the field layout. We took on the first.
 
-Все безымянные слова — это `u=1` или `v=1` на операциях, где `aluRes` эти биты
-не читает. То есть не мусор, а варианты названных инструкций.
+## What these 34% are
 
-Проверили не чтением, а исполнением: `tools/gen_dontcare_test.py` порождает
-пары «базовая форма / форма с битом» на одних операндах и складывает
-результаты по модулю два. Ноль означает, что бит безразличен.
+All unnamed words are `u=1` or `v=1` on operations where `aluRes` does not read these bits.
+That is, not garbage, but variants of named instructions.
 
-**27 сравнений из 32 дали ноль. Пять — нет.**
+Checked not by reading but by execution: `tools/gen_dontcare_test.py` generates
+pairs "base form / form with the bit" on the same operands and XORs
+the results. Zero means the bit is don't-care.
 
-| форма | что это на самом деле |
+**27 of 32 comparisons gave zero. Five did not.**
+
+| form | what it actually is |
 |-------|----------------------|
-| `DIV` u=1 | беззнаковое деление: делитель получает `~u`, а внутри `sign = x[31] & u` |
-| `FSB` u=1, v=1, u+v | сумматор уходит в режим преобразования целое/плавающее (`FPAdder.v`) |
+| `DIV` u=1 | unsigned division: the divider gets `~u`, and inside it `sign = x[31] & u` |
+| `FSB` u=1, v=1, u+v | the adder switches into integer/float conversion mode (`FPAdder.v`) |
 
-Для `DIV` арифметика сошлась точно: `0xF0F0F0F0 DIV 5` даёт `0xFCFCFCFC`
-знаково и `0x30303030` беззнаково, разность ровно `0xCCCCCCCC` — измеренная
-величина.
+For `DIV` the arithmetic agreed exactly: `0xF0F0F0F0 DIV 5` gives `0xFCFCFCFC`
+signed and `0x30303030` unsigned, the difference is exactly `0xCCCCCCCC`, the measured
+value.
 
-Формы `FSB` с `u`/`v` архитектурно не определены: компилятор эмитит `FLT` и
-`FLOOR` только через `FAD`. Их значения заперты в тесте как есть, смысл им не
-приписывается.
+The `FSB` forms with `u`/`v` are architecturally undefined: the compiler emits `FLT` and
+`FLOOR` only via `FAD`. Their values are locked in the test as they are; no meaning is
+ascribed to them.
 
-## Побочно: 100% покрытие кодировки
+## A side effect: 100% encoding coverage
 
-Введены общие суффиксы `.u` / `.v` / `.uv` для форм без отдельного имени и
-читаемое `UDIV`. `FLT`, `FLOOR`, `ADC`, `SBC`, `UMUL` сведены к одному
-механизму псевдонимов.
+Generic suffixes `.u` / `.v` / `.uv` were introduced for forms without a separate name, plus
+the readable `UDIV`. `FLT`, `FLOOR`, `ADC`, `SBC`, `UMUL` were reduced to one
+alias mechanism.
 
-Перебор вырос с 129 760 до 375 776 форм, покрытие слов — с 66.1% до **100.0%**.
-Круг на настоящем выводе компилятора остался полным: 33 838 слов.
+The sweep grew from 129 760 to 375 776 forms, word coverage from 66.1% to **100.0%**.
+The circle on the real compiler output remained complete: 33 838 words.
 
-В формате F1 бит `v` заодно задаёт заполнение старшей половины операнда, и в
-суффиксной форме он уже занят. Ассемблер теперь требует согласованности:
-при `v=0` доступно 0…65535, при `v=1` только −65536…−1.
+In format F1 bit `v` also sets the fill of the upper half of the operand, and in
+the suffix form it is already taken. The assembler now requires consistency:
+with `v=0` the range 0…65535 is available, with `v=1` only −65536…−1.
 
-## Главное: первое слово программы не исполнялось
+## The main thing: the first word of the program was not executed
 
-Зонд делителя дал ноль там, где ожидалось 14. Причина оказалась не в делителе.
+The divider probe gave zero where 14 was expected. The cause turned out not to be the divider.
 
-RISC5 — машина с предвыборкой: на шине адреса стоит `PC+1`, а исполняется то,
-что лежит в регистре команд (`IR <= stall ? IR : codebus`). Во время сброса на
-шине уже стоит `StartAdr`, и настоящее железо успевает защёлкнуть первое слово
-в `IR` до снятия сброса.
+RISC5 is a prefetching machine: the address bus carries `PC+1`, and what executes is
+what is in the instruction register (`IR <= stall ? IR : codebus`). During reset
+the bus already carries `StartAdr`, and the real hardware manages to latch the first word
+into `IR` before reset is released.
 
-`tb/run_tests.cpp` во время сброса подавал на шину нули. После сброса в `IR`
-оставался ноль, первый такт исполнял `MOV R0,R0`, а первое слово программы
-машина не читала вовсе — на шине уже стояло второе.
+`tb/run_tests.cpp` fed zeros onto the bus during reset. After reset `IR`
+held zero, the first cycle executed `MOV R0,R0`, and the machine never read the first word of the program
+at all: the bus already carried the second one.
 
-**Итог: во всех 264 направленных проверках первая инструкция не исполнялась.**
+**Bottom line: in all 264 directed checks the first instruction was not executed.**
 
-Прятаться это могло потому, что каждый тест начинался с безразличной
-инструкции — обнуления регистра, который и так ноль, или записи, перекрываемой
-следующим `MHI`. Симптом вылезал только когда первая инструкция была
-содержательной: `MOV R1, 100 ; MOV R2, 7 ; DIV R3, R1, R2` давало `R3 = 0`,
-потому что `R1` оставался нулём.
+This could stay hidden because every test started with an inconsequential
+instruction: clearing a register that is zero anyway, or a write overwritten
+by the following `MHI`. The symptom appeared only when the first instruction was
+meaningful: `MOV R1, 100 ; MOV R2, 7 ; DIV R3, R1, R2` gave `R3 = 0`,
+because `R1` stayed zero.
 
-Те же «странные» числа из первых замеров объясняются тем же: потеря
-`MOV R1, 0xF0F0` превращала операнд в `0xF0F00000`, и деление честно выдавало
+The same explains the "strange" numbers from the first measurements: losing
+`MOV R1, 0xF0F0` turned the operand into `0xF0F00000`, and the division honestly produced
 `0x30300000`.
 
-### Самое неприятное
+### The most unpleasant part
 
-Эта ошибка **уже была найдена и исправлена** — в `tb/soc_tb.cpp`, с
-комментарием «ровно на этом я и споткнулся». В `tb/run_tests.cpp` исправление
-не перенесли. Аудит четырёх остальных стендов показал, что там всё правильно:
-единственным дефектным оказался тот, что гоняет направленные проверки ISA.
+This bug **had already been found and fixed**, in `tb/soc_tb.cpp`, with
+the comment "this is exactly what I tripped over". The fix was not carried over to `tb/run_tests.cpp`.
+An audit of the other four testbenches showed that everything is correct there:
+the only defective one was the one that runs the directed ISA checks.
 
-Причина, по которой починка не доехала, — отсутствие регрессионного теста.
-Теперь он есть: `tests/t1_prime.s`, две проверки, падает при снятии починки.
+The reason the fix never made it over was the absence of a regression test.
+Now there is one: `tests/t1_prime.s`, two checks, fails when the fix is removed.
 
-Сброс в `run_tests.cpp` приведён к тому же виду, что в остальных стендах:
-шина обслуживается из памяти и во время сброса.
+Reset in `run_tests.cpp` was brought to the same form as in the other testbenches:
+the bus is served from memory during reset too.
 
-## Проверено на промахи
+## Checked for misses
 
-* снять обслуживание шины при сбросе → `t1_prime` падает, `make test` возвращает
-  ненулевой код;
-* после починки все 264 прежние проверки проходят без единой правки ожиданий —
-  значит ни одно ожидание не было подогнано под сломанный пуск.
+* remove serving the bus during reset → `t1_prime` fails, `make test` returns
+  a nonzero code;
+* after the fix all 264 previous checks pass without a single change to the expectations,
+  so not one expectation had been fitted to the broken start-up.
 
-## Что остаётся
+## What remains
 
-Круг по-прежнему пользуется одной раскладкой полей в обе стороны. Раскладку
-держат направленные проверки на железе, которых стало 298 в 18 файлах.
+The circle still uses one field layout in both directions. The layout is
+held up by the directed checks on the hardware, of which there are now 298 in 18 files.

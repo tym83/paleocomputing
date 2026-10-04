@@ -1,109 +1,111 @@
-# Находка 20: мутационный аудит — оснастка ловила треть поломок
+[Русская версия](FINDING-20-mutation-audit.ru.md)
 
-Четвёртый аудитор внёс **31 правдоподобную ошибку в RTL** и прогнал регрессию на каждой.
-**Поймано 10 из 30. Мутационный счёт — 33%.**
+# Finding 20: mutation audit: the harness caught a third of the breakages
 
-Это худший и самый полезный отчёт из пяти: он проверял не выводы, а **способность
-оснастки отличать рабочее ядро от сломанного**.
+The fourth auditor introduced **31 plausible bugs into the RTL** and ran the regression suite on each.
+**10 of 30 caught. Mutation score: 33%.**
 
-## Три механизма, превращавших провал в «зелёное»
+This is the worst and most useful of the five reports: it checked not the conclusions but **the harness's
+ability to tell a working core from a broken one**.
 
-### 1. Несработавшее ожидание считалось пройденным
+## Three mechanisms that turned failure into "green"
 
-`tb/run_tests.cpp` увеличивал счётчик провалов только при несовпадении. Если машина
-не доходила до адреса, к которому привязано ожидание, оно просто не срабатывало —
-и тест оставался зелёным.
+### 1. An expectation that never fired counted as passed
 
-Доказательство аудитора: мутация `B > chkLim` вместо `>=` (тот самый off-by-one,
-который `t2_chk` якобы ловит на границе) давала `проверено 3/5, провалов 0 ✅`.
-**Две проверки испарились, оснастка отрапортовала успех.**
+`tb/run_tests.cpp` incremented the failure counter only on a mismatch. If the machine
+never reached the address the expectation was tied to, the expectation simply did not fire,
+and the test stayed green.
 
-Это прятало ровно те пути, ради которых тесты написаны: срабатывание ловушки и
-возврат из обработчика прерывания.
+The auditor's proof: the mutation `B > chkLim` instead of `>=` (the very off-by-one
+that `t2_chk` supposedly catches at the boundary) gave `checked 3/5, failures 0 ✅`.
+**Two checks evaporated, and the harness reported success.**
 
-✅ **Исправлено:** несработавшее ожидание теперь провал, с перечислением непроверенных.
-Проверено: та же мутация даёт `провалов 2 ❌`.
+This hid exactly the paths the tests were written for: the trap firing and
+the return from the interrupt handler.
 
-### 2. `make test` был зелёным при несобравшемся стенде
+✅ **Fixed:** an expectation that did not fire is now a failure, with the unchecked ones listed.
+Verified: the same mutation gives `failures 2 ❌`.
 
-`|| true` в правилах сборки съедал ошибку, а результат теста определялся грепом смайлика
-по последней строке — для отсутствующего бинарника строка пустая.
-**Ноль выполненных тестов, нулевой код возврата, «ВСЁ ЗЕЛЁНОЕ».**
+### 2. `make test` was green when the testbench failed to build
 
-✅ **Исправлено:** сборка обязана дать бинарник, прогон проверяется по коду возврата,
-добавлен `mkdir -p build`.
+`|| true` in the build rules swallowed the error, and the test result was determined by grepping for an emoji
+in the last line; for a missing binary that line is empty.
+**Zero tests run, zero exit code, "ALL GREEN".**
 
-### 3. `make boot` не был тестом
+✅ **Fixed:** the build must produce a binary, the run is checked by its exit code,
+and `mkdir -p build` was added.
 
-Всегда возвращал 0, контрольная сумма экрана печаталась и ни с чем не сравнивалась.
-Аудитор показал: с убитым `ROR` машина застревает в ПЗУ, экран пуст, вывод «✅», код 0.
+### 3. `make boot` was not a test
 
-🔴 **Не исправлено** — см. раздел «Остаётся открытым».
+It always returned 0; the screen checksum was printed and compared with nothing.
+The auditor showed: with `ROR` killed the machine gets stuck in the ROM, the screen is empty, the output is "✅", exit code 0.
 
-## Два содержательных пробела
+🔴 **Not fixed**: see the section "Remains open".
 
-### Плавающая арифметика не проверялась ничем
+## Two substantive gaps
 
-- во всех тестах — **ноль проверок числового результата FP**, только такты;
-- в дифференциальном стенде за 14.6 млн инструкций — **ноль плавающих операций**;
-- запланированный тест `t1_fp.s` (приоритет 🔴 3) **не был написан**.
+### Floating-point arithmetic was not checked by anything
 
-Пять мутаций FPU проходили: убрано округление, потерян guard-бит, `FSB` работает
-как `FAD`, сломан `FLT`, обнулён множитель.
+- across all tests, **zero checks of an FP numeric result**, only cycles;
+- in the differential testbench, over 14.6 million instructions, **zero floating-point operations**;
+- the planned test `t1_fp.s` (priority 🔴 3) **had not been written**.
 
-Утверждение находки 14 «включая всю плавающую арифметику» было **фактически неверным**.
+Five FPU mutations passed: rounding removed, guard bit lost, `FSB` working
+as `FAD`, `FLT` broken, multiplier zeroed.
 
-✅ **Исправлено:** написан `tests/t1_fp.s`, **17 проверок числовых результатов** по
-семантике Вирта (не IEEE). Включает случаи, где решает округление — они найдены
-перебором, потому что первая версия теста использовала точные значения (2.0 × 3.0)
-и мутацию «убрано округление» не ловила. Теперь ловит: `1.1 × 1.7` даёт `0x3FEF5C2A`
-с округлением и `0x3FEF5C29` без.
+The claim in finding 14, "including all floating-point arithmetic", was **factually wrong**.
 
-Проверено: три из трёх мутаций FPU теперь ловятся.
+✅ **Fixed:** `tests/t1_fp.s` was written, with **17 checks of numeric results** according to
+Wirth's semantics (not IEEE). It includes cases where rounding is decisive: they were found
+by exhaustive search, because the first version of the test used exact values (2.0 × 3.0)
+and did not catch the "rounding removed" mutation. Now it does: `1.1 × 1.7` gives `0x3FEF5C2A`
+with rounding and `0x3FEF5C29` without.
 
-### Тест ветвлений различал меньше половины условий
+Verified: three out of three FPU mutations are now caught.
 
-Во всех четырёх состояниях флагов было **V = 0**. Следствия:
-`VS` не срабатывает никогда, `VC` всегда; `S = N^V ≡ N`, то есть `LT`/`GE` неотличимы
-от `MI`/`PL`; `S|Z ≡ C|Z`, то есть `LE`/`GT` неотличимы от `LS`/`HI`.
+### The branch test distinguished fewer than half of the conditions
 
-Четыре мутации проходили: «VS/VC мертво», «S = N», «LS ≡ LE», «MI ≡ LT».
+All four flag states had **V = 0**. Consequences:
+`VS` never fires, `VC` always does; `S = N^V ≡ N`, so `LT`/`GE` are indistinguishable
+from `MI`/`PL`; `S|Z ≡ C|Z`, so `LE`/`GT` are indistinguishable from `LS`/`HI`.
 
-✅ **Исправлено:** добавлены три состояния — два с переполнением знака (V=1) и одно
-с N=1 при C=0, V=0. **112 проверок вместо 64.**
+Four mutations passed: "VS/VC dead", "S = N", "LS ≡ LE", "MI ≡ LT".
 
-Попутная ловушка: для последнего состояния я взял `IOR`, а логические операции в RISC5
-**не трогают C и V** — флаги протекли из предыдущего состояния, и шесть ожиданий
-разошлись. Заменено на `ADD`.
+✅ **Fixed:** three states were added, two with signed overflow (V=1) and one
+with N=1 at C=0, V=0. **112 checks instead of 64.**
 
-Проверено: три из трёх мутаций ветвления теперь ловятся.
+A trap along the way: for the last state I used `IOR`, but logical operations in RISC5
+**do not touch C and V**: the flags leaked from the previous state, and six expectations
+diverged. Replaced with `ADD`.
 
-## Счёт проверок был завышен вдвое
+Verified: three out of three branch mutations are now caught.
 
-Заявлялось «~360 проверок». Это **250 уникальных ожиданий**, прогнанных на двух сборках
-ядра. Вторая сборка проверяет «расширение ничего не сломало», а не покрытие.
+## The check count was overstated twofold
 
-Честный счёт после доработки: **250 уникальных ожиданий** (было 180) в 14 тестах,
-плюс 1280 прогонов проверки эквивалентности декодера.
+"~360 checks" was claimed. That is **250 unique expectations**, run on two builds
+of the core. The second build checks that "the extension broke nothing", not coverage.
 
-## Остаётся открытым — признано, не исправлено
+The honest count after the rework: **250 unique expectations** (it was 180) in 14 tests,
+plus 1280 runs of the decoder equivalence check.
 
-| Что | Почему важно |
+## Remains open: acknowledged, not fixed
+
+| What | Why it matters |
 |---|---|
-| **`make boot` не проверяет контрольную сумму** и всегда возвращает 0 | застрявшая в ПЗУ машина рапортует успех |
-| **`lockstep` и `boot` не входят в `make test`** | сильнейшие проверки вне гейта |
-| **Диффстенд не сверяет память и устройства** | план требовал сверки записей и периодической полной сверки RAM |
-| **Проверка эквивалентности декодера не ловит поломку `BL`** | в подписи нет PC, R15 и H; поля `b`, `c`, `cond` зафиксированы; ни один переход за 1280 прогонов не состоялся |
-| **Прерывания: 6 проверок** | не проверяются восстановление C и V, содержимое SPC, `CLI`, вложенность, IRQ во время многотактной операции |
-| **Известные расхождения RTL ↔ эталон** (`UMUL`, `MOV a,NZCV`) | в диффстенде не исполнились ни разу; формулировка «семантика совпадает» верна лишь на исполнившемся подмножестве |
-| **`ANN`, `XOR`, беззнаковое `DIV`, деление на ноль, `FLT`/`FLOOR`** | не покрыты тестами |
-| **Ядро с CHK не гонялось в диффстенде** | ✅ частично закрыто: добавлены цели `lockstep-chk` и `boot-chk`, прогон совпал |
+| **`make boot` does not check the checksum** and always returns 0 | a machine stuck in the ROM reports success |
+| **`lockstep` and `boot` are not part of `make test`** | the strongest checks are outside the gate |
+| **The differential testbench does not compare memory and devices** | the plan required comparing writes and a periodic full RAM comparison |
+| **The decoder equivalence check does not catch a broken `BL`** | the signature has no PC, R15 or H; fields `b`, `c`, `cond` are fixed; not a single branch was taken in 1280 runs |
+| **Interrupts: 6 checks** | restoring C and V, the contents of SPC, `CLI`, nesting, an IRQ during a multi-cycle operation are not checked |
+| **Known RTL ↔ reference discrepancies** (`UMUL`, `MOV a,NZCV`) | never executed once in the differential testbench; the wording "the semantics match" is true only on the executed subset |
+| **`ANN`, `XOR`, unsigned `DIV`, division by zero, `FLT`/`FLOOR`** | not covered by tests |
+| **The core with CHK was not run in the differential testbench** | ✅ partly closed: targets `lockstep-chk` and `boot-chk` added, the run matched |
 
-## Главный урок
+## The main lesson
 
-Четыре аудитора проверяли **выводы**. Пятый проверил **инструмент, которым выводы
-получены**, — и нашёл, что инструмент показывает зелёное в трёх разных ситуациях,
-когда должен показывать красное.
+Four auditors checked **conclusions**. The fifth checked **the instrument with which the conclusions
+were obtained**, and found that the instrument shows green in three different situations
+where it should show red.
 
-Ни один из десяти предыдущих «зелёных прогонов регрессии» не был доказательством
-того, чем казался.
+None of the ten previous "green regression runs" was proof
+of what it seemed to be.

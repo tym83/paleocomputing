@@ -1,5 +1,5 @@
-# Контекст — корень репозитория, но образу нужно немногое. Остальное
-# (дерево QEMU в .qemu-work — гигабайты) в сборку уезжать не должно.
+# The context is the repository root, but the image needs little of it. The
+# rest (the QEMU tree in .qemu-work, gigabytes) must not go into the build.
 *
 !qemu/graft.sh
 !qemu/target/

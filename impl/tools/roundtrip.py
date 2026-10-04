@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
-"""Замкнутый круг на настоящем выводе компилятора Вирта.
+"""A closed loop on the real output of Wirth's compiler.
 
-Берём объектные файлы, порождённые ORG.Mod, и для каждого слова кода:
-  слово -> дизассемблер (снят с RISC5.v) -> наш ассемблер -> слово
-Требуем побитового совпадения.
+We take the object files produced by ORG.Mod and, for every code word:
+  word -> disassembler (derived from RISC5.v) -> our assembler -> word
+We require a bit-for-bit match.
 
-Что это доказывает: наш ассемблер покрывает ровно то пространство кодирования,
-которым пользуется настоящий компилятор, и воспроизводит каждую его инструкцию
-бит в бит, включая безразличные биты.
+What this proves: our assembler covers exactly the encoding space
+the real compiler uses, and reproduces each of its instructions
+bit for bit, don't-care bits included.
 
-Чего это НЕ доказывает: правильность раскладки полей — дизассемблер и ассемблер
-пользуются одной и той же раскладкой, и общая ошибка в ней здесь не видна.
-Раскладку проверяют 260 направленных тестов на железе, где результат сверяется
-с архитектурной семантикой, а не с нашим же представлением о ней.
+What this does NOT prove: that the field layout is correct. The disassembler and the assembler
+use the same layout, and a shared bug in it is invisible here.
+The layout is checked by 260 directed tests on the hardware, where the result is compared
+with the architectural semantics rather than with our own idea of it.
 """
 import sys, collections
 sys.path.insert(0, "tools")
@@ -31,29 +31,29 @@ def run(paths):
             txt = disasm(w)
             if txt is None:
                 unnamed += 1
-                forms["(без мнемоники)"] += 1
-                fails.append((p, i, w, "нет мнемоники"))
+                forms["(no mnemonic)"] += 1
+                fails.append((p, i, w, "no mnemonic"))
                 continue
             forms[txt.split()[0]] += 1
             try:
                 back = asm.assemble("        " + txt + "\n", raw=True)[0][0]
             except Exception as e:
                 bad += 1
-                fails.append((p, i, w, f"не собралось: {e}"))
+                fails.append((p, i, w, f"did not assemble: {e}"))
                 continue
             if back != w:
                 bad += 1
                 fails.append((p, i, w, f"{txt} -> {back:08X}"))
-    print(f"  слов кода: {total}, разных мнемоник: {len(forms)}")
+    print(f"  code words: {total}, distinct mnemonics: {len(forms)}")
     print("  " + "  ".join(f"{k}:{v}" for k, v in forms.most_common(12)))
     if fails:
-        print(f"\n❌ не воспроизведено: {len(fails)}")
+        print(f"\n❌ not reproduced: {len(fails)}")
         for p, i, w, why in fails[:12]:
             print(f"    {p.split('/')[-1]}[{i}] {w:08X}  {why}")
         if len(fails) > 12:
-            print(f"    ... и ещё {len(fails) - 12}")
+            print(f"    ... and {len(fails) - 12} more")
         return 1
-    print(f"\n✅ все {total} слов настоящего компилятора воспроизведены бит в бит")
+    print(f"\n✅ all {total} words of the real compiler reproduced bit for bit")
     return 0
 
 

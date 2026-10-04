@@ -1,45 +1,45 @@
-# Публикация образов лаборатории.
+# Publishing the lab images.
 #
-# Собирается и подписывается здесь, а не с чьего-то ноутбука, по двум причинам.
-# Во-первых, подпись cosign делается БЕЗ КЛЮЧА: сборка получает от GitHub
-# одноразовое удостоверение, им и подписывает, а запись в публичном журнале
-# прозрачности фиксирует, что артефакт собран именно этим процессом в этом
-# репозитории. Хранить и беречь нечего. Во-вторых, ровно поэтому личностью
-# подписи становится сам процесс сборки — проверить её сможет кто угодно,
-# не доверяя нам на слово.
+# Images are built and signed here, not on someone's laptop, for two reasons.
+# First, the cosign signature is KEYLESS: the build gets a one-time
+# identity from GitHub and signs with it, and the entry in the public transparency
+# log records that the artifact was built by exactly this workflow in this
+# repository. There is nothing to store or protect. Second, for exactly that reason the
+# identity of the signature is the build workflow itself: anyone can verify it
+# without taking our word for it.
 name: publish
 
 #
-# ⚠ Выпуск запускается ВРУЧНУЮ из main, а не пушем тега:
+# ⚠ A release is started MANUALLY from main, not by pushing a tag:
 #
 #   gh workflow run publish.yml --ref main -f tag=v0.1.8
 #
-# Личность подписи — это файл процесса И ссылка, с которой он запущен:
-# `publish.yml@refs/heads/main` и `publish.yml@refs/tags/v0.1.8` — разные
-# личности. Шлюз community-индекса сверяет её с записью ТОЧНО, и она обязана
-# быть одной на все версии записи. По пушу тега каждая версия подписывалась
-# бы новой личностью, и ни одна не совпала бы с `@refs/heads/main` в
-# marketplace/index/. Поэтому процесс всегда идёт из main, а дерево для
-# сборки берётся из тега.
+# The signature identity is the workflow file AND the ref it was started from:
+# `publish.yml@refs/heads/main` and `publish.yml@refs/tags/v0.1.8` are different
+# identities. The community index gate compares it with the entry EXACTLY, and it must
+# be the same for all versions of the entry. With tag pushes every version would be signed
+# by a new identity, and none would match `@refs/heads/main` in
+# marketplace/index/. So the workflow always runs from main, and the tree for the
+# build is taken from the tag.
 on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Тег выпуска (vX.Y.Z — должен уже существовать) или dev'
+        description: 'Release tag (vX.Y.Z, must already exist) or dev'
         required: false
         default: dev
 
 permissions:
   contents: read
   packages: write
-  id-token: write        # без этого не выдаётся удостоверение для подписи
+  id-token: write        # without this no identity is issued for signing
 
 env:
   REGISTRY: ghcr.io
 
 jobs:
-  # Что собирать и под каким именем. Выпуск берёт дерево из своего тега, dev —
-  # текущий main. Запуск не из main отвергается: подпись вышла бы чужой.
+  # What to build and under which name. A release takes the tree from its tag, dev takes
+  # the current main. A run not from main is rejected: the signature would belong to someone else.
   source:
     runs-on: ubuntu-latest
     outputs:
@@ -51,11 +51,11 @@ jobs:
         run: |
           set -euo pipefail
           tag="${{ github.event.inputs.tag }}"
-          # Выпуск — только из main: его подпись сверяет шлюз индекса, и
-          # личность обязана быть одной (находка 57). dev — из любой ветки:
-          # это проверочная сборка для песочницы до тега, а не выпуск.
+          # A release runs only from main: the index gate checks its signature, and
+          # the identity must be the same (finding 57). dev runs from any branch:
+          # it is a test build for the sandbox before the tag, not a release.
           if [ "$tag" != dev ] && [ "$GITHUB_REF" != refs/heads/main ]; then
-            echo "❌ выпуск запускается из main, а не из $GITHUB_REF"; exit 1
+            echo "❌ a release runs from main, not from $GITHUB_REF"; exit 1
           fi
           echo "identity=https://github.com/${{ github.repository }}/.github/workflows/publish.yml@$GITHUB_REF" >> "$GITHUB_OUTPUT"
           if [ "$tag" = dev ]; then
@@ -63,25 +63,25 @@ jobs:
           else
             git ls-remote --exit-code --tags \
               "https://github.com/${{ github.repository }}" "refs/tags/$tag" >/dev/null \
-              || { echo "❌ тега $tag нет: сначала тег, потом выпуск"; exit 1; }
+              || { echo "❌ tag $tag does not exist: tag first, then release"; exit 1; }
             ref="refs/tags/$tag"
           fi
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          echo "собираем $ref как $tag"
+          echo "building $ref as $tag"
 
-  # Каждый образ — под каждую архитектуру узла из kubevirt/platforms.txt, на
-  # родном раннере, под тегом `<выпуск>-<арх.>`; images-index склеивает их в
-  # один индекс под тегом выпуска. oberon-run берёт задача наполнения тома
-  # машины: без сборки под arm64 машина на таком узле не получала ни ПЗУ, ни
-  # диска (находка 71).
+  # Every image is built for every node architecture from kubevirt/platforms.txt, on a
+  # native runner, under the tag `<release>-<arch>`; images-index merges them into
+  # one index under the release tag. oberon-run is used by the machine's volume fill
+  # job: without an arm64 build, a machine on such a node got neither the ROM nor the
+  # disk (finding 71).
   images:
     needs: [source, launcher-versions]
     name: images (${{ matrix.image.name }}, ${{ matrix.platform.arch }})
-    # host-build: образ, у которого под архитектуру узла собирается только
-    # тонкий последний слой, а тяжёлая сборка идёт на процессоре сборщика
-    # (oberon-web: emsdk есть только под amd64). Такой образ собирается на
-    # amd64 под все архитектуры, последний слой — через эмуляцию.
+    # host-build: an image of which only the thin last layer is built for the node
+    # architecture, while the heavy build runs on the builder's CPU
+    # (oberon-web: emsdk exists only for amd64). Such an image is built on
+    # amd64 for all architectures, the last layer through emulation.
     runs-on: ${{ matrix.image.host-build && 'ubuntu-latest' || matrix.platform.runner }}
     strategy:
       fail-fast: false
@@ -93,8 +93,8 @@ jobs:
             host-build: true
           - name: oberon-lab
             file: deploy/Containerfile
-          # Среда языка: компилятор Вирта без операционной системы. Это то,
-          # что берёт langpack для разовых прогонов и постоянной службы.
+          # The language environment: Wirth's compiler without an operating system. This is
+          # what langpack uses for one-off runs and the permanent service.
           - name: oberon-run
             file: deploy/Containerfile.oberon-run
     steps:
@@ -122,8 +122,8 @@ jobs:
           echo "image=${{ env.REGISTRY }}/$owner/paleocomputing/${{ matrix.image.name }}" >> "$GITHUB_OUTPUT"
           echo "tag=$tag-${{ matrix.platform.arch }}" >> "$GITHUB_OUTPUT"
 
-      # Контекст сборки — impl/: оба описания копируют rtl/, web/, tools/ и
-      # прочее относительно него.
+      # The build context is impl/: both definitions copy rtl/, web/, tools/ and
+      # the rest relative to it.
       - id: build
         uses: docker/build-push-action@v6
         with:
@@ -137,27 +137,27 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.image.name }}-${{ matrix.platform.arch }}
           cache-to: type=gha,scope=${{ matrix.image.name }}-${{ matrix.platform.arch }},mode=max
 
-      # Подписывается дайджест, а не тег: тег можно переставить на другой
-      # образ, дайджест — нет.
-      - name: Подписать образ
+      # The digest is signed, not the tag: a tag can be moved to another
+      # image, a digest cannot.
+      - name: Sign the image
         run: cosign sign --yes "${{ steps.meta.outputs.image }}@${{ steps.build.outputs.digest }}"
 
-      - name: Проверить, что подпись действительно легла
+      - name: Check that the signature actually landed
         run: |
           cosign verify \
             --certificate-identity "${{ needs.source.outputs.identity }}" \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
             "${{ steps.meta.outputs.image }}@${{ steps.build.outputs.digest }}"
 
-      # ⚠ Проверяем СОДЕРЖИМОЕ, а не факт сборки.
+      # ⚠ We check the CONTENTS, not the fact that a build happened.
       #
-      # Образ раздачи однажды вышел без машины: risc5.wasm и oberon.dsk были
-      # тогда продуктами сборки в .gitignore, и `COPY web/` копировал то, чего
-      # нет. (Теперь они лежат в git ради GitHub Pages, а образ собирает свои.) Страница отдавалась, код ответа 200, размер верный — и в кластере
-      # это выглядело успехом, пока никто не попробовал её открыть.
+      # The serving image once shipped without the machine: risc5.wasm and oberon.dsk were
+      # build products listed in .gitignore back then, and `COPY web/` copied something that
+      # did not exist. (Now they are in git for GitHub Pages, and the image builds its own.) The page was served, response code 200, the size was right, and in the cluster
+      # it looked like success until someone tried to open it.
       #
-      # Отсюда правило: после выкладки лезть внутрь и смотреть, что там лежит.
-      - name: Проверить, что в образе есть чем работать
+      # Hence the rule: after publishing, look inside and see what is there.
+      - name: Check that the image has something to work with
         run: |
           set -euo pipefail
           ref="${{ steps.meta.outputs.image }}@${{ steps.build.outputs.digest }}"
@@ -168,17 +168,17 @@ jobs:
                         dir=/opt/oberon/payload ;;
             *)          want=""; dir="" ;;
           esac
-          [ -n "$want" ] || { echo "для ${{ matrix.image.name }} проверки содержимого нет"; exit 0; }
+          [ -n "$want" ] || { echo "no content check for ${{ matrix.image.name }}"; exit 0; }
           for f in $want; do
-            # --platform: образ, собранный на amd64 под arm64 (host-build),
-            # без него не запустился бы вовсе — и отказ docker run выглядел
-            # бы как «файла нет».
+            # --platform: an image built on amd64 for arm64 (host-build)
+            # would not start at all without it, and the docker run failure would look
+            # like "file missing".
             docker run --rm --platform linux/${{ matrix.platform.arch }} --entrypoint sh "$ref" -c "test -s $dir/$f" \
-              || { echo "❌ в образе нет $dir/$f"; exit 1; }
+              || { echo "❌ the image has no $dir/$f"; exit 1; }
             echo "  ✅ $f"
           done
 
-      - name: Итог
+      - name: Summary
         run: |
           echo "### ${{ matrix.image.name }} ${{ matrix.platform.arch }}" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
@@ -186,8 +186,8 @@ jobs:
           echo "${{ steps.build.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
-  # Сборки всех архитектур образа — в один индекс под тегом выпуска: его
-  # берут каталог и кластеры. Подписывается сам индекс.
+  # The builds of all architectures of an image go into one index under the release tag: that is
+  # what the catalog and clusters use. The index itself is signed.
   images-index:
     needs: [source, launcher-versions, images]
     runs-on: ubuntu-latest
@@ -206,32 +206,32 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - uses: sigstore/cosign-installer@v3
-      - name: Индекс
+      - name: Index
         run: |
           set -euo pipefail
           owner=$(echo "${{ github.repository_owner }}" | tr 'A-Z' 'a-z')
           tools/image-index.sh "${{ env.REGISTRY }}/$owner/paleocomputing/${{ matrix.name }}" \
             "${{ needs.source.outputs.tag }}" "${{ needs.source.outputs.tag }}"
 
-  # ── Образ virt-launcher с чужими машинами ─────────────────────────────────
+  # ── The virt-launcher image with foreign machines ─────────────────────────────────
   #
-  # Эмуляторы в кластере живут здесь, а не в oberon-run: тот несёт только ПЗУ
-  # и диск. Какие машины — kubevirt/targets.txt (сегодня RISC5). Раньше этот образ собирался руками на стенде, и выложенный отставал
-  # от кода — свойства chk в нём не было, хотя каталог уже умел его просить.
+  # The emulators in the cluster live here, not in oberon-run: that one carries only the ROM
+  # and the disk. Which machines: kubevirt/targets.txt (RISC5 today). This image used to be built by hand on the test bench, and the published one lagged
+  # behind the code: it lacked the chk property, although the catalog could already ask for it.
   #
-  # Тег несёт версию KubeVirt: launcher обязан совпадать с ней (находка 44).
-  # Поэтому образ собирается под каждую версию из kubevirt/versions.txt
-  # (находка 60) — список берётся из дерева выпуска, а не из этого файла.
+  # The tag carries the KubeVirt version: the launcher must match it (finding 44).
+  # So the image is built for every version from kubevirt/versions.txt
+  # (finding 60); the list is taken from the release tree, not from this file.
   #
-  # Тегов два на один дайджест: `<kubevirt>-paleo-<выпуск>` — имя семейства,
-  # которое не меняется от того, сколько машин в образе (его берёт компонент
-  # платформы, находка 65), и прежний `<kubevirt>-risc5-<выпуск>` — чтобы не
-  # сломать тех, у кого он уже записан в ресурсе KubeVirt.
+  # Two tags for one digest: `<kubevirt>-paleo-<release>` is the family name,
+  # which does not change with the number of machines in the image (the platform
+  # component uses it, finding 65), and the old `<kubevirt>-risc5-<release>`, so as not to
+  # break those who already have it recorded in their KubeVirt resource.
   #
-  # Образ многоархитектурный (kubevirt/platforms.txt, находка 71): каждая
-  # архитектура собирается на родном раннере под своим тегом
-  # `<kubevirt>-paleo-<выпуск>-<арх.>`, а launcher-index склеивает их в один
-  # индекс под обоими именами выше. Узел сам берёт из индекса свою сборку.
+  # The image is multi-architecture (kubevirt/platforms.txt, finding 71): each
+  # architecture is built on a native runner under its own tag
+  # `<kubevirt>-paleo-<release>-<arch>`, and launcher-index merges them into one
+  # index under both names above. A node picks its own build from the index.
   launcher-versions:
     needs: source
     runs-on: ubuntu-latest
@@ -248,8 +248,8 @@ jobs:
           versions=$(awk '!/^#/ && NF { print $1 }' kubevirt/versions.txt | jq -Rnc '[inputs]')
           platforms=$(awk '!/^#/ && NF { print $1, $2 }' kubevirt/platforms.txt \
             | jq -Rnc '[inputs | split(" ") | {arch: .[0], runner: .[1]}]')
-          [ "$versions" != "[]" ] || { echo "в kubevirt/versions.txt нет версий"; exit 1; }
-          [ "$platforms" != "[]" ] || { echo "в kubevirt/platforms.txt нет архитектур"; exit 1; }
+          [ "$versions" != "[]" ] || { echo "kubevirt/versions.txt lists no versions"; exit 1; }
+          [ "$platforms" != "[]" ] || { echo "kubevirt/platforms.txt lists no architectures"; exit 1; }
           list=$(jq -nc --argjson v "$versions" --argjson p "$platforms" '[$v[] as $k | $p[] | . + {kubevirt: $k}]')
           echo "list=$list" >> "$GITHUB_OUTPUT"
           echo "versions=$versions" >> "$GITHUB_OUTPUT"
@@ -269,16 +269,16 @@ jobs:
         with:
           ref: ${{ needs.source.outputs.ref }}
 
-      # install: true — чтобы `docker build` внутри build.sh шёл через buildx
-      # и умел кэш, подпись происхождения и выкладку.
+      # install: true so that `docker build` inside build.sh goes through buildx
+      # and can do caching, provenance attestation and pushing.
       - uses: docker/setup-buildx-action@v3
         with:
           install: true
 
-      # ⚠ Без этого кэш type=gha молча не работает. buildx берёт токен кэша
-      # из ACTIONS_RUNTIME_TOKEN, а шагу `run` его не дают — только самим
-      # действиям. Нет токена — buildx выбрасывает --cache-from/--cache-to без
-      # единого слова, и сборка каждый раз идёт с нуля.
+      # ⚠ Without this the type=gha cache silently does not work. buildx takes the cache token
+      # from ACTIONS_RUNTIME_TOKEN, and the `run` step is not given it, only the
+      # actions themselves. No token, and buildx drops --cache-from/--cache-to without
+      # a single word, and the build starts from scratch every time.
       - uses: crazy-max/ghaction-github-runtime@v4
 
       - uses: docker/login-action@v3
@@ -309,14 +309,14 @@ jobs:
             --metadata-file /tmp/meta.json
           echo "digest=$(jq -r '."containerimage.digest"' /tmp/meta.json)" >> "$GITHUB_OUTPUT"
 
-      - name: Подписать образ
+      - name: Sign the image
         run: cosign sign --yes "${{ steps.meta.outputs.image }}@${{ steps.build.outputs.digest }}"
 
-      # Содержимое, а не факт сборки. Та же проверка идёт на PR (launcher.yml).
-      - name: Проверить машины в образе
+      # The contents, not the fact of a build. The same check runs on PRs (launcher.yml).
+      - name: Check the machines in the image
         run: kubevirt/check_image.sh "${{ steps.meta.outputs.image }}@${{ steps.build.outputs.digest }}"
 
-      - name: Итог
+      - name: Summary
         run: |
           echo "### virt-launcher ${{ matrix.kubevirt }} ${{ matrix.arch }}" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
@@ -324,9 +324,9 @@ jobs:
           echo "${{ steps.build.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
-  # Сборки всех архитектур одной версии KubeVirt — в один индекс под именами,
-  # которые берут кластеры. Индекс подписывается отдельно: cosign verify по
-  # тегу проверяет именно его.
+  # The builds of all architectures of one KubeVirt version go into one index under the names
+  # that clusters use. The index is signed separately: cosign verify by
+  # tag checks exactly that.
   launcher-index:
     needs: [source, launcher-versions, launcher]
     runs-on: ubuntu-latest
@@ -349,23 +349,23 @@ jobs:
 
       - uses: sigstore/cosign-installer@v3
 
-      - name: Индекс
+      - name: Index
         run: |
           set -euo pipefail
           tag="${{ needs.source.outputs.tag }}"
           kv="${{ matrix.kubevirt }}"
           owner=$(echo "${{ github.repository_owner }}" | tr 'A-Z' 'a-z')
-          # Прежнее имя -risc5- — тем же индексом, для тех, у кого оно записано.
+          # The old -risc5- name points at the same index, for those who have it recorded.
           tools/image-index.sh "${{ env.REGISTRY }}/$owner/paleocomputing/virt-launcher" \
             "$kv-paleo-$tag" "$kv-paleo-$tag" "$kv-risc5-$tag"
 
-  # ── Три репозитория каталога как OCI-артефакты ────────────────────────────
+  # ── The three catalog repositories as OCI artifacts ────────────────────────────
   #
-  # Публикует их flux: артефакт каталога — это не образ контейнера, а слепок
-  # дерева файлов, и собирает его именно он. cozypkg сверху добавляет проверку
-  # структуры и отказывается публиковать то, что не разберёт платформа.
+  # flux publishes them: a catalog artifact is not a container image but a snapshot
+  # of a file tree, and flux is what builds it. cozypkg adds a structure check on top
+  # and refuses to publish what the platform would not parse.
   #
-  # Оба инструмента ставятся в раннер и живут только на время сборки.
+  # Both tools are installed on the runner and live only for the duration of the build.
   catalog:
     needs: [source, launcher-index, images-index]
     runs-on: ubuntu-latest
@@ -373,20 +373,20 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.source.outputs.ref }}
-          fetch-depth: 0     # cozypkg берёт из git источник и ревизию артефакта
+          fetch-depth: 0     # cozypkg takes the artifact source and revision from git
 
-      - name: Поставить flux
+      - name: Install flux
         uses: fluxcd/flux2/action@main
 
       - uses: actions/setup-go@v5
         with:
           go-version: stable
 
-      # cozypkg собирается из исходников: в выпущенных бинарях команды validate
-      # ещё нет, а go install на этом модуле не работает — в его go.mod есть
-      # replace-директивы. Коммит прибит гвоздями, чтобы сборка не менялась под
-      # ногами вместе с чужой веткой.
-      - name: Собрать cozypkg
+      # cozypkg is built from source: released binaries do not have the validate command
+      # yet, and go install does not work on this module: its go.mod has
+      # replace directives. The commit is pinned so that the build does not shift under
+      # our feet along with someone else's branch.
+      - name: Build cozypkg
         env:
           COZYSTACK_SHA: ff52aeb44e54d5e851ca18a343e7b66a15c9e571
         run: |
@@ -395,7 +395,7 @@ jobs:
           git -C /tmp/cozystack checkout --quiet "$COZYSTACK_SHA"
           ( cd /tmp/cozystack && go build -o /tmp/cozypkg ./cmd/cozypkg )
           sudo install -m755 /tmp/cozypkg /usr/local/bin/cozypkg
-          cozypkg validate --help >/dev/null && echo "cozypkg собран, validate на месте"
+          cozypkg validate --help >/dev/null && echo "cozypkg built, validate is present"
 
       - uses: docker/login-action@v3
         with:
@@ -405,22 +405,22 @@ jobs:
 
       - uses: sigstore/cosign-installer@v3
 
-      # Таблица launcher'ов компонента платформы — под тег ЭТОГО выпуска.
-      # Задание ждёт launcher, так что таблица не может сослаться на образ,
-      # которого ещё нет в реестре.
-      - name: Таблица launcher'ов под выпуск
+      # The platform component's launcher table, pinned to THIS release's tag.
+      # The job waits for launcher, so the table cannot refer to an image
+      # that is not in the registry yet.
+      - name: Launcher table for the release
         run: |
           python3 marketplace/tools/gen-launcher-table.py --release "${{ needs.source.outputs.tag }}" --pin
-          # И образы с файлами машин — туда же: паспорт не должен отставать от выпуска.
+          # The images with machine files go there too: the passport must not lag behind the release.
           python3 marketplace/tools/pin-images.py --release "${{ needs.source.outputs.tag }}" --pin
 
-      # Публикуется копия с разыменованными ссылками: flux ссылки в архив не
-      # кладёт, а распаковщик каталога в кластере их пропускает — библиотека
-      # машин, подключённая ссылкой, до кластера бы не доехала.
-      - name: Копия каталога без ссылок
+      # A copy with dereferenced links is published: flux does not put links into the archive,
+      # and the catalog unpacker in the cluster skips them, so a machine
+      # library connected by a link would never reach the cluster.
+      - name: Catalog copy without links
         run: marketplace/tools/stage.sh "$RUNNER_TEMP/catalog"
 
-      - name: Проверить каталог перед публикацией
+      - name: Check the catalog before publishing
         run: |
           set -euo pipefail
           for r in machines languages images platform; do
@@ -428,32 +428,32 @@ jobs:
             cozypkg validate "$RUNNER_TEMP/catalog/$r"
           done
 
-      # Свои проверки каталога — поверх штатного валидатора. До сих пор они
-      # жили только в ручном `make check`, и в кластер уезжало то, что они бы
-      # поймали.
-      - name: Проверки каталога
+      # Our own catalog checks, on top of the standard validator. Until now they
+      # lived only in the manual `make check`, and things they would have caught
+      # went to the cluster.
+      - name: Catalog checks
         run: |
           pip install --quiet pyyaml
           python3 marketplace/tools/check.py
 
-      - name: Выложить и подписать
+      - name: Publish and sign
         run: |
           set -euo pipefail
           tag="${{ needs.source.outputs.tag }}"
           owner=$(echo "${{ github.repository_owner }}" | tr 'A-Z' 'a-z')
-          echo "### Каталог" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Catalog" >> "$GITHUB_STEP_SUMMARY"
           for r in machines languages images platform; do
             ref="ghcr.io/$owner/paleocomputing/$r:$tag"
-            # Копия вне git: источник и ревизию передаём сами, в том же виде,
-            # в каком cozypkg вывел бы их из дерева.
+            # A copy outside git: we pass the source and revision ourselves, in the same form
+            # cozypkg would derive them from the tree.
             cozypkg push "oci://$ref" --path "$RUNNER_TEMP/catalog/$r" \
               --source "$(git remote get-url origin)" \
               --revision "$(git describe --tags --always):$(git rev-parse HEAD)"
-            # Подписывается дайджест: cosign сам разрешает тег в него.
+            # The digest is signed: cosign resolves the tag to it itself.
             cosign sign --yes "$ref"
             cosign verify \
               --certificate-identity "${{ needs.source.outputs.identity }}" \
               --certificate-oidc-issuer https://token.actions.githubusercontent.com \
               "$ref" >/dev/null
-            echo "- \`$ref\` — выложен и подпись проверена" >> "$GITHUB_STEP_SUMMARY"
+            echo "- \`$ref\` — published and signature verified" >> "$GITHUB_STEP_SUMMARY"
           done

@@ -1,29 +1,29 @@
 #!/usr/bin/env bash
 #
-# Сборка статического сайта серии в _site/.
+# Build the series' static site into _site/.
 #
-# Один источник на каждый файл:
-#   site/**       — страницы серии (свои, правятся руками)
-#   impl/web/**   — лаборатория, методичка и собранная машина
+# One source for every file:
+#   site/**       — the series pages (our own, edited by hand)
+#   impl/web/**   — the lab, the book and the built machine
 #
-# ⚠ Копий impl/web/ в site/oberon/ больше нет, и заводить их нельзя. Такая
-# копия однажды устарела молча: методичку и лабораторию перевели на английский,
-# а на сайте осталась прежняя версия, и /oberon/book/en/ отдавал 404. Два
-# места, из которых обновляется одно, — та же ловушка, что и во всём остальном
-# в этом репозитории, только тихая: страницы-то открывались.
+# ⚠ There are no more copies of impl/web/ in site/oberon/, and none may be added.
+# Such a copy once went stale silently: the book and the lab were translated into
+# English, the site kept the old version, and /oberon/book/en/ served a 404. Two
+# places of which only one gets updated is the same trap as everywhere else in
+# this repository, only a quiet one: the pages did open.
 #
-# impl/web/index.html — страница запуска машины; на сайте она лежит как
-# run.html, потому что /oberon/ занят страницей проекта из site/.
+# impl/web/index.html is the machine launch page; on the site it lives as
+# run.html, because /oberon/ is taken by the project page from site/.
 #
-# Использование: tools/build-site.sh [каталог-назначения]
+# Usage: tools/build-site.sh [destination-directory]
 set -euo pipefail
 cd "$(dirname "$0")/.."
 out=${1:-_site}
 
-# Файлы разработки в раздачу не едут: прогон лабораторных и генератор методички.
+# Development files are not served: the lab runner and the book generator.
 DEV='\.mjs$|(^|/)mkbook\.py$'
 
-# copy_tree <откуда> <куда> [regex исключений]
+# copy_tree <from> <to> [exclusion regex]
 copy_tree() {
   local src=$1 dst=$2 skip=${3:-} rel
   ( cd "$src" && find . -type f ) | sed 's|^\./||' | sort | while read -r rel; do
@@ -39,8 +39,8 @@ cp site/oberon/index.html "$out/oberon/index.html"
 copy_tree impl/web "$out/oberon" "$DEV|^index\.html$"
 cp impl/web/index.html "$out/oberon/run.html"
 
-# Обязательный состав. Пустой файл — тоже отсутствие: собранный wasm умеет
-# получиться нулевым, и один раз уже получился.
+# Required contents. An empty file counts as missing too: the built wasm can
+# come out zero-sized, and once it already did.
 need="index.html style.css ru/index.html ru/oberon/index.html cozystack/index.html ru/cozystack/index.html
       oberon/index.html oberon/run.html oberon/lab.html oberon/embed.html oberon/checks.html
       oberon/i18n.js oberon/labs.js oberon/labs.en.js
@@ -52,12 +52,12 @@ need="index.html style.css ru/index.html ru/oberon/index.html cozystack/index.ht
       oberon/book/index.html oberon/book/en/index.html"
 miss=0
 for f in $need; do
-  if [ -s "$out/$f" ]; then printf '  ✅ %s\n' "$f"; else printf '  ❌ нет или пусто: %s\n' "$f"; miss=1; fi
+  if [ -s "$out/$f" ]; then printf '  ✅ %s\n' "$f"; else printf '  ❌ missing or empty: %s\n' "$f"; miss=1; fi
 done
-[ "$miss" = 0 ] || { echo "сайт неполный"; exit 1; }
+[ "$miss" = 0 ] || { echo "site incomplete"; exit 1; }
 
-# Проверка местных ссылок. Именно её отсутствие дало живой 404: страницы
-# раскладывались, а /oberon/book/en/ вёл в пустоту.
+# Local link check. Its absence is exactly what produced the live 404: the pages
+# were laid out, but /oberon/book/en/ led nowhere.
 python3 - "$out" <<'PY'
 import os, re, sys, urllib.parse
 root = sys.argv[1]
@@ -73,7 +73,7 @@ for dirpath, _, files in os.walk(root):
         for raw in ref.findall(text):
             if re.match(r'^(https?:|mailto:|data:|#|//)', raw):
                 continue
-            # Адрес, собираемый на месте (`book/${LANG...}`), проверить нечем.
+            # An address assembled at runtime (`book/${LANG...}`) cannot be checked.
             if '${' in raw or '{{' in raw:
                 continue
             target = urllib.parse.unquote(raw.split('#')[0].split('?')[0])
@@ -86,11 +86,11 @@ for dirpath, _, files in os.walk(root):
             if not os.path.exists(dest):
                 bad.append(f"{os.path.relpath(path, root)} → {raw}")
 if bad:
-    print("  ❌ битые местные ссылки:")
+    print("  ❌ broken local links:")
     for b in bad:
         print("    " + b)
     sys.exit(1)
-print("  ✅ местные ссылки")
+print("  ✅ local links")
 PY
 
-echo "  сайт собран в $out/ ($(find "$out" -type f | wc -l | tr -d ' ') файлов)"
+echo "  site built in $out/ ($(find "$out" -type f | wc -l | tr -d ' ') files)"

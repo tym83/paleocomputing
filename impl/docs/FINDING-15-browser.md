@@ -1,91 +1,93 @@
-# Утверждение У1 закрыто: Project Oberon работает в браузере на настоящем RTL
+[Русская версия](FINDING-15-browser.ru.md)
 
-Не эмулятор и не пересказ. Ядро `RISC5.v` Вирта, синтезируемый Verilog, прогоняется
-Verilator'ом такт за тактом, собирается Emscripten'ом в WASM и поднимает Project Oberon
-в обычной вкладке. Снимок: `docs/oberon-in-browser.png`.
+# Claim U1 closed: Project Oberon runs in the browser on the real RTL
 
-На экране: системный журнал с баннером `Oberon V5  NW 14.4.2013`, панель `System.Tool`
-со всеми командами (`ORP.Compile`, `System.Directory`, `Hilbert.Draw`, `Tools.Inspect`…),
-плиточные окна, курсор мыши. Полноценный рабочий стол.
+Not an emulator and not a retelling. Wirth's `RISC5.v` core, synthesisable Verilog, is run
+by Verilator cycle by cycle, built by Emscripten into WASM, and brings up Project Oberon
+in an ordinary tab. Screenshot: `docs/oberon-in-browser.png`.
 
-## Размеры доставки (измерено)
+On screen: the system log with the banner `Oberon V5  NW 14.4.2013`, the `System.Tool` panel
+with all commands (`ORP.Compile`, `System.Directory`, `Hilbert.Draw`, `Tools.Inspect`…),
+tiled windows, the mouse cursor. A complete desktop.
 
-| Артефакт | Сырой | gzip |
+## Delivery sizes (measured)
+
+| Artifact | Raw | gzip |
 |---|---|---|
-| `risc5.wasm` (ядро + рантайм Verilator) | 180 648 | **74 811** |
-| `risc5.js` (обвязка Emscripten) | 15 280 | 5 367 |
+| `risc5.wasm` (core + Verilator runtime) | 180 648 | **74 811** |
+| `risc5.js` (Emscripten glue) | 15 280 | 5 367 |
 | `index.html` | 7 596 | 3 378 |
-| `prom_sd.mem` (загрузчик) | 4 608 | 770 |
-| `oberon.dsk` (образ системы) | 989 184 | 249 402 |
-| **ИТОГО** | | **333 590 = 326 КБ** |
+| `prom_sd.mem` (boot loader) | 4 608 | 770 |
+| `oberon.dsk` (system image) | 989 184 | 249 402 |
+| **TOTAL** | | **333 590 = 326 KB** |
 
-Совпадает с предсказанием ревью (177 КБ сырых / 75 КБ gzip на модель) до процента.
+This matches the review's prediction (177 KB raw / 75 KB gzip for the model) to within a percent.
 
-## Скорость
+## Speed
 
-| Сборка | Результат |
+| Build | Result |
 |---|---|
-| нативная | 4.37 МГц-эквивалент |
-| **WASM (Node, ES-модуль)** | **4.27 МГц-эквивалент** |
+| native | 4.37 MHz-equivalent |
+| **WASM (Node, ES module)** | **4.27 MHz-equivalent** |
 
-**Потеря на WASM — 2.3%.** Ревью предсказывало 5–8%; получилось лучше.
+**The WASM loss is 2.3%.** The review predicted 5–8%; it came out better.
 
-Контрольная сумма кадрового буфера после 12 млн инструкций — `B5DFC933` **во всех трёх
-сборках**: нативной с файловым диском, нативной с диском в памяти и в WASM.
-Побитовая идентичность.
+The framebuffer checksum after 12 million instructions is `B5DFC933` **in all three
+builds**: native with a file-backed disk, native with an in-memory disk, and WASM.
+Bit-for-bit identical.
 
-## Что пришлось решить
+## What had to be solved
 
-**Заглушки привязки потоков.** Рантайм Verilator тянет `pthread_getaffinity_np`,
-`pthread_setaffinity_np`, `sched_getcpu`, которых нет в wasm-sysroot. Ревью предупреждало.
-Сигнатуры заглушек обязаны совпадать, иначе `wasm-ld` ругается на несовпадение типов.
+**Thread affinity stubs.** The Verilator runtime pulls in `pthread_getaffinity_np`,
+`pthread_setaffinity_np`, `sched_getcpu`, which are absent from the wasm sysroot. The review warned about this.
+The stub signatures must match, otherwise `wasm-ld` complains about a type mismatch.
 
-**`VRISC5__Dpi.cpp` исключён** — тянет `svdpi.h`, который использует `uint8_t` без
-включения `<stdint.h>`. DPI нам не нужен.
+**`VRISC5__Dpi.cpp` is excluded**: it pulls in `svdpi.h`, which uses `uint8_t` without
+including `<stdint.h>`. We do not need DPI.
 
-**`verilated_threads.cpp` обязателен** — без него не находится `VlThreadPool`.
+**`verilated_threads.cpp` is mandatory**: without it `VlThreadPool` is not found.
 
-**Компоновать через `em++`, а не `emcc`** — иначе не подтягивается стандартная
-библиотека C++.
+**Link with `em++`, not `emcc`**: otherwise the C++ standard
+library is not pulled in.
 
-**Диск в памяти.** В WASM нет файловой системы, образ приходит из JS. Логика протокола
-SD поверх SPI перенесена из эталонного эмулятора слово в слово и проверена побитовым
-совпадением контрольной суммы экрана с файловым вариантом.
+**An in-memory disk.** WASM has no file system; the image comes from JS. The logic of the SD
+protocol over SPI was carried over from the reference emulator word for word and verified by a bit-for-bit
+match of the screen checksum with the file-backed version.
 
-**SharedArrayBuffer НЕ используется** — сознательное решение по рекомендации ревью.
-Потоки Verilator для дизайна такого размера бессмысленны, а отказ от разделяемой памяти
-снимает требование заголовков COOP/COEP и делает страницу встраиваемой куда угодно,
-включая GitHub Pages.
+**SharedArrayBuffer is NOT used**: a deliberate decision following the review's recommendation.
+Verilator threads are pointless for a design of this size, and giving up shared memory
+removes the requirement for COOP/COEP headers and makes the page embeddable anywhere,
+including GitHub Pages.
 
-## Баг, пойманный вживую
+## A bug caught live
 
-**Если вкладка СТАРТУЕТ скрытой, `requestAnimationFrame` не вызывается вовсе — и цепочка
-кадров не начинается никогда, даже когда вкладку потом открывают.**
+**If a tab STARTS hidden, `requestAnimationFrame` is not called at all, and the chain
+of frames never starts, even when the tab is opened later.**
 
-Проявилось в автоматизации, где вкладка скрыта: страница инициализировалась, WASM
-работал, а экран оставался чёрным и счётчик кадров показывал ноль. Лечится подпиской на
-`visibilitychange` с перезапуском цепочки.
+It showed up in automation, where the tab is hidden: the page initialised, WASM
+ran, but the screen stayed black and the frame counter showed zero. The cure is subscribing to
+`visibilitychange` and restarting the chain.
 
-Это не теоретический риск: любой, кто откроет ссылку в фоновой вкладке и переключится
-на неё потом, попал бы на чёрный экран.
+This is not a theoretical risk: anyone who opened the link in a background tab and switched
+to it later would have got a black screen.
 
-## Ввод
+## Input
 
-**Мышь.** Источник истины — `e.buttons` (битовая маска), а не отдельные события: Оберону
-нужно **одновременное** состояние трёх кнопок для межкнопочных щелчков. Кнопки лежат в
-битах 26/25/24 регистра мыши. `preventDefault` на `mousedown` со средней кнопкой и на
-`auxclick` гасит автопрокрутку; на `contextmenu` — меню правой кнопки.
-**Средняя кнопка эмулируется левым Alt, а не Ctrl**: на macOS система превращает
-`Ctrl+щелчок` в правую кнопку, и такой маппинг физически недостижим.
+**Mouse.** The source of truth is `e.buttons` (a bitmask), not individual events: Oberon
+needs the **simultaneous** state of all three buttons for interclicks. The buttons sit in
+bits 26/25/24 of the mouse register. `preventDefault` on `mousedown` with the middle button and on
+`auxclick` suppresses autoscroll; on `contextmenu`, the right-button menu.
+**The middle button is emulated with left Alt, not Ctrl**: on macOS the system turns
+`Ctrl+click` into a right click, so such a mapping is physically unreachable.
 
-**Клавиатура.** Таблица скан-кодов PS/2 набора 2, отображение из `KeyboardEvent.code`.
+**Keyboard.** A PS/2 scan code set 2 table, mapped from `KeyboardEvent.code`.
 
-## Отрисовка
+## Rendering
 
-Развёртка 1 бит → RGBA обычным JS через таблицу на 256 записей по 8 пикселей.
-Ревью измеряло 0.33 мс на кадр — оптимизировать нечего, WebGL и SIMD не нужны.
-**Кадровый буфер хранится снизу вверх** (`VID.v`: `vidadr = Org + {3'b0, ~vcnt, hword}`),
-без разворота экран перевёрнут.
+Expansion of 1 bit → RGBA in plain JS via a 256-entry table of 8 pixels each.
+The review measured 0.33 ms per frame: there is nothing to optimise, WebGL and SIMD are not needed.
+**The framebuffer is stored bottom-up** (`VID.v`: `vidadr = Org + {3'b0, ~vcnt, hword}`);
+without flipping, the screen is upside down.
 
-При `ALLOW_MEMORY_GROWTH` буфер кучи может быть заменён, поэтому вид на кадровый буфер
-строится заново каждый кадр, а не один раз при старте.
+With `ALLOW_MEMORY_GROWTH` the heap buffer can be replaced, so the view onto the framebuffer
+is rebuilt every frame rather than once at startup.

@@ -1,13 +1,13 @@
-# Собрано marketplace/tools/gen-launcher-table.py из kubevirt/versions.txt.
-# Руками не править: check.py сверяет с источником, publish.yml пересобирает
-# под тег выпуска.
+# Built by marketplace/tools/gen-launcher-table.py from kubevirt/versions.txt.
+# Do not edit by hand: check.py compares it with the source, publish.yml rebuilds it
+# for the release tag.
 # release: dev
 # registry: ghcr.io/tym83/paleocomputing
 # arch: amd64 arm64
 #
-# arch — процессоры узлов, под которые собран образ (kubevirt/platforms.txt).
-# На кластере с узлом другой архитектуры компонент launcher не трогает.
+# The arch line lists node CPUs the image is built for (kubevirt/platforms.txt).
+# On a cluster with a node of another architecture the component leaves the launcher alone.
 #
-# версия KubeVirt   образ virt-launcher (семейство paleo, тот же дайджест, что -risc5-)
+# KubeVirt version   virt-launcher image (paleo family, same digest as -risc5-)
 v1.8.4 ghcr.io/tym83/paleocomputing/virt-launcher:v1.8.4-paleo-dev
 v1.9.0 ghcr.io/tym83/paleocomputing/virt-launcher:v1.9.0-paleo-dev

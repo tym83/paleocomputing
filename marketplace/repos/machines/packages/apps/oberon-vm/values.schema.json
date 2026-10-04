@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "oberon-vm",
   "type": "object",
-  "$comment": "Корень схемы НЕ закрыт намеренно: cozystack-engine подмешивает в values любого приложения тенанта свои ключи (_cluster, _namespace), и при additionalProperties:false Helm отвергает значения целиком — приложение не разворачивается. Ни один чарт платформы корень не закрывает. Вложенные объекты закрыты: туда движок ничего не кладёт. Умолчания memory и hardware и перечень hardware обязаны совпадать с паспортом machine.yaml — это сверяют проверки каталога.",
+  "$comment": "The schema root is intentionally NOT closed: cozystack-engine injects its own keys (_cluster, _namespace) into the values of every tenant application, and with additionalProperties:false Helm rejects the values entirely, so the application does not deploy. No platform chart closes its root. Nested objects are closed: the engine puts nothing there. The memory and hardware defaults and the hardware list must match the machine.yaml passport; the catalog checks verify this.",
   "required": [
     "memory",
     "storageClass",
@@ -11,18 +11,18 @@
   "properties": {
     "memory": {
       "type": "string",
-      "description": "Память машины: целое число Mi или Gi, от 128Mi до 1Gi",
+      "description": "Machine memory: an integer number of Mi or Gi, from 128Mi to 1Gi",
       "pattern": "^[1-9][0-9]*(Mi|Gi)$",
       "default": "128Mi"
     },
     "running": {
       "type": "boolean",
-      "description": "Держать машину запущенной",
+      "description": "Keep the machine running",
       "default": true
     },
     "hardware": {
       "type": "string",
-      "description": "Вариант железа: base — ядро Вирта как есть, chk — с аппаратной проверкой границ массива",
+      "description": "Hardware variant: base is Wirth's core as is, chk adds hardware array bounds checking",
       "enum": [
         "base",
         "chk"

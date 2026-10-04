@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Снять LM.Out с образа диска после прогона в системе и сверить с эталоном.
+"""Extract LM.Out from the disk image after a run in the system and compare it with the reference.
 
-  python3 lm/outcheck.py ОБРАЗ [N ЗЕРНО "затравка"]
-По умолчанию — команда из System.Tool образа lm/mkdisk.sh: 16 1 "alice was ".
+  python3 lm/outcheck.py IMAGE [N SEED "prompt"]
+Default: the command from System.Tool of the lm/mkdisk.sh image: 16 1 "alice was ".
 """
 import pathlib, sys
 HERE = pathlib.Path(__file__).resolve().parent
@@ -18,13 +18,13 @@ def main():
     prompt = sys.argv[4] if len(sys.argv) > 4 else "alice was "
     fs = img.files()
     if "LM.Out" not in fs:
-        print("  ❌ на образе нет LM.Out — команда не отработала")
+        print("  ❌ no LM.Out on the image: the command did not run")
         return 1
     got = img.read(fs["LM.Out"]).decode("latin-1")
     want = prompt + ref.generate(ref.Risc5(), n, seed, prompt)
     ok = got == want
     print(f"  LM.Out: {got!r}")
-    print(f"  эталон: {want!r}  {'совпало ✅' if ok else 'РАСХОЖДЕНИЕ ❌'}")
+    print(f"  reference: {want!r}  {'match ✅' if ok else 'MISMATCH ❌'}")
     return 0 if ok else 1
 
 

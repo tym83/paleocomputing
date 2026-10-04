@@ -1,25 +1,25 @@
-# Сборка образа virt-launcher на каждую правку, которая его касается.
+# Build the virt-launcher image on every change that touches it.
 #
-# ⚠ До этого kubevirt/Containerfile собирался только в publish.yml, то есть
-# при выпуске. Сломанная правка — однажды это был пропавший `mkdir -p
-# /src/qemu` — проходила разбор, вливалась и всплывала уже на выпуске, когда
-# чинить надо срочно.
+# ⚠ Before this, kubevirt/Containerfile was built only in publish.yml, that is,
+# at release time. A broken change (once it was a missing `mkdir -p
+# /src/qemu`) passed review, got merged and surfaced only at release, when
+# it had to be fixed in a hurry.
 #
-# Почему отдельный процесс, а не задача в hardware.yml: фильтр путей там общий
-# на весь файл. Добавь туда kubevirt/** — и правка перехватчика тянула бы за
-# собой RTL и QEMU на полтора-два часа. Здесь — только образ.
+# Why a separate workflow and not a job in hardware.yml: the path filter there is shared
+# by the whole file. Add kubevirt/** there, and a hook change would drag
+# RTL and QEMU along for an hour and a half to two hours. Here it is only the image.
 #
-# Ничего не выкладывается: образ собирается, загружается в docker раннера и
-# проверяется тем же сценарием, что и при выпуске. Кэш — тот же, что у
-# publish.yml (scope=launcher-<версия KubeVirt>): пуши в main его наполняют,
-# PR им пользуются.
+# Nothing is published: the image is built, loaded into the runner's docker and
+# checked by the same script as at release. The cache is the same as in
+# publish.yml (scope=launcher-<KubeVirt version>): pushes to main fill it,
+# PRs use it.
 #
-# Собирается под каждую версию KubeVirt из kubevirt/versions.txt, как и при
-# выпуске (находка 60): иначе сломанная пара версий всплыла бы только там.
+# Built for every KubeVirt version from kubevirt/versions.txt, as at
+# release (finding 60): otherwise a broken version pair would surface only there.
 #
-# И под каждую архитектуру узла из kubevirt/platforms.txt — на родном
-# раннере: образ, который собирается только под amd64, на узле arm64 не
-# запустит ни одной виртуалки.
+# And for every node architecture from kubevirt/platforms.txt, on a native
+# runner: an image built only for amd64 will not start a single VM on an
+# arm64 node.
 name: launcher
 
 on:
@@ -51,10 +51,10 @@ jobs:
           versions=$(awk '!/^#/ && NF { print $1 }' kubevirt/versions.txt | jq -Rnc '[inputs]')
           platforms=$(awk '!/^#/ && NF { print $1, $2 }' kubevirt/platforms.txt \
             | jq -Rnc '[inputs | split(" ") | {arch: .[0], runner: .[1]}]')
-          [ "$versions" != "[]" ] || { echo "в kubevirt/versions.txt нет версий"; exit 1; }
-          [ "$platforms" != "[]" ] || { echo "в kubevirt/platforms.txt нет архитектур"; exit 1; }
-          # Версия KubeVirt × архитектура узла: сборка на каждую пару — на
-          # родном процессоре (kubevirt/platforms.txt).
+          [ "$versions" != "[]" ] || { echo "kubevirt/versions.txt lists no versions"; exit 1; }
+          [ "$platforms" != "[]" ] || { echo "kubevirt/platforms.txt lists no architectures"; exit 1; }
+          # KubeVirt version × node architecture: one build per pair, on a
+          # native CPU (kubevirt/platforms.txt).
           list=$(jq -nc --argjson v "$versions" --argjson p "$platforms" '[$v[] as $k | $p[] | . + {kubevirt: $k}]')
           echo "list=$list" >> "$GITHUB_OUTPUT"
           echo "versions=$versions" >> "$GITHUB_OUTPUT"
@@ -63,7 +63,7 @@ jobs:
     needs: versions
     name: build (${{ matrix.kubevirt }}, ${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
-    # С холодным кэшем libvirt и QEMU собираются до полутора часов.
+    # With a cold cache, libvirt and QEMU take up to an hour and a half to build.
     timeout-minutes: 150
     strategy:
       fail-fast: false
@@ -72,24 +72,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # install: true — чтобы `docker build` внутри build.sh шёл через buildx
-      # и умел кэш GitHub Actions.
+      # install: true so that `docker build` inside build.sh goes through buildx
+      # and can use the GitHub Actions cache.
       - uses: docker/setup-buildx-action@v3
         with:
           install: true
 
-      # ⚠ Без этого кэш type=gha молча не работает: токен кэша шагу `run` не
-      # дают, и buildx выбрасывает --cache-from/--cache-to без предупреждения.
+      # ⚠ Without this the type=gha cache silently does not work: the `run` step is not
+      # given the cache token, and buildx drops --cache-from/--cache-to without a warning.
       - uses: crazy-max/ghaction-github-runtime@v4
 
-      # Имя — как у выпуска (семейство, а не одна машина), только вместо
-      # версии выпуска `pr`.
+      # The name is the same as at release (the family, not one machine), only with
+      # `pr` instead of the release version.
       - id: meta
         run: echo "image=virt-launcher:${{ matrix.kubevirt }}-paleo-pr-${{ matrix.arch }}" >> "$GITHUB_OUTPUT"
 
-      # --load, а не --push: образ нужен только здесь, для проверки.
-      # Подпись происхождения в локальный docker не ложится — отключена.
-      - name: Сборка
+      # --load, not --push: the image is needed only here, for the check.
+      # Provenance attestation cannot be loaded into local docker, so it is disabled.
+      - name: Build
         run: |
           kubevirt/build.sh --kubevirt "${{ matrix.kubevirt }}" "${{ steps.meta.outputs.image }}" \
             --load --provenance=false \
@@ -97,5 +97,5 @@ jobs:
             --cache-from type=gha,scope=launcher-${{ matrix.kubevirt }}-${{ matrix.arch }} \
             --cache-to type=gha,scope=launcher-${{ matrix.kubevirt }}-${{ matrix.arch }},mode=max
 
-      - name: Проверить машины в образе
+      - name: Check the machines in the image
         run: kubevirt/check_image.sh "${{ steps.meta.outputs.image }}"

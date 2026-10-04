@@ -1,62 +1,72 @@
-# Находка 55. Центральный номер: процессор меняется на странице
+[Русская версия](FINDING-55-central-number.ru.md)
 
-Читатель нажимает кнопку, под системой меняется процессор, и страница тут же
-считает, во что обходится проверка границ массива. Не пересказ измерения, а
-измерение: числа считаются в браузере, на настоящей модели RTL.
+# Finding 55. The centerpiece: the processor changes on the page
+
+The reader presses a button, the processor under the system changes, and the
+page immediately computes what array bounds checking costs. Not a retelling of
+a measurement but the measurement itself: the numbers are computed in the
+browser, on the real RTL model.
 
 ```
-конфигурация            команд/индексацию   тактов/индексацию
-B — проверка программная       10.00              11.00
-E — проверка аппаратная         9.00              10.00
-экономия                        1.00               1.00  (9.1%)
+configuration           instructions/index   cycles/index
+B: software check              10.00              11.00
+E: hardware check               9.00              10.00
+savings                         1.00               1.00  (9.1%)
 ```
 
-## Почему это честно
+## Why this is honest
 
-**Тело цикла одно и то же.** Обе программы порождаются одним шаблоном
-(`tools/gen_bounds_bench.py`) и отличаются ровно проверкой: `SUB` + `BCC`
-против одной `CHKS`. Вычисление адреса, чтение элемента, накопление, заворот
-индекса — побайтово одинаковы. Две копии цикла разошлись бы при первой правке,
-и число стало бы сравнением двух разных программ.
+**The loop body is the same.** Both programs are generated from one template
+(`tools/gen_bounds_bench.py`) and differ exactly in the check: `SUB` + `BCC`
+versus a single `CHKS`. Address computation, element load, accumulation and
+index wraparound are identical byte for byte. Two copies of the loop would
+diverge at the first edit, and the number would become a comparison of two
+different programs.
 
-**Программа исполняется со сброса, из ПЗУ.** Ни системы, ни образа диска для
-замера не нужно — только модель процессора. Поэтому замер занимает доли секунды
-и его можно повторять на странице сколько угодно.
+**The program runs from reset, out of ROM.** The measurement needs neither the
+system nor a disk image, only the processor model. So the measurement takes a
+fraction of a second and can be repeated on the page as often as you like.
 
-**Числа совпадают с потолком, посчитанным заранее.** Дизайн v0.2 предсказывал:
-«потолок экономии — 1 такт и 1 слово на индексацию». Измерено ровно это.
+**The numbers match the ceiling computed in advance.** The v0.2 design
+predicted: "the savings ceiling is 1 cycle and 1 word per index operation".
+Exactly that was measured.
 
-## Ловушка, на которой замер соврал вдесятеро
+## The trap that made the measurement lie tenfold
 
-Первая версия гоняла программу **до конца** и ловила момент окончания по слову-
-сигналу в памяти. Проверка шла раз в 200 000 инструкций — и в числа попадал
-холостой хвост: программа давно закончила и крутилась в пустом цикле. Разница
-получилась 10 команд на итерацию вместо одной, то есть **вдесятеро больше
-настоящей**, и выглядела правдоподобно.
+The first version ran the program **to completion** and detected the end by a
+signal word in memory. The check happened once every 200,000 instructions, and
+the idle tail got into the numbers: the program had long finished and was
+spinning in an empty loop. The difference came out as 10 instructions per
+iteration instead of one, that is, **ten times the real value**, and it looked
+plausible.
 
-Правильная постановка обратная: цикл заведомо длиннее бюджета, обе конфигурации
-гоняются **ровно одинаковое число инструкций**, а сделанные итерации читаются из
-счётчика в регистре. Тогда ловить нечего.
+The correct setup is the reverse: the loop is guaranteed to be longer than the
+budget, both configurations run **exactly the same number of instructions**,
+and the completed iterations are read from a counter in a register. Then there
+is nothing to detect.
 
-## Вторая ловушка — в node, не в машине
+## The second trap is in node, not in the machine
 
-`fs.readFileSync` для мелких файлов отдаёт **вид на общий пул**, а не свой
-буфер: `.buffer` там — весь пул целиком. Второе чтение подряд дало чужие байты,
-программа собралась из мусора и просто не доходила до конца. Ни ошибки, ни
-исключения. Лечится окном `new Uint32Array(b.buffer, b.byteOffset, …)`.
+For small files, `fs.readFileSync` returns **a view into a shared pool**, not a
+buffer of its own: `.buffer` there is the entire pool. A second read in a row
+returned someone else's bytes, the program was assembled from garbage and simply
+never ran to completion. No error, no exception. The fix is a window:
+`new Uint32Array(b.buffer, b.byteOffset, …)`.
 
-## Что показывает переключатель
+## What the switch shows
 
-Кроме чисел — главное: **стоковая система грузится на обоих ядрах одинаково**.
-Контрольная сумма экрана `B5DFC933`, та же, что в нативном `make boot`, и то же
-число инструкций. Расширение системы команд, которое меняет поведение
-существующего кода, — не расширение, а другая машина.
+Beyond the numbers, the main point: **the stock system boots identically on
+both cores**. The screen checksum is `B5DFC933`, the same as in the native
+`make boot`, with the same instruction count. An instruction set extension that
+changes the behavior of existing code is not an extension but a different
+machine.
 
-Это проверяется автоматически (`worker-test.mjs`), а не утверждается в тексте.
+This is checked automatically (`worker-test.mjs`), not merely claimed in the
+text.
 
-## Чего пока нет
+## What is not there yet
 
-Конфигурации A (проверок нет вовсе) на странице нет: она требует **другого
-образа системы**, собранного патченым компилятором, а не другого железа.
-Числа по ней сняты перекрёстной сборкой на хосте (находка 21) и в браузер пока
-не приехали.
+Configuration A (no checks at all) is not on the page: it requires **a different
+system image**, built with a patched compiler, not different hardware. Its
+numbers were taken with a cross build on the host (Finding 21) and have not yet
+made it into the browser.

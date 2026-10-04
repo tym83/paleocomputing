@@ -1,15 +1,15 @@
 /*
- * Эталонная таблица для сверки плавающей точки.
+ * Reference table for the floating point cross-check.
  *
- * Считает ext/refemu/risc-fp.c — реализацией, уже сверенной с описанием
- * схемы, — и печатает в том виде, в каком её читает fp_diff.py:
+ * Computed by ext/refemu/risc-fp.c, an implementation already checked against
+ * the circuit description, and printed in the form fp_diff.py reads:
  *
- *   X Y OP R        (шестнадцатеричные, OP: ADD SUB MUL DIV FLT FLR)
+ *   X Y OP R        (hexadecimal, OP: ADD SUB MUL DIV FLT FLR)
  *
- *   fp_ref <число> <число> ...
+ *   fp_ref <number> <number> ...
  *
- * Набор операндов сюда передаётся аргументами, а не зашит: он живёт в одном
- * месте, в fp_diff.py (VALS), и таблица не может от него отстать.
+ * The operand set is passed in as arguments rather than hard-coded: it lives in
+ * one place, fp_diff.py (VALS), so the table cannot fall behind it.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -27,16 +27,16 @@ int main(int argc, char **argv)
         for (int j = 0; j < n; j++) {
             uint32_t x = v[i], y = v[j];
             printf("%08X %08X ADD %08X\n", x, y, fp_add(x, y, false, false));
-            /* Вычитателя в схеме нет: то же сложение с перевёрнутым знаком
-             * второго слагаемого (RISC5.v:64). fp.s делает ровно так же. */
+            /* The circuit has no subtractor: it is the same addition with the
+             * sign of the second operand flipped (RISC5.v:64). fp.s does exactly the same. */
             printf("%08X %08X SUB %08X\n", x, y,
                    fp_add(x, y ^ 0x80000000u, false, false));
             printf("%08X %08X MUL %08X\n", x, y, fp_mul(x, y));
             printf("%08X %08X DIV %08X\n", x, y, fp_div(x, y));
         }
     }
-    /* ⚠ У переводов второй операнд — НОЛЬ (находка 50: первая сверка подавала
-     * то же число дважды и дала 24 ложных расхождения). */
+    /* ⚠ For conversions the second operand is ZERO (finding 50: the first check
+     * passed the same number twice and produced 24 false mismatches). */
     for (int i = 0; i < n; i++) {
         printf("%08X 00000000 FLT %08X\n", v[i], fp_add(v[i], 0, true, false));
         printf("%08X 00000000 FLR %08X\n", v[i], fp_add(v[i], 0, false, true));

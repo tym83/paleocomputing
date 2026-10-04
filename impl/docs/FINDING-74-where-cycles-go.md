@@ -1,106 +1,110 @@
-# Находка 74. Куда уходят такты модели и что даёт быстрый умножитель
+[Русская версия](FINDING-74-where-cycles-go.ru.md)
 
-Главные числа выпуска №2. Всё — на RTL Вирта (Norebo на Verilator), только
-внутри окна замера: модуль пишет `LED(1)` перед шагом модели и `LED(0)` после,
-`tb/norebo_tb.cpp` считает такты и классы команд только между ними.
-Загрузка модулей, чтение весов и вывод текста в число не входят.
+# Finding 74. Where the model's cycles go, and what the fast multiplier gives
 
-## Сколько стоит символ
+The headline numbers of release no. 2. Everything is on Wirth's RTL (Norebo on
+Verilator), only inside the measurement window: the module writes `LED(1)`
+before the model step and `LED(0)` after it, and `tb/norebo_tb.cpp` counts
+cycles and instruction classes only between them. Loading modules, reading
+the weights and printing the text are not included in the count.
 
-32 символа, зерно 1, затравка `alice was `; текст на всех ядрах побайтово
-равен эталону.
+## What a character costs
 
-| ядро | тактов/символ | команд/символ | ускорение | символов/с при 25 МГц |
+32 characters, seed 1, prompt `alice was `; the text on all cores is
+byte-for-byte equal to the reference.
+
+| core | cycles/character | instructions/character | speedup | characters/s at 25 MHz |
 |---|---:|---:|---:|---:|
-| исходный `FPMultiplier` (26 тактов) | 2 804 372 | 1 150 926 | 1.000× | 8.9 |
-| быстрый, 2 такта (`FPMUL_FAST_REG`) | 1 790 953 | 1 150 926 | **1.566×** | 14.0 |
-| быстрый, 1 такт (`FPMUL_FAST`) | 1 748 727 | 1 150 926 | **1.604×** | 14.3 |
+| original `FPMultiplier` (26 cycles) | 2 804 372 | 1 150 926 | 1.000× | 8.9 |
+| fast, 2 cycles (`FPMUL_FAST_REG`) | 1 790 953 | 1 150 926 | **1.566×** | 14.0 |
+| fast, 1 cycle (`FPMUL_FAST`) | 1 748 727 | 1 150 926 | **1.604×** | 14.3 |
 
-Такты на символ от длины прогона не зависят: 8 символов — 2 804 849,
-32 — 2 804 372 (разница 0.02% — выборка и `exp` на разных символах).
-«Символов в секунду» — пересчёт тактов на 25 МГц, а не замер на плате, и
-без видео-DMA (находка 17).
+Cycles per character do not depend on the run length: 8 characters give
+2 804 849, 32 give 2 804 372 (a 0.02% difference, from sampling and `exp` on
+different characters). "Characters per second" is the cycle count converted
+at 25 MHz, not a measurement on a board, and without video DMA (Finding 17).
 
-## Профиль: исходное ядро
+## Profile: the original core
 
-| класс | команд/символ | доля тактов |
+| class | instructions/character | share of cycles |
 |---|---:|---:|
 | `FML` | 42 226 | **39.15%** |
 | `LD` | 383 349 | 27.34% |
-| прочее АЛУ | 383 578 | 13.68% |
-| переходы | 213 184 | 7.60% |
+| other ALU | 383 578 | 13.68% |
+| branches | 213 184 | 7.60% |
 | `ST` | 86 064 | 6.14% |
 | `FAD` | 42 235 | 6.02% |
 | `FDV`, `FSB`, `FLT`, `FLOOR`, `MUL` | ~290 | 0.07% |
 
-Стойло (такты сверх одного на команду) — 59% всех тактов, и почти две трети
-его (64%) — ожидание `FML`. Подряд идущих `FML` нет ни одного: надбавка счётчика
-(находка 01) этой нагрузки не касается.
+Stalls (cycles beyond one per instruction) are 59% of all cycles, and almost
+two thirds of them (64%) are waiting for `FML`. There is not a single
+back-to-back `FML`: the counter surcharge (Finding 01) does not affect this
+workload.
 
-## Почему `FML` — только 39%
+## Why `FML` is only 39%
 
-Внутренний цикл скрытого слоя, `s := s + x[k]*m.w1[base+k]`, как его
-собрал стоковый компилятор: **27 команд, 66 тактов** на одно умножение с
-накоплением.
+The inner loop of the hidden layer, `s := s + x[k]*m.w1[base+k]`, as the
+stock compiler built it: **27 instructions, 66 cycles** per multiply-accumulate.
 
-| что | команд | тактов |
+| what | instructions | cycles |
 |---|---:|---:|
-| полезное: `LD x[k]`, `LD w`, `FML`, `FAD` | 4 | 34 |
-| сумма `s` из памяти и обратно (`LD`, `ST`) | 2 | 4 |
-| счётчик `k`: `ST`, три `LD`, `ADD`, сравнение, выход из цикла | 7 | 11 |
-| проверки границ (два `SUB`+`BLCC`) | 4 | 4 |
-| указатель `m`: перезагрузка SB, `LD m`, проверка NIL | 3 | 5 |
-| адрес: `LD base`, `LSL`, `ADD` | 6 | 7 |
-| переход назад | 1 | 1 |
+| useful: `LD x[k]`, `LD w`, `FML`, `FAD` | 4 | 34 |
+| the sum `s` from memory and back (`LD`, `ST`) | 2 | 4 |
+| the counter `k`: `ST`, three `LD`, `ADD`, comparison, loop exit | 7 | 11 |
+| bounds checks (two `SUB`+`BLCC`) | 4 | 4 |
+| the pointer `m`: SB reload, `LD m`, NIL check | 3 | 5 |
+| address: `LD base`, `LSL`, `ADD` | 6 | 7 |
+| backward branch | 1 | 1 |
 
-Это ровно то, что ревьюер предсказал по исходнику (`design/REVIEW.md`:
-«в кодогенераторе Оберона нет распределителя регистров»): сумма, счётчик и
-указатель живут в памяти и перечитываются на каждом витке. Ревьюер насчитал
-60 тактов для глобальных массивов и 66 для открытых; у нас 66, потому что
-веса лежат за указателем (одна запись из `NEW`): добавились проверка NIL и
-перезагрузка базы модуля.
+This is exactly what the reviewer predicted from the source
+(`design/REVIEW.md`: "the Oberon code generator has no register allocator"):
+the sum, the counter and the pointer live in memory and are reread on every
+iteration. The reviewer counted 60 cycles for global arrays and 66 for open
+ones; we have 66 because the weights sit behind a pointer (one record from
+`NEW`), which adds a NIL check and a reload of the module base.
 
-## Две гипотезы из BACKLOG
+## Two hypotheses from the BACKLOG
 
-`BACKLOG.md`, строка 3b2: «ускорение даёт не FMAC (1.07×), а конвейерный
-умножитель (1.67×)». Источник обоих чисел — арифметика ревьюеров по
-латентностям (`design/REVIEW.md`), без нагрузки и без команды
-воспроизведения.
+`BACKLOG.md`, line 3b2: "the speedup comes not from FMAC (1.07×) but from a
+pipelined multiplier (1.67×)". The source of both numbers is the reviewers'
+arithmetic from latencies (`design/REVIEW.md`), with no workload and no
+reproduction command.
 
-**Быстрый умножитель: 1.566× (2 такта) и 1.604× (1 такт) — измерено.**
-1.67× на этом коде недостижимо даже с бесплатным умножением: убрать `FML`
-целиком — 2 804 372 − 42 226 × 26 = 1 706 496 тактов, потолок **1.643×**.
-Предсказание по Амдалу для однотактного (26 → 1 на каждом `FML`) дало 1.604×
-и совпало с замером до третьего знака — меняется только латентность, всё
-остальное в профиле стоит на месте.
+**Fast multiplier: 1.566× (2 cycles) and 1.604× (1 cycle), measured.**
+1.67× is unreachable on this code even with free multiplication: removing
+`FML` entirely gives 2 804 372 − 42 226 × 26 = 1 706 496 cycles, a ceiling of
+**1.643×**. Amdahl's prediction for the single-cycle variant (26 → 1 on every
+`FML`) gave 1.604× and matched the measurement to the third digit: only the
+latency changes, everything else in the profile stays put.
 
-**FMAC: 1.015–1.064× — оценка, не замер.** Слитная инструкция заменила бы
-пару «`FML` … `FAD`», где `FAD` читает результат `FML` (стенд считает такие
-пары: 42 086 на символ, почти все умножения). Загрузку суммы из памяти между
-ними она не убирает — это делает компилятор, а не инструкция. Экономия на
-пару — от 1 такта (последовательный прогон тех же двух блоков, 1+25+3 против
-26+4, ревьюер 1) до 4 (сложение бесплатно):
+**FMAC: 1.015–1.064×, an estimate, not a measurement.** A fused instruction
+would replace an "`FML` … `FAD`" pair where `FAD` reads the result of `FML`
+(the testbench counts such pairs: 42 086 per character, almost all
+multiplications). It does not remove the load of the sum from memory between
+them; that is the compiler's job, not the instruction's. The saving per pair
+ranges from 1 cycle (running the same two blocks back to back, 1+25+3 versus
+26+4, reviewer 1) to 4 (the addition is free):
 
-| умножитель | ускорение от FMAC поверх него |
+| multiplier | speedup from FMAC on top of it |
 |---|---|
-| исходный, 26 тактов | 1.015× … 1.064× |
-| быстрый, 2 такта | 1.024× … 1.104× |
-| быстрый, 1 такт | 1.025× … 1.107× |
+| original, 26 cycles | 1.015× … 1.064× |
+| fast, 2 cycles | 1.024× … 1.104× |
+| fast, 1 cycle | 1.025× … 1.107× |
 
-То есть «1.07×» — это верхняя граница, а не ожидание, и достигается только
-идеальной FMAC. Заявленное соотношение подтверждается: дело в умножителе, а
-не в инструкции. Но после замены умножителя самой дорогой строкой профиля
-становятся `LD`/`ST` — 54% тактов, — и следующий рычаг уже не в железе, а в
-кодогенераторе.
+So "1.07×" is an upper bound, not an expectation, and it is reached only by
+an ideal FMAC. The stated relationship holds: what matters is the multiplier,
+not the instruction. But after the multiplier is replaced, the most expensive
+rows of the profile become `LD`/`ST`, 54% of cycles, and the next lever is no
+longer in the hardware but in the code generator.
 
-## Как повторить
+## How to reproduce
 
 ```
 cd impl
-make lm-profile          # три ядра, 32 символа, таблицы выше; ~3 минуты
+make lm-profile          # three cores, 32 characters, the tables above; ~3 minutes
 make lm-profile LM_N=8
 ```
 
-Разбор цикла — дизассемблером по объектному файлу:
+The loop breakdown comes from the disassembler run on the object file:
 `python3 -c "import sys; sys.path.insert(0,'tools'); import rsc, disasm; ..."`
-на `build/lm/run/LM.rsc` (строки 428–454 процедуры `Step`).
+on `build/lm/run/LM.rsc` (lines 428–454 of the `Step` procedure).

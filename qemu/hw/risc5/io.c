@@ -1,19 +1,19 @@
 /*
- * Порты машины Оберона.
+ * Ports of the Oberon machine.
  *
- * Карта снята с RISC5Top.v:85-97 (чтение) и :124-131 (запись). Шестнадцать
- * слов начиная с 0xFFFFC0; номер слова — это adr[5:2].
+ * The map is taken from RISC5Top.v:85-97 (read) and :124-131 (write). Sixteen
+ * words starting at 0xFFFFC0; the word number is adr[5:2].
  *
- *   0  счётчик миллисекунд          чтение
- *   1  кнопки и переключатели       чтение
- *   2  приём RS232 / запись — передача
- *   3  готовность RS232             чтение
- *   4  приём SPI / запись — начать обмен
- *   5  готовность SPI / запись — управление выбором устройства
- *   6  мышь и признак клавиатуры    чтение
- *   7  код клавиши                  чтение
- *   8  вход GPIO                    чтение
- *   9  управление GPIO
+ *   0  millisecond counter          read
+ *   1  buttons and switches         read
+ *   2  RS232 receive / write: transmit
+ *   3  RS232 status                 read
+ *   4  SPI receive / write: start exchange
+ *   5  SPI status / write: device select control
+ *   6  mouse and keyboard flag      read
+ *   7  key code                     read
+ *   8  GPIO input                   read
+ *   9  GPIO control
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
@@ -29,28 +29,28 @@ static uint64_t io_read(void *opaque, hwaddr addr, unsigned size)
     switch (addr >> 2) {
     case 0:
         /*
-         * Счётчик миллисекунд от включения. Система крутит на нём всё, что
-         * связано со временем, — без него не доходит даже до экрана.
+         * Milliseconds since power-on. The system drives everything
+         * time-related from it; without it it does not even reach the screen.
          */
         return qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL) - s->start_ms;
     case 1:
-        return 0;                       /* кнопок и переключателей нет */
+        return 0;                       /* no buttons or switches */
     case 2:
-        return 0;                       /* приём RS232 пока не подключён */
+        return 0;                       /* RS232 receive is not connected yet */
     case 3:
-        return 2;                       /* передатчик готов, приёмник пуст */
+        return 2;                       /* transmitter ready, receiver empty */
     case 4:
         return oberon_disk_read(&s->disk);
     case 5:
-        return 1;                       /* обмен по SPI всегда завершён */
+        return 1;                       /* the SPI exchange is always complete */
     case 6:
-        /* Кнопки мыши в 26:24, бит 28 — есть ли код клавиши в очереди. */
+        /* Mouse buttons in 26:24, bit 28: whether a key code is queued. */
         return s->mouse | (s->kbd_head != s->kbd_tail ? (1u << 28) : 0);
     case 7: {
         /*
-         * Чтение СНИМАЕТ байт с очереди: в железе это doneKbd = rd & ioenb &
-         * (iowadr == 7). Пустую очередь читать можно, там будет мусор — как и
-         * в схеме, где outptr просто указывает в нетронутую ячейку.
+         * A read REMOVES the byte from the queue: in hardware this is doneKbd = rd & ioenb &
+         * (iowadr == 7). Reading an empty queue is allowed and yields garbage, just as
+         * in the circuit, where outptr simply points at an untouched cell.
          */
         uint8_t v;
         if (s->kbd_head == s->kbd_tail) {
@@ -75,17 +75,17 @@ static void io_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
 
     switch (addr >> 2) {
     case 2:
-        /* Передача в RS232: пока просто в никуда. */
+        /* RS232 transmit: goes nowhere for now. */
         break;
     case 4:
         /*
-         * Запись начинает обмен по SPI. Устройство на шине одно — карта SD,
-         * с которой загружается система.
+         * A write starts an SPI exchange. There is one device on the bus: the SD card
+         * the system boots from.
          */
         oberon_disk_write(&s->disk, val);
         break;
     case 5:
-        s->spi_ctrl = val & 0xF;        /* выбор устройства, скорость */
+        s->spi_ctrl = val & 0xF;        /* device select, speed */
         break;
     case 9:
         s->gpio_ctrl = val;

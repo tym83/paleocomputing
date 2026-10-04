@@ -1,183 +1,185 @@
-# FPGA: тайминг ядра на ткани ECP5 и что делать в день, когда придёт плата
+[Русская версия](README.ru.md)
 
-Здесь ядро RISC5 размещается и трассируется на настоящей ткани Lattice ECP5
-открытым потоком (yosys → nextpnr-ecp5 → ecppack), и статический анализ
-nextpnr даёт частоту **с задержками проводов** — то, чего не было в синтезе
-по библиотеке ячеек (находки 3, 16, 36). Результаты — в [results.md](results.md),
-выводы — в [находке 69](../docs/FINDING-69-fpga-timing.md).
+# FPGA: core timing on ECP5 fabric, and what to do on the day the board arrives
 
-**Живого железа здесь нет.** Это следующее по точности после платы: реальная
-ткань, реальная трассировка, реальные задержки по модели скоростного класса
-кристалла. Плату не заменяет: не проверено ни одного фронта на осциллографе.
+Here the RISC5 core is placed and routed on real Lattice ECP5 fabric with an
+open flow (yosys → nextpnr-ecp5 → ecppack), and nextpnr's static timing
+analysis gives the frequency **with wire delays**, which synthesis against a
+cell library did not have (findings 3, 16, 36). The results are in [results.md](results.md),
+the conclusions in [finding 69](../docs/FINDING-69-fpga-timing.md).
 
-## Что собирается
+**There is no live hardware here.** This is the next step in accuracy short of a board: real
+fabric, real routing, real delays from the speed-grade model of the
+device. It does not replace a board: not a single edge has been checked on an oscilloscope.
 
-| файл | что это |
+## What gets built
+
+| file | what it is |
 |---|---|
-| `Dockerfile` | прибитый поток: Debian trixie по дайджесту, yosys 0.52, nextpnr-ecp5 0.7, prjtrellis 1.4, openFPGALoader 0.13.1 |
-| `core_timing_top.v` | **тайминг-обёртка ядра, не система**: ядро + ПЗУ на ~clk (режим `soc`) или только ядро (режим `core`); память, входы и выходы — через регистры |
-| `ulx3s_core.lpf` | три группы выводов ULX3S: генератор 25 МГц, вход UART, светодиоды |
-| `check_timing.py` | разбор отчётов nextpnr, проверка частоты, сводка |
+| `Dockerfile` | pinned flow: Debian trixie by digest, yosys 0.52, nextpnr-ecp5 0.7, prjtrellis 1.4, openFPGALoader 0.13.1 |
+| `core_timing_top.v` | **core timing wrapper, not a system**: core + ROM on ~clk (`soc` mode) or the core alone (`core` mode); memory, inputs and outputs go through registers |
+| `ulx3s_core.lpf` | three groups of ULX3S pins: the 25 MHz oscillator, the UART input, the LEDs |
+| `check_timing.py` | parsing nextpnr reports, frequency check, summary |
 | `Makefile` | `synth`, `pnr`, `timing`, `bit`, `all`, `docker-all` |
 
-Цель — **LFE5U-85F-6BG381C** (ULX3S в варианте 85F, скоростной класс 6).
-Целевая частота — **25 МГц**: столько даёт исходный дизайн Вирта
-(`RISC5Top.v`: `always @(posedge CLK50M) clk <= ~clk`, миллисекундный
-счётчик считает до 24999), и столько же — порт EMARD для ULX3S.
+The target is **LFE5U-85F-6BG381C** (ULX3S in the 85F variant, speed grade 6).
+The target frequency is **25 MHz**: that is what Wirth's original design gives
+(`RISC5Top.v`: `always @(posedge CLK50M) clk <= ~clk`, the millisecond
+counter counts to 24999), and the same as the EMARD port for ULX3S.
 
 ```sh
-make docker-all                 # всё в контейнере: 2 ядра x 2 обёртки x 5 зёрен
-make timing WRAP=soc VARIANT=chk SEEDS=1   # одно сочетание, инструменты локально
+make docker-all                 # everything in a container: 2 cores x 2 wrappers x 5 seeds
+make timing WRAP=soc VARIANT=chk SEEDS=1   # one combination, tools installed locally
 ```
 
-`make timing` завершается ошибкой, если хоть одно зерно размещения ниже цели.
-Так же работает CI (`.github/workflows/fpga.yml`).
+`make timing` exits with an error if even one placement seed is below the target.
+CI works the same way (`.github/workflows/fpga.yml`).
 
-### Почему обёртка, а не полная система
+### Why a wrapper and not the full system
 
-Оригинальная плата Вирта держит память во **внешней асинхронной SRAM**: адрес
-уходит на выводы, данные возвращаются в ядро в том же такте. На ULX3S такой
-SRAM нет — там SDRAM, и порт EMARD ставит между ядром и SDRAM кеш-контроллер,
-который останавливает ядро на промахах. Путь «ядро → SRAM → ядро» без платы не
-измерить, а путь «ядро → кеш → SDRAM» — это уже другой дизайн. Поэтому здесь
-измерено то, что на кристалле общее у всех вариантов: ядро и ПЗУ.
+Wirth's original board keeps memory in **external asynchronous SRAM**: the address
+goes out to the pins, and data returns to the core in the same cycle. ULX3S has no such
+SRAM; it has SDRAM, and the EMARD port puts a cache controller between the core and the SDRAM,
+which stalls the core on misses. The "core → SRAM → core" path cannot be
+measured without a board, and the "core → cache → SDRAM" path is a different design. So what is
+measured here is what all variants share on the die: the core and the ROM.
 
-Artix-7 (Arty A7-35T через openXC7 / nextpnr-xilinx) **не делался**: база
-чипа для xc7a35t собирается часами и требует гигабайтов памяти, образов с
-прибитой версией нет. На одном ECP5 уже видно главное — см. находку 69.
+Artix-7 (Arty A7-35T via openXC7 / nextpnr-xilinx) **was not done**: the chip
+database for xc7a35t takes hours to build and needs gigabytes of memory, and there are no images with a
+pinned version. ECP5 alone already shows the main point; see finding 69.
 
-## День, когда придёт ULX3S
+## The day the ULX3S arrives
 
-### 0. Что купить и проверить
+### 0. What to buy and check
 
-- ULX3S v3.x с **LFE5U-85F** (подойдут и 45F/25F/12F: ядро занимает около
-  4 тыс. LUT; для другого кристалла поменять `DEVICE` в Makefile и перемерить).
-  Проверить маркировку кристалла: цифра после `F-` — скоростной класс; мерили
-  класс 6.
-- microSD любого объёма (Оберону нужно 64 МБ), USB-кабель к порту US1
-  (FTDI: и программирование, и UART), монитор с HDMI (GPDI), клавиатура PS/2
-  или USB через ESP32 — как в порте EMARD.
-- `openFPGALoader -V` не старее 0.13.1 (есть в образе: `make docker-image`).
+- ULX3S v3.x with **LFE5U-85F** (45F/25F/12F also work: the core takes about
+  4k LUTs; for a different device change `DEVICE` in the Makefile and re-measure).
+  Check the device marking: the digit after `F-` is the speed grade; we measured
+  grade 6.
+- A microSD card of any size (Oberon needs 64 MB), a USB cable to port US1
+  (FTDI: both programming and UART), a monitor with HDMI (GPDI), a PS/2 keyboard
+  or USB through the ESP32, as in the EMARD port.
+- `openFPGALoader -V` no older than 0.13.1 (it is in the image: `make docker-image`).
 
-### 1. Плата живая
+### 1. The board is alive
 
 ```sh
-openFPGALoader --detect -b ulx3s           # должен найти LFE5U-85F
+openFPGALoader --detect -b ulx3s           # must find LFE5U-85F
 ```
 
-Битстрим тайминг-обёртки (`make bit`) можно залить в SRAM кристалла, чтобы
-убедиться, что поток доходит до железа, — светодиоды будут мигать мусором:
-это XOR выходов ядра, работающего на случайном потоке с UART.
+The timing wrapper bitstream (`make bit`) can be loaded into the device SRAM to
+confirm that the flow reaches the hardware; the LEDs will blink garbage:
+it is the XOR of the outputs of a core running on a random stream from the UART.
 
 ```sh
 make bit WRAP=soc VARIANT=base
-openFPGALoader -b ulx3s build/soc-base/core_timing_top.bit    # в SRAM, до выключения
+openFPGALoader -b ulx3s build/soc-base/core_timing_top.bit    # into SRAM, until power-off
 ```
 
-### 2. Эталон: порт EMARD как есть
+### 2. Reference: the EMARD port as is
 
-Прежде чем подставлять наше ядро, поднять систему в том виде, в каком она
-уже работала на ULX3S у других:
-[emard/oberon](https://github.com/emard/oberon), коммит `ced69d7`
-(2020-12-06), проект `proj/lattice/ulx3s/ulx3s-v20` (`makefile.trellis`).
-Это переработка FleaFPGA-порта Basman74/Oberon_SDRAM: процессор 25 МГц,
-SDRAM 100 МГц через кеш, видео 1024×768 по DVI.
+Before substituting our core, bring up the system in the form in which it
+already ran on ULX3S for others:
+[emard/oberon](https://github.com/emard/oberon), commit `ced69d7`
+(2020-12-06), project `proj/lattice/ulx3s/ulx3s-v20` (`makefile.trellis`).
+It is a rework of the FleaFPGA port Basman74/Oberon_SDRAM: 25 MHz CPU,
+100 MHz SDRAM through a cache, 1024×768 video over DVI.
 
-- Поток EMARD включает VHDL (DVI-кодер) — нужен yosys с плагином GHDL.
-  В нашем образе его нет; проще взять OSS CAD Suite, где он есть.
-- `FPGA_SIZE` в его Makefile и `pixel_clock_MHz` в `hdl/top/ulx3s_v20_top.v`
-  должны соответствовать кристаллу (85F → 75 МГц, 12F → 65 МГц).
-- Прошить во флеш: `openFPGALoader -b ulx3s -f oberon.bit`.
+- The EMARD flow includes VHDL (the DVI encoder), so it needs yosys with the GHDL plugin.
+  Our image does not have it; it is simpler to take OSS CAD Suite, which does.
+- `FPGA_SIZE` in its Makefile and `pixel_clock_MHz` in `hdl/top/ulx3s_v20_top.v`
+  must match the device (85F → 75 MHz, 12F → 65 MHz).
+- Flash it: `openFPGALoader -b ulx3s -f oberon.bit`.
 
-**SD-карта.** Наш образ `impl/ext/disk/Oberon-2016-08-02.dsk` — укороченный
-(начинается с `8d a3 1e 9b`, метки каталога). Оберон ждёт свой раздел с
-сектора 524288 и не трогает первые два сектора, поэтому укороченный образ
-пишется со смещением 524290 секторов (так в README EMARD):
+**SD card.** Our image `impl/ext/disk/Oberon-2016-08-02.dsk` is truncated
+(it starts with `8d a3 1e 9b`, the directory mark). Oberon expects its partition at
+sector 524288 and does not touch the first two sectors, so the truncated image
+is written at an offset of 524290 sectors (as in the EMARD README):
 
 ```sh
 sha256sum -c ../ext/disk/SHA256SUMS
 sudo dd if=../ext/disk/Oberon-2016-08-02.dsk of=/dev/sdX bs=512 seek=524290 conv=fsync
 ```
 
-Загрузчик в ПЗУ должен быть SD-шный — `impl/rtl/prom_sd.mem`, не `prom.mem`
-(тот грузит по последовательной линии; находка 13).
+The boot loader in the ROM must be the SD one, `impl/rtl/prom_sd.mem`, not `prom.mem`
+(that one boots over the serial line; finding 13).
 
-Успех: экран Оберона с системным журналом, как на `docs/oberon-boot-screen.png`.
+Success: the Oberon screen with the system log, as in `docs/oberon-boot-screen.png`.
 
-### 3. Наше ядро в системе EMARD
+### 3. Our core in the EMARD system
 
-Чего **ещё нет** и что надо сделать в этот день:
+What **does not exist yet** and has to be done on that day:
 
-1. **Интерфейс ядра.** `RISC5.v` у EMARD — более ранняя ветка с портом `ce`
-   (разрешение такта): кеш-контроллер останавливает ядро через `ce`, а `stallX`
-   тянется к нулю. Наш `RISC5.v` (версия Вирта 31.8.2018, с прерываниями и
-   плавающей точкой) порта `ce` не имеет. Два пути: гейтить такт ядра через
-   `ce` в обёртке (просто, но трогает тактовое дерево) или завести сигнал
-   промаха кеша в `stallX` (правильнее; `stallX` для этого и сделан — им
-   останавливает ядро видеоконтроллер). Второй путь надо проверить на
-   Verilator-стенде с моделью кеша до прошивки.
-2. **Регистровый файл.** Наш `Registers.v` — поведенческий, с `initial`
-   обнулением. На ECP5 yosys кладёт его в LUT-память (24 `TRELLIS_DPR16X4`,
-   см. results.md), обнуление приходит из битстрима — как у RAM16X1D Вирта.
-3. **CHK.** Ядро с `-DWITH_CHK -DCHK_SPLIT` — тот же список файлов, другой
-   define. Система с диска CHK не использует, поэтому загрузка на ядре с CHK
-   проверяет совместимость (как `make boot-chk` на Verilator).
+1. **Core interface.** EMARD's `RISC5.v` is an earlier branch with a `ce` port
+   (clock enable): the cache controller stalls the core through `ce`, and `stallX`
+   is tied to zero. Our `RISC5.v` (Wirth's version of 31.8.2018, with interrupts and
+   floating point) has no `ce` port. Two ways: gate the core clock through
+   `ce` in the wrapper (simple, but touches the clock tree) or route the cache
+   miss signal into `stallX` (more correct; `stallX` exists for exactly this, the
+   video controller uses it to stall the core). The second way must be checked on the
+   Verilator bench with a cache model before flashing.
+2. **Register file.** Our `Registers.v` is behavioural, with an `initial`
+   reset to zero. On ECP5 yosys puts it in LUT memory (24 `TRELLIS_DPR16X4`,
+   see results.md), and the zeroing comes from the bitstream, as with Wirth's RAM16X1D.
+3. **CHK.** The core with `-DWITH_CHK -DCHK_SPLIT` is the same file list with a different
+   define. The system on disk does not use CHK, so booting on the CHK core
+   checks compatibility (like `make boot-chk` on Verilator).
 
-Критерий: система грузится на обоих ядрах, и экран совпадает с эталоном
-Verilator-стенда (`make boot`, `make boot-chk` сверяют контрольную сумму
-экрана; на плате — сравнить глазами или снять кадр с HDMI-граббера и
-посчитать ту же CRC по кадровому буферу).
+Criterion: the system boots on both cores, and the screen matches the reference of the
+Verilator bench (`make boot` and `make boot-chk` check the screen
+checksum; on the board, compare by eye or grab a frame with an HDMI grabber and
+compute the same CRC over the frame buffer).
 
-### 4. Замер проверки границ на железе
+### 4. Measuring the bounds check on hardware
 
-Числа центрального номера сняты на модели Verilator: **11.00 тактов на
-индексацию без CHK и 10.00 с CHK** (находка 55). Нагрузка
-`tests/bench_bounds_{b,e}.s` лежит в ПЗУ (ORG 0xFFE000) и исполняется со
-сброса, 1 000 000 итераций. Ожидание при 25 МГц и памяти без ожиданий:
-11 000 000 / 25 МГц = **440 мс** и 10 000 000 / 25 МГц = **400 мс** (плюс
-десяток тактов пролога).
+The numbers of the central episode were taken on the Verilator model: **11.00 cycles per
+indexing without CHK and 10.00 with CHK** (finding 55). The workload
+`tests/bench_bounds_{b,e}.s` sits in the ROM (ORG 0xFFE000) and runs from
+reset, 1,000,000 iterations. Expected at 25 MHz with zero-wait-state memory:
+11 000 000 / 25 MHz = **440 ms** and 10 000 000 / 25 MHz = **400 ms** (plus
+a dozen cycles of prologue).
 
-Чего **ещё нет**:
+What **does not exist yet**:
 
-- **Способа снять время.** Программа ничего не выводит: в симуляции итерации
-  читаются из R5. Для платы генератору (`tools/gen_bounds_bench.py`) нужен
-  режим, который читает миллисекундный счётчик (IO `-64`, 0xFFFFC0) до и после
-  цикла и пишет разность в светодиоды (`-60`) или в UART (`-56`). Шаблон один
-  на обе конфигурации — добавлять в него, а не в копии (находка 55).
-- **Подмены ПЗУ без перетрассировки.** Нагрузка должна оказаться в ПЗУ вместо
-  загрузчика. Трассировать заново не нужно: `ecpbram` из prjtrellis меняет
-  содержимое блока памяти прямо в `out.config`:
+- **A way to take the time.** The program prints nothing: in simulation the iterations
+  are read from R5. For the board the generator (`tools/gen_bounds_bench.py`) needs
+  a mode that reads the millisecond counter (IO `-64`, 0xFFFFC0) before and after
+  the loop and writes the difference to the LEDs (`-60`) or the UART (`-56`). There is one template
+  for both configurations; add to it, not to copies (finding 55).
+- **Swapping the ROM without re-routing.** The workload has to end up in the ROM instead of
+  the boot loader. Re-routing is not needed: `ecpbram` from prjtrellis replaces the
+  contents of a memory block directly in `out.config`:
   `ecpbram -i out.config -o bench.config -f prom_sd.mem -t bench_b.mem`,
-  затем `ecppack`. Для этого исходное содержимое ПЗУ должно быть уникальным
-  (ecpbram ищет его по совпадению) — проверить, что ни одно другое BRAM
-  не начинается так же.
+  then `ecppack`. For this the original ROM contents must be unique
+  (ecpbram finds them by matching), so check that no other BRAM
+  starts the same way.
 
-Что сравнивать:
+What to compare:
 
-- **Отношение** B/E: на модели 1.100. На железе с кешем массив (64 слова по
-  адресу 0x1000) после первого прохода сидит в кеше, и каждый `LD` должен
-  стоить как на модели. Если отношение уйдёт от 1.100 больше чем на пару
-  десятых процента — значит, кеш добавляет такты неравномерно, и это надо
-  объяснить до публикации, а не усреднить.
-- **Абсолютное время** против 440/400 мс: расхождение = цена кеша и SDRAM
-  на этой нагрузке. Оно про порт, не про CHK.
-- Частоту не поднимать ради красивого числа: на 25 МГц результат
-  сравним с оригиналом Вирта. Запас по частоте из results.md — отдельный
-  опыт (PLL на 40–50 МГц, та же нагрузка, отношение B/E не должно
-  измениться).
+- **The B/E ratio**: 1.100 on the model. On hardware with a cache the array (64 words at
+  address 0x1000) sits in the cache after the first pass, and every `LD` should
+  cost the same as on the model. If the ratio drifts from 1.100 by more than a couple of
+  tenths of a percent, the cache adds cycles unevenly, and that has to be
+  explained before publication, not averaged away.
+- **Absolute time** against 440/400 ms: the difference is the cost of the cache and SDRAM
+  on this workload. It is about the port, not about CHK.
+- Do not raise the frequency for a nicer number: at 25 MHz the result is
+  comparable with Wirth's original. The frequency headroom from results.md is a separate
+  experiment (a PLL at 40–50 MHz, the same workload; the B/E ratio must not
+  change).
 
-### 5. Что записать
+### 5. What to record
 
-Маркировку кристалла, ревизию платы, версии инструментов, хеш битстрима,
-фотографию экрана, оба времени и отношение — в новую находку, со ссылкой
-на эту и на 55. И поправить фразу на сайте: «на живой плате не запускали»
-станет неправдой только после этого шага.
+The device marking, board revision, tool versions, the bitstream hash,
+a photo of the screen, both times and the ratio, in a new finding, linking
+to this one and to 55. And fix the sentence on the site: "not run on a live board"
+becomes untrue only after this step.
 
-## Источники
+## Sources
 
-- ULX3S: [emard/ulx3s](https://github.com/emard/ulx3s) (аппаратура, лицензия
-  MIT-подобная, LICENSE.md), выводы сверены с
+- ULX3S: [emard/ulx3s](https://github.com/emard/ulx3s) (hardware, MIT-like
+  license, LICENSE.md), pins checked against
   [emard/ulx3s-misc `constraints/ulx3s_v20.lpf`](https://github.com/emard/ulx3s-misc/blob/d0c6f15dd22608d15b60fdf3c3b3c16201eea0f6/constraints/ulx3s_v20.lpf)
-  (у репозитория нет лицензии — файл не копировали, выписали номера выводов).
-- Порт Оберона на ULX3S: [emard/oberon](https://github.com/emard/oberon/tree/ced69d7e0150c34ad4e0acc55519a421fa9f8e37),
-  от [Basman74/Oberon_SDRAM](https://github.com/Basman74/Oberon_SDRAM) (FleaFPGA).
+  (the repository has no license, so the file was not copied; the pin numbers were written out).
+- Oberon port to ULX3S: [emard/oberon](https://github.com/emard/oberon/tree/ced69d7e0150c34ad4e0acc55519a421fa9f8e37),
+  derived from [Basman74/Oberon_SDRAM](https://github.com/Basman74/Oberon_SDRAM) (FleaFPGA).

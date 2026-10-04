@@ -1,13 +1,13 @@
 /*
- * Машина RISC5 Никлауса Вирта для QEMU.
+ * Niklaus Wirth's RISC5 machine for QEMU.
  *
- * Всё состояние ниже снято с RISC5.v, а не с описаний:
- *   :13  reg [21:0] PC          счётчик команд, 22 бита, В СЛОВАХ
- *   :15  reg N, Z, C, OV        флаги условий
- *   :16  reg [31:0] H           вспомогательный регистр
- *   :36  reg irq1, intEnb, intPnd, intMd    состояние прерываний
- *   :37  reg [25:0] SPC         сохранённые флаги и счётчик при прерывании
- *   :11  localparam StartAdr = 22'h3FF800   вектор сброса
+ * All of the state below is taken from RISC5.v, not from descriptions:
+ *   :13  reg [21:0] PC          program counter, 22 bits, IN WORDS
+ *   :15  reg N, Z, C, OV        condition flags
+ *   :16  reg [31:0] H           auxiliary register
+ *   :36  reg irq1, intEnb, intPnd, intMd    interrupt state
+ *   :37  reg [25:0] SPC         flags and counter saved on interrupt
+ *   :11  localparam StartAdr = 22'h3FF800   reset vector
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
@@ -24,15 +24,15 @@
 #define RISC5_NUM_REGS 16
 
 /*
- * Соглашения об именах регистров. Это ИМЕННО СОГЛАШЕНИЯ компилятора Оберона,
- * а не свойство железа: для процессора все шестнадцать равноправны.
+ * Register naming conventions. These are CONVENTIONS of the Oberon compiler,
+ * not a property of the hardware: to the processor all sixteen are equal.
  */
-#define RISC5_REG_MT  12   /* точка входа ловушки */
-#define RISC5_REG_SB  13   /* база статических данных */
-#define RISC5_REG_SP  14   /* вершина стека */
-#define RISC5_REG_LNK 15   /* адрес возврата */
+#define RISC5_REG_MT  12   /* trap entry point */
+#define RISC5_REG_SB  13   /* static data base */
+#define RISC5_REG_SP  14   /* top of stack */
+#define RISC5_REG_LNK 15   /* return address */
 
-/* RISC5.v:11 — сброс уводит счётчик в ПЗУ. Значение в СЛОВАХ. */
+/* RISC5.v:11: reset sends the counter into ROM. The value is in WORDS. */
 #define RISC5_RESET_PC_W 0x3FF800
 
 #define EXCP_RESET 1
@@ -40,48 +40,48 @@
 
 typedef struct CPUArchState {
     /*
-     * Счётчик команд хранится в словах, как в железе: там nxpc = PC + 1
-     * (RISC5.v:182). Байтовый адрес получается умножением на четыре, и это
-     * не деталь реализации — на этом стоит вся адресация кода.
+     * The program counter is kept in words, as in the hardware: there nxpc = PC + 1
+     * (RISC5.v:182). The byte address is obtained by multiplying by four, and this
+     * is not an implementation detail: all code addressing rests on it.
      */
     uint32_t pc_w;
 
     uint32_t r[RISC5_NUM_REGS];
 
     /*
-     * Флаги держим по одному в слове: так их дешевле вычислять в TCG, чем
-     * распаковывать из общего регистра. В железе это четыре отдельных
-     * триггера, так что расхождения с ним нет.
+     * Flags are kept one per word: that is cheaper to compute in TCG than
+     * unpacking them from a shared register. In hardware these are four separate
+     * flip-flops, so there is no divergence from it.
      */
     uint32_t sr_n;
     uint32_t sr_z;
     uint32_t sr_c;
     uint32_t sr_v;
 
-    /* Старшая половина произведения либо остаток от деления (RISC5.v:221). */
+    /* High half of the product or the division remainder (RISC5.v:221). */
     uint32_t h;
 
     /*
-     * Прерывания. intEnb разрешает, intPnd помнит поступившее, intMd
-     * показывает, что обработчик уже внутри. SPC хранит флаги вместе с
-     * адресом возврата: {N, Z, C, V, PC[21:0]} — 26 бит (RISC5.v:227).
+     * Interrupts. intEnb enables, intPnd remembers an arrived one, intMd
+     * shows that the handler is already running. SPC holds the flags together with
+     * the return address: {N, Z, C, V, PC[21:0]}, 26 bits (RISC5.v:227).
      */
     uint32_t spc;
     bool int_enb;
     bool int_pnd;
     bool int_md;
     /*
-     * Аппаратная проверка границ массива (CHK). Это не режим, а ВАРИАНТ
-     * ЖЕЛЕЗА: то же, что собрать RTL с -DWITH_CHK. Выставляется машиной при
-     * создании и дальше не меняется — от него зависит порождаемый код, и
-     * менять его на ходу означало бы держать уже оттранслированные блоки
-     * недействительными.
+     * Hardware array bounds check (CHK). This is not a mode but a HARDWARE
+     * VARIANT: the same as building the RTL with -DWITH_CHK. Set by the machine at
+     * creation and never changed afterwards: generated code depends on it, and
+     * changing it on the fly would mean invalidating blocks that have already
+     * been translated.
      */
     bool chk;
     /*
-     * Индексация через дескриптор (IDX, выпуск 14). Такой же вариант железа,
-     * как chk: то же, что собрать RTL с -DWITH_DESC. Ядро RTL с IDX включает
-     * и CHK, поэтому его двойник в QEMU — chk=on,desc=on.
+     * Indexing through a descriptor (IDX, episode 14). A hardware variant just
+     * like chk: the same as building the RTL with -DWITH_DESC. The RTL core with IDX also
+     * includes CHK, so its QEMU twin is chk=on,desc=on.
      */
     bool desc;
 } CPURISC5State;
@@ -92,9 +92,9 @@ struct ArchCPU {
 };
 
 /*
- * Чтение флагов командой MOV a, NZCV даёт не просто четыре бита:
- * RISC5.v:156 возвращает {N, Z, C, OV, 20'b0, 8'h53}. Младший байт — 0x53,
- * подпись версии ядра. Воспроизводим ровно, иначе система её не узнает.
+ * Reading the flags with MOV a, NZCV gives more than just four bits:
+ * RISC5.v:156 returns {N, Z, C, OV, 20'b0, 8'h53}. The low byte, 0x53, is the
+ * core version signature. We reproduce it exactly, otherwise the system does not recognize it.
  */
 #define RISC5_NZCV_TAG 0x53
 

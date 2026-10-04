@@ -1,15 +1,15 @@
-# ⚠ Здесь было `/norebo` — против собранного двоичного файла. На файловых
-# системах, нечувствительных к регистру (macOS по умолчанию), эта строка
-# глотает и каталог `Norebo/` с библиотекой языка: git сверяет имена без
-# учёта регистра, когда core.ignoreCase включён. Библиотека молча не попадала
-# в репозиторий, и образ среды Оберона собирался без неё.
+# ⚠ This used to be `/norebo`, meant for the built binary. On case-insensitive
+# file systems (the macOS default) that line also swallows the `Norebo/`
+# directory with the language library: git compares names case-insensitively
+# when core.ignoreCase is on. The library silently stayed out of the
+# repository, and the Oberon environment image was built without it.
 #
-# Та же ловушка уже описана в Makefile — там из-за неё цель `norebo`
-# совпадала с каталогом. Теперь пишем имя двоичного файла так, как оно
-# получается на самом деле.
+# The same trap is already described in the Makefile, where it made the
+# `norebo` target collide with the directory. Now we write the binary's name
+# exactly as it is actually produced.
 /norebo.bin
 
-# Промежуточные стадии раскрутки. ⚠ build2 НЕ отсюда: именно он служит
-# компилятору основанием и входит в образ среды — см. NOREBO_PATH.
+# Intermediate bootstrap stages. ⚠ build2 is NOT listed here: it is the base
+# the compiler runs on and goes into the environment image (see NOREBO_PATH).
 /build1/
 /build3/

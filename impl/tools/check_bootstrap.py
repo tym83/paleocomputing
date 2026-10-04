@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""Проверка неподвижной точки по кадровому буферу, без распознавания текста.
+"""Fixed-point check on the frame buffer, without text recognition.
 
-В журнале System.Log два блока по четыре строки: что напечатал компилятор
-с диска и что напечатал собранный им же компилятор. Если это одна и та же
-неподвижная точка, блоки — один и тот же текст, тем же шрифтом, с той же
-левой границы. Значит соответствующие строки пикселей обязаны совпасть
-побитово. Сравниваем их напрямую и не полагаемся на распознавание.
+System.Log holds two blocks of four lines: what the compiler from the disk
+printed and what the compiler it built printed. If this is the same
+fixed point, the blocks are the same text, in the same font, from the same
+left margin. So the corresponding pixel rows must match
+bit for bit. We compare them directly and do not rely on recognition.
 """
 import sys
 
-GEN1_TOP, GEN2_TOP, LINES, LH = 43, 163, 4, 12      # строки журнала и высота строки
-X0, X1 = 655, 1010                                  # горизонтальные границы журнала
+GEN1_TOP, GEN2_TOP, LINES, LH = 43, 163, 4, 12      # log lines and line height
+X0, X1 = 655, 1010                                  # horizontal bounds of the log
 
 def rows(path):
     t = open(path).read().split()
@@ -25,13 +25,13 @@ def main(path):
     a, b = band(px, w, GEN1_TOP), band(px, w, GEN2_TOP)
     ink_a = sum(c == '1' for c in a)
     if ink_a == 0:
-        print("❌ первый блок журнала пуст — компиляция не состоялась"); return 1
+        print("❌ the first log block is empty: compilation did not happen"); return 1
     diff = sum(x != y for x, y in zip(a, b))
-    print(f"  поколение 1: {ink_a} чёрных пикселей в четырёх строках журнала")
-    print(f"  расхождений с поколением 2: {diff} из {len(a)}")
+    print(f"  generation 1: {ink_a} black pixels in four log lines")
+    print(f"  mismatches with generation 2: {diff} of {len(a)}")
     if diff:
-        print("❌ поколения различаются — неподвижная точка не достигнута"); return 1
-    print("✅ поколения совпали побитово: компилятор воспроизводит сам себя")
+        print("❌ generations differ: the fixed point was not reached"); return 1
+    print("✅ generations match bit for bit: the compiler reproduces itself")
     return 0
 
 if __name__ == "__main__":

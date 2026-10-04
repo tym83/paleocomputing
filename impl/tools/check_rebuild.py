@@ -1,40 +1,40 @@
 #!/usr/bin/env python3
-"""Проверка полной пересборки системы: неподвижная точка по объектным файлам.
+"""Check of a full system rebuild: a fixed point over the object files.
 
-Система пересобирается своим же компилятором внутри себя на RTL. Если компилятор
-и исходники согласованы, порождённые объектные файлы обязаны совпасть с теми,
-что лежали на образе, ПОБАЙТОВО.
+The system is rebuilt by its own compiler inside itself on RTL. If the compiler
+and the sources are consistent, the generated object files must match those
+that were on the image, BYTE FOR BYTE.
 
-Исключения перечислены явно и объяснены — иначе проверка выродится в «что
-получилось, то и правильно».
+Exceptions are listed explicitly and explained; otherwise the check degenerates into
+"whatever came out is correct".
 """
 import sys
 sys.path.insert(0, "tools")
 from oberonfs import Image
 
-# Модули, которые на этом образе НЕ компилируются. Это свойство образа, а не
-# нашей машины: каждая причина проверена отдельно.
+# Modules that do NOT compile on this image. This is a property of the image, not of
+# our machine: each reason was verified separately.
 BROKEN = {
-    "RISC":  "pos 926 bad divisor — константа 80000000H как делитель "
-             "отрицательна для знакового INTEGER",
-    "ORC":   "import not available — импортирует V24, которого на образе нет "
-             "ни исходником, ни символьным файлом",
-    "Net":   "incompatible parameters — сигнатуры вызовов SCC разошлись с "
-             "SCC.Mod того же образа",
+    "RISC":  "pos 926 bad divisor — the constant 80000000H as a divisor "
+             "is negative for a signed INTEGER",
+    "ORC":   "import not available — imports V24, which is not on the image "
+             "either as source or as a symbol file",
+    "Net":   "incompatible parameters — the SCC call signatures diverged from "
+             "SCC.Mod of the same image",
 }
 
-# ⚠ Побайтовое сравнение САМО ПО СЕБЕ не отличает «пересобрано и совпало» от
-# «не трогали вовсе»: первая версия этой проверки зелено проходила на нетронутом
-# образе. Поэтому ниже перечислены не «допустимые отличия», а ОБЯЗАТЕЛЬНЫЕ
-# признаки того, что пересборка действительно состоялась. Их отсутствие —
-# провал, а не послабление.
+# ⚠ A byte-for-byte comparison BY ITSELF does not distinguish "rebuilt and matched" from
+# "never touched": the first version of this check passed green on an untouched
+# image. So below are listed not "allowed differences" but MANDATORY
+# signs that the rebuild really happened. Their absence is
+# a failure, not a relaxation.
 REQUIRE_DIFF = {
-    "Math.rsc": "поставляемый двоичный файл устарел: на образе 449 слов кода, "
-                "пересборка даёт 447 при том же ключе 32C32F12",
+    "Math.rsc": "the shipped binary is stale: the image has 449 words of code, "
+                "the rebuild gives 447 with the same key 32C32F12",
 }
 REQUIRE_NEW = {
-    "PIO.rsc": "на образе отсутствовал вовсе",
-    "PIO.smb": "на образе отсутствовал вовсе",
+    "PIO.rsc": "was missing from the image entirely",
+    "PIO.smb": "was missing from the image entirely",
 }
 
 
@@ -53,24 +53,24 @@ def main(before, after):
             diff.append(n)
 
     rsc_same = [n for n in same if n.endswith(".rsc")]
-    print(f"  файлов: было {len(fa)}, стало {len(fb)}")
-    print(f"  объектных файлов совпало побайтово: {len(rsc_same)}")
+    print(f"  files: before {len(fa)}, after {len(fb)}")
+    print(f"  object files matching byte for byte: {len(rsc_same)}")
 
     bad = []
     for n in diff:
         if n in REQUIRE_DIFF:
-            print(f"  ожидаемое отличие {n}: {REQUIRE_DIFF[n]}")
+            print(f"  expected difference {n}: {REQUIRE_DIFF[n]}")
         else:
-            bad.append(f"неожиданно изменился {n}")
+            bad.append(f"{n} changed unexpectedly")
     for n in new:
         if n in REQUIRE_NEW:
-            print(f"  ожидаемо появился {n}: {REQUIRE_NEW[n]}")
+            print(f"  appeared as expected {n}: {REQUIRE_NEW[n]}")
         else:
-            bad.append(f"неожиданно появился {n}")
+            bad.append(f"{n} appeared unexpectedly")
     for n in gone:
-        bad.append(f"пропал {n}")
+        bad.append(f"{n} disappeared")
 
-    # Главная проверка: объектные файлы собранных модулей обязаны совпасть.
+    # The main check: object files of the modules that compile must match.
     for n in sorted(fa):
         if not n.endswith(".rsc"):
             continue
@@ -78,30 +78,30 @@ def main(before, after):
         if mod in BROKEN or n in REQUIRE_DIFF:
             continue
         if n not in same:
-            bad.append(f"{n} не совпал, хотя модуль собирается")
+            bad.append(f"{n} does not match, although the module compiles")
 
     for mod, why in BROKEN.items():
-        print(f"  не собирается {mod}: {why}")
+        print(f"  does not compile {mod}: {why}")
 
-    # Положительные признаки: без них сравнение ничего не доказывает.
+    # Positive signs: without them the comparison proves nothing.
     for n in REQUIRE_NEW:
         if n not in new:
-            bad.append(f"{n} НЕ появился — значит пересборка не выполнялась "
-                       f"(на исходном образе этого файла нет)")
+            bad.append(f"{n} did NOT appear, so the rebuild did not run "
+                       f"(this file is absent from the original image)")
     for n in REQUIRE_DIFF:
         if n not in diff:
-            bad.append(f"{n} НЕ изменился — значит пересборка не выполнялась "
-                       f"(поставляемый файл устарел и обязан отличаться)")
+            bad.append(f"{n} did NOT change, so the rebuild did not run "
+                       f"(the shipped file is stale and must differ)")
     if len(rsc_same) < 35:
-        bad.append(f"совпавших объектных файлов всего {len(rsc_same)}")
+        bad.append(f"only {len(rsc_same)} object files matched")
 
     if bad:
-        print("\n❌ пересборка не сошлась:")
+        print("\n❌ the rebuild did not converge:")
         for x in bad:
             print("   ", x)
         return 1
-    print(f"\n✅ НЕПОДВИЖНАЯ ТОЧКА СИСТЕМЫ: {len(rsc_same)} объектных файлов "
-          f"пересобраны побайтово идентично")
+    print(f"\n✅ SYSTEM FIXED POINT: {len(rsc_same)} object files "
+          f"rebuilt byte for byte identically")
     return 0
 
 

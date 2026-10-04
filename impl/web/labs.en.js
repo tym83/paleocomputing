@@ -1,18 +1,18 @@
 /*
- * Английские тексты лабораторий.
+ * English texts of the labs.
  *
- * Наложение поверх labs.js: русский остаётся там, где написан, а этот файл
- * подменяет его при выборе английского. Так переводится постепенно и без
- * риска сломать работающее — чего нет здесь, то просто останется русским.
+ * An overlay on top of labs.js: the Russian stays where it is written, and this file
+ * replaces it when English is selected. This allows translating gradually without
+ * risking breaking what works: whatever is missing here simply stays Russian.
  *
- * Ключи: <номер>.<поле> — intro, hint, payoff, title, level,
- *        <номер>.step.<индекс> для текста шага.
+ * Keys: <number>.<field> — intro, hint, payoff, title, level,
+ *       <number>.step.<index> for the step text.
  */
 import { SOURCES, BUILTIN, pre } from './lab-sources.js';
 
 export const EN = {
-  // Названия глав методички: одни и те же у разных лабораторий, поэтому
-  // ключом служит имя файла, а не номер задания.
+  // Handbook chapter titles: the same across different labs, so the key is the
+  // file name rather than the lab number.
   'book.01-zachem.html':       'What is real here',
   'book.02-mashina.html':      'The machine: RISC5',
   'book.03-yazyk.html':        'The language: Oberon in one chapter',

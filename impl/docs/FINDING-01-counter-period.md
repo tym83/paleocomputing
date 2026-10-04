@@ -1,78 +1,80 @@
-# Находка 1: цена подряд идущей арифметики равна периоду счётчика, а не длине операции
+[Русская версия](FINDING-01-counter-period.ru.md)
 
-Измерено на `RISC5.v` от 31.8.2018 под Verilator 5.052. Тест: `tests/t1_fpb2b.s`, 13/13.
+# Finding 1: the cost of back-to-back arithmetic equals the counter period, not the operation length
 
-## Что происходит
+Measured on `RISC5.v` dated 31.8.2018 under Verilator 5.052. Test: `tests/t1_fpb2b.s`, 13/13.
 
-Все многотактные блоки Вирта устроены одинаково:
+## What happens
+
+All of Wirth's multi-cycle units are built the same way:
 
 ```verilog
 assign stall = run & ~(S == <N>);
 always @(posedge clk) S <= run ? S + 1 : 0;
 ```
 
-Инструкция завершается, когда `S == N`. Но **на этом же такте `run` ещё высок** —
-он комбинационно выведен из текущей инструкции. Значит `S` не обнуляется, а уходит в `N+1`.
+An instruction completes when `S == N`. But **on that same cycle `run` is still high**:
+it is derived combinationally from the current instruction. So `S` is not reset; it moves on to `N+1`.
 
-Если следующая инструкция — операция того же блока, `run` не опускался, и счётчик
-обязан докрутиться **до переполнения своей разрядности**, а только потом отсчитать
-операцию заново. Поэтому цена второй подряд операции равна не длине операции,
-а **периоду счётчика = 2^(его разрядность)**.
+If the next instruction is an operation of the same unit, `run` never dropped, and the counter
+has to run all the way **to the overflow of its width**, and only then count the
+operation again. That is why the cost of the second back-to-back operation is not the operation length
+but **the counter period = 2^(its width)**.
 
-## Таблица (всё измерено, не выведено)
+## Table (everything measured, nothing derived)
 
-| Блок | Счётчик | Период | Операция | Одиночная | **Подряд** | Надбавка |
+| Unit | Counter | Period | Operation | Single | **Back-to-back** | Penalty |
 |---|---|---|---|---|---|---|
-| `FPAdder` | `reg [1:0] State` | 4 | 4 шага | 4 | **4** | — |
-| `FPMultiplier` | `reg [4:0] S` | 32 | 26 шагов | 26 | **32** | **+23%** |
-| `FPDivider` | `reg [4:0] S` | 32 | 27 шагов | 27 | **32** | **+19%** |
-| `Multiplier` | `reg [5:0] S` | 64 | 34 шага | 34 | **64** | **+88%** |
-| `Divider` | `reg [5:0] S` | 64 | 34 шага | 34 | **64** | **+88%** |
+| `FPAdder` | `reg [1:0] State` | 4 | 4 steps | 4 | **4** | — |
+| `FPMultiplier` | `reg [4:0] S` | 32 | 26 steps | 26 | **32** | **+23%** |
+| `FPDivider` | `reg [4:0] S` | 32 | 27 steps | 27 | **32** | **+19%** |
+| `Multiplier` | `reg [5:0] S` | 64 | 34 steps | 34 | **64** | **+88%** |
+| `Divider` | `reg [5:0] S` | 64 | 34 steps | 34 | **64** | **+88%** |
 
-У сумматора надбавки нет **не потому, что он устроен иначе**, а потому что у него
-период счётчика случайно совпал с длиной операции: 2 бита = 4, и операция ровно 4 шага.
+The adder has no penalty **not because it is built differently**, but because its
+counter period happens to coincide with the operation length: 2 bits = 4, and the operation is exactly 4 steps.
 
-## Как снимается
+## How it is cleared
 
-⚠ **УТОЧНЕНО АУДИТОМ.** Правило действует **на аппаратный блок, а не на мнемонику**,
-и сбрасывает счётчик **любая инструкция, не задействующая тот же блок** — включая
-многотактные обращения к памяти.
+⚠ **REFINED BY THE AUDIT.** The rule applies **to the hardware unit, not to the mnemonic**,
+and the counter is reset by **any instruction that does not use the same unit**, including
+multi-cycle memory accesses.
 
-Аудитор написал два независимых теста (26 утверждений, все прошли на RTL):
+The auditor wrote two independent tests (26 assertions, all passed on the RTL):
 
-| Последовательность | Такты | Что показывает |
+| Sequence | Cycles | What it shows |
 |---|---|---|
-| MUL, MUL, MUL, MUL | 34, 64, 64, 64 | надбавка устойчива |
-| MUL → DIV → MUL | 34, 34, 34 | **разные блоки — сброса нет надбавки** |
-| FML → FDV → FML | 26, 27, 26 | то же для плавающих |
-| FML → FAD → FML | 26, 4, 26 | сумматор — отдельный блок |
-| MUL → **LD** → MUL | 34, **2**, 34 | **загрузка тоже сбрасывает** |
-| MUL → **UMUL** | 34, **64** | 🔴 **один блок, надбавка есть** |
+| MUL, MUL, MUL, MUL | 34, 64, 64, 64 | the penalty is stable |
+| MUL → DIV → MUL | 34, 34, 34 | **different units: reset, no penalty** |
+| FML → FDV → FML | 26, 27, 26 | the same for floating point |
+| FML → FAD → FML | 26, 4, 26 | the adder is a separate unit |
+| MUL → **LD** → MUL | 34, **2**, 34 | **a load resets it too** |
+| MUL → **UMUL** | 34, **64** | 🔴 **one unit, the penalty is there** |
 
-Последняя строка важна: `Multiplier.run = ~p & (op == 10)`, то есть `MUL` и `UMUL` —
-**одна и та же аппаратура**. Аналогично `FPAdder.run = FAD | FSB`.
+The last row matters: `Multiplier.run = ~p & (op == 10)`, that is, `MUL` and `UMUL` are
+**the very same hardware**. Likewise `FPAdder.run = FAD | FSB`.
 
-Формулировка «любая не-арифметическая инструкция» была неточной.
+The wording "any non-arithmetic instruction" was inaccurate.
 
-## Почему это важно для измерений
+## Why this matters for measurements
 
-**Целое умножение в плотном цикле стоит 64 такта вместо 34.** Любой микробенчмарк,
-где арифметические операции идут подряд, завышает их цену почти вдвое — и делает это
-молча, потому что снаружи это просто «умножение медленное».
+**Integer multiplication in a tight loop costs 64 cycles instead of 34.** Any microbenchmark
+in which arithmetic operations run back to back overstates their cost almost twofold, and does so
+silently, because from the outside it just looks like "multiplication is slow".
 
-Практические следствия для выпуска:
-1. Микробенчмарки для У2/У3 **обязаны** перемежать операции или честно сообщать, что
-   меряется режим «подряд».
-2. Реальный код Оберона между умножениями почти всегда имеет загрузки и адресную
-   арифметику, то есть платит одиночную цену. Значит **микробенчмарк и реальная
-   нагрузка расходятся системно**, а не случайно.
-3. Это ещё один аргумент за нагрузку «система пересобирает сама себя» вместо
-   синтетического цикла.
+Practical consequences for the release:
+1. Microbenchmarks for U2/U3 **must** interleave operations or state honestly that
+   they measure the back-to-back mode.
+2. Real Oberon code almost always has loads and address arithmetic between multiplications,
+   so it pays the single cost. Hence **the microbenchmark and the real
+   workload diverge systematically**, not by chance.
+3. This is one more argument for the "the system rebuilds itself" workload instead of
+   a synthetic loop.
 
-## Что это даёт статье
+## What this gives the article
 
-Готовый сюжет: у Вирта каждый многотактный блок — это конечный автомат на счётчике,
-и разрядность счётчика выбрана «с запасом», а не под длину операции. На ПЛИС
-это ничего не стоило по площади, зато создало скрытую надбавку в производительности,
-которая не видна ни в одной документации и которую, судя по отсутствию упоминаний,
-никто не измерял.
+A ready-made story: in Wirth's design every multi-cycle unit is a finite state machine on a counter,
+and the counter width was chosen "with headroom", not to fit the operation length. On an FPGA
+this cost nothing in area, but it created a hidden performance penalty
+that is not visible in any documentation and that, judging by the absence of any mention,
+nobody has measured.

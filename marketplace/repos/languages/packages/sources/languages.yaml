@@ -1,10 +1,10 @@
-# Репозиторий «языки» — окружения для языков, у которых не было реализации,
-# и для тех, чья реализация давно недоступна.
+# The "languages" repository: environments for languages that never had an
+# implementation, and for those whose implementation has long been unavailable.
 #
-# Замечание про «серверлесс»: в Cozystack нет подложки FaaS — ни Knative, ни
-# аналога, — поэтому масштабирования до нуля по запросу здесь взять неоткуда.
-# Практическое свойство «вхолостую ничего не крутится» даёт режим разового
-# задания (mode: job): окружение поднимается на время прогона и исчезает.
+# A note on "serverless": Cozystack has no FaaS substrate (no Knative or an
+# equivalent), so there is nothing to provide scale-to-zero on request here.
+# The practical property "nothing spins idle" comes from the one-off job mode
+# (mode: job): the environment comes up for the duration of a run and disappears.
 apiVersion: cozystack.io/v1alpha1
 kind: PackageSource
 metadata:

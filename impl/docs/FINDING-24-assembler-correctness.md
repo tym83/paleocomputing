@@ -1,180 +1,182 @@
-# Находка 24. Насколько корректен наш ассемблер, и три несогласных Вирта
+[Русская версия](FINDING-24-assembler-correctness.ru.md)
 
-## Вопрос
+# Finding 24. How correct our assembler is, and three Wirths who disagree
 
-Ассемблер `tools/asm.py` — это измерительный прибор: он не участвует в пути
-«Оберон → машинный код» (этим занимается `ORG.Mod`), а нужен, чтобы положить
-в память конкретное слово и спросить железо, что оно с ним сделает. На нём
-держатся все 250 проверок в `tests/`. Вопрос: чем подтверждена его
-правильность, кроме того, что тесты зелёные.
+## The question
 
-## Покрытие
+The assembler `tools/asm.py` is a measuring instrument: it does not take part in the path
+"Oberon → machine code" (that is `ORG.Mod`'s job); it is there to put
+a specific word in memory and ask the hardware what it will do with it. All
+250 checks in `tests/` rest on it. The question: what confirms its
+correctness, other than the tests being green?
 
-Ассемблер знает 16 операций формата F0/F1, три `u`-формы (`ADC`, `SBC`,
-`UMUL`), загрузку/выгрузку и 16 условий ветвления.
+## Coverage
 
-В тестах встречаются **все 16 условных переходов** и все операции, кроме
-`ANN` и `XOR` — эти две не проверены ничем.
+The assembler knows 16 operations of formats F0/F1, three `u` forms (`ADC`, `SBC`,
+`UMUL`), load/store and 16 branch conditions.
 
-## Независимая сверка: дизассемблер Вирта
+The tests contain **all 16 conditional branches** and all operations except
+`ANN` and `XOR`: these two are not checked by anything.
 
-В Project Oberon есть собственный дизассемблер — `ORTool.Mod`, процедура
-`opcode`. Это независимая от нас инстанция, и сверка с ней дала два
-расхождения. Оба оказались настоящими.
+## An independent cross-check: Wirth's disassembler
 
-### 1. Таблица условий в ORTool неверна и неполна
+Project Oberon has its own disassembler, `ORTool.Mod`, procedure
+`opcode`. It is an authority independent of us, and cross-checking against it gave two
+discrepancies. Both turned out to be real.
 
-`ORTool.Mod` определяет `mnemo1` только для 11 индексов из 16 — отсутствуют
-3, 4, 7, 11, 12. А два заполненных противоречат нашим:
+### 1. The condition table in ORTool is wrong and incomplete
 
-| код | ORTool | у нас | RISC5.v |
+`ORTool.Mod` defines `mnemo1` only for 11 indices out of 16: missing are
+3, 4, 7, 11, 12. And two of the filled-in ones contradict ours:
+
+| code | ORTool | ours | RISC5.v |
 |-----|--------|-------|---------|
 | 2   | `LS`   | `CS`  | `(cc == 2) & C` → CS |
-| 10  | `HI`   | `CC`  | то же с инверсией → CC |
+| 10  | `HI`   | `CC`  | the same inverted → CC |
 | 4   | —      | `LS`  | `(cc == 4) & (C\|Z)` → LS |
-| 12  | —      | `HI`  | то же с инверсией → HI |
+| 12  | —      | `HI`  | the same inverted → HI |
 
-Права не таблица, а железо. Доказано не чтением: если подставить в наш
-ассемблер раскладку ORTool, **4 из 112 проверок ветвления падают на RTL**.
-Наша раскладка даёт 112 из 112.
+The hardware is right, not the table. Proven not by reading: if ORTool's layout is plugged into our
+assembler, **4 of 112 branch checks fail on the RTL**.
+Our layout gives 112 of 112.
 
-### 2. Ширина смещения перехода: три разных числа
+### 2. The branch offset width: three different numbers
 
-| источник | выражение | ширина |
+| source | expression | width |
 |----------|-----------|--------|
-| `ORG.Mod` — кодогенератор | `off MOD 1000000H` | 24 бита |
-| `RISC5.v` — железо | `disp = IR[21:0]` | 22 бита |
-| `ORTool.Mod` — дизассемблер | `w MOD 100000H` | 20 бит |
+| `ORG.Mod`, the code generator | `off MOD 1000000H` | 24 bits |
+| `RISC5.v`, the hardware | `disp = IR[21:0]` | 22 bits |
+| `ORTool.Mod`, the disassembler | `w MOD 100000H` | 20 bits |
 
-Три части одной системы, написанные одним человеком, расходятся в ширине
-одного поля.
+Three parts of one system, written by one person, disagree on the width
+of one field.
 
-Расхождение невидимо на практике: адресное пространство 1 МБ — это 18 бит в
-словах, до спорных битов не дотягивается никто. Все три согласны на тех битах,
-которые достижимы.
+The discrepancy is invisible in practice: a 1 MB address space is 18 bits in
+words, and nothing reaches the disputed bits. All three agree on the bits
+that are reachable.
 
-То, что биты 23:22 железо действительно игнорирует, проверено исполнением, а
-не чтением верилога: `tests/t1_branch_width.s` гоняет два перехода,
-различающихся ровно этими битами, и оба приходят в одну точку.
+That the hardware really ignores bits 23:22 was verified by execution, not
+by reading the Verilog: `tests/t1_branch_width.s` runs two branches
+differing in exactly these bits, and both arrive at the same point.
 
-## Что было исправлено у нас
+## What was fixed on our side
 
-Наш ассемблер маскировал смещение по 24 битам и **проверял диапазон тоже по
-24** — то есть принимал переходы от ±2²¹ до ±2²³, кодировал их молча, а машина
-уходила не туда.
+Our assembler masked the offset to 24 bits and **checked the range also at
+24**, that is, it accepted branches from ±2²¹ to ±2²³, encoded them silently, and the machine
+went to the wrong place.
 
-Ошибка латентная и на нашем адресном пространстве недостижимая: 2²¹ слов — это
-8 МБ при доступном мегабайте. Ни один существующий тест её не задевал, и
-поведение ни одного из них не изменилось.
+The bug is latent and unreachable on our address space: 2²¹ words is
+8 MB with one megabyte available. No existing test touched it, and
+the behaviour of none of them changed.
 
-Починено с разделением ролей:
+Fixed with a separation of roles:
 
-* **кодируем** как `ORG.Mod`, 24 бита, чтобы слово совпадало с тем, что
-  излучает настоящий компилятор для того же перехода;
-* **проверяем диапазон** по железу, 22 бита, с явной ошибкой — потому что
-  дальше машина не прыгнет так, как написано.
+* **encode** like `ORG.Mod`, 24 bits, so that the word matches what
+  the real compiler emits for the same branch;
+* **check the range** by the hardware, 22 bits, with an explicit error, because
+  beyond that the machine will not jump the way it is written.
 
-## Чем это теперь держится
+## What holds it up now
 
-Самотест ассемблера (`asm._selftest`) получил два вида проверок: точные
-ожидаемые слова и обязательные отказы (`must_fail`) на выходе за диапазон.
-Самотест включён в `make test` первой строкой.
+The assembler's self-test (`asm._selftest`) got two kinds of checks: exact
+expected words and mandatory rejections (`must_fail`) on out-of-range values.
+The self-test is the first line of `make test`.
 
-Проверено на промахи:
+Checked for misses:
 
-* ослабить проверку диапазона обратно до 24 бит → самотест падает, `make test`
-  возвращает ненулевой код;
-* подставить таблицу условий из ORTool → 4 из 112 проверок ветвления падают.
+* weaken the range check back to 24 bits → the self-test fails, `make test`
+  returns a nonzero code;
+* plug in the condition table from ORTool → 4 of 112 branch checks fail.
 
-Первая попытка встроить самотест в `make test` была зелёной на поломке: код
-возврата съедался конвейером `| tail -1`. Тот же класс отказа, что нашёл
-мутационный аудит (`|| true`). Переписано через файл и явную проверку кода.
+The first attempt to embed the self-test into `make test` was green on a breakage: the exit
+code was swallowed by the `| tail -1` pipeline. The same class of failure the
+mutation audit found (`|| true`). Rewritten via a file and an explicit check of the code.
 
-## Три открытых пункта закрыты
+## Three open items closed
 
-### 1. ANN и XOR
+### 1. ANN and XOR
 
-`tests/t1_logic.s` — 10 проверок на железе: регистровые и непосредственные
-формы `AND`, `ANN`, `IOR`, `XOR`, плюс `ANN` как отрицание. Семантика взята из
-`aluRes` в RISC5.v (`B & ~C1` для ANN). Проверено на промах: перестановка
-`AND`/`ANN` в таблице роняет все 10.
+`tests/t1_logic.s`: 10 checks on the hardware, the register and immediate
+forms of `AND`, `ANN`, `IOR`, `XOR`, plus `ANN` as negation. The semantics are taken from
+`aluRes` in RISC5.v (`B & ~C1` for ANN). Checked for misses: swapping
+`AND`/`ANN` in the table breaks all 10.
 
-### 2. Побайтовая сверка с настоящим выводом ORG.Mod
+### 2. Byte-for-byte cross-check against the real output of ORG.Mod
 
-`tools/rsc.py` разбирает объектные файлы по раскладке, снятой с `ORTool.DecObj`.
-Проверка разбора сошлась с журналом компилятора: 1756, 2325, 6650, 6188 слов и
-ключ `E6FCC519`.
+`tools/rsc.py` parses object files according to the layout taken from `ORTool.DecObj`.
+The parsing check agreed with the compiler log: 1756, 2325, 6650, 6188 words and
+key `E6FCC519`.
 
-`tools/disasm.py` — дизассемблер, снятый с `RISC5.v`. `tools/roundtrip.py`
-гоняет круг «слово → дизассемблер → ассемблер → слово» по каждому слову кода.
+`tools/disasm.py` is a disassembler derived from `RISC5.v`. `tools/roundtrip.py`
+runs the circle "word → disassembler → assembler → word" over every code word.
 
-**Результат: 33 838 слов настоящего компилятора воспроизведены бит в бит.**
+**Result: 33 838 words of the real compiler reproduced bit for bit.**
 
-Первый прогон замкнулся лишь на 15 628 из 16 919 и вскрыл четыре настоящих
-пробела в ассемблере:
+The first run closed the circle on only 15 628 of 16 919 and exposed four real
+gaps in the assembler:
 
-* **нагрузка ловушки.** `ORG.Mod` эмитит `Put3(BLR, cond, Pos()*100H +
-  num*10H + MT)` — в битах 23:8 позиция в исходнике, в 7:4 номер ловушки.
-  Железо их в переходе не читает, обработчик достаёт обратно из инструкции и
-  печатает «pos 6734 TRAP 4». Это 7.6% всего кода компилятора, и выразить их
-  ассемблер не умел;
-* **диапазон непосредственного в F1.** Железо строит операнд как
-  `C1 = {{16{v}}, imm}`, то есть при `v=1` доступно −65536…−1. Мы проверяли как
-  16-битное знаковое и отвергали всё ниже −32768. Компилятор такие излучает:
-  `SUB R0,R0,-65536` — слово `50090000` в ORG.rsc;
-* **`MOV a,H` и `MOV a,NZCV`.** Стоял `TODO(verify)` с пометкой «кодирование
-  неоднозначно». Неоднозначности нет: `aluRes` даёт
-  `(~u ? C0 : (~v ? H : {N,Z,C,OV,20'b0,8'h53}))`. Закрыто;
-* **`FLT` и `FLOOR`.** Спецформы сумматора на том же `op=12`, что `FAD`,
-  различаются `u`/`v`. Видно прямо в `FPAdder.v`: `xe = u ? 8'h96 : x[30:23]`
-  и `z = v ? … // FLOOR`.
+* **the trap payload.** `ORG.Mod` emits `Put3(BLR, cond, Pos()*100H +
+  num*10H + MT)`: bits 23:8 hold the source position, bits 7:4 the trap number.
+  The hardware does not read them in the branch; the handler extracts them back from the instruction and
+  prints "pos 6734 TRAP 4". This is 7.6% of all the compiler's code, and the assembler
+  could not express them;
+* **the immediate range in F1.** The hardware builds the operand as
+  `C1 = {{16{v}}, imm}`, so with `v=1` the range −65536…−1 is available. We checked it as
+  16-bit signed and rejected everything below −32768. The compiler emits such values:
+  `SUB R0,R0,-65536`, the word `50090000` in ORG.rsc;
+* **`MOV a,H` and `MOV a,NZCV`.** There was a `TODO(verify)` marked "encoding
+  ambiguous". There is no ambiguity: `aluRes` gives
+  `(~u ? C0 : (~v ? H : {N,Z,C,OV,20'b0,8'h53}))`. Closed;
+* **`FLT` and `FLOOR`.** Special forms of the adder on the same `op=12` as `FAD`,
+  distinguished by `u`/`v`. It is visible right in `FPAdder.v`: `xe = u ? 8'h96 : x[30:23]`
+  and `z = v ? … // FLOOR`.
 
-Поле перехода в `.rsc` до правки загрузчиком хранит не смещение, а запись
-фиксапа, поэтому 22-битный предел железа к нему не относится — для разбора
-объектных файлов добавлен режим `raw`.
+The branch field in `.rsc`, before the loader patches it, holds not an offset but a fixup
+record, so the hardware's 22-bit limit does not apply to it; a `raw` mode was added for parsing
+object files.
 
-### 3. Систематический перебор пространства кодирования
+### 3. A systematic sweep of the encoding space
 
-`tools/sweep_encoding.py` перебирает **со стороны ассемблера**: все мнемоники ×
-все регистры × граничные непосредственные и смещения — 129 760 форм, каждая
-проходит круг и обязана совпасть побитово.
+`tools/sweep_encoding.py` sweeps **from the assembler side**: all mnemonics ×
+all registers × boundary immediates and offsets, 129 760 forms; each one
+goes through the circle and must match bit for bit.
 
-Перебор именно со стороны текста, а не слов, потому что в словах есть
-безразличные биты. Первая версия перебирала слова и утонула в ложных
-срабатываниях: при `op=0` железо не читает поле `b` вовсе (ветка `MOV` в
-`aluRes` не обращается к `B`), и слово с непустым `b` исполняется так же, но
-буквально не воспроизводится. Это добавлено в тест на железе
+The sweep is from the text side, not the words, because words contain
+don't-care bits. The first version swept words and drowned in false
+positives: at `op=0` the hardware does not read field `b` at all (the `MOV` branch in
+`aluRes` does not access `B`), and a word with a nonempty `b` executes the same way but
+is not reproduced literally. This was added to the hardware test
 (`tests/t1_branch_width.s`).
 
-Перебор нашёл **настоящую коллизию кодировок**: `RTI = BR & ~u & ~v & IR[4]`,
-поэтому переход по регистру без связи с нечётной нагрузкой железо исполняет
-как возврат из прерывания. Подтверждено исполнением: `tests/t1_irq.s` гоняет
-ровно эту комбинацию и получает RTI, 6 проверок из 6. Ассемблер теперь такую
-форму отвергает. Ловушек Оберона это не задевает — они эмитятся через `BLR`,
-то есть с `v=1`.
+The sweep found **a real encoding collision**: `RTI = BR & ~u & ~v & IR[4]`,
+so the hardware executes a branch via register without link with an odd payload
+as a return from interrupt. Confirmed by execution: `tests/t1_irq.s` runs
+exactly this combination and gets RTI, 6 checks of 6. The assembler now rejects such
+a form. Oberon's traps are not affected: they are emitted via `BLR`,
+that is, with `v=1`.
 
-## Как эти две проверки дополняют друг друга
+## How these two checks complement each other
 
-Мутационная проба показала, что ни одна не заменяет другую:
+A mutation probe showed that neither replaces the other:
 
-| мутация | круг на реальном коде | перебор |
+| mutation | circle on real code | sweep |
 |---------|----------------------|---------|
-| перепутать LD и ST | ловит (16 280) | ловит |
-| сдвинуть поле op | ловит (6 694) | ловит |
-| перепутать ADC и SBC | **не ловит** | ловит |
-| переставить поля a и b | ловит слабо (122) | ловит |
+| swap LD and ST | catches (16 280) | catches |
+| shift the op field | catches (6 694) | catches |
+| swap ADC and SBC | **does not catch** | catches |
+| swap fields a and b | catches weakly (122) | catches |
 
-`ADC`/`SBC` в коде компилятора не встречаются вовсе, а перестановку `a`/`b`
-реальный код маскирует: в накопительном стиле они часто совпадают.
+`ADC`/`SBC` do not occur in the compiler's code at all, and real code masks the `a`/`b`
+swap: in accumulating style they often coincide.
 
-## Что остаётся непроверенным
+## What remains unverified
 
-* Круг пользуется одной раскладкой полей в обе стороны, поэтому общая ошибка
-  в ней здесь невидима. Раскладку проверяют 264 направленные проверки на железе,
-  где результат сверяется с архитектурной семантикой.
-* Из 275 616 структурно осмысленных слов мнемонику получают 182 048 (66.1%).
-  Остальное — комбинации, которым железо не даёт отдельного смысла; отдельно
-  они не проверялись.
-* Утверждение про биты 23:8 у ловушек снято с `ORG.Mod` и подтверждено
-  воспроизведением, но обратное чтение нагрузки обработчиком ловушки нашей
-  оснасткой не проверяется.
+* The circle uses one field layout in both directions, so a shared error
+  in it is invisible here. The layout is checked by 264 directed checks on the hardware,
+  where the result is compared with the architectural semantics.
+* Of 275 616 structurally meaningful words, 182 048 (66.1%) get a mnemonic.
+  The rest are combinations to which the hardware gives no separate meaning; they
+  were not checked separately.
+* The claim about bits 23:8 in traps is taken from `ORG.Mod` and confirmed by
+  reproduction, but the trap handler's reading of the payload back is not checked by our
+  harness.

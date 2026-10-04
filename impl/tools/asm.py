@@ -1,41 +1,41 @@
 #!/usr/bin/env python3
 """
-Мини-ассемблер RISC5 (Project Oberon).
+Mini assembler for RISC5 (Project Oberon).
 
-Кодирование по архитектурной справке, сверенной с RISC.v:
-  F0  00u0 | a | b | op |   (12 бит не исп.)   | 0000 | c     регистр-регистр
-  F1  01uv | a | b | op |            n (16)                   регистр-непосредственное
+Encoding follows the architecture reference, checked against RISC.v:
+  F0  00u0 | a | b | op |   (12 bits unused)   | 0000 | c     register-register
+  F1  01uv | a | b | op |            n (16)                   register-immediate
   F2  10uv | a | b |              off (20)                    load/store
-  F3  110v | cond |     (20 бит)      | 0000 | c              ветвление по регистру
-  F3  111v | cond |            off (22)                       ветвление по смещению
+  F3  110v | cond |     (20 bits)     | 0000 | c              branch via register
+  F3  111v | cond |            off (22)                       branch by offset
 
-Назначение: направленные тесты ISA (см. HARNESS.md). Не оптимизирующий, не полный
-ассемблер — ровно столько, сколько нужно для тестов и для листингов в статью.
+Purpose: directed ISA tests (see HARNESS.md). Not an optimizing or complete
+assembler: exactly as much as the tests and the article listings need.
 """
 import re, sys, struct
 
-OPS = {  # op-код в битах 19:16
+OPS = {  # opcode in bits 19:16
     'MOV':0, 'LSL':1, 'ASR':2, 'ROR':3,
     'AND':4, 'ANN':5, 'IOR':6, 'XOR':7,
     'ADD':8, 'SUB':9, 'MUL':10,'DIV':11,
     'FAD':12,'FSB':13,'FML':14,'FDV':15,
 }
-# формы с u=1
+# forms with u=1
 OPS_U = {'ADC':8, 'SBC':9, 'UMUL':10}
 
-# Спецформы сумматора плавающей точки. Признаки взяты из FPAdder.v:
-# `xe = u ? 8'h96 : x[30:23]` — при u=1 операнд трактуется как целое (FLT),
-# `z = v ? … // FLOOR` — при v=1 результат усекается до целого (FLOOR).
+# Special forms of the floating-point adder. The flags come from FPAdder.v:
+# `xe = u ? 8'h96 : x[30:23]`: with u=1 the operand is treated as an integer (FLT),
+# `z = v ? … // FLOOR`: with v=1 the result is truncated to an integer (FLOOR).
 OPS_FP = {'FLT': (12, 1, 0), 'FLOOR': (12, 0, 1)}
 
-# Общие суффиксы для битов u и v. Большинство операций эти биты не читает
-# (проверено исполнением: tests/t1_dontcare.s), но кодировка их допускает, и
-# без такой формы часть пространства невыразима. Там, где бит ЗНАЧИМ, есть
-# читаемое имя: ADC/SBC/UMUL/UDIV/FLT/FLOOR.
+# Generic suffixes for the u and v bits. Most operations do not read these bits
+# (verified by execution: tests/t1_dontcare.s), but the encoding allows them, and
+# without such a form part of the space cannot be expressed. Where the bit MATTERS
+# there is a readable name: ADC/SBC/UMUL/UDIV/FLT/FLOOR.
 SUFFIX = {'.U': (1, 0), '.V': (0, 1), '.UV': (1, 1)}
-# Читаемые имена для форм, где бит значим. Делитель и умножитель получают ~u,
-# поэтому u=1 там означает беззнаковую операцию; у сумматора u/v выбирают
-# преобразования между целым и плавающим (FPAdder.v).
+# Readable names for the forms where the bit matters. The divider and multiplier
+# receive ~u, so u=1 there means an unsigned operation; in the adder u/v select
+# conversions between integer and floating point (FPAdder.v).
 ALIAS = {'UDIV': ('DIV', 1, 0), 'FLT': ('FAD', 1, 0), 'FLOOR': ('FAD', 0, 1),
          'ADC': ('ADD', 1, 0), 'SBC': ('SUB', 1, 0), 'UMUL': ('MUL', 1, 0)}
 
@@ -44,19 +44,19 @@ COND = {
     'PL':0x8,'NE':0x9,'CC':0xA,'VC':0xB,'HI':0xC,'GE':0xD,'GT':0xE,'NV':0xF,
 }
 
-# ⚠ ОПРОВЕРГНУТО РЕВЬЮ (см. design/REVIEW.md, ревьюер 2, п.2).
-# Исходное допущение «в F0 бит 28 всегда 0, там 32 свободных слота» — НЕВЕРНО.
-# По RISC5.v:68-71  p=IR[31] q=IR[30] u=IR[29] v=IR[28], формат F0 = 00uv, и бит 28
-# уже используется: ORG.Floor -> Put0(Fad+V), ORG.Float -> Put0(Fad+U) (ORG.Mod:928-934).
-# Все 16 значений op заняты. Ловушки на неизвестную инструкцию в RISC5 НЕТ ВООБЩЕ —
-# любое 32-битное слово валидно, поэтому неверное кодирование выполнится молча.
+# ⚠ REFUTED BY REVIEW (see design/REVIEW.md, reviewer 2, item 2).
+# The original assumption "in F0 bit 28 is always 0, leaving 32 free slots" is WRONG.
+# Per RISC5.v:68-71  p=IR[31] q=IR[30] u=IR[29] v=IR[28], format F0 = 00uv, and bit 28
+# is already used: ORG.Floor -> Put0(Fad+V), ORG.Float -> Put0(Fad+U) (ORG.Mod:928-934).
+# All 16 op values are taken. RISC5 has NO trap on an unknown instruction AT ALL:
+# every 32-bit word is valid, so a wrong encoding executes silently.
 #
-# Новое кодирование (требует явного сужения декода в RTL:
+# New encoding (requires an explicit narrowing of the decode in RTL:
 #   assign FML = ~p & (op==14) & ~v;  ):
-#   FMAC -> F0, op=14 (Fml), v=1   — переиспользуем don't-care бит, а не "свободный слот"
-#   CHK  -> ТРЕБУЕТ формы F1 с 16-битным непосредственным пределом, иначе экономия НУЛЕВАЯ
-#           (предел массива — константа, сегодня она идёт в immediate поле Cmp)
-# Окончательное кодирование не зафиксировано до сведения всех пяти ревью.
+#   FMAC -> F0, op=14 (Fml), v=1   — reuse a don't-care bit, not a "free slot"
+#   CHK  -> REQUIRES the F1 form with a 16-bit immediate limit, otherwise the saving is ZERO
+#           (the array limit is a constant; today it goes into the immediate field of Cmp)
+# The final encoding is not fixed until all five reviews are reconciled.
 EXT_UNRESOLVED = True
 
 
@@ -67,10 +67,10 @@ class AsmError(Exception):
 def reg(tok):
     m = re.fullmatch(r'R(\d{1,2})', tok.upper())
     if not m:
-        raise AsmError(f'ожидался регистр, получено {tok!r}')
+        raise AsmError(f'expected a register, got {tok!r}')
     n = int(m.group(1))
     if not 0 <= n <= 15:
-        raise AsmError(f'регистр вне диапазона: {tok}')
+        raise AsmError(f'register out of range: {tok}')
     return n
 
 
@@ -82,29 +82,29 @@ def imm(tok, bits, signed=True):
     else:
         lo, hi = 0, (1 << bits) - 1
     if not lo <= v <= hi:
-        raise AsmError(f'непосредственное {v} не влезает в {bits} бит '
-                       f'({"знаковое" if signed else "беззнаковое"})')
+        raise AsmError(f'immediate {v} does not fit in {bits} bits '
+                       f'({"signed" if signed else "unsigned"})')
     return v & ((1 << bits) - 1)
 
 
 def f1_imm(tok):
-    """Непосредственное формата F1 -> (v, поле).
+    """F1-format immediate -> (v, field).
 
-    Железо строит операнд как C1 = {{16{v}}, imm} (RISC5.v). То есть старшая
-    половина заполняется целиком нулями или целиком единицами:
+    The hardware builds the operand as C1 = {{16{v}}, imm} (RISC5.v). So the upper
+    half is filled entirely with zeros or entirely with ones:
         v=0 -> 0 … 65535
         v=1 -> -65536 … -1
-    Это НЕ 16-битное знаковое поле: значения от -65536 до -32769 железу
-    доступны, а знаковой трактовкой отвергались. Настоящий компилятор их
-    излучает — например SUB R0,R0,-65536 (слово 50090000 в ORG.rsc).
+    This is NOT a 16-bit signed field: values from -65536 to -32769 are
+    available to the hardware but were rejected by a signed reading. The real
+    compiler emits them, e.g. SUB R0,R0,-65536 (word 50090000 in ORG.rsc).
     """
     n = int(tok.strip(), 0)
     if 0 <= n <= 0xFFFF:
         return 0, n
     if -0x10000 <= n <= -1:
         return 1, n & 0xFFFF
-    raise AsmError(f'непосредственное {n} недостижимо форматом F1 '
-                   f'(доступно -65536…65535)')
+    raise AsmError(f'immediate {n} is not reachable with format F1 '
+                   f'(available: -65536…65535)')
 
 
 def is_reg(tok):
@@ -124,57 +124,57 @@ def enc_f2(u, v, a, b, off):
 
 
 def enc_f3_reg(v, cond, c, pay=0):
-    # Биты 23:4 железо в переходе по регистру не читает, но ORG.Mod кладёт туда
-    # полезную нагрузку ловушки: Put3(BLR, cond, Pos()*100H + num*10H + MT).
-    # Обработчик ловушки достаёт её обратно из самой инструкции и печатает
-    # «pos <позиция> TRAP <номер>». Без поддержки этой формы ассемблер не мог
-    # воспроизвести 7.6% настоящего кода компилятора.
-    # Коллизия кодировок, найденная перебором: RTI = BR & ~u & ~v & IR[4].
-    # Переход по регистру БЕЗ связи (v=0) с нечётной нагрузкой железо исполнит
-    # как возврат из прерывания, а не как переход. Ловушки Оберона этого не
-    # задевают — ORG.Mod эмитит их через BLR, то есть с v=1.
+    # The hardware does not read bits 23:4 in a branch via register, but ORG.Mod
+    # puts the trap payload there: Put3(BLR, cond, Pos()*100H + num*10H + MT).
+    # The trap handler extracts it back from the instruction itself and prints
+    # "pos <position> TRAP <number>". Without this form the assembler could not
+    # reproduce 7.6% of the real compiler's code.
+    # An encoding collision found by exhaustive search: RTI = BR & ~u & ~v & IR[4].
+    # A branch via register WITHOUT link (v=0) with an odd payload is executed by
+    # the hardware as a return from interrupt, not as a branch. Oberon traps are
+    # not affected: ORG.Mod emits them through BLR, i.e. with v=1.
     if v == 0 and (pay & 1):
-        raise AsmError('переход по регистру без связи с нечётной нагрузкой '
-                       'декодируется железом как RTI (IR[4]=1) — используйте '
-                       'форму со связью или чётную нагрузку')
+        raise AsmError('a branch via register without link with an odd payload '
+                       'is decoded by the hardware as RTI (IR[4]=1); use '
+                       'the linked form or an even payload')
     return ((0b1100 | v) << 28) | (cond << 24) | ((pay & 0xFFFFF) << 4) | c
 
 
 def enc_f3_off(v, cond, off):
-    # ⚠ Три части Project Oberon расходятся в ширине этого поля:
-    #   ORG.Mod  (кодогенератор):  off MOD 1000000H  -> 24 бита
-    #   RISC5.v  (железо):         disp = IR[21:0]   -> 22 бита
-    #   ORTool.Mod (дизассемблер): w MOD 100000H     -> 20 бит
-    # Расхождение невидимо: адресное пространство 1 МБ = 18 бит в словах,
-    # до спорных битов не дотягивается никто.
-    # Кодируем как ORG.Mod, чтобы слово совпадало с тем, что излучает настоящий
-    # компилятор; диапазон проверяем по железу (см. _encode). То, что биты 23:22
-    # железо игнорирует, проверено исполнением: tests/t1_branch_width.s.
+    # ⚠ Three parts of Project Oberon disagree on the width of this field:
+    #   ORG.Mod  (code generator): off MOD 1000000H  -> 24 bits
+    #   RISC5.v  (hardware):       disp = IR[21:0]   -> 22 bits
+    #   ORTool.Mod (disassembler): w MOD 100000H     -> 20 bits
+    # The discrepancy is invisible: the 1 MB address space is 18 bits in words,
+    # so nothing ever reaches the disputed bits.
+    # We encode like ORG.Mod so the word matches what the real compiler emits;
+    # the range is checked against the hardware (see _encode). That the hardware
+    # ignores bits 23:22 is verified by execution: tests/t1_branch_width.s.
     return ((0b1110 | v) << 28) | (cond << 24) | (off & 0xFFFFFF)
 
 
 class Assembler:
-    """raw=True снимает проверку диапазона перехода.
+    """raw=True disables the branch range check.
 
-    В .rsc поле перехода до правки загрузчиком хранит не смещение, а запись
-    фиксапа (номер модуля и процедуры). Такие слова не являются исполнимыми
-    переходами, и 22-битный предел железа к ним не относится.
+    In a .rsc file, before the loader patches it, the branch field holds not an
+    offset but a fixup record (module and procedure number). Such words are not
+    executable branches, and the hardware's 22-bit limit does not apply to them.
     """
     def __init__(self):
         self.raw = False
         self.labels = {}
-        self.expects = []   # (индекс_слова, текст) — проверки для оснастки
+        self.expects = []   # (word_index, text): checks for the harness
 
     def assemble(self, text):
         lines = self._parse(text)
         self._pass1(lines)
         return self._pass2(lines), self.labels, self.expects
 
-    # --- разбор -------------------------------------------------------
+    # --- parsing -----------------------------------------------------
     def _parse(self, text):
         out = []
         for lineno, raw in enumerate(text.splitlines(), 1):
-            # ; EXPECT ... — директива оснастки, не код
+            # ; EXPECT ... is a harness directive, not code
             m = re.match(r'\s*;\s*EXPECT\s+(.*)', raw, re.I)
             if m:
                 out.append(('expect', m.group(1).strip(), lineno))
@@ -196,7 +196,7 @@ class Assembler:
         for kind, val, lineno in lines:
             if kind == 'label':
                 if val in self.labels:
-                    raise AsmError(f'строка {lineno}: метка {val} уже определена')
+                    raise AsmError(f'line {lineno}: label {val} already defined')
                 self.labels[val] = pc
             elif kind == 'insn':
                 pc += 4
@@ -210,89 +210,89 @@ class Assembler:
                 try:
                     words.append(self._encode(val, len(words) * 4))
                 except AsmError as e:
-                    raise AsmError(f'строка {lineno}: {e}\n  {val}')
+                    raise AsmError(f'line {lineno}: {e}\n  {val}')
         return words
 
-    # --- кодирование --------------------------------------------------
+    # --- encoding ----------------------------------------------------
     def _encode(self, line, pc):
         parts = re.split(r'[\s,]+', line.strip())
         mn = parts[0].upper()
         args = [p for p in parts[1:] if p]
 
-        if mn == 'HALT':                 # псевдо: B .  (бесконечный цикл)
+        if mn == 'HALT':                 # pseudo: B .  (infinite loop)
             return enc_f3_off(0, COND[''], -1)
-        if mn == 'NOP':                  # псевдо: MOV R0, R0
+        if mn == 'NOP':                  # pseudo: MOV R0, R0
             return enc_f0(0, 0, 0, OPS['MOV'], 0)
-        if mn == 'WORD':                 # сырое слово
+        if mn == 'WORD':                 # raw word
             return int(args[0], 0) & 0xFFFFFFFF
 
-        # --- особые кодировки формата F3 (RISC5.v:96, 181)
+        # --- special encodings of format F3 (RISC5.v:96, 181)
         # RTI = BR & ~u & ~v & IR[4]           -> 1100 | cond=7 | IR[4]=1
         # STI/CLI: (BR & ~u & ~v & IR[5]) ? IR[0] -> 1100 | cond=7 | IR[5]=1 | IR[0]=e
         if mn == 'RTI':
             return (0b1100 << 28) | (COND[''] << 24) | (1 << 4)
         if mn in ('STI', 'CLI'):
-            # Условие NV ("никогда"), а НЕ "всегда": иначе инструкция выполнит
-            # переход по регистру c. Побочный эффект (установка intEnb) в RISC5.v:181
-            # не зависит от cond, поэтому переход и не нужен.
+            # Condition NV ("never"), NOT "always": otherwise the instruction would
+            # branch via register c. The side effect (setting intEnb) in RISC5.v:181
+            # does not depend on cond, so no branch is needed.
             return (0b1100 << 28) | (COND['NV'] << 24) | (1 << 5) | (1 if mn == 'STI' else 0)
 
-        # --- CHK: аппаратная проверка границ массива
-        # F0 | v=1 | op=1 (алиас LSL) | индекс в поле b | предел в IR[15:4] | c=12 (MT)
+        # --- CHK: hardware array bounds check
+        # F0 | v=1 | op=1 (alias of LSL) | index in field b | limit in IR[15:4] | c=12 (MT)
         if mn in ('CHK', 'CHKN', 'CHKS'):
-            # CHK  — предел 12 бит в IR[15:4], диагностика ломается
-            # CHKN — предел 8 бит в IR[15:8], номер ловушки 1 остаётся в IR[7:4]
+            # CHK  — 12-bit limit in IR[15:4], diagnostics break
+            # CHKN — 8-bit limit in IR[15:8], trap number 1 stays in IR[7:4]
             if len(args) != 2:
-                raise AsmError(f'{mn} требует: регистр-индекс, предел')
+                raise AsmError(f'{mn} requires: index register, limit')
             b = reg(args[0]); lim = int(args[1], 0)
             base = (0b0001 << 28) | (0 << 24) | (b << 20) | (1 << 16) | 12
             if mn == 'CHK':
                 if not 0 <= lim <= 0xFFF:
-                    raise AsmError(f'предел CHK {lim} не влезает в 12 бит (максимум 4095)')
+                    raise AsmError(f'CHK limit {lim} does not fit in 12 bits (maximum 4095)')
                 return base | (lim << 4)
             if mn == 'CHKN':
                 if not 0 <= lim <= 0xFF:
-                    raise AsmError(f'предел CHKN {lim} не влезает в 8 бит (максимум 255)')
+                    raise AsmError(f'CHKN limit {lim} does not fit in 8 bits (maximum 255)')
                 return base | (lim << 8) | (1 << 4)
-            # CHKS — ПРИНЯТЫЙ вариант: предел 12 бит, собранный из двух кусков
-            #   {IR[27:24], IR[15:8]}; номер ловушки 1 остаётся в IR[7:4]
+            # CHKS — the ADOPTED variant: a 12-bit limit assembled from two pieces
+            #   {IR[27:24], IR[15:8]}; trap number 1 stays in IR[7:4]
             if not 0 <= lim <= 0xFFF:
-                raise AsmError(f'предел CHKS {lim} не влезает в 12 бит (максимум 4095)')
+                raise AsmError(f'CHKS limit {lim} does not fit in 12 bits (maximum 4095)')
             return base | ((lim >> 8) << 24) | ((lim & 0xFF) << 8) | (1 << 4)
 
-        # --- IDX: индексация через дескриптор (выпуск 14, 14-episode-descriptors.md)
-        # F0 | v=1 | op=8 (алиас ADD) | a=приёмник | b=дескриптор | c=индекс |
-        # IR[9:8] = масштаб (сдвиг 0..3) | IR[7:4] = 1 (номер ловушки)
+        # --- IDX: indexing through a descriptor (episode 14, 14-episode-descriptors.md)
+        # F0 | v=1 | op=8 (alias of ADD) | a=destination | b=descriptor | c=index |
+        # IR[9:8] = scale (shift 0..3) | IR[7:4] = 1 (trap number)
         #   IDX Rd, Rdesc, Ri, sh   ->  Rd := desc[19:0] + (Ri << sh),
-        #   ловушка, если Ri >= desc[31:20] (беззнаково)
+        #   trap if Ri >= desc[31:20] (unsigned)
         if mn == 'IDX':
             if len(args) != 4:
-                raise AsmError('IDX требует: приёмник, дескриптор, индекс, сдвиг 0..3')
+                raise AsmError('IDX requires: destination, descriptor, index, shift 0..3')
             sh = int(args[3], 0)
             if not 0 <= sh <= 3:
-                raise AsmError(f'сдвиг IDX {sh} вне 0..3 (масштаб 1, 2, 4, 8 байт)')
+                raise AsmError(f'IDX shift {sh} outside 0..3 (scale 1, 2, 4, 8 bytes)')
             return ((0b0001 << 28) | (reg(args[0]) << 24) | (reg(args[1]) << 20)
                     | (8 << 16) | (sh << 8) | (1 << 4) | reg(args[2]))
 
         if mn == 'FMAC':
-            raise AsmError('FMAC вынесена в выпуск №2 (ускорение опровергнуто измерением)')
+            raise AsmError('FMAC moved to episode 2 (the speedup was refuted by measurement)')
 
-        # --- память
+        # --- memory
         if mn in ('LD', 'LDB', 'ST', 'STB'):
             u = 1 if mn.startswith('ST') else 0
             v = 1 if mn.endswith('B') else 0
             if len(args) != 3:
-                raise AsmError(f'{mn} требует a, b, off')
+                raise AsmError(f'{mn} requires a, b, off')
             return enc_f2(u, v, reg(args[0]), reg(args[1]), imm(args[2], 20))
 
-        # --- ветвления
+        # --- branches
         m = re.fullmatch(r'(B|BL)(MI|EQ|CS|VS|LS|LT|LE|PL|NE|CC|VC|HI|GE|GT|NV)?', mn)
         if m:
             v = 1 if m.group(1) == 'BL' else 0
             cond = COND[m.group(2) or '']
             if len(args) not in (1, 2):
-                raise AsmError(f'{mn} требует один аргумент '
-                               f'(или два: регистр и нагрузка ловушки)')
+                raise AsmError(f'{mn} requires one argument '
+                               f'(or two: a register and a trap payload)')
             tgt = args[0]
             if is_reg(tgt):
                 pay = imm(args[1], 20, signed=False) if len(args) == 2 else 0
@@ -304,23 +304,23 @@ class Assembler:
                 off = int(tgt, 0)
             if not self.raw and not -(1 << 21) <= off <= (1 << 21) - 1:
                 raise AsmError(
-                    f'смещение ветвления {off} вне 22-битного диапазона '
-                    f'(RISC5.v читает только IR[21:0])')
+                    f'branch offset {off} outside the 22-bit range '
+                    f'(RISC5.v reads only IR[21:0])')
             return enc_f3_off(v, cond, off)
 
         # --- MHI (F1, u=1, op=MOV)
         if mn == 'MHI':
             if len(args) != 2:
-                raise AsmError('MHI требует a, n')
+                raise AsmError('MHI requires a, n')
             return enc_f1(1, 0, reg(args[0]), 0, OPS['MOV'], imm(args[1], 16, signed=False))
 
         # --- MOV a, H  (F0, u=1, op=MOV, b=0)
         if mn == 'MOVH':
             if len(args) != 1:
-                raise AsmError('MOVH требует a')
+                raise AsmError('MOVH requires a')
             return enc_f0(1, reg(args[0]), 0, OPS['MOV'], 0)
 
-        # --- псевдонимы и суффиксы u/v
+        # --- aliases and u/v suffixes
         uv = None
         if mn in ALIAS:
             base, uu, vv = ALIAS[mn]; mn, uv = base, (uu, vv)
@@ -332,40 +332,40 @@ class Assembler:
         if uv is not None:
             uu, vv = uv
             if len(args) != 3:
-                raise AsmError(f'{mn} требует a, b и регистр или непосредственное')
+                raise AsmError(f'{mn} requires a, b and a register or an immediate')
             if is_reg(args[2]):
                 return enc_f0(uu, reg(args[0]), reg(args[1]), OPS[mn],
                               reg(args[2]), v=vv)
-            # В формате F1 бит v заодно задаёт заполнение старшей половины
-            # операнда, а здесь он уже занят формой. Значит непосредственное
-            # обязано быть с ним согласовано: при v=0 доступно 0…65535,
-            # при v=1 только -65536…-1.
+            # In format F1 the v bit also sets the fill of the operand's upper
+            # half, and here it is already taken by the form. So the immediate
+            # must agree with it: with v=0 the range is 0…65535,
+            # with v=1 only -65536…-1.
             v_need, n = f1_imm(args[2])
             if v_need != vv:
                 raise AsmError(
-                    f'{mn} задаёт v={vv}, а непосредственное {args[2]} требует '
-                    f'v={v_need} (при v=0 доступно 0…65535, при v=1 -65536…-1)')
+                    f'{mn} sets v={vv}, but immediate {args[2]} requires '
+                    f'v={v_need} (with v=0 the range is 0…65535, with v=1 -65536…-1)')
             return enc_f1(uu, vv, reg(args[0]), reg(args[1]), OPS[mn], n)
 
-        # --- регистровые/непосредственные
+        # --- register/immediate
         op = OPS.get(mn)
         u = 0
         if op is None:
             op = OPS_U.get(mn)
             if op is None:
-                raise AsmError(f'неизвестная мнемоника {mn}')
+                raise AsmError(f'unknown mnemonic {mn}')
             u = 1
 
         if mn == 'MOV':
             if len(args) != 2:
-                raise AsmError('MOV требует a, n')
+                raise AsmError('MOV requires a, n')
             a, src = reg(args[0]), args[1]
             if is_reg(src):
                 return enc_f0(0, a, 0, OPS['MOV'], reg(src))
-            # Спецформы MOV. Неоднозначности нет, она снята чтением RISC5.v:
+            # Special forms of MOV. There is no ambiguity; reading RISC5.v resolves it:
             #   aluRes = … (~u ? C0 : (~v ? H : {N,Z,C,OV,20'b0,8'h53}))
-            # то есть u=1,v=0 -> H (старшее слово произведения/остаток),
-            #         u=1,v=1 -> регистр флагов.
+            # i.e.    u=1,v=0 -> H (high word of the product / remainder),
+            #         u=1,v=1 -> the flags register.
             if src.upper() == 'H':
                 return enc_f0(1, a, 0, OPS['MOV'], 0, v=0)
             if src.upper() == 'NZCV':
@@ -374,7 +374,7 @@ class Assembler:
             return enc_f1(0, v, a, 0, OPS['MOV'], n)
 
         if len(args) != 3:
-            raise AsmError(f'{mn} требует a, b, n')
+            raise AsmError(f'{mn} requires a, b, n')
         a, b, src = reg(args[0]), reg(args[1]), args[2]
         if is_reg(src):
             return enc_f0(u, a, b, op, reg(src))
@@ -387,7 +387,7 @@ def assemble(text, raw=False):
     return a.assemble(text)
 
 
-# ---------------------------------------------------------------- самотест
+# ---------------------------------------------------------------- self-test
 SELFTEST = r'''
 start:  MOV  R0, 0
         MOV  R1, 100
@@ -413,9 +413,9 @@ subr:   MOV  R12, 7
 
 def _selftest():
     words, labels, expects = assemble(SELFTEST)
-    print(f'собрано слов: {len(words)}')
-    print(f'метки: {labels}')
-    print(f'проверок EXPECT: {len(expects)} -> {expects}')
+    print(f'words assembled: {len(words)}')
+    print(f'labels: {labels}')
+    print(f'EXPECT checks: {len(expects)} -> {expects}')
     print()
     for i, w in enumerate(words):
         print(f'  {i*4:04X}: {w:08X}   {w>>28:04b} {(w>>24)&0xF:04b} '
@@ -424,33 +424,33 @@ def _selftest():
     fails = []
     def chk(name, got, want):
         if got != want:
-            fails.append(f'{name}: получено {got:08X}, ожидалось {want:08X}')
+            fails.append(f'{name}: got {got:08X}, expected {want:08X}')
 
     def must_fail(name, text):
-        """Ассемблер обязан отвергать то, что железо не исполнит как написано."""
+        """The assembler must reject what the hardware would not execute as written."""
         try:
             assemble(text)
         except AsmError:
             return
-        fails.append(f'{name}: принято, хотя должно быть отвергнуто')
+        fails.append(f'{name}: accepted, but should have been rejected')
 
-    # Ширина смещения перехода — 22 бита (RISC5.v: disp = IR[21:0]).
-    # Раньше ассемблер маскировал 24 и молча кодировал недостижимую цель.
-    must_fail('B вне 22 бит (+)', '        B 2097152\n')     # 1<<21
-    must_fail('B вне 22 бит (-)', '        B -2097153\n')    # -(1<<21)-1
-    # Коллизия, найденная перебором: без связи и с нечётной нагрузкой железо
-    # исполняет RTI, а не переход. Подтверждено исполнением: tests/t1_irq.s.
-    must_fail('B R0 с нечётной нагрузкой', '        B R0, 1\n')
-    chk('BL R12 c нагрузкой', assemble('        BL R12, 0x0AED4\n')[0][0], 0xD70AED4C)
+    # The branch offset is 22 bits wide (RISC5.v: disp = IR[21:0]).
+    # The assembler used to mask 24 bits and silently encode an unreachable target.
+    must_fail('B outside 22 bits (+)', '        B 2097152\n')     # 1<<21
+    must_fail('B outside 22 bits (-)', '        B -2097153\n')    # -(1<<21)-1
+    # A collision found by exhaustive search: without link and with an odd payload
+    # the hardware executes RTI, not a branch. Confirmed by execution: tests/t1_irq.s.
+    must_fail('B R0 with an odd payload', '        B R0, 1\n')
+    chk('BL R12 with payload', assemble('        BL R12, 0x0AED4\n')[0][0], 0xD70AED4C)
     chk('MOV R0, H',    assemble('        MOV R0, H\n')[0][0],    0x20000000)
     chk('MOV R0, NZCV', assemble('        MOV R0, NZCV\n')[0][0], 0x30000000)
     chk('FLT R1,R1,R2', assemble('        FLT R1, R1, R2\n')[0][0], 0x211C0002)
     chk('B +2097151',  assemble('        B 2097151\n')[0][0],  0xE71FFFFF)
     chk('B -2097152',  assemble('        B -2097152\n')[0][0], 0xE7E00000)
     chk('IDX R3,R2,R1,2', assemble('        IDX R3, R2, R1, 2\n')[0][0], 0x13280211)
-    must_fail('IDX сдвиг 4', '        IDX R3, R2, R1, 4\n')
+    must_fail('IDX shift 4', '        IDX R3, R2, R1, 4\n')
 
-    # Разбор кодирования: [31:28] формат | [27:24] a | [23:20] b | [19:16] op | остальное
+    # Encoding breakdown: [31:28] format | [27:24] a | [23:20] b | [19:16] op | rest
     # MOV R0,0    F1 u=0 v=0 -> 0100 | a=0 | b=0 | op=0 | n=0
     chk('MOV R0,0',      words[0],  0x40000000)
     # MOV R1,100  0100 | a=1 | b=0 | op=0 | n=0x64
@@ -478,10 +478,10 @@ def _selftest():
 
     print()
     if fails:
-        print('❌ САМОТЕСТ ПРОВАЛЕН:')
+        print('❌ SELF-TEST FAILED:')
         for f in fails: print('   ', f)
         return 1
-    print('✅ самотест пройден')
+    print('✅ self-test passed')
     return 0
 
 
@@ -490,7 +490,7 @@ def main():
     if len(sys.argv) > 1 and sys.argv[1] == '--selftest':
         sys.exit(_selftest())
     if len(sys.argv) < 2:
-        print('использование: asm.py FILE.s [-o OUT]  ->  OUT.bin + OUT.chk', file=sys.stderr)
+        print('usage: asm.py FILE.s [-o OUT]  ->  OUT.bin + OUT.chk', file=sys.stderr)
         sys.exit(1)
     src_path = sys.argv[1]
     out = sys.argv[3] if len(sys.argv) > 3 and sys.argv[2] == '-o' else os.path.splitext(src_path)[0]
@@ -498,17 +498,17 @@ def main():
     with open(out + '.bin', 'wb') as f:
         for w in words:
             f.write(struct.pack('<I', w))
-    # Построчный формат, чтобы стенд на C++ читал без JSON-библиотеки:
-    #   <после скольких инструкций>  <имя>  <значение>
+    # Line-based format so the C++ testbench can read it without a JSON library:
+    #   <after how many instructions>  <name>  <value>
     with open(out + '.chk', 'w') as f:
         f.write(f'# words {len(words)}\n')
         for i, e in expects:
             m = re.match(r'([A-Za-z_]\w*)\s*=\s*(\S+)', e)
             if not m:
-                raise AsmError(f'не разобрать EXPECT: {e!r}')
+                raise AsmError(f'cannot parse EXPECT: {e!r}')
             name, val = m.group(1).upper(), m.group(2)
             f.write(f'{i} {name} {int(val, 0)}\n')
-    print(f'{out}.bin: {len(words)} слов, {len(expects)} проверок')
+    print(f'{out}.bin: {len(words)} words, {len(expects)} checks')
 
 
 if __name__ == '__main__':

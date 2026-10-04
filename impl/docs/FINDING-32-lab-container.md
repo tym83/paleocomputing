@@ -1,80 +1,82 @@
-# Находка 32. Лабораторные, которым не хватает браузера, — как пакетное задание
+[Русская версия](FINDING-32-lab-container.ru.md)
 
-## Мысль
+# Finding 32. Labs that the browser is not enough for, as a batch job
 
-Лабораторные 1–9 живут в браузере и не требуют ничего, кроме страницы.
-Оставшиеся упираются в инструментарий: правка процессора требует пересборки
-Verilog, правка компилятора — пересборки самого компилятора. В браузере это
-невозможно.
+## The idea
 
-Но это и не интерактивная работа. Это **пакетная нагрузка**: на входе правка,
-на выходе вердикт. Такое не обязано жить на машине учащегося — оно одинаково
-запускается локально и заданием в кластере.
+Labs 1–9 live in the browser and need nothing but the page.
+The rest run up against tooling: editing the processor requires rebuilding the
+Verilog, editing the compiler requires rebuilding the compiler itself. That is
+impossible in the browser.
 
-## Что сделано
+But it is not interactive work either. It is **a batch workload**: an edit goes in,
+a verdict comes out. Such a thing does not have to live on the student's machine: it runs
+the same way locally and as a job in a cluster.
 
-`deploy/Containerfile` — образ на `debian:trixie-slim` с Verilator, сборкой
-C++, Python и Node. 863 МБ, из них почти всё — инструментарий; само дерево
-проекта около 13 МБ (каталог `build/` в образ не попадает, иначе он тащил бы
-сто мегабайт чужих артефактов).
+## What was done
 
-`deploy/lab.sh` — точка входа. Правка подаётся каталогом `/work`: файлы оттуда
-накладываются поверх дерева. Ни гита, ни сети не требуется.
+`deploy/Containerfile`: an image on `debian:trixie-slim` with Verilator, a C++
+toolchain, Python and Node. 863 MB, almost all of it tooling; the project
+tree itself is about 13 MB (the `build/` directory does not go into the image, otherwise it would drag
+in a hundred megabytes of unrelated artifacts).
+
+`deploy/lab.sh`: the entry point. The edit is supplied as the `/work` directory: files from there
+are overlaid on top of the tree. Neither git nor network access is required.
 
 ```
-lab check       полная проверка
-lab isa         задание isa: своя команда в процессоре
-lab compiler    задание compiler: своя встроенная процедура
+lab check       full check
+lab isa         isa assignment: your own instruction in the processor
+lab compiler    compiler assignment: your own built-in procedure
 ```
 
-`deploy/k8s/lab-job.yaml` — то же самое как задание: правка приходит
-`ConfigMap`'ом, `initContainer` раскладывает ключи обратно в пути
-(в именах ключей `ConfigMap` нельзя косые черты), `backoffLimit: 0` — вердикт
-лабораторной повторять бессмысленно.
+`deploy/k8s/lab-job.yaml`: the same thing as a Job: the edit arrives
+as a `ConfigMap`, an `initContainer` lays the keys back out into paths
+(`ConfigMap` key names cannot contain slashes), `backoffLimit: 0`, since repeating a lab's
+verdict is pointless.
 
-## Побочно: независимое подтверждение воспроизводимости
+## A side effect: independent confirmation of reproducibility
 
-В образе стоит **Verilator 5.032**, а на рабочей машине 5.052. Все 298
-направленных проверок, перебор 375 776 форм кодирования и 20 480 комбинаций
-эквивалентности декодера проходят одинаково на обеих версиях.
+The image has **Verilator 5.032**, while the workstation has 5.052. All 298
+directed checks, the sweep of 375 776 encoding forms and the 20 480 decoder
+equivalence combinations pass identically on both versions.
 
-Это не планировалось, но оказалось полезнее самого контейнера: до сих пор все
-наши числа были получены одним симулятором одной версии. Теперь их
-подтверждает вторая.
+This was not planned, but it turned out more useful than the container itself: until now all
+our numbers had been obtained with one simulator of one version. Now a second one
+confirms them.
 
-## Цикл лабораторной проверен с обеих сторон
+## The lab cycle is checked from both sides
 
-`make image-check` требует ровно двух исходов:
+`make image-check` requires exactly two outcomes:
 
-* на чистом дереве лабораторная **обязана пройти**;
-* с заведомо сломанной правкой процессора (переставлены `AND` и `ANN` в
-  `aluRes`) — **обязана провалиться**.
+* on a clean tree the lab **must pass**;
+* with a deliberately broken processor edit (`AND` and `ANN` swapped in
+  `aluRes`) it **must fail**.
 
-Вторая половина не менее важна первой: вердикт, который всегда зелёный, ничего
-не проверяет. Сломанная правка ловится сразу в двух местах — направленным
-тестом логических операций и семантическим дифференциалом (118 и 68 провалов
-в двух файлах).
+The second half is no less important than the first: a verdict that is always green checks
+nothing. The broken edit is caught in two places at once: by the directed
+test of logical operations and by the semantic differential (118 and 68 failures
+in two files).
 
-Цель не входит в `make check`: она требует Docker, которого может не быть.
+The target is not part of `make check`: it requires Docker, which may not be available.
 
-## Грабли, на которые наступил
+## Rakes I stepped on
 
-**Docker на macOS не видит каталоги вне расшаренных путей.** Первый прогон
-молча сообщил «правок в `/work` нет», хотя файл на хосте лежал: временный
-каталог был вне списка, который Docker Desktop пробрасывает. Перенёс рабочий
-каталог внутрь дерева проекта.
+**Docker on macOS does not see directories outside the shared paths.** The first run
+silently reported "no edits in `/work`", although the file was there on the host: the temporary
+directory was outside the list that Docker Desktop passes through. I moved the working
+directory inside the project tree.
 
-**`find` без скобок.** Выражение `-type f -name '*.v' -o -type f -name '*.s'`
-разбирается не так, как читается: `-o` связывает слабее, чем кажется. Скобки
-обязательны.
+**`find` without parentheses.** The expression `-type f -name '*.v' -o -type f -name '*.s'`
+is parsed differently from how it reads: `-o` binds more loosely than it seems. Parentheses
+are mandatory.
 
-## Чего нет
+## What is missing
 
-Это **не пакет Cozystack**, а обычное задание Kubernetes. Чтобы оно стало
-приложением каталога, нужен Helm-чарт с параметрами (какая лабораторная, откуда
-берётся правка, куда складывается вердикт) и место в маркетплейсе — это
-следующий шаг платформы, а не этот.
+This is **not a Cozystack package** but an ordinary Kubernetes Job. For it to become
+a catalog application, it needs a Helm chart with parameters (which lab, where
+the edit comes from, where the verdict goes) and a place in the marketplace: that is
+the next step of the platform, not this one.
 
-Образ никуда не публиковался, в кластере не запускался. В манифесте стоит
-`ghcr.io/REPLACE-ME/oberon-lab:dev` — намеренно, чтобы никто не принял его за
-готовый к применению.
+The image has not been published anywhere and has not been run in a cluster. The manifest has
+`ghcr.io/REPLACE-ME/oberon-lab:dev`, deliberately, so that nobody mistakes it for
+something ready to apply.

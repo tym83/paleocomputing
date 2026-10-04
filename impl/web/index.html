@@ -14,7 +14,7 @@
   header { padding:10px 14px; display:flex; gap:18px; align-items:baseline; flex-wrap:wrap; }
   h1 { font-size:15px; margin:0; font-weight:600; }
   #stat { font:12px/1.4 ui-monospace,monospace; color:#9a9a9a; }
-  /* Экран стоит на месте, мотается только пояснение под ним. */
+  /* The screen stays in place; only the explanation below it scrolls. */
   #wrap { display:flex; justify-content:center; padding:0 10px 14px;
           flex:none; overflow:auto }
   oberon-machine { display:block; width:calc(1024px * var(--k, 1)); max-width:100%;
@@ -62,20 +62,20 @@
 
 <script type="module">
 /*
- * Страница запуска: вся машина — во встраиваемом компоненте, здесь только
- * язык, масштаб и выбор кнопки мыши.
+ * The launch page: the whole machine is in the embeddable component; here there is
+ * only the language, the zoom and the mouse button choice.
  *
- * ⚠ Раньше здесь лежала СВОЯ копия отрисовки, таблицы скан-кодов и цикла
- * кадров — вторая после machine.js. Ровно тот случай, из-за которого в этом
- * репозитории уже дважды расходились два места: правился один, а работал
- * другой. Теперь их снова одно.
+ * ⚠ This page used to carry ITS OWN copy of the rendering, the scan code table and
+ * the frame loop, a second one besides machine.js. Exactly the situation that has
+ * already twice made two places drift apart in this repository: one was edited
+ * while the other was the one running. Now there is one again.
  */
 import { LANG, LANGS, t, applyMarkup, setLang } from './i18n.js';
 import { labelAltKeys } from './machine.js';
 import './embed.js';
 
-// Язык проставляется ДО поиска узлов: подсказка про кнопки заменяется целиком,
-// вместе со span'ами b0..b2, и ссылки на прежние узлы стали бы висячими.
+// The language is applied BEFORE looking up nodes: the button hint is replaced
+// wholesale, including the b0..b2 spans, and references to the old nodes would dangle.
 applyMarkup(document);
 labelAltKeys(document);
 {
@@ -110,8 +110,8 @@ m.addEventListener('oberon-error', e => {
   stat.textContent = t({ en: 'ERROR: ', ru: 'ОШИБКА: ' }) + e.detail;
 });
 
-// Подсветка нажатых кнопок: состояние мыши знает компонент, наружу оно ходит
-// тем же событием, что и темп.
+// Highlighting of pressed buttons: the component knows the mouse state, and it
+// goes out through the same event as the speed.
 m.addEventListener('oberon-buttons', e => {
   bi[0].classList.toggle('on', !!(e.detail & 4));
   bi[1].classList.toggle('on', !!(e.detail & 2));
@@ -120,7 +120,7 @@ m.addEventListener('oberon-buttons', e => {
 
 document.getElementById('btn').onchange = e => m.setButton(+e.target.value);
 
-// Масштаб экрана, выбор запоминается между заходами.
+// Screen zoom; the choice is remembered between visits.
 {
   const z = document.getElementById('zoom');
   const apply = k => {
@@ -134,6 +134,6 @@ document.getElementById('btn').onchange = e => m.setButton(+e.target.value);
   apply(z.value);
   z.onchange = () => { apply(z.value); try { localStorage.setItem('oberon-zoom', z.value); } catch (e) {} };
 }
-// Модуль дошёл до конца: это видит дымовая проверка в браузере.
+// The module ran to the end: the in-browser smoke test sees this.
 document.documentElement.dataset.scriptOk = '1';
 </script>

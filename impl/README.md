@@ -1,84 +1,86 @@
-# Oberon-lab: ядро RISC5 Вирта под Verilator, с измерениями
+[Русская версия](README.ru.md)
 
-Настоящий Verilog Никлауса Вирта, прогоняемый такт за тактом, загружает Project Oberon —
-на хосте и в браузере. Плюс измерительная инфраструктура для вопроса «сколько стоят
-проверки времени исполнения и что даёт перенос одной из них в железо».
+# Oberon-lab: Wirth's RISC5 core under Verilator, with measurements
 
-**Состояние: не принято пятью аудиторами.** Числа и оговорки — в `docs/FINDING-*.md`,
-сводка исправлений — в `docs/FINDING-19-audit-corrections.md`.
+Niklaus Wirth's actual Verilog, run cycle by cycle, boots Project Oberon,
+both on the host and in the browser. Plus measurement infrastructure for the question
+"what do run-time checks cost, and what do we gain by moving one of them into hardware".
 
-## Быстрый старт
+**Status: not accepted by five auditors.** The numbers and caveats are in `docs/FINDING-*.md`;
+the summary of corrections is in `docs/FINDING-19-audit-corrections.md`.
+
+## Quick start
 
 ```
-make deps      # проверить окружение
-make check     # полная проверка: тесты + загрузка системы + диффстенд
+make deps      # check the environment
+make check     # full check: tests + system boot + differential bench
 ```
 
-## Зависимости
+## Dependencies
 
-| Инструмент | Зачем | Проверено на |
+| Tool | What for | Tested with |
 |---|---|---|
-| **Verilator** | прогон RTL | 5.052 |
-| **yosys** | синтез, площадь | 0.69 |
-| **python3** | инструменты и скрипты | 3.14 |
-| **cc** | эмуляторы, тестовые стенды | Apple clang 21 |
-| em++ (Emscripten) | только `make web` | 6.0.9 |
-| Nangate45 liberty | только `make syn`, `make fmax` | `syn/lib/` |
+| **Verilator** | running the RTL | 5.052 |
+| **yosys** | synthesis, area | 0.69 |
+| **python3** | tools and scripts | 3.14 |
+| **cc** | emulators, test benches | Apple clang 21 |
+| em++ (Emscripten) | only `make web` | 6.0.9 |
+| Nangate45 liberty | only `make syn`, `make fmax` | `syn/lib/` |
 
-⚠ Проверено только на macOS ARM. На Linux должно собраться, но не проверялось.
+⚠ Tested only on macOS ARM. It should build on Linux, but this has not been tested.
 
-## Цели
+## Targets
 
-| Цель | Что делает |
+| Target | What it does |
 |---|---|
-| `make test` | 14 наборов тестов ISA (250 уникальных проверок) на двух конфигурациях ядра + эквивалентность декодера |
-| `make boot` | RTL грузит Oberon, сверяет контрольную сумму экрана |
-| `make boot-chk` | то же на ядре с расширением ISA |
-| `make lockstep` | пошаговое сравнение с эталонным эмулятором, 14.6 млн инструкций |
-| `make boot-desc`, `make lockstep-desc` | то же на ядре с дескрипторами (`IDX`, выпуск 14) |
-| `make desc-loop` | цикл центрального номера: без проверки, программная, CHK, дескриптор |
-| `make desc-measure` | три нагрузки в четырёх однородных средах Norebo (~10 минут), затем `desc-cross`, `desc-profile` |
-| `make check` | всё вышеперечисленное, кроме замеров |
-| `make syn` / `make syn --chk` | площадь через yosys |
-| `make web` | сборка браузерной версии |
-| `make configs` | восстановить конфигурации кодогенератора из `patches/` |
-| `make lm-check` / `make lm` | выпуск №2: языковая модель на эмуляторе / на RTL против эталона до байта |
-| `make lm-profile` | такты на символ, профиль, ускорение от быстрого FP-умножителя, потолок FMAC |
-| `make lm-system` / `make lm-qemu` | модель внутри настоящей системы на RTL / в QEMU |
-| `make fpmul-diff`, `make boot-fast`, `make lm-stock` | быстрый FP-умножитель: побитовое равенство, загрузка, стоковая нагрузка |
+| `make test` | 14 ISA test suites (250 unique checks) on two core configurations + decoder equivalence |
+| `make boot` | the RTL boots Oberon and checks the screen checksum |
+| `make boot-chk` | the same on the core with the ISA extension |
+| `make lockstep` | step-by-step comparison with the reference emulator, 14.6 million instructions |
+| `make boot-desc`, `make lockstep-desc` | the same on the core with descriptors (`IDX`, episode 14) |
+| `make desc-loop` | the headline loop: no check, software check, CHK, descriptor |
+| `make desc-measure` | three workloads in four homogeneous Norebo environments (~10 minutes), then `desc-cross`, `desc-profile` |
+| `make check` | everything above except the measurements |
+| `make syn` / `make syn --chk` | area via yosys |
+| `make web` | build the browser version |
+| `make configs` | restore the code generator configurations from `patches/` |
+| `make lm-check` / `make lm` | episode 2: the language model on the emulator / on the RTL against the reference, byte for byte |
+| `make lm-profile` | cycles per character, profile, speedup from the fast FP multiplier, FMAC ceiling |
+| `make lm-system` / `make lm-qemu` | the model inside the real system on the RTL / in QEMU |
+| `make fpmul-diff`, `make boot-fast`, `make lm-stock` | the fast FP multiplier: bit-exact equality, boot, stock workload |
 
-## Что здесь чьё
+## What belongs to whom
 
-**Взято готовым** (не наше, лежит в `rtl/` и `ext/`):
-- ядро RISC5 и периферия — Никлаус Вирт, [projectoberon.net](http://www.projectoberon.net/), `RISC5.v` от 31.8.2018
-- [pdewacht/project-norebo](https://github.com/pdewacht/project-norebo) — компилятор Оберона с командной строки
-- [pdewacht/oberon-risc-emu](https://github.com/pdewacht/oberon-risc-emu) — эталонный эмулятор
-- образ системы Project Oberon 2013
+**Taken ready-made** (not ours; lives in `rtl/` and `ext/`):
+- the RISC5 core and peripherals: Niklaus Wirth, [projectoberon.net](http://www.projectoberon.net/), `RISC5.v` dated 31.8.2018
+- [pdewacht/project-norebo](https://github.com/pdewacht/project-norebo): a command-line Oberon compiler
+- [pdewacht/oberon-risc-emu](https://github.com/pdewacht/oberon-risc-emu): the reference emulator
+- the Project Oberon 2013 system image
 
-**Наше** (~4200 строк):
-- `tb/` — SoC-стенд, дифференциальный стенд, зонд декодера, проверка эквивалентности, модель тактов
-- `tools/` — ассемблер RISC5, анализаторы, скрипты замеров
-- `tests/` — 14 наборов тестов ISA
-- `patches/` — четыре конфигурации кодогенератора Оберона
-- `web/` — браузерная сборка
+**Ours** (~4200 lines):
+- `tb/`: SoC bench, differential bench, decoder probe, equivalence check, cycle model
+- `tools/`: RISC5 assembler, analyzers, measurement scripts
+- `tests/`: 14 ISA test suites
+- `patches/`: four Oberon code generator configurations
+- `web/`: the browser build
 
-**Наша правка в чужом коде**: 53 строки в `RISC5.v` (инструкция CHK),
-`Registers.v` переписан с примитивов Xilinx на поведенческий, счётчик тактов
-и профилировщик в эмуляторах.
+**Our changes to other people's code**: 53 lines in `RISC5.v` (the CHK instruction),
+`Registers.v` rewritten from Xilinx primitives into a behavioral description, a cycle counter
+and a profiler in the emulators.
 
-## Известные ограничения
+## Known limitations
 
-- **Путь в кремний не готов**: сброса нет у регистрового файла, флагов, `H`, `IR`;
-  `Registers.v` держится на `initial`, который `dfflibmap` молча роняет
-- **Площадь и частота — ниже разрешающей способности маршрута**: логически нейтральные
-  переписывания исходника двигают их сильнее измеряемого эффекта
-- **Конфигурации C и D отвергнуты**, сохранены для истории; C требует `NOREBO_CHK=wide`
-- Периферия в стенде — регистровые заглушки, а не проводные интерфейсы:
-  видеоконтроллер не подключён, дисковый обмен словный
-- В браузере запись на диск живёт только в памяти вкладки
+- **The path to silicon is not ready**: there is no reset for the register file, the flags, `H`, `IR`;
+  `Registers.v` relies on `initial`, which `dfflibmap` silently drops
+- **Area and frequency are below the resolution of the flow**: logically neutral
+  rewrites of the source move them more than the effect being measured
+- **Configurations C and D were rejected** and are kept for history; C requires `NOREBO_CHK=wide`
+- The peripherals in the bench are register stubs, not wired interfaces:
+  the video controller is not connected, disk transfer is word-based
+- In the browser, writes to the disk live only in the tab's memory
 
-## Лицензии
+## Licenses
 
-Материалы Вирта распространяются по его собственному уведомлению, не по OSI-лицензии.
-Norebo и oberon-risc-emu — см. лицензии в их каталогах. Наш код в `tb/`, `tools/`,
-`tests/`, `patches/`, `web/` — без ограничений.
+Wirth's materials are distributed under his own notice, not under an OSI license.
+For Norebo and oberon-risc-emu, see the licenses in their directories. Our code in `tb/`, `tools/`,
+`tests/`, `patches/`, `web/` is unrestricted.

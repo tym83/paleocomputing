@@ -1,69 +1,71 @@
-# Находка 41. libvirt запускает машину Вирта
+[Русская версия](FINDING-41-libvirt-runs-oberon.ru.md)
 
-Домен определён, запущен и работает под libvirt. Внутри — настоящий Оберон:
-кадровый буфер домена **совпал побайтово** с буфером той же системы на
-настоящем описании схемы под Verilator. 98 304 байта, 18 607 чёрных точек.
+# Finding 41. libvirt runs Wirth's machine
+
+The domain is defined, started and running under libvirt. Inside is the real Oberon:
+the domain's framebuffer **matched byte for byte** with the buffer of the same system on
+the real circuit description under Verilator. 98 304 bytes, 18 607 black dots.
 
 ```
 <type arch='risc5' machine='oberon'>hvm</type>
 <emulator>/usr/local/bin/qemu-system-risc5</emulator>
 ```
 
-Отдельно проверено: домен под libvirt и тот же эмулятор, запущенный напрямую,
-дают **одинаковый до байта** экран. То есть libvirt ничего не искажает, он
-просто запускает.
+Checked separately: the domain under libvirt and the same emulator launched directly
+give **a byte-identical** screen. That is, libvirt distorts nothing; it
+just launches.
 
-## Чего не хватало цели
+## What the target was missing
 
-libvirt падал по нулевому указателю при опросе эмулятора. Причина нашлась
-опросом бинаря теми же запросами: `query-cpu-definitions` отвечал отказом —
-«модели процессора не поддерживаются этой целью».
+libvirt crashed on a null pointer while probing the emulator. The cause was found by
+probing the binary with the same requests: `query-cpu-definitions` answered with a refusal,
+"CPU models are not supported by this target".
 
-Отказ был честным: у машины Вирта нет ни поколений ядра, ни признаков, которые
-можно включать. Но libvirt на него не рассчитан. Дешевле ответить, чем править
-чужой код, — тем более что модель у нас есть, она называется `risc5-cpu` и уже
-заведена как тип объекта.
+The refusal was honest: Wirth's machine has neither core generations nor features that
+can be enabled. But libvirt is not designed for it. It is cheaper to answer than to patch
+someone else's code, all the more so because we do have a model: it is called `risc5-cpu` and is already
+registered as an object type.
 
-**Тонкость:** определить пришлось не одну функцию, а обе, что есть в заглушке
-(`stubs/qmp-cpu.c`). Линковщик тянет объектный файл целиком, если хоть один его
-символ остался неперекрытым; так же поступает цель riscv.
+**A subtlety:** not one function had to be defined but both of those in the stub
+(`stubs/qmp-cpu.c`). The linker pulls in the whole object file if even one of its
+symbols remains un-overridden; the riscv target does the same.
 
-## Что пришлось отключить в описании машины
+## What had to be disabled in the domain description
 
-libvirt добавляет устройства по умолчанию, и им нужна шина PCI:
+libvirt adds default devices, and they need a PCI bus:
 
 ```
 XML error: No PCI buses available
 ```
 
-У машины Вирта нет ни PCI, ни USB, ни шины для звука. В описании они гасятся
-явно — `<controller type="usb" model="none"/>`, `<memballoon model="none"/>`,
-`<video><model type="none"/></video>`. ПЗУ и образ диска подаются напрямую
-через `<qemu:commandline>`: привычной микропрограммы у машины нет.
+Wirth's machine has no PCI, no USB, no sound bus. In the description they are disabled
+explicitly: `<controller type="usb" model="none"/>`, `<memballoon model="none"/>`,
+`<video><model type="none"/></video>`. The ROM and the disk image are supplied directly
+via `<qemu:commandline>`: the machine has no conventional firmware.
 
-## Две ловушки, стоившие времени
+## Two traps that cost time
 
-**Отказ доступа маскировал настоящую причину.** Эмулятор лежал вне путей,
-разрешённых правилам защиты, и libvirt говорил «нет доступа» вместо того, что
-происходило на самом деле. Дважды — сперва из-за пути, потом из-за AppArmor.
+**A permission denial masked the real cause.** The emulator was outside the paths
+allowed by the security rules, and libvirt said "permission denied" instead of what
+was actually happening. Twice: first because of the path, then because of AppArmor.
 
-**Адрес кадрового буфера я написал десятичным числом и посчитал неверно:**
-950528 вместо 950016 (`0xE7F00`). Промах на 512 байт — ровно четыре строки
-экрана. Картинка выглядела правильной, а сверка показывала 5776 различий, и я
-успел заподозрить и мышь, и точку снятия, и сам libvirt.
+**I wrote the framebuffer address as a decimal number and computed it wrong:**
+950528 instead of 950016 (`0xE7F00`). A miss of 512 bytes, exactly four rows of the
+screen. The picture looked right, but the comparison showed 5776 differences, and I
+managed to suspect the mouse, the capture point and libvirt itself.
 
-Поучительно вот что: **побайтовая сверка нашла ошибку, которую глаз не видел
-вовсе**. Четыре строки сдвига на снимке 1024×768 не заметны, а картинка при
-этом была не той.
+What is instructive: **the byte-for-byte comparison found an error the eye did not see
+at all**. A four-row shift on a 1024×768 snapshot is not noticeable, and yet the picture
+was the wrong one.
 
-## Состояние цепочки
+## State of the chain
 
-| слой | своё | чем подтверждено |
+| layer | our own | confirmed by |
 |---|---|---|
-| QEMU | ✅ наша цель | 1.5 млн команд пошагово, экран побайтово |
-| libvirt | ✅ патч 6 строк | домен определяется, запускается, работает |
-| KubeVirt | ❌ не нужен | перехватчик `OnDefineDomain` штатный |
-| Cozystack | ❌ не нужен | `imageRegistry` на ресурсе KubeVirt |
+| QEMU | ✅ our target | 1.5 million instructions step by step, screen byte for byte |
+| libvirt | ✅ 6-line patch | the domain is defined, starts, runs |
+| KubeVirt | ❌ not needed | the `OnDefineDomain` hook is standard |
+| Cozystack | ❌ not needed | `imageRegistry` on the KubeVirt resource |
 
-Своей сборки требует только libvirt. Следующий шаг — перехватчик KubeVirt,
-который подменит описание машины и путь к эмулятору.
+Only libvirt requires our own build. The next step is a KubeVirt hook
+that will substitute the domain description and the emulator path.

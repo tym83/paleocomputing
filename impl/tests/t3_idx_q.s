@@ -1,5 +1,5 @@
-; ПОРОЖДЁННЫЙ ФАЙЛ — правится tools/gen_idx_diff.py, не руками.
-; 40 случайных IDX (зерно 14) и один случайный выход за границу.
+; GENERATED FILE: edit tools/gen_idx_diff.py, not by hand.
+; 40 random IDX (seed 14) and one random out-of-bounds access.
         MOV  R0, 0
         MOV  R12, 0
         MHI  R12, 0x00FF
@@ -692,7 +692,7 @@
         IOR  R1, R1, 0x02C0
         MOV  R3, 7
         IDX  R3, R2, R1, 2
-        MOV  R4, 0x1111            ; не должна исполниться
+        MOV  R4, 0x1111            ; must not execute
         HALT
 handler:
         MOV  R5, 0x2222

@@ -12,8 +12,8 @@ int main(int argc, char** argv) {
     uint32_t* fb = risc_get_framebuffer_ptr(r);
     uint32_t sum = 0;
     for (int k = 0; k < 1024*768/32; k++) sum += fb[k];
-    if (sum != 0) { printf("кадровый буфер непустой после %ld млн инструкций, сумма %08X\n", total/1000000, sum); return 0; }
+    if (sum != 0) { printf("framebuffer non-empty after %ld million instructions, sum %08X\n", total/1000000, sum); return 0; }
   }
-  printf("кадровый буфер пуст после %ld инструкций\n", total);
+  printf("framebuffer empty after %ld instructions\n", total);
   return 1;
 }

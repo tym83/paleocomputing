@@ -1,2 +1,2 @@
-# Плата по умолчанию для risc5-softmmu.
+# Default board for risc5-softmmu.
 CONFIG_OBERON=y

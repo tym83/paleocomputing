@@ -1,79 +1,79 @@
 #!/usr/bin/env python3
-"""Нагрузка для центрального номера: индексация массива с проверкой границ.
+"""Workload for the central number: array indexing with a bounds check.
 
-Две сборки ОДНОГО И ТОГО ЖЕ тела цикла:
+Two builds of THE SAME loop body:
 
-    B (сток)    SUB RH, i, lim ; BCC trap   — то, что эмитит ORG.Index сегодня
-    E (железо)  CHKS i, lim                 — то же самое одной инструкцией
+    B (stock)    SUB RH, i, lim ; BCC trap   — what ORG.Index emits today
+    E (hardware) CHKS i, lim                 — the same thing in one instruction
 
-Всё остальное — вычисление адреса, чтение элемента, накопление — побайтово
-одинаково. Разница в тактах и есть цена проверки границ, и ничего кроме неё.
+Everything else (address computation, element load, accumulation) is byte for byte
+identical. The difference in cycles is the cost of the bounds check and nothing else.
 
-⚠ Оба файла порождаются одним шаблоном. Две копии цикла разошлись бы при первой
-же правке, и число стало бы сравнением двух разных программ — в этом
-репозитории так уже было.
+⚠ Both files are generated from one template. Two copies of the loop would diverge at
+the very first edit, and the number would become a comparison of two different programs; this
+has already happened in this repository.
 
-Программа кладётся в ПЗУ (ORG = 0x00FFE000), как все направленные тесты: машина
-исполняет её прямо со сброса. Цикл заведомо длиннее бюджета замера: обе программы гоняются РОВНО одинаковое
-число инструкций, а сделанные итерации читаются из счётчика R5. Так не нужно
-ловить момент окончания — иначе в числа попадает холостой хвост, и разница
-получается вдесятеро больше настоящей (проверено: так и вышло).
+The program is placed in ROM (ORG = 0x00FFE000), like all directed tests: the machine
+executes it straight from reset. The loop is deliberately longer than the measurement budget: both programs run EXACTLY the same
+number of instructions, and the completed iterations are read from the counter R5. That way there is no need
+to catch the moment of completion; otherwise an idle tail gets into the numbers, and the difference
+comes out ten times larger than the real one (verified: that is what happened).
 """
 import pathlib, sys
 
 ORG      = 0x00FFE000
-HANDLER  = ORG + 4          # обработчик стоит сразу за первой командой перехода
-LIM      = 64               # размер массива; степень двойки — индекс заворачивается маской
-ITER     = 1000000          # итераций цикла — заведомо больше бюджета замера
-DONE     = 0x100            # адрес слова-сигнала
+HANDLER  = ORG + 4          # the handler sits right after the first branch instruction
+LIM      = 64               # array size; a power of two, so the index wraps with a mask
+ITER     = 1000000          # loop iterations, deliberately more than the measurement budget
+DONE     = 0x100            # address of the signal word
 MAGIC    = 0xB0DE
 
-HEAD = """; ПОРОЖДЁННЫЙ ФАЙЛ — правится tools/gen_bounds_bench.py, не руками.
+HEAD = """; GENERATED FILE: edit tools/gen_bounds_bench.py, not by hand.
 ;
-; Индексация массива в цикле, {iter} итераций, предел {lim}.
-; Конфигурация {cfg}: {what}
+; Array indexing in a loop, {iter} iterations, limit {lim}.
+; Configuration {cfg}: {what}
         B    start
-handler:                       ; ловушка: сюда не должны попасть ни разу
+handler:                       ; trap: must never get here
         MOV  R7, 0x0BAD
         ST   R7, R0, {done_bad}
 spin:   B    spin
 start:
         MOV  R0, 0
-        MOV  R1, 0             ; индекс
-        MOV  R2, 0x1000        ; база массива
-{desc}        MOV  R4, 0             ; накопитель
-        MOV  R5, 0             ; счётчик итераций
+        MOV  R1, 0             ; index
+        MOV  R2, 0x1000        ; array base
+{desc}        MOV  R4, 0             ; accumulator
+        MOV  R5, 0             ; iteration counter
         MHI  R5, 0x{iterhi:04X}
         IOR  R5, R5, 0x{iterlo:04X}
-        MOV  R12, 0            ; MT — адрес обработчика ловушек
+        MOV  R12, 0            ; MT: trap handler address
         MHI  R12, 0x{hi:04X}
         IOR  R12, R12, 0x{lo:04X}
 loop:
 """
 
 CHECK = {
-    'B': "        SUB  R11, R1, {lim}    ; Cmp: индекс - предел, только ради флагов\n"
-         "        BCC  handler           ; беззнаковое i >= lim -> ловушка\n",
-    'E': "        CHKS R1, {lim}         ; то же самое одной командой\n",
+    'B': "        SUB  R11, R1, {lim}    ; Cmp: index - limit, only for the flags\n"
+         "        BCC  handler           ; unsigned i >= lim -> trap\n",
+    'E': "        CHKS R1, {lim}         ; the same in one instruction\n",
 }
 
-# Конфигурация D (выпуск 14): предел едет в указателе. R2 держит не адрес, а
-# дескриптор {длина[31:20], адрес[19:0]} — он строится один раз, вне цикла, как
-# у CHERI. IDX проверяет индекс и сразу даёт адрес элемента: LSL + ADD уходят
-# внутрь команды. Поэтому D сравнивается не только с B и E, но и с A — и
-# разность D − A называется своим именем: это слияние адресной арифметики,
-# а не цена проверки (проверка внутри IDX тактов не добавляет).
-D_BODY = """        IDX  R10, R2, R1, 2    ; проверка + адрес элемента одной командой
+# Configuration D (episode 14): the limit travels in the pointer. R2 holds not an address but
+# a descriptor {length[31:20], address[19:0]}, built once, outside the loop, as
+# in CHERI. IDX checks the index and immediately yields the element address: LSL + ADD move
+# into the instruction. So D is compared not only with B and E but also with A, and
+# the difference D − A is called by its own name: it is the fusion of address arithmetic,
+# not the cost of the check (the check inside IDX adds no cycles).
+D_BODY = """        IDX  R10, R2, R1, 2    ; check + element address in one instruction
         LD   R3, R10, 0
 """
 
-ADDR = """        LSL  R10, R1, 2        ; адрес элемента
+ADDR = """        LSL  R10, R1, 2        ; element address
         ADD  R10, R2, R10
         LD   R3, R10, 0
 """
 
-TAIL = """        ADD  R4, R4, R3        ; полезная работа
-        ADD  R1, R1, 1         ; следующий индекс, с заворотом
+TAIL = """        ADD  R4, R4, R3        ; useful work
+        ADD  R1, R1, 1         ; next index, with wraparound
         AND  R1, R1, {mask}
         SUB  R5, R5, 1
         BNE  loop
@@ -82,18 +82,18 @@ TAIL = """        ADD  R4, R4, R3        ; полезная работа
 done:   B    done
 """
 
-WHAT = {'A': 'проверки нет (выведенная строка находки 61 — здесь замерена)',
-        'B': 'проверка границ программная (SUB + BCC)',
-        'E': 'проверка границ аппаратная (CHKS)',
-        'D': 'дескриптор: проверка и адрес в одной IDX'}
+WHAT = {'A': 'no check (the derived line of finding 61, measured here)',
+        'B': 'software bounds check (SUB + BCC)',
+        'E': 'hardware bounds check (CHKS)',
+        'D': 'descriptor: check and address in a single IDX'}
 
 
 def emit(cfg):
     body = HEAD.format(iter=ITER, lim=LIM, cfg=cfg, what=WHAT[cfg],
                        done_bad=DONE + 4, hi=HANDLER >> 16, lo=HANDLER & 0xFFFF,
                        iterhi=ITER >> 16, iterlo=ITER & 0xFFFF,
-                       desc=f"        MHI  R11, 0x{LIM << 4:04X}      ; длина в старших 12 битах\n"
-                            f"        IOR  R2, R2, R11       ; R2 — дескриптор\n" if cfg == 'D' else '')
+                       desc=f"        MHI  R11, 0x{LIM << 4:04X}      ; length in the upper 12 bits\n"
+                            f"        IOR  R2, R2, R11       ; R2 is the descriptor\n" if cfg == 'D' else '')
     if cfg == 'D':
         body += D_BODY
     else:
@@ -107,13 +107,13 @@ def main():
     for cfg, name in (('B', 'bench_bounds_b'), ('E', 'bench_bounds_e'),
                       ('A', 'bench_bounds_a'), ('D', 'bench_bounds_d')):
         (out / f'{name}.s').write_text(emit(cfg), encoding='utf-8')
-        print(f'  {name}.s — конфигурация {cfg}')
-    # Параметры нужны и странице: держим их в одном месте, а не в двух.
+        print(f'  {name}.s — configuration {cfg}')
+    # The page needs the parameters too: keep them in one place, not two.
     (out / 'bench_bounds.json').write_text(
         '{"org": %d, "iterations": %d, "limit": %d, "done": %d, "magic": %d,'
         ' "counter": 5, "budget": 2000000}\n'
         % (ORG, ITER, LIM, DONE, MAGIC), encoding='utf-8')
-    print(f'  bench_bounds.json — {ITER} итераций, предел {LIM}')
+    print(f'  bench_bounds.json — {ITER} iterations, limit {LIM}')
 
 
 if __name__ == '__main__':

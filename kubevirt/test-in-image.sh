@@ -1,6 +1,6 @@
 #!/bin/sh
-# Запуск Оберона внутри образа virt-launcher — через тот же libvirt,
-# который будет работать в кластере.
+# Runs Oberon inside the virt-launcher image, through the same libvirt that
+# will run in the cluster.
 set -e
 mkdir -p /var/run/libvirt /var/lib/libvirt /var/log/libvirt
 virtlogd -d 2>/dev/null; sleep 2
@@ -29,12 +29,12 @@ XML
 virsh -c qemu:///system define /tmp/d.xml
 virsh -c qemu:///system start oberon
 sleep 18
-echo "--- состояние ---"
+echo "--- state ---"
 virsh -c qemu:///system list
-echo "--- снимок памяти экрана ---"
+echo "--- framebuffer memory snapshot ---"
 virsh -c qemu:///system qemu-monitor-command oberon \
   '{"execute":"pmemsave","arguments":{"val":950016,"size":98304,"filename":"/tmp/img_fb.bin"}}'
-# Снимок кладётся во временный каталог образа: туда libvirt писать вправе,
-# а наружу выносим отдельно.
+# The snapshot goes to the image's temp directory, where libvirt may write,
+# and is copied out separately.
 cp /tmp/img_fb.bin /out/img_fb.bin 2>/dev/null || cat /tmp/img_fb.bin > /out/img_fb.bin
-ls -la /out/img_fb.bin | awk '{print "  вынесено:", $5, "байт"}'
+ls -la /out/img_fb.bin | awk '{print "  copied out:", $5, "bytes"}'

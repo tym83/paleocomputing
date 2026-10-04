@@ -1,57 +1,61 @@
-# Находка 68. Цена проверки тремя числами и своя встроенная функция
+[Русская версия](FINDING-68-labs-a-and-compiler.ru.md)
 
-## Лаба 12: теперь все три конфигурации
+# Finding 68. The cost of a bounds check in three numbers, and a built-in function of your own
 
-До сих пор лаба 12 сравнивала две: B — стоковый компилятор, программная
-проверка (сравнение и переход на ловушку), и E — кодогенератор с командой CHK
-на ядре с CHK. Добавлена A — кодогенератор без проверки вовсе
-(`ORG.NoChk.Mod` = `patches/ORG-cfgA.Mod`, кроме комментария о штампе версии;
-`labs-test.mjs` сверяет файлы построчно). Человек собирает один и тот же цикл
-тремя компиляторами и получает свои три числа:
+## Lab 12: now all three configurations
 
-| конфигурация | время | в коде | слов |
+Until now, lab 12 compared two: B, the stock compiler with a software check
+(a comparison and a branch to a trap), and E, the code generator with the CHK
+instruction on a core with CHK. Added now is A, a code generator with no check
+at all (`ORG.NoChk.Mod` = `patches/ORG-cfgA.Mod` except for the comment with
+the version stamp; `labs-test.mjs` compares the files line by line). A person
+compiles the same loop with three compilers and gets their own three numbers:
+
+| configuration | time | in the code | words |
 |---|---:|---|---:|
-| B, программная | 276 мс | 1 ловушка, 0 CHK | 74 |
-| E, аппаратная | 265 мс | 0 ловушек, 1 CHK | 73 |
-| A, без проверки | 252 мс | ни того, ни другого | 72 |
+| B, software | 276 ms | 1 trap, 0 CHK | 74 |
+| E, hardware | 265 ms | 0 traps, 1 CHK | 73 |
+| A, no check | 252 ms | neither | 72 |
 
-Таймер модели считает такты (25 000 на мс), поэтому числа точные и
-повторяемые. Программная проверка стоит 2.00 такта на индексацию,
-аппаратная — 1.08; железо возвращает 46% цены. Размеры сходятся по
-командам: B = E + 1 ловушка, E = A + 1 CHK.
+The model's timer counts clock cycles (25,000 per ms), so the numbers are
+exact and repeatable. The software check costs 2.00 cycles per indexing
+operation, the hardware one 1.08; the hardware recovers 46% of the cost. The
+sizes add up by instruction: B = E + 1 trap, E = A + 1 CHK.
 
-Машинный признак, по которому проверка отличает конфигурации, — сам
-загруженный код: число CHK и шаблонов ловушки в памяти, а не в файле. Так не
-проходит случай, когда забыли `System.Free` и работает старый код.
+The machine-level evidence by which the check tells the configurations apart
+is the loaded code itself: the number of CHK instructions and trap patterns in
+memory, not in the file. This rules out the case where someone forgot
+`System.Free` and old code is still running.
 
-## Лаба 13: своя встроенная функция
+## Lab 13: a built-in function of your own
 
-Задание `compiler` из контейнера лабораторных переехало в браузер. В
-Паскале была `SQR`, в Обероне Вирт её убрал; человек возвращает её сам —
-три вставки (`ORB` знает имя, `ORP` разбирает вызов, `ORG` порождает
-команду), пересборка компилятора внутри системы, `System.Free`, модуль,
-который зовёт `SQR`.
+The `compiler` task from the labs container has moved to the browser. Pascal
+had `SQR`; Wirth removed it from Oberon; the person brings it back
+themselves: three insertions (`ORB` knows the name, `ORP` parses the call,
+`ORG` emits the instruction), a rebuild of the compiler inside the system,
+`System.Free`, and a module that calls `SQR`.
 
-Проверки читают машину:
+The checks read the machine:
 
-* все три вставки на диске на своих местах;
-* компилятор пересобран: ключ `ORB` прежний, ключ `ORG` новый, `ORP.rsc`
-  импортирует уже новый;
-* `Sq.r = 385`, а в загруженном коде модуля ровно одна команда
-  `MUL Ri, Ri, Ri` — та, что порождает `ORG.Sqr`;
-* компилятор, собранный новым компилятором, — неподвижная точка:
-  `ORB.rsc`, `ORG.rsc`, `ORP.rsc` побайтово те же. `SQR` не поменяла ничего,
-  кроме себя.
+* all three insertions are on disk, each in its place;
+* the compiler has been rebuilt: the `ORB` key is unchanged, the `ORG` key is
+  new, and `ORP.rsc` imports the new one;
+* `Sq.r = 385`, and the module's loaded code contains exactly one
+  `MUL Ri, Ri, Ri` instruction, the one that `ORG.Sqr` emits;
+* the compiler built by the new compiler is a fixed point: `ORB.rsc`,
+  `ORG.rsc`, `ORP.rsc` are byte-for-byte the same. `SQR` changed nothing but
+  itself.
 
-В плане курса лаба 13 отмечена сделанной в браузере; 14 (своя команда
-процессора) остаётся хостовой — Verilog в браузере не пересобрать; 15 —
-после Lilith.
+In the course plan, lab 13 is marked as done in the browser; 14 (an
+instruction of your own for the processor) remains a host lab, since Verilog
+cannot be rebuilt in the browser; 15 comes after Lilith.
 
-## Что нашлось по дороге
+## What turned up along the way
 
-Сценарий теста сначала не проходил на вставке в `ORG.Mod`: вместо
-`PROCEDURE Sqr*(VAR x: Item)` в файл ложилось `PROCEDURE Sqr*(VX: Item)`.
-Модель клавиатуры теряла нажатия в плотной серии символов с Shift, если
-набор шёл по 10 тысяч команд на символ, — пропадали буквы и Shift оставался
-нажатым. На 30 тысячах — чисто. Человека это не касается: руками так быстро
-не набрать; касается только автоматического набора в проверках.
+At first the test script failed on the insertion into `ORG.Mod`: instead of
+`PROCEDURE Sqr*(VAR x: Item)` the file got `PROCEDURE Sqr*(VX: Item)`. The
+keyboard model lost keystrokes in a dense series of Shifted characters when
+typing at 10 thousand instructions per character: letters went missing and
+Shift stayed pressed. At 30 thousand it was clean. This does not affect a
+person, since nobody can type that fast by hand; it only affects automated
+typing in the checks.

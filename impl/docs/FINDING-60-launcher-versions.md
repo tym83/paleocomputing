@@ -1,122 +1,124 @@
-# Находка 60. Launcher под одну версию KubeVirt — это launcher до первого обновления
+[Русская версия](FINDING-60-launcher-versions.ru.md)
 
-Образ `virt-launcher` с машиной RISC5 собирался под одну версию — KubeVirt
-1.8.4. Launcher обязан совпадать с версией KubeVirt в кластере в точности
-(находка 44): он разговаривает с virt-handler по версионированному протоколу.
-А Cozystack main уже перешёл на KubeVirt 1.9.0 (коммит 3e370e79a0 от
-2026-09-04, `chore(kubevirt): update KubeVirt to v1.9.0`). Первое же
-обновление платформы оставило бы машины OberonVM без подходящего образа.
+# Finding 60. A launcher built for one KubeVirt version is a launcher until the first upgrade
 
-Поменять одну строку FROM мало. Мы подменяем в штатном образе **только
-библиотеки libvirt**, значит, собирать надо ту же версию libvirt, что в нём
-лежит, — а она между выпусками KubeVirt меняется.
+The `virt-launcher` image with the RISC5 machine was built for a single version,
+KubeVirt 1.8.4. The launcher must match the KubeVirt version in the cluster exactly
+(Finding 44): it talks to virt-handler over a versioned protocol. And Cozystack main
+had already moved to KubeVirt 1.9.0 (commit 3e370e79a0 of 2026-09-04,
+`chore(kubevirt): update KubeVirt to v1.9.0`). The very first platform upgrade would
+have left OberonVM machines without a matching image.
 
-## Какие версии и что в них внутри
+Changing one FROM line is not enough. We replace **only the libvirt libraries** in
+the stock image, so we must build the same libvirt version that is in it, and that
+version changes between KubeVirt releases.
 
-| KubeVirt | где | основа | libvirt в штатном образе |
+## Which versions and what is inside them
+
+| KubeVirt | where | base | libvirt in the stock image |
 |---|---|---|---|
 | v1.8.2 | Cozystack 1.4.x | CentOS Stream 9 | 11.9.0 (`11.9.0-1.el9`) |
-| **v1.8.4** | Cozystack 1.5.x и 1.6.x (последний выпуск 1.6.3) | CentOS Stream 9 | **11.9.0** (`11.9.0-1.el9`) |
+| **v1.8.4** | Cozystack 1.5.x and 1.6.x (latest release 1.6.3) | CentOS Stream 9 | **11.9.0** (`11.9.0-1.el9`) |
 | **v1.9.0** | Cozystack main | CentOS Stream 9 | **11.10.0** (`11.10.0-12.el9`) |
 
-Последние выпуски KubeVirt на 2026-09-27: 1.8.4 в линии 1.8, 1.9.0 в линии
-1.9; 1.10 есть только как alpha.
+Latest KubeVirt releases as of 2026-09-27: 1.8.4 in the 1.8 line, 1.9.0 in the 1.9
+line; 1.10 exists only as an alpha.
 
-Откуда цифры:
+Where the numbers come from:
 
-* версия KubeVirt в Cozystack — строка `image: quay.io/kubevirt/virt-operator:…`
-  в `packages/system/kubevirt-operator/templates/kubevirt-operator.yaml` на
-  тегах выпусков и на main;
-* основа — `/etc/os-release` внутри `quay.io/kubevirt/virt-launcher:<версия>`;
-* libvirt — по имени библиотеки в том же образе: `libvirt.so.0.11009.0` —
-  это 11.9.0, `libvirt.so.0.11010.0` — 11.10.0. Базы RPM в образе нет,
-  `rpm -q` ничего не знает; полная версия пакета с номером сборки взята из
-  `rpm/BUILD.bazel` в дереве KubeVirt на том же теге — там перечислены пакеты,
-  из которых образ собран.
+* the KubeVirt version in Cozystack is the `image: quay.io/kubevirt/virt-operator:…`
+  line in `packages/system/kubevirt-operator/templates/kubevirt-operator.yaml` on the
+  release tags and on main;
+* the base is `/etc/os-release` inside `quay.io/kubevirt/virt-launcher:<version>`;
+* libvirt is read from the library name in the same image: `libvirt.so.0.11009.0` is
+  11.9.0, `libvirt.so.0.11010.0` is 11.10.0. The image has no RPM database, so
+  `rpm -q` knows nothing; the full package version with the build number was taken
+  from `rpm/BUILD.bazel` in the KubeVirt tree at the same tag, which lists the
+  packages the image is built from.
 
-Сборка под 1.8.2 стоила бы одной строки (libvirt тот же, что у 1.8.4), но
-Cozystack 1.4 — прошлая линия, и в список она не вошла.
+A build for 1.8.2 would cost one line (the libvirt is the same as for 1.8.4), but
+Cozystack 1.4 is a past line and was not included in the list.
 
-## Патч libvirt
+## The libvirt patch
 
-`qemu/libvirt/patch_libvirt.py` проверен на обеих версиях — прогоном на
-чистых деревьях `v11.9.0` и `v11.10.0`. Результат одинаковый: пять правок
-легли, шестая (ветка в `qemu_domain.c` из libvirt 10) штатно отсутствует.
-Сборка 11.10.0 с правками прошла целиком, а она идёт с `-Werror=switch-enum`,
-так что пропущенной ветки по новой архитектуре в 11.10 нет.
+`qemu/libvirt/patch_libvirt.py` was verified on both versions by running it on clean
+`v11.9.0` and `v11.10.0` trees. The result is the same: five edits applied, and the
+sixth (a branch in `qemu_domain.c` from libvirt 10) is absent as expected. The 11.10.0
+build with the edits completed in full, and it builds with `-Werror=switch-enum`, so
+there is no missing branch for the new architecture in 11.10.
 
-## Что изменено
+## What changed
 
-* `kubevirt/versions.txt` — единственное место, где записано, что к какой
-  версии KubeVirt относится: версия libvirt и дайджест многоархитектурного
-  индекса штатного `virt-launcher`. Первая строка — версия по умолчанию.
-* `kubevirt/build.sh` принимает `--kubevirt vX.Y.Z` (или `KUBEVIRT_VERSION`)
-  и передаёт в сборку всю строку. Без аргумента собирается 1.8.4, как
-  раньше. Версии нет в списке или у строки нет дайджеста — сборка
-  отказывается.
-* `kubevirt/Containerfile`: основа готового образа —
-  `virt-launcher:${KUBEVIRT_VERSION}@${LAUNCHER_DIGEST}`. Прибита дайджестом,
-  как и раньше, только дайджест теперь свой у каждой версии.
-* Выпуск (`publish.yml`) собирает образ под каждую строку списка:
-  `virt-launcher:<версия KubeVirt>-risc5-<выпуск>`. Сборка на PR
-  (`launcher.yml`) идёт по тому же списку, так что сломанная строка всплывает
-  до выпуска. Кэш у каждой версии свой и общий для обоих процессов:
-  `scope=launcher-<версия KubeVirt>`. Версию оба берут из списка, а не
-  вырезают из FROM.
-* `kubevirt/check_image.sh` — общая проверка содержимого для выпуска и PR —
-  получила ещё одно условие: в образе ровно одна `libvirt.so.0.*`. Если пара
-  в списке неверна, наша библиотека ложится **рядом** со штатной под другим
-  именем, а не вместо неё, — и сборка при этом проходит.
+* `kubevirt/versions.txt` is the single place that records what belongs to which
+  KubeVirt version: the libvirt version and the digest of the multi-architecture index
+  of the stock `virt-launcher`. The first line is the default version.
+* `kubevirt/build.sh` accepts `--kubevirt vX.Y.Z` (or `KUBEVIRT_VERSION`) and passes
+  the whole line to the build. Without an argument it builds 1.8.4, as before. If the
+  version is not in the list or its line has no digest, the build refuses.
+* `kubevirt/Containerfile`: the base of the final image is
+  `virt-launcher:${KUBEVIRT_VERSION}@${LAUNCHER_DIGEST}`. It is pinned by digest as
+  before, only now each version has its own digest.
+* The release (`publish.yml`) builds an image for every line in the list:
+  `virt-launcher:<KubeVirt version>-risc5-<release>`. The PR build (`launcher.yml`)
+  follows the same list, so a broken line surfaces before the release. Each version
+  has its own cache, shared between both workflows: `scope=launcher-<KubeVirt version>`.
+  Both take the version from the list rather than cutting it out of FROM.
+* `kubevirt/check_image.sh`, the shared content check for release and PRs, got one
+  more condition: the image contains exactly one `libvirt.so.0.*`. If a pair in the
+  list is wrong, our library lands **next to** the stock one under a different name
+  instead of replacing it, and the build still succeeds.
 
-## Проверено здесь
+## Verified here
 
-Локально, colima на arm64, 2 CPU, 2 ГБ памяти, `DOCKER_BUILDKIT=0`:
+Locally, colima on arm64, 2 CPUs, 2 GB of memory, `DOCKER_BUILDKIT=0`:
 
-* стадия `libvirt-build` для 11.10.0 — клон, патч, meson, 739 целей ninja,
-  установка — 4 мин 15 с (слой с зависимостями `dnf builddep` взят из кэша);
-* стадия `qemu-build` от версии KubeVirt не зависит и взята из кэша прежней
-  сборки с тем же `QEMU_REF`;
-* готовый образ `kubevirt/build.sh --kubevirt v1.9.0` — собрался на основе
+* the `libvirt-build` stage for 11.10.0 (clone, patch, meson, 739 ninja targets,
+  install) took 4 min 15 s (the layer with the `dnf builddep` dependencies came from
+  the cache);
+* the `qemu-build` stage does not depend on the KubeVirt version and came from the
+  cache of the previous build with the same `QEMU_REF`;
+* the final image `kubevirt/build.sh --kubevirt v1.9.0` was built on top of
   `virt-launcher:v1.9.0` (arm64);
-* в нём: `virtqemud (libvirt) 11.10.0`, ровно одна `libvirt.so.0.11010.0`,
-  у машины есть свойство `chk`, перехватчик на месте — то же, что проверяет
-  выпуск;
-* `kubevirt/test-in-image.sh` внутри образа: штатный virtqemud 11.10.0 с нашей
-  библиотекой определил и запустил домен `arch='risc5' machine='oberon'`,
-  снимок кадрового буфера — 98 304 байта, 18 607 чёрных точек, **ровно как у
-  эталона** из `kubevirt/README.md`;
-* версия по умолчанию (`kubevirt/build.sh` без аргумента) даёт прежний образ
-  на 1.8.4 с libvirt 11.9.0, и он проходит те же проверки с тем же снимком;
-* нарочно неверная пара (основа 1.9.0, libvirt 11.9.0) собирается без единой
-  ошибки, и в образе лежат обе библиотеки — `libvirt.so.0.11009.0` и
-  `libvirt.so.0.11010.0`. Новое условие `check_image.sh` ловит ровно это.
+* inside it: `virtqemud (libvirt) 11.10.0`, exactly one `libvirt.so.0.11010.0`, the
+  machine has the `chk` property, the hook is in place, which is the same set the
+  release checks;
+* `kubevirt/test-in-image.sh` inside the image: the stock virtqemud 11.10.0 with our
+  library defined and started the domain `arch='risc5' machine='oberon'`; the
+  framebuffer snapshot is 98 304 bytes with 18 607 black pixels, **exactly like the
+  reference** from `kubevirt/README.md`;
+* the default version (`kubevirt/build.sh` without an argument) produces the previous
+  image on 1.8.4 with libvirt 11.9.0, and it passes the same checks with the same
+  snapshot;
+* a deliberately wrong pair (base 1.9.0, libvirt 11.9.0) builds without a single error,
+  and the image contains both libraries, `libvirt.so.0.11009.0` and
+  `libvirt.so.0.11010.0`. The new `check_image.sh` condition catches exactly this.
 
-## Чего не проверено
+## What was not verified
 
-* Полный прогон в кластере на KubeVirt 1.9.0: разговор launcher с
-  virt-handler той же версии и запуск через перехватчик.
-* Образ под amd64 — собирали под arm64; в выпуске сборка идёт на amd64.
-* Собираем libvirt из исходников апстрима, а в штатном образе — сборка
-  CentOS с их собственными заплатами (`-12.el9`). Для 11.9.0 то же самое уже
-  работает в кластере; для 11.10.0 совпадение подтверждено только запуском
-  в образе, а не в кластере.
+* A full run in a cluster on KubeVirt 1.9.0: the launcher talking to virt-handler of
+  the same version and starting through the hook.
+* The amd64 image: we built for arm64; in the release the build runs on amd64.
+* We build libvirt from upstream sources, while the stock image has the CentOS build
+  with their own patches (`-12.el9`). For 11.9.0 the same setup already works in the
+  cluster; for 11.10.0 compatibility is confirmed only by running inside the image,
+  not in a cluster.
 
-## Как добавить версию
+## How to add a version
 
-Посмотреть libvirt в штатном образе новой версии:
+Look at libvirt in the stock image of the new version:
 
 ```
 docker run --rm --entrypoint sh quay.io/kubevirt/virt-launcher:v1.9.1 \
   -c 'grep VERSION_ID /etc/os-release; ls /usr/lib64/libvirt.so.0.*'
 ```
 
-взять дайджест индекса:
+get the index digest:
 
 ```
 docker buildx imagetools inspect quay.io/kubevirt/virt-launcher:v1.9.1
 ```
 
-дописать строку в `kubevirt/versions.txt`, прогнать `patch_libvirt.py` на
-дереве этой версии libvirt. Если основа образа ушла с CentOS Stream 9 (у
-KubeVirt уже есть вариант на CentOS Stream 10), одной строки мало: стадии
-сборки стоят на `centos:stream9`.
+add a line to `kubevirt/versions.txt`, and run `patch_libvirt.py` on the tree of that
+libvirt version. If the image base has moved off CentOS Stream 9 (KubeVirt already has
+a CentOS Stream 10 variant), one line is not enough: the build stages are based on
+`centos:stream9`.

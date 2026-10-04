@@ -1,39 +1,41 @@
+[Русская версия](README.ru.md)
+
 # workbench
 
-Метаприложение: пользователь ставит одну вещь и получает среду из нескольких
-частей — машину с лабораторными и методичку к ней.
+A meta-application: the user installs one thing and gets an environment of
+several parts: a machine with labs and a manual for it.
 
-## Как это устроено
+## How it works
 
-Части не дублируются. Родительский чарт рендерит `HelmRelease` на те же самые
-компоненты репозитория, по ссылке на артефакт:
+The parts are not duplicated. The parent chart renders `HelmRelease` objects for
+the same components of the repository, by artifact reference:
 
 ```
 paleocomputing-machines-default-oberon-lab
 paleocomputing-machines-default-handbook
 ```
 
-Имя артефакта складывается как `<источник>-<вариант>-<компонент>` с заменой
-точек на дефисы. Это единственный способ композиции, который встречается в
-самой платформе — так собран `harbor`.
+The artifact name is built as `<source>-<variant>-<component>` with dots
+replaced by hyphens. This is the only composition method found in the platform
+itself: this is how `harbor` is built.
 
-Штатный валидатор Cozystack такие ссылки не проверяет: он смотрит только
-`chartRef` в `ApplicationDefinition`. Поэтому в каталоге есть своя проверка
-(`tools/check.py`), которая сверяет ссылки метаприложения с компонентами,
-объявленными в источнике, и отдельно убеждается, что сдвиг приставки делает
-их висячими.
+The standard Cozystack validator does not check such references: it looks only
+at `chartRef` in `ApplicationDefinition`. So the catalog has its own check
+(`tools/check.py`) that compares the meta-application references with the
+components declared in the source, and separately makes sure that shifting the
+prefix leaves them dangling.
 
-## Почему не второй вариант источника
+## Why not a second source variant
 
-Вариант в `PackageSource` выглядит естественным местом для «набора, который
-ставится вместе». Но имя артефакта включает имя варианта, а
-`ApplicationDefinition` ссылается ровно на одно имя. Второй вариант увёл бы все
-ссылки каталога на несуществующие артефакты. У всех ста источников самой
-платформы вариант ровно один.
+A variant in `PackageSource` looks like a natural place for "a set installed
+together". But the artifact name includes the variant name, and
+`ApplicationDefinition` refers to exactly one name. A second variant would send
+all catalog references to non-existent artifacts. All hundred sources of the
+platform itself have exactly one variant.
 
-| параметр | по умолчанию | что делает |
+| parameter | default | what it does |
 |---|---|---|
-| `machine` | `true` | машина с лабораторными |
-| `manual` | `true` | методичка рядом |
-| `host` / `manualHost` | `""` | внешние имена частей |
-| `artifactPrefix` | `paleocomputing-machines-default` | начало имён артефактов |
+| `machine` | `true` | machine with the labs |
+| `manual` | `true` | manual next to it |
+| `host` / `manualHost` | `""` | external host names of the parts |
+| `artifactPrefix` | `paleocomputing-machines-default` | prefix of artifact names |

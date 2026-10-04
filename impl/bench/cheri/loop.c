@@ -1,11 +1,11 @@
-/* Цикл замера цены проверки границ — тот же, что на RISC5
+/* Loop that measures the cost of a bounds check, the same one as on RISC5
  * (tools/gen_bounds_bench.py): sum += a[i]; i = (i+1) & 63.
  *
- * sum_a — конфигурация A: только то, что даёт машина (на CHERI — аппаратная
- *         проверка границ капабилити при каждом чтении).
- * sum_b — конфигурация B: A плюс явная программная проверка
- *         «беззнаковое i >= lim -> ловушка». lim читается из памяти
- *         (volatile), чтобы компилятор не доказал её лишней и не выбросил.
+ * sum_a - configuration A: only what the machine provides (on CHERI, the hardware
+ *         capability bounds check on every load).
+ * sum_b - configuration B: A plus an explicit software check
+ *         "unsigned i >= lim -> trap". lim is read from memory
+ *         (volatile) so the compiler cannot prove the check redundant and drop it.
  */
 extern volatile unsigned lim;
 

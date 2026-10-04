@@ -1,17 +1,20 @@
-# Находка 49. Подмена образа launcher переводит ВЕСЬ кластер
+[Русская версия](FINDING-49-workload-update.ru.md)
 
-Мы подменили образ `virt-launcher` у KubeVirt, проверили, что обычная машина на
-нём запускается, и сочли риск закрытым. Через **шестнадцать секунд** после того,
-как virt-controller получил новый образ, KubeVirt начал переводить на него все
-машины кластера — сам, никого не спрашивая.
+# Finding 49. Replacing the launcher image moves the WHOLE cluster
 
-За пять часов: **137 миграций, 91 неудачная**, 26 успешных; остальные к
-моменту остановки не завершились (часть висела в очереди — находка 53).
+We replaced KubeVirt's `virt-launcher` image, checked that an ordinary machine
+starts on it, and considered the risk closed. **Sixteen seconds** after
+virt-controller received the new image, KubeVirt began moving every machine in
+the cluster onto it, on its own, without asking anyone.
 
-## Почему так
+Over five hours: **137 migrations, 91 failed**, 26 succeeded; the rest had not
+finished by the time it was stopped (some were stuck in the queue, see
+Finding 53).
 
-У KubeVirt есть `workloadUpdateStrategy`, и в этом кластере она была настроена
-так:
+## Why
+
+KubeVirt has `workloadUpdateStrategy`, and in this cluster it was configured
+like this:
 
 ```
 workloadUpdateMethods: ["LiveMigrate", "Evict"]
@@ -19,43 +22,44 @@ batchEvictionSize: 10
 batchEvictionInterval: 1m
 ```
 
-Смена образа launcher для него — обновление рабочей нагрузки. Он обязан
-перевести на новый образ уже работающие машины: сначала живой миграцией, а чего
-не вышло — **вытеснением**, то есть перезапуском.
+For KubeVirt, a change of the launcher image is a workload update. It is
+obliged to move already running machines onto the new image: first by live
+migration, and whatever fails to migrate, by **eviction**, that is, a restart.
 
-## Насколько обошлось
+## How bad it got
 
-Простоя не было: все машины оставались в работе. Двадцать шесть миграций прошли
-успешно — значит наш образ мигрировать умеет, дело не в сборке libvirt.
-Проваливались отдельные машины, и по отказам планировщика причина в размещении
-целевого пода, а не в образе.
+There was no downtime: all machines stayed in service. Twenty-six migrations
+succeeded, which means our image can migrate; the libvirt build is not the
+problem. Individual machines failed, and judging by the scheduler's rejections,
+the cause was placement of the target pod, not the image.
 
-Но тряска шла пятый час и сама бы не прекратилась. А `Evict` в стратегии
-означает, что рано или поздно часть машин была бы перезапущена.
+But the churn went on into its fifth hour and would not have stopped by itself.
+And `Evict` in the strategy means that sooner or later some machines would have
+been restarted.
 
-## Что сделано
+## What was done
 
-Автоматический перевод остановлен, образ оставлен:
+Automatic migration was stopped, and the image was kept:
 
 ```
 kubectl -n <namespace-kubevirt> patch kubevirt kubevirt --type=merge \
   -p '{"spec":{"workloadUpdateStrategy":{"workloadUpdateMethods":[]}}}'
 ```
 
-Работающие машины остаются на старом образе до своего следующего запуска, новые
-поднимаются на новом. Это и есть желаемое поведение: **подключать архитектуру
-для новых машин, не трогая работающие**.
+Running machines stay on the old image until their next start, and new ones
+come up on the new image. This is exactly the desired behavior: **enable the
+architecture for new machines without touching running ones**.
 
-## Правило
+## The rule
 
-Меняя образ launcher на живом кластере, **сперва посмотреть на
-`workloadUpdateStrategy`**. Если в ней есть методы — выключить их до правки, а
-не после.
+When changing the launcher image on a live cluster, **first look at
+`workloadUpdateStrategy`**. If it lists any methods, turn them off before the
+change, not after.
 
-## Чем это поучительно
+## Why this is instructive
 
-Я сам назвал живую миграцию главным непроверенным путём — и проверил, что
-машина на нашем образе **запускается**, сочтя этого достаточным.
+I myself had named live migration as the main untested path, and then checked
+only that a machine on our image **starts**, considering that sufficient.
 
-Седьмой случай находки 47 за сессию: проверено существование вместо работы.
-Причём здесь я даже знал, где смотреть.
+The seventh case of Finding 47 in this session: existence was checked instead
+of work. And this time I even knew where to look.

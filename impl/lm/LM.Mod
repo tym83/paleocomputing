@@ -1,16 +1,16 @@
-MODULE LM;  (*символьная языковая модель: MLP Бенжио, контекст 8 символов; выпуск №2*)
+MODULE LM;  (*character-level language model: Bengio MLP, 8-character context; episode 2*)
   IMPORT SYSTEM, Files, Texts, Oberon;
 
-  (* Размеры обязаны совпадать с lm/train.py. Веса — файл LM.Weights:
-     заголовок (магия, V, C, E, H, V кодов символов), затем emb, w1, b1, w2, b2
-     словами в представлении RISC5.
+  (* Sizes must match lm/train.py. Weights are the file LM.Weights:
+     a header (magic, V, C, E, H, V character codes), then emb, w1, b1, w2, b2
+     as words in RISC5 representation.
 
-     ⚠ Порядок операций здесь — контракт с эталоном lm/ref.py: он повторяет
-     каждое сложение и умножение в той же последовательности и в арифметике
-     RISC5. Переставить слагаемые — значит получить другой текст.
+     ⚠ The order of operations here is a contract with the reference lm/ref.py: it repeats
+     every addition and multiplication in the same sequence and in RISC5
+     arithmetic. Reordering the terms means getting a different text.
 
-     Окно замера: LED(1) перед шагом модели, LED(0) после. Стенд norebo_tb
-     считает такты только внутри окна: загрузка весов и вывод в него не входят. *)
+     Measurement window: LED(1) before a model step, LED(0) after. The norebo_tb bench
+     counts cycles only inside the window: loading weights and output are not included. *)
 
   CONST V = 36; C = 8; E = 16; H = 256; K = C*E;
     Magic = 314D4CH;
@@ -29,9 +29,9 @@ MODULE LM;  (*символьная языковая модель: MLP Бенжи
     x: ARRAY K OF REAL; h: ARRAY H OF REAL; z: ARRAY V OF REAL;
     ctx: ARRAY C OF INTEGER;
     seed: INTEGER;
-    (* константы задаются битами, а не десятичной записью: десятичную переводит
-       в двоичную сам компилятор своей арифметикой, и эталону пришлось бы
-       повторять ещё и её *)
+    (* constants are given as bits, not in decimal: decimal is converted to
+       binary by the compiler with its own arithmetic, and the reference would
+       have to repeat that too *)
     c1, p0, p1, p2, q0, q1, lo, half, invT, scale: REAL;
 
   PROCEDURE Load(name: ARRAY OF CHAR): BOOLEAN;
@@ -57,7 +57,7 @@ MODULE LM;  (*символьная языковая модель: MLP Бенжи
     RETURN ok
   END Load;
 
-  (* exp по схеме Math.exp Вирта (NW 12.10.2013); ниже lo — ноль *)
+  (* exp following Wirth's Math.exp scheme (NW 12.10.2013); below lo it is zero *)
   PROCEDURE Exp(x: REAL): REAL;
     VAR n: INTEGER; p, y, yy: REAL;
   BEGIN
@@ -84,7 +84,7 @@ MODULE LM;  (*символьная языковая модель: MLP Бенжи
   BEGIN FOR i := 0 TO C-2 DO ctx[i] := ctx[i+1] END ; ctx[C-1] := c
   END Push;
 
-  (* один символ: прямой проход и выборка *)
+  (* one character: forward pass and sampling *)
   PROCEDURE Step(): INTEGER;
     VAR i, j, k, base: INTEGER; s, mx, t, r: REAL;
   BEGIN
@@ -114,9 +114,9 @@ MODULE LM;  (*символьная языковая модель: MLP Бенжи
     RETURN i
   END Step;
 
-  (* LM.Generate n seed "затравка" — n символов после затравки. Текст идёт в
-     журнал и, для автоматической сверки с эталоном, в файл LM.Out: с экрана
-     текст не прочитать, а файл снимается с образа диска на хосте. *)
+  (* LM.Generate n seed "prompt" — n characters after the prompt. The text goes to
+     the log and, for automatic comparison with the reference, to the file LM.Out: the
+     text cannot be read off the screen, but the file is extracted from the disk image on the host. *)
   PROCEDURE Generate*;
     VAR S: Texts.Scanner; n, i, c: INTEGER; f: Files.File; r: Files.Rider;
   BEGIN Texts.OpenScanner(S, Oberon.Par.text, Oberon.Par.pos); Texts.Scan(S);

@@ -1,217 +1,219 @@
-# Выпуск №2: языковая модель внутри Оберона, и что на самом деле делает её медленной
+[Русская версия](13-episode-lm-on-risc5.ru.md)
 
-Решение о постановке — 2026-09-28. Продолжение флагмана (`09-episode-01-oberon.md`):
-там из дизайна намеренно вынесены «нейросеть и FMAC» (`design/DESIGN.md`, §1), здесь
-они возвращаются — но не как обещание ускорения, а как измерение.
+# Episode 2: a language model inside Oberon, and what actually makes it slow
 
-## Суть
+Decision on the setup: 2026-09-28. A continuation of the flagship (`09-episode-01-oberon.md`):
+there, "the neural network and FMAC" were deliberately taken out of the design (`design/DESIGN.md`, §1); here
+they come back, but not as a promise of speedup, as a measurement.
 
-Маленькая символьная языковая модель, обученная на хосте, работает **внутри системы
-Оберон**: модуль на Обероне-07, собранный компилятором самой системы, читает веса из
-файла и печатает текст. Исполняется на настоящем RTL `RISC5.v` такт за тактом.
+## The essence
 
-Потом — честный разбор, куда уходят такты, и проверка двух гипотез из `BACKLOG.md`
-(строка 3b2): «FMAC даёт 1.07×, конвейерный умножитель — 1.67×». Источник этих чисел —
-арифметика ревьюеров по латентностям RTL и один ручной замер цикла скалярного
-произведения (`design/REVIEW.md`, разделы ревьюеров 1–3); ни команды воспроизведения,
-ни нагрузки-модели за ними нет. Здесь они либо подтверждаются замером, либо нет.
+A small character-level language model, trained on the host, runs **inside the Oberon
+system**: a module in Oberon-07, built by the system's own compiler, reads the weights from a
+file and prints text. It runs on the real `RISC5.v` RTL cycle by cycle.
 
-## Утверждения и критерии
+Then comes an honest breakdown of where the cycles go, and a test of two hypotheses from `BACKLOG.md`
+(line 3b2): "FMAC gives 1.07×, a pipelined multiplier gives 1.67×". The source of these numbers is
+the reviewers' arithmetic over RTL latencies and one manual measurement of a dot-product loop
+(`design/REVIEW.md`, reviewer sections 1–3); there is neither a reproduction command
+nor a model workload behind them. Here they are either confirmed by measurement or not.
 
-| # | Утверждение | Критерий проверки |
+## Claims and criteria
+
+| # | Claim | Verification criterion |
 |---|---|---|
-| **Л1** | Модель работает внутри Оберона на RTL Вирта | модуль собран `ORP.Compile` самой системы; вывод на RTL побайтово равен эталону с хоста для фиксированного зерна и затравки; одна команда `make lm` |
-| **Л2** | Эталон с хоста точен до бита, а не «похож» | хостовая реализация считает в арифметике RISC5 (`risc-fp.c`, сверенной с RTL в находке 50) в том же порядке операций; расхождение с IEEE-float32 измерено и показано отдельно |
-| **Л3** | Известно, куда уходят такты | на RTL, в окне генерации: такты на символ, доля тактов в FML/FAD/FDV/MUL/LD-ST/прочем, число инструкций каждого класса; сумма долей = 100% |
-| **Л4** | Ускорение от быстрого умножителя измерено, а не посчитано | вариант `FPMultiplier` за define (по образцу `WITH_CHK`); результаты побитово равны исходному на ≥10⁷ случайных парах + граничных классах; вывод модели тот же; ускорение на модели и на стоковых нагрузках системы — замером |
-| **Л5** | Потолок FMAC посчитан из измеренного профиля | по числу FML→FAD пар в окне; честно помечено как оценка, а не замер |
-| **Л6** | Цена быстрого умножителя в железе известна | ECP5 (поток находки 69): Fmax, LUT, DSP для исходного и быстрого умножителя; держатся ли 25 МГц |
+| **L1** | The model runs inside Oberon on Wirth's RTL | the module is built by the system's own `ORP.Compile`; the output on the RTL is byte-for-byte equal to the host reference for a fixed seed and prompt; a single command `make lm` |
+| **L2** | The host reference is exact to the bit, not "similar" | the host implementation computes in RISC5 arithmetic (`risc-fp.c`, cross-checked against the RTL in finding 50) in the same order of operations; the divergence from IEEE float32 is measured and shown separately |
+| **L3** | It is known where the cycles go | on the RTL, within the generation window: cycles per character, the share of cycles in FML/FAD/FDV/MUL/LD-ST/other, the number of instructions of each class; the shares sum to 100% |
+| **L4** | The speedup from a fast multiplier is measured, not computed | an `FPMultiplier` variant behind a define (following the `WITH_CHK` pattern); results are bitwise equal to the original on ≥10⁷ random pairs + edge classes; the model output is the same; the speedup on the model and on the system's stock workloads is measured |
+| **L5** | The FMAC ceiling is computed from the measured profile | from the number of FML→FAD pairs in the window; honestly marked as an estimate, not a measurement |
+| **L6** | The hardware cost of the fast multiplier is known | ECP5 (the finding 69 flow): Fmax, LUT, DSP for the original and the fast multiplier; whether 25 MHz holds |
 
-## Модель
+## The model
 
-**Символьный MLP (Bengio 2003):** контекст 8 символов → вложения 16 → скрытый слой 256
-(ReLU) → логиты по словарю ~40 символов. Около 44 тыс. параметров.
+**A character-level MLP (Bengio 2003):** a context of 8 characters → embeddings of 16 → a hidden layer of 256
+(ReLU) → logits over a vocabulary of ~40 characters. About 44 thousand parameters.
 
-Почему не трансформер: у трансформера на этих размерах та же арифметика (умножения с
-накоплением), но нужны softmax внимания, нормализация (`sqrt`) и кэш — сотни строк на
-нестандартной плавающей точке без выигрыша для вопроса выпуска. Вопрос выпуска — не
-качество текста, а цена умножения. ReLU вместо tanh — чтобы трансцендентная функция
-была ровно одна: `exp` в softmax при выборке, ~40 вызовов на символ против ~44 тыс.
-умножений.
+Why not a transformer: at these sizes a transformer has the same arithmetic (multiply-
+accumulates), but needs attention softmax, normalization (`sqrt`) and a cache: hundreds of lines on
+non-standard floating point with no gain for the episode's question. The episode's question is not
+text quality but the cost of multiplication. ReLU instead of tanh so that there is exactly one transcendental
+function: `exp` in the softmax during sampling, ~40 calls per character versus ~44 thousand
+multiplications.
 
-Обучение — на хосте, Python + numpy, без GPU, фиксированное зерно. Текст — книга
-Project Gutenberg в общественном достоянии; источник, лицензия и SHA-256 записываются
-рядом со скриптом. Выборка — детерминированная: свой целочисленный ГПСЧ в модуле и в
-эталоне. Качество позиционируем честно: «похоже на английский», не «чат».
+Training is on the host, Python + numpy, no GPU, a fixed seed. The text is a public-domain
+Project Gutenberg book; the source, license and SHA-256 are recorded
+next to the script. Sampling is deterministic: our own integer PRNG in the module and in the
+reference. We position the quality honestly: "looks like English", not "a chat".
 
-## Бюджет памяти
+## Memory budget
 
-Сверено по исходникам, а не по памяти:
+Checked against the sources, not from memory:
 
-| | адрес / размер | источник |
+| | address / size | source |
 |---|---|---|
-| ОЗУ платы | 1 МБ | `RISC5Top.v` |
-| кадровый буфер | с `0E7F00H`, 96 КБ | `Display.Mod` |
+| board RAM | 1 MB | `RISC5Top.v` |
+| framebuffer | from `0E7F00H`, 96 KB | `Display.Mod` |
 | `MemLim` | `0E7EF0H` | `BootLoad.Mod:8` |
-| стек | `stackOrg = 80000H`, `stackSize = 8000H` (32 КБ) | `BootLoad.Mod:8`, `Kernel.Init` |
-| **куча** | `80000H … 0E7EF0H` = **425 712 Б** на всё (тексты, окна, наш буфер) | `Kernel.Init`: `heapLim := MemLim` |
-| модули (код + глобальные) | ниже `80000H − 8000H`, ~480 КБ на все загруженные модули | `Modules.Mod` |
+| stack | `stackOrg = 80000H`, `stackSize = 8000H` (32 KB) | `BootLoad.Mod:8`, `Kernel.Init` |
+| **heap** | `80000H … 0E7EF0H` = **425,712 B** for everything (texts, windows, our buffer) | `Kernel.Init`: `heapLim := MemLim` |
+| modules (code + globals) | below `80000H − 8000H`, ~480 KB for all loaded modules | `Modules.Mod` |
 
-Веса fp32: 44 тыс. × 4 Б ≈ **176 КБ** — в кучу помещаются с запасом больше чем вдвое,
-одним `NEW` на старте (внутри команды сборщик не работает, `REVIEW.md` §9).
-Norebo (где идёт основной замер на RTL) даёт 8 МБ — такты от размера памяти не
-зависят, но модель обязана влезать и в настоящую машину, иначе выпуск нечестный.
+fp32 weights: 44 thousand × 4 B ≈ **176 KB**; they fit in the heap with more than a twofold margin,
+with one `NEW` at startup (the collector does not run inside a command, `REVIEW.md` §9).
+Norebo (where the main measurement on the RTL takes place) gives 8 MB; cycles do not depend on memory
+size, but the model must also fit in the real machine, otherwise the episode is dishonest.
 
-## Формат весов: fp32, и это решение из арифметики
+## Weight format: fp32, and this is a decision from arithmetic
 
-Конфликт из ревью: «int8 влезает, но тогда плавающий FMAC — не та инструкция». На
-RISC5 его снимает сама машина. Латентности из RTL (`tb/cycle_model.h`, находка 17):
+The conflict from the review: "int8 fits, but then a floating FMAC is the wrong instruction". On
+RISC5 the machine itself resolves it. Latencies from the RTL (`tb/cycle_model.h`, finding 17):
 
-| путь одного умножения с накоплением | такты арифметики |
+| path of one multiply-accumulate | arithmetic cycles |
 |---|---|
 | fp32: `FML` 26 + `FAD` 4 | **30** |
-| int8 → float: `LDB` + `FLT` (это `FAD` с u) 4 + `FML` 26 + `FAD` 4 | 34 + загрузка |
-| фиксированная точка: `MUL` 34 + `ADD` 1 (+ сдвиг) | **35–36** |
+| int8 → float: `LDB` + `FLT` (which is `FAD` with u) 4 + `FML` 26 + `FAD` 4 | 34 + load |
+| fixed point: `MUL` 34 + `ADD` 1 (+ shift) | **35–36** |
 
-**Целое умножение на RISC5 дороже плавающего** (34 против 26 тактов). Квантование не
-ускоряет ничего и только добавляет распаковку; единственный его плюс — объём, а объём
-fp32 и так помещается. Решение: **fp32**, формат файла — сырые 32-битные слова в
-представлении RISC5 (оно совпадает с IEEE-битами для нормальных чисел; подпороговые
-при упаковке обнуляются явно и подсчитываются).
+**Integer multiplication on RISC5 is more expensive than floating-point** (34 versus 26 cycles). Quantization
+speeds up nothing and only adds unpacking; its only advantage is size, and fp32 already
+fits. Decision: **fp32**; the file format is raw 32-bit words in the
+RISC5 representation (it matches the IEEE bits for normal numbers; subnormals
+are explicitly zeroed during packing and counted).
 
-## Что меряем и как
+## What we measure and how
 
-* **Где:** `norebo_tb` — Norebo на RTL Verilator (находка 22). Эмулятор Norebo на C
-  годится для быстрой отладки, но числа выпуска — только с RTL.
-* **Окно:** модуль пишет в порт светодиодов (`-60`) метку начала и конца генерации;
-  стенд считает такты и инструкции только внутри окна. Загрузка модулей и чтение весов
-  в число не входят.
-* **Такты на символ:** такты окна ÷ число символов; плюс проверка линейности (N и 2N
-  символов).
-* **Профиль:** для каждой выполненной инструкции — класс (FML, FAD/FSB, FLT/FLOOR,
-  FDV, MUL, DIV, LD, ST, переход, прочее) и сколько тактов она стояла; FML подряд за
-  FML — отдельно (надбавка счётчика, 32 вместо 26).
-* **QEMU:** та же программа в `qemu-system-risc5` — только функциональная сверка
-  вывода. QEMU тактов не моделирует; числа оттуда не берём.
-* **Быстрый умножитель:** тот же прогон, тот же вывод, другое ядро. Плюс стоковые
-  нагрузки: загрузка системы (`make boot`) и компилятор, собирающий себя (`selfhost`).
-* **FMAC:** оценка по профилю — сколько тактов уходит на пары `FML→FAD` и сколько из
-  них слитная инструкция может убрать при каждой реализации умножителя.
+* **Where:** `norebo_tb`, Norebo on the Verilator RTL (finding 22). The Norebo C emulator
+  is fine for fast debugging, but the episode's numbers come only from the RTL.
+* **Window:** the module writes start and end-of-generation markers to the LED port (`-60`);
+  the bench counts cycles and instructions only inside the window. Loading modules and reading the weights
+  are not included in the number.
+* **Cycles per character:** window cycles ÷ number of characters; plus a linearity check (N and 2N
+  characters).
+* **Profile:** for each executed instruction, its class (FML, FAD/FSB, FLT/FLOOR,
+  FDV, MUL, DIV, LD, ST, branch, other) and how many cycles it stalled; FML directly after
+  FML is counted separately (the counter surcharge, 32 instead of 26).
+* **QEMU:** the same program in `qemu-system-risc5`, only as a functional check of the
+  output. QEMU does not model cycles; we take no numbers from it.
+* **Fast multiplier:** the same run, the same output, a different core. Plus the stock
+  workloads: system boot (`make boot`) and the compiler building itself (`selfhost`).
+* **FMAC:** an estimate from the profile: how many cycles go to `FML→FAD` pairs and how many of
+  them a fused instruction can remove with each multiplier implementation.
 
-## Не-цели
+## Non-goals
 
-* Изменение компилятора и новая инструкция в этом выпуске. FMAC только оценивается.
-* Качество текста, большие модели, токенизатор BPE, трансформер.
-* Работа на физической плате: частота — из временного анализа ПЛИС, не с железа.
-* IEEE-совместимость: считаем в арифметике Вирта и так и пишем.
+* Changing the compiler and a new instruction in this episode. FMAC is only estimated.
+* Text quality, large models, a BPE tokenizer, a transformer.
+* Running on a physical board: the frequency comes from FPGA timing analysis, not from hardware.
+* IEEE compatibility: we compute in Wirth's arithmetic and say so.
 
-## Риски
+## Risks
 
-| Риск | Вероятность | Что делаем |
+| Risk | Likelihood | What we do |
 |---|---|---|
-| Округление RISC5 ≠ IEEE → выбор символа расходится с numpy-эталоном | высокая | эталон считает в `risc-fp.c`; расхождение с IEEE мерим и публикуем, а не прячем |
-| `exp` на нестандартной плавающей точке | средняя | своя `exp` в модуле с тем же порядком операций в эталоне; тест на сетке значений |
-| Прогон на RTL слишком долог | средняя | ~2–3 млн тактов на символ по оценке → 50–100 символов за минуты; длинные прогоны только в фоне |
-| Быстрый умножитель не бит-в-бит равен исходному | средняя | дифференциальный тест модулей до всякого замера |
-| Однотактный умножитель 24×24 не держит 25 МГц на ECP5 | средняя | тогда — двух-трёхтактный вариант, и это тоже результат |
-| Ускорение окажется маленьким | — | это и есть результат; публикуем как есть |
+| RISC5 rounding ≠ IEEE → the character choice diverges from the numpy reference | high | the reference computes in `risc-fp.c`; the divergence from IEEE is measured and published, not hidden |
+| `exp` on non-standard floating point | medium | our own `exp` in the module with the same order of operations in the reference; a test over a grid of values |
+| The run on the RTL takes too long | medium | ~2–3 million cycles per character by estimate → 50–100 characters in minutes; long runs only in the background |
+| The fast multiplier is not bit-for-bit equal to the original | medium | a differential test of the modules before any measurement |
+| A single-cycle 24×24 multiplier does not hold 25 MHz on ECP5 | medium | then a two- or three-cycle variant, and that is a result too |
+| The speedup turns out small | — | that is the result; we publish it as is |
 
-## Результаты
+## Results
 
-Снято 2026-09-28. Каждое число — с командой; все команды из `impl/`.
-Подробности — находки 72–78 в `impl/docs/`.
+Taken on 2026-09-28. Every number comes with a command; all commands run from `impl/`.
+Details in findings 72–78 in `impl/docs/`.
 
-### Л1, Л2 — модель внутри Оберона, текст до байта (находка 72)
+### L1, L2: the model inside Oberon, text exact to the byte (finding 72)
 
-| что | результат | статус | команда |
+| what | result | status | command |
 |---|---|---|---|
-| модель | MLP, контекст 8, вложения 16, скрытый 256, словарь 36; 42 852 параметра, fp32, 171 572 Б | — | `python3 lm/train.py` |
-| качество | 1.24 / 1.57 нат/символ (обучение / отложенные 10%) | измерено | `lm/weights.json` |
-| эмулятор Norebo против эталона RISC5 | 3 зерна × 64 символа, побайтово | измерено | `make lm-check` (идёт в CI) |
-| RTL Вирта против эталона | 2 зерна × 16 символов, побайтово | измерено | `make lm` |
-| настоящая система на RTL (1 МБ, диск, окна), компиляция внутри системы | `LM.Out` = эталон | измерено | `make lm-system` |
-| QEMU, тот же сценарий | `LM.Out` = эталон; кадр побитово равен кадру RTL | измерено | `make lm-qemu` |
-| память | запись с весами 171 408 Б — 40% кучи (425 712 Б); код 892 слова | по исходникам и выводу компилятора | — |
+| model | MLP, context 8, embeddings 16, hidden 256, vocabulary 36; 42,852 parameters, fp32, 171,572 B | — | `python3 lm/train.py` |
+| quality | 1.24 / 1.57 nats/character (training / held-out 10%) | measured | `lm/weights.json` |
+| Norebo emulator versus the RISC5 reference | 3 seeds × 64 characters, byte for byte | measured | `make lm-check` (runs in CI) |
+| Wirth's RTL versus the reference | 2 seeds × 16 characters, byte for byte | measured | `make lm` |
+| the real system on the RTL (1 MB, disk, windows), compilation inside the system | `LM.Out` = reference | measured | `make lm-system` |
+| QEMU, the same scenario | `LM.Out` = reference; the frame is bitwise equal to the RTL frame | measured | `make lm-qemu` |
+| memory | the record with the weights is 171,408 B, 40% of the heap (425,712 B); code 892 words | from the sources and compiler output | — |
 
-Пример (зерно 1): `alice was one thought all the tell you spo`.
+Example (seed 1): `alice was one thought all the tell you spo`.
 
-IEEE против RISC5 (находка 78): 98.5% логитов отличаются побитово
-(медиана расхождения 3.8·10⁻⁶ при логитах ~3.5), но текст на 20 зёрнах
-× 128 символов не разошёлся ни разу — `python3 lm/ieee_study.py 128 $(seq 1 20)`.
+IEEE versus RISC5 (finding 78): 98.5% of logits differ bitwise
+(median divergence 3.8·10⁻⁶ with logits of ~3.5), but the text over 20 seeds
+× 128 characters never diverged once: `python3 lm/ieee_study.py 128 $(seq 1 20)`.
 
-### Л3 — куда уходят такты (находка 74)
+### L3: where the cycles go (finding 74)
 
-RTL, окно замера вокруг шага модели, 32 символа: `make lm-profile`.
+RTL, a measurement window around the model step, 32 characters: `make lm-profile`.
 
-| | значение | статус |
+| | value | status |
 |---|---:|---|
-| тактов на символ | **2 804 372** | измерено |
-| команд на символ | 1 150 926 | измерено |
-| символов в секунду при 25 МГц | 8.9 | пересчёт, без видео-DMA |
-| доля тактов `FML` | **39.15%** | измерено |
-| `LD` / `ST` | 27.34% / 6.14% | измерено |
-| `FAD` | 6.02% | измерено |
-| `FDV`, `FSB`, `FLT`, `FLOOR`, `MUL` вместе | 0.07% | измерено |
-| стойло (сверх одного такта на команду) | 59%, из них 64% — `FML` | измерено |
-| внутренний цикл: команд / тактов на одно умножение с накоплением | 27 / 66 | дизассемблер + счёт |
+| cycles per character | **2,804,372** | measured |
+| instructions per character | 1,150,926 | measured |
+| characters per second at 25 MHz | 8.9 | recomputed, without video DMA |
+| share of cycles in `FML` | **39.15%** | measured |
+| `LD` / `ST` | 27.34% / 6.14% | measured |
+| `FAD` | 6.02% | measured |
+| `FDV`, `FSB`, `FLT`, `FLOOR`, `MUL` combined | 0.07% | measured |
+| stall (beyond one cycle per instruction) | 59%, of which 64% is `FML` | measured |
+| inner loop: instructions / cycles per multiply-accumulate | 27 / 66 | disassembler + counting |
 
-### Л4 — быстрый умножитель (находки 73, 74, 75)
+### L4: the fast multiplier (findings 73, 74, 75)
 
-| | значение | статус | команда |
+| | value | status | command |
 |---|---:|---|---|
-| побитовое равенство с `FPMultiplier` | 0 расхождений на 10 228 649 операциях, оба варианта | измерено | `make fpmul-diff` |
-| ускорение модели, 1 такт | **1.604×** | измерено | `make lm-profile` |
-| ускорение модели, 2 такта | **1.566×** | измерено | `make lm-profile` |
-| предсказание Амдала для 1 такта | 1.604× (совпало) | расчёт | `make lm-profile` |
-| потолок при бесплатном умножении | 1.643× | расчёт из профиля | — |
-| компилятор собирает себя | 1.0000× (31 `FML` на 40.8 млн команд) | измерено | `make lm-stock` |
-| загрузка системы | 1.0000× (0 `FML` на 12 млн команд) | измерено | `make boot boot-fast` |
+| bitwise equality with `FPMultiplier` | 0 mismatches over 10,228,649 operations, both variants | measured | `make fpmul-diff` |
+| model speedup, 1 cycle | **1.604×** | measured | `make lm-profile` |
+| model speedup, 2 cycles | **1.566×** | measured | `make lm-profile` |
+| Amdahl prediction for 1 cycle | 1.604× (matched) | calculation | `make lm-profile` |
+| ceiling with free multiplication | 1.643× | calculated from the profile | — |
+| the compiler building itself | 1.0000× (31 `FML` in 40.8 million instructions) | measured | `make lm-stock` |
+| system boot | 1.0000× (0 `FML` in 12 million instructions) | measured | `make boot boot-fast` |
 
-Гипотеза BACKLOG «конвейерный умножитель — 1.67×» **не подтверждена в
-этой форме**: на этом коде 1.67× недостижимо даже с бесплатным умножением
-(потолок 1.643×), измерено 1.566–1.604×.
+The BACKLOG hypothesis "a pipelined multiplier gives 1.67×" is **not confirmed in
+this form**: on this code 1.67× is unreachable even with free multiplication
+(the ceiling is 1.643×); measured 1.566–1.604×.
 
-### Л5 — FMAC (находка 74)
+### L5: FMAC (finding 74)
 
-Оценка по измеренному числу пар `FML`→`FAD` (42 086 на символ): экономия
-от 1 такта на пару (последовательный прогон тех же блоков) до 4 (сложение
-бесплатно).
+An estimate from the measured number of `FML`→`FAD` pairs (42,086 per character): savings
+from 1 cycle per pair (sequential execution of the same blocks) to 4 (the addition is
+free).
 
-| умножитель | FMAC поверх него | статус |
+| multiplier | FMAC on top of it | status |
 |---|---|---|
-| исходный | 1.015× … 1.064× | оценка |
-| 2 такта | 1.024× … 1.104× | оценка |
-| 1 такт | 1.025× … 1.107× | оценка |
+| original | 1.015× … 1.064× | estimate |
+| 2 cycles | 1.024× … 1.104× | estimate |
+| 1 cycle | 1.025× … 1.107× | estimate |
 
-Гипотеза «FMAC — 1.07×» **подтверждается как верхняя граница**, не как
-ожидание. FMAC не убирает загрузку и сохранение суммы — это делает
-компилятор; после замены умножителя `LD`/`ST` — 54% тактов.
+The hypothesis "FMAC gives 1.07×" **is confirmed as an upper bound**, not as an
+expectation. FMAC does not remove loading and storing the sum; that is the
+compiler's job; after the multiplier is replaced, `LD`/`ST` are 54% of the cycles.
 
-### Л6 — цена в железе (находка 76)
+### L6: the hardware cost (finding 76)
 
-ECP5 LFE5U-85F, 5 зёрен на вариант, `cd fpga && make docker-fmul`.
+ECP5 LFE5U-85F, 5 seeds per variant, `cd fpga && make docker-fmul`.
 
-| ядро (обёртка core) | fmax медиана, МГц | DSP | FF | статус |
+| core (core wrapper) | median fmax, MHz | DSP | FF | status |
 |---|---:|---:|---:|---|
-| исходный | 47.40 | 0 | 614 | измерено |
-| 1 такт | 36.20 | 4 | 561 | измерено |
-| 2 такта | 47.30 | 4 | 588 | измерено |
+| original | 47.40 | 0 | 614 | measured |
+| 1 cycle | 36.20 | 4 | 561 | measured |
+| 2 cycles | 47.30 | 4 | 588 | measured |
 
-25 МГц держатся во всех 30 разводках (включая обёртку soc, где частоту
-держит путь к ПЗУ, а не умножитель).
+25 MHz holds in all 30 place-and-route runs (including the soc wrapper, where the frequency
+is limited by the path to the ROM, not by the multiplier).
 
-### Побочные находки
+### Side findings
 
-* QEMU не умел писать на диск: не было разрешения на запись у привода и
-  не рос raw-образ — исправлено, находка 77. Клавиатура через QMP до системы
-  не доходит — не разобрано.
-* Сравнение дробных в Обероне читает флаг `OV` от последнего целого
-  сложения: `1.0 < 2.0` даёт FALSE после переполнения — находка 78,
+* QEMU could not write to the disk: the drive had no write permission and
+  the raw image did not grow; fixed, finding 77. Keyboard input via QMP does not reach
+  the system; not investigated.
+* Floating-point comparison in Oberon reads the `OV` flag from the last integer
+  addition: `1.0 < 2.0` yields FALSE after an overflow; finding 78,
   `bash lm/ovprobe.sh`.
 
-### Что осталось
+### What remains
 
-* Такты в настоящей системе (с окнами и видео-DMA) не сняты — только в Norebo.
-* Ни FMAC, ни распределение регистров в кодогенераторе не реализованы:
-  оба — оценки или направления, а не замеры.
-* Страница в браузере с переключателем умножителя — не сделана.
+* Cycles in the real system (with windows and video DMA) have not been measured, only in Norebo.
+* Neither FMAC nor register allocation in the code generator has been implemented:
+  both are estimates or directions, not measurements.
+* A browser page with a multiplier switch has not been built.

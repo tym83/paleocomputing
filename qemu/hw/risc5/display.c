@@ -1,19 +1,19 @@
 /*
- * Экран машины Оберона: 1024x768, один бит на точку.
+ * The Oberon machine's screen: 1024x768, one bit per pixel.
  *
- * Кадровый буфер лежит прямо в оперативной памяти — отдельной видеопамяти у
- * машины нет. Адрес и раскладка сняты с VID.v:
+ * The frame buffer lives directly in main memory: the machine has no separate
+ * video memory. The address and layout are taken from VID.v:
  *
  *   localparam Org = 18'b1101_1111_1111_0000_00;
  *   assign vidadr = Org + {3'b0, ~vcnt, hword};
  *
- * Адрес там СЛОВНЫЙ, отсюда байтовое начало 0xE7F00. Ключевое — `~vcnt`:
- * строки хранятся СНИЗУ ВВЕРХ, нулевая строка экрана лежит по старшему
- * адресу. Забыть про это — значит получить перевёрнутую картинку.
+ * The address there is a WORD address, hence the byte start 0xE7F00. The key part is `~vcnt`:
+ * lines are stored BOTTOM UP, screen line zero lives at the highest
+ * address. Forget that and you get an upside-down picture.
  *
- * Внутри слова младший бит — самая левая точка (VID.v сдвигает pixbuf вправо).
- * Единица — чёрное: assign vid = pixbuf[0] ^ inv, и дальше RGB = {vid,vid,vid}
- * на белом фоне даёт чёрные буквы.
+ * Within a word the low bit is the leftmost pixel (VID.v shifts pixbuf right).
+ * One is black: assign vid = pixbuf[0] ^ inv, and then RGB = {vid,vid,vid}
+ * on a white background gives black letters.
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
@@ -29,18 +29,18 @@
 #define FB_WORDS_PER_LINE (FB_WIDTH / 32)
 
 /*
- * Подсказка про кнопки мыши.
+ * Hint about the mouse buttons.
  *
- * Оберону нужны три кнопки, а на ноутбуке средней нет. Машина умеет аккорды,
- * но узнать о них человеку неоткуда: он видит экран по VNC, где никакой
- * документации рядом нет. Поэтому подсказка рисуется НА САМОМ ЭКРАНЕ —
- * в единственном месте, куда он точно смотрит.
+ * Oberon needs three buttons, and a laptop has no middle one. The machine supports chords,
+ * but a person has no way to learn about them: they see the screen over VNC, with no
+ * documentation nearby. So the hint is drawn ON THE SCREEN ITSELF,
+ * the one place they are sure to look.
  *
- * Полоса живёт полминуты и гаснет раньше, если аккордом уже воспользовались:
- * значит поняли. Кадровый буфер она не трогает — рисуется поверх готовой
- * картинки, поэтому побайтовая сверка с железом остаётся честной.
+ * The bar stays for half a minute and goes away sooner if a chord has already been used:
+ * that means it was understood. It does not touch the frame buffer: it is drawn over the finished
+ * picture, so the byte-for-byte comparison with the hardware stays honest.
  *
- * Текст английский: его читает тот, кто пришёл со стороны.
+ * The text is in English: it is read by someone coming from outside.
  */
 #define HINT_MS      30000
 #define HINT_LINES   2
@@ -51,7 +51,7 @@ static const char *const HINT[HINT_LINES] = {
     "  Alt = middle (runs commands)   Ctrl = right   Shift = both (interclick)",
 };
 
-/* Одна буква шрифтом 8x16 поверх готовой картинки. */
+/* One 8x16 glyph over the finished picture. */
 static void draw_char(uint32_t *dst, int x, int y, unsigned char c,
                       uint32_t fg, uint32_t bg)
 {
@@ -76,7 +76,7 @@ static void draw_hint(OberonDisplay *d, uint32_t *dst)
     }
 
     y0 = FB_HEIGHT - HINT_H;
-    /* Подложка во всю ширину, чтобы буквы читались на любом фоне. */
+    /* Full-width backdrop so the letters are readable on any background. */
     for (i = 0; i < HINT_H * FB_WIDTH; i++) {
         dst[(size_t)y0 * FB_WIDTH + i] = 0xFF101010u;
     }
@@ -106,14 +106,14 @@ static void oberon_display_update(void *opaque)
     dst = (uint32_t *)surface_data(surface);
 
     for (y = 0; y < FB_HEIGHT; y++) {
-        /* Строки снизу вверх: экранной строке y отвечает строка буфера 767-y. */
+        /* Lines go bottom up: screen line y corresponds to buffer line 767-y. */
         const uint32_t *src = fb + (size_t)(FB_HEIGHT - 1 - y) * FB_WORDS_PER_LINE;
         uint32_t *out = dst + (size_t)y * FB_WIDTH;
 
         for (w = 0; w < FB_WORDS_PER_LINE; w++) {
             uint32_t v = src[w];
             for (bit = 0; bit < 32; bit++) {
-                /* Младший бит — левая точка; единица — чёрное. */
+                /* The low bit is the left pixel; one is black. */
                 out[w * 32 + bit] = (v >> bit) & 1 ? 0xFF000000u : 0xFFFFFFFFu;
             }
         }

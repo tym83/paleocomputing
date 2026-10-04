@@ -1,30 +1,31 @@
 #!/usr/bin/env python3
-"""Сверка аппаратной проверки границ: QEMU против настоящего RTL.
+"""Cross-check of hardware bounds checking: QEMU against the real RTL.
 
-Одна и та же программа (`tests/bench_bounds_e.bin`, та самая, что считает
-числа на странице) гоняется двумя способами:
+The same program (`tests/bench_bounds_e.bin`, the one that computes the
+numbers on the page) is run two ways:
 
-  * в QEMU с `-machine oberon,chk=on`;
-  * на модели, собранной Verilator'ом из RISC5.v с `-DWITH_CHK -DCHK_SPLIT`
-    и скомпилированной в WASM — то есть на том же железе, что и в браузере.
+  * in QEMU with `-machine oberon,chk=on`;
+  * on the model built by Verilator from RISC5.v with `-DWITH_CHK -DCHK_SPLIT`
+    and compiled to WASM, i.e. on the same hardware as in the browser.
 
-Сравнивается состояние ВСЕХ регистров после одинакового числа инструкций.
-Проверка нужна ровно затем, чтобы расширение системы команд не разъехалось
-между браузером и кластером: в кластере машину исполняет QEMU, в браузере —
-RTL, и «работает у меня» здесь ничего не значит.
+The state of ALL registers is compared after the same number of instructions.
+The check exists precisely so that the instruction set extension does not
+drift apart between the browser and the cluster: in the cluster the machine is
+run by QEMU, in the browser by the RTL, and "works on my machine" means nothing
+here.
 """
 import json, pathlib, re, subprocess, sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 IMPL = ROOT / "impl"
 QEMU = pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / ".qemu-work"
-RESET_PC = 0x00FFE000    # адрес сброса: с него начинается любая программа
-BUDGET = 8000            # инструкций: внутри цикла, и журнал остаётся мелким
-                         # (одна команда на блок — это ~230 байт журнала на команду)
+RESET_PC = 0x00FFE000    # reset address: every program starts here
+BUDGET = 8000            # instructions: inside the loop, and the log stays small
+                         # (one instruction per block is ~230 bytes of log per instruction)
 
 
 def in_rtl(binpath, budget):
-    """Регистры после `budget` инструкций на модели, снятой с RTL."""
+    """Registers after `budget` instructions on the model built from the RTL."""
     js = f"""
 import fs from 'node:fs';
 const b = fs.readFileSync('{binpath}');
@@ -46,23 +47,25 @@ console.log(JSON.stringify({{
 
 
 def in_qemu(binpath, budget, chk, extra=""):
-    """То же самое в QEMU: гоняем с журналом команд и берём состояние на той же команде."""
+    """The same in QEMU: run with the instruction log and take the state at the same instruction."""
     data = pathlib.Path(binpath).read_bytes()
     (QEMU / "prog.bin").write_bytes(data)
-    flag = (",chk=on" if chk else "") + extra   # extra: ",desc=on" для IDX
-    # ⚠ Журнал НЕ ложится на диск. `-d cpu` с one-insn-per-tb пишет ~230 байт
-    # на команду, а программа после полезной части крутится в пустом цикле —
-    # за минуту это десятки гигабайт. Один раз так и вышло: журнал забил диск
-    # виртуалки докера до отказа, containerd перестал писать даже собственную
-    # базу, и чинилось это только пересозданием машины.
+    flag = (",chk=on" if chk else "") + extra   # extra: ",desc=on" for IDX
+    # ⚠ The log does NOT go to disk. `-d cpu` with one-insn-per-tb writes ~230
+    # bytes per instruction, and after the useful part the program spins in an
+    # idle loop: within a minute that is tens of gigabytes. It happened once:
+    # the log filled the Docker VM's disk completely, containerd could no
+    # longer write even its own database, and the only fix was recreating the
+    # VM.
     #
-    # Поэтому журнал идёт в конвейер: `head` берёт свой кусок и закрывает
-    # трубу, QEMU получает SIGPIPE и умирает сам. На диск не попадает ничего.
+    # So the log goes into a pipe: `head` takes its share and closes the pipe,
+    # QEMU gets SIGPIPE and dies on its own. Nothing reaches the disk.
     #
-    # ⚠ И без one-insn-per-tb состояние печатается на КАЖДЫЙ БЛОК трансляции,
-    # а не на команду: счётчики перестают совпадать, и сравнение молча съезжает.
-    # ⚠ `timeout` всё равно нужен: QEMU не умирает от SIGPIPE молча и может
-    # остаться крутиться с закрытой трубой. Проверено — контейнер висел.
+    # ⚠ Without one-insn-per-tb the state is printed per translation BLOCK,
+    # not per instruction: the counters stop matching and the comparison
+    # silently drifts.
+    # ⚠ `timeout` is still needed: QEMU does not always die quietly on SIGPIPE
+    # and can keep spinning with a closed pipe. Verified: the container hung.
     cmd = (f"cd /src && timeout 60 ./build/qemu-system-risc5 -M oberon{flag} "
            f"-accel tcg,one-insn-per-tb=on "
            f"-bios prog.bin -nographic -monitor none -serial none "
@@ -70,16 +73,16 @@ def in_qemu(binpath, budget, chk, extra=""):
     out = subprocess.run(["docker", "run", "--rm", "-v", f"{QEMU}:/src",
                           "qemu-build:risc5", cmd], capture_output=True, text=True)
     text = out.stdout
-    # 400 байт на команду — с запасом: настоящий размер записи ~310,
-    # и на нехватке проверка честно падает, а не сравнивает не то.
+    # 400 bytes per instruction leaves headroom: a real record is ~310,
+    # and if that is not enough the check fails honestly instead of comparing the wrong thing.
     blocks = text.split("PC   ")[1:]
     if not blocks:
-        raise SystemExit("  ❌ журнал QEMU пуст")
+        raise SystemExit("  ❌ QEMU log is empty")
     return blocks
 
 
 def state_at(blocks, idx):
-    """Регистры и счётчик команд из записи журнала."""
+    """Registers and program counter from a log record."""
     blk = blocks[idx]
     regs = {int(m[0]): int(m[1], 16) for m in re.findall(r"R(\d+)\s+([0-9a-f]{8})", blk)}
     pc = int(re.match(r"([0-9a-f]{8})", blk).group(1), 16)
@@ -87,16 +90,16 @@ def state_at(blocks, idx):
 
 
 def aligned(blocks, budget, want_pc):
-    """Запись, соответствующая состоянию модели после `budget` команд.
+    """The record matching the model's state after `budget` instructions.
 
-    ⚠ Номер записи НЕ вычисляется по формуле. QEMU печатает состояние перед
-    исполнением блока, модель считает после исполненной команды, и у разных
-    сборок первая запись разная: зашитый сдвиг сходился локально и разъезжался
-    на прогоне в CI. Ошибка при этом выглядит как расхождение ровно одного
-    регистра — того, который пишет соседняя команда.
+    ⚠ The record number is NOT computed by a formula. QEMU prints the state
+    before executing a block, the model counts after an executed instruction,
+    and the first record differs between builds: a hard-coded offset matched
+    locally and drifted in the CI run. The error then looks like a mismatch in
+    exactly one register, the one written by the neighbouring instruction.
     
-    Поэтому запись ищется по счётчику команд в окрестности ±2 записей. Тело
-    цикла длиннее, так что совпадение в этом окне единственно.
+    So the record is found by program counter within ±2 records. The loop body
+    is longer than that, so the match in this window is unique.
     """
     hits = [k for k in range(max(0, budget - 2), min(len(blocks), budget + 3))
             if state_at(blocks, k)[1] == want_pc]
@@ -106,18 +109,18 @@ def aligned(blocks, budget, want_pc):
 
 
 def main():
-    # Берём ту же копию, что уезжает на страницу: в tests/ файл порождаемый и
-    # в свежем дереве его нет.
+    # Take the same copy that ships to the page: in tests/ the file is
+    # generated and absent from a fresh tree.
     binp = IMPL / "web/bench_bounds_e.bin"
     if not binp.exists():
-        raise SystemExit("  ❌ нет web/bench_bounds_e.bin — соберите: make -C impl web")
+        raise SystemExit("  ❌ no web/bench_bounds_e.bin; build it: make -C impl web")
 
     rtl = in_rtl(binp, BUDGET)
     blocks = in_qemu(binp, BUDGET, chk=True)
     idx, hits = aligned(blocks, BUDGET, rtl["pc"])
     if idx is None:
-        print(f"  ❌ в журнале QEMU нет записи с адресом {rtl['pc']:08X} "
-              f"рядом с {BUDGET}-й командой (подошло записей: {len(hits)})")
+        print(f"  ❌ the QEMU log has no record with address {rtl['pc']:08X} "
+              f"near instruction {BUDGET} (matching records: {len(hits)})")
         return 1
     qemu, qpc = state_at(blocks, idx)
 
@@ -127,23 +130,23 @@ def main():
             print(f"  ❌ R{i}: RTL {rtl['regs'][i]:08X}, QEMU {qemu[i]:08X}")
             bad += 1
     if bad:
-        print(f"\nрасхождений: {bad}")
+        print(f"\nmismatches: {bad}")
         return 1
     done = rtl["regs"][5]
-    print(f"  ✅ CHK: 16 регистров сошлись на {rtl['pc']:08X} после {BUDGET} команд "
-          f"(сделано итераций: {1000000 - done}, запись журнала {idx})")
+    print(f"  ✅ CHK: 16 registers match at {rtl['pc']:08X} after {BUDGET} instructions "
+          f"(iterations done: {1000000 - done}, log record {idx})")
 
-    # Отрицательный контроль. Проверка, которая не умеет краснеть, ничего не
-    # проверяет: гоняем ту же программу на машине БЕЗ расширения — там эта
-    # кодировка означает другое, и состояния обязаны разойтись.
+    # Negative control. A check that cannot turn red checks nothing: run the
+    # same program on a machine WITHOUT the extension; there this encoding
+    # means something else, and the states must diverge.
     plain_blocks = in_qemu(binp, BUDGET, chk=False)
     plain, _ = state_at(plain_blocks, idx)
     if plain == [rtl["regs"][i] for i in range(16)]:
-        print("  ❌ без расширения состояние то же — значит сверка ничего не проверяет")
+        print("  ❌ same state without the extension, so the check verifies nothing")
         return 1
     diff = [i for i in range(16) if plain[i] != rtl["regs"][i]]
-    print(f"  ✅ без расширения расходится {', '.join('R%d' % i for i in diff)} — "
-          f"сверка умеет краснеть")
+    print(f"  ✅ without the extension {', '.join('R%d' % i for i in diff)} diverge; "
+          f"the check can turn red")
     return 0
 
 

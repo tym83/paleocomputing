@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
-"""Сверка плавающей точки с эталоном.
+"""Cross-check of floating point against the reference.
 
-Блок Вирта — не IEEE 754: округление прибавлением единицы, обращение в ноль
-вместо подпороговых, бесконечность только от деления на ноль. Проверять его
-«здравым смыслом» нельзя, только сличением с тем, что делает схема.
+Wirth's unit is not IEEE 754: rounding by adding one, flush to zero instead of
+subnormals, infinity only from division by zero. It cannot be checked by
+"common sense", only by comparison with what the circuit does.
 
-Эталон — ext/refemu/risc-fp.c, уже сверенный с настоящим описанием схемы.
+The reference is ext/refemu/risc-fp.c, already checked against the real
+circuit description.
 
-  fp_diff.py <вывод машины> <эталонные значения>
+  fp_diff.py <machine output> <reference values>
 
-Набор покрывает нули обоих знаков, единицу, степени двойки, наибольшее
-конечное, наименьшее нормальное, подпороговое, бесконечность и мусор.
+The set covers zeros of both signs, one, powers of two, the largest finite,
+the smallest normal, a subnormal, infinity and garbage.
 """
 import struct, sys, pathlib
 
@@ -42,24 +43,24 @@ def main(out_path, exp_path):
         else:
             bad += 1
             if len(shown) < 5:
-                shown.append(f'  {label}: ждали {want}, вышло {have}')
+                shown.append(f'  {label}: expected {want}, got {have}')
 
     for i in VALS:
         for j in VALS:
             for op in ('ADD', 'SUB', 'MUL', 'DIV'):
                 check((f'{i:08X}', f'{j:08X}', op), f'{i:08X} {op} {j:08X}')
-    # ⚠ У переводов второй операнд — НОЛЬ, а не то же число. Первая проверка
-    # подавала одно и то же дважды и дала 24 ложных расхождения.
+    # ⚠ For conversions the second operand is ZERO, not the same number. The
+    # first check passed the same value twice and produced 24 false mismatches.
     for i in VALS:
         for op in ('FLT', 'FLR'):
             check((f'{i:08X}', '00000000', op), f'{i:08X} {op}')
 
-    print(f'сверено случаев: {ok + bad}')
+    print(f'cases checked: {ok + bad}')
     if bad:
-        print(f'❌ расхождений: {bad}')
+        print(f'❌ mismatches: {bad}')
         print('\n'.join(shown))
         return 1
-    print('✅ все совпали с эталоном')
+    print('✅ all match the reference')
     return 0
 
 

@@ -1,38 +1,38 @@
 ##
-## @section Что раздаётся
+## @section What is served
 ##
 
-## @param {string} title=Handbook - Заголовок на титульной странице.
+## @param {string} title=Handbook - Title on the front page.
 title: Handbook
 
-## @typedef {struct} Page - Одна страница методички.
-## @field {string} name - Имя файла без расширения, оно же адрес страницы.
-## @field {string} title - Заголовок в оглавлении.
-## @field {string} body - Текст страницы.
+## @typedef {struct} Page - One page of the manual.
+## @field {string} name - File name without extension, also the page address.
+## @field {string} title - Title in the table of contents.
+## @field {string} body - Page text.
 
-## @param {[]Page} pages - Страницы, которые кладутся в раздачу как есть.
-## Нужны, когда у записи каталога нет собственного образа с документацией:
-## тогда методичка разворачивается на стоковом nginx и ничего собирать не надо.
+## @param {[]Page} pages - Pages served as is.
+## Needed when the catalog entry has no image of its own with documentation:
+## then the manual is deployed on stock nginx and nothing needs to be built.
 pages: []
 
-## @param {string} [image] - Образ, внутри которого уже лежит собранная
-## документация в /usr/share/nginx/html. Если задан, страницы из `pages`
-## игнорируются: образ считается источником истины.
+## @param {string} [image] - Image that already contains built documentation
+## in /usr/share/nginx/html. If set, the pages from `pages` are ignored: the
+## image is the source of truth.
 image: ""
 
 ##
-## @section Как выставляется наружу
+## @section How it is exposed
 ##
 
-## @param {int} replicas=1 - Число реплик.
+## @param {int} replicas=1 - Number of replicas.
 replicas: 1
 
-## @param {string} [host] - Внешнее имя. Пусто — ingress не создаётся.
+## @param {string} [host] - External host name. Empty means no ingress is created.
 host: ""
 
-## @param {string} [ingressClassName] - Класс ingress. Пусто — умолчание кластера.
+## @param {string} [ingressClassName] - Ingress class. Empty means the cluster default.
 ingressClassName: ""
 
-## @param {string} baseImage=nginxinc/nginx-unprivileged:1.27-alpine - Образ
-## раздачи, когда собственного образа с документацией нет.
+## @param {string} baseImage=nginxinc/nginx-unprivileged:1.27-alpine - Serving
+## image when there is no image of its own with documentation.
 baseImage: nginxinc/nginx-unprivileged:1.27-alpine

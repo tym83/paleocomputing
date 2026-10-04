@@ -1,24 +1,26 @@
-# Исполняемая среда языка Оберон — для разовых задач и постоянной службы.
+# Oberon language runtime, for one-off jobs and long-running services.
 #
-# Это НЕ операционная система Оберон и не эмулятор машины: здесь компилятор
-# Вирта и его библиотека, запускаемые как обычная программа. Тот же компилятор,
-# что внутри системы, — но без окон, мыши и экрана. Ровно то, что нужно, когда
-# надо посчитать и отдать ответ.
+# This is NOT the Oberon operating system and not a machine emulator: it is
+# Wirth's compiler and its library, run as an ordinary program. The same
+# compiler as inside the system, but without windows, mouse or screen. Exactly
+# what is needed when you have to compute something and return the answer.
 #
-# Основа — Norebo (pdewacht): среда исполнения RISC5 на C, в которой крутится
-# настоящий объектный код компилятора Вирта.
+# It is based on Norebo (pdewacht): a RISC5 runtime in C that runs the real
+# object code of Wirth's compiler.
 FROM docker.io/library/gcc:14-bookworm AS build
 WORKDIR /src
 COPY ext/norebo/ ./norebo/
 RUN cc -O2 -o /norebo norebo/Runtime/norebo.c norebo/Runtime/risc-cpu.c
 
-# ПЗУ в двоичном виде: в исходниках оно шестнадцатеричным текстом, а QEMU
-# ждёт байты. Переводим при сборке, чтобы не держать в репозитории две копии.
+# The ROM in binary form: in the sources it is hexadecimal text, while QEMU
+# expects bytes. We convert it at build time so the repository does not hold
+# two copies.
 FROM docker.io/library/python:3.12-slim AS payload
 WORKDIR /p
-# ⚠ Берём ИСТОЧНИКИ, а не web/: там лежат продукты сборки, и в .gitignore.
-# Локально они есть, в сборке — нет, и COPY молча копирует пустоту. Ровно на
-# этом образ раздачи однажды вышел без машины.
+# ⚠ We take the SOURCES, not web/: that directory holds build products, and
+# they are in .gitignore. They exist locally but not in the build, and COPY
+# silently copies nothing. That is exactly how the serving image once shipped
+# without the machine.
 COPY rtl/prom_sd.mem ./
 COPY ext/disk/Oberon-2016-08-02.dsk ./oberon.dsk
 RUN python3 -c "import struct; \
@@ -28,13 +30,13 @@ RUN python3 -c "import struct; \
 FROM docker.io/library/debian:bookworm-slim
 RUN useradd -u 10001 -m oberon
 COPY --from=build /norebo /usr/local/bin/norebo
-# Библиотека и загрузочные объектные файлы: без них компилятору не на чем стоять.
+# The library and the boot object files: without them the compiler has nothing to stand on.
 COPY ext/norebo/Norebo/  /opt/oberon/Norebo/
 COPY ext/norebo/Oberon/  /opt/oberon/Oberon/
 COPY ext/norebo/build2/  /opt/oberon/build2/
-# Система Оберон и её ПЗУ: отсюда их забирает приложение машины RISC5,
-# наполняя том. Здесь же они нужны и сами по себе — образ несёт язык вместе
-# с системой, на которой он вырос.
+# The Oberon system and its ROM: the RISC5 machine application takes them
+# from here to fill its volume. They also matter on their own: the image
+# carries the language together with the system it grew up on.
 COPY --from=payload /p/prom.bin /p/oberon.dsk /opt/oberon/payload/
 COPY deploy/oberon-run.sh /usr/local/bin/oberon-run
 RUN chmod +x /usr/local/bin/oberon-run

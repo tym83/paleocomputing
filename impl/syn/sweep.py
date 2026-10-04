@@ -1,28 +1,28 @@
 #!/usr/bin/env python3
-"""Свип площади ядра RISC5 по целевому периоду.
+"""Area sweep of the RISC5 core over the target period.
 
-Защитимый маршрут (по рекомендации ревью методологии):
-  synth -flatten -> dfflibmap -liberty -> abc -liberty -D <период> -> stat -liberty
-Без dfflibmap триггеры выпадают из площади МОЛЧА (проверено: 76% потерь).
-ВАЖНО: без -constr (драйвер + нагрузка) параметр -D игнорируется ПОЛНОСТЬЮ — проверено,
-площадь совпадает до последнего знака при -D 200 и -D 50000. См. docs/FINDING-03.
-Результат — график площадь-vs-период, а не одна цифра.
+Defensible flow (as recommended by the methodology review):
+  synth -flatten -> dfflibmap -liberty -> abc -liberty -D <period> -> stat -liberty
+Without dfflibmap the flip-flops drop out of the area SILENTLY (verified: 76% loss).
+IMPORTANT: without -constr (driver + load) the -D parameter is ignored ENTIRELY. Verified:
+the area matches to the last digit at -D 200 and -D 50000. See docs/FINDING-03.
+The result is an area-vs-period curve, not a single number.
 
-Библиотека ячеек — Sky130 (SkyWater 130 нм), Apache-2.0.
+Cell library: Sky130 (SkyWater 130 nm), Apache-2.0.
 
-Почему не Nangate45, на которой мерилось раньше: её шапка прямо запрещает
-публикацию — «provided pursuant to a License Agreement containing restrictions
-on its use», «does not indicate actual or intended publication of this file».
-Из-за этого синтез не работал из чистого клона, и в репозиторий её класть
-нельзя.
+Why not Nangate45, which was used for measurements before: its header explicitly forbids
+publication: "provided pursuant to a License Agreement containing restrictions
+on its use", "does not indicate actual or intended publication of this file".
+Because of that, synthesis did not work from a clean clone, and the library may not
+be committed to the repository.
 
-Sky130 — настоящий техпроцесс, на нём физически делают чипы, и она свободна.
-Абсолютные числа из-за смены техпроцесса другие (130 нм против 45 нм), но наши
-утверждения — относительные дельты, и они переход переживают: цена команды
-проверки границ по площади +1.04% против +0.32…0.85% на Nangate45. Порядок и
-знак те же.
+Sky130 is a real process node, chips are physically made on it, and it is free.
+Absolute numbers differ because of the process change (130 nm versus 45 nm), but our
+claims are relative deltas, and they survive the switch: the area cost of the bounds
+check instruction is +1.04% versus +0.32…0.85% on Nangate45. Same order of magnitude
+and same sign.
 
-Файл тянется целью `make lib`, в репозиторий не кладётся: 12 МБ.
+The file is fetched by the `make lib` target and is not committed: 12 MB.
 """
 import re, subprocess, sys, csv, os, pathlib
 
@@ -67,22 +67,22 @@ stat -liberty {LIB}
 
 def main():
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    # --chk: мерить конфигурацию с аппаратной проверкой границ.
-    # Параметр defines у synth() был, но main() его никогда не передавал —
-    # то есть `make syn` физически не мог померить дельту (найдено аудитом).
+    # --chk: measure the configuration with the hardware bounds check.
+    # synth() had a defines parameter, but main() never passed it,
+    # so `make syn` physically could not measure the delta (found by audit).
     defs = "-DWITH_CHK -DCHK_SPLIT" if "--chk" in sys.argv else ""
     periods = [int(x) for x in (args or
                ["20000","10000","6000","4000","3000","2500","2000"])]
-    if defs: print("конфигурация: с аппаратной проверкой границ (CHK_SPLIT)\n")
+    if defs: print("configuration: with hardware bounds check (CHK_SPLIT)\n")
     n2 = nand2_area()
-    print(f"NAND2_X1 = {n2} мкм²  (делитель для kGE)\n")
-    hdr = f"{'период,пс':>10} {'площадь,мкм²':>14} {'kGE':>8} {'посл.,мкм²':>12} {'%посл':>6} {'ячеек':>7} {'DFF':>5}"
+    print(f"NAND2_X1 = {n2} um²  (divisor for kGE)\n")
+    hdr = f"{'period,ps':>10} {'area,um²':>14} {'kGE':>8} {'seq,um²':>12} {'%seq':>6} {'cells':>7} {'DFF':>5}"
     print(hdr); print("-" * len(hdr))
     rows = []
     for ps in periods:
         r = synth(ps, defines=defs)
         if r["area"] is None:
-            print(f"{ps:>10}   СИНТЕЗ НЕ ДАЛ ПЛОЩАДИ"); continue
+            print(f"{ps:>10}   SYNTHESIS REPORTED NO AREA"); continue
         kge = r["area"] / n2 / 1000
         print(f"{ps:>10} {r['area']:>14.2f} {kge:>8.2f} {r['seq']:>12.2f} "
               f"{r['seqpct']:>6.1f} {r['cells']:>7} {r['dff']:>5}")

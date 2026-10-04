@@ -1,43 +1,33 @@
-# Лестница проверки границ — macos-arm64-apple-m4
+[Русская версия](macos-arm64-apple-m4.ru.md)
 
-ПОРОЖДЁННЫЙ ФАЙЛ — `impl/bench/ladder/ladder.py`. Как читать — `impl/docs/FINDING-61-bounds-ladder.md`.
+# Bounds-check ladder - macos-arm64-apple-m4
 
-* дата: 2026-09-27
-* система: `Darwin 25.4.0`, архитектура `aarch64`
-* процессор: Apple M4
-* машина: MacBook на Apple M4, нативно
-* массив: 64 × u32, индекс `i = (i + 1) & 63`; итераций на прогон: 500 000 000
-* прогонов на конфигурацию: 5, по кругу; берётся лучший
+GENERATED FILE: `impl/bench/ladder/ladder.py`. How to read it: `impl/docs/FINDING-61-bounds-ladder.md`.
 
-| компилятор | версия | флаги |
+* date: 2026-09-27
+* system: `Darwin 25.4.0`, architecture `aarch64`
+* processor: Apple M4
+* machine: MacBook with Apple M4, native
+* array: 64 × u32, index `i = (i + 1) & 63`; iterations per run: 500 000 000
+* runs per configuration: 5, round-robin; the best is taken
+
+| compiler | version | flags |
 |---|---|---|
 | C (clang) | `Apple clang version 21.0.0 (clang-2100.1.1.101)` | `-O2 -fno-unroll-loops -fno-vectorize -fno-slp-vectorize` |
 
-> ⚠ Наносекунды включают частотное масштабирование и фон машины. Значат отношения к `none` внутри одной строки компилятора, а не абсолютные числа.
+> ⚠ Nanoseconds include frequency scaling and background load on the machine. What matters is the ratio to `none` within one compiler row, not the absolute numbers.
 
-| компилятор | конфигурация | команд в теле | Δ к none | проверка в цикле | нс/итер (лучшее) | медиана | разброс | к none |
+| compiler | configuration | instructions in body | Δ vs none | check in loop | ns/iter (best) | median | spread | vs none |
 |---|---|---:|---:|---|---:|---:|---:|---:|
 | C (clang) | `none` | 6 | +0 | — | 0.505 | 0.506 | 0.4% | 1.000 |
-| C (clang) | `auto` | 6 | +0 | **выброшена** | 0.505 | 0.506 | 0.6% | 1.000 |
-| C (clang) | `forced` | 8 | +2 | осталась | 0.507 | 0.508 | 0.9% | 1.004 |
+| C (clang) | `auto` | 6 | +0 | **dropped** | 0.505 | 0.506 | 0.6% | 1.000 |
+| C (clang) | `forced` | 8 | +2 | kept | 0.507 | 0.508 | 0.9% | 1.004 |
 
-*Команд в теле* — от метки обратного перехода до него самого включительно, по ассемблеру компилятора. *Разброс* — (худший − лучший) / лучший.
+*Instructions in body*: from the label of the backward branch to the branch itself inclusive, from the compiler assembly. *Spread*: (worst − best) / best.
 
-## Тела циклов
+## Loop bodies
 
-### C (clang) — `none` (6 команд)
-
-```asm
-LBB0_1:
-        ldr	w10, [x0, x9, lsl #2]
-        add	w8, w10, w8
-        add	w9, w9, #1
-        and	x9, x9, #0x3f
-        subs	x1, x1, #1
-        b.ne	LBB0_1
-```
-
-### C (clang) — `auto` (6 команд)
+### C (clang) - `none` (6 instructions)
 
 ```asm
 LBB0_1:
@@ -49,7 +39,19 @@ LBB0_1:
         b.ne	LBB0_1
 ```
 
-### C (clang) — `forced` (8 команд — выход к ловушке: `b.hs	LBB0_4`)
+### C (clang) - `auto` (6 instructions)
+
+```asm
+LBB0_1:
+        ldr	w10, [x0, x9, lsl #2]
+        add	w8, w10, w8
+        add	w9, w9, #1
+        and	x9, x9, #0x3f
+        subs	x1, x1, #1
+        b.ne	LBB0_1
+```
+
+### C (clang) - `forced` (8 instructions - exit to trap: `b.hs	LBB0_4`)
 
 ```asm
 LBB0_1:

@@ -1,35 +1,35 @@
 ##
-## @section Машина
+## @section Machine
 ##
-## Архитектура, эмулятор, файлы машины и её варианты железа — не здесь, а в
-## паспорте machine.yaml: их меняет выпуск каталога, а не тенант.
+## The architecture, emulator, machine files and hardware variants are not here
+## but in the machine.yaml passport: they are changed by a catalog release, not by the tenant.
 
-## @param {string} memory=128Mi - Сколько памяти отдать машине.
-## Самой машине Вирта хватает шестнадцати мегабайт: больше её адресная шина
-## не видит. Остальное уходит на обвязку KubeVirt. Пределы — в паспорте
-## машины: от 128Mi до 1Gi.
+## @param {string} memory=128Mi - How much memory to give the machine.
+## Wirth's machine itself needs sixteen megabytes: its address bus sees no more.
+## The rest goes to KubeVirt overhead. The limits are in the machine passport:
+## from 128Mi to 1Gi.
 memory: 128Mi
 
-## @param {boolean} running=true - Держать машину запущенной.
-## false — машина остановлена (стратегия запуска Halted), том с системой и
-## файлами пользователя остаётся.
+## @param {boolean} running=true - Keep the machine running.
+## false means the machine is stopped (run strategy Halted); the volume with the
+## system and the user's files stays.
 running: true
 
-## @param {string} hardware=base - Вариант железа: `base` или `chk`.
-## `chk` включает аппаратную проверку границ массива — ту самую команду, ради
-## которой всё и затевалось. Это НЕ режим эмулятора, а другая сборка
-## процессора: в RTL она включается -DWITH_CHK, а на странице проекта тем же
-## переключателем меняется модель под системой. Стоковая система работает на
-## обоих одинаково. Новый вариант вступает в силу с перезапуском машины.
+## @param {string} hardware=base - Hardware variant: `base` or `chk`.
+## `chk` enables hardware array bounds checking, the very instruction the whole
+## thing was started for. This is NOT an emulator mode but a different CPU
+## build: in RTL it is enabled by -DWITH_CHK, and on the project page the same
+## switch changes the model under the system. The stock system runs the same on
+## both. A new variant takes effect when the machine restarts.
 hardware: base
 
 ##
-## @section Хранилище
+## @section Storage
 ##
 
-## @param {string} storageClass=replicated - Класс тома под ПЗУ и образ.
+## @param {string} storageClass=replicated - Storage class of the volume for the ROM and the image.
 storageClass: replicated
 
-## @param {string} storage=1Gi - Размер тома.
-## Система Оберон занимает меньше мегабайта: запас здесь чисто символический.
+## @param {string} storage=1Gi - Volume size.
+## The Oberon system takes less than a megabyte: the headroom here is purely symbolic.
 storage: 1Gi

@@ -1,23 +1,23 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 
 /*
- * Деление вынесено в помощника: железо считает его последовательно и,
- * главное, кладёт остаток в H. Знаковое деление у Вирта округляет ВНИЗ,
- * а не к нулю, как в C, — это видно в нашей модели АЛУ и проверено сверкой.
+ * Division is moved into a helper: the hardware computes it sequentially and,
+ * more importantly, puts the remainder in H. Wirth's signed division rounds DOWN,
+ * not toward zero as in C; this shows in our ALU model and is confirmed by comparison.
  */
 DEF_HELPER_FLAGS_3(div, TCG_CALL_NO_RWG, i32, env, i32, i32)
 DEF_HELPER_FLAGS_3(udiv, TCG_CALL_NO_RWG, i32, env, i32, i32)
 
-/* Отказ вместо тихо неверного результата, пока плавающая точка не написана. */
+/* A refusal instead of a silently wrong result while floating point is not written. */
 DEF_HELPER_FLAGS_2(unimplemented, TCG_CALL_NO_WG, void, env, i32)
 
 /*
- * Плавающая точка. Помощниками, а не кодом на месте: логика Вирта ветвистая,
- * и повторять её в порождаемом коде значило бы раздувать каждый блок ради
- * операций, которые в системе встречаются нечасто.
+ * Floating point. As helpers rather than inline code: Wirth's logic is branchy,
+ * and repeating it in generated code would bloat every block for the sake of
+ * operations that are rare in the system.
  *
- * Признаки сложения передаются числом: 1 — перевод целого в дробное,
- * 2 — округление вниз. У остальных операций их нет.
+ * The addition flags are passed as a number: 1 is integer to float conversion,
+ * 2 is rounding down. The other operations have none.
  */
 DEF_HELPER_FLAGS_3(fp_add, TCG_CALL_NO_RWG_SE, i32, i32, i32, i32)
 DEF_HELPER_FLAGS_2(fp_mul, TCG_CALL_NO_RWG_SE, i32, i32, i32)

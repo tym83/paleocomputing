@@ -1,17 +1,17 @@
-# Декодер RISC5 для QEMU (decodetree).
+# RISC5 decoder for QEMU (decodetree).
 #
-# Поля сняты не с документации, а с самого железа — RISC5.v Никлауса Вирта:
+# The fields are taken not from documentation but from the hardware itself, Niklaus Wirth's RISC5.v:
 #   p=IR[31] q=IR[30] u=IR[29] v=IR[28]
 #   a=IR[27:24]  b=IR[23:20]  op=IR[19:16]  c=IR[3:0]
-# Те же значения использует наш дизассемблер, замкнутый в круг с ассемблером
-# сплошным перебором пространства команд.
+# Our disassembler uses the same values; it is closed in a loop with the assembler
+# by exhaustive enumeration of the instruction space.
 #
-# Четыре формата различаются парой старших битов:
-#   00uv  регистр-регистр        F0
-#   01uv  регистр-непосредственное F1
-#   10uv  загрузка/запись        F2   (u=0 читать, u=1 писать; v — байт)
-#   110v  переход по регистру    F3
-#   111v  переход по смещению    F3   (v — со ссылкой возврата)
+# The four formats are distinguished by the top bits:
+#   00uv  register-register       F0
+#   01uv  register-immediate      F1
+#   10uv  load/store              F2   (u=0 read, u=1 write; v byte)
+#   110v  branch via register     F3
+#   111v  branch via offset       F3   (v with return link)
 
 %a       24:4
 %b       20:4
@@ -31,51 +31,51 @@
 &breg    cond c v pay
 &bdisp   cond disp v
 
-# ── CHK: аппаратная проверка границ массива ────────────────────────────────
-# Кодировка снята с RISC5.v: p=0, q=0, u=0, v=1, op=1 — алиас LSL, которого
-# компилятор не эмитит. Предел собирается из двух кусков {IR[27:24], IR[15:8]}:
-# так он не перекрывает ни номер ловушки (7:4), ни поле позиции, которое читает
-# Kernel.Trap. Номер ловушки декодеру не нужен — его читает система из слова
-# команды, когда уже оказалась в обработчике.
+# ── CHK: hardware array bounds check ───────────────────────────────────────
+# The encoding is taken from RISC5.v: p=0, q=0, u=0, v=1, op=1, an alias of LSL that
+# the compiler never emits. The limit is assembled from two pieces {IR[27:24], IR[15:8]}:
+# that way it overlaps neither the trap number (7:4) nor the position field read by
+# Kernel.Trap. The decoder does not need the trap number: the system reads it from the
+# instruction word once it is already in the handler.
 #
-# ⚠ Шаблон обязан стоять ДО F0_rrr: decodetree берёт первое совпадение, а эта
-# кодировка — частный случай регистр-регистровой формы.
+# ⚠ The pattern must come BEFORE F0_rrr: decodetree takes the first match, and this
+# encoding is a special case of the register-register form.
 %chklim  24:4 8:8
 
 &chk     b c lim
 
-# ── IDX: индексация через дескриптор (выпуск 14) ──────────────────────────
-# Кодировка снята с RISC5.v (-DWITH_DESC): p=0, q=0, u=0, v=1, op=8 — алиас
-# ADD. a — приёмник, b — дескриптор {длина[31:20], адрес[19:0]}, c — индекс,
-# IR[9:8] — масштаб. IR[15:10] и IR[7:4] (номер ловушки) железо не читает.
+# ── IDX: indexing through a descriptor (episode 14) ────────────────────────
+# The encoding is taken from RISC5.v (-DWITH_DESC): p=0, q=0, u=0, v=1, op=8, an alias of
+# ADD. a is the destination, b the descriptor {length[31:20], address[19:0]}, c the index,
+# IR[9:8] the scale. The hardware does not read IR[15:10] and IR[7:4] (trap number).
 %idxsh   8:2
 
 &idx     a b c sh
 
-# ── F0: регистр-регистр, и внутри неё CHK ─────────────────────────────────
-# Биты 15:4 железо не читает; сохраняем как есть ради точного обратного хода.
+# ── F0: register-register, with CHK inside it ──────────────────────────────
+# The hardware does not read bits 15:4; we keep them as is for an exact round trip.
 #
-# ⚠ CHK — частный случай этой же формы, поэтому обе кодировки живут в одной
-# группе: декодер пробует их по порядку. Порознь генератор их не принимает и
-# правильно делает — перекрытие шаблонов молча меняло бы смысл старого кода.
+# ⚠ CHK is a special case of this same form, so both encodings live in one
+# group: the decoder tries them in order. Separately the generator rejects them, and
+# rightly so: overlapping patterns would silently change the meaning of old code.
 {
   CHK    00 01 .... .... 0001 ........ ---- ....   &chk b=%b c=%c lim=%chklim
   IDX    00 01 .... .... 1000 ------.. ---- ....   &idx a=%a b=%b c=%c sh=%idxsh
   F0_rrr 00 .. .... .... .... ------------ ....   &rrr a=%a b=%b c=%c op=%op u=%u v=%v
 }
 
-# ── F1: регистр-непосредственное ───────────────────────────────────────────
-# v заодно задаёт заполнение старшей половины непосредственного.
+# ── F1: register-immediate ──────────────────────────────────────────────────
+# v also sets how the upper half of the immediate is filled.
 F1_rri   01 .. .... .... .... ................    &rri a=%a b=%b imm=%imm op=%op u=%u v=%v
 
-# ── F2: загрузка и запись ──────────────────────────────────────────────────
+# ── F2: load and store ──────────────────────────────────────────────────────
 F2_mem   10 .. .... .... ....................     &mem a=%a b=%b off=%off u=%u v=%v
 
-# ── F3: переход по адресу из регистра ──────────────────────────────────────
-# Биты 23:4 — нагрузка ловушки: позиция в исходнике и номер. Компилятор кладёт
-# её сюда, а обработчик достаёт, чтобы сказать, ГДЕ сработала проверка.
+# ── F3: branch to an address from a register ────────────────────────────────
+# Bits 23:4 are the trap payload: the source position and the number. The compiler puts
+# it here, and the handler takes it out to tell WHERE the check fired.
 F3_reg   110 . .... .................... ....     &breg cond=%cond c=%c v=%v pay=%pay
 
-# ── F3: переход по смещению ────────────────────────────────────────────────
-# ORG.Mod излучает 24 бита, железо читает 22 — расхождение записано находкой 24.
+# ── F3: branch via offset ───────────────────────────────────────────────────
+# ORG.Mod emits 24 bits, the hardware reads 22; the discrepancy is recorded as finding 24.
 F3_disp  111 . .... ........................      &bdisp cond=%cond disp=%disp v=%v

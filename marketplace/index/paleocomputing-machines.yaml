@@ -1,11 +1,11 @@
-# Запись метаиндекса. Набор полей задан жёстко (cmd/cozypkg/cmd/index.go,
-# разбор идёт строгим UnmarshalStrict), поэтому «тип записи» выражается
-# тегами — единственным полем, куда можно положить что-то своё. Поиск
-# cozypkg search ищет по имени, описанию и тегам.
+# Meta-index entry. The set of fields is fixed (cmd/cozypkg/cmd/index.go,
+# parsed with strict UnmarshalStrict), so the "entry type" is expressed with
+# tags, the only field where you can put something of your own. cozypkg search
+# matches on name, description and tags.
 name: paleocomputing-machines
 ociRef: oci://ghcr.io/tym83/paleocomputing/machines
 version: v0.1.17
-description: Машины, которых нет в основном каталоге — эмуляторы, лабораторные и методички к ним
+description: Machines missing from the main catalog, such as emulators, lab assignments and their manuals
 homepage: https://github.com/tym83/paleocomputing
 maintainer: tym83
 tags:

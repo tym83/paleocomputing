@@ -1,49 +1,51 @@
-# Находка 29. Переносимый каркас оснастки (шаг 1 платформы)
+[Русская версия](FINDING-29-portable-harness.ru.md)
 
-## Зачем
+# Finding 29. A portable harness framework (platform step 1)
 
-В плане платформы первым шагом стоит «вынести оснастку RISC5 в переносимый
-каркас»: без этого вторая машина стоит столько же, сколько первая.
+## Why
 
-## Что вынесено
+In the platform plan the first step is "extract the RISC5 harness into a portable
+framework": without this a second machine costs as much as the first.
 
-`tb/scenario.h` — всё, что от архитектуры не зависит:
+## What was extracted
 
-* язык сценария (`M` мышь, `K` клавиша, `S` снимок экрана), его разбор и
-  проигрывание по номеру инструкции;
-* выгрузка кадра в PBM, включая порядок строк и полярность (в P1 единица —
-  ЧЁРНЫЙ; обратная выкладка даёт негатив, на чём мы один раз уже споткнулись);
-* интерфейс машины `harness::Host` — ровно три действия: поставить указатель,
-  послать код клавиши, отдать описание экрана.
+`tb/scenario.h`: everything that does not depend on the architecture:
 
-Что остаётся машине: адрес и размер кадрового буфера, порядок строк, формат
-регистров ввода. У RISC5 это двадцать строк в `tb/soc_tb.cpp`.
+* the scenario language (`M` mouse, `K` key, `S` screenshot), its parsing and
+  playback by instruction number;
+* dumping a frame to PBM, including row order and polarity (in P1 a one is
+  BLACK; the reverse layout gives a negative, which we already tripped over once);
+* the machine interface `harness::Host`: exactly three actions: set the pointer,
+  send a key code, hand over the screen description.
 
-## Проверка отделения
+What remains for the machine: the address and size of the framebuffer, the row order, the format of the
+input registers. For RISC5 that is twenty lines in `tb/soc_tb.cpp`.
 
-Вынесение не должно менять поведение ни на бит. После него:
+## Checking the separation
 
-* загрузка даёт прежнюю контрольную сумму экрана `B5DFC933`;
-* двухпоколенная самораскрутка даёт **те же 715 000 000 инструкций и
-  1 101 436 669 тактов**, и поколения по-прежнему совпадают побитово.
+The extraction must not change behaviour by a single bit. After it:
 
-Цифры совпали с точностью до инструкции — значит отделение чистое.
+* booting gives the same screen checksum `B5DFC933` as before;
+* the two-generation bootstrap gives **the same 715 000 000 instructions and
+  1 101 436 669 cycles**, and the generations still match bit for bit.
 
-## Что переиспользуется дальше
+The figures matched to the instruction, so the separation is clean.
 
-| актив | для второй машины |
+## What gets reused next
+
+| asset | for the second machine |
 |-------|-------------------|
-| `tb/scenario.h` | целиком |
-| `tools/mkscript.py`, `tools/keymap.py` | язык сценариев; раскладка своя |
-| `tools/pbm2png.py`, `tools/stitch_log.py` | целиком |
-| `web/machine.js` | отрисовка и цикл целиком; скан-коды и разметка кадра свои |
-| `web/lab.html`, `web/labs-test.mjs` | целиком |
-| `tools/alu_model.py`, `gen_alu_diff.py` | метод целиком, модель своя |
-| `tools/roundtrip.py`, `sweep_encoding.py` | метод целиком |
+| `tb/scenario.h` | in full |
+| `tools/mkscript.py`, `tools/keymap.py` | the scenario language; its own layout |
+| `tools/pbm2png.py`, `tools/stitch_log.py` | in full |
+| `web/machine.js` | rendering and the loop in full; its own scan codes and frame layout |
+| `web/lab.html`, `web/labs-test.mjs` | in full |
+| `tools/alu_model.py`, `gen_alu_diff.py` | the method in full, its own model |
+| `tools/roundtrip.py`, `sweep_encoding.py` | the method in full |
 
-## Чего каркас пока НЕ доказывает
+## What the framework does NOT prove yet
 
-Переносимость проверяется второй машиной, а её нет. Пока это отделение
-интерфейса, подтверждённое только тем, что первая машина после него работает
-в точности как раньше. Настоящая проверка — Lilith на том же каркасе, шаг 2
-плана.
+Portability is tested by a second machine, and there is none. For now this is a separation of
+the interface, confirmed only by the fact that the first machine works after it
+exactly as before. The real test is Lilith on the same framework, step 2
+of the plan.

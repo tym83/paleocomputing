@@ -1,5 +1,5 @@
-; ПОРОЖДЁННЫЙ ФАЙЛ — правится tools/gen_idx_tests.py, не руками.
-; t3_idx_max: длина 4095, адрес 0xFFFFF
+; GENERATED FILE: edit tools/gen_idx_tests.py, not by hand.
+; t3_idx_max: length 4095, address 0xFFFFF
         MOV  R0, 0
         MOV  R12, 0
         MHI  R12, 0x00FF
@@ -14,7 +14,7 @@
         MOV  R3, 7
         MOV  R1, 4095
         IDX  R3, R2, R1, 3
-        MOV  R4, 0x1111            ; не должна исполниться
+        MOV  R4, 0x1111            ; must not execute
         HALT
 handler:
         MOV  R5, 0x2222

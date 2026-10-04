@@ -1,33 +1,36 @@
+[Русская версия](README.ru.md)
+
 # langpack
 
-Окружение для языка программирования — то, в чём с ним можно работать.
+An environment for a programming language: what you can work with it in.
 
-## Про «серверлесс»
+## About "serverless"
 
-Подложки FaaS в Cozystack нет: ни Knative, ни аналога в дереве не стоит. Значит
-масштабирования до нуля по входящему запросу взять неоткуда, и обещать его
-нечестно.
+Cozystack has no FaaS substrate: neither Knative nor an equivalent is installed
+in the tree. So there is nothing to provide scale-to-zero on an incoming
+request, and promising it would be dishonest.
 
-Практическое свойство, ради которого серверлесс обычно и берут — «вхолостую
-ничего не крутится» — здесь даёт режим `job`: окружение поднимается на время
-прогона и исчезает. Режим `service` — обычная постоянно поднятая среда: REPL,
-тетрадь, IDE.
+The practical property that serverless is usually chosen for, "nothing spins
+idle", is provided here by the `job` mode: the environment comes up for the
+duration of a run and disappears. The `service` mode is an ordinary
+permanently running environment: a REPL, a notebook, an IDE.
 
-## Исходники
+## Sources
 
-Программа кладётся в `srcdir` (по умолчанию `/src`) только на чтение: это
-`ConfigMap`. Рабочий каталог `workdir` (`/work`) — пустой том на запись, туда
-язык складывает то, что произвёл. Копировать исходники к себе — дело самого
-образа; чарт не навязывает для этого ни оболочки, ни дополнительного контейнера.
+The program is placed into `srcdir` (`/src` by default) read-only: it is a
+`ConfigMap`. The working directory `workdir` (`/work`) is an empty writable
+volume where the language puts whatever it produces. Copying the sources
+elsewhere is the image's own business; the chart imposes neither a shell nor an
+extra container for that.
 
-Совпадение `srcdir` и `workdir` отвергается: том только для чтения закрыл бы
-рабочий каталог.
+`srcdir` equal to `workdir` is rejected: the read-only volume would cover the
+working directory.
 
-| параметр | по умолчанию | что делает |
+| parameter | default | what it does |
 |---|---|---|
-| `language` | — | название языка, обязательно |
-| `image` | — | образ с реализацией, обязательно |
-| `mode` | `job` | `job` — разовый прогон, `service` — постоянная среда |
-| `program` | `[]` | исходники: `path`, `content` |
-| `command` / `args` | `[]` | что запускать |
-| `host` | `""` | внешнее имя; в режиме `job` задавать нельзя |
+| `language` | — | language name, required |
+| `image` | — | image with the implementation, required |
+| `mode` | `job` | `job` is a one-off run, `service` a persistent environment |
+| `program` | `[]` | sources: `path`, `content` |
+| `command` / `args` | `[]` | what to run |
+| `host` | `""` | external host name; cannot be set in `job` mode |

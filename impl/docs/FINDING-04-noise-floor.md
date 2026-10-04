@@ -1,55 +1,57 @@
-# Находка 4: дельта площади от расширения ISA лежит НИЖЕ шума от синтаксиса
+[Русская версия](FINDING-04-noise-floor.ru.md)
 
-Это методологический результат, и он важнее самого числа.
+# Finding 4: the area delta of the ISA extension lies BELOW the noise caused by syntax
 
-## Эксперимент
+This is a methodological result, and it matters more than the number itself.
 
-Взят оригинальный `RISC5.v` Вирта. В него вносились **логически нейтральные**
-переписывания — выражения, тождественные исходным при подстановке константы:
+## Experiment
 
-| Изменение | Что сделано | Площадь, мкм² | Δ от базы |
+Wirth's original `RISC5.v` was taken. **Logically neutral**
+rewrites were applied to it: expressions identical to the originals once the constant is substituted:
+
+| Change | What was done | Area, µm² | Δ from baseline |
 |---|---|---|---|
-| — | оригинал | **14 532.112** | — |
-| `regwr` | добавлены скобки, перенос строки | 14 532.112 | **0** |
-| `pcmux0` | добавлена ветка `1'b0 ? … :` | 14 532.112 | **0** |
+| — | original | **14 532.112** | — |
+| `regwr` | parentheses added, line break | 14 532.112 | **0** |
+| `pcmux0` | branch `1'b0 ? … :` added | 14 532.112 | **0** |
 | `ira0` | `BR ?` → `(BR \| 1'b0) ?` | 14 480.508 | **−51.6** |
 | `regmux` | `(BR & v) ?` → `((BR & v) \| 1'b0) ?` | 14 480.774 | **−51.3** |
-| все четыре вместе | — | 14 620.424 | **+88.3** |
+| all four together | — | 14 620.424 | **+88.3** |
 
-Синтез детерминирован — два прогона одного файла дают совпадение до последнего знака.
+Synthesis is deterministic: two runs of the same file agree to the last digit.
 
-## Что из этого следует
+## What follows from this
 
-**Логически нейтральные переписывания двигают площадь на ±0.6%, причём немонотонно:**
-два изменения по отдельности уменьшают ядро на 51 мкм² каждое, а вместе увеличивают
-на 88. Это не ошибка — это обычное поведение связки yosys+abc, где структура исходника
-задаёт стартовую точку эвристик.
+**Logically neutral rewrites move the area by ±0.6%, and non-monotonically:**
+two changes applied separately shrink the core by 51 µm² each, and together grow it
+by 88. This is not a bug; it is the normal behaviour of the yosys+abc pair, where the structure of the source
+sets the starting point of the heuristics.
 
-**Для сравнения: собственная дельта аппаратной проверки границ — 30.06 мкм².**
+**For comparison: the hardware bounds check's own delta is 30.06 µm².**
 
-То есть **эффект, который мы измеряем, вдвое меньше шума от того, как записано
-выражение, к которому мы даже не притрагивались.**
+That is, **the effect we are measuring is half the size of the noise caused by how
+an expression we did not even touch is written.**
 
-## ⚠ ПОПРАВКА ПОСЛЕ АУДИТА: методика ниже опирается на предположение, которое сама же опровергает
+## ⚠ CORRECTION AFTER THE AUDIT: the method below rests on an assumption that it itself refutes
 
-Аудитор указал на противоречие, и он прав. Выше доказано, что шум **не аддитивен**:
-два изменения по отдельности дают −51 каждое, а вместе +88. Ниже предлагается вычитать
-«постоянное смещение» — а это ровно предположение об аддитивности.
+The auditor pointed out a contradiction, and he is right. Above it is proven that the noise is **not additive**:
+two changes give −51 each separately and +88 together. Below, the proposal is to subtract
+a "constant offset", and that is exactly an assumption of additivity.
 
-**Что остаётся верным:** сравнение двух сборок из одного файла через `ifdef` всё равно
-лучше сравнения двух файлов, потому что устраняет различие в тексте вне охраняемого блока.
-**Что неверно:** называть разность «чистой дельтой». Она остаётся оценкой с погрешностью
-порядка самого шумового пола.
+**What remains true:** comparing two builds from one file via `ifdef` is still
+better than comparing two files, because it removes the textual difference outside the guarded block.
+**What is wrong:** calling the difference a "clean delta". It remains an estimate with an error
+on the order of the noise floor itself.
 
-**Измеренное следствие (находка 16):** дельта принятой конфигурации составляет
-+46.55 мкм² при одном скрипте отображения и +123.16 при другом. Первая цифра **внутри**
-шумового пола ±51. То есть при одном из двух разумных маршрутов эффект **неизмерим**.
+**Measured consequence (finding 16):** the delta of the adopted configuration is
++46.55 µm² with one mapping script and +123.16 with another. The first figure is **inside**
+the ±51 noise floor. That is, with one of two reasonable flows the effect is **unmeasurable**.
 
-Ниже — исходная формулировка, оставлена для честности изложения.
+Below is the original wording, kept for honesty of presentation.
 
-## Правильная методика, которая остаётся защитимой
+## The correct method, which remains defensible
 
-Сравнивать **один и тот же файл** с разницей только в `ifdef`:
+Compare **the same file** differing only in `ifdef`:
 
 ```verilog
 `ifdef WITH_CHK
@@ -61,36 +63,36 @@ assign chkFail = 1'b0;
 `endif
 ```
 
-Обе конфигурации порождаются из **побайтово идентичного текста**, кроме охраняемого блока.
-Постоянное смещение (те самые 88 мкм², которые мой патч добавил к оригиналу) присутствует
-в обеих и вычитается.
+Both configurations are produced from **byte-identical text**, except the guarded block.
+The constant offset (those same 88 µm² that my patch added to the original) is present
+in both and is subtracted.
 
-| Конфигурация | Площадь, мкм² | kGE |
+| Configuration | Area, µm² | kGE |
 |---|---|---|
-| патч, CHK выключен | 14 620.424 | 18.32 |
-| патч, CHK включён (**отвергнутая** кодировка, 12 бит подряд) | 14 650.482 | 18.36 |
+| patch, CHK off | 14 620.424 | 18.32 |
+| patch, CHK on (the **rejected** encoding, 12 contiguous bits) | 14 650.482 | 18.36 |
 | Δ | +30.058 | 37.7 GE, +0.21% |
 
-⚠ **Эти числа относятся к ОТВЕРГНУТОЙ кодировке** (предел в `IR[15:4]`, ломающей
-диагностику). Принятая кодировка (предел из двух кусков) даёт **+46.55 мкм² = 58 GE**
-при том же скрипте и **+123.16 = 154 GE** при delay-driven. См. находку 16.
-Значение +0.21% из всех сводок **удалено**.
+⚠ **These numbers refer to the REJECTED encoding** (limit in `IR[15:4]`, which breaks
+diagnostics). The adopted encoding (limit in two pieces) gives **+46.55 µm² = 58 GE**
+with the same script and **+123.16 = 154 GE** with delay-driven mapping. See finding 16.
+The value +0.21% has been **removed** from all summaries.
 
-## Обязательная формулировка для статьи
+## Mandatory wording for the article
 
-> ⚠ **УСТАРЕЛО.** Формулировка относилась к отвергнутой кодировке. Актуальная —
-> в находке 16: **58…154 GE (+0.32%…+0.85%)** в зависимости от скрипта отображения.
-> Для калибровки: логически нейтральные переписывания того же исходника
-> двигают площадь на ±50 мкм² (±0.35%), то есть **измеряемый эффект того же порядка,
-> что шум инструмента**. Число получено сравнением двух сборок из побайтово идентичного
-> исходника, различающихся только условной компиляцией, и годится для относительного
-> сравнения внутри этого маршрута, а не как абсолютная цена кремния.
+> ⚠ **OBSOLETE.** The wording referred to the rejected encoding. The current one is
+> in finding 16: **58…154 GE (+0.32%…+0.85%)** depending on the mapping script.
+> For calibration: logically neutral rewrites of the same source
+> move the area by ±50 µm² (±0.35%), that is, **the measured effect is of the same order
+> as the tool's noise**. The number was obtained by comparing two builds from a byte-identical
+> source differing only in conditional compilation, and it is suitable for a relative
+> comparison within this flow, not as an absolute silicon cost.
 
-Без второго предложения первое **нельзя публиковать** — его справедливо разнесут.
+Without the second sentence the first one **must not be published**: it would rightly be torn apart.
 
-## Почему 37.7 GE, а не 130–200, как оценивало ревью
+## Why 37.7 GE and not 130–200, as the review estimated
 
-Ревью оценивало полноценный 32-разрядный беззнаковый компаратор. Наша CHK сравнивает
-с 12-битным пределом, поэтому синтез сводит задачу к «старшие 20 бит индекса не нули
-ИЛИ младшие 12 больше предела» — это заметно дешевле полного сравнения.
-Ограничение в 4095 элементов — осознанный размен, и его цена как раз и видна в этом числе.
+The review estimated a full 32-bit unsigned comparator. Our CHK compares
+against a 12-bit limit, so synthesis reduces the task to "the upper 20 bits of the index are not zero
+OR the lower 12 are greater than the limit", which is noticeably cheaper than a full comparison.
+The 4095-element limit is a deliberate trade-off, and its price is exactly what this number shows.

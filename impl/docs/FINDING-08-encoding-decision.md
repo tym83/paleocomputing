@@ -1,32 +1,34 @@
-# Находка 8: развилка по кодированию CHK закрыта данными
+[Русская версия](FINDING-08-encoding-decision.ru.md)
 
-> ## ⚠ НАХОДКА ОТМЕНЕНА
-> Решение, принятое здесь (вариант **D**, предел 8 бит), было **опровергнуто** в находке 9:
-> обоснование строилось на статическом распределении мест проверки, а оно плохо
-> предсказывает динамический выигрыш. Окончательное решение — вариант **E** (находка 10).
-> Ценность этого документа — в методе и в измеренных распределениях, не в выводе.
+# Finding 8: the CHK encoding fork closed by data
+
+> ## ⚠ FINDING WITHDRAWN
+> The decision taken here (option **D**, an 8-bit limit) was **refuted** in finding 9:
+> the justification was built on the static distribution of check sites, and that is a poor
+> predictor of the dynamic gain. The final decision is option **E** (finding 10).
+> The value of this document is in the method and the measured distributions, not in the conclusion.
 
 
-Свободного места в системе команд RISC5 ровно 12 бит (`IR[15:4]`, доказано перебором,
-см. находку 2). Предел массива и служебные поля ловушки конкурируют за это место.
-Развилка решалась не вкусом, а двумя независимыми замерами.
+The free space in the RISC5 instruction set is exactly 12 bits (`IR[15:4]`, proven by exhaustive search,
+see finding 2). The array limit and the trap's service fields compete for this space.
+The fork was decided not by taste but by two independent measurements.
 
-## Что конкурирует
+## What competes
 
-`Kernel.Trap` (Kernel.Mod:256) читает слово по `R15-4` и достаёт из него:
-- **биты 7:4** — номер ловушки (какая именно ошибка)
-- **биты 23:8** — позицию в исходнике (где именно)
+`Kernel.Trap` (Kernel.Mod:256) reads the word at `R15-4` and extracts from it:
+- **bits 7:4**: the trap number (which error exactly)
+- **bits 23:8**: the source position (where exactly)
 
-| Вариант | Предел | Что занимает | Диагностика |
+| Option | Limit | What it occupies | Diagnostics |
 |---|---|---|---|
-| **C** — 12 бит | ≤ 4095 | `IR[15:4]` — перекрывает и номер, и позицию | уничтожена |
-| **D** — 8 бит | ≤ 255 | `IR[15:8]` — номер ловушки цел | имя ошибки цело, позиция потеряна |
+| **C**: 12 bits | ≤ 4095 | `IR[15:4]`, overlaps both the number and the position | destroyed |
+| **D**: 8 bits | ≤ 255 | `IR[15:8]`, the trap number is intact | error name intact, position lost |
 
-## Замер 1: покрытие по скомпилированному коду
+## Measurement 1: coverage over compiled code
 
-12 модулей комплекта Norebo, **154 места проверки индекса**:
+12 modules of the Norebo set, **154 index check sites**:
 
-| Диапазон предела | Проверок | Доля | Накопленно |
+| Limit range | Checks | Share | Cumulative |
 |---|---|---|---|
 | 0…15 | 20 | 15.4% | 15.4% |
 | **16…63** | **55** | **42.3%** | 57.7% |
@@ -36,15 +38,15 @@
 | 1024…4095 | 4 | 3.1% | **86.9%** |
 | 4096…65535 | 17 | 13.1% | 100% |
 
-**Медиана предела — 32.** Минимум 6, максимум 8000.
+**Median limit: 32.** Minimum 6, maximum 8000.
 
-## Замер 2: объявления во всех исходниках
+## Measurement 2: declarations in all sources
 
-Независимый метод, другая выборка: **99 размерностей в 26 модулях**, включая всю оконную
-часть (`Graphics`, `GraphTool`, `Draw`, `System`, `Edit`, `Net`, `SCC`), которая в первый
-замер не попала.
+An independent method, a different sample: **99 dimensions in 26 modules**, including the entire windowing
+part (`Graphics`, `GraphTool`, `Draw`, `System`, `Edit`, `Net`, `SCC`), which the first
+measurement did not cover.
 
-| Диапазон | Доля | Накопленно |
+| Range | Share | Cumulative |
 |---|---|---|
 | 1…15 | 24.2% | 24.2% |
 | **16…63** | **53.5%** | 77.8% |
@@ -54,82 +56,82 @@
 | 1024…4095 | 6.1% | **99.0%** |
 | > 4095 | 1.0% | 100% |
 
-⚠ **ИСПРАВЛЕНО ПОСЛЕ АУДИТА: это НЕ взаимная проверка, а артефакт.**
+⚠ **CORRECTED AFTER THE AUDIT: this is NOT a cross-check, it is an artifact.**
 
-Медиана равна 32 в обоих методах потому, что **32 — модальное значение**: в методе 2
-это **40 из 99 значений (40.4%)**, в методе 1 — 36 из 139 (25.9%). При такой массе
-медиана попадает в 32 при любом процентиле от 38-го до 78-го.
+The median equals 32 in both methods because **32 is the modal value**: in method 2
+it is **40 of 99 values (40.4%)**, in method 1 it is 36 of 139 (25.9%). With that much mass,
+the median lands on 32 for any percentile from the 38th to the 78th.
 
-Что это за 32: **29 объявлений — буквально `ARRAY 32 OF CHAR`**, стандартный буфер имени
-Оберона (`IdLen`, `NameLen`). То есть «медианный массив в системе — 32 элемента»
-означает «в Обероне буфер имени равен 32 байтам», повторённое сорок раз.
+What this 32 is: **29 declarations are literally `ARRAY 32 OF CHAR`**, Oberon's standard name buffer
+(`IdLen`, `NameLen`). That is, "the median array in the system has 32 elements"
+means "in Oberon the name buffer is 32 bytes", repeated forty times.
 
-**Выборки не независимы:** 9 из 26 модулей метода 2 входят в набор метода 1, и на них
-приходится 44 из 99 размерностей.
+**The samples are not independent:** 9 of the 26 modules of method 2 are in the set of method 1, and they
+account for 44 of the 99 dimensions.
 
-**И медиана неустойчива:** на скомпилированном комплекте PO2013 (137 мест) тот же скрипт
-даёт **медиану 24**.
+**And the median is unstable:** on the compiled PO2013 set (137 sites) the same script
+gives **a median of 24**.
 
-Обоснование «8 бит покрывают обычный случай с четырёхкратным запасом» на этом основании
-строить было нельзя — что и подтвердилось в находках 9 и 10.
+The justification "8 bits cover the usual case with a fourfold margin" could not be built
+on this basis, which was confirmed in findings 9 and 10.
 
-| | 8 бит (≤255) | 12 бит (≤4095) | Разница |
+| | 8 bits (≤255) | 12 bits (≤4095) | Difference |
 |---|---|---|---|
-| по скомпилированному коду | **70.0%** | 86.9% | 16.9 п.п. |
-| по объявлениям | **84.8%** | 99.0% | 14.1 п.п. |
+| over compiled code | **70.0%** | 86.9% | 16.9 pp |
+| over declarations | **84.8%** | 99.0% | 14.1 pp |
 
-Расхождение между методами объяснимо: первый взвешивает по **местам проверки** (большой
-массив, индексируемый в десяти местах, считается десять раз), второй считает объявления
-по одному. Поэтому редкие крупные массивы (`ORG.code: ARRAY 8000`, `ORG.str: ARRAY 2400`)
-тянут покрытие вниз именно в первом.
+The discrepancy between the methods is explainable: the first weights by **check sites** (a large
+array indexed in ten places is counted ten times), the second counts declarations
+once each. That is why rare large arrays (`ORG.code: ARRAY 8000`, `ORG.str: ARRAY 2400`)
+pull coverage down precisely in the first.
 
-## Замер 3: что происходит с диагностикой — прогон на настоящей ошибке
+## Measurement 3: what happens to diagnostics, a run on a real error
 
-Модуль с умышленным выходом за границу массива на 100 элементов:
+A module with a deliberate out-of-bounds access 100 elements past the end of an array:
 
-| Конфигурация | Сообщение системы |
+| Configuration | System message |
 |---|---|
-| **B** — программная | `array index out of range at DiagTest pos 483` |
-| **C** — 12 бит | 🔴 `access via NIL pointer at DiagTest pos 262` |
-| **D** — 8 бит | ✅ `array index out of range at DiagTest pos 356` |
+| **B**: software | `array index out of range at DiagTest pos 483` |
+| **C**: 12 bits | 🔴 `access via NIL pointer at DiagTest pos 262` |
+| **D**: 8 bits | ✅ `array index out of range at DiagTest pos 356` |
 
-**Вариант C не говорит «неизвестная ловушка» — он уверенно сообщает НЕ ТУ ОШИБКУ.**
-Предел 100 = 0x64 попал в биты 7:4, дал номер ловушки 4, и система назвала выход за
-границу массива разыменованием NIL. Программист пошёл бы искать несуществующий баг
-с указателем.
+**Option C does not say "unknown trap": it confidently reports THE WRONG ERROR.**
+The limit 100 = 0x64 landed in bits 7:4, gave trap number 4, and the system called an array
+out-of-bounds access a NIL dereference. The programmer would go looking for a nonexistent
+pointer bug.
 
-Это хуже, чем предсказывало ревью (оно ожидало потерю позиции) и хуже, чем я записал
-в находке 7 («unknown trap»): **ошибка не теряется, она подменяется**.
+This is worse than the review predicted (it expected the position to be lost) and worse than I wrote
+in finding 7 ("unknown trap"): **the error is not lost, it is substituted**.
 
-Вариант D называет ошибку верно. Позиция (356 вместо 483) потеряна, потому что предел
-занимает младшие 8 бит поля позиции, а старшие забиты кодом операции.
+Option D names the error correctly. The position (356 instead of 483) is lost, because the limit
+occupies the lower 8 bits of the position field, and the upper ones are filled with the opcode.
 
-## Замер 4: цена по площади
+## Measurement 4: cost in area
 
-| Вариант | Площадь, мкм² |
+| Option | Area, µm² |
 |---|---|
-| без CHK | 14 620.424 |
-| C — 12 бит | 14 650.482 |
-| D — 8 бит | 14 653.940 |
+| without CHK | 14 620.424 |
+| C: 12 bits | 14 650.482 |
+| D: 8 bits | 14 653.940 |
 
-Разница между вариантами — **3.46 мкм²**, при шумовом поле синтеза **±51 мкм²**
-(находка 4). То есть **варианты по площади неразличимы**: выбор кодирования
-не оплачивается площадью вообще.
+The difference between the options is **3.46 µm²**, with a synthesis noise floor of **±51 µm²**
+(finding 4). That is, **the options are indistinguishable in area**: the choice of encoding
+costs no area at all.
 
-## Решение
+## Decision
 
-**Принят вариант D: предел 8 бит, диагностика сохранена.**
+**Option D adopted: an 8-bit limit, diagnostics preserved.**
 
-Обоснование:
-1. Покрытие 70–85% против 87–99% — разница **14–17 процентных пунктов**
-2. Цена этой разницы — система перестаёт правильно называть ошибку, причём **подменяет
-   её другой**, а не признаётся в незнании
-3. По площади варианты неразличимы, то есть выбор бесплатен
-4. Медианный массив в системе — **32 элемента**, то есть 8 бит покрывают
-   «обычный» случай с четырёхкратным запасом
+Justification:
+1. Coverage of 70–85% versus 87–99%: a difference of **14–17 percentage points**
+2. The price of that difference is that the system stops naming the error correctly, and moreover **substitutes
+   a different one** instead of admitting it does not know
+3. In area the options are indistinguishable, so the choice is free
+4. The median array in the system has **32 elements**, so 8 bits cover
+   the "usual" case with a fourfold margin
 
-Для системы, чья ценность в том, что ошибки **находятся и называются**, обмен
-17 пунктов покрытия на ложные сообщения об ошибках невыгоден.
+For a system whose value lies in errors being **found and named**, trading
+17 points of coverage for false error messages is a bad deal.
 
-Массивы длиннее 255 элементов остаются на прежней программной последовательности
-из двух инструкций. Это честная деградация: дороже, но правильно.
+Arrays longer than 255 elements stay on the old two-instruction software
+sequence. This is honest degradation: more expensive, but correct.

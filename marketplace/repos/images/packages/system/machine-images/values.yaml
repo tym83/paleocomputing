@@ -1,42 +1,42 @@
 ##
-## @section Куда и под каким именем кладутся образы
+## @section Where images go and under what name
 ##
 
-## @param {string} namePrefix=fs- - Обязательное начало имени каждого образа.
-## Образы лежат в одном общем пространстве имён с образами платформы, и имя
-## PVC там плоское: `vm-default-images-<имя>`. Без своей приставки запись
-## каталога рано или поздно перезапишет чужой образ. Чарт это проверяет и
-## падает, если приставка пустая или имя совпало с платформенным.
+## @param {string} namePrefix=fs- - Mandatory prefix of every image name.
+## Images live in one namespace shared with the platform images, and PVC names
+## there are flat: `vm-default-images-<name>`. Without its own prefix a catalog
+## entry will sooner or later overwrite someone else's image. The chart checks
+## this and fails if the prefix is empty or a name matches a platform one.
 namePrefix: "fs-"
 
-## @param {string} [storageClass] - Класс хранения для всех образов.
-## Пусто — класс по умолчанию в кластере.
+## @param {string} [storageClass] - Storage class for all images.
+## Empty means the cluster default class.
 storageClass: "replicated"
 
 ##
-## @section Сами образы
+## @section The images themselves
 ##
 
-## @typedef {struct} ImageOS - Что за система внутри.
-## @field {string} [family] - Семейство, например Linux.
-## @field {string} [name] - Название.
-## @field {string} [version] - Версия.
+## @typedef {struct} ImageOS - Which system is inside.
+## @field {string} [family] - Family, for example Linux.
+## @field {string} [name] - Name.
+## @field {string} [version] - Version.
 
-## @typedef {struct} Emulates - Что машина изображает, если она эмулятор.
-## @field {string} machine - Название машины, например «Burroughs B5500».
-## @field {string} [note] - Пояснение: откуда взят эмулятор, что умеет.
+## @typedef {struct} Emulates - What the machine imitates, if it is an emulator.
+## @field {string} machine - Machine name, for example "Burroughs B5500".
+## @field {string} [note] - Note: where the emulator comes from, what it can do.
 
-## @typedef {struct} Image - Один загрузочный образ.
-## @field {string} name - Имя без приставки. С приставкой оно станет адресом,
-##        по которому образ виден в поле выбора у диска.
-## @field {string} url - Откуда скачать образ.
-## @field {quantity} [storage] - Сколько места отвести.
-## @field {string} [storageClass] - Класс хранения только для этого образа.
-## @field {ImageOS} [os] - Метаданные системы.
-## @field {string} [architecture] - Архитектура гостя: amd64, arm64, s390x.
-## @field {Emulates} [emulates] - Заполняется, если внутри образа эмулятор
-##        машины, которой в этом кластере быть не может.
-## @field {string} [description] - Человеческое описание.
+## @typedef {struct} Image - One boot image.
+## @field {string} name - Name without the prefix. With the prefix it becomes the
+##        address under which the image appears in a disk's selection field.
+## @field {string} url - Where to download the image from.
+## @field {quantity} [storage] - How much space to allocate.
+## @field {string} [storageClass] - Storage class for this image only.
+## @field {ImageOS} [os] - System metadata.
+## @field {string} [architecture] - Guest architecture: amd64, arm64, s390x.
+## @field {Emulates} [emulates] - Set when the image contains an emulator of a
+##        machine that cannot exist in this cluster.
+## @field {string} [description] - Human-readable description.
 
-## @param {[]Image} images - Список образов, которые публикуются в кластере.
+## @param {[]Image} images - List of images published in the cluster.
 images: []

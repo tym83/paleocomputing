@@ -1,52 +1,54 @@
-# Находка 18: принятая кодировка портит регистр, номер которого задаётся длиной массива
+[Русская версия](FINDING-18-encoding-hazard.ru.md)
 
-Найдено враждебным аудитом. Я этого не заметил, хотя сам доказывал, что ловушки на
-неизвестную инструкцию в RISC5 нет.
+# Finding 18: the adopted encoding corrupts a register whose number is set by the array length
 
-## Механизм
+Found by the adversarial audit. I did not notice it, although I myself had proven that RISC5 has
+no trap on an unknown instruction.
 
-Инструкция CHK занимает **алиас существующей**: F0 `LSL` с `v=1`. Обоснование было
-в том, что компилятор Оберона такую кодировку не эмитит. Это верно — и недостаточно.
+## Mechanism
 
-**На стоковом ядре слово CHK выполняется как обычный `LSL`, молча**, с записью регистра
-и установкой флагов N и Z. Ловушки на неизвестную инструкцию нет, диагностики не будет.
+The CHK instruction occupies **an alias of an existing one**: F0 `LSL` with `v=1`. The justification was
+that the Oberon compiler does not emit this encoding. That is true, and not enough.
 
-Принятая кодировка (предел из двух кусков) сделала это **хуже**, а не лучше. Раньше
-поле `a` было нулём, и портился R0. Теперь в `IR[27:24]` лежат старшие четыре бита
-предела, то есть **номер затираемого регистра определяется длиной массива**:
+**On the stock core a CHK word executes as an ordinary `LSL`, silently**, writing a register
+and setting the N and Z flags. There is no trap on an unknown instruction, and there will be no diagnostic.
 
-| Предел массива | Что портится на стоковом ядре |
+The adopted encoding (limit in two pieces) made this **worse**, not better. Previously
+field `a` was zero, and R0 was corrupted. Now `IR[27:24]` holds the upper four bits of the
+limit, that is, **the number of the clobbered register is determined by the array length**:
+
+| Array limit | What is corrupted on the stock core |
 |---|---|
 | ≤ 255 | R0 |
 | 256…511 | R1 |
 | 1000 | **R3** |
-| 4095 | 🔴 **R15 — регистр ссылки** |
+| 4095 | 🔴 **R15, the link register** |
 
-Последняя строка — худший случай: затирание адреса возврата уводит управление в никуда,
-и причина будет выглядеть как порча стека.
+The last row is the worst case: clobbering the return address sends control nowhere,
+and the cause will look like stack corruption.
 
-## Что требовалось сделать и не сделано
+## What had to be done and was not
 
-Ревью дизайна (ревьюер 2, пункты 7 и 12) прямо предписывало защиту: помечать модули
-расширенной ISA **байтом версии `.rsc` = `2X`**, чтобы старый загрузчик честно отказал
-(`Modules.Mod:67`: `versionkey = 1X`, иначе `res = 4: bad file version`).
+The design review (reviewer 2, items 7 and 12) explicitly prescribed a safeguard: mark modules of
+the extended ISA **with the `.rsc` version byte = `2X`**, so that the old loader refuses honestly
+(`Modules.Mod:67`: `versionkey = 1X`, otherwise `res = 4: bad file version`).
 
-**Не реализовано и не упомянуто ни в одной находке.** Это прямое невыполнение требования
-ревью, которое я принял и потерял.
+**Not implemented and not mentioned in any finding.** This is a direct failure to meet a requirement
+of the review that I accepted and then lost.
 
-## Проверка, которой не хватало
+## The check that was missing
 
-Обоснование «компилятор LSL с v=1 не эмитит» опиралось только на чтение кодогенератора.
-Аудитор сделал прямую проверку за полминуты: в **51 085 словах** кодовых секций всех
-`.rsc` в `build/` и `ext/norebo/build2/` совпадений с кодировкой CHK — **ноль**,
-в обоих `prom*.mem` тоже ноль.
+The justification "the compiler does not emit LSL with v=1" relied only on reading the code generator.
+The auditor did a direct check in half a minute: in **51 085 words** of the code sections of all
+`.rsc` files in `build/` and `ext/norebo/build2/`, matches with the CHK encoding: **zero**;
+in both `prom*.mem` files, also zero.
 
-Это надо было привести самому. Для контраста: в образе диска 892 слова подходят под
-битовый шаблон — в основном данные, но именно поэтому такую проверку и требуют.
+I should have provided this myself. For contrast: in the disk image 892 words match the
+bit pattern, mostly data, but that is exactly why such a check is required.
 
-## ✅ Исправлено: защита реализована
+## ✅ Fixed: the safeguard is implemented
 
-В кодогенератор конфигурации E добавлена пометка модулей байтом версии 2:
+The configuration E code generator now stamps modules with version byte 2:
 
 ```oberon
 (*CONFIG E: modules using the CHK instruction are stamped version 2 so that a stock
@@ -54,21 +56,21 @@
 IF version = 1 THEN Files.WriteByte(R, 2) ELSE Files.WriteByte(R, version) END ;
 ```
 
-Проверено: модули конфигурации E получают байт **2**, конфигурации B — **1**.
+Verified: configuration E modules get byte **2**, configuration B modules get **1**.
 
-**Где защита срабатывает:** штатный загрузчик реальной системы,
-`Modules.Mod:3` (`versionkey = 1X`) и `Modules.Mod:67` (`IF ch = versionkey THEN …`),
-иначе `res = 4: bad file version`.
+**Where the safeguard fires:** the standard loader of the real system,
+`Modules.Mod:3` (`versionkey = 1X`) and `Modules.Mod:67` (`IF ch = versionkey THEN …`),
+otherwise `res = 4: bad file version`.
 
-**Где не срабатывает и почему это нормально:** у Norebo собственный урезанный загрузчик
-без этой проверки, поэтому в хост-окружении оба модуля грузятся. Это не дыра в защите —
-Norebo и не исполняет CHK на стоковом железе, он сам её реализует.
+**Where it does not fire and why that is fine:** Norebo has its own stripped-down loader
+without this check, so in the host environment both modules load. This is not a hole in the safeguard:
+Norebo does not execute CHK on stock hardware either; it implements it itself.
 
-## Что остаётся риском
+## What remains a risk
 
-Защита закрывает **загрузку модуля целиком**. Она не спасёт, если слово с кодировкой CHK
-окажется в потоке команд иным путём — например, в данных, исполненных как код.
-Прямая проверка (сделана аудитором): в **51 085 словах** кодовых секций всех `.rsc`
-проекта совпадений с кодировкой CHK **ноль**, в обоих образах ПЗУ тоже ноль.
-В образе диска 892 слова подходят под битовый шаблон — это данные, и именно поэтому
-защита по байту версии, а не по шаблону, является правильным решением.
+The safeguard covers **loading a module as a whole**. It will not help if a word with the CHK encoding
+ends up in the instruction stream some other way, for example in data executed as code.
+Direct check (done by the auditor): in **51 085 words** of the code sections of all the project's `.rsc` files
+there are **zero** matches with the CHK encoding, and zero in both ROM images too.
+In the disk image 892 words match the bit pattern: that is data, and exactly why
+a safeguard based on the version byte, rather than on the pattern, is the right solution.

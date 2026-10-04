@@ -1,147 +1,153 @@
-# Находка 62. Лабораторные 10–12: сборщик, задачи и цена проверки на своём коде
+[Русская версия](FINDING-62-new-labs.ru.md)
 
-Три новые лабораторные в `web/labs.js`, английский текст в `web/labs.en.js`,
-набираемые исходники — `web/lab-sources.js` (одна копия и для страницы, и для
-прогона). Каждая проходит в `labs-test.mjs` путь «не сделано → сделано» на
-настоящей модели RTL; прогон подмножества — `node labs-test.mjs 10 11 12`.
+# Finding 62. Labs 10–12: the collector, tasks, and the cost of checking on your own code
 
-## Что проверяется и откуда берётся
+Three new labs in `web/labs.js`, with the English text in `web/labs.en.js` and the
+sources to be typed in `web/lab-sources.js` (one copy for both the page and the test
+run). Each one goes through the "not done → done" path in `labs-test.mjs` on the real
+RTL model; to run a subset, use `node labs-test.mjs 10 11 12`.
 
-Все три проверки читают **память машины**, а не экран. Для этого понадобилось
-находить загруженные модули и их переменные:
+## What is checked and where it comes from
 
-| что | где | как проверено |
+All three checks read **the machine's memory**, not the screen. This required finding
+the loaded modules and their variables:
+
+| what | where | how it was verified |
 |---|---|---|
-| дескриптор `Kernel` | всегда `100H` — ядро компонуется первым | имя в дескрипторе = `Kernel` |
-| переменные `Kernel` | `data` = слово по `100H+52`; `allocated` по `+0`, `heapOrg` `+8`, `heapLim` `+12`, `MemLim` `+24` | `heapOrg` и `MemLim` сверяются со словами 24 и 12, которые оставляет загрузчик; не совпало — проверка отказывается отвечать |
-| список модулей | дескриптор `Modules` — по адресу из слова 20 (его же читает `Modules.Init`), `root` — первая переменная `Modules` после 24 байт его дескрипторов типов | обход даёт те же 13 модулей, что `System.ShowModules` |
-| переменные своего модуля | `data` + размер дескрипторов типов из `.rsc` + 4·номер, в порядке объявления (`Modules.Load`: дескрипторы, затем переменные) | значения совпали с тем, что печатает журнал |
+| the `Kernel` descriptor | always `100H`, because the kernel is linked first | the name in the descriptor = `Kernel` |
+| `Kernel` variables | `data` = the word at `100H+52`; `allocated` at `+0`, `heapOrg` `+8`, `heapLim` `+12`, `MemLim` `+24` | `heapOrg` and `MemLim` are compared with words 24 and 12 left by the boot loader; on a mismatch the check refuses to answer |
+| the module list | the `Modules` descriptor is at the address in word 20 (which `Modules.Init` also reads); `root` is the first `Modules` variable after the 24 bytes of its type descriptors | the walk yields the same 13 modules as `System.ShowModules` |
+| variables of your own module | `data` + the size of the type descriptors from `.rsc` + 4·index, in declaration order (`Modules.Load`: descriptors, then variables) | the values matched what the log prints |
 
-Раскладка дескриптора (`name[32], next, key, num, size, refcnt, data, code,
-imp, cmd, ent, ptr`) снята с `Modules.Mod` на образе. `parseRsc` теперь
-отдаёт `tdBytes` — размер области дескрипторов типов.
+The descriptor layout (`name[32], next, key, num, size, refcnt, data, code,
+imp, cmd, ent, ptr`) was taken from `Modules.Mod` on the image. `parseRsc` now also
+returns `tdBytes`, the size of the type descriptor area.
 
-### 10. Сборщик мусора изнутри (смотреть)
+### 10. The garbage collector from the inside (observe)
 
-1. Ответ — константа `BasicCycle`; сверяется с `Oberon.Mod` **на диске**
-   (регулярное выражение по исходнику), а не с зашитым числом.
-2. `Junk.rsc` есть и `tdBytes > 0`.
-3. `Kernel.allocated ≥ 200 000` после `Junk.Make`; значение запоминается.
-4. После `System.Collect` `allocated` меньше запомненного больше чем на
-   200 000. `allocated` уменьшается только в `Kernel.Scan`, так что это
-   доказательство уборки, а не совпадение.
-5. `Junk.lost > 0` после двух `Junk.Make` подряд.
+1. The answer is the constant `BasicCycle`; it is compared against `Oberon.Mod` **on
+   disk** (a regular expression over the source), not against a hard-coded number.
+2. `Junk.rsc` exists and `tdBytes > 0`.
+3. `Kernel.allocated ≥ 200 000` after `Junk.Make`; the value is remembered.
+4. After `System.Collect`, `allocated` is lower than the remembered value by more
+   than 200 000. `allocated` decreases only in `Kernel.Scan`, so this is proof of
+   collection, not a coincidence.
+5. `Junk.lost > 0` after two `Junk.Make` in a row.
 
-Прогон дополнительно показывает, что **две секунды простоя (30 млн команд)
-мусора не убирают**, и что после шага 5 сборщик **приходит сам** — по
-давлению на кучу.
+The test run additionally shows that **two seconds of idling (30 million
+instructions) do not collect the garbage**, and that after step 5 the collector
+**comes on its own**, triggered by heap pressure.
 
-### 11. Одна задача за раз (ломать)
+### 11. One task at a time (break)
 
-Своя задача `Tick.Step` считает вызовы (`n`) и самый долгий перерыв между
-ними (`gap`, мс).
+Your own task `Tick.Step` counts calls (`n`) and the longest gap between them (`gap`,
+ms).
 
-2. `n > 0` — задача вызывалась.
-3. `gap ≥ 900` после `Tick.Spin` (команда в секунду длиной). Обычный
-   перерыв — 100 мс, период задачи; получить 900 можно только командой,
-   державшей цикл. В прогоне — 1109 мс.
-4. После `Tick.Break` проверка сама гоняет машину 5×200 000 команд: все
-   отсчёты счётчика команд обязаны лежать внутри кода модуля `Tick`
-   (`code … imp` из дескриптора), а `n` — не меняться. В прогоне машина стоит
-   на `3824C` внутри `Tick.Stuck`.
+2. `n > 0`: the task was called.
+3. `gap ≥ 900` after `Tick.Spin` (a command that takes a second). The normal gap is
+   100 ms, the task period; 900 can only come from a command that held the loop. In
+   the test run it is 1109 ms.
+4. After `Tick.Break` the check itself runs the machine for 5×200 000 instructions:
+   every program counter sample must lie inside the code of the `Tick` module
+   (`code … imp` from the descriptor), and `n` must not change. In the test run the
+   machine sits at `3824C` inside `Tick.Stuck`.
 
-### 12. Цена проверки своими руками (измерять)
+### 12. The cost of checking, by hand (measure)
 
-Лаборатория поднимает **ядро с CHK** и кладёт на диск `ORG.Chk.Mod`.
+The lab brings up **the kernel with CHK** and places `ORG.Chk.Mod` on the disk.
 
-1. Модуль `Cost` загружен, `Cost.t > 0`, в **загруженном** коде (память, не
-   файл) ноль команд CHK. Время запоминается.
-2. `ORG.rsc` перезаписан (служебная запись сменилась), ключ прежний, кода
-   больше, чем в поставляемом (6650 слов).
-3. В загруженном `Cost` есть CHK, время другое. Считается по памяти, поэтому
-   не проходит, если забыли `System.Free` и работает старый код.
-4. Ответ — процент ускорения, сверяется с двумя замеренными временами.
+1. The `Cost` module is loaded, `Cost.t > 0`, and the **loaded** code (memory, not the
+   file) has zero CHK instructions. The time is remembered.
+2. `ORG.rsc` has been rewritten (its directory entry changed), the key is the same,
+   and there is more code than in the shipped one (6650 words).
+3. The loaded `Cost` contains CHK, and the time is different. This is counted from
+   memory, so it fails if `System.Free` was forgotten and the old code is still
+   running.
+4. The answer is the speedup percentage, checked against the two measured times.
 
-Числа прогона: **276 мс → 264 мс** на 300 000 индексаций, ровно **1.00 такта
-на индексацию**, 4.35%. Шаг 1, прогнанный на **стоковом** ядре, даёт те же
-276 мс — это утверждение текста лабораторной, и оно проверяется.
+Numbers from the test run: **276 ms → 264 ms** for 300 000 indexing operations,
+exactly **1.00 cycle per indexing operation**, 4.35%. Step 1 run on the **stock**
+kernel gives the same 276 ms; this is a claim in the lab text, and it is checked.
 
-## Что удивило
+## What was surprising
 
-**Таймер — это такты.** `Kernel.Time` читает счётчик, который модель
-увеличивает раз в 25 000 тактов (`tb/wasm_main.cpp`). Миллисекунды в
-лабораторной — точная мера работы, повторяемая до единицы; экономия в один
-такт на индексацию дала ровно 12 мс на 300 000 индексаций.
+**The timer is cycles.** `Kernel.Time` reads a counter that the model increments once
+every 25 000 cycles (`tb/wasm_main.cpp`). Milliseconds in the lab are an exact measure
+of work, repeatable to the unit; a saving of one cycle per indexing operation gave
+exactly 12 ms over 300 000 indexing operations.
 
-**Сборщик — обычная задача.** `Oberon.Mod` заканчивается строкой
-`CurTask := NewTask(GC, 1000); Install(CurTask)`. Раз в секунду он
-вызывается, но убирает только если с прошлой уборки было 20 действий
-человека (`BasicCycle`) или до конца кучи меньше 64 КБ. Время само по себе
-повода не даёт: 256 КБ мусора пролежали сколько угодно.
+**The collector is an ordinary task.** `Oberon.Mod` ends with the line
+`CurTask := NewTask(GC, 1000); Install(CurTask)`. It is called once a second, but it
+only collects if there have been 20 user actions since the last collection
+(`BasicCycle`) or less than 64 KB remain before the end of the heap. Time by itself is
+no reason: 256 KB of garbage stayed in place for as long as you like.
 
-**Почему только между командами — стек не просматривается.** Корни отметки —
-только `mod.ptr`, то есть глобальные указатели модулей. Посреди команды
-живые объекты держатся локальными переменными, и уборка выбросила бы их.
+**Why only between commands: the stack is not scanned.** The roots for marking are
+only `mod.ptr`, that is, the modules' global pointers. In the middle of a command,
+live objects are held by local variables, and a collection would throw them away.
 
-**Безымянная запись под указателем не получает дескриптора типа.**
-`TYPE Block = POINTER TO RECORD … END` в компиляторе 2016 года: `ORP`
-строит дескриптор (`ORG.BuildTD`) только для именованной записи. `.rsc`
-выходит с нулевой областью дескрипторов, а `NEW` в замере **не увеличил
-`Kernel.allocated` ни на байт** — тег берётся не от своего типа. Поэтому в
-лабораторной тип назван (`BlockDesc`), а проверка шага 2 объясняет причину,
-если видит `tdBytes = 0`. Механизм до конца не разобран; наблюдение
-воспроизводится.
+**An anonymous record behind a pointer gets no type descriptor.**
+`TYPE Block = POINTER TO RECORD … END` in the 2016 compiler: `ORP` builds a descriptor
+(`ORG.BuildTD`) only for a named record. The `.rsc` comes out with an empty
+descriptor area, and `NEW` in the measurement **did not increase `Kernel.allocated` by
+a single byte**: the tag is not taken from its own type. That is why the type in the
+lab is named (`BlockDesc`), and the step 2 check explains the reason if it sees
+`tdBytes = 0`. The mechanism has not been fully worked out; the observation is
+reproducible.
 
-**Щелчок по (700, 620) ставит курсор не в конец текста.** Прогон набирал
-команды после `Edit.Open …`, и хвост этой строки прилипал к следующей:
-`Junk.Make` превращался в `Junk.Makeen Junk.Mod ~`, система отвечала
-`Junk command not found`. Старые сценарии не страдали, потому что набирали
-одну строку. Курсор теперь ставится щелчком правее конца текста.
+**A click at (700, 620) does not put the caret at the end of the text.** The test run
+typed commands after `Edit.Open …`, and the tail of that line stuck to the next one:
+`Junk.Make` turned into `Junk.Makeen Junk.Mod ~`, and the system answered
+`Junk command not found`. The old scenarios did not suffer from this because they
+typed a single line. The caret is now set by clicking to the right of the end of the
+text.
 
-**Быстрый набор теряет Shift.** Длинная строка с заглавными, набранная с шагом
-4000 команд на символ, превращала `ORG.Chk.Mod` в `ORG.Chk.mod`. Шаг 10 000.
+**Fast typing loses Shift.** A long line with capitals, typed at 4000 instructions per
+character, turned `ORG.Chk.Mod` into `ORG.Chk.mod`. The step is now 10 000.
 
-**Компиляция `ORG` — 20 млн команд**, а не минута: секунды и в браузере.
+**Compiling `ORG` is 20 million instructions**, not a minute: seconds, even in the
+browser.
 
-## Файл на диске до загрузки
+## A file on disk before boot
 
-`oberonfs.js: addFile` вставляет файл в образ **до** загрузки: заголовок
-(`mark, name, aleng, bleng, date, ext, sec`) по `FileDir.Mod`, данные в
-свободные секторы (номера ниже 64 не берутся — их `Kernel.InitSecMap` держит
-занятыми), запись — в лист B-дерева каталога. Писать в диск работающей
-системы нельзя: карта занятых секторов у неё в памяти. До загрузки карты нет,
-`FileDir.Init` строит её обходом каталога и помечает новый файл как любой
-другой. Переполненный лист не делится — функция громко отказывает. На эталонном
-образе `ORG.Chk.Mod` ложится в лист `ORB.Mod … ORTool.Mod` (16 записей из 24).
+`oberonfs.js: addFile` inserts a file into the image **before** boot: the header
+(`mark, name, aleng, bleng, date, ext, sec`) following `FileDir.Mod`, the data into
+free sectors (numbers below 64 are not used, because `Kernel.InitSecMap` keeps them
+marked as taken), and the entry into a leaf of the directory B-tree. Writing to the
+disk of a running system is not possible: it keeps the map of used sectors in memory.
+Before boot there is no map; `FileDir.Init` builds it by walking the directory and
+marks the new file like any other. A full leaf is not split: the function refuses
+loudly. On the reference image, `ORG.Chk.Mod` lands in the leaf `ORB.Mod … ORTool.Mod`
+(16 entries out of 24).
 
-`<oberon-machine>` получил атрибут `files`; лаборатория объявляет
-`machine: { variant: 'chk', files: ['ORG.Chk.Mod'] }`, и `lab.html` поднимает
-машину заново — как `checks.html` при смене ядра.
+`<oberon-machine>` gained a `files` attribute; the lab declares
+`machine: { variant: 'chk', files: ['ORG.Chk.Mod'] }`, and `lab.html` brings the
+machine up again, just as `checks.html` does on a kernel change.
 
-## Штамп версии: где лаборатория отступает от конфигурации E
+## The version stamp: where the lab departs from configuration E
 
-`ORG-cfgE.Mod` метит модули с CHK версией 2, чтобы стоковый загрузчик их
-отверг (находка 18: на стоковом ядре CHK исполняется как LSL и портит
-регистр). Но загрузчик в образе загрузки — тоже стоковый, и версию 2 он
-отвергает и на ядре с CHK. Пересобрать внутреннее ядро в браузере нельзя.
-Поэтому `web/ORG.Chk.Mod` пишет версию 1 — это единственное отличие от
-`patches/ORG-cfgE.Mod`, и `labs-test.mjs` его проверяет строка в строку.
-Безопасно только в лаборатории: смена ядра поднимает машину с чистым диском,
-и модуль с CHK на стоковое ядро не попадает.
+`ORG-cfgE.Mod` marks modules with CHK as version 2 so that the stock loader rejects
+them (Finding 18: on the stock kernel CHK executes as LSL and corrupts a register).
+But the loader in the boot image is also stock, and it rejects version 2 even on the
+kernel with CHK. The inner kernel cannot be rebuilt in the browser. Therefore
+`web/ORG.Chk.Mod` writes version 1; this is the only difference from
+`patches/ORG-cfgE.Mod`, and `labs-test.mjs` checks it line by line. It is safe only in
+the lab: a kernel change brings the machine up with a clean disk, and a module with
+CHK never reaches the stock kernel.
 
-## Пределы
+## Limits
 
-* Лаборатория 12 меряет **B против E** (программная проверка против
-  аппаратной). Конфигурации A — без проверок вовсе — нет: модуль, собранный
-  со звёздочкой (`MODULE *`), это RISC-0 версии 0, и загрузчик его не
-  примет; а `ORG` с `check := FALSE` потребовал бы ещё одного файла на диске.
-  Сделать можно тем же `addFile`, но это другая лабораторная.
-* «300 000 индексаций» в сообщениях — для цикла из задания. Если человек
-  поменяет цикл, проценты верны, а такты на индексацию — нет.
-* Номера 10–12 в плане курса (`12-labs-and-archive.md`) раньше означали
-  «своя встроенная процедура», «своя команда в процессоре», «портирование».
-  Номера получили сделанные лабораторные; задуманные сдвинуты на 13–15, а
-  задания контейнера (`deploy/lab.sh`, `deploy/Containerfile`, находка 32)
-  называются по имени задания — `isa`, `compiler`, `check`, — как в поле
-  `task:` каталога, а не по номеру. Находка 31 («лабораторные 10–12 не
-  сделаны») описывает прежнюю нумерацию.
+* Lab 12 measures **B versus E** (the software check versus the hardware one).
+  Configuration A, with no checks at all, is not there: a module compiled with an
+  asterisk (`MODULE *`) is RISC-0 version 0, and the loader will not accept it; and an
+  `ORG` with `check := FALSE` would require one more file on the disk. It can be done
+  with the same `addFile`, but that is a different lab.
+* "300 000 indexing operations" in the messages refers to the loop from the
+  assignment. If a person changes the loop, the percentages are correct, but the
+  cycles per indexing operation are not.
+* Numbers 10–12 in the course plan (`12-labs-and-archive.md`) used to mean "your own
+  built-in procedure", "your own processor instruction" and "porting". The numbers
+  went to the labs that were actually built; the planned ones moved to 13–15, and the
+  container tasks (`deploy/lab.sh`, `deploy/Containerfile`, Finding 32) are named by
+  task name (`isa`, `compiler`, `check`), as in the catalog's `task:` field, not by
+  number. Finding 31 ("labs 10–12 are not built") describes the old numbering.

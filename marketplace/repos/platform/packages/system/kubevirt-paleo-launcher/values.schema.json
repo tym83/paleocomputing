@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "kubevirt-paleo-launcher",
   "type": "object",
-  "$comment": "Корень схемы не закрыт: движок Cozystack подмешивает в values свои ключи (_cluster, _namespace).",
+  "$comment": "The schema root is not closed: the Cozystack engine injects its own keys (_cluster, _namespace) into values.",
   "required": ["kubevirtName", "interval", "image"],
   "properties": {
     "kubevirtName": { "type": "string", "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$" },

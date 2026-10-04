@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Собирает английскую главу методички из русской.
+"""Builds an English handbook chapter from the Russian one.
 
-Берёт оформление и навигацию из исходной главы, подменяет названия и вставляет
-переданный текст. Так оформление остаётся в одном месте: поправишь стиль в
-русской — английская подхватит при следующей сборке.
+Takes the styling and navigation from the source chapter, substitutes the titles
+and inserts the given text. That keeps the styling in one place: fix the style in
+the Russian chapter and the English one picks it up on the next build.
 """
 import pathlib, re, sys, json
 
@@ -36,7 +36,7 @@ def build(src_name, article_html):
     nav.append('<a href="../../lab.html" style="margin-top:14px">→ Labs</a></nav>')
 
     body = f'<article><h1>{TITLES[src_name]}</h1>\n{article_html}\n</article>'
-    # Хвост после </article> — подвал, если он есть.
+    # The tail after </article> is the footer, if there is one.
     foot = tail.split('</article>', 1)[1] if '</article>' in tail else '\n</div>\n'
     out = head + ''.join(nav) + '\n' + body + foot
     pathlib.Path('en') / src_name
@@ -46,4 +46,4 @@ def build(src_name, article_html):
 if __name__ == '__main__':
     name = sys.argv[1]
     art = pathlib.Path(sys.argv[2]).read_text(encoding='utf-8')
-    print(f'  {name}: {build(name, art)} байт')
+    print(f'  {name}: {build(name, art)} bytes')

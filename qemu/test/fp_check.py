@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
-"""Сверка плавающей точки QEMU с эталоном — целиком, от исходников до вердикта.
+"""Cross-check of QEMU floating point against the reference, end to end, from sources to verdict.
 
-Раньше эта сверка была сделана один раз руками (находка 50), и повторить её
-было нечем: ни генератора эталонной таблицы, ни образа ПЗУ в репозитории не
-было. Любая правка fp.c могла бы молча сломать арифметику.
+This check used to be done once by hand (finding 50), and there was nothing to
+repeat it with: neither the reference table generator nor the ROM image was in
+the repository. Any edit to fp.c could silently break the arithmetic.
 
-Шаги:
-  1. fp_ref.c + ext/refemu/risc-fp.c  ->  эталонная таблица;
-  2. fp.s нашим ассемблером, операнды — в том же ПЗУ по слову 64;
-  3. qemu-system-risc5 без экрана, снимок памяти с адреса 0x10000 через QMP;
-     что программа дошла до конца, видно по метке за результатами;
+Steps:
+  1. fp_ref.c + ext/refemu/risc-fp.c  ->  reference table;
+  2. fp.s through our assembler, operands in the same ROM at word 64;
+  3. qemu-system-risc5 headless, memory snapshot from address 0x10000 via QMP;
+     that the program reached the end is visible from the mark after the results;
   4. fp_diff.py;
-  5. отрицательный контроль: та же сверка на испорченных данных обязана упасть.
+  5. negative control: the same check on corrupted data must fail.
 
-  fp_check.py [<дерево QEMU со сборкой>]
+  fp_check.py [<QEMU tree with a build>]
 
-Операнды — только VALS из fp_diff.py: и таблица, и ПЗУ строятся из него.
+Operands come only from VALS in fp_diff.py: both the table and the ROM are built from it.
 """
 import os, pathlib, struct, subprocess, sys
 
@@ -29,16 +29,16 @@ import asm                                   # noqa: E402
 
 QEMU = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else ROOT / ".qemu-work").resolve()
 WORK = IMPL / "build/qfp"
-DATA_WORD = 64                 # fp.s читает операнды с FFE100
-ROM_WORDS = 512                # ПЗУ в железе — 512 слов (PROM.v)
+DATA_WORD = 64                 # fp.s reads operands from FFE100
+ROM_WORDS = 512                # the hardware ROM is 512 words (PROM.v)
 OUT_ADDR = 0x10000
 N = len(VALS)
-OUT_WORDS = N * N * 4 + N * 2  # четыре действия на пару плюс два перевода
-DONE_MARK = 0x600D             # fp.s кладёт её сразу за результатами
+OUT_WORDS = N * N * 4 + N * 2  # four operations per pair plus two conversions
+DONE_MARK = 0x600D             # fp.s stores it right after the results
 
 
 def reference():
-    """Эталонная таблица: fp_ref.c поверх risc-fp.c, операнды — из VALS."""
+    """Reference table: fp_ref.c on top of risc-fp.c, operands from VALS."""
     exe = WORK / "fp_ref"
     cc = os.environ.get("CC", "cc")
     subprocess.run([cc, "-O2", "-std=c99", "-I", str(IMPL / "ext/refemu"),
@@ -52,11 +52,11 @@ def reference():
 
 
 def rom():
-    """Образ ПЗУ: программа, пустота до слова 64, затем операнды."""
+    """ROM image: the program, padding up to word 64, then the operands."""
     words, _, _ = asm.assemble((HERE / "fp.s").read_text())
     if len(words) > DATA_WORD:
-        raise SystemExit(f"  ❌ программа ({len(words)} слов) наезжает на данные "
-                         f"в слове {DATA_WORD}")
+        raise SystemExit(f"  ❌ the program ({len(words)} words) overlaps the data "
+                         f"at word {DATA_WORD}")
     image = words + [0] * (DATA_WORD - len(words)) + list(VALS)
     assert len(image) <= ROM_WORDS
     path = WORK / "fp.rom"
@@ -65,23 +65,23 @@ def rom():
 
 
 def run_qemu(rom_path):
-    """Прогон без экрана, снимок памяти через QMP. Возвращает путь к снимку."""
+    """Headless run, memory snapshot via QMP. Returns the path to the snapshot."""
     out = WORK / "fp.out"
     out.unlink(missing_ok=True)
-    # ⚠ Монитор только QMP: сборка идёт с --without-default-features, и
-    # человеческого монитора (HMP, `info registers`) в ней нет. Поэтому конец
-    # программы виден не по PC, а по метке, которую fp.s кладёт за результатами.
+    # ⚠ QMP is the only monitor: the build uses --without-default-features and
+    # has no human monitor (HMP, `info registers`). So the end of the program is
+    # detected not by PC but by the mark fp.s stores after the results.
     #
-    # Программа укладывается в микросекунды; две секунды — с огромным запасом,
-    # а что она правда дошла до конца, проверяет метка, а не время.
+    # The program finishes in microseconds; two seconds is a huge margin, and
+    # whether it really reached the end is checked by the mark, not the time.
     size = (OUT_WORDS + 1) * 4
     cmds = ['{"execute":"qmp_capabilities"}',
             '{"execute":"pmemsave","arguments":{"val":%d,"size":%d,'
             '"filename":"/w/fp.out"}}' % (OUT_ADDR, size),
             '{"execute":"quit"}']
     qmp = "sleep 1; echo '%s'; sleep 2; echo '%s'; sleep 1; echo '%s'" % tuple(cmds)
-    # ⚠ Дерево QEMU монтируется только на чтение: сверка ничего в нём не
-    # оставляет и может гоняться на чужой, уже собранной копии.
+    # ⚠ The QEMU tree is mounted read-only: the check leaves nothing in it and
+    # can run against someone else's already built copy.
     cmd = (f"({qmp}) | timeout 60 /src/build/qemu-system-risc5 -M oberon "
            f"-bios /w/{rom_path.name} -display none -serial none "
            f"-qmp stdio 2>&1")
@@ -90,37 +90,37 @@ def run_qemu(rom_path):
                          capture_output=True, text=True)
     if not out.exists() or out.stat().st_size != size:
         print(res.stdout[-2000:], res.stderr[-2000:], sep="\n")
-        raise SystemExit("  ❌ QEMU не отдал снимок памяти")
+        raise SystemExit("  ❌ QEMU did not return the memory snapshot")
     words = list(struct.unpack(f"<{OUT_WORDS + 1}I", out.read_bytes()))
     if words[-1] != DONE_MARK:
-        raise SystemExit(f"  ❌ программа не дошла до конца: за результатами "
-                         f"{words[-1]:08X}, ждали метку {DONE_MARK:08X}")
-    # Снимок пишет контейнер, в CI — от root, поэтому результаты кладём
-    # отдельным файлом, а не переписываем чужой.
+        raise SystemExit(f"  ❌ the program did not reach the end: after the results "
+                         f"{words[-1]:08X}, expected the mark {DONE_MARK:08X}")
+    # The snapshot is written by the container, as root in CI, so the results
+    # go to a separate file instead of overwriting someone else's.
     res_path = WORK / "fp.res"
     res_path.write_bytes(struct.pack(f"<{OUT_WORDS}I", *words[:-1]))
     return res_path
 
 
 def negative(out_path, exp_path):
-    """Сверка обязана уметь падать: портим по одному значению с каждой стороны."""
+    """The check must be able to fail: corrupt one value on each side."""
     raw = bytearray(out_path.read_bytes())
-    raw[0] ^= 1                                  # младший бит первого результата
+    raw[0] ^= 1                                  # low bit of the first result
     bad_out = WORK / "fp.res.bad"
     bad_out.write_bytes(raw)
 
     lines = exp_path.read_text().splitlines()
-    x, y, op, r = lines[-1].split()              # последний перевод
+    x, y, op, r = lines[-1].split()              # the last conversion
     lines[-1] = f"{x} {y} {op} {int(r, 16) ^ 0x00400000:08X}"
     bad_exp = WORK / "fp_expected.bad.txt"
     bad_exp.write_text("\n".join(lines) + "\n")
 
     ok = True
-    for label, o, e in (("испорчен вывод машины", bad_out, exp_path),
-                        ("испорчен эталон", out_path, bad_exp)):
-        print(f"  — отрицательный контроль: {label}")
+    for label, o, e in (("machine output corrupted", bad_out, exp_path),
+                        ("reference corrupted", out_path, bad_exp)):
+        print(f"  — negative control: {label}")
         if fp_diff(o, e) != 1:
-            print(f"  ❌ {label}, а сверка этого не заметила")
+            print(f"  ❌ {label}, and the check did not notice")
             ok = False
     return ok
 
@@ -128,12 +128,12 @@ def negative(out_path, exp_path):
 def main():
     WORK.mkdir(parents=True, exist_ok=True)
     if not (QEMU / "build/qemu-system-risc5").exists():
-        raise SystemExit(f"  ❌ нет {QEMU}/build/qemu-system-risc5 — сначала make build")
+        raise SystemExit(f"  ❌ no {QEMU}/build/qemu-system-risc5; run make build first")
 
     exp_path, n_exp = reference()
     if n_exp != OUT_WORDS:
-        raise SystemExit(f"  ❌ эталон дал {n_exp} строк, ждали {OUT_WORDS}")
-    print(f"  эталон: {n_exp} случаев из risc-fp.c")
+        raise SystemExit(f"  ❌ the reference produced {n_exp} lines, expected {OUT_WORDS}")
+    print(f"  reference: {n_exp} cases from risc-fp.c")
 
     out_path = run_qemu(rom())
 
@@ -141,7 +141,7 @@ def main():
         return 1
     if not negative(out_path, exp_path):
         return 1
-    print("  ✅ отрицательный контроль: порча с обеих сторон поймана")
+    print("  ✅ negative control: corruption on both sides caught")
     return 0
 
 

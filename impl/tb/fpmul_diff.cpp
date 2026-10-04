@@ -1,19 +1,19 @@
-// Быстрый FP-умножитель против исходного FPMultiplier Вирта — побитово.
+// The fast FP multiplier against Wirth's original FPMultiplier, bit for bit.
 //
-// Эталон — сам исходный модуль, прогоняемый такт за тактом, а не формула:
-// так проверяется ровно то, что стоит в процессоре. Третьим голосом идёт
-// fp_mul из risc-fp.c (сверен с RTL в находке 50) — на случай, если оба
-// Verilog-модуля ошибаются одинаково.
+// The reference is the original module itself, run cycle by cycle, not a formula:
+// this checks exactly what sits in the processor. The third vote is
+// fp_mul from risc-fp.c (checked against RTL in finding 50), in case both
+// Verilog modules are wrong in the same way.
 //
-// Наборы:
-//   1. все 256×256 пар порядков, мантиссы и знаки случайные;
-//   2. граничные мантиссы (0, 1, все единицы, половина, половина−1) × порядки
+// Sets:
+//   1. all 256×256 exponent pairs, random mantissas and signs;
+//   2. edge-case mantissas (0, 1, all ones, half, half−1) × exponents
 //      0, 1, 126, 127, 128, 253, 254, 255;
-//   3. N случайных 32-битных пар (по умолчанию 10 млн);
-//   4. цепочки подряд идущих умножений без снятия run — проверка стойла и
-//      надбавки счётчика у исходника (32 такта вместо 26).
-// Кроме значения сверяется длительность: исходник 26 (подряд — 32), быстрый
-// 1 такт (или 2 с FPMUL_FAST_REG).
+//   3. N random 32-bit pairs (10 million by default);
+//   4. chains of back-to-back multiplications without dropping run: checks the stall and
+//      the original's counter penalty (32 cycles instead of 26).
+// Besides the value, the duration is checked: the original takes 26 (32 back-to-back),
+// the fast one 1 cycle (or 2 with FPMUL_FAST_REG).
 #include "Vfpmul_diff_top.h"
 #include <cstdio>
 #include <cstdlib>
@@ -33,11 +33,11 @@ static const int FAST_LAT = 1;
 static void tick_a() { t->clk_a = 1; t->eval(); t->clk_a = 0; t->eval(); }
 static void tick_b() { t->clk_b = 1; t->eval(); t->clk_b = 0; t->eval(); }
 
-// Одна операция; b2b — run не снимался с прошлой операции.
+// One operation; b2b means run was not dropped since the previous operation.
 static void op(uint32_t x, uint32_t y, bool b2b) {
-    // Как в процессоре: операция длится, пока блок держит stall; такт, на
-    // котором stall снят, — последний такт операции, и фронт в его конце
-    // тоже приходит (счётчик исходника уходит на 26 — отсюда надбавка подряд).
+    // As in the processor: an operation lasts while the unit holds stall; the cycle
+    // in which stall is released is the last cycle of the operation, and the edge at its end
+    // arrives too (the original's counter moves to 26, hence the back-to-back penalty).
     t->x = x; t->y = y; t->run_a = 1; t->run_b = 1; t->eval();
     int ca = 0, cb = 0; uint32_t za = 0, zb = 0;
     for (int c = 1; c <= 40; c++) {
@@ -51,23 +51,23 @@ static void op(uint32_t x, uint32_t y, bool b2b) {
     uint32_t r = fp_mul(x, y);
     n_ops++;
     if (za != zb) {
-        if (n_bad < 10) printf("  ❌ x=%08X y=%08X  исходный %08X  быстрый %08X\n", x, y, za, zb);
+        if (n_bad < 10) printf("  ❌ x=%08X y=%08X  original %08X  fast %08X\n", x, y, za, zb);
         n_bad++;
     }
     if (za != r) {
-        if (n_badref < 10) printf("  ❌ x=%08X y=%08X  исходный %08X  risc-fp.c %08X\n", x, y, za, r);
+        if (n_badref < 10) printf("  ❌ x=%08X y=%08X  original %08X  risc-fp.c %08X\n", x, y, za, r);
         n_badref++;
     }
     int want_a = b2b ? 32 : 26;
     if (ca != want_a || cb != FAST_LAT) {
-        if (n_badlat < 10) printf("  ❌ такты: исходный %d (ждали %d), быстрый %d (ждали %d)\n",
+        if (n_badlat < 10) printf("  ❌ cycles: original %d (expected %d), fast %d (expected %d)\n",
                                   ca, want_a, cb, FAST_LAT);
         n_badlat++;
     }
 }
 
-// Между независимыми операциями run снимается на такт — как в процессоре,
-// когда между двумя FML есть другая инструкция.
+// Between independent operations run is dropped for one cycle, as in the processor
+// when there is another instruction between two FMLs.
 static void idle() { t->run_a = 0; t->run_b = 0; t->eval(); tick_a(); tick_b(); }
 
 static uint64_t rs = 0x9E3779B97F4A7C15ull;
@@ -83,7 +83,7 @@ int main(int argc, char** argv) {
             uint32_t x = (rnd() & 0x807FFFFF) | ex << 23, y = (rnd() & 0x807FFFFF) | ey << 23;
             op(x, y, false); idle();
         }
-    printf("  набор 1, все пары порядков:   %llu операций, расхождений %llu\n",
+    printf("  set 1, all exponent pairs:    %llu operations, mismatches %llu\n",
            (unsigned long long)n_ops, (unsigned long long)n_bad);
 
     const uint32_t mant[] = {0, 1, 0x7FFFFF, 0x400000, 0x3FFFFF, 0x7FFFFE, 0x000800, 0x555555, 0x2AAAAA};
@@ -94,12 +94,12 @@ int main(int argc, char** argv) {
             uint32_t x = (sg & 1) << 31 | ex << 23 | mx, y = (sg >> 1) << 31 | ey << 23 | my;
             op(x, y, false); idle();
         }
-    printf("  набор 2, граничные мантиссы:  %llu операций, расхождений %llu\n",
+    printf("  set 2, edge-case mantissas:  %llu operations, mismatches %llu\n",
            (unsigned long long)(n_ops - before), (unsigned long long)n_bad);
 
     before = n_ops;
     for (uint64_t i = 0; i < N; i++) { op(rnd(), rnd(), false); idle(); }
-    printf("  набор 3, случайные пары:      %llu операций, расхождений %llu\n",
+    printf("  set 3, random pairs:         %llu operations, mismatches %llu\n",
            (unsigned long long)(n_ops - before), (unsigned long long)n_bad);
 
     before = n_ops;
@@ -108,14 +108,14 @@ int main(int argc, char** argv) {
         for (int j = 0; j < len; j++) op(rnd(), rnd(), j > 0);
         idle();
     }
-    printf("  набор 4, цепочки подряд:      %llu операций, расхождений %llu\n",
+    printf("  set 4, back-to-back chains:  %llu operations, mismatches %llu\n",
            (unsigned long long)(n_ops - before), (unsigned long long)n_bad);
 
-    printf("\n  всего %llu операций: быстрый ≠ исходный: %llu; исходный ≠ risc-fp.c: %llu; "
-           "не те такты: %llu\n", (unsigned long long)n_ops, (unsigned long long)n_bad,
+    printf("\n  total %llu operations: fast ≠ original: %llu; original ≠ risc-fp.c: %llu; "
+           "wrong cycle count: %llu\n", (unsigned long long)n_ops, (unsigned long long)n_bad,
            (unsigned long long)n_badref, (unsigned long long)n_badlat);
     bool ok = !n_bad && !n_badref && !n_badlat;
-    printf("  %s\n", ok ? "✅ быстрый умножитель побитово равен исходному" : "❌ ЕСТЬ РАСХОЖДЕНИЯ");
+    printf("  %s\n", ok ? "✅ the fast multiplier is bit-identical to the original" : "❌ MISMATCHES FOUND");
     t->final(); delete t;
     return ok ? 0 : 1;
 }

@@ -1,23 +1,23 @@
-# Сборочные артефакты
+# Build artifacts
 impl/build/
 __pycache__/
 *.pyc
 .DS_Store
 
-# Сайт собирается tools/build-site.sh из site/ и impl/web/ — в репозиторий
-# результат не кладётся.
+# The site is built by tools/build-site.sh from site/ and impl/web/; the result
+# is not committed.
 /_site/
 
-# ⚠ В site/oberon/ хранится только своя index.html. Лаборатория, методичка и
-# машина приезжают из impl/web/ при сборке. Раньше здесь лежала их копия — её
-# забыли обновить после перевода, и /oberon/book/en/ отдавал живой 404.
+# ⚠ site/oberon/ holds only its own index.html. The lab, the book and the
+# machine come from impl/web/ at build time. A copy of them used to live here; it
+# was not updated after the translation, and /oberon/book/en/ served a live 404.
 site/oberon/*
 !site/oberon/index.html
 
-# Библиотеки ячеек в репозиторий не кладём: Sky130 весит 12 МБ и тянется целью
-# `make lib` (она же вызывается из `make syn`). Прежняя Nangate45 не кладётся по
-# другой причине — её шапка прямо запрещает публикацию, см. THIRD-PARTY.md.
+# Cell libraries are not committed: Sky130 weighs 12 MB and is fetched by the
+# `make lib` target (which `make syn` also calls). The former Nangate45 is not
+# committed for another reason: its header explicitly forbids publication, see THIRD-PARTY.md.
 impl/syn/lib/*.lib
 
-# Рабочее дерево QEMU для сборки цели: 1 ГБ чужих исходников, в репозиторий не кладём
+# QEMU work tree for building the target: 1 GB of third-party sources, not committed
 .qemu-work/

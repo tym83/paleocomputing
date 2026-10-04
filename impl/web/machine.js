@@ -1,15 +1,15 @@
-// Переиспользуемая обвязка машины RISC5 для браузера.
+// Reusable harness for the RISC5 machine in the browser.
 //
-// Выделена из index.html, чтобы лаборатории не переписывали заново отрисовку,
-// ввод и цикл. Всё, что лаборатории нужно для ПРОВЕРКИ задания, доступно здесь
-// же: регистры, флаги, память, кадровый буфер и образ диска.
+// Extracted from index.html so the labs do not have to rewrite rendering,
+// input and the run loop. Everything a lab needs to CHECK a task is available
+// here as well: registers, flags, memory, the framebuffer and the disk image.
 //
-// Кадровый буфер хранится снизу вверх (VID.v: vidadr = Org + {3'b0, ~vcnt, hword}),
-// поэтому строки при отрисовке переворачиваются.
+// The framebuffer is stored bottom-up (VID.v: vidadr = Org + {3'b0, ~vcnt, hword}),
+// so rows are flipped when drawing.
 
-// ⚠ Вариант железа подгружается ПО ИМЕНИ, а не импортом: моделей две —
-// базовая и с аппаратной проверкой границ, и страница переключает их на лету.
-// Статический импорт притащил бы обе в любой сборке.
+// ⚠ The hardware variant is loaded BY NAME, not imported: there are two models,
+// the stock one and one with hardware bounds checking, and the page switches
+// between them on the fly. A static import would pull both into every build.
 export const VARIANTS = {
   base: { file: './risc5.js',     title: { en: 'stock core',            ru: 'стоковое ядро' } },
   chk:  { file: './risc5-chk.js', title: { en: 'core with CHK',          ru: 'ядро с CHK' } },
@@ -24,10 +24,11 @@ export async function loadVariant(name = 'base') {
 
 const W = 1024, H = 768;
 
-// Модификатор, дающий среднюю кнопку. Клавиша физически одна, но называется
-// по-разному: на маке на ней написано Option, и подсказка «Alt» там сбивает —
-// человек ищет несуществующую клавишу. Ctrl в этой роли не годится вообще:
-// macOS превращает Ctrl+щелчок в правую кнопку ещё до страницы.
+// The modifier that gives the middle button. It is physically one key, but its
+// name differs: on a Mac it is labelled Option, and an "Alt" hint there is
+// misleading, since people look for a key that does not exist. Ctrl does not
+// work in this role at all: macOS turns Ctrl+click into a right click before
+// the page sees it.
 const MAC = (() => {
   if (typeof navigator === 'undefined') return false;
   const n = navigator;
@@ -37,7 +38,7 @@ const MAC = (() => {
 
 export const ALT_LABEL = MAC ? '\u2325 Option' : 'Alt';
 
-/** Проставить подпись модификатора во все метки .k-alt внутри узла. */
+/** Set the modifier label in every .k-alt element inside the node. */
 export function labelAltKeys(root) {
   const r = root || (typeof document === 'undefined' ? null : document);
   if (!r) return;
@@ -45,7 +46,7 @@ export function labelAltKeys(root) {
 }
 
 
-// Скан-коды PS/2, набор 2. Ровно те, что понимает Input.Mod.
+// PS/2 scan codes, set 2. Exactly the ones Input.Mod understands.
 export const PS2 = {
   KeyA:0x1C,KeyB:0x32,KeyC:0x21,KeyD:0x23,KeyE:0x24,KeyF:0x2B,KeyG:0x34,KeyH:0x33,
   KeyI:0x43,KeyJ:0x3B,KeyK:0x42,KeyL:0x4B,KeyM:0x3A,KeyN:0x31,KeyO:0x44,KeyP:0x4D,
@@ -59,12 +60,12 @@ export const PS2 = {
   ShiftLeft:0x12,ShiftRight:0x59,ControlLeft:0x14,ControlRight:0x14,
 };
 
-// Строка -> скан-коды с обрамлением Shift, как это делает клавиатура.
+// String -> scan codes wrapped in Shift, the way a keyboard does it.
 export function typeCodes(text) {
-  // ⚠ Здесь была ошибка: таблица цифр начиналась с ')', из-за чего SHIFTED[0]
-  // отображалось в несуществующий код, и закрывающая скобка просто не
-  // набиралась. Текст сохранялся молча искажённым — проверка «файл существует»
-  // такое пропускает. Сдвиг над цифрами: 0->) 1->! 2->@ ... 9->(
+  // ⚠ There was a bug here: the digit table started with ')', so SHIFTED[0]
+  // mapped to a nonexistent code and the closing parenthesis simply was not
+  // typed. The text was saved silently corrupted, and a "file exists" check
+  // lets that through. Shift over the digits: 0->) 1->! 2->@ ... 9->(
   const SHIFTED = ')!@#$%^&*(', DIG = '0123456789';
   const out = []; let shift = false;
   const push = (c, need) => {
@@ -86,7 +87,7 @@ export function typeCodes(text) {
         '"':['Quote',1],'<':['Comma',1],'>':['Period',1],'?':['Slash',1],
         '{':['BracketLeft',1],'}':['BracketRight',1],'|':['Backslash',1]};
       const m = map[ch];
-      if (!m) throw new Error(`нет скан-кода для ${JSON.stringify(ch)}`);
+      if (!m) throw new Error(`no scan code for ${JSON.stringify(ch)}`);
       push(PS2[m[0]], !!m[1]);
     }
   }
@@ -115,7 +116,7 @@ export class Machine {
     this.fbN = M._soc_fb_words();
   }
 
-  /** Полный откат: машина и образ диска возвращаются в исходное состояние. */
+  /** Full reset: the machine and the disk image return to their initial state. */
   reset() { this._load(); }
 
   run(n) { return this.M._soc_run(n | 0); }
@@ -136,12 +137,12 @@ export class Machine {
   key(code) { this.M._soc_key(code | 0); }
   mouse(x, y, b) { this.M._soc_mouse(x | 0, y | 0, b | 0); }
 
-  /** Набрать текст. Между символами нужен ход машины: очередь конечна. */
+  /** Type text. The machine must run between characters: the queue is finite. */
   type(text, step = 4000) {
     for (const c of typeCodes(text)) { this.key(c); this.run(step); }
   }
 
-  /** Щёлкнуть в точке экрана. y задаётся как на картинке, сверху вниз. */
+  /** Click at a screen point. y is given as in the picture, top to bottom. */
   click(x, y, button = 2, hold = 150000) {
     this.mouse(x, 767 - y, 0); this.run(hold);
     this.mouse(x, 767 - y, button); this.run(hold);
@@ -153,7 +154,7 @@ export class Machine {
     return new Uint32Array(M.HEAPU32.buffer, this.fbPtr, this.fbN);
   }
 
-  /** Сколько чёрных точек в прямоугольнике. Нужен проверкам: «появился вьюер». */
+  /** How many black pixels are in a rectangle. Used by checks: "a viewer appeared". */
   ink(x0, y0, x1, y1) {
     const fb = this.fb(); let n = 0;
     for (let y = y0; y < y1; y++) {
@@ -166,9 +167,9 @@ export class Machine {
 }
 
 /**
- * Развёртка кадрового буфера на канву. Отдельно от машины: в неё приезжает
- * СЫРОЙ буфер, по биту на точку, откуда угодно — из машины в этом же потоке
- * или из рабочего потока сообщением.
+ * Expands the framebuffer onto a canvas. Separate from the machine: it receives
+ * the RAW buffer, one bit per pixel, from anywhere, either from a machine in the
+ * same thread or from a worker thread via a message.
  */
 export function makeRenderer(canvas) {
   const ctx = canvas.getContext('2d', { alpha: false });
@@ -177,10 +178,10 @@ export function makeRenderer(canvas) {
   const LUT = new Uint32Array(256 * 8);
   for (let b = 0; b < 256; b++)
     for (let k = 0; k < 8; k++)
-      LUT[b * 8 + k] = (b >> k) & 1 ? 0xFF000000 : 0xFFFFFFFF;   // 1 — чёрный
+      LUT[b * 8 + k] = (b >> k) & 1 ? 0xFF000000 : 0xFFFFFFFF;   // 1 is black
 
-  // Кадровый буфер хранится СНИЗУ ВВЕРХ (VID.v: vidadr = Org + {3'b0, ~vcnt, hword}),
-  // поэтому строки при отрисовке переворачиваются.
+  // The framebuffer is stored BOTTOM-UP (VID.v: vidadr = Org + {3'b0, ~vcnt, hword}),
+  // so rows are flipped when drawing.
   return function draw(fb) {
     for (let y = 0; y < H; y++) {
       const src = (767 - y) * 32, dst = y * W;
@@ -198,55 +199,55 @@ export function makeRenderer(canvas) {
 }
 
 /**
- * Мышь и клавиатура канвы. Ввод уходит в `sink` — им может быть машина в этом
- * же потоке или рабочий поток за `postMessage`. Координаты отдаются уже в
- * системе Оберона (снизу вверх).
+ * Mouse and keyboard for the canvas. Input goes to `sink`, which can be a machine
+ * in the same thread or a worker thread behind `postMessage`. Coordinates are
+ * already in Oberon's system (bottom-up).
  *
  * sink: { mouse(x, y, btn), key(code), chord(x, y, first, then) }
  */
 export function bindInput(canvas, sink) {
   let mx = 512, my = 384, btn = 0;
   const push = () => sink.mouse(mx, 767 - my, btn);
-  // Какой кнопкой Оберона считать физическую левую. 4 — левая, 2 — средняя,
-  // 1 — правая (нумерация Input.Mod).
+  // Which Oberon button the physical left button acts as. 4 is left, 2 is middle,
+  // 1 is right (Input.Mod numbering).
   //
-  // ⚠ Без этого переключателя часть системы недоступна на ноутбуке. Выделение
-  // текста в Обероне — это ПРОТЯЖКА правой кнопкой, а на трекпаде мака правой
-  // протяжки не существует: два пальца там означают прокрутку. Значит нельзя
-  // ни выделить, ни, например, сменить шрифт через Edit.ChangeFont — команда
-  // работает по выделению.
+  // ⚠ Without this switch part of the system is unreachable on a laptop. Selecting
+  // text in Oberon is a DRAG with the right button, and a Mac trackpad has no
+  // right drag: two fingers mean scrolling there. So you could neither select
+  // nor, for example, change the font with Edit.ChangeFont, since that command
+  // works on the selection.
   let forced = 4;
 
   const btnsFrom = e => {
-    // Источник истины — e.buttons: Оберону нужно ОДНОВРЕМЕННОЕ состояние
-    // трёх кнопок для межкнопочных щелчков.
+    // The source of truth is e.buttons: Oberon needs the SIMULTANEOUS state of
+    // all three buttons for interclicks.
     let b = 0;
-    if (e.buttons & 1) b |= (e.altKey ? 2 : forced);  // Alt всегда даёт среднюю
-    if (e.buttons & 4) b |= 2;                        // настоящая средняя
-    if (e.buttons & 2) b |= 1;                        // настоящая правая
+    if (e.buttons & 1) b |= (e.altKey ? 2 : forced);  // Alt always gives middle
+    if (e.buttons & 4) b |= 2;                        // real middle
+    if (e.buttons & 2) b |= 1;                        // real right
     return b;
   };
-  // ⚠ Межкнопочный щелчок. Часть системы требует НАЖАТЬ ДВЕ КНОПКИ СРАЗУ:
-  // например вторая отметка в рисовалке ставится левой, к которой добавили
-  // правую (GraphicFrames.Edit: ветка k1 = {2, 0}). Без второй отметки
-  // Rectangles.Make и Curves.MakeCircle молча ничего не делают.
+  // ⚠ Interclick. Part of the system requires PRESSING TWO BUTTONS AT ONCE:
+  // for example, the second mark in the drawing editor is set with left plus an
+  // added right (GraphicFrames.Edit: branch k1 = {2, 0}). Without the second mark
+  // Rectangles.Make and Curves.MakeCircle silently do nothing.
   //
-  // На трекпаде двух кнопок сразу не нажать, поэтому аккорд собирается здесь:
-  // с Shift сначала подаётся левая, машина успевает её увидеть, и только потом
-  // добавляется правая. Порядок важен — система смотрит, с чего щелчок начался.
+  // A trackpad cannot press two buttons at once, so the chord is built here:
+  // with Shift, left is sent first, the machine gets to see it, and only then
+  // right is added. Order matters: the system looks at how the click started.
   let chord = false;
   canvas.addEventListener('mousemove', e => {
     const r = canvas.getBoundingClientRect();
     mx = Math.round((e.clientX - r.left) * W / r.width);
     my = Math.round((e.clientY - r.top) * H / r.height);
-    if (chord && (e.buttons & 1)) { push(); return; }   // аккорд держим, двигаем только точку
+    if (chord && (e.buttons & 1)) { push(); return; }   // hold the chord, move only the point
     chord = false; btn = btnsFrom(e); push();
   });
   canvas.addEventListener('mousedown', e => {
     e.preventDefault();
     if (e.shiftKey && !e.altKey && (e.buttons & 1)) {
       chord = true; btn = 4 | 1;
-      sink.chord(mx, 767 - my, 4, 4 | 1);   // сперва левая, затем к ней правая
+      sink.chord(mx, 767 - my, 4, 4 | 1);   // left first, then right added to it
       return;
     }
     chord = false; btn = btnsFrom(e); push();
@@ -255,15 +256,16 @@ export function bindInput(canvas, sink) {
   canvas.addEventListener('contextmenu', e => e.preventDefault());
   canvas.addEventListener('auxclick', e => e.preventDefault());
 
-  // ⚠ Обработчики висят на всём окне, а не на канве, и глушили КАЖДОЕ нажатие,
-  // код которого есть в таблице PS/2. Отсюда два следствия, найденных на живом
-  // сайте: не работало копирование (Cmd/Ctrl+C), и — хуже — нельзя было вписать
-  // адрес в поля лабораторной, то есть задание с записью в память не делалось
-  // вовсе. Проверки лабораторных этого не ловили: они дёргают машину напрямую,
-  // минуя DOM.
+  // ⚠ The handlers sit on the whole window, not on the canvas, and used to swallow
+  // EVERY key press whose code is in the PS/2 table. That had two consequences,
+  // found on the live site: copying (Cmd/Ctrl+C) did not work, and, worse, you
+  // could not type an address into the lab's input fields, so the memory-write
+  // task could not be done at all. The lab checks did not catch this: they drive
+  // the machine directly, bypassing the DOM.
   //
-  // Клавиатура уходит машине, только если человек не печатает в поле ввода и не
-  // держит системный модификатор. Оберону ни Cmd, ни Ctrl для ввода не нужны.
+  // The keyboard goes to the machine only if the person is not typing in an input
+  // field and is not holding a system modifier. Oberon needs neither Cmd nor Ctrl
+  // for input.
   function typingElsewhere(e) {
     const t = e.target;
     if (!t) return false;
@@ -288,7 +290,7 @@ export function bindInput(canvas, sink) {
   return { setButton(b) { forced = b; } };
 }
 
-/** Отрисовка кадрового буфера на канву и подключение мыши с клавиатурой. */
+/** Draws the framebuffer onto a canvas and wires up mouse and keyboard. */
 export function attach(machine, canvas) {
   const render = makeRenderer(canvas);
   const draw = () => render(machine.fb());
@@ -302,7 +304,7 @@ export function attach(machine, canvas) {
   machine.setButton = b => input.setButton(b);
 
   let raf = 0, running = false;
-  const QUOTA = 70000;      // ~4.2 МГц при 60 кадрах; без квоты вкладка жрёт ядро
+  const QUOTA = 70000;      // ~4.2 MHz at 60 fps; without a quota the tab eats a whole core
   function frame() {
     if (!running) return;
     machine.run(QUOTA);

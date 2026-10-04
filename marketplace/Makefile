@@ -1,8 +1,8 @@
-# Каталог «Забытые системы» для Cozystack.
+# The "Forgotten Systems" catalog for Cozystack.
 #
-# Единица установки — репозиторий целиком, а не отдельный пакет: вещи внутри
-# собраны и проверены вместе. Репозиториев три, у каждого свой OCI-артефакт и
-# своя запись в метаиндексе.
+# The unit of installation is a whole repository, not a single package: the
+# things inside are built and tested together. There are three repositories,
+# each with its own OCI artifact and its own meta-index entry.
 
 COZYPKG ?= /tmp/cozypkg
 REGISTRY ?= ghcr.io/tym83/paleocomputing
@@ -12,22 +12,22 @@ REPOS    := machines languages images platform
 .PHONY: help check validate gen search push clean-check
 
 help:
-	@echo "  make check      все проверки каталога (включая мутации)"
-	@echo "  make validate   только штатный валидатор Cozystack по каждому репозиторию"
-	@echo "  make gen        пересобрать описания приложений из схем чартов"
-	@echo "  make search     показать метаиндекс глазами cozypkg"
-	@echo "  make push       выложить репозитории в OCI (нужен свой REGISTRY=)"
+	@echo "  make check      all catalog checks (including mutations)"
+	@echo "  make validate   only the standard Cozystack validator on each repository"
+	@echo "  make gen        regenerate application definitions from chart schemas"
+	@echo "  make search     show the meta-index as cozypkg sees it"
+	@echo "  make push       push repositories to OCI (needs your own REGISTRY=)"
 
 check:
 	@python3 tools/check.py
 
-# Штатный валидатор Cozystack. Каждый репозиторий проверяется отдельно:
-# корень артефакта у него свой.
+# The standard Cozystack validator. Each repository is checked separately:
+# each has its own artifact root.
 #
-# --helm-lint не включаем намеренно: helm 4 считает ошибкой путь к иконке вида
-# /logos/foo.svg, а это конвенция самого Cozystack (hack/update-crd.sh
-# разрешает такой путь внутрь чарта). На их собственных чартах — nats, redis,
-# kafka, mongodb — helm 4 ругается ровно так же.
+# --helm-lint is intentionally off: helm 4 treats an icon path like
+# /logos/foo.svg as an error, but that is Cozystack's own convention
+# (hack/update-crd.sh resolves such a path into the chart). On their own charts
+# (nats, redis, kafka, mongodb) helm 4 complains in exactly the same way.
 validate:
 	@for r in $(REPOS); do \
 	  echo "── repos/$$r"; \
@@ -43,8 +43,8 @@ gen:
 search:
 	@$(COZYPKG) search --index index
 
-# Публикация. Каждый репозиторий уезжает отдельным артефактом под своим тегом:
-# тег и есть версия репозитория, им же он приколачивается при подключении.
+# Publishing. Each repository ships as a separate artifact under its own tag:
+# the tag is the repository version, and it is what pins it when connected.
 push:
 	@for r in $(REPOS); do \
 	  echo "── repos/$$r -> oci://$(REGISTRY)/$$r:$(TAG)"; \

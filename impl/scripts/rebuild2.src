@@ -1,4 +1,4 @@
-# Пересборка системы, сессия 2 из 2: 20 модулей в 11 командах.
+# System rebuild, session 2 of 2: 20 modules in 11 commands.
 at 12000000
 click 700 620 L
 type ORP.Compile ORS.Mod/s ~

@@ -1,74 +1,79 @@
-# Находка 53. Почему упала сотня переносов: давка, а не образ
+[Русская версия](FINDING-53-migration-stampede.ru.md)
 
-В прошлой сессии смена образа `virt-launcher` вызвала 137 живых переносов, из
-которых почти все провалились. Причина тогда осталась неустановленной: события
-уже вытеснились. Теперь установлена — по журналу `virt-controller` и по самим
-объектам переноса.
+# Finding 53. Why a hundred migrations failed: a stampede, not the image
 
-**Наш образ ни при чём.** Провалов две разных причины, и обе — свойства
-кластера, а не машины.
+In the previous session, changing the `virt-launcher` image triggered 137 live
+migrations, almost all of which failed. The cause remained unknown at the time:
+the events had already been evicted. Now it has been established, from the
+`virt-controller` log and from the migration objects themselves.
 
-## Причина первая: пропускная способность
+**Our image has nothing to do with it.** The failures have two different causes,
+and both are properties of the cluster, not of the machine.
+
+## First cause: throughput
 
 ```
  3570  outbound migrations per node limit
    28  pending pod … timeout period exceeded
 ```
 
-`parallelOutboundMigrationsPerNode` по умолчанию — 2. Смена образа пометила
-устаревшими **все** виртуальные машины кластера разом, и очередь на перенос
-стала длиннее, чем успевает узел. Целевой под ждал своей очереди дольше, чем
-отпущено ожидающему поду, — и перенос объявлялся провалившимся. Хронология
-одного из них:
+`parallelOutboundMigrationsPerNode` defaults to 2. The image change marked
+**all** virtual machines in the cluster as outdated at once, and the migration
+queue became longer than a node could handle. The target pod waited for its
+turn longer than a pending pod is allowed to wait, and the migration was
+declared failed. The timeline of one of them:
 
 ```
 Pending     13:11:17
-Scheduling  14:04:18   ← 53 минуты в очереди
-Failed      14:19:51   ← 15 минут ожидания пода
+Scheduling  14:04:18   ← 53 minutes in the queue
+Failed      14:19:51   ← 15 minutes waiting for the pod
 ```
 
-Дальше контроллер заводил перенос заново, и очередь не рассасывалась. Отсюда
-52 провала на одной машине.
+Then the controller started the migration again, and the queue never cleared.
+Hence 52 failures on a single machine.
 
-## Причина вторая: квота тенанта
+## Second cause: the tenant quota
 
 ```
 197  exceeded quota: tenant-quota
 ```
 
-Живой перенос требует **второго** пода-пускателя: на время переноса память
-машины занята дважды. Если тенант уже упёрся в свою квоту, второй под запретит
-квота — и перенос не начнётся никогда:
+A live migration requires a **second** launcher pod: during the migration the
+machine's memory is counted twice. If the tenant has already hit its quota, the
+quota forbids the second pod, and the migration never starts:
 
 ```
-tenant-kyvernetria  limits.memory: 31604080644 / 32Gi   ← мест нет
+tenant-kyvernetria  limits.memory: 31604080644 / 32Gi   ← no room
 ```
 
-Пять переносов в этом тенанте висят в `Pending` **с девяти утра** и
-перевыставляются до сих пор, каждые пару минут пробуя создать под. Они остались
-от прежней настройки: `workloadUpdateMethods: []` больше не создаёт новых, но
-уже созданные объекты контроллер продолжает вести.
+Five migrations in this tenant have been sitting in `Pending` **since nine in
+the morning** and are still being retried, trying to create a pod every couple
+of minutes. They are left over from the previous setting:
+`workloadUpdateMethods: []` no longer creates new ones, but the controller keeps
+driving the objects that were already created.
 
-## Правило, которое из этого следует
+## The rule that follows
 
-**Машина, целиком занимающая квоту тенанта, не переносится живьём.** Ни при
-обновлении кластера, ни при выводе узла на обслуживание — молча, без ошибки на
-самой машине: она продолжает работать, просто её нельзя сдвинуть.
+**A machine that occupies the tenant's entire quota cannot be live-migrated.**
+Neither during a cluster upgrade nor when a node is drained for maintenance, and
+this happens silently, with no error on the machine itself: it keeps running, it
+just cannot be moved.
 
-Для тенанта с виртуальными машинами квоту нужно брать с запасом на самую
-большую машину — иначе обслуживание узла упрётся в неё. Это касается и нашего
-пакета из каталога: машина Оберона крошечная, но запас нужен ровно такой же —
-её собственный размер.
+For a tenant with virtual machines, the quota must include headroom for the
+largest machine, otherwise node maintenance will get stuck on it. This also
+applies to our catalog package: the Oberon machine is tiny, but it needs exactly
+the same headroom, its own size.
 
-## Что осталось сделать руками
+## What remains to be done by hand
 
-Пять зависших объектов переноса в `tenant-kyvernetria` надо убрать — сами они
-не рассосутся. Команда (удаление, выполнять хозяину кластера):
+The five stuck migration objects in `tenant-kyvernetria` must be removed; they
+will not go away by themselves. The command (a deletion, to be run by the
+cluster owner):
 
 ```bash
 kubectl --context admin@workshop -n tenant-kyvernetria \
   delete vmim -l kubevirt.io/vmi-name --field-selector status.phase=Pending
 ```
 
-Если `--field-selector` по фазе не поддержан, перечислить поимённо:
+If `--field-selector` on the phase is not supported, list them by name:
 `kubevirt-workload-update-{58mzh,cqsdj,l4ksv,ljkzj,x4m7c}`.

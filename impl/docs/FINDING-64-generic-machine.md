@@ -1,124 +1,134 @@
-# Находка 64. Машина каталога — паспорт, а не чарт
+[Русская версия](FINDING-64-generic-machine.ru.md)
 
-OberonVM была единственной машиной каталога и была написана как единственная:
-голый `VirtualMachineInstance`, RISC5 зашит в перехватчик, том и его
-наполнение — хуки установки, уборка тома — отдельная задача со своими
-правами. Каждая следующая машина из дорожной карты (Lilith, порты мёртвых
-систем) означала бы копию чарта и правку кода перехватчика.
+# Finding 64. A catalog machine is a passport, not a chart
 
-Заодно у этой конструкции было три изъяна, найденных в живом тенанте
-(находка 58):
+OberonVM was the only machine in the catalog and was written as the only one:
+a bare `VirtualMachineInstance`, RISC5 hardcoded into the hook sidecar, the
+volume and its population done by install hooks, and volume cleanup done by a
+separate job with its own permissions. Every further machine on the roadmap
+(Lilith, ports of dead systems) would have meant a copy of the chart and an
+edit to the hook sidecar's code.
 
-* машину нельзя перезапустить ни из дашборда, ни `virtctl restart` — только
-  удалить и поставить заново;
-* неудавшаяся первая установка превращалась в «успешное» обновление без тома;
-* ради уборки тома понадобились задача, Role, RoleBinding и метка выхода к
-  API.
+This design also had three defects, found in a live tenant (Finding 58):
 
-## Что сделано
+* the machine could not be restarted either from the dashboard or with
+  `virtctl restart`; it could only be deleted and installed again;
+* a failed first install turned into a "successful" upgrade without a volume;
+* volume cleanup required a job, a Role, a RoleBinding and a label granting
+  egress to the API.
 
-**Паспорт машины.** `apps/oberon-vm/machine.yaml` по схеме
-`library/retro-machine/machine.schema.json`: архитектура и машина для
-libvirt, эмулятор, число процессоров, экран; файлы на томе с ролями —
-`firmware` обновляется из выпуска, `disk` кладётся один раз и дальше
-принадлежит пользователю; как каждый файл передаётся QEMU; варианты железа —
-свойства `-machine` (`chk: "on"`); пределы памяти. Паспорт — файл чарта, а не
-значения: что запустится в virt-launcher, решает выпуск каталога, а не
-тенант.
+## What was done
 
-**Общая библиотека `retro-machine`.** Рисует из паспорта всю машину:
-`VirtualMachine` со стратегией запуска от `running` (`Always` / `Halted`),
-том как обычный ресурс релиза, задачу наполнения, ConfigMap с перехватчиком.
-Приложение OberonVM — один шаблон `{{ include "retro-machine.render" . }}`.
-Библиотека подключена ссылкой, как `cozy-lib` у самого Cozystack.
+**Machine passport.** `apps/oberon-vm/machine.yaml`, following the schema
+`library/retro-machine/machine.schema.json`: the architecture and machine for
+libvirt, the emulator, the number of CPUs, the display; files on the volume
+with roles (`firmware` is refreshed from the release, `disk` is placed once
+and belongs to the user afterwards); how each file is passed to QEMU; hardware
+variants as `-machine` properties (`chk: "on"`); memory limits. The passport
+is a file of the chart, not values: what runs in virt-launcher is decided by
+the catalog release, not by the tenant.
 
-**Перехватчик читает паспорт** из аннотации машины (`paleocomputing.io/machine`)
-вместо зашитого RISC5. Прежняя аннотация `oberon.paleocomputing/chk` ушла —
-вариант железа теперь поле паспорта. Если файлов машины ещё нет на томе,
-перехватчик отказывает громко, а не отдаёт полупереписанный домен: машина
-не стартует, KubeVirt пробует снова, и как только задача наполнения
-закончит, машина поднимается. Тест перехватчика гоняет его на двух
-паспортах — втором, вымышленном, — чтобы было видно: новой машине правка
-кода не нужна.
+**Shared library `retro-machine`.** It renders the whole machine from the
+passport: a `VirtualMachine` with a run strategy derived from `running`
+(`Always` / `Halted`), the volume as an ordinary release resource, the
+population job, and a ConfigMap with the hook sidecar. The OberonVM
+application is a single template, `{{ include "retro-machine.render" . }}`.
+The library is included via a symlink, like `cozy-lib` in Cozystack itself.
 
-**Том — ресурс релиза.** Helm удаляет его вместе с машиной; задача уборки,
-её права и метка выхода к API больше не нужны. Задача наполнения —
-`post-install,post-upgrade`, идемпотентная: прошивку переписывает всегда,
-диск — только если его нет.
+**The hook sidecar reads the passport** from the machine annotation
+(`paleocomputing.io/machine`) instead of a hardcoded RISC5. The former
+annotation `oberon.paleocomputing/chk` is gone: the hardware variant is now a
+passport field. If the machine's files are not yet on the volume, the sidecar
+fails loudly instead of returning a half-rewritten domain: the machine does
+not start, KubeVirt retries, and as soon as the population job finishes, the
+machine comes up. The sidecar test runs it against two passports (the second
+one fictitious) to show that a new machine needs no code change.
 
-**Перезапуск.** Роль тенанта `cozy:tenant:use` в Cozystack даёт
-`update` на `virtualmachines/start|stop|restart`
-(`packages/system/cozystack-basics/templates/clusterroles.yaml`), так что
-тенант управляет машиной из дашборда сам.
+**The volume is a release resource.** Helm deletes it together with the
+machine; the cleanup job, its permissions and the API egress label are no
+longer needed. The population job is `post-install,post-upgrade` and
+idempotent: it always rewrites the firmware, and writes the disk only if it
+is missing.
 
-## Ловушка по дороге: ссылки не доезжают до кластера
+**Restart.** The Cozystack tenant role `cozy:tenant:use` grants `update` on
+`virtualmachines/start|stop|restart`
+(`packages/system/cozystack-basics/templates/clusterroles.yaml`), so the
+tenant controls the machine from the dashboard on its own.
 
-Библиотека подключена ссылкой, копия перехватчика — тоже. Собранный
-`flux build artifact` показал: каталоги `oberon-vm/charts` и
-`oberon-vm/files` в артефакте **пустые** — flux ссылки не упаковывает. А
-распаковщик подключённого каталога в кластере
-(`internal/operator/tapmaterializer_artifact.go`) ссылки пропускает
-намеренно: «an app artifact needs only files». Опубликованный как есть, чарт
-приехал бы в кластер без библиотеки и без перехватчика.
+## A trap along the way: symlinks do not reach the cluster
 
-Поэтому публикуется копия с разыменованными ссылками (`tools/stage.sh`), с
-явными источником и ревизией для `cozypkg push`, а `check.py` собирает ту же
-копию тем же flux и требует в артефакте каждый файл, видимый в дереве;
-отрицательный контроль — артефакт прямо из дерева теряет библиотеку.
+The library is included via a symlink, and so is the copy of the hook
+sidecar. A `flux build artifact` showed that the `oberon-vm/charts` and
+`oberon-vm/files` directories in the artifact are **empty**: flux does not
+package symlinks. And the in-cluster unpacker of the attached directory
+(`internal/operator/tapmaterializer_artifact.go`) skips symlinks on purpose:
+"an app artifact needs only files". Published as is, the chart would have
+arrived in the cluster without the library and without the hook sidecar.
 
-## Цена
+So what gets published is a copy with dereferenced symlinks
+(`tools/stage.sh`), with an explicit source and revision for `cozypkg push`,
+and `check.py` builds the same copy with the same flux and requires every file
+visible in the tree to be present in the artifact; the negative control is
+that an artifact built straight from the tree loses the library.
 
-Машины, поставленные v0.1.10 и раньше, перед обновлением надо поставить
-заново: их том создан хуком и в релиз не входит, обновление падает на нём
-(«already exists»). Сейчас такая машина одна — `wirth-chk` в песочнице.
+## Cost
 
-## Что проверить вживую
+Machines installed by v0.1.10 and earlier must be reinstalled before
+upgrading: their volume was created by a hook and is not part of the release,
+so the upgrade fails on it ("already exists"). Right now there is one such
+machine: `wirth-chk` in the sandbox.
 
-Выпуск с этими изменениями, затем в `tenant-sandbox`: удалить `wirth-chk`,
-поставить заново; убедиться, что это `VirtualMachine`, что в аргументах QEMU
-есть `-machine chk=on` и VNC, что экран через консоль тенанта — эталон
-18607; перезапустить из-под тенанта (`virtctl restart`) и убедиться, что
-файлы на диске пережили перезапуск; удалить — том уходит вместе с релизом.
+## What to check live
 
-## Дополнение: живой тенант нашёл взаимную блокировку
+A release with these changes, then in `tenant-sandbox`: delete `wirth-chk`
+and install it again; confirm that it is a `VirtualMachine`, that the QEMU
+arguments contain `-machine chk=on` and VNC, and that the screen via the
+tenant console matches the reference 18607; restart it as the tenant
+(`virtctl restart`) and confirm that the files on the disk survived the
+restart; delete it, and the volume goes away together with the release.
 
-Первая установка v0.1.12 в `tenant-sandbox` не поднялась. Машина
-перезапускалась, перехватчик честно отказывал — «файлы машины ещё не на
-томе», — а задача наполнения так и не появилась.
+## Addendum: the live tenant found a deadlock
 
-Задача наполнения была хуком `post-install,post-upgrade`. Cozystack ставит
-релиз с ожиданием готовности, а хуки `post-install` Helm запускает только
-после того, как ресурсы готовы. Машина не готова, пока том пуст; том пуст,
-пока не запустится хук; хук ждёт готовности машины. Установка стоит до
-таймаута релиза.
+The first install of v0.1.12 in `tenant-sandbox` did not come up. The machine
+kept restarting, the hook sidecar honestly refused ("machine files are not on
+the volume yet"), and the population job never appeared.
 
-Ни одна статическая проверка этого не видела: чарт рисовался, схема сходилась,
-прогон наполнения на столе был верен. Не было только настоящего Helm с
-ожиданием готовности.
+The population job was a `post-install,post-upgrade` hook. Cozystack installs
+a release waiting for readiness, and Helm runs `post-install` hooks only after
+the resources are ready. The machine is not ready while the volume is empty;
+the volume is empty until the hook runs; the hook waits for the machine to be
+ready. The install hangs until the release timeout.
 
-Исправлено: задача наполнения — обычный ресурс релиза. Том, задача и машина
-создаются вместе; машина пробует стартовать, пока файлов нет, и поднимается,
-когда задача закончит. Шаблон Job неизменяем, поэтому в имени задачи — хэш
-образа и паспорта: новый выпуск даёт новую задачу, прежнюю Helm удаляет.
-`check.py` проверяет, что наполнение у машины не хук, с отрицательным
-контролем; на прежней библиотеке проверка краснеет ровно на этом.
+No static check saw this: the chart rendered, the schema validated, and a
+population run on the bench was correct. The only thing missing was a real
+Helm waiting for readiness.
 
-## Дополнение: сквозная проверка до тега нашла ещё две
+Fixed: the population job is an ordinary release resource. The volume, the
+job and the machine are created together; the machine keeps trying to start
+while the files are missing and comes up once the job finishes. A Job
+template is immutable, so the job name contains a hash of the image and the
+passport: a new release yields a new job, and Helm deletes the previous one.
+`check.py` verifies that the machine's population is not a hook, with a
+negative control; on the previous library the check turns red on exactly
+this.
 
-С этого места выпуск идёт по новому порядку: `dev` из ветки, песочница на
-`dev`, `tools/sandbox-e2e.sh`, и только потом тег. Первые два прогона
-красные, третий — зелёный целиком.
+## Addendum: an end-to-end check before tagging found two more
 
-* **Жёсткая привязка задачи наполнения к узлу машины.** Без файлов машина
-  падает сразу, её под живёт секунды между паузами KubeVirt, задаче не к чему
-  привязаться; срок истекал, а упавшую задачу никто не повторяет. Привязка —
-  мягкая, срок и число попыток больше, имя задачи — хэш всей её
-  спецификации.
-* **Разные группы тома.** virt-launcher монтирует том с `fsGroup 107`
-  (qemu), задача — с 10001; при одновременном монтировании задача
-  проигрывала и падала с `Permission denied`. Группа задачи — 107,
-  `check.py` её закрепляет.
+From this point on, a release follows a new order: `dev` from the branch, the
+sandbox on `dev`, `tools/sandbox-e2e.sh`, and only then the tag. The first two
+runs were red, the third was fully green.
 
-Попутно проверено обновление поверх сломанной установки: машины, застрявшие
-на обеих ошибках, поднялись сами после обновления каталога — новая задача
-наполнения с новым именем заменила упавшую.
+* **Hard affinity of the population job to the machine's node.** Without
+  files, the machine fails immediately, its pod lives for seconds between
+  KubeVirt backoffs, and the job has nothing to bind to; the deadline
+  expired, and nobody retries a failed job. The affinity is now soft, the
+  deadline and the retry count are larger, and the job name is a hash of its
+  whole spec.
+* **Different volume groups.** virt-launcher mounts the volume with
+  `fsGroup 107` (qemu), the job with 10001; when both mounted at the same
+  time, the job lost and failed with `Permission denied`. The job's group is
+  now 107, and `check.py` pins it.
+
+Along the way, an upgrade on top of a broken install was checked: machines
+stuck on either error came up by themselves after the catalog upgrade, as the
+new population job with a new name replaced the failed one.

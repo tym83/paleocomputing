@@ -1,133 +1,135 @@
-# Дизайн: Oberon-машина в браузере + эксперимент с расширением ISA
+[Русская версия](DESIGN-v0.1-superseded.ru.md)
 
-Версия 0.1 (черновик на ревью). 2026-09-21.
+# Design: an Oberon machine in the browser + an ISA extension experiment
+
+Version 0.1 (draft for review). 2026-09-21.
 
 ---
 
-## 1. Цель и критерии успеха
+## 1. Goal and success criteria
 
-Выпуск №1 серии. Три утверждения, которые должны быть доказаны **измерением**, а не
-риторикой:
+Episode 1 of the series. Three claims that must be proven by **measurement**, not by
+rhetoric:
 
-| # | Утверждение | Как проверяется | Критерий |
+| # | Claim | How it is checked | Criterion |
 |---|---|---|---|
-| **У1** | Весь стек — процессор, компилятор, ОС — работает в браузере | страница грузится, Oberon загружается, редактор реагирует | до интерактива ≤ 10 с на типичном ноутбуке |
-| **У2** | Добавление инструкции в процессор ускоряет прикладную задачу, и это делается за минуту | правка RTL → пересборка → замер | ускорение инференса ≥ 2× при неизменном выводе |
-| **У3** | Аппаратная проверка границ стоит X тактов и Y вентилей | дифференциальный замер на одинаковой нагрузке | число опубликовано с доверительным интервалом и воспроизводимо командой |
+| **C1** | The whole stack (processor, compiler, OS) runs in the browser | the page loads, Oberon boots, the editor responds | ≤ 10 s to interactive on a typical laptop |
+| **C2** | Adding an instruction to the processor speeds up an application task, and this takes a minute | RTL edit → rebuild → measurement | inference speedup ≥ 2× with unchanged output |
+| **C3** | Hardware bounds checking costs X cycles and Y gates | a differential measurement on the same workload | the number is published with a confidence interval and reproducible by a command |
 
-**Не-цели (явно):** совместимость с настоящей платой Вирта; поддержка сети; производительность
-ради производительности; полнота ISA-расширений.
+**Non-goals (explicit):** compatibility with Wirth's real board; network support; performance
+for the sake of performance; completeness of ISA extensions.
 
 ---
 
-## 2. Слои системы
+## 2. System layers
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│ Страница выпуска (HTML/JS)                              │
-│  канва 1024×768×1bpp · клавиатура · 3-кнопочная мышь    │
-│  переключатель модели · кнопки замеров · вывод счётчиков│
+│ Episode page (HTML/JS)                                  │
+│  canvas 1024×768×1bpp · keyboard · 3-button mouse       │
+│  model switch · measurement buttons · counter output    │
 └───────────────┬─────────────────────┬───────────────────┘
                 │                     │
      ┌──────────▼─────────┐ ┌─────────▼──────────┐
-     │ БЫСТРАЯ МОДЕЛЬ     │ │ ЧЕСТНАЯ МОДЕЛЬ     │
-     │ ISS на C → WASM    │ │ RTL → Verilator →  │
-     │ (для интерактива)  │ │ C++ → WASM         │
+     │ FAST MODEL         │ │ HONEST MODEL       │
+     │ ISS in C → WASM    │ │ RTL → Verilator →  │
+     │ (for interaction)  │ │ C++ → WASM         │
      └──────────┬─────────┘ └─────────┬──────────┘
                 └──────────┬──────────┘
                     ┌──────▼──────┐
-                    │  SoC-слой   │ RISC5 + RAM + PROM + устройства
+                    │  SoC layer  │ RISC5 + RAM + PROM + devices
                     └──────┬──────┘
                     ┌──────▼──────┐
-                    │ Oberon 2013 │ ОС + компилятор + модуль инференса
+                    │ Oberon 2013 │ OS + compiler + inference module
                     └─────────────┘
 ```
 
-Обе модели реализуют **один и тот же контракт SoC** (§4) и проверяются друг против друга (§8).
+Both models implement **the same SoC contract** (§4) and are checked against each other (§8).
 
 ---
 
-## 3. Виртуальный «железный» слой: ядро RISC5
+## 3. The virtual "hardware" layer: the RISC5 core
 
-Из спецификации (сверено с `RISC.v`):
+From the specification (checked against `RISC.v`):
 
-- **Регистры:** R0–R15. Программные соглашения Oberon: R12=MT (таблица модулей), R13=SB (глобальные модуля), R14=SP, R15=LNK. В железе особый только R15.
-- **Флаги:** N, C, V, Z. N и Z ставятся при **любой** записи в регистр (включая загрузку); C и V — только на целых ADD/SUB.
-- **H** — старшие 32 бита MUL / остаток DIV. **Не сохраняется при прерывании** → MUL/DIV в обработчике небезопасны.
-- **SPC** — сохранение NZCV и PC при IRQ.
+- **Registers:** R0–R15. Oberon software conventions: R12=MT (module table), R13=SB (module globals), R14=SP, R15=LNK. Only R15 is special in hardware.
+- **Flags:** N, C, V, Z. N and Z are set on **any** register write (including a load); C and V only on integer ADD/SUB.
+- **H**: the upper 32 bits of MUL / the remainder of DIV. **Not saved on an interrupt** → MUL/DIV in a handler are unsafe.
+- **SPC**: saves NZCV and PC on IRQ.
 
-### Форматы
+### Formats
 
-| Формат | Биты 31:28 | Смысл |
+| Format | Bits 31:28 | Meaning |
 |---|---|---|
-| F0 | `00u0` | регистр-регистр, n=Rc |
-| F1 | `01uv` | регистр-непосредственное, v=1 → знаковое расширение |
-| F2 | `10uv` | u=0 load / u=1 store; v=0 слово / v=1 байт; смещение 20 бит |
-| F3 | `110v` / `111v` | ветвление: регистр / смещение; v=1 → со ссылкой в R15 |
+| F0 | `00u0` | register-register, n=Rc |
+| F1 | `01uv` | register-immediate, v=1 → sign extension |
+| F2 | `10uv` | u=0 load / u=1 store; v=0 word / v=1 byte; 20-bit offset |
+| F3 | `110v` / `111v` | branch: register / offset; v=1 → with link in R15 |
 
-Операции F0/F1 (op в битах 19:16): MOV, LSL, ASR, ROR, AND, ANN, IOR, XOR, ADD, SUB,
+F0/F1 operations (op in bits 19:16): MOV, LSL, ASR, ROR, AND, ANN, IOR, XOR, ADD, SUB,
 MUL, DIV, **FAD, FSB, FML, FDV**.
 
-При u=1 модифицируются: MOV→(H | NZCV | MHI), ADD→ADC, SUB→SBC, MUL→UMUL.
+With u=1 these are modified: MOV→(H | NZCV | MHI), ADD→ADC, SUB→SBC, MUL→UMUL.
 
-### 🎯 Свободное пространство кодирования
+### 🎯 Free encoding space
 
-**В F0 бит 28 всегда 0** (`00u0`). Значит комбинации `0001` и `0011` в битах 31:28
-не заняты ничем → **32 свободных слота трёхоперандных инструкций**. Плюс в F0 свободны
-12 бит середины слова и нибл перед полем `c`.
+**In F0 bit 28 is always 0** (`00u0`). So the combinations `0001` and `0011` in bits 31:28
+are not taken by anything → **32 free slots for three-operand instructions**. In addition, F0 has
+12 free bits in the middle of the word and the nibble before the `c` field.
 
-Это и есть площадка для расширений. Отдельно фиксируем: **в базовом RISC5 нет слитного
-умножения-с-накоплением ни в целой, ни в плавающей арифметике** — то есть цель эксперимента
-не занята.
-
----
-
-## 4. Контракт SoC
-
-Обе модели обязаны вести себя одинаково по этому контракту.
-
-### Память
-- RAM: конфигурируемая, по умолчанию **1 МБ** (как у Вирта). Параметр `MEM_WORDS`.
-- Адресация байтовая и словная; слово 32 бита, little-endian.
-- **PROM/загрузчик** — отдельная область, исполняется с момента сброса.
-- Кадровый буфер — область в основной RAM, 1024×768×1 бит = 96 КБ.
-
-### Карта адресов
-⚠ **TO VERIFY по `RISC.v` и книге** — значения ниже реконструированы и должны быть сверены
-до начала кодирования:
-
-| Область | Назначение |
-|---|---|
-| `0x00000000` | вектор сброса / начало памяти |
-| `0x00000004` | **вектор прерывания** (подтверждено спецификацией) |
-| `…` | кадровый буфер (в Oberon 2013 — `DisplayStart`) |
-| верхние 64 байта адресного пространства | регистры устройств |
-| область PROM | загрузчик |
-
-Регистры устройств (реконструкция, **TO VERIFY**): счётчик миллисекунд, светодиоды/переключатели,
-данные и статус RS-232, данные и управление SPI, статус мыши/клавиатуры, данные клавиатуры.
-
-### Устройства (минимальный набор для У1)
-| Устройство | Требование |
-|---|---|
-| **Таймер** | миллисекундный счётчик, свободно бегущий |
-| **Дисплей** | 1024×768, 1 бит/пиксель, чтение кадрового буфера из RAM |
-| **Клавиатура** | поток скан-кодов PS/2-совместимый |
-| **Мышь** | X, Y, **три кнопки** (критично: вся оболочка на межкнопочных щелчках) |
-| **SPI/SD** | блочное чтение/запись образа диска |
-| **RS-232** | опционально, для первичной загрузки и отладочного вывода |
-
-### Тактирование и сброс
-- Один тактовый домен в ядре. Всё внешнее — через синхронизаторы (задел под ПЛИС, см. `03-language-machines.md`).
-- **Все регистры сбрасываются явно.** В ПЛИС это избыточно, в кремнии обязательно.
-- **Память не предполагается предзаполненной.** Загрузчик приходит из PROM, а не из битстрима.
+This is the playground for extensions. We note separately: **base RISC5 has no fused
+multiply-accumulate in either integer or floating-point arithmetic**, so the target of the experiment
+is not taken.
 
 ---
 
-## 5. Расширение ISA — эксперимент А (ускорение)
+## 4. The SoC contract
 
-### Инструкция FMAC
-Слитное умножение-с-накоплением в плавающей арифметике.
+Both models must behave identically according to this contract.
+
+### Memory
+- RAM: configurable, **1 MB** by default (as in Wirth's). Parameter `MEM_WORDS`.
+- Byte and word addressing; a 32-bit word, little-endian.
+- **PROM/loader**: a separate area, executed from reset.
+- The framebuffer: an area in main RAM, 1024×768×1 bit = 96 KB.
+
+### Address map
+⚠ **TO VERIFY against `RISC.v` and the book**: the values below are reconstructed and must be checked
+before coding starts:
+
+| Area | Purpose |
+|---|---|
+| `0x00000000` | reset vector / start of memory |
+| `0x00000004` | **interrupt vector** (confirmed by the specification) |
+| `…` | framebuffer (in Oberon 2013, `DisplayStart`) |
+| the top 64 bytes of the address space | device registers |
+| PROM area | loader |
+
+Device registers (reconstruction, **TO VERIFY**): millisecond counter, LEDs/switches,
+RS-232 data and status, SPI data and control, mouse/keyboard status, keyboard data.
+
+### Devices (the minimal set for C1)
+| Device | Requirement |
+|---|---|
+| **Timer** | a free-running millisecond counter |
+| **Display** | 1024×768, 1 bit/pixel, framebuffer read from RAM |
+| **Keyboard** | a PS/2-compatible stream of scan codes |
+| **Mouse** | X, Y, **three buttons** (critical: the whole shell runs on inter-button clicks) |
+| **SPI/SD** | block read/write of the disk image |
+| **RS-232** | optional, for the initial load and debug output |
+
+### Clocking and reset
+- One clock domain in the core. Everything external goes through synchronizers (groundwork for the FPGA, see `03-language-machines.md`).
+- **All registers are reset explicitly.** Redundant on an FPGA, mandatory in silicon.
+- **Memory is not assumed to be preloaded.** The loader comes from the PROM, not from the bitstream.
+
+---
+
+## 5. ISA extension: experiment A (speedup)
+
+### The FMAC instruction
+A fused floating-point multiply-accumulate.
 
 ```
        4      4       4       4                     4       4
@@ -137,121 +139,121 @@ MUL, DIV, **FAD, FSB, FML, FDV**.
    FMAC a, b, c    Ra = Ra + Rb * Rc     (op = 0000)
 ```
 
-Занимает свободное пространство `0001` (F0 с битом 28=1), не конфликтует ни с чем.
+It occupies the free space `0001` (F0 with bit 28=1) and conflicts with nothing.
 
-**Почему должно дать выигрыш.** Внутренний цикл скалярного произведения сейчас:
-`LD` (вес) · `LD` (активация) · `FML` · `FAD` + инкременты указателей + управление циклом.
-FMAC убирает одну инструкцию из четырёх арифметико-загрузочных и, главное, устраняет
-промежуточную запись в регистр с обновлением флагов.
+**Why it should give a gain.** The inner dot-product loop is currently:
+`LD` (weight) · `LD` (activation) · `FML` · `FAD` + pointer increments + loop control.
+FMAC removes one instruction of the four arithmetic/load ones and, more importantly, eliminates
+the intermediate register write with a flag update.
 
-**Ожидаемое ускорение: 1.3–2×.** Если понадобится больше — вторая ступень: `FMACI` с
-пост-инкрементом адреса, убирающая ещё и арифметику указателей.
-⚠ Оценку 2× из `09-episode-01-oberon.md` считать **гипотезой, подлежащей измерению**, а не
-обещанием. Если получится 1.4× — это и есть честный результат выпуска.
+**Expected speedup: 1.3–2×.** If more is needed, a second stage: `FMACI` with
+address post-increment, which also removes the pointer arithmetic.
+⚠ Treat the 2× estimate from `09-episode-01-oberon.md` as **a hypothesis to be measured**, not
+a promise. If we get 1.4×, that is the honest result of the episode.
 
-### Что меняется в компиляторе
-Oberon-компилятор целиком на Обероне и самораскручивается. Минимальное вмешательство:
-1. Новая встроенная процедура (SYSTEM-подобная), которую кодогенератор разворачивает в FMAC.
-2. **Без** изменения парсера и системы типов.
+### What changes in the compiler
+The Oberon compiler is written entirely in Oberon and bootstraps itself. The minimal intervention:
+1. A new built-in procedure (SYSTEM-like) that the code generator expands into FMAC.
+2. **No** changes to the parser or the type system.
 
-Это сознательно минимальный путь: автоматическое распознавание идиомы `a := a + b*c` в
-кодогенераторе — приятно, но не нужно для У2 и добавляет риск.
+This is a deliberately minimal path: automatic recognition of the idiom `a := a + b*c` in the
+code generator would be nice, but it is not needed for C2 and adds risk.
 
-⚠ **Самораскрутка — критический путь.** Изменённый компилятор должен собрать сам себя
-внутри системы. Порядок: собрать новый компилятор старым → пересобрать новым себя →
-сверить побайтово (fixpoint). См. тест T-BOOT-3.
+⚠ **Bootstrapping is the critical path.** The modified compiler must build itself
+inside the system. Order: build the new compiler with the old one → rebuild itself with the new one →
+compare byte for byte (fixpoint). See test T-BOOT-3.
 
 ---
 
-## 6. Расширение ISA — эксперимент Б (цена безопасности памяти)
+## 6. ISA extension: experiment B (the cost of memory safety)
 
-Главный исследовательский результат серии. Урок Burroughs, применённый к RISC5.
+The main research result of the series. The Burroughs lesson applied to RISC5.
 
-### Что добавляем
-Аппаратную проверку границ при индексации. Два варианта на выбор (решить на ревью):
+### What we add
+Hardware bounds checking on indexing. Two variants to choose from (to be decided at review):
 
-**Вариант Б1 — «дешёвый»: инструкция проверки.**
+**Variant B1, "cheap": a check instruction.**
 ```
-   CHK a, b, c     trap если Ra ≥ Rc (беззнаково), иначе Ra = Ra
+   CHK a, b, c     trap if Ra ≥ Rc (unsigned), otherwise Ra = Ra
 ```
-Компилятор вставляет её перед каждой индексацией. Меряем: рост числа тактов и рост кода.
+The compiler inserts it before every indexing. We measure: the growth in cycles and in code.
 
-**Вариант Б2 — «честный»: дескриптор в регистре.**
-Отдельный формат загрузки/сохранения с проверкой: база и длина в паре регистров,
-проверка границ в самой операции доступа, ловушка при выходе.
+**Variant B2, "honest": a descriptor in a register.**
+A separate load/store format with checking: base and length in a register pair,
+the bounds check in the access operation itself, a trap on violation.
 
-Б2 ближе к Burroughs и к CHERI, но требует изменений в модели памяти и в компиляторе.
-**Рекомендация: начать с Б1** — он даёт публикуемое число малой кровью; Б2 держать как
-следующий выпуск.
+B2 is closer to Burroughs and to CHERI, but requires changes to the memory model and the compiler.
+**Recommendation: start with B1**: it gives a publishable number at low cost; keep B2 as
+the next episode.
 
-### Что меряем
-| Метрика | Источник | Без железа? |
+### What we measure
+| Metric | Source | Without hardware? |
 |---|---|---|
-| Такты | счётчик циклов Verilator | ✅ точнее настоящей платы (нет шума и прерываний) |
-| Площадь (ячейки/LUT) | отчёт синтеза `yosys` | ✅ |
-| Макс. частота | `nextpnr` под выбранную ПЛИС | ✅ плата не нужна |
-| Оценка под кремний | открытый маршрут синтеза | ✅ ничего не отправляя |
+| Cycles | the Verilator cycle counter | ✅ more precise than a real board (no noise and no interrupts) |
+| Area (cells/LUT) | the `yosys` synthesis report | ✅ |
+| Max frequency | `nextpnr` for the chosen FPGA | ✅ no board needed |
+| Silicon estimate | an open synthesis flow | ✅ without sending anything |
 
-**Нагрузка для замера — две, обязательно обе:**
-1. Инференс (счётный код, индексация плотная)
-2. **Пересборка системы самой собой** (реальная смешанная нагрузка, а не микробенчмарк)
+**Workloads for the measurement: two, and both are mandatory:**
+1. Inference (compute code, dense indexing)
+2. **The system rebuilding itself** (a real mixed workload, not a microbenchmark)
 
-Замер только на микробенчмарке будет справедливо разнесён рецензентами.
+A measurement on a microbenchmark only would be rightly torn apart by reviewers.
 
 ---
 
-## 7. Программная сторона
+## 7. The software side
 
-| Компонент | Источник | Работа |
+| Component | Source | Work |
 |---|---|---|
-| Образ Oberon 2013 | дистрибутив Project Oberon | сборка образа диска |
-| Компилятор | в составе образа | правка кодогенератора (§5) |
-| Модуль инференса | порт эталонной реализации (~700 строк C) | перенос на Оберон |
-| Веса модели | внешний файл | квантование, укладка в образ или подача через SPI |
+| Oberon 2013 image | the Project Oberon distribution | building the disk image |
+| Compiler | part of the image | editing the code generator (§5) |
+| Inference module | a port of the reference implementation (~700 lines of C) | porting to Oberon |
+| Model weights | an external file | quantization, placing them in the image or feeding them via SPI |
 
-**Бюджет памяти (проверить расчётом до начала работ):**
-- RAM всего: 1 МБ
-- кадровый буфер: 96 КБ
-- ОС + компилятор + модули: **TO VERIFY**
-- остаётся под веса и активации: **TO VERIFY**
+**Memory budget (check by calculation before starting work):**
+- total RAM: 1 MB
+- framebuffer: 96 KB
+- OS + compiler + modules: **TO VERIFY**
+- left for weights and activations: **TO VERIFY**
 
-⚠ Если не влезает — в браузере память можно поднять (`MEM_WORDS`), но тогда У1 и У3 меряются
-на нестандартной конфигурации, и это надо честно писать в статье. Альтернатива: стримить
-веса через SPI слоями.
+⚠ If it does not fit, in the browser the memory can be increased (`MEM_WORDS`), but then C1 and C3 are measured
+on a non-standard configuration, and this must be stated honestly in the article. Alternative: stream
+the weights layer by layer via SPI.
 
 ---
 
-## 8. Как проверяем работоспособность (тестовая стратегия)
+## 8. How we verify that things work (test strategy)
 
-### T0. Дифференциальное тестирование — главный инструмент
+### T0. Differential testing: the main tool
 
-У нас есть **известно-хорошая эталонная модель**: `pdewacht/oberon-risc-emu` (~1500 строк C),
-которая грузит настоящую систему. Значит золотой эталон не надо писать — он есть.
+We have a **known-good reference model**: `pdewacht/oberon-risc-emu` (~1500 lines of C),
+which boots the real system. So the golden reference does not need to be written; it exists.
 
 ```
-        поток инструкций
+        instruction stream
               │
       ┌───────┴───────┐
       ▼               ▼
-  эталонный ISS    наш RTL (Verilator)
+  reference ISS    our RTL (Verilator)
       │               │
-      └───► сравнение состояния после КАЖДОЙ инструкции ◄───┘
-            PC, R0..R15, H, N/C/V/Z, все записи в память
+      └───► compare the state after EVERY instruction ◄───┘
+            PC, R0..R15, H, N/C/V/Z, all memory writes
 ```
 
-Первое расхождение → дамп контекста (PC, слово инструкции, оба состояния) и останов.
+The first divergence → a context dump (PC, instruction word, both states) and a stop.
 
-Это стандартная практика для процессорных проектов и она снимает основную массу ошибок
-до того, как они станут загадочными зависаниями в ОС.
+This is standard practice for processor projects, and it removes the bulk of the bugs
+before they become mysterious hangs in the OS.
 
-**Код теста (набросок):**
+**Test code (sketch):**
 ```c
 // tb/diff_main.c
 for (;;) {
     uint32_t pc = ref_pc(ref);
     uint32_t insn = ref_read_word(ref, pc);
     ref_step(ref);
-    rtl_step(dut);                 // один такт retire
+    rtl_step(dut);                 // one retire cycle
     if (!states_equal(ref, dut)) {
         dump_mismatch(pc, insn, ref, dut);
         return 1;
@@ -260,85 +262,85 @@ for (;;) {
 }
 ```
 
-### T1. Направленные тесты на ISA
-Ассемблерные тесты по одному на каждую инструкцию и каждый значимый случай:
+### T1. Directed ISA tests
+Assembly tests, one for each instruction and each significant case:
 
-- **T1.1 арифметика**: ADD/SUB с переполнением, ADC/SBC с переносом, MUL/UMUL (H!), DIV (H=остаток), деление на ноль
-- **T1.2 флаги**: N и Z ставятся при **любой** записи в регистр, включая `LD` — легко забыть в RTL
-- **T1.3 сдвиги**: ASR со знаковым расширением, ROR, LSL на 0 и на 31
-- **T1.4 плавающая**: FAD/FSB/FML/FDV, включая нули, бесконечности, денормалы, NaN, округление
-- **T1.5 память**: LD/ST слово и байт, отрицательные смещения, границы 20-битного поля
-- **T1.6 ветвления**: все 16 условий × (регистр/смещение) × (со ссылкой/без), обнуление двух младших бит адреса
-- **T1.7 прерывания**: вход по `0x00000004`, сохранение/восстановление флагов и PC, STI/CLI, **и явная проверка что H НЕ сохраняется** (задокументированное поведение)
-- **T1.8 MOV-варианты**: `MOV a,H`, `MOV a,NZCV` (должно вернуть INFO в младших битах), `MHI`
-- **T1.9 новое**: FMAC — точность против последовательности FML+FAD (могут отличаться округлением!), все специальные значения
-- **T1.10 новое**: CHK — срабатывание на границе, беззнаковое сравнение, поведение при Rc=0
+- **T1.1 arithmetic**: ADD/SUB with overflow, ADC/SBC with carry, MUL/UMUL (H!), DIV (H=remainder), division by zero
+- **T1.2 flags**: N and Z are set on **any** register write, including `LD`; easy to forget in RTL
+- **T1.3 shifts**: ASR with sign extension, ROR, LSL by 0 and by 31
+- **T1.4 floating point**: FAD/FSB/FML/FDV, including zeros, infinities, denormals, NaN, rounding
+- **T1.5 memory**: LD/ST word and byte, negative offsets, the bounds of the 20-bit field
+- **T1.6 branches**: all 16 conditions × (register/offset) × (with link/without), clearing the two low address bits
+- **T1.7 interrupts**: entry at `0x00000004`, saving/restoring the flags and PC, STI/CLI, **and an explicit check that H is NOT saved** (documented behavior)
+- **T1.8 MOV variants**: `MOV a,H`, `MOV a,NZCV` (should return INFO in the low bits), `MHI`
+- **T1.9 new**: FMAC: precision against the FML+FAD sequence (they may differ in rounding!), all special values
+- **T1.10 new**: CHK: firing at the boundary, unsigned comparison, behavior with Rc=0
 
-### T2. Рандомизированное тестирование
-Генератор случайных последовательностей инструкций (с корректными адресами), прогон через T0.
-Отдельный режим «только FP» с направленной генерацией специальных значений.
+### T2. Randomized testing
+A generator of random instruction sequences (with valid addresses), run through T0.
+A separate "FP only" mode with directed generation of special values.
 
-### T3. Системные тесты
-- **T-BOOT-1**: PROM-загрузчик стартует, читает SD, передаёт управление
-- **T-BOOT-2**: Oberon доходит до готового экрана, реагирует на клавиатуру и мышь
-- **T-BOOT-3 (критический)**: **самораскрутка** — компилятор собирает сам себя, результат сверяется побайтово с предыдущим (достижение неподвижной точки)
-- **T-BOOT-4**: система пересобирает себя целиком и продолжает работать
-- **T-DISP**: контрольная сумма кадрового буфера против эталонного снимка
+### T3. System tests
+- **T-BOOT-1**: the PROM loader starts, reads the SD, transfers control
+- **T-BOOT-2**: Oberon reaches a ready screen, responds to the keyboard and mouse
+- **T-BOOT-3 (critical)**: **bootstrapping**: the compiler builds itself, the result is compared byte for byte with the previous one (reaching a fixed point)
+- **T-BOOT-4**: the system rebuilds itself completely and keeps running
+- **T-DISP**: the framebuffer checksum against a reference snapshot
 
-### T4. Регрессия производительности
-Каждая сборка пишет в файл: такты на инференс одного токена, такты на полную пересборку
-системы, число ячеек из отчёта синтеза, Fmax. График ведётся с первого дня — иначе У2 и У3
-не на чем будет строить.
+### T4. Performance regression
+Every build writes to a file: cycles per inference of one token, cycles per full system
+rebuild, the number of cells from the synthesis report, Fmax. The chart is kept from day one, otherwise C2 and C3
+will have nothing to stand on.
 
-### T5. Проверка корректности вывода
-⚠ **Обязательно:** после включения FMAC вывод модели должен остаться **функционально тем же**.
-Если FMAC округляет иначе, чем FML+FAD, текст может разойтись. Тест: сравнение
-последовательности токенов при фиксированном зерне на эталонной и ускоренной сборках.
-Если расходится — документировать и объяснить, а не прятать.
+### T5. Output correctness check
+⚠ **Mandatory:** after FMAC is enabled, the model output must stay **functionally the same**.
+If FMAC rounds differently from FML+FAD, the text may diverge. Test: compare
+the token sequence with a fixed seed on the reference and the accelerated builds.
+If it diverges, document and explain it rather than hide it.
 
 ---
 
-## 9. Что нужно уточнить до начала работ
+## 9. What needs to be clarified before work starts
 
-| # | Вопрос | Почему блокирует |
+| # | Question | Why it blocks |
 |---|---|---|
-| В1 | Точная карта адресов устройств из `RISC.v` | без неё не написать SoC |
-| В2 | Адрес и устройство PROM/загрузчика | без него нет старта |
-| В3 | Формат и разрядность плавающей арифметики в `RISC.v` (округление!) | от этого зависит FMAC и T5 |
-| В4 | Реальный бюджет памяти: сколько остаётся под модель | от этого зависит, влезает ли демо в 1 МБ |
-| В5 | Структура кодогенератора Oberon-компилятора | оценка работы по §5 |
-| В6 | Скорость Verilator-модели в WASM: тактов/с | от неё зависит, жив ли интерактив на честной модели |
+| Q1 | The exact device address map from `RISC.v` | without it the SoC cannot be written |
+| Q2 | The address and structure of the PROM/loader | without it there is no start |
+| Q3 | The format and width of floating-point arithmetic in `RISC.v` (rounding!) | FMAC and T5 depend on it |
+| Q4 | The real memory budget: how much is left for the model | it determines whether the demo fits in 1 MB |
+| Q5 | The structure of the Oberon compiler's code generator | the estimate of work for §5 |
+| Q6 | The speed of the Verilator model in WASM: cycles/s | it determines whether interaction is alive on the honest model |
 
-**В6 — самый опасный.** Если честная модель даёт, скажем, 100 тыс. тактов/с, то 25 МГц
-превращаются в замедление в 250 раз, и «правка ISA вживую» перестаёт быть зрелищной.
-Проверять **первым делом**, до всего остального.
+**Q6 is the most dangerous.** If the honest model gives, say, 100 thousand cycles/s, then 25 MHz
+turns into a 250× slowdown, and "live ISA editing" stops being spectacular.
+Check it **first thing**, before everything else.
 
 ---
 
-## 10. Этапы
+## 10. Stages
 
-| Этап | Содержание | Выход |
+| Stage | Content | Output |
 |---|---|---|
-| **0. Разведка** | В1–В6, особенно В6 | решение: жив ли план |
-| **1. Каркас** | RTL-ядро + эталонный ISS + дифференциальный стенд (T0, T1) | ядро проходит все направленные тесты |
-| **2. SoC** | память, устройства, PROM | T-BOOT-1 |
-| **3. Система** | образ Oberon, загрузка, ввод/вывод | T-BOOT-2, T-BOOT-3 |
-| **4. Браузер** | обе модели в WASM, страница, ввод | У1 |
-| **5. Нагрузка** | порт инференса на Оберон | генерация текста работает |
-| **6. Эксперимент А** | FMAC: RTL + компилятор + замеры | У2 |
-| **7. Эксперимент Б** | CHK: RTL + компилятор + замеры на двух нагрузках | У3 |
-| **8. Выпуск** | текст, страница, репозиторий | публикация |
+| **0. Reconnaissance** | Q1–Q6, especially Q6 | a decision: is the plan alive |
+| **1. Skeleton** | RTL core + reference ISS + differential bench (T0, T1) | the core passes all directed tests |
+| **2. SoC** | memory, devices, PROM | T-BOOT-1 |
+| **3. System** | the Oberon image, boot, input/output | T-BOOT-2, T-BOOT-3 |
+| **4. Browser** | both models in WASM, the page, input | C1 |
+| **5. Workload** | port of inference to Oberon | text generation works |
+| **6. Experiment A** | FMAC: RTL + compiler + measurements | C2 |
+| **7. Experiment B** | CHK: RTL + compiler + measurements on two workloads | C3 |
+| **8. Release** | text, page, repository | publication |
 
 ---
 
-## 11. Риски
+## 11. Risks
 
-| Риск | Вероятность | Ущерб | Митигация |
+| Risk | Likelihood | Impact | Mitigation |
 |---|---|---|---|
-| Verilator в WASM слишком медленный | средняя | высокий | быстрая модель берёт интерактив; RTL остаётся витриной механизма; проверить в этапе 0 |
-| Правка Verilog в браузере невозможна (нужен синтез) | **высокая** | средний | предсобранный набор вариантов ISA вместо произвольной правки; эффект слабее, но живёт |
-| Модель не влезает в 1 МБ | средняя | средний | поднять память (с честной оговоркой) или стримить веса через SPI |
-| Самораскрутка компилятора не сходится | средняя | **высокий** | T-BOOT-3 ставится рано, на этапе 3, а не в конце |
-| FMAC меняет вывод из-за округления | средняя | низкий | T5; расхождение документируется как результат |
-| Ускорение окажется 1.2×, а не 2× | средняя | низкий | публикуем измеренное; при необходимости вторая ступень FMACI |
-| Расползание объёма | **высокая** | высокий | не-цели зафиксированы в §1; Б2 явно вынесен в следующий выпуск |
+| Verilator in WASM is too slow | medium | high | the fast model handles interaction; the RTL stays a showcase of the mechanism; check at stage 0 |
+| Editing Verilog in the browser is impossible (synthesis needed) | **high** | medium | a prebuilt set of ISA variants instead of arbitrary editing; the effect is weaker but it lives |
+| The model does not fit in 1 MB | medium | medium | increase memory (with an honest caveat) or stream the weights via SPI |
+| Compiler bootstrapping does not converge | medium | **high** | T-BOOT-3 is placed early, at stage 3, not at the end |
+| FMAC changes the output because of rounding | medium | low | T5; the divergence is documented as a result |
+| The speedup turns out to be 1.2×, not 2× | medium | low | we publish what was measured; if needed, the second stage FMACI |
+| Scope creep | **high** | high | non-goals are fixed in §1; B2 is explicitly moved to the next episode |

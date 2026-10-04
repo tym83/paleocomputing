@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Эталон вывода LM.Mod на хосте — до бита.
+"""Bit-exact host reference for the output of LM.Mod.
 
-Повторяет каждую операцию модуля в том же порядке, в двух арифметиках:
-  risc5 — плавающая точка Вирта через ext/refemu/risc-fp.c (сверена с RTL,
-          находка 50): округление прибавлением единицы, подпороговые в ноль;
-  ieee  — та же программа в IEEE float32 с округлением к ближайшему чётному.
-Первая обязана дать ровно тот текст, что модуль на RTL. Вторая показывает, во
-что обошлось бы «проверить по numpy»: где и насколько тексты расходятся.
+Repeats every operation of the module in the same order, in two arithmetics:
+  risc5 — Wirth's floating point via ext/refemu/risc-fp.c (checked against RTL,
+          finding 50): rounding by adding one, subnormals flushed to zero;
+  ieee  — the same program in IEEE float32 with round-to-nearest-even.
+The first must produce exactly the text the module produces on RTL. The second shows what
+"checking against numpy" would have cost: where and by how much the texts diverge.
 
-  python3 lm/ref.py N ЗЕРНО "затравка" [--ieee] [--stats]
+  python3 lm/ref.py N SEED "prompt" [--ieee] [--stats]
 """
 import ctypes, os, pathlib, struct, subprocess, sys
 
@@ -38,7 +38,7 @@ def s32(v):
 
 
 class Risc5:
-    """Числа — 32-битные слова, операции — схема Вирта."""
+    """Numbers are 32-bit words, operations follow Wirth's scheme."""
     name = "risc5"
 
     def __init__(self):
@@ -53,17 +53,17 @@ class Risc5:
     def floor(self, a): return s32(self._fad(a, FLT_BIAS, False, True))
     def flt(self, n): return self._fad(n & M32, FLT_BIAS, True, False)
     def pack(self, a, n): return (a + ((n << 23) & M32)) & M32          # ORG.Pack: LSL 23, ADD
-    # Флаги после записи в регистр: N = бит 31, Z = все нули. OV в сравнениях
-    # плавающих участвует (S = N^OV), но его ставит только целочисленный
-    # ADD/SUB; в модуле он перед сравнениями всегда 0 — это проверяется ниже.
-    def pos(self, a): return not (a & 0x80000000) and a != 0          # a > 0.0 (без FSB)
+    # Flags after a register write: N = bit 31, Z = all zeros. OV takes part in
+    # floating-point comparisons (S = N^OV), but only integer ADD/SUB sets it;
+    # in the module it is always 0 before comparisons, which is checked below.
+    def pos(self, a): return not (a & 0x80000000) and a != 0          # a > 0.0 (without FSB)
     def gt(self, a, b): d = self.sub(a, b); return not (d & 0x80000000) and d != 0
     def lt(self, a, b): return bool(self.sub(a, b) & 0x80000000)
     def le(self, a, b): d = self.sub(a, b); return bool(d & 0x80000000) or d == 0
 
 
 class Ieee:
-    """Та же программа в IEEE float32 (numpy: каждая операция округляется)."""
+    """The same program in IEEE float32 (numpy: every operation is rounded)."""
     name = "ieee"
 
     def __init__(self):
@@ -99,7 +99,7 @@ def load(A):
     return vocab, V, C, E, H, out
 
 
-# константы LM.Mod, теми же битами
+# LM.Mod constants, with the same bits
 CONST = dict(c1=0x3FB8AA3C, p0=0x44BD3BA7, p1=0x41A19D15, p2=0x3CBD304D, q0=0x458880B6,
              q1=0x43692DA1, lo=0xC1A00000, half=0x3F000000, invT=0x3FA00000, scale=0x38000000)
 
@@ -151,12 +151,12 @@ def generate(A, n, seed, prompt, stats=None):
         t = A.zero
         for i in range(V):
             z[i] = Exp(mul(sub(z[i], mx), k["invT"])); t = add(t, z[i])
-        # seed := seed*1103515245; seed := seed + 12345 — MUL флагов C/OV не трогает,
-        # ADD ставит OV при переполнении, и тогда сравнения плавающих ниже
-        # поменяли бы смысл. Проверяем, что на этом прогоне такого не бывает.
+        # seed := seed*1103515245; seed := seed + 12345 — MUL leaves C/OV alone,
+        # ADD sets OV on overflow, and then the floating-point comparisons below
+        # would change meaning. Check that this does not happen on this run.
         st = s32(st * 1103515245)
         ov = not (-(1 << 31) <= st + 12345 < (1 << 31))
-        assert not ov, "переполнение в ГПСЧ: сравнения плавающих увидели бы OV=1"
+        assert not ov, "overflow in the PRNG: floating-point comparisons would see OV=1"
         st = s32(st + 12345)
         u = (st >> 16) & 0x7FFF          # DIV 10000H = ASR 16, MOD 8000H = AND
         r = mul(mul(A.flt(u), k["scale"]), t)

@@ -1,7 +1,7 @@
 {{- /*
-  Состояние сверки: state, reason, kubevirtVersion, launcherImage, updated.
-  Ключи пишет сам цикл; Helm создаёт ConfigMap пустым и потому при обновлении
-  их не трогает, а при удалении убирает вместе с релизом.
+  Reconcile status: state, reason, kubevirtVersion, launcherImage, updated.
+  The loop writes the keys itself; Helm creates the ConfigMap empty, so it does
+  not touch them on upgrade and removes them together with the release on delete.
 
     kubectl -n cozy-kubevirt get configmap kubevirt-paleo-launcher-status -o yaml
 */}}

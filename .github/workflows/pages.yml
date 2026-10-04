@@ -1,11 +1,11 @@
-# Публикация сайта серии на GitHub Pages.
+# Publishing the series site to GitHub Pages.
 #
-# Классический источник Pages умеет отдавать только корень репозитория или
-# /docs, а сайт собирается в /_site — поэтому раскладка идёт через Actions.
+# The classic Pages source can serve only the repository root or
+# /docs, while the site is built into /_site, so deployment goes through Actions.
 #
-# Сборка — tools/build-site.sh, та же команда, что и локально (`make site` в
-# impl/). Одна команда на два места: раскладка не может разойтись с тем, что
-# видно у себя.
+# The build is tools/build-site.sh, the same command as locally (`make site` in
+# impl/). One command for both places: the deployment cannot diverge from what
+# you see locally.
 name: pages
 
 on:
@@ -19,7 +19,7 @@ permissions:
   pages: write
   id-token: write
 
-# Параллельные раскладки друг друга не отменяют: уже идущая должна дойти.
+# Parallel deployments do not cancel each other: one already running must finish.
 concurrency:
   group: pages
   cancel-in-progress: false
@@ -33,9 +33,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Скрипт же и проверяет состав и местные ссылки: раскладка с битой
-      # ссылкой не уезжает.
-      - name: Собрать сайт
+      # The same script checks the contents and the local links: a deployment with a broken
+      # link does not go out.
+      - name: Build the site
         run: ./tools/build-site.sh _site
 
       - uses: actions/configure-pages@v5

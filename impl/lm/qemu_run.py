@@ -1,22 +1,22 @@
 #!/usr/bin/env python3
-"""Та же модель в QEMU (qemu-system-risc5) — только функциональная сверка.
+"""The same model in QEMU (qemu-system-risc5): functional comparison only.
 
-QEMU такты не моделирует: он переводит команды RISC5 в код хоста и исполняет
-их так быстро, как может. Поэтому отсюда берётся только ответ на вопрос «та
-же система на другой реализации той же машины печатает тот же текст», и ни
-одного числа о скорости.
+QEMU does not model cycles: it translates RISC5 instructions into host code and runs
+them as fast as it can. So this gives only the answer to the question "does the
+same system on another implementation of the same machine print the same text", and not
+a single number about speed.
 
-Сценарий тот же, что scripts/lm.src для RTL: образ lm/mkdisk.sh (LM.Mod,
-LM.Weights и две команды, дописанные в System.Tool), два средних щелчка —
-компиляция внутри системы и генерация. Ввод — через QMP input-send-event,
-экран — снимком кадрового буфера из памяти (pmemsave), без дисплея. Текст
-сверяется с эталоном по файлу LM.Out, который модуль пишет на диск системы.
+The scenario is the same as scripts/lm.src for RTL: the lm/mkdisk.sh image (LM.Mod,
+LM.Weights and two commands appended to System.Tool), two middle clicks:
+compilation inside the system and generation. Input goes through QMP input-send-event,
+the screen is a snapshot of the framebuffer from memory (pmemsave), no display. The text
+is compared with the reference via the file LM.Out, which the module writes to the system disk.
 
 Commands sit in System.Tool rather than being typed: when this runner was
 written, the first key press hung the system in our QEMU (finding 86, fixed
 since; qemu/test/keyboard_check.py now types a command end to end).
 
-  python3 lm/qemu_run.py [каталог дерева QEMU]   (по умолчанию ../.qemu-work)
+  python3 lm/qemu_run.py [QEMU tree directory]   (default ../.qemu-work)
 """
 import os, pathlib, shutil, subprocess, sys
 
@@ -26,12 +26,12 @@ QEMU = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else IMPL.parent / ".qemu-w
 WORK = IMPL / "build" / "lm" / "qemu"
 FB_BASE, FB_W, FB_H = 0xE7F00, 1024, 768
 FB_BYTES = FB_W * FB_H // 8
-# Окно System.Log на экране по умолчанию: правая колонка, от шапки до окна
-# инструментов (координаты сверху вниз, как в сценариях).
+# The System.Log viewer on the default screen: right column, from the header to the tool
+# viewer (coordinates top to bottom, as in the scripts).
 LOG_X0, LOG_X1, LOG_Y0, LOG_Y1 = 640, 1024, 12, 250
 
 def abs_val(v, size):
-    # обратное к qemu_input_scale_axis(value, 0, 0x7FFF, 0, size)
+    # inverse of qemu_input_scale_axis(value, 0, 0x7FFF, 0, size)
     for a in range(v * 0x7FFF // size, v * 0x7FFF // size + 64):
         if a * size // 0x7FFF == v:
             return a
@@ -44,8 +44,8 @@ def qmp(cmd, args):
 
 
 def script():
-    """Строки для stdin QMP с паузами: (секунды паузы, команда)."""
-    out = [(1, qmp("qmp_capabilities", None)), (6, None)]     # загрузка системы
+    """Lines for QMP stdin with pauses: (pause seconds, command)."""
+    out = [(1, qmp("qmp_capabilities", None)), (6, None)]     # system boot
 
     def move(x, y):
         out.append((0.05, qmp("input-send-event", {"events": [
@@ -74,7 +74,7 @@ def script():
 
 
 def fb_rows(raw):
-    """Кадровый буфер -> строки пикселей сверху вниз (как на экране)."""
+    """Framebuffer -> pixel rows top to bottom (as on screen)."""
     wpl = FB_W // 32
     rows = []
     for y in range(FB_H):
@@ -88,7 +88,7 @@ def fb_rows(raw):
 
 
 def pbm_rows(path):
-    """PBM в текстовом виде (P1) — так пишет кадры soc_tb."""
+    """PBM in text form (P1), the way soc_tb writes frames."""
     t = path.read_text().split()
     assert t[0] == "P1"
     w, h = int(t[1]), int(t[2])
@@ -103,17 +103,17 @@ def to_pbm(rows, path):
 def main():
     exe = QEMU / "build" / "qemu-system-risc5"
     if not exe.exists():
-        raise SystemExit(f"  ❌ нет {exe} — сначала make -C qemu build")
+        raise SystemExit(f"  ❌ {exe} missing: run make -C qemu build first")
     disk = IMPL / "build" / "lm" / "oberon-lm.dsk"
     if not disk.exists():
         subprocess.check_call(["bash", str(HERE / "mkdisk.sh")])
     WORK.mkdir(parents=True, exist_ok=True)
     shutil.copy(disk, WORK / "oberon.dsk")
-    # ⚠ Образ надо вырастить заранее. Файловая система берёт новые секторы за
-    # концом эталонного образа (~1 МБ); эмулятор на C и стенд RTL пишут туда
-    # через fseek и файл растёт сам, а у QEMU привод raw фиксированного
-    # размера — запись за конец отвергается, и система потом падает на
-    # ASSERT в Files, читая заголовок файла, которого нет. 8 МБ хватает с запасом.
+    # ⚠ The image must be grown in advance. The file system takes new sectors past
+    # the end of the reference image (~1 MB); the C emulator and the RTL bench write there
+    # via fseek and the file grows by itself, but QEMU's raw drive has a fixed
+    # size: writes past the end are rejected, and the system later fails an
+    # ASSERT in Files reading the header of a file that does not exist. 8 MB is plenty.
     with open(WORK / "oberon.dsk", "r+b") as f:
         f.truncate(8 * 1024 * 1024)
     words = [int(x, 16) for x in (IMPL / "rtl" / "prom_sd.mem").read_text().split()]
@@ -128,11 +128,11 @@ def main():
     fb = WORK / "fb.bin"
     if not fb.exists() or fb.stat().st_size != FB_BYTES:
         print((WORK / "qmp.log").read_text()[-2000:])
-        raise SystemExit("  ❌ QEMU не отдал кадровый буфер")
+        raise SystemExit("  ❌ QEMU did not return the framebuffer")
     rows = fb_rows(fb.read_bytes())
     to_pbm(rows, WORK / "lm_qemu.pbm")
-    print(f"  кадр QEMU: {WORK / 'lm_qemu.pbm'}")
-    # Главная сверка — текст: модуль пишет его ещё и в LM.Out на диск системы.
+    print(f"  QEMU frame: {WORK / 'lm_qemu.pbm'}")
+    # The main comparison is the text: the module also writes it to LM.Out on the system disk.
     sys.stdout.flush()
     rc = subprocess.run([sys.executable, str(HERE / "outcheck.py"), str(WORK / "oberon.dsk")]).returncode
     ref = IMPL / "build" / "lm" / "lm_rtl.pbm"
@@ -140,9 +140,9 @@ def main():
         rr = pbm_rows(ref)
         diff = sum(rows[y][x] != rr[y][x] for y in range(LOG_Y0, LOG_Y1) for x in range(LOG_X0, LOG_X1))
         full = sum(a != b for ra, rb in zip(rows, rr) for a, b in zip(ra, rb))
-        print(f"  против кадра RTL (make lm-system): окно System.Log — {diff} пикселей "
-              f"расходятся, весь кадр — {full}")
-    print("  ✅ QEMU напечатал тот же текст" if rc == 0 else "  ❌ текст расходится")
+        print(f"  vs the RTL frame (make lm-system): System.Log viewer: {diff} pixels "
+              f"differ, whole frame: {full}")
+    print("  ✅ QEMU printed the same text" if rc == 0 else "  ❌ text differs")
     return rc
 
 

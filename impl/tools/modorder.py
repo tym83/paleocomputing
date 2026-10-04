@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Порядок сборки модулей Оберона: топологическая сортировка по IMPORT.
+"""Build order of Oberon modules: a topological sort over IMPORT.
 
-Порядок не берётся из памяти и не списывается из чужого скрипта — он выводится
-из самих исходников. Модуль можно компилировать только после всех, чьи
-символьные файлы ему нужны.
+The order is not taken from memory or copied from someone else's script: it is derived
+from the sources themselves. A module can be compiled only after all modules whose
+symbol files it needs.
 """
 import re, sys, pathlib
 
@@ -18,7 +18,7 @@ def imports(path):
     names = set()
     for part in m.group(1).split(","):
         part = part.strip()
-        if ":=" in part:                     # псевдоним: A := B
+        if ":=" in part:                     # alias: A := B
             part = part.split(":=")[1].strip()
         part = part.split()[0] if part.split() else ""
         if part and part != "SYSTEM":
@@ -39,13 +39,13 @@ def order(only=None):
         for n in sorted(mods):
             if n in done:
                 continue
-            if mods[n] <= done | (set(mods) ^ set(mods)):   # пусто, заполним ниже
+            if mods[n] <= done | (set(mods) ^ set(mods)):   # empty, filled in below
                 pass
             if all(d in done or d not in mods for d in mods[n]):
                 out.append(n); done.add(n); progress = True
         if not progress:
             left = [n for n in sorted(mods) if n not in done]
-            sys.exit(f"цикл в зависимостях: {left}")
+            sys.exit(f"cycle in the dependencies: {left}")
     return out, mods
 
 
@@ -55,4 +55,4 @@ if __name__ == "__main__":
         only = set(open(sys.argv[1]).read().split())
     out, mods = order(only)
     print(" ".join(out))
-    print(f"\nмодулей: {len(out)}", file=sys.stderr)
+    print(f"\nmodules: {len(out)}", file=sys.stderr)

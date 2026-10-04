@@ -1,7 +1,7 @@
 {{- /*
-  Сценарий сверки и таблица launcher'ов. Таблица — копия, собранная
-  tools/gen-launcher-table.py из kubevirt/versions.txt (Helm не читает файлы
-  вне чарта), с тегом выпуска, подставленным при публикации.
+  The reconcile script and the launcher table. The table is a copy built by
+  tools/gen-launcher-table.py from kubevirt/versions.txt (Helm does not read
+  files outside the chart), with the release tag substituted at publish time.
 */ -}}
 apiVersion: v1
 kind: ConfigMap

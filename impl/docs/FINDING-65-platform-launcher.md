@@ -1,66 +1,73 @@
-# Находка 65. Launcher держит компонент платформы, а семейство машин — данные
+[Русская версия](FINDING-65-platform-launcher.ru.md)
 
-До сих пор образ virt-launcher кластера переключал человек: правка
-`customizeComponents` на ресурсе `cozy-kubevirt/kubevirt`. У ручной правки три
-беды:
+# Finding 65. A platform component holds the launcher, and the machine family is data
 
-* она глобальная — на этом образе стартует **каждая** виртуальная машина
-  кластера, не только чужие;
-* она обязана совпадать с версией KubeVirt в точности (находка 44), а после
-  обновления Cozystack, которое переводит KubeVirt на другую версию, молча
-  остаётся — и ломает все машины кластера;
-* она заменяла весь список аргументов virt-controller, то есть заодно
-  фиксировала образ экспорта, порт и уровень журнала.
+Until now, the cluster's virt-launcher image was switched by a human: an edit
+of `customizeComponents` on the `cozy-kubevirt/kubevirt` resource. A manual
+edit has three problems:
 
-## Что сделано
+* it is global: **every** virtual machine in the cluster starts on this
+  image, not only the foreign-architecture ones;
+* it must match the KubeVirt version exactly (Finding 44), and after a
+  Cozystack upgrade that moves KubeVirt to another version it silently stays
+  in place and breaks every machine in the cluster;
+* it replaced the whole argument list of virt-controller, which means it also
+  pinned the export image, the port and the log level.
 
-**Семейство машин — данные.** `kubevirt/targets.txt` перечисляет архитектуры:
-имя, разрядность, порядок байт, машина по умолчанию, есть ли PCI. Из него
-собираются цели QEMU в образе, правки libvirt (`patch_libvirt.py` строит их по
-строкам таблицы вместо зашитого RISC5) и проверки образа (`check_image.sh`).
-Новая архитектура — строка в таблице, а не правка в четырёх местах. Образ
-получил имя по семейству: `virt-launcher:<kubevirt>-paleo-<выпуск>` рядом с
-прежним `-risc5-` на том же дайджесте.
+## What was done
 
-**Четвёртый репозиторий каталога — `platform`.** В нём один компонент,
-`kubevirt-paleo-launcher`: цикл, который держит launcher в паре с версией
-KubeVirt.
+**The machine family is data.** `kubevirt/targets.txt` lists the
+architectures: name, word size, byte order, default machine, and whether
+there is PCI. From it are generated the QEMU targets in the image, the libvirt
+patches (`patch_libvirt.py` builds them from the table rows instead of a
+hardcoded RISC5) and the image checks (`check_image.sh`). A new architecture
+is a row in the table, not an edit in four places. The image is named after
+the family: `virt-launcher:<kubevirt>-paleo-<release>`, next to the former
+`-risc5-` on the same digest.
 
-* Своя запись в `spec.customizeComponents.patches` — JSON Patch из трёх
-  операций: `test` имени контейнера, `test` что `args[0]` — `--launcher-image`,
-  `replace` одного `args[1]`. Остальные аргументы остаются теми, что собрал
-  virt-operator. Если раскладка аргументов когда-нибудь поменяется, `test` не
-  пройдёт, и virt-operator откажется применять правку громко, а не подставит
-  образ на место чужого аргумента; проход сам сверяет раскладку у живого
-  virt-controller и при расхождении правку снимает.
-* Список правок в CRD атомарный: server-side apply забрал бы его целиком.
-  Поэтому чтение-изменение-запись с предусловием на `resourceVersion`: при
-  конфликте проход повторяется на свежем чтении, чужие записи сохраняются как
-  были и в том же порядке.
-* Версия KubeVirt есть в таблице — правка стоит; нет — правки нет (штатный
-  launcher: чужие машины не стартуют, все прочие работают); сомнение в
-  чтении — ничего не пишется. Нужное уже стоит — не пишется ничего.
-* Один экземпляр (Deployment с одной репликой): писатель должен быть один.
-* Права — Role в `cozy-kubevirt` с `resourceNames: [kubevirt]`, без
-  ClusterRole. Удаление — хук `pre-delete`, снимающий правку.
-* Таблица «версия KubeVirt → образ» собирается из `kubevirt/versions.txt`
-  (`tools/gen-launcher-table.py`), `check.py` сверяет её с источником, а
-  публикация пересобирает её под тег выпуска. Задание каталога ждёт задания
-  launcher, поэтому таблица не может сослаться на образ, которого нет.
+**A fourth catalog repository, `platform`.** It holds one component,
+`kubevirt-paleo-launcher`: a loop that keeps the launcher paired with the
+KubeVirt version.
 
-## Проверки
+* Its own entry in `spec.customizeComponents.patches`: a JSON Patch of three
+  operations: a `test` of the container name, a `test` that `args[0]` is
+  `--launcher-image`, and a `replace` of `args[1]` alone. All other arguments
+  stay as virt-operator assembled them. If the argument layout ever changes,
+  the `test` fails and virt-operator refuses to apply the patch loudly instead
+  of substituting the image in place of some other argument; the pass also
+  checks the layout on the live virt-controller itself and removes the patch
+  on a mismatch.
+* The patch list in the CRD is atomic: server-side apply would take ownership
+  of all of it. Hence read-modify-write with a precondition on
+  `resourceVersion`: on a conflict the pass is repeated on a fresh read, and
+  other parties' entries are kept as they were and in the same order.
+* If the KubeVirt version is in the table, the patch is in place; if not,
+  there is no patch (the stock launcher: foreign machines do not start, all
+  others work); if the read is in doubt, nothing is written. If the desired
+  state is already in place, nothing is written.
+* A single instance (a Deployment with one replica): there must be one writer.
+* Permissions: a Role in `cozy-kubevirt` with `resourceNames: [kubevirt]`, no
+  ClusterRole. Removal: a `pre-delete` hook that removes the patch.
+* The "KubeVirt version → image" table is generated from
+  `kubevirt/versions.txt` (`tools/gen-launcher-table.py`), `check.py`
+  compares it with the source, and publishing regenerates it for the release
+  tag. The catalog job waits for the launcher job, so the table cannot refer
+  to an image that does not exist.
 
-`tools/launcher_test.py` — 38 случаев на поддельном API с настоящим
-предусловием по `resourceVersion`: добавить, не трогать, убрать, сохранить
-чужие правки, отказать при сомнении, удалить только своё; отрицательный
-контроль — подделка отвергает устаревшую версию ресурса. Гоняется из
-`check.py`, то есть и перед каждой публикацией каталога.
+## Checks
 
-## Что проверить вживую
+`tools/launcher_test.py`: 38 cases against a fake API with a real
+`resourceVersion` precondition: add, leave alone, remove, keep other parties'
+patches, refuse when in doubt, delete only its own; the negative control is
+that the fake rejects a stale resource version. It runs from `check.py`, that
+is, before every catalog publication as well.
 
-Прогона в кластере ещё не было. Нужно: поставить компонент в `workshop`, где
-сейчас стоит ручная правка; убедиться, что он заменил её своей (а не
-добавил вторую), что `virt-controller` получил тот же образ, что машина
-поднимается, и что удаление компонента возвращает штатный launcher. Помнить
-гонку из находки 58: машины, запущенные в окне смены образа, могут получить
-прежний.
+## What to check live
+
+There has been no run in a cluster yet. To do: install the component in
+`workshop`, where the manual patch is currently in place; confirm that it
+replaced that patch with its own (rather than adding a second one), that
+`virt-controller` got the same image, that the machine comes up, and that
+removing the component brings back the stock launcher. Keep in mind the race
+from Finding 58: machines started during the image switch window may get the
+previous image.

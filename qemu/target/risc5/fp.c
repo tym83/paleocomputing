@@ -1,21 +1,21 @@
 /*
- * Плавающая точка RISC5.
+ * RISC5 floating point.
  *
- * ⚠ Это НЕ стандартная арифметика IEEE 754 и не softfloat из QEMU. Блок Вирта
- * — своя схема (FPAdder.v, FPMultiplier.v, FPDivider.v) со своими краевыми
- * случаями: округление прибавлением единицы, обращение в ноль вместо
- * подпороговых чисел, бесконечность только при делении на ноль. Подставить
- * сюда softfloat значило бы считать иначе, чем считает железо.
+ * ⚠ This is NOT standard IEEE 754 arithmetic and not QEMU's softfloat. Wirth's unit
+ * is its own circuit (FPAdder.v, FPMultiplier.v, FPDivider.v) with its own edge
+ * cases: rounding by adding one, flushing to zero instead of subnormals, infinity
+ * only on division by zero. Plugging softfloat in here would mean computing
+ * differently from the hardware.
  *
- * Поэтому поведение перенесено с эталонной реализации (ext/refemu/risc-fp.c,
- * ISC), которая у нас уже сверена с настоящим описанием схемы. Логика
- * сохранена дословно, включая то, что выглядит странно: странности здесь —
- * свойства схемы, а не описки.
+ * So the behaviour is carried over from the reference implementation (ext/refemu/risc-fp.c,
+ * ISC), which we have already checked against the real circuit description. The logic
+ * is kept verbatim, including what looks odd: the oddities here are
+ * properties of the circuit, not typos.
  *
- * Коды операций (RISC5.v:90-93): 12 сложение, 13 вычитание, 14 умножение,
- * 15 деление. У сложения два признака меняют смысл целиком:
- *   u=1 — перевод целого в дробное;
- *   v=1 — округление дробного вниз до целого.
+ * Opcodes (RISC5.v:90-93): 12 add, 13 subtract, 14 multiply,
+ * 15 divide. For addition two flags change the meaning entirely:
+ *   u=1: integer to float conversion;
+ *   v=1: float rounded down to an integer.
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
@@ -64,7 +64,7 @@ uint32_t HELPER(fp_add)(uint32_t x, uint32_t y, uint32_t flags)
     uint32_t sum = ((xs << 26) | (xs << 25) | (x3 & 0x01FFFFFF))
                  + ((ys << 26) | (ys << 25) | (y3 & 0x01FFFFFF));
 
-    /* Округление здесь — прибавление единицы, а не «к ближайшему чётному». */
+    /* Rounding here is adding one, not round-half-to-even. */
     uint32_t s = (((sum & (1u << 26)) ? -sum : sum) + 1) & 0x07FFFFFF;
 
     uint32_t e1 = e0 + 1;
@@ -89,7 +89,7 @@ uint32_t HELPER(fp_add)(uint32_t x, uint32_t y, uint32_t flags)
     } else if (yn) {
         return x;
     } else if ((t3 & 0x01FFFFFF) == 0 || (e1 & 0x100) != 0) {
-        /* Подпороговое обращается в ноль: тихих денормалов схема не знает. */
+        /* Below the threshold flushes to zero: the circuit knows no quiet denormals. */
         return 0;
     } else {
         return ((sum & 0x04000000) << 5) | (e1 << 23) | ((t3 >> 1) & 0x7FFFFF);
@@ -149,7 +149,7 @@ uint32_t HELPER(fp_div)(uint32_t x, uint32_t y)
     if (xe == 0) {
         return 0;
     } else if (ye == 0) {
-        /* Единственный источник бесконечности — деление на ноль. */
+        /* The only source of infinity is division by zero. */
         return sign | (0xFFu << 23);
     } else if ((e1 & 0x100) == 0) {
         return sign | ((e1 & 0xFF) << 23) | (q3 >> 1);

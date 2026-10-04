@@ -1,188 +1,192 @@
-# Находка 58. Что остаётся после удаления, что не собирается до выпуска и что меняется под тегом
+[Русская версия](FINDING-58-catalog-and-ci-hardening.ru.md)
 
-Три мелочи одного рода: каждая работала, пока на неё не смотрели.
+# Finding 58. What survives deletion, what is not built before a release, and what changes under a tag
 
-## 1. Том машины переживал её удаление
+Three small things of the same kind: each one worked until someone looked at it.
 
-Том с ПЗУ и системой (`oberon-vm-<имя>-payload`) и задача, которая его
-наполняет, — хуки `pre-install`. Иначе нельзя: машина не заведётся с пустым
-томом, а обычный ресурс Helm не ждёт. Но ресурсы хуков Helm при удалении
-релиза не трогает вовсе. Каждая удалённая машина оставляла в тенанте гигабайт
-и отработавшую задачу, а повторная установка под тем же именем упиралась в
-старый том.
+## 1. A machine's volume outlived the machine
 
-### Почему не заметили
+The volume holding the ROM and the system (`oberon-vm-<name>-payload`) and the job
+that fills it are `pre-install` hooks. There is no other way: the machine will not
+boot from an empty volume, and an ordinary Helm resource does not wait. But Helm does
+not touch hook resources at all when a release is uninstalled. Every deleted machine
+left a gigabyte and a finished job behind in the tenant, and reinstalling under the
+same name ran into the old volume.
 
-Заметили — и записали в «Известные ограничения»: «удалите вручную». Запись
-ограничения выглядела как решение. Проверка, которая запрещала тому быть
-хуком обновления (находка про зависание в `Terminating`), смотрела на
-обновление и молчала про удаление.
+### Why it went unnoticed
 
-### Что изменено
+It was noticed, and recorded under "Known limitations": "delete manually". Writing
+the limitation down looked like a solution. The check that forbade the volume from
+being an upgrade hook (the finding about hanging in `Terminating`) looked at upgrades
+and said nothing about deletion.
 
-* `templates/cleanup.yaml`: задача `post-delete` удаляет том и задачу
-  наполнения. Правила, каждое из которых уже стоило кому-то зависшего
-  удаления:
-  * по **именам**, без выборки по меткам — соседние машины тенанта не
-    задеваются;
-  * `kubectl delete --wait=false`: том держит финализатор, пока жив под
-    машины, а под удаляется параллельно — ждать его значит ждать себя;
-  * `activeDeadlineSeconds: 120`: задача, которой не достался образ или
-    права, иначе держит удаление релиза бесконечно.
-* Права у задачи свои — ServiceAccount, Role, RoleBinding, тоже хуки
-  `post-delete`, с весом меньше, чем у задачи. Role разрешает `delete` только
-  на эти два ресурса и только по `resourceNames`. Все четыре удаляются по
-  `hook-succeeded`; упавшая задача остаётся для разбора, повторное удаление
-  убирает её через `before-hook-creation`.
-* Под проходит профиль restricted, под которым живут тенанты Cozystack:
-  не root (образ kubectl по умолчанию запускается от root, поэтому
-  пользователь задан явно), без повышения прав, без возможностей ядра,
-  seccomp `RuntimeDefault`, корень только для чтения.
-* Образ `registry.k8s.io/kubectl:v1.35.9` прибит дайджестом индекса. Что он
-  существует и тянется — проверено `docker pull` по дайджесту; что работает
-  от 65534 с корнем только для чтения и без возможностей — прогоном
-  `kubectl version --client` с теми же ограничениями в docker.
-* `check.py` отрисовывает каждый чарт с хуками и падает, если хоть один
-  ресурс хука переживёт удаление релиза: нет `hook-succeeded` и нет задачи
-  `post-delete`, которая удаляет его по имени, не ждёт, ограничена по времени
-  и имеет на это права. Отрицательные контроли — три поломки уборки: без
-  задачи, без срока, с ожиданием удаления.
+### What changed
 
-Почему не `ownerReference`. Том создаётся раньше машины, UID владельца на
-этот момент нет, и Helm проставить его не умеет. Сделать том обычным
-ресурсом тоже нельзя: тогда машина стартует раньше, чем том наполнен. Задача
-уборки — единственный путь без собственного контроллера.
+* `templates/cleanup.yaml`: a `post-delete` job deletes the volume and the fill job.
+  The rules, each of which has already cost someone a hung deletion:
+  * by **name**, with no label selector, so neighbouring machines in the tenant are
+    not affected;
+  * `kubectl delete --wait=false`: the volume holds a finalizer while the machine's
+    pod is alive, and the pod is deleted in parallel, so waiting for it means waiting
+    for yourself;
+  * `activeDeadlineSeconds: 120`: otherwise a job that could not get its image or
+    permissions holds the release deletion forever.
+* The job has its own permissions: a ServiceAccount, Role and RoleBinding, also
+  `post-delete` hooks, with a lower weight than the job. The Role allows `delete`
+  only on these two resources and only by `resourceNames`. All four are removed via
+  `hook-succeeded`; a failed job stays for inspection, and a repeated deletion
+  removes it via `before-hook-creation`.
+* The pod passes the restricted profile that Cozystack tenants run under: non-root
+  (the kubectl image runs as root by default, so the user is set explicitly), no
+  privilege escalation, no kernel capabilities, seccomp `RuntimeDefault`, read-only
+  root filesystem.
+* The image `registry.k8s.io/kubectl:v1.35.9` is pinned by index digest. That it
+  exists and can be pulled was checked with `docker pull` by digest; that it works as
+  65534 with a read-only root and no capabilities was checked by running
+  `kubectl version --client` under the same restrictions in docker.
+* `check.py` renders every chart that has hooks and fails if any hook resource would
+  survive release deletion: it has no `hook-succeeded` and there is no `post-delete`
+  job that deletes it by name, does not wait, is time-limited and has the permissions
+  to do so. Negative controls are three broken cleanups: without the job, without
+  the deadline, and with waiting for deletion.
 
-Уборку запускает релиз, который удаляется, — то есть его текущая версия
-чарта. Машина, удалённая ещё на v0.1.8 или раньше, оставляет том, и его
-по-прежнему удаляют вручную; обновлённая и потом удалённая — уже нет.
+Why not `ownerReference`. The volume is created before the machine, there is no
+owner UID at that moment, and Helm cannot set one. Making the volume an ordinary
+resource is not possible either: the machine would then start before the volume is
+filled. A cleanup job is the only way short of a custom controller.
 
-## 2. Образ virt-launcher не собирался до выпуска
+Cleanup is run by the release being deleted, that is, by its current chart version.
+A machine deleted on v0.1.8 or earlier leaves its volume behind, and that volume is
+still deleted manually; one that was upgraded and then deleted no longer does.
 
-`kubevirt/Containerfile` собирался только в `publish.yml`. Правка, которая
-его ломала (однажды — пропавший `mkdir -p /src/qemu`), проходила разбор,
-вливалась в main и всплывала при выпуске.
+## 2. The virt-launcher image was not built before a release
 
-### Что изменено
+`kubevirt/Containerfile` was built only in `publish.yml`. A change that broke it
+(once, a missing `mkdir -p /src/qemu`) passed review, was merged into main and
+surfaced at release time.
 
-* Новый процесс `launcher.yml`: на PR и пуш в main, трогающие `kubevirt/**`,
-  `qemu/**` или сам процесс. Собирает образ через `kubevirt/build.sh`,
-  `--load` вместо `--push`, и проверяет содержимое.
-  Не задачей в `hardware.yml`: фильтр путей там общий на файл, и `kubevirt/**`
-  тянул бы за собой RTL и QEMU на полтора-два часа.
-* Проверка содержимого вынесена в `kubevirt/check_image.sh` и вызывается
-  одинаково при выпуске и на PR: `chk=` в свойствах машины, исполняемый
-  `/usr/bin/onDefineDomain`, раскладки VNC.
+### What changed
 
-### Попутная находка: кэш сборки не работал никогда
+* A new workflow, `launcher.yml`: on PRs and pushes to main that touch `kubevirt/**`,
+  `qemu/**` or the workflow itself. It builds the image via `kubevirt/build.sh`, with
+  `--load` instead of `--push`, and checks its contents.
+  It is not a job in `hardware.yml`: the path filter there applies to the whole file,
+  and `kubevirt/**` would drag in RTL and QEMU for an hour and a half to two hours.
+* The content check moved to `kubevirt/check_image.sh` and is called the same way at
+  release and on PRs: `chk=` in the machine properties, an executable
+  `/usr/bin/onDefineDomain`, VNC keymaps.
 
-`publish.yml` передавал `--cache-from/--cache-to type=gha`, но в журнале
-выпуска нет ни импорта, ни экспорта кэша — образ каждый раз собирался с нуля.
-buildx берёт токен кэша из `ACTIONS_RUNTIME_TOKEN`, а шагу `run` его не дают:
-только самим действиям. Нет токена — buildx молча выбрасывает кэш из
-аргументов. Флаги были, кэша не было.
+### Side finding: the build cache never worked
 
-Теперь в обоих процессах перед сборкой стоит
-`crazy-max/ghaction-github-runtime`, который отдаёт токен шагам. Кэш общий
-(`scope=launcher`): пуши в main и выпуски его наполняют, PR им пользуются.
+`publish.yml` passed `--cache-from/--cache-to type=gha`, but the release log shows
+neither a cache import nor an export: the image was built from scratch every time.
+buildx takes the cache token from `ACTIONS_RUNTIME_TOKEN`, and a `run` step does not
+get it; only actions themselves do. Without the token, buildx silently drops the
+cache from its arguments. The flags were there, the cache was not.
 
-## 3. Основы образа менялись под тем же тегом
+Now both workflows run `crazy-max/ghaction-github-runtime` before the build, which
+exposes the token to steps. The cache is shared (`scope=launcher`): pushes to main
+and releases fill it, PRs use it.
 
-`quay.io/centos/centos:stream9` — тег, который переставляется каждые
-несколько недель; `quay.io/kubevirt/virt-launcher:v1.8.4` технически тоже
-можно переставить. Один и тот же коммит собирал разные образы в зависимости
-от дня, а libvirt обязан совпадать с основой virt-launcher.
+## 3. Image bases changed under the same tag
 
-### Что изменено
+`quay.io/centos/centos:stream9` is a tag that is moved every few weeks;
+`quay.io/kubevirt/virt-launcher:v1.8.4` can technically be moved too. The same commit
+built different images depending on the day, and libvirt must match the
+virt-launcher base.
 
-Все три `FROM` прибиты дайджестом многоархитектурного индекса, тег оставлен
-для читателя:
+### What changed
 
-| основа | дайджест индекса |
+All three `FROM` lines are pinned by the digest of the multi-architecture index; the
+tag is kept for the reader:
+
+| base | index digest |
 |---|---|
 | `quay.io/centos/centos:stream9` | `sha256:63e8d0c2a4a4b67c8bd7456283d12106bedf815d8c27d1a72498ebcf173baf09` |
 | `quay.io/kubevirt/virt-launcher:v1.8.4` | `sha256:c89f733b1fdcc810d0b4326bbfc652a4cf3d25bc56cc8545f124d5cb71a1ce20` |
 
-Дайджесты сняты с реестра напрямую (заголовок `Docker-Content-Digest` на
-запрос индекса) и сверены `docker manifest inspect` — это индекс, не образ
-одной платформы.
+The digests were taken directly from the registry (the `Docker-Content-Digest` header
+on the index request) and cross-checked with `docker manifest inspect`: it is an
+index, not a single-platform image.
 
-`publish.yml` вырезал версию KubeVirt для тега образа, срезая начало строки
-`FROM`, — после прибивки в тег уехало бы `v1.8.4@sha256:...`. Теперь режется
-до `@`, и результат обязан быть ровно `vX.Y.Z`; та же строка — в
-`launcher.yml`.
+`publish.yml` extracted the KubeVirt version for the image tag by cutting off the
+start of the `FROM` line; after pinning, `v1.8.4@sha256:...` would have ended up in
+the tag. Now it cuts at `@`, and the result must be exactly `vX.Y.Z`; the same line is
+in `launcher.yml`.
 
-Прибивка основы не замораживает `dnf install`: пакеты из репозиториев CentOS
-по-прежнему свежие на день сборки. Это оставлено сознательно — заморозка
-репозиториев стоит дороже, чем даёт.
+Pinning the base does not freeze `dnf install`: packages from the CentOS repositories
+are still as fresh as the build day. This is deliberate: freezing the repositories
+costs more than it gives.
 
-## Общее
+## Common thread
 
-Все три — про то, что проверяется только заведомо удачный путь. Установку
-проверяли, удаление — нет. Выпуск собирал образ, разбор правки — нет. Флаги
-кэша стояли, но никто не смотрел, срабатывает ли он. Тег записан, но что под
-ним — решал реестр. Запись в «Известных ограничениях» и флаг в командной
-строке выглядят как сделанная работа; проверять надо эффект.
+All three are about checking only the path known to succeed. Installation was
+tested, deletion was not. The release built the image, change review did not. The
+cache flags were there, but nobody looked at whether the cache actually worked. The
+tag was written down, but what was under it was decided by the registry. An entry in
+"Known limitations" and a flag on a command line look like finished work; what has to
+be checked is the effect.
 
-## Дополнение: уборку проверил живой тенант — и она не сработала
+## Addendum: a live tenant tested the cleanup, and it did not work
 
-После выпуска v0.1.9 машина `wirth-chk` удалена из тенанта `tenant-sandbox`.
-Задача уборки запустилась, образ скачался — и 120 секунд ничего не делала:
+After the v0.1.9 release, the machine `wirth-chk` was deleted from the tenant
+`tenant-sandbox`. The cleanup job started, the image was pulled, and then for 120
+seconds it did nothing:
 
 ```
 Job was active longer than specified deadline
 Helm uninstall failed for release tenant-sandbox/oberon-vm-wirth-chk.v2
 ```
 
-Том и задача заполнения остались. Причина — сеть, а не права. В тенанте
-Cozystack до kube-apiserver пускает политика `allow-to-apiserver`, и только
-поды с меткой
+The volume and the fill job remained. The cause was the network, not permissions. In
+a Cozystack tenant, access to kube-apiserver is allowed by the `allow-to-apiserver`
+policy, and only for pods labelled
 
 ```
 policy.cozystack.io/allow-to-apiserver: "true"
 ```
 
-Прочих Cilium молча отбрасывает: `kubectl` не получает ни отказа, ни ответа и
-висит до `activeDeadlineSeconds`. Отказ по RBAC вернулся бы сразу — зависание
-и было подсказкой.
+Cilium silently drops everything else: `kubectl` gets neither a refusal nor a
+response and hangs until `activeDeadlineSeconds`. An RBAC denial would have come back
+immediately; the hang itself was the hint.
 
-Ни `helm template`, ни прогон на столе этого не показывали: и чарт, и права,
-и образ были верны. Не хватало одной метки, про которую знает только тенант.
+Neither `helm template` nor a bench run showed this: the chart, the permissions and
+the image were all correct. What was missing was one label that only the tenant knows
+about.
 
-Исправлено: метка стоит на поде уборки, а `check.py` требует её от всякого
-пода, которому чарт выдаёт свой ServiceAccount (признак того, что под пойдёт в
-API), с отрицательным контролем.
+Fixed: the label is set on the cleanup pod, and `check.py` requires it on every pod
+that the chart gives its own ServiceAccount (a sign that the pod will talk to the
+API), with a negative control.
 
-## Ещё одна ловушка: повторная установка поверх мусора
+## One more trap: reinstalling on top of leftovers
 
-До уборки удалённая машина оставляла том, а завершённый под задачи
-заполнения продолжал на него ссылаться. Повторная установка под тем же
-именем по умолчанию (`before-hook-creation`) удаляет старый том — но защита
-PVC не даёт удалить том, пока жив ссылающийся под, а старая задача
-удалилась бы только следующим хуком. Том висит в `Terminating`, установка —
-до таймаута.
+Before the cleanup existed, a deleted machine left its volume behind, and the
+completed pod of the fill job kept referencing it. A reinstall under the same name
+deletes the old volume by default (`before-hook-creation`), but PVC protection does
+not allow a volume to be deleted while a referencing pod is alive, and the old job
+would only be deleted by the next hook. The volume hangs in `Terminating`, and the
+installation hangs until the timeout.
 
-Дальше хуже: flux повторяет неудавшуюся установку как **обновление**, а в
-обновлении хуков установки нет (находка про том-хук, #19). Релиз честно
-помечается «успешным», а под машины висит в `Pending` на томе, которого
-больше нет. Выход — только руками.
+It gets worse: flux retries a failed installation as an **upgrade**, and an upgrade
+has no install hooks (the finding about the hook volume, #19). The release is
+honestly marked "succeeded", while the machine's pod hangs in `Pending` on a volume
+that no longer exists. The only way out is manual.
 
-Уборка при удалении закрывает причину, но не сам механизм: любая упавшая
-первая установка превращается в «успешное» обновление без тома. Лечится
-переводом машины на `VirtualMachine` с проверкой тома перед запуском — это
-открытая задача.
+Cleanup on deletion removes the cause, but not the mechanism itself: any failed first
+installation turns into a "successful" upgrade with no volume. The cure is moving the
+machine to `VirtualMachine` with a volume check before start; that is an open task.
 
-## Проверено в тенанте на v0.1.10
+## Verified in the tenant on v0.1.10
 
-С меткой выхода к API уборка отработала от начала до конца: машина удалена
-из `tenant-sandbox`, задача уборки завершилась за 5 секунд, Helm записал
-`UninstallSucceeded`, и через 40 секунд от машины не осталось ничего — ни
-тома, ни задач, ни прав. Переустановленная машина поднялась на
-`virt-launcher:v1.8.4-risc5-v0.1.10`, экран через консоль тенанта — 18607
-тёмных точек, эталон.
+With the API egress label, cleanup ran from start to finish: the machine was deleted
+from `tenant-sandbox`, the cleanup job finished in 5 seconds, Helm recorded
+`UninstallSucceeded`, and 40 seconds later nothing was left of the machine: no
+volume, no jobs, no permissions. The reinstalled machine came up on
+`virt-launcher:v1.8.4-risc5-v0.1.10`, and the screen via the tenant console showed
+18607 dark pixels, the reference value.
 
-Попутно: первая установка после смены образа launcher получила **прежний**
-образ. Новые контроллеры уже поднялись, но под машины, видимо, успел создать
-старый, ещё державший аренду лидера. После смены launcher стоит подождать
-выхода старых контроллеров, прежде чем ставить машины, — или пересоздать те,
-что поставлены в это окно.
+Along the way: the first installation after the launcher image change got the
+**previous** image. The new controllers were already up, but the machine's pod was
+apparently created by an old one that still held the leader lease. After a launcher
+change, wait for the old controllers to exit before installing machines, or recreate
+the ones installed during that window.

@@ -1,22 +1,22 @@
 #!/usr/bin/env python3
-"""Сборка сценария ввода для soc_tb из простых команд.
+"""Builds an input script for soc_tb from simple commands.
 
-Язык описания (по строке на шаг):
-  at <N>            установить текущий момент (номер инструкции)
-  wait <N>          сдвинуть текущий момент на N инструкций вперёд
-  click <x> <y> <b> щелчок: подвести, нажать, отпустить (b: L, M, R)
-  move <x> <y>      просто подвести указатель
-  type <текст>      набрать текст на клавиатуре
-  enter             нажать Return
-  shot <файл>       снять экран
-Координата y задаётся как на картинке (сверху вниз) и переводится в систему
-Оберона (снизу вверх) здесь же — чтобы в сценариях писать то, что видно глазом.
+Description language (one line per step):
+  at <N>            set the current moment (instruction number)
+  wait <N>          advance the current moment by N instructions
+  click <x> <y> <b> click: move there, press, release (b: L, M, R)
+  move <x> <y>      just move the pointer
+  type <text>       type text on the keyboard
+  enter             press Return
+  shot <file>       take a screenshot
+The y coordinate is given as in the picture (top to bottom) and converted to Oberon's
+system (bottom to top) right here, so scripts can say what the eye sees.
 """
 import sys
 from keymap import keys
 
-BTN = {"L": 4, "M": 2, "R": 1}          # элементы множества keys из Input.Mod
-HOLD, SETTLE = 200_000, 400_000         # удержание кнопки и пауза после
+BTN = {"L": 4, "M": 2, "R": 1}          # elements of the keys set from Input.Mod
+HOLD, SETTLE = 200_000, 400_000         # button hold and the pause after it
 
 def build(lines):
     t, out = 0, []
@@ -42,7 +42,7 @@ def build(lines):
             for c in keys("\r"): out.append(f"{t} K {c}")
             t += SETTLE
         elif op == "shot": out.append(f"{t} S {rest}")
-        else: sys.exit(f"неизвестная команда: {op}")
+        else: sys.exit(f"unknown command: {op}")
     return out
 
 if __name__ == "__main__":

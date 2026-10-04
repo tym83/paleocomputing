@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Сверка qemu-system-risc5 с моделью, снятой с настоящего RTL.
+"""Cross-check of qemu-system-risc5 against the model derived from the real RTL.
 
-Программа собирается НАШИМ ассемблером, считается НАШЕЙ моделью АЛУ и
-исполняется в QEMU. Сходятся все регистры и флаги — или проверка красная.
+The program is assembled by OUR assembler, computed by OUR ALU model and
+executed in QEMU. All registers and flags match, or the check is red.
 
-Модель независима от цели QEMU: она написана раньше и сверена с железом на
-4650 проверках. Поэтому совпадение здесь — не самосогласованность, а
-внешнее свидетельство.
+The model is independent of the QEMU target: it was written earlier and
+checked against the hardware in 4650 tests. So a match here is not
+self-consistency but external evidence.
 """
 import pathlib, re, struct, subprocess, sys
 
@@ -20,7 +20,7 @@ QEMU = pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / ".qemu-work"
 
 def model(words):
     st = State()
-    for w in words[:-1]:                     # последняя — переход, вне модели
+    for w in words[:-1]:                     # the last one is a branch, outside the model
         if not step(st, w):
             break
     return st
@@ -42,9 +42,9 @@ def in_qemu(binpath):
 
 
 def main():
-    # ⚠ Источник берётся из репозитория, а не из build/: раньше здесь лежала
-    # копия, положенная руками, и на чистом дереве проверка просто не
-    # запускалась бы — а выглядела бы «зелёной, просто не прогнанной».
+    # ⚠ The source is taken from the repository, not from build/: a hand-placed
+    # copy used to live here, and on a clean tree the check simply would not
+    # run, while looking "green, just not run".
     src = pathlib.Path(__file__).resolve().parent / "prog.s"
     work = IMPL / "build/qtest"
     work.mkdir(parents=True, exist_ok=True)
@@ -63,16 +63,16 @@ def main():
     for i in range(16):
         exp, got = st.R[i], regs.get(i, -1)
         if exp != got:
-            print(f"  ❌ R{i}: модель {exp:08X}, QEMU {got:08X}"); bad += 1
+            print(f"  ❌ R{i}: model {exp:08X}, QEMU {got:08X}"); bad += 1
     if flags != (st.N, st.Z, st.C, st.V):
-        print(f"  ❌ флаги: модель {(st.N, st.Z, st.C, st.V)}, QEMU {flags}"); bad += 1
+        print(f"  ❌ flags: model {(st.N, st.Z, st.C, st.V)}, QEMU {flags}"); bad += 1
     if h != st.H:
-        print(f"  ❌ H: модель {st.H:08X}, QEMU {h:08X}"); bad += 1
+        print(f"  ❌ H: model {st.H:08X}, QEMU {h:08X}"); bad += 1
 
     if bad:
-        print(f"\nрасхождений: {bad}")
+        print(f"\nmismatches: {bad}")
         return 1
-    print(f"  ✅ 16 регистров, 4 флага и H сошлись с моделью, снятой с RTL")
+    print(f"  ✅ 16 registers, 4 flags and H match the model derived from the RTL")
     return 0
 
 

@@ -1,8 +1,8 @@
-// Диск в памяти: тот же протокол SD поверх SPI, что в эталонном эмуляторе,
-// но образ лежит байтовым массивом, а не файлом. Нужно для браузера:
-// в WASM нет файловой системы, образ приходит из JS.
-// Логика повторяет tb/disk/disk.c слово в слово, включая определение
-// образа-«только файловая система» по сигнатуре 0x9B1EA38D в нулевом секторе.
+// In-memory disk: the same SD-over-SPI protocol as in the reference emulator,
+// but the image is a byte array rather than a file. Needed for the browser:
+// WASM has no file system, the image comes from JS.
+// The logic follows tb/disk/disk.c word for word, including detection of a
+// "file system only" image by the 0x9B1EA38D signature in sector zero.
 #pragma once
 #include <cstdint>
 #include <cstring>
@@ -13,14 +13,14 @@ struct MemDisk {
     State state = Command;
     std::vector<uint8_t> img;
     uint32_t offset = 0;
-    uint32_t pos = 0;                 // позиция в байтах
+    uint32_t pos = 0;                 // position in bytes
     uint32_t rx_buf[128] = {0};
     int rx_idx = 0;
     uint32_t tx_buf[130] = {0};
     int tx_cnt = 0, tx_idx = 0;
 
-    /* Чтение образа из лабораторной: проверка должна убеждаться, что файл на
-       диске действительно изменился, а не верить надписи на экране. */
+    /* Reading the image from a lab: a check must confirm that the file on
+       disk really changed, not trust what the screen says. */
     uint32_t word(size_t off) const {
         uint32_t v = 0;
         for (int b = 0; b < 4; b++)
@@ -48,13 +48,13 @@ struct MemDisk {
         pos += 512;
     }
     void write_sector(const uint32_t buf[128]) {
-        // ⚠ Найдено аудитом: pos = sec*512u переполняется в uint32, и при
-        // испорченном номере сектора resize пытался выделить до 4 ГБ — то есть
-        // abort() в WASM и убитая вкладка. Растём только в разумных пределах.
-        static const size_t MAX_GROWTH = 16u << 20;      // 16 МБ сверх образа
+        // ⚠ Found by the audit: pos = sec*512u overflows uint32, and with a
+        // corrupted sector number resize tried to allocate up to 4 GB, i.e.
+        // abort() in WASM and a killed tab. Grow only within sane limits.
+        static const size_t MAX_GROWTH = 16u << 20;      // 16 MB beyond the image
         size_t need = (size_t)pos + 512;
         if (need > img.size()) {
-            if (need > img.size() + MAX_GROWTH) return;  // запись мимо — игнорируем
+            if (need > img.size() + MAX_GROWTH) return;  // write out of range: ignore
             img.resize(need, 0);
         }
         for (int i = 0; i < 128; i++)
@@ -66,11 +66,11 @@ struct MemDisk {
         uint32_t cmd = rx_buf[0];
         uint32_t arg = (rx_buf[1] << 24) | (rx_buf[2] << 16) | (rx_buf[3] << 8) | rx_buf[4];
         switch (cmd) {
-            case 81:                              // CMD17: чтение сектора
+            case 81:                              // CMD17: read sector
                 state = Read; tx_buf[0] = 0; tx_buf[1] = 254;
                 seek(arg - offset); read_sector(&tx_buf[2]);
                 tx_cnt = 2 + 128; break;
-            case 88:                              // CMD24: запись сектора
+            case 88:                              // CMD24: write sector
                 state = Write; seek(arg - offset);
                 tx_buf[0] = 0; tx_cnt = 1; break;
             default:

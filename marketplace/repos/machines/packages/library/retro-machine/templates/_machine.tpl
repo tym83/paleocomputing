@@ -1,24 +1,24 @@
 {{/*
-  Машина архитектуры, которой нет в KubeVirt, — общие шаблоны.
+  A machine of an architecture KubeVirt does not have: shared templates.
 
-  Чарт машины несёт только данные: паспорт machine.yaml (схема —
-  machine.schema.json рядом), форму values.yaml/values.schema.json, иконку и
-  README. Его единственный шаблон — `{{ include "retro-machine.render" . }}`.
-  Всё остальное здесь, и перехватчик тоже: files/onDefineDomain.py.
+  A machine chart carries only data: the machine.yaml passport (schema:
+  machine.schema.json next to this), the values.yaml/values.schema.json form, an
+  icon and a README. Its only template is `{{ include "retro-machine.render" . }}`.
+  Everything else is here, including the hook: files/onDefineDomain.py.
 
-  Что получается из одного паспорта:
+  What one passport produces:
 
-    * ConfigMap с перехватчиком — он переписывает домен KubeVirt по
-      паспорту из аннотации машины;
-    * том с файлами машины — ОБЫЧНЫЙ ресурс релиза: создаётся при любой
-      удачной установке или обновлении, удаляется вместе с машиной;
-    * VirtualMachine со стратегией запуска из `running`: перезапуск из
-      дашборда, `virtctl restart`, самовосстановление после сбоя;
-    * задача наполнения — обычный ресурс релиза (не хук, см. ниже): прошивку
-      переписывает всегда, диск пользователя — только если его нет, и права
-      на запись для группы qemu ставит явно.
+    * a ConfigMap with the hook, which rewrites the KubeVirt domain according
+      to the passport from the machine annotation;
+    * a volume with the machine files, an ORDINARY release resource: created on
+      any successful install or upgrade, deleted together with the machine;
+    * a VirtualMachine with the run strategy from `running`: restart from the
+      dashboard, `virtctl restart`, self-healing after a failure;
+    * a fill job, an ordinary release resource (not a hook, see below): it
+      always rewrites the firmware, the user's disk only if it is missing, and
+      sets write permissions for the qemu group explicitly.
 
-  Почему не хуки для тома и не голый VMI — находка 64.
+  Why not hooks for the volume and not a bare VMI: finding 64.
 */}}
 
 {{- define "retro-machine.fullname" -}}
@@ -32,67 +32,69 @@ app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end }}
 
-{{/* Под-селектор подов virt-launcher этой машины: метки шаблона машины
-     KubeVirt переносит на VMI и дальше на под, а kubevirt.io=virt-launcher
-     ставит сам. У задачи наполнения этой метки нет — она себя не выберет. */}}
+{{/* Selector for this machine's virt-launcher pods: KubeVirt carries the
+     machine template labels over to the VMI and then to the pod, and sets
+     kubevirt.io=virt-launcher itself. The fill job lacks that label, so it
+     does not select itself. */}}
 {{- define "retro-machine.launcherSelector" -}}
 kubevirt.io: virt-launcher
 app.kubernetes.io/name: {{ .Chart.Name }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
-{{/* Количество памяти в Mi: паспорт и форма разрешают только Mi и Gi. */}}
+{{/* Memory amount in Mi: the passport and the form allow only Mi and Gi. */}}
 {{- define "retro-machine.mi" -}}
 {{- if not (regexMatch "^[1-9][0-9]*(Mi|Gi)$" .) }}
-{{- fail (printf "retro-machine: память %q — нужно целое число Mi или Gi" .) }}
+{{- fail (printf "retro-machine: memory %q: an integer number of Mi or Gi is required" .) }}
 {{- end }}
 {{- if hasSuffix "Gi" . }}{{ mul (trimSuffix "Gi" . | atoi) 1024 }}{{ else }}{{ trimSuffix "Mi" . | atoi }}{{ end }}
 {{- end }}
 
 {{/*
-  Паспорт машины. Проверяется при каждой отрисовке — не полной схемой (её
-  держат проверки каталога), а тем, без чего шаблоны ниже собрали бы
-  неправду: не тот вариант железа, путь с пробелом в команде оболочки.
+  The machine passport. It is checked on every render, not against the full
+  schema (the catalog checks hold that) but for what the templates below would
+  otherwise get wrong: the wrong hardware variant, a path with a space in a
+  shell command.
 */}}
 {{- define "retro-machine.descriptor" -}}
 {{- $raw := .Files.Get "machine.yaml" }}
 {{- if not $raw }}
-{{- fail (printf "retro-machine: у чарта %s нет machine.yaml — паспорт машины обязателен" .Chart.Name) }}
+{{- fail (printf "retro-machine: chart %s has no machine.yaml; a machine passport is required" .Chart.Name) }}
 {{- end }}
 {{- $m := fromYaml $raw }}
 {{- if hasKey $m "Error" }}
-{{- fail (printf "retro-machine: machine.yaml не разбирается: %s" $m.Error) }}
+{{- fail (printf "retro-machine: machine.yaml does not parse: %s" $m.Error) }}
 {{- end }}
 {{- if or (ne (toString $m.apiVersion) "paleocomputing.io/v1alpha1") (ne (toString $m.kind) "Machine") }}
-{{- fail "retro-machine: machine.yaml — не паспорт (apiVersion paleocomputing.io/v1alpha1, kind Machine)" }}
+{{- fail "retro-machine: machine.yaml is not a passport (apiVersion paleocomputing.io/v1alpha1, kind Machine)" }}
 {{- end }}
 {{- range $f := $m.payload.files }}
 {{- if not (and (regexMatch "^[A-Za-z0-9][A-Za-z0-9._-]*$" (toString $f.name)) (regexMatch "^/[A-Za-z0-9/._-]+$" (toString $f.from)) (has (toString $f.role) (list "firmware" "disk"))) }}
-{{- fail (printf "retro-machine: файл машины %v — имя, путь в образе или роль недопустимы" $f) }}
+{{- fail (printf "retro-machine: machine file %v: invalid name, image path or role" $f) }}
 {{- end }}
 {{- if and (hasKey $f "size") (not (regexMatch "^[1-9][0-9]*$" (toString (int64 $f.size)))) }}
-{{- fail (printf "retro-machine: файл машины %v — size must be a positive number of bytes" $f.name) }}
+{{- fail (printf "retro-machine: machine file %v: size must be a positive number of bytes" $f.name) }}
 {{- end }}
 {{- end }}
 {{- if not (regexMatch "^/[A-Za-z0-9/._-]+$" (toString $m.payload.path)) }}
-{{- fail "retro-machine: payload.path — нужен абсолютный путь без пробелов" }}
+{{- fail "retro-machine: payload.path must be an absolute path without spaces" }}
 {{- end }}
 {{- toJson $m }}
 {{- end }}
 
 {{/*
-  Спецификация задачи наполнения. Отдельно — чтобы имя задачи несло хэш
-  ВСЕЙ спецификации: шаблон Job неизменяем, и любая правка задачи (образ,
-  паспорт, привязка, сроки) обязана давать новое имя, иначе обновление
-  упрётся в «field is immutable».
+  The fill job spec. Kept separate so that the job name carries the hash of the
+  WHOLE spec: a Job template is immutable, and any change to the job (image,
+  passport, affinity, deadlines) must produce a new name, otherwise the upgrade
+  hits "field is immutable".
 */}}
 {{- define "retro-machine.fillJobSpec" -}}
 {{- $ctx := .ctx }}{{- $m := .m }}{{- $fn := .fn }}{{- $base := .base }}{{- $running := .running }}
 spec:
   backoffLimit: 10
-  # Задача, которой не достался под (машина остановлена руками, узел
-  # переполнен), иначе держит установку до таймаута релиза. Срок больше
-  # предельной паузы KubeVirt между попытками запуска (300 с).
+  # A job that got no pod (machine stopped by hand, node full) would otherwise
+  # hold the install until the release timeout. The deadline is longer than
+  # KubeVirt's maximum pause between start attempts (300 s).
   activeDeadlineSeconds: 1800
   ttlSecondsAfterFinished: 3600
   template:
@@ -100,17 +102,17 @@ spec:
       labels: {{- include "retro-machine.labels" $ctx | nindent 8 }}
     spec:
       restartPolicy: OnFailure
-      # ⚠ Образ работает от непривилегированного пользователя, а том приходит
-      # принадлежащим root — записать в него нечего. fsGroup отдаёт том группе
-      # контейнера; менять пользователя нельзя, ограничения тенанта root не
-      # пустят.
+      # ⚠ The image runs as an unprivileged user, and the volume arrives owned
+      # by root, so it cannot write to it. fsGroup gives the volume to the
+      # container's group; changing the user is not possible, tenant
+      # restrictions do not admit root.
       #
-      # ⚠ Группа тома — 107, как у пода машины. virt-launcher работает от
-      # qemu (107) и монтирует тот же том с fsGroup 107; задача с другой
-      # группой при одновременном монтировании проигрывала — kubelet отдавал
-      # том группе 107, и запись падала с Permission denied. Найдено
-      # сквозной проверкой в тенанте. Пользователь образа остаётся своим:
-      # группа тома приходит дополнительной.
+      # ⚠ The volume group is 107, as in the machine pod. virt-launcher runs as
+      # qemu (107) and mounts the same volume with fsGroup 107; a job with a
+      # different group lost on simultaneous mounting: kubelet gave the volume
+      # to group 107 and writes failed with Permission denied. Found by the
+      # end-to-end check in a tenant. The image user stays its own: the volume
+      # group comes as a supplementary one.
       securityContext:
         fsGroup: 107
         runAsUser: 10001
@@ -119,13 +121,13 @@ spec:
         seccompProfile:
           type: RuntimeDefault
       {{- if $running }}
-      # Том ReadWriteOnce: лучше на тот же узел, что под машины. Но только
-      # «лучше», не «обязательно». Жёсткая привязка не давала задаче встать
-      # вовсе: без файлов машина падает сразу, и её под живёт секунды между
-      # паузами KubeVirt — задаче не к чему привязаться, срок истекал, а
-      # упавшую задачу никто не повторяет. Найдено в живом тенанте. На другом
-      # узле задача дождётся, пока очередная неудачная попытка машины отпустит
-      # том, и наполнит его.
+      # The volume is ReadWriteOnce: better on the same node as the machine pod.
+      # But only "better", not "required". Hard affinity kept the job from
+      # being scheduled at all: without files the machine fails at once, and
+      # its pod lives for seconds between KubeVirt pauses, so the job had
+      # nothing to attach to, the deadline expired, and nobody retries a failed
+      # job. Found in a live tenant. On another node the job waits until the
+      # machine's next failed attempt releases the volume, and fills it.
       affinity:
         podAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
@@ -142,12 +144,13 @@ spec:
         args:
           - |
             set -eu
-            # Файлы — с правом записи для группы: диск машина пишет от qemu
-            # (группа 107). ⚠ Одного umask мало: он только снимает биты, а cp
-            # берёт права исходного файла (в образе 644) — и диск выходил
-            # rw-r--r--. Пока наш QEMU не просил записи, этого не было видно;
-            # с ней машина не стартует («Permission denied»). Права ставятся
-            # явно — и уже лежащему диску тоже: его задача не перезаписывает.
+            # Files are group-writable: the machine writes the disk as qemu
+            # (group 107). ⚠ umask alone is not enough: it only clears bits, and
+            # cp takes the source file's mode (644 in the image), so the disk came
+            # out rw-r--r--. While our QEMU did not ask for write access this was
+            # invisible; with it the machine does not start ("Permission denied").
+            # The mode is set explicitly, also for a disk already in place: the
+            # job does not overwrite it.
             umask 002
             put() { cp "$1" "$2.tmp"; chmod 664 "$2.tmp"; mv -f "$2.tmp" "$2"; }
             {{- range $f := $m.payload.files }}
@@ -183,39 +186,39 @@ spec:
 {{- $fn := include "retro-machine.fullname" . }}
 {{- $base := trimSuffix "/" $m.payload.path }}
 
-{{- /* Вариант железа: значение hardware формы, иначе умолчание паспорта. */}}
+{{- /* Hardware variant: the form's hardware value, otherwise the passport default. */}}
 {{- $variant := .Values.hardware | default $m.defaultVariant | toString }}
 {{- if not (hasKey $m.variants $variant) }}
-{{- fail (printf "%s: вариант железа %q не описан; есть: %s" .Chart.Name $variant (keys $m.variants | sortAlpha | join ", ")) }}
+{{- fail (printf "%s: hardware variant %q is not described; available: %s" .Chart.Name $variant (keys $m.variants | sortAlpha | join ", ")) }}
 {{- end }}
 
-{{- /* Память: в пределах паспорта. */}}
+{{- /* Memory: within the passport limits. */}}
 {{- $memory := .Values.memory | default $m.memory.default | toString }}
 {{- $mem := include "retro-machine.mi" $memory | atoi }}
 {{- if or (lt $mem (include "retro-machine.mi" $m.memory.min | atoi)) (gt $mem (include "retro-machine.mi" $m.memory.max | atoi)) }}
-{{- fail (printf "%s: память %s вне пределов машины %s…%s" .Chart.Name $memory $m.memory.min $m.memory.max) }}
+{{- fail (printf "%s: memory %s is outside the machine limits %s…%s" .Chart.Name $memory $m.memory.min $m.memory.max) }}
 {{- end }}
 
-{{- /* ⚠ `default true` здесь нельзя: false для default — пустое значение, и
-       остановленная машина молча запустилась бы. */}}
+{{- /* ⚠ `default true` must not be used here: for default, false is an empty
+       value, and a stopped machine would silently start. */}}
 {{- $running := true }}
 {{- if hasKey .Values "running" }}
 {{- if not (kindIs "bool" .Values.running) }}
-{{- fail (printf "%s: running — true или false" .Chart.Name) }}
+{{- fail (printf "%s: running must be true or false" .Chart.Name) }}
 {{- end }}
 {{- $running = .Values.running }}
 {{- end }}
 
 {{- $hook := (index .Subcharts "retro-machine").Files.Get "files/onDefineDomain.py" }}
 {{- if not $hook }}
-{{- fail "retro-machine: в библиотеке нет files/onDefineDomain.py" }}
+{{- fail "retro-machine: the library has no files/onDefineDomain.py" }}
 {{- end }}
 
-{{- /* Перехватчик: штатная обёртка sidecar-shim исполняет скрипт из
-       ConfigMap, своего образа перехватчика не нужно. Том с файлами
-       монтируется И в перехватчик, И в контейнер с libvirt
-       (sharedComputePath) — по одному и тому же пути, поэтому перехватчик
-       может проверить, что файлы уже на месте. */}}
+{{- /* The hook: the stock sidecar-shim wrapper runs the script from a
+       ConfigMap, so no hook image of our own is needed. The volume with the
+       files is mounted BOTH into the hook AND into the libvirt container
+       (sharedComputePath) at the same path, so the hook can check that the
+       files are already in place. */}}
 {{- $sidecars := list (dict
       "args" (list "--version" "v1alpha2")
       "configMap" (dict "name" (printf "%s-hook" $fn) "key" "onDefineDomain" "hookPath" "/usr/bin/onDefineDomain")
@@ -230,11 +233,11 @@ data:
   onDefineDomain: |
 {{ $hook | indent 4 }}
 ---
-# Том с файлами машины. Обычный ресурс релиза: создаётся любой удачной
-# установкой или обновлением — в том числе обновлением, которым flux
-# повторяет неудавшуюся установку, — и удаляется вместе с машиной. Раньше он
-# был хуком pre-install: на повторе как обновлении его не было вовсе, а при
-# удалении Helm его не трогал (находки 58 и 64).
+# Volume with the machine files. An ordinary release resource: created by any
+# successful install or upgrade, including the upgrade flux uses to retry a
+# failed install, and deleted together with the machine. It used to be a
+# pre-install hook: on a retry as an upgrade it was not there at all, and on
+# delete Helm did not touch it (findings 58 and 64).
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -247,12 +250,13 @@ spec:
     requests:
       storage: {{ .Values.storage | quote }}
 ---
-# Сама машина. VirtualMachine, а не голый VirtualMachineInstance: у неё есть
-# стратегия запуска, а значит перезапуск (`virtctl restart`, кнопки
-# дашборда) и повторный запуск после сбоя с нарастающей паузой.
+# The machine itself. A VirtualMachine, not a bare VirtualMachineInstance: it
+# has a run strategy, and therefore restart (`virtctl restart`, dashboard
+# buttons) and restart after a failure with increasing backoff.
 #
-# Описание намеренно бедное: почти всё перехватчик заменит. KubeVirt требует
-# заполнить поля, чтобы собрать домен, — а мы потом его переписываем.
+# The spec is intentionally sparse: the hook replaces almost everything.
+# KubeVirt requires the fields to be filled in to build the domain, and then we
+# rewrite it.
 apiVersion: kubevirt.io/v1
 kind: VirtualMachine
 metadata:
@@ -263,17 +267,18 @@ spec:
   template:
     metadata:
       labels: {{- include "retro-machine.labels" . | nindent 8 }}
-      # Метаданные шаблона KubeVirt копирует в каждый новый VMI целиком
-      # (SetupVMIFromVM), поэтому паспорт и перехватчик — здесь.
+      # KubeVirt copies the template metadata into every new VMI in full
+      # (SetupVMIFromVM), so the passport and the hook go here.
       annotations:
         paleocomputing.io/machine: {{ toJson $passport | quote }}
         hooks.kubevirt.io/hookSidecars: {{ toJson $sidecars | quote }}
     spec:
-      # ⚠ Выселение — остановкой, а не миграцией. В кластере стратегия
-      # LiveMigrate, а чужую машину мигрировать нечем: KubeVirt отказал бы в
-      # выселении её пода, и слив узла встал бы на ней — чужие люди не смогли
-      # бы обслужить общий кластер. С None под выселяется, а VirtualMachine
-      # поднимает машину на другом узле; диск на томе переживает переезд.
+      # ⚠ Eviction by stopping, not by migration. The cluster strategy is
+      # LiveMigrate, but there is nothing to migrate a foreign machine with:
+      # KubeVirt would refuse to evict its pod, and a node drain would get stuck
+      # on it, so other people could not maintain the shared cluster. With None
+      # the pod is evicted and the VirtualMachine brings the machine up on
+      # another node; the disk on the volume survives the move.
       evictionStrategy: None
       terminationGracePeriodSeconds: {{ $m.domain.terminationGracePeriodSeconds }}
       domain:
@@ -283,26 +288,27 @@ spec:
         devices: {}
       volumes: []
 ---
-# Наполнение тома. Новая задача появляется на каждой установке и на каждом
-# обновлении, которое меняет её спецификацию (имя несёт хэш), в том числе на
-# обновлении, которым flux повторяет упавшую установку.
+# Volume fill. A new job appears on every install and on every upgrade that
+# changes its spec (the name carries a hash), including the upgrade flux uses
+# to retry a failed install.
 #
-# Идемпотентна по ролям: прошивку переписывает всегда (новый выпуск каталога
-# — новое ПЗУ), диск пользователя кладёт, только если его нет или он пуст.
-# Каждый файл пишется во временный и переименовывается: машина, которая
-# стартует параллельно, увидит либо старый файл, либо новый целиком.
+# Idempotent by role: it always rewrites the firmware (a new catalog release
+# means a new ROM), and places the user's disk only if it is missing or empty.
+# Each file is written to a temporary one and renamed: a machine starting in
+# parallel sees either the old file or the new one in full.
 #
-# ⚠ Обычный ресурс релиза, НЕ хук. Хуком post-install она сидела в
-# неразрешимом ожидании: Cozystack ставит релиз с ожиданием готовности,
-# хук post-install Helm запускает только после готовности ресурсов, а машина
-# не готова, пока том пуст, — перехватчик честно отказывает. Найдено в живом
-# тенанте: машина перезапускалась, задача не появлялась. Теперь том, задача и
-# машина создаются вместе; машина пробует стартовать, пока файлов нет, и
-# поднимается, когда задача закончит.
+# ⚠ An ordinary release resource, NOT a hook. As a post-install hook it was
+# stuck in an unresolvable wait: Cozystack installs the release waiting for
+# readiness, Helm runs a post-install hook only after the resources are ready,
+# and the machine is not ready while the volume is empty: the hook honestly
+# refuses. Found in a live tenant: the machine kept restarting, the job never
+# appeared. Now the volume, the job and the machine are created together; the
+# machine tries to start while the files are missing and comes up when the job
+# finishes.
 #
-# Шаблон Job неизменяем, поэтому в имени — хэш образа и паспорта: новый
-# выпуск даёт новую задачу (она обновит прошивку, диск не тронет), прежнюю
-# Helm удаляет как ушедшую из релиза.
+# A Job template is immutable, so the name carries a hash of the image and the
+# passport: a new release yields a new job (it updates the firmware and leaves
+# the disk alone), and Helm deletes the previous one as gone from the release.
 {{- $fillSpec := include "retro-machine.fillJobSpec" (dict "ctx" . "m" $m "fn" $fn "base" $base "running" $running) }}
 apiVersion: batch/v1
 kind: Job

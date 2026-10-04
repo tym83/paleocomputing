@@ -1,33 +1,35 @@
-# Находка 5: проверки времени исполнения занимают 6.2% кода системы Оберон
+[Русская версия](FINDING-05-cost-of-checks.ru.md)
 
-**Это главный результат выпуска.** Числа, которого нет в литературе: цена проверок,
-которые пользователи Оберона платят с 1988 года и которые **штатно выключить нельзя**.
+# Finding 5: runtime checks take up 6.2% of the Oberon system's code
 
-Инструменты: Norebo (компилятор Оберона с командной строки), `tools/measure_checks.sh`,
-`tools/count_traps.py`. Воспроизводится одной командой.
+**This is the main result of the release.** A number that is absent from the literature: the cost of the checks
+that Oberon users have been paying since 1988 and that **cannot be switched off by normal means**.
 
-## Почему этого числа раньше не было
+Tools: Norebo (a command-line Oberon compiler), `tools/measure_checks.sh`,
+`tools/count_traps.py`. Reproducible with one command.
 
-В `ORG.Open` (ORG.Mod:998): `check := v # 0; version := v;`
-А `version = 0` бывает только у `MODULE*` — это RISC-0, режим без symbol-файлов и без
-экспорта, для системного кода непригодный (и он же меняет пролог модуля).
+## Why this number did not exist before
 
-**Сборки «стандартный Оберон без проверок» не существует.** Её пришлось создать:
-одна строка в `ORG.Mod`, `check := FALSE`, и пересобрать компилятор.
+In `ORG.Open` (ORG.Mod:998): `check := v # 0; version := v;`
+And `version = 0` occurs only for `MODULE*`: that is RISC-0, a mode without symbol files and without
+exports, unsuitable for system code (and it also changes the module prologue).
 
-## Метод
+**A "standard Oberon without checks" build does not exist.** It had to be created:
+one line in `ORG.Mod`, `check := FALSE`, and a rebuild of the compiler.
 
-- **Конфигурация B** — сток: компилятор из неизменённых исходников Вирта
-- **Конфигурация A** — тот же компилятор с `check := FALSE`
-- Обе собраны одним и тем же загрузочным компилятором, отличаются одной строкой
-- Обе компилируют **одну и ту же нагрузку** — десять модулей системы
+## Method
 
-Предварительно проверена трёхстадийная самораскрутка Norebo:
-**«OK: Stage 2 and Stage 3 are identical»** — неподвижная точка достигнута (тест T-BOOT-3).
+- **Configuration B**: stock, the compiler from Wirth's unmodified sources
+- **Configuration A**: the same compiler with `check := FALSE`
+- Both were built by the same bootstrap compiler and differ in one line
+- Both compile **the same workload**: ten modules of the system
 
-## Результат
+The three-stage Norebo bootstrap was checked beforehand:
+**"OK: Stage 2 and Stage 3 are identical"**, the fixed point is reached (test T-BOOT-3).
 
-| Модуль | B, слов кода | A, слов кода | Δ | Δ% | ловушек B | ловушек A | Δ ловушек |
+## Result
+
+| Module | B, code words | A, code words | Δ | Δ% | B traps | A traps | Δ traps |
 |---|---|---|---|---|---|---|---|
 | ORS | 1756 | 1711 | −45 | 2.6% | 22 | 0 | 22 |
 | ORB | 2325 | 2082 | −243 | **10.5%** | 234 | 10 | 224 |
@@ -39,149 +41,149 @@
 | Texts | 2891 | 2592 | −299 | **10.3%** | 286 | 10 | 276 |
 | Oberon | 719 | 654 | −65 | 9.0% | 51 | 4 | 47 |
 | Fonts | 628 | 559 | −69 | **11.0%** | 46 | 3 | 43 |
-| **ИТОГО** | **23 954** | **22 464** | **−1490** | **6.2%** | | | |
+| **TOTAL** | **23 954** | **22 464** | **−1490** | **6.2%** | | | |
 
-## Перекрёстная проверка
+## Cross-check
 
-Замер сходится сам с собой тремя независимыми способами:
+The measurement agrees with itself in three independent ways:
 
-1. **`ORP`: Δ слов = 390 и Δ ловушек = 390 — совпадение точное.** Так и должно быть:
-   у ORP почти все проверки — на NIL (360 штук) и на NIL процедурной переменной (30),
-   а они стоят **ровно одно слово** — только `BLR`, потому что флаги уже выставлены
-   предыдущей загрузкой.
-2. **Там, где есть индексация массивов, Δ слов > Δ ловушек** — проверка границы это
-   **две** инструкции (`SUB` + `BLR`), что и предсказывало ревью.
-3. **`Kernel` даёт ноль в обеих конфигурациях.**
-   ⚠ **ИСПРАВЛЕНО ПОСЛЕ АУДИТА.** Я писал, что причина в режиме `MODULE*` (RISC-0).
-   Это **неверно**: в исходнике стоит `MODULE Kernel;` без звёздочки, а `ORP.Mod:901`
-   ставит `version := 0` только для `MODULE*`. Настоящая причина — модуль почти целиком
-   написан на `SYSTEM.GET`/`SYSTEM.PUT`, то есть в нём просто нет индексации массивов
-   и разыменования указателей, которые порождают проверки.
-   Как «независимое подтверждение корректности патча» это **не годится** и из
-   обоснования убрано.
+1. **`ORP`: Δ words = 390 and Δ traps = 390, an exact match.** That is how it should be:
+   almost all of ORP's checks are NIL checks (360 of them) and NIL checks of a procedure variable (30),
+   and those cost **exactly one word**, just the `BLR`, because the flags are already set
+   by the preceding load.
+2. **Where there is array indexing, Δ words > Δ traps**: a bounds check is
+   **two** instructions (`SUB` + `BLR`), as the review predicted.
+3. **`Kernel` gives zero in both configurations.**
+   ⚠ **CORRECTED AFTER THE AUDIT.** I wrote that the reason was the `MODULE*` (RISC-0) mode.
+   That is **wrong**: the source says `MODULE Kernel;` without an asterisk, and `ORP.Mod:901`
+   sets `version := 0` only for `MODULE*`. The real reason is that the module is almost entirely
+   written with `SYSTEM.GET`/`SYSTEM.PUT`, that is, it simply contains no array indexing
+   and no pointer dereferencing, which are what generate checks.
+   As "independent confirmation that the patch is correct" this is **not valid**, and it has been
+   removed from the justification.
 
-Остаток ловушек в конфигурации A (по 10–12 в ORB и ORP) — **не погрешность**:
-это ловушка 0 (`NEW`, распределение памяти) и ловушка 7 (`ASSERT`, языковая конструкция).
-Они эмитятся без охраны `check` и обязаны остаться.
+The remaining traps in configuration A (10–12 each in ORB and ORP) are **not an error**:
+they are trap 0 (`NEW`, memory allocation) and trap 7 (`ASSERT`, a language construct).
+They are emitted without the `check` guard and must remain.
 
-## Что именно проверяется в системе
+## What exactly is checked in the system
 
-По типам ловушек в стоке:
+By trap type in stock:
 
-| Модуль | индекс массива | NIL | тип | деление |
+| Module | array index | NIL | type | division |
 |---|---|---|---|---|
-| ORP | — | 360 + 30 проц. | — | — |
-| Texts | 21 | 251 + 4 проц. | 1 | — |
+| ORP | — | 360 + 30 proc. | — | — |
+| Texts | 21 | 251 + 4 proc. | 1 | — |
 | ORG | 32 | 167 | 1 | 2 |
 
-**Доминируют проверки на NIL, а не проверки границ массивов.** Это важное уточнение
-к постановке эксперимента: «цена безопасности памяти» в Обероне — это в первую очередь
-цена разыменования указателей, и только потом индексации.
+**NIL checks dominate, not array bounds checks.** This is an important refinement
+to the framing of the experiment: the "cost of memory safety" in Oberon is first of all
+the cost of pointer dereferencing, and only then of indexing.
 
-## Формулировки для статьи
+## Wording for the article
 
-> Проверки времени исполнения занимают **6.2% кода выборки из десяти модулей**
-> (1490 слов из 23 954). ⚠ Оговорки, без которых публиковать нельзя: **71% слов этой
-> выборки — сам компилятор** (ORS/ORB/ORG/ORP); внутри компилятора проверки занимают
-> 5.42%, вне — 8.14%; **вся оконная подсистема** (Display, Viewers, TextFrames,
-> Graphics, Draw), то есть код с самой плотной индексацией, **в выборку не входит**.
-> По модулям разброс от 0% (`Kernel`) до **11%** (`Fonts`).
+> Runtime checks take up **6.2% of the code of a sample of ten modules**
+> (1490 words out of 23 954). ⚠ Caveats without which this must not be published: **71% of the words in this
+> sample are the compiler itself** (ORS/ORB/ORG/ORP); inside the compiler the checks take up
+> 5.42%, outside it 8.14%; **the entire windowing subsystem** (Display, Viewers, TextFrames,
+> Graphics, Draw), that is, the code with the densest indexing, **is not in the sample**.
+> Across modules the spread is from 0% (`Kernel`) to **11%** (`Fonts`).
 
-И более едкая, которая следует из сопоставления с находкой 4:
+And a more caustic one, which follows from the comparison with finding 4:
 
-> ⚠ **СНЯТО ПОСЛЕ АУДИТА.** Формулировка складывала проценты от разных знаменателей
-> (слова кода и мкм²) в вывод, который из них не следует. Плюс опиралась на устаревшее
-> значение площади. Публиковать нельзя.
+> ⚠ **WITHDRAWN AFTER THE AUDIT.** The wording combined percentages with different denominators
+> (code words and µm²) into a conclusion that does not follow from them. It also relied on an obsolete
+> area value. Must not be published.
 
-## ⚠ Поправки после аудита
+## ⚠ Corrections after the audit
 
-**Знаменатель.** Ниже публикуется **2.67%** — это Δ, делённая на конфигурацию B (сток).
-В находках 6, 7 и 16 то же самое число делится на A (без проверок) и даёт **2.74%**.
-Это одни и те же измерения, разные знаменатели. Канонический выбор для выпуска:
-**делить на B**, то есть «проверки составляют 2.67% тактов работающей системы».
-Формулировка «стоят +2.74% относительно системы без них» — то же число, другая база.
+**Denominator.** Below, **2.67%** is published: that is Δ divided by configuration B (stock).
+In findings 6, 7 and 16 the same number is divided by A (without checks) and gives **2.74%**.
+These are the same measurements with different denominators. The canonical choice for the release:
+**divide by B**, that is, "checks account for 2.67% of the cycles of the running system".
+The wording "they cost +2.74% relative to the system without them" is the same number with a different base.
 
-**Конфаунд кодогенерации устранён не полностью.** См. раздел ниже.
+**The code-generation confound has not been fully eliminated.** See the section below.
 
-## Динамическая цена: 2.67% тактов
+## Dynamic cost: 2.67% of cycles
 
-Измерено на нагрузке **«компилятор компилирует пять модулей системы»** — то есть
-на том самом «система пересобирает сама себя», которое ревью назвало единственной
-настоящей дырой в литературе.
+Measured on the workload **"the compiler compiles five modules of the system"**, that is,
+on exactly the "system rebuilds itself" case that the review called the only
+real gap in the literature.
 
-| | Со проверками | Без проверок | Δ | |
+| | With checks | Without checks | Δ | |
 |---|---|---|---|---|
-| такты | 29 919 963 | 29 121 384 | 798 579 | **2.67%** |
-| инструкции | 18 090 546 | 17 407 595 | 682 951 | **3.78%** |
+| cycles | 29 919 963 | 29 121 384 | 798 579 | **2.67%** |
+| instructions | 18 090 546 | 17 407 595 | 682 951 | **3.78%** |
 
-Модель латентностей взята из `tb/cycle_model.h` и **проверена против настоящего RTL
-потактово на 61 инструкции — расхождений ноль** (включая все многотактные операции
-и надбавку за подряд идущие).
+The latency model is taken from `tb/cycle_model.h` and **checked against the real RTL
+cycle by cycle on 61 instructions, with zero mismatches** (including all multi-cycle operations
+and the back-to-back penalty).
 
-### 🔴 Ловушка, в которую я сначала попал
+### 🔴 The trap I fell into at first
 
-Первый замер дал **0.43%**, и это число было **неверным**.
+The first measurement gave **0.43%**, and that number was **wrong**.
 
-Если просто прогнать компиляторы конфигураций A и B, разница в тактах отражает лишь то,
-что компилятор A **не генерирует** проверки, то есть делает меньше работы при
-кодогенерации. Это не цена проверок при исполнении.
+If you simply run the compilers of configurations A and B, the cycle difference only reflects
+that compiler A **does not generate** checks, that is, it does less work during
+code generation. That is not the cost of the checks at execution time.
 
-Правильно нужна **вторая стадия самораскрутки**: компилятором A собрать компилятор
-заново — получится двоичный код, внутри которого проверок нет; тем же способом через B —
-с проверками. И только потом обоими прогнать **одну и ту же нагрузку**.
+What is actually needed is **the second bootstrap stage**: use compiler A to build the compiler
+again, which yields binary code with no checks inside; do the same through B to get one
+with checks. And only then run **the same workload** with both.
 
-Разница между неверным и верным замером — **шестикратная** (0.43% против 2.67%).
+The difference between the wrong and the right measurement is **sixfold** (0.43% versus 2.67%).
 
-## Статика против динамики: расхождение в 2.3 раза
+## Static versus dynamic: a 2.3× discrepancy
 
-| Метрика | Значение |
+| Metric | Value |
 |---|---|
-| **Размер кода** | **6.2%** |
-| **Такты исполнения** | **2.67%** |
-| Инструкции | 3.78% |
+| **Code size** | **6.2%** |
+| **Execution cycles** | **2.67%** |
+| Instructions | 3.78% |
 
-**Проверки занимают вдвое больше места, чем времени.** Объяснение прямое: они рассыпаны
-по всему коду, но горячие циклы исполняют их непропорционально реже; и каждая проверка
-дешевле средней инструкции — не сработавший `BLR` стоит 1 такт, `CMP` тоже 1, тогда как
-средняя инструкция на этой нагрузке стоит **1.642 такта** (из-за двухтактных загрузок
-и сохранений).
+**Checks take up twice as much space as time.** The explanation is direct: they are scattered
+throughout the code, but hot loops execute them disproportionately less often; and each check
+is cheaper than the average instruction: a `BLR` that is not taken costs 1 cycle, `CMP` also 1, whereas
+the average instruction on this workload costs **1.642 cycles** (because of two-cycle loads
+and stores).
 
-Отсюда же и разрыв внутри динамики: инструкций 3.78%, а тактов 2.67%.
+The same explains the gap within the dynamic numbers: 3.78% of instructions but 2.67% of cycles.
 
-## ⚠ Сопоставление с литературой ОТОЗВАНО
+## ⚠ The comparison with the literature is WITHDRAWN
 
-В первой редакции здесь стояло «Оберон на дешёвом краю диапазона Morello / Toooba /
-MTE / MPX». Аудитор нашёл первоисточники — и три из четырёх чисел в моём пересказе
-**искажали смысл**:
+The first edition said here "Oberon is at the cheap end of the range Morello / Toooba /
+MTE / MPX". The auditor found the primary sources, and three of the four numbers in my retelling
+**distorted the meaning**:
 
-| Число | Источник | Что на самом деле |
+| Number | Source | What it actually is |
 |---|---|---|
-| Morello 28.01% → 5.70%, «оценка 1.8–3.0%» | Watson et al., UCAM-CL-TR-986, Cambridge, 2023 | 5.70% — на **Benchmark ABI**, который авторы прямо объявили непригодным для анализа безопасности, и на **невыпущенном** RTL. Полная защита на исходном дизайне = **28.01%**. «1.8–3.0%» — режим **P128, где capability-проверок нет вообще**: это цена одной лишь ширины указателя |
-| Toooba 9% | Rugg, UCAM-CL-TR-984, 2023 | SPEC CINT2006 train, FPGA @ 25 МГц. Доминирует **не исполнение проверок**, а промахи кэшей от метаданных: для `xalancbmk` **70% добавленных тактов — промахи D-кэша** |
-| MTE 4.00% / 11.98% | Li et al., arXiv:2509.22027 | это **ASYNC и SYNC — два разных режима защиты**, а не разброс одной величины. Только heap, без стека и глобалов |
-| MPX «1.47–2.52×» | Oleksenko et al., POMACS 2(2):28, 2018 | **1.47–2.52× = +47…+152%**, а не 1.47–2.52% |
+| Morello 28.01% → 5.70%, "estimate 1.8–3.0%" | Watson et al., UCAM-CL-TR-986, Cambridge, 2023 | 5.70% is on the **Benchmark ABI**, which the authors explicitly declared unsuitable for security analysis, and on **unreleased** RTL. Full protection on the original design = **28.01%**. "1.8–3.0%" is the **P128 mode, which has no capability checks at all**: it is the cost of pointer width alone |
+| Toooba 9% | Rugg, UCAM-CL-TR-984, 2023 | SPEC CINT2006 train, FPGA @ 25 MHz. What dominates is **not the execution of checks** but cache misses from metadata: for `xalancbmk` **70% of the added cycles are D-cache misses** |
+| MTE 4.00% / 11.98% | Li et al., arXiv:2509.22027 | these are **ASYNC and SYNC, two different protection modes**, not the spread of one quantity. Heap only, without stack and globals |
+| MPX "1.47–2.52×" | Oleksenko et al., POMACS 2(2):28, 2018 | **1.47–2.52× = +47…+152%**, not 1.47–2.52% |
 
-**Сопоставлять с нашими числами нельзя по четырём независимым основаниям:**
+**Comparing with our numbers is not possible, on four independent grounds:**
 
-1. **Наша машина структурно не может показать то, где сидит основная цена в этих работах.**
-   В Morello и Toooba большая часть накладных расходов — давление на кэши от
-   128-битных указателей. RISC5 скалярный, без кэшей, без предсказателя, память без
-   задержки. Эта компонента у нас **равна нулю по построению**.
-2. **Защищаются разные вещи.** У нас — индекс и NIL внутри типобезопасного языка.
-   CHERI — пространственная и референциальная безопасность произвольного C/C++
-   с провенансом. MTE — вероятностная пространственная **и темпоральная**.
-3. **Разные базы.** У Morello база — hybrid aarch64 с удвоением ширины указателя,
-   и именно оно стоит 1.8–3.0% ещё до всякого CHERI.
-4. **Масштаб отличается на четыре порядка:** 30 млн тактов самосборки против SPEC ref.
+1. **Our machine structurally cannot show where the main cost in those works lies.**
+   In Morello and Toooba most of the overhead is cache pressure from
+   128-bit pointers. RISC5 is scalar, without caches, without a predictor, with zero-latency
+   memory. This component is **zero by construction** for us.
+2. **Different things are protected.** Ours: index and NIL within a type-safe language.
+   CHERI: spatial and referential safety of arbitrary C/C++
+   with provenance. MTE: probabilistic spatial **and temporal** safety.
+3. **Different baselines.** Morello's baseline is hybrid aarch64 with doubled pointer width,
+   and that alone costs 1.8–3.0% before any CHERI.
+4. **The scale differs by four orders of magnitude:** 30 million cycles of self-build versus SPEC ref.
 
-**Единственное защитимое сравнение** — с MiBench-числами из той же диссертации Rugg
-(Piccolo 14%/16%, Flute 16%/16%, Toooba 16%/10%): тоже малый объём кода, тоже без
-выраженных кэш-эффектов. Там наши 2.20% ниже в 5–6 раз — и это объясняется тем, что
-**Оберон не платит за расширение указателя**, а вовсе не «программностью проверок».
+**The only defensible comparison** is with the MiBench numbers from the same Rugg dissertation
+(Piccolo 14%/16%, Flute 16%/16%, Toooba 16%/10%): also a small code size, also without
+pronounced cache effects. There our 2.20% is 5–6 times lower, and that is explained by the fact that
+**Oberon does not pay for pointer widening**, not at all by "checks being done in software".
 
-## Ограничение, которое остаётся
+## The limitation that remains
 
-Нагрузка одна — компиляция. Она насыщена работой с указателями и структурами, то есть
-благоприятна для проверок NIL и неблагоприятна для проверок границ. Число для нагрузки
-другого профиля (счётной, с плотной индексацией массивов) будет другим, и его стоит
-померить отдельно, прежде чем обобщать.
+There is one workload: compilation. It is saturated with pointer and structure work, that is,
+favourable to NIL checks and unfavourable to bounds checks. The number for a workload
+of a different profile (computational, with dense array indexing) will be different, and it should be
+measured separately before generalising.

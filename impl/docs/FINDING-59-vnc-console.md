@@ -1,89 +1,93 @@
-# Находка 59. Машину в кластере запускали, но её экрана не видел никто
+[Русская версия](FINDING-59-vnc-console.ru.md)
 
-Тенант ставит OberonVM из каталога, машина загружается — и на этом всё.
-Дашборд Cozystack открывает консоль виртуальной машины через VNC, `virtctl
-vnc` — тоже. Консоль Оберона была пустой.
+# Finding 59. The machine was running in the cluster, but nobody had seen its screen
 
-## Почему
+A tenant installs OberonVM from the catalog, the machine boots, and that is it. The
+Cozystack dashboard opens the virtual machine console over VNC, and so does `virtctl
+vnc`. The Oberon console was empty.
 
-Перехватчик убирал из описания машины всё, чему нужна шина PCI, и вместе с
-устройствами — `graphics`. Эмулятор запускался с `-display none`:
+## Why
+
+The hook stripped everything that needs a PCI bus out of the machine description, and
+along with the devices it removed `graphics`. The emulator was started with
+`-display none`:
 
 ```
 ... -display none -no-user-config -nodefaults ...
 ```
 
-А `graphics` — не устройство на шине. Это способ показать экран: libvirt
-превращает его в `-vnc unix:<сокет>`, и к этому сокету KubeVirt подключает
-консоль. Сокет лежит в каталоге, который KubeVirt готовит заранее:
+But `graphics` is not a device on the bus. It is a way to show the screen: libvirt
+turns it into `-vnc unix:<socket>`, and KubeVirt attaches the console to that socket.
+The socket lives in a directory that KubeVirt prepares in advance:
 
 ```
-/var/run/kubevirt-private/<uid машины>/virt-vnc
+/var/run/kubevirt-private/<machine uid>/virt-vnc
 ```
 
-Каталог в поде был, пустой: KubeVirt ждал экран, которого не было.
+The directory existed in the pod, empty: KubeVirt was waiting for a screen that did
+not exist.
 
-Своя видеокарта у машины Вирта встроенная: кадровый буфер — область памяти,
-которую цель QEMU и так отдаёт как консоль. Устройство `video` ей не нужно, и
-его по-прежнему нет.
+Wirth's machine has a built-in video card: the framebuffer is a memory region that the
+QEMU target already exposes as the console. It needs no `video` device, and there
+still is none.
 
-## Как проверено
+## How it was verified
 
-Внутри пода работающей машины, рядом с ней, заведён тестовый домен — копия
-описания на копии диска, плюс
+Inside the pod of a running machine, next to it, a test domain was set up: a copy of
+the description on a copy of the disk, plus
 
 ```
 <graphics type='vnc'><listen type='socket' socket='/tmp/t-vnc'/></graphics>
 ```
 
-1. libvirt описание принял: `graphics` при `video none` допустим.
-2. QEMU не запустился: `could not find keymap file for language 'en-us'`.
-   В образ launcher клался один бинарник, без раскладок клавиатуры, а без
-   раскладки VNC не стартует. Раскладки лежат прямо в исходниках QEMU,
-   `pc-bios/keymaps/`.
-3. С раскладкой (для опыта — через `-L` на свой каталог) машина запустилась,
-   сокет появился, `query-vnc` показывает `enabled: true`, а снимок экрана
-   через ту же консоль — система Оберон V5 с окнами `System.Log` и
-   `System.Tool` (`qemu-cluster-vnc.png`).
+1. libvirt accepted the description: `graphics` with `video none` is allowed.
+2. QEMU did not start: `could not find keymap file for language 'en-us'`.
+   Only a single binary was put into the launcher image, with no keyboard keymaps,
+   and VNC does not start without a keymap. The keymaps are right in the QEMU
+   sources, `pc-bios/keymaps/`.
+3. With a keymap (for the experiment, via `-L` pointing at a custom directory) the
+   machine started, the socket appeared, `query-vnc` shows `enabled: true`, and a
+   screenshot through the same console shows the Oberon V5 system with the
+   `System.Log` and `System.Tool` windows (`qemu-cluster-vnc.png`).
 
-## Что изменено
+## What changed
 
-* Перехватчик оставляет `graphics type="vnc"` вместе с адресом сокета,
-  прочие виды экрана (SPICE) убирает.
-* Образ launcher несёт раскладки в `/usr/local/share/qemu/keymaps/`;
-  проверка содержимого образа при выпуске требует `en-us`.
-* Тест перехватчика проверяет, что VNC остался с сокетом KubeVirt, а SPICE
-  ушёл; на старом перехватчике он краснеет ровно на VNC. Прежняя проверка
-  «убрано всё, чему нужна PCI» считала `graphics` устройством PCI — это и
-  было неверное допущение.
+* The hook keeps `graphics type="vnc"` together with the socket address and removes
+  other kinds of display (SPICE).
+* The launcher image ships the keymaps in `/usr/local/share/qemu/keymaps/`; the image
+  content check at release requires `en-us`.
+* The hook test checks that VNC remains with the KubeVirt socket and that SPICE is
+  gone; against the old hook it fails exactly on VNC. The previous check "everything
+  that needs PCI is removed" treated `graphics` as a PCI device, and that was the
+  wrong assumption.
 
-## Общее
+## Common thread
 
-Машина «работала» по всем признакам, которые мы смотрели: под запущен,
-домен в `running`, кадровый буфер непустой. Ни один из них не отвечал на
-вопрос пользователя — «а где экран?». Проверять надо тем путём, которым
-пойдёт человек.
+The machine "worked" by every sign we looked at: the pod was running, the domain was
+`running`, the framebuffer was non-empty. None of them answered the user's question:
+"where is the screen?". Verification has to follow the path a person will take.
 
-## Дополнение: путь пользователя пройден
+## Addendum: the user path has been walked
 
-После выпуска с исправлением машина `wirth-chk` поставлена из каталога заново.
-Эмулятор в кластере запущен так:
+After the release with the fix, the machine `wirth-chk` was installed from the catalog
+again. The emulator in the cluster is started like this:
 
 ```
 -vnc vnc=unix:/var/run/kubevirt-private/<uid>/virt-vnc,audiodev=audio1
 -machine chk=on
 ```
 
-Экран снят не изнутри пода, а через подресурс `vnc` API KubeVirt — тот же, что
-открывает консоль дашборда, — и **с правами тенанта** (`virtctl vnc
---proxy-only` по kubeconfig тенанта плюс `kubevirt/vnc_snapshot.py`):
+The screen was captured not from inside the pod but through the KubeVirt API `vnc`
+subresource, the same one that opens the dashboard console, and **with tenant
+permissions** (`virtctl vnc --proxy-only` with the tenant kubeconfig plus
+`kubevirt/vnc_snapshot.py`):
 
 ```
 RFB 003.008 name='QEMU (tenant-sandbox_oberon-vm-oberon-vm-wirth-chk)' 1024x768 dark_pixels=18607
 ```
 
-18607 тёмных точек — ровно эталон экрана загруженного Оберона из находки 48.
-Снимок `qemu-cluster-vnc.png` заменён этим.
+18607 dark pixels is exactly the reference screen of a booted Oberon from Finding 48.
+The `qemu-cluster-vnc.png` screenshot was replaced with this one.
 
-Попутно: прокси `virtctl vnc` принимает одно подключение и выходит. Первая
-попытка проверила порт через `nc -z` — и этим подключением его съела.
+Along the way: the `virtctl vnc` proxy accepts one connection and exits. The first
+attempt checked the port with `nc -z` and used up the connection that way.

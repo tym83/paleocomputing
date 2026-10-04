@@ -1,26 +1,26 @@
 #!/usr/bin/env python3
 """
-Мини-ассемблер RISC5 (Project Oberon).
+Mini assembler for RISC5 (Project Oberon).
 
-Кодирование по архитектурной справке, сверенной с RISC.v:
-  F0  00u0 | a | b | op |   (12 бит не исп.)   | 0000 | c     регистр-регистр
-  F1  01uv | a | b | op |            n (16)                   регистр-непосредственное
+Encoding per the architecture reference, cross-checked against RISC.v:
+  F0  00u0 | a | b | op |   (12 bits unused)   | 0000 | c     register-register
+  F1  01uv | a | b | op |            n (16)                   register-immediate
   F2  10uv | a | b |              off (20)                    load/store
-  F3  110v | cond |     (20 бит)      | 0000 | c              ветвление по регистру
-  F3  111v | cond |            off (24)                       ветвление по смещению
+  F3  110v | cond |     (20 bits)     | 0000 | c              branch to register
+  F3  111v | cond |            off (24)                       branch by offset
 
-Назначение: направленные тесты ISA (см. HARNESS.md). Не оптимизирующий, не полный
-ассемблер — ровно столько, сколько нужно для тестов и для листингов в статью.
+Purpose: directed ISA tests (see HARNESS.md). Not an optimizing or complete
+assembler: exactly as much as the tests and the article listings need.
 """
 import re, sys, struct
 
-OPS = {  # op-код в битах 19:16
+OPS = {  # opcode in bits 19:16
     'MOV':0, 'LSL':1, 'ASR':2, 'ROR':3,
     'AND':4, 'ANN':5, 'IOR':6, 'XOR':7,
     'ADD':8, 'SUB':9, 'MUL':10,'DIV':11,
     'FAD':12,'FSB':13,'FML':14,'FDV':15,
 }
-# формы с u=1
+# forms with u=1
 OPS_U = {'ADC':8, 'SBC':9, 'UMUL':10}
 
 COND = {
@@ -28,19 +28,19 @@ COND = {
     'PL':0x8,'NE':0x9,'CC':0xA,'VC':0xB,'HI':0xC,'GE':0xD,'GT':0xE,'NV':0xF,
 }
 
-# ⚠ ОПРОВЕРГНУТО РЕВЬЮ (см. design/REVIEW.md, ревьюер 2, п.2).
-# Исходное допущение «в F0 бит 28 всегда 0, там 32 свободных слота» — НЕВЕРНО.
-# По RISC5.v:68-71  p=IR[31] q=IR[30] u=IR[29] v=IR[28], формат F0 = 00uv, и бит 28
-# уже используется: ORG.Floor -> Put0(Fad+V), ORG.Float -> Put0(Fad+U) (ORG.Mod:928-934).
-# Все 16 значений op заняты. Ловушки на неизвестную инструкцию в RISC5 НЕТ ВООБЩЕ —
-# любое 32-битное слово валидно, поэтому неверное кодирование выполнится молча.
+# ⚠ REFUTED BY REVIEW (see design/REVIEW.md, reviewer 2, item 2).
+# The original assumption "in F0 bit 28 is always 0, so there are 32 free slots" is WRONG.
+# Per RISC5.v:68-71  p=IR[31] q=IR[30] u=IR[29] v=IR[28], format F0 = 00uv, and bit 28
+# is already used: ORG.Floor -> Put0(Fad+V), ORG.Float -> Put0(Fad+U) (ORG.Mod:928-934).
+# All 16 op values are taken. RISC5 has NO trap on an unknown instruction AT ALL:
+# any 32-bit word is valid, so a wrong encoding will execute silently.
 #
-# Новое кодирование (требует явного сужения декода в RTL:
+# New encoding (requires explicitly narrowing the decode in the RTL:
 #   assign FML = ~p & (op==14) & ~v;  ):
-#   FMAC -> F0, op=14 (Fml), v=1   — переиспользуем don't-care бит, а не "свободный слот"
-#   CHK  -> ТРЕБУЕТ формы F1 с 16-битным непосредственным пределом, иначе экономия НУЛЕВАЯ
-#           (предел массива — константа, сегодня она идёт в immediate поле Cmp)
-# Окончательное кодирование не зафиксировано до сведения всех пяти ревью.
+#   FMAC -> F0, op=14 (Fml), v=1   - reuses a don't-care bit, not a "free slot"
+#   CHK  -> REQUIRES the F1 form with a 16-bit immediate limit, otherwise the saving is ZERO
+#           (the array limit is a constant; today it goes into the immediate field of Cmp)
+# The final encoding is not fixed until all five reviews are reconciled.
 EXT_UNRESOLVED = True
 
 
@@ -51,10 +51,10 @@ class AsmError(Exception):
 def reg(tok):
     m = re.fullmatch(r'R(\d{1,2})', tok.upper())
     if not m:
-        raise AsmError(f'ожидался регистр, получено {tok!r}')
+        raise AsmError(f'expected a register, got {tok!r}')
     n = int(m.group(1))
     if not 0 <= n <= 15:
-        raise AsmError(f'регистр вне диапазона: {tok}')
+        raise AsmError(f'register out of range: {tok}')
     return n
 
 
@@ -66,8 +66,8 @@ def imm(tok, bits, signed=True):
     else:
         lo, hi = 0, (1 << bits) - 1
     if not lo <= v <= hi:
-        raise AsmError(f'непосредственное {v} не влезает в {bits} бит '
-                       f'({"знаковое" if signed else "беззнаковое"})')
+        raise AsmError(f'immediate {v} does not fit in {bits} bits '
+                       f'({"signed" if signed else "unsigned"})')
     return v & ((1 << bits) - 1)
 
 
@@ -98,18 +98,18 @@ def enc_f3_off(v, cond, off):
 class Assembler:
     def __init__(self):
         self.labels = {}
-        self.expects = []   # (индекс_слова, текст) — проверки для оснастки
+        self.expects = []   # (word_index, text): checks for the harness
 
     def assemble(self, text):
         lines = self._parse(text)
         self._pass1(lines)
         return self._pass2(lines), self.labels, self.expects
 
-    # --- разбор -------------------------------------------------------
+    # --- parsing -----------------------------------------------------
     def _parse(self, text):
         out = []
         for lineno, raw in enumerate(text.splitlines(), 1):
-            # ; EXPECT ... — директива оснастки, не код
+            # ; EXPECT ... is a harness directive, not code
             m = re.match(r'\s*;\s*EXPECT\s+(.*)', raw, re.I)
             if m:
                 out.append(('expect', m.group(1).strip(), lineno))
@@ -131,7 +131,7 @@ class Assembler:
         for kind, val, lineno in lines:
             if kind == 'label':
                 if val in self.labels:
-                    raise AsmError(f'строка {lineno}: метка {val} уже определена')
+                    raise AsmError(f'line {lineno}: label {val} is already defined')
                 self.labels[val] = pc
             elif kind == 'insn':
                 pc += 4
@@ -145,43 +145,43 @@ class Assembler:
                 try:
                     words.append(self._encode(val, len(words) * 4))
                 except AsmError as e:
-                    raise AsmError(f'строка {lineno}: {e}\n  {val}')
+                    raise AsmError(f'line {lineno}: {e}\n  {val}')
         return words
 
-    # --- кодирование --------------------------------------------------
+    # --- encoding ----------------------------------------------------
     def _encode(self, line, pc):
         parts = re.split(r'[\s,]+', line.strip())
         mn = parts[0].upper()
         args = [p for p in parts[1:] if p]
 
-        if mn == 'HALT':                 # псевдо: B .  (бесконечный цикл)
+        if mn == 'HALT':                 # pseudo: B .  (infinite loop)
             return enc_f3_off(0, COND[''], -1)
-        if mn == 'NOP':                  # псевдо: MOV R0, R0
+        if mn == 'NOP':                  # pseudo: MOV R0, R0
             return enc_f0(0, 0, 0, OPS['MOV'], 0)
-        if mn == 'WORD':                 # сырое слово
+        if mn == 'WORD':                 # raw word
             return int(args[0], 0) & 0xFFFFFFFF
 
-        # --- расширения проекта: ЗАБЛОКИРОВАНЫ до пересмотра кодирования
+        # --- project extensions: BLOCKED until the encoding is revised
         if mn in ('FMAC', 'CHK'):
             raise AsmError(
-                f'{mn}: кодирование опровергнуто ревью и не зафиксировано заново. '
-                'См. design/REVIEW.md, ревьюер 2, п.2 и п.3.')
+                f'{mn}: the encoding was refuted by review and has not been fixed again. '
+                'See design/REVIEW.md, reviewer 2, items 2 and 3.')
 
-        # --- память
+        # --- memory
         if mn in ('LD', 'LDB', 'ST', 'STB'):
             u = 1 if mn.startswith('ST') else 0
             v = 1 if mn.endswith('B') else 0
             if len(args) != 3:
-                raise AsmError(f'{mn} требует a, b, off')
+                raise AsmError(f'{mn} requires a, b, off')
             return enc_f2(u, v, reg(args[0]), reg(args[1]), imm(args[2], 20))
 
-        # --- ветвления
+        # --- branches
         m = re.fullmatch(r'(B|BL)(MI|EQ|CS|VS|LS|LT|LE|PL|NE|CC|VC|HI|GE|GT|NV)?', mn)
         if m:
             v = 1 if m.group(1) == 'BL' else 0
             cond = COND[m.group(2) or '']
             if len(args) != 1:
-                raise AsmError(f'{mn} требует один аргумент')
+                raise AsmError(f'{mn} requires one argument')
             tgt = args[0]
             if is_reg(tgt):
                 return enc_f3_reg(v, cond, reg(tgt))
@@ -191,36 +191,36 @@ class Assembler:
             else:
                 off = int(tgt, 0)
             if not -(1 << 23) <= off <= (1 << 23) - 1:
-                raise AsmError(f'смещение ветвления {off} вне 24-битного диапазона')
+                raise AsmError(f'branch offset {off} is outside the 24-bit range')
             return enc_f3_off(v, cond, off)
 
         # --- MHI (F1, u=1, op=MOV)
         if mn == 'MHI':
             if len(args) != 2:
-                raise AsmError('MHI требует a, n')
+                raise AsmError('MHI requires a, n')
             return enc_f1(1, 0, reg(args[0]), 0, OPS['MOV'], imm(args[1], 16, signed=False))
 
         # --- MOV a, H  (F0, u=1, op=MOV, b=0)
         if mn == 'MOVH':
             if len(args) != 1:
-                raise AsmError('MOVH требует a')
+                raise AsmError('MOVH requires a')
             return enc_f0(1, reg(args[0]), 0, OPS['MOV'], 0)
 
-        # TODO(verify): MOV a, NZCV — в справке помечено v=1, но F0 имеет v=0
-        # постоянно. Кодирование неоднозначно; не реализуем, пока не сверено с RISC.v.
+        # TODO(verify): MOV a, NZCV is marked v=1 in the reference, but F0 always has v=0.
+        # The encoding is ambiguous; not implemented until checked against RISC.v.
 
-        # --- регистровые/непосредственные
+        # --- register/immediate
         op = OPS.get(mn)
         u = 0
         if op is None:
             op = OPS_U.get(mn)
             if op is None:
-                raise AsmError(f'неизвестная мнемоника {mn}')
+                raise AsmError(f'unknown mnemonic {mn}')
             u = 1
 
         if mn == 'MOV':
             if len(args) != 2:
-                raise AsmError('MOV требует a, n')
+                raise AsmError('MOV requires a, n')
             a, src = reg(args[0]), args[1]
             if is_reg(src):
                 return enc_f0(0, a, 0, OPS['MOV'], reg(src))
@@ -229,7 +229,7 @@ class Assembler:
             return enc_f1(0, v, a, 0, OPS['MOV'], imm(src, 16))
 
         if len(args) != 3:
-            raise AsmError(f'{mn} требует a, b, n')
+            raise AsmError(f'{mn} requires a, b, n')
         a, b, src = reg(args[0]), reg(args[1]), args[2]
         if is_reg(src):
             return enc_f0(u, a, b, op, reg(src))
@@ -242,7 +242,7 @@ def assemble(text):
     return Assembler().assemble(text)
 
 
-# ---------------------------------------------------------------- самотест
+# ---------------------------------------------------------------- self-test
 SELFTEST = r'''
 start:  MOV  R0, 0
         MOV  R1, 100
@@ -268,9 +268,9 @@ subr:   MOV  R12, 7
 
 def _selftest():
     words, labels, expects = assemble(SELFTEST)
-    print(f'собрано слов: {len(words)}')
-    print(f'метки: {labels}')
-    print(f'проверок EXPECT: {len(expects)} -> {expects}')
+    print(f'words assembled: {len(words)}')
+    print(f'labels: {labels}')
+    print(f'EXPECT checks: {len(expects)} -> {expects}')
     print()
     for i, w in enumerate(words):
         print(f'  {i*4:04X}: {w:08X}   {w>>28:04b} {(w>>24)&0xF:04b} '
@@ -279,9 +279,9 @@ def _selftest():
     fails = []
     def chk(name, got, want):
         if got != want:
-            fails.append(f'{name}: получено {got:08X}, ожидалось {want:08X}')
+            fails.append(f'{name}: got {got:08X}, expected {want:08X}')
 
-    # Разбор кодирования: [31:28] формат | [27:24] a | [23:20] b | [19:16] op | остальное
+    # Encoding breakdown: [31:28] format | [27:24] a | [23:20] b | [19:16] op | rest
     # MOV R0,0    F1 u=0 v=0 -> 0100 | a=0 | b=0 | op=0 | n=0
     chk('MOV R0,0',      words[0],  0x40000000)
     # MOV R1,100  0100 | a=1 | b=0 | op=0 | n=0x64
@@ -309,10 +309,10 @@ def _selftest():
 
     print()
     if fails:
-        print('❌ САМОТЕСТ ПРОВАЛЕН:')
+        print('❌ SELF-TEST FAILED:')
         for f in fails: print('   ', f)
         return 1
-    print('✅ самотест пройден')
+    print('✅ self-test passed')
     return 0
 
 
@@ -321,7 +321,7 @@ def main():
     if len(sys.argv) > 1 and sys.argv[1] == '--selftest':
         sys.exit(_selftest())
     if len(sys.argv) < 2:
-        print('использование: asm.py FILE.s [-o OUT]  ->  OUT.bin + OUT.chk', file=sys.stderr)
+        print('usage: asm.py FILE.s [-o OUT]  ->  OUT.bin + OUT.chk', file=sys.stderr)
         sys.exit(1)
     src_path = sys.argv[1]
     out = sys.argv[3] if len(sys.argv) > 3 and sys.argv[2] == '-o' else os.path.splitext(src_path)[0]
@@ -332,7 +332,7 @@ def main():
     with open(out + '.chk', 'w') as f:
         json.dump({'n_words': len(words), 'labels': labels,
                    'expects': [{'at': i, 'expr': e} for i, e in expects]}, f, indent=1)
-    print(f'{out}.bin: {len(words)} слов, {len(expects)} проверок')
+    print(f'{out}.bin: {len(words)} words, {len(expects)} checks')
 
 
 if __name__ == '__main__':

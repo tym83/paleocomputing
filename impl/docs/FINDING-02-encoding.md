@@ -1,53 +1,55 @@
-# Находка 2: свободное пространство кодирования найдено и доказано перебором
+[Русская версия](FINDING-02-encoding.ru.md)
 
-Тест: `tb/decoder_probe.cpp`. Сырой вывод: `docs/decoder-map.txt`.
+# Finding 2: free encoding space found and proven by exhaustive search
 
-## Главный результат
+Test: `tb/decoder_probe.cpp`. Raw output: `docs/decoder-map.txt`.
 
-**Биты `IR[15:4]` в формате F0 полностью игнорируются декодером.**
+## Main result
 
-Доказано не чтением кода, а перебором: взята инструкция `ADD R5, R1, R2` в формате F0,
-и все **4095 ненулевых значений** поля `IR[15:4]` прогнаны через RTL. Сравнивались
-результат, флаги и число тактов. **Расхождений: 0.**
+**Bits `IR[15:4]` in format F0 are completely ignored by the decoder.**
 
-Контроль метода: те же биты в формате F1 (где это поле `imm`) результат меняют —
-`imm=0x0AB0` даёт `R5=0x00000AB0`. Значит стенд действительно видит разницу, когда она есть.
+Proven not by reading the code but by exhaustive search: the instruction `ADD R5, R1, R2` in format F0 was taken,
+and all **4095 nonzero values** of the field `IR[15:4]` were run through the RTL. The result,
+the flags and the cycle count were compared. **Mismatches: 0.**
 
-→ **12 бит, 4096 значений, гарантированно свободны.** Существующий код держит там нули
+Method control: the same bits in format F1 (where this field is `imm`) do change the result:
+`imm=0x0AB0` gives `R5=0x00000AB0`. So the testbench really does see a difference when there is one.
+
+→ **12 bits, 4096 values, guaranteed free.** Existing code keeps zeros there
 (`ORG.Put0`: `code[pc] := ((a*10H + b)*10H + op)*10000H + c`).
 
-## Чем опровергнута исходная гипотеза
+## What refuted the original hypothesis
 
-В дизайне v0.1 я предполагал, что свободен **бит 28** (формат F0 якобы `00u0`).
-Карта декодера показывает обратное:
+In the v0.1 design I assumed that **bit 28** was free (format F0 supposedly being `00u0`).
+The decoder map shows the opposite:
 
-| Комбинация | op=12 | op=13 | Что это |
+| Combination | op=12 | op=13 | What it is |
 |---|---|---|---|
-| `0000` (бит 28 = 0) | `5678` | `80005678` | FAD / FSB |
-| `0001` (бит 28 = 1) | **`805678`** | **`7FA988`** | **FLT / FLOOR — другое поведение** |
+| `0000` (bit 28 = 0) | `5678` | `80005678` | FAD / FSB |
+| `0001` (bit 28 = 1) | **`805678`** | **`7FA988`** | **FLT / FLOOR: different behaviour** |
 
-То есть бит 28 при op=12/13 занят преобразованиями float↔int, которые компилятор
-эмитит на каждый `ENTIER` (`ORG.Floor` → `Put0(Fad+V, …)`).
+That is, at op=12/13 bit 28 is taken by the float↔int conversions, which the compiler
+emits for every `ENTIER` (`ORG.Floor` → `Put0(Fad+V, …)`).
 
-Отдельно подтверждено: `0011` + op=0 возвращает **`60000053`** = `{N,Z,C,OV, 20'b0, 8'h53}` —
-это `MOV a, NZCV`, и константа INFO действительно **0x53**, а не что-то иное.
+Confirmed separately: `0011` + op=0 returns **`60000053`** = `{N,Z,C,OV, 20'b0, 8'h53}`,
+which is `MOV a, NZCV`, and the INFO constant really is **0x53**, not something else.
 
-Для остальных 14 значений `op` бит 28 — **don't-care алиас**: строки `0000` и `0001`
-совпадают. Занять его означало бы не «добавить в пустоту», а молча изменить поведение
-существующей кодировки. **Ловушки на неизвестную инструкцию в RISC5 нет вообще**,
-поэтому ошибка прошла бы без диагностики.
+For the other 14 values of `op`, bit 28 is a **don't-care alias**: rows `0000` and `0001`
+are identical. Taking it would mean not "adding into empty space" but silently changing the behaviour
+of an existing encoding. **RISC5 has no trap on an unknown instruction at all**,
+so the error would go through without any diagnostic.
 
-## Решение по кодированию
+## Encoding decision
 
 ```
-CHK / FMAC и прочие расширения:  F0, поле IR[15:8] = субопкод ≠ 0
-    31:28  27:24  23:20  19:16   15:8      7:4   3:0
-    00uv     a      b     op    субопкод   0000   c
+CHK / FMAC and other extensions:  F0, field IR[15:8] = subopcode ≠ 0
+    31:28  27:24  23:20  19:16   15:8       7:4   3:0
+    00uv     a      b     op    subopcode   0000   c
 ```
 
-Прецедент в самой ISA: `RTI = BR & ~u & ~v & IR[4]`, а STI/CLI сидят на `IR[5]`/`IR[0]` —
-то есть Вирт сам уже использовал этот приём внутри формата F3.
+A precedent inside the ISA itself: `RTI = BR & ~u & ~v & IR[4]`, and STI/CLI sit on `IR[5]`/`IR[0]`,
+so Wirth himself already used this trick inside format F3.
 
-Обязательное условие: **декод базовой операции сузить явно**, чтобы `субопкод ≠ 0`
-не исполнялся как базовая инструкция на старом ядре. И пометить модули расширенной ISA
-байтом версии `.rsc` = `2X`, чтобы старый загрузчик честно отказал.
+A mandatory condition: **narrow the decode of the base operation explicitly**, so that `subopcode ≠ 0`
+is not executed as a base instruction on the old core. And mark modules of the extended ISA
+with the `.rsc` version byte = `2X`, so that the old loader refuses honestly.

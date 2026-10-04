@@ -1,55 +1,61 @@
-# Находка 77. QEMU впервые пишет на диск — и сразу падал
+[Русская версия](FINDING-77-qemu-writes-disk.ru.md)
 
-Модель проверена и в `qemu-system-risc5`: тот же образ, тот же сценарий из
-двух средних щелчков, система сама компилирует `LM.Mod` и печатает текст.
-Результат совпал с эталоном и с RTL: `LM.Out` на диске —
-`alice was one thought all `, а кадровый буфер после прогона **побитово
-равен** кадру, снятому на RTL тем же сценарием (0 пикселей из 786 432).
+# Finding 77. QEMU writes to disk for the first time, and it crashed right away
 
-QEMU тактов не моделирует — оттуда только функциональная сверка, чисел о
-скорости нет.
+The model was also checked in `qemu-system-risc5`: the same image, the same
+scenario of two middle clicks, and the system compiles `LM.Mod` by itself and
+prints text. The result matched the reference and the RTL: `LM.Out` on disk is
+`alice was one thought all `, and the frame buffer after the run is **bit-for-bit
+equal** to the frame taken on the RTL with the same scenario (0 pixels out of
+786 432).
 
-Чтобы дойти до этого, пришлось закрыть две дыры. Обе — не в модели, а в
-цели QEMU: до выпуска №2 никто не писал в ней на диск. Загрузка системы
-только читает; компиляция внутри системы пишет `.rsc`.
+QEMU does not model cycles, so it provides only a functional cross-check, with
+no speed numbers.
 
-## 1. Первая же запись — аварийный останов
+Getting this far required closing two holes. Both are not in the model but in
+the QEMU target: before episode 2 nobody had written to disk in it. Booting the
+system only reads; compiling inside the system writes `.rsc`.
+
+## 1. The very first write is an abort
 
 ```
 qemu-system-risc5: ../block/io.c:2016: bdrv_co_write_req_prepare:
   Assertion `child->perm & BLK_PERM_WRITE' failed.
 ```
 
-Карта SD берётся по имени привода (`blk_by_name("sd0")`), а не
-подключается как устройство qdev (почему — в комментарии `hw/risc5/oberon.c`).
-Устройство qdev получает разрешения на запись при подключении; привод,
-взятый по имени, — нет. Исправление — одна явная просьба:
-`blk_set_perm(blk, CONSISTENT_READ | WRITE, ALL)`, если привод это разрешает.
+The SD card is taken by drive name (`blk_by_name("sd0")`) rather than attached
+as a qdev device (the reason is in a comment in `hw/risc5/oberon.c`). A qdev
+device receives write permissions when it is attached; a drive taken by name
+does not. The fix is one explicit request:
+`blk_set_perm(blk, CONSISTENT_READ | WRITE, ALL)`, if the drive allows it.
 
-## 2. Образ не растёт
+## 2. The image does not grow
 
-После исправления система доходила до команды и падала на
-`TRAP 7 in Files` — `ASSERT(F.mark = HeaderMark)` при открытии только что
-записанного `LM.rsc`. Журнал QEMU (`-d guest_errors`) показал причину:
-`не записался сектор 2286`. Файловая система берёт новые секторы **за
-концом** эталонного образа (~1 МБ). Эмулятор на C и стенд RTL пишут через
-`fseek`, и файл растёт сам; у QEMU привод raw фиксированного размера,
-запись за конец отвергается. Скрипт `lm/qemu_run.py` доращивает копию образа
-до 8 МБ перед запуском. Для читателя, который пойдёт по `qemu/GUIDE.md` и
-захочет что-то сохранить, это та же ловушка — стоит учесть и там.
+After the fix the system reached the command and failed with
+`TRAP 7 in Files`, i.e. `ASSERT(F.mark = HeaderMark)` when opening the freshly
+written `LM.rsc`. The QEMU log (`-d guest_errors`) showed the cause:
+`sector 2286 could not be written`. The file system takes new sectors **past the
+end** of the reference image (~1 MB). The C emulator and the RTL testbench write
+through `fseek`, and the file grows by itself; in QEMU the raw drive has a fixed
+size, and a write past the end is rejected. The script `lm/qemu_run.py` grows
+the image copy to 8 MB before launch. For a reader who follows `qemu/GUIDE.md`
+and wants to save something, this is the same trap, and it should be accounted
+for there too.
 
-## 3. Клавиатура через QMP не доходит
+## 3. The keyboard does not get through via QMP
 
-Нажатия, поданные `input-send-event`, система не видит (мышь — видит,
-находка 39 проверяла именно мышь). Причину не разбирали: сценарий обходит
-клавиатуру, команды лежат в `System.Tool`. Это открытый вопрос к цели QEMU,
-а не к модели.
+The system does not see key presses sent with `input-send-event` (it does see
+the mouse; finding 39 checked specifically the mouse). The cause was not
+investigated: the scenario bypasses the keyboard, and the commands are placed
+in `System.Tool`. This is an open question for the QEMU target, not for the
+model.
 
-## Как повторить
+## How to reproduce
 
 ```
-make -C qemu build     # в контейнере, первый раз — долго
+make -C qemu build     # in a container, slow the first time
 cd impl && make lm-system && make lm-qemu
 ```
 
-`lm-system` нужен только для сверки кадра; текст сверяется и без него.
+`lm-system` is needed only for the frame comparison; the text is checked
+without it.

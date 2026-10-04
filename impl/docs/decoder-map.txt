@@ -1,12 +1,12 @@
-=== IR[15:4] в формате F0: игнорируются? ===
-  эталон (IR[15:4]=0):  R5=00005678 флаги=0 тактов=1
-  перебрано 4095 ненулевых значений, расхождений: 0  ✅ поле СВОБОДНО
+=== IR[15:4] in format F0: ignored? ===
+  reference (IR[15:4]=0):  R5=00005678 flags=0 cycles=1
+  tried 4095 nonzero values, mismatches: 0  ✅ field is FREE
 
-=== контроль: в формате F1 те же биты обязаны ВЛИЯТЬ ===
-  imm=0000 -> R5=00000000 ; imm=0AB0 -> R5=00000AB0  ✅ влияет, метод рабочий
+=== control: in format F1 the same bits MUST have an effect ===
+  imm=0000 -> R5=00000000 ; imm=0AB0 -> R5=00000AB0  ✅ has an effect, the method works
 
-=== карта декодера: что делает каждая комбинация ===
-    (a=5, b=1, c=2; R1=00001234, R2=00005678, R5 обнулён)
+=== decoder map: what each combination does ===
+    (a=5, b=1, c=2; R1=00001234, R2=00005678, R5 cleared)
 
      op:        0        1        2        3        4        5        6        7        8        9       10       11       12       13       14       15
   0000:     5678        0        0        0        0        0     5678     5678     5678 FFFFA988        0        0     5678 80005678        0        0
@@ -18,5 +18,5 @@
   0006:    20000        0        0        0        0        0        2        2        3 FFFFFFFE        0        0        0        0        0        0
   0007:    20000        0        0        0        0        0 FFFF0002 FFFF0002 FFFF0003     FFFE        0 FFFE0007        0 FFFFFFFF        0        0
 
-  строки — старший нибл IR[31:28] (в двоичном виде), столбцы — op
-  0000/0010 = F0 (u=0/1), 0001/0011 = F0 с БИТОМ 28 = 1
+  rows: high nibble IR[31:28] (in binary), columns: op
+  0000/0010 = F0 (u=0/1), 0001/0011 = F0 with BIT 28 = 1

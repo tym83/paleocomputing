@@ -1,40 +1,46 @@
-# Находка 70. Почему проверка то бесплатна, то нет: запас ширины
+[Русская версия](FINDING-70-why-free.ru.md)
 
-Лестница (находка 61) дала три ответа на один вопрос: на Apple M4 и AMD EPYC
-проверка границ не видна, на серверном ядре Arm стоит 2–6%, на RISC5 — два
-такта из одиннадцати. Объяснение было гипотезой: на широком ядре цикл держит
-задержка цепочки индекса `add → and`, и проверка прячется под ней. Здесь
-гипотеза проверена замером — без счётчиков производительности, которых на
-общих машинах CI нет.
+# Finding 70. Why the check is sometimes free and sometimes not: spare width
 
-## Как мерили такты без счётчиков
+The ladder (Finding 61) gave three answers to one question: on Apple M4 and
+AMD EPYC the bounds check is invisible, on an Arm server core it costs 2–6%,
+and on RISC5 it costs two cycles out of eleven. The explanation was a
+hypothesis: on a wide core the loop is bound by the latency of the index
+chain `add → and`, and the check hides beneath it. Here the hypothesis is
+tested by measurement, without performance counters, which are not available
+on shared CI machines.
 
-В одном процессе чередуются куски: калибровка — цепочка из 32 зависимых
-сложений (одно сложение — один такт на всех этих ядрах) — и сам цикл. Такты
-цикла = лучший кусок цикла (нс) ÷ лучший кусок калибровки (нс на сложение);
-медиана по пяти кругам. Частота, которую знать неоткуда, сокращается.
+## How cycles were measured without counters
 
-Ядро машины Arm на GitHub теперь известно точно: **Neoverse N2** (MIDR part
-0xd49, имена — `arch/arm64/include/asm/cputype.h` ядра Linux). x86 в этот
-прогон попался AMD EPYC 7763 (Zen 3) — машины общие, модель плавает.
+Within one process, chunks alternate: a calibration chunk, a chain of 32
+dependent additions (one addition is one cycle on all of these cores), and
+the loop itself. Loop cycles = best loop chunk (ns) ÷ best calibration chunk
+(ns per addition); the median over five rounds. The frequency, which there is
+no way to know, cancels out.
 
-## Опыт
+The core of GitHub's Arm machine is now known exactly: **Neoverse N2** (MIDR
+part 0xd49; names from `arch/arm64/include/asm/cputype.h` in the Linux
+kernel). The x86 machine in this run turned out to be an AMD EPYC 7763
+(Zen 3); the machines are shared, and the model varies.
 
-Цикл тот же, два рычага:
+## Experiment
 
-* `k` — длина цепочки индекса: k лишних зависимых сложений (`add #64` при
-  маске 63 ничего не меняет), то есть цепочка в 2+k такта;
-* `c` — сколько проверок сравнение+переход на итерацию (на непрозрачных
-  пределах, чтобы компилятор их не выбросил).
+The same loop, two levers:
 
-Плюс проверка на самой критической цепочке (`chain`) — ⚠ **без перехода**:
-`cmp + csel/cmov` обнуляет индекс при выходе за предел (как
-`array_index_nospec` в Linux), и индекс следующей итерации считается из
-обнулённого, так что сравнение и выбор встают в цепочку зависимостей
-(`why.py`, вариант `chain`). Проверку с условным переходом так поставить
-нельзя: угаданный переход в цепочку данных не входит.
+* `k`, the length of the index chain: k extra dependent additions
+  (`add #64` with mask 63 changes nothing), so the chain is 2+k cycles;
+* `c`, how many compare+branch checks per iteration (on opaque limits, so the
+  compiler cannot eliminate them).
 
-Такты на итерацию, clang, медиана:
+Plus a check on the critical chain itself (`chain`), ⚠ **without a branch**:
+`cmp + csel/cmov` zeroes the index when it is out of bounds (like
+`array_index_nospec` in Linux), and the next iteration's index is computed
+from the zeroed one, so the comparison and the select become part of the
+dependency chain (`why.py`, variant `chain`). A check with a conditional
+branch cannot be placed this way: a correctly predicted branch is not part of
+the data chain.
+
+Cycles per iteration, clang, median:
 
 | | c=0 | c=1 | c=2 | c=4 |
 |---|---:|---:|---:|---:|
@@ -44,38 +50,42 @@
 | **Neoverse N2**, k=0 | 2.10 | 2.21 | 2.33 | 2.68 |
 | k=1 | 3.40 | 3.39 | 3.36 | 3.41 |
 | k=4 | 6.01 | 6.01 | 6.01 | 6.01 |
-| проверка на критической цепочке | | EPYC 4.36 · N2 4.19 | | |
+| check on the critical chain | | EPYC 4.36 · N2 4.19 | | |
 
-## Что это значит
+## What this means
 
-* **Гипотеза подтверждена.** Цикл идёт со скоростью цепочки индекса
-  (2 такта), и проверки исполняются в тени этой задержки, пока ядру хватает
-  ширины.
-* **EPYC** прячет одну и две проверки целиком; четыре упираются в пропускную
-  способность (2.5 такта).
-* **Neoverse N2** при двухтактной цепочке запаса не имеет: каждая проверка —
-  около +0.11 такта, это и есть 5% из находки 61. Но стоит цепочке стать на
-  такт длиннее — и даже четыре проверки бесплатны. Разница не в «дорогой
-  проверке на Arm», а в том, что этот цикл упирается у N2 в ширину раньше.
-* **Проверка без перехода, поставленная в цепочку индекса, стоит около двух
-  тактов на обоих ядрах** (EPYC +2.4, N2 +2.1) — это задержка `cmp → csel`,
-  спрятать её нечем. С проверкой `SUB+BCC` у RISC5 это не то же самое: на
-  широком ядре проверку-переход в цепочку не поставить вообще, её прячет
-  предсказатель. Общий вывод остаётся: современное ядро не делает проверку
-  дешёвой, оно прячет её в запасе ширины и за предсказателем, когда они есть.
-  У RISC5 нет ни того ни другого: каждая команда — такт на пути.
+* **The hypothesis is confirmed.** The loop runs at the speed of the index
+  chain (2 cycles), and the checks execute in the shadow of that latency as
+  long as the core has enough width.
+* **EPYC** hides one and two checks completely; four hit the throughput limit
+  (2.5 cycles).
+* **Neoverse N2** has no spare width with a two-cycle chain: each check adds
+  about +0.11 cycles, which is exactly the 5% from Finding 61. But as soon as
+  the chain becomes one cycle longer, even four checks are free. The
+  difference is not "an expensive check on Arm" but that this loop hits N2's
+  width limit sooner.
+* **A branchless check placed in the index chain costs about two cycles on
+  both cores** (EPYC +2.4, N2 +2.1): this is the `cmp → csel` latency, and
+  there is nothing to hide it under. This is not the same as RISC5's
+  `SUB+BCC` check: on a wide core a branching check cannot be put into the
+  chain at all; the predictor hides it. The general conclusion stands: a
+  modern core does not make the check cheap; it hides it in spare width and
+  behind the predictor, when those are available. RISC5 has neither: every
+  instruction is a cycle on the path.
 
-  *Исправлено 2026-09-29 по ревью: прежняя редакция описывала `chain` как
-  «переход на пути» и приравнивала два такта к цене `SUB+BCC` на RISC5.*
+  *Corrected 2026-09-29 after review: the previous version described `chain`
+  as "a branch on the path" and equated the two cycles with the cost of
+  `SUB+BCC` on RISC5.*
 
-## Чего не показывает
+## What this does not show
 
-* **Apple M4 этим способом не измерен убедительно.** Проверка там добавляет
-  около 0.2 такта при любой длине цепочки — и при k=4, где на N2 и EPYC она
-  уже ноль. Это расходится с прямым замером в наносекундах (находка 61:
-  разница в пределах шума). Вероятнее всего, калибровка на macOS смещена —
-  плавающая частота, возможен уход на экономные ядра; счётчиков без sudo нет.
-  Результат лежит в `results/why-macos-arm64-apple-m4.md` как есть, вывода из
-  него не делаем.
-* Один цикл и одно семейство ядер на платформу; ширина и порты — выводы из
-  поведения, а не из документации производителя.
+* **Apple M4 was not measured convincingly by this method.** There the check
+  adds about 0.2 cycles at any chain length, including k=4, where on N2 and
+  EPYC it is already zero. This contradicts the direct measurement in
+  nanoseconds (Finding 61: the difference is within noise). Most likely the
+  calibration on macOS is skewed: a floating frequency, possible migration to
+  efficiency cores; there are no counters without sudo. The result is kept in
+  `results/why-macos-arm64-apple-m4.md` as is, and no conclusion is drawn
+  from it.
+* One loop and one core family per platform; width and ports are inferred
+  from behavior, not taken from vendor documentation.

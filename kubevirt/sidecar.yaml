@@ -1,37 +1,39 @@
-# Пример: виртуальная машина RISC5 в Cozystack через перехватчик KubeVirt.
+# Example: a RISC5 virtual machine in Cozystack through a KubeVirt hook.
 #
-# ⚠ Это схема, а не рабочий манифест: здесь нет паспорта машины (аннотация
-# paleocomputing.io/machine), без которого перехватчик отказывает, и нет
-# наполнения тома. Рабочий путь — чарт oberon-vm, см. kubevirt/GUIDE.md.
+# ⚠ This is a sketch, not a working manifest: it has no machine descriptor
+# (the paleocomputing.io/machine annotation), without which the hook refuses,
+# and no volume filling. The working path is the oberon-vm chart, see
+# kubevirt/GUIDE.md.
 #
-# Форка KubeVirt не требуется. Перехватчик — штатная точка расширения:
-# сторонний контейнер получает описание домена перед запуском и возвращает
-# изменённое. Здесь он подаётся скриптом в ConfigMap, так что и своего образа
-# перехватчика не нужно — используется штатная обёртка sidecar-shim.
+# No KubeVirt fork is needed. The hook is a supported extension point: a
+# third-party container receives the domain description before launch and
+# returns a modified one. Here it is supplied as a script in a ConfigMap, so no
+# hook image of its own is needed either; the stock sidecar-shim wrapper is used.
 #
-# ⚠ Требуется два условия на стороне кластера:
-#   1. включён признак Sidecar в ресурсе KubeVirt:
+# ⚠ Two conditions are required on the cluster side:
+#   1. the Sidecar feature gate is enabled in the KubeVirt resource:
 #        spec.configuration.developerConfiguration.featureGates: [Sidecar]
-#   2. образ virt-launcher собран с libvirt, знающим архитектуру risc5
-#      (патч из qemu/libvirt/, ~6 строк). Переключается настройкой
-#      imageRegistry на ресурсе KubeVirt — форк Cozystack тоже не нужен.
+#   2. the virt-launcher image is built with a libvirt that knows the risc5
+#      architecture (the patch from qemu/libvirt/, ~6 lines). It is switched by
+#      the imageRegistry setting on the KubeVirt resource, so no Cozystack fork
+#      is needed either.
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: risc5-hook
 data:
-  # Имя ключа значения не имеет; важен hookPath в объявлении ниже.
+  # The key name does not matter; what matters is hookPath in the declaration below.
   onDefineDomain: |
-    СЮДА-ВСТАВИТЬ-СОДЕРЖИМОЕ-onDefineDomain.py
+    PASTE-THE-CONTENTS-OF-onDefineDomain.py-HERE
 ---
 apiVersion: kubevirt.io/v1
 kind: VirtualMachineInstance
 metadata:
   name: oberon
   annotations:
-    # Том с эмулятором и образами монтируется И в перехватчик, И в контейнер,
-    # где работает libvirt — за это отвечает sharedComputePath.
+    # The volume with the emulator and images is mounted BOTH into the hook AND
+    # into the container where libvirt runs; sharedComputePath takes care of that.
     hooks.kubevirt.io/hookSidecars: |
       [{
         "args": ["--version", "v1alpha2"],
@@ -48,8 +50,8 @@ metadata:
       }]
 spec:
   domain:
-    # Эти значения перехватчик всё равно заменит; KubeVirt требует их
-    # заполнить, чтобы собрать описание, которое мы потом перепишем.
+    # The hook replaces these values anyway; KubeVirt requires them to build
+    # the description that we then rewrite.
     resources:
       requests:
         memory: 128Mi

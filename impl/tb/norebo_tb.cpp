@@ -1,16 +1,16 @@
-// ЗАМЫКАНИЕ КРУГА: компилятор Оберона собирает сам себя на настоящем RTL.
+// CLOSING THE LOOP: the Oberon compiler compiles itself on the real RTL.
 //
-// До сих пор самораскрутка проверялась на эмуляторе RISC5, написанном на C
-// (ext/norebo/Runtime/risc-cpu.c, 484 строки). Здесь тот же компилятор работает
-// на ядре `RISC5.v` Никлауса Вирта, прогоняемом Verilator'ом такт за тактом.
+// Until now the bootstrap was checked on a RISC5 emulator written in C
+// (ext/norebo/Runtime/risc-cpu.c, 484 lines). Here the same compiler runs
+// on Niklaus Wirth's `RISC5.v` core, driven cycle by cycle by Verilator.
 //
-// Что остаётся на C и почему это законно: мост к файловой системе хоста
-// (norebo.c). Оберон обращается к нему через четыре адреса ввода-вывода —
-// номер запроса и три аргумента, — и это интерфейс к ОС, а не часть машины.
-// В браузерной версии он не нужен вовсе: там файлы живут в образе диска.
+// What stays in C and why that is legitimate: the bridge to the host file system
+// (norebo.c). Oberon reaches it through four I/O addresses (the request number
+// and three arguments), and that is an interface to the OS, not part of the machine.
+// The browser version does not need it at all: there files live in the disk image.
 //
-// Собирается с объектными файлами самого Norebo, чтобы использовать ЕГО
-// реализацию файловых операций без изменений — иначе сравнение было бы нечестным.
+// Built with Norebo's own object files to use ITS implementation of the file
+// operations unchanged; otherwise the comparison would be unfair.
 #include "VRISC5.h"
 #include "VRISC5___024root.h"
 #include "VRISC5_RISC5.h"
@@ -21,7 +21,7 @@
 #include <vector>
 #include <string>
 
-// ── интерфейс к мосту Norebo (реализация — в norebo_bridge.c) ───────────────
+// ── interface to the Norebo bridge (implementation in norebo_bridge.c) ───────────
 extern "C" {
     void     nb_init(int argc, char** argv);
     uint32_t nb_io_read(uint32_t adr);
@@ -32,27 +32,27 @@ extern "C" {
     uint32_t nb_stack_org(void);
 }
 
-// ⚠ Norebo адресует устройства ОТРИЦАТЕЛЬНЫМИ числами (-4, -8, -12, -16), то есть
-// 0xFFFFFFFC и т.д. в 32 битах. Но шина RISC5 — 24 бита, и оттуда приходит 0xFFFFFC.
-// Проверка `(int32_t)a < 0` на 24-битном адресе не срабатывает НИКОГДА — из-за этого
-// первый прогон крутился вхолостую 4 млрд инструкций.
-// Устройства занимают верхние 64 байта 24-битного пространства; переводим обратно
-// в отрицательный вид, который ждёт код Norebo.
+// ⚠ Norebo addresses devices with NEGATIVE numbers (-4, -8, -12, -16), i.e.
+// 0xFFFFFFFC etc. in 32 bits. But the RISC5 bus is 24 bits, and 0xFFFFFC arrives from it.
+// The check `(int32_t)a < 0` on a 24-bit address NEVER fires; because of that
+// the first run spun idle for 4 billion instructions.
+// Devices occupy the top 64 bytes of the 24-bit space; we convert back
+// to the negative form that Norebo's code expects.
 static const uint32_t IO_TOP = 0x00FFFFC0;
 static inline bool is_io(uint32_t a) { return a >= IO_TOP; }
 static inline uint32_t to_neg(uint32_t a) { return a | 0xFF000000u; }
 
-// ── окно замера и профиль (выпуск №2) ──────────────────────────────────────
-// Программа отмечает окно записью в порт светодиодов (-60): 1 — начало, 0 —
-// конец (LED(1)/LED(0) в Обероне). Внутри окна каждая завершённая инструкция
-// относится к классу по своему слову, и ей приписываются все такты, которые
-// она занимала, включая стойло. Окон может быть много — всё суммируется.
-// Снаружи окна не считается ничего: загрузка модулей и чтение весов в число
-// не входят.
+// ── measurement window and profile (episode 2) ──────────────────────────────────
+// The program marks the window by writing to the LED port (-60): 1 is the start, 0 is
+// the end (LED(1)/LED(0) in Oberon). Inside the window each retired instruction
+// is assigned a class by its word, and is charged with all the cycles it
+// occupied, including the stall. There can be many windows; everything is summed.
+// Nothing is counted outside the window: loading modules and reading the weights
+// are not included.
 enum PClass { PC_FML, PC_FAD, PC_FSB, PC_FLT, PC_FLOOR, PC_FDV, PC_MUL, PC_DIV,
               PC_LD, PC_ST, PC_BR, PC_ALU, PC_N };
 static const char* pc_name[PC_N] = {"FML", "FAD", "FSB", "FLT", "FLOOR", "FDV", "MUL", "DIV",
-                                    "LD", "ST", "переход", "прочее АЛУ"};
+                                    "LD", "ST", "branch", "other ALU"};
 static int pclass(uint32_t ir) {
     uint32_t p = ir >> 31 & 1, q = ir >> 30 & 1, u = ir >> 29 & 1, v = ir >> 28 & 1;
     if (p) return q ? PC_BR : (u ? PC_ST : PC_LD);
@@ -70,17 +70,17 @@ struct Prof {
     bool on = false;
     uint64_t windows = 0, cyc = 0, ins = 0;
     uint64_t n[PC_N] = {0}, c[PC_N] = {0};
-    uint64_t fml_b2b = 0, fml_b2b_cyc = 0;   // FML сразу за FML (надбавка счётчика)
-    uint64_t fmac = 0, fmac_cyc = 0;         // FAD, читающий результат последнего FML
-    int fml_dst = -1, fml_n = 0;             // куда писал последний FML и сколько стоил
+    uint64_t fml_b2b = 0, fml_b2b_cyc = 0;   // FML right after FML (counter penalty)
+    uint64_t fmac = 0, fmac_cyc = 0;         // FAD reading the result of the last FML
+    int fml_dst = -1, fml_n = 0;             // where the last FML wrote and what it cost
     uint32_t prev_ir = 0;
     void add(uint32_t ir, int cycles) {
         int k = pclass(ir);
         n[k]++; c[k] += cycles; cyc += cycles; ins++;
         if (k == PC_FML && pclass(prev_ir) == PC_FML) { fml_b2b++; fml_b2b_cyc += cycles; }
-        // Кандидат в слитную FMAC — пара «FML t,a,b … FAD d,x,t»: FAD читает
-        // регистр, куда писал последний FML, и между ними его никто не
-        // переписал (компилятор ставит между ними загрузку суммы из памяти).
+        // A candidate for a fused FMAC is the pair "FML t,a,b … FAD d,x,t": FAD reads
+        // the register the last FML wrote, and nothing overwrote it in between
+        // (the compiler places a load of the sum from memory between them).
         uint32_t a = ir >> 24 & 0xF, b = ir >> 20 & 0xF, cc = ir & 0xF;
         bool q = ir >> 30 & 1, p = ir >> 31 & 1, u = ir >> 29 & 1;
         if (k == PC_FAD && fml_dst >= 0 && (b == (uint32_t)fml_dst || (!q && cc == (uint32_t)fml_dst))) {
@@ -88,17 +88,17 @@ struct Prof {
         }
         if (k == PC_FML) { fml_dst = a; fml_n = cycles; }
         else {
-            bool writes = !p || (p && !q && !u);            // регистровые операции и LD
-            bool link = p && q && (ir >> 28 & 1);           // BL пишет R15
+            bool writes = !p || (p && !q && !u);            // register operations and LD
+            bool link = p && q && (ir >> 28 & 1);           // BL writes R15
             if ((writes && (int)a == fml_dst) || (link && fml_dst == 15)) fml_dst = -1;
         }
         prev_ir = ir;
     }
     void report() const {
         if (!windows) return;
-        printf("\n  окно замера: %llu окон, %llu инструкций, %llu тактов\n",
+        printf("\n  measurement window: %llu windows, %llu instructions, %llu cycles\n",
                (unsigned long long)windows, (unsigned long long)ins, (unsigned long long)cyc);
-        printf("  профиль:  класс        команд      тактов   доля тактов  тактов/команду  стойло\n");
+        printf("  profile:  class        instrs      cycles   cycle share  cycles/instr  stall\n");
         uint64_t st = 0;
         for (int k = 0; k < PC_N; k++) if (n[k]) {
             printf("    %-12s %12llu %12llu %10.2f%% %10.2f %12llu\n", pc_name[k],
@@ -106,11 +106,11 @@ struct Prof {
                    100.0 * c[k] / cyc, (double)c[k] / n[k], (unsigned long long)(c[k] - n[k]));
             st += c[k] - n[k];
         }
-        printf("    стойло всего (такты сверх одного на команду): %llu = %.2f%%\n",
+        printf("    total stall (cycles beyond one per instruction): %llu = %.2f%%\n",
                (unsigned long long)st, 100.0 * st / cyc);
-        printf("    FML сразу за FML: %llu команд, %llu тактов\n",
+        printf("    FML right after FML: %llu instructions, %llu cycles\n",
                (unsigned long long)fml_b2b, (unsigned long long)fml_b2b_cyc);
-        printf("    пары FML→FAD по результату (кандидаты FMAC): %llu, %llu тактов\n",
+        printf("    FML→FAD result pairs (FMAC candidates): %llu, %llu cycles\n",
                (unsigned long long)fmac, (unsigned long long)fmac_cyc);
     }
 };
@@ -124,20 +124,20 @@ struct Soc {
     bool stall() const { return top->rootp->RISC5->stall; }
     uint32_t pc() const { return top->rootp->RISC5->PC; }
 
-    // InnerCore грузит сам мост (nb_init): формат блочный — пары «размер, адрес»,
-    // и разбирает его код Norebo без изменений.
+    // The bridge itself loads InnerCore (nb_init): the format is blocks of "size, address"
+    // pairs, and Norebo's code parses it unchanged.
     uint32_t read_mem(uint32_t a) {
-        // ПЗУ в режиме Norebo не используется: InnerCore уже слинкован и лежит в ОЗУ
-        // Шина RTL выставляет адрес и при записи, и стенд читает его каждый такт.
-        // Чтения светодиодов у Norebo нет (он падает на нём), а метки окна пишут
-        // именно туда — отвечаем нулём, как отвечает несуществующий регистр.
+        // The ROM is not used in Norebo mode: InnerCore is already linked and sits in RAM
+        // The RTL bus drives the address on writes too, and the testbench reads it every cycle.
+        // Norebo has no LED read (it crashes on one), yet the window marks are written
+        // exactly there, so answer zero, as a nonexistent register would.
         if (is_io(a) && (int32_t)to_neg(a) == -60) return 0;
         if (is_io(a)) return nb_io_read(to_neg(a));
         uint32_t i = (a >> 2);
         return i < nb_ram_size() / 4 ? nb_ram()[i] : 0;
     }
     void write_mem(uint32_t a, uint32_t v, bool ben) {
-        if (is_io(a) && (int32_t)to_neg(a) == -60) {      // светодиоды = метки окна
+        if (is_io(a) && (int32_t)to_neg(a) == -60) {      // LEDs = window marks
             if (v == 1 && !prof.on) { prof.on = true; prof.windows++; }
             else if (v == 0) prof.on = false;
             return;
@@ -150,7 +150,7 @@ struct Soc {
         nb_ram()[i] = (nb_ram()[i] & ~m) | (v & m);
     }
     void reset_at_zero() {
-        // Norebo стартует с адреса 0, а не с ПЗУ: InnerCore уже слинкован
+        // Norebo starts at address 0, not from the ROM: InnerCore is already linked
         top->rst = 0; top->irq = 0; top->stallX = 0;
         for (int i = 0; i < 4; i++) {
             top->clk = 0; top->eval();
@@ -158,14 +158,14 @@ struct Soc {
             top->clk = 1; top->eval();
         }
         top->rst = 1; top->clk = 0; top->eval();
-        // Стартовое состояние — как в norebo.c: PC=0, R12=0x20 (вектор ловушек),
-        // R14 = StackOrg. Сброс RISC5 ставит PC в ПЗУ, поэтому переопределяем.
+        // Initial state as in norebo.c: PC=0, R12=0x20 (trap vector),
+        // R14 = StackOrg. RISC5 reset puts PC into the ROM, so we override it.
         //
-        // ⚠ И вместе с PC обязательно задать РЕГИСТР КОМАНД. RISC5 — машина с
-        // предвыборкой: в начале такта IR держит исполняемую инструкцию, а шина
-        // уже показывает следующую. Если задать только PC, в IR останется мусор
-        // от сброса, первая инструкция (переход из InnerCore) не выполнится,
-        // и ядро пойдёт исполнять таблицу модулей как код. Именно это и было.
+        // ⚠ Together with PC the INSTRUCTION REGISTER must be set. RISC5 is a
+        // prefetching machine: at the start of a cycle IR holds the executing instruction, while
+        // the bus already shows the next one. If only PC is set, IR keeps garbage
+        // from reset, the first instruction (the jump out of InnerCore) is not executed,
+        // and the core goes on to execute the module table as code. That is exactly what happened.
         top->rootp->RISC5->PC = 0;
         top->rootp->RISC5->IR = read_mem(0);
         top->rootp->RISC5->regs->R[12] = 0x20;
@@ -174,7 +174,7 @@ struct Soc {
     }
     int step() {
         int n = 0;
-        uint32_t ir = top->rootp->RISC5->IR;   // исполняемая инструкция (предвыборка — см. выше)
+        uint32_t ir = top->rootp->RISC5->IR;   // executing instruction (prefetch, see above)
         bool counted = prof.on;
         for (;;) {
             top->clk = 0; top->eval();
@@ -194,13 +194,13 @@ struct Soc {
 int main(int argc, char** argv) {
     Verilated::commandArgs(argc, argv);
     if (argc < 2) {
-        fprintf(stderr, "использование: norebo_tb ORP.Compile Файл.Mod/s ...\n");
+        fprintf(stderr, "usage: norebo_tb ORP.Compile File.Mod/s ...\n");
         return 1;
     }
     nb_init(argc, argv);
     Soc s;
     s.reset_at_zero();
-    printf("  ядро: RISC5.v Вирта на Verilator, старт с адреса 0\n\n");
+    printf("  core: Wirth's RISC5.v on Verilator, starting at address 0\n\n");
 
     uint64_t guard = getenv("NB_MAX_INSNS") ? strtoull(getenv("NB_MAX_INSNS"), 0, 10) : 400000000ull;
     int trace = getenv("NB_TRACE_PC") ? atoi(getenv("NB_TRACE_PC")) : 0;
@@ -213,9 +213,9 @@ int main(int argc, char** argv) {
                    R->regs->R[14], R->regs->R[12]);
         }
         int n = s.step();
-        if (n < 0) { printf("\n  ЗАВИС на PC=%06X\n", s.pc() * 4); return 2; }
+        if (n < 0) { printf("\n  HUNG at PC=%06X\n", s.pc() * 4); return 2; }
     }
-    printf("\n  выполнено на RTL: %llu инструкций, %llu тактов\n",
+    printf("\n  executed on RTL: %llu instructions, %llu cycles\n",
            (unsigned long long)s.insns, (unsigned long long)s.cycles);
     prof.report();
     return 0;

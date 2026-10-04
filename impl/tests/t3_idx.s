@@ -1,5 +1,5 @@
-; ПОРОЖДЁННЫЙ ФАЙЛ — правится tools/gen_idx_tests.py, не руками.
-; t3_idx: законные индексы, затем индекс = длина
+; GENERATED FILE: edit tools/gen_idx_tests.py, not by hand.
+; t3_idx: legal indices, then index = length
         MOV  R0, 0
         MOV  R12, 0
         MHI  R12, 0x00FF
@@ -8,7 +8,7 @@
         MHI  R2, 0x00A0
         IOR  R2, R2, 0x1000
         MOV  R6, -1
-        ADD  R7, R6, R6             ; C=1 (перенос), N=1
+        ADD  R7, R6, R6             ; C=1 (carry), N=1
         MOV  R1, 3
         IDX  R3, R2, R1, 0
 ; EXPECT R3 = 4099
@@ -34,17 +34,17 @@
 ; EXPECT N = 0
 ; EXPECT Z = 0
 ; EXPECT CYCLES = 1
-        MOV  R1, 9                  ; последний законный индекс
-        IDX  R2, R2, R1, 1           ; приёмник = дескриптор: запись на место
+        MOV  R1, 9                  ; last legal index
+        IDX  R2, R2, R1, 1           ; destination = descriptor: written in place
 ; EXPECT R2 = 4114
 ; EXPECT CYCLES = 1
         MOV  R2, 0
         MHI  R2, 0x00A0
         IOR  R2, R2, 0x1000
         MOV  R3, 7
-        MOV  R1, 10                 ; индекс = длина
+        MOV  R1, 10                 ; index = length
         IDX  R3, R2, R1, 2
-        MOV  R4, 0x1111            ; не должна исполниться
+        MOV  R4, 0x1111            ; must not execute
         HALT
 handler:
         MOV  R5, 0x2222

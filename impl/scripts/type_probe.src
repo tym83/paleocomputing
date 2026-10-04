@@ -1,5 +1,5 @@
 at 12000000
-click 700 600 L        # поставить курсор в конец текста System.Tool
+click 700 600 L        # put the cursor at the end of the System.Tool text
 type ORP.Compile ORS.Mod/s ~
 wait 3000000
 shot build/after_type.pbm

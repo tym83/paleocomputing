@@ -1,9 +1,9 @@
-; T1-LAT — латентности многотактных операций.
-; Это фундамент всех измерений: если они не совпадают с RTL, неверны все числа выпуска.
+; T1-LAT — latencies of multi-cycle operations.
+; This is the foundation of all measurements: if they disagree with the RTL, every number in the episode is wrong.
         MOV  R0, 0
         MOV  R1, 100
         MOV  R2, 7
-; --- однотактные
+; --- single-cycle
         ADD  R3, R1, R2
 ; EXPECT CYCLES = 1
         SUB  R3, R1, R2
@@ -12,7 +12,7 @@
 ; EXPECT CYCLES = 1
         LSL  R3, R1, 3
 ; EXPECT CYCLES = 1
-; --- целые умножение и деление
+; --- integer multiplication and division
         MUL  R4, R1, R2
 ; EXPECT CYCLES = 34
 ; EXPECT R4 = 700
@@ -20,13 +20,13 @@
 ; EXPECT CYCLES = 34
 ; EXPECT R5 = 14
 ; EXPECT H = 2
-; --- память (фон-неймановское стойло)
+; --- memory (von Neumann stall)
         ST   R1, R0, 0
 ; EXPECT CYCLES = 2
         LD   R6, R0, 0
 ; EXPECT CYCLES = 2
 ; EXPECT R6 = 100
-; --- плавающая арифметика
+; --- floating-point arithmetic
         MOV  R7, 0
         MHI  R7, 0x3F80
         MOV  R8, 0
@@ -39,7 +39,7 @@
 ; EXPECT CYCLES = 26
         FDV  R9, R7, R8
 ; EXPECT CYCLES = 27
-; --- подряд идущие FP: ревьюер утверждает 32 такта вместо 26 у второй
+; --- back-to-back FP: the reviewer claims 32 cycles instead of 26 for the second one
         FML  R10, R7, R8
 ; EXPECT CYCLES = 26
         FML  R11, R7, R8

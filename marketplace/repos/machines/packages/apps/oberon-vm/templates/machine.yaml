@@ -1,7 +1,7 @@
 {{/*
-  Вся машина — из паспорта machine.yaml по общим шаблонам библиотеки
-  retro-machine (packages/library/retro-machine). Здесь ничего не
-  дописывается: новая машина каталога — это новый паспорт, а не копия
-  шаблонов.
+  The whole machine comes from the machine.yaml passport via the shared
+  templates of the retro-machine library (packages/library/retro-machine).
+  Nothing is added here: a new catalog machine is a new passport, not a copy of
+  the templates.
 */}}
 {{ include "retro-machine.render" . }}

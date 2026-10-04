@@ -619,9 +619,9 @@ uint32_t risc_get_pc(struct RISC *risc) { return risc->PC; }
 
 uint32_t risc_get_reg(struct RISC *risc, int i) { return risc->R[i & 15]; }
 uint32_t risc_get_h(struct RISC *risc) { return risc->H; }
-/* Добавлено для дифференциального стенда: без доступа к ОЗУ сравнение шло
-   только по регистрам, флагам и H, и расхождение в памяти (например неверное
-   сохранение) оставалось невидимым до тех пор, пока не всплывало в регистре. */
+/* Added for the differential test bench: without access to RAM the comparison
+   covered only registers, flags and H, and a divergence in memory (for example
+   a wrong store) stayed invisible until it surfaced in a register. */
 const uint32_t *risc_get_ram(struct RISC *risc, uint32_t *words) {
   if (words) *words = risc->mem_size / 4;
   return risc->RAM;

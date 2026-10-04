@@ -1,19 +1,19 @@
-# Проверка браузерного слоя на каждую правку.
+# Checks of the browser layer on every change.
 #
-# До этого в репозитории не запускалось автоматически НИЧЕГО, кроме раскладки
-# сайта и сборки образов по тегу. Это стоило двух тихих поломок разом:
-# `make labs` падал на первой же строке с тех пор, как появился выбор языка
-# (в node нет `location`), а сайт месяц отдавал прошлогоднюю лабораторию.
-# Обе видны за полторы минуты — но только если кто-то смотрит.
+# Before this, NOTHING ran automatically in the repository except deploying
+# the site and building images on a tag. That cost two silent breakages at once:
+# `make labs` failed on its very first line ever since the language switch appeared
+# (node has no `location`), and for a month the site served last year's lab.
+# Both show up in a minute and a half, but only if someone is looking.
 #
-# Здесь нет ни RTL, ни QEMU: им нужны verilator, emsdk и часы. Прогон машины
-# берёт собранные risc5.js и risc5.wasm прямо из репозитория — они там лежат
-# потому, что Pages раздаёт статику как есть.
+# There is no RTL and no QEMU here: they need verilator, emsdk and hours. The machine run
+# takes the built risc5.js and risc5.wasm straight from the repository; they are there
+# because Pages serves static files as is.
 #
-# Проверки разведены по стоимости. Быстрые (секунды) идут на каждый пуш.
-# Лаборатории гоняют настоящую машину — девять загрузок Оберона, около
-# четверти часа, — и потому идут только на разбор правки: в main приезжает
-# ровно то, что уже прошло их в запросе на слияние.
+# The checks are split by cost. The fast ones (seconds) run on every push.
+# The labs run the real machine (nine Oberon boots, about
+# a quarter of an hour), so they run only on pull requests: main receives
+# exactly what has already passed them in the pull request.
 name: check
 
 on:
@@ -23,32 +23,32 @@ on:
   workflow_dispatch:
 
 jobs:
-  # Секунды.
+  # Seconds.
   fast:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      # Перехватчик живёт в двух местах: kubevirt/ и пакет каталога (Helm не
-      # читает файлы вне чарта). В кластер уезжает копия из пакета, и однажды
-      # она отстала: каталог просил chk, машина запускалась базовой.
-      - name: Перехватчик
+      # The hook lives in two places: kubevirt/ and the catalog package (Helm does not
+      # read files outside the chart). The copy from the package goes to the cluster, and once
+      # it fell behind: the catalog asked for chk, the machine started as base.
+      - name: Hook
         run: |
           cmp kubevirt/onDefineDomain.py \
               marketplace/repos/machines/packages/apps/oberon-vm/files/onDefineDomain.py \
-            || { echo "❌ копия перехватчика в пакете разошлась с kubevirt/"; exit 1; }
+            || { echo "❌ the hook copy in the package diverged from kubevirt/"; exit 1; }
           python3 kubevirt/hook_test.py \
             marketplace/repos/machines/packages/apps/oberon-vm/files/onDefineDomain.py
-      # Архитектуры в libvirt — данные из kubevirt/targets.txt. Проверка на
-      # игрушечном дереве: для RISC5 правки прежние, вторая архитектура
-      # встаёт одной строкой списка.
-      - name: Патч libvirt
+      # Architectures in libvirt are data from kubevirt/targets.txt. The check runs on a
+      # toy tree: for RISC5 the edits are the same as before, a second architecture
+      # takes one line of the list.
+      - name: libvirt patch
         run: python3 qemu/libvirt/patch_test.py
 
-      # Выпуск №2: веса совпадают с манифестом, модуль модели на эмуляторе
-      # Norebo печатает побайтово тот же текст, что эталон в арифметике
-      # RISC5. Секунды: эмулятор на C, три зерна по 64 символа.
-      - name: Языковая модель (эмулятор против эталона)
+      # Release #2: the weights match the manifest, the model module on the Norebo
+      # emulator prints byte for byte the same text as the reference in RISC5
+      # arithmetic. Seconds: a C emulator, three seeds of 64 characters.
+      - name: Language model (emulator vs reference)
         run: make lm-check
         working-directory: impl
 
@@ -56,42 +56,42 @@ jobs:
         with:
           node-version: '22'
 
-      # Единственная внешняя зависимость сборки методички.
+      # The only external dependency of the book build.
       - name: markdown
         run: pip install --quiet 'markdown==3.10.2'
 
-      # Методичка: проверяются ссылки между главами и ссылки на лабораторные.
-      - name: Методичка
+      # The book: links between chapters and links to the labs are checked.
+      - name: Book
         run: python3 tools/mkbook.py
         working-directory: impl
 
-      # Разметка страниц: что скрипт ищет — то в ней и есть. Поломки этого
-      # рода браузер не показывает ошибкой, страница просто перестаёт
-      # слушаться.
-      - name: Разметка страниц
+      # Page markup: what the script looks for is actually there. Breakages of this
+      # kind are not shown by the browser as errors; the page simply stops
+      # responding.
+      - name: Page markup
         run: node page-test.mjs
         working-directory: impl/web
 
-      # Сайт: состав и все местные ссылки. Именно этой проверки не хватало,
-      # когда /oberon/book/en/ отдавал живой 404.
-      - name: Сборка сайта
+      # The site: contents and all local links. This is exactly the check that was missing
+      # when /oberon/book/en/ served a live 404.
+      - name: Site build
         run: ./tools/build-site.sh _site
 
-      # Страница в настоящем браузере. Статика дважды пропустила мёртвую
-      # лабораторию: браузер молча не выполняет незакрытый <script>, и это
-      # видно только там, где страницу исполняют. Chrome на раннере уже есть.
-      - name: Сайт в браузере
+      # The page in a real browser. The static checks twice let a dead lab
+      # through: the browser silently does not run an unclosed <script>, and that is
+      # visible only where the page is executed. Chrome is already on the runner.
+      - name: Site in a browser
         run: ./tools/browser-smoke.sh _site
 
-      # Методичка собирается из docs/book/*.md. Если сборка что-то изменила,
-      # значит в репозитории лежит не то, что собирается — та же болезнь, что
-      # и копия сайта, только внутри одного каталога.
-      - name: Собранное совпадает с тем, что в репозитории
+      # The book is built from docs/book/*.md. If the build changed anything,
+      # the repository holds something other than what gets built: the same disease as
+      # the site copy, only inside one directory.
+      - name: Built output matches the repository
         run: git diff --exit-code -- impl/web/book
 
-  # Четверть часа: девять лабораторных, каждая на своей загрузке Оберона.
-  # Лаборатория, проверка которой всегда зелёная или всегда красная,
-  # бесполезна, поэтому прогон требует перехода «не сделано» → «сделано».
+  # A quarter of an hour: nine labs, each on its own Oberon boot.
+  # A lab whose check is always green or always red is
+  # useless, so the run requires a transition from "not done" to "done".
   labs:
     if: github.event_name != 'push'
     runs-on: ubuntu-latest
@@ -101,19 +101,19 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Лаборатории
+      - name: Labs
         run: node labs-test.mjs
         working-directory: impl/web
 
-      # Протокол между страницей и рабочим потоком. Разойтись они могут молча:
-      # картинка просто перестанет обновляться, и ни одна другая проверка
-      # этого не увидит.
-      - name: Протокол рабочего потока
+      # The protocol between the page and the worker thread. They can diverge silently:
+      # the picture simply stops updating, and no other check
+      # would see it.
+      - name: Worker thread protocol
         run: node worker-test.mjs
         working-directory: impl/web
 
-      # Числа центрального номера: их видит читатель на странице, и считаются
-      # они тем же модулем, что и здесь.
-      - name: Цена проверки границ
+      # The numbers of the central issue: the reader sees them on the page, and they are
+      # computed by the same module as here.
+      - name: Bounds-check cost
         run: node bench-test.mjs
         working-directory: impl/web

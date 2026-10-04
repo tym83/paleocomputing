@@ -1,17 +1,17 @@
-# Версии KubeVirt, под которые собирается virt-launcher с машиной RISC5.
+# KubeVirt versions the virt-launcher with the RISC5 machine is built for.
 #
-# launcher обязан совпадать с версией KubeVirt в кластере в точности
-# (находка 44), а libvirt в нём подменяется только библиотеками — значит,
-# собирать надо ту же версию libvirt, что лежит в штатном образе. Её видно
-# по имени библиотеки: libvirt.so.0.11009.0 — это 11.9.0 (находка 60).
+# The launcher must match the cluster's KubeVirt version exactly (finding 44),
+# and libvirt in it is replaced only by its libraries, so it must be built
+# from the same libvirt version as the stock image. The version shows in the
+# library name: libvirt.so.0.11009.0 is 11.9.0 (finding 60).
 #
-# Третья колонка — дайджест многоархитектурного индекса штатного образа
-# quay.io/kubevirt/virt-launcher:<версия>: основа прибита им, а не тегом.
-#   docker buildx imagetools inspect quay.io/kubevirt/virt-launcher:<версия>
+# The third column is the digest of the multi-arch index of the stock image
+# quay.io/kubevirt/virt-launcher:<version>: the base is pinned by it, not by tag.
+#   docker buildx imagetools inspect quay.io/kubevirt/virt-launcher:<version>
 #
-# Первая строка — версия по умолчанию для kubevirt/build.sh.
-# Выпуск и сборка на PR идут под каждую строку.
+# The first line is the default version for kubevirt/build.sh.
+# Release and PR builds run for every line.
 #
-# KubeVirt   libvirt    дайджест индекса virt-launcher
+# KubeVirt   libvirt    virt-launcher index digest
 v1.8.4       v11.9.0    sha256:c89f733b1fdcc810d0b4326bbfc652a4cf3d25bc56cc8545f124d5cb71a1ce20
 v1.9.0       v11.10.0   sha256:f23102ca00bf12f7962021adfdfdad63c873b01a03001a6d20d5813950254b9c

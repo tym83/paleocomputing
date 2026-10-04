@@ -1,50 +1,54 @@
-# Находка 85. IDX в QEMU: тот же переключатель, что у CHK, и сверка с RTL по всем регистрам
+[Русская версия](FINDING-85-descriptor-qemu.ru.md)
 
-Паритет (находка 56): вариант железа выбирается везде одинаково, свойством машины.
-Для дескрипторов:
+# Finding 85. IDX in QEMU: the same switch as for CHK, and a comparison with the RTL across all registers
 
-| где | как выбирается |
+Parity (finding 56): the hardware variant is selected the same way everywhere,
+by a machine property. For descriptors:
+
+| where | how it is selected |
 |---|---|
-| RTL | `-DWITH_CHK -DCHK_SPLIT -DWITH_DESC` (`DESCDEF` в `impl/Makefile`) |
+| RTL | `-DWITH_CHK -DCHK_SPLIT -DWITH_DESC` (`DESCDEF` in `impl/Makefile`) |
 | QEMU | `-machine oberon,chk=on,desc=on` |
-| браузер | **нет** — WASM-сборки ядра с дескрипторами не делалось |
-| кластер, пакет каталога | **нет** — `hardware: desc` не заведён |
+| browser | **no**: no WASM build of the core with descriptors was made |
+| cluster, catalog package | **no**: `hardware: desc` has not been added |
 
-`desc` — отдельное свойство, как `chk`: ядро RTL с `IDX` включает и `CHK`, поэтому
-его двойник в QEMU — оба свойства сразу. Без `desc=on` кодировка `IDX` — это `ADD`
-с `v=1`, то есть просто `ADD`, как на ядре Вирта.
+`desc` is a separate property, like `chk`: the RTL core with `IDX` also includes
+`CHK`, so its QEMU counterpart is both properties at once. Without `desc=on`, the
+`IDX` encoding is `ADD` with `v=1`, that is, just `ADD`, as on Wirth's core.
 
-## Сверка
+## Comparison
 
-`qemu/test/compare_idx.py`: программа гоняется в QEMU с журналом команд и на
-нативной модели Verilator с `-DWITH_DESC` (`run_tests_desc --budget=N` печатает все
-регистры); сравниваются 16 регистров после одинакового числа команд.
+`qemu/test/compare_idx.py`: the program is run in QEMU with an instruction log and
+on the native Verilator model with `-DWITH_DESC` (`run_tests_desc --budget=N`
+prints all registers); the 16 registers are compared after the same number of
+instructions.
 
-| программа | бюджет | результат |
+| program | budget | result |
 |---|---:|---|
-| `bench_bounds_d` — цикл находки 81 | 8 000 | 16 регистров сошлись |
-| `t3_idx_q` — 40 случайных `IDX` и случайный выход за границу | 520 | 16 регистров сошлись; машина в обработчике ловушки, `R15` = адрес `IDX` + 4 |
-| те же, `chk=on` без `desc=on` (отрицательный контроль) | | расходятся: `R10` в цикле; `R3`, `R4`, `R5`, `R15` в случайном |
+| `bench_bounds_d`, the loop from finding 81 | 8 000 | 16 registers matched |
+| `t3_idx_q`, 40 random `IDX` and a random out-of-bounds access | 520 | 16 registers matched; the machine is in the trap handler, `R15` = `IDX` address + 4 |
+| the same, `chk=on` without `desc=on` (negative control) | | they diverge: `R10` in the loop; `R3`, `R4`, `R5`, `R15` in the random one |
 
-Старая сверка `compare_chk.py` после правки общей функции запуска QEMU по-прежнему
-проходит. Обе — в `.github/workflows/hardware.yml` (задание qemu; для `IDX` оно
-ставит Verilator ради нативной модели).
+The older comparison `compare_chk.py` still passes after the change to the shared
+QEMU launch function. Both are in `.github/workflows/hardware.yml` (the qemu job;
+for `IDX` it installs Verilator for the native model).
 
-## Что нашлось по дороге
+## What turned up along the way
 
-* **ПЗУ QEMU — 512 слов.** Полный случайный тест (1 666 слов) в него не влезает, и
-  журнал QEMU просто пуст. Поэтому для QEMU порождается свой короткий вариант
-  (`tools/gen_idx_diff.py 40 14 tests/t3_idx_q.s`).
-* **После `HALT` запись в журнале неоднозначна**: машина стоит на одном адресе, и
-  таких записей несколько. Сверка принимает их, только если состояние во всех
-  одинаково.
-* **Инкрементальная сборка QEMU не заметила новую команду**: скопированное дерево
-  сборки оказалось новее правленого `insn.decode`, и ninja не перегенерировал
-  декодер (`unknown type name 'arg_idx'`). Чистая сборка в CI этого не видит;
-  локально лечится `touch` исходников цели после `graft.sh`.
+* **The QEMU ROM is 512 words.** The full random test (1 666 words) does not fit
+  into it, and the QEMU log is simply empty. So a separate short variant is
+  generated for QEMU (`tools/gen_idx_diff.py 40 14 tests/t3_idx_q.s`).
+* **After `HALT` the log entry is ambiguous**: the machine stays at one address,
+  and there are several such entries. The comparison accepts them only if the
+  state is identical in all of them.
+* **The incremental QEMU build did not notice the new instruction**: the copied
+  build tree turned out to be newer than the edited `insn.decode`, and ninja did
+  not regenerate the decoder (`unknown type name 'arg_idx'`). A clean build in CI
+  does not see this; locally it is fixed by `touch`ing the target's sources after
+  `graft.sh`.
 
-## Чего нет
+## What is missing
 
-* Тактов: QEMU их не моделирует, лишний такт простоя при ловушке есть только в RTL
-  и в модели эмулятора Norebo.
-* Браузера и кластера (таблица выше) — открыто.
+* Cycles: QEMU does not model them; the extra stall cycle on a trap exists only
+  in the RTL and in the Norebo emulator model.
+* The browser and the cluster (table above): open.

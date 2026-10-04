@@ -1,6 +1,6 @@
 #!/bin/bash
 set -e
-true  # make отключён: на macOS цель norebo конфликтует с каталогом Norebo/
+true  # make disabled: on macOS the norebo target collides with the Norebo/ directory
 
 ROOT="$PWD"
 

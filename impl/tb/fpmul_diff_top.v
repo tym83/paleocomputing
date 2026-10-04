@@ -1,8 +1,8 @@
-// Обёртка для дифференциальной проверки: исходный FPMultiplier Вирта и
-// быстрый вариант получают одни и те же операнды. Такты и run у каждого свои:
-// блоки заканчивают в разное время, и лишний такт после конца изменил бы
-// состояние счётчика, а с ним и поведение следующей операции подряд.
-// См. tb/fpmul_diff.cpp.
+// Wrapper for the differential check: Wirth's original FPMultiplier and the
+// fast variant receive the same operands. Each has its own clock and run:
+// the units finish at different times, and an extra cycle after the end would
+// change the counter state, and with it the behaviour of the next back-to-back operation.
+// See tb/fpmul_diff.cpp.
 module fpmul_diff_top(
   input clk_a, clk_b, run_a, run_b,
   input [31:0] x, y,

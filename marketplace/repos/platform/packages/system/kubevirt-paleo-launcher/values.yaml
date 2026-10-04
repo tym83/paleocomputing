@@ -1,27 +1,27 @@
 ##
-## @section Что и как часто сверяется
+## @section What is reconciled and how often
 ##
 
-## @param {string} kubevirtName=kubevirt - Имя ресурса KubeVirt. Он обязан
-## лежать в том же пространстве имён, куда ставится компонент (в Cozystack —
-## cozy-kubevirt): права выдаются Role'ю там же, без прав уровня кластера.
+## @param {string} kubevirtName=kubevirt - Name of the KubeVirt resource. It must
+## live in the same namespace the component is installed into (in Cozystack,
+## cozy-kubevirt): permissions are granted by a Role there, without cluster-level rights.
 kubevirtName: kubevirt
 
-## @param {int} interval=30 - Секунд между проходами. Столько же, в худшем
-## случае, после обновления KubeVirt держится launcher прежней версии —
-## если правку не сбросило само обновление.
+## @param {int} interval=30 - Seconds between passes. In the worst case, this is
+## also how long the previous version's launcher stays after a KubeVirt update,
+## if the update itself did not reset the patch.
 interval: 30
 
-## @param {bool} allowWorkloadUpdate=false - Разрешить смену launcher, когда в
-## KubeVirt включён автоперевод машин (workloadUpdateMethods не пуст).
-## ⚠ Наш launcher заменяет штатный для ВСЕХ виртуалок кластера, и при
-## включённом автопереводе KubeVirt перевезёт на новый образ каждую из них:
-## живой миграцией, а что не мигрирует — перезапуском (находка 49). В
-## Cozystack по умолчанию автоперевод включён. Без согласия компонент свою
-## правку не ставит и не меняет (состояние NeedsConsent); снимает — всегда.
-## Согласие можно дать и аннотацией paleocomputing.io/allow-workload-update=true
-## на ресурсе KubeVirt.
+## @param {bool} allowWorkloadUpdate=false - Allow changing the launcher when
+## KubeVirt has automatic workload updates enabled (workloadUpdateMethods not empty).
+## ⚠ Our launcher replaces the stock one for ALL virtual machines of the cluster,
+## and with automatic workload updates KubeVirt moves every one of them onto the
+## new image: by live migration, and whatever does not migrate by a restart
+## (finding 49). In Cozystack automatic workload updates are on by default.
+## Without consent the component neither installs nor changes its patch
+## (state NeedsConsent); it always removes it. Consent can also be given with
+## the annotation paleocomputing.io/allow-workload-update=true on the KubeVirt resource.
 allowWorkloadUpdate: false
 
-## @param {string} image - Образ с kubectl, jq и sh, прибит дайджестом индекса.
+## @param {string} image - Image with kubectl, jq and sh, pinned by index digest.
 image: docker.io/alpine/k8s:1.35.9@sha256:b9cb6db0091a2327c0a56ecda69d37fa830c7a96ea669e7382b3ee778aa07a24

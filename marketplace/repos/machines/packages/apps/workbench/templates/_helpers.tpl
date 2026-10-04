@@ -5,7 +5,7 @@ app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end }}
 
-{{- /* Ссылка на артефакт компонента этого же репозитория. */ -}}
+{{- /* Reference to the artifact of a component of this same repository. */ -}}
 {{- define "workbench.artifact" -}}
 {{- printf "%s-%s" .root.Values.artifactPrefix .component -}}
 {{- end }}

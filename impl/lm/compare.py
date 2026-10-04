@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Сверка: вывод LM.Mod на движке против эталона lm/ref.py.
+"""Comparison: output of LM.Mod on an engine against the reference lm/ref.py.
 
-  python3 lm/compare.py ДВИЖОК N ЗЕРНО... [--ieee]
-ДВИЖОК: emu | rtl | rtl-fast (см. lm/run.sh). С --ieee дополнительно
-считается, где тот же алгоритм в IEEE float32 уходит от арифметики RISC5.
-Код возврата 0 — только если все зёрна совпали побайтово.
+  python3 lm/compare.py ENGINE N SEED... [--ieee]
+ENGINE: emu | rtl | rtl-fast (see lm/run.sh). With --ieee, it also computes
+where the same algorithm in IEEE float32 departs from RISC5 arithmetic.
+Exit code 0 only if all seeds matched byte for byte.
 """
 import pathlib, subprocess, sys
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
@@ -18,7 +18,7 @@ def engine_text(eng, n, seed):
     out = subprocess.run(["bash", str(HERE / "run.sh"), eng, str(n), str(seed), PROMPT],
                          capture_output=True, text=True, check=True).stdout
     keep = [l for l in out.splitlines()
-            if l and not l.startswith(("CYCLES", "  ядро", "  выполнено", "  окно", "  профиль", "    "))]
+            if l and not l.startswith(("CYCLES", "  core", "  executed", "  measurement", "  profile", "    "))]
     return "".join(keep), out
 
 
@@ -39,16 +39,16 @@ def main():
         got, _ = engine_text(eng, n, s)
         ok = got == want.rstrip(" ") or got == want
         bad += not ok
-        line = f"  зерно {s:3d}: {eng} против эталона RISC5 — {'совпало ✅' if ok else 'РАСХОЖДЕНИЕ ❌'}"
+        line = f"  seed {s:3d}: {eng} vs RISC5 reference — {'match ✅' if ok else 'MISMATCH ❌'}"
         if not ok:
-            line += f"\n    эталон: {want!r}\n    движок: {got!r}"
+            line += f"\n    reference: {want!r}\n    engine: {got!r}"
         if I is not None:
             ie = PROMPT + ref.generate(I, n, s, PROMPT)
             d = first_diff(want, ie)
-            line += ("; IEEE-float32 даёт тот же текст" if d is None
-                     else f"; IEEE-float32 расходится с символа {d - len(PROMPT)} из {n}")
+            line += ("; IEEE float32 gives the same text" if d is None
+                     else f"; IEEE float32 diverges from character {d - len(PROMPT)} of {n}")
         print(line, flush=True)
-    print(f"  {len(seeds) - bad} из {len(seeds)} зёрен совпали побайтово")
+    print(f"  {len(seeds) - bad} of {len(seeds)} seeds matched byte for byte")
     return 1 if bad else 0
 
 

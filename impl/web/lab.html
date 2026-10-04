@@ -8,9 +8,9 @@
     :root { --bg:#16181c; --fg:#e6e6e6; --mut:#9aa0a6; --line:#2e3238;
             --ok:#4ec36e; --no:#e06c6c; --acc:#7aa7e8; } }
   * { box-sizing: border-box }
-  /* Раскладка во всю высоту окна: шапка и экран стоят на месте, прокручивается
-     только колонка с заданиями. Иначе кнопка «Проверить» уезжает вверх вместе
-     с тем, что она просит проверить глазами. */
+  /* Full-height layout: the header and the screen stay in place, only the task
+     column scrolls. Otherwise the "Check" button scrolls up together with what
+     it asks you to verify by eye. */
   html, body { height:100% }
   body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.5
          ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
@@ -25,28 +25,28 @@
   main { flex:1; min-height:0; display:grid;
          grid-template-columns:minmax(0,1fr) 380px; gap:16px; padding:16px }
   .panel { min-height:0; overflow-y:auto; padding-right:4px }
-  /* Экран закреплён, а колонка с заданиями мотается: иначе кнопка «Проверить»
-     уезжает вверх вместе с тем, что надо проверять глазами. */
+  /* The screen is pinned and the task column scrolls: otherwise the "Check" button
+     scrolls up together with what has to be verified by eye. */
   .stage { position:sticky; top:12px; align-self:start }
-  /* Никогда не увеличиваем сверх натурального размера: у машины экран
-     1024x768, и при 1:1 точка машины ложится в точку экрана — текст резкий.
-     Растянутая канва и крупнее, чем нужно, и мылится на нецелом масштабе. */
-  /* У машины экран 1024x768. При 1:1 её точка ложится в точку экрана и текст
-     самый резкий; целое двукратное увеличение тоже резкое, промежуточные —
-     мылят, поэтому подписаны честно. Экран не обязан влезать в окно: при
-     крупном масштабе колонка прокручивается. */
-  /* Экран машины — 1024x768. Режим «вписать» подгоняет его под колонку (может
-     чуть мылить на нецелом масштабе), остальные дают точный размер, а если он
-     больше колонки — прокручивается сама рамка экрана, не страница. */
+  /* Never scale beyond the natural size: the machine's screen is 1024x768, and at
+     1:1 a machine pixel maps onto a screen pixel, so text is sharp. A stretched
+     canvas is both larger than needed and blurry at a non-integer scale. */
+  /* The machine's screen is 1024x768. At 1:1 its pixel maps onto a screen pixel and
+     text is sharpest; an integer 2x zoom is sharp too, intermediate ones blur, so
+     they are labelled honestly. The screen does not have to fit the window: at a
+     large zoom the column scrolls. */
+  /* The machine's screen is 1024x768. The "fit" mode scales it to the column (may
+     blur slightly at a non-integer scale), the others give an exact size, and if it
+     is larger than the column, the screen frame itself scrolls, not the page. */
   .stage { --k:1; min-width:0; min-height:0; overflow:auto }
-  /* ⚠ Размер задаётся САМОЙ МАШИНЕ, а не канве: канва живёт в теневом дереве
-     компонента, куда стили страницы не достают. */
+  /* ⚠ The size is set on the MACHINE ITSELF, not on the canvas: the canvas lives in
+     the component's shadow tree, which page styles cannot reach. */
   oberon-machine { display:block; border:1px solid var(--line); background:#fff;
                    margin:0 auto; width:calc(1024px * var(--k)); max-width:none }
   .stage.fit oberon-machine { width:100%; max-width:100% }
 
-  /* На узком экране колонки схлопываются, и держать всё враспор нечем:
-     возвращаемся к обычной прокрутке страницы. */
+  /* On a narrow screen the columns collapse and there is nothing to hold everything
+     in place: fall back to ordinary page scrolling. */
   @media (max-width:1100px) {
     html, body { height:auto }
     body { overflow:visible; display:block }
@@ -103,7 +103,7 @@
       <option value="2" data-i18n-en="2× — large">2× — крупно</option>
     </select>
   </label>
-  <span class="stat" id="stat" title="Сколько команд выполнил процессор; адрес выполняемой сейчас команды; меняется ли картинка">загрузка…</span>
+  <span class="stat" id="stat" title="Сколько команд выполнил процессор; адрес выполняемой сейчас команды; меняется ли картинка" data-i18n-en="loading…">загрузка…</span>
 </header>
 
 <main>
@@ -115,13 +115,13 @@
       <div class="row" id="read"></div>
     </section>
     <section id="toolbox" hidden>
-      <b>Писать прямо в память</b>
-      <div class="intro">Ни проверки прав, ни ловушки — машина такого не умеет.</div>
+      <b data-i18n-en="Write straight into memory">Писать прямо в память</b>
+      <div class="intro" data-i18n-en="No permission check, no trap: the machine has no such thing.">Ни проверки прав, ни ловушки — машина такого не умеет.</div>
       <div class="row">
-        адрес <input id="adr" value="E7F00"> значение <input id="val" value="FFFFFFFF">
-        <button id="poke">Вписать</button>
+        <span data-i18n-en="address">адрес</span> <input id="adr" value="E7F00"> <span data-i18n-en="value">значение</span> <input id="val" value="FFFFFFFF">
+        <button id="poke" data-i18n-en="Write">Вписать</button>
       </div>
-      <div class="row stat">счётчик команд: <b id="pc">—</b></div>
+      <div class="row stat"><span data-i18n-en="program counter:">счётчик команд:</span> <b id="pc">—</b></div>
     </section>
     <section>
       <ol id="steps"></ol>
@@ -141,11 +141,12 @@ import { LABS } from './labs.js';
 const $ = id => document.getElementById(id);
 const hex = n => (n >>> 0).toString(16).toUpperCase();
 
-// Язык: английский по умолчанию, русский по выбору. Выбор запоминается,
-// а `?lang=ru` в адресе перебивает запомненное.
+// Language: English by default, Russian on request. The choice is remembered,
+// and `?lang=ru` in the URL overrides the remembered one.
 applyMarkup(document);
+if (LANG !== 'ru') $('stat').title = 'Instructions executed by the processor; address of the instruction running now; whether the picture is changing';
 LANGS_FILL();
-// Ссылка на методичку в шапке — туда же, на нужный язык.
+// The handbook link in the header goes to the same place, in the right language.
 if (LANG !== 'ru') {
   const bl = $('bookLink');
   if (bl) bl.href = `book/${LANG}/index.html`;
@@ -162,10 +163,10 @@ function LANGS_FILL() {
 }
 
 /*
- * Машина считает в отдельном потоке (см. embed.js): лаборатория — это
- * страница с текстом, формами и проверками, и эмулятор не должен отбирать у
- * неё главный поток. Проверки заданий читают регистры и память, поэтому
- * исполняются ТАМ ЖЕ, рядом с машиной, а сюда приходит только вердикт.
+ * The machine runs in a separate thread (see embed.js): the lab is a page with
+ * text, forms and checks, and the emulator must not take its main thread away.
+ * Task checks read registers and memory, so they run THERE, next to the machine,
+ * and only the verdict comes back here.
  */
 const m = $('cv');
 if (LANG === 'ru') m.setAttribute('start-label', 'Запустить машину');
@@ -186,12 +187,12 @@ function render() {
   $('payoff').innerHTML = lab.payoff || '';
   document.querySelector('.payoff-box').hidden = !lab.payoff;
   $('toolbox').hidden = lab.tools !== 'poke';
-  // Подписи клавиши-модификатора зависят от системы, а разметка приходит
-  // строкой из labs.js — проставляем после каждой перерисовки.
+  // Modifier key labels depend on the OS, and the markup arrives as a string from
+  // labs.js, so we fill them in after every redraw.
   labelAltKeys(document);
   $('read').innerHTML = (lab.read || [])
-    // Английские главы лежат отдельным каталогом: так оформление и ссылки
-    // остаются относительными внутри каждого языка.
+    // English chapters live in a separate directory, so styling and links stay
+    // relative within each language.
     .map(([f, t]) => `<a href="book/${LANG === 'ru' ? '' : LANG + '/'}${f}">📖 ${t}</a>`).join(' · ');
   $('steps').innerHTML = '';
   lab.steps.forEach((st, i) => {
@@ -222,9 +223,9 @@ function render() {
   });
 }
 
-// Машина под лабораторную. Большинству нужен стоковый процессор и эталонный
-// диск; лаборатории, которой нужно другое железо или файл сверх эталона, это
-// объявляют полем `machine`, и машина поднимается заново — как на checks.html.
+// The machine for the lab. Most need the stock processor and the reference disk;
+// a lab that needs different hardware or a file beyond the reference declares it
+// in the `machine` field, and the machine is brought up anew, as on checks.html.
 function applyMachine(l) {
   const want = l.machine || {};
   m.setAttribute('variant', want.variant || 'base');
@@ -233,7 +234,7 @@ function applyMachine(l) {
 }
 applyMachine(lab);
 $('pick').onchange = e => { lab = LABS[+e.target.value]; applyMachine(lab); m.forget(lab.id); render(); };
-// Масштаб экрана. Выбор запоминается: человек настраивает его один раз.
+// Screen zoom. The choice is remembered: people set it once.
 const stage = document.querySelector('.stage'), zoom = $('zoom');
 function applyZoom(k) {
   const fit = (k === 'fit');
@@ -243,14 +244,14 @@ function applyZoom(k) {
 try {
   const saved = localStorage.getItem('oberon-zoom');
   if (saved && [...zoom.options].some(o => o.value === saved)) zoom.value = saved;
-} catch (e) { /* приватное окно — просто остаёмся на 1:1 */ }
+} catch (e) { /* private window: just stay at 1:1 */ }
 applyZoom(zoom.value);
 zoom.onchange = () => {
   applyZoom(zoom.value);
   try { localStorage.setItem('oberon-zoom', zoom.value); } catch (e) {}
 };
 
-// Переключатель кнопки: на трекпаде средней нет, а правой протяжки не бывает.
+// Button switch: a trackpad has no middle button, and there is no right-button drag.
 $('btn').onchange = e => m.setButton(+e.target.value);
 
 $('reset').onclick = () => { m.reset(); m.forget(lab.id); render(); };
@@ -267,8 +268,8 @@ $('poke').onclick = () => {
 
 render();
 
-// Состояние приходит вместе с кадром: отдельного опроса машины больше нет —
-// спрашивать её через границу потока пришлось бы на каждый тик.
+// State arrives together with the frame: there is no separate polling of the machine
+// any more, since asking it across the thread boundary would be needed on every tick.
 let lastCrc = -1;
 m.addEventListener('oberon-frame', e => {
   const d = e.detail;
@@ -279,6 +280,6 @@ m.addEventListener('oberon-frame', e => {
       : `${(d.insns / 1e6).toFixed(1)}M instructions · at ${hex(d.pc)} · screen ${drawing ? 'changing' : 'still'}`);
   $('pc').textContent = hex(d.pc);
 });
-// Модуль дошёл до конца: это видит дымовая проверка в браузере.
+// The module ran to the end: the in-browser smoke test sees this.
 document.documentElement.dataset.scriptOk = '1';
 </script>

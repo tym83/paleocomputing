@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
-"""Вырезает из трассы ядра Ibex несколько итераций циклов sum_a и sum_b.
+"""Cuts a few iterations of the sum_a and sum_b loops out of the Ibex core trace.
 
     trace_cut.py kernels.dis trace_core_00000000.log
 
-Берутся копии из компартмента bench (первая секция в дизассемблере) — те, что
-меряются. Итерации — из середины замера (SKIP совпадений пропускается), чтобы
-не попасть на разогрев.
+The copies from the bench compartment (the first section in the disassembly) are
+used, since those are the ones measured. Iterations come from the middle of the
+measurement (SKIP matches are skipped) to stay clear of the warm-up.
 """
 import re
 import sys
 
 SKIP = 50000
-SHOW = 3          # итераций на ядро
+SHOW = 3          # iterations per kernel
 
 dis, trace = sys.argv[1], sys.argv[2]
 
-# Адреса тела цикла: от цели обратного перехода до самого перехода.
+# Loop body addresses: from the target of the backward branch to the branch itself.
 kernels, cur, section = {}, None, 0
 for line in open(dis):
     if line.startswith("Disassembly of section"):

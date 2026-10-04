@@ -1,9 +1,9 @@
 {{- /*
-  Права цикла — в этом пространстве имён и по именам: ресурс KubeVirt,
-  virt-controller и ConfigMap состояния лежат здесь же. Единственное право на
-  весь кластер — читать узлы: цикл сверяет их архитектуру с тем, под какие
-  процессоры собран образ launcher, и на чужом узле его не ставит. Узлы по
-  имени не ограничить, и записи в них нет.
+  The loop's permissions are in this namespace and by name: the KubeVirt
+  resource, virt-controller and the status ConfigMap all live here. The only
+  cluster-wide permission is reading nodes: the loop checks their architecture
+  against the CPUs the launcher image is built for, and does not install it on a
+  foreign node. Nodes cannot be restricted by name, and there is no write access to them.
 */ -}}
 {{- $name := include "paleo-launcher.name" . }}
 apiVersion: v1
@@ -18,13 +18,13 @@ metadata:
   name: {{ $name }}
   labels: {{- include "paleo-launcher.labels" . | nindent 4 }}
 rules:
-# Свою запись в spec.customizeComponents.patches — чтение и merge patch с
-# предусловием на resourceVersion.
+# Our own entry in spec.customizeComponents.patches: read, and merge patch with
+# a resourceVersion precondition.
 - apiGroups: [kubevirt.io]
   resources: [kubevirts]
   resourceNames: [{{ .Values.kubevirtName }}]
   verbs: [get, list, watch, patch]
-# Сверка версии и раскладки аргументов у живого virt-controller.
+# Checking the version and argument layout of the live virt-controller.
 - apiGroups: [apps]
   resources: [deployments]
   resourceNames: [virt-controller]
@@ -33,8 +33,8 @@ rules:
   resources: [configmaps]
   resourceNames: [{{ include "paleo-launcher.status" . }}]
   verbs: [get, patch]
-# События на ресурсе KubeVirt при смене состояния. create по имени не
-# ограничить — имя события выдаёт сервер.
+# Events on the KubeVirt resource on state change. create cannot be
+# restricted by name: the server assigns the event name.
 - apiGroups: [""]
   resources: [events]
   verbs: [create]

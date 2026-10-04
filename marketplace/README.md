@@ -1,228 +1,243 @@
-# Забытые системы — подключаемый каталог для Cozystack
+[Русская версия](README.ru.md)
 
-Каталог собирает то, чего нет и не будет в основном наборе приложений
-Cozystack: эмуляторы машин, которых не выпустили, системы, оставшиеся
-проектами, и языки, для которых так и не написали реализацию. Каждая такая
-вещь — разворачиваемое окружение, в котором с ней можно работать, а не архив,
-который надо сначала собрать.
+# Forgotten Systems: a pluggable catalog for Cozystack
 
-Каталог устроен по проекту `cozymarketplace` из `cozystack/community`
-(`design-proposals/cozymarketplace` и `-supplementary`). Ничего не выдумано
-поверх: всё, что здесь есть, ложится на механику, которая уже написана.
+The catalog collects what is not and will not be in the main Cozystack
+application set: emulators of machines that were never released, systems that
+stayed as projects, and languages for which no implementation was ever written.
+Each such thing is a deployable environment you can work with, not an archive
+you first have to build.
 
-## Что здесь лежит
+The catalog follows the `cozymarketplace` design from `cozystack/community`
+(`design-proposals/cozymarketplace` and `-supplementary`). Nothing is invented
+on top: everything here maps onto mechanics that are already written.
 
-```
-index/          метаиндекс: по записи на репозиторий
-repos/machines    машины — эмуляторы, лабораторные, методички
-repos/languages   окружения для языков
-repos/images      загрузочные образы машин для KubeVirt
-tools/          генератор описаний каталога и проверки
-```
-
-## Единица установки — репозиторий
-
-Ключевое решение проекта: оператор подключает не отдельный пакет, а репозиторий
-целиком. Смысл в том, что вещи внутри собраны и проверены вместе. Репозиторий —
-один OCI-артефакт, и его тег есть его версия: обновление означает переход на
-другой тег, откат — возврат на прежний.
-
-Поэтому репозиториев три, а не один: у машин, языков и образов разный уровень
-доверия и разная судьба при обновлении.
-
-Подключение идёт штатным путём:
+## What is here
 
 ```
-cozypkg tap oci://ghcr.io/tym83/paleocomputing/machines:v0.1.17   # подключить репозиторий
-cozypkg add paleocomputing.machines                            # поставить из него (без add приложений в каталоге тенанта нет)
+index/          meta-index: one entry per repository
+repos/machines    machines: emulators, lab assignments, manuals
+repos/languages   language environments
+repos/images      boot images of machines for KubeVirt
+tools/          catalog description generator and checks
 ```
 
-Можно и по короткому имени через метаиндекс:
+## The unit of installation is a repository
+
+The key decision of the project: the operator connects not a single package but
+a whole repository. The point is that the things inside are built and tested
+together. A repository is one OCI artifact, and its tag is its version: an
+update means moving to another tag, a rollback means returning to the previous
+one.
+
+That is why there are three repositories rather than one: machines, languages
+and images have different trust levels and a different fate on update.
+
+Connecting goes the standard way:
 
 ```
-cozypkg search --index index                                   # что вообще есть
-cozypkg tap --index index paleocomputing-machines              # то же подключение
+cozypkg tap oci://ghcr.io/tym83/paleocomputing/machines:v0.1.17   # connect the repository
+cozypkg add paleocomputing.machines                            # install from it (without add there are no applications in the tenant catalog)
 ```
 
-Короткое имя разрешается через метаиндекс и **приколачивается к версии из
-записи** — той самой, которую проверял и подписывал шлюз публикации. Без
-`--index` (или `COZYPKG_INDEX`) короткое имя искать негде: в общем индексе
-сообщества этих записей пока нет.
-
-Обновление — повторным `cozypkg tap` с новым тегом, а не правкой тега на
-месте: список компонентов живёт в `PackageSource` и за тегом не следует
-(находка 46).
-
-### Платформа
-
-Четвёртый репозиторий, `platform`, — не приложение для тенанта, а уровень
-кластера, без которого чужие машины каталога не стартуют. Его компонент
-`kubevirt-paleo-launcher` держит образ virt-launcher в паре с версией KubeVirt
-(находка 65). Он привилегированный: ставится с явного согласия оператора.
+You can also use the short name through the meta-index:
 
 ```
-cozypkg tap oci://ghcr.io/tym83/paleocomputing/platform:<версия>
+cozypkg search --index index                                   # what is available at all
+cozypkg tap --index index paleocomputing-machines              # the same connection
+```
+
+The short name is resolved through the meta-index and **pinned to the version
+from the entry**, the very one the publishing gate checked and signed. Without
+`--index` (or `COZYPKG_INDEX`) there is nowhere to look up the short name: the
+shared community index does not have these entries yet.
+
+An update is a repeated `cozypkg tap` with a new tag, not an in-place tag edit:
+the list of components lives in `PackageSource` and does not follow the tag
+(finding 46).
+
+### Platform
+
+The fourth repository, `platform`, is not a tenant application but a cluster
+level without which the catalog's foreign machines do not start. Its component
+`kubevirt-paleo-launcher` keeps the virt-launcher image paired with the KubeVirt
+version (finding 65). It is privileged: it is installed with the operator's
+explicit consent.
+
+```
+cozypkg tap oci://ghcr.io/tym83/paleocomputing/platform:<version>
 cozypkg add paleocomputing.platform --allow-privileged
 ```
 
-⚠ Смена launcher — это обновление нагрузки для KubeVirt: при
-`workloadUpdateMethods: [LiveMigrate, Evict]` (так по умолчанию в Cozystack) он
-перевозит на новый образ **все** виртуалки кластера (находка 49). Поэтому
-компонент при включённом автопереводе свою правку не ставит и не меняет без
-явного согласия — значение `allowWorkloadUpdate: true` или аннотация
-`paleocomputing.io/allow-workload-update=true` на ресурсе KubeVirt; до тех пор
-его состояние `NeedsConsent`. Снятие правки согласия не ждёт.
+⚠ Changing the launcher is a workload update for KubeVirt: with
+`workloadUpdateMethods: [LiveMigrate, Evict]` (the Cozystack default) it moves
+**all** virtual machines of the cluster onto the new image (finding 49). So
+when automatic workload updates are enabled, the component neither installs nor
+changes its patch without explicit consent: the value
+`allowWorkloadUpdate: true` or the annotation
+`paleocomputing.io/allow-workload-update=true` on the KubeVirt resource; until
+then its state is `NeedsConsent`. Removing the patch does not wait for consent.
 
-Семейство машин растёт данными, а не кодом: новая архитектура — строка в
-`kubevirt/targets.txt` (цель QEMU, правки libvirt и проверки образа строятся
-из неё), новая версия KubeVirt — строка в `kubevirt/versions.txt` (из неё же
-собирается таблица компонента платформы).
+The machine family grows with data, not code: a new architecture is a line in
+`kubevirt/targets.txt` (the QEMU target, libvirt patches and image checks are
+built from it), a new KubeVirt version is a line in `kubevirt/versions.txt`
+(the platform component's table is built from it too).
 
-## Как выражены нужные типы записей
+## How the needed entry types are expressed
 
-Схема записи метаиндекса закрыта: разбор идёт строгим `UnmarshalStrict`, и
-лишнее поле ломает его целиком. Полей ровно восемь — `name`, `ociRef`,
-`version`, `description`, `homepage`, `maintainer`, `tags`, `signing`.
+The meta-index entry schema is closed: parsing uses strict `UnmarshalStrict`,
+and an extra field breaks it entirely. There are exactly eight fields: `name`,
+`ociRef`, `version`, `description`, `homepage`, `maintainer`, `tags`,
+`signing`.
 
-Значит «тип записи» невозможно объявить отдельным полем. Единственное
-расширяемое место — `tags`, и поиск `cozypkg search` ищет как раз по имени,
-описанию и тегам. Так типы здесь и выражены: `machine`, `language`, `image`,
+So an "entry type" cannot be declared as a separate field. The only extensible
+place is `tags`, and `cozypkg search` matches exactly on name, description and
+tags. That is how the types are expressed here: `machine`, `language`, `image`,
 `environment`, `documentation`, `privileged`.
 
-### Образы
+### Images
 
-`repos/images` публикует загрузочные образы в общее пространство `cozy-public`,
-откуда их видит поле выбора образа у диска виртуальной машины. Это единственная
-часть каталога, которой нужно доверие уровня кластера; компонент помечен
-привилегированным, и валидатор Cozystack на него предупреждает.
+`repos/images` publishes boot images into the shared `cozy-public` namespace,
+where the image selection field of a virtual machine's disk sees them. This is
+the only part of the catalog that needs cluster-level trust; the component is
+marked privileged, and the Cozystack validator warns about it.
 
-### Окружения для языков
+### Language environments
 
-`repos/languages` даёт один параметризуемый чарт: образ с реализацией языка
-плюс исходники, которые кладутся рядом. Два режима — постоянная среда с
-доступом по HTTP и разовый прогон.
+`repos/languages` provides one parameterized chart: an image with the language
+implementation plus sources placed next to it. Two modes: a persistent
+environment reachable over HTTP, and a one-off run.
 
-Подложки FaaS в Cozystack нет, поэтому масштабирования до нуля здесь не
-обещается. Свойство «вхолостую ничего не крутится» даёт режим разового прогона.
+Cozystack has no FaaS substrate, so scale-to-zero is not promised here. The
+property "nothing spins idle" comes from the one-off run mode.
 
-### Виртуальные архитектуры
+### Virtual architectures
 
-Список архитектур в KubeVirt закрыт: `architectureConfiguration` имеет ровно
-четыре ветки — `amd64`, `arm64`, `ppc64le` (устаревшая) и `s390x`. Пятую
-добавить нельзя, не меняя саму KubeVirt, и пакет каталога этого не может.
+The list of architectures in KubeVirt is closed: `architectureConfiguration`
+has exactly four branches: `amd64`, `arm64`, `ppc64le` (deprecated) and
+`s390x`. A fifth cannot be added without changing KubeVirt itself, and a
+catalog package cannot do that.
 
-Отсюда два рабочих пути, оба в каталоге есть:
+Hence two working paths, both present in the catalog:
 
-* **образ с эмулятором внутри** — машина в кластере обычная, необычное то, что
-  она изображает (`repos/images`, поле `emulates`);
-* **контейнер с эмулятором** — не требует ни доверия уровня кластера, ни
-  готового загрузочного образа (`repos/machines`, так сделан `oberon-lab`).
+* **an image with an emulator inside**: the machine in the cluster is ordinary,
+  what is unusual is what it imitates (`repos/images`, the `emulates` field);
+* **a container with an emulator**: needs neither cluster-level trust nor a
+  ready boot image (`repos/machines`, this is how `oberon-lab` is built).
 
-### Как добавить машину
+### How to add a machine
 
-Машина каталога — это паспорт, а не чарт. Шаблоны общие
-(`packages/library/retro-machine`), перехватчик тоже; OberonVM — первый
-паспорт, по нему видно всё.
+A catalog machine is a passport, not a chart. The templates are shared
+(`packages/library/retro-machine`), and so is the hook; OberonVM is the first
+passport, and everything can be seen from it.
 
-1. **Эмулятор — в образе launcher.** Цель QEMU в дереве и строка в
-   `kubevirt/targets.txt`: из неё собираются `--target-list`, правки libvirt и
-   проверки образа. Компонент платформы привезёт новый образ в кластер сам.
-2. **Файлы машины — в своём образе.** ПЗУ, диски, всё, что эмулятору нужно на
-   старте: образ только носит их, задача наполнения копирует на том.
-3. **Паспорт** `apps/<машина>/machine.yaml` по схеме
-   `library/retro-machine/machine.schema.json`: архитектура и машина, как их
-   знает libvirt; путь к эмулятору; файлы с ролями — `firmware` обновляется
-   из выпуска, `disk` кладётся один раз и дальше принадлежит пользователю;
-   как каждый файл передаётся QEMU; варианты железа — свойства `-machine`.
-4. **Приложение** `apps/<машина>/`: `Chart.yaml`, форма (`values.yaml`,
-   `values.schema.json`), ссылка `charts/retro-machine` на библиотеку и один
-   шаблон `{{ include "retro-machine.render" . }}`. Плюс запись в источнике и
-   в описаниях каталога, как у любого приложения.
+1. **The emulator goes into the launcher image.** A QEMU target in the tree and
+   a line in `kubevirt/targets.txt`: `--target-list`, libvirt patches and image
+   checks are built from it. The platform component brings the new image to the
+   cluster on its own.
+2. **Machine files go into their own image.** ROM, disks, everything the
+   emulator needs at startup: the image only carries them, the fill job copies
+   them onto the volume.
+3. **The passport** `apps/<machine>/machine.yaml` following
+   `library/retro-machine/machine.schema.json`: the architecture and machine as
+   libvirt knows them; the path to the emulator; files with roles (`firmware` is
+   updated from the release, `disk` is placed once and then belongs to the
+   user); how each file is passed to QEMU; hardware variants as `-machine`
+   properties.
+4. **The application** `apps/<machine>/`: `Chart.yaml`, the form
+   (`values.yaml`, `values.schema.json`), the `charts/retro-machine` link to the
+   library and a single template `{{ include "retro-machine.render" . }}`. Plus
+   an entry in the source and in the catalog descriptions, like any application.
 
-Что поймает ошибку: `check.py` сверяет паспорт со схемой и с формой, рисует
-чарт и требует `VirtualMachine`, том в составе релиза и задачу наполнения,
-которая не трогает существующий диск; `kubevirt/hook_test.py` гоняет
-перехватчик на двух паспортах, втором — вымышленном, чтобы было видно, что
-новая машина не требует правки кода. Публикуется копия без ссылок
-(`tools/stage.sh`): flux ссылки в артефакт не кладёт.
+What catches a mistake: `check.py` checks the passport against the schema and
+the form, renders the chart and requires a `VirtualMachine`, a volume as part of
+the release and a fill job that does not touch an existing disk;
+`kubevirt/hook_test.py` runs the hook on two passports, the second one
+fictional, to show that a new machine needs no code changes. A copy without
+symlinks is published (`tools/stage.sh`): flux does not put symlinks into the
+artifact.
 
-### Метаприложения
+### Meta-applications
 
-Окружение из нескольких частей ставится как одна вещь: родительский чарт
-рендерит `HelmRelease` на компоненты того же репозитория. Части не дублируются —
-заказываются по ссылке на артефакт. Это единственный способ композиции, который
-встречается в самой платформе (так собран `harbor`).
+An environment of several parts is installed as one thing: the parent chart
+renders `HelmRelease` objects for components of the same repository. The parts
+are not duplicated; they are ordered by reference to the artifact. This is the
+only composition method found in the platform itself (this is how `harbor` is
+built).
 
-Второй вариант в `PackageSource` для этого не годится: имя артефакта включает
-имя варианта, а `ApplicationDefinition` ссылается ровно на одно имя — второй
-вариант увёл бы все ссылки каталога в пустоту. У всех ста источников платформы
-вариант ровно один.
+A second variant in `PackageSource` does not work for this: the artifact name
+includes the variant name, and `ApplicationDefinition` refers to exactly one
+name, so a second variant would send all catalog references into the void. All
+hundred sources of the platform have exactly one variant.
 
-### Документация вместе с приложением
+### Documentation alongside the application
 
-В описании приложения для каталога нет поля под документацию: в
-`dashboard` есть `description`, `icon`, `category`, `tags` — и всё. Дать панели
-ссылку на руководство негде.
+The catalog application description has no field for documentation: `dashboard`
+has `description`, `icon`, `category`, `tags`, and that is all. There is nowhere
+to give the dashboard a link to a manual.
 
-Поэтому руководство здесь — обычная часть окружения: компонент `handbook`,
-который раздаёт его сам и ставится рядом с приложением. Свой образ с готовой
-документацией или страницы прямо в значениях — тогда собирать не нужно ничего.
+So the manual here is an ordinary part of the environment: the `handbook`
+component, which serves it itself and is installed next to the application.
+Either your own image with ready documentation or pages directly in the values;
+then nothing needs to be built.
 
-## Проверки
+## Checks
 
 ```
-make check        # то же, что python3 tools/check.py
+make check        # same as python3 tools/check.py
 ```
 
-Пятьдесят девять проверок, из них двенадцать — отрицательные контроли
-(мутации): проверяемое ломается нарочно, и проверка обязана покраснеть.
-Проверка, которая не умеет провалиться, ничего не проверяет.
+Fifty-nine checks, twelve of them negative controls (mutations): the thing
+being checked is broken on purpose, and the check must turn red. A check that
+cannot fail checks nothing.
 
-Те же проверки идут в CI перед каждой публикацией: `.github/workflows/publish.yml`,
-задание `catalog`, шаг «Проверки каталога» — после `cozypkg validate` и до
-выкладки. Выпуск запускается вручную из main после пуша тега
-(`gh workflow run publish.yml --ref main -f tag=vX.Y.Z`), см. находку 57.
+The same checks run in CI before every publication: `.github/workflows/publish.yml`,
+job `catalog`, the catalog checks step, after `cozypkg validate` and before
+pushing. A release is started manually from main after pushing the tag
+(`gh workflow run publish.yml --ref main -f tag=vX.Y.Z`), see finding 57.
 
-Штатный валидатор Cozystack проверяет структуру и ссылки в
-`ApplicationDefinition`. Своими проверками закрыты два места, до которых он не
-достаёт: ссылки метаприложения на компоненты и расхождение схемы в каталоге со
-схемой чарта. Схемы вообще не пишутся руками — `make gen` собирает описания
-каталога прямо из `values.schema.json` соответствующих чартов.
+The standard Cozystack validator checks the structure and references in
+`ApplicationDefinition`. Our own checks cover two places it does not reach:
+meta-application references to components, and divergence between the catalog
+schema and the chart schema. Schemas are never written by hand at all:
+`make gen` builds the catalog descriptions directly from the
+`values.schema.json` of the corresponding charts.
 
-`--helm-lint` не включается намеренно: helm 4 считает ошибкой путь к иконке
-вида `/logos/foo.svg`, хотя это конвенция самого Cozystack. На собственных
-чартах платформы — nats, redis, kafka, mongodb — helm 4 ругается ровно так же.
+`--helm-lint` is intentionally off: helm 4 treats an icon path like
+`/logos/foo.svg` as an error, although that is Cozystack's own convention. On
+the platform's own charts (nats, redis, kafka, mongodb) helm 4 complains in
+exactly the same way.
 
-## Порядок выпуска
+## Release order
 
-Тег ставится только после того, как изменение прошло живой тенант. Ошибки,
-которые находил только кластер (взаимная блокировка наполнения, сетевая
-политика тенанта, ссылки, не доехавшие до кластера), иначе обходились
-выпуском на каждую.
+A tag is set only after the change has passed a live tenant. Errors that only
+the cluster found (a deadlock in the volume fill, the tenant network policy,
+symlinks that never reached the cluster) otherwise cost a release each.
 
-1. Изменение — в ветке; `gh workflow run publish.yml --ref <ветка> -f tag=dev`
-   выкладывает всё под тегом `dev` (выпуск под версией — только из main).
-2. На время проверки песочница смотрит на `dev`: каталоги `machines` и
-   `platform` переподключаются с тегом `dev`. Launcher кластера общий на все
-   тенанты, поэтому после выпуска кластер возвращается на тег выпуска.
-3. `tools/sandbox-e2e.sh` — одним прогоном от имени тенанта: поставить машину,
-   дождаться запуска, проверить `VirtualMachine`, launcher, `chk=on`, экран
-   через консоль (эталон 18607 тёмных точек), перезапустить, удалить и
-   убедиться, что не осталось ничего.
-4. Зелёный прогон — мерж, тег, `gh workflow run publish.yml --ref main -f tag=vX.Y.Z`.
+1. The change goes into a branch; `gh workflow run publish.yml --ref <branch> -f tag=dev`
+   pushes everything under the `dev` tag (a versioned release only from main).
+2. During testing the sandbox points at `dev`: the `machines` and `platform`
+   catalogs are reconnected with the `dev` tag. The cluster launcher is shared
+   by all tenants, so after the release the cluster goes back to the release tag.
+3. `tools/sandbox-e2e.sh`, in one run as a tenant: install a machine, wait for
+   it to start, check the `VirtualMachine`, the launcher, `chk=on`, the screen
+   through the console (reference: 18607 dark pixels), restart, delete and make
+   sure nothing is left.
+4. A green run means merge, tag, `gh workflow run publish.yml --ref main -f tag=vX.Y.Z`.
 
-Что проверяется где. `kubevirt-e2e.yml` в CI поднимает kind с каждой версией
-KubeVirt из `kubevirt/versions.txt`, ставит launcher проходом компонента
-платформы и машину из каталога и сверяет экран с эталоном (находка 67) — на
-каждом запросе, без доступа к кластеру. Песочница нужна для того, чего в kind
-нет: сетевых политик тенанта Cozystack, LINSTOR, прав тенанта и дашборда.
-Её сценарии (`tools/sandbox-e2e.sh`, `tools/sandbox-platform-e2e.sh`)
-запускаются руками намеренно: в CI для них пришлось бы хранить ключи
-администратора общего кластера.
+What is checked where. `kubevirt-e2e.yml` in CI brings up kind with every
+KubeVirt version from `kubevirt/versions.txt`, installs the launcher through the
+platform component and a machine from the catalog, and compares the screen with
+the reference (finding 67), on every request, without access to a cluster. The
+sandbox is needed for what kind does not have: Cozystack tenant network
+policies, LINSTOR, tenant permissions and the dashboard. Its scenarios
+(`tools/sandbox-e2e.sh`, `tools/sandbox-platform-e2e.sh`) are run by hand on
+purpose: in CI they would require storing administrator keys of the shared
+cluster.
 
-## Чего здесь нет
+## What is not here
 
-Сборка загрузочных образов машин — отдельная работа, здесь только механика их
-публикации. Образы лаборатории собираются и подписываются в GitHub Actions
-(`.github/workflows/publish.yml`), подпись — без ключа: личностью выступает сам
-процесс сборки, проверить её может кто угодно.
+Building boot images of machines is separate work; here there are only the
+mechanics of publishing them. The lab images are built and signed in GitHub
+Actions (`.github/workflows/publish.yml`); signing is keyless: the build
+process itself is the identity, and anyone can verify it.

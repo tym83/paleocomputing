@@ -1,10 +1,10 @@
 /*
- * Трансляция команд RISC5 в TCG.
+ * Translation of RISC5 instructions into TCG.
  *
- * Семантика взята не из описаний, а из RISC5.v, и продублирована независимой
- * моделью АЛУ (impl/tools/alu_model.py), сверенной с железом на 4650
- * проверках. Там, где поведение неочевидно, в комментарии стоит строка
- * исходника железа.
+ * The semantics come not from descriptions but from RISC5.v, and are duplicated by an independent
+ * ALU model (impl/tools/alu_model.py), checked against the hardware in 4650
+ * tests. Where the behaviour is not obvious, the comment cites the hardware
+ * source line.
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
@@ -30,17 +30,17 @@ static TCGv cpu_n, cpu_z, cpu_c, cpu_v, cpu_h;
 typedef struct DisasContext {
     DisasContextBase base;
     uint32_t opcode;
-    /* Счётчик следующей команды, В СЛОВАХ — как в железе. */
+    /* Next instruction counter, IN WORDS, as in the hardware. */
     uint32_t npc_w;
-    /* Вариант железа: есть ли аппаратная проверка границ (см. cpu.h). */
+    /* Hardware variant: whether the hardware bounds check is present (see cpu.h). */
     bool chk;
     bool desc;
 } DisasContext;
 
 /*
- * Декодер порождается из insn.decode. Он объявляет и типы аргументов arg_*,
- * и прототипы trans_*, поэтому включается здесь: после типа DisasContext, на
- * который ссылается, и до определений самих функций разбора.
+ * The decoder is generated from insn.decode. It declares both the arg_* argument types
+ * and the trans_* prototypes, so it is included here: after the DisasContext type it
+ * refers to, and before the definitions of the decode functions themselves.
  */
 #include "decode-insn.c.inc"
 
@@ -63,9 +63,9 @@ void risc5_cpu_tcg_init(void)
 }
 
 /*
- * Второй операнд. RISC5.v:143 — C1 = q ? {{16{v}}, imm} : C0, то есть в
- * форме с непосредственным бит v заодно задаёт заполнение старшей половины.
- * Это не отдельный признак «знаковости», а именно тот же бит.
+ * Second operand. RISC5.v:143: C1 = q ? {{16{v}}, imm} : C0, so in the
+ * immediate form bit v also sets how the upper half is filled.
+ * This is not a separate "signedness" flag but exactly the same bit.
  */
 static TCGv read_c1(bool q, unsigned v, unsigned c, uint32_t imm)
 {
@@ -75,7 +75,7 @@ static TCGv read_c1(bool q, unsigned v, unsigned c, uint32_t imm)
     return tcg_constant_i32(v ? (0xFFFF0000u | imm) : imm);
 }
 
-/* N и Z обновляются любой операцией АЛУ, C и V — только сложением и вычитанием. */
+/* N and Z are updated by any ALU operation, C and V only by addition and subtraction. */
 static void gen_logic_flags(TCGv res)
 {
     tcg_gen_shri_i32(cpu_n, res, 31);
@@ -83,10 +83,10 @@ static void gen_logic_flags(TCGv res)
 }
 
 /*
- * Перенос и переполнение по формулам самого железа (RISC5.v:206-212).
- * Они несимметричны и не совпадают с обычными: переписаны буква в букву,
- * потому что именно на них опирается компилятор Оберона.
- *   sa = результат[31], sb = B[31], sc = C1[31]
+ * Carry and overflow follow the hardware's own formulas (RISC5.v:206-212).
+ * They are asymmetric and differ from the usual ones: copied letter for letter,
+ * because the Oberon compiler relies on exactly these.
+ *   sa = result[31], sb = B[31], sc = C1[31]
  */
 static void gen_addsub_flags(TCGv res, TCGv b, TCGv c1, bool sub)
 {
@@ -99,7 +99,7 @@ static void gen_addsub_flags(TCGv res, TCGv b, TCGv c1, bool sub)
     tcg_gen_shri_i32(sb, b, 31);
     tcg_gen_shri_i32(sc, c1, 31);
 
-    /* Общая для обеих операций часть: (~sb & sc & ~sa) | (sb & sc & sa) */
+    /* The part shared by both operations: (~sb & sc & ~sa) | (sb & sc & sa) */
     tcg_gen_xori_i32(t0, sb, 1);
     tcg_gen_and_i32(t0, t0, sc);
     tcg_gen_xori_i32(t1, sa, 1);
@@ -143,9 +143,9 @@ static void gen_addsub_flags(TCGv res, TCGv b, TCGv c1, bool sub)
 }
 
 /*
- * Умножение. Здесь живёт находка 11: команда, названная UMUL, на деле
- * перемножает БЕЗЗНАКОВОЕ на ЗНАКОВОЕ. Второй сомножитель знаковый всегда,
- * бит u управляет только первым.
+ * Multiplication. This is where finding 11 lives: the instruction named UMUL actually
+ * multiplies UNSIGNED by SIGNED. The second factor is always signed;
+ * bit u controls only the first.
  */
 static void gen_mul(TCGv dst, TCGv b, TCGv c1, bool unsigned_b)
 {
@@ -172,7 +172,7 @@ static void gen_alu(DisasContext *ctx, unsigned a, unsigned b, unsigned op,
     TCGv sh;
 
     switch (op) {
-    case 0: /* MOV во всех видах — RISC5.v:156 */
+    case 0: /* MOV in all forms, RISC5.v:156 */
         if (q) {
             if (u) {
                 tcg_gen_movi_i32(res, imm << 16);      /* MHI */
@@ -185,8 +185,8 @@ static void gen_alu(DisasContext *ctx, unsigned a, unsigned b, unsigned op,
             tcg_gen_mov_i32(res, cpu_h);
         } else {
             /*
-             * Чтение флагов даёт не четыре бита, а {N,Z,C,V, 20 нулей, 0x53}.
-             * Младший байт — подпись версии ядра, система её проверяет.
+             * Reading the flags gives not four bits but {N,Z,C,V, 20 zeros, 0x53}.
+             * The low byte is the core version signature; the system checks it.
              */
             TCGv t = tcg_temp_new_i32();
             tcg_gen_shli_i32(res, cpu_n, 31);
@@ -200,7 +200,7 @@ static void gen_alu(DisasContext *ctx, unsigned a, unsigned b, unsigned op,
         }
         break;
 
-    /* Сдвиги берут только пять младших бит счётчика. */
+    /* Shifts take only the low five bits of the count. */
     case 1:
         sh = tcg_temp_new_i32();
         tcg_gen_andi_i32(sh, c1, 31);
@@ -222,7 +222,7 @@ static void gen_alu(DisasContext *ctx, unsigned a, unsigned b, unsigned op,
     case 6: tcg_gen_or_i32(res, cpu_r[b], c1); break;
     case 7: tcg_gen_xor_i32(res, cpu_r[b], c1); break;
 
-    case 8: /* ADD, при u=1 — с переносом */
+    case 8: /* ADD, with carry when u=1 */
         tcg_gen_add_i32(res, cpu_r[b], c1);
         if (u) {
             tcg_gen_add_i32(res, res, cpu_c);
@@ -230,7 +230,7 @@ static void gen_alu(DisasContext *ctx, unsigned a, unsigned b, unsigned op,
         gen_addsub_flags(res, cpu_r[b], c1, false);
         tcg_gen_mov_i32(cpu_r[a], res);
         return;
-    case 9: /* SUB, при u=1 — с заёмом */
+    case 9: /* SUB, with borrow when u=1 */
         tcg_gen_sub_i32(res, cpu_r[b], c1);
         if (u) {
             tcg_gen_sub_i32(res, res, cpu_c);
@@ -249,14 +249,14 @@ static void gen_alu(DisasContext *ctx, unsigned a, unsigned b, unsigned op,
         break;
 
     /*
-     * ── Плавающая точка ───────────────────────────────────────────────────
+     * ── Floating point ────────────────────────────────────────────────────
      *
-     * Вычитание — то же сложение с перевёрнутым знаком второго слагаемого:
-     * так это и сделано в железе (RISC5.v:64 подаёт `{FSB^C0[31], C0[30:0]}`),
-     * отдельного вычитателя нет.
+     * Subtraction is the same addition with the sign of the second addend flipped:
+     * that is how the hardware does it (RISC5.v:64 feeds `{FSB^C0[31], C0[30:0]}`),
+     * there is no separate subtractor.
      *
-     * У сложения признаки u и v меняют смысл операции целиком — на перевод
-     * целого в дробное и на округление вниз. У умножения и деления их нет.
+     * For addition the flags u and v change the meaning of the operation entirely, into
+     * integer to float conversion and rounding down. Multiplication and division have none.
      */
     case 12:
         gen_helper_fp_add(res, cpu_r[b], c1,
@@ -273,7 +273,7 @@ static void gen_alu(DisasContext *ctx, unsigned a, unsigned b, unsigned op,
     case 15: gen_helper_fp_div(res, cpu_r[b], c1); break;
 
     default:
-        /* Сюда попасть нельзя: операций ровно шестнадцать. */
+        /* Unreachable: there are exactly sixteen operations. */
         g_assert_not_reached();
     }
 
@@ -288,21 +288,21 @@ static bool trans_F0_rrr(DisasContext *ctx, arg_F0_rrr *r)
 }
 
 /*
- * CHK — аппаратная проверка границ массива.
+ * CHK: hardware array bounds check.
  *
- * Семантика снята с RISC5.v дословно:
- *   chkFail = CHK & (B >= chkLim)        беззнаковое сравнение
- *   при срабатывании regmux = {8'b0, nxpc, 2'b0}, ira0 = 15, pcmux0 = C0[23:2]
- *   то есть РОВНО то же, что делает BLR: R15 := PC+4 ; PC := R[c]
- *   при несрабатывании не пишется ни регистр, ни признаки
+ * The semantics are copied verbatim from RISC5.v:
+ *   chkFail = CHK & (B >= chkLim)        unsigned comparison
+ *   when it fires, regmux = {8'b0, nxpc, 2'b0}, ira0 = 15, pcmux0 = C0[23:2]
+ *   that is, EXACTLY what BLR does: R15 := PC+4 ; PC := R[c]
+ *   when it does not fire, neither the register nor the flags are written
  *
- * Признаки при срабатывании ставятся по общему правилу «пишем регистр —
- * ставим N и Z» (RISC5.v:204): адрес возврата неотрицателен, поэтому N = 0,
- * а Z — только если адрес нулевой.
+ * When it fires, the flags are set by the general rule "write a register,
+ * set N and Z" (RISC5.v:204): the return address is non-negative, so N = 0,
+ * and Z only if the address is zero.
  *
- * На базовом ядре этой команды НЕТ: там та же кодировка декодируется как
- * регистр-регистровая форма (алиас LSL с v=1). Поэтому при выключенном
- * расширении сюда приходить нельзя — отдаём разбор обратно F0.
+ * The base core does NOT have this instruction: there the same encoding decodes as
+ * the register-register form (an alias of LSL with v=1). So with the extension
+ * off we must not get here; we hand decoding back to F0.
  */
 static bool trans_CHK(DisasContext *ctx, arg_chk *r)
 {
@@ -310,7 +310,7 @@ static bool trans_CHK(DisasContext *ctx, arg_chk *r)
     uint32_t lnk;
 
     if (!ctx->chk) {
-        /* Поля те же биты: op = 1 (LSL), u = 0, v = 1, a = IR[27:24]. */
+        /* Same bits for the fields: op = 1 (LSL), u = 0, v = 1, a = IR[27:24]. */
         gen_alu(ctx, extract32(ctx->opcode, 24, 4), r->b, 1, 0, 1, false,
                 r->c, 0);
         return true;
@@ -332,17 +332,17 @@ static bool trans_CHK(DisasContext *ctx, arg_chk *r)
 }
 
 /*
- * IDX — индексация через дескриптор (выпуск 14, 14-episode-descriptors.md).
+ * IDX: indexing through a descriptor (episode 14, 14-episode-descriptors.md).
  *
- * Семантика снята с RISC5.v (-DWITH_DESC):
- *   idxFault = IDX & (C0 >= B[31:20])      беззнаково, все 32 бита индекса
- *   без срабатывания: Ra := {8'b0, B[19:0] + (C0[11:0] << sh)}, N и Z по
- *     результату, C и OV не трогаются (сигнал ADD для IDX снят)
- *   при срабатывании RTL стоит такт и исполняет BLR MT: R15 := PC+4,
- *     PC := R[12]; признаки — по записи R15, как у CHK
+ * The semantics are taken from RISC5.v (-DWITH_DESC):
+ *   idxFault = IDX & (C0 >= B[31:20])      unsigned, all 32 bits of the index
+ *   when it does not fire: Ra := {8'b0, B[19:0] + (C0[11:0] << sh)}, N and Z from
+ *     the result, C and OV untouched (the ADD signal is cleared for IDX)
+ *   when it fires, the RTL stalls a cycle and executes BLR MT: R15 := PC+4,
+ *     PC := R[12]; flags from the R15 write, as with CHK
  *
- * Лишний такт простоя QEMU не моделирует: тактов в нём нет вообще.
- * На ядре без расширения та же кодировка — ADD с v=1, то есть просто ADD.
+ * QEMU does not model the extra stall cycle: it has no cycles at all.
+ * On a core without the extension the same encoding is ADD with v=1, i.e. plain ADD.
  */
 static bool trans_IDX(DisasContext *ctx, arg_idx *r)
 {
@@ -387,8 +387,8 @@ static bool trans_F1_rri(DisasContext *ctx, arg_F1_rri *r)
 }
 
 /*
- * Обращение к памяти. Смещение знаковое, двадцать бит. Байтовая форма
- * (v=1) читает и пишет младший байт.
+ * Memory access. The offset is signed, twenty bits. The byte form
+ * (v=1) reads and writes the low byte.
  */
 static bool trans_F2_mem(DisasContext *ctx, arg_F2_mem *r)
 {
@@ -397,26 +397,26 @@ static bool trans_F2_mem(DisasContext *ctx, arg_F2_mem *r)
 
     tcg_gen_addi_i32(addr, cpu_r[r->b], off);
     /*
-     * ⚠ Адресная шина 24 бита: RISC5.v:7 объявляет adr как [23:0], а
-     * строка 144 берёт для обращения B[23:0] плюс смещение. Старшие восемь
-     * бит железо отбрасывает, и программы на это опираются — порты
-     * адресуются как 0xFFFFFFC0, то есть попросту -64. Без обрезки такой
-     * адрес уходит мимо всей карты памяти и чтение молча даёт ноль.
+     * ⚠ The address bus is 24 bits: RISC5.v:7 declares adr as [23:0], and
+     * line 144 uses B[23:0] plus the offset for the access. The hardware drops the
+     * top eight bits, and programs rely on that: ports
+     * are addressed as 0xFFFFFFC0, which is simply -64. Without truncation such an
+     * address falls outside the whole memory map and the read silently returns zero.
      */
     tcg_gen_andi_i32(addr, addr, 0x00FFFFFF);
 
     if (!r->u) {
         tcg_gen_qemu_ld_i32(cpu_r[r->a], addr, 0, r->v ? MO_UB : MO_TEUL);
         /*
-         * ⚠ Загрузка СТАВИТ ФЛАГИ. В железе (RISC5.v:170,204,205) признаки N
-         * и Z берутся с ЛЮБОЙ записи в регистр — regwr включает не только
-         * АЛУ, но и загрузку, — а значение берётся записанное.
+         * ⚠ A load SETS THE FLAGS. In hardware (RISC5.v:170,204,205) the N
+         * and Z flags come from ANY register write: regwr covers not only the
+         * ALU but also loads, and the value used is the one written.
          *
-         * Загрузчик на это опирается: идёт LD, сразу за ним BNE, и без
-         * признаков переход уходит не туда. Найдено пошаговой сверкой с
-         * эталоном — разошлись на 224-й команде.
+         * The boot loader relies on this: an LD is immediately followed by a BNE, and without
+         * the flags the branch goes the wrong way. Found by step-by-step comparison with
+         * the reference: they diverged at the 224th instruction.
          *
-         * Запись в память регистра не трогает и флаги не меняет.
+         * A store to memory does not touch the register and does not change the flags.
          */
         gen_logic_flags(cpu_r[r->a]);
     } else {
@@ -426,8 +426,8 @@ static bool trans_F2_mem(DisasContext *ctx, arg_F2_mem *r)
 }
 
 /*
- * Условия перехода. Порядок ровно как в железе; старший бит поля
- * отрицает условие.
+ * Branch conditions. The order is exactly as in the hardware; the top bit of the field
+ * negates the condition.
  */
 static void gen_cond(TCGv dst, unsigned cond)
 {
@@ -444,7 +444,7 @@ static void gen_cond(TCGv dst, unsigned cond)
         tcg_gen_xor_i32(t, cpu_n, cpu_v);
         tcg_gen_or_i32(dst, t, cpu_z);
         break;
-    default: tcg_gen_movi_i32(dst, 1); break;                      /* всегда */
+    default: tcg_gen_movi_i32(dst, 1); break;                      /* always */
     }
     if (cond & 8) {
         tcg_gen_xori_i32(dst, dst, 1);
@@ -453,26 +453,26 @@ static void gen_cond(TCGv dst, unsigned cond)
 
 static bool trans_F3_reg(DisasContext *ctx, arg_F3_reg *r)
 {
-    /* Здесь же прячется RTI: BR & ~u & ~v & IR[4] (RISC5.v:98). */
+    /* RTI hides here too: BR & ~u & ~v & IR[4] (RISC5.v:98). */
     TCGLabel *skip = gen_new_label();
     TCGv cond = tcg_temp_new_i32();
 
     gen_cond(cond, r->cond);
     tcg_gen_brcondi_i32(TCG_COND_EQ, cond, 0, skip);
 
-    if (r->v) {                                   /* со ссылкой возврата */
+    if (r->v) {                                   /* with return link */
         uint32_t lnk = (ctx->npc_w * 4) & 0x00FFFFFF;
 
         /*
-         * Запись адреса возврата — тоже запись в регистр, и признаки она
-         * ставит по тому же правилу. Значение неотрицательно (старшие восемь
-         * бит нулевые), поэтому N нулевой, а Z — только при нулевом адресе.
+         * Writing the return address is also a register write, and it sets the
+         * flags by the same rule. The value is non-negative (the top eight bits
+         * are zero), so N is zero, and Z is set only for a zero address.
          */
         tcg_gen_movi_i32(cpu_r[RISC5_REG_LNK], lnk);
         tcg_gen_movi_i32(cpu_n, 0);
         tcg_gen_movi_i32(cpu_z, lnk == 0);
     }
-    /* Адрес перехода лежит в регистре БАЙТОВЫЙ, счётчик считает слова. */
+    /* The branch address in the register is a BYTE address; the counter counts words. */
     tcg_gen_shri_i32(cpu_pc, cpu_r[r->c], 2);
     tcg_gen_exit_tb(NULL, 0);
 
@@ -493,18 +493,18 @@ static bool trans_F3_disp(DisasContext *ctx, arg_F3_disp *r)
         uint32_t lnk = (ctx->npc_w * 4) & 0x00FFFFFF;
 
         /*
-         * Запись адреса возврата — тоже запись в регистр, и признаки она
-         * ставит по тому же правилу. Значение неотрицательно (старшие восемь
-         * бит нулевые), поэтому N нулевой, а Z — только при нулевом адресе.
+         * Writing the return address is also a register write, and it sets the
+         * flags by the same rule. The value is non-negative (the top eight bits
+         * are zero), so N is zero, and Z is set only for a zero address.
          */
         tcg_gen_movi_i32(cpu_r[RISC5_REG_LNK], lnk);
         tcg_gen_movi_i32(cpu_n, 0);
         tcg_gen_movi_i32(cpu_z, lnk == 0);
     }
     /*
-     * Смещение считается в СЛОВАХ от следующей команды. ORG.Mod излучает
-     * двадцать четыре бита, железо читает двадцать два — расхождение
-     * записано находкой 24; берём то, что делает железо.
+     * The offset is counted in WORDS from the next instruction. ORG.Mod emits
+     * twenty-four bits, the hardware reads twenty-two; the discrepancy is
+     * recorded as finding 24. We take what the hardware does.
      */
     target_w = (ctx->npc_w + sextract32(r->disp, 0, 22)) & 0x3FFFFF;
     tcg_gen_movi_i32(cpu_pc, target_w);
@@ -541,8 +541,8 @@ static void risc5_tr_translate_insn(DisasContextBase *dcbase, CPUState *cs)
     ctx->npc_w = ctx->base.pc_next / 4;
 
     /*
-     * Счётчик обновляем ДО разбора: переход со ссылкой возврата кладёт в
-     * R15 адрес следующей команды, и он должен быть уже посчитан.
+     * The counter is updated BEFORE decoding: a branch with a return link puts
+     * the address of the next instruction into R15, and it must already be computed.
      */
     if (!decode_insn(ctx, ctx->opcode)) {
         gen_helper_unimplemented(tcg_env, tcg_constant_i32(ctx->opcode));

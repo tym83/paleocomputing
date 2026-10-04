@@ -1,20 +1,20 @@
-# Тяжёлые проверки: настоящий RTL и цель QEMU.
+# Heavy checks: the real RTL and the QEMU target.
 #
-# Почему отдельно и не на каждый пуш: здесь собираются verilator и QEMU, и
-# прогоны идут десятками минут. Быстрые проверки живут в check.yml и остаются
-# быстрыми — иначе их начинают ждать, а потом и обходить.
+# Why separately and not on every push: verilator and QEMU are built here, and
+# the runs take tens of minutes. The fast checks live in check.yml and stay
+# fast; otherwise people start waiting for them, and then bypassing them.
 #
-# ⚠ До этого RTL и QEMU не проверялись автоматически ВООБЩЕ: это было записано
-# только комментарием в другом workflow. Комментарий проверок не заменяет.
+# ⚠ Before this, RTL and QEMU were not checked automatically AT ALL: that was written
+# only as a comment in another workflow. A comment does not replace checks.
 name: hardware
 
 on:
   workflow_dispatch:
   schedule:
-    # Раз в неделю, ночью с воскресенья на понедельник по UTC.
+    # Once a week, on the night from Sunday to Monday UTC.
     - cron: '17 3 * * 1'
   pull_request:
-    # На правки самого железа и оснастки — обязательно.
+    # On changes to the hardware itself and its tooling, always.
     paths:
       - 'impl/rtl/**'
       - 'impl/tb/**'
@@ -37,41 +37,41 @@ jobs:
           sudo apt-get install -y --no-install-recommends verilator >/dev/null
           verilator --version
 
-      # Направленные тесты ISA на обоих ядрах плюс проверка эквивалентности
-      # декодера: занятие чужой кодировки в RISC5 проявилось бы молчаливым
-      # изменением поведения старого кода.
-      - name: Тесты системы команд
+      # Directed ISA tests on both cores plus an equivalence check of the
+      # decoder: taking over someone else's encoding in RISC5 would show up as a silent
+      # change in the behaviour of old code.
+      - name: Instruction set tests
         run: make test
         working-directory: impl
 
-      # Система грузится на настоящем RTL, и контрольная сумма экрана обязана
-      # совпасть с эталонной — на базовом ядре, на ядре с CHK и на ядре с
-      # дескрипторами (выпуск 14).
-      - name: Загрузка системы
+      # The system boots on the real RTL, and the screen checksum must
+      # match the reference: on the base core, on the core with CHK and on the core with
+      # descriptors (release 14).
+      - name: System boot
         run: make boot boot-chk boot-desc
         working-directory: impl
 
-      # Ступень «дескрипторы»: цикл центрального номера на четырёх ступенях и
-      # отрицательный контроль (дескриптор короче массива обязан остановить
-      # цикл). Секунды.
-      - name: Цикл с дескриптором
+      # The "descriptors" rung: the central issue's loop on four rungs and a
+      # negative control (a descriptor shorter than the array must stop
+      # the loop). Seconds.
+      - name: Loop with a descriptor
         run: make desc-loop
         working-directory: impl
 
-      # Дифференциальный стенд: RTL против эталонного эмулятора, инструкция за
-      # инструкцией, на загрузке настоящей системы.
-      - name: Дифференциальный стенд
+      # Differential bench: RTL against the reference emulator, instruction by
+      # instruction, while booting the real system.
+      - name: Differential bench
         run: make lockstep lockstep-desc
         working-directory: impl
 
-      # Выпуск №2: быстрый FP-умножитель побитово равен исходному (миллион
-      # случайных пар сверх перебора порядков), система на нём грузится с тем
-      # же экраном, модель на RTL печатает эталонный текст.
-      - name: Быстрый FP-умножитель
+      # Release #2: the fast FP multiplier is bit-for-bit equal to the original (a million
+      # random pairs on top of an exhaustive sweep of exponents), the system boots on it with the
+      # same screen, the model on RTL prints the reference text.
+      - name: Fast FP multiplier
         run: make fpmul-diff FPMUL_N=1000000 boot-fast
         working-directory: impl
 
-      - name: Языковая модель на RTL
+      - name: Language model on RTL
         run: make lm
         working-directory: impl
 
@@ -81,52 +81,52 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Декодер принимается генератором самого QEMU: он ругается, если хоть
-      # один бит команды не расписан, и ровно на этом декодер уже ловился.
-      - name: Декодер
+      # The decoder is accepted by QEMU's own generator: it complains if even
+      # one instruction bit is not covered, and the decoder has already been caught on exactly that.
+      - name: Decoder
         run: make check
         working-directory: qemu
 
-      - name: Сборка цели
+      - name: Target build
         run: make build
         working-directory: qemu
 
-      # Главная проверка цели: не «собралось», а «считает то же, что железо».
-      - name: Сверка с моделью, снятой с RTL
+      # The main check of the target: not "it builds" but "it computes the same as the hardware".
+      - name: Comparison with the model taken from RTL
         run: make diff
         working-directory: qemu
 
-      # Плавающая точка против эталона risc-fp.c: 1056 случаев и отрицательный
-      # контроль. Раньше сверка была сделана один раз руками (находка 50).
-      - name: Сверка плавающей точки
+      # Floating point against the risc-fp.c reference: 1056 cases and a negative
+      # control. Before, the comparison was done once by hand (finding 50).
+      - name: Floating point comparison
         run: make fp
         working-directory: qemu
 
-      # Аппаратная проверка границ: та же программа, что считает числа на
-      # странице, в QEMU и на модели с RTL. Плюс отрицательный контроль.
-      # Verilator здесь не нужен: модель, снятая с RTL, лежит в репозитории
-      # собранной (risc5-chk.wasm) — её же отдаёт страница читателю.
-      - name: Сверка расширения ISA
+      # Hardware bounds checking: the same program that computes the numbers on
+      # the page, in QEMU and on the model from RTL. Plus a negative control.
+      # Verilator is not needed here: the model taken from RTL is in the repository
+      # prebuilt (risc5-chk.wasm); the page serves the same one to the reader.
+      - name: ISA extension comparison
         run: python3 qemu/test/compare_chk.py
 
-      # Выпуск №2: система в QEMU сама компилирует модуль модели и печатает
-      # текст; он снимается с диска и сверяется с эталоном. Заодно проверяет
-      # запись на диск в QEMU (находка 77).
+      # Release #2: the system in QEMU compiles the model module itself and prints
+      # text; it is read off the disk and compared with the reference. It also checks
+      # writing to disk in QEMU (finding 77).
       # Keyboard end to end: a command typed into System.Tool and run by a
       # middle click. Byte loads from the key port used to be rejected and
       # the first key press hung the system (finding 86).
       - name: Keyboard
         run: python3 qemu/test/keyboard_check.py
 
-      - name: Языковая модель в системе
+      - name: Language model in the system
         run: |
           make -C impl tools
           python3 impl/lm/qemu_run.py
-      # Индексация через дескриптор (выпуск 14): QEMU с chk=on,desc=on против
-      # нативной модели RTL с -DWITH_DESC — WASM-сборки этого ядра нет, поэтому
-      # здесь нужен Verilator. Цикл центрального номера и случайные IDX с
-      # ловушкой; отрицательный контроль — chk=on без desc=on.
-      - name: Сверка дескрипторов
+      # Indexing through a descriptor (release 14): QEMU with chk=on,desc=on against
+      # the native RTL model with -DWITH_DESC; there is no WASM build of this core, so
+      # Verilator is needed here. The central issue's loop and random IDX with
+      # a trap; the negative control is chk=on without desc=on.
+      - name: Descriptor comparison
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends verilator >/dev/null

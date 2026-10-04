@@ -1,46 +1,46 @@
 #!/usr/bin/env python3
-"""Лестница цены проверки границ: тот же цикл, что на RISC5, на современных процессорах.
+"""Bounds-check cost ladder: the same loop as on RISC5, on modern processors.
 
-На RISC5 цена проверки измерена точно (находка 55): 10 команд против 9, 11
-тактов против 10. Страница Оберона говорит, что на современный процессор это
-число не переносится. Этот скрипт превращает утверждение в замер.
+On RISC5 the cost of a check is measured exactly (finding 55): 10 instructions versus 9,
+11 cycles versus 10. The Oberon page says this number does not carry over to a modern
+processor. This script turns that claim into a measurement.
 
-ОДИН генератор порождает ОДИН И ТОТ ЖЕ цикл на C и на Rust:
+ONE generator produces ONE AND THE SAME loop in C and in Rust:
 
-    sum += a[i];  i = (i + 1) & (LIM - 1);     — LIM ячеек по 32 бита, n итераций
+    sum += a[i];  i = (i + 1) & (LIM - 1);     - LIM cells of 32 bits, n iterations
 
-в трёх конфигурациях, которые отличаются только проверкой:
+in three configurations that differ only in the check:
 
-    none    проверки нет вовсе (C: a[i]; Rust: get_unchecked)
-    auto    проверка так, как её пишет язык, предел — константа LIM
-            (C: if (i >= LIM) __builtin_trap(); Rust: a[i] на [u32; LIM]).
-            Компилятор вправе доказать, что она лишняя: i заворачивается маской.
-            Выбросил он её или нет — само по себе результат.
-    forced  та же проверка, но предел спрятан от оптимизатора (пустой asm в C,
-            std::hint::black_box в Rust) — сравнение и переход обязаны остаться.
-            Прямой аналог конфигурации B на RISC5 (SUB + BCC).
+    none    no check at all (C: a[i]; Rust: get_unchecked)
+    auto    the check as the language writes it, the limit is the constant LIM
+            (C: if (i >= LIM) __builtin_trap(); Rust: a[i] on [u32; LIM]).
+            The compiler may prove it redundant: i wraps around through the mask.
+            Whether it dropped the check or not is a result in itself.
+    forced  the same check, but the limit is hidden from the optimizer (an empty asm in C,
+            std::hint::black_box in Rust), so the compare and branch must stay.
+            The direct analogue of configuration B on RISC5 (SUB + BCC).
 
-Ловушка — холодный путь без возврата: __builtin_trap() в C, паника проверенной
-индексации в Rust auto, явный if + std::process::abort() в Rust forced.
+The trap is a cold path with no return: __builtin_trap() in C, the panic of checked
+indexing in Rust auto, an explicit if + std::process::abort() in Rust forced.
 
-Форма цикла держится как на RISC5: без развёртки и без векторизации (флаги ниже),
-do-while со счётчиком вниз (SUB R5 / BNE loop). Массив приходит через указатель,
-отмытый от оптимизатора, сумма возвращается и печатается — цикл не выбросить.
+The loop shape is kept as on RISC5: no unrolling and no vectorization (flags below),
+a do-while with a down counter (SUB R5 / BNE loop). The array comes in through a pointer
+laundered from the optimizer, and the sum is returned and printed, so the loop cannot be dropped.
 
-Две метрики:
-  * команд в теле цикла — по ассемблеру компилятора: обратный переход и его метка,
-    от метки до перехода включительно. Тело печатается в результаты целиком,
-    чтобы число можно было проверить глазами;
-  * нс на итерацию — лучшее из N прогонов, конфигурации чередуются по кругу.
-    ⚠ Наносекунды на современном процессоре включают частотное масштабирование
-    и соседей по машине. Значат отношения к none, а не абсолютные числа.
+Two metrics:
+  * instructions in the loop body, from the compiler's assembly: the backward branch and its
+    label, from the label to the branch inclusive. The whole body is printed into the results
+    so the number can be checked by eye;
+  * ns per iteration: the best of N runs, with configurations interleaved round-robin.
+    ⚠ Nanoseconds on a modern processor include frequency scaling and neighbours on the
+    machine. What matters is the ratio to none, not the absolute numbers.
 
-Запуск:
+Usage:
     python3 impl/bench/ladder/ladder.py --label macos-arm64-m4
     python3 impl/bench/ladder/ladder.py --label linux-amd64-qemu --iter 2000000 --emulated
 
-Пределы (LIM) берутся из tools/gen_bounds_bench.py — тот же источник, что у
-программ для RISC5, чтобы две лестницы не разошлись при правке.
+The limits (LIM) come from tools/gen_bounds_bench.py, the same source as for the RISC5
+programs, so the two ladders do not drift apart when edited.
 """
 import argparse
 import datetime
@@ -56,16 +56,16 @@ import sys
 HERE = pathlib.Path(__file__).resolve().parent
 IMPL = HERE.parent.parent
 sys.path.insert(0, str(IMPL / 'tools'))
-from gen_bounds_bench import LIM  # noqa: E402  — один предел на обе лестницы
+from gen_bounds_bench import LIM  # noqa: E402  - one limit for both ladders
 
 MASK = LIM - 1
 CONFIGS = ('none', 'auto', 'forced')
 DEFAULT_ITER = 500_000_000
 
-# ─── Исходники ────────────────────────────────────────────────────────────────
+# ─── Sources ──────────────────────────────────────────────────────────────────
 
-C_SRC = """/* ПОРОЖДЁННЫЙ ФАЙЛ — правится impl/bench/ladder/ladder.py, не руками.
- * Конфигурация {cfg}: {what} */
+C_SRC = """/* GENERATED FILE - edit impl/bench/ladder/ladder.py, not by hand.
+ * Configuration {cfg}: {what} */
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -100,8 +100,8 @@ int main(int argc, char **argv)
     for (uint32_t k = 0; k < LIM; k++)
         arr[k] = k * 2654435761u + 1u;
     const uint32_t *p = arr;
-    __asm__ volatile("" : "+r"(p) : : "memory");   /* содержимое неизвестно оптимизатору */
-    ladder_kernel(p, n / 16 + 1);                  /* прогрев */
+    __asm__ volatile("" : "+r"(p) : : "memory");   /* contents unknown to the optimizer */
+    ladder_kernel(p, n / 16 + 1);                  /* warm-up */
     double t0 = now_ns();
     uint32_t s = ladder_kernel(p, n);
     double t1 = now_ns();
@@ -114,12 +114,12 @@ C_CHECK = {
     'none':   ('', ''),
     'auto':   ('', '        if (i >= LIM) __builtin_trap();\n'),
     'forced': ('    size_t lim = LIM;\n'
-               '    __asm__ volatile("" : "+r"(lim));   /* предел неизвестен оптимизатору */\n',
+               '    __asm__ volatile("" : "+r"(lim));   /* limit unknown to the optimizer */\n',
                '        if (i >= lim) __builtin_trap();\n'),
 }
 
-RS_SRC = """// ПОРОЖДЁННЫЙ ФАЙЛ — правится impl/bench/ladder/ladder.py, не руками.
-// Конфигурация {cfg}: {what}
+RS_SRC = """// GENERATED FILE - edit impl/bench/ladder/ladder.py, not by hand.
+// Configuration {cfg}: {what}
 #![allow(unused_imports)]
 use std::hint::black_box;
 use std::time::Instant;
@@ -147,8 +147,8 @@ fn main() {{
     for k in 0..LIM {{
         arr[k] = (k as u32).wrapping_mul(2654435761).wrapping_add(1);
     }}
-    let p: &[u32; LIM] = black_box(&arr);   // содержимое неизвестно оптимизатору
-    black_box(ladder_kernel(p, n / 16 + 1)); // прогрев
+    let p: &[u32; LIM] = black_box(&arr);   // contents unknown to the optimizer
+    black_box(ladder_kernel(p, n / 16 + 1)); // warm-up
     let t0 = Instant::now();
     let s = ladder_kernel(p, n);
     let dt = t0.elapsed().as_nanos() as f64;
@@ -159,7 +159,7 @@ fn main() {{
 RS_CHECK = {
     'none':   ('', '        sum = sum.wrapping_add(unsafe {{ *a.get_unchecked(i) }});\n'),
     'auto':   ('', '        sum = sum.wrapping_add(a[i]);\n'),
-    'forced': ('    let lim: usize = black_box(LIM); // предел неизвестен оптимизатору\n',
+    'forced': ('    let lim: usize = black_box(LIM); // limit unknown to the optimizer\n',
                '        if i >= lim {{\n'
                '            std::process::abort();\n'
                '        }}\n'
@@ -167,9 +167,9 @@ RS_CHECK = {
 }
 
 WHAT = {
-    'none':   'проверки нет',
-    'auto':   'проверка как в языке, предел — константа',
-    'forced': 'проверка с пределом, спрятанным от оптимизатора (аналог B на RISC5)',
+    'none':   'no check',
+    'auto':   'check as the language does it, the limit is a constant',
+    'forced': 'check with the limit hidden from the optimizer (analogue of B on RISC5)',
 }
 
 
@@ -181,24 +181,24 @@ def emit_c(cfg):
 
 def emit_rust(cfg):
     prologue, body = RS_CHECK[cfg]
-    # тело само содержит {{ }} — раскрываем его отдельно, до общего шаблона
+    # the body itself contains {{ }}, so expand it separately, before the common template
     return RS_SRC.format(cfg=cfg, what=WHAT[cfg], lim=LIM,
                          prologue=prologue, body=body.format())
 
 
 def expected_sum(n):
-    """То, что обязана вернуть любая конфигурация: проверки не меняют результат."""
+    """What every configuration must return: checks do not change the result."""
     a = [(k * 2654435761 + 1) & 0xFFFFFFFF for k in range(LIM)]
     return (n // LIM * sum(a) + sum(a[:n % LIM])) & 0xFFFFFFFF
 
 
-# ─── Инструменты ──────────────────────────────────────────────────────────────
+# ─── Toolchains ───────────────────────────────────────────────────────────────
 
-# Флаги держат форму цикла как на RISC5: одна итерация — одно тело.
+# The flags keep the loop shape as on RISC5: one iteration is one body.
 CLANG_FLAGS = ['-O2', '-fno-unroll-loops', '-fno-vectorize', '-fno-slp-vectorize']
 GCC_FLAGS = ['-O2', '-fno-unroll-loops', '-fno-tree-vectorize', '-fno-tree-slp-vectorize']
-# У rustc нет -fno-unroll-loops. Развёртку отключает порог LLVM, равный нулю,
-# плюс запрет развёртки с остатком (runtime unroll); векторизацию — штатные -C.
+# rustc has no -fno-unroll-loops. Unrolling is disabled by an LLVM threshold of zero
+# plus a ban on runtime unrolling; vectorization by the standard -C options.
 RUSTC_FLAGS = ['-C', 'opt-level=2', '-C', 'codegen-units=1',
                '-C', 'debug-assertions=off', '-C', 'overflow-checks=off',
                '-C', 'no-vectorize-loops', '-C', 'no-vectorize-slp',
@@ -206,8 +206,8 @@ RUSTC_FLAGS = ['-C', 'opt-level=2', '-C', 'codegen-units=1',
                '-C', 'llvm-args=-unroll-runtime=false']
 
 
-# Под эмуляцией QEMU компиляторы изредка падают сами (cc1 с SIGSEGV внутри
-# qemu-x86_64 — проверено). Там повторяем; на живой машине падение — ошибка.
+# Under QEMU emulation compilers occasionally crash on their own (cc1 with SIGSEGV inside
+# qemu-x86_64, confirmed). There we retry; on a real machine a crash is an error.
 RETRIES = 1
 
 
@@ -216,7 +216,7 @@ def run(cmd, **kw):
         p = subprocess.run(cmd, capture_output=True, text=True, **kw)
         if p.returncode == 0:
             return p
-        print(f'  ⚠ {cmd[0]} вернул {p.returncode} (попытка {attempt + 1}/{RETRIES})\n'
+        print(f'  ⚠ {cmd[0]} returned {p.returncode} (attempt {attempt + 1}/{RETRIES})\n'
               f'{p.stderr.strip()[-2000:]}', file=sys.stderr, flush=True)
     raise subprocess.CalledProcessError(p.returncode, cmd, p.stdout, p.stderr)
 
@@ -229,7 +229,7 @@ def first_line(cmd):
 
 
 def find_toolchains(want):
-    """Список (имя, язык, команда, флаги, версия). gcc на macOS — это clang: не дублируем."""
+    """List of (name, language, command, flags, version). gcc on macOS is clang: no duplicates."""
     found, seen = [], set()
     for name in ('clang', 'gcc'):
         if 'c' not in want or not shutil.which(name):
@@ -267,7 +267,7 @@ def build(tc, cfg, outdir):
     return stem, stem.with_suffix('.s')
 
 
-# ─── Разбор ассемблера ────────────────────────────────────────────────────────
+# ─── Assembly parsing ─────────────────────────────────────────────────────────
 
 LABEL = re.compile(r'^([A-Za-z_.$][\w.$]*):')
 TRAP_MNEM = {'brk', 'udf', 'ud2', 'hlt', 'int3'}
@@ -283,7 +283,7 @@ def strip_comment(line, arch):
 
 
 def classify(ins, arch):
-    """(вид, цель): вид — 'cond' | 'jump' | 'trap' | 'ret' | None."""
+    """(kind, target): kind is 'cond' | 'jump' | 'trap' | 'ret' | None."""
     parts = ins.split(None, 1)
     mnem = parts[0].lower()
     ops = parts[1] if len(parts) > 1 else ''
@@ -313,7 +313,7 @@ def classify(ins, arch):
 
 
 def function_lines(asm_text, name):
-    """Строки функции name: от её метки до .cfi_endproc / .size / .Lfunc_end."""
+    """Lines of function name: from its label to .cfi_endproc / .size / .Lfunc_end."""
     out, inside = [], False
     for raw in asm_text.splitlines():
         s = raw.strip()
@@ -329,15 +329,16 @@ def function_lines(asm_text, name):
 
 
 def loop_body(asm_text, arch, name='ladder_kernel'):
-    """Тело цикла: от цели обратного перехода до него самого включительно.
+    """Loop body: from the target of the backward branch to the branch itself, inclusive.
 
-    Возвращает словарь: команды, число, боковые выходы из тела (переходы наружу,
-    кроме обратного) и есть ли в теле ловушка. Бросает ValueError, если цикла нет.
+    Returns a dict: instructions, their count, side exits from the body (branches out,
+    other than the backward one) and whether the body contains a trap. Raises ValueError
+    if there is no loop.
     """
     lines = function_lines(asm_text, name)
     if not lines:
-        raise ValueError(f'функция {name} не найдена в ассемблере')
-    items = []                      # ('label', имя) | ('ins', текст)
+        raise ValueError(f'function {name} not found in the assembly')
+    items = []                      # ('label', name) | ('ins', text)
     for raw in lines:
         s = strip_comment(raw, arch)
         if not s:
@@ -349,11 +350,11 @@ def loop_body(asm_text, arch, name='ladder_kernel'):
             if not s:
                 continue
         if s.startswith('.'):
-            continue                # директива
+            continue                # directive
         items.append(('ins', s))
     labels = {v: k for k, (t, v) in enumerate(items) if t == 'label'}
 
-    back = []                       # (позиция перехода, позиция метки, вид)
+    back = []                       # (branch position, label position, kind)
     for k, (t, v) in enumerate(items):
         if t != 'ins':
             continue
@@ -361,9 +362,9 @@ def loop_body(asm_text, arch, name='ladder_kernel'):
         if kind in ('cond', 'jump') and tgt in labels and labels[tgt] < k:
             back.append((k, labels[tgt], kind))
     if not back:
-        raise ValueError('обратного перехода нет — цикла в функции нет')
-    # Условный обратный переход предпочтительнее безусловного; среди равных —
-    # самый короткий (внутренний) цикл.
+        raise ValueError('no backward branch: the function has no loop')
+    # A conditional backward branch is preferred over an unconditional one; among equals,
+    # the shortest (innermost) loop.
     back.sort(key=lambda b: (b[2] != 'cond', b[0] - b[1]))
     end, start, back_kind = back[0]
 
@@ -379,10 +380,10 @@ def loop_body(asm_text, arch, name='ladder_kernel'):
         elif kind in ('cond', 'jump') and v != items[end][1] and \
                 (tgt not in labels or not start <= labels[tgt] <= end):
             exits.append(v)
-    # Единственное чтение памяти в цикле — a[i]. Два чтения и больше значат, что
-    # цикл развёрнут или векторизован и сравнивать тела с RISC5 нельзя.
+    # The only memory load in the loop is a[i]. Two or more loads mean the loop
+    # was unrolled or vectorized, and its body cannot be compared with RISC5.
     if arch == 'x86_64':
-        # lea считает адрес, но память не читает
+        # lea computes an address but does not read memory
         loads = sum(1 for v in body if '(' in v and not v.split()[0].lower().startswith('lea'))
     else:
         loads = sum(1 for v in body if v.split()[0].lower().startswith('ld'))
@@ -390,16 +391,16 @@ def loop_body(asm_text, arch, name='ladder_kernel'):
             'traps_inside': traps, 'back_kind': back_kind, 'loads': loads}
 
 
-# ─── Замер ────────────────────────────────────────────────────────────────────
+# ─── Measurement ──────────────────────────────────────────────────────────────
 
 def host_arch():
     m = platform.machine().lower()
     return 'x86_64' if m in ('x86_64', 'amd64') else 'aarch64' if m in ('arm64', 'aarch64') else m
 
 
-# Номера ядер по MIDR_EL1: implementer → {part → имя}. Источник — Linux
-# arch/arm64/include/asm/cputype.h (ARM_CPU_IMP_*, *_CPU_PART_*), сверено
-# с master 2026-09-28. Неизвестный номер печатается как есть, без догадок.
+# Core numbers from MIDR_EL1: implementer → {part → name}. Source: Linux
+# arch/arm64/include/asm/cputype.h (ARM_CPU_IMP_*, *_CPU_PART_*), checked
+# against master 2026-09-28. An unknown number is printed as is, without guessing.
 ARM_IMPLEMENTERS = {0x41: 'Arm', 0x61: 'Apple', 0x6D: 'Microsoft', 0xC0: 'Ampere'}
 ARM_PARTS = {
     0x41: {0xD03: 'Cortex-A53', 0xD05: 'Cortex-A55', 0xD07: 'Cortex-A57',
@@ -411,13 +412,13 @@ ARM_PARTS = {
            0xD81: 'Cortex-A720', 0xD82: 'Cortex-X4', 0xD83: 'Neoverse V3AE',
            0xD84: 'Neoverse V3', 0xD85: 'Cortex-X925', 0xD87: 'Cortex-A725',
            0xD8E: 'Neoverse N3'},
-    0x6D: {0xD49: 'Azure Cobalt 100 (на основе Neoverse N2 r0p0)'},
+    0x6D: {0xD49: 'Azure Cobalt 100 (based on Neoverse N2 r0p0)'},
     0xC0: {0xAC3: 'AmpereOne', 0xAC4: 'AmpereOne A'},
 }
 
 
 def arm_core_name(implementer, part):
-    """Имя ядра по implementer и part из /proc/cpuinfo (строки вида '0x41')."""
+    """Core name from implementer and part in /proc/cpuinfo (strings like '0x41')."""
     try:
         imp, prt = int(implementer, 16), int(part, 16)
     except (TypeError, ValueError):
@@ -425,17 +426,17 @@ def arm_core_name(implementer, part):
     name = ARM_PARTS.get(imp, {}).get(prt)
     if name:
         return name
-    return f'{ARM_IMPLEMENTERS.get(imp, f"implementer {implementer}")}, part {part} — нет в таблице'
+    return f'{ARM_IMPLEMENTERS.get(imp, f"implementer {implementer}")}, part {part} - not in the table'
 
 
 def cpu_info():
-    """Строки о процессоре для шапки: модель, семейство/модель/степпинг или MIDR, lscpu."""
+    """Processor lines for the header: model, family/model/stepping or MIDR, lscpu."""
     try:
         if sys.platform == 'darwin':
             return [run(['sysctl', '-n', 'machdep.cpu.brand_string']).stdout.strip()]
         info = pathlib.Path('/proc/cpuinfo').read_text()
     except (OSError, subprocess.CalledProcessError):
-        return ['неизвестен']
+        return ['unknown']
 
     def field(key):
         m = re.search(rf'^{key}\s*:\s*(.+)$', info, re.M)
@@ -449,13 +450,13 @@ def cpu_info():
         if fam:
             lines.append(', '.join(fam))
     imp, part = field('CPU implementer'), field('CPU part')
-    # Виртуальная машина на Apple сообщает implementer и part нулями.
+    # A virtual machine on Apple reports implementer and part as zeros.
     if imp and imp not in ('0x00', '0x0'):
         midr = [f'{k.split()[1]} {field(k)}' for k in
                 ('CPU implementer', 'CPU architecture', 'CPU variant', 'CPU part',
                  'CPU revision') if field(k)]
-        lines.append(f'ядро: **{arm_core_name(imp, part)}** (MIDR: {", ".join(midr)}; '
-                     'имена — Linux `arch/arm64/include/asm/cputype.h`)')
+        lines.append(f'core: **{arm_core_name(imp, part)}** (MIDR: {", ".join(midr)}; '
+                     'names from Linux `arch/arm64/include/asm/cputype.h`)')
     if shutil.which('lscpu'):
         p = subprocess.run(['lscpu'], capture_output=True, text=True)
         keep = [l.split(':', 1) for l in p.stdout.splitlines()
@@ -463,7 +464,7 @@ def cpu_info():
                             r'Hypervisor vendor)\s*:', l)]
         if keep:
             lines.append('lscpu: ' + '; '.join(f'{k.strip()} = {v.strip()}' for k, v in keep))
-    return lines or ['не сообщается (виртуальная машина)']
+    return lines or ['not reported (virtual machine)']
 
 
 def time_one(binary, n):
@@ -473,28 +474,28 @@ def time_one(binary, n):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
-    ap.add_argument('--label', required=True, help='имя платформы для файла результатов')
-    ap.add_argument('--iter', type=int, default=DEFAULT_ITER, help='итераций на прогон')
-    ap.add_argument('--reps', type=int, default=5, help='прогонов на конфигурацию')
+    ap.add_argument('--label', required=True, help='platform name for the results file')
+    ap.add_argument('--iter', type=int, default=DEFAULT_ITER, help='iterations per run')
+    ap.add_argument('--reps', type=int, default=5, help='runs per configuration')
     ap.add_argument('--langs', default='c,rust', help='c,rust')
     ap.add_argument('--emulated', action='store_true',
-                    help='машина эмулируется: время не значит ничего, пишется с пометкой')
-    ap.add_argument('--note', default='', help='строка о платформе в шапку результатов')
+                    help='the machine is emulated: timings mean nothing and are marked as such')
+    ap.add_argument('--note', default='', help='a line about the platform for the results header')
     ap.add_argument('--build-dir', default=str(IMPL / 'build' / 'ladder'))
-    ap.add_argument('--out', default=None, help='файл результатов (по умолчанию results/<label>.md)')
+    ap.add_argument('--out', default=None, help='results file (default results/<label>.md)')
     args = ap.parse_args()
     if args.iter < 1:
-        ap.error('--iter должно быть ≥ 1: цикл do-while')
+        ap.error('--iter must be ≥ 1: the loop is do-while')
 
     global RETRIES
     if args.emulated:
         RETRIES = 5
     arch = host_arch()
     if arch not in ('x86_64', 'aarch64'):
-        sys.exit(f'архитектура {arch} разборщиком ассемблера не поддерживается')
+        sys.exit(f'architecture {arch} is not supported by the assembly parser')
     tcs = find_toolchains(set(args.langs.split(',')))
     if not tcs:
-        sys.exit('ни одного компилятора не найдено')
+        sys.exit('no compiler found')
     outdir = pathlib.Path(args.build_dir) / args.label
     outdir.mkdir(parents=True, exist_ok=True)
 
@@ -505,22 +506,22 @@ def main():
             binary, asm = build(tc, cfg, outdir)
             lb = loop_body(asm.read_text(encoding='utf-8', errors='replace'), arch)
             if lb['loads'] != 1:
-                sys.exit(f'❌ {tc[0]} {cfg}: в теле цикла {lb["loads"]} чтений памяти вместо '
-                         f'одного — цикл развёрнут или векторизован:\n{lb["text"]}')
+                sys.exit(f'❌ {tc[0]} {cfg}: the loop body has {lb["loads"]} memory loads instead of '
+                         f'one, so the loop was unrolled or vectorized:\n{lb["text"]}')
             got, _ = time_one(binary, args.iter)
             if got != want:
-                sys.exit(f'❌ {tc[0]} {cfg}: сумма {got}, ожидалась {want} — цикл посчитан неверно')
+                sys.exit(f'❌ {tc[0]} {cfg}: sum {got}, expected {want}: the loop computed the wrong result')
             bins[(tc[0], cfg)] = binary
             rows.append({'tc': tc[0], 'cfg': cfg, **lb, 'times': []})
-            print(f'  {tc[0]:12} {cfg:7} команд в теле: {lb["count"]:2}  '
-                  f'боковых выходов: {len(lb["exits"])}', flush=True)
+            print(f'  {tc[0]:12} {cfg:7} instructions in body: {lb["count"]:2}  '
+                  f'side exits: {len(lb["exits"])}', flush=True)
 
-    # По кругу: дрейф частоты и нагрева ложится на все конфигурации поровну,
-    # а не на ту, что шла последней.
+    # Round-robin: frequency and thermal drift fall on all configurations equally,
+    # not on whichever ran last.
     for rep in range(args.reps):
         for r in rows:
             r['times'].append(time_one(bins[(r['tc'], r['cfg'])], args.iter)[1])
-        print(f'  прогон {rep + 1}/{args.reps}', flush=True)
+        print(f'  run {rep + 1}/{args.reps}', flush=True)
 
     base = {r['tc']: min(r['times']) for r in rows if r['cfg'] == 'none'}
     base_n = {r['tc']: r['count'] for r in rows if r['cfg'] == 'none'}
@@ -541,60 +542,60 @@ def verdict(r):
     if r['cfg'] == 'none':
         return '—'
     if r['exits'] or r['traps_inside']:
-        return 'осталась'
-    return '**выброшена**'
+        return 'kept'
+    return '**dropped**'
 
 
 def report(args, arch, tcs, rows):
     L = []
     w = L.append
-    w(f'# Лестница проверки границ — {args.label}')
+    w(f'# Bounds-check ladder - {args.label}')
     w('')
-    w('ПОРОЖДЁННЫЙ ФАЙЛ — `impl/bench/ladder/ladder.py`. Как читать — '
+    w('GENERATED FILE: `impl/bench/ladder/ladder.py`. How to read it: '
       '`impl/docs/FINDING-61-bounds-ladder.md`.')
     w('')
-    w(f'* дата: {datetime.date.today().isoformat()}')
-    w(f'* система: `{platform.system()} {platform.release()}`, архитектура `{arch}`')
+    w(f'* date: {datetime.date.today().isoformat()}')
+    w(f'* system: `{platform.system()} {platform.release()}`, architecture `{arch}`')
     if args.emulated:
-        w('* процессор: эмулируется; /proc/cpuinfo принадлежит хосту')
+        w('* processor: emulated; /proc/cpuinfo belongs to the host')
     else:
         for line in cpu_info():
-            w(f'* процессор: {line}')
+            w(f'* processor: {line}')
     if args.note:
         w(f'* {args.note}')
-    w(f'* массив: {LIM} × u32, индекс `i = (i + 1) & {MASK}`; итераций на прогон: '
+    w(f'* array: {LIM} × u32, index `i = (i + 1) & {MASK}`; iterations per run: '
       + f'{args.iter:,}'.replace(',', ' '))
-    w(f'* прогонов на конфигурацию: {args.reps}, по кругу; берётся лучший')
+    w(f'* runs per configuration: {args.reps}, round-robin; the best is taken')
     w('')
-    w('| компилятор | версия | флаги |')
+    w('| compiler | version | flags |')
     w('|---|---|---|')
     for name, _, _, flags, ver in tcs:
         w(f'| {name} | `{ver}` | `{" ".join(flags)}` |')
     w('')
     if args.emulated:
-        w('> ⚠ **Машина эмулируется (QEMU).** Время ниже не значит ничего и приведено '
-          'только для полноты. Верны число команд в теле цикла и сумма (проверена).')
+        w('> ⚠ **The machine is emulated (QEMU).** The timings below mean nothing and are given '
+          'only for completeness. The instruction count in the loop body and the sum (checked) are valid.')
     else:
-        w('> ⚠ Наносекунды включают частотное масштабирование и фон машины. '
-          'Значат отношения к `none` внутри одной строки компилятора, а не абсолютные числа.')
+        w('> ⚠ Nanoseconds include frequency scaling and background load on the machine. '
+          'What matters is the ratio to `none` within one compiler row, not the absolute numbers.')
     w('')
-    w('| компилятор | конфигурация | команд в теле | Δ к none | проверка в цикле | '
-      'нс/итер (лучшее) | медиана | разброс | к none |')
+    w('| compiler | configuration | instructions in body | Δ vs none | check in loop | '
+      'ns/iter (best) | median | spread | vs none |')
     w('|---|---|---:|---:|---|---:|---:|---:|---:|')
     for r in rows:
         w(f'| {r["tc"]} | `{r["cfg"]}` | {r["count"]} | {r["dcount"]:+d} | {verdict(r)} | '
           f'{r["best"]:.3f} | {r["median"]:.3f} | {r["spread"] * 100:.1f}% | {r["ratio"]:.3f} |')
     w('')
-    w('*Команд в теле* — от метки обратного перехода до него самого включительно, '
-      'по ассемблеру компилятора. *Разброс* — (худший − лучший) / лучший.')
+    w('*Instructions in body*: from the label of the backward branch to the branch itself inclusive, '
+      'from the compiler assembly. *Spread*: (worst − best) / best.')
     w('')
-    w('## Тела циклов')
+    w('## Loop bodies')
     w('')
     for r in rows:
         extra = ''
         if r['exits']:
-            extra = ' — выход к ловушке: `' + '`, `'.join(r['exits']) + '`'
-        w(f'### {r["tc"]} — `{r["cfg"]}` ({r["count"]} команд{extra})')
+            extra = ' - exit to trap: `' + '`, `'.join(r['exits']) + '`'
+        w(f'### {r["tc"]} - `{r["cfg"]}` ({r["count"]} instructions{extra})')
         w('')
         w('```asm')
         w(r['text'])
