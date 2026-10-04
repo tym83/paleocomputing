@@ -11,7 +11,7 @@ app.kubernetes.io/name: langpack
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
-{{- /* Одно описание контейнера на оба режима: расходиться им незачем. */ -}}
+{{- /* One container definition for both modes: there is no reason for them to diverge. */ -}}
 {{- define "langpack.container" -}}
 name: runtime
 image: {{ .Values.image | quote }}

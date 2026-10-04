@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
-"""Проверки каталога «Забытые системы».
+"""Checks of the "Forgotten Systems" catalog.
 
-Штатный валидатор Cozystack проверяет структуру репозитория и ссылки в
-ApplicationDefinition. Он не знает про две вещи, которые для этого каталога
-важны, и их проверяем здесь:
+The standard Cozystack validator checks the repository structure and the
+references in ApplicationDefinition. It does not know about two things that
+matter for this catalog, so we check them here:
 
-  * ссылки на артефакты внутри метаприложения (родительский чарт рендерит
-    HelmRelease на компоненты того же репозитория — если имя разъедется,
-    метаприложение молча поставит пустоту);
-  * описания приложений в каталоге, собранные генератором, — не отстали ли они
-    от схем чартов.
+  * artifact references inside the meta-application (the parent chart renders
+    HelmRelease objects for components of the same repository; if a name drifts,
+    the meta-application silently installs nothing);
+  * the catalog application descriptions built by the generator: whether they
+    have fallen behind the chart schemas.
 
-Каждая проверка, которая что-то утверждает, сопровождается мутацией: мы ломаем
-проверяемое и убеждаемся, что проверка падает. Проверка, которая не умеет
-провалиться, ничего не проверяет.
+Every check that asserts something comes with a mutation: we break the thing
+being checked and make sure the check fails. A check that cannot fail checks
+nothing.
 """
 from __future__ import annotations
 
@@ -58,7 +58,7 @@ def artifact_name(ps: str, variant: str, component: str) -> str:
 
 def load_source(repo: str) -> dict:
     files = list((ROOT / "repos" / repo / "packages" / "sources").glob("*.yaml"))
-    assert len(files) == 1, f"{repo}: ожидался ровно один файл источника"
+    assert len(files) == 1, f"{repo}: expected exactly one source file"
     return yaml.safe_load(files[0].read_text(encoding="utf-8"))
 
 
@@ -72,67 +72,67 @@ def declared_artifacts(repo: str) -> set[str]:
     return out
 
 
-# ─── 1. Метаиндекс ──────────────────────────────────────────────────────────
+# ─── 1. Meta-index ──────────────────────────────────────────────────────────
 def check_index() -> None:
-    print("\nМетаиндекс")
+    print("\nMeta-index")
     r = run([COZYPKG, "search", "--index", "index"])
     entries = [l for l in r.stdout.splitlines()[1:] if l.strip()]
     files = len(list((ROOT / "index").glob("*.yaml")))
     report(r.returncode == 0 and len(entries) == files,
-           f"cozypkg читает индекс, записей: {len(entries)} из {files}")
+           f"cozypkg reads the index, entries: {len(entries)} of {files}")
 
-    # Мутация: индекс разбирается строго, лишнее поле должно ломать разбор.
+    # Mutation: the index is parsed strictly, an extra field must break parsing.
     victim = ROOT / "index" / "paleocomputing-images.yaml"
     original = victim.read_text(encoding="utf-8")
     try:
         victim.write_text(original + "kind: Image\n", encoding="utf-8")
         bad = run([COZYPKG, "search", "--index", "index"])
         report(bad.returncode != 0 or "unknown field" in (bad.stdout + bad.stderr),
-               "мутация: лишнее поле в записи индекса отвергается")
+               "mutation: an extra field in an index entry is rejected")
     finally:
         victim.write_text(original, encoding="utf-8")
 
-    # Каждая запись должна нести тег, иначе её не найти: тип записи в этой
-    # схеме выражается только тегами.
+    # Every entry must carry a tag, otherwise it cannot be found: in this schema
+    # the entry type is expressed only through tags.
     for f in sorted((ROOT / "index").glob("*.yaml")):
         entry = yaml.safe_load(f.read_text(encoding="utf-8"))
-        report(bool(entry.get("tags")), f"у записи {entry['name']} есть теги")
+        report(bool(entry.get("tags")), f"entry {entry['name']} has tags")
 
 
-# ─── 2. Штатный валидатор ───────────────────────────────────────────────────
+# ─── 2. Standard validator ──────────────────────────────────────────────────
 def check_validate() -> None:
-    print("\nВалидатор Cozystack")
+    print("\nCozystack validator")
     for repo in REPOS:
         r = run([COZYPKG, "validate", f"repos/{repo}"])
-        tail = r.stdout.strip().splitlines()[-1] if r.stdout.strip() else "(пусто)"
+        tail = r.stdout.strip().splitlines()[-1] if r.stdout.strip() else "(empty)"
         errs = re.search(r"(\d+) error", tail)
         report(bool(errs) and errs.group(1) == "0", f"repos/{repo}: {tail}")
 
-    # ⚠ Проверять надо и то, что реально уезжает в реестр. В артефакт попадает
-    # ТОЛЬКО содержимое packages/, с отброшенной приставкой. Манифест источника
-    # когда-то лежал рядом, в sources/, и молча терялся при публикации: дерево
-    # исходников проходило проверку, а опубликованное — нет. Поймано только
-    # круговым прогоном через настоящий реестр.
+    # ⚠ What actually goes to the registry must be checked too. ONLY the
+    # contents of packages/ end up in the artifact, with the prefix stripped. The
+    # source manifest once lay next to it, in sources/, and was silently lost on
+    # publishing: the source tree passed the check, the published one did not.
+    # Caught only by a round trip through a real registry.
     for repo in REPOS:
         r = run([COZYPKG, "validate", f"repos/{repo}/packages"])
-        tail = r.stdout.strip().splitlines()[-1] if r.stdout.strip() else "(пусто)"
+        tail = r.stdout.strip().splitlines()[-1] if r.stdout.strip() else "(empty)"
         errs = re.search(r"(\d+) error", tail)
         report(bool(errs) and errs.group(1) == "0",
-               f"repos/{repo} в опубликованной форме: {tail}")
+               f"repos/{repo} in published form: {tail}")
 
-    # Мутация: убрать манифест источника из packages/ — публикуемая форма
-    # обязана перестать проходить.
+    # Mutation: move the source manifest out of packages/; the published form
+    # must stop passing.
     src = ROOT / "repos/machines/packages/sources/machines.yaml"
     moved = ROOT / "repos/machines/sources-moved-for-test.yaml"
     try:
         src.rename(moved)
         bad = run([COZYPKG, "validate", "repos/machines/packages"])
         report("no-packagesource" in bad.stdout,
-               "мутация: манифест источника вне packages/ ломает публикуемую форму")
+               "mutation: a source manifest outside packages/ breaks the published form")
     finally:
         moved.rename(src)
 
-    # Мутация: испортить ссылку на чарт — валидатор обязан заметить.
+    # Mutation: corrupt the chart reference; the validator must notice.
     victim = ROOT / "repos/machines/packages/system/machines-rd/cozyrds/oberon-lab.yaml"
     original = victim.read_text(encoding="utf-8")
     try:
@@ -142,19 +142,19 @@ def check_validate() -> None:
             encoding="utf-8")
         bad = run([COZYPKG, "validate", "repos/machines"])
         report("appdef-dangling" in bad.stdout,
-               "мутация: сломанная ссылка на чарт поймана валидатором")
+               "mutation: a broken chart reference is caught by the validator")
     finally:
         victim.write_text(original, encoding="utf-8")
 
-    # Привилегированный компонент обязан быть виден оператору.
+    # A privileged component must be visible to the operator.
     r = run([COZYPKG, "validate", "repos/images"])
     report("(privileged)" in r.stdout,
-           "образы помечены привилегированными и валидатор об этом предупреждает")
+           "images are marked privileged and the validator warns about it")
 
 
-# ─── 3. Описания каталога не отстали от чартов ──────────────────────────────
+# ─── 3. Catalog descriptions have not fallen behind the charts ──────────────
 def check_generated() -> None:
-    print("\nОписания приложений для каталога")
+    print("\nCatalog application descriptions")
     for rd in sorted(ROOT.glob("repos/*/packages/system/*-rd")):
         if not (rd / "appdefs.yaml").is_file():
             continue
@@ -162,9 +162,9 @@ def check_generated() -> None:
         r = run([sys.executable, "tools/gen-appdefs.py", str(rd)])
         after = {p.name: p.read_text(encoding="utf-8") for p in (rd / "cozyrds").glob("*.yaml")}
         report(r.returncode == 0 and before == after,
-               f"{rd.relative_to(ROOT)}: сгенерированное совпадает с лежащим в дереве")
+               f"{rd.relative_to(ROOT)}: generated output matches the tree")
 
-        # Схема в каталоге обязана быть ровно схемой чарта.
+        # The catalog schema must be exactly the chart schema.
         spec = yaml.safe_load((rd / "appdefs.yaml").read_text(encoding="utf-8"))
         packages = rd.parents[1]
         for app in spec["apps"]:
@@ -173,10 +173,10 @@ def check_generated() -> None:
             in_chart = json.loads((packages / app["chartPath"] / "values.schema.json")
                                   .read_text(encoding="utf-8"))
             report(in_catalog == in_chart,
-                   f"{app['component']}: схема в каталоге совпадает со схемой чарта")
+                   f"{app['component']}: catalog schema matches the chart schema")
 
 
-# ─── 4. Ссылки метаприложения (этого валидатор Cozystack не проверяет) ──────
+# ─── 4. Meta-application references (the Cozystack validator does not check these)
 def metaapp_refs(values_overrides: list[str] | None = None) -> set[str]:
     chart = ROOT / "repos/machines/packages/apps/workbench"
     args = ["helm", "template", "w", str(chart)] + (values_overrides or [])
@@ -193,79 +193,79 @@ def metaapp_refs(values_overrides: list[str] | None = None) -> set[str]:
 
 
 def check_metaapp() -> None:
-    print("\nМетаприложение")
+    print("\nMeta-application")
     declared = declared_artifacts("machines")
     refs = metaapp_refs()
-    report(len(refs) == 2, f"метаприложение заказывает {len(refs)} части")
+    report(len(refs) == 2, f"the meta-application orders {len(refs)} parts")
     report(refs and refs <= declared,
-           "все ссылки метаприложения ведут в компоненты этого же репозитория")
+           "all meta-application references lead to components of this same repository")
 
-    # Мутация: сдвинуть приставку имени артефакта — ссылки обязаны «повиснуть».
+    # Mutation: shift the artifact name prefix; the references must "dangle".
     broken = metaapp_refs(["--set", "artifactPrefix=wrong-prefix"])
     report(broken and not (broken <= declared),
-           "мутация: сдвинутая приставка делает ссылки висячими")
+           "mutation: a shifted prefix leaves the references dangling")
 
-    # Окружение без единой части не имеет смысла.
+    # An environment without a single part makes no sense.
     r = run(["helm", "template", "w", str(ROOT / "repos/machines/packages/apps/workbench"),
              "--set", "machine=false", "--set", "manual=false"])
-    report(r.returncode != 0, "пустое окружение отвергается")
+    report(r.returncode != 0, "an empty environment is rejected")
 
 
-# ─── 5. Документация действительно доезжает читаемой ────────────────────────
+# ─── 5. Documentation really arrives readable ───────────────────────────────
 def check_handbook() -> None:
-    print("\nМетодичка")
+    print("\nHandbook")
     chart = ROOT / "repos/machines/packages/apps/handbook"
-    body = "первая строка\nвторая строка\n<tag> & \"кавычки\"\n"
-    pages = json.dumps([{"name": "p1", "title": "Глава <1>", "body": body}])
+    body = "first line\nsecond line\n<tag> & \"quotes\"\n"
+    pages = json.dumps([{"name": "p1", "title": "Chapter <1>", "body": body}])
     r = run(["helm", "template", "h", str(chart), "--set-json", f"pages={pages}"])
-    # ConfigMap теперь два — страницы и конфигурация nginx; берём нужный.
+    # There are now two ConfigMaps, the pages and the nginx config; take the right one.
     cm = next((d for d in yaml.safe_load_all(r.stdout)
                if isinstance(d, dict) and d.get("kind") == "ConfigMap"
                and d["metadata"]["name"].endswith("-pages")), None)
-    report(cm is not None, "страницы собираются в ConfigMap")
+    report(cm is not None, "pages are assembled into a ConfigMap")
     if cm:
         page = cm["data"]["p1.html"]
-        report("первая строка\nвторая строка" in page,
-               "переносы строк пережили укладку в YAML")
+        report("first line\nsecond line" in page,
+               "line breaks survived packing into YAML")
         report("&lt;tag&gt;" in page and "&amp;" in page and "<tag>" not in page,
-               "разметка в тексте экранирована, а не выполнена")
+               "markup in the text is escaped, not executed")
         report('<a href="p1.html">' in cm["data"]["index.html"],
-               "оглавление ссылается на страницу")
+               "the table of contents links to the page")
 
-    # Мутация: методичка без источника — ни образа, ни страниц.
+    # Mutation: a handbook without a source, neither image nor pages.
     bad = run(["helm", "template", "h", str(chart)])
-    report(bad.returncode != 0, "мутация: методичка без источника отвергается")
+    report(bad.returncode != 0, "mutation: a handbook without a source is rejected")
 
 
-# ─── 6. Образы: коллизии с платформой ───────────────────────────────────────
+# ─── 6. Images: collisions with the platform ────────────────────────────────
 def check_images() -> None:
-    print("\nОбразы машин")
+    print("\nMachine images")
     chart = ROOT / "repos/images/packages/system/machine-images"
     imgs = json.dumps([{"name": "oberon-risc5", "url": "https://example.org/a.qcow2"}])
     r = run(["helm", "template", "mi", str(chart), "--set-json", f"images={imgs}"])
     names = [d["metadata"]["name"] for d in yaml.safe_load_all(r.stdout)
              if isinstance(d, dict) and d.get("kind") == "DataVolume"]
     report(names == ["vm-default-images-fs-oberon-risc5"],
-           f"образ публикуется под именем с приставкой: {names}")
+           f"the image is published under a prefixed name: {names}")
     ns = {d["metadata"]["namespace"] for d in yaml.safe_load_all(r.stdout)
           if isinstance(d, dict) and d.get("kind") == "DataVolume"}
-    report(ns == {"cozy-public"}, "образ кладётся в общее пространство cozy-public")
+    report(ns == {"cozy-public"}, "the image goes into the shared cozy-public namespace")
 
-    # Мутации: совпадение с платформой, дубль, пустая приставка.
+    # Mutations: a platform collision, a duplicate, an empty prefix.
     collide = json.dumps([{"name": "24.04", "url": "https://example.org/a"}])
     bad = run(["helm", "template", "mi", str(chart), "--set", "namePrefix=ubuntu-",
                "--set-json", f"images={collide}"])
-    report("занято образом платформы" in (bad.stdout + bad.stderr),
-           "мутация: совпадение с образом платформы поймано")
+    report("taken by a platform image" in (bad.stdout + bad.stderr),
+           "mutation: a collision with a platform image is caught")
     dup = json.dumps([{"name": "d", "url": "https://e.org/a"},
                       {"name": "d", "url": "https://e.org/b"}])
     bad = run(["helm", "template", "mi", str(chart), "--set-json", f"images={dup}"])
-    report("дважды" in (bad.stdout + bad.stderr), "мутация: дубль в списке пойман")
+    report("appears twice" in (bad.stdout + bad.stderr), "mutation: a duplicate in the list is caught")
 
 
-# ─── 7. Окружение для языка ─────────────────────────────────────────────────
+# ─── 7. Language environment ────────────────────────────────────────────────
 def check_langpack() -> None:
-    print("\nОкружение для языка")
+    print("\nLanguage environment")
     chart = ROOT / "repos/languages/packages/apps/langpack"
     base = ["helm", "template", "l", str(chart), "--set", "language=Oberon",
             "--set", "image=example/obc:1"]
@@ -274,48 +274,48 @@ def check_langpack() -> None:
     r = run(base + ["--set-json", f"program={prog}"])
     kinds = {d["kind"] for d in yaml.safe_load_all(r.stdout) if isinstance(d, dict)}
     report(kinds == {"ConfigMap", "Job"},
-           f"разовый прогон даёт задание и исходники: {sorted(kinds)}")
+           f"a one-off run yields a job and sources: {sorted(kinds)}")
 
     r = run(base + ["--set", "mode=service", "--set", "host=l.example.org"])
     kinds = {d["kind"] for d in yaml.safe_load_all(r.stdout) if isinstance(d, dict)}
     report(kinds == {"Deployment", "Service", "Ingress"},
-           f"постоянная среда даёт развёртывание и доступ: {sorted(kinds)}")
+           f"a persistent environment yields a deployment and access: {sorted(kinds)}")
 
-    # Исходники монтируются только на чтение, рабочий каталог — на запись.
+    # Sources are mounted read-only, the working directory writable.
     r = run(base + ["--set-json", f"program={prog}"])
     job = next(d for d in yaml.safe_load_all(r.stdout)
                if isinstance(d, dict) and d["kind"] == "Job")
     mounts = {m["mountPath"]: m.get("readOnly", False)
               for m in job["spec"]["template"]["spec"]["containers"][0]["volumeMounts"]}
     report(mounts.get("/src") is True and mounts.get("/work") is False,
-           "исходники только на чтение, рабочий каталог на запись")
+           "sources read-only, working directory writable")
 
-    # Мутации: каждая защита обязана сработать.
+    # Mutations: every safeguard must trigger.
     report(run(base + ["--set", "host=h.example.org"]).returncode != 0,
-           "мутация: внешнее имя у разового прогона отвергается")
+           "mutation: an external host name for a one-off run is rejected")
     report(run(base + ["--set", "srcdir=/work", "--set-json", f"program={prog}"]).returncode != 0,
-           "мутация: совпадение srcdir и workdir отвергается")
+           "mutation: srcdir equal to workdir is rejected")
     report(run(base + ["--set", "mode=nonsense"]).returncode != 0,
-           "мутация: неизвестный режим отвергается схемой")
+           "mutation: an unknown mode is rejected by the schema")
 
 
-# ─── 8. Схемы не должны закрывать корень ────────────────────────────────────
+# ─── 8. Schemas must not close the root ─────────────────────────────────────
 def check_schema_roots() -> None:
-    print("\nСхемы значений")
-    # ⚠ Найдено на живом кластере, не здесь. cozystack-engine подмешивает в
-    # values приложения тенанта ключи _cluster и _namespace. Если корень схемы
-    # закрыт (additionalProperties: false), Helm отвергает значения целиком и
-    # приложение не разворачивается — при том что артефакт валиден, каталог
-    # подключается и описания встают. Ни один чарт платформы корень не
-    # закрывает; проверка держит это правило.
+    print("\nValues schemas")
+    # ⚠ Found on a live cluster, not here. cozystack-engine injects the
+    # _cluster and _namespace keys into tenant application values. If the schema
+    # root is closed (additionalProperties: false), Helm rejects the values
+    # entirely and the application does not deploy, even though the artifact is
+    # valid, the catalog connects and the definitions install. No platform chart
+    # closes its root; this check enforces the rule.
     schemas = sorted(ROOT.glob("repos/*/packages/*/*/values.schema.json"))
-    report(len(schemas) >= 5, f"схем найдено: {len(schemas)}")
+    report(len(schemas) >= 5, f"schemas found: {len(schemas)}")
     for s in schemas:
         d = json.loads(s.read_text(encoding="utf-8"))
         report(d.get("additionalProperties") is not False,
-               f"{s.parent.name}: корень схемы открыт для ключей движка")
+               f"{s.parent.name}: schema root is open for engine keys")
 
-    # Мутация: закрыть корень — проверка обязана покраснеть.
+    # Mutation: close the root; the check must turn red.
     victim = ROOT / "repos/machines/packages/apps/oberon-lab/values.schema.json"
     original = victim.read_text(encoding="utf-8")
     try:
@@ -324,53 +324,53 @@ def check_schema_roots() -> None:
         victim.write_text(json.dumps(d, ensure_ascii=False, indent=2), encoding="utf-8")
         bad = json.loads(victim.read_text(encoding="utf-8"))
         report(bad.get("additionalProperties") is False,
-               "мутация: закрытый корень отличим от открытого")
+               "mutation: a closed root is distinguishable from an open one")
     finally:
         victim.write_text(original, encoding="utf-8")
 
 
-# ─── 9. nginx не должен заводить воркер на каждое ядро узла ─────────────────
+# ─── 9. nginx must not start a worker per node core ─────────────────────────
 def check_nginx_workers() -> None:
-    print("\nЧисло рабочих процессов nginx")
-    # ⚠ Найдено на живом кластере. У стокового образа worker_processes стоит
-    # auto, и nginx смотрит на ядра УЗЛА, а не на выделенный предел: на узле
-    # с 96 ядрами это 96 процессов, они не влезают в отведённую память, и под
-    # уходит в бесконечную перезагрузку. При этом HelmRelease успешен —
-    # отказ виден только по состоянию пода.
+    print("\nNumber of nginx worker processes")
+    # ⚠ Found on a live cluster. The stock image has worker_processes auto,
+    # and nginx looks at the NODE cores, not at the allotted limit: on a 96-core
+    # node that is 96 processes, they do not fit into the allotted memory, and
+    # the pod goes into an endless restart loop. Meanwhile the HelmRelease
+    # succeeds; the failure is visible only in the pod state.
     chart = ROOT / "repos/machines/packages/apps/handbook"
-    pages = json.dumps([{"name": "p", "title": "П", "body": "т"}])
+    pages = json.dumps([{"name": "p", "title": "P", "body": "t"}])
     r = run(["helm", "template", "h", str(chart), "--set-json", f"pages={pages}"])
     docs = [d for d in yaml.safe_load_all(r.stdout) if isinstance(d, dict)]
 
     cm = next((d for d in docs if d.get("kind") == "ConfigMap"
                and d["metadata"]["name"].endswith("-nginx")), None)
-    report(cm is not None, "методичка подкладывает свою конфигурацию nginx")
+    report(cm is not None, "the handbook supplies its own nginx configuration")
     if cm:
         report("worker_processes 1;" in cm["data"]["nginx.conf"],
-               "в ней число воркеров прибито, а не auto")
+               "it pins the number of workers instead of auto")
 
     dep = next((d for d in docs if d.get("kind") == "Deployment"), None)
     mounts = dep["spec"]["template"]["spec"]["containers"][0]["volumeMounts"] if dep else []
     report(any(m.get("subPath") == "nginx.conf" for m in mounts),
-           "конфигурация примонтирована поверх штатной")
+           "the configuration is mounted over the stock one")
 
-    # Наш собственный образ раздачи собран на том же nginx — там тот же риск.
+    # Our own serving image is built on the same nginx, with the same risk.
     cf = (ROOT.parent / "impl/deploy/Containerfile.web").read_text(encoding="utf-8")
     report("worker_processes 1;" in cf,
-           "наш образ раздачи тоже прибивает число воркеров")
+           "our serving image also pins the number of workers")
 
 
 
 def check_components_declared_twice():
-    """Каждое приложение объявляется В ДВУХ местах, и забыть одно легко.
+    """Every application is declared in TWO places, and forgetting one is easy.
 
-    `appdefs.yaml` говорит, что показать в каталоге. `sources/*.yaml` говорит,
-    что выложить артефактом. Приложение, объявленное только в первом, видно в
-    каталоге и ставится — а разворачиваться ему не из чего:
+    `appdefs.yaml` says what to show in the catalog. `sources/*.yaml` says what
+    to publish as an artifact. An application declared only in the first is
+    visible in the catalog and installs, but has nothing to deploy from:
 
         could not get Source object: ExternalArtifact ... not found
 
-    Поймано ровно так: `oberon-vm` появился в каталоге тенанта и не поднялся.
+    Caught exactly like that: `oberon-vm` appeared in the tenant catalog and did not come up.
     """
     for repo in sorted(ROOT.glob("repos/*")):
         src = next(iter((repo / "packages/sources").glob("*.yaml")), None)
@@ -385,14 +385,14 @@ def check_components_declared_twice():
             for app in spec["apps"]:
                 name = app["component"]
                 report(name in declared,
-                       f"{repo.name}: {name} объявлен и в каталоге, и в источнике")
+                       f"{repo.name}: {name} is declared both in the catalog and in the source")
 
 
 HOOK_LINE = re.compile(r'"?helm\.sh/hook"?\s*:\s*"?([^"\n]+)')
 
 
 def upgrade_hook_kinds(text: str) -> list[str]:
-    """Какие ресурсы шаблона объявлены хуком обновления (pre/post-upgrade)."""
+    """Which template resources are declared as an upgrade hook (pre/post-upgrade)."""
     found = []
     for doc in re.split(r"^---\s*$", text, flags=re.M):
         m = HOOK_LINE.search(doc)
@@ -403,26 +403,26 @@ def upgrade_hook_kinds(text: str) -> list[str]:
 
 
 def check_no_volume_upgrade_hooks() -> None:
-    """Том не может быть хуком обновления.
+    """A volume cannot be an upgrade hook.
 
-    Без явной политики удаления Helm применяет к хуку before-hook-creation:
-    на каждом обновлении удаляет ресурс и создаёт заново. Том занят
-    работающей машиной, зависает в Terminating, обновление висит до
-    таймаута. Поймано первым обновлением каталога поверх живых машин в
-    песочнице. Шаблоны машин живут в библиотеке — смотрим и туда.
+    Without an explicit delete policy Helm applies before-hook-creation to a
+    hook: on every upgrade it deletes the resource and creates it again. The
+    volume is in use by a running machine, hangs in Terminating, and the upgrade
+    hangs until the timeout. Caught by the first catalog upgrade over live
+    machines in the sandbox. Machine templates live in the library, so look there too.
     """
     tpls = sorted(ROOT.glob("repos/*/packages/apps/*/templates/*.yaml")) + \
         sorted(ROOT.glob("repos/*/packages/library/*/templates/*.tpl"))
     bad_tpls = [str(t.relative_to(ROOT / "repos")) for t in tpls
                 if "PersistentVolumeClaim" in upgrade_hook_kinds(t.read_text(encoding="utf-8"))]
     report(not bad_tpls,
-           f"ни один том не пересоздаётся при обновлении ({len(tpls)} шаблонов)"
+           f"no volume is recreated on upgrade ({len(tpls)} templates)"
            + (f": {', '.join(bad_tpls)}" if bad_tpls else ""))
-    # Отрицательный контроль: проверка обязана узнать ту самую ошибку.
+    # Negative control: the check must recognize that very mistake.
     bad = ('kind: PersistentVolumeClaim\nmetadata:\n  annotations:\n'
            '    "helm.sh/hook": pre-install,pre-upgrade\n')
     report("PersistentVolumeClaim" in upgrade_hook_kinds(bad),
-           "отрицательный контроль: том-хук обновления распознаётся")
+           "negative control: a volume upgrade hook is recognized")
 
 
 def _hook_set(doc: dict, key: str) -> set[str]:
@@ -430,13 +430,13 @@ def _hook_set(doc: dict, key: str) -> set[str]:
     return {p.strip() for p in str(ann.get(key, "")).split(",") if p.strip()}
 
 
-# ─── Машины по паспортам (library/retro-machine) ────────────────────────────
+# ─── Machines from passports (library/retro-machine) ────────────────────────
 #
-# Машина каталога — паспорт machine.yaml и форма; шаблоны и перехватчик общие.
-# Здесь проверяется то, что при добавлении машины легко испортить данными, и
-# то, что прежняя схема (том и наполнение хуками pre-install, голый VMI,
-# уборка post-delete с правами и меткой выхода к API) ломала на живом
-# кластере. Находка 64.
+# A catalog machine is a machine.yaml passport and a form; the templates and the
+# hook are shared. Checked here: what is easy to break with data when adding a
+# machine, and what the previous design (volume and fill as pre-install hooks, a
+# bare VMI, post-delete cleanup with permissions and the API egress label) broke
+# on a live cluster. Finding 64.
 
 LIBRARY = ROOT / "repos/machines/packages/library/retro-machine"
 MACHINE_SCHEMA = LIBRARY / "machine.schema.json"
@@ -449,11 +449,11 @@ def machine_charts() -> list[pathlib.Path]:
 
 
 def schema_errors(schema: pathlib.Path, doc: object) -> str | None:
-    """Проверяет doc по JSON-схеме тем же валидатором, что Helm — values.
+    """Validates doc against a JSON schema with the same validator Helm uses for values.
 
-    Отдельной библиотеки jsonschema в окружении проверок может не быть, а
-    helm есть всегда: временный чарт, у которого схема значений — наша
-    схема, а значения — проверяемый документ.
+    A separate jsonschema library may be missing in the check environment, but
+    helm is always there: a temporary chart whose values schema is our schema
+    and whose values are the document being checked.
     """
     with tempfile.TemporaryDirectory() as d:
         c = pathlib.Path(d)
@@ -506,8 +506,8 @@ def disk_overwrites(script: str, disks: list[str]) -> list[str]:
 
 
 def run_fill(script: str, base: str, files: list[dict], root: pathlib.Path) -> None:
-    """Исполняет задачу наполнения на диске: пути тома и образа — во временных каталогах."""
-    # Сначала пути в образе: они сами могут содержать имя каталога тома.
+    """Runs the fill job on disk: the volume and image paths are in temporary directories."""
+    # Image paths first: they may themselves contain the volume directory name.
     s = script
     for f in files:
         s = s.replace(f" {f['from']} ", f" {root}/image/{f['name']} ")
@@ -516,14 +516,14 @@ def run_fill(script: str, base: str, files: list[dict], root: pathlib.Path) -> N
 
 
 def hook_leaks(docs: list[dict]) -> list[str]:
-    """Ресурсы хуков, которые могут пережить удаление машины.
+    """Hook resources that may outlive the machine's deletion.
 
-    Ресурсы хуков Helm при удалении релиза не трогает. Поэтому хуком может
-    быть только задача, и только такая, чья жизнь ограничена при любом
-    исходе: удачную удаляет Helm (hook-succeeded), неудачную или зависшую —
-    Kubernetes (activeDeadlineSeconds доводит её до конца,
-    ttlSecondsAfterFinished убирает). Том-хук — ровно то, что прежде
-    оставалось в тенанте и требовало уборки с правами.
+    Helm does not touch hook resources when a release is deleted. So only a job
+    may be a hook, and only one whose life is bounded whatever the outcome: Helm
+    deletes a successful one (hook-succeeded), Kubernetes a failed or stuck one
+    (activeDeadlineSeconds ends it, ttlSecondsAfterFinished removes it). A
+    volume hook is exactly what used to stay behind in the tenant and needed a
+    cleanup with permissions.
     """
     leaks = []
     for d in docs:
@@ -532,56 +532,56 @@ def hook_leaks(docs: list[dict]) -> list[str]:
         name = f"{d['kind']}/{d['metadata']['name']}"
         spec = d.get("spec") or {}
         if d["kind"] != "Job":
-            leaks.append(f"{name}: хуком может быть только задача")
+            leaks.append(f"{name}: only a job may be a hook")
         elif "hook-succeeded" not in _hook_set(d, "helm.sh/hook-delete-policy"):
-            leaks.append(f"{name}: нет hook-succeeded")
+            leaks.append(f"{name}: no hook-succeeded")
         elif not spec.get("activeDeadlineSeconds"):
-            leaks.append(f"{name}: нет activeDeadlineSeconds")
+            leaks.append(f"{name}: no activeDeadlineSeconds")
         elif spec.get("ttlSecondsAfterFinished") is None:
-            leaks.append(f"{name}: нет ttlSecondsAfterFinished")
+            leaks.append(f"{name}: no ttlSecondsAfterFinished")
     return leaks
 
 
 def machine_problems(docs: list[dict], running: bool = True) -> list[str]:
-    """Инварианты отрисованной машины, кроме наполнения и хуков."""
+    """Invariants of a rendered machine, apart from the fill job and hooks."""
     out = []
     kinds = sorted(d["kind"] for d in docs)
     if kinds != ["ConfigMap", "Job", "PersistentVolumeClaim", "VirtualMachine"]:
-        out.append(f"состав: {kinds}")
+        out.append(f"composition: {kinds}")
     vms = [d for d in docs if d["kind"] == "VirtualMachine"]
     if len(vms) != 1:
-        return out + ["нет VirtualMachine"]
+        return out + ["no VirtualMachine"]
     vm = vms[0]
     want = "Always" if running else "Halted"
     if vm["spec"].get("runStrategy") != want or "running" in vm["spec"]:
-        out.append(f"runStrategy {vm['spec'].get('runStrategy')} вместо {want}")
+        out.append(f"runStrategy {vm['spec'].get('runStrategy')} instead of {want}")
     for pvc in (d for d in docs if d["kind"] == "PersistentVolumeClaim"):
         if _hook_set(pvc, "helm.sh/hook"):
-            out.append(f"том {pvc['metadata']['name']} — хук, а не ресурс релиза")
+            out.append(f"volume {pvc['metadata']['name']} is a hook, not a release resource")
     ann = vm["spec"]["template"]["metadata"].get("annotations") or {}
     if "hooks.kubevirt.io/hookSidecars" not in ann:
-        out.append("перехватчик не объявлен на шаблоне машины")
-    # Чужая машина не мигрирует: при кластерной LiveMigrate её под нельзя
-    # было бы выселить, и слив узла встал бы на ней.
+        out.append("the hook is not declared on the machine template")
+    # A foreign machine does not migrate: with cluster-wide LiveMigrate its pod
+    # could not be evicted, and a node drain would get stuck on it.
     if vm["spec"]["template"]["spec"].get("evictionStrategy") != "None":
-        out.append(f"evictionStrategy {vm['spec']['template']['spec'].get('evictionStrategy')!r} вместо None")
+        out.append(f"evictionStrategy {vm['spec']['template']['spec'].get('evictionStrategy')!r} instead of None")
     return out
 
 
 def gets_library(variant: dict, component: str) -> bool:
-    """Получит ли компонент библиотеку retro-machine при сборке платформой."""
+    """Whether the component gets the retro-machine library when the platform builds it."""
     libs = {(l.get("name") or pathlib.Path(l["path"]).name): l["path"] for l in variant.get("libraries", [])}
     comp = next((c for c in variant["components"] if c["name"] == component), {})
     return libs.get("retro-machine") == "library/retro-machine" and "retro-machine" in comp.get("libraries", [])
 
 
 def render_as_published(chart: pathlib.Path, with_library: bool) -> subprocess.CompletedProcess:
-    """Отрисовка чарта в том виде, в каком его соберёт платформа.
+    """Renders the chart the way the platform will assemble it.
 
-    flux push artifact отбрасывает символические ссылки (проверено
-    `flux build artifact`: charts/ и files/ приезжают пустыми), а
-    ArtifactGenerator кладёт библиотеку в charts/<имя> компонента, который её
-    назвал (internal/operator/packagesource_reconciler.go).
+    flux push artifact drops symlinks (verified with `flux build artifact`:
+    charts/ and files/ arrive empty), and ArtifactGenerator puts the library into
+    charts/<name> of the component that names it
+    (internal/operator/packagesource_reconciler.go).
     """
     with tempfile.TemporaryDirectory() as t:
         staged = pathlib.Path(t) / chart.name
@@ -593,34 +593,34 @@ def render_as_published(chart: pathlib.Path, with_library: bool) -> subprocess.C
 
 
 def form_problems(preset: dict, values: dict, vschema: dict) -> list[str]:
-    """Расхождения формы приложения (values.yaml, values.schema.json) с паспортом.
+    """Mismatches between the application form (values.yaml, values.schema.json) and the passport.
 
-    Форма — то, что тенант видит в дашборде; паспорт — то, что машина умеет.
-    Вариант, которого нет в паспорте, отвергнет отрисовка; вариант паспорта,
-    которого нет в форме, тенант не сможет выбрать.
+    The form is what the tenant sees in the dashboard; the passport is what the
+    machine can do. A variant missing from the passport is rejected by the
+    render; a passport variant missing from the form cannot be chosen by the tenant.
     """
     out = []
     hw = vschema.get("hardware", {})
     if sorted(hw.get("enum", [])) != sorted(preset["variants"]):
-        out.append(f"варианты формы {sorted(hw.get('enum', []))}")
+        out.append(f"form variants {sorted(hw.get('enum', []))}")
     if not values.get("hardware") == hw.get("default") == preset["defaultVariant"]:
-        out.append(f"вариант по умолчанию {values.get('hardware')}/{hw.get('default')}")
+        out.append(f"default variant {values.get('hardware')}/{hw.get('default')}")
     if not values.get("memory") == vschema.get("memory", {}).get("default") == preset["memory"]["default"]:
-        out.append(f"память по умолчанию {values.get('memory')}/{vschema.get('memory', {}).get('default')}")
+        out.append(f"default memory {values.get('memory')}/{vschema.get('memory', {}).get('default')}")
     return out
 
 
 def check_machines() -> None:
-    print("\nМашины по паспортам")
+    print("\nMachines from passports")
     charts = machine_charts()
-    report(bool(charts), f"машин с паспортом: {len(charts)} ({', '.join(c.name for c in charts)})")
+    report(bool(charts), f"machines with a passport: {len(charts)} ({', '.join(c.name for c in charts)})")
 
-    # ── Перехватчик: одна копия на все машины ──────────────────────────────
+    # ── The hook: one copy for all machines ────────────────────────────────
     lib_hook = LIBRARY / "files/onDefineDomain.py"
     same = HOOK_SRC.read_bytes() == lib_hook.read_bytes()
-    report(same, "перехватчик в библиотеке совпадает с kubevirt/onDefineDomain.py")
+    report(same, "the library hook matches kubevirt/onDefineDomain.py")
     report(HOOK_SRC.read_bytes() + b"#" != lib_hook.read_bytes(),
-           "отрицательный контроль: отличие в байт замечается")
+           "negative control: a one-byte difference is noticed")
 
     schema = MACHINE_SCHEMA
     source = load_source("machines")
@@ -630,59 +630,59 @@ def check_machines() -> None:
         name = chart.name
         preset = yaml.safe_load((chart / "machine.yaml").read_text(encoding="utf-8"))
 
-        # Паспорт — по схеме. И схема не пропускает очевидной порчи.
+        # The passport follows the schema. And the schema does not let obvious corruption through.
         err = schema_errors(schema, preset)
-        report(err is None, f"{name}: паспорт соответствует machine.schema.json" + (f": {err}" if err else ""))
+        report(err is None, f"{name}: the passport conforms to machine.schema.json" + (f": {err}" if err else ""))
 
-        # Платформа кладёт библиотеку в чарт только если компонент её назвал.
-        # В дереве её подставляет ссылка — собранное платформой обязано
-        # совпасть с тем, что проверяется здесь.
+        # The platform puts the library into the chart only if the component names it.
+        # In the tree a symlink provides it; what the platform assembles must
+        # match what is checked here.
         report(gets_library(variant, name),
-               f"{name}: компонент источника получает библиотеку retro-machine")
+               f"{name}: the source component gets the retro-machine library")
         link = chart / "charts/retro-machine"
         report(link.is_symlink() and link.resolve() == LIBRARY.resolve(),
-               f"{name}: charts/retro-machine в дереве — ссылка на библиотеку")
+               f"{name}: charts/retro-machine in the tree is a link to the library")
 
-        # Форма приложения согласована с паспортом.
+        # The application form agrees with the passport.
         values = yaml.safe_load((chart / "values.yaml").read_text(encoding="utf-8"))
         vschema = json.loads((chart / "values.schema.json").read_text(encoding="utf-8"))["properties"]
         probs = form_problems(preset, values, vschema)
-        report(not probs, f"{name}: форма согласована с паспортом (варианты {sorted(preset['variants'])}, "
-               f"умолчания {preset['defaultVariant']}, {preset['memory']['default']})"
+        report(not probs, f"{name}: the form agrees with the passport (variants {sorted(preset['variants'])}, "
+               f"defaults {preset['defaultVariant']}, {preset['memory']['default']})"
                + (f": {'; '.join(probs)}" if probs else ""))
 
-        # ── Отрисовка по умолчанию ─────────────────────────────────────────
+        # ── Default render ─────────────────────────────────────────────────
         docs, err = render(chart)
         probs = machine_problems(docs) if docs else [err]
-        report(not probs, f"{name}: VirtualMachine со стратегией Always, том — ресурс релиза"
+        report(not probs, f"{name}: VirtualMachine with strategy Always, the volume is a release resource"
                + (f": {'; '.join(probs)}" if probs else ""))
         if not docs:
             continue
         halted, err = render(chart, "running=false")
         probs = machine_problems(halted, running=False) if halted else [err]
-        report(not probs, f"{name}: running=false — стратегия Halted" + (f": {'; '.join(probs)}" if probs else ""))
+        report(not probs, f"{name}: running=false gives strategy Halted" + (f": {'; '.join(probs)}" if probs else ""))
         job = next(d for d in halted if d["kind"] == "Job")
         report("affinity" not in job["spec"]["template"]["spec"],
-               f"{name}: у остановленной машины задача наполнения не ждёт её пода")
+               f"{name}: for a stopped machine the fill job does not wait for its pod")
         job = next(d for d in docs if d["kind"] == "Job")
         aff = job["spec"]["template"]["spec"].get("affinity", {}).get("podAffinity", {})
-        # Мягко, не жёстко: под машины без файлов живёт секунды, и жёсткая
-        # привязка не давала задаче встать вовсе (найдено в живом тенанте).
+        # Soft, not hard: a machine pod without files lives for seconds, and hard
+        # affinity kept the job from being scheduled at all (found in a live tenant).
         pref = (aff.get("preferredDuringSchedulingIgnoredDuringExecution") or [{}])[0].get("podAffinityTerm", {})
         report(pref.get("topologyKey") == "kubernetes.io/hostname"
                and pref.get("labelSelector", {}).get("matchLabels", {}).get("kubevirt.io") == "virt-launcher"
                and not aff.get("requiredDuringSchedulingIgnoredDuringExecution"),
-               f"{name}: наполнение предпочитает узел пода машины, но не обязано ждать его (том RWO)")
+               f"{name}: the fill job prefers the machine pod node but need not wait for it (RWO volume)")
 
         leaks = hook_leaks(docs)
-        report(not leaks, f"{name}: ресурсы хуков не переживают машину" + (f": {'; '.join(leaks)}" if leaks else ""))
+        report(not leaks, f"{name}: hook resources do not outlive the machine" + (f": {'; '.join(leaks)}" if leaks else ""))
 
         vm = next(d for d in docs if d["kind"] == "VirtualMachine")
         cm = next(d for d in docs if d["kind"] == "ConfigMap")
         report(cm["data"]["onDefineDomain"] == lib_hook.read_text(encoding="utf-8"),
-               f"{name}: в ConfigMap уезжает перехватчик библиотеки байт в байт")
+               f"{name}: the ConfigMap carries the library hook byte for byte")
 
-        # Паспорт в аннотации: JSON, по схеме, с выбранным вариантом.
+        # The passport in the annotation: JSON, per the schema, with the selected variant.
         for hwv in sorted(preset["variants"]):
             d, _ = render(chart, f"hardware={hwv}")
             v = next(x for x in d if x["kind"] == "VirtualMachine") if d else vm
@@ -690,34 +690,34 @@ def check_machines() -> None:
             try:
                 passport = json.loads(raw)
             except ValueError as e:
-                report(False, f"{name}: hardware={hwv}: аннотация паспорта — не JSON: {e}")
+                report(False, f"{name}: hardware={hwv}: the passport annotation is not JSON: {e}")
                 continue
             err = schema_errors(schema, passport)
             report(err is None and passport.get("variant") == hwv
                    and {k: passport[k] for k in preset} == preset,
-                   f"{name}: hardware={hwv}: аннотация — паспорт по схеме с variant={passport.get('variant')}"
+                   f"{name}: hardware={hwv}: the annotation is a schema-valid passport with variant={passport.get('variant')}"
                    + (f": {err}" if err else ""))
 
-        # ── Наполнение: прошивка всегда, диск пользователя — никогда ─────────
+        # ── Fill: firmware always, the user disk never ──────────────────────
         script = fill_script(docs)
         base = preset["payload"]["path"].rstrip("/")
         disks = [f"{base}/{f['name']}" for f in preset["payload"]["files"] if f["role"] == "disk"]
         firmware = [f"{base}/{f['name']}" for f in preset["payload"]["files"] if f["role"] == "firmware"]
         over = disk_overwrites(script, disks)
-        report(not over, f"{name}: задача наполнения не перезаписывает диск ({', '.join(disks)})"
+        report(not over, f"{name}: the fill job does not overwrite the disk ({', '.join(disks)})"
                + (f": {over}" if over else ""))
         report(all(re.search(rf"^\s*put \S+ {re.escape(p)}$", script, re.M) for p in firmware),
-               f"{name}: прошивку задача переписывает всегда ({', '.join(firmware)})")
+               f"{name}: the job always rewrites the firmware ({', '.join(firmware)})")
 
-        # То же — исполнением: второй прогон поверх изменённого диска его не
-        # трогает, а прошивку обновляет.
+        # The same by execution: a second run over a modified disk leaves it
+        # alone and updates the firmware.
         with tempfile.TemporaryDirectory() as t:
             root = pathlib.Path(t)
             (root / "payload").mkdir()
             (root / "image").mkdir()
             for f in preset["payload"]["files"]:
                 (root / "image" / f["name"]).write_text("v1", encoding="utf-8")
-                # Как в образе: 644. umask этого не исправит — только chmod.
+                # As in the image: 644. umask does not fix this, only chmod.
                 (root / "image" / f["name"]).chmod(0o644)
             run_fill(script, base, preset["payload"]["files"], root)
             # A disk with a size grows with zeros; the content is what precedes them.
@@ -732,40 +732,40 @@ def check_machines() -> None:
             for f in preset["payload"]["files"]:
                 (root / "image" / f["name"]).write_text("v2", encoding="utf-8")
                 if f["role"] == "disk":
-                    (root / "payload" / f["name"]).write_text("работа пользователя", encoding="utf-8")
-                    # Диск, положенный выпуском до правки прав: rw-r--r--.
+                    (root / "payload" / f["name"]).write_text("user work", encoding="utf-8")
+                    # A disk placed by a release before the permissions fix: rw-r--r--.
                     (root / "payload" / f["name"]).chmod(0o644)
             run_fill(script, base, preset["payload"]["files"], root)
             writable_old = gw()
             grown_old = grown()
-            kept = all(body(f) == ("работа пользователя" if f["role"] == "disk" else "v2")
+            kept = all(body(f) == ("user work" if f["role"] == "disk" else "v2")
                        for f in preset["payload"]["files"])
             clean = not list((root / "payload").glob("*.tmp"))
         report(first and kept and clean,
-               f"{name}: прогон наполнения — первый кладёт всё, повторный обновляет прошивку и не трогает диск")
-        # QEMU пишет диск от группы 107: без g+w машина не стартует.
+               f"{name}: fill runs: the first places everything, a repeat updates the firmware and leaves the disk alone")
+        # QEMU writes the disk as group 107: without g+w the machine does not start.
         # The file system writes past the end of the shipped image: a disk with a
         # size reaches it, the new one and the one left by an earlier release.
         report(grown_new and grown_old,
-               f"{name}: диск дорастает до размера из паспорта — и новый, и оставшийся от прежнего выпуска")
+               f"{name}: the disk grows to the passport size, both a new one and one left from an earlier release")
         report(writable_new and writable_old,
-               f"{name}: диск доступен группе на запись — и новый, и оставшийся от прежнего выпуска")
+               f"{name}: the disk is group-writable, both a new one and one left from an earlier release")
 
-        # ── Форма, которую собирает платформа ──────────────────────────────
-        # flux push artifact отбрасывает ссылки, платформа кладёт библиотеку
-        # в charts/ сама. Повторяем это и сравниваем с отрисовкой дерева.
+        # ── The form the platform assembles ────────────────────────────────
+        # flux push artifact drops symlinks, the platform puts the library into
+        # charts/ itself. We repeat this and compare with the tree render.
         r = render_as_published(chart, with_library=True)
         tree = run(["helm", "template", "t", str(chart), "--namespace", "ns"])
         report(r.returncode == 0 and r.stdout == tree.stdout,
-               f"{name}: собранное платформой (без ссылок, библиотека в charts/) рисуется так же")
+               f"{name}: the platform-assembled form (no symlinks, library in charts/) renders the same")
         report(render_as_published(chart, with_library=False).returncode != 0,
-               f"{name}: отрицательный контроль: без библиотеки в charts/ чарт не рисуется")
+               f"{name}: negative control: without the library in charts/ the chart does not render")
 
-        # Память — в пределах паспорта.
+        # Memory stays within the passport limits.
         over_max, _ = render(chart, f"memory={int(preset['memory']['max'][:-2]) * 2}{preset['memory']['max'][-2:]}")
-        report(not over_max, f"{name}: память больше предела паспорта отвергается")
+        report(not over_max, f"{name}: memory above the passport limit is rejected")
 
-    # ── Отрицательные контроли: каждая проверка обязана узнать поломку ─────
+    # ── Negative controls: every check must recognize the breakage ─────────
     if not charts:
         return
     chart = charts[0]
@@ -773,35 +773,35 @@ def check_machines() -> None:
     docs, _ = render(chart)
 
     for what, fn in [
-        ("роль файла вне списка", lambda p: p["payload"]["files"][0].update(role="rom")),
-        ("файл, не переданный эмулятору", lambda p: p["payload"]["files"][0].update(qemu=["-bios", "/x"])),
-        ("лишнее поле паспорта", lambda p: p.update(arch="risc5")),
-        ("нет вариантов железа", lambda p: p.update(variants={})),
-        ("свойство варианта с запятой", lambda p: p["variants"].update(x={"a": "b,c=d"})),
+        ("file role not in the list", lambda p: p["payload"]["files"][0].update(role="rom")),
+        ("a file not passed to the emulator", lambda p: p["payload"]["files"][0].update(qemu=["-bios", "/x"])),
+        ("an extra passport field", lambda p: p.update(arch="risc5")),
+        ("no hardware variants", lambda p: p.update(variants={})),
+        ("a variant property with a comma", lambda p: p["variants"].update(x={"a": "b,c=d"})),
     ]:
         p = copy.deepcopy(preset)
         fn(p)
-        report(schema_errors(schema, p) is not None, f"отрицательный контроль: схема отвергает паспорт — {what}")
+        report(schema_errors(schema, p) is not None, f"negative control: the schema rejects the passport: {what}")
 
     base = preset["payload"]["path"].rstrip("/")
     disks = [f"{base}/{f['name']}" for f in preset["payload"]["files"] if f["role"] == "disk"]
     script = fill_script(docs)
     unguarded = re.sub(r"^(\s*)\[ -s \S+ \] \|\| ", r"\1", script, flags=re.M)
     report(bool(disk_overwrites(unguarded, disks)),
-           "отрицательный контроль: наполнение без защиты диска распознаётся")
+           "negative control: a fill without disk protection is recognized")
     report(bool(disk_overwrites(script + f"\ncp /x {disks[0]}\n", disks)),
-           "отрицательный контроль: лишняя запись в диск распознаётся")
+           "negative control: an extra write to the disk is recognized")
     with tempfile.TemporaryDirectory() as t:
         root = pathlib.Path(t)
         (root / "payload").mkdir()
         (root / "image").mkdir()
         for f in preset["payload"]["files"]:
             (root / "image" / f["name"]).write_text("v2", encoding="utf-8")
-            (root / "payload" / f["name"]).write_text("работа пользователя", encoding="utf-8")
+            (root / "payload" / f["name"]).write_text("user work", encoding="utf-8")
         run_fill(unguarded, base, preset["payload"]["files"], root)
-        lost = any((root / "payload" / f["name"]).read_text(encoding="utf-8") != "работа пользователя"
+        lost = any((root / "payload" / f["name"]).read_text(encoding="utf-8") != "user work"
                    for f in preset["payload"]["files"] if f["role"] == "disk")
-    report(lost, "отрицательный контроль: прогон без защиты действительно затирает диск")
+    report(lost, "negative control: a run without protection really overwrites the disk")
 
     def mutated(fn) -> list[dict]:
         d = copy.deepcopy(docs)
@@ -813,8 +813,8 @@ def check_machines() -> None:
         if x["kind"] == "PersistentVolumeClaim":
             x["metadata"].setdefault("annotations", {})["helm.sh/hook"] = "pre-install"
 
-    # Задача наполнения — обычный ресурс релиза; чтобы проверить, что утечку
-    # хука ловят, сначала делаем её хуком, потом портим.
+    # The fill job is an ordinary release resource; to check that a hook leak is
+    # caught, we first make it a hook, then break it.
     def as_hook(x):
         x["metadata"].setdefault("annotations", {}).update({
             "helm.sh/hook": "post-install,post-upgrade",
@@ -832,52 +832,52 @@ def check_machines() -> None:
             as_hook(x)
             x["metadata"]["annotations"]["helm.sh/hook-delete-policy"] = "before-hook-creation"
 
-    for fn, what in [(pvc_hook, "том-хук"), (job_no("activeDeadlineSeconds"), "задача без срока"),
-                     (job_no("ttlSecondsAfterFinished"), "задача без срока жизни"),
-                     (job_keeps, "задача без hook-succeeded")]:
-        report(bool(hook_leaks(mutated(fn))), f"отрицательный контроль: утечка хука распознаётся — {what}")
-    report(bool(machine_problems(mutated(pvc_hook))), "отрицательный контроль: том-хук вместо ресурса распознаётся")
+    for fn, what in [(pvc_hook, "volume hook"), (job_no("activeDeadlineSeconds"), "job without a deadline"),
+                     (job_no("ttlSecondsAfterFinished"), "job without a TTL"),
+                     (job_keeps, "job without hook-succeeded")]:
+        report(bool(hook_leaks(mutated(fn))), f"negative control: a hook leak is recognized: {what}")
+    report(bool(machine_problems(mutated(pvc_hook))), "negative control: a volume hook instead of a resource is recognized")
 
     def migrate_eviction(x):
         if x["kind"] == "VirtualMachine":
             x["spec"]["template"]["spec"]["evictionStrategy"] = "LiveMigrate"
     report(bool(machine_problems(mutated(migrate_eviction))),
-           "отрицательный контроль: выселение миграцией у немигрируемой машины распознаётся")
+           "negative control: eviction by migration for a non-migratable machine is recognized")
 
     def bare_vmi(x):
         if x["kind"] == "VirtualMachine":
             x["kind"] = "VirtualMachineInstance"
-    report(bool(machine_problems(mutated(bare_vmi))), "отрицательный контроль: голый VMI вместо VirtualMachine распознаётся")
+    report(bool(machine_problems(mutated(bare_vmi))), "negative control: a bare VMI instead of a VirtualMachine is recognized")
 
     def old_running(x):
         if x["kind"] == "VirtualMachine":
             x["spec"].pop("runStrategy")
             x["spec"]["running"] = True
-    report(bool(machine_problems(mutated(old_running))), "отрицательный контроль: машина без runStrategy распознаётся")
+    report(bool(machine_problems(mutated(old_running))), "negative control: a machine without runStrategy is recognized")
 
     variant = copy.deepcopy(load_source("machines")["spec"]["variants"][0])
     for c in variant["components"]:
         c.pop("libraries", None)
     report(not gets_library(variant, chart.name),
-           "отрицательный контроль: компонент без libraries библиотеку не получит")
+           "negative control: a component without libraries does not get the library")
 
     values = yaml.safe_load((chart / "values.yaml").read_text(encoding="utf-8"))
     vschema = json.loads((chart / "values.schema.json").read_text(encoding="utf-8"))["properties"]
     bad = copy.deepcopy(preset)
     bad["variants"]["extra"] = {}
     report(bool(form_problems(bad, values, vschema)),
-           "отрицательный контроль: вариант паспорта, которого нет в форме, замечается")
+           "negative control: a passport variant missing from the form is noticed")
     bad = copy.deepcopy(preset)
     bad["memory"]["default"] = "256Mi"
     report(bool(form_problems(bad, values, vschema)),
-           "отрицательный контроль: разные умолчания памяти в форме и паспорте замечаются")
+           "negative control: different memory defaults in the form and the passport are noticed")
 
 
 APISERVER_LABEL = "policy.cozystack.io/allow-to-apiserver"
 
 
 def pods_without_apiserver_egress(docs: list[dict]) -> list[str]:
-    """Поды со своим ServiceAccount, которым не открыт путь к kube-apiserver."""
+    """Pods with their own ServiceAccount that have no path to kube-apiserver."""
     bad = []
     for d in docs:
         tpl = (d.get("spec") or {}).get("template") or {}
@@ -892,53 +892,53 @@ def pods_without_apiserver_egress(docs: list[dict]) -> list[str]:
 
 
 def check_apiserver_egress() -> None:
-    """Под, которому выдан доступ к API, должен до API и доехать.
+    """A pod granted API access must actually be able to reach the API.
 
-    В тенанте Cozystack до kube-apiserver пускают только поды с меткой
-    policy.cozystack.io/allow-to-apiserver=true (политика allow-to-apiserver),
-    остальных Cilium молча отбрасывает. Задача уборки тома висела до
-    таймаута, удаление приложения падало — и ни helm template, ни прогон
-    на столе этого не показывали. Свой ServiceAccount у пода — признак, что
-    он собирается ходить в API: значит, метка обязательна.
+    In a Cozystack tenant only pods labeled
+    policy.cozystack.io/allow-to-apiserver=true (the allow-to-apiserver policy)
+    may reach kube-apiserver; Cilium silently drops the rest. The volume cleanup
+    job hung until the timeout and application deletion failed, and neither helm
+    template nor a desk run showed it. A pod having its own ServiceAccount is a
+    sign it intends to call the API, so the label is mandatory.
     """
-    print("\nДоступ к API из тенанта")
+    print("\nAPI access from the tenant")
     for chart in sorted({t.parent.parent for t in ROOT.glob("repos/*/packages/apps/*/templates/*.yaml")}):
         r = run(["helm", "template", "t", str(chart), "--namespace", "ns"])
         if r.returncode != 0:
-            continue  # чарты с обязательными значениями проверяются своими проверками
+            continue  # charts with required values are covered by their own checks
         docs = [d for d in yaml.safe_load_all(r.stdout) if isinstance(d, dict)]
         bad = pods_without_apiserver_egress(docs)
-        report(not bad, f"{chart.name}: поды с доступом к API помечены для выхода к нему"
+        report(not bad, f"{chart.name}: pods with API access are labeled for egress to it"
                + (f": {', '.join(bad)}" if bad else ""))
-    # Отрицательный контроль: под со своим ServiceAccount и без метки.
+    # Negative control: a pod with its own ServiceAccount and no label.
     probe = [{"kind": "Job", "metadata": {"name": "probe"},
               "spec": {"template": {"metadata": {"labels": {}},
                                     "spec": {"serviceAccountName": "probe"}}}}]
     report(pods_without_apiserver_egress(probe) == ["Job/probe"],
-           "отрицательный контроль: под без метки выхода к API распознаётся")
+           "negative control: a pod without the API egress label is recognized")
 
 
 def check_platform_launcher() -> None:
-    """Компонент платформы: таблица launcher'ов и логика прохода.
+    """The platform component: the launcher table and the pass logic.
 
-    Таблица собирается из kubevirt/versions.txt и не правится руками — сверяем.
-    Логику прохода гоняем на поддельном kubectl (launcher_test.py): добавить,
-    не трогать, убрать, сохранить чужие правки, отказать при сомнении.
+    The table is built from kubevirt/versions.txt and is not edited by hand, so
+    we compare. The pass logic runs on a fake kubectl (launcher_test.py): add,
+    leave alone, remove, keep other patches, refuse when in doubt.
     """
-    print("\nКомпонент платформы")
+    print("\nPlatform component")
     r = run([sys.executable, str(ROOT / "tools/gen-launcher-table.py"), "--check"])
-    report(r.returncode == 0, "таблица launcher'ов совпадает с kubevirt/versions.txt"
+    report(r.returncode == 0, "the launcher table matches kubevirt/versions.txt"
            + ("" if r.returncode == 0 else f": {(r.stdout + r.stderr).strip()}"))
     r = run([sys.executable, str(ROOT / "tools/pin-images.py"), "--check"])
-    report(r.returncode == 0, "образы с файлами машин помечены тем же выпуском, что таблица launcher'ов"
+    report(r.returncode == 0, "machine file images carry the same release tag as the launcher table"
            + ("" if r.returncode == 0 else f": {r.stdout.strip()}"))
     r = run([sys.executable, str(ROOT / "tools/launcher_test.py")])
     tail = (r.stdout.strip().splitlines() or ["—"])[-1]
-    report(r.returncode == 0, f"проход реконсайлера на поддельном API: {tail}")
+    report(r.returncode == 0, f"reconciler pass on a fake API: {tail}")
 
 
 def artifact_missing(repo_dir: pathlib.Path, art_src: pathlib.Path) -> list[str]:
-    """Файлы, достижимые в дереве репозитория по ссылкам, которых нет в артефакте."""
+    """Files reachable in the repository tree via symlinks that are missing from the artifact."""
     want = set()
     for dp, _, fs in os.walk(repo_dir / "packages", followlinks=True):
         for f in fs:
@@ -947,7 +947,7 @@ def artifact_missing(repo_dir: pathlib.Path, art_src: pathlib.Path) -> list[str]
         art = pathlib.Path(t) / "a.tgz"
         r = run(["flux", "build", "artifact", "--path", str(art_src), "--output", str(art)])
         if r.returncode != 0:
-            return [f"flux build artifact упал: {r.stderr.strip()}"]
+            return [f"flux build artifact failed: {r.stderr.strip()}"]
         import tarfile
         with tarfile.open(art) as tf:
             have = {m.name for m in tf.getmembers() if m.isfile()}
@@ -955,37 +955,37 @@ def artifact_missing(repo_dir: pathlib.Path, art_src: pathlib.Path) -> list[str]
 
 
 def check_artifact_contents() -> None:
-    """В кластер уезжает всё, что видит чарт, — в том числе через ссылки.
+    """Everything the chart sees reaches the cluster, including via symlinks.
 
-    Библиотека машин подключена ссылкой, а flux ссылки в архив не кладёт.
-    Публикуется копия stage.sh с разыменованными ссылками; здесь та же копия
-    собирается в артефакт тем же flux, и в нём обязан оказаться каждый файл,
-    который видно в дереве.
+    The machine library is attached by a symlink, and flux does not put symlinks
+    into the archive. The stage.sh copy with dereferenced links is published;
+    here the same copy is built into an artifact by the same flux, and every
+    file visible in the tree must end up in it.
     """
-    print("\nСодержимое артефакта каталога")
+    print("\nCatalog artifact contents")
     if not shutil.which("flux"):
-        report(False, "flux не найден — артефакт собрать нечем")
+        report(False, "flux not found; nothing to build the artifact with")
         return
     with tempfile.TemporaryDirectory() as t:
         stage = pathlib.Path(t)
         r = run(["sh", str(ROOT / "tools/stage.sh"), str(stage)])
-        report(r.returncode == 0, "копия каталога без ссылок собрана")
+        report(r.returncode == 0, "the symlink-free catalog copy is built")
         for repo in REPOS:
             lost = artifact_missing(ROOT / "repos" / repo, stage / repo)
-            report(not lost, f"{repo}: в артефакте все файлы дерева"
-                   + (f" — нет: {', '.join(lost[:5])}" if lost else ""))
-    # Отрицательный контроль: артефакт прямо из дерева, со ссылками.
+            report(not lost, f"{repo}: the artifact has all files of the tree"
+                   + (f"; missing: {', '.join(lost[:5])}" if lost else ""))
+    # Negative control: an artifact straight from the tree, with symlinks.
     lost = artifact_missing(ROOT / "repos" / "machines", ROOT / "repos" / "machines")
     report(any("retro-machine" in l or "onDefineDomain" in l for l in lost),
-           "отрицательный контроль: без копии библиотека машин из артефакта пропадает")
+           "negative control: without the copy the machine library is lost from the artifact")
 
 
-# virt-launcher работает от qemu и монтирует тома с этой группой.
+# virt-launcher runs as qemu and mounts volumes with this group.
 LAUNCHER_GID = 107
 
 
 def fill_is_blocking_hook(docs: list[dict]) -> bool:
-    """Задача наполнения — хук post-install/upgrade рядом с машиной."""
+    """The fill job is a post-install/upgrade hook next to a machine."""
     for d in docs:
         if d.get("kind") == "Job" and "-fill" in d["metadata"]["name"]:
             hook = ((d["metadata"].get("annotations") or {}).get("helm.sh/hook") or "")
@@ -995,35 +995,35 @@ def fill_is_blocking_hook(docs: list[dict]) -> bool:
 
 
 def check_fill_not_blocking() -> None:
-    """Наполнение тома не может ждать готовности машины.
+    """The volume fill cannot wait for the machine to be ready.
 
-    Cozystack ставит релиз с ожиданием готовности, а хук post-install Helm
-    запускает после неё. Машина не готова, пока том пуст, — задача-хук не
-    появилась бы никогда. Поймано в живом тенанте.
+    Cozystack installs the release waiting for readiness, and Helm runs a
+    post-install hook after it. The machine is not ready while the volume is
+    empty, so a hook job would never appear. Caught in a live tenant.
     """
-    print("\nНаполнение тома и готовность машины")
+    print("\nVolume fill and machine readiness")
     for chart in sorted(ROOT.glob("repos/*/packages/apps/*")):
         if not (chart / "machine.yaml").exists():
             continue
         r = run(["helm", "template", "t", str(chart), "--namespace", "ns"])
         docs = [d for d in yaml.safe_load_all(r.stdout) if isinstance(d, dict)] if r.returncode == 0 else []
         report(bool(docs) and not fill_is_blocking_hook(docs),
-               f"{chart.name}: наполнение — ресурс релиза, а не хук после готовности")
-        # Группа тома — как у пода машины (qemu, 107): иначе при одновременном
-        # монтировании запись падает с Permission denied (найдено в тенанте).
+               f"{chart.name}: the fill is a release resource, not a post-readiness hook")
+        # The volume group matches the machine pod (qemu, 107): otherwise writes
+        # fail with Permission denied on simultaneous mounting (found in a tenant).
         fs = [((d["spec"]["template"]["spec"].get("securityContext") or {}).get("fsGroup"))
               for d in docs if d.get("kind") == "Job" and "-fill" in d["metadata"]["name"]]
-        report(fs == [LAUNCHER_GID], f"{chart.name}: наполнение пишет в том группой пода машины ({LAUNCHER_GID})"
+        report(fs == [LAUNCHER_GID], f"{chart.name}: the fill writes to the volume with the machine pod group ({LAUNCHER_GID})"
                + ("" if fs == [LAUNCHER_GID] else f": {fs}"))
     probe = [{"kind": "VirtualMachine", "metadata": {"name": "m"}},
              {"kind": "Job", "metadata": {"name": "m-fill-x",
               "annotations": {"helm.sh/hook": "post-install,post-upgrade"}}}]
     report(fill_is_blocking_hook(probe),
-           "отрицательный контроль: наполнение-хук рядом с машиной распознаётся")
+           "negative control: a fill hook next to a machine is recognized")
 
 
 def main() -> None:
-    print("Проверки каталога «Забытые системы»")
+    print("Checks of the \"Forgotten Systems\" catalog")
     check_index()
     check_validate()
     check_generated()
@@ -1040,7 +1040,7 @@ def main() -> None:
     check_machines()
     check_fill_not_blocking()
     check_artifact_contents()
-    print(f"\nИтог: успешно {ok_count}, провалено {fail_count}")
+    print(f"\nTotal: passed {ok_count}, failed {fail_count}")
     sys.exit(1 if fail_count else 0)
 
 

@@ -1,7 +1,8 @@
 {{- /*
-  Имена постоянные, а не от имени релиза: писатель в кластере должен быть
-  один. Второй релиз в том же пространстве имён упрётся в чужие ресурсы и не
-  поставится — это и есть защита от двух циклов, спорящих за одну правку.
+  The names are fixed, not derived from the release name: there must be one
+  writer in the cluster. A second release in the same namespace runs into
+  someone else's resources and fails to install; that is the protection against
+  two loops fighting over one patch.
 */ -}}
 {{- define "paleo-launcher.name" -}}kubevirt-paleo-launcher{{- end }}
 {{- define "paleo-launcher.status" -}}kubevirt-paleo-launcher-status{{- end }}
@@ -18,10 +19,10 @@ app.kubernetes.io/part-of: paleocomputing
 {{- end }}
 
 {{- /*
-  Ограничения пода — профиль restricted: не root (образ по умолчанию root,
-  поэтому пользователь задан явно), без повышения прав и возможностей ядра,
-  seccomp RuntimeDefault, корень только для чтения. kubectl пишет кэш в
-  $HOME — ему отдан /tmp на emptyDir.
+  Pod restrictions follow the restricted profile: not root (the image defaults
+  to root, so the user is set explicitly), no privilege escalation and no kernel
+  capabilities, seccomp RuntimeDefault, read-only root. kubectl writes its cache
+  to $HOME, so it gets /tmp on an emptyDir.
 */ -}}
 {{- define "paleo-launcher.podSecurity" -}}
 runAsNonRoot: true

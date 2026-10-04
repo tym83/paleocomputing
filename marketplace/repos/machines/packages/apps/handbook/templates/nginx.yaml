@@ -4,18 +4,18 @@ kind: ConfigMap
 metadata:
   name: {{ .Release.Name }}-nginx
   labels: {{- include "handbook.labels" . | nindent 4 }}
-# ⚠ worker_processes прибит единицей намеренно.
+# ⚠ worker_processes is pinned to one on purpose.
 #
-# У стокового образа стоит auto, и nginx заводит воркер на каждое ядро УЗЛА,
-# а не на выделенный предел. На узле с 96 ядрами это 96 процессов, они не
-# влезают в 64Mi, и под уходит в бесконечную перезагрузку по нехватке памяти.
-# Найдено на живом кластере: HelmRelease успешен, приложение мертво.
+# The stock image has auto, and nginx starts a worker for every core of the
+# NODE, not of the allotted limit. On a 96-core node that is 96 processes; they
+# do not fit into 64Mi, and the pod goes into an endless OOM restart loop.
+# Found on a live cluster: the HelmRelease succeeded, the application was dead.
 #
-# Штатный скрипт автонастройки образа тут не помогает: он правит
-# /etc/nginx/nginx.conf, а корень контейнера у нас только для чтения, и
-# скрипт молча выходит. Поэтому конфигурация подкладывается целиком.
+# The image's stock auto-tuning script does not help here: it edits
+# /etc/nginx/nginx.conf, but our container root is read-only, and the script
+# exits silently. So the whole configuration is supplied.
 #
-# Раздаче статики больше одного воркера и не нужно: всё упирается в сеть.
+# Serving static files does not need more than one worker anyway: the network is the bottleneck.
 data:
   nginx.conf: |
     worker_processes 1;

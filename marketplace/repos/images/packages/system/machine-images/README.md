@@ -1,40 +1,43 @@
+[Русская версия](README.ru.md)
+
 # machine-images
 
-Загрузочные образы машин, которые становятся видны во всём кластере — в поле
-выбора образа у диска виртуальной машины.
+Boot images of machines that become visible across the whole cluster, in the
+image selection field of a virtual machine's disk.
 
-## Почему это привилегированная вещь
+## Why this is a privileged thing
 
-Образы кладутся в общее пространство имён `cozy-public`, откуда их видят все
-тенанты. Имя там плоское: `vm-default-images-<имя>`. Поэтому компонент помечен
-`install.privileged: true`, и штатный валидатор Cozystack выдаёт на него
-предупреждение — оператор должен увидеть, что подключает.
+Images go into the shared `cozy-public` namespace, where every tenant sees
+them. Names there are flat: `vm-default-images-<name>`. That is why the
+component is marked `install.privileged: true`, and the standard Cozystack
+validator emits a warning about it: the operator must see what they are
+connecting.
 
-Приставка к имени (`namePrefix`, по умолчанию `fs-`) обязательна. Без неё
-запись каталога рано или поздно перезапишет чужой образ для всего кластера.
-Чарт сверяет итоговые имена со списком шестнадцати образов, которые публикует
-сама платформа, и падает при совпадении — а также при дубле внутри своего
-списка.
+The name prefix (`namePrefix`, `fs-` by default) is mandatory. Without it a
+catalog entry will sooner or later overwrite someone else's image for the whole
+cluster. The chart checks the resulting names against the list of sixteen
+images the platform itself publishes and fails on a match, and also on a
+duplicate within its own list.
 
-## Про «новые архитектуры для KubeVirt»
+## About "new architectures for KubeVirt"
 
-Список архитектур в KubeVirt закрыт. В CRD ресурса `KubeVirt` поле
-`architectureConfiguration` имеет ровно четыре ветки: `amd64`, `arm64`,
-`ppc64le` (объявлена устаревшей) и `s390x`. Пятой записи туда не добавить, не
-меняя саму KubeVirt, и никакой пакет каталога этого сделать не может.
+The list of architectures in KubeVirt is closed. In the `KubeVirt` resource CRD
+the `architectureConfiguration` field has exactly four branches: `amd64`,
+`arm64`, `ppc64le` (deprecated) and `s390x`. A fifth entry cannot be added there
+without changing KubeVirt itself, and no catalog package can do that.
 
-Поэтому архитектура, которой никогда не существовало в кремнии, приезжает сюда
-не как архитектура KubeVirt, а как загрузочный образ, внутри которого работает
-её эмулятор. Машина в кластере при этом обычная; необычное — то, что она
-изображает. Для такого образа заполняется поле `emulates`, и оно уезжает в
-аннотацию `paleocomputing.io/emulates`.
+So an architecture that never existed in silicon arrives here not as a KubeVirt
+architecture but as a boot image with its emulator running inside. The machine
+in the cluster is ordinary; what is unusual is what it imitates. For such an
+image the `emulates` field is filled in, and it ends up in the
+`paleocomputing.io/emulates` annotation.
 
-Второй путь для той же задачи — контейнер с эмулятором (так сделан
-`oberon-lab` в репозитории машин). Он не требует ни доверия уровня кластера,
-ни готового загрузочного образа.
+The second way to solve the same task is a container with the emulator (this is
+how `oberon-lab` in the machines repository is built). It needs neither
+cluster-level trust nor a ready boot image.
 
-| параметр | по умолчанию | что делает |
+| parameter | default | what it does |
 |---|---|---|
-| `namePrefix` | `fs-` | обязательная приставка к именам образов |
-| `images` | `[]` | образы: `name`, `url`, `storage`, `os`, `architecture`, `emulates` |
-| `storageClass` | `replicated` | класс хранения для всех образов |
+| `namePrefix` | `fs-` | mandatory prefix for image names |
+| `images` | `[]` | images: `name`, `url`, `storage`, `os`, `architecture`, `emulates` |
+| `storageClass` | `replicated` | storage class for all images |

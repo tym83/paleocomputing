@@ -1,7 +1,7 @@
 name: paleocomputing-languages
 ociRef: oci://ghcr.io/tym83/paleocomputing/languages
 version: v0.1.17
-description: Окружения для языков — постоянная среда или разовый прогон без простаивающих подов
+description: Language environments, either a persistent environment or a one-off run without idle pods
 homepage: https://github.com/tym83/paleocomputing
 maintainer: tym83
 tags:

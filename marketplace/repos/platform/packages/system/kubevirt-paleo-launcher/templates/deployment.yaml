@@ -1,24 +1,24 @@
 {{- /*
-  Цикл сверки: одно развёртывание, одна реплика, Recreate.
+  Reconcile loop: one Deployment, one replica, Recreate.
 
-  Почему не CronJob. Писатель у правки должен быть один, а у CronJob прогоны
-  могут наложиться (Forbid это лечит, но не для задачи, застрявшей в
-  Terminating), шаг — не меньше минуты, и каждый прогон — новый под:
-  планирование, образ, журнал в новом месте. И удаление: хуку пришлось бы
-  сначала приостанавливать расписание и ждать уже запущенные задачи.
-  Развёртывание — один долгоживущий процесс, реагирует за INTERVAL секунд,
-  журнал в одном месте, останавливается одним scale.
+  Why not a CronJob. The patch must have a single writer, while CronJob runs can
+  overlap (Forbid fixes that, but not for a job stuck in Terminating), the step
+  is at least a minute, and every run is a new pod: scheduling, image pull, logs
+  in a new place. And deletion: the hook would first have to suspend the
+  schedule and wait for jobs already running. A Deployment is one long-lived
+  process, reacts within INTERVAL seconds, keeps logs in one place and stops
+  with a single scale.
 
-  Почему Recreate. RollingUpdate на время обновления держит старый и новый под
-  одновременно — два писателя. Recreate сначала гасит старый. Запись всё
-  равно идёт с предусловием на resourceVersion, так что даже два писателя не
-  затёрли бы друг друга молча, — но и спорить им незачем.
+  Why Recreate. RollingUpdate keeps the old and new pod running at the same
+  time during an update: two writers. Recreate stops the old one first. Writes
+  carry a resourceVersion precondition anyway, so even two writers would not
+  silently overwrite each other, but there is no reason for them to fight.
 
-  Метка выхода к API: в cozy-kubevirt сетевых политик Cilium нет (политики
-  allow-to-apiserver ставит чарт тенанта, и только в пространства тенантов),
-  так что сегодня она ничего не открывает. Стоит на случай, если политики
-  придут и в системные пространства: без неё kubectl молча висел бы, а не
-  получал отказ (находка 58).
+  The API egress label: cozy-kubevirt has no Cilium network policies (the
+  allow-to-apiserver policies are installed by the tenant chart, and only into
+  tenant namespaces), so today it opens nothing. It is there in case policies
+  come to system namespaces too: without it kubectl would hang silently instead
+  of getting a refusal (finding 58).
 */ -}}
 {{- $name := include "paleo-launcher.name" . }}
 apiVersion: apps/v1
@@ -39,8 +39,8 @@ spec:
         {{- include "paleo-launcher.labels" . | nindent 8 }}
         policy.cozystack.io/allow-to-apiserver: "true"
       annotations:
-        # Новая таблица или сценарий — новый под: ConfigMap в томе
-        # обновляется с задержкой, а таблица должна смениться вместе с релизом.
+        # A new table or script means a new pod: a ConfigMap in a volume is
+        # updated with a delay, and the table must change together with the release.
         checksum/scripts: {{ include (print $.Template.BasePath "/scripts.yaml") . | sha256sum }}
     spec:
       serviceAccountName: {{ $name }}

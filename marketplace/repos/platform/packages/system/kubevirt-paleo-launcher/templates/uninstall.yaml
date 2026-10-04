@@ -1,19 +1,19 @@
 {{- /*
-  Удаление: убрать свою правку из ресурса KubeVirt, чужие не трогать.
+  Deletion: remove our own patch from the KubeVirt resource, leave others alone.
 
-  Хук pre-delete, а не post-delete: задаче нужен сценарий из ConfigMap
-  релиза, а после удаления релиза его уже нет. Но в pre-delete ещё жив цикл —
-  он вернул бы правку между хуком и удалением развёртывания. Поэтому задача
-  сначала гасит цикл (scale до нуля и ждёт, пока уйдёт под), потом убирает
-  правку.
+  A pre-delete hook, not post-delete: the job needs the script from the
+  release's ConfigMap, and after the release is deleted it is gone. But during
+  pre-delete the loop is still alive and would restore the patch between the
+  hook and the Deployment deletion. So the job first stops the loop (scale to
+  zero and wait for the pod to go away), then removes the patch.
 
-  Права — свои, тоже хуки pre-delete с меньшим весом. Всё удаляется по
-  hook-succeeded; упавшая задача остаётся для разбора, а повторное удаление
-  убирает её через before-hook-creation. activeDeadlineSeconds — чтобы
-  задача, которой не достался образ или права, не держала удаление релиза
-  бесконечно. Упадёт — удаление релиза остановится с ошибкой, и правка
-  останется видна; молча оставить её нельзя: после следующего обновления
-  KubeVirt она сломала бы все машины кластера.
+  Permissions are its own, also pre-delete hooks with a lower weight. Everything
+  is deleted on hook-succeeded; a failed job stays for inspection, and a repeated
+  delete removes it via before-hook-creation. activeDeadlineSeconds keeps a job
+  that got no image or permissions from blocking the release deletion forever.
+  If it fails, the release deletion stops with an error and the patch stays
+  visible; it must not be left silently: after the next KubeVirt update it would
+  break every machine in the cluster.
 */ -}}
 {{- $name := include "paleo-launcher.name" . }}
 {{- $hook := printf "%s-uninstall" $name }}
@@ -45,12 +45,12 @@ rules:
   resources: [deployments]
   resourceNames: [virt-controller, {{ $name }}]
   verbs: [get]
-# Остановить цикл — только своё развёртывание.
+# Stopping the loop: only our own Deployment.
 - apiGroups: [apps]
   resources: [deployments/scale]
   resourceNames: [{{ $name }}]
   verbs: [get, patch, update]
-# Дождаться, пока уйдёт под цикла. list по имени не ограничить.
+# Wait for the loop pod to go away. list cannot be restricted by name.
 - apiGroups: [""]
   resources: [pods]
   verbs: [list]

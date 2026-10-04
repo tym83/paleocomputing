@@ -1,5 +1,5 @@
 {{- if and (not .Values.machine) (not .Values.manual) }}
-{{- fail "workbench: окружение без единой части не имеет смысла — включите machine или manual" }}
+{{- fail "workbench: an environment without a single part makes no sense; enable machine or manual" }}
 {{- end }}
 {{- if .Values.machine }}
 apiVersion: helm.toolkit.fluxcd.io/v2
@@ -40,9 +40,9 @@ spec:
     namespace: {{ .Values.artifactNamespace | quote }}
   interval: 5m
   timeout: 15m
-  {{- /* Методичка ставится вместе с машиной. Если у записи каталога нет
-         собственного образа с документацией, окружение всё равно поднимается:
-         в раздачу кладётся стартовая страница. */}}
+  {{- /* The manual is installed together with the machine. If the catalog
+         entry has no image of its own with documentation, the environment
+         still comes up: a start page is served. */}}
   values:
     title: {{ .Values.manualSource.title | quote }}
     image: {{ .Values.manualSource.image | quote }}
@@ -51,15 +51,15 @@ spec:
     {{- if not .Values.manualSource.image }}
     pages:
       - name: start
-        title: "С чего начать"
+        title: "Getting started"
         body: |
-          Это окружение подняло машину и методичку рядом.
+          This environment brought up a machine and a manual next to it.
 
-          Машина: девять браузерных лабораторных, процессор собран в WASM.
-          Открывается по адресу /lab.html на хосте машины.
+          Machine: nine browser labs, the CPU is compiled to WASM.
+          It opens at /lab.html on the machine host.
 
-          Методичка: раздаётся здесь. Своего образа с документацией у записи
-          каталога не задано, поэтому показана эта стартовая страница —
-          подставьте образ в manualSource.image или свой список pages.
+          Manual: served here. The catalog entry has no documentation image
+          of its own, so this start page is shown instead;
+          set an image in manualSource.image or your own pages list.
     {{- end }}
 {{- end }}

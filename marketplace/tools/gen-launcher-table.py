@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""Таблица launcher'ов для компонента платформы kubevirt-paleo-launcher.
+"""Launcher table for the kubevirt-paleo-launcher platform component.
 
-Единственный источник — kubevirt/versions.txt: под какие версии KubeVirt
-собирается образ virt-launcher. Helm не читает файлы вне чарта, поэтому
-таблица кладётся копией в files/ чарта — но не руками, а отсюда:
+The single source is kubevirt/versions.txt: which KubeVirt versions the
+virt-launcher image is built for. Helm does not read files outside the chart, so
+the table is placed as a copy into the chart's files/, but not by hand, from here:
 
-    python3 tools/gen-launcher-table.py                       # выпуск dev
-    python3 tools/gen-launcher-table.py --release v0.1.11     # при публикации
-    python3 tools/gen-launcher-table.py --check               # совпадает ли лежащая
+    python3 tools/gen-launcher-table.py                       # dev release
+    python3 tools/gen-launcher-table.py --release v0.1.11     # when publishing
+    python3 tools/gen-launcher-table.py --check               # does the stored one match
 
-В дереве лежит таблица выпуска dev. Настоящий тег выпуска подставляет
-publish.yml перед выкладкой каталога: тот же прогон собирает и launcher'ы
-под этим тегом, так что таблица не может сослаться на образ, которого нет.
+The tree holds the dev release table. publish.yml substitutes the real release
+tag before pushing the catalog: the same run builds the launchers under that
+tag, so the table cannot refer to an image that does not exist.
 """
 from __future__ import annotations
 
@@ -41,25 +41,25 @@ def kubevirt_versions(path: pathlib.Path = VERSIONS) -> list[str]:
             continue
         v = line.split()[0]
         if not SEMVER.match(v):
-            sys.exit(f"{path}: версия {v!r} — не vX.Y.Z")
+            sys.exit(f"{path}: version {v!r} is not vX.Y.Z")
         out.append(v)
     if not out:
-        sys.exit(f"{path}: ни одной версии")
+        sys.exit(f"{path}: no versions")
     return out
 
 
 def architectures(path: pathlib.Path = PLATFORMS) -> list[str]:
-    """Под какие процессоры узлов собран образ — первая колонка platforms.txt."""
+    """Which node CPUs the image is built for: the first column of platforms.txt."""
     out = []
     for line in path.read_text(encoding="utf-8").splitlines():
         if not line.strip() or line.startswith("#"):
             continue
         a = line.split()[0]
         if not ARCH.match(a):
-            sys.exit(f"{path}: архитектура {a!r} — не имя вида amd64")
+            sys.exit(f"{path}: architecture {a!r} is not a name like amd64")
         out.append(a)
     if not out:
-        sys.exit(f"{path}: ни одной архитектуры")
+        sys.exit(f"{path}: no architectures")
     return out
 
 
@@ -77,28 +77,28 @@ def registry_digest(ref: str) -> str:
     with urllib.request.urlopen(req) as r:
         digest = r.headers["Docker-Content-Digest"]
     if not re.match(r"^sha256:[0-9a-f]{64}$", digest or ""):
-        sys.exit(f"{ref}: реестр не отдал дайджест")
+        sys.exit(f"{ref}: the registry returned no digest")
     return digest
 
 
 def render(release: str, registry: str, versions: list[str], archs: list[str],
            pin: bool = False) -> str:
     if not RELEASE.match(release):
-        sys.exit(f"выпуск {release!r} — нужен vX.Y.Z или dev")
+        sys.exit(f"release {release!r}: vX.Y.Z or dev required")
     if not REGISTRY_RE.match(registry):
-        sys.exit(f"реестр {registry!r} — нужен вид host/путь")
+        sys.exit(f"registry {registry!r}: host/path form required")
     lines = [
-        "# Собрано marketplace/tools/gen-launcher-table.py из kubevirt/versions.txt.",
-        "# Руками не править: check.py сверяет с источником, publish.yml пересобирает",
-        "# под тег выпуска.",
+        "# Built by marketplace/tools/gen-launcher-table.py from kubevirt/versions.txt.",
+        "# Do not edit by hand: check.py compares it with the source, publish.yml rebuilds it",
+        "# for the release tag.",
         f"# release: {release}",
         f"# registry: {registry}",
         f"# arch: {' '.join(archs)}",
         "#",
-        "# arch — процессоры узлов, под которые собран образ (kubevirt/platforms.txt).",
-        "# На кластере с узлом другой архитектуры компонент launcher не трогает.",
+        "# The arch line lists node CPUs the image is built for (kubevirt/platforms.txt).",
+        "# On a cluster with a node of another architecture the component leaves the launcher alone.",
         "#",
-        "# версия KubeVirt   образ virt-launcher (семейство paleo, тот же дайджест, что -risc5-)",
+        "# KubeVirt version   virt-launcher image (paleo family, same digest as -risc5-)",
     ]
     # With pin the reference carries the digest as well. The dev tag is rewritten
     # by every check build, and nodes pull launchers with IfNotPresent, so a node
@@ -120,9 +120,9 @@ def main() -> None:
     ap.add_argument("--release")
     ap.add_argument("--registry")
     ap.add_argument("--check", action="store_true",
-                    help="сверить лежащую таблицу с kubevirt/versions.txt, ничего не писать")
+                    help="compare the stored table with kubevirt/versions.txt, write nothing")
     ap.add_argument("--pin", action="store_true",
-                    help="дописать к образам дайджест из реестра (при публикации)")
+                    help="append the registry digest to the images (when publishing)")
     ap.add_argument("--out", default=str(TABLE))
     a = ap.parse_args()
     out = pathlib.Path(a.out)
@@ -135,14 +135,14 @@ def main() -> None:
         registry = a.registry or header(have, "registry") or "?"
         want = render(release, registry, kubevirt_versions(), architectures())
         if have != want:
-            sys.exit(f"{out} расходится с kubevirt/versions.txt или platforms.txt — make gen")
-        print(f"таблица совпадает с kubevirt/versions.txt (выпуск {release})")
+            sys.exit(f"{out} differs from kubevirt/versions.txt or platforms.txt; regenerate it")
+        print(f"table matches kubevirt/versions.txt (release {release})")
         return
 
     text = render(a.release or "dev", a.registry or REGISTRY, kubevirt_versions(), architectures(),
                   pin=a.pin)
     out.write_text(text, encoding="utf-8")
-    print(f"записано {out}")
+    print(f"wrote {out}")
 
 
 if __name__ == "__main__":

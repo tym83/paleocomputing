@@ -1,13 +1,13 @@
-# Репозиторий «машины» — эмуляторы систем, которых нет в основном каталоге.
+# The "machines" repository: emulators of systems missing from the main catalog.
 #
-# Единица установки в модели маркетплейса — репозиторий целиком, а не отдельный
-# пакет: вещи внутри собраны и проверены вместе. Репозиторий — один OCI-артефакт
-# со своим тегом, тег и есть его версия.
+# The unit of installation in the marketplace model is a whole repository, not a
+# single package: the things inside are built and tested together. A repository
+# is one OCI artifact with its own tag, and the tag is its version.
 #
-# Вариант ровно один. Имя ссылки на чарт складывается как
-# <источник>-<вариант>-<компонент>, поэтому второй вариант увёл бы все ссылки в
-# ApplicationDefinition на несуществующие артефакты. У всех 100 источников самой
-# платформы вариант тоже ровно один.
+# There is exactly one variant. The chart reference name is built as
+# <source>-<variant>-<component>, so a second variant would send all
+# ApplicationDefinition references to non-existent artifacts. All 100 sources of
+# the platform itself also have exactly one variant.
 apiVersion: cozystack.io/v1alpha1
 kind: PackageSource
 metadata:
@@ -21,34 +21,35 @@ spec:
   variants:
     - name: default
       dependsOn:
-        # Отсюда приезжает CRD для ApplicationDefinition, которую рендерит
-        # компонент machines-rd ниже.
+        # This provides the CRD for the ApplicationDefinition rendered by the
+        # machines-rd component below.
         - cozystack.cozystack-engine
-      # Общие шаблоны машин чужих архитектур. Платформа кладёт библиотеку в
-      # charts/ каждого компонента, который её назвал
-      # (internal/operator/packagesource_reconciler.go) — так же, как свой
-      # cozy-lib. В дереве на неё смотрит ссылка charts/retro-machine, чтобы
-      # helm template и проверки видели то же, что соберёт платформа.
+      # Shared templates for machines of foreign architectures. The platform
+      # puts the library into charts/ of every component that names it
+      # (internal/operator/packagesource_reconciler.go), the same way as its own
+      # cozy-lib. In the tree the charts/retro-machine link points at it, so that
+      # helm template and the checks see what the platform will assemble.
       libraries:
         - name: retro-machine
           path: library/retro-machine
       components:
-        # Компонент без блока install публикуется артефактом и НЕ ставится
-        # релизом (internal/operator/package_reconciler.go: «Skip components
-        # without Install section»). Именно так и нужно приложениям: их
-        # разворачивает пользователь из каталога, а не подключение репозитория.
+        # A component without an install block is published as an artifact and
+        # NOT installed as a release (internal/operator/package_reconciler.go:
+        # "Skip components without Install section"). That is exactly what
+        # applications need: the user deploys them from the catalog, not the
+        # repository connection.
         - name: oberon-lab
           path: apps/oberon-lab
         - name: handbook
           path: apps/handbook
         - name: workbench
           path: apps/workbench
-        # Машина = паспорт machine.yaml + форма; шаблоны — из библиотеки.
+        # A machine = a machine.yaml passport + a form; templates come from the library.
         - name: oberon-vm
           path: apps/oberon-vm
           libraries: ["retro-machine"]
 
-        # А вот описания приложений для каталога ставятся один раз.
+        # The catalog application definitions, however, are installed once.
         - name: machines-rd
           path: system/machines-rd
           install:

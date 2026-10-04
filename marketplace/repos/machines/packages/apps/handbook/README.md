@@ -1,30 +1,33 @@
+[Русская версия](README.ru.md)
+
 # handbook
 
-Документация, которая разворачивается рядом с приложением, а не живёт отдельной
-ссылкой.
+Documentation that is deployed next to the application instead of living as a
+separate link.
 
-Причина простая: в описании приложения для каталога Cozystack нет поля под
-документацию. В `ApplicationDefinition.spec.dashboard` есть `description`,
-`icon`, `category`, `tags` — и всё. Дать ссылку на руководство панели негде,
-поэтому руководство приезжает как обычная часть окружения и раздаётся само.
+The reason is simple: the Cozystack catalog application description has no
+field for documentation. `ApplicationDefinition.spec.dashboard` has
+`description`, `icon`, `category`, `tags`, and that is all. There is nowhere to
+give the dashboard a link to a manual, so the manual arrives as an ordinary
+part of the environment and serves itself.
 
-## Два источника
+## Two sources
 
-**Свой образ** (`image`) — внутри уже лежит собранная документация в
-`/usr/share/nginx/html`. Так сделано у `oberon-lab`: методичка из восьми глав
-лежит в том же образе, что и лабораторные.
+**Your own image** (`image`) already contains built documentation in
+`/usr/share/nginx/html`. This is how `oberon-lab` does it: the eight-chapter
+manual lives in the same image as the labs.
 
-**Страницы в значениях** (`pages`) — когда своего образа нет. Тогда методичка
-поднимается на стоковом непривилегированном nginx, и собирать не нужно ничего.
-Текст страницы кладётся в `ConfigMap` через JSON-кодирование: в литеральном
-блоке YAML многострочный произвольный текст развалился бы по отступам. Разметка
-внутри текста экранируется — страница показывает её, а не выполняет.
+**Pages in the values** (`pages`), when there is no image of your own. Then the
+manual comes up on stock unprivileged nginx, and nothing needs to be built.
+The page text goes into a `ConfigMap` via JSON encoding: in a YAML literal block
+arbitrary multi-line text would fall apart on indentation. Markup inside the
+text is escaped: the page shows it rather than executing it.
 
-Одно исключает другое: если задан `image`, список `pages` игнорируется.
+One excludes the other: if `image` is set, the `pages` list is ignored.
 
-| параметр | по умолчанию | что делает |
+| parameter | default | what it does |
 |---|---|---|
-| `title` | `Handbook` | заголовок титульной страницы |
-| `pages` | `[]` | страницы: `name`, `title`, `body` |
-| `image` | `""` | образ с готовой документацией |
-| `host` | `""` | внешнее имя; пусто — ingress не создаётся |
+| `title` | `Handbook` | front page title |
+| `pages` | `[]` | pages: `name`, `title`, `body` |
+| `image` | `""` | image with ready documentation |
+| `host` | `""` | external host name; empty means no ingress is created |

@@ -1,7 +1,7 @@
-# Что этот репозиторий показывает в каталоге Cozystack.
+# What this repository shows in the Cozystack catalog.
 #
-# Схемы приложений сюда не переписываются: генератор берёт их прямо из
-# values.schema.json соответствующего чарта.
+# Application schemas are not copied here: the generator takes them directly
+# from the values.schema.json of the corresponding chart.
 packageSource: paleocomputing.machines
 variant: default
 artifactNamespace: cozy-system
@@ -53,9 +53,9 @@ apps:
       weight: 10
       keysOrder: [["apiVersion"], ["kind"], ["metadata"], ["metadata", "name"], ["spec", "machine"], ["spec", "manual"], ["spec", "host"], ["spec", "manualHost"]]
 
-  # Машина RISC5 как виртуалка. Отличается от лаборатории принципиально:
-  # там браузер и симуляция схемы, здесь настоящая виртуальная машина
-  # кластера с собственной архитектурой.
+  # The RISC5 machine as a VM. It differs from the lab fundamentally:
+  # there it is a browser and a circuit simulation, here a real virtual machine
+  # of the cluster with its own architecture.
   - component: oberon-vm
     chartPath: apps/oberon-vm
     kind: OberonVM

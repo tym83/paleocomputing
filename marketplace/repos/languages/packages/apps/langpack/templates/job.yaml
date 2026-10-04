@@ -1,6 +1,6 @@
 {{- if eq .Values.mode "job" }}
 {{- if .Values.host }}
-{{- fail "langpack: host задан, но режим job — разовый прогон нечего выставлять наружу" }}
+{{- fail "langpack: host is set but mode is job; a one-off run has nothing to expose" }}
 {{- end }}
 apiVersion: batch/v1
 kind: Job

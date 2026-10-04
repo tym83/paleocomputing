@@ -22,8 +22,8 @@ spec:
         - name: web
           image: {{ .Values.images.web | quote }}
           ports: [{ name: http, containerPort: 8080 }]
-          # Непривилегированный образ nginx уже слушает 8080 от пользователя
-          # 101, поэтому ни команду, ни порт переопределять не нужно.
+          # The unprivileged nginx image already listens on 8080 as user 101,
+          # so neither the command nor the port needs overriding.
           readinessProbe:
             httpGet: { path: /lab.html, port: http }
           livenessProbe:
@@ -35,9 +35,9 @@ spec:
           securityContext:
             allowPrivilegeEscalation: false
             capabilities: { drop: ["ALL"] }
-          # ⚠ Том поверх /etc/nginx/conf.d затёр бы конфигурацию с типом для
-          # wasm, которая лежит в образе. Монтируются только каталоги, куда
-          # nginx действительно пишет.
+          # ⚠ A volume over /etc/nginx/conf.d would wipe the configuration with
+          # the wasm type that ships in the image. Only the directories nginx
+          # actually writes to are mounted.
           volumeMounts:
             - { name: cache, mountPath: /var/cache/nginx }
             - { name: run,   mountPath: /tmp }

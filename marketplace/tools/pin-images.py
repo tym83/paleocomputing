@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
-"""Образы с файлами машин — под тег выпуска.
+"""Images carrying machine files, pinned to the release tag.
 
-В паспорте машины (apps/*/machine.yaml) `image` — наш образ, который несёт ПЗУ
-и диски. В дереве он помечен `dev`; публикация переписывает метку на тег
-выпуска — так же, как gen-launcher-table.py переписывает таблицу launcher'ов.
-Иначе паспорт отставал бы от выпуска: v0.1.14 возил ПЗУ из v0.1.4.
+In a machine passport (apps/*/machine.yaml) `image` is our image that carries
+the ROM and disks. In the tree it is tagged `dev`; publishing rewrites the tag
+to the release tag, the same way gen-launcher-table.py rewrites the launcher
+table. Otherwise the passport would lag behind the release: v0.1.14 shipped the
+ROM from v0.1.4.
 
-    python3 tools/pin-images.py                  # показать, что где стоит
+    python3 tools/pin-images.py                  # show what is set where
     python3 tools/pin-images.py --release v0.1.15
-    python3 tools/pin-images.py --check          # метка совпадает с таблицей launcher'ов
+    python3 tools/pin-images.py --check          # tag matches the launcher table
 """
 from __future__ import annotations
 
@@ -54,14 +55,14 @@ def main() -> int:
     ap.add_argument("--pin", action="store_true", help="append the registry digest (when publishing)")
     a = ap.parse_args()
     if a.release and not RELEASE.match(a.release):
-        sys.exit(f"выпуск {a.release!r} — нужен vX.Y.Z или dev")
+        sys.exit(f"release {a.release!r}: vX.Y.Z or dev required")
     bad = 0
     want = table_release()
     for p in passports():
         text = p.read_text(encoding="utf-8")
         tags = LINE.findall(text)
         if not tags:
-            print(f"  {p.relative_to(MARKET)}: нашего образа нет")
+            print(f"  {p.relative_to(MARKET)}: none of our images")
             continue
         if a.release:
             def repl(m: re.Match) -> str:
@@ -76,7 +77,7 @@ def main() -> int:
                 ok = tag == want
                 bad += not ok
                 print(f"  {'✅' if ok else '❌'} {p.relative_to(MARKET)}: {img.split()[-1]}:{tag}"
-                      + ("" if ok else f" — таблица launcher'ов на {want}"))
+                      + ("" if ok else f": launcher table is at {want}"))
         else:
             for img, tag in tags:
                 print(f"  {p.relative_to(MARKET)}: {img.split()[-1]}:{tag}")

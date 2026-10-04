@@ -5,10 +5,10 @@ metadata:
   name: {{ .Release.Name }}-patch
   labels: {{- include "oberon-lab.labels" . | nindent 4 }}
 data:
-  # Пути в ключи ConfigMap не кладутся: там нельзя косые черты. Поэтому файлы
-  # нумеруются, а соответствие «ключ — путь» идёт отдельной описью. Кодировать
-  # путь в самом ключе (точки вместо черт) нельзя: в именах файлов точки тоже
-  # встречаются, и вложенные каталоги разъезжаются.
+  # Paths cannot be ConfigMap keys: slashes are not allowed there. So the files
+  # are numbered, and the key-to-path mapping goes into a separate manifest.
+  # Encoding the path in the key itself (dots instead of slashes) does not work:
+  # file names contain dots too, and nested directories would fall apart.
   manifest: |
     {{- range $i, $f := .Values.patch }}
     f{{ $i }} {{ $f.path }}
@@ -24,7 +24,7 @@ metadata:
   name: {{ .Release.Name }}-{{ .Values.task }}
   labels: {{- include "oberon-lab.labels" . | nindent 4 }}
 spec:
-  backoffLimit: 0                 # вердикт лабораторной повторять бессмысленно
+  backoffLimit: 0                 # retrying a lab verdict is pointless
   ttlSecondsAfterFinished: 3600
   template:
     metadata:
@@ -48,17 +48,17 @@ spec:
                   [ -n "$key" ] || continue
                   mkdir -p "/work/$(dirname "$path")"
                   cp "/cm/$key" "/work/$path"
-                  echo "  подготовлено: $path"
+                  echo "  prepared: $path"
                 done < /cm/manifest
               else
-                echo "  правок нет — прогон на исходном дереве"
+                echo "  no changes; running on the original tree"
               fi
           volumeMounts:
             - { name: cm,   mountPath: /cm }
             - { name: work, mountPath: /work }
         - name: tree
-          # Verilator и компилятор пишут в build/, поэтому дерево проекта
-          # копируется в том: корень образа остаётся только для чтения.
+          # Verilator and the compiler write to build/, so the project tree is
+          # copied into a volume: the image root stays read-only.
           image: {{ .Values.images.runner | quote }}
           command: ["/bin/sh", "-c", "cp -a /lab/. /tree/"]
           volumeMounts:

@@ -1,47 +1,50 @@
 #!/usr/bin/env python3
-"""Перехватчик KubeVirt: подменяет описание обычной виртуалки на чужую машину.
+"""KubeVirt hook: replaces the description of an ordinary VM with a foreign machine.
 
-KubeVirt позволяет стороннему контейнеру переписать описание домена перед
-запуском — это штатная точка расширения (`OnDefineDomain`), форк не нужен.
-Сюда приходит описание, которое KubeVirt собрал для обычной виртуалки, а
-уходит описание машины, которой в KubeVirt нет.
+KubeVirt lets a third-party container rewrite the domain description before
+launch. This is a supported extension point (`OnDefineDomain`); no fork is
+needed. In comes the description KubeVirt built for an ordinary VM; out goes
+the description of a machine KubeVirt does not know about.
 
-КАКОЙ машины — перехватчик не знает. Всё, что отличает одну машину от
-другой, приходит данными: паспорт машины лежит в аннотации
-`paleocomputing.io/machine` (JSON), её ставит пакет каталога. Схема паспорта —
+WHICH machine, the hook does not know. Everything that tells one machine from
+another arrives as data: the machine descriptor sits in the
+`paleocomputing.io/machine` annotation (JSON), set by the catalog package. The
+descriptor schema is
 `marketplace/repos/machines/packages/library/retro-machine/machine.schema.json`.
-Новая архитектура или система — это новый паспорт, а не правка этого файла.
+A new architecture or system is a new descriptor, not an edit to this file.
 
-Что меняется всегда, для любой чужой машины:
+What always changes, for any foreign machine:
 
-  * тип домена — с `kvm` на `qemu`: аппаратного ускорения для чужой
-    архитектуры не бывает;
-  * убирается всё, что требует шины PCI: libvirt на такие устройства у
-    машины без PCI отвечает «No PCI buses available»;
-  * убираются свойства уровня платформы — ACPI, APIC и прочее: libvirt
-    отвергает описание целиком («machine type 'oberon' does not support
-    ACPI»);
-  * убирается режим smbios, а раздел sysinfo остаётся (см. ниже);
-  * убирается прошивка UEFI: на узлах arm64 KubeVirt всегда ставит её
-    виртуалке (флэш-память pflash), а у чужой машины флэш-памяти нет.
+  * the domain type, from `kvm` to `qemu`: there is no hardware acceleration
+    for a foreign architecture;
+  * everything that needs a PCI bus is removed: for a machine without PCI,
+    libvirt answers such devices with "No PCI buses available";
+  * platform-level features (ACPI, APIC and the like) are removed: libvirt
+    rejects the whole description ("machine type 'oberon' does not support
+    ACPI");
+  * the smbios mode is removed, while the sysinfo section stays (see below);
+  * the UEFI firmware is removed: on arm64 nodes KubeVirt always gives it to
+    a VM (pflash flash memory), and a foreign machine has no flash memory.
 
-Что берётся из паспорта:
+What comes from the descriptor:
 
-  * архитектура, тип машины и путь к эмулятору в образе virt-launcher;
-  * число процессоров: libvirt сверяет его с возможностями машины и
-    отвергает лишнее («Maximum CPUs greater than specified machine type
-    limit 1»);
-  * оставлять ли экран VNC;
-  * файлы машины (ПЗУ, диск) и то, как каждый передаётся эмулятору;
-  * ВАРИАНТ ЖЕЛЕЗА — свойства `-machine`, например `chk=on` у Оберона.
+  * the architecture, the machine type and the emulator path in the
+    virt-launcher image;
+  * the CPU count: libvirt checks it against the machine's capabilities and
+    rejects anything extra ("Maximum CPUs greater than specified machine type
+    limit 1");
+  * whether to keep the VNC display;
+  * the machine files (ROM, disk) and how each one is passed to the emulator;
+  * the HARDWARE VARIANT: `-machine` properties, e.g. `chk=on` for Oberon.
 
-Паспорт проверяется ДО того, как тронуто описание домена. Нет паспорта,
-он не разбирается или в нём не хватает поля — перехватчик падает с внятной
-причиной и ничего не печатает. Полупереписанный домен хуже отказа: libvirt
-может его принять, и машина молча запустится не той.
+The descriptor is validated BEFORE the domain description is touched. If there
+is no descriptor, it does not parse, or a field is missing, the hook fails with
+a clear reason and prints nothing. A half-rewritten domain is worse than a
+refusal: libvirt may accept it, and the wrong machine silently starts.
 
-Запускается обёрткой sidecar-shim: она ищет исполняемый файл с именем
-onDefineDomain и передаёт описание домена и самой машины аргументами.
+It is run by the sidecar-shim wrapper: the wrapper looks for an executable
+named onDefineDomain and passes the domain description and the machine itself
+as arguments.
 """
 import json
 import os
@@ -51,12 +54,12 @@ import xml.etree.ElementTree as ET
 
 QEMU_NS = 'http://libvirt.org/schemas/domain/qemu/1.0'
 
-# Аннотация с паспортом машины. Имя то же, что в библиотеке каталога.
+# Annotation carrying the machine descriptor. Same name as in the catalog library.
 MACHINE_ANNOTATION = 'paleocomputing.io/machine'
 
-# Допустимые значения — ровно как в machine.schema.json. Проверка здесь не
-# заменяет схему, а страхует от паспорта, который до схемы не дошёл: его
-# могли вписать в машину руками.
+# Allowed values exactly as in machine.schema.json. This check does not
+# replace the schema; it guards against a descriptor that never went through
+# the schema, e.g. one written into the machine by hand.
 NAME_RE = re.compile(r'^[a-z0-9][a-z0-9_.-]*$')
 FILE_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]*$')
 PATH_RE = re.compile(r'^/[A-Za-z0-9/._-]+$')
@@ -66,11 +69,11 @@ GRAPHICS = ('vnc', 'none')
 
 
 class DescriptorError(Exception):
-    """Паспорт машины отсутствует или неполон."""
+    """The machine descriptor is missing or incomplete."""
 
 
 def arg(name):
-    """Читает --name значение из аргументов, как их передаёт обёртка."""
+    """Reads `--name value` from the arguments, as the wrapper passes them."""
     a = sys.argv
     for i, v in enumerate(a):
         if v == '--' + name and i + 1 < len(a):
@@ -87,83 +90,83 @@ def _need(cond, what):
 
 def _str(obj, key, where, pattern=None):
     v = obj.get(key) if isinstance(obj, dict) else None
-    _need(isinstance(v, str) and v, f'{where}.{key}: нужна непустая строка')
+    _need(isinstance(v, str) and v, f'{where}.{key}: a non-empty string is required')
     if pattern is not None:
-        _need(pattern.match(v), f'{where}.{key}: недопустимое значение {v!r}')
+        _need(pattern.match(v), f'{where}.{key}: invalid value {v!r}')
     return v
 
 
 def descriptor_from_vmi(vmi_json):
-    """Достаёт паспорт машины из описания VMI, которое передала обёртка."""
-    _need(vmi_json, 'обёртка не передала описание машины (--vmi)')
+    """Extracts the machine descriptor from the VMI description passed by the wrapper."""
+    _need(vmi_json, 'the wrapper did not pass the machine description (--vmi)')
     try:
         vmi = json.loads(vmi_json)
     except (ValueError, TypeError) as e:
-        raise DescriptorError(f'описание машины не разбирается: {e}')
+        raise DescriptorError(f'the machine description does not parse: {e}')
     ann = ((vmi.get('metadata') or {}).get('annotations') or {}) if isinstance(vmi, dict) else {}
     raw = ann.get(MACHINE_ANNOTATION)
-    _need(raw, f'у машины нет аннотации {MACHINE_ANNOTATION}: неизвестно, какую машину собирать')
+    _need(raw, f'the machine has no {MACHINE_ANNOTATION} annotation: unknown which machine to build')
     try:
         desc = json.loads(raw)
     except (ValueError, TypeError) as e:
-        raise DescriptorError(f'аннотация {MACHINE_ANNOTATION} — не JSON: {e}')
-    _need(isinstance(desc, dict), f'аннотация {MACHINE_ANNOTATION} — не объект')
+        raise DescriptorError(f'annotation {MACHINE_ANNOTATION} is not JSON: {e}')
+    _need(isinstance(desc, dict), f'annotation {MACHINE_ANNOTATION} is not an object')
     return desc
 
 
 def validate(desc):
-    """Проверяет паспорт и возвращает то, что нужно для переписывания домена."""
+    """Validates the descriptor and returns what is needed to rewrite the domain."""
     dom = desc.get('domain')
-    _need(isinstance(dom, dict), 'domain: нет раздела')
+    _need(isinstance(dom, dict), 'domain: section missing')
     arch = _str(dom, 'arch', 'domain', NAME_RE)
     machine = _str(dom, 'machine', 'domain', NAME_RE)
     emulator = _str(dom, 'emulator', 'domain', PATH_RE)
     vcpus = dom.get('vcpus')
     _need(isinstance(vcpus, int) and not isinstance(vcpus, bool) and vcpus >= 1,
-          'domain.vcpus: нужно целое не меньше 1')
+          'domain.vcpus: an integer of at least 1 is required')
     graphics = _str(dom, 'graphics', 'domain')
-    _need(graphics in GRAPHICS, f'domain.graphics: одно из {GRAPHICS}, а не {graphics!r}')
+    _need(graphics in GRAPHICS, f'domain.graphics: must be one of {GRAPHICS}, not {graphics!r}')
 
     pay = desc.get('payload')
-    _need(isinstance(pay, dict), 'payload: нет раздела')
+    _need(isinstance(pay, dict), 'payload: section missing')
     base = _str(pay, 'path', 'payload', PATH_RE).rstrip('/')
     files = pay.get('files')
-    _need(isinstance(files, list) and files, 'payload.files: нужен непустой список')
+    _need(isinstance(files, list) and files, 'payload.files: a non-empty list is required')
     args, paths, seen = [], [], set()
     for i, f in enumerate(files):
         where = f'payload.files[{i}]'
-        _need(isinstance(f, dict), f'{where}: не объект')
+        _need(isinstance(f, dict), f'{where}: not an object')
         name = _str(f, 'name', where, FILE_RE)
-        _need(name not in seen, f'{where}.name: {name} встречается дважды')
+        _need(name not in seen, f'{where}.name: {name} appears twice')
         seen.add(name)
         role = _str(f, 'role', where)
-        _need(role in ROLES, f'{where}.role: одно из {ROLES}, а не {role!r}')
+        _need(role in ROLES, f'{where}.role: must be one of {ROLES}, not {role!r}')
         qemu = f.get('qemu')
         _need(isinstance(qemu, list) and qemu and all(isinstance(a, str) and a for a in qemu),
-              f'{where}.qemu: нужен непустой список строк')
-        # Файл, который эмулятору не передан, наполнять незачем: это почти
-        # наверняка опечатка в паспорте.
-        _need(any('{path}' in a for a in qemu), f'{where}.qemu: нигде нет {{path}}')
+              f'{where}.qemu: a non-empty list of strings is required')
+        # A file that is never passed to the emulator has no reason to be
+        # filled in: this is almost certainly a typo in the descriptor.
+        _need(any('{path}' in a for a in qemu), f'{where}.qemu: {{path}} appears nowhere')
         path = f'{base}/{name}'
         paths.append(path)
         args += [a.replace('{path}', path) for a in qemu]
 
     variants = desc.get('variants')
-    _need(isinstance(variants, dict) and variants, 'variants: нужен хотя бы один вариант железа')
+    _need(isinstance(variants, dict) and variants, 'variants: at least one hardware variant is required')
     variant = desc.get('variant') or desc.get('defaultVariant')
-    _need(isinstance(variant, str) and variant, 'не выбран вариант железа (variant/defaultVariant)')
-    _need(variant in variants, f'вариант железа {variant!r} не описан; есть: {sorted(variants)}')
+    _need(isinstance(variant, str) and variant, 'no hardware variant selected (variant/defaultVariant)')
+    _need(variant in variants, f'hardware variant {variant!r} is not defined; available: {sorted(variants)}')
     props = variants[variant]
-    _need(isinstance(props, dict), f'variants.{variant}: не объект')
+    _need(isinstance(props, dict), f'variants.{variant}: not an object')
     for k, v in props.items():
         _need(isinstance(v, str) and PROP_RE.match(k) and PROP_RE.match(v),
-              f'variants.{variant}.{k}: свойство и значение — без запятых, пробелов и «=»')
+              f'variants.{variant}.{k}: property and value must not contain commas, spaces or "="')
     if props:
-        # ⚠ Вторым `-machine`, а не правкой атрибута machine в описании: там
-        # libvirt допускает только имя машины. QEMU сливает опции в одну
-        # группу, и неизвестное свойство честно роняет запуск
-        # («Property 'oberon-machine.chkk' not found»), так что опечатка не
-        # пройдёт молча.
+        # ⚠ As a second `-machine`, not by editing the machine attribute in the
+        # description: libvirt allows only the machine name there. QEMU merges
+        # the options into one group, and an unknown property properly fails
+        # the launch ("Property 'oberon-machine.chkk' not found"), so a typo
+        # does not slip through silently.
         args += ['-machine', ','.join(f'{k}={v}' for k, v in sorted(props.items()))]
 
     return {'arch': arch, 'machine': machine, 'emulator': emulator,
@@ -171,84 +174,85 @@ def validate(desc):
 
 
 def check_payload(paths):
-    """Файлы машины на месте и не пустые.
+    """The machine files are present and not empty.
 
-    Том наполняет задача каталога, и машина может проснуться раньше, чем
-    она закончит. Тогда лучше отказать здесь с понятной причиной: KubeVirt
-    повторит попытку сам, а в событиях машины будет видно, чего она ждёт, —
-    вместо невнятного отказа эмулятора открыть ПЗУ.
+    The volume is filled by a catalog job, and the machine may wake up before
+    the job finishes. It is better to refuse here with a clear reason: KubeVirt
+    retries on its own, and the machine's events show what it is waiting for,
+    instead of an obscure emulator failure to open the ROM.
 
-    Том смонтирован в перехватчик по тому же пути, что и в контейнер с
-    libvirt: библиотека каталога задаёт volumePath и sharedComputePath одним
-    значением.
+    The volume is mounted into the hook at the same path as into the libvirt
+    container: the catalog library sets volumePath and sharedComputePath to
+    one value.
     """
     missing = [p for p in paths if not (os.path.isfile(p) and os.path.getsize(p) > 0)]
-    _need(not missing, 'файлы машины ещё не на томе (задача наполнения не '
-                       f'закончила?): {", ".join(missing)}')
+    _need(not missing, 'machine files are not on the volume yet (has the fill job '
+                       f'not finished?): {", ".join(missing)}')
 
 
 def convert(domain_xml, m):
     ET.register_namespace('qemu', QEMU_NS)
     root = ET.fromstring(domain_xml)
 
-    # ── Тип домена ────────────────────────────────────────────────────────
+    # ── Domain type ───────────────────────────────────────────────────────
     #
-    # KubeVirt объявляет домен как `kvm`, потому что рассчитывает на обычную
-    # виртуалку с аппаратным ускорением. Для чужой архитектуры его не бывает:
-    # её команды переводятся на лету. libvirt это проверяет и отвергает:
-    # «Emulator does not support virt type kvm».
+    # KubeVirt declares the domain as `kvm` because it expects an ordinary VM
+    # with hardware acceleration. A foreign architecture never has it: its
+    # instructions are translated on the fly. libvirt checks this and rejects
+    # it: "Emulator does not support virt type kvm".
     root.set('type', 'qemu')
 
-    # ── Архитектура и машина ──────────────────────────────────────────────
+    # ── Architecture and machine ──────────────────────────────────────────
     os_el = root.find('os')
     type_el = os_el.find('type')
     type_el.set('arch', m['arch'])
     type_el.set('machine', m['machine'])
 
-    # ⚠ Режим smbios убираем, а раздел sysinfo ОСТАВЛЯЕМ. Тонкость: из режима
-    # libvirt выводит аргумент -smbios, которого чужая цель не понимает
-    # («Option not supported for this target»), а сам раздел sysinfo читает
-    # virt-launcher уже после запуска и без него падает. Два требования тянут
-    # в разные стороны, и развести их можно только так.
+    # ⚠ The smbios mode goes, the sysinfo section STAYS. The subtlety: from the
+    # mode libvirt derives the -smbios argument, which a foreign target does
+    # not understand ("Option not supported for this target"), while the
+    # sysinfo section itself is read by virt-launcher after launch, and it
+    # crashes without it. The two requirements pull in opposite directions,
+    # and this is the only way to satisfy both.
     for sm in os_el.findall('smbios'):
         os_el.remove(sm)
 
-    # ⚠ Прошивка UEFI. На узле arm64 KubeVirt всегда объявляет её (AAVMF,
-    # загрузчик и NVRAM), и libvirt превращает это в `-machine
-    # <машина>,pflash0=…,pflash1=…`. Флэш-памяти у чужой машины нет, и QEMU
-    # выходит сразу после запуска. На amd64 этого не видно: там KubeVirt по
-    # умолчанию грузит BIOS и прошивку не объявляет. Нашлось сквозной
-    # проверкой на kind под arm64 (находка 71). Свою прошивку машина берёт
-    # из паспорта (роль firmware).
+    # ⚠ UEFI firmware. On an arm64 node KubeVirt always declares it (AAVMF,
+    # loader and NVRAM), and libvirt turns that into `-machine
+    # <machine>,pflash0=…,pflash1=…`. A foreign machine has no flash memory,
+    # and QEMU exits right after launch. On amd64 this is invisible: there
+    # KubeVirt boots BIOS by default and declares no firmware. Found by the
+    # end-to-end test on kind under arm64 (finding 71). The machine takes its
+    # own firmware from the descriptor (role firmware).
     os_el.attrib.pop('firmware', None)
     for tag in ('loader', 'nvram', 'firmware'):
         for el in os_el.findall(tag):
             os_el.remove(el)
 
-    # ── Свойства платформы ────────────────────────────────────────────────
+    # ── Platform features ─────────────────────────────────────────────────
     #
-    # KubeVirt объявляет ACPI и APIC, рассчитывая на обычную машину. У чужой
-    # их нет, и libvirt отвергает описание целиком: «machine type 'oberon'
-    # does not support ACPI». Нашлось только на живом кластере — в рукописном
-    # описании этих свойств просто не было.
+    # KubeVirt declares ACPI and APIC, expecting an ordinary machine. A
+    # foreign one has neither, and libvirt rejects the whole description:
+    # "machine type 'oberon' does not support ACPI". This only showed up on a
+    # live cluster: the hand-written description simply lacked these features.
     for f in root.findall('features'):
         root.remove(f)
 
-    # Топология процессора и управление питанием — оттуда же.
+    # CPU topology and power management, for the same reason.
     #
-    # ⚠ sysinfo НЕ трогаем: его читает сам virt-launcher уже после запуска, и
-    # без него он падает с «Domain sysinfo are not available». Убирать надо
-    # ровно то, что отвергает libvirt, и ни строкой больше.
+    # ⚠ sysinfo is NOT touched: virt-launcher itself reads it after launch and
+    # without it fails with "Domain sysinfo are not available". Remove exactly
+    # what libvirt rejects and not a line more.
     for tag in ('cpu', 'clock', 'pm', 'cputune', 'numatune',
                 'launchSecurity', 'iothreads'):
         for el in root.findall(tag):
             root.remove(el)
 
-    # ── Число процессоров ─────────────────────────────────────────────────
+    # ── CPU count ─────────────────────────────────────────────────────────
     #
-    # KubeVirt проставляет и текущее число, и предел для горячего
-    # добавления, а libvirt сверяет их с возможностями машины и отвергает
-    # описание. Сколько процессоров у машины — знает только паспорт.
+    # KubeVirt sets both the current count and the hotplug limit, and libvirt
+    # checks them against the machine's capabilities and rejects the
+    # description. Only the descriptor knows how many CPUs the machine has.
     for vcpu in root.findall('vcpu'):
         vcpu.text = str(m['vcpus'])
         for a in ('current', 'placement'):
@@ -258,16 +262,16 @@ def convert(domain_xml, m):
 
     devices = root.find('devices')
 
-    # ── Эмулятор ──────────────────────────────────────────────────────────
+    # ── Emulator ──────────────────────────────────────────────────────────
     emu = devices.find('emulator')
     if emu is None:
         emu = ET.SubElement(devices, 'emulator')
     emu.text = m['emulator']
 
-    # ── Убрать всё, чему нужна шина PCI ───────────────────────────────────
+    # ── Remove everything that needs a PCI bus ────────────────────────────
     #
-    # Мало убрать сами устройства: KubeVirt добавляет контроллеры, каналы и
-    # последовательные порты, которые libvirt тоже привяжет к PCI.
+    # Removing the devices themselves is not enough: KubeVirt adds
+    # controllers, channels and serial ports that libvirt also attaches to PCI.
     for tag in ('controller', 'video', 'memballoon', 'sound', 'channel',
                 'rng', 'watchdog', 'redirdev', 'hostdev', 'input',
                 'interface', 'disk', 'serial', 'console',
@@ -275,30 +279,30 @@ def convert(domain_xml, m):
         for el in devices.findall(tag):
             devices.remove(el)
 
-    # ── Экран ─────────────────────────────────────────────────────────────
+    # ── Display ───────────────────────────────────────────────────────────
     #
-    # graphics — не устройство на шине, а способ показать экран: libvirt
-    # превращает его в `-vnc unix:<сокет>`, а к этому сокету KubeVirt
-    # подключает консоль и `virtctl vnc`. Раньше он уходил вместе с
-    # устройствами PCI, машина запускалась с `-display none`, и экран
-    # Оберона в кластере не видел никто (находка 59). Своя видеокарта у
-    # такой машины встроенная, отдельное устройство video ей не нужно.
+    # graphics is not a bus device but a way to show the screen: libvirt turns
+    # it into `-vnc unix:<socket>`, and KubeVirt attaches the console and
+    # `virtctl vnc` to that socket. It used to be removed along with the PCI
+    # devices, the machine started with `-display none`, and nobody could see
+    # the Oberon screen in the cluster (finding 59). Such a machine has a
+    # built-in video adapter and needs no separate video device.
     #
-    # Оставляем только VNC: у SPICE своя шина каналов, которой здесь нет.
-    # Машина без экрана (graphics: none) не получает и его.
+    # Only VNC is kept: SPICE has its own channel bus, which does not exist
+    # here. A machine without a display (graphics: none) gets none either.
     for el in devices.findall('graphics'):
         if m['graphics'] != 'vnc' or el.get('type') != 'vnc':
             devices.remove(el)
 
-    # Взамен — явные заглушки там, где libvirt иначе подставит своё.
+    # Instead, explicit stubs where libvirt would otherwise insert its defaults.
     ET.SubElement(devices, 'controller', {'type': 'usb', 'model': 'none'})
     ET.SubElement(devices, 'memballoon', {'model': 'none'})
     ET.SubElement(ET.SubElement(devices, 'video'), 'model', {'type': 'none'})
 
-    # ── Файлы машины и вариант железа ─────────────────────────────────────
+    # ── Machine files and hardware variant ────────────────────────────────
     #
-    # Через прямую передачу аргументов: у таких машин нет ни микропрограммы в
-    # привычном смысле, ни контроллера диска, который libvirt умеет описывать.
+    # Passed as raw arguments: such machines have neither firmware in the
+    # usual sense nor a disk controller that libvirt knows how to describe.
     for el in root.findall('{%s}commandline' % QEMU_NS):
         root.remove(el)
     cl = ET.SubElement(root, '{%s}commandline' % QEMU_NS)
@@ -311,12 +315,12 @@ def convert(domain_xml, m):
 def main():
     domain_xml = arg('domain')
     if not domain_xml:
-        sys.exit('перехватчику не передали описание домена')
+        sys.exit('the hook was not given a domain description')
     try:
         m = validate(descriptor_from_vmi(arg('vmi')))
         check_payload(m['paths'])
     except DescriptorError as e:
-        sys.exit(f'перехватчик: {e}')
+        sys.exit(f'hook: {e}')
     print(convert(domain_xml, m))
 
 

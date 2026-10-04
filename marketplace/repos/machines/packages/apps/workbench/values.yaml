@@ -1,45 +1,45 @@
 ##
-## @section Из чего собирается окружение
+## @section What the environment is made of
 ##
-## Метаприложение: пользователь ставит одну вещь и получает среду из нескольких
-## частей. Части — те же самые компоненты репозитория, поэтому они не
-## дублируются: родительский релиз только заказывает их по ссылке на артефакт.
+## A meta-application: the user installs one thing and gets an environment of
+## several parts. The parts are the same components of the repository, so they
+## are not duplicated: the parent release only orders them by artifact reference.
 
-## @param {bool} machine=true - Машина с лабораторными.
+## @param {bool} machine=true - Machine with the labs.
 machine: true
 
-## @param {bool} manual=true - Методичка рядом с машиной.
+## @param {bool} manual=true - Manual next to the machine.
 manual: true
 
-## @param {string} [host] - Внешнее имя машины. Пусто — ingress не создаётся.
+## @param {string} [host] - External host name of the machine. Empty means no ingress is created.
 host: ""
 
-## @param {string} [manualHost] - Внешнее имя методички.
+## @param {string} [manualHost] - External host name of the manual.
 manualHost: ""
 
-## @param {string} [ingressClassName] - Класс ingress. Пусто — умолчание кластера.
+## @param {string} [ingressClassName] - Ingress class. Empty means the cluster default.
 ingressClassName: ""
 
 ##
-## @section Куда смотрят ссылки на чарты
+## @section Where the chart references point
 ##
-## Имя артефакта складывается как <источник>-<вариант>-<компонент>, точки
-## заменяются дефисами (internal/marketplace/naming). Менять эти значения нужно
-## только если репозиторий переименован.
+## The artifact name is built as <source>-<variant>-<component>, with dots
+## replaced by hyphens (internal/marketplace/naming). These values need changing
+## only if the repository is renamed.
 
-## @param {string} artifactPrefix=paleocomputing-machines-default - Общее
-## начало имён артефактов этого репозитория.
+## @param {string} artifactPrefix=paleocomputing-machines-default - Common
+## prefix of this repository's artifact names.
 artifactPrefix: paleocomputing-machines-default
 
-## @param {string} artifactNamespace=cozy-system - Пространство имён, где лежат
-## артефакты подключённого репозитория.
+## @param {string} artifactNamespace=cozy-system - Namespace that holds the
+## artifacts of the connected repository.
 artifactNamespace: cozy-system
 
-## @typedef {struct} Manual - Что показывает методичка.
-## @field {string} title - Заголовок.
-## @field {string} image - Образ с готовой документацией; пусто — берутся pages.
+## @typedef {struct} Manual - What the manual shows.
+## @field {string} title - Title.
+## @field {string} image - Image with ready documentation; empty means pages are used.
 
-## @param {Manual} manualSource - Источник методички.
+## @param {Manual} manualSource - Source of the manual.
 manualSource:
-  title: "Оберон на настоящем Verilog"
+  title: "Oberon on real Verilog"
   image: ""

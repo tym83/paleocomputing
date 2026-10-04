@@ -1,17 +1,18 @@
-# Репозиторий «платформа» — то, что нужно кластеру, чтобы чужие машины из
-# каталога вообще могли в нём работать.
+# The "platform" repository: what the cluster needs so that the catalog's
+# foreign machines can run in it at all.
 #
-# Сегодня здесь один компонент: kubevirt-paleo-launcher держит образ
-# virt-launcher кластера в паре с версией KubeVirt. Образ несёт libvirt и
-# эмуляторы всех чужих архитектур каталога (kubevirt/targets.txt), поэтому
-# компонент один на всё семейство машин, а не по компоненту на машину.
+# Today there is one component here: kubevirt-paleo-launcher keeps the
+# cluster's virt-launcher image paired with the KubeVirt version. The image
+# carries libvirt and the emulators of all foreign catalog architectures
+# (kubevirt/targets.txt), so there is one component for the whole machine
+# family, not one component per machine.
 #
-# Доверие уровня кластера: компонент меняет ресурс KubeVirt, то есть образ,
-# на котором стартует КАЖДАЯ виртуальная машина кластера. Поэтому он помечен
-# privileged — ставится только с явным согласием оператора
-# (`cozypkg add --allow-privileged`), а валидатор Cozystack об этом
-# предупреждает. Пространство имён cozy-kubevirt и так privileged (его держит
-# компонент kubevirt самой платформы): метка ничего не расширяет.
+# Cluster-level trust: the component changes the KubeVirt resource, that is,
+# the image on which EVERY virtual machine of the cluster starts. So it is marked
+# privileged: it is installed only with the operator's explicit consent
+# (`cozypkg add --allow-privileged`), and the Cozystack validator warns about it.
+# The cozy-kubevirt namespace is privileged anyway (the platform's own kubevirt
+# component owns it): the flag extends nothing.
 apiVersion: cozystack.io/v1alpha1
 kind: PackageSource
 metadata:
@@ -25,14 +26,14 @@ spec:
   variants:
     - name: default
       dependsOn:
-        # Ресурс KubeVirt и virt-controller приезжают отсюда.
+        # The KubeVirt resource and virt-controller come from here.
         - cozystack.kubevirt
       components:
         - name: kubevirt-paleo-launcher
           path: system/kubevirt-paleo-launcher
           install:
-            # Там же, где ресурс KubeVirt: все права — Role в этом
-            # пространстве имён, без ClusterRole.
+            # Same place as the KubeVirt resource: all permissions are a Role
+            # in this namespace, no ClusterRole.
             namespace: cozy-kubevirt
             releaseName: kubevirt-paleo-launcher
             privileged: true

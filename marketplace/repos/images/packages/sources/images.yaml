@@ -1,17 +1,17 @@
-# Репозиторий «образы» — загрузочные образы машин для KubeVirt.
+# The "images" repository: boot images of machines for KubeVirt.
 #
-# Это единственный репозиторий каталога, которому нужно доверие уровня
-# кластера: он кладёт образы в общее пространство cozy-public, откуда их видят
-# все тенанты. Компонент помечен privileged, и валидатор Cozystack на этом
-# ругается предупреждением — так и задумано, оператор должен это увидеть.
+# This is the only catalog repository that needs cluster-level trust: it puts
+# images into the shared cozy-public namespace, where every tenant sees them.
+# The component is marked privileged, and the Cozystack validator emits a
+# warning about it. That is intended: the operator must see it.
 #
-# Про «новые архитектуры для KubeVirt». Список архитектур в KubeVirt закрыт:
-# в CRD ресурса KubeVirt поле architectureConfiguration имеет ровно четыре
-# ветки — amd64, arm64, ppc64le (объявлена устаревшей) и s390x. Добавить туда
-# пятую запись нельзя, не меняя саму KubeVirt. Поэтому архитектура, которой
-# никогда не существовало в кремнии, приезжает сюда не как архитектура
-# KubeVirt, а как загрузочный образ, внутри которого работает её эмулятор:
-# машина в кластере обычная, необычное — то, что она изображает.
+# About "new architectures for KubeVirt". The list of architectures in KubeVirt
+# is closed: in the KubeVirt resource CRD the architectureConfiguration field has
+# exactly four branches: amd64, arm64, ppc64le (deprecated) and s390x. A fifth
+# entry cannot be added without changing KubeVirt itself. So an architecture that
+# never existed in silicon arrives here not as a KubeVirt architecture but as a
+# boot image with its emulator running inside: the machine in the cluster is
+# ordinary; what is unusual is what it imitates.
 apiVersion: cozystack.io/v1alpha1
 kind: PackageSource
 metadata:

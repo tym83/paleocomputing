@@ -1,73 +1,73 @@
 ##
-## @section Язык и его окружение
+## @section The language and its environment
 ##
 
-## @param {string} language=Oberon - Как язык называется. Идёт в заголовки и метки.
+## @param {string} language=Oberon - What the language is called. Used in titles and labels.
 language: Oberon
 
-## @param {string} image - Образ, в котором лежит реализация языка.
-## По умолчанию — среда Оберона: компилятор Вирта, запускаемый как обычная
-## программа, без окон, мыши и экрана. Подал исходник — получил ответ.
+## @param {string} image - Image that contains the language implementation.
+## The default is the Oberon environment: Wirth's compiler run as an ordinary
+## program, with no windows, mouse or screen. Feed it a source, get an answer.
 image: ghcr.io/tym83/paleocomputing/oberon-run:v0.1.4
 
-## @param {string} mode=job - Как окружение работает.
-## `service` — постоянно поднятая среда с доступом по HTTP (REPL, тетрадь, IDE).
-## `job` — разовый прогон: окружение живёт только пока считает.
-## Масштабирования до нуля в кластере нет, поэтому «вхолостую не тратим» —
-## это именно `job`.
+## @param {string} mode=job - How the environment runs.
+## `service`: a permanently running environment reachable over HTTP (REPL, notebook, IDE).
+## `job`: a one-off run; the environment lives only while it computes.
+## The cluster has no scale-to-zero, so "spend nothing while idle" means
+## exactly `job`.
 ## @x-cozystack-options {enum: [service, job]}
 mode: job
 
 ##
-## @section Что запускать
+## @section What to run
 ##
 
-## @param {[]string} command - Точка входа. Пусто — команда из образа.
+## @param {[]string} command - Entry point. Empty means the image command.
 command: []
 
-## @param {[]string} args - Аргументы к ней.
+## @param {[]string} args - Its arguments.
 args: []
 
-## @typedef {struct} SourceFile - Один файл исходников.
-## @field {string} path - Имя файла внутри рабочего каталога.
-## @field {string} content - Текст файла.
+## @typedef {struct} SourceFile - One source file.
+## @field {string} path - File name inside the working directory.
+## @field {string} content - File text.
 
-## @param {[]SourceFile} program - Исходники. Кладутся в srcdir только на
-## чтение. Имена плоские: каталогов внутри нет.
+## @param {[]SourceFile} program - Sources. Placed into srcdir read-only.
+## Names are flat: there are no directories inside.
 program: []
 
-## @param {string} srcdir=/src - Куда монтируются исходники. Только чтение:
-## это ConfigMap. Копировать их себе — дело самого образа.
+## @param {string} srcdir=/src - Where the sources are mounted. Read-only:
+## it is a ConfigMap. Copying them elsewhere is the image's own business.
 srcdir: /src
 
-## @param {string} workdir=/work - Рабочий каталог. Пустой том на запись:
-## сюда язык складывает то, что произвёл.
+## @param {string} workdir=/work - Working directory. An empty writable volume:
+## the language puts whatever it produces here.
 workdir: /work
 
 ##
-## @section Ресурсы и доступ
+## @section Resources and access
 ##
 
-## @param {int} replicas=1 - Реплик в режиме service.
+## @param {int} replicas=1 - Replicas in service mode.
 replicas: 1
 
-## @param {int} port=8080 - Порт, который слушает среда в режиме service.
+## @param {int} port=8080 - Port the environment listens on in service mode.
 port: 8080
 
-## @param {string} [host] - Внешнее имя для режима service.
+## @param {string} [host] - External host name for service mode.
 host: ""
 
-## @param {string} [ingressClassName] - Класс ingress.
+## @param {string} [ingressClassName] - Ingress class.
 ingressClassName: ""
 
-## @typedef {struct} Resources - Запрос ресурсов.
+## @typedef {struct} Resources - Resource request.
 ## @field {string} cpu
 ## @field {string} memory
 
-## @param {Resources} resources - Сколько давать окружению.
+## @param {Resources} resources - How much to give the environment.
 resources:
   cpu: "500m"
   memory: "512Mi"
 
-## @param {int} backoffLimit=1 - Сколько раз повторять упавший разовый прогон.
+## @param {int} backoffLimit=1 - How many times to retry a failed one-off run.
 backoffLimit: 1

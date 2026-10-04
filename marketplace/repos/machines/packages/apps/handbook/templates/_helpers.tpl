@@ -27,7 +27,7 @@ li{margin:.4rem 0}
 {{- $page := .page -}}
 <!doctype html><meta charset="utf-8"><title>{{ $page.title | html }}</title>
 <style>{{ include "handbook.style" .root }}</style>
-<p><a href="index.html">&larr; оглавление</a></p>
+<p><a href="index.html">&larr; contents</a></p>
 <h1>{{ $page.title | html }}</h1>
 <pre>{{ $page.body | html }}</pre>
 {{- end }}

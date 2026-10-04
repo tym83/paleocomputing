@@ -1,7 +1,7 @@
 name: paleocomputing-images
 ociRef: oci://ghcr.io/tym83/paleocomputing/images
 version: v0.1.17
-description: Загрузочные образы машин для KubeVirt, включая образы с эмуляторами внутри
+description: Boot images of machines for KubeVirt, including images with emulators inside
 homepage: https://github.com/tym83/paleocomputing
 maintainer: tym83
 tags:

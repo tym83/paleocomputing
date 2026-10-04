@@ -1,17 +1,17 @@
 #!/bin/sh
-# Промежуточная копия репозиториев каталога — с разыменованными ссылками.
+# Staging copy of the catalog repositories, with symlinks dereferenced.
 #
-# Библиотека машин подключается к приложению символьной ссылкой
-# (charts/retro-machine -> ../../../library/retro-machine), как cozy-lib у
-# самого Cozystack. Но `flux push artifact` ссылки в архив не кладёт, а
-# распаковщик каталога в кластере их пропускает (tapmaterializer_artifact.go:
-# «an app artifact needs only files»). Опубликованный как есть, чарт приехал
-# бы в кластер без библиотеки и без перехватчика. Поэтому публикуется копия,
-# где на месте ссылок лежат сами файлы.
+# The machine library is attached to an application by a symlink
+# (charts/retro-machine -> ../../../library/retro-machine), like cozy-lib in
+# Cozystack itself. But `flux push artifact` does not put symlinks into the
+# archive, and the catalog unpacker in the cluster skips them
+# (tapmaterializer_artifact.go: "an app artifact needs only files"). Published
+# as is, the chart would reach the cluster without the library and without the
+# hook. So a copy is published where the files themselves replace the links.
 #
-#   stage.sh <каталог-назначения> [репозиторий...]   (по умолчанию — все)
+#   stage.sh <destination-dir> [repository...]   (all by default)
 set -eu
-out=${1:?укажите каталог назначения}; shift
+out=${1:?specify the destination directory}; shift
 root=$(cd "$(dirname "$0")/.." && pwd)
 [ $# -gt 0 ] || set -- $(cd "$root/repos" && ls)
 mkdir -p "$out"

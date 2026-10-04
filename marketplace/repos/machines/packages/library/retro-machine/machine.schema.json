@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "Паспорт машины",
-  "description": "Всё, чем одна машина отличается от другой: архитектура, файлы, варианты железа. Лежит файлом machine.yaml в чарте машины и доходит до перехватчика аннотацией paleocomputing.io/machine. Корень закрыт: паспорт — не values, движок Cozystack сюда ничего не подмешивает, и лишнее поле почти всегда опечатка.",
+  "title": "Machine passport",
+  "description": "Everything that sets one machine apart from another: architecture, files, hardware variants. It lives as the machine.yaml file in the machine chart and reaches the hook via the paleocomputing.io/machine annotation. The root is closed: the passport is not values, the Cozystack engine injects nothing here, and an extra field is almost always a typo.",
   "type": "object",
   "additionalProperties": false,
   "required": ["apiVersion", "kind", "name", "image", "domain", "payload", "variants", "defaultVariant", "memory"],
@@ -9,12 +9,12 @@
     "apiVersion": { "const": "paleocomputing.io/v1alpha1" },
     "kind": { "const": "Machine" },
     "name": {
-      "description": "Короткое имя машины.",
+      "description": "Short machine name.",
       "type": "string",
       "pattern": "^[a-z][a-z0-9-]*$"
     },
     "image": {
-      "description": "Образ, который несёт файлы машины (ПЗУ, диск). Эмулятор в нём не нужен: он живёт в образе virt-launcher.",
+      "description": "Image that carries the machine files (ROM, disk). The emulator is not needed in it: it lives in the virt-launcher image.",
       "type": "string",
       "pattern": "^[a-z0-9.-]+(:[0-9]+)?/[a-z0-9._/-]+(:[A-Za-z0-9._-]+)?(@sha256:[0-9a-f]{64})?$"
     },
@@ -24,31 +24,31 @@
       "required": ["arch", "machine", "emulator", "vcpus", "graphics", "terminationGracePeriodSeconds"],
       "properties": {
         "arch": {
-          "description": "Архитектура, как её знает libvirt (os/type@arch). Должна быть вкомпилирована в libvirt образа virt-launcher.",
+          "description": "Architecture as libvirt knows it (os/type@arch). Must be compiled into the libvirt of the virt-launcher image.",
           "type": "string",
           "pattern": "^[a-z0-9][a-z0-9_.-]*$"
         },
         "machine": {
-          "description": "Тип машины QEMU (os/type@machine).",
+          "description": "QEMU machine type (os/type@machine).",
           "type": "string",
           "pattern": "^[a-z0-9][a-z0-9_.-]*$"
         },
         "emulator": {
-          "description": "Путь к эмулятору ВНУТРИ образа virt-launcher.",
+          "description": "Path to the emulator INSIDE the virt-launcher image.",
           "type": "string",
           "pattern": "^/[A-Za-z0-9/._-]+$"
         },
         "vcpus": {
-          "description": "Число процессоров машины. libvirt отвергает больше, чем умеет машина.",
+          "description": "Number of machine CPUs. libvirt rejects more than the machine supports.",
           "type": "integer",
           "minimum": 1
         },
         "graphics": {
-          "description": "vnc — экран виден в консоли KubeVirt и через virtctl vnc; none — машина без экрана.",
+          "description": "vnc: the screen is visible in the KubeVirt console and via virtctl vnc; none: a machine without a screen.",
           "enum": ["vnc", "none"]
         },
         "terminationGracePeriodSeconds": {
-          "description": "Сколько KubeVirt ждёт, пока машина выключится сама. У машины без ACPI просьбу выключиться услышать некому — 0 значит «гасить сразу».",
+          "description": "How long KubeVirt waits for the machine to shut down by itself. A machine without ACPI has nobody to hear a shutdown request; 0 means \"power off at once\".",
           "type": "integer",
           "minimum": 0
         }
@@ -60,7 +60,7 @@
       "required": ["path", "files"],
       "properties": {
         "path": {
-          "description": "Куда монтируется том с файлами — и в перехватчик, и в контейнер с libvirt.",
+          "description": "Where the volume with the files is mounted, both in the hook and in the libvirt container.",
           "type": "string",
           "pattern": "^/[A-Za-z0-9/._-]+$"
         },
@@ -73,12 +73,12 @@
             "required": ["name", "from", "role", "qemu"],
             "properties": {
               "name": {
-                "description": "Имя файла на томе, без каталогов.",
+                "description": "File name on the volume, without directories.",
                 "type": "string",
                 "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
               },
               "from": {
-                "description": "Путь к файлу внутри image.",
+                "description": "Path to the file inside image.",
                 "type": "string",
                 "pattern": "^/[A-Za-z0-9/._-]+$"
               },
@@ -88,11 +88,11 @@
                 "minimum": 1
               },
               "role": {
-                "description": "firmware — переписывается из образа при каждой установке и обновлении; disk — данные пользователя, кладётся только если файла нет или он пуст.",
+                "description": "firmware: rewritten from the image on every install and update; disk: user data, placed only if the file is missing or empty.",
                 "enum": ["firmware", "disk"]
               },
               "qemu": {
-                "description": "Аргументы эмулятора для этого файла; {path} заменяется полным путём на томе.",
+                "description": "Emulator arguments for this file; {path} is replaced with the full path on the volume.",
                 "type": "array",
                 "minItems": 1,
                 "items": { "type": "string", "minLength": 1 },
@@ -104,7 +104,7 @@
       }
     },
     "variants": {
-      "description": "Варианты железа: имя → свойства -machine. Пустой объект — машина как есть.",
+      "description": "Hardware variants: name → -machine properties. An empty object means the machine as is.",
       "type": "object",
       "minProperties": 1,
       "propertyNames": { "pattern": "^[a-z][a-z0-9-]*$" },
@@ -119,12 +119,12 @@
       "pattern": "^[a-z][a-z0-9-]*$"
     },
     "variant": {
-      "description": "Выбранный вариант. В паспорте чарта его нет — его дописывает библиотека в аннотацию из значения hardware.",
+      "description": "The selected variant. It is not in the chart passport: the library adds it to the annotation from the hardware value.",
       "type": "string",
       "pattern": "^[a-z][a-z0-9-]*$"
     },
     "memory": {
-      "description": "Память машины в KubeVirt: умолчание и пределы. Только Mi и Gi — библиотека сравнивает их при отрисовке.",
+      "description": "Machine memory in KubeVirt: default and limits. Only Mi and Gi: the library compares them at render time.",
       "type": "object",
       "additionalProperties": false,
       "required": ["default", "min", "max"],

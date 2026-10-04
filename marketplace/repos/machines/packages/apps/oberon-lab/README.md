@@ -1,36 +1,37 @@
+[Русская версия](README.ru.md)
+
 # oberon-lab
 
-Система Оберон 1986 года на настоящем Verilog Никлауса Вирта — интерактивные
-лабораторные и методичка, плюс прогон лабораторных, которым нужен
-инструментарий.
+The 1986 Oberon system on Niklaus Wirth's real Verilog: interactive labs and a
+manual, plus runs of the labs that need a toolchain.
 
-Приложение состоит из двух частей, и каждая включается отдельно.
+The application consists of two parts, and each is enabled separately.
 
-**Веб-часть** (`web: true`) раздаёт девять браузерных лабораторных и методичку
-из восьми глав. Процессор собран в WASM, сервер отдаёт статику — ни симулятора,
-ни компилятора на стороне кластера не нужно.
+**The web part** (`web: true`) serves nine browser labs and an eight-chapter
+manual. The CPU is compiled to WASM and the server serves static files: no
+simulator or compiler is needed on the cluster side.
 
-**Прогон на инструментарии** (`runner: true`) — разовое задание. Учащийся даёт
-правку (описание процессора, тест, модуль компилятора), задание накладывает её
-на дерево проекта, собирает и возвращает вердикт. В браузере такое невозможно:
-нужен Verilator и пересборка.
+**A toolchain run** (`runner: true`) is a one-off job. The learner supplies a
+change (a CPU description, a test, a compiler module); the job applies it to
+the project tree, builds it and returns a verdict. This is impossible in the
+browser: it needs Verilator and a rebuild.
 
-## Параметры
+## Parameters
 
-| параметр | по умолчанию | что делает |
+| parameter | default | what it does |
 |----------|--------------|-----------|
-| `web` | `true` | раздавать лабораторные и методичку |
-| `replicas` | `1` | число реплик веб-части |
-| `host` | `""` | внешнее имя; пусто — без Ingress |
-| `ingressClassName` | `""` | класс Ingress; пусто — умолчание кластера |
-| `runner` | `false` | запустить лабораторную заданием |
-| `task` | `isa` | какую: `isa`, `compiler` или `check` |
-| `patch` | `[]` | файлы правки: `path` и `content` |
-| `images.web` | — | образ статики |
-| `images.runner` | — | образ с Verilator и сборкой |
-| `runnerResources` | `2` / `2Gi` | ресурсы задания |
+| `web` | `true` | serve the labs and the manual |
+| `replicas` | `1` | number of web replicas |
+| `host` | `""` | external host name; empty means no Ingress |
+| `ingressClassName` | `""` | Ingress class; empty means the cluster default |
+| `runner` | `false` | run a lab as a job |
+| `task` | `isa` | which one: `isa`, `compiler` or `check` |
+| `patch` | `[]` | change files: `path` and `content` |
+| `images.web` | — | static files image |
+| `images.runner` | — | image with Verilator and the build |
+| `runnerResources` | `2` / `2Gi` | job resources |
 
-## Пример: своя команда в процессоре
+## Example: your own CPU instruction
 
 ```yaml
 runner: true
@@ -38,18 +39,19 @@ task: isa
 patch:
   - path: rtl/RISC5.v
     content: |
-      ...изменённое описание процессора...
+      ...modified CPU description...
   - path: tests/t1_mine.s
     content: |
-      ; проверка новой команды
+      ; test of the new instruction
       ...
 ```
 
-Задание соберёт ядро и прогонит 298 направленных проверок, перебор
-кодирования и эквивалентность декодера. Ненулевой код возврата означает, что
-правка что-то сломала.
+The job builds the core and runs 298 directed tests, an encoding sweep and the
+decoder equivalence check. A non-zero exit code means the change broke
+something.
 
-## Чего здесь нет
+## What is not here
 
-Образы не опубликованы: в `images` намеренно стоит `ghcr.io/tym83/paleocomputing/`,
-чтобы чарт нельзя было применить не глядя. Подставьте свой реестр.
+The images are not published: `images` intentionally points to
+`ghcr.io/tym83/paleocomputing/` so that the chart cannot be applied blindly.
+Substitute your own registry.

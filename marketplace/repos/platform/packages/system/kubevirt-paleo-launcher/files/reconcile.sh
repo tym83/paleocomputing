@@ -1,57 +1,57 @@
 #!/bin/sh
-# Держит virt-launcher кластера в паре с версией KubeVirt.
+# Keeps the cluster's virt-launcher paired with the KubeVirt version.
 #
-#   reconcile.sh loop        цикл: раз в INTERVAL секунд — once
-#   reconcile.sh once        один проход
-#   reconcile.sh uninstall   остановить цикл и убрать свою правку (хук pre-delete)
+#   reconcile.sh loop        loop: once every INTERVAL seconds
+#   reconcile.sh once        a single pass
+#   reconcile.sh uninstall   stop the loop and remove our patch (pre-delete hook)
 #
-# Что делает проход. Читает ресурс KubeVirt и развёртывание virt-controller,
-# ищет версию KubeVirt в таблице этого выпуска (files/launchers.txt, собрана из
-# kubevirt/versions.txt) и приводит СВОЮ запись в spec.customizeComponents.patches
-# к нужной:
+# What a pass does. It reads the KubeVirt resource and the virt-controller
+# Deployment, looks up the KubeVirt version in this release's table
+# (files/launchers.txt, built from kubevirt/versions.txt) and brings OUR entry in
+# spec.customizeComponents.patches to the desired form:
 #
-#   версия есть в таблице  → запись есть и ставит образ launcher этой версии;
-#   версии нет в таблице   → записи нет: штатный launcher, чужие машины не
-#                            стартуют, все остальные работают;
-#   смена образа при включённом в KubeVirt автопереводе машин
-#   (workloadUpdateMethods не пуст) без явного согласия → записи не ставим и
-#   не меняем, состояние NeedsConsent: KubeVirt перевёз бы на новый launcher
-#   ВСЕ виртуалки кластера (находка 49). Согласие — ALLOW_WORKLOAD_UPDATE=true
-#   (значение чарта allowWorkloadUpdate) или аннотация
-#   paleocomputing.io/allow-workload-update=true на ресурсе KubeVirt. Снятие
-#   своей записи согласия не ждёт: оно возвращает штатный launcher;
-#   узел с виртуалками той архитектуры, под которую образа нет (строка
-#   `# arch:` таблицы), → записи нет: наш образ заменяет launcher ВСЕМ
-#                            виртуалкам, и на таком узле не запустилась бы ни
-#                            одна. Без строки `# arch:` узлы не сверяются;
-#   хоть что-то сомнительно → записи нет (штатный launcher — безопасная сторона);
-#   не удалось прочитать   → ничего не пишется вовсе.
+#   version in the table     → the entry exists and sets that version's launcher image;
+#   version not in the table → no entry: stock launcher, foreign machines do not
+#                              start, everything else works;
+#   an image change while KubeVirt has automatic workload updates enabled
+#   (workloadUpdateMethods not empty) without explicit consent → we neither set
+#   nor change the entry, state NeedsConsent: KubeVirt would move ALL virtual
+#   machines of the cluster onto the new launcher (finding 49). Consent is
+#   ALLOW_WORKLOAD_UPDATE=true (chart value allowWorkloadUpdate) or the annotation
+#   paleocomputing.io/allow-workload-update=true on the KubeVirt resource.
+#   Removing our entry does not wait for consent: it restores the stock launcher;
+#   a node running VMs of an architecture the image is not built for (the
+#   table's `# arch:` line) → no entry: our image replaces the launcher for ALL
+#                              VMs, and not a single one would start on such a
+#                              node. Without the `# arch:` line nodes are not checked;
+#   anything doubtful        → no entry (the stock launcher is the safe side);
+#   failed to read           → nothing is written at all.
 #
-# Своя запись — ровно такой формы (JSON Patch из трёх операций):
+# Our entry has exactly this form (a JSON Patch of three operations):
 #
 #   test    /spec/template/spec/containers/0/name    == virt-controller
 #   test    /spec/template/spec/containers/0/args/0  == --launcher-image
-#   replace /spec/template/spec/containers/0/args/1  := <образ launcher>
+#   replace /spec/template/spec/containers/0/args/1  := <launcher image>
 #
-# Меняется ОДИН элемент списка аргументов — значение после --launcher-image;
-# прочие аргументы (образ экспорта, порт, уровень журнала) остаются теми, что
-# собрал virt-operator. virt-operator строит этот список в коде
-# (components/deployments.go: args[0] = "--launcher-image", args[1] = образ) —
-# так в 1.8.4 и в 1.9.0. Если раскладка когда-нибудь поменяется, test не
-# пройдёт, и virt-operator откажется применять правки громко, а не подставит
-# образ launcher на место чужого аргумента. Чтобы до этого не доходило, проход
-# сам сверяет раскладку у живого virt-controller и при расхождении убирает
-# запись.
+# ONE element of the argument list changes: the value after --launcher-image;
+# the other arguments (export image, port, log level) stay as virt-operator
+# built them. virt-operator builds this list in code
+# (components/deployments.go: args[0] = "--launcher-image", args[1] = image),
+# both in 1.8.4 and in 1.9.0. If the layout ever changes, the test op fails and
+# virt-operator refuses to apply the patches loudly, instead of putting the
+# launcher image in place of some other argument. To avoid getting there, the
+# pass itself checks the layout of the live virt-controller and removes the
+# entry on a mismatch.
 #
-# Список customizeComponents.patches в CRD атомарный (listType=atomic): отдельной
-# записи у него нет владельца, и server-side apply здесь не помогает — он забрал
-# бы весь список. Поэтому запись пишется чтением-изменением-записью с
-# предусловием на resourceVersion: если ресурс изменился между чтением и
-# записью, API вернёт конфликт, и проход повторится на свежем чтении. Чужие
-# записи сохраняются как были и в том же порядке.
+# The customizeComponents.patches list in the CRD is atomic (listType=atomic): a
+# single entry has no owner, and server-side apply does not help here: it would
+# take over the whole list. So the entry is written by read-modify-write with a
+# resourceVersion precondition: if the resource changed between read and write,
+# the API returns a conflict and the pass is repeated on a fresh read. Other
+# entries are kept as they were and in the same order.
 #
-# Пишет только когда нужно: если нужное уже стоит, ни ресурс KubeVirt, ни
-# ConfigMap состояния не трогаются.
+# It writes only when needed: if the desired state is already in place, neither
+# the KubeVirt resource nor the status ConfigMap is touched.
 set -u
 
 NS=${KUBEVIRT_NAMESPACE:-cozy-kubevirt}
@@ -62,7 +62,7 @@ STATUS=${STATUS_CONFIGMAP:-kubevirt-paleo-launcher-status}
 INTERVAL=${INTERVAL:-30}
 ALLOW_WORKLOAD_UPDATE=${ALLOW_WORKLOAD_UPDATE:-false}
 KUBECTL=${KUBECTL:-kubectl}
-# Для uninstall: своё развёртывание и выборка его подов.
+# For uninstall: our own Deployment and the selector of its pods.
 SELF_DEPLOYMENT=${SELF_DEPLOYMENT:-}
 SELF_SELECTOR=${SELF_SELECTOR:-}
 STOP_TIMEOUT=${STOP_TIMEOUT:-60}
@@ -73,7 +73,7 @@ log() {
   printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"
 }
 
-# Одна и та же строка раз в тридцать секунд журнал не украшает.
+# The same line every thirty seconds does not improve the log.
 log_once() {
   [ "$*" = "$last_log" ] && return 0
   last_log=$*
@@ -84,12 +84,12 @@ k() {
   "$KUBECTL" -n "$NS" "$@"
 }
 
-# ── Решение ─────────────────────────────────────────────────────────────────
+# ── Decision ────────────────────────────────────────────────────────────────
 #
-# Вход: ресурс KubeVirt (stdin), развёртывание virt-controller ($vc),
-# архитектуры узлов, где KubeVirt запускает виртуалки ($node_archs — список
-# строк), таблица ($table), режим ($mode: reconcile | uninstall).
-# Выход: {action: write|none, state, reason, version, image, patches, rv}.
+# Input: the KubeVirt resource (stdin), the virt-controller Deployment ($vc),
+# architectures of the nodes where KubeVirt runs VMs ($node_archs, a list of
+# strings), the table ($table), the mode ($mode: reconcile | uninstall).
+# Output: {action: write|none, state, reason, version, image, patches, rv}.
 DECIDE='
 def shape: [
   {op: "test",    path: "/spec/template/spec/containers/0/name"},
@@ -110,8 +110,9 @@ def entry($img): {
     {op: "test",    path: "/spec/template/spec/containers/0/name",   value: "virt-controller"},
     {op: "test",    path: "/spec/template/spec/containers/0/args/0", value: "--launcher-image"},
     {op: "replace", path: "/spec/template/spec/containers/0/args/1", value: $img}] | tojson)};
-# Чужая правка, которая тоже трогает образ launcher: прежняя ручная замена всего
-# списка аргументов, strategic/merge с args/command, что угодно с launcher-image.
+# A foreign patch that also touches the launcher image: an earlier manual
+# replacement of the whole argument list, strategic/merge with args/command,
+# anything mentioning launcher-image.
 def hits_ctrl:
   ((.resourceName // "" | ascii_downcase) as $n | $n == "virt-controller" or $n == "*")
   and ((.resourceType // "" | ascii_downcase) as $t | $t == "deployment" or $t == "*");
@@ -139,7 +140,7 @@ def tag_of:
 | .metadata.resourceVersion as $rv
 | .spec.customizeComponents.patches as $raw
 | if $raw != null and ($raw | type) != "array" then
-    {action: "none", state: "Unknown", reason: "spec.customizeComponents.patches — не список"}
+    {action: "none", state: "Unknown", reason: "spec.customizeComponents.patches is not a list"}
   else
   ($raw // []) as $patches
   | [$patches[] | select(is_ours)] as $mine
@@ -156,33 +157,33 @@ def tag_of:
   | ($vc.metadata.annotations["kubevirt.io/install-strategy-version"]) as $vcver
   | (($vc.spec.template.spec.containers // [])[0] // {}) as $c
   | ($c.image // "" | tag_of) as $vctag
-  | [ (if .metadata.deletionTimestamp then "ресурс KubeVirt удаляется" else empty end),
-      (if ($obs | semver) | not then "нет status.observedKubeVirtVersion" else empty end),
-      (if ($tgt | semver) | not then "нет status.targetKubeVirtVersion" else empty end),
+  | [ (if .metadata.deletionTimestamp then "the KubeVirt resource is being deleted" else empty end),
+      (if ($obs | semver) | not then "no status.observedKubeVirtVersion" else empty end),
+      (if ($tgt | semver) | not then "no status.targetKubeVirtVersion" else empty end),
       (if ($obs | semver) and ($tgt | semver) and $tgt != $obs
-       then "KubeVirt обновляется: \($obs) → \($tgt)" else empty end),
+       then "KubeVirt is updating: \($obs) → \($tgt)" else empty end),
       (if ($obs | semver) and $vcver != $obs
-       then "virt-controller помечен версией \($vcver // "—"), а KubeVirt — \($obs)" else empty end),
+       then "virt-controller is labeled with version \($vcver // "—"), but KubeVirt is \($obs)" else empty end),
       (if ($obs | semver) and $vctag != null and $vctag != $obs
-       then "образ virt-controller с тегом \($vctag), а KubeVirt — \($obs)" else empty end),
+       then "the virt-controller image has tag \($vctag), but KubeVirt is \($obs)" else empty end),
       (if $c.name != "virt-controller" or (($c.args // [])[0]) != "--launcher-image"
-       then "у virt-controller args[0] не --launcher-image — правка рассчитана на другую раскладку"
+       then "virt-controller args[0] is not --launcher-image; the patch expects a different layout"
        else empty end),
-      (if $table_ok | not then "таблица версий испорчена" else empty end)
+      (if $table_ok | not then "the version table is corrupted" else empty end)
     ] as $doubts
   | def away($state; $reason):
       if ($mine | length) > 0
       then {action: "write", state: $state, reason: $reason, patches: $others}
       else {action: "none", state: $state, reason: $reason} end;
-    (if $mode == "uninstall" then away("Removed"; "компонент удаляется")
+    (if $mode == "uninstall" then away("Removed"; "the component is being removed")
      elif ($doubts | length) > 0 then away("Doubt"; $doubts | join("; "))
      elif ($alien | length) > 0 then
-       away("Unsupported"; "узлы с архитектурой \($alien | join(", ")): образ launcher собран только под \($archs | join(", ")) — штатный launcher")
+       away("Unsupported"; "nodes with architecture \($alien | join(", ")): the launcher image is built only for \($archs | join(", ")); using the stock launcher")
      elif $tbl[$obs] == null then
-       away("Unsupported"; "KubeVirt \($obs) нет в таблице этого выпуска (\($tbl | keys | join(", "))) — штатный launcher")
+       away("Unsupported"; "KubeVirt \($obs) is not in the table of this release (\($tbl | keys | join(", "))); using the stock launcher")
      elif ($foreign | length) > 0 then
        {action: "none", state: "Conflict",
-        reason: "образ launcher уже меняет чужая правка virt-controller — уберите её, эта её не перебивает"}
+        reason: "another virt-controller patch already changes the launcher image; remove it, this one does not override it"}
      else
        $tbl[$obs] as $img
        | if ($mine | length) == 1 and ($mine[0] | ops[2].value) == $img then
@@ -192,18 +193,18 @@ def tag_of:
                  and ($vc.status.updatedReplicas // 0) == $want
                  and ($vc.status.readyReplicas // 0) == $want
                  and ($vc.status.replicas // 0) == $want
-              then {action: "none", state: "Applied", reason: "launcher совпадает с KubeVirt"}
-              else {action: "none", state: "Rolling", reason: "правка стоит, virt-controller ещё не перекатился"} end)
+              then {action: "none", state: "Applied", reason: "launcher matches KubeVirt"}
+              else {action: "none", state: "Rolling", reason: "patch is in place, virt-controller has not rolled out yet"} end)
          else
            ($patches | map(is_ours) | index(true)) as $i
            | ((($mine | length) == 0) or (($mine[0] | ops[2].value) != $img)) as $switch
            | if $switch and ($consent | not) then
                {action: "none", state: "NeedsConsent",
-                reason: ("смена launcher перевезёт все виртуалки кластера (workloadUpdateMethods: \($wum | join(", "))) — "
-                         + "разрешите явно: allowWorkloadUpdate: true в значениях компонента или аннотация "
-                         + "paleocomputing.io/allow-workload-update=true на ресурсе KubeVirt, либо очистите workloadUpdateMethods")}
+                reason: ("changing the launcher will move all virtual machines of the cluster (workloadUpdateMethods: \($wum | join(", "))); "
+                         + "allow it explicitly: allowWorkloadUpdate: true in the component values or the annotation "
+                         + "paleocomputing.io/allow-workload-update=true on the KubeVirt resource, or clear workloadUpdateMethods")}
              else
-               {action: "write", state: "Applying", reason: "ставлю launcher для KubeVirt \($obs)",
+               {action: "write", state: "Applying", reason: "setting the launcher for KubeVirt \($obs)",
                 patches: (if $i == null then $patches + [entry($img)]
                           else [$patches | to_entries[]
                                 | if (.value | is_ours)
@@ -223,37 +224,37 @@ decide() {  # kv vc node_archs mode
     --rawfile table "$TABLE" "$DECIDE"
 }
 
-# Узлы, на которых KubeVirt запускает виртуалки (их метит virt-handler). Нужны,
-# только если таблица говорит, под какие процессоры собран образ.
+# Nodes on which KubeVirt runs VMs (virt-handler labels them). Needed only if
+# the table says which CPUs the image is built for.
 #
-# ⚠ Наружу — только список архитектур, не сами узлы. Объекты узлов на живом
-# кластере огромные (списки образов, статусы), и переданные в jq аргументом
-# они не влезали в предел длины командной строки: «Argument list too long»,
-# решение не вычислялось, и компонент стоял. Поддельный API в тестах отдавал
-# крошечные узлы — нашлось только проверкой в песочнице.
+# ⚠ Only the list of architectures goes out, not the nodes themselves. Node
+# objects on a live cluster are huge (image lists, statuses), and passed to jq
+# as an argument they exceeded the command line length limit: "Argument list
+# too long", the decision was not computed, and the component stalled. The fake
+# API in the tests returned tiny nodes; it was found only by the sandbox check.
 node_archs() {
   grep -q '^# arch:' "$TABLE" 2>/dev/null || { echo '[]'; return 0; }
   f=$(mktemp) || return 1
   if ! "$KUBECTL" get nodes -l kubevirt.io/schedulable=true -o json > "$f"; then
     rm -f "$f"; return 1
   fi
-  jq -c '[.items[]? | .metadata.labels["kubernetes.io/arch"] // "неизвестная"]' "$f"
+  jq -c '[.items[]? | .metadata.labels["kubernetes.io/arch"] // "unknown"]' "$f"
   rc=$?; rm -f "$f"; return $rc
 }
 
-# Запись с предусловием на resourceVersion: конфликт — не ошибка, а повод
-# перечитать. null в merge patch убирает ключ, пустой список не оставляем.
+# A write with a resourceVersion precondition: a conflict is not an error but a
+# reason to re-read. null in a merge patch removes the key; we never leave an empty list.
 write_patches() {  # decision
   body=$(printf '%s' "$1" | jq -c '{metadata: {resourceVersion: .rv},
     spec: {customizeComponents: {patches: (if (.patches | length) == 0 then null else .patches end)}}}')
   k patch kubevirt "$KV" --type=merge -p "$body" >/dev/null
 }
 
-# Состояние — в своём ConfigMap. Пишется только при изменении; при смене
-# состояния — ещё и событие на ресурсе KubeVirt.
+# Status lives in our own ConfigMap. It is written only on change; on a state
+# change an event on the KubeVirt resource is emitted as well.
 publish_status() {  # decision kv
   d=$1
-  cur=$(k get configmap "$STATUS" -o json 2>/dev/null) || { log "не прочитан ConfigMap $STATUS — состояние не записано"; return 0; }
+  cur=$(k get configmap "$STATUS" -o json 2>/dev/null) || { log "could not read ConfigMap $STATUS; status not written"; return 0; }
   want=$(printf '%s' "$d" | jq -c '{state, reason, kubevirtVersion: (.version // ""), launcherImage: (.image // "")}')
   have=$(printf '%s' "$cur" | jq -c '.data // {} | {state, reason, kubevirtVersion, launcherImage}
                                        | with_entries(.value //= "")')
@@ -261,7 +262,7 @@ publish_status() {  # decision kv
   [ "$want_cmp" = "$have" ] && return 0
   patch=$(printf '%s' "$want" | jq -c --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '{data: (. + {updated: $ts})}')
   k patch configmap "$STATUS" --type=merge -p "$patch" >/dev/null \
-    || { log "не записано состояние в $STATUS"; return 0; }
+    || { log "failed to write status to $STATUS"; return 0; }
   old_state=$(printf '%s' "$cur" | jq -r '.data.state // ""')
   new_state=$(printf '%s' "$d" | jq -r .state)
   [ "$old_state" = "$new_state" ] || emit_event "$d" "$2"
@@ -278,44 +279,44 @@ emit_event() {  # decision kv
      type: (if (.state | IN("Applied", "Applying", "Rolling", "Removed")) then "Normal" else "Warning" end),
      source: {component: "kubevirt-paleo-launcher"},
      firstTimestamp: $ts, lastTimestamp: $ts, count: 1}' \
-  | k create -f - >/dev/null 2>&1 || log "событие не записано"
+  | k create -f - >/dev/null 2>&1 || log "event not written"
 }
 
-# ── Проход ──────────────────────────────────────────────────────────────────
+# ── Pass ────────────────────────────────────────────────────────────────────
 once() {  # mode
   mode=${1:-reconcile}
   kv=$(k get kubevirt "$KV" --ignore-not-found -o json) \
-    || { log_once "Unknown: ресурс KubeVirt $NS/$KV не прочитан — ничего не пишу"; return 1; }
+    || { log_once "Unknown: could not read KubeVirt resource $NS/$KV; writing nothing"; return 1; }
   if [ -z "$kv" ]; then
-    [ "$mode" = uninstall ] && { log "ресурса KubeVirt $NS/$KV нет — убирать нечего"; return 0; }
-    log_once "Unknown: ресурса KubeVirt $NS/$KV нет — ничего не пишу"; return 1
+    [ "$mode" = uninstall ] && { log "KubeVirt resource $NS/$KV does not exist; nothing to remove"; return 0; }
+    log_once "Unknown: KubeVirt resource $NS/$KV does not exist; writing nothing"; return 1
   fi
-  # При удалении virt-controller не нужен: своя запись убирается при любом его
-  # состоянии.
+  # On uninstall virt-controller is not needed: our entry is removed whatever
+  # its state.
   if ! vc=$(k get deployment "$CTRL" -o json); then
-    [ "$mode" = uninstall ] || { log_once "Unknown: $NS/$CTRL не прочитан — ничего не пишу"; return 1; }
+    [ "$mode" = uninstall ] || { log_once "Unknown: could not read $NS/$CTRL; writing nothing"; return 1; }
     vc='{}'
   fi
-  # При удалении узлы не нужны: своя запись убирается на любом кластере.
+  # On uninstall nodes are not needed: our entry is removed on any cluster.
   if [ "$mode" = uninstall ]; then
     nodes='[]'
   elif ! nodes=$(node_archs); then
-    log_once "Unknown: узлы не прочитаны — ничего не пишу"; return 1
+    log_once "Unknown: could not read nodes; writing nothing"; return 1
   fi
-  d=$(decide "$kv" "$vc" "$nodes" "$mode") || { log_once "Unknown: решение не вычислено (ответ API не разобран) — ничего не пишу"; return 1; }
+  d=$(decide "$kv" "$vc" "$nodes" "$mode") || { log_once "Unknown: decision not computed (API response not parsed); writing nothing"; return 1; }
   state=$(printf '%s' "$d" | jq -r .state)
   reason=$(printf '%s' "$d" | jq -r .reason)
   if [ "$(printf '%s' "$d" | jq -r .action)" = write ]; then
     if write_patches "$d"; then
-      log "$state: $reason — правка ресурса KubeVirt записана"
+      log "$state: $reason; KubeVirt resource patch written"
       if [ "$state" = Applying ]; then
-        # ⚠ Находка 58: пока старый virt-controller держит аренду лидера, поды
-        # машин создаёт он — со старым образом. Машины, запущенные в это окно,
-        # надо пересоздать.
-        log "virt-controller перекатится; машины, запущенные до того, как новый возьмёт аренду лидера, могут получить прежний launcher — пересоздайте их"
+        # ⚠ Finding 58: while the old virt-controller holds the leader lease, it
+        # creates the machine pods, with the old image. Machines started in this
+        # window have to be recreated.
+        log "virt-controller will roll out; machines started before the new one takes the leader lease may get the previous launcher: recreate them"
       fi
     else
-      log "конфликт или отказ при записи ресурса KubeVirt — повторю на свежем чтении"
+      log "conflict or refusal writing the KubeVirt resource; will retry on a fresh read"
       return 1
     fi
   else
@@ -326,11 +327,11 @@ once() {  # mode
 }
 
 uninstall() {
-  # Сначала остановить цикл: иначе он вернул бы правку в промежутке между
-  # этим хуком и удалением развёртывания.
+  # Stop the loop first: otherwise it would restore the patch between this
+  # hook and the Deployment deletion.
   if [ -n "$SELF_DEPLOYMENT" ]; then
     k scale deployment "$SELF_DEPLOYMENT" --replicas=0 >/dev/null \
-      || log "не удалось остановить $SELF_DEPLOYMENT — убираю правку всё равно"
+      || log "failed to stop $SELF_DEPLOYMENT; removing the patch anyway"
     waited=0
     while [ -n "$SELF_SELECTOR" ] && [ "$waited" -lt "$STOP_TIMEOUT" ]; do
       [ -z "$(k get pods -l "$SELF_SELECTOR" -o name 2>/dev/null)" ] && break
@@ -340,7 +341,7 @@ uninstall() {
   tries=0
   until once uninstall; do
     tries=$((tries + 1))
-    [ "$tries" -ge 5 ] && { log "правку убрать не удалось"; return 1; }
+    [ "$tries" -ge 5 ] && { log "failed to remove the patch"; return 1; }
     sleep 2
   done
 }
@@ -349,11 +350,11 @@ case "${1:-loop}" in
   once)      once reconcile ;;
   uninstall) uninstall ;;
   loop)
-    trap 'log "остановлен"; exit 0' TERM INT
-    log "старт: $NS/$KV, таблица $TABLE, раз в ${INTERVAL}s"
+    trap 'log "stopped"; exit 0' TERM INT
+    log "start: $NS/$KV, table $TABLE, every ${INTERVAL}s"
     while :; do
       once reconcile || true
       sleep "$INTERVAL" & wait $!
     done ;;
-  *) echo "использование: $0 loop|once|uninstall" >&2; exit 2 ;;
+  *) echo "usage: $0 loop|once|uninstall" >&2; exit 2 ;;
 esac
