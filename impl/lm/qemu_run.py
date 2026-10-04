@@ -12,9 +12,9 @@ LM.Weights и две команды, дописанные в System.Tool), дв�
 экран — снимком кадрового буфера из памяти (pmemsave), без дисплея. Текст
 сверяется с эталоном по файлу LM.Out, который модуль пишет на диск системы.
 
-⚠ Клавиатура сюда не годится: нажатия, поданные через input-send-event,
-до системы в нашей сборке QEMU не доходят (мышь доходит). Причину не
-разбирали — поэтому команды лежат в System.Tool, а не набираются.
+Commands sit in System.Tool rather than being typed: when this runner was
+written, the first key press hung the system in our QEMU (finding 86, fixed
+since; qemu/test/keyboard_check.py now types a command end to end).
 
   python3 lm/qemu_run.py [каталог дерева QEMU]   (по умолчанию ../.qemu-work)
 """
