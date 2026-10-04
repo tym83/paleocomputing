@@ -1,40 +1,42 @@
-# Браузерная встройка: что уже готово
+[Русская версия](07-browser-embed.ru.md)
 
-Проверено 2026-09-21.
+# Browser embedding: what is already available
 
----
-
-## 1. Burroughs B5500 — retro-b5500 (Paul Kimpel) ✅
-
-- **100% JavaScript**, работает в браузере, живой инстанс: https://www.phkimpel.us/B5500/webUI/B5500Console.html
-- Репозиторий: https://github.com/pkimpel/retro-b5500 (+ wiki WebUIGettingStarted)
-- Софт отдельно: https://github.com/retro-software/B5500-software
-- **ALGOL-компилятор включён**: `ALGOL/DISK` грузится в стандартном Cold Start, плюс `XALGOL/DISK` (Compatible Algol) опционально
-- → **свой код компилировать можно, демо с переполнением реализуемо**
-
-**Что нужно для запуска:** файлы `emulator/` и `webUI/` из репо, образ SYSTEM tape,
-колода `COLDSTART-XIII.card`. Хранилище — IndexedDB, по умолчанию один EU на 200 000
-сегментов (~6 млн слов B5500).
-
-**Браузеры:** Firefox 21+, Chrome 35+, новый Edge, Safari 9.0.2+. Мобильные не поддерживаются.
-
-**⚠ Грабли:**
-- **Safari удаляет всё локальное хранилище, если сайт не посещали 7 дней** — «вернулся через неделю, системы нет»
-- Браузеры лимитируют размер IndexedDB без явного подтверждения пользователя
-- Запуск не в один клик: нужна процедура холодного старта → **для встройки её придётся автоматизировать** (предзаполненный IndexedDB или скриптованный cold start)
-
-**Вердикт:** оценка «вечер на демо» подтверждается, плюс полдня-день на автоматизацию
-холодного старта, если хотим кнопку «запустить» без инструкции на три абзаца.
+Checked on 2026-09-21.
 
 ---
 
-## 2. QNX — v86 (copy.sh) ✅✅
+## 1. Burroughs B5500: retro-b5500 (Paul Kimpel) ✅
 
-- Готовый профиль: https://copy.sh/v86/?profile=qnx — **QNX 4.05, образ 1.4 МБ**
-- v86 = x86-эмулятор с JIT-рекомпиляцией x86 в WASM. https://github.com/copy/v86
-- **Встраивается как библиотека:** `libv86.js`, npm-пакет `v86`, TypeScript-определения
-  `v86.d.ts`, документация через `make doc`, отдельная wiki «How to Compile v86 (Both for
-  embedded use and with the GUI)»
+- **100% JavaScript**, runs in the browser, live instance: https://www.phkimpel.us/B5500/webUI/B5500Console.html
+- Repository: https://github.com/pkimpel/retro-b5500 (+ the WebUIGettingStarted wiki)
+- Software separately: https://github.com/retro-software/B5500-software
+- **The ALGOL compiler is included**: `ALGOL/DISK` loads in the standard Cold Start, plus `XALGOL/DISK` (Compatible Algol) optionally
+- → **you can compile your own code, the overflow demo is feasible**
+
+**What you need to run it:** the `emulator/` and `webUI/` files from the repo, the SYSTEM tape image,
+the `COLDSTART-XIII.card` deck. Storage is IndexedDB, by default one EU of 200,000
+segments (~6 million B5500 words).
+
+**Browsers:** Firefox 21+, Chrome 35+, the new Edge, Safari 9.0.2+. Mobile browsers are not supported.
+
+**⚠ Pitfalls:**
+- **Safari deletes all local storage if the site has not been visited for 7 days**: "came back a week later, the system is gone"
+- Browsers limit the size of IndexedDB without explicit user confirmation
+- Starting is not one click: a cold start procedure is required → **for embedding it will have to be automated** (a prefilled IndexedDB or a scripted cold start)
+
+**Verdict:** the estimate "an evening for a demo" holds, plus half a day to a day for automating the
+cold start, if we want a "run" button without a three-paragraph instruction.
+
+---
+
+## 2. QNX: v86 (copy.sh) ✅✅
+
+- A ready-made profile: https://copy.sh/v86/?profile=qnx: **QNX 4.05, a 1.4 MB image**
+- v86 = an x86 emulator with JIT recompilation of x86 into WASM. https://github.com/copy/v86
+- **Embeds as a library:** `libv86.js`, the `v86` npm package, TypeScript definitions
+  `v86.d.ts`, documentation via `make doc`, a separate wiki page "How to Compile v86 (Both for
+  embedded use and with the GUI)"
 
 ```javascript
 var emulator = new V86({
@@ -46,63 +48,63 @@ var emulator = new V86({
 });
 ```
 
-**Легальность образа:** демо-дискета QNX выпущена самой QNX в 1999 как промо и свободно
-разошлась; лежит в нескольких копиях на Internet Archive и на WinWorld. Хостить можно.
+**Legality of the image:** the QNX demo floppy was released by QNX itself in 1999 as a promo and
+circulated freely; several copies are on the Internet Archive and on WinWorld. It can be hosted.
 
-**Ограничение:** v86 только 32-битный → TempleOS (64-bit) и ряд современных вещей мимо.
+**Limitation:** v86 is 32-bit only → TempleOS (64-bit) and a number of modern things are out.
 
-**Вердикт:** **почти ноль работы**. И это не одно демо, а готовый движок для всей x86-линии
-серии — QNX, KolibriOS, FreeDOS, ReactOS, потенциально NetWare.
-
----
-
-## 3. Oberon — OberonEmulator (Michael Schierl) ✅ с оговоркой
-
-- Живое демо: https://schierlm.github.io/OberonEmulator/
-- Репо: https://github.com/schierlm/OberonEmulator
-- Три варианта: **JavaScript**, **JavaScript + WebAssembly (быстрее)**, Java (скачиваемый)
-- Образы от ~100 КБ минимальных до богатых, RAM настраивается 1–64 МБ, VRAM опционально
-
-**⚠ Оговорка по «настоящести»:** JS-вариант **не поддерживает оригинальный SPI** (сеть и
-SD-карта) и оригинальный клавиатурный интерфейс — вместо них паравиртуализованные
-интерфейсы для клавиатуры, буфера обмена, SD-карты и питания. Поэтому **нужны патченные
-образы** (образы с Hardware Enumerator работают без правок).
-
-**Прочее:** буфер обмена полноценно только в Chrome/Chromium Edge, в Firefox только запись.
-«Нужен довольно быстрый PC или терпение при загрузке».
-
-**Альтернативы для честного билда:**
-- https://github.com/pdewacht/oberon-risc-emu — тот самый референсный C, тривиально собирается Emscripten
-- https://github.com/fzipp/oberon — вариант на Go
-- https://github.com/solbjorg/oberon-riscv — порт Oberon на RISC-V
-
-**Вердикт:** для обзорной статьи готового хватает. Для триады трека 3 лучше свой
-Emscripten-билд из `pdewacht/oberon-risc-emu` — без паравиртуализации, машина настоящая.
+**Verdict:** **almost zero work**. And this is not one demo but a ready engine for the entire x86 line
+of the series: QNX, KolibriOS, FreeDOS, ReactOS, potentially NetWare.
 
 ---
 
-## 4. Verilator → WASM ✅ подтверждено, и жанр уже показан
+## 3. Oberon: OberonEmulator (Michael Schierl) ✅ with a caveat
 
-Путь рабочий и хоженый: Verilator превращает RTL в потактовый C++, Emscripten — в WASM.
+- Live demo: https://schierlm.github.io/OberonEmulator/
+- Repo: https://github.com/schierlm/OberonEmulator
+- Three variants: **JavaScript**, **JavaScript + WebAssembly (faster)**, Java (downloadable)
+- Images from minimal ones of ~100 KB to rich ones, RAM configurable from 1 to 64 MB, VRAM optional
 
-Живые прецеденты:
-- **tiny-tpu** — SystemVerilog-систолический массив, скомпилированный в WASM; браузер
-  исполняет **настоящий RTL потактово и анимирует каждый элемент, каждую активацию и
-  каждую частичную сумму прямо из сигналов железа**. Это ровно тот жанр, который нужен:
-  не рассказ про процессор, а процессор в работе с видимыми внутренностями.
-- **RTL Studio** (rtlstudio.dev) — Verilator, Yosys, вейвформы как WASM в браузерной вкладке
-- **VeriSim** — Icarus Verilog в WASM
-- verilator#1402 — про компиляцию самого Verilator в WASM; нам это не нужно, нам нужен его вывод
+**⚠ Caveat on "authenticity":** the JS variant **does not support the original SPI** (network and
+SD card) or the original keyboard interface; instead it has paravirtualized
+interfaces for the keyboard, clipboard, SD card and power. Hence **patched images are needed**
+(images with the Hardware Enumerator work without changes).
 
-**Вердикт:** RISC5 может крутиться в браузере потактово с видимым конвейером. Быстрая
-модель (`oberon-risc-emu` в WASM) — для работы, RTL-модель — для «смотрите, как оно
-устроено внутри».
+**Other:** the clipboard works fully only in Chrome/Chromium Edge; in Firefox only writing works.
+"You need a fairly fast PC or patience while it loads".
+
+**Alternatives for an honest build:**
+- https://github.com/pdewacht/oberon-risc-emu: the reference C itself, trivially built with Emscripten
+- https://github.com/fzipp/oberon: a Go variant
+- https://github.com/solbjorg/oberon-riscv: a port of Oberon to RISC-V
+
+**Verdict:** for an overview article the ready-made one is enough. For the track 3 triad, our own
+Emscripten build of `pdewacht/oberon-risc-emu` is better: no paravirtualization, the machine is real.
 
 ---
 
-## Что из этого следует для плана
+## 4. Verilator → WASM ✅ confirmed, and the genre has already been shown
 
-1. **Первые три выпуска действительно наполовину собраны.** Burroughs — эмулятор и компилятор готовы. QNX — готово всё, включая образ. Oberon — готово с оговоркой.
-2. **v86 становится базой встройки для всей x86-линии**, а не разовым решением под QNX. Это я недооценил: один движок закрывает несколько выпусков сразу.
-3. **Компонент-встройку всё равно писать**, но он проще, чем казалось: v86 уже даёт API и работу с экраном, B5500 браузерный сам по себе, Oberon есть в двух готовых вариантах. Основная работа — единый вид, загрузчик образов и автоматизация холодного старта B5500.
-4. **Риск, который надо закрыть заранее:** семидневное удаление хранилища в Safari у B5500. Для встройки — не полагаться на сохранённое состояние, всегда уметь подняться из образа за один шаг.
+The path works and is well trodden: Verilator turns RTL into cycle-by-cycle C++, Emscripten turns that into WASM.
+
+Live precedents:
+- **tiny-tpu**: a SystemVerilog systolic array compiled to WASM; the browser
+  executes **the real RTL cycle by cycle and animates every element, every activation and
+  every partial sum straight from the hardware signals**. This is exactly the genre we need:
+  not a story about a processor but a processor at work with its insides visible.
+- **RTL Studio** (rtlstudio.dev): Verilator, Yosys, waveforms as WASM in a browser tab
+- **VeriSim**: Icarus Verilog in WASM
+- verilator#1402: about compiling Verilator itself to WASM; we do not need that, we need its output
+
+**Verdict:** RISC5 can run in the browser cycle by cycle with a visible pipeline. The fast
+model (`oberon-risc-emu` in WASM) is for work; the RTL model is for "look how it
+works inside".
+
+---
+
+## What this means for the plan
+
+1. **The first three episodes really are half done.** Burroughs: the emulator and compiler are ready. QNX: everything is ready, including the image. Oberon: ready with a caveat.
+2. **v86 becomes the embedding base for the entire x86 line**, not a one-off solution for QNX. I underestimated this: one engine covers several episodes at once.
+3. **The embedding component still has to be written**, but it is simpler than it seemed: v86 already provides an API and screen handling, the B5500 is browser-based by itself, Oberon exists in two ready variants. The main work is a unified look, an image loader and automating the B5500 cold start.
+4. **A risk to close in advance:** Safari's seven-day storage deletion for the B5500. For embedding, do not rely on saved state; always be able to come up from the image in one step.

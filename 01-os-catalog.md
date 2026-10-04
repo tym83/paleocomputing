@@ -1,144 +1,146 @@
-# Трек 1. Операционные системы
+[Русская версия](01-os-catalog.ru.md)
 
-Отсортировано по **сохранности артефактов**, а не по интересности. Решает не идея,
-а наличие документации железа и образа ОС.
+# Track 1. Operating systems
 
----
-
-## A. Запускается сегодня почти из коробки
-
-Эмулятор писать не надо, серию можно стартовать без единой строчки кода.
-
-### Радикальные архитектуры
-- **Multics** (GE-645) — кольца защиты, single-level store, файл = сегмент памяти. Эмулятор `dps8m` зрелый, образы публичные.
-- **ITS** (PDP-10, MIT) — нет паролей, любой смотрит и правит чужой процесс, шелл = отладчик DDT. `klh10` / SIMH.
-- **Michigan Terminal System** (360/67, 1967) — интерактивный тайм-шеринг с виртуальной памятью раньше IBM. Hercules, дистрибутив открыт.
-- **Burroughs B5500 + MCP** (1961) — ОС целиком на ALGOL, ассемблера не существует, теги в железе, переполнение буфера невозможно by design. `retro-b5500` работает в браузере.
-- **БЭСМ-6 + Диспак/Дубна** — эмулятор Вакуленко, образы есть.
-- **VM/370 + CMS** — «каждому по виртуальной машине» в 1972.
-
-### Исследовательские ОС с исходниками
-- **Singularity RDK** (MSR) — все процессы в ring 0, изоляция типами, не MMU. Собирается, грузится в QEMU.
-- **Exokernel Xok/ExOS** (MIT) — ядро раздаёт железо, абстракции в libOS.
-- **Barrelfish** (ETH/MSR) — мультиядро как распределённая система, никакой общей памяти между ядрами.
-- **EROS / CapROS** — capability + ортогональная персистентность, чекпойнт всего мира каждые несколько минут.
-- **Amoeba** (Таненбаум) — распределённая ОС, пул процессоров. Ради неё написан Python.
-
-### Микро- и однодискетные
-- **QNX Demo Disk 1.44 МБ** — GUI, TCP/IP, браузер на дискете.
-- **TempleOS** — ring 0, HolyC, 640x480x16, принципиально без сети. Тему вести уважительно к истории автора.
-- **Project Oberon 2013** — процессор RISC5 + компилятор + ОС + GUI, ~10k строк, всё в книге. Референсный эмулятор ~1500 строк C.
-- **Collapse OS / Dusk OS** — Forth для мира после коллапса цепочек поставок.
-- **SymbOS** (Z80, CPC/MSX) — вытесняющая многозадачность и оконный GUI на 4 МГц.
-- **Contiki на C64** — многозадачность, TCP/IP и браузер в 64 КБ.
-- **GEOS** (C64/Apple II) — WIMP на 1 МГц.
-- **Sinclair QDOS** (QL, 1984) — вытесняющая многозадачность на 68008 за три года до Amiga.
-- **NetWare 3.x/4.x** — узкоспециализированный файловый сервер, рвавший универсалов в разы.
+Sorted by **how well the artifacts have survived**, not by how interesting they are. What
+decides is not the idea but whether hardware documentation and an OS image exist.
 
 ---
 
-## B. Эмуляция частичная или кривая — есть что допиливать и опенсорсить
+## A. Runs today almost out of the box
 
-- **Genera / Symbolics** и **CADR** — `usim`, `LambdaDelta`. Genera юридически серая, системный софт CADR от MIT открыт.
-- **Interlisp-D / Medley** — проект возрождения живой, эмулятор `maiko`.
-- **Xerox Alto + Smalltalk-76/80** — `ContrAlto`, исходники в CHM.
-- **Apollo Domain/OS** — сетевой single-level store: объект на чужой машине как локальная память. Драйвер в MAME грузится шершаво.
-- **Newton OS** — «супы» вместо ФС, объектная БД с дифференциальным хранением. `Einstein`, периферия неполная.
-- **Symbian / EPOC32 (EKA2)** — нанокернел с жёстким реальным временем. `EKA2L1` пилится.
-- **Sprite** (Berkeley) — миграция процессов на ходу, родина log-structured FS. Образов почти нет.
-- **Inferno + Dis VM** — всё есть файл, включая удалённое; Limbo с каналами.
-- **ДЕМОС / ИНМОС** — советский UNIX на СМ-1700, через SIMH VAX; собрать рабочий образ — квест.
-- **Copland** (Apple, не вышел) — утёкшие сборки грузятся через раз.
-- **Syllable / AtheOS** — десктопная ОС, написанная одним человеком с нуля.
-- **Pick OS** — ФС нет, есть хэшированная многозначная БД; ОС и СУБД неразличимы.
-- **MUMPS** — язык + БД + ОС в одном, до сих пор крутит здравоохранение.
-- **Phantom OS** (Завалишин) — персистентная виртуальная память, объекты живут вечно. Исходники открыты, живых запусков мало.
+No emulator needs to be written; the series can start without a single line of code.
 
-### Переквалифицировано из C в B — эмулятор не нужен, нужен порт
-- **Mungi / Grasshopper** — single-address-space, Alpha/MIPS (эмуляторы есть)
-- **KeyKOS** — S/370, Hercules уже даёт платформу
-- **colorForth** — голый x86, нужен QEMU и возня с загрузчиком
-- **Nemesis** — Alpha/ARM/x86, исходники были доступны
+### Radical architectures
+- **Multics** (GE-645): protection rings, single-level store, a file = a memory segment. The `dps8m` emulator is mature, images are public.
+- **ITS** (PDP-10, MIT): no passwords, anyone can inspect and modify someone else's process, the shell = the DDT debugger. `klh10` / SIMH.
+- **Michigan Terminal System** (360/67, 1967): interactive time-sharing with virtual memory before IBM. Hercules, the distribution is open.
+- **Burroughs B5500 + MCP** (1961): the OS is entirely in ALGOL, there is no assembler, tags in hardware, buffer overflow impossible by design. `retro-b5500` runs in the browser.
+- **BESM-6 + Dispak/Dubna**: Vakulenko's emulator, images exist.
+- **VM/370 + CMS**: "a virtual machine for everyone" in 1972.
 
----
+### Research OSes with sources
+- **Singularity RDK** (MSR): all processes in ring 0, isolation by types, not by the MMU. Builds, boots in QEMU.
+- **Exokernel Xok/ExOS** (MIT): the kernel hands out the hardware, abstractions live in the libOS.
+- **Barrelfish** (ETH/MSR): a multicore as a distributed system, no shared memory between cores.
+- **EROS / CapROS**: capabilities + orthogonal persistence, a checkpoint of the whole world every few minutes.
+- **Amoeba** (Tanenbaum): a distributed OS, a processor pool. Python was written for it.
 
-## C. Эмулятора нет — здесь и есть проект, который стоит писать и открывать
-
-Отсортировано по соотношению «интересность / реалистичность».
-
-1. **Transputer + Helios, многоузловой** — ISA документирована INMOS исчерпывающе, исходники Helios открывались. Односхемные эмуляторы есть; незанятая ниша — массив 16–64 узлов с линками. **Лучший первый удар.**
-2. **iAPX 432** — документация Intel сохранилась полностью (bitsavers), объектная модель описана до дескрипторов. Единственный пункт, где документация заведомо самодостаточна.
-3. **Magic Cap** (General Magic) — 68349, документирован; писать периферию Sony Magic Link / Motorola Envoy. Агенты Telescript физически мигрируют по сети. Спецификация языка Telescript публиковалась.
-4. **Lilith + Medos-2** (Вирт, 1980) — M-code, Modula-2 сверху донизу. Эмулятор Дреезена существует, но переписать чисто — норм вклад. Пролог к Oberon.
-5. **Кронос + ОС Excelsior** (ВЦ СО АН, Новосибирск) — советская Modula-2-машина, ответ на Lilith. Материал почти не оцифрован. Сильная пара к п.5.
-6. **Tandem NonStop Guardian** — эмулятора нет и не будет без нас. Но принципы описаны отлично (см. D).
-7. **Эльбрус-1/2 + Эль-76** — теговая архитектура, высокоуровневый язык вместо ассемблера. Публичной микроархитектуры и образов нет → фактически D, не C. Начинать с архивов ИТМиВТ и живых носителей знания, пока они есть.
-8. **Taos / Elate / intent** (Tao Group) — бинарники в VP-коде, транслируются при загрузке под конкретный CPU; один образ на Amiga, ARM и x86. Зависит от того, всплывёт ли спецификация VP. Смотреть **патенты** — вероятно, главный путь.
+### Micro and single-floppy systems
+- **QNX Demo Disk 1.44 MB**: GUI, TCP/IP, a browser on a floppy.
+- **TempleOS**: ring 0, HolyC, 640x480x16, deliberately without networking. Treat the subject with respect for the author's story.
+- **Project Oberon 2013**: the RISC5 processor + compiler + OS + GUI, ~10k lines, all in the book. The reference emulator is ~1500 lines of C.
+- **Collapse OS / Dusk OS**: Forth for the world after the collapse of supply chains.
+- **SymbOS** (Z80, CPC/MSX): preemptive multitasking and a windowed GUI at 4 MHz.
+- **Contiki on the C64**: multitasking, TCP/IP and a browser in 64 KB.
+- **GEOS** (C64/Apple II): WIMP at 1 MHz.
+- **Sinclair QDOS** (QL, 1984): preemptive multitasking on the 68008 three years before the Amiga.
+- **NetWare 3.x/4.x**: a narrowly specialized file server that outperformed general-purpose systems several times over.
 
 ---
 
-## D. Реконструкция по бумагам — железа и образов нет, принципы есть
+## B. Emulation is partial or rough: there is something to finish and open-source
 
-«Вообще ничего» — редчайший случай. Почти всегда есть публикации, и этого достаточно
-для **реимплементации**.
+- **Genera / Symbolics** and **CADR**: `usim`, `LambdaDelta`. Genera is legally gray; MIT's CADR system software is open.
+- **Interlisp-D / Medley**: the revival project is alive, the `maiko` emulator.
+- **Xerox Alto + Smalltalk-76/80**: `ContrAlto`, sources at the CHM.
+- **Apollo Domain/OS**: a networked single-level store: an object on another machine as local memory. The MAME driver boots roughly.
+- **Newton OS**: "soups" instead of a file system, an object database with differential storage. `Einstein`, peripherals incomplete.
+- **Symbian / EPOC32 (EKA2)**: a nanokernel with hard real time. `EKA2L1` is in progress.
+- **Sprite** (Berkeley): live process migration, the birthplace of the log-structured FS. Almost no images.
+- **Inferno + Dis VM**: everything is a file, including remote things; Limbo with channels.
+- **DEMOS / INMOS**: Soviet UNIX on the SM-1700, via SIMH VAX; assembling a working image is a quest.
+- **Copland** (Apple, never shipped): leaked builds boot every other time.
+- **Syllable / AtheOS**: a desktop OS written by one person from scratch.
+- **Pick OS**: no file system, there is a hashed multivalue database; the OS and the DBMS are indistinguishable.
+- **MUMPS**: language + database + OS in one, still running healthcare.
+- **Phantom OS** (Zavalishin): persistent virtual memory, objects live forever. The sources are open, few live runs.
 
-- **THE** (Дейкстра, 1968), Electrologica X8 — слоистая архитектура и семафоры в первозданном виде. Пять слоёв, ~десяток процессов, одна статья. **Самая маленькая и реалистичная мишень жанра.**
-- **Tandem NonStop** — Bartlett, «A NonStop Kernel», SOSP 1981; Jim Gray, «Why Do Computers Stop and What Can Be Done About It?», 1985; подшивка Tandem Systems Review. Парные процессы переписываются с нуля без единого байта оригинала.
-- **Nemesis** — кембриджские техотчёты и диссертации (в т.ч. Роско о структуре мультисервисной ОС).
-- **Mungi, Grasshopper** — отчёты и диссертации UNSW / Сиднея.
-- **Magic Cap** — спецификация Telescript + документация для разработчиков; интерфейс восстанавливается по скриншотам и видео.
-- **TSS/360** — как IBM провалила тайм-шеринг, пока MTS на том же железе работала.
-- **Midori** (Microsoft) — только блог Джо Даффи. Не реимплементация, а «по мотивам».
-- **TUNES OS** — ОС, существовавшая двадцать лет только как манифест.
-- **Spring** (Sun) — subcontract, doors, IDL в ядре; часть кода утекала.
-
-### Где действительно тонко
-Закрытые коммерческие системы без академического следа: внутренности **Stratus VOS**,
-внутренности **Pick**, микроархитектура **Taos VP**. Источники: патенты, вендорские
-мануалы у коллекционеров, живые люди.
-
----
-
-## Где искать
-
-- **bitsavers** — вендорская документация
-- **SOSP / OSDI / USENIX** — исследовательские системы
-- **Репозитории диссертаций университетов** — самое подробное описание системы обычно там, подробнее статей, часто с псевдокодом структур
-- **Патентные базы** — для закрытых коммерческих решений
-- **Internet Archive** — сайты умерших компаний
-- **Интервью с носителями знания** — по Эльбрусу, Кроносу, ДЕМОС, Tandem, General Magic люди ещё доступны. Это и источник, и самостоятельный материал.
+### Reclassified from C to B: no emulator needed, a port is needed
+- **Mungi / Grasshopper**: single-address-space, Alpha/MIPS (emulators exist)
+- **KeyKOS**: S/370, Hercules already provides the platform
+- **colorForth**: bare x86, needs QEMU and fiddling with the bootloader
+- **Nemesis**: Alpha/ARM/x86, the sources were available
 
 ---
 
-## Современные параллели (спина обзорных выпусков)
+## C. No emulator exists: this is where the project worth writing and opening lies
 
-| Забытое | Сегодня |
+Sorted by the ratio "interest / feasibility".
+
+1. **Transputer + Helios, multi-node**: the ISA is exhaustively documented by INMOS, the Helios sources were opened. Single-chip emulators exist; the unoccupied niche is an array of 16–64 nodes with links. **The best first strike.**
+2. **iAPX 432**: Intel's documentation has survived completely (bitsavers), the object model is described down to the descriptors. The only item where the documentation is known to be self-sufficient.
+3. **Magic Cap** (General Magic): 68349, documented; the peripherals of the Sony Magic Link / Motorola Envoy would have to be written. Telescript agents physically migrate across the network. The Telescript language specification was published.
+4. **Lilith + Medos-2** (Wirth, 1980): M-code, Modula-2 from top to bottom. Dreesen's emulator exists, but a clean rewrite would be a solid contribution. A prologue to Oberon.
+5. **Kronos + the Excelsior OS** (Computing Center of the Siberian Branch of the Academy of Sciences, Novosibirsk): a Soviet Modula-2 machine, the answer to Lilith. The material is almost undigitized. A strong pair for item 5.
+6. **Tandem NonStop Guardian**: there is no emulator and there will not be one without us. But the principles are described very well (see D).
+7. **Elbrus-1/2 + El-76**: a tagged architecture, a high-level language instead of an assembler. There is no public microarchitecture and no images → effectively D, not C. Start with the ITMiVT archives and the living holders of the knowledge while they are still around.
+8. **Taos / Elate / intent** (Tao Group): binaries in VP code, translated at load time for the specific CPU; one image on the Amiga, ARM and x86. Depends on whether the VP specification surfaces. Look at the **patents**; probably the main route.
+
+---
+
+## D. Reconstruction from paper: no hardware or images, but the principles exist
+
+"Absolutely nothing" is the rarest case. There are almost always publications, and that is enough
+for a **reimplementation**.
+
+- **THE** (Dijkstra, 1968), Electrologica X8: a layered architecture and semaphores in their original form. Five layers, about a dozen processes, one paper. **The smallest and most realistic target of the genre.**
+- **Tandem NonStop**: Bartlett, "A NonStop Kernel", SOSP 1981; Jim Gray, "Why Do Computers Stop and What Can Be Done About It?", 1985; the run of Tandem Systems Review. Process pairs can be rewritten from scratch without a single byte of the original.
+- **Nemesis**: Cambridge technical reports and dissertations (including Roscoe on the structure of a multi-service OS).
+- **Mungi, Grasshopper**: reports and dissertations from UNSW / Sydney.
+- **Magic Cap**: the Telescript specification + developer documentation; the interface can be reconstructed from screenshots and videos.
+- **TSS/360**: how IBM failed at time-sharing while MTS on the same hardware worked.
+- **Midori** (Microsoft): only Joe Duffy's blog. Not a reimplementation but "inspired by".
+- **TUNES OS**: an OS that existed for twenty years only as a manifesto.
+- **Spring** (Sun): subcontract, doors, IDL in the kernel; part of the code leaked.
+
+### Where it is really thin
+Closed commercial systems without an academic trail: the internals of **Stratus VOS**,
+the internals of **Pick**, the microarchitecture of **Taos VP**. Sources: patents, vendor
+manuals held by collectors, living people.
+
+---
+
+## Where to look
+
+- **bitsavers**: vendor documentation
+- **SOSP / OSDI / USENIX**: research systems
+- **University dissertation repositories**: the most detailed description of a system is usually there, more detailed than the papers, often with pseudocode of the structures
+- **Patent databases**: for closed commercial solutions
+- **Internet Archive**: websites of dead companies
+- **Interviews with the holders of the knowledge**: for Elbrus, Kronos, DEMOS, Tandem and General Magic, people are still reachable. This is both a source and material in its own right.
+
+---
+
+## Modern parallels (the backbone of the overview episodes)
+
+| Forgotten | Today |
 |---|---|
-| Amoeba (пул процессоров) | планировщик Kubernetes |
+| Amoeba (processor pool) | the Kubernetes scheduler |
 | VM/370 | Firecracker, Kata Containers |
-| KeyKOS/EROS (чекпойнт мира) | CRIU, snapshot-restore, durable execution (Temporal, Restate) |
-| Sprite (миграция, LFS) | live migration; LSM-деревья, FTL в SSD, F2FS |
+| KeyKOS/EROS (world checkpoint) | CRIU, snapshot-restore, durable execution (Temporal, Restate) |
+| Sprite (migration, LFS) | live migration; LSM trees, FTL in SSDs, F2FS |
 | Exokernel | DPDK, SPDK, io_uring, unikernels, eBPF |
-| Barrelfish | NUMA, P/E-ядра, DPU/IPU |
+| Barrelfish | NUMA, P/E cores, DPU/IPU |
 | Nemesis (QoS) | cgroups v2, io.latency, noisy neighbor |
-| Singularity | WASM/WASI, изоляты Workers, верификатор eBPF, Rust в ядре |
-| Burroughs MCP (теги) | ARM MTE, PAC, CHERI, санитайзеры |
-| Multics (кольца, SLS) | SMM/SGX/TDX; mmap-всего, CXL |
-| Pick / MUMPS | объектное хранилище вместо POSIX, DuckDB поверх S3, SQLite как ФС |
-| Newton soups | CoW-ФС, Git как объектное хранилище |
-| Domain/OS | RDMA, DSM, пулы памяти по CXL |
-| NetWare / QNX | DPU-разгрузка, distroless, unikernels, холодный старт |
-| Genera (живой образ) | hot reload, Erlang code_change, Jupyter |
-| ITS (всё открыто) | eBPF/bpftrace, observability vs zero trust |
-| Plan 9 / Inferno | namespaces в Linux, 9P в WSL2 и gVisor |
-| GEORGE 3 / JCL | Kubernetes Jobs, Argo, Airflow — «переизобрели JCL и назвали YAML» |
+| Singularity | WASM/WASI, Workers isolates, the eBPF verifier, Rust in the kernel |
+| Burroughs MCP (tags) | ARM MTE, PAC, CHERI, sanitizers |
+| Multics (rings, SLS) | SMM/SGX/TDX; mmap-everything, CXL |
+| Pick / MUMPS | object storage instead of POSIX, DuckDB on top of S3, SQLite as a file system |
+| Newton soups | CoW file systems, Git as an object store |
+| Domain/OS | RDMA, DSM, memory pools over CXL |
+| NetWare / QNX | DPU offload, distroless, unikernels, cold start |
+| Genera (live image) | hot reload, Erlang code_change, Jupyter |
+| ITS (everything open) | eBPF/bpftrace, observability vs zero trust |
+| Plan 9 / Inferno | namespaces in Linux, 9P in WSL2 and gVisor |
+| GEORGE 3 / JCL | Kubernetes Jobs, Argo, Airflow: "they reinvented JCL and called it YAML" |
 
-### Эксперименты, а не просто обзоры
-- **EROS**: выдернуть питание на середине записи → возврат в консистентное состояние без journal replay. Рядом — CRIU dump/restore контейнера.
-- **Amoeba**: пять узлов, параллельная сборка, разъезд задач по пулу. Рядом — то же в k8s.
-- **Burroughs**: написать классическое переполнение буфера → аппаратный отказ 1961 года.
-- **NetWare**: файловый бенчмарк против современного Linux на той же виртуалке.
-- **QNX floppy**: рядом собрать distroless и unikernel, сравнить размер и холодный старт.
-- **Oberon**: пересобрать систему саму из себя, засечь время.
-- **Genera**: поймать ошибку в работающей программе, переопределить функцию, продолжить с того же места.
-- **Sprite**: мигрировать живой процесс на другой узел.
+### Experiments, not just overviews
+- **EROS**: pull the power in the middle of a write → return to a consistent state without journal replay. Next to it, CRIU dump/restore of a container.
+- **Amoeba**: five nodes, a parallel build, tasks spreading across the pool. Next to it, the same in k8s.
+- **Burroughs**: write a classic buffer overflow → a hardware fault, 1961 style.
+- **NetWare**: a file benchmark against modern Linux on the same VM.
+- **QNX floppy**: build a distroless image and a unikernel next to it, compare size and cold start.
+- **Oberon**: rebuild the system from itself, time it.
+- **Genera**: catch an error in a running program, redefine the function, continue from the same place.
+- **Sprite**: migrate a live process to another node.

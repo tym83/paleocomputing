@@ -1,177 +1,179 @@
-# Культуртрегерский проект: лаборатории, учебные материалы, архив
+[Русская версия](12-labs-and-archive.ru.md)
 
-Записано 2026-09-22. Два слоя поверх каждой машины, которую мы оживляем:
-**интерактивные лабораторные** и **архив редкого**. Артефакты — побочный продукт,
-а не цель.
+# The cultural outreach project: labs, teaching materials, an archive
+
+Written on 2026-09-22. Two layers on top of every machine we bring back to life:
+**interactive labs** and **an archive of rare material**. Artifacts are a by-product,
+not the goal.
 
 ---
 
-## 0. Поправка, которая делает Оберон СИЛЬНЕЕ, а не слабее
+## 0. A correction that makes Oberon STRONGER, not weaker
 
-Посылка «компилятор написан не на Обероне, надо переписать» — **неверна**, и это
-хорошая новость: работа уже сделана Виртом, и мы её проверили.
+The premise "the compiler is not written in Oberon, it must be rewritten" is **wrong**, and that is
+good news: the work has already been done by Wirth, and we have checked it.
 
-| Модуль | Язык | Заголовок автора |
+| Module | Language | Author's header |
 |---|---|---|
-| `ORS.Mod` — сканер | **Оберон-07** | «Scanner in Oberon-07» |
-| `ORB.Mod` — таблица имён | **Оберон-07** | «in Oberon-07» |
-| `ORG.Mod` — кодогенератор | **Оберон-07** | «code generator in Oberon-07» |
-| `ORP.Mod` — парсер | **Оберон-07** | «Oberon compiler for RISC» |
+| `ORS.Mod`: scanner | **Oberon-07** | "Scanner in Oberon-07" |
+| `ORB.Mod`: symbol table | **Oberon-07** | "in Oberon-07" |
+| `ORG.Mod`: code generator | **Oberon-07** | "code generator in Oberon-07" |
+| `ORP.Mod`: parser | **Oberon-07** | "Oberon compiler for RISC" |
 
-**И мы это не приняли на слово, а проверили побитово.** Трёхстадийная сборка:
-компилятор собирает сам себя, полученный компилятор собирает себя снова, байты
-сравниваются. Результат — `Stage 2 and Stage 3 are identical`. Это **неподвижная точка**:
-доказательство, что язык обслуживает сам себя.
+**And we did not take it on faith; we checked it bit for bit.** A three-stage build:
+the compiler builds itself, the resulting compiler builds itself again, the bytes
+are compared. The result is `Stage 2 and Stage 3 are identical`. This is a **fixed point**:
+proof that the language serves itself.
 
-Более того: она **держится даже после того, как мы инструментировали эмулятор** —
-аудитор проверил, все 30 выходных файлов совпали побайтово.
+Moreover, it **holds even after we instrumented the emulator**: the
+auditor checked, and all 30 output files matched byte for byte.
 
-### Где на самом деле остаётся C — и почему это и есть вау-номер
+### Where C really remains, and why that is the wow act
 
-Не в компиляторе. В **рантайме Norebo**, 1070 строк:
-- `risc-cpu.c` (484) — эмулятор процессора RISC5
-- `norebo.c` (586) — мост к Unix: файлы, аргументы, вывод
+Not in the compiler. In the **Norebo runtime**, 1070 lines:
+- `risc-cpu.c` (484): the RISC5 processor emulator
+- `norebo.c` (586): the bridge to Unix: files, arguments, output
 
-**И первый из двух мы уже заменили.** Наш SoC-стенд грузит настоящую систему на живом
-Verilog. То есть компилятор Оберона **уже способен работать без эмулятора на C** —
-на честном RTL.
+**And we have already replaced the first of the two.** Our SoC bench boots the real system on live
+Verilog. So the Oberon compiler **is already able to work without a C emulator**,
+on honest RTL.
 
-Отсюда номер, которого нет ни у кого:
+Hence an act nobody else has:
 
-> Оберон компилирует сам себя **на процессоре, описанном на Verilog, прогоняемом такт
-> за тактом, в браузерной вкладке**. Ни одной строки C в продукте: язык, компилятор,
-> операционная система и процессор — замкнутый круг, который читатель может провернуть,
-> не вставая.
+> Oberon compiles itself **on a processor described in Verilog, run cycle
+> by cycle, in a browser tab**. Not a single line of C in the product: the language, the compiler,
+> the operating system and the processor form a closed loop that the reader can turn
+> without getting up.
 
-Это сильнее «переписали компилятор» — потому что переписывать нечего, а замкнуть круг
-до конца ещё никто не замыкал.
+This is stronger than "we rewrote the compiler", because there is nothing to rewrite, and nobody has yet
+closed the loop all the way.
 
-### Что для этого осталось
+### What remains for this
 
-| Шаг | Состояние |
+| Step | State |
 |---|---|
-| ядро на RTL грузит систему | ✅ сделано |
-| то же в браузере | ✅ сделано |
-| компилятор внутри работает | ✅ сделано (он в образе) |
-| **пересборка системы самой собой на нашем RTL** | 🔴 не проверено — главный шаг |
-| редактор и файловая система в браузере | 🟠 система своё имеет, нужен мост наружу |
-| убрать `norebo.c` (мост к Unix) | 🟠 для хост-сценария, для браузера не нужен |
+| the core on RTL boots the system | ✅ done |
+| the same in the browser | ✅ done |
+| the compiler works inside | ✅ done (it is in the image) |
+| **the system rebuilding itself on our RTL** | 🔴 not checked: the main step |
+| an editor and a file system in the browser | 🟠 the system has its own; a bridge to the outside is needed |
+| remove `norebo.c` (the bridge to Unix) | 🟠 for the host scenario; not needed for the browser |
 
-**Пересборка системы самой собой на нашем RTL** — и есть тот вау, к которому всё идёт.
-Кнопка «пересобрать» со счётчиком секунд, после чего система продолжает работать на
-только что порождённом коде.
+**The system rebuilding itself on our RTL** is the wow that everything is heading toward.
+A "rebuild" button with a seconds counter, after which the system keeps running on
+the code it has just produced.
 
 ---
 
-## 1. Лаборатории: формат
+## 1. Labs: the format
 
-Каждая машина получает набор лабораторных. Не текст со скриншотами, а **исполняемые
-упражнения в браузере**, где читатель меняет что-то и сразу видит результат.
+Every machine gets a set of labs. Not text with screenshots but **executable
+exercises in the browser**, where the reader changes something and immediately sees the result.
 
-### Обязательные свойства формата
+### Mandatory properties of the format
 
-- **Порог входа ноль.** Открыл ссылку — работает. Без установки, без регистрации
-- **Каждая лаба самодостаточна** и укладывается в 10–20 минут
-- **Есть, что сломать.** Лучшая лаба — та, где читателю дают испортить и показывают,
-  что именно испортилось
-- **Обратимость.** Кнопка «вернуть как было» всегда
-- **Проверка.** Лаба знает, выполнил ли читатель задание
+- **Zero barrier to entry.** Open the link and it works. No installation, no registration
+- **Every lab is self-contained** and fits into 10–20 minutes
+- **There is something to break.** The best lab is one where the reader is allowed to spoil things and is shown
+  what exactly got spoiled
+- **Reversibility.** A "restore as it was" button, always
+- **Checking.** The lab knows whether the reader completed the exercise
 
-### Уровни
+### Levels
 
-| Уровень | Что делает читатель |
+| Level | What the reader does |
 |---|---|
-| **Смотреть** | запустить систему, потыкать, прочитать объяснение |
-| **Менять** | поправить программу, пересобрать, увидеть эффект |
-| **Ломать** | внести ошибку, увидеть диагностику, понять механизм |
-| **Измерять** | снять число самому и сравнить с нашим |
-| **Строить** | добавить инструкцию, изменить ядро, портировать |
+| **Look** | start the system, poke around, read the explanation |
+| **Change** | fix a program, rebuild, see the effect |
+| **Break** | introduce an error, see the diagnostic, understand the mechanism |
+| **Measure** | take a number yourself and compare it with ours |
+| **Build** | add an instruction, change the core, port |
 
 ---
 
-## 2. Курс по Оберону: черновик программы
+## 2. An Oberon course: draft syllabus
 
-Язык почти неизвестен, при этом он **самый маленький из полноценных** — вся
-спецификация умещается в 16 страниц. Это редкий случай, когда за один курс можно
-пройти путь от «не видел синтаксиса» до «правлю кодогенератор».
+The language is almost unknown, and yet it is **the smallest of the full-fledged ones**: the entire
+specification fits in 16 pages. This is a rare case where a single course can
+take you from "never seen the syntax" to "I edit the code generator".
 
-| # | Лаба | Уровень | Что уже готово |
+| # | Lab | Level | What is already ready |
 |---|---|---|---|
-| 1 | Первая программа: всё есть текст, средняя кнопка исполняет | смотреть | система в браузере ✅ |
-| 2 | Синтаксис за 20 минут: весь язык на одной странице | смотреть | — |
-| 3 | Модули и раздельная компиляция; что такое symbol-файл | менять | — |
-| 4 | Проверки времени исполнения: сломать индекс, увидеть ловушку | **ломать** | измерено ✅ |
-| 5 | Сколько стоят проверки: снять число самому | **измерять** | скрипты ✅ |
-| 6 | Динамические структуры и сборщик мусора | менять | — |
-| 7 | Самораскрутка: компилятор собирает сам себя | смотреть | проверено ✅ |
-| 8 | Неподвижная точка: почему это доказательство | смотреть | проверено ✅ |
-| 9 | Внутри кодогенератора: как `a[i]` превращается в инструкции | менять | `ORG.Mod` изучен ✅ |
-| 10 | Сборщик мусора изнутри: где и когда он убирает | смотреть | в браузере ✅ |
-| 11 | Одна задача за раз: кооперативные задачи главного цикла | **ломать** | в браузере ✅ |
-| 12 | Цена проверки своими руками: своё число на своём коде | **измерять** | в браузере ✅ |
-| 13 | Добавить свою встроенную процедуру | **строить** | в браузере ✅ |
-| 14 | Добавить инструкцию в процессор и научить компилятор | **строить** | сделано ✅ |
-| 15 | Портировать модуль на другую машину | **строить** | после Lilith |
+| 1 | The first program: everything is text, the middle button executes | look | system in the browser ✅ |
+| 2 | Syntax in 20 minutes: the whole language on one page | look | — |
+| 3 | Modules and separate compilation; what a symbol file is | change | — |
+| 4 | Run-time checks: break an index, see the trap | **break** | measured ✅ |
+| 5 | What checks cost: take the number yourself | **measure** | scripts ✅ |
+| 6 | Dynamic structures and the garbage collector | change | — |
+| 7 | Bootstrapping: the compiler builds itself | look | checked ✅ |
+| 8 | The fixed point: why it is a proof | look | checked ✅ |
+| 9 | Inside the code generator: how `a[i]` turns into instructions | change | `ORG.Mod` studied ✅ |
+| 10 | The garbage collector from the inside: where and when it collects | look | in the browser ✅ |
+| 11 | One task at a time: cooperative tasks of the main loop | **break** | in the browser ✅ |
+| 12 | The cost of a check by hand: your own number on your own code | **measure** | in the browser ✅ |
+| 13 | Add your own built-in procedure | **build** | in the browser ✅ |
+| 14 | Add an instruction to the processor and teach the compiler | **build** | done ✅ |
+| 15 | Port a module to another machine | **build** | after Lilith |
 
-Номера 10–12 заняли сделанные браузерные лабораторные (сборщик, задачи, цена
-проверки); задуманные раньше под этими номерами сдвинуты на 13–15 без изменений.
-Из остальных двенадцати семь опираются на то, что уже работает.
+Numbers 10–12 are taken by the browser labs that were built (the collector, tasks, the cost
+of a check); the ones originally planned under these numbers moved to 13–15 unchanged.
+Of the remaining twelve, seven rely on what already works.
 
 ---
 
-## 3. Архив: вторая половина проекта
+## 3. The archive: the second half of the project
 
-Культуртрегерская часть. Не «мы сделали», а **«мы сохранили и объяснили»**.
+The cultural outreach part. Not "we built it" but **"we preserved and explained it"**.
 
-### Что архивировать
+### What to archive
 
-| Категория | Примеры из наших каталогов |
+| Category | Examples from our catalogs |
 |---|---|
-| **Исчезающие артефакты** | Ada RED (спека была недоступна 30 лет), Кронос, ДЕМОС, Эль-76 |
-| **Живые носители знания** | участники конкурса Ada, разработчики Кроноса, Эльбруса, Tandem |
-| **Воспроизводимые сборки** | наши образы, эмуляторы, патчи — чтобы через 10 лет запускалось |
-| **Разбор механизмов** | как устроена неподвижная точка, дескрипторы Burroughs, CSP в железе |
-| **Отрицательные результаты** | 21 находка, из них 3 — про наши собственные ошибки |
+| **Vanishing artifacts** | Ada RED (the spec was unavailable for 30 years), Kronos, DEMOS, El-76 |
+| **Living holders of knowledge** | participants of the Ada competition, the developers of Kronos, Elbrus, Tandem |
+| **Reproducible builds** | our images, emulators, patches, so that it still runs in 10 years |
+| **Explanations of mechanisms** | how the fixed point works, Burroughs descriptors, CSP in hardware |
+| **Negative results** | 21 findings, 3 of them about our own mistakes |
 
-### Принципы, выведенные из первой работы
+### Principles drawn from the first piece of work
 
-1. **Артефакты решают, а не идеи.** iAPX 432 и Эльбрус упираются не в сложность,
-   а в наличие документации. Проверять до начала
-2. **Диссертации и патенты недооценены.** Спека Ada RED нашлась транскрибированной
-   одним из авторов; по закрытым системам патенты часто единственный путь
-3. **Носители знания смертны.** По Кроносу, Эльбрусу, ДЕМОС люди ещё доступны.
-   Интервью — и источник, и самостоятельный материал
-4. **Отрицательный результат — тоже архив.** «Мы искали и не нашли» экономит
-   следующему годы
-5. **Воспроизводимость важнее красоты.** Аудит показал: половина наших скриптов
-   воспроизводила не те числа, что опубликованы. Архив без воспроизводимости — музей
-   мёртвых экспонатов
-
----
-
-## 4. Как это ложится на остальные треки
-
-Каждая машина из `11-roadmap-platform.md` получает три слоя:
-
-```
-   АРТЕФАКТ          что мы построили: эмулятор, порт ОС, измерения
-      ↓
-   ЛАБОРАТОРИИ       как читатель это трогает руками
-      ↓
-   АРХИВ             откуда взялось, кто придумал, что сохранилось, чего нет
-```
-
-Без первого нет доказательства. Без второго никто не придёт. Без третьего это
-инженерная поделка, а не культурная работа.
+1. **Artifacts decide, not ideas.** The iAPX 432 and Elbrus are blocked not by complexity
+   but by the availability of documentation. Check before starting
+2. **Dissertations and patents are underrated.** The Ada RED spec turned up transcribed
+   by one of its authors; for closed systems patents are often the only route
+3. **Holders of knowledge are mortal.** For Kronos, Elbrus and DEMOS, people are still reachable.
+   An interview is both a source and material in its own right
+4. **A negative result is archive material too.** "We searched and did not find it" saves
+   the next person years
+5. **Reproducibility matters more than beauty.** The audit showed that half of our scripts
+   reproduced numbers other than the published ones. An archive without reproducibility is a museum
+   of dead exhibits
 
 ---
 
-## 5. Ближайшее
+## 4. How this maps onto the other tracks
 
-| # | Шаг | Почему сейчас |
+Every machine from `11-roadmap-platform.md` gets three layers:
+
+```
+   ARTIFACT          what we built: an emulator, an OS port, measurements
+      ↓
+   LABS              how the reader touches it with their own hands
+      ↓
+   ARCHIVE           where it came from, who invented it, what has survived, what has not
+```
+
+Without the first there is no proof. Without the second nobody will come. Without the third it is
+an engineering craft project, not cultural work.
+
+---
+
+## 5. Next up
+
+| # | Step | Why now |
 |---|---|---|
-| Л1 | **Пересборка системы самой собой на нашем RTL** | главный вау, почти закрыт |
-| Л2 | Каркас лабораторной: канва + задание + проверка + откат | один раз, дальше переиспользуется |
-| Л3 | Лабы 1, 4, 7 (смотреть / ломать / самораскрутка) | все три опираются на готовое |
-| Л4 | Мост «файлы хоста ↔ образ» для правки кода в браузере | без него нет уровня «строить» |
-| Л5 | Первое интервью с носителем знания | люди не ждут |
+| L1 | **The system rebuilding itself on our RTL** | the main wow, almost done |
+| L2 | A lab framework: canvas + exercise + check + rollback | built once, reused afterwards |
+| L3 | Labs 1, 4, 7 (look / break / bootstrapping) | all three rely on what is ready |
+| L4 | A "host files ↔ image" bridge for editing code in the browser | without it there is no "build" level |
+| L5 | The first interview with a holder of knowledge | people do not wait |

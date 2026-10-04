@@ -1,190 +1,193 @@
-# Трек 3. Язык-машины: железо + язык + ОС как единая триада
+[Русская версия](03-language-machines.ru.md)
 
-Жанр называется **language-directed architecture**. Это не курьёзы, а похороненная
-дисциплина: два десятилетия процессор проектировали под язык, а не наоборот.
+# Track 3. Language machines: hardware + language + OS as a single triad
 
-**Образец для подражания — Project Oberon 2013.** Вирт спроектировал процессор RISC5,
-написал компилятор, написал на этом языке ОС с оконным интерфейсом и описал всё в книге
-так, что воспроизводится с нуля. Порты на дешёвые ПЛИС существуют. Проходишь — понимаешь
-весь цикл, дальше делаешь своё.
+The genre is called **language-directed architecture**. These are not curiosities but a buried
+discipline: for two decades processors were designed for the language, not the other way round.
 
----
-
-## Каталог триад
-
-- **Транспьютер + occam + Helios** — планировщик процессов и каналы реализованы **аппаратно**: переключение контекста это инструкция. В ОС просто нет планировщика. Сетка из 16 узлов на ПЛИС = физическая CSP-машина на столе. **Флагман.**
-- **Кронос + Модула-2 + Excelsior** — новосибирская машина под язык Вирта, советский ответ Lilith. Воссоздать процессор в Verilog, поднять Excelsior. Уникальный контент + реальное сохранение наследия (держится на нескольких живых людях).
-- **Lilith + Модула-2 + Medos-2** — оригинал. M-код документирован, эмулятор для сверки есть.
-- **Forth-машины: Novix, MuP21, GA144, J1** — J1 это открытый форт-процессор ~200 строк Verilog, влезает в самую мелкую ПЛИС. Форт-система сама себе язык, ОС и отладчик. **Полная триада за выходные — лучший первый заход.**
-- **iAPX 432 + Ada** — каноническое «язык определил архитектуру и утопил её»: объекты и права доступа в кремнии, четырёхкратное отставание от 8086.
-- **Эльбрус + Эль-76** — идеальная триада по смыслу, самая тяжёлая по артефактам. Только реконструкция.
-- **Машины пятого поколения ICOT: PSI, WAM в железе** — Япония строила национальную программу вокруг логического программирования. Провал громкий, забвение полное.
-- **CADR и Lisp-машины** — легенда жанра, системное ПО MIT открыто, попытки на ПЛИС были.
-- **Rekursiv** (Linn Smart Computing, Шотландия, 1988) — процессор с объектами в железе и языком Lingo. По легенде прототипы утопили. Не знает практически никто.
-- **Mushroom + Napier88** — машина под ортогональную персистентность: объекты переживают выключение питания на уровне архитектуры. Замыкает треки 1, 2 и 4.
-- **Reduceron** (Йорк) — машина графовой редукции для ленивых функциональных языков, живая и документированная. Самый реалистичный исследовательский проект.
-- **SOAR — Smalltalk On A RISC** (Berkeley) — **контраргумент**: специальное железо не нужно, нужен хороший компилятор на обычном RISC. Реализовать = воспроизвести позицию победившей стороны. Выпуск-спор, а не монолог.
-- **B5500 как ALGOL-машина** — стек, дескрипторы, теги выведены напрямую из языка. Эмулятор для сверки есть, путь на ПЛИС короче, чем кажется.
-- **picoJava, Jazelle, Java Card** — недавняя история жанра, забыта начисто.
+**The model to follow is Project Oberon 2013.** Wirth designed the RISC5 processor,
+wrote a compiler, wrote an OS with a windowed interface in that language, and described it all
+in a book so that it can be reproduced from scratch. Ports to cheap FPGAs exist. Work through it
+and you understand the whole cycle; then you build your own.
 
 ---
 
-## Тезис подтрека
+## Catalog of triads
 
-Умерло по трём причинам: компиляторы стали хорошими и семантический разрыв закрылся
-программно; RISC-школа показала, что простое быстрое ядро + хороший компилятор обгоняет
-сложное специализированное; экономика — массовый универсальный кристалл дешевле
-малосерийного специального.
-
-Все три пункта развернулись обратно: ПЛИС стоят как ужин; RISC-V позволяет добавлять
-инструкции легально и бесплатно; CHERI доказывает, что семантику языка имеет смысл
-проверять аппаратно; ускорители и DPU — возвращение специализированного кремния.
-
-**Язык-машины проиграли не по существу, а по экономике, и экономика изменилась.**
+- **Transputer + occam + Helios**: the process scheduler and channels are implemented **in hardware**: a context switch is an instruction. The OS simply has no scheduler. A grid of 16 nodes on an FPGA = a physical CSP machine on the desk. **The flagship.**
+- **Kronos + Modula-2 + Excelsior**: the Novosibirsk machine built for Wirth's language, the Soviet answer to Lilith. Recreate the processor in Verilog, bring up Excelsior. Unique content + real preservation of heritage (it rests on a few living people).
+- **Lilith + Modula-2 + Medos-2**: the original. M-code is documented, an emulator for cross-checking exists.
+- **Forth machines: Novix, MuP21, GA144, J1**: the J1 is an open Forth processor of ~200 lines of Verilog that fits in the smallest FPGA. A Forth system is its own language, OS and debugger. **A full triad in a weekend: the best first approach.**
+- **iAPX 432 + Ada**: the canonical "the language defined the architecture and sank it": objects and access rights in silicon, four times slower than the 8086.
+- **Elbrus + El-76**: the ideal triad in meaning, the hardest in artifacts. Reconstruction only.
+- **ICOT fifth-generation machines: PSI, the WAM in hardware**: Japan built a national program around logic programming. A loud failure, complete oblivion.
+- **CADR and the Lisp machines**: a legend of the genre, MIT's system software is open, FPGA attempts have been made.
+- **Rekursiv** (Linn Smart Computing, Scotland, 1988): a processor with objects in hardware and the Lingo language. Legend has it the prototypes were sunk. Practically nobody knows about it.
+- **Mushroom + Napier88**: a machine for orthogonal persistence: objects survive a power-off at the architecture level. Closes the loop on tracks 1, 2 and 4.
+- **Reduceron** (York): a graph-reduction machine for lazy functional languages, alive and documented. The most realistic research project.
+- **SOAR, Smalltalk On A RISC** (Berkeley): **the counter-argument**: special hardware is not needed, a good compiler on an ordinary RISC is. Implementing it = reproducing the position of the winning side. An episode as a debate, not a monologue.
+- **The B5500 as an ALGOL machine**: the stack, descriptors and tags derived directly from the language. An emulator for cross-checking exists; the path to an FPGA is shorter than it seems.
+- **picoJava, Jazelle, Java Card**: the genre's recent history, completely forgotten.
 
 ---
 
-## Лестница проектов
+## The thesis of the sub-track
 
-| Срок | Проект | Результат |
+It died for three reasons: compilers became good and the semantic gap was closed in
+software; the RISC school showed that a simple fast core + a good compiler outruns a
+complex specialized one; economics: a mass-produced general-purpose chip is cheaper than a
+low-volume special one.
+
+All three have reversed: FPGAs cost as much as a dinner; RISC-V allows adding
+instructions legally and for free; CHERI proves that it makes sense to check language
+semantics in hardware; accelerators and DPUs are the return of specialized silicon.
+
+**Language machines lost not on merit but on economics, and the economics have changed.**
+
+---
+
+## The project ladder
+
+| Time frame | Project | Result |
 |---|---|---|
-| Выходные | J1 или свой мелкий форт-процессор + форт-система | полная триада, первый репозиторий |
-| Месяц | Воспроизвести Project Oberon по книге | калибровка: понятен весь цикл от ISA до оконного менеджера |
-| Первый оригинальный вклад | Кронос или Lilith: процессор в Verilog, кросс-компилятор на хосте, самораскрутка, загрузка ОС | появляется то, чего в мире нет |
-| Флагман | Транспьютерная сетка с occam и Helios | многоузловая CSP-машина, которую возят на конференции |
+| A weekend | J1 or our own small Forth processor + a Forth system | a full triad, the first repository |
+| A month | Reproduce Project Oberon from the book | calibration: the whole cycle from the ISA to the window manager is understood |
+| First original contribution | Kronos or Lilith: the processor in Verilog, a cross-compiler on the host, bootstrapping, booting the OS | something appears that does not exist in the world |
+| Flagship | A transputer grid with occam and Helios | a multi-node CSP machine that gets taken to conferences |
 
-### Две практические вещи, определяющие судьбу проекта
-1. **Целиться в ПЛИС с полностью открытым тулчейном** (iCE40 или ECP5 + yosys/nextpnr), иначе воспроизводимость упирается в проприетарную среду и половина смысла опенсорса теряется.
-2. **С самого начала держать сборку под Verilator**, чтобы читатель запускал триаду без платы одной командой. Проект, требующий купить железку, читают; запускающийся за тридцать секунд — повторяют.
+### Two practical things that decide a project's fate
+1. **Target FPGAs with a fully open toolchain** (iCE40 or ECP5 + yosys/nextpnr); otherwise reproducibility runs into a proprietary environment and half the point of open source is lost.
+2. **Keep the build under Verilator from the very start**, so that the reader runs the triad without a board with a single command. A project that requires buying a gadget gets read; one that starts in thirty seconds gets repeated.
 
-**Самораскрутка** — момент, когда компилятор впервые собирает сам себя уже на целевой
-машине, а не на хосте. Лучшая сцена всего трека, её стоит снимать.
-
----
-
-## Спаять RISC5 физически
-
-### Список железа вокруг RISC5 неприлично короткий
-- ядро RISC5 — порядка тысячи-двух логических ячеек, влезает в самые дешёвые ПЛИС с запасом
-- около мегабайта статической памяти
-- SD-карта по SPI — на ней файловая система
-- видеовыход 1024x768, 1 бит на пиксель, кадровый буфер в основной памяти; видеоконтроллер = счётчик + сдвиговый регистр
-- клавиатура и мышь PS/2
-- последовательный порт для первоначальной загрузки
-
-Ни контроллера памяти, ни шины, ни прерываний в привычном смысле. Спецификация машины
-помещается в несколько страниц книги — поэтому проект выполним в одиночку.
-
-**Важная деталь, на которой спотыкаются все повторяющие:** Oberon требует
-**трёхкнопочную мышь**, вся оконная система построена на межкнопочных щелчках. Помнить
-про третью кнопку с самого начала разводки.
-
-### Путь 1: ПЛИС и своя плата (разумный)
-Развилку решает не производительность, а тулчейн. Для открытого проекта — **iCE40**
-(yosys / nextpnr / icestorm) либо **ECP5**. iCE40 выпускается в паяемых руками корпусах;
-внешняя асинхронная SRAM тоже бывает в паяемых корпусах → машина, собираемая обычным
-паяльником, не фантазия. ECP5 даст больше ресурсов и HDMI, но это BGA, четырёхслойка и фен.
-
-Последовательность: готовая отладочная плата и существующий порт Oberon → пересборка ядра
-из исходников книги под открытый тулчейн + своя периферия → своя плата. Развести раньше =
-развести дважды.
-
-Деньги: отладочная плата — десятки долларов; мелкая серия своей платы — сотни.
-
-### Путь 2: настоящая микросхема (самый громкий)
-Открытые кремниевые шаттлы существуют: открытые PDK + открытый маршрут синтеза.
-**TinyTapeout** — сотни долларов. Полноразмерные шаттлы на открытом 130 нм дают место под
-ядро с периферией.
-
-Смысл: **RISC5 никогда не существовал в виде микросхемы**, он всегда жил внутри ПЛИС.
-Выпустить его в кремнии — довести замысел до конца через тринадцать лет после книги.
-
-⚠️ Состав доступных шаттлов, сроки и цены меняются, часть программ за последние годы
-закрывалась или меняла владельца. **Проверить актуальное состояние перед закладкой.**
-
-Делать после пути 1: дизайн один, различаются только маршруты.
-
-### Путь 3: рассыпуха (монумент)
-32-разрядный тракт, регистровый файл 32 слова, сдвигатель, умножитель — сотни корпусов,
-метры проводов, единицы мегагерц. Восьмибитные самоделки живут в 30–40 микросхемах, это
-другая весовая категория. Делается годами. Если хочется — брать заведомо восьмибитное и
-вести отдельной линией, не привязанной к срокам статей.
-
-### Что получается
-Физическая машина, включающаяся меньше чем за секунду в графическую оболочку с
-компилятором внутри, весь стек которой — от системы команд до оконного менеджера —
-описан в одной книге и умещается в голову одного человека.
-
-**Открытого набора для самостоятельной сборки Oberon-машины сейчас нет.** Есть порты под
-чужие платы и книга; собранной воедино вещи с разводкой, спецификацией, прошивкой и
-инструкцией — нет. Пустая ниша.
+**Bootstrapping** is the moment when the compiler first builds itself on the target
+machine rather than on the host. The best scene of the whole track; it is worth filming.
 
 ---
 
-# Путь до кремния: от виртуального процессора к микросхеме
+## Building RISC5 physically
 
-Ключевое: **источник один и тот же**, меняется только бэкенд.
+### The list of hardware around RISC5 is indecently short
+- the RISC5 core: on the order of one or two thousand logic cells, fits in the cheapest FPGAs with room to spare
+- about a megabyte of static memory
+- an SD card over SPI, holding the file system
+- video output 1024x768, 1 bit per pixel, the framebuffer in main memory; the video controller = a counter + a shift register
+- PS/2 keyboard and mouse
+- a serial port for the initial load
 
-Один Verilog уходит тремя маршрутами: через Verilator в C++ и дальше в WASM (браузер);
-через yosys/nextpnr в битстрим (ПЛИС); через открытый маршрут синтеза в GDSII (фабрика).
-Не три проекта, а один с тремя выходами.
+No memory controller, no bus, no interrupts in the usual sense. The machine's specification
+fits in a few pages of the book, which is why the project is doable by one person.
 
-## Что прощает симуляция и не прощает железо
+**An important detail that everyone who repeats this trips over:** Oberon requires a
+**three-button mouse**; the whole window system is built on inter-button clicks. Remember
+the third button from the very start of the board layout.
 
-Неинициализированный регистр (в железе там мусор при включении). Отсутствие явного сброса.
-Гонки между тактовыми доменами — в симуляции их нет, в железе клавиатура, видео, карта и
-ядро тикают на своих частотах и между ними нужны синхронизаторы. Внешняя память в симуляции
-— массив с мгновенным доступом, в железе контроллер с задержками.
+### Path 1: an FPGA and our own board (the sensible one)
+The fork is decided not by performance but by the toolchain. For an open project: **iCE40**
+(yosys / nextpnr / icestorm) or **ECP5**. The iCE40 comes in hand-solderable packages;
+external asynchronous SRAM also comes in solderable packages → a machine assembled with an
+ordinary soldering iron is not a fantasy. The ECP5 gives more resources and HDMI, but it is BGA,
+a four-layer board and a hot-air gun.
 
-Всё это вылезает на ПЛИС, а не в кремнии. И это хорошо: там итерация стоит тридцать секунд.
+Sequence: a ready-made development board and the existing Oberon port → rebuilding the core
+from the book's sources with the open toolchain + our own peripherals → our own board. Lay it out
+earlier = lay it out twice.
 
-## Что жёстче именно в кремнии
+Money: a development board costs tens of dollars; a small run of our own board, hundreds.
 
-В ПЛИС блочная память есть и фактически бесплатна. В кристалле каждый килобайт SRAM —
-макроблок из библиотеки, занимающий площадь, за которую платишь. Нет бесплатной раздачи
-такта и сброса — дерево тактирования синтезируется отдельно. Появляются рамка выводов,
-питание, защита от статики, цепочки сканирования для тестирования (без них не проверишь,
-живой ли пришедший кристалл).
+### Path 2: a real chip (the loudest)
+Open silicon shuttles exist: open PDKs + an open synthesis flow.
+**TinyTapeout**: hundreds of dollars. Full-size shuttles on open 130 nm give room for the
+core with peripherals.
 
-**Итерация стоит месяцы и деньги вместо тридцати секунд. На шаттл уходит одна попытка.**
+The point: **RISC5 has never existed as a chip**; it has always lived inside an FPGA.
+Producing it in silicon finishes the idea thirteen years after the book.
 
-## Конкретно про RISC5
+⚠️ The set of available shuttles, schedules and prices change; some programs have closed or
+changed owners in recent years. **Check the current state before taping out.**
 
-Ядро маленькое, влезет без вопросов. **Память не влезет**: Oberon хочет ~1 МБ, мегабайт
-SRAM на кристалле в бюджет шаттла не поместится. Значит память внешняя → нужны выводы →
-а на дешёвых шаттлах с выводами туго (проекты делят мультиплексированную шину).
+Do this after path 1: the design is the same, only the flows differ.
 
-**Вывод: заказанный кристалл будет процессором, а не компьютером.** Сам по себе он ничего
-не делает, пока вокруг нет платы с памятью, видеовыходом, картой и разъёмами.
+### Path 3: discrete logic (the monument)
+A 32-bit datapath, a 32-word register file, a shifter, a multiplier: hundreds of packages,
+meters of wire, single-digit megahertz. Eight-bit homebrew machines live in 30–40 chips; that is
+a different weight class. It takes years. If you want it, pick something explicitly eight-bit and
+run it as a separate line not tied to the article schedule.
 
-## Порядок шагов (нарушать нельзя)
+### What you get
+A physical machine that boots in under a second into a graphical shell with a
+compiler inside, whose entire stack, from the instruction set to the window manager,
+is described in one book and fits in one person's head.
 
-1. **Браузер** — сегодня, бесплатно
-2. **Регрессионные тесты** параллельно — окупаются на каждом следующем шаге
-3. **ПЛИС на готовой плате** — десятки долларов; здесь вылезет всё, что простила симуляция
-4. **Своя плата вокруг ПЛИС** — сотни долларов; периферия, разводка, тайминги, питание
-5. **Кремний** — к приезду чипа плата уже отлажена, просто вынимаешь ПЛИС и ставишь кристалл
+**There is currently no open kit for building an Oberon machine yourself.** There are ports to
+other people's boards and the book; a single assembled thing with a board layout, a specification,
+firmware and instructions does not exist. An empty niche.
 
-Шаг 4 перед шагом 5 — **не бюрократия, а условие**. Иначе кристалл полгода пролежит в
-ящике, пока делается плата, и эффект размажется.
+---
 
-## Что заложить прямо сейчас (дёшево сейчас, дорого потом)
+# The road to silicon: from a virtual processor to a chip
 
-- Писать **синтезируемый** Verilog без конструкций, живущих только в симуляции
-- **Явно сбрасывать все регистры**
-- Не рассчитывать на предзаполненную память: в ПЛИС её инициализирует битстрим, **в кристалле этого не будет**
-- Держать ядро и память разведёнными чётким интерфейсом, чтобы модель памяти менялась без правки ядра
-- **Один тактовый домен внутри ядра**, всё внешнее — через синхронизаторы
-- Тесты с первого дня
+The key point: **the source is the same**, only the backend changes.
 
-Если заложено — дорога до кремния открыта. Если нет — на шаге ПЛИС выяснится, что
-переписывать надо заметную часть.
+One Verilog goes along three routes: through Verilator into C++ and on into WASM (the browser);
+through yosys/nextpnr into a bitstream (the FPGA); through an open synthesis flow into GDSII (the fab).
+Not three projects but one with three outputs.
 
-## Арка серии
+## What simulation forgives and hardware does not
 
-Выпуск 1: процессор живёт во вкладке браузера. Середина: он же дышит на ПЛИС. Финал: та же
-строчка Verilog становится куском кремния, который можно взять в руки.
+An uninitialized register (in hardware it holds garbage at power-on). The absence of an explicit reset.
+Races between clock domains: in simulation they do not exist, in hardware the keyboard, video, card and
+core tick at their own frequencies and need synchronizers between them. External memory in simulation
+is an array with instant access; in hardware it is a controller with latencies.
 
-**RISC5 никогда не существовал в виде микросхемы** — всегда жил внутри ПЛИС. Вирт умер в
-начале 2024 года; довести его замысел до кристалла — уместная форма уважения и сильный
-финал серии.
+All of this shows up on the FPGA, not in silicon. And that is good: there an iteration costs thirty seconds.
+
+## What is harsher specifically in silicon
+
+In an FPGA, block memory exists and is effectively free. On a die, every kilobyte of SRAM is a
+macro block from the library that occupies area you pay for. There is no free distribution of the
+clock and reset; the clock tree is synthesized separately. A pad ring appears, along with
+power, ESD protection, and scan chains for testing (without them you cannot check whether the
+die that arrives is alive).
+
+**An iteration costs months and money instead of thirty seconds. A shuttle gets one attempt.**
+
+## Specifically about RISC5
+
+The core is small and will fit without question. **The memory will not fit**: Oberon wants ~1 MB, and a
+megabyte of on-die SRAM will not fit in a shuttle budget. So the memory is external → pins are needed →
+and on cheap shuttles pins are scarce (projects share a multiplexed bus).
+
+**Conclusion: the ordered die will be a processor, not a computer.** On its own it does nothing
+until there is a board around it with memory, video output, a card and connectors.
+
+## The order of steps (must not be violated)
+
+1. **Browser**: today, for free
+2. **Regression tests** in parallel: they pay off at every subsequent step
+3. **FPGA on a ready-made board**: tens of dollars; everything the simulation forgave shows up here
+4. **Our own board around the FPGA**: hundreds of dollars; peripherals, layout, timing, power
+5. **Silicon**: by the time the chip arrives the board is already debugged; you simply remove the FPGA and put in the die
+
+Step 4 before step 5 is **not bureaucracy but a precondition**. Otherwise the die will sit in a
+drawer for half a year while the board is made, and the effect will be diluted.
+
+## What to build in right now (cheap now, expensive later)
+
+- Write **synthesizable** Verilog without constructs that exist only in simulation
+- **Explicitly reset all registers**
+- Do not rely on preloaded memory: in an FPGA the bitstream initializes it, **on a die that will not happen**
+- Keep the core and the memory separated by a clear interface so that the memory model can change without touching the core
+- **A single clock domain inside the core**, everything external through synchronizers
+- Tests from day one
+
+If this is built in, the road to silicon is open. If not, at the FPGA step it will turn out that a
+noticeable part has to be rewritten.
+
+## The arc of the series
+
+Episode 1: the processor lives in a browser tab. The middle: it breathes on an FPGA. The finale: the same
+line of Verilog becomes a piece of silicon you can hold in your hand.
+
+**RISC5 has never existed as a chip**; it has always lived inside an FPGA. Wirth died in
+early 2024; taking his idea all the way to a die is a fitting form of respect and a strong
+finale for the series.

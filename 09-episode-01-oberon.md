@@ -1,141 +1,143 @@
-# Выпуск №1 (флагман): весь компьютер в одной вкладке
+[Русская версия](09-episode-01-oberon.ru.md)
 
-Решение принято 2026-09-21: первым делаем Oberon, а не Burroughs. Причина — нужен
-масштаб и хардкор на старте, Burroughs уходит вторым/третьим (см. `10-episode-burroughs.md`).
+# Episode 1 (flagship): an entire computer in one tab
 
-## Суть
+Decision made on 2026-09-21: we do Oberon first, not Burroughs. The reason: we need
+scale and hardcore at the start; Burroughs moves to second/third (see `10-episode-burroughs.md`).
 
-Не эмулятор. **Настоящий процессор**: Verilog → Verilator → WASM, исполняется потактово
-в браузере. На нём грузится полноценная ОС с оконным интерфейсом, файловой системой и
-редактором. Внутри неё компилятор **пересобирает всю систему целиком, включая себя, за
-секунды**.
+## The essence
 
-**Центральный номер:** читатель правит систему команд процессора прямо на странице,
-жмёт кнопку, и через несколько секунд операционная система продолжает работать на
-изменённом железе.
+Not an emulator. **A real processor**: Verilog → Verilator → WASM, executed cycle by cycle
+in the browser. A full OS with a windowed interface, a file system and an
+editor boots on it. Inside it, the compiler **rebuilds the entire system, including itself, in
+seconds**.
 
-Вертикальный срез от вентиля до оконного менеджера за минуту. Невозможно ни на x86,
-ни на ARM — там ни один человек не держит весь стек в руках.
+**The headline act:** the reader edits the processor's instruction set right on the page,
+presses a button, and a few seconds later the operating system keeps running on
+the modified hardware.
 
-## Цифры, на которых держится эффект
+A vertical slice from the logic gate to the window manager in one minute. Impossible on x86
+or on ARM: there, no single person holds the whole stack in their hands.
 
-- процессор — порядка 1000 строк Verilog
-- компилятор — порядка 3000 строк
-- ОС с графикой, ФС и редактором — порядка 6000 строк
-- **весь стек от описания железа до GUI — около 10 000 строк**
+## The numbers the effect rests on
 
-Для сравнения: ядро Linux и браузер, в котором всё это крутится, — десятки миллионов.
+- the processor: on the order of 1000 lines of Verilog
+- the compiler: on the order of 3000 lines
+- the OS with graphics, a file system and an editor: on the order of 6000 lines
+- **the whole stack, from the hardware description to the GUI: about 10,000 lines**
 
-И главное: **весь этот стек читается за выходные.** Книга Вирта специально так написана.
-Выпуск получается не «посмотрите на забытую систему», а «вот сколько кода на самом деле
-нужно, чтобы был компьютер» — обвинение современной индустрии, предъявленное вещественно.
+For comparison: the Linux kernel and the browser in which all this runs are tens of millions.
 
-## Современная нагрузка поверх: языковая модель на RISC5
+And most importantly: **this whole stack can be read in a weekend.** Wirth's book was written that way on purpose.
+The episode becomes not "look at a forgotten system" but "here is how much code you really
+need for a computer to exist": an indictment of the modern industry, presented in tangible form.
 
-Жанр: берём задачу 2026 года и сажаем на систему, которую читаешь за выходные.
+## A modern workload on top: a language model on RISC5
 
-**Достижимость (оценка, проверить):** модели на 200–300 тысяч параметров генерируют
-связный текст. При однобайтовом квантовании ≈260 КБ весов — **влезает в мегабайт RAM
-машины**. Инференс токена ≈ столько умножений с накоплением, сколько параметров. На 25 МГц,
-с учётом что в RISC5 есть плавающая точка, — порядка десятых долей секунды на токен.
-Даже с ошибкой в разы это единицы токенов/сек, то есть текст заметно ползёт по экрану.
+The genre: take a 2026 problem and put it on a system you can read in a weekend.
 
-Эталонная реализация инференса такого класса — ~700 строк C, перенос на Оберон конечен.
+**Feasibility (an estimate, to be checked):** models with 200–300 thousand parameters generate
+coherent text. With one-byte quantization that is ≈260 KB of weights, which **fits in the machine's
+megabyte of RAM**. Inferring a token ≈ as many multiply-accumulates as there are parameters. At 25 MHz,
+given that RISC5 has floating point, that is on the order of tenths of a second per token.
+Even if this is off by several times, it is a few tokens/s, meaning text visibly crawls across the screen.
 
-**Картинка:** вся система целиком — процессор, компилятор, ОС — меньше по объёму кода,
-чем загрузчик современной ML-библиотеки, и при этом генерирует текст.
+A reference inference implementation of this class is ~700 lines of C; porting it to Oberon is a finite task.
 
-## Настоящий номер: добавить инструкцию и ускорить
+**The picture:** the entire system, processor, compiler and OS, is smaller in code size
+than the loader of a modern ML library, and it still generates text.
 
-Добавить в процессор умножение с накоплением, научить кодогенератор её эмитить,
-пересобрать, показать ускорение. На одной странице: Verilog → новая инструкция →
-компилятор → та же генерация текста, только в разы быстрее.
+## The real act: add an instruction and speed things up
 
-**Продолжение (выпуск N+1):** не одна инструкция, а матричное расширение — маленький
-систолический массив в RISC5. Собрать своими руками самый маленький работающий ускоритель
-ИИ и провести читателя от того, как умножители складываются в решётку, до текста на экране.
-Прецедент жанра — tiny-tpu (см. `07-browser-embed.md`).
+Add a multiply-accumulate to the processor, teach the code generator to emit it,
+rebuild, show the speedup. On one page: Verilog → a new instruction →
+the compiler → the same text generation, only several times faster.
 
-Для позиционирования: продавая GPU как услугу, показать понимание ускорителей от
-транзистора вверх, а не от API вниз.
+**Continuation (episode N+1):** not one instruction but a matrix extension, a small
+systolic array in RISC5. Build with your own hands the smallest working AI accelerator
+and walk the reader from how multipliers form a lattice to text on the screen.
+The precedent for the genre is tiny-tpu (see `07-browser-embed.md`).
 
-## Самое ценное, что можно сделать на Обероне
+For positioning: when selling GPUs as a service, show an understanding of accelerators from the
+transistor up, not from the API down.
 
-**Добавить в RISC5 дескрипторы с длиной и аппаратную проверку границ** — то есть применить
-урок Burroughs к своему процессору.
+## The most valuable thing that can be done on Oberon
 
-Тогда получается не пересказ чужой идеи, а собственное измерение:
-- сколько тактов стоит проверка
-- сколько логических ячеек она съедает
-- насколько замедляется система на реальной нагрузке (например, на пересборке самой себя)
+**Add descriptors with a length and hardware bounds checking to RISC5**, that is, apply
+the Burroughs lesson to our own processor.
 
-**Такого числа нет ни у кого.** Вся дискуссия про CHERI, MTE и безопасность памяти идёт
-на уровне «стоит сколько-то процентов» со ссылками на чужие оценки в чужих условиях.
-А здесь — измерение на полностью прозрачной системе, где известна каждая строчка от
-вентиля до прикладного кода.
+Then it is not a retelling of someone else's idea but our own measurement:
+- how many cycles the check costs
+- how many logic cells it eats
+- how much the system slows down on a real workload (for example, on rebuilding itself)
 
-Это связывает выпуск 1 с выпуском про Burroughs и превращает серию из обзорной в
-исследовательскую.
+**Nobody has this number.** The whole discussion about CHERI, MTE and memory safety happens
+at the level of "it costs some percent", with references to other people's estimates under other conditions.
+Here it is a measurement on a fully transparent system where every line is known, from the
+gate to the application code.
 
-## Прочие эксперименты на Обероне (материал на будущие выпуски)
+This links episode 1 with the Burroughs episode and turns the series from an overview into
+research.
 
-- Добавить возможность в язык — компилятор 3000 строк, весь на виду; честно измерить цену
-- Поменять сборщик мусора — редкий случай, когда GC виден до дна
-- Измерить неизмеримое: такты на вызов процедуры, на переключение окна, на полную пересборку
-- Написать то, чего в системе нет (сетевой стек, многопользовательский режим) — настоящая цена в строках на чистом субстрате
+## Other experiments on Oberon (material for future episodes)
 
-## Что за среда (для читателя выпуска)
+- Add a feature to the language: the compiler is 3000 lines, all in plain sight; honestly measure the cost
+- Swap the garbage collector: a rare case where the GC is visible to the bottom
+- Measure the unmeasurable: cycles per procedure call, per window switch, per full rebuild
+- Write what the system lacks (a network stack, multi-user mode): the real cost in lines on a clean substrate
 
-Нет оболочки и нет меню. **Вся система — текст, и любой текст исполняемый**: пишешь в
-любом окне имя модуля и процедуры, щёлкаешь средней кнопкой — выполняется. Команда,
-документ, лог, исходник — один материал. Окна плиточные. Модули грузятся динамически:
-скомпилировал — сразу живёт в работающей системе без перезапуска. Горячая перезагрузка
-кода, 1988 год.
+## What the environment is like (for the episode's reader)
 
-## Техническая конструкция
+There is no shell and no menu. **The whole system is text, and any text is executable**: you type
+the name of a module and procedure in any window, click the middle button, and it runs. A command,
+a document, a log, a source file are all the same material. Windows are tiled. Modules load dynamically:
+compile it and it immediately lives in the running system without a restart. Hot code
+reloading, 1988.
 
-Две модели за кнопкой переключения:
-- **быстрая** — `pdewacht/oberon-risc-emu` (~1500 строк C) через Emscripten; на ней читатель реально работает
-- **честная** — Verilog через Verilator в WASM, потактово, с видимыми сигналами; на ней смотрят механизм и меняют ISA
+## Technical design
 
-Плюс кнопка пересборки ОС её собственным компилятором изнутри, со счётчиком секунд.
+Two models behind a toggle button:
+- **fast**: `pdewacht/oberon-risc-emu` (~1500 lines of C) via Emscripten; the reader actually works on it
+- **honest**: Verilog via Verilator into WASM, cycle by cycle, with visible signals; this is where people look at the mechanism and change the ISA
 
-⚠ Не брать готовый OberonEmulator Шиерля для флагмана: у него паравиртуализованные SPI и
-клавиатура, нужны патченные образы — «настоящесть» под вопросом. Для обзорной статьи годится.
+Plus a button to rebuild the OS with its own compiler from the inside, with a seconds counter.
 
-## Риски и страховки
+⚠ Do not use Schierl's ready-made OberonEmulator for the flagship: it has paravirtualized SPI and
+keyboard and needs patched images, so its "authenticity" is in question. It is fine for an overview article.
 
-| Риск | Страховка |
+## Risks and safeguards
+
+| Risk | Safeguard |
 |---|---|
-| Потактовый RTL слишком медленный для интерактива | быстрая модель берёт отзывчивость, RTL остаётся витриной |
-| Пересборка Verilog в браузере тяжёлая | заранее собранный набор вариантов ISA вместо произвольной правки — эффект слабее, но живёт |
-| Мало места в кодировании команд RISC5 под новые инструкции | проверить по спецификации **первым делом** |
-| Однобитный экран | всё демонстративное должно хорошо выглядеть текстом — генерация текста подходит идеально |
-| 1 МБ RAM на живом железе | в браузере памяти можно дать больше; на плате останется квантованная версия — это хорошая сюжетная арка сама по себе |
+| Cycle-by-cycle RTL is too slow for interactivity | the fast model provides responsiveness, the RTL stays the showcase |
+| Rebuilding Verilog in the browser is heavy | a prebuilt set of ISA variants instead of arbitrary editing: the effect is weaker but it lives |
+| Not much room in the RISC5 instruction encoding for new instructions | check against the specification **first thing** |
+| A one-bit screen | everything demonstrative must look good as text; text generation fits perfectly |
+| 1 MB of RAM on real hardware | in the browser the memory can be larger; on the board the quantized version remains, which is a good story arc in itself |
 
-## Железо не нужно
+## No hardware needed
 
-**Выпуск делается целиком без оборудования.** Процессор потактово, ОС, нейросеть, правка
-ISA, пересборка — всё это Verilator + WASM на ноутбуке и во вкладке читателя.
+**The episode is done entirely without equipment.** The processor cycle by cycle, the OS, the neural network, ISA
+edits, the rebuild: all of this is Verilator + WASM on a laptop and in the reader's tab.
 
-И главный исследовательский результат (цена аппаратной проверки границ) тоже снимается
-без железа:
-- **такты** — Verilator, точнее настоящей платы (нет шума и прерываний)
-- **площадь** — отчёт синтеза yosys
-- **макс. частота** — yosys + nextpnr под выбранный тип ПЛИС, сама ПЛИС не нужна
-- **оценки под кремний** — открытый маршрут синтеза, ничего никуда не отправляя
+And the main research result (the cost of hardware bounds checking) is also obtained
+without hardware:
+- **cycles**: Verilator, more precise than a real board (no noise and no interrupts)
+- **area**: the yosys synthesis report
+- **max frequency**: yosys + nextpnr for the chosen FPGA type; the FPGA itself is not needed
+- **estimates for silicon**: an open synthesis flow, without sending anything anywhere
 
-Фразу «аппаратная безопасность памяти стоит столько-то тактов и столько-то вентилей»
-можно опубликовать с нулевыми затратами на оборудование.
+The sentence "hardware memory safety costs this many cycles and this many gates"
+can be published with zero spending on equipment.
 
-**Чего без железа не будет:** сюрпризов реальной физики; вещи на столе, которую дают
-потрогать; аргумент «это только в симуляторе крутилось» останется у части аудитории;
-пропадает финал арки с кристаллом в руке. Всё это про историю и валидацию, а не про результат.
+**What we will not have without hardware:** the surprises of real physics; a thing on the desk that people get to
+touch; the argument "it only ran in a simulator" will stay with part of the audience;
+the arc's finale with a die in hand disappears. All of this is about the story and validation, not about the result.
 
-**Порядок покупок:** ничего не покупать до выхода первого выпуска. Если серия пойдёт —
-отладочная плата за несколько десятков долларов становится следующим выпуском, а не
-условием первого. Своя плата и кремний — дальние опции, к которым можно не приходить никогда.
+**Purchasing order:** buy nothing until the first episode is out. If the series takes off,
+a development board for a few dozen dollars becomes the next episode, not a
+precondition for the first. Our own board and silicon are distant options we may never reach.
 
-## Сроки
+## Timeline
 
-2–4 недели. Это осознанный размен: старт серии сдвигается, но первый выпуск бьёт в полную силу.
+2–4 weeks. This is a deliberate trade-off: the start of the series slips, but the first episode hits at full force.

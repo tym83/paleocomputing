@@ -1,120 +1,124 @@
-# Палеокомпьютинг
+[Русская версия](README.ru.md)
+
+# Paleocomputing
 
 *Experimental computer archaeology*
 
-Компьютеры, языки и операционные системы, которые работали, а потом исчезли —
-иногда вместе с идеями, которые до сих пор никто не повторил. Мы запускаем их
-по-настоящему и смотрим, что они умели.
+Computers, languages and operating systems that worked and then disappeared,
+sometimes taking with them ideas that nobody has repeated since. We run them
+for real and see what they could do.
 
-**→ [Открыть сайт серии](https://tym83.github.io/paleocomputing/)**
+**→ [Open the series website](https://tym83.github.io/paleocomputing/)**
 
 ---
 
-## Первые пять минут
+## The first five minutes
 
-Ставить не нужно ничего. Система Оберон 1986 года — процессор, компилятор,
-операционная система и окна — загружается прямо в браузере, на настоящем
-описании схемы Никлауса Вирта.
+There is nothing to install. The 1986 Oberon system (processor, compiler,
+operating system and windows) boots right in the browser, on Niklaus Wirth's
+actual circuit description.
 
 | | |
 |---|---|
-| [Лаборатория](https://tym83.github.io/paleocomputing/oberon/lab.html) | девять заданий, каждое проверяется само |
-| [Просто запустить систему](https://tym83.github.io/paleocomputing/oberon/run.html) | без заданий — мышь, клавиатура, окна |
-| [Методичка](https://tym83.github.io/paleocomputing/oberon/book/) | восемь глав: от «зачем это» до «что мы измерили» |
-| [Поменять процессор](https://tym83.github.io/paleocomputing/oberon/checks.html) | переключатель железа и цена проверки границ, считается на месте |
-| [Вставить к себе](https://tym83.github.io/paleocomputing/oberon/embed.html) | машина как компонент: две строки в любую страницу |
+| [Lab](https://tym83.github.io/paleocomputing/oberon/lab.html) | nine exercises, each one checks itself |
+| [Just run the system](https://tym83.github.io/paleocomputing/oberon/run.html) | no exercises: mouse, keyboard, windows |
+| [Handbook](https://tym83.github.io/paleocomputing/oberon/book/) | eight chapters, from "why bother" to "what we measured" |
+| [Swap the processor](https://tym83.github.io/paleocomputing/oberon/checks.html) | a hardware switch and the cost of bounds checking, computed on the spot |
+| [Embed it on your page](https://tym83.github.io/paleocomputing/oberon/embed.html) | the machine as a component: two lines in any page |
 
-Это не эмулятор. В браузере считается состояние каждого проводника на каждом
-такте — что покажет симуляция, то сделал бы и настоящий чип.
+This is not an emulator. The browser computes the state of every wire on every
+clock cycle: whatever the simulation shows is what the real chip would have done.
 
-### Если хочется проверить нас самим
+### If you want to check our work yourself
 
-Нужен Verilator и компилятор C++:
+You need Verilator and a C++ compiler:
 
 ```
 cd impl
-make deps     # проверить окружение
-make check    # около восьми минут
+make deps     # check the environment
+make check    # about eight minutes
 ```
 
-За эти восемь минут: тесты набора команд, загрузка системы, пошаговая сверка с
-эталонной моделью на 14,6 млн инструкций, самораскрутка компилятора и полная
-пересборка системы — 37 файлов побайтово.
+In those eight minutes: instruction set tests, a system boot, a step-by-step
+comparison against the reference model over 14.6 million instructions, the
+compiler bootstrapping itself, and a full rebuild of the system, 37 files
+compared byte for byte.
 
-⚠ Проверено на macOS ARM. На Linux должно собраться, но не проверялось.
+⚠ Tested on macOS ARM. It should build on Linux, but this has not been tested.
 
-### Что почитать дальше
+### What to read next
 
 | | |
 |---|---|
-| `impl/docs/FINDING-*.md` | 57 находок: что измерено, что нашлось, что оказалось не так |
-| `impl/README.md` | устройство измерительной оснастки, цели Makefile, что чьё |
-| `marketplace/` | подключаемый каталог для Cozystack: те же машины как приложения |
-| `kubevirt/GUIDE.ru.md` | та же машина в своём KubeVirt, без Cozystack ([English](kubevirt/GUIDE.md)) |
-| `qemu/GUIDE.ru.md` | та же машина в обычном QEMU ([English](qemu/GUIDE.md)) |
-| `BACKLOG.md` | что в серии дальше и в каком порядке |
+| `impl/docs/FINDING-*.md` | 57 findings: what was measured, what was found, what turned out to be wrong |
+| `impl/README.md` | how the measurement harness is built, Makefile targets, who owns what |
+| `marketplace/` | a pluggable catalog for Cozystack: the same machines as applications |
+| `kubevirt/GUIDE.md` | the same machine in your own KubeVirt, without Cozystack ([Russian](kubevirt/GUIDE.ru.md)) |
+| `qemu/GUIDE.md` | the same machine in plain QEMU ([Russian](qemu/GUIDE.ru.md)) |
+| `BACKLOG.md` | what comes next in the series and in what order |
 
 ---
 
-## Как устроен репозиторий
+## How the repository is organized
 
-Ниже — рабочие заметки по планированию серии. Начато: 2026-09-21.
+What follows are working notes on planning the series. Started: 2026-09-21.
 
-## Цель
+## Goal
 
-Цикл статей + открытых репозиториев про незаслуженно забытые системы: операционные
-системы, языки программирования, архитектуры процессоров и парадигмы. Не ретро-ностальгия,
-а сбор рабочего словаря идей, часть из которых забирается в проектирование нового
-инфраструктурного слоя (трек 4).
+A series of articles plus open repositories about undeservedly forgotten systems:
+operating systems, programming languages, processor architectures and paradigms.
+Not retro nostalgia, but building a working vocabulary of ideas, some of which go
+into the design of a new infrastructure layer (track 4).
 
-## Четыре трека
+## Four tracks
 
-1. **Операционные системы** — `01-os-catalog.md`
-2. **Языки и компиляторы** — `02-languages.md`
-3. **Язык-машины** (железо + язык + ОС как единая триада) — `03-language-machines.md`
-4. **Инфраструктурный слой завтрашнего дня** — `04-infra-layer.md`
+1. **Operating systems**: `01-os-catalog.md`
+2. **Languages and compilers**: `02-languages.md`
+3. **Language machines** (hardware + language + OS as a single triad): `03-language-machines.md`
+4. **The infrastructure layer of tomorrow**: `04-infra-layer.md`
 
-Плюс сквозные материалы:
-- `05-experiments.md` — отдельные эксперименты и кросс-идеи
-- `06-paradigms.md` — парадигмы без языковой реализации
-- `BACKLOG.md` — ранжированный список проектов со статусом
+Plus cross-cutting material:
+- `05-experiments.md`: standalone experiments and cross-ideas
+- `06-paradigms.md`: paradigms without a language implementation
+- `BACKLOG.md`: a ranked list of projects with their status
 
-## Четыре жанра проекта (важно для планирования)
+## Four project genres (important for planning)
 
-| Жанр | Что нужно | Что получается |
+| Genre | What it needs | What it produces |
 |---|---|---|
-| **Эмуляция** | документация железа + образ ОС | побитовая верность, оригинальный софт работает |
-| **Оживление** | исходники ОС | порт на живое железо/эмулятор, археология сборочных систем |
-| **Реимплементация** | только описанные принципы | новая система по старой спеке, нет правовых вопросов, сразу опенсорс |
-| **Археология** | ничего или почти ничего | поиск артефактов, интервью с носителями знания |
+| **Emulation** | hardware documentation + an OS image | bit-exact fidelity, the original software runs |
+| **Revival** | OS sources | a port to live hardware or an emulator, archaeology of build systems |
+| **Reimplementation** | only the described principles | a new system built from an old spec, no legal questions, open source from day one |
+| **Archaeology** | nothing or almost nothing | hunting for artifacts, interviews with the people who hold the knowledge |
 
-Ключевой вывод: в треке ОС узкое место — **не эмулятор, а артефакты**. Эмулятор пишется
-по документации; вопрос в том, есть ли что в него загружать.
+Key conclusion: in the OS track the bottleneck is **not the emulator but the artifacts**.
+An emulator can be written from documentation; the question is whether there is anything
+to load into it.
 
-## Сквозные линии серии
+## Recurring threads of the series
 
-- Персистентность вместо файлов: KeyKOS/EROS → Grasshopper → Napier88 → Phantom OS
-- Безопасность типом, а не MMU: Burroughs → Эльбрус → Oberon → Singularity → WASI
-- Capability вместо ACL: CAP → iAPX 432 → KeyKOS → seL4
-- Код, независимый от процессора: Taos VP → TIMI (AS/400) → Dis → JVM → WASM
-- Специализация бьёт универсальность: NetWare, QNX, Tandem, DPU
-- CSP от железа до языка: транспьютер → occam → Helios → Newsqueak → Alef → Go
+- Persistence instead of files: KeyKOS/EROS → Grasshopper → Napier88 → Phantom OS
+- Safety through types rather than the MMU: Burroughs → Elbrus → Oberon → Singularity → WASI
+- Capabilities instead of ACLs: CAP → iAPX 432 → KeyKOS → seL4
+- Processor-independent code: Taos VP → TIMI (AS/400) → Dis → JVM → WASM
+- Specialization beats generality: NetWare, QNX, Tandem, DPU
+- CSP from hardware to language: transputer → occam → Helios → Newsqueak → Alef → Go
 
-## Тезис подтрека язык-машин
+## The thesis of the language-machine sub-track
 
-Язык-машины проиграли не по существу, а по экономике (дешёвый массовый универсальный
-кристалл + резко улучшившиеся компиляторы + RISC-аргумент). Экономика изменилась:
-ПЛИС дёшевы, RISC-V позволяет свои расширения, открытые кремниевые шаттлы доступны,
-CHERI возвращает аппаратную проверку семантики языка, ускорители вернули
-специализированный кремний.
+Language machines lost not on merit but on economics (a cheap mass-produced general-purpose
+chip + dramatically improved compilers + the RISC argument). The economics have changed:
+FPGAs are cheap, RISC-V allows custom extensions, open silicon shuttles are available,
+CHERI brings back hardware enforcement of language semantics, and accelerators have
+brought back specialized silicon.
 
-## Текущее состояние
+## Current state
 
-Стадия: сбор и ранжирование материала. Код не начат.
+Stage: collecting and ranking material. No code has been started.
 
-## Ближайшие шаги
+## Next steps
 
-См. `BACKLOG.md`, верхние строки. Кандидаты на первый удар:
-1. Реконсайлер на Рефале + суперкомпиляция (дёшево, актуально, питает трек 4)
-2. Первая триада на форт-процессоре J1 (выходные, полный цикл железо+язык+ОС)
-3. Проверить состояние открытых кремниевых шаттлов под RISC5
+See the top lines of `BACKLOG.md`. Candidates for the first strike:
+1. A reconciler in Refal + supercompilation (cheap, relevant, feeds track 4)
+2. A first triad on the J1 Forth processor (a weekend, the full hardware + language + OS cycle)
+3. Check the state of open silicon shuttles for RISC5

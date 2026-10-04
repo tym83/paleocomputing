@@ -1,61 +1,63 @@
-# Что здесь чужое и на каких условиях
+[Русская версия](THIRD-PARTY.ru.md)
 
-Наша часть — под Apache-2.0 (файл `LICENSE`). Ниже — всё, что взято готовым.
-Условия всех трёх компонентов разрешительные и требуют одного: сохранять
-уведомление об авторстве. Оно сохранено.
+# What here belongs to others, and on what terms
 
-## Project Oberon — Никлаус Вирт, Юрг Гуткнехт, Пол Рид
+Our part is under Apache-2.0 (the `LICENSE` file). Below is everything taken ready-made.
+The terms of all three components are permissive and require one thing: keep the
+authorship notice. It has been kept.
 
-* `impl/rtl/` — описание процессора RISC5 и периферии
-* `impl/ext/oberon-src/`, `impl/ext/po2013-src/` — исходники системы
-* `impl/ext/disk/Oberon-2016-08-02.dsk` — образ системы
-* `impl/web/oberon.dsk` — тот же образ для браузера
+## Project Oberon: Niklaus Wirth, Jürg Gutknecht, Paul Reed
 
-Источник: [projectoberon.net](http://www.projectoberon.net/).
-Текст уведомления: `impl/ext/norebo/license.txt`.
+* `impl/rtl/`: the description of the RISC5 processor and peripherals
+* `impl/ext/oberon-src/`, `impl/ext/po2013-src/`: the system sources
+* `impl/ext/disk/Oberon-2016-08-02.dsk`: the system image
+* `impl/web/oberon.dsk`: the same image for the browser
 
-Наша правка: 53 строки в `RISC5.v` — добавленная команда проверки границ, ради
-которой затевалось измерение. `Registers.v` переписан с примитивов Xilinx на
-поведенческое описание, чтобы модуль собирался открытым инструментарием.
+Source: [projectoberon.net](http://www.projectoberon.net/).
+Notice text: `impl/ext/norebo/license.txt`.
 
-## project-norebo — Peter De Wachter
+Our change: 53 lines in `RISC5.v`, the added bounds-check instruction that the
+measurement was set up for. `Registers.v` was rewritten from Xilinx primitives into a
+behavioral description so that the module builds with open tooling.
 
-* `impl/ext/norebo/` — компилятор Оберона, запускаемый из командной строки
+## project-norebo: Peter De Wachter
 
-Источник: [github.com/pdewacht/project-norebo](https://github.com/pdewacht/project-norebo).
-Условия — те же, что у Project Oberon (`impl/ext/norebo/license.txt`).
+* `impl/ext/norebo/`: the Oberon compiler, run from the command line
 
-Наша правка: счётчик тактов и профилировщик в рантайме.
+Source: [github.com/pdewacht/project-norebo](https://github.com/pdewacht/project-norebo).
+Terms: the same as Project Oberon (`impl/ext/norebo/license.txt`).
 
-## oberon-risc-emu — Peter De Wachter
+Our change: a cycle counter and a profiler in the runtime.
 
-* `impl/ext/refemu/` — эталонный эмулятор, против которого идёт пошаговая сверка
+## oberon-risc-emu: Peter De Wachter
 
-Источник: [github.com/pdewacht/oberon-risc-emu](https://github.com/pdewacht/oberon-risc-emu).
-Уведомление: `impl/ext/refemu/LICENSE` — перенесено из README упомянутого
-репозитория, отдельного файла лицензии там нет.
+* `impl/ext/refemu/`: the reference emulator that the step-by-step comparison runs against
 
-Наша правка: счётчик тактов и трассировка для дифференциального стенда.
+Source: [github.com/pdewacht/oberon-risc-emu](https://github.com/pdewacht/oberon-risc-emu).
+Notice: `impl/ext/refemu/LICENSE`, carried over from the README of that
+repository, which has no separate license file.
 
-## Библиотека ячеек — Sky130 (SkyWater)
+Our change: a cycle counter and tracing for the differential test bench.
 
-* `impl/syn/lib/sky130_fd_sc_hd__tt_025C_1v80.lib` — оценки площади и частоты
+## Cell library: Sky130 (SkyWater)
 
-Apache-2.0, берётся из
+* `impl/syn/lib/sky130_fd_sc_hd__tt_025C_1v80.lib`: area and frequency estimates
+
+Apache-2.0, taken from
 [OpenROAD-flow-scripts](https://github.com/The-OpenROAD-Project/OpenROAD-flow-scripts).
-В репозиторий не кладётся из-за размера (12 МБ) — тянется целью `make lib`,
-которую вызывает и `make syn`.
+It is not committed to the repository because of its size (12 MB); it is fetched by the
+`make lib` target, which `make syn` also calls.
 
-Это настоящий техпроцесс, на нём физически делают чипы.
+This is a real process technology; chips are physically made on it.
 
-### Почему не Nangate45
+### Why not Nangate45
 
-На ней мерилось раньше, и её шапка **прямо запрещает публикацию**: *«provided
-pursuant to a License Agreement containing restrictions on its use»*, *«does not
-indicate actual or intended publication of this file»*. Из-за этого синтез не
-работал из чистого клона.
+Earlier measurements used it, and its header **explicitly forbids publication**: *"provided
+pursuant to a License Agreement containing restrictions on its use"*, *"does not
+indicate actual or intended publication of this file"*. Because of this, synthesis did not
+work from a clean clone.
 
-Смена техпроцесса меняет абсолютные числа (130 нм против 45 нм), но наши
-утверждения — относительные дельты, и они переход переживают: цена команды
-проверки границ по площади **+1.04 %** против +0.32…0.85 % на Nangate45.
-Порядок и знак те же.
+Changing the process technology changes the absolute numbers (130 nm versus 45 nm), but our
+claims are relative deltas, and they survive the switch: the area cost of the bounds-check
+instruction is **+1.04 %** versus +0.32…0.85 % on Nangate45.
+The order of magnitude and the sign are the same.

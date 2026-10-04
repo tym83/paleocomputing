@@ -1,543 +1,545 @@
-# Дизайн: Oberon-машина в браузере и цена проверки границ
+[Русская версия](DESIGN.ru.md)
 
-**Версия 0.3** — переписана после ревью пятью независимыми рецензентами; v0.3 вносит
-исправления по финальному отчёту браузерного ревьюера (скорость, интерфейсы, графика, мышь).
-Исходная версия: `DESIGN-v0.1-superseded.md`. Находки: `REVIEW.md`.
+# Design: an Oberon machine in the browser and the cost of bounds checking
 
-> **Что изменилось по сравнению с 0.1.** Утверждение о свободном месте в кодировании —
-> опровергнуто. Ускорение ≥2× — опровергнуто арифметикой и измерением. Новизна числа
-> по цене проверки границ — опровергнута ссылками. Нейросеть и FMAC вынесены в отдельный
-> выпуск. Эксперимент с проверкой границ перевёрнут и стал дешевле и сильнее.
+**Version 0.3**: rewritten after a review by five independent reviewers; v0.3 adds
+corrections from the browser reviewer's final report (speed, interfaces, graphics, mouse).
+Original version: `DESIGN-v0.1-superseded.md`. Findings: `REVIEW.md`.
+
+> **What changed compared with 0.1.** The claim about free space in the encoding was
+> refuted. The ≥2× speedup was refuted by arithmetic and by measurement. The novelty of the number
+> for the cost of bounds checking was refuted by references. The neural network and FMAC were moved to a separate
+> episode. The bounds-checking experiment was turned around and became cheaper and stronger.
 
 ---
 
-## 1. Что делаем и чего не делаем
+## 1. What we do and what we do not
 
-**Выпуск:** «Процессор Вирта, потактово, в вашей вкладке — и сколько на самом деле стоит
-проверка границ массивов».
+**The episode:** "Wirth's processor, cycle by cycle, in your tab, and what bounds checking
+really costs".
 
-**В выпуске — два утверждения.** Третье (ускорение через расширение ISA) вынесено
-в выпуск №2 вместе с языковой моделью: оно самое дорогое, самое рискованное, внутренне
-противоречивое и **не нужно ни для одного из двух оставшихся**.
+**The episode makes two claims.** The third (a speedup through an ISA extension) was moved
+to episode 2 together with the language model: it is the most expensive, the riskiest, internally
+contradictory, and **not needed for either of the two remaining ones**.
 
-| # | Утверждение | Критерий |
+| # | Claim | Criterion |
 |---|---|---|
-| **У1** | Весь стек — процессор, компилятор, ОС — работает в браузере | холодная загрузка ≤ T с, **медиана и разброс** по K прогонам на M названных конфигурациях |
-| **У3** | Цена проверки границ массивов в трёх конфигурациях на полностью открытом стеке | числа воспроизводятся одной командой; интервал берётся **над популяцией программ** (все ~25–30 модулей системы по отдельности, медиана + IQR) |
+| **C1** | The whole stack (processor, compiler, OS) runs in the browser | cold boot ≤ T s, **median and spread** over K runs on M named configurations |
+| **C3** | The cost of array bounds checking in three configurations on a fully open stack | the numbers are reproduced by one command; the interval is taken **over a population of programs** (all ~25–30 system modules individually, median + IQR) |
 
-**Не-цели (явно):** совместимость с настоящей платой Вирта; сеть; нейросеть; FMAC;
-производительность ради производительности; полнота ISA-расширений.
+**Non-goals (explicit):** compatibility with Wirth's real board; networking; a neural network; FMAC;
+performance for the sake of performance; completeness of ISA extensions.
 
-🟢 **Отдельная не-цель, принятая осознанно: `SharedArrayBuffer` и кросс-доменная изоляция
-не используются.** COOP/COEP нужны только ради WASM-потоков и синхронного `Atomics.wait`;
-здесь нет ни того, ни другого (`verilator --threads` для 5702-вентильного дизайна
-бессмыслен, ввод асинхронен по природе). Архитектура: эмулятор в Worker'е, кадр на главный
-поток через `postMessage(buf, [buf])` — transferable, передача владения за O(1).
+🟢 **A separate non-goal, accepted deliberately: `SharedArrayBuffer` and cross-origin isolation
+are not used.** COOP/COEP are needed only for WASM threads and a synchronous `Atomics.wait`;
+there is neither here (`verilator --threads` is pointless for a 5702-gate design,
+and input is asynchronous by nature). Architecture: the emulator in a Worker, the frame sent to the main
+thread via `postMessage(buf, [buf])`: transferable, an ownership transfer in O(1).
 
-Это снимает целый класс проблем разом: GitHub Pages **не умеет задавать заголовки ответа**
-(проверено на живом `.github.io`); `COEP: require-corp` ломает любой сторонний ресурс без
-`Cross-Origin-Resource-Policy`, а `credentialless` **не поддерживается Safari**; встраивание
-в iframe требует `allow="cross-origin-isolated"` от чужой страницы.
-**→ страница встраивается куда угодно, включая чужой блог.**
+This removes a whole class of problems at once: GitHub Pages **cannot set response headers**
+(checked on a live `.github.io`); `COEP: require-corp` breaks any third-party resource without
+`Cross-Origin-Resource-Policy`, and `credentialless` **is not supported by Safari**; embedding
+in an iframe requires `allow="cross-origin-isolated"` from someone else's page.
+**→ the page can be embedded anywhere, including someone else's blog.**
 
-### Честная рамка У3
+### The honest frame of C3
 
-**Мы не претендуем на новизну осей.** Накладные расходы проверки границ измерены и
-опубликованы: Morello 28.01% → 5.70% (оценка оптимизированного дизайна 1.8–3.0%),
-Toooba 9%, ARM MTE на Pixel 8 независимо 4.00% и 11.98%, Intel MPX в кремнии 1.47–2.52×.
-Площадь тоже, включая кремний: Morello < 6%, CHERIoT 28 нм 26 988 → 58 110 вентилей,
+**We do not claim novelty of the axes.** The overhead of bounds checking has been measured and
+published: Morello 28.01% → 5.70% (an estimate for an optimized design 1.8–3.0%),
+Toooba 9%, ARM MTE on the Pixel 8 independently 4.00% and 11.98%, Intel MPX in silicon 1.47–2.52×.
+Area too, including silicon: Morello < 6%, CHERIoT 28 nm 26,988 → 58,110 gates,
 Ibex 57.3 → 90.3 kGE.
 
-**Новое ровно две вещи:**
-1. 🎯 **Нагрузка «система пересобирает сама себя»** (аналог `buildworld` на CheriBSD) —
-   в литературе не измерена никем
-2. **Три конфигурации на стеке, где открыт каждый слой** — от вентиля до прикладной программы
+**Exactly two things are new:**
+1. 🎯 **The workload "the system rebuilds itself"** (an analog of `buildworld` on CheriBSD):
+   nobody in the literature has measured it
+2. **Three configurations on a stack where every layer is open**, from the gate to the application program
 
-**И один вывод, следующий прямо из чисел и работающий сильнее любой новизны:**
-> отключение проверок границ в Обероне даёт примерно те же ~6%, что и всё флагманское
-> расширение системы команд
+**And one conclusion that follows directly from the numbers and works stronger than any novelty:**
+> turning off bounds checks in Oberon gives about the same ~6% as the entire flagship
+> instruction set extension
 
 ---
 
-## 2. Слои
+## 2. Layers
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│ Страница выпуска                                             │
-│  канва 1024×768×1bpp (WebGL2) · клавиатура · 3 кнопки мыши   │
-│  переключатель конфигураций ISA · счётчики · графики         │
+│ Episode page                                                 │
+│  canvas 1024×768×1bpp (WebGL2) · keyboard · 3 mouse buttons  │
+│  ISA configuration switch · counters · charts                │
 └──────────┬───────────────────────────────┬───────────────────┘
-           │ по умолчанию                  │ по явной кнопке
+           │ by default                    │ on an explicit button
    ┌───────▼────────┐             ┌────────▼─────────┐
    │ ISS → WASM     │             │ RTL → Verilator  │
-   │ 355 МГц в WASM │ ◄─ диффтест │ → C++ → WASM     │
-   │ (опция)        │             │ 5.8–7.0 МГц SoC  │
+   │ 355 MHz in WASM│ ◄─ difftest │ → C++ → WASM     │
+   │ (optional)     │             │ 5.8–7.0 MHz SoC  │
    └───────┬────────┘             └────────┬─────────┘
            └───────────┬───────────────────┘
                  ┌─────▼─────┐
-                 │  SoC      │ RISC5 + SRAM + PROM + устройства
+                 │  SoC      │ RISC5 + SRAM + PROM + devices
                  └─────┬─────┘
                  ┌─────▼─────┐
-                 │Oberon 2013│ ОС + компилятор (3 сборки: без/прогр./аппар. проверок)
+                 │Oberon 2013│ OS + compiler (3 builds: no/software/hardware checks)
                  └───────────┘
 ```
 
-🟢 **Риск «Verilator в WASM слишком медленный» снят измерением полного `RISC5Top`
+🟢 **The risk "Verilator in WASM is too slow" was removed by measuring the full `RISC5Top`
 (Verilator 5.052 → Emscripten 6.0.9 → Node/V8):**
 
-| Модель | нативно | **в WASM** | против реальных 25 МГц |
+| Model | native | **in WASM** | versus the real 25 MHz |
 |---|---|---|---|
-| Ядро RISC5 + FPU | 14.7–15.2 МГц | **13.9–14.1 МГц** | 0.56× |
-| **Полный SoC** (ядро+FPU+VID+SPI+PS2+RS232+мышь) | 6.6–8.1 МГц | **5.8–7.0 МГц** | ≈3.5× медленнее |
-| ISS `pdewacht` | 589 МГц | **355 МГц** | 14× быстрее реальности |
+| RISC5 core + FPU | 14.7–15.2 MHz | **13.9–14.1 MHz** | 0.56× |
+| **Full SoC** (core+FPU+VID+SPI+PS2+RS232+mouse) | 6.6–8.1 MHz | **5.8–7.0 MHz** | ≈3.5× slower |
+| `pdewacht` ISS | 589 MHz | **355 MHz** | 14× faster than reality |
 
-**Потеря на WASM почти нулевая — 5–8%** (верилированный код это плоская целочисленная
-32-битная арифметика, идеальная пища для WASM). На среднем x86-ноуте 2021 г. делить
-на 2–2.5 → **~3 МГц SoC**, и Oberon на этом жив.
+**The loss from WASM is almost zero, 5–8%** (verilated code is flat 32-bit integer
+arithmetic, ideal food for WASM). On an average 2021 x86 laptop, divide
+by 2–2.5 → **~3 MHz SoC**, and Oberon is alive at that.
 
-→ **7 МГц = 116 тыс. тактов на кадр при 60 Гц. Oberon, спроектированный под 25 МГц,
-на 7 МГц полностью отзывчив** — курсор, набор текста, перерисовка окон в реальном времени.
-**Честная модель может быть основным сценарием**, отдельная быстрая для интерактива
-не обязательна (остаётся как эталон диффтеста).
+→ **7 MHz = 116 thousand cycles per frame at 60 Hz. Oberon, designed for 25 MHz,
+is fully responsive at 7 MHz**: the cursor, typing, redrawing windows in real time.
+**The honest model can be the main scenario**; a separate fast one for interaction
+is not required (it stays as the difftest reference).
 
-**Периферия стоит половину:** голое ядро 14 МГц → полный SoC 7 МГц, основной пожиратель —
-`VID.v`, честно тактующий пиксельный поток 1024×768@60. Выкинув его (см. §4), возвращаемся
-ближе к 14.
+**The peripherals cost half:** the bare core at 14 MHz → the full SoC at 7 MHz; the main consumer is
+`VID.v`, which honestly clocks the pixel stream of 1024×768@60. By throwing it out (see §4), we get back
+closer to 14.
 
-Полная пересборка модели (`verilator` + `em++ -O3`) — **8.2 с**.
+A full rebuild of the model (`verilator` + `em++ -O3`) takes **8.2 s**.
 
-🔴 **«Видимый конвейер» показывать нечего — у RISC5 нет конвейера.** Одностадийная выборка
-плюс многотактовые блоки со `stall`. Зрелищно другое: **стойла, регистровый файл, флаги
-NZCV, путь через FP-блоки**. Формулировку в `07-browser-embed.md` исправить.
+🔴 **There is no "visible pipeline" to show: RISC5 has no pipeline.** Single-stage fetch
+plus multi-cycle units with `stall`. What is spectacular is something else: **stalls, the register file, the NZCV
+flags, the path through the FP units**. Fix the wording in `07-browser-embed.md`.
 
 ---
 
-## 3. Ядро RISC5: факты
+## 3. The RISC5 core: facts
 
-Источник — **`RISC5.v` с сайта Вирта, версия 31.8.2018**.
-🔴 Версия из `Spirit-of-Oberon/ProjectOberon2013` датирована 25.9.2015 и **не содержит
-прерываний**. Без версии 2018 не напишется T1.7.
+Source: **`RISC5.v` from Wirth's site, version 31.8.2018**.
+🔴 The version from `Spirit-of-Oberon/ProjectOberon2013` is dated 25.9.2015 and **has no
+interrupts**. Without the 2018 version T1.7 cannot be written.
 
-**Регистры** R0–R15 (R12=MT, R13=SB, R14=SP, R15=LNK; в железе особый только R15).
-**Флаги** N, Z, C, V. **H** — старшие биты MUL / остаток DIV, не сохраняется при IRQ.
-**SPC** — 26 бит: PC + NZCV. 🔴 **Программно нечитаем** — `MOV a, SPC` в ISA нет.
+**Registers** R0–R15 (R12=MT, R13=SB, R14=SP, R15=LNK; only R15 is special in hardware).
+**Flags** N, Z, C, V. **H**: the upper bits of MUL / the remainder of DIV, not saved on IRQ.
+**SPC**: 26 bits: PC + NZCV. 🔴 **Not readable by software**: there is no `MOV a, SPC` in the ISA.
 
-### Форматы — исправлено
+### Formats: corrected
 `p=IR[31], q=IR[30], u=IR[29], v=IR[28]`
 
-| Формат | Биты 31:28 | |
+| Format | Bits 31:28 | |
 |---|---|---|
-| F0 | **`00uv`** ← не `00u0` | регистр-регистр |
-| F1 | `01uv` | регистр-непосредственное |
-| F2 | `10uv` | u: load/store, v: слово/байт, смещение 20 бит |
-| F3 | `110v` / `111v` | ветвление регистр / смещение |
+| F0 | **`00uv`** ← not `00u0` | register-register |
+| F1 | `01uv` | register-immediate |
+| F2 | `10uv` | u: load/store, v: word/byte, 20-bit offset |
+| F3 | `110v` / `111v` | branch to register / by offset |
 
-### 🔴 Свободного пространства кодирования НЕТ
+### 🔴 There is NO free encoding space
 
-Декод арифметики **не смотрит на биты 30 и 28**: `assign FAD = ~p & (op == 12);`
-А `FPAdder.v` в шапке: `// u = 1: FLT; v = 1: FLOOR`.
+The arithmetic decode **does not look at bits 30 and 28**: `assign FAD = ~p & (op == 12);`
+And the header of `FPAdder.v` says: `// u = 1: FLT; v = 1: FLOOR`.
 
-→ **F0 с битом 28 = 1 и op=12 — это FLOOR**, и компилятор её эмитит на каждый `ENTIER`:
+→ **F0 with bit 28 = 1 and op=12 is FLOOR**, and the compiler emits it for every `ENTIER`:
 `ORG.Floor: Put0(Fad+V, x.r, x.r, RH)`.
 
-Полный расклад: `0001`+op=12,13 → FLOOR · `0011`+op=0 → MOV a,NZCV (INFO = **0x53**) ·
-`0011`+op=8,9 → ADC/SBC · `0011`+op=10,11 → UMUL / беззнаковый DIV.
-Остальные 24 — **не свободны, а алиасы** базовой операции.
+The full breakdown: `0001`+op=12,13 → FLOOR · `0011`+op=0 → MOV a,NZCV (INFO = **0x53**) ·
+`0011`+op=8,9 → ADC/SBC · `0011`+op=10,11 → UMUL / unsigned DIV.
+The other 24 are **not free but aliases** of the base operation.
 
-🔴 **Ловушки на неизвестную инструкцию в RISC5 нет вообще.** Любое 32-битное слово —
-валидная команда. Неверное кодирование **исполнится молча**, и диффтест этого не поймает,
-если патч применён к одной модели.
+🔴 **RISC5 has no trap on an unknown instruction at all.** Any 32-bit word is a
+valid instruction. A wrong encoding **will execute silently**, and the difftest will not catch it
+if the patch is applied to only one model.
 
-### 🟢 Единственное доказуемо свободное место — биты `IR[15:4]`
-`RISC5.v` их для F0 не читает, а `ORG.Put0` всегда пишет туда нули:
+### 🟢 The only provably free space is bits `IR[15:4]`
+`RISC5.v` does not read them for F0, and `ORG.Put0` always writes zeros there:
 `code[pc] := ((a*10H + b)*10H + op)*10000H + c`.
-Прецедент в самой ISA: RTI/STI используют `IR[4]`/`IR[5]` внутри F3.
+A precedent in the ISA itself: RTI/STI use `IR[4]`/`IR[5]` inside F3.
 
-**Обязательный тест перед любым расширением:** все 256 комбинаций {IR[31:28] × op} со
-случайными операндами — старое и новое ядро совпадают побитово, кроме новых кодировок.
+**A mandatory test before any extension:** all 256 combinations of {IR[31:28] × op} with
+random operands: the old and new cores match bit for bit, except for the new encodings.
 
-### Латентности (из RTL, определяют всё)
-FAD/FSB **4** · **FML 26** · FDV 27 · MUL/DIV 34 · LD/ST 2 · остальное 1.
-FP-умножитель — **последовательный сдвиг-сложение на 24 шага**, `*` в исходниках нет вовсе.
+### Latencies (from the RTL; they determine everything)
+FAD/FSB **4** · **FML 26** · FDV 27 · MUL/DIV 34 · LD/ST 2 · everything else 1.
+The FP multiplier is **a sequential shift-and-add over 24 steps**; there is no `*` in the sources at all.
 
-🔴 **Конфаундеры замера:**
-- **видео-DMA ворует ~7% тактов** через `stallX(vidreq)` — это часть машины, а не шум
-- **`FML;FML` = 32 такта вместо 26** (незакрытый счётчик) → любой плотный FP-микробенчмарк попадёт в эту яму
-- в исходниках **два умножителя, различающихся в 17 раз** (`Multiplier` vs `Multiplier1`)
+🔴 **Measurement confounders:**
+- **video DMA steals ~7% of cycles** through `stallX(vidreq)`: it is part of the machine, not noise
+- **`FML;FML` = 32 cycles instead of 26** (a counter that is not closed) → any dense FP microbenchmark falls into this pit
+- the sources contain **two multipliers that differ by 17 times** (`Multiplier` vs `Multiplier1`)
 
 ---
 
-## 4. Контракт SoC — подтверждён по `RISC5Top.v`
+## 4. The SoC contract: confirmed against `RISC5Top.v`
 
-| Адрес | Что |
+| Address | What |
 |---|---|
-| `0x000004` | вектор прерывания (слово 1) |
+| `0x000004` | interrupt vector (word 1) |
 | `0x00000C` | `MemLim` |
 | `0x000018` | `heapOrg` |
-| **`0x000020`** | **программный вектор ловушек = MT (R12)** |
-| `0x0E7F00` | DisplayStart, 98 304 байта |
-| `0x0FFFC0…FF` | устройства, `ioenb = (adr[23:6] == 18'h3FFFF)` |
-| `0xFFC000…FFFFFF` | окно PROM **только на шине кода** |
-| **`0xFFE000`** | адрес сброса (`StartAdr = 22'h3FF800`) |
+| **`0x000020`** | **software trap vector = MT (R12)** |
+| `0x0E7F00` | DisplayStart, 98,304 bytes |
+| `0x0FFFC0…FF` | devices, `ioenb = (adr[23:6] == 18'h3FFFF)` |
+| `0xFFC000…FFFFFF` | PROM window **only on the code bus** |
+| **`0xFFE000`** | reset address (`StartAdr = 22'h3FF800`) |
 
-Устройства 0–9: таймер · `{btn,swi}`/LED · RS232 data · RS232 статус · SPI data · SPI ctrl ·
+Devices 0–9: timer · `{btn,swi}`/LED · RS232 data · RS232 status · SPI data · SPI ctrl ·
 `{rdyKbd, dataMs}` · kbd data · GPIO data · GPIO tri-state.
 
-**Что обязано быть в контракте и чего не было в 0.1:**
-1. Адресное пространство **24 бита**, PC — 22. Софт пишет −64, железо видит `0xFFFFC0`, эмулятор сравнивает с `0xFFFFFFC0` → **фиксировать, сколько бит декодируется**
-2. 🔴 **PROM только на шине кода. `LD` из PROM невозможен.** Разделение code/data обязательно
-3. PROM **алиасится каждые 2 КБ**
-4. **Мышь и клавиатура делят одно слово**, три кнопки упакованы в `dataMs[27:0]`
-5. **GPIO (слова 8, 9)**
-6. 🔴 **Кадровый буфер снизу вверх** (`vidadr = Org + {3'b0, ~vcnt, hword}`) — наивная модель даст перевёрнутый экран и съест день
-7. **RS-232 не опционален**: загрузчик читает слово 1 для выбора источника
-8. Прерывание **ровно одно** — таймер 1 кГц
+**What must be in the contract and was missing in 0.1:**
+1. The address space is **24 bits**, the PC is 22. Software writes −64, hardware sees `0xFFFFC0`, the emulator compares with `0xFFFFFFC0` → **pin down how many bits are decoded**
+2. 🔴 **The PROM is only on the code bus. `LD` from the PROM is impossible.** Code/data separation is mandatory
+3. The PROM **aliases every 2 KB**
+4. **The mouse and keyboard share one word**; the three buttons are packed into `dataMs[27:0]`
+5. **GPIO (words 8, 9)**
+6. 🔴 **The framebuffer is bottom-up** (`vidadr = Org + {3'b0, ~vcnt, hword}`): a naive model gives an upside-down screen and eats a day
+7. **RS-232 is not optional**: the loader reads word 1 to choose the boot source
+8. There is **exactly one** interrupt: the 1 kHz timer
 
-**Бюджет памяти (посчитан):** RAM 1 МБ · кадровый буфер 98 304 Б с `0x0E7F00` ·
-`stackOrg := heapOrg`, `stackSize = 8000H` → **под всё остаётся 950 016 байт**.
+**Memory budget (calculated):** RAM 1 MB · framebuffer 98,304 B from `0x0E7F00` ·
+`stackOrg := heapOrg`, `stackSize = 8000H` → **950,016 bytes remain for everything**.
 
-### 🔴🔴 Две модели говорят на разных языках — главная неучтённая работа
+### 🔴🔴 The two models speak different languages: the main unaccounted work
 
-Утверждение «обе модели реализуют один контракт SoC» **неверно по факту**:
+The claim "both models implement one SoC contract" **is false in fact**:
 
-| | Честная (`RISC5Top.v`) | Быстрая (`risc.c`) |
+| | Honest (`RISC5Top.v`) | Fast (`risc.c`) |
 |---|---|---|
-| Дисплей | `hsync, vsync, RGB[2:0]` — **пиксельный поток VGA** | `risc_get_framebuffer_ptr()` + damage |
-| Клавиатура | `PS2C, PS2D` — **битовый PS/2 на двух проводах** | `risc_keyboard_input(bytes[])` |
-| Мышь | `msclk, msdat` — **битовый PS/2**, `MouseP.v` | `risc_mouse_button(1..3, down)` |
-| Диск | `SCLK/MOSI/MISO/SS` — **битовый SPI + автомат SD** | `disk_new(file)`, блочное чтение |
-| Память | внешняя SRAM, тристейт | `uint32_t RAM[]` |
+| Display | `hsync, vsync, RGB[2:0]`: **a VGA pixel stream** | `risc_get_framebuffer_ptr()` + damage |
+| Keyboard | `PS2C, PS2D`: **bit-level PS/2 on two wires** | `risc_keyboard_input(bytes[])` |
+| Mouse | `msclk, msdat`: **bit-level PS/2**, `MouseP.v` | `risc_mouse_button(1..3, down)` |
+| Disk | `SCLK/MOSI/MISO/SS`: **bit-level SPI + an SD state machine** | `disk_new(file)`, block reads |
+| Memory | external SRAM, tri-state | `uint32_t RAM[]` |
 
-→ Чтобы RTL загрузила Oberon, пришлось бы написать битовый сериализатор PS/2 клавиатуры,
-битовый сериализатор PS/2-мыши, **битовый автомат SD-карты поверх SPI** (CMD0/CMD17/CMD24
-с CRC) и приёмник VGA-потока, собирающий кадр из `hsync/vsync/RGB`.
-**Это несколько дней работы с осциллограммами, а не «SoC-слой на полстраницы».**
-В §10 этап 2 этого не учитывал.
+→ For the RTL to boot Oberon we would have to write a bit-level PS/2 keyboard serializer,
+a bit-level PS/2 mouse serializer, **a bit-level SD card state machine on top of SPI** (CMD0/CMD17/CMD24
+with CRC) and a VGA stream receiver that assembles a frame from `hsync/vsync/RGB`.
+**That is several days of work with waveforms, not "a half-page SoC layer".**
+Stage 2 in §10 did not account for this.
 
-🟢 **Решение: не эмулировать провода.** Заменить `PS2`, `MouseP`, `SPI` на модули-заглушки
-с **тем же регистровым интерфейсом к шине** (адреса те же), получающие данные напрямую из
-C++-тестбенча. Ядро `RISC5.v` — предмет статьи — остаётся нетронутым и честным. Дисплей
-читать из области кадрового буфера прямо в массиве SRAM тестбенча, как это делает ISS.
-**Бонус: выкинув `VID`, возвращаемся с 7 МГц ближе к 14.**
+🟢 **Decision: do not emulate the wires.** Replace `PS2`, `MouseP`, `SPI` with stub modules
+with **the same register interface to the bus** (the same addresses), receiving data directly from
+the C++ test bench. The `RISC5.v` core, the subject of the article, stays untouched and honest. The display
+is read from the framebuffer area directly in the test bench's SRAM array, as the ISS does.
+**Bonus: by throwing out `VID`, we get back from 7 MHz closer to 14.**
 
-Битовые интерфейсы оставить отдельным режимом «для дотошных», не на критическом пути.
+Keep the bit-level interfaces as a separate "for the meticulous" mode, off the critical path.
 
-### Что нужно сделать с RTL до всего остального
-🔴 **RTL Вирта привязан к Xilinx и не верилируется и не синтезируется как есть:**
-- `Registers.v` — **`RAM16X1D`** ×32×2, регистровый файл целиком из примитива → переписать поведенческим 3R1W
-- `RISC5Top.v` — **`IOBUF`** ×40, шина `inout [31:0] SRdat` → пара `SRdatI`/`SRdatO`
-- `VID.v` — **`DCM`** с `LOC`-констрейнтом → стаб/параметризуемый источник pclk
-- `msclk`/`msdat` объявлены `inout` → ломает поведенческий стенд
-- рантайм Verilator не линкуется под Emscripten: `pthread_getaffinity_np`, `pthread_setaffinity_np`, `sched_getcpu` — три стаба
+### What has to be done to the RTL before anything else
+🔴 **Wirth's RTL is tied to Xilinx and neither verilates nor synthesizes as is:**
+- `Registers.v`: **`RAM16X1D`** ×32×2, the whole register file is built from a primitive → rewrite as a behavioral 3R1W
+- `RISC5Top.v`: **`IOBUF`** ×40, bus `inout [31:0] SRdat` → a pair `SRdatI`/`SRdatO`
+- `VID.v`: **`DCM`** with a `LOC` constraint → a stub/parameterizable pclk source
+- `msclk`/`msdat` are declared `inout` → breaks the behavioral bench
+- the Verilator runtime does not link under Emscripten: `pthread_getaffinity_np`, `pthread_setaffinity_np`, `sched_getcpu`: three stubs
 
-~50 строк, вечер работы. **Но без этого нет ни площади, ни Fmax, то есть нет У3.**
+~50 lines, an evening of work. **But without it there is no area and no Fmax, so there is no C3.**
 
 ---
 
-## 5. Эксперимент: цена проверки границ — перевёрнут
+## 5. The experiment: the cost of bounds checking, turned around
 
-### Что уже есть в системе
-`ORG.Index` эмитит `SUB` + `BLR CC` = **2 инструкции / 2 такта** на индексацию
-(открытые массивы — 3 / 4, длина приходит скрытым параметром — **дескриптор Burroughs в
-Обероне уже есть, только программный**). Плюс проверки NIL, типов, деления, диапазонов.
+### What the system already has
+`ORG.Index` emits `SUB` + `BLR CC` = **2 instructions / 2 cycles** per indexing
+(open arrays: 3 / 4; the length comes as a hidden parameter: **Oberon already has a Burroughs
+descriptor, only a software one**). Plus checks for NIL, types, division, ranges.
 
-🔴 **Выключить нельзя:** `check := v # 0`, а `version` = 1 всегда, кроме `MODULE*` (RISC-0,
-для системного кода непригоден). **Сборки «Оберон без проверок» не существует.**
+🔴 **They cannot be turned off:** `check := v # 0`, and `version` = 1 always, except for `MODULE*` (RISC-0,
+unsuitable for system code). **A build of "Oberon without checks" does not exist.**
 
-Измеренная доля: цикл скалярного произведения — **23 инструкции / 60 тактов**,
-проверки занимают **4 такта из 60 (6.7%)**, для открытых массивов **8 из 66 (12%)**.
+The measured share: the dot-product loop is **23 instructions / 60 cycles**,
+the checks take **4 cycles of 60 (6.7%)**, for open arrays **8 of 66 (12%)**.
 
-### Три конфигурации
-| # | Конфигурация | Как получить | Когда доступно |
+### Three configurations
+| # | Configuration | How to get it | When available |
 |---|---|---|---|
-| **A** | без проверок | патч `check := FALSE` в `ORG.Open` + опция в `ORP.Option`, ~5 строк; пересобрать компилятор и систему | **неделя 1, на ISS, без единой строчки RTL** |
-| **B** | программные (сток) | как есть | сразу |
-| **C** | аппаратные | CHK в RTL + кодогенератор | после RTL |
+| **A** | no checks | patch `check := FALSE` in `ORG.Open` + an option in `ORP.Option`, ~5 lines; rebuild the compiler and the system | **week 1, on the ISS, without a single line of RTL** |
+| **B** | software (stock) | as is | immediately |
+| **C** | hardware | CHK in the RTL + code generator | after the RTL |
 
-🔴 **Оговорка, которую надо написать самим:** базовая точка A — **не сток-Оберон**,
-а патченная сборка. И программный baseline B — **соломенное чучело**: элиминация только
-для константных индексов, ни выноса инварианта из цикла, ни BCE.
+🔴 **A caveat we must write ourselves:** the baseline point A is **not stock Oberon**
+but a patched build. And the software baseline B is **a straw man**: elimination only
+for constant indexes, no loop-invariant hoisting, no BCE.
 
-### Инструкция CHK
-🔴 **Обязательно форма F1 с 16-битным непосредственным пределом.** В форме F0 экономия
-**нулевая**: предел массива — константа, которую сегодня `Put1a(Cmp, RH, y.r, lim)` кладёт
-прямо в immediate. С регистровой CHK нужен сначала `MOV RH, lim` — снова 2 инструкции.
+### The CHK instruction
+🔴 **It must be the F1 form with a 16-bit immediate limit.** In the F0 form the saving is
+**zero**: the array limit is a constant that today `Put1a(Cmp, RH, y.r, lim)` puts
+straight into the immediate. With a register CHK you first need `MOV RH, lim`: 2 instructions again.
 
-**Потолок экономии: 1 такт и 1 слово на индексацию.** Число считается счётчиком в ISS
-**без единой строчки Verilog**.
+**The ceiling of the saving: 1 cycle and 1 word per indexing.** The number is computed by a counter in the ISS
+**without a single line of Verilog**.
 
-### 🟢 Семантика ловушки — уже существует в системе
-Ловушку через вектор `0x04` сделать **невозможно**: маскируема (CLI), не принимается при
-`stall`, молча проглатывается внутри обработчика (`~intMd`), а `SPC` программно нечитаем
-и хранит *следующий* PC.
+### 🟢 The trap semantics already exist in the system
+A trap through vector `0x04` is **impossible**: it is maskable (CLI), not accepted during
+`stall`, silently swallowed inside a handler (`~intMd`), and `SPC` is not readable by software
+and holds the *next* PC.
 
-Ловушки Oberon — программные, через F3:
+Oberon traps are software traps, via F3:
 ```oberon
 ORG.Trap:      Put3(BLR, cond, ORS.Pos()*100H + num*10H + MT)
-Kernel.Init:   Install(SYSTEM.ADR(Trap), 20H)       (* вектор = 0x20 = MT *)
+Kernel.Init:   Install(SYSTEM.ADR(Trap), 20H)       (* vector = 0x20 = MT *)
 Kernel.Trap:   u := SYSTEM.REG(15); SYSTEM.GET(u-4, v); w := v DIV 10H MOD 10H
 ```
-→ **CHK аппаратно делает то же, что BLR: `R15 := PC+4; PC := R12`**, номер ловушки в тех же
-`IR[7:4]`. Немаскируемо, работает внутри обработчиков, `Kernel.Trap` уже умеет разбирать.
-**Две строки в `pcmux0`, одна в `regwr`.**
+→ **CHK in hardware does the same as BLR: `R15 := PC+4; PC := R12`**, with the trap number in the same
+`IR[7:4]`. Non-maskable, works inside handlers, `Kernel.Trap` can already decode it.
+**Two lines in `pcmux0`, one in `regwr`.**
 
-🔴 CHK **не должна писать регистр** — `regwr = ~p & ~stall` пишет безусловно и затрёт N/Z,
-в отличие от нынешней CMP. Дорабатывать в декодере.
-🔴 **Позиция в исходнике не поместится**: в F0 биты 23:20 = регистр b, 3:0 = регистр c,
-свободны только 15:4 = 12 бит → до 4095 символов, а `ORP.Mod` — 43 КБ. Решение: двухсловная
-CHK либо честная пометка «диагностика деградировала».
+🔴 CHK **must not write a register**: `regwr = ~p & ~stall` writes unconditionally and would clobber N/Z,
+unlike the current CMP. Needs work in the decoder.
+🔴 **The source position will not fit**: in F0 bits 23:20 = register b, 3:0 = register c,
+only 15:4 = 12 bits are free → up to 4095 characters, while `ORP.Mod` is 43 KB. Solution: a two-word
+CHK or an honest note "diagnostics have degraded".
 
-### 🔴 Вариант с дескрипторами (Б2) — НЕ в этом выпуске
-Регистровый файл — **54% всего последовательного состояния RISC5** (512 бит из 604 + ~350
-в FP/mul/div, итого ~955 триггеров). Дескрипторная схема удваивает именно его.
-Измерено на Ibex: +57% всего ядра, **регистровый файл +112.5%**, при этом **сам компаратор
-в EX Block +2.2%**. CHERI-RISC-V Toooba: RF 64→151 бит, **+136% FF**.
+### 🔴 The descriptor variant (B2) is NOT in this episode
+The register file is **54% of all RISC5 sequential state** (512 bits of 604 + ~350
+in FP/mul/div, ~955 flip-flops in total). A descriptor scheme doubles exactly that.
+Measured on Ibex: +57% of the whole core, **the register file +112.5%**, while **the comparator itself
+in the EX block is +2.2%**. CHERI-RISC-V Toooba: RF 64→151 bits, **+136% FF**.
 
-→ На RISC5 будет **хуже**. Полученное число было бы свойством RF-доминированной структуры
-RISC5, **а не ценой дескрипторной адресации**. Если делать — то отдельно и с этой оговоркой.
+→ On RISC5 it will be **worse**. The resulting number would be a property of RISC5's RF-dominated structure,
+**not the cost of descriptor addressing**. If done at all, do it separately and with this caveat.
 
 ---
 
-## 6. Методология измерений
+## 6. Measurement methodology
 
-### Такты
-Счётчик в RTL. 🔴 **ISS `pdewacht` не тактово-точный вообще** (`risc_run` считает
-инструкции) → такты только из RTL, диффтест сверяет архитектурное состояние, не тайминги.
-🔴 Такты для У3 меряются **с выключенным детектором простоя** — написать это явно.
+### Cycles
+A counter in the RTL. 🔴 **The `pdewacht` ISS is not cycle-accurate at all** (`risc_run` counts
+instructions) → cycles only from the RTL; the difftest compares the architectural state, not timing.
+🔴 Cycles for C3 are measured **with the idle detector turned off**; state this explicitly.
 
-### Площадь — защитимый минимум
-🔴 `yosys stat` по умолчанию **молча теряет больше половины RISC5**: в генерируемом genlib
-`MUX2 = AND2 = NAND2 = 4`, таймингов нет, `stat -tech cmos` знает только `$_DFF_P_`/`$_DFF_N_`
-и присваивает **ноль транзисторов** реальным `$_DFFE_*_`/`$_SDFF_*_`/`$_ADFF_*_`, а
-`stat -liberty` даёт площадь 0 неизвестным ячейкам **обычной строкой лога**.
+### Area: the defensible minimum
+🔴 `yosys stat` by default **silently loses more than half of RISC5**: in the generated genlib
+`MUX2 = AND2 = NAND2 = 4`, there are no timings, `stat -tech cmos` knows only `$_DFF_P_`/`$_DFF_N_`
+and assigns **zero transistors** to the real `$_DFFE_*_`/`$_SDFF_*_`/`$_ADFF_*_`, and
+`stat -liberty` gives area 0 to unknown cells **as an ordinary log line**.
 
 ```tcl
 read_verilog RISC5.v Multiplier.v Divider.v FPAdder.v FPMultiplier.v FPDivider.v
 hierarchy -check -top RISC5
 synth -top RISC5 -flatten
-dfflibmap -liberty $LIB          # БЕЗ ЭТОГО ТРИГГЕРЫ ВЫПАДУТ МОЛЧА
+dfflibmap -liberty $LIB          # WITHOUT THIS THE FLIP-FLOPS DROP OUT SILENTLY
 abc -liberty $LIB -constr core.sdc -D <period_ps>
 opt_clean
 stat -liberty $LIB
 ```
-🟢 **Базовая цифра для дифференциального замера получена прогоном:**
-**RISC5 = 5702 ячейки** (1914 `$_MUX_`, 1181 `$_NAND_`, 765 `$_AND_`, **604 триггера**)
-плюс подмодули Multiplier/Divider/FPAdder/FPMultiplier/FPDivider. Есть от чего отсчитывать
-дельту CHK.
+🟢 **The base figure for the differential measurement was obtained by a run:**
+**RISC5 = 5702 cells** (1914 `$_MUX_`, 1181 `$_NAND_`, 765 `$_AND_`, **604 flip-flops**)
+plus the submodules Multiplier/Divider/FPAdder/FPMultiplier/FPDivider. There is a baseline to count
+the CHK delta from.
 
-`kGE = area / area(NAND2_X1)`, скрипт `syn/python/get_kge.py` из lowRISC как есть.
-OpenSTA по нетлисту для Fmax. **Побитово одним флоу, одной версией для всех конфигураций.**
-**Свип `-D` минимум по 5 точкам → график площадь-vs-период** — одна картинка закрывает
-большинство вопросов рецензента. Эталон для копирования: **lowRISC Ibex `syn/`**.
+`kGE = area / area(NAND2_X1)`, the script `syn/python/get_kge.py` from lowRISC as is.
+OpenSTA on the netlist for Fmax. **Bit-identical flow, one version for all configurations.**
+**A sweep of `-D` over at least 5 points → an area-vs-period chart**: one picture answers
+most of a reviewer's questions. The reference to copy: **lowRISC Ibex `syn/`**.
 
-**Обязательная фраза в статью:**
+**A mandatory sentence for the article:**
 > Absolute QoR from an open-source flow trails a commercial flow by roughly 25–60% in cell
 > area and ~2× in power on identical RTL; the numbers here are for relative comparison
 > within a fixed enablement, not as absolute silicon cost.
 
-🔴 **Дельта меньше ~10% по LUT — внутри разброса инструмента** (один и тот же PicoRV32:
-Yosys 1403 LUT против Vivado 1146, +22%).
-🔴 **FPGA-цифры — только как артефакт реализации**, никогда как заявление о площади:
-разрыв FPGA↔ASIC ≈35× по площади (Kuon & Rose).
-🔴 nextpnr **не поддерживает Spartan-3** (целевая платформа Вирта). iCE40 — 128 КБ BRAM,
-ECP5-85F — ~460 КБ: **1 МБ не влезает никуда**, синтезировать ядро отдельно и объяснить, что посчитано.
+🔴 **A delta smaller than ~10% in LUTs is within the tool's spread** (the same PicoRV32:
+Yosys 1403 LUTs versus Vivado 1146, +22%).
+🔴 **FPGA figures only as an implementation artifact**, never as a claim about area:
+the FPGA↔ASIC gap is ≈35× in area (Kuon & Rose).
+🔴 nextpnr **does not support Spartan-3** (Wirth's target platform). iCE40 has 128 KB of BRAM,
+ECP5-85F ~460 KB: **1 MB fits nowhere**; synthesize the core separately and explain what was counted.
 
-### Знаменатель решает всё
-Те же ~0.7 kGE читаются как 33% (SERV), **3.5–7% (RISC5)**, 4% (Ibex micro), 0.03%
-(OpenTitan). Приводить **оба знаменателя** — ядро и правдоподобную SoC. Рамка:
-«даже на ядре без кэшей, MMU, предсказателя и привилегированных режимов цена — X%;
-на ядре с иерархией кэшей она на порядок меньше».
+### The denominator decides everything
+The same ~0.7 kGE reads as 33% (SERV), **3.5–7% (RISC5)**, 4% (Ibex micro), 0.03%
+(OpenTitan). Give **both denominators**: the core and a plausible SoC. The frame:
+"even on a core without caches, MMU, a predictor and privileged modes the cost is X%;
+on a core with a cache hierarchy it is an order of magnitude smaller".
 
-🔴 **По задержке маленькое ядро проигрывает структурно:** адресный тракт load/store в RISC5
-короткий (сумматор → адрес наружу, одна стадия), компараторы почти наверняка лягут на
-критический путь. На ядре с L1+TLB компаратор прячется рядом с tag compare — так делают
-Morello и CHERI. **Сказать оба: консервативно по площади, враждебно по задержке.**
+🔴 **On delay a small core loses structurally:** the load/store address path in RISC5
+is short (adder → address out, one stage), and the comparators will almost certainly land on the
+critical path. On a core with L1+TLB the comparator hides next to the tag compare; that is what
+Morello and CHERI do. **Say both: conservative on area, hostile on delay.**
 
-### Нагрузки
-1. 🎯 **Пересборка системы самой собой** — главная, в литературе не измерена
-2. Все ~25–30 модулей системы **по отдельности** → медиана + IQR (это и есть «интервал»)
-
----
-
-## 7. Тестовая стратегия
-
-Подробности и код — `tests/HARNESS.md`. Здесь только то, что изменилось после ревью.
-
-### T0 — дифференциальный стенд, пять исправлений
-1. 🔴 **«Шаг» ≠ «такт»** — нужен экспортированный строб retire (`~stall`, наружу не выведен → `/*verilator public*/`), `while (!retire) tick();`
-2. 🔴 **В эталоне нет прерываний вообще** (ни `SPC`, ни `RTI`, ни `irq`) → **T1.7 сверять не с чем**, писать свой эталон или признать отсутствие golden-модели
-3. 🔴 **Разная разрядность PC** (RTL 22 бита, эмулятор 32-битный индекс слова) → сравнивать **по модулю 2²²**
-4. 🔴 **Эталон пишет `"Sizg"` + размеры экрана на `DisplayStart`** (`risc.c:130-133`) → побайтовое сравнение RAM упадёт на **нулевом** шаге. Исключить
-5. 🔴 **Эвристика `progress`**: `risc_run` молча выходит раньше запрошенного → **патчить `risc->progress`** (`risc.c:165`, одна строка), иначе состояния разъедутся не из-за бага в RTL
-
-Плюс: диффтест **ограничить RAM, IO исключить** — эмулятор моделирует устройства по-своему.
-
-### Чего не было в 0.1 и надо
-- **покрытие** `verilator --coverage`
-- **ассершены**: «intAck никогда при stall», «не более одного источника stall», «regwr не совпадает с wr», «ben только при F2»
-- 🔴 **BL/BLR затирает N и Z** (`regwr = … | (BR & cond & v & ~stallX)`) — в T1.2 был только LD
-- **невыровненный доступ** (`SRadr = adr[19:2]`, младшие биты молча отбрасываются)
-- **байтовые лейны** (`inbus1`/`outbus` + `SRbe`)
-- **прерывание во время многотактной операции** (до 34 тактов на DIV)
-- 🔴 **T1.4 фиксирует поведение Вирта, а не IEEE**: денормали и нули → 0, деление на 0 → насыщение, **NaN как класса нет**, один guard-бит. Эталон — `risc-fp.c`
-- **тест «немодифицированный образ на новом RTL»** — новая ISA не должна ломать старые бинарники
-- **тест «новый образ на старом CPU» должен ЯВНО ОТКАЗАТЬ**: использовать байт версии `.rsc` (`versionkey = 1X` → поставить **`2X`**), иначе старый загрузчик исполнит новую инструкцию молча
-- **детерминизм компилятора** (два прогона одного исходника → идентичные `.rsc`)
-- 🔴 **диффтест самого компилятора** между тремя реализациями: нативный Oberon / **Norebo** / **fzipp/oberon-compiler (Go)**. Ловит ошибки правки кодогенератора **до** того, как они станут зависанием ОС
-- проверка переполнения `ORG.maxCode = 8000` слов и `maxStrx = 2400` после вставки CHK
-- 🔴 `--x-assign unique --x-initial unique` со случайным seed: **Verilator двухзначный и принципиально не может проверить требование «все регистры сброшены»**
-
-### Самораскрутка
-Штатный режим Project Oberon, **не подвиг** — риск в 0.1 был завышен. Но механика нужна:
-```
-gen0 (старый ORP): ORP.Compile ORS.Mod/s ORB.Mod/s ORG.Mod/s ORP.Mod/s ~
-System.Free ORTool ORP ORG ORB ORS ~          (* иначе res=3: key conflict *)
-gen1 пересобирает себя теми же командами → gen2
-сравнить gen1/*.rsc с gen2/*.rsc побайтово
-```
-🔴 **`Files.Register` перезаписывает `.rsc` на месте, старых версий нет** → сломанный новый
-`ORP.rsc` = компилятора больше нет. **Для конфигурации C кирпич реален** (каждый `.rsc`,
-включая компилятор, содержит CHK) → **обязательны вторая копия образа и хост-маршрут**.
-
-🔴 Фикспойнт доказывает, что компилятор — свой фикспойнт, **а не что он корректен**.
-Сравнивать можно только gen N и gen N+1 **одного исходника** (`.rsc` содержит `ORS.Pos()`).
-
-**Хост-маршрут обязателен как CI**, не как запасной вариант: Norebo (`build-image.py`
-собирает свежий `Oberon.dsk`) + Go-порт. Обе ветки обязаны сходиться к идентичным `.rsc`.
-`BootLoad.Mod` и `ORL.Mod` в опубликованных исходниках **отсутствуют**; PROM-образ готовый
-(`prom.mem`), линкер внутреннего ядра — в Norebo.
+### Workloads
+1. 🎯 **The system rebuilding itself**: the main one, not measured in the literature
+2. All ~25–30 system modules **individually** → median + IQR (this is the "interval")
 
 ---
 
-## 8. Браузер
+## 7. Test strategy
 
-**Размеры измерены:** RTL SoC → WASM 181.7 КБ (62.4 brotli) · ISS → WASM 20.1 КБ (9.0) ·
-образ диска 990 208 Б (184 brotli). Компиляция WASM в V8: 2.9 мс и 0.1 мс.
-Загрузка Oberon на ISS ~30 млн тактов = **~85 мс**.
-**Итого ~0.5 МБ brotli → до интерактива 1.5–3 с.** Требование ≤10 с — запас 4×.
+Details and code: `tests/HARNESS.md`. Here only what changed after the review.
 
-🔴 **GitHub Pages не отдаёт brotli** и `max-age=600`. Класть `.dsk.gz` руками,
-распаковывать `DecompressionStream('gzip')`, кэшировать через Cache API.
-🔴 **SAB/COOP-COEP на GH Pages не выставить** → `-pthread` и `--threads` отпадают
-(для одного ядра не нужны, но проверить, что обвязка их не тянет). **Отказ от SAB.**
-🔴 **RTL-модель жжёт целое ядро непрерывно** (у неё нет эвристики простоя, как у ISS) →
-только по кнопке, остановка при `document.hidden`, детектор простоя в стенде.
-🔴 **VCD не использовать** (×3.4 по скорости, 23.5 байта/такт) → `--public-flat-rw`
-и чтение полей модели напрямую, бесплатно.
-🟢 **Графика не проблема и оптимизировать её преждевременно** (измерено, полный экран):
-развёртка 1bpp→RGBA обычным JS с таблицей на 256×8 — **0.333 мс/кадр**; поиск изменившейся
-области в 96 КБ — **0.007–0.010 мс**; `putImageData` 3 МиБ — ~1–3 мс.
-**Итого 0.4–3.4 мс из 16.7.** Эмуляция (116 тыс. тактов/кадр) стоит в разы больше.
-WASM-SIMD и WebGL не нужны. **Поиск изменений бесплатен** — не городить хуки на запись;
-для RTL тестбенч и так видит каждую запись по `SRwe`/`SRadr`. Рисовать через
-`OffscreenCanvas` из Worker'а (Safari с 16.4).
-**Эмскриптен-порта `oberon-risc-emu` не существует** — SDL2-слой переписать на canvas +
-KeyboardEvent, ~полдня.
+### T0: the differential bench, five fixes
+1. 🔴 **"Step" ≠ "cycle"**: an exported retire strobe is needed (`~stall`, not exported → `/*verilator public*/`), `while (!retire) tick();`
+2. 🔴 **The reference has no interrupts at all** (no `SPC`, no `RTI`, no `irq`) → **T1.7 has nothing to compare against**; write our own reference or acknowledge the absence of a golden model
+3. 🔴 **Different PC widths** (the RTL has 22 bits, the emulator a 32-bit word index) → compare **modulo 2²²**
+4. 🔴 **The reference writes `"Sizg"` + the screen dimensions at `DisplayStart`** (`risc.c:130-133`) → a byte-wise RAM comparison fails at step **zero**. Exclude these
+5. 🔴 **The `progress` heuristic**: `risc_run` silently returns earlier than requested → **patch `risc->progress`** (`risc.c:165`, one line), otherwise the states diverge not because of an RTL bug
 
-### Три кнопки мыши
-Регистр мыши — **одно 28-битное слово (IO-слово 6)**: X в младших битах, Y в средних,
-**кнопки в битах 26/25/24** (`1 << (27 - button)`). Железо видит **одновременное состояние
-трёх кнопок** — межкнопочные щелчки требуют битового состояния, а не последовательности `click`.
+Plus: **limit the difftest to RAM, exclude IO**: the emulator models devices in its own way.
 
-- Работать по `mousedown`/`mouseup`/`mousemove`, источник истины — **`e.buttons`** (битовая маска), она напрямую ложится в регистр
-- **Средняя:** `preventDefault()` на `mousedown` с `button===1` (гасит автопрокрутку Chrome и вставку в Firefox/X11) **плюс на `auxclick`**
-- **Правая:** `preventDefault()` на `contextmenu`
-- 🔴 **Ловушка macOS:** `Ctrl+щелчок` системно превращается в правую кнопку → **маппинг «Ctrl + левая» на Mac физически недостижим**. Прецедент из README `pdewacht`: *«You can use the left alt key to emulate a middle click»* → брать **левый Alt/Option, не Ctrl**
-- Потерянный `mouseup` за окном → `setPointerCapture()` на канве + ресинхронизация из `e.buttons` на каждом `mousemove`
-- **Pointer Lock не нужен и вреден** — мышь в Oberon абсолютная, а он даёт только дельты
-- 🔴 **Мобильные — честно нет.** Межкнопочный щелчок на тачскрине не воспроизводим. Read-only-режим: демо крутится, ввод заблокирован, надпись «нужна мышь с тремя кнопками»
+### What was missing in 0.1 and is needed
+- **coverage** with `verilator --coverage`
+- **assertions**: "intAck never during stall", "no more than one stall source", "regwr does not coincide with wr", "ben only on F2"
+- 🔴 **BL/BLR clobbers N and Z** (`regwr = … | (BR & cond & v & ~stallX)`): T1.2 only had LD
+- **unaligned access** (`SRadr = adr[19:2]`, the low bits are silently dropped)
+- **byte lanes** (`inbus1`/`outbus` + `SRbe`)
+- **an interrupt during a multi-cycle operation** (up to 34 cycles on DIV)
+- 🔴 **T1.4 pins down Wirth's behavior, not IEEE**: denormals and zeros → 0, division by 0 → saturation, **there is no NaN class**, one guard bit. The reference is `risc-fp.c`
+- **the test "an unmodified image on the new RTL"**: the new ISA must not break old binaries
+- **the test "a new image on the old CPU" must EXPLICITLY REFUSE**: use the `.rsc` version byte (`versionkey = 1X` → set **`2X`**), otherwise the old loader will silently execute the new instruction
+- **compiler determinism** (two runs on the same source → identical `.rsc`)
+- 🔴 **a difftest of the compiler itself** across three implementations: native Oberon / **Norebo** / **fzipp/oberon-compiler (Go)**. Catches code generator editing errors **before** they become an OS hang
+- a check for overflow of `ORG.maxCode = 8000` words and `maxStrx = 2400` after inserting CHK
+- 🔴 `--x-assign unique --x-initial unique` with a random seed: **Verilator is two-valued and fundamentally cannot check the requirement "all registers are reset"**
 
-### Переключение конфигураций ISA — три уровня
+### Bootstrapping
+A standard mode of Project Oberon, **not a feat**: the risk in 0.1 was overstated. But the mechanics are needed:
+```
+gen0 (old ORP): ORP.Compile ORS.Mod/s ORB.Mod/s ORG.Mod/s ORP.Mod/s ~
+System.Free ORTool ORP ORG ORB ORS ~          (* otherwise res=3: key conflict *)
+gen1 rebuilds itself with the same commands → gen2
+compare gen1/*.rsc with gen2/*.rsc byte for byte
+```
+🔴 **`Files.Register` overwrites the `.rsc` in place, there are no old versions** → a broken new
+`ORP.rsc` = there is no compiler any more. **For configuration C bricking is real** (every `.rsc`,
+including the compiler, contains CHK) → **a second copy of the image and a host route are mandatory**.
 
-🔴 **Verilator выдаёт C++, а не симулятор.** Чтобы получить исполняемую модель в браузере,
-нужны clang + wasm-ld — ещё 40–100 МБ и десятки секунд. Показательно: **RTL Studio, которую
-я приводил как прецедент, симулирует Icarus'ом и Slang'ом, а не Verilator'ом — ровно поэтому.**
+🔴 The fixed point proves that the compiler is its own fixed point, **not that it is correct**.
+Only gen N and gen N+1 **of the same source** can be compared (`.rsc` contains `ORS.Pos()`).
 
-Обходной путь «симулировать нетлист повентильно» проверен и не годится:
+**The host route is mandatory as CI**, not as a fallback: Norebo (`build-image.py`
+builds a fresh `Oberon.dsk`) + the Go port. Both branches must converge to identical `.rsc`.
+`BootLoad.Mod` and `ORL.Mod` are **missing** from the published sources; the PROM image is ready-made
+(`prom.mem`), and the linker for the inner core is in Norebo.
 
-| Подход | Скорость |
+---
+
+## 8. The browser
+
+**Sizes measured:** RTL SoC → WASM 181.7 KB (62.4 brotli) · ISS → WASM 20.1 KB (9.0) ·
+disk image 990,208 B (184 brotli). WASM compilation in V8: 2.9 ms and 0.1 ms.
+Booting Oberon on the ISS takes ~30 million cycles = **~85 ms**.
+**In total ~0.5 MB brotli → 1.5–3 s to interactive.** The ≤10 s requirement has a 4× margin.
+
+🔴 **GitHub Pages does not serve brotli** and sets `max-age=600`. Put `.dsk.gz` there by hand,
+decompress with `DecompressionStream('gzip')`, cache via the Cache API.
+🔴 **SAB/COOP-COEP cannot be set on GH Pages** → `-pthread` and `--threads` are out
+(not needed for a single core, but check that the wrapper does not pull them in). **No SAB.**
+🔴 **The RTL model burns a whole core continuously** (it has no idle heuristic like the ISS) →
+only on a button press, stopping on `document.hidden`, an idle detector in the bench.
+🔴 **Do not use VCD** (×3.4 slower, 23.5 bytes/cycle) → `--public-flat-rw`
+and reading the model's fields directly, for free.
+🟢 **Graphics are not a problem, and optimizing them would be premature** (measured, full screen):
+expanding 1bpp→RGBA in plain JS with a 256×8 table takes **0.333 ms/frame**; finding the changed
+region in 96 KB takes **0.007–0.010 ms**; `putImageData` of 3 MiB ~1–3 ms.
+**In total 0.4–3.4 ms out of 16.7.** Emulation (116 thousand cycles/frame) costs several times more.
+WASM-SIMD and WebGL are not needed. **Change detection is free**: do not build write hooks;
+for the RTL the test bench sees every write via `SRwe`/`SRadr` anyway. Draw via
+`OffscreenCanvas` from the Worker (Safari since 16.4).
+**There is no Emscripten port of `oberon-risc-emu`**: rewrite the SDL2 layer onto canvas +
+KeyboardEvent, ~half a day.
+
+### Three mouse buttons
+The mouse register is **one 28-bit word (IO word 6)**: X in the low bits, Y in the middle bits,
+**the buttons in bits 26/25/24** (`1 << (27 - button)`). The hardware sees **the simultaneous state of
+the three buttons**: inter-button clicks require bit state, not a sequence of `click` events.
+
+- Work with `mousedown`/`mouseup`/`mousemove`; the source of truth is **`e.buttons`** (a bit mask), which maps directly onto the register
+- **Middle:** `preventDefault()` on `mousedown` with `button===1` (suppresses Chrome's autoscroll and paste in Firefox/X11) **plus on `auxclick`**
+- **Right:** `preventDefault()` on `contextmenu`
+- 🔴 **The macOS trap:** `Ctrl+click` is turned into a right click by the system → **a "Ctrl + left" mapping is physically unreachable on a Mac**. The precedent from the `pdewacht` README: *"You can use the left alt key to emulate a middle click"* → use **left Alt/Option, not Ctrl**
+- A lost `mouseup` outside the window → `setPointerCapture()` on the canvas + resynchronization from `e.buttons` on every `mousemove`
+- **Pointer Lock is not needed and is harmful**: the mouse in Oberon is absolute, and Pointer Lock gives only deltas
+- 🔴 **Mobile: honestly, no.** An inter-button click cannot be reproduced on a touchscreen. A read-only mode: the demo runs, input is blocked, with the caption "a three-button mouse is required"
+
+### Switching ISA configurations: three levels
+
+🔴 **Verilator produces C++, not a simulator.** To get an executable model in the browser
+you need clang + wasm-ld: another 40–100 MB and tens of seconds. Tellingly: **RTL Studio, which
+I cited as a precedent, simulates with Icarus and Slang, not Verilator, for exactly this reason.**
+
+The workaround "simulate the netlist gate by gate" was tested and is no good:
+
+| Approach | Speed |
 |---|---|
-| Verilator→WASM (предсобранный) | **7 000 кГц** |
-| Повентильно в JS, таблично | 36 кГц |
-| То же с кодогенерацией | 13 кГц (**медленнее** — V8 не оптимизирует функцию на 5700 операторов) |
+| Verilator→WASM (prebuilt) | **7,000 kHz** |
+| Gate by gate in JS, table-driven | 36 kHz |
+| The same with code generation | 13 kHz (**slower**: V8 does not optimize a function with 5700 statements) |
 
-→ 0.2–0.5% скорости Verilator: годится на 5 тыс. тактов одной инструкции, не на загрузку ОС.
+→ 0.2–0.5% of Verilator's speed: fine for 5 thousand cycles of a single instruction, not for booting an OS.
 
-🟢 **Рабочее решение — три уровня, все дают эффект «я поменял процессор»:**
+🟢 **The working solution is three levels, all of which give the effect "I changed the processor":**
 
-1. **🎯 Декодер как данные, а не как текст.** Вынести таблицу декодирования в регистры/ПЗУ
-   микрокода внутри RTL, доступные с шины. Тогда «добавить CHK» = записать строку в таблицу
-   из уже скомпилированной WASM-модели. Мгновенно, честно (это настоящий RTL, просто
-   конфигурируемый), и — **это ровно тот механизм, которым живые процессоры получают
-   микрокод-патчи. Сюжетно сильнее правки текста.**
-2. **Предсобранный веер вариантов.** Каждая модель SoC — 177 КБ сырых / **62 КБ brotli**.
-   Двадцать вариантов = 1.2 МБ, лениво по клику, переключение за один `instantiateStreaming`
-   (**2.9 мс**).
-3. **Кнопка «пересобрать по-настоящему»** — форма отправляет Verilog в CI, оттуда приходит
-   `.wasm`. Полный цикл **8.2 с** плюс очередь.
+1. **🎯 The decoder as data, not as text.** Move the decode table into registers/a microcode ROM
+   inside the RTL, accessible from the bus. Then "add CHK" = write a row into the table
+   from the already compiled WASM model. Instant, honest (it is real RTL, just
+   configurable), and **this is exactly the mechanism by which live processors receive
+   microcode patches. Stronger as a story than editing text.**
+2. **A prebuilt fan of variants.** Each SoC model is 177 KB raw / **62 KB brotli**.
+   Twenty variants = 1.2 MB, loaded lazily on click, switching with a single `instantiateStreaming`
+   (**2.9 ms**).
+3. **A "really rebuild" button**: a form sends the Verilog to CI, and a
+   `.wasm` comes back. The full cycle is **8.2 s** plus the queue.
 
-Редактор Verilog на странице оставить, но пусть **подсвечивает и линтит** (Yosys в WASM это
-умеет), а собирает — CI.
+Keep a Verilog editor on the page, but let it **highlight and lint** (Yosys in WASM can
+do that), while CI does the building.
 
-🟢 **Yosys в браузере работает и проверен:** `@yowasp/yosys`, 77.4 МБ сырых / **15.5 МБ
-tarball**; синтез полного RISC5 + FPU — **3.2 с**, пик RSS 450–800 МБ, результат 5702 ячейки.
-→ **«посчитать площадь новой инструкции прямо на странице» технически возможно.**
-
----
-
-## 9. Разведка (этап 0) — один вечер, 3–4 часа
-
-Три числа, каждое способно переписать план:
-1. `verilator` на `RISC5.v` (версия 2018!) нативно, тривиальный цикл → **тактов/с**
-2. `yosys -p 'synth_ice40'` → **проходит / нет, сколько ячеек**
-3. Грепнуть декодер на FLT/FLR → **подтвердить, что `IR[15:4]` действительно свободны**
-
-Плюс дешёвое и сразу полезное: **замер конфигурации A против B на эталонном ISS** —
-готовое число для У3 **на первой неделе, без всякого RTL**.
-
-**Закрыто ревью, разведки не требует:** карта адресов, PROM, бюджет памяти, латентности,
-кодогенерация проверок границ, размеры артефактов, скорость в браузере.
+🟢 **Yosys in the browser works and has been checked:** `@yowasp/yosys`, 77.4 MB raw / **15.5 MB
+tarball**; synthesizing the full RISC5 + FPU takes **3.2 s**, peak RSS 450–800 MB, the result is 5702 cells.
+→ **"compute the area of a new instruction right on the page" is technically possible.**
 
 ---
 
-## 10. Этапы, точки выхода и сроки
+## 9. Reconnaissance (stage 0): one evening, 3–4 hours
 
-**Оценка: 130–190 часов → 9–13 недель при 15 ч/неделю.** Не 2–4 недели.
-Код пишет нейросеть — это снимает 30–40% с *написания* и **ничего не снимает с отладки**,
-а весь риск сидит в отладке.
+Three numbers, each of which can rewrite the plan:
+1. `verilator` on `RISC5.v` (the 2018 version!) natively, a trivial loop → **cycles/s**
+2. `yosys -p 'synth_ice40'` → **passes or not, how many cells**
+3. Grep the decoder for FLT/FLR → **confirm that `IR[15:4]` really are free**
 
-**Критический путь не линейный.** Синтез (площадь, Fmax) и конфигурация A **не зависят
-от RTL и идут с первого дня параллельно**.
+Plus something cheap and immediately useful: **measuring configuration A against B on the reference ISS**:
+a ready number for C3 **in the first week, without any RTL**.
 
-| Точка | Срок | Публикуемый результат, если дальше ничего не будет |
+**Closed by the review, needs no reconnaissance:** the address map, the PROM, the memory budget, the latencies,
+the code generation for bounds checks, artifact sizes, browser speed.
+
+---
+
+## 10. Stages, exit points and timeline
+
+**Estimate: 130–190 hours → 9–13 weeks at 15 h/week.** Not 2–4 weeks.
+A neural network writes the code: this takes 30–40% off *writing* and **nothing off debugging**,
+and all the risk sits in debugging.
+
+**The critical path is not linear.** Synthesis (area, Fmax) and configuration A **do not depend
+on the RTL and run in parallel from day one**.
+
+| Point | Time | Publishable result if nothing further happens |
 |---|---|---|
-| **КТ-0** | ~1 нед | «Сколько свободного места в системе команд процессора Вирта» + три числа разведки + **цена проверок границ из конфигурации A** |
-| **КТ-1** | ~3–4 нед | «Гоняли процессор против его собственного эмулятора инструкция за инструкцией» — методическая статья + живой стенд |
-| **КТ-2** | ~6–8 нед | **«Настоящий Verilog, потактово, грузит операционную систему»** — уже выпуск |
-| **КТ-3** | ~9–11 нед | То же в браузере + «пересобрать систему целиком». **Флагман-лайт, публикуем в любом случае** |
-| **КТ-4** | ~13–16 нед | + три конфигурации, такты/площадь/Fmax. **Целевая** |
+| **CP-0** | ~1 wk | "How much free space there is in the instruction set of Wirth's processor" + the three reconnaissance numbers + **the cost of bounds checks from configuration A** |
+| **CP-1** | ~3–4 wk | "We ran the processor against its own emulator instruction by instruction": a methodological article + a live bench |
+| **CP-2** | ~6–8 wk | **"Real Verilog, cycle by cycle, boots an operating system"**: already an episode |
+| **CP-3** | ~9–11 wk | The same in the browser + "rebuild the whole system". **Flagship-lite, published in any case** |
+| **CP-4** | ~13–16 wk | + three configurations, cycles/area/Fmax. **The target** |
 
-🔴 **На КТ-2 и КТ-3 текст должен быть написан заранее.** Иначе точка выхода не работает:
-в момент, когда проект надо закрывать, ни у кого нет сил писать статью с нуля.
+🔴 **For CP-2 and CP-3 the text must be written in advance.** Otherwise the exit point does not work:
+at the moment the project has to be closed, nobody has the strength to write an article from scratch.
 
-### Скрытая работа, которой не было в 0.1 (70–110 ч)
-ассемблер (частично готов: `tests/asm.py`) · форк ISS под lockstep · детектор ретайра ·
-де-Xilinx-изация RTL · сборка и правка образа диска · маршрут синтеза · три кнопки мыши ·
-кэширование и хостинг · воспроизводимость одной командой · отладочная оснастка ·
-лицензии на материалы Вирта · **текст статьи 20–30 ч** · оформление страницы
+### Hidden work that was not in 0.1 (70–110 h)
+the assembler (partly ready: `tests/asm.py`) · a fork of the ISS for lockstep · a retire detector ·
+de-Xilinx-ing the RTL · building and editing the disk image · the synthesis flow · the three mouse buttons ·
+caching and hosting · one-command reproducibility · debugging harness ·
+licenses for Wirth's materials · **the article text, 20–30 h** · page design
 
 ---
 
-## 11. Риски
+## 11. Risks
 
-| Риск | Вер. | Ущерб | Митигация |
+| Risk | Lik. | Impact | Mitigation |
 |---|---|---|---|
-| Расползание объёма | **высокая** | высокий | не-цели в §1; FMAC и нейросеть вынесены; Б2 вынесен |
-| Проект выдохнется до публикации | **высокая** | высокий | КТ-0…КТ-3 с заранее написанным текстом |
-| RTL не де-Xilinx-изован вовремя → нет У3 | средняя | **высокий** | вынесено в этап 0 |
-| Кирпич при самораскрутке конфигурации C | средняя | высокий | вторая копия образа + хост-маршрут как CI |
-| Компараторы на критическом пути → падение Fmax | **высокая** | средний | ожидаемо и честно публикуется; график площадь-vs-период |
-| Дельта площади внутри шума инструмента | средняя | средний | один флоу побитово, свип по 5 точкам, оговорка |
-| **RTL-модель греет ноутбук** (у неё нет эвристики простоя, как у ISS) | **высокая** | средний | **квота тактов на кадр** (7 млн/60 ≈ 116 тыс. на `requestAnimationFrame`) + `Page Visibility API` для полной остановки в фоне. NB: в Worker'е нет `rAF` — квоту выдаёт главный поток |
-| Битовые интерфейсы RTL (PS/2, SPI+SD, VGA) съедят этап 2 | **высокая** | **высокий** | модули-заглушки с тем же регистровым интерфейсом, §4 |
-| Число выйдет скучным (~6%) | средняя | низкий | это и есть результат; рамка «столько же, сколько всё расширение ISA» |
+| Scope creep | **high** | high | non-goals in §1; FMAC and the neural network moved out; B2 moved out |
+| The project runs out of steam before publication | **high** | high | CP-0…CP-3 with text written in advance |
+| The RTL is not de-Xilinx-ed in time → no C3 | medium | **high** | moved to stage 0 |
+| Bricking during bootstrapping of configuration C | medium | high | a second copy of the image + the host route as CI |
+| Comparators on the critical path → an Fmax drop | **high** | medium | expected and published honestly; an area-vs-period chart |
+| The area delta is within the tool's noise | medium | medium | one bit-identical flow, a sweep over 5 points, a caveat |
+| **The RTL model heats up the laptop** (it has no idle heuristic like the ISS) | **high** | medium | **a cycle quota per frame** (7 million/60 ≈ 116 thousand per `requestAnimationFrame`) + the `Page Visibility API` to stop completely in the background. NB: a Worker has no `rAF`, so the main thread hands out the quota |
+| The RTL's bit-level interfaces (PS/2, SPI+SD, VGA) eat stage 2 | **high** | **high** | stub modules with the same register interface, §4 |
+| The number turns out boring (~6%) | medium | low | that is the result; the frame is "as much as the whole ISA extension" |

@@ -1,115 +1,117 @@
-# Сквозные эксперименты и кросс-идеи
+[Русская версия](05-experiments.ru.md)
+
+# Cross-cutting experiments and cross-ideas
 
 ---
 
-## 1. Интерпретируемый C
+## 1. Interpreted C
 
-**Это существует:** `tcc -run` + шебанг `#!/usr/bin/tcc -run` (C как скриптовый язык за
-одну строку); **Cint** (CERN, два десятилетия внутри ROOT) → **Cling** → уехал в апстрим
-LLVM как **clang-repl** (официальный REPL для C лежит в составе LLVM, знает мало кто);
-**Ch** (коммерческий, полный C99); **picoc**; **Interactive C** (робототехнические курсы
-MIT); **c4** Свирчека (интерпретатор подмножества C в четырёх функциях, ~500 строк,
-исполняет собственный исходник).
+**This exists:** `tcc -run` + the shebang `#!/usr/bin/tcc -run` (C as a scripting language in
+one line); **Cint** (CERN, two decades inside ROOT) → **Cling** → moved upstream into
+LLVM as **clang-repl** (an official REPL for C ships as part of LLVM, and few people know it);
+**Ch** (commercial, full C99); **picoc**; **Interactive C** (MIT robotics courses);
+Swierczek's **c4** (an interpreter for a subset of C in four functions, ~500 lines,
+which runs its own source).
 
-**Настоящий вопрос — что при этом ломается:**
+**The real question is what breaks along the way:**
 
-- **Память обязана быть плоской.** Боксированные значения умирают на `memcpy` структуры по байтам, на union, на приведении `struct*` к `char*`. Нужна байтово-адресуемая куча, типовая информация — в теневой слой. Честный интерпретатор C = санитайзер, который ещё и исполняет.
-- **Указатель — не адрес.** Современная модель говорит, что указатель несёт **происхождение (provenance)**: два указателя могут сравниваться как равные и не быть взаимозаменяемыми. Железо про это не знает. Интерпретатор — может. **Интерпретатор оказывается точнее процессора**, потому что исполняет язык из стандарта, а не то, во что его схлопнул компилятор.
-- **UB.** ~200 случаев в C11. Три стратегии: сделать разумное / остановиться с диагностикой / исполнить все допустимые стандартом варианты. Третья — самая ценная.
-- **Неуточнённый порядок вычислений.** `f() + g()` — интерпретатор фиксирует один порядок и прячет ошибку. Честно — рандомизировать или перебирать.
-- **Внешний мир.** libc и системные вызовы зовут код обратно (компаратор qsort, обработчик сигнала). Нужен двусторонний мост через libffi и трамплины — самая объёмная и скучная часть, на ней сидит вся сложность picoc и Cint.
-- **Мелочи:** setjmp/longjmp, volatile (бессмыслен без моделирования регистров устройств), сигналы, выравнивание, битовые поля, VLA, гибкие массивы, restrict, встроенный ассемблер (нужен эмулятор процессора).
-- **Препроцессор.** Семантика C начинается раньше C. Для REPL — фазы трансляции надо проигрывать инкрементально.
+- **Memory has to be flat.** Boxed values die on a byte-wise `memcpy` of a struct, on a union, on casting `struct*` to `char*`. You need a byte-addressable heap, with type information in a shadow layer. An honest C interpreter = a sanitizer that also executes.
+- **A pointer is not an address.** The modern model says a pointer carries **provenance**: two pointers can compare equal and still not be interchangeable. The hardware knows nothing about this. An interpreter can. **The interpreter turns out to be more precise than the processor**, because it executes the language from the standard, not what the compiler collapsed it into.
+- **UB.** ~200 cases in C11. Three strategies: do something reasonable / stop with a diagnostic / execute all the variants the standard allows. The third is the most valuable.
+- **Unspecified evaluation order.** `f() + g()`: an interpreter fixes one order and hides the bug. The honest way is to randomize or enumerate.
+- **The outside world.** libc and system calls call code back (the qsort comparator, a signal handler). You need a two-way bridge via libffi and trampolines: the biggest and most boring part, where all the complexity of picoc and Cint sits.
+- **Small things:** setjmp/longjmp, volatile (meaningless without modeling device registers), signals, alignment, bit fields, VLAs, flexible arrays, restrict, inline assembly (needs a processor emulator).
+- **The preprocessor.** C's semantics begin before C. For a REPL the translation phases have to be replayed incrementally.
 
-**Зачем:** точный детектор UB вместо эвристического; детерминированное воспроизведение и
-отладка с шагом назад; горячая замена кода; песочница для недоверенного C без
-виртуализации; преподавание (студент видит абстрактную машину).
+**Why:** a precise UB detector instead of a heuristic one; deterministic replay and
+debugging with stepping backwards; hot code replacement; a sandbox for untrusted C without
+virtualization; teaching (the student sees the abstract machine).
 
-**Уровни:**
-| № | Что | Объём |
+**Levels:**
+| # | What | Size |
 |---|---|---|
-| 0 | `tcc -run` + шебанг | 5 минут, затравка статьи |
-| 1 | Своя байткод-машина, плоская куча, подмножество C89, libffi | 5–10k строк (класс c4 и picoc) |
-| 2 | Полный C11: фронтенд clang, исполнение по AST или LLVM IR; начать с clang-repl | своего кода меньше, корректности больше |
-| 3 | **Теневая память с provenance и инициализацией, диагностика UB, детерминированный replay** | отсюда начинается то, чего нет в готовом виде → опенсорсить |
-| 4 | Недетерминированное исполнение: перебор всех допустимых стандартом вариантов | там уже живут **Cerberus** (Сьюэлл) и **KCC** (C11 в K-фреймворке), референсный интерпретатор **CompCert** |
+| 0 | `tcc -run` + shebang | 5 minutes, the article's hook |
+| 1 | Our own bytecode machine, a flat heap, a C89 subset, libffi | 5–10k lines (the class of c4 and picoc) |
+| 2 | Full C11: the clang frontend, execution over the AST or LLVM IR; start with clang-repl | less code of our own, more correctness |
+| 3 | **Shadow memory with provenance and initialization, UB diagnostics, deterministic replay** | this is where what does not exist ready-made begins → open-source it |
+| 4 | Nondeterministic execution: enumerating all variants the standard allows | **Cerberus** (Sewell) and **KCC** (C11 in the K framework) already live there, plus the **CompCert** reference interpreter |
 
-**Связка:** абстрактная машина C — спецификация несуществующего компьютера, под который
-написан весь системный софт планеты и которого никто не строил. Реализовать напрямую =
-тот же жанр, что «забытая машина, от которой остался отчёт». Отчёт — ISO/IEC 9899.
+**The link:** the C abstract machine is the specification of a nonexistent computer for which
+all the world's system software was written and which nobody ever built. Implementing it directly =
+the same genre as "a forgotten machine of which only a report remains". The report is ISO/IEC 9899.
 
-**Панчлайн:** специализировать свой интерпретатор C на конкретной программе частичным
-вычислением → по первой проекции Футамуры получишь скомпилированный бинарник. Компилятор
-C из интерпретатора C автоматически, без строчки кодогенератора. Демонстрация 1971 года.
-
----
-
-## 2. Управляемая среда для C++ («JVM для C++»)
-
-**Уже сделано:** **Sulong** в GraalVM (LLVM-биткод на JVM через Truffle, JIT, режим полностью
-управляемой памяти — C и C++ **уже работают на JVM**); **C++/CLI** (реальный продукт, но
-пришлось изменить язык: отдельные указатели, оператор размещения, категория типов —
-срастить не удалось, удалось пристыковать); **WebAssembly** (победила, потому что
-сознательно **не** стала JVM: линейная память вместо объектной модели, никакой GC для
-объектов C++); **Cheerp** (умеет компилировать объекты C++ в настоящие объекты рантайма с
-идентичностью — ближе всех); **NestedVM**; кладбище бэкендов LLVM в байткод.
-
-**Почему труднее, чем с C:**
-- **Внутренние указатели** повсюду (адрес поля, элемента вектора, базового подобъекта). Перемещающий GC ломает каждый сохранённый. Либо всё прибить гвоздями (GC бессмыслен), либо запретить (это не C++).
-- **RAII.** Детерминированное разрушение — центральная идиома: блокировки, дескрипторы, транзакции. GC даёт недетерминированную финализацию, которая заменой не является (в Java финализаторы за это закопали).
-- **Значимая семантика.** Копирующие конструкторы, перемещение, гарантии раскладки, тривиально копируемые типы. У JVM для объектов только ссылки. Значимые типы = Valhalla, второе десятилетие.
-- **Шаблоны.** Мономорфизация при компиляции против стирания типов в рантайме — противоположные модели. Специализация во время исполнения = механика Truffle = **снова проекции Футамуры**.
-- **Множественное наследование, виртуальные базы, коррекция указателя при приведении.**
-- **ABI как часть языка.** Раскрутка стека через кадры C, dlopen, системные библиотеки, ассемблер.
-- Минимальная поддержка GC появилась в **C++11** и была **выброшена в C++23**, потому что её никто не реализовал.
-
-**Организующая мысль — исторически было три ответа на вопрос «как сделать C++ безопасным
-по памяти и переносимым, не переписывая»:**
-1. **Поменять язык** — C++/CLI, Cyclone, современный C++ со смарт-указателями. Легаси не переезжает.
-2. **Поменять виртуальную машину** — WASM, Sulong, Cheerp. Выигрывает тот, кто меньше спорит с семантикой оригинала.
-3. **Поменять железо** — CHERI, Morello: происхождение проверяется аппаратно, язык не меняется. Ровно то, что делали Burroughs в 1961 и Эльбрус в 1980, теперь с оглядкой на C.
-
-**Три ответа — три выпуска. Лучший каркас для целого сезона: одна задача, три эпохи, три школы.**
-
-**Ставки:** безопасность памяти стала регуляторной темой, «переписать на Rust» для
-существующего объёма невыполнимо. Управляемая среда — единственный путь, при котором
-старый код не переписывают, а перекомпилируют.
-
-**Эксперимент:** не строить JVM для C++ с нуля (это карьера, а не статья). Взять Sulong
-в управляемом режиме, запустить настоящую программу на C++ средней паршивости и честно
-измерить: что сломалось, где просела скорость, какие идиомы отвалились, какие ошибки
-памяти он поймал такими, какими нативная сборка проглотила молча. Вечер работы, статья с
-цифрами. Поверх — разговор о честном управляемом C++ с сохранением RAII и runtime-provenance.
-**Теневая память с provenance нужна и здесь, и в п.1 → написать один раз.**
+**The punchline:** specialize your C interpreter on a particular program by partial
+evaluation → by the first Futamura projection you get a compiled binary. A C compiler
+from a C interpreter, automatically, without a single line of code generator. A 1971 demonstration.
 
 ---
 
-## 3. ОС по спеке, написанная на забытом языке
+## 2. A managed runtime for C++ ("a JVM for C++")
 
-### Асимметрия
-Рефал можно брать завтра (живые реализации Рефала-5, суперкомпилятор). Альтернативных Ada
-нет вообще — ни Red, ни Blue, ни Yellow никогда не компилировались. Любой проект на Red
-начинается с фронтенда языка. Рефал — эксперимент на выходные, Red — проект на год.
+**Already done:** **Sulong** in GraalVM (LLVM bitcode on the JVM via Truffle, JIT, a fully
+managed memory mode: C and C++ **already run on the JVM**); **C++/CLI** (a real product, but
+the language had to change: separate pointers, a placement operator, a type category; it could
+not be fused, only docked); **WebAssembly** (won because it deliberately did **not** become a JVM:
+linear memory instead of an object model, no GC for C++ objects); **Cheerp** (can compile C++
+objects into real runtime objects with identity; the closest of all); **NestedVM**; a graveyard of
+LLVM-to-bytecode backends.
 
-### Что реально реализовать из «только спека»
-- **THE Дейкстры** — пять слоёв, ~десяток процессов, одна статья. Идеальная мишень.
-- **Ядро Tandem NonStop** — парные процессы, контрольные точки. Больше THE, но обозримо.
-- Остальное либо велико (iMAX), либо не спека, а проза (Midori).
+**Why it is harder than with C:**
+- **Interior pointers** everywhere (the address of a field, of a vector element, of a base subobject). A moving GC breaks every stored one. Either pin everything down (the GC is pointless) or forbid them (that is not C++).
+- **RAII.** Deterministic destruction is the central idiom: locks, handles, transactions. A GC gives nondeterministic finalization, which is no substitute (Java buried finalizers for exactly this reason).
+- **Value semantics.** Copy constructors, moves, layout guarantees, trivially copyable types. The JVM has only references for objects. Value types = Valhalla, now in its second decade.
+- **Templates.** Monomorphization at compile time versus type erasure at run time: opposite models. Specialization at run time = the Truffle mechanism = **Futamura projections again**.
+- **Multiple inheritance, virtual bases, pointer adjustment on casts.**
+- **The ABI as part of the language.** Stack unwinding through C frames, dlopen, system libraries, assembly.
+- Minimal GC support appeared in **C++11** and was **removed in C++23** because nobody implemented it.
 
-### Пары, которые сходятся
-- **Ada Red + ядро в стиле NonStop** — самая органичная. Ada проектировали ровно под это: встроенные системы, надёжность, задачи и рандеву в языке. Парные процессы ложатся почти без натяжения. Оба артефакта — ровесники, конец 70-х. Честная альтернативная история: язык, который не выиграл конкурс, пишет ОС, от которой не осталось кода.
-- **Ada Red + iMAX на эмулируемом iAPX 432** — максимальная версия: машина под Аду + ОС на Аде + Ада, проигравшая конкурс. Все три трека в одной точке. Флагман на годы, держать как горизонт.
-- **THE на Аде** — слои ложатся на пакеты, семафоры Дейкстры → примитивы синхронизации Ады. Анахронизм в 12 лет работает на сюжет. **Практический ход:** сначала собрать THE на современной Аде (GNAT), проверить, что реконструкция по статье сходится — снимает главный риск дёшево. Потом переписать на Red. Две статьи: «THE работает» и «THE на языке, которого нет».
+**The organizing thought: historically there have been three answers to the question "how do we make
+C++ memory-safe and portable without rewriting it":**
+1. **Change the language**: C++/CLI, Cyclone, modern C++ with smart pointers. Legacy does not move over.
+2. **Change the virtual machine**: WASM, Sulong, Cheerp. Whoever argues least with the original's semantics wins.
+3. **Change the hardware**: CHERI, Morello: provenance is checked in hardware, the language does not change. Exactly what Burroughs did in 1961 and Elbrus in 1980, now with an eye on C.
 
-### Рефал: ядро — натяжка, control plane — попадание
-Писать ядро на Рефале плохо: нет указателей, нет прямой работы с памятью, всё на GC и
-переписывании термов. Упрёшься ровно в то, из-за чего на нём ядер и не писали.
-Результат — «смотрите, я смог», а не «смотрите, так лучше».
+**Three answers, three episodes. The best frame for an entire season: one problem, three eras, three schools.**
 
-Зато Рефал — естественная нотация для контроллеров. См. `04-infra-layer.md`, раздел
-«Рефал как язык control plane».
+**The stakes:** memory safety has become a regulatory topic, and "rewrite it in Rust" is not
+feasible for the existing volume. A managed runtime is the only path in which
+old code is not rewritten but recompiled.
 
-### Риск, который принять заранее
-Взяв ОС-спеку и написав её на языке, на котором ОС никто не писал, почти гарантированно
-выяснишь, **почему** её на нём не писали. Это не провал, а результат — при условии, что
-статья изначально планируется как «что язык не даёт и почему», а не как победный рапорт.
+**Experiment:** do not build a JVM for C++ from scratch (that is a career, not an article). Take Sulong
+in managed mode, run a real, moderately crummy C++ program and honestly
+measure: what broke, where speed dropped, which idioms fell off, which memory errors
+it caught that the native build swallowed silently. An evening of work, an article with
+numbers. On top of that, a discussion of an honest managed C++ that keeps RAII and run-time provenance.
+**Shadow memory with provenance is needed both here and in item 1 → write it once.**
+
+---
+
+## 3. An OS from a spec, written in a forgotten language
+
+### The asymmetry
+Refal can be picked up tomorrow (live Refal-5 implementations, a supercompiler). There are no
+alternative Adas at all: neither Red, nor Blue, nor Yellow was ever compiled. Any project in Red
+starts with the language frontend. Refal is a weekend experiment; Red is a year-long project.
+
+### What can actually be implemented from "only a spec"
+- **Dijkstra's THE**: five layers, about a dozen processes, one paper. The ideal target.
+- **The Tandem NonStop kernel**: process pairs, checkpoints. Bigger than THE, but manageable.
+- The rest is either large (iMAX) or not a spec but prose (Midori).
+
+### Pairs that fit together
+- **Ada Red + a NonStop-style kernel**: the most organic. Ada was designed exactly for this: embedded systems, reliability, tasks and rendezvous in the language. Process pairs fit almost without strain. Both artifacts are contemporaries, the late 70s. An honest alternative history: the language that did not win the competition writes the OS of which no code remains.
+- **Ada Red + iMAX on an emulated iAPX 432**: the maximal version: a machine built for Ada + an OS in Ada + the Ada that lost the competition. All three tracks at one point. A flagship for years; keep it as the horizon.
+- **THE in Ada**: the layers map onto packages, Dijkstra's semaphores → Ada's synchronization primitives. The 12-year anachronism works for the story. **The practical move:** first build THE in modern Ada (GNAT), check that the reconstruction from the paper holds up; this removes the main risk cheaply. Then rewrite it in Red. Two articles: "THE works" and "THE in a language that does not exist".
+
+### Refal: as a kernel it is a stretch, as a control plane it is a hit
+Writing a kernel in Refal is a bad idea: no pointers, no direct memory access, everything runs on GC and
+term rewriting. You hit exactly the reason nobody wrote kernels in it.
+The result is "look, I managed it", not "look, this is better".
+
+On the other hand, Refal is a natural notation for controllers. See `04-infra-layer.md`, the section
+"Refal as a control plane language".
+
+### A risk to accept in advance
+If you take an OS spec and write it in a language nobody has written an OS in, you will almost certainly
+find out **why** nobody did. That is not a failure but a result, provided the article is planned
+from the start as "what the language does not give and why", not as a victory report.

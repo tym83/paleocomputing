@@ -1,2686 +1,2688 @@
+[Русская версия](SESSION_LOG.ru.md)
+
 # Session log — oberon-lab (started 2026-09-22)
 
-## Цель
-Реализовать выпуск №1 по `design/DESIGN.md` v0.3: RISC5 под Verilator + дифференциальный
-стенд + три конфигурации проверки границ, с измерениями.
+## Goal
+Implement episode 1 per `design/DESIGN.md` v0.3: RISC5 under Verilator + a differential
+bench + three bounds-checking configurations, with measurements.
 
-## Текущее состояние
-- **Инфра:** Verilator 5.052 ✅, emcc ✅, node v26.9 ✅, clang ✅. **yosys ❌ — нужен для У3 (площадь)**
-- **Исходники:** `impl/rtl/` — комплект Вирта, `RISC5.v` от 31.8.2018 (**с прерываниями и FP**),
-  `RISC5Top.v` 14.6.2018, `Registers.v` 1.2.2018. Остальные модули старше, это норма.
-  ⚠ В scratchpad ревьюера лежала версия 25.9.2015 **без прерываний** — её не брать.
-- **Oberon-исходники:** `impl/ext/oberon-src/` — ORS/ORB/ORG/ORP/ORTool, Kernel/Files/Modules/Oberon/System
-- Работает: пока ничего не собрано
-- Не работает: —
+## Current state
+- **Infra:** Verilator 5.052 ✅, emcc ✅, node v26.9 ✅, clang ✅. **yosys ❌: needed for C3 (area)**
+- **Sources:** `impl/rtl/`: Wirth's set, `RISC5.v` dated 31.8.2018 (**with interrupts and FP**),
+  `RISC5Top.v` 14.6.2018, `Registers.v` 1.2.2018. The other modules are older; that is normal.
+  ⚠ The reviewer's scratchpad held the 25.9.2015 version **without interrupts**; do not use it.
+- **Oberon sources:** `impl/ext/oberon-src/`: ORS/ORB/ORG/ORP/ORTool, Kernel/Files/Modules/Oberon/System
+- Works: nothing built yet
+- Does not work: —
 
 
-Этап 0, замер №3: подтвердить по декодеру `RISC5.v`, что биты `IR[15:4]` действительно
-не читаются для F0.
+Stage 0, measurement #3: confirm from the `RISC5.v` decoder that bits `IR[15:4]` really
+are not read for F0.
 
-## Журнал
-### 00:55 — развёрнут проект
-`impl/{rtl,tb,tests,tools,ext,build,docs}`. Скопированы исходники из scratchpad ревьюеров
-(экономия на скачивании). Проверена версия RTL — критично, см. выше.
+## Journal
+### 00:55 — project set up
+`impl/{rtl,tb,tests,tools,ext,build,docs}`. Copied the sources from the reviewers' scratchpad
+(saves downloading). Checked the RTL version: critical, see above.
 
-### 01:05 — ✅ Этап 0, замер №3: свободное пространство кодирования ПОДТВЕРЖДЕНО
-`RISC5.v:100`: `assign C1 = q ? {{16{v}}, imm} : C0;` — при `q=0` (формат F0) поле
-`imm = IR[15:0]` **не используется вообще**. Единственное другое упоминание (строка 112) —
-внутри ветки `q=1`. `IR[3:0]` = irc.
-→ **`IR[15:4]` — 12 свободных бит для F0**, в существующем коде там нули.
-Прецедент подтверждён: `RTI = BR & ~u & ~v & IR[4]`, STI/CLI на `IR[5]`/`IR[0]`.
+### 01:05 — ✅ Stage 0, measurement #3: free encoding space CONFIRMED
+`RISC5.v:100`: `assign C1 = q ? {{16{v}}, imm} : C0;`: with `q=0` (format F0) the field
+`imm = IR[15:0]` **is not used at all**. The only other mention (line 112) is
+inside the `q=1` branch. `IR[3:0]` = irc.
+→ **`IR[15:4]` are 12 free bits for F0**; existing code has zeros there.
+The precedent is confirmed: `RTI = BR & ~u & ~v & IR[4]`, STI/CLI on `IR[5]`/`IR[0]`.
 
-### 01:10 — ✅ ядро собрано под Verilator, стенд с ретайр-детектором работает
-- `Registers.v` заменён поведенческим 3R1W (оригинал → `Registers.xilinx.v.orig`).
-  Долг: `.INIT(16'h0000)` обнулял файл битстримом; в кремнии нужен сброс, порта нет.
-- Доступ к внутренним сигналам: `--public-flat-rw`, путь `top->rootp->RISC5->stall` и
-  `top->rootp->RISC5->regs->R[i]` (не `__DOT__`, как я сначала написал).
-- `rst` **активен низким** (`~rst ? StartAdr : PC`).
-- Стенд: одна плоская память обслуживает codebus и inbus — фон-неймановское стойло.
-- **T0 пройден: 15/15.** MUL измерен = **34 такта**, совпадает с отчётом ревьюера.
+### 01:10 — ✅ the core builds under Verilator, the bench with a retire detector works
+- `Registers.v` replaced with a behavioral 3R1W (original → `Registers.xilinx.v.orig`).
+  Debt: `.INIT(16'h0000)` zeroed the file via the bitstream; silicon needs a reset, and there is no port for it.
+- Access to internal signals: `--public-flat-rw`, the path `top->rootp->RISC5->stall` and
+  `top->rootp->RISC5->regs->R[i]` (not `__DOT__`, as I first wrote).
+- `rst` is **active low** (`~rst ? StartAdr : PC`).
+- Bench: one flat memory serves both codebus and inbus: a von Neumann stall.
+- **T0 passed: 15/15.** MUL measured = **34 cycles**, matching the reviewer's report.
 
-### 01:35 — ✅ направленные тесты: латентности, флаги, надбавка за подряд идущую арифметику
-- `tests/t1_latency.s` — **17/17**. Все латентности из отчётов ревьюеров подтверждены
-  на живом RTL: ADD/SUB/AND/LSL=1, LD/ST=2, FAD/FSB=4, FML=26, FDV=27, MUL/DIV=34.
-- `tests/t1_flags.s` — **13/13**. Подтверждена находка ревью: **принятый BL затирает N и Z**
-  (третий член `regwr`). Store флаги не трогает.
-- `tests/t1_fpb2b.s` — **13/13**. Подтверждено и **обобщено**: надбавка за подряд идущую
-  операцию равна **периоду счётчика 2^разрядность**, а не длине операции.
-  Целый MUL подряд = **64 такта вместо 34 (+88%)**. См. `docs/FINDING-01-counter-period.md`.
-  Моя первоначальная гипотеза (34) была неверна — правило вывелось из промаха.
-- Инструменты: `tools/asm.py` (ассемблер + генерация `.bin`/`.chk`),
-  `tb/run_tests.cpp` (универсальный прогонщик с ретайр-детектором).
+### 01:35 — ✅ directed tests: latencies, flags, the surcharge for back-to-back arithmetic
+- `tests/t1_latency.s`: **17/17**. All latencies from the reviewers' reports confirmed
+  on the live RTL: ADD/SUB/AND/LSL=1, LD/ST=2, FAD/FSB=4, FML=26, FDV=27, MUL/DIV=34.
+- `tests/t1_flags.s`: **13/13**. The review finding is confirmed: **a taken BL clobbers N and Z**
+  (the third term of `regwr`). A store does not touch the flags.
+- `tests/t1_fpb2b.s`: **13/13**. Confirmed and **generalized**: the surcharge for a back-to-back
+  operation equals **the counter period 2^width**, not the operation length.
+  Back-to-back integer MUL = **64 cycles instead of 34 (+88%)**. See `docs/FINDING-01-counter-period.md`.
+  My original hypothesis (34) was wrong; the rule was derived from the miss.
+- Tools: `tools/asm.py` (assembler + `.bin`/`.chk` generation),
+  `tb/run_tests.cpp` (a universal runner with a retire detector).
 
-### 01:50 — ✅ Этап 0 закрыт по кодированию: свободное поле ДОКАЗАНО перебором
-`tb/decoder_probe.cpp`: все 4095 ненулевых значений `IR[15:4]` в формате F0 →
-**0 расхождений** по результату, флагам и тактам. Контроль на F1 показывает, что метод
-видит разницу. Снята карта декодера 8×16 (`docs/decoder-map.txt`).
-Подтверждено опровержение гипотезы v0.1: бит 28 при op=12/13 — это FLT/FLOOR,
-а `0011`+op=0 = `MOV a,NZCV` с INFO=**0x53**. См. `docs/FINDING-02-encoding.md`.
+### 01:50 — ✅ Stage 0 closed on encoding: the free field PROVEN by enumeration
+`tb/decoder_probe.cpp`: all 4095 non-zero values of `IR[15:4]` in format F0 →
+**0 differences** in result, flags and cycles. A control on F1 shows that the method
+sees a difference. Took an 8×16 decoder map (`docs/decoder-map.txt`).
+The refutation of the v0.1 hypothesis is confirmed: bit 28 with op=12/13 is FLT/FLOOR,
+and `0011`+op=0 = `MOV a,NZCV` with INFO=**0x53**. See `docs/FINDING-02-encoding.md`.
 
-## Текущее состояние (перезапись)
-- **Собрано и работает:** ядро RISC5 (2018) под Verilator, стенд с ретайр-детектором,
-  универсальный прогонщик тестов, ассемблер, зонд декодера.
-- **Тесты:** 43 проверки, все зелёные (латентности 17, флаги 13, FP-надбавка 13).
-- **Находки:** 2 задокументированы в `docs/`.
-- **Не сделано:** yosys не установлен (нужен для площади/У3); SoC-обвязка;
-  дифференциальный стенд против эталонного ISS; конфигурации A/B/C проверки границ.
+## Current state (rewrite)
+- **Built and working:** the RISC5 (2018) core under Verilator, the bench with a retire detector,
+  a universal test runner, the assembler, the decoder probe.
+- **Tests:** 43 checks, all green (latencies 17, flags 13, FP surcharge 13).
+- **Findings:** 2 documented in `docs/`.
+- **Not done:** yosys not installed (needed for area/C3); the SoC wrapper;
+  the differential bench against the reference ISS; bounds-checking configurations A/B/C.
 
-## Следующий шаг
-Поставить yosys (`brew install yosys`) и снять базовую площадь ядра — это вторая
-половина замера этапа 0 и прямой вход в У3.
+## Next step
+Install yosys (`brew install yosys`) and take the base area of the core: this is the second
+half of the stage 0 measurement and a direct entry into C3.
 
-### 03:30 — ✅ базовая площадь снята, две ловушки маршрута измерены
-Поставлен yosys 0.69, скачана Nangate45 typical (6.7 МБ).
-**Базовая линия: 14 532.11 мкм² = 18.21 kGE, 993 триггера, 30.9% последовательной логики,
-10 938 ячеек.** Попадает в предсказанный ревью диапазон 10–20 kGE.
+### 03:30 — ✅ base area taken, two flow traps measured
+Installed yosys 0.69, downloaded Nangate45 typical (6.7 MB).
+**Baseline: 14,532.11 µm² = 18.21 kGE, 993 flip-flops, 30.9% sequential logic,
+10,938 cells.** Falls in the 10–20 kGE range predicted by the review.
 
-Две ловушки, обе с измерениями (`docs/FINDING-03-synthesis-traps.md`):
-1. `stat -tech cmos` теряет **758 из 993 триггеров молча** (76%) — подтверждение ревью
-2. **`-D` без `-constr` игнорируется полностью** — площадь совпадает до последнего знака
-   при -D 200 и -D 50000. Этого ревью не предвидело
-Кривая площадь-vs-период оказалась плоской (две точки, разница 0.5%) → график построить
-не из чего, зато дельта от расширения ISA будет чистой. **Fmax без OpenSTA не получить.**
+Two traps, both measured (`docs/FINDING-03-synthesis-traps.md`):
+1. `stat -tech cmos` loses **758 of 993 flip-flops silently** (76%): confirms the review
+2. **`-D` without `-constr` is ignored completely**: the area is identical to the last digit
+   with -D 200 and -D 50000. The review did not foresee this
+The area-vs-period curve turned out flat (two points, 0.5% apart) → there is nothing to build
+a chart from, but the delta from the ISA extension will be clean. **Fmax cannot be obtained without OpenSTA.**
 
-### 04:10 — ✅ CHK реализована в RTL, дельта площади измерена
-Кодировка: F0, v=1, op=1 (алиас LSL — компилятор его не эмитит), **индекс в поле b**
-(через поле a была бы комбинационная петля ira0↔chkFail), предел в `IR[15:4]` (12 бит),
-регистр c=12 → аппаратный переход берёт вектор ловушек из MT без лишнего чтения.
-Семантика при срабатывании — ровно как BLR: `R15 := PC+4; PC := R[12]`. Не срабатывает —
-не пишет ни регистра, ни флагов (CHK исключена из общего терма `regwr`).
+### 04:10 — ✅ CHK implemented in the RTL, area delta measured
+Encoding: F0, v=1, op=1 (an alias of LSL; the compiler does not emit it), **the index in field b**
+(via field a there would be a combinational loop ira0↔chkFail), the limit in `IR[15:4]` (12 bits),
+register c=12 → the hardware jump takes the trap vector from MT without an extra read.
+Semantics when it fires: exactly like BLR: `R15 := PC+4; PC := R[12]`. When it does not fire,
+it writes neither a register nor the flags (CHK is excluded from the common `regwr` term).
 
-**Δ площади = +30.06 мкм² = 37.7 GE.** ⚠ ПОЗЖЕ ИСПРАВЛЕНО: относится к отвергнутой
-кодировке; у принятой +46.55…+123.16 мкм² (58…154 GE) в зависимости от скрипта.
+**Δ area = +30.06 µm² = 37.7 GE.** ⚠ CORRECTED LATER: this applies to the rejected
+encoding; the adopted one costs +46.55…+123.16 µm² (58…154 GE) depending on the script.
 
-🔴 Но главный результат методологический: **логически нейтральные переписывания исходника
-двигают площадь на ±51 мкм² и немонотонно** (два по отдельности −51 каждое, вместе +88).
-То есть **измеряемый эффект вдвое меньше шума от синтаксиса**. Защитимо только сравнение
-двух сборок из одного файла через `ifdef`. См. `docs/FINDING-04-noise-floor.md`.
+🔴 But the main result is methodological: **logically neutral rewrites of the source
+move the area by ±51 µm², and non-monotonically** (two of them separately −51 each, together +88).
+So **the measured effect is half the size of the noise from syntax**. Only a comparison of
+two builds from a single file via `ifdef` is defensible. See `docs/FINDING-04-noise-floor.md`.
 
-### 04:35 — ✅ CHK проверена функционально, регрессия зелёная, сборка через make
-- `tools/asm.py`: добавлена CHK; **исправлен баг** — при `v=0` непосредственное
-  расширяется нулями, значит проверять его надо беззнаково (ловилось на `IOR R12,R12,0xE05C`).
-- `tb/run_tests.cpp`: **исправлена привязка проверок** — была к числу выполненных
-  инструкций, стала к адресу (номеру слова). На прямом коде совпадает, при первом же
-  переходе расходится. Плюс проверки сделаны одноразовыми.
-- `tests/t2_chk.s`: не сработавшая CHK — 1 такт, флаги не тронуты; сработавшая — передала
-  управление на MT, пропущенная инструкция не выполнилась. **5/5.**
-- 🟢 **Ядро с CHK проходит все базовые тесты с идентичным числом тактов** (203, 21, 453)
-  — требуемый ревью тест «старый код на новом RTL».
-- `make test` — вся регрессия одной командой.
+### 04:35 — ✅ CHK verified functionally, regression green, build via make
+- `tools/asm.py`: added CHK; **fixed a bug**: with `v=0` the immediate is
+  zero-extended, so it has to be checked as unsigned (caught on `IOR R12,R12,0xE05C`).
+- `tb/run_tests.cpp`: **fixed how checks are anchored**: they were tied to the number of executed
+  instructions, now to the address (word number). On straight-line code these coincide; at the first
+  branch they diverge. Plus checks were made one-shot.
+- `tests/t2_chk.s`: a CHK that does not fire takes 1 cycle, flags untouched; one that fires
+  transferred control to MT, and the skipped instruction did not execute. **5/5.**
+- 🟢 **The core with CHK passes all base tests with an identical number of cycles** (203, 21, 453):
+  the "old code on the new RTL" test required by the review.
+- `make test`: the whole regression with one command.
 
-## Текущее состояние (перезапись)
-- **Работает:** ядро RISC5 (2018) под Verilator в двух конфигурациях (базовая и с CHK),
-  стенд с ретайр-детектором, прогонщик тестов с привязкой к PC, ассемблер, зонд декодера,
-  маршрут синтеза с Nangate45, `make test` / `make syn`.
-- **Тесты:** 61 проверка на двух ядрах, все зелёные.
-- **Измерено:** базовая площадь 14 532.11 мкм² = 18.21 kGE, 993 триггера;
-  Δ CHK принятой кодировки = 58…154 GE (нижняя граница внутри шума ±64 GE).
-- **Находки:** 4 задокументированы в `docs/`.
-- **Не сделано:** Fmax (нужен OpenSTA); SoC-обвязка; дифференциальный стенд против ISS;
-  конфигурации A/B/C на реальной системе (нужен компилятор Оберона).
+## Current state (rewrite)
+- **Working:** the RISC5 (2018) core under Verilator in two configurations (base and with CHK),
+  the bench with a retire detector, a test runner anchored to the PC, the assembler, the decoder probe,
+  a synthesis flow with Nangate45, `make test` / `make syn`.
+- **Tests:** 61 checks on two cores, all green.
+- **Measured:** base area 14,532.11 µm² = 18.21 kGE, 993 flip-flops;
+  Δ CHK of the adopted encoding = 58…154 GE (the lower bound within the ±64 GE noise).
+- **Findings:** 4 documented in `docs/`.
+- **Not done:** Fmax (needs OpenSTA); the SoC wrapper; the differential bench against the ISS;
+  configurations A/B/C on a real system (needs the Oberon compiler).
 
-## Следующий шаг
-Конфигурация A — патч `check := FALSE` в `ORG.Mod` и замер цены проверок границ на
-реальной нагрузке. Для этого нужен работающий Оберон: либо Norebo (кросс-сборка с хоста),
-либо эталонный эмулятор с образом диска.
+## Next step
+Configuration A: a `check := FALSE` patch in `ORG.Mod` and measuring the cost of bounds checks on a
+real workload. This needs a working Oberon: either Norebo (cross-building from the host)
+or the reference emulator with a disk image.
 
-### 05:10 — 🎯 ГЛАВНЫЙ РЕЗУЛЬТАТ: цена проверок времени исполнения измерена
-Поднят **Norebo** — компилятор Оберона с командной строки (macOS-ловушка: файловая система
-нечувствительна к регистру, `make` считает каталог `Norebo/` готовой целью `norebo` и
-ничего не собирает; собрал напрямую в `norebo.bin`).
+### 05:10 — 🎯 MAIN RESULT: the cost of run-time checks measured
+Brought up **Norebo**, a command-line Oberon compiler (a macOS trap: the file system
+is case-insensitive, `make` treats the `Norebo/` directory as the finished target `norebo` and
+builds nothing; I built directly into `norebo.bin`).
 
-**Трёхстадийная самораскрутка прошла: «Stage 2 and Stage 3 are identical»** — T-BOOT-3 ✅.
+**The three-stage bootstrap passed: "Stage 2 and Stage 3 are identical"**: T-BOOT-3 ✅.
 
-Создана несуществующая конфигурация: `check := FALSE` в `ORG.Open`, пересобран компилятор.
-**Результат: проверки занимают 6.2% кода системы (1490 слов из 23 954).**
-Разброс по модулям 0% (Kernel, он же RISC-0) … 11% (Fonts).
+Created a configuration that did not exist: `check := FALSE` in `ORG.Open`, rebuilt the compiler.
+**Result: the checks take 6.2% of the system's code (1490 words of 23,954).**
+The spread across modules is 0% (Kernel, which is RISC-0) … 11% (Fonts).
 
-Перекрёстно проверено тремя способами: у ORP Δслов = Δловушек = 390 точно (там почти всё —
-проверки NIL по одному слову); где есть индексация, Δслов > Δловушек (проверка границы =
-2 инструкции); Kernel даёт 0 в обеих конфигурациях. Остаток в A — это `NEW` и `ASSERT`,
-они вне охраны `check` и должны остаться.
+Cross-checked three ways: for ORP Δwords = Δtraps = 390 exactly (almost all of them there are
+one-word NIL checks); where there is indexing, Δwords > Δtraps (a bounds check =
+2 instructions); Kernel gives 0 in both configurations. What remains in A is `NEW` and `ASSERT`,
+which are outside the `check` guard and must stay.
 
-🟢 Уточнение к постановке эксперимента: **доминируют проверки на NIL, а не на границы
-массивов** (в ORP 390 из 402 — это NIL). «Цена безопасности памяти» в Обероне — это прежде
-всего цена разыменования указателей. См. `docs/FINDING-05-cost-of-checks.md`.
+🟢 A refinement to the experiment's setup: **NIL checks dominate, not array bounds
+checks** (in ORP 390 of 402 are NIL). The "cost of memory safety" in Oberon is first and foremost
+the cost of dereferencing pointers. See `docs/FINDING-05-cost-of-checks.md`.
 
-⚠ Это размер КОДА, не такты. Смешивать нельзя.
+⚠ This is CODE size, not cycles. They must not be mixed.
 
-### 06:00 — 🎯 динамическая цена проверок: 2.67% тактов
-Оснастил эмулятор Norebo счётчиком тактов по модели из `tb/cycle_model.h`.
-**Модель предварительно проверена против настоящего RTL потактово: 61 инструкция,
-расхождений 0**, включая все многотактные и надбавку за подряд идущие.
+### 06:00 — 🎯 the dynamic cost of checks: 2.67% of cycles
+Instrumented the Norebo emulator with a cycle counter following the model in `tb/cycle_model.h`.
+**The model was first checked against the real RTL cycle by cycle: 61 instructions,
+0 mismatches**, including all multi-cycle ones and the back-to-back surcharge.
 
-🔴 **Едва не опубликовал неверное число.** Первый замер дал 0.43% — но он отражал лишь
-то, что компилятор без проверок делает меньше работы при генерации кода, а не цену
-исполнения проверок. Потребовалась **вторая стадия самораскрутки**: компилятором A
-собрать компилятор заново (двоичный код без проверок внутри), тем же путём через B —
-с проверками, и только потом прогнать обоими одну нагрузку.
-Разница между неверным и верным замером — **шестикратная**.
+🔴 **I nearly published a wrong number.** The first measurement gave 0.43%, but it reflected only
+the fact that a compiler without checks does less work when generating code, not the cost of
+executing the checks. A **second bootstrap stage** was needed: use compiler A to
+build the compiler again (binary code without checks inside), the same way through B
+with checks, and only then run the same workload with both.
+The difference between the wrong and the right measurement is **sixfold**.
 
-**Итог: статика 6.2% кода, динамика 2.67% тактов (3.78% инструкций).**
-Проверки занимают вдвое больше места, чем времени: они рассыпаны по всему коду, но
-горячие циклы исполняют их реже, и каждая дешевле средней инструкции (1 такт против
-средних 1.642). Оберон на дешёвом краю литературного диапазона (Morello 5.7, Toooba 9,
+**Bottom line: statically 6.2% of code, dynamically 2.67% of cycles (3.78% of instructions).**
+The checks take twice as much space as time: they are scattered throughout the code, but
+hot loops execute them less often, and each is cheaper than the average instruction (1 cycle versus
+an average of 1.642). Oberon is at the cheap end of the range in the literature (Morello 5.7, Toooba 9,
 MTE 4–12).
 
-⚠ Ловушка Norebo: если исходник не найден по `NOREBO_PATH`, он **уходит в вечный цикл**
-вместо ошибки. Порядок путей в `tools/measure_checks.sh` проверен, не трогать.
-⚠ Ловушка macOS: нет `timeout`; сделал `tools/run_timeout.py`.
+⚠ A Norebo trap: if a source is not found via `NOREBO_PATH`, it **goes into an infinite loop**
+instead of an error. The path order in `tools/measure_checks.sh` has been checked; do not touch it.
+⚠ A macOS trap: there is no `timeout`; I wrote `tools/run_timeout.py`.
 
-### 06:40 — 🎯 ГЛАВНЫЙ ЭКСПЕРИМЕНТ ЗАМКНУТ: три конфигурации измерены
-CHK добавлена в эмулятор Norebo (регрессия чистая — старый код даёт те же 94 149 309
-тактов) и в кодогенератор (`PutCHK` в `ORG.Mod`, конфигурация C).
-Учёт сошёлся точно: в `Texts` 21 проверка границ → 2 + **19 CHK**, код ровно на 19 слов
-короче; в `Fonts` 22 → 22 CHK, минус 22 слова. Одно слово на проверку.
+### 06:40 — 🎯 MAIN EXPERIMENT CLOSED: three configurations measured
+CHK added to the Norebo emulator (regression clean: old code gives the same 94,149,309
+cycles) and to the code generator (`PutCHK` in `ORG.Mod`, configuration C).
+The accounting matched exactly: in `Texts` 21 bounds checks → 2 + **19 CHK**, the code is exactly 19 words
+shorter; in `Fonts` 22 → 22 CHK, minus 22 words. One word per check.
 
-⚠ Попутная ошибка постановки: у конфигурации C путь начинается с `cfgC`, где лежит
-пропатченный `ORG.Mod` — сравнивались разные исходники. Убрал ORG из нагрузки.
+⚠ An incidental setup error: configuration C's path starts with `cfgC`, which holds
+the patched `ORG.Mod`, so different sources were being compared. Removed ORG from the workload.
 
-**РЕЗУЛЬТАТ (tools/measure3.sh):**
-| конфигурация | такты | инстр. | код |
+**RESULT (tools/measure3.sh):**
+| configuration | cycles | instr. | code |
 |---|---|---|---|
-| A — нет проверок | 29 121 384 | 17 407 595 | 5 775 |
-| B — программные | 29 919 963 (+2.74%) | +3.92% | +9.92% |
-| C — аппаратные | 29 808 859 (+2.36%) | +3.32% | +8.92% |
+| A — no checks | 29,121,384 | 17,407,595 | 5,775 |
+| B — software | 29,919,963 (+2.74%) | +3.92% | +9.92% |
+| C — hardware | 29,808,859 (+2.36%) | +3.32% | +8.92% |
 
-🎯 **Аппаратная проверка границ снимает лишь 14% цены проверок** (0.38 из 2.74 п.п.)
-ценой 0.32…0.85% площади ядра. Причина измерена: доминируют проверки NIL (390 из 402 в ORP),
-CHK их не касается; плюс 12-битный предел и открытые массивы на старом пути.
-Отрицательный результат, и он сильнее положительного. См. `docs/FINDING-06-three-configs.md`.
+🎯 **Hardware bounds checking removes only 14% of the cost of checks** (0.38 of 2.74 pp)
+at the price of 0.32…0.85% of the core's area. The reason is measured: NIL checks dominate (390 of 402 in ORP),
+and CHK does not touch them; plus the 12-bit limit and open arrays on the old path.
+A negative result, and it is stronger than a positive one. See `docs/FINDING-06-three-configs.md`.
 
-## Следующий шаг
-Вторая нагрузка — счётная, с плотной индексацией массивов. Сейчас единственная нагрузка
-компиляторная (много указателей, мало индексации), и это записанное ограничение. Счётная
-покажет верхнюю границу вклада CHK.
+## Next step
+A second workload: a compute one, with dense array indexing. Currently the only workload
+is the compiler (many pointers, little indexing), and this is a recorded limitation. A compute
+workload will show the upper bound of CHK's contribution.
 
-### 07:20 — ✅ вторая нагрузка: разброс вклада аппаратуры в 3.5 раза
-`bench/ArrBench.Mod` — сортировка + умножение матриц, ни одного указателя,
-все пределы < 4096. Итог: проверки стоят **+10.16% тактов**, аппаратная поддержка
-снимает **ровно 50.0%** (две инструкции по такту заменяются одной).
+### 07:20 — ✅ second workload: the hardware's contribution varies 3.5×
+`bench/ArrBench.Mod`: sorting + matrix multiplication, not a single pointer,
+all limits < 4096. Result: the checks cost **+10.16% of cycles**, hardware support
+removes **exactly 50.0%** (two one-cycle instructions are replaced by one).
 
-🎯 **Против 14% на компиляторной нагрузке — разброс в 3.5 раза.**
-«Сколько даёт аппаратная проверка границ» без указания нагрузки — бессмысленный вопрос.
+🎯 **Versus 14% on the compiler workload: a 3.5× spread.**
+"How much does hardware bounds checking give" without naming the workload is a meaningless question.
 
-Два бага по дороге:
-1. 🔴 В моём же бенчмарке был реальный выход за границу (`b[i*M+j]` до 3599 при массиве
-   на 1000). **Конфигурация A проглотила молча**, портя 2600 слов; B поймала. Случайная,
-   но идеальная демонстрация смысла проверок.
-2. 🔴 **CHK ломает диагностику: `unknown trap 8`.** Предел в `IR[15:4]` перекрывает
-   и номер ловушки (биты 7:4), и позицию (23:8). Ревью предсказало потерю позиции,
-   но не то, что испортится сам номер ошибки.
+Two bugs along the way:
+1. 🔴 My own benchmark had a real out-of-bounds access (`b[i*M+j]` up to 3599 with an array
+   of 1000). **Configuration A swallowed it silently**, corrupting 2600 words; B caught it. An accidental
+   but perfect demonstration of why checks matter.
+2. 🔴 **CHK breaks diagnostics: `unknown trap 8`.** The limit in `IR[15:4]` overlaps
+   both the trap number (bits 7:4) and the position (23:8). The review predicted the loss of the position,
+   but not that the error number itself would be corrupted.
 
-Открытая развилка: предел 4095 со сломанной диагностикой / предел 255 с верным номером /
-двухсловная CHK. Решать по данным — сколько массивов короче 256. Не измерено.
+An open fork: a 4095 limit with broken diagnostics / a 255 limit with the right number /
+a two-word CHK. Decide by data: how many arrays are shorter than 256. Not measured.
 
-## Следующий шаг
-Замерить распределение длин массивов в системе, чтобы закрыть развилку по кодированию CHK.
+## Next step
+Measure the distribution of array lengths in the system to close the CHK encoding fork.
 
-### 07:50 — полный комплект исходников PO2013 и анализатор длин массивов
-Скачан **полный комплект Project Oberon 2013 — 46 модулей**, включая все оконные
+### 07:50 — the full set of PO2013 sources and an array length analyzer
+Downloaded **the full set of Project Oberon 2013: 46 modules**, including all the windowing ones
 (`Display`, `Viewers`, `TextFrames`, `MenuViewers`, `Graphics`, `GraphicFrames`, `Curves`,
-`Rectangles`, `Draw`, `GraphTool`, `System`, `Edit`, `Net`, `SCC`, `Math`, `Tools` и др.)
-в `ext/po2013-src/`. Не скачались два zip-архива с дополнительными утилитами.
-Без оконных модулей выборка была бы смещена — именно там плотная индексация.
+`Rectangles`, `Draw`, `GraphTool`, `System`, `Edit`, `Net`, `SCC`, `Math`, `Tools` and others)
+into `ext/po2013-src/`. Two zip archives with additional utilities did not download.
+Without the windowing modules the sample would be biased: that is exactly where dense indexing lives.
 
-`tools/array_limits.py` — статический анализ: достаёт пределы массивов прямо из
-скомпилированного кода по паре «`SUB` с непосредственным пределом + ловушка №1».
-Компилятор патчить не требуется. **Проверен на известном случае**: на `ArrBench`
-вытащил ровно объявленные в исходнике 60, 1000 и 3600.
+`tools/array_limits.py`: a static analysis that extracts array limits straight from the
+compiled code by the pair "`SUB` with an immediate limit + trap #1".
+No compiler patch is needed. **Checked on a known case**: on `ArrBench`
+it extracted exactly the 60, 1000 and 3600 declared in the source.
 
-`tools/build_po2013.py` — сборка в порядке зависимостей, вычисленном топологической
-сортировкой по секциям IMPORT (а не заданном руками).
+`tools/build_po2013.py`: a build in dependency order, computed by a topological
+sort over the IMPORT sections (not given by hand).
 
-⚠ **Ловушка: `Input.Mod` вешает Norebo наглухо.** Проверено, что это НЕ мои изменения:
-зависает и с эталонным бинарником эмулятора, и со штатным загрузочным компилятором, и с
-компилятором `build2`. Файл цел (шестнадцатеричный литерал таблицы клавиатуры закрыт).
-Причина не найдена; модуль крошечный и на статистику длин массивов не влияет.
-Сборка сделана устойчивой: таймаут на модуль, зависшие помечаются и пропускаются.
+⚠ **A trap: `Input.Mod` hangs Norebo dead.** Verified that this is NOT my changes:
+it hangs with the reference emulator binary, with the stock boot compiler, and with
+the `build2` compiler. The file is intact (the hex literal of the keyboard table is closed).
+The cause was not found; the module is tiny and does not affect the array length statistics.
+The build was made robust: a timeout per module, hung ones are marked and skipped.
 
-### 08:40 — ✅ развилка по кодированию CHK закрыта данными
-Три независимых замера (`docs/FINDING-08-encoding-decision.md`):
-1. По скомпилированному коду, 154 места проверки: **медиана предела 32**,
-   8 бит покрывают 70.0%, 12 бит 86.9%
-2. По объявлениям во всех 46 исходниках (99 размерностей, включая оконные модули,
-   которых нет в комплекте Norebo): **медиана снова 32**, 8 бит 84.8%, 12 бит 99.0%
-3. Прогон на настоящей ошибке — и вот главное:
-   - B (программная): `array index out of range` ✅
-   - C (12 бит): 🔴 **`access via NIL pointer`** — система уверенно сообщает НЕ ТУ ошибку
-   - D (8 бит): ✅ `array index out of range`, потеряна только позиция
-4. По площади варианты **неразличимы** (3.46 мкм² при шумовом поле ±51)
+### 08:40 — ✅ the CHK encoding fork closed by data
+Three independent measurements (`docs/FINDING-08-encoding-decision.md`):
+1. On compiled code, 154 check sites: **median limit 32**,
+   8 bits cover 70.0%, 12 bits 86.9%
+2. On declarations in all 46 sources (99 dimensions, including the windowing modules,
+   which are not in the Norebo set): **the median is again 32**, 8 bits 84.8%, 12 bits 99.0%
+3. A run on a real error, and here is the main thing:
+   - B (software): `array index out of range` ✅
+   - C (12 bits): 🔴 **`access via NIL pointer`**: the system confidently reports the WRONG error
+   - D (8 bits): ✅ `array index out of range`, only the position is lost
+4. By area the variants are **indistinguishable** (3.46 µm² with a noise floor of ±51)
 
-**Принят вариант D (8 бит).** Обмен 14–17 п.п. покрытия на ложные сообщения об ошибках
-невыгоден для системы, чья ценность — в том, что ошибки находятся и называются.
-Переведены эмулятор, RTL (`CHK_NARROW`), ассемблер (`CHKN`) и кодогенератор (cfgD).
+**Variant D (8 bits) adopted.** Trading 14–17 pp of coverage for false error messages
+is a bad deal for a system whose value is that errors are found and named.
+Moved the emulator, the RTL (`CHK_NARROW`), the assembler (`CHKN`) and the code generator (cfgD) over.
 
-⚠ Попутно: скачанный комплект PO2013 — **версии 2019 года, а компилятор Norebo 2016-го**.
-Несовместимы, причём проявляется зависанием, а не ошибкой. Для анализа по
-скомпилированному коду использован согласованный комплект Norebo.
+⚠ Incidentally: the downloaded PO2013 set is **the 2019 version, while the Norebo compiler is from 2016**.
+They are incompatible, and this shows up as a hang, not an error. For the analysis of
+compiled code the matching Norebo set was used.
 
-### 09:20 — 🔴 поправка: развилка данными НЕ закрывается
-Замер принятого (8 бит) варианта на ВТОРОЙ нагрузке опроверг обоснование находки 8.
+### 09:20 — 🔴 correction: the data does NOT close the fork
+Measuring the adopted (8-bit) variant on the SECOND workload refuted the rationale of finding 8.
 
-| вариант | компиляция | счётная |
+| variant | compilation | compute |
 |---|---|---|
-| 12 бит (диагностика сломана) | 13.9% | **50.0%** |
-| 8 бит (диагностика цела) | 13.0% | **15.8%** |
+| 12 bits (diagnostics broken) | 13.9% | **50.0%** |
+| 8 bits (diagnostics intact) | 13.0% | **15.8%** |
 
-**Ошибка в обосновании:** решение принималось по распределению МЕСТ проверки (медиана 32),
-а горячие циклы счётного кода гоняют КРУПНЫЕ массивы (1000 и 3600 в бенчмарке).
-Под 8 бит попали 6 проверок из 15 — и не те, что исполняются миллионы раз.
-Статика упала на 17 п.п., динамика — **втрое**.
+**The error in the rationale:** the decision was made on the distribution of check SITES (median 32),
+while the hot loops of compute code run LARGE arrays (1000 and 3600 in the benchmark).
+Only 6 of 15 checks fell under 8 bits, and not the ones executed millions of times.
+The static number dropped by 17 pp, the dynamic one **threefold**.
 
-Урок: для решений о кодировании нужен **динамический профиль**, а не подсчёт мест.
+The lesson: encoding decisions need a **dynamic profile**, not a count of sites.
 
-Двухсловный вариант тоже не выход: процессор обязан пропустить второе слово, это такт,
-и выигрыш исчезает. Архитектурно правильный ответ — предел в регистре с выносом из цикла,
-но **кодогенератор Оберона не умеет выносить инварианты** и не научится без переписывания ORG.
+A two-word variant is no way out either: the processor has to skip the second word, that is a cycle,
+and the gain disappears. The architecturally correct answer is a limit in a register hoisted out of the loop,
+but **the Oberon code generator cannot hoist invariants** and will not learn to without rewriting ORG.
 
-**Итог: показана настоящая развилка с измеренной ценой каждой ветки** — для статьи это
-лучше, чем однозначное решение. См. `docs/FINDING-09-fork-unresolved.md`.
+**Bottom line: a real fork is shown with the measured cost of each branch**; for the article this is
+better than a single decision. See `docs/FINDING-09-fork-unresolved.md`.
 
-## Следующий шаг
-Динамический профиль индексации: счётчик на каждую проверку с группировкой по пределу.
-Закроет развилку окончательно и стоит недорого.
+## Next step
+A dynamic indexing profile: a counter per check, grouped by limit.
+It will close the fork for good and is cheap.
 
-### 10:10 — 🎯 РАЗВИЛКА ЗАКРЫТА: предел из двух кусков
-Динамический профиль (счётчик исполнений проверок по классам длин) показал, что
-на счётной нагрузке **68.3% исполнений — массивы 256…1023**, которых 8 бит не покрывают.
-И дал предсказательную модель: отношение динамического покрытия предсказывает отношение
-выигрыша **точно** (31.6% против измеренных 31.6%).
+### 10:10 — 🎯 FORK CLOSED: a limit made of two pieces
+The dynamic profile (a counter of check executions by length class) showed that
+on the compute workload **68.3% of executions are arrays of 256…1023**, which 8 bits do not cover.
+And it gave a predictive model: the ratio of dynamic coverage predicts the ratio of the
+gain **exactly** (31.6% versus a measured 31.6%).
 
-Это подсказало искать биты там, где я не искал. **Поле `a` (IR[27:24]) инструкции CHK
-не нужно** (при срабатывании ira0 = 15, при несрабатывании регистр не пишется), а лежит
-ВНЕ поля позиции (23:8) и ВНЕ поля номера ловушки (7:4).
-→ предел собирается из двух кусков `{IR[27:24], IR[15:8]}` = 12 бит, номер ловушки цел.
+This prompted me to look for bits where I had not looked. **Field `a` (IR[27:24]) of the CHK instruction
+is not needed** (when it fires ira0 = 15; when it does not, no register is written), and it lies
+OUTSIDE the position field (23:8) and OUTSIDE the trap number field (7:4).
+→ the limit is assembled from two pieces `{IR[27:24], IR[15:8]}` = 12 bits, and the trap number is intact.
 
-| вариант | компиляция | счётная | диагностика |
+| variant | compilation | compute | diagnostics |
 |---|---|---|---|
-| 12 бит в IR[15:4] | 13.9% | 50.0% | 🔴 НЕ ТА ошибка |
-| 8 бит | 13.0% | 15.8% | ✅ |
-| **два куска (принят)** | **13.7%** | **50.0%** | ✅ |
+| 12 bits in IR[15:4] | 13.9% | 50.0% | 🔴 the WRONG error |
+| 8 bits | 13.0% | 15.8% | ✅ |
+| **two pieces (adopted)** | **13.7%** | **50.0%** | ✅ |
 
-Проверено на массиве 1000 элементов: E даёт 19 слов, CHK задействована,
-сообщение `array index out of range` верное. На счётной нагрузке результат **побитово
-совпадает** с вариантом максимального покрытия (57 133 094 такта).
-Переведены RTL (`CHK_SPLIT`), ассемблер (`CHKS`), эмулятор, кодогенератор (cfgE), Makefile.
-Регрессия RTL зелёная, 61 проверка. См. `docs/FINDING-10-split-encoding.md`.
+Checked on an array of 1000 elements: E gives 19 words, CHK is used,
+the message `array index out of range` is correct. On the compute workload the result **matches bit
+for bit** the maximum-coverage variant (57,133,094 cycles).
+Moved the RTL (`CHK_SPLIT`), the assembler (`CHKS`), the emulator, the code generator (cfgE) and the Makefile over.
+RTL regression green, 61 checks. See `docs/FINDING-10-split-encoding.md`.
 
-## Текущее состояние (перезапись)
-- **Измерения завершены:** цена проверок 2.74% (компиляция) / 10.16% (счётная);
-  аппаратная поддержка снимает 13.7% / 50.0% при целой диагностике;
-  площадь 58…154 GE (нижняя граница внутри шума); база 18.21 kGE, 993 триггера
-- **Находок задокументировано:** 10
-- **Осталось:** Fmax (нужен OpenSTA); полный набор тестов ISA (из 12 сделано 4);
-  дифференциальный стенд против эталонного ISS; утверждение У1 целиком (SoC, браузер)
+## Current state (rewrite)
+- **Measurements complete:** the cost of checks 2.74% (compilation) / 10.16% (compute);
+  hardware support removes 13.7% / 50.0% with diagnostics intact;
+  area 58…154 GE (the lower bound within noise); base 18.21 kGE, 993 flip-flops
+- **Findings documented:** 10
+- **Remaining:** Fmax (needs OpenSTA); the full set of ISA tests (4 of 12 done);
+  the differential bench against the reference ISS; claim C1 as a whole (SoC, browser)
 
-### 10:40 — ✅ находка 11: UMUL в RISC5 — смешанное умножение, а не беззнаковое
-`Multiplier.v`: слагаемое `{w0[31], w0}` расширяется знаком ВСЕГДА, флаг u управляет
-только последним шагом. Следствие: `UMUL` считает первый операнд беззнаково,
-а **второй знаково**.
-Измерено: `UMUL R, 2, 0xFFFFFFFF` даёт H = 0xFFFFFFFF, тогда как истинно беззнаковое
-дало бы H = 1. Тест `tests/t1_umul.s`, 6/6. См. `docs/FINDING-11-umul-is-mixed.md`.
-Найдено случайно: моё ожидание в `t1_arith.s` было основано на «правильной» семантике.
-Важно для дифференциального стенда: эталон обязан воспроизводить именно эту особенность.
+### 10:40 — ✅ finding 11: UMUL in RISC5 is a mixed multiplication, not an unsigned one
+`Multiplier.v`: the addend `{w0[31], w0}` is ALWAYS sign-extended; flag u controls
+only the last step. Consequence: `UMUL` treats the first operand as unsigned
+and **the second as signed**.
+Measured: `UMUL R, 2, 0xFFFFFFFF` gives H = 0xFFFFFFFF, whereas a truly unsigned one
+would give H = 1. Test `tests/t1_umul.s`, 6/6. See `docs/FINDING-11-umul-is-mixed.md`.
+Found by accident: my expectation in `t1_arith.s` was based on the "correct" semantics.
+Important for the differential bench: the reference must reproduce exactly this quirk.
 
-### 11:30 — ✅ проверка эквивалентности декодера, находка 12
-`tb/decoder_equiv.cpp`: все 256 комбинаций {IR[31:28] × op} × 5 наборов операндов = 1280
-прогонов на двух ядрах, сравнение регистров, флагов, тактов и контрольной суммы памяти.
+### 11:30 — ✅ decoder equivalence check, finding 12
+`tb/decoder_equiv.cpp`: all 256 combinations of {IR[31:28] × op} × 5 operand sets = 1280
+runs on two cores, comparing registers, flags, cycles and a memory checksum.
 
-**Поймала настоящую ошибку:** мой декод `~p & ~q & v & (op==1)` не проверял бит `u`,
-поэтому CHK декодировалась в ДВУХ кодировках (`0001` и `0011`) — занимала два слота
-вместо одного. Существующий код не ломался, но кодовое пространство расходовалось вдвое.
-Исправлено вставкой `~u &` в RTL и эмулятор; теперь различается ровно одна кодировка.
+**It caught a real bug:** my decode `~p & ~q & v & (op==1)` did not check bit `u`,
+so CHK decoded in TWO encodings (`0001` and `0011`), taking two slots
+instead of one. Existing code did not break, but the code space was used up twice as fast.
+Fixed by inserting `~u &` in the RTL and the emulator; now exactly one encoding differs.
 
-Подключено к `make test` через цель `equiv`. См. `docs/FINDING-12-decoder-equivalence.md`.
+Hooked into `make test` via the `equiv` target. See `docs/FINDING-12-decoder-equivalence.md`.
 
-**Итог по тестам ISA: 12 из 12 запланированных сделаны.**
-Полная регрессия: 11 наборов × 2 конфигурации + эквивалентность декодера, всё зелёное.
+**ISA tests overall: 12 of the 12 planned are done.**
+Full regression: 11 suites × 2 configurations + decoder equivalence, all green.
 
-### 12:40 — 🎯 ВЕХА: настоящий Verilog загружает настоящий Оберон
-SoC-стенд: ядро `RISC5.v` на RTL + ОЗУ + ПЗУ + устройства заглушками с тем же
-регистровым интерфейсом (по рекомендации ревью — проводные интерфейсы не эмулируем).
-Логика SD-карты взята из эталонного эмулятора, она словная и ложится на регистры.
+### 12:40 — 🎯 MILESTONE: real Verilog boots real Oberon
+The SoC bench: the `RISC5.v` core on RTL + RAM + ROM + devices as stubs with the same
+register interface (as the review recommended, we do not emulate the wired interfaces).
+The SD card logic is taken from the reference emulator; it is word-based and maps onto registers.
 
-**Загрузка: 12 млн инструкций, 18.65 млн тактов, 4.27 с на хосте = 4.37 МГц-эквивалент.
-Кадровый буфер непустой, на экране интерфейс Оберона** (`docs/oberon-boot-screen.png`).
-Эталон рисует первый кадр после ~8 млн инструкций, наше RTL — после ~7.1 млн.
+**Boot: 12 million instructions, 18.65 million cycles, 4.27 s on the host = 4.37 MHz-equivalent.
+The framebuffer is non-empty, the Oberon interface is on the screen** (`docs/oberon-boot-screen.png`).
+The reference draws the first frame after ~8 million instructions, our RTL after ~7.1 million.
 
-Три ошибки по дороге:
-1. 🔴 `prom.mem` из комплекта Вирта — загрузчик по ПОСЛЕДОВАТЕЛЬНОЙ ЛИНИИ, с диска не
-   читает. Нужен из эталонного эмулятора (`risc-boot.inc`). Начинаются одинаково.
-2. 🔴 Во время сброса шину надо обслуживать из памяти: IR защёлкивается каждый такт,
-   и с нулями первая инструкция выполняется как `MOV R0,R0` вместо перехода.
-3. Кадровый буфер снизу вверх — предсказано ревью, сэкономило день.
-См. `docs/FINDING-13-boot-on-rtl.md`.
+Three bugs along the way:
+1. 🔴 `prom.mem` from Wirth's set is a loader over the SERIAL LINE; it does not read
+   from the disk. The one from the reference emulator (`risc-boot.inc`) is needed. They start the same.
+2. 🔴 During reset the bus must be served from memory: IR is latched every cycle,
+   and with zeros the first instruction executes as `MOV R0,R0` instead of a jump.
+3. The framebuffer is bottom-up: predicted by the review, it saved a day.
+See `docs/FINDING-13-boot-on-rtl.md`.
 
-### 13:20 — 🎯 ДИФФЕРЕНЦИАЛЬНЫЙ СТЕНД: 15 млн инструкций совпадения
-`tb/lockstep.cpp`: RTL против эталонного эмулятора, после КАЖДОЙ инструкции сверяются
-счётчик команд, все 16 регистров, H и четыре флага. Нагрузка — загрузка системы Оберон.
+### 13:20 — 🎯 DIFFERENTIAL BENCH: 15 million instructions of agreement
+`tb/lockstep.cpp`: RTL against the reference emulator; after EVERY instruction it compares
+the program counter, all 16 registers, H and the four flags. The workload is booting the Oberon system.
 
-**Результат: 14 600 503 инструкции строгого сравнения, 23.2 млн тактов RTL,
-5.8 с на хосте, расхождений 0.** Прогрев в загрузчике 399 497 инструкций.
+**Result: 14,600,503 instructions of strict comparison, 23.2 million RTL cycles,
+5.8 s on the host, 0 mismatches.** Warm-up in the loader: 399,497 instructions.
 
-Пять источников недетерминизма устранены (четыре предсказаны ревью):
-разрядность PC, регистр ссылки после выхода из ПЗУ, таймер, эвристика progress, образ диска.
+Five sources of nondeterminism eliminated (four predicted by the review):
+PC width, the link register after leaving the ROM, the timer, the progress heuristic, the disk image.
 
-Стенд поймал две мои ошибки:
-1. шина во время сброса (нашлось сразу — у эталона первая инструкция уходила по переходу)
-2. 🔴 **служебную запись, которую я вписал сам**, предвосхищая ловушку из ревью: эталон
-   кладёт "Sizg" на DisplayStart в `risc_configure_memory()`, которую наш запуск не
-   вызывает. Разошлось на шаге 2 101 536.
+The bench caught two of my bugs:
+1. the bus during reset (found immediately: in the reference the first instruction branched away)
+2. 🔴 **a housekeeping write that I had added myself**, anticipating a trap from the review: the reference
+   puts "Sizg" at DisplayStart in `risc_configure_memory()`, which our launch does not
+   call. Diverged at step 2,101,536.
 
-Цели `make lockstep` и `make boot`. См. `docs/FINDING-14-lockstep.md`.
+Targets `make lockstep` and `make boot`. See `docs/FINDING-14-lockstep.md`.
 
-### 14:10 — 🎯 У1 ЗАКРЫТО: Оберон работает в браузере на настоящем RTL
-`web/` — ядро RISC5 → Verilator → Emscripten → WASM, Project Oberon в обычной вкладке.
-Проверено в Chrome: полноценный рабочий стол, баннер `Oberon V5 NW 14.4.2013`,
-панель System.Tool со всеми командами. Снимок `docs/oberon-in-browser.png`.
+### 14:10 — 🎯 C1 CLOSED: Oberon runs in the browser on real RTL
+`web/`: the RISC5 core → Verilator → Emscripten → WASM, Project Oberon in an ordinary tab.
+Checked in Chrome: a full desktop, the banner `Oberon V5 NW 14.4.2013`,
+the System.Tool panel with all the commands. Screenshot `docs/oberon-in-browser.png`.
 
-**Доставка 326 КБ в gzip** (модель 75 КБ, образ 249 КБ) — совпадает с предсказанием ревью.
-**Скорость в WASM 4.27 МГц против 4.37 нативных — потеря 2.3%** (ревью ждало 5–8%).
-Контрольная сумма экрана `B5DFC933` **одинакова во всех трёх сборках**.
+**Delivery is 326 KB gzipped** (model 75 KB, image 249 KB): matches the review's prediction.
+**Speed in WASM is 4.27 MHz versus 4.37 native: a 2.3% loss** (the review expected 5–8%).
+The screen checksum `B5DFC933` **is the same in all three builds**.
 
-Решено: заглушки привязки потоков (предсказано ревью), исключение DPI-файла,
-`verilated_threads.cpp`, компоновка через `em++`, диск в памяти вместо файла.
-**SharedArrayBuffer сознательно не используется** — страница встраивается куда угодно.
+Solved: stubs for thread affinity (predicted by the review), excluding the DPI file,
+`verilated_threads.cpp`, linking via `em++`, the disk in memory instead of a file.
+**SharedArrayBuffer is deliberately not used**: the page can be embedded anywhere.
 
-🔴 Пойман настоящий баг: **если вкладка стартует скрытой, rAF не вызывается вовсе и цикл
-не запускается никогда**, даже после открытия вкладки. Лечится подпиской на
-`visibilitychange`. Проявилось именно в автоматизации со скрытой вкладкой.
-См. `docs/FINDING-15-browser.md`.
+🔴 Caught a real bug: **if the tab starts hidden, rAF is never called and the loop
+never starts**, even after the tab is opened. Fixed by subscribing to
+`visibilitychange`. It showed up precisely in automation with a hidden tab.
+See `docs/FINDING-15-browser.md`.
 
-### 14:40 — ✅ Fmax закрыт, находка 16
-`syn/fmax.py`: свип цели по задержке с явным delay-driven скриптом abc и `stime -p`.
+### 14:40 — ✅ Fmax closed, finding 16
+`syn/fmax.py`: a sweep of the delay target with an explicit delay-driven abc script and `stime -p`.
 
-**⚠ ПОЗЖЕ ИСПРАВЛЕНО АУДИТОМ: знак дельты частоты НЕ ОПРЕДЕЛЁН.**
-delay-driven маршрут: 2096.0 → 2134.6 пс = −1.81%. Дефолтный abc: 2215.3 → 2180.5 пс
-= **+1.60%, то есть CHK БЫСТРЕЕ**. Знак противоположен между маршрутами на одном RTL.
-Предсказание ревью («компараторы лягут на критический путь») остаётся неподтверждённым:
-разрешения инструмента не хватает, чтобы его проверить.
+**⚠ CORRECTED LATER BY THE AUDIT: the sign of the frequency delta is NOT DETERMINED.**
+The delay-driven flow: 2096.0 → 2134.6 ps = −1.81%. Default abc: 2215.3 → 2180.5 ps
+= **+1.60%, that is, CHK is FASTER**. The sign is opposite between flows on the same RTL.
+The review's prediction ("the comparators will land on the critical path") remains unconfirmed:
+the tool's resolution is not enough to test it.
 
-🔴 **ПОЗЖЕ ИСПРАВЛЕНО: сравнивались РАЗНЫЕ конфигурации RTL.** +30.06 снималось без
-`CHK_SPLIT`, +123.16 — с ним. На идентичном RTL разброс **2.65×** (+46.55 против +123.16),
-а не вчетверо. Качественный вывод («маршрут двигает эффект сильнее самого эффекта»)
-выживает, число — нет.
+🔴 **CORRECTED LATER: DIFFERENT RTL configurations were compared.** +30.06 was taken without
+`CHK_SPLIT`, +123.16 with it. On identical RTL the spread is **2.65×** (+46.55 versus +123.16),
+not fourfold. The qualitative conclusion ("the flow moves the effect more than the effect itself")
+survives; the number does not.
 
-⚠ Оговорки: `WireLoad = "none"` (задержки проводов не учтены), критический путь
-настоящей системы идёт через внешнюю память, которой в нетлисте ядра нет.
-OpenSTA не установлен и в Homebrew не пакетирован — полноценный статический анализ
-остаётся незакрытым. См. `docs/FINDING-16-fmax.md`.
+⚠ Caveats: `WireLoad = "none"` (wire delays not counted); the critical path of the
+real system goes through external memory, which is not in the core's netlist.
+OpenSTA is not installed and is not packaged in Homebrew; a full static analysis
+remains open. See `docs/FINDING-16-fmax.md`.
 
-## Текущее состояние (перезапись)
-**Все пункты дизайна закрыты.**
-- У1 (весь стек в браузере) ✅ — `web/`, 326 КБ gzip, 4.27 МГц, проверено в Chrome
-- У3 (цена проверок в трёх конфигурациях) ✅ — на двух нагрузках, с площадью и частотой
-- Тесты ISA: 12 из 12 + эквивалентность декодера, ~360 проверок, всё зелёное
-- Дифференциальный стенд: 15 млн инструкций совпадения с эталоном
-- Находок задокументировано: **16**
-Не закрыто: OpenSTA (полноценный статический анализ).
+## Current state (rewrite)
+**All design items are closed.**
+- C1 (the whole stack in the browser) ✅: `web/`, 326 KB gzip, 4.27 MHz, checked in Chrome
+- C3 (the cost of checks in three configurations) ✅: on two workloads, with area and frequency
+- ISA tests: 12 of 12 + decoder equivalence, ~360 checks, all green
+- Differential bench: 15 million instructions agreeing with the reference
+- Findings documented: **16**
+Not closed: OpenSTA (full static analysis).
 
-### 15:10 — ✅ находка 17: модель тактов проверена на реальной нагрузке
-Наводка от аудитора: модель тактов ни разу не сверялась с RTL на настоящей нагрузке,
-только на 61 инструкции синтетики — при том что на ней построены ВСЕ числа выпуска.
+### 15:10 — ✅ finding 17: the cycle model verified on a real workload
+A tip from an auditor: the cycle model had never been checked against the RTL on a real workload,
+only on 61 synthetic instructions, even though ALL the episode's numbers are built on it.
 
-Сверка встроена в SoC-стенд. **12 000 000 инструкций загрузки Оберона,
-расхождений 0 (0.0000%), суммарно 18 654 115 против 18 654 115 — совпадение до такта.**
+The comparison is built into the SoC bench. **12,000,000 instructions of the Oberon boot,
+0 mismatches (0.0000%), in total 18,654,115 versus 18,654,115: exact to the cycle.**
 
-🔴 Ловушка при самой проверке: первый прогон дал «расхождение 15.8%». Это была ОШИБКА
-В КОДЕ СВЕРКИ — инструкция читалась по `top->adr` до установки шины (там адрес прошлого
-такта). Правильно брать PC напрямую. Если бы опубликовал — ложная находка, обесценивающая
-все числа тактов. **Отрицательный результат надо проверять так же тщательно, как положительный.**
-См. `docs/FINDING-17-cycle-model-validated.md`.
+🔴 A trap in the check itself: the first run gave "a 15.8% mismatch". It was a BUG
+IN THE COMPARISON CODE: the instruction was read via `top->adr` before the bus was set (it held the previous
+cycle's address). The right thing is to take the PC directly. Had I published it, it would have been a false finding devaluing
+all the cycle numbers. **A negative result must be checked as carefully as a positive one.**
+See `docs/FINDING-17-cycle-model-validated.md`.
 
-### 16:30 — 🔴 мутационный аудит: оснастка ловила треть поломок
-Аудитор внёс **31 мутацию в RTL, поймано 10 из 30 (33%)**. Три механизма превращали
-провал в «зелёное»: несработавшее ожидание не считалось, `|| true` съедал ошибку сборки,
-`make boot` всегда возвращал 0.
+### 16:30 — 🔴 mutation audit: the harness caught a third of the breakages
+An auditor introduced **31 mutations into the RTL; 10 of 30 were caught (33%)**. Three mechanisms turned
+a failure into "green": an expectation that never fired was not counted, `|| true` swallowed a build error,
+`make boot` always returned 0.
 
-Исправлено:
-- **B1** несработавшее ожидание = провал (проверено: мутация `>` вместо `>=` теперь ловится)
-- **B2** сборка обязана дать бинарник, прогон по коду возврата, `mkdir -p build`
-- **B3** написан `tests/t1_fp.s` — **17 проверок числовых результатов FP**, которых
-  не было вообще. Случаи, чувствительные к округлению, найдены перебором.
-  Три из трёх мутаций FPU теперь ловятся
-- **S1** в тесте ветвлений было **V=0 во всех состояниях** → пять условий из восьми
-  неразличимы. Добавлены состояния с переполнением: **112 проверок вместо 64**.
-  Три из трёх мутаций ветвления ловятся
-- патчи кодогенератора спасены из `build/` в `patches/` (их сносил `make clean`)
+Fixed:
+- **B1** an expectation that did not fire = a failure (verified: the mutation `>` instead of `>=` is now caught)
+- **B2** the build must produce a binary, the run is judged by its exit code, `mkdir -p build`
+- **B3** wrote `tests/t1_fp.s`: **17 checks of numerical FP results**, which
+  did not exist at all. Rounding-sensitive cases were found by enumeration.
+  Three of three FPU mutations are now caught
+- **S1** the branch test had **V=0 in all states** → five of the eight conditions
+  were indistinguishable. Added states with overflow: **112 checks instead of 64**.
+  Three of three branch mutations are caught
+- the code generator patches were rescued from `build/` into `patches/` (`make clean` used to wipe them)
 
-Честный счёт: **250 уникальных ожиданий** (не «~360» — то был тот же набор на двух сборках).
-См. `docs/FINDING-20-mutation-audit.md`.
+The honest count: **250 unique expectations** (not "~360": that was the same set on two builds).
+See `docs/FINDING-20-mutation-audit.md`.
 
-### 17:40 — все пять аудиторов отчитались, ВСЕ пятеро: НЕ ПРИНИМАЮ
-| Аудитор | Главное, что нашёл |
+### 17:40 — all five auditors reported, ALL five: I DO NOT ACCEPT
+| Auditor | The main thing found |
 |---|---|
-| враждебный читатель | сравнение разных RTL выдано за «вчетверо»; площадь от отвергнутой кодировки; заявки на новизну опровергнуты первоисточниками |
-| RTL | **знак дельты частоты не определён** (+1.60% против −1.81% по маршрутам) |
-| тулчейн | патчи жили только в `build/`, который сносит `make clean`; конфигурация C не запускается |
-| верификация | **мутационный счёт 33%**: 31 поломка RTL, поймано 10; три механизма превращали провал в «зелёное» |
-| методология | **разложил главное число: 2.74% = 2.20% исполнение + 0.54% кодогенерация** |
+| hostile reader | a comparison of different RTL presented as "fourfold"; area from a rejected encoding; novelty claims refuted by primary sources |
+| RTL | **the sign of the frequency delta is not determined** (+1.60% versus −1.81% depending on the flow) |
+| toolchain | the patches lived only in `build/`, which `make clean` wipes; configuration C does not run |
+| verification | **a mutation score of 33%**: 31 RTL breakages, 10 caught; three mechanisms turned failure into "green" |
+| methodology | **broke down the main number: 2.74% = 2.20% execution + 0.54% code generation** |
 
-Исправлено: разложение перекрёстной сборкой 2×2 (`tools/measure_cross.sh`, воспроизведено,
-две независимые оценки сходятся на 0.4%); **чистое число 2.20%, аппаратура снимает 17.1%**;
-площадь и частота переформулированы как «ниже разрешающей способности маршрута»;
-диапазон «14–50%» опровергнут контрпримером 10.4% и заменён на три точки;
-медиана 32 признана артефактом модального значения `ARRAY 32 OF CHAR`;
-сопоставление с литературой **отозвано** — три из четырёх чисел искажали смысл;
-правило счётчика уточнено (блок, а не мнемоника; `LD` тоже сбрасывает; MUL→UMUL = 64).
-См. `docs/FINDING-19`, `FINDING-20`, `FINDING-21`.
+Fixed: the breakdown via a 2×2 cross-build (`tools/measure_cross.sh`, reproduced,
+two independent estimates agree within 0.4%); **the clean number is 2.20%, the hardware removes 17.1%**;
+area and frequency reformulated as "below the resolution of the flow";
+the range "14–50%" refuted by a 10.4% counterexample and replaced by three points;
+the median of 32 recognized as an artifact of the modal value `ARRAY 32 OF CHAR`;
+the comparison with the literature **withdrawn**: three of four numbers distorted the meaning;
+the counter rule refined (a block, not a mnemonic; `LD` also resets it; MUL→UMUL = 64).
+See `docs/FINDING-19`, `FINDING-20`, `FINDING-21`.
 
-### 19:30 — 🎯 КРУГ ЗАМКНУТ: компилятор Оберона на настоящем RTL
-`make selfhost`. Все четыре модуля компилятора (ORS/ORB/ORG/ORP) собраны на ядре
-`RISC5.v` Вирта под Verilator: **40 770 748 инструкций, 66 700 249 тактов,
-результат побайтово совпал с эмулятором по всем четырём.**
+### 19:30 — 🎯 THE LOOP IS CLOSED: the Oberon compiler on real RTL
+`make selfhost`. All four compiler modules (ORS/ORB/ORG/ORP) were built on Wirth's
+`RISC5.v` core under Verilator: **40,770,748 instructions, 66,700,249 cycles,
+the result matched the emulator byte for byte for all four.**
 
-Единственный C в контуре — мост к файловой системе хоста (включён из `norebo.c`
-без изменений, подменены только `main()` и запуск процессора). В браузере он не нужен.
+The only C in the loop is the bridge to the host file system (included from `norebo.c`
+unchanged; only `main()` and the processor start were replaced). It is not needed in the browser.
 
-Три ошибки по дороге: адреса устройств отрицательные, а шина 24-битная (прогон 4 млрд
-инструкций вхолостую); условие останова срабатывало на любом системном вызове (103
-инструкции); **не задан регистр команд при старте** — RISC5 с предвыборкой, и ядро пошло
-исполнять таблицу модулей как код.
+Three bugs along the way: device addresses are negative while the bus is 24-bit (a run of 4 billion
+idle instructions); the stop condition fired on any system call (103
+instructions); **the instruction register was not set at start**: RISC5 prefetches, and the core went
+on to execute the module table as code.
 
-⚠ И отдельная ловушка: цикл ожидания `pgrep -f norebo_tb` **нашёл сам себя** и полтора
-часа ждал собственного завершения. См. `docs/FINDING-22-selfhost-on-rtl.md`.
+⚠ And a separate trap: the wait loop `pgrep -f norebo_tb` **found itself** and spent an hour and a half
+waiting for its own completion. See `docs/FINDING-22-selfhost-on-rtl.md`.
 
-### 05:47 — самораскрутка внутри самой системы, без моста к хосту
-- Стенд `soc_tb` получил ввод: регистры мыши и клавиатуры по формату из `Input.Mod`
-  (кнопки в битах 24..26, готовность клавиатуры — бит 28) и сценарный режим
-  `--script=` (подвести мышь, послать скан-код, снять кадр).
-- `tools/keymap.py` строит раскладку разбором таблицы `kbdTab` прямо из исходника
-  драйвера — ничего не выдумано. `tools/mkscript.py` собирает сценарий из команд
-  `click` / `type` / `enter` / `shot`, координата `y` пишется как на картинке.
-- Проверка: средний щелчок по `System.ShowModules` открыл вьюер со списком модулей.
-  Затем набран и исполнен `ORP.Compile ORS.Mod/s ~` — компилятор собрал свой сканер.
-- **Неподвижная точка достигнута.** Четыре модуля собраны компилятором с диска,
-  `System.Free` выгрузил все четыре, те же исходники собраны заново уже новым
-  компилятором. Размер кода, размер данных и ключ совпали у всех четырёх:
+### 05:47 — bootstrapping inside the system itself, without the host bridge
+- The `soc_tb` bench got input: mouse and keyboard registers in the format from `Input.Mod`
+  (buttons in bits 24..26, keyboard ready is bit 28) and a scripted mode
+  `--script=` (move the mouse, send a scan code, take a frame).
+- `tools/keymap.py` builds the keymap by parsing the `kbdTab` table straight from the driver
+  source: nothing is made up. `tools/mkscript.py` assembles a script from the commands
+  `click` / `type` / `enter` / `shot`; the `y` coordinate is written as in the picture.
+- Check: a middle click on `System.ShowModules` opened a viewer with the list of modules.
+  Then `ORP.Compile ORS.Mod/s ~` was typed and executed: the compiler built its scanner.
+- **Fixed point reached.** Four modules were built by the compiler from disk,
+  `System.Free` unloaded all four, and the same sources were built again by the new
+  compiler. Code size, data size and key matched for all four:
   ORS 1756/992/76547166, ORB 2325/408/2F03B698, ORG 6650/34980/8F476858,
-  ORP 6188/144/E6FCC519. 715 млн инструкций, 1,1 млрд тактов, 0 расхождений модели.
-- **Ловушка 4 оказалась не багом компилятора.** Сборка всех четырёх модулей одной
-  командой падала на ORP. `NilCheck` в `ORG.Mod` — это номер 4, то есть NIL, то есть
-  исчерпание кучи: внутри команды `Oberon.Loop` не выполняется и сборщик мусора не
-  работает. Четырьмя отдельными командами проходит.
-- **Найден баг воспроизводимости в своей оснастке.** `disk.c` открывает образ как
-  `rb+`, а цель `boot` шла без `--disk`, то есть прямо на эталонном образе в `ext/`.
-  Каждая загрузка системы молча правила источник истины; образ уже разошёлся с
-  upstream. Контрольная сумма экрана `B5DFC933` совпадала и на испорченном образе —
-  проверка загрузки к этому нечувствительна. Починено: без `--persist` стенд
-  работает на копии в `build/`, `ext/disk/SHA256SUMS` фиксирует эталон, цель
-  `pristine` проверяет его и входит в `make check`. Образ восстановлен из upstream.
-- `tools/check_bootstrap.py` сверяет два блока журнала как растр, без распознавания
-  текста. Проверен на промахи: падает на кадре только с первым поколением, на кадре
-  с ловушкой и на кадре одиночной сборки ORP.
-- Находка записана в `docs/FINDING-23-bootstrap-in-system.md`. Цели `pristine` и
-  `bootstrap` добавлены в `make check`.
+  ORP 6188/144/E6FCC519. 715 million instructions, 1.1 billion cycles, 0 model mismatches.
+- **Trap 4 turned out not to be a compiler bug.** Building all four modules with one
+  command failed on ORP. `NilCheck` in `ORG.Mod` is number 4, that is NIL, that is
+  heap exhaustion: inside a command `Oberon.Loop` does not run and the garbage collector does not
+  work. With four separate commands it passes.
+- **Found a reproducibility bug in my own harness.** `disk.c` opens the image as
+  `rb+`, and the `boot` target ran without `--disk`, that is, directly on the reference image in `ext/`.
+  Every system boot silently modified the source of truth; the image had already diverged from
+  upstream. The screen checksum `B5DFC933` matched even on the corrupted image:
+  the boot check is insensitive to this. Fixed: without `--persist` the bench
+  works on a copy in `build/`, `ext/disk/SHA256SUMS` pins the reference, and the
+  `pristine` target checks it and is part of `make check`. The image was restored from upstream.
+- `tools/check_bootstrap.py` compares two blocks of the log as a raster, without text
+  recognition. Checked for misses: it fails on a frame with only the first generation, on a frame
+  with a trap, and on a frame of a single ORP build.
+- The finding is recorded in `docs/FINDING-23-bootstrap-in-system.md`. The `pristine` and
+  `bootstrap` targets were added to `make check`.
 
-### 06:40 — аудит собственного ассемблера: три несогласных Вирта
-- Вопрос был «насколько корректен наш ассемблер». Покрытие: все 16 условных
-  переходов в тестах есть, из операций не проверены ничем только `ANN` и `XOR`.
-- Сверка с независимой инстанцией — дизассемблером `ORTool.Mod` самого Вирта —
-  дала два расхождения, оба настоящие.
-- **Таблица условий в ORTool неверна и неполна**: заполнено 11 индексов из 16,
-  и `mnemo1[2]="LS"`, `mnemo1[10]="HI"` против наших CS и CC. Право железо:
-  `RISC5.v` даёт `(cc==2)&C` и `(cc==4)&(C|Z)`. Доказано мутацией: с раскладкой
-  ORTool **4 из 112 проверок ветвления падают на RTL**, с нашей — 112 из 112.
-- **Ширина смещения перехода: три разных числа в одной системе.** ORG.Mod
-  (кодогенератор) — `off MOD 1000000H`, 24 бита. RISC5.v (железо) —
-  `disp = IR[21:0]`, 22 бита. ORTool.Mod (дизассемблер) — `w MOD 100000H`,
-  20 бит. Невидимо на практике: адресное пространство 1 МБ = 18 бит в словах.
-- Что биты 23:22 железо игнорирует — проверено исполнением, не чтением:
-  новый `tests/t1_branch_width.s`, два перехода различаются только ими и
-  приходят в одну точку.
-- **Найдена латентная ошибка у себя**: ассемблер проверял диапазон по 24 битам
-  и молча принимал недостижимые переходы. Починено с разделением ролей —
-  кодируем как ORG.Mod (24 бита, совместимо с настоящим компилятором),
-  диапазон проверяем по железу (22 бита, явная ошибка). Поведение существующих
-  тестов не изменилось: ошибка была недостижима на 1 МБ.
-- Самотест ассемблера получил обязательные отказы (`must_fail`) и включён в
-  `make test`. Первая попытка встроить была зелёной на поломке — код возврата
-  съедался конвейером `| tail -1`, тот же класс, что `|| true` из аудита.
-  Переписано через файл и явную проверку кода, оба пути проверены.
-- Находка записана в `docs/FINDING-24-assembler-correctness.md`.
+### 06:40 — auditing our own assembler: three Wirths who disagree
+- The question was "how correct is our assembler". Coverage: all 16 conditional
+  branches are in the tests; of the operations only `ANN` and `XOR` are not checked by anything.
+- Comparison with an independent instance, Wirth's own disassembler `ORTool.Mod`,
+  gave two differences, both real.
+- **The condition table in ORTool is wrong and incomplete**: 11 of 16 indexes are filled,
+  and `mnemo1[2]="LS"`, `mnemo1[10]="HI"` versus our CS and CC. The hardware is right:
+  `RISC5.v` gives `(cc==2)&C` and `(cc==4)&(C|Z)`. Proven by mutation: with the ORTool
+  layout **4 of 112 branch checks fail on the RTL**, with ours 112 of 112 pass.
+- **Branch offset width: three different numbers in one system.** ORG.Mod
+  (the code generator): `off MOD 1000000H`, 24 bits. RISC5.v (the hardware):
+  `disp = IR[21:0]`, 22 bits. ORTool.Mod (the disassembler): `w MOD 100000H`,
+  20 bits. Invisible in practice: a 1 MB address space = 18 bits in words.
+- That the hardware ignores bits 23:22 was checked by execution, not by reading:
+  a new `tests/t1_branch_width.s`, two branches that differ only in them
+  arrive at the same point.
+- **Found a latent bug of my own**: the assembler checked the range against 24 bits
+  and silently accepted unreachable branches. Fixed by separating roles:
+  we encode like ORG.Mod (24 bits, compatible with the real compiler),
+  and check the range against the hardware (22 bits, an explicit error). The behavior of existing
+  tests did not change: the bug was unreachable within 1 MB.
+- The assembler self-test got mandatory refusals (`must_fail`) and was included in
+  `make test`. The first attempt to hook it in was green on a breakage: the exit code
+  was swallowed by the `| tail -1` pipeline, the same class as `|| true` from the audit.
+  Rewritten via a file and an explicit check of the code; both paths verified.
+- The finding is recorded in `docs/FINDING-24-assembler-correctness.md`.
 
-### 08:20 — три открытых пункта по ассемблеру закрыты, круг на реальном коде
-- **ANN и XOR покрыты**: `tests/t1_logic.s`, 10 проверок на железе, семантика из
-  `aluRes`. Мутация (перестановка AND/ANN) роняет все 10.
-- **Побайтовая сверка с выводом ORG.Mod сделана.** `tools/rsc.py` разбирает .rsc
-  по раскладке из `ORTool.DecObj` (сошлось с журналом: 1756/2325/6650/6188 слов,
-  ключ E6FCC519). `tools/disasm.py` снят с RISC5.v. `tools/roundtrip.py` гоняет
-  круг слово→дизассемблер→ассемблер→слово. **33 838 слов настоящего компилятора
-  воспроизведены бит в бит.**
-- Первый прогон замкнулся на 15 628 из 16 919 и вскрыл ЧЕТЫРЕ пробела:
-  (1) нагрузка ловушки в битах 23:4 у BLR — `Put3(BLR, cond, Pos()*100H +
-  num*10H + MT)`, это 7.6% кода компилятора, выразить было нечем;
-  (2) диапазон непосредственного F1 — железо даёт `{{16{v}}, imm}`, то есть
-  −65536…−1 при v=1, а мы проверяли как 16-битное знаковое (реальное слово
+### 08:20 — three open assembler items closed, a round trip on real code
+- **ANN and XOR covered**: `tests/t1_logic.s`, 10 checks on the hardware, semantics from
+  `aluRes`. A mutation (swapping AND/ANN) brings down all 10.
+- **A byte-for-byte comparison with ORG.Mod's output is done.** `tools/rsc.py` parses .rsc
+  following the layout from `ORTool.DecObj` (agrees with the log: 1756/2325/6650/6188 words,
+  key E6FCC519). `tools/disasm.py` is taken from RISC5.v. `tools/roundtrip.py` runs
+  the round trip word→disassembler→assembler→word. **33,838 words of the real compiler
+  reproduced bit for bit.**
+- The first run closed on 15,628 of 16,919 and exposed FOUR gaps:
+  (1) the trap payload in bits 23:4 of BLR: `Put3(BLR, cond, Pos()*100H +
+  num*10H + MT)`, 7.6% of the compiler's code, and there was no way to express it;
+  (2) the F1 immediate range: the hardware gives `{{16{v}}, imm}`, that is,
+  −65536…−1 with v=1, while we checked it as a 16-bit signed value (a real word
   `50090000` = `SUB R0,R0,-65536`);
-  (3) `MOV a,H` / `MOV a,NZCV` — старый `TODO(verify)` снят чтением aluRes;
-  (4) `FLT` / `FLOOR` — спецформы op=12, различаются u/v, видно в FPAdder.v.
-- **Систематический перебор** `tools/sweep_encoding.py` — 129 760 форм со стороны
-  ассемблера, все проходят круг. Перебор со стороны СЛОВ не годится: при op=0
-  железо не читает поле b (ветка MOV в aluRes не трогает B), и слово с непустым b
-  не воспроизводится буквально. Добавлено в тест на железе.
-- **Найдена настоящая коллизия кодировок**: `RTI = BR & ~u & ~v & IR[4]`, то есть
-  переход по регистру без связи с нечётной нагрузкой исполняется как RTI.
-  Подтверждено исполнением — `tests/t1_irq.s` гоняет ровно эту комбинацию.
-  Ассемблер такую форму теперь отвергает; ловушек Оберона не задевает (там BLR).
-- Мутационная проба показала, что две проверки НЕ заменяют друг друга: перестановку
-  ADC/SBC круг не ловит вовсе (их нет в коде компилятора), перестановку a/b ловит
-  слабо (122 случая — в накопительном стиле a и b часто совпадают). Перебор ловит обе.
-- **Найден ещё один баг воспроизводимости**: кэш байт-кода Python. Секундная
-  гранулярность времени на macOS — восстановленный из копии дизассемблер продолжал
-  выдавать мутированный разбор, потому что `.pyc` считался свежим. В Makefile
-  добавлен `PYTHONDONTWRITEBYTECODE`, `__pycache__` в .gitignore.
-  Осталось удалить существующий каталог: `rm -rf tools/__pycache__` (выполнить самому).
-- Цели `roundtrip` и перебор встроены в `make test` / `make check`, оба пути
-  (зелёный и красный) проверены. Тестов стало 264 проверки в 16 файлах.
-- Находка 24 дополнена.
+  (3) `MOV a,H` / `MOV a,NZCV`: the old `TODO(verify)` was resolved by reading aluRes;
+  (4) `FLT` / `FLOOR`: special forms of op=12 that differ in u/v, visible in FPAdder.v.
+- **A systematic enumeration** `tools/sweep_encoding.py`: 129,760 forms from the assembler's
+  side, all pass the round trip. Enumerating from the WORD side does not work: with op=0
+  the hardware does not read field b (the MOV branch in aluRes does not touch B), and a word with a non-empty b
+  is not reproduced literally. Added to the hardware test.
+- **Found a real encoding collision**: `RTI = BR & ~u & ~v & IR[4]`, that is,
+  a branch to a register without link and with an odd payload executes as RTI.
+  Confirmed by execution: `tests/t1_irq.s` runs exactly this combination.
+  The assembler now rejects this form; it does not affect Oberon traps (those are BLR).
+- A mutation probe showed that the two checks do NOT replace each other: the round trip does not catch
+  swapping ADC/SBC at all (they do not occur in the compiler's code), and catches swapping a/b
+  weakly (122 cases: in accumulator style a and b often coincide). The enumeration catches both.
+- **Found another reproducibility bug**: the Python bytecode cache. With one-second
+  time granularity on macOS, a disassembler restored from a backup kept
+  producing the mutated parse because the `.pyc` was considered fresh. Added
+  `PYTHONDONTWRITEBYTECODE` to the Makefile and `__pycache__` to .gitignore.
+  What remains is to remove the existing directory: `rm -rf tools/__pycache__` (to be run by hand).
+- The `roundtrip` targets and the enumeration are built into `make test` / `make check`; both paths
+  (green and red) verified. The tests are now 264 checks in 16 files.
+- Finding 24 extended.
 
-### 09:40 — 🔴 первое слово программы не исполнялось во всех 264 проверках
-- Взялись за открытый пункт: 34% пространства кодирования без мнемоники. Оказалось,
-  это не мусор — это `u=1`/`v=1` на операциях, где `aluRes` эти биты не читает.
-  Проверено исполнением (`tools/gen_dontcare_test.py`): 27 сравнений из 32 дали ноль.
-- **Пять форм значимы**: `DIV` с u=1 — беззнаковое деление (делитель получает `~u`,
-  внутри `sign = x[31] & u`); `FSB` с u/v — сумматор в режиме преобразования.
-  Для DIV арифметика сошлась точно: 0xF0F0F0F0 DIV 5 = 0xFCFCFCFC знаково,
-  0x30303030 беззнаково, разность ровно измеренная 0xCCCCCCCC.
-- Введены суффиксы `.u`/`.v`/`.uv` и `UDIV`; FLT/FLOOR/ADC/SBC/UMUL сведены к одному
-  механизму псевдонимов. Перебор вырос до 375 776 форм, **покрытие слов 66.1% → 100%**.
-  Круг на реальном коде остался полным (33 838 слов).
-- **ГЛАВНОЕ.** Зонд делителя дал 0 вместо 14, и причина не в делителе. RISC5 — машина
-  с предвыборкой: на шине адреса стоит PC+1, исполняется содержимое IR. Во время
-  сброса на шине уже стоит StartAdr, и железо защёлкивает первое слово в IR.
-  `tb/run_tests.cpp` при сбросе подавал на шину НУЛИ — в IR оставался ноль, первый
-  такт исполнял MOV R0,R0, а первое слово программы не читалось вовсе.
-  **Во всех 264 направленных проверках первая инструкция не исполнялась.**
-- Пряталось потому, что каждый тест начинался с безразличной инструкции. И те самые
-  «странные» числа из первых замеров (0x30300000 вместо 0x30303030) объясняются этим же.
-- **Самое неприятное**: ошибка УЖЕ была найдена и исправлена в `tb/soc_tb.cpp`
-  («ровно на этом я и споткнулся»), но в `run_tests.cpp` не перенесена — не было
-  регрессионного теста. Аудит всех пяти стендов: остальные четыре в порядке.
-  Теперь есть `tests/t1_prime.s`, сброс приведён к единому виду.
-- После починки все 264 прежние проверки проходят БЕЗ единой правки ожиданий — значит
-  ни одно ожидание не было подогнано под сломанный пуск.
-- Находка 25. Проверок стало 298 в 18 файлах.
-- Черновой зонд `tests/t9_probe.s` в сборку не входит, можно удалить:
-  `rm tests/t9_probe.s tests/t9_probe.bin tests/t9_probe.chk` (выполнить самому).
+### 09:40 — 🔴 the first word of the program was not executed in any of the 264 checks
+- Took up an open item: 34% of the encoding space without a mnemonic. It turned out
+  this is not garbage: it is `u=1`/`v=1` on operations where `aluRes` does not read these bits.
+  Verified by execution (`tools/gen_dontcare_test.py`): 27 of 32 comparisons gave zero.
+- **Five forms are significant**: `DIV` with u=1 is unsigned division (the divider gets `~u`,
+  inside `sign = x[31] & u`); `FSB` with u/v is the adder in conversion mode.
+  For DIV the arithmetic matched exactly: 0xF0F0F0F0 DIV 5 = 0xFCFCFCFC signed,
+  0x30303030 unsigned, the difference exactly the measured 0xCCCCCCCC.
+- Introduced the suffixes `.u`/`.v`/`.uv` and `UDIV`; FLT/FLOOR/ADC/SBC/UMUL were reduced to one
+  alias mechanism. The enumeration grew to 375,776 forms, **word coverage 66.1% → 100%**.
+  The round trip on real code stayed complete (33,838 words).
+- **THE MAIN THING.** The divider probe gave 0 instead of 14, and the cause was not the divider. RISC5 is a machine
+  with prefetch: the address bus holds PC+1, while the contents of IR are executed. During
+  reset the bus already holds StartAdr, and the hardware latches the first word into IR.
+  `tb/run_tests.cpp` fed ZEROS to the bus during reset: IR kept a zero, the first
+  cycle executed MOV R0,R0, and the program's first word was never read at all.
+  **In all 264 directed checks the first instruction was not executed.**
+- It hid because every test started with an irrelevant instruction. And those
+  "strange" numbers from the first measurements (0x30300000 instead of 0x30303030) are explained by the same thing.
+- **The most unpleasant part**: the bug HAD ALREADY been found and fixed in `tb/soc_tb.cpp`
+  ("this is exactly what I tripped over"), but it was not carried over to `run_tests.cpp`: there was no
+  regression test. An audit of all five benches: the other four are fine.
+  Now there is `tests/t1_prime.s`, and reset was brought to a single form.
+- After the fix all 264 previous checks pass WITHOUT a single change to the expectations, so
+  not a single expectation had been tuned to the broken start.
+- Finding 25. Checks are now 298 in 18 files.
+- The draft probe `tests/t9_probe.s` is not part of the build and can be deleted:
+  `rm tests/t9_probe.s tests/t9_probe.bin tests/t9_probe.chk` (to be run by hand).
 
-### 11:20 — семантический дифференциал и лечение четырёх старых болячек
-- **Закрыта последняя дыра.** `tools/alu_model.py` — модель целочисленного ядра по
-  RISC5.v, написанная отдельно от ассемблера. `tools/gen_alu_diff.py` строит
-  случайные программы и проверяет двоякое: (1) предсказание модели совпадает с
-  железом по результату, всем четырём флагам и H; (2) модель, разобрав слово от
-  ассемблера, называет ту же операцию. Общей раскладки в цепочке нет.
-  900 случаев, **4650 проверок**, все зелёные. Семь мутаций модели — все пойманы.
-- **Программа не помещалась в адресное пространство.** Первый большой дифференциал
-  дал 1720 «провалов», и все — НЕСРАБОТАВШИЕ ожидания. PC 22-битный, программа лежит
-  по ORG=0xFFE000, до края ровно 2048 слов; длиннее — молча уходит по кругу на ноль.
-  Поймало правило «несработавшее ожидание — провал» из мутационного аудита.
-  Починено: оснастка отказывается грузить длинную программу, генератор режет на файлы.
-- **`measure_clean.sh`: три глушителя подряд.** (1) путь — двоичные модули лежат в
-  `build/s2X`, а искались в `build/cfgX`, копирование с `|| true` проглатывало
-  отсутствие, и все три конфигурации оказывались одним компилятором → разница +0.00%;
-  (2) отсюда ZeroDivisionError в конце — единственный внешний признак;
-  (3) конфигурация E ставит версию 2, а загрузчик проверяет `versionkey = 1X` и такие
-  модули НЕ ГРУЗИТ — это наш же намеренный замок. Стадия 2 собирала компилятор
-  компилятором E, получала версию 2, прогон давал пустой лог, `set -e` обрывал сразу
-  после «нагрузка:» — вот и симптом «скрипт ничего не выводит».
-  Починено: жёсткая проверка, защита знаменателя, `tools/rsc_setversion.py`.
-  **Честный замер**: A 29 277 745 тактов, B +2.19%, E +1.85%; аппаратура снимает 15.5%.
-  Цифра +2.19% сходится с 2.20% из разложения 2×2 — два независимых способа.
-- **Эквивалентность декодера**: подпись была узкой (R5, R6, флаги, такты, память),
-  поле `a` намертво 5 — а у формата F3 это и есть условие, т.е. из 16 условий
-  проверялось одно, и порча BL не видна (нет R15 и PC). Теперь подпись — все 16
-  регистров, флаги, PC, H; поле `a` перебирается: **20 480 комбинаций вместо 1280**.
-  Расходится по-прежнему ровно CHK.
-- **Lockstep не сравнивал память.** Добавлена периодическая полная сверка ОЗУ: 58
-  проходов на 14,6 млн инструкций. Первое же расхождение объяснимое — `00FFE27C`
-  против `FFFFFA7C`, один адрес возврата в разных картах ПЗУ; правило от R15
-  распространено на память, поблажек 99 за прогон, они считаются. Порча одного бита
-  ловится.
-- Мелочь: `ADC`/`SBC` с отрицательным непосредственным недостижимы (псевдоним
-  фиксирует v=0) — писать `ADD.uv` / `SUB.uv`; ассемблер объясняет это в ошибке.
-- Находка 26.
+### 11:20 — a semantic differential and curing four old ailments
+- **The last hole is closed.** `tools/alu_model.py` is a model of the integer core per
+  RISC5.v, written separately from the assembler. `tools/gen_alu_diff.py` builds
+  random programs and checks two things: (1) the model's prediction matches the
+  hardware in the result, all four flags and H; (2) the model, having parsed a word from the
+  assembler, names the same operation. There is no shared layout in the chain.
+  900 cases, **4650 checks**, all green. Seven mutations of the model, all caught.
+- **The program did not fit in the address space.** The first large differential
+  gave 1720 "failures", and all of them were expectations that NEVER FIRED. The PC is 22-bit, the program sits
+  at ORG=0xFFE000, exactly 2048 words to the edge; anything longer silently wraps around to zero.
+  It was caught by the rule "an expectation that does not fire is a failure" from the mutation audit.
+  Fixed: the harness refuses to load a long program, the generator splits it into files.
+- **`measure_clean.sh`: three silencers in a row.** (1) the path: the binary modules live in
+  `build/s2X` but were looked for in `build/cfgX`; the copy with `|| true` swallowed
+  their absence, and all three configurations ended up being one compiler → a difference of +0.00%;
+  (2) hence a ZeroDivisionError at the end, the only external symptom;
+  (3) configuration E sets version 2, while the loader checks `versionkey = 1X` and does
+  NOT LOAD such modules: our own deliberate lock. Stage 2 built the compiler with
+  compiler E, got version 2, the run produced an empty log, and `set -e` aborted right
+  after "workload:"; hence the symptom "the script prints nothing".
+  Fixed: a hard check, a guard on the denominator, `tools/rsc_setversion.py`.
+  **The honest measurement**: A 29,277,745 cycles, B +2.19%, E +1.85%; the hardware removes 15.5%.
+  The +2.19% figure agrees with 2.20% from the 2×2 breakdown: two independent methods.
+- **Decoder equivalence**: the signature was narrow (R5, R6, flags, cycles, memory),
+  and field `a` was hard-wired to 5, while in format F3 that is the condition, i.e. of 16 conditions
+  only one was checked, and a corruption of BL was invisible (no R15 and PC). Now the signature is all 16
+  registers, the flags, PC, H; field `a` is enumerated: **20,480 combinations instead of 1280**.
+  As before, exactly CHK differs.
+- **Lockstep did not compare memory.** Added a periodic full RAM comparison: 58
+  passes over 14.6 million instructions. The very first mismatch is explainable: `00FFE27C`
+  versus `FFFFFA7C`, one return address in different ROM maps; the R15 rule
+  was extended to memory, there are 99 allowances per run, and they are counted. A single-bit corruption
+  is caught.
+- A small thing: `ADC`/`SBC` with a negative immediate are unreachable (the alias
+  pins v=0); write `ADD.uv` / `SUB.uv`; the assembler explains this in its error.
+- Finding 26.
 
-### 13:10 — 🎯 СИСТЕМА ПЕРЕСОБИРАЕТ СЕБЯ ЦЕЛИКОМ
-- 42 модуля — от Kernel и Display до Edit и Draw — собраны компилятором Оберона
-  внутри самой системы на ядре RISC5.v. Вход только мышь и клавиатура.
-- **37 объектных файлов пересобраны побайтово идентично.** Система — неподвижная
-  точка своего компилятора. Пересобранный образ грузится, сумма экрана прежняя B5DFC933.
-- Написан `tools/oberonfs.py` — чтение файловой системы Оберона прямо из образа
-  (раскладка из Kernel.Mod/FileDir.Mod/Files.Mod). Проверен перекрёстно: извлечённый
-  ORP.rsc даёт ключ E6FCC519 и 6188 слов — то же, что на экране и в самораскрутке.
-- Порядок сборки выведен топологической сортировкой по IMPORT из исходников
-  С САМОГО ОБРАЗА, а не из нашей копии 2019 года.
-- **Образ Project Oberon 2016 не вполне согласован.** Три модуля не компилируются
-  компилятором с того же образа: `RISC` (pos 926 bad divisor — 80000000H как делитель
-  отрицателен для знакового INTEGER), `ORC` (импортирует V24, которого на образе нет),
-  `Net` (девять incompatible parameters — сигнатуры SCC разошлись). Плюс `Math.rsc`
-  устарел (449 слов на образе против 447 при пересборке, ключ тот же), а `PIO.rsc`
-  и `PIO.smb` отсутствовали вовсе.
-- Ловушка 4 снова: пачки по три роняли третий модуль. Та же причина, что в находке 23 —
-  внутри команды нет сборки мусора. Компилятор надо звать по одному модулю за команду.
-- **Журнал System.Log не прокручивается** (18 строк), и первый прогон спрятал шесть
-  команд из одиннадцати. Сценарий теперь чистит журнал после каждой команды и снимает
-  кадр; `tools/stitch_log.py` сшивает области в одну картинку.
-- **Проверка чуть не оказалась зелёной на поломке**: побайтовое сравнение проходило на
-  НЕТРОНУТОМ образе, потому что не отличает «пересобрано и совпало» от «не трогали».
-  Даты не помогают — на образе все нулевые, часов нет. Починено обязательными
-  положительными признаками (PIO.rsc должен появиться, Math.rsc обязан отличаться).
-- Цель `make rebuild` (3 сессии, ~8 минут) входит в `make check`. Находка 27.
+### 13:10 — 🎯 THE SYSTEM REBUILDS ITSELF COMPLETELY
+- 42 modules, from Kernel and Display to Edit and Draw, were built by the Oberon compiler
+  inside the system itself on the RISC5.v core. The only input is the mouse and keyboard.
+- **37 object files were rebuilt byte-for-byte identical.** The system is a fixed
+  point of its compiler. The rebuilt image boots, the screen checksum is still B5DFC933.
+- Wrote `tools/oberonfs.py`: reading the Oberon file system straight from the image
+  (the layout from Kernel.Mod/FileDir.Mod/Files.Mod). Cross-checked: the extracted
+  ORP.rsc gives key E6FCC519 and 6188 words, the same as on the screen and in the bootstrap.
+- The build order was derived by a topological sort over IMPORT from the sources
+  FROM THE IMAGE ITSELF, not from our 2019 copy.
+- **The Project Oberon 2016 image is not fully consistent.** Three modules do not compile
+  with the compiler from the same image: `RISC` (pos 926 bad divisor: 80000000H as a divisor
+  is negative for a signed INTEGER), `ORC` (imports V24, which is not on the image),
+  `Net` (nine incompatible parameters: the SCC signatures have diverged). Plus `Math.rsc`
+  is stale (449 words on the image versus 447 when rebuilt, the same key), and `PIO.rsc`
+  and `PIO.smb` were missing altogether.
+- Trap 4 again: batches of three brought down the third module. The same cause as in finding 23:
+  there is no garbage collection inside a command. The compiler has to be called one module per command.
+- **The System.Log journal does not scroll** (18 lines), and the first run hid six
+  commands of eleven. The script now clears the log after every command and takes
+  a frame; `tools/stitch_log.py` stitches the regions into one picture.
+- **The check nearly turned out green on a breakage**: the byte-wise comparison passed on an
+  UNTOUCHED image, because it does not distinguish "rebuilt and matched" from "not touched".
+  Dates do not help: on the image they are all zero, there is no clock. Fixed with mandatory
+  positive signs (PIO.rsc must appear, Math.rsc must differ).
+- The `make rebuild` target (3 sessions, ~8 minutes) is part of `make check`. Finding 27.
 
-### 15:40 — каркас лабораторных и первые три лабы (Л2, Л3)
-- `web/machine.js` — переиспользуемая обвязка машины (отрисовка, мышь, клавиатура,
-  набор текста скан-кодами, щелчки по координатам, откат). Выделена из index.html.
-- `web/oberonfs.js` — чтение файловой системы Оберона из образа в памяти машины.
-- `web/labs.js` + `web/lab.html` + `web/labs-test.mjs` — лаборатории и оболочка.
-- Браузерная сборка получила доступ к состоянию: soc_reg/flags/h/ram/fb_crc/disk_word
-  и soc_poke (единственное на запись — без него нет уровня «ломать»).
-- **Лаба 1 «смотреть»**: загрузка, сумма экрана B5DFC933; открыть список модулей,
-  проверка считает точки текста в полосе вьюера.
-- **Лаба 4 «ломать»**: испортить кадровый буфер (система жива), затем вписать
-  E7FFFFFF по текущему PC (переход на себя) — машина встаёт. Остановку НЕЛЬЗЯ
-  определять по счётчику инструкций: переход на себя тоже исполняется. Проверка
-  берёт пять проб PC: до порчи гуляет, после — замирает.
-- **Лаба 7 «строить»**: пересобрать Math внутри системы и своими руками увидеть
-  находку 27 — 1877 байт до, 1869 после. Проверка читает длину С ДИСКА.
-- **Откат вскрыл последствие находки 19**: после повторного soc_init система не
-  грузилась — в RISC5.v нет сброса регистрового файла, флагов, H и IR, и при втором
-  пуске там грязь. Починено явным обнулением в soc_init; на ПЛИС этого не будет,
-  пункт кремниевого чек-листа открыт.
-- `make labs` требует перехода проверки из «не сделано» в «сделано» и статически
-  сверяет разметку оболочки. Красный путь проверен. Цель входит в `make check`.
-- Страницу в браузере открыть не удалось: Chrome в этом окружении не достучался до
-  локального сервера (ошибка даже на листинге, при curl 200). Разметка проверена
-  статически, поведение — безголово.
-- Находка 28.
+### 15:40 — the lab framework and the first three labs (L2, L3)
+- `web/machine.js`: a reusable machine wrapper (rendering, mouse, keyboard,
+  typing text as scan codes, clicks at coordinates, rollback). Extracted from index.html.
+- `web/oberonfs.js`: reading the Oberon file system from the image in the machine's memory.
+- `web/labs.js` + `web/lab.html` + `web/labs-test.mjs`: the labs and the shell.
+- The browser build got access to the state: soc_reg/flags/h/ram/fb_crc/disk_word
+  and soc_poke (the only write access; without it there is no "break" level).
+- **Lab 1 "look"**: boot, screen checksum B5DFC933; open the module list,
+  the check counts text pixels in the viewer's strip.
+- **Lab 4 "break"**: corrupt the framebuffer (the system is alive), then write
+  E7FFFFFF at the current PC (a jump to itself): the machine stops. A stop CANNOT
+  be detected by the instruction counter: a jump to itself also executes. The check
+  takes five samples of the PC: before the corruption it wanders, after it freezes.
+- **Lab 7 "build"**: rebuild Math inside the system and see
+  finding 27 with your own hands: 1877 bytes before, 1869 after. The check reads the length FROM THE DISK.
+- **Rollback exposed a consequence of finding 19**: after a repeated soc_init the system did not
+  boot: RISC5.v has no reset for the register file, the flags, H and IR, and on the second
+  start there is garbage there. Fixed by explicit zeroing in soc_init; on an FPGA this will not happen,
+  so the silicon checklist item stays open.
+- `make labs` requires a check to go from "not done" to "done" and statically
+  verifies the shell's markup. The red path is verified. The target is part of `make check`.
+- I could not open the page in a browser: Chrome in this environment could not reach the
+  local server (an error even on the listing, while curl returned 200). The markup was checked
+  statically, the behavior headlessly.
+- Finding 28.
 
-### 16:30 — переносимый каркас оснастки (П1)
-- `tb/scenario.h`: язык сценария, его разбор и проигрывание, выгрузка кадра в PBM
-  и интерфейс `harness::Host` (поставить указатель / послать клавишу / отдать экран).
-  Машине остаётся адрес и размер кадрового буфера, порядок строк и формат регистров
-  ввода — у RISC5 это двадцать строк в soc_tb.cpp.
-- **Отделение чистое**: после вынесения загрузка даёт прежнюю сумму B5DFC933,
-  а двухпоколенная самораскрутка — ТЕ ЖЕ 715 000 000 инструкций и 1 101 436 669
-  тактов, поколения совпадают побитово. Цифры сошлись до инструкции.
-- Переносимость этим НЕ доказана: её докажет вторая машина (Lilith, шаг 2 плана).
-- Находка 29.
+### 16:30 — a portable harness framework (P1)
+- `tb/scenario.h`: the scenario language, its parsing and playback, dumping a frame to PBM,
+  and the `harness::Host` interface (set the pointer / send a key / hand over the screen).
+  What is left to the machine is the framebuffer address and size, the row order and the format of the input
+  registers: for RISC5 that is twenty lines in soc_tb.cpp.
+- **The separation is clean**: after the extraction the boot gives the same checksum B5DFC933,
+  and the two-generation bootstrap gives THE SAME 715,000,000 instructions and 1,101,436,669
+  cycles, the generations match bit for bit. The numbers agree to the instruction.
+- Portability is NOT proven by this: the second machine will prove it (Lilith, step 2 of the plan).
+- Finding 29.
 
-### 18:20 — методичка по Оберону, 8 глав
-- `docs/book/*.md` (источник) -> `web/book/*.html` (сборщик `tools/mkbook.py` на
-  готовой библиотеке `markdown`, своего конвертера не писали). Около 5000 слов.
-- Главы: зачем и что настоящее / машина RISC5 / язык за одну главу / система:
-  текст вместо кнопок / модули и символьные файлы / компилятор изнутри /
-  самораскрутка и неподвижная точка / что мы измерили.
-- **Написано по исходникам**: 33 ключевых слова из `EnterKW` в ORS.Mod, 42 встроенных
-  имени из `enter` в ORB.Mod, соглашения о регистрах из констант ORG.Mod, пример
-  модуля — настоящий Blink.Mod с образа, путь `a[i]` — по процедуре Index,
-  кодировка ловушки — по Trap. Числа — из находок 8, 16, 24, 26, 27.
-- Лаборатории связаны с главами, на странице лаб — ссылка на методичку.
-- `make book` падает на ссылке в несуществующую главу или на несуществующую лабу;
-  `make labs` проверяет ссылки из лаб в главы. Три мутации, все пойманы.
-- Чего нет: упражнений (они в лабах, их 3 из 12), оконной подсистемы, сборщика
-  мусора, второй машины.
-- Находка 30. Следующее по договорённости — девять оставшихся лабораторных.
+### 18:20 — an Oberon handbook, 8 chapters
+- `docs/book/*.md` (source) -> `web/book/*.html` (the builder `tools/mkbook.py` on the
+  ready-made `markdown` library; we did not write our own converter). About 5000 words.
+- Chapters: why, and what is real / the RISC5 machine / the language in one chapter / the system:
+  text instead of buttons / modules and symbol files / the compiler from the inside /
+  bootstrapping and the fixed point / what we measured.
+- **Written from the sources**: 33 keywords from `EnterKW` in ORS.Mod, 42 built-in
+  names from `enter` in ORB.Mod, register conventions from ORG.Mod's constants, the example
+  module is the real Blink.Mod from the image, the path of `a[i]` follows the Index procedure,
+  the trap encoding follows Trap. Numbers from findings 8, 16, 24, 26, 27.
+- Labs are linked to chapters; the labs page links to the handbook.
+- `make book` fails on a link to a nonexistent chapter or a nonexistent lab;
+  `make labs` checks the links from labs to chapters. Three mutations, all caught.
+- What is missing: exercises (they are in the labs, 3 of 12), the windowing subsystem, the garbage
+  collector, a second machine.
+- Finding 30. Next, as agreed: the nine remaining labs.
 
-### 21:10 — девять лабораторных
-- К трём прежним добавлены шесть: №2 первый свой модуль, №3 ключ интерфейса,
-  №5 сколько тактов на инструкцию (уровень «измерять»), №6 куча кончается внутри
-  команды, №8 неподвижная точка в два поколения, №9 внутри кодогенератора.
-  Программа курса закрыта с 1 по 9.
-- В каркас добавлено: состояние между шагами, поля ответа (без них нет «измерять»),
-  разбор .rsc в браузере (размер кода, ключ, версия, импорты с их ключами), чтение
-  текста Оберона (файлы редактора — не голый ASCII: метка, смещение, куски со
-  шрифтами, концы строк — возврат каретки), признак «файл пересобран» по служебной
-  записи каталога.
-- **Три гипотезы опыт отверг.** (1) Пачка ORS+ORB+ORG+PIO кучу НЕ исчерпывает —
-  дело не в числе модулей, а в весе; роняет ORP. (2) Звёздочка после MODULE код не
-  уменьшает, а УВЕЛИЧИВАЕТ: 34 слова с проверками, 38 без — `version := 0` включает
-  режим RISC-0 целиком, а он резервирует восемь слов в начале модуля. Два эффекта
-  сразу; это стало содержанием лабы, а не было спрятано. (3) **Наборщик скан-кодов
-  не набирал закрывающую скобку** — таблица цифр начиналась не с того символа,
-  в файл уходило `INC(i END`, и файл при этом исправно создавался.
-- Защита от последнего: тест набирает текст через настоящий редактор, сохраняет,
-  читает файл обратно с диска и сверяет посимвольно.
-- Список номеров лаб в сборщике методички теперь читается из web/labs.js, а не зашит.
-- Лабы 10–12 не сделаны и в браузере невозможны: №10 — большой объём правок
-  компилятора, №11 — пересборка Verilog на хосте, №12 — ждёт второй машины.
-- Находка 31.
+### 21:10 — nine labs
+- Six were added to the previous three: #2 your first module, #3 the interface key,
+  #5 how many cycles per instruction (the "measure" level), #6 the heap runs out inside
+  a command, #8 the fixed point in two generations, #9 inside the code generator.
+  The course syllabus is closed from 1 to 9.
+- Added to the framework: state between steps, answer fields (without them there is no "measure"),
+  parsing .rsc in the browser (code size, key, version, imports with their keys), reading
+  Oberon text (the editor's files are not plain ASCII: a tag, an offset, runs with
+  fonts, line ends are carriage returns), a "file rebuilt" sign from the directory's
+  housekeeping record.
+- **Experiment rejected three hypotheses.** (1) The batch ORS+ORB+ORG+PIO does NOT exhaust the heap:
+  it is not about the number of modules but about their weight; ORP is what brings it down. (2) The asterisk after MODULE does not
+  shrink the code but GROWS it: 34 words with checks, 38 without: `version := 0` turns on
+  RISC-0 mode as a whole, and it reserves eight words at the start of the module. Two effects
+  at once; this became the content of a lab rather than being hidden. (3) **The scan-code typist
+  did not type the closing parenthesis**: the digit table started from the wrong character,
+  `INC(i END` went into the file, and the file was still created without complaint.
+- Protection against the last one: the test types text through the real editor, saves it,
+  reads the file back from disk and compares it character by character.
+- The list of lab numbers in the handbook builder is now read from web/labs.js instead of being hard-coded.
+- Labs 10–12 are not done and are impossible in the browser: #10 needs a large amount of compiler
+  edits, #11 rebuilding Verilog on the host, #12 waits for the second machine.
+- Finding 31.
 
-### 22:40 — лабораторные с инструментарием как пакетное задание
-- Мысль пользователя: часть лабораторок можно крутить в Cozystack. Верно — те, что
-  правят процессор и компилятор, не интерактивны, это пакетная нагрузка «дал правку,
-  получил вердикт».
-- `deploy/Containerfile` (debian:trixie-slim + Verilator, g++, python3, node, 863 МБ),
-  `deploy/lab.sh` (правка подаётся каталогом /work, накладывается поверх дерева),
-  `deploy/k8s/lab-job.yaml` (правка через ConfigMap, initContainer раскладывает ключи
-  обратно в пути, backoffLimit: 0).
-- **Побочно — независимое подтверждение воспроизводимости**: в образе Verilator 5.032
-  против нашего 5.052, и все 298 проверок, 375 776 форм перебора и 20 480 комбинаций
-  эквивалентности декодера проходят одинаково. До сих пор все числа давал один
-  симулятор одной версии.
-- `make image-check` требует ДВУХ исходов: чистое дерево проходит, сломанная правка
-  (переставлены AND и ANN в aluRes) проваливается — ловится тестом логики и
-  семантическим дифференциалом (118 и 68 провалов). В `make check` не входит: нужен Docker.
-- Грабли: (1) Docker на macOS не видит каталоги вне расшаренных путей — молча
-  «правок нет», хотя файл лежит; перенёс рабочий каталог внутрь дерева проекта.
-  (2) `find` без скобок: `-o` связывает слабее, чем читается.
-- Это НЕ пакет Cozystack, а обычное задание Kubernetes. Образ не публиковался,
-  в кластере не запускался, в манифесте намеренно `ghcr.io/REPLACE-ME/`.
-- Находка 32.
+### 22:40 — labs with tooling as a batch job
+- The user's idea: some labs could run in Cozystack. Right: the ones that
+  edit the processor and the compiler are not interactive; they are a batch workload, "submit an edit,
+  get a verdict".
+- `deploy/Containerfile` (debian:trixie-slim + Verilator, g++, python3, node, 863 MB),
+  `deploy/lab.sh` (the edit is submitted as the /work directory and overlaid on the tree),
+  `deploy/k8s/lab-job.yaml` (the edit via a ConfigMap, an initContainer lays the keys
+  back out into paths, backoffLimit: 0).
+- **A side effect: independent confirmation of reproducibility**: the image has Verilator 5.032
+  versus our 5.052, and all 298 checks, the 375,776 enumerated forms and the 20,480 decoder
+  equivalence combinations pass identically. Until now all the numbers came from one
+  simulator of one version.
+- `make image-check` requires TWO outcomes: the clean tree passes, a broken edit
+  (AND and ANN swapped in aluRes) fails, caught by the logic test and the
+  semantic differential (118 and 68 failures). It is not part of `make check`: it needs Docker.
+- Pitfalls: (1) Docker on macOS does not see directories outside the shared paths: silently
+  "no edits", even though the file is there; I moved the working directory inside the project tree.
+  (2) `find` without parentheses: `-o` binds more loosely than it reads.
+- This is NOT a Cozystack package but an ordinary Kubernetes job. The image was not published,
+  was not run in a cluster, and the manifest deliberately says `ghcr.io/REPLACE-ME/`.
+- Finding 32.
 
-### 23:50 — подключаемый каталог для Cozystack
-- Идея пользователя: отдельный маркетплейс, куда складывать эмуляторы никогда не
-  выпущенных архитектур, нереализованные ОС и языки — как разворачиваемые окружения.
-- **Механика уже существует.** Дорожная карта: community marketplace на 2027 Q1,
-  пропозалы в `cozystack/community` открыты и не смёржены; консоль на динамическом
-  обнаружении через ApplicationDefinition; прецедент — `ccp`. В дереве: PackageSource,
-  ApplicationDefinition, `cozypkg tap/untap` (подключение стороннего источника;
-  официальные отключить нельзя — защитная метка), `cozypkg validate` для ВНЕШНЕГО
-  репозитория, пакет internal/marketplace.
-- Имя ссылки на чарт: `<источник>-<вариант>-<компонент>`, точки в дефисы
+### 23:50 — a pluggable catalog for Cozystack
+- The user's idea: a separate marketplace for emulators of never-released
+  architectures, unimplemented OSes and languages, as deployable environments.
+- **The mechanism already exists.** Roadmap: a community marketplace in 2027 Q1,
+  the proposals in `cozystack/community` are open and not merged; the console relies on dynamic
+  discovery via ApplicationDefinition; the precedent is `ccp`. In the tree: PackageSource,
+  ApplicationDefinition, `cozypkg tap/untap` (connecting a third-party source;
+  the official ones cannot be disabled, there is a protective label), `cozypkg validate` for an EXTERNAL
+  repository, the internal/marketplace package.
+- The chart reference name: `<source>-<variant>-<component>`, dots turned into dashes
   (internal/marketplace/naming).
-- Создан `~/projects/forgotten-systems/marketplace`: sources/ + packages/apps/oberon-lab
-  + packages/system/oberon-lab-rd. `cozypkg validate .` — 0 ошибок, 0 предупреждений.
-- **Проверено на промах**: подменил имя ссылки на несуществующее — валидатор поймал
-  висячую ссылку. Значит он действительно читает наши объекты.
-- **Побочная находка для платформы**: `helm lint` версии 4 ругается `invalid icon URL`
-  на ВСЕ чарты Cozystack (nats, redis, kafka, mongodb — у каждого ровно одна такая
-  ошибка). Это расхождение helm 4 с их же конвенцией (/logos/... разрешается внутрь
-  чарта в hack/update-crd.sh). Следствие: `cozypkg validate --helm-lint` на helm 4
-  сейчас непригоден ни для своего каталога, ни для стороннего.
-- Образы не публиковались, в OCI не выкладывалось, в кластере не запускалось —
-  везде намеренно REPLACE-ME.
-- Находка 33.
+- Created `~/projects/forgotten-systems/marketplace`: sources/ + packages/apps/oberon-lab
+  + packages/system/oberon-lab-rd. `cozypkg validate .`: 0 errors, 0 warnings.
+- **Checked for misses**: replaced a reference name with a nonexistent one, and the validator caught
+  the dangling reference. So it really does read our objects.
+- **A side finding for the platform**: `helm lint` version 4 complains `invalid icon URL`
+  about ALL Cozystack charts (nats, redis, kafka, mongodb: each has exactly one such
+  error). This is a divergence of helm 4 from their own convention (/logos/... is resolved inside the
+  chart in hack/update-crd.sh). Consequence: `cozypkg validate --helm-lint` on helm 4
+  is currently unusable for both their own catalog and a third-party one.
+- Images were not published, nothing was pushed to OCI, nothing was run in a cluster:
+  REPLACE-ME everywhere on purpose.
+- Finding 33.
 
-## Следующий шаг
-`make check` целиком (около 8 минут), затем — Л1/П1 из BACKLOG.md.
+## Next step
+`make check` as a whole (about 8 minutes), then L1/P1 from BACKLOG.md.
 
-### 24.09 — каталог пересобран по проекту cozymarketplace
+### 24.09 — the catalog rebuilt following the cozymarketplace project
 
-Прочитал оба проекта в `cozystack/community` (`cozymarketplace` @kvaps и
-`cozymarketplace-supplementary` @IvanHunters) — оба уже в `main`. Сверил их не с
-текстом, а с кодом: типы `PackageSource`/`ApplicationDefinition`, `cozypkg`
-(`index.go`, `tap.go`, `validate.go`, `push.go`), реконсайлеры, консоль.
+Read both projects in `cozystack/community` (`cozymarketplace` by @kvaps and
+`cozymarketplace-supplementary` by @IvanHunters); both are already in `main`. Checked them not against
+the text but against the code: the `PackageSource`/`ApplicationDefinition` types, `cozypkg`
+(`index.go`, `tap.go`, `validate.go`, `push.go`), the reconcilers, the console.
 
-**Каталог разложен на три репозитория** в `~/projects/forgotten-systems/marketplace`:
-`repos/machines` (эмуляторы, лабораторные, методичка), `repos/languages`
-(окружения для языков), `repos/images` (загрузочные образы для KubeVirt).
-Единица установки — репозиторий, как требует проект; у каждого свой
-OCI-артефакт и своя запись в метаиндексе `index/`.
+**The catalog is split into three repositories** in `~/projects/forgotten-systems/marketplace`:
+`repos/machines` (emulators, labs, the handbook), `repos/languages`
+(environments for languages), `repos/images` (boot images for KubeVirt).
+The unit of installation is a repository, as the project requires; each has its own
+OCI artifact and its own entry in the `index/` meta-index.
 
-**Цепочка обнаружения проверена настоящим cozypkg:** `search` показывает три
-записи, `tap forgotten-systems-machines` разрешает короткое имя в
-`oci://…:v0.1.0` с версией из записи. Падает только на отсутствии `flux` в PATH.
+**The discovery chain was verified with the real cozypkg:** `search` shows three
+entries, `tap forgotten-systems-machines` resolves the short name to
+`oci://…:v0.1.0` with the version from the entry. It fails only because `flux` is not in PATH.
 
-**Новые части:**
-- `handbook` — документация ставится рядом с приложением; работает и без
-  сборки образа (страницы прямо в значениях, стоковый nginx);
-- `workbench` — метаприложение: родительский чарт рендерит `HelmRelease` на
-  компоненты того же репозитория (идиома `harbor`);
-- `langpack` — окружение для языка: разовый прогон или постоянная среда;
-- `machine-images` — публикация образов в `cozy-public` с защитой от коллизий;
-- `tools/gen-appdefs.py` — описания каталога собираются из `values.schema.json`
-  чартов, руками схемы не пишутся;
-- `tools/check.py` — 35 проверок, 9 из них мутации.
+**New parts:**
+- `handbook`: documentation installed next to the application; works even without
+  building an image (pages right in the values, stock nginx);
+- `workbench`: a meta-application: a parent chart renders `HelmRelease` objects for
+  components of the same repository (the `harbor` idiom);
+- `langpack`: an environment for a language: a one-off run or a persistent environment;
+- `machine-images`: publishing images to `cozy-public` with collision protection;
+- `tools/gen-appdefs.py`: the catalog descriptions are generated from the charts'
+  `values.schema.json`; schemas are not written by hand;
+- `tools/check.py`: 35 checks, 9 of them mutations.
 
-**Ключевые находки (все в `docs/FINDING-34-marketplace-architecture.md`):**
-- схема записи метаиндекса закрыта (`UnmarshalStrict`) → типы записей выражаются
-  только тегами, это не выбор, а ограничение;
-- список архитектур KubeVirt закрыт (`architectureConfiguration`: ровно
-  amd64/arm64/ppc64le/s390x) → новую архитектуру пакетом не добавить;
-- **шесть аннотаций золотых образов пишутся и не читаются никем** (ноль
-  совпадений по всему дереву вне шаблона, который их пишет; оба потребителя
-  берут только имя PVC) — стоит завести issue наверх;
-- имена золотых образов — плоское общекластерное пространство, сторонний пакет
-  может молча перезаписать образ платформы; защиты наверху нет, своя сделана;
-- компонент без блока `install` не ставится релизом — это и есть шаблон
-  приложения;
-- у всех 100 источников платформы ровно один вариант; второй увёл бы ссылки
-  каталога в пустоту;
-- в `ApplicationDefinitionDashboard` нет поля под документацию.
+**Key findings (all in `docs/FINDING-34-marketplace-architecture.md`):**
+- the meta-index entry schema is closed (`UnmarshalStrict`) → entry types can be expressed
+  only with tags; this is not a choice but a constraint;
+- the KubeVirt architecture list is closed (`architectureConfiguration`: exactly
+  amd64/arm64/ppc64le/s390x) → a new architecture cannot be added by a package;
+- **six golden-image annotations are written and read by nobody** (zero
+  matches across the whole tree outside the template that writes them; both consumers
+  take only the PVC name); worth filing an issue upstream;
+- golden image names are a flat cluster-wide namespace, so a third-party package
+  can silently overwrite a platform image; there is no protection upstream, we built our own;
+- a component without an `install` block is not installed as a release: that is the
+  application template;
+- all 100 platform sources have exactly one variant; a second one would send the catalog's
+  references into the void;
+- `ApplicationDefinitionDashboard` has no field for documentation.
 
-Старый верхний уровень каталога (`sources/`, `packages/`) удалён — полностью
-продублирован в `repos/machines`; копия в scratchpad.
+The old top level of the catalog (`sources/`, `packages/`) was removed: it is fully
+duplicated in `repos/machines`; a copy is in the scratchpad.
 
-Ничего не публиковалось, в кластер не ходил (контекст тенантный,
-cluster-scoped объекты там всё равно не создать). Реестр, образы и подписи —
-`REPLACE-ME`. Находок 34.
+Nothing was published, I did not go into a cluster (the context is a tenant one,
+cluster-scoped objects cannot be created there anyway). Registry, images and signatures are
+`REPLACE-ME`. Findings: 34.
 
-## Текущее состояние (перезапись)
-- **Каталог:** `~/projects/forgotten-systems/marketplace` — три репозитория,
-  метаиндекс, генератор описаний, набор проверок. `make check` — 35/35 зелёных,
-  `make validate` — ноль ошибок по каждому репозиторию (у образов одно
-  намеренное предупреждение: компонент привилегированный).
-- **Инструменты:** `cozypkg` собран в `/tmp/cozypkg` (из `~/projects/cozystack`),
-  helm 4.2.3, `flux` и `cosign` **не установлены** — без них не проверить
-  публикацию и подпись.
-- **Не сделано:** ничего не выложено в OCI; образы контейнеров не собраны;
-  загрузочные образы машин не собраны; на кластере не проверялось.
+## Current state (rewrite)
+- **Catalog:** `~/projects/forgotten-systems/marketplace`: three repositories,
+  a meta-index, a description generator, a set of checks. `make check`: 35/35 green,
+  `make validate`: zero errors for each repository (the images one has one
+  deliberate warning: the component is privileged).
+- **Tools:** `cozypkg` built into `/tmp/cozypkg` (from `~/projects/cozystack`),
+  helm 4.2.3; `flux` and `cosign` **are not installed**, and without them publication
+  and signing cannot be checked.
+- **Not done:** nothing pushed to OCI; container images not built;
+  machine boot images not built; not tested on a cluster.
 
-## Следующий шаг
-Завести issue наверх про непрочитанные аннотации золотых образов
-(`vm-default-images.cozystack.io/*`) — из всех находок эта единственная задевает
-самих пользователей платформы, а не только сторонние каталоги.
+## Next step
+File an upstream issue about the unread golden-image annotations
+(`vm-default-images.cozystack.io/*`): of all the findings this is the only one that affects
+the platform's users themselves, not just third-party catalogs.
 
-### 24.09 — публикация, кластер и начало цели QEMU
+### 24.09 — publication, the cluster and the start of the QEMU target
 
-**Опубликовано.** Репозиторий переименован в `paleocomputing` (англ. подзаголовок
-*experimental computer archaeology* — retrocomputing про коллекционирование, у нас
-про опыты). Сайт серии на GitHub Pages: `tym83.github.io/paleocomputing`, раскладка
-через Actions (классический источник Pages умеет только корень или /docs).
+**Published.** The repository was renamed to `paleocomputing` (English subtitle
+*experimental computer archaeology*: retrocomputing is about collecting, ours is
+about experiments). The series site is on GitHub Pages: `tym83.github.io/paleocomputing`, deployed
+via Actions (the classic Pages source can only serve the root or /docs).
 
-Образы и каталог в `ghcr.io/tym83/paleocomputing/*`, подпись cosign **без ключа** —
-личность это сам процесс сборки. Всё публичное, проверено анонимным скачиванием.
+Images and the catalog are in `ghcr.io/tym83/paleocomputing/*`, signed with cosign **keylessly**:
+the identity is the build process itself. Everything is public, verified by an anonymous download.
 
-**Перед публикацией исключена библиотека ячеек Nangate45**: её шапка прямо
-запрещает публикацию. Замена — Sky130 (Apache-2.0), две строки, не сделано.
+**Before publication the Nangate45 cell library was excluded**: its header explicitly
+forbids publication. The replacement is Sky130 (Apache-2.0), two lines; not done.
 
-**Три бага, найденных ТОЛЬКО на живом кластере** — все по образцу «релиз успешен,
-приложение мертво»:
-1. манифест источника лежал вне `packages/` и не попадал в OCI-артефакт;
-2. схемы закрывали корень, а `cozystack-engine` подмешивает `_cluster`/`_namespace`
-   → Helm отвергал значения целиком;
-3. nginx с `worker_processes auto` заводил воркер на каждое ядро УЗЛА (96 штук),
-   не влезал в 64Mi → OOM по кругу. Штатный автотюн не помогает: правит конфиг на
-   месте, а корень только для чтения.
+**Three bugs found ONLY on a live cluster**, all following the pattern "the release succeeded,
+the application is dead":
+1. the source manifest lay outside `packages/` and did not make it into the OCI artifact;
+2. the schemas closed the root, while `cozystack-engine` mixes in `_cluster`/`_namespace`
+   → Helm rejected the values entirely;
+3. nginx with `worker_processes auto` started a worker for every core of the NODE (96 of them),
+   did not fit in 64Mi → OOM in a loop. The stock autotune does not help: it edits the config in
+   place, and the root is read-only.
 
-Каждое закрыто проверкой с мутацией. Проверок каталога **50**.
+Each is closed by a check with a mutation. Catalog checks: **50**.
 
-**Состояние на кластере (tenant-paleo, контекст admin@workshop):** машина работает,
-`/lab.html` отдаётся (200, 12019 байт). Методичка ждёт перетапливания на v0.1.3.
+**State on the cluster (tenant-paleo, context admin@workshop):** the machine works,
+`/lab.html` is served (200, 12019 bytes). The handbook waits for a re-tap to v0.1.3.
 
-**Цель QEMU начата** (`qemu/`, своя сборка — QEMU и libvirt отклоняют вклад с ИИ,
-Claude назван поимённо). Написаны декодер, состояние процессора, трансляция 16
-операций, деление, прерывания, плата, порты. `qemu-system-risc5` собирается одной
-командой в контейнере.
+**The QEMU target is started** (`qemu/`, our own build: QEMU and libvirt reject AI-assisted contributions,
+naming Claude explicitly). Written: the decoder, the processor state, translation of 16
+operations, division, interrupts, the board, the ports. `qemu-system-risc5` builds with one
+command in a container.
 
-**Сверено с железом:** 16 регистров, 4 флага и H сошлись с моделью АЛУ, снятой с
-RISC5.v. Проверка `make -C qemu diff`, умеет краснеть.
+**Checked against the hardware:** 16 registers, 4 flags and H agreed with the ALU model taken from
+RISC5.v. The check `make -C qemu diff` can go red.
 
-Баги цели: чистая сборка падала там, где инкрементальная проходила (нет прототипа
-у порождённого декодера); ПЗУ было не по тому адресу и вчетверо больше (в железе
-512 слов); процессор создавался, но **не исполнял** — без `realize` не заводится
-поток; **адресная шина 24 бита**, старшие биты железо отбрасывает, без обрезки
-порты недостижимы.
+Bugs in the target: a clean build failed where an incremental one passed (no prototype
+for the generated decoder); the ROM was at the wrong address and four times larger (the hardware has
+512 words); the processor was created but **did not execute**: without `realize` its thread is not
+started; **the address bus is 24 bits**, the hardware drops the upper bits, and without truncation
+the ports are unreachable.
 
-**Форк KubeVirt НЕ НУЖЕН.** Найдена штатная точка: перехватчик `OnDefineDomain`
-переписывает описание машины, а `SharedComputePath` у его PVC монтирует том
-**внутрь compute**, где работает libvirt. Открыт один вопрос: примет ли libvirt
-незнакомую архитектуру (`virArchFromString` на ней не падает, возвращает NONE).
+**A fork of KubeVirt is NOT NEEDED.** Found a standard hook point: the `OnDefineDomain` hook
+rewrites the machine description, and `SharedComputePath` on its PVC mounts the volume
+**inside compute**, where libvirt runs. One question is open: will libvirt accept
+an unfamiliar architecture (`virArchFromString` does not fail on it, it returns NONE).
 
-## Текущее состояние (перезапись)
-- **Сайт:** `tym83.github.io/paleocomputing` — живой, лаборатория и методичка.
-- **Каталог:** три репозитория, теги v0.1.0…v0.1.3, последний чист.
-**ЦЕПОЧКА ЗАМКНУТА.** Тенант ставит `OberonVM` из маркетплейса — работает
-машина Вирта, экран совпал с железом побайтово.
+## Current state (rewrite)
+- **Site:** `tym83.github.io/paleocomputing`: live, the lab and the handbook.
+- **Catalog:** three repositories, tags v0.1.0…v0.1.3, the latest is clean.
+**THE CHAIN IS CLOSED.** A tenant installs `OberonVM` from the marketplace, and Wirth's
+machine runs; the screen matched the hardware byte for byte.
 
-- **Кластер `workshop`** (157.180.61.253, 87 тенантов, ~50 виртуалок).
-  Две настройки уровня кластера применены:
-  * `virt-launcher` подменён на `ghcr.io/tym83/paleocomputing/virt-launcher:v1.8.4-risc5`
-    (`customizeComponents` у KubeVirt в `cozy-kubevirt`);
-  * добавлен признак `Sidecar` к семи прежним.
-  ⚠ Откат обоих — в `/tmp/ROLLBACK.txt`. Обычные машины проверены: Ubuntu
-  поднимается, 50 машин целы.
-- **Каталог:** `v0.1.7`, подключён повторным `cozypkg tap` (переключения тега
-  НЕ хватает — находка 46). Пять компонентов, приложение `oberon-vm`.
-- **Песочница:** тенант `tenant-sandbox`. Живут: стенд `build` (8 ядер, 16 Ги,
-  77.42.12.137, `ssh -F <scratchpad>/sandbox/config stand`), `check2` —
-  доказательство что обычные машины целы, `wirth` — машина Вирта.
-- **QEMU:** цель полная, кроме FPU. VNC, аккорды кнопок, подсказка на экране.
-- **Язык:** английский по умолчанию, переведено всё.
-- **Git:** PR #1–#4 влиты. PR #5 открыт (находки 47, 48).
+- **The `workshop` cluster** (157.180.61.253, 87 tenants, ~50 VMs).
+  Two cluster-level settings applied:
+  * `virt-launcher` replaced with `ghcr.io/tym83/paleocomputing/virt-launcher:v1.8.4-risc5`
+    (`customizeComponents` on KubeVirt in `cozy-kubevirt`);
+  * the `Sidecar` feature gate added to the seven existing ones.
+  ⚠ The rollback for both is in `/tmp/ROLLBACK.txt`. Ordinary machines checked: Ubuntu
+  comes up, the 50 machines are intact.
+- **Catalog:** `v0.1.7`, connected by a repeated `cozypkg tap` (switching the tag
+  is NOT enough: finding 46). Five components, the `oberon-vm` application.
+- **Sandbox:** tenant `tenant-sandbox`. Alive: the `build` bench (8 cores, 16 Gi,
+  77.42.12.137, `ssh -F <scratchpad>/sandbox/config stand`), `check2`, the
+  proof that ordinary machines are intact, and `wirth`, Wirth's machine.
+- **QEMU:** the target is complete except for the FPU. VNC, button chords, an on-screen hint.
+- **Language:** English by default, everything translated.
+- **Git:** PRs #1–#4 merged. PR #5 open (findings 47, 48).
 
-## Следующий шаг
-Поставить yosys (`brew install yosys`) и снять базовую площадь ядра — это вторая
-половина замера этапа 0 и прямой вход в У3.
+## Next step
+Install yosys (`brew install yosys`) and take the base area of the core: this is the second
+half of the stage 0 measurement and a direct entry into C3.
 
-### 03:30 — ✅ базовая площадь снята, две ловушки маршрута измерены
-Поставлен yosys 0.69, скачана Nangate45 typical (6.7 МБ).
-**Базовая линия: 14 532.11 мкм² = 18.21 kGE, 993 триггера, 30.9% последовательной логики,
-10 938 ячеек.** Попадает в предсказанный ревью диапазон 10–20 kGE.
+### 03:30 — ✅ base area taken, two flow traps measured
+Installed yosys 0.69, downloaded Nangate45 typical (6.7 MB).
+**Baseline: 14,532.11 µm² = 18.21 kGE, 993 flip-flops, 30.9% sequential logic,
+10,938 cells.** Falls in the 10–20 kGE range predicted by the review.
 
-Две ловушки, обе с измерениями (`docs/FINDING-03-synthesis-traps.md`):
-1. `stat -tech cmos` теряет **758 из 993 триггеров молча** (76%) — подтверждение ревью
-2. **`-D` без `-constr` игнорируется полностью** — площадь совпадает до последнего знака
-   при -D 200 и -D 50000. Этого ревью не предвидело
-Кривая площадь-vs-период оказалась плоской (две точки, разница 0.5%) → график построить
-не из чего, зато дельта от расширения ISA будет чистой. **Fmax без OpenSTA не получить.**
+Two traps, both measured (`docs/FINDING-03-synthesis-traps.md`):
+1. `stat -tech cmos` loses **758 of 993 flip-flops silently** (76%): confirms the review
+2. **`-D` without `-constr` is ignored completely**: the area is identical to the last digit
+   with -D 200 and -D 50000. The review did not foresee this
+The area-vs-period curve turned out flat (two points, 0.5% apart) → there is nothing to build
+a chart from, but the delta from the ISA extension will be clean. **Fmax cannot be obtained without OpenSTA.**
 
-### 04:10 — ✅ CHK реализована в RTL, дельта площади измерена
-Кодировка: F0, v=1, op=1 (алиас LSL — компилятор его не эмитит), **индекс в поле b**
-(через поле a была бы комбинационная петля ira0↔chkFail), предел в `IR[15:4]` (12 бит),
-регистр c=12 → аппаратный переход берёт вектор ловушек из MT без лишнего чтения.
-Семантика при срабатывании — ровно как BLR: `R15 := PC+4; PC := R[12]`. Не срабатывает —
-не пишет ни регистра, ни флагов (CHK исключена из общего терма `regwr`).
+### 04:10 — ✅ CHK implemented in the RTL, area delta measured
+Encoding: F0, v=1, op=1 (an alias of LSL; the compiler does not emit it), **the index in field b**
+(via field a there would be a combinational loop ira0↔chkFail), the limit in `IR[15:4]` (12 bits),
+register c=12 → the hardware jump takes the trap vector from MT without an extra read.
+Semantics when it fires: exactly like BLR: `R15 := PC+4; PC := R[12]`. When it does not fire,
+it writes neither a register nor the flags (CHK is excluded from the common `regwr` term).
 
-**Δ площади = +30.06 мкм² = 37.7 GE.** ⚠ ПОЗЖЕ ИСПРАВЛЕНО: относится к отвергнутой
-кодировке; у принятой +46.55…+123.16 мкм² (58…154 GE) в зависимости от скрипта.
+**Δ area = +30.06 µm² = 37.7 GE.** ⚠ CORRECTED LATER: this applies to the rejected
+encoding; the adopted one costs +46.55…+123.16 µm² (58…154 GE) depending on the script.
 
-🔴 Но главный результат методологический: **логически нейтральные переписывания исходника
-двигают площадь на ±51 мкм² и немонотонно** (два по отдельности −51 каждое, вместе +88).
-То есть **измеряемый эффект вдвое меньше шума от синтаксиса**. Защитимо только сравнение
-двух сборок из одного файла через `ifdef`. См. `docs/FINDING-04-noise-floor.md`.
+🔴 But the main result is methodological: **logically neutral rewrites of the source
+move the area by ±51 µm², and non-monotonically** (two of them separately −51 each, together +88).
+So **the measured effect is half the size of the noise from syntax**. Only a comparison of
+two builds from a single file via `ifdef` is defensible. See `docs/FINDING-04-noise-floor.md`.
 
-### 04:35 — ✅ CHK проверена функционально, регрессия зелёная, сборка через make
-- `tools/asm.py`: добавлена CHK; **исправлен баг** — при `v=0` непосредственное
-  расширяется нулями, значит проверять его надо беззнаково (ловилось на `IOR R12,R12,0xE05C`).
-- `tb/run_tests.cpp`: **исправлена привязка проверок** — была к числу выполненных
-  инструкций, стала к адресу (номеру слова). На прямом коде совпадает, при первом же
-  переходе расходится. Плюс проверки сделаны одноразовыми.
-- `tests/t2_chk.s`: не сработавшая CHK — 1 такт, флаги не тронуты; сработавшая — передала
-  управление на MT, пропущенная инструкция не выполнилась. **5/5.**
-- 🟢 **Ядро с CHK проходит все базовые тесты с идентичным числом тактов** (203, 21, 453)
-  — требуемый ревью тест «старый код на новом RTL».
-- `make test` — вся регрессия одной командой.
+### 04:35 — ✅ CHK verified functionally, regression green, build via make
+- `tools/asm.py`: added CHK; **fixed a bug**: with `v=0` the immediate is
+  zero-extended, so it has to be checked as unsigned (caught on `IOR R12,R12,0xE05C`).
+- `tb/run_tests.cpp`: **fixed how checks are anchored**: they were tied to the number of executed
+  instructions, now to the address (word number). On straight-line code these coincide; at the first
+  branch they diverge. Plus checks were made one-shot.
+- `tests/t2_chk.s`: a CHK that does not fire takes 1 cycle, flags untouched; one that fires
+  transferred control to MT, and the skipped instruction did not execute. **5/5.**
+- 🟢 **The core with CHK passes all base tests with an identical number of cycles** (203, 21, 453):
+  the "old code on the new RTL" test required by the review.
+- `make test`: the whole regression with one command.
 
-## Текущее состояние (перезапись)
-- **Работает:** ядро RISC5 (2018) под Verilator в двух конфигурациях (базовая и с CHK),
-  стенд с ретайр-детектором, прогонщик тестов с привязкой к PC, ассемблер, зонд декодера,
-  маршрут синтеза с Nangate45, `make test` / `make syn`.
-- **Тесты:** 61 проверка на двух ядрах, все зелёные.
-- **Измерено:** базовая площадь 14 532.11 мкм² = 18.21 kGE, 993 триггера;
-  Δ CHK принятой кодировки = 58…154 GE (нижняя граница внутри шума ±64 GE).
-- **Находки:** 4 задокументированы в `docs/`.
-- **Не сделано:** Fmax (нужен OpenSTA); SoC-обвязка; дифференциальный стенд против ISS;
-  конфигурации A/B/C на реальной системе (нужен компилятор Оберона).
+## Current state (rewrite)
+- **Working:** the RISC5 (2018) core under Verilator in two configurations (base and with CHK),
+  the bench with a retire detector, a test runner anchored to the PC, the assembler, the decoder probe,
+  a synthesis flow with Nangate45, `make test` / `make syn`.
+- **Tests:** 61 checks on two cores, all green.
+- **Measured:** base area 14,532.11 µm² = 18.21 kGE, 993 flip-flops;
+  Δ CHK of the adopted encoding = 58…154 GE (the lower bound within the ±64 GE noise).
+- **Findings:** 4 documented in `docs/`.
+- **Not done:** Fmax (needs OpenSTA); the SoC wrapper; the differential bench against the ISS;
+  configurations A/B/C on a real system (needs the Oberon compiler).
 
-## Следующий шаг
-Конфигурация A — патч `check := FALSE` в `ORG.Mod` и замер цены проверок границ на
-реальной нагрузке. Для этого нужен работающий Оберон: либо Norebo (кросс-сборка с хоста),
-либо эталонный эмулятор с образом диска.
+## Next step
+Configuration A: a `check := FALSE` patch in `ORG.Mod` and measuring the cost of bounds checks on a
+real workload. This needs a working Oberon: either Norebo (cross-building from the host)
+or the reference emulator with a disk image.
 
-### 05:10 — 🎯 ГЛАВНЫЙ РЕЗУЛЬТАТ: цена проверок времени исполнения измерена
-Поднят **Norebo** — компилятор Оберона с командной строки (macOS-ловушка: файловая система
-нечувствительна к регистру, `make` считает каталог `Norebo/` готовой целью `norebo` и
-ничего не собирает; собрал напрямую в `norebo.bin`).
+### 05:10 — 🎯 MAIN RESULT: the cost of run-time checks measured
+Brought up **Norebo**, a command-line Oberon compiler (a macOS trap: the file system
+is case-insensitive, `make` treats the `Norebo/` directory as the finished target `norebo` and
+builds nothing; I built directly into `norebo.bin`).
 
-**Трёхстадийная самораскрутка прошла: «Stage 2 and Stage 3 are identical»** — T-BOOT-3 ✅.
+**The three-stage bootstrap passed: "Stage 2 and Stage 3 are identical"**: T-BOOT-3 ✅.
 
-Создана несуществующая конфигурация: `check := FALSE` в `ORG.Open`, пересобран компилятор.
-**Результат: проверки занимают 6.2% кода системы (1490 слов из 23 954).**
-Разброс по модулям 0% (Kernel, он же RISC-0) … 11% (Fonts).
+Created a configuration that did not exist: `check := FALSE` in `ORG.Open`, rebuilt the compiler.
+**Result: the checks take 6.2% of the system's code (1490 words of 23,954).**
+The spread across modules is 0% (Kernel, which is RISC-0) … 11% (Fonts).
 
-Перекрёстно проверено тремя способами: у ORP Δслов = Δловушек = 390 точно (там почти всё —
-проверки NIL по одному слову); где есть индексация, Δслов > Δловушек (проверка границы =
-2 инструкции); Kernel даёт 0 в обеих конфигурациях. Остаток в A — это `NEW` и `ASSERT`,
-они вне охраны `check` и должны остаться.
+Cross-checked three ways: for ORP Δwords = Δtraps = 390 exactly (almost all of them there are
+one-word NIL checks); where there is indexing, Δwords > Δtraps (a bounds check =
+2 instructions); Kernel gives 0 in both configurations. What remains in A is `NEW` and `ASSERT`,
+which are outside the `check` guard and must stay.
 
-🟢 Уточнение к постановке эксперимента: **доминируют проверки на NIL, а не на границы
-массивов** (в ORP 390 из 402 — это NIL). «Цена безопасности памяти» в Обероне — это прежде
-всего цена разыменования указателей. См. `docs/FINDING-05-cost-of-checks.md`.
+🟢 A refinement to the experiment's setup: **NIL checks dominate, not array bounds
+checks** (in ORP 390 of 402 are NIL). The "cost of memory safety" in Oberon is first and foremost
+the cost of dereferencing pointers. See `docs/FINDING-05-cost-of-checks.md`.
 
-⚠ Это размер КОДА, не такты. Смешивать нельзя.
+⚠ This is CODE size, not cycles. They must not be mixed.
 
-### 06:00 — 🎯 динамическая цена проверок: 2.67% тактов
-Оснастил эмулятор Norebo счётчиком тактов по модели из `tb/cycle_model.h`.
-**Модель предварительно проверена против настоящего RTL потактово: 61 инструкция,
-расхождений 0**, включая все многотактные и надбавку за подряд идущие.
+### 06:00 — 🎯 the dynamic cost of checks: 2.67% of cycles
+Instrumented the Norebo emulator with a cycle counter following the model in `tb/cycle_model.h`.
+**The model was first checked against the real RTL cycle by cycle: 61 instructions,
+0 mismatches**, including all multi-cycle ones and the back-to-back surcharge.
 
-🔴 **Едва не опубликовал неверное число.** Первый замер дал 0.43% — но он отражал лишь
-то, что компилятор без проверок делает меньше работы при генерации кода, а не цену
-исполнения проверок. Потребовалась **вторая стадия самораскрутки**: компилятором A
-собрать компилятор заново (двоичный код без проверок внутри), тем же путём через B —
-с проверками, и только потом прогнать обоими одну нагрузку.
-Разница между неверным и верным замером — **шестикратная**.
+🔴 **I nearly published a wrong number.** The first measurement gave 0.43%, but it reflected only
+the fact that a compiler without checks does less work when generating code, not the cost of
+executing the checks. A **second bootstrap stage** was needed: use compiler A to
+build the compiler again (binary code without checks inside), the same way through B
+with checks, and only then run the same workload with both.
+The difference between the wrong and the right measurement is **sixfold**.
 
-**Итог: статика 6.2% кода, динамика 2.67% тактов (3.78% инструкций).**
-Проверки занимают вдвое больше места, чем времени: они рассыпаны по всему коду, но
-горячие циклы исполняют их реже, и каждая дешевле средней инструкции (1 такт против
-средних 1.642). Оберон на дешёвом краю литературного диапазона (Morello 5.7, Toooba 9,
+**Bottom line: statically 6.2% of code, dynamically 2.67% of cycles (3.78% of instructions).**
+The checks take twice as much space as time: they are scattered throughout the code, but
+hot loops execute them less often, and each is cheaper than the average instruction (1 cycle versus
+an average of 1.642). Oberon is at the cheap end of the range in the literature (Morello 5.7, Toooba 9,
 MTE 4–12).
 
-⚠ Ловушка Norebo: если исходник не найден по `NOREBO_PATH`, он **уходит в вечный цикл**
-вместо ошибки. Порядок путей в `tools/measure_checks.sh` проверен, не трогать.
-⚠ Ловушка macOS: нет `timeout`; сделал `tools/run_timeout.py`.
+⚠ A Norebo trap: if a source is not found via `NOREBO_PATH`, it **goes into an infinite loop**
+instead of an error. The path order in `tools/measure_checks.sh` has been checked; do not touch it.
+⚠ A macOS trap: there is no `timeout`; I wrote `tools/run_timeout.py`.
 
-### 06:40 — 🎯 ГЛАВНЫЙ ЭКСПЕРИМЕНТ ЗАМКНУТ: три конфигурации измерены
-CHK добавлена в эмулятор Norebo (регрессия чистая — старый код даёт те же 94 149 309
-тактов) и в кодогенератор (`PutCHK` в `ORG.Mod`, конфигурация C).
-Учёт сошёлся точно: в `Texts` 21 проверка границ → 2 + **19 CHK**, код ровно на 19 слов
-короче; в `Fonts` 22 → 22 CHK, минус 22 слова. Одно слово на проверку.
+### 06:40 — 🎯 MAIN EXPERIMENT CLOSED: three configurations measured
+CHK added to the Norebo emulator (regression clean: old code gives the same 94,149,309
+cycles) and to the code generator (`PutCHK` in `ORG.Mod`, configuration C).
+The accounting matched exactly: in `Texts` 21 bounds checks → 2 + **19 CHK**, the code is exactly 19 words
+shorter; in `Fonts` 22 → 22 CHK, minus 22 words. One word per check.
 
-⚠ Попутная ошибка постановки: у конфигурации C путь начинается с `cfgC`, где лежит
-пропатченный `ORG.Mod` — сравнивались разные исходники. Убрал ORG из нагрузки.
+⚠ An incidental setup error: configuration C's path starts with `cfgC`, which holds
+the patched `ORG.Mod`, so different sources were being compared. Removed ORG from the workload.
 
-**РЕЗУЛЬТАТ (tools/measure3.sh):**
-| конфигурация | такты | инстр. | код |
+**RESULT (tools/measure3.sh):**
+| configuration | cycles | instr. | code |
 |---|---|---|---|
-| A — нет проверок | 29 121 384 | 17 407 595 | 5 775 |
-| B — программные | 29 919 963 (+2.74%) | +3.92% | +9.92% |
-| C — аппаратные | 29 808 859 (+2.36%) | +3.32% | +8.92% |
+| A — no checks | 29,121,384 | 17,407,595 | 5,775 |
+| B — software | 29,919,963 (+2.74%) | +3.92% | +9.92% |
+| C — hardware | 29,808,859 (+2.36%) | +3.32% | +8.92% |
 
-🎯 **Аппаратная проверка границ снимает лишь 14% цены проверок** (0.38 из 2.74 п.п.)
-ценой 0.32…0.85% площади ядра. Причина измерена: доминируют проверки NIL (390 из 402 в ORP),
-CHK их не касается; плюс 12-битный предел и открытые массивы на старом пути.
-Отрицательный результат, и он сильнее положительного. См. `docs/FINDING-06-three-configs.md`.
+🎯 **Hardware bounds checking removes only 14% of the cost of checks** (0.38 of 2.74 pp)
+at the price of 0.32…0.85% of the core's area. The reason is measured: NIL checks dominate (390 of 402 in ORP),
+and CHK does not touch them; plus the 12-bit limit and open arrays on the old path.
+A negative result, and it is stronger than a positive one. See `docs/FINDING-06-three-configs.md`.
 
-## Следующий шаг
-Вторая нагрузка — счётная, с плотной индексацией массивов. Сейчас единственная нагрузка
-компиляторная (много указателей, мало индексации), и это записанное ограничение. Счётная
-покажет верхнюю границу вклада CHK.
+## Next step
+A second workload: a compute one, with dense array indexing. Currently the only workload
+is the compiler (many pointers, little indexing), and this is a recorded limitation. A compute
+workload will show the upper bound of CHK's contribution.
 
-### 07:20 — ✅ вторая нагрузка: разброс вклада аппаратуры в 3.5 раза
-`bench/ArrBench.Mod` — сортировка + умножение матриц, ни одного указателя,
-все пределы < 4096. Итог: проверки стоят **+10.16% тактов**, аппаратная поддержка
-снимает **ровно 50.0%** (две инструкции по такту заменяются одной).
+### 07:20 — ✅ second workload: the hardware's contribution varies 3.5×
+`bench/ArrBench.Mod`: sorting + matrix multiplication, not a single pointer,
+all limits < 4096. Result: the checks cost **+10.16% of cycles**, hardware support
+removes **exactly 50.0%** (two one-cycle instructions are replaced by one).
 
-🎯 **Против 14% на компиляторной нагрузке — разброс в 3.5 раза.**
-«Сколько даёт аппаратная проверка границ» без указания нагрузки — бессмысленный вопрос.
+🎯 **Versus 14% on the compiler workload: a 3.5× spread.**
+"How much does hardware bounds checking give" without naming the workload is a meaningless question.
 
-Два бага по дороге:
-1. 🔴 В моём же бенчмарке был реальный выход за границу (`b[i*M+j]` до 3599 при массиве
-   на 1000). **Конфигурация A проглотила молча**, портя 2600 слов; B поймала. Случайная,
-   но идеальная демонстрация смысла проверок.
-2. 🔴 **CHK ломает диагностику: `unknown trap 8`.** Предел в `IR[15:4]` перекрывает
-   и номер ловушки (биты 7:4), и позицию (23:8). Ревью предсказало потерю позиции,
-   но не то, что испортится сам номер ошибки.
+Two bugs along the way:
+1. 🔴 My own benchmark had a real out-of-bounds access (`b[i*M+j]` up to 3599 with an array
+   of 1000). **Configuration A swallowed it silently**, corrupting 2600 words; B caught it. An accidental
+   but perfect demonstration of why checks matter.
+2. 🔴 **CHK breaks diagnostics: `unknown trap 8`.** The limit in `IR[15:4]` overlaps
+   both the trap number (bits 7:4) and the position (23:8). The review predicted the loss of the position,
+   but not that the error number itself would be corrupted.
 
-Открытая развилка: предел 4095 со сломанной диагностикой / предел 255 с верным номером /
-двухсловная CHK. Решать по данным — сколько массивов короче 256. Не измерено.
+An open fork: a 4095 limit with broken diagnostics / a 255 limit with the right number /
+a two-word CHK. Decide by data: how many arrays are shorter than 256. Not measured.
 
-## Следующий шаг
-Замерить распределение длин массивов в системе, чтобы закрыть развилку по кодированию CHK.
+## Next step
+Measure the distribution of array lengths in the system to close the CHK encoding fork.
 
-### 07:50 — полный комплект исходников PO2013 и анализатор длин массивов
-Скачан **полный комплект Project Oberon 2013 — 46 модулей**, включая все оконные
+### 07:50 — the full set of PO2013 sources and an array length analyzer
+Downloaded **the full set of Project Oberon 2013: 46 modules**, including all the windowing ones
 (`Display`, `Viewers`, `TextFrames`, `MenuViewers`, `Graphics`, `GraphicFrames`, `Curves`,
-`Rectangles`, `Draw`, `GraphTool`, `System`, `Edit`, `Net`, `SCC`, `Math`, `Tools` и др.)
-в `ext/po2013-src/`. Не скачались два zip-архива с дополнительными утилитами.
-Без оконных модулей выборка была бы смещена — именно там плотная индексация.
+`Rectangles`, `Draw`, `GraphTool`, `System`, `Edit`, `Net`, `SCC`, `Math`, `Tools` and others)
+into `ext/po2013-src/`. Two zip archives with additional utilities did not download.
+Without the windowing modules the sample would be biased: that is exactly where dense indexing lives.
 
-`tools/array_limits.py` — статический анализ: достаёт пределы массивов прямо из
-скомпилированного кода по паре «`SUB` с непосредственным пределом + ловушка №1».
-Компилятор патчить не требуется. **Проверен на известном случае**: на `ArrBench`
-вытащил ровно объявленные в исходнике 60, 1000 и 3600.
+`tools/array_limits.py`: a static analysis that extracts array limits straight from the
+compiled code by the pair "`SUB` with an immediate limit + trap #1".
+No compiler patch is needed. **Checked on a known case**: on `ArrBench`
+it extracted exactly the 60, 1000 and 3600 declared in the source.
 
-`tools/build_po2013.py` — сборка в порядке зависимостей, вычисленном топологической
-сортировкой по секциям IMPORT (а не заданном руками).
+`tools/build_po2013.py`: a build in dependency order, computed by a topological
+sort over the IMPORT sections (not given by hand).
 
-⚠ **Ловушка: `Input.Mod` вешает Norebo наглухо.** Проверено, что это НЕ мои изменения:
-зависает и с эталонным бинарником эмулятора, и со штатным загрузочным компилятором, и с
-компилятором `build2`. Файл цел (шестнадцатеричный литерал таблицы клавиатуры закрыт).
-Причина не найдена; модуль крошечный и на статистику длин массивов не влияет.
-Сборка сделана устойчивой: таймаут на модуль, зависшие помечаются и пропускаются.
+⚠ **A trap: `Input.Mod` hangs Norebo dead.** Verified that this is NOT my changes:
+it hangs with the reference emulator binary, with the stock boot compiler, and with
+the `build2` compiler. The file is intact (the hex literal of the keyboard table is closed).
+The cause was not found; the module is tiny and does not affect the array length statistics.
+The build was made robust: a timeout per module, hung ones are marked and skipped.
 
-### 08:40 — ✅ развилка по кодированию CHK закрыта данными
-Три независимых замера (`docs/FINDING-08-encoding-decision.md`):
-1. По скомпилированному коду, 154 места проверки: **медиана предела 32**,
-   8 бит покрывают 70.0%, 12 бит 86.9%
-2. По объявлениям во всех 46 исходниках (99 размерностей, включая оконные модули,
-   которых нет в комплекте Norebo): **медиана снова 32**, 8 бит 84.8%, 12 бит 99.0%
-3. Прогон на настоящей ошибке — и вот главное:
-   - B (программная): `array index out of range` ✅
-   - C (12 бит): 🔴 **`access via NIL pointer`** — система уверенно сообщает НЕ ТУ ошибку
-   - D (8 бит): ✅ `array index out of range`, потеряна только позиция
-4. По площади варианты **неразличимы** (3.46 мкм² при шумовом поле ±51)
+### 08:40 — ✅ the CHK encoding fork closed by data
+Three independent measurements (`docs/FINDING-08-encoding-decision.md`):
+1. On compiled code, 154 check sites: **median limit 32**,
+   8 bits cover 70.0%, 12 bits 86.9%
+2. On declarations in all 46 sources (99 dimensions, including the windowing modules,
+   which are not in the Norebo set): **the median is again 32**, 8 bits 84.8%, 12 bits 99.0%
+3. A run on a real error, and here is the main thing:
+   - B (software): `array index out of range` ✅
+   - C (12 bits): 🔴 **`access via NIL pointer`**: the system confidently reports the WRONG error
+   - D (8 bits): ✅ `array index out of range`, only the position is lost
+4. By area the variants are **indistinguishable** (3.46 µm² with a noise floor of ±51)
 
-**Принят вариант D (8 бит).** Обмен 14–17 п.п. покрытия на ложные сообщения об ошибках
-невыгоден для системы, чья ценность — в том, что ошибки находятся и называются.
-Переведены эмулятор, RTL (`CHK_NARROW`), ассемблер (`CHKN`) и кодогенератор (cfgD).
+**Variant D (8 bits) adopted.** Trading 14–17 pp of coverage for false error messages
+is a bad deal for a system whose value is that errors are found and named.
+Moved the emulator, the RTL (`CHK_NARROW`), the assembler (`CHKN`) and the code generator (cfgD) over.
 
-⚠ Попутно: скачанный комплект PO2013 — **версии 2019 года, а компилятор Norebo 2016-го**.
-Несовместимы, причём проявляется зависанием, а не ошибкой. Для анализа по
-скомпилированному коду использован согласованный комплект Norebo.
+⚠ Incidentally: the downloaded PO2013 set is **the 2019 version, while the Norebo compiler is from 2016**.
+They are incompatible, and this shows up as a hang, not an error. For the analysis of
+compiled code the matching Norebo set was used.
 
-### 09:20 — 🔴 поправка: развилка данными НЕ закрывается
-Замер принятого (8 бит) варианта на ВТОРОЙ нагрузке опроверг обоснование находки 8.
+### 09:20 — 🔴 correction: the data does NOT close the fork
+Measuring the adopted (8-bit) variant on the SECOND workload refuted the rationale of finding 8.
 
-| вариант | компиляция | счётная |
+| variant | compilation | compute |
 |---|---|---|
-| 12 бит (диагностика сломана) | 13.9% | **50.0%** |
-| 8 бит (диагностика цела) | 13.0% | **15.8%** |
+| 12 bits (diagnostics broken) | 13.9% | **50.0%** |
+| 8 bits (diagnostics intact) | 13.0% | **15.8%** |
 
-**Ошибка в обосновании:** решение принималось по распределению МЕСТ проверки (медиана 32),
-а горячие циклы счётного кода гоняют КРУПНЫЕ массивы (1000 и 3600 в бенчмарке).
-Под 8 бит попали 6 проверок из 15 — и не те, что исполняются миллионы раз.
-Статика упала на 17 п.п., динамика — **втрое**.
+**The error in the rationale:** the decision was made on the distribution of check SITES (median 32),
+while the hot loops of compute code run LARGE arrays (1000 and 3600 in the benchmark).
+Only 6 of 15 checks fell under 8 bits, and not the ones executed millions of times.
+The static number dropped by 17 pp, the dynamic one **threefold**.
 
-Урок: для решений о кодировании нужен **динамический профиль**, а не подсчёт мест.
+The lesson: encoding decisions need a **dynamic profile**, not a count of sites.
 
-Двухсловный вариант тоже не выход: процессор обязан пропустить второе слово, это такт,
-и выигрыш исчезает. Архитектурно правильный ответ — предел в регистре с выносом из цикла,
-но **кодогенератор Оберона не умеет выносить инварианты** и не научится без переписывания ORG.
+A two-word variant is no way out either: the processor has to skip the second word, that is a cycle,
+and the gain disappears. The architecturally correct answer is a limit in a register hoisted out of the loop,
+but **the Oberon code generator cannot hoist invariants** and will not learn to without rewriting ORG.
 
-**Итог: показана настоящая развилка с измеренной ценой каждой ветки** — для статьи это
-лучше, чем однозначное решение. См. `docs/FINDING-09-fork-unresolved.md`.
+**Bottom line: a real fork is shown with the measured cost of each branch**; for the article this is
+better than a single decision. See `docs/FINDING-09-fork-unresolved.md`.
 
-## Следующий шаг
-Динамический профиль индексации: счётчик на каждую проверку с группировкой по пределу.
-Закроет развилку окончательно и стоит недорого.
+## Next step
+A dynamic indexing profile: a counter per check, grouped by limit.
+It will close the fork for good and is cheap.
 
-### 10:10 — 🎯 РАЗВИЛКА ЗАКРЫТА: предел из двух кусков
-Динамический профиль (счётчик исполнений проверок по классам длин) показал, что
-на счётной нагрузке **68.3% исполнений — массивы 256…1023**, которых 8 бит не покрывают.
-И дал предсказательную модель: отношение динамического покрытия предсказывает отношение
-выигрыша **точно** (31.6% против измеренных 31.6%).
+### 10:10 — 🎯 FORK CLOSED: a limit made of two pieces
+The dynamic profile (a counter of check executions by length class) showed that
+on the compute workload **68.3% of executions are arrays of 256…1023**, which 8 bits do not cover.
+And it gave a predictive model: the ratio of dynamic coverage predicts the ratio of the
+gain **exactly** (31.6% versus a measured 31.6%).
 
-Это подсказало искать биты там, где я не искал. **Поле `a` (IR[27:24]) инструкции CHK
-не нужно** (при срабатывании ira0 = 15, при несрабатывании регистр не пишется), а лежит
-ВНЕ поля позиции (23:8) и ВНЕ поля номера ловушки (7:4).
-→ предел собирается из двух кусков `{IR[27:24], IR[15:8]}` = 12 бит, номер ловушки цел.
+This prompted me to look for bits where I had not looked. **Field `a` (IR[27:24]) of the CHK instruction
+is not needed** (when it fires ira0 = 15; when it does not, no register is written), and it lies
+OUTSIDE the position field (23:8) and OUTSIDE the trap number field (7:4).
+→ the limit is assembled from two pieces `{IR[27:24], IR[15:8]}` = 12 bits, and the trap number is intact.
 
-| вариант | компиляция | счётная | диагностика |
+| variant | compilation | compute | diagnostics |
 |---|---|---|---|
-| 12 бит в IR[15:4] | 13.9% | 50.0% | 🔴 НЕ ТА ошибка |
-| 8 бит | 13.0% | 15.8% | ✅ |
-| **два куска (принят)** | **13.7%** | **50.0%** | ✅ |
+| 12 bits in IR[15:4] | 13.9% | 50.0% | 🔴 the WRONG error |
+| 8 bits | 13.0% | 15.8% | ✅ |
+| **two pieces (adopted)** | **13.7%** | **50.0%** | ✅ |
 
-Проверено на массиве 1000 элементов: E даёт 19 слов, CHK задействована,
-сообщение `array index out of range` верное. На счётной нагрузке результат **побитово
-совпадает** с вариантом максимального покрытия (57 133 094 такта).
-Переведены RTL (`CHK_SPLIT`), ассемблер (`CHKS`), эмулятор, кодогенератор (cfgE), Makefile.
-Регрессия RTL зелёная, 61 проверка. См. `docs/FINDING-10-split-encoding.md`.
+Checked on an array of 1000 elements: E gives 19 words, CHK is used,
+the message `array index out of range` is correct. On the compute workload the result **matches bit
+for bit** the maximum-coverage variant (57,133,094 cycles).
+Moved the RTL (`CHK_SPLIT`), the assembler (`CHKS`), the emulator, the code generator (cfgE) and the Makefile over.
+RTL regression green, 61 checks. See `docs/FINDING-10-split-encoding.md`.
 
-## Текущее состояние (перезапись)
-- **Измерения завершены:** цена проверок 2.74% (компиляция) / 10.16% (счётная);
-  аппаратная поддержка снимает 13.7% / 50.0% при целой диагностике;
-  площадь 58…154 GE (нижняя граница внутри шума); база 18.21 kGE, 993 триггера
-- **Находок задокументировано:** 10
-- **Осталось:** Fmax (нужен OpenSTA); полный набор тестов ISA (из 12 сделано 4);
-  дифференциальный стенд против эталонного ISS; утверждение У1 целиком (SoC, браузер)
+## Current state (rewrite)
+- **Measurements complete:** the cost of checks 2.74% (compilation) / 10.16% (compute);
+  hardware support removes 13.7% / 50.0% with diagnostics intact;
+  area 58…154 GE (the lower bound within noise); base 18.21 kGE, 993 flip-flops
+- **Findings documented:** 10
+- **Remaining:** Fmax (needs OpenSTA); the full set of ISA tests (4 of 12 done);
+  the differential bench against the reference ISS; claim C1 as a whole (SoC, browser)
 
-### 10:40 — ✅ находка 11: UMUL в RISC5 — смешанное умножение, а не беззнаковое
-`Multiplier.v`: слагаемое `{w0[31], w0}` расширяется знаком ВСЕГДА, флаг u управляет
-только последним шагом. Следствие: `UMUL` считает первый операнд беззнаково,
-а **второй знаково**.
-Измерено: `UMUL R, 2, 0xFFFFFFFF` даёт H = 0xFFFFFFFF, тогда как истинно беззнаковое
-дало бы H = 1. Тест `tests/t1_umul.s`, 6/6. См. `docs/FINDING-11-umul-is-mixed.md`.
-Найдено случайно: моё ожидание в `t1_arith.s` было основано на «правильной» семантике.
-Важно для дифференциального стенда: эталон обязан воспроизводить именно эту особенность.
+### 10:40 — ✅ finding 11: UMUL in RISC5 is a mixed multiplication, not an unsigned one
+`Multiplier.v`: the addend `{w0[31], w0}` is ALWAYS sign-extended; flag u controls
+only the last step. Consequence: `UMUL` treats the first operand as unsigned
+and **the second as signed**.
+Measured: `UMUL R, 2, 0xFFFFFFFF` gives H = 0xFFFFFFFF, whereas a truly unsigned one
+would give H = 1. Test `tests/t1_umul.s`, 6/6. See `docs/FINDING-11-umul-is-mixed.md`.
+Found by accident: my expectation in `t1_arith.s` was based on the "correct" semantics.
+Important for the differential bench: the reference must reproduce exactly this quirk.
 
-### 11:30 — ✅ проверка эквивалентности декодера, находка 12
-`tb/decoder_equiv.cpp`: все 256 комбинаций {IR[31:28] × op} × 5 наборов операндов = 1280
-прогонов на двух ядрах, сравнение регистров, флагов, тактов и контрольной суммы памяти.
+### 11:30 — ✅ decoder equivalence check, finding 12
+`tb/decoder_equiv.cpp`: all 256 combinations of {IR[31:28] × op} × 5 operand sets = 1280
+runs on two cores, comparing registers, flags, cycles and a memory checksum.
 
-**Поймала настоящую ошибку:** мой декод `~p & ~q & v & (op==1)` не проверял бит `u`,
-поэтому CHK декодировалась в ДВУХ кодировках (`0001` и `0011`) — занимала два слота
-вместо одного. Существующий код не ломался, но кодовое пространство расходовалось вдвое.
-Исправлено вставкой `~u &` в RTL и эмулятор; теперь различается ровно одна кодировка.
+**It caught a real bug:** my decode `~p & ~q & v & (op==1)` did not check bit `u`,
+so CHK decoded in TWO encodings (`0001` and `0011`), taking two slots
+instead of one. Existing code did not break, but the code space was used up twice as fast.
+Fixed by inserting `~u &` in the RTL and the emulator; now exactly one encoding differs.
 
-Подключено к `make test` через цель `equiv`. См. `docs/FINDING-12-decoder-equivalence.md`.
+Hooked into `make test` via the `equiv` target. See `docs/FINDING-12-decoder-equivalence.md`.
 
-**Итог по тестам ISA: 12 из 12 запланированных сделаны.**
-Полная регрессия: 11 наборов × 2 конфигурации + эквивалентность декодера, всё зелёное.
+**ISA tests overall: 12 of the 12 planned are done.**
+Full regression: 11 suites × 2 configurations + decoder equivalence, all green.
 
-### 12:40 — 🎯 ВЕХА: настоящий Verilog загружает настоящий Оберон
-SoC-стенд: ядро `RISC5.v` на RTL + ОЗУ + ПЗУ + устройства заглушками с тем же
-регистровым интерфейсом (по рекомендации ревью — проводные интерфейсы не эмулируем).
-Логика SD-карты взята из эталонного эмулятора, она словная и ложится на регистры.
+### 12:40 — 🎯 MILESTONE: real Verilog boots real Oberon
+The SoC bench: the `RISC5.v` core on RTL + RAM + ROM + devices as stubs with the same
+register interface (as the review recommended, we do not emulate the wired interfaces).
+The SD card logic is taken from the reference emulator; it is word-based and maps onto registers.
 
-**Загрузка: 12 млн инструкций, 18.65 млн тактов, 4.27 с на хосте = 4.37 МГц-эквивалент.
-Кадровый буфер непустой, на экране интерфейс Оберона** (`docs/oberon-boot-screen.png`).
-Эталон рисует первый кадр после ~8 млн инструкций, наше RTL — после ~7.1 млн.
+**Boot: 12 million instructions, 18.65 million cycles, 4.27 s on the host = 4.37 MHz-equivalent.
+The framebuffer is non-empty, the Oberon interface is on the screen** (`docs/oberon-boot-screen.png`).
+The reference draws the first frame after ~8 million instructions, our RTL after ~7.1 million.
 
-Три ошибки по дороге:
-1. 🔴 `prom.mem` из комплекта Вирта — загрузчик по ПОСЛЕДОВАТЕЛЬНОЙ ЛИНИИ, с диска не
-   читает. Нужен из эталонного эмулятора (`risc-boot.inc`). Начинаются одинаково.
-2. 🔴 Во время сброса шину надо обслуживать из памяти: IR защёлкивается каждый такт,
-   и с нулями первая инструкция выполняется как `MOV R0,R0` вместо перехода.
-3. Кадровый буфер снизу вверх — предсказано ревью, сэкономило день.
-См. `docs/FINDING-13-boot-on-rtl.md`.
+Three bugs along the way:
+1. 🔴 `prom.mem` from Wirth's set is a loader over the SERIAL LINE; it does not read
+   from the disk. The one from the reference emulator (`risc-boot.inc`) is needed. They start the same.
+2. 🔴 During reset the bus must be served from memory: IR is latched every cycle,
+   and with zeros the first instruction executes as `MOV R0,R0` instead of a jump.
+3. The framebuffer is bottom-up: predicted by the review, it saved a day.
+See `docs/FINDING-13-boot-on-rtl.md`.
 
-### 13:20 — 🎯 ДИФФЕРЕНЦИАЛЬНЫЙ СТЕНД: 15 млн инструкций совпадения
-`tb/lockstep.cpp`: RTL против эталонного эмулятора, после КАЖДОЙ инструкции сверяются
-счётчик команд, все 16 регистров, H и четыре флага. Нагрузка — загрузка системы Оберон.
+### 13:20 — 🎯 DIFFERENTIAL BENCH: 15 million instructions of agreement
+`tb/lockstep.cpp`: RTL against the reference emulator; after EVERY instruction it compares
+the program counter, all 16 registers, H and the four flags. The workload is booting the Oberon system.
 
-**Результат: 14 600 503 инструкции строгого сравнения, 23.2 млн тактов RTL,
-5.8 с на хосте, расхождений 0.** Прогрев в загрузчике 399 497 инструкций.
+**Result: 14,600,503 instructions of strict comparison, 23.2 million RTL cycles,
+5.8 s on the host, 0 mismatches.** Warm-up in the loader: 399,497 instructions.
 
-Пять источников недетерминизма устранены (четыре предсказаны ревью):
-разрядность PC, регистр ссылки после выхода из ПЗУ, таймер, эвристика progress, образ диска.
+Five sources of nondeterminism eliminated (four predicted by the review):
+PC width, the link register after leaving the ROM, the timer, the progress heuristic, the disk image.
 
-Стенд поймал две мои ошибки:
-1. шина во время сброса (нашлось сразу — у эталона первая инструкция уходила по переходу)
-2. 🔴 **служебную запись, которую я вписал сам**, предвосхищая ловушку из ревью: эталон
-   кладёт "Sizg" на DisplayStart в `risc_configure_memory()`, которую наш запуск не
-   вызывает. Разошлось на шаге 2 101 536.
+The bench caught two of my bugs:
+1. the bus during reset (found immediately: in the reference the first instruction branched away)
+2. 🔴 **a housekeeping write that I had added myself**, anticipating a trap from the review: the reference
+   puts "Sizg" at DisplayStart in `risc_configure_memory()`, which our launch does not
+   call. Diverged at step 2,101,536.
 
-Цели `make lockstep` и `make boot`. См. `docs/FINDING-14-lockstep.md`.
+Targets `make lockstep` and `make boot`. See `docs/FINDING-14-lockstep.md`.
 
-### 14:10 — 🎯 У1 ЗАКРЫТО: Оберон работает в браузере на настоящем RTL
-`web/` — ядро RISC5 → Verilator → Emscripten → WASM, Project Oberon в обычной вкладке.
-Проверено в Chrome: полноценный рабочий стол, баннер `Oberon V5 NW 14.4.2013`,
-панель System.Tool со всеми командами. Снимок `docs/oberon-in-browser.png`.
+### 14:10 — 🎯 C1 CLOSED: Oberon runs in the browser on real RTL
+`web/`: the RISC5 core → Verilator → Emscripten → WASM, Project Oberon in an ordinary tab.
+Checked in Chrome: a full desktop, the banner `Oberon V5 NW 14.4.2013`,
+the System.Tool panel with all the commands. Screenshot `docs/oberon-in-browser.png`.
 
-**Доставка 326 КБ в gzip** (модель 75 КБ, образ 249 КБ) — совпадает с предсказанием ревью.
-**Скорость в WASM 4.27 МГц против 4.37 нативных — потеря 2.3%** (ревью ждало 5–8%).
-Контрольная сумма экрана `B5DFC933` **одинакова во всех трёх сборках**.
+**Delivery is 326 KB gzipped** (model 75 KB, image 249 KB): matches the review's prediction.
+**Speed in WASM is 4.27 MHz versus 4.37 native: a 2.3% loss** (the review expected 5–8%).
+The screen checksum `B5DFC933` **is the same in all three builds**.
 
-Решено: заглушки привязки потоков (предсказано ревью), исключение DPI-файла,
-`verilated_threads.cpp`, компоновка через `em++`, диск в памяти вместо файла.
-**SharedArrayBuffer сознательно не используется** — страница встраивается куда угодно.
+Solved: stubs for thread affinity (predicted by the review), excluding the DPI file,
+`verilated_threads.cpp`, linking via `em++`, the disk in memory instead of a file.
+**SharedArrayBuffer is deliberately not used**: the page can be embedded anywhere.
 
-🔴 Пойман настоящий баг: **если вкладка стартует скрытой, rAF не вызывается вовсе и цикл
-не запускается никогда**, даже после открытия вкладки. Лечится подпиской на
-`visibilitychange`. Проявилось именно в автоматизации со скрытой вкладкой.
-См. `docs/FINDING-15-browser.md`.
+🔴 Caught a real bug: **if the tab starts hidden, rAF is never called and the loop
+never starts**, even after the tab is opened. Fixed by subscribing to
+`visibilitychange`. It showed up precisely in automation with a hidden tab.
+See `docs/FINDING-15-browser.md`.
 
-### 14:40 — ✅ Fmax закрыт, находка 16
-`syn/fmax.py`: свип цели по задержке с явным delay-driven скриптом abc и `stime -p`.
+### 14:40 — ✅ Fmax closed, finding 16
+`syn/fmax.py`: a sweep of the delay target with an explicit delay-driven abc script and `stime -p`.
 
-**⚠ ПОЗЖЕ ИСПРАВЛЕНО АУДИТОМ: знак дельты частоты НЕ ОПРЕДЕЛЁН.**
-delay-driven маршрут: 2096.0 → 2134.6 пс = −1.81%. Дефолтный abc: 2215.3 → 2180.5 пс
-= **+1.60%, то есть CHK БЫСТРЕЕ**. Знак противоположен между маршрутами на одном RTL.
-Предсказание ревью («компараторы лягут на критический путь») остаётся неподтверждённым:
-разрешения инструмента не хватает, чтобы его проверить.
+**⚠ CORRECTED LATER BY THE AUDIT: the sign of the frequency delta is NOT DETERMINED.**
+The delay-driven flow: 2096.0 → 2134.6 ps = −1.81%. Default abc: 2215.3 → 2180.5 ps
+= **+1.60%, that is, CHK is FASTER**. The sign is opposite between flows on the same RTL.
+The review's prediction ("the comparators will land on the critical path") remains unconfirmed:
+the tool's resolution is not enough to test it.
 
-🔴 **ПОЗЖЕ ИСПРАВЛЕНО: сравнивались РАЗНЫЕ конфигурации RTL.** +30.06 снималось без
-`CHK_SPLIT`, +123.16 — с ним. На идентичном RTL разброс **2.65×** (+46.55 против +123.16),
-а не вчетверо. Качественный вывод («маршрут двигает эффект сильнее самого эффекта»)
-выживает, число — нет.
+🔴 **CORRECTED LATER: DIFFERENT RTL configurations were compared.** +30.06 was taken without
+`CHK_SPLIT`, +123.16 with it. On identical RTL the spread is **2.65×** (+46.55 versus +123.16),
+not fourfold. The qualitative conclusion ("the flow moves the effect more than the effect itself")
+survives; the number does not.
 
-⚠ Оговорки: `WireLoad = "none"` (задержки проводов не учтены), критический путь
-настоящей системы идёт через внешнюю память, которой в нетлисте ядра нет.
-OpenSTA не установлен и в Homebrew не пакетирован — полноценный статический анализ
-остаётся незакрытым. См. `docs/FINDING-16-fmax.md`.
+⚠ Caveats: `WireLoad = "none"` (wire delays not counted); the critical path of the
+real system goes through external memory, which is not in the core's netlist.
+OpenSTA is not installed and is not packaged in Homebrew; a full static analysis
+remains open. See `docs/FINDING-16-fmax.md`.
 
-## Текущее состояние (перезапись)
-**Все пункты дизайна закрыты.**
-- У1 (весь стек в браузере) ✅ — `web/`, 326 КБ gzip, 4.27 МГц, проверено в Chrome
-- У3 (цена проверок в трёх конфигурациях) ✅ — на двух нагрузках, с площадью и частотой
-- Тесты ISA: 12 из 12 + эквивалентность декодера, ~360 проверок, всё зелёное
-- Дифференциальный стенд: 15 млн инструкций совпадения с эталоном
-- Находок задокументировано: **16**
-Не закрыто: OpenSTA (полноценный статический анализ).
+## Current state (rewrite)
+**All design items are closed.**
+- C1 (the whole stack in the browser) ✅: `web/`, 326 KB gzip, 4.27 MHz, checked in Chrome
+- C3 (the cost of checks in three configurations) ✅: on two workloads, with area and frequency
+- ISA tests: 12 of 12 + decoder equivalence, ~360 checks, all green
+- Differential bench: 15 million instructions agreeing with the reference
+- Findings documented: **16**
+Not closed: OpenSTA (full static analysis).
 
-### 15:10 — ✅ находка 17: модель тактов проверена на реальной нагрузке
-Наводка от аудитора: модель тактов ни разу не сверялась с RTL на настоящей нагрузке,
-только на 61 инструкции синтетики — при том что на ней построены ВСЕ числа выпуска.
+### 15:10 — ✅ finding 17: the cycle model verified on a real workload
+A tip from an auditor: the cycle model had never been checked against the RTL on a real workload,
+only on 61 synthetic instructions, even though ALL the episode's numbers are built on it.
 
-Сверка встроена в SoC-стенд. **12 000 000 инструкций загрузки Оберона,
-расхождений 0 (0.0000%), суммарно 18 654 115 против 18 654 115 — совпадение до такта.**
+The comparison is built into the SoC bench. **12,000,000 instructions of the Oberon boot,
+0 mismatches (0.0000%), in total 18,654,115 versus 18,654,115: exact to the cycle.**
 
-🔴 Ловушка при самой проверке: первый прогон дал «расхождение 15.8%». Это была ОШИБКА
-В КОДЕ СВЕРКИ — инструкция читалась по `top->adr` до установки шины (там адрес прошлого
-такта). Правильно брать PC напрямую. Если бы опубликовал — ложная находка, обесценивающая
-все числа тактов. **Отрицательный результат надо проверять так же тщательно, как положительный.**
-См. `docs/FINDING-17-cycle-model-validated.md`.
+🔴 A trap in the check itself: the first run gave "a 15.8% mismatch". It was a BUG
+IN THE COMPARISON CODE: the instruction was read via `top->adr` before the bus was set (it held the previous
+cycle's address). The right thing is to take the PC directly. Had I published it, it would have been a false finding devaluing
+all the cycle numbers. **A negative result must be checked as carefully as a positive one.**
+See `docs/FINDING-17-cycle-model-validated.md`.
 
-### 16:30 — 🔴 мутационный аудит: оснастка ловила треть поломок
-Аудитор внёс **31 мутацию в RTL, поймано 10 из 30 (33%)**. Три механизма превращали
-провал в «зелёное»: несработавшее ожидание не считалось, `|| true` съедал ошибку сборки,
-`make boot` всегда возвращал 0.
+### 16:30 — 🔴 mutation audit: the harness caught a third of the breakages
+An auditor introduced **31 mutations into the RTL; 10 of 30 were caught (33%)**. Three mechanisms turned
+a failure into "green": an expectation that never fired was not counted, `|| true` swallowed a build error,
+`make boot` always returned 0.
 
-Исправлено:
-- **B1** несработавшее ожидание = провал (проверено: мутация `>` вместо `>=` теперь ловится)
-- **B2** сборка обязана дать бинарник, прогон по коду возврата, `mkdir -p build`
-- **B3** написан `tests/t1_fp.s` — **17 проверок числовых результатов FP**, которых
-  не было вообще. Случаи, чувствительные к округлению, найдены перебором.
-  Три из трёх мутаций FPU теперь ловятся
-- **S1** в тесте ветвлений было **V=0 во всех состояниях** → пять условий из восьми
-  неразличимы. Добавлены состояния с переполнением: **112 проверок вместо 64**.
-  Три из трёх мутаций ветвления ловятся
-- патчи кодогенератора спасены из `build/` в `patches/` (их сносил `make clean`)
+Fixed:
+- **B1** an expectation that did not fire = a failure (verified: the mutation `>` instead of `>=` is now caught)
+- **B2** the build must produce a binary, the run is judged by its exit code, `mkdir -p build`
+- **B3** wrote `tests/t1_fp.s`: **17 checks of numerical FP results**, which
+  did not exist at all. Rounding-sensitive cases were found by enumeration.
+  Three of three FPU mutations are now caught
+- **S1** the branch test had **V=0 in all states** → five of the eight conditions
+  were indistinguishable. Added states with overflow: **112 checks instead of 64**.
+  Three of three branch mutations are caught
+- the code generator patches were rescued from `build/` into `patches/` (`make clean` used to wipe them)
 
-Честный счёт: **250 уникальных ожиданий** (не «~360» — то был тот же набор на двух сборках).
-См. `docs/FINDING-20-mutation-audit.md`.
+The honest count: **250 unique expectations** (not "~360": that was the same set on two builds).
+See `docs/FINDING-20-mutation-audit.md`.
 
-### 17:40 — все пять аудиторов отчитались, ВСЕ пятеро: НЕ ПРИНИМАЮ
-| Аудитор | Главное, что нашёл |
+### 17:40 — all five auditors reported, ALL five: I DO NOT ACCEPT
+| Auditor | The main thing found |
 |---|---|
-| враждебный читатель | сравнение разных RTL выдано за «вчетверо»; площадь от отвергнутой кодировки; заявки на новизну опровергнуты первоисточниками |
-| RTL | **знак дельты частоты не определён** (+1.60% против −1.81% по маршрутам) |
-| тулчейн | патчи жили только в `build/`, который сносит `make clean`; конфигурация C не запускается |
-| верификация | **мутационный счёт 33%**: 31 поломка RTL, поймано 10; три механизма превращали провал в «зелёное» |
-| методология | **разложил главное число: 2.74% = 2.20% исполнение + 0.54% кодогенерация** |
+| hostile reader | a comparison of different RTL presented as "fourfold"; area from a rejected encoding; novelty claims refuted by primary sources |
+| RTL | **the sign of the frequency delta is not determined** (+1.60% versus −1.81% depending on the flow) |
+| toolchain | the patches lived only in `build/`, which `make clean` wipes; configuration C does not run |
+| verification | **a mutation score of 33%**: 31 RTL breakages, 10 caught; three mechanisms turned failure into "green" |
+| methodology | **broke down the main number: 2.74% = 2.20% execution + 0.54% code generation** |
 
-Исправлено: разложение перекрёстной сборкой 2×2 (`tools/measure_cross.sh`, воспроизведено,
-две независимые оценки сходятся на 0.4%); **чистое число 2.20%, аппаратура снимает 17.1%**;
-площадь и частота переформулированы как «ниже разрешающей способности маршрута»;
-диапазон «14–50%» опровергнут контрпримером 10.4% и заменён на три точки;
-медиана 32 признана артефактом модального значения `ARRAY 32 OF CHAR`;
-сопоставление с литературой **отозвано** — три из четырёх чисел искажали смысл;
-правило счётчика уточнено (блок, а не мнемоника; `LD` тоже сбрасывает; MUL→UMUL = 64).
-См. `docs/FINDING-19`, `FINDING-20`, `FINDING-21`.
+Fixed: the breakdown via a 2×2 cross-build (`tools/measure_cross.sh`, reproduced,
+two independent estimates agree within 0.4%); **the clean number is 2.20%, the hardware removes 17.1%**;
+area and frequency reformulated as "below the resolution of the flow";
+the range "14–50%" refuted by a 10.4% counterexample and replaced by three points;
+the median of 32 recognized as an artifact of the modal value `ARRAY 32 OF CHAR`;
+the comparison with the literature **withdrawn**: three of four numbers distorted the meaning;
+the counter rule refined (a block, not a mnemonic; `LD` also resets it; MUL→UMUL = 64).
+See `docs/FINDING-19`, `FINDING-20`, `FINDING-21`.
 
-### 19:30 — 🎯 КРУГ ЗАМКНУТ: компилятор Оберона на настоящем RTL
-`make selfhost`. Все четыре модуля компилятора (ORS/ORB/ORG/ORP) собраны на ядре
-`RISC5.v` Вирта под Verilator: **40 770 748 инструкций, 66 700 249 тактов,
-результат побайтово совпал с эмулятором по всем четырём.**
+### 19:30 — 🎯 THE LOOP IS CLOSED: the Oberon compiler on real RTL
+`make selfhost`. All four compiler modules (ORS/ORB/ORG/ORP) were built on Wirth's
+`RISC5.v` core under Verilator: **40,770,748 instructions, 66,700,249 cycles,
+the result matched the emulator byte for byte for all four.**
 
-Единственный C в контуре — мост к файловой системе хоста (включён из `norebo.c`
-без изменений, подменены только `main()` и запуск процессора). В браузере он не нужен.
+The only C in the loop is the bridge to the host file system (included from `norebo.c`
+unchanged; only `main()` and the processor start were replaced). It is not needed in the browser.
 
-Три ошибки по дороге: адреса устройств отрицательные, а шина 24-битная (прогон 4 млрд
-инструкций вхолостую); условие останова срабатывало на любом системном вызове (103
-инструкции); **не задан регистр команд при старте** — RISC5 с предвыборкой, и ядро пошло
-исполнять таблицу модулей как код.
+Three bugs along the way: device addresses are negative while the bus is 24-bit (a run of 4 billion
+idle instructions); the stop condition fired on any system call (103
+instructions); **the instruction register was not set at start**: RISC5 prefetches, and the core went
+on to execute the module table as code.
 
-⚠ И отдельная ловушка: цикл ожидания `pgrep -f norebo_tb` **нашёл сам себя** и полтора
-часа ждал собственного завершения. См. `docs/FINDING-22-selfhost-on-rtl.md`.
+⚠ And a separate trap: the wait loop `pgrep -f norebo_tb` **found itself** and spent an hour and a half
+waiting for its own completion. See `docs/FINDING-22-selfhost-on-rtl.md`.
 
-### 05:47 — самораскрутка внутри самой системы, без моста к хосту
-- Стенд `soc_tb` получил ввод: регистры мыши и клавиатуры по формату из `Input.Mod`
-  (кнопки в битах 24..26, готовность клавиатуры — бит 28) и сценарный режим
-  `--script=` (подвести мышь, послать скан-код, снять кадр).
-- `tools/keymap.py` строит раскладку разбором таблицы `kbdTab` прямо из исходника
-  драйвера — ничего не выдумано. `tools/mkscript.py` собирает сценарий из команд
-  `click` / `type` / `enter` / `shot`, координата `y` пишется как на картинке.
-- Проверка: средний щелчок по `System.ShowModules` открыл вьюер со списком модулей.
-  Затем набран и исполнен `ORP.Compile ORS.Mod/s ~` — компилятор собрал свой сканер.
-- **Неподвижная точка достигнута.** Четыре модуля собраны компилятором с диска,
-  `System.Free` выгрузил все четыре, те же исходники собраны заново уже новым
-  компилятором. Размер кода, размер данных и ключ совпали у всех четырёх:
+### 05:47 — bootstrapping inside the system itself, without the host bridge
+- The `soc_tb` bench got input: mouse and keyboard registers in the format from `Input.Mod`
+  (buttons in bits 24..26, keyboard ready is bit 28) and a scripted mode
+  `--script=` (move the mouse, send a scan code, take a frame).
+- `tools/keymap.py` builds the keymap by parsing the `kbdTab` table straight from the driver
+  source: nothing is made up. `tools/mkscript.py` assembles a script from the commands
+  `click` / `type` / `enter` / `shot`; the `y` coordinate is written as in the picture.
+- Check: a middle click on `System.ShowModules` opened a viewer with the list of modules.
+  Then `ORP.Compile ORS.Mod/s ~` was typed and executed: the compiler built its scanner.
+- **Fixed point reached.** Four modules were built by the compiler from disk,
+  `System.Free` unloaded all four, and the same sources were built again by the new
+  compiler. Code size, data size and key matched for all four:
   ORS 1756/992/76547166, ORB 2325/408/2F03B698, ORG 6650/34980/8F476858,
-  ORP 6188/144/E6FCC519. 715 млн инструкций, 1,1 млрд тактов, 0 расхождений модели.
-- **Ловушка 4 оказалась не багом компилятора.** Сборка всех четырёх модулей одной
-  командой падала на ORP. `NilCheck` в `ORG.Mod` — это номер 4, то есть NIL, то есть
-  исчерпание кучи: внутри команды `Oberon.Loop` не выполняется и сборщик мусора не
-  работает. Четырьмя отдельными командами проходит.
-- **Найден баг воспроизводимости в своей оснастке.** `disk.c` открывает образ как
-  `rb+`, а цель `boot` шла без `--disk`, то есть прямо на эталонном образе в `ext/`.
-  Каждая загрузка системы молча правила источник истины; образ уже разошёлся с
-  upstream. Контрольная сумма экрана `B5DFC933` совпадала и на испорченном образе —
-  проверка загрузки к этому нечувствительна. Починено: без `--persist` стенд
-  работает на копии в `build/`, `ext/disk/SHA256SUMS` фиксирует эталон, цель
-  `pristine` проверяет его и входит в `make check`. Образ восстановлен из upstream.
-- `tools/check_bootstrap.py` сверяет два блока журнала как растр, без распознавания
-  текста. Проверен на промахи: падает на кадре только с первым поколением, на кадре
-  с ловушкой и на кадре одиночной сборки ORP.
-- Находка записана в `docs/FINDING-23-bootstrap-in-system.md`. Цели `pristine` и
-  `bootstrap` добавлены в `make check`.
+  ORP 6188/144/E6FCC519. 715 million instructions, 1.1 billion cycles, 0 model mismatches.
+- **Trap 4 turned out not to be a compiler bug.** Building all four modules with one
+  command failed on ORP. `NilCheck` in `ORG.Mod` is number 4, that is NIL, that is
+  heap exhaustion: inside a command `Oberon.Loop` does not run and the garbage collector does not
+  work. With four separate commands it passes.
+- **Found a reproducibility bug in my own harness.** `disk.c` opens the image as
+  `rb+`, and the `boot` target ran without `--disk`, that is, directly on the reference image in `ext/`.
+  Every system boot silently modified the source of truth; the image had already diverged from
+  upstream. The screen checksum `B5DFC933` matched even on the corrupted image:
+  the boot check is insensitive to this. Fixed: without `--persist` the bench
+  works on a copy in `build/`, `ext/disk/SHA256SUMS` pins the reference, and the
+  `pristine` target checks it and is part of `make check`. The image was restored from upstream.
+- `tools/check_bootstrap.py` compares two blocks of the log as a raster, without text
+  recognition. Checked for misses: it fails on a frame with only the first generation, on a frame
+  with a trap, and on a frame of a single ORP build.
+- The finding is recorded in `docs/FINDING-23-bootstrap-in-system.md`. The `pristine` and
+  `bootstrap` targets were added to `make check`.
 
-### 06:40 — аудит собственного ассемблера: три несогласных Вирта
-- Вопрос был «насколько корректен наш ассемблер». Покрытие: все 16 условных
-  переходов в тестах есть, из операций не проверены ничем только `ANN` и `XOR`.
-- Сверка с независимой инстанцией — дизассемблером `ORTool.Mod` самого Вирта —
-  дала два расхождения, оба настоящие.
-- **Таблица условий в ORTool неверна и неполна**: заполнено 11 индексов из 16,
-  и `mnemo1[2]="LS"`, `mnemo1[10]="HI"` против наших CS и CC. Право железо:
-  `RISC5.v` даёт `(cc==2)&C` и `(cc==4)&(C|Z)`. Доказано мутацией: с раскладкой
-  ORTool **4 из 112 проверок ветвления падают на RTL**, с нашей — 112 из 112.
-- **Ширина смещения перехода: три разных числа в одной системе.** ORG.Mod
-  (кодогенератор) — `off MOD 1000000H`, 24 бита. RISC5.v (железо) —
-  `disp = IR[21:0]`, 22 бита. ORTool.Mod (дизассемблер) — `w MOD 100000H`,
-  20 бит. Невидимо на практике: адресное пространство 1 МБ = 18 бит в словах.
-- Что биты 23:22 железо игнорирует — проверено исполнением, не чтением:
-  новый `tests/t1_branch_width.s`, два перехода различаются только ими и
-  приходят в одну точку.
-- **Найдена латентная ошибка у себя**: ассемблер проверял диапазон по 24 битам
-  и молча принимал недостижимые переходы. Починено с разделением ролей —
-  кодируем как ORG.Mod (24 бита, совместимо с настоящим компилятором),
-  диапазон проверяем по железу (22 бита, явная ошибка). Поведение существующих
-  тестов не изменилось: ошибка была недостижима на 1 МБ.
-- Самотест ассемблера получил обязательные отказы (`must_fail`) и включён в
-  `make test`. Первая попытка встроить была зелёной на поломке — код возврата
-  съедался конвейером `| tail -1`, тот же класс, что `|| true` из аудита.
-  Переписано через файл и явную проверку кода, оба пути проверены.
-- Находка записана в `docs/FINDING-24-assembler-correctness.md`.
+### 06:40 — auditing our own assembler: three Wirths who disagree
+- The question was "how correct is our assembler". Coverage: all 16 conditional
+  branches are in the tests; of the operations only `ANN` and `XOR` are not checked by anything.
+- Comparison with an independent instance, Wirth's own disassembler `ORTool.Mod`,
+  gave two differences, both real.
+- **The condition table in ORTool is wrong and incomplete**: 11 of 16 indexes are filled,
+  and `mnemo1[2]="LS"`, `mnemo1[10]="HI"` versus our CS and CC. The hardware is right:
+  `RISC5.v` gives `(cc==2)&C` and `(cc==4)&(C|Z)`. Proven by mutation: with the ORTool
+  layout **4 of 112 branch checks fail on the RTL**, with ours 112 of 112 pass.
+- **Branch offset width: three different numbers in one system.** ORG.Mod
+  (the code generator): `off MOD 1000000H`, 24 bits. RISC5.v (the hardware):
+  `disp = IR[21:0]`, 22 bits. ORTool.Mod (the disassembler): `w MOD 100000H`,
+  20 bits. Invisible in practice: a 1 MB address space = 18 bits in words.
+- That the hardware ignores bits 23:22 was checked by execution, not by reading:
+  a new `tests/t1_branch_width.s`, two branches that differ only in them
+  arrive at the same point.
+- **Found a latent bug of my own**: the assembler checked the range against 24 bits
+  and silently accepted unreachable branches. Fixed by separating roles:
+  we encode like ORG.Mod (24 bits, compatible with the real compiler),
+  and check the range against the hardware (22 bits, an explicit error). The behavior of existing
+  tests did not change: the bug was unreachable within 1 MB.
+- The assembler self-test got mandatory refusals (`must_fail`) and was included in
+  `make test`. The first attempt to hook it in was green on a breakage: the exit code
+  was swallowed by the `| tail -1` pipeline, the same class as `|| true` from the audit.
+  Rewritten via a file and an explicit check of the code; both paths verified.
+- The finding is recorded in `docs/FINDING-24-assembler-correctness.md`.
 
-### 08:20 — три открытых пункта по ассемблеру закрыты, круг на реальном коде
-- **ANN и XOR покрыты**: `tests/t1_logic.s`, 10 проверок на железе, семантика из
-  `aluRes`. Мутация (перестановка AND/ANN) роняет все 10.
-- **Побайтовая сверка с выводом ORG.Mod сделана.** `tools/rsc.py` разбирает .rsc
-  по раскладке из `ORTool.DecObj` (сошлось с журналом: 1756/2325/6650/6188 слов,
-  ключ E6FCC519). `tools/disasm.py` снят с RISC5.v. `tools/roundtrip.py` гоняет
-  круг слово→дизассемблер→ассемблер→слово. **33 838 слов настоящего компилятора
-  воспроизведены бит в бит.**
-- Первый прогон замкнулся на 15 628 из 16 919 и вскрыл ЧЕТЫРЕ пробела:
-  (1) нагрузка ловушки в битах 23:4 у BLR — `Put3(BLR, cond, Pos()*100H +
-  num*10H + MT)`, это 7.6% кода компилятора, выразить было нечем;
-  (2) диапазон непосредственного F1 — железо даёт `{{16{v}}, imm}`, то есть
-  −65536…−1 при v=1, а мы проверяли как 16-битное знаковое (реальное слово
+### 08:20 — three open assembler items closed, a round trip on real code
+- **ANN and XOR covered**: `tests/t1_logic.s`, 10 checks on the hardware, semantics from
+  `aluRes`. A mutation (swapping AND/ANN) brings down all 10.
+- **A byte-for-byte comparison with ORG.Mod's output is done.** `tools/rsc.py` parses .rsc
+  following the layout from `ORTool.DecObj` (agrees with the log: 1756/2325/6650/6188 words,
+  key E6FCC519). `tools/disasm.py` is taken from RISC5.v. `tools/roundtrip.py` runs
+  the round trip word→disassembler→assembler→word. **33,838 words of the real compiler
+  reproduced bit for bit.**
+- The first run closed on 15,628 of 16,919 and exposed FOUR gaps:
+  (1) the trap payload in bits 23:4 of BLR: `Put3(BLR, cond, Pos()*100H +
+  num*10H + MT)`, 7.6% of the compiler's code, and there was no way to express it;
+  (2) the F1 immediate range: the hardware gives `{{16{v}}, imm}`, that is,
+  −65536…−1 with v=1, while we checked it as a 16-bit signed value (a real word
   `50090000` = `SUB R0,R0,-65536`);
-  (3) `MOV a,H` / `MOV a,NZCV` — старый `TODO(verify)` снят чтением aluRes;
-  (4) `FLT` / `FLOOR` — спецформы op=12, различаются u/v, видно в FPAdder.v.
-- **Систематический перебор** `tools/sweep_encoding.py` — 129 760 форм со стороны
-  ассемблера, все проходят круг. Перебор со стороны СЛОВ не годится: при op=0
-  железо не читает поле b (ветка MOV в aluRes не трогает B), и слово с непустым b
-  не воспроизводится буквально. Добавлено в тест на железе.
-- **Найдена настоящая коллизия кодировок**: `RTI = BR & ~u & ~v & IR[4]`, то есть
-  переход по регистру без связи с нечётной нагрузкой исполняется как RTI.
-  Подтверждено исполнением — `tests/t1_irq.s` гоняет ровно эту комбинацию.
-  Ассемблер такую форму теперь отвергает; ловушек Оберона не задевает (там BLR).
-- Мутационная проба показала, что две проверки НЕ заменяют друг друга: перестановку
-  ADC/SBC круг не ловит вовсе (их нет в коде компилятора), перестановку a/b ловит
-  слабо (122 случая — в накопительном стиле a и b часто совпадают). Перебор ловит обе.
-- **Найден ещё один баг воспроизводимости**: кэш байт-кода Python. Секундная
-  гранулярность времени на macOS — восстановленный из копии дизассемблер продолжал
-  выдавать мутированный разбор, потому что `.pyc` считался свежим. В Makefile
-  добавлен `PYTHONDONTWRITEBYTECODE`, `__pycache__` в .gitignore.
-  Осталось удалить существующий каталог: `rm -rf tools/__pycache__` (выполнить самому).
-- Цели `roundtrip` и перебор встроены в `make test` / `make check`, оба пути
-  (зелёный и красный) проверены. Тестов стало 264 проверки в 16 файлах.
-- Находка 24 дополнена.
+  (3) `MOV a,H` / `MOV a,NZCV`: the old `TODO(verify)` was resolved by reading aluRes;
+  (4) `FLT` / `FLOOR`: special forms of op=12 that differ in u/v, visible in FPAdder.v.
+- **A systematic enumeration** `tools/sweep_encoding.py`: 129,760 forms from the assembler's
+  side, all pass the round trip. Enumerating from the WORD side does not work: with op=0
+  the hardware does not read field b (the MOV branch in aluRes does not touch B), and a word with a non-empty b
+  is not reproduced literally. Added to the hardware test.
+- **Found a real encoding collision**: `RTI = BR & ~u & ~v & IR[4]`, that is,
+  a branch to a register without link and with an odd payload executes as RTI.
+  Confirmed by execution: `tests/t1_irq.s` runs exactly this combination.
+  The assembler now rejects this form; it does not affect Oberon traps (those are BLR).
+- A mutation probe showed that the two checks do NOT replace each other: the round trip does not catch
+  swapping ADC/SBC at all (they do not occur in the compiler's code), and catches swapping a/b
+  weakly (122 cases: in accumulator style a and b often coincide). The enumeration catches both.
+- **Found another reproducibility bug**: the Python bytecode cache. With one-second
+  time granularity on macOS, a disassembler restored from a backup kept
+  producing the mutated parse because the `.pyc` was considered fresh. Added
+  `PYTHONDONTWRITEBYTECODE` to the Makefile and `__pycache__` to .gitignore.
+  What remains is to remove the existing directory: `rm -rf tools/__pycache__` (to be run by hand).
+- The `roundtrip` targets and the enumeration are built into `make test` / `make check`; both paths
+  (green and red) verified. The tests are now 264 checks in 16 files.
+- Finding 24 extended.
 
-### 09:40 — 🔴 первое слово программы не исполнялось во всех 264 проверках
-- Взялись за открытый пункт: 34% пространства кодирования без мнемоники. Оказалось,
-  это не мусор — это `u=1`/`v=1` на операциях, где `aluRes` эти биты не читает.
-  Проверено исполнением (`tools/gen_dontcare_test.py`): 27 сравнений из 32 дали ноль.
-- **Пять форм значимы**: `DIV` с u=1 — беззнаковое деление (делитель получает `~u`,
-  внутри `sign = x[31] & u`); `FSB` с u/v — сумматор в режиме преобразования.
-  Для DIV арифметика сошлась точно: 0xF0F0F0F0 DIV 5 = 0xFCFCFCFC знаково,
-  0x30303030 беззнаково, разность ровно измеренная 0xCCCCCCCC.
-- Введены суффиксы `.u`/`.v`/`.uv` и `UDIV`; FLT/FLOOR/ADC/SBC/UMUL сведены к одному
-  механизму псевдонимов. Перебор вырос до 375 776 форм, **покрытие слов 66.1% → 100%**.
-  Круг на реальном коде остался полным (33 838 слов).
-- **ГЛАВНОЕ.** Зонд делителя дал 0 вместо 14, и причина не в делителе. RISC5 — машина
-  с предвыборкой: на шине адреса стоит PC+1, исполняется содержимое IR. Во время
-  сброса на шине уже стоит StartAdr, и железо защёлкивает первое слово в IR.
-  `tb/run_tests.cpp` при сбросе подавал на шину НУЛИ — в IR оставался ноль, первый
-  такт исполнял MOV R0,R0, а первое слово программы не читалось вовсе.
-  **Во всех 264 направленных проверках первая инструкция не исполнялась.**
-- Пряталось потому, что каждый тест начинался с безразличной инструкции. И те самые
-  «странные» числа из первых замеров (0x30300000 вместо 0x30303030) объясняются этим же.
-- **Самое неприятное**: ошибка УЖЕ была найдена и исправлена в `tb/soc_tb.cpp`
-  («ровно на этом я и споткнулся»), но в `run_tests.cpp` не перенесена — не было
-  регрессионного теста. Аудит всех пяти стендов: остальные четыре в порядке.
-  Теперь есть `tests/t1_prime.s`, сброс приведён к единому виду.
-- После починки все 264 прежние проверки проходят БЕЗ единой правки ожиданий — значит
-  ни одно ожидание не было подогнано под сломанный пуск.
-- Находка 25. Проверок стало 298 в 18 файлах.
-- Черновой зонд `tests/t9_probe.s` в сборку не входит, можно удалить:
-  `rm tests/t9_probe.s tests/t9_probe.bin tests/t9_probe.chk` (выполнить самому).
+### 09:40 — 🔴 the first word of the program was not executed in any of the 264 checks
+- Took up an open item: 34% of the encoding space without a mnemonic. It turned out
+  this is not garbage: it is `u=1`/`v=1` on operations where `aluRes` does not read these bits.
+  Verified by execution (`tools/gen_dontcare_test.py`): 27 of 32 comparisons gave zero.
+- **Five forms are significant**: `DIV` with u=1 is unsigned division (the divider gets `~u`,
+  inside `sign = x[31] & u`); `FSB` with u/v is the adder in conversion mode.
+  For DIV the arithmetic matched exactly: 0xF0F0F0F0 DIV 5 = 0xFCFCFCFC signed,
+  0x30303030 unsigned, the difference exactly the measured 0xCCCCCCCC.
+- Introduced the suffixes `.u`/`.v`/`.uv` and `UDIV`; FLT/FLOOR/ADC/SBC/UMUL were reduced to one
+  alias mechanism. The enumeration grew to 375,776 forms, **word coverage 66.1% → 100%**.
+  The round trip on real code stayed complete (33,838 words).
+- **THE MAIN THING.** The divider probe gave 0 instead of 14, and the cause was not the divider. RISC5 is a machine
+  with prefetch: the address bus holds PC+1, while the contents of IR are executed. During
+  reset the bus already holds StartAdr, and the hardware latches the first word into IR.
+  `tb/run_tests.cpp` fed ZEROS to the bus during reset: IR kept a zero, the first
+  cycle executed MOV R0,R0, and the program's first word was never read at all.
+  **In all 264 directed checks the first instruction was not executed.**
+- It hid because every test started with an irrelevant instruction. And those
+  "strange" numbers from the first measurements (0x30300000 instead of 0x30303030) are explained by the same thing.
+- **The most unpleasant part**: the bug HAD ALREADY been found and fixed in `tb/soc_tb.cpp`
+  ("this is exactly what I tripped over"), but it was not carried over to `run_tests.cpp`: there was no
+  regression test. An audit of all five benches: the other four are fine.
+  Now there is `tests/t1_prime.s`, and reset was brought to a single form.
+- After the fix all 264 previous checks pass WITHOUT a single change to the expectations, so
+  not a single expectation had been tuned to the broken start.
+- Finding 25. Checks are now 298 in 18 files.
+- The draft probe `tests/t9_probe.s` is not part of the build and can be deleted:
+  `rm tests/t9_probe.s tests/t9_probe.bin tests/t9_probe.chk` (to be run by hand).
 
-### 11:20 — семантический дифференциал и лечение четырёх старых болячек
-- **Закрыта последняя дыра.** `tools/alu_model.py` — модель целочисленного ядра по
-  RISC5.v, написанная отдельно от ассемблера. `tools/gen_alu_diff.py` строит
-  случайные программы и проверяет двоякое: (1) предсказание модели совпадает с
-  железом по результату, всем четырём флагам и H; (2) модель, разобрав слово от
-  ассемблера, называет ту же операцию. Общей раскладки в цепочке нет.
-  900 случаев, **4650 проверок**, все зелёные. Семь мутаций модели — все пойманы.
-- **Программа не помещалась в адресное пространство.** Первый большой дифференциал
-  дал 1720 «провалов», и все — НЕСРАБОТАВШИЕ ожидания. PC 22-битный, программа лежит
-  по ORG=0xFFE000, до края ровно 2048 слов; длиннее — молча уходит по кругу на ноль.
-  Поймало правило «несработавшее ожидание — провал» из мутационного аудита.
-  Починено: оснастка отказывается грузить длинную программу, генератор режет на файлы.
-- **`measure_clean.sh`: три глушителя подряд.** (1) путь — двоичные модули лежат в
-  `build/s2X`, а искались в `build/cfgX`, копирование с `|| true` проглатывало
-  отсутствие, и все три конфигурации оказывались одним компилятором → разница +0.00%;
-  (2) отсюда ZeroDivisionError в конце — единственный внешний признак;
-  (3) конфигурация E ставит версию 2, а загрузчик проверяет `versionkey = 1X` и такие
-  модули НЕ ГРУЗИТ — это наш же намеренный замок. Стадия 2 собирала компилятор
-  компилятором E, получала версию 2, прогон давал пустой лог, `set -e` обрывал сразу
-  после «нагрузка:» — вот и симптом «скрипт ничего не выводит».
-  Починено: жёсткая проверка, защита знаменателя, `tools/rsc_setversion.py`.
-  **Честный замер**: A 29 277 745 тактов, B +2.19%, E +1.85%; аппаратура снимает 15.5%.
-  Цифра +2.19% сходится с 2.20% из разложения 2×2 — два независимых способа.
-- **Эквивалентность декодера**: подпись была узкой (R5, R6, флаги, такты, память),
-  поле `a` намертво 5 — а у формата F3 это и есть условие, т.е. из 16 условий
-  проверялось одно, и порча BL не видна (нет R15 и PC). Теперь подпись — все 16
-  регистров, флаги, PC, H; поле `a` перебирается: **20 480 комбинаций вместо 1280**.
-  Расходится по-прежнему ровно CHK.
-- **Lockstep не сравнивал память.** Добавлена периодическая полная сверка ОЗУ: 58
-  проходов на 14,6 млн инструкций. Первое же расхождение объяснимое — `00FFE27C`
-  против `FFFFFA7C`, один адрес возврата в разных картах ПЗУ; правило от R15
-  распространено на память, поблажек 99 за прогон, они считаются. Порча одного бита
-  ловится.
-- Мелочь: `ADC`/`SBC` с отрицательным непосредственным недостижимы (псевдоним
-  фиксирует v=0) — писать `ADD.uv` / `SUB.uv`; ассемблер объясняет это в ошибке.
-- Находка 26.
+### 11:20 — a semantic differential and curing four old ailments
+- **The last hole is closed.** `tools/alu_model.py` is a model of the integer core per
+  RISC5.v, written separately from the assembler. `tools/gen_alu_diff.py` builds
+  random programs and checks two things: (1) the model's prediction matches the
+  hardware in the result, all four flags and H; (2) the model, having parsed a word from the
+  assembler, names the same operation. There is no shared layout in the chain.
+  900 cases, **4650 checks**, all green. Seven mutations of the model, all caught.
+- **The program did not fit in the address space.** The first large differential
+  gave 1720 "failures", and all of them were expectations that NEVER FIRED. The PC is 22-bit, the program sits
+  at ORG=0xFFE000, exactly 2048 words to the edge; anything longer silently wraps around to zero.
+  It was caught by the rule "an expectation that does not fire is a failure" from the mutation audit.
+  Fixed: the harness refuses to load a long program, the generator splits it into files.
+- **`measure_clean.sh`: three silencers in a row.** (1) the path: the binary modules live in
+  `build/s2X` but were looked for in `build/cfgX`; the copy with `|| true` swallowed
+  their absence, and all three configurations ended up being one compiler → a difference of +0.00%;
+  (2) hence a ZeroDivisionError at the end, the only external symptom;
+  (3) configuration E sets version 2, while the loader checks `versionkey = 1X` and does
+  NOT LOAD such modules: our own deliberate lock. Stage 2 built the compiler with
+  compiler E, got version 2, the run produced an empty log, and `set -e` aborted right
+  after "workload:"; hence the symptom "the script prints nothing".
+  Fixed: a hard check, a guard on the denominator, `tools/rsc_setversion.py`.
+  **The honest measurement**: A 29,277,745 cycles, B +2.19%, E +1.85%; the hardware removes 15.5%.
+  The +2.19% figure agrees with 2.20% from the 2×2 breakdown: two independent methods.
+- **Decoder equivalence**: the signature was narrow (R5, R6, flags, cycles, memory),
+  and field `a` was hard-wired to 5, while in format F3 that is the condition, i.e. of 16 conditions
+  only one was checked, and a corruption of BL was invisible (no R15 and PC). Now the signature is all 16
+  registers, the flags, PC, H; field `a` is enumerated: **20,480 combinations instead of 1280**.
+  As before, exactly CHK differs.
+- **Lockstep did not compare memory.** Added a periodic full RAM comparison: 58
+  passes over 14.6 million instructions. The very first mismatch is explainable: `00FFE27C`
+  versus `FFFFFA7C`, one return address in different ROM maps; the R15 rule
+  was extended to memory, there are 99 allowances per run, and they are counted. A single-bit corruption
+  is caught.
+- A small thing: `ADC`/`SBC` with a negative immediate are unreachable (the alias
+  pins v=0); write `ADD.uv` / `SUB.uv`; the assembler explains this in its error.
+- Finding 26.
 
-### 13:10 — 🎯 СИСТЕМА ПЕРЕСОБИРАЕТ СЕБЯ ЦЕЛИКОМ
-- 42 модуля — от Kernel и Display до Edit и Draw — собраны компилятором Оберона
-  внутри самой системы на ядре RISC5.v. Вход только мышь и клавиатура.
-- **37 объектных файлов пересобраны побайтово идентично.** Система — неподвижная
-  точка своего компилятора. Пересобранный образ грузится, сумма экрана прежняя B5DFC933.
-- Написан `tools/oberonfs.py` — чтение файловой системы Оберона прямо из образа
-  (раскладка из Kernel.Mod/FileDir.Mod/Files.Mod). Проверен перекрёстно: извлечённый
-  ORP.rsc даёт ключ E6FCC519 и 6188 слов — то же, что на экране и в самораскрутке.
-- Порядок сборки выведен топологической сортировкой по IMPORT из исходников
-  С САМОГО ОБРАЗА, а не из нашей копии 2019 года.
-- **Образ Project Oberon 2016 не вполне согласован.** Три модуля не компилируются
-  компилятором с того же образа: `RISC` (pos 926 bad divisor — 80000000H как делитель
-  отрицателен для знакового INTEGER), `ORC` (импортирует V24, которого на образе нет),
-  `Net` (девять incompatible parameters — сигнатуры SCC разошлись). Плюс `Math.rsc`
-  устарел (449 слов на образе против 447 при пересборке, ключ тот же), а `PIO.rsc`
-  и `PIO.smb` отсутствовали вовсе.
-- Ловушка 4 снова: пачки по три роняли третий модуль. Та же причина, что в находке 23 —
-  внутри команды нет сборки мусора. Компилятор надо звать по одному модулю за команду.
-- **Журнал System.Log не прокручивается** (18 строк), и первый прогон спрятал шесть
-  команд из одиннадцати. Сценарий теперь чистит журнал после каждой команды и снимает
-  кадр; `tools/stitch_log.py` сшивает области в одну картинку.
-- **Проверка чуть не оказалась зелёной на поломке**: побайтовое сравнение проходило на
-  НЕТРОНУТОМ образе, потому что не отличает «пересобрано и совпало» от «не трогали».
-  Даты не помогают — на образе все нулевые, часов нет. Починено обязательными
-  положительными признаками (PIO.rsc должен появиться, Math.rsc обязан отличаться).
-- Цель `make rebuild` (3 сессии, ~8 минут) входит в `make check`. Находка 27.
+### 13:10 — 🎯 THE SYSTEM REBUILDS ITSELF COMPLETELY
+- 42 modules, from Kernel and Display to Edit and Draw, were built by the Oberon compiler
+  inside the system itself on the RISC5.v core. The only input is the mouse and keyboard.
+- **37 object files were rebuilt byte-for-byte identical.** The system is a fixed
+  point of its compiler. The rebuilt image boots, the screen checksum is still B5DFC933.
+- Wrote `tools/oberonfs.py`: reading the Oberon file system straight from the image
+  (the layout from Kernel.Mod/FileDir.Mod/Files.Mod). Cross-checked: the extracted
+  ORP.rsc gives key E6FCC519 and 6188 words, the same as on the screen and in the bootstrap.
+- The build order was derived by a topological sort over IMPORT from the sources
+  FROM THE IMAGE ITSELF, not from our 2019 copy.
+- **The Project Oberon 2016 image is not fully consistent.** Three modules do not compile
+  with the compiler from the same image: `RISC` (pos 926 bad divisor: 80000000H as a divisor
+  is negative for a signed INTEGER), `ORC` (imports V24, which is not on the image),
+  `Net` (nine incompatible parameters: the SCC signatures have diverged). Plus `Math.rsc`
+  is stale (449 words on the image versus 447 when rebuilt, the same key), and `PIO.rsc`
+  and `PIO.smb` were missing altogether.
+- Trap 4 again: batches of three brought down the third module. The same cause as in finding 23:
+  there is no garbage collection inside a command. The compiler has to be called one module per command.
+- **The System.Log journal does not scroll** (18 lines), and the first run hid six
+  commands of eleven. The script now clears the log after every command and takes
+  a frame; `tools/stitch_log.py` stitches the regions into one picture.
+- **The check nearly turned out green on a breakage**: the byte-wise comparison passed on an
+  UNTOUCHED image, because it does not distinguish "rebuilt and matched" from "not touched".
+  Dates do not help: on the image they are all zero, there is no clock. Fixed with mandatory
+  positive signs (PIO.rsc must appear, Math.rsc must differ).
+- The `make rebuild` target (3 sessions, ~8 minutes) is part of `make check`. Finding 27.
 
-### 15:40 — каркас лабораторных и первые три лабы (Л2, Л3)
-- `web/machine.js` — переиспользуемая обвязка машины (отрисовка, мышь, клавиатура,
-  набор текста скан-кодами, щелчки по координатам, откат). Выделена из index.html.
-- `web/oberonfs.js` — чтение файловой системы Оберона из образа в памяти машины.
-- `web/labs.js` + `web/lab.html` + `web/labs-test.mjs` — лаборатории и оболочка.
-- Браузерная сборка получила доступ к состоянию: soc_reg/flags/h/ram/fb_crc/disk_word
-  и soc_poke (единственное на запись — без него нет уровня «ломать»).
-- **Лаба 1 «смотреть»**: загрузка, сумма экрана B5DFC933; открыть список модулей,
-  проверка считает точки текста в полосе вьюера.
-- **Лаба 4 «ломать»**: испортить кадровый буфер (система жива), затем вписать
-  E7FFFFFF по текущему PC (переход на себя) — машина встаёт. Остановку НЕЛЬЗЯ
-  определять по счётчику инструкций: переход на себя тоже исполняется. Проверка
-  берёт пять проб PC: до порчи гуляет, после — замирает.
-- **Лаба 7 «строить»**: пересобрать Math внутри системы и своими руками увидеть
-  находку 27 — 1877 байт до, 1869 после. Проверка читает длину С ДИСКА.
-- **Откат вскрыл последствие находки 19**: после повторного soc_init система не
-  грузилась — в RISC5.v нет сброса регистрового файла, флагов, H и IR, и при втором
-  пуске там грязь. Починено явным обнулением в soc_init; на ПЛИС этого не будет,
-  пункт кремниевого чек-листа открыт.
-- `make labs` требует перехода проверки из «не сделано» в «сделано» и статически
-  сверяет разметку оболочки. Красный путь проверен. Цель входит в `make check`.
-- Страницу в браузере открыть не удалось: Chrome в этом окружении не достучался до
-  локального сервера (ошибка даже на листинге, при curl 200). Разметка проверена
-  статически, поведение — безголово.
-- Находка 28.
+### 15:40 — the lab framework and the first three labs (L2, L3)
+- `web/machine.js`: a reusable machine wrapper (rendering, mouse, keyboard,
+  typing text as scan codes, clicks at coordinates, rollback). Extracted from index.html.
+- `web/oberonfs.js`: reading the Oberon file system from the image in the machine's memory.
+- `web/labs.js` + `web/lab.html` + `web/labs-test.mjs`: the labs and the shell.
+- The browser build got access to the state: soc_reg/flags/h/ram/fb_crc/disk_word
+  and soc_poke (the only write access; without it there is no "break" level).
+- **Lab 1 "look"**: boot, screen checksum B5DFC933; open the module list,
+  the check counts text pixels in the viewer's strip.
+- **Lab 4 "break"**: corrupt the framebuffer (the system is alive), then write
+  E7FFFFFF at the current PC (a jump to itself): the machine stops. A stop CANNOT
+  be detected by the instruction counter: a jump to itself also executes. The check
+  takes five samples of the PC: before the corruption it wanders, after it freezes.
+- **Lab 7 "build"**: rebuild Math inside the system and see
+  finding 27 with your own hands: 1877 bytes before, 1869 after. The check reads the length FROM THE DISK.
+- **Rollback exposed a consequence of finding 19**: after a repeated soc_init the system did not
+  boot: RISC5.v has no reset for the register file, the flags, H and IR, and on the second
+  start there is garbage there. Fixed by explicit zeroing in soc_init; on an FPGA this will not happen,
+  so the silicon checklist item stays open.
+- `make labs` requires a check to go from "not done" to "done" and statically
+  verifies the shell's markup. The red path is verified. The target is part of `make check`.
+- I could not open the page in a browser: Chrome in this environment could not reach the
+  local server (an error even on the listing, while curl returned 200). The markup was checked
+  statically, the behavior headlessly.
+- Finding 28.
 
-### 16:30 — переносимый каркас оснастки (П1)
-- `tb/scenario.h`: язык сценария, его разбор и проигрывание, выгрузка кадра в PBM
-  и интерфейс `harness::Host` (поставить указатель / послать клавишу / отдать экран).
-  Машине остаётся адрес и размер кадрового буфера, порядок строк и формат регистров
-  ввода — у RISC5 это двадцать строк в soc_tb.cpp.
-- **Отделение чистое**: после вынесения загрузка даёт прежнюю сумму B5DFC933,
-  а двухпоколенная самораскрутка — ТЕ ЖЕ 715 000 000 инструкций и 1 101 436 669
-  тактов, поколения совпадают побитово. Цифры сошлись до инструкции.
-- Переносимость этим НЕ доказана: её докажет вторая машина (Lilith, шаг 2 плана).
-- Находка 29.
+### 16:30 — a portable harness framework (P1)
+- `tb/scenario.h`: the scenario language, its parsing and playback, dumping a frame to PBM,
+  and the `harness::Host` interface (set the pointer / send a key / hand over the screen).
+  What is left to the machine is the framebuffer address and size, the row order and the format of the input
+  registers: for RISC5 that is twenty lines in soc_tb.cpp.
+- **The separation is clean**: after the extraction the boot gives the same checksum B5DFC933,
+  and the two-generation bootstrap gives THE SAME 715,000,000 instructions and 1,101,436,669
+  cycles, the generations match bit for bit. The numbers agree to the instruction.
+- Portability is NOT proven by this: the second machine will prove it (Lilith, step 2 of the plan).
+- Finding 29.
 
-### 18:20 — методичка по Оберону, 8 глав
-- `docs/book/*.md` (источник) -> `web/book/*.html` (сборщик `tools/mkbook.py` на
-  готовой библиотеке `markdown`, своего конвертера не писали). Около 5000 слов.
-- Главы: зачем и что настоящее / машина RISC5 / язык за одну главу / система:
-  текст вместо кнопок / модули и символьные файлы / компилятор изнутри /
-  самораскрутка и неподвижная точка / что мы измерили.
-- **Написано по исходникам**: 33 ключевых слова из `EnterKW` в ORS.Mod, 42 встроенных
-  имени из `enter` в ORB.Mod, соглашения о регистрах из констант ORG.Mod, пример
-  модуля — настоящий Blink.Mod с образа, путь `a[i]` — по процедуре Index,
-  кодировка ловушки — по Trap. Числа — из находок 8, 16, 24, 26, 27.
-- Лаборатории связаны с главами, на странице лаб — ссылка на методичку.
-- `make book` падает на ссылке в несуществующую главу или на несуществующую лабу;
-  `make labs` проверяет ссылки из лаб в главы. Три мутации, все пойманы.
-- Чего нет: упражнений (они в лабах, их 3 из 12), оконной подсистемы, сборщика
-  мусора, второй машины.
-- Находка 30. Следующее по договорённости — девять оставшихся лабораторных.
+### 18:20 — an Oberon handbook, 8 chapters
+- `docs/book/*.md` (source) -> `web/book/*.html` (the builder `tools/mkbook.py` on the
+  ready-made `markdown` library; we did not write our own converter). About 5000 words.
+- Chapters: why, and what is real / the RISC5 machine / the language in one chapter / the system:
+  text instead of buttons / modules and symbol files / the compiler from the inside /
+  bootstrapping and the fixed point / what we measured.
+- **Written from the sources**: 33 keywords from `EnterKW` in ORS.Mod, 42 built-in
+  names from `enter` in ORB.Mod, register conventions from ORG.Mod's constants, the example
+  module is the real Blink.Mod from the image, the path of `a[i]` follows the Index procedure,
+  the trap encoding follows Trap. Numbers from findings 8, 16, 24, 26, 27.
+- Labs are linked to chapters; the labs page links to the handbook.
+- `make book` fails on a link to a nonexistent chapter or a nonexistent lab;
+  `make labs` checks the links from labs to chapters. Three mutations, all caught.
+- What is missing: exercises (they are in the labs, 3 of 12), the windowing subsystem, the garbage
+  collector, a second machine.
+- Finding 30. Next, as agreed: the nine remaining labs.
 
-### 21:10 — девять лабораторных
-- К трём прежним добавлены шесть: №2 первый свой модуль, №3 ключ интерфейса,
-  №5 сколько тактов на инструкцию (уровень «измерять»), №6 куча кончается внутри
-  команды, №8 неподвижная точка в два поколения, №9 внутри кодогенератора.
-  Программа курса закрыта с 1 по 9.
-- В каркас добавлено: состояние между шагами, поля ответа (без них нет «измерять»),
-  разбор .rsc в браузере (размер кода, ключ, версия, импорты с их ключами), чтение
-  текста Оберона (файлы редактора — не голый ASCII: метка, смещение, куски со
-  шрифтами, концы строк — возврат каретки), признак «файл пересобран» по служебной
-  записи каталога.
-- **Три гипотезы опыт отверг.** (1) Пачка ORS+ORB+ORG+PIO кучу НЕ исчерпывает —
-  дело не в числе модулей, а в весе; роняет ORP. (2) Звёздочка после MODULE код не
-  уменьшает, а УВЕЛИЧИВАЕТ: 34 слова с проверками, 38 без — `version := 0` включает
-  режим RISC-0 целиком, а он резервирует восемь слов в начале модуля. Два эффекта
-  сразу; это стало содержанием лабы, а не было спрятано. (3) **Наборщик скан-кодов
-  не набирал закрывающую скобку** — таблица цифр начиналась не с того символа,
-  в файл уходило `INC(i END`, и файл при этом исправно создавался.
-- Защита от последнего: тест набирает текст через настоящий редактор, сохраняет,
-  читает файл обратно с диска и сверяет посимвольно.
-- Список номеров лаб в сборщике методички теперь читается из web/labs.js, а не зашит.
-- Лабы 10–12 не сделаны и в браузере невозможны: №10 — большой объём правок
-  компилятора, №11 — пересборка Verilog на хосте, №12 — ждёт второй машины.
-- Находка 31.
+### 21:10 — nine labs
+- Six were added to the previous three: #2 your first module, #3 the interface key,
+  #5 how many cycles per instruction (the "measure" level), #6 the heap runs out inside
+  a command, #8 the fixed point in two generations, #9 inside the code generator.
+  The course syllabus is closed from 1 to 9.
+- Added to the framework: state between steps, answer fields (without them there is no "measure"),
+  parsing .rsc in the browser (code size, key, version, imports with their keys), reading
+  Oberon text (the editor's files are not plain ASCII: a tag, an offset, runs with
+  fonts, line ends are carriage returns), a "file rebuilt" sign from the directory's
+  housekeeping record.
+- **Experiment rejected three hypotheses.** (1) The batch ORS+ORB+ORG+PIO does NOT exhaust the heap:
+  it is not about the number of modules but about their weight; ORP is what brings it down. (2) The asterisk after MODULE does not
+  shrink the code but GROWS it: 34 words with checks, 38 without: `version := 0` turns on
+  RISC-0 mode as a whole, and it reserves eight words at the start of the module. Two effects
+  at once; this became the content of a lab rather than being hidden. (3) **The scan-code typist
+  did not type the closing parenthesis**: the digit table started from the wrong character,
+  `INC(i END` went into the file, and the file was still created without complaint.
+- Protection against the last one: the test types text through the real editor, saves it,
+  reads the file back from disk and compares it character by character.
+- The list of lab numbers in the handbook builder is now read from web/labs.js instead of being hard-coded.
+- Labs 10–12 are not done and are impossible in the browser: #10 needs a large amount of compiler
+  edits, #11 rebuilding Verilog on the host, #12 waits for the second machine.
+- Finding 31.
 
-### 22:40 — лабораторные с инструментарием как пакетное задание
-- Мысль пользователя: часть лабораторок можно крутить в Cozystack. Верно — те, что
-  правят процессор и компилятор, не интерактивны, это пакетная нагрузка «дал правку,
-  получил вердикт».
-- `deploy/Containerfile` (debian:trixie-slim + Verilator, g++, python3, node, 863 МБ),
-  `deploy/lab.sh` (правка подаётся каталогом /work, накладывается поверх дерева),
-  `deploy/k8s/lab-job.yaml` (правка через ConfigMap, initContainer раскладывает ключи
-  обратно в пути, backoffLimit: 0).
-- **Побочно — независимое подтверждение воспроизводимости**: в образе Verilator 5.032
-  против нашего 5.052, и все 298 проверок, 375 776 форм перебора и 20 480 комбинаций
-  эквивалентности декодера проходят одинаково. До сих пор все числа давал один
-  симулятор одной версии.
-- `make image-check` требует ДВУХ исходов: чистое дерево проходит, сломанная правка
-  (переставлены AND и ANN в aluRes) проваливается — ловится тестом логики и
-  семантическим дифференциалом (118 и 68 провалов). В `make check` не входит: нужен Docker.
-- Грабли: (1) Docker на macOS не видит каталоги вне расшаренных путей — молча
-  «правок нет», хотя файл лежит; перенёс рабочий каталог внутрь дерева проекта.
-  (2) `find` без скобок: `-o` связывает слабее, чем читается.
-- Это НЕ пакет Cozystack, а обычное задание Kubernetes. Образ не публиковался,
-  в кластере не запускался, в манифесте намеренно `ghcr.io/REPLACE-ME/`.
-- Находка 32.
+### 22:40 — labs with tooling as a batch job
+- The user's idea: some labs could run in Cozystack. Right: the ones that
+  edit the processor and the compiler are not interactive; they are a batch workload, "submit an edit,
+  get a verdict".
+- `deploy/Containerfile` (debian:trixie-slim + Verilator, g++, python3, node, 863 MB),
+  `deploy/lab.sh` (the edit is submitted as the /work directory and overlaid on the tree),
+  `deploy/k8s/lab-job.yaml` (the edit via a ConfigMap, an initContainer lays the keys
+  back out into paths, backoffLimit: 0).
+- **A side effect: independent confirmation of reproducibility**: the image has Verilator 5.032
+  versus our 5.052, and all 298 checks, the 375,776 enumerated forms and the 20,480 decoder
+  equivalence combinations pass identically. Until now all the numbers came from one
+  simulator of one version.
+- `make image-check` requires TWO outcomes: the clean tree passes, a broken edit
+  (AND and ANN swapped in aluRes) fails, caught by the logic test and the
+  semantic differential (118 and 68 failures). It is not part of `make check`: it needs Docker.
+- Pitfalls: (1) Docker on macOS does not see directories outside the shared paths: silently
+  "no edits", even though the file is there; I moved the working directory inside the project tree.
+  (2) `find` without parentheses: `-o` binds more loosely than it reads.
+- This is NOT a Cozystack package but an ordinary Kubernetes job. The image was not published,
+  was not run in a cluster, and the manifest deliberately says `ghcr.io/REPLACE-ME/`.
+- Finding 32.
 
-### 23:50 — подключаемый каталог для Cozystack
-- Идея пользователя: отдельный маркетплейс, куда складывать эмуляторы никогда не
-  выпущенных архитектур, нереализованные ОС и языки — как разворачиваемые окружения.
-- **Механика уже существует.** Дорожная карта: community marketplace на 2027 Q1,
-  пропозалы в `cozystack/community` открыты и не смёржены; консоль на динамическом
-  обнаружении через ApplicationDefinition; прецедент — `ccp`. В дереве: PackageSource,
-  ApplicationDefinition, `cozypkg tap/untap` (подключение стороннего источника;
-  официальные отключить нельзя — защитная метка), `cozypkg validate` для ВНЕШНЕГО
-  репозитория, пакет internal/marketplace.
-- Имя ссылки на чарт: `<источник>-<вариант>-<компонент>`, точки в дефисы
+### 23:50 — a pluggable catalog for Cozystack
+- The user's idea: a separate marketplace for emulators of never-released
+  architectures, unimplemented OSes and languages, as deployable environments.
+- **The mechanism already exists.** Roadmap: a community marketplace in 2027 Q1,
+  the proposals in `cozystack/community` are open and not merged; the console relies on dynamic
+  discovery via ApplicationDefinition; the precedent is `ccp`. In the tree: PackageSource,
+  ApplicationDefinition, `cozypkg tap/untap` (connecting a third-party source;
+  the official ones cannot be disabled, there is a protective label), `cozypkg validate` for an EXTERNAL
+  repository, the internal/marketplace package.
+- The chart reference name: `<source>-<variant>-<component>`, dots turned into dashes
   (internal/marketplace/naming).
-- Создан `~/projects/forgotten-systems/marketplace`: sources/ + packages/apps/oberon-lab
-  + packages/system/oberon-lab-rd. `cozypkg validate .` — 0 ошибок, 0 предупреждений.
-- **Проверено на промах**: подменил имя ссылки на несуществующее — валидатор поймал
-  висячую ссылку. Значит он действительно читает наши объекты.
-- **Побочная находка для платформы**: `helm lint` версии 4 ругается `invalid icon URL`
-  на ВСЕ чарты Cozystack (nats, redis, kafka, mongodb — у каждого ровно одна такая
-  ошибка). Это расхождение helm 4 с их же конвенцией (/logos/... разрешается внутрь
-  чарта в hack/update-crd.sh). Следствие: `cozypkg validate --helm-lint` на helm 4
-  сейчас непригоден ни для своего каталога, ни для стороннего.
-- Образы не публиковались, в OCI не выкладывалось, в кластере не запускалось —
-  везде намеренно REPLACE-ME.
-- Находка 33.
+- Created `~/projects/forgotten-systems/marketplace`: sources/ + packages/apps/oberon-lab
+  + packages/system/oberon-lab-rd. `cozypkg validate .`: 0 errors, 0 warnings.
+- **Checked for misses**: replaced a reference name with a nonexistent one, and the validator caught
+  the dangling reference. So it really does read our objects.
+- **A side finding for the platform**: `helm lint` version 4 complains `invalid icon URL`
+  about ALL Cozystack charts (nats, redis, kafka, mongodb: each has exactly one such
+  error). This is a divergence of helm 4 from their own convention (/logos/... is resolved inside the
+  chart in hack/update-crd.sh). Consequence: `cozypkg validate --helm-lint` on helm 4
+  is currently unusable for both their own catalog and a third-party one.
+- Images were not published, nothing was pushed to OCI, nothing was run in a cluster:
+  REPLACE-ME everywhere on purpose.
+- Finding 33.
 
-## Следующий шаг
-`make check` целиком (около 8 минут), затем — Л1/П1 из BACKLOG.md.
+## Next step
+`make check` as a whole (about 8 minutes), then L1/P1 from BACKLOG.md.
 
-### 24.09 — каталог пересобран по проекту cozymarketplace
+### 24.09 — the catalog rebuilt following the cozymarketplace project
 
-Прочитал оба проекта в `cozystack/community` (`cozymarketplace` @kvaps и
-`cozymarketplace-supplementary` @IvanHunters) — оба уже в `main`. Сверил их не с
-текстом, а с кодом: типы `PackageSource`/`ApplicationDefinition`, `cozypkg`
-(`index.go`, `tap.go`, `validate.go`, `push.go`), реконсайлеры, консоль.
+Read both projects in `cozystack/community` (`cozymarketplace` by @kvaps and
+`cozymarketplace-supplementary` by @IvanHunters); both are already in `main`. Checked them not against
+the text but against the code: the `PackageSource`/`ApplicationDefinition` types, `cozypkg`
+(`index.go`, `tap.go`, `validate.go`, `push.go`), the reconcilers, the console.
 
-**Каталог разложен на три репозитория** в `~/projects/forgotten-systems/marketplace`:
-`repos/machines` (эмуляторы, лабораторные, методичка), `repos/languages`
-(окружения для языков), `repos/images` (загрузочные образы для KubeVirt).
-Единица установки — репозиторий, как требует проект; у каждого свой
-OCI-артефакт и своя запись в метаиндексе `index/`.
+**The catalog is split into three repositories** in `~/projects/forgotten-systems/marketplace`:
+`repos/machines` (emulators, labs, the handbook), `repos/languages`
+(environments for languages), `repos/images` (boot images for KubeVirt).
+The unit of installation is a repository, as the project requires; each has its own
+OCI artifact and its own entry in the `index/` meta-index.
 
-**Цепочка обнаружения проверена настоящим cozypkg:** `search` показывает три
-записи, `tap forgotten-systems-machines` разрешает короткое имя в
-`oci://…:v0.1.0` с версией из записи. Падает только на отсутствии `flux` в PATH.
+**The discovery chain was verified with the real cozypkg:** `search` shows three
+entries, `tap forgotten-systems-machines` resolves the short name to
+`oci://…:v0.1.0` with the version from the entry. It fails only because `flux` is not in PATH.
 
-**Новые части:**
-- `handbook` — документация ставится рядом с приложением; работает и без
-  сборки образа (страницы прямо в значениях, стоковый nginx);
-- `workbench` — метаприложение: родительский чарт рендерит `HelmRelease` на
-  компоненты того же репозитория (идиома `harbor`);
-- `langpack` — окружение для языка: разовый прогон или постоянная среда;
-- `machine-images` — публикация образов в `cozy-public` с защитой от коллизий;
-- `tools/gen-appdefs.py` — описания каталога собираются из `values.schema.json`
-  чартов, руками схемы не пишутся;
-- `tools/check.py` — 35 проверок, 9 из них мутации.
+**New parts:**
+- `handbook`: documentation installed next to the application; works even without
+  building an image (pages right in the values, stock nginx);
+- `workbench`: a meta-application: a parent chart renders `HelmRelease` objects for
+  components of the same repository (the `harbor` idiom);
+- `langpack`: an environment for a language: a one-off run or a persistent environment;
+- `machine-images`: publishing images to `cozy-public` with collision protection;
+- `tools/gen-appdefs.py`: the catalog descriptions are generated from the charts'
+  `values.schema.json`; schemas are not written by hand;
+- `tools/check.py`: 35 checks, 9 of them mutations.
 
-**Ключевые находки (все в `docs/FINDING-34-marketplace-architecture.md`):**
-- схема записи метаиндекса закрыта (`UnmarshalStrict`) → типы записей выражаются
-  только тегами, это не выбор, а ограничение;
-- список архитектур KubeVirt закрыт (`architectureConfiguration`: ровно
-  amd64/arm64/ppc64le/s390x) → новую архитектуру пакетом не добавить;
-- **шесть аннотаций золотых образов пишутся и не читаются никем** (ноль
-  совпадений по всему дереву вне шаблона, который их пишет; оба потребителя
-  берут только имя PVC) — стоит завести issue наверх;
-- имена золотых образов — плоское общекластерное пространство, сторонний пакет
-  может молча перезаписать образ платформы; защиты наверху нет, своя сделана;
-- компонент без блока `install` не ставится релизом — это и есть шаблон
-  приложения;
-- у всех 100 источников платформы ровно один вариант; второй увёл бы ссылки
-  каталога в пустоту;
-- в `ApplicationDefinitionDashboard` нет поля под документацию.
+**Key findings (all in `docs/FINDING-34-marketplace-architecture.md`):**
+- the meta-index entry schema is closed (`UnmarshalStrict`) → entry types can be expressed
+  only with tags; this is not a choice but a constraint;
+- the KubeVirt architecture list is closed (`architectureConfiguration`: exactly
+  amd64/arm64/ppc64le/s390x) → a new architecture cannot be added by a package;
+- **six golden-image annotations are written and read by nobody** (zero
+  matches across the whole tree outside the template that writes them; both consumers
+  take only the PVC name); worth filing an issue upstream;
+- golden image names are a flat cluster-wide namespace, so a third-party package
+  can silently overwrite a platform image; there is no protection upstream, we built our own;
+- a component without an `install` block is not installed as a release: that is the
+  application template;
+- all 100 platform sources have exactly one variant; a second one would send the catalog's
+  references into the void;
+- `ApplicationDefinitionDashboard` has no field for documentation.
 
-Старый верхний уровень каталога (`sources/`, `packages/`) удалён — полностью
-продублирован в `repos/machines`; копия в scratchpad.
+The old top level of the catalog (`sources/`, `packages/`) was removed: it is fully
+duplicated in `repos/machines`; a copy is in the scratchpad.
 
-Ничего не публиковалось, в кластер не ходил (контекст тенантный,
-cluster-scoped объекты там всё равно не создать). Реестр, образы и подписи —
-`REPLACE-ME`. Находок 34.
+Nothing was published, I did not go into a cluster (the context is a tenant one,
+cluster-scoped objects cannot be created there anyway). Registry, images and signatures are
+`REPLACE-ME`. Findings: 34.
 
-## Текущее состояние (перезапись)
-- **Каталог:** `~/projects/forgotten-systems/marketplace` — три репозитория,
-  метаиндекс, генератор описаний, набор проверок. `make check` — 35/35 зелёных,
-  `make validate` — ноль ошибок по каждому репозиторию (у образов одно
-  намеренное предупреждение: компонент привилегированный).
-- **Инструменты:** `cozypkg` собран в `/tmp/cozypkg` (из `~/projects/cozystack`),
-  helm 4.2.3, `flux` и `cosign` **не установлены** — без них не проверить
-  публикацию и подпись.
-- **Не сделано:** ничего не выложено в OCI; образы контейнеров не собраны;
-  загрузочные образы машин не собраны; на кластере не проверялось.
+## Current state (rewrite)
+- **Catalog:** `~/projects/forgotten-systems/marketplace`: three repositories,
+  a meta-index, a description generator, a set of checks. `make check`: 35/35 green,
+  `make validate`: zero errors for each repository (the images one has one
+  deliberate warning: the component is privileged).
+- **Tools:** `cozypkg` built into `/tmp/cozypkg` (from `~/projects/cozystack`),
+  helm 4.2.3; `flux` and `cosign` **are not installed**, and without them publication
+  and signing cannot be checked.
+- **Not done:** nothing pushed to OCI; container images not built;
+  machine boot images not built; not tested on a cluster.
 
-## Следующий шаг
-Завести issue наверх про непрочитанные аннотации золотых образов
-(`vm-default-images.cozystack.io/*`) — из всех находок эта единственная задевает
-самих пользователей платформы, а не только сторонние каталоги.
+## Next step
+File an upstream issue about the unread golden-image annotations
+(`vm-default-images.cozystack.io/*`): of all the findings this is the only one that affects
+the platform's users themselves, not just third-party catalogs.
 
-### 24.09 — публикация, кластер и начало цели QEMU
+### 24.09 — publication, the cluster and the start of the QEMU target
 
-**Опубликовано.** Репозиторий переименован в `paleocomputing` (англ. подзаголовок
-*experimental computer archaeology* — retrocomputing про коллекционирование, у нас
-про опыты). Сайт серии на GitHub Pages: `tym83.github.io/paleocomputing`, раскладка
-через Actions (классический источник Pages умеет только корень или /docs).
+**Published.** The repository was renamed to `paleocomputing` (English subtitle
+*experimental computer archaeology*: retrocomputing is about collecting, ours is
+about experiments). The series site is on GitHub Pages: `tym83.github.io/paleocomputing`, deployed
+via Actions (the classic Pages source can only serve the root or /docs).
 
-Образы и каталог в `ghcr.io/tym83/paleocomputing/*`, подпись cosign **без ключа** —
-личность это сам процесс сборки. Всё публичное, проверено анонимным скачиванием.
+Images and the catalog are in `ghcr.io/tym83/paleocomputing/*`, signed with cosign **keylessly**:
+the identity is the build process itself. Everything is public, verified by an anonymous download.
 
-**Перед публикацией исключена библиотека ячеек Nangate45**: её шапка прямо
-запрещает публикацию. Замена — Sky130 (Apache-2.0), две строки, не сделано.
+**Before publication the Nangate45 cell library was excluded**: its header explicitly
+forbids publication. The replacement is Sky130 (Apache-2.0), two lines; not done.
 
-**Три бага, найденных ТОЛЬКО на живом кластере** — все по образцу «релиз успешен,
-приложение мертво»:
-1. манифест источника лежал вне `packages/` и не попадал в OCI-артефакт;
-2. схемы закрывали корень, а `cozystack-engine` подмешивает `_cluster`/`_namespace`
-   → Helm отвергал значения целиком;
-3. nginx с `worker_processes auto` заводил воркер на каждое ядро УЗЛА (96 штук),
-   не влезал в 64Mi → OOM по кругу. Штатный автотюн не помогает: правит конфиг на
-   месте, а корень только для чтения.
+**Three bugs found ONLY on a live cluster**, all following the pattern "the release succeeded,
+the application is dead":
+1. the source manifest lay outside `packages/` and did not make it into the OCI artifact;
+2. the schemas closed the root, while `cozystack-engine` mixes in `_cluster`/`_namespace`
+   → Helm rejected the values entirely;
+3. nginx with `worker_processes auto` started a worker for every core of the NODE (96 of them),
+   did not fit in 64Mi → OOM in a loop. The stock autotune does not help: it edits the config in
+   place, and the root is read-only.
 
-Каждое закрыто проверкой с мутацией. Проверок каталога **50**.
+Each is closed by a check with a mutation. Catalog checks: **50**.
 
-**Состояние на кластере (tenant-paleo, контекст admin@workshop):** машина работает,
-`/lab.html` отдаётся (200, 12019 байт). Методичка ждёт перетапливания на v0.1.3.
+**State on the cluster (tenant-paleo, context admin@workshop):** the machine works,
+`/lab.html` is served (200, 12019 bytes). The handbook waits for a re-tap to v0.1.3.
 
-**Цель QEMU начата** (`qemu/`, своя сборка — QEMU и libvirt отклоняют вклад с ИИ,
-Claude назван поимённо). Написаны декодер, состояние процессора, трансляция 16
-операций, деление, прерывания, плата, порты. `qemu-system-risc5` собирается одной
-командой в контейнере.
+**The QEMU target is started** (`qemu/`, our own build: QEMU and libvirt reject AI-assisted contributions,
+naming Claude explicitly). Written: the decoder, the processor state, translation of 16
+operations, division, interrupts, the board, the ports. `qemu-system-risc5` builds with one
+command in a container.
 
-**Сверено с железом:** 16 регистров, 4 флага и H сошлись с моделью АЛУ, снятой с
-RISC5.v. Проверка `make -C qemu diff`, умеет краснеть.
+**Checked against the hardware:** 16 registers, 4 flags and H agreed with the ALU model taken from
+RISC5.v. The check `make -C qemu diff` can go red.
 
-Баги цели: чистая сборка падала там, где инкрементальная проходила (нет прототипа
-у порождённого декодера); ПЗУ было не по тому адресу и вчетверо больше (в железе
-512 слов); процессор создавался, но **не исполнял** — без `realize` не заводится
-поток; **адресная шина 24 бита**, старшие биты железо отбрасывает, без обрезки
-порты недостижимы.
+Bugs in the target: a clean build failed where an incremental one passed (no prototype
+for the generated decoder); the ROM was at the wrong address and four times larger (the hardware has
+512 words); the processor was created but **did not execute**: without `realize` its thread is not
+started; **the address bus is 24 bits**, the hardware drops the upper bits, and without truncation
+the ports are unreachable.
 
-**Форк KubeVirt НЕ НУЖЕН.** Найдена штатная точка: перехватчик `OnDefineDomain`
-переписывает описание машины, а `SharedComputePath` у его PVC монтирует том
-**внутрь compute**, где работает libvirt. Открыт один вопрос: примет ли libvirt
-незнакомую архитектуру (`virArchFromString` на ней не падает, возвращает NONE).
+**A fork of KubeVirt is NOT NEEDED.** Found a standard hook point: the `OnDefineDomain` hook
+rewrites the machine description, and `SharedComputePath` on its PVC mounts the volume
+**inside compute**, where libvirt runs. One question is open: will libvirt accept
+an unfamiliar architecture (`virArchFromString` does not fail on it, it returns NONE).
 
-## Текущее состояние (перезапись)
-- **Сайт:** `tym83.github.io/paleocomputing` — живой, лаборатория и методичка.
-- **Каталог:** три репозитория, теги v0.1.0…v0.1.3, последний чист.
-- **Кластер `workshop`** (157.180.61.253, 87 тенантов, ~50 виртуалок):
-  **подменён образ virt-launcher** на наш — `customizeComponents` у ресурса
-  KubeVirt в `cozy-kubevirt`. Обычные машины проверены: Ubuntu поднялась.
-  ⚠ Откат в `/tmp/ROLLBACK.txt`, одна команда.
-- **Песочница:** тенант `tenant-sandbox`, доступ `~/claude2-sandbox.kubeconfig`.
-  Стенд `build` — 8 ядер, 16 Ги, вход `ssh -F <scratchpad>/sandbox/config stand`,
-  адрес 77.42.12.137. На нём собираются образы (podman) и лежит дерево QEMU.
-  Живёт виртуалка `check2` — доказательство, что обычные машины целы.
-- **QEMU:** цель полная — ядро сверено на 1.5 млн команд, диск, экран,
-  клавиатура, мышь, **VNC**, аккорды кнопок и подсказка на экране. Нет FPU.
-- **libvirt:** патч на 5 мест, проверен на 10.0.0 и 11.9.0.
+## Current state (rewrite)
+- **Site:** `tym83.github.io/paleocomputing`: live, the lab and the handbook.
+- **Catalog:** three repositories, tags v0.1.0…v0.1.3, the latest is clean.
+- **The `workshop` cluster** (157.180.61.253, 87 tenants, ~50 VMs):
+  **the virt-launcher image was replaced** with ours: `customizeComponents` on the
+  KubeVirt resource in `cozy-kubevirt`. Ordinary machines checked: Ubuntu came up.
+  ⚠ The rollback is in `/tmp/ROLLBACK.txt`, one command.
+- **Sandbox:** tenant `tenant-sandbox`, access via `~/claude2-sandbox.kubeconfig`.
+  The `build` bench: 8 cores, 16 Gi, login `ssh -F <scratchpad>/sandbox/config stand`,
+  address 77.42.12.137. Images are built on it (podman), and the QEMU tree lives there.
+  The VM `check2` lives there: the proof that ordinary machines are intact.
+- **QEMU:** the target is complete: the core checked over 1.5 million instructions, disk, screen,
+  keyboard, mouse, **VNC**, button chords and an on-screen hint. No FPU.
+- **libvirt:** a patch in 5 places, checked on 10.0.0 and 11.9.0.
 - **virt-launcher:** `ghcr.io/tym83/paleocomputing/virt-launcher:v1.8.4-risc5`,
-  **публичный**, тянется анонимно.
-- **Каталог:** приложение `oberon-vm` собрано (перехватчик + том + машина),
-  52 проверки зелёные. `langpack` по умолчанию — Оберон.
-- **Язык:** английский по умолчанию, русский выбором. Переведено всё.
-- **⚠ Найдено:** образ раздачи выкладывался БЕЗ машины (находка 45). Исправлено,
-  добавлена проверка содержимого после выкладки.
-- **Git:** PR #1 влит. PR #2 открыт и ждёт мержа. Тег v0.1.4 указывает на
-  сломанную сборку — переставить после исправлений.
+  **public**, pulled anonymously.
+- **Catalog:** the `oberon-vm` application is built (hook + volume + machine),
+  52 checks green. The default `langpack` is Oberon.
+- **Language:** English by default, Russian as an option. Everything translated.
+- **⚠ Found:** the serving image was published WITHOUT the machine (finding 45). Fixed,
+  added a check of the contents after publishing.
+- **Git:** PR #1 merged. PR #2 is open and waiting to be merged. Tag v0.1.4 points to
+  a broken build; move it after the fixes.
 
-## Следующий шаг
-Поставить yosys (`brew install yosys`) и снять базовую площадь ядра — это вторая
-половина замера этапа 0 и прямой вход в У3.
+## Next step
+Install yosys (`brew install yosys`) and take the base area of the core: this is the second
+half of the stage 0 measurement and a direct entry into C3.
 
-### 03:30 — ✅ базовая площадь снята, две ловушки маршрута измерены
-Поставлен yosys 0.69, скачана Nangate45 typical (6.7 МБ).
-**Базовая линия: 14 532.11 мкм² = 18.21 kGE, 993 триггера, 30.9% последовательной логики,
-10 938 ячеек.** Попадает в предсказанный ревью диапазон 10–20 kGE.
+### 03:30 — ✅ base area taken, two flow traps measured
+Installed yosys 0.69, downloaded Nangate45 typical (6.7 MB).
+**Baseline: 14,532.11 µm² = 18.21 kGE, 993 flip-flops, 30.9% sequential logic,
+10,938 cells.** Falls in the 10–20 kGE range predicted by the review.
 
-Две ловушки, обе с измерениями (`docs/FINDING-03-synthesis-traps.md`):
-1. `stat -tech cmos` теряет **758 из 993 триггеров молча** (76%) — подтверждение ревью
-2. **`-D` без `-constr` игнорируется полностью** — площадь совпадает до последнего знака
-   при -D 200 и -D 50000. Этого ревью не предвидело
-Кривая площадь-vs-период оказалась плоской (две точки, разница 0.5%) → график построить
-не из чего, зато дельта от расширения ISA будет чистой. **Fmax без OpenSTA не получить.**
+Two traps, both measured (`docs/FINDING-03-synthesis-traps.md`):
+1. `stat -tech cmos` loses **758 of 993 flip-flops silently** (76%): confirms the review
+2. **`-D` without `-constr` is ignored completely**: the area is identical to the last digit
+   with -D 200 and -D 50000. The review did not foresee this
+The area-vs-period curve turned out flat (two points, 0.5% apart) → there is nothing to build
+a chart from, but the delta from the ISA extension will be clean. **Fmax cannot be obtained without OpenSTA.**
 
-### 04:10 — ✅ CHK реализована в RTL, дельта площади измерена
-Кодировка: F0, v=1, op=1 (алиас LSL — компилятор его не эмитит), **индекс в поле b**
-(через поле a была бы комбинационная петля ira0↔chkFail), предел в `IR[15:4]` (12 бит),
-регистр c=12 → аппаратный переход берёт вектор ловушек из MT без лишнего чтения.
-Семантика при срабатывании — ровно как BLR: `R15 := PC+4; PC := R[12]`. Не срабатывает —
-не пишет ни регистра, ни флагов (CHK исключена из общего терма `regwr`).
+### 04:10 — ✅ CHK implemented in the RTL, area delta measured
+Encoding: F0, v=1, op=1 (an alias of LSL; the compiler does not emit it), **the index in field b**
+(via field a there would be a combinational loop ira0↔chkFail), the limit in `IR[15:4]` (12 bits),
+register c=12 → the hardware jump takes the trap vector from MT without an extra read.
+Semantics when it fires: exactly like BLR: `R15 := PC+4; PC := R[12]`. When it does not fire,
+it writes neither a register nor the flags (CHK is excluded from the common `regwr` term).
 
-**Δ площади = +30.06 мкм² = 37.7 GE.** ⚠ ПОЗЖЕ ИСПРАВЛЕНО: относится к отвергнутой
-кодировке; у принятой +46.55…+123.16 мкм² (58…154 GE) в зависимости от скрипта.
+**Δ area = +30.06 µm² = 37.7 GE.** ⚠ CORRECTED LATER: this applies to the rejected
+encoding; the adopted one costs +46.55…+123.16 µm² (58…154 GE) depending on the script.
 
-🔴 Но главный результат методологический: **логически нейтральные переписывания исходника
-двигают площадь на ±51 мкм² и немонотонно** (два по отдельности −51 каждое, вместе +88).
-То есть **измеряемый эффект вдвое меньше шума от синтаксиса**. Защитимо только сравнение
-двух сборок из одного файла через `ifdef`. См. `docs/FINDING-04-noise-floor.md`.
+🔴 But the main result is methodological: **logically neutral rewrites of the source
+move the area by ±51 µm², and non-monotonically** (two of them separately −51 each, together +88).
+So **the measured effect is half the size of the noise from syntax**. Only a comparison of
+two builds from a single file via `ifdef` is defensible. See `docs/FINDING-04-noise-floor.md`.
 
-### 04:35 — ✅ CHK проверена функционально, регрессия зелёная, сборка через make
-- `tools/asm.py`: добавлена CHK; **исправлен баг** — при `v=0` непосредственное
-  расширяется нулями, значит проверять его надо беззнаково (ловилось на `IOR R12,R12,0xE05C`).
-- `tb/run_tests.cpp`: **исправлена привязка проверок** — была к числу выполненных
-  инструкций, стала к адресу (номеру слова). На прямом коде совпадает, при первом же
-  переходе расходится. Плюс проверки сделаны одноразовыми.
-- `tests/t2_chk.s`: не сработавшая CHK — 1 такт, флаги не тронуты; сработавшая — передала
-  управление на MT, пропущенная инструкция не выполнилась. **5/5.**
-- 🟢 **Ядро с CHK проходит все базовые тесты с идентичным числом тактов** (203, 21, 453)
-  — требуемый ревью тест «старый код на новом RTL».
-- `make test` — вся регрессия одной командой.
+### 04:35 — ✅ CHK verified functionally, regression green, build via make
+- `tools/asm.py`: added CHK; **fixed a bug**: with `v=0` the immediate is
+  zero-extended, so it has to be checked as unsigned (caught on `IOR R12,R12,0xE05C`).
+- `tb/run_tests.cpp`: **fixed how checks are anchored**: they were tied to the number of executed
+  instructions, now to the address (word number). On straight-line code these coincide; at the first
+  branch they diverge. Plus checks were made one-shot.
+- `tests/t2_chk.s`: a CHK that does not fire takes 1 cycle, flags untouched; one that fires
+  transferred control to MT, and the skipped instruction did not execute. **5/5.**
+- 🟢 **The core with CHK passes all base tests with an identical number of cycles** (203, 21, 453):
+  the "old code on the new RTL" test required by the review.
+- `make test`: the whole regression with one command.
 
-## Текущее состояние (перезапись)
-- **Работает:** ядро RISC5 (2018) под Verilator в двух конфигурациях (базовая и с CHK),
-  стенд с ретайр-детектором, прогонщик тестов с привязкой к PC, ассемблер, зонд декодера,
-  маршрут синтеза с Nangate45, `make test` / `make syn`.
-- **Тесты:** 61 проверка на двух ядрах, все зелёные.
-- **Измерено:** базовая площадь 14 532.11 мкм² = 18.21 kGE, 993 триггера;
-  Δ CHK принятой кодировки = 58…154 GE (нижняя граница внутри шума ±64 GE).
-- **Находки:** 4 задокументированы в `docs/`.
-- **Не сделано:** Fmax (нужен OpenSTA); SoC-обвязка; дифференциальный стенд против ISS;
-  конфигурации A/B/C на реальной системе (нужен компилятор Оберона).
+## Current state (rewrite)
+- **Working:** the RISC5 (2018) core under Verilator in two configurations (base and with CHK),
+  the bench with a retire detector, a test runner anchored to the PC, the assembler, the decoder probe,
+  a synthesis flow with Nangate45, `make test` / `make syn`.
+- **Tests:** 61 checks on two cores, all green.
+- **Measured:** base area 14,532.11 µm² = 18.21 kGE, 993 flip-flops;
+  Δ CHK of the adopted encoding = 58…154 GE (the lower bound within the ±64 GE noise).
+- **Findings:** 4 documented in `docs/`.
+- **Not done:** Fmax (needs OpenSTA); the SoC wrapper; the differential bench against the ISS;
+  configurations A/B/C on a real system (needs the Oberon compiler).
 
-## Следующий шаг
-Конфигурация A — патч `check := FALSE` в `ORG.Mod` и замер цены проверок границ на
-реальной нагрузке. Для этого нужен работающий Оберон: либо Norebo (кросс-сборка с хоста),
-либо эталонный эмулятор с образом диска.
+## Next step
+Configuration A: a `check := FALSE` patch in `ORG.Mod` and measuring the cost of bounds checks on a
+real workload. This needs a working Oberon: either Norebo (cross-building from the host)
+or the reference emulator with a disk image.
 
-### 05:10 — 🎯 ГЛАВНЫЙ РЕЗУЛЬТАТ: цена проверок времени исполнения измерена
-Поднят **Norebo** — компилятор Оберона с командной строки (macOS-ловушка: файловая система
-нечувствительна к регистру, `make` считает каталог `Norebo/` готовой целью `norebo` и
-ничего не собирает; собрал напрямую в `norebo.bin`).
+### 05:10 — 🎯 MAIN RESULT: the cost of run-time checks measured
+Brought up **Norebo**, a command-line Oberon compiler (a macOS trap: the file system
+is case-insensitive, `make` treats the `Norebo/` directory as the finished target `norebo` and
+builds nothing; I built directly into `norebo.bin`).
 
-**Трёхстадийная самораскрутка прошла: «Stage 2 and Stage 3 are identical»** — T-BOOT-3 ✅.
+**The three-stage bootstrap passed: "Stage 2 and Stage 3 are identical"**: T-BOOT-3 ✅.
 
-Создана несуществующая конфигурация: `check := FALSE` в `ORG.Open`, пересобран компилятор.
-**Результат: проверки занимают 6.2% кода системы (1490 слов из 23 954).**
-Разброс по модулям 0% (Kernel, он же RISC-0) … 11% (Fonts).
+Created a configuration that did not exist: `check := FALSE` in `ORG.Open`, rebuilt the compiler.
+**Result: the checks take 6.2% of the system's code (1490 words of 23,954).**
+The spread across modules is 0% (Kernel, which is RISC-0) … 11% (Fonts).
 
-Перекрёстно проверено тремя способами: у ORP Δслов = Δловушек = 390 точно (там почти всё —
-проверки NIL по одному слову); где есть индексация, Δслов > Δловушек (проверка границы =
-2 инструкции); Kernel даёт 0 в обеих конфигурациях. Остаток в A — это `NEW` и `ASSERT`,
-они вне охраны `check` и должны остаться.
+Cross-checked three ways: for ORP Δwords = Δtraps = 390 exactly (almost all of them there are
+one-word NIL checks); where there is indexing, Δwords > Δtraps (a bounds check =
+2 instructions); Kernel gives 0 in both configurations. What remains in A is `NEW` and `ASSERT`,
+which are outside the `check` guard and must stay.
 
-🟢 Уточнение к постановке эксперимента: **доминируют проверки на NIL, а не на границы
-массивов** (в ORP 390 из 402 — это NIL). «Цена безопасности памяти» в Обероне — это прежде
-всего цена разыменования указателей. См. `docs/FINDING-05-cost-of-checks.md`.
+🟢 A refinement to the experiment's setup: **NIL checks dominate, not array bounds
+checks** (in ORP 390 of 402 are NIL). The "cost of memory safety" in Oberon is first and foremost
+the cost of dereferencing pointers. See `docs/FINDING-05-cost-of-checks.md`.
 
-⚠ Это размер КОДА, не такты. Смешивать нельзя.
+⚠ This is CODE size, not cycles. They must not be mixed.
 
-### 06:00 — 🎯 динамическая цена проверок: 2.67% тактов
-Оснастил эмулятор Norebo счётчиком тактов по модели из `tb/cycle_model.h`.
-**Модель предварительно проверена против настоящего RTL потактово: 61 инструкция,
-расхождений 0**, включая все многотактные и надбавку за подряд идущие.
+### 06:00 — 🎯 the dynamic cost of checks: 2.67% of cycles
+Instrumented the Norebo emulator with a cycle counter following the model in `tb/cycle_model.h`.
+**The model was first checked against the real RTL cycle by cycle: 61 instructions,
+0 mismatches**, including all multi-cycle ones and the back-to-back surcharge.
 
-🔴 **Едва не опубликовал неверное число.** Первый замер дал 0.43% — но он отражал лишь
-то, что компилятор без проверок делает меньше работы при генерации кода, а не цену
-исполнения проверок. Потребовалась **вторая стадия самораскрутки**: компилятором A
-собрать компилятор заново (двоичный код без проверок внутри), тем же путём через B —
-с проверками, и только потом прогнать обоими одну нагрузку.
-Разница между неверным и верным замером — **шестикратная**.
+🔴 **I nearly published a wrong number.** The first measurement gave 0.43%, but it reflected only
+the fact that a compiler without checks does less work when generating code, not the cost of
+executing the checks. A **second bootstrap stage** was needed: use compiler A to
+build the compiler again (binary code without checks inside), the same way through B
+with checks, and only then run the same workload with both.
+The difference between the wrong and the right measurement is **sixfold**.
 
-**Итог: статика 6.2% кода, динамика 2.67% тактов (3.78% инструкций).**
-Проверки занимают вдвое больше места, чем времени: они рассыпаны по всему коду, но
-горячие циклы исполняют их реже, и каждая дешевле средней инструкции (1 такт против
-средних 1.642). Оберон на дешёвом краю литературного диапазона (Morello 5.7, Toooba 9,
+**Bottom line: statically 6.2% of code, dynamically 2.67% of cycles (3.78% of instructions).**
+The checks take twice as much space as time: they are scattered throughout the code, but
+hot loops execute them less often, and each is cheaper than the average instruction (1 cycle versus
+an average of 1.642). Oberon is at the cheap end of the range in the literature (Morello 5.7, Toooba 9,
 MTE 4–12).
 
-⚠ Ловушка Norebo: если исходник не найден по `NOREBO_PATH`, он **уходит в вечный цикл**
-вместо ошибки. Порядок путей в `tools/measure_checks.sh` проверен, не трогать.
-⚠ Ловушка macOS: нет `timeout`; сделал `tools/run_timeout.py`.
+⚠ A Norebo trap: if a source is not found via `NOREBO_PATH`, it **goes into an infinite loop**
+instead of an error. The path order in `tools/measure_checks.sh` has been checked; do not touch it.
+⚠ A macOS trap: there is no `timeout`; I wrote `tools/run_timeout.py`.
 
-### 06:40 — 🎯 ГЛАВНЫЙ ЭКСПЕРИМЕНТ ЗАМКНУТ: три конфигурации измерены
-CHK добавлена в эмулятор Norebo (регрессия чистая — старый код даёт те же 94 149 309
-тактов) и в кодогенератор (`PutCHK` в `ORG.Mod`, конфигурация C).
-Учёт сошёлся точно: в `Texts` 21 проверка границ → 2 + **19 CHK**, код ровно на 19 слов
-короче; в `Fonts` 22 → 22 CHK, минус 22 слова. Одно слово на проверку.
+### 06:40 — 🎯 MAIN EXPERIMENT CLOSED: three configurations measured
+CHK added to the Norebo emulator (regression clean: old code gives the same 94,149,309
+cycles) and to the code generator (`PutCHK` in `ORG.Mod`, configuration C).
+The accounting matched exactly: in `Texts` 21 bounds checks → 2 + **19 CHK**, the code is exactly 19 words
+shorter; in `Fonts` 22 → 22 CHK, minus 22 words. One word per check.
 
-⚠ Попутная ошибка постановки: у конфигурации C путь начинается с `cfgC`, где лежит
-пропатченный `ORG.Mod` — сравнивались разные исходники. Убрал ORG из нагрузки.
+⚠ An incidental setup error: configuration C's path starts with `cfgC`, which holds
+the patched `ORG.Mod`, so different sources were being compared. Removed ORG from the workload.
 
-**РЕЗУЛЬТАТ (tools/measure3.sh):**
-| конфигурация | такты | инстр. | код |
+**RESULT (tools/measure3.sh):**
+| configuration | cycles | instr. | code |
 |---|---|---|---|
-| A — нет проверок | 29 121 384 | 17 407 595 | 5 775 |
-| B — программные | 29 919 963 (+2.74%) | +3.92% | +9.92% |
-| C — аппаратные | 29 808 859 (+2.36%) | +3.32% | +8.92% |
+| A — no checks | 29,121,384 | 17,407,595 | 5,775 |
+| B — software | 29,919,963 (+2.74%) | +3.92% | +9.92% |
+| C — hardware | 29,808,859 (+2.36%) | +3.32% | +8.92% |
 
-🎯 **Аппаратная проверка границ снимает лишь 14% цены проверок** (0.38 из 2.74 п.п.)
-ценой 0.32…0.85% площади ядра. Причина измерена: доминируют проверки NIL (390 из 402 в ORP),
-CHK их не касается; плюс 12-битный предел и открытые массивы на старом пути.
-Отрицательный результат, и он сильнее положительного. См. `docs/FINDING-06-three-configs.md`.
+🎯 **Hardware bounds checking removes only 14% of the cost of checks** (0.38 of 2.74 pp)
+at the price of 0.32…0.85% of the core's area. The reason is measured: NIL checks dominate (390 of 402 in ORP),
+and CHK does not touch them; plus the 12-bit limit and open arrays on the old path.
+A negative result, and it is stronger than a positive one. See `docs/FINDING-06-three-configs.md`.
 
-## Следующий шаг
-Вторая нагрузка — счётная, с плотной индексацией массивов. Сейчас единственная нагрузка
-компиляторная (много указателей, мало индексации), и это записанное ограничение. Счётная
-покажет верхнюю границу вклада CHK.
+## Next step
+A second workload: a compute one, with dense array indexing. Currently the only workload
+is the compiler (many pointers, little indexing), and this is a recorded limitation. A compute
+workload will show the upper bound of CHK's contribution.
 
-### 07:20 — ✅ вторая нагрузка: разброс вклада аппаратуры в 3.5 раза
-`bench/ArrBench.Mod` — сортировка + умножение матриц, ни одного указателя,
-все пределы < 4096. Итог: проверки стоят **+10.16% тактов**, аппаратная поддержка
-снимает **ровно 50.0%** (две инструкции по такту заменяются одной).
+### 07:20 — ✅ second workload: the hardware's contribution varies 3.5×
+`bench/ArrBench.Mod`: sorting + matrix multiplication, not a single pointer,
+all limits < 4096. Result: the checks cost **+10.16% of cycles**, hardware support
+removes **exactly 50.0%** (two one-cycle instructions are replaced by one).
 
-🎯 **Против 14% на компиляторной нагрузке — разброс в 3.5 раза.**
-«Сколько даёт аппаратная проверка границ» без указания нагрузки — бессмысленный вопрос.
+🎯 **Versus 14% on the compiler workload: a 3.5× spread.**
+"How much does hardware bounds checking give" without naming the workload is a meaningless question.
 
-Два бага по дороге:
-1. 🔴 В моём же бенчмарке был реальный выход за границу (`b[i*M+j]` до 3599 при массиве
-   на 1000). **Конфигурация A проглотила молча**, портя 2600 слов; B поймала. Случайная,
-   но идеальная демонстрация смысла проверок.
-2. 🔴 **CHK ломает диагностику: `unknown trap 8`.** Предел в `IR[15:4]` перекрывает
-   и номер ловушки (биты 7:4), и позицию (23:8). Ревью предсказало потерю позиции,
-   но не то, что испортится сам номер ошибки.
+Two bugs along the way:
+1. 🔴 My own benchmark had a real out-of-bounds access (`b[i*M+j]` up to 3599 with an array
+   of 1000). **Configuration A swallowed it silently**, corrupting 2600 words; B caught it. An accidental
+   but perfect demonstration of why checks matter.
+2. 🔴 **CHK breaks diagnostics: `unknown trap 8`.** The limit in `IR[15:4]` overlaps
+   both the trap number (bits 7:4) and the position (23:8). The review predicted the loss of the position,
+   but not that the error number itself would be corrupted.
 
-Открытая развилка: предел 4095 со сломанной диагностикой / предел 255 с верным номером /
-двухсловная CHK. Решать по данным — сколько массивов короче 256. Не измерено.
+An open fork: a 4095 limit with broken diagnostics / a 255 limit with the right number /
+a two-word CHK. Decide by data: how many arrays are shorter than 256. Not measured.
 
-## Следующий шаг
-Замерить распределение длин массивов в системе, чтобы закрыть развилку по кодированию CHK.
+## Next step
+Measure the distribution of array lengths in the system to close the CHK encoding fork.
 
-### 07:50 — полный комплект исходников PO2013 и анализатор длин массивов
-Скачан **полный комплект Project Oberon 2013 — 46 модулей**, включая все оконные
+### 07:50 — the full set of PO2013 sources and an array length analyzer
+Downloaded **the full set of Project Oberon 2013: 46 modules**, including all the windowing ones
 (`Display`, `Viewers`, `TextFrames`, `MenuViewers`, `Graphics`, `GraphicFrames`, `Curves`,
-`Rectangles`, `Draw`, `GraphTool`, `System`, `Edit`, `Net`, `SCC`, `Math`, `Tools` и др.)
-в `ext/po2013-src/`. Не скачались два zip-архива с дополнительными утилитами.
-Без оконных модулей выборка была бы смещена — именно там плотная индексация.
+`Rectangles`, `Draw`, `GraphTool`, `System`, `Edit`, `Net`, `SCC`, `Math`, `Tools` and others)
+into `ext/po2013-src/`. Two zip archives with additional utilities did not download.
+Without the windowing modules the sample would be biased: that is exactly where dense indexing lives.
 
-`tools/array_limits.py` — статический анализ: достаёт пределы массивов прямо из
-скомпилированного кода по паре «`SUB` с непосредственным пределом + ловушка №1».
-Компилятор патчить не требуется. **Проверен на известном случае**: на `ArrBench`
-вытащил ровно объявленные в исходнике 60, 1000 и 3600.
+`tools/array_limits.py`: a static analysis that extracts array limits straight from the
+compiled code by the pair "`SUB` with an immediate limit + trap #1".
+No compiler patch is needed. **Checked on a known case**: on `ArrBench`
+it extracted exactly the 60, 1000 and 3600 declared in the source.
 
-`tools/build_po2013.py` — сборка в порядке зависимостей, вычисленном топологической
-сортировкой по секциям IMPORT (а не заданном руками).
+`tools/build_po2013.py`: a build in dependency order, computed by a topological
+sort over the IMPORT sections (not given by hand).
 
-⚠ **Ловушка: `Input.Mod` вешает Norebo наглухо.** Проверено, что это НЕ мои изменения:
-зависает и с эталонным бинарником эмулятора, и со штатным загрузочным компилятором, и с
-компилятором `build2`. Файл цел (шестнадцатеричный литерал таблицы клавиатуры закрыт).
-Причина не найдена; модуль крошечный и на статистику длин массивов не влияет.
-Сборка сделана устойчивой: таймаут на модуль, зависшие помечаются и пропускаются.
+⚠ **A trap: `Input.Mod` hangs Norebo dead.** Verified that this is NOT my changes:
+it hangs with the reference emulator binary, with the stock boot compiler, and with
+the `build2` compiler. The file is intact (the hex literal of the keyboard table is closed).
+The cause was not found; the module is tiny and does not affect the array length statistics.
+The build was made robust: a timeout per module, hung ones are marked and skipped.
 
-### 08:40 — ✅ развилка по кодированию CHK закрыта данными
-Три независимых замера (`docs/FINDING-08-encoding-decision.md`):
-1. По скомпилированному коду, 154 места проверки: **медиана предела 32**,
-   8 бит покрывают 70.0%, 12 бит 86.9%
-2. По объявлениям во всех 46 исходниках (99 размерностей, включая оконные модули,
-   которых нет в комплекте Norebo): **медиана снова 32**, 8 бит 84.8%, 12 бит 99.0%
-3. Прогон на настоящей ошибке — и вот главное:
-   - B (программная): `array index out of range` ✅
-   - C (12 бит): 🔴 **`access via NIL pointer`** — система уверенно сообщает НЕ ТУ ошибку
-   - D (8 бит): ✅ `array index out of range`, потеряна только позиция
-4. По площади варианты **неразличимы** (3.46 мкм² при шумовом поле ±51)
+### 08:40 — ✅ the CHK encoding fork closed by data
+Three independent measurements (`docs/FINDING-08-encoding-decision.md`):
+1. On compiled code, 154 check sites: **median limit 32**,
+   8 bits cover 70.0%, 12 bits 86.9%
+2. On declarations in all 46 sources (99 dimensions, including the windowing modules,
+   which are not in the Norebo set): **the median is again 32**, 8 bits 84.8%, 12 bits 99.0%
+3. A run on a real error, and here is the main thing:
+   - B (software): `array index out of range` ✅
+   - C (12 bits): 🔴 **`access via NIL pointer`**: the system confidently reports the WRONG error
+   - D (8 bits): ✅ `array index out of range`, only the position is lost
+4. By area the variants are **indistinguishable** (3.46 µm² with a noise floor of ±51)
 
-**Принят вариант D (8 бит).** Обмен 14–17 п.п. покрытия на ложные сообщения об ошибках
-невыгоден для системы, чья ценность — в том, что ошибки находятся и называются.
-Переведены эмулятор, RTL (`CHK_NARROW`), ассемблер (`CHKN`) и кодогенератор (cfgD).
+**Variant D (8 bits) adopted.** Trading 14–17 pp of coverage for false error messages
+is a bad deal for a system whose value is that errors are found and named.
+Moved the emulator, the RTL (`CHK_NARROW`), the assembler (`CHKN`) and the code generator (cfgD) over.
 
-⚠ Попутно: скачанный комплект PO2013 — **версии 2019 года, а компилятор Norebo 2016-го**.
-Несовместимы, причём проявляется зависанием, а не ошибкой. Для анализа по
-скомпилированному коду использован согласованный комплект Norebo.
+⚠ Incidentally: the downloaded PO2013 set is **the 2019 version, while the Norebo compiler is from 2016**.
+They are incompatible, and this shows up as a hang, not an error. For the analysis of
+compiled code the matching Norebo set was used.
 
-### 09:20 — 🔴 поправка: развилка данными НЕ закрывается
-Замер принятого (8 бит) варианта на ВТОРОЙ нагрузке опроверг обоснование находки 8.
+### 09:20 — 🔴 correction: the data does NOT close the fork
+Measuring the adopted (8-bit) variant on the SECOND workload refuted the rationale of finding 8.
 
-| вариант | компиляция | счётная |
+| variant | compilation | compute |
 |---|---|---|
-| 12 бит (диагностика сломана) | 13.9% | **50.0%** |
-| 8 бит (диагностика цела) | 13.0% | **15.8%** |
+| 12 bits (diagnostics broken) | 13.9% | **50.0%** |
+| 8 bits (diagnostics intact) | 13.0% | **15.8%** |
 
-**Ошибка в обосновании:** решение принималось по распределению МЕСТ проверки (медиана 32),
-а горячие циклы счётного кода гоняют КРУПНЫЕ массивы (1000 и 3600 в бенчмарке).
-Под 8 бит попали 6 проверок из 15 — и не те, что исполняются миллионы раз.
-Статика упала на 17 п.п., динамика — **втрое**.
+**The error in the rationale:** the decision was made on the distribution of check SITES (median 32),
+while the hot loops of compute code run LARGE arrays (1000 and 3600 in the benchmark).
+Only 6 of 15 checks fell under 8 bits, and not the ones executed millions of times.
+The static number dropped by 17 pp, the dynamic one **threefold**.
 
-Урок: для решений о кодировании нужен **динамический профиль**, а не подсчёт мест.
+The lesson: encoding decisions need a **dynamic profile**, not a count of sites.
 
-Двухсловный вариант тоже не выход: процессор обязан пропустить второе слово, это такт,
-и выигрыш исчезает. Архитектурно правильный ответ — предел в регистре с выносом из цикла,
-но **кодогенератор Оберона не умеет выносить инварианты** и не научится без переписывания ORG.
+A two-word variant is no way out either: the processor has to skip the second word, that is a cycle,
+and the gain disappears. The architecturally correct answer is a limit in a register hoisted out of the loop,
+but **the Oberon code generator cannot hoist invariants** and will not learn to without rewriting ORG.
 
-**Итог: показана настоящая развилка с измеренной ценой каждой ветки** — для статьи это
-лучше, чем однозначное решение. См. `docs/FINDING-09-fork-unresolved.md`.
+**Bottom line: a real fork is shown with the measured cost of each branch**; for the article this is
+better than a single decision. See `docs/FINDING-09-fork-unresolved.md`.
 
-## Следующий шаг
-Динамический профиль индексации: счётчик на каждую проверку с группировкой по пределу.
-Закроет развилку окончательно и стоит недорого.
+## Next step
+A dynamic indexing profile: a counter per check, grouped by limit.
+It will close the fork for good and is cheap.
 
-### 10:10 — 🎯 РАЗВИЛКА ЗАКРЫТА: предел из двух кусков
-Динамический профиль (счётчик исполнений проверок по классам длин) показал, что
-на счётной нагрузке **68.3% исполнений — массивы 256…1023**, которых 8 бит не покрывают.
-И дал предсказательную модель: отношение динамического покрытия предсказывает отношение
-выигрыша **точно** (31.6% против измеренных 31.6%).
+### 10:10 — 🎯 FORK CLOSED: a limit made of two pieces
+The dynamic profile (a counter of check executions by length class) showed that
+on the compute workload **68.3% of executions are arrays of 256…1023**, which 8 bits do not cover.
+And it gave a predictive model: the ratio of dynamic coverage predicts the ratio of the
+gain **exactly** (31.6% versus a measured 31.6%).
 
-Это подсказало искать биты там, где я не искал. **Поле `a` (IR[27:24]) инструкции CHK
-не нужно** (при срабатывании ira0 = 15, при несрабатывании регистр не пишется), а лежит
-ВНЕ поля позиции (23:8) и ВНЕ поля номера ловушки (7:4).
-→ предел собирается из двух кусков `{IR[27:24], IR[15:8]}` = 12 бит, номер ловушки цел.
+This prompted me to look for bits where I had not looked. **Field `a` (IR[27:24]) of the CHK instruction
+is not needed** (when it fires ira0 = 15; when it does not, no register is written), and it lies
+OUTSIDE the position field (23:8) and OUTSIDE the trap number field (7:4).
+→ the limit is assembled from two pieces `{IR[27:24], IR[15:8]}` = 12 bits, and the trap number is intact.
 
-| вариант | компиляция | счётная | диагностика |
+| variant | compilation | compute | diagnostics |
 |---|---|---|---|
-| 12 бит в IR[15:4] | 13.9% | 50.0% | 🔴 НЕ ТА ошибка |
-| 8 бит | 13.0% | 15.8% | ✅ |
-| **два куска (принят)** | **13.7%** | **50.0%** | ✅ |
+| 12 bits in IR[15:4] | 13.9% | 50.0% | 🔴 the WRONG error |
+| 8 bits | 13.0% | 15.8% | ✅ |
+| **two pieces (adopted)** | **13.7%** | **50.0%** | ✅ |
 
-Проверено на массиве 1000 элементов: E даёт 19 слов, CHK задействована,
-сообщение `array index out of range` верное. На счётной нагрузке результат **побитово
-совпадает** с вариантом максимального покрытия (57 133 094 такта).
-Переведены RTL (`CHK_SPLIT`), ассемблер (`CHKS`), эмулятор, кодогенератор (cfgE), Makefile.
-Регрессия RTL зелёная, 61 проверка. См. `docs/FINDING-10-split-encoding.md`.
+Checked on an array of 1000 elements: E gives 19 words, CHK is used,
+the message `array index out of range` is correct. On the compute workload the result **matches bit
+for bit** the maximum-coverage variant (57,133,094 cycles).
+Moved the RTL (`CHK_SPLIT`), the assembler (`CHKS`), the emulator, the code generator (cfgE) and the Makefile over.
+RTL regression green, 61 checks. See `docs/FINDING-10-split-encoding.md`.
 
-## Текущее состояние (перезапись)
-- **Измерения завершены:** цена проверок 2.74% (компиляция) / 10.16% (счётная);
-  аппаратная поддержка снимает 13.7% / 50.0% при целой диагностике;
-  площадь 58…154 GE (нижняя граница внутри шума); база 18.21 kGE, 993 триггера
-- **Находок задокументировано:** 10
-- **Осталось:** Fmax (нужен OpenSTA); полный набор тестов ISA (из 12 сделано 4);
-  дифференциальный стенд против эталонного ISS; утверждение У1 целиком (SoC, браузер)
+## Current state (rewrite)
+- **Measurements complete:** the cost of checks 2.74% (compilation) / 10.16% (compute);
+  hardware support removes 13.7% / 50.0% with diagnostics intact;
+  area 58…154 GE (the lower bound within noise); base 18.21 kGE, 993 flip-flops
+- **Findings documented:** 10
+- **Remaining:** Fmax (needs OpenSTA); the full set of ISA tests (4 of 12 done);
+  the differential bench against the reference ISS; claim C1 as a whole (SoC, browser)
 
-### 10:40 — ✅ находка 11: UMUL в RISC5 — смешанное умножение, а не беззнаковое
-`Multiplier.v`: слагаемое `{w0[31], w0}` расширяется знаком ВСЕГДА, флаг u управляет
-только последним шагом. Следствие: `UMUL` считает первый операнд беззнаково,
-а **второй знаково**.
-Измерено: `UMUL R, 2, 0xFFFFFFFF` даёт H = 0xFFFFFFFF, тогда как истинно беззнаковое
-дало бы H = 1. Тест `tests/t1_umul.s`, 6/6. См. `docs/FINDING-11-umul-is-mixed.md`.
-Найдено случайно: моё ожидание в `t1_arith.s` было основано на «правильной» семантике.
-Важно для дифференциального стенда: эталон обязан воспроизводить именно эту особенность.
+### 10:40 — ✅ finding 11: UMUL in RISC5 is a mixed multiplication, not an unsigned one
+`Multiplier.v`: the addend `{w0[31], w0}` is ALWAYS sign-extended; flag u controls
+only the last step. Consequence: `UMUL` treats the first operand as unsigned
+and **the second as signed**.
+Measured: `UMUL R, 2, 0xFFFFFFFF` gives H = 0xFFFFFFFF, whereas a truly unsigned one
+would give H = 1. Test `tests/t1_umul.s`, 6/6. See `docs/FINDING-11-umul-is-mixed.md`.
+Found by accident: my expectation in `t1_arith.s` was based on the "correct" semantics.
+Important for the differential bench: the reference must reproduce exactly this quirk.
 
-### 11:30 — ✅ проверка эквивалентности декодера, находка 12
-`tb/decoder_equiv.cpp`: все 256 комбинаций {IR[31:28] × op} × 5 наборов операндов = 1280
-прогонов на двух ядрах, сравнение регистров, флагов, тактов и контрольной суммы памяти.
+### 11:30 — ✅ decoder equivalence check, finding 12
+`tb/decoder_equiv.cpp`: all 256 combinations of {IR[31:28] × op} × 5 operand sets = 1280
+runs on two cores, comparing registers, flags, cycles and a memory checksum.
 
-**Поймала настоящую ошибку:** мой декод `~p & ~q & v & (op==1)` не проверял бит `u`,
-поэтому CHK декодировалась в ДВУХ кодировках (`0001` и `0011`) — занимала два слота
-вместо одного. Существующий код не ломался, но кодовое пространство расходовалось вдвое.
-Исправлено вставкой `~u &` в RTL и эмулятор; теперь различается ровно одна кодировка.
+**It caught a real bug:** my decode `~p & ~q & v & (op==1)` did not check bit `u`,
+so CHK decoded in TWO encodings (`0001` and `0011`), taking two slots
+instead of one. Existing code did not break, but the code space was used up twice as fast.
+Fixed by inserting `~u &` in the RTL and the emulator; now exactly one encoding differs.
 
-Подключено к `make test` через цель `equiv`. См. `docs/FINDING-12-decoder-equivalence.md`.
+Hooked into `make test` via the `equiv` target. See `docs/FINDING-12-decoder-equivalence.md`.
 
-**Итог по тестам ISA: 12 из 12 запланированных сделаны.**
-Полная регрессия: 11 наборов × 2 конфигурации + эквивалентность декодера, всё зелёное.
+**ISA tests overall: 12 of the 12 planned are done.**
+Full regression: 11 suites × 2 configurations + decoder equivalence, all green.
 
-### 12:40 — 🎯 ВЕХА: настоящий Verilog загружает настоящий Оберон
-SoC-стенд: ядро `RISC5.v` на RTL + ОЗУ + ПЗУ + устройства заглушками с тем же
-регистровым интерфейсом (по рекомендации ревью — проводные интерфейсы не эмулируем).
-Логика SD-карты взята из эталонного эмулятора, она словная и ложится на регистры.
+### 12:40 — 🎯 MILESTONE: real Verilog boots real Oberon
+The SoC bench: the `RISC5.v` core on RTL + RAM + ROM + devices as stubs with the same
+register interface (as the review recommended, we do not emulate the wired interfaces).
+The SD card logic is taken from the reference emulator; it is word-based and maps onto registers.
 
-**Загрузка: 12 млн инструкций, 18.65 млн тактов, 4.27 с на хосте = 4.37 МГц-эквивалент.
-Кадровый буфер непустой, на экране интерфейс Оберона** (`docs/oberon-boot-screen.png`).
-Эталон рисует первый кадр после ~8 млн инструкций, наше RTL — после ~7.1 млн.
+**Boot: 12 million instructions, 18.65 million cycles, 4.27 s on the host = 4.37 MHz-equivalent.
+The framebuffer is non-empty, the Oberon interface is on the screen** (`docs/oberon-boot-screen.png`).
+The reference draws the first frame after ~8 million instructions, our RTL after ~7.1 million.
 
-Три ошибки по дороге:
-1. 🔴 `prom.mem` из комплекта Вирта — загрузчик по ПОСЛЕДОВАТЕЛЬНОЙ ЛИНИИ, с диска не
-   читает. Нужен из эталонного эмулятора (`risc-boot.inc`). Начинаются одинаково.
-2. 🔴 Во время сброса шину надо обслуживать из памяти: IR защёлкивается каждый такт,
-   и с нулями первая инструкция выполняется как `MOV R0,R0` вместо перехода.
-3. Кадровый буфер снизу вверх — предсказано ревью, сэкономило день.
-См. `docs/FINDING-13-boot-on-rtl.md`.
+Three bugs along the way:
+1. 🔴 `prom.mem` from Wirth's set is a loader over the SERIAL LINE; it does not read
+   from the disk. The one from the reference emulator (`risc-boot.inc`) is needed. They start the same.
+2. 🔴 During reset the bus must be served from memory: IR is latched every cycle,
+   and with zeros the first instruction executes as `MOV R0,R0` instead of a jump.
+3. The framebuffer is bottom-up: predicted by the review, it saved a day.
+See `docs/FINDING-13-boot-on-rtl.md`.
 
-### 13:20 — 🎯 ДИФФЕРЕНЦИАЛЬНЫЙ СТЕНД: 15 млн инструкций совпадения
-`tb/lockstep.cpp`: RTL против эталонного эмулятора, после КАЖДОЙ инструкции сверяются
-счётчик команд, все 16 регистров, H и четыре флага. Нагрузка — загрузка системы Оберон.
+### 13:20 — 🎯 DIFFERENTIAL BENCH: 15 million instructions of agreement
+`tb/lockstep.cpp`: RTL against the reference emulator; after EVERY instruction it compares
+the program counter, all 16 registers, H and the four flags. The workload is booting the Oberon system.
 
-**Результат: 14 600 503 инструкции строгого сравнения, 23.2 млн тактов RTL,
-5.8 с на хосте, расхождений 0.** Прогрев в загрузчике 399 497 инструкций.
+**Result: 14,600,503 instructions of strict comparison, 23.2 million RTL cycles,
+5.8 s on the host, 0 mismatches.** Warm-up in the loader: 399,497 instructions.
 
-Пять источников недетерминизма устранены (четыре предсказаны ревью):
-разрядность PC, регистр ссылки после выхода из ПЗУ, таймер, эвристика progress, образ диска.
+Five sources of nondeterminism eliminated (four predicted by the review):
+PC width, the link register after leaving the ROM, the timer, the progress heuristic, the disk image.
 
-Стенд поймал две мои ошибки:
-1. шина во время сброса (нашлось сразу — у эталона первая инструкция уходила по переходу)
-2. 🔴 **служебную запись, которую я вписал сам**, предвосхищая ловушку из ревью: эталон
-   кладёт "Sizg" на DisplayStart в `risc_configure_memory()`, которую наш запуск не
-   вызывает. Разошлось на шаге 2 101 536.
+The bench caught two of my bugs:
+1. the bus during reset (found immediately: in the reference the first instruction branched away)
+2. 🔴 **a housekeeping write that I had added myself**, anticipating a trap from the review: the reference
+   puts "Sizg" at DisplayStart in `risc_configure_memory()`, which our launch does not
+   call. Diverged at step 2,101,536.
 
-Цели `make lockstep` и `make boot`. См. `docs/FINDING-14-lockstep.md`.
+Targets `make lockstep` and `make boot`. See `docs/FINDING-14-lockstep.md`.
 
-### 14:10 — 🎯 У1 ЗАКРЫТО: Оберон работает в браузере на настоящем RTL
-`web/` — ядро RISC5 → Verilator → Emscripten → WASM, Project Oberon в обычной вкладке.
-Проверено в Chrome: полноценный рабочий стол, баннер `Oberon V5 NW 14.4.2013`,
-панель System.Tool со всеми командами. Снимок `docs/oberon-in-browser.png`.
+### 14:10 — 🎯 C1 CLOSED: Oberon runs in the browser on real RTL
+`web/`: the RISC5 core → Verilator → Emscripten → WASM, Project Oberon in an ordinary tab.
+Checked in Chrome: a full desktop, the banner `Oberon V5 NW 14.4.2013`,
+the System.Tool panel with all the commands. Screenshot `docs/oberon-in-browser.png`.
 
-**Доставка 326 КБ в gzip** (модель 75 КБ, образ 249 КБ) — совпадает с предсказанием ревью.
-**Скорость в WASM 4.27 МГц против 4.37 нативных — потеря 2.3%** (ревью ждало 5–8%).
-Контрольная сумма экрана `B5DFC933` **одинакова во всех трёх сборках**.
+**Delivery is 326 KB gzipped** (model 75 KB, image 249 KB): matches the review's prediction.
+**Speed in WASM is 4.27 MHz versus 4.37 native: a 2.3% loss** (the review expected 5–8%).
+The screen checksum `B5DFC933` **is the same in all three builds**.
 
-Решено: заглушки привязки потоков (предсказано ревью), исключение DPI-файла,
-`verilated_threads.cpp`, компоновка через `em++`, диск в памяти вместо файла.
-**SharedArrayBuffer сознательно не используется** — страница встраивается куда угодно.
+Solved: stubs for thread affinity (predicted by the review), excluding the DPI file,
+`verilated_threads.cpp`, linking via `em++`, the disk in memory instead of a file.
+**SharedArrayBuffer is deliberately not used**: the page can be embedded anywhere.
 
-🔴 Пойман настоящий баг: **если вкладка стартует скрытой, rAF не вызывается вовсе и цикл
-не запускается никогда**, даже после открытия вкладки. Лечится подпиской на
-`visibilitychange`. Проявилось именно в автоматизации со скрытой вкладкой.
-См. `docs/FINDING-15-browser.md`.
+🔴 Caught a real bug: **if the tab starts hidden, rAF is never called and the loop
+never starts**, even after the tab is opened. Fixed by subscribing to
+`visibilitychange`. It showed up precisely in automation with a hidden tab.
+See `docs/FINDING-15-browser.md`.
 
-### 14:40 — ✅ Fmax закрыт, находка 16
-`syn/fmax.py`: свип цели по задержке с явным delay-driven скриптом abc и `stime -p`.
+### 14:40 — ✅ Fmax closed, finding 16
+`syn/fmax.py`: a sweep of the delay target with an explicit delay-driven abc script and `stime -p`.
 
-**⚠ ПОЗЖЕ ИСПРАВЛЕНО АУДИТОМ: знак дельты частоты НЕ ОПРЕДЕЛЁН.**
-delay-driven маршрут: 2096.0 → 2134.6 пс = −1.81%. Дефолтный abc: 2215.3 → 2180.5 пс
-= **+1.60%, то есть CHK БЫСТРЕЕ**. Знак противоположен между маршрутами на одном RTL.
-Предсказание ревью («компараторы лягут на критический путь») остаётся неподтверждённым:
-разрешения инструмента не хватает, чтобы его проверить.
+**⚠ CORRECTED LATER BY THE AUDIT: the sign of the frequency delta is NOT DETERMINED.**
+The delay-driven flow: 2096.0 → 2134.6 ps = −1.81%. Default abc: 2215.3 → 2180.5 ps
+= **+1.60%, that is, CHK is FASTER**. The sign is opposite between flows on the same RTL.
+The review's prediction ("the comparators will land on the critical path") remains unconfirmed:
+the tool's resolution is not enough to test it.
 
-🔴 **ПОЗЖЕ ИСПРАВЛЕНО: сравнивались РАЗНЫЕ конфигурации RTL.** +30.06 снималось без
-`CHK_SPLIT`, +123.16 — с ним. На идентичном RTL разброс **2.65×** (+46.55 против +123.16),
-а не вчетверо. Качественный вывод («маршрут двигает эффект сильнее самого эффекта»)
-выживает, число — нет.
+🔴 **CORRECTED LATER: DIFFERENT RTL configurations were compared.** +30.06 was taken without
+`CHK_SPLIT`, +123.16 with it. On identical RTL the spread is **2.65×** (+46.55 versus +123.16),
+not fourfold. The qualitative conclusion ("the flow moves the effect more than the effect itself")
+survives; the number does not.
 
-⚠ Оговорки: `WireLoad = "none"` (задержки проводов не учтены), критический путь
-настоящей системы идёт через внешнюю память, которой в нетлисте ядра нет.
-OpenSTA не установлен и в Homebrew не пакетирован — полноценный статический анализ
-остаётся незакрытым. См. `docs/FINDING-16-fmax.md`.
+⚠ Caveats: `WireLoad = "none"` (wire delays not counted); the critical path of the
+real system goes through external memory, which is not in the core's netlist.
+OpenSTA is not installed and is not packaged in Homebrew; a full static analysis
+remains open. See `docs/FINDING-16-fmax.md`.
 
-## Текущее состояние (перезапись)
-**Все пункты дизайна закрыты.**
-- У1 (весь стек в браузере) ✅ — `web/`, 326 КБ gzip, 4.27 МГц, проверено в Chrome
-- У3 (цена проверок в трёх конфигурациях) ✅ — на двух нагрузках, с площадью и частотой
-- Тесты ISA: 12 из 12 + эквивалентность декодера, ~360 проверок, всё зелёное
-- Дифференциальный стенд: 15 млн инструкций совпадения с эталоном
-- Находок задокументировано: **16**
-Не закрыто: OpenSTA (полноценный статический анализ).
+## Current state (rewrite)
+**All design items are closed.**
+- C1 (the whole stack in the browser) ✅: `web/`, 326 KB gzip, 4.27 MHz, checked in Chrome
+- C3 (the cost of checks in three configurations) ✅: on two workloads, with area and frequency
+- ISA tests: 12 of 12 + decoder equivalence, ~360 checks, all green
+- Differential bench: 15 million instructions agreeing with the reference
+- Findings documented: **16**
+Not closed: OpenSTA (full static analysis).
 
-### 15:10 — ✅ находка 17: модель тактов проверена на реальной нагрузке
-Наводка от аудитора: модель тактов ни разу не сверялась с RTL на настоящей нагрузке,
-только на 61 инструкции синтетики — при том что на ней построены ВСЕ числа выпуска.
+### 15:10 — ✅ finding 17: the cycle model verified on a real workload
+A tip from an auditor: the cycle model had never been checked against the RTL on a real workload,
+only on 61 synthetic instructions, even though ALL the episode's numbers are built on it.
 
-Сверка встроена в SoC-стенд. **12 000 000 инструкций загрузки Оберона,
-расхождений 0 (0.0000%), суммарно 18 654 115 против 18 654 115 — совпадение до такта.**
+The comparison is built into the SoC bench. **12,000,000 instructions of the Oberon boot,
+0 mismatches (0.0000%), in total 18,654,115 versus 18,654,115: exact to the cycle.**
 
-🔴 Ловушка при самой проверке: первый прогон дал «расхождение 15.8%». Это была ОШИБКА
-В КОДЕ СВЕРКИ — инструкция читалась по `top->adr` до установки шины (там адрес прошлого
-такта). Правильно брать PC напрямую. Если бы опубликовал — ложная находка, обесценивающая
-все числа тактов. **Отрицательный результат надо проверять так же тщательно, как положительный.**
-См. `docs/FINDING-17-cycle-model-validated.md`.
+🔴 A trap in the check itself: the first run gave "a 15.8% mismatch". It was a BUG
+IN THE COMPARISON CODE: the instruction was read via `top->adr` before the bus was set (it held the previous
+cycle's address). The right thing is to take the PC directly. Had I published it, it would have been a false finding devaluing
+all the cycle numbers. **A negative result must be checked as carefully as a positive one.**
+See `docs/FINDING-17-cycle-model-validated.md`.
 
-### 16:30 — 🔴 мутационный аудит: оснастка ловила треть поломок
-Аудитор внёс **31 мутацию в RTL, поймано 10 из 30 (33%)**. Три механизма превращали
-провал в «зелёное»: несработавшее ожидание не считалось, `|| true` съедал ошибку сборки,
-`make boot` всегда возвращал 0.
+### 16:30 — 🔴 mutation audit: the harness caught a third of the breakages
+An auditor introduced **31 mutations into the RTL; 10 of 30 were caught (33%)**. Three mechanisms turned
+a failure into "green": an expectation that never fired was not counted, `|| true` swallowed a build error,
+`make boot` always returned 0.
 
-Исправлено:
-- **B1** несработавшее ожидание = провал (проверено: мутация `>` вместо `>=` теперь ловится)
-- **B2** сборка обязана дать бинарник, прогон по коду возврата, `mkdir -p build`
-- **B3** написан `tests/t1_fp.s` — **17 проверок числовых результатов FP**, которых
-  не было вообще. Случаи, чувствительные к округлению, найдены перебором.
-  Три из трёх мутаций FPU теперь ловятся
-- **S1** в тесте ветвлений было **V=0 во всех состояниях** → пять условий из восьми
-  неразличимы. Добавлены состояния с переполнением: **112 проверок вместо 64**.
-  Три из трёх мутаций ветвления ловятся
-- патчи кодогенератора спасены из `build/` в `patches/` (их сносил `make clean`)
+Fixed:
+- **B1** an expectation that did not fire = a failure (verified: the mutation `>` instead of `>=` is now caught)
+- **B2** the build must produce a binary, the run is judged by its exit code, `mkdir -p build`
+- **B3** wrote `tests/t1_fp.s`: **17 checks of numerical FP results**, which
+  did not exist at all. Rounding-sensitive cases were found by enumeration.
+  Three of three FPU mutations are now caught
+- **S1** the branch test had **V=0 in all states** → five of the eight conditions
+  were indistinguishable. Added states with overflow: **112 checks instead of 64**.
+  Three of three branch mutations are caught
+- the code generator patches were rescued from `build/` into `patches/` (`make clean` used to wipe them)
 
-Честный счёт: **250 уникальных ожиданий** (не «~360» — то был тот же набор на двух сборках).
-См. `docs/FINDING-20-mutation-audit.md`.
+The honest count: **250 unique expectations** (not "~360": that was the same set on two builds).
+See `docs/FINDING-20-mutation-audit.md`.
 
-### 17:40 — все пять аудиторов отчитались, ВСЕ пятеро: НЕ ПРИНИМАЮ
-| Аудитор | Главное, что нашёл |
+### 17:40 — all five auditors reported, ALL five: I DO NOT ACCEPT
+| Auditor | The main thing found |
 |---|---|
-| враждебный читатель | сравнение разных RTL выдано за «вчетверо»; площадь от отвергнутой кодировки; заявки на новизну опровергнуты первоисточниками |
-| RTL | **знак дельты частоты не определён** (+1.60% против −1.81% по маршрутам) |
-| тулчейн | патчи жили только в `build/`, который сносит `make clean`; конфигурация C не запускается |
-| верификация | **мутационный счёт 33%**: 31 поломка RTL, поймано 10; три механизма превращали провал в «зелёное» |
-| методология | **разложил главное число: 2.74% = 2.20% исполнение + 0.54% кодогенерация** |
+| hostile reader | a comparison of different RTL presented as "fourfold"; area from a rejected encoding; novelty claims refuted by primary sources |
+| RTL | **the sign of the frequency delta is not determined** (+1.60% versus −1.81% depending on the flow) |
+| toolchain | the patches lived only in `build/`, which `make clean` wipes; configuration C does not run |
+| verification | **a mutation score of 33%**: 31 RTL breakages, 10 caught; three mechanisms turned failure into "green" |
+| methodology | **broke down the main number: 2.74% = 2.20% execution + 0.54% code generation** |
 
-Исправлено: разложение перекрёстной сборкой 2×2 (`tools/measure_cross.sh`, воспроизведено,
-две независимые оценки сходятся на 0.4%); **чистое число 2.20%, аппаратура снимает 17.1%**;
-площадь и частота переформулированы как «ниже разрешающей способности маршрута»;
-диапазон «14–50%» опровергнут контрпримером 10.4% и заменён на три точки;
-медиана 32 признана артефактом модального значения `ARRAY 32 OF CHAR`;
-сопоставление с литературой **отозвано** — три из четырёх чисел искажали смысл;
-правило счётчика уточнено (блок, а не мнемоника; `LD` тоже сбрасывает; MUL→UMUL = 64).
-См. `docs/FINDING-19`, `FINDING-20`, `FINDING-21`.
+Fixed: the breakdown via a 2×2 cross-build (`tools/measure_cross.sh`, reproduced,
+two independent estimates agree within 0.4%); **the clean number is 2.20%, the hardware removes 17.1%**;
+area and frequency reformulated as "below the resolution of the flow";
+the range "14–50%" refuted by a 10.4% counterexample and replaced by three points;
+the median of 32 recognized as an artifact of the modal value `ARRAY 32 OF CHAR`;
+the comparison with the literature **withdrawn**: three of four numbers distorted the meaning;
+the counter rule refined (a block, not a mnemonic; `LD` also resets it; MUL→UMUL = 64).
+See `docs/FINDING-19`, `FINDING-20`, `FINDING-21`.
 
-### 19:30 — 🎯 КРУГ ЗАМКНУТ: компилятор Оберона на настоящем RTL
-`make selfhost`. Все четыре модуля компилятора (ORS/ORB/ORG/ORP) собраны на ядре
-`RISC5.v` Вирта под Verilator: **40 770 748 инструкций, 66 700 249 тактов,
-результат побайтово совпал с эмулятором по всем четырём.**
+### 19:30 — 🎯 THE LOOP IS CLOSED: the Oberon compiler on real RTL
+`make selfhost`. All four compiler modules (ORS/ORB/ORG/ORP) were built on Wirth's
+`RISC5.v` core under Verilator: **40,770,748 instructions, 66,700,249 cycles,
+the result matched the emulator byte for byte for all four.**
 
-Единственный C в контуре — мост к файловой системе хоста (включён из `norebo.c`
-без изменений, подменены только `main()` и запуск процессора). В браузере он не нужен.
+The only C in the loop is the bridge to the host file system (included from `norebo.c`
+unchanged; only `main()` and the processor start were replaced). It is not needed in the browser.
 
-Три ошибки по дороге: адреса устройств отрицательные, а шина 24-битная (прогон 4 млрд
-инструкций вхолостую); условие останова срабатывало на любом системном вызове (103
-инструкции); **не задан регистр команд при старте** — RISC5 с предвыборкой, и ядро пошло
-исполнять таблицу модулей как код.
+Three bugs along the way: device addresses are negative while the bus is 24-bit (a run of 4 billion
+idle instructions); the stop condition fired on any system call (103
+instructions); **the instruction register was not set at start**: RISC5 prefetches, and the core went
+on to execute the module table as code.
 
-⚠ И отдельная ловушка: цикл ожидания `pgrep -f norebo_tb` **нашёл сам себя** и полтора
-часа ждал собственного завершения. См. `docs/FINDING-22-selfhost-on-rtl.md`.
+⚠ And a separate trap: the wait loop `pgrep -f norebo_tb` **found itself** and spent an hour and a half
+waiting for its own completion. See `docs/FINDING-22-selfhost-on-rtl.md`.
 
-### 05:47 — самораскрутка внутри самой системы, без моста к хосту
-- Стенд `soc_tb` получил ввод: регистры мыши и клавиатуры по формату из `Input.Mod`
-  (кнопки в битах 24..26, готовность клавиатуры — бит 28) и сценарный режим
-  `--script=` (подвести мышь, послать скан-код, снять кадр).
-- `tools/keymap.py` строит раскладку разбором таблицы `kbdTab` прямо из исходника
-  драйвера — ничего не выдумано. `tools/mkscript.py` собирает сценарий из команд
-  `click` / `type` / `enter` / `shot`, координата `y` пишется как на картинке.
-- Проверка: средний щелчок по `System.ShowModules` открыл вьюер со списком модулей.
-  Затем набран и исполнен `ORP.Compile ORS.Mod/s ~` — компилятор собрал свой сканер.
-- **Неподвижная точка достигнута.** Четыре модуля собраны компилятором с диска,
-  `System.Free` выгрузил все четыре, те же исходники собраны заново уже новым
-  компилятором. Размер кода, размер данных и ключ совпали у всех четырёх:
+### 05:47 — bootstrapping inside the system itself, without the host bridge
+- The `soc_tb` bench got input: mouse and keyboard registers in the format from `Input.Mod`
+  (buttons in bits 24..26, keyboard ready is bit 28) and a scripted mode
+  `--script=` (move the mouse, send a scan code, take a frame).
+- `tools/keymap.py` builds the keymap by parsing the `kbdTab` table straight from the driver
+  source: nothing is made up. `tools/mkscript.py` assembles a script from the commands
+  `click` / `type` / `enter` / `shot`; the `y` coordinate is written as in the picture.
+- Check: a middle click on `System.ShowModules` opened a viewer with the list of modules.
+  Then `ORP.Compile ORS.Mod/s ~` was typed and executed: the compiler built its scanner.
+- **Fixed point reached.** Four modules were built by the compiler from disk,
+  `System.Free` unloaded all four, and the same sources were built again by the new
+  compiler. Code size, data size and key matched for all four:
   ORS 1756/992/76547166, ORB 2325/408/2F03B698, ORG 6650/34980/8F476858,
-  ORP 6188/144/E6FCC519. 715 млн инструкций, 1,1 млрд тактов, 0 расхождений модели.
-- **Ловушка 4 оказалась не багом компилятора.** Сборка всех четырёх модулей одной
-  командой падала на ORP. `NilCheck` в `ORG.Mod` — это номер 4, то есть NIL, то есть
-  исчерпание кучи: внутри команды `Oberon.Loop` не выполняется и сборщик мусора не
-  работает. Четырьмя отдельными командами проходит.
-- **Найден баг воспроизводимости в своей оснастке.** `disk.c` открывает образ как
-  `rb+`, а цель `boot` шла без `--disk`, то есть прямо на эталонном образе в `ext/`.
-  Каждая загрузка системы молча правила источник истины; образ уже разошёлся с
-  upstream. Контрольная сумма экрана `B5DFC933` совпадала и на испорченном образе —
-  проверка загрузки к этому нечувствительна. Починено: без `--persist` стенд
-  работает на копии в `build/`, `ext/disk/SHA256SUMS` фиксирует эталон, цель
-  `pristine` проверяет его и входит в `make check`. Образ восстановлен из upstream.
-- `tools/check_bootstrap.py` сверяет два блока журнала как растр, без распознавания
-  текста. Проверен на промахи: падает на кадре только с первым поколением, на кадре
-  с ловушкой и на кадре одиночной сборки ORP.
-- Находка записана в `docs/FINDING-23-bootstrap-in-system.md`. Цели `pristine` и
-  `bootstrap` добавлены в `make check`.
+  ORP 6188/144/E6FCC519. 715 million instructions, 1.1 billion cycles, 0 model mismatches.
+- **Trap 4 turned out not to be a compiler bug.** Building all four modules with one
+  command failed on ORP. `NilCheck` in `ORG.Mod` is number 4, that is NIL, that is
+  heap exhaustion: inside a command `Oberon.Loop` does not run and the garbage collector does not
+  work. With four separate commands it passes.
+- **Found a reproducibility bug in my own harness.** `disk.c` opens the image as
+  `rb+`, and the `boot` target ran without `--disk`, that is, directly on the reference image in `ext/`.
+  Every system boot silently modified the source of truth; the image had already diverged from
+  upstream. The screen checksum `B5DFC933` matched even on the corrupted image:
+  the boot check is insensitive to this. Fixed: without `--persist` the bench
+  works on a copy in `build/`, `ext/disk/SHA256SUMS` pins the reference, and the
+  `pristine` target checks it and is part of `make check`. The image was restored from upstream.
+- `tools/check_bootstrap.py` compares two blocks of the log as a raster, without text
+  recognition. Checked for misses: it fails on a frame with only the first generation, on a frame
+  with a trap, and on a frame of a single ORP build.
+- The finding is recorded in `docs/FINDING-23-bootstrap-in-system.md`. The `pristine` and
+  `bootstrap` targets were added to `make check`.
 
-### 06:40 — аудит собственного ассемблера: три несогласных Вирта
-- Вопрос был «насколько корректен наш ассемблер». Покрытие: все 16 условных
-  переходов в тестах есть, из операций не проверены ничем только `ANN` и `XOR`.
-- Сверка с независимой инстанцией — дизассемблером `ORTool.Mod` самого Вирта —
-  дала два расхождения, оба настоящие.
-- **Таблица условий в ORTool неверна и неполна**: заполнено 11 индексов из 16,
-  и `mnemo1[2]="LS"`, `mnemo1[10]="HI"` против наших CS и CC. Право железо:
-  `RISC5.v` даёт `(cc==2)&C` и `(cc==4)&(C|Z)`. Доказано мутацией: с раскладкой
-  ORTool **4 из 112 проверок ветвления падают на RTL**, с нашей — 112 из 112.
-- **Ширина смещения перехода: три разных числа в одной системе.** ORG.Mod
-  (кодогенератор) — `off MOD 1000000H`, 24 бита. RISC5.v (железо) —
-  `disp = IR[21:0]`, 22 бита. ORTool.Mod (дизассемблер) — `w MOD 100000H`,
-  20 бит. Невидимо на практике: адресное пространство 1 МБ = 18 бит в словах.
-- Что биты 23:22 железо игнорирует — проверено исполнением, не чтением:
-  новый `tests/t1_branch_width.s`, два перехода различаются только ими и
-  приходят в одну точку.
-- **Найдена латентная ошибка у себя**: ассемблер проверял диапазон по 24 битам
-  и молча принимал недостижимые переходы. Починено с разделением ролей —
-  кодируем как ORG.Mod (24 бита, совместимо с настоящим компилятором),
-  диапазон проверяем по железу (22 бита, явная ошибка). Поведение существующих
-  тестов не изменилось: ошибка была недостижима на 1 МБ.
-- Самотест ассемблера получил обязательные отказы (`must_fail`) и включён в
-  `make test`. Первая попытка встроить была зелёной на поломке — код возврата
-  съедался конвейером `| tail -1`, тот же класс, что `|| true` из аудита.
-  Переписано через файл и явную проверку кода, оба пути проверены.
-- Находка записана в `docs/FINDING-24-assembler-correctness.md`.
+### 06:40 — auditing our own assembler: three Wirths who disagree
+- The question was "how correct is our assembler". Coverage: all 16 conditional
+  branches are in the tests; of the operations only `ANN` and `XOR` are not checked by anything.
+- Comparison with an independent instance, Wirth's own disassembler `ORTool.Mod`,
+  gave two differences, both real.
+- **The condition table in ORTool is wrong and incomplete**: 11 of 16 indexes are filled,
+  and `mnemo1[2]="LS"`, `mnemo1[10]="HI"` versus our CS and CC. The hardware is right:
+  `RISC5.v` gives `(cc==2)&C` and `(cc==4)&(C|Z)`. Proven by mutation: with the ORTool
+  layout **4 of 112 branch checks fail on the RTL**, with ours 112 of 112 pass.
+- **Branch offset width: three different numbers in one system.** ORG.Mod
+  (the code generator): `off MOD 1000000H`, 24 bits. RISC5.v (the hardware):
+  `disp = IR[21:0]`, 22 bits. ORTool.Mod (the disassembler): `w MOD 100000H`,
+  20 bits. Invisible in practice: a 1 MB address space = 18 bits in words.
+- That the hardware ignores bits 23:22 was checked by execution, not by reading:
+  a new `tests/t1_branch_width.s`, two branches that differ only in them
+  arrive at the same point.
+- **Found a latent bug of my own**: the assembler checked the range against 24 bits
+  and silently accepted unreachable branches. Fixed by separating roles:
+  we encode like ORG.Mod (24 bits, compatible with the real compiler),
+  and check the range against the hardware (22 bits, an explicit error). The behavior of existing
+  tests did not change: the bug was unreachable within 1 MB.
+- The assembler self-test got mandatory refusals (`must_fail`) and was included in
+  `make test`. The first attempt to hook it in was green on a breakage: the exit code
+  was swallowed by the `| tail -1` pipeline, the same class as `|| true` from the audit.
+  Rewritten via a file and an explicit check of the code; both paths verified.
+- The finding is recorded in `docs/FINDING-24-assembler-correctness.md`.
 
-### 08:20 — три открытых пункта по ассемблеру закрыты, круг на реальном коде
-- **ANN и XOR покрыты**: `tests/t1_logic.s`, 10 проверок на железе, семантика из
-  `aluRes`. Мутация (перестановка AND/ANN) роняет все 10.
-- **Побайтовая сверка с выводом ORG.Mod сделана.** `tools/rsc.py` разбирает .rsc
-  по раскладке из `ORTool.DecObj` (сошлось с журналом: 1756/2325/6650/6188 слов,
-  ключ E6FCC519). `tools/disasm.py` снят с RISC5.v. `tools/roundtrip.py` гоняет
-  круг слово→дизассемблер→ассемблер→слово. **33 838 слов настоящего компилятора
-  воспроизведены бит в бит.**
-- Первый прогон замкнулся на 15 628 из 16 919 и вскрыл ЧЕТЫРЕ пробела:
-  (1) нагрузка ловушки в битах 23:4 у BLR — `Put3(BLR, cond, Pos()*100H +
-  num*10H + MT)`, это 7.6% кода компилятора, выразить было нечем;
-  (2) диапазон непосредственного F1 — железо даёт `{{16{v}}, imm}`, то есть
-  −65536…−1 при v=1, а мы проверяли как 16-битное знаковое (реальное слово
+### 08:20 — three open assembler items closed, a round trip on real code
+- **ANN and XOR covered**: `tests/t1_logic.s`, 10 checks on the hardware, semantics from
+  `aluRes`. A mutation (swapping AND/ANN) brings down all 10.
+- **A byte-for-byte comparison with ORG.Mod's output is done.** `tools/rsc.py` parses .rsc
+  following the layout from `ORTool.DecObj` (agrees with the log: 1756/2325/6650/6188 words,
+  key E6FCC519). `tools/disasm.py` is taken from RISC5.v. `tools/roundtrip.py` runs
+  the round trip word→disassembler→assembler→word. **33,838 words of the real compiler
+  reproduced bit for bit.**
+- The first run closed on 15,628 of 16,919 and exposed FOUR gaps:
+  (1) the trap payload in bits 23:4 of BLR: `Put3(BLR, cond, Pos()*100H +
+  num*10H + MT)`, 7.6% of the compiler's code, and there was no way to express it;
+  (2) the F1 immediate range: the hardware gives `{{16{v}}, imm}`, that is,
+  −65536…−1 with v=1, while we checked it as a 16-bit signed value (a real word
   `50090000` = `SUB R0,R0,-65536`);
-  (3) `MOV a,H` / `MOV a,NZCV` — старый `TODO(verify)` снят чтением aluRes;
-  (4) `FLT` / `FLOOR` — спецформы op=12, различаются u/v, видно в FPAdder.v.
-- **Систематический перебор** `tools/sweep_encoding.py` — 129 760 форм со стороны
-  ассемблера, все проходят круг. Перебор со стороны СЛОВ не годится: при op=0
-  железо не читает поле b (ветка MOV в aluRes не трогает B), и слово с непустым b
-  не воспроизводится буквально. Добавлено в тест на железе.
-- **Найдена настоящая коллизия кодировок**: `RTI = BR & ~u & ~v & IR[4]`, то есть
-  переход по регистру без связи с нечётной нагрузкой исполняется как RTI.
-  Подтверждено исполнением — `tests/t1_irq.s` гоняет ровно эту комбинацию.
-  Ассемблер такую форму теперь отвергает; ловушек Оберона не задевает (там BLR).
-- Мутационная проба показала, что две проверки НЕ заменяют друг друга: перестановку
-  ADC/SBC круг не ловит вовсе (их нет в коде компилятора), перестановку a/b ловит
-  слабо (122 случая — в накопительном стиле a и b часто совпадают). Перебор ловит обе.
-- **Найден ещё один баг воспроизводимости**: кэш байт-кода Python. Секундная
-  гранулярность времени на macOS — восстановленный из копии дизассемблер продолжал
-  выдавать мутированный разбор, потому что `.pyc` считался свежим. В Makefile
-  добавлен `PYTHONDONTWRITEBYTECODE`, `__pycache__` в .gitignore.
-  Осталось удалить существующий каталог: `rm -rf tools/__pycache__` (выполнить самому).
-- Цели `roundtrip` и перебор встроены в `make test` / `make check`, оба пути
-  (зелёный и красный) проверены. Тестов стало 264 проверки в 16 файлах.
-- Находка 24 дополнена.
+  (3) `MOV a,H` / `MOV a,NZCV`: the old `TODO(verify)` was resolved by reading aluRes;
+  (4) `FLT` / `FLOOR`: special forms of op=12 that differ in u/v, visible in FPAdder.v.
+- **A systematic enumeration** `tools/sweep_encoding.py`: 129,760 forms from the assembler's
+  side, all pass the round trip. Enumerating from the WORD side does not work: with op=0
+  the hardware does not read field b (the MOV branch in aluRes does not touch B), and a word with a non-empty b
+  is not reproduced literally. Added to the hardware test.
+- **Found a real encoding collision**: `RTI = BR & ~u & ~v & IR[4]`, that is,
+  a branch to a register without link and with an odd payload executes as RTI.
+  Confirmed by execution: `tests/t1_irq.s` runs exactly this combination.
+  The assembler now rejects this form; it does not affect Oberon traps (those are BLR).
+- A mutation probe showed that the two checks do NOT replace each other: the round trip does not catch
+  swapping ADC/SBC at all (they do not occur in the compiler's code), and catches swapping a/b
+  weakly (122 cases: in accumulator style a and b often coincide). The enumeration catches both.
+- **Found another reproducibility bug**: the Python bytecode cache. With one-second
+  time granularity on macOS, a disassembler restored from a backup kept
+  producing the mutated parse because the `.pyc` was considered fresh. Added
+  `PYTHONDONTWRITEBYTECODE` to the Makefile and `__pycache__` to .gitignore.
+  What remains is to remove the existing directory: `rm -rf tools/__pycache__` (to be run by hand).
+- The `roundtrip` targets and the enumeration are built into `make test` / `make check`; both paths
+  (green and red) verified. The tests are now 264 checks in 16 files.
+- Finding 24 extended.
 
-### 09:40 — 🔴 первое слово программы не исполнялось во всех 264 проверках
-- Взялись за открытый пункт: 34% пространства кодирования без мнемоники. Оказалось,
-  это не мусор — это `u=1`/`v=1` на операциях, где `aluRes` эти биты не читает.
-  Проверено исполнением (`tools/gen_dontcare_test.py`): 27 сравнений из 32 дали ноль.
-- **Пять форм значимы**: `DIV` с u=1 — беззнаковое деление (делитель получает `~u`,
-  внутри `sign = x[31] & u`); `FSB` с u/v — сумматор в режиме преобразования.
-  Для DIV арифметика сошлась точно: 0xF0F0F0F0 DIV 5 = 0xFCFCFCFC знаково,
-  0x30303030 беззнаково, разность ровно измеренная 0xCCCCCCCC.
-- Введены суффиксы `.u`/`.v`/`.uv` и `UDIV`; FLT/FLOOR/ADC/SBC/UMUL сведены к одному
-  механизму псевдонимов. Перебор вырос до 375 776 форм, **покрытие слов 66.1% → 100%**.
-  Круг на реальном коде остался полным (33 838 слов).
-- **ГЛАВНОЕ.** Зонд делителя дал 0 вместо 14, и причина не в делителе. RISC5 — машина
-  с предвыборкой: на шине адреса стоит PC+1, исполняется содержимое IR. Во время
-  сброса на шине уже стоит StartAdr, и железо защёлкивает первое слово в IR.
-  `tb/run_tests.cpp` при сбросе подавал на шину НУЛИ — в IR оставался ноль, первый
-  такт исполнял MOV R0,R0, а первое слово программы не читалось вовсе.
-  **Во всех 264 направленных проверках первая инструкция не исполнялась.**
-- Пряталось потому, что каждый тест начинался с безразличной инструкции. И те самые
-  «странные» числа из первых замеров (0x30300000 вместо 0x30303030) объясняются этим же.
-- **Самое неприятное**: ошибка УЖЕ была найдена и исправлена в `tb/soc_tb.cpp`
-  («ровно на этом я и споткнулся»), но в `run_tests.cpp` не перенесена — не было
-  регрессионного теста. Аудит всех пяти стендов: остальные четыре в порядке.
-  Теперь есть `tests/t1_prime.s`, сброс приведён к единому виду.
-- После починки все 264 прежние проверки проходят БЕЗ единой правки ожиданий — значит
-  ни одно ожидание не было подогнано под сломанный пуск.
-- Находка 25. Проверок стало 298 в 18 файлах.
-- Черновой зонд `tests/t9_probe.s` в сборку не входит, можно удалить:
-  `rm tests/t9_probe.s tests/t9_probe.bin tests/t9_probe.chk` (выполнить самому).
+### 09:40 — 🔴 the first word of the program was not executed in any of the 264 checks
+- Took up an open item: 34% of the encoding space without a mnemonic. It turned out
+  this is not garbage: it is `u=1`/`v=1` on operations where `aluRes` does not read these bits.
+  Verified by execution (`tools/gen_dontcare_test.py`): 27 of 32 comparisons gave zero.
+- **Five forms are significant**: `DIV` with u=1 is unsigned division (the divider gets `~u`,
+  inside `sign = x[31] & u`); `FSB` with u/v is the adder in conversion mode.
+  For DIV the arithmetic matched exactly: 0xF0F0F0F0 DIV 5 = 0xFCFCFCFC signed,
+  0x30303030 unsigned, the difference exactly the measured 0xCCCCCCCC.
+- Introduced the suffixes `.u`/`.v`/`.uv` and `UDIV`; FLT/FLOOR/ADC/SBC/UMUL were reduced to one
+  alias mechanism. The enumeration grew to 375,776 forms, **word coverage 66.1% → 100%**.
+  The round trip on real code stayed complete (33,838 words).
+- **THE MAIN THING.** The divider probe gave 0 instead of 14, and the cause was not the divider. RISC5 is a machine
+  with prefetch: the address bus holds PC+1, while the contents of IR are executed. During
+  reset the bus already holds StartAdr, and the hardware latches the first word into IR.
+  `tb/run_tests.cpp` fed ZEROS to the bus during reset: IR kept a zero, the first
+  cycle executed MOV R0,R0, and the program's first word was never read at all.
+  **In all 264 directed checks the first instruction was not executed.**
+- It hid because every test started with an irrelevant instruction. And those
+  "strange" numbers from the first measurements (0x30300000 instead of 0x30303030) are explained by the same thing.
+- **The most unpleasant part**: the bug HAD ALREADY been found and fixed in `tb/soc_tb.cpp`
+  ("this is exactly what I tripped over"), but it was not carried over to `run_tests.cpp`: there was no
+  regression test. An audit of all five benches: the other four are fine.
+  Now there is `tests/t1_prime.s`, and reset was brought to a single form.
+- After the fix all 264 previous checks pass WITHOUT a single change to the expectations, so
+  not a single expectation had been tuned to the broken start.
+- Finding 25. Checks are now 298 in 18 files.
+- The draft probe `tests/t9_probe.s` is not part of the build and can be deleted:
+  `rm tests/t9_probe.s tests/t9_probe.bin tests/t9_probe.chk` (to be run by hand).
 
-### 11:20 — семантический дифференциал и лечение четырёх старых болячек
-- **Закрыта последняя дыра.** `tools/alu_model.py` — модель целочисленного ядра по
-  RISC5.v, написанная отдельно от ассемблера. `tools/gen_alu_diff.py` строит
-  случайные программы и проверяет двоякое: (1) предсказание модели совпадает с
-  железом по результату, всем четырём флагам и H; (2) модель, разобрав слово от
-  ассемблера, называет ту же операцию. Общей раскладки в цепочке нет.
-  900 случаев, **4650 проверок**, все зелёные. Семь мутаций модели — все пойманы.
-- **Программа не помещалась в адресное пространство.** Первый большой дифференциал
-  дал 1720 «провалов», и все — НЕСРАБОТАВШИЕ ожидания. PC 22-битный, программа лежит
-  по ORG=0xFFE000, до края ровно 2048 слов; длиннее — молча уходит по кругу на ноль.
-  Поймало правило «несработавшее ожидание — провал» из мутационного аудита.
-  Починено: оснастка отказывается грузить длинную программу, генератор режет на файлы.
-- **`measure_clean.sh`: три глушителя подряд.** (1) путь — двоичные модули лежат в
-  `build/s2X`, а искались в `build/cfgX`, копирование с `|| true` проглатывало
-  отсутствие, и все три конфигурации оказывались одним компилятором → разница +0.00%;
-  (2) отсюда ZeroDivisionError в конце — единственный внешний признак;
-  (3) конфигурация E ставит версию 2, а загрузчик проверяет `versionkey = 1X` и такие
-  модули НЕ ГРУЗИТ — это наш же намеренный замок. Стадия 2 собирала компилятор
-  компилятором E, получала версию 2, прогон давал пустой лог, `set -e` обрывал сразу
-  после «нагрузка:» — вот и симптом «скрипт ничего не выводит».
-  Починено: жёсткая проверка, защита знаменателя, `tools/rsc_setversion.py`.
-  **Честный замер**: A 29 277 745 тактов, B +2.19%, E +1.85%; аппаратура снимает 15.5%.
-  Цифра +2.19% сходится с 2.20% из разложения 2×2 — два независимых способа.
-- **Эквивалентность декодера**: подпись была узкой (R5, R6, флаги, такты, память),
-  поле `a` намертво 5 — а у формата F3 это и есть условие, т.е. из 16 условий
-  проверялось одно, и порча BL не видна (нет R15 и PC). Теперь подпись — все 16
-  регистров, флаги, PC, H; поле `a` перебирается: **20 480 комбинаций вместо 1280**.
-  Расходится по-прежнему ровно CHK.
-- **Lockstep не сравнивал память.** Добавлена периодическая полная сверка ОЗУ: 58
-  проходов на 14,6 млн инструкций. Первое же расхождение объяснимое — `00FFE27C`
-  против `FFFFFA7C`, один адрес возврата в разных картах ПЗУ; правило от R15
-  распространено на память, поблажек 99 за прогон, они считаются. Порча одного бита
-  ловится.
-- Мелочь: `ADC`/`SBC` с отрицательным непосредственным недостижимы (псевдоним
-  фиксирует v=0) — писать `ADD.uv` / `SUB.uv`; ассемблер объясняет это в ошибке.
-- Находка 26.
+### 11:20 — a semantic differential and curing four old ailments
+- **The last hole is closed.** `tools/alu_model.py` is a model of the integer core per
+  RISC5.v, written separately from the assembler. `tools/gen_alu_diff.py` builds
+  random programs and checks two things: (1) the model's prediction matches the
+  hardware in the result, all four flags and H; (2) the model, having parsed a word from the
+  assembler, names the same operation. There is no shared layout in the chain.
+  900 cases, **4650 checks**, all green. Seven mutations of the model, all caught.
+- **The program did not fit in the address space.** The first large differential
+  gave 1720 "failures", and all of them were expectations that NEVER FIRED. The PC is 22-bit, the program sits
+  at ORG=0xFFE000, exactly 2048 words to the edge; anything longer silently wraps around to zero.
+  It was caught by the rule "an expectation that does not fire is a failure" from the mutation audit.
+  Fixed: the harness refuses to load a long program, the generator splits it into files.
+- **`measure_clean.sh`: three silencers in a row.** (1) the path: the binary modules live in
+  `build/s2X` but were looked for in `build/cfgX`; the copy with `|| true` swallowed
+  their absence, and all three configurations ended up being one compiler → a difference of +0.00%;
+  (2) hence a ZeroDivisionError at the end, the only external symptom;
+  (3) configuration E sets version 2, while the loader checks `versionkey = 1X` and does
+  NOT LOAD such modules: our own deliberate lock. Stage 2 built the compiler with
+  compiler E, got version 2, the run produced an empty log, and `set -e` aborted right
+  after "workload:"; hence the symptom "the script prints nothing".
+  Fixed: a hard check, a guard on the denominator, `tools/rsc_setversion.py`.
+  **The honest measurement**: A 29,277,745 cycles, B +2.19%, E +1.85%; the hardware removes 15.5%.
+  The +2.19% figure agrees with 2.20% from the 2×2 breakdown: two independent methods.
+- **Decoder equivalence**: the signature was narrow (R5, R6, flags, cycles, memory),
+  and field `a` was hard-wired to 5, while in format F3 that is the condition, i.e. of 16 conditions
+  only one was checked, and a corruption of BL was invisible (no R15 and PC). Now the signature is all 16
+  registers, the flags, PC, H; field `a` is enumerated: **20,480 combinations instead of 1280**.
+  As before, exactly CHK differs.
+- **Lockstep did not compare memory.** Added a periodic full RAM comparison: 58
+  passes over 14.6 million instructions. The very first mismatch is explainable: `00FFE27C`
+  versus `FFFFFA7C`, one return address in different ROM maps; the R15 rule
+  was extended to memory, there are 99 allowances per run, and they are counted. A single-bit corruption
+  is caught.
+- A small thing: `ADC`/`SBC` with a negative immediate are unreachable (the alias
+  pins v=0); write `ADD.uv` / `SUB.uv`; the assembler explains this in its error.
+- Finding 26.
 
-### 13:10 — 🎯 СИСТЕМА ПЕРЕСОБИРАЕТ СЕБЯ ЦЕЛИКОМ
-- 42 модуля — от Kernel и Display до Edit и Draw — собраны компилятором Оберона
-  внутри самой системы на ядре RISC5.v. Вход только мышь и клавиатура.
-- **37 объектных файлов пересобраны побайтово идентично.** Система — неподвижная
-  точка своего компилятора. Пересобранный образ грузится, сумма экрана прежняя B5DFC933.
-- Написан `tools/oberonfs.py` — чтение файловой системы Оберона прямо из образа
-  (раскладка из Kernel.Mod/FileDir.Mod/Files.Mod). Проверен перекрёстно: извлечённый
-  ORP.rsc даёт ключ E6FCC519 и 6188 слов — то же, что на экране и в самораскрутке.
-- Порядок сборки выведен топологической сортировкой по IMPORT из исходников
-  С САМОГО ОБРАЗА, а не из нашей копии 2019 года.
-- **Образ Project Oberon 2016 не вполне согласован.** Три модуля не компилируются
-  компилятором с того же образа: `RISC` (pos 926 bad divisor — 80000000H как делитель
-  отрицателен для знакового INTEGER), `ORC` (импортирует V24, которого на образе нет),
-  `Net` (девять incompatible parameters — сигнатуры SCC разошлись). Плюс `Math.rsc`
-  устарел (449 слов на образе против 447 при пересборке, ключ тот же), а `PIO.rsc`
-  и `PIO.smb` отсутствовали вовсе.
-- Ловушка 4 снова: пачки по три роняли третий модуль. Та же причина, что в находке 23 —
-  внутри команды нет сборки мусора. Компилятор надо звать по одному модулю за команду.
-- **Журнал System.Log не прокручивается** (18 строк), и первый прогон спрятал шесть
-  команд из одиннадцати. Сценарий теперь чистит журнал после каждой команды и снимает
-  кадр; `tools/stitch_log.py` сшивает области в одну картинку.
-- **Проверка чуть не оказалась зелёной на поломке**: побайтовое сравнение проходило на
-  НЕТРОНУТОМ образе, потому что не отличает «пересобрано и совпало» от «не трогали».
-  Даты не помогают — на образе все нулевые, часов нет. Починено обязательными
-  положительными признаками (PIO.rsc должен появиться, Math.rsc обязан отличаться).
-- Цель `make rebuild` (3 сессии, ~8 минут) входит в `make check`. Находка 27.
+### 13:10 — 🎯 THE SYSTEM REBUILDS ITSELF COMPLETELY
+- 42 modules, from Kernel and Display to Edit and Draw, were built by the Oberon compiler
+  inside the system itself on the RISC5.v core. The only input is the mouse and keyboard.
+- **37 object files were rebuilt byte-for-byte identical.** The system is a fixed
+  point of its compiler. The rebuilt image boots, the screen checksum is still B5DFC933.
+- Wrote `tools/oberonfs.py`: reading the Oberon file system straight from the image
+  (the layout from Kernel.Mod/FileDir.Mod/Files.Mod). Cross-checked: the extracted
+  ORP.rsc gives key E6FCC519 and 6188 words, the same as on the screen and in the bootstrap.
+- The build order was derived by a topological sort over IMPORT from the sources
+  FROM THE IMAGE ITSELF, not from our 2019 copy.
+- **The Project Oberon 2016 image is not fully consistent.** Three modules do not compile
+  with the compiler from the same image: `RISC` (pos 926 bad divisor: 80000000H as a divisor
+  is negative for a signed INTEGER), `ORC` (imports V24, which is not on the image),
+  `Net` (nine incompatible parameters: the SCC signatures have diverged). Plus `Math.rsc`
+  is stale (449 words on the image versus 447 when rebuilt, the same key), and `PIO.rsc`
+  and `PIO.smb` were missing altogether.
+- Trap 4 again: batches of three brought down the third module. The same cause as in finding 23:
+  there is no garbage collection inside a command. The compiler has to be called one module per command.
+- **The System.Log journal does not scroll** (18 lines), and the first run hid six
+  commands of eleven. The script now clears the log after every command and takes
+  a frame; `tools/stitch_log.py` stitches the regions into one picture.
+- **The check nearly turned out green on a breakage**: the byte-wise comparison passed on an
+  UNTOUCHED image, because it does not distinguish "rebuilt and matched" from "not touched".
+  Dates do not help: on the image they are all zero, there is no clock. Fixed with mandatory
+  positive signs (PIO.rsc must appear, Math.rsc must differ).
+- The `make rebuild` target (3 sessions, ~8 minutes) is part of `make check`. Finding 27.
 
-### 15:40 — каркас лабораторных и первые три лабы (Л2, Л3)
-- `web/machine.js` — переиспользуемая обвязка машины (отрисовка, мышь, клавиатура,
-  набор текста скан-кодами, щелчки по координатам, откат). Выделена из index.html.
-- `web/oberonfs.js` — чтение файловой системы Оберона из образа в памяти машины.
-- `web/labs.js` + `web/lab.html` + `web/labs-test.mjs` — лаборатории и оболочка.
-- Браузерная сборка получила доступ к состоянию: soc_reg/flags/h/ram/fb_crc/disk_word
-  и soc_poke (единственное на запись — без него нет уровня «ломать»).
-- **Лаба 1 «смотреть»**: загрузка, сумма экрана B5DFC933; открыть список модулей,
-  проверка считает точки текста в полосе вьюера.
-- **Лаба 4 «ломать»**: испортить кадровый буфер (система жива), затем вписать
-  E7FFFFFF по текущему PC (переход на себя) — машина встаёт. Остановку НЕЛЬЗЯ
-  определять по счётчику инструкций: переход на себя тоже исполняется. Проверка
-  берёт пять проб PC: до порчи гуляет, после — замирает.
-- **Лаба 7 «строить»**: пересобрать Math внутри системы и своими руками увидеть
-  находку 27 — 1877 байт до, 1869 после. Проверка читает длину С ДИСКА.
-- **Откат вскрыл последствие находки 19**: после повторного soc_init система не
-  грузилась — в RISC5.v нет сброса регистрового файла, флагов, H и IR, и при втором
-  пуске там грязь. Починено явным обнулением в soc_init; на ПЛИС этого не будет,
-  пункт кремниевого чек-листа открыт.
-- `make labs` требует перехода проверки из «не сделано» в «сделано» и статически
-  сверяет разметку оболочки. Красный путь проверен. Цель входит в `make check`.
-- Страницу в браузере открыть не удалось: Chrome в этом окружении не достучался до
-  локального сервера (ошибка даже на листинге, при curl 200). Разметка проверена
-  статически, поведение — безголово.
-- Находка 28.
+### 15:40 — the lab framework and the first three labs (L2, L3)
+- `web/machine.js`: a reusable machine wrapper (rendering, mouse, keyboard,
+  typing text as scan codes, clicks at coordinates, rollback). Extracted from index.html.
+- `web/oberonfs.js`: reading the Oberon file system from the image in the machine's memory.
+- `web/labs.js` + `web/lab.html` + `web/labs-test.mjs`: the labs and the shell.
+- The browser build got access to the state: soc_reg/flags/h/ram/fb_crc/disk_word
+  and soc_poke (the only write access; without it there is no "break" level).
+- **Lab 1 "look"**: boot, screen checksum B5DFC933; open the module list,
+  the check counts text pixels in the viewer's strip.
+- **Lab 4 "break"**: corrupt the framebuffer (the system is alive), then write
+  E7FFFFFF at the current PC (a jump to itself): the machine stops. A stop CANNOT
+  be detected by the instruction counter: a jump to itself also executes. The check
+  takes five samples of the PC: before the corruption it wanders, after it freezes.
+- **Lab 7 "build"**: rebuild Math inside the system and see
+  finding 27 with your own hands: 1877 bytes before, 1869 after. The check reads the length FROM THE DISK.
+- **Rollback exposed a consequence of finding 19**: after a repeated soc_init the system did not
+  boot: RISC5.v has no reset for the register file, the flags, H and IR, and on the second
+  start there is garbage there. Fixed by explicit zeroing in soc_init; on an FPGA this will not happen,
+  so the silicon checklist item stays open.
+- `make labs` requires a check to go from "not done" to "done" and statically
+  verifies the shell's markup. The red path is verified. The target is part of `make check`.
+- I could not open the page in a browser: Chrome in this environment could not reach the
+  local server (an error even on the listing, while curl returned 200). The markup was checked
+  statically, the behavior headlessly.
+- Finding 28.
 
-### 16:30 — переносимый каркас оснастки (П1)
-- `tb/scenario.h`: язык сценария, его разбор и проигрывание, выгрузка кадра в PBM
-  и интерфейс `harness::Host` (поставить указатель / послать клавишу / отдать экран).
-  Машине остаётся адрес и размер кадрового буфера, порядок строк и формат регистров
-  ввода — у RISC5 это двадцать строк в soc_tb.cpp.
-- **Отделение чистое**: после вынесения загрузка даёт прежнюю сумму B5DFC933,
-  а двухпоколенная самораскрутка — ТЕ ЖЕ 715 000 000 инструкций и 1 101 436 669
-  тактов, поколения совпадают побитово. Цифры сошлись до инструкции.
-- Переносимость этим НЕ доказана: её докажет вторая машина (Lilith, шаг 2 плана).
-- Находка 29.
+### 16:30 — a portable harness framework (P1)
+- `tb/scenario.h`: the scenario language, its parsing and playback, dumping a frame to PBM,
+  and the `harness::Host` interface (set the pointer / send a key / hand over the screen).
+  What is left to the machine is the framebuffer address and size, the row order and the format of the input
+  registers: for RISC5 that is twenty lines in soc_tb.cpp.
+- **The separation is clean**: after the extraction the boot gives the same checksum B5DFC933,
+  and the two-generation bootstrap gives THE SAME 715,000,000 instructions and 1,101,436,669
+  cycles, the generations match bit for bit. The numbers agree to the instruction.
+- Portability is NOT proven by this: the second machine will prove it (Lilith, step 2 of the plan).
+- Finding 29.
 
-### 18:20 — методичка по Оберону, 8 глав
-- `docs/book/*.md` (источник) -> `web/book/*.html` (сборщик `tools/mkbook.py` на
-  готовой библиотеке `markdown`, своего конвертера не писали). Около 5000 слов.
-- Главы: зачем и что настоящее / машина RISC5 / язык за одну главу / система:
-  текст вместо кнопок / модули и символьные файлы / компилятор изнутри /
-  самораскрутка и неподвижная точка / что мы измерили.
-- **Написано по исходникам**: 33 ключевых слова из `EnterKW` в ORS.Mod, 42 встроенных
-  имени из `enter` в ORB.Mod, соглашения о регистрах из констант ORG.Mod, пример
-  модуля — настоящий Blink.Mod с образа, путь `a[i]` — по процедуре Index,
-  кодировка ловушки — по Trap. Числа — из находок 8, 16, 24, 26, 27.
-- Лаборатории связаны с главами, на странице лаб — ссылка на методичку.
-- `make book` падает на ссылке в несуществующую главу или на несуществующую лабу;
-  `make labs` проверяет ссылки из лаб в главы. Три мутации, все пойманы.
-- Чего нет: упражнений (они в лабах, их 3 из 12), оконной подсистемы, сборщика
-  мусора, второй машины.
-- Находка 30. Следующее по договорённости — девять оставшихся лабораторных.
+### 18:20 — an Oberon handbook, 8 chapters
+- `docs/book/*.md` (source) -> `web/book/*.html` (the builder `tools/mkbook.py` on the
+  ready-made `markdown` library; we did not write our own converter). About 5000 words.
+- Chapters: why, and what is real / the RISC5 machine / the language in one chapter / the system:
+  text instead of buttons / modules and symbol files / the compiler from the inside /
+  bootstrapping and the fixed point / what we measured.
+- **Written from the sources**: 33 keywords from `EnterKW` in ORS.Mod, 42 built-in
+  names from `enter` in ORB.Mod, register conventions from ORG.Mod's constants, the example
+  module is the real Blink.Mod from the image, the path of `a[i]` follows the Index procedure,
+  the trap encoding follows Trap. Numbers from findings 8, 16, 24, 26, 27.
+- Labs are linked to chapters; the labs page links to the handbook.
+- `make book` fails on a link to a nonexistent chapter or a nonexistent lab;
+  `make labs` checks the links from labs to chapters. Three mutations, all caught.
+- What is missing: exercises (they are in the labs, 3 of 12), the windowing subsystem, the garbage
+  collector, a second machine.
+- Finding 30. Next, as agreed: the nine remaining labs.
 
-### 21:10 — девять лабораторных
-- К трём прежним добавлены шесть: №2 первый свой модуль, №3 ключ интерфейса,
-  №5 сколько тактов на инструкцию (уровень «измерять»), №6 куча кончается внутри
-  команды, №8 неподвижная точка в два поколения, №9 внутри кодогенератора.
-  Программа курса закрыта с 1 по 9.
-- В каркас добавлено: состояние между шагами, поля ответа (без них нет «измерять»),
-  разбор .rsc в браузере (размер кода, ключ, версия, импорты с их ключами), чтение
-  текста Оберона (файлы редактора — не голый ASCII: метка, смещение, куски со
-  шрифтами, концы строк — возврат каретки), признак «файл пересобран» по служебной
-  записи каталога.
-- **Три гипотезы опыт отверг.** (1) Пачка ORS+ORB+ORG+PIO кучу НЕ исчерпывает —
-  дело не в числе модулей, а в весе; роняет ORP. (2) Звёздочка после MODULE код не
-  уменьшает, а УВЕЛИЧИВАЕТ: 34 слова с проверками, 38 без — `version := 0` включает
-  режим RISC-0 целиком, а он резервирует восемь слов в начале модуля. Два эффекта
-  сразу; это стало содержанием лабы, а не было спрятано. (3) **Наборщик скан-кодов
-  не набирал закрывающую скобку** — таблица цифр начиналась не с того символа,
-  в файл уходило `INC(i END`, и файл при этом исправно создавался.
-- Защита от последнего: тест набирает текст через настоящий редактор, сохраняет,
-  читает файл обратно с диска и сверяет посимвольно.
-- Список номеров лаб в сборщике методички теперь читается из web/labs.js, а не зашит.
-- Лабы 10–12 не сделаны и в браузере невозможны: №10 — большой объём правок
-  компилятора, №11 — пересборка Verilog на хосте, №12 — ждёт второй машины.
-- Находка 31.
+### 21:10 — nine labs
+- Six were added to the previous three: #2 your first module, #3 the interface key,
+  #5 how many cycles per instruction (the "measure" level), #6 the heap runs out inside
+  a command, #8 the fixed point in two generations, #9 inside the code generator.
+  The course syllabus is closed from 1 to 9.
+- Added to the framework: state between steps, answer fields (without them there is no "measure"),
+  parsing .rsc in the browser (code size, key, version, imports with their keys), reading
+  Oberon text (the editor's files are not plain ASCII: a tag, an offset, runs with
+  fonts, line ends are carriage returns), a "file rebuilt" sign from the directory's
+  housekeeping record.
+- **Experiment rejected three hypotheses.** (1) The batch ORS+ORB+ORG+PIO does NOT exhaust the heap:
+  it is not about the number of modules but about their weight; ORP is what brings it down. (2) The asterisk after MODULE does not
+  shrink the code but GROWS it: 34 words with checks, 38 without: `version := 0` turns on
+  RISC-0 mode as a whole, and it reserves eight words at the start of the module. Two effects
+  at once; this became the content of a lab rather than being hidden. (3) **The scan-code typist
+  did not type the closing parenthesis**: the digit table started from the wrong character,
+  `INC(i END` went into the file, and the file was still created without complaint.
+- Protection against the last one: the test types text through the real editor, saves it,
+  reads the file back from disk and compares it character by character.
+- The list of lab numbers in the handbook builder is now read from web/labs.js instead of being hard-coded.
+- Labs 10–12 are not done and are impossible in the browser: #10 needs a large amount of compiler
+  edits, #11 rebuilding Verilog on the host, #12 waits for the second machine.
+- Finding 31.
 
-### 22:40 — лабораторные с инструментарием как пакетное задание
-- Мысль пользователя: часть лабораторок можно крутить в Cozystack. Верно — те, что
-  правят процессор и компилятор, не интерактивны, это пакетная нагрузка «дал правку,
-  получил вердикт».
-- `deploy/Containerfile` (debian:trixie-slim + Verilator, g++, python3, node, 863 МБ),
-  `deploy/lab.sh` (правка подаётся каталогом /work, накладывается поверх дерева),
-  `deploy/k8s/lab-job.yaml` (правка через ConfigMap, initContainer раскладывает ключи
-  обратно в пути, backoffLimit: 0).
-- **Побочно — независимое подтверждение воспроизводимости**: в образе Verilator 5.032
-  против нашего 5.052, и все 298 проверок, 375 776 форм перебора и 20 480 комбинаций
-  эквивалентности декодера проходят одинаково. До сих пор все числа давал один
-  симулятор одной версии.
-- `make image-check` требует ДВУХ исходов: чистое дерево проходит, сломанная правка
-  (переставлены AND и ANN в aluRes) проваливается — ловится тестом логики и
-  семантическим дифференциалом (118 и 68 провалов). В `make check` не входит: нужен Docker.
-- Грабли: (1) Docker на macOS не видит каталоги вне расшаренных путей — молча
-  «правок нет», хотя файл лежит; перенёс рабочий каталог внутрь дерева проекта.
-  (2) `find` без скобок: `-o` связывает слабее, чем читается.
-- Это НЕ пакет Cozystack, а обычное задание Kubernetes. Образ не публиковался,
-  в кластере не запускался, в манифесте намеренно `ghcr.io/REPLACE-ME/`.
-- Находка 32.
+### 22:40 — labs with tooling as a batch job
+- The user's idea: some labs could run in Cozystack. Right: the ones that
+  edit the processor and the compiler are not interactive; they are a batch workload, "submit an edit,
+  get a verdict".
+- `deploy/Containerfile` (debian:trixie-slim + Verilator, g++, python3, node, 863 MB),
+  `deploy/lab.sh` (the edit is submitted as the /work directory and overlaid on the tree),
+  `deploy/k8s/lab-job.yaml` (the edit via a ConfigMap, an initContainer lays the keys
+  back out into paths, backoffLimit: 0).
+- **A side effect: independent confirmation of reproducibility**: the image has Verilator 5.032
+  versus our 5.052, and all 298 checks, the 375,776 enumerated forms and the 20,480 decoder
+  equivalence combinations pass identically. Until now all the numbers came from one
+  simulator of one version.
+- `make image-check` requires TWO outcomes: the clean tree passes, a broken edit
+  (AND and ANN swapped in aluRes) fails, caught by the logic test and the
+  semantic differential (118 and 68 failures). It is not part of `make check`: it needs Docker.
+- Pitfalls: (1) Docker on macOS does not see directories outside the shared paths: silently
+  "no edits", even though the file is there; I moved the working directory inside the project tree.
+  (2) `find` without parentheses: `-o` binds more loosely than it reads.
+- This is NOT a Cozystack package but an ordinary Kubernetes job. The image was not published,
+  was not run in a cluster, and the manifest deliberately says `ghcr.io/REPLACE-ME/`.
+- Finding 32.
 
-### 23:50 — подключаемый каталог для Cozystack
-- Идея пользователя: отдельный маркетплейс, куда складывать эмуляторы никогда не
-  выпущенных архитектур, нереализованные ОС и языки — как разворачиваемые окружения.
-- **Механика уже существует.** Дорожная карта: community marketplace на 2027 Q1,
-  пропозалы в `cozystack/community` открыты и не смёржены; консоль на динамическом
-  обнаружении через ApplicationDefinition; прецедент — `ccp`. В дереве: PackageSource,
-  ApplicationDefinition, `cozypkg tap/untap` (подключение стороннего источника;
-  официальные отключить нельзя — защитная метка), `cozypkg validate` для ВНЕШНЕГО
-  репозитория, пакет internal/marketplace.
-- Имя ссылки на чарт: `<источник>-<вариант>-<компонент>`, точки в дефисы
+### 23:50 — a pluggable catalog for Cozystack
+- The user's idea: a separate marketplace for emulators of never-released
+  architectures, unimplemented OSes and languages, as deployable environments.
+- **The mechanism already exists.** Roadmap: a community marketplace in 2027 Q1,
+  the proposals in `cozystack/community` are open and not merged; the console relies on dynamic
+  discovery via ApplicationDefinition; the precedent is `ccp`. In the tree: PackageSource,
+  ApplicationDefinition, `cozypkg tap/untap` (connecting a third-party source;
+  the official ones cannot be disabled, there is a protective label), `cozypkg validate` for an EXTERNAL
+  repository, the internal/marketplace package.
+- The chart reference name: `<source>-<variant>-<component>`, dots turned into dashes
   (internal/marketplace/naming).
-- Создан `~/projects/forgotten-systems/marketplace`: sources/ + packages/apps/oberon-lab
-  + packages/system/oberon-lab-rd. `cozypkg validate .` — 0 ошибок, 0 предупреждений.
-- **Проверено на промах**: подменил имя ссылки на несуществующее — валидатор поймал
-  висячую ссылку. Значит он действительно читает наши объекты.
-- **Побочная находка для платформы**: `helm lint` версии 4 ругается `invalid icon URL`
-  на ВСЕ чарты Cozystack (nats, redis, kafka, mongodb — у каждого ровно одна такая
-  ошибка). Это расхождение helm 4 с их же конвенцией (/logos/... разрешается внутрь
-  чарта в hack/update-crd.sh). Следствие: `cozypkg validate --helm-lint` на helm 4
-  сейчас непригоден ни для своего каталога, ни для стороннего.
-- Образы не публиковались, в OCI не выкладывалось, в кластере не запускалось —
-  везде намеренно REPLACE-ME.
-- Находка 33.
+- Created `~/projects/forgotten-systems/marketplace`: sources/ + packages/apps/oberon-lab
+  + packages/system/oberon-lab-rd. `cozypkg validate .`: 0 errors, 0 warnings.
+- **Checked for misses**: replaced a reference name with a nonexistent one, and the validator caught
+  the dangling reference. So it really does read our objects.
+- **A side finding for the platform**: `helm lint` version 4 complains `invalid icon URL`
+  about ALL Cozystack charts (nats, redis, kafka, mongodb: each has exactly one such
+  error). This is a divergence of helm 4 from their own convention (/logos/... is resolved inside the
+  chart in hack/update-crd.sh). Consequence: `cozypkg validate --helm-lint` on helm 4
+  is currently unusable for both their own catalog and a third-party one.
+- Images were not published, nothing was pushed to OCI, nothing was run in a cluster:
+  REPLACE-ME everywhere on purpose.
+- Finding 33.
 
-## Следующий шаг
-`make check` целиком (около 8 минут), затем — Л1/П1 из BACKLOG.md.
+## Next step
+`make check` as a whole (about 8 minutes), then L1/P1 from BACKLOG.md.
 
-### 24.09 — каталог пересобран по проекту cozymarketplace
+### 24.09 — the catalog rebuilt following the cozymarketplace project
 
-Прочитал оба проекта в `cozystack/community` (`cozymarketplace` @kvaps и
-`cozymarketplace-supplementary` @IvanHunters) — оба уже в `main`. Сверил их не с
-текстом, а с кодом: типы `PackageSource`/`ApplicationDefinition`, `cozypkg`
-(`index.go`, `tap.go`, `validate.go`, `push.go`), реконсайлеры, консоль.
+Read both projects in `cozystack/community` (`cozymarketplace` by @kvaps and
+`cozymarketplace-supplementary` by @IvanHunters); both are already in `main`. Checked them not against
+the text but against the code: the `PackageSource`/`ApplicationDefinition` types, `cozypkg`
+(`index.go`, `tap.go`, `validate.go`, `push.go`), the reconcilers, the console.
 
-**Каталог разложен на три репозитория** в `~/projects/forgotten-systems/marketplace`:
-`repos/machines` (эмуляторы, лабораторные, методичка), `repos/languages`
-(окружения для языков), `repos/images` (загрузочные образы для KubeVirt).
-Единица установки — репозиторий, как требует проект; у каждого свой
-OCI-артефакт и своя запись в метаиндексе `index/`.
+**The catalog is split into three repositories** in `~/projects/forgotten-systems/marketplace`:
+`repos/machines` (emulators, labs, the handbook), `repos/languages`
+(environments for languages), `repos/images` (boot images for KubeVirt).
+The unit of installation is a repository, as the project requires; each has its own
+OCI artifact and its own entry in the `index/` meta-index.
 
-**Цепочка обнаружения проверена настоящим cozypkg:** `search` показывает три
-записи, `tap forgotten-systems-machines` разрешает короткое имя в
-`oci://…:v0.1.0` с версией из записи. Падает только на отсутствии `flux` в PATH.
+**The discovery chain was verified with the real cozypkg:** `search` shows three
+entries, `tap forgotten-systems-machines` resolves the short name to
+`oci://…:v0.1.0` with the version from the entry. It fails only because `flux` is not in PATH.
 
-**Новые части:**
-- `handbook` — документация ставится рядом с приложением; работает и без
-  сборки образа (страницы прямо в значениях, стоковый nginx);
-- `workbench` — метаприложение: родительский чарт рендерит `HelmRelease` на
-  компоненты того же репозитория (идиома `harbor`);
-- `langpack` — окружение для языка: разовый прогон или постоянная среда;
-- `machine-images` — публикация образов в `cozy-public` с защитой от коллизий;
-- `tools/gen-appdefs.py` — описания каталога собираются из `values.schema.json`
-  чартов, руками схемы не пишутся;
-- `tools/check.py` — 35 проверок, 9 из них мутации.
+**New parts:**
+- `handbook`: documentation installed next to the application; works even without
+  building an image (pages right in the values, stock nginx);
+- `workbench`: a meta-application: a parent chart renders `HelmRelease` objects for
+  components of the same repository (the `harbor` idiom);
+- `langpack`: an environment for a language: a one-off run or a persistent environment;
+- `machine-images`: publishing images to `cozy-public` with collision protection;
+- `tools/gen-appdefs.py`: the catalog descriptions are generated from the charts'
+  `values.schema.json`; schemas are not written by hand;
+- `tools/check.py`: 35 checks, 9 of them mutations.
 
-**Ключевые находки (все в `docs/FINDING-34-marketplace-architecture.md`):**
-- схема записи метаиндекса закрыта (`UnmarshalStrict`) → типы записей выражаются
-  только тегами, это не выбор, а ограничение;
-- список архитектур KubeVirt закрыт (`architectureConfiguration`: ровно
-  amd64/arm64/ppc64le/s390x) → новую архитектуру пакетом не добавить;
-- **шесть аннотаций золотых образов пишутся и не читаются никем** (ноль
-  совпадений по всему дереву вне шаблона, который их пишет; оба потребителя
-  берут только имя PVC) — стоит завести issue наверх;
-- имена золотых образов — плоское общекластерное пространство, сторонний пакет
-  может молча перезаписать образ платформы; защиты наверху нет, своя сделана;
-- компонент без блока `install` не ставится релизом — это и есть шаблон
-  приложения;
-- у всех 100 источников платформы ровно один вариант; второй увёл бы ссылки
-  каталога в пустоту;
-- в `ApplicationDefinitionDashboard` нет поля под документацию.
+**Key findings (all in `docs/FINDING-34-marketplace-architecture.md`):**
+- the meta-index entry schema is closed (`UnmarshalStrict`) → entry types can be expressed
+  only with tags; this is not a choice but a constraint;
+- the KubeVirt architecture list is closed (`architectureConfiguration`: exactly
+  amd64/arm64/ppc64le/s390x) → a new architecture cannot be added by a package;
+- **six golden-image annotations are written and read by nobody** (zero
+  matches across the whole tree outside the template that writes them; both consumers
+  take only the PVC name); worth filing an issue upstream;
+- golden image names are a flat cluster-wide namespace, so a third-party package
+  can silently overwrite a platform image; there is no protection upstream, we built our own;
+- a component without an `install` block is not installed as a release: that is the
+  application template;
+- all 100 platform sources have exactly one variant; a second one would send the catalog's
+  references into the void;
+- `ApplicationDefinitionDashboard` has no field for documentation.
 
-Старый верхний уровень каталога (`sources/`, `packages/`) удалён — полностью
-продублирован в `repos/machines`; копия в scratchpad.
+The old top level of the catalog (`sources/`, `packages/`) was removed: it is fully
+duplicated in `repos/machines`; a copy is in the scratchpad.
 
-Ничего не публиковалось, в кластер не ходил (контекст тенантный,
-cluster-scoped объекты там всё равно не создать). Реестр, образы и подписи —
-`REPLACE-ME`. Находок 34.
+Nothing was published, I did not go into a cluster (the context is a tenant one,
+cluster-scoped objects cannot be created there anyway). Registry, images and signatures are
+`REPLACE-ME`. Findings: 34.
 
-## Текущее состояние (перезапись)
-- **Каталог:** `~/projects/forgotten-systems/marketplace` — три репозитория,
-  метаиндекс, генератор описаний, набор проверок. `make check` — 35/35 зелёных,
-  `make validate` — ноль ошибок по каждому репозиторию (у образов одно
-  намеренное предупреждение: компонент привилегированный).
-- **Инструменты:** `cozypkg` собран в `/tmp/cozypkg` (из `~/projects/cozystack`),
-  helm 4.2.3, `flux` и `cosign` **не установлены** — без них не проверить
-  публикацию и подпись.
-- **Не сделано:** ничего не выложено в OCI; образы контейнеров не собраны;
-  загрузочные образы машин не собраны; на кластере не проверялось.
+## Current state (rewrite)
+- **Catalog:** `~/projects/forgotten-systems/marketplace`: three repositories,
+  a meta-index, a description generator, a set of checks. `make check`: 35/35 green,
+  `make validate`: zero errors for each repository (the images one has one
+  deliberate warning: the component is privileged).
+- **Tools:** `cozypkg` built into `/tmp/cozypkg` (from `~/projects/cozystack`),
+  helm 4.2.3; `flux` and `cosign` **are not installed**, and without them publication
+  and signing cannot be checked.
+- **Not done:** nothing pushed to OCI; container images not built;
+  machine boot images not built; not tested on a cluster.
 
-## Следующий шаг
-Завести issue наверх про непрочитанные аннотации золотых образов
-(`vm-default-images.cozystack.io/*`) — из всех находок эта единственная задевает
-самих пользователей платформы, а не только сторонние каталоги.
+## Next step
+File an upstream issue about the unread golden-image annotations
+(`vm-default-images.cozystack.io/*`): of all the findings this is the only one that affects
+the platform's users themselves, not just third-party catalogs.
 
-### 24.09 — публикация, кластер и начало цели QEMU
+### 24.09 — publication, the cluster and the start of the QEMU target
 
-**Опубликовано.** Репозиторий переименован в `paleocomputing` (англ. подзаголовок
-*experimental computer archaeology* — retrocomputing про коллекционирование, у нас
-про опыты). Сайт серии на GitHub Pages: `tym83.github.io/paleocomputing`, раскладка
-через Actions (классический источник Pages умеет только корень или /docs).
+**Published.** The repository was renamed to `paleocomputing` (English subtitle
+*experimental computer archaeology*: retrocomputing is about collecting, ours is
+about experiments). The series site is on GitHub Pages: `tym83.github.io/paleocomputing`, deployed
+via Actions (the classic Pages source can only serve the root or /docs).
 
-Образы и каталог в `ghcr.io/tym83/paleocomputing/*`, подпись cosign **без ключа** —
-личность это сам процесс сборки. Всё публичное, проверено анонимным скачиванием.
+Images and the catalog are in `ghcr.io/tym83/paleocomputing/*`, signed with cosign **keylessly**:
+the identity is the build process itself. Everything is public, verified by an anonymous download.
 
-**Перед публикацией исключена библиотека ячеек Nangate45**: её шапка прямо
-запрещает публикацию. Замена — Sky130 (Apache-2.0), две строки, не сделано.
+**Before publication the Nangate45 cell library was excluded**: its header explicitly
+forbids publication. The replacement is Sky130 (Apache-2.0), two lines; not done.
 
-**Три бага, найденных ТОЛЬКО на живом кластере** — все по образцу «релиз успешен,
-приложение мертво»:
-1. манифест источника лежал вне `packages/` и не попадал в OCI-артефакт;
-2. схемы закрывали корень, а `cozystack-engine` подмешивает `_cluster`/`_namespace`
-   → Helm отвергал значения целиком;
-3. nginx с `worker_processes auto` заводил воркер на каждое ядро УЗЛА (96 штук),
-   не влезал в 64Mi → OOM по кругу. Штатный автотюн не помогает: правит конфиг на
-   месте, а корень только для чтения.
+**Three bugs found ONLY on a live cluster**, all following the pattern "the release succeeded,
+the application is dead":
+1. the source manifest lay outside `packages/` and did not make it into the OCI artifact;
+2. the schemas closed the root, while `cozystack-engine` mixes in `_cluster`/`_namespace`
+   → Helm rejected the values entirely;
+3. nginx with `worker_processes auto` started a worker for every core of the NODE (96 of them),
+   did not fit in 64Mi → OOM in a loop. The stock autotune does not help: it edits the config in
+   place, and the root is read-only.
 
-Каждое закрыто проверкой с мутацией. Проверок каталога **50**.
+Each is closed by a check with a mutation. Catalog checks: **50**.
 
-**Состояние на кластере (tenant-paleo, контекст admin@workshop):** машина работает,
-`/lab.html` отдаётся (200, 12019 байт). Методичка ждёт перетапливания на v0.1.3.
+**State on the cluster (tenant-paleo, context admin@workshop):** the machine works,
+`/lab.html` is served (200, 12019 bytes). The handbook waits for a re-tap to v0.1.3.
 
-**Цель QEMU начата** (`qemu/`, своя сборка — QEMU и libvirt отклоняют вклад с ИИ,
-Claude назван поимённо). Написаны декодер, состояние процессора, трансляция 16
-операций, деление, прерывания, плата, порты. `qemu-system-risc5` собирается одной
-командой в контейнере.
+**The QEMU target is started** (`qemu/`, our own build: QEMU and libvirt reject AI-assisted contributions,
+naming Claude explicitly). Written: the decoder, the processor state, translation of 16
+operations, division, interrupts, the board, the ports. `qemu-system-risc5` builds with one
+command in a container.
 
-**Сверено с железом:** 16 регистров, 4 флага и H сошлись с моделью АЛУ, снятой с
-RISC5.v. Проверка `make -C qemu diff`, умеет краснеть.
+**Checked against the hardware:** 16 registers, 4 flags and H agreed with the ALU model taken from
+RISC5.v. The check `make -C qemu diff` can go red.
 
-Баги цели: чистая сборка падала там, где инкрементальная проходила (нет прототипа
-у порождённого декодера); ПЗУ было не по тому адресу и вчетверо больше (в железе
-512 слов); процессор создавался, но **не исполнял** — без `realize` не заводится
-поток; **адресная шина 24 бита**, старшие биты железо отбрасывает, без обрезки
-порты недостижимы.
+Bugs in the target: a clean build failed where an incremental one passed (no prototype
+for the generated decoder); the ROM was at the wrong address and four times larger (the hardware has
+512 words); the processor was created but **did not execute**: without `realize` its thread is not
+started; **the address bus is 24 bits**, the hardware drops the upper bits, and without truncation
+the ports are unreachable.
 
-**Форк KubeVirt НЕ НУЖЕН.** Найдена штатная точка: перехватчик `OnDefineDomain`
-переписывает описание машины, а `SharedComputePath` у его PVC монтирует том
-**внутрь compute**, где работает libvirt. Открыт один вопрос: примет ли libvirt
-незнакомую архитектуру (`virArchFromString` на ней не падает, возвращает NONE).
+**A fork of KubeVirt is NOT NEEDED.** Found a standard hook point: the `OnDefineDomain` hook
+rewrites the machine description, and `SharedComputePath` on its PVC mounts the volume
+**inside compute**, where libvirt runs. One question is open: will libvirt accept
+an unfamiliar architecture (`virArchFromString` does not fail on it, it returns NONE).
 
-## Текущее состояние (перезапись)
-- **Сайт:** `tym83.github.io/paleocomputing` — живой, лаборатория и методичка.
-- **Каталог:** три репозитория, теги v0.1.0…v0.1.3, последний чист.
-- **Кластер (рабочий):** тенант `tenant-paleo`, каталог v0.1.3, машина и
-  методичка работают. Трогать нельзя.
-- **Песочница:** тенант `tenant-sandbox`, доступ `~/claude2-sandbox.kubeconfig`,
-  шпаргалка `~/claude2-sandbox-HOWTO.md`. Виртуалка `build` — 8 ядер, 16 Ги,
-  внешний адрес 77.42.12.137 через LoadBalancer `build-ssh` (port-forward до неё
-  НЕ достаёт: подключение мостом). Вход `ssh -F <scratchpad>/sandbox/config stand`.
-- **QEMU:** цель полная — ядро сверено пошагово на 1.5 млн команд, диск по SPI,
-  экран (буфер совпал побайтово), клавиатура, мышь. Нет плавающей точки.
-- **libvirt:** патч на 5 мест (`qemu/libvirt/patch_libvirt.py`), проверен на
-  10.0.0 и 11.9.0. Домен определяется и работает.
-- **virt-launcher:** свой образ `virt-launcher-risc5:v1.8.4` собран на стенде,
-  Оберон внутри него работает. В реестр НЕ выложен.
-- **KubeVirt:** перехватчик `kubevirt/onDefineDomain.py` проверен на живом
-  libvirt. Форк не нужен.
-- **Git:** работа на ветке `feat/risc5-virtual-architecture`, 11 коммитов с
-  трейлером. ⚠ В origin/main 21 коммит без `Assisted-by: LLM` — решение о
-  перезаписи за пользователем.
+## Current state (rewrite)
+- **Site:** `tym83.github.io/paleocomputing`: live, the lab and the handbook.
+- **Catalog:** three repositories, tags v0.1.0…v0.1.3, the latest is clean.
+- **Cluster (production):** tenant `tenant-paleo`, catalog v0.1.3, the machine and
+  the handbook work. Do not touch.
+- **Sandbox:** tenant `tenant-sandbox`, access via `~/claude2-sandbox.kubeconfig`,
+  cheat sheet `~/claude2-sandbox-HOWTO.md`. The `build` VM: 8 cores, 16 Gi,
+  external address 77.42.12.137 via the LoadBalancer `build-ssh` (port-forward does NOT
+  reach it: the connection is bridged). Login `ssh -F <scratchpad>/sandbox/config stand`.
+- **QEMU:** the target is complete: the core checked step by step over 1.5 million instructions, disk over SPI,
+  screen (the buffer matched byte for byte), keyboard, mouse. No floating point.
+- **libvirt:** a patch in 5 places (`qemu/libvirt/patch_libvirt.py`), checked on
+  10.0.0 and 11.9.0. The domain is defined and runs.
+- **virt-launcher:** our own image `virt-launcher-risc5:v1.8.4` built on the bench,
+  Oberon works inside it. NOT pushed to a registry.
+- **KubeVirt:** the hook `kubevirt/onDefineDomain.py` checked on a live
+  libvirt. No fork needed.
+- **Git:** work on the branch `feat/risc5-virtual-architecture`, 11 commits with the
+  trailer. ⚠ origin/main has 21 commits without `Assisted-by: LLM`; the decision to
+  rewrite them is the user's.
 
-## Следующий шаг
-Основное сделано. Из незакрытого: плавающая точка в QEMU, перевод методички
-(8 глав) и сайта, живая миграция машин на нашем образе не проверена.
+## Next step
+The main work is done. Still open: floating point in QEMU, translating the handbook
+(8 chapters) and the site; live migration of machines on our image has not been checked.
 
-### 24.09 — каталог полностью работает на кластере (v0.1.3)
+### 24.09 — the catalog works completely on the cluster (v0.1.3)
 
-Оба пода `1/1 Running` без перезагрузок, `worker_processes 1;` подтверждён
-изнутри контейнера, обе страницы отдаются, категория в консоли на месте.
+Both pods `1/1 Running` with no restarts, `worker_processes 1;` confirmed
+from inside the container, both pages are served, the category is in place in the console.
 
-Путь занял три версии, каждая закрывала баг, невидимый со стола — все в
-`docs/FINDING-35-cluster-bugs.md`. Общий почерк: релиз успешен, приложение мертво.
+The path took three versions, each closing a bug invisible from the desk, all in
+`docs/FINDING-35-cluster-bugs.md`. The common signature: the release succeeded, the application is dead.
 
-**Живое:** tap v0.1.3, три ApplicationDefinition, `forgotten-machines-rd` в
-cozy-system, тенант `tenant-paleo` с машиной и методичкой.
+**Live:** tap v0.1.3, three ApplicationDefinitions, `forgotten-machines-rd` in
+cozy-system, tenant `tenant-paleo` with the machine and the handbook.
