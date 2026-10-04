@@ -1,5 +1,5 @@
 /*
- * Помощники RISC5: деление и явный отказ на ненаписанном.
+ * RISC5 helpers: division and an explicit refusal on what is not written yet.
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
@@ -10,14 +10,14 @@
 #include "accel/tcg/cpu-loop.h"
 
 /*
- * Знаковое деление у Вирта округляет ВНИЗ, а не к нулю, как принято в C:
- * остаток всегда неотрицателен. Компилятор Оберона на это опирается, поэтому
- * округление к нулю здесь дало бы расхождение на отрицательных числах.
+ * Wirth's signed division rounds DOWN, not toward zero as is usual in C:
+ * the remainder is always non-negative. The Oberon compiler relies on this, so
+ * rounding toward zero here would diverge on negative numbers.
  *
- * Делитель железо рассчитывает на положительный (Divider.v); при нуле или
- * отрицательном его поведение не определено. Мы выбираем определённое:
- * возвращаем нули и пишем в журнал, чтобы расхождение было видно, а не
- * проявилось потом как загадочный результат.
+ * The hardware expects a positive divisor (Divider.v); for zero or a
+ * negative one its behaviour is undefined. We choose a defined one:
+ * return zeros and write to the log, so that the divergence is visible instead of
+ * showing up later as a mysterious result.
  */
 uint32_t HELPER(div)(CPURISC5State *env, uint32_t b, uint32_t c)
 {
@@ -25,14 +25,14 @@ uint32_t HELPER(div)(CPURISC5State *env, uint32_t b, uint32_t c)
 
     if (y <= 0) {
         qemu_log_mask(LOG_GUEST_ERROR,
-                      "RISC5: DIV на делитель %d — в железе не определено\n", y);
+                      "RISC5: DIV by divisor %d is undefined in hardware\n", y);
         env->h = 0;
         return 0;
     }
 
     q = x / y;
     r = x % y;
-    if (r < 0) {          /* приводим к округлению вниз */
+    if (r < 0) {          /* convert to rounding down */
         q -= 1;
         r += y;
     }
@@ -43,7 +43,7 @@ uint32_t HELPER(div)(CPURISC5State *env, uint32_t b, uint32_t c)
 uint32_t HELPER(udiv)(CPURISC5State *env, uint32_t b, uint32_t c)
 {
     if (c == 0) {
-        qemu_log_mask(LOG_GUEST_ERROR, "RISC5: UDIV на ноль\n");
+        qemu_log_mask(LOG_GUEST_ERROR, "RISC5: UDIV by zero\n");
         env->h = 0;
         return 0;
     }
@@ -55,7 +55,7 @@ void HELPER(unimplemented)(CPURISC5State *env, uint32_t what)
 {
     CPUState *cs = env_cpu(env);
 
-    qemu_log_mask(LOG_UNIMP, "RISC5: не написано, код %08x\n", what);
+    qemu_log_mask(LOG_UNIMP, "RISC5: not implemented, code %08x\n", what);
     cs->exception_index = EXCP_RESET;
     cpu_loop_exit(cs);
 }

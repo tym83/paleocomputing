@@ -1,29 +1,30 @@
-# Машины, которые несёт образ virt-launcher: по строке на архитектуру.
+# Machines carried by the virt-launcher image: one line per architecture.
 #
-# Образ один на все чужие архитектуры — семейство, а не «образ RISC5». Новая
-# машина — это строка здесь (и её цель QEMU в дереве), а не новый образ,
-# новый тег и новая настройка кластера.
+# One image for all foreign architectures: a family, not "the RISC5 image". A
+# new machine is a line here (plus its QEMU target in the tree), not a new
+# image, a new tag and a new cluster setting.
 #
-# Отсюда читают:
-#   kubevirt/Containerfile        --target-list для QEMU и какие qemu-system-*
-#                                 класть в образ;
-#   qemu/libvirt/patch_libvirt.py какие архитектуры вписать в libvirt;
-#   kubevirt/check_image.sh       что каждый эмулятор в образе есть и отвечает,
-#                                 а libvirt знает каждую архитектуру.
+# Read by:
+#   kubevirt/Containerfile        --target-list for QEMU and which qemu-system-*
+#                                 to put in the image;
+#   qemu/libvirt/patch_libvirt.py which architectures to add to libvirt;
+#   kubevirt/check_image.sh       that each emulator is in the image and
+#                                 responds, and libvirt knows each architecture.
 #
-# Колонки:
-#   арх.        имя архитектуры. Оно же имя цели QEMU (<арх.>-softmmu), имя
-#               бинаря (qemu-system-<арх.>) и имя архитектуры в libvirt. Одно
-#               имя на три места не случайно: libvirt не верит описанию домена
-#               и спрашивает архитектуру у самого эмулятора (query-target), а
-#               тот отвечает именем своей цели. Разойтись им нельзя.
-#   бит         разрядность: 16, 32 или 64 (у Lilith слово в 16 бит).
-#   порядок     порядок байтов: LE или BE.
-#   машина      машина QEMU по умолчанию для этой архитектуры.
-#   PCI         есть ли у машины шина PCI: yes или no. Для незнакомой
-#               архитектуры libvirt считает, что есть, и требует контроллер,
-#               которого может не быть (qemu/libvirt/README.md).
-#   описание    до конца строки; уходит комментарием в перечень libvirt.
+# Columns:
+#   arch        architecture name. It is also the QEMU target name
+#               (<arch>-softmmu), the binary name (qemu-system-<arch>) and the
+#               architecture name in libvirt. One name in three places is no
+#               accident: libvirt does not trust the domain description and
+#               asks the emulator itself for the architecture (query-target),
+#               which answers with its target name. They must not diverge.
+#   bits        word size: 16, 32 or 64 (Lilith has a 16-bit word).
+#   order       byte order: LE or BE.
+#   machine     default QEMU machine for this architecture.
+#   PCI         whether the machine has a PCI bus: yes or no. For an unfamiliar
+#               architecture libvirt assumes it does and demands a controller
+#               that may not exist (qemu/libvirt/README.md).
+#   description to end of line; goes as a comment into the libvirt list.
 #
-# арх.   бит  порядок  машина   PCI  описание
+# arch   bits order    machine  PCI  description
 risc5    32   LE       oberon   no   Wirth RISC5 32 LE http://www.projectoberon.net/

@@ -7,14 +7,14 @@
 #include "ui/input.h"
 #include "system/block-backend-global-state.h"
 
-/* Порты занимают шестнадцать слов начиная с 0xFFFFC0 (RISC5Top.v:86). */
+/* The ports occupy sixteen words starting at 0xFFFFC0 (RISC5Top.v:86). */
 #define OBERON_IO_BASE 0xFFFFC0
 #define OBERON_IO_SIZE 0x40
 
-/* Диск по SPI: состояние разбора команд карты SD. */
+/* Disk over SPI: SD card command parsing state. */
 /*
- * Кадровый буфер. Адрес снят с VID.v: Org = 18'b1101_1111_1111_0000_00 —
- * адрес СЛОВНЫЙ, отсюда байтовое начало 0xE7F00. Размер 1024*768/8 байт.
+ * Frame buffer. The address is taken from VID.v: Org = 18'b1101_1111_1111_0000_00,
+ * a WORD address, hence the byte start 0xE7F00. Size 1024*768/8 bytes.
  */
 #define OBERON_FB_BASE 0xE7F00
 #define OBERON_FB_SIZE (1024 * 768 / 8)
@@ -22,7 +22,7 @@
 typedef struct OberonDisplay {
     QemuConsole  *con;
     MemoryRegion *ram;
-    bool          hint_done;   /* аккордом воспользовались — подсказка не нужна */
+    bool          hint_done;   /* a chord has been used, the hint is no longer needed */
 } OberonDisplay;
 
 void oberon_display_init(OberonDisplay *d, MemoryRegion *ram);
@@ -30,7 +30,7 @@ void oberon_display_init(OberonDisplay *d, MemoryRegion *ram);
 typedef struct OberonDisk {
     BlockBackend *blk;
     int      state;
-    uint32_t offset;          /* смещение секторов для образа без разделов */
+    uint32_t offset;          /* sector offset for an image without partitions */
     uint32_t write_sector;
 
     uint32_t rx_buf[130];
@@ -55,12 +55,12 @@ uint32_t oberon_disk_read(OberonDisk *d);
 
 typedef struct OberonIOState {
     MemoryRegion mr;
-    int64_t  start_ms;      /* отсчёт миллисекунд от включения */
+    int64_t  start_ms;      /* milliseconds since power-on */
     uint32_t spi_tx, spi_rx, spi_ctrl;
     uint32_t mouse;
     int      mouse_x, mouse_y, mouse_btn;
-    bool     mod_ctrl, mod_shift, mod_alt;   /* для аккордов кнопок */
-    bool    *chord_used;                     /* чтобы погасить подсказку */
+    bool     mod_ctrl, mod_shift, mod_alt;   /* for button chords */
+    bool    *chord_used;                     /* to dismiss the hint */
 
     uint8_t  kbd_fifo[OBERON_KBD_FIFO];
     int      kbd_head, kbd_tail;

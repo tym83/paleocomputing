@@ -1,8 +1,8 @@
-# Сборка цели RISC5 для QEMU.
+# Build of the RISC5 target for QEMU.
 #
-# Зависимости живут здесь, а не на машине разработчика: настройка QEMU тянет
-# meson, ninja, glib и pixman, и ставить это хосту ради одной цели незачем.
-# Заодно сборка становится воспроизводимой — у всех одинаковая.
+# Dependencies live here rather than on the developer's machine: configuring QEMU pulls in
+# meson, ninja, glib and pixman, and there is no reason to install them on the host for one target.
+# It also makes the build reproducible: the same for everyone.
 FROM debian:trixie-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \

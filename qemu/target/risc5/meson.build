@@ -1,6 +1,6 @@
-# Декодер порождается из insn.decode генератором самого QEMU. Ширина команды
-# 32 бита — у RISC5 все четыре формата одинаковой длины, что и делает декодер
-# таким коротким.
+# The decoder is generated from insn.decode by QEMU's own generator. The instruction
+# width is 32 bits: all four RISC5 formats have the same length, which is what keeps
+# the decoder so short.
 gen = [
   decodetree.process('insn.decode', extra_args: [ '--static-decode', 'decode_insn',
                                                   '--insnwidth', '32' ])
@@ -16,7 +16,7 @@ risc5_ss.add(files(
   'fp.c',
   'cpu.c'))
 
-# Ответы наблюдателю нужны только в системной сборке.
+# Answers to the monitor are only needed in the system build.
 risc5_system_ss.add(files('qmp-cmds.c'))
 
 target_arch += {'risc5': risc5_ss}

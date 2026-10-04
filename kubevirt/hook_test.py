@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
-"""Проверки перехватчика: что он действительно преобразует описание.
+"""Hook tests: that it really transforms the description.
 
-Проверка, которая не умеет провалиться, ничего не проверяет — поэтому рядом
-с каждым утверждением стоит мутация или отрицательный контроль.
+A check that cannot fail checks nothing, so every assertion is paired with a
+mutation or a negative control.
 
-Перехватчик не знает, какую машину собирает: паспорт приходит аннотацией.
-Поэтому проверок три рода:
+The hook does not know which machine it builds: the descriptor arrives as an
+annotation. So there are three kinds of checks:
 
-  * Оберон по настоящему паспорту из каталога
-    (`marketplace/.../apps/oberon-vm/machine.yaml`) — всё, что перехватчик
-    делал до перехода на паспорта, обязано получаться и теперь;
-  * вымышленная вторая машина — другая архитектура, другой эмулятор, другое
-    число процессоров, другие аргументы: без единой правки кода;
-  * отрицательные контроли — нет паспорта, он не разбирается, в нём дыра,
-    файлов машины нет на томе: перехватчик обязан упасть и НЕ напечатать
-    домен, а не собрать полупереписанный.
+  * Oberon from the real catalog descriptor
+    (`marketplace/.../apps/oberon-vm/machine.yaml`): everything the hook did
+    before descriptors were introduced must still come out the same;
+  * a fictional second machine (another architecture, emulator, CPU count
+    and arguments) without a single code change;
+  * negative controls (no descriptor, it does not parse, it has a hole, the
+    machine files are not on the volume): the hook must fail and NOT print a
+    domain, rather than build a half-rewritten one.
 """
 import copy
 import json
@@ -27,8 +27,8 @@ import xml.etree.ElementTree as ET
 import yaml
 
 HERE = pathlib.Path(__file__).resolve().parent
-# Какой файл проверять: по умолчанию свой, но CI гоняет и копию из пакета
-# каталога — в кластер уезжает именно она.
+# Which file to test: our own by default, but CI also runs the copy from the
+# catalog package, since that is the one that ships to the cluster.
 HOOK = pathlib.Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else HERE / 'onDefineDomain.py'
 PRESET = HERE.parent / 'marketplace/repos/machines/packages/apps/oberon-vm/machine.yaml'
 QEMU_NS = 'http://libvirt.org/schemas/domain/qemu/1.0'
@@ -45,7 +45,7 @@ def report(passed, text):
 
 
 def with_payload(desc, where):
-    """Паспорт, чьи файлы лежат во временном каталоге, — как на томе."""
+    """A descriptor whose files sit in a temporary directory, as on the volume."""
     d = copy.deepcopy(desc)
     d['payload']['path'] = str(where)
     for f in d['payload']['files']:
@@ -54,7 +54,7 @@ def with_payload(desc, where):
 
 
 def run(domain_xml, desc=None, variant=None, vmi=None):
-    """Запуск перехватчика. Возвращает (домен или None, stdout, stderr)."""
+    """Runs the hook. Returns (domain or None, stdout, stderr)."""
     cmd = [sys.executable, str(HOOK), '--domain', domain_xml]
     if vmi is None and desc is not None:
         d = dict(desc)
@@ -78,84 +78,85 @@ def machine_props(args):
 
 
 def oberon(src, tmp):
-    print('\nОберон по паспорту каталога')
+    print('\nOberon from the catalog descriptor')
     preset = yaml.safe_load(PRESET.read_text(encoding='utf-8'))
     desc = with_payload(preset, tmp)
     root, _, err = run(src, desc)
-    report(root is not None, 'перехватчик отработал' + (f': {err.strip()}' if root is None else ''))
+    report(root is not None, 'hook ran' + (f': {err.strip()}' if root is None else ''))
     if root is None:
         return
 
     report(root.get('type') == 'qemu',
-           'тип домена qemu, а не kvm (ускорения для чужой архитектуры нет)')
+           'domain type is qemu, not kvm (no acceleration for a foreign architecture)')
 
     t = root.find('os/type')
     report(t.get('arch') == 'risc5' and t.get('machine') == 'oberon',
-           f"архитектура и машина из паспорта: {t.get('arch')}/{t.get('machine')}")
-    report(root.find('os/smbios') is None, 'режим smbios убран')
-    report(root.find('sysinfo') is not None, 'раздел sysinfo оставлен (его читает virt-launcher)')
-    report(root.find('features') is None, 'ACPI/APIC и прочие свойства платформы убраны')
-    report(root.find('cpu') is None and root.find('clock') is None, 'топология процессора и часы убраны')
+           f"architecture and machine from the descriptor: {t.get('arch')}/{t.get('machine')}")
+    report(root.find('os/smbios') is None, 'smbios mode removed')
+    report(root.find('sysinfo') is not None, 'sysinfo section kept (virt-launcher reads it)')
+    report(root.find('features') is None, 'ACPI/APIC and other platform features removed')
+    report(root.find('cpu') is None and root.find('clock') is None, 'CPU topology and clock removed')
     vcpu = root.find('vcpu')
     report(vcpu is not None and vcpu.text == '1' and 'current' not in vcpu.attrib
-           and root.find('vcpus') is None, 'процессор один, без предела горячего добавления')
+           and root.find('vcpus') is None, 'one CPU, no hotplug limit')
 
     emu = root.find('devices/emulator')
     report(emu is not None and emu.text == '/usr/local/bin/qemu-system-risc5',
-           'эмулятор подменён на наш')
+           'emulator replaced with ours')
 
     d = root.find('devices')
     pci = [e.tag for e in d if e.tag in
            ('disk', 'interface', 'serial', 'console', 'channel', 'rng',
             'sound', 'watchdog', 'input')]
-    report(not pci, f'убрано всё, чему нужна шина PCI (осталось: {pci})')
+    report(not pci, f'everything that needs a PCI bus removed (left: {pci})')
 
-    # Экран: VNC остаётся (через него работает консоль), всё прочее уходит.
-    # Проверка на сокет — чтобы не прошёл голый <graphics/> без адреса.
+    # Display: VNC stays (the console works through it), everything else goes.
+    # The socket check keeps a bare <graphics/> without an address from passing.
     gfx = d.findall('graphics')
     vnc = [g for g in gfx if g.get('type') == 'vnc']
     report(len(vnc) == 1 and vnc[0].find('listen') is not None
            and vnc[0].find('listen').get('socket', '').endswith('/virt-vnc'),
-           'VNC оставлен вместе с сокетом KubeVirt')
+           'VNC kept together with the KubeVirt socket')
     report(all(g.get('type') == 'vnc' for g in gfx),
-           f"прочие виды экрана убраны (осталось: {[g.get('type') for g in gfx]})")
+           f"other display types removed (left: {[g.get('type') for g in gfx]})")
     report(any(g.get('type') == 'spice' for g in ET.fromstring(src).find('devices').findall('graphics')),
-           'мутация: во входе действительно есть SPICE, который надо убрать')
+           'mutation: the input really has SPICE, which must be removed')
 
     stubs = {e.tag for e in d}
     report({'controller', 'memballoon', 'video'} <= stubs,
-           'поставлены заглушки вместо устройств по умолчанию')
+           'stubs set in place of default devices')
 
-    # Аргументы — ровно те же, что перехватчик ставил до паспортов, с
-    # поправкой только на каталог тома.
+    # The arguments are exactly what the hook set before descriptors, adjusted
+    # only for the volume directory.
     args = qemu_args(root)
     want = ['-bios', f'{tmp}/prom.bin', '-drive', f'if=none,id=sd0,file={tmp}/oberon.dsk,format=raw']
-    report(args == want, f'ПЗУ и образ диска переданы напрямую: {args}')
+    report(args == want, f'ROM and disk image passed directly: {args}')
 
-    # ── Вариант железа ────────────────────────────────────────────────────
+    # ── Hardware variant ──────────────────────────────────────────────────
     #
-    # Однажды пакет уехал в кластер со старой копией перехватчика: каталог
-    # просил chk, машина запускалась базовой, и всё выглядело зелёным.
-    report(machine_props(args) == [], 'без выбора — вариант по умолчанию, машина базовая')
+    # Once the package shipped to the cluster with a stale copy of the hook:
+    # the catalog asked for chk, the machine started as base, and everything
+    # looked green.
+    report(machine_props(args) == [], 'no choice: default variant, base machine')
     chk, _, _ = run(src, desc, variant='chk')
     report(chk is not None and machine_props(qemu_args(chk)) == ['chk=on'],
-           'вариант chk даёт -machine chk=on')
+           'variant chk gives -machine chk=on')
     base, _, _ = run(src, desc, variant='base')
     report(base is not None and machine_props(qemu_args(base)) == [],
-           'вариант base не добавляет свойств')
+           'variant base adds no properties')
 
-    # Мутации: без перехватчика описание осталось бы чужим.
+    # Mutations: without the hook the description would stay foreign.
     untouched = ET.fromstring(src)
     report(untouched.find('os/type').get('arch') == 'x86_64',
-           'мутация: исходное описание действительно чужое (x86_64)')
+           'mutation: the source description really is foreign (x86_64)')
     report(untouched.get('type') == 'kvm',
-           'мутация: исходный тип домена действительно kvm')
+           'mutation: the source domain type really is kvm')
     report(untouched.find('features') is not None and untouched.find('os/smbios') is not None,
-           'мутация: во входе действительно есть ACPI и smbios')
+           'mutation: the input really has ACPI and smbios')
 
 
-# Вымышленная машина: ни одно её значение не встречается в коде перехватчика.
-# Если она собирается, новая машина каталога — это только паспорт.
+# A fictional machine: none of its values appears in the hook code. If it
+# builds, a new catalog machine is just a descriptor.
 LILITH = {
     'apiVersion': 'paleocomputing.io/v1alpha1',
     'kind': 'Machine',
@@ -176,31 +177,31 @@ LILITH = {
 
 
 def second_machine(src, tmp):
-    print('\nВторая, вымышленная машина — без правки кода')
+    print('\nA second, fictional machine, with no code change')
     desc = with_payload(LILITH, tmp)
     root, _, err = run(src, desc, variant='wide')
-    report(root is not None, 'перехватчик отработал' + (f': {err.strip()}' if root is None else ''))
+    report(root is not None, 'hook ran' + (f': {err.strip()}' if root is None else ''))
     if root is None:
         return
     t = root.find('os/type')
     report((t.get('arch'), t.get('machine')) == ('mcode', 'lilith-1980'),
-           f"архитектура и машина: {t.get('arch')}/{t.get('machine')}")
-    report(root.find('devices/emulator').text == '/opt/emu/qemu-system-mcode', 'свой эмулятор')
-    report(root.find('vcpu').text == '2', 'число процессоров из паспорта: 2')
-    report(root.find('devices/graphics') is None, 'машина без экрана не получает и VNC')
+           f"architecture and machine: {t.get('arch')}/{t.get('machine')}")
+    report(root.find('devices/emulator').text == '/opt/emu/qemu-system-mcode', 'its own emulator')
+    report(root.find('vcpu').text == '2', 'CPU count from the descriptor: 2')
+    report(root.find('devices/graphics') is None, 'a machine without a display gets no VNC either')
     args = qemu_args(root)
     want = ['-kernel', f'{tmp}/boot.rom',
             '-drive', f'if=none,id=hd0,file={tmp}/medos.img,format=raw',
             '-device', 'honeywell-disk,drive=hd0',
             '-machine', 'bus-width=32,cache=on']
-    report(args == want, f'аргументы файлов и варианта собраны из паспорта: {args}')
+    report(args == want, f'file and variant arguments built from the descriptor: {args}')
     report(root.get('type') == 'qemu' and root.find('features') is None,
-           'общая часть (qemu, без ACPI) та же, что у Оберона')
+           'the common part (qemu, no ACPI) is the same as for Oberon')
 
 
 def arm64(src, tmp):
-    """Описание, какое KubeVirt даёт виртуалке на узле arm64."""
-    print('\nУзел arm64: KubeVirt объявляет прошивку UEFI')
+    """The description KubeVirt gives a VM on an arm64 node."""
+    print('\narm64 node: KubeVirt declares UEFI firmware')
     x = src.replace('<type arch="x86_64" machine="q35">hvm</type>',
                     '<type arch="aarch64" machine="virt">hvm</type>\n'
                     '    <loader readonly="yes" secure="no" type="pflash">/usr/share/AAVMF/AAVMF_CODE.fd</loader>\n'
@@ -209,34 +210,34 @@ def arm64(src, tmp):
     src_root = ET.fromstring(x)
     report(src_root.find('os/loader') is not None and src_root.find('os/nvram') is not None
            and src_root.find('os').get('firmware') == 'efi',
-           'мутация: во входе действительно загрузчик, NVRAM и firmware=efi')
+           'mutation: the input really has a loader, NVRAM and firmware=efi')
     preset = yaml.safe_load(PRESET.read_text(encoding='utf-8'))
     root, _, err = run(x, with_payload(preset, tmp))
-    report(root is not None, 'перехватчик отработал' + (f': {err.strip()}' if root is None else ''))
+    report(root is not None, 'hook ran' + (f': {err.strip()}' if root is None else ''))
     if root is None:
         return
     o = root.find('os')
     report(o.find('loader') is None and o.find('nvram') is None and 'firmware' not in o.attrib,
-           'прошивка UEFI убрана: иначе -machine oberon,pflash0=… и QEMU выходит')
-    report(o.find('type').get('arch') == 'risc5', 'архитектура из паспорта и здесь')
+           'UEFI firmware removed: otherwise -machine oberon,pflash0=… and QEMU exits')
+    report(o.find('type').get('arch') == 'risc5', 'architecture from the descriptor here too')
 
 
 def must_fail(src, text, **kw):
     root, out, err = run(src, **kw)
     report(root is None and not out.strip() and err.strip(),
-           f'отрицательный контроль: {text}' + (f' — «{err.strip().splitlines()[-1]}»' if err.strip() else ''))
+           f'negative control: {text}' + (f': "{err.strip().splitlines()[-1]}"' if err.strip() else ''))
 
 
 def negatives(src, tmp):
-    print('\nОтрицательные контроли: отказ, а не полупереписанный домен')
+    print('\nNegative controls: refusal, not a half-rewritten domain')
     good = with_payload(LILITH, tmp)
 
-    must_fail(src, 'без описания машины (--vmi) отказ')
-    must_fail(src, 'без аннотации с паспортом отказ',
+    must_fail(src, 'no machine description (--vmi): refused')
+    must_fail(src, 'no descriptor annotation: refused',
               vmi=json.dumps({'metadata': {'annotations': {}}}))
-    must_fail(src, 'паспорт — не JSON: отказ',
+    must_fail(src, 'descriptor is not JSON: refused',
               vmi=json.dumps({'metadata': {'annotations': {ANNOTATION: '{"domain": '}}}))
-    must_fail(src, 'описание машины — не JSON: отказ', vmi='{')
+    must_fail(src, 'machine description is not JSON: refused', vmi='{')
 
     def broken(fn):
         d = copy.deepcopy(good)
@@ -244,34 +245,34 @@ def negatives(src, tmp):
         return d
 
     cases = [
-        ('нет архитектуры', lambda d: d['domain'].pop('arch')),
-        ('путь к эмулятору не абсолютный', lambda d: d['domain'].update(emulator='qemu')),
-        ('ноль процессоров', lambda d: d['domain'].update(vcpus=0)),
-        ('неизвестная роль файла', lambda d: d['payload']['files'][0].update(role='rom')),
-        ('файл с каталогом в имени', lambda d: d['payload']['files'][0].update(name='../x')),
-        ('файл не передан эмулятору ({path} нигде нет)',
+        ('no architecture', lambda d: d['domain'].pop('arch')),
+        ('emulator path is not absolute', lambda d: d['domain'].update(emulator='qemu')),
+        ('zero CPUs', lambda d: d['domain'].update(vcpus=0)),
+        ('unknown file role', lambda d: d['payload']['files'][0].update(role='rom')),
+        ('file name contains a directory', lambda d: d['payload']['files'][0].update(name='../x')),
+        ('file not passed to the emulator ({path} appears nowhere)',
          lambda d: d['payload']['files'][0].update(qemu=['-kernel', '/etc/passwd'])),
-        ('нет вариантов железа', lambda d: d.update(variants={})),
-        ('свойство варианта с запятой (вторая опция -machine)',
+        ('no hardware variants', lambda d: d.update(variants={})),
+        ('variant property with a comma (a second -machine option)',
          lambda d: d['variants'].update(plain={'x': 'on,dump-guest-core=on'})),
     ]
     for what, fn in cases:
-        must_fail(src, f'{what}: отказ', desc=broken(fn))
-    must_fail(src, 'выбран неописанный вариант: отказ', desc=good, variant='nonexistent')
+        must_fail(src, f'{what}: refused', desc=broken(fn))
+    must_fail(src, 'undefined variant selected: refused', desc=good, variant='nonexistent')
 
-    # Файлов машины нет на томе: задача наполнения ещё не закончила.
+    # The machine files are not on the volume: the fill job has not finished yet.
     empty = pathlib.Path(tempfile.mkdtemp())
     d = copy.deepcopy(good)
     d['payload']['path'] = str(empty)
-    must_fail(src, 'файлов машины нет на томе: отказ', desc=d)
+    must_fail(src, 'machine files not on the volume: refused', desc=d)
     (empty / 'boot.rom').write_bytes(b'\x01')
     (empty / 'medos.img').write_bytes(b'')
-    must_fail(src, 'диск машины пустой: отказ', desc=d)
+    must_fail(src, 'machine disk is empty: refused', desc=d)
 
-    # Контроль контролей: тот же паспорт без поломки проходит — значит,
-    # отказы выше вызваны именно поломкой.
+    # Control of the controls: the same descriptor without the breakage
+    # passes, so the refusals above are caused by the breakage itself.
     root, _, _ = run(src, desc=good)
-    report(root is not None, 'контроль: неиспорченный паспорт проходит')
+    report(root is not None, 'control: an intact descriptor passes')
 
 
 def main():
@@ -283,7 +284,7 @@ def main():
         negatives(src, pathlib.Path(c))
         with tempfile.TemporaryDirectory() as d:
             arm64(src, pathlib.Path(d))
-    print(f'\nИтог: успешно {ok}, провалено {bad}')
+    print(f'\nTotal: passed {ok}, failed {bad}')
     return 1 if bad else 0
 
 

@@ -1,22 +1,22 @@
-# Архитектуры узлов, под которые собирается образ virt-launcher.
+# Node architectures the virt-launcher image is built for.
 #
-# Не путать с kubevirt/targets.txt: там — машины, которые эмулируются
-# (RISC5), здесь — процессор самого сервера, на котором эмулятор исполняется.
-# Эмулятор и libvirt — обычные программы, и под каждый процессор узла их надо
-# собрать отдельно. Образ выпуска — многоархитектурный: одно имя, внутри по
-# сборке на строку отсюда.
+# Not to be confused with kubevirt/targets.txt: that file lists the machines
+# being emulated (RISC5); this one lists the CPU of the server itself, on which
+# the emulator runs. The emulator and libvirt are ordinary programs and must be
+# built separately for each node CPU. The release image is multi-arch: one
+# name, with one build per line from here inside.
 #
-# Наш launcher заменяет штатный для ВСЕХ виртуалок кластера. Узел архитектуры,
-# которой здесь нет, не запустил бы ни одной — поэтому компонент платформы
-# сверяет узлы с этим списком (строка `# arch:` в его таблице) и на таком
-# кластере launcher не трогает.
+# Our launcher replaces the stock one for ALL VMs in the cluster. A node of an
+# architecture missing here would not start a single one, so the platform
+# component checks the nodes against this list (the `# arch:` line in its
+# table) and leaves the launcher alone on such a cluster.
 #
-# Отсюда читают: launcher.yml, publish.yml, kubevirt-e2e.yml (матрица сборки)
-# и marketplace/tools/gen-launcher-table.py (строка `# arch:` таблицы).
+# Read by: launcher.yml, publish.yml, kubevirt-e2e.yml (build matrix)
+# and marketplace/tools/gen-launcher-table.py (the `# arch:` table line).
 #
-# Сборка идёт на родном процессоре, без эмуляции: libvirt и QEMU под чужой
-# архитектурой через binfmt собирались бы часами.
+# Builds run on a native CPU, without emulation: libvirt and QEMU built for a
+# foreign architecture through binfmt would take hours.
 #
-# арх.    раннер GitHub Actions
+# arch    GitHub Actions runner
 amd64     ubuntu-latest
 arm64     ubuntu-24.04-arm

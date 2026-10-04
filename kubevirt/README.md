@@ -1,75 +1,81 @@
-# Машина Вирта в KubeVirt — без форка
+[Русская версия](README.ru.md)
 
-Штатная точка расширения `OnDefineDomain`: сторонний контейнер получает
-описание домена перед запуском и возвращает изменённое. KubeVirt патчить не
-нужно вовсе.
+# The Wirth machine in KubeVirt, without a fork
 
-**Поставить у себя, без Cozystack** — пошагово в [GUIDE.ru.md](GUIDE.ru.md)
-(English: [GUIDE.md](GUIDE.md)): признак `Sidecar`, подмена launcher, чарт
-машины обычным Helm, экран через `virtctl vnc`.
+The supported extension point `OnDefineDomain`: a third-party container
+receives the domain description before launch and returns a modified one.
+KubeVirt does not need patching at all.
 
-## Проверено живьём
+**Install it yourself, without Cozystack**: step by step in
+[GUIDE.md](GUIDE.md) (Russian: [GUIDE.ru.md](GUIDE.ru.md)): the `Sidecar`
+feature gate, replacing the launcher, the machine chart with plain Helm, the
+screen through `virtctl vnc`.
 
-Описание, какое KubeVirt даёт обычной виртуалке — архитектура x86_64, машина
-q35, тип домена `kvm`, диски и сеть на PCI, — прогнано через перехватчик и
-скормлено настоящему libvirt:
+## Verified live
+
+The description KubeVirt gives an ordinary VM (architecture x86_64, machine
+q35, domain type `kvm`, disks and network on PCI) was run through the hook and
+fed to a real libvirt:
 
 ```
 Domain 'default_testvm' started
 ```
 
-Запустившаяся машина — настоящий Оберон: кадровый буфер **совпал побайтово** с
-буфером той же системы на настоящем описании схемы. 98 304 байта, 18 607
-чёрных точек.
+The machine that started is a real Oberon: its framebuffer **matched byte for
+byte** the framebuffer of the same system on the real circuit description.
+98,304 bytes, 18,607 black pixels.
 
-## Что меняет перехватчик
+## What the hook changes
 
-| | из чего | во что |
+| | from | to |
 |---|---|---|
-| тип домена | `kvm` | `qemu` |
-| архитектура | `x86_64` | `risc5` |
-| машина | `q35` | `oberon` |
-| эмулятор | `/usr/libexec/qemu-kvm` | наш, `/usr/local/bin/qemu-system-risc5` из образа `virt-launcher` |
-| устройства | диски, сеть, порты, каналы | убраны |
-| ПЗУ и диск | — | добавлены напрямую, с общего тома: `/payload/prom.bin`, `/payload/oberon.dsk` |
+| domain type | `kvm` | `qemu` |
+| architecture | `x86_64` | `risc5` |
+| machine | `q35` | `oberon` |
+| emulator | `/usr/libexec/qemu-kvm` | ours, `/usr/local/bin/qemu-system-risc5` from the `virt-launcher` image |
+| devices | disks, network, ports, channels | removed |
+| ROM and disk | — | added directly, from the shared volume: `/payload/prom.bin`, `/payload/oberon.dsk` |
 
-**Тип домена важен отдельно.** KubeVirt объявляет `kvm`, потому что
-рассчитывает на обычную виртуалку с аппаратным ускорением. Для чужой
-архитектуры его не бывает — команды переводятся на лету. libvirt это проверяет
-и отвергает: *«Emulator does not support virt type kvm»*.
+**The domain type matters on its own.** KubeVirt declares `kvm` because it
+expects an ordinary VM with hardware acceleration. A foreign architecture never
+has it: instructions are translated on the fly. libvirt checks this and
+rejects it: *"Emulator does not support virt type kvm"*.
 
-**Устройства мало перечислить — их надо убрать все.** У машины Вирта нет шины
-PCI, и libvirt отвечает *«No PCI buses available»* не только на диск с сетью,
-но и на последовательные порты, каналы гостевого агента и источник случайных
-чисел, которые KubeVirt добавляет сам.
+**Listing the devices is not enough; all of them must go.** The Wirth machine
+has no PCI bus, and libvirt answers *"No PCI buses available"* not only for
+the disk and network, but also for the serial ports, guest agent channels and
+the random number source that KubeVirt adds on its own.
 
-## Откуда берутся эмулятор и образы
+## Where the emulator and images come from
 
-Эмулятор лежит в самом образе `virt-launcher` — там же, где libvirt, который
-его опрашивает.
+The emulator sits in the `virt-launcher` image itself, next to the libvirt
+that queries it.
 
-ПЗУ и диск приходят с тома, объявленного у перехватчика с `sharedComputePath`
-(`/payload`): KubeVirt монтирует такой том **и в перехватчик, и в контейнер,
-где работает libvirt**. Это и есть то место, куда пакет каталога кладёт образы.
+The ROM and disk come from a volume declared on the hook with
+`sharedComputePath` (`/payload`): KubeVirt mounts such a volume **both into the
+hook and into the container where libvirt runs**. That is exactly where the
+catalog package puts the images.
 
-## Что всё-таки требует своей сборки
+## What still needs a custom build
 
-Только **libvirt**: он спрашивает архитектуру у самого эмулятора и незнакомую
-отвергает. Патч — около десяти строк в пяти местах, лежит в `qemu/libvirt/`,
-проверен. На практике это свой образ `virt-launcher` и переключение реестра
-настройкой — ни KubeVirt, ни Cozystack не форкаются.
+Only **libvirt**: it asks the emulator itself for the architecture and rejects
+an unfamiliar one. The patch is about ten lines in five places, lives in
+`qemu/libvirt/`, and is verified. In practice this means our own
+`virt-launcher` image and switching the registry by a setting; neither KubeVirt
+nor Cozystack is forked.
 
-## Сборка и прогон в кластере
+## Build and run in a cluster
 
-Образ `virt-launcher` с патченым libvirt и эмулятором собирается в CI
-(`.github/workflows/publish.yml`, задание `launcher`, через `build.sh`) с тегом
-`virt-launcher:v1.8.4-risc5-<выпуск>`: версия KubeVirt в теге обязана совпадать
-с кластерной (находка 44). В кластере нужен ещё включённый признак `Sidecar`.
+The `virt-launcher` image with the patched libvirt and the emulator is built in
+CI (`.github/workflows/publish.yml`, job `launcher`, via `build.sh`) with the
+tag `virt-launcher:v1.8.4-risc5-<release>`: the KubeVirt version in the tag
+must match the cluster's (finding 44). The cluster also needs the `Sidecar`
+feature gate enabled.
 
-Машина из каталога (`OberonVM`) так и запущена в кластере — в том числе с
-`hardware: chk`, когда перехватчик добавляет `-machine chk=on`.
+The catalog machine (`OberonVM`) has been run in the cluster this way,
+including with `hardware: chk`, when the hook adds `-machine chk=on`.
 
-Перехватчик лежит в двух местах: здесь и копией в пакете каталога
-(`marketplace/repos/machines/packages/apps/oberon-vm/files/`), потому что Helm
-не читает файлы вне чарта. Копии обязаны совпадать побайтово — это сверяет CI
-(`.github/workflows/check.yml`, шаг «Перехватчик»).
+The hook lives in two places: here, and as a copy in the catalog package
+(`marketplace/repos/machines/packages/apps/oberon-vm/files/`), because Helm does
+not read files outside the chart. The copies must match byte for byte; CI
+checks this (`.github/workflows/check.yml`, step "Hook").

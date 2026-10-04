@@ -1,72 +1,78 @@
-# Патч libvirt: архитектура RISC5
+[Русская версия](README.ru.md)
 
-Своя сборка, не заявка в апстрим: libvirt отклоняет вклад с участием языковой
-модели, Claude назван в их правилах поимённо.
+# libvirt patch: the RISC5 architecture
 
-## Зачем он нужен
+Our own build, not an upstream submission: libvirt rejects contributions
+involving a language model, and Claude is named in their rules explicitly.
 
-Проверено опытом: **libvirt не верит описанию машины, он спрашивает архитектуру
-у самого эмулятора** по QMP. Назваться знакомым именем в описании не выходит —
-отказ приходит при опросе бинаря:
+## Why it is needed
+
+Verified by experience: **libvirt does not trust the machine description, it
+asks the emulator itself for the architecture** over QMP. Claiming a familiar
+name in the description does not work; the refusal comes when the binary is
+probed:
 
 ```
 internal error: Unknown QEMU arch risc5
 ```
 
-## Что правит
+## What it edits
 
-Пять мест, около десяти строк. Три обязательны всегда, две зависят от версии —
-скрипт сам решает, какие применимы:
+Five places, about ten lines. Three are always required, two depend on the
+version; the script decides on its own which ones apply:
 
-| файл | что | версии |
+| file | what | versions |
 |---|---|---|
-| `src/util/virarch.h` | значение в перечне архитектур | все |
-| `src/util/virarch.c` | имя, разрядность, порядок байтов | все |
-| `src/qemu/qemu_capabilities.c` | машина по умолчанию | все |
-| `src/qemu/qemu_domain.c` | ветка разбора случаев | 10.x |
-| `src/qemu/qemu_postparse.c` | та же ветка, переехала | 11.x |
-| `src/qemu/qemu_domain.c` | у RISC5 нет шины PCI | 11.x |
+| `src/util/virarch.h` | value in the architecture enum | all |
+| `src/util/virarch.c` | name, bit width, byte order | all |
+| `src/qemu/qemu_capabilities.c` | default machine | all |
+| `src/qemu/qemu_domain.c` | case in the switch | 10.x |
+| `src/qemu/qemu_postparse.c` | the same case, moved | 11.x |
+| `src/qemu/qemu_domain.c` | RISC5 has no PCI bus | 11.x |
 
-**Три из пяти мест показал сам компилятор.** Таблица машин защищена проверкой
-длины, разбор случаев собирается с `-Werror=switch-enum`, а про PCI libvirt
-сказал в рантайме. Искать их вручную не пришлось.
+**Three of the five places were pointed out by the compiler itself.** The
+machine table is guarded by a length check, the switch is compiled with
+`-Werror=switch-enum`, and libvirt reported the PCI issue at runtime. None of
+them had to be hunted down by hand.
 
-Про PCI стоит отдельно: для незнакомой архитектуры `qemuDomainSupportsPCI`
-по умолчанию отвечает «есть» — особые случаи там только для ARM и RISC-V.
-Без правки libvirt требует контроллер, которого у машины Вирта быть не может.
+PCI deserves a separate note: for an unknown architecture
+`qemuDomainSupportsPCI` answers "yes" by default; the only special cases there
+are ARM and RISC-V. Without the edit libvirt demands a controller that
+Wirth's machine cannot have.
 
-**Каждая замена проверяется.** Молча не применившийся патч хуже отсутствующего:
-libvirt соберётся, а архитектуры знать не будет. На libvirt 11.9 это сработало —
-скрипт остановил сборку, когда место из 10.x не нашлось.
+**Every replacement is checked.** A patch that silently failed to apply is
+worse than no patch: libvirt builds, but does not know the architecture. On
+libvirt 11.9 this paid off: the script stopped the build when the 10.x spot
+was not found.
 
-Накладывается из корня дерева libvirt:
+Apply from the root of the libvirt tree:
 
 ```
 python3 patch_libvirt.py
 ```
 
-## Архитектуры — данные
+## Architectures are data
 
-Какие архитектуры вписывать, скрипт берёт из `kubevirt/targets.txt` (в сборке
-образа — `targets.txt` рядом с собой): имя, разрядность, порядок байтов,
-машина по умолчанию и есть ли шина PCI. Все правки выше собираются из этой
-строки по одному образцу, поэтому новая машина — новая строка, а не новый
-код. Проверено прогоном на чистых `v11.9.0` и `v11.10.0`: для RISC5 результат
-тот же, что давала прежняя таблица правок в коде, кроме текста комментария
-к PCI — теперь он собирается из описания.
+The script takes the architectures to add from `kubevirt/targets.txt` (in the
+image build, from `targets.txt` next to itself): name, bit width, byte order,
+default machine and whether there is a PCI bus. All the edits above are
+generated from that line by a single template, so a new machine is a new line,
+not new code. Verified by runs on clean `v11.9.0` and `v11.10.0`: for RISC5
+the result is the same as the old edit table in code produced, except for the
+text of the PCI comment, which is now built from the description.
 
-`--dry-run` показывает, что изменится, ничего не записывая. Проверка без
-дерева libvirt — `python3 qemu/libvirt/patch_test.py`: игрушечное дерево с
-теми же якорями, сравнение с прежней таблицей правок, вторая выдуманная
-архитектура из своего списка и отрицательные контроли.
+`--dry-run` shows what would change without writing anything. The test that
+needs no libvirt tree is `python3 qemu/libvirt/patch_test.py`: a toy tree with
+the same anchors, a comparison with the old edit table, a second made-up
+architecture from its own list, and negative controls.
 
-## Чего патча НЕ хватает
+## What the patch does NOT cover
 
-После него libvirt узнаёт архитектуру, но падает при опросе эмулятора —
-обращение по нулевому указателю в коде разбора ответов QMP.
+After it libvirt recognises the architecture but crashes when probing the
+emulator: a null pointer dereference in the code that parses QMP replies.
 
-Причина найдена опросом бинаря теми же запросами, что делает libvirt. Отвечает
-всё, кроме одного:
+The cause was found by probing the binary with the same requests libvirt
+makes. Everything answers except one:
 
 ```
 query-target             ✅ {"arch": "risc5"}
@@ -76,16 +82,18 @@ query-kvm                ✅
 query-version            ✅
 ```
 
-**Наша цель не объявляет ни одной модели процессора.** Для машины Вирта это
-честно — вариантов ядра у неё нет, — но libvirt на такой отказ не рассчитан и
-падает вместо внятной ошибки.
+**Our target does not declare a single CPU model.** For Wirth's machine that
+is honest, since its core has no variants, but libvirt does not expect such a
+refusal and crashes instead of reporting a clear error.
 
-Два пути, оба рабочие:
+Two ways out, both workable:
 
-1. **Объявить в цели одну модель процессора.** Честно: модель ровно одна,
-   `risc5-cpu`, она уже есть как тип объекта. Нужно лишь ответить на запрос.
-2. Поправить libvirt, чтобы он переживал отказ. Правильнее по существу — падать
-   на таком libvirt не должен, — но это правка чужого кода сверх необходимого.
+1. **Declare one CPU model in the target.** Honest: there is exactly one
+   model, `risc5-cpu`, and it already exists as an object type. It only needs
+   to answer the request.
+2. Fix libvirt so that it survives the refusal. More correct in substance,
+   since libvirt should not crash on this, but it means editing someone
+   else's code beyond what is necessary.
 
-Разумно первое: наша цель просто становится полнее, и это пригодится не только
-здесь.
+The first is the sensible choice: our target simply becomes more complete,
+and that will be useful beyond this case.

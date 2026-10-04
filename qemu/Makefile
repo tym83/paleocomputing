@@ -1,40 +1,40 @@
-# Цель RISC5 для QEMU — своя сборка.
+# The RISC5 target for QEMU: our own build.
 QEMU_DECODETREE ?= /tmp/decodetree.py
 
 .PHONY: check decodetree help build diff fp
 
 help:
-	@echo "  make check   проверить декодер генератором самого QEMU"
-	@echo "  make build   собрать qemu-system-risc5 в контейнере"
-	@echo "  make diff    сверить QEMU с моделью, снятой с настоящего RTL"
-	@echo "  make fp      сверить плавающую точку с эталоном risc-fp.c"
+	@echo "  make check   verify the decoder with QEMU's own generator"
+	@echo "  make build   build qemu-system-risc5 in a container"
+	@echo "  make diff    compare QEMU against the model taken from the real RTL"
+	@echo "  make fp      compare floating point against the risc-fp.c reference"
 
-# Скачиваем генератор, если его нет: он маленький и лежит в дереве QEMU.
+# Download the generator if it is missing: it is small and lives in the QEMU tree.
 $(QEMU_DECODETREE):
 	@curl -fsSL -o $@ https://raw.githubusercontent.com/qemu/qemu/master/scripts/decodetree.py
 
-# ⚠ Проверка обязана уметь падать. Генератор ругается, если хоть один бит
-# команды не расписан — именно на этом декодер и ловился, пока безразличные
-# биты были помечены точкой вместо дефиса.
+# ⚠ The check must be able to fail. The generator complains if even one bit of
+# an instruction is left unspecified; that is exactly how the decoder used to
+# break, while don't-care bits were marked with a dot instead of a dash.
 check: $(QEMU_DECODETREE)
 	@python3 $(QEMU_DECODETREE) --output-null target/risc5/insn.decode \
-	  && echo "  декодер принят генератором QEMU ✅"
+	  && echo "  decoder accepted by the QEMU generator ✅"
 	@python3 $(QEMU_DECODETREE) -o /tmp/risc5-decode.c.inc target/risc5/insn.decode
 	@n=$$(grep -c 'trans_' /tmp/risc5-decode.c.inc); \
-	  test "$$n" -ge 5 && echo "  функций разбора: $$n (по одной на формат) ✅" \
-	  || { echo "  ❌ форматов меньше пяти"; exit 1; }
+	  test "$$n" -ge 5 && echo "  decode functions: $$n (one per format) ✅" \
+	  || { echo "  ❌ fewer than five formats"; exit 1; }
 
-# Сборка в контейнере: зависимости QEMU на машину разработчика не ставим.
-# QEMU_SRC — куда клонировать дерево, по умолчанию рядом, в .qemu-work.
+# Build in a container: QEMU's dependencies are not installed on the developer's machine.
+# QEMU_SRC is where the tree is cloned; by default next door, in .qemu-work.
 QEMU_SRC ?= ../.qemu-work
-# ⚠ Дерево QEMU пинуется КОММИТОМ, а не веткой и не тегом.
+# ⚠ The QEMU tree is pinned by COMMIT, not by branch or tag.
 #
-# Веткой нельзя: master сегодня и master через неделю — разные машины, а сверка
-# с RTL, которая не воспроизводится, ничего не доказывает.
+# Not by branch: master today and master a week later are different machines, and a
+# comparison with the RTL that cannot be reproduced proves nothing.
 #
-# Тегом не выходит: цель написана под текущий master, где заголовки лежат в
-# hw/core/ и system/. В 10.2 они ещё в hw/ и sysemu/, в 9.2 — тем более, и
-# сборка падает на первом же include. Проверено обоими.
+# Not by tag either: the target is written against current master, where headers live in
+# hw/core/ and system/. In 10.2 they are still in hw/ and sysemu/, in 9.2 even more so, and
+# the build fails on the very first include. Both were tried.
 QEMU_REF ?= 942229961efea74b153c44c59188eb08375f10f1
 
 build:
@@ -47,14 +47,14 @@ build:
 	  'cd /src && test -d build || ./configure --target-list=risc5-softmmu \
 	     --disable-docs --disable-tools --disable-guest-agent \
 	     --without-default-features --enable-vnc --enable-pixman >/dev/null; ninja -C build'
-	@echo "  собран: $(QEMU_SRC)/build/qemu-system-risc5"
+	@echo "  built: $(QEMU_SRC)/build/qemu-system-risc5"
 
-# Главная проверка цели: не «собралось», а «считает то же, что железо».
+# The main check of the target: not "it builds" but "it computes the same as the hardware".
 diff:
 	@python3 test/compare.py $(abspath $(QEMU_SRC))
 
-# Плавающая точка против эталона risc-fp.c: таблица, ПЗУ, прогон, сверка и
-# отрицательный контроль — одной целью. Раньше это было сделано один раз
-# руками, и правка fp.c могла сломать арифметику молча.
+# Floating point against the risc-fp.c reference: table, ROM, run, comparison and
+# negative control in one target. This used to be done once by hand, and an
+# edit to fp.c could silently break the arithmetic.
 fp:
 	@python3 test/fp_check.py $(abspath $(QEMU_SRC))

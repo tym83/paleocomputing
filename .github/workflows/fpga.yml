@@ -1,12 +1,12 @@
-# Размещение и трассировка ядра RISC5 на ткани Lattice ECP5 (ULX3S) открытым
-# потоком yosys -> nextpnr-ecp5, со статическим анализом тайминга.
+# Place and route of the RISC5 core on Lattice ECP5 fabric (ULX3S) with the open
+# yosys -> nextpnr-ecp5 flow, with static timing analysis.
 #
-# Тайминг здесь — проверка, а не украшение: задание падает, если хоть одно
-# зерно размещения не держит 25 МГц — частоту исходного дизайна Вирта
-# (RISC5Top.v делит 50 МГц пополам). Правка RTL, которая ломает частоту,
-# не проходит так же, как правка, которая ломает загрузку.
+# Timing here is a check, not decoration: the job fails if even one
+# placement seed does not hold 25 MHz, the frequency of Wirth's original design
+# (RISC5Top.v divides 50 MHz by two). An RTL change that breaks the frequency
+# fails just like a change that breaks booting.
 #
-# Инструменты — из прибитого образа impl/fpga/Dockerfile; см. impl/fpga/results.md.
+# Tools come from the pinned impl/fpga/Dockerfile image; see impl/fpga/results.md.
 name: fpga
 
 on:
@@ -33,30 +33,30 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Образ инструментов
+      - name: Tools image
         run: make docker-image
         working-directory: impl/fpga
 
-      - name: Версии инструментов
+      - name: Tool versions
         run: |
           docker run --rm paleo-fpga:local sh -c \
             'yosys -V; nextpnr-ecp5 --version; openFPGALoader -V; dpkg-query -W fpga-trellis'
 
-      # Три ядра (base, chk, desc) x две обёртки (soc, core) x пять зёрен.
-      # make all завершается с ошибкой, если хоть одно зерно ниже 25 МГц.
-      - name: Синтез, размещение, тайминг
+      # Three cores (base, chk, desc) x two wrappers (soc, core) x five seeds.
+      # make all fails if even one seed is below 25 MHz.
+      - name: Synthesis, placement, timing
         run: |
           docker run --rm -v "$GITHUB_WORKSPACE":/work -w /work/impl/fpga \
             paleo-fpga:local make all
 
-      # Упаковка в битстрим — проверка, что результат вообще собирается в
-      # файл для платы. Битстрим обёртки систему не загружает.
-      - name: Битстрим (проверка упаковки)
+      # Packing into a bitstream checks that the result builds into a board
+      # file at all. The wrapper bitstream does not boot the system.
+      - name: Bitstream (packing check)
         run: |
           docker run --rm -v "$GITHUB_WORKSPACE":/work -w /work/impl/fpga \
             paleo-fpga:local make bit WRAP=soc VARIANT=chk
 
-      - name: Сводка
+      - name: Summary
         if: always()
         run: cat impl/fpga/build/summary.md >> "$GITHUB_STEP_SUMMARY" || true
 

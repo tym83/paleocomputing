@@ -1,19 +1,19 @@
 /*
- * Ответы на запросы наблюдателя для машины RISC5.
+ * Answers to monitor queries for the RISC5 machine.
  *
- * Нужен ровно один: query-cpu-definitions. Наша цель его не поддерживала, и
- * libvirt на отказ отвечал обращением по нулевому указателю — падал вместо
- * внятной ошибки. Отказ был честным (вариантов ядра у машины нет), но дешевле
- * ответить, чем править чужой код.
+ * Exactly one is needed: query-cpu-definitions. Our target did not support it, and
+ * libvirt answered the refusal with a null pointer dereference, crashing instead of
+ * giving a clear error. The refusal was honest (the machine has no CPU variants), but it
+ * is cheaper to answer than to patch someone else's code.
  *
- * Модель здесь ровно одна и всегда будет одна: у Вирта не было ни поколений
- * ядра, ни признаков, которые можно включать и выключать. Перечисляем то, что
- * уже есть как тип объекта.
+ * There is exactly one model here and there always will be: Wirth had neither core
+ * generations nor features that can be switched on and off. We list what
+ * already exists as an object type.
  *
- * ⚠ Определять приходится ОБЕ функции, а не только нужную. Заглушка на этот
- * случай лежит в одном объектном файле (stubs/qmp-cpu.c), и линковщик тянет
- * его целиком, если хоть один её символ остался неперекрытым. Так же поступает
- * цель riscv.
+ * ⚠ BOTH functions have to be defined, not only the one we need. The stub for this
+ * case lives in a single object file (stubs/qmp-cpu.c), and the linker pulls it in
+ * whole if even one of its symbols is left unoverridden. The riscv target does
+ * the same.
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
@@ -48,14 +48,14 @@ CpuDefinitionInfoList *qmp_query_cpu_definitions(Error **errp)
 }
 
 /*
- * Раскрытие модели — перечислить признаки, которые даёт выбранная модель.
- * У нашей машины признаков нет вообще, поэтому отказываем честно. Функция
- * нужна, чтобы не подтянулась заглушка целиком (см. выше).
+ * Model expansion: list the features the chosen model provides.
+ * Our machine has no features at all, so we refuse honestly. The function
+ * exists so that the stub is not pulled in whole (see above).
  */
 CpuModelExpansionInfo *qmp_query_cpu_model_expansion(CpuModelExpansionType type,
                                                      CpuModelInfo *model,
                                                      Error **errp)
 {
-    error_setg(errp, "У RISC5 одна модель процессора и она без признаков");
+    error_setg(errp, "RISC5 has a single CPU model and it has no features");
     return NULL;
 }

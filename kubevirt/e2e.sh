@@ -1,28 +1,28 @@
 #!/bin/sh
-# Сквозная проверка launcher на настоящем KubeVirt — без живого кластера.
+# End-to-end check of the launcher on real KubeVirt, without a live cluster.
 #
-#   kubevirt/e2e.sh <шаг>          шаги по порядку:
+#   kubevirt/e2e.sh <step>         steps in order:
 #
-#     tools      скачать kind и virtctl (версии прибиты) в $E2E_DIR/bin
-#     cluster    поднять кластер kind и загрузить в него образ launcher
-#     kubevirt   поставить KubeVirt $KUBEVIRT_VERSION: эмуляция, признак Sidecar
-#     launcher   подменить launcher тем же проходом, что компонент платформы
-#                kubevirt-paleo-launcher (его reconcile.sh once), и дождаться,
-#                пока virt-controller перекатится и возьмёт аренду лидера
-#     machine    отрисовать чарт oberon-vm, применить, дождаться машины
-#     screen     снять экран через `virtctl vnc --proxy-only` и сверить
-#                с эталоном: dark_pixels=18607
-#     diag       выгрузить всё, что нужно для разбора отказа
-#     down       удалить кластер kind
+#     tools      download kind and virtctl (pinned versions) into $E2E_DIR/bin
+#     cluster    bring up a kind cluster and load the launcher image into it
+#     kubevirt   install KubeVirt $KUBEVIRT_VERSION: emulation, Sidecar gate
+#     launcher   replace the launcher with the same pass as the platform
+#                component kubevirt-paleo-launcher (its reconcile.sh once), and
+#                wait until virt-controller rolls out and takes the leader lease
+#     machine    render the oberon-vm chart, apply it, wait for the machine
+#     screen     capture the screen via `virtctl vnc --proxy-only` and compare
+#                with the reference: dark_pixels=18607
+#     diag       dump everything needed to analyse a failure
+#     down       delete the kind cluster
 #
-# Версия KubeVirt — KUBEVIRT_VERSION или первая строка kubevirt/versions.txt.
-# Образ launcher (LAUNCHER_IMAGE) уже должен лежать в локальном docker:
+# KubeVirt version: KUBEVIRT_VERSION or the first line of kubevirt/versions.txt.
+# The launcher image (LAUNCHER_IMAGE) must already be in the local docker:
 #
 #   kubevirt/build.sh --kubevirt v1.9.0 paleo.local/virt-launcher:v1.9.0-paleo-e2e --load
 #
-# Всё своё — kubeconfig, бинарники, снимок — в $E2E_DIR; ~/.kube/config не
-# читается и не пишется, каждая команда kubectl идёт с явным --context.
-# Находка 67.
+# Everything of our own (kubeconfig, binaries, snapshot) lives in $E2E_DIR;
+# ~/.kube/config is neither read nor written, and every kubectl command uses an
+# explicit --context. Finding 67.
 set -eu
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 
@@ -35,14 +35,14 @@ NS=${NS:-e2e}
 RELEASE=${RELEASE:-wirth}
 KV_NS=kubevirt
 
-# kind и его образ узла — парой из заметок к выпуску kind. Kubernetes 1.35 —
-# в окне поддержки и KubeVirt 1.8, и 1.9.
+# kind and its node image as a pair from the kind release notes. Kubernetes
+# 1.35 is within the support window of both KubeVirt 1.8 and 1.9.
 KIND_VERSION=${KIND_VERSION:-v0.33.0}
 KIND_NODE_IMAGE=${KIND_NODE_IMAGE:-kindest/node:v1.35.8@sha256:07b2536e30b803ed61d1677a79df6115f798ce64c80f9e22f6ed45afd09323c0}
 
-# Сроки. Эмуляция на раннере медленная, а машина стартует не сразу: пока
-# задача наполнения не положила файлы, перехватчик отказывает, и KubeVirt
-# повторяет запуск с нарастающей паузой (до 300 с).
+# Timeouts. Emulation on the runner is slow, and the machine does not start at
+# once: until the fill job has put the files in place, the hook refuses, and
+# KubeVirt retries the launch with a growing backoff (up to 300 s).
 KUBEVIRT_TIMEOUT=${KUBEVIRT_TIMEOUT:-900}
 LAUNCHER_TIMEOUT=${LAUNCHER_TIMEOUT:-600}
 MACHINE_TIMEOUT=${MACHINE_TIMEOUT:-1200}
@@ -56,45 +56,45 @@ mkdir -p "$BIN"
 PATH=$BIN:$PATH
 
 log() { printf '%s [e2e %s] %s\n' "$(date -u +%H:%M:%S)" "$KUBEVIRT_VERSION" "$*"; }
-die() { log "ОТКАЗ: $*"; exit 1; }
+die() { log "FAILED: $*"; exit 1; }
 
 k() { kubectl --kubeconfig "$KUBECONFIG_FILE" --context "$CONTEXT" "$@"; }
 
-# Длительность шага — в журнал и в сводку задачи GitHub Actions.
+# Step duration goes to the log and to the GitHub Actions job summary.
 STEP_START=$(date +%s)
 took() {
   s=$(( $(date +%s) - STEP_START ))
-  log "шаг $1: $s с"
+  log "step $1: $s s"
   if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
-    printf '| %s | %s | %s с |\n' "$KUBEVIRT_VERSION" "$1" "$s" >> "$GITHUB_STEP_SUMMARY"
+    printf '| %s | %s | %s s |\n' "$KUBEVIRT_VERSION" "$1" "$s" >> "$GITHUB_STEP_SUMMARY"
   fi
 }
 
-# Ждать, пока команда не пройдёт, но не дольше $1 секунд.
-wait_for() {  # срок описание команда...
+# Wait until the command succeeds, but no longer than $1 seconds.
+wait_for() {  # timeout description command...
   limit=$1 what=$2; shift 2
   t0=$(date +%s)
   until "$@"; do
-    [ $(( $(date +%s) - t0 )) -lt "$limit" ] || { log "не дождался за $limit с: $what"; return 1; }
+    [ $(( $(date +%s) - t0 )) -lt "$limit" ] || { log "gave up after $limit s: $what"; return 1; }
     sleep 5
   done
-  log "готово за $(( $(date +%s) - t0 )) с: $what"
+  log "done in $(( $(date +%s) - t0 )) s: $what"
 }
 
 os_arch() {
   os=$(uname -s | tr '[:upper:]' '[:lower:]')
-  case $(uname -m) in x86_64|amd64) arch=amd64 ;; aarch64|arm64) arch=arm64 ;; *) die "архитектура $(uname -m)" ;; esac
+  case $(uname -m) in x86_64|amd64) arch=amd64 ;; aarch64|arm64) arch=arm64 ;; *) die "architecture $(uname -m)" ;; esac
 }
 
-# ── Шаги ────────────────────────────────────────────────────────────────────
+# ── Steps ───────────────────────────────────────────────────────────────────
 
 step_tools() {
   if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
-    printf '| KubeVirt | шаг | время |\n|---|---|---|\n' >> "$GITHUB_STEP_SUMMARY"
+    printf '| KubeVirt | step | time |\n|---|---|---|\n' >> "$GITHUB_STEP_SUMMARY"
   fi
   os_arch
   curl -fsSL -o "$BIN/kind" "https://github.com/kubernetes-sigs/kind/releases/download/$KIND_VERSION/kind-$os-$arch"
-  # virtctl — той же версии, что KubeVirt: подресурс vnc версионирован.
+  # virtctl at the same version as KubeVirt: the vnc subresource is versioned.
   curl -fsSL -o "$BIN/virtctl" "https://github.com/kubevirt/kubevirt/releases/download/$KUBEVIRT_VERSION/virtctl-$KUBEVIRT_VERSION-$os-$arch"
   chmod +x "$BIN/kind" "$BIN/virtctl"
   kind version
@@ -105,12 +105,13 @@ step_tools() {
 
 step_cluster() {
   docker image inspect "$LAUNCHER_IMAGE" >/dev/null 2>&1 \
-    || die "образа $LAUNCHER_IMAGE нет в локальном docker — сначала kubevirt/build.sh ... --load"
+    || die "image $LAUNCHER_IMAGE is not in the local docker: run kubevirt/build.sh ... --load first"
   kind create cluster --name "$CLUSTER" --image "$KIND_NODE_IMAGE" \
     --kubeconfig "$KUBECONFIG_FILE" --wait 180s
-  # Образ launcher только локальный (paleo.local — не реестр): под машины
-  # берёт его с узла, скачать его неоткуда. Не загрузился — машина упадёт
-  # на ErrImagePull, а не на чужом образе.
+  # The launcher image is local only (paleo.local is not a registry): the
+  # machine pod takes it from the node, there is nowhere to pull it from. If it
+  # did not load, the machine fails with ErrImagePull rather than running on a
+  # foreign image.
   kind load docker-image "$LAUNCHER_IMAGE" --name "$CLUSTER"
   k get nodes -o wide
   k get storageclass
@@ -120,9 +121,9 @@ step_kubevirt() {
   base=https://github.com/kubevirt/kubevirt/releases/download/$KUBEVIRT_VERSION
   k apply -f "$base/kubevirt-operator.yaml"
   k -n "$KV_NS" rollout status deployment/virt-operator --timeout=600s
-  # useEmulation: на раннере нет /dev/kvm. Машине Вирта это ничего не стоит:
-  # чужую архитектуру QEMU исполняет программно (TCG) и при KVM тоже.
-  # Sidecar — без него перехватчик не запускается (находка 48).
+  # useEmulation: the runner has no /dev/kvm. This costs the Wirth machine
+  # nothing: QEMU runs a foreign architecture in software (TCG) even with KVM.
+  # Sidecar: without it the hook does not run (finding 48).
   k apply -f - <<EOF
 apiVersion: kubevirt.io/v1
 kind: KubeVirt
@@ -130,9 +131,9 @@ metadata:
   name: kubevirt
   namespace: $KV_NS
 spec:
-  # Узел один: вторые реплики virt-api и virt-controller только съели бы
-  # память раннера. Аренду лидера (шаг launcher) это не упрощает — её всё
-  # равно ждём явно.
+  # A single node: second replicas of virt-api and virt-controller would only
+  # eat the runner's memory. This does not simplify the leader lease (the
+  # launcher step): we still wait for it explicitly.
   infra:
     replicas: 1
   configuration:
@@ -142,17 +143,18 @@ spec:
 EOF
   k -n "$KV_NS" wait kubevirt/kubevirt --for=condition=Available --timeout="${KUBEVIRT_TIMEOUT}s"
   obs=$(k -n "$KV_NS" get kubevirt kubevirt -o jsonpath='{.status.observedKubeVirtVersion}')
-  [ "$obs" = "$KUBEVIRT_VERSION" ] || die "KubeVirt сообщает версию $obs, ждали $KUBEVIRT_VERSION"
+  [ "$obs" = "$KUBEVIRT_VERSION" ] || die "KubeVirt reports version $obs, expected $KUBEVIRT_VERSION"
   k -n "$KV_NS" get pods -o wide
 }
 
-# Что сейчас видит проход платформы: состояние из его ConfigMap.
+# What the platform pass currently sees: the state from its ConfigMap.
 launcher_state() {
   k -n "$KV_NS" get configmap kubevirt-paleo-launcher-status -o jsonpath='{.data.state}' 2>/dev/null
 }
 
-# Аренду лидера держит под нового virt-controller (находка 58: пока её держит
-# старый, поды машин создаёт он — со штатным launcher).
+# The leader lease is held by a pod of the new virt-controller (finding 58:
+# while the old one holds it, it creates the machine pods, with the stock
+# launcher).
 leader_is_new() {
   holder=$(k -n "$KV_NS" get lease virt-controller -o jsonpath='{.spec.holderIdentity}' 2>/dev/null) || return 1
   [ -n "$holder" ] || return 1
@@ -175,32 +177,32 @@ reconcile_applied() {
 }
 
 step_launcher() {
-  # reconcile.sh зовёт "$KUBECTL" без аргументов — обёртка несёт наш
-  # kubeconfig и контекст.
+  # reconcile.sh calls "$KUBECTL" without arguments, so the wrapper carries
+  # our kubeconfig and context.
   cat > "$BIN/kubectl-e2e" <<EOF
 #!/bin/sh
 exec kubectl --kubeconfig "$KUBECONFIG_FILE" --context "$CONTEXT" "\$@"
 EOF
   chmod +x "$BIN/kubectl-e2e"
-  # Таблица — как files/launchers.txt компонента, только с локальным образом.
+  # The table is like the component's files/launchers.txt, only with the local image.
   printf '# kubevirt/e2e.sh\n%s %s\n' "$KUBEVIRT_VERSION" "$LAUNCHER_IMAGE" > "$E2E_DIR/launchers.txt"
-  # ConfigMap состояния в платформе создаёт чарт компонента; здесь — руками.
+  # On the platform the state ConfigMap is created by the component chart; here, by hand.
   k -n "$KV_NS" create configmap kubevirt-paleo-launcher-status --dry-run=client -o yaml | k apply -f -
 
-  reconcile_once || die "первый проход reconcile.sh не удался"
-  [ "$(launcher_state)" = Applying ] || die "после первого прохода состояние $(launcher_state), ждали Applying"
+  reconcile_once || die "the first reconcile.sh pass failed"
+  [ "$(launcher_state)" = Applying ] || die "after the first pass the state is $(launcher_state), expected Applying"
   k -n "$KV_NS" get kubevirt kubevirt -o jsonpath='{.spec.customizeComponents}'; echo
 
-  wait_for "$LAUNCHER_TIMEOUT" "virt-controller перекатился на launcher (состояние Applied)" reconcile_applied \
-    || die "состояние $(launcher_state)"
+  wait_for "$LAUNCHER_TIMEOUT" "virt-controller rolled out with the launcher (state Applied)" reconcile_applied \
+    || die "state $(launcher_state)"
   args=$(k -n "$KV_NS" get deployment virt-controller -o jsonpath='{.spec.template.spec.containers[0].args}')
-  log "аргументы virt-controller: $args"
+  log "virt-controller arguments: $args"
   case $args in
     *'"--launcher-image","'"$LAUNCHER_IMAGE"'"'*) ;;
-    *) die "у virt-controller не наш --launcher-image" ;;
+    *) die "virt-controller does not have our --launcher-image" ;;
   esac
-  wait_for "$LAUNCHER_TIMEOUT" "аренду лидера держит новый virt-controller" leader_is_new \
-    || die "аренда лидера: $(k -n "$KV_NS" get lease virt-controller -o jsonpath='{.spec.holderIdentity}')"
+  wait_for "$LAUNCHER_TIMEOUT" "the new virt-controller holds the leader lease" leader_is_new \
+    || die "leader lease: $(k -n "$KV_NS" get lease virt-controller -o jsonpath='{.spec.holderIdentity}')"
 }
 
 vm_ready() {
@@ -209,28 +211,28 @@ vm_ready() {
 
 step_machine() {
   k create namespace "$NS" --dry-run=client -o yaml | k apply -f -
-  # Чарт каталога как есть — отличается только класс тома: у kind это
-  # standard (local-path), а не replicated из LINSTOR.
+  # The catalog chart as is; only the storage class differs: on kind it is
+  # standard (local-path), not replicated from LINSTOR.
   helm template "$RELEASE" "$ROOT/marketplace/repos/machines/packages/apps/oberon-vm" \
     --namespace "$NS" --set storageClass=standard > "$E2E_DIR/oberon-vm.yaml"
   k -n "$NS" apply -f "$E2E_DIR/oberon-vm.yaml"
 
   k -n "$NS" wait job -l app.kubernetes.io/instance="$RELEASE" --for=condition=Complete \
-    --timeout="${MACHINE_TIMEOUT}s" || die "задача наполнения тома не завершилась"
-  wait_for "$MACHINE_TIMEOUT" "VirtualMachine $VM готова" vm_ready || die "машина не готова"
+    --timeout="${MACHINE_TIMEOUT}s" || die "the volume fill job did not complete"
+  wait_for "$MACHINE_TIMEOUT" "VirtualMachine $VM ready" vm_ready || die "machine not ready"
 
   pod=$(k -n "$NS" get pods -l kubevirt.io=virt-launcher,app.kubernetes.io/instance="$RELEASE" \
           --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}')
   img=$(k -n "$NS" get pod "$pod" -o jsonpath='{.spec.containers[?(@.name=="compute")].image}')
-  log "под машины $pod, launcher $img"
-  [ "$img" = "$LAUNCHER_IMAGE" ] || die "под машины на чужом launcher: $img"
-  # Эмулятор — наш qemu-system-risc5: значит, перехватчик переписал домен, а
-  # libvirt в образе принял архитектуру.
-  # shellcheck disable=SC2016 # раскрывается в поде, не здесь
+  log "machine pod $pod, launcher $img"
+  [ "$img" = "$LAUNCHER_IMAGE" ] || die "machine pod runs a foreign launcher: $img"
+  # The emulator is our qemu-system-risc5: so the hook rewrote the domain and
+  # libvirt in the image accepted the architecture.
+  # shellcheck disable=SC2016 # expanded in the pod, not here
   emu=$(k -n "$NS" exec "$pod" -c compute -- sh -c \
     'for p in /proc/[0-9]*; do tr "\0" " " < "$p/cmdline" 2>/dev/null; echo; done' \
-    | grep -m1 'qemu-system-risc5') || die "в поде машины не запущен qemu-system-risc5"
-  log "эмулятор: $emu"
+    | grep -m1 'qemu-system-risc5') || die "qemu-system-risc5 is not running in the machine pod"
+  log "emulator: $emu"
 }
 
 snapshot_once() {
@@ -239,44 +241,44 @@ snapshot_once() {
     vnc "$VM" --proxy-only --port "$port" > "$E2E_DIR/virtctl-vnc.log" 2>&1 &
   proxy=$!
   sleep 3
-  # ⚠ Прокси принимает одно подключение и выходит: порт не проверять ничем,
-  # кроме самого снимка (находка 59).
+  # ⚠ The proxy accepts one connection and exits: do not probe the port with
+  # anything but the snapshot itself (finding 59).
   out=$(python3 "$ROOT/kubevirt/vnc_snapshot.py" 127.0.0.1 "$port" "$E2E_DIR/screen.ppm" 2>&1) || true
   kill "$proxy" 2>/dev/null || true
   wait "$proxy" 2>/dev/null || true
-  log "снимок: ${out:-пусто}"
+  log "snapshot: ${out:-empty}"
   case $out in *"dark_pixels=$EXPECT_DARK"*) return 0 ;; esac
   [ -s "$E2E_DIR/virtctl-vnc.log" ] && sed 's/^/  virtctl: /' "$E2E_DIR/virtctl-vnc.log"
   return 1
 }
 
 step_screen() {
-  wait_for "$SCREEN_TIMEOUT" "экран Оберона совпал с эталоном (dark_pixels=$EXPECT_DARK)" snapshot_once \
-    || die "экран не совпал с эталоном"
+  wait_for "$SCREEN_TIMEOUT" "Oberon screen matched the reference (dark_pixels=$EXPECT_DARK)" snapshot_once \
+    || die "screen did not match the reference"
 }
 
 step_diag() {
   set +e
   section() { printf '\n::group::%s\n' "$1"; }
   endsec() { printf '::endgroup::\n'; }
-  section "узлы и поды"; k get nodes -o wide; k get pods -A -o wide; endsec
+  section "nodes and pods"; k get nodes -o wide; k get pods -A -o wide; endsec
   section "KubeVirt"; k -n "$KV_NS" get kubevirt kubevirt -o yaml; endsec
   section "virt-controller"
   k -n "$KV_NS" get deployment virt-controller -o jsonpath='{.spec.template.spec.containers[0].args}'; echo
   k -n "$KV_NS" get lease virt-controller -o yaml
   k -n "$KV_NS" logs -l kubevirt.io=virt-controller --tail=200 --prefix
   endsec
-  section "состояние компонента launcher"; k -n "$KV_NS" get configmap kubevirt-paleo-launcher-status -o yaml; endsec
+  section "launcher component state"; k -n "$KV_NS" get configmap kubevirt-paleo-launcher-status -o yaml; endsec
   section "virt-handler"; k -n "$KV_NS" logs -l kubevirt.io=virt-handler --tail=300 --prefix; endsec
-  section "машина: VM, VMI, задача, том"
+  section "machine: VM, VMI, job, volume"
   k -n "$NS" get vm,vmi,job,pvc,pods -o wide
   k -n "$NS" get vm "$VM" -o yaml
   k -n "$NS" get vmi "$VM" -o yaml
   k -n "$NS" logs -l job-name --tail=100 --prefix
   endsec
-  section "события"; k -n "$NS" get events --sort-by=.lastTimestamp; k -n "$KV_NS" get events --sort-by=.lastTimestamp | tail -50; endsec
+  section "events"; k -n "$NS" get events --sort-by=.lastTimestamp; k -n "$KV_NS" get events --sort-by=.lastTimestamp | tail -50; endsec
   for pod in $(k -n "$NS" get pods -l kubevirt.io=virt-launcher -o jsonpath='{.items[*].metadata.name}'); do
-    section "под $pod"
+    section "pod $pod"
     k -n "$NS" describe pod "$pod"
     for c in $(k -n "$NS" get pod "$pod" -o jsonpath='{.spec.containers[*].name}'); do
       echo "── $c"; k -n "$NS" logs "$pod" -c "$c" --tail=300
@@ -291,10 +293,10 @@ step_down() {
   kind delete cluster --name "$CLUSTER" --kubeconfig "$KUBECONFIG_FILE"
 }
 
-step=${1:?укажите шаг: tools cluster kubevirt launcher machine screen diag down}
-log "шаг $step, launcher $LAUNCHER_IMAGE, каталог $E2E_DIR"
+step=${1:?specify a step: tools cluster kubevirt launcher machine screen diag down}
+log "step $step, launcher $LAUNCHER_IMAGE, directory $E2E_DIR"
 case $step in
   tools|cluster|kubevirt|launcher|machine|screen|diag|down) "step_$step" ;;
-  *) die "неизвестный шаг $step" ;;
+  *) die "unknown step $step" ;;
 esac
 took "$step"

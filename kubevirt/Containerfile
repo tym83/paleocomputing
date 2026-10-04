@@ -1,45 +1,45 @@
-# Образ virt-launcher с libvirt, знающим архитектуры чужих машин.
+# virt-launcher image with a libvirt that knows foreign machine architectures.
 #
-# Какие машины он несёт — kubevirt/targets.txt, по строке на архитектуру
-# (сегодня одна: RISC5). Образ один на всё семейство: новая машина — строка
-# там, а не новый образ.
+# Which machines it carries is in kubevirt/targets.txt, one line per
+# architecture (today one: RISC5). One image for the whole family: a new
+# machine is a line there, not a new image.
 #
-# Форкается ТОЛЬКО libvirt, и патч в нём — шесть строк в четырёх таблицах на
-# каждую архитектуру.
-# Сам KubeVirt не трогаем: перехватчик OnDefineDomain — штатная точка, а
-# реестр образов переключается настройкой на ресурсе KubeVirt, так что и
-# Cozystack форка не требует.
+# ONLY libvirt is forked, and the patch in it is six lines in four tables per
+# architecture.
+# KubeVirt itself is untouched: the OnDefineDomain hook is a supported
+# extension point, and the image registry is switched by a setting on the
+# KubeVirt resource, so Cozystack needs no fork either.
 #
-# Собирается под ту же основу, что у штатного образа — CentOS Stream 9 и
-# ту же версию libvirt. Взять сборку с другой основы нельзя: разойдутся
-# библиотеки. Какой libvirt в какой версии KubeVirt — в kubevirt/versions.txt,
-# и build.sh передаёт обе версии парой.
+# Built on the same base as the stock image, CentOS Stream 9, and the same
+# libvirt version. A build from another base will not do: the libraries would
+# diverge. Which libvirt goes with which KubeVirt version is in
+# kubevirt/versions.txt, and build.sh passes both versions as a pair.
 #
-# Контекст сборки — корень репозитория, а коммит QEMU передаётся снаружи:
-# он записан один раз, в qemu/Makefile. Собирать через kubevirt/build.sh —
-# он читает коммит оттуда же, откуда его берут проверки.
+# The build context is the repository root, and the QEMU commit is passed in
+# from outside: it is recorded once, in qemu/Makefile. Build through
+# kubevirt/build.sh, which reads the commit from the same place the checks do.
 #
-# ⚠ Основы прибиты дайджестом индекса (многоархитектурного), тег оставлен для
-# читателя. По одному тегу `stream9` через месяц приезжает другая система, а
-# `v1.8.4` технически можно переставить — и тот же коммит собирал бы другой
-# образ. Обновлять дайджест вместе с тегом: у centos — здесь, у launcher — в
-# kubevirt/versions.txt, рядом с его версией:
+# ⚠ The bases are pinned by the (multi-arch) index digest; the tag is kept for
+# the reader. The `stream9` tag alone brings a different system a month later,
+# and `v1.8.4` can technically be moved, so the same commit would build a
+# different image. Update the digest together with the tag: for centos here,
+# for the launcher in kubevirt/versions.txt, next to its version:
 #
 #   docker buildx imagetools inspect quay.io/kubevirt/virt-launcher:v1.8.4
 
-# Версия KubeVirt, под которую собирается образ, и дайджест индекса её
-# штатного launcher — строка из kubevirt/versions.txt, их передаёт build.sh.
-# Объявлены до первого FROM, чтобы их видела основа готового образа.
-# Значения здесь — для версии по умолчанию.
+# The KubeVirt version the image is built for and the index digest of its
+# stock launcher: a line from kubevirt/versions.txt, passed by build.sh.
+# Declared before the first FROM so the final image's base can see them.
+# The values here are for the default version.
 ARG KUBEVIRT_VERSION=v1.8.4
 ARG LAUNCHER_DIGEST=sha256:c89f733b1fdcc810d0b4326bbfc652a4cf3d25bc56cc8545f124d5cb71a1ce20
 
-# ── Сборка libvirt ─────────────────────────────────────────────────────────
+# ── libvirt build ──────────────────────────────────────────────────────────
 FROM quay.io/centos/centos:stream9@sha256:63e8d0c2a4a4b67c8bd7456283d12106bedf815d8c27d1a72498ebcf173baf09 AS libvirt-build
 
-# Зависимости берём не списком, а тем набором, которым libvirt собирается в
-# самом дистрибутиве: перебирать их по одной — долго и ненадёжно.
-# CRB нужен отдельно: meson, ninja и часть заголовков лежат там.
+# Dependencies are taken not as a list but as the set the distribution itself
+# builds libvirt with: picking them one by one is slow and unreliable.
+# CRB is needed separately: meson, ninja and some headers live there.
 RUN dnf install -y --setopt=install_weak_deps=False dnf-plugins-core \
  && dnf config-manager --set-enabled crb \
  && dnf install -y --setopt=install_weak_deps=False \
@@ -47,28 +47,29 @@ RUN dnf install -y --setopt=install_weak_deps=False dnf-plugins-core \
  && dnf builddep -y --setopt=install_weak_deps=False libvirt \
  && dnf clean all
 
-# Пара к KUBEVIRT_VERSION из kubevirt/versions.txt; значение здесь — для
-# версии по умолчанию.
+# The pair to KUBEVIRT_VERSION from kubevirt/versions.txt; the value here is
+# for the default version.
 ARG LIBVIRT_VERSION=v11.9.0
 RUN git clone --depth 1 -b ${LIBVIRT_VERSION} \
       https://github.com/libvirt/libvirt.git /src
 
-# Список архитектур кладётся рядом со скриптом: там он его и ищет.
+# The architecture list goes next to the script: that is where it looks for it.
 COPY qemu/libvirt/patch_libvirt.py kubevirt/targets.txt /src/
 WORKDIR /src
 RUN python3 patch_libvirt.py
 
-# Собираем только то, что нужно: драйвер QEMU и общую библиотеку.
+# Build only what is needed: the QEMU driver and the shared library.
 RUN meson setup build --prefix=/usr --libdir=/usr/lib64 \
       -Ddriver_qemu=enabled -Dtests=disabled -Ddocs=disabled \
       -Ddriver_libxl=disabled -Ddriver_lxc=disabled -Ddriver_vbox=disabled \
  && ninja -C build \
  && DESTDIR=/out ninja -C build install
 
-# ── Сборка эмулятора ───────────────────────────────────────────────────────
+# ── Emulator build ─────────────────────────────────────────────────────────
 #
-# ⚠ Собирать надо здесь же, а не приносить готовый: образ virt-launcher стоит
-# на CentOS 9, и бинарь с Ubuntu в нём не запускается — «GLIBC_2.38 not found».
+# ⚠ It must be built here rather than brought in prebuilt: the virt-launcher
+# image is based on CentOS 9, and a binary from Ubuntu does not run in it
+# ("GLIBC_2.38 not found").
 FROM quay.io/centos/centos:stream9@sha256:63e8d0c2a4a4b67c8bd7456283d12106bedf815d8c27d1a72498ebcf173baf09 AS qemu-build
 
 RUN dnf install -y --setopt=install_weak_deps=False dnf-plugins-core \
@@ -80,15 +81,16 @@ RUN dnf install -y --setopt=install_weak_deps=False dnf-plugins-core \
       libpng-devel libjpeg-turbo-devel \
  && dnf clean all
 
-# ⚠ Свежему QEMU нужен Python 3.12, а базовый в CentOS 9 — 3.9. Ставим рядом
-# и указываем явно: подменять системный нельзя, на нём держится dnf.
+# ⚠ Recent QEMU needs Python 3.12, while CentOS 9 ships 3.9. Install it
+# alongside and point to it explicitly: the system one cannot be replaced, dnf
+# depends on it.
 ENV PYTHON=/usr/bin/python3.12
 
-# ⚠ Дерево QEMU — тем же коммитом, что у проверок. Раньше здесь брался
-# свежий master: образ собирался из другой машины, чем та, что сверена с RTL,
-# и пересборка через неделю давала третью.
+# ⚠ The QEMU tree is at the same commit as the checks use. This used to take
+# the latest master: the image was built from a different machine than the one
+# verified against the RTL, and a rebuild a week later produced a third one.
 ARG QEMU_REF
-RUN test -n "${QEMU_REF}" || { echo "QEMU_REF не задан: собирать через kubevirt/build.sh"; exit 1; } \
+RUN test -n "${QEMU_REF}" || { echo "QEMU_REF is not set: build through kubevirt/build.sh"; exit 1; } \
  && mkdir -p /src/qemu && cd /src/qemu && git init -q \
  && { git fetch --depth 1 -q https://gitlab.com/qemu-project/qemu.git "${QEMU_REF}" \
    || git fetch --depth 1 -q https://github.com/qemu/qemu.git "${QEMU_REF}"; } \
@@ -99,9 +101,9 @@ COPY qemu/target        /src/qemu-target/target
 COPY qemu/hw            /src/qemu-target/hw
 COPY qemu/configs       /src/qemu-target/configs
 COPY kubevirt/targets.txt /src/targets.txt
-# Цели и бинари — из kubevirt/targets.txt: <арх.>-softmmu и qemu-system-<арх.>.
-# Готовые эмуляторы собираются в /out/bin, чтобы последняя стадия взяла их
-# одной строкой, сколько бы их ни было.
+# Targets and binaries come from kubevirt/targets.txt: <arch>-softmmu and
+# qemu-system-<arch>. The finished emulators are collected in /out/bin so the
+# last stage can take them in one line, however many there are.
 RUN /src/qemu-target/graft.sh /src/qemu \
  && archs=$(awk '!/^#/ && NF { print $1 }' /src/targets.txt) \
  && test -n "$archs" \
@@ -115,21 +117,21 @@ RUN /src/qemu-target/graft.sh /src/qemu \
  && mkdir -p /out/bin \
  && for a in $archs; do cp build/qemu-system-$a /out/bin/; done
 
-# ── Готовый образ ──────────────────────────────────────────────────────────
+# ── Final image ────────────────────────────────────────────────────────────
 FROM quay.io/kubevirt/virt-launcher:${KUBEVIRT_VERSION}@${LAUNCHER_DIGEST}
 
-# Подменяем только библиотеки libvirt: всё остальное в образе штатное.
+# Only the libvirt libraries are replaced: everything else in the image is stock.
 COPY --from=libvirt-build /out/usr/lib64/libvirt.so.* /usr/lib64/
 COPY --from=libvirt-build /out/usr/lib64/libvirt/connection-driver/libvirt_driver_qemu.so \
                           /usr/lib64/libvirt/connection-driver/
 
-# Эмулятор кладём сюда же: так он есть и без общего тома, а том остаётся
-# способом принести машину, которой в образе нет.
+# The emulator goes here too: this way it is present without a shared volume,
+# and the volume remains a way to bring a machine the image does not have.
 COPY --from=qemu-build /out/bin/ /usr/local/bin/
-# Раскладки клавиатуры для VNC. Без них QEMU с `-vnc` не стартует вовсе
-# («could not find keymap file for language 'en-us'»), а консоль в дашборде
-# идёт именно через VNC. Ищет он их в <prefix>/share/qemu/keymaps.
+# Keyboard keymaps for VNC. Without them QEMU with `-vnc` does not start at
+# all ("could not find keymap file for language 'en-us'"), and the dashboard
+# console goes through VNC. It looks for them in <prefix>/share/qemu/keymaps.
 COPY --from=qemu-build /src/qemu/pc-bios/keymaps/ /usr/local/share/qemu/keymaps/
 
-# Перехватчик может прийти скриптом из ConfigMap, но пусть будет и в образе.
+# The hook can come as a script from a ConfigMap, but keep it in the image too.
 COPY kubevirt/onDefineDomain.py /usr/bin/onDefineDomain

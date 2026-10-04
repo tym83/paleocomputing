@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
-"""Сверка кадрового буфера QEMU с эталонной машиной на настоящем RTL.
+"""Cross-check of the QEMU framebuffer against the reference machine on the real RTL.
 
-Смотреть на картинку глазами — слабая проверка: глаз не заметит сдвига на
-строку или перевёрнутого бита в редко используемом шрифте. Поэтому сравниваем
-байты: 98 304 байта кадрового буфера после загрузки системы должны совпасть
-с точностью до бита.
+Looking at the picture is a weak check: the eye will not notice a one-line
+shift or a flipped bit in a rarely used glyph. So the bytes are compared: the
+98,304 bytes of the framebuffer after the system boots must match bit for bit.
 
-  fb_diff.py <снимок из QEMU> <снимок с RTL>
+  fb_diff.py <QEMU snapshot> <RTL snapshot>
 """
 import sys, pathlib
 
@@ -16,17 +15,17 @@ def main(qemu_fb, rtl_fb):
     r = pathlib.Path(rtl_fb).read_bytes()
 
     if len(q) != len(r):
-        print(f'❌ размеры не совпали: QEMU {len(q)}, RTL {len(r)}')
+        print(f'❌ sizes differ: QEMU {len(q)}, RTL {len(r)}')
         return 1
     if q == r:
         ink = sum(bin(b).count('1') for b in q)
-        print(f'✅ кадровые буферы совпали побайтово ({len(q)} байт)')
-        print(f'   чёрных точек на экране: {ink}')
+        print(f'✅ framebuffers match byte for byte ({len(q)} bytes)')
+        print(f'   black pixels on screen: {ink}')
         return 0
 
     diff = sum(1 for a, b in zip(q, r) if a != b)
     first = next(i for i, (a, b) in enumerate(zip(q, r)) if a != b)
-    print(f'❌ различий {diff} байт из {len(q)}, первое по смещению 0x{first:X}')
+    print(f'❌ {diff} of {len(q)} bytes differ, the first at offset 0x{first:X}')
     return 1
 
 

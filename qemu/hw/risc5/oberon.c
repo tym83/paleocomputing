@@ -1,16 +1,16 @@
 /*
- * Плата машины Оберона.
+ * The Oberon machine board.
  *
- * Карта памяти снята с RISC5Top.v:
+ * The memory map is taken from RISC5Top.v:
  *   :84  codebus = (adr[23:14] == 10'h3FF) ? romout : inbus0
- *        — выборка кода из ПЗУ начиная с 0xFFC000
+ *        — code fetch from ROM starting at 0xFFC000
  *   :86  ioenb   = (adr[23:6] == 18'h3FFFF)
- *        — регистры ввода-вывода с 0xFFFFC0, шестнадцать слов
- *   RISC5.v:11  вектор сброса 22'h3FF800, то есть байтовый 0xFFE000
+ *        — I/O registers from 0xFFFFC0, sixteen words
+ *   RISC5.v:11  reset vector 22'h3FF800, i.e. byte address 0xFFE000
  *
- * Устройств пока нет: это самая узкая плата, на которой цель собирается и
- * можно гонять отдельные команды против нашего же RTL. Диск по SPI, мышь,
- * клавиатура и кадровый буфер — следующим шагом.
+ * No devices yet: this is the narrowest board on which the target builds and
+ * individual instructions can be run against our own RTL. SPI disk, mouse,
+ * keyboard and frame buffer come as the next step.
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
@@ -29,10 +29,10 @@
 #include "hw/core/qdev-properties-system.h"
 
 /*
- * ПЗУ в железе — 512 слов: PROM.v берёт только adr[10:2]. Выборка кода
- * уходит в него начиная с 0xFFC000 (RISC5Top.v:84), то есть двухкилобайтный
- * блок повторяется четырежды; сброс попадает в 0xFFE000, это его начало.
- * Заводим ровно 2 КБ по адресу сброса — так же, как есть в схеме.
+ * ROM in hardware is 512 words: PROM.v uses only adr[10:2]. Code fetch
+ * goes to it starting at 0xFFC000 (RISC5Top.v:84), so the two-kilobyte
+ * block repeats four times; reset lands at 0xFFE000, which is its start.
+ * We set up exactly 2 KB at the reset address, just as in the circuit.
  */
 #define OBERON_RAM_BASE  0x000000
 #define OBERON_RAM_SIZE  0xFFE000
@@ -40,19 +40,19 @@
 #define OBERON_ROM_SIZE  0x000800
 
 /*
- * Вариант железа. Расширение системы команд — это не «режим эмулятора»,
- * а другая сборка процессора: в RTL оно включается -DWITH_CHK. Здесь тем же
- * смыслом обладает свойство машины:
+ * Hardware variant. An instruction set extension is not an "emulator mode"
+ * but a different build of the processor: in the RTL it is enabled with -DWITH_CHK. Here the same
+ * meaning is carried by a machine property:
  *
  *   -machine oberon,chk=on
  *
- * По умолчанию выключено: базовая машина обязана вести себя ровно как ядро
- * Вирта без расширений, иначе сверка с RTL перестаёт что-либо значить.
+ * Off by default: the base machine must behave exactly like Wirth's core
+ * without extensions, otherwise the comparison with the RTL stops meaning anything.
  *
- * Свойство статическое: машина в процессе одна, а выбор делается до запуска.
+ * The property is static: there is one machine per process, and the choice is made before start.
  */
 static bool oberon_chk;
-static bool oberon_desc;   /* IDX, выпуск 14: как -DWITH_DESC в RTL */
+static bool oberon_desc;   /* IDX, episode 14: like -DWITH_DESC in the RTL */
 
 static bool oberon_get_desc(Object *obj, Error **errp)
 {
@@ -90,39 +90,39 @@ static void oberon_init(MachineState *machine)
     memory_region_add_subregion(sys, OBERON_RAM_BASE, ram);
 
     /*
-     * ПЗУ доступно только на чтение: в железе это отдельный блок PROM,
-     * писать туда нечем.
+     * ROM is read-only: in hardware it is a separate PROM block,
+     * and there is nothing to write to it with.
      */
     memory_region_init_rom(rom, NULL, "oberon.rom", OBERON_ROM_SIZE,
                            &error_fatal);
     memory_region_add_subregion(sys, OBERON_ROM_BASE, rom);
 
     /*
-     * Содержимое ПЗУ подаётся через -bios. Это же и есть способ гонять
-     * отдельные программы для сверки с настоящим RTL: наш ассемблер
-     * собирает кусок кода, он кладётся по адресу сброса, и дальше можно
-     * сравнивать состояние регистров команда за командой.
+     * The ROM contents are supplied via -bios. This is also the way to run
+     * individual programs for comparison with the real RTL: our assembler
+     * builds a piece of code, it is placed at the reset address, and then the
+     * register state can be compared instruction by instruction.
      */
     /*
-     * Экран. Кадровый буфер лежит в обычной памяти, отдельной видеопамяти
-     * у машины нет — устройство просто читает её и рисует.
+     * Screen. The frame buffer lives in ordinary memory; the machine has no separate
+     * video memory, the device simply reads it and draws.
      */
     OberonDisplay *disp = g_new0(OberonDisplay, 1);
     oberon_display_init(disp, ram);
 
     /*
-     * Порты. Без счётчика миллисекунд система не доходит даже до экрана:
-     * на нём держится всё, что связано со временем.
+     * Ports. Without the millisecond counter the system does not even reach the screen:
+     * everything time-related depends on it.
      */
     {
         /*
-         * Образ системы подаётся приводом без шины:
+         * The system image is supplied as a drive without a bus:
          *   -drive if=none,id=sd0,file=oberon.dsk,format=raw
          *
-         * Именно без шины: QEMU считает осиротевшим любой привод с шиной,
-         * который никто не забрал устройством, и отказывается запускаться.
-         * Карта SD у нас не устройство qdev, а часть портов, поэтому берём
-         * её по имени.
+         * Without a bus on purpose: QEMU treats any drive with a bus that no device
+         * has claimed as orphaned and refuses to start.
+         * Our SD card is not a qdev device but part of the ports, so we take
+         * it by name.
          */
         BlockBackend *blk = blk_by_name("sd0");
 
@@ -132,15 +132,15 @@ static void oberon_init(MachineState *machine)
         }
 
         if (!blk) {
-            warn_report("образ диска не задан: добавьте -drive if=none,id=sd0,file=<образ>,format=raw");
+            warn_report("no disk image given: add -drive if=none,id=sd0,file=<image>,format=raw");
         } else {
             /*
-             * Разрешения на запись надо попросить явно. Устройство qdev
-             * получает их при подключении привода, а мы берём привод по
-             * имени — и без этой строки ПЕРВАЯ ЖЕ запись на диск роняет
-             * QEMU проверкой BLK_PERM_WRITE в block/io.c. До выпуска №2
-             * на диск в QEMU никто не писал: загрузка только читает.
-             * Компиляция внутри системы пишет .rsc — и упала.
+             * Write permissions have to be requested explicitly. A qdev device
+             * gets them when the drive is attached, but we take the drive by
+             * name, and without this line the VERY FIRST write to disk crashes
+             * QEMU on the BLK_PERM_WRITE check in block/io.c. Before episode 2
+             * nobody wrote to disk in QEMU: booting only reads.
+             * Compiling inside the system writes .rsc, and it crashed.
              */
             blk_set_perm(blk, BLK_PERM_CONSISTENT_READ |
                          (blk_supports_write_perm(blk) ? BLK_PERM_WRITE : 0),
@@ -155,7 +155,7 @@ static void oberon_init(MachineState *machine)
     if (machine->firmware) {
         ssize_t n = load_image_mr(machine->firmware, rom);
         if (n < 0) {
-            error_report("не удалось прочитать образ ПЗУ '%s'", machine->firmware);
+            error_report("could not read ROM image '%s'", machine->firmware);
             exit(1);
         }
     }
@@ -176,11 +176,11 @@ static void oberon_machine_init(MachineClass *mc)
     object_class_property_add_bool(OBJECT_CLASS(mc), "chk",
                                    oberon_get_chk, oberon_set_chk);
     object_class_property_set_description(OBJECT_CLASS(mc), "chk",
-        "аппаратная проверка границ массива (как -DWITH_CHK в RTL)");
+        "hardware array bounds check (like -DWITH_CHK in the RTL)");
     object_class_property_add_bool(OBJECT_CLASS(mc), "desc",
                                    oberon_get_desc, oberon_set_desc);
     object_class_property_set_description(OBJECT_CLASS(mc), "desc",
-        "индексация через дескриптор IDX (как -DWITH_DESC в RTL)");
+        "descriptor indexing IDX (like -DWITH_DESC in the RTL)");
 }
 
 DEFINE_MACHINE("oberon", oberon_machine_init)

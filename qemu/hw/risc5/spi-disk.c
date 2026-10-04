@@ -1,13 +1,13 @@
 /*
- * Диск по SPI — карта SD, как её видит загрузчик Оберона.
+ * Disk over SPI: an SD card as the Oberon boot loader sees it.
  *
- * Перенесено с нашей же реализации в impl/tb/disk/disk.c, которая уже
- * поднимает настоящую систему на стенде с Verilator. Поведение то же
- * буква в букву: те же состояния, те же коды команд, тот же разбор.
+ * Ported from our own implementation in impl/tb/disk/disk.c, which already
+ * boots the real system on the Verilator test bench. The behaviour is the same
+ * letter for letter: same states, same command codes, same parsing.
  *
- * Обмен идёт значениями, а не байтами: запись в порт SPI толкает слово,
- * чтение отдаёт ответ. Команды приходят по шесть значений, данные —
- * блоками по сто двадцать восемь слов.
+ * The exchange is in values, not bytes: a write to the SPI port pushes a word,
+ * a read returns the response. Commands arrive as six values, data in
+ * blocks of one hundred twenty-eight words.
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
@@ -35,7 +35,7 @@ static void seek_read(OberonDisk *d, uint32_t secnum, uint32_t *buf)
         if (blk_pread(d->blk, (int64_t)secnum * SECTOR_BYTES, SECTOR_BYTES,
                       bytes, 0) < 0) {
             qemu_log_mask(LOG_GUEST_ERROR,
-                          "RISC5: не прочитался сектор %u\n", secnum);
+                          "RISC5: sector %u could not be read\n", secnum);
             memset(bytes, 0, sizeof(bytes));
         }
     }
@@ -58,7 +58,7 @@ static void seek_write(OberonDisk *d, uint32_t secnum, const uint32_t *buf)
     }
     if (d->blk && blk_pwrite(d->blk, (int64_t)secnum * SECTOR_BYTES,
                              SECTOR_BYTES, bytes, 0) < 0) {
-        qemu_log_mask(LOG_GUEST_ERROR, "RISC5: не записался сектор %u\n", secnum);
+        qemu_log_mask(LOG_GUEST_ERROR, "RISC5: sector %u could not be written\n", secnum);
     }
 }
 
@@ -69,20 +69,20 @@ static void run_command(OberonDisk *d)
                    (d->rx_buf[3] << 8)  |  d->rx_buf[4];
 
     switch (cmd) {
-    case 81:                                  /* прочитать один блок */
+    case 81:                                  /* read a single block */
         if (!d->first_read_seen) {
             d->first_read_seen = true;
-            /* Заметная веха: загрузчик добрался до диска. */
+            /* A visible milestone: the boot loader has reached the disk. */
             qemu_log_mask(LOG_GUEST_ERROR,
-                          "RISC5: первое чтение сектора %u\n", arg - d->offset);
+                          "RISC5: first read of sector %u\n", arg - d->offset);
         }
         d->state = ST_READ;
         d->tx_buf[0] = 0;
-        d->tx_buf[1] = 254;                   /* признак начала данных */
+        d->tx_buf[1] = 254;                   /* start-of-data token */
         seek_read(d, arg - d->offset, &d->tx_buf[2]);
         d->tx_cnt = 2 + SECTOR_WORDS;
         break;
-    case 88:                                  /* записать один блок */
+    case 88:                                  /* write a single block */
         d->state = ST_WRITE;
         d->write_sector = arg - d->offset;
         d->tx_buf[0] = 0;
@@ -102,8 +102,8 @@ void oberon_disk_write(OberonDisk *d, uint32_t value)
     switch (d->state) {
     case ST_COMMAND:
         /*
-         * Пока идёт 0xFF и ещё ничего не набрано — это холостой такт,
-         * которым хозяин шины качает тактовый сигнал.
+         * While 0xFF is coming and nothing has been collected yet, this is an idle cycle
+         * the bus master uses to drive the clock.
          */
         if ((uint8_t)value != 0xFF || d->rx_idx != 0) {
             d->rx_buf[d->rx_idx++] = value;
@@ -133,8 +133,8 @@ void oberon_disk_write(OberonDisk *d, uint32_t value)
         if (d->rx_idx == SECTOR_WORDS) {
             seek_write(d, d->write_sector, d->rx_buf);
         }
-        if (d->rx_idx == SECTOR_WORDS + 2) {   /* два слова контрольной суммы */
-            d->tx_buf[0] = 5;                  /* принято */
+        if (d->rx_idx == SECTOR_WORDS + 2) {   /* two checksum words */
+            d->tx_buf[0] = 5;                  /* accepted */
             d->tx_cnt = 1;
             d->tx_idx = -1;
             d->rx_idx = 0;
@@ -161,9 +161,9 @@ void oberon_disk_init(OberonDisk *d, BlockBackend *blk)
     d->tx_idx = 0;
 
     /*
-     * Образ бывает двух видов: с таблицей разделов и без неё. Если нулевой
-     * сектор начинается подписью файловой системы Оберона, значит разделов
-     * нет и сектора надо смещать — ровно так же различает их наш стенд.
+     * An image comes in two kinds: with a partition table and without. If sector
+     * zero starts with the Oberon file system signature, there are no
+     * partitions and sectors must be offset; our test bench tells them apart the same way.
      */
     seek_read(d, 0, first);
     d->offset = (first[0] == 0x9B1EA38D) ? 0x80002 : 0;

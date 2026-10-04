@@ -1,13 +1,13 @@
-# Лестница цены проверки границ на настоящем x86-64 и arm64.
+# The bounds-check cost ladder on real x86-64 and arm64.
 #
-# Локально лестница снимается на Apple M4 и в контейнере linux/arm64; x86-64
-# там доступен только через эмуляцию QEMU, где время ничего не значит. Здесь —
-# живые машины GitHub. Что и как считается — impl/docs/FINDING-61-bounds-ladder.md;
-# опыт «почему так» (why.py) — там же, раздел «Почему так: эксперимент».
+# Locally the ladder is measured on an Apple M4 and in a linux/arm64 container; x86-64
+# is available there only through QEMU emulation, where timing means nothing. Here we
+# get live GitHub machines. What is measured and how: impl/docs/FINDING-61-bounds-ladder.md;
+# the "why" experiment (why.py) is there too, in the section "Why: the experiment".
 #
-# ⚠ Машины общие и виртуальные: соседи, частота и модель процессора меняются
-# от прогона к прогону. Значат отношения к `none` внутри одного прогона, а не
-# наносекунды. Модель процессора пишется в шапку результатов.
+# ⚠ The machines are shared and virtual: neighbours, frequency and CPU model change
+# from run to run. What matters is ratios to `none` within one run, not
+# nanoseconds. The CPU model is written into the results header.
 name: ladder
 
 on:
@@ -35,28 +35,28 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # clang и gcc в образах есть. rustc в образах arm64 бывал не всегда —
-      # ставим минимальный stable, если его нет.
-      - name: Инструменты
+      # clang and gcc are in the images. rustc was not always in the arm64 images,
+      # so we install a minimal stable if it is missing.
+      - name: Tools
         run: |
           if ! command -v rustc >/dev/null; then
             curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
             echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
           fi
 
-      - name: Лестница
+      - name: Ladder
         run: |
           python3 impl/bench/ladder/ladder.py --label '${{ matrix.label }}' \
-            --note 'машина: GitHub Actions `${{ matrix.runner }}`, общая виртуальная'
+            --note 'machine: GitHub Actions `${{ matrix.runner }}`, shared virtual'
           cat 'impl/bench/ladder/results/${{ matrix.label }}.md' >> "$GITHUB_STEP_SUMMARY"
 
-      # Почему проверка то бесплатна, то нет: цепочка индекса удлиняется на k
-      # звеньев, проверок c штук, такты — по калибровке зависимыми сложениями.
-      # Только C (clang, gcc); около минуты на машину.
-      - name: Почему так
+      # Why the check is sometimes free and sometimes not: the index chain grows by k
+      # links, there are c checks, cycles are calibrated with dependent additions.
+      # C only (clang, gcc); about a minute per machine.
+      - name: Why
         run: |
           python3 impl/bench/ladder/why.py --label '${{ matrix.label }}' \
-            --note 'машина: GitHub Actions `${{ matrix.runner }}`, общая виртуальная'
+            --note 'machine: GitHub Actions `${{ matrix.runner }}`, shared virtual'
           cat 'impl/bench/ladder/results/why-${{ matrix.label }}.md' >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@v4

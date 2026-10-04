@@ -1,5 +1,5 @@
 /*
- * Процессор RISC5 Никлауса Вирта для QEMU — объект и его жизненный цикл.
+ * Niklaus Wirth's RISC5 processor for QEMU: the object and its life cycle.
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
@@ -18,10 +18,10 @@
 #include "cpu.h"
 
 /*
- * Счётчик команд внутри держится в СЛОВАХ, как в железе: RISC5.v:182 делает
- * nxpc = PC + 1 на инструкцию. Снаружи QEMU оперирует байтовыми адресами,
- * поэтому на границе умножаем и делим на четыре. Точно так же поступает цель
- * avr, у которой слово шестнадцатибитное.
+ * Internally the program counter is kept in WORDS, as in the hardware: RISC5.v:182 does
+ * nxpc = PC + 1 per instruction. Outside, QEMU works with byte addresses,
+ * so at the boundary we multiply and divide by four. The avr target does exactly
+ * the same, with its sixteen-bit word.
  */
 static void risc5_cpu_set_pc(CPUState *cs, vaddr value)
 {
@@ -40,8 +40,8 @@ static bool risc5_cpu_has_work(CPUState *cs)
 }
 
 /*
- * Блока управления памятью нет, разделения кода и данных тоже: любое слово
- * доступно любому коду. Поэтому индекс один на всё.
+ * There is no memory management unit, and no separation of code and data either: any word
+ * is accessible to any code. So there is a single index for everything.
  */
 static int risc5_cpu_mmu_index(CPUState *cs, bool ifetch)
 {
@@ -84,17 +84,17 @@ static void risc5_cpu_reset_hold(Object *obj, ResetType type)
     env->int_enb = env->int_pnd = env->int_md = false;
 
     /*
-     * RISC5.v:11,195 — сброс уводит счётчик в ПЗУ, а не в ноль. Там лежит
-     * загрузчик, который поднимает систему с диска по SPI.
+     * RISC5.v:11,195: reset sends the counter into ROM, not to zero. That is where
+     * the boot loader lives, which brings the system up from disk over SPI.
      */
     env->pc_w = RISC5_RESET_PC_W;
 }
 
 
 /*
- * Трансляции адресов нет: физический равен виртуальному. Отображение
- * заводим один раз на всю страницу и всегда успешно — промахнуться здесь
- * нечем, защиты не существует.
+ * There is no address translation: physical equals virtual. The mapping
+ * is set up once for the whole page and always succeeds: there is nothing to
+ * miss here, protection does not exist.
  */
 bool risc5_cpu_tlb_fill(CPUState *cs, vaddr address, int size,
                         MMUAccessType access_type, int mmu_idx,
@@ -111,9 +111,9 @@ hwaddr risc5_cpu_get_phys_addr_debug(CPUState *cs, vaddr addr)
 }
 
 /*
- * Приём прерывания (RISC5.v:193-196, 227). Флаги и адрес возврата
- * складываются в SPC одним словом — {N, Z, C, V, PC[21:0]}, — а счётчик
- * уходит в СЛОВО 1, а не в ноль: нулевое слово занято загрузчиком.
+ * Taking an interrupt (RISC5.v:193-196, 227). The flags and the return address
+ * are packed into SPC as one word, {N, Z, C, V, PC[21:0]}, and the counter
+ * goes to WORD 1, not to zero: word zero is taken by the boot loader.
  */
 void risc5_cpu_do_interrupt(CPUState *cs)
 {
@@ -148,7 +148,7 @@ static void risc5_cpu_dump_state(CPUState *cs, FILE *f, int flags)
     CPURISC5State *env = cpu_env(cs);
     int i;
 
-    qemu_fprintf(f, "PC   %08x (слово %06x)\n", env->pc_w * 4, env->pc_w);
+    qemu_fprintf(f, "PC   %08x (word %06x)\n", env->pc_w * 4, env->pc_w);
     qemu_fprintf(f, "H    %08x   N%u Z%u C%u V%u\n", env->h,
                  env->sr_n & 1, env->sr_z & 1, env->sr_c & 1, env->sr_v & 1);
 
@@ -159,10 +159,10 @@ static void risc5_cpu_dump_state(CPUState *cs, FILE *f, int flags)
 }
 
 /*
- * ⚠ Без этого процессор создаётся, но НЕ ИСПОЛНЯЕТ: поток исполнения
- * заводится здесь. Признак был обманчив — машина запускалась, состояние
- * говорило «running», а query-cpus-fast отдавал пустой список, и ни один
- * блок трансляции не выполнялся.
+ * ⚠ Without this the processor is created but DOES NOT EXECUTE: the execution thread
+ * is started here. The symptom was misleading: the machine started, the state
+ * said "running", but query-cpus-fast returned an empty list, and not a single
+ * translation block ran.
  */
 static void risc5_cpu_realizefn(DeviceState *dev, Error **errp)
 {
@@ -184,9 +184,9 @@ static void risc5_cpu_realizefn(DeviceState *dev, Error **errp)
 static void risc5_cpu_initfn(Object *obj)
 {
     /*
-     * Ни свойств, ни вариантов ядра: машина одна, и она не
-     * параметризуется. Список признаков, который есть у больших целей,
-     * здесь был бы пустым.
+     * No properties and no core variants: there is one machine, and it is not
+     * parameterized. The feature list that bigger targets have
+     * would be empty here.
      */
 }
 
