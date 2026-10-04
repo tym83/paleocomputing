@@ -35,7 +35,7 @@ ARG KUBEVIRT_VERSION=v1.8.4
 ARG LAUNCHER_DIGEST=sha256:c89f733b1fdcc810d0b4326bbfc652a4cf3d25bc56cc8545f124d5cb71a1ce20
 
 # ── Сборка libvirt ─────────────────────────────────────────────────────────
-FROM quay.io/centos/centos:stream9@sha256:0996d37c69b3a8c33042932d415ad7bf5a8122270264e835e5c0153615aef0e4 AS libvirt-build
+FROM quay.io/centos/centos:stream9@sha256:63e8d0c2a4a4b67c8bd7456283d12106bedf815d8c27d1a72498ebcf173baf09 AS libvirt-build
 
 # Зависимости берём не списком, а тем набором, которым libvirt собирается в
 # самом дистрибутиве: перебирать их по одной — долго и ненадёжно.
@@ -69,7 +69,7 @@ RUN meson setup build --prefix=/usr --libdir=/usr/lib64 \
 #
 # ⚠ Собирать надо здесь же, а не приносить готовый: образ virt-launcher стоит
 # на CentOS 9, и бинарь с Ubuntu в нём не запускается — «GLIBC_2.38 not found».
-FROM quay.io/centos/centos:stream9@sha256:0996d37c69b3a8c33042932d415ad7bf5a8122270264e835e5c0153615aef0e4 AS qemu-build
+FROM quay.io/centos/centos:stream9@sha256:63e8d0c2a4a4b67c8bd7456283d12106bedf815d8c27d1a72498ebcf173baf09 AS qemu-build
 
 RUN dnf install -y --setopt=install_weak_deps=False dnf-plugins-core \
  && dnf config-manager --set-enabled crb \
