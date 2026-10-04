@@ -82,6 +82,11 @@
                 "type": "string",
                 "pattern": "^/[A-Za-z0-9/._-]+$"
               },
+              "size": {
+                "description": "Minimum size of a disk file in bytes. The fill job extends a smaller disk with zeros, a new one and one already on the volume alike, and never shrinks it.",
+                "type": "integer",
+                "minimum": 1
+              },
               "role": {
                 "description": "firmware — переписывается из образа при каждой установке и обновлении; disk — данные пользователя, кладётся только если файла нет или он пуст.",
                 "enum": ["firmware", "disk"]

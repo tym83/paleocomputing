@@ -70,6 +70,9 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- if not (and (regexMatch "^[A-Za-z0-9][A-Za-z0-9._-]*$" (toString $f.name)) (regexMatch "^/[A-Za-z0-9/._-]+$" (toString $f.from)) (has (toString $f.role) (list "firmware" "disk"))) }}
 {{- fail (printf "retro-machine: файл машины %v — имя, путь в образе или роль недопустимы" $f) }}
 {{- end }}
+{{- if and (hasKey $f "size") (not (regexMatch "^[1-9][0-9]*$" (toString (int64 $f.size)))) }}
+{{- fail (printf "retro-machine: файл машины %v — size must be a positive number of bytes" $f.name) }}
+{{- end }}
 {{- end }}
 {{- if not (regexMatch "^/[A-Za-z0-9/._-]+$" (toString $m.payload.path)) }}
 {{- fail "retro-machine: payload.path — нужен абсолютный путь без пробелов" }}
@@ -152,6 +155,11 @@ spec:
             {{- if eq $f.role "disk" }}
             [ -s {{ $dst }} ] || put {{ $f.from }} {{ $dst }}
             chmod 664 {{ $dst }}
+            {{- with $f.size }}
+            # Grow, never shrink: the file system writes past the end of the
+            # shipped image, and a raw drive cannot grow on its own.
+            [ "$(wc -c < {{ $dst }})" -ge {{ int64 . }} ] || truncate -s {{ int64 . }} {{ $dst }}
+            {{- end }}
             {{- else }}
             put {{ $f.from }} {{ $dst }}
             {{- end }}
