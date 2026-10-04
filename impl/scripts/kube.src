@@ -1,0 +1,17 @@
+# Kube in the real Oberon system on RTL. The image is kube/mkdisk.sh: Kube.Mod
+# and the lines appended to System.Tool. The system compiles the module, the
+# commands run with the middle button, as a reader would run them.
+at 12000000
+click 690 569 M
+wait 45000000
+click 690 581 M
+wait 8000000
+click 690 593 M
+wait 24000000
+click 690 605 M
+wait 10000000
+click 690 617 M
+wait 10000000
+click 690 629 M
+wait 10000000
+shot build/kube/kube_rtl.pbm
