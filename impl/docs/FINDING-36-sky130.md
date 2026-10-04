@@ -1,55 +1,57 @@
-# Находка 36. Свободная библиотека ячеек, и утверждение переживает смену техпроцесса
+[Русская версия](FINDING-36-sky130.ru.md)
 
-Оценки площади и частоты считались по библиотеке ячеек **Nangate45**, которую
-пришлось исключить из публикации: её шапка прямо запрещает распространение —
-*«provided pursuant to a License Agreement containing restrictions on its use»*,
-*«does not indicate actual or intended publication of this file»*. Из-за этого
-`make syn` и `make fmax` не работали из чистого клона.
+# Finding 36. A free cell library, and the claim survives a change of process
 
-Замена — **Sky130** (SkyWater, 130 нм) под Apache-2.0. Это настоящий техпроцесс,
-на нём физически делают чипы, и библиотека берётся из потока OpenROAD.
+The area and frequency estimates were computed with the **Nangate45** cell library, which
+had to be excluded from the publication: its header explicitly forbids redistribution:
+*"provided pursuant to a License Agreement containing restrictions on its use"*,
+*"does not indicate actual or intended publication of this file"*. Because of this,
+`make syn` and `make fmax` did not work from a clean clone.
 
-## Скрипт синтеза не потребовал ни одной правки
+The replacement is **Sky130** (SkyWater, 130 nm) under Apache-2.0. It is a real process,
+chips are physically made on it, and the library is taken from the OpenROAD flow.
 
-Отображение прошло с первого раза: 7306 ячеек, все из набора
-`sky130_fd_sc_hd__*`. Поменялись две строки — путь к файлу в `syn/fmax.py` и
-`syn/sweep.py`, — плюс цель `make lib`, которая тянет библиотеку по требованию
-(12 МБ, в репозиторий не кладём).
+## The synthesis script needed not a single edit
 
-## Главное: относительные дельты переход переживают
+Mapping went through the first time: 7306 cells, all from the
+`sky130_fd_sc_hd__*` set. Two lines changed, the file path in `syn/fmax.py` and
+`syn/sweep.py`, plus a `make lib` target that fetches the library on demand
+(12 MB, not committed to the repository).
 
-Это и надо было проверить. Абсолютные числа обязаны измениться — 130 нм против
-45 нм, — а вот наши утверждения сформулированы как относительные, и вопрос был,
-устоят ли они.
+## The main point: the relative deltas survive the switch
 
-| | Nangate45 (45 нм) | Sky130 (130 нм) |
+This is what had to be checked. The absolute numbers are bound to change, 130 nm versus
+45 nm, but our claims are formulated as relative ones, and the question was
+whether they would hold.
+
+| | Nangate45 (45 nm) | Sky130 (130 nm) |
 |---|---|---|
-| частота базового ядра | 451…477 МГц | **113.8 МГц** |
-| частота с командой проверки | 458.6 / 468.5 МГц | **115.1 МГц** |
-| дельта площади, отображение по площади | +0.32…0.85 % | **+1.04 %** |
-| дельта площади, отображение по задержке | — | **+1.35 %** |
+| base core frequency | 451…477 MHz | **113.8 MHz** |
+| frequency with the check instruction | 458.6 / 468.5 MHz | **115.1 MHz** |
+| area delta, area-driven mapping | +0.32…0.85 % | **+1.04 %** |
+| area delta, delay-driven mapping | — | **+1.35 %** |
 
-Частота упала втрое — ровно как и ожидается от втрое более грубого техпроцесса.
-**Знак и порядок дельты сохранились:** цена аппаратной проверки границ по
-площади около процента, а не десятки процентов.
+The frequency dropped threefold, exactly as expected from a three times coarser process.
+**The sign and order of magnitude of the delta held:** the area cost of a hardware bounds check
+is around one percent, not tens of percent.
 
-## Заодно воспроизвелась находка 16
+## Finding 16 reproduced along the way
 
-На Sky130 ядро **с** командой проверки оказалось быстрее базового: 115.1 против
-113.8 МГц. Это то же самое, что дал один из маршрутов на Nangate45 (там CHK был
-быстрее на 1.60 %).
+On Sky130 the core **with** the check instruction turned out faster than the base one: 115.1 versus
+113.8 MHz. This is the same thing one of the flows gave on Nangate45 (there CHK was
+faster by 1.60 %).
 
-Объяснение прежнее: добавление логики меняет работу оптимизатора, и на
-критическом пути он находит другое решение. Величина дельты по площади тоже
-зависит от маршрута отображения — 1.04 % против 1.35 % на одной и той же
-библиотеке.
+The explanation is the same as before: adding logic changes how the optimiser works, and on
+the critical path it finds a different solution. The size of the area delta also
+depends on the mapping flow: 1.04 % versus 1.35 % on one and the same
+library.
 
-Практический вывод не изменился: **дельта площади лежит внутри разброса от
-выбора маршрута**, и предъявлять её как точное число нельзя. Правильная
-формулировка — «около процента, порядок величины устойчив».
+The practical conclusion has not changed: **the area delta lies within the spread caused by
+the choice of flow**, and it must not be presented as an exact number. The correct
+wording is "around one percent; the order of magnitude is stable".
 
-## Что осталось незакрытым
+## What remains open
 
-`WireLoad = "none"` — задержки проводов по-прежнему не учтены, и частота
-остаётся оценочной. Sky130 идёт вместе с потоком OpenROAD, который умеет
-настоящую трассировку; это снимет оговорку, но требует Linux-стенда.
+`WireLoad = "none"`: wire delays are still not taken into account, and the frequency
+remains an estimate. Sky130 comes with the OpenROAD flow, which can do
+real routing; that would remove the caveat, but requires a Linux setup.

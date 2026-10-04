@@ -1,57 +1,59 @@
-# Находка 17: модель тактов подтверждена на реальной нагрузке — 12 млн инструкций, 0 расхождений
+[Русская версия](FINDING-17-cycle-model-validated.ru.md)
 
-Закрывает единственную непроверенную зависимость проекта.
+# Finding 17: the cycle model confirmed on a real workload: 12 million instructions, 0 mismatches
 
-## Зачем это было нужно
+This closes the project's only unverified dependency.
 
-**На модели тактов `tb/cycle_model.h` построены ВСЕ числа тактов выпуска** — и 2.74%,
-и 10.16%, и вклад аппаратной проверки границ. Потому что эталонный эмулятор Norebo,
-на котором гоняются нагрузки, не тактово-точный: он считает инструкции.
+## Why this was needed
 
-До сих пор модель сверялась только на **61 инструкции синтетических тестов**. Это
-покрывало все латентности и надбавку за подряд идущие операции, но не давало
-уверенности, что на реальном коде нет случая, который модель трактует иначе.
+**ALL of the release's cycle numbers are built on the cycle model `tb/cycle_model.h`**: the 2.74%,
+the 10.16%, and the contribution of the hardware bounds check. That is because the reference emulator Norebo,
+on which the workloads are run, is not cycle-accurate: it counts instructions.
 
-## Проверка
+Until now the model had been checked only on **61 instructions of synthetic tests**. That
+covered all latencies and the back-to-back penalty, but gave no
+confidence that real code contains no case the model treats differently.
 
-Сверка встроена в SoC-стенд: на **каждой** инструкции загрузки системы Оберон
-предсказание модели сравнивается с фактическим числом тактов RTL.
+## The check
+
+The comparison is built into the SoC testbench: on **every** instruction of the Oberon system boot,
+the model's prediction is compared with the actual RTL cycle count.
 
 | | |
 |---|---|
-| инструкций | **12 000 000** |
-| тактов по RTL | 18 654 115 |
-| тактов по модели | **18 654 115** |
-| расхождений | **0 (0.0000%)** |
+| instructions | **12 000 000** |
+| RTL cycles | 18 654 115 |
+| model cycles | **18 654 115** |
+| mismatches | **0 (0.0000%)** |
 
-Совпадение и поинструкционное, и суммарное — до такта.
+The agreement is both per instruction and in total, to the cycle.
 
-Нагрузка не синтетическая: это код, который писал Вирт — загрузчик, ядро, файловая
-система, оконная подсистема, вся плавающая арифметика при отрисовке.
+The workload is not synthetic: it is code Wirth wrote, the boot loader, kernel, file
+system, windowing subsystem, and all the floating-point arithmetic during rendering.
 
-## Ловушка, в которую я попал при самой проверке
+## The trap I fell into during the check itself
 
-Первый прогон дал **расхождение 15.8%** и 77% неверно предсказанных инструкций.
-Это выглядело как крупная находка и было **ошибкой в коде сверки**.
+The first run gave **a 15.8% mismatch** and 77% of instructions mispredicted.
+It looked like a major finding and was **a bug in the comparison code**.
 
-Инструкция для модели читалась по адресной шине `top->adr` в начале шага — но шина
-устанавливается только после `clk = 0` и `eval()`. До этого там адрес **предыдущего**
-такта, то есть часто адрес данных от завершившейся загрузки, а не следующая инструкция.
+The instruction for the model was read from the address bus `top->adr` at the start of the step, but the bus
+is only set after `clk = 0` and `eval()`. Before that it holds the address of the **previous**
+cycle, often the data address of a completed load rather than the next instruction.
 
-Правильно — брать `PC` напрямую, как это делает `tb/run_tests.cpp`, где модель и
-сходилась с нулём расхождений.
+The correct way is to take `PC` directly, as `tb/run_tests.cpp` does, where the model
+agreed with zero mismatches.
 
-**Урок:** отрицательный результат проверяется так же тщательно, как положительный.
-Если бы я опубликовал «модель врёт на 15.8%», это была бы ложная находка, и она
-обесценила бы все числа тактов выпуска.
+**Lesson:** a negative result is checked just as carefully as a positive one.
+Had I published "the model is off by 15.8%", that would have been a false finding, and it
+would have discredited all the release's cycle numbers.
 
-## Что теперь можно утверждать
+## What can now be claimed
 
-> Все числа тактов получены моделью латентностей, проверенной против настоящего RTL
-> двумя способами: поинструкционно на 61 направленном тесте, покрывающем все латентности
-> и надбавку за подряд идущие операции, и на 12 млн инструкций загрузки системы Оберон
-> с нулевым расхождением как поинструкционно, так и суммарно.
+> All cycle numbers were obtained with a latency model checked against the real RTL
+> in two ways: per instruction on 61 directed tests covering all latencies
+> and the back-to-back penalty, and on 12 million instructions of the Oberon system boot
+> with zero mismatches both per instruction and in total.
 
-Оставшееся ограничение честное: модель не учитывает видео-DMA, которое в настоящем SoC
-крадёт такты через `stallX`. В нашем стенде видеоконтроллер не подключён, поэтому модель
-и RTL согласованы между собой, но обе описывают машину **без** видео-DMA.
+The remaining limitation is honest: the model does not account for video DMA, which in the real SoC
+steals cycles via `stallX`. In our testbench the video controller is not connected, so the model
+and the RTL agree with each other, but both describe the machine **without** video DMA.

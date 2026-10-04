@@ -1,61 +1,63 @@
-# Находка 19: что нашёл приёмочный аудит и что исправлено
+[Русская версия](FINDING-19-audit-corrections.ru.md)
 
-Пять аудиторов, из них двое отчитались к этому моменту. Оба вынесли **НЕ ПРИНИМАЮ**
-и совпали в четырёх блокирующих пунктах независимо друг от друга.
+# Finding 19: what the acceptance audit found and what was fixed
 
-## Фактические ошибки — исправлены
+Five auditors, two of whom had reported by this point. Both returned **NOT ACCEPTED**
+and agreed on four blocking items independently of each other.
 
-| Что было опубликовано | Что на самом деле | Статус |
+## Factual errors: fixed
+
+| What was published | What is actually the case | Status |
 |---|---|---|
-| «дельта площади зависит от маршрута **вчетверо** при идентичном RTL» | RTL **не был идентичен**: +30.06 снималось без `CHK_SPLIT`, +123.16 — с ним. На одном RTL разброс **2.65×** | ✅ переписано |
-| «цена по площади **+0.21%** (37.7 GE)» | относится к **отвергнутой** кодировке. У принятой **+46.55…+123.16 мкм² = 58…154 GE**, причём нижняя граница **внутри шумового пола** ±64 GE | ✅ вычищено из шести файлов |
-| «цена по частоте **−1.81%**, ревью предсказывало и подтвердилось» | 🔴 **знак не определён**: дефолтный маршрут даёт **+1.60%**, то есть CHK **быстрее**. Предсказание ревью остаётся непроверенным | ✅ переписано |
-| «`Kernel` даёт ноль, потому что это `MODULE*` (RISC-0)» | в исходнике `MODULE Kernel;` **без звёздочки**. Ноль потому, что модуль почти целиком на `SYSTEM.GET/PUT` | ✅ исправлено |
-| `docs/decoder-map.txt` — «сырой вывод зонда» | содержал **сообщение об ошибке shell** | ✅ перегенерирован |
+| "the area delta varies **fourfold** with the flow, with identical RTL" | the RTL **was not identical**: +30.06 was taken without `CHK_SPLIT`, +123.16 with it. On one RTL the spread is **2.65×** | ✅ rewritten |
+| "area cost **+0.21%** (37.7 GE)" | refers to the **rejected** encoding. The adopted one has **+46.55…+123.16 µm² = 58…154 GE**, and the lower bound is **inside the noise floor** of ±64 GE | ✅ purged from six files |
+| "frequency cost **−1.81%**, the review predicted it and it was confirmed" | 🔴 **the sign is undetermined**: the default flow gives **+1.60%**, that is, CHK is **faster**. The review's prediction remains unverified | ✅ rewritten |
+| "`Kernel` gives zero because it is `MODULE*` (RISC-0)" | the source says `MODULE Kernel;` **without an asterisk**. It is zero because the module is almost entirely `SYSTEM.GET/PUT` | ✅ fixed |
+| `docs/decoder-map.txt` is "the raw output of the probe" | it contained **a shell error message** | ✅ regenerated |
 
-## Дыра в безопасности кодировки — исправлена
+## A security hole in the encoding: fixed
 
-**Принятая кодировка портила регистр, номер которого задаётся длиной массива.**
-На стоковом ядре слово CHK исполняется как `LSL` молча; в поле `a` лежат старшие четыре
-бита предела. Предел 1000 → портится R3, предел ≥ 3840 → **R15, регистр ссылки**.
+**The adopted encoding corrupted a register whose number is set by the array length.**
+On the stock core a CHK word executes silently as `LSL`; field `a` holds the upper four
+bits of the limit. Limit 1000 → R3 is corrupted, limit ≥ 3840 → **R15, the link register**.
 
-Требование ревью (байт версии `.rsc` = 2) было принято и потеряно. Реализовано, проверено.
-Подробности — находка 18.
+The review's requirement (`.rsc` version byte = 2) had been accepted and lost. Implemented and verified.
+Details in finding 18.
 
-## Воспроизводимость — исправлена
+## Reproducibility: fixed
 
-| Проблема | Статус |
+| Problem | Status |
 |---|---|
-| `measure3.sh` гонял конфигурацию **D** (отвергнутую), а не принятую **E** | ✅ |
-| счётной нагрузки не было в виде скрипта вообще, числа снимались вручную | ✅ `tools/measure_bench.sh` |
-| `syn/sweep.py`: параметр `defines` существовал, но `main()` его не передавал — `make syn` **физически не мог** померить дельту | ✅ флаг `--chk` |
-| `lockstep` и `boot` собирались **без** `-DWITH_CHK` — все системные доказательства относились к базовому ядру | ✅ цели `lockstep-chk`, `boot-chk`; проверено: те же 18 654 115 тактов и та же контрольная сумма `B5DFC933` |
-| верхний кусок предела `IR[27:24]` **не покрывался тестами вовсе** | ✅ `tests/t2_chk_hi.s`, в регрессии |
+| `measure3.sh` ran configuration **D** (the rejected one), not the adopted **E** | ✅ |
+| the computational workload did not exist as a script at all; the numbers were taken by hand | ✅ `tools/measure_bench.sh` |
+| `syn/sweep.py`: the `defines` parameter existed, but `main()` did not pass it, so `make syn` **physically could not** measure the delta | ✅ flag `--chk` |
+| `lockstep` and `boot` were built **without** `-DWITH_CHK`: all the system-level evidence referred to the base core | ✅ targets `lockstep-chk`, `boot-chk`; verified: the same 18 654 115 cycles and the same checksum `B5DFC933` |
+| the upper piece of the limit `IR[27:24]` was **not covered by tests at all** | ✅ `tests/t2_chk_hi.s`, in the regression suite |
 
-## Опровергнутые заявки на новизну
+## Refuted novelty claims
 
-| Заявка | Что нашлось |
+| Claim | What was found |
 |---|---|
-| «цена проверок — числа нет в литературе» | Eggert, «Runtime Checking for ISO Standard Pascal», IEEE TSE 1981 |
-| «UMUL не поймали раньше» | рассылка Oberon, 4.03.2018, тред «Bug in multiplier?»: Hellwig Geisse нашёл, Jörg Straube подтвердил и выложил фикс |
-| «надбавку никто не измерял» | базовая латентность обсуждалась в рассылке в 2016; про сам механизм не нашлось, но поиск покрыл только архив рассылки, GitHub и академические базы |
+| "the cost of checks: the number is absent from the literature" | Eggert, "Runtime Checking for ISO Standard Pascal", IEEE TSE 1981 |
+| "the UMUL issue was not caught earlier" | the Oberon mailing list, 4.03.2018, thread "Bug in multiplier?": Hellwig Geisse found it, Jörg Straube confirmed it and posted a fix |
+| "nobody has measured the penalty" | the base latency was discussed on the mailing list in 2016; nothing was found about the mechanism itself, but the search covered only the list archive, GitHub and academic databases |
 
-**Допустимая форма для всех трёх:** «не нашли упоминаний в таких-то источниках»,
-а не «никто не измерял».
+**The acceptable form for all three:** "we found no mention in such-and-such sources",
+not "nobody has measured it".
 
-## Что признано и НЕ исправлено — остаётся ограничением
+## What is acknowledged and NOT fixed: remains a limitation
 
-- **Конфаунд кодогенерации устранён не полностью.** В финальном прогоне конфигурация A по-прежнему не эмитит проверок, то есть разница включает и работу компилятора по их порождению (~0.4 из 2.74 п.п.). Число — **верхняя оценка**.
-- **«Ровно 50%» — тождество, а не измерение.** Две инструкции заменяются одной, потолок задан конструкцией. Содержательная величина здесь — **доля покрытых проверок**, а не 50%.
-- **`ArrBench` написан под ответ.** Все его массивы объявлены так, чтобы попадать под аппаратную проверку. Это **верхняя граница** выигрыша, а не типичный случай.
-- **CPI конфигурации A на счётной нагрузке = 2.43**, свыше 40% тактов — 34-тактный умножитель на адресной арифметике. «10.16%» — во многом про умножитель Вирта, а не про проверки.
-- **Ни У1, ни У3 не закрыты по критериям собственного дизайна**: нет медианы и IQR по популяции программ, нет разброса по прогонам, «4.27 МГц» измерены в Node, а не в браузере.
-- **Чек-лист пути в кремний не выполнен**: сброса нет у регистрового файла, флагов, `H`, `IR`; `Registers.v` держится на `initial`, который `dfflibmap` молча роняет.
-- **512 из 993 триггеров — регистровый файл**, у Вирта он в LUT-RAM. База 18.21 kGE — свойство нашей переделки, а не размер оригинала.
-- **CHK внутри обработчика прерывания** оставляет `intMd = 1` навсегда (прерывания мертвы). Это не регрессия CHK — программная проверка делает то же самое, — но нигде не отмечено.
+- **The code-generation confound is not fully eliminated.** In the final run configuration A still does not emit checks, so the difference also includes the compiler's work generating them (~0.4 of 2.74 pp). The number is an **upper estimate**.
+- **"Exactly 50%" is an identity, not a measurement.** Two instructions are replaced by one; the ceiling is set by construction. The meaningful quantity here is **the share of checks covered**, not the 50%.
+- **`ArrBench` was written to fit the answer.** All its arrays are declared so as to fall under the hardware check. This is an **upper bound** on the gain, not a typical case.
+- **The CPI of configuration A on the computational workload = 2.43**; over 40% of cycles are the 34-cycle multiplier on address arithmetic. The "10.16%" is largely about Wirth's multiplier, not about the checks.
+- **Neither U1 nor U3 is closed by the criteria of our own design**: there is no median and IQR over a population of programs, no spread across runs, and the "4.27 MHz" was measured in Node, not in a browser.
+- **The path-to-silicon checklist is not done**: the register file, flags, `H` and `IR` have no reset; `Registers.v` relies on `initial`, which `dfflibmap` silently drops.
+- **512 of the 993 flip-flops are the register file**, which in Wirth's design is in LUT-RAM. The 18.21 kGE baseline is a property of our rework, not the size of the original.
+- **CHK inside an interrupt handler** leaves `intMd = 1` forever (interrupts are dead). This is not a CHK regression (the software check does the same thing), but it is not noted anywhere.
 
-## Главный урок
+## The main lesson
 
-Оба аудитора нашли **одни и те же** ошибки независимо, и все они одного типа:
-**число, снятое в одних условиях, кочевало в сводки как общее**. Ни одна не была ошибкой
-измерения — все были ошибками переноса результата в текст.
+Both auditors found **the same** errors independently, and they are all of one kind:
+**a number taken under some conditions migrated into summaries as a general one**. None was a measurement
+error; all were errors in carrying a result over into text.

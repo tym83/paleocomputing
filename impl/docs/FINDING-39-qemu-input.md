@@ -1,55 +1,57 @@
-# Находка 39. Машиной в QEMU можно управлять
+[Русская версия](FINDING-39-qemu-input.ru.md)
 
-Клавиатура и мышь написаны, и система отвечает на них так же, как на настоящем
-RTL. Проверка: средний щелчок по словам `System.ShowModules` в окне инструментов
-открывает окно со списком загруженных модулей.
+# Finding 39. The machine in QEMU can be controlled
 
-| | до щелчка | после |
+The keyboard and mouse are written, and the system responds to them just as on the real
+RTL. The check: a middle click on the words `System.ShowModules` in the tool window
+opens a window with the list of loaded modules.
+
+| | before the click | after |
 |---|---|---|
-| точек в нижней правой полосе | 563 | **4856** |
+| dots in the bottom-right strip | 563 | **4856** |
 
-Те же числа даёт машина под Verilator. Открывшееся окно показывает те же
-тринадцать модулей с теми же адресами.
+The machine under Verilator gives the same numbers. The window that opens shows the same
+thirteen modules with the same addresses.
 
-## Коды клавиш не выдуманы
+## The key codes are not made up
 
-Своя таблица перевода была бы ошибкой: она разошлась бы с системой на редких
-клавишах, и обнаружилось бы это нескоро. В QEMU уже есть
-`qemu_input_map_linux_to_atset2` — ровно набор 2 PS/2, который читает `PS2.v`.
-Той же таблицей пользуется штатный `ps2.c`.
+Our own translation table would have been a mistake: it would have diverged from the system on rare
+keys, and that would not have been discovered for a long time. QEMU already has
+`qemu_input_map_linux_to_atset2`, exactly the PS/2 set 2 that `PS2.v` reads.
+The standard `ps2.c` uses the same table.
 
-Порядок байтов взят из протокола: приставка расширения `0xE0` идёт **раньше**
-признака отпускания `0xF0`, иначе `Input.Mod` разберёт не ту клавишу.
+The byte order is taken from the protocol: the extension prefix `0xE0` comes **before**
+the release marker `0xF0`, otherwise `Input.Mod` will decode the wrong key.
 
-Очередь — 16 байт, как `fifo[15:0]` в железе, и чтение порта 7 снимает байт:
+The queue is 16 bytes, like `fifo[15:0]` in the hardware, and reading port 7 removes a byte:
 `doneKbd = rd & ioenb & (iowadr == 7)`.
 
-## Кнопки мыши держатся набором, а не последним событием
+## Mouse buttons are held as a set, not as the last event
 
-Оберону нужно **одновременное** состояние кнопок: его межкнопочные щелчки — это
-нажать одну и, не отпуская, добавить другую. Поэтому состояние копится в наборе
-битов (левая 4, средняя 2, правая 1), а не перезаписывается каждым событием.
+Oberon needs the **simultaneous** state of the buttons: its interclicks mean
+pressing one and, without releasing it, adding another. So the state is accumulated in a set
+of bits (left 4, middle 2, right 1) rather than overwritten by every event.
 
-Раскладка слова взята из `MousePM.v:36`:
+The word layout is taken from `MousePM.v:36`:
 
 ```
 out = {run, btns, 2'b0, y, 2'b0, x}
 ```
 
-x в битах 9:0, y в 21:12, кнопки в 26:24. Начало координат внизу слева, поэтому
-экранный y переворачивается.
+x in bits 9:0, y in 21:12, the buttons in 26:24. The origin is at the bottom left, so
+the screen y is flipped.
 
-## Что понадобилось поправить под текущий QEMU
+## What had to be adjusted for the current QEMU
 
-Событие ввода приходит как `QemuInputEvent`, и поля читаются напрямую —
-`evt->key.key`, `evt->btn.button`, `evt->abs.value`, — а не через вложенные
-указатели, как было раньше. И `evt->key.key` — **уже код linux**, так что
-перевод нужен ровно один, в набор 2.
+An input event arrives as `QemuInputEvent`, and the fields are read directly,
+`evt->key.key`, `evt->btn.button`, `evt->abs.value`, rather than through nested
+pointers as before. And `evt->key.key` is **already a linux code**, so exactly
+one translation is needed, into set 2.
 
-## Состояние цели
+## Status of the target
 
-Написано и сверено с железом: целочисленное ядро, память, переходы, порты,
-счётчик времени, диск по SPI, экран, клавиатура, мышь.
+Written and checked against the hardware: the integer core, memory, branches, ports,
+the timer, the SPI disk, the screen, keyboard, mouse.
 
-Не написано: плавающая точка (пока честный отказ вместо счёта). Системе для
-работы она не понадобилась — на экран и ввод её хватает без FPU.
+Not yet written: floating point (for now an honest refusal instead of computing). The system did not
+need it to work: the screen and input get by without an FPU.

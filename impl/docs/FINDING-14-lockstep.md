@@ -1,65 +1,67 @@
-# Дифференциальный стенд: 15 млн инструкций точного совпадения с эталоном
+[Русская версия](FINDING-14-lockstep.ru.md)
 
-Сильнейшая проверка, какая здесь возможна. Синтетические тесты покрывают то, что придумал
-автор; загрузка системы исполняет то, что реально написал Вирт.
+# Differential testbench: 15 million instructions in exact agreement with the reference
 
-Запуск: `make lockstep` · исходник `tb/lockstep.cpp`
+The strongest check possible here. Synthetic tests cover what the author
+thought of; booting the system executes what Wirth actually wrote.
 
-## Результат
+Run: `make lockstep` · source `tb/lockstep.cpp`
+
+## Result
 
 | | |
 |---|---|
-| прогрев в загрузчике (сравнение по положению) | 399 497 инструкций |
-| **строгое сравнение** | **14 600 503 инструкции** |
-| тактов RTL | 23 245 948 |
-| время на хосте | **5.8 с** |
-| расхождений | **0** |
+| warm-up in the boot loader (comparison by position) | 399 497 instructions |
+| **strict comparison** | **14 600 503 instructions** |
+| RTL cycles | 23 245 948 |
+| host time | **5.8 s** |
+| mismatches | **0** |
 
-После **каждой** инструкции сверяются: счётчик команд, все 16 регистров, регистр H
-и все четыре флага (N, Z, C, V).
+After **every** instruction the following are compared: the program counter, all 16 registers, the H register
+and all four flags (N, Z, C, V).
 
-## Пять источников недетерминизма, которые пришлось устранить
+## Five sources of nondeterminism that had to be eliminated
 
-Четыре из пяти были названы в ревью заранее, и все четыре встретились.
+Four of the five were named in the review in advance, and all four came up.
 
-**1. Разная разрядность счётчика команд.** У RTL 22 бита и адрес сброса `0xFFE000`,
-у эталона 32-битный индекс слова и ПЗУ по `0xFFFFF800`. Оба попадают в нулевое слово
-ПЗУ, потому что оно на 512 слов и алиасится. Внутри ПЗУ сравниваем индекс слова,
-вне — сам адрес.
+**1. Different program counter widths.** The RTL has 22 bits and reset address `0xFFE000`;
+the reference has a 32-bit word index and the ROM at `0xFFFFF800`. Both land on word zero of the
+ROM, because it is 512 words and aliases. Inside the ROM we compare the word index;
+outside it, the address itself.
 
-**2. Регистр ссылки после выхода из загрузчика.** В R15 остаётся адрес возврата в ПЗУ,
-законно различающийся на константу. Нормализуется так же, как счётчик команд.
+**2. The link register after leaving the boot loader.** R15 keeps the return address into the ROM,
+which legitimately differs by a constant. It is normalised the same way as the program counter.
 
-**3. Таймер.** У каждой модели свой счётчик миллисекунд. Эталон ведётся от нашего
-через `risc_set_time()`.
+**3. The timer.** Each model has its own millisecond counter. The reference is driven from ours
+via `risc_set_time()`.
 
-**4. Эвристика `progress`.** `risc_run()` досрочно выходит, когда замечает холостой
-цикл опроса. Обходится тем, что мы вызываем его по одной инструкции — счётчик
-сбрасывается при каждом вызове.
+**4. The `progress` heuristic.** `risc_run()` exits early when it notices an idle
+polling loop. This is avoided by calling it one instruction at a time: the counter
+is reset on every call.
 
-**5. Диск.** У каждой модели своя копия образа: иначе записи одной попадут в чтения другой.
+**5. The disk.** Each model has its own copy of the image: otherwise the writes of one would end up in the reads of the other.
 
-## Две ошибки, которые стенд поймал в моём же коде
+## Two mistakes the testbench caught in my own code
 
-**Шина во время сброса.** Регистр команд защёлкивается каждый такт. Если во время сброса
-подавать нули, первая инструкция выполняется как `MOV R0,R0` вместо перехода из
-загрузчика. Стенд показал это сразу: у эталона первая инструкция уходила по переходу,
-у RTL счётчик просто сдвигался на слово.
+**The bus during reset.** The instruction register latches every cycle. If zeros are fed during reset,
+the first instruction executes as `MOV R0,R0` instead of the jump from the
+boot loader. The testbench showed this immediately: in the reference the first instruction took the jump,
+in the RTL the counter simply advanced by one word.
 
-**Служебная запись, которой не было.** Ревью предупреждало, что эталон кладёт на
-`DisplayStart` сигнатуру `"Sizg"` и размеры экрана. Я вписал её у себя заранее — и создал
-расхождение сам: эталон делает это в `risc_configure_memory()`, которую наш запуск
-не вызывает, поэтому у него там нули. Разошлось на шаге **2 101 536**, когда система
-прочитала это место: в регистре оказалось `53697A67` против нуля.
-Правильно — не писать ничего.
+**A service write that should not have been there.** The review warned that the reference puts
+the signature `"Sizg"` and the screen dimensions at `DisplayStart`. I wrote it in on my side in advance, and so created
+a mismatch myself: the reference does this in `risc_configure_memory()`, which our run
+does not call, so it has zeros there. It diverged at step **2 101 536**, when the system
+read that location: the register held `53697A67` versus zero.
+The correct thing is to write nothing.
 
-## Что это доказывает и чего не доказывает
+## What this proves and what it does not
 
-**Доказывает:** архитектурная семантика ядра `RISC5.v` в нашей сборке совпадает с
-эталонной реализацией на реальной нагрузке длиной в 15 млн инструкций, включая всю
-плавающую арифметику, умножение и деление, работу с памятью и ветвления.
+**It proves:** the architectural semantics of the `RISC5.v` core in our build match
+the reference implementation on a real workload 15 million instructions long, including all
+floating-point arithmetic, multiplication and division, memory operations and branches.
 
-**Не доказывает:** тайминги. Эталон не тактово-точный (`risc_run` считает инструкции),
-поэтому все числа тактов берутся только из RTL, а стенд сверяет архитектурное состояние.
-Прерывания эталон не моделирует вовсе, поэтому на этом участке golden-модели нет —
-их проверяет отдельный направленный тест `tests/t1_irq.s`.
+**It does not prove:** timings. The reference is not cycle-accurate (`risc_run` counts instructions),
+so all cycle numbers come only from the RTL, and the testbench compares architectural state.
+The reference does not model interrupts at all, so there is no golden model for that part:
+they are checked by a separate directed test, `tests/t1_irq.s`.

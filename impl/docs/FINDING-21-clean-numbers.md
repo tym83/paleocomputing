@@ -1,74 +1,76 @@
-# Находка 21: главное число выпуска разложено перекрёстной сборкой
+[Русская версия](FINDING-21-clean-numbers.ru.md)
 
-Пятый аудитор показал, как отделить цену **исполнения** проверок от работы компилятора
-по их **порождению**. Я воспроизвёл его постановку — разложение оказалось точным.
+# Finding 21: the release's main number decomposed by a cross build
 
-Воспроизводится: `tools/measure_cross.sh`.
+The fifth auditor showed how to separate the cost of **executing** checks from the compiler's work
+**generating** them. I reproduced his setup, and the decomposition turned out to be exact.
 
-## Постановка
+Reproducible: `tools/measure_cross.sh`.
 
-Конфигурация A отличалась от B **двумя вещами сразу**: внутри неё нет проверок **и**
-она не эмитит проверки для нагрузки. Разница A↔B складывала две разные величины.
+## Setup
 
-Строим все четыре комбинации:
+Configuration A differed from B in **two things at once**: it has no checks inside **and**
+it does not emit checks for the workload. The A↔B difference summed two different quantities.
 
-| | проверки внутри компилятора | эмитит проверки | как получена |
+We build all four combinations:
+
+| | checks inside the compiler | emits checks | how obtained |
 |---|---|---|---|
-| **A** | нет | нет | патченый `ORG.Mod`, собранный компилятором A |
-| **A′** | нет | **да** | **стоковый** `ORG.Mod`, собранный компилятором A |
-| **B′** | есть | **нет** | патченый `ORG.Mod`, собранный компилятором B |
-| **B** | есть | да | стоковый `ORG.Mod`, собранный компилятором B |
+| **A** | no | no | patched `ORG.Mod` built by compiler A |
+| **A′** | no | **yes** | **stock** `ORG.Mod` built by compiler A |
+| **B′** | yes | **no** | patched `ORG.Mod` built by compiler B |
+| **B** | yes | yes | stock `ORG.Mod` built by compiler B |
 
-## Результат
+## Result
 
-| | Такты | Инструкции | Код, слов |
+| | Cycles | Instructions | Code, words |
 |---|---|---|---|
 | A | 29 121 384 | 17 407 595 | 5 775 |
 | A′ | 29 277 745 | 17 508 073 | **6 348** |
 | B′ | 29 761 304 | 17 987 770 | **5 775** |
 | B | 29 919 963 | 18 090 546 | 6 348 |
 
-**Контроль постановки:** A′ и B порождают по 6 348 слов, B′ и A — по 5 775.
-Совпадение точное, значит пары сравниваются на идентичном выходе.
+**Setup control:** A′ and B each produce 6 348 words, B′ and A each 5 775.
+The match is exact, so the pairs are compared on identical output.
 
-### Разложение
+### Decomposition
 
-Всего **B − A = 798 579 тактов = 2.74%**, и оно раскладывается ровно:
+In total **B − A = 798 579 cycles = 2.74%**, and it decomposes exactly:
 
-| Составляющая | Оценка 1 | Оценка 2 | Расхождение |
+| Component | Estimate 1 | Estimate 2 | Discrepancy |
 |---|---|---|---|
-| **исполнение проверок** | B − A′ = 642 218 (**2.21%**) | B′ − A = 639 920 (**2.20%**) | 0.4% |
-| **порождение проверок** | A′ − A = 156 361 (0.54%) | B − B′ = 158 659 (0.54%) | 1.4% |
-| сумма | 798 579 | = B − A | ✅ точно |
+| **executing checks** | B − A′ = 642 218 (**2.21%**) | B′ − A = 639 920 (**2.20%**) | 0.4% |
+| **generating checks** | A′ − A = 156 361 (0.54%) | B − B′ = 158 659 (0.54%) | 1.4% |
+| sum | 798 579 | = B − A | ✅ exact |
 
-Две независимые оценки каждой составляющей сходятся, перекрёстных членов нет.
+The two independent estimates of each component agree; there are no cross terms.
 
-## Что меняется в публикуемых числах
+## What changes in the published numbers
 
-| Было | Стало |
+| Was | Now |
 |---|---|
-| «цена проверок **2.74%** тактов» | **2.20%** — цена исполнения. 2.74% — верхняя оценка, включающая 0.54% работы компилятора |
-| «аппаратура снимает **13.7%**» | **17.1%** — по чистому знаменателю 642 218 тактов, а не по 798 579 |
-| «по инструкциям 3.92%» | **3.33%** |
+| "the cost of checks is **2.74%** of cycles" | **2.20%**, the cost of execution. 2.74% is an upper estimate that includes 0.54% of compiler work |
+| "hardware removes **13.7%**" | **17.1%**, with the clean denominator of 642 218 cycles rather than 798 579 |
+| "3.92% in instructions" | **3.33%** |
 
-Формулировка, которая остаётся верной:
+The wording that remains correct:
 
-> Проверки времени исполнения стоят **2.20% тактов** на нагрузке «компилятор компилирует
-> пять модулей системы». Ещё **0.54%** уходит на работу самого компилятора по их
-> порождению — это цена не проверок, а их эмиссии, и складывать эти величины в одно
-> число некорректно, хотя прямое сравнение конфигураций именно это и делает.
+> Runtime checks cost **2.20% of cycles** on the workload "the compiler compiles
+> five modules of the system". Another **0.54%** goes to the compiler's own work generating
+> them: that is the cost not of the checks but of emitting them, and adding these quantities into one
+> number is incorrect, even though a direct comparison of configurations does exactly that.
 
-## Поправка к находке 5
+## Correction to finding 5
 
-Там написано: «первый замер дал 0.43%, и это число было **неверным**; разница между
-неверным и верным замером — шестикратная».
+It says there: "the first measurement gave 0.43%, and that number was **wrong**; the difference between
+the wrong and the right measurement is sixfold".
 
-Аудитор показал, что это некорректно **дважды**:
+The auditor showed that this is incorrect **twice over**:
 
-1. **Нагрузки разные.** 0.43% снято на десяти модулях, 2.67% — на пяти. На одной и той же
-   нагрузке стадия 1 даёт **0.53%**, то есть **5.1×**, а не 6×.
-2. **0.43% — не ошибка, а компонента.** Это та самая работа компилятора по порождению
-   проверок, которая в разложении выше стоит 0.54%. Стадия 1 и стадия 2 меряют **разные
-   составляющие одной величины**, а не «неверное против верного».
+1. **The workloads differ.** 0.43% was taken on ten modules, 2.67% on five. On one and the same
+   workload stage 1 gives **0.53%**, that is, **5.1×**, not 6×.
+2. **0.43% is not an error but a component.** It is exactly the compiler's work generating
+   checks, which costs 0.54% in the decomposition above. Stage 1 and stage 2 measure **different
+   components of one quantity**, not "wrong versus right".
 
-Формулировка «число ошибается вшестеро» отзывается.
+The wording "the number is off by a factor of six" is withdrawn.

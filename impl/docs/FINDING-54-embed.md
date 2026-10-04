@@ -1,67 +1,76 @@
-# Находка 54. Машина как компонент: поток вместо главного
+[Русская версия](FINDING-54-embed.ru.md)
 
-Машина Вирта теперь вставляется в чужую страницу двумя строками:
+# Finding 54. The machine as a component: a worker instead of the main thread
+
+Wirth's machine can now be embedded into someone else's page with two lines:
 
 ```html
 <script type="module" src="…/oberon/embed.js"></script>
 <oberon-machine base="…/oberon/"></oberon-machine>
 ```
 
-От принимающей страницы не требуется ничего — ни сборки, ни фреймворка, ни
-заголовков ответа. Последнее не мелочь, а решение дизайна v0.2, принятое против
-соблазна.
+Nothing is required of the host page: no build step, no framework, no response
+headers. The last point is not a detail but a v0.2 design decision, made
+against temptation.
 
-## Почему не SharedArrayBuffer
+## Why not SharedArrayBuffer
 
-Очевидный способ поселить эмулятор в отдельный поток — общая память и
-`Atomics.wait`. Он требует заголовков `COOP`/`COEP`, а из этого следует:
+The obvious way to put the emulator into a separate thread is shared memory and
+`Atomics.wait`. It requires `COOP`/`COEP` headers, and that implies:
 
-- **GitHub Pages заголовков не ставит вовсе** — проверено на живом `.github.io`;
-- `COEP: require-corp` ломает любой сторонний ресурс на странице, а
-  `credentialless` не поддерживается Safari;
-- встроенной в iframe машине принимающая страница должна выдать
-  `allow="cross-origin-isolated"` — то есть встроить её к себе смог бы не всякий.
+- **GitHub Pages does not set these headers at all**; verified on a live
+  `.github.io`;
+- `COEP: require-corp` breaks any third-party resource on the page, and
+  `credentialless` is not supported by Safari;
+- for a machine embedded in an iframe, the host page would have to grant
+  `allow="cross-origin-isolated"`, which means not every page could embed it.
 
-Поэтому общей памяти нет. Кадр уезжает обычным `postMessage` с передачей
-владения: 96 КБ за O(1), без копии. Страница возвращает отрисованный буфер
-обратно, и по кругу ходят два — иначе сборщик мусора просыпался бы шестьдесят
-раз в секунду.
+So there is no shared memory. A frame travels via an ordinary `postMessage` with
+ownership transfer: 96 KB in O(1), with no copy. The page returns the rendered
+buffer, and two buffers circulate; otherwise the garbage collector would wake
+up sixty times a second.
 
-**Кадр отдаётся сырым, по биту на точку.** Разворачивать его в RGBA в потоке
-нельзя: это 3 МБ на кадр вместо 96 КБ. Разворот стоит 0.33 мс на главном потоке
-(измерено) — в тридцать раз дешевле пересылки.
+**The frame is sent raw, one bit per pixel.** Expanding it to RGBA in the worker
+is not an option: that is 3 MB per frame instead of 96 KB. The expansion costs
+0.33 ms on the main thread (measured), thirty times cheaper than transferring
+it.
 
-## Кадр просит страница, а не поток
+## The page asks for a frame, not the worker
 
-Модель RTL считает непрерывно: у неё нет эвристики простоя, и, оставленная сама
-себе, она ровно жжёт ядро. Поэтому цикл перевёрнут: поток не гонит кадры, а
-отвечает на запрос. Запрос делает `requestAnimationFrame` страницы — и не
-делает, когда вкладка скрыта или элемент ушёл за край окна
-(`IntersectionObserver`). Машина, которой не на кого смотреть, не считает.
+The RTL model computes continuously: it has no idle heuristic, and left to
+itself it just burns a core. So the loop is inverted: the worker does not push
+frames, it answers requests. The request is made by the page's
+`requestAnimationFrame`, and it is not made when the tab is hidden or the
+element has scrolled out of the viewport (`IntersectionObserver`). A machine
+that nobody is watching does not compute.
 
-## Заодно исчезла вторая копия
+## The second copy disappeared along the way
 
-Страница запуска держала **свою** отрисовку, свою таблицу скан-кодов PS/2 и свой
-цикл кадров — вторые после `machine.js`. Ровно тот случай, из-за которого в этом
-репозитории уже дважды расходились два места: правился один, работал другой
-(находки 51 и 52). Теперь отрисовка и ввод вынесены в `makeRenderer` и
-`bindInput`, а страница похудела с 289 строк до 138.
+The launch page kept **its own** rendering, its own PS/2 scan code table and its
+own frame loop, duplicates of those in `machine.js`. This is exactly the
+situation that has already twice caused two places in this repository to
+diverge: one was edited, the other was the one running (Findings 51 and 52).
+Rendering and input are now factored out into `makeRenderer` and `bindInput`,
+and the page shrank from 289 lines to 138.
 
-## Проверка
+## Verification
 
-Протокол между страницей и потоком проверяется в node на настоящей машине
-(`worker-test.mjs`, 10 проверок): кадр приходит нужного размера и с передачей
-владения, счётчик инструкций растёт, возвращённый буфер переиспользуется,
-система догружается до картинки, аккорд даёт машине ход между двумя нажатиями,
-откат возвращает машину в начало, неизвестное сообщение не проглатывается.
+The protocol between the page and the worker is checked in node on the real
+machine (`worker-test.mjs`, 10 checks): the frame arrives with the right size
+and with ownership transfer, the instruction counter grows, the returned buffer
+is reused, the system loads up to the picture, a chord gives the machine a step
+between two key presses, a reset returns the machine to the start, and an
+unknown message is not silently swallowed.
 
-Три мутации — убрать возврат буфера в пул, убрать ход между нажатиями аккорда,
-убрать сам откат — валят соответствующие проверки и только их.
+Three mutations (removing the buffer's return to the pool, removing the step
+between chord key presses, removing the reset itself) fail the corresponding
+checks and only those.
 
-Это важнее, чем кажется: разойтись страница и поток могут **молча**. Картинка
-просто перестанет обновляться, и ни одна другая проверка этого не увидит — в
-браузере никто не считает пиксели.
+This matters more than it seems: the page and the worker can diverge
+**silently**. The picture simply stops updating, and no other check will see
+it, since nobody counts pixels in a browser.
 
-В браузере проверено отдельно: система догружается до рабочего стола внутри
-обычной страницы (18 607 тёмных точек на канве), курсор Оберона идёт за мышью
-(ввод доходит до потока), подпись кнопки запуска по умолчанию английская.
+Separately verified in a browser: the system loads up to the desktop inside an
+ordinary page (18,607 dark pixels on the canvas), the Oberon cursor follows the
+mouse (input reaches the worker), and the launch button's label is English by
+default.

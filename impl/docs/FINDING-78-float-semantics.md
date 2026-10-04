@@ -1,65 +1,70 @@
-# Находка 78. Плавающая точка Вирта на модели: всё другое, текст тот же — и один флаг
+[Русская версия](FINDING-78-float-semantics.ru.md)
 
-Две вещи про арифметику, которые всплыли при переносе модели.
+# Finding 78. Wirth's floating point on the model: everything differs, the text is the same, and one flag
 
-## 1. Против IEEE: 98.5% логитов другие, текст — тот же
+Two things about arithmetic that surfaced while porting the model.
 
-`lm/ieee_study.py` гоняет одну и ту же программу (`lm/ref.py`) в
-арифметике RISC5 (`risc-fp.c`) и в IEEE float32 (numpy, округление к
-ближайшему чётному) и сравнивает логиты шаг за шагом.
+## 1. Versus IEEE: 98.5% of logits differ, the text is the same
+
+`lm/ieee_study.py` runs the same program (`lm/ref.py`) in RISC5 arithmetic
+(`risc-fp.c`) and in IEEE float32 (numpy, round to nearest even) and compares
+the logits step by step.
 
 | | |
 |---|---|
-| зёрен × символов | 20 × 128 |
-| логитов сравнено | 92 160 |
-| побитово отличаются | **90 747 (98.5%)** |
-| абсолютное расхождение | медиана 3.8·10⁻⁶, наибольшее 7.3·10⁻⁵ |
-| сами логиты по модулю | медиана ~3.5, до ~22 |
-| зёрен, где текст разошёлся | **0 из 20** |
+| seeds × characters | 20 × 128 |
+| logits compared | 92 160 |
+| differ bit-wise | **90 747 (98.5%)** |
+| absolute difference | median 3.8·10⁻⁶, largest 7.3·10⁻⁵ |
+| magnitude of the logits themselves | median ~3.5, up to ~22 |
+| seeds where the text diverged | **0 of 20** |
 
-Почти каждое число другое — округление прибавлением единицы вместо
-округления к чётному накапливается за 128 и 256 сложений скалярного
-произведения. Но расхождение на пять-шесть порядков меньше самих логитов, а
-выборка берёт 15-битное случайное число: чтобы выбор символа перевернулся,
-случайное число должно попасть в щель шириной ~10⁻⁵ у границы. За 2560
-шагов не попало ни разу.
+Almost every number is different: rounding by adding one instead of rounding to
+even accumulates over the 128 and 256 additions of a dot product. But the
+difference is five to six orders of magnitude smaller than the logits
+themselves, and sampling takes a 15-bit random number: for a character choice
+to flip, the random number has to fall into a gap ~10⁻⁵ wide at the boundary.
+In 2560 steps it never did.
 
-Отсюда практический вывод для выпуска: сверять модуль с numpy было бы
-«почти всегда правильно» и однажды — необъяснимо неправильно. Эталон в
-арифметике RISC5 даёт совпадение до байта, и расхождение, если оно
-случится, будет ошибкой, а не округлением.
+Hence the practical conclusion for the episode: checking the module against
+numpy would be "almost always right" and, once, inexplicably wrong. A reference
+in RISC5 arithmetic gives a byte-exact match, and a mismatch, if one happens,
+will be a bug rather than rounding.
 
-## 2. Сравнение дробных читает флаг, который ставит целое сложение
+## 2. Floating-point comparison reads a flag set by integer addition
 
-При разборе кодогенерации сравнений: `ORG.RealRelation` сравнивает дробные
-через `FSB` и ставит условие из той же таблицы `relmap`, что и для целых.
-Для `<` и `>=` это `S = N xor OV` (`RISC5.v:188`). Но `OV` пишут только
-целочисленные `ADD`/`SUB` (`RISC5.v:216-218`); `FSB` его не трогает. Значит,
-условие сравнения дробных берёт `OV` **от последнего целого сложения**.
+While examining the code generation for comparisons: `ORG.RealRelation` compares
+reals through `FSB` and sets the condition from the same `relmap` table as for
+integers. For `<` and `>=` that is `S = N xor OV` (`RISC5.v:188`). But `OV` is
+written only by the integer `ADD`/`SUB` (`RISC5.v:216-218`); `FSB` does not touch
+it. So the condition of a floating-point comparison takes `OV` **from the last
+integer addition**.
 
-Проверено программой `lm/OvProbe.Mod` на эмуляторе Norebo и на RTL Вирта:
+Verified with the program `lm/OvProbe.Mod` on the Norebo emulator and on Wirth's
+RTL:
 
 ```
 no overflow: 1.0 < 2.0 TRUE
 after overflow: 1.0 < 2.0 FALSE
 ```
 
-Между двумя сравнениями — `i := 7FFFFFFFH; i := i + 1`. Сравнение с нулём
-(`x < 0.0`) делается без `FSB`, по флагам загрузки, и зависит от `OV` так же.
+Between the two comparisons there is `i := 7FFFFFFFH; i := i + 1`. Comparison
+with zero (`x < 0.0`) is done without `FSB`, from the load flags, and depends on
+`OV` in the same way.
 
-Насколько это опасно: переполнение целого прямо перед сравнением дробных —
-редкость, а ближайшая целая `ADD`/`SUB` (счётчик цикла, проверка границ)
-перезаписывает `OV`. В модели выпуска единственное место, где это возможно, —
-`seed + 12345` в генераторе случайных чисел; эталон проверяет на каждом
-шаге, что переполнения там не бывает (иначе сравнения при выборке
-поменяли бы смысл). Это свойство пары «компилятор 2016 года + RISC5.v 2018»
-из этого репозитория; исправлено ли оно в более поздних версиях Оберона,
-мы не проверяли и новизны не утверждаем.
+How dangerous this is: an integer overflow right before a floating-point
+comparison is rare, and the nearest integer `ADD`/`SUB` (a loop counter, a bounds
+check) overwrites `OV`. In the episode's model the only place where it can
+happen is `seed + 12345` in the random number generator; the reference checks at
+every step that no overflow occurs there (otherwise the comparisons during
+sampling would change meaning). This is a property of the pair "2016 compiler +
+2018 RISC5.v" in this repository; whether it was fixed in later versions of
+Oberon we did not check, and we do not claim novelty.
 
-## Как повторить
+## How to reproduce
 
 ```
 cd impl
-python3 lm/ieee_study.py 128 $(seq 1 20)   # нужен numpy
-bash lm/ovprobe.sh                          # нужен build/obj_nb/norebo_tb (make lm)
+python3 lm/ieee_study.py 128 $(seq 1 20)   # needs numpy
+bash lm/ovprobe.sh                          # needs build/obj_nb/norebo_tb (make lm)
 ```

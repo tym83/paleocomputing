@@ -1,84 +1,86 @@
-# Находка 3: две ловушки открытого маршрута синтеза, обе измерены
+[Русская версия](FINDING-03-synthesis-traps.ru.md)
 
-> ⚠ **Числа ниже получены на Nangate45**, которую пришлось исключить из
-> публикации — её лицензия запрещает распространение. Измерения перенесены на
-> свободную Sky130, и относительные выводы там устояли, а абсолютные величины
-> изменились (частота втрое ниже: 130 нм против 45 нм). См.
-> [находку 36](FINDING-36-sky130.md).
+# Finding 3: two traps of the open synthesis flow, both measured
+
+> ⚠ **The numbers below were obtained on Nangate45**, which had to be excluded from
+> the publication: its license forbids redistribution. The measurements were moved to
+> the free Sky130, and the relative conclusions held there, while the absolute values
+> changed (frequency three times lower: 130 nm versus 45 nm). See
+> [finding 36](FINDING-36-sky130.md).
 
 
-Инструменты: yosys 0.69, Nangate45 typical. Скрипты: `syn/sweep.py`, `syn/demo_cmos_bug.ys`.
+Tools: yosys 0.69, Nangate45 typical. Scripts: `syn/sweep.py`, `syn/demo_cmos_bug.ys`.
 
-## Ловушка 1: `stat -tech cmos` молча теряет 76% триггеров
+## Trap 1: `stat -tech cmos` silently loses 76% of the flip-flops
 
-Ревью предупреждало, что `stat -tech cmos` знает только `$_DFF_P_`/`$_DFF_N_`.
-Проверено на нашем ядре:
+The review warned that `stat -tech cmos` only knows `$_DFF_P_`/`$_DFF_N_`.
+Checked on our core:
 
-| Тип триггера в нетлисте | Штук | Учтён? |
+| Flip-flop type in the netlist | Count | Counted? |
 |---|---|---|
-| `$_DFFE_PP_` | 570 | ❌ ноль транзисторов |
+| `$_DFFE_PP_` | 570 | ❌ zero transistors |
 | `$_DFF_P_` | 235 | ✅ |
 | `$_SDFF_PP0_` | 129 | ❌ |
 | `$_DFFE_PN_` | 33 | ❌ |
 | `$_SDFF_PN0_` | 24 | ❌ |
 | `$_SDFFE_PN0P_` | 1 | ❌ |
 | `$_SDFF_PP1_` | 1 | ❌ |
-| **всего** | **993** | **учтено 235 (24%)** |
+| **total** | **993** | **235 counted (24%)** |
 
-**Потеряно молча 758 триггеров — 76%.** Единственный сигнал об этом — плюс в конце
-строки `Estimated number of transistors: 67154+`.
+**758 flip-flops, 76%, are lost silently.** The only signal of this is a plus sign at the end of
+the line `Estimated number of transistors: 67154+`.
 
-## Ловушка 2: `-D` без `-constr` игнорируется ПОЛНОСТЬЮ
+## Trap 2: `-D` without `-constr` is ignored COMPLETELY
 
-Это ревью не предвидело, и это хуже первой ловушки, потому что здесь вообще нет сигнала.
+The review did not foresee this, and it is worse than the first trap, because here there is no signal at all.
 
-| Команда | Площадь, мкм² |
+| Command | Area, µm² |
 |---|---|
-| `abc -liberty L` (без цели по задержке) | 13 862.856000 |
-| `abc -liberty L -D 200` (жёстко) | **13 862.856000** |
-| `abc -liberty L -D 50000` (свободно) | **13 862.856000** |
+| `abc -liberty L` (no delay target) | 13 862.856000 |
+| `abc -liberty L -D 200` (tight) | **13 862.856000** |
+| `abc -liberty L -D 50000` (loose) | **13 862.856000** |
 | `abc -liberty L -constr C -D 200` | 14 532.112000 |
 | `abc -liberty L -constr C -D 50000` | 14 461.356000 |
 
-**Совпадение до последнего знака при разнице цели в 250 раз.** Без файла ограничений
-(`set_driving_cell`, `set_load`) цель по задержке не доходит до мапперa, и результат —
-точка минимальной площади, которую, как верно заметило ревью, «не использует ни один
-tapeout». Отчёт при этом выглядит совершенно нормально.
+**Identical to the last digit with a 250× difference in the target.** Without a constraints file
+(`set_driving_cell`, `set_load`) the delay target never reaches the mapper, and the result is
+the minimum-area point which, as the review rightly noted, "no tapeout uses".
+Meanwhile the report looks perfectly normal.
 
-## Следствие: кривой площадь-vs-период здесь нет
+## Consequence: there is no area-vs-period curve here
 
-Свип по восьми точкам от 20 нс до 0.5 нс с `-constr` даёт **всего два значения**:
+A sweep over eight points from 20 ns to 0.5 ns with `-constr` gives **only two values**:
 
-| Период | Площадь, мкм² | kGE |
+| Period | Area, µm² | kGE |
 |---|---|---|
-| ≥ 3000 пс | 14 461.36 | 18.12 |
-| ≤ 2000 пс | 14 532.11 | 18.21 |
+| ≥ 3000 ps | 14 461.36 | 18.12 |
+| ≤ 2000 ps | 14 532.11 | 18.21 |
 
-Разница **0.5%**. То есть маршрут практически не торгует площадь на скорость для этого
-дизайна. Это и плохо, и хорошо:
+The difference is **0.5%**. That is, the flow practically does not trade area for speed for this
+design. This is both bad and good:
 
-- **плохо:** рекомендованный ревью «график площадь-vs-период, который закрывает большинство вопросов рецензента» построить не из чего — он плоский
-- **хорошо:** дельта площади от расширения ISA будет **чистой**, её не надо защищать от подозрения «вы просто выбрали удобную точку по таймингу»
+- **bad:** the "area-vs-period plot that closes most of a reviewer's questions" recommended by the review cannot be built from anything: it is flat
+- **good:** the area delta from the ISA extension will be **clean**; it does not need defending against the suspicion "you just picked a convenient timing point"
 
-**Fmax из этого маршрута не получить вообще** — нужен OpenSTA по нетлисту. Это отдельная
-работа, и без неё вторая половина У3 (частота) остаётся незакрытой.
+**Fmax cannot be obtained from this flow at all**: that needs OpenSTA on the netlist. This is separate
+work, and without it the second half of U3 (frequency) remains open.
 
-## Базовая линия проекта (зафиксирована)
+## Project baseline (recorded)
 
-Ядро RISC5 (31.8.2018, с прерываниями и FPU), Nangate45 typical, `-constr`, `-D 2000`:
+RISC5 core (31.8.2018, with interrupts and FPU), Nangate45 typical, `-constr`, `-D 2000`:
 
-| Метрика | Значение |
+| Metric | Value |
 |---|---|
-| Площадь | **14 532.11 мкм²** |
-| **kGE** (÷ NAND2_X1 = 0.798 мкм²) | **18.21** |
-| Последовательная логика | 4 490.35 мкм² (**30.9%**) |
-| Ячеек | 10 938 |
-| Триггеров | **993** |
+| Area | **14 532.11 µm²** |
+| **kGE** (÷ NAND2_X1 = 0.798 µm²) | **18.21** |
+| Sequential logic | 4 490.35 µm² (**30.9%**) |
+| Cells | 10 938 |
+| Flip-flops | **993** |
 
-Сверка с ревью: оценка «~955 триггеров» из подсчёта битов в исходниках против
-измеренных **993** — расхождение 4%, объясняется деталями синтеза. Оценка размера ядра
-«~10–20 kGE» подтверждена: **18.21 kGE**.
+Cross-check with the review: the estimate of "~955 flip-flops" from counting bits in the sources versus
+the measured **993** is a 4% discrepancy, explained by synthesis details. The core size estimate
+"~10–20 kGE" is confirmed: **18.21 kGE**.
 
-⚠ Обязательная оговорка в статью остаётся в силе: открытый маршрут отстаёт от
-коммерческого на 25–60% по площади; числа годятся для **относительного** сравнения
-внутри одного маршрута, а не как абсолютная цена кремния.
+⚠ The mandatory caveat for the article still stands: the open flow lags behind
+a commercial one by 25–60% in area; the numbers are good for a **relative** comparison
+within one flow, not as an absolute silicon cost.

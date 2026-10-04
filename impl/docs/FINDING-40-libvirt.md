@@ -1,70 +1,73 @@
-# Находка 40. libvirt спрашивает архитектуру у самого эмулятора
+[Русская версия](FINDING-40-libvirt.ru.md)
 
-Опыт поставлен на стенде: libvirt 10.0.0, наш `qemu-system-risc5`, машина
-`oberon`. Вопрос был один — можно ли подключить новую архитектуру, ничего не
-патча.
+# Finding 40. libvirt asks the emulator itself for the architecture
 
-**Нельзя.** Но граница прошла не там, где ожидалось, и это меняет план.
+The experiment was set up on the test machine: libvirt 10.0.0, our `qemu-system-risc5`, a domain
+`oberon`. There was one question: can a new architecture be plugged in without patching
+anything?
 
-## Что показали два опыта
+**It cannot.** But the boundary turned out not to be where it was expected, and that changes the plan.
 
-**Объявить архитектуру своим именем** — отказ на разборе описания машины:
+## What the two experiments showed
+
+**Declaring the architecture under its own name**: refused while parsing the domain
+description:
 
 ```
 error: unsupported configuration: Unknown architecture risc5
 ```
 
-Ожидаемо: `virArchFromString` перебирает свою таблицу и незнакомое имя
-отвергает.
+As expected: `virArchFromString` goes through its table and rejects an unfamiliar
+name.
 
-**Назваться знакомой архитектурой** (`arch="riscv32"`, эмулятор наш) — отказ
-глубже, уже при опросе бинаря:
+**Posing as a familiar architecture** (`arch="riscv32"`, our emulator): refused
+deeper, already while probing the binary:
 
 ```
 internal error: Unknown QEMU arch risc5
 Failed to probe capabilities for /usr/bin/qemu-system-risc5
 ```
 
-Вот это и есть главное: **libvirt не верит описанию машины, он спрашивает сам
-эмулятор** по QMP и получает от него `risc5` — то имя, под которым цель
-заведена в перечне QAPI самого QEMU. Подменить его в описании невозможно.
+This is the main point: **libvirt does not trust the domain description; it asks the
+emulator itself** via QMP and gets `risc5` from it, the name under which the target
+is registered in QEMU's own QAPI enumeration. It cannot be substituted in the description.
 
-Попутно: бинарь должен лежать там, где его разрешено запускать правилам защиты
-(`/usr/bin`), иначе отказ приходит как «нет доступа» и маскирует настоящую
-причину.
+Along the way: the binary has to live where the security rules allow it to be executed
+(`/usr/bin`), otherwise the refusal comes back as "permission denied" and masks the real
+cause.
 
-## Насколько велик патч libvirt
+## How big the libvirt patch is
 
-Мал. Архитектура заводится в трёх местах:
+Small. An architecture is registered in three places:
 
 | | |
 |---|---|
-| `src/util/virarch.h` | значение в перечне, сейчас их 67 |
-| `src/util/virarch.c` | строка в `virArchData[]`: имя, разрядность, порядок байтов |
-| `src/qemu/qemu_capabilities.c` | машина по умолчанию в `preferredMachines[]` |
+| `src/util/virarch.h` | a value in the enumeration, of which there are currently 67 |
+| `src/util/virarch.c` | a row in `virArchData[]`: name, word size, byte order |
+| `src/qemu/qemu_capabilities.c` | the default machine in `preferredMachines[]` |
 
-Итого около пяти строк. Последняя таблица защищена проверкой на совпадение
-длины с перечнем, так что забыть её не выйдет — сборка не пройдёт.
+About five lines in total. The last table is guarded by a check that its length matches
+the enumeration, so it cannot be forgotten: the build will not pass.
 
-## Что это значит для цепочки
+## What this means for the chain
 
-| слой | нужен ли свой | почему |
+| layer | does it need our own | why |
 |---|---|---|
-| QEMU | ✅ наша цель | иначе нечему исполнять RISC5 |
-| **libvirt** | ✅ **патч ~5 строк** | архитектура спрашивается у бинаря |
-| KubeVirt | ❌ **не нужен** | перехватчик `OnDefineDomain` штатный |
-| Cozystack | ❌ не нужен | `imageRegistry` на ресурсе KubeVirt |
+| QEMU | ✅ our target | otherwise there is nothing to execute RISC5 |
+| **libvirt** | ✅ **a ~5-line patch** | the architecture is asked of the binary |
+| KubeVirt | ❌ **not needed** | the `OnDefineDomain` hook is standard |
+| Cozystack | ❌ not needed | `imageRegistry` on the KubeVirt resource |
 
-То есть своей сборки требует **только libvirt**, а не KubeVirt и не платформа.
-На практике это означает свой образ `virt-launcher` — в нём libvirt и живёт, —
-и переключение реестра настройкой, без форка чего бы то ни было.
+That is, **only libvirt** requires our own build, not KubeVirt and not the platform.
+In practice this means our own `virt-launcher` image, which is where libvirt lives,
+and switching the registry by configuration, without forking anything.
 
-## Замечание про апстрим
+## A note on upstream
 
-Патч в libvirt мы отдать не можем: их правила отклоняют вклад с участием
-языковой модели, Claude назван поимённо (находка записана отдельно). Так что это
-своя сборка. GPL это разрешает.
+We cannot contribute the patch to libvirt: their rules reject contributions involving
+a language model, and Claude is named explicitly (the finding is recorded separately). So this
+is our own build. The GPL allows it.
 
-Зато сам патч тривиален и не содержит ничего изобретательного: три записи в
-таблицах. Если понадобится апстрим — его напишет человек за полчаса, и наша
-работа останется спецификацией и доказательством, что оно работает.
+On the other hand, the patch itself is trivial and contains nothing inventive: three entries in
+tables. If upstreaming is ever needed, a human can write it in half an hour, and our
+work will remain the specification and the proof that it works.

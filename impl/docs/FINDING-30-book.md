@@ -1,60 +1,62 @@
-# Находка 30. Методичка по Оберону
+[Русская версия](FINDING-30-book.ru.md)
 
-## Что сделано
+# Finding 30. The Oberon course book
 
-Восемь глав, около пяти тысяч слов, в `docs/book/*.md`. Источник истины —
-Markdown в репозитории: его можно читать и рецензировать в гите. Вывод —
-`web/book/*.html`, рядом с лабораторными, чтобы читать и делать задания в
-одном месте.
+## What was done
 
-| глава | о чём |
+Eight chapters, about five thousand words, in `docs/book/*.md`. The source of truth is
+Markdown in the repository: it can be read and reviewed in git. The output is
+`web/book/*.html`, next to the labs, so that reading and doing the assignments happen in
+one place.
+
+| chapter | about |
 |-------|-------|
-| 1. Зачем это и что здесь настоящее | что симулируется, что смоделировано, чем это проверено |
-| 2. Машина: RISC5 | регистры, четыре формата команд, условия, ловушки, карта памяти |
-| 3. Язык: Оберон за одну главу | все 33 ключевых слова, типы, операторы, встроенные процедуры |
-| 4. Система: текст вместо кнопок | средний щелчок, три кнопки, стрелка и тильда, окна, журнал |
-| 5. Модули, символьные файлы и ключи | раздельная компиляция, зачем `/s`, порядок сборки |
-| 6. Компилятор изнутри | четыре модуля, элемент, путь от `a[i]` до команд, фиксапы |
-| 7. Самораскрутка и неподвижная точка | что доказывает совпадение поколений, а что нет |
-| 8. Что мы измерили и что нашли | цена проверок, кодировка CHK, расхождения в самом Обероне |
+| 1. What this is for, and what here is real | what is simulated, what is modelled, how it is verified |
+| 2. The machine: RISC5 | registers, four instruction formats, conditions, traps, memory map |
+| 3. The language: Oberon in one chapter | all 33 keywords, types, statements, built-in procedures |
+| 4. The system: text instead of buttons | the middle click, three buttons, the arrow and the tilde, windows, the log |
+| 5. Modules, symbol files and keys | separate compilation, why `/s`, build order |
+| 6. The compiler from inside | four modules, the item, the path from `a[i]` to instructions, fixups |
+| 7. Self-hosting and the fixed point | what the agreement of generations proves and what it does not |
+| 8. What we measured and what we found | the cost of checks, the CHK encoding, discrepancies in Oberon itself |
 
-Сборщик — `tools/mkbook.py` на библиотеке `markdown` (своего конвертера не
-писали). Общий шаблон, оглавление, переходы вперёд и назад.
+The builder is `tools/mkbook.py` on the `markdown` library (we did not write our own
+converter). A shared template, a table of contents, forward and back navigation.
 
-## Написано по исходникам, а не по памяти
+## Written from the sources, not from memory
 
-Ключевые слова вытащены из таблицы `EnterKW` в `ORS.Mod` — их ровно 33.
-Встроенные имена — из `enter` в `ORB.Mod`, их 42. Соглашения о регистрах
-(`MT=12`, `SB=13`, `SP=14`, `LNK=15`) — из констант `ORG.Mod`. Пример модуля
-целиком — настоящий `Blink.Mod` с образа. Путь `a[i]` разобран по процедуре
-`Index` в `ORG.Mod`, кодировка ловушки — по `Trap` там же.
+The keywords were pulled from the `EnterKW` table in `ORS.Mod`: there are exactly 33.
+The built-in names come from `enter` in `ORB.Mod`: there are 42. The register conventions
+(`MT=12`, `SB=13`, `SP=14`, `LNK=15`) come from the constants of `ORG.Mod`. The complete example
+module is the real `Blink.Mod` from the image. The path of `a[i]` is traced through the procedure
+`Index` in `ORG.Mod`, the trap encoding through `Trap` in the same place.
 
-Числа в восьмой главе — из находок 8, 16, 24, 26, 27: цена проверок 2.19% и
-1.85%, доля, снимаемая аппаратурой, 15.5%, площадь 46…123 мкм², динамический
-профиль 68.3%, три ширины поля смещения, ошибка в таблице условий `ORTool`.
+The numbers in chapter eight come from findings 8, 16, 24, 26, 27: the cost of checks 2.19% and
+1.85%, the share removed by hardware 15.5%, area 46…123 µm², the dynamic
+profile 68.3%, three widths of the offset field, the error in the `ORTool` condition table.
 
-## Связь с лабораториями
+## Connection to the labs
 
-У каждой лабораторной появились ссылки на относящиеся главы, а на странице
-лабораторных — ссылка на методичку.
+Each lab now has links to the relevant chapters, and the labs page
+has a link to the course book.
 
-## Проверки
+## Checks
 
-`make book` падает, если ссылка ведёт на несуществующую главу или на
-лабораторную, которой нет. `make labs` дополнительно проверяет, что ссылки из
-лабораторных ведут в существующие файлы глав.
+`make book` fails if a link leads to a nonexistent chapter or to a
+lab that does not exist. `make labs` additionally checks that links from
+the labs lead to existing chapter files.
 
-Битая ссылка в учебнике хуже отсутствующей главы: она выглядит рабочей.
+A broken link in a textbook is worse than a missing chapter: it looks like it works.
 
-Проверено на промах трижды: ссылка на главу `99-nety.md`, ссылка на
-лабораторную №5 (которой нет) и ссылка из лабораторной на несуществующий файл
-главы — каждая роняет сборку.
+Checked for misses three times: a link to chapter `99-nety.md`, a link to
+lab No. 5 (which does not exist) and a link from a lab to a nonexistent
+chapter file each break the build.
 
-## Чего в методичке нет
+## What the course book does not contain
 
-Это учебник к тем трём лабораторным, что сделаны, и к машине. В нём нет:
+It is a textbook for the three labs that have been made, and for the machine. It does not contain:
 
-* упражнений с проверкой — они в лабораторных, а их пока три из двенадцати;
-* разбора оконной подсистемы и графики (`Viewers`, `TextFrames`, `Graphics`);
-* описания сборщика мусора и устройства кучи;
-* ничего про вторую машину — её ещё нет.
+* exercises with checks: those are in the labs, and so far there are three of twelve;
+* a walkthrough of the windowing subsystem and graphics (`Viewers`, `TextFrames`, `Graphics`);
+* a description of the garbage collector and the heap layout;
+* anything about the second machine: it does not exist yet.

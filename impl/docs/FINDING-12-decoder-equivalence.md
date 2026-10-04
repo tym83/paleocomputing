@@ -1,52 +1,54 @@
-# Находка 12: проверка эквивалентности декодера поймала лишнюю занятую кодировку
+[Русская версия](FINDING-12-decoder-equivalence.ru.md)
 
-Тест: `tb/decoder_equiv.cpp` + `tools/cmp_decoder.py`, цель `make equiv`.
+# Finding 12: the decoder equivalence check caught an extra occupied encoding
 
-## Зачем эта проверка нужна именно здесь
+Test: `tb/decoder_equiv.cpp` + `tools/cmp_decoder.py`, target `make equiv`.
 
-В RISC5 **нет ловушки на неизвестную инструкцию** — любое 32-битное слово декодируется
-как валидная команда (доказано зондом декодера, находка 2). Значит занятие чужой кодировки
-проявится не диагностикой, а **молчаливым изменением поведения существующего кода**.
-Функциональные тесты этого не поймают: они исполняют только те кодировки, которые
-компилятор эмитит.
+## Why this check is needed here in particular
 
-Ревью требовало именно эту проверку, и не зря.
+RISC5 has **no trap on an unknown instruction**: any 32-bit word decodes
+as a valid instruction (proven by the decoder probe, finding 2). So taking someone else's encoding
+will show up not as a diagnostic but as a **silent change in the behaviour of existing code**.
+Functional tests will not catch this: they execute only the encodings that
+the compiler emits.
 
-## Метод
+The review demanded exactly this check, and rightly so.
 
-Все **256 комбинаций** {IR[31:28] × op} × **5 наборов операндов** = 1280 прогонов
-на двух ядрах: базовом и с расширением. Для каждого фиксируются регистры-приёмники,
-флаги, число тактов и контрольная сумма изменённой памяти.
+## Method
 
-Ожидание: различается **ровно одна** кодировка — новая.
+All **256 combinations** {IR[31:28] × op} × **5 operand sets** = 1280 runs
+on two cores: the base one and the extended one. For each, the destination registers,
+flags, cycle count and a checksum of modified memory are recorded.
 
-## Что нашлось
+Expectation: **exactly one** encoding differs, the new one.
 
-Первый прогон показал **две** различающихся кодировки:
+## What was found
 
-| Кодировка | Ожидалась |
+The first run showed **two** differing encodings:
+
+| Encoding | Expected |
 |---|---|
-| `0001` op=1 | ✅ это CHK |
-| **`0011` op=1** | ❌ **не ожидалась** |
+| `0001` op=1 | ✅ this is CHK |
+| **`0011` op=1** | ❌ **not expected** |
 
-Причина: декод был записан как `~p & ~q & v & (op == 1)` — **бит `u` не проверялся**.
-Поэтому инструкция декодировалась и при `u=0` (`0001`), и при `u=1` (`0011`),
-то есть занимала **два слота вместо одного**.
+The reason: the decode was written as `~p & ~q & v & (op == 1)`, and **bit `u` was not checked**.
+So the instruction decoded both with `u=0` (`0001`) and with `u=1` (`0011`),
+that is, it occupied **two slots instead of one**.
 
-Существующий код это не ломает (компилятор не эмитит F0 LSL ни с `u`, ни с `v`),
-но расходовать вдвое больше кодового пространства, чем нужно, — ошибка,
-которую потом не найти.
+This does not break existing code (the compiler emits F0 LSL with neither `u` nor `v`),
+but spending twice as much code space as needed is a mistake
+that could never be found later.
 
-Исправление — одна вставка `~u &` в декод RTL и симметричная в эмуляторе.
-После неё: **различается ровно одна кодировка**.
+The fix is one insertion of `~u &` into the RTL decode and a symmetric one in the emulator.
+After it: **exactly one encoding differs**.
 
-## Три ошибки кодирования, пойманные тремя разными способами
+## Three encoding errors, caught in three different ways
 
-| Ошибка | Чем поймана |
+| Error | Caught by |
 |---|---|
-| исходная гипотеза «свободен бит 28» | зондом декодера (находка 2) |
-| `STI`/`CLI` с условием «всегда» вместо «никогда» | трассировкой в тесте прерываний |
-| CHK занимала две кодировки вместо одной | **проверкой эквивалентности** |
+| the original hypothesis "bit 28 is free" | the decoder probe (finding 2) |
+| `STI`/`CLI` with condition "always" instead of "never" | tracing in the interrupt test |
+| CHK occupied two encodings instead of one | **the equivalence check** |
 
-Ни одна из трёх не была бы найдена обычными функциональными тестами: все три касаются
-кодировок, которые компилятор не эмитит, а потому никогда не исполняются в нормальной работе.
+None of the three would have been found by ordinary functional tests: all three concern
+encodings the compiler does not emit, and which are therefore never executed in normal operation.

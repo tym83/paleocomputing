@@ -1,95 +1,97 @@
-# Находка 23. Компилятор Оберона воспроизводит себя внутри системы на RTL
+[Русская версия](FINDING-23-bootstrap-in-system.ru.md)
 
-## Что проверялось
+# Finding 23. The Oberon compiler reproduces itself inside the system on the RTL
 
-Находка 22 показала, что компилятор даёт на ядре `RISC5.v` тот же код, что
-эмулятор на C. Но запускал его тогда Norebo — обвязка на C, подменявшая
-файловую систему хоста. Оставался вопрос: обойдётся ли машина вообще без
-хоста.
+## What was checked
 
-Здесь компилятор работает внутри настоящей системы Оберон, загруженной с
-образа диска. Единственный вход в машину — регистры мыши и клавиатуры
-(`-40` и `-36`). Ни одной строки кода с хоста в контуре нет.
+Finding 22 showed that the compiler produces the same code on the `RISC5.v` core as
+the C emulator. But back then it was launched by Norebo, a C wrapper that substituted
+the host file system. A question remained: can the machine do without the
+host altogether?
 
-## Как
+Here the compiler runs inside the real Oberon system, booted from
+a disk image. The only input into the machine is the mouse and keyboard registers
+(`-40` and `-36`). There is not a single line of host code in the loop.
 
-Стенд `tb/soc_tb.cpp` получил сценарный режим: файл из строк
-`<номер инструкции> <действие> <аргументы>`, где действие — подвести мышь,
-нажать скан-код PS/2 или снять кадровый буфер. Формат регистров взят прямо из
-`Input.Mod`: кнопки в битах 24..26, координаты в полях по 12 бит, готовность
-клавиатуры — бит 28.
+## How
 
-Раскладка не выдумана: `tools/keymap.py` разбирает шестнадцатеричную таблицу
-`kbdTab` из исходника `Input.Mod` и строит обратное отображение «символ →
-скан-код». Заглавные буквы даются обрамлением из `12H` / `F0H 12H`.
+The testbench `tb/soc_tb.cpp` got a scripted mode: a file of lines
+`<instruction number> <action> <arguments>`, where the action is to move the mouse,
+press a PS/2 scan code, or capture the framebuffer. The register format is taken straight from
+`Input.Mod`: buttons in bits 24..26, coordinates in 12-bit fields, keyboard
+ready is bit 28.
 
-`tools/mkscript.py` собирает сценарий из человеческих команд (`click`, `type`,
-`enter`, `shot`). Координата `y` пишется как на картинке, сверху вниз, и
-переводится в систему Оберона (снизу вверх) внутри генератора.
+The layout is not made up: `tools/keymap.py` parses the hexadecimal table
+`kbdTab` from the `Input.Mod` source and builds the reverse mapping "character →
+scan code". Capital letters are produced by wrapping with `12H` / `F0H 12H`.
 
-## Результат
+`tools/mkscript.py` builds a script from human commands (`click`, `type`,
+`enter`, `shot`). The `y` coordinate is written as in the picture, top to bottom, and
+converted to Oberon's system (bottom to top) inside the generator.
 
-Сценарий `scripts/gen2_sep.src`: набрать пять команд в `System.Tool`, исполнить
-первые четыре (сборка `ORS`, `ORB`, `ORG`, `ORP`), выгрузить все четыре модуля
-из памяти, исполнить те же четыре команды снова — теперь их выполняет только
-что собранный компилятор, загруженный с диска.
+## Result
 
-| модуль | поколение 1 | поколение 2 |
+The script `scripts/gen2_sep.src`: type five commands into `System.Tool`, execute
+the first four (building `ORS`, `ORB`, `ORG`, `ORP`), unload all four modules
+from memory, execute the same four commands again; now they are executed by the freshly
+built compiler, loaded from disk.
+
+| module | generation 1 | generation 2 |
 |--------|-------------|-------------|
 | ORS | 1756  992 76547166 | 1756  992 76547166 |
 | ORB | 2325  408 2F03B698 | 2325  408 2F03B698 |
 | ORG | 6650 34980 8F476858 | 6650 34980 8F476858 |
 | ORP | 6188  144 E6FCC519 | 6188  144 E6FCC519 |
 
-Совпали размер кода, размер данных и ключ у всех четырёх модулей. Строка
-`OR Compiler 18.4.2016` напечатана во втором блоке заново — это новый
-`ORP.rsc` объявляет себя при загрузке, то есть второе поколение действительно
-собрано новыми двоичными файлами, а не оставшимися в памяти старыми.
+The code size, data size and key matched for all four modules. The line
+`OR Compiler 18.4.2016` is printed anew in the second block: that is the new
+`ORP.rsc` announcing itself on load, so the second generation really was
+built by the new binaries, not by the old ones left in memory.
 
-715 000 000 инструкций, 1 101 436 669 тактов, расхождений с моделью тактов —
-ноль.
+715 000 000 instructions, 1 101 436 669 cycles, mismatches with the cycle model:
+zero.
 
-## Ловушка 4, которая оказалась не ошибкой компилятора
+## Trap 4, which turned out not to be a compiler bug
 
-Первая попытка собирала все четыре модуля **одной** командой
-`ORP.Compile ORS.Mod/s ORB.Mod/s ORG.Mod/s ORP.Mod/s ~`. `ORS`, `ORB` и `ORG`
-собрались, на `ORP` выпало `TRAP 4 in ORB`.
+The first attempt built all four modules with **one** command
+`ORP.Compile ORS.Mod/s ORB.Mod/s ORG.Mod/s ORP.Mod/s ~`. `ORS`, `ORB` and `ORG`
+built, and on `ORP` it dropped out with `TRAP 4 in ORB`.
 
-`ORP.Compile ORP.Mod/s ~` на чистой загрузке отрабатывает без ошибок
-(`6188 144 E6FCC519`), так что дело не в исходнике.
+`ORP.Compile ORP.Mod/s ~` on a clean boot runs without errors
+(`6188 144 E6FCC519`), so the source is not the problem.
 
-В `ORG.Mod` номер 4 ставит `PROCEDURE NilCheck` — это разыменование NIL. А NIL
-возвращает `Kernel.New`, когда кончилась куча. Внутри одной команды управление
-не возвращается в `Oberon.Loop`, сборщик мусора не запускается, и таблицы
-символов четырёх модулей копятся в памяти.
+In `ORG.Mod`, number 4 is set by `PROCEDURE NilCheck`: a NIL dereference. And NIL
+is returned by `Kernel.New` when the heap has run out. Within one command control
+does not return to `Oberon.Loop`, the garbage collector does not run, and the symbol
+tables of four modules pile up in memory.
 
-Четыре отдельные команды — проходят все четыре модуля. Ограничение не
-компилятора, а модели памяти системы: собирать компилятор надо по модулю за
-команду.
+With four separate commands all four modules go through. The limitation is not
+the compiler's but the system's memory model: the compiler has to be built one module per
+command.
 
-## Побочно найден баг воспроизводимости в собственной оснастке
+## A reproducibility bug found in our own harness along the way
 
-`tb/disk/disk.c` открывает образ как `rb+` и пишет в него настоящие сектора.
-Цель `boot` запускала стенд **без** `--disk`, то есть на значении по умолчанию
-— на эталонном образе в `ext/disk/`. Каждая загрузка системы молча правила
-источник истины; к моменту находки образ уже отличался от upstream
-(`3eee8459…` против `3a460a5a…`).
+`tb/disk/disk.c` opens the image as `rb+` and writes real sectors into it.
+The `boot` target ran the testbench **without** `--disk`, that is, with the default value:
+the reference image in `ext/disk/`. Every system boot silently edited
+the source of truth; by the time of the finding the image already differed from upstream
+(`3eee8459…` versus `3a460a5a…`).
 
-Контрольная сумма кадрового буфера при этом совпадала с эталонной
-`B5DFC933` и на испорченном образе — то есть проверка загрузки к порче диска
-нечувствительна и поймать это не могла.
+Meanwhile the framebuffer checksum matched the reference
+`B5DFC933` even on the corrupted image, so the boot check is
+insensitive to disk corruption and could not have caught this.
 
-Починено двумя слоями:
+Fixed in two layers:
 
-* стенд без `--persist` копирует образ в `build/<имя>.work` и работает на
-  копии; писать в указанный файл разрешает только явный флаг;
-* `ext/disk/SHA256SUMS` фиксирует эталон, чтобы расхождение было заметно.
+* without `--persist`, the testbench copies the image to `build/<name>.work` and works on
+  the copy; writing to the given file is allowed only with an explicit flag;
+* `ext/disk/SHA256SUMS` pins the reference, so that any divergence is noticeable.
 
-Образ восстановлен из upstream, загрузка на нём даёт прежнюю `B5DFC933`.
+The image was restored from upstream, and booting it gives the same `B5DFC933` as before.
 
-## Что это значит
+## What this means
 
-Круг замкнут полностью. Машина описана верилогом Вирта, на ней работает его
-система, внутри системы её компилятор собирает собственный исходник и приходит
-в неподвижную точку. Между хостом и машиной остаются только мышь, клавиатура
-и образ диска.
+The circle is completely closed. The machine is described by Wirth's Verilog, his
+system runs on it, and inside the system its compiler builds its own source and reaches
+a fixed point. Between the host and the machine there remain only the mouse, the keyboard
+and the disk image.

@@ -1,23 +1,27 @@
-# Находка 52. Кнопка «Just run the system» вела на русскую страницу
+[Русская версия](FINDING-52-nobody-ran-it.ru.md)
 
-Английский стал языком по умолчанию в лабораториях. На странице запуска машины
-— той, на которую ведёт кнопка `Just run the system` с английского лендинга, —
-он не появился вовсе: заголовок, подсказка про кнопки мыши, строка состояния и
-названия пунктов были русскими.
+# Finding 52. The "Just run the system" button led to a Russian page
 
-Заодно выяснилось, что заголовки вкладок (`<title>`) и атрибут языка документа
-остались русскими **и в лабораториях**. На самой странице их не видно: их видят
-закладка, превью ссылки в мессенджере, поиск и экранная читалка.
+English became the default language in the labs. On the machine launch page,
+the one the `Just run the system` button on the English landing page leads to,
+it did not appear at all: the heading, the hint about mouse buttons, the status
+line and the item names were in Russian.
 
-## Почему пропустили
+Along the way it turned out that the tab titles (`<title>`) and the document
+language attribute had stayed Russian **in the labs too**. They are not visible
+on the page itself: they are seen by bookmarks, link previews in messengers,
+search engines and screen readers.
 
-Страница запуска не участвовала ни в одной проверке. Безголовые прогоны
-(`labs-test.mjs`, `probe.mjs`) работают с `machine.js` напрямую, минуя её
-разметку, а глазами её смотрели по-русски.
+## Why it was missed
 
-## Что хуже: проверок не запускал никто
+The launch page was not part of any check. The headless runs (`labs-test.mjs`,
+`probe.mjs`) work with `machine.js` directly, bypassing its markup, and people
+looked at it by eye in Russian.
 
-`make labs` падал **на первой же строке** с тех пор, как появился выбор языка:
+## What is worse: nobody ran the checks
+
+`make labs` had been failing **on the very first line** ever since language
+selection was added:
 
 ```
 const q = new URLSearchParams(location.search).get('lang');
@@ -25,29 +29,29 @@ const q = new URLSearchParams(location.search).get('lang');
 ReferenceError: location is not defined
 ```
 
-В node нет `location`. Девять лабораторных не проверялись ни разу с того
-коммита — и это не было видно, потому что в репозитории **не запускалось
-автоматически ничего**, кроме раскладки сайта и сборки образов по тегу.
+node has no `location`. The nine labs had not been checked even once since that
+commit, and this was not visible, because **nothing ran automatically** in the
+repository except the site deployment and the image builds on tags.
 
-Две тихие поломки одного происхождения: результат есть, проверки нет.
+Two silent breakages with one origin: the result exists, the check does not.
 
-## Что сделано
+## What was done
 
-Страница запуска переведена и получила переключатель языка — те же
-`data-i18n-en`, что и в лабораториях. `applyMarkup` теперь ставит и
-`<html lang>`, и заголовок вкладки. `i18n.js` не падает без браузера.
+The launch page was translated and got a language switcher, using the same
+`data-i18n-en` attributes as the labs. `applyMarkup` now sets both
+`<html lang>` and the tab title. `i18n.js` no longer fails outside a browser.
 
-Появился прогон на каждую правку (`.github/workflows/check.yml`): методичка,
-девять лабораторных на настоящей машине, сборка сайта с проверкой ссылок и
-сверка собранной методички с той, что лежит в репозитории. Полторы минуты,
-node и python3 — RTL и QEMU туда не помещаются, но всё, что можно проверить
-дёшево, проверяется теперь само.
+There is now a run on every change (`.github/workflows/check.yml`): the
+workbook, the nine labs on the real machine, the site build with link checking,
+and a comparison of the built workbook against the one in the repository. A
+minute and a half, node and python3. RTL and QEMU do not fit there, but
+everything that can be checked cheaply is now checked on its own.
 
-## Мелочь, которая ловится только в браузере
+## A small thing that is caught only in the browser
 
-Подсказка про кнопки мыши заменяется целиком, вместе со `span`'ами `b0..b2`,
-которыми подсвечиваются нажатые кнопки. Значит, `applyMarkup` обязан отработать
-**до** того, как скрипт найдёт эти узлы: иначе ссылки останутся на выброшенные
-элементы, подсветка молча перестанет работать, и ни одна проверка этого не
-заметит. Тот же корень, что и у прошлой ловушки с `data-i18n-en` на `<label>`,
-съедавшим `<select>`.
+The mouse button hint is replaced entirely, together with the `b0..b2` `span`s
+used to highlight pressed buttons. So `applyMarkup` must run **before** the
+script looks up those nodes: otherwise the references will point to discarded
+elements, highlighting will silently stop working, and no check will notice.
+The same root as the earlier trap with `data-i18n-en` on a `<label>` swallowing
+a `<select>`.

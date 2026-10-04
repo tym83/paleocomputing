@@ -1,115 +1,117 @@
-# Находка 6: аппаратная проверка границ снимает лишь 14% цены проверок
+[Русская версия](FINDING-06-three-configs.ru.md)
 
-> ## ⚠ НАХОДКА ОТМЕНЕНА — И НЕ ВОСПРОИЗВОДИТСЯ
-> Дополнительно к сказанному ниже: **конфигурация C в текущем дереве не запускается**.
-> Эмулятор `ext/norebo/Runtime/risc-cpu.c` декодирует CHK жёстко по кодировке варианта E
-> (предел из двух кусков), а `patches/ORG-cfgC.Mod` эмитит предел в `IR[15:4]`. Декодер
-> читает его как `lim DIV 16`, проверка срабатывает на законных индексах, компилятор
-> падает через ~1.7 млн тактов. Числа C ниже сняты до перевода эмулятора на split
-> и из дерева не воспроизводятся.
+# Finding 6: a hardware bounds check removes only 14% of the cost of checks
+
+> ## ⚠ FINDING WITHDRAWN, AND NOT REPRODUCIBLE
+> In addition to what is said below: **configuration C does not run in the current tree**.
+> The emulator `ext/norebo/Runtime/risc-cpu.c` decodes CHK hard-wired to the encoding of variant E
+> (limit in two pieces), while `patches/ORG-cfgC.Mod` emits the limit in `IR[15:4]`. The decoder
+> reads it as `lim DIV 16`, the check fires on legitimate indices, and the compiler
+> crashes after ~1.7 million cycles. The C numbers below were taken before the emulator was switched to split
+> and cannot be reproduced from the tree.
 >
-> ## ⚠ НАХОДКА ОТМЕНЕНА
-> Числа ниже относятся к конфигурации **C** (предел 12 бит в `IR[15:4]`), которая была
-> **отвергнута**: она ломает диагностику — система сообщает не ту ошибку (находка 8).
-> Принятая конфигурация — **E**, предел из двух кусков (находка 10). Для неё вклад
-> аппаратуры составляет **13.7%** на компиляции и **50.0%** на счётной нагрузке.
-> Читать вместе с находками 9 и 10.
+> ## ⚠ FINDING WITHDRAWN
+> The numbers below refer to configuration **C** (a 12-bit limit in `IR[15:4]`), which was
+> **rejected**: it breaks diagnostics, the system reports the wrong error (finding 8).
+> The adopted configuration is **E**, a limit in two pieces (finding 10). For it the hardware's
+> contribution is **13.7%** on compilation and **50.0%** on the computational workload.
+> Read together with findings 9 and 10.
 
 
-**Это замыкает главный эксперимент выпуска: три конфигурации на полностью открытом стеке.**
-Отрицательный результат, и он интереснее положительного.
+**This closes the main experiment of the release: three configurations on a fully open stack.**
+A negative result, and it is more interesting than a positive one.
 
-Воспроизводится: `tools/measure3.sh`.
+Reproducible: `tools/measure3.sh`.
 
-## Три конфигурации
+## Three configurations
 
-| | Что | Как получена |
+| | What | How it was obtained |
 |---|---|---|
-| **A** | проверок нет | `check := FALSE` в `ORG.Open` — сборки не существовало, создана |
-| **B** | программные (сток) | `CMP` + `BLR` = 2 слова / 2 такта на индексацию |
-| **C** | аппаратные | новая инструкция `CHK` = 1 слово / 1 такт |
+| **A** | no checks | `check := FALSE` in `ORG.Open`; the build did not exist, it was created |
+| **B** | software (stock) | `CMP` + `BLR` = 2 words / 2 cycles per indexing |
+| **C** | hardware | new instruction `CHK` = 1 word / 1 cycle |
 
-Нагрузка — **«компилятор компилирует пять модулей системы»**, то есть «система
-пересобирает сама себя». Ровно та, которую ревью назвало единственной не измеренной никем.
+The workload is **"the compiler compiles five modules of the system"**, that is, "the system
+rebuilds itself". Exactly the one the review called the only one nobody has measured.
 
-**Обязательны две стадии самораскрутки.** Прямое сравнение компиляторов меряет не цену
-проверок, а работу компилятора по их генерации — на этом я один раз уже ошибся
-в шесть раз (см. находку 5).
+**Two bootstrap stages are mandatory.** A direct comparison of the compilers measures not the cost
+of the checks but the compiler's work generating them; I already got this wrong once,
+by a factor of six (see finding 5).
 
-## Результат
+## Result
 
-| Конфигурация | Такты | Инструкции | Код, слов |
+| Configuration | Cycles | Instructions | Code, words |
 |---|---|---|---|
-| A — нет проверок | 29 121 384 | 17 407 595 | 5 775 |
-| B — программные | 29 919 963 | 18 090 546 | 6 348 |
-| C — аппаратные | 29 808 859 | 17 986 329 | 6 290 |
+| A: no checks | 29 121 384 | 17 407 595 | 5 775 |
+| B: software | 29 919 963 | 18 090 546 | 6 348 |
+| C: hardware | 29 808 859 | 17 986 329 | 6 290 |
 
-**Цена проверок относительно их отсутствия:**
+**Cost of checks relative to their absence:**
 
-| | Такты | Инструкции | Код |
+| | Cycles | Instructions | Code |
 |---|---|---|---|
-| B — программные | **+2.74%** | +3.92% | +9.92% |
-| C — аппаратные | **+2.36%** | +3.32% | +8.92% |
+| B: software | **+2.74%** | +3.92% | +9.92% |
+| C: hardware | **+2.36%** | +3.32% | +8.92% |
 
-**Что даёт аппаратная поддержка (C против B):**
+**What hardware support gives (C versus B):**
 
-| | Абсолютно | Доля нагрузки |
+| | Absolute | Share of the workload |
 |---|---|---|
-| такты | 111 104 | **0.37%** |
-| инструкции | 104 217 | 0.58% |
-| код | 58 слов | 0.91% |
+| cycles | 111 104 | **0.37%** |
+| instructions | 104 217 | 0.58% |
+| code | 58 words | 0.91% |
 
-## Главный вывод
+## Main conclusion
 
-**Аппаратная проверка границ снимает лишь 14% цены проверок** (0.38 из 2.74 процентных
-пунктов) и обходится в **0.32%…0.85% площади ядра**.
+**A hardware bounds check removes only 14% of the cost of checks** (0.38 of 2.74 percentage
+points) and costs **0.32%…0.85% of the core area**.
 
-То есть в этой системе **добавление аппаратной поддержки почти ничего не покупает** —
-и причина не в том, что она плохо сделана, а в том, что **проверки границ массивов не там,
-где сидит цена**.
+That is, in this system **adding hardware support buys almost nothing**,
+and the reason is not that it is badly done but that **array bounds checks are not where
+the cost lies**.
 
-## Почему так — три причины, все измеренные
+## Why: three reasons, all measured
 
-1. **Доминируют проверки на NIL, а не на границы.** В `ORP` из 402 ловушек **390 — это
-   разыменование указателей**, и стоят они по одному слову и одному такту каждая. CHK их
-   не касается вообще.
-2. **CHK покрывает только массивы короче 4096 элементов** — следствие 12-битного предела
-   в свободном поле `IR[15:4]`. Массивы вроде `code: ARRAY 8000` уходят на старый путь.
-3. **Открытые массивы остаются на двух инструкциях**: длина приходит скрытым параметром,
-   её надо загрузить, а это ещё и два такта на загрузку.
+1. **NIL checks dominate, not bounds checks.** In `ORP`, of 402 traps **390 are
+   pointer dereferences**, and they cost one word and one cycle each. CHK does not
+   touch them at all.
+2. **CHK covers only arrays shorter than 4096 elements**, a consequence of the 12-bit limit
+   in the free field `IR[15:4]`. Arrays such as `code: ARRAY 8000` fall back to the old path.
+3. **Open arrays stay at two instructions**: the length arrives as a hidden parameter,
+   it has to be loaded, and that also costs two cycles for the load.
 
-## Что из этого следует для повестки CHERI/MTE
+## What follows for the CHERI/MTE agenda
 
-Аккуратная формулировка, которую можно защищать:
+A careful wording that can be defended:
 
-> На системе, где проверки существуют с 1988 года и написаны программно, их полная цена
-> составляет **2.74% тактов**. Перенос самой частой из них в аппаратуру снимает
-> **0.37 процентного пункта** ценой **0.32%…0.85% площади ядра**. Основная часть цены
-> приходится не на проверку границ массивов, а на проверку указателей на NIL, и аппаратное
-> ускорение границ её не затрагивает.
+> On a system where checks have existed since 1988 and are implemented in software, their full cost
+> is **2.74% of cycles**. Moving the most frequent of them into hardware removes
+> **0.37 percentage points** at a cost of **0.32%…0.85% of the core area**. Most of the cost
+> falls not on array bounds checks but on NIL pointer checks, and hardware
+> acceleration of bounds does not touch it.
 
-Это не довод против аппаратной безопасности памяти. Это довод за то, что **прежде чем
-переносить проверку в железо, надо измерить, какая именно проверка стоит денег** — и что
-в системах, спроектированных с проверками изначально, ответ может оказаться
-не тем, который подсказывает интуиция из мира C.
+This is not an argument against hardware memory safety. It is an argument that **before
+moving a check into hardware, one should measure which check actually costs money**, and that
+in systems designed with checks from the start the answer may turn out
+not to be the one intuition from the C world suggests.
 
-## Сопоставление всех чисел выпуска
+## All the release's numbers side by side
 
-| Метрика | Значение |
+| Metric | Value |
 |---|---|
-| Проверки: размер кода | 6.2% (на выборке из 10 модулей) |
-| Проверки: такты | **2.74%** |
-| Аппаратная поддержка снимает | **0.37 п.п.** такта = 14% цены |
-| Площадь аппаратной поддержки | **+0.32%…+0.85% (58…154 GE, зависит от скрипта отображения; нижняя граница внутри шума)** |
-| Шумовой пол синтеза | ±51 мкм² — **вдвое больше измеряемого эффекта** |
-| База: ядро RISC5 | 14 532 мкм² = 18.21 kGE, 993 триггера |
+| Checks: code size | 6.2% (on a sample of 10 modules) |
+| Checks: cycles | **2.74%** |
+| Hardware support removes | **0.37 pp** of cycles = 14% of the cost |
+| Area of hardware support | **+0.32%…+0.85% (58…154 GE, depends on the mapping script; the lower bound is inside the noise)** |
+| Synthesis noise floor | ±51 µm², **twice the measured effect** |
+| Baseline: RISC5 core | 14 532 µm² = 18.21 kGE, 993 flip-flops |
 
-## Ограничения, записанные честно
+## Limitations, recorded honestly
 
-- Нагрузка одна и она компиляторная: много указателей, мало плотной индексации.
-  На счётной нагрузке доля проверок границ будет выше, а вклад CHK — заметнее.
-- Предел CHK в 12 бит — осознанный размен ради использования **доказуемо** свободного
-  поля кодирования. Более широкий предел потребовал бы занять алиас существующей
-  инструкции, а ловушки на неизвестную инструкцию в RISC5 нет.
-- Такты получены моделью латентностей, сверенной с RTL потактово (61 инструкция,
-  расхождений 0), а не прогоном всей нагрузки на RTL: для этого нужна SoC-обвязка.
+- There is one workload and it is a compiler workload: many pointers, little dense indexing.
+  On a computational workload the share of bounds checks will be higher, and CHK's contribution more noticeable.
+- The 12-bit CHK limit is a deliberate trade-off in favour of using a **provably** free
+  encoding field. A wider limit would require taking an alias of an existing
+  instruction, and RISC5 has no trap on an unknown instruction.
+- The cycles were obtained with a latency model checked against the RTL cycle by cycle (61 instructions,
+  0 mismatches), not by running the whole workload on the RTL: that would need a SoC wrapper.

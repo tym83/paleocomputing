@@ -1,60 +1,66 @@
-# Находка 47. Всё зелёное, и ничего не работает
+[Русская версия](FINDING-47-green-and-dead.ru.md)
 
-За одну сессию я попал в одну и ту же ловушку **шесть раз**. Каждый раз она
-выглядела иначе, и каждый раз я чинил частность, не замечая общего. Записываю
-общее — оно полезнее шести починок.
+# Finding 47. Everything is green, and nothing works
 
-## Шесть случаев
+In one session I fell into the same trap **six times**. Each time it looked
+different, and each time I fixed the particular case without noticing what they
+had in common. I am writing down the common part, because it is more useful
+than six fixes.
 
-| что проверяли | что отвечало | что было на самом деле |
+## Six cases
+
+| what was checked | what answered | what was actually the case |
 |---|---|---|
-| каталог собран | артефакт валиден | манифест источника не попал внутрь |
-| приложение развёрнуто | релиз успешен | схема отвергала значения, пода не было |
-| страница отдаётся | `HTTP 200, 12019 байт` | в образе не было машины |
-| сборка прошла | зелёная | копировалось то, чего нет |
-| каталог обновлён | «создано 4 артефакта» | компонентов пять |
-| приложение поставлено | ресурс создан | том пуст, машине нечего грузить |
+| catalog built | artifact valid | the source manifest did not get inside |
+| application deployed | release succeeded | the schema rejected the values, there was no pod |
+| page served | `HTTP 200, 12019 bytes` | the image did not contain the machine |
+| build passed | green | it copied what was not there |
+| catalog updated | "created 4 artifacts" | there are five components |
+| application installed | resource created | the volume is empty, the machine has nothing to load |
 
-Ни один из этих ответов не был ложью. Просто **каждый отвечал не на тот
-вопрос**.
+None of these answers was a lie. It is just that **each one answered a
+different question**.
 
-## В чём природа
+## What its nature is
 
-Проверка смотрит на **форму ответа**: код возврата, размер, статус, факт
-существования. А знать надо **делает ли вещь свою работу**.
+The check looks at **the shape of the response**: exit code, size, status, the
+fact of existence. What we need to know is **whether the thing does its job**.
 
-Между этими двумя вопросами помещается вся разница между «развернулось» и
-«работает». И она тем шире, чем длиннее цепочка: у нас их шесть — репозиторий,
-сборка, реестр, каталог, платформа, машина, — и на каждой границе ответ
-подменяется формой.
+The entire difference between "deployed" and "works" fits between these two
+questions. And it grows with the length of the chain: ours has six links
+(repository, build, registry, catalog, platform, machine), and at every boundary
+the answer is replaced by its shape.
 
-Второе обстоятельство, общее для всех шести: **проверка шла там, где условия
-уже подготовлены предыдущим прогоном**. Файлы лежат с прошлого раза; каталог в
-каталоге; том наполнен. На чистой стороне — в сборке, в чужом кластере, у
-человека, который пришёл впервые, — ничего этого нет.
+The second circumstance common to all six: **the check ran where the conditions
+had already been prepared by a previous run**. The files are left over from last
+time; the catalog is in the catalog; the volume is filled. On the clean side (in
+the build, in someone else's cluster, for a person arriving for the first time)
+none of this exists.
 
-## Что из этого следует практически
+## What follows in practice
 
-**Спрашивать вещь о её работе, а не о её существовании.**
+**Ask the thing about its work, not about its existence.**
 
-* не «образ собрался», а «в образе есть чем работать» — залезть и посмотреть;
-* не «страница отдаётся», а «машина на ней заводится»;
-* не «артефактов создано N», а «N совпадает с числом компонентов»;
-* не «приложение установлено», а «оно делает то, ради чего поставлено».
+* not "the image built" but "the image contains something to work with": go
+  inside and look;
+* not "the page is served" but "the machine boots on it";
+* not "N artifacts created" but "N matches the number of components";
+* not "the application is installed" but "it does what it was installed for".
 
-**Проверять на чистом.** Всё, что проверено на машине, где уже лежат следы
-прошлых прогонов, не проверено. Сборка с нуля, пустой кластер, свежий клон.
+**Check on a clean environment.** Anything checked on a machine that still
+carries traces of previous runs is not checked. Build from scratch, an empty
+cluster, a fresh clone.
 
-**Проверка должна уметь провалиться.** Каждую новую я проверяю мутацией: ломаю
-то, что она стережёт, и убеждаюсь, что она краснеет. Без этого шага проверка —
-украшение.
+**A check must be able to fail.** I verify every new check by mutation: I break
+what it guards and make sure it turns red. Without this step a check is
+decoration.
 
-## Почему это стоит отдельной заметки
+## Why this deserves a separate note
 
-Шесть раз — это не совпадение и не невнимательность. Это свойство способа
-работы: цепочка длинная, на каждой границе есть быстрый ответ, и соблазн
-принять его за настоящий велик именно тогда, когда устал и хочется, чтобы
-сошлось.
+Six times is neither a coincidence nor inattention. It is a property of the way
+of working: the chain is long, every boundary offers a quick answer, and the
+temptation to take it for the real one is strongest exactly when you are tired
+and want things to add up.
 
-Отсюда правило, которое я вывожу для себя: **чем больше хочется, чтобы
-получилось, тем прямее надо спрашивать**.
+Hence the rule I derive for myself: **the more you want it to work, the more
+directly you have to ask**.

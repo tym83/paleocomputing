@@ -1,55 +1,60 @@
-# Находка 57. Личность подписи зависит от того, откуда запущен выпуск
+[Русская версия](FINDING-57-signing-identity.ru.md)
 
-Каталог подписывается без ключа: личностью подписи становится сам процесс
-сборки. Запись метаиндекса хранит эту личность, и шлюз community-индекса
-сверяет с ней каждую новую версию:
+# Finding 57. The signing identity depends on where the release is run from
+
+The catalog is signed keylessly: the build workflow itself becomes the signing
+identity. The meta-index entry stores this identity, and the community index
+gate checks every new version against it:
 
 ```
 signing:
   identity: https://github.com/tym83/paleocomputing/.github/workflows/publish.yml@refs/heads/main
 ```
 
-Выпуски при этом шли по пушу тега. А личность — это файл процесса **и
-ссылка, с которой он запущен**:
+Releases, however, were triggered by a tag push. And the identity is the
+workflow file **plus the ref it was run from**:
 
-| как запущен | личность |
+| how it was run | identity |
 |---|---|
-| вручную из main | `publish.yml@refs/heads/main` |
-| пушем тега v0.1.8 | `publish.yml@refs/tags/v0.1.8` |
+| manually from main | `publish.yml@refs/heads/main` |
+| by pushing tag v0.1.8 | `publish.yml@refs/tags/v0.1.8` |
 
-Ни один выпуск по тегу с записью не совпадал. Вписать тег в запись нельзя:
-личность обязана быть одной на все версии записи — в этом и смысл проверки.
+Not a single tag-triggered release matched the entry. The tag cannot be put
+into the entry: the identity must be the same for all versions of the entry;
+that is the whole point of the check.
 
-## Почему не заметили
+## Why it was not noticed
 
-Проверка подписи в самом процессе публикации сверяла только начало:
+The signature check in the publishing workflow itself compared only the prefix:
 
 ```
 --certificate-identity-regexp "^https://github.com/tym83/paleocomputing/"
 ```
 
-Под него подходит любая ссылка. А `cozypkg tap` подписи не проверяет вовсе —
-это работа шлюза индекса. Подключение в кластере работало, и расхождение
-всплыло бы только при подаче записи в официальный индекс.
+Any ref matches it. And `cozypkg tap` does not verify signatures at all; that is
+the index gate's job. Connecting the catalog in the cluster worked, and the
+mismatch would only have surfaced when submitting the entry to the official
+index.
 
-Нашлось чтением исходников `cozypkg` (`cmd/cozypkg/cmd/tap.go`,
-`validate.go`), а не прогоном.
+It was found by reading the `cozypkg` sources (`cmd/cozypkg/cmd/tap.go`,
+`validate.go`), not by running anything.
 
-## Что изменено
+## What was changed
 
-* Выпуск запускается вручную из main, дерево для сборки берётся из тега:
+* A release is run manually from main, and the tree for the build is taken from
+  the tag:
 
   ```
   git tag -a v0.1.9 -m ... && git push origin v0.1.9
   gh workflow run publish.yml --ref main -f tag=v0.1.9
   ```
 
-  Запуск не из main и выпуск несуществующего тега процесс отвергает.
-* Проверка подписи после выкладки сверяет личность **точно** — ту же строку,
-  что записана в метаиндексе.
+  The workflow rejects a run not from main and a release of a nonexistent tag.
+* The signature check after publishing compares the identity **exactly**,
+  against the same string that is recorded in the meta-index.
 
-## Общее
+## The common thread
 
-Тот же почерк, что в находках 35, 45 и 46: проверка смотрела на то, что
-заведомо совпадёт. Префикс репозитория совпадает всегда — значит, он ничего
-не проверял.
+The same signature as in Findings 35, 45 and 46: the check looked at something
+that was bound to match. The repository prefix always matches, so it checked
+nothing.

@@ -1,19 +1,21 @@
-# Находка 22: круг замкнут — компилятор Оберона работает на настоящем RTL
+[Русская версия](FINDING-22-selfhost-on-rtl.ru.md)
 
-Воспроизводится: `make selfhost`.
+# Finding 22: the circle is closed: the Oberon compiler runs on the real RTL
 
-## Что сделано
+Reproducible: `make selfhost`.
 
-Компилятор Project Oberon целиком — `ORS`, `ORB`, `ORG`, `ORP` — скомпилирован
-**на ядре `RISC5.v` Никлауса Вирта**, прогоняемом Verilator'ом такт за тактом.
-Не на эмуляторе, написанном на C, а на синтезируемом Verilog.
+## What was done
+
+The entire Project Oberon compiler, `ORS`, `ORB`, `ORG`, `ORP`, was compiled
+**on Niklaus Wirth's `RISC5.v` core**, run by Verilator cycle by cycle.
+Not on an emulator written in C, but on synthesisable Verilog.
 
 | | |
 |---|---|
-| инструкций на RTL | **40 770 748** |
-| тактов | **66 700 249** |
-| модулей скомпилировано | 4 |
-| совпадение с эмулятором | **побайтово, все четыре** |
+| instructions on the RTL | **40 770 748** |
+| cycles | **66 700 249** |
+| modules compiled | 4 |
+| match with the emulator | **byte for byte, all four** |
 
 ```
 ORS   d79c7b037bc77ada9bf5cd3f0c734ba2  ✅
@@ -22,58 +24,58 @@ ORG   c34ca90c12748405a80c1109ab6ca422  ✅
 ORP   476b4efce7bc3116d68788c5385b1967  ✅
 ```
 
-## Что это значит
+## What this means
 
-Компилятор Оберона **уже был написан на Обероне** и самораскручивался — это работа Вирта,
-и мы её только проверили (неподвижная точка, находка в журнале). Новое здесь другое:
+The Oberon compiler **was already written in Oberon** and bootstrapped itself: that is Wirth's work,
+and we only checked it (the fixed point, a finding in the log). What is new here is something else:
 
-> Язык, компилятор, операционная система **и процессор** замкнулись в круг, где
-> единственный код на C — мост к файловой системе хоста, то есть интерфейс к ОС,
-> а не часть машины.
+> The language, the compiler, the operating system **and the processor** closed into a circle where
+> the only C code is the bridge to the host file system, that is, an interface to the OS,
+> not part of the machine.
 
-В браузерной версии и этот мост не нужен: там файлы живут в образе диска.
+In the browser version even this bridge is not needed: there the files live in the disk image.
 
-## Как устроено
+## How it works
 
-Norebo связывает Оберон с хостом через четыре адреса ввода-вывода: номер системного
-запроса и три аргумента. Мы **включили `norebo.c` целиком, подменив только `main()`
-и запуск процессора** — файловые операции, память и таблица запросов взяты без единого
-изменения. Иначе сравнение «то же самое, но на RTL» было бы нечестным: мы бы сравнивали
-с собственной реализацией.
+Norebo connects Oberon to the host through four I/O addresses: the system
+call number and three arguments. We **included `norebo.c` in full, replacing only `main()`
+and the processor start-up**: the file operations, memory and the call table were taken without a single
+change. Otherwise the comparison "the same thing, but on RTL" would be dishonest: we would be comparing
+against our own implementation.
 
-Процессор крутит Verilator, всё остальное — код Norebo.
+Verilator runs the processor; everything else is Norebo's code.
 
-## Три ошибки по дороге, все мои
+## Three mistakes along the way, all mine
 
-**1. Адреса устройств.** Norebo адресует их отрицательными числами (`-4`, `-8`, `-12`,
-`-16`), то есть `0xFFFFFFFC` в 32 битах. Но шина RISC5 — **24 бита**, и оттуда приходит
-`0xFFFFFC`. Проверка `(int32_t)a < 0` на 24-битном адресе **не срабатывает никогда**.
-Первый прогон отработал **4 миллиарда инструкций вхолостую**.
+**1. Device addresses.** Norebo addresses them with negative numbers (`-4`, `-8`, `-12`,
+`-16`), that is, `0xFFFFFFFC` in 32 bits. But the RISC5 bus is **24 bits**, and what arrives from it is
+`0xFFFFFC`. The check `(int32_t)a < 0` on a 24-bit address **never fires**.
+The first run spent **4 billion instructions idling**.
 
-**2. Условие останова.** Починив первое, я заодно упростил проверку останова — и она
-стала срабатывать на **любом** системном вызове вместо одного лишь `noreboHalt`.
-Прогон заканчивался через 103 инструкции.
+**2. The halt condition.** Having fixed the first, I also simplified the halt check, and it
+started firing on **any** system call instead of only `noreboHalt`.
+The run ended after 103 instructions.
 
-**3. Регистр команд при старте.** Самая содержательная. RISC5 — машина с предвыборкой:
-в начале такта регистр команд держит исполняемую инструкцию, а шина уже показывает
-следующую. Я задал счётчик команд, но **не задал регистр команд** — в нём остался мусор
-после сброса. Первая инструкция образа (переход в точку входа) не выполнилась,
-и ядро пошло исполнять **таблицу модулей как код**.
+**3. The instruction register at start-up.** The most substantive one. RISC5 is a prefetching machine:
+at the start of a cycle the instruction register holds the executing instruction, and the bus already shows
+the next one. I set the program counter but **did not set the instruction register**: it was left with garbage
+after reset. The first instruction of the image (the jump to the entry point) was not executed,
+and the core went on executing **the module table as code**.
 
-Трассировка показала это мгновенно: счётчик шёл `0, 4, 8, C…` вместо перехода на `0x3664`.
+Tracing showed this instantly: the counter went `0, 4, 8, C…` instead of jumping to `0x3664`.
 
-## Отдельно: ловушка в собственном цикле ожидания
+## Separately: a trap in my own wait loop
 
-Проверяя результат, я написал `until ! pgrep -f norebo_tb; do sleep; done` — и цикл
-**нашёл сам себя**: в его командной строке упомянуто искомое имя. Полтора часа он ждал
-собственного завершения, а я считал, что идёт долгая компиляция.
+While checking the result, I wrote `until ! pgrep -f norebo_tb; do sleep; done`, and the loop
+**found itself**: its own command line mentions the name being searched for. For an hour and a half it waited
+for its own termination, while I thought a long compilation was running.
 
-Мораль та же, что в находке 17: **отрицательный результат проверяется так же тщательно,
-как положительный**. «Не завершилось за полтора часа» оказалось не свойством системы,
-а свойством измерителя.
+The moral is the same as in finding 17: **a negative result is checked just as carefully
+as a positive one**. "Did not finish in an hour and a half" turned out to be a property not of the system
+but of the measuring instrument.
 
-## Что открывает
+## What it opens up
 
-- **лаборатория «самораскрутка»** (курс по Оберону, лаба 7–8) теперь может идти на RTL
-- следующий шаг — то же самое **в браузере**, где моста к хосту нет вовсе
-- и та же схема переносится на Lilith: компилятор Модулы-2 на машине, которой не было
+- **the "bootstrap" lab** (the Oberon course, labs 7–8) can now run on the RTL
+- the next step is the same thing **in the browser**, where there is no bridge to the host at all
+- and the same scheme carries over to Lilith: a Modula-2 compiler on a machine that never existed

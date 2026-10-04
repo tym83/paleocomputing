@@ -1,7 +1,10 @@
-# Находка 48. Машина Вирта стоит из маркетплейса в тенанте Cozystack
+[Русская версия](FINDING-48-full-chain.ru.md)
 
-Цепочка замкнута целиком. Тенант ставит приложение из каталога — и получает
-работающую машину с архитектурой, которой в платформе нет:
+# Finding 48. Wirth's machine installs from the marketplace in a Cozystack tenant
+
+The chain is closed end to end. A tenant installs an application from the
+catalog and gets a working machine with an architecture the platform does not
+have:
 
 ```
 kubectl apply -f - <<EOF
@@ -12,50 +15,53 @@ spec: {memory: 128Mi}
 EOF
 ```
 
-Внутри — домен `arch='risc5' machine='oberon'` с нашим эмулятором, и в нём
-система Оберон 1986 года. Кадровый буфер **совпал побайтово** с буфером той же
-системы на настоящем описании схемы: 98 304 байта, 18 607 точек.
+Inside is a domain `arch='risc5' machine='oberon'` with our emulator, and in it
+the 1986 Oberon system. The framebuffer **matched byte for byte** the
+framebuffer of the same system running on the real circuit description: 98,304
+bytes, 18,607 pixels.
 
-## Что потребовалось, а что нет
+## What was required and what was not
 
-| слой | своё | почему |
+| layer | our own | why |
 |---|---|---|
-| QEMU | ✅ цель RISC5 | иначе нечему исполнять |
-| libvirt | ✅ патч ~10 строк | архитектуру спрашивают у эмулятора |
-| virt-launcher | ✅ свой образ | в нём живёт libvirt |
-| KubeVirt | ❌ | `OnDefineDomain` — штатная точка |
-| образ перехватчика | ❌ | штатная обёртка исполняет скрипт из ConfigMap |
-| Cozystack | ❌ | приложение обычное |
+| QEMU | ✅ RISC5 target | otherwise there is nothing to execute |
+| libvirt | ✅ ~10-line patch | the architecture is queried from the emulator |
+| virt-launcher | ✅ our own image | libvirt lives in it |
+| KubeVirt | ❌ | `OnDefineDomain` is a standard extension point |
+| hook image | ❌ | the standard wrapper runs a script from a ConfigMap |
+| Cozystack | ❌ | the application is an ordinary one |
 
-**Форкнут только libvirt**, и правка в нём — три записи в таблицах плюс две
-ветки, которые показал сам компилятор.
+**Only libvirt is forked**, and the change in it is three table entries plus two
+branches that the compiler itself pointed out.
 
-## Две предпосылки уровня кластера
+## Two cluster-level prerequisites
 
-Тенант их выставить не может, и это не изъян, а форма вещи:
+A tenant cannot set them, and that is not a flaw but the shape of the thing:
 
-1. **признак `Sidecar`** — без него перехватчик не запускается;
-2. **образ `virt-launcher` с патченым libvirt** — архитектура должна быть
-   известна ему, а не описанию машины.
+1. **the `Sidecar` feature gate**: without it the hook does not start;
+2. **a `virt-launcher` image with patched libvirt**: the architecture must be
+   known to it, not to the machine description.
 
-Кластер соглашается один раз, и дальше **любой тенант ставит любую машину из
-каталога**. Как пакет драйверов: ядро раздаёт кластер, пользуется кто угодно.
+The cluster agrees once, and from then on **any tenant installs any machine
+from the catalog**. Like a driver package: the cluster distributes the kernel,
+and anyone can use it.
 
-Проверено, что согласие безопасно: обычная Ubuntu на нашем образе поднимается,
-50 машин кластера не пострадали.
+It was verified that this agreement is safe: an ordinary Ubuntu boots on our
+image, and the cluster's 50 machines were not affected.
 
-## Чего это стоило
+## What it cost
 
-Постановка одной машины в один тенант вскрыла **четыре ошибки подряд**,
-невидимые всем предыдущим прогонам:
+Installing one machine into one tenant exposed **four bugs in a row**, invisible
+to all previous runs:
 
-* приложение объявлено в одном месте из двух — артефакта нет;
-* переключение тега каталога не обновляет список компонентов;
-* том приходит от root, а образ работает от обычного пользователя;
-* задача наполнения не упорядочена и не пересоздаётся.
+* the application was declared in only one of two places, so there is no
+  artifact;
+* switching the catalog tag does not update the list of components;
+* the volume arrives owned by root, while the image runs as a regular user;
+* the fill job is not ordered and is not recreated.
 
-Каждая выглядела как успех. Общее — в находке 47.
+Each looked like success. The common thread is in Finding 47.
 
-Практический вывод для всей серии: **последний шаг, который кажется
-формальностью, и есть самая полезная проверка**. Всё, что до него, проверяло
-части.
+Practical conclusion for the whole series: **the last step, the one that looks
+like a formality, is the most useful check**. Everything before it checked
+parts.

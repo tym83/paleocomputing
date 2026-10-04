@@ -1,40 +1,41 @@
-# Находка 66. Незакрытый `<script>` браузер не выполняет — молча
+[Русская версия](FINDING-66-unclosed-script.ru.md)
 
-Лаборатория на сайте не работала: список лабораторных пуст, машина не
-запускается, внизу навсегда «загрузка…». Первое объяснение — дважды
-объявленная переменная, `SyntaxError` (исправлено в #24) — было верным, но
-не единственным: после исправления страница осталась мёртвой.
+# Finding 66. The browser does not execute an unclosed `<script>`, silently
 
-## Настоящая причина
+The lab on the website did not work: the list of labs was empty, the machine
+did not start, and "loading…" stayed at the bottom forever. The first
+explanation, a variable declared twice causing a `SyntaxError` (fixed in #24),
+was correct but not the only one: after the fix the page stayed dead.
 
-В `lab.html` не было закрывающего `</script>`. Я счёл это безобидным — «браузер
-прощает» — и даже научил проверку страниц прощать отсутствие тега. Это
-неверно. По спецификации HTML, если файл кончается внутри элемента `script`,
-парсер помечает его как «уже запущенный», и скрипт **не выполняется вовсе**.
-Ни ошибки в консоли, ни предупреждения.
+## The real cause
 
-## Как нашлось
+`lab.html` had no closing `</script>`. I considered this harmless ("the
+browser forgives it") and even taught the page check to forgive a missing
+tag. That is wrong. Per the HTML specification, if the file ends inside a
+`script` element, the parser marks it as "already started", and the script
+**is not executed at all**. No error in the console, no warning.
 
-* Вручную выполненный текст того же модуля отрабатывал — список заполнялся.
-* Безголовый Chrome на опубликованной странице: 0 лабораторных, в консоли
-  пусто.
-* Отладочная копия страницы с отметками по ходу скрипта: обычный скрипт
-  выполнился, первая строка модуля — нет. Ни одного `await` на верхнем
-  уровне в зависимостях не нашлось, значит модуль не запускался вообще.
-* С дописанным `</script>` — все отметки и 12 лабораторных.
+## How it was found
 
-## Что изменено
+* Executing the text of the same module by hand worked: the list got filled.
+* Headless Chrome on the published page: 0 labs, an empty console.
+* A debug copy of the page with markers along the script: the classic script
+  ran, the first line of the module did not. No top-level `await` was found in
+  the dependencies, so the module did not run at all.
+* With `</script>` added: all markers and 12 labs.
 
-* `lab.html` закрывает свой скрипт.
-* `page-test.mjs` требует, чтобы каждый `<script>` был закрыт.
-* `tools/browser-smoke.sh` в быстром задании CI открывает собранный сайт
-  безголовым Chrome и требует в списке столько лабораторных, сколько их в
-  `labs.js`. Проверено в обе стороны: исправленная страница — 12 из 12,
-  прежняя — 0 из 12.
+## What changed
 
-## Общее
+* `lab.html` closes its script.
+* `page-test.mjs` requires every `<script>` to be closed.
+* `tools/browser-smoke.sh`, in the fast CI job, opens the built site in
+  headless Chrome and requires as many labs in the list as there are in
+  `labs.js`. Verified both ways: the fixed page gives 12 of 12, the previous
+  one 0 of 12.
 
-Две поломки подряд прошли мимо статических проверок, потому что проверки
-смотрели на текст страницы, а сломано было её исполнение. Страницу проверяет
-только браузер. «Браузер это прощает» — утверждение, которое надо было
-проверить браузером, а не принять.
+## In general
+
+Two breakages in a row slipped past the static checks because the checks
+looked at the page's text, while what was broken was its execution. Only a
+browser checks a page. "The browser forgives it" is a claim that should have
+been checked with a browser, not accepted.

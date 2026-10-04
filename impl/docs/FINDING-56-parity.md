@@ -1,51 +1,55 @@
-# Находка 56. Паритет: одно и то же железо в браузере и в кластере
+[Русская версия](FINDING-56-parity.ru.md)
 
-Расширение системы команд появилось сначала в браузере — переключателем на
-странице. Этого мало: машина живёт в двух местах, и «есть на странице, нет в
-кластере» — это ровно та болезнь, которой этот репозиторий болел трижды
-(находки 51, 52, 54). Поэтому вариант железа теперь выбирается везде одинаково.
+# Finding 56. Parity: the same hardware in the browser and in the cluster
 
-| Где | Как выбирается |
+The instruction set extension appeared first in the browser, as a switch on the
+page. That is not enough: the machine lives in two places, and "present on the
+page, absent in the cluster" is exactly the disease this repository has had
+three times (Findings 51, 52, 54). So the hardware variant is now selected the
+same way everywhere.
+
+| Where | How it is selected |
 |---|---|
-| RTL (нативно, Verilator) | `-DWITH_CHK -DCHK_SPLIT` |
-| браузер | `<oberon-machine variant="chk">`, переключатель на странице |
+| RTL (native, Verilator) | `-DWITH_CHK -DCHK_SPLIT` |
+| browser | `<oberon-machine variant="chk">`, a switch on the page |
 | QEMU | `-machine oberon,chk=on` |
-| кластер, пакет каталога | `hardware: chk` → аннотация → хук → тот же `-machine` |
+| cluster, catalog package | `hardware: chk` → annotation → hook → the same `-machine` |
 
-**Это не режим эмулятора, а другая сборка процессора.** Поэтому и выбирается
-он свойством машины, а не ключом запуска: по умолчанию выключено, и базовая
-машина обязана вести себя ровно как ядро Вирта — иначе сверка с RTL перестаёт
-что-либо значить.
+**This is not an emulator mode but a different build of the processor.** That
+is why it is selected by a machine property and not by a launch flag: it is off
+by default, and the base machine must behave exactly like Wirth's core;
+otherwise the comparison with RTL stops meaning anything.
 
-## Чем доказано, что это одно и то же железо
+## How it is proven to be the same hardware
 
-`qemu/test/compare_chk.py`: **та же программа**, которой считаются числа на
-странице, гоняется в QEMU с `chk=on` и на модели, снятой с настоящего RTL и
-собранной в WASM. Сравниваются все шестнадцать регистров после одинакового
-числа команд. Сошлись.
+`qemu/test/compare_chk.py`: **the same program** that computes the numbers on
+the page is run in QEMU with `chk=on` and on the model extracted from the real
+RTL and built into WASM. All sixteen registers are compared after the same
+number of instructions. They matched.
 
-И там же отрицательный контроль: та же программа на машине **без** расширения
-обязана разойтись — иначе сверка ничего не проверяет. Расходится `R0`: без
-расширения эта кодировка означает сдвиг, и регистр, которого CHK не трогает,
-оказывается записан.
+The same script has a negative control: the same program on a machine
+**without** the extension must diverge; otherwise the comparison checks
+nothing. `R0` diverges: without the extension this encoding means a shift, and
+a register that CHK does not touch ends up written.
 
-## Две ловушки сравнения
+## Two comparison traps
 
-**QEMU печатает состояние перед командой, модель — после.** Сдвиг на единицу
-выглядел как настоящая ошибка реализации: расходился ровно один регистр — тот,
-который пишет следующая команда.
+**QEMU prints the state before an instruction, the model prints it after.** The
+off-by-one looked like a real implementation bug: exactly one register diverged,
+the one written by the next instruction.
 
-**И журнал нельзя писать в файл.** `-d cpu` с `one-insn-per-tb` — это ~310
-байт на команду, а программа после полезной части крутится в пустом цикле.
-Минута журналирования — десятки гигабайт: диск виртуалки докера забился до
-отказа, containerd перестал писать собственную базу, и чинилось это только
-пересозданием машины. Теперь журнал идёт в конвейер `head -c` и на диск не
-попадает вовсе (плюс `timeout`: от закрытой трубы QEMU сам не умирает —
-проверено, контейнер висел).
+**And the log must not be written to a file.** `-d cpu` with `one-insn-per-tb`
+is ~310 bytes per instruction, and after its useful part the program spins in
+an empty loop. A minute of logging is tens of gigabytes: the Docker VM's disk
+filled up completely, containerd stopped being able to write its own database,
+and the only fix was recreating the VM. Now the log goes into a `head -c`
+pipeline and never reaches the disk at all (plus `timeout`: QEMU does not die by
+itself when the pipe is closed; verified, the container hung).
 
-## Чего пока нет
+## What is not there yet
 
-Установка из каталога с `hardware: chk` в кластере **не прогонялась**: для неё
-нужен новый образ эмулятора с этой целью QEMU, а он публикуется по тегу.
-Проверено всё, что до образа: шаблон рисует аннотацию, хук её читает и
-добавляет `-machine chk=on`, QEMU с этим ключом считает как настоящий RTL.
+Installing from the catalog with `hardware: chk` in the cluster **has not been
+run**: it needs a new emulator image with this QEMU target, and that is
+published on a tag. Everything up to the image has been verified: the template
+renders the annotation, the hook reads it and adds `-machine chk=on`, and QEMU
+with this flag computes like the real RTL.

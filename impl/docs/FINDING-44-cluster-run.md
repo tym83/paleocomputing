@@ -1,9 +1,12 @@
-# Находка 44. Виртуальная машина RISC5 работает в Kubernetes
+[Русская версия](FINDING-44-cluster-run.ru.md)
 
-Полный прогон в песочнице: k3s, KubeVirt 1.8.4, наш образ `virt-launcher`,
-перехватчик из ConfigMap. Виртуалка `oberon` в состоянии **Running**, внутри —
-настоящая система Оберон: кадровый буфер **совпал побайтово** с буфером той же
-системы на настоящем описании схемы. 98 304 байта, 18 607 точек.
+# Finding 44. The RISC5 virtual machine runs in Kubernetes
+
+A full run in the sandbox: k3s, KubeVirt 1.8.4, our `virt-launcher` image, and
+a hook from a ConfigMap. The `oberon` VM is in the **Running** state, and inside
+it is a real Oberon system: its framebuffer **matched byte for byte** the
+framebuffer of the same system running on the real circuit description.
+98,304 bytes, 18,607 pixels.
 
 ```
 <domain type='qemu'>
@@ -11,58 +14,63 @@
   <emulator>/usr/local/bin/qemu-system-risc5</emulator>
 ```
 
-## Форка не потребовалось нигде
+## No fork was needed anywhere
 
-| слой | что сделали |
+| layer | what we did |
 |---|---|
-| KubeVirt | ничего — `OnDefineDomain` штатная точка |
-| образ перехватчика | не нужен — скрипт из ConfigMap |
-| virt-launcher | свой образ, подменён через `customizeComponents` |
-| Cozystack | ничего |
+| KubeVirt | nothing; `OnDefineDomain` is a standard extension point |
+| hook image | not needed; the script comes from a ConfigMap |
+| virt-launcher | our own image, substituted via `customizeComponents` |
+| Cozystack | nothing |
 
-Подменять `imageRegistry` не пришлось: он меняет реестр **всем** образам
-KubeVirt, а свой у нас один. `customizeComponents.patches` правит аргумент
-`--launcher-image` у virt-controller — точечно и штатно.
+There was no need to override `imageRegistry`: it changes the registry for
+**all** KubeVirt images, and we have only one image of our own.
+`customizeComponents.patches` edits the `--launcher-image` argument of
+virt-controller, which is targeted and supported.
 
-## Четыре отказа, которые нашлись только здесь
+## Four rejections that only showed up here
 
-Все четыре пришли от настоящего KubeVirt, а не от рукописного описания. На
-столе их не видно, потому что вручную таких разделов просто не пишешь.
+All four came from real KubeVirt, not from a hand-written domain description.
+They are invisible on the bench, because nobody writes such sections by hand.
 
-**ACPI.** `machine type 'oberon' does not support ACPI` — KubeVirt объявляет
-свойства платформы, которых у машины Вирта нет.
+**ACPI.** `machine type 'oberon' does not support ACPI`. KubeVirt declares
+platform features that Wirth's machine does not have.
 
-**Число процессоров.** `Maximum CPUs greater than specified machine type
-limit 1` — KubeVirt проставляет предел для горячего добавления, libvirt сверяет
-его с возможностями машины.
+**CPU count.** `Maximum CPUs greater than specified machine type
+limit 1`. KubeVirt sets a limit for CPU hotplug, and libvirt checks it against
+the machine's capabilities.
 
-**sysinfo — и тут же обратный отказ.** Убрал раздел целиком → virt-launcher упал
-с `Domain sysinfo are not available`: он читает его уже после запуска. Вернул →
-QEMU отверг `-smbios`: `Option not supported for this target`.
+**sysinfo, followed immediately by the opposite rejection.** I removed the
+section entirely, and virt-launcher failed with `Domain sysinfo are not
+available`: it reads the section after startup. I put it back, and QEMU
+rejected `-smbios`: `Option not supported for this target`.
 
-Два требования тянут в разные стороны, и разводятся они одним способом: **раздел
-`sysinfo` оставить, а режим `smbios` из `os` убрать**. Аргумент `-smbios` libvirt
-выводит именно из режима, а не из раздела.
+The two requirements pull in opposite directions, and there is one way to
+satisfy both: **keep the `sysinfo` section, but remove the `smbios` mode from
+`os`**. libvirt derives the `-smbios` argument from the mode, not from the
+section.
 
-Это лучшая иллюстрация правила «убирать ровно то, что отвергают, и ни строкой
-больше». Широкий взмах веником сломал то, что работало.
+This is the best illustration of the rule "remove exactly what gets rejected,
+and not a line more". A broad sweep broke something that worked.
 
-**Версия launcher.** Образ обязан совпадать с версией KubeVirt: launcher
-разговаривает с virt-handler по версионированному протоколу. Ставили stable
-(1.9.0), образ собран на 1.8.4 — пришлось переставить KubeVirt на 1.8.4, ту же
-версию, что в рабочем кластере.
+**Launcher version.** The image must match the KubeVirt version: the launcher
+talks to virt-handler over a versioned protocol. We had installed stable
+(1.9.0), while the image was built on 1.8.4, so we had to reinstall KubeVirt at
+1.8.4, the same version as in the production cluster.
 
-## Что теперь доказано
+## What is now proven
 
-Новая архитектура подключается к KubeVirt **снаружи**, тремя вещами:
+The new architecture plugs into KubeVirt **from the outside**, with three
+things:
 
-1. образ `virt-launcher` с libvirt, знающим архитектуру (патч 5 мест);
-2. перехватчик — скрипт, который переписывает описание домена;
-3. том с эмулятором и образами, общий с контейнером libvirt.
+1. a `virt-launcher` image with a libvirt that knows the architecture (a patch
+   in 5 places);
+2. a hook, a script that rewrites the domain description;
+3. a volume with the emulator and images, shared with the libvirt container.
 
-Ни один из четырёх проектов не форкнут.
+None of the four projects is forked.
 
-## Состояние
+## State
 
-Песочница: тенант `tenant-sandbox`, виртуалка `build` (k3s + KubeVirt внутри).
-Образ выложен: `ghcr.io/tym83/paleocomputing/virt-launcher:v1.8.4-risc5`.
+Sandbox: tenant `tenant-sandbox`, VM `build` (k3s + KubeVirt inside).
+The image is published: `ghcr.io/tym83/paleocomputing/virt-launcher:v1.8.4-risc5`.

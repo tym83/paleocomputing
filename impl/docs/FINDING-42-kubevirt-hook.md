@@ -1,59 +1,61 @@
-# Находка 42. Машина Вирта запускается описанием от перехватчика KubeVirt
+[Русская версия](FINDING-42-kubevirt-hook.ru.md)
 
-Цепочка замкнулась. Описание домена, какое KubeVirt даёт **обычной** виртуалке —
-архитектура x86_64, машина q35, тип домена `kvm`, диски и сеть на PCI,
-последовательные порты, канал гостевого агента, источник случайных чисел, —
-прогнано через наш перехватчик и скормлено настоящему libvirt:
+# Finding 42. Wirth's machine starts from a description produced by a KubeVirt hook
+
+The chain is closed. The domain description that KubeVirt produces for an **ordinary** VM
+(architecture x86_64, machine q35, domain type `kvm`, disks and network on PCI,
+serial ports, a guest agent channel, a random number source)
+was run through our hook and fed to the real libvirt:
 
 ```
 Domain 'default_testvm' started
 ```
 
-Запустившаяся машина — настоящий Оберон: кадровый буфер **совпал побайтово** с
-буфером той же системы на настоящем описании схемы. 98 304 байта, 18 607 точек.
+The machine that started is the real Oberon: the framebuffer **matched byte for byte** with
+the buffer of the same system on the real circuit description. 98 304 bytes, 18 607 dots.
 
-## Форка KubeVirt не потребовалось вовсе
+## No KubeVirt fork was needed at all
 
-`OnDefineDomain` — штатная точка расширения. Более того, писать свой образ тоже
-не нужно: перехватчик подаётся **скриптом в ConfigMap**, его исполняет штатная
-обёртка `sidecar-shim`. От неё требуется одно — исполняемый файл с именем
-`onDefineDomain`, который печатает изменённое описание.
+`OnDefineDomain` is a standard extension point. Moreover, there is no need to write our own image
+either: the hook is supplied **as a script in a ConfigMap** and executed by the standard
+`sidecar-shim` wrapper. It requires only one thing: an executable named
+`onDefineDomain` that prints the modified description.
 
-Эмулятор приносит том, объявленный с `sharedComputePath`: KubeVirt монтирует
-такой том **и в перехватчик, и в контейнер, где работает libvirt**.
+The emulator is brought in by a volume declared with `sharedComputePath`: KubeVirt mounts
+such a volume **both into the hook and into the container where libvirt runs**.
 
-## Два отказа, каждый по делу
+## Two refusals, each one justified
 
-**Тип домена.** KubeVirt объявляет `kvm`, рассчитывая на обычную виртуалку с
-аппаратным ускорением. Для чужой архитектуры его не бывает — команды
-переводятся на лету. libvirt проверяет и отвергает:
+**The domain type.** KubeVirt declares `kvm`, expecting an ordinary VM with
+hardware acceleration. For a foreign architecture there is none: instructions are
+translated on the fly. libvirt checks and rejects:
 
 ```
 unsupported configuration: Emulator does not support virt type 'kvm'
 ```
 
-**Устройства.** Мало заменить диск и сеть: `No PCI buses available` приходит и
-на последовательные порты, каналы и источник случайных чисел, которые KubeVirt
-добавляет сам. Убирать надо всё и ставить явные заглушки.
+**Devices.** Replacing the disk and network is not enough: `No PCI buses available` also comes
+for the serial ports, channels and random number source that KubeVirt
+adds itself. Everything has to be removed and explicit stubs put in.
 
-Оба нашлись тем, что описание скармливалось живому libvirt, а не сверялось
-глазами.
+Both were found because the description was fed to a live libvirt rather than checked
+by eye.
 
-## Состояние цепочки
+## State of the chain
 
-| слой | своё | чем подтверждено |
+| layer | our own | confirmed by |
 |---|---|---|
-| QEMU | ✅ наша цель | 1.5 млн команд пошагово, экран побайтово |
-| libvirt | ✅ патч 6 строк | домен определяется и работает |
-| KubeVirt | ❌ **не нужен** | перехватчик проверен на живом libvirt |
-| Cozystack | ❌ не нужен | `imageRegistry` на ресурсе KubeVirt |
+| QEMU | ✅ our target | 1.5 million instructions step by step, screen byte for byte |
+| libvirt | ✅ 6-line patch | the domain is defined and runs |
+| KubeVirt | ❌ **not needed** | the hook was tested on a live libvirt |
+| Cozystack | ❌ not needed | `imageRegistry` on the KubeVirt resource |
 
-**Своей сборки требует только libvirt.** На практике — свой образ
-`virt-launcher` и переключение реестра настройкой.
+**Only libvirt requires our own build.** In practice: our own
+`virt-launcher` image and switching the registry by configuration.
 
-## Чего ещё нет
+## What does not exist yet
 
-Полного прогона в кластере: нужен включённый признак `Sidecar` в ресурсе
-KubeVirt и собранный образ `virt-launcher` с патченым libvirt. Само
-преобразование проверено на настоящем libvirt, и машина из него запускается и
-работает — то есть непроверенной осталась только упаковка, не существо.
+A full run in the cluster: it needs the `Sidecar` feature gate enabled in the
+KubeVirt resource and a built `virt-launcher` image with the patched libvirt. The
+transformation itself was tested on the real libvirt, and the machine starts from it and
+runs, so what remains untested is only the packaging, not the substance.

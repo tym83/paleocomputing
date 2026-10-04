@@ -1,55 +1,57 @@
-# Находка 38. Оберон показывает экран в нашем собственном QEMU
+[Русская версия](FINDING-38-qemu-screen.ru.md)
 
-`qemu-system-risc5` загружает систему Оберон с образа диска и рисует её экран.
-На снимке — журнал со строкой `Oberon V5 NW 14.4.2013`, окно `System.Tool` со
-списком команд, курсор мыши. Та самая картинка, что и на настоящем RTL.
+# Finding 38. Oberon shows its screen in our own QEMU
 
-## Проверка не глазами
+`qemu-system-risc5` boots the Oberon system from a disk image and draws its screen.
+The screenshot shows the log with the line `Oberon V5 NW 14.4.2013`, the `System.Tool` window with
+its list of commands, the mouse cursor. The very same picture as on the real RTL.
 
-Смотреть на картинку — слабая проверка: глаз не заметит сдвига на строку или
-перевёрнутого бита в редком глифе. Поэтому сравниваются байты.
+## A check not by eye
 
-**98 304 байта кадрового буфера совпали побайтово** с буфером той же системы,
-загруженной на настоящем описании схемы под Verilator. Чёрных точек 18 607 — в
-обеих машинах одинаково.
+Looking at a picture is a weak check: the eye will not notice a shift by one line or
+a flipped bit in a rare glyph. So bytes are compared.
 
-Проверка оформлена как `qemu/test/fb_diff.py`.
+**98 304 bytes of the framebuffer matched byte for byte** with the buffer of the same system
+booted on the real circuit description under Verilator. Black dots: 18 607, the same
+in both machines.
 
-## Что пришлось снять с железа
+The check is packaged as `qemu/test/fb_diff.py`.
 
-Адрес и раскладка взяты из `VID.v`, а не из описаний:
+## What had to be taken from the hardware
+
+The address and layout were taken from `VID.v`, not from descriptions:
 
 ```
 localparam Org = 18'b1101_1111_1111_0000_00;
 assign vidadr = Org + {3'b0, ~vcnt, hword};
 ```
 
-Три вещи, каждая из которых в одиночку портит картинку:
+Three things, each of which on its own spoils the picture:
 
-* адрес там **словный**, отсюда байтовое начало `0xE7F00`;
-* `~vcnt` означает, что строки лежат **снизу вверх** — нулевая строка экрана по
-  старшему адресу. Забыть про это — получить перевёрнутый экран;
-* внутри слова **младший бит — самая левая точка**, а единица означает чёрное
+* the address there is a **word** address, hence the byte start `0xE7F00`;
+* `~vcnt` means the rows are stored **bottom-up**: row zero of the screen is at
+  the highest address. Forget this and you get an upside-down screen;
+* within a word **the least significant bit is the leftmost dot**, and a one means black
   (`assign vid = pixbuf[0] ^ inv`).
 
-Отдельной видеопамяти у машины нет: кадровый буфер лежит в обычном ОЗУ, и
-устройство просто читает его.
+The machine has no separate video memory: the framebuffer lives in ordinary RAM, and
+the device simply reads it.
 
-## Мелочь, стоившая захода
+## A small thing that cost a round
 
-В этой версии QEMU функция, которой устройство сообщает об изменении экрана,
-называется `qemu_console_update`, а не `dpy_gfx_update` — последняя осталась
-только обратным вызовом для подсистемы вывода. Компилятор ловит это сразу, но
-искать пришлось по чужим устройствам.
+In this version of QEMU the function with which a device reports a screen change
+is called `qemu_console_update`, not `dpy_gfx_update`; the latter remained
+only as a callback for the display subsystem. The compiler catches this immediately, but
+it had to be looked up in other people's devices.
 
-`screendump` в нашей сборке нет — конфигурировали без лишнего. И хорошо: вместо
-картинки через QMP выгружается сама память буфера (`pmemsave`), а это как раз то,
-что можно сравнить побайтово.
+There is no `screendump` in our build: it was configured without extras. And that is good: instead of
+a picture via QMP, the buffer memory itself is dumped (`pmemsave`), and that is exactly what
+can be compared byte for byte.
 
-## Где мы теперь
+## Where we are now
 
-Целочисленное ядро, память, переходы, порты, счётчик времени, диск по SPI и
-экран воспроизведены верно — сверено с железом, а не с нашими же ожиданиями.
+The integer core, memory, branches, ports, the timer, the SPI disk and the
+screen are reproduced correctly, checked against the hardware rather than against our own expectations.
 
-Не написано: клавиатура, мышь, плавающая точка. После них машина станет
-полноценной, и можно ставить опыт с libvirt.
+Not yet written: keyboard, mouse, floating point. After them the machine will become
+complete, and the experiment with libvirt can be set up.

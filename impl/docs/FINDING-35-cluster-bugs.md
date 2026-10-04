@@ -1,93 +1,95 @@
-# Находка 35. Три бага, которые видно только на живом кластере
+[Русская версия](FINDING-35-cluster-bugs.ru.md)
 
-Каталог «Забытые системы» развёрнут на настоящем кластере Cozystack и работает:
-машина с лабораторными и методичка подняты в тенанте, подключены снаружи
-сторонним каталогом, без единого патча платформы.
+# Finding 35. Three bugs visible only on a live cluster
 
-Дорога заняла три версии, и каждая правка закрывала баг, **невидимый со стола**.
-У всех трёх один почерк: **релиз успешен, приложение мертво**.
+The "Forgotten Systems" catalog has been deployed on a real Cozystack cluster and works:
+the machine with the labs and the course book are up in a tenant, connected from outside
+as a third-party catalog, without a single patch to the platform.
 
-## 1. Манифест источника не попадал в артефакт (v0.1.1)
+Getting there took three versions, and each fix closed a bug **invisible from the desk**.
+All three share one signature: **the release succeeds, the application is dead**.
 
-`cozypkg push` кладёт в OCI-артефакт **только содержимое `packages/`**, отбрасывая
-эту приставку. Манифест `PackageSource` лежал рядом, в `sources/`, и терялся.
+## 1. The source manifest did not make it into the artifact (v0.1.1)
 
-Дерево исходников при этом проходило проверку: валидатор обходит весь корень и
-манифест находил. А то, что реально скачает человек, — нет.
+`cozypkg push` puts **only the contents of `packages/`** into the OCI artifact, dropping
+that prefix. The `PackageSource` manifest sat next to it, in `sources/`, and got lost.
 
-Поймано только круговым прогоном: выложить в реестр и притянуть обратно.
-Платформа держит свои источники внутри `packages/` ровно поэтому.
+The source tree, meanwhile, passed the check: the validator walks the whole root and
+found the manifest. But what a person would actually download did not have it.
 
-## 2. Схемы отвергали ключи, которые подмешивает движок (v0.1.2)
+Caught only by a round trip: push to the registry and pull back.
+The platform keeps its sources inside `packages/` for exactly this reason.
 
-`cozystack-engine` кладёт `_cluster` и `_namespace` в values **каждого**
-приложения тенанта. Наши `values.schema.json` закрывали корень через
-`additionalProperties: false`, и Helm выбрасывал документ значений целиком.
+## 2. The schemas rejected keys that the engine mixes in (v0.1.2)
 
-Ошибка выглядела так:
+`cozystack-engine` puts `_cluster` and `_namespace` into the values of **every**
+tenant application. Our `values.schema.json` closed the root with
+`additionalProperties: false`, and Helm threw out the values document entirely.
+
+The error looked like this:
 
 ```
 at '': additional properties '_namespace', '_cluster' not allowed
 ```
 
-**Ни один чарт платформы корень не закрывает** — проверено по всем `packages/apps/*`.
-Это их конвенция, и существует она именно из-за подмешивания.
+**Not a single platform chart closes the root**: checked across all `packages/apps/*`.
+This is their convention, and it exists precisely because of the mixing in.
 
-Признаки были обманчивы до предела: артефакт валиден, источник подключён,
-описания приложений встали, категория в консоли появилась. Только под не
-создавался никогда.
+The signs were as deceptive as they get: the artifact is valid, the source is connected,
+the application descriptions are in place, the category appeared in the console. Only the pod
+was never created.
 
-## 3. nginx заводил воркер на каждое ядро УЗЛА (v0.1.3)
+## 3. nginx started a worker for every core of the NODE (v0.1.3)
 
-Образ идёт с `worker_processes auto`, и «auto» считает ядра узла, а не долю,
-выделенную поду. На узле с 96 ядрами — 96 процессов, они не влезают в 64 МБ,
-и ядро убивает под по кругу. Раздаче статики хватает одного.
+The image ships with `worker_processes auto`, and "auto" counts the node's cores, not the share
+allocated to the pod. On a node with 96 cores that is 96 processes; they do not fit into 64 MB,
+and the kernel kills the pod over and over. Serving static files needs one.
 
-Предел памяти тут ни при чём: поднимать его — лечить симптом.
+The memory limit has nothing to do with it: raising it would be treating the symptom.
 
-**Штатный автотюн не спасает.** У образа есть `30-tune-worker-processes.sh`,
-умеющий считать по лимитам cgroup, но он **правит `/etc/nginx/nginx.conf` на
-месте**, а корень контейнера у нас только для чтения — скрипт молча выходит с
-кодом 0. Поэтому чарт подкладывает конфигурацию целиком, через `subPath`.
+**The stock auto-tuning does not help.** The image has `30-tune-worker-processes.sh`,
+which can count from cgroup limits, but it **edits `/etc/nginx/nginx.conf` in
+place**, and our container's root is read-only, so the script silently exits with
+code 0. That is why the chart supplies the whole configuration via `subPath`.
 
-Та же мина сидела в нашем собственном образе раздачи — прибито на уровне сборки.
+The same mine was sitting in our own serving image; it was nailed down at build level.
 
-## 4. Приложение объявлено в каталоге, но не в источнике (v0.1.4)
+## 4. An application declared in the catalog but not in the source (v0.1.4)
 
-Приложение объявляется **в двух местах**, и они не связаны:
+An application is declared **in two places**, and they are not linked:
 
-* `appdefs.yaml` — что показать в каталоге;
-* `sources/*.yaml` — что выложить артефактом.
+* `appdefs.yaml`: what to show in the catalog;
+* `sources/*.yaml`: what to publish as an artifact.
 
-Объявленное только в первом видно в консоли, тенант его ставит — и оно не
-разворачивается, потому что разворачиваться не из чего:
+One declared only in the first is visible in the console, the tenant installs it, and it does not
+deploy, because there is nothing to deploy from:
 
 ```
 could not get Source object: ExternalArtifact ... not found
 ```
 
-Опять тот же почерк: приложение появилось, установилось, статус вернулся —
-и ничего не работает.
+The same signature again: the application appeared, installed, returned a status,
+and nothing works.
 
-Закрыто проверкой: каждое приложение сверяется с обоими списками. Проверено
-мутацией — убрали объявление из источника, проверка покраснела.
+Closed with a check: every application is cross-checked against both lists. Verified
+with a mutation: the declaration was removed from the source, and the check went red.
 
-## Что из этого следует
+## What follows from this
 
-Мы проверяем **формы и структуры**, а ломается **поведение в чужой среде**: под
-движком, который дописывает значения; на узле с девяноста шестью ядрами; в
-артефакте, собранном не из того каталога.
+We check **forms and structures**, while what breaks is **behaviour in someone else's environment**: under
+an engine that adds values; on a node with ninety-six cores; in an
+artifact built from the wrong directory.
 
-Ни одна проверка на столе такого класса не ловит. Практический вывод:
-**каждую версию каталога прокатывать на живом кластере**, и дешевле часто и по
-одному изменению, чем копить.
+No check on the desk catches this class. The practical conclusion:
+**roll out every version of the catalog on a live cluster**, and it is cheaper to do it often and one
+change at a time than to accumulate.
 
-Все три правила закрыты проверками с мутацией — проверок каталога стало 50.
+All three rules are covered by checks with mutations; the catalog now has 50 checks.
 
-## Состояние
+## Status
 
-Тенант `tenant-paleo`, оба пода `1/1 Running` без перезагрузок. Внутри
-контейнера методички `worker_processes 1;`. Обе страницы отдаются. В консоли
-категория **Forgotten Systems** с тремя типами.
+Tenant `tenant-paleo`, both pods `1/1 Running` with no restarts. Inside
+the course book container, `worker_processes 1;`. Both pages are served. In the console,
+the category **Forgotten Systems** with three types.
 
-Первая забытая машина работает в Cozystack обычным приложением.
+The first forgotten machine runs in Cozystack as an ordinary application.

@@ -1,83 +1,90 @@
-# Находка 86. Первое же нажатие клавиши вешало систему в QEMU
+[Русская версия](FINDING-86-qemu-keyboard-byte-load.ru.md)
 
-## Симптом
+# Finding 86. The very first key press hung the system in QEMU
 
-В Cozystack (OberonVM, `virtctl vnc`) и в локальном QEMU после одного нажатия
-клавиши машина переставала отвечать: буква не появлялась, указатель мыши больше
-не двигался. Щелчки мышью до нажатия работали. В `impl/lm/qemu_run.py` это уже
-было замечено («нажатия через input-send-event не доходят»), но причину не
-разбирали и обошли, заранее положив команды в `System.Tool`.
+## Symptom
 
-## Причина
+In Cozystack (OberonVM, `virtctl vnc`) and in local QEMU, after a single key
+press the machine stopped responding: the letter did not appear, and the mouse
+pointer no longer moved. Mouse clicks before the key press worked. This had
+already been noticed in `impl/lm/qemu_run.py` ("key presses via
+input-send-event do not get through"), but the cause had not been investigated;
+it was worked around by putting the commands into `System.Tool` in advance.
 
-Журнал исполнения (`-d exec,nochain`) показал, что процессор не стоит: каждый
-проход `Oberon.Loop` уходит в ветку «есть клавиша», вызывает `Input.Read` и
-отдаёт символ текстовому окну. До фоновых задач дело не доходит никогда.
+## Cause
 
-`Input.Peek` читает код клавиши в переменную типа `BYTE`:
+The execution log (`-d exec,nochain`) showed that the processor was not stuck:
+every pass of `Oberon.Loop` took the "a key is available" branch, called
+`Input.Read` and handed the character to the text viewer. The background tasks
+were never reached.
+
+`Input.Peek` reads the key code into a variable of type `BYTE`:
 
 ```
 SYSTEM.GET(kbdAdr, kbdCode)      (* kbdCode: BYTE *)
 ```
 
-Это байтовая загрузка из порта 7. Порты в `qemu/hw/risc5/io.c` были объявлены с
-`.valid = {4, 4}`, то есть только словами. QEMU такое обращение отвергал,
-обработчик порта не вызывался, и код не снимался с очереди. Признак «есть код» в
-порту 6 оставался поднятым навсегда, и система бесконечно читала одно и то же
-нажатие.
+This is a byte load from port 7. The ports in `qemu/hw/risc5/io.c` were declared
+with `.valid = {4, 4}`, that is, word accesses only. QEMU rejected such an
+access, the port handler was not called, and the code was not removed from the
+queue. The "code available" flag in port 6 stayed raised forever, and the system
+read the same key press endlessly.
 
-В железе порты декодируются по `adr[5:2]`, младшие биты не участвуют, поэтому
-байтовое чтение работает. Пошаговая сверка с RTL этого не поймала, потому что
-загрузка системы клавиатуру не читает.
+In hardware the ports are decoded by `adr[5:2]`, and the low bits do not
+participate, so a byte read works. The step-by-step comparison with the RTL did
+not catch this, because booting the system does not read the keyboard.
 
-## Исправление
+## Fix
 
-`.valid = {1, 4}`, `.impl = {4, 4}`: обращения любого размера принимаются, а
-обработчик по-прежнему получает целое слово, и байт из него выделяет сам QEMU.
+`.valid = {1, 4}`, `.impl = {4, 4}`: accesses of any size are accepted, while the
+handler still receives a whole word, and QEMU itself extracts the byte from it.
 
-## Проверка
+## Verification
 
-`qemu/test/keyboard_check.py` загружает систему, ставит каретку в конец
-`System.Tool`, набирает с клавиатуры строку `System.ShowModules` (с Shift) и
-запускает её средним щелчком. Проходит, только если под `System.Tool` появилось
-окно со списком модулей. Отрицательный контроль: тот же сценарий без каретки,
-нажатиям некуда идти, окна нет.
+`qemu/test/keyboard_check.py` boots the system, places the caret at the end of
+`System.Tool`, types the string `System.ShowModules` on the keyboard (with
+Shift) and runs it with a middle click. It passes only if a viewer with the list
+of modules appears below `System.Tool`. Negative control: the same scenario
+without the caret, so the key presses have nowhere to go, and no viewer appears.
 
-| сборка | тёмных точек в области окна: набор / контроль | результат |
+| build | dark pixels in the viewer area: typed / control | result |
 |---|---|---|
-| с исправлением | 3534 / 885 | ✅ |
-| до исправления | 885 / 885 | ❌ |
+| with the fix | 3534 / 885 | ✅ |
+| before the fix | 885 / 885 | ❌ |
 
-Через VNC с настоящими нажатиями Shift набираются заглавные буквы, скобки,
-`:=`, `~`, кавычки и `|`.
+Over VNC with real Shift presses, capital letters, brackets, `:=`, `~`, quotes
+and `|` can be typed.
 
-## Длинный набор: очередь и край окна
+## Long input: the queue and the viewer edge
 
-Чтобы проверить клавиатуру всерьёз, `Kube.Mod` (10 212 символов) набирался в редакторе
-системы через QMP `input-send-event`, сохранялся `Edit.Store`, компилировался внутри
-системы и запускался. По дороге нашлись ещё две вещи.
+To test the keyboard seriously, `Kube.Mod` (10 212 characters) was typed into the
+system's editor through QMP `input-send-event`, saved with `Edit.Store`, compiled
+inside the system and run. Two more things turned up along the way.
 
-**Очередь на 16 байт теряет быстрый ввод.** В схеме Вирта очередь `PS2.v` — 16 байт,
-но там клавиатура не может слать быстрее человека. QMP и VNC-клиент могут, а
-нажатие с Shift занимает в очереди шесть байт. При наборе 680 символов в секунду до
-системы дошло 5359 символов из 10 212. Очередь стала 4096 байт, и нажатие кладётся в
-неё целиком или не кладётся вовсе: половина нажатия, например отпускание без 0xF0,
-оставила бы Input.Mod уверенным, что Shift ещё нажат. С большой очередью при той же
-скорости дошло 6490: машина разбирает нажатия медленнее, чем их подают, и поток,
-который постоянно быстрее машины, никакая очередь не спасёт. Это забота отправителя.
-В итоговом прогоне (5 мс между символами и щелчок перед каждой строкой) не
-потерялось ни одного символа.
+**A 16-byte queue loses fast input.** In Wirth's design the `PS2.v` queue is 16
+bytes, but there the keyboard cannot send faster than a human. QMP and a VNC
+client can, and a key press with Shift takes six bytes in the queue. When typing
+680 characters per second, 5359 of 10 212 characters reached the system. The
+queue became 4096 bytes, and a key press is put into it either whole or not at
+all: half a key press, for example a release without 0xF0, would leave Input.Mod
+believing that Shift is still held. With the large queue at the same speed, 6490
+got through: the machine processes key presses more slowly than they are fed, and
+no queue can save a stream that is constantly faster than the machine. That is
+the sender's concern. In the final run (5 ms between characters and a click
+before each line) not a single character was lost.
 
-**Редактор теряет нажатия у нижнего края окна.** Когда каретка доходит до последней
-видимой строки, часть нажатий пропадает, и строки склеиваются: каждый раз ровно на
-60-й строке, при любой скорости. Это поведение TextFrames, QEMU тут ни при чём. Если
-вставлять строки в обратном порядке в начало текста, каретка вниз не уходит, и
-модуль приходит целиком.
+**The editor loses key presses at the bottom edge of the viewer.** When the caret
+reaches the last visible line, some key presses are lost and lines get glued
+together: every time exactly at line 60, at any speed. This is TextFrames
+behavior, and QEMU has nothing to do with it. If lines are inserted in reverse
+order at the beginning of the text, the caret does not move down, and the module
+arrives whole.
 
-**Итог.** Модуль набран целиком (10 212 из 10 212), скомпилирован внутри системы,
-`Kube.Start` поставил три контроллера, `Kube.Apply web 3 nginx` поднял три пода,
-масштабирование до 1 и до 4 согласовалось фоновыми задачами. Файл, сохранённый до
-перезагрузки, после неё на месте.
+**Result.** The module was typed in full (10 212 of 10 212), compiled inside the
+system, `Kube.Start` set up three controllers, `Kube.Apply web 3 nginx` brought up
+three pods, and scaling to 1 and to 4 was reconciled by background tasks. A file
+saved before a reboot is still there after it.
 
-Отдельно нашлось, что `Kube.DeletePod web-rs-3` молча ничего не делает: сканер
-текста заканчивает имя на дефисе и ищет под `web`. Это ошибка в Kube.Mod.
+Separately, it turned out that `Kube.DeletePod web-rs-3` silently does nothing:
+the text scanner ends the name at the hyphen and looks for a pod named `web`.
+This is a bug in Kube.Mod.
