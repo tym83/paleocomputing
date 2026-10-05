@@ -73,11 +73,11 @@ The images are published per release and per KubeVirt version:
 ghcr.io/tym83/paleocomputing/virt-launcher:<KubeVirt version>-paleo-<release>
 ```
 
-for example `virt-launcher:v1.8.4-paleo-v0.1.17`. They are signed by the
+for example `virt-launcher:v1.8.4-paleo-v0.1.18`. They are signed by the
 release workflow; to check before use:
 
 ```sh
-cosign verify ghcr.io/tym83/paleocomputing/virt-launcher:v1.8.4-paleo-v0.1.17 \
+cosign verify ghcr.io/tym83/paleocomputing/virt-launcher:v1.8.4-paleo-v0.1.18 \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   --certificate-identity https://github.com/tym83/paleocomputing/.github/workflows/publish.yml@refs/heads/main
 ```
@@ -90,11 +90,11 @@ refuses to touch a `virt-controller` whose argument layout it does not
 recognise, and removes its entry cleanly.
 
 ```sh
-git clone --depth 1 -b v0.1.17 https://github.com/tym83/paleocomputing
+git clone --depth 1 -b v0.1.18 https://github.com/tym83/paleocomputing
 cd paleocomputing
 
 KV_VERSION=$(kubectl -n $KV_NS get kubevirt kubevirt -o jsonpath='{.status.observedKubeVirtVersion}')
-echo "$KV_VERSION ghcr.io/tym83/paleocomputing/virt-launcher:$KV_VERSION-paleo-v0.1.17" > /tmp/launchers.txt
+echo "$KV_VERSION ghcr.io/tym83/paleocomputing/virt-launcher:$KV_VERSION-paleo-v0.1.18" > /tmp/launchers.txt
 
 # Optional: the script reports its state here.
 kubectl -n $KV_NS create configmap kubevirt-paleo-launcher-status
@@ -106,7 +106,7 @@ R=marketplace/repos/platform/packages/system/kubevirt-paleo-launcher/files/recon
 until sh $R once && [ "$(kubectl -n $KV_NS get cm kubevirt-paleo-launcher-status -o jsonpath='{.data.state}')" = Applied ]; do sleep 10; done
 ```
 
-The table the catalog publishes after v0.1.17 names each launcher by tag and
+The table the catalog publishes since v0.1.18 names each launcher by tag and
 by digest, `virt-launcher:<tag>@sha256:<digest>`, and a line in your own table
 may do the same. The digest is the hash of the exact image, so a node fetches
 exactly the build that was published. Nodes pull launchers with
@@ -137,7 +137,7 @@ spec:
           [{"op":"test","path":"/spec/template/spec/containers/0/name","value":"virt-controller"},
            {"op":"test","path":"/spec/template/spec/containers/0/args/0","value":"--launcher-image"},
            {"op":"replace","path":"/spec/template/spec/containers/0/args/1",
-            "value":"ghcr.io/tym83/paleocomputing/virt-launcher:v1.8.4-paleo-v0.1.17"}]
+            "value":"ghcr.io/tym83/paleocomputing/virt-launcher:v1.8.4-paleo-v0.1.18"}]
 ```
 
 ⚠ **Upgrading KubeVirt**: the launcher must follow. Change the tag to the new
@@ -156,7 +156,7 @@ In the source tree the chart points at the `dev` image with the ROM and disk,
 so pin it to the release first:
 
 ```sh
-python3 marketplace/tools/pin-images.py --release v0.1.17
+python3 marketplace/tools/pin-images.py --release v0.1.18
 
 helm install wirth marketplace/repos/machines/packages/apps/oberon-vm \
   --namespace oberon --create-namespace \
@@ -164,7 +164,7 @@ helm install wirth marketplace/repos/machines/packages/apps/oberon-vm \
 ```
 
 With `--pin` the script also appends the registry digest of that release to
-the image, the way the published catalog does after v0.1.17; it asks ghcr for
+the image, the way the published catalog does since v0.1.18; it asks ghcr for
 the digest, so it needs network access.
 
 | value | default | |
@@ -182,7 +182,7 @@ the hook refuses to define the domain and the VM restarts with a back-off;
 that is expected.
 
 The Job places the disk only once and never overwrites it, because the disk
-belongs to the user. After v0.1.17 the machine passport also declares the disk
+belongs to the user. After v0.1.18 the machine passport also declares the disk
 size, 8 MiB, and the Job grows a smaller disk to it with zeros, keeping its
 content; a disk left by an earlier release is grown the same way. The shipped
 image is about 1 MB, and the Oberon file system writes new files past its end,
@@ -212,7 +212,7 @@ The Oberon System desktop comes up with the log line `Oberon V5 NW 14.4.2013`
 and the `System.Tool` window. The mouse is absolute — the pointer follows
 yours. A middle click on a command name executes it: try
 `System.ShowModules` in the tool window (finding 39). The keyboard works over
-VNC, Shift included, in releases after v0.1.17; in v0.1.17 and earlier the
+VNC, Shift included, since v0.1.18; in v0.1.17 and earlier the
 first key press hangs the machine (finding 86).
 
 To switch to the bounds-checking processor:
@@ -241,9 +241,9 @@ KubeVirt, launcher switch, machine, screen check. It expects the launcher
 image in the local Docker; the published one works:
 
 ```sh
-docker pull ghcr.io/tym83/paleocomputing/virt-launcher:v1.8.4-paleo-v0.1.17
-python3 marketplace/tools/pin-images.py --release v0.1.17
-export KUBEVIRT_VERSION=v1.8.4 LAUNCHER_IMAGE=ghcr.io/tym83/paleocomputing/virt-launcher:v1.8.4-paleo-v0.1.17
+docker pull ghcr.io/tym83/paleocomputing/virt-launcher:v1.8.4-paleo-v0.1.18
+python3 marketplace/tools/pin-images.py --release v0.1.18
+export KUBEVIRT_VERSION=v1.8.4 LAUNCHER_IMAGE=ghcr.io/tym83/paleocomputing/virt-launcher:v1.8.4-paleo-v0.1.18
 for s in tools cluster kubevirt launcher machine screen; do kubevirt/e2e.sh $s || break; done
 kubevirt/e2e.sh down
 ```

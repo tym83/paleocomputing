@@ -1,6 +1,6 @@
 name: paleocomputing-languages
 ociRef: oci://ghcr.io/tym83/paleocomputing/languages
-version: v0.1.17
+version: v0.1.18
 description: Language environments, either a persistent environment or a one-off run without idle pods
 homepage: https://github.com/tym83/paleocomputing
 maintainer: tym83
