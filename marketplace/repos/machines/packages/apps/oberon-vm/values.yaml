@@ -33,3 +33,12 @@ storageClass: replicated
 ## @param {string} storage=1Gi - Volume size.
 ## The Oberon system takes less than a megabyte: the headroom here is purely symbolic.
 storage: 1Gi
+
+##
+## @section Radio
+##
+
+## @param {string} air - Name of an OberonAir in this tenant to join; empty for none.
+## The machine's radio (SCC.Mod, Net.Mod) then reaches every other machine on
+## the same air, and Net.SendMsg, Net.SendFiles and Kube nodes work between them.
+air: ""

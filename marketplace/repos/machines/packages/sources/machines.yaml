@@ -44,6 +44,9 @@ spec:
           path: apps/handbook
         - name: workbench
           path: apps/workbench
+        # The air between machines: a relay for their radios (Net.Mod).
+        - name: oberon-air
+          path: apps/oberon-air
         # A machine = a machine.yaml passport + a form; templates come from the library.
         - name: oberon-vm
           path: apps/oberon-vm

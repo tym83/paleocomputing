@@ -224,6 +224,17 @@ spec:
       "configMap" (dict "name" (printf "%s-hook" $fn) "key" "onDefineDomain" "hookPath" "/usr/bin/onDefineDomain")
       "pvc" (dict "name" (printf "%s-payload" $fn) "volumePath" $base "sharedComputePath" $base)) }}
 {{- $passport := set (deepCopy $m) "variant" $variant }}
+{{- /* The air: the instance names an OberonAir in the tenant; its Service is
+       oberon-air-<name>. Only a machine whose passport declares a radio can join. */}}
+{{- with .Values.air }}
+{{- if not $m.air }}
+{{- fail (printf "%s: this machine has no radio, air cannot be set" $.Chart.Name) }}
+{{- end }}
+{{- if not (regexMatch "^[a-z0-9]([a-z0-9-]{0,40}[a-z0-9])?$" (toString .)) }}
+{{- fail (printf "%s: air %q is not the name of an air in this tenant" $.Chart.Name .) }}
+{{- end }}
+{{- $_ := set $passport.air "host" (printf "oberon-air-%s" .) }}
+{{- end }}
 apiVersion: v1
 kind: ConfigMap
 metadata:

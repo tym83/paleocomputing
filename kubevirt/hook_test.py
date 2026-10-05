@@ -222,6 +222,31 @@ def arm64(src, tmp):
     report(o.find('type').get('arch') == 'risc5', 'architecture from the descriptor here too')
 
 
+def air(src, tmp):
+    print('\nThe air: the radio talks to the relay named by the instance')
+    preset = yaml.safe_load(PRESET.read_text(encoding='utf-8'))
+    report(isinstance(preset.get('air'), dict), 'the Oberon passport declares a radio (air)')
+    desc = with_payload(preset, tmp)
+    root, _, err = run(src, desc)
+    args = qemu_args(root) if root is not None else []
+    report(root is not None and '-chardev' not in args,
+           'no relay named: no air arguments' + (f': {err.strip()}' if root is None else ''))
+    d = copy.deepcopy(desc)
+    d['air']['host'] = 'oberon-air-lab'
+    root, _, err = run(src, d)
+    args = qemu_args(root) if root is not None else []
+    chardev = [b for a, b in zip(args, args[1:]) if a == '-chardev']
+    report(chardev == ['udp,id=air,host=oberon-air-lab,port=7524,localaddr=0.0.0.0,localport=7524'],
+           f'relay named: UDP air to it ({chardev})')
+    report('radio=air' in machine_props(args), f'radio switched on ({machine_props(args)})')
+    bad = copy.deepcopy(d)
+    bad['air']['host'] = 'relay;rm -rf /'
+    must_fail(src, 'relay name that is not a DNS name: refused', desc=bad)
+    bad = copy.deepcopy(d)
+    bad['air']['port'] = 70000
+    must_fail(src, 'air port out of range: refused', desc=bad)
+
+
 def must_fail(src, text, **kw):
     root, out, err = run(src, **kw)
     report(root is None and not out.strip() and err.strip(),
@@ -280,6 +305,8 @@ def main():
     with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b, \
             tempfile.TemporaryDirectory() as c:
         oberon(src, pathlib.Path(a))
+        with tempfile.TemporaryDirectory() as e:
+            air(src, pathlib.Path(e))
         second_machine(src, pathlib.Path(b))
         negatives(src, pathlib.Path(c))
         with tempfile.TemporaryDirectory() as d:

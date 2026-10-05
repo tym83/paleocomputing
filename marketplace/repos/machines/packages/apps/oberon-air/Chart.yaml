@@ -1,0 +1,7 @@
+apiVersion: v2
+name: oberon-air
+description: The air between Oberon machines — a relay for their radios
+icon: /logos/oberon-air.svg
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

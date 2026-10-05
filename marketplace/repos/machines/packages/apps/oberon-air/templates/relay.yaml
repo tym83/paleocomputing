@@ -1,0 +1,54 @@
+{{- /* The Service is named after the release (oberon-air-<name>): an OberonVM
+       with air: <name> finds it by exactly this name. One replica on purpose:
+       the relay keeps the list of machines it has heard from in memory, and two
+       of them would split the air in halves. */}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}
+  labels: {{- include "oberon-air.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: oberon-air
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels: {{- include "oberon-air.labels" . | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: relay
+          image: {{ .Values.image | quote }}
+          ports:
+            - name: air
+              containerPort: 7524
+              protocol: UDP
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {cpu: 200m, memory: 64Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65534
+            capabilities:
+              drop: [ALL]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}
+  labels: {{- include "oberon-air.labels" . | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/name: oberon-air
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: air
+      port: 7524
+      targetPort: air
+      protocol: UDP

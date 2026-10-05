@@ -22,6 +22,21 @@ apps:
       tags: [paleocomputing, education, emulation, retrocomputing, machine]
       keysOrder: [["apiVersion"], ["kind"], ["metadata"], ["metadata", "name"], ["spec", "web"], ["spec", "replicas"], ["spec", "host"], ["spec", "runner"], ["spec", "task"], ["spec", "patch"]]
 
+  - component: oberon-air
+    chartPath: apps/oberon-air
+    kind: OberonAir
+    plural: oberonairs
+    singular: oberonair
+    prefix: oberon-air-
+    dashboard:
+      singular: Oberon Air
+      plural: Oberon Airs
+      category: Paleocomputing
+      description: The air between Oberon machines — Wirth's radio network, so machines can talk over Net
+      icon: logos/oberon-air.svg
+      tags: [paleocomputing, networking, emulation, retrocomputing]
+      keysOrder: [["apiVersion"], ["kind"], ["metadata"], ["metadata", "name"], ["spec", "image"]]
+
   - component: handbook
     chartPath: apps/handbook
     kind: Handbook

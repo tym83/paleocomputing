@@ -97,6 +97,10 @@ jobs:
           # what langpack uses for one-off runs and the permanent service.
           - name: oberon-run
             file: deploy/Containerfile.oberon-run
+          # The air relay that connects the radios of Oberon machines (Net.Mod).
+          - name: oberon-air
+            context: qemu/radio
+            file: Containerfile
     steps:
       - uses: actions/checkout@v4
         with:
@@ -122,13 +126,13 @@ jobs:
           echo "image=${{ env.REGISTRY }}/$owner/paleocomputing/${{ matrix.image.name }}" >> "$GITHUB_OUTPUT"
           echo "tag=$tag-${{ matrix.platform.arch }}" >> "$GITHUB_OUTPUT"
 
-      # The build context is impl/: both definitions copy rtl/, web/, tools/ and
-      # the rest relative to it.
+      # The build context is impl/ unless the image says otherwise: the machine
+      # images copy rtl/, web/, tools/ and the rest relative to it.
       - id: build
         uses: docker/build-push-action@v6
         with:
-          context: impl
-          file: impl/${{ matrix.image.file }}
+          context: ${{ matrix.image.context || 'impl' }}
+          file: ${{ matrix.image.context || 'impl' }}/${{ matrix.image.file }}
           push: true
           tags: ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}
           platforms: linux/${{ matrix.platform.arch }}
@@ -166,6 +170,7 @@ jobs:
                         dir=/usr/share/nginx/html ;;
             oberon-run) want="prom.bin oberon.dsk"
                         dir=/opt/oberon/payload ;;
+            oberon-air) want="relay.py"; dir="" ;;
             *)          want=""; dir="" ;;
           esac
           [ -n "$want" ] || { echo "no content check for ${{ matrix.image.name }}"; exit 0; }
@@ -194,7 +199,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        name: [oberon-web, oberon-lab, oberon-run]
+        name: [oberon-web, oberon-lab, oberon-run, oberon-air]
     steps:
       - uses: actions/checkout@v4
         with:

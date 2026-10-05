@@ -63,3 +63,10 @@ memory:
   default: 128Mi
   min: 128Mi
   max: 1Gi
+
+# The radio of Project Oberon (SCC.Mod, Net.Mod): an nRF24L01+ that the QEMU
+# target switches on with -machine radio=<chardev>. An instance with `air` set
+# names the relay, and the hook connects the radio to it over UDP.
+air:
+  machineProperty: radio
+  port: 7524
