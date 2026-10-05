@@ -1,236 +1,238 @@
-# Трек 4. Инфраструктурный слой завтрашнего дня
+[Русская версия](04-infra-layer.ru.md)
 
-Тезис: современные инфраструктурные слои появлялись как инструмент для вчерашних задач
-и потом переносились на послезавтрашние.
+# Track 4. The infrastructure layer of tomorrow
 
----
-
-## Против какой задачи проектировали Kubernetes
-
-Borg решал задачу Google ~2005–2013: много одинаковых x86-нод; нагрузка — реплицируемые
-stateless-сервисы, обрабатывающие запросы, плюс вытесняемый фоновый batch. Потребитель
-API — человек-оператор. Единица планирования — один процесс на одну ноду. Ресурсы
-линейные и взаимозаменяемые. Отказ ноды — норма. Состояние живёт где-то ещё.
-
-Всё последующее — надстройки, а не развитие модели:
-- **StatefulSet** — «а вот тут всё-таки состояние»
-- **Operator** — «модель ресурсов не выражает мою сущность, дайте я напишу код»
-- **Device plugin** — «ресурсы всё-таки не взаимозаменяемые»
-- **Topology manager, Volcano, Kueue** — «планировать по одному поду не получается»
-
-Каждая заплатка честно признаёт, что базовое допущение не держит, но не отменяет его.
+Thesis: modern infrastructure layers appeared as a tool for yesterday's problems
+and were then carried over to the problems of the day after tomorrow.
 
 ---
 
-## Что представляет собой завтрашняя нагрузка
+## What problem Kubernetes was designed against
 
-1. **Единица планирования — задание, а не контейнер на ноде.** Ко-аллоцированный набор ускорителей на конкретной топологии интерконнекта, на N часов, с вытеснением и чекпойнтом. Gang scheduling по топологии и по времени одновременно. Планировщик, перебирающий поды по одному, решает другую задачу.
-2. **Нода перестала быть единицей.** CXL и пулы памяти рвут связку «процессор и его память». DPU уносит сеть и хранилище на отдельный вычислитель со своей ОС. Внутри корпуса уже распределённая система, а модель говорит «cpu и memory на узле».
-3. **Состояние стало основной нагрузкой.** БД, очереди, векторные индексы, веса моделей. PersistentVolume — абстракция диска, а не данных: платформа не знает про долговечность, репликацию, консистентность. Всё вынесено в операторы, то есть за пределы модели.
-4. **Мультитенантность — базовый режим.** Namespace границей безопасности не является и не проектировался ею.
-5. **Энергия стала дефицитным ресурсом.** Лимит стойки в киловаттах ограничивает размещение сильнее свободных ядер. Ни один массовый планировщик не считает ватты первоклассным ресурсом.
-6. **Доверие — условие размещения.** TDX, SEV-SNP, аттестация: «разместить только там, где доказана конфигурация» — предикат планирования, которого в модели нет.
-7. **Потребитель API всё чаще не человек.** Важна не читаемость YAML, а выразимость намерения, обратимость и проверяемость эффекта до применения.
+Borg solved Google's problem of ~2005–2013: many identical x86 nodes; the workload was replicated
+stateless services handling requests, plus preemptible background batch. The consumer of the
+API was a human operator. The unit of scheduling was one process on one node. Resources were
+linear and interchangeable. Node failure was the norm. State lived somewhere else.
+
+Everything that came after is add-ons, not an evolution of the model:
+- **StatefulSet**: "but here there is state after all"
+- **Operator**: "the resource model cannot express my entity, let me write code"
+- **Device plugin**: "resources are not interchangeable after all"
+- **Topology manager, Volcano, Kueue**: "scheduling one pod at a time does not work"
+
+Each patch honestly admits that the base assumption does not hold, but does not revoke it.
 
 ---
 
-## Принципы слоя и их предки из серии
+## What tomorrow's workload looks like
 
-| Принцип | Суть | Предок |
+1. **The unit of scheduling is a job, not a container on a node.** A co-allocated set of accelerators on a specific interconnect topology, for N hours, with preemption and checkpointing. Gang scheduling by topology and by time at the same time. A scheduler that iterates over pods one by one is solving a different problem.
+2. **The node is no longer the unit.** CXL and memory pools break the "processor and its memory" pairing. A DPU takes networking and storage away to a separate computer with its own OS. Inside the chassis there is already a distributed system, while the model says "cpu and memory on a node".
+3. **State has become the main workload.** Databases, queues, vector indexes, model weights. PersistentVolume is an abstraction of a disk, not of data: the platform knows nothing about durability, replication, consistency. All of it is pushed into operators, that is, outside the model.
+4. **Multi-tenancy is the baseline mode.** A namespace is not a security boundary and was never designed as one.
+5. **Energy has become a scarce resource.** A rack's limit in kilowatts constrains placement more than free cores do. No mainstream scheduler treats watts as a first-class resource.
+6. **Trust is a placement condition.** TDX, SEV-SNP, attestation: "place only where the configuration is proven" is a scheduling predicate that the model does not have.
+7. **The consumer of the API is increasingly not a human.** What matters is not the readability of YAML but the expressibility of intent, reversibility, and the ability to verify the effect before applying it.
+
+---
+
+## Principles of the layer and their ancestors from the series
+
+| Principle | Essence | Ancestor |
 |---|---|---|
-| **Раздавать, а не абстрагировать** | k8s отстаёт от железа на 2–3 года, т.к. каждое устройство требует новой абстракции в ядре API. Платформа безопасно распределяет и изолирует, абстракции — в библиотеках потребителя. Новый ускоритель доступен в день драйвера. | Xok/ExOS |
-| **Право вместо роли** | RBAC = ACL: плохо делегируется, не композируется, не отзывается частично. Тенант получает делегируемый отзываемый набор прав, который передаёт дальше урезанным. | KeyKOS, EROS |
-| **Состояние как единая консистентная сущность** | Reconcile-цикл существует потому, что намерение в etcd, а реальность на узлах, и между ними вечная гонка. Ортогональная персистентность делает согласованный снимок мира целиком. **Самый радикальный и спорный пункт.** | KeyKOS, EROS, Grasshopper, Napier88 |
-| **Промежуточное представление нагрузки** | Гетерогенность x86/ARM/GPU/DPU решают матрицей сборок. Альтернатива: переносимый артефакт, транслируемый под цель в момент размещения. | Taos VP-код, TIMI (AS/400) |
-| **Изоляция типом** | Контроллеры сегодня — поды с широчайшими правами к API. Верифицируемый модуль с декларированными эффектами снимает класс проблем и стоимость изоляции. | Singularity → WASI |
-| **Планирование как решение по многим ресурсам разом** | Ядра, память, топология, ватты, тепло, время, доказанная конфигурация — в одном решателе, а не в цепочке независимых плагинов. | пакетные системы 60-х, Amoeba |
-| **Время и QoS — первоклассные величины** | Не лимиты и реквесты как прокси, а дедлайн и доля пропускной способности, за которые система отвечает. | Nemesis |
-| **Ноду разобрать на части** | Если внутри корпуса распределённая система, control plane должен планировать на DPU и пул памяти напрямую, а не поверх иллюзии единого узла. | Barrelfish, Domain/OS |
+| **Distribute, don't abstract** | k8s lags behind hardware by 2–3 years, because every device needs a new abstraction in the core API. The platform safely distributes and isolates; abstractions live in the consumer's libraries. A new accelerator is available on the day its driver ships. | Xok/ExOS |
+| **Capability instead of role** | RBAC = ACL: it delegates poorly, does not compose, cannot be partially revoked. A tenant receives a delegable, revocable set of rights that it passes on in reduced form. | KeyKOS, EROS |
+| **State as a single consistent entity** | The reconcile loop exists because intent is in etcd and reality is on the nodes, with an eternal race between them. Orthogonal persistence takes a consistent snapshot of the whole world. **The most radical and contested point.** | KeyKOS, EROS, Grasshopper, Napier88 |
+| **An intermediate representation of the workload** | x86/ARM/GPU/DPU heterogeneity is handled with a build matrix. The alternative: a portable artifact translated for the target at placement time. | Taos VP code, TIMI (AS/400) |
+| **Isolation by type** | Controllers today are pods with the broadest rights to the API. A verifiable module with declared effects removes a class of problems and the cost of isolation. | Singularity → WASI |
+| **Scheduling as a decision over many resources at once** | Cores, memory, topology, watts, heat, time, proven configuration: in one solver, not in a chain of independent plugins. | batch systems of the 60s, Amoeba |
+| **Time and QoS as first-class quantities** | Not limits and requests as proxies, but a deadline and a share of throughput that the system is accountable for. | Nemesis |
+| **Take the node apart** | If there is a distributed system inside the chassis, the control plane should schedule onto the DPU and the memory pool directly, not on top of the illusion of a single node. | Barrelfish, Domain/OS |
 
 ---
 
-## Ловушка
+## The trap
 
-Kubernetes победил не архитектурой, а тем, что стал общим языком: API знают все,
-экосистема несёт стоимость интеграции. Переписывание с нуля конкурирует не с качеством
-дизайна, а с накопленным ecosystem lock-in. Все зелёные поля за десять лет проиграли
-ровно поэтому.
+Kubernetes won not by its architecture but by becoming a common language: everyone knows the API,
+and the ecosystem carries the cost of integration. A rewrite from scratch competes not with the quality
+of the design but with the accumulated ecosystem lock-in. Every greenfield effort of the last ten years
+lost for exactly this reason.
 
-**Работающий путь:** не «Kubernetes, но лучше», а выбрать одну ось, где он неправ
-структурно, а не случайно, и строить там, где его нет. Компенсировать интеграцией, а не
-совместимостью.
-
----
-
-## Три реалистичных оси
-
-1. **Планирование заданий на ускорителях по топологии и времени** ← ближе всего к земле: есть GPU-as-a-Service клиенты, датацентровая практика, Cozystack как носитель. Kubernetes здесь концептуально не о том, рядом стоит Slurm из семидесятых, между ними дыра, в которую все падают.
-2. **Данные и состояние как первичная сущность платформы**
-3. **Мультитенантность на правах вместо ролей**
+**The path that works:** not "Kubernetes, but better", but picking one axis where it is wrong
+structurally rather than accidentally, and building where it does not exist. Compensate with integration,
+not with compatibility.
 
 ---
 
-## Рефал как язык control plane (сильнейшая идея разговора)
+## Three realistic axes
 
-**Контроллер Kubernetes — это правило переписывания термов.** Сопоставить образец в
-состоянии кластера → породить новое состояние. Весь reconcile-цикл — term rewriting
-system, записанная неудобным способом: на Go, императивно, без возможности что-либо
-доказать. Рефал создан ровно для этого, и у него есть теория.
-
-Следствия, проверяемые за вечер:
-- **Завершаемость и сходимость становятся свойствами набора правил**, а не надеждой. Классическая боль — два контроллера дерутся за одно поле и система осциллирует. В переписывающей системе это конфликт правил, обнаруживаемый статически, а не в проде в три часа ночи.
-- **Суперкомпиляция над набором контроллеров**: прогнать правила всех контроллеров тенанта через суперкомпилятор, он развернёт взаимодействие и покажет либо неподвижную точку, либо цикл. Ровно то, ради чего Турчин придумывал метавычисления, применённое к задаче, которой тогда не существовало.
-- **Мини-реконсайлер на Рефале**: десяток правил, состояние кластера как терм, плюс доказательство сходимости из любого начального состояния.
-
-Скрещивает забытый язык, забытую теорию, инфраструктурную ось и даёт практический
-результат. Реализаций Рефала хватает, порог входа — вечер.
-
-Родственная идея с другой стороны: **пространство кортежей (Linda) как язык, а не
-библиотека** — возможно, та же идея под другим углом.
+1. **Scheduling accelerator jobs by topology and time** ← closest to the ground: there are GPU-as-a-Service customers, data center practice, and Cozystack as the carrier. Kubernetes is conceptually about something else here, Slurm from the seventies stands next to it, and between them is a gap that everyone falls into.
+2. **Data and state as the primary entity of the platform**
+3. **Multi-tenancy built on capabilities instead of roles**
 
 ---
 
-## Как это связано с сериями
+## Refal as a control plane language (the strongest idea of the conversation)
 
-Серия перестаёт быть ретроспективой и становится сбором словаря для нового дизайна.
-Каждый выпуск заканчивается не «как трогательно», а «вот этот примитив мы забираем в
-проект и вот почему».
+**A Kubernetes controller is a term rewriting rule.** Match a pattern in the
+cluster state → produce a new state. The whole reconcile loop is a term rewriting
+system written down in an awkward way: in Go, imperatively, with no way to prove
+anything. Refal was created exactly for this, and it has a theory.
+
+Consequences that can be checked in an evening:
+- **Termination and convergence become properties of the rule set**, not a hope. The classic pain is two controllers fighting over one field while the system oscillates. In a rewriting system this is a rule conflict, detected statically, not in production at three in the morning.
+- **Supercompilation over a set of controllers**: run the rules of all of a tenant's controllers through a supercompiler, and it will unfold their interaction and show either a fixed point or a cycle. Exactly what Turchin invented metacomputation for, applied to a problem that did not exist back then.
+- **A mini-reconciler in Refal**: a dozen rules, the cluster state as a term, plus a proof of convergence from any initial state.
+
+It crosses a forgotten language, a forgotten theory and an infrastructure axis, and gives a practical
+result. There are plenty of Refal implementations; the entry threshold is an evening.
+
+A related idea from the other side: **tuple space (Linda) as a language, not a
+library**, possibly the same idea from another angle.
 
 ---
 
-# Слой без операционной системы
+## How this connects to the series
 
-Тезис пользователя: инфраслою завтрашнего дня ОС не должна быть нужна — надо просто уметь
-работать с оборудованием.
+The series stops being a retrospective and becomes the collection of a vocabulary for a new design.
+Each episode ends not with "how touching" but with "this is the primitive we take into the
+project, and this is why".
 
-## Идея не наивная, у неё есть имя и 25 лет результатов
+---
 
-**Arrakis, OSDI 2014, подзаголовок «The Operating System is the Control Plane»** — буквально
-этот тезис: данные идут мимо ядра прямо в железо через SR-IOV, ОС остаётся раздавать права
-и разруливать конфликты. Рядом: **IX** (того же года), **Snap** (Google), **Demikernel**
-(MSR), вся линия юникернелов от MirageOS до Unikraft, **rump-ядра** NetBSD (драйверы как
-библиотека), **Arrakis/Barrelfish/seL4**, **AWS Nitro**, **Oxide Computer**.
+# A layer without an operating system
 
-## ОС не исчезает — она разбирается на части
+The user's thesis: tomorrow's infrastructure layer should not need an OS; it should simply know how
+to work with the hardware.
 
-Что она делает и куда это девается:
+## The idea is not naive; it has a name and 25 years of results
 
-| Функция | Куда девается |
+**Arrakis, OSDI 2014, subtitle "The Operating System is the Control Plane"**, is literally
+this thesis: data goes past the kernel straight into the hardware via SR-IOV, and the OS remains to hand out rights
+and resolve conflicts. Nearby: **IX** (the same year), **Snap** (Google), **Demikernel**
+(MSR), the whole line of unikernels from MirageOS to Unikraft, NetBSD **rump kernels** (drivers as a
+library), **Arrakis/Barrelfish/seL4**, **AWS Nitro**, **Oxide Computer**.
+
+## The OS does not disappear; it gets taken apart
+
+What it does and where that goes:
+
+| Function | Where it goes |
 |---|---|
-| **Драйверы** | Ценность Linux — не планировщик, а ~30 млн строк драйверов. Три исторических ответа: резко сузить номенклатуру железа; переиспользовать чужие драйверы как библиотеку (rump); вытолкнуть драйвер в устройство (DPU, SR-IOV, NVMe) |
-| **Мультиплексирование** | Одна нагрузка на машину — не нужно. Облако — это и есть бизнес, убрать нельзя |
-| **Изоляция** | Железом (MMU/IOMMU/SR-IOV), типами (Singularity/WASM) или никак. Третьего нет |
-| **Именование и обнаружение** | Где-то должно жить |
-| **Жизненный цикл** | Загрузка, падение, перезапуск, обновление |
-| **Наблюдаемость** | ⚠ Здесь зарыт труп |
+| **Drivers** | The value of Linux is not the scheduler but ~30 million lines of drivers. Three historical answers: drastically narrow the range of hardware; reuse someone else's drivers as a library (rump); push the driver into the device (DPU, SR-IOV, NVMe) |
+| **Multiplexing** | With one workload per machine it is not needed. The cloud is the business itself, so it cannot be removed |
+| **Isolation** | By hardware (MMU/IOMMU/SR-IOV), by types (Singularity/WASM), or not at all. There is no third option |
+| **Naming and discovery** | Has to live somewhere |
+| **Lifecycle** | Boot, crash, restart, update |
+| **Observability** | ⚠ This is where the body is buried |
 
-**Наблюдаемость — задокументированная причина №1**, по которой юникернелы не вышли за
-пределы демонстраций. Не производительность и не безопасность, а то, что упавшее в проде
-невозможно вскрыть: нет `ps`, нет `dmesg`, нет `strace`.
+**Observability is the documented reason #1** why unikernels never got beyond
+demonstrations. Not performance and not security, but the fact that something that crashed in production
+cannot be opened up: there is no `ps`, no `dmesg`, no `strace`.
 
-## Наблюдение, меняющее рамку
+## An observation that changes the frame
 
-Железо уже поглощает ОС: NVMe делает очередями то, что делал блочный слой; SR-IOV —
-мультиплексирование, которое делал драйвер; DPU уносит сетевой стек; IOMMU — защиту;
-CXL — управление памятью.
+Hardware is already absorbing the OS: NVMe does with queues what the block layer used to do; SR-IOV does
+the multiplexing the driver used to do; the DPU takes away the network stack; the IOMMU takes protection;
+CXL takes memory management.
 
-Но заметь, что происходит: **ОС не исчезает, она переезжает внутрь устройств**. А там
-крутится прошивка, которой ты не управляешь, которую не наблюдаешь и не можешь заменить.
-По совокупности может оказаться хуже. На этом построен весь тезис Oxide Computer, вычистивших
-BMC и традиционную прошивку.
+But notice what is happening: **the OS does not disappear, it moves into the devices**. And there
+runs firmware that you do not control, cannot observe and cannot replace.
+Taken together, this may turn out worse. The whole thesis of Oxide Computer, who cleaned out the
+BMC and traditional firmware, is built on this.
 
-**Правильный вопрос не «ОС или без ОС», а: где живёт механизм и кто может его наблюдать и
-заменить.** Эта формулировка защищается; «уйти от понятия ОС» — нет.
+**The right question is not "OS or no OS" but: where does the mechanism live, and who can observe and
+replace it.** This formulation is defensible; "getting away from the notion of an OS" is not.
 
-## Что это значит для первой оси (GPU-облако)
+## What this means for the first axis (GPU cloud)
 
-**С пути данных ОС убирается — реалистично уже сегодня.** Ускорительные нагрузки и так
-ходят мимо ядра: GPUDirect, RDMA, очереди NIC через SR-IOV. Задание получает нарезку машины
-и исполняется рантаймом, а не операционной системой. Это модель Arrakis, и под ускорительную
-нагрузку она ложится лучше, чем под ту, для которой придумывалась.
+**Removing the OS from the data path is realistic already today.** Accelerator workloads already
+bypass the kernel: GPUDirect, RDMA, NIC queues via SR-IOV. A job receives a slice of the machine
+and is executed by a runtime, not by an operating system. This is the Arrakis model, and it fits accelerator
+workloads better than the workload it was invented for.
 
-**С пути управления ОС не убирается никогда** — только переселяется. Правильный адрес:
-**DPU и сервисный процессор**. Там живут размещение, аттестация, учёт, наблюдение, уборка
-после падения, проверка что тенант А не видит память тенанта Б.
+**The OS is never removed from the control path**, only relocated. The right address is
+**the DPU and the service processor**. That is where placement, attestation, accounting, observation, cleanup
+after a crash, and verification that tenant A cannot see tenant B's memory live.
 
-**Формулировка:** хост становится чистым субстратом исполнения, а всё, что раньше называлось
-операционной системой, уезжает в управляющий комплекс. Arrakis + логика Nitro + позиция
-Oxide, собранные под конкретную нагрузку.
+**Formulation:** the host becomes a pure execution substrate, and everything that used to be called
+the operating system moves into the management complex. Arrakis + the logic of Nitro + the stance of
+Oxide, assembled for a specific workload.
 
-Это та же экзоядерная сделка из трека 1: слой не абстрагирует железо, а безопасно его
-раздаёт.
+This is the same exokernel bargain from track 1: the layer does not abstract the hardware but safely
+distributes it.
 
-## Условие, которое делает это возможным
+## The condition that makes this possible
 
-Все, кому удалось обойтись без ОС, **резко сузили номенклатуру железа**: консоли, Oxide,
-юникернелы поверх virtio. Проблема драйверов неразрешима в общем случае и разрешима, когда
-устройств двенадцать и ты сам решаешь какие.
+Everyone who managed to do without an OS **drastically narrowed the range of hardware**: consoles, Oxide,
+unikernels on top of virtio. The driver problem is unsolvable in the general case and solvable when
+there are twelve devices and you yourself decide which ones.
 
-У пользователя ровно такая ситуация: спецификацию закупки датацентра определяет он. Задача
-переходит из «переписать Linux» в «написать драйверы для дюжины известных устройств».
+The user has exactly this situation: he defines the data center's procurement specification. The task
+turns from "rewrite Linux" into "write drivers for a dozen known devices".
 
-## Тест готовности дизайна
+## The design readiness test
 
-**Задание упало в три часа ночи — что делает дежурный, чтобы понять причину?**
+**A job crashed at three in the morning: what does the on-call engineer do to find the cause?**
 
-Если ответ не появляется сразу и убедительно — дизайн не готов. Наблюдаемость в системах
-без ОС проектируется первой, а не последней: задним числом не пристраивается, потому что
-нечего инструментировать, если всё исполняется мимо всех слоёв.
-
----
-
-# Упаковка проекта под Cozystack
-
-**Разделение: браузер берёт исполнение, кластер берёт сборку.**
-
-Всё, что компилируется в WASM (эмуляторы, модель RISC5, рантаймы), в кластере не нуждается —
-это статика на CDN. В Cozystack имеет смысл паковать то, что в браузер не лезет:
-
-- **Компилятор RED как сервис сборки.** Фронтенд поверх LLVM — сотни мегабайт тулчейна. Схема: подал исходник → кластер собрал → вернул WASM-модуль → браузер исполнил.
-- **Verilator, yosys, nextpnr.** Сборка модели процессора и синтез под ПЛИС — тяжёлые, длинные, с большими артефактами. Классическая пакетная нагрузка.
-- **Длинные потактовые прогоны RTL и регрессия.** Batch.
-
-Состав пакета: чарт с тулчейн-образом, объект «сборка» как задание, хранилище артефактов,
-тонкий веб-фронт. По конвенциям Cozystack — обычное приложение каталога.
-
-**Зачем — две причины, обе не про RED:**
-
-1. **В каталоге появляется живой запоминающийся пример**, отличающийся от очередного Postgres. «Разверни в один клик песочницу, где компилируется язык, проигравший конкурс Пентагона в 1979-м» — контент-маркетинг, встроенный в продукт.
-2. **Публичная песочница, исполняющая чужой произвольный код, — настоящий тест мультитенантной изоляции.** Если можно безопасно пустить посторонних выполнять что угодно в своём кластере — это доказывает про платформу больше любого бенчмарка.
-
-**Петля:** сборочный конвейер этого проекта сам становится рабочей нагрузкой для
-инфраслоя, который проектируется. Длинные задания, артефакты, ограничения по времени,
-ко-аллокация — ровно первая ось. Не выдуманный тест, а собственная боль.
+If the answer does not come immediately and convincingly, the design is not ready. In systems without an OS,
+observability is designed first, not last: it cannot be bolted on after the fact, because there is
+nothing to instrument if everything executes past all the layers.
 
 ---
 
-# Что мы предлагаем НОВОГО — не ривайвал (2026-09-29)
+# Packaging the project for Cozystack
 
-Ривайвал (что завтра взять у забытых машин) — половина силы. Сильная позиция — **заявка**: что нового мы предлагаем ДЛЯ завтрашнего дня. Наш козырь — у нас есть и живой облачный инфраслой (Cozystack), и каталог забытых/диких принципов; из их сшивки рождается то, чего ещё нет. Четыре оригинальных направления (манифест-скелет, раскручиваем дальше):
+**The split: the browser takes execution, the cluster takes builds.**
 
-## 1. Capability-нативное облако
-Изоляция арендаторов не через namespace'ы, а через **аппаратные capability** (CHERI × дескрипторы Burroughs) как единый примитив сквозь весь стек — memory-safety как модель мультиарендности датацентра.
-- **Что нового:** так облако сегодня никто не строит; безопасность — не политика поверх, а свойство адресации.
-- **Что приносим:** Cozystack как готовая мультиарендная площадка для проверки; наши #3c/#3d/#14 (дескрипторы, замеры цены безопасности).
-- **Железо-носитель:** Arm Morello / CHERI-RISC-V.
-- **Заявка:** первыми показать k8s-подобный тенант, чья граница — capability, а не ядро ОС.
+Everything that compiles to WASM (emulators, the RISC5 model, runtimes) does not need a cluster;
+it is static content on a CDN. In Cozystack it makes sense to package what does not fit into the browser:
 
-## 2. Энергия как первый класс планирования
-По мере созревания обратимых чипов (Vaire) — инфраслой, который **считает и биллит по стёртым битам** (учёт Ландауэра) и оффлоудит reversible-совместимые нагрузки на адиабатический тир.
-- **Что нового:** энергия/необратимость как измеряемый ресурс планировщика, а не постфактум-метрика.
-- **Что приносим:** FinOps-каркас Cozystack; наш #30/#44 (обратимый/троичный процессор как экспериментальный тир).
-- **Заявка:** первый scheduler, у которого «сколько бит ты сотрёшь» — параметр размещения.
+- **The RED compiler as a build service.** A frontend on top of LLVM is hundreds of megabytes of toolchain. The scheme: submit source → the cluster builds it → returns a WASM module → the browser executes it.
+- **Verilator, yosys, nextpnr.** Building the processor model and synthesizing for an FPGA are heavy, long, with large artifacts. A classic batch workload.
+- **Long cycle-accurate RTL runs and regression.** Batch.
 
-## 3. Облако, которое не перезагружается
-Ортогональная персистентность (EROS/KeyKOS) × пул памяти по **CXL**: нет «файлов», нет «ребута» — мир арендатора это персистентный граф объектов на дезагрегированной памяти. Single-level store на масштаб датацентра.
-- **Что нового:** «выключить/сохранить/загрузить» исчезают как понятия на уровне инфры.
-- **Что приносим:** наш #36/#37 (persistent capability-ОС, single-level store) + Cozystack-подложка.
-- **Заявка:** тенант, переживающий отказ узла без «загрузки» — состояние просто продолжает быть.
+Package contents: a chart with a toolchain image, a "build" object as a job, artifact storage,
+a thin web frontend. By Cozystack conventions, an ordinary catalog application.
 
-## 4. Само-верифицируемая content-addressed фабрика
-Content-addressed до самого низа (Unison-стиль) + артефакты, несущие **машинно-проверяемые контракты** ресурсов/безопасности (seL4-дух).
-- **Что нового:** «сломанные зависимости», «config drift» и «неправильная конфигурация» структурно невозможны в подложке.
-- **Что приносим:** наш #40 (Unison), #21 (diverse double-compiling), GitOps-опыт Cozystack.
-- **Заявка:** датацентр, который нельзя сконфигурировать неправильно — деплой не принимается без доказательства.
+**Why: two reasons, neither of them about RED:**
 
-**Общий тезис серии:** прошлое даёт словарь, будущее — это наши четыре заявки. Реставрация обосновывает право говорить; заявки делают нас участниками, а не музеем.
+1. **The catalog gets a living, memorable example** that differs from yet another Postgres. "Deploy in one click a sandbox where a language that lost the Pentagon competition in 1979 compiles" is content marketing built into the product.
+2. **A public sandbox that executes other people's arbitrary code is a real test of multi-tenant isolation.** If you can safely let strangers run anything in your cluster, that proves more about the platform than any benchmark.
+
+**The loop:** this project's build pipeline itself becomes a workload for the
+infrastructure layer being designed. Long jobs, artifacts, time limits,
+co-allocation: exactly the first axis. Not a made-up test but our own pain.
+
+---
+
+# What NEW we propose, not a revival (2026-09-29)
+
+Revival (what tomorrow should take from forgotten machines) is half the strength. The strong position is a **claim**: what new things we propose FOR tomorrow. Our trump card is that we have both a living cloud infrastructure layer (Cozystack) and a catalog of forgotten/wild principles; stitching them together produces what does not yet exist. Four original directions (a manifesto skeleton, to be developed further):
+
+## 1. A capability-native cloud
+Tenant isolation not through namespaces but through **hardware capabilities** (CHERI × Burroughs descriptors) as a single primitive across the whole stack: memory safety as the multi-tenancy model of a data center.
+- **What is new:** nobody builds a cloud this way today; security is not a policy on top but a property of addressing.
+- **What we bring:** Cozystack as a ready multi-tenant site for testing; our #3c/#3d/#14 (descriptors, measurements of the cost of safety).
+- **Hardware carrier:** Arm Morello / CHERI-RISC-V.
+- **Claim:** be the first to show a k8s-like tenant whose boundary is a capability, not the OS kernel.
+
+## 2. Energy as a first-class scheduling concern
+As reversible chips mature (Vaire), an infrastructure layer that **counts and bills by erased bits** (Landauer accounting) and offloads reversible-compatible workloads to an adiabatic tier.
+- **What is new:** energy/irreversibility as a measurable scheduler resource, not an after-the-fact metric.
+- **What we bring:** Cozystack's FinOps framework; our #30/#44 (a reversible/ternary processor as an experimental tier).
+- **Claim:** the first scheduler for which "how many bits will you erase" is a placement parameter.
+
+## 3. A cloud that never reboots
+Orthogonal persistence (EROS/KeyKOS) × a memory pool over **CXL**: no "files", no "reboot"; the tenant's world is a persistent object graph on disaggregated memory. A single-level store at data center scale.
+- **What is new:** "shut down/save/load" disappear as concepts at the infrastructure level.
+- **What we bring:** our #36/#37 (a persistent capability OS, single-level store) + Cozystack as the substrate.
+- **Claim:** a tenant that survives a node failure without "booting": the state simply continues to be.
+
+## 4. A self-verifying content-addressed factory
+Content-addressed all the way down (Unison style) + artifacts that carry **machine-checkable contracts** for resources/security (in the spirit of seL4).
+- **What is new:** "broken dependencies", "config drift" and "misconfiguration" are structurally impossible in the substrate.
+- **What we bring:** our #40 (Unison), #21 (diverse double-compiling), Cozystack's GitOps experience.
+- **Claim:** a data center that cannot be misconfigured: a deployment is not accepted without a proof.
+
+**The common thesis of the series:** the past gives the vocabulary, the future is our four claims. Restoration justifies the right to speak; the claims make us participants, not a museum.

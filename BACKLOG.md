@@ -1,207 +1,209 @@
-# Backlog проектов
+[Русская версия](BACKLOG.ru.md)
 
-Статусы: `idea` / `research` / `in progress` / `done` / `dropped`
-Обновлено: 2026-09-25
+# Project backlog
+
+Statuses: `idea` / `research` / `in progress` / `done` / `dropped`
+Updated: 2026-09-25
 
 ---
 
-## Верхние кандидаты (ранжировано)
+## Top candidates (ranked)
 
-| # | Проект | Трек | Усилие | Артефакты | Что на выходе | Статус |
+| # | Project | Track | Effort | Artifacts | Outcome | Status |
 |---|---|---|---|---|---|---|
-| 1 | **Реконсайлер на Рефале + суперкомпиляция** | 2+4 | вечер–неделя | всё есть | статически обнаруживаемые конфликты контроллеров, доказательство сходимости | idea |
-| 2 | **Триада на форт-процессоре J1** | 3 | выходные | всё есть | первый репозиторий, полный цикл железо+язык+ОС | idea |
-| 3 | **Sulong в управляемом режиме: что ломается в реальном C++** | сквозной | вечер | всё есть | статья с цифрами, вход в «сезон трёх ответов» | idea |
-| 3a | **Компонент-встройка: `<oberon-machine>`, машина в worker'е** | инфра серии | сделано | — | две строки вставляют машину в любую страницу; SAB и COOP/COEP не понадобились (находка 54) | **done** |
-| 3b | **Выпуск №1 (ФЛАГМАН, пересмотрен): Oberon в браузере + цена проверки границ** | 3+1 | **9–13 недель** (130–190 ч) | всё есть | дизайн v0.2 в `design/DESIGN.md`, прошёл ревью пятью рецензентами; нейросеть и FMAC вынесены в выпуск №2 | **next** |
-| 3b2 | **Выпуск №2: языковая модель на RISC5 + замена FP-умножителя** | 3 | после флагмана | всё есть | дизайн и замеры — `13-episode-lm-on-risc5.md`, находки 72–78. Измерено на RTL: быстрый умножитель 1.60× (1 такт) / 1.57× (2 такта), потолок при бесплатном умножении 1.64× — прежние «1.67×» недостижимы; FMAC по профилю 1.015–1.064× (оценка). Дальше узкое место — `LD`/`ST` от кодогенератора без распределения регистров | in progress |
-| 3c | **Выпуск №2–3: переполнения не существует (B5500 / x86 / CHERI)** | 1 | вечер (мин.) — неск. дней (триптих) | эмулятор и ALGOL готовы | см. `10-episode-burroughs.md` | idea |
-| 3d | **Дескрипторы в RISC5: измерить настоящую цену аппаратной безопасности памяти** | 3 | после флагмана | — | числа, которых нет ни у кого; превращает серию в исследовательскую | прототип и замеры: `14-episode-descriptors.md`, находки 80–84 |
-| 3e | **«Две Ады»: контрактные задачи, решения на RED и GREEN рядом** | 2 | дни | ✅ оба набора документов найдены | кода не требует вообще | idea |
-| 4 | **Рефлексивная башня (3-Lisp заново)** | парадигмы | неделя | статьи есть | выпуск, ломающий картину мира | idea |
-| 5 | **THE Дейкстры на GNAT** | 1(D)+2 | 2–4 недели | одна статья | проверка жанра реконструкции на минимальной мишени | idea |
-| 6 | **Воспроизвести Project Oberon по книге** | 3 | месяц | всё есть | калибровка: понятен весь цикл от ISA до GUI | idea |
-| 7 | **Проверить состояние открытых кремниевых шаттлов под RISC5** | 3 | часы (research) | — | решение по пути «кремний» | idea |
-| 8 | **Транспьютер: многоузловая сетка + occam + Helios** | 3+1 | флагман, месяцы | док INMOS есть, Helios открывался | физическая CSP-машина, демо на конференции | idea |
-| 9 | **Эмулятор iAPX 432** | 1(C) | большой | дока Intel есть, но частичная (даташитов не хватает); `iapx432-image-builder` неполон/непроверен | подтверждено 29.09: рабочего эмулятора НЕТ — пробел = проект | **пусто** |
-| 10 | **Кронос: процессор в Verilog + Excelsior** | 3+1 | большой | материал почти не оцифрован | первый оригинальный вклад + сохранение наследия | idea |
-| 11 | **Своя плата Oberon-машины (iCE40 + SRAM, ручная пайка)** | 3 | месяцы | всё есть | **пустая ниша: открытого набора для сборки нет** | idea |
-| 12 | **Magic Cap: эмулятор 68349 + периферия Magic Link** | 1(C) | большой | ROM у коллекционеров (проверить) | агенты Telescript живьём | idea |
-| 13 | **Интерпретатор C уровня 3 (provenance + UB + replay)** | сквозной | большой | стандарт | точный детектор UB; теневая память переиспользуется в п.3 | idea |
-| 14 | **Ada Red: фронтенд** | 2 | 3–6 мес неполной занятости | ✅ спека, рационале, синтакс-диаграммы, тестовые задачи и примеры — всё есть | первый публично доступный компилятор RED в истории | research |
-| 15 | **Ядро в стиле Tandem NonStop на Ada Red** | 1(D)+2 | после п.14 | Bartlett SOSP'81 + Gray 1985 | альтернативная история, парные процессы живьём | idea |
-| 16 | **Энергия в системе типов: проработка концепции** | парадигмы | неделя research | нет предшественников | понять, работоспособна идея или разваливается | idea |
-| 17 | **Linda / пространство кортежей как язык** | парадигмы+4 | средний | теория есть | возможно, та же идея, что п.1, с другой стороны | idea |
-| 18 | **Reduceron на ПЛИС** | 3 | средний | живой, документирован | аппаратная графовая редукция | idea |
-| 19 | **WAM по книге Айт-Каси** | 2 | средний | книга | классика, наглядный результат | idea |
-| 20 | **Проекции Футамуры: компилятор из интерпретатора живьём** | 2 | средний | статьи 1971 | выпуск, бьющий наповал | idea |
-| 21 | **Trusting Trust + diverse double-compiling** | 2 | средний | всё есть | выходит за пределы ретро-аудитории (supply chain security) | idea |
+| 1 | **A reconciler in Refal + supercompilation** | 2+4 | an evening to a week | everything exists | statically detectable controller conflicts, a proof of convergence | idea |
+| 2 | **The triad on the J1 Forth processor** | 3 | a weekend | everything exists | the first repository, the full hardware+language+OS cycle | idea |
+| 3 | **Sulong in managed mode: what breaks in real C++** | cross-cutting | an evening | everything exists | an article with numbers, the entry into the "season of three answers" | idea |
+| 3a | **Embeddable component: `<oberon-machine>`, the machine in a worker** | series infra | done | — | two lines put the machine into any page; SAB and COOP/COEP were not needed (finding 54) | **done** |
+| 3b | **Episode #1 (FLAGSHIP, revised): Oberon in the browser + the cost of bounds checking** | 3+1 | **9–13 weeks** (130–190 h) | everything exists | design v0.2 in `design/DESIGN.md`, reviewed by five reviewers; the neural network and FMAC moved to episode #2 | **next** |
+| 3b2 | **Episode #2: a language model on RISC5 + replacing the FP multiplier** | 3 | after the flagship | everything exists | design and measurements: `13-episode-lm-on-risc5.md`, findings 72–78. Measured on RTL: the fast multiplier gives 1.60× (1 cycle) / 1.57× (2 cycles), the ceiling with free multiplication is 1.64×, so the earlier "1.67×" is unreachable; FMAC by profile 1.015–1.064× (estimate). The next bottleneck is `LD`/`ST` from a code generator without register allocation | in progress |
+| 3c | **Episode #2–3: overflow does not exist (B5500 / x86 / CHERI)** | 1 | an evening (min.) to several days (triptych) | emulator and ALGOL ready | see `10-episode-burroughs.md` | idea |
+| 3d | **Descriptors in RISC5: measure the real cost of hardware memory safety** | 3 | after the flagship | — | numbers nobody has; turns the series into research | prototype and measurements: `14-episode-descriptors.md`, findings 80–84 |
+| 3e | **"Two Adas": the contract problems, RED and GREEN solutions side by side** | 2 | days | ✅ both document sets found | requires no code at all | idea |
+| 4 | **The reflective tower (3-Lisp anew)** | paradigms | a week | papers exist | an episode that breaks the worldview | idea |
+| 5 | **Dijkstra's THE on GNAT** | 1(D)+2 | 2–4 weeks | one paper | testing the reconstruction genre on a minimal target | idea |
+| 6 | **Reproduce Project Oberon from the book** | 3 | a month | everything exists | calibration: the whole cycle from ISA to GUI is understood | idea |
+| 7 | **Check the state of open silicon shuttles for RISC5** | 3 | hours (research) | — | a decision on the "silicon" path | idea |
+| 8 | **Transputer: a multi-node grid + occam + Helios** | 3+1 | flagship, months | INMOS docs exist, Helios was open-sourced | a physical CSP machine, a conference demo | idea |
+| 9 | **iAPX 432 emulator** | 1(C) | large | Intel docs exist but are partial (datasheets are missing); `iapx432-image-builder` is incomplete/unverified | confirmed 29.09: there is NO working emulator, the gap = the project | **empty** |
+| 10 | **Kronos: the processor in Verilog + Excelsior** | 3+1 | large | the material is almost undigitized | the first original contribution + preserving the heritage | idea |
+| 11 | **Our own Oberon machine board (iCE40 + SRAM, hand soldering)** | 3 | months | everything exists | **an empty niche: there is no open kit to build** | idea |
+| 12 | **Magic Cap: a 68349 emulator + Magic Link peripherals** | 1(C) | large | ROMs with collectors (to check) | Telescript agents live | idea |
+| 13 | **A level-3 C interpreter (provenance + UB + replay)** | cross-cutting | large | the standard | a precise UB detector; the shadow memory is reused in item 3 | idea |
+| 14 | **Ada Red: frontend** | 2 | 3–6 months part-time | ✅ spec, rationale, syntax diagrams, test problems and examples: everything exists | the first publicly available RED compiler in history | research |
+| 15 | **A Tandem NonStop style kernel in Ada Red** | 1(D)+2 | after item 14 | Bartlett SOSP'81 + Gray 1985 | alternative history, process pairs live | idea |
+| 16 | **Energy in the type system: working out the concept** | paradigms | a week of research | no predecessors | find out whether the idea works or falls apart | idea |
+| 17 | **Linda / tuple space as a language** | paradigms+4 | medium | theory exists | possibly the same idea as item 1, from the other side | idea |
+| 18 | **Reduceron on an FPGA** | 3 | medium | alive, documented | hardware graph reduction | idea |
+| 19 | **The WAM from Aït-Kaci's book** | 2 | medium | the book | a classic, a visible result | idea |
+| 20 | **Futamura projections: a compiler from an interpreter, live** | 2 | medium | 1971 papers | an episode that knocks you flat | idea |
+| 21 | **Trusting Trust + diverse double-compiling** | 2 | medium | everything exists | reaches beyond the retro audience (supply chain security) | idea |
 
 ---
 
-## Новые кандидаты (2026-09-29 — троичность, аналог, живые Lisp-ОС)
+## New candidates (2026-09-29: ternary, analog, living Lisp OSes)
 
-Из разведки по «неосуществлённым или утраченным железным архитектурам, которые можно эмулировать сейчас». В основную таблицу не влиты (нумерация условная) — то, чего в бэклоге ещё не было. Что уже есть и не дублируется: iAPX 432 (#9), транспьютер (#8), Burroughs/дескрипторы (#3c/#3d/#10/#14), Reduceron/графовая редукция (#18), WAM (#19), Lisp-машина на RISC5 (#3b2/#13).
+From a survey of "never-implemented or lost hardware architectures that can be emulated now". Not merged into the main table (the numbering is provisional): these are things the backlog did not have yet. What already exists and is not duplicated: iAPX 432 (#9), transputer (#8), Burroughs/descriptors (#3c/#3d/#10/#14), Reduceron/graph reduction (#18), WAM (#19), Lisp machine on RISC5 (#3b2/#13).
 
-| # | Проект | Трек | Усилие | Артефакты | Что на выходе | Статус |
+| # | Project | Track | Effort | Artifacts | Outcome | Status |
 |---|---|---|---|---|---|---|
-| 22 | **Сетунь-70: троичность живьём** — сбалансированная троичная, язык ДССП (двухстековая RPN), структурное программирование Дейкстры прямо в железе | 3+1 | вечер | эмулятор готов ([smaslovski/Setun70](https://github.com/smaslovski/Setun70)) | троичный счёт и ДССП в терминале; своя русская линия наследия (Брусенцов, МГУ) — сильный «свой» сюжет | idea |
-| 23 | **Аналоговый ренессанс: ОДУ патч-кордами** — класс машин вымер, сейчас возрождён | 6+1 | вечер–выходные | [The Analog Thing](https://the-analog-thing.org/) (open-hw) + [PyAnalog](https://github.com/anabrid/pyanalog) (симулятор) | аттрактор Лоренца/ОДУ в реальном времени, «вычисление без дискретизации» | idea |
-| 24 | **Многозначная логика: квадернарная машина, которой не было** — MVL-исследования 1980-х, полной машины так и не построили | 6 | средний (research) | бумаги MVL | эмуляция base-4 ISA; «неосуществлённая ветка» как отдельный сюжет | idea |
-| 25 | **Пожить в Lisp-ОС: Medley Interlisp** — Interlisp-D жив, VM Maiko, браузер | обзор/лаба | вечер | живой проект [interlisp.org](https://interlisp.org/) | резиденциальная Lisp-ОС в один клик; лаба «смотреть/ломать» на готовом | idea |
-| 26 | **Полный ACE Тьюринга (1945): неосуществлённый дизайн** — построили лишь урезанный Pilot ACE | обзор/research | research | спека ACE | реконструкция «машины, которую не собрали» | idea |
-| 27 | **GA144 / Forth F18: 144 асинхронных ядра** — рифма к J1 (#2), но async-массив | 3 | средний | эмулятор есть | экзотический async-Forth рядом с нашей J1-триадой | idea |
-| 28 | **Аналитическая машина Бэббиджа живьём** — не достроена | обзор | вечер | эмулятор Fourmilab (J. Walker) + Plan 28 | программа в стиле Лавлейс; «нулевая» неосуществлённая машина | idea |
-| 29 | **Rational R1000: Ada-машина живьём** — железо оживил DataMuseum.dk | 2 (Ada) | средний | эмулятор DataMuseum.dk | пара к Ada-треку (RED/GREEN #14/#3e): реальная Ada-машина | idea |
+| 22 | **Setun-70: ternary live**: balanced ternary, the DSSP language (two-stack RPN), Dijkstra's structured programming right in the hardware | 3+1 | an evening | emulator ready ([smaslovski/Setun70](https://github.com/smaslovski/Setun70)) | ternary arithmetic and DSSP in a terminal; our own Russian heritage line (Brusentsov, Moscow State University), a strong "home-grown" story | idea |
+| 23 | **The analog renaissance: ODEs with patch cords**: the class of machines died out and is now revived | 6+1 | an evening to a weekend | [The Analog Thing](https://the-analog-thing.org/) (open-hw) + [PyAnalog](https://github.com/anabrid/pyanalog) (simulator) | a Lorenz attractor/ODE in real time, "computation without discretization" | idea |
+| 24 | **Multi-valued logic: the quaternary machine that never was**: MVL research of the 1980s, a complete machine was never built | 6 | medium (research) | MVL papers | emulation of a base-4 ISA; "the never-implemented branch" as a story of its own | idea |
+| 25 | **Living in a Lisp OS: Medley Interlisp**: Interlisp-D is alive, the Maiko VM, the browser | overview/lab | an evening | living project [interlisp.org](https://interlisp.org/) | a resident Lisp OS in one click; a "look/break" lab on something ready-made | idea |
+| 26 | **Turing's full ACE (1945): a never-implemented design**: only the cut-down Pilot ACE was built | overview/research | research | the ACE spec | a reconstruction of "the machine that was never built" | idea |
+| 27 | **GA144 / Forth F18: 144 asynchronous cores**: a rhyme to J1 (#2), but an async array | 3 | medium | an emulator exists | exotic async Forth next to our J1 triad | idea |
+| 28 | **Babbage's Analytical Engine live**: never completed | overview | an evening | the Fourmilab emulator (J. Walker) + Plan 28 | a program in Lovelace's style; the "zeroth" never-implemented machine | idea |
+| 29 | **Rational R1000: an Ada machine live**: the hardware was brought back to life by DataMuseum.dk | 2 (Ada) | medium | the DataMuseum.dk emulator | a companion to the Ada track (RED/GREEN #14/#3e): a real Ada machine | idea |
 
 ---
 
-## Дикие / против-интуиции (2026-09-29 — «выглядит как обход законов, а всё честно»)
+## Wild / counter-intuitive (2026-09-29: "looks like cheating the laws, but it is all honest")
 
-Критерий отбора: выглядит как нарушение здравого смысла + математически честно + эмулируется + почти никто не трогал. Футамура (#20) и 3-Lisp (#4) — из той же корзины, уже стоят выше.
+Selection criterion: looks like a violation of common sense + mathematically honest + can be emulated + almost nobody has touched it. Futamura (#20) and 3-Lisp (#4) are from the same basket and already rank higher.
 
-| # | Проект | Трек | Усилие | Артефакты | Что на выходе | Статус |
+| # | Project | Track | Effort | Artifacts | Outcome | Status |
 |---|---|---|---|---|---|---|
-| 30 | 🎯 **Обратимый процессор Pendulum/PISA** — вычисление без стирания битов, почти ноль энергии (Ландауэр); программы идут назад | 3+6 | вечер (эмул.) — большой (RTL) | эмулятор PendVM + ассемблер PAL; тезис Вьери (MIT); архив Франка (UF revcomp); физически — Vaire «Ice River» 2025 (energy-recovery 1.77), AQFP-сверхпроводники | обратимый ассемблер живьём; «uncompute» на глазах; мост к теме энергии вычислений | idea |
-| 31 | **The Mill** (Иван Годард) — «пояс» вместо регистров, сверхширокий issue; гениально на бумаге, в кремний так и не вышел | 3 | большой | 10+ лет докладов/патентов | эмулятор архитектуры, которой нет в железе | idea |
-| 32 | **Transport-Triggered (TTA/«MOVE»)** — одна операция «переместить», вычисление как побочный эффект | 3 | средний | академ. TTA (MOVE, TCE-тулчейн) | абсурдный, но собираемый CPU; контраст к обычному ISA | idea |
-| 33 | **OISC / subleq** — процессор с единственной инструкцией, Тьюринг-полный | 3 | вечер | целая сцена subleq | минимализм-рекорд; наглядная лаба | idea |
-| 34 | **CPU внутри «Жизни» Конвея / Wireworld** — рабочий компьютер, построенный в клеточном автомате | парадигмы | вечер–выходные | Golly, OTCA-метапиксель, Life-in-Life | бредово-красивое демо: компьютер, «выросший» в автомате | idea |
-| 35 | **Клоклесс / асинхронные CPU** — вычисление без тактового генератора (микропайплайны Сазерленда) | 3 | средний | Sutherland «Micropipelines»; async-тулчейны | «невозможные» тайминги; рифма к GA144 (#27) | idea |
-| 36 | **Ортогональная персистентность + чистые capability-ОС** (KeyKOS/EROS/Coyotos, Grasshopper) — нет файлов, нет загрузки, нет «сохранить»; мир объектов персистентен | 1+парадигмы | средний | исходники EROS/Coyotos, статьи | ОС, которая «не выключается никогда»; глубокий сюжет о памяти как диске | idea |
-| 37 | **Single-level store** (Multics, IBM AS/400) — память и диск это одно | 1 | обзор/средний | доки Multics/AS400 | показать, что «файлов могло не быть» | idea |
-| 38 | **Реплицируемая детерминированная ВМ разделённой реальности** (Croquet/TeaTime, Кэй/Хиллис) — все «в одной живой картине» без сервера | парадигмы+инфра | средний | статьи TeaTime, OpenCroquet | распределённая реальность на детерминизме, а не на синхронизации | idea |
-| 39 | **Реляционное программирование / miniKanren** — запускать программы НАЗАД: из результата получить входы, синтез кода из спеки | 2 | средний | miniKanren, «The Reasoned Schemer» | магия «программа наоборот»; выпуск, ломающий картину | idea |
-| 40 | **Content-addressed код (Unison)** — функции по хэшу: нет сломанных зависимостей, нет билда, код нельзя «сломать переименованием» | 2 | средний | Unison жив | радикальная модель кода; параллель к нашим темам о хрупкости | idea |
-| 41 | **Unum / posit-арифметика** (Густафсон) — еретическая замена IEEE-float переменной точностью; в кремний не прижилась | 3 | средний | SoftPosit, спека posit | другая арифметика в железе/эмуляции; острый спор с IEEE | idea |
-| 42 | **Аналитическая машина Бэббиджа на ПЛИС/Verilog** — заметной FPGA-реализации НЕТ (пустая ниша); десятичная (base-10) Мельница/Склад, предвосхищающий перенос | 3 | средний–большой | софт-эмуляторы (Fourmilab/порты), Plan 28, arxiv 2024 | оригинальный вклад, а не порт: base-10 машина в кремнии | idea |
-| 43 | **Чисто функциональная ОС по Хендерсону/Стою** — ОС как ленивый поток вход→выход; «sorting office» Стоя против недетерминизма, на редукционной машине | парадигмы+3 | средний | Henderson 1982; PhD Стоя (Кембридж, для SKIM); наш SKIM/Reduceron-стенд (#18) | двойная рифма (функц. ОС × SKIM); ранняя недоигранная модель, а не NixOS-обзор | idea |
-| 44 | 🎯 **Обратимый БАЛАНСНО-ТРОИЧНЫЙ процессор** (Сетунь × Pendulum) — комбинация, которой НЕТ: троичные обратимые гейты/сумматоры описаны, троичные CPU и обратимые CPU есть по отдельности, а машины «троичная+обратимая» — нет | 3+6 | большой | компоненты: балансно-троичные reversible-гейты (IEEE), 24-трит ternary RISC на FPGA; обратимость — PISA/PendVM | быть первыми: reversible-ternary ISA + эмулятор; сшивка двух любимых тем | **пусто (проверено 29.09)** |
-| 45 | **Глушков: МИР / рекурсивная машина** (Киев, 1965–69) — эмулятора нет, слабо оцифровано; адресная арифметика и алгол-подобный язык «в железе» | 3+1 | большой | материал Института кибернетики (проверить); русско-советская линия как Кронос (#10) | эмулятор + сохранение наследия; оригинальный вклад | **пусто (проверено 29.09)** |
+| 30 | 🎯 **The Pendulum/PISA reversible processor**: computation without erasing bits, almost zero energy (Landauer); programs run backwards | 3+6 | an evening (emul.) to large (RTL) | the PendVM emulator + the PAL assembler; Vieri's thesis (MIT); Frank's archive (UF revcomp); physically, Vaire "Ice River" 2025 (energy recovery 1.77), AQFP superconductors | reversible assembly live; "uncompute" before your eyes; a bridge to the topic of the energy of computation | idea |
+| 31 | **The Mill** (Ivan Godard): a "belt" instead of registers, ultra-wide issue; brilliant on paper, never made it to silicon | 3 | large | 10+ years of talks/patents | an emulator of an architecture that does not exist in hardware | idea |
+| 32 | **Transport-Triggered (TTA/"MOVE")**: a single "move" operation, computation as a side effect | 3 | medium | academic TTA (MOVE, the TCE toolchain) | an absurd but buildable CPU; a contrast to a regular ISA | idea |
+| 33 | **OISC / subleq**: a processor with a single instruction, Turing-complete | 3 | an evening | a whole subleq scene | a minimalism record; a clear lab | idea |
+| 34 | **A CPU inside Conway's "Life" / Wireworld**: a working computer built in a cellular automaton | paradigms | an evening to a weekend | Golly, the OTCA metapixel, Life-in-Life | an absurdly beautiful demo: a computer "grown" in an automaton | idea |
+| 35 | **Clockless / asynchronous CPUs**: computation without a clock generator (Sutherland's micropipelines) | 3 | medium | Sutherland "Micropipelines"; async toolchains | "impossible" timings; a rhyme to GA144 (#27) | idea |
+| 36 | **Orthogonal persistence + pure capability OSes** (KeyKOS/EROS/Coyotos, Grasshopper): no files, no boot, no "save"; the world of objects is persistent | 1+paradigms | medium | EROS/Coyotos sources, papers | an OS that "never shuts down"; a deep story about memory as disk | idea |
+| 37 | **Single-level store** (Multics, IBM AS/400): memory and disk are one | 1 | overview/medium | Multics/AS400 docs | show that "there might have been no files" | idea |
+| 38 | **A replicated deterministic VM of shared reality** (Croquet/TeaTime, Kay/Hillis): everyone "in one living picture" without a server | paradigms+infra | medium | TeaTime papers, OpenCroquet | distributed reality built on determinism, not on synchronization | idea |
+| 39 | **Relational programming / miniKanren**: run programs BACKWARDS: get the inputs from the result, synthesize code from a spec | 2 | medium | miniKanren, "The Reasoned Schemer" | the magic of "the program in reverse"; an episode that breaks the picture | idea |
+| 40 | **Content-addressed code (Unison)**: functions by hash: no broken dependencies, no build, code cannot be "broken by a rename" | 2 | medium | Unison is alive | a radical model of code; a parallel to our topics of fragility | idea |
+| 41 | **Unum / posit arithmetic** (Gustafson): a heretical replacement of IEEE float with variable precision; did not catch on in silicon | 3 | medium | SoftPosit, the posit spec | a different arithmetic in hardware/emulation; a sharp dispute with IEEE | idea |
+| 42 | **Babbage's Analytical Engine on an FPGA/in Verilog**: there is NO notable FPGA implementation (an empty niche); a decimal (base-10) Mill/Store with anticipating carry | 3 | medium to large | software emulators (Fourmilab/ports), Plan 28, arxiv 2024 | an original contribution, not a port: a base-10 machine in silicon | idea |
+| 43 | **A purely functional OS after Henderson/Stoye**: the OS as a lazy input→output stream; Stoye's "sorting office" against nondeterminism, on a reduction machine | paradigms+3 | medium | Henderson 1982; Stoye's PhD (Cambridge, for SKIM); our SKIM/Reduceron rig (#18) | a double rhyme (functional OS × SKIM); an early, unfinished model, not a NixOS overview | idea |
+| 44 | 🎯 **A reversible BALANCED-TERNARY processor** (Setun × Pendulum): a combination that does NOT exist: ternary reversible gates/adders are described, ternary CPUs and reversible CPUs exist separately, but a "ternary+reversible" machine does not | 3+6 | large | components: balanced-ternary reversible gates (IEEE), a 24-trit ternary RISC on an FPGA; reversibility from PISA/PendVM | be the first: a reversible-ternary ISA + emulator; stitching together two favorite topics | **empty (checked 29.09)** |
+| 45 | **Glushkov: MIR / the recursive machine** (Kyiv, 1965–69): no emulator, poorly digitized; address arithmetic and an ALGOL-like language "in hardware" | 3+1 | large | material from the Institute of Cybernetics (to check); the Russian-Soviet line like Kronos (#10) | an emulator + preserving the heritage; an original contribution | **empty (checked 29.09)** |
 
 ---
 
-## Обзорные выпуски (эмулятор не нужен, можно ставить между тяжёлыми)
+## Overview episodes (no emulator needed, can be placed between heavy ones)
 
-Приоритет по силе современной параллели:
+Priority by the strength of the modern parallel:
 
-1. **Amoeba** — «планировщик Kubernetes в 1990». Эксперимент: 5 узлов, разъезд задач, рядом k8s.
-2. **Singularity** — «WASI двадцать лет спустя». Все процессы в ring 0, изоляция типами.
-3. **VM/370** — «Firecracker в 1972».
-4. **EROS/KeyKOS** — выдернуть питание, показать консистентность; рядом CRIU.
-5. **Burroughs MCP** — переполнение буфера → аппаратный отказ 1961 года.
-6. **NetWare** — файловый бенчмарк против современного Linux на той же виртуалке.
-7. **Exokernel Xok** — «io_uring и eBPF как медленная капитуляция ядра».
-8. **QNX floppy** — рядом distroless и unikernel, сравнить размер и холодный старт.
-9. **Genera** — поймать ошибку, переопределить функцию, продолжить с того же места.
-10. **GEORGE 3 / JCL** — «переизобрели управление заданиями и назвали его YAML». Ехидный, заходит на конференциях.
-11. **Domain/OS** — сетевой single-level store; рядом RDMA и CXL.
-12. **Sprite** — миграция живого процесса; LFS → LSM.
-13. **Pick / MUMPS** — БД вместо ФС.
-14. **Multics** — кольца и сегменты; SGX/TDX и mmap.
-15. **ITS** — всё открыто; eBPF vs zero trust.
-16. **Contiki на C64 / SymbOS** — сколько ресурсов нужно на самом деле.
-17. **TempleOS** — вести уважительно.
-18. **Nemesis** — QoS и noisy neighbor.
+1. **Amoeba**: "the Kubernetes scheduler in 1990". Experiment: 5 nodes, jobs spreading out, k8s alongside.
+2. **Singularity**: "WASI twenty years later". All processes in ring 0, isolation by types.
+3. **VM/370**: "Firecracker in 1972".
+4. **EROS/KeyKOS**: pull the power, show the consistency; CRIU alongside.
+5. **Burroughs MCP**: buffer overflow → a hardware fault in 1961.
+6. **NetWare**: a file benchmark against modern Linux on the same virtual machine.
+7. **Exokernel Xok**: "io_uring and eBPF as the kernel's slow capitulation".
+8. **QNX floppy**: distroless and unikernel alongside, compare size and cold start.
+9. **Genera**: catch an error, redefine a function, continue from the same spot.
+10. **GEORGE 3 / JCL**: "they reinvented job control and called it YAML". Snarky, goes down well at conferences.
+11. **Domain/OS**: a networked single-level store; RDMA and CXL alongside.
+12. **Sprite**: live process migration; LFS → LSM.
+13. **Pick / MUMPS**: a database instead of a file system.
+14. **Multics**: rings and segments; SGX/TDX and mmap.
+15. **ITS**: everything open; eBPF vs zero trust.
+16. **Contiki on the C64 / SymbOS**: how many resources are really needed.
+17. **TempleOS**: handle it respectfully.
+18. **Nemesis**: QoS and the noisy neighbor.
 
 ---
 
-## Новое направление: от машины к платформе (2026-09-22)
+## New direction: from the machine to the platform (2026-09-22)
 
-Полностью — в `11-roadmap-platform.md`. Верхние строки:
+In full: `11-roadmap-platform.md`. The top lines:
 
-| # | Проект | Усилие | Зависит от |
+| # | Project | Effort | Depends on |
 |---|---|---|---|
-| П1 | **Вынести оснастку RISC5 в переносимый каркас** | средний | — |
-| П2 | **Lilith как вторая машина** на том же каркасе | средний | П1 |
-| П3 | FaaS-обёртка: машина как функция в Cozystack | средний | — |
-| П4 | **Oberon на Lilith** — первый кросс-номер | средний | П2 |
-| П5 | ~~Свой тип машины в KubeVirt~~ | — | ⚠ прямой путь закрыт: список архитектур в KubeVirt фиксирован (FINDING-34) |
-| П6 | ~~Подключаемый маркетплейс для Cozystack~~ | — | ✅ 24.09.2026, `marketplace/`: три репозитория, метаиндекс, 35 проверок |
-| П7 | Официальный community-каталог | большой | П6 ✅ — дальше упирается в публикацию, не в код |
+| P1 | **Extract the RISC5 tooling into a portable framework** | medium | — |
+| P2 | **Lilith as the second machine** on the same framework | medium | P1 |
+| P3 | FaaS wrapper: the machine as a function in Cozystack | medium | — |
+| P4 | **Oberon on Lilith**: the first cross-port | medium | P2 |
+| P5 | ~~A custom machine type in KubeVirt~~ | — | ⚠ the direct path is closed: the list of architectures in KubeVirt is fixed (FINDING-34) |
+| P6 | ~~A pluggable marketplace for Cozystack~~ | — | ✅ 24.09.2026, `marketplace/`: three repositories, a meta-index, 35 checks |
+| P7 | An official community catalog | large | P6 ✅, from here on it is blocked by publication, not by code |
 
-**Культуртрегерский слой** (`12-labs-and-archive.md`): к каждой машине — интерактивные
-лаборатории и архив. Ближайшее:
+**The cultural outreach layer** (`12-labs-and-archive.md`): for each machine, interactive
+labs and an archive. The nearest items:
 
-| # | Проект | Усилие | Состояние |
+| # | Project | Effort | State |
 |---|---|---|---|
-| Л1 | 🎯 **Пересборка Оберона самим собой на нашем RTL** | малый | почти закрыт, главный вау |
-| Л2 | Каркас лабораторной (задание + проверка + откат) | средний | — |
-| Л3 | Лабы «смотреть / ломать / самораскрутка» | малый | опираются на готовое |
-| Л4 | Мост «файлы хоста ↔ образ» для правки в браузере | средний | нужен для уровня «строить» |
-| Л5 | Первое интервью с носителем знания | малый | **люди не ждут** |
+| L1 | 🎯 **Rebuilding Oberon with itself on our RTL** | small | almost closed, the main wow |
+| L2 | A lab framework (task + check + rollback) | medium | — |
+| L3 | "Look / break / bootstrap" labs | small | rely on what is ready |
+| L4 | A "host files ↔ image" bridge for editing in the browser | medium | needed for the "build" level |
+| L5 | The first interview with a knowledge holder | small | **people do not wait** |
 
-🟢 **Поправка к посылке:** компилятор Оберона **уже написан на Обероне** (ORS/ORB/ORG/ORP,
-Oberon-07) и самораскручивается — проверено побитово. На C написан **рантайм Norebo**
-(1091 строка): эмулятор RISC5 и интерфейс к Unix. Задача не «переписать компилятор»,
-а убрать C из-под него — и наш SoC-стенд уже почти это закрывает.
+🟢 **A correction to the premise:** the Oberon compiler **is already written in Oberon** (ORS/ORB/ORG/ORP,
+Oberon-07) and bootstraps itself, verified bit for bit. What is written in C is **the Norebo runtime**
+(1091 lines): the RISC5 emulator and the interface to Unix. The task is not "rewrite the compiler"
+but to remove C from underneath it, and our SoC rig already almost closes this.
 
-## Ритм
+## Rhythm
 
-Связка «тяжёлый проект с собственным эмулятором раз в квартал + обзорно-экспериментальные
-выпуски между ними» устойчивее ровного потока.
+The combination "a heavy project with its own emulator once a quarter + overview and experimental
+episodes in between" is more sustainable than an even flow.
 
-**Стартовать с Amoeba или Singularity:** обе заводятся сегодня, обе бьют в текущую
-повестку, обе задают тон «это не музей, это ваша архитектура двадцать лет назад».
-
----
-
-## Открытые вопросы
-
-- Состояние открытых кремниевых шаттлов: цены, окна подачи, статус программ (часть за последние годы закрывалась или меняла владельца)
-- Доступность ROM-образов Sony Magic Link / Motorola Envoy
-- Всплывёт ли спецификация VP-кода Taos — смотреть патенты Tao Group
-- Есть ли публично доступное описание микроархитектуры Эльбрус-1/2; выходы на носителей знания через ИТМиВТ
-- Состояние исходников Helios и наличие живых сборок
-- Какие порты Project Oberon существуют под ECP5/iCE40 и их состояние
-
-## Закрытые вопросы (2026-09-21)
-
-Результаты — в `07-browser-embed.md`.
-
-- ✅ **retro-b5500**: браузерный, ALGOL-компилятор включён в cold start → демо с переполнением реализуемо. Грабли: холодный старт не в один клик, Safari чистит IndexedDB через 7 дней.
-- ✅ **v86 + QNX 4.05**: готовый профиль с образом 1.4 МБ, встраивается как библиотека (npm `v86`, `libv86.js`, TS-определения). Образ демо-дискеты легально доступен (Internet Archive, WinWorld). Ограничение — только 32 бита.
-- ✅ **Oberon в браузере**: OberonEmulator Шиерля, варианты JS и JS+WASM. Оговорка — паравиртуализованный SPI и клавиатура, нужны патченные образы. Для честной триады собирать `pdewacht/oberon-risc-emu` через Emscripten.
-- ✅ **Verilator → WASM**: путь рабочий. Измерено: голое ядро 17.75 МГц-экв. нативно, в WASM ~3–4 МГц против реальных 25 → загрузка Oberon на RTL 8–10 с, **RTL не стартовый сценарий**. Размеры: SoC 62 КБ brotli, ISS 9 КБ, образ 184 КБ → до интерактива 1.5–3 с.
-- ✅ **Дизайн эксперимента с Oberon отревьюен пятью рецензентами** — `design/REVIEW.md` (930 строк находок), переписан в `design/DESIGN.md` v0.2. Ключевое: свободного места в кодировании нет (кроме `IR[15:4]`); ускорение ≥2× недостижимо; новизна числа по цене проверок границ опровергнута, настоящая дыра — нагрузка «система пересобирает себя»; RTL Вирта привязан к Xilinx и не синтезируется как есть; брать версию 2018, а не 2015 (в 2015 нет прерываний).
-- ✅ **Ada RED**: спецификация сохранилась ЦЕЛИКОМ. Reference Manual + Design Rationale (март 1979) транскрибированы в HTML на iment.com одним из авторов; PDF на DTIC (ADA219453) и зеркало на Internet Archive (`DTIC_ADA219453`). Есть синтаксические flow-диаграммы, контрактные тестовые задачи и примеры программ. Steelman свободно доступен. Детали — `08-ada-red.md`.
-  - ⚠ Поправка: рабочий транслятор RED у Intermetrics **был** (Mark Davis), но по условиям контракта не учитывался при выборе и не сохранился. Формулировка «никогда не компилировался» неверна.
-  - Blue и Yellow в открытом вебе отсутствуют (проверено по заголовкам и метаданным зеркала DTIC на Internet Archive + веб; контрольный запрос по Red проходит). Остаётся DTIC из браузера, библиотека или сообщество историков Ada.
-  - 🎁 Найдены документы GREEN под цветовым именем, до переименования в Ada: `DTIC_ADA070753` (Informal Introduction), `DTIC_ADA073714` (Formal Definition), `DTIC_ADA070752` (Sample Problems — GREEN Solutions). Последний стыкуется с приложением B рационале RED («Contract Test Problems»).
-  - → **Новый дешёвый выпуск:** «Две Ады» — одни и те же контрактные задачи, решения на RED и на GREEN рядом. Кода не требует вообще.
+**Start with Amoeba or Singularity:** both can be brought up today, both hit the current
+agenda, both set the tone "this is not a museum, this is your architecture twenty years ago".
 
 ---
 
-## Принципиальные решения
+## Open questions
 
-- **Открытый тулчейн обязателен** для всего железного трека (iCE40/ECP5 + yosys/nextpnr). Проприетарная среда убивает воспроизводимость.
-- **Verilator с первого дня** — читатель должен запускать триаду без платы одной командой.
-- **Жанр статьи объявлять заранее.** Для «ОС на языке, на котором ОС не писали» — это «что язык не даёт и почему», а не победный рапорт. Тогда отрицательный результат остаётся результатом.
-- **Не строить «Kubernetes, но лучше».** Выбирать ось, где он неправ структурно, и строить там, где его нет.
+- The state of open silicon shuttles: prices, submission windows, program status (some have closed or changed owners in recent years)
+- Availability of Sony Magic Link / Motorola Envoy ROM images
+- Will the Taos VP code specification surface: look at the Tao Group patents
+- Is there a publicly available description of the Elbrus-1/2 microarchitecture; ways to reach knowledge holders through ITMiVT
+- The state of the Helios sources and the existence of working builds
+- Which Project Oberon ports exist for ECP5/iCE40 and their state
+
+## Closed questions (2026-09-21)
+
+Results: `07-browser-embed.md`.
+
+- ✅ **retro-b5500**: browser-based, the ALGOL compiler is included in the cold start → the overflow demo is feasible. Pitfalls: the cold start is not one click, Safari clears IndexedDB after 7 days.
+- ✅ **v86 + QNX 4.05**: a ready profile with a 1.4 MB image, embeddable as a library (npm `v86`, `libv86.js`, TS definitions). The demo floppy image is legally available (Internet Archive, WinWorld). Limitation: 32-bit only.
+- ✅ **Oberon in the browser**: Schierl's OberonEmulator, JS and JS+WASM variants. Caveat: paravirtualized SPI and keyboard, patched images are needed. For an honest triad, build `pdewacht/oberon-risc-emu` with Emscripten.
+- ✅ **Verilator → WASM**: the path works. Measured: the bare core runs at 17.75 MHz-equivalent natively, ~3–4 MHz in WASM versus the real 25 → booting Oberon on the RTL takes 8–10 s, **RTL is not the starting scenario**. Sizes: SoC 62 KB brotli, ISS 9 KB, image 184 KB → 1.5–3 s to interactive.
+- ✅ **The Oberon experiment design was reviewed by five reviewers**: `design/REVIEW.md` (930 lines of findings), rewritten into `design/DESIGN.md` v0.2. Key points: there is no free space in the encoding (except `IR[15:4]`); a speedup of ≥2× is unreachable; the novelty of a number for the cost of bounds checking was refuted, the real gap is the "the system rebuilds itself" workload; Wirth's RTL is tied to Xilinx and does not synthesize as is; take the 2018 version, not 2015 (2015 has no interrupts).
+- ✅ **Ada RED**: the specification survived IN FULL. The Reference Manual + Design Rationale (March 1979) were transcribed to HTML on iment.com by one of the authors; PDF on DTIC (ADA219453) and a mirror on the Internet Archive (`DTIC_ADA219453`). There are syntax flow diagrams, contract test problems and example programs. Steelman is freely available. Details: `08-ada-red.md`.
+  - ⚠ Correction: Intermetrics **did have** a working RED translator (Mark Davis), but under the contract terms it was not considered in the selection and did not survive. The statement "it was never compiled" is wrong.
+  - Blue and Yellow are absent from the open web (checked by titles and metadata of the DTIC mirror on the Internet Archive + the web; the control query for Red succeeds). What remains is DTIC from a browser, a library, or the Ada historians' community.
+  - 🎁 GREEN documents were found under the color name, from before the renaming to Ada: `DTIC_ADA070753` (Informal Introduction), `DTIC_ADA073714` (Formal Definition), `DTIC_ADA070752` (Sample Problems — GREEN Solutions). The last one matches appendix B of the RED rationale ("Contract Test Problems").
+  - → **A new cheap episode:** "Two Adas": the same contract problems, with RED and GREEN solutions side by side. Requires no code at all.
 
 ---
 
-## Анализ «дёшево × эффектно» (2026-09-21)
+## Decisions of principle
 
-**Критерий, который недооценивают: порог повторения.** Демо, запускаемое в браузере,
-расходится в разы лучше требующего QEMU, образа и получаса возни. Это главный множитель
-эффекта, а не деталь оформления.
+- **An open toolchain is mandatory** for the whole hardware track (iCE40/ECP5 + yosys/nextpnr). A proprietary environment kills reproducibility.
+- **Verilator from day one**: the reader must be able to run the triad without a board in one command.
+- **Announce the genre of the article in advance.** For "an OS in a language nobody wrote OSes in", it is "what the language does not give and why", not a victory report. Then a negative result stays a result.
+- **Do not build "Kubernetes, but better".** Pick an axis where it is structurally wrong, and build where it does not exist.
 
-### Лучшее соотношение
-| Проект | Время | Почему |
+---
+
+## "Cheap × impressive" analysis (2026-09-21)
+
+**The underrated criterion: the reproduction threshold.** A demo that runs in the browser
+spreads many times better than one that needs QEMU, an image and half an hour of fiddling. This is the main multiplier
+of impact, not a detail of presentation.
+
+### Best ratio
+| Project | Time | Why |
 |---|---|---|
-| **Burroughs: переполнения не существует** | вечер + вечер на текст | эмулятор в браузере, ALGOL готов, тезис бьёт в регуляторную повестку memory safety |
-| Триптих B5500 / x86 / CHERI | +день-два на CHERI | манифест всей серии, из него растёт «сезон трёх ответов» |
-| QNX на дискете vs контейнер | полдня | цифры говорят сами, риск нулевой; минус — тезис «раньше было компактнее» аудитория подозревает |
-| Oberon пересобирает сам себя | час-два | видео работает лучше текста; минус — нет острого современного тезиса |
+| **Burroughs: overflow does not exist** | an evening + an evening for the text | emulator in the browser, ALGOL ready, the thesis hits the regulatory memory safety agenda |
+| B5500 / x86 / CHERI triptych | +a day or two for CHERI | the manifesto of the whole series, the "season of three answers" grows out of it |
+| QNX on a floppy vs a container | half a day | the numbers speak for themselves, zero risk; downside: the audience suspects the thesis "things used to be more compact" |
+| Oberon rebuilds itself | an hour or two | video works better than text; downside: no sharp modern thesis |
 
-### Что выглядит дёшево, но дёшевым не является (поправка к оценкам выше в файле)
-- **Реконсайлер на Рефале** записан как «вечер» — оптимизм. Смоделировать состояние термом легко; довести до убедительного результата с суперкомпиляцией — полторы недели, и есть риск, что на живом примере красивой картинки не выйдет. Отличный второй-третий выпуск, плохой первый.
-- **Sulong на реальном C++** — классический вечер, который становится неделей. Сборка нетривиальной программы под чужой тулчейн всегда съедает больше. Брать заведомо маленькую, но не игрушечную программу.
-- **Amoeba и NetWare** — огромный эффект, но сеть в обоих легко съест три дня. Не первые выпуски.
-- **Рефлексивная башня** — неделя и сильнейшее впечатление, но узкая аудитория: кто способен оценить, в основном уже знает. Эффект глубокий, не широкий.
+### What looks cheap but is not (a correction to the estimates earlier in the file)
+- **The reconciler in Refal** is written down as "an evening", which is optimistic. Modeling the state as a term is easy; bringing it to a convincing result with supercompilation takes a week and a half, and there is a risk that a live example will not produce a pretty picture. An excellent second or third episode, a bad first one.
+- **Sulong on real C++** is a classic evening that turns into a week. Building a non-trivial program under someone else's toolchain always eats more. Take a deliberately small but not toy program.
+- **Amoeba and NetWare**: a huge effect, but networking in both can easily eat three days. Not the first episodes.
+- **The reflective tower**: a week and the strongest impression, but a narrow audience: those able to appreciate it mostly already know. The effect is deep, not wide.
 
-### Решение по первому выпуску
-Выбран **Oberon целиком** (`09-episode-01-oberon.md`) — единственный, дающий одновременно
-масштаб, хардкор и настоящую неожиданность. Осознанный размен: 2–4 недели вместо вечера.
-Burroughs (`10-episode-burroughs.md`) уходит вторым/третьим.
+### Decision on the first episode
+**Oberon in full** was chosen (`09-episode-01-oberon.md`): the only one that gives at once
+scale, hardcore and a genuine surprise. A deliberate trade-off: 2–4 weeks instead of an evening.
+Burroughs (`10-episode-burroughs.md`) moves to second/third.
