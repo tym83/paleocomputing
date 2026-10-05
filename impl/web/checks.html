@@ -65,10 +65,10 @@
 <oberon-machine id="m" variant="base"></oberon-machine>
 
 <script type="module">
-import { LANG, t, applyMarkup } from './i18n.js';
+import { t, applyMarkup } from './i18n.js';
 import './embed.js';
 applyMarkup(document);
-if (LANG === 'ru') document.getElementById('m').setAttribute('start-label', 'Запустить машину');
+document.getElementById('m').setAttribute('start-label', t({ en: 'Start the machine', ru: 'Запустить машину' }));
 
 const WHAT = {
   base: { en: 'Stock core: the compiler emits SUB + BCC before every indexing — two instructions.',

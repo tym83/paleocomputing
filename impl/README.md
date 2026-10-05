@@ -63,6 +63,7 @@ make check     # full check: tests + system boot + differential bench
 - `tests/`: 14 ISA test suites
 - `patches/`: four Oberon code generator configurations
 - `web/`: the browser build
+- `kube/`: Kube, a Kubernetes control plane in Oberon (episode 15); `kube/check.sh` and `kube/system.sh` run it
 
 **Our changes to other people's code**: 53 lines in `RISC5.v` (the CHK instruction),
 `Registers.v` rewritten from Xilinx primitives into a behavioral description, a cycle counter

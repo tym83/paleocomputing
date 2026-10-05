@@ -106,6 +106,15 @@ R=marketplace/repos/platform/packages/system/kubevirt-paleo-launcher/files/recon
 until sh $R once && [ "$(kubectl -n $KV_NS get cm kubevirt-paleo-launcher-status -o jsonpath='{.data.state}')" = Applied ]; do sleep 10; done
 ```
 
+The table the catalog publishes after v0.1.17 names each launcher by tag and
+by digest, `virt-launcher:<tag>@sha256:<digest>`, and a line in your own table
+may do the same. The digest is the hash of the exact image, so a node fetches
+exactly the build that was published. Nodes pull launchers with
+`IfNotPresent`, and a tag that gets rewritten, such as the `dev` tag of test
+builds, would otherwise leave a node on whatever build it saw first: that is
+how a sandbox once kept running an emulator without the keyboard fix
+(finding 86).
+
 While the new `virt-controller` pod cannot start, the state stays `Rolling`
 and the loop keeps waiting: the rollout needs room for one more
 `virt-controller` pod next to the old one.
@@ -154,6 +163,10 @@ helm install wirth marketplace/repos/machines/packages/apps/oberon-vm \
   --set storageClass=<your StorageClass>
 ```
 
+With `--pin` the script also appends the registry digest of that release to
+the image, the way the published catalog does after v0.1.17; it asks ghcr for
+the digest, so it needs network access.
+
 | value | default | |
 |---|---|---|
 | `storageClass` | `replicated` | class of the 1Gi volume with the ROM and the disk |
@@ -167,6 +180,14 @@ PVC `oberon-vm-wirth-payload`, a Job `oberon-vm-wirth-fill-<hash>` that copies
 onto the volume, and `VirtualMachine oberon-vm-wirth`. Until the Job is done
 the hook refuses to define the domain and the VM restarts with a back-off;
 that is expected.
+
+The Job places the disk only once and never overwrites it, because the disk
+belongs to the user. After v0.1.17 the machine passport also declares the disk
+size, 8 MiB, and the Job grows a smaller disk to it with zeros, keeping its
+content; a disk left by an earlier release is grown the same way. The shipped
+image is about 1 MB, and the Oberon file system writes new files past its end,
+which QEMU refuses on a raw disk: before this, a larger saved file was silently
+lost (finding 86).
 
 ```sh
 kubectl -n oberon wait vm/oberon-vm-wirth --for=condition=Ready --timeout=20m
@@ -190,7 +211,9 @@ The proxy accepts **one** connection and exits (finding 59).
 The Oberon System desktop comes up with the log line `Oberon V5 NW 14.4.2013`
 and the `System.Tool` window. The mouse is absolute — the pointer follows
 yours. A middle click on a command name executes it: try
-`System.ShowModules` in the tool window (finding 39).
+`System.ShowModules` in the tool window (finding 39). The keyboard works over
+VNC, Shift included, in releases after v0.1.17; in v0.1.17 and earlier the
+first key press hangs the machine (finding 86).
 
 To switch to the bounds-checking processor:
 
@@ -249,4 +272,5 @@ both architectures on native runners.
 [`../qemu/GUIDE.md`](../qemu/GUIDE.md) — the same machine in plain QEMU.
 Findings in `impl/docs/`: 44 (version match), 48 (Sidecar), 58 (leader
 lease), 59 (VNC), 60 (libvirt versions), 64 (the machine chart), 65 (the
-launcher component), 67 (the kind e2e).
+launcher component), 67 (the kind e2e), 86 (keyboard, disk size, images by
+digest).

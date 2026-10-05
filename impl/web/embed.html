@@ -39,12 +39,12 @@
 она жгла бы ядро впустую.</p>
 
 <script type="module">
-import { applyMarkup } from './i18n.js';
+import { t, applyMarkup } from './i18n.js';
 import './embed.js';
 applyMarkup(document);
 
 const m = document.getElementById('m'), stat = document.getElementById('stat');
-if (document.documentElement.lang === 'ru') m.setAttribute('start-label', 'Запустить машину');
+m.setAttribute('start-label', t({ en: 'Start the machine', ru: 'Запустить машину' }));
 document.getElementById('start').onclick = () => m.start();
 document.getElementById('stop').onclick  = () => m.stop();
 document.getElementById('reset').onclick = () => m.reset();

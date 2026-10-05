@@ -81,7 +81,7 @@ export function createHandler(post) {
         state[msg.lab] ??= {};
         let r;
         try {
-          r = step.check(m, { state: state[msg.lab], answer: msg.answer || '' });
+          r = step.check(m, { state: state[msg.lab], answer: msg.answer || '', lang: msg.lang });
         } catch (e) {
           r = { ok: false, msg: String(e && e.message || e) };
         }
