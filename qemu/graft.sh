@@ -10,10 +10,13 @@ set -eu
 Q="${1:?specify the QEMU tree directory}"
 HERE=$(cd "$(dirname "$0")" && pwd)
 
-cp -a "$HERE/target/risc5"               "$Q/target/"
-cp -a "$HERE/hw/risc5"                   "$Q/hw/"
+# cp -R, not cp -a: the copies must get the current time. With the source
+# timestamps kept, a file edited before the previous build looks older than its
+# object file, and an incremental build silently keeps the old code.
+cp -R "$HERE/target/risc5"               "$Q/target/"
+cp -R "$HERE/hw/risc5"                   "$Q/hw/"
 cp    "$HERE/configs/targets/risc5-softmmu.mak" "$Q/configs/targets/"
-cp -a "$HERE/configs/devices/risc5-softmmu"     "$Q/configs/devices/"
+cp -R "$HERE/configs/devices/risc5-softmmu"     "$Q/configs/devices/"
 
 add_once() {  # file, what to look for, what to replace it with
   grep -q "$3" "$1" || sed -i.bak "s|$2|$3\\n$2|" "$1"

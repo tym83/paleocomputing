@@ -1,0 +1,9 @@
+##
+## @section Air
+##
+## One air is one radio channel shared by the Oberon machines that join it
+## (OberonVM, value `air`). Wirth's Net.Mod runs over it unchanged: messages,
+## files, and Kube nodes talking to their control plane.
+
+## @param {string} image - The relay image.
+image: ghcr.io/tym83/paleocomputing/oberon-air:dev

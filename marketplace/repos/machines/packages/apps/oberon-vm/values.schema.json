@@ -29,6 +29,12 @@
       ],
       "default": "base"
     },
+    "air": {
+      "type": "string",
+      "description": "Name of an OberonAir in this tenant to join with the radio; empty for none",
+      "pattern": "^([a-z0-9]([a-z0-9-]{0,40}[a-z0-9])?)?$",
+      "default": ""
+    },
     "storageClass": {
       "type": "string",
       "minLength": 1,

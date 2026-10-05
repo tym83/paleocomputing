@@ -66,6 +66,8 @@ PATH_RE = re.compile(r'^/[A-Za-z0-9/._-]+$')
 PROP_RE = re.compile(r'^[A-Za-z0-9_.-]+$')
 ROLES = ('firmware', 'disk')
 GRAPHICS = ('vnc', 'none')
+# A DNS name of a Service in the tenant: the air relay the machine's radio talks to.
+HOST_RE = re.compile(r'^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$')
 
 
 class DescriptorError(Exception):
@@ -168,6 +170,26 @@ def validate(desc):
         # the launch ("Property 'oberon-machine.chkk' not found"), so a typo
         # does not slip through silently.
         args += ['-machine', ','.join(f'{k}={v}' for k, v in sorted(props.items()))]
+
+    # ── The air ────────────────────────────────────────────────────────────
+    #
+    # A machine with a radio declares it in the passport (air.machineProperty,
+    # air.port); the instance names the relay (air.host). The radio then talks
+    # to the relay over UDP from the launcher pod, which has the pod network.
+    air = desc.get('air')
+    if air is not None:
+        _need(isinstance(air, dict), 'air: not an object')
+        prop = _str(air, 'machineProperty', 'air', PROP_RE)
+        port = air.get('port')
+        _need(isinstance(port, int) and not isinstance(port, bool) and 0 < port < 65536,
+              'air.port: a port number is required')
+        host = air.get('host')
+        if host:
+            _need(isinstance(host, str) and HOST_RE.match(host),
+                  'air.host: a DNS name of the relay Service is required')
+            args += ['-chardev', f'udp,id=air,host={host},port={port},'
+                                 f'localaddr=0.0.0.0,localport={port}',
+                     '-machine', f'{prop}=air']
 
     return {'arch': arch, 'machine': machine, 'emulator': emulator,
             'vcpus': vcpus, 'graphics': graphics, 'args': args, 'paths': paths}

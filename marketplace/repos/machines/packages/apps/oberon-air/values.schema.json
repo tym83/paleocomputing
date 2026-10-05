@@ -1,0 +1,17 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "oberon-air",
+  "type": "object",
+  "$comment": "The schema root is intentionally NOT closed: cozystack-engine injects its own keys (_cluster, _namespace) into the values of every tenant application.",
+  "required": [
+    "image"
+  ],
+  "properties": {
+    "image": {
+      "type": "string",
+      "description": "The relay image",
+      "minLength": 1,
+      "default": "ghcr.io/tym83/paleocomputing/oberon-air:dev"
+    }
+  }
+}

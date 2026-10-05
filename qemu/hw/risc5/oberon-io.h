@@ -6,6 +6,8 @@
 #include "ui/console.h"
 #include "ui/input.h"
 #include "system/block-backend-global-state.h"
+#include "chardev/char-fe.h"
+#include "qemu/timer.h"
 
 /* The ports occupy sixteen words starting at 0xFFFFC0 (RISC5Top.v:86). */
 #define OBERON_IO_BASE 0xFFFFC0
@@ -53,6 +55,38 @@ uint32_t oberon_disk_read(OberonDisk *d);
  */
 #define OBERON_KBD_FIFO 4096
 
+/*
+ * spiCtrl bits (RISC5Top.v): slave select 0 is the SD card, 1 the radio;
+ * bit 2 selects 32-bit words; bit 3 drives the radio's CE pin.
+ */
+#define OBERON_SPI_SD          0x1
+#define OBERON_SPI_NET         0x2
+#define OBERON_SPI_FAST        0x4
+#define OBERON_SPI_NET_ENABLE  0x8
+
+#define OBERON_RADIO_PAYLOAD 32
+#define OBERON_RADIO_FIFO    3
+
+typedef struct OberonRadio {
+    CharFrontend air;
+    QEMUTimer *hello;
+    uint8_t  regs[0x20];
+    uint8_t  status;
+    uint8_t  rx[OBERON_RADIO_FIFO][OBERON_RADIO_PAYLOAD];
+    uint8_t  tx[OBERON_RADIO_FIFO][OBERON_RADIO_PAYLOAD];
+    int      rx_count, tx_count;
+    uint8_t  cmd;
+    int      pos;             /* bytes of the current command clocked so far */
+    bool     selected, ce;
+    uint32_t rx_word;         /* what the last exchange shifted in */
+    uint8_t  in[64];
+} OberonRadio;
+
+void     oberon_radio_init(OberonRadio *r, Chardev *air);
+void     oberon_radio_ctrl(OberonRadio *r, uint32_t ctrl);
+void     oberon_radio_write(OberonRadio *r, uint32_t value, bool fast);
+uint32_t oberon_radio_read(OberonRadio *r);
+
 typedef struct OberonIOState {
     MemoryRegion mr;
     int64_t  start_ms;      /* milliseconds since power-on */
@@ -68,10 +102,11 @@ typedef struct OberonIOState {
     QemuInputHandlerState *kbd_handler, *mouse_handler;
     uint32_t gpio_ctrl;
     OberonDisk disk;
+    OberonRadio radio;
 } OberonIOState;
 
 void oberon_io_init(OberonIOState *s, MemoryRegion *sys, hwaddr base,
-                    BlockBackend *blk);
+                    BlockBackend *blk, Chardev *air);
 void oberon_input_init(OberonIOState *s);
 
 #endif

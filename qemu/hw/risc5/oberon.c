@@ -20,6 +20,7 @@
 #include "hw/core/loader.h"
 #include "qemu/error-report.h"
 #include "hw/core/qdev-properties.h"
+#include "chardev/char.h"
 #include "system/address-spaces.h"
 #include "system/system.h"
 #include "cpu.h"
@@ -52,7 +53,24 @@
  * The property is static: there is one machine per process, and the choice is made before start.
  */
 static bool oberon_chk;
+/*
+ * -machine oberon,radio=<chardev id>: the air of the nRF24L01+ radio that
+ * SCC.Mod and Net.Mod use, normally a UDP socket to a relay. Without it the
+ * radio answers but every transmission fails, as with no other station in range.
+ */
+static char *oberon_radio;
 static bool oberon_desc;   /* IDX, episode 14: like -DWITH_DESC in the RTL */
+
+static char *oberon_get_radio(Object *obj, Error **errp)
+{
+    return g_strdup(oberon_radio ? oberon_radio : "");
+}
+
+static void oberon_set_radio(Object *obj, const char *value, Error **errp)
+{
+    g_free(oberon_radio);
+    oberon_radio = g_strdup(value);
+}
 
 static bool oberon_get_desc(Object *obj, Error **errp)
 {
@@ -146,8 +164,17 @@ static void oberon_init(MachineState *machine)
                          (blk_supports_write_perm(blk) ? BLK_PERM_WRITE : 0),
                          BLK_PERM_ALL, &error_fatal);
         }
+        Chardev *air = NULL;
+
+        if (oberon_radio && *oberon_radio) {
+            air = qemu_chr_find(oberon_radio);
+            if (!air) {
+                error_report("radio: no chardev '%s'", oberon_radio);
+                exit(1);
+            }
+        }
         OberonIOState *io = g_new0(OberonIOState, 1);
-        oberon_io_init(io, sys, OBERON_IO_BASE, blk);
+        oberon_io_init(io, sys, OBERON_IO_BASE, blk, air);
         io->chord_used = &disp->hint_done;
         oberon_input_init(io);
     }
@@ -177,6 +204,10 @@ static void oberon_machine_init(MachineClass *mc)
                                    oberon_get_chk, oberon_set_chk);
     object_class_property_set_description(OBJECT_CLASS(mc), "chk",
         "hardware array bounds check (like -DWITH_CHK in the RTL)");
+    object_class_property_add_str(OBJECT_CLASS(mc), "radio",
+                                  oberon_get_radio, oberon_set_radio);
+    object_class_property_set_description(OBJECT_CLASS(mc), "radio",
+        "chardev carrying the air of the nRF24L01+ radio (SCC.Mod, Net.Mod)");
     object_class_property_add_bool(OBJECT_CLASS(mc), "desc",
                                    oberon_get_desc, oberon_set_desc);
     object_class_property_set_description(OBJECT_CLASS(mc), "desc",

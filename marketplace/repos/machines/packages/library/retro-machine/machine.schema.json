@@ -123,6 +123,17 @@
       "type": "string",
       "pattern": "^[a-z][a-z0-9-]*$"
     },
+    "air": {
+      "description": "The machine has a radio that the hook connects to an air relay. machineProperty is the -machine property that takes the chardev, port the UDP port of the relay; host is set per instance from the air value and names the relay Service.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["machineProperty", "port"],
+      "properties": {
+        "machineProperty": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+$"},
+        "port": {"type": "integer", "minimum": 1, "maximum": 65535},
+        "host": {"type": "string", "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$"}
+      }
+    },
     "memory": {
       "description": "Machine memory in KubeVirt: default and limits. Only Mi and Gi: the library compares them at render time.",
       "type": "object",

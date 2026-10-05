@@ -40,6 +40,9 @@ static uint64_t io_read(void *opaque, hwaddr addr, unsigned size)
     case 3:
         return 2;                       /* transmitter ready, receiver empty */
     case 4:
+        if (s->spi_ctrl & OBERON_SPI_NET) {
+            return oberon_radio_read(&s->radio);
+        }
         return oberon_disk_read(&s->disk);
     case 5:
         return 1;                       /* the SPI exchange is always complete */
@@ -79,13 +82,18 @@ static void io_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
         break;
     case 4:
         /*
-         * A write starts an SPI exchange. There is one device on the bus: the SD card
-         * the system boots from.
+         * A write starts an SPI exchange with the selected slave: the radio
+         * when spiCtrl bit 1 is set, otherwise the SD card the system boots from.
          */
-        oberon_disk_write(&s->disk, val);
+        if (s->spi_ctrl & OBERON_SPI_NET) {
+            oberon_radio_write(&s->radio, val, s->spi_ctrl & OBERON_SPI_FAST);
+        } else {
+            oberon_disk_write(&s->disk, val);
+        }
         break;
     case 5:
-        s->spi_ctrl = val & 0xF;        /* device select, speed */
+        s->spi_ctrl = val & 0xF;        /* device select, speed, radio enable */
+        oberon_radio_ctrl(&s->radio, s->spi_ctrl);
         break;
     case 9:
         s->gpio_ctrl = val;
@@ -112,10 +120,11 @@ static const MemoryRegionOps io_ops = {
 };
 
 void oberon_io_init(OberonIOState *s, MemoryRegion *sys, hwaddr base,
-                    BlockBackend *blk)
+                    BlockBackend *blk, Chardev *air)
 {
     s->start_ms = qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL);
     oberon_disk_init(&s->disk, blk);
+    oberon_radio_init(&s->radio, air);
 
     memory_region_init_io(&s->mr, NULL, &io_ops, s, "oberon.io", 0x40);
     memory_region_add_subregion(sys, base, &s->mr);

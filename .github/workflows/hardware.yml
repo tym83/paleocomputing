@@ -122,6 +122,12 @@ jobs:
         run: |
           make -C impl tools
           python3 impl/lm/qemu_run.py
+
+      # Wirth's radio network: two machines and the relay on one Docker network;
+      # Net.SendMsg from one must reach the other's log, and nothing may arrive
+      # once the relay is stopped.
+      - name: Radio
+        run: python3 qemu/test/radio_check.py
       # Indexing through a descriptor (release 14): QEMU with chk=on,desc=on against
       # the native RTL model with -DWITH_DESC; there is no WASM build of this core, so
       # Verilator is needed here. The central issue's loop and random IDX with
