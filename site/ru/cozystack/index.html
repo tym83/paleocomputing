@@ -64,8 +64,8 @@
       Делается один раз администратором кластера, утилитой <code>cozypkg</code>
       из <a href="https://github.com/cozystack/cozystack">репозитория Cozystack</a>:
     </p>
-    <pre><code>cozypkg tap oci://ghcr.io/tym83/paleocomputing/machines:v0.1.17
-cozypkg tap oci://ghcr.io/tym83/paleocomputing/languages:v0.1.17
+    <pre><code>cozypkg tap oci://ghcr.io/tym83/paleocomputing/machines:v0.1.18
+cozypkg tap oci://ghcr.io/tym83/paleocomputing/languages:v0.1.18
 # tap подключает репозиторий, add ставит из него приложения
 cozypkg add paleocomputing.machines
 cozypkg add paleocomputing.languages</code></pre>
@@ -114,7 +114,7 @@ cozypkg add paleocomputing.languages</code></pre>
       репозиторий platform и поставьте <code>kubevirt-paleo-launcher</code> — он
       привилегированный, поэтому нужно явное согласие оператора:
     </p>
-    <pre><code>cozypkg tap oci://ghcr.io/tym83/paleocomputing/platform:v0.1.17
+    <pre><code>cozypkg tap oci://ghcr.io/tym83/paleocomputing/platform:v0.1.18
 cozypkg add paleocomputing.platform --allow-privileged</code></pre>
     <p>
       Он следит за версией KubeVirt в кластере и держит launcher в паре с ней.
@@ -205,7 +205,6 @@ spec:
   <section>
     <h2>Известные ограничения</h2>
     <ol class="steps">
-      <li><p><strong>В версиях до v0.1.17 включительно не работает клавиатура, а на диск не помещаются новые файлы.</strong> Первое же нажатие клавиши вешает машину, а диском служит поставляемый образ размером около 1 МБ, поэтому файл побольше при сохранении теряется. В следующих версиях исправлено и то и другое, а обновление увеличивает существующий диск, не трогая его содержимого.</p></li>
       <li><p><strong>Машина не мигрирует.</strong> При выводе узла на обслуживание она останавливается, а не переезжает.</p></li>
       <li><p><strong>Машины, поставленные версией v0.1.10 и раньше, перед обновлением нужно переустановить.</strong> Их том создан хуком установки и в релиз не входит; обновление до любого более позднего выпуска падает на нём («already exists»). Удалите такую машину и поставьте заново.</p></li>
       <li><p><strong>Версии до v0.1.9 включительно оставляют том после удаления машины.</strong> Он создаётся один раз при установке, и такие ресурсы Helm при удалении не убирает. В следующих версиях его убирает задача, которая запускается при удалении; машина, удалённая ещё на v0.1.9 или раньше, оставляет <code>oberon-vm-&lt;имя&gt;-payload</code> — его удалите вручную.</p></li>

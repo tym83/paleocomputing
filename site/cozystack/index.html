@@ -64,8 +64,8 @@
       Done once, by the cluster administrator, with <code>cozypkg</code> from
       the <a href="https://github.com/cozystack/cozystack">Cozystack repository</a>:
     </p>
-    <pre><code>cozypkg tap oci://ghcr.io/tym83/paleocomputing/machines:v0.1.17
-cozypkg tap oci://ghcr.io/tym83/paleocomputing/languages:v0.1.17
+    <pre><code>cozypkg tap oci://ghcr.io/tym83/paleocomputing/machines:v0.1.18
+cozypkg tap oci://ghcr.io/tym83/paleocomputing/languages:v0.1.18
 # tap makes the repository known; add installs its applications
 cozypkg add paleocomputing.machines
 cozypkg add paleocomputing.languages</code></pre>
@@ -114,7 +114,7 @@ cozypkg add paleocomputing.languages</code></pre>
       platform repository and install <code>kubevirt-paleo-launcher</code> — it
       is privileged, so it needs the operator's explicit consent:
     </p>
-    <pre><code>cozypkg tap oci://ghcr.io/tym83/paleocomputing/platform:v0.1.17
+    <pre><code>cozypkg tap oci://ghcr.io/tym83/paleocomputing/platform:v0.1.18
 cozypkg add paleocomputing.platform --allow-privileged</code></pre>
     <p>
       It watches the cluster's KubeVirt version and keeps the launcher matched to
@@ -210,7 +210,6 @@ spec:
   <section>
     <h2>Known limits</h2>
     <ol class="steps">
-      <li><p><strong>Versions up to v0.1.17 have no working keyboard and a disk that cannot hold new files.</strong> The first key press hangs the machine, and the disk is the shipped image of about 1 MB, so a larger saved file is lost. Later versions fix both, and upgrading grows an existing disk without touching its content.</p></li>
       <li><p><strong>The machine does not migrate.</strong> When a node is drained, it stops rather than moves.</p></li>
       <li><p><strong>Machines installed with v0.1.10 or earlier must be reinstalled before upgrading.</strong> Their volume was created by an install hook and is not part of the release; upgrading them to any later release fails on that volume ("already exists"). Delete such a machine and install it again.</p></li>
       <li><p><strong>Versions up to v0.1.9 leave the machine's volume behind when it is deleted.</strong> The volume is created once, at install time, and Helm does not remove such resources on uninstall. Later versions clean it up with a job that runs on deletion; a machine deleted while still on v0.1.9 or earlier leaves <code>oberon-vm-&lt;name&gt;-payload</code> to be removed by hand.</p></li>

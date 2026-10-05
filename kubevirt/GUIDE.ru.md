@@ -73,11 +73,11 @@ kubectl -n $KV_NS get kubevirt kubevirt -o jsonpath='{.spec.workloadUpdateStrate
 ghcr.io/tym83/paleocomputing/virt-launcher:<версия KubeVirt>-paleo-<выпуск>
 ```
 
-например `virt-launcher:v1.8.4-paleo-v0.1.17`. Они подписаны процессом выпуска;
+например `virt-launcher:v1.8.4-paleo-v0.1.18`. Они подписаны процессом выпуска;
 проверить перед использованием:
 
 ```sh
-cosign verify ghcr.io/tym83/paleocomputing/virt-launcher:v1.8.4-paleo-v0.1.17 \
+cosign verify ghcr.io/tym83/paleocomputing/virt-launcher:v1.8.4-paleo-v0.1.18 \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   --certificate-identity https://github.com/tym83/paleocomputing/.github/workflows/publish.yml@refs/heads/main
 ```
@@ -89,11 +89,11 @@ cosign verify ghcr.io/tym83/paleocomputing/virt-launcher:v1.8.4-paleo-v0.1.17 \
 незнакомой раскладкой аргументов и чисто убирает свою запись.
 
 ```sh
-git clone --depth 1 -b v0.1.17 https://github.com/tym83/paleocomputing
+git clone --depth 1 -b v0.1.18 https://github.com/tym83/paleocomputing
 cd paleocomputing
 
 KV_VERSION=$(kubectl -n $KV_NS get kubevirt kubevirt -o jsonpath='{.status.observedKubeVirtVersion}')
-echo "$KV_VERSION ghcr.io/tym83/paleocomputing/virt-launcher:$KV_VERSION-paleo-v0.1.17" > /tmp/launchers.txt
+echo "$KV_VERSION ghcr.io/tym83/paleocomputing/virt-launcher:$KV_VERSION-paleo-v0.1.18" > /tmp/launchers.txt
 
 # Необязательно: сюда скрипт пишет своё состояние.
 kubectl -n $KV_NS create configmap kubevirt-paleo-launcher-status
@@ -105,7 +105,7 @@ R=marketplace/repos/platform/packages/system/kubevirt-paleo-launcher/files/recon
 until sh $R once && [ "$(kubectl -n $KV_NS get cm kubevirt-paleo-launcher-status -o jsonpath='{.data.state}')" = Applied ]; do sleep 10; done
 ```
 
-Таблица, которую каталог публикует после v0.1.17, называет каждый лаунчер и по
+Таблица, которую каталог публикует начиная с v0.1.18, называет каждый лаунчер и по
 тегу, и по дайджесту, `virt-launcher:<тег>@sha256:<дайджест>`, и строка в вашей
 собственной таблице может делать так же. Дайджест — это хеш точного образа,
 поэтому узел скачивает ровно ту сборку, которая была опубликована. Узлы
@@ -135,7 +135,7 @@ spec:
           [{"op":"test","path":"/spec/template/spec/containers/0/name","value":"virt-controller"},
            {"op":"test","path":"/spec/template/spec/containers/0/args/0","value":"--launcher-image"},
            {"op":"replace","path":"/spec/template/spec/containers/0/args/1",
-            "value":"ghcr.io/tym83/paleocomputing/virt-launcher:v1.8.4-paleo-v0.1.17"}]
+            "value":"ghcr.io/tym83/paleocomputing/virt-launcher:v1.8.4-paleo-v0.1.18"}]
 ```
 
 ⚠ **Обновление KubeVirt**: launcher обязан идти следом. Меняйте тег на новую
@@ -153,7 +153,7 @@ spec:
 смотрит на образ `dev` с ПЗУ и диском, поэтому сначала прибейте его к выпуску:
 
 ```sh
-python3 marketplace/tools/pin-images.py --release v0.1.17
+python3 marketplace/tools/pin-images.py --release v0.1.18
 
 helm install wirth marketplace/repos/machines/packages/apps/oberon-vm \
   --namespace oberon --create-namespace \
@@ -161,7 +161,7 @@ helm install wirth marketplace/repos/machines/packages/apps/oberon-vm \
 ```
 
 С ключом `--pin` скрипт ещё и дописывает к образу дайджест этого выпуска из
-реестра, как это делает опубликованный каталог после v0.1.17; дайджест он
+реестра, как это делает опубликованный каталог начиная с v0.1.18; дайджест он
 спрашивает у ghcr, поэтому ему нужна сеть.
 
 | значение | по умолчанию | |
@@ -179,7 +179,7 @@ helm install wirth marketplace/repos/machines/packages/apps/oberon-vm \
 так и задумано.
 
 Диск задача кладёт только один раз и никогда не перезаписывает, потому что он
-принадлежит пользователю. После v0.1.17 паспорт машины ещё и объявляет размер
+принадлежит пользователю. После v0.1.18 паспорт машины ещё и объявляет размер
 диска, 8 МиБ, и задача дополняет диск поменьше нулями до этого размера, сохраняя
 содержимое; диск, оставшийся от прежнего выпуска, увеличивается так же.
 Поставляемый образ занимает около 1 МБ, файловая система Оберона пишет новые
@@ -209,7 +209,7 @@ virtctl -n oberon vnc oberon-vm-wirth --proxy-only --port 5900
 и окном `System.Tool`. Мышь абсолютная — указатель идёт за вашим. Средний
 щелчок по имени команды выполняет её: попробуйте `System.ShowModules` в окне
 инструментов (находка 39). Клавиатура, включая Shift, работает через VNC в
-выпусках после v0.1.17; в v0.1.17 и раньше первое же нажатие вешает машину
+выпусках начиная с v0.1.18; в v0.1.17 и раньше первое же нажатие вешает машину
 (находка 86).
 
 Переключиться на процессор с проверкой границ:
@@ -238,9 +238,9 @@ KUBECTL=kubectl KUBEVIRT_NAMESPACE=$KV_NS LAUNCHER_TABLE=/tmp/launchers.txt sh $
 Docker; опубликованный подходит:
 
 ```sh
-docker pull ghcr.io/tym83/paleocomputing/virt-launcher:v1.8.4-paleo-v0.1.17
-python3 marketplace/tools/pin-images.py --release v0.1.17
-export KUBEVIRT_VERSION=v1.8.4 LAUNCHER_IMAGE=ghcr.io/tym83/paleocomputing/virt-launcher:v1.8.4-paleo-v0.1.17
+docker pull ghcr.io/tym83/paleocomputing/virt-launcher:v1.8.4-paleo-v0.1.18
+python3 marketplace/tools/pin-images.py --release v0.1.18
+export KUBEVIRT_VERSION=v1.8.4 LAUNCHER_IMAGE=ghcr.io/tym83/paleocomputing/virt-launcher:v1.8.4-paleo-v0.1.18
 for s in tools cluster kubevirt launcher machine screen; do kubevirt/e2e.sh $s || break; done
 kubevirt/e2e.sh down
 ```
