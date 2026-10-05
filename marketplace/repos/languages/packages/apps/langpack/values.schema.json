@@ -17,7 +17,7 @@
     "image": {
       "type": "string",
       "minLength": 1,
-      "default": "ghcr.io/tym83/paleocomputing/oberon-run:v0.1.4"
+      "default": "ghcr.io/tym83/paleocomputing/oberon-run:dev"
     },
     "mode": {
       "type": "string",

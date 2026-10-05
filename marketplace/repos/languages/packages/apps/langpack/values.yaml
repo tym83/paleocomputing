@@ -8,7 +8,7 @@ language: Oberon
 ## @param {string} image - Image that contains the language implementation.
 ## The default is the Oberon environment: Wirth's compiler run as an ordinary
 ## program, with no windows, mouse or screen. Feed it a source, get an answer.
-image: ghcr.io/tym83/paleocomputing/oberon-run:v0.1.4
+image: ghcr.io/tym83/paleocomputing/oberon-run:dev
 
 ## @param {string} mode=job - How the environment runs.
 ## `service`: a permanently running environment reachable over HTTP (REPL, notebook, IDE).
