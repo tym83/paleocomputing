@@ -142,7 +142,8 @@ passport, and everything can be seen from it.
    `library/retro-machine/machine.schema.json`: the architecture and machine as
    libvirt knows them; the path to the emulator; files with roles (`firmware` is
    updated from the release, `disk` is placed once and then belongs to the
-   user); how each file is passed to QEMU; hardware variants as `-machine`
+   user, and may declare a `size` that the fill job grows it to with zeros);
+   how each file is passed to QEMU; hardware variants as `-machine`
    properties.
 4. **The application** `apps/<machine>/`: `Chart.yaml`, the form
    (`values.yaml`, `values.schema.json`), the `charts/retro-machine` link to the
@@ -151,7 +152,8 @@ passport, and everything can be seen from it.
 
 What catches a mistake: `check.py` checks the passport against the schema and
 the form, renders the chart and requires a `VirtualMachine`, a volume as part of
-the release and a fill job that does not touch an existing disk;
+the release and a fill job that does not touch an existing disk except to
+grow it to the passport size;
 `kubevirt/hook_test.py` runs the hook on two passports, the second one
 fictional, to show that a new machine needs no code changes. A copy without
 symlinks is published (`tools/stage.sh`): flux does not put symlinks into the
@@ -219,6 +221,10 @@ symlinks that never reached the cluster) otherwise cost a release each.
 2. During testing the sandbox points at `dev`: the `machines` and `platform`
    catalogs are reconnected with the `dev` tag. The cluster launcher is shared
    by all tenants, so after the release the cluster goes back to the release tag.
+   The published catalog refers to the launchers and the machine file images by
+   digest as well as tag. Every `dev` build rewrites the tag, and nodes pull
+   with `IfNotPresent`, so a tag alone left a node on the build it saw first
+   (finding 86).
 3. `tools/sandbox-e2e.sh`, in one run as a tenant: install a machine, wait for
    it to start, check the `VirtualMachine`, the launcher, `chk=on`, the screen
    through the console (reference: 18607 dark pixels), restart, delete and make

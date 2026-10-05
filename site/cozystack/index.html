@@ -172,7 +172,9 @@ spec:
     <p>
       The machine needs sixteen megabytes; the rest goes to the KubeVirt
       scaffolding. Its read-only memory and system disk arrive on a volume that
-      is filled once, at install time.
+      is filled once, at install time. The disk is 8 MiB: the Oberon file
+      system writes new files past the end of the shipped image of about 1 MB,
+      so the disk is grown with zeros to make room for the files you save.
     </p>
     <p>
       The screen is reached with
@@ -182,7 +184,9 @@ spec:
       dashboard versions the VNC console tab exists only for VMInstance. Oberon
       wants three mouse buttons; the middle one, which runs commands, is
       <kbd>Alt</kbd> with a left click, and the machine says so on its own screen
-      for the first half minute. In the dashboard the catalog has its own section,
+      for the first half minute. The keyboard works over the same connection,
+      Shift included, so you can type in the editor and save what you typed.
+      In the dashboard the catalog has its own section,
       <em>Paleocomputing</em>. Dashboards that render only IaaS, PaaS and NaaS in
       the sidebar (1.6 and earlier) show it at the end of “Show all apps”.
     </p>
@@ -193,11 +197,20 @@ spec:
       the user's files across restarts and upgrades — only the firmware is
       refreshed from the release.
     </p>
+    <p>
+      Something to try: Kube, a minimal Kubernetes control plane written in
+      Oberon, can be typed into an OberonVM, compiled by the system itself and
+      run there, with three controllers keeping three pods running on simulated
+      nodes. A Kubernetes control plane from a 1986 language ends up inside a
+      virtual machine that Kubernetes manages. The story and the commands are in
+      the <a href="https://github.com/tym83/paleocomputing/blob/main/15-episode-kube.md">Kube episode</a>.
+    </p>
   </section>
 
   <section>
     <h2>Known limits</h2>
     <ol class="steps">
+      <li><p><strong>Versions up to v0.1.17 have no working keyboard and a disk that cannot hold new files.</strong> The first key press hangs the machine, and the disk is the shipped image of about 1 MB, so a larger saved file is lost. Later versions fix both, and upgrading grows an existing disk without touching its content.</p></li>
       <li><p><strong>The machine does not migrate.</strong> When a node is drained, it stops rather than moves.</p></li>
       <li><p><strong>Machines installed with v0.1.10 or earlier must be reinstalled before upgrading.</strong> Their volume was created by an install hook and is not part of the release; upgrading them to any later release fails on that volume ("already exists"). Delete such a machine and install it again.</p></li>
       <li><p><strong>Versions up to v0.1.9 leave the machine's volume behind when it is deleted.</strong> The volume is created once, at install time, and Helm does not remove such resources on uninstall. Later versions clean it up with a job that runs on deletion; a machine deleted while still on v0.1.9 or earlier leaves <code>oberon-vm-&lt;name&gt;-payload</code> to be removed by hand.</p></li>

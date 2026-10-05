@@ -67,6 +67,17 @@ docker rm oberon-payload
 
 The machine writes to `oberon.dsk`: keep a copy if you want to start over.
 
+Grow the image before the first run. The shipped image is about 1 MB, and the
+Oberon file system places new files in sectors past its end, while QEMU refuses
+writes beyond the end of a raw disk file. On a disk of the original size a
+larger saved file is silently lost and leaves a directory entry that points
+nowhere (finding 86). Growing the file adds zeros at the end and keeps the
+content; 8 MB is the size the catalog machine uses:
+
+```sh
+truncate -s 8M oberon.dsk
+```
+
 ## Run
 
 ```sh
@@ -100,6 +111,14 @@ page, just under 16 MB. `-m` is not needed.
 
 The mouse is absolute; a middle click on a command name executes it — try
 `System.ShowModules` in the tool window.
+
+The keyboard works over VNC, Shift included, and so do key events sent through
+the QEMU monitor protocol (QMP `input-send-event`); before finding 86 the first
+key press hung the system. A program that types a long text should leave a few
+milliseconds between characters: the machine handles keys more slowly than a
+script can send them, and the 4096-byte keyboard queue only absorbs bursts. The
+Oberon editor itself drops keys when the caret reaches the bottom line of a
+viewer, so long texts are easier to insert bottom-up at the top of the text.
 
 To check that the run is the real thing without looking: connect
 [`../kubevirt/vnc_snapshot.py`](../kubevirt/vnc_snapshot.py) instead of a
