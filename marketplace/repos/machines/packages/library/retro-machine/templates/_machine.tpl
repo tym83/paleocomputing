@@ -296,7 +296,14 @@ spec:
         resources:
           requests:
             memory: {{ $memory }}
-        devices: {}
+        devices:
+          # No pod interface for the guest. The hook drops every PCI device, the
+          # NIC included, so the guest never had a network; but by default
+          # KubeVirt still binds the pod interface to the guest and takes the
+          # pod's address with it, and then the pod itself has no network. The
+          # radio of a machine on the air talks to its relay from the pod, so
+          # the pod keeps its address.
+          autoattachPodInterface: false
       volumes: []
 ---
 # Volume fill. A new job appears on every install and on every upgrade that
