@@ -25,7 +25,7 @@ import json, pathlib, shutil, socket, subprocess, sys, tempfile, time, uuid
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 IMPL = ROOT / "impl"
 sys.path.insert(0, str(IMPL / "tools"))
-from oberonfs import Image                       # noqa: E402
+from install_net import install_net              # noqa: E402
 
 QEMU = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else ROOT / ".qemu-work").resolve()
 NOREBO = IMPL / "ext" / "norebo"
@@ -34,39 +34,13 @@ FB_BASE, FB_W, FB_H = 0xE7F00, 1024, 768
 LOG = (640, 1024, 12, 250)                       # System.Log: x0, x1, y0, y1
 
 
-def norebo(cwd, *args):
-    env = {"NOREBO_PATH": f"{cwd}:{NOREBO}/Norebo:{NOREBO}/Oberon:{NOREBO}/build2",
-           "PATH": "/usr/bin:/bin"}
-    return subprocess.run([str(NOREBO / "norebo.bin"), *args], cwd=cwd, env=env,
-                          capture_output=True, text=True).stdout
-
-
 def build_disk(work):
-    """The stock image with Net compiled against its own symbol files."""
-    comp, inst = work / "compile", work / "install"
-    comp.mkdir(), inst.mkdir()
-    img = Image(DISK)
-    files = img.files()
-    for m in ("Viewers", "TextFrames", "MenuViewers", "Display", "Fonts", "Texts",
-              "Oberon", "Input", "Files", "Kernel", "FileDir", "Modules", "SCC"):
-        (comp / f"{m}.smb").write_bytes(img.read(files[f"{m}.smb"]))
-    shutil.copy(IMPL / "ext" / "po2013-src" / "Net.Mod", comp)
-    out = norebo(comp, "ORP.Compile", "Net.Mod/s")
-    if "new symbol file" not in out:
-        raise SystemExit("  ❌ Net.Mod did not compile:\n" + out)
-    # Installing needs Norebo's own module interfaces, so a separate directory.
-    for f in ("Net.rsc", "Net.smb"):
-        shutil.copy(comp / f, inst)
-    for m in ("VDisk", "VFileDir", "VFiles", "VDiskUtil"):
-        shutil.copy(NOREBO / "Norebo" / f"{m}.Mod", inst)
-    norebo(inst, "ORP.Compile", "VDisk.Mod/s", "VFileDir.Mod/s", "VFiles.Mod/s", "VDiskUtil.Mod/s")
-    shutil.copy(DISK, inst / "disk.dsk")
-    norebo(inst, "VDiskUtil.InstallFiles", "disk.dsk", "Net.rsc", "=>", "Net.rsc",
-           "Net.smb", "=>", "Net.smb")
-    if "Net.rsc" not in Image(inst / "disk.dsk").files():
-        raise SystemExit("  ❌ Net.rsc did not reach the disk image")
+    """The stock image with Net, the same way the oberon-run image gets it."""
+    disk = work / "net.dsk"
+    shutil.copy(DISK, disk)
+    install_net(disk, IMPL / "ext" / "po2013-src" / "Net.Mod", NOREBO, NOREBO / "norebo.bin")
     for name in ("a", "b"):
-        shutil.copy(inst / "disk.dsk", work / f"{name}.dsk")
+        shutil.copy(disk, work / f"{name}.dsk")
         with open(work / f"{name}.dsk", "r+b") as f:
             f.truncate(8 * 1024 * 1024)          # room for the files Oberon writes
     words = [int(x, 16) for x in (IMPL / "rtl" / "prom_sd.mem").read_text().split()]

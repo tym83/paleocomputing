@@ -11,6 +11,12 @@ FROM docker.io/library/gcc:14-bookworm AS build
 WORKDIR /src
 COPY ext/norebo/ ./norebo/
 RUN cc -O2 -o /norebo norebo/Runtime/norebo.c norebo/Runtime/risc-cpu.c
+# Wirth's Net on the system disk, so machines on an air can talk (Net.StartServer,
+# Net.SendMsg, Net.SendFiles). The image has SCC compiled but Net only as source.
+COPY tools/oberonfs.py tools/install_net.py ./tools/
+COPY ext/po2013-src/Net.Mod ./Net.Mod
+COPY ext/disk/Oberon-2016-08-02.dsk ./oberon.dsk
+RUN python3 tools/install_net.py oberon.dsk --norebo ./norebo --norebo-bin /norebo --net-mod Net.Mod
 
 # The ROM in binary form: in the sources it is hexadecimal text, while QEMU
 # expects bytes. We convert it at build time so the repository does not hold
@@ -22,7 +28,7 @@ WORKDIR /p
 # silently copies nothing. That is exactly how the serving image once shipped
 # without the machine.
 COPY rtl/prom_sd.mem ./
-COPY ext/disk/Oberon-2016-08-02.dsk ./oberon.dsk
+COPY --from=build /src/oberon.dsk ./oberon.dsk
 RUN python3 -c "import struct; \
   ws=[int(x,16) for x in open('prom_sd.mem').read().split()]; \
   open('prom.bin','wb').write(b''.join(struct.pack('<I',w) for w in ws))"
