@@ -6,9 +6,17 @@
  * risking breaking what works: whatever is missing here simply stays Russian.
  *
  * Keys: <number>.<field> — intro, hint, payoff, title, level,
- *       <number>.step.<index> for the step text.
+ *       <number>.step.<index> for the step text,
+ *       <number>.answer.<index> for the placeholder of a step's answer field,
+ *       <number>.check.<index>.<name> for a check result, and check.<name> for
+ *       results shared by all labs. A check result is a function of the values
+ *       the check passes (`v`), since the message carries numbers read from the
+ *       machine; see `tr` in labs.js.
  */
 import { SOURCES, BUILTIN, pre } from './lab-sources.js';
+
+// English plural: 1 word, 2 words.
+const pl = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 
 export const EN = {
   // Handbook chapter titles: the same across different labs, so the key is the
@@ -443,4 +451,221 @@ END Idx.</pre>
     <code>SQR</code>, the old compiler is still in memory:
     <code>System.Free ORP ORG ORB ~</code>, in exactly that order. If the
     compiler rebuild complains about a key, the <code>/s</code> is missing.`,
+
+
+  // ── payoffs of labs 2–9 ──────────────────────────────────────────────────
+  '2.payoff': `You wrote a program, compiled it and ran it without ever leaving
+   the system. No IDE, no separate toolchain, no package manager. The editor,
+   the compiler, the file system and the loader were all <b>already part of
+   those 101 KB</b> you counted in the first lab.`,
+  '3.payoff': `There are no header files at all. The compiler extracts a
+   module's interface itself and computes a key over it; every module remembers
+   the keys of everything it imports. Change an interface, and the dependants
+   simply <b>refuse to load</b>.
+   <br><br>
+   They do not crash later in some obscure place, they do not work "almost
+   right" — the system catches the mismatch at load time. Fifty years of
+   <code>#include</code> in C have not given us that.`,
+  '4.payoff': `You wrote rubbish straight into the memory of a running system —
+   and nobody stopped you. No memory manager, no rings, no permissions. And it
+   gets better: the system survived a spoiled <i>screen</i>, but spoiled
+   <i>code</i> killed it instantly — no trap, no message, not a single line in
+   the log.
+   <br><br>
+   This is what an "unsafe language" really means at the hardware level: not
+   "dangerous" but <b>the machine is physically unable to notice</b>. Every
+   buffer overflow of the last thirty years works exactly like this.`,
+  '5.payoff': `The number agreed with the table. That sounds dull right up to
+   the moment you remember that a modern processor does not work this way: one
+   and the same instruction takes different time depending on the cache, the
+   predictor and what ran before it.
+   <br><br>
+   Here time is <b>a property of the instruction, not of history</b>. That is
+   why measurements on this machine can be trusted: there is nothing to make
+   noise. And that is why people who need a guaranteed response in time still
+   miss machines like this.`,
+  '6.payoff': `The garbage collector runs <b>between</b> commands, not inside
+   them. So one long command can eat all the memory, even if nine tenths of
+   what is taken is already garbage. Several modules in one line do not build;
+   the same ones one at a time do.
+   <br><br>
+   This is not an oversight but a deliberate trade: <b>no pauses in the middle
+   of work</b> — at the price of a memory ceiling per command. Hard real-time
+   systems do the same today.`,
+  '7.payoff': `The binary on the official image <b>does not match</b> what
+   compiling its own source from the same image gives. 449 words against 447.
+   The image drifted apart from itself — and for years nobody noticed, because
+   nobody rebuilt it.
+   <br><br>
+   This is what a system that builds itself is for: it lets you <b>verify the
+   distribution instead of trusting it</b>.`,
+  '8.payoff': `The two generations agreed byte for byte. Think about what
+   exactly that has verified: the processor, memory, disk, loader, file
+   system, parsing, code generation — <b>everything at once, with one
+   fact</b>.
+   <br><br>
+   No test suite gives coverage like that. And it cannot be faked: a compiler
+   with a bug will almost certainly build itself into something that then
+   builds itself differently.`,
+  '9.payoff': `Whether bounds checks are present is switched by <b>one
+   variable</b> in the code generator. You just switched the language's safety
+   on and off by editing one line — and that is exactly the lever the project's
+   main experiment used to measure its price.
+   <br><br>
+   And a surprise: the star after <code>MODULE</code> makes the code
+   <b>larger</b>, not smaller — 38 words against 34. The mode without checks
+   reserves eight words of its own, and on a short module that eats up all the
+   savings.`,
+
+  // ── answer fields ────────────────────────────────────────────────────────
+  '5.answer.1': 'e.g. 1.55',
+  '5.answer.2': 'e.g. 1.54',
+  '10.answer.0': 'a number',
+  '12.answer.3': 'e.g. 4.0',
+
+  // ── check results ────────────────────────────────────────────────────────
+  'check.boot':       'the system has not booted yet',
+  'check.number':     'enter a number',
+  'check.first':      v => `do step ${v.s} first`,
+  'check.firstSteps': v => `do steps ${v.s} first`,
+  'check.none':       v => `there is no ${v.f} yet`,
+  'check.notLoaded':  v => `module ${v.name} is not loaded`,
+
+  '1.check.0.ok': v => `the desktop is in place: ${v.log} dots in the log, ${v.tool} in System.Tool`,
+  '1.check.0.no': v => `not booted yet (${v.log} dots in the log, ${v.tool} in System.Tool, ${v.mi} M instructions)`,
+  '1.check.1.ok': v => `the module viewer is open (${v.n} dots of text in the lower strip)`,
+  '1.check.1.no': v => `${v.n} dots in the lower strip — no viewer yet`,
+  '1.check.2.ok': v => `the left track is taken: ${v.n} dots of drawing`,
+  '1.check.2.no': v => `the left side is still empty (${v.n} dots)`,
+
+  '2.check.0.none': 'there is no Hello.Mod file on the disk',
+  '2.check.0.ok':   v => `Hello.Mod saved, ${v.n} characters`,
+  '2.check.0.no':   v => `the text is missing: ${v.lost}`,
+  '2.check.1.ok':   v => `Hello.rsc created: ${v.words} code words, key ${v.key}`,
+  '2.check.1.no':   'no Hello.rsc yet — the compilation did not go through',
+
+  '3.check.0.ok':     v => `Blink.rsc: key ${v.key}, ${v.words} code words`,
+  '3.check.1.same':   'Blink.rsc has not been rebuilt yet',
+  '3.check.1.ok':     v => `the file was rewritten, the key is the same: ${v.key}`,
+  '3.check.1.no':     v => `the key changed: it was ${v.was}, now ${v.now}`,
+  '3.check.2.unread': 'the files cannot be read',
+  '3.check.2.noimp':  'Oberon does not import Texts?',
+  '3.check.2.ok':     v => `they agree: Oberon remembers ${v.key}, and that is the key of Texts. Were they to differ, the module would simply not load.`,
+  '3.check.2.no':     v => `mismatch: ${v.rec} against ${v.key}`,
+
+  '4.check.0.unseen':  v => `no write visible at E7F00: ${v.poked} of 32 dots in the bottom row on the left`,
+  '4.check.0.ok':      'the screen is spoiled (32 dots at the bottom left), the machine keeps running',
+  '4.check.0.stopped': 'the machine has stopped — that is already the next step',
+  '4.check.1.ok':      v => `the machine has stopped: the program counter froze at ${v.pc}`,
+  '4.check.1.no':      v => `the machine is alive, the program counter wanders (${v.n} different values)`,
+
+  '5.check.0.ok':    v => `starting point: ${v.mi} M instructions, ${v.mc} M cycles`,
+  '5.check.1.ok':    v => `correct: ${v.real} cycles per instruction`,
+  '5.check.1.no':    v => `it comes to ${v.real} now, and you entered ${v.got}`,
+  '5.check.2.short': v => `only ${v.mi} M instructions in the interval — the compilation has not run yet`,
+  '5.check.2.ok':    v => `correct: ${v.real}. The same as when idle and during boot — the machine does not care what it is doing.`,
+  '5.check.2.no':    v => `the interval comes to ${v.real}, and you entered ${v.got}`,
+
+  '6.check.0.wait': 'the command has not finished yet',
+  '6.check.0.ok':   'there is no PIO.rsc on the disk — the batch did not reach the last module',
+  '6.check.0.no':   'PIO.rsc already exists: it looks like you built it with a separate command',
+  '6.check.1.ok':   v => `PIO.rsc created, ${v.words} code words. The same work, but the garbage collector ran between the commands.`,
+
+  '7.check.0.disk': 'the disk cannot be read yet',
+  '7.check.0.ok':   v => `Math.rsc on the image: ${v.n} bytes — this is the shipped file`,
+  '7.check.0.no':   v => `Math.rsc: ${v.n} bytes (1877 expected before the rebuild)`,
+  '7.check.1.disk': 'the disk cannot be read',
+  '7.check.1.ok':   v => `Math.rsc rebuilt: ${v.n} bytes instead of 1877. The shipped file had 449 code words, the fresh one has 447, with the same key 32C32F12.`,
+  '7.check.1.no':   v => `Math.rsc is now ${v.n} bytes; after the rebuild it should be 1869`,
+
+  '8.check.0.unread': 'ORS.rsc cannot be read',
+  '8.check.0.same':   'ORS.rsc has not been rebuilt yet (the directory entry is the same)',
+  '8.check.0.ok':     v => `generation 1: ${v.words} code words, key ${v.key}`,
+  '8.check.1.ok':     'from here on the compiler will be loaded from the disk again',
+  '8.check.2.same':   'ORS.rsc has not been rebuilt: the directory entry is the same',
+  '8.check.2.ok':     v => `the generations agree: ${v.words} words, key ${v.key}. Different binary code going in — the same result coming out.`,
+  '8.check.2.no':     v => `they diverged: ${v.was} words before, ${v.now} now`,
+
+  '9.check.0.ver':    'the version is not 1 — is the star already there?',
+  '9.check.0.ok':     v => `Idx.rsc: ${v.words} code words, version ${v.ver}`,
+  '9.check.1.nostar': 'there is no star before the module name',
+  '9.check.1.ver':    v => `the object file version is still ${v.ver} — rebuild it`,
+  '9.check.1.ok':     v => `the version became 0: bounds checks are no longer generated. `
+    + `But the code is now ${v.now} words instead of ${v.was} — ${pl(v.d, 'word', 'words')} MORE. `
+    + `The star switches on the RISC-0 mode as a whole, and it reserves eight words at the start of the module. `
+    + `Two effects at once — which is why the price of the checks cannot be measured this way.`,
+
+  '10.check.0.unread': 'Oberon.Mod cannot be read',
+  '10.check.0.ok':     v => `correct: BasicCycle = ${v.n}. The collector sweeps not by the clock but by your actions: once every ${v.n} keystrokes and clicks — or when less than 64 KB is left to the end of the heap.`,
+  '10.check.0.no':     'Oberon.Mod on the disk has a different number',
+  '10.check.1.notd':   'the record has no type descriptor: this compiler version builds one only for a named record, and NEW for an anonymous one takes the size from who knows where — the heap does not grow at all. Declare BlockDesc separately.',
+  '10.check.1.ok':     v => `Junk.rsc built: ${pl(v.words, 'word', 'words')} of code, a type descriptor of ${v.td} bytes. A block is 240 bytes of data and 8 of overhead; the kernel hands it out from the list of 256-byte pieces.`,
+  '10.check.kernel':   'the Kernel variables were not found at the expected addresses — the check cannot be trusted',
+  '10.check.2.no':     v => `${v.a} of ${v.size} bytes in the heap — Junk.Make has not run yet (or the collector has already passed: run it again)`,
+  '10.check.2.ok':     v => `Kernel.allocated = ${v.a} bytes (${v.pct}% of the heap). The collector wakes up once a second and leaves: there is no reason — few actions, and the heap is not full.`,
+  '10.check.3.ok':     v => `the collector returned ${v.freed} bytes: ${v.peak} before, ${v.a} now. Kernel.allocated decreases in only one place — in Kernel.Scan, so the sweep has happened.`,
+  '10.check.3.no':     v => `still ${v.a} bytes in the heap — no sweep yet`,
+  '10.check.4.ok':     v => `NEW returned NIL ${pl(v.lost, 'time', 'times')}: the heap ran out inside the command. It now holds ${v.a} bytes. `
+    + (v.full
+      ? 'Less than 64 KB to the end — that is the second reason, and within a second the collector will come on its own, without System.Collect: check System.Watch.'
+      : 'The collector has already passed on its own, without System.Collect: less than 64 KB was left to the end of the heap — the second reason.'),
+  '10.check.4.no':     'Junk.lost = 0: all blocks have been allocated so far',
+
+  '11.check.0.ok': v => `Tick.rsc built: ${pl(v.words, 'word', 'words')} of code`,
+  '11.check.1.ok': v => `the task has been called ${pl(v.n, 'time', 'times')} so far; the longest pause is ${v.gap} ms`,
+  '11.check.1.no': 'Tick is loaded, but the task has not been called once — did you run Tick.Start?',
+  '11.check.2.ok': v => `the task was not called for ${v.gap} ms in a row — exactly while the command ran. Nobody preempted it: there is nothing to preempt with.`,
+  '11.check.2.no': v => `the longest pause so far is ${v.gap} ms — Tick.Spin has not run yet`,
+  '11.check.3.ok': v => `the machine spins in your code at ${v.pcs} (module Tick: ${v.from}–${v.to}), the counter n froze at ${v.n}. No more mouse, no collector, no first task of yours.`,
+  '11.check.3.no': v => `the system is alive: the task is being called (n = ${v.n})`,
+
+  '12.check.0.variant':   'the machine is not on the core with CHK — pick the lab again',
+  '12.check.0.notLoaded': 'module Cost is not loaded — did you run Cost.Run?',
+  '12.check.0.zero':      'Cost.t = 0: the loop has not finished yet',
+  '12.check.0.chk':       v => `the loaded Cost already has ${pl(v.k, 'CHK instruction', 'CHK instructions')} — that is step 3; start with a reset`,
+  '12.check.0.ok':        v => `software check: ${v.t} ms, not a single CHK in the code. That is ${v.cyc} cycles per loop iteration.`,
+  '12.check.1.same':      'ORG.rsc has not been rebuilt yet',
+  '12.check.1.key':       v => `the ORG key changed (${v.key}): ORP will not load with it — was the wrong file built?`,
+  '12.check.1.ok':        v => `ORG.rsc rebuilt: ${pl(v.words, 'word', 'words')} instead of ${v.stock}, the key is the same ${v.key}`,
+  '12.check.1.stock':     v => `ORG.rsc was rebuilt, but it is the stock ORG (${v.words} words)`,
+  '12.check.2.nochk':     'the loaded Cost has no CHK at all — the old code is still in memory (System.Free) or it was built by the stock ORG',
+  '12.check.newRun':      'Cost.Run has not been run with the new code yet',
+  '12.check.2.ok':        v => `hardware check: ${v.t} ms against ${v.tB}. ${v.k} CHK in the code. The difference of ${v.d} ms = ${v.cyc} cycles per indexing.`,
+  '12.check.3.ok':        v => `correct: ${v.real}%. One cycle per indexing out of about ${v.per} per loop iteration.`,
+  '12.check.3.no':        v => `it comes to ${v.real}%, and you entered ${v.got}`,
+  '12.check.4.same':      'ORG.rsc has not been rebuilt since step 3',
+  '12.check.4.key':       v => `the ORG key changed (${v.key}): was the wrong file built?`,
+  '12.check.4.ver':       v => `ORG.rsc version ${v.ver}, not 1`,
+  '12.check.4.ok':        v => `ORG.rsc rebuilt a third time: version 1, the key is the same ${v.key}`,
+  '12.check.5.chk':       v => `the loaded Cost has ${v.n} CHK — that is still the code of step 3 (System.Free) or ORG.NoChk has not been built`,
+  '12.check.5.traps':     v => `the loaded Cost has ${pl(v.n, 'software index trap', 'software index traps')} — the stock ORG is at work`,
+  '12.check.5.sizes':     v => `the code sizes do not line up: A ${v.a}, E ${v.e}, B ${v.b} words`,
+  '12.check.5.ok':        v => `no check: ${v.t} ms, neither CHK nor traps in the code, ${pl(v.words, 'word', 'words')} `
+    + `(E ${v.e}, B ${v.b}). Three numbers: B ${v.tB} ms, E ${v.tE} ms, A ${v.t} ms. `
+    + `The software check costs ${v.sw} cycles per indexing, the hardware one ${v.hw}; `
+    + `the hardware gave back ${v.pct}% of the price of the check.`,
+
+  '13.check.0.orb':       'ORB.Mod on the disk has no enter("SQR", SFunc, intType, …) — was it inserted and saved (Edit.Store)?',
+  '13.check.0.code':      v => `code ${v.code}: the units are the number of parameters, and SQR has one`,
+  '13.check.0.taken':     v => `number ${v.fct} is already taken by the function ${v.by}`,
+  '13.check.0.org':       'ORG.Mod on the disk has no PROCEDURE Sqr*(VAR x: Item)',
+  '13.check.0.orp':       v => `ORP.Mod on the disk has no branch "fct = ${v.fct} THEN … ORG.Sqr(x)"`,
+  '13.check.0.ok':        v => `all three insertions are on the disk: SQR with number ${v.fct}, ORG.Sqr, the branch in ORP`,
+  '13.check.1.same':      v => `${v.n}.rsc has not been rebuilt yet`,
+  '13.check.1.orb':       v => `the ORB key changed (${v.key}): the interface of ORB need not be touched`,
+  '13.check.1.org':       'the ORG key is the same — is there no exported Sqr in the built ORG?',
+  '13.check.1.orp':       'ORP.rsc was built against a different ORG — build ORG before ORP, in one command',
+  '13.check.1.ok':        v => `the compiler is rebuilt. The ORB key is the same ${v.orb}, the ORG key `
+    + `${v.was} → ${v.now}, and ORP.rsc already imports the new one. `
+    + `The old compiler is still running in memory.`,
+  '13.check.2.oldOrg':    v => `the old ORG is in memory (key ${v.key}) — System.Free ORP ORG ORB`,
+  '13.check.2.nosq':      'no Sq.rsc: Sq.Mod has not been built (the old compiler will say SQR is undefined)',
+  '13.check.2.notLoaded': 'module Sq is not loaded — did you run Sq.Run?',
+  '13.check.2.nomul':     'the code of Sq has no MUL Ri, Ri, Ri — was SQR built through ORG.Sqr?',
+  '13.check.2.sum':       v => `Sq.r = ${v.r}, but the sum of the squares from 1 to 10 is 385`,
+  '13.check.2.ok':        v => `Sq.r = 385, and the loaded code of Sq has ${v.sq === 1 ? 'one instruction' : v.sq + ' instructions'} `
+    + `MUL Ri, Ri, Ri — the one your ORG.Sqr emits. The compiler in memory is the new one (ORG key ${v.key}).`,
+  '13.check.3.same':      v => `${v.n}.rsc has not been rebuilt by the new compiler yet`,
+  '13.check.3.diff':      v => `${v.list}.rsc differs from what the old compiler built: the new function touched someone else's code`,
+  '13.check.3.ok':        v => `fixed point: ORB.rsc, ORG.rsc, ORP.rsc are the same byte for byte (${v.bytes} bytes). SQR changed nothing but itself.`,
 };

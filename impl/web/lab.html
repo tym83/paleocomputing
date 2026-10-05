@@ -103,7 +103,7 @@
       <option value="2" data-i18n-en="2× — large">2× — крупно</option>
     </select>
   </label>
-  <span class="stat" id="stat" title="Сколько команд выполнил процессор; адрес выполняемой сейчас команды; меняется ли картинка" data-i18n-en="loading…">загрузка…</span>
+  <span class="stat" id="stat" title="Сколько команд выполнил процессор; адрес выполняемой сейчас команды; меняется ли картинка" data-i18n-title-en="Instructions executed by the processor; address of the instruction running now; whether the picture is changing" data-i18n-en="loading…">загрузка…</span>
 </header>
 
 <main>
@@ -135,7 +135,7 @@
 <script type="module">
 import { labelAltKeys, ALT_LABEL } from './machine.js';
 import './embed.js';
-import { LANG, LANGS, setLang, applyMarkup } from './i18n.js';
+import { LANG, LANGS, t, setLang, applyMarkup } from './i18n.js';
 import { LABS } from './labs.js';
 
 const $ = id => document.getElementById(id);
@@ -144,7 +144,6 @@ const hex = n => (n >>> 0).toString(16).toUpperCase();
 // Language: English by default, Russian on request. The choice is remembered,
 // and `?lang=ru` in the URL overrides the remembered one.
 applyMarkup(document);
-if (LANG !== 'ru') $('stat').title = 'Instructions executed by the processor; address of the instruction running now; whether the picture is changing';
 LANGS_FILL();
 // The handbook link in the header goes to the same place, in the right language.
 if (LANG !== 'ru') {
@@ -169,7 +168,7 @@ function LANGS_FILL() {
  * and only the verdict comes back here.
  */
 const m = $('cv');
-if (LANG === 'ru') m.setAttribute('start-label', 'Запустить машину');
+m.setAttribute('start-label', t({ en: 'Start the machine', ru: 'Запустить машину' }));
 
 let lab = LABS[0];
 
@@ -183,7 +182,7 @@ function render() {
   $('title').textContent = lab.title;
   $('level').textContent = '· ' + lab.level;
   $('intro').innerHTML = lab.intro;
-  $('hint').innerHTML = (LANG === 'ru' ? '<b>Подсказка.</b> ' : '<b>Hint.</b> ') + lab.hint;
+  $('hint').innerHTML = t({ en: '<b>Hint.</b> ', ru: '<b>Подсказка.</b> ' }) + lab.hint;
   $('payoff').innerHTML = lab.payoff || '';
   document.querySelector('.payoff-box').hidden = !lab.payoff;
   $('toolbox').hidden = lab.tools !== 'poke';
@@ -199,7 +198,7 @@ function render() {
     const li = document.createElement('li');
     li.innerHTML = st.text;
     const b = document.createElement('button');
-    b.textContent = LANG === 'ru' ? 'Проверить' : 'Check';
+    b.textContent = t({ en: 'Check', ru: 'Проверить' });
     const res = document.createElement('div');
     res.className = 'res';
     let inp = null;
@@ -209,7 +208,7 @@ function render() {
       inp.style.width = '150px';
     }
     b.onclick = async () => {
-      const r = await m.check(lab.id, i, inp ? inp.value : '');
+      const r = await m.check(lab.id, i, inp ? inp.value : '', LANG);
       res.className = 'res ' + (r.ok ? 'ok' : 'no');
       res.textContent = (r.ok ? '✅ ' : '— ') + r.msg;
       li.classList.toggle('done', r.ok);
@@ -256,9 +255,8 @@ $('btn').onchange = e => m.setButton(+e.target.value);
 
 $('reset').onclick = () => { m.reset(); m.forget(lab.id); render(); };
 $('pause').onclick = () => {
-  const ru = LANG === 'ru';
-  if (m.running) { m.stop(); $('pause').textContent = ru ? 'Пуск' : 'Run'; }
-  else { m.start(); $('pause').textContent = ru ? 'Пауза' : 'Pause'; }
+  if (m.running) { m.stop(); $('pause').textContent = t({ en: 'Run', ru: 'Пуск' }); }
+  else { m.start(); $('pause').textContent = t({ en: 'Pause', ru: 'Пауза' }); }
 };
 $('poke').onclick = () => {
   const a = parseInt($('adr').value, 16), v = parseInt($('val').value, 16);
@@ -274,10 +272,9 @@ let lastCrc = -1;
 m.addEventListener('oberon-frame', e => {
   const d = e.detail;
   const drawing = d.crc !== lastCrc; lastCrc = d.crc;
-  $('stat').textContent =
-    (LANG === 'ru'
-      ? `${(d.insns / 1e6).toFixed(1)} млн команд · адрес ${hex(d.pc)} · экран ${drawing ? 'меняется' : 'замер'}`
-      : `${(d.insns / 1e6).toFixed(1)}M instructions · at ${hex(d.pc)} · screen ${drawing ? 'changing' : 'still'}`);
+  $('stat').textContent = t({
+    en: `${(d.insns / 1e6).toFixed(1)}M instructions · at ${hex(d.pc)} · screen ${drawing ? 'changing' : 'still'}`,
+    ru: `${(d.insns / 1e6).toFixed(1)} млн команд · адрес ${hex(d.pc)} · экран ${drawing ? 'меняется' : 'замер'}` });
   $('pc').textContent = hex(d.pc);
 });
 // The module ran to the end: the in-browser smoke test sees this.

@@ -60,4 +60,7 @@ export function applyMarkup(root = document) {
   root.querySelectorAll('[data-i18n-ph-' + LANG + ']').forEach(el => {
     el.placeholder = el.getAttribute('data-i18n-ph-' + LANG);
   });
+  root.querySelectorAll('[data-i18n-title-' + LANG + ']').forEach(el => {
+    el.title = el.getAttribute('data-i18n-title-' + LANG);
+  });
 }

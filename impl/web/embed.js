@@ -23,7 +23,7 @@
  *   width      CSS width of the canvas (default 100%)
  *
  * Methods and events: `.start()`, `.stop()`, `.reset()`, `.setButton(n)`,
- * `.poke(address, value)`, `.check(lab, step, answer)`; the last one runs next
+ * `.poke(address, value)`, `.check(lab, step, answer[, lang])`; the last one runs next
  * to the machine, in the worker, and returns a promise;
  * events: `oberon-ready`, `oberon-frame` (twice a second, with the speed),
  * `oberon-buttons` (mouse button state), `oberon-error`.
@@ -249,8 +249,12 @@ class OberonMachine extends HTMLElement {
     });
   }
 
-  /** Check a lab step. Computed by the worker, next to the machine. */
-  check(lab, step, answer) { return this._ask({ t: 'check', lab, step, answer }); }
+  /** Check a lab step. Computed by the worker, next to the machine. The result
+      message comes in the page's language: the worker cannot see the page's
+      choice, so it travels with the request. */
+  check(lab, step, answer, lang = document.documentElement.lang) {
+    return this._ask({ t: 'check', lab, step, answer, lang });
+  }
 
   /** Forget a lab's accumulated state. */
   forget(lab) { this._send({ t: 'forget', lab }); }

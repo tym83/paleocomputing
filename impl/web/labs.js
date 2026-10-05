@@ -30,6 +30,26 @@ const text = (m, name) => {
 };
 
 /*
+ * Check results. The Russian is written right in the check, as the rest of the
+ * lab text; the English lives in the overlay (labs.en.js) under the key
+ * "<number>.check.<step>.<name>" (or "check.<name>" for messages shared by all
+ * labs) as a function of the same values `v`. Usage:
+ *
+ *   msg: tr(c, '7.check.1.ok', { n }) ?? `Math.rsc пересобран: ${n} байт…`
+ *
+ * The language comes with the check, in `c.lang`: checks run in the worker next
+ * to the machine, and the worker sees neither the page's URL nor its storage.
+ * Without it, the module default applies. A key missing from the overlay falls
+ * back to the Russian, as everywhere in the overlay.
+ */
+function tr(c, key, v = {}) {
+  const lang = (c && c.lang) || LANG;
+  if (/^ru\b/.test(lang)) return undefined;
+  const e = EN[key];
+  return typeof e === 'function' ? e(v) : e;
+}
+
+/*
  * Loaded modules, read from the machine's memory rather than from the screen.
  *
  * Module descriptor (Modules.ModDesc): name[32], next, key, num, size, refcnt,
@@ -149,7 +169,7 @@ const ALL = [
           <li><b>Чёрные полоски</b> над каждым окном — его заголовок и его собственные команды.</li>
           <li><b>Слева пусто, и это не ошибка.</b> Экран поделён на вертикальные дорожки. Левая — свободное место, куда открываются окна. Пока ничего не открыли, она белая.</li>
         </ul>`,
-      check: m => {
+      check: (m, c) => {
         // ⚠ This used to compare the full screen checksum with the boot
         // reference. It could never pass: the framebuffer includes the mouse
         // cursor, and the first mouse move changed the sum for good, while step 2
@@ -158,8 +178,8 @@ const ALL = [
         const log = m.ink(655, 10, 1015, 120);      // log: title and version line
         const tool = m.ink(655, 255, 1015, 580);    // System.Tool: list of commands
         if (log > 500 && tool > 5000)
-          return { ok: true, msg: `рабочий стол на месте: ${log} точек в журнале, ${tool} в System.Tool` };
-        return { ok: false, msg: `ещё не догрузилось (в журнале ${log} точек, в System.Tool ${tool}, инструкций ${(m.insns/1e6).toFixed(1)} млн)` };
+          return { ok: true, msg: tr(c, '1.check.0.ok', { log, tool }) ?? `рабочий стол на месте: ${log} точек в журнале, ${tool} в System.Tool` };
+        return { ok: false, msg: tr(c, '1.check.0.no', { log, tool, mi: (m.insns/1e6).toFixed(1) }) ?? `ещё не догрузилось (в журнале ${log} точек, в System.Tool ${tool}, инструкций ${(m.insns/1e6).toFixed(1)} млн)` };
       } },
     { text: `Теперь запустите команду. В нижнем окне найдите слова
         <code>System.ShowModules</code> и щёлкните <b>средней</b> кнопкой ровно
@@ -187,11 +207,11 @@ Kernel        00000100 00002184  4</pre>
         <br><br>
         Не получилось — скорее всего щёлкнули мимо слова либо обычной левой
         кнопкой. Левая просто ставит курсор, она ничего не запускает.`,
-      check: m => {
+      check: (m, c) => {
         const n = m.ink(655, 530, 1015, 700);       // the strip where the viewer opens
         return n > 2000
-          ? { ok: true, msg: `вьюер модулей открыт (${n} точек текста в нижней полосе)` }
-          : { ok: false, msg: `в нижней полосе ${n} точек — вьюера пока нет` };
+          ? { ok: true, msg: tr(c, '1.check.1.ok', { n }) ?? `вьюер модулей открыт (${n} точек текста в нижней полосе)` }
+          : { ok: false, msg: tr(c, '1.check.1.no', { n }) ?? `в нижней полосе ${n} точек — вьюера пока нет` };
       } },
     { text: `Теперь заселите пустую дорожку слева. Средний щелчок по
         <code>Hilbert.Draw</code> — и она перестанет быть белой: там откроется
@@ -207,11 +227,11 @@ Kernel        00000100 00002184  4</pre>
           <li><code>↑</code> — параметр берётся из того, что вы перед этим выделили;</li>
           <li><code>@</code> — команда работает с текстом в помеченном окне.</li>
         </ul>`,
-      check: m => {
+      check: (m, c) => {
         const n = m.ink(10, 10, 620, 760);          // left track
         return n > 5000
-          ? { ok: true, msg: `дорожка слева занята: ${n} точек рисунка` }
-          : { ok: false, msg: `слева ещё пусто (${n} точек)` };
+          ? { ok: true, msg: tr(c, '1.check.2.ok', { n }) ?? `дорожка слева занята: ${n} точек рисунка` }
+          : { ok: false, msg: tr(c, '1.check.2.no', { n }) ?? `слева ещё пусто (${n} точек)` };
       } },
   ],
   payoff: `Посчитайте строки в открывшемся окне. <b>Тринадцать.</b> Это вся
@@ -243,26 +263,26 @@ Kernel        00000100 00002184  4</pre>
   tools: 'poke',
   steps: [
     { text: 'Дождитесь загрузки и впишите мусор в кадровый буфер: адрес <code>E7F00</code>, значение <code>FFFFFFFF</code>. Экран испортится, а система уцелеет — потому что портить экран ей не запрещено.',
-      check: m => {
-        if (m.insns < 12e6) return { ok: false, msg: 'система ещё не загрузилась' };
+      check: (m, c) => {
+        if (m.insns < 12e6) return { ok: false, msg: tr(c, 'check.boot') ?? 'система ещё не загрузилась' };
         // ⚠ This used to compare the full screen checksum with the boot reference,
         // and "the sum changed" counted as completing the task. Any mouse move
         // changes the sum, so the step passed by itself without checking anything.
         // Address E7F00 is the first word of the framebuffer, which is the bottom row
         // of the screen: writing FFFFFFFF must blacken exactly 32 pixels at bottom left.
         const poked = m.ink(0, 767, 32, 768);
-        if (poked < 32) return { ok: false, msg: `по адресу E7F00 записи не видно: в нижней строке слева ${poked} точек из 32` };
+        if (poked < 32) return { ok: false, msg: tr(c, '4.check.0.unseen', { poked }) ?? `по адресу E7F00 записи не видно: в нижней строке слева ${poked} точек из 32` };
         const pcs = new Set(); for (let i = 0; i < 5; i++) { m.run(50000); pcs.add(m.pc); }
         return pcs.size > 1
-          ? { ok: true, msg: 'экран испорчен (32 точки внизу слева), машина продолжает работать' }
-          : { ok: false, msg: 'машина встала — это уже следующий шаг' };
+          ? { ok: true, msg: tr(c, '4.check.0.ok') ?? 'экран испорчен (32 точки внизу слева), машина продолжает работать' }
+          : { ok: false, msg: tr(c, '4.check.0.stopped') ?? 'машина встала — это уже следующий шаг' };
       } },
     { text: 'Теперь испортите <b>код</b>. В панели показан текущий счётчик команд — впишите по этому адресу значение <code>E7FFFFFF</code>. Это «переход на самого себя»: машина встанет насмерть, без ловушки и без сообщения.',
-      check: m => {
+      check: (m, c) => {
         const pcs = new Set(); for (let i = 0; i < 5; i++) { m.run(50000); pcs.add(m.pc); }
         return pcs.size === 1
-          ? { ok: true, msg: `машина встала: счётчик команд замер на ${[...pcs][0].toString(16).toUpperCase()}` }
-          : { ok: false, msg: `машина жива, счётчик команд гуляет (${pcs.size} разных значений)` };
+          ? { ok: true, msg: tr(c, '4.check.1.ok', { pc: hex([...pcs][0]) }) ?? `машина встала: счётчик команд замер на ${[...pcs][0].toString(16).toUpperCase()}` }
+          : { ok: false, msg: tr(c, '4.check.1.no', { n: pcs.size }) ?? `машина жива, счётчик команд гуляет (${pcs.size} разных значений)` };
       } },
   ],
   payoff: `Вы записали мусор прямо в память работающей системы — и вас никто не
@@ -286,22 +306,22 @@ Kernel        00000100 00002184  4</pre>
     версией компилятора, чем та, что лежит рядом.`,
   steps: [
     { text: 'Дождитесь загрузки. Запомните размер файла <code>Math.rsc</code> — проверка покажет его ниже.',
-      check: m => {
+      check: (m, c) => {
         const fs = new OberonFS(m), f = fs.files().get('Math.rsc');
-        if (!f) return { ok: false, msg: 'диск ещё не читается' };
+        if (!f) return { ok: false, msg: tr(c, '7.check.0.disk') ?? 'диск ещё не читается' };
         const n = fs.length(f);
         return n === 1877
-          ? { ok: true, msg: `Math.rsc на образе: ${n} байт — это поставляемый файл` }
-          : { ok: false, msg: `Math.rsc: ${n} байт (ожидалось 1877 до пересборки)` };
+          ? { ok: true, msg: tr(c, '7.check.0.ok', { n }) ?? `Math.rsc на образе: ${n} байт — это поставляемый файл` }
+          : { ok: false, msg: tr(c, '7.check.0.no', { n }) ?? `Math.rsc: ${n} байт (ожидалось 1877 до пересборки)` };
       } },
     { text: 'Поставьте курсор в конец текста <code>System.Tool</code> (левый щелчок), наберите <code>ORP.Compile Math.Mod/s ~</code> и запустите средним щелчком по набранному.',
-      check: m => {
+      check: (m, c) => {
         const fs = new OberonFS(m), f = fs.files().get('Math.rsc');
-        if (!f) return { ok: false, msg: 'диск не читается' };
+        if (!f) return { ok: false, msg: tr(c, '7.check.1.disk') ?? 'диск не читается' };
         const n = fs.length(f);
         return n === 1869
-          ? { ok: true, msg: `Math.rsc пересобран: ${n} байт вместо 1877. Поставляемый файл содержал 449 слов кода, свежий — 447, при том же ключе 32C32F12.` }
-          : { ok: false, msg: `Math.rsc сейчас ${n} байт; после пересборки должно стать 1869` };
+          ? { ok: true, msg: tr(c, '7.check.1.ok', { n }) ?? `Math.rsc пересобран: ${n} байт вместо 1877. Поставляемый файл содержал 449 слов кода, свежий — 447, при том же ключе 32C32F12.` }
+          : { ok: false, msg: tr(c, '7.check.1.no', { n }) ?? `Math.rsc сейчас ${n} байт; после пересборки должно стать 1869` };
       } },
   ],
   payoff: `Двоичный файл, лежащий на официальном образе, <b>не совпадает</b> с тем,
@@ -325,30 +345,30 @@ Kernel        00000100 00002184  4</pre>
   steps: [
     { text: 'Дождитесь загрузки и нажмите «Проверить» — это запомнит текущие показания счётчиков.',
       check: (m, c) => {
-        if (m.insns < 12e6) return { ok: false, msg: 'система ещё не загрузилась' };
+        if (m.insns < 12e6) return { ok: false, msg: tr(c, 'check.boot') ?? 'система ещё не загрузилась' };
         c.state.i0 = m.insns; c.state.c0 = m.cycles;
-        return { ok: true, msg: `отсчёт: ${(m.insns/1e6).toFixed(1)} млн инструкций, ${(m.cycles/1e6).toFixed(1)} млн тактов` };
+        return { ok: true, msg: tr(c, '5.check.0.ok', { mi: (m.insns/1e6).toFixed(1), mc: (m.cycles/1e6).toFixed(1) }) ?? `отсчёт: ${(m.insns/1e6).toFixed(1)} млн инструкций, ${(m.cycles/1e6).toFixed(1)} млн тактов` };
       } },
     { text: 'Разделите такты на инструкции за весь прогон и введите результат с двумя знаками.',
       answer: 'например 1.55',
       check: (m, c) => {
         const real = m.cycles / m.insns, got = parseFloat((c.answer || '').replace(',', '.'));
-        if (!isFinite(got)) return { ok: false, msg: 'введите число' };
+        if (!isFinite(got)) return { ok: false, msg: tr(c, 'check.number') ?? 'введите число' };
         return near(got, real, 0.05)
-          ? { ok: true, msg: `верно: ${real.toFixed(3)} такта на инструкцию` }
-          : { ok: false, msg: `сейчас получается ${real.toFixed(3)}, а введено ${got}` };
+          ? { ok: true, msg: tr(c, '5.check.1.ok', { real: real.toFixed(3) }) ?? `верно: ${real.toFixed(3)} такта на инструкцию` }
+          : { ok: false, msg: tr(c, '5.check.1.no', { real: real.toFixed(3), got }) ?? `сейчас получается ${real.toFixed(3)}, а введено ${got}` };
       } },
     { text: 'Теперь поставьте курсор в конец текста <code>System.Tool</code>, наберите <code>ORP.Compile Math.Mod/s ~</code> и запустите. Затем введите, сколько тактов на инструкцию пришлось на этот отрезок.',
       answer: 'например 1.54',
       check: (m, c) => {
-        if (c.state.i0 === undefined) return { ok: false, msg: 'сначала шаг 1' };
+        if (c.state.i0 === undefined) return { ok: false, msg: tr(c, 'check.first', { s: '1' }) ?? 'сначала шаг 1' };
         const di = m.insns - c.state.i0, dc = m.cycles - c.state.c0;
-        if (di < 20e6) return { ok: false, msg: `на отрезке всего ${(di/1e6).toFixed(1)} млн инструкций — компиляция ещё не прошла` };
+        if (di < 20e6) return { ok: false, msg: tr(c, '5.check.2.short', { mi: (di/1e6).toFixed(1) }) ?? `на отрезке всего ${(di/1e6).toFixed(1)} млн инструкций — компиляция ещё не прошла` };
         const real = dc / di, got = parseFloat((c.answer || '').replace(',', '.'));
-        if (!isFinite(got)) return { ok: false, msg: 'введите число' };
+        if (!isFinite(got)) return { ok: false, msg: tr(c, 'check.number') ?? 'введите число' };
         return near(got, real, 0.06)
-          ? { ok: true, msg: `верно: ${real.toFixed(3)}. Столько же, сколько на холостом ходу и при загрузке — машине всё равно, чем заниматься.` }
-          : { ok: false, msg: `на отрезке получается ${real.toFixed(3)}, а введено ${got}` };
+          ? { ok: true, msg: tr(c, '5.check.2.ok', { real: real.toFixed(3) }) ?? `верно: ${real.toFixed(3)}. Столько же, сколько на холостом ходу и при загрузке — машине всё равно, чем заниматься.` }
+          : { ok: false, msg: tr(c, '5.check.2.no', { real: real.toFixed(3), got }) ?? `на отрезке получается ${real.toFixed(3)}, а введено ${got}` };
       } },
   ],
   payoff: `Число сошлось с таблицей. Это звучит скучно ровно до того момента, пока не
@@ -371,16 +391,16 @@ Kernel        00000100 00002184  4</pre>
     наткнётесь на это сами — и найдёте обход.`,
   steps: [
     { text: 'Поставьте курсор в конец <code>System.Tool</code> и запустите одной командой: <code>ORP.Compile ORS.Mod/s ORB.Mod/s ORG.Mod/s ORP.Mod/s PIO.Mod/s ~</code>. В журнале появится <code>TRAP 4</code> — разыменование NIL, то есть память кончилась. Файл <code>PIO.rsc</code> так и не появится.',
-      check: m => {
-        if (m.insns < 120e6) return { ok: false, msg: 'команда ещё не отработала' };
+      check: (m, c) => {
+        if (m.insns < 120e6) return { ok: false, msg: tr(c, '6.check.0.wait') ?? 'команда ещё не отработала' };
         return hdr(m, 'PIO.rsc') === undefined
-          ? { ok: true, msg: 'PIO.rsc на диске нет — пачка не дошла до последнего модуля' }
-          : { ok: false, msg: 'PIO.rsc уже есть: похоже, вы собрали его отдельной командой' };
+          ? { ok: true, msg: tr(c, '6.check.0.ok') ?? 'PIO.rsc на диске нет — пачка не дошла до последнего модуля' }
+          : { ok: false, msg: tr(c, '6.check.0.no') ?? 'PIO.rsc уже есть: похоже, вы собрали его отдельной командой' };
       } },
     { text: 'Теперь то же самое, но по одному модулю за команду. Достаточно последнего: <code>ORP.Compile PIO.Mod/s ~</code>.',
-      check: m => hdr(m, 'PIO.rsc') !== undefined
-        ? { ok: true, msg: `PIO.rsc создан, ${rsc(m, 'PIO.rsc').codeWords} слов кода. Та же работа, но между командами отработал сборщик мусора.` }
-        : { ok: false, msg: 'PIO.rsc пока нет' } },
+      check: (m, c) => hdr(m, 'PIO.rsc') !== undefined
+        ? { ok: true, msg: tr(c, '6.check.1.ok', { words: rsc(m, 'PIO.rsc').codeWords }) ?? `PIO.rsc создан, ${rsc(m, 'PIO.rsc').codeWords} слов кода. Та же работа, но между командами отработал сборщик мусора.` }
+        : { ok: false, msg: tr(c, 'check.none', { f: 'PIO.rsc' }) ?? 'PIO.rsc пока нет' } },
   ],
   payoff: `Сборщик мусора работает <b>между</b> командами, а не внутри. Значит одна
    длинная команда способна съесть всю память, даже если девять десятых
@@ -404,25 +424,25 @@ Kernel        00000100 00002184  4</pre>
     { text: 'Соберите сканер компилятора: <code>ORP.Compile ORS.Mod/s ~</code>. Это поколение 1 — его собрал компилятор, лежавший на диске.',
       check: (m, c) => {
         const h = hdr(m, 'ORS.rsc'), r = rsc(m, 'ORS.rsc');
-        if (!h) return { ok: false, msg: 'ORS.rsc не читается' };
+        if (!h) return { ok: false, msg: tr(c, '8.check.0.unread') ?? 'ORS.rsc не читается' };
         if (c.state.h1 === undefined) {
-          if (h === 12383) return { ok: false, msg: 'ORS.rsc ещё не пересобран (служебная запись прежняя)' };
+          if (h === 12383) return { ok: false, msg: tr(c, '8.check.0.same') ?? 'ORS.rsc ещё не пересобран (служебная запись прежняя)' };
           c.state.h1 = h; c.state.key = r.key; c.state.words = r.codeWords;
         }
-        return { ok: true, msg: `поколение 1: ${r.codeWords} слов кода, ключ ${r.key.toString(16).toUpperCase()}` };
+        return { ok: true, msg: tr(c, '8.check.0.ok', { words: r.codeWords, key: hex(r.key) }) ?? `поколение 1: ${r.codeWords} слов кода, ключ ${r.key.toString(16).toUpperCase()}` };
       } },
     { text: 'Выгрузите компилятор из памяти: <code>System.Free ORP ORG ORB ORS ~</code>. Без этого следующая сборка пойдёт старым кодом, оставшимся в памяти, и опыт потеряет смысл.',
       check: (m, c) => c.state.h1 !== undefined
-        ? { ok: true, msg: 'дальше компилятор будет загружен с диска заново' }
-        : { ok: false, msg: 'сначала шаг 1' } },
+        ? { ok: true, msg: tr(c, '8.check.1.ok') ?? 'дальше компилятор будет загружен с диска заново' }
+        : { ok: false, msg: tr(c, 'check.first', { s: '1' }) ?? 'сначала шаг 1' } },
     { text: 'Соберите <code>ORS.Mod</code> ещё раз. Теперь это делает свежесобранный компилятор — поколение 2.',
       check: (m, c) => {
-        if (c.state.h1 === undefined) return { ok: false, msg: 'сначала шаг 1' };
+        if (c.state.h1 === undefined) return { ok: false, msg: tr(c, 'check.first', { s: '1' }) ?? 'сначала шаг 1' };
         const h = hdr(m, 'ORS.rsc'), r = rsc(m, 'ORS.rsc');
-        if (h === c.state.h1) return { ok: false, msg: 'ORS.rsc не пересобирался: служебная запись та же' };
+        if (h === c.state.h1) return { ok: false, msg: tr(c, '8.check.2.same') ?? 'ORS.rsc не пересобирался: служебная запись та же' };
         return (r.codeWords === c.state.words && r.key === c.state.key)
-          ? { ok: true, msg: `поколения совпали: ${r.codeWords} слов, ключ ${r.key.toString(16).toUpperCase()}. Разный двоичный код на входе — одинаковый результат на выходе.` }
-          : { ok: false, msg: `разошлись: было ${c.state.words} слов, стало ${r.codeWords}` };
+          ? { ok: true, msg: tr(c, '8.check.2.ok', { words: r.codeWords, key: hex(r.key) }) ?? `поколения совпали: ${r.codeWords} слов, ключ ${r.key.toString(16).toUpperCase()}. Разный двоичный код на входе — одинаковый результат на выходе.` }
+          : { ok: false, msg: tr(c, '8.check.2.no', { was: c.state.words, now: r.codeWords }) ?? `разошлись: было ${c.state.words} слов, стало ${r.codeWords}` };
       } },
   ],
   payoff: `Два поколения совпали побайтово. Вдумайтесь, что именно этим проверено:
@@ -454,21 +474,21 @@ Kernel        00000100 00002184  4</pre>
 BEGIN n := 0
 END Hello.</pre>
       Затем <code>Edit.Store</code> в заголовке этого окна.`,
-      check: m => {
+      check: (m, c) => {
         const t = text(m, 'Hello.Mod');
-        if (t === null) return { ok: false, msg: 'файла Hello.Mod на диске нет' };
+        if (t === null) return { ok: false, msg: tr(c, '2.check.0.none') ?? 'файла Hello.Mod на диске нет' };
         const need = ['MODULE Hello', 'VAR n*', 'PROCEDURE Add*', 'END Hello.'];
         const lost = need.filter(x => !t.includes(x));
         return lost.length === 0
-          ? { ok: true, msg: `Hello.Mod сохранён, ${t.length} символов` }
-          : { ok: false, msg: `в тексте не хватает: ${lost.join(', ')}` };
+          ? { ok: true, msg: tr(c, '2.check.0.ok', { n: t.length }) ?? `Hello.Mod сохранён, ${t.length} символов` }
+          : { ok: false, msg: tr(c, '2.check.0.no', { lost: lost.join(', ') }) ?? `в тексте не хватает: ${lost.join(', ')}` };
       } },
     { text: 'Теперь скомпилируйте его: <code>ORP.Compile Hello.Mod ~</code>.',
-      check: m => {
+      check: (m, c) => {
         const r = rsc(m, 'Hello.rsc');
         return r
-          ? { ok: true, msg: `Hello.rsc создан: ${r.codeWords} слов кода, ключ ${r.key.toString(16).toUpperCase()}` }
-          : { ok: false, msg: 'Hello.rsc пока нет — компиляция не прошла' };
+          ? { ok: true, msg: tr(c, '2.check.1.ok', { words: r.codeWords, key: hex(r.key) }) ?? `Hello.rsc создан: ${r.codeWords} слов кода, ключ ${r.key.toString(16).toUpperCase()}` }
+          : { ok: false, msg: tr(c, '2.check.1.no') ?? 'Hello.rsc пока нет — компиляция не прошла' };
       } },
   ],
   payoff: `Вы написали программу, скомпилировали и запустили её, ни разу не выйдя из
@@ -490,30 +510,30 @@ END Hello.</pre>
     { text: 'Посмотрим на готовый модуль. Нажмите «Проверить» — будет показан ключ <code>Blink.rsc</code>, лежащего на образе.',
       check: (m, c) => {
         const r = rsc(m, 'Blink.rsc');
-        if (!r) return { ok: false, msg: 'система ещё не загрузилась' };
+        if (!r) return { ok: false, msg: tr(c, 'check.boot') ?? 'система ещё не загрузилась' };
         c.state.key = r.key;
-        return { ok: true, msg: `Blink.rsc: ключ ${r.key.toString(16).toUpperCase().padStart(8,'0')}, ${r.codeWords} слов кода` };
+        return { ok: true, msg: tr(c, '3.check.0.ok', { key: hex(r.key).padStart(8, '0'), words: r.codeWords }) ?? `Blink.rsc: ключ ${r.key.toString(16).toUpperCase().padStart(8,'0')}, ${r.codeWords} слов кода` };
       } },
     { text: 'Пересоберите его: <code>ORP.Compile Blink.Mod/s ~</code>. Исходник не менялся, значит интерфейс тот же — и ключ обязан остаться прежним, хотя файл будет перезаписан.',
       check: (m, c) => {
-        if (c.state.key === undefined) return { ok: false, msg: 'сначала шаг 1' };
+        if (c.state.key === undefined) return { ok: false, msg: tr(c, 'check.first', { s: '1' }) ?? 'сначала шаг 1' };
         const h = hdr(m, 'Blink.rsc'), r = rsc(m, 'Blink.rsc');
-        if (h === 22417) return { ok: false, msg: "Blink.rsc ещё не пересобирался" };
+        if (h === 22417) return { ok: false, msg: tr(c, '3.check.1.same') ?? "Blink.rsc ещё не пересобирался" };
         return r.key === c.state.key
-          ? { ok: true, msg: `файл перезаписан, ключ прежний: ${r.key.toString(16).toUpperCase()}` }
-          : { ok: false, msg: `ключ изменился: было ${c.state.key.toString(16).toUpperCase()}, стало ${r.key.toString(16).toUpperCase()}` };
+          ? { ok: true, msg: tr(c, '3.check.1.ok', { key: hex(r.key) }) ?? `файл перезаписан, ключ прежний: ${r.key.toString(16).toUpperCase()}` }
+          : { ok: false, msg: tr(c, '3.check.1.no', { was: hex(c.state.key), now: hex(r.key) }) ?? `ключ изменился: было ${c.state.key.toString(16).toUpperCase()}, стало ${r.key.toString(16).toUpperCase()}` };
       } },
     { text: `А теперь — зачем всё это. Каждый модуль хранит ключи тех, кого
       импортирует. Нажмите «Проверить»: сверим ключ, который <code>Oberon.rsc</code>
       помнит для <code>Texts</code>, с собственным ключом <code>Texts.rsc</code>.`,
-      check: m => {
+      check: (m, c) => {
         const o = rsc(m, 'Oberon.rsc'), t = rsc(m, 'Texts.rsc');
-        if (!o || !t) return { ok: false, msg: 'файлы не читаются' };
+        if (!o || !t) return { ok: false, msg: tr(c, '3.check.2.unread') ?? 'файлы не читаются' };
         const rec = (o.imports.find(([n]) => n === 'Texts') || [])[1];
-        if (rec === undefined) return { ok: false, msg: 'Oberon не импортирует Texts?' };
+        if (rec === undefined) return { ok: false, msg: tr(c, '3.check.2.noimp') ?? 'Oberon не импортирует Texts?' };
         return rec === t.key
-          ? { ok: true, msg: `совпало: Oberon помнит ${rec.toString(16).toUpperCase().padStart(8,'0')}, и это ключ Texts. Разойдись они — модуль просто не загрузится.` }
-          : { ok: false, msg: `расхождение: ${rec.toString(16).toUpperCase()} против ${t.key.toString(16).toUpperCase()}` };
+          ? { ok: true, msg: tr(c, '3.check.2.ok', { key: hex(rec).padStart(8, '0') }) ?? `совпало: Oberon помнит ${rec.toString(16).toUpperCase().padStart(8,'0')}, и это ключ Texts. Разойдись они — модуль просто не загрузится.` }
+          : { ok: false, msg: tr(c, '3.check.2.no', { rec: hex(rec), key: hex(t.key) }) ?? `расхождение: ${rec.toString(16).toUpperCase()} против ${t.key.toString(16).toUpperCase()}` };
       } },
   ],
   payoff: `Заголовочных файлов нет вообще. Компилятор сам извлекает интерфейс модуля
@@ -550,24 +570,24 @@ END Idx.</pre>
       Сохраните и соберите: <code>ORP.Compile Idx.Mod/s ~</code>.`,
       check: (m, c) => {
         const r = rsc(m, 'Idx.rsc');
-        if (!r) return { ok: false, msg: 'Idx.rsc пока нет' };
-        if (r.version !== 1) return { ok: false, msg: 'версия не 1 — звёздочка уже стоит?' };
+        if (!r) return { ok: false, msg: tr(c, 'check.none', { f: 'Idx.rsc' }) ?? 'Idx.rsc пока нет' };
+        if (r.version !== 1) return { ok: false, msg: tr(c, '9.check.0.ver') ?? 'версия не 1 — звёздочка уже стоит?' };
         c.state.words = r.codeWords;
-        return { ok: true, msg: `Idx.rsc: ${r.codeWords} слов кода, версия ${r.version}` };
+        return { ok: true, msg: tr(c, '9.check.0.ok', { words: r.codeWords, ver: r.version }) ?? `Idx.rsc: ${r.codeWords} слов кода, версия ${r.version}` };
       } },
     { text: `Теперь поставьте курсор в самое начало второй строки, перед
       <code>Idx;</code>, и наберите звёздочку. Получится <code>MODULE *Idx;</code>.
       Сохраните и соберите снова.`,
       check: (m, c) => {
-        if (c.state.words === undefined) return { ok: false, msg: 'сначала шаг 1' };
+        if (c.state.words === undefined) return { ok: false, msg: tr(c, 'check.first', { s: '1' }) ?? 'сначала шаг 1' };
         const t = text(m, 'Idx.Mod'), r = rsc(m, 'Idx.rsc');
-        if (!t || !t.includes('*Idx')) return { ok: false, msg: 'звёздочки перед именем модуля нет' };
+        if (!t || !t.includes('*Idx')) return { ok: false, msg: tr(c, '9.check.1.nostar') ?? 'звёздочки перед именем модуля нет' };
         if (r.version !== 0)
-          return { ok: false, msg: `версия объектного файла всё ещё ${r.version} — пересоберите` };
+          return { ok: false, msg: tr(c, '9.check.1.ver', { ver: r.version }) ?? `версия объектного файла всё ещё ${r.version} — пересоберите` };
         const d = r.codeWords - c.state.words;
         const sl = n => (n % 10 === 1 && n % 100 !== 11) ? 'слово'
           : ([2,3,4].includes(n % 10) && ![12,13,14].includes(n % 100)) ? 'слова' : 'слов';
-        return { ok: true, msg: `версия стала 0: проверки границ больше не порождаются. `
+        return { ok: true, msg: tr(c, '9.check.1.ok', { now: r.codeWords, was: c.state.words, d }) ?? `версия стала 0: проверки границ больше не порождаются. `
           + `Но кода стало ${r.codeWords} вместо ${c.state.words} — на ${d} ${sl(d)} БОЛЬШЕ. `
           + `Звёздочка включает режим RISC-0 целиком, а он резервирует восемь слов в начале модуля. `
           + `Два эффекта сразу — поэтому цену проверок так не измерить.` };
@@ -607,12 +627,12 @@ END Idx.</pre>
       check: (m, c) => {
         const t = text(m, 'Oberon.Mod');
         const want = t && t.match(/BasicCycle\s*=\s*(\d+)/);
-        if (!want) return { ok: false, msg: 'Oberon.Mod не читается' };
+        if (!want) return { ok: false, msg: tr(c, '10.check.0.unread') ?? 'Oberon.Mod не читается' };
         const got = parseInt((c.answer || '').trim(), 10);
-        if (!isFinite(got)) return { ok: false, msg: 'введите число' };
+        if (!isFinite(got)) return { ok: false, msg: tr(c, 'check.number') ?? 'введите число' };
         return got === +want[1]
-          ? { ok: true, msg: `верно: BasicCycle = ${want[1]}. Сборщик убирает не по часам, а по вашим действиям: раз в ${want[1]} нажатий и щелчков — или когда до конца кучи остаётся меньше 64 КБ.` }
-          : { ok: false, msg: `в Oberon.Mod на диске стоит другое число` };
+          ? { ok: true, msg: tr(c, '10.check.0.ok', { n: want[1] }) ?? `верно: BasicCycle = ${want[1]}. Сборщик убирает не по часам, а по вашим действиям: раз в ${want[1]} нажатий и щелчков — или когда до конца кучи остаётся меньше 64 КБ.` }
+          : { ok: false, msg: tr(c, '10.check.0.no') ?? `в Oberon.Mod на диске стоит другое число` };
       } },
     { text: `Теперь модуль, который сорит. <code>Edit.Open Junk.Mod ~</code>,
         наберите, сохраните (<code>Edit.Store</code>) и соберите
@@ -621,12 +641,12 @@ END Idx.</pre>
         Тип записи нужен именованный (<code>BlockDesc</code>), а не
         <code>POINTER TO RECORD … END</code> прямо в объявлении указателя —
         почему, скажет проверка.`,
-      check: m => {
+      check: (m, c) => {
         const r = rsc(m, 'Junk.rsc');
-        if (!r) return { ok: false, msg: 'Junk.rsc пока нет' };
+        if (!r) return { ok: false, msg: tr(c, 'check.none', { f: 'Junk.rsc' }) ?? 'Junk.rsc пока нет' };
         if (r.tdBytes === 0)
-          return { ok: false, msg: 'у записи нет дескриптора типа: компилятор этой версии строит его только для именованной записи, и NEW для безымянной берёт размер неизвестно откуда — куча не растёт вовсе. Объявите BlockDesc отдельно.' };
-        return { ok: true, msg: `Junk.rsc собран: ${pl(r.codeWords, 'слово', 'слова', 'слов')} кода, дескриптор типа ${r.tdBytes} байт. Блок — 240 байт данных и 8 служебных, ядро выдаёт его из списка кусков по 256.` };
+          return { ok: false, msg: tr(c, '10.check.1.notd') ?? 'у записи нет дескриптора типа: компилятор этой версии строит его только для именованной записи, и NEW для безымянной берёт размер неизвестно откуда — куча не растёт вовсе. Объявите BlockDesc отдельно.' };
+        return { ok: true, msg: tr(c, '10.check.1.ok', { words: r.codeWords, td: r.tdBytes }) ?? `Junk.rsc собран: ${pl(r.codeWords, 'слово', 'слова', 'слов')} кода, дескриптор типа ${r.tdBytes} байт. Блок — 240 байт данных и 8 служебных, ядро выдаёт его из списка кусков по 256.` };
       } },
     { text: `Допишите в <code>System.Tool</code> строку <code>Junk.Make</code> и
         запустите её, затем <code>System.Watch</code> (верхняя строка
@@ -636,12 +656,12 @@ END Idx.</pre>
         команда уже кончилась.`,
       check: (m, c) => {
         const k = heap(m);
-        if (!k.ok) return { ok: false, msg: 'переменные Kernel не нашлись по ожидаемым адресам — проверке верить нельзя' };
+        if (!k.ok) return { ok: false, msg: tr(c, '10.check.kernel') ?? 'переменные Kernel не нашлись по ожидаемым адресам — проверке верить нельзя' };
         const size = k.heapLim - k.heapOrg;
         if (k.allocated < 200000)
-          return { ok: false, msg: `в куче ${k.allocated} байт из ${size} — Junk.Make ещё не запускали (или сборщик уже прошёл: запустите ещё раз)` };
+          return { ok: false, msg: tr(c, '10.check.2.no', { a: k.allocated, size }) ?? `в куче ${k.allocated} байт из ${size} — Junk.Make ещё не запускали (или сборщик уже прошёл: запустите ещё раз)` };
         c.state.peak = k.allocated;
-        return { ok: true, msg: `Kernel.allocated = ${k.allocated} байт (${Math.round(k.allocated * 100 / size)}% кучи). Сборщик раз в секунду просыпается и уходит: повода нет — действий мало, куча не полна.` };
+        return { ok: true, msg: tr(c, '10.check.2.ok', { a: k.allocated, pct: Math.round(k.allocated * 100 / size) }) ?? `Kernel.allocated = ${k.allocated} байт (${Math.round(k.allocated * 100 / size)}% кучи). Сборщик раз в секунду просыпается и уходит: повода нет — действий мало, куча не полна.` };
       } },
     { text: `Щёлкните <code>System.Collect</code> — он стоит в той же верхней
         строке. Это не уборка, а только <code>ActCnt := 0</code>: сама уборка
@@ -649,28 +669,28 @@ END Idx.</pre>
         <code>GC</code>, то есть в пределах секунды. Подождите и снова
         <code>System.Watch</code>.`,
       check: (m, c) => {
-        if (c.state.peak === undefined) return { ok: false, msg: 'сначала шаг 3' };
+        if (c.state.peak === undefined) return { ok: false, msg: tr(c, 'check.first', { s: '3' }) ?? 'сначала шаг 3' };
         const k = heap(m);
-        if (!k.ok) return { ok: false, msg: 'переменные Kernel не нашлись по ожидаемым адресам' };
+        if (!k.ok) return { ok: false, msg: tr(c, '10.check.kernel') ?? 'переменные Kernel не нашлись по ожидаемым адресам' };
         const freed = c.state.peak - k.allocated;
         return freed > 200000
-          ? { ok: true, msg: `сборщик вернул ${freed} байт: было ${c.state.peak}, стало ${k.allocated}. Kernel.allocated уменьшается только в одном месте — в Kernel.Scan, значит уборка прошла.` }
-          : { ok: false, msg: `в куче по-прежнему ${k.allocated} байт — уборки ещё не было` };
+          ? { ok: true, msg: tr(c, '10.check.3.ok', { freed, peak: c.state.peak, a: k.allocated }) ?? `сборщик вернул ${freed} байт: было ${c.state.peak}, стало ${k.allocated}. Kernel.allocated уменьшается только в одном месте — в Kernel.Scan, значит уборка прошла.` }
+          : { ok: false, msg: tr(c, '10.check.3.no', { a: k.allocated }) ?? `в куче по-прежнему ${k.allocated} байт — уборки ещё не было` };
       } },
     { text: `И последнее: запустите <code>Junk.Make</code> <b>два раза подряд</b>,
         без <code>System.Collect</code> между ними. Две команды по 256 000 байт
         в кучу на ${Math.round((0xE7EF0 - 0x80000) / 1000)} КБ не влезают, хотя
         первая половина к началу второй команды — уже мусор.`,
-      check: m => {
+      check: (m, c) => {
         const lost = modVar(m, 'Junk', 0);
-        if (lost === null) return { ok: false, msg: 'модуль Junk не загружен' };
+        if (lost === null) return { ok: false, msg: tr(c, 'check.notLoaded', { name: 'Junk' }) ?? 'модуль Junk не загружен' };
         const k = heap(m);
         return lost > 0
-          ? { ok: true, msg: `NEW вернул NIL ${pl(lost, 'раз', 'раза', 'раз')}: куча кончилась внутри команды. Сейчас в ней ${k.allocated} байт. `
+          ? { ok: true, msg: tr(c, '10.check.4.ok', { lost, a: k.allocated, full: k.allocated >= k.heapLim - k.heapOrg - 0x10000 }) ?? `NEW вернул NIL ${pl(lost, 'раз', 'раза', 'раз')}: куча кончилась внутри команды. Сейчас в ней ${k.allocated} байт. `
               + (k.allocated >= k.heapLim - k.heapOrg - 0x10000
                 ? 'До конца меньше 64 КБ — это второй повод, и в пределах секунды сборщик придёт сам, без System.Collect: проверьте System.Watch.'
                 : 'Сборщик уже прошёл сам, без System.Collect: до конца кучи оставалось меньше 64 КБ — второй повод.') }
-          : { ok: false, msg: 'Junk.lost = 0: все блоки пока выделились' };
+          : { ok: false, msg: tr(c, '10.check.4.no') ?? 'Junk.lost = 0: все блоки пока выделились' };
       } },
   ],
   payoff: `Сборщик Оберона — не поток и не прерывание, а <b>обычная задача
@@ -706,48 +726,48 @@ END Idx.</pre>
         <code>Step</code> — задача: считает вызовы в <code>n</code>, запоминает
         самый долгий перерыв между ними в <code>gap</code> (в миллисекундах) и
         мигает квадратиком внизу левой дорожки.`,
-      check: m => {
+      check: (m, c) => {
         const r = rsc(m, 'Tick.rsc');
         return r
-          ? { ok: true, msg: `Tick.rsc собран: ${pl(r.codeWords, 'слово', 'слова', 'слов')} кода` }
-          : { ok: false, msg: 'Tick.rsc пока нет' };
+          ? { ok: true, msg: tr(c, '11.check.0.ok', { words: r.codeWords }) ?? `Tick.rsc собран: ${pl(r.codeWords, 'слово', 'слова', 'слов')} кода` }
+          : { ok: false, msg: tr(c, 'check.none', { f: 'Tick.rsc' }) ?? 'Tick.rsc пока нет' };
       } },
     { text: `Допишите в <code>System.Tool</code> три строки —
         <code>Tick.Start</code>, <code>Tick.Spin</code>,
         <code>Tick.Break</code> — и запустите первую. Внизу слева замигает
         квадратик, а <code>System.Watch</code> покажет <code>Tasks 2</code>:
         сборщик мусора и ваша.`,
-      check: m => {
+      check: (m, c) => {
         const n = modVar(m, 'Tick', 0);
-        if (n === null) return { ok: false, msg: 'модуль Tick не загружен' };
+        if (n === null) return { ok: false, msg: tr(c, 'check.notLoaded', { name: 'Tick' }) ?? 'модуль Tick не загружен' };
         return n > 0
-          ? { ok: true, msg: `задачу вызвали уже ${pl(n, 'раз', 'раза', 'раз')}; самый долгий перерыв — ${modVar(m, 'Tick', 1)} мс` }
-          : { ok: false, msg: 'Tick загружен, но задача ещё ни разу не вызывалась — Tick.Start запускали?' };
+          ? { ok: true, msg: tr(c, '11.check.1.ok', { n, gap: modVar(m, 'Tick', 1) }) ?? `задачу вызвали уже ${pl(n, 'раз', 'раза', 'раз')}; самый долгий перерыв — ${modVar(m, 'Tick', 1)} мс` }
+          : { ok: false, msg: tr(c, '11.check.1.no') ?? 'Tick загружен, но задача ещё ни разу не вызывалась — Tick.Start запускали?' };
       } },
     { text: `Запустите <code>Tick.Spin</code>: команда секунду крутится в
         пустом цикле. Всё это время квадратик не мигает, указатель мыши не
         движется, сборщик не приходит — работает только ваша команда.`,
-      check: m => {
+      check: (m, c) => {
         const gap = modVar(m, 'Tick', 1);
-        if (gap === null) return { ok: false, msg: 'модуль Tick не загружен' };
+        if (gap === null) return { ok: false, msg: tr(c, 'check.notLoaded', { name: 'Tick' }) ?? 'модуль Tick не загружен' };
         return gap >= 900
-          ? { ok: true, msg: `задачу не вызывали ${gap} мс подряд — ровно пока шла команда. Никто её не вытеснил: вытеснять нечем.` }
-          : { ok: false, msg: `самый долгий перерыв пока ${gap} мс — Tick.Spin ещё не запускали` };
+          ? { ok: true, msg: tr(c, '11.check.2.ok', { gap }) ?? `задачу не вызывали ${gap} мс подряд — ровно пока шла команда. Никто её не вытеснил: вытеснять нечем.` }
+          : { ok: false, msg: tr(c, '11.check.2.no', { gap }) ?? `самый долгий перерыв пока ${gap} мс — Tick.Spin ещё не запускали` };
       } },
     { text: `А теперь <code>Tick.Break</code>. Команда сама по себе мгновенная:
         она лишь ставит в круг вторую задачу, <code>Stuck</code>, которая не
         возвращается никогда. Первый же её вызов — и система мертва. Спасёт
         только «Откатить».`,
-      check: m => {
+      check: (m, c) => {
         const M = loaded(m, 'Tick'), n0 = modVar(m, 'Tick', 0);
-        if (!M) return { ok: false, msg: 'модуль Tick не загружен' };
+        if (!M) return { ok: false, msg: tr(c, 'check.notLoaded', { name: 'Tick' }) ?? 'модуль Tick не загружен' };
         const pcs = new Set();
         for (let i = 0; i < 5; i++) { m.run(200000); pcs.add(m.pc); }
         const inside = [...pcs].every(pc => pc >= M.code && pc < M.imp);
         const n1 = modVar(m, 'Tick', 0);
         return inside && n1 === n0
-          ? { ok: true, msg: `машина крутится в вашем коде по адресу ${[...pcs].map(x => x.toString(16).toUpperCase()).join(', ')} (модуль Tick: ${M.code.toString(16).toUpperCase()}–${M.imp.toString(16).toUpperCase()}), счётчик n замер на ${n1}. Ни мыши, ни сборщика, ни вашей первой задачи больше не будет.` }
-          : { ok: false, msg: `система жива: задача вызывается (n = ${n1})` };
+          ? { ok: true, msg: tr(c, '11.check.3.ok', { pcs: [...pcs].map(hex).join(', '), from: hex(M.code), to: hex(M.imp), n: n1 }) ?? `машина крутится в вашем коде по адресу ${[...pcs].map(x => x.toString(16).toUpperCase()).join(', ')} (модуль Tick: ${M.code.toString(16).toUpperCase()}–${M.imp.toString(16).toUpperCase()}), счётчик n замер на ${n1}. Ни мыши, ни сборщика, ни вашей первой задачи больше не будет.` }
+          : { ok: false, msg: tr(c, '11.check.3.no', { n: n1 }) ?? `система жива: задача вызывается (n = ${n1})` };
       } },
   ],
   payoff: `Вся «многозадачность» Оберона — это цикл, который по очереди
@@ -787,15 +807,15 @@ END Idx.</pre>
         Время — по <code>Kernel.Time</code>, в миллисекундах; оно появится в
         журнале.`,
       check: (m, c) => {
-        if (m.variant !== 'chk') return { ok: false, msg: 'машина не на ядре с CHK — выберите лабораторную заново' };
+        if (m.variant !== 'chk') return { ok: false, msg: tr(c, '12.check.0.variant') ?? 'машина не на ядре с CHK — выберите лабораторную заново' };
         const t = modVar(m, 'Cost', 0), k = chkInMemory(m, 'Cost');
-        if (t === null) return { ok: false, msg: 'модуль Cost не загружен — Cost.Run запускали?' };
-        if (t <= 0) return { ok: false, msg: 'Cost.t = 0: цикл ещё не отработал' };
-        if (k > 0) return { ok: false, msg: `в загруженном Cost уже ${k} команд CHK — это шаг 3; начните с отката` };
+        if (t === null) return { ok: false, msg: tr(c, '12.check.0.notLoaded') ?? 'модуль Cost не загружен — Cost.Run запускали?' };
+        if (t <= 0) return { ok: false, msg: tr(c, '12.check.0.zero') ?? 'Cost.t = 0: цикл ещё не отработал' };
+        if (k > 0) return { ok: false, msg: tr(c, '12.check.0.chk', { k }) ?? `в загруженном Cost уже ${k} команд CHK — это шаг 3; начните с отката` };
         const org = rsc(m, 'ORG.rsc');
         Object.assign(c.state, { tB: t, codeB: codeInMemory(m, 'Cost'), orgHdr: hdr(m, 'ORG.rsc'),
                                  orgKey: org.key, tE: undefined, orgHdrE: undefined, tA: undefined });
-        return { ok: true, msg: `программная проверка: ${t} мс, в коде ни одной CHK. Это ${(t * CYCLES_PER_MS / 300000).toFixed(1)} такта на оборот цикла.` };
+        return { ok: true, msg: tr(c, '12.check.0.ok', { t, cyc: (t * CYCLES_PER_MS / 300000).toFixed(1) }) ?? `программная проверка: ${t} мс, в коде ни одной CHK. Это ${(t * CYCLES_PER_MS / 300000).toFixed(1)} такта на оборот цикла.` };
       } },
     { text: `Соберите кодогенератор, знающий CHK:
         <code>ORP.Compile ORG.Chk.Mod ~</code>. Имя файла другое, но модуль в
@@ -805,40 +825,40 @@ END Idx.</pre>
         Это самый большой модуль компилятора, но на этой машине он собирается
         за два десятка миллионов команд — секунды.`,
       check: (m, c) => {
-        if (c.state.tB === undefined) return { ok: false, msg: 'сначала шаг 1' };
+        if (c.state.tB === undefined) return { ok: false, msg: tr(c, 'check.first', { s: '1' }) ?? 'сначала шаг 1' };
         const r = rsc(m, 'ORG.rsc');
-        if (hdr(m, 'ORG.rsc') === c.state.orgHdr) return { ok: false, msg: 'ORG.rsc ещё не пересобран' };
+        if (hdr(m, 'ORG.rsc') === c.state.orgHdr) return { ok: false, msg: tr(c, '12.check.1.same') ?? 'ORG.rsc ещё не пересобран' };
         if (r.key !== c.state.orgKey)
-          return { ok: false, msg: `ключ ORG изменился (${r.key.toString(16).toUpperCase()}): ORP с таким не загрузится — собран не тот файл?` };
+          return { ok: false, msg: tr(c, '12.check.1.key', { key: hex(r.key) }) ?? `ключ ORG изменился (${r.key.toString(16).toUpperCase()}): ORP с таким не загрузится — собран не тот файл?` };
         return r.codeWords > ORG_STOCK_WORDS
-          ? { ok: true, msg: `ORG.rsc пересобран: ${pl(r.codeWords, 'слово', 'слова', 'слов')} вместо ${ORG_STOCK_WORDS}, ключ прежний ${r.key.toString(16).toUpperCase()}` }
-          : { ok: false, msg: `ORG.rsc пересобран, но это стоковый ORG (${r.codeWords} слов)` };
+          ? { ok: true, msg: tr(c, '12.check.1.ok', { words: r.codeWords, stock: ORG_STOCK_WORDS, key: hex(r.key) }) ?? `ORG.rsc пересобран: ${pl(r.codeWords, 'слово', 'слова', 'слов')} вместо ${ORG_STOCK_WORDS}, ключ прежний ${r.key.toString(16).toUpperCase()}` }
+          : { ok: false, msg: tr(c, '12.check.1.stock', { words: r.codeWords }) ?? `ORG.rsc пересобран, но это стоковый ORG (${r.codeWords} слов)` };
       } },
     { text: `Выгрузите старый код из памяти: <code>System.Free Cost ORP ORG ~</code>.
         Затем снова <code>ORP.Compile Cost.Mod ~</code> и <code>Cost.Run</code>.
         Теперь перед <code>a[i]</code> стоит одна команда CHK, и проверяет
         границу само железо.`,
       check: (m, c) => {
-        if (c.state.tB === undefined) return { ok: false, msg: 'сначала шаг 1' };
+        if (c.state.tB === undefined) return { ok: false, msg: tr(c, 'check.first', { s: '1' }) ?? 'сначала шаг 1' };
         const t = modVar(m, 'Cost', 0), k = chkInMemory(m, 'Cost');
-        if (t === null || k === null) return { ok: false, msg: 'модуль Cost не загружен' };
-        if (k === 0) return { ok: false, msg: 'в загруженном Cost нет ни одной CHK — старый код ещё в памяти (System.Free) или собран стоковым ORG' };
-        if (t <= 0 || t === c.state.tB) return { ok: false, msg: 'Cost.Run с новым кодом ещё не запускали' };
+        if (t === null || k === null) return { ok: false, msg: tr(c, 'check.notLoaded', { name: 'Cost' }) ?? 'модуль Cost не загружен' };
+        if (k === 0) return { ok: false, msg: tr(c, '12.check.2.nochk') ?? 'в загруженном Cost нет ни одной CHK — старый код ещё в памяти (System.Free) или собран стоковым ORG' };
+        if (t <= 0 || t === c.state.tB) return { ok: false, msg: tr(c, '12.check.newRun') ?? 'Cost.Run с новым кодом ещё не запускали' };
         Object.assign(c.state, { tE: t, codeE: codeInMemory(m, 'Cost'), orgHdrE: hdr(m, 'ORG.rsc') });
         const d = c.state.tB - t;
-        return { ok: true, msg: `аппаратная проверка: ${t} мс против ${c.state.tB}. В коде ${k} CHK. Разница ${d} мс = ${(d * CYCLES_PER_MS / 300000).toFixed(2)} такта на индексацию.` };
+        return { ok: true, msg: tr(c, '12.check.2.ok', { t, tB: c.state.tB, k, d, cyc: (d * CYCLES_PER_MS / 300000).toFixed(2) }) ?? `аппаратная проверка: ${t} мс против ${c.state.tB}. В коде ${k} CHK. Разница ${d} мс = ${(d * CYCLES_PER_MS / 300000).toFixed(2)} такта на индексацию.` };
       } },
     { text: `Ваше число: на сколько процентов быстрее стал цикл? Введите с одним
         знаком после запятой.`,
       answer: 'например 4.0',
       check: (m, c) => {
-        if (c.state.tE === undefined) return { ok: false, msg: 'сначала шаг 3' };
+        if (c.state.tE === undefined) return { ok: false, msg: tr(c, 'check.first', { s: '3' }) ?? 'сначала шаг 3' };
         const real = (c.state.tB - c.state.tE) * 100 / c.state.tB;
         const got = parseFloat((c.answer || '').replace(',', '.'));
-        if (!isFinite(got)) return { ok: false, msg: 'введите число' };
+        if (!isFinite(got)) return { ok: false, msg: tr(c, 'check.number') ?? 'введите число' };
         return near(got, real, 0.3)
-          ? { ok: true, msg: `верно: ${real.toFixed(2)}%. Такт на индексацию из примерно ${(c.state.tB * CYCLES_PER_MS / 300000).toFixed(0)} на оборот цикла.` }
-          : { ok: false, msg: `получается ${real.toFixed(2)}%, а введено ${got}` };
+          ? { ok: true, msg: tr(c, '12.check.3.ok', { real: real.toFixed(2), per: (c.state.tB * CYCLES_PER_MS / 300000).toFixed(0) }) ?? `верно: ${real.toFixed(2)}%. Такт на индексацию из примерно ${(c.state.tB * CYCLES_PER_MS / 300000).toFixed(0)} на оборот цикла.` }
+          : { ok: false, msg: tr(c, '12.check.3.no', { real: real.toFixed(2), got }) ?? `получается ${real.toFixed(2)}%, а введено ${got}` };
       } },
     { text: `Третье число — конфигурация <b>A</b>: проверки нет совсем. На диске
         лежит и <code>ORG.NoChk.Mod</code> — стоковый кодогенератор с одной
@@ -855,30 +875,30 @@ END Idx.</pre>
         импортёры отличить A от B не могут. Здесь это безопасно — диск
         лаборатории сбрасывается откатом.`,
       check: (m, c) => {
-        if (c.state.tE === undefined) return { ok: false, msg: 'сначала шаги 1–3' };
+        if (c.state.tE === undefined) return { ok: false, msg: tr(c, 'check.firstSteps', { s: '1–3' }) ?? 'сначала шаги 1–3' };
         const r = rsc(m, 'ORG.rsc'), h = hdr(m, 'ORG.rsc');
-        if (h === c.state.orgHdr || h === c.state.orgHdrE) return { ok: false, msg: 'ORG.rsc после шага 3 ещё не пересобран' };
+        if (h === c.state.orgHdr || h === c.state.orgHdrE) return { ok: false, msg: tr(c, '12.check.4.same') ?? 'ORG.rsc после шага 3 ещё не пересобран' };
         if (r.key !== c.state.orgKey)
-          return { ok: false, msg: `ключ ORG изменился (${r.key.toString(16).toUpperCase()}): собран не тот файл?` };
-        if (r.version !== 1) return { ok: false, msg: `версия ORG.rsc ${r.version}, а не 1` };
-        return { ok: true, msg: `ORG.rsc пересобран в третий раз: версия 1, ключ прежний ${r.key.toString(16).toUpperCase()}` };
+          return { ok: false, msg: tr(c, '12.check.4.key', { key: hex(r.key) }) ?? `ключ ORG изменился (${r.key.toString(16).toUpperCase()}): собран не тот файл?` };
+        if (r.version !== 1) return { ok: false, msg: tr(c, '12.check.4.ver', { ver: r.version }) ?? `версия ORG.rsc ${r.version}, а не 1` };
+        return { ok: true, msg: tr(c, '12.check.4.ok', { key: hex(r.key) }) ?? `ORG.rsc пересобран в третий раз: версия 1, ключ прежний ${r.key.toString(16).toUpperCase()}` };
       } },
     { text: `Снова <code>System.Free Cost ORP ORG ~</code>, <code>ORP.Compile Cost.Mod ~</code>
         и <code>Cost.Run</code>. Перед <code>a[i]</code> теперь не стоит
         ничего.`,
       check: (m, c) => {
-        if (c.state.tE === undefined) return { ok: false, msg: 'сначала шаги 1–3' };
+        if (c.state.tE === undefined) return { ok: false, msg: tr(c, 'check.firstSteps', { s: '1–3' }) ?? 'сначала шаги 1–3' };
         const t = modVar(m, 'Cost', 0), k = codeInMemory(m, 'Cost');
-        if (t === null || k === null) return { ok: false, msg: 'модуль Cost не загружен' };
+        if (t === null || k === null) return { ok: false, msg: tr(c, 'check.notLoaded', { name: 'Cost' }) ?? 'модуль Cost не загружен' };
         const { tB, tE, codeB: B, codeE: E } = c.state;
-        if (k.chk > 0) return { ok: false, msg: `в загруженном Cost ${k.chk} CHK — это ещё код шага 3 (System.Free) или ORG.NoChk не собран` };
-        if (k.traps > 0) return { ok: false, msg: `в загруженном Cost ${k.traps} программных ловушек индекса — работает стоковый ORG` };
-        if (t <= 0 || t === tE) return { ok: false, msg: 'Cost.Run с новым кодом ещё не запускали' };
+        if (k.chk > 0) return { ok: false, msg: tr(c, '12.check.5.chk', { n: k.chk }) ?? `в загруженном Cost ${k.chk} CHK — это ещё код шага 3 (System.Free) или ORG.NoChk не собран` };
+        if (k.traps > 0) return { ok: false, msg: tr(c, '12.check.5.traps', { n: k.traps }) ?? `в загруженном Cost ${k.traps} программных ловушек индекса — работает стоковый ORG` };
+        if (t <= 0 || t === tE) return { ok: false, msg: tr(c, '12.check.newRun') ?? 'Cost.Run с новым кодом ещё не запускали' };
         if (!(k.words < E.words && E.words < B.words))
-          return { ok: false, msg: `размеры кода не выстроились: A ${k.words}, E ${E.words}, B ${B.words} слов` };
+          return { ok: false, msg: tr(c, '12.check.5.sizes', { a: k.words, e: E.words, b: B.words }) ?? `размеры кода не выстроились: A ${k.words}, E ${E.words}, B ${B.words} слов` };
         c.state.tA = t;
         const cy = d => (d * CYCLES_PER_MS / 300000).toFixed(2);
-        return { ok: true, msg: `без проверки: ${t} мс, в коде ни CHK, ни ловушек, ${pl(k.words, 'слово', 'слова', 'слов')} `
+        return { ok: true, msg: tr(c, '12.check.5.ok', { t, words: k.words, e: E.words, b: B.words, tB, tE, sw: cy(tB - t), hw: cy(tE - t), pct: Math.round((tB - tE) * 100 / (tB - t)) }) ?? `без проверки: ${t} мс, в коде ни CHK, ни ловушек, ${pl(k.words, 'слово', 'слова', 'слов')} `
           + `(E ${E.words}, B ${B.words}). Три числа: B ${tB} мс, E ${tE} мс, A ${t} мс. `
           + `Программная проверка стоит ${cy(tB - t)} такта на индексацию, аппаратная — ${cy(tE - t)}; `
           + `железо вернуло ${Math.round((tB - tE) * 100 / (tB - t))}% цены проверки.` };
@@ -941,20 +961,20 @@ END Idx.</pre>
       check: (m, c) => {
         const orb = text(m, 'ORB.Mod') || '', org = text(m, 'ORG.Mod') || '', orp = text(m, 'ORP.Mod') || '';
         const e = /enter\("SQR",\s*SFunc,\s*intType,\s*(\d+)\)/.exec(orb);
-        if (!e) return { ok: false, msg: 'в ORB.Mod на диске нет enter("SQR", SFunc, intType, …) — вставлено и сохранено (Edit.Store)?' };
+        if (!e) return { ok: false, msg: tr(c, '13.check.0.orb') ?? 'в ORB.Mod на диске нет enter("SQR", SFunc, intType, …) — вставлено и сохранено (Edit.Store)?' };
         const code = +e[1], fct = Math.floor(code / 10);
-        if (code % 10 !== 1) return { ok: false, msg: `код ${code}: единицы — число параметров, у SQR он один` };
+        if (code % 10 !== 1) return { ok: false, msg: tr(c, '13.check.0.code', { code }) ?? `код ${code}: единицы — число параметров, у SQR он один` };
         const taken = [...orb.matchAll(/enter\("(\w+)",\s*SFunc,\s*\w+,\s*(\d+)\)/g)]
           .filter(x => x[1] !== 'SQR' && Math.floor(+x[2] / 10) === fct);
-        if (taken.length) return { ok: false, msg: `номер ${fct} уже занят функцией ${taken[0][1]}` };
+        if (taken.length) return { ok: false, msg: tr(c, '13.check.0.taken', { fct, by: taken[0][1] }) ?? `номер ${fct} уже занят функцией ${taken[0][1]}` };
         if (!/PROCEDURE\s+Sqr\*\s*\(\s*VAR\s+x\s*:\s*Item\s*\)/.test(org))
-          return { ok: false, msg: 'в ORG.Mod на диске нет PROCEDURE Sqr*(VAR x: Item)' };
+          return { ok: false, msg: tr(c, '13.check.0.org') ?? 'в ORG.Mod на диске нет PROCEDURE Sqr*(VAR x: Item)' };
         if (!new RegExp(`fct\\s*=\\s*${fct}\\s+THEN[^\\r\\n]*ORG\\.Sqr\\(x\\)`).test(orp))
-          return { ok: false, msg: `в ORP.Mod на диске нет ветки «fct = ${fct} THEN … ORG.Sqr(x)»` };
+          return { ok: false, msg: tr(c, '13.check.0.orp', { fct }) ?? `в ORP.Mod на диске нет ветки «fct = ${fct} THEN … ORG.Sqr(x)»` };
         const snap = {};
         for (const n of ['ORB', 'ORG', 'ORP']) snap[n] = { hdr: hdr(m, n + '.rsc'), key: rsc(m, n + '.rsc').key };
         Object.assign(c.state, { fct, snap, built: undefined, ran: undefined });
-        return { ok: true, msg: `все три вставки на диске: SQR с номером ${fct}, ORG.Sqr, ветка в ORP` };
+        return { ok: true, msg: tr(c, '13.check.0.ok', { fct }) ?? `все три вставки на диске: SQR с номером ${fct}, ORG.Sqr, ветка в ORP` };
       } },
     { text: `Пересоберите компилятор им самим, старым:
         <code>ORP.Compile ORB.Mod/s ORG.Mod/s ORP.Mod/s ~</code>. Ключ
@@ -964,22 +984,22 @@ END Idx.</pre>
         прежний.`,
       check: (m, c) => {
         const s = c.state.snap;
-        if (!s) return { ok: false, msg: 'сначала шаг 1' };
+        if (!s) return { ok: false, msg: tr(c, 'check.first', { s: '1' }) ?? 'сначала шаг 1' };
         const r = {};
         for (const n of ['ORB', 'ORG', 'ORP']) {
-          if (hdr(m, n + '.rsc') === s[n].hdr) return { ok: false, msg: `${n}.rsc ещё не пересобран` };
+          if (hdr(m, n + '.rsc') === s[n].hdr) return { ok: false, msg: tr(c, '13.check.1.same', { n }) ?? `${n}.rsc ещё не пересобран` };
           r[n] = rsc(m, n + '.rsc');
         }
         if (r.ORB.key !== s.ORB.key)
-          return { ok: false, msg: `ключ ORB изменился (${hex(r.ORB.key)}): интерфейс ORB трогать не нужно` };
+          return { ok: false, msg: tr(c, '13.check.1.orb', { key: hex(r.ORB.key) }) ?? `ключ ORB изменился (${hex(r.ORB.key)}): интерфейс ORB трогать не нужно` };
         if (r.ORG.key === s.ORG.key)
-          return { ok: false, msg: 'ключ ORG прежний — экспортированной Sqr в собранном ORG нет?' };
+          return { ok: false, msg: tr(c, '13.check.1.org') ?? 'ключ ORG прежний — экспортированной Sqr в собранном ORG нет?' };
         const imp = Object.fromEntries(r.ORP.imports);
         if (imp.ORG !== r.ORG.key || imp.ORB !== r.ORB.key)
-          return { ok: false, msg: 'ORP.rsc собран против другого ORG — соберите ORG раньше ORP, одной командой' };
+          return { ok: false, msg: tr(c, '13.check.1.orp') ?? 'ORP.rsc собран против другого ORG — соберите ORG раньше ORP, одной командой' };
         c.state.built = { ORB: bytes(m, 'ORB.rsc'), ORG: bytes(m, 'ORG.rsc'), ORP: bytes(m, 'ORP.rsc'),
                           hdr: { ORB: hdr(m, 'ORB.rsc'), ORG: hdr(m, 'ORG.rsc'), ORP: hdr(m, 'ORP.rsc') } };
-        return { ok: true, msg: `компилятор пересобран. Ключ ORB прежний ${hex(r.ORB.key)}, ключ ORG `
+        return { ok: true, msg: tr(c, '13.check.1.ok', { orb: hex(r.ORB.key), was: hex(s.ORG.key), now: hex(r.ORG.key) }) ?? `компилятор пересобран. Ключ ORB прежний ${hex(r.ORB.key)}, ключ ORG `
           + `${hex(s.ORG.key)} → ${hex(r.ORG.key)}, и ORP.rsc импортирует уже новый. `
           + `В памяти пока работает старый компилятор.` };
       } },
@@ -989,20 +1009,20 @@ END Idx.</pre>
         <code>Sq.Run</code>:
         ${pre(SOURCES.Sq)}`,
       check: (m, c) => {
-        if (!c.state.built) return { ok: false, msg: 'сначала шаг 2' };
+        if (!c.state.built) return { ok: false, msg: tr(c, 'check.first', { s: '2' }) ?? 'сначала шаг 2' };
         const org = rsc(m, 'ORG.rsc'), k = loadedKey(m, 'ORG');
         if (k !== null && k !== org.key)
-          return { ok: false, msg: `в памяти старый ORG (ключ ${hex(k)}) — System.Free ORP ORG ORB` };
-        if (!rsc(m, 'Sq.rsc')) return { ok: false, msg: 'Sq.rsc нет: Sq.Mod не собран (старый компилятор скажет, что SQR не определён)' };
+          return { ok: false, msg: tr(c, '13.check.2.oldOrg', { key: hex(k) }) ?? `в памяти старый ORG (ключ ${hex(k)}) — System.Free ORP ORG ORB` };
+        if (!rsc(m, 'Sq.rsc')) return { ok: false, msg: tr(c, '13.check.2.nosq') ?? 'Sq.rsc нет: Sq.Mod не собран (старый компилятор скажет, что SQR не определён)' };
         const M = loaded(m, 'Sq');
-        if (!M) return { ok: false, msg: 'модуль Sq не загружен — Sq.Run запускали?' };
+        if (!M) return { ok: false, msg: tr(c, '13.check.2.notLoaded') ?? 'модуль Sq не загружен — Sq.Run запускали?' };
         const r = modVar(m, 'Sq', 0);
         let sq = 0;
         for (let a = M.code; a < M.imp; a += 4) if (isSquare(m.ram(a))) sq++;
-        if (!sq) return { ok: false, msg: 'в коде Sq нет MUL Ri, Ri, Ri — SQR собран не через ORG.Sqr?' };
-        if (r !== 385) return { ok: false, msg: `Sq.r = ${r}, а сумма квадратов от 1 до 10 — 385` };
+        if (!sq) return { ok: false, msg: tr(c, '13.check.2.nomul') ?? 'в коде Sq нет MUL Ri, Ri, Ri — SQR собран не через ORG.Sqr?' };
+        if (r !== 385) return { ok: false, msg: tr(c, '13.check.2.sum', { r }) ?? `Sq.r = ${r}, а сумма квадратов от 1 до 10 — 385` };
         c.state.ran = true;
-        return { ok: true, msg: `Sq.r = 385, и в загруженном коде Sq ${sq === 1 ? 'одна команда' : sq + ' команды'} `
+        return { ok: true, msg: tr(c, '13.check.2.ok', { sq, key: hex(org.key) }) ?? `Sq.r = 385, и в загруженном коде Sq ${sq === 1 ? 'одна команда' : sq + ' команды'} `
           + `MUL Ri, Ri, Ri — та, что порождает ваш ORG.Sqr. Компилятор в памяти — новый (ключ ORG ${hex(org.key)}).` };
       } },
     { text: `Последняя проверка — та же, что у задания <code>compiler</code> на
@@ -1011,15 +1031,15 @@ END Idx.</pre>
         теперь им работает уже новый компилятор.`,
       check: (m, c) => {
         const b = c.state.built;
-        if (!b || !c.state.ran) return { ok: false, msg: 'сначала шаги 2 и 3' };
+        if (!b || !c.state.ran) return { ok: false, msg: tr(c, 'check.firstSteps', { s: '2 and 3' }) ?? 'сначала шаги 2 и 3' };
         const diff = [];
         for (const n of ['ORB', 'ORG', 'ORP']) {
-          if (hdr(m, n + '.rsc') === b.hdr[n]) return { ok: false, msg: `${n}.rsc ещё не пересобран новым компилятором` };
+          if (hdr(m, n + '.rsc') === b.hdr[n]) return { ok: false, msg: tr(c, '13.check.3.same', { n }) ?? `${n}.rsc ещё не пересобран новым компилятором` };
           if (!sameBytes(bytes(m, n + '.rsc'), b[n])) diff.push(n);
         }
         return diff.length
-          ? { ok: false, msg: `${diff.join(', ')}.rsc отличается от собранного старым компилятором: новая функция задела чужой код` }
-          : { ok: true, msg: `неподвижная точка: ORB.rsc, ORG.rsc, ORP.rsc побайтово те же (${b.ORB.length + b.ORG.length + b.ORP.length} байт). SQR ничего, кроме себя, не поменяла.` };
+          ? { ok: false, msg: tr(c, '13.check.3.diff', { list: diff.join(', ') }) ?? `${diff.join(', ')}.rsc отличается от собранного старым компилятором: новая функция задела чужой код` }
+          : { ok: true, msg: tr(c, '13.check.3.ok', { bytes: b.ORB.length + b.ORG.length + b.ORP.length }) ?? `неподвижная точка: ORB.rsc, ORG.rsc, ORP.rsc побайтово те же (${b.ORB.length + b.ORG.length + b.ORP.length} байт). SQR ничего, кроме себя, не поменяла.` };
       } },
   ],
   payoff: `Вы расширили язык. Не библиотекой — компилятором: <code>SQR</code>
@@ -1067,8 +1087,8 @@ function localise(lab) {
     out.read = lab.read.map(([f, title]) => [f, o[`book.${f}`] ?? title]);
   }
   out.steps = lab.steps.map((st, i) => {
-    const tr = at(`step.${i}`);
-    return tr === undefined ? st : { ...st, text: tr };
+    const text = at(`step.${i}`), answer = at(`answer.${i}`);
+    return { ...st, ...(text !== undefined && { text }), ...(st.answer && answer !== undefined && { answer }) };
   });
   return out;
 }
