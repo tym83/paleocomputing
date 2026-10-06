@@ -11,12 +11,14 @@ FROM docker.io/library/gcc:14-bookworm AS build
 WORKDIR /src
 COPY ext/norebo/ ./norebo/
 RUN cc -O2 -o /norebo norebo/Runtime/norebo.c norebo/Runtime/risc-cpu.c
-# Wirth's Net on the system disk, so machines on an air can talk (Net.StartServer,
-# Net.SendMsg, Net.SendFiles). The image has SCC compiled but Net only as source.
-COPY tools/oberonfs.py tools/install_net.py ./tools/
-COPY ext/po2013-src/Net.Mod ./Net.Mod
+# Wirth's Net and our Kube on the system disk, so machines on an air can talk
+# (Net.StartServer, Net.SendMsg) and form a cluster (Kube, KubeNet). The image
+# has SCC compiled but Net only as source; Kube is ours.
+COPY tools/oberonfs.py tools/install_modules.py ./tools/
+COPY ext/po2013-src/Net.Mod kube/Kube.Mod kube/KubeNet.Mod ./mods/
 COPY ext/disk/Oberon-2016-08-02.dsk ./oberon.dsk
-RUN python3 tools/install_net.py oberon.dsk --norebo ./norebo --norebo-bin /norebo --net-mod Net.Mod
+RUN python3 tools/install_modules.py oberon.dsk mods/Net.Mod mods/Kube.Mod mods/KubeNet.Mod \
+      --norebo ./norebo --norebo-bin /norebo
 
 # The ROM in binary form: in the sources it is hexadecimal text, while QEMU
 # expects bytes. We convert it at build time so the repository does not hold

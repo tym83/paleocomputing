@@ -20,17 +20,17 @@ Norebo against the symbol files of the disk image and installed on it.
 
   python3 qemu/test/radio_check.py [QEMU tree]   (default ../.qemu-work)
 """
-import json, pathlib, shutil, socket, subprocess, sys, tempfile, time, uuid
+import pathlib, shutil, sys, tempfile, time, uuid
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 IMPL = ROOT / "impl"
 sys.path.insert(0, str(IMPL / "tools"))
-from install_net import install_net              # noqa: E402
+from install_modules import install_modules      # noqa: E402
+from qmp_machine import QMP, docker               # noqa: E402
 
 QEMU = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else ROOT / ".qemu-work").resolve()
 NOREBO = IMPL / "ext" / "norebo"
 DISK = IMPL / "ext" / "disk" / "Oberon-2016-08-02.dsk"
-FB_BASE, FB_W, FB_H = 0xE7F00, 1024, 768
 LOG = (640, 1024, 12, 250)                       # System.Log: x0, x1, y0, y1
 
 
@@ -38,7 +38,7 @@ def build_disk(work):
     """The stock image with Net, the same way the oberon-run image gets it."""
     disk = work / "net.dsk"
     shutil.copy(DISK, disk)
-    install_net(disk, IMPL / "ext" / "po2013-src" / "Net.Mod", NOREBO, NOREBO / "norebo.bin")
+    install_modules(disk, [IMPL / "ext" / "po2013-src" / "Net.Mod"], NOREBO, NOREBO / "norebo.bin")
     for name in ("a", "b"):
         shutil.copy(disk, work / f"{name}.dsk")
         with open(work / f"{name}.dsk", "r+b") as f:
@@ -46,79 +46,6 @@ def build_disk(work):
     words = [int(x, 16) for x in (IMPL / "rtl" / "prom_sd.mem").read_text().split()]
     (work / "prom.bin").write_bytes(b"".join(w.to_bytes(4, "little") for w in words))
     shutil.copy(ROOT / "qemu" / "radio" / "relay.py", work)
-
-
-class QMP:
-    def __init__(self, port):
-        for _ in range(60):
-            try:
-                self.s = socket.create_connection(("127.0.0.1", port))
-                break
-            except OSError:
-                time.sleep(1)
-        self.f = self.s.makefile("rw")
-        self._read()
-        self.cmd("qmp_capabilities")
-
-    def _read(self):
-        while True:
-            m = json.loads(self.f.readline())
-            if "event" not in m:
-                return m
-
-    def cmd(self, name, **args):
-        self.f.write(json.dumps({"execute": name, "arguments": args} if args else
-                                {"execute": name}) + "\n")
-        self.f.flush()
-        r = self._read()
-        if "error" in r:
-            raise RuntimeError(r)
-        return r
-
-    def events(self, *ev):
-        self.cmd("input-send-event", events=list(ev))
-
-    def click(self, x, y, button="left"):
-        def ax(v, size):
-            for a in range(v * 0x7FFF // size, v * 0x7FFF // size + 64):
-                if a * size // 0x7FFF == v:
-                    return a
-        self.events({"type": "abs", "data": {"axis": "x", "value": ax(x, FB_W)}},
-                    {"type": "abs", "data": {"axis": "y", "value": ax(y, FB_H)}})
-        for down in (True, False):
-            self.events({"type": "btn", "data": {"down": down, "button": button}})
-            time.sleep(0.3)
-
-    def type(self, text):
-        base = {" ": "spc", "\n": "ret", ".": "dot", "/": "slash", "~": "grave_accent"}
-        for ch in text:
-            shift = ch.isupper() or ch == "~"
-            q = base.get(ch, ch.lower())
-            if shift:
-                self.events({"type": "key", "data": {"down": True, "key": {"type": "qcode", "data": "shift"}}})
-            for down in (True, False):
-                self.events({"type": "key", "data": {"down": down, "key": {"type": "qcode", "data": q}}})
-            if shift:
-                self.events({"type": "key", "data": {"down": False, "key": {"type": "qcode", "data": "shift"}}})
-            time.sleep(0.02)
-
-    def log_dark(self, work, tag):
-        name = f"fb-{tag}.bin"
-        self.cmd("pmemsave", val=FB_BASE, size=FB_W * FB_H // 8, filename=f"/w/{name}")
-        time.sleep(0.5)
-        raw = (work / name).read_bytes()
-        x0, x1, y0, y1 = LOG
-        wpl, n = FB_W // 32, 0
-        for y in range(y0, y1):
-            line = raw[(FB_H - 1 - y) * wpl * 4:(FB_H - y) * wpl * 4]
-            for x in range(x0, x1):
-                w = int.from_bytes(line[(x // 32) * 4:(x // 32) * 4 + 4], "little")
-                n += (w >> (x % 32)) & 1
-        return n
-
-
-def docker(*args, check=True):
-    return subprocess.run(["docker", *args], check=check, capture_output=True, text=True).stdout
 
 
 def main():
@@ -151,19 +78,19 @@ def main():
         a.type("alice/x\n")
         a.click(680, 581, "middle")
         time.sleep(2)
-        before = a.log_dark(work, "a0")
+        before = a.dark(work, "a0", LOG)
 
         b.click(900, 557)
         b.type("\nNet.StartServer\nNet.SendMsg alice Hello over the air\nNet.SendMsg alice Second")
         b.click(680, 569, "middle")
         b.click(680, 581, "middle")
         time.sleep(10)
-        after = a.log_dark(work, "a1")
+        after = a.dark(work, "a1", LOG)
 
         docker("stop", "-t", "1", names["relay"])
         b.click(680, 593, "middle")              # the same partner, no air any more
         time.sleep(10)
-        control = a.log_dark(work, "a2")
+        control = a.dark(work, "a2", LOG)
     finally:
         for n in names.values():
             docker("rm", "-f", n, check=False)

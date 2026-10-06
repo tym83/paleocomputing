@@ -23,7 +23,7 @@ from oberonfs import Image
 img = Image(sys.argv[1] + "/ext/disk/Oberon-2016-08-02.dsk")
 t = img.read(img.files()["System.Tool"])
 cmds = (b'ORP.Compile Kube.Mod/s ~\r'
-        b'Kube.Start ~\r'
+        b'Kube.Start local ~\r'
         b'Kube.Apply web 3 nginx ~\r'
         b'Kube.Get ~\r'
         b'Kube.DeletePod "web-rs-0" ~\r'

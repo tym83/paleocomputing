@@ -128,6 +128,10 @@ jobs:
       # once the relay is stopped.
       - name: Radio
         run: python3 qemu/test/radio_check.py
+      # Kube with real nodes: a control plane and two kubelets on three machines
+      # talking over the radio; a node switched off goes NotReady and its pods move.
+      - name: Kube over the radio
+        run: python3 qemu/test/kube_radio_check.py
       # Indexing through a descriptor (release 14): QEMU with chk=on,desc=on against
       # the native RTL model with -DWITH_DESC; there is no WASM build of this core, so
       # Verilator is needed here. The central issue's loop and random IDX with
