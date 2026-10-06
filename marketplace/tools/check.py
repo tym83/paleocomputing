@@ -704,6 +704,22 @@ def check_machines() -> None:
                    f"{name}: hardware={hwv}: the VM spec does not name the system image, "
                    "so a release does not change a running VM")
 
+        # ── Machines on one air are spread over the hosts ───────────────────
+        if preset.get("air"):
+            def spread(spec):
+                t = spec["spec"]["template"]
+                terms = (t["spec"].get("affinity", {}).get("podAntiAffinity", {})
+                         .get("preferredDuringSchedulingIgnoredDuringExecution", []))
+                return t["metadata"]["labels"].get("paleocomputing.io/air"), [
+                    (x["podAffinityTerm"]["topologyKey"], x["podAffinityTerm"]["labelSelector"]["matchLabels"])
+                    for x in terms]
+            d, _ = render(chart, "air=lab")
+            label, terms = spread(next(x for x in d if x["kind"] == "VirtualMachine"))
+            report(label == "lab" and terms == [("kubernetes.io/hostname", {"paleocomputing.io/air": "lab"})],
+                   f"{name}: on an air the machine prefers a host without the other machines of that air")
+            label, terms = spread(vm)
+            report(label is None and not terms, f"{name}: without an air there is no spreading rule")
+
         # ── Fill: firmware always, the user disk never ──────────────────────
         script = fill_script(docs)
         base = preset["payload"]["path"].rstrip("/")
