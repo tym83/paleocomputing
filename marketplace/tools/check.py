@@ -692,11 +692,17 @@ def check_machines() -> None:
             except ValueError as e:
                 report(False, f"{name}: hardware={hwv}: the passport annotation is not JSON: {e}")
                 continue
-            err = schema_errors(schema, passport)
+            # The image is left out of the VM template on purpose (it changes
+            # with every release); with it put back the passport is complete.
+            full = {**passport, "image": preset["image"]} if "image" in preset else passport
+            err = schema_errors(schema, full)
             report(err is None and passport.get("variant") == hwv
-                   and {k: passport[k] for k in preset} == preset,
+                   and {k: full[k] for k in preset} == preset,
                    f"{name}: hardware={hwv}: the annotation is a schema-valid passport with variant={passport.get('variant')}"
                    + (f": {err}" if err else ""))
+            report("image" not in passport and preset.get("image", "\0") not in json.dumps(v["spec"]),
+                   f"{name}: hardware={hwv}: the VM spec does not name the system image, "
+                   "so a release does not change a running VM")
 
         # ── Fill: firmware always, the user disk never ──────────────────────
         script = fill_script(docs)

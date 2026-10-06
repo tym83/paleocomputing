@@ -223,7 +223,12 @@ spec:
       "args" (list "--version" "v1alpha2")
       "configMap" (dict "name" (printf "%s-hook" $fn) "key" "onDefineDomain" "hookPath" "/usr/bin/onDefineDomain")
       "pvc" (dict "name" (printf "%s-payload" $fn) "volumePath" $base "sharedComputePath" $base)) }}
-{{- $passport := set (deepCopy $m) "variant" $variant }}
+{{- /* The passport in the VM template leaves out the system image: the hook
+       does not need it (the fill job copies the disk), and the image reference
+       changes with every catalog release. A VM template that changes makes a
+       running VM wait for a restart (the cluster does not update workloads),
+       and the Helm upgrade then times out waiting for it. */}}
+{{- $passport := omit (set (deepCopy $m) "variant" $variant) "image" }}
 {{- /* The air: the instance names an OberonAir in the tenant; its Service is
        oberon-air-<name>. Only a machine whose passport declares a radio can join. */}}
 {{- with .Values.air }}
