@@ -4,7 +4,7 @@
 # matches on name, description and tags.
 name: paleocomputing-machines
 ociRef: oci://ghcr.io/tym83/paleocomputing/machines
-version: v0.1.19
+version: v0.1.20
 description: Machines missing from the main catalog, such as emulators, lab assignments and their manuals
 homepage: https://github.com/tym83/paleocomputing
 maintainer: tym83

@@ -64,8 +64,8 @@
       Done once, by the cluster administrator, with <code>cozypkg</code> from
       the <a href="https://github.com/cozystack/cozystack">Cozystack repository</a>:
     </p>
-    <pre><code>cozypkg tap oci://ghcr.io/tym83/paleocomputing/machines:v0.1.19
-cozypkg tap oci://ghcr.io/tym83/paleocomputing/languages:v0.1.19
+    <pre><code>cozypkg tap oci://ghcr.io/tym83/paleocomputing/machines:v0.1.20
+cozypkg tap oci://ghcr.io/tym83/paleocomputing/languages:v0.1.20
 # tap makes the repository known; add installs its applications
 cozypkg add paleocomputing.machines
 cozypkg add paleocomputing.languages</code></pre>
@@ -114,7 +114,7 @@ cozypkg add paleocomputing.languages</code></pre>
       platform repository and install <code>kubevirt-paleo-launcher</code> — it
       is privileged, so it needs the operator's explicit consent:
     </p>
-    <pre><code>cozypkg tap oci://ghcr.io/tym83/paleocomputing/platform:v0.1.19
+    <pre><code>cozypkg tap oci://ghcr.io/tym83/paleocomputing/platform:v0.1.20
 cozypkg add paleocomputing.platform --allow-privileged</code></pre>
     <p>
       It watches the cluster's KubeVirt version and keeps the launcher matched to
