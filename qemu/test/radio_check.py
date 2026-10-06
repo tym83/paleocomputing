@@ -52,6 +52,7 @@ def main():
     exe = QEMU / "build" / "qemu-system-risc5"
     if not exe.exists():
         raise SystemExit(f"  ❌ no {exe}; run make -C qemu build first")
+    (IMPL / "build").mkdir(parents=True, exist_ok=True)
     work = pathlib.Path(tempfile.mkdtemp(prefix="radio-", dir=str(IMPL / "build")))
     build_disk(work)
     net = f"oberon-air-{uuid.uuid4().hex[:8]}"

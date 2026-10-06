@@ -52,9 +52,9 @@ class QMP:
 
     def type(self, text):
         base = {" ": "spc", "\n": "ret", ".": "dot", "/": "slash", "~": "grave_accent",
-                "-": "minus", '"': "apostrophe", ",": "comma"}
+                "-": "minus", '"': "apostrophe", ",": "comma", "*": "8"}
         for ch in text:
-            shift = ch.isupper() or ch in '~"'
+            shift = ch.isupper() or ch in '~"*'
             q = base.get(ch, ch.lower())
             if shift:
                 self.events({"type": "key", "data": {"down": True, "key": {"type": "qcode", "data": "shift"}}})

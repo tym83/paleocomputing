@@ -33,4 +33,30 @@ grep -q "'risc5'" "$Q/qapi/machine.json" || \
   sed -i.bak "s|'ppc64', 'riscv32'|'ppc64', 'risc5', 'riscv32'|" "$Q/qapi/machine.json"
 rm -f "$Q/qapi/machine.json.bak"
 
+# The air: keep receiving after a failed read on the UDP chardev. Its socket is
+# connected, so once the relay is gone an ICMP "port unreachable" makes the next
+# read fail with ECONNREFUSED, and upstream then removes the read watch for
+# good: the machine keeps sending but never hears the air again, even after the
+# relay is back. A datagram socket has no stream to end; the error is consumed
+# by the read, so carrying on does not spin.
+U="$Q/chardev/char-udp.c"
+if ! grep -q 'risc5: keep the air' "$U"; then
+  "${PYTHON:-python3}" - "$U" <<'PY'
+import sys
+p = sys.argv[1]
+s = open(p).read()
+old = """    if (ret <= 0) {
+        remove_fd_in_watch(chr);
+        return FALSE;
+    }"""
+new = """    if (ret <= 0) {
+        (void)chr;
+        return TRUE;    /* risc5: keep the air after a failed read */
+    }"""
+if old not in s:
+    sys.exit("graft.sh: udp_chr_read in char-udp.c is not as expected")
+open(p, "w").write(s.replace(old, new))
+PY
+fi
+
 echo "risc5 target grafted into $Q"

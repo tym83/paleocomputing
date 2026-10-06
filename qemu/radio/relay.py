@@ -14,9 +14,13 @@ The relay forwards each frame to every other machine it has heard from in the
 last minute, which is what a shared radio channel does. Frames carry their
 channel, and the receiving radio drops frames for other channels.
 
-    python3 qemu/radio/relay.py [--port 7524] [--verbose]
+A lossy air for tests: --loss P drops each delivery with probability P, for
+each receiver on its own, as a noisy channel would.
+
+    python3 qemu/radio/relay.py [--port 7524] [--loss 0.0] [--verbose]
 """
 import argparse
+import random
 import socket
 import time
 
@@ -28,13 +32,14 @@ FORGET_AFTER = 60.0
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=7524)
+    ap.add_argument("--loss", type=float, default=0.0)
     ap.add_argument("--verbose", action="store_true")
     a = ap.parse_args()
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind(("0.0.0.0", a.port))
     peers: dict[tuple[str, int], float] = {}
-    print(f"air relay on udp/{a.port}", flush=True)
+    print(f"air relay on udp/{a.port}" + (f", loss {a.loss:.0%}" if a.loss else ""), flush=True)
 
     while True:
         data, src = sock.recvfrom(2048)
@@ -53,7 +58,7 @@ def main() -> None:
         if a.verbose:
             print(f"{src[0]}:{src[1]} ch {data[0]} -> {len(peers) - 1} stations", flush=True)
         for p in peers:
-            if p != src:
+            if p != src and (a.loss <= 0 or random.random() >= a.loss):
                 sock.sendto(data, p)
 
 
