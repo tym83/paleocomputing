@@ -11,15 +11,23 @@ MODULE Kube;  (*A minimal Kubernetes control plane in Oberon-07.
   once the kubelet says it runs them. A local node (Kube.Local) has no kubelet
   to wait for: the scheduler runs its pods at once; it keeps the demos without
   a radio working.
+  The objects survive a restart of the machine, as etcd would keep them: a fourth
+  task writes the store to the disk whenever it changes, and Kube.Start reads it
+  back. Two files, Kube.Store0 and Kube.Store1, are written in turn, each with a
+  generation and a checksum, so a write cut short leaves the other one whole.
+  They are rewritten in place: the Oberon file system frees the sectors of a
+  replaced file only at the next boot, and a new file per change would fill
+  the disk.
   Commands, run with the middle button:
     Kube.Apply name N image,  Kube.Get,  Kube.DeletePod "name",  Kube.Save [file],
     Kube.Start [local] (install the controllers; local adds three local nodes),
     Kube.Local (the local nodes alone), Kube.Stop (remove the controllers),
+    Kube.Reset (forget every object, on the disk too),
     Kube.Run N (run N ticks by hand, for the Norebo command line).
   Pod names contain hyphens, which end a name for Texts.Scan, so DeletePod
   also takes the name as a quoted string.*)
 
-  IMPORT Texts, Oberon;
+  IMPORT Files, Kernel, Texts, Oberon;
 
   CONST
     maxObj = 256;
@@ -27,6 +35,8 @@ MODULE Kube;  (*A minimal Kubernetes control plane in Oberon-07.
     phPending = 0; phRunning = 1;   (*pods*)
     phNotReady = 0; phReady = 1;    (*nodes*)
     period = 50;  (*ms between ticks in the full system*)
+    storePeriod = 500;  (*ms between checks whether the store changed*)
+    magic = 4B554231H;  (*"KUB1"*)
 
   TYPE
     Name* = ARRAY 40 OF CHAR;
@@ -39,8 +49,9 @@ MODULE Kube;  (*A minimal Kubernetes control plane in Oberon-07.
   VAR
     store: ARRAY maxObj OF Object;
     W: Texts.Writer;
-    tDeploy, tRS, tNode: Oberon.Task;
+    tDeploy, tRS, tNode, tStore: Oberon.Task;
     seq: INTEGER;
+    gen, savedSum, slot: INTEGER;   (*the store on disk*)
     running: BOOLEAN;
 
   PROCEDURE append(VAR s: Name; t: ARRAY OF CHAR);
@@ -128,6 +139,18 @@ MODULE Kube;  (*A minimal Kubernetes control plane in Oberon-07.
     END
   END newRS;
 
+  (*the short id the radio carries: one byte, 1..255, not used by another pod*)
+  PROCEDURE freeId(): INTEGER;
+    VAR i, id: INTEGER; taken: BOOLEAN;
+  BEGIN id := 0;
+    REPEAT INC(id); taken := FALSE;
+      FOR i := 0 TO maxObj-1 DO
+        IF store[i].used & (store[i].kind = kPod) & (store[i].id = id) THEN taken := TRUE END
+      END
+    UNTIL ~taken OR (id = 255);
+    RETURN id
+  END freeId;
+
   PROCEDURE newPod(rs, image: ARRAY OF CHAR);
     VAR k: INTEGER;
   BEGIN k := alloc();
@@ -135,8 +158,7 @@ MODULE Kube;  (*A minimal Kubernetes control plane in Oberon-07.
       store[k].used := TRUE; store[k].local := FALSE; store[k].kind := kPod;
       store[k].name[0] := 0X; append(store[k].name, rs); append(store[k].name, "-");
       appendNum(store[k].name, seq);
-      (*the short id the radio carries: one byte, 1..255*)
-      store[k].id := seq MOD 255 + 1; INC(seq);
+      store[k].id := freeId(); INC(seq);
       store[k].owner[0] := 0X; append(store[k].owner, rs);
       store[k].image[0] := 0X; append(store[k].image, image);
       store[k].node[0] := 0X; store[k].phase := phPending; store[k].replicas := 0
@@ -422,18 +444,131 @@ MODULE Kube;  (*A minimal Kubernetes control plane in Oberon-07.
     Get
   END Run;
 
-  (*Kube.Start local also creates the three local nodes; without it the
-    cluster waits for kubelets on the radio (KubeNet)*)
+  (* ---- the store on disk ---- *)
+
+  PROCEDURE mix(h, x: INTEGER): INTEGER;
+  BEGIN RETURN (h * 31 + x) MOD 1000000007
+  END mix;
+
+  PROCEDURE mixName(h: INTEGER; s: Name): INTEGER;
+    VAR i: INTEGER;
+  BEGIN i := 0;
+    WHILE (i < LEN(s)) & (s[i] # 0X) DO h := mix(h, ORD(s[i])); INC(i) END;
+    RETURN mix(h, 0)
+  END mixName;
+
+  (*everything that is written to the disk; seen is left out: it changes on
+    every heartbeat and is not restored*)
+  PROCEDURE sum(): INTEGER;
+    VAR i, h: INTEGER;
+  BEGIN h := mix(1, seq);
+    FOR i := 0 TO maxObj-1 DO
+      IF store[i].used THEN
+        h := mix(mix(mix(mix(mix(h, store[i].kind), store[i].replicas), store[i].phase), store[i].id),
+                 ORD(store[i].local));
+        h := mixName(mixName(mixName(mixName(h, store[i].name), store[i].owner), store[i].node), store[i].image)
+      END
+    END;
+    RETURN h
+  END sum;
+
+  PROCEDURE storeName(n: INTEGER; VAR name: ARRAY OF CHAR);
+  BEGIN name := "Kube.Store0"; name[10] := CHR(ORD("0") + n)
+  END storeName;
+
+  (*writes the store into slot n, in place, with generation g*)
+  PROCEDURE write(n, g, h: INTEGER);
+    VAR f: Files.File; r: Files.Rider; name: ARRAY 16 OF CHAR; i, cnt: INTEGER; new: BOOLEAN;
+  BEGIN storeName(n, name); f := Files.Old(name); new := f = NIL;
+    IF new THEN f := Files.New(name) END;
+    cnt := 0; FOR i := 0 TO maxObj-1 DO IF store[i].used THEN INC(cnt) END END;
+    Files.Set(r, f, 0);
+    Files.WriteInt(r, magic); Files.WriteInt(r, g); Files.WriteInt(r, seq); Files.WriteInt(r, cnt);
+    FOR i := 0 TO maxObj-1 DO
+      IF store[i].used THEN
+        Files.WriteInt(r, store[i].kind); Files.WriteInt(r, store[i].replicas);
+        Files.WriteInt(r, store[i].phase); Files.WriteInt(r, store[i].id);
+        Files.WriteByte(r, ORD(store[i].local));
+        Files.WriteString(r, store[i].name); Files.WriteString(r, store[i].owner);
+        Files.WriteString(r, store[i].node); Files.WriteString(r, store[i].image)
+      END
+    END;
+    Files.WriteInt(r, h); Files.WriteInt(r, g);   (*a whole snapshot ends with its sum and generation*)
+    IF new THEN Files.Register(f) ELSE Files.Close(f) END
+  END write;
+
+  (*reads slot n into the store if it is whole; returns its generation, or -1*)
+  PROCEDURE read(n: INTEGER): INTEGER;
+    VAR f: Files.File; r: Files.Rider; name: ARRAY 16 OF CHAR;
+      i, m, g, s, cnt, h, g2, k, now: INTEGER; b: BYTE;
+  BEGIN storeName(n, name); f := Files.Old(name); g := -1;
+    IF f # NIL THEN
+      Files.Set(r, f, 0); Files.ReadInt(r, m);
+      IF m = magic THEN
+        Files.ReadInt(r, g); Files.ReadInt(r, s); Files.ReadInt(r, cnt);
+        IF (cnt < 0) OR (cnt > maxObj) THEN g := -1 ELSE
+          FOR i := 0 TO maxObj-1 DO store[i].used := FALSE END;
+          seq := s; now := Kernel.Time();
+          FOR k := 0 TO cnt-1 DO
+            store[k].used := TRUE;
+            Files.ReadInt(r, store[k].kind); Files.ReadInt(r, store[k].replicas);
+            Files.ReadInt(r, store[k].phase); Files.ReadInt(r, store[k].id);
+            Files.ReadByte(r, b); store[k].local := b # 0;
+            Files.ReadString(r, store[k].name); Files.ReadString(r, store[k].owner);
+            Files.ReadString(r, store[k].node); Files.ReadString(r, store[k].image);
+            (*a remote node gets one heartbeat timeout to report again, as the
+              node lifecycle controller gives nodes a grace period after a restart*)
+            store[k].seen := now
+          END;
+          Files.ReadInt(r, h); Files.ReadInt(r, g2);
+          IF r.eof OR (g2 # g) OR (h # sum()) THEN
+            FOR i := 0 TO maxObj-1 DO store[i].used := FALSE END; seq := 0; g := -1
+          END
+        END
+      ELSE g := -1
+      END
+    END;
+    RETURN g
+  END read;
+
+  PROCEDURE ctlStore*;
+    VAR h: INTEGER;
+  BEGIN h := sum();
+    IF h # savedSum THEN
+      INC(gen); slot := 1 - slot; write(slot, gen, h); savedSum := h
+    END
+  END ctlStore;
+
+  (*the newer whole snapshot of the two; the store stays empty if there is none*)
+  PROCEDURE load(): INTEGER;
+    VAR g0, g1, cnt, i: INTEGER;
+  BEGIN g1 := read(1); g0 := read(0);   (*slot 0 is now in the store*)
+    IF g1 > g0 THEN g1 := read(1); slot := 1; gen := g1 ELSE slot := 0; gen := g0 END;
+    IF gen < 0 THEN gen := 0; slot := 0 END;
+    savedSum := sum();
+    cnt := 0; FOR i := 0 TO maxObj-1 DO IF store[i].used THEN INC(cnt) END END;
+    RETURN cnt
+  END load;
+
+  (*Kube.Start reads the store back from the disk first. Kube.Start local also
+    creates the three local nodes; without it the cluster waits for kubelets on
+    the radio (KubeNet)*)
   PROCEDURE Start*;
-    VAR S: Texts.Scanner;
+    VAR S: Texts.Scanner; n: INTEGER;
   BEGIN Texts.OpenScanner(S, Oberon.Par.text, Oberon.Par.pos); Texts.Scan(S);
-    IF (S.class = Texts.Name) & (S.s = "local") THEN Local END;
     IF ~running THEN
+      n := load();
+      IF n > 0 THEN
+        Texts.WriteString(W, "kube: "); Texts.WriteInt(W, n, 0);
+        Texts.WriteString(W, " objects restored from the disk"); Texts.WriteLn(W)
+      END;
+      IF (S.class = Texts.Name) & (S.s = "local") THEN Local END;
       tDeploy := Oberon.NewTask(ctlDeploy, period); Oberon.Install(tDeploy);
       tRS := Oberon.NewTask(ctlRS, period); Oberon.Install(tRS);
       tNode := Oberon.NewTask(ctlNode, period); Oberon.Install(tNode);
+      tStore := Oberon.NewTask(ctlStore, storePeriod); Oberon.Install(tStore);
       running := TRUE;
-      Texts.WriteString(W, "kube: 3 controllers installed (deploy, replicaset, node)");
+      Texts.WriteString(W, "kube: 3 controllers installed (deploy, replicaset, node), store on disk");
       Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf)
     END
   END Start;
@@ -441,21 +576,29 @@ MODULE Kube;  (*A minimal Kubernetes control plane in Oberon-07.
   PROCEDURE Stop*;
   BEGIN
     IF running THEN
-      Oberon.Remove(tDeploy); Oberon.Remove(tRS); Oberon.Remove(tNode); running := FALSE;
+      Oberon.Remove(tDeploy); Oberon.Remove(tRS); Oberon.Remove(tNode); Oberon.Remove(tStore);
+      running := FALSE;
       Texts.WriteString(W, "kube: controllers removed"); Texts.WriteLn(W);
       Texts.Append(Oberon.Log, W.buf)
     END
   END Stop;
 
-  PROCEDURE Reset*;
+  PROCEDURE clear;
     VAR i: INTEGER;
   BEGIN FOR i := 0 TO maxObj-1 DO store[i].used := FALSE END; seq := 0
+  END clear;
+
+  PROCEDURE Reset*;
+    VAR res: INTEGER;
+  BEGIN clear; Files.Delete("Kube.Store0", res); Files.Delete("Kube.Store1", res);
+    gen := 0; slot := 0; savedSum := sum();
+    Texts.WriteString(W, "kube: store cleared"); Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf)
   END Reset;
 
   (*self-contained demo for the Norebo command line (one process, local nodes)*)
   PROCEDURE Demo*;
     VAR ignore: BOOLEAN;
-  BEGIN Reset; Local;
+  BEGIN clear; Local;
     Texts.WriteString(W, "== apply deployment web, replicas=3 =="); Texts.WriteLn(W);
     Texts.Append(Oberon.Log, W.buf);
     applyDep("web", "nginx", 3); Step; Step; Get;
@@ -468,5 +611,5 @@ MODULE Kube;  (*A minimal Kubernetes control plane in Oberon-07.
   END Demo;
 
 BEGIN Texts.OpenWriter(W); running := FALSE;
-  Reset
+  clear; gen := 0; slot := 0; savedSum := sum()
 END Kube.
