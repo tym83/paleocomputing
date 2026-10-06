@@ -19,11 +19,14 @@ kube_cluster.py); each scenario must converge again within its deadline:
                     converged; the number of heartbeat timeouts is reported;
   7. another cluster  a station sends "node-a: run nothing" tagged as another
                     cluster: node-a keeps its pods. The same message tagged
-                    as this cluster, the control, does empty node-a.
+                    as this cluster, the control, does empty node-a;
+  8. rollout        web 6 moves to a new image: at no moment do fewer than 6
+                    or more than 7 pods run (maxUnavailable 0, maxSurge 1), and
+                    in the end only the new ReplicaSet is left, with 6 pods.
 
   python3 qemu/test/kube_dr_check.py [QEMU tree]   (default ../.qemu-work)
 """
-import pathlib, sys, time
+import pathlib, re, sys, time
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from kube_cluster import Cluster, ROOT, TAG, TTL, converged, running   # noqa: E402
@@ -124,30 +127,76 @@ def main():
         check("6. 30 % loss for 60 s, then clean air: converged", t is not None,
               f"{gaps} heartbeat gaps over {TTL:.0f} s heard by the listener, "
               f"{moves} changes of assignment while lossy, converged in {secs(t)}")
-        # 7. another cluster
-        real = c.raw("assign", "node-a")
+        # 7. another cluster, aimed at the node that runs pods
+        beats, _ = c.view()
+        busy = max(both, key=lambda n: len(running(beats).get(n, ())))
+        real = c.raw("assign", busy)
         def forged(tag):
             f = bytearray(real)
             f[1 + 8] = tag                      # payload: 8 header bytes, then the cluster tag
             f[1 + 17] = 0                       # no pods
             f[1 + 4:1 + 8] = (10).to_bytes(4, "little")
             return bytes(f)
-        beats, _ = c.view()
-        keep = running(beats)["node-a"]
+        keep = running(beats)[busy]
         t7 = time.time()
         c.inject(forged(TAG % 255 + 1), times=5)
-        heard = [m for m in c.air(t7) if m["kind"] == "heartbeat" and m["node"] == "node-a"]
-        check("7a. another cluster's assignment is ignored",
-              bool(heard) and all(set(m["ids"]) == keep for m in heard),
-              f"{len(heard)} heartbeats of node-a, all with {sorted(keep)}")
+        heard = [m for m in c.air(t7) if m["kind"] == "heartbeat" and m["node"] == busy]
+        check(f"7a. another cluster's assignment is ignored by {busy}",
+              bool(keep) and bool(heard) and all(set(m["ids"]) == keep for m in heard),
+              f"{len(heard)} heartbeats, all with {sorted(keep)}")
         t7 = time.time()
-        c.inject(forged(TAG), times=15, interval=0.2)   # faster than the plane repairs it
-        heard = [m for m in c.air(t7) if m["kind"] == "heartbeat" and m["node"] == "node-a"]
-        check("7b. control: the same message tagged as this cluster empties node-a",
+        # Every 50 ms: the kubelet reports a fixed time after the plane's real
+        # assignment, which puts the pods back at once; slower injections were
+        # always undone just before the report, in step with the plane.
+        c.inject(forged(TAG), times=60, interval=0.05)
+        heard = [m for m in c.air(t7) if m["kind"] == "heartbeat" and m["node"] == busy]
+        check(f"7b. control: the same message tagged as this cluster empties {busy}",
               any(not m["ids"] for m in heard), f"{sum(1 for m in heard if not m['ids'])} empty heartbeats")
         t = c.wait(converged(6, both), 20)
         check("7c. the control plane puts the pods back", t is not None, f"in {secs(t)}")
+        # 8. rollout. A kubelet runs exactly its last assignment, and the plane
+        # sends the assignments of all nodes in one tick: one round is a
+        # consistent picture of what runs. Heartbeats of different nodes are
+        # up to a second apart, and pairing them showed 5 or 8 pods that never
+        # ran at the same moment.
+        beats, _ = c.view()
+        before = set(i for s_ in running(beats, both).values() for i in s_)
+        c.run("plane", "Kube.Apply web 6 nginx2 ~")
+        t8 = time.time()
+        prev, last_change = None, t8
+        while time.time() - t8 < 90:
+            beats, _ = c.view(window=1.5)
+            cur = sorted(i for s_ in running(beats, both).values() for i in s_)
+            if cur != prev:
+                prev, last_change = cur, time.time()
+            if time.time() - last_change > 10 and len(cur) == 6:
+                break
+            time.sleep(0.5)
+        rounds, cur_round, last_t = [], {}, None
+        for m in c.air(t8 - 1):
+            if m["kind"] != "assign":
+                continue
+            if last_t is not None and m["t"] - last_t > 0.3:
+                rounds.append(cur_round)
+                cur_round = {}
+            cur_round[m["node"]] = set(m["ids"])
+            last_t = m["t"]
+        rounds.append(cur_round)
+        totals = [len(set().union(*r.values())) for r in rounds if set(r) == set(both)]
+        low, high = min(totals), max(totals)
+        check("8a. never fewer than 6 pods running during the rollout", low >= 6,
+              f"lowest {low} over {len(totals)} rounds of assignments")
+        check("8b. never more than 7", high <= 7, f"highest {high}")
+        beats, _ = c.view()
+        after = set(i for s_ in running(beats, both).values() for i in s_)
+        check("8d. every pod was replaced: no id of the old pods runs", not (before & after),
+              f"before {sorted(before)}, after {sorted(after)}")
         c.screenshot("plane", c.work / "plane.png")
+        st = c.state()
+        rs = re.findall(r"replicaset (\S+)\s+desired=(\d+)\s+image=(\S+)", st)
+        pods = re.findall(r"pod \S+ @node-[ab] Running", st)
+        check("8c. only the new ReplicaSet is left, 6 pods Running", len(rs) == 1 and rs[0][1:] == ("6", "nginx2")
+              and len(pods) == 6, f"{rs}, {len(pods)} running")
     finally:
         ok = all(results)
         c.close(keep=not ok)

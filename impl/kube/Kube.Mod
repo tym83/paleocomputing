@@ -1,7 +1,10 @@
 MODULE Kube;  (*A minimal Kubernetes control plane in Oberon-07.
   Three controllers run as background Oberon.Task entries in the same ring
   as the system garbage collector:
-    ctlDeploy - Deployment -> ReplicaSet (keeps one RS with the wanted replicas/image);
+    ctlDeploy - Deployment -> ReplicaSet: one RS per image; a new image is rolled
+                out pod by pod (maxSurge 1, maxUnavailable 0, as Kubernetes does
+                by default): a new pod is added, and an old one goes only when
+                more pods run than wanted;
     ctlRS     - ReplicaSet -> Pod (keeps the number of pods equal to replicas);
     ctlNode   - scheduler: binds a pod to the least loaded Ready node, and
                 unbinds the pods of a node that went NotReady, so they move.
@@ -127,27 +130,35 @@ MODULE Kube;  (*A minimal Kubernetes control plane in Oberon-07.
     RETURN best
   END leastNode;
 
-  PROCEDURE newRS(deploy, image: ARRAY OF CHAR; rep: INTEGER);
+  (*a ReplicaSet of revision rev: web-rs, web-rs2, web-rs3 ...*)
+  PROCEDURE newRS(deploy, image: ARRAY OF CHAR; rep, rev: INTEGER): INTEGER;
     VAR k: INTEGER;
   BEGIN k := alloc();
     IF k >= 0 THEN
       store[k].used := TRUE; store[k].local := FALSE; store[k].kind := kRS;
       store[k].name[0] := 0X; append(store[k].name, deploy); append(store[k].name, "-rs");
+      IF rev > 1 THEN appendNum(store[k].name, rev) END;
       store[k].owner[0] := 0X; append(store[k].owner, deploy);
       store[k].image[0] := 0X; append(store[k].image, image);
-      store[k].replicas := rep; store[k].phase := 0; store[k].node[0] := 0X
-    END
+      store[k].replicas := rep; store[k].phase := 0; store[k].node[0] := 0X; store[k].id := rev
+    END;
+    RETURN k
   END newRS;
 
-  (*the short id the radio carries: one byte, 1..255, not used by another pod*)
+  (*the short id the radio carries: one byte, 1..255. Ids go round, the next
+    after the last one given, skipping those in use: a kubelet knows a pod
+    only by its id, and a lowest-free id gave a new pod the id of the old one
+    it replaced, so the kubelet took it for the same pod and a rollout changed
+    nothing on the node. Kubernetes never reuses a pod's UID for this reason;
+    here an id comes back after 255 others, long after any kubelet dropped it*)
   PROCEDURE freeId(): INTEGER;
-    VAR i, id: INTEGER; taken: BOOLEAN;
-  BEGIN id := 0;
-    REPEAT INC(id); taken := FALSE;
+    VAR i, id, tries: INTEGER; taken: BOOLEAN;
+  BEGIN id := seq MOD 255; tries := 0;
+    REPEAT id := id MOD 255 + 1; INC(tries); taken := FALSE;
       FOR i := 0 TO maxObj-1 DO
         IF store[i].used & (store[i].kind = kPod) & (store[i].id = id) THEN taken := TRUE END
       END
-    UNTIL ~taken OR (id = 255);
+    UNTIL ~taken OR (tries = 255);
     RETURN id
   END freeId;
 
@@ -165,27 +176,96 @@ MODULE Kube;  (*A minimal Kubernetes control plane in Oberon-07.
     END
   END newPod;
 
+  (*removes one object of the owner, a Pending pod first, as the ReplicaSet
+    controller removes pods that are not ready first*)
   PROCEDURE delOneOwned(kind: INTEGER; owner: ARRAY OF CHAR);
-    VAR i: INTEGER; done: BOOLEAN;
-  BEGIN done := FALSE; i := 0;
-    WHILE (i < maxObj) & ~done DO
-      IF store[i].used & (store[i].kind = kind) & (store[i].owner = owner) THEN
-        store[i].used := FALSE; done := TRUE
-      END; INC(i)
-    END
+    VAR i, k: INTEGER;
+  BEGIN k := -1; i := 0;
+    WHILE i < maxObj DO
+      IF store[i].used & (store[i].kind = kind) & (store[i].owner = owner)
+          & ((k < 0) OR (store[i].phase # phRunning) & (store[k].phase = phRunning)) THEN k := i END;
+      INC(i)
+    END;
+    IF k >= 0 THEN store[k].used := FALSE END
   END delOneOwned;
 
-  (*Deployment controller: one RS per deployment, replicas/image kept in sync*)
-  PROCEDURE ctlDeploy*;
-    VAR i, rs: INTEGER;
-  BEGIN
+  PROCEDURE countRunning(owner: ARRAY OF CHAR): INTEGER;
+    VAR i, c: INTEGER;
+  BEGIN c := 0;
     FOR i := 0 TO maxObj-1 DO
-      IF store[i].used & (store[i].kind = kDeploy) THEN
-        rs := findOwned(kRS, store[i].name);
-        IF rs < 0 THEN newRS(store[i].name, store[i].image, store[i].replicas)
-        ELSE store[rs].replicas := store[i].replicas; store[rs].image := store[i].image
+      IF store[i].used & (store[i].kind = kPod) & (store[i].owner = owner) & (store[i].phase = phRunning) THEN INC(c) END
+    END;
+    RETURN c
+  END countRunning;
+
+  (*pods still run by kubelets although they were deleted: they count against
+    the surge until they are gone (as podReplacementPolicy TerminationComplete
+    does in Kubernetes; without it, for a second, one pod more than the surge
+    allows ran)*)
+  PROCEDURE stopping(): INTEGER;
+    VAR i, c: INTEGER;
+  BEGIN c := 0;
+    FOR i := 0 TO maxObj-1 DO
+      IF store[i].used & (store[i].kind = kNode) & (store[i].phase = phReady) THEN INC(c, store[i].replicas) END
+    END;
+    RETURN c
+  END stopping;
+
+  (*one step of a deployment: the RS of its image gets the replicas; while
+    older RSs still have pods, the step is a rolling one. The deployment's id
+    is its last revision*)
+  PROCEDURE deploy(d: INTEGER);
+    VAR i, cur, want, oldRep, oldRun, newRun, rev: INTEGER; name: Name;
+  BEGIN want := store[d].replicas; cur := -1; oldRep := 0; oldRun := 0;
+    FOR i := 0 TO maxObj-1 DO
+      IF store[i].used & (store[i].kind = kRS) & (store[i].owner = store[d].name) THEN
+        IF store[i].image = store[d].image THEN cur := i
+        ELSE INC(oldRep, store[i].replicas); INC(oldRun, countRunning(store[i].name))
         END
       END
+    END;
+    IF cur < 0 THEN
+      rev := store[d].id;
+      REPEAT INC(rev); name[0] := 0X; append(name, store[d].name); append(name, "-rs");
+        IF rev > 1 THEN appendNum(name, rev) END
+      UNTIL find(kRS, name) < 0;
+      store[d].id := rev;
+      IF oldRep = 0 THEN cur := newRS(store[d].name, store[d].image, want, rev)
+      ELSE cur := newRS(store[d].name, store[d].image, 0, rev)
+      END
+    END;
+    IF cur >= 0 THEN
+      IF (oldRep = 0) & (oldRun = 0) THEN store[cur].replicas := want   (*no rollout: plain scale*)
+      ELSE
+        newRun := countRunning(store[cur].name);
+        IF (store[cur].replicas < want) & (store[cur].replicas + oldRep + stopping() < want + 1) THEN
+          INC(store[cur].replicas)                                  (*surge one new pod*)
+        ELSIF store[cur].replicas > want THEN store[cur].replicas := want
+        END;
+        IF (oldRep > 0) & (newRun + oldRun > want) THEN            (*one old pod may go*)
+          i := 0;
+          WHILE i < maxObj DO
+            IF store[i].used & (store[i].kind = kRS) & (store[i].owner = store[d].name) & (i # cur)
+                & (store[i].replicas > 0) THEN DEC(store[i].replicas); i := maxObj
+            END;
+            INC(i)
+          END
+        END
+      END;
+      (*old ReplicaSets without replicas and pods are done*)
+      FOR i := 0 TO maxObj-1 DO
+        IF store[i].used & (store[i].kind = kRS) & (store[i].owner = store[d].name) & (i # cur)
+            & (store[i].replicas = 0) & (countOwned(kPod, store[i].name) = 0) THEN store[i].used := FALSE
+        END
+      END
+    END
+  END deploy;
+
+  PROCEDURE ctlDeploy*;
+    VAR i: INTEGER;
+  BEGIN
+    FOR i := 0 TO maxObj-1 DO
+      IF store[i].used & (store[i].kind = kDeploy) THEN deploy(i) END
     END
   END ctlDeploy;
 
@@ -313,10 +393,20 @@ MODULE Kube;  (*A minimal Kubernetes control plane in Oberon-07.
     END
   END PodIds;
 
-  (*a kubelet reported the pods it runs: those are Running, the others Pending*)
+  (*a kubelet reported the pods it runs: those are Running, the others Pending.
+    Ids it still runs that no pod has any more are pods being stopped; the
+    node keeps their number (in replicas) until its next report*)
   PROCEDURE Report*(nm: ARRAY OF CHAR; ids: ARRAY OF BYTE; n: INTEGER);
-    VAR i, j: INTEGER; on: BOOLEAN;
-  BEGIN
+    VAR i, j, k, gone: INTEGER; on: BOOLEAN;
+  BEGIN gone := 0;
+    FOR j := 0 TO n-1 DO
+      on := FALSE;
+      FOR i := 0 TO maxObj-1 DO
+        IF store[i].used & (store[i].kind = kPod) & (store[i].id = ids[j]) & (store[i].node = nm) THEN on := TRUE END
+      END;
+      IF ~on THEN INC(gone) END
+    END;
+    k := find(kNode, nm); IF k >= 0 THEN store[k].replicas := gone END;
     FOR i := 0 TO maxObj-1 DO
       IF store[i].used & (store[i].kind = kPod) & (store[i].node = nm) THEN
         on := FALSE;
@@ -343,7 +433,7 @@ MODULE Kube;  (*A minimal Kubernetes control plane in Oberon-07.
     IF k < 0 THEN k := alloc();
       IF k >= 0 THEN store[k].used := TRUE; store[k].local := FALSE; store[k].kind := kDeploy;
         store[k].name[0] := 0X; append(store[k].name, nm);
-        store[k].owner[0] := 0X; store[k].node[0] := 0X; store[k].phase := 0
+        store[k].owner[0] := 0X; store[k].node[0] := 0X; store[k].phase := 0; store[k].id := 0
       END
     END;
     IF k >= 0 THEN store[k].replicas := rep;
@@ -382,7 +472,8 @@ MODULE Kube;  (*A minimal Kubernetes control plane in Oberon-07.
         FOR j := 0 TO maxObj-1 DO
           IF store[j].used & (store[j].kind = kRS) & (store[j].owner = store[i].name) THEN
             Texts.WriteString(W, "  replicaset "); Texts.WriteString(W, store[j].name);
-            Texts.WriteString(W, "  desired="); Texts.WriteInt(W, store[j].replicas, 0); Texts.WriteLn(W);
+            Texts.WriteString(W, "  desired="); Texts.WriteInt(W, store[j].replicas, 0);
+            Texts.WriteString(W, "  image="); Texts.WriteString(W, store[j].image); Texts.WriteLn(W);
             FOR k := 0 TO maxObj-1 DO
               IF store[k].used & (store[k].kind = kPod) & (store[k].owner = store[j].name) THEN
                 Texts.WriteString(W, "    pod "); Texts.WriteString(W, store[k].name);
@@ -619,7 +710,11 @@ MODULE Kube;  (*A minimal Kubernetes control plane in Oberon-07.
     ignore := delPod("web-rs-0"); Step; Step; Get;
     Texts.WriteString(W, "== scale deployment web to 1, reconcile =="); Texts.WriteLn(W);
     Texts.Append(Oberon.Log, W.buf);
-    applyDep("web", "nginx", 1); Step; Step; Get
+    applyDep("web", "nginx", 1); Step; Step; Get;
+    Texts.WriteString(W, "== scale to 3, then roll out image nginx2 one pod at a time =="); Texts.WriteLn(W);
+    Texts.Append(Oberon.Log, W.buf);
+    applyDep("web", "nginx", 3); Step; Step;
+    applyDep("web", "nginx2", 3); Step; Get; Step; Get; Step; Step; Step; Step; Step; Get
   END Demo;
 
 BEGIN Texts.OpenWriter(W); running := FALSE;

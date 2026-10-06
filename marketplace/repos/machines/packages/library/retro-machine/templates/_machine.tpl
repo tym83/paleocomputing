@@ -283,6 +283,9 @@ spec:
   template:
     metadata:
       labels: {{- include "retro-machine.labels" . | nindent 8 }}
+        {{- with .Values.air }}
+        paleocomputing.io/air: {{ . | quote }}
+        {{- end }}
       # KubeVirt copies the template metadata into every new VMI in full
       # (SetupVMIFromVM), so the passport and the hook go here.
       annotations:
@@ -296,6 +299,21 @@ spec:
       # the pod is evicted and the VirtualMachine brings the machine up on
       # another node; the disk on the volume survives the move.
       evictionStrategy: None
+      {{- with .Values.air }}
+      # Machines on one air are a cluster, of Kube for instance: a host that
+      # fails should take as few of them as it can. They are spread over the
+      # hosts when there are enough, and share one when there are not; only
+      # "preferred", as a required rule would leave a machine unscheduled.
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchLabels:
+                  paleocomputing.io/air: {{ . | quote }}
+      {{- end }}
       terminationGracePeriodSeconds: {{ $m.domain.terminationGracePeriodSeconds }}
       domain:
         resources:
