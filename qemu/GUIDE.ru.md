@@ -58,7 +58,7 @@ cp impl/ext/disk/Oberon-2016-08-02.dsk oberon.dsk
 или готовыми — из опубликованного образа:
 
 ```sh
-docker create --name oberon-payload ghcr.io/tym83/paleocomputing/oberon-run:v0.1.19
+docker create --name oberon-payload ghcr.io/tym83/paleocomputing/oberon-run:v0.1.20
 docker cp oberon-payload:/opt/oberon/payload/prom.bin .
 docker cp oberon-payload:/opt/oberon/payload/oberon.dsk .
 docker rm oberon-payload
