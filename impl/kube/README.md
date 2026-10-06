@@ -61,6 +61,7 @@ click over VNC):
 | `Kube.Stop` | remove the controllers, keeping the objects |
 | `Kube.Run N` | run N ticks by hand, for Norebo |
 | `Kube.Save [file]` | write what `Kube.Get` prints into a file, `Kube.State` by default |
+| `Kube.Reset` | forget every object, on the disk too |
 
 The pod name is quoted because the Oberon text scanner ends a name at a hyphen.
 
@@ -117,6 +118,69 @@ and all three pods Running on the other.
 `Net`, `Kube` and `KubeNet` are compiled onto the system disk of the
 `oberon-run` image (`tools/install_modules.py`), so in an `OberonVM` they are
 ready to run without typing anything in.
+
+## The store on disk
+
+Kube keeps its objects on the disk of the control plane machine, as
+Kubernetes keeps them in etcd. A background task writes them whenever they
+change, and `Kube.Start` reads them back after a restart. There are two files,
+`Kube.Store0` and `Kube.Store1`, written in turn, each with a generation number
+and a checksum: a write cut short by a power failure leaves the other file
+whole, and `Kube.Start` takes the newer whole one. The files are rewritten in
+place, because the Oberon file system frees the sectors of a replaced file only
+at the next boot, and a new file per change would fill the disk under churn.
+
+Restored nodes get one heartbeat timeout to report again before they count as
+NotReady, as the node lifecycle controller gives nodes a grace period after it
+restarts. `Kube.Reset` forgets every object, on the disk too.
+
+## Disaster recovery
+
+`qemu/test/kube_dr_check.py` runs a control plane and two nodes and measures
+them from the air: a passive listener (`qemu/radio/listen.py`) joins the relay
+like a machine, never sends, and records every heartbeat and assignment. It runs
+in the hardware workflow.
+
+| what fails | what happens | time |
+|---|---|---|
+| a node is switched off | NotReady after the 3 s heartbeat timeout, its pods run on the other node | about 4 s |
+| the node comes back and joins | Ready again; when the deployment is scaled up, the new pods go to it, the least loaded node | at once |
+| the control plane is switched off | the kubelets keep running what they were given | |
+| the control plane boots again | the store comes back from its disk: the same pods on the same nodes, not one assignment changes | at once after `Kube.Start` |
+| the air (the relay) is gone for 20 s | both nodes go NotReady on the plane; with the air back the cluster converges again | about 5 s |
+| 30 % of deliveries are lost for a minute | a few heartbeat gaps exceed the timeout, so a few pods move; the cluster stays whole and converges | |
+
+The 3 s timeout is three missed heartbeats. On a lossy air that is tight: the
+real kubelet reports every 10 s and the control plane waits 40 s. The timeout is
+kept short here so the tests stay short.
+
+Getting these to pass found two faults in the QEMU machine, not in Kube: `MOD`
+after a multiplication could return the high part of the product, so the store
+was never written ([finding 87](../docs/FINDING-87-qemu-div-remainder.md)); and
+a machine stopped hearing the air for good after the relay had been gone once,
+because QEMU's UDP channel drops its reader after a failed read (`graft.sh`
+patches that).
+
+## Load
+
+`qemu/test/kube_load_check.py --nodes N` runs a control plane, N nodes and a
+deployment of three pods per node, and measures from the air how long the
+cluster takes to converge and to recover from a lost node. It runs in the
+hardware workflow on request (`kube_load`), for 2, 4, 6 and 8 nodes, on a
+GitHub runner with 4 cores:
+
+| nodes | pods | converge | failover | frames per second on the air | false NotReady |
+|---|---|---|---|---|---|
+| 2 | 6 | 3.3 s | 4.0 s | 4.0 | 0 |
+| 4 | 12 | 3.9 s | 4.5 s | 8.0 | 0 |
+| 6 | 18 | 6.0 s | 3.5 s | 11.7 | 0 |
+| 8 | 24 | 4.1 s | 4.6 s | 15.8 | 0 |
+
+Every node hears its assignment and reports a heartbeat once a second, up to
+eight nodes. Each machine keeps a host core busy, because Oberon's loop never
+idles, so with eight nodes the runner is more than twice oversubscribed; that
+showed as a command typed into the control plane that once never ran, not as
+a fault of the cluster.
 
 ## In Cozystack
 
