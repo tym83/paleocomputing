@@ -106,8 +106,16 @@ moves its pods to the nodes that remain. Messages are kept to one packet on
 purpose: the radio has no collision avoidance, and two stations sending longer
 messages at once would interleave them at the receivers.
 
-Pods on the radio are numbered by a one-byte id, and a heartbeat holds up to 15
-of them, so one node runs up to 15 pods. Apply a deployment once its nodes are
+Every message starts with a one-byte tag of the cluster, so several clusters
+can share one air: `KubeNet.Serve [cluster]` and `KubeNet.Join name [cluster]`
+take a cluster name of up to 8 characters, `kube` when it is left out, and a
+node ignores the messages of other clusters. Without it a second control plane
+on the same air, with a node of the same name, kept switching that node's pods
+on and off in the sandbox tenant. The tag is computed from the name, so two
+different names share a tag with a chance of 1 in 255.
+
+Pods on the radio are numbered by a one-byte id, and a heartbeat holds up to 14
+of them, so one node runs up to 14 pods. Apply a deployment once its nodes are
 Ready: like the real scheduler, Kube does not move running pods to a node that
 joined later.
 

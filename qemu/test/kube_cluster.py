@@ -19,11 +19,14 @@ sys.path.insert(0, str(IMPL / "tools"))
 sys.path.insert(0, str(ROOT / "qemu" / "test"))
 from install_modules import install_modules, DEFAULT   # noqa: E402
 from qmp_machine import QMP, docker                    # noqa: E402
+sys.path.insert(0, str(ROOT / "qemu" / "radio"))
+from listen import cluster_tag                          # noqa: E402
 
 NOREBO = IMPL / "ext" / "norebo"
 DISK = IMPL / "ext" / "disk" / "Oberon-2016-08-02.dsk"
 BEAT = 1.0          # KubeNet: heartbeat and assignment period, s
 TTL = 3.0           # KubeNet: a node silent this long goes NotReady, s
+TAG = cluster_tag("kube")   # the default cluster
 
 
 def node_name(i):
@@ -94,6 +97,28 @@ class Cluster:
                "--network-alias", "relay", "-v", f"{self.work}:/w", "qemu-build:risc5",
                f"python3 -u /w/relay.py --loss {loss}")
 
+    def inject(self, frame: bytes, times=5, interval=1.0):
+        """Sends a radio frame to the air from a station of its own, as another
+        cluster or a rogue machine would."""
+        code = (f"import socket,time\ns=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)\n"
+                f"s.sendto(bytes([0xFF]),('relay',7524))\ntime.sleep(0.5)\n"
+                f"for _ in range({times}):\n s.sendto(bytes.fromhex('{frame.hex()}'),('relay',7524));"
+                f" time.sleep({interval})\n")
+        docker("run", "--rm", "--network", self.net, "qemu-build:risc5", f"python3 -c \"{code}\"")
+
+    def raw(self, kind, node, since=0.0):
+        """The latest raw frame of this kind for this node, from the air."""
+        p = self.work / "air.jsonl"
+        last = None
+        for line in p.read_text().splitlines():
+            try:
+                m = json.loads(line)
+            except ValueError:
+                continue
+            if m.get("kind") == kind and m.get("node") == node and m["t"] >= since:
+                last = bytes.fromhex(m["raw"])
+        return last
+
     def air_off(self):
         docker("rm", "-f", self.name("relay"), check=False)
 
@@ -147,7 +172,7 @@ class Cluster:
                     m = json.loads(line)
                 except ValueError:
                     continue
-                if m["t"] >= since and "kind" in m:
+                if m["t"] >= since and "kind" in m and m.get("cluster") == TAG:
                     out.append(m)
         return out
 
