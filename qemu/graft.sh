@@ -33,29 +33,92 @@ grep -q "'risc5'" "$Q/qapi/machine.json" || \
   sed -i.bak "s|'ppc64', 'riscv32'|'ppc64', 'risc5', 'riscv32'|" "$Q/qapi/machine.json"
 rm -f "$Q/qapi/machine.json.bak"
 
-# The air: keep receiving after a failed read on the UDP chardev. Its socket is
-# connected, so once the relay is gone an ICMP "port unreachable" makes the next
-# read fail with ECONNREFUSED, and upstream then removes the read watch for
-# good: the machine keeps sending but never hears the air again, even after the
-# relay is back. A datagram socket has no stream to end; the error is consumed
-# by the read, so carrying on does not spin.
+# The air, two changes to the UDP chardev (chardev/char-udp.c):
+#
+# 1. Keep receiving after a failed read. The socket is connected, so once the
+#    relay is gone an ICMP "port unreachable" makes the next read fail with
+#    ECONNREFUSED, and upstream then removes the read watch for good: the
+#    machine keeps sending but never hears the air again. A datagram socket has
+#    no stream to end, and the error is consumed by the read, so carrying on
+#    does not spin.
+# 2. Connect again after a failed write. In Kubernetes the relay is a Service;
+#    Cilium's socket load balancing turns the connect() to its ClusterIP into
+#    the address of one relay pod, and when that pod is replaced it aborts the
+#    socket, which leaves it without a destination. Every write then fails and
+#    the machine falls silent for good. On a failed write the chardev resolves
+#    the relay's name again and reconnects, at most once a second.
 U="$Q/chardev/char-udp.c"
-if ! grep -q 'risc5: keep the air' "$U"; then
+if ! grep -q 'risc5: connect again' "$U"; then
   "${PYTHON:-python3}" - "$U" <<'PY'
 import sys
 p = sys.argv[1]
 s = open(p).read()
-old = """    if (ret <= 0) {
+edits = [
+    ("""#include "io/channel-socket.h"
+""", """#include "io/channel-socket.h"
+#include "qemu/timer.h"
+#include <netdb.h>
+"""),
+    ("""    int max_size;
+};""", """    int max_size;
+    SocketAddress *remote;   /* risc5: connect again after a failed write */
+    int64_t retry_at;
+};"""),
+    ("""static int udp_chr_write(Chardev *chr, const uint8_t *buf, int len)
+{
+    UdpChardev *s = UDP_CHARDEV(chr);
+
+    return qio_channel_write(
+        s->ioc, (const char *)buf, len, NULL);
+}""", """static int udp_chr_write(Chardev *chr, const uint8_t *buf, int len)
+{
+    UdpChardev *s = UDP_CHARDEV(chr);
+    int ret = qio_channel_write(s->ioc, (const char *)buf, len, NULL);
+    int64_t now;
+    struct addrinfo hints = { .ai_family = AF_INET, .ai_socktype = SOCK_DGRAM };
+    struct addrinfo *res;
+
+    if (ret >= 0 || !s->remote || s->remote->type != SOCKET_ADDRESS_TYPE_INET) {
+        return ret;
+    }
+    now = qemu_clock_get_ms(QEMU_CLOCK_REALTIME);
+    if (now < s->retry_at) {
+        return ret;
+    }
+    s->retry_at = now + 1000;
+    if (getaddrinfo(s->remote->u.inet.host, s->remote->u.inet.port, &hints, &res) == 0) {
+        if (connect(QIO_CHANNEL_SOCKET(s->ioc)->fd, res->ai_addr, res->ai_addrlen) == 0) {
+            ret = qio_channel_write(s->ioc, (const char *)buf, len, NULL);
+        }
+        freeaddrinfo(res);
+    }
+    return ret;
+}"""),
+    ("""    if (ret <= 0) {
         remove_fd_in_watch(chr);
         return FALSE;
-    }"""
-new = """    if (ret <= 0) {
+    }""", """    if (ret <= 0) {
         (void)chr;
         return TRUE;    /* risc5: keep the air after a failed read */
-    }"""
-if old not in s:
-    sys.exit("graft.sh: udp_chr_read in char-udp.c is not as expected")
-open(p, "w").write(s.replace(old, new))
+    }"""),
+    ("""    qapi_free_SocketAddress(local_addr);
+    qapi_free_SocketAddress(remote_addr);
+    if (ret < 0) {
+        object_unref(OBJECT(sioc));
+        return false;
+    }""", """    qapi_free_SocketAddress(local_addr);
+    if (ret < 0) {
+        qapi_free_SocketAddress(remote_addr);
+        object_unref(OBJECT(sioc));
+        return false;
+    }
+    s->remote = remote_addr;"""),
+]
+for old, new in edits:
+    if old not in s:
+        sys.exit("graft.sh: char-udp.c is not as expected near: " + old.strip().splitlines()[0])
+    s = s.replace(old, new, 1)
+open(p, "w").write(s)
 PY
 fi
 
