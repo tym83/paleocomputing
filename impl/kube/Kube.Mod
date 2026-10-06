@@ -273,6 +273,18 @@ MODULE Kube;  (*A minimal Kubernetes control plane in Oberon-07.
     END
   END Expire;
 
+  (*the grace after a restart starts when the control plane begins to listen:
+    every remote node counts as just heard. Without it the time between
+    Kube.Start and KubeNet.Serve ate the grace, all nodes went NotReady, and
+    their pods were moved although they never stopped*)
+  PROCEDURE Listening*(now: INTEGER);
+    VAR i: INTEGER;
+  BEGIN
+    FOR i := 0 TO maxObj-1 DO
+      IF store[i].used & (store[i].kind = kNode) & ~store[i].local THEN store[i].seen := now END
+    END
+  END Listening;
+
   (*the i-th Ready remote node, for the control plane to send assignments to*)
   PROCEDURE ReadyNode*(i: INTEGER; VAR nm: ARRAY OF CHAR): BOOLEAN;
     VAR k, c, j: INTEGER; found: BOOLEAN;
