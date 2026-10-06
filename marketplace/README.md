@@ -36,7 +36,7 @@ and images have different trust levels and a different fate on update.
 Connecting goes the standard way:
 
 ```
-cozypkg tap oci://ghcr.io/tym83/paleocomputing/machines:v0.1.18   # connect the repository
+cozypkg tap oci://ghcr.io/tym83/paleocomputing/machines:v0.1.19   # connect the repository
 cozypkg add paleocomputing.machines                            # install from it (without add there are no applications in the tenant catalog)
 ```
 
