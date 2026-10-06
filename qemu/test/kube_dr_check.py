@@ -99,7 +99,14 @@ def main():
         c.relay(loss=0.3)
         t1 = time.time()
         time.sleep(60)
-        beats = [m for m in c.air(t1) if m["kind"] == "heartbeat"]
+        heard = c.air(t1)
+        beats = [m for m in heard if m["kind"] == "heartbeat"]
+        moves, last = 0, {}
+        for m in heard:
+            if m["kind"] == "assign":
+                if m["node"] in last and last[m["node"]] != m["ids"]:
+                    moves += 1
+                last[m["node"]] = m["ids"]
         gaps = 0
         for n in both:
             ts = sorted(m["t"] for m in beats if m["node"] == n)
@@ -107,7 +114,8 @@ def main():
         c.relay()
         t = c.wait(converged(6, both), 30)
         check("6. 30 % loss for 60 s, then clean air: converged", t is not None,
-              f"{gaps} heartbeat gaps over {TTL:.0f} s heard by the listener, converged in {secs(t)}")
+              f"{gaps} heartbeat gaps over {TTL:.0f} s heard by the listener, "
+              f"{moves} changes of assignment while lossy, converged in {secs(t)}")
         c.screenshot("plane", c.work / "plane.png")
     finally:
         ok = all(results)

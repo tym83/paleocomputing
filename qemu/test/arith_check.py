@@ -35,6 +35,7 @@ def s32(x):
 
 
 def main():
+    (IMPL / "build").mkdir(parents=True, exist_ok=True)
     work = pathlib.Path(tempfile.mkdtemp(prefix="arith-", dir=str(IMPL / "build")))
     disk = work / "a.dsk"
     shutil.copy(IMPL / "ext" / "disk" / "Oberon-2016-08-02.dsk", disk)

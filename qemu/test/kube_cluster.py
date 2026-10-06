@@ -36,6 +36,7 @@ class Cluster:
         if not (self.qemu / "build" / "qemu-system-risc5").exists():
             raise SystemExit(f"  ❌ no {self.qemu}/build/qemu-system-risc5; run make -C qemu build first")
         self.nodes = [node_name(i) for i in range(nodes)]
+        (IMPL / "build").mkdir(parents=True, exist_ok=True)
         self.work = pathlib.Path(tempfile.mkdtemp(prefix="kube-", dir=str(IMPL / "build")))
         self.net = f"oberon-kc-{uuid.uuid4().hex[:8]}"
         self.machines = ["plane"] + self.nodes

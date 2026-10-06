@@ -72,6 +72,7 @@ def run(cmds, qmp):
 def main():
     if not (QEMU / "build" / "qemu-system-risc5").exists():
         raise SystemExit(f"  ❌ no {QEMU}/build/qemu-system-risc5; run make -C qemu build first")
+    (IMPL / "build").mkdir(parents=True, exist_ok=True)
     work = pathlib.Path(tempfile.mkdtemp(prefix="kube-", dir=str(IMPL / "build")))
     build(work)
     net = f"oberon-kube-{uuid.uuid4().hex[:8]}"

@@ -179,6 +179,7 @@ jobs:
         run: make -C impl tools
       - name: Load, ${{ matrix.nodes }} nodes
         run: |
+          set -o pipefail
           python3 qemu/test/kube_load_check.py --nodes ${{ matrix.nodes }} --json | tee load.txt
           echo "### Kube load, ${{ matrix.nodes }} nodes" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
