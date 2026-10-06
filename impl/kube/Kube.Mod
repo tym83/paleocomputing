@@ -3,12 +3,18 @@ MODULE Kube;  (*A minimal Kubernetes control plane in Oberon-07.
   as the system garbage collector:
     ctlDeploy - Deployment -> ReplicaSet (keeps one RS with the wanted replicas/image);
     ctlRS     - ReplicaSet -> Pod (keeps the number of pods equal to replicas);
-    ctlNode   - scheduler (puts a pod on the least loaded node) + kubelet
-                (moves a scheduled pod to Running).
+    ctlNode   - scheduler: binds a pod to the least loaded Ready node, and
+                unbinds the pods of a node that went NotReady, so they move.
   Ownership is the owner field (ownerReferences): pod.owner = rs, rs.owner = deploy.
-  Objects live in the store array. Commands, run with the middle button:
-    Kube.Apply name N image,  Kube.Get,  Kube.DeletePod "name",
-    Kube.Start/Stop (install/remove the controllers),
+  Nodes are objects too. A remote node (another Oberon machine on the radio,
+  see KubeNet) is Ready while its kubelet reports, and its pods are Running
+  once the kubelet says it runs them. A local node (Kube.Local) has no kubelet
+  to wait for: the scheduler runs its pods at once; it keeps the demos without
+  a radio working.
+  Commands, run with the middle button:
+    Kube.Apply name N image,  Kube.Get,  Kube.DeletePod "name",  Kube.Save [file],
+    Kube.Start [local] (install the controllers; local adds three local nodes),
+    Kube.Local (the local nodes alone), Kube.Stop (remove the controllers),
     Kube.Run N (run N ticks by hand, for the Norebo command line).
   Pod names contain hyphens, which end a name for Texts.Scan, so DeletePod
   also takes the name as a quoted string.*)
@@ -17,21 +23,21 @@ MODULE Kube;  (*A minimal Kubernetes control plane in Oberon-07.
 
   CONST
     maxObj = 256;
-    kDeploy = 0; kRS = 1; kPod = 2;
-    phPending = 0; phRunning = 1;
+    kDeploy = 0; kRS = 1; kPod = 2; kNode = 3;
+    phPending = 0; phRunning = 1;   (*pods*)
+    phNotReady = 0; phReady = 1;    (*nodes*)
     period = 50;  (*ms between ticks in the full system*)
 
   TYPE
-    Name = ARRAY 40 OF CHAR;
+    Name* = ARRAY 40 OF CHAR;
     Object = RECORD
-      used: BOOLEAN;
-      kind, replicas, phase: INTEGER;
+      used, local: BOOLEAN;
+      kind, replicas, phase, id, seen: INTEGER;
       name, owner, node, image: Name
     END;
 
   VAR
     store: ARRAY maxObj OF Object;
-    nodes: ARRAY 3 OF Name;
     W: Texts.Writer;
     tDeploy, tRS, tNode: Oberon.Task;
     seq: INTEGER;
@@ -40,7 +46,7 @@ MODULE Kube;  (*A minimal Kubernetes control plane in Oberon-07.
   PROCEDURE append(VAR s: Name; t: ARRAY OF CHAR);
     VAR i, j: INTEGER;
   BEGIN i := 0; WHILE s[i] # 0X DO INC(i) END;
-    j := 0; WHILE t[j] # 0X DO s[i] := t[j]; INC(i); INC(j) END; s[i] := 0X
+    j := 0; WHILE (j < LEN(t)) & (t[j] # 0X) DO s[i] := t[j]; INC(i); INC(j) END; s[i] := 0X
   END append;
 
   PROCEDURE appendNum(VAR s: Name; n: INTEGER);
@@ -88,15 +94,24 @@ MODULE Kube;  (*A minimal Kubernetes control plane in Oberon-07.
     RETURN c
   END countOwned;
 
+  PROCEDURE ready(nm: ARRAY OF CHAR): BOOLEAN;
+    VAR k: INTEGER;
+  BEGIN k := find(kNode, nm);
+    RETURN (k >= 0) & (store[k].phase = phReady)
+  END ready;
+
+  (*the Ready node with the fewest pods; -1 when no node is Ready*)
   PROCEDURE leastNode(): INTEGER;
     VAR i, j, best, bestLoad, load: INTEGER;
-  BEGIN best := 0; bestLoad := maxObj + 1;
-    FOR i := 0 TO 2 DO
-      load := 0;
-      FOR j := 0 TO maxObj-1 DO
-        IF store[j].used & (store[j].kind = kPod) & (store[j].node = nodes[i]) THEN INC(load) END
-      END;
-      IF load < bestLoad THEN bestLoad := load; best := i END
+  BEGIN best := -1; bestLoad := maxObj + 1;
+    FOR i := 0 TO maxObj-1 DO
+      IF store[i].used & (store[i].kind = kNode) & (store[i].phase = phReady) THEN
+        load := 0;
+        FOR j := 0 TO maxObj-1 DO
+          IF store[j].used & (store[j].kind = kPod) & (store[j].node = store[i].name) THEN INC(load) END
+        END;
+        IF load < bestLoad THEN bestLoad := load; best := i END
+      END
     END;
     RETURN best
   END leastNode;
@@ -105,7 +120,7 @@ MODULE Kube;  (*A minimal Kubernetes control plane in Oberon-07.
     VAR k: INTEGER;
   BEGIN k := alloc();
     IF k >= 0 THEN
-      store[k].used := TRUE; store[k].kind := kRS;
+      store[k].used := TRUE; store[k].local := FALSE; store[k].kind := kRS;
       store[k].name[0] := 0X; append(store[k].name, deploy); append(store[k].name, "-rs");
       store[k].owner[0] := 0X; append(store[k].owner, deploy);
       store[k].image[0] := 0X; append(store[k].image, image);
@@ -117,9 +132,11 @@ MODULE Kube;  (*A minimal Kubernetes control plane in Oberon-07.
     VAR k: INTEGER;
   BEGIN k := alloc();
     IF k >= 0 THEN
-      store[k].used := TRUE; store[k].kind := kPod;
+      store[k].used := TRUE; store[k].local := FALSE; store[k].kind := kPod;
       store[k].name[0] := 0X; append(store[k].name, rs); append(store[k].name, "-");
-      appendNum(store[k].name, seq); INC(seq);
+      appendNum(store[k].name, seq);
+      (*the short id the radio carries: one byte, 1..255*)
+      store[k].id := seq MOD 255 + 1; INC(seq);
       store[k].owner[0] := 0X; append(store[k].owner, rs);
       store[k].image[0] := 0X; append(store[k].image, image);
       store[k].node[0] := 0X; store[k].phase := phPending; store[k].replicas := 0
@@ -163,18 +180,26 @@ MODULE Kube;  (*A minimal Kubernetes control plane in Oberon-07.
     END
   END ctlRS;
 
-  (*scheduler + kubelet*)
+  (*scheduler: pods of a node that is gone or NotReady are unbound, unbound
+    pods go to the least loaded Ready node; a local node runs its pods at once*)
   PROCEDURE ctlNode*;
-    VAR i: INTEGER;
+    VAR i, n: INTEGER;
   BEGIN
     FOR i := 0 TO maxObj-1 DO
+      IF store[i].used & (store[i].kind = kPod) & (store[i].node[0] # 0X) & ~ready(store[i].node) THEN
+        store[i].node[0] := 0X; store[i].phase := phPending
+      END
+    END;
+    FOR i := 0 TO maxObj-1 DO
       IF store[i].used & (store[i].kind = kPod) & (store[i].node[0] = 0X) THEN
-        store[i].node := nodes[leastNode()]
+        n := leastNode();
+        IF n >= 0 THEN store[i].node := store[n].name END
       END
     END;
     FOR i := 0 TO maxObj-1 DO
       IF store[i].used & (store[i].kind = kPod) & (store[i].node[0] # 0X) & (store[i].phase = phPending) THEN
-        store[i].phase := phRunning
+        n := find(kNode, store[i].node);
+        IF (n >= 0) & store[n].local THEN store[i].phase := phRunning END
       END
     END
   END ctlNode;
@@ -183,11 +208,106 @@ MODULE Kube;  (*A minimal Kubernetes control plane in Oberon-07.
   BEGIN ctlDeploy; ctlRS; ctlNode
   END Step;
 
+  (* ---- nodes: the interface KubeNet uses ---- *)
+
+  PROCEDURE addNode(nm: ARRAY OF CHAR; local: BOOLEAN): INTEGER;
+    VAR k: INTEGER;
+  BEGIN k := find(kNode, nm);
+    IF k < 0 THEN k := alloc();
+      IF k >= 0 THEN
+        store[k].used := TRUE; store[k].kind := kNode; store[k].local := local;
+        store[k].name[0] := 0X; append(store[k].name, nm);
+        store[k].owner[0] := 0X; store[k].node[0] := 0X; store[k].image[0] := 0X;
+        store[k].phase := phNotReady; store[k].replicas := 0; store[k].id := 0
+      END
+    END;
+    RETURN k
+  END addNode;
+
+  (*a kubelet was heard: the node exists and is Ready*)
+  PROCEDURE NodeSeen*(nm: ARRAY OF CHAR; now: INTEGER);
+    VAR k: INTEGER;
+  BEGIN k := addNode(nm, FALSE);
+    IF k >= 0 THEN
+      IF store[k].phase # phReady THEN
+        Texts.WriteString(W, "kube: node "); Texts.WriteString(W, nm);
+        Texts.WriteString(W, " Ready"); Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf)
+      END;
+      store[k].phase := phReady; store[k].seen := now
+    END
+  END NodeSeen;
+
+  (*remote nodes not heard for ttl ms go NotReady; the scheduler then moves their pods*)
+  PROCEDURE Expire*(now, ttl: INTEGER);
+    VAR i: INTEGER;
+  BEGIN
+    FOR i := 0 TO maxObj-1 DO
+      IF store[i].used & (store[i].kind = kNode) & ~store[i].local & (store[i].phase = phReady)
+          & (now - store[i].seen > ttl) THEN
+        store[i].phase := phNotReady;
+        Texts.WriteString(W, "kube: node "); Texts.WriteString(W, store[i].name);
+        Texts.WriteString(W, " NotReady"); Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf)
+      END
+    END
+  END Expire;
+
+  (*the i-th Ready remote node, for the control plane to send assignments to*)
+  PROCEDURE ReadyNode*(i: INTEGER; VAR nm: ARRAY OF CHAR): BOOLEAN;
+    VAR k, c, j: INTEGER; found: BOOLEAN;
+  BEGIN k := 0; c := 0; found := FALSE;
+    WHILE (k < maxObj) & ~found DO
+      IF store[k].used & (store[k].kind = kNode) & ~store[k].local & (store[k].phase = phReady) THEN
+        IF c = i THEN
+          j := 0;
+          WHILE (j < LEN(nm) - 1) & (store[k].name[j] # 0X) DO nm[j] := store[k].name[j]; INC(j) END;
+          nm[j] := 0X; found := TRUE
+        ELSE INC(c) END
+      END;
+      INC(k)
+    END;
+    RETURN found
+  END ReadyNode;
+
+  (*ids of the pods bound to a node*)
+  PROCEDURE PodIds*(nm: ARRAY OF CHAR; VAR ids: ARRAY OF BYTE; VAR n: INTEGER);
+    VAR i: INTEGER;
+  BEGIN n := 0;
+    FOR i := 0 TO maxObj-1 DO
+      IF store[i].used & (store[i].kind = kPod) & (store[i].node = nm) & (n < LEN(ids)) THEN
+        ids[n] := store[i].id; INC(n)
+      END
+    END
+  END PodIds;
+
+  (*a kubelet reported the pods it runs: those are Running, the others Pending*)
+  PROCEDURE Report*(nm: ARRAY OF CHAR; ids: ARRAY OF BYTE; n: INTEGER);
+    VAR i, j: INTEGER; on: BOOLEAN;
+  BEGIN
+    FOR i := 0 TO maxObj-1 DO
+      IF store[i].used & (store[i].kind = kPod) & (store[i].node = nm) THEN
+        on := FALSE;
+        FOR j := 0 TO n-1 DO IF ids[j] = store[i].id THEN on := TRUE END END;
+        IF on THEN store[i].phase := phRunning ELSE store[i].phase := phPending END
+      END
+    END
+  END Report;
+
+  (*three nodes without a kubelet, for the demos that have no radio*)
+  PROCEDURE Local*;
+    VAR k: INTEGER;
+  BEGIN
+    k := addNode("node-a", TRUE); IF k >= 0 THEN store[k].phase := phReady END;
+    k := addNode("node-b", TRUE); IF k >= 0 THEN store[k].phase := phReady END;
+    k := addNode("node-c", TRUE); IF k >= 0 THEN store[k].phase := phReady END
+  END Local;
+
+  (* ---- commands ---- *)
+
   PROCEDURE applyDep(nm, img: ARRAY OF CHAR; rep: INTEGER);
     VAR k: INTEGER;
   BEGIN k := find(kDeploy, nm);
     IF k < 0 THEN k := alloc();
-      IF k >= 0 THEN store[k].used := TRUE; store[k].kind := kDeploy;
+      IF k >= 0 THEN store[k].used := TRUE; store[k].local := FALSE; store[k].kind := kDeploy;
         store[k].name[0] := 0X; append(store[k].name, nm);
         store[k].owner[0] := 0X; store[k].node[0] := 0X; store[k].phase := 0
       END
@@ -208,9 +328,18 @@ MODULE Kube;  (*A minimal Kubernetes control plane in Oberon-07.
     RETURN done
   END delPod;
 
-  PROCEDURE Get*;
-    VAR i, j, k: INTEGER;
-  BEGIN
+  PROCEDURE describe(VAR W: Texts.Writer);
+    VAR i, j, k: INTEGER; first: BOOLEAN;
+  BEGIN first := TRUE;
+    FOR i := 0 TO maxObj-1 DO
+      IF store[i].used & (store[i].kind = kNode) THEN
+        IF first THEN Texts.WriteString(W, "nodes: "); first := FALSE ELSE Texts.WriteString(W, ", ") END;
+        Texts.WriteString(W, store[i].name);
+        IF store[i].phase = phReady THEN Texts.WriteString(W, " Ready")
+        ELSE Texts.WriteString(W, " NotReady") END
+      END
+    END;
+    IF ~first THEN Texts.WriteLn(W) END;
     FOR i := 0 TO maxObj-1 DO
       IF store[i].used & (store[i].kind = kDeploy) THEN
         Texts.WriteString(W, "deployment "); Texts.WriteString(W, store[i].name);
@@ -223,7 +352,9 @@ MODULE Kube;  (*A minimal Kubernetes control plane in Oberon-07.
             FOR k := 0 TO maxObj-1 DO
               IF store[k].used & (store[k].kind = kPod) & (store[k].owner = store[j].name) THEN
                 Texts.WriteString(W, "    pod "); Texts.WriteString(W, store[k].name);
-                Texts.WriteString(W, " @"); Texts.WriteString(W, store[k].node);
+                IF store[k].node[0] # 0X THEN
+                  Texts.WriteString(W, " @"); Texts.WriteString(W, store[k].node)
+                END;
                 IF store[k].phase = phRunning THEN Texts.WriteString(W, " Running")
                 ELSE Texts.WriteString(W, " Pending") END;
                 Texts.WriteLn(W)
@@ -232,9 +363,29 @@ MODULE Kube;  (*A minimal Kubernetes control plane in Oberon-07.
           END
         END
       END
-    END;
-    Texts.Append(Oberon.Log, W.buf)
+    END
+  END describe;
+
+  PROCEDURE Get*;
+  BEGIN describe(W); Texts.Append(Oberon.Log, W.buf)
   END Get;
+
+  (*Texts in the 2016 system calls notify on every change, without a NIL check:
+    a text that no viewer shows still needs one*)
+  PROCEDURE quiet(T: Texts.Text; op, beg, end: INTEGER);
+  END quiet;
+
+  (*the same as Get, into a file (Kube.State unless named): what tests read back from the disk*)
+  PROCEDURE Save*;
+    VAR T: Texts.Text; V: Texts.Writer; S: Texts.Scanner; file: Name;
+  BEGIN Texts.OpenScanner(S, Oberon.Par.text, Oberon.Par.pos); Texts.Scan(S);
+    file[0] := 0X;
+    IF S.class = Texts.Name THEN append(file, S.s) ELSE append(file, "Kube.State") END;
+    Texts.OpenWriter(V); describe(V);
+    NEW(T); Texts.Open(T, ""); T.notify := quiet; Texts.Append(T, V.buf); Texts.Close(T, file);
+    Texts.WriteString(W, "kube: state saved to "); Texts.WriteString(W, file); Texts.WriteLn(W);
+    Texts.Append(Oberon.Log, W.buf)
+  END Save;
 
   PROCEDURE Apply*;
     VAR S: Texts.Scanner; nm, img: Name; rep: INTEGER;
@@ -271,8 +422,12 @@ MODULE Kube;  (*A minimal Kubernetes control plane in Oberon-07.
     Get
   END Run;
 
+  (*Kube.Start local also creates the three local nodes; without it the
+    cluster waits for kubelets on the radio (KubeNet)*)
   PROCEDURE Start*;
-  BEGIN
+    VAR S: Texts.Scanner;
+  BEGIN Texts.OpenScanner(S, Oberon.Par.text, Oberon.Par.pos); Texts.Scan(S);
+    IF (S.class = Texts.Name) & (S.s = "local") THEN Local END;
     IF ~running THEN
       tDeploy := Oberon.NewTask(ctlDeploy, period); Oberon.Install(tDeploy);
       tRS := Oberon.NewTask(ctlRS, period); Oberon.Install(tRS);
@@ -297,10 +452,10 @@ MODULE Kube;  (*A minimal Kubernetes control plane in Oberon-07.
   BEGIN FOR i := 0 TO maxObj-1 DO store[i].used := FALSE END; seq := 0
   END Reset;
 
-  (*self-contained demo for the Norebo command line (one process)*)
+  (*self-contained demo for the Norebo command line (one process, local nodes)*)
   PROCEDURE Demo*;
     VAR ignore: BOOLEAN;
-  BEGIN Reset;
+  BEGIN Reset; Local;
     Texts.WriteString(W, "== apply deployment web, replicas=3 =="); Texts.WriteLn(W);
     Texts.Append(Oberon.Log, W.buf);
     applyDep("web", "nginx", 3); Step; Step; Get;
@@ -313,6 +468,5 @@ MODULE Kube;  (*A minimal Kubernetes control plane in Oberon-07.
   END Demo;
 
 BEGIN Texts.OpenWriter(W); running := FALSE;
-  nodes[0] := "node-a"; nodes[1] := "node-b"; nodes[2] := "node-c";
   Reset
 END Kube.
