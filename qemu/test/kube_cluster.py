@@ -102,6 +102,8 @@ class Cluster:
             docker("rm", "-f", self.name(m), check=False)
         docker("network", "rm", self.net, check=False)
         if keep:
+            for d in self.machines:
+                (self.work / f"{d}.dsk").unlink(missing_ok=True)   # big; the air log is what tells
             print(f"  files kept in {self.work}")
         else:
             shutil.rmtree(self.work, ignore_errors=True)
