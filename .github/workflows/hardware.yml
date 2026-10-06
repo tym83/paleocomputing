@@ -10,6 +10,11 @@ name: hardware
 
 on:
   workflow_dispatch:
+    inputs:
+      kube_load:
+        description: 'Also run the Kube load test (several QEMU machines per node count)'
+        type: boolean
+        default: false
   schedule:
     # Once a week, on the night from Sunday to Monday UTC.
     - cron: '17 3 * * 1'
@@ -118,6 +123,13 @@ jobs:
       - name: Keyboard
         run: python3 qemu/test/keyboard_check.py
 
+      # Integer arithmetic of the running system against Python's: a product
+      # followed by MOD used to return the product's high part (finding 87).
+      - name: Arithmetic in the system
+        run: |
+          make -C impl tools
+          python3 qemu/test/arith_check.py
+
       - name: Language model in the system
         run: |
           make -C impl tools
@@ -132,6 +144,10 @@ jobs:
       # talking over the radio; a node switched off goes NotReady and its pods move.
       - name: Kube over the radio
         run: python3 qemu/test/kube_radio_check.py
+      # Disaster recovery for that cluster: a node lost and back, the control
+      # plane lost and restored from its disk, the air lost, a lossy air.
+      - name: Kube DR
+        run: python3 qemu/test/kube_dr_check.py
       # Indexing through a descriptor (release 14): QEMU with chk=on,desc=on against
       # the native RTL model with -DWITH_DESC; there is no WASM build of this core, so
       # Verilator is needed here. The central issue's loop and random IDX with
@@ -142,3 +158,29 @@ jobs:
           sudo apt-get install -y --no-install-recommends verilator >/dev/null
           make -C impl build/obj_desc/run_tests_desc
           python3 qemu/test/compare_idx.py
+
+  # Load on Kube over the radio: one air, a control plane and N nodes, each a
+  # QEMU machine. On request only; every machine keeps a core busy (Oberon's
+  # loop does not idle), so the larger counts also measure a crowded host.
+  kube-load:
+    if: github.event_name == 'workflow_dispatch' && inputs.kube_load
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        nodes: [2, 4, 6, 8]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Target build
+        run: make build
+        working-directory: qemu
+      - name: Tools
+        run: make -C impl tools
+      - name: Load, ${{ matrix.nodes }} nodes
+        run: |
+          python3 qemu/test/kube_load_check.py --nodes ${{ matrix.nodes }} --json | tee load.txt
+          echo "### Kube load, ${{ matrix.nodes }} nodes" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          tail -1 load.txt >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
