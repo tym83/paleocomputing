@@ -5,8 +5,14 @@
  * more importantly, puts the remainder in H. Wirth's signed division rounds DOWN,
  * not toward zero as in C; this shows in our ALU model and is confirmed by comparison.
  */
-DEF_HELPER_FLAGS_3(div, TCG_CALL_NO_RWG, i32, env, i32, i32)
-DEF_HELPER_FLAGS_3(udiv, TCG_CALL_NO_RWG, i32, env, i32, i32)
+/*
+ * No call flags: the helpers write H (env->h), which is a TCG global (cpu_h).
+ * With TCG_CALL_NO_RWG the code generator was free to keep H in a host
+ * register across the call, and the remainder was lost behind the high part
+ * of an earlier multiplication: MOD returned that high part (finding 87).
+ */
+DEF_HELPER_3(div, i32, env, i32, i32)
+DEF_HELPER_3(udiv, i32, env, i32, i32)
 
 /* A refusal instead of a silently wrong result while floating point is not written. */
 DEF_HELPER_FLAGS_2(unimplemented, TCG_CALL_NO_WG, void, env, i32)
