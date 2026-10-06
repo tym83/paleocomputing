@@ -78,7 +78,12 @@ def main():
               f"{sorted((n, sorted(s)) for n, s in running(during).items())}")
         t_off = time.time()
         c.on("plane")
-        c.run("plane", "Kube.Start", "KubeNet.Serve")
+        # A pause between the two commands, longer than the heartbeat timeout:
+        # typing over VNC in the cloud takes that long, and the restored nodes
+        # must not lose their grace before the plane even listens.
+        c.run("plane", "Kube.Start")
+        time.sleep(5)
+        c.run("plane", "KubeNet.Serve")
         t = c.wait(lambda b, a: converged(6, both)(b, a) and running(b) == before
                    and all(set(a.get(n, [])) == before[n] for n in both), 20)
         check("4b. plane back from its disk: the same pods on the same nodes", t is not None,

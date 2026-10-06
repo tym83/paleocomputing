@@ -132,7 +132,9 @@ at the next boot, and a new file per change would fill the disk under churn.
 
 Restored nodes get one heartbeat timeout to report again before they count as
 NotReady, as the node lifecycle controller gives nodes a grace period after it
-restarts. `Kube.Reset` forgets every object, on the disk too.
+restarts. The grace starts when `KubeNet.Serve` begins to listen, not when the
+store is read: in the cloud, typing the second command over VNC took longer
+than the timeout, and every pod moved although none had stopped. `Kube.Reset` forgets every object, on the disk too.
 
 ## Disaster recovery
 

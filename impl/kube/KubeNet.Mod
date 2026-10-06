@@ -119,7 +119,7 @@ MODULE KubeNet;  (*Kube over Wirth's radio: a control plane and kubelets on sepa
   END start;
 
   PROCEDURE Serve*;
-  BEGIN start(1);
+  BEGIN start(1); Kube.Listening(Kernel.Time());
     Texts.WriteString(W, "kubenet: control plane on the air"); Texts.WriteLn(W);
     Texts.Append(Oberon.Log, W.buf)
   END Serve;
