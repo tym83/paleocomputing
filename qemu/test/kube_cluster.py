@@ -11,13 +11,14 @@ disk stays) and booted again with `on`; that is a reboot from the same disk.
 `relay(loss)` replaces the relay, which is also how the air goes away and
 comes back.
 """
-import json, pathlib, shutil, sys, tempfile, time, uuid
+import json, pathlib, re, shutil, sys, tempfile, time, uuid
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 IMPL = ROOT / "impl"
 sys.path.insert(0, str(IMPL / "tools"))
 sys.path.insert(0, str(ROOT / "qemu" / "test"))
 from install_modules import install_modules, DEFAULT   # noqa: E402
+from oberonfs import Image                             # noqa: E402
 from qmp_machine import QMP, docker                    # noqa: E402
 sys.path.insert(0, str(ROOT / "qemu" / "radio"))
 from listen import cluster_tag                          # noqa: E402
@@ -25,7 +26,7 @@ from listen import cluster_tag                          # noqa: E402
 NOREBO = IMPL / "ext" / "norebo"
 DISK = IMPL / "ext" / "disk" / "Oberon-2016-08-02.dsk"
 BEAT = 1.0          # KubeNet: heartbeat and assignment period, s
-TTL = 3.0           # KubeNet: a node silent this long goes NotReady, s
+TTL = 5.0           # KubeNet: a node silent this long goes NotReady, s
 TAG = cluster_tag("kube")   # the default cluster
 
 
@@ -157,6 +158,21 @@ class Cluster:
         time.sleep(2)
         self._connect(m)
         time.sleep(boot)
+
+    def state(self, m="plane"):
+        """What Kube.Get prints, read back from the machine's disk: Kube.Save
+        writes it, the machine is switched off so QEMU flushes the disk."""
+        self.run(m, "Kube.Save Kube.State")
+        time.sleep(2)
+        self.off(m)
+        img = Image(self.work / f"{m}.dsk")
+        files = img.files()
+        if "Kube.State" not in files:
+            return ""
+        text = img.read(files["Kube.State"]).decode("latin-1")
+        text = text[text.find("nodes: "):]
+        return "\n".join(l for l in re.split(r"[\r\n]", text)
+                         if re.search(r"(nodes:|deployment|replicaset|pod) ", l))
 
     def screenshot(self, m, path):
         self.q[m].screenshot(self.work, path)

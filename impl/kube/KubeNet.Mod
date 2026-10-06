@@ -15,7 +15,7 @@ MODULE KubeNet;  (*Kube over Wirth's radio: a control plane and kubelets on sepa
   A kubelet sends a heartbeat every second with the pods it runs. The control
   plane takes a heartbeat as "the node is Ready and runs these pods", sends each
   Ready node the pods bound to it every second, and marks a node NotReady when it
-  has been silent for three seconds; Kube's scheduler then moves its pods.
+  has been silent for five seconds; Kube's scheduler then moves its pods.
   The kubelet runs exactly what the last assignment said: level-triggered, like
   the real one. A lost message is repaired by the next one.
 
@@ -32,7 +32,7 @@ MODULE KubeNet;  (*Kube over Wirth's radio: a control plane and kubelets on sepa
     nameLen = 8; maxIds = 14;     (*1 + 8 + 1 + 14 = 24 data bytes*)
     hdr = 1 + nameLen + 1;        (*cluster, name, count*)
     period = 100;                 (*ms between ticks of the task*)
-    beat = 1000; ttl = 3000;      (*ms*)
+    beat = 1000; ttl = 5000;      (*ms: five missed heartbeats; three moved pods on a lossy air*)
 
   TYPE Ids = ARRAY maxIds OF BYTE;
 

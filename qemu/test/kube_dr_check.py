@@ -19,11 +19,14 @@ kube_cluster.py); each scenario must converge again within its deadline:
                     converged; the number of heartbeat timeouts is reported;
   7. another cluster  a station sends "node-a: run nothing" tagged as another
                     cluster: node-a keeps its pods. The same message tagged
-                    as this cluster, the control, does empty node-a.
+                    as this cluster, the control, does empty node-a;
+  8. rollout        web 6 moves to a new image: at no moment do fewer than 6
+                    or more than 7 pods run (maxUnavailable 0, maxSurge 1), and
+                    in the end only the new ReplicaSet is left, with 6 pods.
 
   python3 qemu/test/kube_dr_check.py [QEMU tree]   (default ../.qemu-work)
 """
-import pathlib, sys, time
+import pathlib, re, sys, time
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from kube_cluster import Cluster, ROOT, TAG, TTL, converged, running   # noqa: E402
@@ -147,7 +150,31 @@ def main():
               any(not m["ids"] for m in heard), f"{sum(1 for m in heard if not m['ids'])} empty heartbeats")
         t = c.wait(converged(6, both), 20)
         check("7c. the control plane puts the pods back", t is not None, f"in {secs(t)}")
+        # 8. rollout
+        c.run("plane", "Kube.Apply web 6 nginx2 ~")
+        t8 = time.time()
+        low, high, last_change = 6, 6, t8
+        prev = None
+        while time.time() - t8 < 90:
+            beats, _ = c.view(window=1.5)
+            ids = [i for s_ in running(beats, both).values() for i in s_]
+            n = len(set(ids))
+            if len(beats) == 2:
+                low, high = min(low, n), max(high, n)
+            cur = sorted(ids)
+            if cur != prev:
+                prev, last_change = cur, time.time()
+            if time.time() - last_change > 10 and n == 6:
+                break
+            time.sleep(0.5)
+        check("8a. never fewer than 6 pods running during the rollout", low >= 6, f"lowest {low}")
+        check("8b. never more than 7", high <= 7, f"highest {high}")
         c.screenshot("plane", c.work / "plane.png")
+        st = c.state()
+        rs = re.findall(r"replicaset (\S+)\s+desired=(\d+)\s+image=(\S+)", st)
+        pods = re.findall(r"pod \S+ @node-[ab] Running", st)
+        check("8c. only the new ReplicaSet is left, 6 pods Running", len(rs) == 1 and rs[0][1:] == ("6", "nginx2")
+              and len(pods) == 6, f"{rs}, {len(pods)} running")
     finally:
         ok = all(results)
         c.close(keep=not ok)

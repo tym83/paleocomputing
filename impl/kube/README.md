@@ -20,11 +20,11 @@ as kube-controller-manager would.
 |---|---|
 | etcd | the `store` array of records |
 | the API and kubectl | middle-click commands: `Kube.Apply`, `Kube.Get`, `Kube.DeletePod` |
-| deployment controller | `ctlDeploy`: one ReplicaSet per Deployment, with its replicas and image |
+| deployment controller | `ctlDeploy`: one ReplicaSet per image; a new image is rolled out one pod at a time |
 | replicaset controller | `ctlRS`: the number of Pods equals `replicas` |
 | scheduler | `ctlNode`: binds a Pod to the least loaded Ready node, and unbinds the Pods of a node that went NotReady so they move |
 | kubelet | `KubeNet` on a node machine: runs what the control plane assigned and reports it in a heartbeat |
-| node lifecycle controller | `Kube.Expire`: a node silent for three seconds goes NotReady |
+| node lifecycle controller | `Kube.Expire`: a node silent for five seconds goes NotReady |
 | ownerReferences | the `owner` field: pod to replicaset, replicaset to deployment |
 | nodes | other Oberon machines on Wirth's radio, or three local nodes for a single machine |
 
@@ -55,7 +55,7 @@ click over VNC):
 |---|---|
 | `Kube.Start` | install the three controllers and wait for nodes on the radio |
 | `Kube.Start local` | the same with three local nodes, for a single machine |
-| `Kube.Apply name N image` | declare a deployment or change its replicas |
+| `Kube.Apply name N image` | declare a deployment, change its replicas, or roll it out to a new image |
 | `Kube.Get` | print the object tree into the log |
 | `Kube.DeletePod "name"` | delete a pod; the next tick recreates it under a new name |
 | `Kube.Stop` | remove the controllers, keeping the objects |
@@ -101,7 +101,7 @@ kubelet broadcasts a heartbeat every second with the pods it runs; the control
 plane sends every Ready node the list of pods bound to it every second. Both
 sides are level-triggered, like their Kubernetes counterparts: a node runs
 exactly what the last list said, so a lost packet is repaired by the next one.
-A node that has been silent for three seconds goes NotReady, and the scheduler
+A node that has been silent for five seconds goes NotReady, and the scheduler
 moves its pods to the nodes that remain. Messages are kept to one packet on
 purpose: the radio has no collision avoidance, and two stations sending longer
 messages at once would interleave them at the receivers.
@@ -153,16 +153,35 @@ in the hardware workflow.
 
 | what fails | what happens | time |
 |---|---|---|
-| a node is switched off | NotReady after the 3 s heartbeat timeout, its pods run on the other node | about 4 s |
+| a node is switched off | NotReady after the 5 s heartbeat timeout, its pods run on the other node | about 7 s |
 | the node comes back and joins | Ready again; when the deployment is scaled up, the new pods go to it, the least loaded node | at once |
 | the control plane is switched off | the kubelets keep running what they were given | |
 | the control plane boots again | the store comes back from its disk: the same pods on the same nodes, not one assignment changes | at once after `Kube.Start` |
-| the air (the relay) is gone for 20 s | both nodes go NotReady on the plane; with the air back the cluster converges again | about 5 s |
-| 30 % of deliveries are lost for a minute | a few heartbeat gaps exceed the timeout, so a few pods move; the cluster stays whole and converges | |
+| the air (the relay) is gone for 20 s | both nodes go NotReady on the plane; with the air back the cluster converges again | about 7 s |
+| 30 % of deliveries are lost for a minute | no heartbeat gap reaches the timeout; no pod moves | |
+| another cluster on the air sends "node-a: run nothing" | node-a ignores it; the same message tagged as this cluster, the control, does empty node-a, and the plane puts the pods back | |
+| `web 6` is rolled out to a new image | 6 to 7 pods run at every moment; in the end only the new ReplicaSet is left | |
 
-The 3 s timeout is three missed heartbeats. On a lossy air that is tight: the
-real kubelet reports every 10 s and the control plane waits 40 s. The timeout is
-kept short here so the tests stay short.
+The timeout is five missed heartbeats. It was three at first: on an air losing
+30 % of deliveries, three heartbeats in a row went missing a few times a
+minute, the plane took the node for NotReady and moved pods that never
+stopped. With five, none moved; the price is a slower failover, about 7 s
+instead of 4. The real kubelet reports every 10 s and the control plane waits
+40 s, four missed reports: the same trade, at another scale.
+
+Machines on one air prefer different hosts of the Kubernetes cluster they run
+in (`retro-machine` gives them the air as a label and a preferred
+anti-affinity), so losing a host takes as few nodes as it can.
+
+## Rollouts
+
+`Kube.Apply web 6 nginx2` on a running `web` changes its image. The
+deployment controller makes a new ReplicaSet for the image (`web-rs2`, then
+`web-rs3`) and moves the pods one at a time, as Kubernetes does by default
+(maxSurge 1, maxUnavailable 0): one new pod is added, and one old pod goes
+only once more pods run than wanted, that is, once the new pod's kubelet has
+reported it. An old ReplicaSet left without replicas and pods is removed. A
+ReplicaSet that has to shrink removes Pending pods first.
 
 Getting these to pass found two faults in the QEMU machine, not in Kube: `MOD`
 after a multiplication could return the high part of the product, so the store
@@ -202,5 +221,6 @@ machine ([finding 86](../docs/FINDING-86-qemu-keyboard-byte-load.md)).
 
 ## Next
 
-Deployment updates as rollouts, and a node that really runs something for its
-pods: a Pod as an Oberon task started from a module named by the image.
+A node that really runs something for its pods: a Pod as an Oberon task
+started from a module named by the image, so that a rollout replaces running
+code and a readiness check can hold it back.
