@@ -58,8 +58,14 @@ def main():
         t = c.wait(lambda b, x: set(b) >= set(c.nodes), 30)
         phase("join", None if t is None else time.time() - t0, 30)
 
-        t0 = time.time()
-        c.run("plane", f"Kube.Apply web {rep} nginx ~")
+        # On a crowded host a typed command can get lost: if no pod is assigned
+        # within 15 s the command is typed again, and the attempts are recorded.
+        for attempt in range(1, 4):
+            t0 = time.time()
+            c.run("plane", f"Kube.Apply web {rep} nginx ~")
+            if c.wait(lambda b, x: any(x.values()), 15) is not None:
+                break
+        res["apply_attempts"] = attempt
 
         def spread(b, x):
             if not converged(rep, c.nodes)(b, x):
