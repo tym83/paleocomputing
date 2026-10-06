@@ -183,6 +183,21 @@ only once more pods run than wanted, that is, once the new pod's kubelet has
 reported it. An old ReplicaSet left without replicas and pods is removed. A
 ReplicaSet that has to shrink removes Pending pods first.
 
+A deleted pod keeps running until its kubelet hears the next assignment, up to
+a second later. At first the controller did not wait for that, and for a
+moment eight pods ran where seven were the most allowed; real Kubernetes does
+the same unless a Deployment sets `podReplacementPolicy: TerminationComplete`.
+Kube now counts the ids a kubelet still reports but no pod has as pods being
+stopped, and does not add a new pod while there are any.
+
+A kubelet knows a pod only by its one-byte id. Ids used to be the lowest free
+one, so the new pod got the id of the old pod it had just replaced, the
+kubelet took it for the same pod, and the rollout changed nothing on the node:
+the store said nginx2, the node never restarted anything. Kubernetes never
+reuses a pod's UID for the same reason. Ids now go round, the next after the
+last one given, and the DR check requires that no id of the old pods runs
+after a rollout.
+
 Getting these to pass found two faults in the QEMU machine, not in Kube: `MOD`
 after a multiplication could return the high part of the product, so the store
 was never written ([finding 87](../docs/FINDING-87-qemu-div-remainder.md)); and
@@ -200,16 +215,17 @@ GitHub runner with 4 cores:
 
 | nodes | pods | converge | failover | frames per second on the air | false NotReady |
 |---|---|---|---|---|---|
-| 2 | 6 | 3.3 s | 4.0 s | 4.0 | 0 |
-| 4 | 12 | 3.9 s | 4.5 s | 8.0 | 0 |
-| 6 | 18 | 6.0 s | 3.5 s | 11.7 | 0 |
-| 8 | 24 | 4.1 s | 4.6 s | 15.8 | 0 |
+| 2 | 6 | 3.3 s | 6.0 s | 4.0 | 0 |
+| 4 | 12 | 2.8 s | 6.0 s | 7.9 | 0 |
+| 6 | 18 | 3.0 s | 6.1 s | 11.8 | 0 |
+| 8 | 24 | 3.5 s | 6.1 s | 15.4 | 0 |
 
 Every node hears its assignment and reports a heartbeat once a second, up to
 eight nodes. Each machine keeps a host core busy, because Oberon's loop never
 idles, so with eight nodes the runner is more than twice oversubscribed; that
 showed as a command typed into the control plane that once never ran, not as
-a fault of the cluster.
+a fault of the cluster. Failover is the 5 s heartbeat timeout plus a second
+for the next assignment to reach the remaining nodes.
 
 ## In Cozystack
 

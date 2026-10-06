@@ -145,15 +145,20 @@ MODULE Kube;  (*A minimal Kubernetes control plane in Oberon-07.
     RETURN k
   END newRS;
 
-  (*the short id the radio carries: one byte, 1..255, not used by another pod*)
+  (*the short id the radio carries: one byte, 1..255. Ids go round, the next
+    after the last one given, skipping those in use: a kubelet knows a pod
+    only by its id, and a lowest-free id gave a new pod the id of the old one
+    it replaced, so the kubelet took it for the same pod and a rollout changed
+    nothing on the node. Kubernetes never reuses a pod's UID for this reason;
+    here an id comes back after 255 others, long after any kubelet dropped it*)
   PROCEDURE freeId(): INTEGER;
-    VAR i, id: INTEGER; taken: BOOLEAN;
-  BEGIN id := 0;
-    REPEAT INC(id); taken := FALSE;
+    VAR i, id, tries: INTEGER; taken: BOOLEAN;
+  BEGIN id := seq MOD 255; tries := 0;
+    REPEAT id := id MOD 255 + 1; INC(tries); taken := FALSE;
       FOR i := 0 TO maxObj-1 DO
         IF store[i].used & (store[i].kind = kPod) & (store[i].id = id) THEN taken := TRUE END
       END
-    UNTIL ~taken OR (id = 255);
+    UNTIL ~taken OR (tries = 255);
     RETURN id
   END freeId;
 
@@ -193,6 +198,19 @@ MODULE Kube;  (*A minimal Kubernetes control plane in Oberon-07.
     RETURN c
   END countRunning;
 
+  (*pods still run by kubelets although they were deleted: they count against
+    the surge until they are gone (as podReplacementPolicy TerminationComplete
+    does in Kubernetes; without it, for a second, one pod more than the surge
+    allows ran)*)
+  PROCEDURE stopping(): INTEGER;
+    VAR i, c: INTEGER;
+  BEGIN c := 0;
+    FOR i := 0 TO maxObj-1 DO
+      IF store[i].used & (store[i].kind = kNode) & (store[i].phase = phReady) THEN INC(c, store[i].replicas) END
+    END;
+    RETURN c
+  END stopping;
+
   (*one step of a deployment: the RS of its image gets the replicas; while
     older RSs still have pods, the step is a rolling one. The deployment's id
     is its last revision*)
@@ -220,7 +238,7 @@ MODULE Kube;  (*A minimal Kubernetes control plane in Oberon-07.
       IF (oldRep = 0) & (oldRun = 0) THEN store[cur].replicas := want   (*no rollout: plain scale*)
       ELSE
         newRun := countRunning(store[cur].name);
-        IF (store[cur].replicas < want) & (store[cur].replicas + oldRep < want + 1) THEN
+        IF (store[cur].replicas < want) & (store[cur].replicas + oldRep + stopping() < want + 1) THEN
           INC(store[cur].replicas)                                  (*surge one new pod*)
         ELSIF store[cur].replicas > want THEN store[cur].replicas := want
         END;
@@ -375,10 +393,20 @@ MODULE Kube;  (*A minimal Kubernetes control plane in Oberon-07.
     END
   END PodIds;
 
-  (*a kubelet reported the pods it runs: those are Running, the others Pending*)
+  (*a kubelet reported the pods it runs: those are Running, the others Pending.
+    Ids it still runs that no pod has any more are pods being stopped; the
+    node keeps their number (in replicas) until its next report*)
   PROCEDURE Report*(nm: ARRAY OF CHAR; ids: ARRAY OF BYTE; n: INTEGER);
-    VAR i, j: INTEGER; on: BOOLEAN;
-  BEGIN
+    VAR i, j, k, gone: INTEGER; on: BOOLEAN;
+  BEGIN gone := 0;
+    FOR j := 0 TO n-1 DO
+      on := FALSE;
+      FOR i := 0 TO maxObj-1 DO
+        IF store[i].used & (store[i].kind = kPod) & (store[i].id = ids[j]) & (store[i].node = nm) THEN on := TRUE END
+      END;
+      IF ~on THEN INC(gone) END
+    END;
+    k := find(kNode, nm); IF k >= 0 THEN store[k].replicas := gone END;
     FOR i := 0 TO maxObj-1 DO
       IF store[i].used & (store[i].kind = kPod) & (store[i].node = nm) THEN
         on := FALSE;
