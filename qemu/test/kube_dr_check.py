@@ -16,14 +16,17 @@ kube_cluster.py); each scenario must converge again within its deadline:
                     plane, which unbinds their pods; with the air back the
                     cluster converges again;
   6. lossy air      30 % of deliveries lost for 60 s: the cluster stays
-                    converged; the number of heartbeat timeouts is reported.
+                    converged; the number of heartbeat timeouts is reported;
+  7. another cluster  a station sends "node-a: run nothing" tagged as another
+                    cluster: node-a keeps its pods. The same message tagged
+                    as this cluster, the control, does empty node-a.
 
   python3 qemu/test/kube_dr_check.py [QEMU tree]   (default ../.qemu-work)
 """
 import pathlib, sys, time
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from kube_cluster import Cluster, ROOT, TTL, converged, running   # noqa: E402
+from kube_cluster import Cluster, ROOT, TAG, TTL, converged, running   # noqa: E402
 
 QEMU = sys.argv[1] if len(sys.argv) > 1 else ROOT / ".qemu-work"
 results = []
@@ -121,6 +124,29 @@ def main():
         check("6. 30 % loss for 60 s, then clean air: converged", t is not None,
               f"{gaps} heartbeat gaps over {TTL:.0f} s heard by the listener, "
               f"{moves} changes of assignment while lossy, converged in {secs(t)}")
+        # 7. another cluster
+        real = c.raw("assign", "node-a")
+        def forged(tag):
+            f = bytearray(real)
+            f[1 + 8] = tag                      # payload: 8 header bytes, then the cluster tag
+            f[1 + 17] = 0                       # no pods
+            f[1 + 4:1 + 8] = (10).to_bytes(4, "little")
+            return bytes(f)
+        beats, _ = c.view()
+        keep = running(beats)["node-a"]
+        t7 = time.time()
+        c.inject(forged(TAG % 255 + 1), times=5)
+        heard = [m for m in c.air(t7) if m["kind"] == "heartbeat" and m["node"] == "node-a"]
+        check("7a. another cluster's assignment is ignored",
+              bool(heard) and all(set(m["ids"]) == keep for m in heard),
+              f"{len(heard)} heartbeats of node-a, all with {sorted(keep)}")
+        t7 = time.time()
+        c.inject(forged(TAG), times=15, interval=0.2)   # faster than the plane repairs it
+        heard = [m for m in c.air(t7) if m["kind"] == "heartbeat" and m["node"] == "node-a"]
+        check("7b. control: the same message tagged as this cluster empties node-a",
+              any(not m["ids"] for m in heard), f"{sum(1 for m in heard if not m['ids'])} empty heartbeats")
+        t = c.wait(converged(6, both), 20)
+        check("7c. the control plane puts the pods back", t is not None, f"in {secs(t)}")
         c.screenshot("plane", c.work / "plane.png")
     finally:
         ok = all(results)
