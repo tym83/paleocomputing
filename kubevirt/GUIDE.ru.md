@@ -73,11 +73,11 @@ kubectl -n $KV_NS get kubevirt kubevirt -o jsonpath='{.spec.workloadUpdateStrate
 ghcr.io/tym83/paleocomputing/virt-launcher:<версия KubeVirt>-paleo-<выпуск>
 ```
 
-например `virt-launcher:v1.8.4-paleo-v0.1.20`. Они подписаны процессом выпуска;
+например `virt-launcher:v1.8.4-paleo-v0.1.21`. Они подписаны процессом выпуска;
 проверить перед использованием:
 
 ```sh
-cosign verify ghcr.io/tym83/paleocomputing/virt-launcher:v1.8.4-paleo-v0.1.20 \
+cosign verify ghcr.io/tym83/paleocomputing/virt-launcher:v1.8.4-paleo-v0.1.21 \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   --certificate-identity https://github.com/tym83/paleocomputing/.github/workflows/publish.yml@refs/heads/main
 ```
@@ -89,11 +89,11 @@ cosign verify ghcr.io/tym83/paleocomputing/virt-launcher:v1.8.4-paleo-v0.1.20 \
 незнакомой раскладкой аргументов и чисто убирает свою запись.
 
 ```sh
-git clone --depth 1 -b v0.1.20 https://github.com/tym83/paleocomputing
+git clone --depth 1 -b v0.1.21 https://github.com/tym83/paleocomputing
 cd paleocomputing
 
 KV_VERSION=$(kubectl -n $KV_NS get kubevirt kubevirt -o jsonpath='{.status.observedKubeVirtVersion}')
-echo "$KV_VERSION ghcr.io/tym83/paleocomputing/virt-launcher:$KV_VERSION-paleo-v0.1.20" > /tmp/launchers.txt
+echo "$KV_VERSION ghcr.io/tym83/paleocomputing/virt-launcher:$KV_VERSION-paleo-v0.1.21" > /tmp/launchers.txt
 
 # Необязательно: сюда скрипт пишет своё состояние.
 kubectl -n $KV_NS create configmap kubevirt-paleo-launcher-status
@@ -135,7 +135,7 @@ spec:
           [{"op":"test","path":"/spec/template/spec/containers/0/name","value":"virt-controller"},
            {"op":"test","path":"/spec/template/spec/containers/0/args/0","value":"--launcher-image"},
            {"op":"replace","path":"/spec/template/spec/containers/0/args/1",
-            "value":"ghcr.io/tym83/paleocomputing/virt-launcher:v1.8.4-paleo-v0.1.20"}]
+            "value":"ghcr.io/tym83/paleocomputing/virt-launcher:v1.8.4-paleo-v0.1.21"}]
 ```
 
 ⚠ **Обновление KubeVirt**: launcher обязан идти следом. Меняйте тег на новую
@@ -153,7 +153,7 @@ spec:
 смотрит на образ `dev` с ПЗУ и диском, поэтому сначала прибейте его к выпуску:
 
 ```sh
-python3 marketplace/tools/pin-images.py --release v0.1.20
+python3 marketplace/tools/pin-images.py --release v0.1.21
 
 helm install wirth marketplace/repos/machines/packages/apps/oberon-vm \
   --namespace oberon --create-namespace \
@@ -179,7 +179,7 @@ helm install wirth marketplace/repos/machines/packages/apps/oberon-vm \
 так и задумано.
 
 Диск задача кладёт только один раз и никогда не перезаписывает, потому что он
-принадлежит пользователю. После v0.1.20 паспорт машины ещё и объявляет размер
+принадлежит пользователю. После v0.1.21 паспорт машины ещё и объявляет размер
 диска, 8 МиБ, и задача дополняет диск поменьше нулями до этого размера, сохраняя
 содержимое; диск, оставшийся от прежнего выпуска, увеличивается так же.
 Поставляемый образ занимает около 1 МБ, файловая система Оберона пишет новые
@@ -238,9 +238,9 @@ KUBECTL=kubectl KUBEVIRT_NAMESPACE=$KV_NS LAUNCHER_TABLE=/tmp/launchers.txt sh $
 Docker; опубликованный подходит:
 
 ```sh
-docker pull ghcr.io/tym83/paleocomputing/virt-launcher:v1.8.4-paleo-v0.1.20
-python3 marketplace/tools/pin-images.py --release v0.1.20
-export KUBEVIRT_VERSION=v1.8.4 LAUNCHER_IMAGE=ghcr.io/tym83/paleocomputing/virt-launcher:v1.8.4-paleo-v0.1.20
+docker pull ghcr.io/tym83/paleocomputing/virt-launcher:v1.8.4-paleo-v0.1.21
+python3 marketplace/tools/pin-images.py --release v0.1.21
+export KUBEVIRT_VERSION=v1.8.4 LAUNCHER_IMAGE=ghcr.io/tym83/paleocomputing/virt-launcher:v1.8.4-paleo-v0.1.21
 for s in tools cluster kubevirt launcher machine screen; do kubevirt/e2e.sh $s || break; done
 kubevirt/e2e.sh down
 ```
