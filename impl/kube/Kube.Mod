@@ -53,6 +53,7 @@ MODULE Kube;  (*A minimal Kubernetes control plane in Oberon-07.
     END;
 
   VAR
+    capacity*: INTEGER;   (*pods a node can run; KubeNet sets what one message carries*)
     store: ARRAY maxObj OF Object;
     W: Texts.Writer;
     tDeploy, tRS, tNode, tStore: Oberon.Task;
@@ -117,7 +118,11 @@ MODULE Kube;  (*A minimal Kubernetes control plane in Oberon-07.
     RETURN (k >= 0) & (store[k].phase = phReady)
   END ready;
 
-  (*the Ready node with the fewest pods; -1 when no node is Ready*)
+  PROCEDURE SetCapacity*(n: INTEGER);
+  BEGIN capacity := n
+  END SetCapacity;
+
+  (*the Ready node with the fewest pods and room for one more; -1 when there is none*)
   PROCEDURE leastNode(): INTEGER;
     VAR i, j, best, bestLoad, load: INTEGER;
   BEGIN best := -1; bestLoad := maxObj + 1;
@@ -127,7 +132,7 @@ MODULE Kube;  (*A minimal Kubernetes control plane in Oberon-07.
         FOR j := 0 TO maxObj-1 DO
           IF store[j].used & (store[j].kind = kPod) & (store[j].node = store[i].name) THEN INC(load) END
         END;
-        IF load < bestLoad THEN bestLoad := load; best := i END
+        IF (load < bestLoad) & (load < capacity) THEN bestLoad := load; best := i END
       END
     END;
     RETURN best
@@ -767,6 +772,6 @@ MODULE Kube;  (*A minimal Kubernetes control plane in Oberon-07.
     applyDep("web", "nginx2", 3); Step; Get; Step; Get; Step; Step; Step; Step; Step; Get
   END Demo;
 
-BEGIN Texts.OpenWriter(W); running := FALSE; paused := FALSE;
+BEGIN Texts.OpenWriter(W); running := FALSE; paused := FALSE; capacity := maxObj;
   clear; gen := 0; slot := 0; savedSum := sum()
 END Kube.

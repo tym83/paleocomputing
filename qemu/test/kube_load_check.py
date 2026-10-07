@@ -51,10 +51,10 @@ def main():
 
     c = Cluster(a.qemu, nodes=a.nodes, loss=a.loss)
     try:
-        c.run("plane", "Kube.Start", "KubeNet.Serve")
+        c.serve()
         t0 = time.time()
         for n in c.nodes:
-            c.run(n, f"KubeNet.Join {n}")
+            c.join(n)
         t = c.wait(lambda b, x: set(b) >= set(c.nodes), 30)
         phase("join", None if t is None else time.time() - t0, 30)
 
