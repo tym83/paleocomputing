@@ -77,7 +77,7 @@ spec:
   air: lab
   kubeRole: plane
   kubeKey: 00c0ffee00c0ffee
-  commands: Kube.Ensure web 4 Ticker
+  commands: Kube.Apply web 4 Ticker
 ---
 apiVersion: apps.cozystack.io/v1alpha1
 kind: OberonVM
@@ -91,9 +91,11 @@ spec:
 ```
 
 At start the plane runs `Kube.Start` and `KubeNet.Serve`, a node runs
-`KubeNet.Join`; nothing has to be typed. `Kube.Ensure` creates a deployment
-only if there is none: these commands run at every start, and `Kube.Apply`
-there would undo, after each restart, whatever was changed on the plane since. The plane keeps its objects on its
+`KubeNet.Join`; nothing has to be typed. The commands run at every start, so
+with `Kube.Apply` there the commands are the source of truth: a deployment
+changed over VNC goes back to them at the next restart. `Kube.Ensure` instead
+creates a deployment only if there is none, and keeps what was changed on the
+plane. The plane keeps its objects on its
 disk and comes back with them after a restart. More deployments are applied on
 the plane over VNC, for example `Kube.Apply web 6 Ticker2`, which rolls `web`
 out to the second version one pod at a time.

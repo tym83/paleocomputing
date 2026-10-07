@@ -150,7 +150,9 @@ the end of `System`'s body. The catalog composes the commands from the form.
 Restarts taught one more lesson. The commands run at every start, and with
 `Kube.Apply` there, a restarted control plane put the deployment back to its
 first-boot version and undid a rollout made since. `Kube.Ensure` creates a
-deployment only if there is none, and the commands at start use it.
+deployment only if there is none, for machines whose own changes should
+survive, as in the browser lab. OberonKube keeps `Kube.Apply` on purpose:
+there the form is the source of truth.
 
 ## OberonKube: a cluster in one order
 
