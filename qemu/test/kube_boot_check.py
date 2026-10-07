@@ -57,7 +57,16 @@ def main():
               f"{time.time() - t_on:.0f} s after power on" if t is not None else "not within 120 s")
         moved = [m for m in c.air(t_on) if m["kind"] == "assign" and set(m["ids"]) != before.get(m["node"], set())]
         check("2b. not one pod moved across the restart", not moved, f"{len(moved)} changed assignments")
-        c.screenshot("node-a", c.work / "node-a.png")
+        # The screens of the three machines, kept as a CI artifact: the plane
+        # after Kube.Get, the nodes after Ticker.Show, as a reader would see them.
+        shots = ROOT / "impl" / "build" / "kube-screens"
+        shots.mkdir(parents=True, exist_ok=True)
+        c.run("plane", "Kube.Get")
+        for n in both:
+            c.run(n, "Ticker.Show")
+        time.sleep(2)
+        for m in ["plane"] + both:
+            c.screenshot(m, shots / f"{m}.png")
     finally:
         ok = all(results)
         c.close(keep=not ok)

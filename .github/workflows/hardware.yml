@@ -152,6 +152,15 @@ jobs:
       # catalog sets them; no key pressed. The plane restarts by itself too.
       - name: Kube boot
         run: python3 qemu/test/kube_boot_check.py
+      # What the three machines show at the end of it: the plane after Kube.Get,
+      # the nodes after Ticker.Show. For the docs, and for looking at a failure.
+      - name: Kube screens
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kube-screens
+          path: impl/build/kube-screens/*.png
+          if-no-files-found: ignore
       # Indexing through a descriptor (release 14): QEMU with chk=on,desc=on against
       # the native RTL model with -DWITH_DESC; there is no WASM build of this core, so
       # Verilator is needed here. The central issue's loop and random IDX with
