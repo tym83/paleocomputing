@@ -437,6 +437,29 @@ MODULE Kube;  (*A minimal Kubernetes control plane in Oberon-07.
     RETURN found
   END ReadyNode;
 
+  (*the next pod whose spec a kubelet may need, after position at: first the
+    pods bound to a Ready remote node that do not run yet, then, with all
+    false, any pod bound to one. The image tells the node which module runs
+    the pod*)
+  PROCEDURE NextSpec*(VAR at: INTEGER; pendingOnly: BOOLEAN; VAR id: INTEGER; VAR image: ARRAY OF CHAR): BOOLEAN;
+    VAR i, k, n: INTEGER; found: BOOLEAN;
+  BEGIN found := FALSE; i := 0;
+    WHILE (i < maxObj) & ~found DO
+      k := (at + 1 + i) MOD maxObj;
+      IF store[k].used & (store[k].kind = kPod) & (store[k].node[0] # 0X)
+          & (~pendingOnly OR (store[k].phase # phRunning)) THEN
+        n := find(kNode, store[k].node);
+        IF (n >= 0) & ~store[n].local & (store[n].phase = phReady) THEN
+          found := TRUE; at := k; id := store[k].id;
+          n := 0; WHILE (n < LEN(image)-1) & (store[k].image[n] # 0X) DO image[n] := store[k].image[n]; INC(n) END;
+          image[n] := 0X
+        END
+      END;
+      INC(i)
+    END;
+    RETURN found
+  END NextSpec;
+
   (*ids of the pods bound to a node*)
   PROCEDURE PodIds*(nm: ARRAY OF CHAR; VAR ids: ARRAY OF BYTE; VAR n: INTEGER);
     VAR i: INTEGER;

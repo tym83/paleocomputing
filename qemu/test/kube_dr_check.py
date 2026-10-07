@@ -27,7 +27,7 @@ kube_cluster.py); each scenario must converge again within its deadline:
                     puts the pods back (e). Before that, every message of the
                     cluster on the air carries a mac the reference HalfSipHash
                     accepts: the Oberon and the Python implementations agree;
-  8. rollout        web 6 moves to a new image: at no moment do fewer than 6
+  8. rollout        web 6 moves from module Ticker to Ticker2: at no moment do fewer than 6
                     or more than 7 pods run (maxUnavailable 0, maxSurge 1), and
                     in the end only the new ReplicaSet is left, with 6 pods.
 
@@ -64,7 +64,7 @@ def main():
         check("both kubelets heard", t is not None, secs(t))
 
         # 1. start
-        c.run("plane", "Kube.Apply web 4 nginx ~")
+        c.run("plane", "Kube.Apply web 4 Ticker ~")
         t = c.wait(lambda b, a: converged(4, both)(b, a) and all(running(b)[n] for n in both), 20)
         check("1. web 4 runs on both nodes", t is not None, f"converged in {secs(t)}")
 
@@ -79,7 +79,7 @@ def main():
         c.join("node-b")
         t = c.wait(lambda b, a: "node-b" in b, 15)
         check("3a. node-b back on the air", t is not None, secs(t))
-        c.run("plane", "Kube.Apply web 6 nginx ~")
+        c.run("plane", "Kube.Apply web 6 Ticker ~")
         t = c.wait(lambda b, a: converged(6, both)(b, a) and len(running(b).get("node-b", ())) == 2, 20)
         check("3b. scaled to 6: the two new pods go to node-b", t is not None, secs(t))
 
@@ -180,7 +180,7 @@ def main():
         # ran at the same moment.
         beats, _ = c.view()
         before = set(i for s_ in running(beats, both).values() for i in s_)
-        c.run("plane", "Kube.Apply web 6 nginx2 ~")
+        c.run("plane", "Kube.Apply web 6 Ticker2 ~")
         t8 = time.time()
         prev, last_change = None, t8
         while time.time() - t8 < 90:
@@ -210,11 +210,19 @@ def main():
         after = set(i for s_ in running(beats, both).values() for i in s_)
         check("8d. every pod was replaced: no id of the old pods runs", not (before & after),
               f"before {sorted(before)}, after {sorted(after)}")
+        # 9. a pod whose module is not on the node: assigned, never Running
+        c.run("plane", "Kube.Apply ghost 2 Nope ~")
+        time.sleep(8)
+        beats, assigns = c.view()
+        given = set(i for n in both for i in assigns.get(n, [])) - set(i for s_ in running(beats, both).values() for i in s_)
+        check("9. pods of a module the nodes do not have are assigned but never run", len(given) == 2,
+              f"assigned and not running: {sorted(given)}")
+        c.run("plane", "Kube.Apply ghost 0 Nope ~")
         c.screenshot("plane", c.work / "plane.png")
         st = c.state()
-        rs = re.findall(r"replicaset (\S+)\s+desired=(\d+)\s+image=(\S+)", st)
+        rs = re.findall(r"replicaset (web\S*)\s+desired=(\d+)\s+image=(\S+)", st)
         pods = re.findall(r"pod \S+ @node-[ab] Running", st)
-        check("8c. only the new ReplicaSet is left, 6 pods Running", len(rs) == 1 and rs[0][1:] == ("6", "nginx2")
+        check("8c. only the new ReplicaSet is left, 6 pods Running", len(rs) == 1 and rs[0][1:] == ("6", "Ticker2")
               and len(pods) == 6, f"{rs}, {len(pods)} running")
     finally:
         ok = all(results)

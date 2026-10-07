@@ -62,7 +62,7 @@ def main():
         # within 15 s the command is typed again, and the attempts are recorded.
         for attempt in range(1, 4):
             t0 = time.time()
-            c.run("plane", f"Kube.Apply web {rep} nginx ~")
+            c.run("plane", f"Kube.Apply web {rep} Ticker ~")
             if c.wait(lambda b, x: any(x.values()), 15) is not None:
                 break
         res["apply_attempts"] = attempt

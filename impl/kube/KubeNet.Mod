@@ -6,6 +6,14 @@ MODULE KubeNet;  (*Kube over Wirth's radio: a control plane and kubelets on sepa
 
     heartbeat  kubelet -> all   typ 60H  [cluster][name, 6][n][n pod ids][counter, 2][mac, 4]
     assign     plane   -> all   typ 61H  [cluster][name, 6][n][n pod ids][counter, 2][mac, 4]
+    spec       plane   -> all   typ 62H  [cluster][pod id][n][image, n][counter, 2][mac, 4]
+
+  A pod's image names an Oberon module, up to 15 characters. The kubelet loads
+  it and calls its Start command for a new pod and its Stop command for a pod
+  that is gone, with the pod in Pods (commands take no parameters). It reports
+  as running only the pods whose Start returned: a pod whose module is not on
+  the node stays Pending, as a pod whose image cannot be pulled. The control
+  plane sends the spec of one pod per tick, the pods that do not run yet first.
 
   The first byte tags the cluster: one air can carry several clusters, and a
   node must not obey another cluster's control plane that has a node of the
@@ -36,10 +44,11 @@ MODULE KubeNet;  (*Kube over Wirth's radio: a control plane and kubelets on sepa
   The cluster name is up to 8 characters, "kube" when left out; the key is up
   to 16 hex digits (64 bits), all zero when left out.*)
 
-  IMPORT SYSTEM, SCC, Kernel, Texts, Oberon, Kube;
+  IMPORT SYSTEM, SCC, Kernel, Modules, Texts, Oberon, Kube, Pods;
 
   CONST
-    tBeat = 60H; tAssign = 61H;
+    tBeat = 60H; tAssign = 61H; tSpec = 62H;
+    imageLen = 15;
     nameLen = 6; maxIds = 10;     (*1 + 6 + 1 + 10 + 2 + 4 = 24 data bytes*)
     hdr = 1 + nameLen + 1;        (*cluster, name, count*)
     tail = 2 + 4;                 (*counter, mac*)
@@ -63,6 +72,10 @@ MODULE KubeNet;  (*Kube over Wirth's radio: a control plane and kubelets on sepa
     last: INTEGER;                (*time of the last heartbeat or assignment round*)
     peer: ARRAY maxPeers OF RECORD name: Name; ctr, seen: INTEGER END;
     npeers: INTEGER;
+    want: Ids; nwant: INTEGER;    (*this node's last assignment*)
+    image, ranImage: ARRAY 256 OF ARRAY imageLen+1 OF CHAR;   (*per pod id: its image, the one started*)
+    started, failed: ARRAY 256 OF BOOLEAN;
+    specAt, ticks: INTEGER;       (*the control plane's round of specs*)
 
   (* ---- HalfSipHash-2-4, 32-bit output ---- *)
 
@@ -120,6 +133,21 @@ MODULE KubeNet;  (*Kube over Wirth's radio: a control plane and kubelets on sepa
     SCC.SendPacket(head, out)
   END send;
 
+  PROCEDURE sendSpec(id: INTEGER; img: ARRAY OF CHAR);
+    VAR head: SCC.Header; buf: ARRAY 4+imageLen+tail OF BYTE; out: ARRAY 3+imageLen+tail OF BYTE;
+      i, n, len, h: INTEGER;
+  BEGIN n := 0; WHILE (n < imageLen) & (n < LEN(img)) & (img[n] # 0X) DO INC(n) END;
+    buf[0] := tSpec; buf[1] := tag; buf[2] := id; buf[3] := n;
+    FOR i := 0 TO n-1 DO buf[4+i] := ORD(img[i]) END;
+    len := 3 + n;
+    buf[1+len] := ctr MOD 100H; buf[2+len] := ctr DIV 100H MOD 100H; ctr := (ctr + 1) MOD 10000H;
+    h := mac(buf, 1+len+2);
+    FOR i := 0 TO 3 DO buf[3+len+i] := ASR(h, 8*i) MOD 100H END;
+    FOR i := 0 TO len+tail-1 DO out[i] := buf[1+i] END;
+    head.dadr := 0FFH; head.typ := tSpec; head.len := len + tail;
+    SCC.SendPacket(head, out)
+  END sendSpec;
+
   (*a message's counter is new for its sender; a sender not heard for ttl
     starts anew*)
   PROCEDURE fresh(name: ARRAY OF CHAR; c, now: INTEGER): BOOLEAN;
@@ -166,6 +194,70 @@ MODULE KubeNet;  (*Kube over Wirth's radio: a control plane and kubelets on sepa
     RETURN ok
   END read;
 
+  (*a spec from the control plane, already received by SCC.ReceiveHead: TRUE
+    for this cluster's spec with a valid mac and a fresh counter*)
+  PROCEDURE readSpec(len, now: INTEGER; VAR id: INTEGER; VAR img: ARRAY OF CHAR): BOOLEAN;
+    VAR buf: ARRAY 4+imageLen+tail OF BYTE; i, n, c, h, got: INTEGER; ok: BOOLEAN;
+  BEGIN ok := (len >= 3 + tail) & (len <= 3 + imageLen + tail);
+    IF ok THEN
+      buf[0] := tSpec;
+      FOR i := 1 TO len DO SCC.Receive(buf[i]) END;
+      n := buf[3]; ok := (buf[1] = tag) & (n = len - 3 - tail)
+    ELSE SCC.Skip(len)
+    END;
+    IF ok THEN
+      h := mac(buf, 1+len-4);
+      got := buf[1+len-4] + buf[1+len-3] * 100H + buf[1+len-2] * 10000H + LSL(buf[1+len-1], 24);
+      ok := got = h
+    END;
+    IF ok THEN
+      id := buf[2];
+      FOR i := 0 TO n-1 DO img[i] := CHR(buf[4+i]) END; img[n] := 0X;
+      c := buf[4+n] + buf[5+n] * 100H;
+      ok := fresh("*plane", c, now)
+    END;
+    RETURN ok
+  END readSpec;
+
+  (*the kubelet: starts the assigned pods it knows the image of, stops the
+    started pods no longer assigned, and keeps in run the pods that run*)
+  PROCEDURE call(id: INTEGER; img, cmd: ARRAY OF CHAR): BOOLEAN;
+    VAR mod: Modules.Module; c: Modules.Command; ok: BOOLEAN;
+  BEGIN ok := FALSE;
+    Modules.Load(img, mod);
+    IF (Modules.res = 0) & (mod # NIL) THEN
+      c := Modules.ThisCommand(mod, cmd);
+      IF c # NIL THEN Pods.Set(id, img); c; ok := TRUE END
+    END;
+    RETURN ok
+  END call;
+
+  PROCEDURE reconcile;
+    VAR i, j, id: INTEGER; on, ignore: BOOLEAN;
+  BEGIN
+    FOR id := 1 TO 255 DO
+      IF started[id] THEN
+        on := FALSE; FOR j := 0 TO nwant-1 DO IF want[j] = id THEN on := TRUE END END;
+        IF ~on OR (image[id] # ranImage[id]) THEN
+          ignore := call(id, ranImage[id], "Stop"); started[id] := FALSE
+        END
+      END
+    END;
+    FOR j := 0 TO nwant-1 DO
+      id := want[j];
+      IF ~started[id] & ~failed[id] & (image[id][0] # 0X) THEN
+        IF call(id, image[id], "Start") THEN started[id] := TRUE; ranImage[id] := image[id]
+        ELSE failed[id] := TRUE;
+          Texts.WriteString(W, "kubelet: no module "); Texts.WriteString(W, image[id]);
+          Texts.WriteString(W, " for pod "); Texts.WriteInt(W, id, 0); Texts.WriteLn(W);
+          Texts.Append(Oberon.Log, W.buf)
+        END
+      END
+    END;
+    nrun := 0;
+    FOR j := 0 TO nwant-1 DO IF started[want[j]] THEN run[nrun] := want[j]; INC(nrun) END END
+  END reconcile;
+
   PROCEDURE log(s, name: ARRAY OF CHAR; ids: Ids; n: INTEGER);
     VAR i: INTEGER;
   BEGIN Texts.WriteString(W, s); Texts.WriteString(W, name); Texts.WriteString(W, ":");
@@ -182,6 +274,7 @@ MODULE KubeNet;  (*Kube over Wirth's radio: a control plane and kubelets on sepa
 
   PROCEDURE planeTick;
     VAR head: SCC.Header; name: Name; node: Kube.Name; ids: Ids; n, i, now: INTEGER;
+      img: ARRAY imageLen+1 OF CHAR;
   BEGIN now := Kernel.Time();
     REPEAT SCC.ReceiveHead(head);
       IF head.valid THEN
@@ -192,6 +285,10 @@ MODULE KubeNet;  (*Kube over Wirth's radio: a control plane and kubelets on sepa
       END
     UNTIL ~head.valid;
     Kube.Expire(now, ttl);
+    INC(ticks);
+    IF Kube.NextSpec(specAt, TRUE, i, img) OR (ticks MOD 10 = 0) & Kube.NextSpec(specAt, FALSE, i, img) THEN
+      sendSpec(i, img)
+    END;
     IF now - last >= beat THEN last := now; i := 0;
       WHILE Kube.ReadyNode(i, node) DO
         Kube.PodIds(node, ids, n); send(tAssign, node, ids, n); INC(i)
@@ -200,18 +297,21 @@ MODULE KubeNet;  (*Kube over Wirth's radio: a control plane and kubelets on sepa
   END planeTick;
 
   PROCEDURE nodeTick;
-    VAR head: SCC.Header; name: Name; ids: Ids; n, now: INTEGER;
+    VAR head: SCC.Header; name: Name; ids: Ids; n, now, id: INTEGER; img: ARRAY imageLen+1 OF CHAR;
   BEGIN now := Kernel.Time();
     REPEAT SCC.ReceiveHead(head);
       IF head.valid THEN
         IF head.typ = tAssign THEN
-          IF read(tAssign, head.len, now, name, ids, n) & (name = me) & ~same(ids, n, run, nrun) THEN
-            run := ids; nrun := n; log("kubelet ", me, run, nrun)
+          IF read(tAssign, head.len, now, name, ids, n) & (name = me) & ~same(ids, n, want, nwant) THEN
+            want := ids; nwant := n; log("kubelet ", me, want, nwant)
           END
+        ELSIF head.typ = tSpec THEN
+          IF readSpec(head.len, now, id, img) & (img # image[id]) THEN image[id] := img; failed[id] := FALSE END
         ELSE SCC.Skip(head.len)
         END
       END
     UNTIL ~head.valid;
+    reconcile;
     IF now - last >= beat THEN last := now; send(tBeat, me, run, nrun) END
   END nodeTick;
 
@@ -304,7 +404,7 @@ MODULE KubeNet;  (*Kube over Wirth's radio: a control plane and kubelets on sepa
     IF ~word(R, me) OR (me[0] = 0X) THEN err("a node name of up to 6 characters is needed")
     ELSIF ~cluster(R, cl) THEN err("the cluster name is up to 8 characters, the key up to 16 hex digits")
     ELSE
-      nrun := 0; start(2);
+      nrun := 0; nwant := 0; start(2);
       Texts.WriteString(W, "kubenet: node "); Texts.WriteString(W, me);
       Texts.WriteString(W, " of "); Texts.WriteString(W, cl);
       Texts.WriteString(W, " joined the air"); Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf)
@@ -318,5 +418,6 @@ MODULE KubeNet;  (*Kube over Wirth's radio: a control plane and kubelets on sepa
     END
   END Stop;
 
-BEGIN Texts.OpenWriter(W); role := 0; nrun := 0; npeers := 0; tag := tagOf("kube"); k0 := 0; k1 := 0
+BEGIN Texts.OpenWriter(W); role := 0; nrun := 0; nwant := 0; npeers := 0; tag := tagOf("kube"); k0 := 0; k1 := 0;
+  specAt := 0; ticks := 0
 END KubeNet.

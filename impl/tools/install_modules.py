@@ -30,7 +30,9 @@ sys.path.insert(0, str(HERE))
 from oberonfs import Image                       # noqa: E402
 
 DEFAULT = [HERE.parent / "ext" / "po2013-src" / "Net.Mod",
-           HERE.parent / "kube" / "Kube.Mod", HERE.parent / "kube" / "KubeNet.Mod"]
+           HERE.parent / "kube" / "Kube.Mod", HERE.parent / "kube" / "Pods.Mod",
+           HERE.parent / "kube" / "KubeNet.Mod",
+           HERE.parent / "kube" / "Ticker.Mod", HERE.parent / "kube" / "Ticker2.Mod"]
 IMPORTS = ("Viewers", "TextFrames", "MenuViewers", "Display", "Fonts", "Texts",
            "Oberon", "Input", "Files", "Kernel", "FileDir", "Modules", "SCC")
 

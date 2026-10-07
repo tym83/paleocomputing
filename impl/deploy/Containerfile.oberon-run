@@ -15,9 +15,10 @@ RUN cc -O2 -o /norebo norebo/Runtime/norebo.c norebo/Runtime/risc-cpu.c
 # (Net.StartServer, Net.SendMsg) and form a cluster (Kube, KubeNet). The image
 # has SCC compiled but Net only as source; Kube is ours.
 COPY tools/oberonfs.py tools/install_modules.py ./tools/
-COPY ext/po2013-src/Net.Mod kube/Kube.Mod kube/KubeNet.Mod ./mods/
+COPY ext/po2013-src/Net.Mod kube/Kube.Mod kube/Pods.Mod kube/KubeNet.Mod kube/Ticker.Mod kube/Ticker2.Mod ./mods/
 COPY ext/disk/Oberon-2016-08-02.dsk ./oberon.dsk
-RUN python3 tools/install_modules.py oberon.dsk mods/Net.Mod mods/Kube.Mod mods/KubeNet.Mod \
+RUN python3 tools/install_modules.py oberon.dsk mods/Net.Mod mods/Kube.Mod mods/Pods.Mod mods/KubeNet.Mod \
+      mods/Ticker.Mod mods/Ticker2.Mod \
       --norebo ./norebo --norebo-bin /norebo
 
 # The ROM in binary form: in the sources it is hexadecimal text, while QEMU
