@@ -54,6 +54,10 @@ run node2 5902 "KubeNet.Join node2 kube $KEY"
 
 The machines' screens are on VNC ports 5900, 5901 and 5902. Booting in software emulation takes up to a minute; after that the control plane's log shows the nodes Ready, and the nodes show their pods started. Oberon's mouse has three buttons, and the middle one runs the command it points at, so `Kube.Get` in any window of the control plane shows all objects, and `Ticker.Show` on a node shows its pods. To roll out a new version, write `Kube.Apply web 4 Ticker2 ~` on the control plane and middle-click that line.
 
+![The control plane in QEMU after a restart. The store came back from disk, `Kube.Ensure` among the commands at start saw that the deployment exists and left it alone, and `Kube.Get` shows the same pods on the same node. The shot was taken by an automated check; nobody typed anything](../img/qemu-plane.png)
+
+![Node node-b in QEMU. It joined first and got all four pods: like the real scheduler, Kube does not move running pods to a node that came later](../img/qemu-node-b.png)
+
 You can listen to the air from the side, as the tests do. The listener joins the relay as one more machine, sends nothing, and prints every message with its signature checked:
 
 ```sh
