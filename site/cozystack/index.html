@@ -30,7 +30,9 @@
       After that, tenants see new applications in the dashboard:
     </p>
     <ol class="steps">
-      <li><h3>OberonVM</h3><p>Wirth's RISC5 as a real virtual machine in KubeVirt, booting the Oberon system of 1986. Fields: <code>memory</code> and <code>hardware</code> — <code>base</code>, or <code>chk</code> for the processor with the hardware array bounds check, the same machine the <a href="../oberon/checks.html">bounds-check page</a> switches to.</p></li>
+      <li><h3>OberonVM</h3><p>Wirth's RISC5 as a real virtual machine in KubeVirt, booting the Oberon system of 1986. Fields: <code>memory</code> and <code>hardware</code> — <code>base</code>, or <code>chk</code> for the processor with the hardware array bounds check, the same machine the <a href="../oberon/checks.html">bounds-check page</a> switches to. <code>air</code> joins the machine to an OberonAir; <code>kubeRole</code> (<code>plane</code> or <code>node</code>), <code>kubeCluster</code>, <code>kubeNode</code> and <code>kubeKey</code> make it part of a Kube cluster; <code>commands</code> are Oberon commands it runs at every start.</p></li>
+      <li><h3>OberonAir</h3><p>Wirth's radio network inside a tenant: a relay that carries the frames of the nRF24L01+ transceivers between the machines that name it in their <code>air</code>. Wirth's own <code>Net</code> works over it unchanged, and so does Kube.</p></li>
+      <li><h3>OberonKube</h3><p>A whole Kube cluster in one order: an air, a control plane and a machine per node, formed at start with nothing typed. Fields: <code>nodes</code> (1 to 8), <code>cluster</code>, <code>key</code> that signs every message on the air, <code>deployments</code> such as <code>web 4 Ticker; api 2 Ticker2</code>.</p></li>
       <li><h3>OberonLab</h3><p>The <a href="../oberon/lab.html">thirteen labs</a> and the handbook, served inside the cluster. Optionally a batch run of the labs that need the circuit or the compiler rebuilt: <code>task</code> is <code>isa</code>, <code>compiler</code> or <code>check</code>.</p></li>
       <li><h3>Handbook</h3><p>Documentation served next to the application it documents.</p></li>
       <li><h3>Workbench</h3><p>The machine, its labs and its handbook installed as one thing.</p></li>
@@ -46,7 +48,7 @@
       they ask for:
     </p>
     <ul class="chapters">
-      <li><code>machines</code> — OberonVM, OberonLab, Handbook, Workbench;</li>
+      <li><code>machines</code> — OberonVM, OberonAir, OberonKube, OberonLab, Handbook, Workbench;</li>
       <li><code>languages</code> — LangPack;</li>
       <li><code>images</code> — boot images for ordinary KubeVirt disks. The only part that writes outside a tenant, into <code>cozy-public</code>; it is tagged <code>privileged</code> and the Cozystack validator warns about it.</li>
     </ul>
@@ -198,12 +200,15 @@ spec:
       refreshed from the release.
     </p>
     <p>
-      Something to try: Kube, a minimal Kubernetes control plane written in
-      Oberon, can be typed into an OberonVM, compiled by the system itself and
-      run there, with three controllers keeping three pods running on simulated
-      nodes. A Kubernetes control plane from a 1986 language ends up inside a
-      virtual machine that Kubernetes manages. The story and the commands are in
-      the <a href="https://github.com/tym83/paleocomputing/blob/main/15-episode-kube.md">Kube episode</a>.
+      Something to try: Kube, a Kubernetes control plane written in Oberon.
+      An OberonKube order starts a control plane and its nodes, Oberon machines
+      that talk over Wirth's radio, run code as pods and roll out new versions
+      one pod at a time. A Kubernetes control plane from a 1986 language ends up
+      inside virtual machines that Kubernetes manages. The story is in the
+      <a href="https://github.com/tym83/paleocomputing/blob/main/15-episode-kube.md">Kube episode</a>
+      and <a href="https://github.com/tym83/paleocomputing/blob/main/16-episode-kube-radio.md">the next one</a>;
+      the same cluster of three machines runs in the browser in the
+      <a href="../oberon/kube.html">cluster lab</a>.
     </p>
   </section>
 

@@ -49,6 +49,7 @@ need="index.html style.css ru/index.html ru/oberon/index.html cozystack/index.ht
       oberon/bench.js oberon/bench-worker.js oberon/bench_bounds.json
       oberon/bench_bounds_b.bin oberon/bench_bounds_e.bin oberon/oberon.dsk oberon/oberon.dsk.gz
       oberon/prom_sd.mem oberon/embed.js oberon/worker.js oberon/worker-core.js
+      oberon/kube.html oberon/kube-air.js oberon/oberon-kube.dsk.gz
       oberon/book/index.html oberon/book/en/index.html"
 miss=0
 for f in $need; do

@@ -52,7 +52,8 @@ compared byte for byte.
 |---|---|
 | `impl/docs/FINDING-*.md` | 85 findings: what was measured, what was found, what turned out to be wrong |
 | `impl/README.md` | how the measurement harness is built, Makefile targets, who owns what |
-| `15-episode-kube.md` | the latest episode: Kube, a Kubernetes control plane written in Oberon, running inside the Oberon machine and in Cozystack ([Russian](15-episode-kube.ru.md)) |
+| `16-episode-kube-radio.md` | the latest episode: Kube's nodes are Oberon machines talking over Wirth's radio; rollouts, disaster recovery, OberonKube in Cozystack, and a cluster lab in the browser ([Russian](16-episode-kube-radio.ru.md)) |
+| `15-episode-kube.md` | Kube, a Kubernetes control plane written in Oberon, running inside the Oberon machine ([Russian](15-episode-kube.ru.md)) |
 | `impl/kube/` | the Kube code and how to run it |
 | `marketplace/` | a pluggable catalog for Cozystack: the same machines as applications |
 | `kubevirt/GUIDE.md` | the same machine in your own KubeVirt, without Cozystack ([Russian](kubevirt/GUIDE.ru.md)) |

@@ -51,7 +51,8 @@ make check    # около восьми минут
 |---|---|
 | `impl/docs/FINDING-*.md` | 85 находок: что измерено, что нашлось, что оказалось не так |
 | `impl/README.md` | устройство измерительной оснастки, цели Makefile, что чьё |
-| `15-episode-kube.ru.md` | последний выпуск: Kube, управляющий слой Kubernetes на Обероне, который работает внутри машины Оберон и в Cozystack ([English](15-episode-kube.md)) |
+| `16-episode-kube-radio.ru.md` | последний выпуск: узлы Kube — машины Оберона, связанные радио Вирта; выкатки, восстановление после аварий, OberonKube в Cozystack и лаборатория с кластером в браузере ([English](16-episode-kube-radio.md)) |
+| `15-episode-kube.ru.md` | Kube, управляющий слой Kubernetes на Обероне, который работает внутри машины Оберон ([English](15-episode-kube.md)) |
 | `impl/kube/` | код Kube и как его запустить |
 | `marketplace/` | подключаемый каталог для Cozystack: те же машины как приложения |
 | `kubevirt/GUIDE.ru.md` | та же машина в своём KubeVirt, без Cozystack ([English](kubevirt/GUIDE.md)) |

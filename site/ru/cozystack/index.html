@@ -30,7 +30,9 @@
       этого у тенантов в дашборде появляются новые приложения:
     </p>
     <ol class="steps">
-      <li><h3>OberonVM</h3><p>Машина Вирта RISC5 как настоящая виртуальная машина в KubeVirt, в ней загружается система Оберон 1986 года. Поля: <code>memory</code> и <code>hardware</code> — <code>base</code> или <code>chk</code>, процессор с аппаратной проверкой границ массива; та же машина, на которую переключает <a href="../../oberon/checks.html">страница о цене проверки</a>.</p></li>
+      <li><h3>OberonVM</h3><p>Машина Вирта RISC5 как настоящая виртуальная машина в KubeVirt, в ней загружается система Оберон 1986 года. Поля: <code>memory</code> и <code>hardware</code> — <code>base</code> или <code>chk</code>, процессор с аппаратной проверкой границ массива; та же машина, на которую переключает <a href="../../oberon/checks.html">страница о цене проверки</a>. <code>air</code> подключает машину к OberonAir; <code>kubeRole</code> (<code>plane</code> или <code>node</code>), <code>kubeCluster</code>, <code>kubeNode</code> и <code>kubeKey</code> делают её частью кластера Kube; <code>commands</code> — команды Оберона, которые она выполняет при каждом старте.</p></li>
+      <li><h3>OberonAir</h3><p>Радиосеть Вирта внутри тенанта: ретранслятор, который переносит кадры приёмопередатчиков nRF24L01+ между машинами, указавшими его в <code>air</code>. Поверх него без изменений работает собственный <code>Net</code> Вирта, и Kube тоже.</p></li>
+      <li><h3>OberonKube</h3><p>Целый кластер Kube одним заказом: эфир, управляющий слой и по машине на узел; собирается при старте, набирать ничего не нужно. Поля: <code>nodes</code> (от 1 до 8), <code>cluster</code>, <code>key</code>, которым подписано каждое сообщение в эфире, <code>deployments</code>, например <code>web 4 Ticker; api 2 Ticker2</code>.</p></li>
       <li><h3>OberonLab</h3><p><a href="../../oberon/lab.html">Тринадцать лабораторных</a> и методичка, раздаются изнутри кластера. По желанию — разовый прогон заданий, которым нужно пересобрать схему или компилятор: <code>task</code> — <code>isa</code>, <code>compiler</code> или <code>check</code>.</p></li>
       <li><h3>Handbook</h3><p>Документация, которая раздаётся рядом с приложением, которое она описывает.</p></li>
       <li><h3>Workbench</h3><p>Машина, лабораторные и методичка одной установкой.</p></li>
@@ -46,7 +48,7 @@
       доверия просят:
     </p>
     <ul class="chapters">
-      <li><code>machines</code> — OberonVM, OberonLab, Handbook, Workbench;</li>
+      <li><code>machines</code> — OberonVM, OberonAir, OberonKube, OberonLab, Handbook, Workbench;</li>
       <li><code>languages</code> — LangPack;</li>
       <li><code>images</code> — загрузочные образы для обычных дисков KubeVirt. Единственная часть, которая пишет за пределы тенанта, в <code>cozy-public</code>; помечена <code>privileged</code>, и валидатор Cozystack об этом предупреждает.</li>
     </ul>
@@ -193,12 +195,15 @@ spec:
       перезапусками и обновлениями — из выпуска обновляется только прошивка.
     </p>
     <p>
-      Что можно попробовать: Kube, минимальный управляющий слой Kubernetes на
-      Обероне, можно набрать в OberonVM, скомпилировать самой системой и
-      запустить там же, и три контроллера будут держать три пода на
-      смоделированных узлах. Управляющий слой Kubernetes на языке 1986 года
-      оказывается внутри виртуальной машины, которой управляет Kubernetes.
-      История и команды — в <a href="https://github.com/tym83/paleocomputing/blob/main/15-episode-kube.ru.md">выпуске о Kube</a>.
+      Что можно попробовать: Kube, управляющий слой Kubernetes на Обероне.
+      Заказ OberonKube запускает управляющий слой и его узлы — машины Оберона,
+      которые связаны радио Вирта, выполняют код как поды и выкатывают новые
+      версии по одному поду. Управляющий слой Kubernetes на языке 1986 года
+      оказывается внутри виртуальных машин, которыми управляет Kubernetes.
+      История — в <a href="https://github.com/tym83/paleocomputing/blob/main/15-episode-kube.ru.md">выпуске о Kube</a>
+      и <a href="https://github.com/tym83/paleocomputing/blob/main/16-episode-kube-radio.ru.md">следующем</a>;
+      тот же кластер из трёх машин работает в браузере, в
+      <a href="../../oberon/kube.html">лаборатории с кластером</a>.
     </p>
   </section>
 
