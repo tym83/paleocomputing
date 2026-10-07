@@ -26,6 +26,13 @@ import { LABS } from './labs.js';
  */
 export function createHandler(post) {
   let m = null;
+  let loop = null;            // the machine's own run loop (go / halt)
+  // Let incoming messages in, then go on. Not setTimeout: in a background tab
+  // timers fire about once a second, in workers too, and the machine crawled.
+  const chan = typeof MessageChannel === 'undefined' ? null : new MessageChannel();
+  let next = null;
+  if (chan) chan.port1.onmessage = () => { const f = next; next = null; f && f(); };
+  const yieldThen = f => { if (chan) { next = f; chan.port2.postMessage(0); } else setTimeout(f, 0); };
   // Lab state by id: lab steps accumulate it between checks.
   const state = {};
   // Frame buffers circulate: the page returns a drawn one with a `recycle`
@@ -39,8 +46,11 @@ export function createHandler(post) {
     new Uint32Array(buf).set(fb);
     // The screen checksum travels with the frame: from it the page shows the one
     // thing a person cares about, whether the machine is drawing or has frozen.
+    // The frames this machine's radio sent go out with the screen: the page
+    // is the air and hands them to the other machines (kube-air.js).
+    const air = m.radioTake();
     post({ t: 'frame', buf, insns: m.insns, cycles: m.cycles, pc: m.pc,
-           crc: m.fbCrc(), ...extra }, [buf]);
+           crc: m.fbCrc(), air, ...extra }, [buf]);
   }
 
   return async function handle(msg) {
@@ -48,7 +58,34 @@ export function createHandler(post) {
       case 'init':
         m = await Machine.create(new Uint32Array(msg.prom), new Uint8Array(msg.img),
                                  msg.variant || 'base');
+        // The commands it runs at start, on RS232 (Boot.Mod): a Kube role.
+        if (msg.serial) m.serial(msg.serial);
+        if (msg.timescale) m.timescale(msg.timescale);
         post({ t: 'ready', variant: m.variant });
+        return;
+
+      // ── several machines on one air ───────────────────────────────────────
+      case 'air':
+        for (const f of msg.frames) m.radioGive(new Uint8Array(f));
+        return;
+
+      // A command line typed under the last line of System.Tool and run with
+      // the middle button, as a person would.
+      case 'command':
+        // Long presses: with a fast machine clock (timescale) the background
+        // tasks run often, a pass of the system's loop takes longer, and a short
+        // press could fall between two looks at the mouse.
+        m.click(900, 557, 4, 1500000);
+        m.type('\n' + msg.text);
+        m.run(2000000);          // let the editor take the last keys before the click
+        m.click(680, 569, 2, 1500000);
+        return;
+
+      // Power off and on; the disk keeps what was written, Kube's store too.
+      case 'reboot':
+        m.reboot();
+        if (msg.serial) m.serial(msg.serial);
+        frame({ reset: true });
         return;
 
       case 'run':
@@ -59,15 +96,31 @@ export function createHandler(post) {
         frame();
         return;
 
-      case 'key':   m.key(msg.code | 0); return;
-      case 'mouse': m.mouse(msg.x | 0, msg.y | 0, msg.btn | 0); return;
-
-      // A two-button chord: the machine must run between the presses, otherwise
-      // the system will not see which button the click started with.
-      case 'chord':
-        m.mouse(msg.x | 0, msg.y | 0, msg.first | 0);
-        m.run(msg.gap | 0 || 20000);
-        m.mouse(msg.x | 0, msg.y | 0, msg.then | 0);
+      // Several machines on one air (kube.html): the machine runs on its own,
+      // in slices of msg.quota instructions, and the radio's frames go out after
+      // every slice; the screen at most every 200 ms. The loop is the thread's,
+      // not the page's: a page's timers in a background tab fire once a second,
+      // and a machine waiting for them ran at a quarter of its speed.
+      case 'go': {
+        if (loop) return;
+        let last = 0;
+        const tick = () => {
+          if (!loop) return;
+          for (let i = 0; i < (msg.slices | 0 || 8); i++) {
+            m.run(msg.quota | 0 || 25000);
+            const air = m.radioTake();
+            if (air.length) post({ t: 'air', air });
+          }
+          const now = Date.now();
+          if (now - last > 200) { last = now; frame(); }
+          yieldThen(tick);
+        };
+        loop = true;
+        yieldThen(tick);
+        return;
+      }
+      case 'halt':
+        loop = null;
         return;
 
       // ── labs ──────────────────────────────────────────────────────────────
