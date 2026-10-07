@@ -720,6 +720,30 @@ def check_machines() -> None:
             label, terms = spread(vm)
             report(label is None and not terms, f"{name}: without an air there is no spreading rule")
 
+        # ── Commands at start: a Kube role and free text ────────────────────
+        if preset.get("commands"):
+            def text(*o):
+                d, err = render(chart, *o)
+                if not d:
+                    return None, err
+                v = next(x for x in d if x["kind"] == "VirtualMachine")
+                p = json.loads(v["spec"]["template"]["metadata"]["annotations"][MACHINE_ANNOTATION])
+                return p.get("commands", {}).get("text"), ""
+            got, _ = text("air=lab", "kubeRole=plane", "kubeKey=0123abcd", "commands=Ticker.Show")
+            report(got == "Kube.Start;KubeNet.Serve kube 0123abcd;Ticker.Show",
+                   f"{name}: a Kube plane starts Kube and serves its cluster at start ({got!r})")
+            got, _ = text("air=lab", "kubeRole=node", "kubeNode=node-a", "kubeCluster=farm")
+            report(got == "KubeNet.Join node-a farm", f"{name}: a Kube node joins its cluster at start ({got!r})")
+            got, _ = text()
+            report(got is None, f"{name}: without a role or commands the machine runs nothing at start")
+            for o, why in ((("kubeRole=plane",), "a Kube role without an air"),
+                           (("air=lab", "kubeRole=node"), "a Kube node without a name"),
+                           (("air=lab", "kubeRole=node", "kubeNode=toolongname"), "a node name over 6 characters"),
+                           (("air=lab", "kubeRole=plane", "kubeKey=xyz"), "a key that is not hex"),
+                           (("air=lab", "kubeRole=boss"), "an unknown role")):
+                got, err = text(*o)
+                report(got is None and err != "", f"{name}: negative control: {why} is refused")
+
         # ── Fill: firmware always, the user disk never ──────────────────────
         script = fill_script(docs)
         base = preset["payload"]["path"].rstrip("/")

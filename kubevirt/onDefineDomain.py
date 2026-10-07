@@ -66,6 +66,8 @@ PATH_RE = re.compile(r'^/[A-Za-z0-9/._-]+$')
 PROP_RE = re.compile(r'^[A-Za-z0-9_.-]+$')
 ROLES = ('firmware', 'disk')
 GRAPHICS = ('vnc', 'none')
+# The commands a machine runs at start: printable characters only.
+CMD_RE = re.compile(r'^[ -~]{1,240}$')
 # A DNS name of a Service in the tenant: the air relay the machine's radio talks to.
 HOST_RE = re.compile(r'^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$')
 
@@ -190,6 +192,23 @@ def validate(desc):
             args += ['-chardev', f'udp,id=air,host={host},port={port},'
                                  f'localaddr=0.0.0.0,localport={port}',
                      '-machine', f'{prop}=air']
+
+    # ── Commands at start ──────────────────────────────────────────────────
+    #
+    # A machine that can run commands at start declares the property in the
+    # passport (commands.machineProperty); the instance gives the text
+    # (commands.text). For Oberon the text arrives on RS232 receive and
+    # Boot.Mod runs it, as cloud-init does on Linux. In -machine a comma ends
+    # the value, so commas are doubled.
+    cmds = desc.get('commands')
+    if cmds is not None:
+        _need(isinstance(cmds, dict), 'commands: not an object')
+        prop = _str(cmds, 'machineProperty', 'commands', PROP_RE)
+        text = cmds.get('text')
+        if text:
+            _need(isinstance(text, str) and CMD_RE.match(text),
+                  'commands.text: up to 240 printable characters are allowed')
+            args += ['-machine', f"{prop}={text.replace(',', ',,')}"]
 
     return {'arch': arch, 'machine': machine, 'emulator': emulator,
             'vcpus': vcpus, 'graphics': graphics, 'args': args, 'paths': paths}

@@ -35,6 +35,40 @@
       "pattern": "^([a-z0-9]([a-z0-9-]{0,40}[a-z0-9])?)?$",
       "default": ""
     },
+    "kubeRole": {
+      "type": "string",
+      "description": "Role of this machine in a Kube cluster: plane or node; empty for none. Needs an air",
+      "enum": [
+        "",
+        "plane",
+        "node"
+      ],
+      "default": ""
+    },
+    "kubeCluster": {
+      "type": "string",
+      "description": "Name of the Kube cluster, up to 8 characters",
+      "pattern": "^[a-z0-9-]{1,8}$",
+      "default": "kube"
+    },
+    "kubeNode": {
+      "type": "string",
+      "description": "Name of this node, up to 6 characters (role node)",
+      "pattern": "^([a-z0-9-]{1,6})?$",
+      "default": ""
+    },
+    "kubeKey": {
+      "type": "string",
+      "description": "Key of the cluster, up to 16 hex digits; the same on the plane and every node",
+      "pattern": "^[0-9a-fA-F]{0,16}$",
+      "default": ""
+    },
+    "commands": {
+      "type": "string",
+      "description": "Oberon commands to run at start, separated by ;",
+      "pattern": "^[ -~]{0,240}$",
+      "default": ""
+    },
     "storageClass": {
       "type": "string",
       "minLength": 1,

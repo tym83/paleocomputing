@@ -7,7 +7,7 @@ as on the oberon-run system disk.
 
   1. the control plane runs Kube.Start and KubeNet.Serve;
   2. two machines run KubeNet.Join node-a and KubeNet.Join node-b, and once
-     both are Ready the control plane runs Kube.Apply web 3 nginx;
+     both are Ready the control plane runs Kube.Apply web 3 Ticker;
   3. Kube.Save writes the state: both nodes Ready, three pods Running, spread
      over the two nodes;
   4. node-b is switched off. After the heartbeat timeout node-b must be
@@ -98,7 +98,7 @@ def main():
         run(["KubeNet.Join node-a"], q["na"])
         run(["KubeNet.Join node-b"], q["nb"])
         time.sleep(5)                                    # both kubelets heard
-        run(["Kube.Apply web 3 nginx ~"], q["plane"])
+        run(["Kube.Apply web 3 Ticker ~"], q["plane"])
         time.sleep(10)
         run(["Kube.Save Kube.One"], q["plane"])
 

@@ -18,19 +18,27 @@ kube_cluster.py); each scenario must converge again within its deadline:
                     same nodes, not one moved;
   6. lossy air      30 % of deliveries lost for 60 s: the cluster stays
                     converged; the number of heartbeat timeouts is reported;
-  7. another cluster  a station sends "node-a: run nothing" tagged as another
-                    cluster: node-a keeps its pods. The same message tagged
-                    as this cluster, the control, does empty node-a;
-  8. rollout        web 6 moves to a new image: at no moment do fewer than 6
+  7. intruders     right after the plane's assignment to the node that runs
+                    pods, a station sends "run nothing" for it: tagged as
+                    another cluster (a), unsigned (b), and an old genuine
+                    assignment replayed (c); the node keeps its pods. The
+                    control (d): the same message signed with the cluster key
+                    and a fresh counter does empty the node, and the plane
+                    puts the pods back (e). Before that, every message of the
+                    cluster on the air carries a mac the reference HalfSipHash
+                    accepts: the Oberon and the Python implementations agree;
+  8. rollout        web 6 moves from module Ticker to Ticker2: at no moment do fewer than 6
                     or more than 7 pods run (maxUnavailable 0, maxSurge 1), and
                     in the end only the new ReplicaSet is left, with 6 pods.
 
   python3 qemu/test/kube_dr_check.py [QEMU tree]   (default ../.qemu-work)
 """
-import pathlib, re, sys, time
+import json, pathlib, re, sys, time
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from kube_cluster import Cluster, ROOT, TAG, TTL, converged, running   # noqa: E402
+
+KEY = "0123456789abcdef"
 
 QEMU = sys.argv[1] if len(sys.argv) > 1 else ROOT / ".qemu-work"
 results = []
@@ -46,17 +54,17 @@ def secs(t):
 
 
 def main():
-    c = Cluster(QEMU, nodes=2)
+    c = Cluster(QEMU, nodes=2, key=KEY)
     try:
         both = ["node-a", "node-b"]
-        c.run("plane", "Kube.Start", "KubeNet.Serve")
-        c.run("node-a", "KubeNet.Join node-a")
-        c.run("node-b", "KubeNet.Join node-b")
+        c.serve()
+        c.join("node-a")
+        c.join("node-b")
         t = c.wait(lambda b, a: set(b) >= set(both), 15)
         check("both kubelets heard", t is not None, secs(t))
 
         # 1. start
-        c.run("plane", "Kube.Apply web 4 nginx ~")
+        c.run("plane", "Kube.Apply web 4 Ticker ~")
         t = c.wait(lambda b, a: converged(4, both)(b, a) and all(running(b)[n] for n in both), 20)
         check("1. web 4 runs on both nodes", t is not None, f"converged in {secs(t)}")
 
@@ -68,10 +76,10 @@ def main():
 
         # 3. node back
         c.on("node-b")
-        c.run("node-b", "KubeNet.Join node-b")
+        c.join("node-b")
         t = c.wait(lambda b, a: "node-b" in b, 15)
         check("3a. node-b back on the air", t is not None, secs(t))
-        c.run("plane", "Kube.Apply web 6 nginx ~")
+        c.run("plane", "Kube.Apply web 6 Ticker ~")
         t = c.wait(lambda b, a: converged(6, both)(b, a) and len(running(b).get("node-b", ())) == 2, 20)
         check("3b. scaled to 6: the two new pods go to node-b", t is not None, secs(t))
 
@@ -90,7 +98,7 @@ def main():
         # must not lose their grace before the plane even listens.
         c.run("plane", "Kube.Start")
         time.sleep(5)
-        c.run("plane", "KubeNet.Serve")
+        c.run("plane", f"KubeNet.Serve kube {KEY}")
         t = c.wait(lambda b, a: converged(6, both)(b, a) and running(b) == before
                    and all(set(a.get(n, [])) == before[n] for n in both), 20)
         check("4b. plane back from its disk: the same pods on the same nodes", t is not None,
@@ -132,33 +140,40 @@ def main():
         check("6. 30 % loss for 60 s, then clean air: converged", t is not None,
               f"{gaps} heartbeat gaps over {TTL:.0f} s heard by the listener, "
               f"{moves} changes of assignment while lossy, converged in {secs(t)}")
-        # 7. another cluster, aimed at the node that runs pods
+        # 7. intruders, aimed at the node that runs pods
+        genuine = [json.loads(l) for l in (c.work / "air.jsonl").read_text().splitlines() if '"kind"' in l]
+        genuine = [m for m in genuine if m.get("cluster") == TAG]
+        bad = [m for m in genuine if not m.get("auth")]
+        check("7. every message of the cluster so far carries a valid mac", genuine and not bad,
+              f"{len(genuine)} messages, {len(bad)} rejected by the reference HalfSipHash")
         beats, _ = c.view()
         busy = max(both, key=lambda n: len(running(beats).get(n, ())))
-        real = c.raw("assign", busy)
-        def forged(tag):
-            f = bytearray(real)
-            f[1 + 8] = tag                      # payload: 8 header bytes, then the cluster tag
-            f[1 + 17] = 0                       # no pods
-            f[1 + 4:1 + 8] = (10).to_bytes(4, "little")
-            return bytes(f)
         keep = running(beats)[busy]
+        old = next((m for m in genuine if m["kind"] == "assign" and m["node"] == busy
+                    and set(m["ids"]) != keep), None)
+
+        def held(frames, what):
+            t7 = time.time()
+            out = c.inject_after(busy, frames).strip()
+            time.sleep(1.5)
+            heard = [m for m in c.air(t7) if m["kind"] == "heartbeat" and m["node"] == busy]
+            sent = "after 0 " not in out and "injected" in out
+            check(what, sent and bool(keep) and bool(heard) and all(set(m["ids"]) == keep for m in heard),
+                  f"{out or 'the injector said nothing'}; {len(heard)} heartbeats of {busy}, all with {sorted(keep)}")
+        held([{"cluster": TAG % 255 + 1, "key": KEY, "ids": []}],
+             "7a. an assignment tagged as another cluster is ignored")
+        held([{"cluster": TAG, "key": "", "ids": []}],
+             "7b. an assignment without the cluster key is ignored")
+        held([{"raw": old["raw"]}] if old else [],
+             f"7c. an old genuine assignment {old['ids'] if old else '(none found)'} replayed is ignored")
         t7 = time.time()
-        c.inject(forged(TAG % 255 + 1), times=5)
+        c.inject_after(busy, [{"cluster": TAG, "key": KEY, "ids": []}])
+        time.sleep(1.5)
         heard = [m for m in c.air(t7) if m["kind"] == "heartbeat" and m["node"] == busy]
-        check(f"7a. another cluster's assignment is ignored by {busy}",
-              bool(keep) and bool(heard) and all(set(m["ids"]) == keep for m in heard),
-              f"{len(heard)} heartbeats, all with {sorted(keep)}")
-        t7 = time.time()
-        # Every 50 ms: the kubelet reports a fixed time after the plane's real
-        # assignment, which puts the pods back at once; slower injections were
-        # always undone just before the report, in step with the plane.
-        c.inject(forged(TAG), times=60, interval=0.05)
-        heard = [m for m in c.air(t7) if m["kind"] == "heartbeat" and m["node"] == busy]
-        check(f"7b. control: the same message tagged as this cluster empties {busy}",
+        check(f"7d. control: the same assignment signed with the key empties {busy}",
               any(not m["ids"] for m in heard), f"{sum(1 for m in heard if not m['ids'])} empty heartbeats")
         t = c.wait(converged(6, both), 20)
-        check("7c. the control plane puts the pods back", t is not None, f"in {secs(t)}")
+        check("7e. the control plane puts the pods back", t is not None, f"in {secs(t)}")
         # 8. rollout. A kubelet runs exactly its last assignment, and the plane
         # sends the assignments of all nodes in one tick: one round is a
         # consistent picture of what runs. Heartbeats of different nodes are
@@ -166,7 +181,7 @@ def main():
         # ran at the same moment.
         beats, _ = c.view()
         before = set(i for s_ in running(beats, both).values() for i in s_)
-        c.run("plane", "Kube.Apply web 6 nginx2 ~")
+        c.run("plane", "Kube.Apply web 6 Ticker2 ~")
         t8 = time.time()
         prev, last_change = None, t8
         while time.time() - t8 < 90:
@@ -196,11 +211,19 @@ def main():
         after = set(i for s_ in running(beats, both).values() for i in s_)
         check("8d. every pod was replaced: no id of the old pods runs", not (before & after),
               f"before {sorted(before)}, after {sorted(after)}")
+        # 9. a pod whose module is not on the node: assigned, never Running
+        c.run("plane", "Kube.Apply ghost 2 Nope ~")
+        time.sleep(8)
+        beats, assigns = c.view()
+        given = set(i for n in both for i in assigns.get(n, [])) - set(i for s_ in running(beats, both).values() for i in s_)
+        check("9. pods of a module the nodes do not have are assigned but never run", len(given) == 2,
+              f"assigned and not running: {sorted(given)}")
+        c.run("plane", "Kube.Apply ghost 0 Nope ~")
         c.screenshot("plane", c.work / "plane.png")
         st = c.state()
-        rs = re.findall(r"replicaset (\S+)\s+desired=(\d+)\s+image=(\S+)", st)
+        rs = re.findall(r"replicaset (web\S*)\s+desired=(\d+)\s+image=(\S+)", st)
         pods = re.findall(r"pod \S+ @node-[ab] Running", st)
-        check("8c. only the new ReplicaSet is left, 6 pods Running", len(rs) == 1 and rs[0][1:] == ("6", "nginx2")
+        check("8c. only the new ReplicaSet is left, 6 pods Running", len(rs) == 1 and rs[0][1:] == ("6", "Ticker2")
               and len(pods) == 6, f"{rs}, {len(pods)} running")
     finally:
         ok = all(results)

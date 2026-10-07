@@ -103,6 +103,9 @@ typedef struct OberonIOState {
     uint32_t gpio_ctrl;
     OberonDisk disk;
     OberonRadio radio;
+    /* RS232 receive: the machine's commands, read by Boot.Mod at start */
+    const char *serial_in;
+    size_t   serial_len, serial_pos;
 } OberonIOState;
 
 void oberon_io_init(OberonIOState *s, MemoryRegion *sys, hwaddr base,

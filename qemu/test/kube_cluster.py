@@ -11,7 +11,7 @@ disk stays) and booted again with `on`; that is a reboot from the same disk.
 `relay(loss)` replaces the relay, which is also how the air goes away and
 comes back.
 """
-import json, pathlib, re, shutil, sys, tempfile, time, uuid
+import json, pathlib, re, shutil, subprocess, sys, tempfile, time, uuid
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 IMPL = ROOT / "impl"
@@ -35,7 +35,9 @@ def node_name(i):
 
 
 class Cluster:
-    def __init__(self, qemu, nodes, loss=0.0, boot=30):
+    def __init__(self, qemu, nodes, loss=0.0, boot=30, key=None, commands=None):
+        self.key = key            # the cluster key, hex; None: the default, all zero
+        self.commands = commands or {}   # machine -> what it runs at start (-machine commands=)
         self.qemu = pathlib.Path(qemu).resolve()
         if not (self.qemu / "build" / "qemu-system-risc5").exists():
             raise SystemExit(f"  ❌ no {self.qemu}/build/qemu-system-risc5; run make -C qemu build first")
@@ -68,7 +70,7 @@ class Cluster:
                 f.truncate(8 * 1024 * 1024)
         words = [int(x, 16) for x in (IMPL / "rtl" / "prom_sd.mem").read_text().split()]
         (self.work / "prom.bin").write_bytes(b"".join(w.to_bytes(4, "little") for w in words))
-        for f in ("relay.py", "listen.py"):
+        for f in ("relay.py", "listen.py", "halfsiphash.py", "inject.py"):
             shutil.copy(ROOT / "qemu" / "radio" / f, self.work)
 
     def name(self, m):
@@ -77,10 +79,16 @@ class Cluster:
     def _run(self, m):
         docker("run", "-d", "--name", self.name(m), "--network", self.net, "-p", "127.0.0.1::4444",
                "-v", f"{self.qemu}:/src:ro", "-v", f"{self.work}:/w", "-w", "/w", "qemu-build:risc5",
-               f"/src/build/qemu-system-risc5 -machine oberon,radio=air -bios prom.bin "
+               f"/src/build/qemu-system-risc5 -machine '{self._machine(m)}' -bios prom.bin "
                f"-drive if=none,id=sd0,file={m}.dsk,format=raw -display none "
                f"-chardev udp,id=air,host=relay,port=7524,localaddr=0.0.0.0,localport=7524 "
                f"-qmp tcp:0.0.0.0:4444,server,wait=off")
+
+    def _machine(self, m):
+        opts = "oberon,radio=air"
+        if self.commands.get(m):
+            opts += ",commands=" + self.commands[m].replace(",", ",,")
+        return opts
 
     def _connect(self, m):
         port = int(docker("port", self.name(m), "4444").strip().rsplit(":", 1)[1])
@@ -89,7 +97,7 @@ class Cluster:
     def _listener(self):
         docker("run", "-d", "--name", self.name("listen"), "--network", self.net,
                "-v", f"{self.work}:/w", "qemu-build:risc5",
-               "sh -c 'python3 -u /w/listen.py relay --json > /w/air.jsonl'")
+               f"sh -c 'python3 -u /w/listen.py relay --json --key {self.key or 0} > /w/air.jsonl'")
 
     def relay(self, loss=0.0):
         """(Re)starts the relay; the air is gone while it is down."""
@@ -98,14 +106,22 @@ class Cluster:
                "--network-alias", "relay", "-v", f"{self.work}:/w", "qemu-build:risc5",
                f"python3 -u /w/relay.py --loss {loss}")
 
-    def inject(self, frame: bytes, times=5, interval=1.0):
-        """Sends a radio frame to the air from a station of its own, as another
-        cluster or a rogue machine would."""
-        code = (f"import socket,time\ns=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)\n"
-                f"s.sendto(bytes([0xFF]),('relay',7524))\ntime.sleep(0.5)\n"
-                f"for _ in range({times}):\n s.sendto(bytes.fromhex('{frame.hex()}'),('relay',7524));"
-                f" time.sleep({interval})\n")
-        docker("run", "--rm", "--network", self.net, "qemu-build:risc5", f"python3 -c \"{code}\"")
+    def serve(self):
+        """Kube and KubeNet on the control plane, with the cluster key."""
+        self.run("plane", "Kube.Start")
+        self.run("plane", f"KubeNet.Serve kube {self.key or ''}".rstrip())
+
+    def join(self, node):
+        self.run(node, f"KubeNet.Join {node} kube {self.key or ''}".rstrip())
+
+    def inject_after(self, node, frames, rounds=3):
+        """Sends frames for a node right after the plane's assignment to it, from
+        a station of its own (qemu/radio/inject.py), as an intruder would."""
+        spec = json.dumps({"node": node, "rounds": rounds, "frames": frames})
+        r = subprocess.run(["docker", "run", "--rm", "--network", self.net, "-v", f"{self.work}:/w", "-w", "/w",
+                            "qemu-build:risc5", f"python3 /w/inject.py relay '{spec}'"],
+                           capture_output=True, text=True)
+        return r.stdout + r.stderr[-400:]
 
     def raw(self, kind, node, since=0.0):
         """The latest raw frame of this kind for this node, from the air."""
@@ -188,7 +204,7 @@ class Cluster:
                     m = json.loads(line)
                 except ValueError:
                     continue
-                if m["t"] >= since and "kind" in m and m.get("cluster") == TAG:
+                if m["t"] >= since and "kind" in m and m.get("cluster") == TAG and m.get("auth", True):
                     out.append(m)
         return out
 

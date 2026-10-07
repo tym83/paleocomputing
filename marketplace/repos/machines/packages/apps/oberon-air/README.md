@@ -28,4 +28,9 @@ alice's log. `Net.SendFiles` and `Net.ReceiveFiles` move files the same way.
 
 The relay keeps the list of machines it has heard from in memory, so the air
 runs as a single replica. Machines announce themselves every few seconds, so a
-restarted relay finds them again on its own.
+restarted relay finds them again on its own, and a machine reconnects when the
+relay's pod is replaced.
+
+An air is also what a Kube cluster talks over: give the machines of one air a
+`kubeRole` in their OberonVM form, and they form a cluster at start. See the
+OberonVM description.

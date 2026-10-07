@@ -8,6 +8,10 @@
  *   1  buttons and switches         read
  *   2  RS232 receive / write: transmit
  *   3  RS232 status                 read
+ *
+ * RS232 receive carries the machine's commands (-machine oberon,commands=...):
+ * the text is in the receive queue from power-on, and Boot.Mod reads it with
+ * RS232.Rec and runs it, as if it had been typed on a serial console.
  *   4  SPI receive / write: start exchange
  *   5  SPI status / write: device select control
  *   6  mouse and keyboard flag      read
@@ -36,9 +40,14 @@ static uint64_t io_read(void *opaque, hwaddr addr, unsigned size)
     case 1:
         return 0;                       /* no buttons or switches */
     case 2:
-        return 0;                       /* RS232 receive is not connected yet */
+        /* RS232 receive: the next byte of the machine's commands */
+        if (s->serial_pos < s->serial_len) {
+            return (uint8_t)s->serial_in[s->serial_pos++];
+        }
+        return 0;
     case 3:
-        return 2;                       /* transmitter ready, receiver empty */
+        /* bit 1: transmitter ready; bit 0: a received byte is waiting */
+        return 2 | (s->serial_pos < s->serial_len ? 1 : 0);
     case 4:
         if (s->spi_ctrl & OBERON_SPI_NET) {
             return oberon_radio_read(&s->radio);

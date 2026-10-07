@@ -29,8 +29,26 @@ HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from oberonfs import Image                       # noqa: E402
 
+# System, patched to run Boot.Run at the end of its body; its source comes
+# from the disk image (the 2016 system, not the 2013 sources in ext/).
+SYSTEM_BOOT = "System.Mod"
 DEFAULT = [HERE.parent / "ext" / "po2013-src" / "Net.Mod",
-           HERE.parent / "kube" / "Kube.Mod", HERE.parent / "kube" / "KubeNet.Mod"]
+           HERE.parent / "kube" / "Kube.Mod", HERE.parent / "kube" / "Pods.Mod",
+           HERE.parent / "kube" / "KubeNet.Mod",
+           HERE.parent / "kube" / "Ticker.Mod", HERE.parent / "kube" / "Ticker2.Mod",
+           HERE.parent / "kube" / "Boot.Mod", HERE / SYSTEM_BOOT]   # not a file: patched from the image
+def patched_system(text: str) -> str:
+    """System.Mod of the image with Boot.Run called last in its body. Only the
+    body changes, so the symbol file and its key stay the same and every
+    module compiled against System still loads."""
+    text = text.replace("\r\n", "\r")
+    old = "Kernel.Install(SYSTEM.ADR(Abort), 0);"
+    if old not in text or "Boot.Run" in text:
+        raise SystemExit("System.Mod on the image is not the one patched for Boot")
+    text = text.replace("  VAR W: Texts.Writer;", "  VAR W: Texts.Writer; bootRes: INTEGER;", 1)
+    return text.replace(old, old + ' Oberon.Call("Boot.Run", bootRes);', 1)
+
+
 IMPORTS = ("Viewers", "TextFrames", "MenuViewers", "Display", "Fonts", "Texts",
            "Oberon", "Input", "Files", "Kernel", "FileDir", "Modules", "SCC")
 
@@ -53,7 +71,11 @@ def install_modules(disk: pathlib.Path, sources: list[pathlib.Path], norebo: pat
             (comp / f"{m}.smb").write_bytes(img.read(files[f"{m}.smb"]))
         names = []
         for src in sources:
-            shutil.copy(src, comp / src.name)
+            if src.name == SYSTEM_BOOT and not src.exists():
+                (comp / src.name).write_bytes(
+                    patched_system(img.read(files[SYSTEM_BOOT]).decode("latin-1")).encode("latin-1"))
+            else:
+                shutil.copy(src, comp / src.name)
             out = _norebo(binary, norebo, comp, "ORP.Compile", f"{src.name}/s")
             if "compiling" not in out or "FAILED" in out:
                 raise SystemExit(f"{src.name} did not compile:\n" + out)

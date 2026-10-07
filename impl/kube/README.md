@@ -71,6 +71,9 @@ The pod name is quoted because the Oberon text scanner ends a name at a hyphen.
 |---|---|
 | `Kube.Mod` | the control plane: objects, controllers, scheduler |
 | `KubeNet.Mod` | the cluster over the radio: the control plane side and the kubelet |
+| `Pods.Mod` | the pod a workload is started or stopped for |
+| `Ticker.Mod`, `Ticker2.Mod` | two versions of a workload, for pods and rollouts |
+| `Boot.Mod` | runs the machine's commands at start (RS232 receive) |
 | `check.sh` | compile and run `Kube.Demo` in Norebo |
 | `mkdisk.sh` | a system image with `Kube.Mod` and the commands appended to `System.Tool` |
 | `system.sh` | boot that image on the RTL, click the commands, take a screenshot; the clicks are in `../scripts/kube.src` |
@@ -86,17 +89,20 @@ On the control plane:
 
 ```
 Kube.Start
-KubeNet.Serve
-Kube.Apply web 3 nginx ~
+KubeNet.Serve kube 00c0ffee00c0ffee
+Kube.Apply web 3 Ticker ~
 ```
 
 On each node:
 
 ```
-KubeNet.Join node-a
+KubeNet.Join node-a kube 00c0ffee00c0ffee
 ```
 
-The protocol is two messages, each one radio packet sent to everybody. A
+In the catalog nothing has to be typed: an `OberonVM` with a `kubeRole` runs
+these commands at start (see "Commands at start" below).
+
+The protocol is three messages, each one radio packet sent to everybody. A
 kubelet broadcasts a heartbeat every second with the pods it runs; the control
 plane sends every Ready node the list of pods bound to it every second. Both
 sides are level-triggered, like their Kubernetes counterparts: a node runs
@@ -114,8 +120,22 @@ on the same air, with a node of the same name, kept switching that node's pods
 on and off in the sandbox tenant. The tag is computed from the name, so two
 different names share a tag with a chance of 1 in 255.
 
-Pods on the radio are numbered by a one-byte id, and a heartbeat holds up to 14
-of them, so one node runs up to 14 pods. Apply a deployment once its nodes are
+The tag separates clusters but proves nothing: any station can send it. Every
+message is therefore signed with the cluster key, the third word of Serve and
+Join, up to 16 hex digits: a HalfSipHash-2-4 mac (the 32-bit SipHash, which
+fits the machine's arithmetic) over the message type and its data, after a
+16-bit counter. A message with a wrong mac is dropped, and so is one whose
+counter is not newer than the last one from its sender: an old assignment
+replayed is refused while its sender is alive. A sender silent for longer than
+the node timeout may have restarted and counts from anew, so its counter is
+learned again then. The DR check verifies every mac on the air with a
+reference implementation in Python and tries the intruders: another
+cluster's assignment, an unsigned one and a replayed one are ignored, the
+same assignment signed with the key is obeyed.
+
+Signing took six bytes of the packet: a node name is up to 6 characters, and a
+heartbeat holds up to 10 pod ids, so one node runs up to 10 pods; the
+scheduler binds no more to it. Apply a deployment once its nodes are
 Ready: like the real scheduler, Kube does not move running pods to a node that
 joined later.
 
@@ -123,9 +143,38 @@ joined later.
 nodes Ready, three pods spread over them, then one node switched off, NotReady,
 and all three pods Running on the other.
 
-`Net`, `Kube` and `KubeNet` are compiled onto the system disk of the
-`oberon-run` image (`tools/install_modules.py`), so in an `OberonVM` they are
-ready to run without typing anything in.
+`Net`, `Kube`, `KubeNet`, `Pods`, the workloads `Ticker` and `Ticker2` and
+`Boot` are compiled onto the system disk of the `oberon-run` image
+(`tools/install_modules.py`), so in an `OberonVM` they are ready to run without
+typing anything in.
+
+## Pods run code
+
+A pod's image names an Oberon module on the node. The control plane sends each
+pod's image in a signed spec message (the third message, one per tick, the
+pods that do not run yet first). The kubelet loads the module and calls its
+`Start` command for a new pod and `Stop` for a pod that is gone; Oberon
+commands take no parameters, so the pod is passed in `Pods`. The kubelet
+reports as running only the pods whose `Start` returned: a pod of a module
+that is not on the node stays Pending, as a pod whose image cannot be pulled
+(DR scenario 9). `Ticker` and `Ticker2` are two versions of a workload that
+counts seconds per pod (`Ticker.Show`), so `Kube.Apply web 6 Ticker2` on a
+running `web 6 Ticker` replaces running code, pod by pod.
+
+## Commands at start
+
+QEMU takes the commands a machine runs at start (`-machine
+oberon,commands=...`, separated by `;`) and puts them on RS232 receive, as if
+they came from a serial console. `Boot.Run` reads them and runs each one with
+the rest of its line as parameters. It is called at the end of `System`'s
+body: `System` is rebuilt from the image's own source with that one line
+added, so its interface, and the key every other module checks, stays the
+same. The catalog composes the commands from the `OberonVM` form (`kubeRole`,
+`kubeCluster`, `kubeNode`, `kubeKey`, `commands`) and the KubeVirt hook passes
+them to QEMU. `qemu/test/kube_boot_check.py` starts three machines with only
+their commands, no key pressed: the cluster forms and runs a deployment, and
+the control plane, switched off and on, comes back by itself without moving a
+pod.
 
 ## The store on disk
 
@@ -159,7 +208,8 @@ in the hardware workflow.
 | the control plane boots again | the store comes back from its disk: the same pods on the same nodes, not one assignment changes | at once after `Kube.Start` |
 | the air (the relay) is gone for 20 s | both nodes go NotReady; the plane pauses evictions instead of moving every pod, and with the air back the same pods run on the same nodes | about 3 s |
 | 30 % of deliveries are lost for a minute | no heartbeat gap reaches the timeout; no pod moves | |
-| another cluster on the air sends "node-a: run nothing" | node-a ignores it; the same message tagged as this cluster, the control, does empty node-a, and the plane puts the pods back | |
+| right after the plane's assignment, a station sends "run nothing" for a node: tagged as another cluster, unsigned, or an old genuine assignment replayed | the node ignores all three; the same assignment signed with the key and a fresh counter, the control, does empty it, and the plane puts the pods back | |
+| a deployment of a module the nodes do not have | its pods are assigned but never run, they stay Pending | |
 | `web 6` is rolled out to a new image | 6 to 7 pods run at every moment; in the end only the new ReplicaSet is left | |
 
 The timeout is five missed heartbeats. It was three at first: on an air losing
@@ -242,14 +292,15 @@ for the next assignment to reach the remaining nodes.
 
 ## In Cozystack
 
-Kube also runs inside an `OberonVM` from the catalog. Before the modules came
-on the system disk it was typed into the editor over VNC, saved, compiled
-inside the system with `ORP.Compile Kube.Mod/s` and run with the commands
-above. Getting there needed fixes to the keyboard and the disk of the virtual
-machine ([finding 86](../docs/FINDING-86-qemu-keyboard-byte-load.md)).
+Kube runs inside `OberonVM` machines from the catalog, which form a cluster
+from their form; the description of OberonVM shows the fields. At first it was
+typed into the editor over VNC, saved, compiled inside the system with
+`ORP.Compile Kube.Mod/s` and run by hand; getting there needed fixes to the
+keyboard and the disk of the virtual machine
+([finding 86](../docs/FINDING-86-qemu-keyboard-byte-load.md)).
 
 ## Next
 
-A node that really runs something for its pods: a Pod as an Oberon task
-started from a module named by the image, so that a rollout replaces running
-code and a readiness check can hold it back.
+A readiness check a workload answers, so that a rollout waits for the new
+code to be ready and not only started; and a way to apply deployments without
+VNC.
