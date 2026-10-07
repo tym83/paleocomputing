@@ -23,7 +23,13 @@
 # the reader. The `stream9` tag alone brings a different system a month later,
 # and `v1.8.4` can technically be moved, so the same commit would build a
 # different image. Update the digest together with the tag: for centos here,
-# for the launcher in kubevirt/versions.txt, next to its version:
+# for the launcher in kubevirt/versions.txt, next to its version.
+#
+# The centos base is our copy of quay.io/centos/centos:stream9
+# (.github/workflows/mirror-base.yml): quay rewrites the tag daily and removes
+# the old digests within days, so a pin there broke the build twice. To move
+# the base, run that workflow and pin the dated tag and digest it prints.
+# The launcher digest:
 #
 #   docker buildx imagetools inspect quay.io/kubevirt/virt-launcher:v1.8.4
 
@@ -35,7 +41,7 @@ ARG KUBEVIRT_VERSION=v1.8.4
 ARG LAUNCHER_DIGEST=sha256:c89f733b1fdcc810d0b4326bbfc652a4cf3d25bc56cc8545f124d5cb71a1ce20
 
 # ── libvirt build ──────────────────────────────────────────────────────────
-FROM quay.io/centos/centos:stream9@sha256:63e8d0c2a4a4b67c8bd7456283d12106bedf815d8c27d1a72498ebcf173baf09 AS libvirt-build
+FROM ghcr.io/tym83/paleocomputing/centos:stream9-20261007@sha256:33346f5fe280763eb78e85f968ad52bc2b2013369de85403f67e802db98ed243 AS libvirt-build
 
 # Dependencies are taken not as a list but as the set the distribution itself
 # builds libvirt with: picking them one by one is slow and unreliable.
@@ -70,7 +76,7 @@ RUN meson setup build --prefix=/usr --libdir=/usr/lib64 \
 # ⚠ It must be built here rather than brought in prebuilt: the virt-launcher
 # image is based on CentOS 9, and a binary from Ubuntu does not run in it
 # ("GLIBC_2.38 not found").
-FROM quay.io/centos/centos:stream9@sha256:63e8d0c2a4a4b67c8bd7456283d12106bedf815d8c27d1a72498ebcf173baf09 AS qemu-build
+FROM ghcr.io/tym83/paleocomputing/centos:stream9-20261007@sha256:33346f5fe280763eb78e85f968ad52bc2b2013369de85403f67e802db98ed243 AS qemu-build
 
 RUN dnf install -y --setopt=install_weak_deps=False dnf-plugins-core \
  && dnf config-manager --set-enabled crb \
