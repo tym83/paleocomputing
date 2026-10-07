@@ -85,7 +85,7 @@ stays Pending, which is what Kubernetes calls an image it cannot pull.
 
 `Kube.Apply web 6 Ticker2` on a running `web 6 Ticker` creates a new
 ReplicaSet and moves the pods one at a time, maxSurge 1 and maxUnavailable 0,
-as Kubernetes does by default. Two faults showed on the way, both of which
+the careful setting (Kubernetes defaults to 25% and 25%). Two faults showed on the way, both of which
 real Kubernetes has met.
 
 A pod deleted on the control plane keeps running until its node hears the

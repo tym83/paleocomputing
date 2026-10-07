@@ -236,7 +236,7 @@ function command(name, text) {
   if (!p || !p.on) return;
   p.w.postMessage({ t: 'command', text });
   // A rollout is watched from the command on: how many pods ran at least and at most.
-  if (/Ticker2/.test(text) && /Kube\.Apply/.test(text)) roll = { min: 99, max: 0 };
+  if (/Ticker2/.test(text) && /Kube\.Apply/.test(text)) roll = { min: 99, max: 0, start: ran().length };
 }
 
 // ── the air panel ─────────────────────────────────────────────────────────
@@ -402,14 +402,17 @@ lab({
   title: { en: '2. Roll out new code', ru: '2. Выкатить новый код' },
   task: { en: 'Click <b>web 4 Ticker2</b>. Kube makes a new ReplicaSet and replaces the pods one at a time: never fewer than 4 running, never more than 5. On a node, <code>Ticker2.Show</code> shows the new code counting.',
           ru: 'Нажмите <b>web 4 Ticker2</b>. Kube создаёт новый ReplicaSet и заменяет поды по одному: работает не меньше 4 и не больше 5. На узле <code>Ticker2.Show</code> показывает, как считает новый код.' },
-  why: { en: 'A pod\'s image names an Oberon module. The kubelet loads it and calls its Start command; a pod of the old image gets its Stop. maxSurge 1, maxUnavailable 0, as Kubernetes does by default; a pod a kubelet still runs after deletion counts against the surge until it is gone (podReplacementPolicy: TerminationComplete). Pod ids go round and are never reused soon: a reused id once made a kubelet take a new pod for the old one, and a rollout changed nothing.',
-         ru: 'Образ пода — это имя модуля Оберона. Kubelet загружает его и вызывает команду Start; под старого образа получает Stop. maxSurge 1, maxUnavailable 0, как в Kubernetes по умолчанию; под, который kubelet ещё выполняет после удаления, считается против surge, пока не остановится (podReplacementPolicy: TerminationComplete). Номера подов идут по кругу и скоро не повторяются: однажды повторный номер заставил kubelet принять новый под за старый, и выкатка ничего не меняла.' },
+  why: { en: 'A pod\'s image names an Oberon module. The kubelet loads it and calls its Start command; a pod of the old image gets its Stop. maxSurge 1, maxUnavailable 0, the careful setting (Kubernetes defaults to 25% and 25%); a pod a kubelet still runs after deletion counts against the surge until it is gone (podReplacementPolicy: TerminationComplete). Pod ids go round and are never reused soon: a reused id once made a kubelet take a new pod for the old one, and a rollout changed nothing.',
+         ru: 'Образ пода — это имя модуля Оберона. Kubelet загружает его и вызывает команду Start; под старого образа получает Stop. maxSurge 1, maxUnavailable 0, самый осторожный вариант (в Kubernetes по умолчанию 25% и 25%); под, который kubelet ещё выполняет после удаления, считается против surge, пока не остановится (podReplacementPolicy: TerminationComplete). Номера подов идут по кругу и скоро не повторяются: однажды повторный номер заставил kubelet принять новый под за старый, и выкатка ничего не меняла.' },
   update() {
     const ids = ran(), imgs = ids.map(i => images[i]);
     if (roll && !this.done) {
       roll.min = Math.min(roll.min, ids.length); roll.max = Math.max(roll.max, ids.length);
+      // Done when every pod runs the new image, and only if the rollout kept
+      // maxSurge 1, maxUnavailable 0: never fewer than before, never more
+      // than one over the end count.
       if (ids.length >= 4 && imgs.every(x => x === 'Ticker2'))
-        this.mark(true, t({ en: `done: ${ids.length} pods of Ticker2; during the rollout ${roll.min}…${roll.max} ran (as the heartbeats show)`, ru: `готово: подов Ticker2 — ${ids.length}; во время выкатки работало ${roll.min}…${roll.max} (по сигналам жизни)` }));
+        this.mark(roll.min >= Math.min(roll.start, ids.length) && roll.max <= ids.length + 1, t({ en: `done: ${ids.length} pods of Ticker2; during the rollout ${roll.min}…${roll.max} ran (as the heartbeats show)`, ru: `готово: подов Ticker2 — ${ids.length}; во время выкатки работало ${roll.min}…${roll.max} (по сигналам жизни)` }));
     }
   },
 });

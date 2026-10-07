@@ -247,8 +247,8 @@ anti-affinity), so losing a host takes as few nodes as it can.
 
 `Kube.Apply web 6 nginx2` on a running `web` changes its image. The
 deployment controller makes a new ReplicaSet for the image (`web-rs2`, then
-`web-rs3`) and moves the pods one at a time, as Kubernetes does by default
-(maxSurge 1, maxUnavailable 0): one new pod is added, and one old pod goes
+`web-rs3`) and moves the pods one at a time, with maxSurge 1 and
+maxUnavailable 0, the careful setting (Kubernetes defaults to 25% and 25%): one new pod is added, and one old pod goes
 only once more pods run than wanted, that is, once the new pod's kubelet has
 reported it. An old ReplicaSet left without replicas and pods is removed. A
 ReplicaSet that has to shrink removes Pending pods first.
