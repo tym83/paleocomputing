@@ -153,11 +153,11 @@ in the hardware workflow.
 
 | what fails | what happens | time |
 |---|---|---|
-| a node is switched off | NotReady after the 5 s heartbeat timeout, its pods run on the other node | about 7 s |
+| a node is switched off | NotReady after the 5 s heartbeat timeout, its pods move 2 s later | about 8 s |
 | the node comes back and joins | Ready again; when the deployment is scaled up, the new pods go to it, the least loaded node | at once |
 | the control plane is switched off | the kubelets keep running what they were given | |
 | the control plane boots again | the store comes back from its disk: the same pods on the same nodes, not one assignment changes | at once after `Kube.Start` |
-| the air (the relay) is gone for 20 s | both nodes go NotReady on the plane; with the air back the cluster converges again | about 7 s |
+| the air (the relay) is gone for 20 s | both nodes go NotReady; the plane pauses evictions instead of moving every pod, and with the air back the same pods run on the same nodes | about 3 s |
 | 30 % of deliveries are lost for a minute | no heartbeat gap reaches the timeout; no pod moves | |
 | another cluster on the air sends "node-a: run nothing" | node-a ignores it; the same message tagged as this cluster, the control, does empty node-a, and the plane puts the pods back | |
 | `web 6` is rolled out to a new image | 6 to 7 pods run at every moment; in the end only the new ReplicaSet is left | |
@@ -168,6 +168,19 @@ minute, the plane took the node for NotReady and moved pods that never
 stopped. With five, none moved; the price is a slower failover, about 7 s
 instead of 4. The real kubelet reports every 10 s and the control plane waits
 40 s, four missed reports: the same trade, at another scale.
+
+When too many nodes go NotReady at once, all of them, or at least 55 % of
+three or more, the nodes are more likely cut off than dead, and Kube pauses
+evictions, as the node lifecycle controller of Kubernetes does for a fully
+disrupted zone. Two details were needed for that to work, both learned from a
+failed check. Nodes do not go NotReady at the same moment, their heartbeats are
+up to a second apart, so a node's pods move only after it has been NotReady
+for 2 s: by then the others have gone too, and the disruption is seen.
+Kubernetes waits five minutes (`tolerationSeconds: 300`). And nodes come back
+one by one: the first one Ready ends the disruption while the others have not
+reported yet, so the silent nodes get one more timeout to report, as
+Kubernetes resets the nodes' timers when a zone leaves full disruption.
+Without these, a 20 s outage of the air moved 74 assignments; with them, none.
 
 Machines on one air prefer different hosts of the Kubernetes cluster they run
 in (`retro-machine` gives them the air as a label and a preferred

@@ -13,8 +13,9 @@ kube_cluster.py); each scenario must converge again within its deadline:
                     the same nodes, none moves or restarts. While the plane is
                     off, the kubelets keep running what they were given;
   5. air lost       the relay is gone for 20 s: both nodes go NotReady on the
-                    plane, which unbinds their pods; with the air back the
-                    cluster converges again;
+                    plane, which then pauses evictions instead of unbinding
+                    every pod; with the air back the same pods run on the
+                    same nodes, not one moved;
   6. lossy air      30 % of deliveries lost for 60 s: the cluster stays
                     converged; the number of heartbeat timeouts is reported;
   7. another cluster  a station sends "node-a: run nothing" tagged as another
@@ -99,12 +100,16 @@ def main():
         check("4c. no pod moved or restarted on the way", not moved, f"{len(moved)} other assignments")
 
         # 5. air lost
+        beats, _ = c.view()
+        placed = running(beats, both)
         c.air_off()
         time.sleep(20)
-        t0 = time.time()
+        t5 = time.time()
         c.relay()
-        t = c.wait(converged(6, both), 40)
-        check("5. air back after 20 s: converged again", t is not None, f"in {secs(t)}")
+        t = c.wait(lambda b, a: converged(6, both)(b, a) and running(b, both) == placed, 40)
+        check("5a. air back after 20 s: the same pods on the same nodes", t is not None, f"in {secs(t)}")
+        moved = [m for m in c.air(t5) if m["kind"] == "assign" and set(m["ids"]) != placed.get(m["node"], set())]
+        check("5b. evictions were paused: no assignment changed", not moved, f"{len(moved)} changed")
 
         # 6. lossy air
         c.relay(loss=0.3)

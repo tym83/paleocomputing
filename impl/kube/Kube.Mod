@@ -7,7 +7,8 @@ MODULE Kube;  (*A minimal Kubernetes control plane in Oberon-07.
                 more pods run than wanted;
     ctlRS     - ReplicaSet -> Pod (keeps the number of pods equal to replicas);
     ctlNode   - scheduler: binds a pod to the least loaded Ready node, and
-                unbinds the pods of a node that went NotReady, so they move.
+                unbinds the pods of a node that went NotReady, so they move;
+                unless too many nodes are NotReady at once (see disrupted).
   Ownership is the owner field (ownerReferences): pod.owner = rs, rs.owner = deploy.
   Nodes are objects too. A remote node (another Oberon machine on the radio,
   see KubeNet) is Ready while its kubelet reports, and its pods are Running
@@ -38,6 +39,8 @@ MODULE Kube;  (*A minimal Kubernetes control plane in Oberon-07.
     phPending = 0; phRunning = 1;   (*pods*)
     phNotReady = 0; phReady = 1;    (*nodes*)
     period = 50;  (*ms between ticks in the full system*)
+    evictDelay = 2000;  (*ms a node is NotReady before its pods move: time to see
+                          whether the other nodes go too (see disrupted)*)
     storePeriod = 500;  (*ms between checks whether the store changed*)
     magic = 4B554231H;  (*"KUB1"*)
 
@@ -55,7 +58,7 @@ MODULE Kube;  (*A minimal Kubernetes control plane in Oberon-07.
     tDeploy, tRS, tNode, tStore: Oberon.Task;
     seq: INTEGER;
     gen, savedSum, slot: INTEGER;   (*the store on disk*)
-    running: BOOLEAN;
+    running, paused: BOOLEAN;
 
   PROCEDURE append(VAR s: Name; t: ARRAY OF CHAR);
     VAR i, j: INTEGER;
@@ -282,14 +285,61 @@ MODULE Kube;  (*A minimal Kubernetes control plane in Oberon-07.
     END
   END ctlRS;
 
-  (*scheduler: pods of a node that is gone or NotReady are unbound, unbound
-    pods go to the least loaded Ready node; a local node runs its pods at once*)
-  PROCEDURE ctlNode*;
-    VAR i, n: INTEGER;
-  BEGIN
+  (*Too many remote nodes NotReady at once: all of them, or at least 55 % of
+    three or more. Then the nodes are more likely cut off than dead (the air or
+    the control plane failed), and moving their pods would only reshuffle the
+    cluster when the air comes back. The node lifecycle controller of
+    Kubernetes stops evicting in the same case (a fully disrupted zone, or a
+    partially disrupted one in a cluster of up to 50 nodes)*)
+  PROCEDURE disrupted(): BOOLEAN;
+    VAR i, total, down: INTEGER;
+  BEGIN total := 0; down := 0;
     FOR i := 0 TO maxObj-1 DO
-      IF store[i].used & (store[i].kind = kPod) & (store[i].node[0] # 0X) & ~ready(store[i].node) THEN
-        store[i].node[0] := 0X; store[i].phase := phPending
+      IF store[i].used & (store[i].kind = kNode) & ~store[i].local THEN
+        INC(total); IF store[i].phase # phReady THEN INC(down) END
+      END
+    END;
+    RETURN (total > 0) & ((down = total) OR (total >= 3) & (down * 100 >= total * 55))
+  END disrupted;
+
+  (*a pod's node is gone, or NotReady for longer than evictDelay. Nodes do not
+    go NotReady at the same moment, their heartbeats are up to a second apart:
+    without the delay the first node of an air that failed as a whole had its
+    pods moved before the others went and the disruption could be seen.
+    Kubernetes waits five minutes by default (tolerationSeconds 300)*)
+  PROCEDURE evictable(nm: ARRAY OF CHAR; now: INTEGER): BOOLEAN;
+    VAR k: INTEGER;
+  BEGIN k := find(kNode, nm);
+    RETURN (k < 0) OR (store[k].phase # phReady) & (store[k].local OR (now - store[k].id > evictDelay))
+  END evictable;
+
+  (*scheduler: pods of a node that is gone or NotReady are unbound, unless the
+    cluster is disrupted; unbound pods go to the least loaded Ready node; a
+    local node runs its pods at once*)
+  PROCEDURE ctlNode*;
+    VAR i, n, now: INTEGER; d: BOOLEAN;
+  BEGIN d := disrupted();
+    IF d # paused THEN paused := d;
+      IF d THEN Texts.WriteString(W, "kube: too many nodes NotReady, evictions paused")
+      ELSE Texts.WriteString(W, "kube: evictions resumed, silent nodes get a grace");
+        (*Nodes come back one by one: the first one Ready ends the disruption
+          while the others have not reported yet, and their pods would be
+          moved at once. Kubernetes resets the nodes' timers when a zone leaves
+          full disruption; here the silent nodes count as just heard, so they
+          have one timeout to report*)
+        FOR i := 0 TO maxObj-1 DO
+          IF store[i].used & (store[i].kind = kNode) & ~store[i].local & (store[i].phase # phReady) THEN
+            store[i].phase := phReady; store[i].seen := Kernel.Time()
+          END
+        END
+      END;
+      Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf)
+    END;
+    IF ~d THEN now := Kernel.Time();
+      FOR i := 0 TO maxObj-1 DO
+        IF store[i].used & (store[i].kind = kPod) & (store[i].node[0] # 0X) & evictable(store[i].node, now) THEN
+          store[i].node[0] := 0X; store[i].phase := phPending
+        END
       END
     END;
     FOR i := 0 TO maxObj-1 DO
@@ -346,7 +396,7 @@ MODULE Kube;  (*A minimal Kubernetes control plane in Oberon-07.
     FOR i := 0 TO maxObj-1 DO
       IF store[i].used & (store[i].kind = kNode) & ~store[i].local & (store[i].phase = phReady)
           & (now - store[i].seen > ttl) THEN
-        store[i].phase := phNotReady;
+        store[i].phase := phNotReady; store[i].id := now;   (*a node's id: NotReady since*)
         Texts.WriteString(W, "kube: node "); Texts.WriteString(W, store[i].name);
         Texts.WriteString(W, " NotReady"); Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf)
       END
@@ -717,6 +767,6 @@ MODULE Kube;  (*A minimal Kubernetes control plane in Oberon-07.
     applyDep("web", "nginx2", 3); Step; Get; Step; Get; Step; Step; Step; Step; Step; Get
   END Demo;
 
-BEGIN Texts.OpenWriter(W); running := FALSE;
+BEGIN Texts.OpenWriter(W); running := FALSE; paused := FALSE;
   clear; gen := 0; slot := 0; savedSum := sum()
 END Kube.
