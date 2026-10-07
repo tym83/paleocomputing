@@ -154,11 +154,12 @@ def main():
 
         def held(frames, what):
             t7 = time.time()
-            c.inject_after(busy, frames)
+            out = c.inject_after(busy, frames).strip()
             time.sleep(1.5)
             heard = [m for m in c.air(t7) if m["kind"] == "heartbeat" and m["node"] == busy]
-            check(what, bool(keep) and bool(heard) and all(set(m["ids"]) == keep for m in heard),
-                  f"{len(heard)} heartbeats of {busy}, all with {sorted(keep)}")
+            sent = "after 0 " not in out and "injected" in out
+            check(what, sent and bool(keep) and bool(heard) and all(set(m["ids"]) == keep for m in heard),
+                  f"{out or 'the injector said nothing'}; {len(heard)} heartbeats of {busy}, all with {sorted(keep)}")
         held([{"cluster": TAG % 255 + 1, "key": KEY, "ids": []}],
              "7a. an assignment tagged as another cluster is ignored")
         held([{"cluster": TAG, "key": "", "ids": []}],

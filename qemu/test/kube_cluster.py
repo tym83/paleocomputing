@@ -11,7 +11,7 @@ disk stays) and booted again with `on`; that is a reboot from the same disk.
 `relay(loss)` replaces the relay, which is also how the air goes away and
 comes back.
 """
-import json, pathlib, re, shutil, sys, tempfile, time, uuid
+import json, pathlib, re, shutil, subprocess, sys, tempfile, time, uuid
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 IMPL = ROOT / "impl"
@@ -111,8 +111,10 @@ class Cluster:
         """Sends frames for a node right after the plane's assignment to it, from
         a station of its own (qemu/radio/inject.py), as an intruder would."""
         spec = json.dumps({"node": node, "rounds": rounds, "frames": frames})
-        return docker("run", "--rm", "--network", self.net, "-v", f"{self.work}:/w", "-w", "/w",
-                      "qemu-build:risc5", f"python3 /w/inject.py relay '{spec}'")
+        r = subprocess.run(["docker", "run", "--rm", "--network", self.net, "-v", f"{self.work}:/w", "-w", "/w",
+                            "qemu-build:risc5", f"python3 /w/inject.py relay '{spec}'"],
+                           capture_output=True, text=True)
+        return r.stdout + r.stderr[-400:]
 
     def raw(self, kind, node, since=0.0):
         """The latest raw frame of this kind for this node, from the air."""
