@@ -2,7 +2,7 @@
 # so the entry type is expressed with tags.
 name: paleocomputing-platform
 ociRef: oci://ghcr.io/tym83/paleocomputing/platform
-version: v0.1.20
+version: v0.1.21
 description: Cluster level for the catalog's foreign machines that keeps virt-launcher paired with the KubeVirt version
 homepage: https://github.com/tym83/paleocomputing
 maintainer: tym83

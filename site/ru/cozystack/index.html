@@ -64,8 +64,8 @@
       Делается один раз администратором кластера, утилитой <code>cozypkg</code>
       из <a href="https://github.com/cozystack/cozystack">репозитория Cozystack</a>:
     </p>
-    <pre><code>cozypkg tap oci://ghcr.io/tym83/paleocomputing/machines:v0.1.20
-cozypkg tap oci://ghcr.io/tym83/paleocomputing/languages:v0.1.20
+    <pre><code>cozypkg tap oci://ghcr.io/tym83/paleocomputing/machines:v0.1.21
+cozypkg tap oci://ghcr.io/tym83/paleocomputing/languages:v0.1.21
 # tap подключает репозиторий, add ставит из него приложения
 cozypkg add paleocomputing.machines
 cozypkg add paleocomputing.languages</code></pre>
@@ -114,7 +114,7 @@ cozypkg add paleocomputing.languages</code></pre>
       репозиторий platform и поставьте <code>kubevirt-paleo-launcher</code> — он
       привилегированный, поэтому нужно явное согласие оператора:
     </p>
-    <pre><code>cozypkg tap oci://ghcr.io/tym83/paleocomputing/platform:v0.1.20
+    <pre><code>cozypkg tap oci://ghcr.io/tym83/paleocomputing/platform:v0.1.21
 cozypkg add paleocomputing.platform --allow-privileged</code></pre>
     <p>
       Он следит за версией KubeVirt в кластере и держит launcher в паре с ней.

@@ -35,7 +35,7 @@ tools/          генератор описаний каталога и пров
 Подключение идёт штатным путём:
 
 ```
-cozypkg tap oci://ghcr.io/tym83/paleocomputing/machines:v0.1.20   # подключить репозиторий
+cozypkg tap oci://ghcr.io/tym83/paleocomputing/machines:v0.1.21   # подключить репозиторий
 cozypkg add paleocomputing.machines                            # поставить из него (без add приложений в каталоге тенанта нет)
 ```
 
