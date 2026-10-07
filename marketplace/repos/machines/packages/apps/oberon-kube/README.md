@@ -38,7 +38,9 @@ A pod's image is an Oberon module on the nodes; `Ticker` and `Ticker2` are
 there to try, and `Ticker.Show` on a node shows its pods counting. More
 deployments are applied on the control plane over VNC, for example
 `Kube.Apply web 6 Ticker2`, which rolls `web` out to the second version one pod
-at a time. A node runs up to 10 pods.
+at a time. A node runs up to 10 pods. The deployments of the form are created
+once (`Kube.Ensure`): a restart of the control plane keeps what was changed on
+it since.
 
 The deployments are applied as the control plane starts, before every node
 has joined, so the first nodes may get them all: like the real scheduler,

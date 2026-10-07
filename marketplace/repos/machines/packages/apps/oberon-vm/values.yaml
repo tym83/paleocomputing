@@ -52,7 +52,8 @@ air: ""
 ## nodes talk over the radio, so the machine needs an air. A plane runs
 ## Kube.Start and KubeNet.Serve at start, a node KubeNet.Join: the cluster
 ## forms itself, nothing has to be typed. The plane keeps its objects on its
-## disk; apply deployments on it over VNC, e.g. Kube.Apply web 4 Ticker.
+## disk; apply deployments on it over VNC, e.g. Kube.Apply web 4 Ticker, or let
+## `commands` create one at start with Kube.Ensure web 4 Ticker.
 kubeRole: ""
 
 ## @param {string} kubeCluster=kube - Name of the Kube cluster, up to 8 characters.

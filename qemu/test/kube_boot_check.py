@@ -31,7 +31,7 @@ def main():
     both = ["node-a", "node-b"]
     t_start = time.time()
     c = Cluster(QEMU, nodes=2, key=KEY, boot=0, commands={
-        "plane": f"Kube.Start;KubeNet.Serve kube {KEY};Kube.Apply web 4 Ticker",
+        "plane": f"Kube.Start;KubeNet.Serve kube {KEY};Kube.Ensure web 4 Ticker",
         "node-a": f"KubeNet.Join node-a kube {KEY}",
         "node-b": f"KubeNet.Join node-b kube {KEY}",
     })
