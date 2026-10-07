@@ -26,8 +26,8 @@ import { LABS } from './labs.js';
  */
 export function createHandler(post) {
   let m = null;
-  let loop = null;
-let script = [];            // input the running loop plays slice by slice: [action, cycles]            // the machine's own run loop (go / halt)
+  let loop = null;            // the machine's own run loop (go / halt)
+  let script = [];            // input the running loop plays slice by slice: [action, cycles]
   // Let incoming messages in, then go on. Not setTimeout: in a background tab
   // timers fire about once a second, in workers too, and the machine crawled.
   const chan = typeof MessageChannel === 'undefined' ? null : new MessageChannel();
@@ -63,6 +63,17 @@ let script = [];            // input the running loop plays slice by slice: [act
         if (msg.serial) m.serial(msg.serial);
         if (msg.timescale) m.timescale(msg.timescale);
         post({ t: 'ready', variant: m.variant });
+        return;
+
+      case 'key':   m.key(msg.code | 0); return;
+      case 'mouse': m.mouse(msg.x | 0, msg.y | 0, msg.btn | 0); return;
+
+      // A two-button chord: the machine must run between the presses, otherwise
+      // the system will not see which button the click started with.
+      case 'chord':
+        m.mouse(msg.x | 0, msg.y | 0, msg.first | 0);
+        m.run(msg.gap | 0 || 20000);
+        m.mouse(msg.x | 0, msg.y | 0, msg.then | 0);
         return;
 
       // ── several machines on one air ───────────────────────────────────────
