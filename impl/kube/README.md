@@ -208,7 +208,8 @@ in the hardware workflow.
 | the control plane boots again | the store comes back from its disk: the same pods on the same nodes, not one assignment changes | at once after `Kube.Start` |
 | the air (the relay) is gone for 20 s | both nodes go NotReady; the plane pauses evictions instead of moving every pod, and with the air back the same pods run on the same nodes | about 3 s |
 | 30 % of deliveries are lost for a minute | no heartbeat gap reaches the timeout; no pod moves | |
-| another cluster on the air sends "node-a: run nothing" | node-a ignores it; the same message tagged as this cluster, the control, does empty node-a, and the plane puts the pods back | |
+| right after the plane's assignment, a station sends "run nothing" for a node: tagged as another cluster, unsigned, or an old genuine assignment replayed | the node ignores all three; the same assignment signed with the key and a fresh counter, the control, does empty it, and the plane puts the pods back | |
+| a deployment of a module the nodes do not have | its pods are assigned but never run, they stay Pending | |
 | `web 6` is rolled out to a new image | 6 to 7 pods run at every moment; in the end only the new ReplicaSet is left | |
 
 The timeout is five missed heartbeats. It was three at first: on an air losing
