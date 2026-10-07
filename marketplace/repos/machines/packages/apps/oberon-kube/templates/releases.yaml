@@ -1,0 +1,80 @@
+{{- /* One order, a whole cluster: the parts are releases of this repository's
+       own components, ordered by artifact reference (the meta-application
+       pattern of workbench). The flux shard is left to the platform's webhook,
+       as for every release a tenant chart creates.
+
+       The air is <release>-air; its Service has that name, and the machines
+       are pointed at it with airHost. Their air value, which tags them for
+       spreading over the hosts, is a short hash of the release, unique per
+       cluster and within the 42 characters an air name may have. */}}
+{{- $n := int .Values.nodes }}
+{{- if or (lt $n 1) (gt $n 8) }}
+{{- fail (printf "oberon-kube: nodes must be from 1 to 8, not %d" $n) }}
+{{- end }}
+{{- if not (regexMatch "^[a-z0-9-]{1,8}$" (toString .Values.cluster)) }}
+{{- fail (printf "oberon-kube: cluster %q is not up to 8 lowercase letters, digits or hyphens" .Values.cluster) }}
+{{- end }}
+{{- if not (regexMatch "^[0-9a-fA-F]{0,16}$" (toString .Values.key)) }}
+{{- fail "oberon-kube: key is not up to 16 hex digits" }}
+{{- end }}
+{{- $apply := list }}
+{{- range $d := splitList ";" (toString .Values.deployments) }}
+{{- $d = trim $d }}
+{{- if $d }}
+{{- if not (regexMatch "^[a-z0-9-]{1,20} [0-9]{1,3} [A-Za-z][A-Za-z0-9]{0,14}$" $d) }}
+{{- fail (printf "oberon-kube: deployment %q is not \"name replicas module\"" $d) }}
+{{- end }}
+{{- $apply = append $apply (printf "Kube.Apply %s" $d) }}
+{{- end }}
+{{- end }}
+{{- $air := printf "k%s" (sha256sum .Release.Name | trunc 10) }}
+{{- $airHost := printf "%s-air" .Release.Name }}
+{{- $common := dict "air" $air "airHost" $airHost "kubeCluster" (toString .Values.cluster)
+      "kubeKey" (toString .Values.key) "memory" (toString .Values.memory)
+      "storageClass" (toString .Values.storageClass) }}
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: {{ $airHost }}
+  labels: {{- include "oberon-kube.labels" . | nindent 4 }}
+spec:
+  chartRef:
+    kind: ExternalArtifact
+    name: {{ include "oberon-kube.artifact" (dict "root" $ "component" "oberon-air") }}
+    namespace: {{ .Values.artifactNamespace | quote }}
+  interval: 5m
+  timeout: 10m
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: {{ .Release.Name }}-plane
+  labels: {{- include "oberon-kube.labels" . | nindent 4 }}
+spec:
+  chartRef:
+    kind: ExternalArtifact
+    name: {{ include "oberon-kube.artifact" (dict "root" $ "component" "oberon-vm") }}
+    namespace: {{ .Values.artifactNamespace | quote }}
+  interval: 5m
+  timeout: 10m
+  dependsOn:
+    - name: {{ $airHost }}
+  values: {{- merge (dict "kubeRole" "plane" "commands" (join ";" $apply)) $common | toYaml | nindent 4 }}
+{{- range $i := untilStep 1 (int (add $n 1)) 1 }}
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: {{ $.Release.Name }}-node{{ $i }}
+  labels: {{- include "oberon-kube.labels" $ | nindent 4 }}
+spec:
+  chartRef:
+    kind: ExternalArtifact
+    name: {{ include "oberon-kube.artifact" (dict "root" $ "component" "oberon-vm") }}
+    namespace: {{ $.Values.artifactNamespace | quote }}
+  interval: 5m
+  timeout: 10m
+  dependsOn:
+    - name: {{ $airHost }}
+  values: {{- merge (dict "kubeRole" "node" "kubeNode" (printf "node%d" $i)) $common | toYaml | nindent 4 }}
+{{- end }}

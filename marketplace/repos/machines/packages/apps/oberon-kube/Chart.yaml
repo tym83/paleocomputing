@@ -1,0 +1,7 @@
+apiVersion: v2
+name: oberon-kube
+description: A Kube cluster of Oberon machines — Kubernetes written in Oberon, on Wirth's radio
+icon: /logos/oberon-kube.svg
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

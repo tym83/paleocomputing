@@ -1,0 +1,45 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "oberon-kube",
+  "type": "object",
+  "$comment": "The schema root is intentionally NOT closed: cozystack-engine injects its own keys (_cluster, _namespace) into the values of every tenant application, and with additionalProperties:false Helm rejects the values entirely, so the application does not deploy.",
+  "properties": {
+    "nodes": {
+      "type": "integer",
+      "description": "Number of nodes, from 1 to 8",
+      "minimum": 1,
+      "maximum": 8,
+      "default": 2
+    },
+    "cluster": {
+      "type": "string",
+      "description": "Name of the cluster, up to 8 characters",
+      "pattern": "^[a-z0-9-]{1,8}$",
+      "default": "kube"
+    },
+    "key": {
+      "type": "string",
+      "description": "Key of the cluster, up to 16 hex digits; empty means zeros, unauthenticated",
+      "pattern": "^[0-9a-fA-F]{0,16}$",
+      "default": ""
+    },
+    "deployments": {
+      "type": "string",
+      "description": "Deployments applied at start, e.g. web 4 Ticker; api 2 Ticker2",
+      "default": ""
+    },
+    "memory": {
+      "type": "string",
+      "description": "Memory of each machine: an integer number of Mi or Gi, from 128Mi to 1Gi",
+      "pattern": "^[1-9][0-9]*(Mi|Gi)$",
+      "default": "128Mi"
+    },
+    "storageClass": {
+      "type": "string",
+      "description": "Storage class of the machines' volumes",
+      "default": "replicated"
+    },
+    "artifactPrefix": { "type": "string", "minLength": 1 },
+    "artifactNamespace": { "type": "string", "minLength": 1 }
+  }
+}

@@ -210,6 +210,76 @@ def check_metaapp() -> None:
              "--set", "machine=false", "--set", "manual=false"])
     report(r.returncode != 0, "an empty environment is rejected")
 
+    r = run(["helm", "template", "w", str(ROOT / "repos/machines/packages/apps/workbench")])
+    report("sharding.fluxcd.io/key" not in r.stdout,
+           "the flux shard is left to the platform's webhook: no controller serves a shard named here")
+
+
+def check_kube() -> None:
+    """OberonKube: a whole Kube cluster as releases of oberon-air and oberon-vm."""
+    print("\nKube cluster (OberonKube)")
+    chart = ROOT / "repos/machines/packages/apps/oberon-kube"
+    vm_chart = ROOT / "repos/machines/packages/apps/oberon-vm"
+    declared = declared_artifacts("machines")
+
+    def releases(*sets):
+        args = ["helm", "template", "oberon-kube-farm", str(chart)]
+        for o in sets:
+            args += ["--set", o]
+        r = run(args)
+        if r.returncode != 0:
+            return None, r.stderr.strip()
+        return [d for d in yaml.safe_load_all(r.stdout) if isinstance(d, dict) and d.get("kind") == "HelmRelease"], ""
+
+    hrs, err = releases("nodes=3", "key=00c0ffee", "deployments=web 4 Ticker; api 2 Ticker2")
+    report(hrs is not None and len(hrs) == 5, f"three nodes: an air, a plane and three nodes ({len(hrs or [])} releases) {err}")
+    if not hrs:
+        return
+    refs = {h["spec"]["chartRef"]["name"] for h in hrs}
+    report(refs <= declared, "all references lead to components of this same repository")
+    broken, _ = releases("artifactPrefix=wrong-prefix")
+    report(broken and not ({h["spec"]["chartRef"]["name"] for h in broken} <= declared),
+           "mutation: a shifted prefix leaves the references dangling")
+    air = next(h for h in hrs if h["metadata"]["name"].endswith("-air"))
+    machines = [h for h in hrs if h is not air]
+    vals = [h["spec"]["values"] for h in machines]
+    report(all(v["airHost"] == air["metadata"]["name"] for v in vals)
+           and len({v["air"] for v in vals}) == 1
+           and all(h["spec"].get("dependsOn") == [{"name": air["metadata"]["name"]}] for h in machines),
+           "every machine joins the cluster's own air, after it")
+    report(len({(v["kubeCluster"], v["kubeKey"]) for v in vals}) == 1,
+           "one cluster name and one key on every machine")
+    nodes = sorted(v.get("kubeNode") for v in vals if v["kubeRole"] == "node")
+    report(nodes == ["node1", "node2", "node3"] and [v["kubeRole"] for v in vals].count("plane") == 1,
+           f"one plane and nodes with unique names ({nodes})")
+    report(not any("sharding.fluxcd.io/key" in (h["metadata"].get("labels") or {}) for h in hrs),
+           "the flux shard is left to the platform's webhook")
+
+    # Each machine's values through the real OberonVM chart: what the machine runs at start.
+    texts = {}
+    for h in machines:
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
+            yaml.safe_dump(h["spec"]["values"], f)
+        r = run(["helm", "template", "x", str(vm_chart), "-f", f.name])
+        pathlib.Path(f.name).unlink()
+        vm = next((d for d in yaml.safe_load_all(r.stdout) if isinstance(d, dict)
+                   and d.get("kind") == "VirtualMachine"), None) if r.returncode == 0 else None
+        p = json.loads(vm["spec"]["template"]["metadata"]["annotations"][MACHINE_ANNOTATION]) if vm else {}
+        texts[h["metadata"]["name"]] = (p.get("commands", {}).get("text"), p.get("air", {}).get("host"))
+    plane = texts.get("oberon-kube-farm-plane", (None, None))
+    report(plane == ("Kube.Start;KubeNet.Serve kube 00c0ffee;Kube.Apply web 4 Ticker;Kube.Apply api 2 Ticker2",
+                     "oberon-kube-farm-air"),
+           f"through the OberonVM chart the plane starts Kube and its deployments ({plane[0]!r})")
+    node = texts.get("oberon-kube-farm-node2", (None, None))
+    report(node == ("KubeNet.Join node2 kube 00c0ffee", "oberon-kube-farm-air"),
+           f"through the OberonVM chart a node joins at start ({node[0]!r})")
+
+    for o, why in ((("nodes=0",), "no nodes"), (("nodes=9",), "more than 8 nodes"),
+                   (("key=xyz",), "a key that is not hex"), (("cluster=TooLongName",), "a bad cluster name"),
+                   (("deployments=web four Ticker",), "a deployment that is not name replicas module")):
+        bad, err = releases(*o)
+        report(bad is None and err != "", f"negative control: {why} is refused")
+
 
 # ─── 5. Documentation really arrives readable ───────────────────────────────
 def check_handbook() -> None:
@@ -1074,6 +1144,7 @@ def main() -> None:
     check_validate()
     check_generated()
     check_metaapp()
+    check_kube()
     check_handbook()
     check_images()
     check_langpack()

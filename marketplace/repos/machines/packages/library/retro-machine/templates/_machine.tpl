@@ -238,7 +238,13 @@ spec:
 {{- if not (regexMatch "^[a-z0-9]([a-z0-9-]{0,40}[a-z0-9])?$" (toString .)) }}
 {{- fail (printf "%s: air %q is not the name of an air in this tenant" $.Chart.Name .) }}
 {{- end }}
-{{- $_ := set $passport.air "host" (printf "oberon-air-%s" .) }}
+{{- /* airHost: the relay's Service when it is not oberon-air-<air>, as in
+       an OberonKube, whose air is a release of its own */}}
+{{- $host := default (printf "oberon-air-%s" .) $.Values.airHost }}
+{{- if not (regexMatch "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$" $host) }}
+{{- fail (printf "%s: airHost %q is not the name of a Service" $.Chart.Name $host) }}
+{{- end }}
+{{- $_ := set $passport.air "host" $host }}
 {{- end }}
 {{- /* Commands at start: a Kube role and free text from the form become the
        passport's commands.text; the hook passes it to the machine, and for
