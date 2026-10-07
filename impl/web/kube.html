@@ -1,0 +1,503 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title data-i18n-en="Kube on Wirth's radio: a cluster in the browser">Kube по радио Вирта: кластер в браузере</title>
+<style>
+  :root { color-scheme: light dark; --bg:#f6f6f4; --fg:#1a1a1a; --mut:#666;
+          --line:#d8d8d4; --ok:#1a7f37; --no:#a33; --acc:#2b5fa8; --warn:#9a6700; --card:#fff; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#16181c; --fg:#e6e6e6; --mut:#9aa0a6; --line:#2e3238;
+            --ok:#4ec36e; --no:#e06c6c; --acc:#7aa7e8; --warn:#d6a03a; --card:#1d2025; } }
+  * { box-sizing:border-box }
+  body { margin:0; background:var(--bg); color:var(--fg);
+         font:14px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif }
+  header { padding:10px 16px; border-bottom:1px solid var(--line);
+           display:flex; gap:14px; align-items:baseline; flex-wrap:wrap }
+  header h1 { font-size:15px; margin:0; font-weight:600 }
+  header a { color:var(--acc) }
+  select, button, input { font:inherit; padding:4px 9px; border:1px solid var(--line);
+                          border-radius:6px; background:transparent; color:inherit }
+  button { cursor:pointer } button:hover { border-color:var(--acc) }
+  button:disabled { opacity:.5; cursor:default }
+  main { display:grid; grid-template-columns:minmax(0,1fr) 420px; gap:16px; padding:16px }
+  @media (max-width:1100px) { main { display:block } }
+  .machines { display:grid; grid-template-columns:repeat(auto-fill,minmax(360px,1fr)); gap:12px }
+  .machine { border:1px solid var(--line); border-radius:8px; background:var(--card); overflow:hidden }
+  .machine .bar { display:flex; gap:8px; align-items:center; padding:6px 8px;
+                  border-bottom:1px solid var(--line); flex-wrap:wrap }
+  .machine .bar b { font-size:13px }
+  .machine .role { color:var(--mut); font-size:12px }
+  .machine canvas { display:block; width:100%; height:auto; background:#fff; image-rendering:auto }
+  .machine.off canvas { opacity:.25 }
+  .machine.cut .bar { background:repeating-linear-gradient(45deg,transparent 0 8px,rgba(160,60,60,.12) 8px 16px) }
+  .dot { width:9px; height:9px; border-radius:50%; display:inline-block; background:var(--mut) }
+  .dot.on { background:var(--ok) } .dot.no { background:var(--no) }
+  .panel > section { border:1px solid var(--line); border-radius:8px; padding:12px; margin-bottom:12px; background:var(--card) }
+  .panel h2 { font-size:14px; margin:0 0 8px }
+  .mut { color:var(--mut) } .ok { color:var(--ok) } .no { color:var(--no) }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:6px 0 }
+  table { border-collapse:collapse; width:100% } td, th { text-align:left; padding:3px 6px; border-bottom:1px solid var(--line); font-size:13px }
+  code { font:12px ui-monospace,SFMono-Regular,Menlo,monospace }
+  #log { font:12px/1.35 ui-monospace,SFMono-Regular,Menlo,monospace; height:220px; overflow:auto;
+         border:1px solid var(--line); border-radius:6px; padding:6px; white-space:pre }
+  #log .hb { color:var(--mut) } #log .as { color:var(--acc) } #log .sp { color:var(--warn) }
+  #log .bad { color:var(--no) } #log .lost { opacity:.45; text-decoration:line-through }
+  .lab { border-top:1px solid var(--line); padding-top:8px; margin-top:8px }
+  .lab:first-of-type { border-top:none; margin-top:0; padding-top:0 }
+  .lab h3 { font-size:13px; margin:0 0 4px; display:flex; gap:8px; align-items:center }
+  .lab .state { font-size:12px }
+  .lab p { margin:4px 0 }
+  .why { color:var(--mut); font-size:13px }
+  details summary { cursor:pointer }
+</style>
+
+<header>
+  <h1 data-i18n-en="Kube on Wirth's radio · a cluster of three Oberon machines">Kube по радио Вирта · кластер из трёх машин Оберона</h1>
+  <a href="index.html" data-i18n-en="the machine">машина</a>
+  <a href="lab.html" data-i18n-en="labs">лаборатории</a>
+  <label class="mut"><span data-i18n-en="language">язык</span> <select id="lang"></select></label>
+  <span class="mut" id="stat" data-i18n-en="loading…">загрузка…</span>
+</header>
+
+<main>
+  <div>
+    <p class="why" data-i18n-en="Three RISC5 machines on Wirth's own circuit (the RTL, compiled to WebAssembly), each in its own thread. Each has the nRF24L01+ radio of Project Oberon; this page is the air between them. At power-on each machine reads its role from its serial line, as a cloud machine reads cloud-init: the control plane starts Kube and applies a deployment, the nodes join. Nothing has to be typed. Time inside the machines runs several times slower than yours: a second of theirs is a few of ours.">
+      Три машины RISC5 на схеме самого Вирта (RTL, скомпилированный в WebAssembly), каждая в своём потоке. У каждой радио nRF24L01+ из Project Oberon; эфир между ними — эта страница. При включении каждая машина читает свою роль с последовательной линии, как облачная машина читает cloud-init: управляющая запускает Kube и применяет деплоймент, узлы подключаются. Набирать ничего не нужно. Время внутри машин идёт в несколько раз медленнее нашего: их секунда — несколько наших.</p>
+    <div class="machines" id="machines"></div>
+  </div>
+
+  <div class="panel">
+    <section>
+      <h2 data-i18n-en="The cluster, as the air shows it">Кластер, как его видно по эфиру</h2>
+      <table><thead><tr><th data-i18n-en="node">узел</th><th data-i18n-en="heard">слышен</th><th data-i18n-en="runs">выполняет</th><th data-i18n-en="assigned">назначено</th></tr></thead>
+        <tbody id="nodes"></tbody></table>
+      <div class="row mut" id="pods"></div>
+    </section>
+
+    <section>
+      <h2 data-i18n-en="Labs">Лабораторные</h2>
+      <div id="labs"></div>
+    </section>
+
+    <section>
+      <h2 data-i18n-en="The air">Эфир</h2>
+      <div class="row">
+        <button id="airBtn" data-i18n-en="Switch the air off">Выключить эфир</button>
+        <label><span data-i18n-en="loss">потери</span> <input id="loss" type="range" min="0" max="60" value="0" style="width:120px"> <span id="lossV">0%</span></label>
+      </div>
+      <div class="row mut" id="airStat"></div>
+      <div id="log"></div>
+    </section>
+
+    <section>
+      <h2 data-i18n-en="On the control plane">На управляющей машине</h2>
+      <div class="row">
+        <button data-cmd="Kube.Get" data-on="plane">Kube.Get</button>
+        <button data-cmd="Kube.Apply web 4 Ticker ~" data-on="plane">web 4 Ticker</button>
+        <button data-cmd="Kube.Apply web 4 Ticker2 ~" data-on="plane">web 4 Ticker2</button>
+        <button data-cmd="Kube.Apply web 6 Ticker2 ~" data-on="plane">web 6 Ticker2</button>
+      </div>
+      <div class="row">
+        <input id="cmd" value="Kube.Apply api 2 Ticker ~" style="flex:1;min-width:0">
+        <button id="cmdRun" data-i18n-en="Run">Выполнить</button>
+      </div>
+      <div class="row">
+        <button data-cmd="Ticker.Show" data-on="node1">node1: Ticker.Show</button>
+        <button data-cmd="Ticker2.Show" data-on="node2">node2: Ticker2.Show</button>
+      </div>
+      <p class="why" data-i18n-en="A command is typed under the last line of the System.Tool viewer and run with the middle button, as a person would; its output goes to the machine's log. You can also click into a screen and work in it yourself: Alt (⌥) + click is the middle button.">Команда набирается под последней строкой окна System.Tool и запускается средней кнопкой, как это сделал бы человек; вывод идёт в журнал машины. Можно и самим щёлкнуть в экран и работать в нём: Alt (⌥) + щелчок — средняя кнопка.</p>
+    </section>
+
+    <section>
+      <h2 data-i18n-en="An intruder on the air">Нарушитель в эфире</h2>
+      <p class="why" data-i18n-en="A station of nobody's sends “run nothing” to the node that runs pods, right after the control plane's own assignment, so the node holds it when it reports. Which of these will the node obey?">Ничья станция шлёт узлу с подами «ничего не выполняй» сразу после назначения управляющей машины, чтобы узел держал его в момент отчёта. Какое из них узел выполнит?</p>
+      <div class="row">
+        <button data-intrude="other" data-i18n-en="another cluster's">чужого кластера</button>
+        <button data-intrude="unsigned" data-i18n-en="unsigned">без подписи</button>
+        <button data-intrude="replay" data-i18n-en="an old one replayed">повтор старого</button>
+        <button data-intrude="signed" data-i18n-en="signed with the key">с подписью ключом</button>
+      </div>
+      <div class="row mut" id="intrudeStat"></div>
+    </section>
+
+    <section>
+      <details><summary data-i18n-en="How this page works">Как устроена эта страница</summary>
+        <p class="why" data-i18n-en="The machines are the same RTL model the other labs use, with the radio and the serial line added to its peripherals (impl/tb/memradio.h). The relay and the reading of Kube's messages are impl/web/kube-air.js, the same protocol as qemu/radio/relay.py and listen.py. The disk carries Kube, KubeNet, Pods, the Ticker workloads and Boot, built by impl/tools/install_modules.py. The cluster key here is 00c0ffee00c0ffee, cluster kube.">Машины — та же модель RTL, что и в других лабораторных, с радио и последовательной линией в периферии (impl/tb/memradio.h). Ретранслятор и разбор сообщений Kube — impl/web/kube-air.js, тот же протокол, что в qemu/radio/relay.py и listen.py. На диске Kube, KubeNet, Pods, нагрузки Ticker и Boot, собранные impl/tools/install_modules.py. Ключ кластера здесь 00c0ffee00c0ffee, кластер kube.</p>
+      </details>
+    </section>
+  </div>
+</main>
+
+<script type="module">
+import { LANG, LANGS, t, setLang, applyMarkup } from './i18n.js';
+import { makeRenderer, bindInput, labelAltKeys } from './machine.js';
+import { Air, keyOf, clusterTag, decode, signAssign, frameLike } from './kube-air.js';
+
+const $ = id => document.getElementById(id);
+applyMarkup(document);
+labelAltKeys(document);
+{
+  const sel = $('lang');
+  for (const [k, v] of Object.entries(LANGS)) sel.add(new Option(v, k, false, k === LANG));
+  sel.onchange = () => setLang(sel.value);
+}
+
+const KEY = '00c0ffee00c0ffee', TAG = clusterTag('kube');
+// The machines run on their own (worker-core 'go'): slices of QUOTA
+// instructions, the radio's frames out after each, the screen five times a second.
+const QUOTA = 25000, SLICES = 8;
+// Cycles per machine millisecond: the board's 25000 would make a machine second
+// last half a minute here; at 2500 the machines think they run at 2.5 MHz, and
+// their seconds pass ten times faster for us.
+const TIMESCALE = +(new URLSearchParams(location.search).get('timescale') || 2500);
+const ROLES = [
+  { name: 'plane', role: { en: 'control plane', ru: 'управляющая машина' },
+    serial: `Kube.Start;KubeNet.Serve kube ${KEY};Kube.Ensure web 4 Ticker` },
+  { name: 'node1', role: { en: 'node', ru: 'узел' }, serial: `KubeNet.Join node1 kube ${KEY}` },
+  { name: 'node2', role: { en: 'node', ru: 'узел' }, serial: `KubeNet.Join node2 kube ${KEY}` },
+];
+
+const air = new Air({ key: KEY });
+const HERE = new URL('.', import.meta.url);
+async function load() {
+  const text = await (await fetch(new URL('prom_sd.mem', HERE))).text();
+  const prom = new Uint32Array(text.trim().split(/\s+/).map(h => parseInt(h, 16)));
+  let disk;
+  try {
+    const r = await fetch(new URL('oberon-kube.dsk.gz', HERE));
+    disk = new Uint8Array(await new Response(r.body.pipeThrough(new DecompressionStream('gzip'))).arrayBuffer());
+  } catch {
+    disk = new Uint8Array(await (await fetch(new URL('oberon-kube.dsk', HERE))).arrayBuffer());
+  }
+  return { prom, disk };
+}
+
+// ── machines ─────────────────────────────────────────────────────────────
+const peers = [];
+function addMachine(spec, prom, disk) {
+  const box = document.createElement('div');
+  box.className = 'machine';
+  box.innerHTML = `<div class="bar"><span class="dot"></span><b>${spec.name}</b>
+    <span class="role">${t(spec.role)}</span><span style="flex:1"></span>
+    <button data-act="power">${t({ en: 'Power off', ru: 'Выключить' })}</button>
+    <button data-act="cut">${t({ en: 'Cut off the air', ru: 'Отрезать от эфира' })}</button></div>
+    <canvas width="1024" height="768"></canvas>`;
+  $('machines').append(box);
+  const canvas = box.querySelector('canvas');
+  const draw = makeRenderer(canvas);
+  const w = new Worker(new URL('worker.js', HERE), { type: 'module' });
+  const p = { ...spec, w, box, canvas, draw, on: true, inbox: [], insns: 0, ready: false,
+              give: f => { if (p.on) w.postMessage({ t: 'air', frames: [f.buffer.slice(0)] }); } };
+  bindInput(canvas, {
+    mouse: (x, y, b) => w.postMessage({ t: 'mouse', x, y, btn: b }),
+    key: c => w.postMessage({ t: 'key', code: c }),
+    chord: (x, y, first, then) => w.postMessage({ t: 'chord', x, y, first, then }),
+  });
+  w.onmessage = e => {
+    const m = e.data;
+    if (m.t === 'ready') { p.ready = true; go(p); }
+    else if (m.t === 'air') { if (p.on) for (const f of m.air) air.pass(p, new Uint8Array(f)); }
+    else if (m.t === 'frame') {
+      p.draw(new Uint32Array(m.buf)); p.insns = m.insns; maybeRender();
+      w.postMessage({ t: 'recycle', buf: m.buf }, [m.buf]);
+      if (p.on && m.air) for (const f of m.air) air.pass(p, new Uint8Array(f));
+    } else if (m.t === 'error') console.error(spec.name, m.message);
+  };
+  const img = disk.slice();
+  w.postMessage({ t: 'init', prom: prom.slice().buffer, img: img.buffer, serial: spec.serial,
+                  timescale: TIMESCALE }, [img.buffer]);
+  box.querySelector('[data-act=power]').onclick = () => power(p);
+  box.querySelector('[data-act=cut]').onclick = () => cut(p);
+  air.add(p); peers.push(p);
+  return p;
+}
+
+function go(p) { p.w.postMessage({ t: 'go', quota: QUOTA, slices: SLICES }); }
+
+// Switching off stops the machine and its radio; switching on is a reboot from
+// the same disk, with the same role on its serial line.
+function power(p) {
+  const btn = p.box.querySelector('[data-act=power]');
+  if (p.on) { p.on = false; p.w.postMessage({ t: 'halt' }); air.cut.add(p.name); p.box.classList.add('off');
+              btn.textContent = t({ en: 'Power on', ru: 'Включить' }); events.push({ t: Date.now(), off: p.name }); }
+  else { p.on = true; if (!p.isCut) air.cut.delete(p.name); p.box.classList.remove('off');
+         btn.textContent = t({ en: 'Power off', ru: 'Выключить' }); events.push({ t: Date.now(), on: p.name });
+         p.w.postMessage({ t: 'reboot', serial: p.serial }); go(p); }
+}
+function cut(p) {
+  const btn = p.box.querySelector('[data-act=cut]');
+  p.isCut = !p.isCut;
+  if (p.isCut) { air.cut.add(p.name); p.box.classList.add('cut'); btn.textContent = t({ en: 'Back on the air', ru: 'Вернуть в эфир' }); }
+  else { if (p.on) air.cut.delete(p.name); p.box.classList.remove('cut'); btn.textContent = t({ en: 'Cut off the air', ru: 'Отрезать от эфира' }); }
+  events.push({ t: Date.now(), cut: p.name, isCut: p.isCut });
+}
+function command(name, text) {
+  const p = peers.find(x => x.name === name);
+  if (!p || !p.on) return;
+  p.w.postMessage({ t: 'command', text });
+  // A rollout is watched from the command on: how many pods ran at least and at most.
+  if (/Ticker2/.test(text) && /Kube\.Apply/.test(text)) roll = { min: 99, max: 0 };
+}
+
+// ── the air panel ─────────────────────────────────────────────────────────
+const events = [];
+$('airBtn').onclick = () => {
+  air.on = !air.on;
+  $('airBtn').textContent = air.on ? t({ en: 'Switch the air off', ru: 'Выключить эфир' }) : t({ en: 'Switch the air on', ru: 'Включить эфир' });
+  events.push({ t: Date.now(), air: air.on });
+};
+$('loss').oninput = () => { air.loss = $('loss').value / 100; $('lossV').textContent = $('loss').value + '%'; };
+const lines = [];
+air.listeners.push(e => {
+  if (e.cluster !== undefined && e.cluster !== TAG && e.kind) { /* another cluster: shown below */ }
+  const who = e.from.padEnd(10);
+  let s, cls;
+  if (e.kind === 'heartbeat') { s = `${who} ♥ ${e.node} ${t({ en: 'runs', ru: 'выполняет' })} [${e.ids}]`; cls = 'hb'; }
+  else if (e.kind === 'assign') { s = `${who} → ${e.node}: [${e.ids}]`; cls = 'as'; }
+  else if (e.kind === 'spec') { s = `${who} ✎ pod ${e.id} = ${e.image}`; cls = 'sp'; }
+  else return;
+  if (e.auth === false || e.cluster !== TAG) { cls += ' bad'; s += e.cluster !== TAG ? t({ en: '  (another cluster)', ru: '  (чужой кластер)' }) : t({ en: '  (bad signature)', ru: '  (неверная подпись)' }); }
+  if (!e.passed) cls += ' lost';
+  lines.push(`<span class="${cls}">${new Date(e.t).toLocaleTimeString()} ${s}</span>`);
+  if (lines.length > 300) lines.splice(0, lines.length - 300);
+});
+
+// The cluster as the air shows it: the last heartbeat and assignment of each
+// node, and the image of each pod from the specs.
+const lastBeat = {}, lastAssign = {}, images = {};
+air.listeners.push(e => {
+  if (!e.passed || e.cluster !== TAG || e.auth === false) return;
+  if (e.kind === 'heartbeat') lastBeat[e.node] = { t: e.t, ids: e.ids };
+  else if (e.kind === 'assign') lastAssign[e.node] = { t: e.t, ids: e.ids };
+  else if (e.kind === 'spec') images[e.id] = e.image;
+});
+function cluster() {
+  const now = Date.now(), period = beatPeriod();
+  const nodes = Object.keys(lastBeat).sort();
+  return nodes.map(n => ({ node: n, ago: (now - lastBeat[n].t) / 1000,
+                           alive: now - lastBeat[n].t < 3 * period,
+                           runs: lastBeat[n].ids, assigned: lastAssign[n]?.ids || [] }));
+}
+// How long a second of the machines is here: the median gap between two
+// heartbeats of one node. Silence is judged against it, not against our seconds.
+function beatPeriod() {
+  const gaps = [];
+  const by = {};
+  for (const e of air.log) if (e.kind === 'heartbeat' && e.passed && e.cluster === TAG) {
+    if (by[e.node]) gaps.push(e.t - by[e.node]); by[e.node] = e.t;
+  }
+  gaps.sort((a, b) => a - b);
+  return gaps.length ? gaps[gaps.length >> 1] : 4000;
+}
+function render() {
+  const c = cluster();
+  $('nodes').innerHTML = c.map(r => `<tr><td><span class="dot ${r.alive ? 'on' : 'no'}"></span> ${r.node}</td>
+    <td>${r.ago.toFixed(0)} ${t({ en: 's ago', ru: 'с назад' })}</td><td><code>${r.runs.map(id => id + (images[id] ? ':' + images[id] : '')).join(' ')}</code></td>
+    <td><code>${r.assigned.join(' ')}</code></td></tr>`).join('');
+  const total = c.filter(r => r.alive).reduce((a, r) => a + r.runs.length, 0);
+  $('pods').textContent = t({ en: `pods running: ${total}; a machine second here is about ${(beatPeriod() / 1000).toFixed(1)} s`,
+                              ru: `работает подов: ${total}; секунда машин здесь — около ${(beatPeriod() / 1000).toFixed(1)} с` });
+  for (const p of peers) p.box.querySelector('.dot').className = 'dot ' + (p.on ? (p.isCut ? 'no' : 'on') : '');
+  const log = $('log'), stick = log.scrollTop + log.clientHeight >= log.scrollHeight - 4;
+  log.innerHTML = lines.join('\n'); if (stick) log.scrollTop = log.scrollHeight;
+  $('airStat').textContent = t({ en: `${air.log.length} frames kept; air ${air.on ? 'on' : 'OFF'}; cut off: ${[...air.cut].join(', ') || 'none'}`,
+                                 ru: `кадров в памяти: ${air.log.length}; эфир ${air.on ? 'включён' : 'ВЫКЛЮЧЕН'}; отрезаны: ${[...air.cut].join(', ') || 'никто'}` });
+  $('stat').textContent = peers.map(p => `${p.name} ${(p.insns / 1e6).toFixed(0)}M`).join(' · ');
+  for (const l of LABS) l.update?.();
+}
+// Drawn on the machines' frames rather than on a timer: a background tab's
+// timers fire about once a minute, and the labs would wait for them.
+let lastRender = 0;
+function maybeRender() { const n = Date.now(); if (n - lastRender > 400) { lastRender = n; render(); } }
+setInterval(maybeRender, 500);
+window.kube = { air, peers, cluster, beatPeriod, get labs() { return LABS; },
+                get outage() { return outage; }, get reboot() { return reboot; }, get intr() { return intr; } };
+
+// ── commands ─────────────────────────────────────────────────────────────
+for (const b of document.querySelectorAll('[data-cmd]')) b.onclick = () => command(b.dataset.on, b.dataset.cmd);
+$('cmdRun').onclick = () => command('plane', $('cmd').value);
+
+// ── the intruder ─────────────────────────────────────────────────────────
+// Right after the plane's own assignment to the node, so the node still holds
+// the intruder's when it reports (it reports a fixed time after the plane).
+function busiest() {
+  const c = cluster().filter(r => r.alive);
+  c.sort((a, b) => b.runs.length - a.runs.length);
+  return c[0]?.node;
+}
+let oldGenuine = {};
+air.listeners.push(e => {
+  if (e.kind === 'assign' && e.passed && e.auth && e.cluster === TAG) {
+    oldGenuine[e.node] ??= [];
+    oldGenuine[e.node].push(e);
+    if (oldGenuine[e.node].length > 200) oldGenuine[e.node].shift();
+  }
+});
+function intrude(kind, rounds = 3) {
+  const node = busiest();
+  if (!node) return;
+  const keep = lastBeat[node]?.ids || [];
+  const stale = (oldGenuine[node] || []).find(e => JSON.stringify(e.ids) !== JSON.stringify(keep));
+  if (kind === 'replay' && !stale) { $('intrudeStat').textContent = t({ en: 'no old assignment of that node to replay yet', ru: 'старого назначения этого узла для повтора пока нет' }); return; }
+  let left = rounds;
+  const t0 = Date.now();
+  intr = { kind, node, keep, t0, done: false };
+  const hook = e => {
+    if (left <= 0 || !(e.kind === 'assign' && e.node === node && e.from === 'plane' && e.passed)) return;
+    left--;
+    let f;
+    if (kind === 'replay') f = stale.frame;
+    else {
+      const key = kind === 'unsigned' ? keyOf('') : keyOf(KEY);
+      const tag = kind === 'other' ? TAG % 255 + 1 : TAG;
+      const { data, len } = signAssign(key, tag, node, [], e.counter + 2);
+      f = frameLike(e.frame, data, len);
+    }
+    air.inject(f);
+    if (left === 0) { const i = air.listeners.indexOf(hook); if (i >= 0) air.listeners.splice(i, 1); }
+  };
+  air.listeners.push(hook);
+  $('intrudeStat').textContent = t({ en: `sending to ${node}, after the next three assignments…`, ru: `шлю на ${node}, после трёх следующих назначений…` });
+}
+let intr = null;
+for (const b of document.querySelectorAll('[data-intrude]')) b.onclick = () => intrude(b.dataset.intrude);
+
+// ── labs ─────────────────────────────────────────────────────────────────
+// Each is checked from the air, as the DR tests check the cluster in QEMU.
+const LABS = [];
+function lab(spec) {
+  const el = document.createElement('div');
+  el.className = 'lab';
+  el.innerHTML = `<h3><span class="state mut">○</span>${t(spec.title)}</h3><p>${t(spec.task)}</p>
+    <p class="why res"></p><details><summary class="mut">${t({ en: 'what is going on', ru: 'что происходит' })}</summary><p class="why">${t(spec.why)}</p></details>`;
+  $('labs').append(el);
+  const s = { ...spec, el, done: false };
+  s.mark = (ok, msg) => {
+    el.querySelector('.state').textContent = ok ? '✓' : '○';
+    el.querySelector('.state').className = 'state ' + (ok ? 'ok' : 'mut');
+    if (msg) el.querySelector('.res').textContent = msg;
+    s.done = s.done || ok;
+  };
+  LABS.push(s);
+  return s;
+}
+const ran = () => cluster().filter(r => r.alive).flatMap(r => r.runs);
+const sameAssign = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+
+lab({
+  title: { en: '1. The cluster forms by itself', ru: '1. Кластер собирается сам' },
+  task: { en: 'Wait. The control plane starts Kube and applies <code>web 4 Ticker</code>; the nodes join; four pods run. Watch the air: heartbeats (♥), assignments (→) and specs (✎).',
+          ru: 'Подождите. Управляющая машина запускает Kube и применяет <code>web 4 Ticker</code>, узлы подключаются, четыре пода запускаются. Смотрите в эфир: сигналы жизни (♥), назначения (→) и спецификации (✎).' },
+  why: { en: 'Each machine reads its commands from its serial line at start (Boot.Mod), as a cloud VM reads cloud-init. A kubelet broadcasts a heartbeat every machine second with the pods it runs; the plane sends each Ready node the list of pods bound to it, and the image of each pod. Both sides compare the whole state each time, so a lost packet is repaired by the next one: no acknowledgements, no retries.',
+         ru: 'Каждая машина при старте читает команды со своей последовательной линии (Boot.Mod), как облачная ВМ читает cloud-init. Kubelet каждую секунду машины рассылает сигнал жизни со списком подов, которые выполняет; управляющая машина шлёт каждому узлу в Ready список его подов и образ каждого пода. Обе стороны каждый раз сверяют всё состояние, поэтому потерянный пакет исправит следующий: ни подтверждений, ни повторов.' },
+  update() {
+    const c = cluster().filter(r => r.alive);
+    const ok = c.length >= 2 && ran().length === 4 && c.every(r => sameAssign(r.runs, r.assigned));
+    if (ok && !this.done) this.mark(true, t({ en: `formed: ${c.map(r => r.node + ' [' + r.runs + ']').join(', ')}`, ru: `собрался: ${c.map(r => r.node + ' [' + r.runs + ']').join(', ')}` }));
+  },
+});
+
+let roll = null;
+lab({
+  title: { en: '2. Roll out new code', ru: '2. Выкатить новый код' },
+  task: { en: 'Click <b>web 4 Ticker2</b>. Kube makes a new ReplicaSet and replaces the pods one at a time: never fewer than 4 running, never more than 5. On a node, <code>Ticker2.Show</code> shows the new code counting.',
+          ru: 'Нажмите <b>web 4 Ticker2</b>. Kube создаёт новый ReplicaSet и заменяет поды по одному: работает не меньше 4 и не больше 5. На узле <code>Ticker2.Show</code> показывает, как считает новый код.' },
+  why: { en: 'A pod\'s image names an Oberon module. The kubelet loads it and calls its Start command; a pod of the old image gets its Stop. maxSurge 1, maxUnavailable 0, as Kubernetes does by default; a pod a kubelet still runs after deletion counts against the surge until it is gone (podReplacementPolicy: TerminationComplete). Pod ids go round and are never reused soon: a reused id once made a kubelet take a new pod for the old one, and a rollout changed nothing.',
+         ru: 'Образ пода — это имя модуля Оберона. Kubelet загружает его и вызывает команду Start; под старого образа получает Stop. maxSurge 1, maxUnavailable 0, как в Kubernetes по умолчанию; под, который kubelet ещё выполняет после удаления, считается против surge, пока не остановится (podReplacementPolicy: TerminationComplete). Номера подов идут по кругу и скоро не повторяются: однажды повторный номер заставил kubelet принять новый под за старый, и выкатка ничего не меняла.' },
+  update() {
+    const ids = ran(), imgs = ids.map(i => images[i]);
+    if (roll && !this.done) {
+      roll.min = Math.min(roll.min, ids.length); roll.max = Math.max(roll.max, ids.length);
+      if (ids.length >= 4 && imgs.every(x => x === 'Ticker2'))
+        this.mark(true, t({ en: `done: ${ids.length} pods of Ticker2; during the rollout ${roll.min}…${roll.max} ran (as the heartbeats show)`, ru: `готово: подов Ticker2 — ${ids.length}; во время выкатки работало ${roll.min}…${roll.max} (по сигналам жизни)` }));
+    }
+  },
+});
+
+lab({
+  title: { en: '3. A node dies', ru: '3. Узел умирает' },
+  task: { en: 'Switch off the node that runs pods (<b>Power off</b> on its screen). After five machine seconds of silence it is NotReady; two seconds later its pods move to the other node. Switch it on again: it boots, joins, and gets nothing back until you scale up.',
+          ru: 'Выключите узел, на котором есть поды (<b>Выключить</b> над его экраном). После пяти секунд машинного молчания он NotReady; ещё через две секунды его поды переезжают на другой узел. Включите его снова: он загрузится, подключится и ничего не получит обратно, пока вы не масштабируете.' },
+  why: { en: 'The node timeout is five missed heartbeats: with three, a lossy air took live nodes for dead. Pods move only two seconds after a node went NotReady, time to see whether the others go too (lab 4). Kubernetes waits 40 s and then 5 minutes; this is the same design at a smaller scale.',
+         ru: 'Таймаут узла — пять пропущенных сигналов жизни: при трёх эфир с потерями принимал живые узлы за мёртвые. Поды переезжают только через две секунды после NotReady — время понять, не пропадают ли и остальные (лабораторная 4). Kubernetes ждёт 40 с и затем 5 минут; это то же устройство в меньшем масштабе.' },
+  update() {
+    const off = peers.find(p => !p.on && p.name !== 'plane');
+    if (off && !this.done) {
+      const c = cluster().filter(r => r.alive);
+      if (c.length >= 1 && !c.some(r => r.node === off.name) && ran().length >= 4 && c.every(r => sameAssign(r.runs, r.assigned)))
+        this.mark(true, t({ en: `${off.name} is gone; ${c.map(r => r.node + ' runs [' + r.runs + ']').join(', ')}`, ru: `${off.name} пропал; ${c.map(r => r.node + ' выполняет [' + r.runs + ']').join(', ')}` }));
+    }
+  },
+});
+
+let outage = null;
+lab({
+  title: { en: '4. The air dies', ru: '4. Пропадает эфир' },
+  task: { en: 'Switch the air off for a while (half a minute is enough), then on. All nodes go NotReady at once; Kube decides the air failed, not the nodes, and moves nothing. When the air is back, the same pods run on the same nodes.',
+          ru: 'Выключите эфир на время (хватит полуминуты), потом включите. Все узлы разом уходят в NotReady; Kube решает, что сломался эфир, а не узлы, и ничего не переносит. Когда эфир вернётся, те же поды работают на тех же узлах.' },
+  why: { en: 'When all nodes, or at least 55 % of three or more, go NotReady together, they are more likely cut off than dead: Kube pauses evictions, as the node lifecycle controller of Kubernetes does for a disrupted zone. Without it, a 20 s outage moved 74 assignments in the DR test; with it, none. The nodes keep running what they were given all along.',
+         ru: 'Если в NotReady разом уходят все узлы или не меньше 55 % из трёх и более, они скорее отрезаны, чем мертвы: Kube приостанавливает выселение, как контроллер узлов Kubernetes для недоступной зоны. Без этого 20 с без эфира в DR-тесте давали 74 переназначения, с этим — ни одного. Узлы всё это время продолжают выполнять то, что им дали.' },
+  update() {
+    if (!air.on && !outage) outage = { before: cluster().filter(r => r.alive).map(r => [r.node, r.assigned]), t0: Date.now() };
+    if (air.on && outage && !outage.back) outage.back = Date.now();
+    if (outage?.back && !this.done && Date.now() - outage.back > 3 * beatPeriod()) {
+      const after = Object.fromEntries(cluster().filter(r => r.alive).map(r => [r.node, r.assigned]));
+      const same = outage.before.every(([n, a]) => sameAssign(after[n], a));
+      const moved = air.log.filter(e => e.t > outage.back && e.kind === 'assign' && e.passed && e.from === 'plane' &&
+        !sameAssign(e.ids, (outage.before.find(([n]) => n === e.node) || [, e.ids])[1])).length;
+      this.mark(same && moved === 0, same && moved === 0
+        ? t({ en: `the air was off ${((outage.back - outage.t0) / 1000).toFixed(0)} s; not one assignment changed`, ru: `эфира не было ${((outage.back - outage.t0) / 1000).toFixed(0)} с; ни одно назначение не изменилось` })
+        : t({ en: `${moved} assignments changed; switch the air off again to retry`, ru: `изменилось назначений: ${moved}; выключите эфир снова, чтобы повторить` }));
+      if (!(same && moved === 0)) outage = null;
+    }
+  },
+});
+
+lab({
+  title: { en: '5. An intruder', ru: '5. Нарушитель' },
+  task: { en: 'Use the intruder buttons. Another cluster\'s, an unsigned and a replayed assignment are ignored: the node keeps its pods. Only the one signed with the cluster key and a fresh counter is obeyed, and the control plane puts the pods back at once.',
+          ru: 'Нажмите кнопки нарушителя. Назначение чужого кластера, неподписанное и повторённое игнорируются: узел сохраняет поды. Выполняется только подписанное ключом кластера и со свежим счётчиком, и управляющая машина тут же возвращает поды.' },
+  why: { en: 'Every message carries the cluster\'s tag, a 16-bit counter and a HalfSipHash-2-4 mac (the 32-bit variant of SipHash, which fits the machine\'s arithmetic) over its type and data. A wrong mac is dropped, and so is a counter not newer than the sender\'s last. The signed control shows the check is real: the same message with the key is obeyed. Level-triggered control repairs it at the next round.',
+         ru: 'Каждое сообщение несёт метку кластера, 16-битный счётчик и подпись HalfSipHash-2-4 (32-битный вариант SipHash, ложится на арифметику машины) над типом и данными. Сообщение с неверной подписью отбрасывается, как и со счётчиком не новее последнего от того же отправителя. Подписанное контрольное сообщение показывает, что проверка настоящая: то же сообщение с ключом выполняется. Управление по уровню исправляет его в следующем такте.' },
+  seen: {},
+  update() {
+    if (!intr || intr.done) return;
+    const beats = air.log.filter(e => e.t > intr.t0 && e.kind === 'heartbeat' && e.node === intr.node && e.passed && e.auth !== false);
+    if (beats.length < 3) return;
+    intr.done = true;
+    const obeyed = beats.some(e => !sameAssign(e.ids, intr.keep));
+    const want = intr.kind === 'signed';
+    this.seen[intr.kind] = obeyed === want;
+    $('intrudeStat').textContent = (obeyed ? t({ en: `${intr.node} OBEYED`, ru: `${intr.node} ПОСЛУШАЛСЯ` }) : t({ en: `${intr.node} ignored it`, ru: `${intr.node} проигнорировал` }))
+      + (obeyed === want ? ' ✓' : ' ✗');
+    const all = ['other', 'unsigned', 'replay', 'signed'].every(k => this.seen[k]);
+    this.mark(all, t({ en: `tried: ${Object.keys(this.seen).join(', ')}`, ru: `испробовано: ${Object.keys(this.seen).join(', ')}` }));
+  },
+});
+
+let reboot = null;
+lab({
+  title: { en: '6. The control plane restarts', ru: '6. Перезапуск управляющей машины' },
+  task: { en: 'Switch the control plane off and on. It boots, runs its commands again, reads its store from its disk, and not one pod moves: the nodes kept running all along.',
+          ru: 'Выключите и включите управляющую машину. Она загрузится, снова выполнит свои команды, прочитает хранилище с диска, и ни один под не переедет: узлы всё это время работали.' },
+  why: { en: 'Kube keeps its objects on the plane\'s disk, as Kubernetes keeps them in etcd: two files written in turn, each with a generation and a checksum, rewritten in place. Restored nodes get one timeout of grace counted from when the plane starts to listen, not from when it reads the store; in the cloud, a slow start once ate the grace and moved every pod.',
+         ru: 'Kube хранит объекты на диске управляющей машины, как Kubernetes — в etcd: два файла пишутся по очереди, у каждого поколение и контрольная сумма, перезапись на месте. Восстановленные узлы получают один таймаут отсрочки, отсчитанный с момента, когда машина начинает слушать, а не с чтения хранилища; в облаке медленный старт однажды съел отсрочку, и переехали все поды.' },
+  update() {
+    const plane = peers.find(p => p.name === 'plane');
+    if (!plane.on && !reboot) reboot = { before: Object.fromEntries(cluster().filter(r => r.alive).map(r => [r.node, r.runs])) };
+    if (plane.on && reboot && !reboot.on) reboot.on = Date.now();
+    if (reboot?.on && !this.done) {
+      const back = air.log.filter(e => e.t > reboot.on && e.from === 'plane' && e.kind === 'assign' && e.passed);
+      if (back.length < 4) return;
+      const changed = back.filter(e => !sameAssign(e.ids, reboot.before[e.node] || e.ids)).length;
+      this.mark(changed === 0, changed === 0 ? t({ en: 'the plane is back from its disk; no assignment changed', ru: 'управляющая машина вернулась с диска; ни одно назначение не изменилось' })
+                                             : t({ en: `${changed} assignments changed`, ru: `изменилось назначений: ${changed}` }));
+      if (changed) reboot = null;
+    }
+  },
+});
+
+// ── start ────────────────────────────────────────────────────────────────
+const { prom, disk } = await load();
+for (const r of ROLES) addMachine(r, prom, disk);
+</script>

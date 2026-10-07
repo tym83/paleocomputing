@@ -6,6 +6,7 @@
 #include "VRISC5_RISC5.h"
 #include "VRISC5_Registers.h"
 #include "memdisk.h"
+#include "memradio.h"
 #include <emscripten.h>
 #include <cstdint>
 #include <cstdlib>
@@ -22,7 +23,15 @@ static VRISC5* top = nullptr;
 static std::vector<uint32_t> ram;
 static uint32_t rom[512];
 static MemDisk disk;
+static MemRadio radio;
+static uint32_t spi_ctrl = 0;             // port 5: bit 1 selects the radio instead of the disk
+// RS232 receive: the machine's commands, which Boot.Mod reads and runs at start
+static std::vector<uint8_t> serial_in; static size_t serial_pos = 0;
 static uint32_t ms = 0;
+// Cycles per millisecond of the machine's clock: 25000 is the board's 25 MHz.
+// The cluster page sets fewer: the model runs well below 25 MHz in a browser,
+// and protocols timed in machine seconds would crawl.
+static uint64_t cycles_per_ms = 25000;
 static uint64_t g_cycles = 0, g_insns = 0;
 // Input
 static uint32_t mouse_reg = 0;            // X | Y<<12 | buttons in 26/25/24
@@ -36,8 +45,9 @@ static inline uint32_t read_data(uint32_t a) {
     if ((a >> 6) == (IO_BASE >> 6)) {
         switch ((a >> 2) & 15) {
             case 0: return ms;
-            case 3: return 0;
-            case 4: return disk.read();
+            case 2: return serial_pos < serial_in.size() ? serial_in[serial_pos++] : 0;
+            case 3: return 2u | (serial_pos < serial_in.size() ? 1u : 0u);
+            case 4: return (spi_ctrl & 2) ? radio.read() : disk.read();
             case 5: return 1;
             case 6: return mouse_reg | (kbd_head != kbd_tail ? 0x10000000u : 0u);
             case 7: {
@@ -50,7 +60,13 @@ static inline uint32_t read_data(uint32_t a) {
     return ram[(a >> 2) & (MEM_WORDS - 1)];
 }
 static inline void write_data(uint32_t a, uint32_t v, bool ben) {
-    if ((a >> 6) == (IO_BASE >> 6)) { if (((a >> 2) & 15) == 4) disk.write(v); return; }
+    if ((a >> 6) == (IO_BASE >> 6)) {
+        switch ((a >> 2) & 15) {
+            case 4: if (spi_ctrl & 2) radio.write(v, spi_ctrl & 4); else disk.write(v); break;
+            case 5: spi_ctrl = v & 0xF; radio.ctrl(spi_ctrl); break;
+        }
+        return;
+    }
     uint32_t i = (a >> 2) & (MEM_WORDS - 1);
     if (!ben) { ram[i] = v; return; }
     uint32_t m = 0xFFu << ((a & 3) * 8);
@@ -59,14 +75,27 @@ static inline void write_data(uint32_t a, uint32_t v, bool ben) {
 
 extern "C" {
 
+static void power_on();
+
 EMSCRIPTEN_KEEPALIVE
 void soc_init(const uint8_t* prom_words, int prom_n, const uint8_t* img, int img_len) {
     if (!top) top = new VRISC5;
-    ram.assign(MEM_WORDS, 0);
     memset(rom, 0, sizeof rom);
     const uint32_t* pw = (const uint32_t*)prom_words;
     for (int i = 0; i < prom_n && i < 512; i++) rom[i] = pw[i];
     disk.init(img, (size_t)img_len);
+    power_on();
+}
+
+// Power off and on: memory, processor, radio and serial line start afresh, the
+// disk keeps what was written to it, as a real machine's SD card does. Kube's
+// store survives this; a lab switches a machine off and on with it.
+EMSCRIPTEN_KEEPALIVE
+void soc_reboot() { power_on(); }
+
+static void power_on() {
+    ram.assign(MEM_WORDS, 0);
+    radio.init(); spi_ctrl = 0; serial_pos = 0;
     ms = 0; g_cycles = g_insns = 0;
     kbd_head = kbd_tail = 0; mouse_reg = 0;
 
@@ -106,7 +135,7 @@ int soc_run(int n) {
             if (top->wr) write_data(a, top->outbus, top->ben);
             top->clk = 1; top->eval();
             g_cycles++;
-            if ((g_cycles % 25000) == 0) ms++;
+            if ((g_cycles % cycles_per_ms) == 0) ms++;
             if (ret) { g_insns++; done++; break; }
             if (++guard > 400) return done;
         }
@@ -169,6 +198,18 @@ EMSCRIPTEN_KEEPALIVE void soc_mouse(int x, int y, int buttons) {
     if (x < 0) x = 0; if (x > 1023) x = 1023;
     if (y < 0) y = 0; if (y > 767) y = 767;
     mouse_reg = ((uint32_t)buttons & 7) << 24 | ((uint32_t)y & 0xFFF) << 12 | ((uint32_t)x & 0xFFF);
+}
+
+// The air, for the page: the next frame this machine sent (channel + 32
+// bytes) into out, 1 if there was one; and a frame of another machine in.
+EMSCRIPTEN_KEEPALIVE int soc_radio_take(uint8_t* out) { return radio.take(out) ? 1 : 0; }
+EMSCRIPTEN_KEEPALIVE void soc_radio_give(const uint8_t* in) { radio.give(in); }
+
+EMSCRIPTEN_KEEPALIVE void soc_timescale(int c) { cycles_per_ms = c > 0 ? (uint64_t)c : 25000; }
+
+// What arrives on RS232 receive from now on: the commands Boot.Mod runs.
+EMSCRIPTEN_KEEPALIVE void soc_serial(const uint8_t* text, int len) {
+    serial_in.assign(text, text + len); serial_pos = 0;
 }
 
 }  // extern "C"

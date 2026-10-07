@@ -216,10 +216,7 @@ ever been read.
 
 ## What is next
 
-* **Real nodes.** Instead of three names, several Oberon VMs, each running a
-  kubelet. The difficulty is that Wirth's machine has no network, so the nodes
-  need some other way to share state with the control plane; finding one is
-  the next piece of work.
-* **Rollouts.** Today a changed image is copied into the existing ReplicaSet,
-  and the running pods keep the old one. A real Deployment update creates a new
-  ReplicaSet and moves the replicas over to it step by step.
+Both pieces of work that stood here are done: real nodes, several Oberon
+machines that talk over Wirth's radio, and rollouts that move pods to a new
+ReplicaSet one at a time. They are the
+[next episode](16-episode-kube-radio.md).

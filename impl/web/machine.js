@@ -107,6 +107,7 @@ export class Machine {
   _load() {
     const M = this.M;
     if (this.pP) { M._free(this.pP); M._free(this.pI); }
+    if (this._radioBuf) { M._free(this._radioBuf); this._radioBuf = null; }
     this.pP = M._malloc(this.prom.length * 4);
     M.HEAPU8.set(new Uint8Array(this.prom.buffer), this.pP);
     this.pI = M._malloc(this.img.length);
@@ -118,6 +119,9 @@ export class Machine {
 
   /** Full reset: the machine and the disk image return to their initial state. */
   reset() { this._load(); }
+
+  /** Power off and on: memory and processor start afresh, the disk keeps what was written. */
+  reboot() { this.M._soc_reboot(); }
 
   run(n) { return this.M._soc_run(n | 0); }
 
@@ -133,6 +137,28 @@ export class Machine {
   fbCrc()  { return this.M._soc_fb_crc() >>> 0; }
   disk(off){ return this.M._soc_disk_word(off >>> 0) >>> 0; }
   diskSize(){ return this.M._soc_disk_size() >>> 0; }
+
+  // ── the air and the serial line, for machines that talk to each other ──
+  /** The frames this machine sent since the last call (channel + 32 bytes each). */
+  radioTake() {
+    const M = this.M, p = this._radioBuf ??= M._malloc(33), out = [];
+    while (M._soc_radio_take(p)) out.push(M.HEAPU8.slice(p, p + 33));
+    return out;
+  }
+  /** A frame of another machine, as the air delivers it. */
+  radioGive(frame) {
+    const M = this.M, p = this._radioBuf ??= M._malloc(33);
+    M.HEAPU8.set(frame.subarray(0, 33), p);
+    M._soc_radio_give(p);
+  }
+  /** Cycles per millisecond of the machine's clock (25000 is the board's 25 MHz). */
+  timescale(c) { this.M._soc_timescale(c | 0); }
+
+  /** Text on RS232 receive: Boot.Mod runs it as commands at start. */
+  serial(text) {
+    const M = this.M, b = new TextEncoder().encode(text), p = M._malloc(b.length + 1);
+    M.HEAPU8.set(b, p); M._soc_serial(p, b.length); M._free(p);
+  }
 
   key(code) { this.M._soc_key(code | 0); }
   mouse(x, y, b) { this.M._soc_mouse(x | 0, y | 0, b | 0); }

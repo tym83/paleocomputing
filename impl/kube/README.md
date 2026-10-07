@@ -176,6 +176,11 @@ their commands, no key pressed: the cluster forms and runs a deployment, and
 the control plane, switched off and on, comes back by itself without moving a
 pod.
 
+The commands run at every start, not only the first, so a deployment in them
+is created with `Kube.Ensure name N image`, which does nothing when the
+deployment exists. With `Kube.Apply` there, a restarted control plane put the
+deployment back to its first-boot version and undid a rollout made since.
+
 ## The store on disk
 
 Kube keeps its objects on the disk of the control plane machine, as
@@ -298,6 +303,19 @@ typed into the editor over VNC, saved, compiled inside the system with
 `ORP.Compile Kube.Mod/s` and run by hand; getting there needed fixes to the
 keyboard and the disk of the virtual machine
 ([finding 86](../docs/FINDING-86-qemu-keyboard-byte-load.md)).
+
+## In the browser
+
+[`impl/web/kube.html`](../web/kube.html) runs a control plane and two nodes on
+Wirth's RTL compiled to WebAssembly, each machine in a worker of its own, with
+the page as the air (`kube-air.js`). The machines get the same nRF24L01+ model
+as in QEMU (`tb/memradio.h`) and the same commands at start on RS232. The page
+runs their clocks ten times faster than their instructions (`timescale`):
+the model executes under a million instructions a second there, and a
+protocol timed in machine seconds would crawl. Six labs check themselves from
+the air: the cluster forms, a rollout, a node dies, the air dies, an
+intruder, the control plane restarts from its disk. `node impl/web/kube-test.mjs`
+runs the same cluster without a browser.
 
 ## Next
 

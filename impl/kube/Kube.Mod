@@ -23,7 +23,7 @@ MODULE Kube;  (*A minimal Kubernetes control plane in Oberon-07.
   replaced file only at the next boot, and a new file per change would fill
   the disk.
   Commands, run with the middle button:
-    Kube.Apply name N image,  Kube.Get,  Kube.DeletePod "name",  Kube.Save [file],
+    Kube.Apply name N image,  Kube.Ensure name N image (only if absent),  Kube.Get,  Kube.DeletePod "name",  Kube.Save [file],
     Kube.Start [local] (install the controllers; local adds three local nodes),
     Kube.Local (the local nodes alone), Kube.Stop (remove the controllers),
     Kube.Reset (forget every object, on the disk too),
@@ -590,20 +590,46 @@ MODULE Kube;  (*A minimal Kubernetes control plane in Oberon-07.
     Texts.Append(Oberon.Log, W.buf)
   END Save;
 
-  PROCEDURE Apply*;
-    VAR S: Texts.Scanner; nm, img: Name; rep: INTEGER;
-  BEGIN Texts.OpenScanner(S, Oberon.Par.text, Oberon.Par.pos); Texts.Scan(S);
+  (*name N image from the command's parameters; FALSE when they are not there*)
+  PROCEDURE depParams(VAR nm, img: Name; VAR rep: INTEGER): BOOLEAN;
+    VAR S: Texts.Scanner; ok: BOOLEAN;
+  BEGIN Texts.OpenScanner(S, Oberon.Par.text, Oberon.Par.pos); Texts.Scan(S); ok := FALSE;
     IF S.class = Texts.Name THEN nm[0] := 0X; append(nm, S.s); Texts.Scan(S);
-      IF S.class = Texts.Int THEN rep := S.i; Texts.Scan(S);
+      IF S.class = Texts.Int THEN rep := S.i; Texts.Scan(S); ok := TRUE;
         img[0] := 0X;
-        IF S.class = Texts.Name THEN append(img, S.s) ELSE append(img, "scratch") END;
-        applyDep(nm, img, rep);
-        Texts.WriteString(W, "deployment "); Texts.WriteString(W, nm);
-        Texts.WriteString(W, " applied, replicas="); Texts.WriteInt(W, rep, 0); Texts.WriteLn(W);
-        Texts.Append(Oberon.Log, W.buf)
+        IF S.class = Texts.Name THEN append(img, S.s) ELSE append(img, "scratch") END
       END
+    END;
+    RETURN ok
+  END depParams;
+
+  PROCEDURE Apply*;
+    VAR nm, img: Name; rep: INTEGER;
+  BEGIN
+    IF depParams(nm, img, rep) THEN
+      applyDep(nm, img, rep);
+      Texts.WriteString(W, "deployment "); Texts.WriteString(W, nm);
+      Texts.WriteString(W, " applied, replicas="); Texts.WriteInt(W, rep, 0); Texts.WriteLn(W);
+      Texts.Append(Oberon.Log, W.buf)
     END
   END Apply;
+
+  (*Kube.Ensure name N image: the deployment as Apply would make it, but only if
+    there is none of that name. For the commands a machine runs at every start:
+    with Apply there, a restart put the deployment back to what it was at the
+    first boot and undid every change made since, a rollout included*)
+  PROCEDURE Ensure*;
+    VAR nm, img: Name; rep: INTEGER;
+  BEGIN
+    IF depParams(nm, img, rep) THEN
+      Texts.WriteString(W, "deployment "); Texts.WriteString(W, nm);
+      IF find(kDeploy, nm) < 0 THEN applyDep(nm, img, rep);
+        Texts.WriteString(W, " created, replicas="); Texts.WriteInt(W, rep, 0)
+      ELSE Texts.WriteString(W, " exists, kept as it is")
+      END;
+      Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf)
+    END
+  END Ensure;
 
   PROCEDURE DeletePod*;
     VAR S: Texts.Scanner;
