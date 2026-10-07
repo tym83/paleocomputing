@@ -17,7 +17,7 @@
  * The logic is split out of worker.js so it can be tested in node: there is no
  * `self` there, and the protocol needs testing.
  */
-import { Machine } from './machine.js';
+import { Machine, typeCodes } from './machine.js';
 import { LABS } from './labs.js';
 
 /**
@@ -26,7 +26,8 @@ import { LABS } from './labs.js';
  */
 export function createHandler(post) {
   let m = null;
-  let loop = null;            // the machine's own run loop (go / halt)
+  let loop = null;
+let script = [];            // input the running loop plays slice by slice: [action, cycles]            // the machine's own run loop (go / halt)
   // Let incoming messages in, then go on. Not setTimeout: in a background tab
   // timers fire about once a second, in workers too, and the machine crawled.
   const chan = typeof MessageChannel === 'undefined' ? null : new MessageChannel();
@@ -71,19 +72,30 @@ export function createHandler(post) {
 
       // A command line typed under the last line of System.Tool and run with
       // the middle button, as a person would.
-      case 'command':
+      case 'command': {
         // Long presses: with a fast machine clock (timescale) the background
         // tasks run often, a pass of the system's loop takes longer, and a short
-        // press could fall between two looks at the mouse.
-        m.click(900, 557, 4, 1500000);
-        m.type('\n' + msg.text);
-        m.run(2000000);          // let the editor take the last keys before the click
-        m.click(680, 569, 2, 1500000);
+        // press could fall between two looks at the mouse. Typed as a script
+        // the running loop plays a slice at a time: done in one go, the
+        // machine spent seconds of its time deaf to the air, and the plane
+        // took both nodes for NotReady.
+        const H = 1500000, steps = [];
+        const click = (x, y, b) => {
+          steps.push([() => m.mouse(x, 767 - y, 0), H], [() => m.mouse(x, 767 - y, b), H],
+                     [() => m.mouse(x, 767 - y, 0), H]);
+        };
+        click(900, 557, 4);
+        for (const c of typeCodes('\n' + msg.text)) steps.push([() => m.key(c), 4000]);
+        steps.push([null, 2000000]);            // the editor takes the last keys before the click
+        click(680, 569, 2);
+        if (loop) { script.push(...steps); return; }
+        for (const [f, n] of steps) { f && f(); m.run(n); }
         return;
+      }
 
       // Power off and on; the disk keeps what was written, Kube's store too.
       case 'reboot':
-        m.reboot();
+        m.reboot(); script = [];
         if (msg.serial) m.serial(msg.serial);
         frame({ reset: true });
         return;
@@ -107,7 +119,13 @@ export function createHandler(post) {
         const tick = () => {
           if (!loop) return;
           for (let i = 0; i < (msg.slices | 0 || 8); i++) {
-            m.run(msg.quota | 0 || 25000);
+            const q = msg.quota | 0 || 25000;
+            if (script.length) {
+              const s = script[0];
+              if (s[0]) { s[0](); s[0] = null; }
+              const n = Math.min(s[1], q); m.run(n); s[1] -= n;
+              if (s[1] <= 0) script.shift();
+            } else m.run(q);
             const air = m.radioTake();
             if (air.length) post({ t: 'air', air });
           }
