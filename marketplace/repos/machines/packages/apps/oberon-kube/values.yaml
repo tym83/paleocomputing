@@ -1,0 +1,55 @@
+##
+## @section Cluster
+##
+## A meta-application: one order gives a whole Kube cluster. Kube is the
+## Kubernetes control plane written in Oberon; its nodes are Oberon machines
+## that talk over Wirth's radio. The parts are the same components of this
+## repository, ordered by artifact reference: one OberonAir for the radio, one
+## OberonVM as the control plane and an OberonVM per node. They form the
+## cluster at start; nothing has to be typed.
+
+## @param {int} nodes=2 - Number of nodes, from 1 to 8.
+## Each node is an Oberon machine, and each machine keeps a host core busy
+## (Oberon's loop never idles). Eight is what the load tests ran.
+nodes: 2
+
+## @param {string} cluster=kube - Name of the cluster, up to 8 characters.
+## Several clusters can share one air; a node obeys only its own cluster.
+cluster: kube
+
+## @param {string} key - Key of the cluster, up to 16 hex digits.
+## Every message on the air is signed with it, and a node obeys only messages
+## signed with its cluster's key. Empty means a key of zeros: anybody on the
+## same air could command the nodes.
+key: ""
+
+## @param {string} deployments - Deployments the control plane applies at start, separated by `;`.
+## Each is `name replicas module`, e.g. `web 4 Ticker; api 2 Ticker2`. The
+## module is an Oberon module on the nodes; Ticker and Ticker2 are there to
+## try. More can be applied later on the control plane over VNC
+## (Kube.Apply name replicas module).
+deployments: ""
+
+##
+## @section Machines
+##
+
+## @param {string} memory=128Mi - Memory of each machine.
+memory: 128Mi
+
+## @param {string} storageClass=replicated - Storage class of the machines' volumes.
+## replicated lets the scheduler put the machines on different hosts, so that
+## losing a host takes as few nodes as it can.
+storageClass: replicated
+
+##
+## @section Where the chart references point
+##
+
+## @param {string} artifactPrefix=paleocomputing-machines-default - Common
+## prefix of this repository's artifact names.
+artifactPrefix: paleocomputing-machines-default
+
+## @param {string} artifactNamespace=cozy-system - Namespace that holds the
+## artifacts of the connected repository.
+artifactNamespace: cozy-system

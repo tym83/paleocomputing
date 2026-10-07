@@ -86,3 +86,21 @@ apps:
       tags: [paleocomputing, machine, kubevirt, architecture, retrocomputing]
       weight: 20
       keysOrder: [["apiVersion"], ["kind"], ["metadata"], ["metadata", "name"], ["spec", "memory"], ["spec", "running"], ["spec", "hardware"], ["spec", "storageClass"], ["spec", "storage"]]
+
+  # A whole Kube cluster in one order: an air, a control plane and N nodes,
+  # all of them releases of the components above (the workbench pattern).
+  - component: oberon-kube
+    chartPath: apps/oberon-kube
+    kind: OberonKube
+    plural: oberonkubes
+    singular: oberonkube
+    prefix: oberon-kube-
+    dashboard:
+      singular: Oberon Kube
+      plural: Oberon Kubes
+      category: Paleocomputing
+      description: A Kube cluster of Oberon machines — Kubernetes written in Oberon, on Wirth's radio
+      icon: logos/oberon-kube.svg
+      tags: [paleocomputing, kubernetes, cluster, machine, retrocomputing]
+      weight: 30
+      keysOrder: [["apiVersion"], ["kind"], ["metadata"], ["metadata", "name"], ["spec", "nodes"], ["spec", "cluster"], ["spec", "key"], ["spec", "deployments"], ["spec", "memory"], ["spec", "storageClass"]]

@@ -51,6 +51,9 @@ spec:
         - name: oberon-vm
           path: apps/oberon-vm
           libraries: ["retro-machine"]
+        # A Kube cluster in one order: releases of oberon-air and oberon-vm.
+        - name: oberon-kube
+          path: apps/oberon-kube
 
         # The catalog application definitions, however, are installed once.
         - name: machines-rd

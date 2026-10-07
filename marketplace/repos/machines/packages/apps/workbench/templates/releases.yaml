@@ -8,7 +8,6 @@ metadata:
   name: {{ .Release.Name }}-machine
   labels:
     {{- include "workbench.labels" . | nindent 4 }}
-    sharding.fluxcd.io/key: tenants
 spec:
   chartRef:
     kind: ExternalArtifact
@@ -32,7 +31,6 @@ metadata:
   name: {{ .Release.Name }}-manual
   labels:
     {{- include "workbench.labels" . | nindent 4 }}
-    sharding.fluxcd.io/key: tenants
 spec:
   chartRef:
     kind: ExternalArtifact
