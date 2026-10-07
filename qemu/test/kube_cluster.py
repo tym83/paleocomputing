@@ -35,8 +35,9 @@ def node_name(i):
 
 
 class Cluster:
-    def __init__(self, qemu, nodes, loss=0.0, boot=30, key=None):
+    def __init__(self, qemu, nodes, loss=0.0, boot=30, key=None, commands=None):
         self.key = key            # the cluster key, hex; None: the default, all zero
+        self.commands = commands or {}   # machine -> what it runs at start (-machine commands=)
         self.qemu = pathlib.Path(qemu).resolve()
         if not (self.qemu / "build" / "qemu-system-risc5").exists():
             raise SystemExit(f"  ❌ no {self.qemu}/build/qemu-system-risc5; run make -C qemu build first")
@@ -78,10 +79,16 @@ class Cluster:
     def _run(self, m):
         docker("run", "-d", "--name", self.name(m), "--network", self.net, "-p", "127.0.0.1::4444",
                "-v", f"{self.qemu}:/src:ro", "-v", f"{self.work}:/w", "-w", "/w", "qemu-build:risc5",
-               f"/src/build/qemu-system-risc5 -machine oberon,radio=air -bios prom.bin "
+               f"/src/build/qemu-system-risc5 -machine '{self._machine(m)}' -bios prom.bin "
                f"-drive if=none,id=sd0,file={m}.dsk,format=raw -display none "
                f"-chardev udp,id=air,host=relay,port=7524,localaddr=0.0.0.0,localport=7524 "
                f"-qmp tcp:0.0.0.0:4444,server,wait=off")
+
+    def _machine(self, m):
+        opts = "oberon,radio=air"
+        if self.commands.get(m):
+            opts += ",commands=" + self.commands[m].replace(",", ",,")
+        return opts
 
     def _connect(self, m):
         port = int(docker("port", self.name(m), "4444").strip().rsplit(":", 1)[1])

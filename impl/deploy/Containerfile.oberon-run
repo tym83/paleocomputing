@@ -12,13 +12,17 @@ WORKDIR /src
 COPY ext/norebo/ ./norebo/
 RUN cc -O2 -o /norebo norebo/Runtime/norebo.c norebo/Runtime/risc-cpu.c
 # Wirth's Net and our Kube on the system disk, so machines on an air can talk
-# (Net.StartServer, Net.SendMsg) and form a cluster (Kube, KubeNet). The image
-# has SCC compiled but Net only as source; Kube is ours.
+# (Net.StartServer, Net.SendMsg) and form a cluster (Kube, KubeNet, with the
+# Ticker workloads). The image has SCC compiled but Net only as source; Kube is
+# ours. Boot runs the machine's commands at start (-machine commands=...), and
+# System, rebuilt from the image's own source, calls it last in its body:
+# mods/System.Mod does not exist, install_modules patches the image's.
 COPY tools/oberonfs.py tools/install_modules.py ./tools/
-COPY ext/po2013-src/Net.Mod kube/Kube.Mod kube/Pods.Mod kube/KubeNet.Mod kube/Ticker.Mod kube/Ticker2.Mod ./mods/
+COPY ext/po2013-src/Net.Mod kube/Kube.Mod kube/Pods.Mod kube/KubeNet.Mod kube/Ticker.Mod kube/Ticker2.Mod \
+     kube/Boot.Mod ./mods/
 COPY ext/disk/Oberon-2016-08-02.dsk ./oberon.dsk
 RUN python3 tools/install_modules.py oberon.dsk mods/Net.Mod mods/Kube.Mod mods/Pods.Mod mods/KubeNet.Mod \
-      mods/Ticker.Mod mods/Ticker2.Mod \
+      mods/Ticker.Mod mods/Ticker2.Mod mods/Boot.Mod mods/System.Mod \
       --norebo ./norebo --norebo-bin /norebo
 
 # The ROM in binary form: in the sources it is hexadecimal text, while QEMU

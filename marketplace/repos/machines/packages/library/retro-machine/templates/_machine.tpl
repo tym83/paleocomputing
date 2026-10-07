@@ -240,6 +240,48 @@ spec:
 {{- end }}
 {{- $_ := set $passport.air "host" (printf "oberon-air-%s" .) }}
 {{- end }}
+{{- /* Commands at start: a Kube role and free text from the form become the
+       passport's commands.text; the hook passes it to the machine, and for
+       Oberon Boot.Mod runs it. A Kube node talks over the radio, so a role
+       needs an air. */}}
+{{- $cmds := list }}
+{{- with .Values.kubeRole }}
+{{- if not $.Values.air }}
+{{- fail (printf "%s: kubeRole %q needs an air: Kube nodes talk over the radio" $.Chart.Name .) }}
+{{- end }}
+{{- $cl := default "kube" $.Values.kubeCluster }}
+{{- if not (regexMatch "^[a-z0-9-]{1,8}$" $cl) }}
+{{- fail (printf "%s: kubeCluster %q is not up to 8 lowercase letters, digits or hyphens" $.Chart.Name $cl) }}
+{{- end }}
+{{- $key := default "" $.Values.kubeKey }}
+{{- if not (regexMatch "^[0-9a-fA-F]{0,16}$" $key) }}
+{{- fail (printf "%s: kubeKey is not up to 16 hex digits" $.Chart.Name) }}
+{{- end }}
+{{- if eq . "plane" }}
+{{- $cmds = append $cmds "Kube.Start" }}
+{{- $cmds = append $cmds (trim (printf "KubeNet.Serve %s %s" $cl $key)) }}
+{{- else if eq . "node" }}
+{{- if not (regexMatch "^[a-z0-9-]{1,6}$" (default "" $.Values.kubeNode)) }}
+{{- fail (printf "%s: a Kube node needs kubeNode, up to 6 lowercase letters, digits or hyphens" $.Chart.Name) }}
+{{- end }}
+{{- $cmds = append $cmds (trim (printf "KubeNet.Join %s %s %s" $.Values.kubeNode $cl $key)) }}
+{{- else }}
+{{- fail (printf "%s: kubeRole must be plane, node or empty, not %q" $.Chart.Name .) }}
+{{- end }}
+{{- end }}
+{{- with .Values.commands }}
+{{- $cmds = append $cmds . }}
+{{- end }}
+{{- if $cmds }}
+{{- if not $m.commands }}
+{{- fail (printf "%s: this machine cannot run commands at start" $.Chart.Name) }}
+{{- end }}
+{{- $text := join ";" $cmds }}
+{{- if not (regexMatch "^[ -~]{1,240}$" $text) }}
+{{- fail (printf "%s: the commands at start are not up to 240 printable characters" $.Chart.Name) }}
+{{- end }}
+{{- $_ := set $passport.commands "text" $text }}
+{{- end }}
 apiVersion: v1
 kind: ConfigMap
 metadata:

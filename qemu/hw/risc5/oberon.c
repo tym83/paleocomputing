@@ -59,6 +59,24 @@ static bool oberon_chk;
  * radio answers but every transmission fails, as with no other station in range.
  */
 static char *oberon_radio;
+/*
+ * -machine oberon,commands=<text>: what the machine runs at start, commands
+ * separated by ';'. The text arrives on RS232 receive from power-on, and
+ * Boot.Mod, called at the end of System's body, reads and runs it: the
+ * catalog sets up a machine this way, as cloud-init does a Linux one.
+ */
+static char *oberon_commands;
+
+static char *oberon_get_commands(Object *obj, Error **errp)
+{
+    return g_strdup(oberon_commands ? oberon_commands : "");
+}
+
+static void oberon_set_commands(Object *obj, const char *value, Error **errp)
+{
+    g_free(oberon_commands);
+    oberon_commands = g_strdup(value);
+}
 static bool oberon_desc;   /* IDX, episode 14: like -DWITH_DESC in the RTL */
 
 static char *oberon_get_radio(Object *obj, Error **errp)
@@ -175,6 +193,10 @@ static void oberon_init(MachineState *machine)
         }
         OberonIOState *io = g_new0(OberonIOState, 1);
         oberon_io_init(io, sys, OBERON_IO_BASE, blk, air);
+        if (oberon_commands && *oberon_commands) {
+            io->serial_in = oberon_commands;
+            io->serial_len = strlen(oberon_commands);
+        }
         io->chord_used = &disp->hint_done;
         oberon_input_init(io);
     }
@@ -208,6 +230,10 @@ static void oberon_machine_init(MachineClass *mc)
                                   oberon_get_radio, oberon_set_radio);
     object_class_property_set_description(OBJECT_CLASS(mc), "radio",
         "chardev carrying the air of the nRF24L01+ radio (SCC.Mod, Net.Mod)");
+    object_class_property_add_str(OBJECT_CLASS(mc), "commands",
+                                  oberon_get_commands, oberon_set_commands);
+    object_class_property_set_description(OBJECT_CLASS(mc), "commands",
+        "commands the system runs at start, separated by ';' (RS232 receive, Boot.Mod)");
     object_class_property_add_bool(OBJECT_CLASS(mc), "desc",
                                    oberon_get_desc, oberon_set_desc);
     object_class_property_set_description(OBJECT_CLASS(mc), "desc",

@@ -42,3 +42,37 @@ storage: 1Gi
 ## The machine's radio (SCC.Mod, Net.Mod) then reaches every other machine on
 ## the same air, and Net.SendMsg, Net.SendFiles and Kube nodes work between them.
 air: ""
+
+##
+## @section Kube
+##
+
+## @param {string} kubeRole - Role of this machine in a Kube cluster: `plane`, `node`, or empty for none.
+## Kube is the Kubernetes control plane written in Oberon (impl/kube); its
+## nodes talk over the radio, so the machine needs an air. A plane runs
+## Kube.Start and KubeNet.Serve at start, a node KubeNet.Join: the cluster
+## forms itself, nothing has to be typed. The plane keeps its objects on its
+## disk; apply deployments on it over VNC, e.g. Kube.Apply web 4 Ticker.
+kubeRole: ""
+
+## @param {string} kubeCluster=kube - Name of the Kube cluster, up to 8 characters.
+## Several clusters can share one air; a node obeys only its own cluster.
+kubeCluster: kube
+
+## @param {string} kubeNode - Name of this node, up to 6 characters (role `node`).
+kubeNode: ""
+
+## @param {string} kubeKey - Key of the cluster, up to 16 hex digits.
+## Every message on the air is signed with it, and a node obeys only messages
+## signed with its cluster's key. The same key on the plane and on every node.
+kubeKey: ""
+
+##
+## @section Start
+##
+
+## @param {string} commands - Oberon commands to run at start, separated by `;`.
+## Run after the Kube role's commands, e.g. `Ticker.Show` or `Hilbert.Draw`.
+## Up to 240 characters in all.
+commands: ""
+

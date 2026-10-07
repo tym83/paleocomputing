@@ -247,6 +247,34 @@ def air(src, tmp):
     must_fail(src, 'air port out of range: refused', desc=bad)
 
 
+def commands(src, tmp):
+    print('\nCommands at start: the text of the instance goes to the machine property')
+    preset = yaml.safe_load(PRESET.read_text(encoding='utf-8'))
+    report(isinstance(preset.get('commands'), dict), 'the Oberon passport declares commands at start')
+    desc = with_payload(preset, tmp)
+    root, _, err = run(src, desc)
+    args = qemu_args(root) if root is not None else []
+    report(root is not None and not any(a.startswith('commands=') for a in args),
+           'no text: no commands argument' + (f': {err.strip()}' if root is None else ''))
+    d = copy.deepcopy(desc)
+    d['commands']['text'] = 'Kube.Start;KubeNet.Serve kube 0123'
+    root, _, err = run(src, d)
+    args = qemu_args(root) if root is not None else []
+    got = [a for a in args if a.startswith('commands=')]
+    report(got == ['commands=Kube.Start;KubeNet.Serve kube 0123'], f'text given: one -machine commands=... ({got})')
+    d['commands']['text'] = 'Edit.Open a,b'
+    root, _, err = run(src, d)
+    args = qemu_args(root) if root is not None else []
+    got = [a for a in args if a.startswith('commands=')]
+    report(got == ['commands=Edit.Open a,,b'], f'a comma is doubled, so it cannot end the value ({got})')
+    bad = copy.deepcopy(d)
+    bad['commands']['text'] = 'Kube.Start\nrm'
+    must_fail(src, 'a control character in the commands: refused', desc=bad)
+    bad = copy.deepcopy(d)
+    bad['commands']['text'] = 'x' * 241
+    must_fail(src, 'commands longer than 240 characters: refused', desc=bad)
+
+
 def must_fail(src, text, **kw):
     root, out, err = run(src, **kw)
     report(root is None and not out.strip() and err.strip(),
@@ -307,6 +335,8 @@ def main():
         oberon(src, pathlib.Path(a))
         with tempfile.TemporaryDirectory() as e:
             air(src, pathlib.Path(e))
+        with tempfile.TemporaryDirectory() as e:
+            commands(src, pathlib.Path(e))
         second_machine(src, pathlib.Path(b))
         negatives(src, pathlib.Path(c))
         with tempfile.TemporaryDirectory() as d:

@@ -70,3 +70,9 @@ memory:
 air:
   machineProperty: radio
   port: 7524
+
+# Commands the system runs at start (-machine commands=...): they arrive on
+# RS232 receive and Boot.Mod, called at the end of System's body, runs them.
+# The instance composes them from its form: a Kube role, or free text.
+commands:
+  machineProperty: commands

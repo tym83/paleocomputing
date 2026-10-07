@@ -1,3 +1,5 @@
+[Русская версия](README.ru.md)
+
 # Oberon VM — Wirth's RISC5 as a virtual machine
 
 A whole architecture, plugged into the cluster from outside. The machine that
@@ -59,3 +61,61 @@ The machine is a `VirtualMachine`, so it can be stopped, started and
 restarted from the dashboard. Everything that makes it Oberon is data in
 `machine.yaml` — the templates and the hook are shared by every machine in
 the catalogue (`packages/library/retro-machine`).
+
+## A Kube cluster from the form
+
+The system disk carries Kube, a Kubernetes control plane written in Oberon,
+and KubeNet, which carries it over Wirth's radio. A few machines on one
+`OberonAir` form a cluster by themselves when their form says what each one is:
+
+```yaml
+apiVersion: apps.cozystack.io/v1alpha1
+kind: OberonVM
+metadata:
+  name: plane
+spec:
+  air: lab
+  kubeRole: plane
+  kubeKey: 00c0ffee00c0ffee
+  commands: Kube.Apply web 4 Ticker
+---
+apiVersion: apps.cozystack.io/v1alpha1
+kind: OberonVM
+metadata:
+  name: node-a
+spec:
+  air: lab
+  kubeRole: node
+  kubeNode: node-a
+  kubeKey: 00c0ffee00c0ffee
+```
+
+At start the plane runs `Kube.Start` and `KubeNet.Serve`, a node runs
+`KubeNet.Join`; nothing has to be typed. The plane keeps its objects on its
+disk and comes back with them after a restart. More deployments are applied on
+the plane over VNC, for example `Kube.Apply web 6 Ticker2`, which rolls `web`
+out to the second version one pod at a time.
+
+| field | |
+|---|---|
+| `kubeRole` | `plane` or `node`; needs `air` |
+| `kubeCluster` | the cluster name, up to 8 characters, `kube` by default; several clusters can share one air |
+| `kubeNode` | the node name, up to 6 characters |
+| `kubeKey` | up to 16 hex digits, the same on every machine of the cluster: every message on the air is signed with it, and a node obeys only its own cluster's signed messages |
+| `commands` | any Oberon commands to run at start, separated by `;`, after the Kube role's |
+
+A pod's image names an Oberon module on the node: `Ticker` and `Ticker2` are
+there to try. The kubelet loads the module and calls its `Start` command; a
+pod whose module is missing stays Pending, as a pod whose image cannot be
+pulled. A node runs up to 10 pods, the room in one radio packet.
+
+How it works, what was measured and what failed on the way is in
+`impl/kube/README.md` of the repository.
+
+## Commands at start
+
+`commands` is not only for Kube. The text reaches the machine on its serial
+line (RS232 receive) from power-on, and `Boot.Mod`, called at the end of the
+system's start, runs each command as if it had been clicked: a cloud-init for
+Oberon. Up to 240 printable characters in all.
+

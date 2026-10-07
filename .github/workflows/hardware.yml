@@ -148,6 +148,10 @@ jobs:
       # plane lost and restored from its disk, the air lost, a lossy air.
       - name: Kube DR
         run: python3 qemu/test/kube_dr_check.py
+      # A cluster that forms from the machines' commands at start, as the
+      # catalog sets them; no key pressed. The plane restarts by itself too.
+      - name: Kube boot
+        run: python3 qemu/test/kube_boot_check.py
       # Indexing through a descriptor (release 14): QEMU with chk=on,desc=on against
       # the native RTL model with -DWITH_DESC; there is no WASM build of this core, so
       # Verilator is needed here. The central issue's loop and random IDX with
