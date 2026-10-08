@@ -267,7 +267,7 @@ def check_kube() -> None:
         p = json.loads(vm["spec"]["template"]["metadata"]["annotations"][MACHINE_ANNOTATION]) if vm else {}
         texts[h["metadata"]["name"]] = (p.get("commands", {}).get("text"), p.get("air", {}).get("host"))
     plane = texts.get("oberon-kube-farm-plane", (None, None))
-    report(plane == ("Kube.Start;KubeNet.Serve kube 00c0ffee;Kube.Ensure web 4 Ticker;Kube.Ensure api 2 Ticker2",
+    report(plane == ("Kube.Start;KubeNet.Serve kube 00c0ffee;Kube.Apply web 4 Ticker;Kube.Apply api 2 Ticker2",
                      "oberon-kube-farm-air"),
            f"through the OberonVM chart the plane starts Kube and its deployments ({plane[0]!r})")
     node = texts.get("oberon-kube-farm-node2", (None, None))

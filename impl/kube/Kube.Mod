@@ -2,8 +2,8 @@ MODULE Kube;  (*A minimal Kubernetes control plane in Oberon-07.
   Three controllers run as background Oberon.Task entries in the same ring
   as the system garbage collector:
     ctlDeploy - Deployment -> ReplicaSet: one RS per image; a new image is rolled
-                out pod by pod (maxSurge 1, maxUnavailable 0, as Kubernetes does
-                by default): a new pod is added, and an old one goes only when
+                out pod by pod (maxSurge 1, maxUnavailable 0; Kubernetes defaults
+                to 25% and 25%): a new pod is added, and an old one goes only when
                 more pods run than wanted;
     ctlRS     - ReplicaSet -> Pod (keeps the number of pods equal to replicas);
     ctlNode   - scheduler: binds a pod to the least loaded Ready node, and

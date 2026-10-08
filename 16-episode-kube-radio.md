@@ -85,7 +85,7 @@ stays Pending, which is what Kubernetes calls an image it cannot pull.
 
 `Kube.Apply web 6 Ticker2` on a running `web 6 Ticker` creates a new
 ReplicaSet and moves the pods one at a time, maxSurge 1 and maxUnavailable 0,
-as Kubernetes does by default. Two faults showed on the way, both of which
+the careful setting (Kubernetes defaults to 25% and 25%). Two faults showed on the way, both of which
 real Kubernetes has met.
 
 A pod deleted on the control plane keeps running until its node hears the
@@ -150,7 +150,9 @@ the end of `System`'s body. The catalog composes the commands from the form.
 Restarts taught one more lesson. The commands run at every start, and with
 `Kube.Apply` there, a restarted control plane put the deployment back to its
 first-boot version and undid a rollout made since. `Kube.Ensure` creates a
-deployment only if there is none, and the commands at start use it.
+deployment only if there is none, for machines whose own changes should
+survive, as in the browser lab. OberonKube keeps `Kube.Apply` on purpose:
+there the form is the source of truth.
 
 ## OberonKube: a cluster in one order
 

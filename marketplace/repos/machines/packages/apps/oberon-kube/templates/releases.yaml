@@ -24,10 +24,11 @@
 {{- if not (regexMatch "^[a-z0-9-]{1,20} [0-9]{1,3} [A-Za-z][A-Za-z0-9]{0,14}$" $d) }}
 {{- fail (printf "oberon-kube: deployment %q is not \"name replicas module\"" $d) }}
 {{- end }}
-{{- /* Ensure, not Apply: the plane runs these at every start, and Apply
-       would put the deployment back to the form's version after a restart,
-       undoing every change made on the plane since (a rollout included). */}}
-{{- $apply = append $apply (printf "Kube.Ensure %s" $d) }}
+{{- /* Apply, not Ensure: the form is the source of truth. The plane runs
+       these at every start, so a changed form takes effect at the next
+       restart, and a change made over VNC to a deployment of the form
+       lasts until then. Kube.Ensure would keep the plane's own version. */}}
+{{- $apply = append $apply (printf "Kube.Apply %s" $d) }}
 {{- end }}
 {{- end }}
 {{- $air := printf "k%s" (sha256sum .Release.Name | trunc 10) }}
