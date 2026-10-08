@@ -1,16 +1,16 @@
 # How to try it yourself
 
-There are four ways, from very simple, where nothing needs installing, to your own cloud. Everything below is open: the sources are in the repository [tym83/paleocomputing](https://github.com/tym83/paleocomputing), Kube's code in `impl/kube`, and a detailed description with measurements in `impl/kube/README.md`.
+There are four ways, from very simple, where nothing needs installing, to your own cloud. Everything below is open: the sources are in the repository [tym83/paleocomputing](https://github.com/tym83/paleocomputing), Kube's code in the `impl/kube` folder, and a detailed description with measurements in `impl/kube/README.md`.
 
 ## In a browser
 
-Open the [cluster lab](https://tym83.github.io/paleocomputing/oberon/kube.html) and wait half a minute. Nothing needs installing; everything runs in the tab, and the server only serves files. The page is happiest in a recent Chrome or Firefox on a computer with several cores, since each of the three machines takes a core of its own. Keep the tab in view: in the background the browser slows the page down, and the cluster, though it does not stop, lives noticeably slower.
+Open the [cluster lab](https://tym83.github.io/paleocomputing/oberon/kube.html) and wait half a minute. Nothing needs installing: everything runs in the tab, and the server only serves files. The page is happiest in a recent Chrome or Firefox on a computer with several cores, since each of the three machines takes a core of its own. Keep the tab in view: in the background the browser slows it down, and the cluster, though it does not stop, lives noticeably slower.
 
-To run the same page locally, clone the repository and start any static server in `impl/web`, for example `python3 -m http.server 8765`, then open `http://127.0.0.1:8765/kube.html`. And if you need no browser at all, the same three-machine cluster runs in Node.js with `node impl/web/kube-test.mjs`. It boots three machines on Wirth's actual circuit, waits for the cluster to form, and checks from the air that all pods run and all signatures are valid.
+To run the same page locally, clone the repository, start any static server in the `impl/web` folder, for example `python3 -m http.server 8765`, and open `http://127.0.0.1:8765/kube.html`. And if you need no browser at all, the same three-machine cluster runs in Node.js with `node impl/web/kube-test.mjs`. It boots three machines on Wirth's actual circuit, waits for the cluster to form, and checks from the air that all pods run and all signatures are valid. The machines' clocks are honest here, so it takes about a minute.
 
 ## In QEMU on your computer
 
-You need Docker, git and make. First build our machine model in QEMU. The build runs in a container, so QEMU's dependencies stay out of your system, but it takes about ten minutes:
+You need Docker, git and make. First build our machine model for QEMU. The build runs in a container, so QEMU's dependencies stay out of your system, but it takes about ten minutes:
 
 ```sh
 git clone https://github.com/tym83/paleocomputing
@@ -18,7 +18,7 @@ cd paleocomputing
 make -C qemu build
 ```
 
-The system disk, with Kube, KubeNet, the workloads and the commands-at-start module already compiled onto it, is easiest to take from the published image. Each machine needs its own copy of the disk, grown to eight megabytes so the system has room to write its store:
+The system disk, with Kube, KubeNet, the teaching workload and the commands-at-start module already compiled onto it, is easiest to take from the published image. Each machine needs its own copy of the disk, grown to eight megabytes so the system has room to write its store:
 
 ```sh
 docker create --name payload ghcr.io/tym83/paleocomputing/oberon-run:v0.1.21
@@ -28,7 +28,7 @@ docker rm payload
 for m in plane node1 node2; do cp oberon.dsk $m.dsk; truncate -s 8M $m.dsk; done
 ```
 
-Next comes the air: a Docker network with a relay in it:
+Next you need the air, that is, a Docker network with a relay in it:
 
 ```sh
 docker network create kube-air
@@ -36,7 +36,7 @@ docker run -d --name relay --network kube-air -v "$PWD/qemu/radio:/r" \
   qemu-build:risc5 'python3 -u /r/relay.py'
 ```
 
-And three machines, each with its commands at start. The string after `commands=` is exactly what the machine runs after booting, the commands separated by semicolons:
+And finally three machines, each with its commands at start. The string after `commands=` is exactly what the machine runs after booting, the commands separated by semicolons:
 
 ```sh
 run() {
@@ -47,33 +47,35 @@ run() {
      -chardev udp,id=air,host=relay,port=7524,localaddr=0.0.0.0,localport=7524"
 }
 KEY=00c0ffee00c0ffee
-run plane 5900 "Kube.Start;KubeNet.Serve kube $KEY;Kube.Ensure web 4 Ticker"
+run plane 5900 "Kube.Start;KubeNet.Serve kube $KEY;Kube.Apply web 4 Ticker"
 run node1 5901 "KubeNet.Join node1 kube $KEY"
 run node2 5902 "KubeNet.Join node2 kube $KEY"
 ```
 
-The machines' screens are on VNC ports 5900, 5901 and 5902. Booting in software emulation takes up to a minute; after that the control plane's log shows the nodes Ready, and the nodes show their pods started. Oberon's mouse has three buttons, and the middle one runs the command it points at, so `Kube.Get` in any window of the control plane shows all objects, and `Ticker.Show` on a node shows its pods. To roll out a new version, write `Kube.Apply web 4 Ticker2 ~` on the control plane and middle-click that line.
+This uses `Kube.Apply`, not `Kube.Ensure` as in the browser lab: release v0.1.21 does not have `Kube.Ensure` yet. The difference shows only if you roll out a new version by hand and restart the control plane: with `Kube.Apply` the deployment goes back to what the commands say.
 
-![The control plane in QEMU after a restart. The store came back from disk, `Kube.Ensure` among the commands at start saw that the deployment exists and left it alone, and `Kube.Get` shows the same pods on the same node. The shot was taken by an automated check; nobody typed anything](../img/qemu-plane.png)
+The machines' screens are on VNC ports 5900, 5901 and 5902. Booting in software emulation takes up to a minute, after which the control plane's log shows lines about the nodes being ready, and the nodes' logs about the pods started. Oberon's mouse has three buttons, and the middle one runs the command it points at. So `Kube.Get` in any window of the control plane shows all objects, and `Ticker.Show` on a node shows its pods. To roll out a new version, write `Kube.Apply web 4 Ticker2 ~` on the control plane and middle-click that line.
+
+![The control plane in QEMU after a restart. The store came back from disk, and `Kube.Get` shows the same pods on the same node. The shot was taken by an automated check whose commands at start hold `Kube.Ensure`, which is why the log shows it left the existing deployment alone](../img/qemu-plane.png)
 
 ![Node node-b in QEMU. It joined first and got all four pods: like the real scheduler, Kube does not move running pods to a node that came later](../img/qemu-node-b.png)
 
-You can listen to the air from the side, as the tests do. The listener joins the relay as one more machine, sends nothing, and prints every message with its signature checked:
+You can listen to the air from the side, as the tests do. The listener joins the relay as one more machine, sends nothing, and with `--json` prints every heartbeat and every assignment together with whether its signature is valid:
 
 ```sh
 docker run --rm -it --network kube-air -v "$PWD/qemu/radio:/r" \
-  qemu-build:risc5 'python3 -u /r/listen.py relay --key 00c0ffee00c0ffee'
+  qemu-build:risc5 'python3 -u /r/listen.py relay --json --key 00c0ffee00c0ffee'
 ```
 
-And then you can break things. `docker stop node2` switches a node off, `docker stop relay` jams the air, and `docker start` brings either back. The same folder holds `inject.py`, which can play the intruder.
+And then you can break things. `docker stop node2` switches a node off, `docker stop relay` jams the air, and `docker start` brings either back. If the relay gets a different address after a restart, the machines will find it themselves: after a failed send our model looks the address up by name again. The same folder holds `inject.py`, which can play the intruder.
 
-The checks in the repository start the cluster in exactly this way, only automatically. After building QEMU and the tools (`make -C impl tools`) you can run them yourself: `python3 qemu/test/kube_dr_check.py` checks every failure from the table above, `python3 qemu/test/kube_boot_check.py` the cluster forming from commands at start alone, and `python3 qemu/test/kube_load_check.py --nodes 4` measures load. Keep in mind that each Oberon machine takes a whole core, since its loop never idles, so eight nodes on a laptop will measure the laptop rather than the cluster.
+The checks in the repository start the cluster in just this way, only automatically. After building QEMU and the tools with `make -C impl tools`, you can run them yourself: `python3 qemu/test/kube_dr_check.py` checks every failure discussed above (their table is in `impl/kube/README.md`), `python3 qemu/test/kube_boot_check.py` checks that the cluster forms from commands at start alone, and `python3 qemu/test/kube_load_check.py --nodes 4` measures load. These checks build the disk from source, so they already have `Kube.Ensure`. Keep in mind that each Oberon machine takes a whole core, since its loop never idles, and eight nodes on a laptop will measure the laptop rather than the cluster.
 
-When you are done, the containers go with `docker rm -f plane node1 node2 relay` and the network with `docker network rm kube-air`.
+When you are done, remove the containers with `docker rm -f plane node1 node2 relay` and the network with `docker network rm kube-air`.
 
 ## In your own KubeVirt
 
-An Oberon machine also runs in plain KubeVirt, without Cozystack. It needs our virt-launcher image, which knows the RISC5 architecture, and KubeVirt's ability to attach hooks to virtual machines switched on. How to do that is described in detail in the [guide](https://github.com/tym83/paleocomputing/blob/main/kubevirt/GUIDE.md), together with an example VirtualMachine. A cluster needs three such machines, a relay as an ordinary pod with a UDP service, and the commands at start in the machine's annotation, which the hook passes on to QEMU. That is exactly what the Cozystack catalog does for you, so without Cozystack the easiest way is to look at what its charts in the `marketplace` folder create.
+An Oberon machine also runs in plain KubeVirt, without Cozystack. It needs our virt-launcher image, which knows the RISC5 architecture, and KubeVirt's ability to attach hooks to virtual machines switched on. How to do that is described in detail in the [guide](https://github.com/tym83/paleocomputing/blob/main/kubevirt/GUIDE.md), which also has an example VirtualMachine. A cluster needs three such machines, a relay as an ordinary pod with a UDP service, and the commands at start in the machine's annotation, which the hook passes on to QEMU. That is exactly what the Cozystack catalog does for you, so without Cozystack the easiest way is to see what its charts in the `marketplace` folder create.
 
 ## In Cozystack
 
@@ -84,9 +86,9 @@ cozypkg tap oci://ghcr.io/tym83/paleocomputing/machines:v0.1.21
 cozypkg add paleocomputing.machines
 ```
 
-The cluster administrator has two duties here: to switch on the Sidecar feature gate in KubeVirt and to install our virt-launcher image matching your KubeVirt version. The details are on the [project page](https://tym83.github.io/paleocomputing/cozystack/).
+The cluster administrator has to do two things for this: switch on the Sidecar feature gate in KubeVirt and install our virt-launcher image for your KubeVirt version. The details are on the [project page](https://tym83.github.io/paleocomputing/cozystack/).
 
-After that, users see a Paleocomputing section in the dashboard, with OberonVM, OberonAir and OberonKube in it. A Kube cluster is ordered with one form or one resource:
+After that, users see a Paleocomputing section in the dashboard, with OberonVM, OberonAir and OberonKube among other things. A Kube cluster is ordered with one form or one resource:
 
 ```yaml
 apiVersion: apps.cozystack.io/v1alpha1
@@ -99,6 +101,6 @@ spec:
   deployments: web 4 Ticker; api 2 Ticker2
 ```
 
-From this order the catalog creates an air, a control plane machine and three nodes, and the cluster forms by itself. Any machine's screen opens with `virtctl vnc` under the tenant's own rights; the machine names are shown in the dashboard. Deleting the order deletes all its parts.
+From this order the catalog creates an air, a control plane machine and three nodes, and the cluster forms by itself. Any machine's screen opens with `virtctl vnc` under the tenant's own rights, and the machine names are shown in the dashboard. The source of truth here is the form: its deployments are applied at every start of the control plane, so a changed form takes effect after a restart, and a change made over VNC lasts only until then. Deleting the order deletes all its parts too.
 
-You can also build a cluster by hand from separate machines. Then create an `OberonAir`, and in each `OberonVM` name that air in `air`, set the role in `kubeRole` (`plane` for the control plane and `node` for the nodes), the node name in `kubeNode` and the same key in `kubeKey`. This is more fun if you want, say, to put two clusters with different keys on one air and watch them not get in each other's way.
+You can also build a cluster by hand from separate machines. Then create an `OberonAir`, and in each `OberonVM` name that air in the field `air`, the role in `kubeRole` (`plane` for the control plane and `node` for the nodes), the node name in `kubeNode` and the same key in `kubeKey`. The control plane's deployments go in the field `commands`, and the cluster name, if it should not be `kube`, in `kubeCluster`. This is more fun if you want, for example, to put two clusters with different keys on one air and watch them not get in each other's way.
