@@ -20,7 +20,7 @@ red_problem() {
     echo; body "$f" | sed -f "problems/run/$(basename "$f" .red).sed"
     cat "problems/run/$1-main.red"; } > "$tmp/p${1#0}.red"
 }
-RED_PROBLEMS="01 05 06 07 08 09 10"
+RED_PROBLEMS="01 02 05 06 07 08 09 10"
 for n in $RED_PROBLEMS; do red_problem "$n"; done
 printf '%-80s\n%-80s\n' STATUS DONE > "$tmp/cards"
 fail=0
