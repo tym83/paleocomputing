@@ -11,7 +11,7 @@ name: pages
 on:
   push:
     branches: [main]
-    paths: ['site/**', 'impl/web/**', 'tools/build-site.sh', '.github/workflows/pages.yml']
+    paths: ['site/**', 'impl/web/**', 'impl/x8-the/web/**', 'tools/build-site.sh', '.github/workflows/pages.yml']
   workflow_dispatch:
 
 permissions:

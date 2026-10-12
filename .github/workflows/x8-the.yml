@@ -61,4 +61,6 @@ jobs:
           name: x8-web
           path: impl/x8-the/web
       - name: Built output matches the repository
-        run: git diff --exit-code -- web
+        run: |
+          git status --porcelain -- web
+          test -z "$(git status --porcelain -- web)"

@@ -12,15 +12,16 @@
 
 static x8 m;
 static unsigned char *tape;
-static char out[1 << 16];          /* events: device, character, ... */
+static unsigned char out[1 << 16]; /* events of 6 bytes: device, character, milliseconds */
 static int outlen;
 
 static void on_char(int dev, int ch, uint64_t cycles)
 {
-    (void)cycles;
-    if (outlen + 2 > (int)sizeof out) return;
-    out[outlen++] = (char)dev;
-    out[outlen++] = (char)ch;
+    uint32_t ms = (uint32_t)(cycles / CYCLES_PER_MS);
+    if (outlen + 6 > (int)sizeof out) return;
+    out[outlen++] = (unsigned char)dev;
+    out[outlen++] = (unsigned char)ch;
+    for (int k = 0; k < 4; k++) out[outlen++] = (unsigned char)(ms >> (8 * k));
 }
 
 /* load the program tape and press LS and IP */
@@ -54,10 +55,11 @@ EMSCRIPTEN_KEEPALIVE void x8w_key(int ascii)
     if (code >= 0) charon_key_now(&m, code);
 }
 
-/* the output since the last call: pairs of (device, character) */
-EMSCRIPTEN_KEEPALIVE int x8w_out(char *dst, int max)
+/* the output since the last call, in whole events */
+EMSCRIPTEN_KEEPALIVE int x8w_out(unsigned char *dst, int max)
 {
     int n = outlen < max ? outlen : max;
+    n -= n % 6;
     memcpy(dst, out, (size_t)n);
     memmove(out, out + n, (size_t)(outlen - n));
     outlen -= n;

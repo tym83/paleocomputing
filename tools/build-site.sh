@@ -38,6 +38,8 @@ copy_tree site "$out" '^oberon/'
 cp site/oberon/index.html "$out/oberon/index.html"
 copy_tree impl/web "$out/oberon" "$DEV|^index\.html$"
 cp impl/web/index.html "$out/oberon/run.html"
+# The X8 and THE (episode 18): the page and the machine built for the browser.
+copy_tree impl/x8-the/web "$out/x8" '(^|/)build\.sh$'
 
 # Required contents. An empty file counts as missing too: the built wasm can
 # come out zero-sized, and once it already did.
@@ -50,7 +52,8 @@ need="index.html style.css ru/index.html ru/oberon/index.html cozystack/index.ht
       oberon/bench_bounds_b.bin oberon/bench_bounds_e.bin oberon/oberon.dsk oberon/oberon.dsk.gz
       oberon/prom_sd.mem oberon/embed.js oberon/worker.js oberon/worker-core.js
       oberon/kube.html oberon/kube-air.js oberon/oberon-kube.dsk.gz
-      oberon/book/index.html oberon/book/en/index.html"
+      oberon/book/index.html oberon/book/en/index.html
+      x8/index.html x8/x8page.js x8/x8.js x8/x8.wasm x8/the.tape x8/the.json"
 miss=0
 for f in $need; do
   if [ -s "$out/$f" ]; then printf '  ✅ %s\n' "$f"; else printf '  ❌ missing or empty: %s\n' "$f"; miss=1; fi

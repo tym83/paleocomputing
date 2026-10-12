@@ -64,4 +64,11 @@ print(len(re.findall('<option', m.group(1))) if m else 0)")
   esac
 done
 
+# The X8: the page boots THE at full speed; the console must reach pm2's question.
+out=$(dom "x8/index.html?autostart=1&speed=0")
+printf '%s' "$out" | grep -q 'data-script-ok="1"' && say ok "x8/index.html: page script ran to the end" \
+  || say no "x8/index.html: page script did not run"
+printf '%s' "$out" | grep -q 'how many squares' && say ok "x8/index.html: THE booted and pm2 asks its question" \
+  || say no "x8/index.html: no question from pm2 on the console"
+
 exit $bad

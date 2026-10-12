@@ -88,15 +88,16 @@
   }
 
   function drain() {
-    const buf = mod._malloc(4096);
+    const buf = mod._malloc(6000);
     for (;;) {
-      const n = mod._x8w_out(buf, 4096);
+      const n = mod._x8w_out(buf, 6000);
       if (!n) break;
       let con = '', lp = '';
-      for (let i = 0; i < n; i += 2) {
-        const dev = mod.HEAPU8[buf + i], ch = String.fromCharCode(mod.HEAPU8[buf + i + 1]);
+      for (let i = 0; i < n; i += 6) {
+        const h = mod.HEAPU8, dev = h[buf + i], ch = String.fromCharCode(h[buf + i + 1]);
+        const ms = h[buf + i + 2] | (h[buf + i + 3] << 8) | (h[buf + i + 4] << 16) | (h[buf + i + 5] << 24);
         if (dev === 1) {
-          if (col === 0) con += '[' + seconds(mod._x8w_cycles()) + ' s] ';
+          if (col === 0) con += '[' + seconds(ms * CPM) + ' s] ';
           con += ch;
           col = ch === '\n' ? 0 : col + 1;
         } else lp += ch;
