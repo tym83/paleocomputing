@@ -9,7 +9,7 @@ not let anyone count, and it disappeared. This episode rebuilds both
 languages from their 1979 documents. Each gets a compiler written in itself
 that reaches a fixed point. On RED there is also a NonStop-style kernel and
 the Kubernetes control loop, with the control plane run as a Tandem process
-pair. There are eleven labs and a comparison with Ada 83. The code is in
+pair. There are twelve labs and a comparison with Ada 83. The code is in
 [`impl/ada-colors/`](impl/ada-colors/); the research notes are in
 [`impl/ada-colors/notes/`](impl/ada-colors/notes/).
 
@@ -166,6 +166,49 @@ replays what the clients were told against the books, and they agree. Swap the
 two SENDs, replying before checkpointing, and the audit finds a confirmed
 transfer missing from the books while the total balance is still right.
 
+## THE: Dijkstra's layers in RED
+
+[`os/the.red`](impl/ada-colors/os/the.red) rebuilds the THE multiprogramming
+system (Dijkstra, CACM 1968, EWD 196). It is backlog item 5, done in RED
+instead of GNAT. The five levels of the paper are RED tasks, and a process
+only calls on levels below it: semaphores (level 0) are mailboxes of tokens,
+because THE signals between processes and a REGION only brackets one; the
+segment controller (level 1) keeps eight segments in three core pages and
+dumps to the free drum page with the least latency; the message interpreter
+(level 2) shares one console and reads its vocabulary from a segment; three
+tape readers and a line printer (level 3) buffer through segments and ask the
+operator for paper; three user programs (level 4) and an operator (level 5)
+complete the society. The run finishes with every program's result printed.
+Lab 12 lets the segment controller report its dumps on the console, a level-1
+process calling level 2, and the runtime reports a deadlock at the first dump:
+the interpreter needs the segment controller to read its vocabulary, which is
+the reason the paper gives for the order of the two levels.
+
+[`os/the_green.grn`](impl/ada-colors/os/the_green.grn) is THE's output path in
+GREEN. With neither semaphores nor mailboxes, each semaphore is a server task
+that accepts P only while its count is positive, and nine printed lines cost
+54 rendezvous.
+
+[`os/the_kube.red`](impl/ada-colors/os/the_kube.red) and
+[`os/the_kube_green.grn`](impl/ada-colors/os/the_kube_green.grn) put the
+Kubernetes control loop on top of THE as level-4 user programs that use only
+P, V, segments, the console and the clock. There is no API server: the store
+is segments under one semaphore, a watch is a wake-up semaphore saturating at
+one, and resync, heartbeats and lease checks come from a clock process,
+because P has no timeout. The first version cut a node's power with
+EXTERMINATE while its kubelet held the store's semaphore, and the whole
+control plane stopped for good. In GREEN the semaphores are server tasks
+again, and the same run costs 1168 rendezvous.
+
+Three contrasts in [`os/contrast/`](impl/ada-colors/os/contrast/), each
+written in RED, in GREEN and on THE's semaphores:
+
+| Problem | RED | GREEN (1979) | THE semaphores |
+|---|---|---|---|
+| Timeout: the producer goes silent | `WAIT` with `DELAY`: the waiter gives up | no timed entry call: the buffer server answers "nothing" for the caller | `P` has no timeout: a watchdog on the clock puts a sentinel item in the buffer |
+| Failure while holding a lock | a `REGION` releases its lock on an exception | a lock task stays seized; the other worker waits for ever | the `V` never comes; the other worker waits for ever |
+| Readers and a writer | an exclusive `REGION`: everyone takes turns, 40 ms | the server owns the data and hands out copies; the work overlaps, 13 ms | Courtois et al. 1971: readers overlap, and a late reader overtakes the waiting writer |
+
 ## Kubernetes on RED patterns
 
 [`kube/kube.red`](impl/ada-colors/kube/kube.red) maps each Kubernetes part onto
@@ -208,7 +251,7 @@ they were fixed in the same way as upstream:
 
 ## Labs and comparisons
 
-- [`labs/`](impl/ada-colors/labs/README.md): eleven exercises (look, change,
+- [`labs/`](impl/ada-colors/labs/README.md): twelve exercises (look, change,
   break, build) and `labs/check.sh`, which says whether a task is done.
 - [`problems/run/`](impl/ada-colors/problems/run/): all twenty 1979 contract
   solutions run, ten RED and ten GREEN, plus RED's C.1. Each has a sed file

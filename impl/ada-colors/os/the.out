@@ -1,0 +1,29 @@
+[20 ms] CONSOLE  reader 1: tape loaded, reading
+[30 ms]   segment controller: segment 1 dumped from core page 1 to drum page 6
+[40 ms] PRINTER  program 1: sum of squares 630
+[40 ms] CONSOLE  reader 2: tape loaded, reading
+[45 ms]   segment controller: segment 3 dumped from core page 2 to drum page 1
+[70 ms]   segment controller: segment 1 read from drum page 6 into core page 2
+[75 ms]   segment controller: segment 6 dumped from core page 3 to drum page 7
+[80 ms]   segment controller: segment 2 dumped from core page 1 to drum page 8
+[90 ms] CONSOLE  reader 3: tape loaded, reading
+[90 ms]   segment controller: segment 1 dumped from core page 2 to drum page 2
+[120 ms]   segment controller: segment 2 read from drum page 8 into core page 2
+[135 ms]   segment controller: segment 4 dumped from core page 3 to drum page 3
+[170 ms]   segment controller: segment 1 read from drum page 2 into core page 3
+[180 ms]   segment controller: segment 7 dumped from core page 1 to drum page 4
+[185 ms]   segment controller: segment 2 dumped from core page 2 to drum page 5
+[190 ms] PRINTER  program 2: sum of squares 2030
+[190 ms] CONSOLE  program 1: finished, result queued for the printer
+[200 ms]   segment controller: segment 1 dumped from core page 3 to drum page 8
+[225 ms]   segment controller: segment 2 read from drum page 5 into core page 3
+[230 ms]   segment controller: segment 5 dumped from core page 1 to drum page 6
+[240 ms]   segment controller: segment 1 read from drum page 8 into core page 1
+[260 ms] CONSOLE  program 2: finished, result queued for the printer
+[280 ms] CONSOLE  printer: out of paper, waiting for the operator
+[300 ms] CONSOLE  program 3: finished, result queued for the printer
+[420 ms] CONSOLE  operator to printer: paper loaded
+[430 ms] PRINTER  program 3: sum of squares 4230
+[430 ms] all programs finished, the printer is empty
+[430 ms] drum transfers 15, segment faults 13, with 8 segments in 3 core pages
+[430 ms] no process waited for one on a higher level, so no circle of waiting could form
