@@ -152,6 +152,9 @@ ABNORMAL FUNC ctype(CONST t : typ) => STRING[ASCII] IMPORTS ALL;
       WHEN t_float => RETURN "double";
       WHEN t_string => RETURN "rstr";
       WHEN t_void => RETURN "void";
+      WHEN t_mbox => RETURN "rt_mbox";
+      WHEN t_lock => RETURN "rt_lock";
+      WHEN t_act => RETURN "rt_act";
       ELSE =>
          IF t.cname = NIL THEN
             declare_ctype(t);
@@ -347,11 +350,27 @@ ABNORMAL FUNC resolve_subtype(CONST st : node, OUT c : cons) => typ IMPORTS ALL;
          RETURN t;
       WHEN s_file =>
          RETURN ty_file;
+      WHEN s_mailbox =>
+         % MAILBOX[message subtype](size) (10.3)
+         BEGIN
+            VAR ec : cons;
+            t := new_typ(t_mbox);
+            t.elem := resolve_subtype(st.a, ec);
+            t.elemcons := ec;
+            IF st.b /= NIL THEN
+               c.lo := mk(gexpr(st.b, ty_int, dummy));
+            END IF;
+         END;
+         RETURN t;
       WHEN s_name =>
          IF st.name.ALL = "BOOL" THEN
             RETURN ty_bool;
          ELSEIF st.name.ALL = "ASCII" THEN
             RETURN ty_ascii;
+         ELSEIF st.name.ALL = "DATA_LOCK" THEN
+            RETURN ty_lock;
+         ELSEIF st.name.ALL = "ACT" THEN
+            RETURN ty_act;
          END IF;
          BEGIN
             VAR y : sym := lookup(st.name.ALL);
@@ -377,7 +396,17 @@ END FUNC resolve_subtype;
 
 % give a fresh variable its storage (strings, arrays and records own buffers)
 PROC init_storage(READONLY lval : STRING[ASCII], CONST t : typ, CONST c : cons) IMPORTS ALL;
-   IF t.kind = t_ptr THEN
+   IF t.kind = t_mbox THEN
+      IF c.lo = NIL THEN
+         fail(0, "a mailbox variable needs a size");
+      END IF;
+      emit("rt_mbox_init(&" & lval & ", " & c.lo.ALL & ", sizeof(" & ctype(t.elem) & "), "
+           & mcopy(t.elem) & ");");
+   ELSEIF t.kind = t_lock THEN
+      emit("rt_lock_init(&" & lval & ");");
+   ELSEIF t.kind = t_act THEN
+      emit(lval & ".active = 0; " & lval & ".t = NULL; " & lval & ".waiters = NULL;");
+   ELSEIF t.kind = t_ptr THEN
       % indirect variables start as NIL (4.4.3), at every elaboration
       emit(lval & " = NULL;");
    ELSEIF t.kind = t_string THEN
@@ -445,6 +474,23 @@ ABNORMAL FUNC manifest(CONST e : node, OUT ok : BOOL) => INT IMPORTS ALL;
 END FUNC manifest;
 
 % ---- assignment, copy and equality --------------------------------------------------
+
+% the function a mailbox uses to copy one message of type t
+ABNORMAL FUNC mcopy(CONST t : typ) => STRING[ASCII] IMPORTS ALL;
+   CONST ct := ctype(t);
+   VAR name : STRING[ASCII](ct.LEN + 3) := "mc_" & ct;
+   VAR l : lines;
+   IF NOT seen_name(mcopies, name) THEN
+      ALLOC l PTR;
+      l.s := mk(name);
+      l.next := mcopies;
+      mcopies := l;
+      put(out_protos, "static void " & name & "(void *d, const void *s);");
+      put(out_funcs, "static void " & name & "(void *d, const void *s) { *(" & ct & " *)d = "
+          & copy_code(t, "*(const " & ct & " *)s") & "; }");
+   END IF;
+   RETURN name;
+END FUNC mcopy;
 
 ABNORMAL FUNC assign_code(READONLY lval : STRING[ASCII], CONST t : typ, READONLY v : STRING[ASCII],
                           CONST c : cons) => STRING[ASCII] IMPORTS ALL;

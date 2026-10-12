@@ -45,6 +45,8 @@ ABNORMAL FUNC declaration => node IMPORTS ALL;
       RETURN capsule_decl;
    ELSEIF at_kw("EXPOSE") THEN
       RETURN expose_decl;
+   ELSEIF at_kw("TASK") THEN
+      RETURN task_decl;
    ELSEIF at_kw("EXCEPTION") THEN
       VAR head, tail : node;
       VAR names : node;
@@ -298,6 +300,26 @@ ABNORMAL FUNC capsule_decl => node IMPORTS ALL;
    RETURN x;
 END FUNC capsule_decl;
 
+% TASK (diagram 61)
+ABNORMAL FUNC task_decl => node IMPORTS ALL;
+   VAR x : node := nn(n_task, cur_line);
+   VAR dummy : BOOL;
+   tpos := tpos + 1;
+   x.name := expect_id;
+   IF at_op("(") THEN
+      x.a := formal_params;
+   END IF;
+   dummy := imports_list(x);
+   expect_op(";");
+   x.c := body;
+   expect_kw("END");
+   expect_kw("TASK");
+   IF expect_id.ALL /= x.name.ALL THEN
+      fail(cur_line, "END TASK name does not match " & x.name.ALL);
+   END IF;
+   RETURN x;
+END FUNC task_decl;
+
 % EXPOSE (diagram 55): ival 1 = ALL, a = names; flag 1 = NEW, 2 = EXTERNAL
 ABNORMAL FUNC expose_decl => node IMPORTS ALL;
    VAR x : node := nn(n_expose, cur_line);
@@ -411,6 +433,46 @@ ABNORMAL FUNC unlabeled_statement => node IMPORTS ALL;
    ELSEIF at_kw("RERAISE") THEN
       tpos := tpos + 1;
       RETURN nn(n_reraise, line);
+   ELSEIF at_kw("CREATE") THEN
+      % task invocation (diagram 62): name, actual parameters, NAMED variable
+      x := nn(n_create, line);
+      tpos := tpos + 1;
+      x.name := expect_id;
+      IF at_op("(") THEN
+         x.b := actual_params;
+      END IF;
+      expect_kw("NAMED");
+      x.a := postfix;
+      RETURN x;
+   ELSEIF at_kw("WAIT") THEN
+      % wait statement (diagram 63): arms of waiting invocations
+      VAR head, tail : node;
+      x := nn(n_wait, line);
+      tpos := tpos + 1;
+      WHILE accept_kw("WHEN") REPEAT
+         VAR invs, itail : node;
+         VAR more : BOOL := TRUE;
+         WHILE more REPEAT
+            append(invs, itail, postfix);
+            more := accept_op(",");
+         END REPEAT;
+         expect_op("=>");
+         append(head, tail, arm(invs, body, line));
+      END REPEAT;
+      expect_kw("END");
+      expect_kw("WAIT");
+      x.a := head;
+      RETURN x;
+   ELSEIF at_kw("REGION") THEN
+      % region statement (diagram 65)
+      x := nn(n_region, line);
+      tpos := tpos + 1;
+      x.a := expr;
+      expect_kw("DO");
+      x.b := body;
+      expect_kw("END");
+      expect_kw("REGION");
+      RETURN x;
    ELSEIF at_kw("ALLOC") THEN
       x := nn(n_alloc, line);
       tpos := tpos + 1;

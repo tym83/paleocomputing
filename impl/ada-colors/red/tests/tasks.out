@@ -1,0 +1,11 @@
+consumed MES1
+consumed MES2
+consumed MES3
+worker 1 recovered in region
+worker 2 recovered in region
+shared = 10
+timeout after 13 ticks
+high priority
+main at priority 10
+low priority
+end

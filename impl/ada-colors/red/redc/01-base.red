@@ -104,6 +104,9 @@ CONST t_ptr := 8;
 CONST t_void := 9;
 CONST t_file := 10;
 CONST t_nil := 11;
+CONST t_mbox := 12;
+CONST t_lock := 13;
+CONST t_act := 14;
 
 % ---- symbol kinds -------------------------------------------------------------
 CONST y_var := 1;
@@ -114,6 +117,7 @@ CONST y_type := 5;
 CONST y_abbrev := 6;
 CONST y_exc := 7;
 CONST y_capsule := 8;
+CONST y_task := 9;
 
 % ---- the data ---------------------------------------------------------------
 TYPE text : PTR (n : INT) STRING[ASCII](n);
@@ -135,7 +139,7 @@ TYPE typ : PTR RECORD[kind : INT, name : text, lits : node,
 
 TYPE field : PTR RECORD[name : text, t : typ, c : cons, st : node, next : field];
 
-TYPE parm : PTR RECORD[name : text, mode : INT, t : typ, c : cons, next : parm];
+TYPE parm : PTR RECORD[name : text, mode : INT, t : typ, c : cons, cfield : text, next : parm];
 
 TYPE sym : PTR RECORD[kind : INT, name : text, t : typ, c : cons,
                       access, cname : text, ro_flag : BOOL,
@@ -180,6 +184,9 @@ VAR func_sym : sym;
 VAR exits : exitrec;
 VAR frames : INT := 0;
 VAR handlers : lines;
+VAR cleanups : lines;
+VAR mcopies : lines;
 
 VAR ty_int, ty_bool, ty_float, ty_ascii, ty_string, ty_void, ty_file, ty_nil : typ;
+VAR ty_lock, ty_act : typ;
 VAR no_cons : cons;

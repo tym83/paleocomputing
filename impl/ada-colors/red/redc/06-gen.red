@@ -36,7 +36,7 @@ PROC declare_body(CONST elems : node) IMPORTS ALL;
    END REPEAT;
    e := elems;
    WHILE e /= NIL REPEAT
-      IF e.kind = n_proc OR e.kind = n_func THEN
+      IF e.kind = n_proc OR e.kind = n_func OR e.kind = n_task THEN
          declare_subprogram(e);
       END IF;
       e := e.next;
@@ -227,6 +227,8 @@ PROC declare_subprogram(CONST d : node) IMPORTS ALL;
    VAR tail : parm;
    IF d.kind = n_func THEN
       y := new_sym(y_func, d.name);
+   ELSEIF d.kind = n_task THEN
+      y := new_sym(y_task, d.name);
    ELSE
       y := new_sym(y_proc, d.name);
    END IF;
@@ -236,6 +238,7 @@ PROC declare_subprogram(CONST d : node) IMPORTS ALL;
       pm.name := p.name;
       pm.mode := p.ival;
       pm.t := resolve_subtype(p.a, pm.c);
+      pm.cfield := mk(new_name(lower_s(p.name.ALL) & "_"));
       IF tail = NIL THEN
          y.params := pm;
       ELSE
@@ -252,12 +255,15 @@ PROC declare_subprogram(CONST d : node) IMPORTS ALL;
    y.cname := mk(new_name("f_" & c_ident(d.name.ALL) & "_"));
    y.decl := d;
    y.level := cur_level;
+   IF d.kind = n_task THEN
+      put(out_globals, "static rt_taskdecl " & y.cname.ALL & "decl;");
+   END IF;
    define(y, d.line);
 END PROC declare_subprogram;
 
 PROC element(CONST e : node) IMPORTS ALL;
    VAR k : INT := e.kind;
-   IF k = n_proc OR k = n_func THEN
+   IF k = n_proc OR k = n_func OR k = n_task THEN
       subprogram(e);
    ELSEIF k = n_exception OR k = n_abbrev OR k = n_newtype OR k = n_capsule OR k = n_expose THEN
       RETURN;
@@ -368,6 +374,7 @@ PROC subprogram(CONST d : node) IMPORTS ALL;
    VAR args : text := mk("");
    VAR pm : parm := y.params;
    VAR saved_handlers : lines := handlers;
+   VAR saved_cleanups : lines := cleanups;
    VAR ctx : fctxrec;
    VAR head : text;
    VAR frame : text := mk(y.cname.ALL & "fr");
@@ -382,6 +389,7 @@ PROC subprogram(CONST d : node) IMPORTS ALL;
    exits := NIL;
    frames := 0;
    handlers := NIL;
+   cleanups := NIL;
    cur_level := cur_level + 1;
    open_scope;
    ALLOC ctx PTR;
@@ -392,12 +400,14 @@ PROC subprogram(CONST d : node) IMPORTS ALL;
    fctx := ctx;
    IF parent /= NIL THEN
       put(fields_buf, " struct " & parent.ALL & " *up;");
-      args := mk("struct " & parent.ALL & " *up_");
-      emit("F->up = up_;");
+      IF y.kind /= y_task THEN
+         args := mk("struct " & parent.ALL & " *up_");
+         emit("F->up = up_;");
+      END IF;
    END IF;
    WHILE pm /= NIL REPEAT
       CONST ct := ctype(pm.t);
-      CONST f := new_name(lower_s(pm.name.ALL) & "_");
+      CONST f := pm.cfield.ALL;
       VAR p : sym;
       IF args.LEN > 0 THEN
          args := mk(args.ALL & ", ");
@@ -407,14 +417,18 @@ PROC subprogram(CONST d : node) IMPORTS ALL;
          put(fields_buf, " " & ct & " " & f & ";");
          args := mk(args.ALL & ct & " " & f);
          p.access := mk(f);
-         emit("F->" & f & " = " & copy_code(pm.t, f) & ";");
+         IF y.kind /= y_task THEN
+            emit("F->" & f & " = " & copy_code(pm.t, f) & ";");
+         END IF;
       ELSE
          p := new_sym(y_var, pm.name);
          put(fields_buf, " " & ct & " *" & f & ";");
          args := mk(args.ALL & ct & " *" & f);
          p.access := mk(f);
          p.byref := TRUE;
-         emit("F->" & f & " = " & f & ";");
+         IF y.kind /= y_task THEN
+            emit("F->" & f & " = " & f & ";");
+         END IF;
       END IF;
       p.t := pm.t;
       p.c := pm.c;
@@ -431,8 +445,11 @@ PROC subprogram(CONST d : node) IMPORTS ALL;
    close_scope;
    fctx := fctx.next;
    cur_level := cur_level - 1;
-   IF args.LEN = 0 THEN
+   IF args.LEN = 0 OR y.kind = y_task THEN
       args := mk("void");
+   END IF;
+   IF y.kind = y_task THEN
+      args := mk("void *fv_");
    END IF;
    head := mk("static " & ctype(y.result) & " " & y.cname.ALL & "(" & args.ALL & ")");
    put(out_protos, head.ALL & ";");
@@ -440,7 +457,11 @@ PROC subprogram(CONST d : node) IMPORTS ALL;
    put(out_frames, "struct " & frame.ALL & " { int dummy;");
    splice(out_frames, fields_buf);
    put(out_frames, "};");
-   put(out_funcs, "  struct " & frame.ALL & " *F = rt_alloc(sizeof *F);");
+   IF y.kind = y_task THEN
+      put(out_funcs, "  struct " & frame.ALL & " *F = fv_;");
+   ELSE
+      put(out_funcs, "  struct " & frame.ALL & " *F = rt_alloc(sizeof *F);");
+   END IF;
    splice(out_funcs, code);
    IF y.result.kind /= t_void THEN
       put(out_funcs, "  rt_raise_msg(RT_X_ASSERT, " & q & "function ended without RETURN" & q & ");");
@@ -459,6 +480,7 @@ PROC subprogram(CONST d : node) IMPORTS ALL;
    exits := saved_exits;
    frames := saved_frames;
    handlers := saved_handlers;
+   cleanups := saved_cleanups;
 END PROC subprogram;
 
 % ---- statements --------------------------------------------------------------------------
@@ -467,6 +489,13 @@ PROC body_elements(CONST elems : node) IMPORTS ALL;
    VAR e : node := elems;
    WHILE e /= NIL REPEAT
       element(e);
+      e := e.next;
+   END REPEAT;
+   e := elems;
+   WHILE e /= NIL REPEAT
+      IF e.kind = n_task THEN
+         emit("rt_await_decl(&" & lookup(e.name.ALL).cname.ALL & "decl);");
+      END IF;
       e := e.next;
    END REPEAT;
 END PROC body_elements;
@@ -479,13 +508,30 @@ PROC gen_body(CONST elems : node) IMPORTS ALL;
    close_scope;
 END PROC gen_body;
 
-PROC pop_frames(CONST upto : INT) IMPORTS frames;
+% leaving open frames by EXIT or RETURN: pop guards, unlock regions (10.7)
+PROC pop_frames(CONST upto : INT) IMPORTS frames, cleanups;
    VAR i : INT := frames;
+   VAR c : lines := cleanups;
    WHILE i > upto REPEAT
-      emit("RT_POP(xf" & itos(i) & ");");
+      emit(c.s.ALL);
+      c := c.next;
       i := i - 1;
    END REPEAT;
 END PROC pop_frames;
+
+PROC push_cleanup(READONLY s : STRING[ASCII]) IMPORTS frames, cleanups;
+   VAR c : lines;
+   ALLOC c PTR;
+   c.s := mk(s);
+   c.next := cleanups;
+   cleanups := c;
+   frames := frames + 1;
+END PROC push_cleanup;
+
+PROC pop_cleanup IMPORTS frames, cleanups;
+   cleanups := cleanups.next;
+   frames := frames - 1;
+END PROC pop_cleanup;
 
 PROC gen_statement(CONST s : node) IMPORTS ALL;
    VAR label : text;
@@ -520,6 +566,9 @@ PROC gen_statement(CONST s : node) IMPORTS ALL;
          emit("rt_raise(" & handlers.s.ALL & ");");
       WHEN n_guard => st_guard(s);
       WHEN n_alloc => st_alloc(s);
+      WHEN n_create => st_create(s);
+      WHEN n_wait => st_wait(s);
+      WHEN n_region => st_region(s);
       ELSE => fail(s.line, "this statement is not handled yet");
    END CASE;
    IF s.tag /= NIL THEN
@@ -725,16 +774,16 @@ PROC st_guard(CONST s : node) IMPORTS ALL;
    VAR h : node := s.b;
    VAR first : BOOL := TRUE;
    VAR hv : lines;
-   frames := frames + 1;
    BEGIN
-      CONST f := "xf" & itos(frames);
+      CONST f := new_name("xf");
       CONST x := new_name("x");
+      push_cleanup("RT_POP(" & f & ");");
       emit("{ rt_frame " & f & ";");
       emit("if (RT_TRY(" & f & ")) {");
       gen_body(s.a);
       emit("RT_POP(" & f & ");");
       emit("} else {");
-      frames := frames - 1;
+      pop_cleanup;
       emit("RT_POP(" & f & ");");
       emit("int " & x & " = rt_xcur;");
       ALLOC hv PTR;
@@ -820,3 +869,183 @@ PROC st_alloc(CONST s : node) IMPORTS ALL;
       emit("}");
    END;
 END PROC st_alloc;
+
+% ---- multitasking (chapter 10) ------------------------------------------------------------
+
+% an activation variable as an rt_act pointer; ME names the running activation
+ABNORMAL FUNC act_ref(CONST e : node) => STRING[ASCII] IMPORTS ALL;
+   VAR lv : text;
+   VAR t : typ;
+   VAR c : cons;
+   VAR ro : BOOL;
+   IF e.kind = n_name AND e.name.ALL = "ME" AND lookup("ME") = NIL THEN
+      RETURN "rt_me()";
+   END IF;
+   lvalue(e, lv, t, c, ro);
+   IF t.kind /= t_act THEN
+      fail(e.line, "an activation variable (ACT) is required");
+   END IF;
+   RETURN "&" & lv.ALL;
+END FUNC act_ref;
+
+% CREATE task(args) NAMED actvar (10.1): a fresh frame holds the parameters
+PROC st_create(CONST s : node) IMPORTS ALL;
+   VAR y : sym := lookup(s.name.ALL);
+   VAR pm : parm;
+   VAR a : node := s.b;
+   VAR lv : text;
+   VAR lt, vt : typ;
+   VAR lc : cons;
+   VAR ro : BOOL;
+   IF y = NIL OR y.kind /= y_task THEN
+      fail(s.line, s.name.ALL & " is not a task");
+   END IF;
+   pm := y.params;
+   BEGIN
+      CONST nf := new_name("nf");
+      CONST act := act_ref(s.a);
+      emit("{ struct " & y.cname.ALL & "fr *" & nf & " = rt_alloc(sizeof *" & nf & ");");
+      IF y.level > 0 THEN
+         VAR link : text := mk("F");
+         FOR i : INT(1 .. cur_level - y.level) REPEAT
+            link := mk(link.ALL & "->up");
+         END REPEAT;
+         emit(nf & "->up = " & link.ALL & ";");
+      END IF;
+      WHILE a /= NIL AND pm /= NIL REPEAT
+         IF pm.mode = m_const THEN
+            CONST v := gexpr(a, pm.t, vt);
+            check_type(vt, pm.t, s.line);
+            emit(nf & "->" & pm.cfield.ALL & " = " & copy_code(pm.t, v) & ";");
+         ELSE
+            lvalue(a, lv, lt, lc, ro);
+            check_type(lt, pm.t, s.line);
+            emit(nf & "->" & pm.cfield.ALL & " = &" & lv.ALL & ";");
+         END IF;
+         a := a.next;
+         pm := pm.next;
+      END REPEAT;
+      IF a /= NIL OR pm /= NIL THEN
+         fail(s.line, "wrong number of actual parameters for task " & s.name.ALL);
+      END IF;
+      emit("rt_create(" & act & ", &" & y.cname.ALL & "decl, " & y.cname.ALL & ", " & nf & "); }");
+   END;
+END PROC st_create;
+
+% one waiting invocation of a WAIT statement (10.5) as an rt_alt initializer;
+% a SEND gets a temporary holding its message
+ABNORMAL FUNC wait_alt(CONST inv : node, READONLY arr : STRING[ASCII], CONST i : INT) => STRING[ASCII] IMPORTS ALL;
+   VAR lv : text;
+   VAR t, vt : typ;
+   VAR c : cons;
+   VAR ro : BOOL;
+   VAR fn : node;
+   VAR args : node;
+   CONST slot := arr & "[" & itos(i) & "]";
+   IF inv.kind /= n_apply OR inv.a.kind /= n_name THEN
+      fail(inv.line, "a waiting invocation is SEND, RECEIVE or a DELAY");
+   END IF;
+   fn := inv.a;
+   args := inv.b;
+   IF fn.name.ALL = "SEND" OR fn.name.ALL = "RECEIVE" THEN
+      lvalue(args, lv, t, c, ro);
+      IF t.kind /= t_mbox THEN
+         fail(inv.line, "a mailbox is required");
+      END IF;
+      IF fn.name.ALL = "RECEIVE" THEN
+         VAR dv : text;
+         VAR dt : typ;
+         lvalue(args.next, dv, dt, c, ro);
+         check_type(dt, t.elem, inv.line);
+         RETURN slot & " = (rt_alt){RT_ALT_RECEIVE, 1, &" & lv.ALL & ", &" & dv.ALL & ", 0};";
+      END IF;
+      BEGIN
+         CONST tmp := new_name("msg");
+         CONST v := gexpr(args.next, t.elem, vt);
+         check_type(vt, t.elem, inv.line);
+         emit(ctype(t.elem) & " " & tmp & " = " & v & ";");
+         RETURN slot & " = (rt_alt){RT_ALT_SEND, 1, &" & lv.ALL & ", &" & tmp & ", 0};";
+      END;
+   ELSEIF fn.name.ALL = "DELAY" OR fn.name.ALL = "DELAY_UNTIL" THEN
+      CONST v := gexpr(args, ty_int, vt);
+      IF fn.name.ALL = "DELAY" THEN
+         RETURN slot & " = (rt_alt){RT_ALT_DELAY, 1, NULL, NULL, " & v & "};";
+      END IF;
+      RETURN slot & " = (rt_alt){RT_ALT_DELAY_UNTIL, 1, NULL, NULL, " & v & "};";
+   ELSEIF fn.name.ALL = "DELAY_UNTIL_INACTIVE" THEN
+      RETURN slot & " = (rt_alt){RT_ALT_INACTIVE, 1, " & act_ref(args) & ", NULL, 0};";
+   END IF;
+   fail(inv.line, fn.name.ALL & " cannot be a waiting invocation");
+   RETURN "";
+END FUNC wait_alt;
+
+PROC st_wait(CONST s : node) IMPORTS ALL;
+   VAR a : node := s.a;
+   VAR n : INT := 0;
+   VAR first : BOOL := TRUE;
+   VAR inits : buffer := new_buffer;
+   CONST arr := new_name("alts");
+   CONST w := new_name("w");
+   WHILE a /= NIL REPEAT
+      n := n + list_len(a.a);
+      a := a.next;
+   END REPEAT;
+   emit("{ rt_alt " & arr & "[" & itos(n) & "];");
+   a := s.a;
+   n := 0;
+   WHILE a /= NIL REPEAT
+      VAR inv : node := a.a;
+      WHILE inv /= NIL REPEAT
+         put(inits, wait_alt(inv, arr, n));
+         n := n + 1;
+         inv := inv.next;
+      END REPEAT;
+      a := a.next;
+   END REPEAT;
+   splice(code, inits);
+   emit("int " & w & " = rt_wait(" & itos(n) & ", " & arr & ");");
+   a := s.a;
+   n := 0;
+   WHILE a /= NIL REPEAT
+      VAR conds : text := mk("0");
+      FOR i : INT(1 .. list_len(a.a)) REPEAT
+         conds := mk(conds.ALL & " || " & w & " == " & itos(n));
+         n := n + 1;
+      END REPEAT;
+      IF first THEN
+         emit("if (" & conds.ALL & ") {");
+      ELSE
+         emit("} else if (" & conds.ALL & ") {");
+      END IF;
+      first := FALSE;
+      gen_body(a.b);
+      a := a.next;
+   END REPEAT;
+   emit("}");
+   emit("}");
+END PROC st_wait;
+
+% REGION lock DO body END REGION (10.7): the lock is released however the body ends
+PROC st_region(CONST s : node) IMPORTS ALL;
+   VAR lv : text;
+   VAR t : typ;
+   VAR c : cons;
+   VAR ro : BOOL;
+   CONST lk := new_name("lk");
+   CONST f := new_name("xf");
+   lvalue(s.a, lv, t, c, ro);
+   IF t.kind /= t_lock THEN
+      fail(s.line, "REGION needs a DATA_LOCK variable");
+   END IF;
+   emit("{ rt_lock *" & lk & " = &" & lv.ALL & "; rt_region_enter(" & lk & ");");
+   emit("rt_frame " & f & ";");
+   emit("if (RT_TRY(" & f & ")) {");
+   push_cleanup("RT_POP(" & f & "); rt_region_leave(" & lk & ");");
+   gen_body(s.b);
+   pop_cleanup;
+   emit("RT_POP(" & f & "); rt_region_leave(" & lk & ");");
+   emit("} else {");
+   emit("RT_POP(" & f & "); rt_region_leave(" & lk & "); rt_raise(rt_xcur);");
+   emit("}");
+   emit("}");
+END PROC st_region;

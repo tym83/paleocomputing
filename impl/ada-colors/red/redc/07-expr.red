@@ -255,7 +255,8 @@ ABNORMAL FUNC gexpr(CONST e : node, CONST want : typ, OUT t : typ) => STRING[ASC
       VAR y : sym := lookup(e.name.ALL);
       IF y = NIL THEN
          IF e.name.ALL = "SIZELN" OR e.name.ALL = "EOF" OR e.name.ALL = "SYS_IN"
-               OR e.name.ALL = "SYS_OUT" THEN
+               OR e.name.ALL = "SYS_OUT" OR e.name.ALL = "TIME" OR e.name.ALL = "MILLISECONDS"
+               OR e.name.ALL = "SECONDS" OR e.name.ALL = "MINUTES" OR e.name.ALL = "HOURS" THEN
             RETURN gcall(wrap_apply(e), FALSE, t);
          END IF;
          fail(e.line, e.name.ALL & " is not defined");
@@ -736,6 +737,50 @@ ABNORMAL FUNC builtin(READONLY name : STRING[ASCII], CONST tt : node, CONST args
       RETURN "0";
    ELSEIF name = "OPEN" OR name = "CLOSE" THEN
       RETURN "(void)0";
+   ELSEIF name = "SEND" OR name = "RECEIVE" THEN
+      VAR lv, dv : text;
+      VAR lc : cons;
+      VAR ro : BOOL;
+      VAR mt, dt : typ;
+      lvalue(args, lv, mt, lc, ro);
+      IF mt.kind /= t_mbox THEN
+         fail(line, name & " needs a mailbox");
+      END IF;
+      IF name = "RECEIVE" THEN
+         lvalue(args.next, dv, dt, lc, ro);
+         check_type(dt, mt.elem, line);
+         RETURN "rt_receive(&" & lv.ALL & ", &" & dv.ALL & ")";
+      END IF;
+      BEGIN
+         CONST v := gexpr(args.next, mt.elem, at);
+         check_type(at, mt.elem, line);
+         RETURN "({ " & ctype(mt.elem) & " m_ = " & v & "; rt_send(&" & lv.ALL & ", &m_); })";
+      END;
+   ELSEIF name = "PRIORITY" THEN
+      t := ty_int;
+      RETURN "rt_priority(" & act_ref(args) & ")";
+   ELSEIF name = "SET_PRIORITY" THEN
+      CONST v := gexpr(args.next, ty_int, at);
+      RETURN "rt_set_priority(" & act_ref(args) & ", " & v & ")";
+   ELSEIF name = "EXTERMINATE" THEN
+      RETURN "rt_exterminate(" & act_ref(args) & ")";
+   ELSEIF name = "ACTIVE" THEN
+      t := ty_bool;
+      RETURN "rt_is_active(" & act_ref(args) & ")";
+   ELSEIF name = "DELAY" THEN
+      CONST v := gexpr(args, ty_int, at);
+      RETURN "rt_delay(" & v & ")";
+   ELSEIF name = "DELAY_UNTIL" THEN
+      CONST v := gexpr(args, ty_int, at);
+      RETURN "rt_delay_until(" & v & ")";
+   ELSEIF name = "DELAY_UNTIL_INACTIVE" THEN
+      RETURN "rt_delay_until_inactive(" & act_ref(args) & ")";
+   ELSEIF name = "TIME" THEN
+      t := ty_int;
+      RETURN "rt_time()";
+   ELSEIF name = "MILLISECONDS" OR name = "SECONDS" OR name = "MINUTES" OR name = "HOURS" THEN
+      t := ty_int;
+      RETURN "RT_" & name;
    ELSEIF name = "HALT" THEN
       CONST a := gexpr(args, ty_int, at);
       RETURN "rt_exit(" & a & ")";
