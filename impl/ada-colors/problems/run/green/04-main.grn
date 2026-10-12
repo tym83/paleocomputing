@@ -1,0 +1,17 @@
+
+-- RESET and START are pressed; the square runs into the right border and
+-- blinks for five seconds, then the picture is reset. START is pressed again
+-- at 8 seconds, when both sticks push right: the objects collide.
+restricted(DISPLAY, JOYSTICK, TEXT_IO)
+procedure MAIN is
+   use DISPLAY, TEXT_IO;
+begin
+   initiate DISPLAY, JOYSTICK(SQUARE .. CIRCLE);
+   DISPLAY.RESET;
+   DISPLAY.START;
+   delay 8.0 * SECONDS;
+   PUT("START pressed again"); PUT(NEWLINE);
+   DISPLAY.START;
+   delay 6.0 * SECONDS;
+   abort DISPLAY, JOYSTICK(SQUARE .. CIRCLE);
+end MAIN;

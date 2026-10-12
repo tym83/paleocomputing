@@ -213,6 +213,8 @@ procedure GREENC is
       RESULT : TYP;
       DEPTH, LEVEL : INTEGER;
       BYREF, VRP, HIDDEN : BOOLEAN;
+      -- made visible by a use clause, not declared here
+      FROM_USE : BOOLEAN;
       MEMBERS, MNEXT : SYM;
       CHAIN, STACK : SYM;
    end record;

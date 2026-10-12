@@ -54,7 +54,7 @@
    begin
       Z := new SYM_REC(Y.KIND, Y.NAME, Y.T, Y.C, Y.ACCESS_PATH, Y.CNAME, Y.RO, Y.MVALUE, Y.HASMV,
                        Y.DECL, Y.PARAMS, Y.RESULT, 0, Y.LEVEL, Y.BYREF, Y.VRP, Y.HIDDEN,
-                       Y.MEMBERS, null, null, null);
+                       FALSE, Y.MEMBERS, null, null, null);
    end COPY_SYM;
 
    -- the full declaration of a private type is copied into the type object
@@ -86,8 +86,10 @@
       -- every declaration of the spec; those of the private part are hidden
       M := SCOPE_STACK;
       while M /= null and then M.DEPTH = DEPTH loop
+         -- what a use clause of the specification made visible stays visible
+         -- in the body, but is not offered to the clients
          COPY_SYM(M, Z);
-         Z.HIDDEN := HIDDEN_FROM(M, FIRST_PRIVATE);
+         Z.HIDDEN := HIDDEN_FROM(M, FIRST_PRIVATE) or M.FROM_USE;
          Z.MNEXT := Y.MEMBERS;
          Y.MEMBERS := Z;
          M := M.STACK;
@@ -186,6 +188,7 @@
                if not M.HIDDEN and then (OLD = null or else (OLD.DEPTH < DEPTH
                   and then OLD.KIND /= Y_VAR and then OLD.KIND /= Y_CONST)) then
                   COPY_SYM(M, Z);
+                  Z.FROM_USE := TRUE;
                   DEFINE(Z, N.LINE);
                end if;
                M := M.MNEXT;

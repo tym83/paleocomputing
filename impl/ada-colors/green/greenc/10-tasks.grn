@@ -382,6 +382,8 @@
          DECLARE_SLOT("rt_int", Y.CNAME.all & "lo");
          DECLARE_SLOT("rt_int", Y.CNAME.all & "hi");
          GEXPR(R.A, TY_INT, VT, V);
+         -- the index type of the family: INTEGER or an enumeration (RM79 9.1)
+         Y.T := VT;
          PATH_AT(Y.LEVEL, Y.CNAME.all & "lo", P);
          EMIT(P.all & " = " & V.all & ";");
          GEXPR(R.B, TY_INT, VT, V);
@@ -404,7 +406,7 @@
       DECL_ELEMENTS(E.D);
       M := SCOPE_STACK;
       while M /= null and then M.DEPTH = DEPTH loop
-         if M.KIND = Y_FUNC or M.KIND = Y_PROC then
+         if (M.KIND = Y_FUNC or M.KIND = Y_PROC) and not M.FROM_USE then
             -- a visible subprogram of the task runs in its caller and sees the
             -- task's data (RM79 9.1): its static link is the frame of the task
             -- body, kept in a global once the task runs
@@ -418,6 +420,7 @@
             M.ACCESS_PATH := MK(Y.CNAME.all & "frame");
          end if;
          COPY_SYM(M, Z);
+         Z.HIDDEN := M.FROM_USE;
          Z.MNEXT := Y.MEMBERS;
          Y.MEMBERS := Z;
          M := M.STACK;
@@ -688,6 +691,9 @@
          end if;
          OWN_INDEX(P);
          T := TY_INT;
+         if Y.T /= null then
+            T := Y.T;
+         end if;
          R := P;
       elsif Y.KIND = Y_TASK and A = "ACTIVE" then
          ACT_PATH(Y, P);

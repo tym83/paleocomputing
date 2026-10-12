@@ -128,7 +128,7 @@
    procedure NEW_SYM(KIND : INTEGER; NAME : TEXT) return SYM is
    begin
       return new SYM_REC(KIND, NAME, null, null, null, null, FALSE, 0, FALSE, null, null, null,
-                         0, 0, FALSE, FALSE, FALSE, null, null, null, null);
+                         0, 0, FALSE, FALSE, FALSE, FALSE, null, null, null, null);
    end NEW_SYM;
 
    procedure NEW_TYP(KIND : INTEGER) return TYP is
