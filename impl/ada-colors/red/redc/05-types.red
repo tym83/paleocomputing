@@ -333,6 +333,7 @@ ABNORMAL FUNC resolve_subtype(CONST st : node, OUT c : cons) => typ IMPORTS ALL;
                ALLOC f PTR;
                f.name := comp.name;
                f.t := resolve_subtype(comp.a, cc);
+               f.c := cc;
                f.st := comp.a;
                IF tail = NIL THEN
                   t.fields := f;
@@ -357,12 +358,13 @@ ABNORMAL FUNC resolve_subtype(CONST st : node, OUT c : cons) => typ IMPORTS ALL;
             IF y = NIL THEN
                fail(st.line, "unknown type " & st.name.ALL);
             END IF;
-            IF y.kind = y_abbrev THEN
-               RETURN resolve_subtype(y.st, c);
-            ELSEIF y.kind = y_type THEN
-               IF y.t /= NIL THEN
-                  RETURN y.t;
+            IF (y.kind = y_abbrev OR y.kind = y_type) AND y.t /= NIL THEN
+               IF y.c /= NIL THEN
+                  c := y.c;
                END IF;
+               RETURN y.t;
+            END IF;
+            IF y.kind = y_abbrev OR y.kind = y_type THEN
                RETURN resolve_subtype(y.st, c);
             END IF;
             fail(st.line, st.name.ALL & " is not a type");
@@ -400,9 +402,7 @@ PROC init_storage(READONLY lval : STRING[ASCII], CONST t : typ, CONST c : cons) 
    ELSEIF t.kind = t_record THEN
       VAR f : field := t.fields;
       WHILE f /= NIL REPEAT
-         VAR fc : cons;
-         VAR ft : typ := resolve_subtype(f.st, fc);
-         init_storage(lval & "." & lower_s(f.name.ALL), f.t, fc);
+         init_storage(lval & "." & lower_s(f.name.ALL), f.t, f.c);
          f := f.next;
       END REPEAT;
    END IF;

@@ -113,6 +113,7 @@ CONST y_proc := 4;
 CONST y_type := 5;
 CONST y_abbrev := 6;
 CONST y_exc := 7;
+CONST y_capsule := 8;
 
 % ---- the data ---------------------------------------------------------------
 TYPE text : PTR (n : INT) STRING[ASCII](n);
@@ -132,7 +133,7 @@ TYPE typ : PTR RECORD[kind : INT, name : text, lits : node,
                       cname : text, forward, defined, helpers : BOOL,
                       next : typ];
 
-TYPE field : PTR RECORD[name : text, t : typ, st : node, next : field];
+TYPE field : PTR RECORD[name : text, t : typ, c : cons, st : node, next : field];
 
 TYPE parm : PTR RECORD[name : text, mode : INT, t : typ, c : cons, next : parm];
 
@@ -140,6 +141,7 @@ TYPE sym : PTR RECORD[kind : INT, name : text, t : typ, c : cons,
                       access, cname : text, ro_flag : BOOL,
                       mvalue : INT, hasmv : BOOL, st : node, decl : node,
                       params : parm, result : typ, depth : INT,
+                      level : INT, byref : BOOL, members, mnext : sym,
                       chain, stack : sym];
 
 TYPE lines : PTR RECORD[s : text, next : lines];
@@ -148,6 +150,9 @@ TYPE buffer : PTR RECORD[head, tail : lines];
 TYPE buckets : PTR (n : INT) ARRAY INT(0 .. n) OF sym;
 
 TYPE exitrec : PTR RECORD[match, label : text, depth : INT, next : exitrec];
+
+% a closed scope being translated: subprogram or capsule (3.5, 3.7)
+TYPE fctxrec : PTR RECORD[depth : INT, imps : node, all_imp : BOOL, next : fctxrec];
 
 EXCEPTION compile_error;
 
@@ -167,6 +172,10 @@ VAR out_types, out_helpers, out_protos, out_globals, out_funcs, out_init, out_ex
 VAR code : buffer;
 VAR fields_buf : buffer;
 VAR in_func : BOOL := FALSE;
+VAR cur_level : INT := 0;
+VAR fctx : fctxrec;
+VAR st_field : text;
+VAR out_frames : buffer;
 VAR func_sym : sym;
 VAR exits : exitrec;
 VAR frames : INT := 0;

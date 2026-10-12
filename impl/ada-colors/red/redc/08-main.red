@@ -1,8 +1,16 @@
 % ---- the main capsule: translate, then print the C program ----------------------
 
-PROC translate(CONST cap : node) IMPORTS ALL;
-   declare_body(cap.c);
-   body_elements(cap.c);
+PROC translate(CONST units : node) IMPORTS ALL;
+   VAR u : node := units;
+   WHILE u /= NIL REPEAT
+      IF u.next = NIL THEN
+         declare_body(u.c);
+         body_elements(u.c);
+      ELSE
+         gen_capsule(u);
+      END IF;
+      u := u.next;
+   END REPEAT;
 END PROC translate;
 
 PROC print_program IMPORTS ALL;
@@ -10,6 +18,7 @@ PROC print_program IMPORTS ALL;
    WRITELN("#include " & q & "paleo.h" & q);
    WRITELN("#include <math.h>");
    print_buffer(out_types);
+   print_buffer(out_frames);
    print_buffer(out_helpers);
    print_buffer(out_protos);
    print_buffer(out_globals);
@@ -35,6 +44,7 @@ out_globals := new_buffer;
 out_funcs := new_buffer;
 out_init := new_buffer;
 out_excs := new_buffer;
+out_frames := new_buffer;
 code := out_init;
 no_cons := new_cons;
 ty_int := new_typ(t_int);

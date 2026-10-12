@@ -1,5 +1,86 @@
 % ---- variables (lvalues) ---------------------------------------------------------
 
+% C for a data object seen from the current subprogram: frames are reached
+% through the static link, one ->up per level
+ABNORMAL FUNC access_of(CONST y : sym) => STRING[ASCII] IMPORTS cur_level;
+   VAR p : text := mk("F");
+   IF y.level <= 0 THEN
+      RETURN y.access.ALL;
+   END IF;
+   FOR i : INT(1 .. cur_level - y.level) REPEAT
+      p := mk(p.ALL & "->up");
+   END REPEAT;
+   IF y.byref THEN
+      RETURN "(*" & p.ALL & "->" & y.access.ALL & ")";
+   END IF;
+   RETURN p.ALL & "->" & y.access.ALL;
+END FUNC access_of;
+
+FUNC import_of(CONST l : node, READONLY name : STRING[ASCII]) => node;
+   VAR p : node := l;
+   WHILE p /= NIL REPEAT
+      IF p.name.ALL = name THEN
+         RETURN p;
+      END IF;
+      p := p.next;
+   END REPEAT;
+   RETURN NIL;
+END FUNC import_of;
+
+% a variable of an enclosing scope is known in a closed scope only when it is
+% imported (3.5, 3.7); the result tells whether it was imported READONLY
+ABNORMAL FUNC check_import(CONST y : sym, CONST line : INT) => BOOL IMPORTS fctx;
+   VAR c : fctxrec := fctx;
+   VAR ro : BOOL := FALSE;
+   WHILE c /= NIL AND y.depth < c.depth REPEAT
+      IF NOT c.all_imp THEN
+         VAR imp : node := import_of(c.imps, y.name.ALL);
+         IF imp = NIL THEN
+            fail(line, y.name.ALL & " is a variable of an enclosing scope and is not imported");
+         END IF;
+         IF imp.ival = 1 THEN
+            ro := TRUE;
+         END IF;
+      END IF;
+      c := c.next;
+   END REPEAT;
+   RETURN ro;
+END FUNC check_import;
+
+% a C identifier for a name that may be an operator symbol (13.2)
+FUNC c_ident(READONLY s : STRING[ASCII]) => STRING[ASCII];
+   IF s = "+" THEN
+      RETURN "op_plus";
+   ELSEIF s = "-" THEN
+      RETURN "op_minus";
+   ELSEIF s = "*" THEN
+      RETURN "op_times";
+   ELSEIF s = "/" THEN
+      RETURN "op_slash";
+   ELSEIF s = "**" THEN
+      RETURN "op_power";
+   ELSEIF s = "&" THEN
+      RETURN "op_cat";
+   ELSEIF s = "=" THEN
+      RETURN "op_eq";
+   ELSEIF s = "/=" THEN
+      RETURN "op_ne";
+   ELSEIF s = "<" THEN
+      RETURN "op_lt";
+   ELSEIF s = "<=" THEN
+      RETURN "op_le";
+   ELSEIF s = ">" THEN
+      RETURN "op_gt";
+   ELSEIF s = ">=" THEN
+      RETURN "op_ge";
+   ELSEIF s = ":=" THEN
+      RETURN "op_assign";
+   ELSEIF s = "#" THEN
+      RETURN "op_resolve";
+   END IF;
+   RETURN lower_s(s);
+END FUNC c_ident;
+
 ABNORMAL FUNC deref(READONLY base : STRING[ASCII], CONST t : typ) => STRING[ASCII] IMPORTS ALL;
    RETURN "(*(" & ctype(t) & ")rt_nil_check(" & base & "))";
 END FUNC deref;
@@ -33,10 +114,13 @@ PROC lvalue(CONST e : node, OUT code : text, OUT t : typ, OUT c : cons, OUT ro :
       IF y.kind /= y_var AND y.kind /= y_const THEN
          fail(e.line, e.name.ALL & " is not a variable");
       END IF;
-      code := y.access;
+      code := mk(access_of(y));
       t := y.t;
       c := y.c;
       ro := y.ro_flag;
+      IF y.kind = y_var AND check_import(y, e.line) THEN
+         ro := TRUE;
+      END IF;
    ELSEIF e.kind = n_paren THEN
       lvalue(e.a, code, t, c, ro);
    ELSEIF e.kind = n_select THEN
@@ -68,7 +152,7 @@ PROC select_on(READONLY base : STRING[ASCII], CONST bt : typ, CONST e : node, VA
       VAR f : field := bt.fields;
       WHILE f /= NIL REPEAT
          IF f.name.ALL = e.name.ALL THEN
-            VAR ft : typ := resolve_subtype(f.st, c);
+            c := f.c;
             code := mk(base & "." & lower_s(e.name.ALL));
             t := f.t;
             RETURN;
@@ -177,8 +261,12 @@ ABNORMAL FUNC gexpr(CONST e : node, CONST want : typ, OUT t : typ) => STRING[ASC
          fail(e.line, e.name.ALL & " is not defined");
       END IF;
       IF y.kind = y_var OR y.kind = y_const THEN
+         VAR ro : BOOL;
          t := y.t;
-         RETURN y.access.ALL;
+         IF y.kind = y_var THEN
+            ro := check_import(y, e.line);
+         END IF;
+         RETURN access_of(y);
       END IF;
       IF y.kind = y_func THEN
          RETURN gcall(wrap_apply(e), FALSE, t);
@@ -512,6 +600,12 @@ ABNORMAL FUNC gcall(CONST e : node, CONST is_stmt : BOOL, OUT t : typ) => STRING
       fail(e.line, fn.name.ALL & " is a procedure, not a function");
    END IF;
    pm := y.params;
+   IF y.level > 0 THEN
+      args := mk("F");
+      FOR i : INT(1 .. cur_level - y.level) REPEAT
+         args := mk(args.ALL & "->up");
+      END REPEAT;
+   END IF;
    WHILE a /= NIL AND pm /= NIL REPEAT
       IF args.LEN > 0 THEN
          args := mk(args.ALL & ", ");

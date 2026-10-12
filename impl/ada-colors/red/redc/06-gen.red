@@ -4,8 +4,12 @@
 PROC declare_body(CONST elems : node) IMPORTS ALL;
    VAR e : node := elems;
    WHILE e /= NIL REPEAT
-      IF e.kind = n_proc OR e.kind = n_func THEN
-         declare_subprogram(e);
+      IF e.kind = n_const AND e.flag = 0 THEN
+         manifest_const(e);
+      ELSEIF e.kind = n_capsule THEN
+         gen_capsule(e);
+      ELSEIF e.kind = n_expose THEN
+         gen_expose(e);
       ELSEIF e.kind = n_exception THEN
          VAR y : sym := new_sym(y_exc, e.name);
          y.cname := mk(new_name("ex_" & lower_s(e.name.ALL) & "_"));
@@ -30,7 +34,167 @@ PROC declare_body(CONST elems : node) IMPORTS ALL;
       END IF;
       e := e.next;
    END REPEAT;
+   e := elems;
+   WHILE e /= NIL REPEAT
+      IF e.kind = n_proc OR e.kind = n_func THEN
+         declare_subprogram(e);
+      END IF;
+      e := e.next;
+   END REPEAT;
 END PROC declare_body;
+
+% a constant whose value is a manifest INT expression is known during
+% translation (5.5), so it can be used before the body is elaborated
+PROC manifest_const(CONST d : node) IMPORTS ALL;
+   VAR ok : BOOL;
+   VAR v : INT;
+   VAR y : sym;
+   VAR c : cons;
+   IF d.a /= NIL THEN
+      IF d.a.kind /= s_int OR d.a.a /= NIL THEN
+         RETURN;
+      END IF;
+   END IF;
+   v := manifest(d.b, ok);
+   IF NOT ok THEN
+      RETURN;
+   END IF;
+   d.flag := 1;
+   y := new_sym(y_const, d.name);
+   y.t := ty_int;
+   y.c := new_cons;
+   y.mvalue := v;
+   y.hasmv := TRUE;
+   y.ro_flag := TRUE;
+   y.access := mk("((rt_int)" & itos(v) & "LL)");
+   define(y, d.line);
+END PROC manifest_const;
+
+FUNC exported(CONST d : node, READONLY name : STRING[ASCII], OUT ro : BOOL) => BOOL;
+   VAR p : node := d.a;
+   ro := FALSE;
+   IF d.ival = 1 THEN
+      RETURN TRUE;
+   END IF;
+   WHILE p /= NIL REPEAT
+      IF p.name.ALL = name THEN
+         ro := p.ival = 1;
+         RETURN TRUE;
+      END IF;
+      p := p.next;
+   END REPEAT;
+   RETURN FALSE;
+END FUNC exported;
+
+ABNORMAL FUNC copy_sym(CONST y : sym) => sym;
+   VAR z : sym;
+   ALLOC z PTR;
+   z.kind := y.kind;
+   z.name := y.name;
+   z.t := y.t;
+   z.c := y.c;
+   z.access := y.access;
+   z.cname := y.cname;
+   z.ro_flag := y.ro_flag;
+   z.mvalue := y.mvalue;
+   z.hasmv := y.hasmv;
+   z.st := y.st;
+   z.decl := y.decl;
+   z.params := y.params;
+   z.result := y.result;
+   z.level := y.level;
+   z.byref := y.byref;
+   z.members := y.members;
+   RETURN z;
+END FUNC copy_sym;
+
+% a capsule invoked as old (8.1): its body is elaborated once, on entry to the
+% scope where it is declared; the exported definitions are kept for EXPOSE
+PROC gen_capsule(CONST d : node) IMPORTS ALL;
+   VAR y : sym := new_sym(y_capsule, d.name);
+   VAR ctx : fctxrec;
+   VAR m : sym;
+   VAR p : node := d.a;
+   VAR ro : BOOL;
+   y.decl := d;
+   open_scope;
+   ALLOC ctx PTR;
+   ctx.depth := depth;
+   ctx.imps := d.d;
+   ctx.all_imp := d.flag >= 2;
+   ctx.next := fctx;
+   fctx := ctx;
+   declare_body(d.c);
+   body_elements(d.c);
+   fctx := fctx.next;
+   % fix the types while the capsule's own definitions are still known
+   m := scope_stack;
+   WHILE m /= NIL AND m.depth = depth REPEAT
+      IF (m.kind = y_type OR m.kind = y_abbrev) AND m.t = NIL THEN
+         m.t := resolve_subtype(m.st, m.c);
+      ELSEIF m.kind = y_type AND m.t.kind = t_ptr THEN
+         finish_ptr(m.t);
+      END IF;
+      m := m.stack;
+   END REPEAT;
+   m := scope_stack;
+   WHILE m /= NIL AND m.depth = depth REPEAT
+      IF exported(d, m.name.ALL, ro) THEN
+         VAR z : sym := copy_sym(m);
+         IF ro THEN
+            z.ro_flag := TRUE;
+         END IF;
+         z.mnext := y.members;
+         y.members := z;
+      END IF;
+      m := m.stack;
+   END REPEAT;
+   WHILE p /= NIL REPEAT
+      IF lookup(p.name.ALL) = NIL OR lookup(p.name.ALL).depth /= depth THEN
+         fail(d.line, p.name.ALL & " is exported but not defined in capsule " & d.name.ALL);
+      END IF;
+      p := p.next;
+   END REPEAT;
+   close_scope;
+   define(y, d.line);
+END PROC gen_capsule;
+
+% EXPOSE visible-list FROM capsule (8.1, 8.2)
+PROC gen_expose(CONST d : node) IMPORTS ALL;
+   VAR y : sym := lookup(d.name.ALL);
+   VAR m : sym;
+   VAR p : node := d.a;
+   IF y = NIL OR y.kind /= y_capsule THEN
+      fail(d.line, d.name.ALL & " is not a capsule");
+   END IF;
+   IF d.ival = 1 THEN
+      m := y.members;
+      WHILE m /= NIL REPEAT
+         define(copy_sym(m), d.line);
+         m := m.mnext;
+      END REPEAT;
+      RETURN;
+   END IF;
+   WHILE p /= NIL REPEAT
+      VAR found : BOOL := FALSE;
+      m := y.members;
+      WHILE m /= NIL REPEAT
+         IF m.name.ALL = p.name.ALL THEN
+            VAR z : sym := copy_sym(m);
+            IF p.ival = 1 THEN
+               z.ro_flag := TRUE;
+            END IF;
+            define(z, d.line);
+            found := TRUE;
+         END IF;
+         m := m.mnext;
+      END REPEAT;
+      IF NOT found THEN
+         fail(d.line, p.name.ALL & " is not exported by " & d.name.ALL);
+      END IF;
+      p := p.next;
+   END REPEAT;
+END PROC gen_expose;
 
 % the target of an indirect type is resolved when first needed: types may refer
 % to each other in any order
@@ -85,8 +249,9 @@ PROC declare_subprogram(CONST d : node) IMPORTS ALL;
       VAR rc : cons;
       y.result := resolve_subtype(d.b, rc);
    END IF;
-   y.cname := mk(new_name("f_" & lower_s(d.name.ALL) & "_"));
+   y.cname := mk(new_name("f_" & c_ident(d.name.ALL) & "_"));
    y.decl := d;
+   y.level := cur_level;
    define(y, d.line);
 END PROC declare_subprogram;
 
@@ -94,14 +259,16 @@ PROC element(CONST e : node) IMPORTS ALL;
    VAR k : INT := e.kind;
    IF k = n_proc OR k = n_func THEN
       subprogram(e);
-   ELSEIF k = n_exception OR k = n_abbrev OR k = n_newtype THEN
+   ELSEIF k = n_exception OR k = n_abbrev OR k = n_newtype OR k = n_capsule OR k = n_expose THEN
       RETURN;
    ELSEIF k = n_ptrtype THEN
       finish_ptr(lookup(e.name.ALL).t);
    ELSEIF k = n_var THEN
       var_decl(e);
-   ELSEIF k = n_const THEN
+   ELSEIF k = n_const AND e.flag = 0 THEN
       const_decl(e);
+   ELSEIF k = n_const THEN
+      RETURN;
    ELSEIF k = n_assert THEN
       VAR t : typ;
       CONST c := gexpr(e.a, ty_bool, t);
@@ -116,14 +283,28 @@ ABNORMAL FUNC storage(READONLY name : STRING[ASCII], CONST t : typ) => STRING[AS
    IF NOT in_func THEN
       CONST g := new_name("g_" & lower_s(name) & "_");
       put(out_globals, "static " & ctype(t) & " " & g & ";");
+      st_field := mk(g);
       RETURN g;
    END IF;
    BEGIN
       CONST f := new_name(lower_s(name) & "_");
       put(fields_buf, " " & ctype(t) & " " & f & ";");
+      st_field := mk(f);
       RETURN "F->" & f;
    END;
 END FUNC storage;
+
+% remember where a declared object lives: a global, or a field of the frame
+% of the subprogram at the current level
+PROC bind(CONST y : sym, READONLY access : STRING[ASCII]) IMPORTS ALL;
+   IF in_func THEN
+      y.level := cur_level;
+      y.access := st_field;
+   ELSE
+      y.level := 0;
+      y.access := mk(access);
+   END IF;
+END PROC bind;
 
 PROC var_decl(CONST d : node) IMPORTS ALL;
    VAR c : cons;
@@ -139,7 +320,7 @@ PROC var_decl(CONST d : node) IMPORTS ALL;
    END IF;
    y.t := t;
    y.c := c;
-   y.access := mk(access);
+   bind(y, access);
    define(y, d.line);
 END PROC var_decl;
 
@@ -165,7 +346,7 @@ PROC const_decl(CONST d : node) IMPORTS ALL;
       BEGIN
          CONST access := storage(d.name.ALL, t);
          emit(access & " = " & copy_code(t, v) & ";");
-         y.access := mk(access);
+         bind(y, access);
       END;
    END;
    y.t := t;
@@ -186,15 +367,34 @@ PROC subprogram(CONST d : node) IMPORTS ALL;
    VAR saved_frames : INT := frames;
    VAR args : text := mk("");
    VAR pm : parm := y.params;
-   VAR frame : STRING[ASCII](4) := "FR  ";
+   VAR saved_handlers : lines := handlers;
+   VAR ctx : fctxrec;
    VAR head : text;
+   VAR frame : text := mk(y.cname.ALL & "fr");
+   VAR parent : text;
+   IF in_func THEN
+      parent := mk(func_sym.cname.ALL & "fr");
+   END IF;
    code := new_buffer;
    fields_buf := new_buffer;
    in_func := TRUE;
    func_sym := y;
    exits := NIL;
    frames := 0;
+   handlers := NIL;
+   cur_level := cur_level + 1;
    open_scope;
+   ALLOC ctx PTR;
+   ctx.depth := depth;
+   ctx.imps := d.d;
+   ctx.all_imp := d.flag >= 2;
+   ctx.next := fctx;
+   fctx := ctx;
+   IF parent /= NIL THEN
+      put(fields_buf, " struct " & parent.ALL & " *up;");
+      args := mk("struct " & parent.ALL & " *up_");
+      emit("F->up = up_;");
+   END IF;
    WHILE pm /= NIL REPEAT
       CONST ct := ctype(pm.t);
       CONST f := new_name(lower_s(pm.name.ALL) & "_");
@@ -206,17 +406,19 @@ PROC subprogram(CONST d : node) IMPORTS ALL;
          p := new_sym(y_const, pm.name);
          put(fields_buf, " " & ct & " " & f & ";");
          args := mk(args.ALL & ct & " " & f);
-         p.access := mk("F->" & f);
+         p.access := mk(f);
          emit("F->" & f & " = " & copy_code(pm.t, f) & ";");
       ELSE
          p := new_sym(y_var, pm.name);
          put(fields_buf, " " & ct & " *" & f & ";");
          args := mk(args.ALL & ct & " *" & f);
-         p.access := mk("(*F->" & f & ")");
+         p.access := mk(f);
+         p.byref := TRUE;
          emit("F->" & f & " = " & f & ";");
       END IF;
       p.t := pm.t;
       p.c := pm.c;
+      p.level := cur_level;
       p.ro_flag := pm.mode = m_const OR pm.mode = m_readonly;
       define(p, d.line);
       pm := pm.next;
@@ -227,15 +429,18 @@ PROC subprogram(CONST d : node) IMPORTS ALL;
    declare_body(d.c);
    body_elements(d.c);
    close_scope;
+   fctx := fctx.next;
+   cur_level := cur_level - 1;
    IF args.LEN = 0 THEN
       args := mk("void");
    END IF;
    head := mk("static " & ctype(y.result) & " " & y.cname.ALL & "(" & args.ALL & ")");
    put(out_protos, head.ALL & ";");
    put(out_funcs, head.ALL & " {");
-   put(out_funcs, "  struct " & y.cname.ALL & "fr { int dummy;");
-   splice(out_funcs, fields_buf);
-   put(out_funcs, "  } *F = rt_alloc(sizeof *F);");
+   put(out_frames, "struct " & frame.ALL & " { int dummy;");
+   splice(out_frames, fields_buf);
+   put(out_frames, "};");
+   put(out_funcs, "  struct " & frame.ALL & " *F = rt_alloc(sizeof *F);");
    splice(out_funcs, code);
    IF y.result.kind /= t_void THEN
       put(out_funcs, "  rt_raise_msg(RT_X_ASSERT, " & q & "function ended without RETURN" & q & ");");
@@ -253,6 +458,7 @@ PROC subprogram(CONST d : node) IMPORTS ALL;
    func_sym := saved_sym;
    exits := saved_exits;
    frames := saved_frames;
+   handlers := saved_handlers;
 END PROC subprogram;
 
 % ---- statements --------------------------------------------------------------------------
@@ -453,7 +659,7 @@ PROC st_repeat(CONST s : node) IMPORTS ALL;
       open_scope;
       y.t := t;
       y.c := c;
-      y.access := mk(access);
+      bind(y, access);
       y.ro_flag := TRUE;
       define(y, s.line);
       gen_body(s.b);

@@ -43,6 +43,8 @@ ABNORMAL FUNC declaration => node IMPORTS ALL;
       RETURN subprogram_decl;
    ELSEIF at_kw("CAPSULE") THEN
       RETURN capsule_decl;
+   ELSEIF at_kw("EXPOSE") THEN
+      RETURN expose_decl;
    ELSEIF at_kw("EXCEPTION") THEN
       VAR head, tail : node;
       VAR names : node;
@@ -296,6 +298,46 @@ ABNORMAL FUNC capsule_decl => node IMPORTS ALL;
    RETURN x;
 END FUNC capsule_decl;
 
+% EXPOSE (diagram 55): ival 1 = ALL, a = names; flag 1 = NEW, 2 = EXTERNAL
+ABNORMAL FUNC expose_decl => node IMPORTS ALL;
+   VAR x : node := nn(n_expose, cur_line);
+   tpos := tpos + 1;
+   IF accept_kw("ALL") THEN
+      x.ival := 1;
+   ELSEIF NOT accept_kw("NONE") THEN
+      VAR head, tail : node;
+      VAR more : BOOL := TRUE;
+      WHILE more REPEAT
+         VAR n : node := nn(n_name, cur_line);
+         IF accept_kw("READONLY") THEN
+            n.ival := 1;
+         END IF;
+         n.name := definable_name;
+         append(head, tail, n);
+         more := accept_op(",");
+      END REPEAT;
+      x.a := head;
+   END IF;
+   expect_kw("FROM");
+   IF accept_kw("NEW") THEN
+      x.flag := 1;
+   END IF;
+   IF accept_kw("EXTERNAL") THEN
+      x.flag := x.flag + 2;
+   END IF;
+   x.name := expect_id;
+   IF at_op("(") THEN
+      x.b := actual_params;
+   END IF;
+   IF at_kw("RENAMING") THEN
+      perror("RENAMING is not handled yet");
+   END IF;
+   IF x.flag = 1 OR x.flag = 3 THEN
+      perror("capsules invoked as NEW are not handled yet");
+   END IF;
+   RETURN x;
+END FUNC expose_decl;
+
 % ---- statements (chapter 6) --------------------------------------------------------
 
 FUNC is_compound_kw(READONLY w : STRING[ASCII]) => BOOL;
@@ -512,16 +554,16 @@ ABNORMAL FUNC guard_stmt => node IMPORTS ALL;
    RETURN x;
 END FUNC guard_stmt;
 
-% the program: one main capsule (3.1)
+% the program: translation units, each a capsule declaration (3.1); the last
+% one is the main capsule, the others are libraries it can EXPOSE EXTERNAL
 ABNORMAL FUNC program => node IMPORTS ALL;
-   VAR x : node;
-   IF NOT at_kw("CAPSULE") THEN
-      perror("a program is a capsule declaration");
-   END IF;
-   x := capsule_decl;
-   expect_op(";");
-   IF NOT at_kind(k_eof) THEN
-      perror("text after the main capsule");
-   END IF;
-   RETURN x;
+   VAR head, tail : node;
+   WHILE NOT at_kind(k_eof) REPEAT
+      IF NOT at_kw("CAPSULE") THEN
+         perror("a translation unit is a capsule declaration");
+      END IF;
+      append(head, tail, capsule_decl);
+      expect_op(";");
+   END REPEAT;
+   RETURN head;
 END FUNC program;
