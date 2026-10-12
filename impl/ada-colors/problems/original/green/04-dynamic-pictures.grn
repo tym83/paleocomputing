@@ -1,0 +1,205 @@
+-- GREEN solution to DoD-1 sample problem 4: Dynamic Pictures
+--
+-- Source: Honeywell Inc. Systems and Research Center / CII Honeywell Bull,
+--   "Set of Sample Problems for DoD High Order Language Program. GREEN
+--   Solutions", April 1979, DTIC ADA070752, section 4 (doc pages 4-1..4-6,
+--   PDF pages 30-35). Transcribed from the scanned pages; OCR noise fixed,
+--   uncertain spots marked "-- OCR?".
+--
+-- Problem (condensed):
+--   On a display screen draw a grid of e.g. 10 horizontal and 10 vertical
+--   lines. Two movable objects (distinguished by colour or shape) move in it;
+--   speed and direction of each are controlled by a joystick. A RESET button
+--   returns the objects to a predefined position, a START button makes them
+--   move. If the objects collide they blink and after some seconds return to
+--   their home position (equivalent to RESET).
+--   Assumptions: START and RESET raise different interrupts. Joysticks are
+--   passive and must be read explicitly: two 16-bit registers, one byte per
+--   direction, each holding a six-bit right-adjusted deflection value.
+--   Guidelines: keep the algorithms independent of the display device (work
+--   on a primitive random-point display with 10-bit coordinates); localize
+--   hardware dependencies; output is complete once point coordinates are
+--   deposited as integers in buffers.
+--
+-- GREEN solution notes (condensed from section 4.2):
+--   The objects are controlled by a process DISPLAY, which provides a
+--   1024x1024 grid assumed to be read by an independent (not given) process
+--   that refreshes the screen. Objects are drawn on the grid by a procedure
+--   DRAW_OBJECT, also not given (a separate subunit).
+--   A controller task is provided for each JOYSTICK (a task family), which
+--   performs the reading when required.
+--   DISPLAY repeatedly computes the position of the objects and has them
+--   drawn, except when they are blinking and must not be drawn. An object can
+--   blink for at most 5 seconds, alternately on and off for periods of one
+--   third of a second (the grid is recomputed every thirtieth of a second).
+--   Objects start blinking when they collide or when they hit the grid
+--   limits. START and RESET are interrupt entries.
+--
+-- ---------------------------------------------------------------------------
+
+task DISPLAY is
+   type OBJECT_ID   is (SQUARE, CIRCLE);
+   subtype SPEED    is INTEGER range -63 .. 63;
+   subtype POSITION is INTEGER range 0 .. 1023;
+   type OBJECT_INFO is
+      record
+         X,Y   : POSITION;
+         BLINK : BOOLEAN;
+      end record;
+
+   type OBJECT is array(SQUARE .. CIRCLE) of OBJECT_INFO;
+   procedure DRAW_OBJECT(WHICH : OBJECT_ID);
+
+   GRID              : array(0 .. 1023, 0 .. 1023) of BOOLEAN;
+   BASIC_PERIOD      : constant TIME := 0.033*SECONDS;
+   BLINKING_DURATION : constant TIME := 5*SECONDS;
+   BLINKING_PERIOD   : constant INTEGER := 10;
+
+   entry START;
+   entry RESET;
+
+   for START use at ...; -- interrupt for start
+   for RESET use at ...; -- interrupt for reset
+end;
+
+task JOYSTICK(SQUARE .. CIRCLE) is
+   entry READ(SX,SY : out SPEED);
+end;
+
+task body JOYSTICK is
+   type JOYSTICK_INFO is
+      record
+         LEFT_SPEED,
+         RIGHT_SPEED,
+         FORWARD_SPEED,
+         REVERSE_SPEED : INTEGER range 0..63;
+      end record;
+
+   DEVICE   : array(SQUARE .. CIRCLE) of INTEGER := ...;
+      -- contains the device number of each joystick;
+
+   REGISTER : array(SQUARE .. CIRCLE) of JOYSTICK_INFO;
+      -- the device registers for each joystick
+
+   ME       : constant OBJECT_ID := JOYSTICK'INDEX;
+   BYTE     : constant INTEGER := 8;
+
+   for REGISTER use at ...;   -- address of device registers
+   for JOYSTICK_INFO use
+      record at mod 4;
+         LEFT_SPEED    at 0      range 2 .. 7;
+         RIGHT_SPEED   at 1*BYTE range 2 .. 7;
+         FORWARD_SPEED at 2*BYTE range 2 .. 7;
+         REVERSE_SPEED at 3*BYTE range 2 .. 7;
+      end record;
+
+begin
+   loop
+      accept READ(SX, SY : out SPEED) do
+         SEND_CONTROL(DEVICE(ME), REGISTER(ME)'ADDRESS);
+         delay 0.001*SECONDS;
+         if REGISTER(ME).LEFT_SPEED > 0 then
+            SX := -REGISTER(ME).LEFT_SPEED;
+         else
+            SX :=  REGISTER(ME).RIGHT_SPEED;
+         end if;
+
+         if REGISTER(ME).REVERSE_SPEED > 0 then
+            SY := -REGISTER(ME).REVERSE_SPEED;
+         else
+            SY :=  REGISTER(ME).FORWARD_SPEED;
+         end if;
+      end READ;
+   end loop;
+end JOYSTICK;
+
+task body DISPLAY is
+   SPEED_UNIT : constant INTEGER := ...;
+   -- assume a constant period : SPEED_UNIT gives
+   -- the distance covesquare during this period by
+   -- an object moving at speed 1.
+   OB           : OBJECT;
+   BLINK_ON     : BOOLEAN;
+   BLINK_TIME   : TIME;
+   SWITCH_BLINK : INTEGER;
+   SX, SY       : SPEED;
+
+   procedure INIT is
+   begin
+      for I in SQUARE .. CIRCLE loop
+         OB(I).X     := 0;
+         OB(I).Y     := 0;
+         OB(I).BLINK := FALSE;
+      end loop;
+      BLINK_TIME := 0.0;
+      SWITCH_BLINK := 0;
+      BLINK_ON     := FALSE;
+   end;
+
+   procedure START_BLINK is
+   begin
+      if BLINK_TIME = 0.0 then
+         BLINK_TIME   := BLINKING_DURATION;
+         SWITCH_BLINK:= BLINKING_PERIOD;
+         BLINK_ON     := FALSE;
+      end if;
+   end;
+
+   procedure DRAW_OBJECT(WHICH : OBJECT_ID) is separate;
+
+begin  -- DISPLAY
+   accept RESET;
+   loop
+      INIT;
+      accept START;
+      loop
+         select
+            delay BASIC_PERIOD;
+            if BLINK_TIME > 0.0 then
+               BLINK_TIME := BLINK_TIME - BASIC_PERIOD;
+               SWITCH_BLINK := SWITCH_BLINK - 1;
+               if BLINK_TIME = 0.0 then
+                  exit;
+               elsif SWITCH_BLINK = 0 then
+                  BLINK_ON := not BLINK_ON;
+                  SWITCH_BLINK := BLINKING_PERIOD;
+               end if;
+            end if;
+
+            for I in SQUARE .. CIRCLE loop
+               if not OB(I).BLINK then
+                  JOYSTICK(I).READ(SX,SY);
+                  if   (OB(I).X = 0    and SX < 0)
+                     or(OB(I).X = 1023 and SX > 0)
+                     or(OB(I).Y = 0    and SY < 0)
+                     or(OB(I).Y = 1023 and SY > 0) then
+                        OB(I).BLINK := TRUE;
+                        START_BLINK;
+                  else
+                     OB(I).X := OB(I).X + SPEED_UNIT*SX;
+                     OB(I).Y := OB(I).Y + SPEED_UNIT*SY;
+                  end if;
+               end if;
+            end loop;
+
+            if OB(CIRCLE).X = OB(SQUARE).X
+               and OB(CIRCLE).Y = OB(SQUARE).Y then  -- collision
+                  OB(CIRCLE).BLINK := TRUE;
+                  OB(SQUARE).BLINK := TRUE;
+                  START_BLINK;
+            end if;
+
+            for I in SQUARE .. CIRCLE loop
+               if not OB(I).BLINK or BLINK_ON then
+                  DRAW_OBJECT(I);
+               end if;
+            end loop;
+
+         or
+            accept RESET;
+            exit;
+
+         end select;
+      end loop;
+   end loop;
+end DISPLAY;

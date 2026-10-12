@@ -1,0 +1,443 @@
+-- GREEN solution to DoD-1 sample problem 5: A Database Protection Module
+--
+-- Source: Honeywell Inc. Systems and Research Center / CII Honeywell Bull,
+--   "Set of Sample Problems for DoD High Order Language Program. GREEN
+--   Solutions", April 1979, DTIC ADA070752, section 5 (doc pages 5-1..5-12,
+--   PDF pages 36-47). Transcribed from the scanned pages; OCR noise fixed,
+--   uncertain spots marked "-- OCR?".
+--
+-- Problem (condensed):
+--   A DBMS module controls access to data areas. A user (or running process)
+--   indicates whether he needs exclusive access to a part of the data base
+--   (a "data-set") or is willing to share it (e.g. for reading):
+--       EXCLUSIVE (DATA-SET-NAME, PREEMPTION-PARAMETER);
+--       SHARED    (DATA-SET-NAME, PREEMPTION-PARAMETER);
+--       FREE      (DATA-SET-NAME);
+--   It must be possible to specify (by an executable statement, a declaration
+--   at scope entry, or at compile time): (A) whether exclusive reservation has
+--   priority over shared; (B) how many users may share a resource; (C) which
+--   users may execute which kind of access; (D) whether preemption is possible
+--   and, if not, whether an exception is raised on an attempt to use the
+--   preemption parameter; (E) whether users have different priorities;
+--   (F) whether a requester waits for the resource or gets an exception to
+--   allow evasive action. The module is coded in the complete form needed for
+--   a library; proper cleanup must be provided in case of preemption.
+--   Guidelines: one general module, or generic facilities instantiating
+--   modules with a subset of the functionality.
+--
+-- GREEN solution notes (condensed from section 5.2):
+--   Access to each data-set is controlled by a separate task in a family
+--   (DATA_SET). Each user is, upon login, attributed a task (e.g. an
+--   interactive command interpreter) in the family USER_PROCESS, which
+--   defines EXCLUSIVE, FREE and SHARED for that user; the task index serves as
+--   the user identification. A constant table of access rights, ACCESS_TABLE,
+--   is initialized in the program.
+--   Simplifying assumption: a task requesting preemption that cannot be
+--   granted access immediately (access already given to higher-priority
+--   tasks; a task cannot preempt a higher-priority one) is suspended if it
+--   can wait, but loses the preemption attribute (otherwise two more entries
+--   per priority level would be needed).
+--   Exclusive access: (1) the user calls EXCLUSIVE with data-set name and
+--   preemption parameter; (2) it calls the homonymic procedure of the
+--   DATA_SET task, passing the user id; (3) access is validated against the
+--   user's access list, and if not rejected the request is queued on entry
+--   TEST_EXCLUSIVE for the appropriate priority; (4) TEST_EXCLUSIVE checks
+--   whether the request can be granted (possibly preempting others) and
+--   honors it, otherwise sets an out status flag to false; (5) if not
+--   satisfied and the task is willing to wait, it is queued on WAIT_EXCLUSIVE
+--   for its priority. Shared access works similarly. Priorities are handled
+--   by guarding the accept statements in the body of DATA_SET.
+--   Preemption is communicated via a vector of booleans in each user task
+--   (PREEMPTED_DS, one per data-set): the flag is set and the FAILURE
+--   exception is raised in the user task. The handler scans the vector to see
+--   whether FAILURE was a preemption, and from which data-set; if all flags
+--   are false it was a real failure. The sample USER_PROCESS body shows how
+--   such exceptions are handled, with messages to the user terminal.
+--
+--   Transcriber's note: the original is kept verbatim, including apparent
+--   slips in it: MY_RIGHTS(PREEMPTION_OK) where the enumeration declares
+--   PREEMPT_OK; assignment to the in parameter PREEMPT; WAIT_SHARED called
+--   without its (WHO) argument; entries declared in the task body of
+--   DATA_SET rather than in its specification.
+--
+-- ---------------------------------------------------------------------------
+
+package DATA_SET_PROTECTION_MODULE is
+
+   MAX_DATA_SET : constant INTEGER := 50;
+   MAX_USER     : constant INTEGER := 100;
+   MAX_PRIO     : constant INTEGER := 64;
+
+   type DS_NAME   is new INTEGER range 1..MAX_DATA_SET;
+   type USER_NAME is new INTEGER range 1..MAX_USER;
+   type PRIO      is new INTEGER range 1..MAX_PRIO;
+
+   type RIGHTS is
+      (EXCLUSIVE_OK, SHARE_OK, PREEMPT_OK, WAIT_OK, SIGNAL_PREEMPT);
+
+   type RIGHTS_LIST is
+         array (RIGHTS'FIRST .. RIGHTS'LAST)        of BOOLEAN;
+   type USER_LIST is
+         array(USER_NAME'FIRST .. USER_NAME'LAST) of BOOLEAN;
+   type DS_LIST is
+         array(DS_NAME'FIRST .. DS_NAME'LAST)     of BOOLEAN;
+
+   type RIGHTS_TABLE is
+         array(DS_NAME'FIRST .. DS_NAME'LAST,
+               USER_NAME'FIRST .. USER_NAME'LAST) of RIGHTS_LIST;
+
+   type REQUEST_CODE is ...;
+   -- different kinds of access requests that can be made
+
+   PERMISSION_DENIED, PREEMPTION_DENIED, UNAVAILABLE: exception;
+
+   ACCESS_TABLE : RIGHTS_TABLE := -- global access matrix;
+   PRIORITY     : array (USER_NAME'FIRST .. USER_NAME'LAST)
+                       of PRIO;
+
+   task USER_PROCESS(USER_NAME'FIRST .. USER_NAME'LAST) is
+
+      procedure EXCLUSIVE  (DS : DS_NAME; PREEMPT : BOOLEAN);
+      procedure SHARED     (DS : DS_NAME; PREEMPT : BOOLEAN);
+      procedure FREE       (DS : DS_NAME);
+      procedure REQUEST    (DS : DS_NAME; WHAT : REQUEST_CODE);
+      function  GET_RIGHTS(DS : DS_NAME) return RIGHTS_LIST;
+
+      PREEMPTED_DS : DS_LIST;
+
+   end USER_PROCESS;
+
+end DATA_SET_PROTECTION_MODULE;
+
+restricted(TEXT_IO)
+package body DATA_SET_PROTECTION_MODULE is
+
+   task DATA_SET(DS_NAME'FIRST .. DS_NAME'LAST) is
+      procedure EXCLUSIVE (WHO : USER_NAME; PREEMPT : BOOLEAN);
+      procedure SHARED    (WHO : USER_NAME; PREEMPT : BOOLEAN);
+      procedure FREE      (WHO : USER_NAME);
+      procedure REQUEST   (WHO : USER_NAME; WHAT : REQUEST_CODE);
+      function  GET_RIGHTS(WHO : USER_NAME) return RIGHTS_LIST;
+   end DATA_SET;
+
+   task body USER_PROCESS is
+      use TEXT_IO;
+
+      ME     : constant USER_NAME := USER_PROCESS'INDEX;
+      DS_SET : DS_LIST := (DS_NAME'FIRST .. DS_NAME'LAST => FALSE);
+         -- set of currently reserved data sets
+
+      procedure EXCLUSIVE(DS : DS_NAME; PREEMPT : BOOLEAN) is
+      begin
+         DATA_SET(DS).EXCLUSIVE(ME,PREEMPT);
+      end;
+
+      procedure SHARED(DS : DS_NAME; PREEMPT : BOOLEAN) is
+      begin
+         DATA_SET(DS).SHARED(ME, PREEMPT);
+      end;
+
+      procedure FREE(DS : DS_NAME) is
+      begin
+         DATA_SET(DS).FREE(ME);
+      end;
+
+      procedure REQUEST(DS : DS_NAME; WHAT : REQUEST_CODE) is
+      begin
+         DATA_SET(DS).REQUEST(ME, WHAT);
+      end;
+
+      function GET_RIGHTS(DS : DS_NAME) return RIGHTS_LIST is
+      begin
+         return DATA_SET(DS).GET_RIGHTS(ME);
+      end;
+
+   begin  -- body of USER_PROCESS
+      loop
+         begin
+            -- read command
+            -- execute command
+         exception
+            when UNAVAILABLE =>
+               PUT("data set is busy");
+            when PREEMPTION_DENIED =>
+               PUT("preemption refused");
+            when PERMISSION_DENIED =>
+               PUT("access violation");
+               for X in DS_NAME'FIRST .. DS_NAME'LAST loop
+                  if DS_SET(X) then
+                     FREE(X);
+                  end if;
+               end loop;
+               raise;  -- access violation is a fatal error
+            when FAILURE =>
+               declare
+                  BAD_ERROR : BOOLEAN := TRUE;
+               begin
+                  for X in DS_NAME'FIRST .. DS_NAME'LAST loop
+                     if PREEMPTED_DS(X) then
+                        BAD_ERROR := FALSE;
+                        PUT("you have been preempted from data set : ");
+                        PUT(X);
+                        PREEMPTED_DS(X) := FALSE;
+                        exit;
+                     end if;
+                  end loop;
+                  if BAD_ERROR then
+                     PUT("killed!");
+                     for X in DS_NAME'FIRST .. DS_NAME'LAST loop
+                        if DS_SET(X) then
+                           FREE(X);
+                        end if;
+                     end loop;
+                     raise;
+                  end if;
+               end;
+         end;
+      end loop;
+   end USER_PROCESS;
+
+   task body DATA_SET is
+
+      ME : constant DS_NAME := DATA_SET'INDEX;
+
+      MAX_SHARING : constant INTEGER := -- some constant;
+      -- note : MAX_SHARING cannot be modified while the
+      -- data-set is still active, i.e., still being accessed.
+
+      USERS   : USER_LIST;
+      -- set of users currently accessing the data-set
+      MODE    : (IN_SHARED, IN_EXCLUSIVE) := IN_SHARED;
+      N_USERS : INTEGER := 0;
+      PRIORITY_FOR_EXCLUSIVE : BOOLEAN := TRUE;
+      REQUEST_COUNT : array(PRIO'FIRST .. PRIO'LAST) of INTEGER
+                            := (PRIO'FIRST .. PRIO'LAST => 0);
+
+      entry TEST_EXCLUSIVE(PRIO'FIRST .. PRIO'LAST)
+             (CHECK : out BOOLEAN; WHO : USER_NAME; PREEMPT : BOOLEAN);
+
+      entry TEST_SHARED(PRIO'FIRST .. PRIO'LAST)
+             (CHECK : out BOOLEAN; WHO : USER_NAME; PREEMPT : BOOLEAN);
+
+      entry WAIT_EXCLUSIVE(PRIO'FIRST .. PRIO'LAST)(WHO : USER_NAME);
+
+      entry WAIT_SHARED(PRIO'FIRST .. PRIO'LAST)(WHO : USER_NAME);
+
+      entry RELEASE(WHO : USER_NAME);
+      entry RESERVE(P : PRIO);
+
+      procedure ASK(CHECK : out BOOLEAN;
+                    WHO : USER_NAME;
+                    PREEMPT, EXCL : BOOLEAN);
+
+      procedure FREE(WHO : USER_NAME) is
+      begin
+         if not USERS(WHO) then
+            raise PERMISSION_DENIED;
+         else
+            RELEASE(WHO);
+         end if;
+      end FREE;
+
+      procedure REQUEST(WHO : USER_NAME; WHAT : REQUEST_CODE) is
+      begin
+         if not USERS(WHO) then
+            raise PERMISSION_DENIED;
+         else
+            -- perform the access : no synchronization is necessary,
+            -- since it has been achieved by the reservation requests
+         end if;
+      end REQUEST;
+
+      procedure EXCLUSIVE(WHO : USER_NAME; PREEMPT : BOOLEAN) is
+         MY_RIGHTS : constant RIGHTS_LIST := ACCESS_TABLE(ME, WHO);
+         ACCEPTED  : BOOLEAN;
+      begin
+         if not MY_RIGHTS(EXCLUSIVE_OK) then
+            raise PERMISSION_DENIED;
+         elsif PREEMPT and not MY_RIGHTS(PREEMPTION_OK) then
+            if MY_RIGHTS(SIGNAL_PREEMPT) then
+               raise PREEMPTION_DENIED;
+            else
+               PREEMPT := FALSE;
+            end if;
+         end if;
+         RESERVE(PRIORITY(WHO));
+         TEST_EXCLUSIVE(PRIORITY(WHO))(ACCEPTED,WHO,PREEMPT);
+         if not ACCEPTED then
+            if not MY_RIGHTS(WAIT_OK) then
+               raise UNAVAILABLE;
+            else
+               RESERVE(PRIORITY(WHO));
+               WAIT_EXCLUSIVE(PRIORITY(WHO))(WHO);
+            end if;
+         end if;
+      end EXCLUSIVE;
+
+      procedure SHARED (WHO : USER_NAME; PREEMPT : BOOLEAN) is
+         MY_RIGHTS : constant RIGHTS_LIST := ACCESS_TABLE(ME, WHO);
+         ACCEPTED  : BOOLEAN;
+      begin
+         if not MY_RIGHTS(SHARE_OK) then
+            raise PERMISSION_DENIED;
+         elsif PREEMPT and not MY_RIGHTS(PREEMPTION_OK) then
+            if MY_RIGHTS(SIGNAL_PREEMPT) then
+               raise PREEMPTION_DENIED;
+            else
+               PREEMPT := FALSE;
+            end if;
+         end if;
+         RESERVE(PRIORITY(WHO));
+         TEST_SHARED(PRIORITY(WHO))(ACCEPTED,WHO,PREEMPT);
+         if not ACCEPTED then
+            if not MY_RIGHTS(WAIT_OK) then
+               raise UNAVAILABLE;
+            else
+               RESERVE(PRIORITY(WHO));
+               WAIT_SHARED(PRIORITY(WHO));
+            end if;
+         end if;
+      end SHARED;
+
+
+      function GET_RIGHTS(WHO : USER_NAME) return RIGHTS_LIST is
+      begin
+         return ACCESS_TABLE(ME, WHO);
+      end GET_RIGHTS;
+
+      ---------------------------------------------------------
+      -- The procedure ASK, which is not visible, performs
+      -- all the checks needed to permit a request.
+      -- If preemption must be done, it is performed here.
+      ---------------------------------------------------------
+      procedure ASK(CHECK   : out BOOLEAN;
+                    WHO     : USER_NAME;
+                    PREEMPT : BOOLEAN;
+                    EXCL    : BOOLEAN) is
+         TEMP_USERS : USER_LIST := USERS;
+         CNT        : INTEGER := 0;
+
+      begin
+         if MODE = IN_EXCLUSIVE or N_USERS = MAX_SHARING then
+            -- preempt necessary if requested.
+            if PREEMPT then
+               for X in USER_NAME'FIRST .. USER_NAME'LAST loop
+                  if USERS(X) and PRIORITY(X) > PRIORITY(WHO) then
+                     CNT := CNT + 1;
+                     TEMP_USERS(X) := FALSE;
+                     if EXCL then
+                        CHECK := FALSE;
+                        return;
+                     end if;
+                  end if;
+               end loop;
+
+               if CNT = MAX_SHARING then
+                  CHECK := FALSE;
+                  return;
+               elsif EXCL then  -- preempt all
+                  for X in USER_NAME'FIRST .. USER_NAME'LAST loop
+                     if USERS(X) then
+                        USERS(X)  := FALSE;
+                        USER_PROCESS(X).PREEMPTED_DS(ME) := TRUE;
+                        raise USER_PROCESS(X).FAILURE;
+                     end if;
+                  end loop;
+                  N_USERS := 0;
+               else  -- preempt one of the possible users
+                  declare
+                     X : USER_NAME;
+                  begin
+                     X := CHOOSE(TEMP_USERS);
+                     -- assume CHOOSE returns an element
+                     -- chosen non deterministically in the set.
+                     USERS(X)  := FALSE;
+                     USER_PROCESS(X).PREEMPTED_DS(ME) := TRUE;
+                     raise USER_PROCESS(X).FAILURE;
+                     N_USERS   := N_USERS - 1;
+                  end;
+               end if;
+            else
+               CHECK := FALSE;
+               return;
+            end if;
+         end if;
+         USERS(WHO) := TRUE;
+         N_USERS    := N_USERS + 1;
+         CHECK      := TRUE;
+         if EXCL then
+            MODE := IN_EXCLUSIVE;
+         end if;
+      end ASK;
+
+   begin  -- body of DATA_SET
+      loop
+         accept RESERVE(P : PRIO) do
+            REQUEST_COUNT(P) := REQUEST_COUNT(P) + 1;
+         end;
+
+         -- flush the RESERVE queue
+         loop
+            select
+               accept RESERVE(P : PRIO) do
+                  REQUEST_COUNT(P) := REQUEST_COUNT(P) + 1;
+               end;
+            else
+               exit;
+            end select;
+         end loop;
+
+         for P in reverse PRIO'FIRST .. PRIO'LAST loop
+            if REQUEST_COUNT(P) > 0 then
+               select
+                  accept TEST_EXCLUSIVE(P)(CHECK : out BOOLEAN;
+                                           WHO : USER_NAME;
+                                           PREEMPT : BOOLEAN) do
+                     ASK(CHECK,WHO,PREEMPT,TRUE);
+                  end;
+
+               or when not PRIORITY_FOR_EXCLUSIVE
+                        or TEST_EXCLUSIVE'COUNT = 0 =>
+                     accept TEST_SHARED(P)(CHECK : out BOOLEAN;
+                                           WHO     : USER_NAME;
+                                           PREEMPT : BOOLEAN) do
+                        ASK(CHECK,WHO,PREEMPT,FALSE);
+                     end;
+
+               or when N_USERS = 0 =>
+                     accept WAIT_EXCLUSIVE(P)(WHO : USER_NAME) do
+                        USERS(WHO) := TRUE;
+                     end;
+                     N_USERS := 1;
+                     MODE    := IN_EXCLUSIVE;
+
+               or when (MODE = IN_SHARED and N_USERS < MAX_SHARING)
+                     or (not (N_USERS = 0 and PRIORITY_FOR_EXCLUSIVE
+                              and(TEST_EXCLUSIVE(P)'COUNT>0
+                                  or WAIT_EXCLUSIVE(P)'COUNT>0))) =>
+                     accept WAIT_SHARED(P)(WHO : USER_NAME) do
+                        USERS(WHO) := TRUE;
+                     end;
+                     N_USERS := N_USERS + 1;
+               end select;
+
+               REQUEST_COUNT(P) := REQUEST_COUNT(P) - 1;
+               exit;  -- go and process newly arrived requests
+            end if;
+         end loop;
+         loop
+            select
+               accept RELEASE(WHO : USER_NAME) do
+                  USERS(WHO) := FALSE;
+               end;
+               N_USERS := N_USERS - 1;
+               if MODE = IN_EXCLUSIVE then
+                  MODE := IN_SHARED;
+               end if;
+            else
+               exit;
+            end select;
+         end loop;
+      end loop;
+   end DATA_SET;
+end DATA_SET_PROTECTION_MODULE;

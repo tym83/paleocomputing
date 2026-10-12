@@ -1,0 +1,367 @@
+-- GREEN solution to DoD-1 sample problem 8: General Purpose Real-Time
+-- Scheduler
+--
+-- Source: Honeywell Inc. Systems and Research Center / CII Honeywell Bull,
+--   "Set of Sample Problems for DOD High Order Language Program. GREEN
+--   Solutions", April 1979, DTIC ADA070752, section 8 (doc pages 8-1..8-10,
+--   PDF pages 59-68).
+--
+-- Problem (condensed):
+--   Write a library module that schedules computational processes in actual
+--   real time; the number of processes varies and is determinable at link
+--   time. The scheduler receives the 'ticks' of the system real-time clock
+--   (e.g. via its interrupt) and turns them into real time; time span may be
+--   restricted to 24 hours (all times modulo 24 h). Real time is readable via
+--   TIME(OPERAND), depositing an ASCII string hhmmss. Main purpose: initiate
+--   processes once or repeatedly according to real-time conditions, via
+--   operations of the form
+--      EXECUTE PROCESSNAME, TIME
+--      EXECUTE TIME  -- meaning the process which performs this operation
+--      EXECUTE PROCESSNAME, START-TIME, REPETITION-INTERVAL
+--   (representation left to the language designer; not necessarily
+--   procedure calls). Processes due at the same time are activated in
+--   priority order; a generic sort routine usable for other data types should
+--   show the parameter passing mechanism is cheap. Processes can be
+--   disconnected at any time by themselves or by others. Assume a clock with
+--   sufficiently frequent ticks.
+--
+-- GREEN design notes (condensed from section 8.2):
+--   The scheduler is a task (SCHEDULING_TASK) inside the body of package
+--   SCHEDULER, running independently at higher priority than user processes.
+--   A "user process" is any GREEN task that declares
+--      package MY_TASK is new SCHEDULER.TASK_PATTERN(PROCESS_NAME);
+--   which signs it on under that string name and makes EXECUTE, DISCONNECT
+--   and SIGN_OFF available. Commands:
+--     EXECUTE(process_name, start_time [, period]) -- with keyword notation:
+--       EXECUTE(process_name, AT_TIME := start_time, THEN_EVERY := period);
+--       omitting process_name (or naming the caller) also suspends the caller
+--       until the indicated time.
+--     DISCONNECT(process_name) cancels any previous request for the process.
+--     SIGN_OFF ends the caller's interaction with the scheduler.
+--   Rules (violations raise an exception in the caller): a name may be used
+--   by only one task; commands require being signed on (re-sign-on only by a
+--   new instantiation); no request for another process still executing; no
+--   second request while one is pending (use DISCONNECT), though a
+--   self-suspending task may omit start_time to reuse a periodic schedule;
+--   no request for an already elapsed time.
+--   Internals: there is a maximum number of connected processes. The
+--   instantiation's initialization calls entry SIGN_ON; the scheduler's
+--   entries are not in the visible part, so they can only be called through
+--   TASK_PATTERN (nested in the scheduler). Integrity is protected by an
+--   unforgeable internal process index stored in a variable local to the
+--   TASK_PATTERN instance, reset by SIGN_OFF. A name table maps names to
+--   indices. A delay list, sorted chronologically and, for equal due dates,
+--   in suspension order, holds suspended tasks with a pending request. Time
+--   flow is perceived through entry TICK, possibly bound to a clock
+--   interrupt; ticks are assumed slow enough that none is lost.
+--   (No generic sort routine is given in the GREEN listing.)
+--
+-- ---------------------------------------------------------------------------
+
+package SCHEDULER is
+
+   MAX_TIME: constant INTEGER := 86400;
+   type TIME is new INTEGER range 0 .. MAX_TIME;
+   function CLOCK return TIME;
+
+   LATE_REQUEST,    ALREADY_SCHEDULED, TOO_MANY_TASKS,
+   INEXISTENT_TASK, TASK_STILL_ACTIVE, NOT_SIGNED_ON,
+   ALREADY_SIGNED_ON: exception;
+
+   generic (S: STRING)
+   package TASK_PATTERN is
+      procedure EXECUTE(WHO        : STRING;
+                        AT_TIME    : TIME := 0;
+                        THEN_EVERY : TIME := 0);
+      procedure EXECUTE(AT_TIME    : TIME;
+                        THEN_EVERY : TIME := 0);
+      procedure DISCONNECT(WHO: STRING);
+      procedure SIGN_OFF;
+   end TASK_PATTERN;
+
+end SCHEDULER;
+
+
+package body SCHEDULER is
+
+   ----------------------------------------------------------
+   -- The task SCHEDULING_TASK is actually the real scheduler
+   ----------------------------------------------------------
+   task SCHEDULING_TASK is
+
+      MAX_TASK: constant INTEGER := 63;
+      type TASK_INDEX is new INTEGER range 0 .. MAX_TASK;
+      subtype TASK_ID is TASK_INDEX  range 1 .. TASK_INDEX'LAST;
+
+      function SEARCH_TASK(WHO : STRING) return TASK_ID;
+
+      entry DISCONNECT(TSK: TASK_ID);
+      entry REMOVE(TSK: TASK_ID);
+      entry SCHEDULE(TSK, CALLER: TASK_ID; AT_TIME, THEN_EVERY: TIME);
+      entry SIGN_ON(NAME: STRING; TSK: out TASK_ID);
+      entry WAIT(TASK_ID'FIRST .. TASK_ID'LAST);
+
+   end SCHEDULING_TASK;
+
+   --------------------------------------------------------
+   -- The generic package TASK_PATTERN provides the user interface
+   -- with the scheduler. Each new instantiation makes a new
+   -- process known to the scheduler, by the call to SIGN_ON
+   -- done at initialization.
+   --------------------------------------------------------
+   package body TASK_PATTERN is
+      use SCHEDULING_TASK;
+      ME: TASK_INDEX; -- ME is in fact a constant
+                      -- which receives a value upon
+                      -- package initialization.
+
+      --------------------------------------------------
+      -- EXECUTE corresponds to a scheduling request
+      -- made for another process.
+      --------------------------------------------------
+      procedure EXECUTE(WHO        : STRING;
+                        AT_TIME    : TIME;
+                        THEN_EVERY : TIME) is
+         WHOSE_ID: TASK_ID;
+      begin
+         if ME = 0 then
+            raise NOT_SIGNED_ON;
+         end if;
+         WHOSE_ID := SEARCH_TASK(WHO);
+         SCHEDULE(WHOSE_ID, ME, AT_TIME, THEN_EVERY);
+         if WHOSE_ID = ME then
+            WAIT(ME);
+         end if;
+      end EXECUTE;
+
+      --------------------------------------------------
+      -- This version of EXECUTE also suspends the caller
+      --------------------------------------------------
+      procedure EXECUTE(AT_TIME: TIME;
+                        THEN_EVERY: TIME) is
+      begin
+         if ME = 0 then
+            raise NOT_SIGNED_ON;
+         else
+            SCHEDULE(ME, ME, AT_TIME, THEN_EVERY);
+            WAIT(ME); --actually blocks the calling task
+         end if;
+      end EXECUTE;
+
+      --------------------------------------------------
+      -- To remove a scheduler entry
+      --------------------------------------------------
+      procedure DISCONNECT(WHO: STRING) is
+      begin
+         SCHEDULING_TASK.DISCONNECT(SEARCH_TASK(WHO));
+      end DISCONNECT;
+
+      --------------------------------------------------
+      -- To remove the process name from the scheduler's table
+      --------------------------------------------------
+      procedure SIGN_OFF is
+      begin
+         if ME = 0 then
+            raise NOT_SIGNED_ON;
+         else
+            REMOVE(ME);
+            ME := 0;
+         end if;
+      end SIGN_OFF;
+
+   begin  --initialization of TASK_PATTERN
+      SIGN_ON(S, ME);
+   end TASK_PATTERN;
+
+   -----------------------------------------------------------
+   -- BODY OF SCHEDULING_TASK
+   -----------------------------------------------------------
+   task body SCHEDULING_TASK is
+
+      type TASK_NAME is access STRING;
+      type TASK_STATUS is
+         record
+            ACTIVE, REQUESTED : BOOLEAN;
+            START,  PERIOD    : TIME;
+            NEXT,   PREVIOUS  : TASK_INDEX;
+         end record;
+
+      TIME_NOW: TIME := 0;
+      DELAY_LIST: TASK_INDEX := 0;
+      TIME_TABLE: array(1 .. MAX_TASK) of TASK_STATUS;
+      NAME_TABLE: array(1 .. MAX_TASK) of TASK_NAME;
+
+      procedure LINK(TSK: TASK_ID);
+      procedure UNLINK(TSK: TASK_ID);
+
+      entry TICK;
+
+      for TICK use at -- interrupt address for tick;
+
+      --------------------------------------------------------
+      -- Find the internal id corresponding to a process name
+      --------------------------------------------------------
+      function SEARCH_TASK(WHO: STRING) return TASK_ID is
+      begin
+         for I in TASK_ID'FIRST .. TASK_ID'LAST loop
+            if NAME_TABLE(I) /= null
+            and then NAME_TABLE(I).all = WHO then
+               return I;
+            end if;
+         end loop;
+         raise INEXISTENT_TASK;
+      end SEARCH_TASK;
+
+      function CLOCK return TIME is
+      begin
+         return TIME_NOW;
+      end CLOCK;
+
+      --------------------------------------------------------
+      -- Add a process in the delay list.
+      -- The process must have been already scheduled,
+      -- and must be blocked.
+      --------------------------------------------------------
+      procedure LINK(TSK: TASK_ID) is
+         I: TASK_ID;
+         THIS: TASK_STATUS renames TIME_TABLE(TSK);
+      begin
+         if DELAY_LIST = 0 then
+            DELAY_LIST := TSK;
+            THIS.PREVIOUS := 0;
+            THIS.NEXT := 0;
+         else
+            I := DELAY_LIST;
+            while TIME_TABLE(I).START <= THIS.START
+               and TIME_TABLE(I).NEXT /= 0 loop
+                  I:= TIME_TABLE(I).NEXT;
+            end loop;
+            if TIME_TABLE(I).START > THIS.START then
+               THIS.NEXT := I;
+               THIS.PREVIOUS := TIME_TABLE(I).PREVIOUS;
+               TIME_TABLE(I).PREVIOUS := TSK;
+            else
+               THIS.PREVIOUS := I;
+               THIS.NEXT := TIME_TABLE(I).NEXT;
+               TIME_TABLE(I).NEXT := TSK;
+            end if;
+         end if;
+      end LINK;
+
+      --------------------------------------------------------
+      -- remove a process from the delay list
+      --------------------------------------------------------
+      procedure UNLINK(TSK: TASK_ID) is
+         THIS: TASK_STATUS renames TIME_TABLE(TSK);
+      begin
+         if THIS.NEXT /= 0 then
+            TIME_TABLE(THIS.NEXT).PREVIOUS := THIS.PREVIOUS;
+         end if;
+         if THIS.PREVIOUS /= 0 then
+            TIME_TABLE(THIS.PREVIOUS).NEXT := THIS.NEXT;
+            THIS.PREVIOUS := 0;
+         else     --first in delay_list
+            DELAY_LIST := THIS.NEXT;
+         end if;
+         THIS.NEXT := 0;
+      end UNLINK;
+
+   begin     -- body of scheduling_task
+      loop
+         declare     -- this inner block to catch all exceptions
+            I: TASK_ID;
+         begin
+            select
+               accept TICK;
+               TIME_NOW := (TIME_NOW + 1) mod MAX_TIME;
+               loop-- to release all processes due
+                  -- to be awoken now
+                  if DELAY_LIST /= 0
+                     and then
+                        TIME_TABLE(DELAY_LIST).START = TIME_NOW then
+                        I := DELAY_LIST;
+                        UNLINK(I);
+                        TIME_TABLE(I).ACTIVE := TRUE;
+                        if TIME_TABLE(I).PERIOD > 0
+                           and then TIME_TABLE(I).START
+                                    + TIME_TABLE(I).PERIOD
+                                    <= MAX_TIME then
+                              TIME_TABLE(I).START :=
+                                      TIME_TABLE(I).START
+                                    + TIME_TABLE(I).PERIOD;
+                              TIME_TABLE(I).REQUESTED := TRUE;
+                        else
+                           TIME_TABLE(I).REQUESTED := FALSE;
+                        end if;
+                        accept WAIT(I);-- actually release process
+                                       -- with task-id I
+                  else exit;
+                  end if;
+               end loop;
+            or
+               -- removes any previous request for TSK
+               accept DISCONNECT(TSK: TASK_ID) do
+                  if TIME_TABLE(TSK).REQUESTED then
+                     UNLINK(TSK);
+                  end if;
+                  TIME_TABLE(TSK).START := 0;
+                  TIME_TABLE(TSK).PERIOD := 0;
+                  TIME_TABLE(TSK).REQUESTED := FALSE;
+               end DISCONNECT;
+            or
+               -- enter new request for TSK
+               accept SCHEDULE(TSK, CALLER: TASK_ID;
+                               AT_TIME, THEN_EVERY: TIME) do
+                  if TSK = CALLER then
+                     TIME_TABLE(TSK).ACTIVE := FALSE;
+                  end if;
+                  if AT_TIME > 0 then
+                     if AT_TIME < TIME_NOW then
+                        raise LATE_REQUEST;
+                     elsif TIME_TABLE(TSK).ACTIVE then
+                        raise TASK_STILL_ACTIVE;
+                     elsif TIME_TABLE(TSK).REQUESTED then
+                        raise ALREADY_SCHEDULED;
+                     else
+                        TIME_TABLE(TSK).REQUESTED := TRUE;
+                        TIME_TABLE(TSK).START := AT_TIME;
+                        TIME_TABLE(TSK).PERIOD := THEN_EVERY;
+                     end if;
+                  elsif TSK /= CALLER then
+                     raise LATE_REQUEST;
+                  end if;
+                  if TIME_TABLE(TSK).REQUESTED then
+                     LINK(TSK);
+                  end if;
+               end SCHEDULE;
+            or
+               accept REMOVE(TSK: TASK_ID) do
+                  NAME_TABLE(TSK) := null;
+               end REMOVE;
+            or
+               -- enter new name in name table
+               -- and allocate corresponding task_id
+               accept SIGN_ON(NAME: STRING; TSK: out TASK_ID) do
+                  for I in TASK_ID'FIRST .. TASK_ID'LAST loop
+                     if NAME_TABLE(I) = null then
+                        NAME_TABLE(I) := new TASK_NAME(NAME);
+                        TSK := I;
+                        TIME_TABLE(I) := (FALSE, FALSE, 0, 0, 0, 0);
+                        return;
+                     elsif NAME_TABLE(I).all = NAME then
+                        raise ALREADY_SIGNED_ON;
+                     end if;
+                  end loop;
+                  raise TOO_MANY_TASKS;
+               end SIGN_ON;
+            end select;
+         exception
+            when others =>
+               null;
+            end;
+      end loop;
+   end SCHEDULING_TASK;
+
+begin  -- initialization of SCHEDULER
+   initiate SCHEDULING_TASK;
+end SCHEDULER;

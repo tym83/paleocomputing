@@ -1,0 +1,135 @@
+-- GREEN solution to DoD-1 sample problem 1: Polled Asynchronous Interrupt
+--
+-- Source: Honeywell Systems and Research Center / CII Honeywell Bull,
+--   "Set of Sample Problems for DOD High Order Language Program. GREEN
+--   Solutions", April 1979, DTIC ADA070752, PDF pages 6-10 (doc pages 1-1..1-5).
+--   Transcribed from page images; indentation as printed.
+--
+-- PROBLEM (condensed):
+--   A channel handler is called as READ(DEVICE_NUMBER) and returns a character
+--   from that device's input stream. Minimum delay between a character entering
+--   the circular buffer and being available to READ; no input may be lost.
+--   16-bit byte-addressable machine, >= 10 asynchronous keyboards sharing an I/O
+--   channel. Hard-wired circular buffer of 128 bytes at 500(8); HEADPOINTER
+--   (most recent input, maintained by the channel) and TAILPOINTER (maintained
+--   by the handler). An interrupt occurs only when head is just below tail
+--   (buffer about to overflow); interrupt location for channel 0 is 440(8).
+--   Each input is two bytes: byte 0 = ASCII character, byte 1 = device 0-9.
+--   Guideline: be as hardware-independent as possible, clearly separate the
+--   hardware-dependent interface.
+--
+-- GREEN DESIGN NOTES (condensed from section 1.2):
+--   (a) HEAD and TAIL must be at fixed addresses since hardware manipulates
+--       them; the machine is byte-addressable, so each step adds 2. On the
+--       interrupt the response is to disable further input until at least one
+--       read has occurred (a disable signal on a separate line); keyboards are
+--       re-enabled by an enable signal.
+--   (b) The channel handler is a task (several channels could be a family).
+--       Buffer control and multiplexing are done by a nested task POLLING; when
+--       input has occurred, the character is transmitted through an
+--       intermediate task family LOGICAL_KEYBOARD. Each member loops, receiving
+--       a character from POLLING and handing it out in response to an external
+--       READ. The user calls READ indirectly through the value-returning
+--       procedure READ of the channel handler, which takes the device index.
+--
+-- ---------------------------------------------------------------------------
+
+task CHANNEL_HANDLER is
+   type DEVICE is new INTEGER range 0 .. 9;
+   procedure READ (D: DEVICE) return CHARACTER;
+end;
+
+task body CHANNEL_HANDLER is
+
+   type ITEM is
+      record
+         CHAR: CHARACTER;
+         DEV : DEVICE;
+      end record;
+
+   task LOGICAL_KEYBOARD(DEVICE'FIRST .. DEVICE'LAST) is
+      entry READ   (C: out CHARACTER);
+      entry DEPOSIT(C: in  CHARACTER);
+   end;
+
+   task POLLING;
+
+   procedure READ(D: DEVICE) return CHARACTER is
+      C: CHARACTER;
+   begin
+      LOGICAL_KEYBOARD(D).READ(C);
+      return(C);
+   end;
+
+   task body LOGICAL_KEYBOARD is
+      LAST_CHARACTER: CHARACTER;
+      OK_TO_READ    : BOOLEAN := TRUE;
+   begin
+      loop
+         select
+            accept DEPOSIT(C: in CHARACTER) do
+               if not OK_TO_READ then
+                  LAST_CHARACTER := C;
+               end if;
+            end;
+            OK_TO_READ := TRUE;
+
+         or when OK_TO_READ =>
+            accept READ(C: out CHARACTER) do
+               C := LAST_CHARACTER;
+            end;
+            OK_TO_READ := FALSE;
+         end select;
+      end loop;
+   end;
+
+   task body POLLING is
+
+      subtype INDEX is INTEGER range 0 .. 63;
+      BUFFER: array (INDEX'FIRST .. INDEX'LAST) of ITEM;
+      HEAD, TAIL: INTEGER range 8#500 .. 8#677;
+         -- initialized to 8#500 by I/O channel
+      NEXT: INDEX;
+
+      entry INTERRUPT;
+      procedure ENABLE  is separate; -- restore keyboard input
+      procedure DISABLE is separate; -- inhibits input from keyboard
+      DISABLED: BOOLEAN := FALSE;
+      POLLING_PERIOD: constant TIME := 0.1*SECONDS;  -- OCR? (operator printed as a raised mark)
+
+      for BUFFER use at 8#500;
+      for ITEM use
+         record at mod 2;
+            CHAR at 0 range 0 .. 7;
+            DEV  at 1 range 0 .. 7;
+         end record;
+      for HEAD use at  -- head address;
+      for TAIL use at  -- tail address;
+      for INTERRUPT use at 8#440;
+
+   begin  -- POLLING
+      loop
+         select
+            when HEAD = TAIL =>  -- buffer empty
+               delay POLLING_PERIOD;
+         or when not DISABLED =>
+               accept INTERRUPT;
+               DISABLED := TRUE;
+               DISABLE;
+               -- Other actions may be taken
+         or when HEAD /= TAIL =>
+               delay 0;  -- effect of a guarded else
+               if TAIL=8#676 then TAIL := 8#500; else TAIL := TAIL+2; end if;
+               NEXT := (TAIL - 8#500)/2;
+               LOGICAL_KEYBOARD(BUFFER(NEXT).DEV).DEPOSIT(BUFFER(NEXT).CHAR);
+               if DISABLED then
+                  DISABLED := FALSE;
+                  ENABLE;
+               end if;
+         end select;
+      end loop;
+   end POLLING;
+
+begin
+   initiate POLLING, LOGICAL_KEYBOARD(DEVICE'FIRST .. DEVICE'LAST);
+end CHANNEL_HANDLER;

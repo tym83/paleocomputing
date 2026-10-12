@@ -1,0 +1,132 @@
+-- GREEN solution to DoD-1 sample problem 9: Distributed Parallel Output
+--
+-- Source: Honeywell Inc. Systems and Research Center / CII Honeywell Bull,
+--   "Set of Sample Problems for DOD High Order Language Program. GREEN
+--   Solutions", April 1979, DTIC ADA070752, section 9 (doc pages 9-1..9-5,
+--   PDF pages 69-73).
+--
+-- Problem (condensed):
+--   Purpose: process parallel events which need not progress at the same
+--   rate. A multiple-addressee message must be output over several
+--   asynchronous links. Each link is controlled by its own process, which
+--   accepts one packet of the message at a time and notifies the program
+--   when the last packet furnished to it has been acknowledged by the
+--   distant station. When all transmissions are complete the program purges
+--   the message. Assumptions: five addressees (may differ per message); the
+--   message is five packets of 80 bytes; the buffers are contiguous; at
+--   initialization the program gets the address of the first buffer, the
+--   number of buffers, and the five links (processes L0..L9, given as
+--   (Ln, Ln, Ln...), n in 0..9); 8-bit machine; up to ten addressees; no
+--   queuing delay (link processes are dedicated; they may be resident in
+--   dedicated microprocessors on a bus, coordinated by another processor).
+--
+-- GREEN design notes (condensed from section 9.2):
+--   For parallelism, a message transmission may start before earlier ones
+--   complete, and links need not send contiguous packets of one message:
+--   packets of different messages may be interleaved on a link (reassembly
+--   at the far end). A task MESSAGE repeatedly accepts transmission
+--   requests. Since buffers are bounded and the addressee count is fixed,
+--   the number of concurrent message transmissions is bounded. For each
+--   message to be sent over a particular link a member of task family
+--   PACKETIZER is initiated, forwarding all packets of the message on that
+--   link. Each link is driven by a LINK_CONTROLLER that repeatedly accepts a
+--   packet and sends it; it can also receive a distant acknowledgement
+--   identifying the message, which is forwarded to MESSAGE. When MESSAGE has
+--   received five acks for a message it releases the corresponding buffers.
+--   Message size is fixed; messages are identified by the index of their
+--   first buffer. Each buffer is guarded by an AVAILABLE flag; resetting it
+--   releases the buffer, purging its contents.
+--
+-- ---------------------------------------------------------------------------
+
+package MESSAGE_TRANSMISSION is
+
+   N_LINKS   : constant INTEGER := 10;
+   PKT_SIZE  : constant INTEGER := 80;
+   MSG_SIZE  : constant INTEGER := 5;
+   N_BUFFERS : constant INTEGER := 100;
+
+   type LINK     is new INTEGER range 0 .. N_LINKS-1;
+   type DEST_SET is array (1 .. 5) of LINK;
+   type PACKET   is array (1 .. PKT_SIZE) of CHARACTER;
+   subtype MSG_ID is INTEGER range 1 .. N_BUFFERS;
+
+   BUFFERS   : array(MSG_ID'FIRST .. MSG_ID'LAST) of PACKET;
+   AVAILABLE : array(MSG_ID'FIRST .. MSG_ID'LAST) of BOOLEAN
+                    := (MSG_ID'FIRST .. MSG_ID'LAST => TRUE);
+
+   task MESSAGE is
+      entry SEND (MSG : MSG_ID; TO   : DEST_SET);
+      entry ACK  (MSG : MSG_ID; FROM : LINK);
+   end;
+end;
+
+package body MESSAGE_TRANSMISSION is
+
+   task PACKETIZER (1 .. 100) is
+      entry SEND (MSG : MSG_ID; TO : LINK);
+   end;
+
+   task LINK_CONTROLLER (LINK'FIRST .. LINK'LAST) is
+      entry SEND (PKT, MSG : MSG_ID);
+      entry ACK  (MSG : MSG_ID);
+   end;
+
+   task body PACKETIZER is
+      M    : MSG_ID;
+      DEST : LINK;
+   begin
+      accept SEND (MSG : MSG_ID; TO : LINK) do
+         M := MSG;
+         DEST := TO;
+      end SEND;
+
+      for I in 1 .. MSG_SIZE loop
+         LINK_CONTROLLER(DEST).SEND(M+I-1, M);
+      end loop;
+   end PACKETIZER;
+
+   task body LINK_CONTROLLER is
+   begin
+      loop
+         select
+            accept SEND (PKT, MSG : MSG_ID) do
+            -- transmit packet over the link
+            end SEND;
+
+         or accept ACK (MSG : MSG_ID) do
+               MESSAGE.ACK(MSG, LINK_CONTROLLER'INDEX);
+            end ACK;
+         end select;
+      end loop;
+   end LINK_CONTROLLER;
+
+   task body MESSAGE is
+      ACK_COUNT : array (MSG_ID'FIRST .. MSG_ID'LAST) of INTEGER
+                        := (MSG_ID'FIRST .. MSG_ID'LAST => 0);
+   begin
+      loop
+         select
+            accept SEND (MSG : MSG_ID; TO : DEST_SET) do
+               for I in 1 .. MSG_SIZE loop
+                  initiate PACKETIZER((MSG-1)*MSG_SIZE + I);
+                  PACKETIZER((MSG-1)*MSG_SIZE + I).SEND(MSG, TO(I));
+               end loop;
+            end SEND;
+
+         or accept ACK (MSG : MSG_ID; FROM : LINK) do
+               ACK_COUNT(MSG) := ACK_COUNT(MSG) + 1;
+               if ACK_COUNT(MSG) = MSG_SIZE then
+                  ACK_COUNT(MSG) := 0;
+                  for I in 1 .. MSG_SIZE loop
+                     AVAILABLE(MSG + I - 1) := TRUE;
+                  end loop;
+               end if;
+            end ACK;
+         end select;
+      end loop;
+   end MESSAGE;
+
+begin  -- body of MESSAGE_TRANSMISSION
+   initiate MESSAGE, LINK_CONTROLLER(LINK'FIRST .. LINK'LAST);
+end MESSAGE_TRANSMISSION;
