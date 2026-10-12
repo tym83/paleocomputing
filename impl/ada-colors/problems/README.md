@@ -15,6 +15,16 @@ Both sets contain the same ten problems with the same DoD wording, so **all ten 
 RED also prints one extra program in Appendix C (the matrix-vector package), included
 as `red/C1-matrix-vector.red`.
 
+## Running them
+
+All twenty solutions and C1 run: `problems/run/run.sh` makes each original
+translatable with its sed file, adds what the problem assumes to be present
+(`*-units`), drives it (`*-main`) and compares the output with the expected
+one. Every line of a sed file is a change a translator forced, with the reason
+next to it, so the sed files list the errors of the 1979 texts. Interrupts,
+devices and the network are tasks on the virtual clock. The originals are not
+in git; get them as described below.
+
 ## Layout
 
 ```

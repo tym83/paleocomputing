@@ -210,11 +210,27 @@ they were fixed in the same way as upstream:
 
 - [`labs/`](impl/ada-colors/labs/README.md): eleven exercises (look, change,
   break, build) and `labs/check.sh`, which says whether a task is done.
-- [`problems/run/`](impl/ada-colors/problems/run/): the 1979 RED originals made
-  runnable, C.1 and contract problem 6, each with a sed file of the changes a
-  translator forced. Problem 6 needs a fair WAIT: with the first ready
-  alternative always taken, the operator's DONE starves. RED leaves the choice
-  undefined, and the runtime now takes ready alternatives in turn.
+- [`problems/run/`](impl/ada-colors/problems/run/): all twenty 1979 contract
+  solutions run, ten RED and ten GREEN, plus RED's C.1. Each has a sed file
+  with the changes a translator forced, one commented line per change, and an
+  expected output; `problems/run/run.sh` checks them all. Interrupts, devices
+  and the network are device tasks on the virtual clock; interrupt entries and
+  mailboxes at fixed addresses become ordinary ones. No solution translated as
+  printed. RED's errors are mostly careless (undeclared names, a missing
+  `OCTAL`, a parameter named after the reserved word `REP`), with two design
+  errors a translator would pass: in problem 4 the collision test compares
+  pointers that are never equal, and in problem 5 every procedure changes a
+  copy, so no reservation reaches the database. GREEN breaks its own rules more
+  often: four solutions initiate a task, `exit` or `return` inside an `accept`
+  body (RM79 9.5, 5.7, 5.3); problem 3 writes one byte further on than it
+  reads; in problem 5 `FREE` hangs; problem 8 loses a request whose deadline
+  is earlier than the head of its list. Problem 6 needs a fair WAIT: with the
+  first ready alternative always taken, the operator's DONE starves. RED leaves
+  the choice undefined, and the runtime now takes ready alternatives in turn.
+- [`impl/deploy/Containerfile.ada-colors-run`](impl/deploy/Containerfile.ada-colors-run):
+  RED and GREEN for the `langpack` application of the Cozystack catalog. A
+  `.red` or `.grn` source runs as a one-off job; the image build replays both
+  bootstraps and refuses to finish without the fixed points.
 - [`ada83/`](impl/ada-colors/ada83/): the same three situations in Ada 83,
   built by GNAT `-gnat83` in CI. They are the bounded buffer as a server task,
   the timed entry call that GREEN 1979 did not have, and the lock as a task
@@ -287,9 +303,7 @@ such a call, and now so does the runtime.
 ## Next
 
 - The Blue and Yellow designs, from DTIC ADB950587, downloaded by hand.
-- The other 1979 contract problems on both compilers side by side, with
-  simulated interrupts for problems 1, 2 and 4 (DTIC was down for maintenance
-  when the Blue and Yellow volume was tried).
+  DTIC was down for maintenance on 12 October 2026.
 - RED in the browser: redc is plain C, so the open question is a C back end
   in WebAssembly or an interpreter.
 - The Rational R1000 emulator, to measure the cost of a rendezvous on the

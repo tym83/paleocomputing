@@ -35,4 +35,6 @@ cc -std=gnu11 -Irt program.c rt/paleo.c -lpthread -lm -o program
 ./program
 ```
 
+If you have Cozystack at hand, you don't need to install anything. The series' application catalog has an environment for languages, and RED and GREEN arrived there as a separate image: you specify the `ada-colors-run` image, put in a source file, and the program runs as a one-off job whose output becomes its log. When the image is built, both compilers go the whole way from their seeds again and check that they reproduce themselves.
+
 None of this runs in the browser yet. The RED compiler is written in RED and translates into plain C, so building it for WebAssembly isn't hard. The catch is that a RED program is itself translated into C, so the browser also needs a C compiler. That's a job for next time.
