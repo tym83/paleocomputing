@@ -67,7 +67,7 @@ jobs:
 
       - name: Disk images (cached)
         id: disks
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: /tmp/disks
           key: r1000-pam-disks-${{ env.DISK0_SHA }}-${{ env.DISK1_SHA }}
@@ -83,6 +83,14 @@ jobs:
           echo "$DISK1_SHA  /tmp/disks/disk1.bin" | sha256sum -c
           ls -l /tmp/disks
 
+      # saved at once: the job itself may run into its time limit
+      - name: Keep the disk images
+        if: steps.disks.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /tmp/disks
+          key: ${{ steps.disks.outputs.cache-primary-key }}
+
       - name: Build the emulator
         run: |
           set -eu
@@ -91,9 +99,13 @@ jobs:
           cd /tmp/emu/SwEmulator
           make setup
           # glibc hides usleep and cfmakeraw under -std=c23 without
-          # _GNU_SOURCE, and has no fls/flsll (linux_compat.h)
-          printf 'CFLAGS += -D_GNU_SOURCE -include %s\n' \
-            "$GITHUB_WORKSPACE/impl/ada-colors/r1000/linux_compat.h" > ../Makefile.local
+          # _GNU_SOURCE and has no fls/flsll (linux_compat.h); the link line
+          # names -lm before the objects, which --as-needed drops
+          {
+            printf 'CFLAGS += -D_GNU_SOURCE -include %s\n' \
+              "$GITHUB_WORKSPACE/impl/ada-colors/r1000/linux_compat.h"
+            echo 'LDFLAGS += -Wl,--no-as-needed -lm'
+          } > ../Makefile.local
           make CC=gcc-14 r1000sim
           ls -l r1000sim
 
