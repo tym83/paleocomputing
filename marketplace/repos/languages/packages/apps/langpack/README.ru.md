@@ -33,3 +33,25 @@
 | `program` | `[]` | исходники: `path`, `content` |
 | `command` / `args` | `[]` | что запускать |
 | `host` | `""` | внешнее имя; в режиме `job` задавать нельзя |
+
+## RED и GREEN
+
+Образ `ada-colors-run` несёт RED и GREEN, двух финалистов конкурса DoD-1
+1979 года, у каждого компилятор написан на самом языке. Язык выбирается по
+расширению: `.red` для RED, `.grn` для GREEN. Несколько файлов одного языка
+склеиваются в порядке, заданном в `args`.
+
+```yaml
+language: RED
+image: ghcr.io/tym83/paleocomputing/ada-colors-run:dev
+mode: job
+program:
+  - path: hello.red
+    content: |
+      CAPSULE main EXPORTS NONE;
+         WRITELN("hello from 1979");
+      END CAPSULE main;
+```
+
+Вывод программы — это лог задания. Ошибка трансляции печатается сообщением
+транслятора с номером строки, и задание завершается с ошибкой.
