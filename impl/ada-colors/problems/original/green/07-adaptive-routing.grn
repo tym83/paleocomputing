@@ -1,0 +1,192 @@
+-- GREEN solution to DoD-1 sample problem 7: Adaptive Routing Algorithm for
+-- a Node within a Data Switching Network
+--
+-- Source: Honeywell Inc. Systems and Research Center / CII Honeywell Bull,
+--   "Set of Sample Problems for DOD High Order Language Program. GREEN
+--   Solutions", April 1979, DTIC ADA070752, section 7 (doc pages 7-1..7-6,
+--   PDF pages 53-58).
+--
+-- Problem (condensed):
+--   Purpose: test language suitability for multicomputer and communications
+--   applications. Program a multiprocessor within one node of a data
+--   switching network to maintain tables of (1) distances, (2) minimum
+--   delay times, and (3) routing. Each node keeps distance (hop count) and
+--   minimum-delay tables to all other nodes, updated by table exchanges
+--   between neighbours (distance one); routing goes through the neighbour
+--   giving minimum delay. In parallel, at the same periodic rate, other
+--   processes compute delays to neighbours and read in neighbours' updated
+--   tables. Initially a node knows only its neighbours (distance 1 and their
+--   delay); everything else is infinite. When a link is broken or
+--   established, a process at each of the two nodes corrects the tables.
+--   Distance is kept because on a disconnected network distances grow
+--   without limit: a distance greater than the number of nodes means
+--   infinite/unreachable. Number of nodes, neighbours and update period are
+--   compile-time constants. Actual interchange is done by library routines.
+--
+-- GREEN design notes (condensed from section 7.2):
+--   At each node a task TABLE keeps the distance/min-delay table to all
+--   other nodes (NODE_TABLE) and the routing table (NODE_ROUTE). A task
+--   UPDATE_TABLE periodically reads all neighbouring tables and computes new
+--   ones. Each node knows its neighbours through NEIGHBOR and the delay to
+--   them through NEIGHBOR_DEL; when a link is established the delay is
+--   passed to the updating task. A neighbour's table is obtained via library
+--   routine READ_NEIGHBOR_TABLE, which uses entry READ of the corresponding
+--   remote TABLE task. New tables are copied into the local TABLE task via
+--   entry WRITE; GET_ROUTE interrogates the routing table. Entries
+--   ESTABLISH_LINK and BREAK_LINK of the updating task are used when a link
+--   is created or broken.
+--
+-- Transcription note: the body calls LIBRARY.READ_NEIGHBOR_NODE although the
+-- package LIBRARY declares READ_NEIGHBOR_TABLE; this mismatch is in the
+-- original listing and is kept verbatim.
+--
+-- ---------------------------------------------------------------------------
+
+package NETWORK_INFO is
+
+   subtype NODE is INTEGER range 1..50;
+   subtype DISTANCE is INTEGER range
+            NODE'FIRST - 1 .. NODE'LAST;
+   subtype EXTENDED_NODE is DISTANCE;
+
+   type NODE_INFO is
+         record
+            DEL  : INTEGER;
+            DIST : DISTANCE;
+         end record;
+
+   type ALL_INFO   is array(NODE) of NODE_INFO;
+   type ROUTE_INFO is array(NODE) of EXTENDED_NODE;
+
+   INFINITY         : constant INTEGER := INTEGER'LAST;
+   NULL_NODE        : constant EXTENDED_NODE := NODE'FIRST - 1;
+   BASIC_PERIOD     : constant INTEGER := 60*SECONDS;
+
+   -- additional information relative to the current node
+end NETWORK_INFO;
+
+restricted(NETWORK_INFO)
+procedure MAIN is
+   use NETWORK_INFO;
+
+   ME : constant NODE := -- index of the node-id of this node;
+
+   NEIGHBOR     : array(NODE'FIRST .. NODE'LAST) of BOOLEAN := ...;
+   NEIGHBOR_DEL : array(NODE'FIRST .. NODE'LAST) of INTEGER := ...;
+   --  minimum delay time to the neighbors
+
+   package LIBRARY is
+
+      procedure READ_NEIGHBOR_TABLE(N : NODE;
+                   HIS_TABLE : out ALL_INFO);
+      -- this procedure "tele"-issues a READ for
+      -- the process TABLE of node N
+   end LIBRARY;
+
+   task UPDATE_TABLE is
+      entry ESTABLISH_LINK(N : NODE; DEL : INTEGER);
+      entry BREAK_LINK(N : NODE);
+   end UPDATE_TABLE;
+
+   task TABLE is
+      entry READ(CURR_TABLE : out ALL_INFO);
+      entry WRITE(NEW_TABLE : ALL_INFO;
+                  NEW_ROUTE : ROUTE_INFO);
+      entry GET_ROUTE(N : NODE; R : out EXTENDED_NODE);
+   end TABLE;
+
+   task body TABLE is
+
+      NODE_TABLE : ALL_INFO :=
+            (ME => (DEL => 0, DIST => 0),
+             others => (DEL => INFINITY, DIST => NODE'LAST));
+      NODE_ROUTE : ROUTE_INFO :=
+            (ME => ME, others => NULL_NODE);
+
+   begin  -- TABLE
+      loop
+         select
+            accept READ(CURR_TABLE : out ALL_INFO) do
+               CURR_TABLE := NODE_TABLE;
+            end;
+         or
+            accept WRITE(NEW_TABLE : ALL_INFO;
+                         NEW_ROUTE : ROUTE_INFO) do
+               NODE_TABLE := NEW_TABLE;
+               NODE_ROUTE := NEW_ROUTE;
+            end;
+         or
+            accept GET_ROUTE(N : NODE; R : out EXTENDED_NODE) do
+               R := NODE_ROUTE(N);
+            end;
+         end select;
+      end loop;
+   end TABLE;
+
+   task body UPDATE_TABLE is
+      HIS_TABLE : ALL_INFO;
+      MY_TABLE  : ALL_INFO :=
+               (ME => (DEL => 0, DIST => 0),
+                others => (DEL => INFINITY, DIST => NODE'LAST));
+      ROUTE : ROUTE_INFO :=
+               (ME => ME, others => NULL_NODE);
+      START_TIME : TIME;
+
+   begin -- UPDATE_TABLE
+      loop
+         START_TIME := SYSTEM'CLOCK;
+         for I in NODE'FIRST .. NODE'LAST loop
+            if NEIGHBOR(I) then
+               LIBRARY.READ_NEIGHBOR_NODE(I, HIS_TABLE);
+               for J in NODE'FIRST .. NODE'LAST loop
+                  if ROUTE(J) = I then
+                     if HIS_TABLE(J).DIST < NODE'LAST then
+                        MY_TABLE(J) :=
+                           (DIST => HIS_TABLE(J).DIST + 1,
+                            DEL  => HIS_TABLE(J).DEL +
+                                    NEIGHBOR_DEL(I));
+                     else -- node J is unreachable
+                        MY_TABLE(J) :=
+                          (DIST => NODE'LAST,
+                           DEL  => INFINITY);
+                        ROUTE(J) := NULL_NODE;
+                     end if;
+                  elsif HIS_TABLE(J).DEL /= INFINITY and then
+                     MY_TABLE(J).DEL > HIS_TABLE(J).DEL +
+                        NEIGHBOR_DEL(I) then
+                     -- establish a new ROUTE
+                     ROUTE(J) := I;
+                     MY_TABLE(J) :=
+                          (DIST => HIS_TABLE(J).DIST + 1,
+                           DEL  => HIS_TABLE(J).DEL +
+                                          NEIGHBOR_DEL(I));
+                  end if;
+               end loop;
+            end if;
+         end loop;
+
+         TABLE.WRITE(MY_TABLE, ROUTE);
+         select
+            accept ESTABLISH_LINK(N : NODE; DEL : INTEGER) do
+               NEIGHBOR(N) := TRUE;
+               NEIGHBOR_DEL(N) := DEL;
+               MY_TABLE(N) := (DIST => 1, DEL => DEL);
+               ROUTE(N) := N;
+            end;
+         or
+            accept BREAK_LINK(N : NODE) do
+               NEIGHBOR(N) := FALSE;
+               for I in NODE'FIRST .. NODE'LAST loop
+                  if ROUTE(I) = N then
+                     MY_TABLE(I).DEL := INFINITY;
+                  end if;
+               end loop;
+            end;
+         end select;
+         delay START_TIME + BASIC_PERIOD - SYSTEM'CLOCK;
+      end loop;
+   end UPDATE_TABLE;
+
+begin  -- MAIN
+   initiate UPDATE_TABLE, TABLE;
+end;

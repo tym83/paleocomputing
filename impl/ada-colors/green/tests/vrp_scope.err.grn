@@ -1,0 +1,11 @@
+procedure MAIN is
+   N : INTEGER := 0;
+   X : INTEGER;
+   procedure GEN return INTEGER is
+   begin
+      N := N + 1;
+      return N;
+   end GEN;
+begin
+   X := GEN;
+end MAIN;

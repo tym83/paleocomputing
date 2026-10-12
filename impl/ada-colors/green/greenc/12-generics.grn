@@ -1,0 +1,322 @@
+   -- ---- generics (RM79 12) -------------------------------------------------------------
+   --
+   -- A generic unit is used only through an explicit instantiation:
+   --    procedure SWAP is new EXCHANGE(ELEM is INTEGER);
+   --    package STACK_INT is new STACK(SIZE := 200, ELEM is INTEGER);
+   -- Each instantiation translates the generic text again, with the formal
+   -- parameters bound to the actual ones.
+
+   -- generic [( generic_parameter { ; generic_parameter } )] unit (RM79 12.1);
+   -- a generic parameter is an n_param whose IVAL is 1 (object), 10 (type)
+   -- or 11 (subprogram, its specification in A, a default name in B)
+   procedure GENERIC_P(RES : out NODE) is
+      X, P, HEAD, TAIL, NAMES, ST, DEF, SUB : NODE;
+      DEF_NAME_TEXT : TEXT;
+      MORE : BOOLEAN := TRUE;
+   begin
+      EXPECT_KW("GENERIC");
+      X := NN(N_GENERIC, CUR_LINE);
+      if AT_OP("(") then
+         SKIP;
+         while MORE loop
+            if AT_KW("RESTRICTED") then
+               SKIP;
+            end if;
+            if AT_KW("TYPE") then
+               SKIP;
+               P := NN(N_PARAM, CUR_LINE);
+               P.IVAL := 10;
+               EXPECT_ID(P.NAME);
+               APPEND(HEAD, TAIL, P);
+            elsif AT_KW("PROCEDURE") or AT_KW("FUNCTION") then
+               P := NN(N_PARAM, CUR_LINE);
+               P.IVAL := 11;
+               if AT_KW("PROCEDURE") then
+                  SUB := NN(N_PROC, CUR_LINE);
+               else
+                  SUB := NN(N_FUNC, CUR_LINE);
+               end if;
+               SKIP;
+               DESIGNATOR(SUB.NAME);
+               if AT_OP("(") then
+                  FORMAL_PART(SUB.A);
+               end if;
+               if AT_KW("RETURN") then
+                  SKIP;
+                  SUBTYPE_IND(SUB.B);
+               end if;
+               SUB.IVAL := 1;
+               P.NAME := SUB.NAME;
+               P.A := SUB;
+               if AT_KW("IS") then
+                  SKIP;
+                  if AT_KIND(K_STR) then
+                     DESIGNATOR(DEF_NAME_TEXT);
+                     P.B := NN(N_NAME, CUR_LINE);
+                     P.B.NAME := DEF_NAME_TEXT;
+                  else
+                     NAME_P(P.B);
+                  end if;
+               end if;
+               APPEND(HEAD, TAIL, P);
+            else
+               ID_LIST(NAMES);
+               EXPECT_OP(":");
+               if AT_KW("IN") then
+                  SKIP;
+               end if;
+               SUBTYPE_IND(ST);
+               DEF := null;
+               if AT_OP(":=") then
+                  SKIP;
+                  EXPR(DEF);
+               end if;
+               while NAMES /= null loop
+                  P := NN(N_PARAM, NAMES.LINE);
+                  P.IVAL := 1;
+                  P.NAME := NAMES.NAME;
+                  P.A := ST;
+                  P.B := DEF;
+                  APPEND(HEAD, TAIL, P);
+                  NAMES := NAMES.NEXT;
+               end loop;
+            end if;
+            MORE := AT_OP(";");
+            if MORE then
+               SKIP;
+            end if;
+         end loop;
+         EXPECT_OP(")");
+      end if;
+      if AT_KW("PROCEDURE") or AT_KW("FUNCTION") then
+         SUBPROGRAM(X.B);
+      elsif AT_KW("PACKAGE") then
+         PACKAGE_P(X.B);
+      elsif AT_KW("TASK") then
+         TASK_P(X.B);
+      else
+         PERROR("a generic unit is a subprogram, a package or a task");
+      end if;
+      X.A := HEAD;
+      X.NAME := X.B.NAME;
+      RES := X;
+   end GENERIC_P;
+
+   -- ... is new G [( generic_association { , generic_association } )]; (RM79 12.2)
+   -- an association "F is name" is marked FLAG 5
+   procedure INSTANTIATION(X : NODE; RES : out NODE) is
+      I, HEAD, TAIL, A : NODE;
+      FORMAL : TEXT;
+      MARK : INTEGER;
+      MORE : BOOLEAN := TRUE;
+   begin
+      EXPECT_KW("IS");
+      EXPECT_KW("NEW");
+      I := NN(N_INST, X.LINE);
+      I.NAME := X.NAME;
+      I.IVAL := X.KIND;
+      EXPECT_ID(I.TAG);
+      if AT_OP("(") then
+         SKIP;
+         while MORE loop
+            FORMAL := null;
+            MARK := 0;
+            if AT_KIND(K_ID) and KIND_AT(1) = K_KW and TEXT_AT(1) = "IS" then
+               EXPECT_ID(FORMAL);
+               SKIP;
+               MARK := 5;
+            elsif AT_KIND(K_ID) and KIND_AT(1) = K_OP and (TEXT_AT(1) = ":=" or TEXT_AT(1) = "=:"
+               or TEXT_AT(1) = ":=:") then
+               EXPECT_ID(FORMAL);
+               SKIP;
+               MARK := 1;
+            end if;
+            if AT_KIND(K_STR) and MARK = 5 then
+               A := NN(N_NAME, CUR_LINE);
+               DESIGNATOR(A.NAME);
+            else
+               EXPR(A);
+            end if;
+            A.TAG := FORMAL;
+            A.FLAG := MARK;
+            APPEND(HEAD, TAIL, A);
+            MORE := AT_OP(",");
+            if MORE then
+               SKIP;
+            end if;
+         end loop;
+         EXPECT_OP(")");
+      end if;
+      EXPECT_OP(";");
+      I.A := HEAD;
+      RES := I;
+   end INSTANTIATION;
+
+   -- ---- code ------------------------------------------------------------------------
+
+   procedure GENERIC_DECL(E : NODE) is
+      Y : SYM;
+   begin
+      if E.KIND = N_GENERIC then
+         Y := NEW_SYM(Y_GENERIC, E.NAME);
+         Y.DECL := E;
+         DEFINE(Y, E.LINE);
+      elsif E.KIND = N_INST then
+         INSTANTIATE(E);
+      else
+         FAIL(E.LINE, "this declaration is not handled");
+      end if;
+   end GENERIC_DECL;
+
+   -- a body for a generic unit declared earlier is kept for its instantiations
+   function IS_GENERIC_NAME(N : STRING) return BOOLEAN is
+      Y : SYM := LOOKUP(N);
+   begin
+      return Y /= null and then Y.KIND = Y_GENERIC;
+   end IS_GENERIC_NAME;
+
+   procedure ATTACH_GENERIC_BODY(E : NODE) is
+      Y : SYM := LOOKUP(E.NAME.all);
+   begin
+      Y.DECL.C := E;
+   end ATTACH_GENERIC_BODY;
+
+   -- the actual for generic formal P: positional by number, or named
+   function GACTUAL(ARGS : NODE; NTH : INTEGER; NAME : STRING) return NODE is
+      A : NODE := ARGS;
+      I : INTEGER := 1;
+   begin
+      while A /= null loop
+         if A.TAG = null and I = NTH then
+            return A;
+         end if;
+         if A.TAG /= null and then A.TAG.all = NAME then
+            return A;
+         end if;
+         if A.TAG = null then
+            I := I + 1;
+         end if;
+         A := A.NEXT;
+      end loop;
+      return null;
+   end GACTUAL;
+
+   procedure COPY_NODE(N : NODE; NAME : TEXT; R : out NODE) is
+   begin
+      R := NN(N.KIND, N.LINE);
+      R.all := N.all;
+      R.NAME := NAME;
+      R.NEXT := null;
+   end COPY_NODE;
+
+   procedure INSTANTIATE(E : NODE) is
+      G : SYM := LOOKUP(E.TAG.all);
+      GD, PAT, F, A, CN : NODE;
+      Y, Z, FS : SYM;
+      NTH : INTEGER := 1;
+      T, VT : TYP;
+      C : CONS;
+      V, ACC, X : TEXT;
+      OK : BOOLEAN;
+   begin
+      if G = null or else G.KIND /= Y_GENERIC then
+         FAIL(E.LINE, E.TAG.all & " is not a generic unit");
+      end if;
+      GD := G.DECL;
+      PAT := GD.B;
+      OPEN_SCOPE;
+      F := GD.A;
+      while F /= null loop
+         A := GACTUAL(E.A, NTH, F.NAME.all);
+         NTH := NTH + 1;
+         if F.IVAL = 10 then
+            -- a type: the formal names the actual type
+            if A = null or else A.KIND /= N_NAME then
+               FAIL(E.LINE, "a type is required for generic parameter " & F.NAME.all);
+            end if;
+            Y := LOOKUP(A.NAME.all);
+            if Y = null or else Y.KIND /= Y_TYPE then
+               FAIL(E.LINE, A.NAME.all & " is not a type");
+            end if;
+            COPY_SYM(Y, Z);
+            Z.NAME := F.NAME;
+            DEFINE(Z, E.LINE);
+         elsif F.IVAL = 11 then
+            -- a subprogram matching the formal's specification (RM79 12.2)
+            if A = null then
+               A := F.B;
+            end if;
+            if A = null or else A.KIND /= N_NAME then
+               FAIL(E.LINE, "a subprogram is required for generic parameter " & F.NAME.all);
+            end if;
+            BUILD_SUBPROGRAM(F.A, FS);
+            Y := TABLE(HASH(A.NAME.all));
+            while Y /= null and then not (Y.NAME.all = A.NAME.all and then (Y.KIND = Y_FUNC or Y.KIND = Y_PROC)
+               and then SAME_SIGNATURE(Y.PARAMS, FS.PARAMS) and then SAME(Y.RESULT, FS.RESULT)) loop
+               Y := Y.CHAIN;
+            end loop;
+            if Y = null then
+               FAIL(E.LINE, "no subprogram " & A.NAME.all & " matches generic parameter " & F.NAME.all);
+            end if;
+            COPY_SYM(Y, Z);
+            Z.NAME := F.NAME;
+            DEFINE(Z, E.LINE);
+         else
+            -- an object: a constant holding the actual value
+            if A = null then
+               A := F.B;
+            end if;
+            if A = null then
+               FAIL(E.LINE, "no actual for generic parameter " & F.NAME.all);
+            end if;
+            RESOLVE(F.A, T, C);
+            GEXPR(A, T, VT, V);
+            CHECK_TYPE(VT, T, E.LINE);
+            Z := NEW_SYM(Y_CONST, F.NAME);
+            STORAGE(F.NAME.all, T, ACC);
+            COPY_CODE(T, V.all, X);
+            EMIT(ACC.all & " = " & X.all & ";");
+            Z.T := T;
+            Z.C := C;
+            Z.RO := TRUE;
+            if T.KIND = T_INT then
+               MANIFEST(A, Z.MVALUE, OK);
+               Z.HASMV := OK;
+            end if;
+            BIND(Z, ACC);
+            DEFINE(Z, E.LINE);
+         end if;
+         F := F.NEXT;
+      end loop;
+      if PAT.KIND = N_PROC or PAT.KIND = N_FUNC then
+         if PAT.IVAL = 1 then
+            if GD.C = null then
+               FAIL(E.LINE, "the body of generic " & E.TAG.all & " is not given before this instantiation");
+            end if;
+            PAT := GD.C;
+         end if;
+         COPY_NODE(PAT, E.NAME, CN);
+         BUILD_SUBPROGRAM(CN, Y);
+         DEFINE(Y, E.LINE);
+         SUBPROGRAM_BODY(CN, Y);
+      elsif PAT.KIND = N_PKGSPEC then
+         COPY_NODE(PAT, E.NAME, CN);
+         PACKAGE_SPEC(CN);
+         Y := LOOKUP(E.NAME.all);
+         if GD.C /= null then
+            COPY_NODE(GD.C, E.NAME, CN);
+            PACKAGE_BODY(CN);
+         end if;
+      else
+         COPY_NODE(PAT, E.NAME, CN);
+         TASK_SPEC(CN);
+         Y := LOOKUP(E.NAME.all);
+         if GD.C = null then
+            FAIL(E.LINE, "the body of generic task " & E.TAG.all & " is not given before this instantiation");
+         end if;
+         COPY_NODE(GD.C, E.NAME, CN);
+         TASK_BODY(CN);
+      end if;
+      CLOSE_SCOPE;
+      DEFINE(Y, E.LINE);
+   end INSTANTIATE;

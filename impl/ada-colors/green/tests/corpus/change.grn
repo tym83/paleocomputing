@@ -1,0 +1,32 @@
+-- INTRO 1979 Example 1.2, unchanged
+restricted (TEXT_IO)
+procedure COUNT_YOUR_CHANGE is
+   use TEXT_IO;
+   -- This program reads in 6 integer values, respectively
+   -- representing the number of pennies, nickels, dimes, quarters,
+   -- half dollars, and silver dollars in coinage.
+   -- The program outputs the total value of the coins in dollars
+   -- and cents.
+   COIN_COUNT,
+   TOTAL_CHANGE,
+   NUM_CENTS,
+   NUM_DOLLARS : INTEGER;
+   COIN_VALUE : constant array (1..6) of INTEGER :=
+                (01, 05, 10, 25, 50, 100);
+begin
+   TOTAL_CHANGE := 0;
+   for NEXT_COIN in 1..6 loop
+      GET(COIN_COUNT);
+      TOTAL_CHANGE := TOTAL_CHANGE + COIN_VALUE(NEXT_COIN)*COIN_COUNT;
+   end loop;
+   if TOTAL_CHANGE = 0 then
+      PUT("NO CHANGE");
+   else
+      NUM_DOLLARS := TOTAL_CHANGE/100;
+      NUM_CENTS   := TOTAL_CHANGE mod 100;
+      PUT("CHANGE IS $");
+      PUT(NUM_DOLLARS);
+      PUT(".");
+      PUT(NUM_CENTS);
+   end if;
+end;

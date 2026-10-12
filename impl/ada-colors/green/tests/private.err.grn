@@ -1,0 +1,15 @@
+package P is
+   type T is private;
+private
+   type T is record
+      SECRET : INTEGER;
+   end record;
+end P;
+package body P is
+end P;
+procedure MAIN is
+   use P;
+   X : T;
+begin
+   X.SECRET := 1;
+end MAIN;

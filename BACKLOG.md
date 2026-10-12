@@ -3,7 +3,7 @@
 # Project backlog
 
 Statuses: `idea` / `research` / `in progress` / `done` / `dropped`
-Updated: 2026-09-25
+Updated: 2026-10-12
 
 ---
 
@@ -19,7 +19,7 @@ Updated: 2026-09-25
 | 3b2 | **Episode #2: a language model on RISC5 + replacing the FP multiplier** | 3 | after the flagship | everything exists | design and measurements: `13-episode-lm-on-risc5.md`, findings 72–78. Measured on RTL: the fast multiplier gives 1.60× (1 cycle) / 1.57× (2 cycles), the ceiling with free multiplication is 1.64×, so the earlier "1.67×" is unreachable; FMAC by profile 1.015–1.064× (estimate). The next bottleneck is `LD`/`ST` from a code generator without register allocation | in progress |
 | 3c | **Episode #2–3: overflow does not exist (B5500 / x86 / CHERI)** | 1 | an evening (min.) to several days (triptych) | emulator and ALGOL ready | see `10-episode-burroughs.md` | idea |
 | 3d | **Descriptors in RISC5: measure the real cost of hardware memory safety** | 3 | after the flagship | — | numbers nobody has; turns the series into research | prototype and measurements: `14-episode-descriptors.md`, findings 80–84 |
-| 3e | **"Two Adas": the contract problems, RED and GREEN solutions side by side** | 2 | days | ✅ both document sets found | requires no code at all | idea |
+| 3e | **"Two Adas": the contract problems, RED and GREEN solutions side by side** | 2 | days | ✅ both document sets found | all 20 solutions transcribed and compared ([`impl/ada-colors/problems/`](impl/ada-colors/problems/README.md)); RED C.1 and problem 6 run; see `17-episode-red-green.md` | in progress |
 | 4 | **The reflective tower (3-Lisp anew)** | paradigms | a week | papers exist | an episode that breaks the worldview | idea |
 | 5 | **Dijkstra's THE on GNAT** | 1(D)+2 | 2–4 weeks | one paper | testing the reconstruction genre on a minimal target | idea |
 | 6 | **Reproduce Project Oberon from the book** | 3 | a month | everything exists | calibration: the whole cycle from ISA to GUI is understood | idea |
@@ -30,8 +30,8 @@ Updated: 2026-09-25
 | 11 | **Our own Oberon machine board (iCE40 + SRAM, hand soldering)** | 3 | months | everything exists | **an empty niche: there is no open kit to build** | idea |
 | 12 | **Magic Cap: a 68349 emulator + Magic Link peripherals** | 1(C) | large | ROMs with collectors (to check) | Telescript agents live | idea |
 | 13 | **A level-3 C interpreter (provenance + UB + replay)** | cross-cutting | large | the standard | a precise UB detector; the shadow memory is reused in item 3 | idea |
-| 14 | **Ada Red: frontend** | 2 | 3–6 months part-time | ✅ spec, rationale, syntax diagrams, test problems and examples: everything exists | the first publicly available RED compiler in history | research |
-| 15 | **A Tandem NonStop style kernel in Ada Red** | 1(D)+2 | after item 14 | Bartlett SOSP'81 + Gray 1985 | alternative history, process pairs live | idea |
+| 14 | **Ada Red: frontend** | 2 | 3–6 months part-time | ✅ spec, rationale, syntax diagrams, test problems and examples: everything exists | redc, a RED compiler written in RED, at a fixed point; GREEN gets the same (`17-episode-red-green.md`) | **done** |
+| 15 | **A Tandem NonStop style kernel in Ada Red** | 1(D)+2 | after item 14 | Bartlett SOSP'81 + Gray 1985 | PAIRS ([`impl/ada-colors/os/pairs.red`](impl/ada-colors/os/pairs.red)), plus the Kubernetes control plane as a process pair | **done** |
 | 16 | **Energy in the type system: working out the concept** | paradigms | a week of research | no predecessors | find out whether the idea works or falls apart | idea |
 | 17 | **Linda / tuple space as a language** | paradigms+4 | medium | theory exists | possibly the same idea as item 1, from the other side | idea |
 | 18 | **Reduceron on an FPGA** | 3 | medium | alive, documented | hardware graph reduction | idea |

@@ -1,0 +1,198 @@
+   -- ---- the predefined environment: package STANDARD (RM79 App. C) ---------------
+
+   procedure PREDEF_TYPE(NAME : STRING; T : TYP; LO, HI : STRING) is
+      Y : SYM;
+   begin
+      Y := NEW_SYM(Y_TYPE, MK(NAME));
+      Y.T := T;
+      if LO'LENGTH > 0 then
+         Y.C := NEW_CONS;
+         Y.C.LO := MK(LO);
+         Y.C.HI := MK(HI);
+      end if;
+      DEFINE(Y, 0);
+   end PREDEF_TYPE;
+
+   procedure PREDEF_CONST(NAME : STRING; T : TYP; CODE_TEXT : STRING) is
+      Y : SYM;
+   begin
+      Y := NEW_SYM(Y_CONST, MK(NAME));
+      Y.T := T;
+      Y.RO := TRUE;
+      Y.ACCESS_PATH := MK(CODE_TEXT);
+      DEFINE(Y, 0);
+   end PREDEF_CONST;
+
+   procedure PREDEF_EXC(NAME : STRING) is
+      Y : SYM;
+   begin
+      Y := NEW_SYM(Y_EXC, MK(NAME));
+      Y.CNAME := MK("rt_exc(" & Q & NAME & Q & ")");
+      DEFINE(Y, 0);
+   end PREDEF_EXC;
+
+   procedure PREDEF_LIT(NAME : STRING; T : TYP; V : INTEGER) is
+      Y : SYM;
+   begin
+      Y := NEW_SYM(Y_ENUMLIT, MK(NAME));
+      Y.T := T;
+      Y.RESULT := T;
+      Y.MVALUE := V;
+      Y.HASMV := TRUE;
+      DEFINE(Y, 0);
+   end PREDEF_LIT;
+
+   procedure PREDEFINE is
+      CONTROL : constant STRING := "NUL SOH STX ETX EOT ENQ ACK BEL BS HT LF VT FF CR SO SI DLE "
+         & "DC1 DC2 DC3 DC4 NAK SYN ETB CAN EM SUB ESC FS GS RS US ";
+      START : INTEGER := 1;
+      CODE_NO : INTEGER := 0;
+   begin
+      PREDEF_TYPE("INTEGER", TY_INT, "", "");
+      PREDEF_TYPE("SHORT_INTEGER", TY_INT, "", "");
+      PREDEF_TYPE("LONG_INTEGER", TY_INT, "", "");
+      -- NATURAL starts at 1 (RM79 3.6.3)
+      PREDEF_TYPE("NATURAL", TY_INT, "1", "INT64_MAX");
+      PREDEF_TYPE("PRIORITY", TY_INT, "0", "255");
+      PREDEF_TYPE("BOOLEAN", TY_BOOL, "0", "1");
+      PREDEF_TYPE("CHARACTER", TY_CHAR, "0", "127");
+      PREDEF_TYPE("STRING", TY_STRING, "", "");
+      PREDEF_TYPE("FLOAT", TY_FLOAT, "", "");
+      PREDEF_TYPE("SHORT_FLOAT", TY_FLOAT, "", "");
+      PREDEF_TYPE("LONG_FLOAT", TY_FLOAT, "", "");
+      PREDEF_TYPE("TIME", TY_FLOAT, "", "");
+      PREDEF_LIT("FALSE", TY_BOOL, 0);
+      PREDEF_LIT("TRUE", TY_BOOL, 1);
+      -- the control characters are identifiers of CHARACTER
+      for I in 1 .. CONTROL'LENGTH loop
+         if CONTROL(I) = " " then
+            PREDEF_CONST(CONTROL(START .. I - 1), TY_CHAR, INTEGER'REP(CODE_NO));
+            CODE_NO := CODE_NO + 1;
+            START := I + 1;
+         end if;
+      end loop;
+      PREDEF_CONST("DEL", TY_CHAR, "127");
+      PREDEF_CONST("EXCLAM", TY_CHAR, "33");
+      PREDEF_CONST("DOLLAR", TY_CHAR, "36");
+      PREDEF_CONST("QUESTION", TY_CHAR, "63");
+      PREDEF_CONST("AT_SIGN", TY_CHAR, "64");
+      PREDEF_CONST("L_BRACKET", TY_CHAR, "91");
+      PREDEF_CONST("BACK_SLASH", TY_CHAR, "92");
+      PREDEF_CONST("R_BRACKET", TY_CHAR, "93");
+      PREDEF_CONST("CIRCUMFLEX", TY_CHAR, "94");
+      PREDEF_CONST("GRAVE", TY_CHAR, "96");
+      PREDEF_CONST("L_BRACE", TY_CHAR, "123");
+      PREDEF_CONST("R_BRACE", TY_CHAR, "125");
+      PREDEF_CONST("TILDE", TY_CHAR, "126");
+      for I in 0 .. 25 loop
+         PREDEF_CONST("LC_" & CHARACTER'VAL(66 + I), TY_CHAR, INTEGER'REP(97 + I));
+      end loop;
+      -- TEXT_IO (RM79 14.3): NEWLINE is a string constant, used as PUT(NEWLINE)
+      PREDEF_CONST("NEWLINE", TY_STRING, "rt_str(" & Q & "\n" & Q & ", 1)");
+      PREDEF_CONST("SECONDS", TY_FLOAT, "((double)RT_SECONDS)");
+      -- the predefined exceptions (RM79 11.1) and END_OF_FILE (RM79 14.2)
+      PREDEF_EXC("ACCESS_ERROR");
+      PREDEF_EXC("ASSERT_ERROR");
+      PREDEF_EXC("DISCRIMINANT_ERROR");
+      PREDEF_EXC("DIVIDE_ERROR");
+      PREDEF_EXC("FAILURE");
+      PREDEF_EXC("INDEX_ERROR");
+      PREDEF_EXC("INITIATE_ERROR");
+      PREDEF_EXC("NO_VALUE_ERROR");
+      PREDEF_EXC("OVERFLOW");
+      PREDEF_EXC("OVERLAP_ERROR");
+      PREDEF_EXC("RANGE_ERROR");
+      PREDEF_EXC("SELECT_ERROR");
+      PREDEF_EXC("STORAGE_OVERFLOW");
+      PREDEF_EXC("TASKING_ERROR");
+      PREDEF_EXC("UNDERFLOW");
+      PREDEF_EXC("END_OF_FILE");
+   end PREDEFINE;
+
+   -- ---- compilation units (RM79 10) ---------------------------------------------
+
+   procedure TRANSLATE(U : NODE) is
+      P : NODE := U;
+      Y : SYM;
+   begin
+      OPEN_SCOPE;
+      while P /= null loop
+         if P.NEXT = null then
+            -- the main program: a library procedure without parameters
+            if P.KIND /= N_PROC or P.A /= null then
+               FAIL(P.LINE, "the main program is a procedure without parameters");
+            end if;
+            BUILD_SUBPROGRAM(P, Y);
+            DEFINE(Y, P.LINE);
+            SUBPROGRAM_BODY(P, Y);
+            MAIN_NAME := Y.CNAME;
+         else
+            DECL_ELEMENT(P);
+         end if;
+         P := P.NEXT;
+      end loop;
+   end TRANSLATE;
+
+   procedure PRINT_PROGRAM is
+   begin
+      EMIT_HELPERS;
+      PUT("#include " & Q & "paleo.h" & Q);
+      PUT(NEWLINE);
+      PUT("#include <math.h>");
+      PUT(NEWLINE);
+      PRINT_BUFFER(OUT_TYPES);
+      PRINT_BUFFER(OUT_FRAMES);
+      PRINT_BUFFER(OUT_HELPERS);
+      PRINT_BUFFER(OUT_PROTOS);
+      PRINT_BUFFER(OUT_GLOBALS);
+      PRINT_BUFFER(OUT_FUNCS);
+      PUT("int main(int argc, char **argv) {");
+      PUT(NEWLINE);
+      PUT("  rt_init(argc, argv);");
+      PUT(NEWLINE);
+      PUT("  rt_set_lang(1);");
+      PUT(NEWLINE);
+      PRINT_BUFFER(OUT_EXCS);
+      PRINT_BUFFER(OUT_INIT);
+      PUT("  " & MAIN_NAME.all & "();");
+      PUT(NEWLINE);
+      PRINT_BUFFER(OUT_AWAITS);
+      PUT("  rt_main_done();");
+      PUT(NEWLINE);
+      PUT("  return 0;");
+      PUT(NEWLINE);
+      PUT("}");
+      PUT(NEWLINE);
+   end PRINT_PROGRAM;
+
+begin
+   OUT_TYPES := NEW_BUFFER;
+   OUT_FRAMES := NEW_BUFFER;
+   OUT_HELPERS := NEW_BUFFER;
+   OUT_PROTOS := NEW_BUFFER;
+   OUT_GLOBALS := NEW_BUFFER;
+   OUT_FUNCS := NEW_BUFFER;
+   OUT_INIT := NEW_BUFFER;
+   OUT_EXCS := NEW_BUFFER;
+   CODE := OUT_INIT;
+   NO_CONS := NEW_CONS;
+   TY_INT := NEW_TYP(T_INT);
+   TY_BOOL := NEW_TYP(T_BOOL);
+   TY_FLOAT := NEW_TYP(T_FLOAT);
+   TY_CHAR := NEW_TYP(T_CHAR);
+   TY_STRING := NEW_TYP(T_STRING);
+   TY_VOID := NEW_TYP(T_VOID);
+   TY_NIL := NEW_TYP(T_NIL);
+   TY_ACT := NEW_TYP(T_ACT);
+   TY_TDECL := NEW_TYP(T_TDECL);
+   TY_ENTRY := NEW_TYP(T_ENTRY);
+   OUT_AWAITS := NEW_BUFFER;
+   PREDEFINE;
+   READ_SOURCE;
+   COMPILATION(UNITS);
+   if UNITS = null then
+      FAIL(1, "the compilation is empty");
+   end if;
+   TRANSLATE(UNITS);
+   PRINT_PROGRAM;
+end GREENC;

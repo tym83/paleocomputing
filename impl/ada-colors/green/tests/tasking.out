@@ -1,0 +1,12 @@
+sum 150
+initiating an active task: INITIATE_ERROR
+ping
+ping
+no ping for two seconds
+watcher active:  FALSE
+calling a terminated task: TASKING_ERROR
+sleeper: FAILURE raised from outside
+server saw DIVIDE_ERROR
+caller saw DIVIDE_ERROR
+10 / 3 = 3
+end of main

@@ -123,6 +123,15 @@ language before it became a standard.
 ### One more source
 Mary Van Deusen's article on the RED type system, published later in SIGPLAN Notices.
 
+## Update 2026-10-12: two more GREEN documents, and the episode
+
+The DTIC mirror on the Internet Archive also holds `DTIC_ADA071761`, the
+*Preliminary Ada Reference Manual* of May 1979 with the Duncan letter announcing
+the choice, and `DTIC_ADA073662`, the *Rationale for the Design of the GREEN
+Programming Language* of 15 March 1979. Both RED and GREEN are now rebuilt,
+each with a compiler written in itself: see
+[`17-episode-red-green.md`](17-episode-red-green.md).
+
 ## What RED actually is
 
 From the introduction: a language for embedded US DoD applications per the Steelman requirements, combining

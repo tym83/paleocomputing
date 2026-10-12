@@ -1,0 +1,1 @@
+may not assign to COUNT, which is not local to it (RM79 6.5)

@@ -1,0 +1,34 @@
+[English version](README.md)
+
+# RED и GREEN
+
+Два финалиста конкурса языков DoD-1 Министерства обороны США 1979 года,
+собранные заново по их документам. GREEN победил и стал Адой, RED (Intermetrics)
+исчез. Эпизод описан в [`17-episode-red-green.ru.md`](../../17-episode-red-green.ru.md).
+
+| Каталог | Что там |
+|---|---|
+| `rt/` | Рантайм на C, с которым собираются оба компилятора. Его планировщик точно следует правилам RED, а часы виртуальные, поэтому каждый запуск печатает одно и то же |
+| `red/boot/` | Затравка RED на Python (только для genesis) |
+| `red/redc/` | redc, компилятор RED, написанный на RED. `red/seed/redc.c` — то, что последний redc сделал из себя |
+| `red/tests/` | Тесты RED с ожидаемым выводом |
+| `green/` | То же для GREEN: затравка, greenc на GREEN, семя, тесты, примеры INTRO 1979 года |
+| `os/` | PAIRS, ядро в стиле Tandem NonStop на RED |
+| `kube/` | Управляющий цикл Kubernetes на RED, в виде процессной пары и на GREEN |
+| `labs/` | Одиннадцать упражнений с проверкой |
+| `problems/` | Десять контрольных задач DoD: заметки и сравнение; `run/` делает оригиналы 1979 года работающими |
+| `ada83/` | Те же ситуации на Аде 83, для GNAT `-gnat83` |
+| `notes/` | Грамматика RED, дайджест GREEN, история, находки по GREEN |
+
+```sh
+make                   # redc из семени, дважды; файлы C должны совпасть
+make genesis           # первый шаг, от затравки на Python
+red/tests/run.sh
+make -C green fixpoint test genesis
+os/run.sh              # PAIRS и три цикла Kubernetes
+labs/check.sh 03 look
+```
+
+Нужны компилятор C, make, Python 3 (только для genesis) и perl (для таймаутов).
+Оригиналов 1979 года из `problems/original/` в git нет; откуда они берутся,
+написано в `problems/README.md`.

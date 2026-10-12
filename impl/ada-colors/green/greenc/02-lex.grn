@@ -1,0 +1,340 @@
+   -- ---- small helpers ----------------------------------------------------------
+
+   -- an allocator may not appear in a function body (RM79 6.5): MK is a
+   -- value-returning procedure
+   procedure MK(S : STRING) return TEXT is
+   begin
+      return new STRING(S);
+   end MK;
+
+   procedure NEW_NAME(BASE : STRING; RES : out TEXT) is
+   begin
+      SERIAL := SERIAL + 1;
+      RES := new STRING(BASE & INTEGER'REP(SERIAL));
+      return;
+   end NEW_NAME;
+
+   function IS_LETTER(C : CHARACTER) return BOOLEAN is
+   begin
+      return (C >= "A" and C <= "Z") or (C >= "a" and C <= "z");
+   end IS_LETTER;
+
+   function IS_DIGIT(C : CHARACTER) return BOOLEAN is
+   begin
+      return C >= "0" and C <= "9";
+   end IS_DIGIT;
+
+   function UPPER(C : CHARACTER) return CHARACTER is
+   begin
+      if C >= "a" and C <= "z" then
+         return CHARACTER'VAL(CHARACTER'ORD(C) - 32);
+      end if;
+      return C;
+   end UPPER;
+
+   function LOWER_S(S : STRING) return STRING is
+      R : STRING := S;
+   begin
+      for I in 1 .. S'LENGTH loop
+         if R(I) >= "A" and R(I) <= "Z" then
+            R(I) := CHARACTER'VAL(CHARACTER'ORD(R(I)) + 32);
+         end if;
+      end loop;
+      return R;
+   end LOWER_S;
+
+   -- a record component in C: the suffix keeps clear of C keywords
+   function C_FIELD(S : STRING) return STRING is
+   begin
+      return LOWER_S(S) & "_";
+   end C_FIELD;
+
+   -- a quote character, for the C we write
+   function Q return STRING is
+   begin
+      return """";
+   end Q;
+
+   procedure FAIL(LINE : INTEGER; MSG : STRING) is
+   begin
+      if TRIAL = 0 then
+         PUT("greenc: line " & INTEGER'REP(LINE) & ": " & MSG);
+         PUT(NEWLINE);
+      end if;
+      raise COMPILE_ERROR;
+   end FAIL;
+
+   -- ---- output buffers -----------------------------------------------------------
+
+   procedure NEW_BUFFER return BUFFER is
+   begin
+      return new BUFFER_REC(null, null);
+   end NEW_BUFFER;
+
+   procedure PUT_TO(B : BUFFER; S : STRING) is
+      L : LINES;
+   begin
+      L := new LINES_REC(null, null);
+      L.S := MK(S);
+      if B.TAIL = null then
+         B.HEAD := L;
+      else
+         B.TAIL.NEXT := L;
+      end if;
+      B.TAIL := L;
+   end PUT_TO;
+
+   procedure EMIT(S : STRING) is
+   begin
+      PUT_TO(CODE, S);
+   end EMIT;
+
+   procedure PRINT_BUFFER(B : BUFFER) is
+      L : LINES := B.HEAD;
+   begin
+      while L /= null loop
+         PUT(L.S.all);
+         PUT(NEWLINE);
+         L := L.NEXT;
+      end loop;
+   end PRINT_BUFFER;
+
+   procedure SPLICE(A : BUFFER; B : BUFFER) is
+   begin
+      if B.HEAD = null then
+         return;
+      end if;
+      if A.TAIL = null then
+         A.HEAD := B.HEAD;
+      else
+         A.TAIL.NEXT := B.HEAD;
+      end if;
+      A.TAIL := B.TAIL;
+      B.HEAD := null;
+      B.TAIL := null;
+   end SPLICE;
+
+   -- ---- lexical units (RM79 2) --------------------------------------------------
+
+   -- the 62 reserved words (RM79 2.8)
+   function IS_RESERVED(W : STRING) return BOOLEAN is
+   begin
+      case W'LENGTH of
+         when 2 =>
+            return W = "AT" or W = "DO" or W = "IF" or W = "IN" or W = "IS" or W = "OF"
+               or W = "OR";
+         when 3 =>
+            return W = "ALL" or W = "AND" or W = "END" or W = "FOR" or W = "MOD" or W = "NEW"
+               or W = "NOT" or W = "OUT" or W = "USE" or W = "XOR";
+         when 4 =>
+            return W = "BODY" or W = "CASE" or W = "ELSE" or W = "EXIT" or W = "GOTO"
+               or W = "LOOP" or W = "NULL" or W = "TASK" or W = "THEN" or W = "TYPE"
+               or W = "WHEN";
+         when 5 =>
+            return W = "ABORT" or W = "ARRAY" or W = "BEGIN" or W = "DELAY" or W = "DELTA"
+               or W = "ELSIF" or W = "ENTRY" or W = "RAISE" or W = "RANGE" or W = "WHILE";
+         when 6 =>
+            return W = "ACCEPT" or W = "ACCESS" or W = "ASSERT" or W = "DIGITS" or W = "OTHERS"
+               or W = "PRAGMA" or W = "RECORD" or W = "RETURN" or W = "SELECT";
+         when 7 =>
+            return W = "DECLARE" or W = "GENERIC" or W = "PACKAGE" or W = "PACKING"
+               or W = "PRIVATE" or W = "RENAMES" or W = "REVERSE" or W = "SUBTYPE";
+         when 8 =>
+            return W = "CONSTANT" or W = "FUNCTION" or W = "INITIATE" or W = "SEPARATE";
+         when 9 =>
+            return W = "EXCEPTION" or W = "PROCEDURE";
+         when 10 =>
+            return W = "RESTRICTED";
+         when others =>
+            return FALSE;
+      end case;
+   end IS_RESERVED;
+
+   procedure ADD_TOKEN(KIND : INTEGER; S : STRING; IVAL : INTEGER) is
+   begin
+      NTOKS := NTOKS + 1;
+      TOKS(NTOKS) := new TOKEN_REC(KIND, SRC_LINE, IVAL, null);
+      TOKS(NTOKS).S := MK(S);
+   end ADD_TOKEN;
+
+   function DIGIT_VALUE(C : CHARACTER) return INTEGER is
+   begin
+      if IS_DIGIT(C) then
+         return CHARACTER'ORD(C) - CHARACTER'ORD("0");
+      end if;
+      return CHARACTER'ORD(UPPER(C)) - CHARACTER'ORD("A") + 10;
+   end DIGIT_VALUE;
+
+   procedure LEX_LINE(LINE : STRING) is
+      I : INTEGER := 1;
+      J : INTEGER := 0;
+      N : INTEGER := LINE'LENGTH;
+      C : CHARACTER;
+      V : INTEGER;
+      BUF : STRING(1 .. 1000);
+      BL : INTEGER;
+   begin
+      while I <= N loop
+         C := LINE(I);
+         if C = " " or C = HT or C = CR or C = FF then
+            I := I + 1;
+         elsif C = "-" and I < N and then LINE(I + 1) = "-" then
+            I := N + 1;                              -- a comment (RM79 2.6)
+         elsif IS_LETTER(C) then
+            J := I;
+            BL := 0;
+            while J <= N and then (IS_LETTER(LINE(J)) or IS_DIGIT(LINE(J)) or LINE(J) = "_") loop
+               BL := BL + 1;
+               BUF(BL) := UPPER(LINE(J));
+               J := J + 1;
+            end loop;
+            if IS_RESERVED(BUF(1 .. BL)) then
+               ADD_TOKEN(K_KW, BUF(1 .. BL), 0);
+            else
+               ADD_TOKEN(K_ID, BUF(1 .. BL), 0);
+            end if;
+            I := J;
+         elsif IS_DIGIT(C) then
+            -- integers, based integers without a closing #, reals (RM79 2.4)
+            J := I;
+            V := 0;
+            BL := 0;
+            while J <= N and then (IS_DIGIT(LINE(J)) or LINE(J) = "_") loop
+               if LINE(J) /= "_" then
+                  V := V * 10 + DIGIT_VALUE(LINE(J));
+                  BL := BL + 1;
+                  BUF(BL) := LINE(J);
+               end if;
+               J := J + 1;
+            end loop;
+            if J <= N and then LINE(J) = "#" then
+               declare
+                  BASE : INTEGER := V;
+               begin
+                  V := 0;
+                  J := J + 1;
+                  while J <= N and then (IS_LETTER(LINE(J)) or IS_DIGIT(LINE(J)) or LINE(J) = "_") loop
+                     if LINE(J) /= "_" then
+                        if DIGIT_VALUE(LINE(J)) >= BASE then
+                           FAIL(SRC_LINE, "digit " & LINE(J) & " is not valid in base "
+                                & INTEGER'REP(BASE) & " (RM79 2.4)");
+                        end if;
+                        V := V * BASE + DIGIT_VALUE(LINE(J));
+                     end if;
+                     J := J + 1;
+                  end loop;
+               end;
+               ADD_TOKEN(K_INT, INTEGER'REP(V), V);
+            elsif J < N and then (LINE(J) = "." and IS_DIGIT(LINE(J + 1))) then
+               BL := BL + 1;
+               BUF(BL) := ".";
+               J := J + 1;
+               while J <= N and then (IS_DIGIT(LINE(J)) or LINE(J) = "_") loop
+                  if LINE(J) /= "_" then
+                     BL := BL + 1;
+                     BUF(BL) := LINE(J);
+                  end if;
+                  J := J + 1;
+               end loop;
+               if J <= N and then (LINE(J) = "E" or LINE(J) = "e") then
+                  BL := BL + 1;
+                  BUF(BL) := "E";
+                  J := J + 1;
+                  while J <= N and then (IS_DIGIT(LINE(J)) or LINE(J) = "+" or LINE(J) = "-") loop
+                     BL := BL + 1;
+                     BUF(BL) := LINE(J);
+                     J := J + 1;
+                  end loop;
+               end if;
+               ADD_TOKEN(K_FLOAT, BUF(1 .. BL), 0);
+            elsif J < N and then ((LINE(J) = "E" or LINE(J) = "e") and IS_DIGIT(LINE(J + 1))) then
+               -- 1E6 is an approximate number (RM79 2.4)
+               BL := BL + 1;
+               BUF(BL) := "E";
+               J := J + 1;
+               while J <= N and then IS_DIGIT(LINE(J)) loop
+                  BL := BL + 1;
+                  BUF(BL) := LINE(J);
+                  J := J + 1;
+               end loop;
+               ADD_TOKEN(K_FLOAT, BUF(1 .. BL), 0);
+            else
+               ADD_TOKEN(K_INT, BUF(1 .. BL), V);
+            end if;
+            I := J;
+         elsif C = """" then
+            -- a character string; a doubled quote stands for one (RM79 2.5)
+            J := I + 1;
+            BL := 0;
+            loop
+               if J > N then
+                  FAIL(SRC_LINE, "unterminated string");
+               end if;
+               if LINE(J) = """" then
+                  exit when J = N or else LINE(J + 1) /= """";
+                  J := J + 1;
+               end if;
+               BL := BL + 1;
+               BUF(BL) := LINE(J);
+               J := J + 1;
+            end loop;
+            ADD_TOKEN(K_STR, BUF(1 .. BL), 0);
+            I := J + 1;
+         else
+            declare
+               TWO : STRING(1 .. 3) := "   ";
+            begin
+               TWO(1) := C;
+               if I < N then
+                  TWO(2) := LINE(I + 1);
+               end if;
+               if I + 1 < N then
+                  TWO(3) := LINE(I + 2);
+               end if;
+               if TWO = ":=:" then
+                  ADD_TOKEN(K_OP, ":=:", 0);
+                  I := I + 3;
+               elsif TWO(1 .. 2) = ":=" or TWO(1 .. 2) = "=:" or TWO(1 .. 2) = "=>"
+                  or TWO(1 .. 2) = ".." or TWO(1 .. 2) = "**" or TWO(1 .. 2) = "/="
+                  or TWO(1 .. 2) = "<=" or TWO(1 .. 2) = ">=" or TWO(1 .. 2) = "<<"
+                  or TWO(1 .. 2) = ">>" then
+                  ADD_TOKEN(K_OP, TWO(1 .. 2), 0);
+                  I := I + 2;
+               elsif C = "&" or C = "'" or C = "(" or C = ")" or C = "*" or C = "+"
+                  or C = "," or C = "-" or C = "." or C = "/" or C = ":" or C = ";"
+                  or C = "<" or C = "=" or C = ">" or C = "|" then
+                  ADD_TOKEN(K_OP, TWO(1 .. 1), 0);
+                  I := I + 1;
+               else
+                  FAIL(SRC_LINE, "unexpected character");
+               end if;
+            end;
+         end if;
+      end loop;
+   end LEX_LINE;
+
+   -- GET reads characters, the line ends included, until END_OF_FILE (RM79 14.3)
+   procedure READ_SOURCE is
+      BUF : STRING(1 .. 10000);
+      BL : INTEGER := 0;
+      C : CHARACTER;
+   begin
+      loop
+         GET(C);
+         if C = LF then
+            SRC_LINE := SRC_LINE + 1;
+            LEX_LINE(BUF(1 .. BL));
+            BL := 0;
+         else
+            BL := BL + 1;
+            BUF(BL) := C;
+         end if;
+      end loop;
+   exception
+      when END_OF_FILE =>
+         if BL > 0 then
+            SRC_LINE := SRC_LINE + 1;
+            LEX_LINE(BUF(1 .. BL));
+         end if;
+         ADD_TOKEN(K_EOF, "<end>", 0);
+   end READ_SOURCE;

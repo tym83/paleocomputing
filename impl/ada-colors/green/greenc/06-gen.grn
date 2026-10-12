@@ -1,0 +1,788 @@
+   -- ---- declarative parts (RM79 6.1) -------------------------------------------------
+
+   -- where a declared object lives: a global at library level, otherwise a
+   -- field of the frame of the subprogram at the current level
+   procedure STORAGE(NAME : STRING; T : TYP; ACCESS_CODE : out TEXT) is
+      CT, G : TEXT;
+   begin
+      CTYPE(T, CT);
+      if not IN_FUNC then
+         NEW_NAME("g_" & LOWER_S(NAME) & "_", G);
+         PUT_TO(OUT_GLOBALS, "static " & CT.all & " " & G.all & ";");
+         ST_FIELD := G;
+         ACCESS_CODE := G;
+      else
+         NEW_NAME(LOWER_S(NAME) & "_", G);
+         PUT_TO(FIELDS_BUF, " " & CT.all & " " & G.all & ";");
+         ST_FIELD := G;
+         ACCESS_CODE := MK("F->" & G.all);
+      end if;
+   end STORAGE;
+
+   procedure BIND(Y : SYM; ACCESS_CODE : TEXT) is
+   begin
+      if IN_FUNC then
+         Y.LEVEL := CUR_LEVEL;
+         Y.ACCESS_PATH := ST_FIELD;
+      else
+         Y.LEVEL := 0;
+         Y.ACCESS_PATH := ACCESS_CODE;
+      end if;
+   end BIND;
+
+   -- the subprograms of a declarative part may be called before their bodies:
+   -- their specifications are declared when the first body is reached
+   procedure DECLARE_SUBPROGRAMS(FROM : NODE) is
+      E : NODE := FROM;
+   begin
+      while E /= null loop
+         if (E.KIND = N_PROC or E.KIND = N_FUNC) and E.IVAL = 0 then
+            DECLARE_ONE(E);
+         end if;
+         E := E.NEXT;
+      end loop;
+   end DECLARE_SUBPROGRAMS;
+
+   -- a body completes an earlier declaration of the same subprogram, if there
+   -- is one (RM79 6.4); otherwise it declares the subprogram
+   procedure DECLARE_ONE(E : NODE) is
+      Y, Z : SYM;
+   begin
+      if IS_GENERIC_NAME(E.NAME.all) then
+         return;
+      end if;
+      BUILD_SUBPROGRAM(E, Y);
+      Z := TABLE(HASH(Y.NAME.all));
+      while Z /= null loop
+         if Z.NAME.all = Y.NAME.all and then (Z.KIND = Y_FUNC or Z.KIND = Y_PROC)
+            and then Z.DECL /= null and then Z.DECL.IVAL = 1 and then Z.DEPTH = DEPTH
+            and then SAME_SIGNATURE(Z.PARAMS, Y.PARAMS) and then SAME(Z.RESULT, Y.RESULT) then
+            Z.DECL := E;
+            return;
+         end if;
+         Z := Z.CHAIN;
+      end loop;
+      DEFINE(Y, E.LINE);
+   end DECLARE_ONE;
+
+   procedure BUILD_SUBPROGRAM(D : NODE; Y : out SYM) is
+      P : NODE := D.A;
+      PM, TAIL : PARM;
+      RC : CONS;
+      K : INTEGER := Y_PROC;
+   begin
+      if D.KIND = N_FUNC then
+         K := Y_FUNC;
+      end if;
+      Y := NEW_SYM(K, D.NAME);
+      while P /= null loop
+         PM := new PARM_REC(P.NAME, P.IVAL, null, null, null, P.B, null);
+         RESOLVE(P.A, PM.T, PM.C);
+         NEW_NAME(LOWER_S(P.NAME.all) & "_", PM.CFIELD);
+         if D.KIND = N_FUNC and PM.MODE /= M_IN then
+            FAIL(P.LINE, "a function can only have in parameters (RM79 6.5)");
+         end if;
+         if D.FLAG = 1 and PM.MODE /= M_IN then
+            FAIL(P.LINE, "a value-returning procedure can only have in parameters (RM79 6.5)");
+         end if;
+         if TAIL = null then
+            Y.PARAMS := PM;
+         else
+            TAIL.NEXT := PM;
+         end if;
+         TAIL := PM;
+         P := P.NEXT;
+      end loop;
+      Y.RESULT := TY_VOID;
+      if D.B /= null then
+         RESOLVE(D.B, Y.RESULT, RC);
+      end if;
+      Y.VRP := D.FLAG = 1;
+      NEW_NAME("f_" & C_IDENT(D.NAME.all) & "_", Y.CNAME);
+      Y.DECL := D;
+      Y.LEVEL := CUR_LEVEL;
+   end BUILD_SUBPROGRAM;
+
+   procedure DECL_ELEMENTS(DECLS : NODE) is
+      E : NODE := DECLS;
+      DECLARED : BOOLEAN := FALSE;
+   begin
+      while E /= null loop
+         if (E.KIND = N_PROC or E.KIND = N_FUNC) and not DECLARED then
+            DECLARE_SUBPROGRAMS(E);
+            DECLARED := TRUE;
+         end if;
+         DECL_ELEMENT(E);
+         E := E.NEXT;
+      end loop;
+   end DECL_ELEMENTS;
+
+   procedure DECL_ELEMENT(E : NODE) is
+      Y : SYM;
+      T, VT : TYP;
+      C : CONS;
+      ACC, V, X : TEXT;
+      OK : BOOLEAN;
+   begin
+      case E.KIND of
+         when 42 =>
+            -- type declaration (RM79 3.3); the full declaration of a private
+            -- type completes the type declared in the visible part (RM79 7.4)
+            Y := LOOKUP(E.NAME.all);
+            if Y /= null and then Y.KIND = Y_TYPE and then Y.DEPTH = DEPTH and then Y.T /= null
+               and then Y.T.PRIV and then Y.T.KIND = T_VOID and then E.A.KIND /= D_PRIVATE then
+               TYPE_DEFINITION(E.A, E.NAME, T, C);
+               COMPLETE_PRIVATE(Y.T, T);
+               Y.C := C;
+            else
+               Y := NEW_SYM(Y_TYPE, E.NAME);
+               Y.DECL := E;
+               DEFINE(Y, E.LINE);
+               if E.A.KIND = D_PRIVATE then
+                  Y.T := NEW_TYP(T_VOID);
+                  Y.T.NAME := E.NAME;
+                  Y.T.PRIV := TRUE;
+                  Y.T.DECL := CUR_PKG;
+               else
+                  TYPE_DEFINITION(E.A, E.NAME, Y.T, Y.C);
+               end if;
+            end if;
+         when 43 =>
+            Y := NEW_SYM(Y_TYPE, E.NAME);
+            RESOLVE(E.A, Y.T, Y.C);
+            DEFINE(Y, E.LINE);
+         when 40 =>
+            -- object declaration (RM79 3.2)
+            RESOLVE(E.A, T, C);
+            Y := NEW_SYM(Y_VAR, E.NAME);
+            if T.KIND = T_STRING and C.SLEN = null and E.B /= null then
+               -- the bounds come from the initial value (RM79 3.6)
+               VRP_OK := TRUE;
+               GEXPR(E.B, T, VT, V);
+               VRP_OK := FALSE;
+               CHECK_TYPE(VT, T, E.LINE);
+               STORAGE(E.NAME.all, T, ACC);
+               EMIT(ACC.all & " = rt_str_copy(" & V.all & ");");
+            else
+               STORAGE(E.NAME.all, T, ACC);
+               INIT_STORAGE(ACC.all, T, C);
+               if E.B /= null then
+                  VRP_OK := TRUE;
+                  GEXPR(E.B, T, VT, V);
+                  VRP_OK := FALSE;
+                  CHECK_TYPE(VT, T, E.LINE);
+                  ASSIGN_CODE(ACC.all, T, V.all, C, X);
+                  EMIT(X.all);
+               end if;
+            end if;
+            Y.T := T;
+            Y.C := C;
+            BIND(Y, ACC);
+            DEFINE(Y, E.LINE);
+         when 41 =>
+            RESOLVE(E.A, T, C);
+            Y := NEW_SYM(Y_CONST, E.NAME);
+            VRP_OK := TRUE;
+            GEXPR(E.B, T, VT, V);
+            VRP_OK := FALSE;
+            CHECK_TYPE(VT, T, E.LINE);
+            if T.KIND = T_INT then
+               MANIFEST(E.B, Y.MVALUE, OK);
+               Y.HASMV := OK;
+            end if;
+            STORAGE(E.NAME.all, T, ACC);
+            COPY_CODE(T, V.all, X);
+            EMIT(ACC.all & " = " & X.all & ";");
+            Y.T := T;
+            Y.C := C;
+            Y.RO := TRUE;
+            BIND(Y, ACC);
+            DEFINE(Y, E.LINE);
+         when 46 =>
+            -- an exception declaration is one exception, even in a recursive
+            -- procedure (RM79 11.1)
+            Y := NEW_SYM(Y_EXC, E.NAME);
+            NEW_NAME("ex_" & LOWER_S(E.NAME.all) & "_", Y.CNAME);
+            PUT_TO(OUT_GLOBALS, "static int " & Y.CNAME.all & ";");
+            PUT_TO(OUT_EXCS, "  " & Y.CNAME.all & " = rt_exc(" & Q & E.NAME.all & Q & ");");
+            DEFINE(Y, E.LINE);
+         when 44 | 45 =>
+            if IS_GENERIC_NAME(E.NAME.all) then
+               ATTACH_GENERIC_BODY(E);
+            elsif E.IVAL = 1 then
+               BUILD_SUBPROGRAM(E, Y);
+               DEFINE(Y, E.LINE);
+            else
+               SUBPROGRAM_BODY(E, LOOKUP_DECL(E));
+            end if;
+         when 55 =>
+            USE_CLAUSE(E);
+         when others =>
+            OTHER_DECL(E);
+      end case;
+   end DECL_ELEMENT;
+
+   -- packages are in 09-units, tasks and generics in 10-tasks and 11-generics
+   procedure OTHER_DECL(E : NODE) is
+   begin
+      if E.KIND = N_PKGSPEC then
+         PACKAGE_SPEC(E);
+      elsif E.KIND = N_PKGBODY then
+         PACKAGE_BODY(E);
+      else
+         TASK_DECL(E);
+      end if;
+   end OTHER_DECL;
+
+   -- ---- subprogram bodies (RM79 6.4) ------------------------------------------------
+
+   procedure SUBPROGRAM_BODY(D : NODE; Y : SYM) is
+      SAVED_CODE : BUFFER := CODE;
+      SAVED_FIELDS : BUFFER := FIELDS_BUF;
+      SAVED_IN : BOOLEAN := IN_FUNC;
+      SAVED_SYM : SYM := FUNC_SYM;
+      SAVED_EXITS : EXITS_T := EXITS;
+      SAVED_FRAMES : INTEGER := FRAMES;
+      SAVED_HANDLERS : LINES := HANDLERS;
+      SAVED_CLEANUPS : LINES := CLEANUPS;
+      SAVED_PURE : SYM := PURE_SYM;
+      AW : TEXT;
+      SAVED_PDEPTH : INTEGER := PURE_DEPTH;
+      ARGS, HEAD, FRAME, PARENT, CT, X : TEXT;
+      PM : PARM := Y.PARAMS;
+      P : SYM;
+   begin
+      FRAME := MK(Y.CNAME.all & "fr");
+      if IN_FUNC then
+         PARENT := MK(FUNC_SYM.CNAME.all & "fr");
+      end if;
+      CODE := NEW_BUFFER;
+      FIELDS_BUF := NEW_BUFFER;
+      IN_FUNC := TRUE;
+      FUNC_SYM := Y;
+      EXITS := null;
+      FRAMES := 0;
+      HANDLERS := null;
+      CLEANUPS := null;
+      CUR_LEVEL := CUR_LEVEL + 1;
+      ARGS := MK("");
+      OPEN_SCOPE;
+      if Y.KIND = Y_FUNC and not Y.VRP then
+         -- a function has no side effects (RM79 6.5)
+         PURE_SYM := Y;
+         PURE_DEPTH := DEPTH;
+      end if;
+      if PARENT /= null then
+         PUT_TO(FIELDS_BUF, " struct " & PARENT.all & " *up;");
+         ARGS := MK("struct " & PARENT.all & " *up_");
+         EMIT("F->up = up_;");
+      end if;
+      while PM /= null loop
+         CTYPE(PM.T, CT);
+         if ARGS'LENGTH > 0 then
+            ARGS := MK(ARGS.all & ", ");
+         end if;
+         if PM.MODE = M_IN then
+            -- an in parameter acts as a local constant (RM79 6.3)
+            P := NEW_SYM(Y_CONST, PM.NAME);
+            P.RO := TRUE;
+            PUT_TO(FIELDS_BUF, " " & CT.all & " " & PM.CFIELD.all & ";");
+            ARGS := MK(ARGS.all & CT.all & " " & PM.CFIELD.all);
+            COPY_CODE(PM.T, PM.CFIELD.all, X);
+            EMIT("F->" & PM.CFIELD.all & " = " & X.all & ";");
+         else
+            P := NEW_SYM(Y_VAR, PM.NAME);
+            P.BYREF := TRUE;
+            PUT_TO(FIELDS_BUF, " " & CT.all & " *" & PM.CFIELD.all & ";");
+            ARGS := MK(ARGS.all & CT.all & " *" & PM.CFIELD.all);
+            EMIT("F->" & PM.CFIELD.all & " = " & PM.CFIELD.all & ";");
+         end if;
+         P.ACCESS_PATH := PM.CFIELD;
+         P.T := PM.T;
+         P.C := PM.C;
+         P.LEVEL := CUR_LEVEL;
+         DEFINE(P, D.LINE);
+         PM := PM.NEXT;
+      end loop;
+      if Y.RESULT.KIND /= T_VOID then
+         CTYPE(Y.RESULT, CT);
+         PUT_TO(FIELDS_BUF, " " & CT.all & " result_;");
+      end if;
+      DECL_ELEMENTS(D.C);
+      GUARDED(D.D, D.E, D.LINE);
+      TASK_AWAITS(D.C, AW);
+      CLOSE_SCOPE;
+      CUR_LEVEL := CUR_LEVEL - 1;
+      if ARGS'LENGTH = 0 then
+         ARGS := MK("void");
+      end if;
+      CTYPE(Y.RESULT, CT);
+      HEAD := MK("static " & CT.all & " " & Y.CNAME.all & "(" & ARGS.all & ")");
+      PUT_TO(OUT_PROTOS, HEAD.all & ";");
+      PUT_TO(OUT_FRAMES, "struct " & FRAME.all & " { int dummy;");
+      SPLICE(OUT_FRAMES, FIELDS_BUF);
+      PUT_TO(OUT_FRAMES, "};");
+      PUT_TO(OUT_FUNCS, HEAD.all & " {");
+      PUT_TO(OUT_FUNCS, "  struct " & FRAME.all & " *F = rt_alloc(sizeof *F);");
+      SPLICE(OUT_FUNCS, CODE);
+      if Y.RESULT.KIND /= T_VOID then
+         -- leaving a function other than by return (RM79 6.5)
+         PUT_TO(OUT_FUNCS, "  rt_raise(RT_X_INIT);");
+         PUT_TO(OUT_FUNCS, "ret_:");
+         PUT_TO(OUT_FUNCS, AW.all);
+         PUT_TO(OUT_FUNCS, "  return F->result_;");
+      else
+         PUT_TO(OUT_FUNCS, "ret_:");
+         -- a unit with local tasks is left only when they have terminated (RM79 9.4)
+         PUT_TO(OUT_FUNCS, AW.all);
+         PUT_TO(OUT_FUNCS, "  return;");
+      end if;
+      PUT_TO(OUT_FUNCS, "}");
+      PUT_TO(OUT_FUNCS, "");
+      CODE := SAVED_CODE;
+      FIELDS_BUF := SAVED_FIELDS;
+      IN_FUNC := SAVED_IN;
+      FUNC_SYM := SAVED_SYM;
+      EXITS := SAVED_EXITS;
+      FRAMES := SAVED_FRAMES;
+      HANDLERS := SAVED_HANDLERS;
+      CLEANUPS := SAVED_CLEANUPS;
+      PURE_SYM := SAVED_PURE;
+      PURE_DEPTH := SAVED_PDEPTH;
+   end SUBPROGRAM_BODY;
+
+   -- ---- statements (RM79 5) -----------------------------------------------------------
+
+   procedure GEN_STATEMENTS(STMTS : NODE) is
+      S : NODE := STMTS;
+   begin
+      while S /= null loop
+         GEN_STATEMENT(S);
+         S := S.NEXT;
+      end loop;
+   end GEN_STATEMENTS;
+
+   -- leaving open frames by exit or return: pop exception frames, and run
+   -- whatever else was pushed
+   procedure POP_FRAMES(UPTO : INTEGER) is
+      I : INTEGER := FRAMES;
+      C : LINES := CLEANUPS;
+   begin
+      while I > UPTO loop
+         EMIT(C.S.all);
+         C := C.NEXT;
+         I := I - 1;
+      end loop;
+   end POP_FRAMES;
+
+   procedure PUSH_CLEANUP(S : STRING) is
+   begin
+      CLEANUPS := new LINES_REC(null, CLEANUPS);
+      CLEANUPS.S := MK(S);
+      FRAMES := FRAMES + 1;
+   end PUSH_CLEANUP;
+
+   procedure POP_CLEANUP is
+   begin
+      CLEANUPS := CLEANUPS.NEXT;
+      FRAMES := FRAMES - 1;
+   end POP_CLEANUP;
+
+   -- statements with exception handlers (RM79 11.2)
+   procedure GUARDED(STMTS, HS : NODE; LINE : INTEGER) is
+      F, X : TEXT;
+      H, N : NODE;
+      FIRST : BOOLEAN := TRUE;
+      HAS_OTHERS : BOOLEAN := FALSE;
+      CONDS : TEXT;
+   begin
+      if HS = null then
+         GEN_STATEMENTS(STMTS);
+         return;
+      end if;
+      NEW_NAME("xf", F);
+      NEW_NAME("x", X);
+      PUSH_CLEANUP("RT_POP(" & F.all & ");");
+      EMIT("{ rt_frame " & F.all & ";");
+      EMIT("if (RT_TRY(" & F.all & ")) {");
+      GEN_STATEMENTS(STMTS);
+      EMIT("RT_POP(" & F.all & ");");
+      EMIT("} else {");
+      POP_CLEANUP;
+      EMIT("RT_POP(" & F.all & ");");
+      EMIT("int " & X.all & " = rt_xcur;");
+      -- an aborted task is not stopped by its handlers (RM79 9.10)
+      EMIT("if (rt_g_aborted()) rt_raise(" & X.all & ");");
+      HANDLERS := new LINES_REC(X, HANDLERS);
+      H := HS;
+      while H /= null loop
+         N := H.A;
+         CONDS := MK("0");
+         while N /= null loop
+            if N.NAME.all = "OTHERS" then
+               HAS_OTHERS := TRUE;
+               CONDS := MK("1");
+            else
+               PREFIX_HINT := N.TAG;
+               EXC_ID(N.NAME.all, H.LINE, F);
+               CONDS := MK(CONDS.all & " || " & X.all & " == " & F.all);
+            end if;
+            N := N.NEXT;
+         end loop;
+         if FIRST then
+            EMIT("if (" & CONDS.all & ") {");
+         else
+            EMIT("} else if (" & CONDS.all & ") {");
+         end if;
+         FIRST := FALSE;
+         GEN_STATEMENTS(H.B);
+         H := H.NEXT;
+      end loop;
+      if not HAS_OTHERS then
+         EMIT("} else {");
+         EMIT("rt_raise(" & X.all & ");");
+      end if;
+      EMIT("}");
+      HANDLERS := HANDLERS.NEXT;
+      EMIT("}");
+      EMIT("}");
+   end GUARDED;
+
+   procedure EXC_ID(NAME : STRING; LINE : INTEGER; R : out TEXT) is
+      Y : SYM := LOOKUP(NAME);
+   begin
+      if PREFIX_HINT /= null then
+         Y := MEMBER_OF(PREFIX_HINT.all, NAME, LINE);
+         PREFIX_HINT := null;
+      end if;
+      if Y = null or else Y.KIND /= Y_EXC then
+         FAIL(LINE, NAME & " is not an exception");
+      end if;
+      R := Y.CNAME;
+   end EXC_ID;
+
+   procedure GEN_STATEMENT(S : NODE) is
+      T, VT : TYP;
+      C : CONS;
+      LV, V, X : TEXT;
+      RO : BOOLEAN;
+   begin
+      case S.KIND of
+         when 20 =>
+            if S.A.KIND = N_APPLY and then S.A.B /= null and then S.A.B.KIND = N_RANGE then
+               SLICE_ASSIGN(S);
+               return;
+            end if;
+            IN_LV_PATH := TRUE;
+            LAST_DEREF := FALSE;
+            LVALUE(S.A, LV, T, C, RO);
+            IN_LV_PATH := FALSE;
+            if RO then
+               FAIL(S.LINE, "assignment to a constant or an in parameter");
+            end if;
+            CHECK_PURE_TARGET(S.A, S.LINE);
+            VRP_OK := TRUE;
+            GEXPR(S.B, T, VT, V);
+            VRP_OK := FALSE;
+            CHECK_TYPE(VT, T, S.LINE);
+            ASSIGN_CODE(LV.all, T, V.all, C, X);
+            EMIT(X.all);
+         when 21 =>
+            VRP_OK := TRUE;
+            GEN_CALL(S);
+            VRP_OK := FALSE;
+         when 22 =>
+            GEN_IF(S);
+         when 23 =>
+            GEN_CASE(S);
+         when 24 =>
+            GEN_LOOP(S);
+         when 25 =>
+            GEN_BLOCK(S);
+         when 26 =>
+            GEN_EXIT(S);
+         when 27 =>
+            GEN_RETURN(S);
+         when 28 =>
+            if S.TAG /= null and then IS_TASK_NAME(S.TAG.all) and then S.NAME.all = "FAILURE" then
+               -- raise T.FAILURE: the only exception raised in another task (RM79 11.5)
+               TASK_FAILURE(S);
+            else
+               PREFIX_HINT := S.TAG;
+               EXC_ID(S.NAME.all, S.LINE, X);
+               EMIT("rt_raise(" & X.all & ");");
+            end if;
+         when 29 =>
+            -- raise; re-raises, only in a handler (RM79 11.3)
+            if HANDLERS = null then
+               FAIL(S.LINE, "raise; outside an exception handler");
+            end if;
+            EMIT("rt_raise(" & HANDLERS.S.all & ");");
+         when 30 =>
+            -- assert raises ASSERT_ERROR (RM79 5.9)
+            GEXPR(S.A, TY_BOOL, VT, V);
+            CHECK_TYPE(VT, TY_BOOL, S.LINE);
+            EMIT("if (!(" & V.all & ")) rt_raise(RT_X_ASSERT);");
+         when 31 =>
+            null;
+         when others =>
+            TASK_STATEMENT_GEN(S);
+      end case;
+   end GEN_STATEMENT;
+
+
+   -- assignment to a slice of a string (RM79 5.1.1): the lengths must agree
+   procedure SLICE_ASSIGN(S : NODE) is
+      LV, LO, HI, V : TEXT;
+      T, VT : TYP;
+      C : CONS;
+      RO : BOOLEAN;
+   begin
+      IN_LV_PATH := TRUE;
+      LAST_DEREF := FALSE;
+      LVALUE(S.A.A, LV, T, C, RO);
+      IN_LV_PATH := FALSE;
+      if RO or T.KIND /= T_STRING then
+         FAIL(S.LINE, "assignment to a slice needs a STRING variable");
+      end if;
+      CHECK_PURE_TARGET(S.A, S.LINE);
+      GEXPR(S.A.B.A, TY_INT, VT, LO);
+      GEXPR(S.A.B.B, TY_INT, VT, HI);
+      VRP_OK := TRUE;
+      GEXPR(S.B, TY_STRING, VT, V);
+      VRP_OK := FALSE;
+      CHECK_TYPE(VT, TY_STRING, S.LINE);
+      EMIT("rt_str_slice_assign(&" & LV.all & ", " & LO.all & ", " & HI.all & ", " & V.all & ");");
+   end SLICE_ASSIGN;
+
+   procedure GEN_CALL(S : NODE) is
+      C : NODE := S.A;
+      T : TYP;
+      V : TEXT;
+   begin
+      if C.KIND = N_NAME or C.KIND = N_SELECT then
+         C := NN(N_APPLY, S.LINE);
+         C.A := S.A;
+      end if;
+      if C.KIND /= N_APPLY then
+         FAIL(S.LINE, "not a procedure call");
+      end if;
+      GCALL(C, TRUE, T, V);
+      EMIT(V.all & ";");
+   end GEN_CALL;
+
+   procedure GEN_IF(S : NODE) is
+      A : NODE := S.A;
+      FIRST : BOOLEAN := TRUE;
+      T : TYP;
+      V : TEXT;
+   begin
+      while A /= null loop
+         GEXPR(A.A, TY_BOOL, T, V);
+         CHECK_TYPE(T, TY_BOOL, S.LINE);
+         if FIRST then
+            EMIT("if (" & V.all & ") {");
+         else
+            EMIT("} else if (" & V.all & ") {");
+         end if;
+         FIRST := FALSE;
+         GEN_STATEMENTS(A.B);
+         A := A.NEXT;
+      end loop;
+      if S.FLAG = 1 then
+         EMIT("} else {");
+         GEN_STATEMENTS(S.B);
+      end if;
+      EMIT("}");
+   end GEN_IF;
+
+   procedure GEN_CASE(S : NODE) is
+      ST, VT : TYP;
+      FIRST : BOOLEAN := TRUE;
+      A : NODE := S.B;
+      LAB : NODE;
+      SEL, TMP, CT, CONDS, V, LO, HI : TEXT;
+   begin
+      GEXPR(S.A, null, ST, SEL);
+      NEW_NAME("sel", TMP);
+      CTYPE(ST, CT);
+      EMIT("{ " & CT.all & " " & TMP.all & " = " & SEL.all & ";");
+      while A /= null loop
+         LAB := A.A;
+         CONDS := MK("0");
+         while LAB /= null loop
+            if LAB.B = null then
+               GEXPR(LAB.A, ST, VT, V);
+               CHECK_TYPE(VT, ST, S.LINE);
+               CONDS := MK(CONDS.all & " || " & TMP.all & " == " & V.all);
+            else
+               GEXPR(LAB.A, ST, VT, LO);
+               GEXPR(LAB.B, ST, VT, HI);
+               CONDS := MK(CONDS.all & " || (" & TMP.all & " >= " & LO.all & " && " & TMP.all
+                           & " <= " & HI.all & ")");
+            end if;
+            LAB := LAB.NEXT;
+         end loop;
+         if FIRST then
+            EMIT("if (" & CONDS.all & ") {");
+         else
+            EMIT("} else if (" & CONDS.all & ") {");
+         end if;
+         FIRST := FALSE;
+         GEN_STATEMENTS(A.B);
+         A := A.NEXT;
+      end loop;
+      if FIRST then
+         EMIT("{");
+      else
+         EMIT("} else {");
+      end if;
+      if S.FLAG = 1 then
+         GEN_STATEMENTS(S.C);
+      else
+         EMIT("rt_raise(RT_X_CASE);");
+      end if;
+      EMIT("}");
+      EMIT("}");
+   end GEN_CASE;
+
+   procedure PUSH_EXIT(MATCH : TEXT; IS_LOOP : BOOLEAN; LABEL : out TEXT) is
+   begin
+      NEW_NAME("L_end_", LABEL);
+      EXITS := new EXIT_REC(MATCH, LABEL, FRAMES, IS_LOOP, EXITS);
+   end PUSH_EXIT;
+
+   -- loops (RM79 5.6): the loop parameter is a constant; the range is
+   -- evaluated once
+   procedure GEN_LOOP(S : NODE) is
+      T, VT : TYP;
+      C : CONS;
+      LABEL, COND, ACC, LOV, HIV, IT : TEXT;
+      Y : SYM;
+      R : NODE;
+   begin
+      PUSH_EXIT(S.TAG, TRUE, LABEL);
+      if S.FLAG = 0 then
+         EMIT("for (;;) {");
+         GEN_STATEMENTS(S.B);
+         EMIT("}");
+      elsif S.FLAG = 1 then
+         GEXPR(S.A, TY_BOOL, VT, COND);
+         CHECK_TYPE(VT, TY_BOOL, S.LINE);
+         EMIT("while (" & COND.all & ") {");
+         GEN_STATEMENTS(S.B);
+         EMIT("}");
+      else
+         R := S.A;
+         C := NEW_CONS;
+         if R.KIND = N_RANGE then
+            GEXPR(R.A, null, T, C.LO);
+            GEXPR(R.B, T, VT, C.HI);
+            CHECK_TYPE(VT, T, S.LINE);
+         else
+            RESOLVE(R, T, C);
+            if C.LO = null then
+               FAIL(S.LINE, "a FOR loop needs a discrete range");
+            end if;
+         end if;
+         STORAGE(S.NAME.all, T, ACC);
+         NEW_NAME("lo", LOV);
+         NEW_NAME("hi", HIV);
+         NEW_NAME("it", IT);
+         EMIT("{ rt_int " & LOV.all & " = " & C.LO.all & ", " & HIV.all & " = " & C.HI.all & ";");
+         if S.IVAL = 1 then
+            EMIT("for (rt_int " & IT.all & " = " & HIV.all & "; " & IT.all & " >= " & LOV.all & "; "
+                 & IT.all & "--) {");
+         else
+            EMIT("for (rt_int " & IT.all & " = " & LOV.all & "; " & IT.all & " <= " & HIV.all & "; "
+                 & IT.all & "++) {");
+         end if;
+         EMIT(ACC.all & " = " & IT.all & ";");
+         OPEN_SCOPE;
+         Y := NEW_SYM(Y_CONST, S.NAME);
+         Y.T := T;
+         Y.RO := TRUE;
+         BIND(Y, ACC);
+         DEFINE(Y, S.LINE);
+         GEN_STATEMENTS(S.B);
+         CLOSE_SCOPE;
+         EMIT("}");
+         EMIT("}");
+      end if;
+      EXITS := EXITS.NEXT;
+      EMIT(LABEL.all & ": ;");
+   end GEN_LOOP;
+
+   -- blocks (RM79 6.7): a declarative part, statements, handlers
+   procedure GEN_BLOCK(S : NODE) is
+      LABEL, AW : TEXT;
+   begin
+      PUSH_EXIT(S.TAG, FALSE, LABEL);
+      EMIT("{");
+      OPEN_SCOPE;
+      DECL_ELEMENTS(S.A);
+      GUARDED(S.B, S.C, S.LINE);
+      TASK_AWAITS(S.A, AW);
+      EMIT(AW.all);
+      CLOSE_SCOPE;
+      EMIT("}");
+      EXITS := EXITS.NEXT;
+      EMIT(LABEL.all & ": ;");
+   end GEN_BLOCK;
+
+   -- exit [loop name] [when condition] (RM79 5.7)
+   procedure GEN_EXIT(S : NODE) is
+      X : EXITS_T := EXITS;
+      T : TYP;
+      V : TEXT;
+   begin
+      while X /= null loop
+         if (S.NAME = null and X.IS_LOOP) or else (S.NAME /= null and then X.MATCH /= null
+            and then X.MATCH.all = S.NAME.all) then
+            if S.A /= null then
+               GEXPR(S.A, TY_BOOL, T, V);
+               CHECK_TYPE(T, TY_BOOL, S.LINE);
+               EMIT("if (" & V.all & ") {");
+            end if;
+            POP_FRAMES(X.DEPTH);
+            EMIT("goto " & X.LABEL.all & ";");
+            if S.A /= null then
+               EMIT("}");
+            end if;
+            return;
+         end if;
+         X := X.NEXT;
+      end loop;
+      if S.NAME = null then
+         FAIL(S.LINE, "exit outside a loop");
+      end if;
+      FAIL(S.LINE, "exit " & S.NAME.all & " names no enclosing loop");
+   end GEN_EXIT;
+
+   procedure GEN_RETURN(S : NODE) is
+      VT : TYP;
+      V : TEXT;
+   begin
+      if not IN_FUNC then
+         FAIL(S.LINE, "return outside a subprogram");
+      end if;
+      if ACCEPT_DEPTH > 0 then
+         FAIL(S.LINE, "a return statement cannot appear in an accept statement (RM79 5.3)");
+      end if;
+      if FUNC_SYM.RESULT.KIND = T_VOID then
+         if S.A /= null then
+            FAIL(S.LINE, "a procedure returns no value");
+         end if;
+         POP_FRAMES(0);
+         EMIT("goto ret_;");
+         return;
+      end if;
+      if S.A = null then
+         FAIL(S.LINE, "return needs a value here");
+      end if;
+      GEXPR(S.A, FUNC_SYM.RESULT, VT, V);
+      CHECK_TYPE(VT, FUNC_SYM.RESULT, S.LINE);
+      EMIT("F->result_ = " & V.all & ";");
+      POP_FRAMES(0);
+      EMIT("goto ret_;");
+   end GEN_RETURN;

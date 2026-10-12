@@ -1,0 +1,637 @@
+   -- ---- symbols: one hash table, scopes as a stack ------------------------------------
+
+   function HASH(S : STRING) return INTEGER is
+      H : INTEGER := 0;
+   begin
+      for I in 1 .. S'LENGTH loop
+         H := (H * 31 + CHARACTER'ORD(S(I))) mod 4093;
+      end loop;
+      return H;
+   end HASH;
+
+   function LOOKUP(NAME : STRING) return SYM is
+      Y : SYM := TABLE(HASH(NAME));
+   begin
+      while Y /= null loop
+         if Y.NAME.all = NAME then
+            return Y;
+         end if;
+         Y := Y.CHAIN;
+      end loop;
+      return null;
+   end LOOKUP;
+
+   function LOOKUP_DECL(D : NODE) return SYM is
+      Y : SYM := TABLE(HASH(D.NAME.all));
+   begin
+      while Y /= null loop
+         if Y.DECL = D then
+            return Y;
+         end if;
+         Y := Y.CHAIN;
+      end loop;
+      return null;
+   end LOOKUP_DECL;
+
+   function OVERLOADABLE(Y : SYM) return BOOLEAN is
+   begin
+      return Y.KIND = Y_FUNC or Y.KIND = Y_PROC or Y.KIND = Y_ENUMLIT or Y.KIND = Y_ENTRY;
+   end OVERLOADABLE;
+
+   function SAME(A, B : TYP) return BOOLEAN is
+   begin
+      -- type equivalence is by name, applied strictly (RM79 3.3): every type
+      -- definition is a distinct type; the predefined scalar types and STRING
+      -- are each one type
+      if A = B then
+         return TRUE;
+      end if;
+      if A = null or B = null or else A.KIND /= B.KIND then
+         return FALSE;
+      end if;
+      return A.KIND = T_INT or A.KIND = T_BOOL or A.KIND = T_FLOAT or A.KIND = T_CHAR
+         or A.KIND = T_STRING or A.KIND = T_VOID;
+   end SAME;
+
+   function SAME_SIGNATURE(A, B : PARM) return BOOLEAN is
+      X : PARM := A;
+      Y : PARM := B;
+   begin
+      while X /= null and Y /= null loop
+         if not SAME(X.T, Y.T) or X.MODE /= Y.MODE then
+            return FALSE;
+         end if;
+         X := X.NEXT;
+         Y := Y.NEXT;
+      end loop;
+      return X = null and Y = null;
+   end SAME_SIGNATURE;
+
+   procedure DEFINE(Y : SYM; LINE : INTEGER) is
+      H : INTEGER := HASH(Y.NAME.all);
+      Z : SYM := TABLE(H);
+   begin
+      while Z /= null loop
+         if Z.DEPTH = DEPTH and then Z.NAME.all = Y.NAME.all and then not (OVERLOADABLE(Y)
+            and OVERLOADABLE(Z) and (Y.KIND /= Z.KIND or else not SAME_SIGNATURE(Y.PARAMS, Z.PARAMS)
+               or else not SAME(Y.RESULT, Z.RESULT))) then
+            FAIL(LINE, Y.NAME.all & " is already declared in this declarative part");
+         end if;
+         Z := Z.CHAIN;
+      end loop;
+      Y.DEPTH := DEPTH;
+      Y.CHAIN := TABLE(H);
+      TABLE(H) := Y;
+      Y.STACK := SCOPE_STACK;
+      SCOPE_STACK := Y;
+   end DEFINE;
+
+   procedure OPEN_SCOPE is
+   begin
+      DEPTH := DEPTH + 1;
+   end OPEN_SCOPE;
+
+   procedure CLOSE_SCOPE is
+   begin
+      while SCOPE_STACK /= null and then SCOPE_STACK.DEPTH = DEPTH loop
+         TABLE(HASH(SCOPE_STACK.NAME.all)) := SCOPE_STACK.CHAIN;
+         SCOPE_STACK := SCOPE_STACK.STACK;
+      end loop;
+      DEPTH := DEPTH - 1;
+   end CLOSE_SCOPE;
+
+   procedure NEW_SYM(KIND : INTEGER; NAME : TEXT) return SYM is
+   begin
+      return new SYM_REC(KIND, NAME, null, null, null, null, FALSE, 0, FALSE, null, null, null,
+                         0, 0, FALSE, FALSE, FALSE, null, null, null, null);
+   end NEW_SYM;
+
+   procedure NEW_TYP(KIND : INTEGER) return TYP is
+   begin
+      return new TYP_REC(KIND, null, null, null, null, null, null, null, null, null, null,
+                         FALSE, FALSE, FALSE, null);
+   end NEW_TYP;
+
+   procedure NEW_CONS return CONS is
+   begin
+      return new CONS_REC(null, null, null, 0, 0, FALSE);
+   end NEW_CONS;
+
+   function KIND_NAME(T : TYP) return STRING is
+   begin
+      if T.NAME /= null then
+         return T.NAME.all;
+      end if;
+      case T.KIND of
+         when 1 => return "INTEGER";
+         when 2 => return "BOOLEAN";
+         when 3 => return "FLOAT";
+         when 5 => return "STRING";
+         when 10 => return "null";
+         when 11 => return "CHARACTER";
+         when others => return "an anonymous type";
+      end case;
+   end KIND_NAME;
+
+   procedure CHECK_TYPE(GOT, WANT : TYP; LINE : INTEGER) is
+   begin
+      if WANT = null then
+         return;
+      end if;
+      if GOT.KIND = T_NIL and WANT.KIND = T_PTR then
+         return;
+      end if;
+      if not SAME(GOT, WANT) then
+         FAIL(LINE, "type mismatch: " & KIND_NAME(GOT) & " where " & KIND_NAME(WANT) & " is required");
+      end if;
+   end CHECK_TYPE;
+
+   function FIELD_COUNT(T : TYP) return INTEGER is
+      N : INTEGER := 0;
+      F : FIELD := T.FIELDS;
+   begin
+      while F /= null loop
+         N := N + 1;
+         F := F.NEXT;
+      end loop;
+      return N;
+   end FIELD_COUNT;
+
+   -- ---- C types ---------------------------------------------------------------------
+
+   procedure CTYPE(T : TYP; R : out TEXT) is
+      S : TEXT;
+   begin
+      case T.KIND of
+         when 1 => R := MK("rt_int");
+         when 2 | 4 | 11 => R := MK("int");
+         when 3 => R := MK("double");
+         when 5 => R := MK("rstr");
+         when 9 => R := MK("void");
+         when 13 => R := MK("rt_act");
+         when 14 => R := MK("rt_taskdecl");
+         when 15 => R := MK("rt_entry");
+         when others =>
+            if T.CNAME = null then
+               DECLARE_CTYPE(T);
+            elsif T.KIND = T_RECORD and then T.FORWARD and then not T.DEFINED then
+               T.DEFINED := TRUE;
+               FIELD_DECLS(T, S);
+               PUT_TO(OUT_TYPES, "struct " & T.CNAME.all & " {" & S.all & " };");
+            end if;
+            R := T.CNAME;
+      end case;
+   end CTYPE;
+
+   procedure FIELD_DECLS(T : TYP; R : out TEXT) is
+      F : FIELD := T.FIELDS;
+      S, CT : TEXT;
+   begin
+      S := MK(" int dummy_;");
+      while F /= null loop
+         CTYPE(F.T, CT);
+         S := MK(S.all & " " & CT.all & " " & C_FIELD(F.NAME.all) & ";");
+         F := F.NEXT;
+      end loop;
+      R := S;
+   end FIELD_DECLS;
+
+   procedure DECLARE_CTYPE(T : TYP) is
+      CT, S : TEXT;
+      TARGET : TYP;
+   begin
+      if T.KIND = T_PTR then
+         FINISH_PTR(T);
+      end if;
+      if T.KIND = T_ARRAY then
+         NEW_NAME("A", T.CNAME);
+      elsif T.KIND = T_RECORD then
+         NEW_NAME("R", T.CNAME);
+      else
+         NEW_NAME("P", T.CNAME);
+      end if;
+      T.NEXT := ALL_TYPES;
+      ALL_TYPES := T;
+      if T.KIND = T_PTR then
+         TARGET := T.TARGET;
+         if TARGET = null then
+            FAIL(0, "the designated type of " & KIND_NAME(T) & " is never declared");
+         end if;
+         if TARGET.KIND = T_RECORD then
+            if TARGET.CNAME = null then
+               NEW_NAME("R", TARGET.CNAME);
+               TARGET.NEXT := ALL_TYPES;
+               ALL_TYPES := TARGET;
+               PUT_TO(OUT_TYPES, "typedef struct " & TARGET.CNAME.all & " " & TARGET.CNAME.all & ";");
+               TARGET.FORWARD := TRUE;
+            end if;
+            PUT_TO(OUT_TYPES, "typedef struct " & TARGET.CNAME.all & " *" & T.CNAME.all & ";");
+         else
+            CTYPE(TARGET, CT);
+            PUT_TO(OUT_TYPES, "typedef " & CT.all & " *" & T.CNAME.all & ";");
+         end if;
+      elsif T.KIND = T_ARRAY then
+         CTYPE(T.ELEM, CT);
+         PUT_TO(OUT_TYPES, "typedef struct " & T.CNAME.all & " " & T.CNAME.all & ";");
+         PUT_TO(OUT_TYPES, "struct " & T.CNAME.all & " { rt_int lo, hi, lo2, hi2; " & CT.all & " *p; };");
+      else
+         PUT_TO(OUT_TYPES, "typedef struct " & T.CNAME.all & " " & T.CNAME.all & ";");
+         T.DEFINED := TRUE;
+         FIELD_DECLS(T, S);
+         PUT_TO(OUT_TYPES, "struct " & T.CNAME.all & " {" & S.all & " };");
+      end if;
+   end DECLARE_CTYPE;
+
+   function LIT_INDEX(LITS : NODE; NAME : STRING) return INTEGER is
+      I : INTEGER := 0;
+      L : NODE := LITS;
+   begin
+      while L /= null loop
+         if L.NAME.all = NAME then
+            return I;
+         end if;
+         I := I + 1;
+         L := L.NEXT;
+      end loop;
+      return -1;
+   end LIT_INDEX;
+
+   -- ---- manifest (static) values (RM79 4.8) -----------------------------------------
+
+   procedure MANIFEST(E : NODE; V : out INTEGER; OK : out BOOLEAN) is
+      A, B : INTEGER;
+      OK2 : BOOLEAN;
+      Y : SYM;
+   begin
+      OK := FALSE;
+      V := 0;
+      if E.KIND = N_INT then
+         OK := TRUE;
+         V := E.IVAL;
+      elsif E.KIND = N_PAREN then
+         MANIFEST(E.A, V, OK);
+      elsif E.KIND = N_UNOP and then E.NAME.all = "-" then
+         MANIFEST(E.A, A, OK);
+         V := -A;
+      elsif E.KIND = N_BINOP and then (E.NAME.all = "+" or E.NAME.all = "-" or E.NAME.all = "*") then
+         MANIFEST(E.A, A, OK);
+         MANIFEST(E.B, B, OK2);
+         OK := OK and OK2;
+         if OK then
+            if E.NAME.all = "+" then
+               V := A + B;
+            elsif E.NAME.all = "-" then
+               V := A - B;
+            else
+               V := A * B;
+            end if;
+         end if;
+      elsif E.KIND = N_NAME then
+         Y := LOOKUP(E.NAME.all);
+         if Y /= null and then Y.KIND = Y_CONST and then Y.HASMV then
+            OK := TRUE;
+            V := Y.MVALUE;
+         end if;
+      end if;
+   end MANIFEST;
+
+   -- ---- subtypes (RM79 3.3) ----------------------------------------------------------
+
+   -- the type and constraint of a subtype indication or anonymous type definition
+   procedure RESOLVE(ST : NODE; T : out TYP; C : out CONS) is
+      Y : SYM;
+      DUMMY : TYP;
+      CODE : TEXT;
+      OK : BOOLEAN;
+      R : NODE;
+   begin
+      C := NEW_CONS;
+      if ST.KIND /= S_MARK then
+         TYPE_DEFINITION(ST, null, T, C);
+         return;
+      end if;
+      if ST.TAG /= null then
+         Y := MEMBER_OF(ST.TAG.all, ST.NAME.all, ST.LINE);
+      else
+         Y := LOOKUP(ST.NAME.all);
+      end if;
+      if Y = null or else Y.KIND /= Y_TYPE then
+         FAIL(ST.LINE, ST.NAME.all & " is not a type");
+      end if;
+      T := Y.T;
+      if Y.C /= null then
+         C.LO := Y.C.LO;
+         C.HI := Y.C.HI;
+         C.SLEN := Y.C.SLEN;
+         C.MLO := Y.C.MLO;
+         C.MHI := Y.C.MHI;
+         C.HASM := Y.C.HASM;
+      end if;
+      if T = null then
+         FAIL(ST.LINE, "the type " & ST.NAME.all & " is used before its full declaration");
+      end if;
+      if ST.FLAG = 1 then
+         -- range constraint (RM79 3.5)
+         R := ST.A;
+         GEXPR(R.A, T, DUMMY, C.LO);
+         GEXPR(R.B, T, DUMMY, C.HI);
+         MANIFEST(R.A, C.MLO, OK);
+         C.HASM := OK;
+         MANIFEST(R.B, C.MHI, OK);
+         C.HASM := C.HASM and OK;
+      elsif ST.FLAG = 2 then
+         -- index constraint (RM79 3.6); STRING objects count from 1
+         R := ST.A;
+         if R.KIND /= N_RANGE then
+            FAIL(ST.LINE, "an index constraint is a discrete range");
+         end if;
+         if T.KIND = T_STRING then
+            GEXPR(R.A, TY_INT, DUMMY, CODE);
+            GEXPR(R.B, TY_INT, DUMMY, C.SLEN);
+            C.SLEN := MK("(" & C.SLEN.all & " - " & CODE.all & " + 1)");
+         elsif T.KIND = T_ARRAY then
+            GEXPR(R.A, T.IDX, DUMMY, C.LO);
+            GEXPR(R.B, T.IDX, DUMMY, C.HI);
+         else
+            FAIL(ST.LINE, "this type takes no index constraint");
+         end if;
+      end if;
+   end RESOLVE;
+
+   -- a type definition (RM79 3.5 - 3.8); NAME is the declared name, if any
+   procedure TYPE_DEFINITION(D : NODE; NAME : TEXT; T : out TYP; C : out CONS) is
+      DUMMY, IT : TYP;
+      IC : CONS;
+      L, COMP : NODE;
+      F, TAIL : FIELD;
+      OK : BOOLEAN;
+      N : INTEGER;
+      Y : SYM;
+   begin
+      C := NEW_CONS;
+      case D.KIND of
+         when 70 =>
+            -- enumeration (RM79 3.5.1): every literal is declared with the type
+            T := NEW_TYP(T_ENUM);
+            T.LITS := D.A;
+            T.NAME := NAME;
+            L := D.A;
+            N := 0;
+            while L /= null loop
+               if L.KIND = N_NAME then
+                  Y := NEW_SYM(Y_ENUMLIT, L.NAME);
+                  Y.T := T;
+                  Y.RESULT := T;
+                  Y.MVALUE := N;
+                  Y.HASMV := TRUE;
+                  DEFINE(Y, L.LINE);
+               end if;
+               N := N + 1;
+               L := L.NEXT;
+            end loop;
+            C.LO := MK("0");
+            C.HI := MK(INTEGER'REP(N - 1));
+         when 71 =>
+            -- an integer type (RM79 3.5.4); here a constrained INTEGER
+            T := TY_INT;
+            GEXPR(D.A, TY_INT, DUMMY, C.LO);
+            GEXPR(D.B, TY_INT, DUMMY, C.HI);
+            MANIFEST(D.A, C.MLO, OK);
+            C.HASM := OK;
+            MANIFEST(D.B, C.MHI, OK);
+            C.HASM := C.HASM and OK;
+         when 72 =>
+            T := TY_FLOAT;
+         when 73 =>
+            -- arrays (RM79 3.6)
+            if D.A.NEXT /= null then
+               FAIL(D.LINE, "arrays of more than one dimension are not handled yet");
+            end if;
+            T := NEW_TYP(T_ARRAY);
+            T.NAME := NAME;
+            RESOLVE(D.B, T.ELEM, T.ELEMCONS);
+            L := D.A;
+            if L.KIND = N_RANGE then
+               GEXPR(L.A, null, T.IDX, C.LO);
+               GEXPR(L.B, T.IDX, DUMMY, C.HI);
+            else
+               RESOLVE(L, T.IDX, IC);
+               if T.IDX.KIND = T_ENUM or T.IDX.KIND = T_CHAR or T.IDX.KIND = T_BOOL then
+                  C.LO := IC.LO;
+                  C.HI := IC.HI;
+               elsif IC.LO /= null then
+                  -- a type-mark index: positional aggregates start at its FIRST
+                  T.TCONS := NEW_CONS;
+                  T.TCONS.LO := IC.LO;
+               end if;
+            end if;
+            if C.LO /= null then
+               T.TCONS := C;
+            end if;
+         when 74 =>
+            -- records (RM79 3.7)
+            T := NEW_TYP(T_RECORD);
+            T.NAME := NAME;
+            COMP := D.A;
+            while COMP /= null loop
+               F := new FIELD_REC(COMP.NAME, null, null, null);
+               RESOLVE(COMP.A, F.T, F.C);
+               if TAIL = null then
+                  T.FIELDS := F;
+               else
+                  TAIL.NEXT := F;
+               end if;
+               TAIL := F;
+               COMP := COMP.NEXT;
+            end loop;
+         when 75 =>
+            -- access types (RM79 3.8); the designated type may come later
+            T := NEW_TYP(T_PTR);
+            T.NAME := NAME;
+            T.DECL := D.A;
+         when 76 =>
+            RESOLVE(D.A, T, C);
+         when others =>
+            FAIL(D.LINE, "this type definition is not handled");
+      end case;
+   end TYPE_DEFINITION;
+
+   -- the designated type of an access type is resolved when first needed
+   procedure FINISH_PTR(T : TYP) is
+      C : CONS;
+   begin
+      if T.TARGET = null and T.DECL /= null then
+         RESOLVE(T.DECL, T.TARGET, C);
+      end if;
+   end FINISH_PTR;
+
+   -- give a fresh object its storage: strings and arrays own buffers; access
+   -- objects start as null (RM79 3.8)
+   procedure INIT_STORAGE(LVAL : STRING; T : TYP; C : CONS) is
+      CT, I : TEXT;
+      F : FIELD;
+   begin
+      if T.KIND = T_PTR then
+         EMIT(LVAL & " = NULL;");
+      elsif T.KIND = T_STRING then
+         if C.SLEN = null then
+            FAIL(0, "a STRING object needs an index constraint or an initial value");
+         end if;
+         EMIT(LVAL & " = rt_str_new(" & C.SLEN.all & ");");
+      elsif T.KIND = T_ARRAY then
+         if C.LO = null then
+            FAIL(0, "an array object needs an index constraint");
+         end if;
+         CTYPE(T.ELEM, CT);
+         EMIT(LVAL & ".lo = " & C.LO.all & "; " & LVAL & ".hi = " & C.HI.all & "; " & LVAL
+              & ".lo2 = 1; " & LVAL & ".hi2 = 1;");
+         EMIT(LVAL & ".p = rt_alloc(sizeof(" & CT.all & ") * (size_t)RT_CNT(" & LVAL & "));");
+         if T.ELEM.KIND = T_STRING or T.ELEM.KIND = T_ARRAY or T.ELEM.KIND = T_RECORD then
+            NEW_NAME("i", I);
+            EMIT("for (rt_int " & I.all & " = 0; " & I.all & " < RT_CNT(" & LVAL & "); " & I.all & "++) {");
+            INIT_STORAGE(LVAL & ".p[" & I.all & "]", T.ELEM, T.ELEMCONS);
+            EMIT("}");
+         end if;
+      elsif T.KIND = T_RECORD then
+         F := T.FIELDS;
+         while F /= null loop
+            INIT_STORAGE(LVAL & "." & C_FIELD(F.NAME.all), F.T, F.C);
+            F := F.NEXT;
+         end loop;
+      end if;
+   end INIT_STORAGE;
+
+   -- ---- assignment, copy and equality ------------------------------------------------
+
+   function COMPOSITE(T : TYP) return BOOLEAN is
+   begin
+      return T.KIND = T_ARRAY or T.KIND = T_RECORD;
+   end COMPOSITE;
+
+   procedure ASSIGN_CODE(LVAL : STRING; T : TYP; V : STRING; C : CONS; R : out TEXT) is
+      CT : TEXT;
+   begin
+      if COMPOSITE(T) then
+         CTYPE(T, CT);
+         R := MK("as_" & T.CNAME.all & "(&" & LVAL & ", " & V & ");");
+      elsif T.KIND = T_STRING then
+         R := MK("rt_str_assign(&" & LVAL & ", " & V & ");");
+      elsif (T.KIND = T_INT or T.KIND = T_ENUM or T.KIND = T_CHAR) and C /= null and then C.LO /= null then
+         R := MK(LVAL & " = rt_range(" & V & ", " & C.LO.all & ", " & C.HI.all & ");");
+      else
+         R := MK(LVAL & " = " & V & ";");
+      end if;
+   end ASSIGN_CODE;
+
+   procedure COPY_CODE(T : TYP; V : STRING; R : out TEXT) is
+      CT : TEXT;
+   begin
+      if COMPOSITE(T) then
+         CTYPE(T, CT);
+         R := MK("cp_" & T.CNAME.all & "(" & V & ")");
+      elsif T.KIND = T_STRING then
+         R := MK("rt_str_copy(" & V & ")");
+      else
+         R := MK(V);
+      end if;
+   end COPY_CODE;
+
+   procedure EQ_CODE(T : TYP; A, B : STRING; R : out TEXT) is
+      CT : TEXT;
+   begin
+      if COMPOSITE(T) then
+         CTYPE(T, CT);
+         R := MK("eq_" & T.CNAME.all & "(" & A & ", " & B & ")");
+      elsif T.KIND = T_STRING then
+         R := MK("rt_str_eq(" & A & ", " & B & ")");
+      else
+         R := MK("(" & A & " == " & B & ")");
+      end if;
+   end EQ_CODE;
+
+   function SEEN_NAME(L : LINES; S : STRING) return BOOLEAN is
+      P : LINES := L;
+   begin
+      while P /= null loop
+         if P.S.all = S then
+            return TRUE;
+         end if;
+         P := P.NEXT;
+      end loop;
+      return FALSE;
+   end SEEN_NAME;
+
+   -- assignment, copy and equality for every composite C type
+   procedure EMIT_HELPERS is
+      T : TYP := ALL_TYPES;
+      DONE, L : LINES;
+   begin
+      while T /= null loop
+         if COMPOSITE(T) and then not SEEN_NAME(DONE, T.CNAME.all) then
+            L := new LINES_REC(T.CNAME, DONE);
+            DONE := L;
+            PUT_TO(OUT_HELPERS, "static void as_" & T.CNAME.all & "(" & T.CNAME.all & " *d, "
+                   & T.CNAME.all & " s);");
+            PUT_TO(OUT_HELPERS, "static " & T.CNAME.all & " cp_" & T.CNAME.all & "(" & T.CNAME.all
+                   & " s);");
+            PUT_TO(OUT_HELPERS, "static int eq_" & T.CNAME.all & "(" & T.CNAME.all & " a, "
+                   & T.CNAME.all & " b);");
+            HELPER_BODIES(T);
+         end if;
+         T := T.NEXT;
+      end loop;
+   end EMIT_HELPERS;
+
+   procedure HELPER_BODIES(T : TYP) is
+      C : TEXT := T.CNAME;
+      B : BUFFER := OUT_FUNCS;
+      CT, X, Y, CONDS : TEXT;
+      F : FIELD;
+   begin
+      if T.KIND = T_ARRAY then
+         CTYPE(T.ELEM, CT);
+         ASSIGN_CODE("d->p[i]", T.ELEM, "s.p[i]", null, X);
+         PUT_TO(B, "static void as_" & C.all & "(" & C.all & " *d, " & C.all & " s) {");
+         PUT_TO(B, "  if (d->hi - d->lo != s.hi - s.lo) rt_raise_msg(RT_X_SUBTYPE, " & Q
+                & "array length" & Q & ");");
+         PUT_TO(B, "  for (rt_int i = 0; i < RT_CNT(s); i++) { " & X.all & " }");
+         PUT_TO(B, "}");
+         COPY_CODE(T.ELEM, "s.p[i]", X);
+         PUT_TO(B, "static " & C.all & " cp_" & C.all & "(" & C.all & " s) {");
+         PUT_TO(B, "  " & C.all & " d = s; d.p = rt_alloc(sizeof(" & CT.all & ") * (size_t)RT_CNT(s));");
+         PUT_TO(B, "  for (rt_int i = 0; i < RT_CNT(s); i++) d.p[i] = " & X.all & ";");
+         PUT_TO(B, "  return d;");
+         PUT_TO(B, "}");
+         EQ_CODE(T.ELEM, "a.p[i]", "b.p[i]", X);
+         PUT_TO(B, "static int eq_" & C.all & "(" & C.all & " a, " & C.all & " b) {");
+         PUT_TO(B, "  if (a.hi - a.lo != b.hi - b.lo) return 0;");
+         PUT_TO(B, "  for (rt_int i = 0; i < RT_CNT(a); i++) if (!(" & X.all & ")) return 0;");
+         PUT_TO(B, "  return 1;");
+         PUT_TO(B, "}");
+      else
+         PUT_TO(B, "static void as_" & C.all & "(" & C.all & " *d, " & C.all & " s) {");
+         F := T.FIELDS;
+         while F /= null loop
+            ASSIGN_CODE("d->" & C_FIELD(F.NAME.all), F.T, "s." & C_FIELD(F.NAME.all), null, X);
+            PUT_TO(B, "  " & X.all);
+            F := F.NEXT;
+         end loop;
+         PUT_TO(B, "}");
+         PUT_TO(B, "static " & C.all & " cp_" & C.all & "(" & C.all & " s) {");
+         PUT_TO(B, "  " & C.all & " d = s;");
+         CONDS := MK("1");
+         F := T.FIELDS;
+         while F /= null loop
+            COPY_CODE(F.T, "s." & C_FIELD(F.NAME.all), X);
+            PUT_TO(B, "  d." & C_FIELD(F.NAME.all) & " = " & X.all & ";");
+            EQ_CODE(F.T, "a." & C_FIELD(F.NAME.all), "b." & C_FIELD(F.NAME.all), Y);
+            CONDS := MK(CONDS.all & " && " & Y.all);
+            F := F.NEXT;
+         end loop;
+         PUT_TO(B, "  return d;");
+         PUT_TO(B, "}");
+         PUT_TO(B, "static int eq_" & C.all & "(" & C.all & " a, " & C.all & " b) {");
+         PUT_TO(B, "  return " & CONDS.all & ";");
+         PUT_TO(B, "}");
+      end if;
+   end HELPER_BODIES;

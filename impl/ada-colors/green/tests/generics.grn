@@ -1,0 +1,109 @@
+-- generics (RM79 12): every use goes through an explicit instantiation
+generic (type ELEM)
+procedure EXCHANGE(A, B : in out ELEM) is
+   T : ELEM;
+begin
+   T := A;
+   A := B;
+   B := T;
+end EXCHANGE;
+
+generic (SIZE : INTEGER; type ELEM)
+package STACK is
+   procedure PUSH(X : ELEM);
+   procedure POP(X : out ELEM);
+   function DEPTH return INTEGER;
+   OVERFLOW_ERROR : exception;
+end STACK;
+
+package body STACK is
+   SPACE : array (1 .. SIZE) of ELEM;
+   TOP : INTEGER := 0;
+   procedure PUSH(X : ELEM) is
+   begin
+      if TOP = SIZE then
+         raise OVERFLOW_ERROR;
+      end if;
+      TOP := TOP + 1;
+      SPACE(TOP) := X;
+   end PUSH;
+   procedure POP(X : out ELEM) is
+   begin
+      X := SPACE(TOP);
+      TOP := TOP - 1;
+   end POP;
+   function DEPTH return INTEGER is
+   begin
+      return TOP;
+   end DEPTH;
+end STACK;
+
+generic (type ITEM; function COMBINE(X, Y : ITEM) return ITEM)
+function REDUCE(A, B, C : ITEM) return ITEM is
+begin
+   return COMBINE(COMBINE(A, B), C);
+end REDUCE;
+
+-- a semaphore as a generic task, as RM79 9.11 defines it in GREEN
+generic task SEMAPHORE is
+   entry P;
+   entry V;
+end SEMAPHORE;
+
+task body SEMAPHORE is
+begin
+   loop
+      accept P;
+      accept V;
+   end loop;
+end SEMAPHORE;
+
+procedure MAIN is
+   procedure SWAP is new EXCHANGE(ELEM is INTEGER);
+   subtype WORD is STRING(1 .. 3);
+   procedure SWAP_TEXT is new EXCHANGE(WORD);
+   package INT_STACK is new STACK(SIZE := 3, ELEM is INTEGER);
+   package NAMES is new STACK(2, CHARACTER);
+   function PLUS(X, Y : INTEGER) return INTEGER is
+   begin
+      return X + Y;
+   end PLUS;
+   function MAX(X, Y : INTEGER) return INTEGER is
+   begin
+      if X > Y then
+         return X;
+      end if;
+      return Y;
+   end MAX;
+   function SUM3 is new REDUCE(INTEGER, PLUS);
+   function MAX3 is new REDUCE(ITEM is INTEGER, COMBINE is MAX);
+   task MUTEX is new SEMAPHORE;
+   I, J : INTEGER;
+   S1 : STRING(1 .. 3) := "abc";
+   S2 : STRING(1 .. 3) := "xyz";
+   C : CHARACTER;
+begin
+   I := 1;
+   J := 2;
+   SWAP(I, J);
+   SWAP_TEXT(S1, S2);
+   PUT(I); PUT(J); PUT(" " & S1 & S2); PUT(NEWLINE);
+   INT_STACK.PUSH(10);
+   INT_STACK.PUSH(20);
+   INT_STACK.PUSH(30);
+   begin
+      INT_STACK.PUSH(40);
+   exception
+      when INT_STACK.OVERFLOW_ERROR => PUT("overflow at depth"); PUT(INT_STACK.DEPTH); PUT(NEWLINE);
+   end;
+   INT_STACK.POP(I);
+   NAMES.PUSH("G");
+   NAMES.POP(C);
+   PUT(I); PUT(C); PUT(NAMES.DEPTH); PUT(NEWLINE);
+   PUT(SUM3(1, 2, 3)); PUT(MAX3(4, 9, 2)); PUT(NEWLINE);
+   initiate MUTEX;
+   MUTEX.P;
+   PUT("in the critical section"); PUT(NEWLINE);
+   MUTEX.V;
+   abort MUTEX;
+end MAIN;

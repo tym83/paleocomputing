@@ -1,0 +1,49 @@
+-- INTRO 1979 Section 6.5 (a delay alternative as a timeout); changes marked CHANGE n, see CHANGES.md
+task PRINTER_DRIVER is
+   subtype LINE_IMAGE is STRING(1 .. 120);
+   entry LINE_PRINT(L : LINE_IMAGE);
+end;
+
+task body PRINTER_DRIVER is
+   BUFFER : LINE_IMAGE;
+   CHAIN_GOING : BOOLEAN := FALSE;
+begin
+   loop
+      select
+         accept LINE_PRINT(L : LINE_IMAGE) do
+            BUFFER := L;
+         end;
+         PUT("printing " & BUFFER(1 .. 5) & " at"); PUT(SYSTEM'CLOCK / SECONDS); PUT(NEWLINE);  -- CHANGE 1
+         if not CHAIN_GOING then
+            -- start the chain
+            delay 1.0*SECONDS;
+            CHAIN_GOING := TRUE;
+         end if;
+      or
+         when CHAIN_GOING =>
+            delay 10.0*SECONDS;
+            -- stop the chain
+            CHAIN_GOING := FALSE;
+            PUT("chain stopped at"); PUT(SYSTEM'CLOCK / SECONDS); PUT(NEWLINE);  -- CHANGE 1
+      end select;
+   end loop;
+end;
+
+-- CHANGE 2: a main program that uses the driver
+procedure PRINT_THREE is
+   L : STRING(1 .. 120);
+begin
+   for I in 1 .. 120 loop
+      L(I) := " ";
+   end loop;
+   initiate PRINTER_DRIVER;
+   L(1 .. 5) := "LINE1";
+   PRINTER_DRIVER.LINE_PRINT(L);
+   L(1 .. 5) := "LINE2";
+   PRINTER_DRIVER.LINE_PRINT(L);
+   delay 20.0 * SECONDS;
+   L(1 .. 5) := "LINE3";
+   PRINTER_DRIVER.LINE_PRINT(L);
+   delay 20.0 * SECONDS;
+   abort PRINTER_DRIVER;
+end PRINT_THREE;

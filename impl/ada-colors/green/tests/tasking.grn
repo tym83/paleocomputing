@@ -1,0 +1,129 @@
+-- GREEN tasking (RM79 9): initiate, rendezvous, select, delay, abort
+procedure MAIN is
+   task BUFFER is
+      entry PUT_ITEM(X : in INTEGER);
+      entry GET_ITEM(X : out INTEGER);
+      entry STOP;
+   end BUFFER;
+
+   task PRODUCER;
+   task WATCHER is
+      entry PING;
+   end WATCHER;
+   task SLEEPER;
+   task FAULTY is
+      entry DIVIDE(A, B : in INTEGER; Q : out INTEGER);
+   end FAULTY;
+
+   task body BUFFER is
+      SIZE : constant INTEGER := 2;
+      ITEMS : array (1 .. 2) of INTEGER;
+      COUNT : INTEGER := 0;
+      HEAD : INTEGER := 1;
+      DONE : BOOLEAN := FALSE;
+   begin
+      while not DONE loop
+         select
+            when COUNT < SIZE =>
+               accept PUT_ITEM(X : in INTEGER) do
+                  ITEMS((HEAD + COUNT - 1) mod SIZE + 1) := X;
+               end PUT_ITEM;
+               COUNT := COUNT + 1;
+         or
+            when COUNT > 0 =>
+               accept GET_ITEM(X : out INTEGER) do
+                  X := ITEMS(HEAD);
+               end GET_ITEM;
+               HEAD := HEAD mod SIZE + 1;
+               COUNT := COUNT - 1;
+         or
+            accept STOP;
+            DONE := TRUE;
+         end select;
+      end loop;
+   end BUFFER;
+
+   task body PRODUCER is
+   begin
+      for I in 1 .. 5 loop
+         BUFFER.PUT_ITEM(I * 10);
+      end loop;
+   end PRODUCER;
+
+   -- a delay alternative as a timeout (RM79 9.7, INTRO 6.5)
+   task body WATCHER is
+   begin
+      loop
+         select
+            accept PING;
+            PUT("ping"); PUT(NEWLINE);
+         or
+            delay 2.0 * SECONDS;
+            PUT("no ping for two seconds"); PUT(NEWLINE);
+            exit;
+         end select;
+      end loop;
+   end WATCHER;
+
+   task body SLEEPER is
+   begin
+      loop
+         delay 1.0 * SECONDS;
+      end loop;
+   exception
+      when FAILURE =>
+         PUT("sleeper: FAILURE raised from outside"); PUT(NEWLINE);
+   end SLEEPER;
+
+   -- an exception in an accept body reaches both partners (RM79 11.4)
+   task body FAULTY is
+   begin
+      loop
+         begin
+            accept DIVIDE(A, B : in INTEGER; Q : out INTEGER) do
+               Q := A / B;
+            end DIVIDE;
+         exception
+            when DIVIDE_ERROR => PUT("server saw DIVIDE_ERROR"); PUT(NEWLINE);
+         end;
+      end loop;
+   end FAULTY;
+
+   V, SUM : INTEGER := 0;
+begin
+   initiate BUFFER, PRODUCER;
+   for I in 1 .. 5 loop
+      BUFFER.GET_ITEM(V);
+      SUM := SUM + V;
+   end loop;
+   PUT("sum"); PUT(SUM); PUT(NEWLINE);
+   BUFFER.STOP;
+   begin
+      initiate WATCHER;
+      initiate WATCHER;
+   exception
+      when INITIATE_ERROR => PUT("initiating an active task: INITIATE_ERROR"); PUT(NEWLINE);
+   end;
+   WATCHER.PING;
+   WATCHER.PING;
+   delay 5.0 * SECONDS;
+   PUT("watcher active: "); PUT(WATCHER'ACTIVE); PUT(NEWLINE);
+   begin
+      WATCHER.PING;
+   exception
+      when TASKING_ERROR => PUT("calling a terminated task: TASKING_ERROR"); PUT(NEWLINE);
+   end;
+   initiate SLEEPER;
+   delay 3.0 * SECONDS;
+   raise SLEEPER.FAILURE;
+   initiate FAULTY;
+   begin
+      FAULTY.DIVIDE(10, 0, V);
+   exception
+      when DIVIDE_ERROR => PUT("caller saw DIVIDE_ERROR"); PUT(NEWLINE);
+   end;
+   FAULTY.DIVIDE(10, 3, V);
+   PUT("10 / 3 ="); PUT(V); PUT(NEWLINE);
+   abort FAULTY;
+   PUT("end of main"); PUT(NEWLINE);
+end MAIN;

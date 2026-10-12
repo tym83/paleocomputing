@@ -1,0 +1,36 @@
+-- entry families (RM79 9.5): one queue per member, accept E(I)(...)
+procedure MAIN is
+   type LEVEL is (LOW, MIDDLE, HIGH);
+   task SERVER is
+      entry REQUEST(LEVEL)(N : in INTEGER);
+      entry SLOT(1 .. 3);
+   end SERVER;
+   task body SERVER is
+   begin
+      for I in 1 .. 3 loop
+         accept SLOT(I);
+         PUT("slot"); PUT(I); PUT(NEWLINE);
+      end loop;
+      loop
+         select
+            accept REQUEST(HIGH)(N : in INTEGER) do
+               PUT("high"); PUT(N); PUT(NEWLINE);
+            end REQUEST;
+         or
+            accept REQUEST(LOW)(N : in INTEGER) do
+               PUT("low"); PUT(N); PUT(NEWLINE);
+            end REQUEST;
+         or
+            delay 1.0 * SECONDS;
+            exit;
+         end select;
+      end loop;
+   end SERVER;
+begin
+   initiate SERVER;
+   SERVER.SLOT(1);
+   SERVER.SLOT(2);
+   SERVER.SLOT(3);
+   SERVER.REQUEST(HIGH)(7);
+   SERVER.REQUEST(LOW)(3);
+end MAIN;

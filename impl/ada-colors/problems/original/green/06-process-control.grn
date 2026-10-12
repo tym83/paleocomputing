@@ -1,0 +1,154 @@
+-- GREEN solution to DoD-1 sample problem 6: A Process Control Example
+--
+-- Source: Honeywell Inc. Systems and Research Center / CII Honeywell Bull,
+--   "Set of Sample Problems for DOD High Order Language Program. GREEN
+--   Solutions", April 1979, DTIC ADA070752, section 6 (doc pages 6-1..6-5,
+--   PDF pages 48-52).
+--
+-- Problem (condensed):
+--   Four processes: a reads data from the environment into a buffer area;
+--   b processes the buffer data and stores results in a 'result area';
+--   c produces output from these results; d monitors/controls the others
+--   and talks to the operator console. a and b share a double buffer:
+--   when a has filled one area, b is notified and reads it while a fills
+--   the other; b notifies a after reading an area. Reading an unfilled
+--   area or writing an unread area is illegal. It must be possible to
+--   replace a by hardware without changing b, c, d, and to terminate a and
+--   b at any time without losing data (a cleanup processes any remaining
+--   data in either buffer area). Actual I/O and b's processing are given
+--   library routines; d may be highly summarized.
+--
+-- GREEN design notes (condensed from section 6.2):
+--   Each buffer is controlled by a separate task; correct handling of
+--   multiple buffers is achieved exclusively by task synchronization.
+--   Tasks A, B, C, D are declared in package BUFFERS, which also fixes the
+--   buffer size, number of buffers and element type (works for any number
+--   of buffers). D repeatedly receives control commands, including an
+--   interrupt via its INTERRUPT entry. C repeatedly acts on RESULT_AREA and
+--   is not synchronized (changing RESULT_AREA while it is read is
+--   acceptable). B receives buffers through entry NEXT_BUFFER with an
+--   element count; a non-full buffer is the last one and tells B to stop.
+--   Each buffer is owned by a member of task family WORKER, local to A.
+--   A worker waits on accept RELEASE (start of its writing phase); when
+--   its buffer is full it calls A.FULL (so A can release the next worker)
+--   and then sends the buffer to B.NEXT_BUFFER. If all buffers are full A
+--   waits on the call to RELEASE; if all are empty A waits on accept FULL.
+--   Termination: on an interrupt, D calls A.STOP; A calls STOP of the
+--   worker currently reading; the worker stops and sends its partial buffer
+--   to B while holding A in a rendezvous; once B has accepted it, worker and
+--   A are released, all input has reached B, and A aborts all workers.
+--
+-- Transcription note: the declaration "RESULT_AREA:" has no type in the
+-- original listing (it is left schematic, as are the "..." fragments).
+--
+-- ---------------------------------------------------------------------------
+
+package BUFFERS is
+   MAX_BUFFERS: constant INTEGER := 2;
+   MAX_SIZE   : constant INTEGER := 1000;
+
+   subtype BUFF_RANGE is INTEGER range 1 .. MAX_SIZE;
+   subtype BUFF_NAME  is INTEGER range 1 .. MAX_BUFFERS;
+   type ITEM      is new CHARACTER;
+   type BUFF_TYPE is array(1 .. MAX_SIZE) of ITEM;
+
+   RESULT_AREA:  -- working area filled by B and read by C
+
+   task A is
+      entry STOP;
+   end;
+   task B is
+      entry NEXT_BUFFER(BUF: BUFF_TYPE; N_ELTS: INTEGER);
+   end;
+   task C;
+   task D;
+end;
+
+package body BUFFERS is
+   procedure READ(C : in out ITEM) is separate;
+  task body A is
+      FILLING: BUFF_NAME := 1;
+
+      entry FULL;
+
+      task WORKER(BUFF_NAME'FIRST .. BUFF_NAME'LAST) is
+         entry RELEASE;
+         entry STOP;
+      end;
+      function NEXT(B: BUFF_NAME) return BUFF_NAME is
+      begin
+         return (B mod MAX_BUFFERS) + 1;
+      end;
+
+      task body WORKER is
+         BUFFER: BUFF_TYPE;
+         ME    : constant INTEGER := WORKER'INDEX;
+      begin
+      <<FILL_BUFFER>> loop
+            accept RELEASE;
+            for I in 1 .. MAX_SIZE loop
+               select
+                  accept STOP do
+                        B.NEXT_BUFFER(BUFFER, I-1);
+                  end STOP;
+                  exit FILL_BUFFER;
+               else
+                  READ(BUFFER(I));
+               end select;
+            end loop;
+            A.FULL;
+            B.NEXT_BUFFER(BUFFER, MAX_SIZE);
+         end loop FILL_BUFFER;
+      end WORKER;
+
+  begin -- A
+      initiate WORKER(BUFF_NAME'FIRST .. BUFF_NAME'LAST);
+      loop
+         WORKER(FILLING).RELEASE;
+         select
+            accept FULL;
+            FILLING := NEXT(FILLING);
+         or when FULL'COUNT = 0 =>
+            accept STOP;
+            WORKER(FILLING).STOP;
+            exit;
+         end select;
+      end loop;
+      abort WORKER(BUFF_NAME'FIRST .. BUFF_NAME'LAST);
+  end A;
+
+   task body B is
+   begin
+      loop
+         accept NEXT_BUFFER(BUF: BUFF_TYPE; N_ELTS: INTEGER) do
+            -- compute values using BUF, and store
+            -- results in RESULT_AREA
+            exit when N_ELTS < MAX_SIZE;
+         end NEXT_BUFFER;
+      end loop;
+   end B;
+
+   task body C is
+   begin
+      loop
+         -- perform some actions, using contents of RESULT_AREA
+      end loop;
+   end C;
+
+   task body D is
+      entry INTERRUPT;
+      for INTERRUPT use at ...;
+   begin
+      loop
+         select
+            accept INTERRUPT;
+            A.STOP;
+         or -- accept other controls, or do other things
+            ...
+         end select;
+      end loop;
+   end D;
+
+begin -- initialization of BUFFERS
+   initiate A, B, C, D;
+end;

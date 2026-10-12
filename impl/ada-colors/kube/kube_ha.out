@@ -1,0 +1,40 @@
+[0 ms] user: create deployment web, 4 replicas
+[0 ms] deployment 4: new replicaset for version 1
+[0 ms] replicaset 5: 0 of 4 pods, creating 4
+[0 ms] scheduler: pod 6 -> node 1
+[0 ms] scheduler: pod 7 -> node 2
+[0 ms] scheduler: pod 8 -> node 3
+[0 ms] scheduler: pod 9 -> node 1
+[0 ms] kubelet 1: pod 6 (version 1) running
+[0 ms] kubelet 1: pod 9 (version 1) running
+[0 ms] kubelet 2: pod 7 (version 1) running
+[0 ms] kubelet 3: pod 8 (version 1) running
+[60 ms]   pod 6  rs 5  version 1  node-id 1  phase 1
+[60 ms]   pod 7  rs 5  version 1  node-id 2  phase 1
+[60 ms]   pod 8  rs 5  version 1  node-id 3  phase 1
+[60 ms]   pod 9  rs 5  version 1  node-id 1  phase 1
+[60 ms] user: roll out version 2
+[60 ms] deployment 4: old replicaset 5 scaled to 0
+[60 ms] deployment 4: new replicaset for version 2
+[60 ms] replicaset 5: delete pod 6
+[60 ms] replicaset 5: delete pod 7
+[60 ms] replicaset 5: delete pod 8
+[60 ms] replicaset 5: delete pod 9
+[60 ms] replicaset 10: 0 of 4 pods, creating 4
+[60 ms] api server primary loses power right after storing pod 11; the writes still in its mailbox are gone
+[60 ms] scheduler: pod 11 -> node 1
+[80 ms] replicaset 10: 1 of 4 pods, creating 3
+[95 ms] api server backup: no heartbeat, taking over the name API
+[95 ms] scheduler: pod 11 -> node 1
+[95 ms] kubelet 1: pod 11 (version 2) running
+[115 ms] replicaset 10: 1 of 4 pods, creating 3
+[115 ms] scheduler: pod 12 -> node 2
+[115 ms] scheduler: pod 13 -> node 3
+[115 ms] scheduler: pod 14 -> node 1
+[115 ms] kubelet 1: pod 14 (version 2) running
+[115 ms] kubelet 2: pod 12 (version 2) running
+[115 ms] kubelet 3: pod 13 (version 2) running
+[210 ms]   pod 11  rs 10  version 2  node-id 1  phase 1
+[210 ms]   pod 12  rs 10  version 2  node-id 2  phase 1
+[210 ms]   pod 13  rs 10  version 2  node-id 3  phase 1
+[210 ms]   pod 14  rs 10  version 2  node-id 1  phase 1

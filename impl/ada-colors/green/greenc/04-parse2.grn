@@ -1,0 +1,680 @@
+   -- ---- declarative parts (RM79 6.1) ------------------------------------------------
+
+   procedure SKIP_PRAGMA is
+   begin
+      while not AT_OP(";") loop
+         SKIP;
+      end loop;
+      SKIP;
+   end SKIP_PRAGMA;
+
+   procedure SKIP_VISIBILITY is
+      NAMES : NODE;
+   begin
+      -- restricted [(unit, ...)] (RM79 8.3)
+      SKIP;
+      if AT_OP("(") then
+         SKIP;
+         ID_LIST(NAMES);
+         EXPECT_OP(")");
+      end if;
+   end SKIP_VISIBILITY;
+
+   -- representation specifications (RM79 13) do not change the meaning of a
+   -- program here: they are read and ignored
+   procedure SKIP_REPRESENTATION is
+   begin
+      while not AT_KW("USE") loop
+         SKIP;
+      end loop;
+      SKIP;
+      if AT_KW("RECORD") then
+         while not (AT_KW("END") and KIND_AT(1) = K_KW and TEXT_AT(1) = "RECORD") loop
+            SKIP;
+         end loop;
+         SKIP;
+         SKIP;
+      end if;
+      while not AT_OP(";") loop
+         SKIP;
+      end loop;
+      SKIP;
+   end SKIP_REPRESENTATION;
+
+   procedure DECL_PART(RES : out NODE) is
+      HEAD, TAIL, X, NAMES : NODE;
+   begin
+      loop
+         if AT_KW("PRAGMA") then
+            SKIP_PRAGMA;
+         elsif AT_KW("USE") then
+            SKIP;
+            X := NN(N_USE, CUR_LINE);
+            ID_LIST(X.A);
+            EXPECT_OP(";");
+            APPEND(HEAD, TAIL, X);
+         elsif AT_KW("RESTRICTED") then
+            SKIP_VISIBILITY;
+         elsif AT_KW("FOR") then
+            SKIP_REPRESENTATION;
+         elsif AT_KW("TYPE") or AT_KW("SUBTYPE") then
+            TYPE_DECL(X);
+            APPEND(HEAD, TAIL, X);
+         elsif AT_KW("PROCEDURE") or AT_KW("FUNCTION") then
+            SUBPROGRAM(X);
+            APPEND(HEAD, TAIL, X);
+         elsif AT_KW("PACKAGE") then
+            PACKAGE_P(X);
+            APPEND(HEAD, TAIL, X);
+         elsif AT_KW("TASK") then
+            TASK_P(X);
+            APPEND(HEAD, TAIL, X);
+         elsif AT_KW("GENERIC") then
+            GENERIC_P(X);
+            APPEND(HEAD, TAIL, X);
+         elsif AT_KW("ENTRY") then
+            ENTRY_P(X);
+            APPEND(HEAD, TAIL, X);
+         elsif AT_KIND(K_ID) and KIND_AT(1) = K_OP and (TEXT_AT(1) = ":" or TEXT_AT(1) = ",") then
+            OBJECT_DECL(X);
+            APPEND(HEAD, TAIL, X);
+         else
+            RES := HEAD;
+            return;
+         end if;
+      end loop;
+   end DECL_PART;
+
+   -- object declarations (RM79 3.2) and exception declarations (RM79 11.1):
+   -- one node per declared name
+   procedure OBJECT_DECL(RES : out NODE) is
+      HEAD, TAIL, NAMES, ST, INIT, X : NODE;
+      LINE : INTEGER := CUR_LINE;
+      IS_CONST : BOOLEAN := FALSE;
+   begin
+      ID_LIST(NAMES);
+      EXPECT_OP(":");
+      if AT_KW("EXCEPTION") then
+         SKIP;
+         EXPECT_OP(";");
+         while NAMES /= null loop
+            X := NN(N_EXC, LINE);
+            X.NAME := NAMES.NAME;
+            APPEND(HEAD, TAIL, X);
+            NAMES := NAMES.NEXT;
+         end loop;
+         RES := HEAD;
+         return;
+      end if;
+      if AT_KW("CONSTANT") then
+         SKIP;
+         IS_CONST := TRUE;
+      end if;
+      TYPE_SPEC(ST);
+      if AT_OP(":=") then
+         SKIP;
+         EXPR(INIT);
+      end if;
+      EXPECT_OP(";");
+      while NAMES /= null loop
+         if IS_CONST then
+            X := NN(N_CONST, LINE);
+         else
+            X := NN(N_VAR, LINE);
+         end if;
+         X.NAME := NAMES.NAME;
+         X.A := ST;
+         X.B := INIT;
+         if not (IS_CONST and INIT = null) then
+            APPEND(HEAD, TAIL, X);
+         end if;
+         NAMES := NAMES.NEXT;
+      end loop;
+      RES := HEAD;
+      return;
+   end OBJECT_DECL;
+
+   -- type and subtype declarations (RM79 3.3); type T; is an incomplete one
+   procedure TYPE_DECL(RES : out NODE) is
+      X : NODE;
+      LINE : INTEGER := CUR_LINE;
+   begin
+      if AT_KW("SUBTYPE") then
+         SKIP;
+         X := NN(N_SUBTYPE, LINE);
+         EXPECT_ID(X.NAME);
+         EXPECT_KW("IS");
+         SUBTYPE_IND(X.A);
+         EXPECT_OP(";");
+         RES := X;
+         return;
+      end if;
+      EXPECT_KW("TYPE");
+      X := NN(N_TYPE, LINE);
+      EXPECT_ID(X.NAME);
+      if AT_OP(";") then
+         SKIP;
+         RES := null;
+         return;
+      end if;
+      EXPECT_KW("IS");
+      if AT_KW("PRIVATE") then
+         SKIP;
+         X.A := NN(D_PRIVATE, LINE);
+      else
+         TYPE_DEF(X.A);
+      end if;
+      EXPECT_OP(";");
+      RES := X;
+      return;
+   end TYPE_DECL;
+
+   -- formal_part ::= ( parameter_declaration { ; parameter_declaration } ) (RM79 6.2)
+   procedure FORMAL_PART(RES : out NODE) is
+      HEAD, TAIL, NAMES, ST, DEF, P : NODE;
+      MODE : INTEGER;
+      MORE : BOOLEAN := TRUE;
+   begin
+      EXPECT_OP("(");
+      while MORE loop
+         ID_LIST(NAMES);
+         EXPECT_OP(":");
+         MODE := M_IN;
+         if AT_KW("IN") then
+            SKIP;
+            if AT_KW("OUT") then
+               SKIP;
+               MODE := M_INOUT;
+            end if;
+         elsif AT_KW("OUT") then
+            SKIP;
+            MODE := M_OUT;
+         end if;
+         SUBTYPE_IND(ST);
+         DEF := null;
+         if AT_OP(":=") then
+            SKIP;
+            EXPR(DEF);
+         end if;
+         while NAMES /= null loop
+            P := NN(N_PARAM, NAMES.LINE);
+            P.NAME := NAMES.NAME;
+            P.IVAL := MODE;
+            P.A := ST;
+            P.B := DEF;
+            APPEND(HEAD, TAIL, P);
+            NAMES := NAMES.NEXT;
+         end loop;
+         MORE := AT_OP(";");
+         if MORE then
+            SKIP;
+         end if;
+      end loop;
+      EXPECT_OP(")");
+      RES := HEAD;
+      return;
+   end FORMAL_PART;
+
+   procedure DESIGNATOR(RES : out TEXT) is
+   begin
+      if AT_KIND(K_STR) then
+         -- an operator designator such as "*" (RM79 6.6.1)
+         SKIP;
+         RES := MK(TOKS(TPOS - 1).S.all);
+         return;
+      end if;
+      EXPECT_ID(RES);
+      return;
+   end DESIGNATOR;
+
+   -- subprogram bodies (RM79 6.4): A params, B result, C declarations,
+   -- D statements, E handlers; FLAG 1 marks a value-returning procedure.
+   -- A declaration without a body gives no node.
+   procedure SUBPROGRAM(RES : out NODE) is
+      X : NODE;
+      LINE : INTEGER := CUR_LINE;
+      IS_PROC : BOOLEAN := AT_KW("PROCEDURE");
+   begin
+      SKIP;
+      if IS_PROC then
+         X := NN(N_PROC, LINE);
+      else
+         X := NN(N_FUNC, LINE);
+      end if;
+      DESIGNATOR(X.NAME);
+      if AT_KW("IS") and KIND_AT(1) = K_KW and TEXT_AT(1) = "NEW" then
+         -- an instantiation (RM79 12.2)
+         INSTANTIATION(X, RES);
+         return;
+      end if;
+      if AT_OP("(") then
+         FORMAL_PART(X.A);
+      end if;
+      if AT_KW("RETURN") then
+         SKIP;
+         SUBTYPE_IND(X.B);
+         if IS_PROC then
+            X.FLAG := 1;
+         end if;
+      elsif not IS_PROC then
+         PERROR("a function needs a RETURN clause");
+      end if;
+      if AT_OP(";") then
+         -- a subprogram declaration (RM79 6.2), completed by a body later
+         SKIP;
+         X.IVAL := 1;
+         RES := X;
+         return;
+      end if;
+      EXPECT_KW("IS");
+      if AT_KW("SEPARATE") then
+         PERROR("separate bodies are not handled");
+      end if;
+      BODY_PART(X);
+      if AT_KIND(K_ID) or AT_KIND(K_STR) then
+         if TOKS(TPOS).S.all /= X.NAME.all then
+            PERROR("the name after END does not match " & X.NAME.all);
+         end if;
+         SKIP;
+      end if;
+      EXPECT_OP(";");
+      RES := X;
+      return;
+   end SUBPROGRAM;
+
+   -- declarative part, begin statements, exception handlers, end (RM79 6.4)
+   procedure BODY_PART(X : NODE) is
+   begin
+      DECL_PART(X.C);
+      if AT_KW("BEGIN") then
+         SKIP;
+         STATEMENTS(X.D);
+      end if;
+      if AT_KW("EXCEPTION") then
+         PARSE_HANDLERS(X.E);
+      end if;
+      EXPECT_KW("END");
+   end BODY_PART;
+
+   -- exception handlers (RM79 11.2); OTHERS becomes a name OTHERS
+   procedure PARSE_HANDLERS(RES : out NODE) is
+      HEAD, TAIL, H, NAMES, NTAIL, N : NODE;
+   begin
+      EXPECT_KW("EXCEPTION");
+      while AT_KW("WHEN") loop
+         SKIP;
+         H := NN(N_HANDLER, CUR_LINE);
+         NAMES := null;
+         NTAIL := null;
+         loop
+            if AT_KW("OTHERS") then
+               SKIP;
+               N := NN(N_NAME, CUR_LINE);
+               N.NAME := MK("OTHERS");
+            else
+               NAME_NODE(N);
+               while AT_OP(".") loop
+                  SKIP;
+                  N.TAG := N.NAME;
+                  EXPECT_ID(N.NAME);
+               end loop;
+            end if;
+            APPEND(NAMES, NTAIL, N);
+            exit when not AT_OP("|");
+            SKIP;
+         end loop;
+         EXPECT_OP("=>");
+         H.A := NAMES;
+         STATEMENTS(H.B);
+         APPEND(HEAD, TAIL, H);
+      end loop;
+      RES := HEAD;
+      return;
+   end PARSE_HANDLERS;
+
+   -- packages (RM79 7.1): a specification has its visible part in C and its
+   -- private part in D; a body is like a subprogram body
+   procedure PACKAGE_P(RES : out NODE) is
+      X : NODE;
+      LINE : INTEGER := CUR_LINE;
+   begin
+      EXPECT_KW("PACKAGE");
+      if AT_KW("BODY") then
+         SKIP;
+         X := NN(N_PKGBODY, LINE);
+         EXPECT_ID(X.NAME);
+         EXPECT_KW("IS");
+         BODY_PART(X);
+      else
+         X := NN(N_PKGSPEC, LINE);
+         EXPECT_ID(X.NAME);
+         if AT_KW("IS") and KIND_AT(1) = K_KW and TEXT_AT(1) = "NEW" then
+            INSTANTIATION(X, RES);
+            return;
+         end if;
+         EXPECT_KW("IS");
+         DECL_PART(X.C);
+         if AT_KW("PRIVATE") then
+            SKIP;
+            DECL_PART(X.D);
+         end if;
+         EXPECT_KW("END");
+      end if;
+      if AT_KIND(K_ID) then
+         SKIP;
+      end if;
+      EXPECT_OP(";");
+      RES := X;
+      return;
+   end PACKAGE_P;
+
+   -- ---- statements (RM79 5) ------------------------------------------------------------
+
+   function AT_STATEMENTS_END return BOOLEAN is
+   begin
+      return AT_KW("END") or AT_KW("ELSE") or AT_KW("ELSIF") or AT_KW("WHEN")
+         or AT_KW("EXCEPTION") or AT_KW("OR") or AT_KIND(K_EOF);
+   end AT_STATEMENTS_END;
+
+   procedure STATEMENTS(RES : out NODE) is
+      HEAD, TAIL, X : NODE;
+   begin
+      while not AT_STATEMENTS_END loop
+         if AT_KW("PRAGMA") then
+            SKIP_PRAGMA;
+         else
+            STATEMENT(X);
+            APPEND(HEAD, TAIL, X);
+         end if;
+      end loop;
+      RES := HEAD;
+      return;
+   end STATEMENTS;
+
+   procedure STATEMENT(RES : out NODE) is
+      X, T : NODE;
+      LINE : INTEGER := CUR_LINE;
+      LABEL : TEXT;
+   begin
+      if AT_OP("<<") then
+         -- a label serves both goto and exit (RM79 5)
+         SKIP;
+         EXPECT_ID(LABEL);
+         EXPECT_OP(">>");
+      end if;
+      if AT_KW("NULL") then
+         SKIP;
+         EXPECT_OP(";");
+         X := NN(N_NULL, LINE);
+         RES := X;
+         return;
+      elsif AT_KW("IF") then
+         IF_STMT(X);
+         RES := X;
+         return;
+      elsif AT_KW("CASE") then
+         CASE_STMT(X);
+         RES := X;
+         return;
+      elsif AT_KW("FOR") or AT_KW("WHILE") or AT_KW("LOOP") then
+         LOOP_STMT(X);
+         X.TAG := LABEL;
+         if AT_KIND(K_ID) then
+            if LABEL = null or else TOKS(TPOS).S.all /= LABEL.all then
+               PERROR("the name after END LOOP does not match the label");
+            end if;
+            SKIP;
+         end if;
+         EXPECT_OP(";");
+         RES := X;
+         return;
+      elsif AT_KW("DECLARE") or AT_KW("BEGIN") then
+         X := NN(N_BLOCK, LINE);
+         X.TAG := LABEL;
+         if AT_KW("DECLARE") then
+            SKIP;
+            DECL_PART(X.A);
+         end if;
+         EXPECT_KW("BEGIN");
+         STATEMENTS(X.B);
+         if AT_KW("EXCEPTION") then
+            PARSE_HANDLERS(X.C);
+         end if;
+         EXPECT_KW("END");
+         if AT_KIND(K_ID) then
+            SKIP;
+         end if;
+         EXPECT_OP(";");
+         RES := X;
+         return;
+      elsif AT_KW("EXIT") then
+         SKIP;
+         X := NN(N_EXIT, LINE);
+         if AT_KIND(K_ID) then
+            EXPECT_ID(X.NAME);
+         end if;
+         if AT_KW("WHEN") then
+            SKIP;
+            EXPR(X.A);
+         end if;
+         EXPECT_OP(";");
+         RES := X;
+         return;
+      elsif AT_KW("RETURN") then
+         SKIP;
+         X := NN(N_RETURN, LINE);
+         if not AT_OP(";") then
+            EXPR(X.A);
+         end if;
+         EXPECT_OP(";");
+         RES := X;
+         return;
+      elsif AT_KW("RAISE") then
+         SKIP;
+         if AT_OP(";") then
+            SKIP;
+            X := NN(N_RERAISE, LINE);
+            RES := X;
+            return;
+         end if;
+         X := NN(N_RAISE, LINE);
+         EXPECT_ID(X.NAME);
+         while AT_OP(".") loop
+            SKIP;
+            X.TAG := X.NAME;
+            EXPECT_ID(X.NAME);
+         end loop;
+         EXPECT_OP(";");
+         RES := X;
+         return;
+      elsif AT_KW("ASSERT") then
+         SKIP;
+         X := NN(N_ASSERT, LINE);
+         EXPR(X.A);
+         EXPECT_OP(";");
+         RES := X;
+         return;
+      elsif AT_KW("GOTO") then
+         PERROR("goto is not handled");
+      end if;
+      TASK_STATEMENT(X);
+      if X /= null then
+         RES := X;
+         return;
+      end if;
+      NAME_P(T);
+      if AT_OP(":=") then
+         SKIP;
+         X := NN(N_ASSIGN, LINE);
+         X.A := T;
+         EXPR(X.B);
+      else
+         X := NN(N_CALL, LINE);
+         X.A := T;
+      end if;
+      EXPECT_OP(";");
+      RES := X;
+      return;
+   end STATEMENT;
+
+   -- initiate, accept, select, delay, abort: in 10-tasks
+   procedure TASK_STATEMENT(RES : out NODE) is
+   begin
+      PARSE_TASK_STATEMENT(RES);
+   end TASK_STATEMENT;
+
+   -- IF (RM79 5.4); FLAG 1 = has ELSE
+   procedure IF_STMT(RES : out NODE) is
+      X, ARM, HEAD, TAIL : NODE;
+      GO : BOOLEAN := TRUE;
+   begin
+      X := NN(N_IF, CUR_LINE);
+      SKIP;
+      ARM := NN(N_ARM, CUR_LINE);
+      EXPR(ARM.A);
+      EXPECT_KW("THEN");
+      STATEMENTS(ARM.B);
+      APPEND(HEAD, TAIL, ARM);
+      while GO loop
+         if AT_KW("ELSIF") then
+            SKIP;
+            ARM := NN(N_ARM, CUR_LINE);
+            EXPR(ARM.A);
+            EXPECT_KW("THEN");
+            STATEMENTS(ARM.B);
+            APPEND(HEAD, TAIL, ARM);
+         elsif AT_KW("ELSE") then
+            SKIP;
+            X.FLAG := 1;
+            STATEMENTS(X.B);
+         else
+            GO := FALSE;
+         end if;
+      end loop;
+      EXPECT_KW("END");
+      EXPECT_KW("IF");
+      EXPECT_OP(";");
+      X.A := HEAD;
+      RES := X;
+      return;
+   end IF_STMT;
+
+   -- CASE expression OF (RM79 5.5); FLAG 1 = has OTHERS
+   procedure CASE_STMT(RES : out NODE) is
+      X, ARM, HEAD, TAIL, LABS, LTAIL, L : NODE;
+      OTHERS_ARM : BOOLEAN;
+   begin
+      X := NN(N_CASE, CUR_LINE);
+      SKIP;
+      EXPR(X.A);
+      EXPECT_KW("OF");
+      while AT_KW("WHEN") loop
+         SKIP;
+         LABS := null;
+         LTAIL := null;
+         OTHERS_ARM := FALSE;
+         loop
+            if AT_KW("OTHERS") then
+               SKIP;
+               OTHERS_ARM := TRUE;
+            else
+               L := NN(N_LABEL, CUR_LINE);
+               SIMPLE_EXPR(L.A);
+               if AT_OP("..") then
+                  SKIP;
+                  SIMPLE_EXPR(L.B);
+               end if;
+               APPEND(LABS, LTAIL, L);
+            end if;
+            exit when not AT_OP("|");
+            SKIP;
+         end loop;
+         EXPECT_OP("=>");
+         if OTHERS_ARM then
+            X.FLAG := 1;
+            STATEMENTS(X.C);
+         else
+            ARM := NN(N_ARM, CUR_LINE);
+            ARM.A := LABS;
+            STATEMENTS(ARM.B);
+            APPEND(HEAD, TAIL, ARM);
+         end if;
+      end loop;
+      EXPECT_KW("END");
+      EXPECT_KW("CASE");
+      EXPECT_OP(";");
+      X.B := HEAD;
+      RES := X;
+      return;
+   end CASE_STMT;
+
+   -- loop statement (RM79 5.6): FLAG 0 plain, 1 while, 2 for; IVAL 1 = reverse
+   procedure LOOP_STMT(RES : out NODE) is
+      X, R : NODE;
+      LINE : INTEGER := CUR_LINE;
+   begin
+      X := NN(N_LOOP, LINE);
+      if AT_KW("FOR") then
+         SKIP;
+         X.FLAG := 2;
+         EXPECT_ID(X.NAME);
+         EXPECT_KW("IN");
+         if AT_KW("REVERSE") then
+            SKIP;
+            X.IVAL := 1;
+         end if;
+         if AT_KIND(K_ID) and KIND_AT(1) = K_KW and TEXT_AT(1) = "LOOP" then
+            SUBTYPE_IND(X.A);
+         else
+            R := NN(N_RANGE, LINE);
+            SIMPLE_EXPR(R.A);
+            if AT_OP("..") then
+               SKIP;
+               SIMPLE_EXPR(R.B);
+               X.A := R;
+            else
+               X.A := R.A;
+            end if;
+         end if;
+      elsif AT_KW("WHILE") then
+         SKIP;
+         X.FLAG := 1;
+         EXPR(X.A);
+      end if;
+      EXPECT_KW("LOOP");
+      STATEMENTS(X.B);
+      EXPECT_KW("END");
+      EXPECT_KW("LOOP");
+      RES := X;
+      return;
+   end LOOP_STMT;
+
+   -- ---- compilation (RM79 10.1) ------------------------------------------------------
+
+   procedure COMPILATION(RES : out NODE) is
+      HEAD, TAIL, X : NODE;
+   begin
+      while not AT_KIND(K_EOF) loop
+         if AT_KW("PRAGMA") then
+            SKIP_PRAGMA;
+         else
+            if AT_KW("RESTRICTED") then
+               SKIP_VISIBILITY;
+            end if;
+            if AT_KW("PROCEDURE") or AT_KW("FUNCTION") then
+               SUBPROGRAM(X);
+            elsif AT_KW("PACKAGE") then
+               PACKAGE_P(X);
+            elsif AT_KW("TASK") then
+               TASK_P(X);
+            elsif AT_KW("GENERIC") then
+               GENERIC_P(X);
+            else
+               PERROR("a compilation unit is a subprogram, a package or a task");
+            end if;
+            APPEND(HEAD, TAIL, X);
+         end if;
+      end loop;
+      RES := HEAD;
+      return;
+   end COMPILATION;

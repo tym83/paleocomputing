@@ -1,0 +1,156 @@
+-- GREEN solution to DoD-1 sample problem 10: Unpacking and Conversion of Data
+--
+-- Source: Honeywell Inc. Systems and Research Center / CII Honeywell Bull,
+--   "Set of Sample Problems for DOD High Order Language Program. GREEN
+--   Solutions", April 1979, DTIC ADA070752, section 10 (doc pages
+--   10-1..10-4, PDF pages 74-77).
+--
+-- Problem (condensed):
+--   Purpose: process a packed binary message header. A packed binary
+--   message packet has been placed in a buffer by the line handler; the
+--   program determines classification, precedence and destination of the
+--   packet, reorders them and places them in a queue entry for later
+--   processing by another program. Assumptions: 8-bit machine; the buffer
+--   comes from a buffer pool and its location is supplied on invocation;
+--   packets up to 256 bytes; queue entries come from a common pool via
+--   GET_A_QUEUE (infinite supply); a packet is passed to a program before
+--   this routine terminates.
+--
+--   Packet format (figure in assumption 4):
+--     byte 0, bits 0-2 : classification  0 top-secret, 1 secret,
+--                                        2 confidential, 3 unclass,
+--                                        all others unknown
+--     byte 0, bits 3-4 : precedence      0 routine, 1 priority, 2 flash,
+--                                        3 unknown
+--     byte 0, bits 5-7 and byte 1, bits 0-7 : addressee
+--     byte 2, bits 0-7 : packet length in bytes
+--   Queue entry format (assumption 5):
+--     byte 0 : classification, ASCII: T top-secret, S secret,
+--              C confidential, U unclassified, X unknown
+--     byte 1 : precedence: F flash, P priority, R routine, X unknown
+--     bytes 2 and 3 : addressee (right justified, not converted)
+--     byte 4 : packet length
+--     byte 5 : packet number
+--
+-- GREEN design notes (condensed from section 10.2):
+--   Two record types, PACKET_FORMAT and QE_FORMAT, with representation
+--   specifications. Unpacking/conversion of addressee and packet length is
+--   just component assignment. Classification and precedence need a case
+--   statement because the representations of the corresponding enumeration
+--   types are not ordered in the same way.
+--
+-- Transcription note: the printed character literals appear as "T", "S" ...
+-- (double-quote style of the typewriter font), kept as printed.
+--
+-- ---------------------------------------------------------------------------
+
+restricted(LINE_HANDLER, QUEUE_HANDLER)
+task PACKET_TO_QUEUE is
+
+   BYTE       : constant INTEGER := 8;
+   MAX_PACKET : constant INTEGER := 255;
+   type PACKET_NUMBER is new INTEGER range 0 .. MAX_PACKET;
+
+   package PACKET_TYPE is
+      MAX_LENGTH : constant INTEGER := 256;
+
+      type CLASSIFICATION is
+               (TOP_SECRET, SECRET,     CONFIDENTIAL, UNCLASSIFIED,
+                UNKNOWN_4,  UNKNOWN_5,  UNKNOWN_6,    UNKNOWN_7);
+
+      type PRECEDENCE is
+               (ROUTINE, PRIORITY, FLASH, UNKNOWN);
+
+      type ADDRESS is new INTEGER range 0 .. 1023;
+      type LENGTH  is new INTEGER range 0 .. MAX_LENGTH;
+
+      type PACKET_FORMAT is
+         record
+            CLASS : CLASSIFICATION;
+            PREC  : PRECEDENCE;
+            DEST  : ADDRESS;
+            LGTH  : LENGTH;
+         end record;
+
+      for CLASSIFICATION use
+         (TOP_SECRET   => 0,
+          SECRET       => 1,
+          CONFIDENTIAL => 2,
+          UNCLASSIFIED => 3,
+          UNKNOWN_4    => 4,
+          UNKNOWN_5    => 5,
+          UNKNOWN_6    => 6,
+          UNKNOWN_7    => 7);
+
+      for PRECEDENCE use
+         (ROUTINE  => 0,
+          PRIORITY => 1,
+          FLASH    => 2,
+          UNKNOWN  => 3);
+
+      for PACKET_FORMAT use
+         record
+            CLASS at 0*BYTE range 0 .. 2;
+            PREC  at 0*BYTE range 3 .. 4;
+            DEST  at 0*BYTE range 5 .. 15;
+            -- note that bit positions may exceed word size
+            LGTH  at 2*BYTE range 0 .. 7;
+         end record;
+
+   end PACKET_TYPE;
+
+   package QUEUE_ENTRY_TYPE is
+      type CLASSIFICATION is new CHARACTER;
+      type PRECEDENCE     is new CHARACTER;
+      subtype ADDRESS     is PACKET_TYPE.ADDRESS;
+      subtype LENGTH      is PACKET_TYPE.LENGTH;
+      type QE_FORMAT is
+         record
+            CLASS : CLASSIFICATION;
+            PREC  : PRECEDENCE;
+            DEST  : ADDRESS;
+            LGTH  : LENGTH;
+            NBR   : PACKET_NUMBER;
+         end record;
+      for QE_FORMAT use
+         record
+            CLASS at 0*BYTE range 0 .. 7;
+            PREC  at 1*BYTE range 0 .. 7;
+            DEST  at 2*BYTE range 0 .. 15;
+            LGTH  at 4*BYTE range 0 .. 7;
+            NBR   at 5*BYTE range 0 .. 7;
+         end record;
+   end QUEUE_ENTRY_TYPE;
+
+   PKT_INDEX : PACKET_NUMBER;
+   CUR_PKT   : PACKET_TYPE.PACKET_FORMAT;
+   CUR_QE    : QUEUE_ENTRY_TYPE.QE_FORMAT;
+
+begin
+   loop
+      declare
+         use PACKET_TYPE, QUEUE_ENTRY_TYPE;
+      begin
+         LINE_HANDLER.GET_A_PACKET(PKT_INDEX);
+         CUR_PKT := LINE_HANDLER.BUFFER_POOL(PKT_INDEX);
+         QUEUE_HANDLER.GET_A_QUEUE(CUR_QE);
+         case CUR_PKT.CLASS of
+            when TOP_SECRET   => CUR_QE.CLASS := "T";
+            when SECRET       => CUR_QE.CLASS := "S";
+            when CONFIDENTIAL => CUR_QE.CLASS := "C";
+            when UNCLASSIFIED => CUR_QE.CLASS := "U";
+            when others       => CUR_QE.CLASS := "X";
+         end case;
+         case CUR_PKT.PREC of
+            when ROUTINE  => CUR_QE.PREC := "R";
+            when PRIORITY => CUR_QE.PREC := "P";
+            when FLASH    => CUR_QE.PREC := "F";
+            when others   => CUR_QE.PREC := "X";
+         end case;
+         CUR_QE.DEST := CUR_PKT.DEST;
+         CUR_QE.LGTH := CUR_PKT.LGTH;
+         CUR_QE.NBR  := PKT_INDEX;
+         QUEUE_HANDLER.SEND_QUEUE(CUR_QE);
+      end;
+   end loop;
+end PACKET_TO_QUEUE;

@@ -1,0 +1,30 @@
+-- RM79 6.5: a value-returning procedure may assign globals, but is called
+-- only where they are not in scope: the counter is hidden in a package body
+package UNIQUE_NUMBER_GENERATOR is
+   procedure GENERATOR return INTEGER;   -- value returning procedure
+end UNIQUE_NUMBER_GENERATOR;
+
+package body UNIQUE_NUMBER_GENERATOR is
+   LAST : INTEGER := 0;
+   procedure GENERATOR return INTEGER is
+   begin
+      LAST := LAST + 1;
+      return LAST;
+   end GENERATOR;
+end UNIQUE_NUMBER_GENERATOR;
+
+procedure MAIN is
+   use UNIQUE_NUMBER_GENERATOR;
+   A, B : INTEGER;
+
+   function TWICE(X : INTEGER) return INTEGER is
+      LOCAL : INTEGER;
+   begin
+      LOCAL := 2 * X;          -- a local: allowed
+      return LOCAL;
+   end TWICE;
+begin
+   A := GENERATOR;
+   B := TWICE(GENERATOR);      -- inside an assignment
+   PUT(A); PUT(B); PUT(NEWLINE);
+end MAIN;

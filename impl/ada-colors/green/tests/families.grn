@@ -1,0 +1,45 @@
+-- task families (RM79 9.2): members F(I), F'INDEX in the body, initiate F(lo .. hi)
+procedure MAIN is
+   N : constant INTEGER := 4;
+   task WORKER(INTEGER range 1 .. N) is
+      entry JOB(X : in INTEGER; Y : out INTEGER);
+   end WORKER;
+   task LINK(1 .. 2);
+
+   task body WORKER is
+   begin
+      loop
+         select
+            accept JOB(X : in INTEGER; Y : out INTEGER) do
+               Y := X * WORKER'INDEX;
+            end JOB;
+         or
+            delay 10.0 * SECONDS;
+            exit;
+         end select;
+      end loop;
+   end WORKER;
+
+   task body LINK is
+   begin
+      PUT("link"); PUT(LINK'INDEX); PUT(NEWLINE);
+   end LINK;
+
+   R : INTEGER;
+begin
+   initiate WORKER;
+   for I in 1 .. N loop
+      WORKER(I).JOB(100, R);
+      PUT(R);
+   end loop;
+   PUT(NEWLINE);
+   PUT(WORKER(2)'ACTIVE); PUT(NEWLINE);
+   initiate LINK(2 .. 2);
+   delay 1.0 * SECONDS;
+   initiate LINK(1);
+   begin
+      WORKER(5).JOB(1, R);
+   exception
+      when INDEX_ERROR => PUT("no member 5: INDEX_ERROR"); PUT(NEWLINE);
+   end;
+end MAIN;

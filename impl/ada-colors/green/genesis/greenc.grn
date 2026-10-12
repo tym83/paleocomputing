@@ -1,0 +1,4424 @@
+-- greenc -- a translator for GREEN (Preliminary Ada, May 1979), written in GREEN.
+--
+-- It reads a GREEN compilation on the standard input and writes C on the
+-- standard output; the C is linked with rt/paleo.c. The whole translator is
+-- one library procedure (RM79 10.1) whose declarative part holds everything;
+-- the source is kept in several files joined in name order. References such
+-- as "RM79 5.6" are to the Preliminary Ada Reference Manual.
+--
+-- Writing a translator in GREEN, two rules of the language shape the code:
+-- a function may not change anything outside itself and may not allocate
+-- (RM79 6.5), so everything that advances the scanner or builds a tree is a
+-- procedure -- a value-returning procedure when it yields one result, used only
+-- as the right side of an assignment; and a value-returning procedure takes
+-- in parameters only, so results in pairs come back through out parameters.
+
+restricted (TEXT_IO)
+procedure GREENC is
+   use TEXT_IO;
+
+   -- token kinds
+   K_EOF   : constant INTEGER := 0;
+   K_ID    : constant INTEGER := 1;
+   K_KW    : constant INTEGER := 2;
+   K_OP    : constant INTEGER := 3;
+   K_INT   : constant INTEGER := 4;
+   K_FLOAT : constant INTEGER := 5;
+   K_STR   : constant INTEGER := 6;
+
+   -- node kinds: expressions
+   N_INT    : constant INTEGER := 1;
+   N_FLOAT  : constant INTEGER := 2;
+   N_STR    : constant INTEGER := 3;
+   N_NIL    : constant INTEGER := 4;
+   N_NAME   : constant INTEGER := 5;
+   N_UNOP   : constant INTEGER := 6;
+   N_BINOP  : constant INTEGER := 7;
+   N_APPLY  : constant INTEGER := 8;
+   N_SELECT : constant INTEGER := 9;
+   N_ATTR   : constant INTEGER := 10;
+   N_NEW    : constant INTEGER := 11;
+   N_AGG    : constant INTEGER := 12;
+   N_CITEM  : constant INTEGER := 13;
+   N_RANGE  : constant INTEGER := 14;
+   N_PAREN  : constant INTEGER := 15;
+   N_RAW    : constant INTEGER := 16;
+
+   -- statements
+   N_ASSIGN   : constant INTEGER := 20;
+   N_CALL     : constant INTEGER := 21;
+   N_IF       : constant INTEGER := 22;
+   N_CASE     : constant INTEGER := 23;
+   N_LOOP     : constant INTEGER := 24;
+   N_BLOCK    : constant INTEGER := 25;
+   N_EXIT     : constant INTEGER := 26;
+   N_RETURN   : constant INTEGER := 27;
+   N_RAISE    : constant INTEGER := 28;
+   N_RERAISE  : constant INTEGER := 29;
+   N_ASSERT   : constant INTEGER := 30;
+   N_NULL     : constant INTEGER := 31;
+   N_DELAY    : constant INTEGER := 32;
+   N_INITIATE : constant INTEGER := 33;
+   N_ACCEPT   : constant INTEGER := 34;
+   N_SELECTS  : constant INTEGER := 35;
+   N_ABORT    : constant INTEGER := 36;
+
+   -- declarations
+   N_VAR      : constant INTEGER := 40;
+   N_CONST    : constant INTEGER := 41;
+   N_TYPE     : constant INTEGER := 42;
+   N_SUBTYPE  : constant INTEGER := 43;
+   N_PROC     : constant INTEGER := 44;
+   N_FUNC     : constant INTEGER := 45;
+   N_EXC      : constant INTEGER := 46;
+   N_PARAM    : constant INTEGER := 47;
+   N_PKGSPEC  : constant INTEGER := 48;
+   N_PKGBODY  : constant INTEGER := 49;
+   N_TASKSPEC : constant INTEGER := 50;
+   N_TASKBODY : constant INTEGER := 51;
+   N_ENTRY    : constant INTEGER := 52;
+   N_INST     : constant INTEGER := 53;
+   N_GENERIC  : constant INTEGER := 54;
+   N_USE      : constant INTEGER := 55;
+
+   -- parts of constructs
+   N_ARM     : constant INTEGER := 60;
+   N_LABEL   : constant INTEGER := 61;
+   N_HANDLER : constant INTEGER := 62;
+   N_COMP    : constant INTEGER := 63;
+   N_ALT     : constant INTEGER := 64;
+
+   -- type definitions and subtype indications (RM79 3)
+   D_ENUM   : constant INTEGER := 70;
+   D_RANGE  : constant INTEGER := 71;
+   D_FLOAT  : constant INTEGER := 72;
+   D_ARRAY  : constant INTEGER := 73;
+   D_RECORD : constant INTEGER := 74;
+   D_ACCESS : constant INTEGER := 75;
+   D_DERIVED : constant INTEGER := 76;
+   D_PRIVATE : constant INTEGER := 77;
+   S_MARK   : constant INTEGER := 80;
+
+   -- parameter modes (RM79 6.2)
+   M_IN    : constant INTEGER := 1;
+   M_INOUT : constant INTEGER := 2;
+   M_OUT   : constant INTEGER := 3;
+
+   -- type kinds
+   T_INT    : constant INTEGER := 1;
+   T_BOOL   : constant INTEGER := 2;
+   T_FLOAT  : constant INTEGER := 3;
+   T_ENUM   : constant INTEGER := 4;
+   T_STRING : constant INTEGER := 5;
+   T_ARRAY  : constant INTEGER := 6;
+   T_RECORD : constant INTEGER := 7;
+   T_PTR    : constant INTEGER := 8;
+   T_VOID   : constant INTEGER := 9;
+   T_NIL    : constant INTEGER := 10;
+   T_CHAR   : constant INTEGER := 11;
+   T_UNIV   : constant INTEGER := 12;
+
+   -- symbol kinds
+   Y_VAR     : constant INTEGER := 1;
+   Y_CONST   : constant INTEGER := 2;
+   Y_FUNC    : constant INTEGER := 3;
+   Y_PROC    : constant INTEGER := 4;
+   Y_TYPE    : constant INTEGER := 5;
+   Y_EXC     : constant INTEGER := 6;
+   Y_ENUMLIT : constant INTEGER := 7;
+   Y_PACKAGE : constant INTEGER := 8;
+   Y_TASK    : constant INTEGER := 9;
+   Y_ENTRY   : constant INTEGER := 10;
+   Y_GENERIC : constant INTEGER := 11;
+
+   -- the data
+   type TEXT is access STRING;
+
+   type TOKEN_REC;
+   type TOKEN is access TOKEN_REC;
+   type TOKEN_REC is record
+      KIND, LINE, IVAL : INTEGER;
+      S : TEXT;
+   end record;
+   type TOKEN_ARRAY is array (INTEGER) of TOKEN;
+
+   type NODE_REC;
+   type NODE is access NODE_REC;
+   type NODE_REC is record
+      KIND, LINE, IVAL, FLAG : INTEGER;
+      NAME, TAG : TEXT;
+      A, B, C, D, E, NEXT : NODE;
+   end record;
+
+   type CONS_REC;
+   type CONS is access CONS_REC;
+   type CONS_REC is record
+      LO, HI, SLEN : TEXT;
+      MLO, MHI : INTEGER;
+      HASM : BOOLEAN;
+   end record;
+
+   type TYP_REC;
+   type TYP is access TYP_REC;
+   type FIELD_REC;
+   type FIELD is access FIELD_REC;
+   type TYP_REC is record
+      KIND : INTEGER;
+      NAME : TEXT;
+      LITS : NODE;
+      ELEM, IDX : TYP;
+      ELEMCONS, TCONS : CONS;
+      FIELDS : FIELD;
+      TARGET : TYP;
+      DECL : NODE;
+      CNAME : TEXT;
+      FORWARD, DEFINED, PRIV : BOOLEAN;
+      NEXT : TYP;
+   end record;
+   type FIELD_REC is record
+      NAME : TEXT;
+      T : TYP;
+      C : CONS;
+      NEXT : FIELD;
+   end record;
+
+   type PARM_REC;
+   type PARM is access PARM_REC;
+   type PARM_REC is record
+      NAME : TEXT;
+      MODE : INTEGER;
+      T : TYP;
+      C : CONS;
+      CFIELD : TEXT;
+      DFLT : NODE;
+      NEXT : PARM;
+   end record;
+
+   type SYM_REC;
+   type SYM is access SYM_REC;
+   type SYM_REC is record
+      KIND : INTEGER;
+      NAME : TEXT;
+      T : TYP;
+      C : CONS;
+      ACCESS_PATH, CNAME : TEXT;
+      RO : BOOLEAN;
+      MVALUE : INTEGER;
+      HASMV : BOOLEAN;
+      DECL : NODE;
+      PARAMS : PARM;
+      RESULT : TYP;
+      DEPTH, LEVEL : INTEGER;
+      BYREF, VRP : BOOLEAN;
+      MEMBERS, MNEXT : SYM;
+      CHAIN, STACK : SYM;
+   end record;
+   type SYM_ARRAY is array (INTEGER) of SYM;
+
+   type LINES_REC;
+   type LINES is access LINES_REC;
+   type LINES_REC is record
+      S : TEXT;
+      NEXT : LINES;
+   end record;
+   type BUFFER_REC is record
+      HEAD, TAIL : LINES;
+   end record;
+   type BUFFER is access BUFFER_REC;
+
+   type EXIT_REC;
+   type EXITS_T is access EXIT_REC;
+   type EXIT_REC is record
+      MATCH, LABEL : TEXT;
+      DEPTH : INTEGER;
+      IS_LOOP : BOOLEAN;
+      NEXT : EXITS_T;
+   end record;
+
+   COMPILE_ERROR : exception;
+
+   TOKS : TOKEN_ARRAY(1 .. 1000000);
+   NTOKS : INTEGER := 0;
+   TPOS : INTEGER := 1;
+   SRC_LINE : INTEGER := 0;
+
+   TABLE : SYM_ARRAY(0 .. 4092);
+   DEPTH : INTEGER := 0;
+   SCOPE_STACK : SYM;
+
+   ALL_TYPES : TYP;
+   SERIAL : INTEGER := 0;
+
+   OUT_TYPES, OUT_FRAMES, OUT_HELPERS, OUT_PROTOS, OUT_GLOBALS : BUFFER;
+   OUT_FUNCS, OUT_INIT, OUT_EXCS, CODE, FIELDS_BUF : BUFFER;
+   IN_FUNC : BOOLEAN := FALSE;
+   CUR_LEVEL : INTEGER := 0;
+   ST_FIELD : TEXT;
+   FUNC_SYM : SYM;
+   EXITS : EXITS_T;
+   FRAMES : INTEGER := 0;
+   HANDLERS : LINES;
+   CLEANUPS : LINES;
+   TRIAL : INTEGER := 0;
+
+   TY_INT, TY_BOOL, TY_FLOAT, TY_CHAR, TY_STRING, TY_VOID, TY_NIL, TY_UNIV : TYP;
+   NO_CONS : CONS;
+   UNITS : NODE;
+   MAIN_NAME : TEXT;
+   -- ---- small helpers ----------------------------------------------------------
+
+   -- an allocator may not appear in a function body (RM79 6.5): MK is a
+   -- value-returning procedure
+   procedure MK(S : STRING) return TEXT is
+   begin
+      return new STRING(S);
+   end MK;
+
+   procedure NEW_NAME(BASE : STRING; RES : out TEXT) is
+   begin
+      SERIAL := SERIAL + 1;
+      RES := new STRING(BASE & INTEGER'REP(SERIAL));
+      return;
+   end NEW_NAME;
+
+   function IS_LETTER(C : CHARACTER) return BOOLEAN is
+   begin
+      return (C >= "A" and C <= "Z") or (C >= "a" and C <= "z");
+   end IS_LETTER;
+
+   function IS_DIGIT(C : CHARACTER) return BOOLEAN is
+   begin
+      return C >= "0" and C <= "9";
+   end IS_DIGIT;
+
+   function UPPER(C : CHARACTER) return CHARACTER is
+   begin
+      if C >= "a" and C <= "z" then
+         return CHARACTER'VAL(CHARACTER'ORD(C) - 32);
+      end if;
+      return C;
+   end UPPER;
+
+   function LOWER_S(S : STRING) return STRING is
+      R : STRING := S;
+   begin
+      for I in 1 .. S'LENGTH loop
+         if R(I) >= "A" and R(I) <= "Z" then
+            R(I) := CHARACTER'VAL(CHARACTER'ORD(R(I)) + 32);
+         end if;
+      end loop;
+      return R;
+   end LOWER_S;
+
+   -- a record component in C: the suffix keeps clear of C keywords
+   function C_FIELD(S : STRING) return STRING is
+   begin
+      return LOWER_S(S) & "_";
+   end C_FIELD;
+
+   -- a quote character, for the C we write
+   function Q return STRING is
+   begin
+      return """";
+   end Q;
+
+   procedure FAIL(LINE : INTEGER; MSG : STRING) is
+   begin
+      if TRIAL = 0 then
+         PUT("greenc: line " & INTEGER'REP(LINE) & ": " & MSG);
+         PUT(NEWLINE);
+      end if;
+      raise COMPILE_ERROR;
+   end FAIL;
+
+   -- ---- output buffers -----------------------------------------------------------
+
+   procedure NEW_BUFFER return BUFFER is
+   begin
+      return new BUFFER_REC(null, null);
+   end NEW_BUFFER;
+
+   procedure PUT_TO(B : BUFFER; S : STRING) is
+      L : LINES;
+   begin
+      L := new LINES_REC(null, null);
+      L.S := MK(S);
+      if B.TAIL = null then
+         B.HEAD := L;
+      else
+         B.TAIL.NEXT := L;
+      end if;
+      B.TAIL := L;
+   end PUT_TO;
+
+   procedure EMIT(S : STRING) is
+   begin
+      PUT_TO(CODE, S);
+   end EMIT;
+
+   procedure PRINT_BUFFER(B : BUFFER) is
+      L : LINES := B.HEAD;
+   begin
+      while L /= null loop
+         PUT(L.S.all);
+         PUT(NEWLINE);
+         L := L.NEXT;
+      end loop;
+   end PRINT_BUFFER;
+
+   procedure SPLICE(A : BUFFER; B : BUFFER) is
+   begin
+      if B.HEAD = null then
+         return;
+      end if;
+      if A.TAIL = null then
+         A.HEAD := B.HEAD;
+      else
+         A.TAIL.NEXT := B.HEAD;
+      end if;
+      A.TAIL := B.TAIL;
+      B.HEAD := null;
+      B.TAIL := null;
+   end SPLICE;
+
+   -- ---- lexical units (RM79 2) --------------------------------------------------
+
+   -- the 62 reserved words (RM79 2.8)
+   function IS_RESERVED(W : STRING) return BOOLEAN is
+   begin
+      case W'LENGTH of
+         when 2 =>
+            return W = "AT" or W = "DO" or W = "IF" or W = "IN" or W = "IS" or W = "OF"
+               or W = "OR";
+         when 3 =>
+            return W = "ALL" or W = "AND" or W = "END" or W = "FOR" or W = "MOD" or W = "NEW"
+               or W = "NOT" or W = "OUT" or W = "USE" or W = "XOR";
+         when 4 =>
+            return W = "BODY" or W = "CASE" or W = "ELSE" or W = "EXIT" or W = "GOTO"
+               or W = "LOOP" or W = "NULL" or W = "TASK" or W = "THEN" or W = "TYPE"
+               or W = "WHEN";
+         when 5 =>
+            return W = "ABORT" or W = "ARRAY" or W = "BEGIN" or W = "DELAY" or W = "DELTA"
+               or W = "ELSIF" or W = "ENTRY" or W = "RAISE" or W = "RANGE" or W = "WHILE";
+         when 6 =>
+            return W = "ACCEPT" or W = "ACCESS" or W = "ASSERT" or W = "DIGITS" or W = "OTHERS"
+               or W = "PRAGMA" or W = "RECORD" or W = "RETURN" or W = "SELECT";
+         when 7 =>
+            return W = "DECLARE" or W = "GENERIC" or W = "PACKAGE" or W = "PACKING"
+               or W = "PRIVATE" or W = "RENAMES" or W = "REVERSE" or W = "SUBTYPE";
+         when 8 =>
+            return W = "CONSTANT" or W = "FUNCTION" or W = "INITIATE" or W = "SEPARATE";
+         when 9 =>
+            return W = "EXCEPTION" or W = "PROCEDURE";
+         when 10 =>
+            return W = "RESTRICTED";
+         when others =>
+            return FALSE;
+      end case;
+   end IS_RESERVED;
+
+   procedure ADD_TOKEN(KIND : INTEGER; S : STRING; IVAL : INTEGER) is
+   begin
+      NTOKS := NTOKS + 1;
+      TOKS(NTOKS) := new TOKEN_REC(KIND, SRC_LINE, IVAL, null);
+      TOKS(NTOKS).S := MK(S);
+   end ADD_TOKEN;
+
+   function DIGIT_VALUE(C : CHARACTER) return INTEGER is
+   begin
+      if IS_DIGIT(C) then
+         return CHARACTER'ORD(C) - CHARACTER'ORD("0");
+      end if;
+      return CHARACTER'ORD(UPPER(C)) - CHARACTER'ORD("A") + 10;
+   end DIGIT_VALUE;
+
+   procedure LEX_LINE(LINE : STRING) is
+      I : INTEGER := 1;
+      J : INTEGER := 0;
+      N : INTEGER := LINE'LENGTH;
+      C : CHARACTER;
+      V : INTEGER;
+      BUF : STRING(1 .. 1000);
+      BL : INTEGER;
+   begin
+      while I <= N loop
+         C := LINE(I);
+         if C = " " or C = HT or C = CR or C = FF then
+            I := I + 1;
+         elsif C = "-" and I < N and then LINE(I + 1) = "-" then
+            I := N + 1;                              -- a comment (RM79 2.6)
+         elsif IS_LETTER(C) then
+            J := I;
+            BL := 0;
+            while J <= N and then (IS_LETTER(LINE(J)) or IS_DIGIT(LINE(J)) or LINE(J) = "_") loop
+               BL := BL + 1;
+               BUF(BL) := UPPER(LINE(J));
+               J := J + 1;
+            end loop;
+            if IS_RESERVED(BUF(1 .. BL)) then
+               ADD_TOKEN(K_KW, BUF(1 .. BL), 0);
+            else
+               ADD_TOKEN(K_ID, BUF(1 .. BL), 0);
+            end if;
+            I := J;
+         elsif IS_DIGIT(C) then
+            -- integers, based integers without a closing #, reals (RM79 2.4)
+            J := I;
+            V := 0;
+            BL := 0;
+            while J <= N and then (IS_DIGIT(LINE(J)) or LINE(J) = "_") loop
+               if LINE(J) /= "_" then
+                  V := V * 10 + DIGIT_VALUE(LINE(J));
+                  BL := BL + 1;
+                  BUF(BL) := LINE(J);
+               end if;
+               J := J + 1;
+            end loop;
+            if J <= N and then LINE(J) = "#" then
+               declare
+                  BASE : INTEGER := V;
+               begin
+                  V := 0;
+                  J := J + 1;
+                  while J <= N and then (IS_LETTER(LINE(J)) or IS_DIGIT(LINE(J)) or LINE(J) = "_") loop
+                     if LINE(J) /= "_" then
+                        V := V * BASE + DIGIT_VALUE(LINE(J));
+                     end if;
+                     J := J + 1;
+                  end loop;
+               end;
+               ADD_TOKEN(K_INT, INTEGER'REP(V), V);
+            elsif J < N and then (LINE(J) = "." and IS_DIGIT(LINE(J + 1))) then
+               BL := BL + 1;
+               BUF(BL) := ".";
+               J := J + 1;
+               while J <= N and then (IS_DIGIT(LINE(J)) or LINE(J) = "_") loop
+                  if LINE(J) /= "_" then
+                     BL := BL + 1;
+                     BUF(BL) := LINE(J);
+                  end if;
+                  J := J + 1;
+               end loop;
+               if J <= N and then (LINE(J) = "E" or LINE(J) = "e") then
+                  BL := BL + 1;
+                  BUF(BL) := "E";
+                  J := J + 1;
+                  while J <= N and then (IS_DIGIT(LINE(J)) or LINE(J) = "+" or LINE(J) = "-") loop
+                     BL := BL + 1;
+                     BUF(BL) := LINE(J);
+                     J := J + 1;
+                  end loop;
+               end if;
+               ADD_TOKEN(K_FLOAT, BUF(1 .. BL), 0);
+            elsif J < N and then ((LINE(J) = "E" or LINE(J) = "e") and IS_DIGIT(LINE(J + 1))) then
+               -- 1E6 is an approximate number (RM79 2.4)
+               BL := BL + 1;
+               BUF(BL) := "E";
+               J := J + 1;
+               while J <= N and then IS_DIGIT(LINE(J)) loop
+                  BL := BL + 1;
+                  BUF(BL) := LINE(J);
+                  J := J + 1;
+               end loop;
+               ADD_TOKEN(K_FLOAT, BUF(1 .. BL), 0);
+            else
+               ADD_TOKEN(K_INT, BUF(1 .. BL), V);
+            end if;
+            I := J;
+         elsif C = """" then
+            -- a character string; a doubled quote stands for one (RM79 2.5)
+            J := I + 1;
+            BL := 0;
+            loop
+               if J > N then
+                  FAIL(SRC_LINE, "unterminated string");
+               end if;
+               if LINE(J) = """" then
+                  exit when J = N or else LINE(J + 1) /= """";
+                  J := J + 1;
+               end if;
+               BL := BL + 1;
+               BUF(BL) := LINE(J);
+               J := J + 1;
+            end loop;
+            ADD_TOKEN(K_STR, BUF(1 .. BL), 0);
+            I := J + 1;
+         else
+            declare
+               TWO : STRING(1 .. 3) := "   ";
+            begin
+               TWO(1) := C;
+               if I < N then
+                  TWO(2) := LINE(I + 1);
+               end if;
+               if I + 1 < N then
+                  TWO(3) := LINE(I + 2);
+               end if;
+               if TWO = ":=:" then
+                  ADD_TOKEN(K_OP, ":=:", 0);
+                  I := I + 3;
+               elsif TWO(1 .. 2) = ":=" or TWO(1 .. 2) = "=:" or TWO(1 .. 2) = "=>"
+                  or TWO(1 .. 2) = ".." or TWO(1 .. 2) = "**" or TWO(1 .. 2) = "/="
+                  or TWO(1 .. 2) = "<=" or TWO(1 .. 2) = ">=" or TWO(1 .. 2) = "<<"
+                  or TWO(1 .. 2) = ">>" then
+                  ADD_TOKEN(K_OP, TWO(1 .. 2), 0);
+                  I := I + 2;
+               elsif C = "&" or C = "'" or C = "(" or C = ")" or C = "*" or C = "+"
+                  or C = "," or C = "-" or C = "." or C = "/" or C = ":" or C = ";"
+                  or C = "<" or C = "=" or C = ">" or C = "|" then
+                  ADD_TOKEN(K_OP, TWO(1 .. 1), 0);
+                  I := I + 1;
+               else
+                  FAIL(SRC_LINE, "unexpected character");
+               end if;
+            end;
+         end if;
+      end loop;
+   end LEX_LINE;
+
+   -- GET reads characters, the line ends included, until END_OF_FILE (RM79 14.3)
+   procedure READ_SOURCE is
+      BUF : STRING(1 .. 10000);
+      BL : INTEGER := 0;
+      C : CHARACTER;
+   begin
+      loop
+         GET(C);
+         if C = LF then
+            SRC_LINE := SRC_LINE + 1;
+            LEX_LINE(BUF(1 .. BL));
+            BL := 0;
+         else
+            BL := BL + 1;
+            BUF(BL) := C;
+         end if;
+      end loop;
+   exception
+      when END_OF_FILE =>
+         if BL > 0 then
+            SRC_LINE := SRC_LINE + 1;
+            LEX_LINE(BUF(1 .. BL));
+         end if;
+         ADD_TOKEN(K_EOF, "<end>", 0);
+   end READ_SOURCE;
+   -- ---- parser: the syntax of RM79 Appendix E -------------------------------------
+   --
+   -- Each parsing procedure is a value-returning procedure (it advances TPOS)
+   -- and is therefore called only as the right side of an assignment.
+
+   procedure NN(KIND, LINE : INTEGER) return NODE is
+   begin
+      return new NODE_REC(KIND, LINE, 0, 0, null, null, null, null, null, null, null, null);
+   end NN;
+
+   procedure APPEND(HEAD, TAIL : in out NODE; X : NODE) is
+   begin
+      if X = null then
+         return;
+      end if;
+      if HEAD = null then
+         HEAD := X;
+      else
+         TAIL.NEXT := X;
+      end if;
+      TAIL := X;
+      while TAIL.NEXT /= null loop
+         TAIL := TAIL.NEXT;
+      end loop;
+   end APPEND;
+
+   function LIST_LEN(L : NODE) return INTEGER is
+      N : INTEGER := 0;
+      P : NODE := L;
+   begin
+      while P /= null loop
+         N := N + 1;
+         P := P.NEXT;
+      end loop;
+      return N;
+   end LIST_LEN;
+
+   function CUR_LINE return INTEGER is
+   begin
+      return TOKS(TPOS).LINE;
+   end CUR_LINE;
+
+   function AT_KW(W : STRING) return BOOLEAN is
+   begin
+      return TOKS(TPOS).KIND = K_KW and then TOKS(TPOS).S.all = W;
+   end AT_KW;
+
+   function AT_OP(W : STRING) return BOOLEAN is
+   begin
+      return TOKS(TPOS).KIND = K_OP and then TOKS(TPOS).S.all = W;
+   end AT_OP;
+
+   function AT_KIND(K : INTEGER) return BOOLEAN is
+   begin
+      return TOKS(TPOS).KIND = K;
+   end AT_KIND;
+
+   function KIND_AT(K : INTEGER) return INTEGER is
+   begin
+      if TPOS + K > NTOKS then
+         return K_EOF;
+      end if;
+      return TOKS(TPOS + K).KIND;
+   end KIND_AT;
+
+   function TEXT_AT(K : INTEGER) return STRING is
+   begin
+      if TPOS + K > NTOKS then
+         return "";
+      end if;
+      return TOKS(TPOS + K).S.all;
+   end TEXT_AT;
+
+   procedure PERROR(MSG : STRING) is
+   begin
+      FAIL(TOKS(TPOS).LINE, MSG & " (at " & TOKS(TPOS).S.all & ")");
+   end PERROR;
+
+   procedure SKIP is
+   begin
+      TPOS := TPOS + 1;
+   end SKIP;
+
+   procedure EXPECT_KW(W : STRING) is
+   begin
+      if not AT_KW(W) then
+         PERROR("expected " & W);
+      end if;
+      TPOS := TPOS + 1;
+   end EXPECT_KW;
+
+   procedure EXPECT_OP(W : STRING) is
+   begin
+      if not AT_OP(W) then
+         PERROR("expected " & W);
+      end if;
+      TPOS := TPOS + 1;
+   end EXPECT_OP;
+
+   procedure EXPECT_ID(RES : out TEXT) is
+   begin
+      if not AT_KIND(K_ID) then
+         PERROR("expected an identifier");
+      end if;
+      TPOS := TPOS + 1;
+      RES := TOKS(TPOS - 1).S;
+      return;
+   end EXPECT_ID;
+
+   procedure NAME_NODE(RES : out NODE) is
+      X : NODE;
+   begin
+      X := NN(N_NAME, CUR_LINE);
+      EXPECT_ID(X.NAME);
+      RES := X;
+      return;
+   end NAME_NODE;
+
+   procedure ID_LIST(RES : out NODE) is
+      HEAD, TAIL, X : NODE;
+   begin
+      NAME_NODE(X);
+      APPEND(HEAD, TAIL, X);
+      while AT_OP(",") loop
+         SKIP;
+         NAME_NODE(X);
+         APPEND(HEAD, TAIL, X);
+      end loop;
+      RES := HEAD;
+      return;
+   end ID_LIST;
+
+   -- ---- expressions (RM79 4.4) ---------------------------------------------------
+
+   procedure BINOP(OP : TEXT; L, R : NODE; LINE : INTEGER) return NODE is
+      X : NODE;
+   begin
+      X := NN(N_BINOP, LINE);
+      X.NAME := OP;
+      X.A := L;
+      X.B := R;
+      return X;
+   end BINOP;
+
+   -- expression ::= relation {and relation} | ... ; and then / or else are the
+   -- short-circuit forms of conditions (RM79 5.4.1)
+   procedure EXPR(RES : out NODE) is
+      L, R : NODE;
+      OP : TEXT;
+      LINE : INTEGER;
+   begin
+      RELATION(L);
+      while AT_KW("AND") or AT_KW("OR") or AT_KW("XOR") loop
+         OP := TOKS(TPOS).S;
+         LINE := CUR_LINE;
+         SKIP;
+         if OP.all = "AND" and AT_KW("THEN") then
+            SKIP;
+         elsif OP.all = "OR" and AT_KW("ELSE") then
+            SKIP;
+         end if;
+         RELATION(R);
+         L := BINOP(OP, L, R, LINE);
+      end loop;
+      RES := L;
+      return;
+   end EXPR;
+
+   function IS_REL(S : STRING) return BOOLEAN is
+   begin
+      return S = "=" or S = "/=" or S = "<" or S = "<=" or S = ">" or S = ">=";
+   end IS_REL;
+
+   procedure RELATION(RES : out NODE) is
+      L, R, LO, HI, T : NODE;
+      OP : TEXT;
+      LINE : INTEGER := CUR_LINE;
+      NEG : BOOLEAN := FALSE;
+   begin
+      SIMPLE_EXPR(L);
+      if AT_KIND(K_OP) and then IS_REL(TOKS(TPOS).S.all) then
+         OP := TOKS(TPOS).S;
+         SKIP;
+         SIMPLE_EXPR(R);
+         L := BINOP(OP, L, R, LINE);
+         RES := L;
+         return;
+      end if;
+      if AT_KW("NOT") and KIND_AT(1) = K_KW and TEXT_AT(1) = "IN" then
+         SKIP;
+         NEG := TRUE;
+      end if;
+      if AT_KW("IN") then
+         -- membership in a range (RM79 4.5.2)
+         SKIP;
+         SIMPLE_EXPR(LO);
+         EXPECT_OP("..");
+         SIMPLE_EXPR(HI);
+         T := NN(N_RANGE, LINE);
+         T.A := LO;
+         T.B := HI;
+         OP := MK("IN");
+         L := BINOP(OP, L, T, LINE);
+         if NEG then
+            T := NN(N_UNOP, LINE);
+            T.NAME := MK("NOT");
+            T.A := L;
+            RES := T;
+            return;
+         end if;
+      end if;
+      RES := L;
+      return;
+   end RELATION;
+
+   -- simple_expression ::= [unary_operator] term {adding_operator term}
+   procedure SIMPLE_EXPR(RES : out NODE) is
+      L, R : NODE;
+      OP : TEXT;
+      LINE : INTEGER := CUR_LINE;
+   begin
+      if AT_OP("+") or AT_OP("-") or AT_KW("NOT") then
+         OP := TOKS(TPOS).S;
+         SKIP;
+         TERM(R);
+         L := NN(N_UNOP, LINE);
+         L.NAME := OP;
+         L.A := R;
+      else
+         TERM(L);
+      end if;
+      while AT_OP("+") or AT_OP("-") or AT_OP("&") loop
+         OP := TOKS(TPOS).S;
+         SKIP;
+         TERM(R);
+         L := BINOP(OP, L, R, LINE);
+      end loop;
+      RES := L;
+      return;
+   end SIMPLE_EXPR;
+
+   procedure TERM(RES : out NODE) is
+      L, R : NODE;
+      OP : TEXT;
+      LINE : INTEGER := CUR_LINE;
+   begin
+      FACTOR(L);
+      while AT_OP("*") or AT_OP("/") or AT_KW("MOD") loop
+         OP := TOKS(TPOS).S;
+         SKIP;
+         FACTOR(R);
+         L := BINOP(OP, L, R, LINE);
+      end loop;
+      RES := L;
+      return;
+   end TERM;
+
+   procedure FACTOR(RES : out NODE) is
+      L, R : NODE;
+      OP : TEXT;
+      LINE : INTEGER := CUR_LINE;
+   begin
+      PRIMARY(L);
+      if AT_OP("**") then
+         OP := TOKS(TPOS).S;
+         SKIP;
+         PRIMARY(R);
+         L := BINOP(OP, L, R, LINE);
+      end if;
+      RES := L;
+      return;
+   end FACTOR;
+
+   procedure PRIMARY(RES : out NODE) is
+      X : NODE;
+      LINE : INTEGER := CUR_LINE;
+   begin
+      if AT_KIND(K_INT) then
+         X := NN(N_INT, LINE);
+         X.IVAL := TOKS(TPOS).IVAL;
+         X.NAME := TOKS(TPOS).S;
+         SKIP;
+         RES := X;
+         return;
+      end if;
+      if AT_KIND(K_FLOAT) then
+         X := NN(N_FLOAT, LINE);
+         X.NAME := TOKS(TPOS).S;
+         SKIP;
+         RES := X;
+         return;
+      end if;
+      if AT_KIND(K_STR) then
+         X := NN(N_STR, LINE);
+         X.NAME := TOKS(TPOS).S;
+         SKIP;
+         RES := X;
+         return;
+      end if;
+      if AT_KW("NULL") then
+         SKIP;
+         X := NN(N_NIL, LINE);
+         RES := X;
+         return;
+      end if;
+      if AT_KW("NEW") then
+         -- allocator ::= new qualified_expression (RM79 4.7)
+         SKIP;
+         X := NN(N_NEW, LINE);
+         EXPECT_ID(X.NAME);
+         if AT_OP("(") then
+            AGG_OR_PAREN(X.A);
+         end if;
+         RES := X;
+         return;
+      end if;
+      if AT_OP("(") then
+         AGG_OR_PAREN(X);
+         RES := X;
+         return;
+      end if;
+      if AT_KIND(K_ID) then
+         NAME_P(X);
+         RES := X;
+         return;
+      end if;
+      PERROR("expected an expression");
+      RES := null;
+      return;
+   end PRIMARY;
+
+   -- aggregate (RM79 3.6.2) or parenthesized expression
+   procedure AGG_OR_PAREN(RES : out NODE) is
+      LINE : INTEGER := CUR_LINE;
+      ITEMS, ITAIL, IT, FIRST, KEYS, KTAIL, LAB, X : NODE;
+      MORE : BOOLEAN := TRUE;
+   begin
+      EXPECT_OP("(");
+      while MORE loop
+         IT := NN(N_CITEM, LINE);
+         if AT_KW("OTHERS") then
+            SKIP;
+            EXPECT_OP("=>");
+            LAB := NN(N_LABEL, LINE);
+            LAB.FLAG := 1;
+            IT.A := LAB;
+            EXPR(IT.B);
+         else
+            EXPR(FIRST);
+            if AT_OP("..") or AT_OP("|") or AT_OP("=>") then
+               KEYS := null;
+               KTAIL := null;
+               loop
+                  LAB := NN(N_LABEL, LINE);
+                  LAB.A := FIRST;
+                  if AT_OP("..") then
+                     SKIP;
+                     SIMPLE_EXPR(LAB.B);
+                  end if;
+                  APPEND(KEYS, KTAIL, LAB);
+                  exit when not AT_OP("|");
+                  SKIP;
+                  SIMPLE_EXPR(FIRST);
+               end loop;
+               EXPECT_OP("=>");
+               IT.A := KEYS;
+               EXPR(IT.B);
+            else
+               IT.B := FIRST;
+            end if;
+         end if;
+         APPEND(ITEMS, ITAIL, IT);
+         MORE := AT_OP(",");
+         if MORE then
+            SKIP;
+         end if;
+      end loop;
+      EXPECT_OP(")");
+      if ITEMS.NEXT = null and ITEMS.A = null then
+         X := NN(N_PAREN, LINE);
+         X.A := ITEMS.B;
+         RES := X;
+         return;
+      end if;
+      X := NN(N_AGG, LINE);
+      X.A := ITEMS;
+      RES := X;
+      return;
+   end AGG_OR_PAREN;
+
+   -- name (RM79 4.1): identifier, indexed or selected component, attribute
+   procedure NAME_P(RES : out NODE) is
+      P, X, ARGS, ATAIL, LO, R : NODE;
+      LINE : INTEGER := CUR_LINE;
+      MORE : BOOLEAN;
+   begin
+      NAME_NODE(P);
+      loop
+         if AT_OP("(") then
+            SKIP;
+            ARGS := null;
+            ATAIL := null;
+            if not AT_OP(")") then
+               MORE := TRUE;
+               while MORE loop
+                  declare
+                     FORMAL : TEXT;
+                     MARK : INTEGER := 0;
+                  begin
+                     -- named association, the mode written at the call (RM79 5.2.1)
+                     if AT_KIND(K_ID) and KIND_AT(1) = K_OP and (TEXT_AT(1) = ":=" or
+                        TEXT_AT(1) = "=:" or TEXT_AT(1) = ":=:" or TEXT_AT(1) = "=>") then
+                        FORMAL := TOKS(TPOS).S;
+                        if TEXT_AT(1) = ":=" then
+                           MARK := 1;
+                        elsif TEXT_AT(1) = "=:" then
+                           MARK := 2;
+                        elsif TEXT_AT(1) = ":=:" then
+                           MARK := 3;
+                        else
+                           MARK := 4;
+                        end if;
+                        SKIP;
+                        SKIP;
+                     end if;
+                     EXPR(LO);
+                     if AT_OP("..") then
+                        SKIP;
+                        R := NN(N_RANGE, LINE);
+                        R.A := LO;
+                        SIMPLE_EXPR(R.B);
+                        LO := R;
+                     end if;
+                     LO.TAG := FORMAL;
+                     LO.FLAG := MARK;
+                     APPEND(ARGS, ATAIL, LO);
+                  end;
+                  MORE := AT_OP(",");
+                  if MORE then
+                     SKIP;
+                  end if;
+               end loop;
+            end if;
+            EXPECT_OP(")");
+            X := NN(N_APPLY, LINE);
+            X.A := P;
+            X.B := ARGS;
+            P := X;
+         elsif AT_OP(".") then
+            SKIP;
+            X := NN(N_SELECT, LINE);
+            X.A := P;
+            if AT_KW("ALL") then
+               SKIP;
+               X.NAME := MK("ALL");
+            else
+               EXPECT_ID(X.NAME);
+            end if;
+            P := X;
+         elsif AT_OP("'") then
+            -- attributes are not reserved words; they follow ' (RAT79 2.1)
+            SKIP;
+            X := NN(N_ATTR, LINE);
+            X.A := P;
+            X.NAME := TOKS(TPOS).S;
+            SKIP;
+            if AT_OP("(") then
+               SKIP;
+               EXPR(X.B);
+               EXPECT_OP(")");
+            end if;
+            P := X;
+         else
+            RES := P;
+            return;
+         end if;
+      end loop;
+   end NAME_P;
+
+   -- ---- types and subtypes (RM79 3) ------------------------------------------------
+
+   -- type_mark [constraint]
+   procedure SUBTYPE_IND(RES : out NODE) is
+      X, R, ARGS, ATAIL, LO : NODE;
+      LINE : INTEGER := CUR_LINE;
+      MORE : BOOLEAN := TRUE;
+   begin
+      X := NN(S_MARK, LINE);
+      EXPECT_ID(X.NAME);
+      while AT_OP(".") loop
+         SKIP;
+         X.TAG := X.NAME;
+         EXPECT_ID(X.NAME);
+      end loop;
+      if AT_KW("RANGE") then
+         SKIP;
+         R := NN(N_RANGE, LINE);
+         SIMPLE_EXPR(R.A);
+         EXPECT_OP("..");
+         SIMPLE_EXPR(R.B);
+         X.A := R;
+         X.FLAG := 1;
+      elsif AT_OP("(") then
+         SKIP;
+         while MORE loop
+            EXPR(LO);
+            if AT_OP("..") then
+               SKIP;
+               R := NN(N_RANGE, LINE);
+               R.A := LO;
+               SIMPLE_EXPR(R.B);
+               LO := R;
+            end if;
+            APPEND(ARGS, ATAIL, LO);
+            MORE := AT_OP(",");
+            if MORE then
+               SKIP;
+            end if;
+         end loop;
+         EXPECT_OP(")");
+         X.A := ARGS;
+         X.FLAG := 2;
+      elsif AT_KW("DIGITS") or AT_KW("DELTA") then
+         SKIP;
+         SIMPLE_EXPR(R);
+         if AT_KW("RANGE") then
+            SKIP;
+            SIMPLE_EXPR(R);
+            EXPECT_OP("..");
+            SIMPLE_EXPR(R);
+         end if;
+      end if;
+      RES := X;
+      return;
+   end SUBTYPE_IND;
+
+   -- a type in an object declaration: a subtype indication or an anonymous
+   -- type definition (RM79 3.3)
+   procedure TYPE_SPEC(RES : out NODE) is
+      X : NODE;
+   begin
+      if AT_OP("(") or AT_KW("ARRAY") or AT_KW("RECORD") or AT_KW("ACCESS") or AT_KW("RANGE") then
+         TYPE_DEF(X);
+      else
+         SUBTYPE_IND(X);
+      end if;
+      RES := X;
+      return;
+   end TYPE_SPEC;
+
+   procedure TYPE_DEF(RES : out NODE) is
+      X, LITS, LTAIL, L, IDX, ITAIL, R, COMPS, CTAIL, NAMES, ST, DEF, CM : NODE;
+      LINE : INTEGER := CUR_LINE;
+      MORE : BOOLEAN := TRUE;
+   begin
+      if AT_OP("(") then
+         -- enumeration (RM79 3.5.1): identifiers and character literals
+         SKIP;
+         X := NN(D_ENUM, LINE);
+         while MORE loop
+            if AT_KIND(K_STR) then
+               L := NN(N_STR, LINE);
+               L.NAME := TOKS(TPOS).S;
+               SKIP;
+            else
+               NAME_NODE(L);
+            end if;
+            APPEND(LITS, LTAIL, L);
+            MORE := AT_OP(",");
+            if MORE then
+               SKIP;
+            end if;
+         end loop;
+         EXPECT_OP(")");
+         X.A := LITS;
+         RES := X;
+         return;
+      end if;
+      if AT_KW("RANGE") then
+         SKIP;
+         X := NN(D_RANGE, LINE);
+         SIMPLE_EXPR(X.A);
+         EXPECT_OP("..");
+         SIMPLE_EXPR(X.B);
+         RES := X;
+         return;
+      end if;
+      if AT_KW("DIGITS") or AT_KW("DELTA") then
+         SKIP;
+         X := NN(D_FLOAT, LINE);
+         SIMPLE_EXPR(R);
+         if AT_KW("RANGE") then
+            SKIP;
+            SIMPLE_EXPR(R);
+            EXPECT_OP("..");
+            SIMPLE_EXPR(R);
+         end if;
+         RES := X;
+         return;
+      end if;
+      if AT_KW("ARRAY") then
+         -- RM79 3.6: every index a discrete range, or every index a type mark
+         SKIP;
+         X := NN(D_ARRAY, LINE);
+         EXPECT_OP("(");
+         while MORE loop
+            if AT_KIND(K_ID) and KIND_AT(1) = K_OP and (TEXT_AT(1) = "," or TEXT_AT(1) = ")") then
+               L := NN(S_MARK, LINE);
+               EXPECT_ID(L.NAME);
+               X.FLAG := 1;
+            else
+               L := NN(N_RANGE, LINE);
+               SIMPLE_EXPR(L.A);
+               EXPECT_OP("..");
+               SIMPLE_EXPR(L.B);
+            end if;
+            APPEND(IDX, ITAIL, L);
+            MORE := AT_OP(",");
+            if MORE then
+               SKIP;
+            end if;
+         end loop;
+         EXPECT_OP(")");
+         EXPECT_KW("OF");
+         X.A := IDX;
+         TYPE_SPEC(X.B);
+         RES := X;
+         return;
+      end if;
+      if AT_KW("RECORD") then
+         -- RM79 3.7; a deferred constant component is a discriminant
+         SKIP;
+         X := NN(D_RECORD, LINE);
+         while not AT_KW("END") loop
+            if AT_KW("NULL") then
+               SKIP;
+               EXPECT_OP(";");
+            else
+               ID_LIST(NAMES);
+               EXPECT_OP(":");
+               if AT_KW("CONSTANT") then
+                  SKIP;
+               end if;
+               TYPE_SPEC(ST);
+               DEF := null;
+               if AT_OP(":=") then
+                  SKIP;
+                  EXPR(DEF);
+               end if;
+               EXPECT_OP(";");
+               while NAMES /= null loop
+                  CM := NN(N_COMP, NAMES.LINE);
+                  CM.NAME := NAMES.NAME;
+                  CM.A := ST;
+                  CM.B := DEF;
+                  APPEND(COMPS, CTAIL, CM);
+                  NAMES := NAMES.NEXT;
+               end loop;
+            end if;
+         end loop;
+         EXPECT_KW("END");
+         EXPECT_KW("RECORD");
+         X.A := COMPS;
+         RES := X;
+         return;
+      end if;
+      if AT_KW("ACCESS") then
+         SKIP;
+         X := NN(D_ACCESS, LINE);
+         TYPE_SPEC(X.A);
+         RES := X;
+         return;
+      end if;
+      if AT_KW("NEW") then
+         SKIP;
+         X := NN(D_DERIVED, LINE);
+         SUBTYPE_IND(X.A);
+         RES := X;
+         return;
+      end if;
+      PERROR("expected a type definition");
+      RES := null;
+      return;
+   end TYPE_DEF;
+   -- ---- declarative parts (RM79 6.1) ------------------------------------------------
+
+   procedure SKIP_PRAGMA is
+   begin
+      while not AT_OP(";") loop
+         SKIP;
+      end loop;
+      SKIP;
+   end SKIP_PRAGMA;
+
+   procedure SKIP_VISIBILITY is
+      NAMES : NODE;
+   begin
+      -- restricted [(unit, ...)] (RM79 8.3)
+      SKIP;
+      if AT_OP("(") then
+         SKIP;
+         ID_LIST(NAMES);
+         EXPECT_OP(")");
+      end if;
+   end SKIP_VISIBILITY;
+
+   procedure DECL_PART(RES : out NODE) is
+      HEAD, TAIL, X, NAMES : NODE;
+   begin
+      loop
+         if AT_KW("PRAGMA") then
+            SKIP_PRAGMA;
+         elsif AT_KW("USE") then
+            SKIP;
+            X := NN(N_USE, CUR_LINE);
+            ID_LIST(X.A);
+            EXPECT_OP(";");
+            APPEND(HEAD, TAIL, X);
+         elsif AT_KW("RESTRICTED") then
+            SKIP_VISIBILITY;
+         elsif AT_KW("TYPE") or AT_KW("SUBTYPE") then
+            TYPE_DECL(X);
+            APPEND(HEAD, TAIL, X);
+         elsif AT_KW("PROCEDURE") or AT_KW("FUNCTION") then
+            SUBPROGRAM(X);
+            APPEND(HEAD, TAIL, X);
+         elsif AT_KW("PACKAGE") then
+            PACKAGE_P(X);
+            APPEND(HEAD, TAIL, X);
+         elsif AT_KIND(K_ID) and KIND_AT(1) = K_OP and (TEXT_AT(1) = ":" or TEXT_AT(1) = ",") then
+            OBJECT_DECL(X);
+            APPEND(HEAD, TAIL, X);
+         else
+            RES := HEAD;
+            return;
+         end if;
+      end loop;
+   end DECL_PART;
+
+   -- object declarations (RM79 3.2) and exception declarations (RM79 11.1):
+   -- one node per declared name
+   procedure OBJECT_DECL(RES : out NODE) is
+      HEAD, TAIL, NAMES, ST, INIT, X : NODE;
+      LINE : INTEGER := CUR_LINE;
+      IS_CONST : BOOLEAN := FALSE;
+   begin
+      ID_LIST(NAMES);
+      EXPECT_OP(":");
+      if AT_KW("EXCEPTION") then
+         SKIP;
+         EXPECT_OP(";");
+         while NAMES /= null loop
+            X := NN(N_EXC, LINE);
+            X.NAME := NAMES.NAME;
+            APPEND(HEAD, TAIL, X);
+            NAMES := NAMES.NEXT;
+         end loop;
+         RES := HEAD;
+         return;
+      end if;
+      if AT_KW("CONSTANT") then
+         SKIP;
+         IS_CONST := TRUE;
+      end if;
+      TYPE_SPEC(ST);
+      if AT_OP(":=") then
+         SKIP;
+         EXPR(INIT);
+      end if;
+      EXPECT_OP(";");
+      while NAMES /= null loop
+         if IS_CONST then
+            X := NN(N_CONST, LINE);
+         else
+            X := NN(N_VAR, LINE);
+         end if;
+         X.NAME := NAMES.NAME;
+         X.A := ST;
+         X.B := INIT;
+         if not (IS_CONST and INIT = null) then
+            APPEND(HEAD, TAIL, X);
+         end if;
+         NAMES := NAMES.NEXT;
+      end loop;
+      RES := HEAD;
+      return;
+   end OBJECT_DECL;
+
+   -- type and subtype declarations (RM79 3.3); type T; is an incomplete one
+   procedure TYPE_DECL(RES : out NODE) is
+      X : NODE;
+      LINE : INTEGER := CUR_LINE;
+   begin
+      if AT_KW("SUBTYPE") then
+         SKIP;
+         X := NN(N_SUBTYPE, LINE);
+         EXPECT_ID(X.NAME);
+         EXPECT_KW("IS");
+         SUBTYPE_IND(X.A);
+         EXPECT_OP(";");
+         RES := X;
+         return;
+      end if;
+      EXPECT_KW("TYPE");
+      X := NN(N_TYPE, LINE);
+      EXPECT_ID(X.NAME);
+      if AT_OP(";") then
+         SKIP;
+         RES := null;
+         return;
+      end if;
+      EXPECT_KW("IS");
+      if AT_KW("PRIVATE") then
+         SKIP;
+         X.A := NN(D_PRIVATE, LINE);
+      else
+         TYPE_DEF(X.A);
+      end if;
+      EXPECT_OP(";");
+      RES := X;
+      return;
+   end TYPE_DECL;
+
+   -- formal_part ::= ( parameter_declaration { ; parameter_declaration } ) (RM79 6.2)
+   procedure FORMAL_PART(RES : out NODE) is
+      HEAD, TAIL, NAMES, ST, DEF, P : NODE;
+      MODE : INTEGER;
+      MORE : BOOLEAN := TRUE;
+   begin
+      EXPECT_OP("(");
+      while MORE loop
+         ID_LIST(NAMES);
+         EXPECT_OP(":");
+         MODE := M_IN;
+         if AT_KW("IN") then
+            SKIP;
+            if AT_KW("OUT") then
+               SKIP;
+               MODE := M_INOUT;
+            end if;
+         elsif AT_KW("OUT") then
+            SKIP;
+            MODE := M_OUT;
+         end if;
+         SUBTYPE_IND(ST);
+         DEF := null;
+         if AT_OP(":=") then
+            SKIP;
+            EXPR(DEF);
+         end if;
+         while NAMES /= null loop
+            P := NN(N_PARAM, NAMES.LINE);
+            P.NAME := NAMES.NAME;
+            P.IVAL := MODE;
+            P.A := ST;
+            P.B := DEF;
+            APPEND(HEAD, TAIL, P);
+            NAMES := NAMES.NEXT;
+         end loop;
+         MORE := AT_OP(";");
+         if MORE then
+            SKIP;
+         end if;
+      end loop;
+      EXPECT_OP(")");
+      RES := HEAD;
+      return;
+   end FORMAL_PART;
+
+   procedure DESIGNATOR(RES : out TEXT) is
+   begin
+      if AT_KIND(K_STR) then
+         -- an operator designator such as "*" (RM79 6.6.1)
+         SKIP;
+         RES := MK(TOKS(TPOS - 1).S.all);
+         return;
+      end if;
+      EXPECT_ID(RES);
+      return;
+   end DESIGNATOR;
+
+   -- subprogram bodies (RM79 6.4): A params, B result, C declarations,
+   -- D statements, E handlers; FLAG 1 marks a value-returning procedure.
+   -- A declaration without a body gives no node.
+   procedure SUBPROGRAM(RES : out NODE) is
+      X : NODE;
+      LINE : INTEGER := CUR_LINE;
+      IS_PROC : BOOLEAN := AT_KW("PROCEDURE");
+   begin
+      SKIP;
+      if IS_PROC then
+         X := NN(N_PROC, LINE);
+      else
+         X := NN(N_FUNC, LINE);
+      end if;
+      DESIGNATOR(X.NAME);
+      if AT_OP("(") then
+         FORMAL_PART(X.A);
+      end if;
+      if AT_KW("RETURN") then
+         SKIP;
+         SUBTYPE_IND(X.B);
+         if IS_PROC then
+            X.FLAG := 1;
+         end if;
+      elsif not IS_PROC then
+         PERROR("a function needs a RETURN clause");
+      end if;
+      if AT_OP(";") then
+         SKIP;
+         RES := null;
+         return;
+      end if;
+      EXPECT_KW("IS");
+      if AT_KW("SEPARATE") then
+         PERROR("separate bodies are not handled");
+      end if;
+      BODY_PART(X);
+      if AT_KIND(K_ID) or AT_KIND(K_STR) then
+         if TOKS(TPOS).S.all /= X.NAME.all then
+            PERROR("the name after END does not match " & X.NAME.all);
+         end if;
+         SKIP;
+      end if;
+      EXPECT_OP(";");
+      RES := X;
+      return;
+   end SUBPROGRAM;
+
+   -- declarative part, begin statements, exception handlers, end (RM79 6.4)
+   procedure BODY_PART(X : NODE) is
+   begin
+      DECL_PART(X.C);
+      if AT_KW("BEGIN") then
+         SKIP;
+         STATEMENTS(X.D);
+      end if;
+      if AT_KW("EXCEPTION") then
+         PARSE_HANDLERS(X.E);
+      end if;
+      EXPECT_KW("END");
+   end BODY_PART;
+
+   -- exception handlers (RM79 11.2); OTHERS becomes a name OTHERS
+   procedure PARSE_HANDLERS(RES : out NODE) is
+      HEAD, TAIL, H, NAMES, NTAIL, N : NODE;
+   begin
+      EXPECT_KW("EXCEPTION");
+      while AT_KW("WHEN") loop
+         SKIP;
+         H := NN(N_HANDLER, CUR_LINE);
+         NAMES := null;
+         NTAIL := null;
+         loop
+            if AT_KW("OTHERS") then
+               SKIP;
+               N := NN(N_NAME, CUR_LINE);
+               N.NAME := MK("OTHERS");
+            else
+               NAME_NODE(N);
+               while AT_OP(".") loop
+                  SKIP;
+                  N.TAG := N.NAME;
+                  EXPECT_ID(N.NAME);
+               end loop;
+            end if;
+            APPEND(NAMES, NTAIL, N);
+            exit when not AT_OP("|");
+            SKIP;
+         end loop;
+         EXPECT_OP("=>");
+         H.A := NAMES;
+         STATEMENTS(H.B);
+         APPEND(HEAD, TAIL, H);
+      end loop;
+      RES := HEAD;
+      return;
+   end PARSE_HANDLERS;
+
+   -- packages (RM79 7.1): a specification has its visible part in C and its
+   -- private part in D; a body is like a subprogram body
+   procedure PACKAGE_P(RES : out NODE) is
+      X : NODE;
+      LINE : INTEGER := CUR_LINE;
+   begin
+      EXPECT_KW("PACKAGE");
+      if AT_KW("BODY") then
+         SKIP;
+         X := NN(N_PKGBODY, LINE);
+         EXPECT_ID(X.NAME);
+         EXPECT_KW("IS");
+         BODY_PART(X);
+      else
+         X := NN(N_PKGSPEC, LINE);
+         EXPECT_ID(X.NAME);
+         EXPECT_KW("IS");
+         DECL_PART(X.C);
+         if AT_KW("PRIVATE") then
+            SKIP;
+            DECL_PART(X.D);
+         end if;
+         EXPECT_KW("END");
+      end if;
+      if AT_KIND(K_ID) then
+         SKIP;
+      end if;
+      EXPECT_OP(";");
+      RES := X;
+      return;
+   end PACKAGE_P;
+
+   -- ---- statements (RM79 5) ------------------------------------------------------------
+
+   function AT_STATEMENTS_END return BOOLEAN is
+   begin
+      return AT_KW("END") or AT_KW("ELSE") or AT_KW("ELSIF") or AT_KW("WHEN")
+         or AT_KW("EXCEPTION") or AT_KW("OR") or AT_KIND(K_EOF);
+   end AT_STATEMENTS_END;
+
+   procedure STATEMENTS(RES : out NODE) is
+      HEAD, TAIL, X : NODE;
+   begin
+      while not AT_STATEMENTS_END loop
+         if AT_KW("PRAGMA") then
+            SKIP_PRAGMA;
+         else
+            STATEMENT(X);
+            APPEND(HEAD, TAIL, X);
+         end if;
+      end loop;
+      RES := HEAD;
+      return;
+   end STATEMENTS;
+
+   procedure STATEMENT(RES : out NODE) is
+      X, T : NODE;
+      LINE : INTEGER := CUR_LINE;
+      LABEL : TEXT;
+   begin
+      if AT_OP("<<") then
+         -- a label serves both goto and exit (RM79 5)
+         SKIP;
+         EXPECT_ID(LABEL);
+         EXPECT_OP(">>");
+      end if;
+      if AT_KW("NULL") then
+         SKIP;
+         EXPECT_OP(";");
+         X := NN(N_NULL, LINE);
+         RES := X;
+         return;
+      elsif AT_KW("IF") then
+         IF_STMT(X);
+         RES := X;
+         return;
+      elsif AT_KW("CASE") then
+         CASE_STMT(X);
+         RES := X;
+         return;
+      elsif AT_KW("FOR") or AT_KW("WHILE") or AT_KW("LOOP") then
+         LOOP_STMT(X);
+         X.TAG := LABEL;
+         if AT_KIND(K_ID) then
+            if LABEL = null or else TOKS(TPOS).S.all /= LABEL.all then
+               PERROR("the name after END LOOP does not match the label");
+            end if;
+            SKIP;
+         end if;
+         EXPECT_OP(";");
+         RES := X;
+         return;
+      elsif AT_KW("DECLARE") or AT_KW("BEGIN") then
+         X := NN(N_BLOCK, LINE);
+         X.TAG := LABEL;
+         if AT_KW("DECLARE") then
+            SKIP;
+            DECL_PART(X.A);
+         end if;
+         EXPECT_KW("BEGIN");
+         STATEMENTS(X.B);
+         if AT_KW("EXCEPTION") then
+            PARSE_HANDLERS(X.C);
+         end if;
+         EXPECT_KW("END");
+         if AT_KIND(K_ID) then
+            SKIP;
+         end if;
+         EXPECT_OP(";");
+         RES := X;
+         return;
+      elsif AT_KW("EXIT") then
+         SKIP;
+         X := NN(N_EXIT, LINE);
+         if AT_KIND(K_ID) then
+            EXPECT_ID(X.NAME);
+         end if;
+         if AT_KW("WHEN") then
+            SKIP;
+            EXPR(X.A);
+         end if;
+         EXPECT_OP(";");
+         RES := X;
+         return;
+      elsif AT_KW("RETURN") then
+         SKIP;
+         X := NN(N_RETURN, LINE);
+         if not AT_OP(";") then
+            EXPR(X.A);
+         end if;
+         EXPECT_OP(";");
+         RES := X;
+         return;
+      elsif AT_KW("RAISE") then
+         SKIP;
+         if AT_OP(";") then
+            SKIP;
+            X := NN(N_RERAISE, LINE);
+            RES := X;
+            return;
+         end if;
+         X := NN(N_RAISE, LINE);
+         EXPECT_ID(X.NAME);
+         while AT_OP(".") loop
+            SKIP;
+            X.TAG := X.NAME;
+            EXPECT_ID(X.NAME);
+         end loop;
+         EXPECT_OP(";");
+         RES := X;
+         return;
+      elsif AT_KW("ASSERT") then
+         SKIP;
+         X := NN(N_ASSERT, LINE);
+         EXPR(X.A);
+         EXPECT_OP(";");
+         RES := X;
+         return;
+      elsif AT_KW("GOTO") then
+         PERROR("goto is not handled");
+      end if;
+      TASK_STATEMENT(X);
+      if X /= null then
+         RES := X;
+         return;
+      end if;
+      NAME_P(T);
+      if AT_OP(":=") then
+         SKIP;
+         X := NN(N_ASSIGN, LINE);
+         X.A := T;
+         EXPR(X.B);
+      else
+         X := NN(N_CALL, LINE);
+         X.A := T;
+      end if;
+      EXPECT_OP(";");
+      RES := X;
+      return;
+   end STATEMENT;
+
+   -- the tasking statements are parsed in 09-tasks
+   procedure TASK_STATEMENT(RES : out NODE) is
+   begin
+      RES := null;
+      return;
+   end TASK_STATEMENT;
+
+   -- IF (RM79 5.4); FLAG 1 = has ELSE
+   procedure IF_STMT(RES : out NODE) is
+      X, ARM, HEAD, TAIL : NODE;
+      GO : BOOLEAN := TRUE;
+   begin
+      X := NN(N_IF, CUR_LINE);
+      SKIP;
+      ARM := NN(N_ARM, CUR_LINE);
+      EXPR(ARM.A);
+      EXPECT_KW("THEN");
+      STATEMENTS(ARM.B);
+      APPEND(HEAD, TAIL, ARM);
+      while GO loop
+         if AT_KW("ELSIF") then
+            SKIP;
+            ARM := NN(N_ARM, CUR_LINE);
+            EXPR(ARM.A);
+            EXPECT_KW("THEN");
+            STATEMENTS(ARM.B);
+            APPEND(HEAD, TAIL, ARM);
+         elsif AT_KW("ELSE") then
+            SKIP;
+            X.FLAG := 1;
+            STATEMENTS(X.B);
+         else
+            GO := FALSE;
+         end if;
+      end loop;
+      EXPECT_KW("END");
+      EXPECT_KW("IF");
+      EXPECT_OP(";");
+      X.A := HEAD;
+      RES := X;
+      return;
+   end IF_STMT;
+
+   -- CASE expression OF (RM79 5.5); FLAG 1 = has OTHERS
+   procedure CASE_STMT(RES : out NODE) is
+      X, ARM, HEAD, TAIL, LABS, LTAIL, L : NODE;
+      OTHERS_ARM : BOOLEAN;
+   begin
+      X := NN(N_CASE, CUR_LINE);
+      SKIP;
+      EXPR(X.A);
+      EXPECT_KW("OF");
+      while AT_KW("WHEN") loop
+         SKIP;
+         LABS := null;
+         LTAIL := null;
+         OTHERS_ARM := FALSE;
+         loop
+            if AT_KW("OTHERS") then
+               SKIP;
+               OTHERS_ARM := TRUE;
+            else
+               L := NN(N_LABEL, CUR_LINE);
+               SIMPLE_EXPR(L.A);
+               if AT_OP("..") then
+                  SKIP;
+                  SIMPLE_EXPR(L.B);
+               end if;
+               APPEND(LABS, LTAIL, L);
+            end if;
+            exit when not AT_OP("|");
+            SKIP;
+         end loop;
+         EXPECT_OP("=>");
+         if OTHERS_ARM then
+            X.FLAG := 1;
+            STATEMENTS(X.C);
+         else
+            ARM := NN(N_ARM, CUR_LINE);
+            ARM.A := LABS;
+            STATEMENTS(ARM.B);
+            APPEND(HEAD, TAIL, ARM);
+         end if;
+      end loop;
+      EXPECT_KW("END");
+      EXPECT_KW("CASE");
+      EXPECT_OP(";");
+      X.B := HEAD;
+      RES := X;
+      return;
+   end CASE_STMT;
+
+   -- loop statement (RM79 5.6): FLAG 0 plain, 1 while, 2 for; IVAL 1 = reverse
+   procedure LOOP_STMT(RES : out NODE) is
+      X, R : NODE;
+      LINE : INTEGER := CUR_LINE;
+   begin
+      X := NN(N_LOOP, LINE);
+      if AT_KW("FOR") then
+         SKIP;
+         X.FLAG := 2;
+         EXPECT_ID(X.NAME);
+         EXPECT_KW("IN");
+         if AT_KW("REVERSE") then
+            SKIP;
+            X.IVAL := 1;
+         end if;
+         if AT_KIND(K_ID) and KIND_AT(1) = K_KW and TEXT_AT(1) = "LOOP" then
+            SUBTYPE_IND(X.A);
+         else
+            R := NN(N_RANGE, LINE);
+            SIMPLE_EXPR(R.A);
+            if AT_OP("..") then
+               SKIP;
+               SIMPLE_EXPR(R.B);
+               X.A := R;
+            else
+               X.A := R.A;
+            end if;
+         end if;
+      elsif AT_KW("WHILE") then
+         SKIP;
+         X.FLAG := 1;
+         EXPR(X.A);
+      end if;
+      EXPECT_KW("LOOP");
+      STATEMENTS(X.B);
+      EXPECT_KW("END");
+      EXPECT_KW("LOOP");
+      RES := X;
+      return;
+   end LOOP_STMT;
+
+   -- ---- compilation (RM79 10.1) ------------------------------------------------------
+
+   procedure COMPILATION(RES : out NODE) is
+      HEAD, TAIL, X : NODE;
+   begin
+      while not AT_KIND(K_EOF) loop
+         if AT_KW("PRAGMA") then
+            SKIP_PRAGMA;
+         else
+            if AT_KW("RESTRICTED") then
+               SKIP_VISIBILITY;
+            end if;
+            if AT_KW("PROCEDURE") or AT_KW("FUNCTION") then
+               SUBPROGRAM(X);
+            elsif AT_KW("PACKAGE") then
+               PACKAGE_P(X);
+            else
+               PERROR("a compilation unit is a subprogram or a package");
+            end if;
+            APPEND(HEAD, TAIL, X);
+         end if;
+      end loop;
+      RES := HEAD;
+      return;
+   end COMPILATION;
+   -- ---- symbols: one hash table, scopes as a stack ------------------------------------
+
+   function HASH(S : STRING) return INTEGER is
+      H : INTEGER := 0;
+   begin
+      for I in 1 .. S'LENGTH loop
+         H := (H * 31 + CHARACTER'ORD(S(I))) mod 4093;
+      end loop;
+      return H;
+   end HASH;
+
+   function LOOKUP(NAME : STRING) return SYM is
+      Y : SYM := TABLE(HASH(NAME));
+   begin
+      while Y /= null loop
+         if Y.NAME.all = NAME then
+            return Y;
+         end if;
+         Y := Y.CHAIN;
+      end loop;
+      return null;
+   end LOOKUP;
+
+   function LOOKUP_DECL(D : NODE) return SYM is
+      Y : SYM := TABLE(HASH(D.NAME.all));
+   begin
+      while Y /= null loop
+         if Y.DECL = D then
+            return Y;
+         end if;
+         Y := Y.CHAIN;
+      end loop;
+      return null;
+   end LOOKUP_DECL;
+
+   function OVERLOADABLE(Y : SYM) return BOOLEAN is
+   begin
+      return Y.KIND = Y_FUNC or Y.KIND = Y_PROC or Y.KIND = Y_ENUMLIT or Y.KIND = Y_ENTRY;
+   end OVERLOADABLE;
+
+   function SAME(A, B : TYP) return BOOLEAN is
+   begin
+      -- type equivalence is by name, applied strictly (RM79 3.3): every type
+      -- definition is a distinct type; the predefined scalar types and STRING
+      -- are each one type
+      if A = B then
+         return TRUE;
+      end if;
+      if A = null or B = null or else A.KIND /= B.KIND then
+         return FALSE;
+      end if;
+      return A.KIND = T_INT or A.KIND = T_BOOL or A.KIND = T_FLOAT or A.KIND = T_CHAR
+         or A.KIND = T_STRING or A.KIND = T_VOID;
+   end SAME;
+
+   function SAME_SIGNATURE(A, B : PARM) return BOOLEAN is
+      X : PARM := A;
+      Y : PARM := B;
+   begin
+      while X /= null and Y /= null loop
+         if not SAME(X.T, Y.T) or X.MODE /= Y.MODE then
+            return FALSE;
+         end if;
+         X := X.NEXT;
+         Y := Y.NEXT;
+      end loop;
+      return X = null and Y = null;
+   end SAME_SIGNATURE;
+
+   procedure DEFINE(Y : SYM; LINE : INTEGER) is
+      H : INTEGER := HASH(Y.NAME.all);
+      Z : SYM := TABLE(H);
+   begin
+      while Z /= null loop
+         if Z.DEPTH = DEPTH and then Z.NAME.all = Y.NAME.all and then not (OVERLOADABLE(Y)
+            and OVERLOADABLE(Z) and (Y.KIND /= Z.KIND or else not SAME_SIGNATURE(Y.PARAMS, Z.PARAMS)
+               or else not SAME(Y.RESULT, Z.RESULT))) then
+            FAIL(LINE, Y.NAME.all & " is already declared in this declarative part");
+         end if;
+         Z := Z.CHAIN;
+      end loop;
+      Y.DEPTH := DEPTH;
+      Y.CHAIN := TABLE(H);
+      TABLE(H) := Y;
+      Y.STACK := SCOPE_STACK;
+      SCOPE_STACK := Y;
+   end DEFINE;
+
+   procedure OPEN_SCOPE is
+   begin
+      DEPTH := DEPTH + 1;
+   end OPEN_SCOPE;
+
+   procedure CLOSE_SCOPE is
+   begin
+      while SCOPE_STACK /= null and then SCOPE_STACK.DEPTH = DEPTH loop
+         TABLE(HASH(SCOPE_STACK.NAME.all)) := SCOPE_STACK.CHAIN;
+         SCOPE_STACK := SCOPE_STACK.STACK;
+      end loop;
+      DEPTH := DEPTH - 1;
+   end CLOSE_SCOPE;
+
+   procedure NEW_SYM(KIND : INTEGER; NAME : TEXT) return SYM is
+   begin
+      return new SYM_REC(KIND, NAME, null, null, null, null, FALSE, 0, FALSE, null, null, null,
+                         0, 0, FALSE, FALSE, null, null, null, null);
+   end NEW_SYM;
+
+   procedure NEW_TYP(KIND : INTEGER) return TYP is
+   begin
+      return new TYP_REC(KIND, null, null, null, null, null, null, null, null, null, null,
+                         FALSE, FALSE, FALSE, null);
+   end NEW_TYP;
+
+   procedure NEW_CONS return CONS is
+   begin
+      return new CONS_REC(null, null, null, 0, 0, FALSE);
+   end NEW_CONS;
+
+   function KIND_NAME(T : TYP) return STRING is
+   begin
+      if T.NAME /= null then
+         return T.NAME.all;
+      end if;
+      case T.KIND of
+         when 1 => return "INTEGER";
+         when 2 => return "BOOLEAN";
+         when 3 => return "FLOAT";
+         when 5 => return "STRING";
+         when 10 => return "null";
+         when 11 => return "CHARACTER";
+         when others => return "an anonymous type";
+      end case;
+   end KIND_NAME;
+
+   procedure CHECK_TYPE(GOT, WANT : TYP; LINE : INTEGER) is
+   begin
+      if WANT = null then
+         return;
+      end if;
+      if GOT.KIND = T_NIL and WANT.KIND = T_PTR then
+         return;
+      end if;
+      if not SAME(GOT, WANT) then
+         FAIL(LINE, "type mismatch: " & KIND_NAME(GOT) & " where " & KIND_NAME(WANT) & " is required");
+      end if;
+   end CHECK_TYPE;
+
+   function FIELD_COUNT(T : TYP) return INTEGER is
+      N : INTEGER := 0;
+      F : FIELD := T.FIELDS;
+   begin
+      while F /= null loop
+         N := N + 1;
+         F := F.NEXT;
+      end loop;
+      return N;
+   end FIELD_COUNT;
+
+   -- ---- C types ---------------------------------------------------------------------
+
+   procedure CTYPE(T : TYP; R : out TEXT) is
+      S : TEXT;
+   begin
+      case T.KIND of
+         when 1 => R := MK("rt_int");
+         when 2 | 4 | 11 => R := MK("int");
+         when 3 => R := MK("double");
+         when 5 => R := MK("rstr");
+         when 9 => R := MK("void");
+         when others =>
+            if T.CNAME = null then
+               DECLARE_CTYPE(T);
+            elsif T.KIND = T_RECORD and then T.FORWARD and then not T.DEFINED then
+               T.DEFINED := TRUE;
+               FIELD_DECLS(T, S);
+               PUT_TO(OUT_TYPES, "struct " & T.CNAME.all & " {" & S.all & " };");
+            end if;
+            R := T.CNAME;
+      end case;
+   end CTYPE;
+
+   procedure FIELD_DECLS(T : TYP; R : out TEXT) is
+      F : FIELD := T.FIELDS;
+      S, CT : TEXT;
+   begin
+      S := MK(" int dummy_;");
+      while F /= null loop
+         CTYPE(F.T, CT);
+         S := MK(S.all & " " & CT.all & " " & C_FIELD(F.NAME.all) & ";");
+         F := F.NEXT;
+      end loop;
+      R := S;
+   end FIELD_DECLS;
+
+   procedure DECLARE_CTYPE(T : TYP) is
+      CT, S : TEXT;
+      TARGET : TYP;
+   begin
+      if T.KIND = T_PTR then
+         FINISH_PTR(T);
+      end if;
+      if T.KIND = T_ARRAY then
+         NEW_NAME("A", T.CNAME);
+      elsif T.KIND = T_RECORD then
+         NEW_NAME("R", T.CNAME);
+      else
+         NEW_NAME("P", T.CNAME);
+      end if;
+      T.NEXT := ALL_TYPES;
+      ALL_TYPES := T;
+      if T.KIND = T_PTR then
+         TARGET := T.TARGET;
+         if TARGET = null then
+            FAIL(0, "the designated type of " & KIND_NAME(T) & " is never declared");
+         end if;
+         if TARGET.KIND = T_RECORD then
+            if TARGET.CNAME = null then
+               NEW_NAME("R", TARGET.CNAME);
+               TARGET.NEXT := ALL_TYPES;
+               ALL_TYPES := TARGET;
+               PUT_TO(OUT_TYPES, "typedef struct " & TARGET.CNAME.all & " " & TARGET.CNAME.all & ";");
+               TARGET.FORWARD := TRUE;
+            end if;
+            PUT_TO(OUT_TYPES, "typedef struct " & TARGET.CNAME.all & " *" & T.CNAME.all & ";");
+         else
+            CTYPE(TARGET, CT);
+            PUT_TO(OUT_TYPES, "typedef " & CT.all & " *" & T.CNAME.all & ";");
+         end if;
+      elsif T.KIND = T_ARRAY then
+         CTYPE(T.ELEM, CT);
+         PUT_TO(OUT_TYPES, "typedef struct " & T.CNAME.all & " " & T.CNAME.all & ";");
+         PUT_TO(OUT_TYPES, "struct " & T.CNAME.all & " { rt_int lo, hi, lo2, hi2; " & CT.all & " *p; };");
+      else
+         PUT_TO(OUT_TYPES, "typedef struct " & T.CNAME.all & " " & T.CNAME.all & ";");
+         T.DEFINED := TRUE;
+         FIELD_DECLS(T, S);
+         PUT_TO(OUT_TYPES, "struct " & T.CNAME.all & " {" & S.all & " };");
+      end if;
+   end DECLARE_CTYPE;
+
+   function LIT_INDEX(LITS : NODE; NAME : STRING) return INTEGER is
+      I : INTEGER := 0;
+      L : NODE := LITS;
+   begin
+      while L /= null loop
+         if L.NAME.all = NAME then
+            return I;
+         end if;
+         I := I + 1;
+         L := L.NEXT;
+      end loop;
+      return -1;
+   end LIT_INDEX;
+
+   -- ---- manifest (static) values (RM79 4.8) -----------------------------------------
+
+   procedure MANIFEST(E : NODE; V : out INTEGER; OK : out BOOLEAN) is
+      A, B : INTEGER;
+      OK2 : BOOLEAN;
+      Y : SYM;
+   begin
+      OK := FALSE;
+      V := 0;
+      if E.KIND = N_INT then
+         OK := TRUE;
+         V := E.IVAL;
+      elsif E.KIND = N_PAREN then
+         MANIFEST(E.A, V, OK);
+      elsif E.KIND = N_UNOP and then E.NAME.all = "-" then
+         MANIFEST(E.A, A, OK);
+         V := -A;
+      elsif E.KIND = N_BINOP and then (E.NAME.all = "+" or E.NAME.all = "-" or E.NAME.all = "*") then
+         MANIFEST(E.A, A, OK);
+         MANIFEST(E.B, B, OK2);
+         OK := OK and OK2;
+         if OK then
+            if E.NAME.all = "+" then
+               V := A + B;
+            elsif E.NAME.all = "-" then
+               V := A - B;
+            else
+               V := A * B;
+            end if;
+         end if;
+      elsif E.KIND = N_NAME then
+         Y := LOOKUP(E.NAME.all);
+         if Y /= null and then Y.KIND = Y_CONST and then Y.HASMV then
+            OK := TRUE;
+            V := Y.MVALUE;
+         end if;
+      end if;
+   end MANIFEST;
+
+   -- ---- subtypes (RM79 3.3) ----------------------------------------------------------
+
+   -- the type and constraint of a subtype indication or anonymous type definition
+   procedure RESOLVE(ST : NODE; T : out TYP; C : out CONS) is
+      Y : SYM;
+      DUMMY : TYP;
+      CODE : TEXT;
+      OK : BOOLEAN;
+      R : NODE;
+   begin
+      C := NEW_CONS;
+      if ST.KIND /= S_MARK then
+         TYPE_DEFINITION(ST, null, T, C);
+         return;
+      end if;
+      Y := LOOKUP(ST.NAME.all);
+      if Y = null or else Y.KIND /= Y_TYPE then
+         FAIL(ST.LINE, ST.NAME.all & " is not a type");
+      end if;
+      T := Y.T;
+      if Y.C /= null then
+         C.LO := Y.C.LO;
+         C.HI := Y.C.HI;
+         C.SLEN := Y.C.SLEN;
+         C.MLO := Y.C.MLO;
+         C.MHI := Y.C.MHI;
+         C.HASM := Y.C.HASM;
+      end if;
+      if T = null then
+         FAIL(ST.LINE, "the type " & ST.NAME.all & " is used before its full declaration");
+      end if;
+      if ST.FLAG = 1 then
+         -- range constraint (RM79 3.5)
+         R := ST.A;
+         GEXPR(R.A, T, DUMMY, C.LO);
+         GEXPR(R.B, T, DUMMY, C.HI);
+         MANIFEST(R.A, C.MLO, OK);
+         C.HASM := OK;
+         MANIFEST(R.B, C.MHI, OK);
+         C.HASM := C.HASM and OK;
+      elsif ST.FLAG = 2 then
+         -- index constraint (RM79 3.6); STRING objects count from 1
+         R := ST.A;
+         if R.KIND /= N_RANGE then
+            FAIL(ST.LINE, "an index constraint is a discrete range");
+         end if;
+         if T.KIND = T_STRING then
+            GEXPR(R.A, TY_INT, DUMMY, CODE);
+            GEXPR(R.B, TY_INT, DUMMY, C.SLEN);
+            C.SLEN := MK("(" & C.SLEN.all & " - " & CODE.all & " + 1)");
+         elsif T.KIND = T_ARRAY then
+            GEXPR(R.A, T.IDX, DUMMY, C.LO);
+            GEXPR(R.B, T.IDX, DUMMY, C.HI);
+         else
+            FAIL(ST.LINE, "this type takes no index constraint");
+         end if;
+      end if;
+   end RESOLVE;
+
+   -- a type definition (RM79 3.5 - 3.8); NAME is the declared name, if any
+   procedure TYPE_DEFINITION(D : NODE; NAME : TEXT; T : out TYP; C : out CONS) is
+      DUMMY, IT : TYP;
+      IC : CONS;
+      L, COMP : NODE;
+      F, TAIL : FIELD;
+      OK : BOOLEAN;
+      N : INTEGER;
+      Y : SYM;
+   begin
+      C := NEW_CONS;
+      case D.KIND of
+         when 70 =>
+            -- enumeration (RM79 3.5.1): every literal is declared with the type
+            T := NEW_TYP(T_ENUM);
+            T.LITS := D.A;
+            T.NAME := NAME;
+            L := D.A;
+            N := 0;
+            while L /= null loop
+               if L.KIND = N_NAME then
+                  Y := NEW_SYM(Y_ENUMLIT, L.NAME);
+                  Y.T := T;
+                  Y.MVALUE := N;
+                  Y.HASMV := TRUE;
+                  DEFINE(Y, L.LINE);
+               end if;
+               N := N + 1;
+               L := L.NEXT;
+            end loop;
+            C.LO := MK("0");
+            C.HI := MK(INTEGER'REP(N - 1));
+         when 71 =>
+            -- an integer type (RM79 3.5.4); here a constrained INTEGER
+            T := TY_INT;
+            GEXPR(D.A, TY_INT, DUMMY, C.LO);
+            GEXPR(D.B, TY_INT, DUMMY, C.HI);
+            MANIFEST(D.A, C.MLO, OK);
+            C.HASM := OK;
+            MANIFEST(D.B, C.MHI, OK);
+            C.HASM := C.HASM and OK;
+         when 72 =>
+            T := TY_FLOAT;
+         when 73 =>
+            -- arrays (RM79 3.6)
+            if D.A.NEXT /= null then
+               FAIL(D.LINE, "arrays of more than one dimension are not handled yet");
+            end if;
+            T := NEW_TYP(T_ARRAY);
+            T.NAME := NAME;
+            RESOLVE(D.B, T.ELEM, T.ELEMCONS);
+            L := D.A;
+            if L.KIND = N_RANGE then
+               GEXPR(L.A, null, T.IDX, C.LO);
+               GEXPR(L.B, T.IDX, DUMMY, C.HI);
+            else
+               RESOLVE(L, T.IDX, IC);
+               if T.IDX.KIND = T_ENUM or T.IDX.KIND = T_CHAR or T.IDX.KIND = T_BOOL then
+                  C.LO := IC.LO;
+                  C.HI := IC.HI;
+               elsif IC.LO /= null then
+                  -- a type-mark index: positional aggregates start at its FIRST
+                  T.TCONS := NEW_CONS;
+                  T.TCONS.LO := IC.LO;
+               end if;
+            end if;
+            if C.LO /= null then
+               T.TCONS := C;
+            end if;
+         when 74 =>
+            -- records (RM79 3.7)
+            T := NEW_TYP(T_RECORD);
+            T.NAME := NAME;
+            COMP := D.A;
+            while COMP /= null loop
+               F := new FIELD_REC(COMP.NAME, null, null, null);
+               RESOLVE(COMP.A, F.T, F.C);
+               if TAIL = null then
+                  T.FIELDS := F;
+               else
+                  TAIL.NEXT := F;
+               end if;
+               TAIL := F;
+               COMP := COMP.NEXT;
+            end loop;
+         when 75 =>
+            -- access types (RM79 3.8); the designated type may come later
+            T := NEW_TYP(T_PTR);
+            T.NAME := NAME;
+            T.DECL := D.A;
+         when 76 =>
+            RESOLVE(D.A, T, C);
+         when others =>
+            FAIL(D.LINE, "this type definition is not handled");
+      end case;
+   end TYPE_DEFINITION;
+
+   -- the designated type of an access type is resolved when first needed
+   procedure FINISH_PTR(T : TYP) is
+      C : CONS;
+   begin
+      if T.TARGET = null and T.DECL /= null then
+         RESOLVE(T.DECL, T.TARGET, C);
+      end if;
+   end FINISH_PTR;
+
+   -- give a fresh object its storage: strings and arrays own buffers; access
+   -- objects start as null (RM79 3.8)
+   procedure INIT_STORAGE(LVAL : STRING; T : TYP; C : CONS) is
+      CT, I : TEXT;
+      F : FIELD;
+   begin
+      if T.KIND = T_PTR then
+         EMIT(LVAL & " = NULL;");
+      elsif T.KIND = T_STRING then
+         if C.SLEN = null then
+            FAIL(0, "a STRING object needs an index constraint or an initial value");
+         end if;
+         EMIT(LVAL & " = rt_str_new(" & C.SLEN.all & ");");
+      elsif T.KIND = T_ARRAY then
+         if C.LO = null then
+            FAIL(0, "an array object needs an index constraint");
+         end if;
+         CTYPE(T.ELEM, CT);
+         EMIT(LVAL & ".lo = " & C.LO.all & "; " & LVAL & ".hi = " & C.HI.all & "; " & LVAL
+              & ".lo2 = 1; " & LVAL & ".hi2 = 1;");
+         EMIT(LVAL & ".p = rt_alloc(sizeof(" & CT.all & ") * (size_t)RT_CNT(" & LVAL & "));");
+         if T.ELEM.KIND = T_STRING or T.ELEM.KIND = T_ARRAY or T.ELEM.KIND = T_RECORD then
+            NEW_NAME("i", I);
+            EMIT("for (rt_int " & I.all & " = 0; " & I.all & " < RT_CNT(" & LVAL & "); " & I.all & "++) {");
+            INIT_STORAGE(LVAL & ".p[" & I.all & "]", T.ELEM, T.ELEMCONS);
+            EMIT("}");
+         end if;
+      elsif T.KIND = T_RECORD then
+         F := T.FIELDS;
+         while F /= null loop
+            INIT_STORAGE(LVAL & "." & C_FIELD(F.NAME.all), F.T, F.C);
+            F := F.NEXT;
+         end loop;
+      end if;
+   end INIT_STORAGE;
+
+   -- ---- assignment, copy and equality ------------------------------------------------
+
+   function COMPOSITE(T : TYP) return BOOLEAN is
+   begin
+      return T.KIND = T_ARRAY or T.KIND = T_RECORD;
+   end COMPOSITE;
+
+   procedure ASSIGN_CODE(LVAL : STRING; T : TYP; V : STRING; C : CONS; R : out TEXT) is
+      CT : TEXT;
+   begin
+      if COMPOSITE(T) then
+         CTYPE(T, CT);
+         R := MK("as_" & T.CNAME.all & "(&" & LVAL & ", " & V & ");");
+      elsif T.KIND = T_STRING then
+         R := MK("rt_str_assign(&" & LVAL & ", " & V & ");");
+      elsif (T.KIND = T_INT or T.KIND = T_ENUM or T.KIND = T_CHAR) and C /= null and then C.LO /= null then
+         R := MK(LVAL & " = rt_range(" & V & ", " & C.LO.all & ", " & C.HI.all & ");");
+      else
+         R := MK(LVAL & " = " & V & ";");
+      end if;
+   end ASSIGN_CODE;
+
+   procedure COPY_CODE(T : TYP; V : STRING; R : out TEXT) is
+      CT : TEXT;
+   begin
+      if COMPOSITE(T) then
+         CTYPE(T, CT);
+         R := MK("cp_" & T.CNAME.all & "(" & V & ")");
+      elsif T.KIND = T_STRING then
+         R := MK("rt_str_copy(" & V & ")");
+      else
+         R := MK(V);
+      end if;
+   end COPY_CODE;
+
+   procedure EQ_CODE(T : TYP; A, B : STRING; R : out TEXT) is
+      CT : TEXT;
+   begin
+      if COMPOSITE(T) then
+         CTYPE(T, CT);
+         R := MK("eq_" & T.CNAME.all & "(" & A & ", " & B & ")");
+      elsif T.KIND = T_STRING then
+         R := MK("rt_str_eq(" & A & ", " & B & ")");
+      else
+         R := MK("(" & A & " == " & B & ")");
+      end if;
+   end EQ_CODE;
+
+   function SEEN_NAME(L : LINES; S : STRING) return BOOLEAN is
+      P : LINES := L;
+   begin
+      while P /= null loop
+         if P.S.all = S then
+            return TRUE;
+         end if;
+         P := P.NEXT;
+      end loop;
+      return FALSE;
+   end SEEN_NAME;
+
+   -- assignment, copy and equality for every composite C type
+   procedure EMIT_HELPERS is
+      T : TYP := ALL_TYPES;
+      DONE, L : LINES;
+   begin
+      while T /= null loop
+         if COMPOSITE(T) and then not SEEN_NAME(DONE, T.CNAME.all) then
+            L := new LINES_REC(T.CNAME, DONE);
+            DONE := L;
+            PUT_TO(OUT_HELPERS, "static void as_" & T.CNAME.all & "(" & T.CNAME.all & " *d, "
+                   & T.CNAME.all & " s);");
+            PUT_TO(OUT_HELPERS, "static " & T.CNAME.all & " cp_" & T.CNAME.all & "(" & T.CNAME.all
+                   & " s);");
+            PUT_TO(OUT_HELPERS, "static int eq_" & T.CNAME.all & "(" & T.CNAME.all & " a, "
+                   & T.CNAME.all & " b);");
+            HELPER_BODIES(T);
+         end if;
+         T := T.NEXT;
+      end loop;
+   end EMIT_HELPERS;
+
+   procedure HELPER_BODIES(T : TYP) is
+      C : TEXT := T.CNAME;
+      B : BUFFER := OUT_FUNCS;
+      CT, X, Y, CONDS : TEXT;
+      F : FIELD;
+   begin
+      if T.KIND = T_ARRAY then
+         CTYPE(T.ELEM, CT);
+         ASSIGN_CODE("d->p[i]", T.ELEM, "s.p[i]", null, X);
+         PUT_TO(B, "static void as_" & C.all & "(" & C.all & " *d, " & C.all & " s) {");
+         PUT_TO(B, "  if (d->hi - d->lo != s.hi - s.lo) rt_raise_msg(RT_X_SUBTYPE, " & Q
+                & "array length" & Q & ");");
+         PUT_TO(B, "  for (rt_int i = 0; i < RT_CNT(s); i++) { " & X.all & " }");
+         PUT_TO(B, "}");
+         COPY_CODE(T.ELEM, "s.p[i]", X);
+         PUT_TO(B, "static " & C.all & " cp_" & C.all & "(" & C.all & " s) {");
+         PUT_TO(B, "  " & C.all & " d = s; d.p = rt_alloc(sizeof(" & CT.all & ") * (size_t)RT_CNT(s));");
+         PUT_TO(B, "  for (rt_int i = 0; i < RT_CNT(s); i++) d.p[i] = " & X.all & ";");
+         PUT_TO(B, "  return d;");
+         PUT_TO(B, "}");
+         EQ_CODE(T.ELEM, "a.p[i]", "b.p[i]", X);
+         PUT_TO(B, "static int eq_" & C.all & "(" & C.all & " a, " & C.all & " b) {");
+         PUT_TO(B, "  if (a.hi - a.lo != b.hi - b.lo) return 0;");
+         PUT_TO(B, "  for (rt_int i = 0; i < RT_CNT(a); i++) if (!(" & X.all & ")) return 0;");
+         PUT_TO(B, "  return 1;");
+         PUT_TO(B, "}");
+      else
+         PUT_TO(B, "static void as_" & C.all & "(" & C.all & " *d, " & C.all & " s) {");
+         F := T.FIELDS;
+         while F /= null loop
+            ASSIGN_CODE("d->" & C_FIELD(F.NAME.all), F.T, "s." & C_FIELD(F.NAME.all), null, X);
+            PUT_TO(B, "  " & X.all);
+            F := F.NEXT;
+         end loop;
+         PUT_TO(B, "}");
+         PUT_TO(B, "static " & C.all & " cp_" & C.all & "(" & C.all & " s) {");
+         PUT_TO(B, "  " & C.all & " d = s;");
+         CONDS := MK("1");
+         F := T.FIELDS;
+         while F /= null loop
+            COPY_CODE(F.T, "s." & C_FIELD(F.NAME.all), X);
+            PUT_TO(B, "  d." & C_FIELD(F.NAME.all) & " = " & X.all & ";");
+            EQ_CODE(F.T, "a." & C_FIELD(F.NAME.all), "b." & C_FIELD(F.NAME.all), Y);
+            CONDS := MK(CONDS.all & " && " & Y.all);
+            F := F.NEXT;
+         end loop;
+         PUT_TO(B, "  return d;");
+         PUT_TO(B, "}");
+         PUT_TO(B, "static int eq_" & C.all & "(" & C.all & " a, " & C.all & " b) {");
+         PUT_TO(B, "  return " & CONDS.all & ";");
+         PUT_TO(B, "}");
+      end if;
+   end HELPER_BODIES;
+   -- ---- declarative parts (RM79 6.1) -------------------------------------------------
+
+   -- where a declared object lives: a global at library level, otherwise a
+   -- field of the frame of the subprogram at the current level
+   procedure STORAGE(NAME : STRING; T : TYP; ACCESS_CODE : out TEXT) is
+      CT, G : TEXT;
+   begin
+      CTYPE(T, CT);
+      if not IN_FUNC then
+         NEW_NAME("g_" & LOWER_S(NAME) & "_", G);
+         PUT_TO(OUT_GLOBALS, "static " & CT.all & " " & G.all & ";");
+         ST_FIELD := G;
+         ACCESS_CODE := G;
+      else
+         NEW_NAME(LOWER_S(NAME) & "_", G);
+         PUT_TO(FIELDS_BUF, " " & CT.all & " " & G.all & ";");
+         ST_FIELD := G;
+         ACCESS_CODE := MK("F->" & G.all);
+      end if;
+   end STORAGE;
+
+   procedure BIND(Y : SYM; ACCESS_CODE : TEXT) is
+   begin
+      if IN_FUNC then
+         Y.LEVEL := CUR_LEVEL;
+         Y.ACCESS_PATH := ST_FIELD;
+      else
+         Y.LEVEL := 0;
+         Y.ACCESS_PATH := ACCESS_CODE;
+      end if;
+   end BIND;
+
+   -- the subprograms of a declarative part may be called before their bodies:
+   -- their specifications are declared when the first body is reached
+   procedure DECLARE_SUBPROGRAMS(FROM : NODE) is
+      E : NODE := FROM;
+      Y : SYM;
+   begin
+      while E /= null loop
+         if E.KIND = N_PROC or E.KIND = N_FUNC then
+            BUILD_SUBPROGRAM(E, Y);
+            DEFINE(Y, E.LINE);
+         end if;
+         E := E.NEXT;
+      end loop;
+   end DECLARE_SUBPROGRAMS;
+
+   procedure BUILD_SUBPROGRAM(D : NODE; Y : out SYM) is
+      P : NODE := D.A;
+      PM, TAIL : PARM;
+      RC : CONS;
+      K : INTEGER := Y_PROC;
+   begin
+      if D.KIND = N_FUNC then
+         K := Y_FUNC;
+      end if;
+      Y := NEW_SYM(K, D.NAME);
+      while P /= null loop
+         PM := new PARM_REC(P.NAME, P.IVAL, null, null, null, P.B, null);
+         RESOLVE(P.A, PM.T, PM.C);
+         NEW_NAME(LOWER_S(P.NAME.all) & "_", PM.CFIELD);
+         if D.KIND = N_FUNC and PM.MODE /= M_IN then
+            FAIL(P.LINE, "a function can only have in parameters (RM79 6.5)");
+         end if;
+         if D.FLAG = 1 and PM.MODE /= M_IN then
+            FAIL(P.LINE, "a value-returning procedure can only have in parameters (RM79 6.5)");
+         end if;
+         if TAIL = null then
+            Y.PARAMS := PM;
+         else
+            TAIL.NEXT := PM;
+         end if;
+         TAIL := PM;
+         P := P.NEXT;
+      end loop;
+      Y.RESULT := TY_VOID;
+      if D.B /= null then
+         RESOLVE(D.B, Y.RESULT, RC);
+      end if;
+      Y.VRP := D.FLAG = 1;
+      NEW_NAME("f_" & C_IDENT(D.NAME.all) & "_", Y.CNAME);
+      Y.DECL := D;
+      Y.LEVEL := CUR_LEVEL;
+   end BUILD_SUBPROGRAM;
+
+   procedure DECL_ELEMENTS(DECLS : NODE) is
+      E : NODE := DECLS;
+      DECLARED : BOOLEAN := FALSE;
+   begin
+      while E /= null loop
+         if (E.KIND = N_PROC or E.KIND = N_FUNC) and not DECLARED then
+            DECLARE_SUBPROGRAMS(E);
+            DECLARED := TRUE;
+         end if;
+         DECL_ELEMENT(E);
+         E := E.NEXT;
+      end loop;
+   end DECL_ELEMENTS;
+
+   procedure DECL_ELEMENT(E : NODE) is
+      Y : SYM;
+      T, VT : TYP;
+      C : CONS;
+      ACC, V, X : TEXT;
+      OK : BOOLEAN;
+   begin
+      case E.KIND of
+         when 42 =>
+            -- type declaration (RM79 3.3)
+            Y := NEW_SYM(Y_TYPE, E.NAME);
+            Y.DECL := E;
+            DEFINE(Y, E.LINE);
+            TYPE_DEFINITION(E.A, E.NAME, Y.T, Y.C);
+         when 43 =>
+            Y := NEW_SYM(Y_TYPE, E.NAME);
+            RESOLVE(E.A, Y.T, Y.C);
+            DEFINE(Y, E.LINE);
+         when 40 =>
+            -- object declaration (RM79 3.2)
+            RESOLVE(E.A, T, C);
+            Y := NEW_SYM(Y_VAR, E.NAME);
+            if T.KIND = T_STRING and C.SLEN = null and E.B /= null then
+               -- the bounds come from the initial value (RM79 3.6)
+               GEXPR(E.B, T, VT, V);
+               CHECK_TYPE(VT, T, E.LINE);
+               STORAGE(E.NAME.all, T, ACC);
+               EMIT(ACC.all & " = rt_str_copy(" & V.all & ");");
+            else
+               STORAGE(E.NAME.all, T, ACC);
+               INIT_STORAGE(ACC.all, T, C);
+               if E.B /= null then
+                  GEXPR(E.B, T, VT, V);
+                  CHECK_TYPE(VT, T, E.LINE);
+                  ASSIGN_CODE(ACC.all, T, V.all, C, X);
+                  EMIT(X.all);
+               end if;
+            end if;
+            Y.T := T;
+            Y.C := C;
+            BIND(Y, ACC);
+            DEFINE(Y, E.LINE);
+         when 41 =>
+            RESOLVE(E.A, T, C);
+            Y := NEW_SYM(Y_CONST, E.NAME);
+            GEXPR(E.B, T, VT, V);
+            CHECK_TYPE(VT, T, E.LINE);
+            if T.KIND = T_INT then
+               MANIFEST(E.B, Y.MVALUE, OK);
+               Y.HASMV := OK;
+            end if;
+            STORAGE(E.NAME.all, T, ACC);
+            COPY_CODE(T, V.all, X);
+            EMIT(ACC.all & " = " & X.all & ";");
+            Y.T := T;
+            Y.C := C;
+            Y.RO := TRUE;
+            BIND(Y, ACC);
+            DEFINE(Y, E.LINE);
+         when 46 =>
+            -- an exception declaration is one exception, even in a recursive
+            -- procedure (RM79 11.1)
+            Y := NEW_SYM(Y_EXC, E.NAME);
+            NEW_NAME("ex_" & LOWER_S(E.NAME.all) & "_", Y.CNAME);
+            PUT_TO(OUT_GLOBALS, "static int " & Y.CNAME.all & ";");
+            PUT_TO(OUT_EXCS, "  " & Y.CNAME.all & " = rt_exc(" & Q & E.NAME.all & Q & ");");
+            DEFINE(Y, E.LINE);
+         when 44 | 45 =>
+            SUBPROGRAM_BODY(E, LOOKUP_DECL(E));
+         when 55 =>
+            null;
+         when others =>
+            OTHER_DECL(E);
+      end case;
+   end DECL_ELEMENT;
+
+   -- packages and tasks are handled in 09-units
+   procedure OTHER_DECL(E : NODE) is
+   begin
+      FAIL(E.LINE, "this declaration is not handled yet");
+   end OTHER_DECL;
+
+   -- ---- subprogram bodies (RM79 6.4) ------------------------------------------------
+
+   procedure SUBPROGRAM_BODY(D : NODE; Y : SYM) is
+      SAVED_CODE : BUFFER := CODE;
+      SAVED_FIELDS : BUFFER := FIELDS_BUF;
+      SAVED_IN : BOOLEAN := IN_FUNC;
+      SAVED_SYM : SYM := FUNC_SYM;
+      SAVED_EXITS : EXITS_T := EXITS;
+      SAVED_FRAMES : INTEGER := FRAMES;
+      SAVED_HANDLERS : LINES := HANDLERS;
+      SAVED_CLEANUPS : LINES := CLEANUPS;
+      ARGS, HEAD, FRAME, PARENT, CT, X : TEXT;
+      PM : PARM := Y.PARAMS;
+      P : SYM;
+   begin
+      FRAME := MK(Y.CNAME.all & "fr");
+      if IN_FUNC then
+         PARENT := MK(FUNC_SYM.CNAME.all & "fr");
+      end if;
+      CODE := NEW_BUFFER;
+      FIELDS_BUF := NEW_BUFFER;
+      IN_FUNC := TRUE;
+      FUNC_SYM := Y;
+      EXITS := null;
+      FRAMES := 0;
+      HANDLERS := null;
+      CLEANUPS := null;
+      CUR_LEVEL := CUR_LEVEL + 1;
+      ARGS := MK("");
+      OPEN_SCOPE;
+      if PARENT /= null then
+         PUT_TO(FIELDS_BUF, " struct " & PARENT.all & " *up;");
+         ARGS := MK("struct " & PARENT.all & " *up_");
+         EMIT("F->up = up_;");
+      end if;
+      while PM /= null loop
+         CTYPE(PM.T, CT);
+         if ARGS'LENGTH > 0 then
+            ARGS := MK(ARGS.all & ", ");
+         end if;
+         if PM.MODE = M_IN then
+            -- an in parameter acts as a local constant (RM79 6.3)
+            P := NEW_SYM(Y_CONST, PM.NAME);
+            P.RO := TRUE;
+            PUT_TO(FIELDS_BUF, " " & CT.all & " " & PM.CFIELD.all & ";");
+            ARGS := MK(ARGS.all & CT.all & " " & PM.CFIELD.all);
+            COPY_CODE(PM.T, PM.CFIELD.all, X);
+            EMIT("F->" & PM.CFIELD.all & " = " & X.all & ";");
+         else
+            P := NEW_SYM(Y_VAR, PM.NAME);
+            P.BYREF := TRUE;
+            PUT_TO(FIELDS_BUF, " " & CT.all & " *" & PM.CFIELD.all & ";");
+            ARGS := MK(ARGS.all & CT.all & " *" & PM.CFIELD.all);
+            EMIT("F->" & PM.CFIELD.all & " = " & PM.CFIELD.all & ";");
+         end if;
+         P.ACCESS_PATH := PM.CFIELD;
+         P.T := PM.T;
+         P.C := PM.C;
+         P.LEVEL := CUR_LEVEL;
+         DEFINE(P, D.LINE);
+         PM := PM.NEXT;
+      end loop;
+      if Y.RESULT.KIND /= T_VOID then
+         CTYPE(Y.RESULT, CT);
+         PUT_TO(FIELDS_BUF, " " & CT.all & " result_;");
+      end if;
+      DECL_ELEMENTS(D.C);
+      GUARDED(D.D, D.E, D.LINE);
+      CLOSE_SCOPE;
+      CUR_LEVEL := CUR_LEVEL - 1;
+      if ARGS'LENGTH = 0 then
+         ARGS := MK("void");
+      end if;
+      CTYPE(Y.RESULT, CT);
+      HEAD := MK("static " & CT.all & " " & Y.CNAME.all & "(" & ARGS.all & ")");
+      PUT_TO(OUT_PROTOS, HEAD.all & ";");
+      PUT_TO(OUT_FRAMES, "struct " & FRAME.all & " { int dummy;");
+      SPLICE(OUT_FRAMES, FIELDS_BUF);
+      PUT_TO(OUT_FRAMES, "};");
+      PUT_TO(OUT_FUNCS, HEAD.all & " {");
+      PUT_TO(OUT_FUNCS, "  struct " & FRAME.all & " *F = rt_alloc(sizeof *F);");
+      SPLICE(OUT_FUNCS, CODE);
+      if Y.RESULT.KIND /= T_VOID then
+         -- leaving a function other than by return (RM79 6.5)
+         PUT_TO(OUT_FUNCS, "  rt_raise(RT_X_INIT);");
+         PUT_TO(OUT_FUNCS, "ret_:");
+         PUT_TO(OUT_FUNCS, "  return F->result_;");
+      else
+         PUT_TO(OUT_FUNCS, "ret_:");
+         PUT_TO(OUT_FUNCS, "  return;");
+      end if;
+      PUT_TO(OUT_FUNCS, "}");
+      PUT_TO(OUT_FUNCS, "");
+      CODE := SAVED_CODE;
+      FIELDS_BUF := SAVED_FIELDS;
+      IN_FUNC := SAVED_IN;
+      FUNC_SYM := SAVED_SYM;
+      EXITS := SAVED_EXITS;
+      FRAMES := SAVED_FRAMES;
+      HANDLERS := SAVED_HANDLERS;
+      CLEANUPS := SAVED_CLEANUPS;
+   end SUBPROGRAM_BODY;
+
+   -- ---- statements (RM79 5) -----------------------------------------------------------
+
+   procedure GEN_STATEMENTS(STMTS : NODE) is
+      S : NODE := STMTS;
+   begin
+      while S /= null loop
+         GEN_STATEMENT(S);
+         S := S.NEXT;
+      end loop;
+   end GEN_STATEMENTS;
+
+   -- leaving open frames by exit or return: pop exception frames, and run
+   -- whatever else was pushed
+   procedure POP_FRAMES(UPTO : INTEGER) is
+      I : INTEGER := FRAMES;
+      C : LINES := CLEANUPS;
+   begin
+      while I > UPTO loop
+         EMIT(C.S.all);
+         C := C.NEXT;
+         I := I - 1;
+      end loop;
+   end POP_FRAMES;
+
+   procedure PUSH_CLEANUP(S : STRING) is
+   begin
+      CLEANUPS := new LINES_REC(null, CLEANUPS);
+      CLEANUPS.S := MK(S);
+      FRAMES := FRAMES + 1;
+   end PUSH_CLEANUP;
+
+   procedure POP_CLEANUP is
+   begin
+      CLEANUPS := CLEANUPS.NEXT;
+      FRAMES := FRAMES - 1;
+   end POP_CLEANUP;
+
+   -- statements with exception handlers (RM79 11.2)
+   procedure GUARDED(STMTS, HS : NODE; LINE : INTEGER) is
+      F, X : TEXT;
+      H, N : NODE;
+      FIRST : BOOLEAN := TRUE;
+      HAS_OTHERS : BOOLEAN := FALSE;
+      CONDS : TEXT;
+   begin
+      if HS = null then
+         GEN_STATEMENTS(STMTS);
+         return;
+      end if;
+      NEW_NAME("xf", F);
+      NEW_NAME("x", X);
+      PUSH_CLEANUP("RT_POP(" & F.all & ");");
+      EMIT("{ rt_frame " & F.all & ";");
+      EMIT("if (RT_TRY(" & F.all & ")) {");
+      GEN_STATEMENTS(STMTS);
+      EMIT("RT_POP(" & F.all & ");");
+      EMIT("} else {");
+      POP_CLEANUP;
+      EMIT("RT_POP(" & F.all & ");");
+      EMIT("int " & X.all & " = rt_xcur;");
+      HANDLERS := new LINES_REC(X, HANDLERS);
+      H := HS;
+      while H /= null loop
+         N := H.A;
+         CONDS := MK("0");
+         while N /= null loop
+            if N.NAME.all = "OTHERS" then
+               HAS_OTHERS := TRUE;
+               CONDS := MK("1");
+            else
+               EXC_ID(N.NAME.all, H.LINE, F);
+               CONDS := MK(CONDS.all & " || " & X.all & " == " & F.all);
+            end if;
+            N := N.NEXT;
+         end loop;
+         if FIRST then
+            EMIT("if (" & CONDS.all & ") {");
+         else
+            EMIT("} else if (" & CONDS.all & ") {");
+         end if;
+         FIRST := FALSE;
+         GEN_STATEMENTS(H.B);
+         H := H.NEXT;
+      end loop;
+      if not HAS_OTHERS then
+         EMIT("} else {");
+         EMIT("rt_raise(" & X.all & ");");
+      end if;
+      EMIT("}");
+      HANDLERS := HANDLERS.NEXT;
+      EMIT("}");
+      EMIT("}");
+   end GUARDED;
+
+   procedure EXC_ID(NAME : STRING; LINE : INTEGER; R : out TEXT) is
+      Y : SYM := LOOKUP(NAME);
+   begin
+      if Y = null or else Y.KIND /= Y_EXC then
+         FAIL(LINE, NAME & " is not an exception");
+      end if;
+      R := Y.CNAME;
+   end EXC_ID;
+
+   procedure GEN_STATEMENT(S : NODE) is
+      T, VT : TYP;
+      C : CONS;
+      LV, V, X : TEXT;
+      RO : BOOLEAN;
+   begin
+      case S.KIND of
+         when 20 =>
+            LVALUE(S.A, LV, T, C, RO);
+            if RO then
+               FAIL(S.LINE, "assignment to a constant or an in parameter");
+            end if;
+            GEXPR(S.B, T, VT, V);
+            CHECK_TYPE(VT, T, S.LINE);
+            ASSIGN_CODE(LV.all, T, V.all, C, X);
+            EMIT(X.all);
+         when 21 =>
+            GEN_CALL(S);
+         when 22 =>
+            GEN_IF(S);
+         when 23 =>
+            GEN_CASE(S);
+         when 24 =>
+            GEN_LOOP(S);
+         when 25 =>
+            GEN_BLOCK(S);
+         when 26 =>
+            GEN_EXIT(S);
+         when 27 =>
+            GEN_RETURN(S);
+         when 28 =>
+            EXC_ID(S.NAME.all, S.LINE, X);
+            EMIT("rt_raise(" & X.all & ");");
+         when 29 =>
+            -- raise; re-raises, only in a handler (RM79 11.3)
+            if HANDLERS = null then
+               FAIL(S.LINE, "raise; outside an exception handler");
+            end if;
+            EMIT("rt_raise(" & HANDLERS.S.all & ");");
+         when 30 =>
+            -- assert raises ASSERT_ERROR (RM79 5.9)
+            GEXPR(S.A, TY_BOOL, VT, V);
+            CHECK_TYPE(VT, TY_BOOL, S.LINE);
+            EMIT("if (!(" & V.all & ")) rt_raise(RT_X_ASSERT);");
+         when 31 =>
+            null;
+         when others =>
+            TASK_STATEMENT_GEN(S);
+      end case;
+   end GEN_STATEMENT;
+
+   -- the tasking statements are generated in 09-tasks
+   procedure TASK_STATEMENT_GEN(S : NODE) is
+   begin
+      FAIL(S.LINE, "this statement is not handled yet");
+   end TASK_STATEMENT_GEN;
+
+   procedure GEN_CALL(S : NODE) is
+      C : NODE := S.A;
+      T : TYP;
+      V : TEXT;
+   begin
+      if C.KIND = N_NAME or C.KIND = N_SELECT then
+         C := NN(N_APPLY, S.LINE);
+         C.A := S.A;
+      end if;
+      if C.KIND /= N_APPLY then
+         FAIL(S.LINE, "not a procedure call");
+      end if;
+      GCALL(C, TRUE, T, V);
+      EMIT(V.all & ";");
+   end GEN_CALL;
+
+   procedure GEN_IF(S : NODE) is
+      A : NODE := S.A;
+      FIRST : BOOLEAN := TRUE;
+      T : TYP;
+      V : TEXT;
+   begin
+      while A /= null loop
+         GEXPR(A.A, TY_BOOL, T, V);
+         CHECK_TYPE(T, TY_BOOL, S.LINE);
+         if FIRST then
+            EMIT("if (" & V.all & ") {");
+         else
+            EMIT("} else if (" & V.all & ") {");
+         end if;
+         FIRST := FALSE;
+         GEN_STATEMENTS(A.B);
+         A := A.NEXT;
+      end loop;
+      if S.FLAG = 1 then
+         EMIT("} else {");
+         GEN_STATEMENTS(S.B);
+      end if;
+      EMIT("}");
+   end GEN_IF;
+
+   procedure GEN_CASE(S : NODE) is
+      ST, VT : TYP;
+      FIRST : BOOLEAN := TRUE;
+      A : NODE := S.B;
+      LAB : NODE;
+      SEL, TMP, CT, CONDS, V, LO, HI : TEXT;
+   begin
+      GEXPR(S.A, null, ST, SEL);
+      NEW_NAME("sel", TMP);
+      CTYPE(ST, CT);
+      EMIT("{ " & CT.all & " " & TMP.all & " = " & SEL.all & ";");
+      while A /= null loop
+         LAB := A.A;
+         CONDS := MK("0");
+         while LAB /= null loop
+            if LAB.B = null then
+               GEXPR(LAB.A, ST, VT, V);
+               CHECK_TYPE(VT, ST, S.LINE);
+               CONDS := MK(CONDS.all & " || " & TMP.all & " == " & V.all);
+            else
+               GEXPR(LAB.A, ST, VT, LO);
+               GEXPR(LAB.B, ST, VT, HI);
+               CONDS := MK(CONDS.all & " || (" & TMP.all & " >= " & LO.all & " && " & TMP.all
+                           & " <= " & HI.all & ")");
+            end if;
+            LAB := LAB.NEXT;
+         end loop;
+         if FIRST then
+            EMIT("if (" & CONDS.all & ") {");
+         else
+            EMIT("} else if (" & CONDS.all & ") {");
+         end if;
+         FIRST := FALSE;
+         GEN_STATEMENTS(A.B);
+         A := A.NEXT;
+      end loop;
+      if FIRST then
+         EMIT("{");
+      else
+         EMIT("} else {");
+      end if;
+      if S.FLAG = 1 then
+         GEN_STATEMENTS(S.C);
+      else
+         EMIT("rt_raise(RT_X_CASE);");
+      end if;
+      EMIT("}");
+      EMIT("}");
+   end GEN_CASE;
+
+   procedure PUSH_EXIT(MATCH : TEXT; IS_LOOP : BOOLEAN; LABEL : out TEXT) is
+   begin
+      NEW_NAME("L_end_", LABEL);
+      EXITS := new EXIT_REC(MATCH, LABEL, FRAMES, IS_LOOP, EXITS);
+   end PUSH_EXIT;
+
+   -- loops (RM79 5.6): the loop parameter is a constant; the range is
+   -- evaluated once
+   procedure GEN_LOOP(S : NODE) is
+      T, VT : TYP;
+      C : CONS;
+      LABEL, COND, ACC, LOV, HIV, IT : TEXT;
+      Y : SYM;
+      R : NODE;
+   begin
+      PUSH_EXIT(S.TAG, TRUE, LABEL);
+      if S.FLAG = 0 then
+         EMIT("for (;;) {");
+         GEN_STATEMENTS(S.B);
+         EMIT("}");
+      elsif S.FLAG = 1 then
+         GEXPR(S.A, TY_BOOL, VT, COND);
+         CHECK_TYPE(VT, TY_BOOL, S.LINE);
+         EMIT("while (" & COND.all & ") {");
+         GEN_STATEMENTS(S.B);
+         EMIT("}");
+      else
+         R := S.A;
+         C := NEW_CONS;
+         if R.KIND = N_RANGE then
+            GEXPR(R.A, null, T, C.LO);
+            GEXPR(R.B, T, VT, C.HI);
+            CHECK_TYPE(VT, T, S.LINE);
+         else
+            RESOLVE(R, T, C);
+            if C.LO = null then
+               FAIL(S.LINE, "a FOR loop needs a discrete range");
+            end if;
+         end if;
+         STORAGE(S.NAME.all, T, ACC);
+         NEW_NAME("lo", LOV);
+         NEW_NAME("hi", HIV);
+         NEW_NAME("it", IT);
+         EMIT("{ rt_int " & LOV.all & " = " & C.LO.all & ", " & HIV.all & " = " & C.HI.all & ";");
+         if S.IVAL = 1 then
+            EMIT("for (rt_int " & IT.all & " = " & HIV.all & "; " & IT.all & " >= " & LOV.all & "; "
+                 & IT.all & "--) {");
+         else
+            EMIT("for (rt_int " & IT.all & " = " & LOV.all & "; " & IT.all & " <= " & HIV.all & "; "
+                 & IT.all & "++) {");
+         end if;
+         EMIT(ACC.all & " = " & IT.all & ";");
+         OPEN_SCOPE;
+         Y := NEW_SYM(Y_CONST, S.NAME);
+         Y.T := T;
+         Y.RO := TRUE;
+         BIND(Y, ACC);
+         DEFINE(Y, S.LINE);
+         GEN_STATEMENTS(S.B);
+         CLOSE_SCOPE;
+         EMIT("}");
+         EMIT("}");
+      end if;
+      EXITS := EXITS.NEXT;
+      EMIT(LABEL.all & ": ;");
+   end GEN_LOOP;
+
+   -- blocks (RM79 6.7): a declarative part, statements, handlers
+   procedure GEN_BLOCK(S : NODE) is
+      LABEL : TEXT;
+   begin
+      PUSH_EXIT(S.TAG, FALSE, LABEL);
+      EMIT("{");
+      OPEN_SCOPE;
+      DECL_ELEMENTS(S.A);
+      GUARDED(S.B, S.C, S.LINE);
+      CLOSE_SCOPE;
+      EMIT("}");
+      EXITS := EXITS.NEXT;
+      EMIT(LABEL.all & ": ;");
+   end GEN_BLOCK;
+
+   -- exit [loop name] [when condition] (RM79 5.7)
+   procedure GEN_EXIT(S : NODE) is
+      X : EXITS_T := EXITS;
+      T : TYP;
+      V : TEXT;
+   begin
+      while X /= null loop
+         if (S.NAME = null and X.IS_LOOP) or else (S.NAME /= null and then X.MATCH /= null
+            and then X.MATCH.all = S.NAME.all) then
+            if S.A /= null then
+               GEXPR(S.A, TY_BOOL, T, V);
+               CHECK_TYPE(T, TY_BOOL, S.LINE);
+               EMIT("if (" & V.all & ") {");
+            end if;
+            POP_FRAMES(X.DEPTH);
+            EMIT("goto " & X.LABEL.all & ";");
+            if S.A /= null then
+               EMIT("}");
+            end if;
+            return;
+         end if;
+         X := X.NEXT;
+      end loop;
+      if S.NAME = null then
+         FAIL(S.LINE, "exit outside a loop");
+      end if;
+      FAIL(S.LINE, "exit " & S.NAME.all & " names no enclosing loop");
+   end GEN_EXIT;
+
+   procedure GEN_RETURN(S : NODE) is
+      VT : TYP;
+      V : TEXT;
+   begin
+      if not IN_FUNC then
+         FAIL(S.LINE, "return outside a subprogram");
+      end if;
+      if FUNC_SYM.RESULT.KIND = T_VOID then
+         if S.A /= null then
+            FAIL(S.LINE, "a procedure returns no value");
+         end if;
+         POP_FRAMES(0);
+         EMIT("goto ret_;");
+         return;
+      end if;
+      if S.A = null then
+         FAIL(S.LINE, "return needs a value here");
+      end if;
+      GEXPR(S.A, FUNC_SYM.RESULT, VT, V);
+      CHECK_TYPE(VT, FUNC_SYM.RESULT, S.LINE);
+      EMIT("F->result_ = " & V.all & ";");
+      POP_FRAMES(0);
+      EMIT("goto ret_;");
+   end GEN_RETURN;
+   -- ---- names of objects ----------------------------------------------------------------
+
+   -- C for an object seen from the current subprogram: frames are reached
+   -- through the static link, one ->up per level
+   procedure ACCESS_OF(Y : SYM; R : out TEXT) is
+      P : TEXT;
+   begin
+      if Y.LEVEL <= 0 then
+         R := Y.ACCESS_PATH;
+         return;
+      end if;
+      P := MK("F");
+      for I in 1 .. CUR_LEVEL - Y.LEVEL loop
+         P := MK(P.all & "->up");
+      end loop;
+      if Y.BYREF then
+         R := MK("(*" & P.all & "->" & Y.ACCESS_PATH.all & ")");
+      else
+         R := MK(P.all & "->" & Y.ACCESS_PATH.all);
+      end if;
+   end ACCESS_OF;
+
+   -- the static link to pass to a subprogram declared at level L
+   procedure LINK_TO(L : INTEGER; R : out TEXT) is
+   begin
+      R := MK("F");
+      for I in 1 .. CUR_LEVEL - L loop
+         R := MK(R.all & "->up");
+      end loop;
+   end LINK_TO;
+
+   -- a C identifier for a designator that may be an operator symbol (RM79 6.6.1)
+   function C_IDENT(S : STRING) return STRING is
+   begin
+      if S = "+" then
+         return "op_plus";
+      elsif S = "-" then
+         return "op_minus";
+      elsif S = "*" then
+         return "op_times";
+      elsif S = "/" then
+         return "op_slash";
+      elsif S = "**" then
+         return "op_power";
+      elsif S = "&" then
+         return "op_cat";
+      elsif S = "=" then
+         return "op_eq";
+      elsif S = "<" then
+         return "op_lt";
+      elsif S = "<=" then
+         return "op_le";
+      elsif S = ">" then
+         return "op_gt";
+      elsif S = ">=" then
+         return "op_ge";
+      elsif S = "MOD" then
+         return "op_mod";
+      elsif S = "AND" then
+         return "op_and";
+      elsif S = "OR" then
+         return "op_or";
+      elsif S = "XOR" then
+         return "op_xor";
+      elsif S = "NOT" then
+         return "op_not";
+      end if;
+      return LOWER_S(S);
+   end C_IDENT;
+
+   procedure DEREF(BASE : STRING; T : TYP; R : out TEXT) is
+      CT : TEXT;
+   begin
+      CTYPE(T, CT);
+      R := MK("(*(" & CT.all & ")rt_nil_check(" & BASE & "))");
+   end DEREF;
+
+   function IS_OBJECT(E : NODE) return BOOLEAN is
+      Y : SYM;
+   begin
+      if E.KIND = N_NAME then
+         Y := LOOKUP(E.NAME.all);
+         return Y /= null and then (Y.KIND = Y_VAR or Y.KIND = Y_CONST);
+      elsif E.KIND = N_SELECT then
+         return IS_OBJECT(E.A);
+      elsif E.KIND = N_APPLY then
+         if E.B /= null and then E.B.KIND = N_RANGE then
+            return FALSE;
+         end if;
+         return IS_OBJECT(E.A);
+      end if;
+      return FALSE;
+   end IS_OBJECT;
+
+   procedure LVALUE(E : NODE; CODE_OUT : out TEXT; T : out TYP; C : out CONS; RO : out BOOLEAN) is
+      Y : SYM;
+      BASE : TEXT;
+      BT : TYP;
+      BC : CONS;
+   begin
+      if E.KIND = N_NAME then
+         Y := LOOKUP(E.NAME.all);
+         if Y = null then
+            FAIL(E.LINE, E.NAME.all & " is not declared");
+         end if;
+         if Y.KIND /= Y_VAR and Y.KIND /= Y_CONST then
+            FAIL(E.LINE, E.NAME.all & " is not an object");
+         end if;
+         ACCESS_OF(Y, CODE_OUT);
+         T := Y.T;
+         C := Y.C;
+         RO := Y.RO;
+      elsif E.KIND = N_PAREN then
+         LVALUE(E.A, CODE_OUT, T, C, RO);
+      elsif E.KIND = N_SELECT then
+         LVALUE(E.A, BASE, BT, BC, RO);
+         SELECT_ON(BASE.all, BT, E, RO, CODE_OUT, T, C);
+      elsif E.KIND = N_APPLY then
+         LVALUE(E.A, BASE, BT, BC, RO);
+         INDEX_ON(BASE.all, BT, E, RO, TRUE, CODE_OUT, T, C);
+      else
+         FAIL(E.LINE, "not an object");
+      end if;
+   end LVALUE;
+
+   -- selected components (RM79 4.1.2); dereferencing is implicit (RM79 4.3)
+   procedure SELECT_ON(BASE : STRING; BT : TYP; E : NODE; RO : in out BOOLEAN;
+                       CODE_OUT : out TEXT; T : out TYP; C : out CONS) is
+      F : FIELD;
+      D : TEXT;
+   begin
+      C := NO_CONS;
+      if BT.KIND = T_PTR then
+         FINISH_PTR(BT);
+         DEREF(BASE, BT, D);
+         RO := FALSE;
+         if E.NAME.all = "ALL" then
+            CODE_OUT := D;
+            T := BT.TARGET;
+            return;
+         end if;
+         SELECT_ON(D.all, BT.TARGET, E, RO, CODE_OUT, T, C);
+         return;
+      end if;
+      if BT.KIND = T_RECORD then
+         F := BT.FIELDS;
+         while F /= null loop
+            if F.NAME.all = E.NAME.all then
+               C := F.C;
+               CODE_OUT := MK(BASE & "." & C_FIELD(E.NAME.all));
+               T := F.T;
+               return;
+            end if;
+            F := F.NEXT;
+         end loop;
+         FAIL(E.LINE, KIND_NAME(BT) & " has no component " & E.NAME.all);
+      end if;
+      FAIL(E.LINE, "cannot select " & E.NAME.all & " here");
+   end SELECT_ON;
+
+   -- indexed components and slices (RM79 4.1.1, 4.3)
+   procedure INDEX_ON(BASE : STRING; BT : TYP; E : NODE; RO : in out BOOLEAN; LV : BOOLEAN;
+                      CODE_OUT : out TEXT; T : out TYP; C : out CONS) is
+      A : NODE := E.B;
+      IT : TYP;
+      I, LO, HI, D : TEXT;
+   begin
+      C := NO_CONS;
+      if BT.KIND = T_PTR then
+         FINISH_PTR(BT);
+         DEREF(BASE, BT, D);
+         RO := FALSE;
+         INDEX_ON(D.all, BT.TARGET, E, RO, LV, CODE_OUT, T, C);
+         return;
+      end if;
+      if LIST_LEN(A) /= 1 then
+         FAIL(E.LINE, "one index expected");
+      end if;
+      if BT.KIND = T_STRING then
+         if A.KIND = N_RANGE then
+            GEXPR(A.A, TY_INT, IT, LO);
+            GEXPR(A.B, TY_INT, IT, HI);
+            CODE_OUT := MK("rt_str_slice(" & BASE & ", " & LO.all & ", " & HI.all & ")");
+            T := TY_STRING;
+            RO := TRUE;
+            return;
+         end if;
+         GEXPR(A, TY_INT, IT, I);
+         T := TY_CHAR;
+         if LV then
+            CODE_OUT := MK("(*rt_str_at(&" & BASE & ", " & I.all & "))");
+         else
+            CODE_OUT := MK("rt_str_get(" & BASE & ", " & I.all & ")");
+            RO := TRUE;
+         end if;
+         return;
+      end if;
+      if BT.KIND = T_ARRAY then
+         GEXPR(A, BT.IDX, IT, I);
+         CHECK_TYPE(IT, BT.IDX, E.LINE);
+         CODE_OUT := MK(BASE & ".p[rt_index(" & I.all & ", " & BASE & ".lo, " & BASE & ".hi) - "
+                        & BASE & ".lo]");
+         T := BT.ELEM;
+         C := BT.ELEMCONS;
+         return;
+      end if;
+      FAIL(E.LINE, "cannot index this");
+   end INDEX_ON;
+
+   -- ---- expressions (RM79 4.4) -------------------------------------------------------------
+
+   function IS_CHAR_LIT(E : NODE) return BOOLEAN is
+   begin
+      return E.KIND = N_STR and then E.NAME'LENGTH = 1;
+   end IS_CHAR_LIT;
+
+   function IS_ENUM_LIT(E : NODE) return BOOLEAN is
+      Y : SYM;
+   begin
+      if E.KIND /= N_NAME then
+         return FALSE;
+      end if;
+      Y := LOOKUP(E.NAME.all);
+      return Y /= null and then Y.KIND = Y_ENUMLIT;
+   end IS_ENUM_LIT;
+
+   -- a string as a C string literal
+   function C_STRING(S : STRING) return STRING is
+      N : INTEGER := 0;
+   begin
+      for I in 1 .. S'LENGTH loop
+         if S(I) = """" or S(I) = "\" or S(I) = "?" then
+            N := N + 1;
+         end if;
+      end loop;
+      declare
+         R : STRING(1 .. S'LENGTH + N + 2);
+         J : INTEGER := 1;
+      begin
+         R(1) := """";
+         for I in 1 .. S'LENGTH loop
+            J := J + 1;
+            if S(I) = """" or S(I) = "\" or S(I) = "?" then
+               R(J) := "\";
+               J := J + 1;
+            end if;
+            R(J) := S(I);
+         end loop;
+         R(J + 1) := """";
+         return R;
+      end;
+   end C_STRING;
+
+   procedure GEXPR(E : NODE; WANT : TYP; T : out TYP; R : out TEXT) is
+      Y : SYM;
+      BT : TYP;
+      C : CONS;
+      RO : BOOLEAN;
+      BASE, A : TEXT;
+      NM : NODE;
+   begin
+      T := TY_INT;
+      case E.KIND of
+         when 1 =>
+            if WANT /= null and then WANT.KIND = T_FLOAT then
+               T := TY_FLOAT;
+               R := MK(E.NAME.all & ".0");
+            else
+               R := MK("((rt_int)" & INTEGER'REP(E.IVAL) & "LL)");
+            end if;
+         when 2 =>
+            T := TY_FLOAT;
+            R := E.NAME;
+         when 3 =>
+            if IS_CHAR_LIT(E) and WANT /= null and then (WANT.KIND = T_CHAR or WANT.KIND = T_ENUM) then
+               -- a character literal is a string of length one (RM79 2.5)
+               CHAR_LITERAL(E, WANT, T, R);
+            else
+               T := TY_STRING;
+               R := MK("rt_str(" & C_STRING(E.NAME.all) & ", " & INTEGER'REP(E.NAME'LENGTH) & ")");
+            end if;
+         when 4 =>
+            T := TY_NIL;
+            R := MK("NULL");
+         when 15 =>
+            GEXPR(E.A, WANT, T, R);
+         when 5 =>
+            GEN_NAME(E, WANT, T, R);
+         when 6 =>
+            GEN_UNOP(E, WANT, T, R);
+         when 7 =>
+            GEN_BINOP(E, WANT, T, R);
+         when 8 =>
+            if E.A.KIND = N_NAME then
+               Y := LOOKUP(E.A.NAME.all);
+               if Y = null or else (Y.KIND = Y_FUNC or Y.KIND = Y_PROC or Y.KIND = Y_ENTRY) then
+                  GCALL(E, FALSE, T, R);
+                  return;
+               end if;
+               if Y.KIND = Y_TYPE then
+                  CONVERSION(E, Y, T, R);
+                  return;
+               end if;
+            end if;
+            GEXPR(E.A, null, BT, BASE);
+            RO := TRUE;
+            INDEX_ON(BASE.all, BT, E, RO, FALSE, R, T, C);
+         when 9 =>
+            GEXPR(E.A, null, BT, BASE);
+            RO := TRUE;
+            SELECT_ON(BASE.all, BT, E, RO, R, T, C);
+         when 10 =>
+            GEN_ATTR(E, WANT, T, R);
+         when 11 =>
+            ALLOCATOR(E, WANT, T, R);
+         when 12 =>
+            AGGREGATE(E, WANT, T, R);
+         when others =>
+            FAIL(E.LINE, "this expression is not handled");
+      end case;
+   end GEXPR;
+
+   procedure CHAR_LITERAL(E : NODE; WANT : TYP; T : out TYP; R : out TEXT) is
+      I : INTEGER;
+   begin
+      if WANT.KIND = T_CHAR then
+         T := TY_CHAR;
+         R := MK(INTEGER'REP(CHARACTER'ORD(E.NAME(1)) - 1));
+         return;
+      end if;
+      -- a character literal of an enumeration type such as ("A", "B")
+      I := LIT_INDEX(WANT.LITS, E.NAME.all);
+      if I < 0 then
+         FAIL(E.LINE, """" & E.NAME.all & """ is not a literal of " & KIND_NAME(WANT));
+      end if;
+      T := WANT;
+      R := MK(INTEGER'REP(I));
+   end CHAR_LITERAL;
+
+   procedure GEN_NAME(E : NODE; WANT : TYP; T : out TYP; R : out TEXT) is
+      Y : SYM := LOOKUP(E.NAME.all);
+      Z : SYM;
+      CALL : NODE;
+   begin
+      if Y = null then
+         if E.NAME.all = "PUT" or E.NAME.all = "GET" then
+            FAIL(E.LINE, E.NAME.all & " needs an item");
+         end if;
+         FAIL(E.LINE, E.NAME.all & " is not declared");
+      end if;
+      if Y.KIND = Y_VAR or Y.KIND = Y_CONST then
+         T := Y.T;
+         ACCESS_OF(Y, R);
+         return;
+      end if;
+      if Y.KIND = Y_ENUMLIT then
+         -- enumeration literals may be overloaded; the context decides (RM79 3.5.1)
+         Z := Y;
+         if WANT /= null then
+            while Z /= null loop
+               exit when Z.NAME.all = E.NAME.all and then Z.KIND = Y_ENUMLIT and then SAME(Z.T, WANT);
+               Z := Z.CHAIN;
+            end loop;
+            if Z = null then
+               Z := Y;
+            end if;
+         end if;
+         T := Z.T;
+         R := MK(INTEGER'REP(Z.MVALUE));
+         return;
+      end if;
+      if Y.KIND = Y_FUNC or Y.KIND = Y_PROC or Y.KIND = Y_ENTRY then
+         CALL := NN(N_APPLY, E.LINE);
+         CALL.A := E;
+         GCALL(CALL, FALSE, T, R);
+         return;
+      end if;
+      FAIL(E.LINE, E.NAME.all & " cannot be used as a value");
+   end GEN_NAME;
+
+   procedure GEN_UNOP(E : NODE; WANT : TYP; T : out TYP; R : out TEXT) is
+      A : TEXT;
+   begin
+      if E.NAME.all = "NOT" then
+         GEXPR(E.A, TY_BOOL, T, A);
+         CHECK_TYPE(T, TY_BOOL, E.LINE);
+         R := MK("(!" & A.all & ")");
+         return;
+      end if;
+      GEXPR(E.A, WANT, T, A);
+      if E.NAME.all = "+" then
+         R := A;
+      elsif T.KIND = T_FLOAT then
+         R := MK("(-" & A.all & ")");
+      else
+         CHECK_TYPE(T, TY_INT, E.LINE);
+         R := MK("rt_neg(" & A.all & ")");
+      end if;
+   end GEN_UNOP;
+
+   procedure GEN_BINOP(E : NODE; WANT : TYP; T : out TYP; R : out TEXT) is
+      OP : STRING := E.NAME.all;
+      TA, TB, HINT, CT : TYP;
+      A, B, X, DUMMY : TEXT;
+   begin
+      T := TY_BOOL;
+      if OP = "AND" or OP = "OR" or OP = "XOR" then
+         GEXPR(E.A, TY_BOOL, TA, A);
+         GEXPR(E.B, TY_BOOL, TB, B);
+         CHECK_TYPE(TA, TY_BOOL, E.LINE);
+         CHECK_TYPE(TB, TY_BOOL, E.LINE);
+         if OP = "AND" then
+            R := MK("(" & A.all & " && " & B.all & ")");
+         elsif OP = "OR" then
+            R := MK("(" & A.all & " || " & B.all & ")");
+         else
+            R := MK("(" & A.all & " != " & B.all & ")");
+         end if;
+         return;
+      end if;
+      if OP = "IN" then
+         -- membership in a range (RM79 4.5.2)
+         GEXPR(E.A, null, TA, A);
+         GEXPR(E.B.A, TA, TB, B);
+         GEXPR(E.B.B, TA, TB, X);
+         R := MK("({ rt_int m_ = " & A.all & "; m_ >= " & B.all & " && m_ <= " & X.all & "; })");
+         return;
+      end if;
+      if OP = "&" then
+         -- catenation of strings and characters (RM79 4.5.3)
+         if IS_CHAR_LIT(E.A) then
+            HINT := TY_CHAR;
+         end if;
+         GEXPR(E.A, HINT, TA, A);
+         HINT := null;
+         if IS_CHAR_LIT(E.B) then
+            HINT := TY_CHAR;
+         end if;
+         GEXPR(E.B, HINT, TB, B);
+         T := TY_STRING;
+         if TA.KIND = T_STRING and TB.KIND = T_STRING then
+            R := MK("rt_str_cat(" & A.all & ", " & B.all & ")");
+         elsif TA.KIND = T_STRING and TB.KIND = T_CHAR then
+            R := MK("rt_str_catc(" & A.all & ", " & B.all & ")");
+         elsif TA.KIND = T_CHAR and TB.KIND = T_STRING then
+            R := MK("rt_str_ccat(" & A.all & ", " & B.all & ")");
+         elsif TA.KIND = T_CHAR and TB.KIND = T_CHAR then
+            R := MK("rt_str_cc(" & A.all & ", " & B.all & ")");
+         else
+            FAIL(E.LINE, "& catenates strings and characters");
+         end if;
+         return;
+      end if;
+      if IS_REL(OP) then
+         if IS_CHAR_LIT(E.A) or IS_ENUM_LIT(E.A) or E.A.KIND = N_NIL or E.A.KIND = N_INT then
+            GEXPR(E.B, null, HINT, DUMMY);
+         end if;
+         GEXPR(E.A, HINT, TA, A);
+         GEXPR(E.B, TA, TB, B);
+         CT := TA;
+         if TA.KIND /= T_NIL and TB.KIND /= T_NIL then
+            CHECK_TYPE(TB, TA, E.LINE);
+         end if;
+         if TA.KIND = T_NIL then
+            CT := TB;
+         end if;
+         if CT.KIND = T_STRING then
+            if OP = "=" then
+               R := MK("rt_str_eq(" & A.all & ", " & B.all & ")");
+            elsif OP = "/=" then
+               R := MK("(!rt_str_eq(" & A.all & ", " & B.all & "))");
+            elsif OP = "<" then
+               R := MK("rt_str_lt(" & A.all & ", " & B.all & ")");
+            elsif OP = "<=" then
+               R := MK("rt_str_le(" & A.all & ", " & B.all & ")");
+            elsif OP = ">" then
+               R := MK("rt_str_lt(" & B.all & ", " & A.all & ")");
+            else
+               R := MK("rt_str_le(" & B.all & ", " & A.all & ")");
+            end if;
+            return;
+         end if;
+         if COMPOSITE(CT) then
+            EQ_CODE(CT, A.all, B.all, X);
+            if OP = "=" then
+               R := X;
+            elsif OP = "/=" then
+               R := MK("(!" & X.all & ")");
+            else
+               FAIL(E.LINE, "no ordering is defined for composite values");
+            end if;
+            return;
+         end if;
+         if OP = "=" then
+            R := MK("(" & A.all & " == " & B.all & ")");
+         elsif OP = "/=" then
+            R := MK("(" & A.all & " != " & B.all & ")");
+         else
+            R := MK("(" & A.all & " " & OP & " " & B.all & ")");
+         end if;
+         return;
+      end if;
+      GEXPR(E.A, WANT, TA, A);
+      GEXPR(E.B, TA, TB, B);
+      if TA.KIND = T_FLOAT or TB.KIND = T_FLOAT then
+         T := TY_FLOAT;
+         if OP = "+" or OP = "-" or OP = "*" then
+            R := MK("(" & A.all & " " & OP & " " & B.all & ")");
+         elsif OP = "/" then
+            R := MK("rt_fdiv(" & A.all & ", " & B.all & ")");
+         elsif OP = "**" then
+            R := MK("rt_fpow(" & A.all & ", " & B.all & ")");
+         else
+            FAIL(E.LINE, "operator " & OP & " is not defined for FLOAT");
+         end if;
+         return;
+      end if;
+      CHECK_TYPE(TA, TY_INT, E.LINE);
+      CHECK_TYPE(TB, TY_INT, E.LINE);
+      T := TY_INT;
+      if OP = "+" then
+         R := MK("rt_add(" & A.all & ", " & B.all & ")");
+      elsif OP = "-" then
+         R := MK("rt_sub(" & A.all & ", " & B.all & ")");
+      elsif OP = "*" then
+         R := MK("rt_mul(" & A.all & ", " & B.all & ")");
+      elsif OP = "/" then
+         -- integer division truncates (RM79 4.5.5)
+         R := MK("rt_quot(" & A.all & ", " & B.all & ")");
+      elsif OP = "MOD" then
+         -- A = (A/B)*B + (A mod B): the sign of the left operand (RM79 4.5.5)
+         R := MK("rt_rem(" & A.all & ", " & B.all & ")");
+      elsif OP = "**" then
+         R := MK("rt_pow(" & A.all & ", " & B.all & ")");
+      else
+         FAIL(E.LINE, "operator " & OP & " is not defined for INTEGER");
+      end if;
+   end GEN_BINOP;
+
+   -- T(x): qualification and conversion share one form (RM79 4.6)
+   procedure CONVERSION(E : NODE; Y : SYM; T : out TYP; R : out TEXT) is
+      ATY : TYP;
+      A : TEXT;
+   begin
+      if LIST_LEN(E.B) /= 1 then
+         FAIL(E.LINE, "a conversion takes one expression");
+      end if;
+      T := Y.T;
+      GEXPR(E.B, T, ATY, A);
+      if T.KIND = T_INT and ATY.KIND = T_FLOAT then
+         R := MK("((rt_int)llround(" & A.all & "))");
+      elsif T.KIND = T_FLOAT and ATY.KIND = T_INT then
+         R := MK("((double)(" & A.all & "))");
+      else
+         CHECK_TYPE(ATY, T, E.LINE);
+         if (T.KIND = T_INT or T.KIND = T_ENUM or T.KIND = T_CHAR) and Y.C /= null and then Y.C.LO /= null then
+            R := MK("rt_range(" & A.all & ", " & Y.C.LO.all & ", " & Y.C.HI.all & ")");
+         else
+            R := A;
+         end if;
+      end if;
+   end CONVERSION;
+
+   -- attributes (RM79 App. A); positions count from 1: T'ORD(T'FIRST) = 1
+   procedure GEN_ATTR(E : NODE; WANT : TYP; T : out TYP; R : out TEXT) is
+      A : STRING := E.NAME.all;
+      Y : SYM;
+      TT, ATY : TYP;
+      V, D : TEXT;
+      C : CONS;
+      N : INTEGER;
+   begin
+      if E.A.KIND = N_NAME then
+         Y := LOOKUP(E.A.NAME.all);
+      end if;
+      if Y /= null and then Y.KIND = Y_TYPE then
+         TT := Y.T;
+         C := Y.C;
+         if A = "ORD" then
+            GEXPR(E.B, TT, ATY, V);
+            CHECK_TYPE(ATY, TT, E.LINE);
+            T := TY_INT;
+            R := MK("((rt_int)(" & V.all & ") + 1)");
+            return;
+         elsif A = "VAL" and TT.KIND = T_INT then
+            GEXPR(E.B, TY_STRING, ATY, V);
+            T := TY_INT;
+            R := MK("rt_int_of_str(" & V.all & ")");
+            return;
+         elsif A = "VAL" then
+            GEXPR(E.B, TY_INT, ATY, V);
+            T := TT;
+            R := MK("rt_range(" & V.all & " - 1, " & C.LO.all & ", " & C.HI.all & ")");
+            return;
+         elsif A = "REP" and TT.KIND = T_INT then
+            GEXPR(E.B, TY_INT, ATY, V);
+            T := TY_STRING;
+            R := MK("rt_str_of_int(" & V.all & ")");
+            return;
+         elsif A = "REP" and TT.KIND = T_FLOAT then
+            GEXPR(E.B, TY_FLOAT, ATY, V);
+            T := TY_STRING;
+            R := MK("rt_g_image_float(" & V.all & ")");
+            return;
+         elsif A = "SUCC" or A = "PRED" then
+            GEXPR(E.B, TT, ATY, V);
+            T := TT;
+            if TT.KIND = T_INT then
+               if A = "SUCC" then
+                  R := MK("rt_add(" & V.all & ", 1)");
+               else
+                  R := MK("rt_sub(" & V.all & ", 1)");
+               end if;
+            elsif A = "SUCC" then
+               R := MK("rt_range(" & V.all & " + 1, " & C.LO.all & ", " & C.HI.all & ")");
+            else
+               R := MK("rt_range(" & V.all & " - 1, " & C.LO.all & ", " & C.HI.all & ")");
+            end if;
+            return;
+         elsif A = "FIRST" or A = "LAST" then
+            T := TT;
+            if TT.KIND = T_ARRAY then
+               T := TT.IDX;
+            end if;
+            if C /= null and then C.LO /= null then
+               if A = "FIRST" then
+                  R := C.LO;
+               else
+                  R := C.HI;
+               end if;
+            elsif TT.KIND = T_INT then
+               if A = "FIRST" then
+                  R := MK("INT64_MIN");
+               else
+                  R := MK("INT64_MAX");
+               end if;
+            else
+               FAIL(E.LINE, "this type has no " & A);
+            end if;
+            return;
+         end if;
+         OTHER_ATTR(E, Y, T, R);
+         return;
+      end if;
+      if Y /= null and then (Y.KIND /= Y_VAR and Y.KIND /= Y_CONST) then
+         OTHER_ATTR(E, Y, T, R);
+         return;
+      end if;
+      GEXPR(E.A, null, TT, V);
+      if TT.KIND = T_PTR then
+         FINISH_PTR(TT);
+         DEREF(V.all, TT, D);
+         V := D;
+         TT := TT.TARGET;
+      end if;
+      T := TY_INT;
+      if TT.KIND = T_STRING then
+         if A = "LENGTH" or A = "LAST" then
+            R := MK("(" & V.all & ").len");
+            return;
+         elsif A = "FIRST" then
+            R := MK("((rt_int)1)");
+            return;
+         end if;
+      elsif TT.KIND = T_ARRAY then
+         T := TT.IDX;
+         if A = "FIRST" then
+            R := MK("(" & V.all & ").lo");
+            return;
+         elsif A = "LAST" then
+            R := MK("(" & V.all & ").hi");
+            return;
+         elsif A = "LENGTH" then
+            T := TY_INT;
+            R := MK("RT_CNT(" & V.all & ")");
+            return;
+         end if;
+      end if;
+      FAIL(E.LINE, "attribute " & A & " is not handled here");
+   end GEN_ATTR;
+
+   -- task and entry attributes are generated in 09-tasks
+   procedure OTHER_ATTR(E : NODE; Y : SYM; T : out TYP; R : out TEXT) is
+   begin
+      FAIL(E.LINE, "attribute " & E.NAME.all & " is not handled here");
+      T := TY_INT;
+      R := null;
+   end OTHER_ATTR;
+
+   -- allocator ::= new qualified_expression (RM79 4.7)
+   procedure ALLOCATOR(E : NODE; WANT : TYP; T : out TYP; R : out TEXT) is
+      Y : SYM := LOOKUP(E.NAME.all);
+      TARGET, VT : TYP;
+      CT, PT, CELL, V, X : TEXT;
+   begin
+      if WANT = null or else WANT.KIND /= T_PTR then
+         FAIL(E.LINE, "the access type of this allocator is not known here");
+      end if;
+      if Y = null or else Y.KIND /= Y_TYPE then
+         FAIL(E.LINE, E.NAME.all & " is not a type");
+      end if;
+      FINISH_PTR(WANT);
+      TARGET := WANT.TARGET;
+      CHECK_TYPE(Y.T, TARGET, E.LINE);
+      CTYPE(TARGET, CT);
+      CTYPE(WANT, PT);
+      NEW_NAME("cell", CELL);
+      if E.A = null then
+         FAIL(E.LINE, "an allocator gives the initial value: new T(...) (RM79 4.7)");
+      end if;
+      if E.A.KIND = N_AGG then
+         AGGREGATE(E.A, TARGET, VT, V);
+      else
+         GEXPR(E.A, TARGET, VT, V);
+      end if;
+      CHECK_TYPE(VT, TARGET, E.LINE);
+      COPY_CODE(TARGET, V.all, X);
+      T := WANT;
+      R := MK("({ " & CT.all & " *" & CELL.all & " = rt_alloc(sizeof(" & CT.all & ")); *" & CELL.all
+              & " = " & X.all & "; (" & PT.all & ")" & CELL.all & "; })");
+   end ALLOCATOR;
+
+   -- aggregates (RM79 3.6.2): records, positional or named; arrays,
+   -- positional, with choices and others
+   procedure AGGREGATE(E : NODE; WANT : TYP; T : out TYP; R : out TEXT) is
+      IT : NODE := E.A;
+      F : FIELD;
+      VT : TYP;
+      CT, TMP, V, X, PARTS, ET, LO, HI, KEY : TEXT;
+      N : INTEGER;
+      LAB : NODE;
+   begin
+      if WANT = null then
+         FAIL(E.LINE, "the type of this aggregate is not known here");
+      end if;
+      T := WANT;
+      CTYPE(WANT, CT);
+      NEW_NAME("ag", TMP);
+      if WANT.KIND = T_RECORD then
+         PARTS := MK("({ " & CT.all & " " & TMP.all & ";");
+         if LIST_LEN(IT) /= FIELD_COUNT(WANT) then
+            FAIL(E.LINE, "an aggregate gives every component of " & KIND_NAME(WANT));
+         end if;
+         F := WANT.FIELDS;
+         while IT /= null loop
+            if IT.A /= null then
+               -- named: find the component
+               F := WANT.FIELDS;
+               while F /= null and then not (IT.A.A.KIND = N_NAME and then F.NAME.all = IT.A.A.NAME.all) loop
+                  F := F.NEXT;
+               end loop;
+               if F = null then
+                  FAIL(E.LINE, "no such component in the aggregate");
+               end if;
+            end if;
+            GEXPR(IT.B, F.T, VT, V);
+            CHECK_TYPE(VT, F.T, E.LINE);
+            COPY_CODE(F.T, V.all, X);
+            PARTS := MK(PARTS.all & " " & TMP.all & "." & C_FIELD(F.NAME.all) & " = " & X.all & ";");
+            IT := IT.NEXT;
+            if F /= null then
+               F := F.NEXT;
+            end if;
+         end loop;
+         R := MK(PARTS.all & " " & TMP.all & "; })");
+         return;
+      end if;
+      if WANT.KIND /= T_ARRAY then
+         FAIL(E.LINE, "an aggregate builds a record or an array");
+      end if;
+      CTYPE(WANT.ELEM, ET);
+      if IT.A = null then
+         -- positional: from the first index value onward
+         if WANT.TCONS /= null and then WANT.TCONS.LO /= null then
+            LO := WANT.TCONS.LO;
+         else
+            LO := MK("1");
+         end if;
+         N := LIST_LEN(IT);
+         PARTS := MK("({ " & CT.all & " " & TMP.all & "; " & TMP.all & ".lo = " & LO.all & "; "
+                     & TMP.all & ".hi = " & LO.all & " + " & INTEGER'REP(N - 1) & "; " & TMP.all
+                     & ".lo2 = " & TMP.all & ".hi2 = 1; " & TMP.all & ".p = rt_alloc(sizeof(" & ET.all
+                     & ") * " & INTEGER'REP(N + 1) & ");");
+         N := 0;
+         while IT /= null loop
+            if IT.A /= null then
+               FAIL(E.LINE, "named associations follow the positional ones");
+            end if;
+            GEXPR(IT.B, WANT.ELEM, VT, V);
+            CHECK_TYPE(VT, WANT.ELEM, E.LINE);
+            COPY_CODE(WANT.ELEM, V.all, X);
+            PARTS := MK(PARTS.all & " " & TMP.all & ".p[" & INTEGER'REP(N) & "] = " & X.all & ";");
+            N := N + 1;
+            IT := IT.NEXT;
+         end loop;
+         R := MK(PARTS.all & " " & TMP.all & "; })");
+         return;
+      end if;
+      -- named choices: the bounds are those of the type, or of the one range given
+      if WANT.TCONS /= null and then WANT.TCONS.HI /= null then
+         LO := WANT.TCONS.LO;
+         HI := WANT.TCONS.HI;
+      elsif IT.NEXT = null and IT.A.FLAG /= 1 and IT.A.B /= null then
+         GEXPR(IT.A.A, WANT.IDX, VT, LO);
+         GEXPR(IT.A.B, WANT.IDX, VT, HI);
+      else
+         FAIL(E.LINE, "the bounds of this aggregate are not known");
+      end if;
+      PARTS := MK("({ " & CT.all & " " & TMP.all & "; " & TMP.all & ".lo = " & LO.all & "; "
+                  & TMP.all & ".hi = " & HI.all & "; " & TMP.all & ".lo2 = " & TMP.all & ".hi2 = 1; "
+                  & TMP.all & ".p = rt_alloc(sizeof(" & ET.all & ") * (size_t)(RT_CNT(" & TMP.all
+                  & ") + 1));");
+      while IT /= null loop
+         GEXPR(IT.B, WANT.ELEM, VT, V);
+         CHECK_TYPE(VT, WANT.ELEM, E.LINE);
+         COPY_CODE(WANT.ELEM, V.all, X);
+         LAB := IT.A;
+         while LAB /= null loop
+            if LAB.FLAG = 1 then
+               PARTS := MK(PARTS.all & " for (rt_int k_ = 0; k_ < RT_CNT(" & TMP.all & "); k_++) "
+                           & TMP.all & ".p[k_] = " & X.all & ";");
+            elsif LAB.B /= null then
+               GEXPR(LAB.A, WANT.IDX, VT, KEY);
+               GEXPR(LAB.B, WANT.IDX, VT, HI);
+               PARTS := MK(PARTS.all & " for (rt_int k_ = " & KEY.all & "; k_ <= " & HI.all & "; k_++) "
+                           & TMP.all & ".p[rt_index(k_, " & TMP.all & ".lo, " & TMP.all & ".hi) - "
+                           & TMP.all & ".lo] = " & X.all & ";");
+            else
+               GEXPR(LAB.A, WANT.IDX, VT, KEY);
+               PARTS := MK(PARTS.all & " " & TMP.all & ".p[rt_index(" & KEY.all & ", " & TMP.all
+                           & ".lo, " & TMP.all & ".hi) - " & TMP.all & ".lo] = " & X.all & ";");
+            end if;
+            LAB := LAB.NEXT;
+         end loop;
+         IT := IT.NEXT;
+      end loop;
+      R := MK(PARTS.all & " " & TMP.all & "; })");
+   end AGGREGATE;
+
+   -- ---- subprogram calls (RM79 5.2) -----------------------------------------------------
+
+   -- the actual for formal PM: positional first, then by name (RM79 5.2.1)
+   function ACTUAL_FOR(ARGS : NODE; PM, FIRST : PARM) return NODE is
+      A : NODE := ARGS;
+      P : PARM := FIRST;
+   begin
+      while A /= null and then A.TAG = null loop
+         if P = PM then
+            return A;
+         end if;
+         P := P.NEXT;
+         A := A.NEXT;
+      end loop;
+      while A /= null loop
+         if A.TAG /= null and then A.TAG.all = PM.NAME.all then
+            return A;
+         end if;
+         A := A.NEXT;
+      end loop;
+      return null;
+   end ACTUAL_FOR;
+
+   procedure GCALL(E : NODE; IS_STMT : BOOLEAN; T : out TYP; R : out TEXT) is
+      FN : NODE := E.A;
+      Y : SYM;
+      ARGS, LV, V, CT, X : TEXT;
+      A : NODE;
+      PM : PARM;
+      LT, VT : TYP;
+      LC : CONS;
+      RO : BOOLEAN;
+   begin
+      if FN.KIND /= N_NAME then
+         OTHER_CALL(E, IS_STMT, T, R);
+         return;
+      end if;
+      Y := LOOKUP(FN.NAME.all);
+      if Y = null then
+         BUILTIN(FN.NAME.all, E.B, E.LINE, IS_STMT, T, R);
+         return;
+      end if;
+      if Y.KIND = Y_FUNC or Y.KIND = Y_PROC then
+         RESOLVE_OVERLOAD(FN.NAME.all, E.B, IS_STMT, E.LINE, Y);
+      end if;
+      if Y.KIND = Y_ENTRY then
+         OTHER_CALL(E, IS_STMT, T, R);
+         return;
+      end if;
+      if Y.KIND /= Y_FUNC and Y.KIND /= Y_PROC then
+         FAIL(E.LINE, FN.NAME.all & " cannot be called");
+      end if;
+      if IS_STMT and Y.RESULT.KIND /= T_VOID then
+         FAIL(E.LINE, FN.NAME.all & " returns a value; it is not a procedure call");
+      end if;
+      if not IS_STMT and Y.RESULT.KIND = T_VOID then
+         FAIL(E.LINE, FN.NAME.all & " is a procedure, not a function");
+      end if;
+      ARGS := MK("");
+      if Y.LEVEL > 0 then
+         LINK_TO(Y.LEVEL, ARGS);
+      end if;
+      PM := Y.PARAMS;
+      while PM /= null loop
+         A := ACTUAL_FOR(E.B, PM, Y.PARAMS);
+         if ARGS'LENGTH > 0 then
+            ARGS := MK(ARGS.all & ", ");
+         end if;
+         if A = null then
+            if PM.DFLT = null or PM.MODE /= M_IN then
+               FAIL(E.LINE, "no actual parameter for " & PM.NAME.all);
+            end if;
+            -- a default is used only for in parameters (RM79 5.2.2)
+            GEXPR(PM.DFLT, PM.T, VT, V);
+            ARGS := MK(ARGS.all & V.all);
+         else
+            if A.FLAG /= 0 and A.FLAG /= 4 and A.FLAG /= PM.MODE then
+               -- := in, =: out, :=: in out, written at the call (RM79 5.2.1)
+               FAIL(E.LINE, "the association of " & PM.NAME.all & " does not match its mode");
+            end if;
+            if PM.MODE = M_IN then
+               GEXPR(A, PM.T, VT, V);
+               CHECK_TYPE(VT, PM.T, E.LINE);
+               if PM.C /= null and then PM.C.LO /= null and then (PM.T.KIND = T_INT or PM.T.KIND = T_ENUM) then
+                  V := MK("rt_range(" & V.all & ", " & PM.C.LO.all & ", " & PM.C.HI.all & ")");
+               end if;
+               ARGS := MK(ARGS.all & V.all);
+            else
+               LVALUE(A, LV, LT, LC, RO);
+               if RO then
+                  FAIL(E.LINE, PM.NAME.all & " needs a variable");
+               end if;
+               CHECK_TYPE(LT, PM.T, E.LINE);
+               ARGS := MK(ARGS.all & "&" & LV.all);
+            end if;
+         end if;
+         PM := PM.NEXT;
+      end loop;
+      if LIST_LEN(E.B) > 0 and then Y.PARAMS = null then
+         FAIL(E.LINE, FN.NAME.all & " takes no parameters");
+      end if;
+      T := Y.RESULT;
+      R := MK(Y.CNAME.all & "(" & ARGS.all & ")");
+   end GCALL;
+
+   -- overloading is resolved in 10-overload
+   procedure RESOLVE_OVERLOAD(NAME : STRING; ARGS : NODE; IS_STMT : BOOLEAN; LINE : INTEGER;
+                              Y : in out SYM) is
+   begin
+      null;
+   end RESOLVE_OVERLOAD;
+
+   -- calls of entries and of package members are generated in 09-units
+   procedure OTHER_CALL(E : NODE; IS_STMT : BOOLEAN; T : out TYP; R : out TEXT) is
+   begin
+      FAIL(E.LINE, "this call is not handled yet");
+      T := TY_VOID;
+      R := null;
+   end OTHER_CALL;
+
+   -- TEXT_IO (RM79 14.3) and the subprograms of STANDARD
+   procedure BUILTIN(NAME : STRING; ARGS : NODE; LINE : INTEGER; IS_STMT : BOOLEAN;
+                     T : out TYP; R : out TEXT) is
+      ATY, LT : TYP;
+      A, W, LV : TEXT;
+      LC : CONS;
+      RO : BOOLEAN;
+   begin
+      T := TY_VOID;
+      if NAME = "PUT" then
+         if ARGS = null then
+            FAIL(LINE, "PUT needs an item");
+         end if;
+         GEXPR(ARGS, null, ATY, A);
+         W := MK("0");
+         if ARGS.NEXT /= null then
+            GEXPR(ARGS.NEXT, TY_INT, LT, W);
+         end if;
+         if ATY.KIND = T_STRING then
+            R := MK("rt_g_put(" & A.all & ")");
+         elsif ATY.KIND = T_CHAR then
+            R := MK("rt_g_putc(" & A.all & ")");
+         elsif ATY.KIND = T_INT then
+            R := MK("rt_g_put_int(" & A.all & ", " & W.all & ")");
+         elsif ATY.KIND = T_BOOL then
+            R := MK("rt_g_put_bool(" & A.all & ", " & W.all & ")");
+         elsif ATY.KIND = T_FLOAT then
+            R := MK("rt_g_put_float(" & A.all & ", " & W.all & ", 0)");
+         else
+            FAIL(LINE, "PUT of this type is not handled");
+         end if;
+      elsif NAME = "GET" then
+         LVALUE(ARGS, LV, LT, LC, RO);
+         if LT.KIND /= T_CHAR then
+            FAIL(LINE, "GET reads a CHARACTER here");
+         end if;
+         R := MK("(" & LV.all & " = rt_g_getc())");
+      elsif NAME = "ABS" then
+         GEXPR(ARGS, null, T, A);
+         if T.KIND = T_INT then
+            R := MK("rt_abs(" & A.all & ")");
+         else
+            R := MK("fabs(" & A.all & ")");
+         end if;
+      else
+         TASK_BUILTIN(NAME, ARGS, LINE, T, R);
+      end if;
+   end BUILTIN;
+
+   -- SET_PRIORITY and the like, in 09-tasks
+   procedure TASK_BUILTIN(NAME : STRING; ARGS : NODE; LINE : INTEGER; T : out TYP; R : out TEXT) is
+   begin
+      FAIL(LINE, NAME & " is not declared");
+      T := TY_VOID;
+      R := null;
+   end TASK_BUILTIN;
+   -- ---- the predefined environment: package STANDARD (RM79 App. C) ---------------
+
+   procedure PREDEF_TYPE(NAME : STRING; T : TYP; LO, HI : STRING) is
+      Y : SYM;
+   begin
+      Y := NEW_SYM(Y_TYPE, MK(NAME));
+      Y.T := T;
+      if LO'LENGTH > 0 then
+         Y.C := NEW_CONS;
+         Y.C.LO := MK(LO);
+         Y.C.HI := MK(HI);
+      end if;
+      DEFINE(Y, 0);
+   end PREDEF_TYPE;
+
+   procedure PREDEF_CONST(NAME : STRING; T : TYP; CODE_TEXT : STRING) is
+      Y : SYM;
+   begin
+      Y := NEW_SYM(Y_CONST, MK(NAME));
+      Y.T := T;
+      Y.RO := TRUE;
+      Y.ACCESS_PATH := MK(CODE_TEXT);
+      DEFINE(Y, 0);
+   end PREDEF_CONST;
+
+   procedure PREDEF_EXC(NAME : STRING) is
+      Y : SYM;
+   begin
+      Y := NEW_SYM(Y_EXC, MK(NAME));
+      Y.CNAME := MK("rt_exc(" & Q & NAME & Q & ")");
+      DEFINE(Y, 0);
+   end PREDEF_EXC;
+
+   procedure PREDEF_LIT(NAME : STRING; T : TYP; V : INTEGER) is
+      Y : SYM;
+   begin
+      Y := NEW_SYM(Y_ENUMLIT, MK(NAME));
+      Y.T := T;
+      Y.MVALUE := V;
+      Y.HASMV := TRUE;
+      DEFINE(Y, 0);
+   end PREDEF_LIT;
+
+   procedure PREDEFINE is
+      CONTROL : constant STRING := "NUL SOH STX ETX EOT ENQ ACK BEL BS HT LF VT FF CR SO SI DLE "
+         & "DC1 DC2 DC3 DC4 NAK SYN ETB CAN EM SUB ESC FS GS RS US ";
+      START : INTEGER := 1;
+      CODE_NO : INTEGER := 0;
+   begin
+      PREDEF_TYPE("INTEGER", TY_INT, "", "");
+      PREDEF_TYPE("SHORT_INTEGER", TY_INT, "", "");
+      PREDEF_TYPE("LONG_INTEGER", TY_INT, "", "");
+      -- NATURAL starts at 1 (RM79 3.6.3)
+      PREDEF_TYPE("NATURAL", TY_INT, "1", "INT64_MAX");
+      PREDEF_TYPE("PRIORITY", TY_INT, "0", "255");
+      PREDEF_TYPE("BOOLEAN", TY_BOOL, "0", "1");
+      PREDEF_TYPE("CHARACTER", TY_CHAR, "0", "127");
+      PREDEF_TYPE("STRING", TY_STRING, "", "");
+      PREDEF_TYPE("FLOAT", TY_FLOAT, "", "");
+      PREDEF_TYPE("SHORT_FLOAT", TY_FLOAT, "", "");
+      PREDEF_TYPE("LONG_FLOAT", TY_FLOAT, "", "");
+      PREDEF_TYPE("TIME", TY_FLOAT, "", "");
+      PREDEF_LIT("FALSE", TY_BOOL, 0);
+      PREDEF_LIT("TRUE", TY_BOOL, 1);
+      -- the control characters are identifiers of CHARACTER
+      for I in 1 .. CONTROL'LENGTH loop
+         if CONTROL(I) = " " then
+            PREDEF_CONST(CONTROL(START .. I - 1), TY_CHAR, INTEGER'REP(CODE_NO));
+            CODE_NO := CODE_NO + 1;
+            START := I + 1;
+         end if;
+      end loop;
+      PREDEF_CONST("DEL", TY_CHAR, "127");
+      PREDEF_CONST("EXCLAM", TY_CHAR, "33");
+      PREDEF_CONST("DOLLAR", TY_CHAR, "36");
+      PREDEF_CONST("QUESTION", TY_CHAR, "63");
+      PREDEF_CONST("AT_SIGN", TY_CHAR, "64");
+      PREDEF_CONST("L_BRACKET", TY_CHAR, "91");
+      PREDEF_CONST("BACK_SLASH", TY_CHAR, "92");
+      PREDEF_CONST("R_BRACKET", TY_CHAR, "93");
+      PREDEF_CONST("CIRCUMFLEX", TY_CHAR, "94");
+      PREDEF_CONST("GRAVE", TY_CHAR, "96");
+      PREDEF_CONST("L_BRACE", TY_CHAR, "123");
+      PREDEF_CONST("R_BRACE", TY_CHAR, "125");
+      PREDEF_CONST("TILDE", TY_CHAR, "126");
+      for I in 0 .. 25 loop
+         PREDEF_CONST("LC_" & CHARACTER'VAL(66 + I), TY_CHAR, INTEGER'REP(97 + I));
+      end loop;
+      -- TEXT_IO (RM79 14.3): NEWLINE is a string constant, used as PUT(NEWLINE)
+      PREDEF_CONST("NEWLINE", TY_STRING, "rt_str(" & Q & "\n" & Q & ", 1)");
+      PREDEF_CONST("SECONDS", TY_FLOAT, "((double)RT_SECONDS)");
+      -- the predefined exceptions (RM79 11.1) and END_OF_FILE (RM79 14.2)
+      PREDEF_EXC("ACCESS_ERROR");
+      PREDEF_EXC("ASSERT_ERROR");
+      PREDEF_EXC("DISCRIMINANT_ERROR");
+      PREDEF_EXC("DIVIDE_ERROR");
+      PREDEF_EXC("FAILURE");
+      PREDEF_EXC("INDEX_ERROR");
+      PREDEF_EXC("INITIATE_ERROR");
+      PREDEF_EXC("NO_VALUE_ERROR");
+      PREDEF_EXC("OVERFLOW");
+      PREDEF_EXC("OVERLAP_ERROR");
+      PREDEF_EXC("RANGE_ERROR");
+      PREDEF_EXC("SELECT_ERROR");
+      PREDEF_EXC("STORAGE_OVERFLOW");
+      PREDEF_EXC("TASKING_ERROR");
+      PREDEF_EXC("UNDERFLOW");
+      PREDEF_EXC("END_OF_FILE");
+   end PREDEFINE;
+
+   -- ---- compilation units (RM79 10) ---------------------------------------------
+
+   procedure TRANSLATE(U : NODE) is
+      P : NODE := U;
+      Y : SYM;
+   begin
+      OPEN_SCOPE;
+      while P /= null loop
+         if P.NEXT = null then
+            -- the main program: a library procedure without parameters
+            if P.KIND /= N_PROC or P.A /= null then
+               FAIL(P.LINE, "the main program is a procedure without parameters");
+            end if;
+            BUILD_SUBPROGRAM(P, Y);
+            DEFINE(Y, P.LINE);
+            SUBPROGRAM_BODY(P, Y);
+            MAIN_NAME := Y.CNAME;
+         else
+            DECL_ELEMENT(P);
+         end if;
+         P := P.NEXT;
+      end loop;
+   end TRANSLATE;
+
+   procedure PRINT_PROGRAM is
+   begin
+      EMIT_HELPERS;
+      PUT("#include " & Q & "paleo.h" & Q);
+      PUT(NEWLINE);
+      PUT("#include <math.h>");
+      PUT(NEWLINE);
+      PRINT_BUFFER(OUT_TYPES);
+      PRINT_BUFFER(OUT_FRAMES);
+      PRINT_BUFFER(OUT_HELPERS);
+      PRINT_BUFFER(OUT_PROTOS);
+      PRINT_BUFFER(OUT_GLOBALS);
+      PRINT_BUFFER(OUT_FUNCS);
+      PUT("int main(int argc, char **argv) {");
+      PUT(NEWLINE);
+      PUT("  rt_init(argc, argv);");
+      PUT(NEWLINE);
+      PUT("  rt_set_lang(1);");
+      PUT(NEWLINE);
+      PRINT_BUFFER(OUT_EXCS);
+      PRINT_BUFFER(OUT_INIT);
+      PUT("  " & MAIN_NAME.all & "();");
+      PUT(NEWLINE);
+      PUT("  rt_main_done();");
+      PUT(NEWLINE);
+      PUT("  return 0;");
+      PUT(NEWLINE);
+      PUT("}");
+      PUT(NEWLINE);
+   end PRINT_PROGRAM;
+
+begin
+   OUT_TYPES := NEW_BUFFER;
+   OUT_FRAMES := NEW_BUFFER;
+   OUT_HELPERS := NEW_BUFFER;
+   OUT_PROTOS := NEW_BUFFER;
+   OUT_GLOBALS := NEW_BUFFER;
+   OUT_FUNCS := NEW_BUFFER;
+   OUT_INIT := NEW_BUFFER;
+   OUT_EXCS := NEW_BUFFER;
+   CODE := OUT_INIT;
+   NO_CONS := NEW_CONS;
+   TY_INT := NEW_TYP(T_INT);
+   TY_BOOL := NEW_TYP(T_BOOL);
+   TY_FLOAT := NEW_TYP(T_FLOAT);
+   TY_CHAR := NEW_TYP(T_CHAR);
+   TY_STRING := NEW_TYP(T_STRING);
+   TY_VOID := NEW_TYP(T_VOID);
+   TY_NIL := NEW_TYP(T_NIL);
+   PREDEFINE;
+   READ_SOURCE;
+   COMPILATION(UNITS);
+   TRANSLATE(UNITS);
+   PRINT_PROGRAM;
+end GREENC;

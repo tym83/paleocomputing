@@ -1,0 +1,285 @@
+-- greenc -- a translator for GREEN (Preliminary Ada, May 1979), written in GREEN.
+--
+-- It reads a GREEN compilation on the standard input and writes C on the
+-- standard output; the C is linked with rt/paleo.c. The whole translator is
+-- one library procedure (RM79 10.1) whose declarative part holds everything;
+-- the source is kept in several files joined in name order. References such
+-- as "RM79 5.6" are to the Preliminary Ada Reference Manual.
+--
+-- Writing a translator in GREEN, two rules of the language shape the code:
+-- a function may not change anything outside itself and may not allocate
+-- (RM79 6.5), so everything that advances the scanner or builds a tree is a
+-- procedure -- a value-returning procedure when it yields one result, used only
+-- as the right side of an assignment; and a value-returning procedure takes
+-- in parameters only, so results in pairs come back through out parameters.
+
+restricted (TEXT_IO)
+procedure GREENC is
+   use TEXT_IO;
+
+   -- token kinds
+   K_EOF   : constant INTEGER := 0;
+   K_ID    : constant INTEGER := 1;
+   K_KW    : constant INTEGER := 2;
+   K_OP    : constant INTEGER := 3;
+   K_INT   : constant INTEGER := 4;
+   K_FLOAT : constant INTEGER := 5;
+   K_STR   : constant INTEGER := 6;
+
+   -- node kinds: expressions
+   N_INT    : constant INTEGER := 1;
+   N_FLOAT  : constant INTEGER := 2;
+   N_STR    : constant INTEGER := 3;
+   N_NIL    : constant INTEGER := 4;
+   N_NAME   : constant INTEGER := 5;
+   N_UNOP   : constant INTEGER := 6;
+   N_BINOP  : constant INTEGER := 7;
+   N_APPLY  : constant INTEGER := 8;
+   N_SELECT : constant INTEGER := 9;
+   N_ATTR   : constant INTEGER := 10;
+   N_NEW    : constant INTEGER := 11;
+   N_AGG    : constant INTEGER := 12;
+   N_CITEM  : constant INTEGER := 13;
+   N_RANGE  : constant INTEGER := 14;
+   N_PAREN  : constant INTEGER := 15;
+   N_RAW    : constant INTEGER := 16;
+
+   -- statements
+   N_ASSIGN   : constant INTEGER := 20;
+   N_CALL     : constant INTEGER := 21;
+   N_IF       : constant INTEGER := 22;
+   N_CASE     : constant INTEGER := 23;
+   N_LOOP     : constant INTEGER := 24;
+   N_BLOCK    : constant INTEGER := 25;
+   N_EXIT     : constant INTEGER := 26;
+   N_RETURN   : constant INTEGER := 27;
+   N_RAISE    : constant INTEGER := 28;
+   N_RERAISE  : constant INTEGER := 29;
+   N_ASSERT   : constant INTEGER := 30;
+   N_NULL     : constant INTEGER := 31;
+   N_DELAY    : constant INTEGER := 32;
+   N_INITIATE : constant INTEGER := 33;
+   N_ACCEPT   : constant INTEGER := 34;
+   N_SELECTS  : constant INTEGER := 35;
+   N_ABORT    : constant INTEGER := 36;
+
+   -- declarations
+   N_VAR      : constant INTEGER := 40;
+   N_CONST    : constant INTEGER := 41;
+   N_TYPE     : constant INTEGER := 42;
+   N_SUBTYPE  : constant INTEGER := 43;
+   N_PROC     : constant INTEGER := 44;
+   N_FUNC     : constant INTEGER := 45;
+   N_EXC      : constant INTEGER := 46;
+   N_PARAM    : constant INTEGER := 47;
+   N_PKGSPEC  : constant INTEGER := 48;
+   N_PKGBODY  : constant INTEGER := 49;
+   N_TASKSPEC : constant INTEGER := 50;
+   N_TASKBODY : constant INTEGER := 51;
+   N_ENTRY    : constant INTEGER := 52;
+   N_INST     : constant INTEGER := 53;
+   N_GENERIC  : constant INTEGER := 54;
+   N_USE      : constant INTEGER := 55;
+
+   -- parts of constructs
+   N_ARM     : constant INTEGER := 60;
+   N_LABEL   : constant INTEGER := 61;
+   N_HANDLER : constant INTEGER := 62;
+   N_COMP    : constant INTEGER := 63;
+   N_ALT     : constant INTEGER := 64;
+
+   -- type definitions and subtype indications (RM79 3)
+   D_ENUM   : constant INTEGER := 70;
+   D_RANGE  : constant INTEGER := 71;
+   D_FLOAT  : constant INTEGER := 72;
+   D_ARRAY  : constant INTEGER := 73;
+   D_RECORD : constant INTEGER := 74;
+   D_ACCESS : constant INTEGER := 75;
+   D_DERIVED : constant INTEGER := 76;
+   D_PRIVATE : constant INTEGER := 77;
+   S_MARK   : constant INTEGER := 80;
+
+   -- parameter modes (RM79 6.2)
+   M_IN    : constant INTEGER := 1;
+   M_INOUT : constant INTEGER := 2;
+   M_OUT   : constant INTEGER := 3;
+
+   -- type kinds
+   T_INT    : constant INTEGER := 1;
+   T_BOOL   : constant INTEGER := 2;
+   T_FLOAT  : constant INTEGER := 3;
+   T_ENUM   : constant INTEGER := 4;
+   T_STRING : constant INTEGER := 5;
+   T_ARRAY  : constant INTEGER := 6;
+   T_RECORD : constant INTEGER := 7;
+   T_PTR    : constant INTEGER := 8;
+   T_VOID   : constant INTEGER := 9;
+   T_NIL    : constant INTEGER := 10;
+   T_CHAR   : constant INTEGER := 11;
+   T_UNIV   : constant INTEGER := 12;
+   T_ACT    : constant INTEGER := 13;
+   T_TDECL  : constant INTEGER := 14;
+   T_ENTRY  : constant INTEGER := 15;
+
+   -- symbol kinds
+   Y_VAR     : constant INTEGER := 1;
+   Y_CONST   : constant INTEGER := 2;
+   Y_FUNC    : constant INTEGER := 3;
+   Y_PROC    : constant INTEGER := 4;
+   Y_TYPE    : constant INTEGER := 5;
+   Y_EXC     : constant INTEGER := 6;
+   Y_ENUMLIT : constant INTEGER := 7;
+   Y_PACKAGE : constant INTEGER := 8;
+   Y_TASK    : constant INTEGER := 9;
+   Y_ENTRY   : constant INTEGER := 10;
+   Y_GENERIC : constant INTEGER := 11;
+
+   -- the data
+   type TEXT is access STRING;
+
+   type TOKEN_REC;
+   type TOKEN is access TOKEN_REC;
+   type TOKEN_REC is record
+      KIND, LINE, IVAL : INTEGER;
+      S : TEXT;
+   end record;
+   type TOKEN_ARRAY is array (INTEGER) of TOKEN;
+
+   type NODE_REC;
+   type NODE is access NODE_REC;
+   type NODE_REC is record
+      KIND, LINE, IVAL, FLAG : INTEGER;
+      NAME, TAG : TEXT;
+      A, B, C, D, E, NEXT : NODE;
+   end record;
+
+   type CONS_REC;
+   type CONS is access CONS_REC;
+   type CONS_REC is record
+      LO, HI, SLEN : TEXT;
+      MLO, MHI : INTEGER;
+      HASM : BOOLEAN;
+   end record;
+
+   type TYP_REC;
+   type TYP is access TYP_REC;
+   type FIELD_REC;
+   type FIELD is access FIELD_REC;
+   type TYP_REC is record
+      KIND : INTEGER;
+      NAME : TEXT;
+      LITS : NODE;
+      ELEM, IDX : TYP;
+      ELEMCONS, TCONS : CONS;
+      FIELDS : FIELD;
+      TARGET : TYP;
+      DECL : NODE;
+      CNAME : TEXT;
+      FORWARD, DEFINED, PRIV : BOOLEAN;
+      NEXT : TYP;
+   end record;
+   type FIELD_REC is record
+      NAME : TEXT;
+      T : TYP;
+      C : CONS;
+      NEXT : FIELD;
+   end record;
+
+   type PARM_REC;
+   type PARM is access PARM_REC;
+   type PARM_REC is record
+      NAME : TEXT;
+      MODE : INTEGER;
+      T : TYP;
+      C : CONS;
+      CFIELD : TEXT;
+      DFLT : NODE;
+      NEXT : PARM;
+   end record;
+
+   type SYM_REC;
+   type SYM is access SYM_REC;
+   type SYM_REC is record
+      KIND : INTEGER;
+      NAME : TEXT;
+      T : TYP;
+      C : CONS;
+      ACCESS_PATH, CNAME : TEXT;
+      RO : BOOLEAN;
+      MVALUE : INTEGER;
+      HASMV : BOOLEAN;
+      DECL : NODE;
+      PARAMS : PARM;
+      RESULT : TYP;
+      DEPTH, LEVEL : INTEGER;
+      BYREF, VRP, HIDDEN : BOOLEAN;
+      MEMBERS, MNEXT : SYM;
+      CHAIN, STACK : SYM;
+   end record;
+   type SYM_ARRAY is array (INTEGER) of SYM;
+
+   type LINES_REC;
+   type LINES is access LINES_REC;
+   type LINES_REC is record
+      S : TEXT;
+      NEXT : LINES;
+   end record;
+   type BUFFER_REC is record
+      HEAD, TAIL : LINES;
+   end record;
+   type BUFFER is access BUFFER_REC;
+
+   type EXIT_REC;
+   type EXITS_T is access EXIT_REC;
+   type EXIT_REC is record
+      MATCH, LABEL : TEXT;
+      DEPTH : INTEGER;
+      IS_LOOP : BOOLEAN;
+      NEXT : EXITS_T;
+   end record;
+
+   COMPILE_ERROR : exception;
+
+   TOKS : TOKEN_ARRAY(1 .. 1000000);
+   NTOKS : INTEGER := 0;
+   TPOS : INTEGER := 1;
+   SRC_LINE : INTEGER := 0;
+
+   TABLE : SYM_ARRAY(0 .. 4092);
+   DEPTH : INTEGER := 0;
+   SCOPE_STACK : SYM;
+
+   ALL_TYPES : TYP;
+   SERIAL : INTEGER := 0;
+
+   OUT_TYPES, OUT_FRAMES, OUT_HELPERS, OUT_PROTOS, OUT_GLOBALS : BUFFER;
+   OUT_FUNCS, OUT_INIT, OUT_EXCS, CODE, FIELDS_BUF : BUFFER;
+   IN_FUNC : BOOLEAN := FALSE;
+   CUR_LEVEL : INTEGER := 0;
+   ST_FIELD : TEXT;
+   FUNC_SYM : SYM;
+   EXITS : EXITS_T;
+   FRAMES : INTEGER := 0;
+   HANDLERS : LINES;
+   CLEANUPS : LINES;
+   TRIAL : INTEGER := 0;
+
+   TY_INT, TY_BOOL, TY_FLOAT, TY_CHAR, TY_STRING, TY_VOID, TY_NIL, TY_UNIV : TYP;
+   TY_ACT, TY_TDECL, TY_ENTRY : TYP;
+   CUR_TASK : SYM;
+   ACCEPT_DEPTH : INTEGER := 0;
+   FAMARG_DONE : BOOLEAN := FALSE;
+   FAM_IX : NODE;
+   OUT_AWAITS : BUFFER;
+   NO_CONS : CONS;
+   UNITS : NODE;
+   PKG_STACK : LINES;
+   CUR_PKG : NODE;
+   PREFIX_HINT : TEXT;
+   CALL_WANT : TYP;
+   PURE_SYM : SYM;
+   PURE_DEPTH : INTEGER := 0;
+   VRP_OK : BOOLEAN := FALSE;
+   IN_LV_PATH : BOOLEAN := FALSE;
+   LAST_DEREF : BOOLEAN := FALSE;
+   MAIN_NAME : TEXT;

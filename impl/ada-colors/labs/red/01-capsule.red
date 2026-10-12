@@ -1,0 +1,26 @@
+% Lab 1. A capsule is an abstract data type: only what it exports is seen.
+CAPSULE main EXPORTS NONE;
+   CAPSULE stackcap EXPORTS stack, init, push, pop;
+      CONST size := 10;
+      TYPE stack : RECORD[top : INT(0 .. size), elem : ARRAY INT(1 .. size) OF INT];
+      PROC init(VAR s : stack);
+         s.top := 0;
+      END PROC init;
+      PROC push(VAR s : stack, CONST e : INT);
+         s.top := s.top + 1;
+         s.elem(s.top) := e;
+      END PROC push;
+      PROC pop(VAR s : stack, OUT e : INT);
+         e := s.elem(s.top);
+         s.top := s.top - 1;
+      END PROC pop;
+   END CAPSULE stackcap;
+   EXPOSE ALL FROM stackcap;
+   VAR s : stack;
+   VAR x : INT;
+   init(s);
+   push(s, 7);
+   push(s, 42);
+   pop(s, x);
+   WRITELN("popped " & CNVT[STRING[ASCII]](x));
+END CAPSULE main;

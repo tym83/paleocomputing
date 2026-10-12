@@ -1,0 +1,150 @@
+   -- ---- the rules of RM79 6.5 on functions and value-returning procedures -----------
+
+   function ROOT_NAME(E : NODE) return NODE is
+   begin
+      if E.KIND = N_NAME then
+         return E;
+      elsif E.KIND = N_SELECT or E.KIND = N_APPLY or E.KIND = N_PAREN then
+         return ROOT_NAME(E.A);
+      end if;
+      return null;
+   end ROOT_NAME;
+
+   -- inside a function nothing outside it may change: no assignment to a
+   -- non-local object, none through an access value (RM79 6.5)
+   procedure CHECK_PURE_TARGET(TARGET : NODE; LINE : INTEGER) is
+      N : NODE;
+      Y : SYM;
+   begin
+      if PURE_SYM = null then
+         return;
+      end if;
+      if LAST_DEREF then
+         FAIL(LINE, "function " & PURE_SYM.NAME.all
+              & " may not change an object designated by an access value (RM79 6.5)");
+      end if;
+      N := ROOT_NAME(TARGET);
+      if N /= null then
+         Y := LOOKUP(N.NAME.all);
+         if Y /= null and then Y.KIND = Y_VAR and then Y.DEPTH < PURE_DEPTH then
+            FAIL(LINE, "function " & PURE_SYM.NAME.all & " may not assign to " & N.NAME.all
+                 & ", which is not local to it (RM79 6.5)");
+         end if;
+      end if;
+   end CHECK_PURE_TARGET;
+
+   -- the non-local variables a value-returning procedure assigns, found in
+   -- its text: the names assigned that it does not declare itself
+   function ASSIGNS_NONLOCAL(D : NODE; NAME : STRING) return BOOLEAN is
+   begin
+      return SCAN_ASSIGNS(D.D, D, NAME) or else SCAN_HANDLERS(D.E, D, NAME);
+   end ASSIGNS_NONLOCAL;
+
+   function DECLARES(D : NODE; NAME : STRING) return BOOLEAN is
+      P : NODE := D.A;
+      E : NODE := D.C;
+   begin
+      while P /= null loop
+         if P.NAME.all = NAME then
+            return TRUE;
+         end if;
+         P := P.NEXT;
+      end loop;
+      while E /= null loop
+         if E.NAME /= null and then E.NAME.all = NAME then
+            return TRUE;
+         end if;
+         E := E.NEXT;
+      end loop;
+      return FALSE;
+   end DECLARES;
+
+   function SCAN_HANDLERS(H : NODE; D : NODE; NAME : STRING) return BOOLEAN is
+      P : NODE := H;
+   begin
+      while P /= null loop
+         if SCAN_ASSIGNS(P.B, D, NAME) then
+            return TRUE;
+         end if;
+         P := P.NEXT;
+      end loop;
+      return FALSE;
+   end SCAN_HANDLERS;
+
+   function SCAN_ASSIGNS(STMTS : NODE; D : NODE; NAME : STRING) return BOOLEAN is
+      S : NODE := STMTS;
+      A : NODE;
+      R : NODE;
+   begin
+      while S /= null loop
+         if S.KIND = N_ASSIGN then
+            R := ROOT_NAME(S.A);
+            if R /= null and then R.NAME.all = NAME and then not DECLARES(D, NAME) then
+               return TRUE;
+            end if;
+         elsif S.KIND = N_IF then
+            A := S.A;
+            while A /= null loop
+               if SCAN_ASSIGNS(A.B, D, NAME) then
+                  return TRUE;
+               end if;
+               A := A.NEXT;
+            end loop;
+            if SCAN_ASSIGNS(S.B, D, NAME) then
+               return TRUE;
+            end if;
+         elsif S.KIND = N_CASE then
+            A := S.B;
+            while A /= null loop
+               if SCAN_ASSIGNS(A.B, D, NAME) then
+                  return TRUE;
+               end if;
+               A := A.NEXT;
+            end loop;
+            if SCAN_ASSIGNS(S.C, D, NAME) then
+               return TRUE;
+            end if;
+         elsif S.KIND = N_LOOP then
+            if SCAN_ASSIGNS(S.B, D, NAME) then
+               return TRUE;
+            end if;
+         elsif S.KIND = N_BLOCK then
+            if SCAN_ASSIGNS(S.B, D, NAME) or else SCAN_HANDLERS(S.C, D, NAME) then
+               return TRUE;
+            end if;
+         end if;
+         S := S.NEXT;
+      end loop;
+      return FALSE;
+   end SCAN_ASSIGNS;
+
+   -- a call of a value-returning procedure is allowed only in an assignment,
+   -- an initialization or a procedure call, and only where the variables it
+   -- assigns are not within the scope of their declaration (RM79 6.5).
+   -- Inside a function, no procedure declared outside it may be called.
+   procedure CHECK_CALL_RULES(E : NODE; Y : SYM) is
+      Z : SYM;
+      S : SYM;
+   begin
+      if PURE_SYM /= null and then (Y.RESULT.KIND = T_VOID or Y.VRP) and then Y.DEPTH < PURE_DEPTH then
+         FAIL(E.LINE, "function " & PURE_SYM.NAME.all & " may not call procedure " & Y.NAME.all
+              & ": it could have side effects (RM79 6.5)");
+      end if;
+      if not Y.VRP or else TRIAL > 0 then
+         return;
+      end if;
+      if not VRP_OK then
+         FAIL(E.LINE, "value-returning procedure " & Y.NAME.all
+              & " can be called only in an assignment, an initialization or a procedure call (RM79 6.5)");
+      end if;
+      -- the variables visible here that the procedure assigns
+      S := SCOPE_STACK;
+      while S /= null loop
+         if S.KIND = Y_VAR and then S.DEPTH <= Y.DEPTH and then LOOKUP(S.NAME.all) = S
+            and then ASSIGNS_NONLOCAL(Y.DECL, S.NAME.all) then
+            FAIL(E.LINE, "value-returning procedure " & Y.NAME.all & " assigns " & S.NAME.all
+                 & ", which is visible here; it can be called only outside its scope (RM79 6.5)");
+         end if;
+         S := S.STACK;
+      end loop;
+   end CHECK_CALL_RULES;

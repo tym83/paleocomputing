@@ -1,0 +1,189 @@
+   -- ---- packages (RM79 7) -------------------------------------------------------------
+
+   function IS_PACKAGE(E : NODE) return BOOLEAN is
+      Y : SYM;
+   begin
+      if E.KIND /= N_NAME then
+         return FALSE;
+      end if;
+      Y := LOOKUP(E.NAME.all);
+      return Y /= null and then (Y.KIND = Y_PACKAGE or Y.KIND = Y_TASK);
+   end IS_PACKAGE;
+
+   -- a declaration of the visible part of package P
+   function MEMBER_OF(P, NAME : STRING; LINE : INTEGER) return SYM is
+      Y : SYM := LOOKUP(P);
+      M : SYM;
+   begin
+      if Y = null or else (Y.KIND /= Y_PACKAGE and Y.KIND /= Y_TASK) then
+         return null;
+      end if;
+      M := Y.MEMBERS;
+      while M /= null loop
+         if M.NAME.all = NAME and not M.HIDDEN then
+            return M;
+         end if;
+         M := M.MNEXT;
+      end loop;
+      return null;
+   end MEMBER_OF;
+
+   function INSIDE_PACKAGE(P : NODE) return BOOLEAN is
+      L : LINES := PKG_STACK;
+   begin
+      if P = null then
+         return TRUE;
+      end if;
+      while L /= null loop
+         if L.S.all = P.NAME.all then
+            return TRUE;
+         end if;
+         L := L.NEXT;
+      end loop;
+      return FALSE;
+   end INSIDE_PACKAGE;
+
+   procedure COPY_SYM(Y : SYM; Z : out SYM) is
+   begin
+      Z := new SYM_REC(Y.KIND, Y.NAME, Y.T, Y.C, Y.ACCESS_PATH, Y.CNAME, Y.RO, Y.MVALUE, Y.HASMV,
+                       Y.DECL, Y.PARAMS, Y.RESULT, 0, Y.LEVEL, Y.BYREF, Y.VRP, Y.HIDDEN,
+                       Y.MEMBERS, null, null, null);
+   end COPY_SYM;
+
+   -- the full declaration of a private type is copied into the type object
+   -- that clients already hold (RM79 7.4)
+   procedure COMPLETE_PRIVATE(PH, FULL : TYP) is
+      N : TEXT := PH.NAME;
+      P : NODE := PH.DECL;
+   begin
+      PH.all := FULL.all;
+      PH.NAME := N;
+      PH.PRIV := TRUE;
+      PH.DECL := P;
+   end COMPLETE_PRIVATE;
+
+   -- package P is <visible part> [private <private part>] end P; (RM79 7.1)
+   procedure PACKAGE_SPEC(E : NODE) is
+      Y, M, Z : SYM;
+      SAVED : NODE := CUR_PKG;
+      FIRST_PRIVATE : SYM;
+   begin
+      Y := NEW_SYM(Y_PACKAGE, E.NAME);
+      Y.DECL := E;
+      PKG_STACK := new LINES_REC(E.NAME, PKG_STACK);
+      CUR_PKG := E;
+      OPEN_SCOPE;
+      DECL_ELEMENTS(E.C);
+      FIRST_PRIVATE := SCOPE_STACK;
+      DECL_ELEMENTS(E.D);
+      -- every declaration of the spec; those of the private part are hidden
+      M := SCOPE_STACK;
+      while M /= null and then M.DEPTH = DEPTH loop
+         COPY_SYM(M, Z);
+         Z.HIDDEN := HIDDEN_FROM(M, FIRST_PRIVATE);
+         Z.MNEXT := Y.MEMBERS;
+         Y.MEMBERS := Z;
+         M := M.STACK;
+      end loop;
+      CLOSE_SCOPE;
+      PKG_STACK := PKG_STACK.NEXT;
+      CUR_PKG := SAVED;
+      DEFINE(Y, E.LINE);
+   end PACKAGE_SPEC;
+
+   -- is M declared after the first declaration of the private part? The
+   -- scope stack is newest first, so M is private if FIRST_PRIVATE is not
+   -- reached walking down from the top before meeting M... i.e. M is above it
+   function HIDDEN_FROM(M, FIRST_PRIVATE : SYM) return BOOLEAN is
+      P : SYM := SCOPE_STACK;
+   begin
+      while P /= null loop
+         if P = FIRST_PRIVATE then
+            return FALSE;
+         end if;
+         if P = M then
+            return TRUE;
+         end if;
+         P := P.STACK;
+      end loop;
+      return FALSE;
+   end HIDDEN_FROM;
+
+   -- package body P is ... [begin ...] [exception ...] end P; its statements
+   -- run when the body is elaborated (RM79 7.3)
+   procedure PACKAGE_BODY(E : NODE) is
+      Y : SYM := LOOKUP(E.NAME.all);
+      M, Z : SYM;
+      SAVED : NODE := CUR_PKG;
+   begin
+      if Y /= null and then Y.KIND = Y_GENERIC then
+         ATTACH_GENERIC_BODY(E);
+         return;
+      end if;
+      if Y = null or else Y.KIND /= Y_PACKAGE then
+         FAIL(E.LINE, "package body " & E.NAME.all & " has no specification");
+      end if;
+      PKG_STACK := new LINES_REC(E.NAME, PKG_STACK);
+      CUR_PKG := Y.DECL;
+      OPEN_SCOPE;
+      M := Y.MEMBERS;
+      while M /= null loop
+         COPY_SYM(M, Z);
+         Z.HIDDEN := FALSE;
+         DEFINE(Z, E.LINE);
+         M := M.MNEXT;
+      end loop;
+      DECL_ELEMENTS(E.C);
+      -- the bodies completed the specs held in the package's member list
+      M := Y.MEMBERS;
+      while M /= null loop
+         if (M.KIND = Y_FUNC or M.KIND = Y_PROC) and then M.DECL.IVAL = 1 then
+            Z := TABLE(HASH(M.NAME.all));
+            while Z /= null loop
+               if Z.CNAME = M.CNAME then
+                  M.DECL := Z.DECL;
+               end if;
+               Z := Z.CHAIN;
+            end loop;
+            if M.DECL.IVAL = 1 then
+               FAIL(E.LINE, "no body for " & M.NAME.all & " in package body " & E.NAME.all);
+            end if;
+         end if;
+         M := M.MNEXT;
+      end loop;
+      GUARDED(E.D, E.E, E.LINE);
+      CLOSE_SCOPE;
+      PKG_STACK := PKG_STACK.NEXT;
+      CUR_PKG := SAVED;
+   end PACKAGE_BODY;
+
+   -- use P; the visible declarations of P become directly visible, but never
+   -- hide another declaration (RM79 8.4)
+   procedure USE_CLAUSE(E : NODE) is
+      N : NODE := E.A;
+      Y, M, Z, OLD : SYM;
+   begin
+      while N /= null loop
+         Y := LOOKUP(N.NAME.all);
+         if Y = null then
+            if N.NAME.all /= "TEXT_IO" then
+               FAIL(N.LINE, N.NAME.all & " is not a package");
+            end if;
+         elsif Y.KIND /= Y_PACKAGE then
+            FAIL(N.LINE, N.NAME.all & " is not a package");
+         else
+            M := Y.MEMBERS;
+            while M /= null loop
+               OLD := LOOKUP(M.NAME.all);
+               if not M.HIDDEN and then (OLD = null or else (OLD.DEPTH < DEPTH
+                  and then OLD.KIND /= Y_VAR and then OLD.KIND /= Y_CONST)) then
+                  COPY_SYM(M, Z);
+                  DEFINE(Z, N.LINE);
+               end if;
+               M := M.MNEXT;
+            end loop;
+         end if;
+         N := N.NEXT;
+      end loop;
+   end USE_CLAUSE;
+

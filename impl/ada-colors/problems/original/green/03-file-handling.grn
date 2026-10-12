@@ -1,0 +1,558 @@
+-- GREEN solution to DoD-1 sample problem 3: A Small File Handling Package
+--
+-- Source: Honeywell Systems and Research Center / CII Honeywell Bull,
+--   "Set of Sample Problems for DOD High Order Language Program. GREEN
+--   Solutions", April 1979, DTIC ADA070752, PDF pages 16-29 (doc pages 3-1..3-14).
+--   Transcribed from page images; indentation as printed.
+--
+-- PROBLEM (condensed):
+--   Producers build files with CREATE(filename, estimated size),
+--   WRITE(filename, data-area) and ENDWRITE(filename); files are sequential,
+--   each write appends a record. One or more consumers READ(filename,
+--   record-no, data-area). When reading is complete, DESTROY(filename).
+--   Exceptions at least for: (A) create with an existing name; (B) write to a
+--   nonexistent file; (C) read from a nonexistent file or record; (D) destroy
+--   while still in use. Storage medium: disk. Guidelines: prevent deadlock of
+--   file storage, allow disk operations to be scheduled by any policy (show
+--   where the scheduler goes), and let users access only the five operations.
+--
+-- GREEN DESIGN NOTES (condensed from section 3.2):
+--   Three levels. (1) A generic package FILE_IO gives files of elements of a
+--   given type with CREATE, DESTROY, READ, WRITE, END_WRITE on single elements;
+--   file names are character strings. (2) An untyped level (task FILE_MANAGER)
+--   reads and writes arbitrary numbers of bytes; files are designated by a
+--   string plus an unforgeable key. (3) Individual files are tasks (a task
+--   family FILE), a DIRECTORY maps file names to task indices, and a
+--   DISK_HANDLER maps file storage onto disk storage.
+--   Keys: every instance of the generic FILE_IO maps onto the single
+--   FILE_MANAGER task; to keep a file created by one instance from being read or
+--   written by another, each instance obtains a unique key (restricted private
+--   type) used as an extra file identifier. (Alternatively, internal file names
+--   allocated by CREATE could be used, as in the language's own user-level I/O.)
+--   Files: CREATE associates a member of the task family FILE with the name and
+--   initiates it; DIRECTORY keeps the name-to-index correspondence.
+--   Disk: at lower levels operations are expressed as memory address + byte
+--   count; each file is divided into blocks, one per disk sector; the disk
+--   handler keeps a disk map translating (file, block) to a disk address.
+--
+-- ---------------------------------------------------------------------------
+
+restricted(FILE_MANAGER)
+generic (type ELEM)
+package FILE_IO is
+
+   subtype FILE_NAME is STRING;
+
+   procedure CREATE   (F: FILE_NAME; SIZE: INTEGER);
+   procedure DESTROY  (F: FILE_NAME);
+   procedure WRITE    (F: FILE_NAME; DATA: ELEM);
+   procedure END_WRITE(F: FILE_NAME);
+   procedure READ     (F: FILE_NAME; RECORD_NO: INTEGER; DATA: out ELEM);
+
+   INVALID_FILE      : exception renames FILE_MANAGER.INVALID_FILE;
+   FILE_EXISTS       : exception renames FILE_MANAGER.FILE_EXISTS;
+   DIRECTORY_FULL    : exception renames FILE_MANAGER.DIRECTORY_FULL;
+   READ_ERROR        : exception renames FILE_MANAGER.READ_ERROR;
+   WRITE_ERROR       : exception renames FILE_MANAGER.WRITE_ERROR;
+   FILE_SIZE_EXCEEDED: exception renames FILE_MANAGER.FILE_SIZE_EXCEEDED;
+   ILLEGAL_READ      : exception renames FILE_MANAGER.ILLEGAL_READ;
+   ILLEGAL_WRITE     : exception renames FILE_MANAGER.ILLEGAL_WRITE;
+   ILLEGAL_CLOSE     : exception renames FILE_MANAGER.ILLEGAL_CLOSE;
+
+end FILE_IO;
+
+package body FILE_IO is
+-- All the calls of the typed operations of FILE_IO are converted
+-- to the lower-level, untyped, operations of FILE_MANAGER.
+
+   KEY: FILE_MANAGER.KEY_TYPE;
+
+   procedure CREATE (F: FILE_NAME; SIZE: INTEGER) is
+   begin
+      FILE_MANAGER.CREATE(F, KEY, SIZE*ELEM'SIZE);  -- OCR? ('*' printed as a raised mark)
+   end;
+
+   procedure DESTROY(F: FILE_NAME) is
+   begin
+      FILE_MANAGER.DESTROY(F, KEY);
+   end;
+
+   procedure WRITE(F: FILE_NAME; DATA: ELEM) is
+   begin
+      FILE_MANAGER.WRITE(F, KEY, DATA'ADDRESS, ELEM'SIZE);
+   end;
+
+   procedure END_WRITE(F: FILE_NAME) is
+   begin
+      FILE_MANAGER.END_WRITE(F, KEY);
+   end;
+
+   procedure READ(F: FILE_NAME; RECORD_NO: INTEGER; DATA: out ELEM) is
+      SIZE: constant INTEGER := RECORD_NO*ELEM'SIZE;  -- OCR? ('*' printed as a raised mark)
+   begin
+      FILE_MANAGER.READ(F, KEY, SIZE, DATA'ADDRESS, ELEM'SIZE);
+   end;
+
+begin
+   FILE_MANAGER.GET_NEW_KEY(KEY);
+end FILE_IO;
+
+task FILE_MANAGER is
+
+   subtype FILE_NAME is STRING;
+   restricted type KEY_TYPE is private;
+
+   entry CREATE (F: FILE_NAME; K: KEY_TYPE; SIZE: INTEGER);
+   entry DESTROY(F: FILE_NAME; K: KEY_TYPE);
+
+   procedure WRITE(F: FILE_NAME;
+                   K: KEY_TYPE;
+                   SOURCE_ADDR: INTEGER;
+                   N_BYTES: INTEGER);
+
+   procedure READ (F: FILE_NAME;
+                   K: KEY_TYPE;
+                   RECORD_ADDR: INTEGER;
+                   DEST_ADDR: INTEGER;
+                   N_BYTES: INTEGER);
+
+   procedure END_WRITE(F: FILE_NAME; K: KEY_TYPE);
+
+   entry GET_NEW_KEY(KEY: out KEY_TYPE);
+
+   INVALID_FILE, FILE_EXISTS,   DIRECTORY_FULL,
+   READ_ERROR,   WRITE_ERROR,   FILE_SIZE_EXCEEDED,
+   ILLEGAL_READ, ILLEGAL_WRITE, ILLEGAL_CLOSE: exception;
+private
+   type KEY_TYPE is new INTEGER;
+end FILE_MANAGER;
+
+task body FILE_MANAGER is
+
+   MAX_FILES: constant INTEGER := 100;
+   type FILE_INDEX is new INTEGER range 1 .. MAX_FILES;
+
+   LAST_KEY: KEY_TYPE := KEY_TYPE'FIRST;
+
+   ---------------------------------------------------------
+   -- The package DIRECTORY provides a mapping from extended
+   -- file names (augmented with keys) to internal indices
+   ---------------------------------------------------------
+   package DIRECTORY is
+      function  SEARCH(F: FILE_NAME; K: KEY_TYPE) return FILE_INDEX;
+      procedure ADD   (F: FILE_NAME; K: KEY_TYPE) return FILE_INDEX;
+      procedure REMOVE(F: FILE_NAME; K: KEY_TYPE);
+   end DIRECTORY;
+
+   ---------------------------------------------------------
+   -- Each member of the family FILE separately controls
+   -- access to a given file. It is initiated when
+   -- the file is created, and terminates when the file
+   -- is destroyed. It can then be reused for another file.
+   ---------------------------------------------------------
+   task FILE(FILE_INDEX'FIRST .. FILE_INDEX'LAST) is
+      procedure READ(RECORD_ADDR: INTEGER;
+                     DEST_ADDR  : INTEGER;
+                     N_BYTES    : INTEGER);
+
+      entry WRITE(SOURCE_ADDR: INTEGER; N_BYTES: INTEGER);
+      entry END_WRITE;
+      entry OPEN(SIZE: INTEGER);
+      entry CLOSE;
+   end FILE;
+
+   ---------------------------------------------------------
+   -- The DISK_HANDLER both provides a mapping between file
+   -- blocks and disk blocks, and gives access to the actual
+   -- disk operations.
+   ---------------------------------------------------------
+   task DISK_HANDLER is
+
+      BLOCK_SIZE: constant INTEGER := 1024;
+      MAX_BLOCKS: constant INTEGER := 800;
+
+      subtype BLOCK_INDEX is INTEGER range 1 .. MAX_BLOCKS;
+      subtype BYTE_OFFSET is INTEGER range 0 .. BLOCK_SIZE - 1;
+
+      entry READ( DATA_ADDR: INTEGER;
+                  B: BLOCK_INDEX;
+                  DISPL: BYTE_OFFSET;
+                  N_BYTES: INTEGER);
+
+      entry WRITE(DATA_ADDR: INTEGER;
+                  B: BLOCK_INDEX;
+                  DISPL: BYTE_OFFSET;
+                  N_BYTES: INTEGER);
+
+      entry RESERVE(F: FILE_INDEX; N_BLOCKS: INTEGER);
+      entry RELEASE(F: FILE_INDEX);
+
+      function BLOCK_ADDR(F: FILE_INDEX;
+                          BLOCK_NUM: INTEGER) return BLOCK_INDEX;
+
+      INEXISTENT_BLOCK, DISK_FULL, DISK_ERROR: exception;
+
+   end DISK_HANDLER;
+
+   package body DIRECTORY    is separate;
+   task    body FILE         is separate;
+   task    body DISK_HANDLER is separate;
+
+   procedure WRITE(F: FILE_NAME;
+                   K: KEY_TYPE;
+                   SOURCE_ADDR: INTEGER;
+                   N_BYTES: INTEGER) is
+      use DIRECTORY;
+      FX: FILE_INDEX := SEARCH(F, K);
+   begin
+      FILE(FX).WRITE(SOURCE_ADDR, N_BYTES);
+   exception
+      when TASKING_ERROR =>
+         raise INVALID_FILE;
+   end;
+
+   procedure END_WRITE(F: FILE_NAME; K:KEY_TYPE) is
+      use DIRECTORY;
+      FX: FILE_INDEX := SEARCH(F, K);
+   begin
+      FILE(FX).END_WRITE;
+   end;
+
+   procedure READ(F: FILE_NAME;
+                  K: KEY_TYPE;
+                  RECORD_ADDR: INTEGER;
+                  DEST_ADDR: INTEGER;
+                  N_BYTES: INTEGER) is
+      use DIRECTORY;
+      FX: FILE_INDEX := SEARCH(F, K);
+   begin
+      FILE(FX).READ(RECORD_ADDR, DEST_ADDR, N_BYTES);
+   end;
+
+begin -- body of FILE_MANAGER
+   loop
+      begin
+         select
+            accept GET_NEW_KEY(KEY: out KEY_TYPE) do
+               KEY := LAST_KEY;
+            end;
+            if LAST_KEY = KEY_TYPE'LAST then
+               LAST_KEY := KEY_TYPE'FIRST;
+            else
+               LAST_KEY := LAST_KEY + 1;
+            end if;
+         or
+            accept CREATE(F: FILE_NAME;
+                          K: KEY_TYPE;
+                          SIZE: INTEGER) do
+               declare
+                  FX: FILE_INDEX;
+               begin
+                  begin
+                     FX := DIRECTORY.SEARCH(F, K);
+                     raise FILE_EXISTS;
+                  exception
+                     when INVALID_FILE => null;
+                  end;
+                  FX := DIRECTORY.ADD(F, K);
+                  initiate FILE(FX);
+                  FILE(FX).OPEN(SIZE);
+               end;
+            end CREATE;
+         or
+            accept DESTROY(F: FILE_NAME; K: KEY_TYPE) do
+               declare
+                  FX: FILE_INDEX := DIRECTORY.SEARCH(F, K);
+               begin
+                  FILE(FX).CLOSE;
+                  DIRECTORY.REMOVE(F, K);
+               end;
+            end DESTROY;
+         end select;
+      exception
+         when others => null;
+      end;
+   end loop;
+end FILE_MANAGER;
+
+   ------------------------------------------------------------
+   -- separately compiled bodies
+   ------------------------------------------------------------
+   restricted(FILE_MANAGER)
+   separate package body DIRECTORY is
+
+      type NAME_REF  is access FILE_NAME;
+      type DIR_ENTRY is
+         record
+            NAME: NAME_REF;
+            KEY : KEY_TYPE;
+         end record;
+
+      FILE_MAP: array(FILE_INDEX'FIRST .. FILE_INDEX'LAST)
+                      of DIR_ENTRY;
+
+      function SEARCH(F: FILE_NAME; K: KEY_TYPE) return FILE_INDEX is
+      begin
+         for I in FILE_INDEX'FIRST .. FILE_INDEX'LAST loop
+            if FILE_MAP(I).NAME /= null
+               and then FILE_MAP(I).NAME.all = F
+               and then FILE_MAP(I).KEY = K then
+               return I;
+            end if;
+         end loop;
+         raise INVALID_FILE;
+      end SEARCH;
+
+      procedure ADD(F: FILE_NAME; K: KEY_TYPE) return FILE_INDEX is
+         FX: FILE_INDEX;
+      begin
+         begin
+            FX := SEARCH(F, K);
+            raise FILE_EXISTS;
+         exception
+            when INVALID_FILE => null;
+         end;
+         for I in FILE_INDEX'FIRST .. FILE_INDEX'LAST loop
+            if FILE_MAP(I).NAME = null then
+               FILE_MAP(I).NAME := new NAME_REF(F);
+               FILE_MAP(I).KEY := K;
+               return I;
+            end if;
+         end loop;
+         raise DIRECTORY_FULL;
+      end ADD;
+
+      procedure REMOVE(F: FILE_NAME; K: KEY_TYPE) is
+         FX: FILE_INDEX := SEARCH(F, K);
+      begin
+         FILE_MAP(FX).NAME := null;
+      end REMOVE;
+   end DIRECTORY;
+
+restricted(FILE_MANAGER)
+separate task body FILE is
+   use DISK_HANDLER;
+   ME: constant FILE_INDEX := FILE'INDEX;
+
+   FILE_SIZE   : INTEGER;
+   LAST_WRITTEN: INTEGER := 0;
+   DONE_WRITING: BOOLEAN:= FALSE;
+   N_READERS   : INTEGER:= 0;
+   CLOSED      : BOOLEAN := FALSE;
+
+   entry START_READ;
+   entry STOP_READ;
+
+   procedure READ(RECORD_ADDR: INTEGER;
+                  DEST_ADDR  : INTEGER;
+                  N_BYTES    : INTEGER) is
+      ADDR, CURRENT_BLOCK, BYTES_LEFT, BYTES_IN_BLOCK, OFFSET: INTEGER;
+   begin
+      if (not DONE_WRITING)
+         or RECORD_ADDR > FILE_SIZE then
+         raise ILLEGAL_READ;
+      end if;
+      ADDR := DEST_ADDR;
+      CURRENT_BLOCK := (RECORD_ADDR/BLOCK_SIZE) + 1;
+      OFFSET := RECORD_ADDR mod BLOCK_SIZE;
+      BYTES_LEFT := N_BYTES;
+      START_READ;
+      -- the following loop distributes the read operation
+      -- over all the blocks that contain part of the
+      -- desired information
+      loop
+         if BLOCK_SIZE - OFFSET > BYTES_LEFT then
+            BYTES_IN_BLOCK := BYTES_LEFT;
+            BYTES_LEFT := 0;
+         else
+            BYTES_IN_BLOCK := BLOCK_SIZE - OFFSET;
+            BYTES_LEFT := BYTES_LEFT - BYTES_IN_BLOCK;
+         end if;
+         begin
+            DISK_HANDLER.READ(ADDR,
+                              BLOCK_ADDR(ME, CURRENT_BLOCK),
+                              OFFSET,
+                              BYTES_IN_BLOCK);
+         exception
+            when DISK_ERROR | INEXISTENT_BLOCK =>
+               raise READ_ERROR;
+         end;
+         exit when BYTES_LEFT = 0;
+         ADDR := ADDR + BYTES_IN_BLOCK;
+         CURRENT_BLOCK := CURRENT_BLOCK + 1;
+         OFFSET := 0;
+      end loop;
+      STOP_READ;
+   end READ;
+
+begin  -- FILE
+   accept OPEN(SIZE: INTEGER) do
+      begin
+         if SIZE mod BLOCK_SIZE = 0 then
+            RESERVE(ME, SIZE/BLOCK_SIZE);
+         else
+            RESERVE(ME, SIZE/BLOCK_SIZE + 1);
+         end if;
+         FILE_SIZE := SIZE;
+      exception
+         when DISK_FULL =>
+            raise DIRECTORY_FULL;
+      end;
+   end OPEN;
+
+   while not DONE_WRITING loop  -- writing phase
+      declare
+         ADDR, BYTES_IN_BLOCK, BYTES_LEFT,
+         CURRENT_BLOCK, OFFSET: INTEGER;
+      begin
+         select
+            accept WRITE(SOURCE_ADDR: INTEGER; N_BYTES: INTEGER) do
+               if LAST_WRITTEN >= FILE_SIZE then
+                  raise FILE_SIZE_EXCEEDED;
+               end if;
+               ADDR := SOURCE_ADDR;
+               CURRENT_BLOCK := ((LAST_WRITTEN + 1)/BLOCK_SIZE) + 1;
+               OFFSET := (LAST_WRITTEN + 1) mod BLOCK_SIZE;
+               BYTES_LEFT := N_BYTES;
+               -- loop similar to the one done for READ
+               loop
+                  if BLOCK_SIZE - OFFSET > BYTES_LEFT then
+                     BYTES_IN_BLOCK := BYTES_LEFT;
+                     BYTES_LEFT := 0;
+                  else
+                     BYTES_IN_BLOCK := BLOCK_SIZE - OFFSET;
+                     BYTES_LEFT := BYTES_LEFT - BYTES_IN_BLOCK;
+                  end if;
+                  begin
+                     DISK_HANDLER.WRITE(ADDR,
+                                        BLOCK_ADDR(ME, CURRENT_BLOCK),
+                                        OFFSET,
+                                        BYTES_IN_BLOCK);
+                  exception
+                     when DISK_ERROR | INEXISTENT_BLOCK =>
+                        raise WRITE_ERROR;
+                  end;
+                  exit when BYTES_LEFT = 0;
+                  ADDR := ADDR + BYTES_IN_BLOCK;
+                  CURRENT_BLOCK := CURRENT_BLOCK + 1;
+                  OFFSET := 0;
+               end loop;
+               LAST_WRITTEN := LAST_WRITTEN + N_BYTES;
+            end WRITE;
+         or
+            accept END_WRITE;
+            DONE_WRITING := TRUE;
+            FILE_SIZE := LAST_WRITTEN;
+         or
+            accept CLOSE do
+               raise ILLEGAL_CLOSE;
+            end CLOSE;
+         end select;
+      exception
+         when others => null;
+      end;
+   end loop;
+
+   while (not CLOSED) loop -- reading phase
+      begin
+         select
+            accept START_READ;
+            N_READERS := N_READERS + 1;
+         or
+            accept STOP_READ;
+            N_READERS := N_READERS - 1;
+         or
+            accept CLOSE do
+               if N_READERS > 0 then
+                  raise ILLEGAL_CLOSE;
+               else
+                  RELEASE(ME);
+               end if;
+            end;
+            CLOSED := TRUE;
+         or
+            accept WRITE do
+               raise ILLEGAL_WRITE;
+            end WRITE;
+         or
+            accept END_WRITE do
+               raise ILLEGAL_WRITE;
+            end END_WRITE;
+         end select;
+      exception
+         when others => null;
+      end;
+   end loop;
+end FILE;
+
+restricted(FILE_MANAGER)
+separate task body DISK_HANDLER is
+   type BLOCK_DESC is
+      record
+         FREE: BOOLEAN := TRUE;
+         FX: FILE_INDEX;
+         BX: BLOCK_INDEX;
+      end;
+
+   DISK_MAP: array(BLOCK_INDEX'FIRST .. BLOCK_INDEX'LAST)
+                   of BLOCK_DESC;
+   FREE_BLOCKS: INTEGER := MAX_BLOCKS;
+
+   function BLOCK_ADDR(F: FILE_INDEX;
+                       BLOCK_NUM: INTEGER) return BLOCK_INDEX is
+      -- returns the disk address of the BLOCK_NUMth
+      -- block of file F
+   begin
+      for I in BLOCK_INDEX'FIRST .. BLOCK_INDEX'LAST loop
+         if DISK_MAP(I) = (FALSE, F, BLOCK_NUM) then
+            return I;
+         end if;
+      end loop;
+      raise INEXISTENT_BLOCK;
+   end BLOCK_ADDR;
+
+
+begin
+   loop
+      declare
+         B : BLOCK_INDEX;
+      begin
+         select
+            accept RESERVE(F: FILE_INDEX;
+                           N_BLOCKS: INTEGER) do
+            -- find the requested number of free blocks
+            -- in the disk map, and allocate them to file f.
+               if N_BLOCKS > FREE_BLOCKS then
+                  raise DISK_FULL;
+               else
+                  FREE_BLOCKS := FREE_BLOCKS - N_BLOCKS;
+                  B := 1;
+                  for I in 1 .. N_BLOCKS loop
+                     while not DISK_MAP(B).FREE loop
+                        B := B + 1;
+                     end loop;
+                     DISK_MAP(B) := (FALSE, F, I);
+                  end loop;
+               end if;
+            end RESERVE;
+         or
+            accept RELEASE(F: FILE_INDEX) do
+            -- free all the blocks of file F in the disk map
+               for B in BLOCK_INDEX'FIRST .. BLOCK_INDEX'LAST) loop  -- sic: unbalanced ')' as printed
+                  if (not DISK_MAP(B).FREE)
+                     and DISK_MAP(B).FX = F then
+                     DISK_MAP(B).FREE := TRUE;
+                     FREE_BLOCKS := FREE_BLOCKS + 1;
+                  end if;
+               end loop;
+            end RELEASE;
+         or
+            -- the rest of DISK_HANDLER is
+            -- concerned with scheduling disk
+            -- IO requests and is not given.
+         end select;
+      exception
+         when others => null;
+      end;
+   end loop;
+end DISK_HANDLER;

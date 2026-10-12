@@ -1,0 +1,141 @@
+-- GREEN solution to DoD-1 sample problem 2: Priority Interrupt System
+--
+-- Source: Honeywell Systems and Research Center / CII Honeywell Bull,
+--   "Set of Sample Problems for DOD High Order Language Program. GREEN
+--   Solutions", April 1979, DTIC ADA070752, PDF pages 11-15 (doc pages 2-1..2-5).
+--   Transcribed from page images; indentation as printed.
+--
+-- PROBLEM (condensed):
+--   An interrupt kernel with four priority levels 0..3 (lower number = higher
+--   priority). Higher priority interrupts preempt lower priority handlers; as
+--   much processing as possible with higher interrupts enabled; preempted
+--   lower-level handlers must be resumed properly. Handler bodies may be
+--   simulated by counting interrupts per level. Interrupt vector at 20(8),
+--   4 bytes per level: 20(8) P0, 24(8) P1, 30(8) P2, 34(8) P3. Interrupts are
+--   enabled/disabled with "SIN <operand>" (bits 0-3, 1 = enable); the
+--   enable state is not part of the saved context. Guideline: as for problem 1;
+--   it should be easy to replace handler bodies (e.g. at run time).
+--
+-- GREEN DESIGN NOTES (condensed from section 2.2):
+--   A generic package INTERRUPT_HANDLING takes the four service routines as
+--   generic parameters. Typical use (counting interrupts), as printed:
+--
+--      declare
+--         COUNT_0, COUNT_1, COUNT_2, COUNT_3: INTEGER := 0;
+--         procedure INC_O is          -- sic: printed "INC_O", used as INC_0 below
+--         begin
+--            COUNT_0 := COUNT_0 + 1;
+--         end;
+--         -- and similarly for INC_1, INC_2, INC_3
+--         package COUNT_INTERRUPTS is
+--            new INTERRUPT_HANDLING(INC_0, INC_1, INC_2, INC_3);
+--      begin
+--         ...
+--      end;
+--
+--   The package contains a family of four HANDLER tasks, each executing its
+--   routine when an interrupt occurs; task DISPATCH receives the interrupts
+--   (entries INT_i linked to the vector) and releases handlers. Each handler
+--   waits by calling the SERVE entry of its level (SERVE is an entry family).
+--   Physical masking/unmasking of interrupts is done by the GREEN run time.
+--   A received interrupt sets a PENDING flag; when pending and no higher level
+--   is pending, the handler is released by accepting its SERVE call. After the
+--   routine runs, the handler calls DISPATCH.RTI, which resets PENDING. Each
+--   handler runs at a different priority only so that a higher-priority
+--   interrupt can preempt a lower-priority handler; task priorities do not
+--   control when an interrupt is accepted.
+--
+-- ---------------------------------------------------------------------------
+
+generic (procedure ROUT0;
+         procedure ROUT1;
+         procedure ROUT2;
+         procedure ROUT3)
+package INTERRUPT_HANDLING;
+
+package body INTERRUPT_HANDLING is
+
+   type LEVEL is new INTEGER range 0 .. 3;
+
+   task DISPATCH is
+
+      entry INT_0;
+      entry INT_1;
+      entry INT_2;
+      entry INT_3;
+
+      entry SERVE(LEVEL'FIRST .. LEVEL'LAST);
+      entry RTI  (LVL: LEVEL);
+
+      for INT_0 use at 8#20;
+      for INT_1 use at 8#24;
+      for INT_2 use at 8#30;
+      for INT_3 use at 8#34;
+   end;
+
+   task HANDLER(LEVEL'FIRST .. LEVEL'LAST);
+
+   task body HANDLER is
+      ME: constant LEVEL := HANDLER'INDEX;
+   begin
+      SET_PRIORITY(SYSTEM'MAX_PRIORITY - (INTEGER(ME)+1));
+      loop
+         DISPATCH.SERVE(ME);
+         case ME of
+            when 0 => ROUT0;
+            when 1 => ROUT1;
+            when 2 => ROUT2;
+            when 3 => ROUT3;
+         end case;
+         DISPATCH.RTI(ME);
+      end loop;
+   end HANDLER;
+
+   task body DISPATCH is
+
+      PENDING: array(LEVEL'FIRST .. LEVEL'LAST) of BOOLEAN :=
+                     (FALSE, FALSE, FALSE, FALSE);
+
+   begin  -- DISPATCH
+      SET_PRIORITY(SYSTEM'MAX_PRIORITY);
+      loop
+         select
+            when not PENDING(0) =>
+               accept INT_0;
+               PENDING(0) := TRUE;
+
+         or when not PENDING(1) =>
+               accept INT_1;
+               PENDING(1) := TRUE;
+
+         or when not PENDING(2) =>
+               accept INT_2;
+               PENDING(2) := TRUE;
+
+         or when not PENDING(3) =>
+               accept INT_3;
+               PENDING(3) := TRUE;
+
+         or when PENDING(0) =>
+               accept SERVE(0);
+
+         or when PENDING(0 .. 1) = (FALSE, TRUE) =>
+               accept SERVE(1);
+
+         or when PENDING(0 .. 2) = (FALSE, FALSE, TRUE) =>
+               accept SERVE(2);
+
+         or when PENDING(0 .. 3) = (FALSE, FALSE, FALSE, TRUE) =>
+               accept SERVE(3);
+
+         or
+            accept RTI(LVL: LEVEL) do
+               PENDING(LVL) := FALSE;
+            end;
+         end select;
+      end loop;
+   end DISPATCH;
+
+begin -- initialization of INTERRUPT_HANDLING
+   initiate DISPATCH, HANDLER(LEVEL'FIRST .. LEVEL'LAST);
+end INTERRUPT_HANDLING;
