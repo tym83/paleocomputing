@@ -66,4 +66,7 @@ TESTS="EMPTY_LOOP CALL RENDEZVOUS RENDEZVOUS_PARAM TASK_LIFE"
 } > "$W/_.cli"
 
 cd "$W"
-"$SIM" -T -0 +_.disk.0 -1 +_.disk.1 -w . "include _.cli" 2>&1 | tee _.log
+# -T (no telnet ports) takes an argument in the emulator's getopt string, so
+# it gets one; the exit status is kept past tee
+{ "$SIM" -T x -0 +_.disk.0 -1 +_.disk.1 -w . "include _.cli"; echo $? > _.status; } 2>&1 | tee _.log
+exit "$(cat _.status)"

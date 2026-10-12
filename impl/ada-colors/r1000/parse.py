@@ -17,7 +17,7 @@ def table(rows):
     print("| test | N | total, s | per operation, us |")
     print("|---|---:|---:|---:|")
     for name, n, secs in rows:
-        print(f"| {name} | {n} | {secs:.3f} | {secs / n * 1e6:.2f} |")
+        print(f"| {name} | {n} | {secs:.3f} | {secs / n * 1e6:.4f} |")
 
 
 def r1000(log, console):
