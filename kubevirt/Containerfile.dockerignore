@@ -8,3 +8,7 @@
 !qemu/libvirt/patch_libvirt.py
 !kubevirt/targets.txt
 !kubevirt/onDefineDomain.py
+!impl/x8-the/emu/x8.c
+!impl/x8-the/emu/x8.h
+!impl/x8-the/emu/charon.c
+!impl/x8-the/emu/charon.h
