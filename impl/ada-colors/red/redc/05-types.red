@@ -224,7 +224,7 @@ ABNORMAL FUNC field_decls(CONST t : typ) => STRING[ASCII] IMPORTS ALL;
    VAR f : field := t.fields;
    VAR s : text := mk(" ");
    WHILE f /= NIL REPEAT
-      s := mk(s.ALL & ctype(f.t) & " " & lower_s(f.name.ALL) & "; ");
+      s := mk(s.ALL & ctype(f.t) & " " & field_c(f.name.ALL) & "; ");
       f := f.next;
    END REPEAT;
    RETURN s.ALL;
@@ -642,7 +642,7 @@ PROC init_storage(READONLY lval : STRING[ASCII], CONST t : typ, CONST c : cons) 
    ELSEIF t.kind = t_record THEN
       VAR f : field := t.fields;
       WHILE f /= NIL REPEAT
-         init_storage(lval & "." & lower_s(f.name.ALL), f.t, f.c);
+         init_storage(lval & "." & field_c(f.name.ALL), f.t, f.c);
          f := f.next;
       END REPEAT;
    END IF;
@@ -842,7 +842,7 @@ PROC helper_bodies(CONST t : typ) IMPORTS ALL;
       VAR conds : text := mk("1");
       put(b, "static void as_" & c & "(" & c & " *d, " & c & " s) {");
       WHILE f /= NIL REPEAT
-         CONST fn := lower_s(f.name.ALL);
+         CONST fn := field_c(f.name.ALL);
          put(b, "  " & elem_assign("d->" & fn, f.t, "s." & fn));
          f := f.next;
       END REPEAT;
@@ -851,7 +851,7 @@ PROC helper_bodies(CONST t : typ) IMPORTS ALL;
       put(b, "  " & c & " d = s;");
       f := t.fields;
       WHILE f /= NIL REPEAT
-         CONST fn := lower_s(f.name.ALL);
+         CONST fn := field_c(f.name.ALL);
          put(b, "  d." & fn & " = " & copy_code(f.t, "s." & fn) & ";");
          conds := mk(conds.ALL & " && " & eq_code(f.t, "a." & fn, "b." & fn));
          f := f.next;

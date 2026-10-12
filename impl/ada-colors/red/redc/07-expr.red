@@ -184,7 +184,7 @@ PROC select_on(READONLY base : STRING[ASCII], CONST bt : typ, CONST e : node, VA
       WHILE f /= NIL REPEAT
          IF f.name.ALL = e.name.ALL THEN
             c := f.c;
-            code := mk(base & "." & lower_s(e.name.ALL));
+            code := mk(base & "." & field_c(e.name.ALL));
             t := f.t;
             RETURN;
          END IF;
@@ -749,7 +749,7 @@ ABNORMAL FUNC constructor(CONST e : node, CONST want : typ, OUT t : typ) => STRI
             BEGIN
                CONST v := gexpr(it.b, f.t, vt);
                check_type(vt, f.t, e.line);
-               parts := mk(parts.ALL & " " & tmp & "." & lower_s(f.name.ALL) & " = "
+               parts := mk(parts.ALL & " " & tmp & "." & field_c(f.name.ALL) & " = "
                            & copy_code(f.t, v) & ";");
             END;
             it := it.next;
