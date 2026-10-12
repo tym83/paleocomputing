@@ -598,13 +598,13 @@ ABNORMAL FUNC gbinop(CONST e : node, CONST want : typ, OUT t : typ) => STRING[AS
       BEGIN
          CONST a := gexpr(e.a, hint, ta);
          CONST b := gexpr(e.b, ta, tb);
-         VAR ct : typ := ta;
+         VAR ct : typ := base_of(ta);
          t := ty_bool;
          IF ta.kind /= t_nil AND tb.kind /= t_nil THEN
             check_type(tb, ta, e.line);
          END IF;
          IF ta.kind = t_nil THEN
-            ct := tb;
+            ct := base_of(tb);
          END IF;
          IF ct.kind = t_string THEN
             IF op.ALL = "=" THEN
