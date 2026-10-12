@@ -35,7 +35,9 @@ processor and with RED on our runtime.
 
 ## Results
 
-Run of 12 October 2026. The emulator ran at 1/1.64 of the real machine's
+Run of 12 October 2026; a second run the same day gave the R1000 figures
+again to within 0.6% (2% for the task), while RED on the shared runner moved
+by a quarter, hence the ranges. The emulator ran at 1/1.64 of the real machine's
 speed on the runner; the Environment was ready to log in after 96 minutes, and
 the whole run took 101.
 
@@ -44,8 +46,8 @@ the whole run took 101.
 | loop iteration with `Counter := Counter + 1` | 3.38 µs | 0.95 ns | — |
 | the same with a procedure call | 6.13 µs | 2.2 ns | — |
 | **procedure call alone** | **2.75 µs** | **1.25 ns** | — |
-| rendezvous, empty `accept` | 55.4 µs | 13.5 µs | 20.7 µs (two mailboxes of size 0) |
-| rendezvous, `in out` parameter | 63.4 µs | 26.7 µs | 29.3 µs (two mailboxes of size 1) |
+| rendezvous, empty `accept` | 55.4 µs | 13.5 µs | 21–28 µs (two mailboxes of size 0) |
+| rendezvous, `in out` parameter | 63.4 µs | 26.7 µs | 26–29 µs (two mailboxes of size 1) |
 | task: create, run, wait for the end | 399 µs | 57.6 µs | 150 µs |
 | **rendezvous / procedure call** | **≈ 19** | **≈ 10,000** | — |
 
