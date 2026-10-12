@@ -1,6 +1,6 @@
 # Labs, and how to get your hands on all this
 
-As in the earlier parts, I wanted readers to be able not just to read about the language but to break something with their own hands. The `impl/ada-colors/labs` directory holds eleven short RED programs and a `check.sh` script that translates your version of a program, runs it and tells you whether you've completed the task. The tasks follow the same levels as before: look, change, break, measure and build. And since time in the programs is virtual and the scheduler is deterministic, you can compare your output with someone else's character for character.
+As in the earlier parts, I wanted readers to be able not just to read about the language but to break something with their own hands. The `impl/ada-colors/labs` directory holds eleven RED exercises and a `check.sh` script that translates your version of a program, runs it and tells you whether you've completed the task. The tasks follow the same levels as before: look, change, break, measure and build. And since time in the programs is virtual and the scheduler is deterministic, you can compare your output with someone else's character for character.
 
 Here's what's there:
 
@@ -23,7 +23,7 @@ git clone https://github.com/tym83/paleocomputing
 cd paleocomputing/impl/ada-colors
 make                     # builds redc from the seed and checks the fixed point
 red/tests/run.sh         # language tests
-os/run.sh                # the operating system and both Kubernetes variants
+os/run.sh                # the operating system and all three Kubernetes variants
 labs/check.sh 03 look    # the mailbox lab
 ```
 
@@ -35,4 +35,4 @@ cc -std=gnu11 -Irt program.c rt/paleo.c -lpthread -lm -o program
 ./program
 ```
 
-None of this runs in the browser yet. The RED compiler is written in RED and translates into plain C, so building it for WebAssembly is easy. The catch is that a RED program is itself translated into C, so the browser also needs a C compiler. That's a job for next time.
+None of this runs in the browser yet. The RED compiler is written in RED and translates into plain C, so building it for WebAssembly isn't hard. The catch is that a RED program is itself translated into C, so the browser also needs a C compiler. That's a job for next time.
