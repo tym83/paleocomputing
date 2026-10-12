@@ -311,6 +311,10 @@ ABNORMAL FUNC gexpr(CONST e : node, CONST want : typ, OUT t : typ) => STRING[ASC
    ELSEIF k = n_name THEN
       VAR y : sym := lookup(e.name.ALL);
       IF y = NIL THEN
+         IF e.name.ALL = "ME" THEN
+            t := ty_act;
+            RETURN "rt_me()";
+         END IF;
          IF e.name.ALL = "SIZELN" OR e.name.ALL = "EOF" OR e.name.ALL = "SYS_IN"
                OR e.name.ALL = "SYS_OUT" OR e.name.ALL = "TIME" OR e.name.ALL = "MILLISECONDS"
                OR e.name.ALL = "SECONDS" OR e.name.ALL = "MINUTES" OR e.name.ALL = "HOURS" THEN

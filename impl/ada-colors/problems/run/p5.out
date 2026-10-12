@@ -1,0 +1,11 @@
+[0 ms] reader 1: reading
+[1 ms] reader 2: reading
+[2 ms] reader 3: refused, too many users
+[3 ms] writer: asks for exclusive use and waits
+[10 ms] reader 1: done
+[11 ms] reader 2: done
+[2003 ms] writer: writing
+[2500 ms] reader 4: refused, used exclusively
+[3000 ms] boss: took the dataset over
+[3500 ms] boss: done
+[4003 ms] writer: x_not_using_dataset: it was preempted and nobody told it

@@ -207,7 +207,7 @@ ABNORMAL FUNC ctype(CONST t : typ) => STRING[ASCII] IMPORTS ALL;
       WHEN t_void => RETURN "void";
       WHEN t_mbox => RETURN "rt_mbox";
       WHEN t_lock => RETURN "rt_lock";
-      WHEN t_act => RETURN "rt_act";
+      WHEN t_act => RETURN "rt_act *";
       WHEN t_set => RETURN "rset";
       ELSE =>
          IF t.cname = NIL THEN
@@ -613,7 +613,9 @@ PROC init_storage(READONLY lval : STRING[ASCII], CONST t : typ, CONST c : cons) 
    ELSEIF t.kind = t_lock THEN
       emit("rt_lock_init(&" & lval & ");");
    ELSEIF t.kind = t_act THEN
-      emit(lval & ".active = 0; " & lval & ".t = NULL; " & lval & ".waiters = NULL;");
+      % an ACT value is shared by assignment and compared by identity (C.10),
+      % so a variable holds a reference to its activation record
+      emit(lval & " = rt_alloc(sizeof(rt_act));");
    ELSEIF t.kind = t_ptr THEN
       % indirect variables start as NIL (4.4.3), at every elaboration
       emit(lval & " = NULL;");
@@ -749,8 +751,12 @@ ABNORMAL FUNC eq_code(CONST t : typ, READONLY a : STRING[ASCII], READONLY b : ST
    IF t.kind = t_set THEN
       RETURN "rt_set_eq(" & a & ", " & b & ")";
    END IF;
-   IF t.kind = t_mbox OR t.kind = t_lock OR t.kind = t_act THEN
-      % not comparable (C.10-C.12); only the generated helpers ask
+   IF t.kind = t_act THEN
+      % two ACT values are equal when they are the same activation variable (C.10)
+      RETURN "(" & a & " == " & b & ")";
+   END IF;
+   IF t.kind = t_mbox OR t.kind = t_lock THEN
+      % not comparable (C.11, C.12); only the generated helpers ask
       RETURN "0";
    END IF;
    IF t.kind = t_string THEN

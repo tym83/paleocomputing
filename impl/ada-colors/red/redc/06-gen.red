@@ -914,7 +914,8 @@ END PROC st_alloc;
 
 % ---- multitasking (chapter 10) ------------------------------------------------------------
 
-% an activation variable as an rt_act pointer; ME names the running activation
+% an activation variable as an rt_act pointer (the variable holds one); ME
+% names the running activation
 ABNORMAL FUNC act_ref(CONST e : node) => STRING[ASCII] IMPORTS ALL;
    VAR lv : text;
    VAR t : typ;
@@ -927,7 +928,7 @@ ABNORMAL FUNC act_ref(CONST e : node) => STRING[ASCII] IMPORTS ALL;
    IF t.kind /= t_act THEN
       fail(e.line, "an activation variable (ACT) is required");
    END IF;
-   RETURN "&" & lv.ALL;
+   RETURN lv.ALL;
 END FUNC act_ref;
 
 % CREATE task(args) NAMED actvar (10.1): a fresh frame holds the parameters
