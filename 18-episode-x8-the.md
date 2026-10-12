@@ -135,12 +135,34 @@ for the operator, the line printer, and the core table of segment control as
 it changes (which segment is in which page, holiness, the Victim). On the
 series site it is `/x8/`.
 
+## In QEMU and in the cluster
+
+`qemu-system-x8` ([`qemu/target/x8`](qemu/target/x8/), [`qemu/hw/x8`](qemu/hw/x8/))
+is a QEMU machine that runs the same X8 core: one translation block hands a
+slice of machine time to `x8.c` and `charon.c`, which `graft.sh` copies in from
+`impl/x8-the/emu`, and the X8 cycle of 1.25 us is kept in step with QEMU's
+virtual clock. The THE tape is the kernel (`-kernel the.tape`; QEMU presses LS
+and IP), the first serial port is the console teleprinter and keyboard, the
+second the line printer; `-machine x8,commands=...` types operator lines at
+start. Translating every X8 instruction into TCG would only have made a second
+model of the machine to keep in agreement with the first; this way the CI job
+`qemu` can require THE to print in QEMU byte for byte what it prints in
+`x8emu`, and it does.
+
+From there the path of the Oberon machine: `x8` is a line in
+`kubevirt/targets.txt`, so the virt-launcher image carries `qemu-system-x8` and
+its libvirt knows the architecture; the catalog machine `x8-vm`
+([`marketplace/.../apps/x8-vm`](marketplace/repos/machines/packages/apps/x8-vm/README.md))
+is a passport for the shared `retro-machine` library, with the tape from the
+`x8-run` image; the KubeVirt end-to-end check installs it on kind and requires
+`qemu-system-x8` with the tape and a THE console on the VNC screen.
+
 ## Labs
 
-[`labs/`](impl/x8-the/labs/README.md): six exercises (look, change, break,
+[`labs/`](impl/x8-the/labs/README.md): seven exercises (look, change, break,
 measure) and `labs/check.sh`.
 
 ## Next
 
-- A QEMU machine model of the X8, KubeVirt, and the X8 in the Cozystack catalog,
-  like the Oberon machine of the earlier episodes.
+- The drum and the printer as their own screens of the catalog machine, and the
+  paper tape punch, which THE does not use.
