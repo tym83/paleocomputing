@@ -7,6 +7,8 @@ procedure TIMEOUT is
       entry REPLY (X : out INTEGER);
    end SERVER;
 
+   V : INTEGER;
+
    task body SERVER is
    begin
       delay 0.3;
@@ -15,7 +17,6 @@ procedure TIMEOUT is
       end REPLY;
    end SERVER;
 
-   V : INTEGER;
 begin
    select
       SERVER.REPLY (V);

@@ -10,6 +10,13 @@ procedure REGION is
       entry RELEASE;
    end LOCK;
 
+   COUNT : INTEGER := 0;
+   pragma SHARED (COUNT);
+
+   task type WORKER is
+      entry START (N : in INTEGER);
+   end WORKER;
+
    task body LOCK is
    begin
       loop
@@ -21,13 +28,6 @@ procedure REGION is
          end select;
       end loop;
    end LOCK;
-
-   COUNT : INTEGER := 0;
-   pragma SHARED (COUNT);
-
-   task type WORKER is
-      entry START (N : in INTEGER);
-   end WORKER;
 
    task body WORKER is
       ID : INTEGER;

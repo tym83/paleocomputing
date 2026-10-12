@@ -8,6 +8,9 @@ procedure BUFFER is
       entry GET (X : out INTEGER);
    end MAILBOX;
 
+   task PRODUCER;
+   V : INTEGER;
+
    task body MAILBOX is
       SIZE  : constant := 3;
       ITEMS : array (1 .. SIZE) of INTEGER;
@@ -33,7 +36,6 @@ procedure BUFFER is
       end loop;
    end MAILBOX;
 
-   task PRODUCER;
    task body PRODUCER is
    begin
       for I in 1 .. 5 loop
@@ -41,7 +43,6 @@ procedure BUFFER is
       end loop;
    end PRODUCER;
 
-   V : INTEGER;
 begin
    for I in 1 .. 5 loop
       MAILBOX.GET (V);
