@@ -29,3 +29,18 @@ tr -d '\r' < "$b/console.txt" > "$b/console.unix"
 tr -d '\r' < "$b/lp.txt" > "$b/lp.unix"
 { echo "== console teleprinter"; cat "$b/console.unix"; echo "== line printer"; cat "$b/lp.unix"; } > "$b/the.out"
 diff -u "$top/the/the.out" "$b/the.out" && echo "THE in QEMU: console and line printer as from x8emu"
+
+# commands=: the lines the catalog machine types at start. One serial port, so
+# the line printer prints on the console too, as in the cluster.
+: > "$b/cmd.txt"
+"$qemu" -display none -monitor none -kernel "$b/the.tape" -serial "file:$b/cmd.txt" \
+  -machine "x8,commands=pm2 7;k scale 4,realtime=off" &
+pid=$!
+for i in $(seq 1 60); do
+  grep -q "web-4" "$b/cmd.txt" && grep -q "squares printed: 7" "$b/cmd.txt" && break
+  sleep 1
+done
+kill $pid; wait $pid 2>/dev/null || true
+grep -q "squares printed: 7" "$b/cmd.txt" && grep -q "web-4" "$b/cmd.txt" \
+  || { echo "commands= did not reach THE:"; tr -d '\r' < "$b/cmd.txt"; exit 1; }
+echo "THE in QEMU: the commands typed at start reached pm2 and Kubernetes on THE"

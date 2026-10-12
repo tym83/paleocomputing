@@ -105,7 +105,7 @@ static void x8_read(void *opaque, const uint8_t *buf, int size)
 
 /*
  * commands=<line;line>: the operator types these lines at start, the first
- * after ten seconds of machine time (THE has long finished booting), the
+ * after twelve seconds of machine time (when pm2 has asked its question), the
  * others three seconds apart. They go to CHARON as a keys file.
  */
 static char *commands_to_keys(const char *text)
@@ -118,7 +118,7 @@ static char *commands_to_keys(const char *text)
 
     for (char **l = lines; *l; l++) {
         if (**l) {
-            g_string_append_printf(s, "%d %s\\n\n", 10000 + 3000 * n++, *l);
+            g_string_append_printf(s, "%d %s\\n\n", 12000 + 3000 * n++, *l);
         }
     }
     fd = g_file_open_tmp("x8-keys-XXXXXX", &path, &err);
