@@ -111,6 +111,18 @@
          IS_CONST := TRUE;
       end if;
       TYPE_SPEC(ST);
+      if AT_KW("RENAMES") and not IS_CONST then
+         -- X : T renames NAME; another name for an existing object (RM79 8.5)
+         SKIP;
+         X := NN(N_VAR, LINE);
+         X.NAME := NAMES.NAME;
+         X.A := ST;
+         X.FLAG := 2;
+         EXPR(X.B);
+         EXPECT_OP(";");
+         RES := X;
+         return;
+      end if;
       if AT_OP(":=") then
          SKIP;
          EXPR(INIT);

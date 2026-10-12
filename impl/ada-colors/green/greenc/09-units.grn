@@ -164,7 +164,7 @@
       CUR_PKG := SAVED;
    end PACKAGE_BODY;
 
-   -- use P; the visible declarations of P become directly visible, but never
+   -- use M; the visible declarations of module M become directly visible, but never
    -- hide another declaration (RM79 8.4)
    procedure USE_CLAUSE(E : NODE) is
       N : NODE := E.A;
@@ -176,8 +176,9 @@
             if N.NAME.all /= "TEXT_IO" then
                FAIL(N.LINE, N.NAME.all & " is not a package");
             end if;
-         elsif Y.KIND /= Y_PACKAGE then
-            FAIL(N.LINE, N.NAME.all & " is not a package");
+         elsif Y.KIND /= Y_PACKAGE and Y.KIND /= Y_TASK then
+            -- a use clause names modules: packages and tasks (RM79 8.4)
+            FAIL(N.LINE, N.NAME.all & " is not a package or a task");
          else
             M := Y.MEMBERS;
             while M /= null loop

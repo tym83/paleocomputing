@@ -229,6 +229,15 @@ procedure GREENC is
    end record;
    type BUFFER is access BUFFER_REC;
 
+   -- what a generic body saw where it was declared (RM79 12.3)
+   type GCTX_REC;
+   type GCTX is access GCTX_REC;
+   type GCTX_REC is record
+      BODY_NODE : NODE;
+      VISIBLE : SYM;
+      NEXT : GCTX;
+   end record;
+
    type EXIT_REC;
    type EXITS_T is access EXIT_REC;
    type EXIT_REC is record
@@ -259,6 +268,7 @@ procedure GREENC is
    ST_FIELD : TEXT;
    FUNC_SYM : SYM;
    EXITS : EXITS_T;
+   GENERIC_CONTEXTS : GCTX;
    -- the loops that enclose the innermost accept statement: an exit cannot
    -- reach them (RM79 5.7)
    ACCEPT_EXITS : EXITS_T;

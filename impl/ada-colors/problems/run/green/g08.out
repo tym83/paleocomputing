@@ -1,0 +1,7 @@
+tick   1: OPERATOR runs
+tick   3: SAMPLER runs
+tick   7: SAMPLER runs
+tick   9: OPERATOR disconnects SAMPLER
+tick   9: OPERATOR: INEXISTENT_TASK
+tick   9: OPERATOR: LATE_REQUEST
+tick  10: LOGGER runs

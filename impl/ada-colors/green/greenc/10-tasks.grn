@@ -356,6 +356,7 @@
    end ENTRY_FAMILY_SLOT;
 
    procedure TASK_SPEC(E : NODE) is
+      HAS_PROCS : BOOLEAN := FALSE;
       Y, M, Z : SYM;
       SAVED : SYM := CUR_TASK;
       D, V, P, P2 : TEXT;
@@ -404,7 +405,17 @@
       M := SCOPE_STACK;
       while M /= null and then M.DEPTH = DEPTH loop
          if M.KIND = Y_FUNC or M.KIND = Y_PROC then
-            FAIL(E.LINE, "procedures in the visible part of a task are not handled");
+            -- a visible subprogram of the task runs in its caller and sees the
+            -- task's data (RM79 9.1): its static link is the frame of the task
+            -- body, kept in a global once the task runs
+            if Y.C /= null or IN_FUNC then
+               FAIL(E.LINE, "subprograms in the visible part of a nested task or a family are not handled");
+            end if;
+            if not HAS_PROCS then
+               PUT_TO(OUT_GLOBALS, "static void *" & Y.CNAME.all & "frame;");
+               HAS_PROCS := TRUE;
+            end if;
+            M.ACCESS_PATH := MK(Y.CNAME.all & "frame");
          end if;
          COPY_SYM(M, Z);
          Z.MNEXT := Y.MEMBERS;
@@ -503,6 +514,9 @@
       while M /= null loop
          COPY_SYM(M, Z);
          DEFINE(Z, E.LINE);
+         if (M.KIND = Y_FUNC or M.KIND = Y_PROC) and M.ACCESS_PATH /= null then
+            B.ACCESS_PATH := M.ACCESS_PATH;
+         end if;
          M := M.MNEXT;
       end loop;
       CUR_TASK := Y;
