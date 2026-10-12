@@ -1,6 +1,6 @@
 #!/bin/sh
 # Check a RED lab: labs/check.sh <lab> <task> [file]
-#   lab   01..11      task  look | change | break | build
+#   lab   01..12      task  look | change | break | build
 #   file  defaults to the lab's program in labs/red/
 # It translates the file with build/redc, runs it and says whether the task is done.
 set -u
@@ -37,5 +37,8 @@ case "$lab/$task" in
   09/break)  want "NotReady" "Deciding after each event, before the queued relist is read, evicts healthy nodes after a control plane failover." "delete the draining loop in node_ctl" ;;
   10/build)  [ $rc -eq 0 ] && want "7" "Your built-in went through a fixed point of redc." "add MAX to builtin in red/redc/07-expr.red, run make fixpoint, then translate a program printing MAX(3, 7)" ;;
   11/break)  [ $rc -eq 1 ] && ok "The 1979 text does not translate without that change: $(cat "$tmp/out")" || no "drop one line of problems/run/C1-matrix-vector.sed and regenerate" ;;
+  12/look)   want "no circle of waiting" "Every process waits only for processes below it; the society finishes." "run it unchanged" ;;
+  12/change) want "drum transfers 0" "With a core page per segment the segment controller never touches the drum." "set CONST ncore := 8" ;;
+  12/break)  want "deadlock" "The segment controller waited for the message interpreter, which needed the segment controller to read its vocabulary: the reason THE puts the console on level 2." "set report_dumps to TRUE" ;;
   *)         [ $rc -eq 0 ] && { cat "$tmp/out"; exit 0; } || { cat "$tmp/out"; exit 1; } ;;
 esac
