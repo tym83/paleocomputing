@@ -218,6 +218,8 @@ void rt_g_put_int(rt_int v, rt_int width);
 void rt_g_put_bool(int v, rt_int width);
 void rt_g_put_float(double v, rt_int width, rt_int fract);
 int rt_g_getc(void);                           /* END_OF_FILE at the end */
+rt_int rt_g_get_int(void);                     /* next integer item */
+double rt_g_get_float(void);                   /* next real item */
 rstr rt_g_image_float(double v);               /* T'REP for floats */
 rt_int rt_g_col(void);
 

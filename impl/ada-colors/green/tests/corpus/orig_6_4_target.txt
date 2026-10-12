@@ -1,0 +1,32 @@
+restricted (TEXT_IO)
+procedure TARGET_PRACTICE is
+   use TEXT_IO;
+   -- This program reads in four values, respectively representing
+   -- the X and Y velocities of a projectile, the distance to a
+   -- target, and the height of the target.
+   -- It prints a message indicating whether the projectile will
+   -- hit the target or not.
+   type REAL is digits 7;
+   X_VELOCITY, Y_VELOCITY,
+   TARGET_DISTANCE, TARGET_HEIGHT, NET_RISE : REAL;
+   G : constant REAL := 32.2;
+
+   procedure COMPUTE_RISE (V_X, V_Y, DISTANCE : in REAL; RISE : out REAL) is
+      TIME : REAL;
+   begin
+      TIME := DISTANCE/V_X;
+      RISE := V_Y*TIME - (G/2.0)*(TIME**2);
+   end;
+
+begin
+   GET(X_VELOCITY);
+   GET(Y_VELOCITY);
+   GET(TARGET_DISTANCE);
+   GET(TARGET_HEIGHT);
+   COMPUTE_RISE(X_VELOCITY, Y_VELOCITY, TARGET_DISTANCE, NET_RISE);
+   if NET_RISE > 0 and NET_RISE < TARGET_HEIGHT then
+      PUT("HIT");
+   else
+      PUT("MISS");
+   end if;
+end;

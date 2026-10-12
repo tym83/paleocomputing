@@ -1,0 +1,27 @@
+task PRINTER_DRIVER is
+   subtype LINE_IMAGE is STRING(1 .. 120);
+   entry LINE_PRINT(L : LINE_IMAGE);
+end;
+
+task body PRINTER_DRIVER is
+   BUFFER : LINE_IMAGE;
+   CHAIN_GOING : BOOLEAN := FALSE;
+begin
+   loop
+      select
+         accept LINE_PRINT(L : LINE_IMAGE) do
+            BUFFER := L;
+         end;
+         if not CHAIN_GOING then
+            -- start the chain
+            delay 1.0*SECONDS;
+            CHAIN_GOING := TRUE;
+         end if;
+      or
+         when CHAIN_GOING =>
+            delay 10.0*SECONDS;
+            -- stop the chain
+            CHAIN_GOING := FALSE;
+      end select;
+   end loop;
+end;

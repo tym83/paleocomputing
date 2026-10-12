@@ -7,10 +7,11 @@
       return new STRING(S);
    end MK;
 
-   procedure NEW_NAME(BASE : STRING) return TEXT is
+   procedure NEW_NAME(BASE : STRING; RES : out TEXT) is
    begin
       SERIAL := SERIAL + 1;
-      return new STRING(BASE & INTEGER'REP(SERIAL));
+      RES := new STRING(BASE & INTEGER'REP(SERIAL));
+      return;
    end NEW_NAME;
 
    function IS_LETTER(C : CHARACTER) return BOOLEAN is
@@ -41,6 +42,12 @@
       end loop;
       return R;
    end LOWER_S;
+
+   -- a record component in C: the suffix keeps clear of C keywords
+   function C_FIELD(S : STRING) return STRING is
+   begin
+      return LOWER_S(S) & "_";
+   end C_FIELD;
 
    -- a quote character, for the C we write
    function Q return STRING is
@@ -208,6 +215,10 @@
                   J := J + 1;
                   while J <= N and then (IS_LETTER(LINE(J)) or IS_DIGIT(LINE(J)) or LINE(J) = "_") loop
                      if LINE(J) /= "_" then
+                        if DIGIT_VALUE(LINE(J)) >= BASE then
+                           FAIL(SRC_LINE, "digit " & LINE(J) & " is not valid in base "
+                                & INTEGER'REP(BASE) & " (RM79 2.4)");
+                        end if;
                         V := V * BASE + DIGIT_VALUE(LINE(J));
                      end if;
                      J := J + 1;

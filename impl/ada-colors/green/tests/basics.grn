@@ -1,0 +1,70 @@
+restricted (TEXT_IO)
+procedure HELLO is
+   use TEXT_IO;
+   type COLOR is (RED, GREEN, BLUE);
+   type NODE;
+   type LINK is access NODE;
+   type NODE is record
+      VAL : INTEGER;
+      NEXT : LINK;
+   end record;
+   type TEXT is access STRING;
+   HEAD : LINK;
+   C : COLOR := GREEN;
+   N : INTEGER range 0 .. 10 := 0;
+   T : TEXT;
+   BAD : exception;
+
+   function FACT(K : INTEGER) return INTEGER is
+   begin
+      if K <= 1 then
+         return 1;
+      end if;
+      return K * FACT(K - 1);
+   end FACT;
+
+   procedure PUSH(V : INTEGER) is
+   begin
+      HEAD := new NODE(V, HEAD);
+   end PUSH;
+
+begin
+   PUT("fact(10) ="); PUT(FACT(10)); PUT(NEWLINE);
+   PUSH(1); PUSH(2);
+   declare
+      P : LINK := HEAD;
+   begin
+      while P /= null loop
+         PUT(P.VAL); P := P.NEXT;
+      end loop;
+   end;
+   PUT(NEWLINE);
+   PUT(INTEGER'REP(-7 mod 3)); PUT(" "); PUT(INTEGER'REP((-7) / 2)); PUT(NEWLINE);
+   PUT(INTEGER'REP(CHARACTER'ORD("A"))); PUT(CHARACTER'VAL(67)); PUT(NEWLINE);
+   if C = GREEN and then COLOR'SUCC(C) = BLUE then PUT("enum ok"); PUT(NEWLINE); end if;
+   begin
+      loop
+         N := N + 1;
+      end loop;
+   exception
+      when RANGE_ERROR => PUT("range error at"); PUT(N); PUT(NEWLINE);
+   end;
+   T := new STRING("text");
+   PUT(T.all); PUT(INTEGER'REP(T'LENGTH)); PUT(NEWLINE);
+   for I in 1 .. 5 loop
+      exit when I = 4;
+      PUT(I);
+   end loop;
+   PUT(NEWLINE);
+   case N of
+      when 0 .. 5 => PUT("small");
+      when 10 | 11 => PUT("ten");
+      when others => PUT("?");
+   end case;
+   PUT(NEWLINE);
+   begin
+      raise BAD;
+   exception
+      when others => PUT("BAD propagates to others"); PUT(NEWLINE);
+   end;
+end HELLO;

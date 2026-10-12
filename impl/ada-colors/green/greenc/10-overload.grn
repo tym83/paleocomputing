@@ -1,0 +1,153 @@
+   -- ---- overloading (RM79 6.6) ------------------------------------------------------
+   --
+   -- A call is resolved by the types and modes of the actuals, the names of
+   -- named associations, and the type the context wants of the result.
+
+   -- does this subprogram fit the call? Each actual is typed against the
+   -- formal's type, with errors turned into "no" (TRIAL > 0)
+   procedure FITS(Y : SYM; ARGS : NODE; WANT : TYP; OK : out BOOLEAN) is
+      PM : PARM := Y.PARAMS;
+      A : NODE;
+      T : TYP;
+      C : CONS;
+      V : TEXT;
+      RO : BOOLEAN;
+      SAVED : BUFFER := CODE;
+      USED : INTEGER := 0;
+   begin
+      OK := TRUE;
+      TRIAL := TRIAL + 1;
+      CODE := NEW_BUFFER;
+      begin
+         while OK and PM /= null loop
+            A := ACTUAL_FOR(ARGS, PM, Y.PARAMS);
+            if A = null then
+               OK := PM.DFLT /= null;
+            else
+               USED := USED + 1;
+               if A.FLAG /= 0 and A.FLAG /= 4 and A.FLAG /= PM.MODE then
+                  OK := FALSE;
+               elsif PM.MODE = M_IN then
+                  GEXPR(A, PM.T, T, V);
+                  OK := SAME(T, PM.T) or (T.KIND = T_NIL and PM.T.KIND = T_PTR);
+               else
+                  LVALUE(A, V, T, C, RO);
+                  OK := SAME(T, PM.T);
+               end if;
+            end if;
+            PM := PM.NEXT;
+         end loop;
+         if USED /= LIST_LEN(ARGS) then
+            OK := FALSE;
+         end if;
+         if OK and WANT /= null and Y.RESULT.KIND /= T_VOID then
+            OK := SAME(Y.RESULT, WANT) or WANT.KIND = T_VOID;
+         end if;
+      exception
+         when COMPILE_ERROR =>
+            OK := FALSE;
+      end;
+      TRIAL := TRIAL - 1;
+      CODE := SAVED;
+   end FITS;
+
+   function IS_BUILTIN(N : STRING) return BOOLEAN is
+   begin
+      return N = "PUT" or N = "GET" or N = "ABS" or N = "SET_PRIORITY";
+   end IS_BUILTIN;
+
+   -- the visible subprogram of this name that fits; null means the predefined one
+   procedure RESOLVE_OVERLOAD(NAME : STRING; ARGS : NODE; IS_STMT : BOOLEAN; WANT : TYP;
+                              LINE : INTEGER; Y : in out SYM) is
+      Z : SYM := TABLE(HASH(NAME));
+      FIRST : SYM;
+      N : INTEGER := 0;
+      OK : BOOLEAN;
+   begin
+      -- with the wanted result type first, then without it
+      for PASS in 1 .. 2 loop
+         Z := TABLE(HASH(NAME));
+         N := 0;
+         while Z /= null loop
+            if Z.NAME.all = NAME and then (Z.KIND = Y_FUNC or Z.KIND = Y_PROC) then
+               N := N + 1;
+               if FIRST = null then
+                  FIRST := Z;
+               end if;
+               if (Z.RESULT.KIND = T_VOID) = IS_STMT then
+                  if PASS = 1 then
+                     FITS(Z, ARGS, WANT, OK);
+                  else
+                     FITS(Z, ARGS, null, OK);
+                  end if;
+                  if OK then
+                     Y := Z;
+                     return;
+                  end if;
+               end if;
+            end if;
+            Z := Z.CHAIN;
+         end loop;
+      end loop;
+      if IS_BUILTIN(NAME) then
+         Y := null;
+         return;
+      end if;
+      if N > 1 then
+         FAIL(LINE, "no declaration of " & NAME & " fits these actual parameters");
+      end if;
+      Y := FIRST;
+   end RESOLVE_OVERLOAD;
+
+   -- an operator with a user declaration that fits ("*" for matrices, ...);
+   -- "/=" follows "=" and cannot be declared itself (RM79 6.6.1)
+   procedure USER_OPERATOR(E : NODE; WANT : TYP; T : out TYP; R : out TEXT; DONE : out BOOLEAN) is
+      OP : TEXT := E.NAME;
+      NEGATE : BOOLEAN := FALSE;
+      Y : SYM;
+      CALL, FNAME, L, RT : NODE;
+      OK : BOOLEAN;
+   begin
+      DONE := FALSE;
+      if OP.all = "/=" then
+         OP := MK("=");
+         NEGATE := TRUE;
+      end if;
+      if LOOKUP(OP.all) = null then
+         return;
+      end if;
+      L := NN(E.A.KIND, E.A.LINE);
+      L.all := E.A.all;
+      L.NEXT := null;
+      L.TAG := null;
+      L.FLAG := 0;
+      if E.KIND = N_BINOP then
+         RT := NN(E.B.KIND, E.B.LINE);
+         RT.all := E.B.all;
+         RT.NEXT := null;
+         RT.TAG := null;
+         RT.FLAG := 0;
+         L.NEXT := RT;
+      end if;
+      Y := TABLE(HASH(OP.all));
+      while Y /= null loop
+         if Y.NAME.all = OP.all and then Y.KIND = Y_FUNC then
+            FITS(Y, L, null, OK);
+            if OK then
+               FNAME := NN(N_NAME, E.LINE);
+               FNAME.NAME := OP;
+               CALL := NN(N_APPLY, E.LINE);
+               CALL.A := FNAME;
+               CALL.B := L;
+               CALL_WANT := null;
+               GCALL_WITH(CALL, Y, T, R);
+               if NEGATE then
+                  R := MK("(!" & R.all & ")");
+               end if;
+               DONE := TRUE;
+               return;
+            end if;
+         end if;
+         Y := Y.CHAIN;
+      end loop;
+   end USER_OPERATOR;

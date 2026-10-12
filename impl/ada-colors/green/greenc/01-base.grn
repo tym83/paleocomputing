@@ -117,6 +117,9 @@ procedure GREENC is
    T_NIL    : constant INTEGER := 10;
    T_CHAR   : constant INTEGER := 11;
    T_UNIV   : constant INTEGER := 12;
+   T_ACT    : constant INTEGER := 13;
+   T_TDECL  : constant INTEGER := 14;
+   T_ENTRY  : constant INTEGER := 15;
 
    -- symbol kinds
    Y_VAR     : constant INTEGER := 1;
@@ -167,7 +170,7 @@ procedure GREENC is
       NAME : TEXT;
       LITS : NODE;
       ELEM, IDX : TYP;
-      ELEMCONS : CONS;
+      ELEMCONS, TCONS : CONS;
       FIELDS : FIELD;
       TARGET : TYP;
       DECL : NODE;
@@ -190,7 +193,7 @@ procedure GREENC is
       T : TYP;
       C : CONS;
       CFIELD : TEXT;
-      DEFAULT : NODE;
+      DFLT : NODE;
       NEXT : PARM;
    end record;
 
@@ -209,7 +212,7 @@ procedure GREENC is
       PARAMS : PARM;
       RESULT : TYP;
       DEPTH, LEVEL : INTEGER;
-      BYREF, VRP : BOOLEAN;
+      BYREF, VRP, HIDDEN : BOOLEAN;
       MEMBERS, MNEXT : SYM;
       CHAIN, STACK : SYM;
    end record;
@@ -262,4 +265,21 @@ procedure GREENC is
    TRIAL : INTEGER := 0;
 
    TY_INT, TY_BOOL, TY_FLOAT, TY_CHAR, TY_STRING, TY_VOID, TY_NIL, TY_UNIV : TYP;
+   TY_ACT, TY_TDECL, TY_ENTRY : TYP;
+   CUR_TASK : SYM;
+   ACCEPT_DEPTH : INTEGER := 0;
+   FAMARG_DONE : BOOLEAN := FALSE;
+   FAM_IX : NODE;
+   OUT_AWAITS : BUFFER;
    NO_CONS : CONS;
+   UNITS : NODE;
+   PKG_STACK : LINES;
+   CUR_PKG : NODE;
+   PREFIX_HINT : TEXT;
+   CALL_WANT : TYP;
+   PURE_SYM : SYM;
+   PURE_DEPTH : INTEGER := 0;
+   VRP_OK : BOOLEAN := FALSE;
+   IN_LV_PATH : BOOLEAN := FALSE;
+   LAST_DEREF : BOOLEAN := FALSE;
+   MAIN_NAME : TEXT;

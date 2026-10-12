@@ -1127,3 +1127,36 @@ int rt_g_aborted(void) {
     if (g_aborted[i] == cur) return 1;
   return 0;
 }
+
+/* ---- GREEN TEXT_IO GET of numbers (RM79 14.4): an item is a lexical unit,
+ * leading blanks and line ends are skipped ----------------------------------- */
+
+static void g_item_text(char *b, size_t cap) {
+  int c;
+  do {
+    c = rt_getc();
+    if (c < 0) rt_raise(RT_X_FILE);
+  } while (c == ' ' || c == '\t' || c == '\n' || c == '\r');
+  size_t n = 0;
+  while (c >= 0 && c != ' ' && c != '\t' && c != '\n' && c != '\r') {
+    if (n + 1 < cap) b[n++] = (char)c;
+    c = rt_getc();
+  }
+  b[n] = 0;
+}
+
+rt_int rt_g_get_int(void) {
+  char b[64], *end;
+  g_item_text(b, sizeof b);
+  long long v = strtoll(b, &end, 10);
+  if (*end) rt_raise(RT_X_RANGE);
+  return (rt_int)v;
+}
+
+double rt_g_get_float(void) {
+  char b[64], *end;
+  g_item_text(b, sizeof b);
+  double v = strtod(b, &end);
+  if (*end) rt_raise(RT_X_RANGE);
+  return v;
+}

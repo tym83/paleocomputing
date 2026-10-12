@@ -1,0 +1,10 @@
+procedure MAIN is
+   COUNT : INTEGER := 0;
+   function NEXT_VALUE return INTEGER is
+   begin
+      COUNT := COUNT + 1;
+      return COUNT;
+   end NEXT_VALUE;
+begin
+   PUT(NEXT_VALUE);
+end MAIN;

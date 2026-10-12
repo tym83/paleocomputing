@@ -1,0 +1,13 @@
+procedure MAIN is
+   type CELL is record
+      V : INTEGER;
+   end record;
+   type LINK is access CELL;
+   P : LINK;
+   function MAKE(X : INTEGER) return LINK is
+   begin
+      return new CELL(V => X);
+   end MAKE;
+begin
+   P := MAKE(1);
+end MAIN;

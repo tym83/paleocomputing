@@ -1,0 +1,85 @@
+-- packages (RM79 7): library package with a private type, use, P.X
+package STACKS is
+   type STACK is private;
+   EMPTY_ERROR : exception;
+   procedure PUSH(S : in out STACK; X : INTEGER);
+   procedure POP(S : in out STACK; X : out INTEGER);
+   function SIZE(S : STACK) return INTEGER;
+private
+   type CELL;
+   type LINK is access CELL;
+   type CELL is record
+      VALUE : INTEGER;
+      NEXT : LINK;
+   end record;
+   type STACK is record
+      TOP : LINK;
+      COUNT : INTEGER;
+   end record;
+end STACKS;
+
+package body STACKS is
+   procedure PUSH(S : in out STACK; X : INTEGER) is
+   begin
+      S.TOP := new CELL(X, S.TOP);
+      S.COUNT := S.COUNT + 1;
+   end PUSH;
+
+   procedure POP(S : in out STACK; X : out INTEGER) is
+   begin
+      if S.TOP = null then
+         raise EMPTY_ERROR;
+      end if;
+      X := S.TOP.VALUE;
+      S.TOP := S.TOP.NEXT;
+      S.COUNT := S.COUNT - 1;
+   end POP;
+
+   function SIZE(S : STACK) return INTEGER is
+   begin
+      return S.COUNT;
+   end SIZE;
+end STACKS;
+
+package COUNTER is
+   procedure TICK;
+   function VALUE return INTEGER;
+end COUNTER;
+
+package body COUNTER is
+   N : INTEGER := 0;
+   procedure TICK is
+   begin
+      N := N + 1;
+   end TICK;
+   function VALUE return INTEGER is
+   begin
+      return N;
+   end VALUE;
+begin
+   N := 100;
+end COUNTER;
+
+restricted (TEXT_IO, STACKS, COUNTER)
+procedure MAIN is
+   use TEXT_IO;
+   use STACKS;
+   S : STACK;
+   X : INTEGER;
+begin
+   PUSH(S, 1);
+   PUSH(S, 2);
+   STACKS.PUSH(S, 3);
+   PUT("size"); PUT(SIZE(S)); PUT(NEWLINE);
+   POP(S, X); PUT(X);
+   POP(S, X); PUT(X);
+   POP(S, X); PUT(X); PUT(NEWLINE);
+   begin
+      POP(S, X);
+   exception
+      when STACKS.EMPTY_ERROR => PUT("empty"); PUT(NEWLINE);
+   end;
+   COUNTER.TICK;
+   COUNTER.TICK;
+   PUT("counter"); PUT(COUNTER.VALUE); PUT(NEWLINE);
+end MAIN;

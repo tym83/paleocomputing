@@ -1,0 +1,111 @@
+-- INTRO 1979 Example 6.3 (message decoding); the changes are marked CHANGE n and listed in CHANGES.md
+procedure MESSAGE_DECODING is
+   -- CHANGE 1: END_OF_TRANSMISSION, PRINT and the message are "declared
+   -- elsewhere" in the original; here they are given
+   END_OF_TRANSMISSION : constant CHARACTER := EOT;
+   MESSAGE : constant STRING := "GREEN WON IN MAY 1979";
+   procedure PRINT(L : STRING) is
+      LAST : INTEGER := 0;
+   begin
+      for I in 1 .. L'LENGTH loop
+         exit when L(I) = END_OF_TRANSMISSION;
+         if L(I) /= " " then
+            LAST := I;
+         end if;
+      end loop;
+      PUT(L(1 .. LAST));
+      PUT(NEWLINE);
+   end PRINT;
+
+   task GENERATE_MESSAGES;
+
+   task DECODE is
+      entry SEND_CHAR    (C : in CHARACTER);
+      entry RECEIVE_CHAR (C : out CHARACTER);
+   end;
+
+   task PRINT_MESSAGES;
+
+   task body GENERATE_MESSAGES is
+      NEXT_CODE : CHARACTER;
+      NEXT_INDEX : INTEGER := 1;        -- CHANGE 3: the source of the data
+      entry STOP;
+      for STOP use at 8#6060;          -- CHANGE 2: was 8#8060, digit 8 is not octal
+   begin
+      loop
+         select
+            accept STOP;
+            exit;
+         else
+            -- code for receiving data and
+            -- generating NEXT_CODE
+            -- CHANGE 3: the data is the message; at its end the program
+            -- behaves as if the STOP interrupt had come
+            exit when NEXT_INDEX > MESSAGE'LENGTH;
+            NEXT_CODE := MESSAGE(NEXT_INDEX);
+            NEXT_INDEX := NEXT_INDEX + 1;
+            DECODE.SEND_CHAR(NEXT_CODE);
+         end select;
+      end loop;
+      DECODE.SEND_CHAR(END_OF_TRANSMISSION);
+   end;
+
+   task body DECODE is
+      STORAGE_SIZE : constant INTEGER := 500;
+      COUNT : INTEGER range 0 .. STORAGE_SIZE;
+      IN_INDEX, OUT_INDEX : INTEGER range 1 .. STORAGE_SIZE;
+      CODE, CHAR : CHARACTER;
+      STORAGE_AREA : array (1 .. STORAGE_SIZE) of CHARACTER;
+   begin
+      COUNT := 0;
+      IN_INDEX := 1;
+      OUT_INDEX := 1;
+      loop
+         select
+            when COUNT < STORAGE_SIZE =>
+               accept SEND_CHAR(C : in CHARACTER) do
+                  CODE := C;
+               end;
+               -- statements for decoding the value of CODE
+               -- and producing the decoded value in CHAR
+               CHAR := CODE;                    -- CHANGE 4: the identity code
+               STORAGE_AREA(IN_INDEX) := CHAR;
+               COUNT := COUNT + 1;
+               IN_INDEX := (IN_INDEX mod STORAGE_SIZE) + 1;
+         or
+            when COUNT > 0 =>
+               accept RECEIVE_CHAR(C : out CHARACTER) do   -- sic: the scan (PDF p. 81) has ";" here, a slip; "do" restored
+                  C := STORAGE_AREA(OUT_INDEX);    -- source says BUFFER(OUT_INDEX): a slip in the original
+               end;
+               COUNT := COUNT - 1;
+               OUT_INDEX := (OUT_INDEX mod STORAGE_SIZE) + 1;  -- source: BUFFER_SIZE (same slip)
+         end select;
+         exit when CHAR = END_OF_TRANSMISSION and COUNT = 0;
+      end loop;
+   end DECODE;
+
+   task body PRINT_MESSAGES is
+      NEXT_CHAR : CHARACTER;
+      INDEX : INTEGER;
+      LINE  : STRING(1 .. 120);
+   begin
+      INDEX := 1;
+      loop
+         DECODE.RECEIVE_CHAR(NEXT_CHAR);
+         LINE(INDEX) := NEXT_CHAR;
+         if INDEX < 120 then
+            INDEX := INDEX + 1;
+         else
+            PRINT(LINE);
+            INDEX := 1;
+         end if;
+         if NEXT_CHAR = END_OF_TRANSMISSION then
+            PRINT(LINE);
+            exit;
+         end if;
+      end loop;
+   end;
+
+begin -- main program
+   initiate GENERATE_MESSAGES, DECODE, PRINT_MESSAGES;
+end MESSAGE_DECODING;

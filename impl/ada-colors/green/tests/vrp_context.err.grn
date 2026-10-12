@@ -1,0 +1,18 @@
+package P is
+   procedure GEN return INTEGER;
+end P;
+package body P is
+   N : INTEGER := 0;
+   procedure GEN return INTEGER is
+   begin
+      N := N + 1;
+      return N;
+   end GEN;
+end P;
+procedure MAIN is
+   use P;
+begin
+   if GEN > 0 then
+      PUT("positive");
+   end if;
+end MAIN;

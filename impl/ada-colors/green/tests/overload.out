@@ -1,0 +1,11 @@
+vector 11 22 33
+vector 2 4 6
+int 42
+string hello
+string zero
+string zero
+2 3
+move from 1 to 10
+move from 2 to 5
+move from 3 to 7
+different

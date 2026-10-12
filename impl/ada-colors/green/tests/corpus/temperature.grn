@@ -1,0 +1,15 @@
+-- INTRO 1979 Example 1.1 (GREEN, An Informal Introduction, DTIC ADA070753), unchanged
+restricted (TEXT_IO)
+procedure TEMPERATURE_CONVERSION is
+   use TEXT_IO;
+   -- A comment.
+   -- This program reads a value representing a
+   -- fahrenheit temperature and converts it to a
+   -- value representing its centigrade equivalent.
+   type REAL is digits 7;
+   FAHRENHEIT_TEMP, CENTIGRADE_TEMP : REAL;
+begin
+   GET(FAHRENHEIT_TEMP);
+   CENTIGRADE_TEMP := (5.0/9.0) * (FAHRENHEIT_TEMP - 32.0);
+   PUT(CENTIGRADE_TEMP);
+end;
