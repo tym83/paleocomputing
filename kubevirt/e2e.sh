@@ -301,17 +301,19 @@ step_x8() {
 
   # THE boots in a few seconds of X8 time and then waits for the operator;
   # its console is a text screen. On a slow runner the boot takes longer, so
-  # snapshots are taken every 20 seconds until two in a row show the same
-  # text (not all dark): the system came up and settled.
-  b="" deadline=$(($(date +%s) + MACHINE_TIMEOUT))
+  # snapshots are taken every 20 seconds until one matches either of the two
+  # before it (not all dark): the system came up and settled. Two, because
+  # the console cursor blinks and a settled screen alternates between two
+  # counts one character cell apart.
+  b="" c="" deadline=$(($(date +%s) + MACHINE_TIMEOUT))
   while :; do
     sleep 20
     a=$(x8_snapshot a); log "X8 console: $a"
     case $a in *dark_pixels=*) ;; *) die "no X8 console snapshot" ;; esac
     da=${a##*dark_pixels=}
-    [ "$da" = "$b" ] && break
+    [ "$da" = "$b" ] || [ "$da" = "$c" ] && break
     [ "$(date +%s)" -lt "$deadline" ] || die "the X8 console did not settle in ${MACHINE_TIMEOUT}s (last $b, then $da)"
-    b=$da
+    c=$b b=$da
   done
   w=$(echo "$a" | sed -n 's/.* \([0-9]*\)x\([0-9]*\) dark_pixels=.*/\1/p')
   h=$(echo "$a" | sed -n 's/.* \([0-9]*\)x\([0-9]*\) dark_pixels=.*/\2/p')
