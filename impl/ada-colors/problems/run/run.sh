@@ -14,10 +14,17 @@ cat problems/run/C1-main.red >> "$tmp/c1.red"
 # problem 6, process control
 { cat problems/run/06-units.red; echo; body problems/original/red/06-process-control.red \
   | sed -f problems/run/06-process-control.sed; cat problems/run/06-main.red; } > "$tmp/p6.red"
+# problem 8, real-time scheduler; problem 9, distributed output
+{ cat problems/run/08-units.red; echo; body problems/original/red/08-realtime-scheduler.red \
+  | sed -f problems/run/08-realtime-scheduler.sed; cat problems/run/08-main.red; } > "$tmp/p8.red"
+{ cat problems/run/09-units.red; echo; body problems/original/red/09-distributed-output.red \
+  | sed -f problems/run/09-distributed-output.sed; cat problems/run/09-main.red; } > "$tmp/p9.red"
 printf '%-80s\n%-80s\n' STATUS DONE > "$tmp/cards"
-for p in c1 p6; do
+fail=0
+for p in c1 p6 p8 p9; do
   build/redc < "$tmp/$p.red" > "$tmp/$p.c"
   cc -std=gnu11 -O1 -w -Irt "$tmp/$p.c" rt/paleo.c -o "$tmp/$p" -lpthread -lm
-  echo "== $p"
-  perl -e 'alarm shift; exec @ARGV' 30 "$tmp/$p" < "$tmp/cards"
+  perl -e 'alarm shift; exec @ARGV' 30 "$tmp/$p" < "$tmp/cards" > "$tmp/$p.txt" 2>&1
+  if diff -u "problems/run/$p.out" "$tmp/$p.txt"; then echo "ok $p"; else echo "FAIL $p"; fail=1; fi
 done
+exit $fail

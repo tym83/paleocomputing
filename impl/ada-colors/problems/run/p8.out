@@ -1,0 +1,9 @@
+[3 ms] job runs at priority 10
+[5 ms] process body
+[10 ms] job runs at priority 10
+[10 ms] process body
+[17 ms] job runs at priority 10
+[20 ms] process body
+[24 ms] job runs at priority 10
+[30 ms] process body
+[40 ms] all scheduled processes are done

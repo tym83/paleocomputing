@@ -1,0 +1,26 @@
+[2 ms] L1 sent packet 1  
+[4 ms] L3 sent packet 1  
+[4 ms] L1 sent packet 2  
+[5 ms] L4 sent packet 1  
+[6 ms] L1 sent packet 3  
+[8 ms] L7 sent packet 1  
+[8 ms] L3 sent packet 2  
+[8 ms] L1 sent packet 4  
+[10 ms] L9 sent packet 1  
+[10 ms] L4 sent packet 2  
+[10 ms] L1 sent packet 5  
+[12 ms] L3 sent packet 3  
+[15 ms] L4 sent packet 3  
+[16 ms] L7 sent packet 2  
+[16 ms] L3 sent packet 4  
+[20 ms] L9 sent packet 2  
+[20 ms] L4 sent packet 4  
+[20 ms] L3 sent packet 5  
+[24 ms] L7 sent packet 3  
+[25 ms] L4 sent packet 5  
+[30 ms] L9 sent packet 3  
+[32 ms] L7 sent packet 4  
+[40 ms] L9 sent packet 4  
+[40 ms] L7 sent packet 5  
+[50 ms] L9 sent packet 5  
+[50 ms] every transmission acknowledged: the message can be purged

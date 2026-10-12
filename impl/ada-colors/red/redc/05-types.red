@@ -135,7 +135,7 @@ FUNC same(CONST a : typ, CONST b : typ) => BOOL;
       END IF;
       RETURN same(a.elem, b.elem) AND same(a.idx, b.idx);
    END IF;
-   IF a.kind = t_set THEN
+   IF a.kind = t_set OR a.kind = t_mbox THEN
       RETURN same(a.elem, b.elem);
    END IF;
    IF a.kind = t_record THEN
@@ -152,6 +152,22 @@ FUNC same(CONST a : typ, CONST b : typ) => BOOL;
    END IF;
    RETURN FALSE;
 END FUNC same;
+
+% a new type without parameters has the values of its underlying type (4.4.2)
+FUNC base_of(CONST t : typ) => typ;
+   IF t /= NIL AND t.kind = t_new AND t.tparams = NIL THEN
+      RETURN base_of(t.under);
+   END IF;
+   RETURN t;
+END FUNC base_of;
+
+% the constraint of a subtype, looking through a new type without parameters
+FUNC base_cons(CONST t : typ, CONST c : cons) => cons;
+   IF t /= NIL AND t.kind = t_new AND t.tparams = NIL AND t.elemcons /= NIL THEN
+      RETURN base_cons(t.under, t.elemcons);
+   END IF;
+   RETURN c;
+END FUNC base_cons;
 
 FUNC kind_name(CONST t : typ) => STRING[ASCII];
    CASE t.kind
@@ -365,6 +381,7 @@ ABNORMAL FUNC resolve_subtype(CONST st : node, OUT c : cons) => typ IMPORTS ALL;
             VAR ic, ic2, ec : cons;
             VAR it : typ := resolve_subtype(st.a, ic);
             VAR et : typ := resolve_subtype(st.b, ec);
+            ic := base_cons(it, ic);
             t := new_typ(t_array);
             t.idx := it;
             t.elem := et;
@@ -373,9 +390,9 @@ ABNORMAL FUNC resolve_subtype(CONST st : node, OUT c : cons) => typ IMPORTS ALL;
             IF ic.lo /= NIL THEN
                c.lo := ic.lo;
                c.hi := ic.hi;
-            ELSEIF it.kind = t_enum THEN
+            ELSEIF base_of(it).kind = t_enum THEN
                c.lo := mk("0");
-               c.hi := mk(itos(list_len(it.lits) - 1));
+               c.hi := mk(itos(list_len(base_of(it).lits) - 1));
             END IF;
             c.lo2 := mk("1");
             c.hi2 := mk("1");

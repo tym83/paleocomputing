@@ -726,9 +726,11 @@ PROC st_repeat(CONST s : node) IMPORTS ALL;
       RETURN;
    END IF;
    t := resolve_subtype(s.a, c);
-   IF t.kind = t_enum AND c.lo = NIL THEN
+   c := base_cons(t, c);
+   IF base_of(t).kind = t_enum AND c.lo = NIL THEN
+      c := new_cons;
       c.lo := mk("0");
-      c.hi := mk(itos(list_len(t.lits) - 1));
+      c.hi := mk(itos(list_len(base_of(t).lits) - 1));
    ELSEIF c.lo = NIL THEN
       fail(s.line, "a FOR index needs a range");
    END IF;
