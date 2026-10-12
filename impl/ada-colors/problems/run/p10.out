@@ -1,0 +1,3 @@
+queue entry: S F addressee 1234 length 5 packet 1
+queue entry: U R addressee 7 length 40 packet 2
+queue entry: X X addressee 2047 length 255 packet 3

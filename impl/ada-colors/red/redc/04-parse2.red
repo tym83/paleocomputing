@@ -115,6 +115,23 @@ ABNORMAL FUNC abbrev_decl => node IMPORTS ALL;
    RETURN x;
 END FUNC abbrev_decl;
 
+% a representation specification (RM 13.1) chooses the layout of a type and
+% does not change the meaning of the program; redc reads it and keeps the
+% layout of C
+PROC skip_rep IMPORTS ALL;
+   VAR depth : INT := 0;
+   IF accept_kw("REP") THEN
+      WHILE NOT (depth = 0 AND at_op(";")) AND NOT at_kind(k_eof) REPEAT
+         IF at_op("(") OR at_op("[") THEN
+            depth := depth + 1;
+         ELSEIF at_op(")") OR at_op("]") THEN
+            depth := depth - 1;
+         END IF;
+         tpos := tpos + 1;
+      END REPEAT;
+   END IF;
+END PROC skip_rep;
+
 ABNORMAL FUNC type_decl => node IMPORTS ALL;
    VAR line : INT := cur_line;
    VAR name : text;
@@ -137,6 +154,7 @@ ABNORMAL FUNC type_decl => node IMPORTS ALL;
    END IF;
    x.name := name;
    x.a := p_subtype;
+   skip_rep;
    RETURN x;
 END FUNC type_decl;
 
