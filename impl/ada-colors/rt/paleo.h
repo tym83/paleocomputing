@@ -17,6 +17,10 @@
 
 typedef int64_t rt_int;
 
+/* number of components of a RED array descriptor {lo, hi, lo2, hi2, p} */
+#define RT_CNT(a) (((a).hi >= (a).lo && (a).hi2 >= (a).lo2) ? \
+                   ((a).hi - (a).lo + 1) * ((a).hi2 - (a).lo2 + 1) : 0)
+
 /* ---- memory ---------------------------------------------------------- */
 void *rt_alloc(size_t n);
 
@@ -44,6 +48,7 @@ void rt_str_assign(rstr *dst, rstr src);       /* same length required */
 void rt_str_slice_assign(rstr *dst, rt_int i, rt_int j, rstr src);
 rstr rt_str_of_int(rt_int v);
 rstr rt_str_of_float(double v, int prec);
+rstr rt_format(double v, rt_int n, rt_int m);   /* RED A.3 FORMAT */
 rt_int rt_int_of_str(rstr s);
 const char *rt_cstr(rstr s);                   /* NUL-terminated copy */
 

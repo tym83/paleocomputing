@@ -107,6 +107,8 @@ CONST t_nil := 11;
 CONST t_mbox := 12;
 CONST t_lock := 13;
 CONST t_act := 14;
+CONST t_new := 15;
+CONST t_set := 16;
 
 % ---- symbol kinds -------------------------------------------------------------
 CONST y_var := 1;
@@ -129,10 +131,11 @@ TYPE node : PTR RECORD[kind : INT, line : INT, ival : INT, flag : INT,
                        name : text, tag : text,
                        a, b, c, d : node, next : node];
 
-TYPE cons : PTR RECORD[lo, hi, slen : text, mlo, mhi : INT, hasm : BOOL];
+TYPE cons : PTR RECORD[lo, hi, lo2, hi2, slen : text, mlo, mhi : INT, hasm : BOOL, args : node];
 
 TYPE typ : PTR RECORD[kind : INT, name : text, lits : node,
-                      elem : typ, idx : typ, elemcons : cons, elemst : node,
+                      elem : typ, idx, idx2 : typ, elemcons : cons, elemst : node,
+                      under : typ, tparams : node,
                       fields : field, target : typ, decl : node,
                       cname : text, forward, defined, helpers : BOOL,
                       next : typ];
@@ -185,6 +188,7 @@ VAR exits : exitrec;
 VAR frames : INT := 0;
 VAR handlers : lines;
 VAR cleanups : lines;
+VAR trial : INT := 0;
 VAR mcopies : lines;
 
 VAR ty_int, ty_bool, ty_float, ty_ascii, ty_string, ty_void, ty_file, ty_nil : typ;

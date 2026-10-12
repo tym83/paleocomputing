@@ -52,8 +52,11 @@ ABNORMAL FUNC new_name(READONLY base : STRING[ASCII]) => STRING[ASCII] IMPORTS s
    RETURN base & itos(serial);
 END FUNC new_name;
 
-PROC fail(CONST line : INT, READONLY msg : STRING[ASCII]);
-   WRITELN("redc: line " & itos(line) & ": " & msg);
+% while overloads are being tried (trial > 0) an error only means "no match"
+PROC fail(CONST line : INT, READONLY msg : STRING[ASCII]) IMPORTS trial;
+   IF trial = 0 THEN
+      WRITELN("redc: line " & itos(line) & ": " & msg);
+   END IF;
    RAISE compile_error;
 END PROC fail;
 

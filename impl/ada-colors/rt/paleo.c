@@ -288,6 +288,13 @@ rstr rt_str_of_float(double v, int prec) {
   return rt_str_copy(rt_str(b, n));
 }
 
+/* FORMAT(v, n, m): n characters left of the point, m right, zeros kept */
+rstr rt_format(double v, rt_int n, rt_int m) {
+  char b[128];
+  int len = snprintf(b, sizeof b, "%0*.*f", (int)(n + m + 1 + (v < 0)), (int)m, v);
+  return rt_str_copy(rt_str(b, len));
+}
+
 rt_int rt_int_of_str(rstr s) {
   rt_int i = 0, v = 0;
   int neg = 0, any = 0;

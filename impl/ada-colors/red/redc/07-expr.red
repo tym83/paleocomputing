@@ -148,6 +148,25 @@ PROC select_on(READONLY base : STRING[ASCII], CONST bt : typ, CONST e : node, VA
       select_on(deref(base, bt), bt.target, e, ro, code, t, c);
       RETURN;
    END IF;
+   IF bt.kind = t_new THEN
+      VAR p : node := bt.tparams;
+      IF e.name.ALL = "ALL" THEN
+         code := mk(base & ".all");
+         t := bt.under;
+         RETURN;
+      END IF;
+      WHILE p /= NIL REPEAT
+         IF p.name.ALL = e.name.ALL THEN
+            code := mk(base & ".p_" & lower_s(p.name.ALL));
+            t := ty_int;
+            ro := TRUE;
+            RETURN;
+         END IF;
+         p := p.next;
+      END REPEAT;
+      select_on(base & ".all", bt.under, e, ro, code, t, c);
+      RETURN;
+   END IF;
    IF bt.kind = t_record THEN
       VAR f : field := bt.fields;
       WHILE f /= NIL REPEAT
@@ -173,6 +192,25 @@ PROC index_on(READONLY base : STRING[ASCII], CONST bt : typ, CONST e : node, VAR
       finish_ptr(bt);
       ro := FALSE;
       index_on(deref(base, bt), bt.target, e, ro, lv, code, t, c);
+      RETURN;
+   END IF;
+   IF bt.kind = t_new THEN
+      index_on(base & ".all", bt.under, e, ro, lv, code, t, c);
+      RETURN;
+   END IF;
+   IF bt.kind = t_array AND bt.idx2 /= NIL THEN
+      IF list_len(a) /= 2 THEN
+         fail(e.line, "two subscripts expected");
+      END IF;
+      BEGIN
+         CONST i := gexpr(a, bt.idx, it);
+         CONST j := gexpr(a.next, bt.idx2, it);
+         code := mk(base & ".p[(rt_index(" & i & ", " & base & ".lo, " & base & ".hi) - " & base
+                    & ".lo) * (" & base & ".hi2 - " & base & ".lo2 + 1) + rt_index(" & j & ", "
+                    & base & ".lo2, " & base & ".hi2) - " & base & ".lo2]");
+         t := bt.elem;
+         c := bt.elemcons;
+      END;
       RETURN;
    END IF;
    IF list_len(a) /= 1 THEN
@@ -273,6 +311,16 @@ ABNORMAL FUNC gexpr(CONST e : node, CONST want : typ, OUT t : typ) => STRING[ASC
          RETURN gcall(wrap_apply(e), FALSE, t);
       END IF;
       fail(e.line, e.name.ALL & " cannot be used as a value");
+   ELSEIF k = n_unop AND lookup(e.name.ALL) /= NIL AND user_op(e.name.ALL, copy_node(e.a)) /= NIL THEN
+      VAR call : node := nn(n_apply, e.line);
+      VAR fname : node := nn(n_name, e.line);
+      fname.name := e.name;
+      call.a := fname;
+      call.b := copy_node(e.a);
+      RETURN gcall(call, FALSE, t);
+   ELSEIF k = n_unop AND e.name.ALL = "NOT" AND want /= NIL AND want.kind = t_set THEN
+      CONST a := gexpr(e.a, want, t);
+      RETURN "rt_set_not(" & a & ", 0, " & itos(list_len(want.elem.lits) - 1) & ")";
    ELSEIF k = n_unop THEN
       IF e.name.ALL = "NOT" THEN
          CONST a := gexpr(e.a, ty_bool, t);
@@ -327,6 +375,23 @@ ABNORMAL FUNC gexpr(CONST e : node, CONST want : typ, OUT t : typ) => STRING[ASC
    fail(e.line, "this expression is not handled yet");
    RETURN "";
 END FUNC gexpr;
+
+% a node used in an argument list needs its own next link
+ABNORMAL FUNC copy_node(CONST e : node) => node;
+   VAR x : node;
+   ALLOC x PTR;
+   x.kind := e.kind;
+   x.line := e.line;
+   x.ival := e.ival;
+   x.flag := e.flag;
+   x.name := e.name;
+   x.tag := e.tag;
+   x.a := e.a;
+   x.b := e.b;
+   x.c := e.c;
+   x.d := e.d;
+   RETURN x;
+END FUNC copy_node;
 
 ABNORMAL FUNC wrap_apply(CONST e : node) => node;
    VAR x : node := nn(n_apply, e.line);
@@ -420,7 +485,48 @@ END FUNC attribute;
 ABNORMAL FUNC gbinop(CONST e : node, CONST want : typ, OUT t : typ) => STRING[ASCII] IMPORTS ALL;
    VAR op : text := e.name;
    VAR ta, tb, hint : typ;
+   VAR uy : sym;
    t := ty_bool;
+   IF lookup(op.ALL) /= NIL THEN
+      VAR l, r : node;
+      l := copy_node(e.a);
+      r := copy_node(e.b);
+      l.next := r;
+      uy := user_op(op.ALL, l);
+      IF uy /= NIL THEN
+         VAR call : node := nn(n_apply, e.line);
+         VAR fname : node := nn(n_name, e.line);
+         fname.name := op;
+         call.a := fname;
+         call.b := l;
+         RETURN gcall(call, FALSE, t);
+      END IF;
+   END IF;
+   IF op.ALL = "IN" THEN
+      % membership (C.9)
+      CONST s := gexpr(e.b, NIL, tb);
+      IF tb.kind /= t_set THEN
+         fail(e.line, "IN needs a set");
+      END IF;
+      BEGIN
+         CONST a := gexpr(e.a, tb.elem, ta);
+         check_type(ta, tb.elem, e.line);
+         t := ty_bool;
+         RETURN "rt_set_in(" & a & ", " & s & ")";
+      END;
+   END IF;
+   IF (op.ALL = "AND" OR op.ALL = "OR" OR op.ALL = "XOR") AND want /= NIL AND want.kind = t_set THEN
+      CONST a := gexpr(e.a, want, ta);
+      CONST b := gexpr(e.b, want, tb);
+      check_type(tb, ta, e.line);
+      t := ta;
+      IF op.ALL = "AND" THEN
+         RETURN "rt_set_and(" & a & ", " & b & ")";
+      ELSEIF op.ALL = "OR" THEN
+         RETURN "rt_set_or(" & a & ", " & b & ")";
+      END IF;
+      RETURN "rt_set_xor(" & a & ", " & b & ")";
+   END IF;
    IF op.ALL = "AND" OR op.ALL = "OR" OR op.ALL = "XOR" THEN
       CONST a := gexpr(e.a, ty_bool, ta);
       CONST b := gexpr(e.b, ty_bool, tb);
@@ -486,7 +592,19 @@ ABNORMAL FUNC gbinop(CONST e : node, CONST want : typ, OUT t : typ) => STRING[AS
             END IF;
             RETURN "rt_str_le(" & b & ", " & a & ")";
          END IF;
-         IF ct.kind = t_array OR ct.kind = t_record THEN
+         IF ct.kind = t_set THEN
+            IF op.ALL = "=" THEN
+               RETURN "rt_set_eq(" & a & ", " & b & ")";
+            ELSEIF op.ALL = "/=" THEN
+               RETURN "(!rt_set_eq(" & a & ", " & b & "))";
+            ELSEIF op.ALL = "<=" THEN
+               RETURN "rt_set_le(" & a & ", " & b & ")";
+            ELSEIF op.ALL = ">=" THEN
+               RETURN "rt_set_le(" & b & ", " & a & ")";
+            END IF;
+            fail(e.line, "sets are ordered by <= and >=");
+         END IF;
+         IF composite(ct) THEN
             IF op.ALL = "=" THEN
                RETURN eq_code(ct, a, b);
             ELSEIF op.ALL = "/=" THEN
@@ -540,8 +658,55 @@ ABNORMAL FUNC constructor(CONST e : node, CONST want : typ, OUT t : typ) => STRI
    VAR it : node := e.a;
    VAR f : field;
    VAR vt : typ;
+   IF want /= NIL AND want.kind = t_set THEN
+      VAR s : text := mk("rt_set_empty()");
+      t := want;
+      WHILE it /= NIL REPEAT
+         CONST v := gexpr(it.b, want.elem, vt);
+         check_type(vt, want.elem, e.line);
+         s := mk("rt_set_add(" & s.ALL & ", " & v & ")");
+         it := it.next;
+      END REPEAT;
+      RETURN s.ALL;
+   END IF;
+   IF want /= NIL AND want.kind = t_new THEN
+      fail(e.line, "a constructor for " & want.name.ALL & " needs the underlying type");
+   END IF;
+   IF want /= NIL AND want.kind = t_array AND want.idx2 = NIL THEN
+      CONST tmp := new_name("ac");
+      CONST ct := ctype(want);
+      CONST et := ctype(want.elem);
+      VAR parts : text;
+      t := want;
+      IF it /= NIL AND it.a /= NIL AND it.a.b /= NIL AND it.next = NIL THEN
+         % [lo .. hi : value]
+         CONST lo := gexpr(it.a.a, want.idx, vt);
+         CONST hi := gexpr(it.a.b, want.idx, vt);
+         CONST v := gexpr(it.b, want.elem, vt);
+         check_type(vt, want.elem, e.line);
+         RETURN "({ " & ct & " " & tmp & "; " & tmp & ".lo = " & lo & "; " & tmp & ".hi = " & hi
+                & "; " & tmp & ".lo2 = " & tmp & ".hi2 = 1; " & tmp & ".p = rt_alloc(sizeof(" & et
+                & ") * (size_t)RT_CNT(" & tmp & ")); for (rt_int i_ = 0; i_ < RT_CNT(" & tmp
+                & "); i_++) " & tmp & ".p[i_] = " & copy_code(want.elem, v) & "; " & tmp & "; })";
+      END IF;
+      parts := mk("({ " & ct & " " & tmp & "; " & tmp & ".lo = 1; " & tmp & ".hi = " & itos(list_len(it))
+                  & "; " & tmp & ".lo2 = " & tmp & ".hi2 = 1; " & tmp & ".p = rt_alloc(sizeof(" & et & ") * "
+                  & itos(list_len(it) + 1) & ");");
+      FOR i : INT(0 .. list_len(e.a) - 1) REPEAT
+         IF it.a /= NIL THEN
+            fail(e.line, "only positional array constructors are handled");
+         END IF;
+         BEGIN
+            CONST v := gexpr(it.b, want.elem, vt);
+            check_type(vt, want.elem, e.line);
+            parts := mk(parts.ALL & " " & tmp & ".p[" & itos(i) & "] = " & copy_code(want.elem, v) & ";");
+         END;
+         it := it.next;
+      END REPEAT;
+      RETURN parts.ALL & " " & tmp & "; })";
+   END IF;
    IF want = NIL OR want.kind /= t_record THEN
-      fail(e.line, "only record constructors are handled yet");
+      fail(e.line, "the type of this constructor is not known here");
    END IF;
    t := want;
    f := want.fields;
@@ -572,6 +737,89 @@ END FUNC constructor;
 
 % ---- invocations -------------------------------------------------------------------------
 
+% does the actual parameter list fit this deferred unit? (11.1) Each actual is
+% typed against the formal's type with errors turned into "no"
+ABNORMAL FUNC fits(CONST y : sym, CONST args : node) => BOOL IMPORTS ALL;
+   VAR a : node := args;
+   VAR pm : parm := y.params;
+   VAR t : typ;
+   VAR saved : buffer := code;
+   VAR ok : BOOL := TRUE;
+   VAR lv : text;
+   VAR lc : cons;
+   VAR ro : BOOL;
+   trial := trial + 1;
+   code := new_buffer;
+   GUARD
+      WHILE ok AND a /= NIL AND pm /= NIL REPEAT
+         IF pm.mode = m_var OR pm.mode = m_out THEN
+            lvalue(a, lv, t, lc, ro);
+         ELSE
+            CONST v := gexpr(a, pm.t, t);
+         END IF;
+         IF NOT (same(t, pm.t) OR (t.kind = t_nil AND pm.t.kind = t_ptr)) THEN
+            ok := FALSE;
+         END IF;
+         a := a.next;
+         pm := pm.next;
+      END REPEAT;
+      IF a /= NIL OR pm /= NIL THEN
+         ok := FALSE;
+      END IF;
+   BY
+      WHEN compile_error =>
+         ok := FALSE;
+   END GUARD;
+   trial := trial - 1;
+   code := saved;
+   RETURN ok;
+END FUNC fits;
+
+% the visible deferred unit of this name whose interface matches the actuals
+ABNORMAL FUNC resolve_overload(READONLY name : STRING[ASCII], CONST args : node, CONST is_stmt : BOOL,
+                               CONST line : INT) => sym IMPORTS ALL;
+   VAR y : sym := table(hash(name));
+   VAR first : sym;
+   VAR n : INT := 0;
+   WHILE y /= NIL REPEAT
+      IF y.name.ALL = name AND (y.kind = y_func OR y.kind = y_proc) THEN
+         n := n + 1;
+         IF first = NIL THEN
+            first := y;
+         END IF;
+         IF ((y.kind = y_proc) = is_stmt) AND fits(y, args) THEN
+            RETURN y;
+         END IF;
+      END IF;
+      y := y.chain;
+   END REPEAT;
+   IF is_builtin(name) THEN
+      RETURN NIL;
+   END IF;
+   IF n > 1 THEN
+      fail(line, "no definition of " & name & " matches these actual parameters");
+   END IF;
+   RETURN first;
+END FUNC resolve_overload;
+
+FUNC is_builtin(READONLY n : STRING[ASCII]) => BOOL;
+   RETURN n = "ABS" OR n = "POS" OR n = "SUCC" OR n = "PRED" OR n = "SQRT" OR n = "FLOOR"
+       OR n = "WRITELN" OR n = "WRITE" OR n = "READLN" OR n = "SEND" OR n = "RECEIVE"
+       OR n = "DELAY" OR n = "TIME" OR n = "CNVT" OR n = "FORMAT";
+END FUNC is_builtin;
+
+% is there a user definition of this operator symbol that fits? (13.2)
+ABNORMAL FUNC user_op(READONLY op : STRING[ASCII], CONST args : node) => sym IMPORTS ALL;
+   VAR y : sym := table(hash(op));
+   WHILE y /= NIL REPEAT
+      IF y.name.ALL = op AND y.kind = y_func AND fits(y, args) THEN
+         RETURN y;
+      END IF;
+      y := y.chain;
+   END REPEAT;
+   RETURN NIL;
+END FUNC user_op;
+
 ABNORMAL FUNC gcall(CONST e : node, CONST is_stmt : BOOL, OUT t : typ) => STRING[ASCII] IMPORTS ALL;
    VAR fn : node := e.a;
    VAR tt : node;
@@ -590,6 +838,12 @@ ABNORMAL FUNC gcall(CONST e : node, CONST is_stmt : BOOL, OUT t : typ) => STRING
    y := lookup(fn.name.ALL);
    IF y = NIL THEN
       RETURN builtin(fn.name.ALL, tt, e.b, e.line, is_stmt, t);
+   END IF;
+   IF y.kind = y_func OR y.kind = y_proc THEN
+      y := resolve_overload(fn.name.ALL, e.b, is_stmt, e.line);
+      IF y = NIL THEN
+         RETURN builtin(fn.name.ALL, tt, e.b, e.line, is_stmt, t);
+      END IF;
    END IF;
    IF y.kind /= y_func AND y.kind /= y_proc THEN
       fail(e.line, fn.name.ALL & " cannot be invoked");
@@ -671,6 +925,29 @@ ABNORMAL FUNC builtin(READONLY name : STRING[ASCII], CONST tt : node, CONST args
          RETURN "rt_range(" & a & " + 1, 0, " & itos(list_len(at.lits) - 1) & ")";
       END IF;
       RETURN "rt_range(" & a & " - 1, 0, " & itos(list_len(at.lits) - 1) & ")";
+   ELSEIF name = "SQRT" OR name = "SIN" OR name = "COS" OR name = "EXP" OR name = "LN"
+         OR name = "FLOOR" THEN
+      % FLOOR is in C.4; the others stand for a mathematical library capsule
+      CONST a := gexpr(args, ty_float, at);
+      t := ty_float;
+      IF name = "LN" THEN
+         RETURN "log(" & a & ")";
+      END IF;
+      RETURN lower_s(name) & "(" & a & ")";
+   ELSEIF name = "IFLOAT" THEN
+      CONST a := gexpr(args.next, ty_int, at);
+      t := ty_float;
+      RETURN "((double)(" & a & "))";
+   ELSEIF name = "IFIX" THEN
+      CONST a := gexpr(args, ty_float, at);
+      t := ty_int;
+      RETURN "((rt_int)(" & a & "))";
+   ELSEIF name = "FORMAT" THEN
+      CONST a := gexpr(args, ty_float, at);
+      CONST n1 := gexpr(args.next, ty_int, at);
+      CONST m1 := gexpr(args.next.next, ty_int, at);
+      t := ty_string;
+      RETURN "rt_format(" & a & ", " & n1 & ", " & m1 & ")";
    ELSEIF name = "ABS" THEN
       CONST a := gexpr(args, NIL, at);
       t := at;
@@ -687,6 +964,12 @@ ABNORMAL FUNC builtin(READONLY name : STRING[ASCII], CONST tt : node, CONST args
          IF tt.kind = s_string AND at.kind = t_int THEN
             t := ty_string;
             RETURN "rt_str_of_int(" & a & ")";
+         ELSEIF tt.kind = s_string AND at.kind = t_float THEN
+            t := ty_string;
+            RETURN "rt_str_of_float(" & a & ", 6)";
+         ELSEIF tt.kind = s_string AND at.kind = t_bool THEN
+            t := ty_string;
+            RETURN "((" & a & ") ? rt_str(" & q & "TRUE" & q & ", 4) : rt_str(" & q & "FALSE" & q & ", 5))";
          ELSEIF tt.kind = s_int AND at.kind = t_string THEN
             t := ty_int;
             RETURN "rt_int_of_str(" & a & ")";

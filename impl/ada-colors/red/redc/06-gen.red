@@ -30,6 +30,7 @@ PROC declare_body(CONST elems : node) IMPORTS ALL;
       ELSEIF e.kind = n_newtype THEN
          VAR y : sym := new_sym(y_type, e.name);
          y.st := e.a;
+         y.decl := e;
          define(y, e.line);
       END IF;
       e := e.next;
@@ -130,7 +131,10 @@ PROC gen_capsule(CONST d : node) IMPORTS ALL;
    % fix the types while the capsule's own definitions are still known
    m := scope_stack;
    WHILE m /= NIL AND m.depth = depth REPEAT
-      IF (m.kind = y_type OR m.kind = y_abbrev) AND m.t = NIL THEN
+      IF m.kind = y_type AND m.t = NIL AND m.decl /= NIL AND m.decl.kind = n_newtype
+            AND m.decl.b /= NIL THEN
+         m.t := new_type(m, nn(s_name, d.line), m.c);
+      ELSEIF (m.kind = y_type OR m.kind = y_abbrev) AND m.t = NIL THEN
          m.t := resolve_subtype(m.st, m.c);
       ELSEIF m.kind = y_type AND m.t.kind = t_ptr THEN
          finish_ptr(m.t);
@@ -364,7 +368,7 @@ END PROC const_decl;
 % ---- subprograms ------------------------------------------------------------------------
 
 PROC subprogram(CONST d : node) IMPORTS ALL;
-   VAR y : sym := lookup(d.name.ALL);
+   VAR y : sym := lookup_decl(d);
    VAR saved_code : buffer := code;
    VAR saved_fields : buffer := fields_buf;
    VAR saved_in : BOOL := in_func;
@@ -582,6 +586,21 @@ PROC st_assign(CONST s : node) IMPORTS ALL;
    VAR t, vt : typ;
    VAR c : cons;
    VAR ro : BOOL;
+   IF s.a.kind = n_apply AND s.a.b /= NIL AND s.a.b.kind = n_range THEN
+      % assignment to a substring (C.8): the lengths must agree
+      lvalue(s.a.a, lv, t, c, ro);
+      IF ro OR t.kind /= t_string THEN
+         fail(s.line, "slice assignment needs a string variable");
+      END IF;
+      BEGIN
+         CONST lo := gexpr(s.a.b.a, ty_int, vt);
+         CONST hi := gexpr(s.a.b.b, ty_int, vt);
+         CONST v := gexpr(s.b, ty_string, vt);
+         check_type(vt, ty_string, s.line);
+         emit("rt_str_slice_assign(&" & lv.ALL & ", " & lo & ", " & hi & ", " & v & ");");
+      END;
+      RETURN;
+   END IF;
    lvalue(s.a, lv, t, c, ro);
    IF ro THEN
       fail(s.line, "assignment to a readonly data item");

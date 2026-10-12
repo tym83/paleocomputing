@@ -54,3 +54,13 @@ Digest specs -> pick subsets -> bootstrap compilers.
   LEN collides with the .LEN attribute (renamed slen); indirect vars must be reset to NIL at
   every elaboration of a loop body; READONLY temporaries must be boxed per evaluation.
 - Debug aid: PALEO_ABORT=<exception id> prints a C backtrace at the raise.
+### 2026-10-12 — redc grows: tasks, overloading, new types, 2-D arrays, sets; C.1 runs
+- Tasking (mailboxes, WAIT, REGION, priorities, delays) tested in red/tests/tasks.red.
+- Overloading incl. operators; bug found: subprogram body looked up by name picked another
+  overload -> lookup_decl. User ABS(vector) must not hide built-in ABS(INT).
+- RED Rationale C.1 matrix_vector_package (1979) runs for the first time:
+  problems/run/C1-matrix-vector.sed lists the fixes; real 1979 slips found by the translator:
+  undeclared m/n in trans/upperTriangle/backSubstitute, a(p.r), x(k.p), ASSERT b.n : c.m,
+  capsule end name. Logic slips kept: IF i = j (should be /=) skips pivot swap; determ ignores
+  the sign of row swaps and multiplies the diagonal inside the elimination loop;
+  realmultiply loops to k instead of its parameter i.
