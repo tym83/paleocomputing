@@ -1,6 +1,6 @@
 #!/bin/sh
 # Check a RED lab: labs/check.sh <lab> <task> [file]
-#   lab   01..11      task  look | change | break | build
+#   lab   01..12      task  look | change | break | build
 #   file  defaults to the lab's program in labs/red/
 # It translates the file with build/redc, runs it and says whether the task is done.
 set -u
@@ -30,12 +30,15 @@ case "$lab/$task" in
   04/change) want "timeout" "The timeout won the race." "make the sender slower than the WAIT" ;;
   04/break)  want "X_EMPTY_MAILBOX" "RED forbids a SEND to a zero-size mailbox inside WAIT: it could deadlock (10.5)." "wait on SEND(m0, 1) where m0 is a MAILBOX[INT](0)" ;;
   05/break)  want "deadlock" "The exception left the task, its region was released, but main still waits for a message that never comes: the runtime sees every task blocked." "remove the GUARD around the REGION" ;;
-  06/change) want "^a" "Equal priorities run in the order they became eligible." "give a, b and c the same priority" ;;
+  06/change) [ "$(head -1 "$tmp/out")" = "a" ] && ok "Equal priorities run in the order they became eligible." || no "give a, b and c the same priority" ;;
   07/build)  want "max" "Your generic got an instance per type it was called with." "write GENERIC t : TYPE FUNC max(CONST a, b : t) => t and print \"max\" & something" ;;
   08/break)  want "disagree" "Replying before the checkpoint loses a confirmed transfer: the NonStop rule exists for this." "in the primary, swap the checkpoint SEND (with its IF) and the reply SEND, so the crash comes between them" ;;
   08/change) want "exactly once" "Wherever the primary dies, the audit holds." "change crash_after to another request number" ;;
   09/break)  want "NotReady" "Deciding after each event, before the queued relist is read, evicts healthy nodes after a control plane failover." "delete the draining loop in node_ctl" ;;
   10/build)  [ $rc -eq 0 ] && want "7" "Your built-in went through a fixed point of redc." "add MAX to builtin in red/redc/07-expr.red, run make fixpoint, then translate a program printing MAX(3, 7)" ;;
   11/break)  [ $rc -eq 1 ] && ok "The 1979 text does not translate without that change: $(cat "$tmp/out")" || no "drop one line of problems/run/C1-matrix-vector.sed and regenerate" ;;
+  12/look)   want "no circle of waiting" "Every process waits only for processes below it; the society finishes." "run it unchanged" ;;
+  12/change) want "drum transfers 0" "With a core page per segment the segment controller never touches the drum." "set CONST ncore := 8" ;;
+  12/break)  want "deadlock" "The segment controller waited for the message interpreter, which needed the segment controller to read its vocabulary: the reason THE puts the console on level 2." "set report_dumps to TRUE" ;;
   *)         [ $rc -eq 0 ] && { cat "$tmp/out"; exit 0; } || { cat "$tmp/out"; exit 1; } ;;
 esac

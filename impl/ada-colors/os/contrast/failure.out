@@ -1,0 +1,4 @@
+[1 ms] worker 1 holds the lock
+[6 ms] worker 1 failed inside the region
+[6 ms] worker 2 holds the lock
+[11 ms] both workers are through, balance 110: the region released the lock for the failed one

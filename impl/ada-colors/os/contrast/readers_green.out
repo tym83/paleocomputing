@@ -1,0 +1,5 @@
+[10 ms] reader 1 read 0
+[11 ms] reader 2 read 0
+[12 ms] writer wrote 1
+[13 ms] reader 3 read 0
+[13 ms] all done: the server owns the data, the work on copies overlaps
