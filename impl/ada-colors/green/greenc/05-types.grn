@@ -476,7 +476,7 @@
             T.NAME := NAME;
             COMP := D.A;
             while COMP /= null loop
-               F := new FIELD_REC(COMP.NAME, null, null, null);
+               F := new FIELD_REC(COMP.NAME, null, null, null, COMP.B);
                RESOLVE(COMP.A, F.T, F.C);
                if TAIL = null then
                   T.FIELDS := F;
@@ -510,7 +510,8 @@
    -- give a fresh object its storage: strings and arrays own buffers; access
    -- objects start as null (RM79 3.8)
    procedure INIT_STORAGE(LVAL : STRING; T : TYP; C : CONS) is
-      CT, I : TEXT;
+      CT, I, V, X : TEXT;
+      VT : TYP;
       F : FIELD;
    begin
       if T.KIND = T_PTR then
@@ -543,6 +544,12 @@
          F := T.FIELDS;
          while F /= null loop
             INIT_STORAGE(LVAL & "." & C_FIELD(F.NAME.all), F.T, F.C);
+            if F.DFLT /= null then
+               GEXPR(F.DFLT, F.T, VT, V);
+               CHECK_TYPE(VT, F.T, 0);
+               ASSIGN_CODE(LVAL & "." & C_FIELD(F.NAME.all), F.T, V.all, F.C, X);
+               EMIT(X.all);
+            end if;
             F := F.NEXT;
          end loop;
       end if;

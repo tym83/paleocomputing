@@ -421,6 +421,12 @@
          end if;
          FAIL(E.LINE, E.NAME.all & " is not declared");
       end if;
+      if Y.KIND = Y_CONST and Y.HASMV then
+         -- a manifest integer constant is its value, wherever it is used
+         T := Y.T;
+         R := MK("((rt_int)" & INTEGER'REP(Y.MVALUE) & "LL)");
+         return;
+      end if;
       if Y.KIND = Y_VAR or Y.KIND = Y_CONST then
          T := Y.T;
          ACCESS_OF(Y, R);
@@ -653,9 +659,17 @@
       V, D : TEXT;
       C : CONS;
       N : INTEGER;
+      RO : BOOLEAN;
    begin
       if E.A.KIND = N_APPLY and then E.A.A.KIND = N_NAME and then IS_TASK_NAME(E.A.A.NAME.all) then
          MEMBER_ATTR(E, T, R);
+         return;
+      end if;
+      if A = "ADDRESS" then
+         -- the address of an object, an integer in linear memory (RM79 App. A)
+         LVALUE(E.A, V, ATY, C, RO);
+         T := TY_INT;
+         R := MK("((rt_int)(intptr_t)&(" & V.all & "))");
          return;
       end if;
       if A = "COUNT" and then E.A.KIND = N_APPLY and then E.A.A.KIND = N_NAME then
@@ -695,6 +709,13 @@
       if Y /= null and then Y.KIND = Y_TYPE then
          TT := Y.T;
          C := Y.C;
+         if A = "SIZE" then
+            -- the size of a value of the type, in bits (RM79 App. A)
+            CTYPE(TT, D);
+            T := TY_INT;
+            R := MK("((rt_int)(sizeof(" & D.all & ") * 8))");
+            return;
+         end if;
          if A = "ORD" then
             GEXPR(E.B, TT, ATY, V);
             CHECK_TYPE(ATY, TT, E.LINE);
@@ -1052,7 +1073,7 @@
 
    -- the C call of subprogram Y with the actuals of E (RM79 5.2)
    procedure GCALL_WITH(E : NODE; Y : SYM; T : out TYP; R : out TEXT) is
-      ARGS, LV, V : TEXT;
+      ARGS, LV, V, X1, X2 : TEXT;
       A : NODE;
       PM : PARM;
       LT, VT : TYP;
@@ -1069,14 +1090,16 @@
          end if;
          GEXPR(CALL_TASK_IX, Y.MEMBERS.T, VT, V);
          CALL_TASK_IX := null;
-         LV := MK(Y.ACCESS_PATH.all & "[rt_index(" & V.all & ", " & Y.MEMBERS.CNAME.all & "lo, "
-                  & Y.MEMBERS.CNAME.all & "hi) - " & Y.MEMBERS.CNAME.all & "lo]");
+         PATH_AT(Y.MEMBERS.LEVEL, Y.ACCESS_PATH.all, LV);
+         PATH_AT(Y.MEMBERS.LEVEL, Y.MEMBERS.CNAME.all & "lo", X1);
+         PATH_AT(Y.MEMBERS.LEVEL, Y.MEMBERS.CNAME.all & "hi", X2);
+         LV := MK(LV.all & "[rt_index(" & V.all & ", " & X1.all & ", " & X2.all & ") - " & X1.all & "]");
          ARGS := MK("(" & LV.all & " ? " & LV.all & " : (rt_raise(RT_X_TASKING), (void *)0))");
       elsif (Y.KIND = Y_FUNC or Y.KIND = Y_PROC) and then Y.ACCESS_PATH /= null then
          -- a visible subprogram of a task: the task body's frame; before the
          -- task runs there is none
-         ARGS := MK("(" & Y.ACCESS_PATH.all & " ? " & Y.ACCESS_PATH.all
-                    & " : (rt_raise(RT_X_TASKING), (void *)0))");
+         PATH_AT(Y.MEMBERS.LEVEL, Y.ACCESS_PATH.all, LV);
+         ARGS := MK("(" & LV.all & " ? " & LV.all & " : (rt_raise(RT_X_TASKING), (void *)0))");
       elsif Y.LEVEL > 0 then
          LINK_TO(Y.LEVEL, ARGS);
       end if;

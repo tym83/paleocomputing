@@ -357,6 +357,10 @@
 
    procedure TASK_SPEC(E : NODE) is
       HAS_PROCS : BOOLEAN := FALSE;
+      SAVED_DEFER : BOOLEAN;
+      FIELDS, CT : TEXT;
+      PM : PARM;
+      FP, FLO, FHI : TEXT;
       Y, M, Z : SYM;
       SAVED : SYM := CUR_TASK;
       D, V, P, P2 : TEXT;
@@ -402,25 +406,48 @@
       end if;
       OPEN_SCOPE;
       CUR_TASK := Y;
+      SAVED_DEFER := DEFER_ENTRY_STRUCTS;
+      DEFER_ENTRY_STRUCTS := TRUE;
       DECL_ELEMENTS(E.C);
       DECL_ELEMENTS(E.D);
+      DEFER_ENTRY_STRUCTS := SAVED_DEFER;
+      M := SCOPE_STACK;
+      while M /= null and then M.DEPTH = DEPTH loop
+         if M.KIND = Y_ENTRY and not M.FROM_USE then
+            FIELDS := MK(" int dummy_;");
+            PM := M.PARAMS;
+            while PM /= null loop
+               CTYPE(PM.T, CT);
+               if PM.MODE = M_IN then
+                  FIELDS := MK(FIELDS.all & " " & CT.all & " " & PM.CFIELD.all & ";");
+               else
+                  FIELDS := MK(FIELDS.all & " " & CT.all & " *" & PM.CFIELD.all & ";");
+               end if;
+               PM := PM.NEXT;
+            end loop;
+            PUT_TO(OUT_TYPES, "struct " & M.CNAME.all & "p {" & FIELDS.all & " };");
+         end if;
+         M := M.STACK;
+      end loop;
       M := SCOPE_STACK;
       while M /= null and then M.DEPTH = DEPTH loop
          if (M.KIND = Y_FUNC or M.KIND = Y_PROC) and not M.FROM_USE then
             -- a visible subprogram of the task runs in its caller and sees the
             -- task's data (RM79 9.1): its static link is the frame of the task
             -- body, kept in a global once the task runs
-            if IN_FUNC then
-               FAIL(E.LINE, "subprograms in the visible part of a nested task are not handled");
-            end if;
             if not HAS_PROCS and Y.C /= null then
                -- a family: one frame per member
-               PUT_TO(OUT_GLOBALS, "static void **" & Y.CNAME.all & "frames;");
-               EMIT(Y.CNAME.all & "frames = rt_alloc(sizeof(void *) * (size_t)(" & Y.CNAME.all & "hi >= "
-                    & Y.CNAME.all & "lo ? " & Y.CNAME.all & "hi - " & Y.CNAME.all & "lo + 1 : 1));");
+               DECLARE_SLOT("void **", Y.CNAME.all & "frames");
+               PATH_AT(Y.LEVEL, Y.CNAME.all & "frames", FP);
+               PATH_AT(Y.LEVEL, Y.CNAME.all & "lo", FLO);
+               PATH_AT(Y.LEVEL, Y.CNAME.all & "hi", FHI);
+               EMIT(FP.all & " = rt_alloc(sizeof(void *) * (size_t)(" & FHI.all & " >= "
+                    & FLO.all & " ? " & FHI.all & " - " & FLO.all & " + 1 : 1));");
                HAS_PROCS := TRUE;
             elsif not HAS_PROCS then
-               PUT_TO(OUT_GLOBALS, "static void *" & Y.CNAME.all & "frame;");
+               DECLARE_SLOT("void *", Y.CNAME.all & "frame");
+               PATH_AT(Y.LEVEL, Y.CNAME.all & "frame", FP);
+               EMIT(FP.all & " = NULL;");
                HAS_PROCS := TRUE;
             end if;
             if Y.C /= null then
@@ -472,7 +499,9 @@
          TAIL := PM;
          P := P.NEXT;
       end loop;
-      PUT_TO(OUT_TYPES, "struct " & Y.CNAME.all & "p {" & FIELDS.all & " };");
+      if not DEFER_ENTRY_STRUCTS then
+         PUT_TO(OUT_TYPES, "struct " & Y.CNAME.all & "p {" & FIELDS.all & " };");
+      end if;
       Y.RESULT := TY_VOID;
       Y.DECL := E;
       Y.MEMBERS := CUR_TASK;
@@ -509,6 +538,7 @@
    procedure TASK_BODY(E : NODE) is
       Y : SYM := LOOKUP(E.NAME.all);
       B, M, Z : SYM;
+      UPP : TEXT;
       SAVED : SYM := CUR_TASK;
    begin
       if Y /= null and then Y.KIND = Y_GENERIC then
@@ -532,10 +562,18 @@
          COPY_SYM(M, Z);
          DEFINE(Z, E.LINE);
          if (M.KIND = Y_FUNC or M.KIND = Y_PROC) and M.ACCESS_PATH /= null and then SAME_TASK(M.MEMBERS, Y) then
-            if Y.C /= null then
-               B.ACCESS_PATH := MK(M.ACCESS_PATH.all & "[index_ - " & Y.CNAME.all & "lo] = F;");
+            -- the statement runs in the body, whose frame is linked to the
+            -- frame where the task is declared
+            if Y.LEVEL > 0 then
+               UPP := MK("up_->");
             else
-               B.ACCESS_PATH := MK(M.ACCESS_PATH.all & " = F;");
+               UPP := MK("");
+            end if;
+            if Y.C /= null then
+               B.ACCESS_PATH := MK(UPP.all & M.ACCESS_PATH.all & "[index_ - " & UPP.all & Y.CNAME.all
+                                   & "lo] = F;");
+            else
+               B.ACCESS_PATH := MK(UPP.all & M.ACCESS_PATH.all & " = F;");
             end if;
          end if;
          M := M.MNEXT;

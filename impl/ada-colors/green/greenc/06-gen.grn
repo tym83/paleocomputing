@@ -134,7 +134,7 @@
    end DECL_ELEMENTS;
 
    procedure DECL_ELEMENT(E : NODE) is
-      Y : SYM;
+      Y, Z : SYM;
       T, VT : TYP;
       C : CONS;
       ACC, V, X : TEXT;
@@ -238,6 +238,23 @@
             BIND(Y, ACC);
             DEFINE(Y, E.LINE);
          when 46 =>
+            if E.A /= null then
+               -- a renaming is the same exception under another name (RM79 8.5)
+               if E.A.KIND = N_SELECT and then IS_PACKAGE(E.A.A) then
+                  Y := MEMBER_OF(E.A.A.NAME.all, E.A.NAME.all, E.LINE);
+               elsif E.A.KIND = N_NAME then
+                  Y := LOOKUP(E.A.NAME.all);
+               else
+                  Y := null;
+               end if;
+               if Y = null or else Y.KIND /= Y_EXC then
+                  FAIL(E.LINE, "an exception is renamed only as an exception");
+               end if;
+               COPY_SYM(Y, Z);
+               Z.NAME := E.NAME;
+               DEFINE(Z, E.LINE);
+               return;
+            end if;
             -- an exception declaration is one exception, even in a recursive
             -- procedure (RM79 11.1)
             Y := NEW_SYM(Y_EXC, E.NAME);
@@ -348,7 +365,21 @@
          PUT_TO(FIELDS_BUF, " " & CT.all & " result_;");
       end if;
       DECL_ELEMENTS(D.C);
-      GUARDED(D.D, D.E, D.LINE);
+      if D.TAG /= null and then D.TAG.all = "INTERFACE" and Y.RESULT.KIND = T_VOID then
+         -- the foreign body is the runtime's rt_g_<name> (RM79 13.9)
+         X := MK("");
+         PM := Y.PARAMS;
+         while PM /= null loop
+            if X'LENGTH > 0 then
+               X := MK(X.all & ", ");
+            end if;
+            X := MK(X.all & "F->" & PM.CFIELD.all);
+            PM := PM.NEXT;
+         end loop;
+         EMIT("rt_g_" & LOWER_S(D.NAME.all) & "(" & X.all & ");");
+      else
+         GUARDED(D.D, D.E, D.LINE);
+      end if;
       TASK_AWAITS(D.C, AW);
       CLOSE_SCOPE;
       CUR_LEVEL := CUR_LEVEL - 1;

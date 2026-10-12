@@ -1193,3 +1193,7 @@ double rt_g_get_float(void) {
   if (*end) rt_raise(RT_X_RANGE);
   return v;
 }
+
+void rt_g_move_bytes(rt_int from, rt_int to, rt_int n) {
+  if (n > 0) memmove((void *)(intptr_t)to, (const void *)(intptr_t)from, (size_t)n);
+}

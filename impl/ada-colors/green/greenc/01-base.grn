@@ -186,6 +186,7 @@ procedure GREENC is
       T : TYP;
       C : CONS;
       NEXT : FIELD;
+      DFLT : NODE;  -- the initial value of the component, if any (RM79 3.7)
    end record;
 
    type PARM_REC;
@@ -290,6 +291,11 @@ procedure GREENC is
    FAM_IX : NODE;
    -- the member index of F(I).P(...), a visible subprogram of a family member
    CALL_TASK_IX : NODE;
+   -- pragma INTERFACE seen in the statements of the body being parsed (RM79 13.9)
+   SAW_INTERFACE : BOOLEAN := FALSE;
+   -- in a task specification the parameter structs of the entries wait until
+   -- the private part has completed the private types (RM79 7.4)
+   DEFER_ENTRY_STRUCTS : BOOLEAN := FALSE;
    OUT_AWAITS : BUFFER;
    NO_CONS : CONS;
    UNITS : NODE;
