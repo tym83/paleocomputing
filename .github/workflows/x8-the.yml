@@ -43,7 +43,7 @@ jobs:
       - name: Labs
         run: |
           labs/check.sh 01 > /dev/null
-          sed -i 's/^    ncp = 6, /    ncp = 4, /' the/the.elan && labs/check.sh 02 | tail -1 && git checkout the/
+          sed -i 's/^    ncp = 8, /    ncp = 5, /' the/the.elan && labs/check.sh 02 | tail -1 && git checkout the/
           sed -i 's/^    layerbreak = 0, /    layerbreak = 1, /' the/the.elan && MAX=60 labs/check.sh 03 | tail -1 && git checkout the/
 
   web:

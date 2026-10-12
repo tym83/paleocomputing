@@ -7,7 +7,7 @@ here=$(cd "$(dirname "$0")" && pwd)
 python3 "$here/../asm/x8asm.py" "$here/../the/the.elan" -o "$here/the.tape" -s "$here/../build/the.sym"
 python3 - "$here/../build/the.sym" "$here/the.json" <<'PY'
 import json, sys
-want = ['cttab', 'victim', 'scbuse', 'scbmax', 'pcbs', 'pm1sv', 'pm3sv', 'vocsv', 'tsv', 'cur', 'ndrum']
+want = ['cttab', 'victim', 'scbuse', 'scbmax', 'pcbs', 'pm1sv', 'pm3sv', 'vocsv', 'tsv', 'cur', 'ndrum', 'ksv']
 sym = {}
 for line in open(sys.argv[1]):
     addr, name = line.split()[:2]
@@ -15,7 +15,7 @@ for line in open(sys.argv[1]):
         sym[name] = int(addr, 8)
 missing = [w for w in want if w not in sym]
 assert not missing, missing
-sym['ncp'] = 6
+sym['ncp'] = 8
 sym['pcbsize'] = 48
 json.dump(sym, open(sys.argv[2], 'w'), indent=1, sort_keys=True)
 PY

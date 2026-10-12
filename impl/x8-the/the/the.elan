@@ -25,9 +25,9 @@
 """""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
 
 'begin' telex = 1, kbd = 2, lpdev = 11, drum = 27, sysdev = 36, tooth = 38, clock = 39,
-    pcbsize = 48, nprocs = 6,
-    ncp = 6,                " core pages for segments
-    nscb = 6,               " segment control buffer: N + 1 places, N = 5 askers
+    pcbsize = 48, nprocs = 13,
+    ncp = 8,                " core pages for segments
+    nscb = 7,               " segment control buffer: N + 1 places, N = 6 askers
     slice = 5,              " time slice of the user programs, in clock ticks of 10 ms
     cpbase = 16384,         " the first core page
     ntsv = 8,               " segment variables of the transput area
@@ -214,7 +214,39 @@ clkint:
   car1 = a
   a = 1
   resched = a
-  goto(:intloop)
+  a = 0
+  kdprev = a
+  a = dlist, z
+y,goto(:intloop)
+clk1:
+  g = a                 " a sleeping process
+  a = car0
+  a - mg[43], z
+y,goto(:clk2)           " its time has come
+u,a = a, p
+y,goto(:clk2)
+  a = g                 " not yet
+  kdprev = a
+  a = mg[30], z
+y,goto(:intloop)
+  goto(:clk1)
+clk2:
+  a = mg[30]
+  kdnext = a
+  a = kdprev, z
+y,goto(:clk3)
+  d = a
+  a = kdnext
+  md[30] = a
+  goto(:clk4)
+clk3:
+  a = kdnext
+  dlist = a
+clk4:
+  subc(:ready)
+  a = kdnext, z
+y,goto(:intloop)
+  goto(:clk1)
 
 " a system call: the operation is in the saved A, the semaphore in the saved S
 sysint:
@@ -225,10 +257,25 @@ sysint:
   a = md[0]
 u,a - 1, z
 y,goto(:sysint1)
+u,a - 3, z
+y,goto(:sysint2)
   subc(:kv)
   goto(:intloop)
 sysint1:
   subc(:kp)
+  goto(:intloop)
+" the delay (call 3): the process waits until the clock (AR0 of device 39,
+" in ticks of 10 ms) has passed now + S; the cooking clock looks at the list
+sysint2:
+  a = car0
+  a + s
+  md[43] = a
+  a = dlist
+  md[30] = a
+  a = d
+  dlist = a
+  a = 1
+  curblocked = a
   goto(:intloop)
 
 " P (EWD 123): the count goes down; below zero the process waits in the queue
@@ -418,6 +465,15 @@ idle:
 crash:
   ivoff
   crashmsg[6] = a
+crash0:
+  ifa(0)                " wait until the teleprinter has finished what it had
+  a '*' b1, z
+n,goto(:crash0b)
+  a = tar2              " (AFT: nothing pending)
+  rua(18), z
+n,goto(:crash0)
+crash0b:
+  ifoff(telex)
   a = crashcode
   tcode = a
   a = d18
@@ -1151,11 +1207,36 @@ n,goto(:mline9)         " shorter than three characters
 mline3:
   a = line              " end: the report and the stop
 u,a - 14, z
-n,goto(:mline4)
+n,goto(:mlinek0)
   a = line[1]
 u,a - 23, z
-n,goto(:mline4)
+n,goto(:mlinek0)
   goto(:mreport)
+mlinek0:
+  a = line              " k ...: a line for kubectl, a level higher
+u,a - 20, z
+n,goto(:mline4)
+  a = line[1]
+u,a - 36, z
+n,goto(:mline4)
+  a = :line[2]
+  g = a
+  a = :kline
+  d = a
+  a = sva               " the characters after "k "
+  a - 3
+  count3 = a
+mlinek:
+  a = mg
+  md = a
+  g + 1
+  a = d
+  a + 1
+  d = a
+  rep3e(:mlinek)
+  s = :kopsem
+  subc(:sysv)
+  gotor(mc[-1])
 mline4:
   a = line              " pm1, pm2, pm3 and a number: an answer
 u,a - 25, z
@@ -1285,10 +1366,10 @@ mtel:
 mname:
   d = a
   a = md[35]
-  lus(2)
-  a = md[35]
-  a + a
-  a + a                 " four words a name
+  s = a
+  a + s
+  a + s
+  a + a                 " six words a name
   a + :names
   g = a
 mname1:
@@ -1373,7 +1454,12 @@ lp:
   a + :towner
   d = a
   a = md
-  a + a
+u,a - lplast, z         " the same owner as the document before: no new heading
+y,goto(:lp2x)
+  lplast = a
+  s = a
+  a + s
+  a + s
   a + a
   a + :names
   g = a
@@ -1395,6 +1481,7 @@ lp2:
   subc(:lpchar)
   a = :lbuf
   subc(:lpline)
+lp2x:
 " the segment, line by line
   a = lpslot
   a + :tsv
@@ -1862,6 +1949,710 @@ n,goto(:pm33)
   subc(:opening)
   subc(:finish)
 
+"""""""""""""""""""""""""""""""""" level 4: Kube """"""""""""""""""""""""""""
+" A Kubernetes control plane as user programs of THE. THE gives a program
+" nothing but semaphores, segments and the console, so everything else is
+" built from them:
+"   kapi   the API server: it owns the store, a segment, and serves requests
+"          one at a time from a mailbox made of three semaphores (free places,
+"          filled places, the writers' mutex): what RED had as MAILBOX and
+"          GREEN as an entry;
+"   ctrl   the replica controller: as many pods as the deployment wants;
+"   schd   the scheduler: a pending pod goes to the ready node with fewer pods;
+"   kub1, kub2   the kubelets: a heartbeat, and bound pods become running;
+"   node   the node lifecycle controller: a node silent for a second is not
+"          ready, and its pods are evicted;
+"   kctl   kubectl: what the operator types after "k" on the console.
+" The loops sleep with the one new kernel service, a delay on the clock.
+" There is no watch: every pass takes a fresh snapshot of the store, as a
+" level-triggered controller should.
+" The store (one segment): 16 pods of 4 words from 0 (state: 1 pending,
+" 2 bound, 3 running; node; number); the wanted replicas at 100; node k at
+" 110 + 2k (ready, last heartbeat); the next pod number at 120.
+" A client's block: 44 its node (kubelets), 45 the second argument of a
+" request, 46 the answer, 47 its snapshot buffer.
+
+" kreq(A = operation, S = the first argument): A := the answer
+kreq:
+  b + 2
+  m[b - 2] = a
+  m[b - 1] = s
+  s = :kslots
+  subc(:sysp)
+  s = :kmutex
+  subc(:sysp)
+  a = kw
+  a + :kring
+  d = a
+  a = cur
+  md = a
+  a = m[b - 2]
+  md[1] = a
+  a = m[b - 1]
+  md[2] = a
+  a = cur
+  g = a
+  a = mg[45]
+  md[3] = a
+  a = kw
+  a + 4
+  a '*' 31              " eight places of four words
+  kw = a
+  s = :kmutex
+  subc(:sysv)
+  s = :kitems
+  subc(:sysv)
+  a = cur
+  a + 32
+  s = a
+  subc(:sysp)           " the answer
+  a = cur
+  d = a
+  a = md[46]
+  b - 2
+  gotor(mc[-1])
+
+" kat(A = a place 0..15): D := its first word in my snapshot
+kat:
+  a + a
+  a + a
+  s = a
+  a = cur
+  d = a
+  a = md[47]
+  a + s
+  d = a
+  gotor(mc[-1])
+
+" mine: D := my snapshot
+mine:
+  a = cur
+  d = a
+  a = md[47]
+  d = a
+  gotor(mc[-1])
+
+" sleep(S = clock ticks of 10 ms)
+sleep:
+  a = 3
+  ifon(sysdev)
+  gotor(mc[-1])
+
+" snap: a fresh snapshot of the store
+snap:
+  a = 1
+  s = 0
+  subc(:kreq)
+  gotor(mc[-1])
+
+" sec(A = the second argument of the next request)
+sec:
+  s = a
+  a = cur
+  d = a
+  md[45] = s
+  gotor(mc[-1])
+
+" ---------------------------------------------------------------- kapi
+kapi:
+  s = :ksv
+  a = 1
+  subc(:ask)            " the store: an empty segment, zeros
+  d = a
+  a = 3
+  md[100] = a           " deployment web: three replicas
+  a = 1
+  md[110 + 2] = a       " node 1 ready
+  md[110 + 4] = a       " node 2 ready
+  md[120] = a
+  s = :ksv
+  subc(:profane)
+  a = :kt0
+  subc(:kputs)
+  a = 3
+  subc(:putn)
+  a = 37
+  subc(:putc)
+kapi1:
+  s = :kitems
+  subc(:sysp)
+  a = kr
+  a + :kring
+  d = a
+  a = md
+  kclient = a
+  a = md[1]
+  kop = a
+  a = md[2]
+  karg1 = a
+  a = md[3]
+  karg2 = a
+  a = kr
+  a + 4
+  a '*' 31
+  kr = a
+  s = :kslots
+  subc(:sysv)
+  s = :ksv
+  a = 1
+  subc(:ask)
+  kbase = a
+  a = 0
+  kans = a
+  klog = a              " what to write in the log, after the store is let go
+  a = kop
+u,a - 1, z
+y,goto(:kapisnap)
+u,a - 2, z
+y,goto(:kapicreate)
+u,a - 3, z
+y,goto(:kapidelete)
+u,a - 4, z
+y,goto(:kapibind)
+u,a - 5, z
+y,goto(:kapibeat)
+u,a - 7, z
+y,goto(:kapinode)
+u,a - 8, z
+y,goto(:kapiscale)
+kapidone:
+  s = :ksv
+  subc(:profane)
+  a = klog, z
+y,goto(:kapireply)
+  subc(:kapilog)
+kapireply:
+  a = kclient
+  d = a
+  a = kans
+  md[46] = a
+  a = kclient
+  a + 32
+  s = a
+  subc(:sysv)
+  goto(:kapi1)
+
+" a place in the store: D := its first word
+kplace:
+  a + a
+  a + a
+  a + kbase
+  d = a
+  gotor(mc[-1])
+
+" 1 snapshot: the first 128 words of the store into the client's buffer
+kapisnap:
+  a = kclient
+  d = a
+  a = md[47]
+  d = a
+  a = kbase
+  g = a
+  s = 127
+  count6 = s
+kapisnap1:
+  a = mg
+  md = a
+  g + 1
+  a = d
+  a + 1
+  d = a
+  rep6e(:kapisnap1)
+  goto(:kapidone)
+
+" 2 create (arg1 pods): pending pods in free places
+kapicreate:
+  a = 0
+  kapiidx = a
+kapicr1:
+  a = kapiidx
+  subc(:kplace)
+  a = md, z
+n,goto(:kapicr2)
+  a = 1
+  md = a
+  a = 0
+  md[1] = a
+  a = kbase
+  g = a
+  a = mg[120]
+  md[2] = a
+  a + 1
+  mg[120] = a
+  a = 1                 " (one line in the log per create: the last one)
+  klog = a
+  a = md[2]
+  klogpod = a
+  a = karg1
+  a - 1, z
+y,goto(:kapidone)
+  karg1 = a
+kapicr2:
+  a = kapiidx
+  a + 1
+  kapiidx = a
+u,a - 16, z
+n,goto(:kapicr1)
+  goto(:kapidone)
+
+" 3 delete (arg1 the place)
+kapidelete:
+  a = karg1
+  subc(:kplace)
+  a = md, z
+y,goto(:kapidone)
+  a = 0
+  md = a
+  a = md[2]
+  klogpod = a
+  a = 2
+  klog = a
+  goto(:kapidone)
+
+" 4 bind (arg1 the place, arg2 the node): only a pending pod; the store is
+" the truth, and a scheduler with an old snapshot may ask twice
+kapibind:
+  a = karg1
+  subc(:kplace)
+  a = md
+u,a - 1, z
+n,goto(:kapibind1)
+  a = 2
+  md = a
+  a = karg2
+  md[1] = a
+  a = md[2]
+  klogpod = a
+  a = 3
+  klog = a
+  a = 1
+  kans = a
+  goto(:kapidone)
+kapibind1:
+u,a - 2, z
+n,goto(:kapidone)
+  a = karg2             " 4 bind with state 3: the kubelet says running
+  a - 3, z
+n,goto(:kapidone)
+  a = 3
+  md = a
+  a = md[2]
+  klogpod = a
+  a = md[1]
+  karg2 = a
+  a = 4
+  klog = a
+  goto(:kapidone)
+
+" 5 heartbeat (arg1 the node): the time of the clock
+kapibeat:
+  a = karg1
+  a + a
+  a + kbase
+  d = a
+  a = car0
+  md[111] = a
+  goto(:kapidone)
+
+" 7 node state (arg1 the node, arg2 ready)
+kapinode:
+  a = karg1
+  a + a
+  a + kbase
+  d = a
+  a = karg2
+  md[110] = a
+  a = 5
+  klog = a
+  goto(:kapidone)
+
+" 8 scale (arg1 replicas)
+kapiscale:
+  a = kbase
+  d = a
+  a = karg1
+  md[100] = a
+  a = 6
+  klog = a
+  goto(:kapidone)
+
+" the log line for what was done, on the line printer
+kapilog:
+  a = klog
+u,a - 1, z
+y,goto(:klog1)
+u,a - 2, z
+y,goto(:klog2)
+u,a - 3, z
+y,goto(:klog3)
+u,a - 4, z
+y,goto(:klog4)
+u,a - 5, z
+y,goto(:klog5)
+  a = :kt9              " scale
+  subc(:kputs)
+  a = karg1
+  subc(:putn)
+  goto(:klogend)
+klog1:
+  a = :kt1              " create
+  subc(:kputs)
+  a = klogpod
+  subc(:kpod)
+  goto(:klogend)
+klog2:
+  a = :kt2              " delete
+  subc(:kputs)
+  a = klogpod
+  subc(:kpod)
+  goto(:klogend)
+klog3:
+  a = :kt3              " bind ... node n
+  subc(:kputs)
+  a = klogpod
+  subc(:kpod)
+  a = :kt4
+  subc(:kputs)
+  a = karg2
+  subc(:putn)
+  goto(:klogend)
+klog4:
+  a = :kt5              " running ... on node n
+  subc(:kputs)
+  a = klogpod
+  subc(:kpod)
+  a = :kt11
+  subc(:kputs)
+  a = karg2
+  subc(:putn)
+  goto(:klogend)
+klog5:
+  a = :kt6              " node n ready / not ready
+  subc(:kputs)
+  a = karg1
+  subc(:putn)
+  a = karg2, z
+n,goto(:klog5b)
+  a = :kt7
+  subc(:kputs)
+klog5b:
+  a = :kt8
+  subc(:kputs)
+  a = 37
+  subc(:putc)
+  goto(:klogout)        " news about a node goes to the printer at once
+klogend:
+  a = 37
+  subc(:putc)
+  a = klogn
+  a + 1
+  klogn = a
+  a = kitems, z         " nobody waiting: the lines so far go to the printer
+y,goto(:klogout)
+u,a = a, p
+y,gotor(mc[-1])
+klogout:
+  a = 0
+  klogn = a
+  subc(:closeout)
+  gotor(mc[-1])
+
+" kputs(A = the first code of a text that ends with 63), kpod(A = a number)
+kputs:
+  b + 1
+  m[b - 1] = a
+kputs1:
+  a = m[b - 1]
+  d = a
+  a = md
+u,a - 63, z
+y,goto(:kputs2)
+  subc(:putc)
+  a = m[b - 1]
+  a + 1
+  m[b - 1] = a
+  goto(:kputs1)
+kputs2:
+  b - 1
+  gotor(mc[-1])
+kpod:
+  b + 1
+  m[b - 1] = a
+  a = :kt10             " web-
+  subc(:kputs)
+  a = m[b - 1]
+  subc(:putn)
+  b - 1
+  gotor(mc[-1])
+
+" ---------------------------------------------------------------- ctrl
+" as many live pods (pending, bound, running) as wanted
+ctrlx:
+  b + 8
+ctrl:
+  s = 30
+  subc(:sleep)
+  subc(:snap)
+  a = 0
+  m[b - 2] = a
+  m[b - 1] = a
+ctrl1:
+  a = m[b - 1]
+  subc(:kat)
+  a = md, z
+y,goto(:ctrl2)
+  a = m[b - 2]
+  a + 1
+  m[b - 2] = a
+  a = m[b - 1]
+  m[b - 3] = a
+ctrl2:
+  a = m[b - 1]
+  a + 1
+  m[b - 1] = a
+u,a - 16, z
+n,goto(:ctrl1)
+  subc(:mine)
+  a = md[100]
+  a - m[b - 2], z
+y,goto(:ctrl)
+u,a = a, p
+n,goto(:ctrl3)
+  s = 1                 " too few: one more pod (one per pass)
+  a = 2
+  subc(:kreq)
+  goto(:ctrl)
+ctrl3:
+  s = m[b - 3]             " too many: delete the last one
+  a = 3
+  subc(:kreq)
+  goto(:ctrl)
+
+" ---------------------------------------------------------------- schd
+" each pending pod to the ready node with fewer pods
+schdx:
+  b + 8
+schd:
+  s = 20
+  subc(:sleep)
+  subc(:snap)
+  a = 0
+  m[b - 4] = a
+  m[b - 5] = a
+  m[b - 1] = a
+schd1:
+  a = m[b - 1]
+  subc(:kat)
+  a = md
+u,a - 1, p
+n,goto(:schd2)          " free or pending
+  a = md[1]
+u,a - 1, z
+n,goto(:schd1b)
+  a = m[b - 4]
+  a + 1
+  m[b - 4] = a
+  goto(:schd2)
+schd1b:
+  a = m[b - 5]
+  a + 1
+  m[b - 5] = a
+schd2:
+  a = m[b - 1]
+  a + 1
+  m[b - 1] = a
+u,a - 16, z
+n,goto(:schd1)
+  a = 0
+  m[b - 1] = a
+schd3:
+  a = m[b - 1]
+  subc(:kat)
+  a = md
+u,a - 1, z
+n,goto(:schd6)          " not pending
+  subc(:mine)
+  a = md[112], z
+y,goto(:schd4)          " node 1 not ready: node 2, if it is
+  a = md[114], z
+y,goto(:schd5)          " node 2 not ready: node 1
+  a = m[b - 4]
+  a - m[b - 5], z
+y,goto(:schd5)
+u,a = a, p
+n,goto(:schd5)          " node 1 has fewer
+schd4:
+  a = md[114], z
+y,goto(:schd6)          " no ready node at all
+  a = 2
+  goto(:schd5b)
+schd5:
+  a = 1
+schd5b:
+  m[b - 6] = a
+  subc(:sec)
+  s = m[b - 1]
+  a = 4
+  subc(:kreq)
+  a = m[b - 6]
+u,a - 1, z
+n,goto(:schd5c)
+  a = m[b - 4]
+  a + 1
+  m[b - 4] = a
+  goto(:schd6)
+schd5c:
+  a = m[b - 5]
+  a + 1
+  m[b - 5] = a
+schd6:
+  a = m[b - 1]
+  a + 1
+  m[b - 1] = a
+u,a - 16, z
+n,goto(:schd3)
+  goto(:schd)
+
+" ---------------------------------------------------------------- kubelets
+kubx:
+  b + 8
+kub:
+  a = cur
+  d = a
+  a = md[44]
+  a + :kdead
+  d = a
+  a = md, z
+y,goto(:kub0)
+  s = :dead             " the machine of this node was switched off
+  subc(:sysp)
+kub0:
+  a = cur
+  d = a
+  s = md[44]
+  a = 5
+  subc(:kreq)           " heartbeat
+  subc(:snap)
+  a = 0
+  m[b - 1] = a
+kub1:
+  a = m[b - 1]
+  subc(:kat)
+  a = md
+u,a - 2, z
+n,goto(:kub2)           " not bound
+  a = md[1]
+  s = a
+  a = cur
+  d = a
+  a = md[44]
+  a - s, z
+n,goto(:kub2)           " bound elsewhere
+  a = 3
+  subc(:sec)
+  s = m[b - 1]
+  a = 4
+  subc(:kreq)           " running here
+kub2:
+  a = m[b - 1]
+  a + 1
+  m[b - 1] = a
+u,a - 16, z
+n,goto(:kub1)
+  s = 20
+  subc(:sleep)
+  goto(:kub)
+
+" ---------------------------------------------------------------- node
+" the node lifecycle controller
+nodex:
+  b + 8
+node:
+  s = 50
+  subc(:sleep)
+  subc(:snap)
+  a = 1
+  m[b - 7] = a
+node1:
+  subc(:mine)
+  a = m[b - 7]
+  a + m[b - 7]
+  a + d
+  d = a
+  a = car0
+  a - md[111]           " how long the node has been silent
+  a - 100, p
+n,goto(:node3)          " heard within a second
+  a = md[110], z
+y,goto(:node5)          " not ready already
+  a = 0
+  subc(:sec)
+  s = m[b - 7]
+  a = 7
+  subc(:kreq)           " not ready
+  a = 10
+  s = m[b - 7]
+  subc(:opening)        " the console too
+  subc(:snap)
+  a = 0
+  m[b - 1] = a
+node2:
+  a = m[b - 1]
+  subc(:kat)
+  a = md, z
+y,goto(:node2b)
+  a = md[1]
+  a - m[b - 7], z
+n,goto(:node2b)
+  s = m[b - 1]
+  a = 3
+  subc(:kreq)           " evict
+node2b:
+  a = m[b - 1]
+  a + 1
+  m[b - 1] = a
+u,a - 16, z
+n,goto(:node2)
+  goto(:node5)
+node3:
+  a = md[110], z
+n,goto(:node5)          " ready already
+  a = 1
+  subc(:sec)
+  s = m[b - 7]
+  a = 7
+  subc(:kreq)
+node5:
+  a = m[b - 7]
+  a + 1
+  m[b - 7] = a
+u,a - 3, z
+n,goto(:node1)
+  goto(:node)
+
+" ---------------------------------------------------------------- kctl
+" kubectl: the operator's lines after "k": "scale n" or "kill n"
+kctl:
+  s = :kopsem
+  subc(:sysp)
+  a = kline
+u,a - 28, z             " s: scale n
+y,goto(:kctl1)
+u,a - 20, z             " k: kill n
+n,goto(:kctl)
+  a = kline[5]
+  a + :kdead
+  d = a
+  a = 1
+  md = a                " the machine of node n is switched off
+  goto(:kctl)
+kctl1:
+  s = kline[6]
+  a = 8
+  subc(:kreq)
+  goto(:kctl)
+
+
 """""""""""""""""""""""""""""""""" the start """"""""""""""""""""""""""""""""
 " After LS and IP the prille begin has read this tape and given the
 " interrupt of the IP reader (EWD 149, 10.1): we arrive here deaf.
@@ -1873,13 +2664,16 @@ boot:
   ch = a
 " zeros where nothing was loaded
   s = :pcbs
-  a = 6 * 48 - 1
+  a = nprocs * 48 - 1
   subc(:zerof)
   s = :dpt
   a = 1023
   subc(:zerof)
   s = :scb
   a = 12 * nscb - 1
+  subc(:zerof)
+  s = :kline
+  a = 31
   subc(:zerof)
 " the core table: page 0 is the Victim, the others are free
   a = :cttab
@@ -1992,11 +2786,15 @@ y,goto(:boot4)
   mg[31] = a            " the priority
   a = md[4]
   mg[35] = a            " the number
+  a = md[5]
+  mg[47] = a            " the snapshot buffer (Kube)
+  a = md[6]
+  mg[44] = a            " the node (kubelets)
   a = -0
   mg[40] = a            " no output segment
   subc(:ready)
   a = bootp
-  a + 5
+  a + 7
   bootp = a
   goto(:boot3)
 boot4:
@@ -2030,38 +2828,99 @@ zerof1:
 
 """""""""""""""""""""""""""""""""" data """"""""""""""""""""""""""""""""""""
 
-" the processes: block, start, stack, priority, number
+" the processes: block, start, stack, priority, number, snapshot buffer, node
 boottab:
-  :pcbs
+  :pcbs[0]
   :sc
-  :stacks
+  :stacks[0]
   +1
+  +0
+  +0
   +0
   :pcbs[48]
   :mi
   :stacks[64]
   +2
   +1
+  +0
+  +0
   :pcbs[96]
   :lp
   :stacks[128]
   +3
   +2
+  +0
+  +0
   :pcbs[144]
   :pm1
   :stacks[192]
   +4
   +3
+  +0
+  +0
   :pcbs[192]
   :pm2
   :stacks[256]
   +4
   +4
+  +0
+  +0
   :pcbs[240]
   :pm3
   :stacks[320]
   +4
   +5
+  +0
+  +0
+  :pcbs[288]
+  :kapi
+  :stacks[384]
+  +4
+  +6
+  +0
+  +0
+  :pcbs[336]
+  :ctrlx
+  :stacks[448]
+  +4
+  +7
+  :kbufs[0]
+  +0
+  :pcbs[384]
+  :schdx
+  :stacks[512]
+  +4
+  +8
+  :kbufs[128]
+  +0
+  :pcbs[432]
+  :kubx
+  :stacks[576]
+  +4
+  +9
+  :kbufs[256]
+  +1
+  :pcbs[480]
+  :kubx
+  :stacks[640]
+  +4
+  +10
+  :kbufs[384]
+  +2
+  :pcbs[528]
+  :nodex
+  :stacks[704]
+  +4
+  +11
+  :kbufs[512]
+  +0
+  :pcbs[576]
+  :kctl
+  :stacks[768]
+  +4
+  +12
+  +0
+  +0
   +0
 pcbtab:
   :pcbs
@@ -2075,17 +2934,50 @@ names:
   'text' <sc>
   '77'
   '77'
+  '77'
+  '77'
   'text' <mi>
+  '77'
+  '77'
   '77'
   '77'
   'text' <lp>
   '77'
   '77'
+  '77'
+  '77'
   'text' <pm1>
+  '77'
+  '77'
   '77'
   'text' <pm2>
   '77'
+  '77'
+  '77'
   'text' <pm3>
+  '77'
+  '77'
+  '77'
+  'text' <kapi>
+  '77'
+  '77'
+  'text' <ctrl>
+  '77'
+  '77'
+  'text' <schd>
+  '77'
+  '77'
+  'text' <kub1>
+  '77'
+  '77'
+  'text' <kub2>
+  '77'
+  '77'
+  'text' <node>
+  '77'
+  '77'
+  'text' <kctl>
+  '77'
   '77'
 
 " the vocabulary of the messages, copied into a segment at the start
@@ -2120,6 +3012,9 @@ v8:
 v9:
   'text' <drum page written:>
   '77'
+v10:
+  'text' <not ready, node>
+  '77'
 vocend:
 vidx:
   (:v0 - :voc)
@@ -2132,6 +3027,32 @@ vidx:
   (:v7 - :voc)
   (:v8 - :voc)
   (:v9 - :voc)
+  (:v10 - :voc)
+
+kt0:  'text' <deployment web, replicas: >
+  '77'
+kt1:  'text' <created >
+  '77'
+kt2:  'text' <deleted >
+  '77'
+kt3:  'text' <bound >
+  '77'
+kt4:  'text' < to node >
+  '77'
+kt5:  'text' <running >
+  '77'
+kt11: 'text' < on node >
+  '77'
+kt6:  'text' <node >
+  '77'
+kt7:  'text' < not>
+  '77'
+kt8:  'text' < ready>
+  '77'
+kt9:  'text' <scaled to >
+  '77'
+kt10: 'text' <web->
+  '77'
 
 crashmsg:
   'text' <crash  >
@@ -2201,6 +3122,7 @@ lplen: +0
 lpslot: +0
 lpslot2: +0
 lpptr: +0
+lplast: +0
 tqr: +0
 tqw: +0
 bootp: +0
@@ -2214,6 +3136,26 @@ rerr: +0
 rs: +0
 rv: +0
 rpass: +0
+dlist: +0
+kdprev: +0
+kdnext: +0
+kw: +0
+kr: +0
+kclient: +0
+kop: +0
+karg1: +0
+karg2: +0
+kbase: +0
+kans: +0
+klog: +0
+klogpod: +0
+klogn: +0
+kapiidx: +0
+ksv: -0
+kdead:
+  +0
+  +0
+  +0
 vocsv: -0
 pm1sv:
   -0
@@ -2263,6 +3205,14 @@ tfree:   +8
   +0
 dead:    +0
   +0
+kslots:  +8
+  +0
+kitems:  +0
+  +0
+kmutex:  +1
+  +0
+kopsem:  +0
+  +0
 
 " start orders (EWD 149, 4.1): lock word, label of the next one, code word
 tlock: +0
@@ -2273,13 +3223,16 @@ lnext: +0
 lcode: +0
 
 " storage that the start fills or that is written before it is read
-pcbs:      'skip' 288
-stacks:    'skip' 384
+pcbs:      'skip' 624
+stacks:    'skip' 832
+kbufs:     'skip' 640
+kring:     'skip' 32
+kline:     'skip' 32
 bootstack: 'skip' 32
 kstack:    'skip' 32
 dpt:       'skip' 1024
-scb:       'skip' 72
-cttab:     'skip' 24
+scb:       'skip' (12 * nscb)
+cttab:     'skip' (4 * ncp)
 kbring:    'skip' 16
 mreq:      'skip' 8
 tq:        'skip' 8

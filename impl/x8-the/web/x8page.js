@@ -7,24 +7,24 @@
   const ru = params.get('lang') === 'ru';
   const T = ru ? {
     title: 'THE на Electrologica X8',
-    lead: 'Мультипрограммная система Дейкстры (1965–68), заново написанная в машинном коде X8 по его статьям, на эмуляторе X8, собранном по симулятору Математического центра 1971 года. Машина стартует как настоящая: LS, затем IP, и CHARON читает ленту с системой. Время виртуальное: при скорости 1× X8 работает со своей настоящей скоростью, телетайп печатает десять знаков в секунду. Когда pm2 спросит, сколько квадратов печатать, ответьте строкой «pm2 12»; в конце наберите «end».',
+    lead: 'Мультипрограммная система Дейкстры (1965–68), заново написанная в машинном коде X8 по его статьям, на эмуляторе X8, собранном по симулятору Математического центра 1971 года. Машина стартует как настоящая: LS, затем IP, и CHARON читает ленту с системой. Время виртуальное: при скорости 1× X8 работает со своей настоящей скоростью, телетайп печатает десять знаков в секунду. Когда pm2 спросит, сколько квадратов печатать, ответьте строкой «pm2 12». Kubernetes работает здесь как программы пользователей: «k kill 2» выключает машину узла 2, «k scale 5» просит пять реплик, а API-сервер пишет журнал на построчную печать. В конце наберите «end».',
     start: 'LS, IP', restart: 'Заново', speed: 'скорость ', console: 'Консольный телетайп', lp: 'Построчная печать',
     core: 'Ферритовая память: страницы сегментов', send: 'Нажать', running: 'работает', stopped: 'машина остановилась',
     idle: 'динамический стоп: ждёт прерывания', time: 'время', drum: 'обмены с барабаном', scb: 'буфер контроллера',
     page: 'стр.', holds: 'сегмент', holy: 'святость', victim: 'Жертва', free: 'свободна', coming: 'едет с барабана',
     placeholder: 'например: pm2 12',
     legend: 'Жертва — страница, в которую придёт следующий сегмент с барабана. Святую страницу нельзя выбрать Жертвой (EWD 113).',
-    names: { sieve: 'pm1 решето', data: 'pm3 данные', voc: 'словарь сообщений', out: 'вывод', queue: 'очередь печати' }
+    names: { sieve: 'pm1 решето', data: 'pm3 данные', voc: 'словарь сообщений', out: 'вывод', queue: 'очередь печати', store: 'хранилище Kube' }
   } : {
     title: 'THE on the Electrologica X8',
-    lead: 'Dijkstra\'s multiprogramming system (1965–68), written again in X8 machine code from his papers, on an X8 emulator built from the 1971 simulator of the Mathematisch Centrum. The machine starts as the real one did: LS, then IP, and CHARON reads the system tape. Time is virtual: at 1× the X8 runs at its own speed and the teleprinter prints ten characters a second. When pm2 asks how many squares to print, answer with the line "pm2 12"; at the end type "end".',
+    lead: 'Dijkstra\'s multiprogramming system (1965–68), written again in X8 machine code from his papers, on an X8 emulator built from the 1971 simulator of the Mathematisch Centrum. The machine starts as the real one did: LS, then IP, and CHARON reads the system tape. Time is virtual: at 1× the X8 runs at its own speed and the teleprinter prints ten characters a second. When pm2 asks how many squares to print, answer with the line "pm2 12". Kubernetes runs here as user programs: "k kill 2" switches off the machine of node 2, "k scale 5" asks for five replicas, and the API server keeps its log on the line printer. At the end type "end".',
     start: 'LS, IP', restart: 'Again', speed: 'speed ', console: 'Console teleprinter', lp: 'Line printer',
     core: 'Core: the pages of segment control', send: 'Type', running: 'running', stopped: 'the machine stopped',
     idle: 'dynamic stop: waiting for an interrupt', time: 'time', drum: 'drum transfers', scb: 'controller buffer',
     page: 'page', holds: 'segment', holy: 'holiness', victim: 'Victim', free: 'free', coming: 'coming from the drum',
     placeholder: 'for example: pm2 12',
     legend: 'The Victim is the page the next segment from the drum will come into. A holy page is never chosen as the Victim (EWD 113).',
-    names: { sieve: 'pm1 sieve', data: 'pm3 data', voc: 'message vocabulary', out: 'output', queue: 'printer queue' }
+    names: { sieve: 'pm1 sieve', data: 'pm3 data', voc: 'message vocabulary', out: 'output', queue: 'printer queue', store: 'Kube store' }
   };
   const $ = (id) => document.getElementById(id);
   document.documentElement.lang = ru ? 'ru' : 'en';
@@ -41,7 +41,7 @@
   $('send').textContent = T.send;
   $('line').placeholder = T.placeholder;
   $('legend').textContent = T.legend;
-  const PROCS = ['sc', 'mi', 'lp', 'pm1', 'pm2', 'pm3'];
+  const PROCS = ['sc', 'mi', 'lp', 'pm1', 'pm2', 'pm3', 'kapi', 'ctrl', 'schd', 'kub1', 'kub2', 'node', 'kctl'];
   const CPM = 800;   // cycles per millisecond (1.25 us a cycle)
 
   let mod = null, sym = null, tapeBytes = null;
@@ -56,9 +56,10 @@
     if (sv >= sym.pm1sv && sv < sym.pm1sv + 4) return n.sieve + ' ' + (sv - sym.pm1sv);
     if (sv >= sym.pm3sv && sv < sym.pm3sv + 6) return n.data + ' ' + (sv - sym.pm3sv);
     if (sv === sym.vocsv) return n.voc;
+    if (sv === sym.ksv) return n.store;
     if (sv >= sym.tsv && sv < sym.tsv + 8) return n.queue + ' ' + (sv - sym.tsv);
     const k = Math.floor((sv - sym.pcbs) / sym.pcbsize);
-    if (k >= 0 && k < 6 && sv - sym.pcbs - k * sym.pcbsize === 40) return PROCS[k] + ' ' + n.out;
+    if (k >= 0 && k < PROCS.length && sv - sym.pcbs - k * sym.pcbsize === 40) return PROCS[k] + ' ' + n.out;
     return '@' + sv.toString(8);
   }
 
@@ -84,7 +85,7 @@
     $('stats').innerHTML =
       '<span>' + T.time + '</span><span>' + seconds(mod._x8w_cycles()).trim() + ' s</span>' +
       '<span>' + T.drum + '</span><span>' + mod._x8w_drum() + '</span>' +
-      '<span>' + T.scb + '</span><span>' + word(sym.scbuse) + ' / 6 (max ' + word(sym.scbmax) + ')</span>';
+      '<span>' + T.scb + '</span><span>' + word(sym.scbuse) + ' / 7 (max ' + word(sym.scbmax) + ')</span>';
   }
 
   function drain() {
