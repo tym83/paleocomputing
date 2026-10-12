@@ -300,18 +300,22 @@ step_x8() {
   case $emu in *"-kernel /payload/the.tape"*) ;; *) die "the THE tape is not the kernel" ;; esac
 
   # THE boots in a few seconds of X8 time and then waits for the operator;
-  # its console is a text screen. Two snapshots some time apart must show
-  # text (not all dark) and be the same: the system came up and settled.
-  sleep 60
-  a=$(x8_snapshot a); log "X8 console: $a"
-  sleep 20
-  b=$(x8_snapshot b); log "X8 console: $b"
-  da=${a##*dark_pixels=}
-  case $a in *dark_pixels=*) ;; *) die "no X8 console snapshot" ;; esac
+  # its console is a text screen. On a slow runner the boot takes longer, so
+  # snapshots are taken every 20 seconds until two in a row show the same
+  # text (not all dark): the system came up and settled.
+  b="" deadline=$(($(date +%s) + MACHINE_TIMEOUT))
+  while :; do
+    sleep 20
+    a=$(x8_snapshot a); log "X8 console: $a"
+    case $a in *dark_pixels=*) ;; *) die "no X8 console snapshot" ;; esac
+    da=${a##*dark_pixels=}
+    [ "$da" = "$b" ] && break
+    [ "$(date +%s)" -lt "$deadline" ] || die "the X8 console did not settle in ${MACHINE_TIMEOUT}s (last $b, then $da)"
+    b=$da
+  done
   w=$(echo "$a" | sed -n 's/.* \([0-9]*\)x\([0-9]*\) dark_pixels=.*/\1/p')
   h=$(echo "$a" | sed -n 's/.* \([0-9]*\)x\([0-9]*\) dark_pixels=.*/\2/p')
   [ -n "$w" ] && [ "$da" -lt $((w * h)) ] || die "the X8 console is blank"
-  [ "${b##*dark_pixels=}" = "$da" ] || die "the X8 console did not settle ($da, then ${b##*dark_pixels=})"
   log "X8 console shows THE: dark_pixels=$da of $((w * h))"
 }
 
