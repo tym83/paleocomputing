@@ -8,6 +8,19 @@ PROC translate(CONST units : node) IMPORTS ALL;
          caps.d := u;
          declare_body(u.c);
          body_elements(u.c);
+         % the library capsules are declared in the scope of the program
+         BEGIN
+            VAR l : node := units;
+            WHILE l /= u REPEAT
+               BEGIN
+                  CONST w := waits_of(l);
+                  IF w.LEN > 0 THEN
+                     emit(w);
+                  END IF;
+               END;
+               l := l.next;
+            END REPEAT;
+         END;
       ELSE
          gen_capsule(u);
       END IF;

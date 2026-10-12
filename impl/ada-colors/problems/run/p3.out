@@ -1,0 +1,14 @@
+[0 ms] producer: created log
+[5 ms] producer: wrote block 1
+[7 ms] reader 1: x_read_beingwritten
+[10 ms] producer: wrote block 2
+[15 ms] producer: wrote block 3
+[15 ms] producer: block 4: x_write_size_exceeded
+[15 ms] producer: endwrite
+[24 ms] janitor: create log again: x_create_exists
+[24 ms] janitor: destroy while read: x_destroy_fileused
+[26 ms] reader 3: block 1 says record 2
+[31 ms] reader 2: block 2 says record 3
+[40 ms] janitor: destroyed log
+[40 ms] janitor: destroy a missing file: X_NIL, the package has no answer
+[45 ms] reader 4: x_noexists

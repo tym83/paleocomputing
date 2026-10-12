@@ -184,7 +184,7 @@ PROC select_on(READONLY base : STRING[ASCII], CONST bt : typ, CONST e : node, VA
       WHILE f /= NIL REPEAT
          IF f.name.ALL = e.name.ALL THEN
             c := f.c;
-            code := mk(base & "." & lower_s(e.name.ALL));
+            code := mk(base & "." & field_c(e.name.ALL));
             t := f.t;
             RETURN;
          END IF;
@@ -311,6 +311,10 @@ ABNORMAL FUNC gexpr(CONST e : node, CONST want : typ, OUT t : typ) => STRING[ASC
    ELSEIF k = n_name THEN
       VAR y : sym := lookup(e.name.ALL);
       IF y = NIL THEN
+         IF e.name.ALL = "ME" THEN
+            t := ty_act;
+            RETURN "rt_me()";
+         END IF;
          IF e.name.ALL = "SIZELN" OR e.name.ALL = "EOF" OR e.name.ALL = "SYS_IN"
                OR e.name.ALL = "SYS_OUT" OR e.name.ALL = "TIME" OR e.name.ALL = "MILLISECONDS"
                OR e.name.ALL = "SECONDS" OR e.name.ALL = "MINUTES" OR e.name.ALL = "HOURS" THEN
@@ -594,13 +598,13 @@ ABNORMAL FUNC gbinop(CONST e : node, CONST want : typ, OUT t : typ) => STRING[AS
       BEGIN
          CONST a := gexpr(e.a, hint, ta);
          CONST b := gexpr(e.b, ta, tb);
-         VAR ct : typ := ta;
+         VAR ct : typ := base_of(ta);
          t := ty_bool;
          IF ta.kind /= t_nil AND tb.kind /= t_nil THEN
             check_type(tb, ta, e.line);
          END IF;
          IF ta.kind = t_nil THEN
-            ct := tb;
+            ct := base_of(tb);
          END IF;
          IF ct.kind = t_string THEN
             IF op.ALL = "=" THEN
@@ -745,7 +749,7 @@ ABNORMAL FUNC constructor(CONST e : node, CONST want : typ, OUT t : typ) => STRI
             BEGIN
                CONST v := gexpr(it.b, f.t, vt);
                check_type(vt, f.t, e.line);
-               parts := mk(parts.ALL & " " & tmp & "." & lower_s(f.name.ALL) & " = "
+               parts := mk(parts.ALL & " " & tmp & "." & field_c(f.name.ALL) & " = "
                            & copy_code(f.t, v) & ";");
             END;
             it := it.next;

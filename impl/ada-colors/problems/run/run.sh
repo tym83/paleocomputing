@@ -11,17 +11,20 @@ body() { sed -n '/^% -----/,$p' "$1" | tail -n +2; }
 LC_ALL=C sed -f problems/run/C1-matrix-vector.sed problems/original/red/C1-matrix-vector.red \
   | sed -n '/^CAPSULE matrix_vector_package/,/^END CAPSULE/p' > "$tmp/c1.red"
 cat problems/run/C1-main.red >> "$tmp/c1.red"
-# problem 6, process control
-{ cat problems/run/06-units.red; echo; body problems/original/red/06-process-control.red \
-  | sed -f problems/run/06-process-control.sed; cat problems/run/06-main.red; } > "$tmp/p6.red"
-# problem 8, real-time scheduler; problem 9, distributed output
-{ cat problems/run/08-units.red; echo; body problems/original/red/08-realtime-scheduler.red \
-  | sed -f problems/run/08-realtime-scheduler.sed; cat problems/run/08-main.red; } > "$tmp/p8.red"
-{ cat problems/run/09-units.red; echo; body problems/original/red/09-distributed-output.red \
-  | sed -f problems/run/09-distributed-output.sed; cat problems/run/09-main.red; } > "$tmp/p9.red"
+# contract problem NN: the configuration capsule, NN-units.red, the original
+# through NN-slug.sed, then NN-main.red; the program is pN
+red_problem() {
+  f=$(ls problems/original/red/$1-*.red)
+  { cat problems/run/configuration.red
+    if [ -f "problems/run/$1-units.red" ]; then cat "problems/run/$1-units.red"; fi
+    echo; body "$f" | sed -f "problems/run/$(basename "$f" .red).sed"
+    cat "problems/run/$1-main.red"; } > "$tmp/p${1#0}.red"
+}
+RED_PROBLEMS="01 02 03 04 05 06 07 08 09 10"
+for n in $RED_PROBLEMS; do red_problem "$n"; done
 printf '%-80s\n%-80s\n' STATUS DONE > "$tmp/cards"
 fail=0
-for p in c1 p6 p8 p9; do
+for p in c1 $(for n in $RED_PROBLEMS; do printf 'p%s ' "${n#0}"; done); do
   build/redc < "$tmp/$p.red" > "$tmp/$p.c"
   cc -std=gnu11 -O1 -w -Irt "$tmp/$p.c" rt/paleo.c -o "$tmp/$p" -lpthread -lm
   perl -e 'alarm shift; exec @ARGV' 30 "$tmp/$p" < "$tmp/cards" > "$tmp/$p.txt" 2>&1

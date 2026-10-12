@@ -1,0 +1,4 @@
+[1 min] node 1 to node 4: distance 2, delay 15, via node 2
+[1 min] node 1 to node 5: distance 3, delay 16, via node 2
+[15 min] node 1 to node 4: distance 2, delay 6, via node 3
+[15 min] node 1 to node 5: distance 3, delay 7, via node 3

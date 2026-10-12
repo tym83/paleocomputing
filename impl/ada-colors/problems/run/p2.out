@@ -1,0 +1,20 @@
+[10 ms] hardware: interrupt on level 3
+[10 ms] hardware: interrupt on level 2
+[10 ms] hardware: interrupt on level 1
+[10 ms] hardware: interrupt on level 0
+[10 ms] level 0 handles its interrupt 1
+[10 ms] level 1 handles its interrupt 1
+[10 ms] level 2 handles its interrupt 1
+[10 ms] level 3 handles its interrupt 1
+[20 ms] hardware: interrupt on level 3
+[20 ms] hardware: interrupt on level 3
+[20 ms] hardware: interrupt on level 2
+[20 ms] hardware: interrupt on level 0
+[20 ms] hardware: interrupt on level 3
+[20 ms] hardware: interrupt on level 2
+[20 ms] level 0 handles its interrupt 2
+[20 ms] level 2 handles its interrupt 2
+[20 ms] level 2 handles its interrupt 3
+[20 ms] level 3 handles its interrupt 2
+[20 ms] level 3 handles its interrupt 3
+[20 ms] level 3 handles its interrupt 4

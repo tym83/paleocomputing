@@ -164,6 +164,9 @@ TYPE exitrec : PTR RECORD[match, label : text, depth : INT, next : exitrec];
 % the capsules being translated, innermost first
 TYPE caprec : PTR RECORD[d : node, next : caprec];
 
+% what leaving the scope of a capsule's declaration waits for (10.1, 8.1)
+TYPE waitrec : PTR RECORD[d : node, w : text, next : waitrec];
+
 TYPE fctxrec : PTR RECORD[depth : INT, imps : node, all_imp : BOOL, next : fctxrec];
 
 EXCEPTION compile_error;
@@ -187,6 +190,7 @@ VAR in_func : BOOL := FALSE;
 VAR cur_level : INT := 0;
 VAR fctx : fctxrec;
 VAR caps : caprec;
+VAR cap_waits : waitrec;
 VAR psub : lines;          % parameter placeholders of the new type being created
 VAR st_field : text;
 VAR out_frames : buffer;
