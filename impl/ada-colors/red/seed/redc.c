@@ -1369,14 +1369,27 @@ struct f_builtin_400fr { int dummy;
  P413 mt_1159;
  P413 dt_1160;
  rstr v_1161;
- rstr v_1162;
- rstr v_1163;
- rstr v_1164;
- rstr a_1165;
+ P404 lv_1162;
+ P411 lc_1163;
+ int ro_1164;
+ P413 mt_1165;
+ P404 lv_1166;
+ P404 dv_1167;
+ P404 bv_1168;
+ P411 lc_1169;
+ int ro_1170;
+ P413 mt_1171;
+ P413 dt_1172;
+ P413 bt_1173;
+ rstr v_1174;
+ rstr v_1175;
+ rstr v_1176;
+ rstr v_1177;
+ rstr a_1178;
 };
 struct f_translate_402fr { int dummy;
  P409 units_401;
- P409 u_1166;
+ P409 u_1179;
 };
 struct f_print_program_403fr { int dummy;
 };
@@ -7799,13 +7812,54 @@ f_check_type_167(F->at_1137, (*(P413)rt_nil_check(F->mt_1159)).elem, F->line_397
 F->result_ = rt_str_cat(rt_str_cat(rt_str_cat(rt_str_cat(rt_str_cat(rt_str_cat(rt_str("({ ", 3), f_ctype_169((*(P413)rt_nil_check(F->mt_1159)).elem)), rt_str(" m_ = ", 6)), F->v_1161), rt_str("; rt_send(&", 11)), (*(P404)rt_nil_check(F->lv_1155))), rt_str(", &m_); })", 10));
 goto ret_;
 }
+} else if ((rt_str_eq((*F->name_394), rt_str("FULL_SLOTS", 10)) || rt_str_eq((*F->name_394), rt_str("EMPTY_SLOTS", 11)))) {
+F->lv_1162 = NULL;
+F->lc_1163 = NULL;
+F->mt_1165 = NULL;
+f_lvalue_335(F->args_396, &F->lv_1162, &F->mt_1165, &F->lc_1163, &F->ro_1164);
+if (((*(P413)rt_nil_check(F->mt_1165)).kind != ((rt_int)12LL))) {
+f_fail_21(F->line_397, ({ rstr *b_ = rt_alloc(sizeof(rstr)); *b_ = rt_str_cat((*F->name_394), rt_str(" needs a mailbox", 16)); b_; }));
+}
+(*F->t_399) = g_ty_int_461;
+if (rt_str_eq((*F->name_394), rt_str("FULL_SLOTS", 10))) {
+F->result_ = rt_str_cat(rt_str_cat(rt_str("rt_mbox_count(&", 15), (*(P404)rt_nil_check(F->lv_1162))), rt_str(")", 1));
+goto ret_;
+}
+F->result_ = rt_str_cat(rt_str_cat(rt_str_cat(rt_str_cat(rt_str("(", 1), (*(P404)rt_nil_check(F->lv_1162))), rt_str(".cap - rt_mbox_count(&", 22)), (*(P404)rt_nil_check(F->lv_1162))), rt_str("))", 2));
+goto ret_;
+} else if ((rt_str_eq((*F->name_394), rt_str("COND_SEND", 9)) || rt_str_eq((*F->name_394), rt_str("COND_RECEIVE", 12)))) {
+F->lv_1166 = NULL;
+F->dv_1167 = NULL;
+F->bv_1168 = NULL;
+F->lc_1169 = NULL;
+F->mt_1171 = NULL;
+F->dt_1172 = NULL;
+F->bt_1173 = NULL;
+f_lvalue_335(F->args_396, &F->lv_1166, &F->mt_1171, &F->lc_1169, &F->ro_1170);
+if (((*(P413)rt_nil_check(F->mt_1171)).kind != ((rt_int)12LL))) {
+f_fail_21(F->line_397, ({ rstr *b_ = rt_alloc(sizeof(rstr)); *b_ = rt_str_cat((*F->name_394), rt_str(" needs a mailbox", 16)); b_; }));
+}
+f_lvalue_335((*(P409)rt_nil_check((*(P409)rt_nil_check(F->args_396)).next)).next, &F->bv_1168, &F->bt_1173, &F->lc_1169, &F->ro_1170);
+f_check_type_167(F->bt_1173, g_ty_bool_462, F->line_397);
+if (rt_str_eq((*F->name_394), rt_str("COND_RECEIVE", 12))) {
+f_lvalue_335((*(P409)rt_nil_check(F->args_396)).next, &F->dv_1167, &F->dt_1172, &F->lc_1169, &F->ro_1170);
+f_check_type_167(F->dt_1172, (*(P413)rt_nil_check(F->mt_1171)).elem, F->line_397);
+F->result_ = rt_str_cat(rt_str_cat(rt_str_cat(rt_str_cat(rt_str_cat((*(P404)rt_nil_check(F->bv_1168)), rt_str(" = rt_cond_receive(&", 20)), (*(P404)rt_nil_check(F->lv_1166))), rt_str(", &", 3)), (*(P404)rt_nil_check(F->dv_1167))), rt_str(")", 1));
+goto ret_;
+}
+{
+F->v_1174 = rt_str_copy(f_gexpr_356((*(P409)rt_nil_check(F->args_396)).next, (*(P413)rt_nil_check(F->mt_1171)).elem, &F->at_1137));
+f_check_type_167(F->at_1137, (*(P413)rt_nil_check(F->mt_1171)).elem, F->line_397);
+F->result_ = rt_str_cat(rt_str_cat(rt_str_cat(rt_str_cat(rt_str_cat(rt_str_cat(rt_str_cat(rt_str_cat(rt_str("({ ", 3), f_ctype_169((*(P413)rt_nil_check(F->mt_1171)).elem)), rt_str(" m_ = ", 6)), F->v_1174), rt_str("; ", 2)), (*(P404)rt_nil_check(F->bv_1168))), rt_str(" = rt_cond_send(&", 17)), (*(P404)rt_nil_check(F->lv_1166))), rt_str(", &m_); })", 10));
+goto ret_;
+}
 } else if (rt_str_eq((*F->name_394), rt_str("PRIORITY", 8))) {
 (*F->t_399) = g_ty_int_461;
 F->result_ = rt_str_cat(rt_str_cat(rt_str("rt_priority(", 12), f_act_ref_288(F->args_396)), rt_str(")", 1));
 goto ret_;
 } else if (rt_str_eq((*F->name_394), rt_str("SET_PRIORITY", 12))) {
-F->v_1162 = rt_str_copy(f_gexpr_356((*(P409)rt_nil_check(F->args_396)).next, g_ty_int_461, &F->at_1137));
-F->result_ = rt_str_cat(rt_str_cat(rt_str_cat(rt_str_cat(rt_str("rt_set_priority(", 16), f_act_ref_288(F->args_396)), rt_str(", ", 2)), F->v_1162), rt_str(")", 1));
+F->v_1175 = rt_str_copy(f_gexpr_356((*(P409)rt_nil_check(F->args_396)).next, g_ty_int_461, &F->at_1137));
+F->result_ = rt_str_cat(rt_str_cat(rt_str_cat(rt_str_cat(rt_str("rt_set_priority(", 16), f_act_ref_288(F->args_396)), rt_str(", ", 2)), F->v_1175), rt_str(")", 1));
 goto ret_;
 } else if (rt_str_eq((*F->name_394), rt_str("EXTERMINATE", 11))) {
 F->result_ = rt_str_cat(rt_str_cat(rt_str("rt_exterminate(", 15), f_act_ref_288(F->args_396)), rt_str(")", 1));
@@ -7815,12 +7869,12 @@ goto ret_;
 F->result_ = rt_str_cat(rt_str_cat(rt_str("rt_is_active(", 13), f_act_ref_288(F->args_396)), rt_str(")", 1));
 goto ret_;
 } else if (rt_str_eq((*F->name_394), rt_str("DELAY", 5))) {
-F->v_1163 = rt_str_copy(f_gexpr_356(F->args_396, g_ty_int_461, &F->at_1137));
-F->result_ = rt_str_cat(rt_str_cat(rt_str("rt_delay(", 9), F->v_1163), rt_str(")", 1));
+F->v_1176 = rt_str_copy(f_gexpr_356(F->args_396, g_ty_int_461, &F->at_1137));
+F->result_ = rt_str_cat(rt_str_cat(rt_str("rt_delay(", 9), F->v_1176), rt_str(")", 1));
 goto ret_;
 } else if (rt_str_eq((*F->name_394), rt_str("DELAY_UNTIL", 11))) {
-F->v_1164 = rt_str_copy(f_gexpr_356(F->args_396, g_ty_int_461, &F->at_1137));
-F->result_ = rt_str_cat(rt_str_cat(rt_str("rt_delay_until(", 15), F->v_1164), rt_str(")", 1));
+F->v_1177 = rt_str_copy(f_gexpr_356(F->args_396, g_ty_int_461, &F->at_1137));
+F->result_ = rt_str_cat(rt_str_cat(rt_str("rt_delay_until(", 15), F->v_1177), rt_str(")", 1));
 goto ret_;
 } else if (rt_str_eq((*F->name_394), rt_str("DELAY_UNTIL_INACTIVE", 20))) {
 F->result_ = rt_str_cat(rt_str_cat(rt_str("rt_delay_until_inactive(", 24), f_act_ref_288(F->args_396)), rt_str(")", 1));
@@ -7834,8 +7888,8 @@ goto ret_;
 F->result_ = rt_str_cat(rt_str("RT_", 3), (*F->name_394));
 goto ret_;
 } else if (rt_str_eq((*F->name_394), rt_str("HALT", 4))) {
-F->a_1165 = rt_str_copy(f_gexpr_356(F->args_396, g_ty_int_461, &F->at_1137));
-F->result_ = rt_str_cat(rt_str_cat(rt_str("rt_exit(", 8), F->a_1165), rt_str(")", 1));
+F->a_1178 = rt_str_copy(f_gexpr_356(F->args_396, g_ty_int_461, &F->at_1137));
+F->result_ = rt_str_cat(rt_str_cat(rt_str("rt_exit(", 8), F->a_1178), rt_str(")", 1));
 goto ret_;
 }
 f_fail_21(F->line_397, ({ rstr *b_ = rt_alloc(sizeof(rstr)); *b_ = rt_str_cat((*F->name_394), rt_str(" is not defined", 15)); b_; }));
@@ -7849,16 +7903,16 @@ ret_:
 static void f_translate_402(P409 units_401) {
   struct f_translate_402fr *F = rt_alloc(sizeof *F);
 F->units_401 = units_401;
-F->u_1166 = NULL;
-F->u_1166 = F->units_401;
-while ((F->u_1166 != NULL)) {
-if (((*(P409)rt_nil_check(F->u_1166)).next == NULL)) {
-f_declare_body_219((*(P409)rt_nil_check(F->u_1166)).c);
-f_body_elements_256((*(P409)rt_nil_check(F->u_1166)).c);
+F->u_1179 = NULL;
+F->u_1179 = F->units_401;
+while ((F->u_1179 != NULL)) {
+if (((*(P409)rt_nil_check(F->u_1179)).next == NULL)) {
+f_declare_body_219((*(P409)rt_nil_check(F->u_1179)).c);
+f_body_elements_256((*(P409)rt_nil_check(F->u_1179)).c);
 } else {
-f_gen_capsule_229(F->u_1166);
+f_gen_capsule_229(F->u_1179);
 }
-F->u_1166 = (*(P409)rt_nil_check(F->u_1166)).next;
+F->u_1179 = (*(P409)rt_nil_check(F->u_1179)).next;
 }
 ret_:
   return;
@@ -8235,23 +8289,23 @@ g_ty_nil_468 = NULL;
 g_ty_lock_469 = NULL;
 g_ty_act_470 = NULL;
 g_no_cons_471 = NULL;
-{ A408 *cell1167 = rt_alloc(sizeof(A408));
-rt_int pv1168 = ((rt_int)1000000LL);
-(*cell1167).lo = ((rt_int)1LL); (*cell1167).hi = pv1168; (*cell1167).lo2 = 1; (*cell1167).hi2 = 1;
-(*cell1167).p = rt_alloc(sizeof(P405) * (size_t)RT_CNT((*cell1167)));
-for (rt_int i1169 = 0; i1169 < RT_CNT((*cell1167)); i1169++) {
-(*cell1167).p[i1169] = NULL;
+{ A408 *cell1180 = rt_alloc(sizeof(A408));
+rt_int pv1181 = ((rt_int)1000000LL);
+(*cell1180).lo = ((rt_int)1LL); (*cell1180).hi = pv1181; (*cell1180).lo2 = 1; (*cell1180).hi2 = 1;
+(*cell1180).p = rt_alloc(sizeof(P405) * (size_t)RT_CNT((*cell1180)));
+for (rt_int i1182 = 0; i1182 < RT_CNT((*cell1180)); i1182++) {
+(*cell1180).p[i1182] = NULL;
 }
-g_toks_431 = cell1167;
+g_toks_431 = cell1180;
 }
-{ A426 *cell1170 = rt_alloc(sizeof(A426));
-rt_int pv1171 = ((rt_int)4093LL);
-(*cell1170).lo = ((rt_int)0LL); (*cell1170).hi = pv1171; (*cell1170).lo2 = 1; (*cell1170).hi2 = 1;
-(*cell1170).p = rt_alloc(sizeof(P419) * (size_t)RT_CNT((*cell1170)));
-for (rt_int i1172 = 0; i1172 < RT_CNT((*cell1170)); i1172++) {
-(*cell1170).p[i1172] = NULL;
+{ A426 *cell1183 = rt_alloc(sizeof(A426));
+rt_int pv1184 = ((rt_int)4093LL);
+(*cell1183).lo = ((rt_int)0LL); (*cell1183).hi = pv1184; (*cell1183).lo2 = 1; (*cell1183).hi2 = 1;
+(*cell1183).p = rt_alloc(sizeof(P419) * (size_t)RT_CNT((*cell1183)));
+for (rt_int i1185 = 0; i1185 < RT_CNT((*cell1183)); i1185++) {
+(*cell1183).p[i1185] = NULL;
 }
-g_table_435 = cell1170;
+g_table_435 = cell1183;
 }
 g_out_types_440 = f_new_buffer_22();
 g_out_helpers_441 = f_new_buffer_22();
@@ -8272,20 +8326,20 @@ g_ty_file_467 = f_new_typ_154(((rt_int)10LL));
 g_ty_nil_468 = f_new_typ_154(((rt_int)11LL));
 g_ty_lock_469 = f_new_typ_154(((rt_int)13LL));
 g_ty_act_470 = f_new_typ_154(((rt_int)14LL));
-{ rt_frame xf1173;
-if (RT_TRY(xf1173)) {
+{ rt_frame xf1186;
+if (RT_TRY(xf1186)) {
 f_init_ascii_174();
 f_read_source_43();
 f_translate_402(f_program_133());
 f_print_program_403();
-RT_POP(xf1173);
+RT_POP(xf1186);
 } else {
-RT_POP(xf1173);
-int x1174 = rt_xcur;
-if (0 || x1174 == ex_compile_error_1) {
+RT_POP(xf1186);
+int x1187 = rt_xcur;
+if (0 || x1187 == ex_compile_error_1) {
 rt_exit(((rt_int)1LL));
 } else {
-rt_raise(x1174);
+rt_raise(x1187);
 }
 }
 }

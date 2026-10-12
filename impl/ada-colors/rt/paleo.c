@@ -75,16 +75,23 @@ void *rt_nil_check(void *p) {
 void rt_set_lang(int green) {
   lang_green = green;
   if (green) {
-    /* GREEN 1979 (Preliminary Ada) predefined exceptions, see the digest */
-    int ce = rt_exc("CONSTRAINT_ERROR"), ne = rt_exc("NUMERIC_ERROR");
-    RT_X_RANGE = RT_X_SUBSCRIPT = RT_X_NIL = RT_X_SUBTYPE = RT_X_TAG = ce;
-    RT_X_CASE = RT_X_INIT = ce;
-    RT_X_OVERFLOW = RT_X_ZERO_DIVIDE = RT_X_NEG_EXP = ne;
+    /* GREEN 1979 (Preliminary Ada): the 15 predefined exceptions, RM79 11.1 */
+    RT_X_RANGE = RT_X_CASE = RT_X_NEG_EXP = rt_exc("RANGE_ERROR");
+    RT_X_SUBSCRIPT = RT_X_SUBTYPE = rt_exc("INDEX_ERROR");
+    RT_X_OVERFLOW = rt_exc("OVERFLOW");
+    RT_X_ZERO_DIVIDE = rt_exc("DIVIDE_ERROR");
+    RT_X_NIL = rt_exc("ACCESS_ERROR");
     RT_X_ASSERT = rt_exc("ASSERT_ERROR");
-    RT_X_TASKING = RT_X_CREATE = RT_X_EMPTY_MAILBOX = rt_exc("TASKING_ERROR");
+    RT_X_TAG = rt_exc("DISCRIMINANT_ERROR");
+    RT_X_INIT = rt_exc("NO_VALUE_ERROR");
+    RT_X_TASKING = RT_X_EMPTY_MAILBOX = rt_exc("TASKING_ERROR");
+    RT_X_CREATE = rt_exc("INITIATE_ERROR");
     RT_X_TERMINATE = rt_exc("FAILURE");
-    RT_X_FREE = rt_exc("STORAGE_ERROR");
-    RT_X_FILE = rt_exc("NAME_ERROR");
+    RT_X_FREE = rt_exc("STORAGE_OVERFLOW");
+    (void)rt_exc("SELECT_ERROR");
+    (void)rt_exc("UNDERFLOW");
+    (void)rt_exc("OVERLAP_ERROR");
+    RT_X_FILE = rt_exc("END_OF_FILE"); /* TEXT_IO, RM79 14.2 */
     RT_X_DEADLOCK = rt_exc("DEADLOCK");
   } else {
     /* RED Reference Manual, Appendix D */
@@ -836,6 +843,18 @@ void rt_receive(rt_mbox *m, void *dst) {
 
 rt_int rt_mbox_count(rt_mbox *m) { return m->count; }
 
+int rt_cond_send(rt_mbox *m, const void *msg) {
+  int ok = try_send(m, msg);
+  if (ok) maybe_preempt();
+  return ok;
+}
+
+int rt_cond_receive(rt_mbox *m, void *dst) {
+  int ok = try_receive(m, dst);
+  if (ok) maybe_preempt();
+  return ok;
+}
+
 /* ---- data locks ---------------------------------------------------------- */
 
 void rt_lock_init(rt_lock *l) {
@@ -1017,4 +1036,70 @@ void rt_init(int argc, char **argv) {
 void rt_main_done(void) {
   fflush(stdout);
   exit(0);
+}
+
+/* ---- GREEN TEXT_IO (RM79 14.3-14.4) ------------------------------------- */
+
+static rt_int g_col = 1;
+
+static void g_track(const unsigned char *p, rt_int n) {
+  for (rt_int i = 0; i < n; i++) {
+    if (p[i] == '\n') g_col = 1;
+    else if (p[i] == '\t') g_col = ((g_col - 1) / 8 + 1) * 8 + 1;
+    else g_col++;
+  }
+}
+
+rt_int rt_g_col(void) { return g_col; }
+
+void rt_g_put(rstr s) {
+  fwrite(s.p, 1, (size_t)s.len, stdout);
+  g_track(s.p, s.len);
+}
+
+void rt_g_putc(int c) {
+  unsigned char b = (unsigned char)c;
+  putchar(c);
+  g_track(&b, 1);
+}
+
+static void g_item(rstr s, rt_int width, int right) {
+  if (g_col > 1) rt_g_putc(' ');
+  rt_int pad = width > s.len ? width - s.len : 0;
+  if (right) while (pad-- > 0) rt_g_putc(' ');
+  rt_g_put(s);
+  if (!right) while (pad-- > 0) rt_g_putc(' ');
+}
+
+void rt_g_put_int(rt_int v, rt_int width) { g_item(rt_str_of_int(v), width, 1); }
+
+void rt_g_put_bool(int v, rt_int width) {
+  g_item(v ? rt_str("TRUE", 4) : rt_str("FALSE", 5), width, 0);
+}
+
+/* floating output is d.ddd E+ddd with a three-digit exponent (RM79 14.4) */
+rstr rt_g_image_float(double v) {
+  char b[64], m[48];
+  int e = 0;
+  if (v != 0.0) {
+    snprintf(m, sizeof m, "%.5e", v);
+    char *x = strchr(m, 'e');
+    e = atoi(x + 1);
+    *x = 0;
+  } else {
+    strcpy(m, "0.00000");
+  }
+  int n = snprintf(b, sizeof b, "%sE%c%03d", m, e < 0 ? '-' : '+', e < 0 ? -e : e);
+  return rt_str_copy(rt_str(b, n));
+}
+
+void rt_g_put_float(double v, rt_int width, rt_int fract) {
+  (void)fract;
+  g_item(rt_g_image_float(v), width, 1);
+}
+
+int rt_g_getc(void) {
+  int c = rt_getc();
+  if (c < 0) rt_raise(RT_X_FILE);
+  return c;
 }

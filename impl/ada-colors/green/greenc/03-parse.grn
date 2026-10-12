@@ -1,0 +1,653 @@
+   -- ---- parser: the syntax of RM79 Appendix E -------------------------------------
+   --
+   -- Each parsing procedure is a value-returning procedure (it advances TPOS)
+   -- and is therefore called only as the right side of an assignment.
+
+   procedure NN(KIND, LINE : INTEGER) return NODE is
+   begin
+      return new NODE_REC(KIND, LINE, 0, 0, null, null, null, null, null, null, null, null);
+   end NN;
+
+   procedure APPEND(HEAD, TAIL : in out NODE; X : NODE) is
+   begin
+      if X = null then
+         return;
+      end if;
+      if HEAD = null then
+         HEAD := X;
+      else
+         TAIL.NEXT := X;
+      end if;
+      TAIL := X;
+      while TAIL.NEXT /= null loop
+         TAIL := TAIL.NEXT;
+      end loop;
+   end APPEND;
+
+   function LIST_LEN(L : NODE) return INTEGER is
+      N : INTEGER := 0;
+      P : NODE := L;
+   begin
+      while P /= null loop
+         N := N + 1;
+         P := P.NEXT;
+      end loop;
+      return N;
+   end LIST_LEN;
+
+   function CUR_LINE return INTEGER is
+   begin
+      return TOKS(TPOS).LINE;
+   end CUR_LINE;
+
+   function AT_KW(W : STRING) return BOOLEAN is
+   begin
+      return TOKS(TPOS).KIND = K_KW and then TOKS(TPOS).S.all = W;
+   end AT_KW;
+
+   function AT_OP(W : STRING) return BOOLEAN is
+   begin
+      return TOKS(TPOS).KIND = K_OP and then TOKS(TPOS).S.all = W;
+   end AT_OP;
+
+   function AT_KIND(K : INTEGER) return BOOLEAN is
+   begin
+      return TOKS(TPOS).KIND = K;
+   end AT_KIND;
+
+   function KIND_AT(K : INTEGER) return INTEGER is
+   begin
+      if TPOS + K > NTOKS then
+         return K_EOF;
+      end if;
+      return TOKS(TPOS + K).KIND;
+   end KIND_AT;
+
+   function TEXT_AT(K : INTEGER) return STRING is
+   begin
+      if TPOS + K > NTOKS then
+         return "";
+      end if;
+      return TOKS(TPOS + K).S.all;
+   end TEXT_AT;
+
+   procedure PERROR(MSG : STRING) is
+   begin
+      FAIL(TOKS(TPOS).LINE, MSG & " (at " & TOKS(TPOS).S.all & ")");
+   end PERROR;
+
+   procedure SKIP is
+   begin
+      TPOS := TPOS + 1;
+   end SKIP;
+
+   procedure EXPECT_KW(W : STRING) is
+   begin
+      if not AT_KW(W) then
+         PERROR("expected " & W);
+      end if;
+      TPOS := TPOS + 1;
+   end EXPECT_KW;
+
+   procedure EXPECT_OP(W : STRING) is
+   begin
+      if not AT_OP(W) then
+         PERROR("expected " & W);
+      end if;
+      TPOS := TPOS + 1;
+   end EXPECT_OP;
+
+   procedure EXPECT_ID return TEXT is
+   begin
+      if not AT_KIND(K_ID) then
+         PERROR("expected an identifier");
+      end if;
+      TPOS := TPOS + 1;
+      return TOKS(TPOS - 1).S;
+   end EXPECT_ID;
+
+   procedure NAME_NODE return NODE is
+      X : NODE;
+   begin
+      X := NN(N_NAME, CUR_LINE);
+      X.NAME := EXPECT_ID;
+      return X;
+   end NAME_NODE;
+
+   procedure ID_LIST return NODE is
+      HEAD, TAIL, X : NODE;
+   begin
+      X := NAME_NODE;
+      APPEND(HEAD, TAIL, X);
+      while AT_OP(",") loop
+         SKIP;
+         X := NAME_NODE;
+         APPEND(HEAD, TAIL, X);
+      end loop;
+      return HEAD;
+   end ID_LIST;
+
+   -- ---- expressions (RM79 4.4) ---------------------------------------------------
+
+   procedure BINOP(OP : TEXT; L, R : NODE; LINE : INTEGER) return NODE is
+      X : NODE;
+   begin
+      X := NN(N_BINOP, LINE);
+      X.NAME := OP;
+      X.A := L;
+      X.B := R;
+      return X;
+   end BINOP;
+
+   -- expression ::= relation {and relation} | ... ; and then / or else are the
+   -- short-circuit forms of conditions (RM79 5.4.1)
+   procedure EXPR return NODE is
+      L, R : NODE;
+      OP : TEXT;
+      LINE : INTEGER;
+   begin
+      L := RELATION;
+      while AT_KW("AND") or AT_KW("OR") or AT_KW("XOR") loop
+         OP := TOKS(TPOS).S;
+         LINE := CUR_LINE;
+         SKIP;
+         if OP.all = "AND" and AT_KW("THEN") then
+            SKIP;
+         elsif OP.all = "OR" and AT_KW("ELSE") then
+            SKIP;
+         end if;
+         R := RELATION;
+         L := BINOP(OP, L, R, LINE);
+      end loop;
+      return L;
+   end EXPR;
+
+   function IS_REL(S : STRING) return BOOLEAN is
+   begin
+      return S = "=" or S = "/=" or S = "<" or S = "<=" or S = ">" or S = ">=";
+   end IS_REL;
+
+   procedure RELATION return NODE is
+      L, R, LO, HI, T : NODE;
+      OP : TEXT;
+      LINE : INTEGER := CUR_LINE;
+      NEG : BOOLEAN := FALSE;
+   begin
+      L := SIMPLE_EXPR;
+      if AT_KIND(K_OP) and then IS_REL(TOKS(TPOS).S.all) then
+         OP := TOKS(TPOS).S;
+         SKIP;
+         R := SIMPLE_EXPR;
+         L := BINOP(OP, L, R, LINE);
+         return L;
+      end if;
+      if AT_KW("NOT") and KIND_AT(1) = K_KW and TEXT_AT(1) = "IN" then
+         SKIP;
+         NEG := TRUE;
+      end if;
+      if AT_KW("IN") then
+         -- membership in a range (RM79 4.5.2)
+         SKIP;
+         LO := SIMPLE_EXPR;
+         EXPECT_OP("..");
+         HI := SIMPLE_EXPR;
+         T := NN(N_RANGE, LINE);
+         T.A := LO;
+         T.B := HI;
+         OP := MK("IN");
+         L := BINOP(OP, L, T, LINE);
+         if NEG then
+            T := NN(N_UNOP, LINE);
+            T.NAME := MK("NOT");
+            T.A := L;
+            return T;
+         end if;
+      end if;
+      return L;
+   end RELATION;
+
+   -- simple_expression ::= [unary_operator] term {adding_operator term}
+   procedure SIMPLE_EXPR return NODE is
+      L, R : NODE;
+      OP : TEXT;
+      LINE : INTEGER := CUR_LINE;
+   begin
+      if AT_OP("+") or AT_OP("-") or AT_KW("NOT") then
+         OP := TOKS(TPOS).S;
+         SKIP;
+         R := TERM;
+         L := NN(N_UNOP, LINE);
+         L.NAME := OP;
+         L.A := R;
+      else
+         L := TERM;
+      end if;
+      while AT_OP("+") or AT_OP("-") or AT_OP("&") loop
+         OP := TOKS(TPOS).S;
+         SKIP;
+         R := TERM;
+         L := BINOP(OP, L, R, LINE);
+      end loop;
+      return L;
+   end SIMPLE_EXPR;
+
+   procedure TERM return NODE is
+      L, R : NODE;
+      OP : TEXT;
+      LINE : INTEGER := CUR_LINE;
+   begin
+      L := FACTOR;
+      while AT_OP("*") or AT_OP("/") or AT_KW("MOD") loop
+         OP := TOKS(TPOS).S;
+         SKIP;
+         R := FACTOR;
+         L := BINOP(OP, L, R, LINE);
+      end loop;
+      return L;
+   end TERM;
+
+   procedure FACTOR return NODE is
+      L, R : NODE;
+      OP : TEXT;
+      LINE : INTEGER := CUR_LINE;
+   begin
+      L := PRIMARY;
+      if AT_OP("**") then
+         OP := TOKS(TPOS).S;
+         SKIP;
+         R := PRIMARY;
+         L := BINOP(OP, L, R, LINE);
+      end if;
+      return L;
+   end FACTOR;
+
+   procedure PRIMARY return NODE is
+      X : NODE;
+      LINE : INTEGER := CUR_LINE;
+   begin
+      if AT_KIND(K_INT) then
+         X := NN(N_INT, LINE);
+         X.IVAL := TOKS(TPOS).IVAL;
+         X.NAME := TOKS(TPOS).S;
+         SKIP;
+         return X;
+      end if;
+      if AT_KIND(K_FLOAT) then
+         X := NN(N_FLOAT, LINE);
+         X.NAME := TOKS(TPOS).S;
+         SKIP;
+         return X;
+      end if;
+      if AT_KIND(K_STR) then
+         X := NN(N_STR, LINE);
+         X.NAME := TOKS(TPOS).S;
+         SKIP;
+         return X;
+      end if;
+      if AT_KW("NULL") then
+         SKIP;
+         X := NN(N_NIL, LINE);
+         return X;
+      end if;
+      if AT_KW("NEW") then
+         -- allocator ::= new qualified_expression (RM79 4.7)
+         SKIP;
+         X := NN(N_NEW, LINE);
+         X.NAME := EXPECT_ID;
+         if AT_OP("(") then
+            X.A := AGG_OR_PAREN;
+         end if;
+         return X;
+      end if;
+      if AT_OP("(") then
+         X := AGG_OR_PAREN;
+         return X;
+      end if;
+      if AT_KIND(K_ID) then
+         X := NAME_P;
+         return X;
+      end if;
+      PERROR("expected an expression");
+      return null;
+   end PRIMARY;
+
+   -- aggregate (RM79 3.6.2) or parenthesized expression
+   procedure AGG_OR_PAREN return NODE is
+      LINE : INTEGER := CUR_LINE;
+      ITEMS, ITAIL, IT, FIRST, KEYS, KTAIL, LAB, X : NODE;
+      MORE : BOOLEAN := TRUE;
+   begin
+      EXPECT_OP("(");
+      while MORE loop
+         IT := NN(N_CITEM, LINE);
+         if AT_KW("OTHERS") then
+            SKIP;
+            EXPECT_OP("=>");
+            LAB := NN(N_LABEL, LINE);
+            LAB.FLAG := 1;
+            IT.A := LAB;
+            IT.B := EXPR;
+         else
+            FIRST := EXPR;
+            if AT_OP("..") or AT_OP("|") or AT_OP("=>") then
+               KEYS := null;
+               KTAIL := null;
+               loop
+                  LAB := NN(N_LABEL, LINE);
+                  LAB.A := FIRST;
+                  if AT_OP("..") then
+                     SKIP;
+                     LAB.B := SIMPLE_EXPR;
+                  end if;
+                  APPEND(KEYS, KTAIL, LAB);
+                  exit when not AT_OP("|");
+                  SKIP;
+                  FIRST := SIMPLE_EXPR;
+               end loop;
+               EXPECT_OP("=>");
+               IT.A := KEYS;
+               IT.B := EXPR;
+            else
+               IT.B := FIRST;
+            end if;
+         end if;
+         APPEND(ITEMS, ITAIL, IT);
+         MORE := AT_OP(",");
+         if MORE then
+            SKIP;
+         end if;
+      end loop;
+      EXPECT_OP(")");
+      if ITEMS.NEXT = null and ITEMS.A = null then
+         X := NN(N_PAREN, LINE);
+         X.A := ITEMS.B;
+         return X;
+      end if;
+      X := NN(N_AGG, LINE);
+      X.A := ITEMS;
+      return X;
+   end AGG_OR_PAREN;
+
+   -- name (RM79 4.1): identifier, indexed or selected component, attribute
+   procedure NAME_P return NODE is
+      P, X, ARGS, ATAIL, LO, R : NODE;
+      LINE : INTEGER := CUR_LINE;
+      MORE : BOOLEAN;
+   begin
+      P := NAME_NODE;
+      loop
+         if AT_OP("(") then
+            SKIP;
+            ARGS := null;
+            ATAIL := null;
+            if not AT_OP(")") then
+               MORE := TRUE;
+               while MORE loop
+                  declare
+                     FORMAL : TEXT;
+                     MARK : INTEGER := 0;
+                  begin
+                     -- named association, the mode written at the call (RM79 5.2.1)
+                     if AT_KIND(K_ID) and KIND_AT(1) = K_OP and (TEXT_AT(1) = ":=" or
+                        TEXT_AT(1) = "=:" or TEXT_AT(1) = ":=:" or TEXT_AT(1) = "=>") then
+                        FORMAL := TOKS(TPOS).S;
+                        if TEXT_AT(1) = ":=" then
+                           MARK := 1;
+                        elsif TEXT_AT(1) = "=:" then
+                           MARK := 2;
+                        elsif TEXT_AT(1) = ":=:" then
+                           MARK := 3;
+                        else
+                           MARK := 4;
+                        end if;
+                        SKIP;
+                        SKIP;
+                     end if;
+                     LO := EXPR;
+                     if AT_OP("..") then
+                        SKIP;
+                        R := NN(N_RANGE, LINE);
+                        R.A := LO;
+                        R.B := SIMPLE_EXPR;
+                        LO := R;
+                     end if;
+                     LO.TAG := FORMAL;
+                     LO.FLAG := MARK;
+                     APPEND(ARGS, ATAIL, LO);
+                  end;
+                  MORE := AT_OP(",");
+                  if MORE then
+                     SKIP;
+                  end if;
+               end loop;
+            end if;
+            EXPECT_OP(")");
+            X := NN(N_APPLY, LINE);
+            X.A := P;
+            X.B := ARGS;
+            P := X;
+         elsif AT_OP(".") then
+            SKIP;
+            X := NN(N_SELECT, LINE);
+            X.A := P;
+            if AT_KW("ALL") then
+               SKIP;
+               X.NAME := MK("ALL");
+            else
+               X.NAME := EXPECT_ID;
+            end if;
+            P := X;
+         elsif AT_OP("'") then
+            -- attributes are not reserved words; they follow ' (RAT79 2.1)
+            SKIP;
+            X := NN(N_ATTR, LINE);
+            X.A := P;
+            X.NAME := TOKS(TPOS).S;
+            SKIP;
+            if AT_OP("(") then
+               SKIP;
+               X.B := EXPR;
+               EXPECT_OP(")");
+            end if;
+            P := X;
+         else
+            return P;
+         end if;
+      end loop;
+   end NAME_P;
+
+   -- ---- types and subtypes (RM79 3) ------------------------------------------------
+
+   -- type_mark [constraint]
+   procedure SUBTYPE_IND return NODE is
+      X, R, ARGS, ATAIL, LO : NODE;
+      LINE : INTEGER := CUR_LINE;
+      MORE : BOOLEAN := TRUE;
+   begin
+      X := NN(S_MARK, LINE);
+      X.NAME := EXPECT_ID;
+      while AT_OP(".") loop
+         SKIP;
+         X.TAG := X.NAME;
+         X.NAME := EXPECT_ID;
+      end loop;
+      if AT_KW("RANGE") then
+         SKIP;
+         R := NN(N_RANGE, LINE);
+         R.A := SIMPLE_EXPR;
+         EXPECT_OP("..");
+         R.B := SIMPLE_EXPR;
+         X.A := R;
+         X.FLAG := 1;
+      elsif AT_OP("(") then
+         SKIP;
+         while MORE loop
+            LO := EXPR;
+            if AT_OP("..") then
+               SKIP;
+               R := NN(N_RANGE, LINE);
+               R.A := LO;
+               R.B := SIMPLE_EXPR;
+               LO := R;
+            end if;
+            APPEND(ARGS, ATAIL, LO);
+            MORE := AT_OP(",");
+            if MORE then
+               SKIP;
+            end if;
+         end loop;
+         EXPECT_OP(")");
+         X.A := ARGS;
+         X.FLAG := 2;
+      elsif AT_KW("DIGITS") or AT_KW("DELTA") then
+         SKIP;
+         R := SIMPLE_EXPR;
+         if AT_KW("RANGE") then
+            SKIP;
+            R := SIMPLE_EXPR;
+            EXPECT_OP("..");
+            R := SIMPLE_EXPR;
+         end if;
+      end if;
+      return X;
+   end SUBTYPE_IND;
+
+   -- a type in an object declaration: a subtype indication or an anonymous
+   -- type definition (RM79 3.3)
+   procedure TYPE_SPEC return NODE is
+      X : NODE;
+   begin
+      if AT_OP("(") or AT_KW("ARRAY") or AT_KW("RECORD") or AT_KW("ACCESS") or AT_KW("RANGE") then
+         X := TYPE_DEF;
+      else
+         X := SUBTYPE_IND;
+      end if;
+      return X;
+   end TYPE_SPEC;
+
+   procedure TYPE_DEF return NODE is
+      X, LITS, LTAIL, L, IDX, ITAIL, R, COMPS, CTAIL, NAMES, ST, DEF, CM : NODE;
+      LINE : INTEGER := CUR_LINE;
+      MORE : BOOLEAN := TRUE;
+   begin
+      if AT_OP("(") then
+         -- enumeration (RM79 3.5.1): identifiers and character literals
+         SKIP;
+         X := NN(D_ENUM, LINE);
+         while MORE loop
+            if AT_KIND(K_STR) then
+               L := NN(N_STR, LINE);
+               L.NAME := TOKS(TPOS).S;
+               SKIP;
+            else
+               L := NAME_NODE;
+            end if;
+            APPEND(LITS, LTAIL, L);
+            MORE := AT_OP(",");
+            if MORE then
+               SKIP;
+            end if;
+         end loop;
+         EXPECT_OP(")");
+         X.A := LITS;
+         return X;
+      end if;
+      if AT_KW("RANGE") then
+         SKIP;
+         X := NN(D_RANGE, LINE);
+         X.A := SIMPLE_EXPR;
+         EXPECT_OP("..");
+         X.B := SIMPLE_EXPR;
+         return X;
+      end if;
+      if AT_KW("DIGITS") or AT_KW("DELTA") then
+         SKIP;
+         X := NN(D_FLOAT, LINE);
+         R := SIMPLE_EXPR;
+         if AT_KW("RANGE") then
+            SKIP;
+            R := SIMPLE_EXPR;
+            EXPECT_OP("..");
+            R := SIMPLE_EXPR;
+         end if;
+         return X;
+      end if;
+      if AT_KW("ARRAY") then
+         -- RM79 3.6: every index a discrete range, or every index a type mark
+         SKIP;
+         X := NN(D_ARRAY, LINE);
+         EXPECT_OP("(");
+         while MORE loop
+            if AT_KIND(K_ID) and KIND_AT(1) = K_OP and (TEXT_AT(1) = "," or TEXT_AT(1) = ")") then
+               L := NN(S_MARK, LINE);
+               L.NAME := EXPECT_ID;
+               X.FLAG := 1;
+            else
+               L := NN(N_RANGE, LINE);
+               L.A := SIMPLE_EXPR;
+               EXPECT_OP("..");
+               L.B := SIMPLE_EXPR;
+            end if;
+            APPEND(IDX, ITAIL, L);
+            MORE := AT_OP(",");
+            if MORE then
+               SKIP;
+            end if;
+         end loop;
+         EXPECT_OP(")");
+         EXPECT_KW("OF");
+         X.A := IDX;
+         X.B := TYPE_SPEC;
+         return X;
+      end if;
+      if AT_KW("RECORD") then
+         -- RM79 3.7; a deferred constant component is a discriminant
+         SKIP;
+         X := NN(D_RECORD, LINE);
+         while not AT_KW("END") loop
+            if AT_KW("NULL") then
+               SKIP;
+               EXPECT_OP(";");
+            else
+               NAMES := ID_LIST;
+               EXPECT_OP(":");
+               if AT_KW("CONSTANT") then
+                  SKIP;
+               end if;
+               ST := TYPE_SPEC;
+               DEF := null;
+               if AT_OP(":=") then
+                  SKIP;
+                  DEF := EXPR;
+               end if;
+               EXPECT_OP(";");
+               while NAMES /= null loop
+                  CM := NN(N_COMP, NAMES.LINE);
+                  CM.NAME := NAMES.NAME;
+                  CM.A := ST;
+                  CM.B := DEF;
+                  APPEND(COMPS, CTAIL, CM);
+                  NAMES := NAMES.NEXT;
+               end loop;
+            end if;
+         end loop;
+         EXPECT_KW("END");
+         EXPECT_KW("RECORD");
+         X.A := COMPS;
+         return X;
+      end if;
+      if AT_KW("ACCESS") then
+         SKIP;
+         X := NN(D_ACCESS, LINE);
+         X.A := TYPE_SPEC;
+         return X;
+      end if;
+      if AT_KW("NEW") then
+         SKIP;
+         X := NN(D_DERIVED, LINE);
+         X.A := SUBTYPE_IND;
+         return X;
+      end if;
+      PERROR("expected a type definition");
+      return null;
+   end TYPE_DEF;

@@ -6,8 +6,9 @@
 [56 ms] client 2: no reply to request 3, retrying
 [56 ms] client 1: no reply to request 3, retrying
 [56 ms] $BANK: request 3 of client 2 is a retry, answered from the checkpoint
-[68 ms] account 1: 0
-[68 ms] account 2: 10
-[68 ms] account 3: 200
-[68 ms] account 4: 190
-[68 ms] total 400 (money is neither lost nor made)
+[68 ms] account 1: 0   clients were told: 0
+[68 ms] account 2: 10   clients were told: 10
+[68 ms] account 3: 200   clients were told: 200
+[68 ms] account 4: 190   clients were told: 190
+[68 ms] total 400
+[68 ms] audit: every confirmed transfer is in the books exactly once

@@ -1041,6 +1041,41 @@ ABNORMAL FUNC builtin(READONLY name : STRING[ASCII], CONST tt : node, CONST args
          check_type(at, mt.elem, line);
          RETURN "({ " & ctype(mt.elem) & " m_ = " & v & "; rt_send(&" & lv.ALL & ", &m_); })";
       END;
+   ELSEIF name = "FULL_SLOTS" OR name = "EMPTY_SLOTS" THEN
+      VAR lv : text;
+      VAR lc : cons;
+      VAR ro : BOOL;
+      VAR mt : typ;
+      lvalue(args, lv, mt, lc, ro);
+      IF mt.kind /= t_mbox THEN
+         fail(line, name & " needs a mailbox");
+      END IF;
+      t := ty_int;
+      IF name = "FULL_SLOTS" THEN
+         RETURN "rt_mbox_count(&" & lv.ALL & ")";
+      END IF;
+      RETURN "(" & lv.ALL & ".cap - rt_mbox_count(&" & lv.ALL & "))";
+   ELSEIF name = "COND_SEND" OR name = "COND_RECEIVE" THEN
+      VAR lv, dv, bv : text;
+      VAR lc : cons;
+      VAR ro : BOOL;
+      VAR mt, dt, bt : typ;
+      lvalue(args, lv, mt, lc, ro);
+      IF mt.kind /= t_mbox THEN
+         fail(line, name & " needs a mailbox");
+      END IF;
+      lvalue(args.next.next, bv, bt, lc, ro);
+      check_type(bt, ty_bool, line);
+      IF name = "COND_RECEIVE" THEN
+         lvalue(args.next, dv, dt, lc, ro);
+         check_type(dt, mt.elem, line);
+         RETURN bv.ALL & " = rt_cond_receive(&" & lv.ALL & ", &" & dv.ALL & ")";
+      END IF;
+      BEGIN
+         CONST v := gexpr(args.next, mt.elem, at);
+         check_type(at, mt.elem, line);
+         RETURN "({ " & ctype(mt.elem) & " m_ = " & v & "; " & bv.ALL & " = rt_cond_send(&" & lv.ALL & ", &m_); })";
+      END;
    ELSEIF name = "PRIORITY" THEN
       t := ty_int;
       RETURN "rt_priority(" & act_ref(args) & ")";

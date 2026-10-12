@@ -44,6 +44,8 @@ CAPSULE pairs EXPORTS NONE;
    % fault injection: the primary loses power right after checkpointing this request
    VAR crash_after : INT := 5;
    VAR done : MAILBOX[INT](8);
+   % what the clients were told: every confirmed transfer, for the final audit
+   VAR ledger : MAILBOX[msg](64);
 
    FUNC mkmsg(CONST kind, src, seq, a, b, amount, result : INT) => msg;
       RETURN [kind : kind, src : src, seq : seq, a : a, b : b, amount : amount, result : result];
@@ -202,17 +204,21 @@ CAPSULE pairs EXPORTS NONE;
    END FUNC spawn_bank;
 
    % ---- clients ------------------------------------------------------------------
-   TASK client(CONST me : INT, CONST id : INT) IMPORTS ports, done;
+   TASK client(CONST me : INT, CONST id : INT) IMPORTS ports, done, ledger;
       VAR m : msg;
       VAR replied : BOOL;
       FOR seq : INT(1 .. 6) REPEAT
          replied := FALSE;
          WHILE NOT replied REPEAT
             CONST dest := resolve;
-            SEND(ports(dest), mkmsg(k_request, me, seq, id, id + 1 + (seq MOD 2), 10 * seq, 0));
+            CONST req := mkmsg(k_request, me, seq, id, id + 1 + (seq MOD 2), 10 * seq, 0);
+            SEND(ports(dest), req);
             WAIT
                WHEN RECEIVE(ports(me), m) =>
                   replied := TRUE;
+                  IF m.result = 1 THEN
+                     SEND(ledger, req);
+                  END IF;
                WHEN DELAY(50) =>
                   log("client " & CNVT[STRING[ASCII]](id) & ": no reply to request "
                       & CNVT[STRING[ASCII]](seq) & ", retrying");
@@ -228,6 +234,8 @@ CAPSULE pairs EXPORTS NONE;
    VAR m : msg;
    VAR c1, c2, p0, b0 : INT;
    VAR total : INT := 0;
+   VAR expect : ARRAY INT(1 .. naccounts) OF INT;
+   VAR wrong : INT := 0;
    FOR c : INT(0 .. ncpus - 1) REPEAT
       cpu_up(c) := TRUE;
    END REPEAT;
@@ -242,12 +250,30 @@ CAPSULE pairs EXPORTS NONE;
    CREATE client(c2, 2) NAMED procs(c2);
    RECEIVE(done, got);
    RECEIVE(done, got);
+   % the audit: replay what the clients were told and compare with the bank
+   FOR a : INT(1 .. naccounts) REPEAT
+      expect(a) := 100;
+   END REPEAT;
+   WHILE FULL_SLOTS(ledger) > 0 REPEAT
+      RECEIVE(ledger, m);
+      expect(m.a) := expect(m.a) - m.amount;
+      expect(m.b) := expect(m.b) + m.amount;
+   END REPEAT;
    FOR a : INT(1 .. naccounts) REPEAT
       SEND(ports(resolve), mkmsg(k_query, c1, 0, a, 0, 0, 0));
       RECEIVE(ports(c1), m);
       total := total + m.amount;
-      log("account " & CNVT[STRING[ASCII]](a) & ": " & CNVT[STRING[ASCII]](m.amount));
+      IF m.amount /= expect(a) THEN
+         wrong := wrong + 1;
+      END IF;
+      log("account " & CNVT[STRING[ASCII]](a) & ": " & CNVT[STRING[ASCII]](m.amount)
+          & "   clients were told: " & CNVT[STRING[ASCII]](expect(a)));
    END REPEAT;
-   log("total " & CNVT[STRING[ASCII]](total) & " (money is neither lost nor made)");
+   log("total " & CNVT[STRING[ASCII]](total));
+   IF wrong = 0 THEN
+      log("audit: every confirmed transfer is in the books exactly once");
+   ELSE
+      log("audit: " & CNVT[STRING[ASCII]](wrong) & " accounts disagree with what the clients were told");
+   END IF;
    HALT(0);
 END CAPSULE pairs;

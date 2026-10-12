@@ -174,6 +174,8 @@ void rt_mbox_init(rt_mbox *m, rt_int cap, size_t esz, rt_copyfn copy);
 void rt_send(rt_mbox *m, const void *msg);
 void rt_receive(rt_mbox *m, void *dst);
 rt_int rt_mbox_count(rt_mbox *m);
+int rt_cond_send(rt_mbox *m, const void *msg);   /* RED C.11: never waits */
+int rt_cond_receive(rt_mbox *m, void *dst);
 
 /* the WAIT statement: try alternatives, else block on all of them */
 enum { RT_ALT_SEND = 1, RT_ALT_RECEIVE, RT_ALT_DELAY, RT_ALT_DELAY_UNTIL,
@@ -206,5 +208,17 @@ void *rt_accept_begin(rt_entry *e);            /* blocks for a caller */
 void rt_accept_end(rt_entry *e, int failed, int exc);
 rt_int rt_entry_count(rt_entry *e);
 void rt_main_done(void);                       /* main body finished */
+
+/* ---- GREEN TEXT_IO (RM79 14.3-14.4) ----------------------------------- */
+/* Column-tracking output: a PUT of a non-character item is preceded by one
+ * space except at column 1; numbers are right-justified within WIDTH. */
+void rt_g_put(rstr s);
+void rt_g_putc(int c);
+void rt_g_put_int(rt_int v, rt_int width);
+void rt_g_put_bool(int v, rt_int width);
+void rt_g_put_float(double v, rt_int width, rt_int fract);
+int rt_g_getc(void);                           /* END_OF_FILE at the end */
+rstr rt_g_image_float(double v);               /* T'REP for floats */
+rt_int rt_g_col(void);
 
 #endif
