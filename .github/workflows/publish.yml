@@ -101,6 +101,9 @@ jobs:
           # in themselves. The same langpack runs them as one-off jobs.
           - name: ada-colors-run
             file: deploy/Containerfile.ada-colors-run
+          # The THE tape for the X8 machine (episode 18); the emulator is in the launcher.
+          - name: x8-run
+            file: deploy/Containerfile.x8-run
           # The air relay that connects the radios of Oberon machines (Net.Mod).
           - name: oberon-air
             context: qemu/radio
@@ -175,6 +178,7 @@ jobs:
             oberon-run) want="prom.bin oberon.dsk"
                         dir=/opt/oberon/payload ;;
             oberon-air) want="relay.py"; dir="" ;;
+            x8-run)     want="the.tape"; dir=/opt/x8/payload ;;
             ada-colors-run) want="bin/redc bin/greenc rt/paleo.o"
                         dir=/opt/ada-colors ;;
             *)          want=""; dir="" ;;
@@ -217,7 +221,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        name: [oberon-web, oberon-lab, oberon-run, oberon-air, ada-colors-run]
+        name: [oberon-web, oberon-lab, oberon-run, oberon-air, ada-colors-run, x8-run]
     steps:
       - uses: actions/checkout@v4
         with:

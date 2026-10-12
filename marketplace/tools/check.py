@@ -671,6 +671,10 @@ def form_problems(preset: dict, values: dict, vschema: dict) -> list[str]:
     """
     out = []
     hw = vschema.get("hardware", {})
+    # A machine with a single hardware has no choice to offer: no field.
+    if len(preset["variants"]) == 1 and "hardware" not in vschema and "hardware" not in values:
+        hw = {"enum": list(preset["variants"]), "default": preset["defaultVariant"]}
+        values = dict(values, hardware=preset["defaultVariant"])
     if sorted(hw.get("enum", [])) != sorted(preset["variants"]):
         out.append(f"form variants {sorted(hw.get('enum', []))}")
     if not values.get("hardware") == hw.get("default") == preset["defaultVariant"]:
@@ -799,20 +803,26 @@ def check_machines() -> None:
                 v = next(x for x in d if x["kind"] == "VirtualMachine")
                 p = json.loads(v["spec"]["template"]["metadata"]["annotations"][MACHINE_ANNOTATION])
                 return p.get("commands", {}).get("text"), ""
-            got, _ = text("air=lab", "kubeRole=plane", "kubeKey=0123abcd", "commands=Ticker.Show")
-            report(got == "Kube.Start;KubeNet.Serve kube 0123abcd;Ticker.Show",
-                   f"{name}: a Kube plane starts Kube and serves its cluster at start ({got!r})")
-            got, _ = text("air=lab", "kubeRole=node", "kubeNode=node-a", "kubeCluster=farm")
-            report(got == "KubeNet.Join node-a farm", f"{name}: a Kube node joins its cluster at start ({got!r})")
+            # The Kube roles exist only on machines with a radio (Oberon).
+            if preset.get("air"):
+                got, _ = text("air=lab", "kubeRole=plane", "kubeKey=0123abcd", "commands=Ticker.Show")
+                report(got == "Kube.Start;KubeNet.Serve kube 0123abcd;Ticker.Show",
+                       f"{name}: a Kube plane starts Kube and serves its cluster at start ({got!r})")
+                got, _ = text("air=lab", "kubeRole=node", "kubeNode=node-a", "kubeCluster=farm")
+                report(got == "KubeNet.Join node-a farm", f"{name}: a Kube node joins its cluster at start ({got!r})")
             got, _ = text()
             report(got is None, f"{name}: without a role or commands the machine runs nothing at start")
-            for o, why in ((("kubeRole=plane",), "a Kube role without an air"),
-                           (("air=lab", "kubeRole=node"), "a Kube node without a name"),
-                           (("air=lab", "kubeRole=node", "kubeNode=toolongname"), "a node name over 6 characters"),
-                           (("air=lab", "kubeRole=plane", "kubeKey=xyz"), "a key that is not hex"),
-                           (("air=lab", "kubeRole=boss"), "an unknown role")):
-                got, err = text(*o)
-                report(got is None and err != "", f"{name}: negative control: {why} is refused")
+            if preset.get("air"):
+                for o, why in ((("kubeRole=plane",), "a Kube role without an air"),
+                               (("air=lab", "kubeRole=node"), "a Kube node without a name"),
+                               (("air=lab", "kubeRole=node", "kubeNode=toolongname"), "a node name over 6 characters"),
+                               (("air=lab", "kubeRole=plane", "kubeKey=xyz"), "a key that is not hex"),
+                               (("air=lab", "kubeRole=boss"), "an unknown role")):
+                    got, err = text(*o)
+                    report(got is None and err != "", f"{name}: negative control: {why} is refused")
+
+            got, _ = text("commands=pm2 12;k scale 5")
+            report(got == "pm2 12;k scale 5", f"{name}: free commands reach the machine as typed ({got!r})")
 
         # ── Fill: firmware always, the user disk never ──────────────────────
         script = fill_script(docs)

@@ -51,6 +51,10 @@ spec:
         - name: oberon-vm
           path: apps/oberon-vm
           libraries: ["retro-machine"]
+        # Dijkstra's THE on the Electrologica X8 (episode 18): the same library.
+        - name: x8-vm
+          path: apps/x8-vm
+          libraries: ["retro-machine"]
         # A Kube cluster in one order: releases of oberon-air and oberon-vm.
         - name: oberon-kube
           path: apps/oberon-kube

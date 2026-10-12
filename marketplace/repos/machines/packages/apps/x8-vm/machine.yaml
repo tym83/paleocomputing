@@ -1,0 +1,50 @@
+# Passport of the Electrologica X8 of the Mathematisch Centrum with Dijkstra's
+# THE multiprogramming system (1968), reconstructed in X8 machine code in
+# impl/x8-the. Templates and the hook are shared (library/retro-machine).
+#
+# Schema: library/retro-machine/machine.schema.json.
+apiVersion: paleocomputing.io/v1alpha1
+kind: Machine
+name: x8
+
+# Where the THE tape comes from. The emulator is in the virt-launcher image.
+image: ghcr.io/tym83/paleocomputing/x8-run:dev
+
+domain:
+  arch: x8
+  machine: x8
+  emulator: /usr/local/bin/qemu-system-x8
+  # The X8 has one processor; THE multiplexes it between its processes.
+  vcpus: 1
+  # The console teleprinter is a text screen in QEMU; the VNC console shows it
+  # and its keyboard is the operator's.
+  graphics: vnc
+  # The X8 has no shutdown request to hear.
+  terminationGracePeriodSeconds: 0
+
+payload:
+  path: /payload
+  files:
+    # The program tape: QEMU presses LS and IP, and CHARON reads it through
+    # the IP reader, as the operator did in 1968. Refreshed on every update.
+    - name: the.tape
+      from: /opt/x8/payload/the.tape
+      role: firmware
+      qemu: ["-kernel", "{path}"]
+
+# One hardware: the THE installation of the Mathematisch Centrum.
+variants:
+  base: {}
+defaultVariant: base
+
+# The X8 has 32K words of core (about 108 KB); the rest is KubeVirt overhead.
+memory:
+  default: 128Mi
+  min: 128Mi
+  max: 512Mi
+
+# Lines the operator types at start (-machine commands=...), separated by ';':
+# the first twelve seconds of machine time after IP, then three seconds apart.
+# For example `pm2 12;k scale 5`.
+commands:
+  machineProperty: commands

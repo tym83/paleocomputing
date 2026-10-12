@@ -1,0 +1,7 @@
+{{/*
+  The whole machine comes from the machine.yaml passport via the shared
+  templates of the retro-machine library (packages/library/retro-machine).
+  Nothing is added here: a new catalog machine is a new passport, not a copy of
+  the templates.
+*/}}
+{{ include "retro-machine.render" . }}

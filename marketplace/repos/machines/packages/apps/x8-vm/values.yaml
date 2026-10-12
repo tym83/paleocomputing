@@ -1,0 +1,35 @@
+##
+## @section Machine
+##
+## The architecture, emulator, tape and hardware are not here but in the
+## machine.yaml passport: they are changed by a catalog release, not by the tenant.
+
+## @param {string} memory=128Mi - How much memory to give the machine.
+## The X8 itself has 32K words of 27 bits; the rest goes to KubeVirt overhead.
+## The limits are in the machine passport: from 128Mi to 512Mi.
+memory: 128Mi
+
+## @param {boolean} running=true - Keep the machine running.
+## false means the machine is stopped (run strategy Halted).
+running: true
+
+##
+## @section Storage
+##
+
+## @param {string} storageClass=replicated - Storage class of the volume for the tape.
+storageClass: replicated
+
+## @param {string} storage=1Gi - Volume size.
+## The THE tape is a few kilobytes: the size here is purely symbolic.
+storage: 1Gi
+
+##
+## @section Start
+##
+
+## @param {string} commands - Operator lines typed at start, separated by `;`.
+## THE asks how many squares pm2 prints: `pm2 <n>` answers;
+## Kubernetes on THE takes `k kill <node>` and `k scale <n>`. Up to 240
+## characters in all.
+commands: ""
