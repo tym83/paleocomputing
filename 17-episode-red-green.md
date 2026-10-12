@@ -274,6 +274,11 @@ they were fixed in the same way as upstream:
   RED and GREEN for the `langpack` application of the Cozystack catalog. A
   `.red` or `.grn` source runs as a one-off job; the image build replays both
   bootstraps and refuses to finish without the fixed points.
+- [`r1000/`](impl/ada-colors/r1000/README.md): the cost of a rendezvous on
+  the Rational R1000, measured in the Rational Environment on DataMuseum.dk's
+  emulator by the machine's microcycle count, in CI. A procedure call took
+  2.75 µs and a rendezvous 55 µs, about twenty calls; with GNAT on a modern
+  runner a rendezvous costs ten thousand calls (13.5 µs against 1.25 ns).
 - [`ada83/`](impl/ada-colors/ada83/): the same three situations in Ada 83,
   built by GNAT `-gnat83` in CI. They are the bounded buffer as a server task,
   the timed entry call that GREEN 1979 did not have, and the lock as a task
@@ -366,5 +371,3 @@ After `make seed` the page must be rebuilt too: `cd impl/ada-colors/web && npm c
 
 - The Blue and Yellow designs, from DTIC ADB950587, downloaded by hand.
   DTIC was down for maintenance on 12 October 2026.
-- The Rational R1000 emulator, to measure the cost of a rendezvous on the
-  real Ada machine.

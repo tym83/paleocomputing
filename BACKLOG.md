@@ -54,7 +54,7 @@ From a survey of "never-implemented or lost hardware architectures that can be e
 | 26 | **Turing's full ACE (1945): a never-implemented design**: only the cut-down Pilot ACE was built | overview/research | research | the ACE spec | a reconstruction of "the machine that was never built" | idea |
 | 27 | **GA144 / Forth F18: 144 asynchronous cores**: a rhyme to J1 (#2), but an async array | 3 | medium | an emulator exists | exotic async Forth next to our J1 triad | idea |
 | 28 | **Babbage's Analytical Engine live**: never completed | overview | an evening | the Fourmilab emulator (J. Walker) + Plan 28 | a program in Lovelace's style; the "zeroth" never-implemented machine | idea |
-| 29 | **Rational R1000: an Ada machine live**: the hardware was brought back to life by DataMuseum.dk | 2 (Ada) | medium | the DataMuseum.dk emulator | a companion to the Ada track (RED/GREEN #14/#3e): a real Ada machine | idea |
+| 29 | **Rational R1000: an Ada machine live**: the hardware was brought back to life by DataMuseum.dk | 2 (Ada) | medium | the DataMuseum.dk emulator | the rendezvous measured on the real Ada machine in CI: 55 µs, about twenty procedure calls, against ten thousand with GNAT today ([`impl/ada-colors/r1000/`](impl/ada-colors/r1000/README.md)) | **done** (measurement) |
 
 ---
 
