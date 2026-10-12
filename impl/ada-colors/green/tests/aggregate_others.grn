@@ -1,0 +1,24 @@
+restricted(TEXT_IO)
+procedure MAIN is
+   use TEXT_IO;
+   subtype NODE is INTEGER range 1 .. 5;
+   type RI is array(NODE'FIRST .. NODE'LAST) of INTEGER;
+   ME : constant NODE := 3;
+   X : RI := (ME => ME, others => 0);
+   task T is
+      entry G(N : NODE; R : out INTEGER);
+   end T;
+   task body T is
+   begin
+      accept G(N : NODE; R : out INTEGER) do
+         R := X(N);
+      end;
+   end T;
+   V : INTEGER;
+begin
+   PUT(X(3)); PUT(X(1));
+   initiate T;
+   T.G(3, V);
+   PUT(V);
+   PUT(NEWLINE);
+end MAIN;

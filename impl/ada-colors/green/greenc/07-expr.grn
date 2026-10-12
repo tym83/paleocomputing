@@ -101,8 +101,13 @@
       BT : TYP;
       BC : CONS;
    begin
-      if E.KIND = N_NAME then
-         Y := LOOKUP(E.NAME.all);
+      if E.KIND = N_NAME or (E.KIND = N_SELECT and then IS_PACKAGE(E.A)) then
+         if E.KIND = N_SELECT then
+            -- P.X: a variable of the visible part of package P (RM79 4.1.2)
+            Y := MEMBER_OF(E.A.NAME.all, E.NAME.all, E.LINE);
+         else
+            Y := LOOKUP(E.NAME.all);
+         end if;
          if Y = null then
             FAIL(E.LINE, E.NAME.all & " is not declared");
          end if;
@@ -317,6 +322,14 @@
                end if;
                if Y.KIND = Y_TYPE then
                   CONVERSION(E, Y, T, R);
+                  return;
+               end if;
+            elsif E.A.KIND = N_SELECT and then IS_PACKAGE(E.A.A) then
+               -- P.F(...) calls a function of the visible part of P
+               Y := MEMBER_OF(E.A.A.NAME.all, E.A.NAME.all, E.LINE);
+               if Y /= null and then (Y.KIND = Y_FUNC or Y.KIND = Y_PROC or Y.KIND = Y_ENTRY) then
+                  CALL_WANT := WANT;
+                  GCALL(E, FALSE, T, R);
                   return;
                end if;
             end if;
@@ -773,6 +786,8 @@
       F : FIELD;
       VT : TYP;
       CT, TMP, V, X, PARTS, ET, LO, HI, KEY : TEXT;
+      -- the others choice fills the array before the named choices are stored
+      FILL : TEXT := MK("");
       N : INTEGER;
       LAB : NODE;
    begin
@@ -856,6 +871,7 @@
                   & TMP.all & ".hi = " & HI.all & "; " & TMP.all & ".lo2 = " & TMP.all & ".hi2 = 1; "
                   & TMP.all & ".p = rt_alloc(sizeof(" & ET.all & ") * (size_t)(RT_CNT(" & TMP.all
                   & ") + 1));");
+      N := PARTS.all'LENGTH;
       while IT /= null loop
          GEXPR(IT.B, WANT.ELEM, VT, V);
          CHECK_TYPE(VT, WANT.ELEM, E.LINE);
@@ -863,8 +879,8 @@
          LAB := IT.A;
          while LAB /= null loop
             if LAB.FLAG = 1 then
-               PARTS := MK(PARTS.all & " for (rt_int k_ = 0; k_ < RT_CNT(" & TMP.all & "); k_++) "
-                           & TMP.all & ".p[k_] = " & X.all & ";");
+               FILL := MK(" for (rt_int k_ = 0; k_ < RT_CNT(" & TMP.all & "); k_++) "
+                          & TMP.all & ".p[k_] = " & X.all & ";");
             elsif LAB.B /= null then
                GEXPR(LAB.A, WANT.IDX, VT, KEY);
                GEXPR(LAB.B, WANT.IDX, VT, HI);
@@ -880,7 +896,8 @@
          end loop;
          IT := IT.NEXT;
       end loop;
-      R := MK(PARTS.all & " " & TMP.all & "; })");
+      R := MK(PARTS.all(1 .. N) & FILL.all & PARTS.all(N + 1 .. PARTS.all'LENGTH) & " " & TMP.all
+              & "; })");
    end AGGREGATE;
 
    -- ---- subprogram calls (RM79 5.2) -----------------------------------------------------
