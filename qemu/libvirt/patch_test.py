@@ -112,14 +112,18 @@ def main():
     with tempfile.TemporaryDirectory() as tmp:
         tmp = pathlib.Path(tmp)
 
-        # 1. RISC5 from the real targets.txt against the old edit table.
+        # 1. RISC5 from targets.txt against the old edit table. The other
+        # machines of the file are left out here and checked in 6.
+        risc5 = tmp / 'targets-risc5.txt'
+        risc5.write_text(''.join(l for l in TARGETS.read_text().splitlines(True)
+                                 if l.startswith('#') or not l.strip() or l.split()[0] == 'risc5'))
         new, old = tmp / 'new', tmp / 'old'
         make_tree(new)
         make_tree(old)
         for rel, a, b in OLD_EDITS:
             p = old / rel
             p.write_text(p.read_text().replace(a, b, 1))
-        r = run(new, '--targets', str(TARGETS))
+        r = run(new, '--targets', str(risc5))
         report(r.returncode == 0, 'patch from kubevirt/targets.txt applied'
                + ('' if r.returncode == 0 else f': {r.stdout}{r.stderr}'))
         got, want = read_tree(new), read_tree(old)
@@ -129,12 +133,12 @@ def main():
                'the enum line matches byte for byte, comment included')
 
         # 2. A second run changes nothing.
-        r = run(new, '--targets', str(TARGETS))
+        r = run(new, '--targets', str(risc5))
         report(r.returncode == 0 and read_tree(new) == got, 'a second run changes nothing')
 
         # 3. A second architecture, added only as a data line.
         fake = tmp / 'targets-two.txt'
-        fake.write_text(TARGETS.read_text()
+        fake.write_text(risc5.read_text()
                         + 'fakearch 64   BE       fakeboard yes  Fake machine for the test\n')
         two = tmp / 'two'
         make_tree(two)
@@ -175,6 +179,17 @@ def main():
         r = run(broken, '--targets', str(TARGETS))
         report(r.returncode != 0 and 'could not find the spot' in r.stderr,
                'negative control: a missing required anchor stops the patch')
+
+        # 6. Every machine of the real targets.txt: each gets its enum entry,
+        # and those without PCI get refused it.
+        full = tmp / 'full'
+        make_tree(full)
+        r = run(full, '--targets', str(TARGETS))
+        t = read_tree(full)
+        rows = [l.split() for l in TARGETS.read_text().splitlines() if l.strip() and not l.startswith('#')]
+        report(r.returncode == 0 and all(f'VIR_ARCH_{w[0].upper()},' in t['src/util/virarch.h'] for w in rows)
+               and all(f'VIR_ARCH_{w[0].upper()})' in t['src/qemu/qemu_domain.c'] for w in rows if w[4] == 'no'),
+               f'all machines of kubevirt/targets.txt patched: {", ".join(w[0] for w in rows)}')
 
     print(f'Total: passed {ok}, failed {fail}')
     sys.exit(1 if fail else 0)

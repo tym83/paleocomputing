@@ -29,11 +29,13 @@ on:
     paths:
       - 'kubevirt/**'
       - 'qemu/**'
+      - 'impl/x8-the/emu/**'
       - '.github/workflows/launcher.yml'
   pull_request:
     paths:
       - 'kubevirt/**'
       - 'qemu/**'
+      - 'impl/x8-the/emu/**'
       - '.github/workflows/launcher.yml'
 
 permissions:

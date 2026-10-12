@@ -26,6 +26,9 @@ on:
     paths:
       - 'kubevirt/**'
       - 'qemu/**'
+      - 'impl/x8-the/emu/**'
+      - 'impl/x8-the/the/**'
+      - 'marketplace/repos/machines/packages/apps/x8-vm/**'
       - 'marketplace/repos/machines/packages/library/**'
       - 'marketplace/repos/platform/packages/system/kubevirt-paleo-launcher/**'
       - '.github/workflows/kubevirt-e2e.yml'
@@ -33,6 +36,9 @@ on:
     paths:
       - 'kubevirt/**'
       - 'qemu/**'
+      - 'impl/x8-the/emu/**'
+      - 'impl/x8-the/the/**'
+      - 'marketplace/repos/machines/packages/apps/x8-vm/**'
       - 'marketplace/repos/machines/packages/library/**'
       - 'marketplace/repos/platform/packages/system/kubevirt-paleo-launcher/**'
       - '.github/workflows/kubevirt-e2e.yml'
@@ -123,6 +129,9 @@ jobs:
 
       - name: Screen through virtctl vnc
         run: kubevirt/e2e.sh screen
+
+      - name: x8-vm machine from the catalog (Dijkstra's THE)
+        run: kubevirt/e2e.sh x8
 
       - name: Failure diagnostics
         if: failure()

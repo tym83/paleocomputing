@@ -12,6 +12,9 @@
 #     machine    render the oberon-vm chart, apply it, wait for the machine
 #     screen     capture the screen via `virtctl vnc --proxy-only` and compare
 #                with the reference: dark_pixels=18607
+#     x8         the X8 with Dijkstra's THE (x8-vm chart): its tape image is
+#                built here and loaded into kind, the machine must run
+#                qemu-system-x8, and its console must show text that settles
 #     diag       dump everything needed to analyse a failure
 #     down       delete the kind cluster
 #
@@ -257,6 +260,61 @@ step_screen() {
     || die "screen did not match the reference"
 }
 
+x8_vm_ready() {
+  [ "$(k -n "$NS" get vm x8-vm-dijkstra -o jsonpath='{.status.ready}' 2>/dev/null)" = true ]
+}
+
+x8_snapshot() {
+  port=$(( 5900 + $(date +%s) % 90 ))
+  virtctl --kubeconfig "$KUBECONFIG_FILE" --context "$CONTEXT" -n "$NS" \
+    vnc x8-vm-dijkstra --proxy-only --port "$port" > "$E2E_DIR/virtctl-vnc.log" 2>&1 &
+  proxy=$!
+  sleep 3
+  python3 "$ROOT/kubevirt/vnc_snapshot.py" 127.0.0.1 "$port" "$E2E_DIR/x8-$1.ppm" 2>&1 || true
+  kill "$proxy" 2>/dev/null || true
+  wait "$proxy" 2>/dev/null || true
+}
+
+step_x8() {
+  # The tape image is not published before this change is merged, so it is
+  # built from the tree and loaded into kind, as the launcher is.
+  img=paleo.local/x8-run:e2e
+  docker build -q -f "$ROOT/impl/deploy/Containerfile.x8-run" -t "$img" "$ROOT/impl" >/dev/null
+  kind load docker-image "$img" --name "$CLUSTER"
+  k create namespace "$NS" --dry-run=client -o yaml | k apply -f -
+  helm template dijkstra "$ROOT/marketplace/repos/machines/packages/apps/x8-vm" \
+    --namespace "$NS" --set storageClass=standard \
+    | sed "s|ghcr.io/tym83/paleocomputing/x8-run:dev|$img|" > "$E2E_DIR/x8-vm.yaml"
+  k -n "$NS" apply -f "$E2E_DIR/x8-vm.yaml"
+  k -n "$NS" wait job -l app.kubernetes.io/instance=dijkstra --for=condition=Complete \
+    --timeout="${MACHINE_TIMEOUT}s" || die "the X8 volume fill job did not complete"
+  wait_for "$MACHINE_TIMEOUT" "VirtualMachine x8-vm-dijkstra ready" x8_vm_ready || die "X8 machine not ready"
+
+  pod=$(k -n "$NS" get pods -l kubevirt.io=virt-launcher,app.kubernetes.io/instance=dijkstra \
+          --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}')
+  # shellcheck disable=SC2016 # expanded in the pod, not here
+  emu=$(k -n "$NS" exec "$pod" -c compute -- sh -c \
+    'for p in /proc/[0-9]*; do tr "\0" " " < "$p/cmdline" 2>/dev/null; echo; done' \
+    | grep -m1 'qemu-system-x8') || die "qemu-system-x8 is not running in the machine pod"
+  log "emulator: $emu"
+  case $emu in *"-kernel /payload/the.tape"*) ;; *) die "the THE tape is not the kernel" ;; esac
+
+  # THE boots in a few seconds of X8 time and then waits for the operator;
+  # its console is a text screen. Two snapshots some time apart must show
+  # text (not all dark) and be the same: the system came up and settled.
+  sleep 60
+  a=$(x8_snapshot a); log "X8 console: $a"
+  sleep 20
+  b=$(x8_snapshot b); log "X8 console: $b"
+  da=${a##*dark_pixels=}
+  case $a in *dark_pixels=*) ;; *) die "no X8 console snapshot" ;; esac
+  w=$(echo "$a" | sed -n 's/.* \([0-9]*\)x\([0-9]*\) dark_pixels=.*/\1/p')
+  h=$(echo "$a" | sed -n 's/.* \([0-9]*\)x\([0-9]*\) dark_pixels=.*/\2/p')
+  [ -n "$w" ] && [ "$da" -lt $((w * h)) ] || die "the X8 console is blank"
+  [ "${b##*dark_pixels=}" = "$da" ] || die "the X8 console did not settle ($da, then ${b##*dark_pixels=})"
+  log "X8 console shows THE: dark_pixels=$da of $((w * h))"
+}
+
 step_diag() {
   set +e
   section() { printf '\n::group::%s\n' "$1"; }
@@ -293,10 +351,10 @@ step_down() {
   kind delete cluster --name "$CLUSTER" --kubeconfig "$KUBECONFIG_FILE"
 }
 
-step=${1:?specify a step: tools cluster kubevirt launcher machine screen diag down}
+step=${1:?specify a step: tools cluster kubevirt launcher machine screen x8 diag down}
 log "step $step, launcher $LAUNCHER_IMAGE, directory $E2E_DIR"
 case $step in
-  tools|cluster|kubevirt|launcher|machine|screen|diag|down) "step_$step" ;;
+  tools|cluster|kubevirt|launcher|machine|screen|x8|diag|down) "step_$step" ;;
   *) die "unknown step $step" ;;
 esac
 took "$step"
