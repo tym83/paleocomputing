@@ -3,6 +3,7 @@
  * teleprinter and the line printer handed to JavaScript and the keyboard
  * pressed from it. Built with emscripten (make web).
  */
+#define _POSIX_C_SOURCE 200809L   /* fmemopen */
 #include <stdlib.h>
 #include <string.h>
 #include <emscripten.h>
