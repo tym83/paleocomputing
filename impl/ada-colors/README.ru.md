@@ -13,9 +13,9 @@
 | `red/redc/` | redc, компилятор RED, написанный на RED. `red/seed/redc.c` — то, что последний redc сделал из себя |
 | `red/tests/` | Тесты RED с ожидаемым выводом |
 | `green/` | То же для GREEN: затравка, greenc на GREEN, семя, тесты, примеры INTRO 1979 года |
-| `os/` | PAIRS, ядро в стиле Tandem NonStop на RED |
+| `os/` | PAIRS, ядро в стиле Tandem NonStop на RED; система THE Дейкстры на RED и её семафоры на GREEN |
 | `kube/` | Управляющий цикл Kubernetes на RED, в виде процессной пары и на GREEN |
-| `labs/` | Одиннадцать упражнений с проверкой |
+| `labs/` | Двенадцать упражнений с проверкой |
 | `problems/` | Десять контрольных задач DoD: заметки и сравнение; `run/` делает оригиналы 1979 года работающими |
 | `ada83/` | Те же ситуации на Аде 83, для GNAT `-gnat83` |
 | `notes/` | Грамматика RED, дайджест GREEN, история, находки по GREEN |
@@ -25,7 +25,7 @@ make                   # redc из семени, дважды; файлы C до
 make genesis           # первый шаг, от затравки на Python
 red/tests/run.sh
 make -C green fixpoint test genesis
-os/run.sh              # PAIRS и три цикла Kubernetes
+os/run.sh              # PAIRS, THE и три цикла Kubernetes
 labs/check.sh 03 look
 ```
 

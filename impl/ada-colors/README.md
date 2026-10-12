@@ -13,9 +13,9 @@ The episode is described in [`17-episode-red-green.md`](../../17-episode-red-gre
 | `red/redc/` | redc, a RED compiler written in RED. `red/seed/redc.c` is what the last redc made of itself |
 | `red/tests/` | RED tests with expected output |
 | `green/` | The same for GREEN: bootstrap, greenc written in GREEN, seed, tests, the 1979 INTRO examples |
-| `os/` | PAIRS, a Tandem NonStop style kernel in RED |
+| `os/` | PAIRS, a Tandem NonStop style kernel in RED; Dijkstra's THE system in RED and its semaphore core in GREEN |
 | `kube/` | The Kubernetes control loop in RED, as a process pair, and in GREEN |
-| `labs/` | Eleven exercises with a checker |
+| `labs/` | Twelve exercises with a checker |
 | `problems/` | The ten DoD contract problems: notes and comparison; `run/` makes 1979 originals runnable |
 | `ada83/` | The same situations in Ada 83, for GNAT `-gnat83` |
 | `notes/` | The RED grammar, a GREEN digest, history, GREEN findings |
@@ -25,7 +25,7 @@ make                   # redc from its seed, twice; the C must be identical
 make genesis           # the first step, from the Python bootstrap
 red/tests/run.sh
 make -C green fixpoint test genesis
-os/run.sh              # PAIRS and the three Kubernetes loops
+os/run.sh              # PAIRS, THE and the three Kubernetes loops
 labs/check.sh 03 look
 ```
 

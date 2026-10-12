@@ -347,6 +347,23 @@ Now for the most instructive part. If you swap two lines in the primary, so that
 
 The client was told a transfer of thirty units went through, and the books have no record of it. And note: the total amount of money is still 400, so if that's all you look at, you see no error at all. That's exactly what the "checkpoint before reply" rule is for, and it's very easy to break with the best of intentions, for the sake of speed. This became one of the labs.
 
+Tandem isn't the only system of those years that asked to be written in RED. Ten years before Guardian, in 1965–1968, Dijkstra's group in Eindhoven built the THE multiprogramming system, and the paper about it became one of the most cited in the history of operating systems. Its central idea is hierarchy. The system is a society of sequential processes laid out on five levels: processor allocation and semaphores on level 0, the segment controller that moves information between core and drum on level 1, the message interpreter that owns the only console on level 2, buffering of input and output on level 3, user programs on level 4 and the operator on level 5. A process calls only on levels below it, and Dijkstra claimed that this is what lets the system's correctness be proved in advance and its testing be exhaustive.
+
+I built THE in RED, about four hundred lines. The semaphores turned out to be mailboxes of tokens: P takes a token, V puts one back. `REGION` won't do here, because in THE one process does the V and another does the P, while RED's critical section only brackets code inside one process. Eight segments live in three core pages, and the controller dumps the surplus to the free drum page with the least latency, exactly as the paper says. Three paper tape readers fill buffers, three programs compute sums of squares, the printer asks the operator for paper on its third line, and a hundred and forty milliseconds later the operator loads it.
+
+The most interesting thing in the paper is one passage that's easy to miss. Dijkstra explains why the message interpreter sits above the segment controller rather than beside it: the console's vocabulary is stored in segments, so to print a sentence the interpreter needs the controller. I checked what happens if the order is broken. In lab 12 the segment controller reports every dump to the operator, so a level-1 process waits for a level-2 one. The system freezes at the very first dump:
+
+```
+[20 ms] CONSOLE  reader 1: tape loaded, reading
+[30 ms]   segment controller: segment 1 dumped from core page 1 to drum page 6
+[40 ms] CONSOLE  reader 2: tape loaded, reading
+*** deadlock: every task is waiting (t=400)
+```
+
+The controller waits for the console, and the console waits for the controller to read its vocabulary. One arrow pointing up, and Dijkstra's proof no longer holds.
+
+For comparison I wrote THE's core in GREEN too. It has neither semaphores nor mailboxes, so each semaphore becomes a server task that accepts P only while its count is positive. It works, but nine lines printed by three programs through a shared buffer cost 54 rendezvous. Where RED takes a token from a mailbox, GREEN wakes a server.
+
 # Kubernetes on mailboxes
 
 For those who haven't worked with Kubernetes, three sentences. In Kubernetes you don't command "start three copies of the service"; you write the desired state into a store, a deployment with three replicas, and a set of independent controllers compares desired with actual over and over and closes the gap: they create pods, that is, instances of the application, assign them to nodes, evict pods from nodes that have stopped responding, and during a version upgrade roll out new pods in place of the old ones. All of them read and write through a single API server.
@@ -465,7 +482,7 @@ And this, I think, is a lesson not about 1979 but about any technological fork i
 
 # Labs, and how to get your hands on all this
 
-As in the earlier parts, I wanted readers to be able not just to read about the language but to break something with their own hands. The `impl/ada-colors/labs` directory holds eleven RED exercises and a `check.sh` script that translates your version of a program, runs it and tells you whether you've completed the task. The tasks follow the same levels as before: look, change, break, measure and build. And since time in the programs is virtual and the scheduler is deterministic, you can compare your output with someone else's character for character.
+As in the earlier parts, I wanted readers to be able not just to read about the language but to break something with their own hands. The `impl/ada-colors/labs` directory holds twelve RED exercises and a `check.sh` script that translates your version of a program, runs it and tells you whether you've completed the task. The tasks follow the same levels as before: look, change, break, measure and build. And since time in the programs is virtual and the scheduler is deterministic, you can compare your output with someone else's character for character.
 
 Here's what's there:
 
@@ -477,6 +494,7 @@ Here's what's there:
 - priorities: give tasks equal priorities and see first-come, first-served ordering;
 - generics: write your own `max` for numbers and strings without instantiating anything by hand;
 - a process pair: move the primary's death to a different request, then swap the reply and the checkpoint and catch the missing transfer with the audit;
+- Dijkstra's THE: let the segment controller report every dump to the drum to the operator, and watch the whole system freeze, because the console needs the very controller that is waiting for it;
 - Kubernetes with a process-pair control plane: remove the queue draining in the node controller and get healthy nodes evicted after a failover;
 - the compiler itself: add a built-in `MAX` function to `redc`, rebuild it and make sure the fixed point still holds;
 - the 1979 program: drop one fix from the list and see which error in the original stops the translator.
