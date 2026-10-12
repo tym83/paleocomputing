@@ -33,7 +33,7 @@
 typedef struct X8MC {
     X8CPU *cpu;
     x8 m;
-    CharBackend console, printer;
+    CharFrontend console, printer;
     bool have_printer;
     int col[2];                    /* column of the teleprinter and the printer */
 } X8MC;
@@ -43,7 +43,7 @@ static char *x8_keys;              /* -machine x8,keys=<file>: "ms text" lines *
 static char *x8_commands;          /* -machine x8,commands=<line;line>  */
 static bool x8_realtime = true;
 
-static void put(CharBackend *be, const char *s)
+static void put(CharFrontend *be, const char *s)
 {
     qemu_chr_fe_write_all(be, (const uint8_t *)s, strlen(s));
 }
@@ -56,7 +56,7 @@ static void put(CharBackend *be, const char *s)
 static void x8_on_char(int dev, int ch, uint64_t cycles)
 {
     bool lp = dev == DEV_LINEPRINTER;
-    CharBackend *be = lp && mc.have_printer ? &mc.printer : &mc.console;
+    CharFrontend *be = lp && mc.have_printer ? &mc.printer : &mc.console;
     int *col = &mc.col[lp];
     char buf[32];
 
