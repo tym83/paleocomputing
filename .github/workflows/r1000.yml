@@ -1,0 +1,123 @@
+# What an Ada rendezvous cost on the Rational R1000, the Ada machine, against
+# a procedure call and the life of a task (impl/ada-colors/r1000).
+#
+# r1000: DataMuseum.dk's software emulator of the R1000/400 boots the Rational
+#   Environment from the museum's public disk images, compiles rdv_bench.ada
+#   and runs it; the time per operation is the machine's own microcycle count.
+#   The boot alone takes an hour or more, so this runs only by hand or when
+#   the benchmark itself changes.
+# gnat: the same Ada 83 text with GNAT -gnat83 on the runner.
+# red: the same measurements in RED on our runtime.
+name: r1000
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['feat/r1000-*']
+    paths: ['impl/ada-colors/r1000/**', '.github/workflows/r1000.yml']
+
+env:
+  # the emulator's Codeberg repository at a fixed commit
+  EMU_REPO: https://codeberg.org/Datamuseum-dk/R1000.Emulator.git
+  EMU_REF: 0c19695af3d1954ca5d78c8c9c6779e9fab3bc9b
+  # https://datamuseum.dk/wiki/Bits:30000551 and Bits:30000552, public
+  DISK0_URL: https://datamuseum.dk/bits/30000551
+  DISK0_SHA: 5e34d149ac2f9397d6fd7f084815a5834b44b674a6708725e1e8c9e4c3bb7720
+  DISK1_URL: https://datamuseum.dk/bits/30000552
+  DISK1_SHA: 4b3895bb373642e74c9d628ef49f1001479869270024e67ac551db2cf7b07b90
+
+jobs:
+  gnat:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y gnat
+      - name: Benchmark
+        working-directory: impl/ada-colors/r1000
+        run: |
+          set -eu
+          mkdir -p /tmp/g && cd /tmp/g
+          gnatchop -q "$GITHUB_WORKSPACE/impl/ada-colors/r1000/rdv_bench.ada" .
+          printf 'with Rdv_Bench;\nprocedure Bench_Main is\nbegin\n   Rdv_Bench.Target_Seconds := 2.0;\n   Rdv_Bench.Run;\nend Bench_Main;\n' > bench_main.adb
+          gnatmake -q -gnat83 -O1 bench_main.adb
+          ./bench_main | tee out.txt
+          python3 "$GITHUB_WORKSPACE/impl/ada-colors/r1000/parse.py" ada out.txt | tee -a "$GITHUB_STEP_SUMMARY"
+
+  red:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Benchmark
+        working-directory: impl/ada-colors
+        run: |
+          set -eu
+          make fixpoint
+          build/redc < r1000/rdv_bench.red > build/rb.c
+          cc -std=gnu11 -O1 -w -Irt build/rb.c rt/paleo.c -o build/rb -lpthread -lm
+          PALEO_LINEBUF=1 build/rb | python3 r1000/stamp.py | tee build/rb.txt
+          python3 r1000/parse.py host build/rb.txt | tee -a "$GITHUB_STEP_SUMMARY"
+
+  r1000:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Disk images (cached)
+        id: disks
+        uses: actions/cache@v4
+        with:
+          path: /tmp/disks
+          key: r1000-pam-disks-${{ env.DISK0_SHA }}-${{ env.DISK1_SHA }}
+
+      - name: Download disk images
+        if: steps.disks.outputs.cache-hit != 'true'
+        run: |
+          set -eu
+          mkdir -p /tmp/disks
+          curl -sSfL -o /tmp/disks/disk0.bin "$DISK0_URL"
+          curl -sSfL -o /tmp/disks/disk1.bin "$DISK1_URL"
+          echo "$DISK0_SHA  /tmp/disks/disk0.bin" | sha256sum -c
+          echo "$DISK1_SHA  /tmp/disks/disk1.bin" | sha256sum -c
+          ls -l /tmp/disks
+
+      - name: Build the emulator
+        run: |
+          set -eu
+          git clone -q "$EMU_REPO" /tmp/emu
+          git -C /tmp/emu checkout -q "$EMU_REF"
+          cd /tmp/emu/SwEmulator
+          make setup
+          make CC=gcc-14 r1000sim
+          ls -l r1000sim
+
+      - name: Boot, compile and run
+        run: |
+          set -eu
+          sh impl/ada-colors/r1000/run.sh /tmp/emu/SwEmulator/r1000sim \
+            /tmp/disks/disk0.bin /tmp/disks/disk1.bin /tmp/run > /tmp/run.out 2>&1 &
+          pid=$!
+          # progress for the log: the console's last lines every ten minutes
+          while kill -0 "$pid" 2>/dev/null; do
+            sleep 600
+            echo "--- $(date -u +%H:%M) console:"
+            tail -c 600 /tmp/run/_.r1000.console 2>/dev/null | tr -cd '[:print:]\n' | tail -5 || true
+            grep FIDO /tmp/run/_.log 2>/dev/null | tail -1 || true
+          done
+          wait "$pid"
+
+      - name: Result
+        if: always()
+        run: |
+          python3 impl/ada-colors/r1000/parse.py r1000 /tmp/run/_.log /tmp/run/_.r1000.console \
+            | tee -a "$GITHUB_STEP_SUMMARY" || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: r1000-run
+          path: |
+            /tmp/run/_.log
+            /tmp/run/_.r1000.console
+            /tmp/run/_.cli
+            /tmp/run.out
