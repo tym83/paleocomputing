@@ -1,0 +1,45 @@
+# The Electrologica X8 and THE (impl/x8-the).
+#
+# x8: the emulator is built, and the X8 test program of the Mathematisch
+#   Centrum (1971, fetched from Dick Grune's page) runs its 375 tests on it;
+#   the expectations written in its comments must hold.
+# the: THE boots by IP, runs its three user programs with the operator's
+#   keys, and its console and line printer must be as expected; the labs that
+#   need no change run, and the layering break must hang the machine.
+name: x8-the
+
+on:
+  push:
+    branches: [main]
+    paths: ['impl/x8-the/**', '.github/workflows/x8-the.yml']
+  pull_request:
+    paths: ['impl/x8-the/**', '.github/workflows/x8-the.yml']
+  workflow_dispatch:
+
+defaults:
+  run:
+    working-directory: impl/x8-the
+
+jobs:
+  x8:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Emulator
+        run: make -C emu
+      - name: The X8 test program of 1971
+        run: tests/x8stest.sh
+
+  the:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Emulator
+        run: make -C emu
+      - name: THE, console and line printer
+        run: tests/the.sh
+      - name: Labs
+        run: |
+          labs/check.sh 01 > /dev/null
+          sed -i 's/^    ncp = 6, /    ncp = 4, /' the/the.elan && labs/check.sh 02 | tail -1 && git checkout the/
+          sed -i 's/^    layerbreak = 0, /    layerbreak = 1, /' the/the.elan && MAX=60 labs/check.sh 03 | tail -1 && git checkout the/
