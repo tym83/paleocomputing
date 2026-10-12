@@ -1,0 +1,56 @@
+# The RED and GREEN episode (impl/ada-colors).
+#
+# red: the compiler written in RED is rebuilt from its seed twice and the two C
+#   files must be identical (the fixed point); the very first step from the
+#   Python bootstrap is replayed; then the tests, the NonStop kernel, the
+#   Kubernetes loops and the labs run. Everything prints the same on every run:
+#   the runtime follows the RED scheduler exactly and its clock is virtual.
+# green: the same for the compiler written in GREEN.
+# ada83: the comparison programs, built by GNAT in Ada 83 mode.
+name: ada-colors
+
+on:
+  push:
+    branches: [main]
+    paths: ['impl/ada-colors/**', '.github/workflows/ada-colors.yml']
+  pull_request:
+    paths: ['impl/ada-colors/**', '.github/workflows/ada-colors.yml']
+  workflow_dispatch:
+
+defaults:
+  run:
+    working-directory: impl/ada-colors
+
+jobs:
+  red:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fixed point
+        run: make fixpoint
+      - name: Genesis (the first step, from the Python bootstrap)
+        run: make genesis
+      - name: Tests
+        run: red/tests/run.sh
+      - name: NonStop kernel and Kubernetes loops
+        run: os/run.sh
+      - name: Labs
+        run: |
+          for lab in 01 02 03 04 05 06 07 08 09; do labs/check.sh $lab look; done
+
+  green:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fixed point and tests
+        run: |
+          if [ -f green/Makefile ]; then make -C green fixpoint test; else echo "no green yet"; fi
+
+  ada83:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: GNAT
+        run: sudo apt-get update && sudo apt-get install -y gnat
+      - name: Ada 83 comparison programs
+        run: ada83/run.sh
