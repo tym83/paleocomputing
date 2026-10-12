@@ -737,6 +737,9 @@
       V : TEXT;
    begin
       while X /= null loop
+         if ACCEPT_DEPTH > 0 and X = ACCEPT_EXITS then
+            FAIL(S.LINE, "an exit statement cannot leave an accept statement (RM79 5.7)");
+         end if;
          if (S.NAME = null and X.IS_LOOP) or else (S.NAME /= null and then X.MATCH /= null
             and then X.MATCH.all = S.NAME.all) then
             if S.A /= null then

@@ -1,0 +1,21 @@
+
+-- The environment delivers a character a millisecond. The operator presses the
+-- interrupt at 2.5 seconds; then every character read must have reached B.
+restricted(BUFFERS, TEXT_IO)
+procedure MAIN is
+   use BUFFERS, TEXT_IO;
+begin
+   delay 2.5 * SECONDS;
+   PUT("operator: interrupt"); PUT(NEWLINE);
+   D.INTERRUPT;
+   delay 1.0 * SECONDS;
+   PUT("read"); PUT(ITEMS_READ, 6); PUT(", processed by B"); PUT(RESULT_AREA, 6);
+   PUT(NEWLINE);
+   if ITEMS_READ = RESULT_AREA then
+      PUT("no data lost");
+   else
+      PUT("data lost");
+   end if;
+   PUT(NEWLINE);
+   abort C, D;
+end MAIN;

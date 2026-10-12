@@ -739,6 +739,7 @@
    -- an exception in the body goes to both partners (RM79 11.4)
    procedure GEN_ACCEPT(S : NODE) is
       Y : SYM := LOOKUP_ENTRY(S.NAME.all, CUR_TASK);
+      SAVED_AX : EXITS_T;
       ENT, EP, XF, X : TEXT;
       PM : PARM;
       F : NODE := S.A;
@@ -784,7 +785,10 @@
          PM := PM.NEXT;
       end loop;
       ACCEPT_DEPTH := ACCEPT_DEPTH + 1;
+      SAVED_AX := ACCEPT_EXITS;
+      ACCEPT_EXITS := EXITS;
       GEN_STATEMENTS(S.B);
+      ACCEPT_EXITS := SAVED_AX;
       ACCEPT_DEPTH := ACCEPT_DEPTH - 1;
       CLOSE_SCOPE;
       POP_CLEANUP;

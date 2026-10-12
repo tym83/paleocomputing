@@ -259,6 +259,9 @@ procedure GREENC is
    ST_FIELD : TEXT;
    FUNC_SYM : SYM;
    EXITS : EXITS_T;
+   -- the loops that enclose the innermost accept statement: an exit cannot
+   -- reach them (RM79 5.7)
+   ACCEPT_EXITS : EXITS_T;
    FRAMES : INTEGER := 0;
    HANDLERS : LINES;
    CLEANUPS : LINES;

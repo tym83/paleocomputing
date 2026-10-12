@@ -1,0 +1,9 @@
+C sees      0
+B got a buffer of  1000 items, total   1000
+C sees   1000
+B got a buffer of  1000 items, total   2000
+operator: interrupt
+B got a buffer of   501 items, total   2501
+C sees   2501
+read   2501, processed by B   2501
+no data lost

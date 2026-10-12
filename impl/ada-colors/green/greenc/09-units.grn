@@ -25,6 +25,13 @@
          end if;
          M := M.MNEXT;
       end loop;
+      -- inside a task body, T.E also names a local entry of T (RM79 9.5)
+      if Y.KIND = Y_TASK then
+         M := LOOKUP_ENTRY(NAME, Y);
+         if M /= null and then M.KIND = Y_ENTRY and then SAME_TASK(M.MEMBERS, Y) then
+            return M;
+         end if;
+      end if;
       return null;
    end MEMBER_OF;
 
