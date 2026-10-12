@@ -39,7 +39,9 @@ jobs:
           mkdir -p /tmp/g && cd /tmp/g
           gnatchop -q "$GITHUB_WORKSPACE/impl/ada-colors/r1000/rdv_bench.ada" .
           printf 'with Rdv_Bench;\nprocedure Bench_Main is\nbegin\n   Rdv_Bench.Target_Seconds := 2.0;\n   Rdv_Bench.Run;\nend Bench_Main;\n' > bench_main.adb
-          gnatmake -q -gnat83 -O1 bench_main.adb
+          # without optimization: at -O1 GCC deletes the empty loop and inlines
+          # the call, and there is nothing left to measure
+          gnatmake -q -gnat83 -O0 -fno-inline bench_main.adb
           ./bench_main | tee out.txt
           python3 "$GITHUB_WORKSPACE/impl/ada-colors/r1000/parse.py" ada out.txt | tee -a "$GITHUB_STEP_SUMMARY"
 
@@ -88,6 +90,8 @@ jobs:
           git -C /tmp/emu checkout -q "$EMU_REF"
           cd /tmp/emu/SwEmulator
           make setup
+          # glibc hides usleep and cfmakeraw under -std=c23 without this
+          echo 'CFLAGS += -D_GNU_SOURCE' > ../Makefile.local
           make CC=gcc-14 r1000sim
           ls -l r1000sim
 
