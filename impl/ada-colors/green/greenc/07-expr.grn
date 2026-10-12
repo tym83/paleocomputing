@@ -185,6 +185,19 @@
          INDEX_ON(D.all, BT.TARGET, E, RO, LV, CODE_OUT, T, C);
          return;
       end if;
+      if LIST_LEN(A) = 2 and BT.KIND = T_ARRAY and then BT.IDX2 /= null then
+         -- A(I, J): row-major in one block of components
+         GEXPR(A, BT.IDX, IT, I);
+         CHECK_TYPE(IT, BT.IDX, E.LINE);
+         GEXPR(A.NEXT, BT.IDX2, IT, D);
+         CHECK_TYPE(IT, BT.IDX2, E.LINE);
+         CODE_OUT := MK(BASE & ".p[(rt_index(" & I.all & ", " & BASE & ".lo, " & BASE & ".hi) - " & BASE
+                        & ".lo) * (" & BASE & ".hi2 - " & BASE & ".lo2 + 1) + rt_index(" & D.all & ", "
+                        & BASE & ".lo2, " & BASE & ".hi2) - " & BASE & ".lo2]");
+         T := BT.ELEM;
+         C := BT.ELEMCONS;
+         return;
+      end if;
       if LIST_LEN(A) /= 1 then
          FAIL(E.LINE, "one index expected");
       end if;
@@ -336,6 +349,12 @@
                   CONVERSION(E, Y, T, R);
                   return;
                end if;
+            elsif E.A.KIND = N_SELECT and then E.A.A.KIND = N_APPLY and then E.A.A.A.KIND = N_NAME
+               and then IS_TASK_NAME(E.A.A.A.NAME.all) and then MEMBER_OF(E.A.A.A.NAME.all, E.A.NAME.all,
+               E.LINE) /= null and then MEMBER_OF(E.A.A.A.NAME.all, E.A.NAME.all, E.LINE).KIND = Y_FUNC then
+               CALL_WANT := WANT;
+               GCALL(E, FALSE, T, R);
+               return;
             elsif E.A.KIND = N_SELECT and then IS_PACKAGE(E.A.A) then
                -- P.F(...) calls a function of the visible part of P
                Y := MEMBER_OF(E.A.A.NAME.all, E.A.NAME.all, E.LINE);
@@ -638,6 +657,21 @@
       if E.A.KIND = N_APPLY and then E.A.A.KIND = N_NAME and then IS_TASK_NAME(E.A.A.NAME.all) then
          MEMBER_ATTR(E, T, R);
          return;
+      end if;
+      if A = "COUNT" and then E.A.KIND = N_APPLY and then E.A.A.KIND = N_NAME then
+         Y := LOOKUP(E.A.A.NAME.all);
+         if Y /= null and then Y.KIND = Y_ENTRY and then Y.C /= null then
+            -- E(I)'COUNT: the callers queued on a member of an entry family (RM79 9.9)
+            if not SAME_TASK(Y.MEMBERS, CUR_TASK) then
+               FAIL(E.LINE, "E'COUNT is allowed only in the body of the task (RM79 9.9)");
+            end if;
+            ENTRY_PATH(Y, "", V);
+            GEXPR(E.A.B, null, ATY, D);
+            ENTRY_FAMILY_SLOT(Y, V.all, D.all, V);
+            T := TY_INT;
+            R := MK("rt_entry_count(&" & V.all & ")");
+            return;
+         end if;
       end if;
       if E.A.KIND = N_NAME then
          Y := LOOKUP(E.A.NAME.all);
@@ -965,6 +999,19 @@
          NM.NAME := FN.NAME;
          NM.TAG := FN.A.NAME;
          FN := NM;
+      elsif FN.KIND = N_SELECT and then FN.A.KIND = N_APPLY and then FN.A.A.KIND = N_NAME
+         and then IS_TASK_NAME(FN.A.A.NAME.all) then
+         Y := MEMBER_OF(FN.A.A.NAME.all, FN.NAME.all, FN.LINE);
+         if Y /= null and then (Y.KIND = Y_FUNC or Y.KIND = Y_PROC) then
+            -- F(I).P(...): a visible subprogram of a family member (RM79 9.1)
+            RESOLVE_MEMBER_OVERLOAD(FN.A.A.NAME.all, FN.NAME.all, E.B, IS_STMT, CALL_WANT, E.LINE, Y);
+            CALL_TASK_IX := FN.A.B;
+            if IS_STMT and Y.RESULT.KIND /= T_VOID then
+               FAIL(E.LINE, FN.NAME.all & " returns a value; it is not a procedure call");
+            end if;
+            GCALL_WITH(E, Y, T, R);
+            return;
+         end if;
       end if;
       if FN.KIND /= N_NAME then
          OTHER_CALL(E, IS_STMT, T, R);
@@ -1014,7 +1061,18 @@
    begin
       CHECK_CALL_RULES(E, Y);
       ARGS := MK("");
-      if (Y.KIND = Y_FUNC or Y.KIND = Y_PROC) and then Y.ACCESS_PATH /= null then
+      if (Y.KIND = Y_FUNC or Y.KIND = Y_PROC) and then Y.ACCESS_PATH /= null
+         and then Y.MEMBERS /= null and then Y.MEMBERS.C /= null then
+         -- a visible subprogram of member I of a task family
+         if CALL_TASK_IX = null then
+            FAIL(E.LINE, Y.NAME.all & " needs the member of the family: F(I)." & Y.NAME.all);
+         end if;
+         GEXPR(CALL_TASK_IX, Y.MEMBERS.T, VT, V);
+         CALL_TASK_IX := null;
+         LV := MK(Y.ACCESS_PATH.all & "[rt_index(" & V.all & ", " & Y.MEMBERS.CNAME.all & "lo, "
+                  & Y.MEMBERS.CNAME.all & "hi) - " & Y.MEMBERS.CNAME.all & "lo]");
+         ARGS := MK("(" & LV.all & " ? " & LV.all & " : (rt_raise(RT_X_TASKING), (void *)0))");
+      elsif (Y.KIND = Y_FUNC or Y.KIND = Y_PROC) and then Y.ACCESS_PATH /= null then
          -- a visible subprogram of a task: the task body's frame; before the
          -- task runs there is none
          ARGS := MK("(" & Y.ACCESS_PATH.all & " ? " & Y.ACCESS_PATH.all

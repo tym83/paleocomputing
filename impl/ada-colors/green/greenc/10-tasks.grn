@@ -275,7 +275,7 @@
       OWN : TEXT;
    begin
       PATH_AT(Y.LEVEL, Y.ACCESS_PATH.all, R);
-      if Y.MEMBERS /= null and then Y.MEMBERS.C /= null then
+      if Y.MEMBERS /= null and then Y.MEMBERS.C /= null and then not Y.RO then
          if I'LENGTH = 0 then
             OWN_INDEX(OWN);
             MEMBER(Y.MEMBERS, R.all, OWN.all, R);
@@ -410,14 +410,25 @@
             -- a visible subprogram of the task runs in its caller and sees the
             -- task's data (RM79 9.1): its static link is the frame of the task
             -- body, kept in a global once the task runs
-            if Y.C /= null or IN_FUNC then
-               FAIL(E.LINE, "subprograms in the visible part of a nested task or a family are not handled");
+            if IN_FUNC then
+               FAIL(E.LINE, "subprograms in the visible part of a nested task are not handled");
             end if;
-            if not HAS_PROCS then
+            if not HAS_PROCS and Y.C /= null then
+               -- a family: one frame per member
+               PUT_TO(OUT_GLOBALS, "static void **" & Y.CNAME.all & "frames;");
+               EMIT(Y.CNAME.all & "frames = rt_alloc(sizeof(void *) * (size_t)(" & Y.CNAME.all & "hi >= "
+                    & Y.CNAME.all & "lo ? " & Y.CNAME.all & "hi - " & Y.CNAME.all & "lo + 1 : 1));");
+               HAS_PROCS := TRUE;
+            elsif not HAS_PROCS then
                PUT_TO(OUT_GLOBALS, "static void *" & Y.CNAME.all & "frame;");
                HAS_PROCS := TRUE;
             end if;
-            M.ACCESS_PATH := MK(Y.CNAME.all & "frame");
+            if Y.C /= null then
+               M.ACCESS_PATH := MK(Y.CNAME.all & "frames");
+            else
+               M.ACCESS_PATH := MK(Y.CNAME.all & "frame");
+            end if;
+            M.MEMBERS := Y;
          end if;
          COPY_SYM(M, Z);
          Z.HIDDEN := M.FROM_USE;
@@ -470,12 +481,15 @@
       end if;
       Y.ACCESS_PATH := MK(Y.CNAME.all & "ent");
       PATH_AT(Y.LEVEL, Y.ACCESS_PATH.all, X);
+      -- an entry declared in the body of a family member is local to that
+      -- member (RM79 9.5): its queue lives in the member's frame (marked RO)
+      Y.RO := CUR_TASK.C /= null and IN_FUNC and CUR_LEVEL > CUR_TASK.LEVEL;
       if E.B /= null then
-         if CUR_TASK.C /= null then
+         if CUR_TASK.C /= null and not Y.RO then
             FAIL(E.LINE, "an entry family in a task family is not handled");
          end if;
          FAMILY_BOUNDS(E.B, Y, X);
-      elsif CUR_TASK.C /= null then
+      elsif CUR_TASK.C /= null and not Y.RO then
          DECLARE_SLOT("rt_entry *", Y.ACCESS_PATH.all);
          PATH_AT(CUR_TASK.LEVEL, CUR_TASK.CNAME.all & "lo", LO);
          PATH_AT(CUR_TASK.LEVEL, CUR_TASK.CNAME.all & "hi", HI);
@@ -517,8 +531,12 @@
       while M /= null loop
          COPY_SYM(M, Z);
          DEFINE(Z, E.LINE);
-         if (M.KIND = Y_FUNC or M.KIND = Y_PROC) and M.ACCESS_PATH /= null then
-            B.ACCESS_PATH := M.ACCESS_PATH;
+         if (M.KIND = Y_FUNC or M.KIND = Y_PROC) and M.ACCESS_PATH /= null and then SAME_TASK(M.MEMBERS, Y) then
+            if Y.C /= null then
+               B.ACCESS_PATH := MK(M.ACCESS_PATH.all & "[index_ - " & Y.CNAME.all & "lo] = F;");
+            else
+               B.ACCESS_PATH := MK(M.ACCESS_PATH.all & " = F;");
+            end if;
          end if;
          M := M.MNEXT;
       end loop;
@@ -558,9 +576,15 @@
 
    procedure TASK_FAILURE(S : NODE) is
       Y : SYM := LOOKUP(S.TAG.all);
-      A : TEXT;
+      A, I : TEXT;
+      IT : TYP;
    begin
-      ACT_PATH(Y, A);
+      if S.A /= null then
+         GEXPR(S.A, Y.T, IT, I);
+         ACT_PATH_I(Y, I.all, A);
+      else
+         ACT_PATH(Y, A);
+      end if;
       EMIT("rt_exterminate(&" & A.all & ");");
    end TASK_FAILURE;
 

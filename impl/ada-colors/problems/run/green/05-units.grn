@@ -1,0 +1,50 @@
+-- The users' terminals, which the problem leaves as "read command": each
+-- user has a script of commands, one every so often.
+--   1 EXCLUSIVE   2 SHARED   3 FREE   0 log out
+package TERMINALS is
+   procedure NEXT_COMMAND(USER : INTEGER; CMD, DS : out INTEGER; PREEMPT : out BOOLEAN);
+end TERMINALS;
+
+package body TERMINALS is
+   STEP : array (1 .. 4) of INTEGER := (0, 0, 0, 0);
+
+   procedure NEXT_COMMAND(USER : INTEGER; CMD, DS : out INTEGER; PREEMPT : out BOOLEAN) is
+   begin
+      STEP(USER) := STEP(USER) + 1;
+      DS := 1;
+      PREEMPT := FALSE;
+      CMD := 0;
+      if USER = 1 then
+         -- reads, frees, then writes
+         case STEP(USER) of
+            when 1 => delay 0.1 * SECONDS; CMD := 2;
+            when 2 => delay 0.5 * SECONDS; CMD := 3;
+            when 3 => delay 0.1 * SECONDS; CMD := 1;
+            when others => delay 10.0 * SECONDS;
+         end case;
+      elsif USER = 2 then
+         -- reads, then asks to write, which it may not
+         case STEP(USER) of
+            when 1 => delay 0.2 * SECONDS; CMD := 2;
+            when 2 => delay 1.0 * SECONDS; CMD := 3;
+            when 3 => delay 0.2 * SECONDS; CMD := 1;
+            when others => null;
+         end case;
+      elsif USER = 3 then
+         -- a high-priority writer that preempts
+         case STEP(USER) of
+            when 1 => delay 2.0 * SECONDS; CMD := 1; PREEMPT := TRUE;
+            when 2 => delay 0.5 * SECONDS; CMD := 3;
+            when others => null;
+         end case;
+      else
+         -- a writer that will not wait
+         case STEP(USER) of
+            when 1 => delay 0.3 * SECONDS; CMD := 1;
+            when 2 => delay 1.9 * SECONDS; CMD := 1;
+            when others => null;
+         end case;
+      end if;
+   end NEXT_COMMAND;
+end TERMINALS;
+

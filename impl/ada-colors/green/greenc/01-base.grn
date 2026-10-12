@@ -159,6 +159,8 @@ procedure GREENC is
       LO, HI, SLEN : TEXT;
       MLO, MHI : INTEGER;
       HASM : BOOLEAN;
+      -- the bounds of the second index of a two-dimensional array
+      LO2, HI2 : TEXT;
    end record;
 
    type TYP_REC;
@@ -177,6 +179,7 @@ procedure GREENC is
       CNAME : TEXT;
       FORWARD, DEFINED, PRIV : BOOLEAN;
       NEXT : TYP;
+      IDX2 : TYP;
    end record;
    type FIELD_REC is record
       NAME : TEXT;
@@ -285,6 +288,8 @@ procedure GREENC is
    ACCEPT_DEPTH : INTEGER := 0;
    FAMARG_DONE : BOOLEAN := FALSE;
    FAM_IX : NODE;
+   -- the member index of F(I).P(...), a visible subprogram of a family member
+   CALL_TASK_IX : NODE;
    OUT_AWAITS : BUFFER;
    NO_CONS : CONS;
    UNITS : NODE;

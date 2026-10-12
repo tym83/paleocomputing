@@ -1,0 +1,58 @@
+-- as in GREEN 1979 problem 5: a two-dimensional array (RM79 3.6); a family
+-- whose members offer a visible procedure that calls a local entry of the
+-- member (RM79 9.1, 9.5); E(I)'COUNT; raise F(I).FAILURE (RM79 11.5)
+package M is
+   type TABLE is array (1 .. 2, 1 .. 3) of INTEGER;
+   T : TABLE;
+   task CELL(1 .. 2) is
+      procedure BUMP(BY : INTEGER);
+   end CELL;
+   task VICTIM;
+   procedure SHUT_DOWN;
+end M;
+restricted(TEXT_IO)
+package body M is
+   use TEXT_IO;
+   task body CELL is
+      ME : constant INTEGER := CELL'INDEX;
+      SUM : INTEGER := 0;
+      entry ADD(1 .. 2)(V : INTEGER);
+      procedure BUMP(BY : INTEGER) is
+      begin
+         ADD(1)(BY);
+      end BUMP;
+   begin
+      loop
+         accept ADD(1)(V : INTEGER) do
+            SUM := SUM + V;
+            T(ME, 3) := SUM + ADD(1)'COUNT;
+         end ADD;
+      end loop;
+   end CELL;
+   task body VICTIM is
+   begin
+      delay 10.0 * SECONDS;
+   exception
+      when FAILURE => PUT("victim got FAILURE"); PUT(NEWLINE);
+   end VICTIM;
+   procedure SHUT_DOWN is
+   begin
+      abort CELL(1 .. 2);
+   end SHUT_DOWN;
+begin
+   initiate CELL(1 .. 2), VICTIM;
+end M;
+restricted(M, TEXT_IO)
+procedure MAIN is
+   use M, TEXT_IO;
+begin
+   delay 0.01 * SECONDS;  -- the members reach their bodies
+   T(2, 1) := 21;
+   CELL(1).BUMP(5);
+   CELL(2).BUMP(7);
+   CELL(2).BUMP(1);
+   PUT(T(2, 1)); PUT(T(1, 3)); PUT(T(2, 3)); PUT(NEWLINE);
+   raise VICTIM.FAILURE;
+   delay 0.1 * SECONDS;
+   SHUT_DOWN;
+end MAIN;

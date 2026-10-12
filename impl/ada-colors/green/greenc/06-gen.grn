@@ -365,7 +365,7 @@
       PUT_TO(OUT_FUNCS, "  struct " & FRAME.all & " *F = rt_alloc(sizeof *F);");
       if Y.KIND = Y_PROC and then Y.ACCESS_PATH /= null then
          -- a task body whose visible subprograms need its frame
-         PUT_TO(OUT_FUNCS, "  " & Y.ACCESS_PATH.all & " = F;");
+         PUT_TO(OUT_FUNCS, "  " & Y.ACCESS_PATH.all);
       end if;
       SPLICE(OUT_FUNCS, CODE);
       if Y.RESULT.KIND /= T_VOID then

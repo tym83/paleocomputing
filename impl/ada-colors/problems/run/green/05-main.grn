@@ -1,0 +1,28 @@
+
+-- Four users on data set 1. User 1 (priority 10) may read, write and wait;
+-- user 2 (20) may read and wait; user 3 (30) may write and preempt; user 4 (5)
+-- may write but not wait.
+restricted(DATA_SET_PROTECTION_MODULE, TEXT_IO)
+procedure MAIN is
+   use DATA_SET_PROTECTION_MODULE, TEXT_IO;
+   NONE : RIGHTS_LIST := (FALSE, FALSE, FALSE, FALSE, FALSE);
+begin
+   for D in DS_NAME'FIRST .. DS_NAME'LAST loop
+      for U in USER_NAME'FIRST .. USER_NAME'LAST loop
+         ACCESS_TABLE(D, U) := NONE;
+      end loop;
+   end loop;
+   --                    EXCLUSIVE SHARE  PREEMPT WAIT   SIGNAL_PREEMPT
+   ACCESS_TABLE(1, 1) := (TRUE,    TRUE,  FALSE,  TRUE,  FALSE);
+   ACCESS_TABLE(1, 2) := (FALSE,   TRUE,  FALSE,  TRUE,  FALSE);
+   ACCESS_TABLE(1, 3) := (TRUE,    FALSE, TRUE,   FALSE, TRUE);
+   ACCESS_TABLE(1, 4) := (TRUE,    FALSE, FALSE,  FALSE, FALSE);
+   PRIORITY(1) := 10;
+   PRIORITY(2) := 20;
+   PRIORITY(3) := 30;
+   PRIORITY(4) := 5;
+   initiate USER_PROCESS(1 .. 4);
+   delay 4.0 * SECONDS;
+   abort USER_PROCESS(1 .. 4);
+   SHUT_DOWN;
+end MAIN;

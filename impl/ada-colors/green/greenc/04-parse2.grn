@@ -491,6 +491,12 @@
          end if;
          X := NN(N_RAISE, LINE);
          EXPECT_ID(X.NAME);
+         if AT_OP("(") then
+            -- raise F(I).FAILURE: a member of a task family (RM79 11.5)
+            SKIP;
+            EXPR(X.A);
+            EXPECT_OP(")");
+         end if;
          while AT_OP(".") loop
             SKIP;
             X.TAG := X.NAME;
