@@ -6,6 +6,8 @@
 # the: THE boots by IP, runs its three user programs with the operator's
 #   keys, and its console and line printer must be as expected; the labs that
 #   need no change run, and the layering break must hang the machine.
+# web: the browser build is made again with the pinned emscripten image and
+#   must match what is committed in impl/x8-the/web (the site serves it).
 name: x8-the
 
 on:
@@ -43,3 +45,20 @@ jobs:
           labs/check.sh 01 > /dev/null
           sed -i 's/^    ncp = 6, /    ncp = 4, /' the/the.elan && labs/check.sh 02 | tail -1 && git checkout the/
           sed -i 's/^    layerbreak = 0, /    layerbreak = 1, /' the/the.elan && MAX=60 labs/check.sh 03 | tail -1 && git checkout the/
+
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: The X8 in WebAssembly, the THE tape, the addresses for the page
+        run: |
+          mkdir -p build
+          docker run --rm -u "$(id -u):$(id -g)" -v "$PWD:/src" -w /src/emu docker.io/emscripten/emsdk:3.1.74 make web
+          web/build.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: x8-web
+          path: impl/x8-the/web
+      - name: Built output matches the repository
+        run: git diff --exit-code -- web
