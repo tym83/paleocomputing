@@ -1,0 +1,275 @@
+-- THE/KUBE in GREEN: the control loop of os/the_kube.red on the semaphore
+-- core of os/the_green.grn. Next to kube/kube_green.grn it shows two ways to
+-- build the same thing in one language:
+--
+--   * kube/kube_green.grn is native GREEN: an API server task owns the store,
+--     and everyone else talks to it by rendezvous;
+--   * here the store is plain shared arrays, as in THE, and the controllers
+--     guard it with semaphores. A semaphore is still a server task (GREEN has
+--     nothing else), so every P and V is a rendezvous too. The run counts them.
+--
+-- The wake-up semaphores saturate at one, a clock task wakes everyone every
+-- 10 ms, and a node loses power between two passes of its kubelet: a kubelet
+-- aborted while it held the store's semaphore would stop the control plane.
+-- Time is virtual and the scheduler deterministic (rt/paleo.c).
+
+restricted(TEXT_IO) procedure THE_KUBE is
+   use TEXT_IO;
+
+   NNODES : constant INTEGER := 3;
+   NPODS  : constant INTEGER := 8;
+   STORE  : constant INTEGER := 1;
+   DEPLOY : constant INTEGER := 2;
+   SCHED  : constant INTEGER := 3;
+   NODES  : constant INTEGER := 4;
+   KUBELET_SEM : constant INTEGER := 5;   -- 5, 6, 7
+
+   -- the store, shared, guarded by SEM(STORE)
+   DESIRED : INTEGER := 3;
+   COMMAND : INTEGER := 0;
+   POD     : array (1 .. 8) of INTEGER;   -- 0 none, -1 pending, n bound to node n
+   RUNNING : array (1 .. 8) of INTEGER;
+   BEAT    : array (1 .. 3) of INTEGER;
+   READY   : array (1 .. 3) of INTEGER;
+   POWERED : array (1 .. 3) of BOOLEAN;
+   CALLS   : INTEGER := 0;
+
+   function IMG(N : INTEGER) return STRING is
+   begin
+      return INTEGER'REP(N);
+   end IMG;
+
+   function NOW return INTEGER is
+   begin
+      return INTEGER(SYSTEM'CLOCK * 1000.0 / SECONDS);
+   end NOW;
+
+   procedure LOG(S : STRING) is
+   begin
+      PUT("[" & IMG(NOW) & " ms] " & S);
+      PUT(NEWLINE);
+   end LOG;
+
+   -- ---- level 0: semaphores as server tasks; 1 counts, 2..7 saturate at one ---
+   task SEM(INTEGER range 1 .. 7) is
+      entry P;
+      entry V;
+   end SEM;
+
+   task body SEM is
+      COUNT : INTEGER := 0;
+      LIMIT : INTEGER := 1;
+   begin
+      if SEM'INDEX = STORE then
+         COUNT := 1;
+      end if;
+      loop
+         select
+            when COUNT > 0 =>
+               accept P;
+               COUNT := COUNT - 1;
+         or
+            accept V;
+            if COUNT < LIMIT then
+               COUNT := COUNT + 1;
+            end if;
+         end select;
+      end loop;
+   end SEM;
+
+   procedure P(S : INTEGER) is
+   begin
+      CALLS := CALLS + 1;
+      SEM(S).P;
+   end P;
+
+   procedure V(S : INTEGER) is
+   begin
+      CALLS := CALLS + 1;
+      SEM(S).V;
+   end V;
+
+   procedure WAKE_ALL is
+   begin
+      for S in DEPLOY .. KUBELET_SEM + NNODES - 1 loop
+         V(S);
+      end loop;
+   end WAKE_ALL;
+
+   task CLOCK;
+
+   task body CLOCK is
+   begin
+      loop
+         delay 0.010 * SECONDS;
+         WAKE_ALL;
+      end loop;
+   end CLOCK;
+
+   -- ---- level 4: the controllers --------------------------------------------------
+   task DEPLOYMENT_CONTROLLER;
+   task SCHEDULER;
+   task NODE_CONTROLLER;
+   task KUBELET(INTEGER range 1 .. 3);
+
+   task body DEPLOYMENT_CONTROLLER is
+      HAVE : INTEGER;
+   begin
+      loop
+         P(DEPLOY);
+         P(STORE);
+         if COMMAND > 0 then
+            DESIRED := COMMAND;
+            COMMAND := 0;
+            LOG("deployment controller: desired replicas " & IMG(DESIRED));
+         end if;
+         HAVE := 0;
+         for I in 1 .. NPODS loop
+            if POD(I) /= 0 then
+               HAVE := HAVE + 1;
+            end if;
+         end loop;
+         for I in 1 .. NPODS loop
+            if POD(I) = 0 and HAVE < DESIRED then
+               POD(I) := -1;
+               HAVE := HAVE + 1;
+               LOG("deployment controller: pod " & IMG(I) & " created");
+            end if;
+         end loop;
+         V(STORE);
+      end loop;
+   end DEPLOYMENT_CONTROLLER;
+
+   task body SCHEDULER is
+      LOAD : array (1 .. 3) of INTEGER;
+      BEST : INTEGER;
+   begin
+      loop
+         P(SCHED);
+         P(STORE);
+         for N in 1 .. NNODES loop
+            LOAD(N) := 0;
+         end loop;
+         for I in 1 .. NPODS loop
+            if POD(I) > 0 then
+               LOAD(POD(I)) := LOAD(POD(I)) + 1;
+            end if;
+         end loop;
+         for I in 1 .. NPODS loop
+            if POD(I) = -1 then
+               BEST := 0;
+               for N in 1 .. NNODES loop
+                  if READY(N) = 1 then
+                     if BEST = 0 then
+                        BEST := N;
+                     elsif LOAD(N) < LOAD(BEST) then
+                        BEST := N;
+                     end if;
+                  end if;
+               end loop;
+               if BEST > 0 then
+                  POD(I) := BEST;
+                  LOAD(BEST) := LOAD(BEST) + 1;
+                  LOG("scheduler: pod " & IMG(I) & " bound to node " & IMG(BEST));
+               end if;
+            end if;
+         end loop;
+         V(STORE);
+      end loop;
+   end SCHEDULER;
+
+   task body KUBELET is
+      N : INTEGER;
+   begin
+      N := KUBELET'INDEX;
+      loop
+         P(KUBELET_SEM + N - 1);
+         if not POWERED(N) then
+            LOG("kubelet " & IMG(N) & ": power gone, the node stops");
+            exit;
+         end if;
+         P(STORE);
+         BEAT(N) := NOW;
+         READY(N) := 1;
+         for I in 1 .. NPODS loop
+            if POD(I) = N and RUNNING(I) = 0 then
+               RUNNING(I) := 1;
+               LOG("kubelet " & IMG(N) & ": pod " & IMG(I) & " running");
+            end if;
+         end loop;
+         V(STORE);
+      end loop;
+   end KUBELET;
+
+   task body NODE_CONTROLLER is
+      LAST_BEAT, SEEN_AT : array (1 .. 3) of INTEGER;
+      LOST : INTEGER;
+   begin
+      for N in 1 .. NNODES loop
+         LAST_BEAT(N) := -1;
+         SEEN_AT(N) := 0;
+      end loop;
+      loop
+         P(NODES);
+         LOST := 0;
+         P(STORE);
+         for N in 1 .. NNODES loop
+            if BEAT(N) /= LAST_BEAT(N) then
+               LAST_BEAT(N) := BEAT(N);
+               SEEN_AT(N) := NOW;
+            end if;
+            if READY(N) = 1 and NOW - SEEN_AT(N) > 60 then
+               READY(N) := 0;
+               for I in 1 .. NPODS loop
+                  if POD(I) = N then
+                     POD(I) := -1;
+                     RUNNING(I) := 0;
+                  end if;
+               end loop;
+               LOST := N;
+            end if;
+         end loop;
+         V(STORE);
+         if LOST > 0 then
+            LOG("node controller: node " & IMG(LOST) & " has no heartbeat, its pods go back to the scheduler");
+            WAKE_ALL;
+         end if;
+      end loop;
+   end NODE_CONTROLLER;
+
+   ON : array (1 .. 3) of INTEGER;
+begin
+   for I in 1 .. NPODS loop
+      POD(I) := 0;
+      RUNNING(I) := 0;
+   end loop;
+   for N in 1 .. NNODES loop
+      BEAT(N) := 0;
+      READY(N) := 1;
+      POWERED(N) := TRUE;
+      ON(N) := 0;
+   end loop;
+   initiate SEM(1 .. 7);
+   initiate DEPLOYMENT_CONTROLLER, SCHEDULER, NODE_CONTROLLER, KUBELET(1 .. 3), CLOCK;
+   WAKE_ALL;
+   delay 0.120 * SECONDS;
+   LOG("node 2 loses power");
+   POWERED(2) := FALSE;
+   delay 0.150 * SECONDS;
+   LOG("operator: scale to 5");
+   P(STORE);
+   COMMAND := 5;
+   V(STORE);
+   V(DEPLOY);
+   delay 0.250 * SECONDS;
+   P(STORE);
+   for I in 1 .. NPODS loop
+      if POD(I) > 0 and RUNNING(I) = 1 then
+         ON(POD(I)) := ON(POD(I)) + 1;
+      end if;
+   end loop;
+   V(STORE);
+   LOG("running pods: node 1 " & IMG(ON(1)) & ", node 2 " & IMG(ON(2)) & ", node 3 " & IMG(ON(3))
+       & "; " & IMG(CALLS) & " rendezvous with semaphore tasks");
+   abort CLOCK, DEPLOYMENT_CONTROLLER, SCHEDULER, NODE_CONTROLLER, KUBELET(1 .. 3), SEM(1 .. 7);
+end THE_KUBE;

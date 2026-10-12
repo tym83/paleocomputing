@@ -22,8 +22,16 @@ translatable with its sed file, adds what the problem assumes to be present
 (`*-units`), drives it (`*-main`) and compares the output with the expected
 one. Every line of a sed file is a change a translator forced, with the reason
 next to it, so the sed files list the errors of the 1979 texts. Interrupts,
-devices and the network are tasks on the virtual clock. The originals are not
-in git; get them as described below.
+devices and the network are tasks on the virtual clock.
+
+## Sources and rights
+
+The transcriptions in `original/` are published for study and comparison, with
+their sources: the RED solutions come from the *RED Rationale* (Intermetrics,
+March 1979; the RED documents carry "Copyright © 1979 Intermetrics, Inc."), as
+reprinted by Mary Van Deusen at iment.com; the GREEN solutions come from DTIC
+ADA070752 (April 1979). The code is kept as printed, errors included; the
+changes needed to run it are separate, in `run/`.
 
 ## Layout
 

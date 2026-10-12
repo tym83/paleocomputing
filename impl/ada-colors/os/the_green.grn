@@ -1,0 +1,130 @@
+-- THE/GREEN: the semaphore core of Dijkstra's THE system (CACM 11(5), 1968;
+-- EWD 196), written in GREEN (Preliminary Ada, May 1979), next to os/the.red.
+--
+-- THE regulates the "harmonious co-operation" of its sequential processes by
+-- P and V alone. GREEN has no semaphore and no mailbox: its one mechanism is
+-- the rendezvous. So a semaphore becomes a server task, a member of the family
+-- SEM, that accepts P only while its count is positive. The program is THE's
+-- level 3 output path: three user programs (level 4) hand results to the line
+-- printer through a buffer of four slots guarded by the classic three
+-- semaphores, "full", "empty" and a mutex.
+--
+-- Every P and every V is a rendezvous with a task: where RED takes a token
+-- from a mailbox, GREEN wakes a server. The run counts them.
+-- Time is virtual and the scheduler deterministic (rt/paleo.c).
+
+restricted(TEXT_IO) procedure THE_GREEN is
+   use TEXT_IO;
+
+   SLOTS : constant INTEGER := 4;
+   ITEMS : constant INTEGER := 3;      -- results per program
+   FULL  : constant INTEGER := 1;
+   EMPTY : constant INTEGER := 2;
+   MUTEX : constant INTEGER := 3;
+
+   BUFFER : array (1 .. 4) of INTEGER;
+   IN_SLOT, OUT_SLOT : INTEGER := 0;
+   CALLS : INTEGER := 0;
+
+   function IMG(N : INTEGER) return STRING is
+   begin
+      return INTEGER'REP(N);
+   end IMG;
+
+   procedure LOG(S : STRING) is
+   begin
+      PUT("[" & IMG(INTEGER(SYSTEM'CLOCK * 1000.0 / SECONDS)) & " ms] " & S);
+      PUT(NEWLINE);
+   end LOG;
+
+   -- ---- level 0: a semaphore is a server task --------------------------------
+   task SEM(INTEGER range 1 .. 3) is
+      entry INIT(N : in INTEGER);
+      entry P;
+      entry V;
+   end SEM;
+
+   task body SEM is
+      COUNT : INTEGER;
+   begin
+      accept INIT(N : in INTEGER) do
+         COUNT := N;
+      end INIT;
+      loop
+         select
+            when COUNT > 0 =>
+               accept P;
+               COUNT := COUNT - 1;
+         or
+            accept V;
+            COUNT := COUNT + 1;
+         end select;
+      end loop;
+   end SEM;
+
+   procedure P(S : INTEGER) is
+   begin
+      CALLS := CALLS + 1;
+      SEM(S).P;
+   end P;
+
+   procedure V(S : INTEGER) is
+   begin
+      CALLS := CALLS + 1;
+      SEM(S).V;
+   end V;
+
+   -- ---- level 3: the line printer unbuffers the output stream ------------------
+   task PRINTER is
+      entry STOP;
+   end PRINTER;
+
+   task body PRINTER is
+      ITEM : INTEGER;
+   begin
+      for LINE in 1 .. 3 * ITEMS loop
+         P(FULL);
+         OUT_SLOT := OUT_SLOT mod SLOTS + 1;
+         ITEM := BUFFER(OUT_SLOT);
+         V(EMPTY);
+         delay 0.010 * SECONDS;
+         LOG("PRINTER  program " & IMG(ITEM / 1000) & ": " & IMG(ITEM mod 1000));
+      end loop;
+      accept STOP;
+   end PRINTER;
+
+   -- ---- level 4: user programs ---------------------------------------------------
+   task PROGRAM(INTEGER range 1 .. 3) is
+      entry DONE;
+   end PROGRAM;
+
+   task body PROGRAM is
+      U : INTEGER;
+   begin
+      U := PROGRAM'INDEX;
+      for I in 1 .. ITEMS loop
+         delay 0.001 * SECONDS * U;
+         P(EMPTY);
+         P(MUTEX);
+         IN_SLOT := IN_SLOT mod SLOTS + 1;
+         BUFFER(IN_SLOT) := 1000 * U + I * I * U;
+         V(MUTEX);
+         V(FULL);
+      end loop;
+      accept DONE;
+   end PROGRAM;
+
+begin
+   initiate SEM(1 .. 3);
+   SEM(FULL).INIT(0);
+   SEM(EMPTY).INIT(SLOTS);
+   SEM(MUTEX).INIT(1);
+   initiate PRINTER, PROGRAM(1 .. 3);
+   for U in 1 .. 3 loop
+      PROGRAM(U).DONE;
+   end loop;
+   PRINTER.STOP;
+   LOG("printed " & IMG(3 * ITEMS) & " lines with " & IMG(CALLS)
+       & " rendezvous with semaphore tasks: every P and V wakes a server");
+   abort SEM(1 .. 3);
+end THE_GREEN;

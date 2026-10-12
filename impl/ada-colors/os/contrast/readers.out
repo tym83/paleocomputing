@@ -1,0 +1,5 @@
+[10 ms] reader 1 read 0
+[20 ms] reader 2 read 0
+[30 ms] writer wrote 1
+[40 ms] reader 3 read 1
+[40 ms] all done: the lock serialised everyone, readers included

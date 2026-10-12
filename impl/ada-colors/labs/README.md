@@ -2,7 +2,7 @@
 
 # Labs: what RED can do
 
-Eleven short exercises on RED, the language that lost the DoD-1 competition to
+Twelve short exercises on RED, the language that lost the DoD-1 competition to
 GREEN in 1979. Each one takes 10–20 minutes. The programs are in `labs/red/`, and
 `labs/check.sh` tells you whether a task is done. It translates your file with
 `build/redc`, runs it and looks at what came out.
@@ -38,6 +38,9 @@ your output with someone else's.
 | | | **break**: delete the draining loop in `node_ctl` | Healthy nodes are evicted after the failover |
 | 10 | `red/redc/*.red` | **build**: add a built-in `MAX(a, b)` to `builtin` in `07-expr.red`, run `make fixpoint`, then translate a program that prints `MAX(3, 7)` | The compiler that is written in RED accepts your change and reproduces itself |
 | 11 | `problems/run/C1-matrix-vector.sed` | **break**: drop one line of the sed script and translate the 1979 sample again | Each line is an error in the text printed in 1979 that a translator rejects |
+| 12 | `12-the.red` | **look**: Dijkstra's THE system (1968) in five levels; three programs share three core pages through a drum | No process waits for one above it, and the society finishes |
+| | | **change**: `CONST ncore := 8` | `drum transfers 0`: a core page per segment, and the segment controller never needs the drum |
+| | | **break**: set `report_dumps` to `TRUE`, so the segment controller (level 1) tells the operator about every dump through the message interpreter (level 2) | Deadlock: the interpreter needs the segment controller to read its vocabulary. This is why THE puts the console above the drum |
 
 Lab 10 checks your own program: `labs/check.sh 10 build myprog.red`. Lab 11 checks
 the regenerated sample:
@@ -48,3 +51,7 @@ sed -f problems/run/C1-matrix-vector.sed problems/original/red/C1-matrix-vector.
 cat problems/run/C1-main.red >> /tmp/c1.red
 labs/check.sh 11 break /tmp/c1.red
 ```
+
+Reference solutions for the change, break and build tasks are in
+`labs/solutions/`. `labs/verify.sh` checks the checker: each solution must pass,
+and the unchanged program must not. CI runs it on every pull request.
