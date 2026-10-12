@@ -1,8 +1,10 @@
 /* Runtime shared by the RED and GREEN compilers. See paleo.h. */
 #include "paleo.h"
 
+#ifndef __wasi__
 #include <execinfo.h>
 #include <signal.h>
+#endif
 #include <unistd.h>
 #include <math.h>
 #include <pthread.h>
@@ -54,12 +56,14 @@ static void on_unhandled(int id);
 
 void rt_raise(int id) {
   rt_xcur = id;
+#ifndef __wasi__
   if (getenv("PALEO_ABORT") && atoi(getenv("PALEO_ABORT")) == id) {
     void *bt[32];
     int n = backtrace(bt, 32);
     backtrace_symbols_fd(bt, n, 2);
     abort();
   }
+#endif
   if (!rt_xtop) on_unhandled(id);
   longjmp(rt_xtop->jb, 1);
 }
@@ -660,8 +664,16 @@ void rt_yield(void) {
   check_terminate();
 }
 
+#ifdef __wasi__
+/* wasi-libc has no pthread_exit: a task thread leaves through this */
+static __thread jmp_buf task_exit;
+#endif
+
 static void *task_main(void *arg) {
   rt_task *t = arg;
+#ifdef __wasi__
+  if (setjmp(task_exit)) return NULL;
+#endif
   pthread_mutex_lock(&G);
   while (cur != t) pthread_cond_wait(&t->cv, &G);
   rt_frame f;
@@ -706,7 +718,12 @@ void rt_create(rt_act *a, rt_taskdecl *d, void (*fn)(void *), void *frame) {
   make_ready(t);
   pthread_attr_t attr;
   pthread_attr_init(&attr);
+#ifdef __wasi__
+  /* in the browser every task stack comes out of one shared memory */
+  pthread_attr_setstacksize(&attr, 1u << 20);
+#else
   pthread_attr_setstacksize(&attr, 64u << 20);
+#endif
   if (pthread_create(&t->th, &attr, task_main, t) != 0) {
     fprintf(stderr, "*** cannot start a task\n");
     exit(4);
@@ -1040,12 +1057,17 @@ static void on_unhandled(int id) {
   fflush(stdout);
   if (cur && cur != &main_task) {
     /* RED 9.3: an unhandled exception ends the task activation only */
+#ifdef __wasi__
+    longjmp(task_exit, 1);
+#else
     pthread_exit(NULL);
+#endif
   }
   fprintf(stderr, "*** unhandled exception %s\n", rt_exc_name(id));
   exit(1);
 }
 
+#ifndef __wasi__
 static void on_segv(int sig) {
   void *bt[48];
   int n = backtrace(bt, 48);
@@ -1055,11 +1077,15 @@ static void on_segv(int sig) {
   _exit(5);
 }
 
+#endif
+
 void rt_init(int argc, char **argv) {
+#ifndef __wasi__
   if (getenv("PALEO_ABORT")) {
     signal(SIGSEGV, on_segv);
     signal(SIGBUS, on_segv);
   }
+#endif
   g_argc = argc;
   g_argv = argv;
   pthread_cond_init(&main_task.cv, NULL);
