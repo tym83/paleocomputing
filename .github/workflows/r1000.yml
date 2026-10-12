@@ -14,7 +14,7 @@ on:
   workflow_dispatch:
   push:
     branches: ['feat/r1000-*']
-    paths: ['impl/ada-colors/r1000/**', '.github/workflows/r1000.yml']
+    paths: ['impl/ada-colors/r1000/**', '!impl/ada-colors/r1000/*.md', '.github/workflows/r1000.yml']
 
 env:
   # the emulator's Codeberg repository at a fixed commit
