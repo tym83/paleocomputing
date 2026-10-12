@@ -118,11 +118,16 @@ END FUNC copy_sym;
 % scope where it is declared; the exported definitions are kept for EXPOSE
 PROC gen_capsule(CONST d : node) IMPORTS ALL;
    VAR y : sym := new_sym(y_capsule, d.name);
+   VAR cr : caprec;
    VAR ctx : fctxrec;
    VAR m : sym;
    VAR p : node := d.a;
    VAR ro : BOOL;
    y.decl := d;
+   ALLOC cr PTR;
+   cr.d := d;
+   cr.next := caps;
+   caps := cr;
    open_scope;
    ALLOC ctx PTR;
    ctx.depth := depth;
@@ -136,8 +141,7 @@ PROC gen_capsule(CONST d : node) IMPORTS ALL;
    % fix the types while the capsule's own definitions are still known
    m := scope_stack;
    WHILE m /= NIL AND m.depth = depth REPEAT
-      IF m.kind = y_type AND m.t = NIL AND m.decl /= NIL AND m.decl.kind = n_newtype
-            AND m.decl.b /= NIL THEN
+      IF m.kind = y_type AND m.t = NIL AND m.decl /= NIL AND m.decl.kind = n_newtype THEN
          m.t := new_type(m, nn(s_name, d.line), m.c);
       ELSEIF (m.kind = y_type OR m.kind = y_abbrev) AND m.t = NIL THEN
          m.t := resolve_subtype(m.st, m.c);
@@ -165,6 +169,7 @@ PROC gen_capsule(CONST d : node) IMPORTS ALL;
       p := p.next;
    END REPEAT;
    close_scope;
+   caps := caps.next;
    define(y, d.line);
 END PROC gen_capsule;
 
@@ -617,6 +622,9 @@ PROC st_assign(CONST s : node) IMPORTS ALL;
    lvalue(s.a, lv, t, c, ro);
    IF ro THEN
       fail(s.line, "assignment to a readonly data item");
+   END IF;
+   IF NOT opened(t) THEN
+      fail(s.line, ":= for " & t.name.ALL & " is not exported by its capsule");
    END IF;
    BEGIN
       CONST v := gexpr(s.b, t, vt);

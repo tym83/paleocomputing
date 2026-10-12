@@ -136,7 +136,7 @@ TYPE cons : PTR RECORD[lo, hi, lo2, hi2, slen : text, mlo, mhi : INT, hasm : BOO
 
 TYPE typ : PTR RECORD[kind : INT, name : text, lits : node,
                       elem : typ, idx, idx2 : typ, elemcons : cons, elemst : node,
-                      under : typ, tparams : node,
+                      under : typ, tparams : node, ocap : node,
                       fields : field, target : typ, decl : node,
                       cname : text, forward, defined, helpers : BOOL,
                       next : typ];
@@ -161,6 +161,9 @@ TYPE buckets : PTR (n : INT) ARRAY INT(0 .. n) OF sym;
 TYPE exitrec : PTR RECORD[match, label : text, depth : INT, next : exitrec];
 
 % a closed scope being translated: subprogram or capsule (3.5, 3.7)
+% the capsules being translated, innermost first
+TYPE caprec : PTR RECORD[d : node, next : caprec];
+
 TYPE fctxrec : PTR RECORD[depth : INT, imps : node, all_imp : BOOL, next : fctxrec];
 
 EXCEPTION compile_error;
@@ -183,6 +186,8 @@ VAR fields_buf : buffer;
 VAR in_func : BOOL := FALSE;
 VAR cur_level : INT := 0;
 VAR fctx : fctxrec;
+VAR caps : caprec;
+VAR psub : lines;          % parameter placeholders of the new type being created
 VAR st_field : text;
 VAR out_frames : buffer;
 VAR func_sym : sym;

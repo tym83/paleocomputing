@@ -460,7 +460,7 @@ ABNORMAL FUNC resolve_subtype(CONST st : node, OUT c : cons) => typ IMPORTS ALL;
                END IF;
                RETURN y.t;
             END IF;
-            IF y.kind = y_type AND y.decl /= NIL AND y.decl.kind = n_newtype AND y.decl.b /= NIL THEN
+            IF y.kind = y_type AND y.decl /= NIL AND y.decl.kind = n_newtype THEN
                RETURN new_type(y, st, c);
             END IF;
             IF y.kind = y_abbrev OR y.kind = y_type THEN
@@ -474,6 +474,48 @@ ABNORMAL FUNC resolve_subtype(CONST st : node, OUT c : cons) => typ IMPORTS ALL;
    RETURN NIL;
 END FUNC resolve_subtype;
 
+% outside the capsule that declares a new type, its components, .ALL and :=
+% are known only if the capsule exports them, i.e. exports ALL (8.2)
+ABNORMAL FUNC opened(CONST t : typ) => BOOL IMPORTS caps;
+   VAR c : caprec := caps;
+   IF t.kind /= t_new OR t.ocap = NIL OR t.ocap.ival = 1 THEN
+      RETURN TRUE;
+   END IF;
+   WHILE c /= NIL REPEAT
+      IF c.d = t.ocap THEN
+         RETURN TRUE;
+      END IF;
+      c := c.next;
+   END REPEAT;
+   RETURN FALSE;
+END FUNC opened;
+
+% every occurrence of pat in s replaced by r
+FUNC replace_all(READONLY s : STRING[ASCII], READONLY pat : STRING[ASCII], READONLY r : STRING[ASCII])
+      => STRING[ASCII];
+   VAR i : INT := 1;
+   IF pat.LEN = 0 OR s.LEN < pat.LEN THEN
+      RETURN s;
+   END IF;
+   WHILE i + pat.LEN - 1 <= s.LEN REPEAT
+      IF s(i .. i + pat.LEN - 1) = pat THEN
+         RETURN s(1 .. i - 1) & r & replace_all(s(i + pat.LEN .. s.LEN), pat, r);
+      END IF;
+      i := i + 1;
+   END REPEAT;
+   RETURN s;
+END FUNC replace_all;
+
+ABNORMAL FUNC subst(READONLY s : STRING[ASCII]) => STRING[ASCII] IMPORTS psub;
+   VAR l : lines := psub;
+   VAR r : text := mk(s);
+   WHILE l /= NIL REPEAT
+      r := mk(replace_all(r.ALL, l.s.ALL, l.next.s.ALL));
+      l := l.next.next;
+   END REPEAT;
+   RETURN r.ALL;
+END FUNC subst;
+
 % a new type with parameters (4.4.2): one typ per declaration; an invocation
 % such as matrix(b.m, c.n) supplies the constraint, kept as the actual list
 ABNORMAL FUNC new_type(CONST y : sym, CONST st : node, OUT c : cons) => typ IMPORTS ALL;
@@ -486,16 +528,20 @@ ABNORMAL FUNC new_type(CONST y : sym, CONST st : node, OUT c : cons) => typ IMPO
       y.t.name := y.name;
       y.t.decl := d;
       y.t.tparams := d.b;
+      IF caps /= NIL THEN
+         y.t.ocap := caps.d;
+      END IF;
       open_scope;
       p := d.b;
       WHILE p /= NIL REPEAT
          VAR z : sym := new_sym(y_const, p.name);
          z.t := ty_int;
-         z.access := mk("0");
+         z.access := mk("@P_" & lower_s(p.name.ALL) & "@");
          define(z, d.line);
          p := p.next;
       END REPEAT;
       y.t.under := resolve_subtype(d.a, uc);
+      y.t.elemcons := uc;
       close_scope;
    END IF;
    c.args := st.b;
@@ -518,23 +564,34 @@ PROC init_storage(READONLY lval : STRING[ASCII], CONST t : typ, CONST c : cons) 
          p := p.next;
          a := a.next;
       END REPEAT;
-      open_scope;
-      p := t.tparams;
-      WHILE p /= NIL REPEAT
-         VAR z : sym := new_sym(y_const, p.name);
-         z.t := ty_int;
-         z.access := mk(lval & ".p_" & lower_s(p.name.ALL));
-         define(z, 0);
-         p := p.next;
-      END REPEAT;
-      ut := resolve_subtype(t.decl.a, uc);
-      close_scope;
-      init_storage(lval & ".all", t.under, uc);
+      % the constraints were worked out where the type is declared, with the
+      % parameters as placeholders; here they become this object's fields
+      BEGIN
+         VAR saved : lines := psub;
+         p := t.tparams;
+         WHILE p /= NIL REPEAT
+            VAR l1, l2 : lines;
+            ALLOC l1 PTR;
+            ALLOC l2 PTR;
+            l1.s := mk("@P_" & lower_s(p.name.ALL) & "@");
+            l2.s := mk(lval & ".p_" & lower_s(p.name.ALL));
+            l1.next := l2;
+            l2.next := psub;
+            psub := l1;
+            p := p.next;
+         END REPEAT;
+         IF t.tparams = NIL THEN
+            init_storage(lval, t.under, t.elemcons);
+         ELSE
+            init_storage(lval & ".all", t.under, t.elemcons);
+         END IF;
+         psub := saved;
+      END;
    ELSEIF t.kind = t_mbox THEN
       IF c.lo = NIL THEN
          fail(0, "a mailbox variable needs a size");
       END IF;
-      emit("rt_mbox_init(&" & lval & ", " & c.lo.ALL & ", sizeof(" & ctype(t.elem) & "), "
+      emit("rt_mbox_init(&" & lval & ", " & subst(c.lo.ALL) & ", sizeof(" & ctype(t.elem) & "), "
            & mcopy(t.elem) & ");");
    ELSEIF t.kind = t_lock THEN
       emit("rt_lock_init(&" & lval & ");");
@@ -547,13 +604,13 @@ PROC init_storage(READONLY lval : STRING[ASCII], CONST t : typ, CONST c : cons) 
       IF c.slen = NIL THEN
          fail(0, "a string variable needs a length");
       END IF;
-      emit(lval & " = rt_str_new(" & c.slen.ALL & ");");
+      emit(lval & " = rt_str_new(" & subst(c.slen.ALL) & ");");
    ELSEIF t.kind = t_array THEN
       IF c.lo = NIL THEN
          fail(0, "an array variable needs index bounds");
       END IF;
-      emit(lval & ".lo = " & c.lo.ALL & "; " & lval & ".hi = " & c.hi.ALL & "; "
-           & lval & ".lo2 = " & c.lo2.ALL & "; " & lval & ".hi2 = " & c.hi2.ALL & ";");
+      emit(lval & ".lo = " & subst(c.lo.ALL) & "; " & lval & ".hi = " & subst(c.hi.ALL) & "; "
+           & lval & ".lo2 = " & subst(c.lo2.ALL) & "; " & lval & ".hi2 = " & subst(c.hi2.ALL) & ";");
       emit(lval & ".p = rt_alloc(sizeof(" & ctype(t.elem) & ") * (size_t)RT_CNT(" & lval & "));");
       IF t.elem.kind = t_string OR t.elem.kind = t_array OR t.elem.kind = t_record
             OR t.elem.kind = t_new OR t.elem.kind = t_ptr OR t.elem.kind = t_mbox

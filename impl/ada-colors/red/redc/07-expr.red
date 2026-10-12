@@ -150,6 +150,18 @@ PROC select_on(READONLY base : STRING[ASCII], CONST bt : typ, CONST e : node, VA
    END IF;
    IF bt.kind = t_new THEN
       VAR p : node := bt.tparams;
+      IF NOT opened(bt) THEN
+         fail(e.line, "the components of " & bt.name.ALL & " are not exported by its capsule");
+      END IF;
+      IF bt.tparams = NIL THEN
+         IF e.name.ALL = "ALL" THEN
+            code := mk(base);
+            t := bt.under;
+            RETURN;
+         END IF;
+         select_on(base, bt.under, e, ro, code, t, c);
+         RETURN;
+      END IF;
       IF e.name.ALL = "ALL" THEN
          code := mk(base & ".all");
          t := bt.under;
@@ -195,7 +207,14 @@ PROC index_on(READONLY base : STRING[ASCII], CONST bt : typ, CONST e : node, VAR
       RETURN;
    END IF;
    IF bt.kind = t_new THEN
-      index_on(base & ".all", bt.under, e, ro, lv, code, t, c);
+      IF NOT opened(bt) THEN
+         fail(e.line, "the components of " & bt.name.ALL & " are not exported by its capsule");
+      END IF;
+      IF bt.tparams = NIL THEN
+         index_on(base, bt.under, e, ro, lv, code, t, c);
+      ELSE
+         index_on(base & ".all", bt.under, e, ro, lv, code, t, c);
+      END IF;
       RETURN;
    END IF;
    IF bt.kind = t_array AND bt.idx2 /= NIL THEN
