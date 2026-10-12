@@ -61,3 +61,20 @@ Changing the process technology changes the absolute numbers (130 nm versus 45 n
 claims are relative deltas, and they survive the switch: the area cost of the bounds-check
 instruction is **+1.04 %** versus +0.32…0.85 % on Nangate45.
 The order of magnitude and the sign are the same.
+
+## The RED and GREEN page (`site/red/`)
+
+* `site/red/coi-serviceworker.js`: coi-serviceworker 0.1.7, Guido Zuidhof and
+  contributors, MIT ([github.com/gzuidhof/coi-serviceworker](https://github.com/gzuidhof/coi-serviceworker)).
+  The notice is the first line of the file. Unchanged.
+* `site/red/toolchain.bin`: libc headers, `libc.a`, `libsetjmp.a` and
+  `crt1-command.o` of wasi-libc for `wasm32-wasip1-threads`, and
+  `libclang_rt.builtins.a` of compiler-rt, from
+  [wasi-sdk 34](https://github.com/WebAssembly/wasi-sdk/releases/tag/wasi-sdk-34).
+  wasi-libc is under Apache-2.0 WITH LLVM-exception, Apache-2.0 or MIT, with
+  the musl part under MIT; compiler-rt under Apache-2.0 WITH LLVM-exception.
+  Unchanged; `impl/ada-colors/web/build.mjs` picks the files and pins the
+  downloads by checksum.
+* Not in the repository: the page loads clang and lld compiled to WebAssembly,
+  [@yowasp/clang](https://www.npmjs.com/package/@yowasp/clang) (ISC; LLVM under
+  Apache-2.0 WITH LLVM-exception), from jsDelivr.
