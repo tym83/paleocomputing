@@ -31,18 +31,21 @@ There are three users. pm1 is the sieve of Eratosthenes over 2048 numbers spread
 The machine starts the way the X8 did: the LS button, then IP, and CHARON reads the system tape through the IP reader and gives the interrupt. Then the console speaks:
 
 ```
-[   8.134 s] pm2: how many squares?
-[  12.701 s] pm2 12
-[  13.451 s] pm3: segments written and read twice: 6
-[  17.455 s] pm1: primes below 2048: 309
-[  20.258 s] pm2: squares printed: 12
-[  22.761 s] pm3: errors: 0
-[  24.264 s] pm1: finished
-[  25.667 s] pm2: finished
-[  27.070 s] pm3: finished
-[  90.401 s] end
-[  90.807 s] drum transfers: 54
-[  92.707 s] segment control buffer, most used: 3 places of 6
+[  11.825 s] pm2: how many squares?
+[  14.127 s] pm2 12
+[  14.886 s] pm3: segments written and read twice: 6
+[  18.924 s] pm2: squares printed: 12
+[  21.429 s] pm1: primes below 2048: 309
+[  24.232 s] pm3: errors: 0
+[  25.735 s] pm2: finished
+[  27.138 s] pm1: finished
+[  28.541 s] pm3: finished
+[  40.901 s] k kill 2
+[  42.978 s] node: not ready, node 2
+[  71.001 s] k scale 5
+[ 110.401 s] end
+[ 110.807 s] drum transfers: 56
+[ 112.707 s] segment control buffer, most used: 3 places of 7
 ```
 
-There really are 309 primes below 2048. The three programs need about fifteen segments and there are six pages, so the drum makes fifty-four transfers in a run without spoiling a single word. On the line printer the primes come out in four pieces, as pm1 fills and hands over segments, followed by pm2's table of squares. pm3 prints nothing; it only reports on the console.
+There really are 309 primes below 2048. The user programs and the Kubernetes store need about twenty segments and there are eight pages, so the drum makes some fifty transfers in a run without spoiling a single word. On the line printer the primes come out in four pieces, as pm1 fills and hands over segments, followed by pm2's table of squares. pm3 prints nothing; it only reports on the console.

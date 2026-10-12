@@ -21,8 +21,8 @@ case "$lab" in
 01) run; has "segment control buffer" && ok || no "the run did not reach the report" ;;
 02) run; has "primes below 2048: 309" || no "pm1 lost its primes"
     has "errors: 0" || no "pm3 found errors"
-    t=$(num "drum transfers"); echo "drum transfers: $t (with 8 core pages: 62)"
-    [ "${t:-0}" -gt 62 ] && ok || no "fewer core pages should mean more drum traffic: set ncp = 5" ;;
+    t=$(num "drum transfers"); echo "drum transfers: $t (with 8 core pages: 56)"
+    [ "${t:-0}" -gt 56 ] && ok || no "fewer core pages should mean more drum traffic: set ncp = 5" ;;
 03) run; cat "$b/stop.txt"
     has "drum transfers" && no "the report came: set layerbreak = 1"
     echo "the machine waits for ever: the segment controller waits for the message interpreter, which"

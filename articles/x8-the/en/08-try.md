@@ -15,4 +15,4 @@ The test program is fetched from Dick Grune's page and isn't in the repository: 
 
 There are six labs, checked by `labs/check.sh`. They include the experiments of the previous chapter: fewer core pages, a broken level, another time slice. There is also an operator answering with another number, and a run of the X8 test program. Time in the emulator is virtual, so your output can be compared with anyone else's character by character, down to the milliseconds in the console stamps.
 
-None of this runs in the browser yet, and there is no X8 machine in Kubernetes yet either. Both will come, as with the Oberon machine in earlier parts of the series: the emulator is written in C and builds for WebAssembly without changes.
+In the browser all of this runs on the series page: [tym83.github.io/paleocomputing/x8/](https://tym83.github.io/paleocomputing/x8/). It is the same emulator, built for WebAssembly, and you are the operator at the console.
