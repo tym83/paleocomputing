@@ -1,0 +1,517 @@
+-- KUBE/GREEN: the Kubernetes control loop of kube/kube.red, written in GREEN
+-- (Preliminary Ada, May 1979). The design is the same: an API server owns the
+-- store, controllers keep caches and reconcile on an event or a timed resync,
+-- writes are optimistic, kubelets renew leases. What changes is what GREEN gives:
+--
+--   * there are no mailboxes, only the rendezvous: a watch stream becomes a
+--     task family INBOX(1..NPORTS), each member a bounded buffer task;
+--   * a caller cannot wait for "a message or a timeout": GREEN 1979 has no
+--     timed entry call (RAT79 11.4.10), so the resync tick is made inside the
+--     inbox, by a delay alternative that queues a TICK event;
+--   * the API server cannot call an inbox that is full without blocking, and a
+--     controller blocked in a call to the API server does not empty its inbox:
+--     a bounded inbox can deadlock the two, so the inboxes are large.
+-- Time is virtual and the scheduler deterministic (rt/paleo.c), so the run is
+-- the same every time. One SECONDS is 1000 ticks, so 0.001*SECONDS is 1 ms.
+
+restricted(TEXT_IO) procedure KUBE is
+   use TEXT_IO;
+
+   K_DEPLOY : constant INTEGER := 1;
+   K_RS     : constant INTEGER := 2;
+   K_POD    : constant INTEGER := 3;
+   K_NODE   : constant INTEGER := 4;
+   K_LEASE  : constant INTEGER := 5;
+   K_TICK   : constant INTEGER := 6;
+
+   PENDING   : constant INTEGER := 0;
+   RUNNING   : constant INTEGER := 1;
+   READY     : constant INTEGER := 1;
+   NOT_READY : constant INTEGER := 2;
+
+   NOBJ   : constant INTEGER := 64;
+   NNODES : constant INTEGER := 3;
+   NPORTS : constant INTEGER := 8;
+
+   P_DEPLOY  : constant INTEGER := 1;
+   P_RS      : constant INTEGER := 2;
+   P_SCHED   : constant INTEGER := 3;
+   P_NODES   : constant INTEGER := 4;
+   P_USER    : constant INTEGER := 5;
+   P_KUBELET : constant INTEGER := 6;   -- node N listens on P_KUBELET + N - 1
+
+   OP_CREATE : constant INTEGER := 1;
+   OP_UPDATE : constant INTEGER := 2;
+   OP_DELETE : constant INTEGER := 3;
+
+   type OBJ is record
+      KIND, ID, RV, OWNER, REPLICAS, VERSION, NODE, PHASE, BEAT, GONE : INTEGER;
+   end record;
+
+   type CACHE is array (1 .. 64) of OBJ;
+
+   function BLANK(K : INTEGER) return OBJ is
+   begin
+      return (KIND => K, ID => 0, RV => 0, OWNER => 0, REPLICAS => 0, VERSION => 0,
+              NODE => 0, PHASE => 0, BEAT => 0, GONE => 0);
+   end BLANK;
+
+   function IMG(N : INTEGER) return STRING is
+   begin
+      return INTEGER'REP(N);
+   end IMG;
+
+   procedure LOG(S : STRING) is
+   begin
+      PUT("[" & IMG(INTEGER(SYSTEM'CLOCK * 1000.0 / SECONDS)) & " ms] " & S);
+      PUT(NEWLINE);
+   end LOG;
+
+   -- ---- watch streams: one bounded buffer task per port ------------------------
+   task INBOX(INTEGER range 1 .. 8) is
+      entry PUT_EVENT(E : in OBJ);
+      entry GET_EVENT(E : out OBJ);
+   end INBOX;
+
+   task body INBOX is
+      SIZE  : constant INTEGER := 256;
+      ITEMS : array (1 .. 256) of OBJ;
+      HEAD  : INTEGER := 1;
+      COUNT : INTEGER := 0;
+   begin
+      loop
+         select
+            when COUNT < SIZE =>
+               accept PUT_EVENT(E : in OBJ) do
+                  ITEMS((HEAD + COUNT - 1) mod SIZE + 1) := E;
+               end PUT_EVENT;
+               COUNT := COUNT + 1;
+         or
+            when COUNT > 0 =>
+               accept GET_EVENT(E : out OBJ) do
+                  E := ITEMS(HEAD);
+               end GET_EVENT;
+               HEAD := HEAD mod SIZE + 1;
+               COUNT := COUNT - 1;
+         or
+            -- nothing came for 20 ms: the owner gets a tick and resyncs
+            delay 0.020 * SECONDS;
+            if COUNT < SIZE then
+               ITEMS((HEAD + COUNT - 1) mod SIZE + 1) := BLANK(K_TICK);
+               COUNT := COUNT + 1;
+            end if;
+         end select;
+      end loop;
+   end INBOX;
+
+   -- ---- the API server ---------------------------------------------------------------
+   task API is
+      entry WATCH(PORT : in INTEGER; KINDS : in INTEGER);
+      entry WRITE(OP : in INTEGER; O : in OBJ);
+      entry BEAT(ID : in INTEGER);
+      entry GET(ID : in INTEGER; O : out OBJ);
+      entry LIST(PORT : in INTEGER);
+   end API;
+
+   task body API is
+      STORE     : CACHE;
+      WATCHERS  : array (1 .. 8) of INTEGER;
+      NEXT_ID   : INTEGER := 0;
+      NEXT_RV   : INTEGER := 0;
+      CONFLICTS : INTEGER := 0;
+      CHANGED   : OBJ;
+      SEND_IT   : BOOLEAN;
+   begin
+      for P in 1 .. NPORTS loop
+         WATCHERS(P) := 0;
+      end loop;
+      for I in 1 .. NOBJ loop
+         STORE(I) := BLANK(0);
+      end loop;
+      loop
+         SEND_IT := FALSE;
+         select
+            accept WATCH(PORT : in INTEGER; KINDS : in INTEGER) do
+               WATCHERS(PORT) := KINDS;
+               -- a new watcher first gets what it asked for: list, then watch
+               for I in 1 .. NEXT_ID loop
+                  if STORE(I).GONE = 0 and (KINDS / 2 ** STORE(I).KIND) mod 2 = 1 then
+                     INBOX(PORT).PUT_EVENT(STORE(I));
+                  end if;
+               end loop;
+            end WATCH;
+         or
+            accept WRITE(OP : in INTEGER; O : in OBJ) do
+               CHANGED := O;
+               if OP = OP_CREATE then
+                  NEXT_ID := NEXT_ID + 1;
+                  NEXT_RV := NEXT_RV + 1;
+                  CHANGED.ID := NEXT_ID;
+                  CHANGED.RV := NEXT_RV;
+                  SEND_IT := TRUE;
+               elsif STORE(O.ID).RV /= O.RV or STORE(O.ID).GONE = 1 then
+                  CONFLICTS := CONFLICTS + 1;
+               else
+                  NEXT_RV := NEXT_RV + 1;
+                  CHANGED.RV := NEXT_RV;
+                  if OP = OP_DELETE then
+                     CHANGED.GONE := 1;
+                  end if;
+                  SEND_IT := TRUE;
+               end if;
+            end WRITE;
+            if SEND_IT then
+               STORE(CHANGED.ID) := CHANGED;
+            end if;
+         or
+            accept BEAT(ID : in INTEGER) do
+               STORE(ID).BEAT := INTEGER(SYSTEM'CLOCK * 1000.0 / SECONDS);
+               CHANGED := STORE(ID);
+               CHANGED.KIND := K_LEASE;
+               SEND_IT := TRUE;
+            end BEAT;
+         or
+            accept GET(ID : in INTEGER; O : out OBJ) do
+               O := STORE(ID);
+            end GET;
+         or
+            accept LIST(PORT : in INTEGER) do
+               for I in 1 .. NEXT_ID loop
+                  if STORE(I).GONE = 0 and STORE(I).KIND = K_POD then
+                     INBOX(PORT).PUT_EVENT(STORE(I));
+                  end if;
+               end loop;
+               INBOX(PORT).PUT_EVENT(BLANK(0));
+               LOG("api server: " & IMG(CONFLICTS) & " stale writes refused so far");
+            end LIST;
+         end select;
+         -- tell the watchers after the rendezvous, so the writer is not held
+         if SEND_IT then
+            for P in 1 .. NPORTS loop
+               if (WATCHERS(P) / 2 ** CHANGED.KIND) mod 2 = 1 then
+                  INBOX(P).PUT_EVENT(CHANGED);
+               end if;
+            end loop;
+         end if;
+      end loop;
+   end API;
+
+   -- an informer: keep the cache current from one event
+   procedure ABSORB(C : in out CACHE; O : in OBJ; FRESH : out BOOLEAN) is
+   begin
+      FRESH := C(O.ID).ID = 0;
+      if O.RV > C(O.ID).RV then
+         C(O.ID) := O;
+      end if;
+   end ABSORB;
+
+   procedure CLEAR(C : out CACHE) is
+   begin
+      for I in 1 .. NOBJ loop
+         C(I) := BLANK(0);
+      end loop;
+   end CLEAR;
+
+   -- ---- deployment controller: one replica set per template version -------------
+   task DEPLOY_CTL;
+   task body DEPLOY_CTL is
+      C     : CACHE;
+      E     : OBJ;
+      O     : OBJ;
+      FRESH : BOOLEAN;
+      FOUND : BOOLEAN;
+      ASKED : array (1 .. 64) of INTEGER;
+   begin
+      CLEAR(C);
+      for I in 1 .. NOBJ loop
+         ASKED(I) := 0;
+      end loop;
+      API.WATCH(P_DEPLOY, 2 ** K_DEPLOY + 2 ** K_RS);
+      loop
+         INBOX(P_DEPLOY).GET_EVENT(E);
+         if E.KIND = K_TICK then
+            for I in 1 .. NOBJ loop
+               ASKED(I) := 0;
+            end loop;
+         else
+            ABSORB(C, E, FRESH);
+         end if;
+         for D in 1 .. NOBJ loop
+            if C(D).KIND = K_DEPLOY and C(D).GONE = 0 then
+               FOUND := FALSE;
+               for R in 1 .. NOBJ loop
+                  if C(R).KIND = K_RS and C(R).GONE = 0 and C(R).OWNER = D then
+                     if C(R).VERSION = C(D).VERSION then
+                        FOUND := TRUE;
+                        if C(R).REPLICAS /= C(D).REPLICAS then
+                           O := C(R);
+                           O.REPLICAS := C(D).REPLICAS;
+                           API.WRITE(OP_UPDATE, O);
+                           LOG("deployment " & IMG(D) & ": scale replicaset " & IMG(R) & " to "
+                               & IMG(O.REPLICAS));
+                        end if;
+                     elsif C(R).REPLICAS > 0 then
+                        O := C(R);
+                        O.REPLICAS := 0;
+                        API.WRITE(OP_UPDATE, O);
+                        LOG("deployment " & IMG(D) & ": old replicaset " & IMG(R) & " scaled to 0");
+                     end if;
+                  end if;
+               end loop;
+               if not FOUND and ASKED(D) /= C(D).VERSION then
+                  ASKED(D) := C(D).VERSION;
+                  O := BLANK(K_RS);
+                  O.OWNER := D;
+                  O.REPLICAS := C(D).REPLICAS;
+                  O.VERSION := C(D).VERSION;
+                  API.WRITE(OP_CREATE, O);
+                  LOG("deployment " & IMG(D) & ": new replicaset for version " & IMG(O.VERSION));
+               end if;
+            end if;
+         end loop;
+      end loop;
+   end DEPLOY_CTL;
+
+   -- ---- replica set controller: as many live pods as replicas --------------------
+   task RS_CTL;
+   task body RS_CTL is
+      C      : CACHE;
+      E      : OBJ;
+      O      : OBJ;
+      FRESH  : BOOLEAN;
+      HAVE   : INTEGER;
+      EXPECT : array (1 .. 64) of INTEGER;
+   begin
+      CLEAR(C);
+      for I in 1 .. NOBJ loop
+         EXPECT(I) := 0;
+      end loop;
+      API.WATCH(P_RS, 2 ** K_RS + 2 ** K_POD);
+      loop
+         INBOX(P_RS).GET_EVENT(E);
+         if E.KIND = K_TICK then
+            for I in 1 .. NOBJ loop
+               EXPECT(I) := 0;
+            end loop;
+         else
+            ABSORB(C, E, FRESH);
+            if FRESH and E.KIND = K_POD and EXPECT(E.OWNER) > 0 then
+               EXPECT(E.OWNER) := EXPECT(E.OWNER) - 1;
+            end if;
+         end if;
+         for R in 1 .. NOBJ loop
+            if C(R).KIND = K_RS and C(R).GONE = 0 then
+               HAVE := 0;
+               for P in 1 .. NOBJ loop
+                  if C(P).KIND = K_POD and C(P).GONE = 0 and C(P).OWNER = R then
+                     HAVE := HAVE + 1;
+                     if HAVE > C(R).REPLICAS then
+                        API.WRITE(OP_DELETE, C(P));
+                        LOG("replicaset " & IMG(R) & ": delete pod " & IMG(P));
+                        C(P).GONE := 1;
+                     end if;
+                  end if;
+               end loop;
+               if HAVE + EXPECT(R) < C(R).REPLICAS then
+                  LOG("replicaset " & IMG(R) & ": " & IMG(HAVE) & " of " & IMG(C(R).REPLICAS)
+                      & " pods, creating " & IMG(C(R).REPLICAS - HAVE - EXPECT(R)));
+                  for K in HAVE + EXPECT(R) + 1 .. C(R).REPLICAS loop
+                     O := BLANK(K_POD);
+                     O.OWNER := R;
+                     O.VERSION := C(R).VERSION;
+                     API.WRITE(OP_CREATE, O);
+                     EXPECT(R) := EXPECT(R) + 1;
+                  end loop;
+               end if;
+            end if;
+         end loop;
+      end loop;
+   end RS_CTL;
+
+   -- ---- scheduler: bind each pending pod to the ready node with fewest pods ------
+   task SCHEDULER;
+   task body SCHEDULER is
+      C     : CACHE;
+      E     : OBJ;
+      O     : OBJ;
+      FRESH : BOOLEAN;
+      BEST, BEST_LOAD, LOAD : INTEGER;
+   begin
+      CLEAR(C);
+      API.WATCH(P_SCHED, 2 ** K_POD + 2 ** K_NODE);
+      loop
+         INBOX(P_SCHED).GET_EVENT(E);
+         if E.KIND /= K_TICK then
+            ABSORB(C, E, FRESH);
+         end if;
+         for P in 1 .. NOBJ loop
+            if C(P).KIND = K_POD and C(P).GONE = 0 and C(P).NODE = 0 then
+               BEST := 0;
+               BEST_LOAD := NOBJ;
+               for N in 1 .. NOBJ loop
+                  if C(N).KIND = K_NODE and C(N).GONE = 0 and C(N).PHASE = READY then
+                     LOAD := 0;
+                     for Q in 1 .. NOBJ loop
+                        if C(Q).KIND = K_POD and C(Q).GONE = 0 and C(Q).NODE = N then
+                           LOAD := LOAD + 1;
+                        end if;
+                     end loop;
+                     if LOAD < BEST_LOAD then
+                        BEST := N;
+                        BEST_LOAD := LOAD;
+                     end if;
+                  end if;
+               end loop;
+               if BEST > 0 then
+                  O := C(P);
+                  O.NODE := BEST;
+                  API.WRITE(OP_UPDATE, O);
+                  C(P).NODE := BEST;
+                  LOG("scheduler: pod " & IMG(P) & " -> node " & IMG(C(BEST).OWNER));
+               end if;
+            end if;
+         end loop;
+      end loop;
+   end SCHEDULER;
+
+   -- ---- node controller: leases by the time it saw them, NotReady, eviction -------
+   task NODE_CTL;
+   task body NODE_CTL is
+      C      : CACHE;
+      E      : OBJ;
+      O      : OBJ;
+      FRESH  : BOOLEAN;
+      NOW    : INTEGER;
+   begin
+      CLEAR(C);
+      API.WATCH(P_NODES, 2 ** K_NODE + 2 ** K_LEASE + 2 ** K_POD);
+      loop
+         INBOX(P_NODES).GET_EVENT(E);
+         NOW := INTEGER(SYSTEM'CLOCK * 1000.0 / SECONDS);
+         if E.KIND = K_LEASE or E.KIND = K_NODE then
+            if E.KIND = K_LEASE or C(E.ID).ID = 0 then
+               C(E.ID).BEAT := NOW;
+            end if;
+            C(E.ID).KIND := K_NODE;
+            C(E.ID).OWNER := E.OWNER;
+            C(E.ID).ID := E.ID;
+            if E.RV > C(E.ID).RV then
+               C(E.ID).RV := E.RV;
+               C(E.ID).PHASE := E.PHASE;
+            end if;
+         elsif E.KIND /= K_TICK then
+            ABSORB(C, E, FRESH);
+         end if;
+         for N in 1 .. NOBJ loop
+            if C(N).KIND = K_NODE and C(N).PHASE = READY and NOW - C(N).BEAT > 30 then
+               O := C(N);
+               O.PHASE := NOT_READY;
+               API.WRITE(OP_UPDATE, O);
+               C(N).PHASE := NOT_READY;
+               LOG("node controller: node " & IMG(C(N).OWNER) & " is NotReady, evicting its pods");
+               for P in 1 .. NOBJ loop
+                  if C(P).KIND = K_POD and C(P).GONE = 0 and C(P).NODE = N then
+                     API.WRITE(OP_DELETE, C(P));
+                     C(P).GONE := 1;
+                  end if;
+               end loop;
+            end if;
+         end loop;
+      end loop;
+   end NODE_CTL;
+
+   -- ---- kubelets: a family, one member per node ----------------------------------
+   task KUBELET(INTEGER range 1 .. 3);
+   task body KUBELET is
+      C     : CACHE;
+      E     : OBJ;
+      O     : OBJ;
+      FRESH : BOOLEAN;
+      N     : INTEGER;
+      ME    : INTEGER;
+      NEXT_BEAT : INTEGER := 0;
+   begin
+      N := KUBELET'INDEX;
+      ME := P_KUBELET + N - 1;
+      CLEAR(C);
+      API.WATCH(ME, 2 ** K_POD);
+      loop
+         INBOX(ME).GET_EVENT(E);
+         if E.KIND /= K_TICK then
+            ABSORB(C, E, FRESH);
+         end if;
+         if INTEGER(SYSTEM'CLOCK * 1000.0 / SECONDS) >= NEXT_BEAT then
+            API.BEAT(N);
+            NEXT_BEAT := INTEGER(SYSTEM'CLOCK * 1000.0 / SECONDS) + 10;
+         end if;
+         for P in 1 .. NOBJ loop
+            if C(P).KIND = K_POD and C(P).GONE = 0 and C(P).NODE = N and C(P).PHASE = PENDING then
+               O := C(P);
+               O.PHASE := RUNNING;
+               API.WRITE(OP_UPDATE, O);
+               C(P).PHASE := RUNNING;
+               LOG("kubelet " & IMG(N) & ": pod " & IMG(P) & " (version " & IMG(O.VERSION) & ") running");
+            end if;
+         end loop;
+      end loop;
+   end KUBELET;
+
+   -- ---- the user -------------------------------------------------------------------
+   procedure SHOW is
+      E : OBJ;
+   begin
+      API.LIST(P_USER);
+      loop
+         INBOX(P_USER).GET_EVENT(E);
+         exit when E.KIND = 0;
+         if E.KIND = K_POD then
+            LOG("  pod " & IMG(E.ID) & "  rs " & IMG(E.OWNER) & "  version " & IMG(E.VERSION)
+                & "  node-id " & IMG(E.NODE) & "  phase " & IMG(E.PHASE));
+         end if;
+      end loop;
+   end SHOW;
+
+   WEB : constant INTEGER := 4;
+   D, STALE, N_OBJ : OBJ;
+begin
+   initiate INBOX(1 .. 8), API;
+   for N in 1 .. NNODES loop
+      N_OBJ := BLANK(K_NODE);
+      N_OBJ.OWNER := N;
+      N_OBJ.PHASE := READY;
+      API.WRITE(OP_CREATE, N_OBJ);
+   end loop;
+   initiate DEPLOY_CTL, RS_CTL, SCHEDULER, NODE_CTL, KUBELET(1 .. 3);
+
+   LOG("user: create deployment web, 3 replicas");
+   D := BLANK(K_DEPLOY);
+   D.REPLICAS := 3;
+   D.VERSION := 1;
+   API.WRITE(OP_CREATE, D);
+   delay 0.060 * SECONDS;
+   SHOW;
+
+   LOG("user: scale web to 5");
+   API.GET(WEB, STALE);
+   API.GET(WEB, D);
+   D.REPLICAS := 5;
+   API.WRITE(OP_UPDATE, D);
+   LOG("user: a second client writes 4 replicas from the copy it read before");
+   STALE.REPLICAS := 4;
+   API.WRITE(OP_UPDATE, STALE);
+   delay 0.060 * SECONDS;
+   SHOW;
+
+   LOG("user: node 2 loses power");
+   abort KUBELET(2);
+   delay 0.120 * SECONDS;
+   SHOW;
+
+   LOG("user: roll out version 2");
+   API.GET(WEB, D);
+   D.VERSION := 2;
+   API.WRITE(OP_UPDATE, D);
+   delay 0.080 * SECONDS;
+   SHOW;
+   abort INBOX(1 .. 8), API, DEPLOY_CTL, RS_CTL, SCHEDULER, NODE_CTL, KUBELET(1 .. 3);
+end KUBE;

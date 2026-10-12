@@ -1,0 +1,66 @@
+[0 ms] user: create deployment web, 3 replicas
+[0 ms] deployment 4: new replicaset for version 1
+[0 ms] replicaset 5: 0 of 3 pods, creating 3
+[0 ms] scheduler: pod 6 -> node 1
+[0 ms] scheduler: pod 7 -> node 2
+[0 ms] kubelet 1: pod 6 (version 1) running
+[0 ms] scheduler: pod 8 -> node 3
+[0 ms] kubelet 2: pod 7 (version 1) running
+[0 ms] kubelet 3: pod 8 (version 1) running
+[60 ms] api server: 0 stale writes refused so far
+[60 ms]   pod 6  rs 5  version 1  node-id 1  phase 1
+[60 ms]   pod 7  rs 5  version 1  node-id 2  phase 1
+[60 ms]   pod 8  rs 5  version 1  node-id 3  phase 1
+[60 ms] user: scale web to 5
+[60 ms] user: a second client writes 4 replicas from the copy it read before
+[60 ms] deployment 4: scale replicaset 5 to 5
+[60 ms] replicaset 5: 3 of 5 pods, creating 2
+[60 ms] scheduler: pod 9 -> node 1
+[60 ms] scheduler: pod 10 -> node 2
+[60 ms] kubelet 1: pod 9 (version 1) running
+[60 ms] kubelet 2: pod 10 (version 1) running
+[120 ms] api server: 1 stale writes refused so far
+[120 ms]   pod 6  rs 5  version 1  node-id 1  phase 1
+[120 ms]   pod 7  rs 5  version 1  node-id 2  phase 1
+[120 ms]   pod 8  rs 5  version 1  node-id 3  phase 1
+[120 ms]   pod 9  rs 5  version 1  node-id 1  phase 1
+[120 ms]   pod 10  rs 5  version 1  node-id 2  phase 1
+[120 ms] user: node 2 loses power
+[160 ms] node controller: node 2 is NotReady, evicting its pods
+[160 ms] replicaset 5: 4 of 5 pods, creating 1
+[160 ms] replicaset 5: 3 of 5 pods, creating 1
+[160 ms] scheduler: pod 11 -> node 3
+[160 ms] scheduler: pod 12 -> node 1
+[160 ms] kubelet 3: pod 11 (version 1) running
+[160 ms] kubelet 1: pod 12 (version 1) running
+[240 ms] api server: 1 stale writes refused so far
+[240 ms]   pod 6  rs 5  version 1  node-id 1  phase 1
+[240 ms]   pod 8  rs 5  version 1  node-id 3  phase 1
+[240 ms]   pod 9  rs 5  version 1  node-id 1  phase 1
+[240 ms]   pod 11  rs 5  version 1  node-id 3  phase 1
+[240 ms]   pod 12  rs 5  version 1  node-id 1  phase 1
+[240 ms] user: roll out version 2
+[240 ms] deployment 4: old replicaset 5 scaled to 0
+[240 ms] deployment 4: new replicaset for version 2
+[240 ms] replicaset 5: delete pod 6
+[240 ms] replicaset 5: delete pod 8
+[240 ms] replicaset 5: delete pod 9
+[240 ms] replicaset 5: delete pod 11
+[240 ms] replicaset 5: delete pod 12
+[240 ms] replicaset 13: 0 of 5 pods, creating 5
+[240 ms] scheduler: pod 14 -> node 1
+[240 ms] scheduler: pod 15 -> node 3
+[240 ms] kubelet 1: pod 14 (version 2) running
+[240 ms] scheduler: pod 16 -> node 1
+[240 ms] kubelet 3: pod 15 (version 2) running
+[240 ms] scheduler: pod 17 -> node 3
+[240 ms] kubelet 1: pod 16 (version 2) running
+[240 ms] scheduler: pod 18 -> node 1
+[240 ms] kubelet 3: pod 17 (version 2) running
+[240 ms] kubelet 1: pod 18 (version 2) running
+[320 ms] api server: 1 stale writes refused so far
+[320 ms]   pod 14  rs 13  version 2  node-id 1  phase 1
+[320 ms]   pod 15  rs 13  version 2  node-id 3  phase 1
+[320 ms]   pod 16  rs 13  version 2  node-id 1  phase 1
+[320 ms]   pod 17  rs 13  version 2  node-id 3  phase 1
+[320 ms]   pod 18  rs 13  version 2  node-id 1  phase 1

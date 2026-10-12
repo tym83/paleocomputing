@@ -2,6 +2,8 @@
 #include "paleo.h"
 
 #include <execinfo.h>
+#include <signal.h>
+#include <unistd.h>
 #include <math.h>
 #include <pthread.h>
 #include <stdio.h>
@@ -495,6 +497,7 @@ struct rt_task {
   int accept_exc;          /* exception raised in the accept body */
   rt_waiter *wl;           /* waiter records registered */
   rt_waiter *serving;      /* callers whose accept body is running */
+  rt_waiter *callw;        /* its own record in an entry queue, while calling */
   rt_task *all_next;
   rt_act self_act;
 };
@@ -736,6 +739,16 @@ void rt_exterminate(rt_act *a) {
   t->term_pending = 1;
   if (t->state == T_BLOCKED) {
     drop_waiters(t);
+    if (t->callw) {
+      /* a queued entry call is cancelled (RM79 9.10) */
+      for (rt_waiter **p = t->callw->queue; *p; p = &(*p)->next)
+        if (*p == t->callw) {
+          *p = t->callw->next;
+          break;
+        }
+      t->callw->t = NULL;
+      t->callw = NULL;
+    }
     t->result = -2;
     make_ready(t);
   }
@@ -903,9 +916,11 @@ void rt_entry_call(rt_entry *e, void *params) {
   while (*q) q = &(*q)->next;
   *q = w;
   cur->accept_exc = 0;
+  cur->callw = w;
   if (e->acceptors) satisfy(e->acceptors);
   cur->state = T_BLOCKED;
   reschedule();
+  cur->callw = NULL;
   if (cur->accept_exc) rt_raise(cur->accept_exc);
   check_terminate();
 }
@@ -917,6 +932,7 @@ void *rt_accept_begin(rt_entry *e) {
   }
   rt_waiter *w = e->callers;
   e->callers = w->next;
+  w->queue = &cur->serving;
   w->next = cur->serving;
   cur->serving = w;
   return w->data;
@@ -926,8 +942,12 @@ void rt_accept_end(rt_entry *e, int failed, int exc) {
   (void)e;
   rt_waiter *w = cur->serving;
   cur->serving = w->next;
-  w->t->accept_exc = failed ? exc : 0;
-  make_ready(w->t);
+  /* the caller may have been aborted during the rendezvous */
+  if (w->t && w->t->state == T_BLOCKED) {
+    w->t->accept_exc = failed ? exc : 0;
+    w->t->callw = NULL;
+    make_ready(w->t);
+  }
   maybe_preempt();
 }
 
@@ -1026,7 +1046,20 @@ static void on_unhandled(int id) {
   exit(1);
 }
 
+static void on_segv(int sig) {
+  void *bt[48];
+  int n = backtrace(bt, 48);
+  fflush(stdout);
+  fprintf(stderr, "*** signal %d\n", sig);
+  backtrace_symbols_fd(bt, n, 2);
+  _exit(5);
+}
+
 void rt_init(int argc, char **argv) {
+  if (getenv("PALEO_ABORT")) {
+    signal(SIGSEGV, on_segv);
+    signal(SIGBUS, on_segv);
+  }
   g_argc = argc;
   g_argv = argv;
   pthread_cond_init(&main_task.cv, NULL);
