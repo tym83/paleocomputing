@@ -1,0 +1,41 @@
+# Expectations written in the comments of X8Stest.elan (Mathematisch Centrum,
+# 1971-72), one line per test number as counted by pustat.py. Registers in
+# octal; C L O P N are the one-bit registers C, LT, OF, the parity bit and NINT
+# read from T. Two comments disagree with the code of X8S itself; we follow
+# X8S and say so: test 42 ("a = s = -0": X8S gives A the sign of the old A,
+# +0) and test 71 ("of = 0": the same operands set OF in test 68, and X8S sets
+# it here too).
+1  A=000000000 S=777777777
+17 S=525252525 P=1
+18 S=252525252 P=0
+21 C=0 L=0
+22 C=1 L=1
+23 C=0 L=0
+24 C=0 L=1
+25 S=400000000 C=1 L=1
+26 C=0 L=1
+27 C=1 L=0
+28 A=000000001 S=000000002
+29 S=000252525
+30 A=000000001 S=777777777 C=0 L=1 O=1
+31 S=777777776 O=1
+34 A=000000000 S=777777777
+36 A=252525252 S=525252525
+37 A=000000000 S=777777777
+39 A=777777777 S=777777777 C=1
+40 A=000000000 S=000000000
+41 A=000000000 S=000000000 C=0
+42 S=777777777 C=0
+43 A=777777772 S=777777777 C=0
+60 S=000000032
+62 C=0
+63 S=000000064
+64 C=1
+65 S=000000064
+68 C=0 O=1 N=0
+69 C=1 O=1 N=0
+70 C=0 O=0 N=0
+71 C=1
+73 N=0
+74 N=0
+75 N=1
