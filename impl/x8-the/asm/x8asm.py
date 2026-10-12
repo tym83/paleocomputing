@@ -809,6 +809,7 @@ def main():
     ap.add_argument('source', nargs='+')
     ap.add_argument('-o', '--output', help='IP tape')
     ap.add_argument('-l', '--listing', help='listing file')
+    ap.add_argument('-s', '--symbols', help='labels and their addresses')
     ap.add_argument('-D', action='append', default=[], help='name=value: replace a "+n" data word '
                     'labelled name (used for the in-sim flag of the X8 test program)')
     a = ap.parse_args()
@@ -839,6 +840,10 @@ def main():
     if a.output:
         with open(a.output, 'wb') as fh:
             fh.write(ip_tape(asm.words))
+    if a.symbols:
+        with open(a.symbols, 'w') as fh:
+            for (sid, name), addr in sorted(Scope.known.items(), key=lambda x: x[1]):
+                fh.write('%06o %s%s\n' % (addr, name, '' if sid == 0 else '  (block %d)' % sid))
     if a.listing:
         with open(a.listing, 'w') as fh:
             for lc, w, src in asm.listing:

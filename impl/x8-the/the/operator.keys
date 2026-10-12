@@ -1,0 +1,5 @@
+# What the operator types on the console keyboard: "milliseconds text".
+# pm2 asks how many squares; the operator answers, and at the end asks for
+# the report.
+12000 pm2 12\n
+90000 end\n
