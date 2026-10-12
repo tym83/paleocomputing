@@ -207,6 +207,11 @@ they were fixed in the same way as upstream:
 
 - [`labs/`](impl/ada-colors/labs/README.md): eleven exercises (look, change,
   break, build) and `labs/check.sh`, which says whether a task is done.
+- [`problems/run/`](impl/ada-colors/problems/run/): the 1979 RED originals made
+  runnable, C.1 and contract problem 6, each with a sed file of the changes a
+  translator forced. Problem 6 needs a fair WAIT: with the first ready
+  alternative always taken, the operator's DONE starves. RED leaves the choice
+  undefined, and the runtime now takes ready alternatives in turn.
 - [`ada83/`](impl/ada-colors/ada83/): the same three situations in Ada 83,
   built by GNAT `-gnat83` in CI. They are the bounded buffer as a server task,
   the timed entry call that GREEN 1979 did not have, and the lock as a task
@@ -214,15 +219,74 @@ they were fixed in the same way as upstream:
 
 ## GREEN
 
-*In progress: the compiler written in GREEN, its fixed point, tasking with
-`initiate`, `select` and rendezvous, and the 1979 INTRO examples. This section
-will be filled in when it lands.*
+[`green/`](impl/ada-colors/green/) follows the same path as RED: a Python
+bootstrap that reuses the RED bootstrap's code generator, then greenc. greenc
+is a GREEN compiler written in GREEN, about 6,500 lines. It reached its fixed
+point, and every later version was built by the one before. `make -C green
+fixpoint test genesis` checks all of it.
+
+greenc follows the Preliminary Ada Reference Manual of May 1979, cited as
+RM79. It supports:
+
+- packages, with private types whose components are hidden outside;
+- `restricted(...)` visibility lists and `use`;
+- overloading by parameter types, modes and names, and by result type;
+- operator designators, with `/=` following `=`;
+- the fifteen RM79 exceptions;
+- the purity rules of RM79 6.5;
+- tasks that start only on `initiate` (a second `initiate` of an active task
+  raises INITIATE_ERROR, and a terminated task can be started again);
+- rendezvous, and `select` with guards, `delay` and `else` (SELECT_ERROR when
+  every alternative is closed);
+- exceptions from an accept body reaching both partners;
+- `raise T.FAILURE`, and `abort`;
+- task and entry families;
+- generics instantiated with `is new`.
+
+The INTRO 1979 examples 1.1–1.4, 6.3 and 6.5 run in
+[`green/tests/corpus/`](impl/ada-colors/green/tests/corpus/). The findings
+are in [`notes/green-findings.md`](impl/ada-colors/notes/green-findings.md):
+
+- **The purity rules shape the compiler.** A function may not assign non-local
+  objects, allocate or do I/O. A value-returning procedure may be called only
+  where the globals it changes are not in scope. So a recursive-descent parser
+  over a global token position can use neither: greenc's parser is procedures
+  with `out` parameters. RED made the opposite choice: an impure function is
+  marked ABNORMAL and may do anything.
+- Two errors in the 1979 texts are rejected by greenc: `NET_RISE > 0` compares
+  a REAL with an integer literal, and `8#8060` has the digit 8 in base 8.
+- **RM79 output puts a space before every number** that is not at column 1, so
+  the 1979 change-counting example prints `CHANGE IS $ 2. 53`.
+
+What is not implemented: distinct numeric types (every integer type is
+INTEGER, every real type FLOAT), multi-dimensional arrays, record default
+values, visible procedures of tasks, `separate`, renaming, interrupts, and
+entry families inside task families.
+
+### Kubernetes in GREEN
+
+[`kube/kube_green.grn`](impl/ada-colors/kube/kube_green.grn) is the control loop
+of `kube.red` in GREEN, 517 lines against 522. With only the rendezvous, the
+design has to change:
+
+- A watch stream is a family of inbox tasks.
+- GREEN 1979 has no timed entry call, so the resync tick is made inside the
+  inbox by a delay alternative.
+- A bounded inbox can lock the two sides together: the API server waits for
+  room in a controller's inbox while that controller waits in a call to the API
+  server. With inboxes of 4 the cluster stops. The other inboxes keep ticking,
+  so the runtime cannot even report a deadlock.
+
+Writing it found a runtime bug. A task aborted while queued at an entry stayed
+in the queue, and the server later woke a finished task. RM79 9.10 cancels
+such a call, and now so does the runtime.
 
 ## Next
 
 - The Blue and Yellow designs, from DTIC ADB950587, downloaded by hand.
-- The 1979 contract problems running on both compilers side by side, with
-  simulated interrupts for problems 1, 2 and 4.
+- The other 1979 contract problems on both compilers side by side, with
+  simulated interrupts for problems 1, 2 and 4 (DTIC was down for maintenance
+  when the Blue and Yellow volume was tried).
 - RED in the browser: redc is plain C, so the open question is a C back end
   in WebAssembly or an interpreter.
 - The Rational R1000 emulator, to measure the cost of a rendezvous on the
