@@ -31,8 +31,7 @@ processor and with RED on our runtime.
   checked by their SHA-256, then GNAT (`-gnat83 -O0 -fno-inline`, since at
   `-O1` GCC deletes the empty loop and inlines the call) and RED
   ([`rdv_bench.red`](rdv_bench.red), timed from outside by
-  [`stamp.py`](stamp.py), with `PALEO_LINEBUF=1` so the runtime sends every
-  line at once).
+  [`stamp.py`](stamp.py), under `stdbuf -oL` so every line leaves at once).
 
 ## Results
 

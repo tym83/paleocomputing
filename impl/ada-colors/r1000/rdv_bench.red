@@ -1,7 +1,8 @@
 % The same measurements in RED on our runtime: a procedure call, a round trip
 % through two mailboxes of size 0 (RED's rendezvous: the sender waits for the
 % receiver), the same round trip with buffered mailboxes, and the life of a
-% task. RED's clock is virtual, so stamp.py timestamps the BEGIN and END lines.
+% task. RED's clock is virtual, so stamp.py timestamps the BEGIN and END lines
+% (run under stdbuf -oL, so that each line leaves at once).
 CAPSULE main EXPORTS NONE;
    CONST n := 200000;
    CONST n_tasks := 20000;

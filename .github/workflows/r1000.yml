@@ -56,7 +56,7 @@ jobs:
           make fixpoint
           build/redc < r1000/rdv_bench.red > build/rb.c
           cc -std=gnu11 -O1 -w -Irt build/rb.c rt/paleo.c -o build/rb -lpthread -lm
-          PALEO_LINEBUF=1 build/rb | python3 r1000/stamp.py | tee build/rb.txt
+          stdbuf -oL build/rb | python3 r1000/stamp.py | tee build/rb.txt
           python3 r1000/parse.py host build/rb.txt | tee -a "$GITHUB_STEP_SUMMARY"
 
   r1000:

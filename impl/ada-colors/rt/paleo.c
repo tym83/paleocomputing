@@ -1080,8 +1080,6 @@ static void on_segv(int sig) {
 #endif
 
 void rt_init(int argc, char **argv) {
-  /* PALEO_LINEBUF: every line leaves at once, so an outside clock can time it */
-  if (getenv("PALEO_LINEBUF")) setvbuf(stdout, NULL, _IOLBF, 0);
 #ifndef __wasi__
   if (getenv("PALEO_ABORT")) {
     signal(SIGSEGV, on_segv);
