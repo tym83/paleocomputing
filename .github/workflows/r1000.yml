@@ -90,8 +90,10 @@ jobs:
           git -C /tmp/emu checkout -q "$EMU_REF"
           cd /tmp/emu/SwEmulator
           make setup
-          # glibc hides usleep and cfmakeraw under -std=c23 without this
-          echo 'CFLAGS += -D_GNU_SOURCE' > ../Makefile.local
+          # glibc hides usleep and cfmakeraw under -std=c23 without
+          # _GNU_SOURCE, and has no fls/flsll (linux_compat.h)
+          printf 'CFLAGS += -D_GNU_SOURCE -include %s\n' \
+            "$GITHUB_WORKSPACE/impl/ada-colors/r1000/linux_compat.h" > ../Makefile.local
           make CC=gcc-14 r1000sim
           ls -l r1000sim
 
