@@ -76,3 +76,14 @@ Digest specs -> pick subsets -> bootstrap compilers.
   (2) freshness must be the controller's OBSERVED time of a lease change (as the node lifecycle
   controller does), and a controller must drain queued events before deciding.
 - GREEN chain delegated to a fork (works only under green/, does not commit).
+### 2026-10-12 — contract problem 6 runs; WAIT fairness
+- problems/run/06-*: RED P6 (process control) runs with operator cards. 1979 slips the translator
+  rejects: mes('b0..'b1) on a parameterless new type, buffers declared as TYPE but used as a
+  variable, aa/ba/ca declared but cc/bb created, keep_outputting/keep_outputing.
+- Found by running it: with WAIT always taking the first ready alternative, task a never sees
+  the operator's DONE (its returned buffer is always ready): the 1979 solution needs a fair WAIT.
+  RED leaves the choice undefined; rt_wait now rotates its starting alternative.
+  Also: if task a dies, the operator console hangs on SEND to the zero-size mcontrol.
+- The fairness exposed my own bug: the Kube node controller drained its queue with
+  WAIT RECEIVE / DELAY(0), relying on the first alternative winning; now FULL_SLOTS.
+- DTIC was under maintenance (ADB950587 still not checked).

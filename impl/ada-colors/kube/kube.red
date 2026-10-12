@@ -363,13 +363,11 @@ CAPSULE kube EXPORTS NONE;
             WHEN RECEIVE(ports(p_nodes), m) => note(m);
             WHEN DELAY(10) =>
          END WAIT;
-         % take in everything already queued before deciding anything
-         draining := TRUE;
-         WHILE draining REPEAT
-            WAIT
-               WHEN RECEIVE(ports(p_nodes), m) => note(m);
-               WHEN DELAY(0) => draining := FALSE;
-            END WAIT;
+         % take in everything already queued before deciding anything; WAIT
+         % would not do: among ready alternatives its choice is undefined (10.5)
+         WHILE FULL_SLOTS(ports(p_nodes)) > 0 REPEAT
+            RECEIVE(ports(p_nodes), m);
+            note(m);
          END REPEAT;
          % a lease renewed again brings the node back
          FOR n : INT(1 .. nobj) REPEAT

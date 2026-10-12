@@ -933,9 +933,15 @@ void rt_accept_end(rt_entry *e, int failed, int exc) {
 
 /* ---- WAIT / select ------------------------------------------------------- */
 
+/* RED 10.5 leaves the choice among ready alternatives undefined; taking them
+ * in turn keeps an always-ready one from starving the others */
+static unsigned wait_turn;
+
 int rt_wait(int n, rt_alt *alts) {
   int else_alt = -1;
-  for (int i = 0; i < n; i++) {
+  unsigned start = n > 0 ? wait_turn++ % (unsigned)n : 0;
+  for (int k = 0; k < n; k++) {
+    int i = (int)((start + (unsigned)k) % (unsigned)n);
     rt_alt *a = &alts[i];
     if (!a->open) continue;
     switch (a->kind) {
@@ -1102,4 +1108,22 @@ int rt_g_getc(void) {
   int c = rt_getc();
   if (c < 0) rt_raise(RT_X_FILE);
   return c;
+}
+
+/* ---- GREEN abort (RM79 9.10) -------------------------------------------------- */
+
+#define G_MAX_ABORTED 1024
+static rt_task *g_aborted[G_MAX_ABORTED];
+static int g_naborted;
+
+void rt_g_abort(rt_act *a) {
+  if (!a->active || !a->t) return;
+  if (g_naborted < G_MAX_ABORTED) g_aborted[g_naborted++] = a->t;
+  rt_exterminate(a);
+}
+
+int rt_g_aborted(void) {
+  for (int i = 0; i < g_naborted; i++)
+    if (g_aborted[i] == cur) return 1;
+  return 0;
 }

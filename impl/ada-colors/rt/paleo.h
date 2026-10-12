@@ -221,4 +221,9 @@ int rt_g_getc(void);                           /* END_OF_FILE at the end */
 rstr rt_g_image_float(double v);               /* T'REP for floats */
 rt_int rt_g_col(void);
 
+/* GREEN abort (RM79 9.10): the task ends unconditionally; its handlers
+ * re-raise at once instead of handling the exception */
+void rt_g_abort(rt_act *a);
+int rt_g_aborted(void);
+
 #endif
