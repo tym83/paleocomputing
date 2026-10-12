@@ -28,3 +28,4 @@
 #
 # arch   bits order    machine  PCI  description
 risc5    32   LE       oberon   no   Wirth RISC5 32 LE http://www.projectoberon.net/
+x8       32   LE       x8       no   Electrologica X8 27-bit word, Dijkstra THE https://github.com/tym83/paleocomputing

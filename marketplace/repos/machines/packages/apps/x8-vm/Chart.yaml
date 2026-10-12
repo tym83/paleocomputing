@@ -1,0 +1,7 @@
+apiVersion: v2
+name: x8-vm
+description: Dijkstra's THE on the Electrologica X8 as a virtual machine — 27-bit words, a drum, and semaphores
+icon: /logos/x8-vm.svg
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

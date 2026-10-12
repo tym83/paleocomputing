@@ -1,0 +1,40 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "x8-vm",
+  "type": "object",
+  "$comment": "The schema root is intentionally NOT closed: cozystack-engine injects its own keys (_cluster, _namespace) into the values of every tenant application, and with additionalProperties:false Helm rejects the values entirely, so the application does not deploy. No platform chart closes its root. Nested objects are closed: the engine puts nothing there. The memory default must match the machine.yaml passport; the catalog checks verify this.",
+  "required": [
+    "memory",
+    "storageClass",
+    "storage"
+  ],
+  "properties": {
+    "memory": {
+      "type": "string",
+      "description": "Machine memory: an integer number of Mi or Gi, from 128Mi to 512Mi",
+      "pattern": "^[1-9][0-9]*(Mi|Gi)$",
+      "default": "128Mi"
+    },
+    "running": {
+      "type": "boolean",
+      "description": "Keep the machine running",
+      "default": true
+    },
+    "commands": {
+      "type": "string",
+      "description": "Operator lines typed at start, separated by ;",
+      "pattern": "^[ -~]{0,240}$",
+      "default": ""
+    },
+    "storageClass": {
+      "type": "string",
+      "minLength": 1,
+      "default": "replicated"
+    },
+    "storage": {
+      "type": "string",
+      "minLength": 1,
+      "default": "1Gi"
+    }
+  }
+}

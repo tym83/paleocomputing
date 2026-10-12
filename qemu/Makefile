@@ -36,6 +36,8 @@ QEMU_SRC ?= ../.qemu-work
 # hw/core/ and system/. In 10.2 they are still in hw/ and sysemu/, in 9.2 even more so, and
 # the build fails on the very first include. Both were tried.
 QEMU_REF ?= 942229961efea74b153c44c59188eb08375f10f1
+# The X8 (episode 18) builds from the same tree: make build QEMU_TARGETS=x8-softmmu
+QEMU_TARGETS ?= risc5-softmmu
 
 build:
 	@test -d $(QEMU_SRC) || { mkdir -p $(QEMU_SRC) && cd $(QEMU_SRC) && \
@@ -44,10 +46,10 @@ build:
 	@./graft.sh $(QEMU_SRC)
 	@docker build -q -f build/Containerfile -t qemu-build:risc5 . >/dev/null
 	@docker run --rm -v "$$(cd $(QEMU_SRC) && pwd):/src" qemu-build:risc5 \
-	  'cd /src && test -d build || ./configure --target-list=risc5-softmmu \
+	  'cd /src && test -d build || ./configure --target-list=$(QEMU_TARGETS) \
 	     --disable-docs --disable-tools --disable-guest-agent \
 	     --without-default-features --enable-vnc --enable-pixman >/dev/null; ninja -C build'
-	@echo "  built: $(QEMU_SRC)/build/qemu-system-risc5"
+	@echo "  built: $(QEMU_TARGETS) in $(QEMU_SRC)/build"
 
 # The main check of the target: not "it builds" but "it computes the same as the hardware".
 diff:

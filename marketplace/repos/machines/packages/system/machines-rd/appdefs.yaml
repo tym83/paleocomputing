@@ -87,6 +87,22 @@ apps:
       weight: 20
       keysOrder: [["apiVersion"], ["kind"], ["metadata"], ["metadata", "name"], ["spec", "memory"], ["spec", "running"], ["spec", "hardware"], ["spec", "storageClass"], ["spec", "storage"]]
 
+  - component: x8-vm
+    chartPath: apps/x8-vm
+    kind: X8VM
+    plural: x8vms
+    singular: x8vm
+    prefix: x8-vm-
+    dashboard:
+      singular: X8 VM
+      plural: X8 VMs
+      category: Paleocomputing
+      description: Dijkstra's THE multiprogramming system on the Electrologica X8 (1968), with Kubernetes on semaphores
+      icon: logos/x8-vm.svg
+      tags: [paleocomputing, machine, kubevirt, architecture, retrocomputing]
+      weight: 21
+      keysOrder: [["apiVersion"], ["kind"], ["metadata"], ["metadata", "name"], ["spec", "memory"], ["spec", "running"], ["spec", "commands"], ["spec", "storageClass"], ["spec", "storage"]]
+
   # A whole Kube cluster in one order: an air, a control plane and N nodes,
   # all of them releases of the components above (the workbench pattern).
   - component: oberon-kube

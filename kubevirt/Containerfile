@@ -106,6 +106,9 @@ COPY qemu/graft.sh      /src/qemu-target/
 COPY qemu/target        /src/qemu-target/target
 COPY qemu/hw            /src/qemu-target/hw
 COPY qemu/configs       /src/qemu-target/configs
+# The X8 target runs the core of impl/x8-the/emu; graft.sh copies it in.
+COPY impl/x8-the/emu/x8.c impl/x8-the/emu/x8.h impl/x8-the/emu/charon.c impl/x8-the/emu/charon.h \
+     /src/impl/x8-the/emu/
 COPY kubevirt/targets.txt /src/targets.txt
 # Targets and binaries come from kubevirt/targets.txt: <arch>-softmmu and
 # qemu-system-<arch>. The finished emulators are collected in /out/bin so the

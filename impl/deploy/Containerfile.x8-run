@@ -1,0 +1,13 @@
+# The THE tape for the X8 machine application (catalog app x8-vm).
+#
+# The emulator is not here: qemu-system-x8 is in the virt-launcher image, next
+# to libvirt. This image only carries the program tape that the machine's
+# volume fill job copies out, so it needs a shell and cp, nothing more.
+FROM docker.io/library/python:3.12-slim-bookworm AS build
+COPY x8-the/asm/ /src/asm/
+COPY x8-the/the/ /src/the/
+RUN mkdir -p /p && python3 /src/asm/x8asm.py /src/the/the.elan -o /p/the.tape
+
+FROM docker.io/library/busybox:1.37.0
+COPY --from=build /p/the.tape /opt/x8/payload/the.tape
+USER 10001

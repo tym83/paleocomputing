@@ -6,6 +6,9 @@
 # the: THE boots by IP, runs its three user programs with the operator's
 #   keys, and its console and line printer must be as expected; the labs that
 #   need no change run, and the layering break must hang the machine.
+# qemu: the X8 as a QEMU machine (qemu-system-x8): the target is grafted into
+#   the pinned QEMU tree and built in the container of qemu/, and THE must
+#   print in it exactly what it prints in x8emu.
 # web: the browser build is made again with the pinned emscripten image and
 #   must match what is committed in impl/x8-the/web (the site serves it).
 name: x8-the
@@ -13,9 +16,11 @@ name: x8-the
 on:
   push:
     branches: [main]
-    paths: ['impl/x8-the/**', '.github/workflows/x8-the.yml']
+    paths: ['impl/x8-the/**', 'qemu/target/x8/**', 'qemu/hw/x8/**', 'qemu/graft.sh',
+            '.github/workflows/x8-the.yml']
   pull_request:
-    paths: ['impl/x8-the/**', '.github/workflows/x8-the.yml']
+    paths: ['impl/x8-the/**', 'qemu/target/x8/**', 'qemu/hw/x8/**', 'qemu/graft.sh',
+            '.github/workflows/x8-the.yml']
   workflow_dispatch:
 
 defaults:
@@ -64,3 +69,18 @@ jobs:
         run: |
           git status --porcelain -- web
           test -z "$(git status --porcelain -- web)"
+
+  qemu:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build qemu-system-x8
+        working-directory: qemu
+        run: make build QEMU_TARGETS=x8-softmmu
+      # The binary is built for the container's Debian, so it runs there too.
+      - name: THE in QEMU
+        working-directory: .
+        run: |
+          docker run --rm -v "$PWD:/work" -v "$(cd .qemu-work && pwd):/src" qemu-build:risc5 \
+            'cd /work && impl/x8-the/tests/qemu.sh /src/build/qemu-system-x8'

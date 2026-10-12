@@ -1,5 +1,5 @@
 #!/bin/sh
-# Grafts the RISC5 target into a QEMU tree.
+# Grafts the RISC5 and X8 targets into a QEMU tree.
 #
 # QEMU targets are compiled in: dropping the files in is not enough, the target
 # also has to be declared in four places. That is why this is a script and not
@@ -18,6 +18,16 @@ cp -R "$HERE/hw/risc5"                   "$Q/hw/"
 cp    "$HERE/configs/targets/risc5-softmmu.mak" "$Q/configs/targets/"
 cp -R "$HERE/configs/devices/risc5-softmmu"     "$Q/configs/devices/"
 
+# The X8: QEMU runs the core of impl/x8-the/emu (x8.c from X8S, charon.c),
+# so the files are copied from there, not kept twice. Inside the image build
+# they are at the same place relative to this script.
+cp -R "$HERE/target/x8"                  "$Q/target/"
+cp -R "$HERE/hw/x8"                      "$Q/hw/"
+cp    "$HERE/configs/targets/x8-softmmu.mak" "$Q/configs/targets/"
+cp -R "$HERE/configs/devices/x8-softmmu"     "$Q/configs/devices/"
+cp "$HERE"/../impl/x8-the/emu/x8.c "$HERE"/../impl/x8-the/emu/x8.h \
+   "$HERE"/../impl/x8-the/emu/charon.c "$HERE"/../impl/x8-the/emu/charon.h "$Q/target/x8/"
+
 add_once() {  # file, what to look for, what to replace it with
   grep -q "$3" "$1" || sed -i.bak "s|$2|$3\\n$2|" "$1"
   rm -f "$1.bak"
@@ -27,10 +37,16 @@ add_once "$Q/target/meson.build" "subdir('riscv')"      "subdir('risc5')"
 add_once "$Q/target/Kconfig"     "source riscv/Kconfig"  "source risc5/Kconfig"
 add_once "$Q/hw/meson.build"     "subdir('riscv')"       "subdir('risc5')"
 add_once "$Q/hw/Kconfig"         "source riscv/Kconfig"  "source risc5/Kconfig"
+add_once "$Q/target/meson.build" "subdir('riscv')"      "subdir('x8')"
+add_once "$Q/target/Kconfig"     "source riscv/Kconfig"  "source x8/Kconfig"
+add_once "$Q/hw/meson.build"     "subdir('riscv')"       "subdir('x8')"
+add_once "$Q/hw/Kconfig"         "source riscv/Kconfig"  "source x8/Kconfig"
 
 # The list of targets in QAPI; without it target-info does not build.
 grep -q "'risc5'" "$Q/qapi/machine.json" || \
   sed -i.bak "s|'ppc64', 'riscv32'|'ppc64', 'risc5', 'riscv32'|" "$Q/qapi/machine.json"
+grep -q "'x8'" "$Q/qapi/machine.json" || \
+  sed -i.bak "s|'x86_64',|'x86_64', 'x8',|" "$Q/qapi/machine.json"
 rm -f "$Q/qapi/machine.json.bak"
 
 # The air, two changes to the UDP chardev (chardev/char-udp.c):
@@ -122,4 +138,4 @@ open(p, "w").write(s)
 PY
 fi
 
-echo "risc5 target grafted into $Q"
+echo "risc5 and x8 targets grafted into $Q"
