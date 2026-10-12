@@ -101,9 +101,12 @@ are not parsed either.
 Writing 5,000 lines of RED is a test of the language. These are the places
 where it pushed back, all of them by its own rules:
 
-- **IMPORTS is a real constraint.** Once redc enforced it, its own source had
-  to declare every outer variable each subprogram touches. The check then
-  caught mistakes in the NonStop kernel and in the Kubernetes code.
+- **IMPORTS is a real constraint.** Once redc enforced it, every subprogram
+  in its own source had to declare what it imports. The small lexer and table
+  functions have real lists; the parser and the generator, which touch almost
+  all global state, say `IMPORTS ALL` (101 of 137). In the NonStop kernel and
+  the Kubernetes code, where the lists are short and real, the check caught
+  two mistakes.
 - **Names are case-insensitive and the predefined ones are not reserved.** A
   global variable `pos` hid the built-in `POS`. A task parameter `me` hid `ME`.
   A record field `len` collided with the `.LEN` attribute. Each time the

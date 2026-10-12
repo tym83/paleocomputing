@@ -33,7 +33,7 @@ your output with someone else's.
 | 06 | `06-priority.red` | **look**: `c b a`. **change**: give all three the same priority | `a b c`: equal priorities run in FIFO order (RM 10.2) |
 | 07 | `07-generic.red` | **look**: `swap` gets an instance for INT and one for STRING, and nobody names them. **build**: write `GENERIC t : TYPE FUNC max(CONST a, b : t) => t`, call it with integers and strings, print `"max ..."` | An instance per type, made at the call (RM 11.3) |
 | 08 | `08-pairs.red` | **change**: set `crash_after` to another request number | Wherever the primary dies, the audit holds |
-| | | **break**: in the primary, move the reply `SEND` above the checkpoint `SEND` | The audit finds a confirmed transfer missing from the books. The total is still right, so nothing looks wrong at a glance |
+| | | **break**: in the primary, swap the checkpoint `SEND` (with its `IF`) and the reply `SEND`, so that the crash falls between them | The audit finds a confirmed transfer missing from the books. The total is still right, so nothing looks wrong at a glance |
 | 09 | `09-kube-ha.red` | **look**: the API server's primary dies in the middle of a rollout, and the cluster still ends where it should | |
 | | | **break**: delete the draining loop in `node_ctl` | Healthy nodes are evicted after the failover |
 | 10 | `red/redc/*.red` | **build**: add a built-in `MAX(a, b)` to `builtin` in `07-expr.red`, run `make fixpoint`, then translate a program that prints `MAX(3, 7)` | The compiler that is written in RED accepts your change and reproduces itself |
