@@ -1,0 +1,12 @@
+
+-- start the conversion task, let the line deliver its five packets, stop it
+restricted(PACKET_CONVERSION, TEXT_IO)
+procedure MAIN is
+   use PACKET_CONVERSION, TEXT_IO;
+begin
+   initiate PACKET_TO_QUEUE;
+   delay 0.5 * SECONDS;
+   abort PACKET_TO_QUEUE;
+   PUT("five packets converted, the task is stopped");
+   PUT(NEWLINE);
+end MAIN;

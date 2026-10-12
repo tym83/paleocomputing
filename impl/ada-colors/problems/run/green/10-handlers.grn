@@ -1,0 +1,66 @@
+
+-- The line handler and the queue handler that problem 10 assumes to be
+-- present. Packets come from a buffer pool; queue entries are printed.
+
+restricted(PACKET_FORMATS, TEXT_IO)
+package LINE_HANDLER is
+   use PACKET_FORMATS;
+   BUFFER_POOL : array (PACKET_NUMBER'FIRST .. PACKET_NUMBER'LAST) of PACKET_TYPE.PACKET_FORMAT;
+   procedure GET_A_PACKET (I : out PACKET_NUMBER);
+end LINE_HANDLER;
+
+package body LINE_HANDLER is
+   use PACKET_TYPE;
+   ARRIVED : array (1 .. 5) of PACKET_NUMBER := (3, 7, 10, 11, 200);
+   NEXT    : INTEGER := 1;
+
+   -- the next packet the line has placed in the pool; when the line is
+   -- quiet the caller waits
+   procedure GET_A_PACKET (I : out PACKET_NUMBER) is
+   begin
+      while NEXT > 5 loop
+         delay 1.0 * SECONDS;
+      end loop;
+      I := ARRIVED(NEXT);
+      NEXT := NEXT + 1;
+   end GET_A_PACKET;
+
+begin
+   BUFFER_POOL(3)   := (TOP_SECRET,   FLASH,    1023, 200);
+   BUFFER_POOL(7)   := (SECRET,       ROUTINE,  5,    12);
+   BUFFER_POOL(10)  := (UNKNOWN_6,    UNKNOWN,  513,  255);
+   BUFFER_POOL(11)  := (UNCLASSIFIED, PRIORITY, 0,    1);
+   BUFFER_POOL(200) := (CONFIDENTIAL, PRIORITY, 77,   64);
+end LINE_HANDLER;
+
+restricted(PACKET_FORMATS, TEXT_IO)
+package QUEUE_HANDLER is
+   use PACKET_FORMATS;
+   procedure GET_A_QUEUE (Q : out QUEUE_ENTRY_TYPE.QE_FORMAT);
+   procedure SEND_QUEUE (Q : in QUEUE_ENTRY_TYPE.QE_FORMAT);
+end QUEUE_HANDLER;
+
+package body QUEUE_HANDLER is
+   use TEXT_IO, QUEUE_ENTRY_TYPE;
+
+   procedure GET_A_QUEUE (Q : out QE_FORMAT) is
+   begin
+      Q := (" ", " ", 0, 0, 0);
+   end GET_A_QUEUE;
+
+   procedure SEND_QUEUE (Q : in QE_FORMAT) is
+   begin
+      PUT("queue entry: ");
+      PUT(CHARACTER(Q.CLASS));
+      PUT(" ");
+      PUT(CHARACTER(Q.PREC));
+      PUT(" dest");
+      PUT(INTEGER(Q.DEST), 5);
+      PUT(" length");
+      PUT(INTEGER(Q.LGTH), 4);
+      PUT(" packet");
+      PUT(INTEGER(Q.NBR), 4);
+      PUT(NEWLINE);
+   end SEND_QUEUE;
+end QUEUE_HANDLER;
+
