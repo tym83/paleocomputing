@@ -64,3 +64,15 @@ Digest specs -> pick subsets -> bootstrap compilers.
   capsule end name. Logic slips kept: IF i = j (should be /=) skips pivot swap; determ ignores
   the sign of row swaps and multiplies the diagonal inside the elimination loop;
   realmultiply loops to k instead of its parameter i.
+### 2026-10-12 — OS and Kube on RED
+- os/pairs.red: NonStop-style kernel, process pair $BANK, crash between checkpoint and reply,
+  exactly-once via numbered retries. os/run.sh runs os/ and kube/ programs.
+- kube/kube.red: apiserver task, mailbox watches, informer caches, optimistic writes,
+  expectations, leases; node 2 power loss -> NotReady -> pods move; rollout v2.
+- kube/kube_ha.red ("crazy"): apiserver as a Tandem process pair, primary dies mid-rollout
+  after storing the first v2 pod; lost writes repaired by level-triggered resync + expiring
+  expectations + relist from the new primary. On the way it reproduced two real Kubernetes
+  failure modes: (1) all nodes NotReady after a control plane outage -> full disruption guard;
+  (2) freshness must be the controller's OBSERVED time of a lease change (as the node lifecycle
+  controller does), and a controller must drain queued events before deciding.
+- GREEN chain delegated to a fork (works only under green/, does not commit).

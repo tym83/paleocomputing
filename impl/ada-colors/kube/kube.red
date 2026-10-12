@@ -140,9 +140,13 @@ CAPSULE kube EXPORTS NONE;
                   broadcast(m.o);
                END IF;
             WHEN op_beat =>
-               % a node lease: renewed in place, seen only by lease watchers
+               % a node lease: renewed in place, sent only to lease watchers
                store(m.o.id).beat := TIME;
-               broadcast(store(m.o.id));
+               BEGIN
+                  VAR l : obj := store(m.o.id);
+                  l.kind := k_lease;
+                  broadcast(l);
+               END;
             WHEN op_get =>
                SEND(ports(m.port), mk(op_event, p_api, store(m.o.id)));
             WHEN op_list =>
@@ -328,27 +332,78 @@ CAPSULE kube EXPORTS NONE;
       VAR c : cache;
       VAR m : msg;
       VAR fresh : BOOL;
+      VAR quiet : BOOL := FALSE;
+      VAR draining : BOOL;
+
+      PROC note(CONST m : msg) IMPORTS c;
+         VAR fresh : BOOL;
+         IF m.o.kind = k_lease OR m.o.kind = k_node THEN
+            % freshness is when this controller saw the lease renewed (or the node
+            % listed anew), not the time written in it: a control plane outage
+            % then costs no node
+            IF m.o.kind = k_lease OR c(m.o.id).id = 0 THEN
+               c(m.o.id).beat := TIME;
+            END IF;
+            c(m.o.id).kind := k_node;
+            c(m.o.id).owner := m.o.owner;
+            c(m.o.id).id := m.o.id;
+            IF m.o.rv > c(m.o.id).rv THEN
+               c(m.o.id).rv := m.o.rv;
+               c(m.o.id).phase := m.o.phase;
+            END IF;
+         ELSE
+            fresh := absorb(c, m.o);
+         END IF;
+      END PROC note;
+
       clear(c);
       watch(p_nodes, 2 ** k_node + 2 ** k_lease + 2 ** k_pod);
       WHILE TRUE REPEAT
          WAIT
-            WHEN RECEIVE(ports(p_nodes), m) =>
-               IF m.o.kind = k_lease OR m.o.kind = k_node THEN
-                  c(m.o.id).beat := m.o.beat;
-                  c(m.o.id).kind := k_node;
-                  c(m.o.id).owner := m.o.owner;
-                  c(m.o.id).id := m.o.id;
-                  IF m.o.rv > c(m.o.id).rv THEN
-                     c(m.o.id).rv := m.o.rv;
-                     c(m.o.id).phase := m.o.phase;
-                  END IF;
-               ELSE
-                  fresh := absorb(c, m.o);
-               END IF;
+            WHEN RECEIVE(ports(p_nodes), m) => note(m);
             WHEN DELAY(10) =>
          END WAIT;
+         % take in everything already queued before deciding anything
+         draining := TRUE;
+         WHILE draining REPEAT
+            WAIT
+               WHEN RECEIVE(ports(p_nodes), m) => note(m);
+               WHEN DELAY(0) => draining := FALSE;
+            END WAIT;
+         END REPEAT;
+         % a lease renewed again brings the node back
          FOR n : INT(1 .. nobj) REPEAT
-            IF c(n).kind = k_node AND c(n).phase = ready AND TIME - c(n).beat > 30 THEN
+            IF c(n).kind = k_node AND c(n).phase = not_ready AND TIME - c(n).beat <= 30 THEN
+               VAR o : obj := c(n);
+               o.phase := ready;
+               write(op_update, o);
+               c(n).phase := ready;
+               log("node controller: node " & str(c(n).owner) & " renews its lease, Ready again");
+            END IF;
+         END REPEAT;
+         % when every node goes silent at once, it is the control plane that was
+         % away, not the nodes: evict nothing (Kubernetes calls it full disruption)
+         BEGIN
+            VAR live, silent : INT := 0;
+            FOR n : INT(1 .. nobj) REPEAT
+               IF c(n).kind = k_node AND c(n).phase = ready THEN
+                  live := live + 1;
+                  IF TIME - c(n).beat > 30 THEN
+                     silent := silent + 1;
+                  END IF;
+               END IF;
+            END REPEAT;
+            IF silent > 0 AND silent = live THEN
+               IF NOT quiet THEN
+                  log("node controller: all " & str(live) & " nodes silent at once, no eviction");
+               END IF;
+               quiet := TRUE;
+            ELSE
+               quiet := FALSE;
+            END IF;
+         END;
+         FOR n : INT(1 .. nobj) REPEAT
+            IF NOT quiet AND c(n).kind = k_node AND c(n).phase = ready AND TIME - c(n).beat > 30 THEN
                VAR o : obj := c(n);
                o.phase := not_ready;
                o.kind := k_node;
