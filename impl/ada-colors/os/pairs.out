@@ -1,0 +1,13 @@
+[0 ms] $BANK primary on CPU 0 (port 3), backup on CPU 1 (port 4)
+[6 ms] $BANK primary checkpointed request 3 of client 2 and has not replied yet
+[6 ms] CPU 0 loses power
+[41 ms] $BANK backup on CPU 1 hears no heartbeat: takes over as primary
+[41 ms] $BANK backup started on CPU 2, port 5
+[56 ms] client 2: no reply to request 3, retrying
+[56 ms] client 1: no reply to request 3, retrying
+[56 ms] $BANK: request 3 of client 2 is a retry, answered from the checkpoint
+[68 ms] account 1: 0
+[68 ms] account 2: 10
+[68 ms] account 3: 200
+[68 ms] account 4: 190
+[68 ms] total 400 (money is neither lost nor made)

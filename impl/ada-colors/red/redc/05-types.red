@@ -556,7 +556,8 @@ PROC init_storage(READONLY lval : STRING[ASCII], CONST t : typ, CONST c : cons) 
            & lval & ".lo2 = " & c.lo2.ALL & "; " & lval & ".hi2 = " & c.hi2.ALL & ";");
       emit(lval & ".p = rt_alloc(sizeof(" & ctype(t.elem) & ") * (size_t)RT_CNT(" & lval & "));");
       IF t.elem.kind = t_string OR t.elem.kind = t_array OR t.elem.kind = t_record
-            OR t.elem.kind = t_new OR t.elem.kind = t_ptr THEN
+            OR t.elem.kind = t_new OR t.elem.kind = t_ptr OR t.elem.kind = t_mbox
+            OR t.elem.kind = t_lock OR t.elem.kind = t_act THEN
          CONST i := new_name("i");
          emit("for (rt_int " & i & " = 0; " & i & " < RT_CNT(" & lval & "); " & i & "++) {");
          init_storage(lval & ".p[" & i & "]", t.elem, t.elemcons);
@@ -673,6 +674,10 @@ ABNORMAL FUNC eq_code(CONST t : typ, READONLY a : STRING[ASCII], READONLY b : ST
    END IF;
    IF t.kind = t_set THEN
       RETURN "rt_set_eq(" & a & ", " & b & ")";
+   END IF;
+   IF t.kind = t_mbox OR t.kind = t_lock OR t.kind = t_act THEN
+      % not comparable (C.10-C.12); only the generated helpers ask
+      RETURN "0";
    END IF;
    IF t.kind = t_string THEN
       RETURN "rt_str_eq(" & a & ", " & b & ")";
