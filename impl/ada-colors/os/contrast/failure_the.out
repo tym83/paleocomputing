@@ -1,0 +1,3 @@
+[1 ms] worker 1 holds the semaphore
+[6 ms] worker 1 failed between P and V
+[100 ms] 1 of 2 workers through, balance 100: worker 2 still waits in P, the semaphore stays at zero

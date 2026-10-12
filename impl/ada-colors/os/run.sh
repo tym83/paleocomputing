@@ -4,7 +4,7 @@ set -u
 cd "$(dirname "$0")/.."
 pass=0; failn=0; tmp=$(mktemp -d)
 [ -x green/build/greenc ] || make -s -C green fixpoint > /dev/null
-for src in os/*.red os/*.grn kube/*.red kube/*.grn; do
+for src in os/*.red os/*.grn os/contrast/*.red os/contrast/*.grn kube/*.red kube/*.grn; do
   [ -f "$src" ] || continue
   case "$src" in *.grn) cc=green/build/greenc; name=$(basename "$src" .grn)g;; *) cc=build/redc; name=$(basename "$src" .red);; esac
   exp="${src%.*}.out"

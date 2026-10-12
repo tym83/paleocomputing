@@ -1,0 +1,5 @@
+[10 ms] reader 1 read 0
+[11 ms] reader 2 read 0
+[13 ms] reader 3 read 0
+[23 ms] writer wrote 1
+[23 ms] all done: readers overlapped, and reader 3 overtook the waiting writer
