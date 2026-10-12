@@ -1,0 +1,13 @@
+-- slices of arrays compared with aggregates, as in GREEN 1979 problem 2;
+-- SYSTEM'MAX_PRIORITY (RM79 9.8)
+restricted(TEXT_IO)
+procedure MAIN is
+   use TEXT_IO;
+   PENDING : array (0 .. 3) of BOOLEAN := (FALSE, FALSE, TRUE, FALSE);
+begin
+   PUT(PENDING(0 .. 2) = (FALSE, FALSE, TRUE));
+   PUT(PENDING(0 .. 1) = (FALSE, TRUE));
+   PUT(PENDING(2 .. 3) = (TRUE, FALSE));
+   PUT(SYSTEM'MAX_PRIORITY > SYSTEM'MIN_PRIORITY);
+   PUT(NEWLINE);
+end MAIN;

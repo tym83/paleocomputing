@@ -207,6 +207,18 @@
          end if;
          return;
       end if;
+      if BT.KIND = T_ARRAY and A.KIND = N_RANGE then
+         -- a slice shares the components of the array (RM79 4.1.2)
+         GEXPR(A.A, BT.IDX, IT, LO);
+         GEXPR(A.B, BT.IDX, IT, HI);
+         CTYPE(BT, D);
+         CODE_OUT := MK("({ " & D.all & " s_ = " & BASE & "; rt_int l_ = " & LO.all & ", h_ = " & HI.all
+                        & "; if (l_ <= h_) { rt_index(l_, s_.lo, s_.hi); rt_index(h_, s_.lo, s_.hi); }"
+                        & " s_.p += l_ - s_.lo; s_.lo = l_; s_.hi = h_; s_; })");
+         T := BT;
+         RO := TRUE;
+         return;
+      end if;
       if BT.KIND = T_ARRAY then
          GEXPR(A, BT.IDX, IT, I);
          CHECK_TYPE(IT, BT.IDX, E.LINE);
@@ -633,6 +645,16 @@
             -- the real-time clock, of type TIME (RM79 9.9)
             T := TY_FLOAT;
             R := MK("((double)rt_time())");
+            return;
+         end if;
+         if Y = null and E.A.NAME.all = "SYSTEM" and (A = "MAX_PRIORITY" or A = "MIN_PRIORITY") then
+            -- the range of PRIORITY (RM79 9.8); the runtime runs the highest first
+            T := TY_INT;
+            if A = "MAX_PRIORITY" then
+               R := MK("((rt_int)255)");
+            else
+               R := MK("((rt_int)0)");
+            end if;
             return;
          end if;
       end if;

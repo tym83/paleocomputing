@@ -1,0 +1,37 @@
+
+-- Four handler bodies that take some time. Interrupts arrive at level 2
+-- (0.1 s), level 0 (0.3 s), level 3 (0.35 s) and level 1 (0.4 s): a higher
+-- level is served at once, even inside a lower one; a lower level waits until
+-- every higher level has returned.
+restricted(INTERRUPT_HANDLING, TEXT_IO)
+procedure MAIN is
+   use TEXT_IO;
+
+   procedure SAY(L : INTEGER; WHAT : STRING) is
+   begin
+      PUT(INTEGER(SYSTEM'CLOCK / SECONDS * 1000.0), 5); PUT(" ms  level");
+      PUT(L, 2); PUT(" "); PUT(WHAT); PUT(NEWLINE);
+   end SAY;
+
+   procedure WORK(L : INTEGER; FOR_TIME : TIME) is
+   begin
+      SAY(L, "handler starts");
+      delay FOR_TIME;
+      SAY(L, "handler returns");
+   end WORK;
+
+   procedure ROUT0 is begin WORK(0, 0.1 * SECONDS); end ROUT0;
+   procedure ROUT1 is begin WORK(1, 0.1 * SECONDS); end ROUT1;
+   procedure ROUT2 is begin WORK(2, 0.5 * SECONDS); end ROUT2;
+   procedure ROUT3 is begin WORK(3, 0.1 * SECONDS); end ROUT3;
+
+   package INTERRUPTS is new INTERRUPT_HANDLING(ROUT0, ROUT1, ROUT2, ROUT3);
+
+begin
+   delay 0.1 * SECONDS;  SAY(2, "interrupt"); INTERRUPTS.SIGNAL(2);
+   delay 0.2 * SECONDS;  SAY(0, "interrupt"); INTERRUPTS.SIGNAL(0);
+   delay 0.05 * SECONDS; SAY(3, "interrupt"); INTERRUPTS.SIGNAL(3);
+   delay 0.05 * SECONDS; SAY(1, "interrupt"); INTERRUPTS.SIGNAL(1);
+   delay 1.0 * SECONDS;
+   INTERRUPTS.SHUT_DOWN;
+end MAIN;
