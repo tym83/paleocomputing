@@ -120,6 +120,7 @@ CONST y_abbrev := 6;
 CONST y_exc := 7;
 CONST y_capsule := 8;
 CONST y_task := 9;
+CONST y_generic := 10;
 
 % ---- the data ---------------------------------------------------------------
 TYPE text : PTR (n : INT) STRING[ASCII](n);
@@ -129,7 +130,7 @@ TYPE tokens : PTR (n : INT) ARRAY INT(1 .. n) OF token;
 
 TYPE node : PTR RECORD[kind : INT, line : INT, ival : INT, flag : INT,
                        name : text, tag : text,
-                       a, b, c, d : node, next : node];
+                       a, b, c, d, e : node, next : node];
 
 TYPE cons : PTR RECORD[lo, hi, lo2, hi2, slen : text, mlo, mhi : INT, hasm : BOOL, args : node];
 
@@ -149,6 +150,7 @@ TYPE sym : PTR RECORD[kind : INT, name : text, t : typ, c : cons,
                       mvalue : INT, hasmv : BOOL, st : node, decl : node,
                       params : parm, result : typ, depth : INT,
                       level : INT, byref : BOOL, members, mnext : sym,
+                      binds : node, insts : sym,
                       chain, stack : sym];
 
 TYPE lines : PTR RECORD[s : text, next : lines];

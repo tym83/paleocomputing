@@ -47,6 +47,8 @@ ABNORMAL FUNC declaration => node IMPORTS ALL;
       RETURN expose_decl;
    ELSEIF at_kw("TASK") THEN
       RETURN task_decl;
+   ELSEIF at_kw("GENERIC") THEN
+      RETURN generic_decl;
    ELSEIF at_kw("EXCEPTION") THEN
       VAR head, tail : node;
       VAR names : node;
@@ -242,6 +244,9 @@ ABNORMAL FUNC subprogram_decl => node IMPORTS ALL;
       x.flag := 1;
    END IF;
    x.name := definable_name;
+   IF at_op("[") THEN
+      x.e := formal_tt;
+   END IF;
    IF at_op("(") THEN
       x.a := formal_params;
    END IF;
@@ -300,12 +305,110 @@ ABNORMAL FUNC capsule_decl => node IMPORTS ALL;
    RETURN x;
 END FUNC capsule_decl;
 
+% formal translation time properties (diagram 66): names of generic parameters
+ABNORMAL FUNC formal_tt => node IMPORTS ALL;
+   VAR head, tail : node;
+   VAR more : BOOL := TRUE;
+   expect_op("[");
+   WHILE more REPEAT
+      append(head, tail, name_node);
+      more := accept_op(",");
+   END REPEAT;
+   expect_op("]");
+   RETURN head;
+END FUNC formal_tt;
+
+% GENERIC (diagram 69): parameters with their constraints, NEEDS, the pattern.
+% a generic parameter is an n_param whose ival is the kind of constraint:
+% 1 TYPE, 2 SUBTYPE, 3 PROC, 4 FUNC, 5 TASK, 6 a value of subtype a
+ABNORMAL FUNC generic_decl => node IMPORTS ALL;
+   VAR x : node := nn(n_generic, cur_line);
+   VAR head, tail : node;
+   VAR more : BOOL := TRUE;
+   tpos := tpos + 1;
+   WHILE more REPEAT
+      VAR names : node := id_list;
+      VAR kind : INT := 6;
+      VAR st : node;
+      expect_op(":");
+      IF accept_kw("TYPE") THEN
+         kind := 1;
+      ELSEIF accept_kw("SUBTYPE") THEN
+         kind := 2;
+      ELSEIF accept_kw("PROC") THEN
+         kind := 3;
+      ELSEIF accept_kw("FUNC") THEN
+         kind := 4;
+      ELSEIF accept_kw("TASK") THEN
+         kind := 5;
+      ELSE
+         st := p_subtype;
+      END IF;
+      IF kind <= 2 AND at_op("(") THEN
+         % TYPE (INT, ENUM): the allowed categories; kept as names
+         x.e := actual_params;
+      ELSEIF kind >= 3 AND kind <= 5 THEN
+         IF at_op("(") THEN
+            tpos := tpos + 1;
+            WHILE NOT at_op(")") REPEAT
+               st := p_subtype;
+               IF NOT at_op(")") THEN
+                  expect_op(",");
+               END IF;
+            END REPEAT;
+            tpos := tpos + 1;
+         END IF;
+         IF kind = 4 AND accept_op("=>") THEN
+            st := p_subtype;
+         END IF;
+      END IF;
+      WHILE names /= NIL REPEAT
+         VAR p : node := nn(n_param, names.line);
+         p.name := names.name;
+         p.ival := kind;
+         p.a := st;
+         append(head, tail, p);
+         names := names.next;
+      END REPEAT;
+      more := accept_op(",");
+   END REPEAT;
+   IF accept_kw("NEEDS") THEN
+      % the needed definitions are taken from the scope of each invocation (11.4)
+      more := TRUE;
+      WHILE more REPEAT
+         VAR nm : text := definable_name;
+         VAR st : node;
+         IF at_op("(") THEN
+            tpos := tpos + 1;
+            WHILE NOT at_op(")") REPEAT
+               st := p_subtype;
+               IF NOT at_op(")") THEN
+                  expect_op(",");
+               END IF;
+            END REPEAT;
+            tpos := tpos + 1;
+         END IF;
+         IF accept_op("=>") THEN
+            st := p_subtype;
+         END IF;
+         more := accept_op(",");
+      END REPEAT;
+   END IF;
+   x.a := head;
+   x.b := declaration;
+   x.name := x.b.name;
+   RETURN x;
+END FUNC generic_decl;
+
 % TASK (diagram 61)
 ABNORMAL FUNC task_decl => node IMPORTS ALL;
    VAR x : node := nn(n_task, cur_line);
    VAR dummy : BOOL;
    tpos := tpos + 1;
    x.name := expect_id;
+   IF at_op("[") THEN
+      x.e := formal_tt;
+   END IF;
    IF at_op("(") THEN
       x.a := formal_params;
    END IF;
@@ -438,6 +541,9 @@ ABNORMAL FUNC unlabeled_statement => node IMPORTS ALL;
       x := nn(n_create, line);
       tpos := tpos + 1;
       x.name := expect_id;
+      IF at_op("[") THEN
+         x.e := actual_tt;
+      END IF;
       IF at_op("(") THEN
          x.b := actual_params;
       END IF;

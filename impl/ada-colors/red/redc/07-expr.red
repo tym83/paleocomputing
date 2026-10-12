@@ -347,7 +347,7 @@ ABNORMAL FUNC gexpr(CONST e : node, CONST want : typ, OUT t : typ) => STRING[ASC
             nm := nm.a;
          END IF;
          y := lookup(nm.name.ALL);
-         IF y = NIL OR y.kind = y_func OR y.kind = y_proc THEN
+         IF y = NIL OR y.kind = y_func OR y.kind = y_proc OR y.kind = y_generic THEN
             RETURN gcall(e, FALSE, t);
          END IF;
       END IF;
@@ -839,7 +839,9 @@ ABNORMAL FUNC gcall(CONST e : node, CONST is_stmt : BOOL, OUT t : typ) => STRING
    IF y = NIL THEN
       RETURN builtin(fn.name.ALL, tt, e.b, e.line, is_stmt, t);
    END IF;
-   IF y.kind = y_func OR y.kind = y_proc THEN
+   IF y.kind = y_generic THEN
+      y := instantiate(y, tt, e.b, e.line);
+   ELSEIF y.kind = y_func OR y.kind = y_proc THEN
       y := resolve_overload(fn.name.ALL, e.b, is_stmt, e.line);
       IF y = NIL THEN
          RETURN builtin(fn.name.ALL, tt, e.b, e.line, is_stmt, t);

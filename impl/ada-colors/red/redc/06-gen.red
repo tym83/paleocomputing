@@ -39,6 +39,11 @@ PROC declare_body(CONST elems : node) IMPORTS ALL;
    WHILE e /= NIL REPEAT
       IF e.kind = n_proc OR e.kind = n_func OR e.kind = n_task THEN
          declare_subprogram(e);
+      ELSEIF e.kind = n_generic THEN
+         VAR g : sym := new_sym(y_generic, e.name);
+         g.decl := e;
+         g.level := cur_level;
+         define(g, e.line);
       END IF;
       e := e.next;
    END REPEAT;
@@ -226,6 +231,10 @@ PROC finish_ptr(CONST t : typ) IMPORTS ALL;
 END PROC finish_ptr;
 
 PROC declare_subprogram(CONST d : node) IMPORTS ALL;
+   define(build_subprogram(d), d.line);
+END PROC declare_subprogram;
+
+ABNORMAL FUNC build_subprogram(CONST d : node) => sym IMPORTS ALL;
    VAR y : sym;
    VAR p : node := d.a;
    VAR tail : parm;
@@ -262,14 +271,15 @@ PROC declare_subprogram(CONST d : node) IMPORTS ALL;
    IF d.kind = n_task THEN
       put(out_globals, "static rt_taskdecl " & y.cname.ALL & "decl;");
    END IF;
-   define(y, d.line);
-END PROC declare_subprogram;
+   RETURN y;
+END FUNC build_subprogram;
 
 PROC element(CONST e : node) IMPORTS ALL;
    VAR k : INT := e.kind;
    IF k = n_proc OR k = n_func OR k = n_task THEN
       subprogram(e);
-   ELSEIF k = n_exception OR k = n_abbrev OR k = n_newtype OR k = n_capsule OR k = n_expose THEN
+   ELSEIF k = n_exception OR k = n_abbrev OR k = n_newtype OR k = n_capsule OR k = n_expose
+         OR k = n_generic THEN
       RETURN;
    ELSEIF k = n_ptrtype THEN
       finish_ptr(lookup(e.name.ALL).t);
@@ -368,7 +378,10 @@ END PROC const_decl;
 % ---- subprograms ------------------------------------------------------------------------
 
 PROC subprogram(CONST d : node) IMPORTS ALL;
-   VAR y : sym := lookup_decl(d);
+   gen_subprogram(d, lookup_decl(d));
+END PROC subprogram;
+
+PROC gen_subprogram(CONST d : node, CONST y : sym) IMPORTS ALL;
    VAR saved_code : buffer := code;
    VAR saved_fields : buffer := fields_buf;
    VAR saved_in : BOOL := in_func;
@@ -485,7 +498,7 @@ PROC subprogram(CONST d : node) IMPORTS ALL;
    frames := saved_frames;
    handlers := saved_handlers;
    cleanups := saved_cleanups;
-END PROC subprogram;
+END PROC gen_subprogram;
 
 % ---- statements --------------------------------------------------------------------------
 
@@ -916,6 +929,9 @@ PROC st_create(CONST s : node) IMPORTS ALL;
    VAR lt, vt : typ;
    VAR lc : cons;
    VAR ro : BOOL;
+   IF y /= NIL AND y.kind = y_generic THEN
+      y := instantiate(y, s.e, s.b, s.line);
+   END IF;
    IF y = NIL OR y.kind /= y_task THEN
       fail(s.line, s.name.ALL & " is not a task");
    END IF;
@@ -1068,3 +1084,165 @@ PROC st_region(CONST s : node) IMPORTS ALL;
    emit("}");
    emit("}");
 END PROC st_region;
+
+% ---- generics (11.3): instances are made where the generic is invoked -------------------
+
+FUNC gparam(CONST g : node, READONLY name : STRING[ASCII]) => node;
+   VAR p : node := g.a;
+   WHILE p /= NIL REPEAT
+      IF p.name.ALL = name THEN
+         RETURN p;
+      END IF;
+      p := p.next;
+   END REPEAT;
+   RETURN NIL;
+END FUNC gparam;
+
+% a binding of a generic parameter to its replacement element: a type, a
+% subprogram or task (a copy of its symbol under the parameter's name), or a value
+ABNORMAL FUNC bind_sym(CONST p : node) => sym;
+   VAR y : sym;
+   IF p.ival <= 2 THEN
+      y := new_sym(y_type, p.name);
+   ELSE
+      y := new_sym(y_const, p.name);
+   END IF;
+   RETURN y;
+END FUNC bind_sym;
+
+FUNC same_binds(CONST a : sym, CONST b : sym) => BOOL;
+   VAR x : sym := a;
+   VAR y : sym := b;
+   WHILE x /= NIL AND y /= NIL REPEAT
+      IF x.name.ALL /= y.name.ALL OR NOT same_binding(x, y) THEN
+         RETURN FALSE;
+      END IF;
+      x := x.mnext;
+      y := y.mnext;
+   END REPEAT;
+   RETURN x = NIL AND y = NIL;
+END FUNC same_binds;
+
+FUNC same_binding(CONST a : sym, CONST b : sym) => BOOL;
+   IF a.kind = y_type THEN
+      RETURN b.kind = y_type AND same(a.t, b.t);
+   END IF;
+   IF a.kind = y_const AND a.hasmv THEN
+      RETURN b.hasmv AND a.mvalue = b.mvalue;
+   END IF;
+   RETURN a.cname /= NIL AND b.cname /= NIL AND a.cname.ALL = b.cname.ALL;
+END FUNC same_binding;
+
+% the instance of generic g for the actual properties tt and actual parameters
+% args; replacement elements come from [..] and from the types of the actuals
+ABNORMAL FUNC instantiate(CONST g : sym, CONST tt : node, CONST args : node, CONST line : INT) => sym
+      IMPORTS ALL;
+   VAR gd : node := g.decl;
+   VAR pat : node := gd.b;
+   VAR binds : sym;
+   VAR f : node := pat.e;
+   VAR a : node := tt;
+   VAR fp : node := pat.a;
+   VAR inst : sym;
+   VAR at : typ;
+   VAR c : cons;
+   VAR saved_fctx : fctxrec := fctx;
+   VAR saved_in : BOOL := in_func;
+   VAR saved_level : INT := cur_level;
+   VAR saved_sym : sym := func_sym;
+   VAR saved_code : buffer := code;
+   % from the actual translation time property list
+   WHILE f /= NIL AND a /= NIL REPEAT
+      VAR p : node := gparam(gd, f.name.ALL);
+      VAR b : sym;
+      IF p = NIL THEN
+         fail(line, f.name.ALL & " is not a generic parameter");
+      END IF;
+      b := bind_sym(p);
+      IF p.ival <= 2 THEN
+         IF a.kind >= s_int THEN
+            b.t := resolve_subtype(a, c);
+         ELSE
+            VAR st : node := nn(s_name, line);
+            st.name := a.name;
+            b.t := resolve_subtype(st, c);
+         END IF;
+         b.c := c;
+      ELSEIF p.ival <= 5 THEN
+         IF a.kind /= n_name OR lookup(a.name.ALL) = NIL THEN
+            fail(line, "a procedure, function or task is required for " & p.name.ALL);
+         END IF;
+         b := copy_sym(lookup(a.name.ALL));
+         b.name := p.name;
+      ELSE
+         VAR ok : BOOL;
+         b.t := resolve_subtype(p.a, c);
+         b.access := mk(gexpr(a, b.t, at));
+         b.mvalue := manifest(a, ok);
+         b.hasmv := ok;
+      END IF;
+      b.mnext := binds;
+      binds := b;
+      f := f.next;
+      a := a.next;
+   END REPEAT;
+   % from the types of the actual parameters
+   a := args;
+   WHILE fp /= NIL AND a /= NIL REPEAT
+      IF fp.a.kind = s_name AND gparam(gd, fp.a.name.ALL) /= NIL AND gparam(gd, fp.a.name.ALL).ival <= 2 THEN
+         VAR known : BOOL := FALSE;
+         VAR q : sym := binds;
+         WHILE q /= NIL REPEAT
+            IF q.name.ALL = fp.a.name.ALL THEN
+               known := TRUE;
+            END IF;
+            q := q.mnext;
+         END REPEAT;
+         IF NOT known THEN
+            VAR b : sym := bind_sym(gparam(gd, fp.a.name.ALL));
+            CONST v := gexpr(a, NIL, at);
+            b.t := at;
+            b.c := no_cons;
+            b.mnext := binds;
+            binds := b;
+         END IF;
+      END IF;
+      fp := fp.next;
+      a := a.next;
+   END REPEAT;
+   % an earlier instance with the same replacement elements?
+   inst := g.insts;
+   WHILE inst /= NIL REPEAT
+      IF same_binds(inst.members, binds) THEN
+         RETURN inst;
+      END IF;
+      inst := inst.insts;
+   END REPEAT;
+   % a new instance, translated at the outermost level so any invoker can call it
+   fctx := NIL;
+   in_func := FALSE;
+   cur_level := 0;
+   func_sym := NIL;
+   code := new_buffer;
+   open_scope;
+   BEGIN
+      VAR b : sym := binds;
+      WHILE b /= NIL REPEAT
+         define(b, line);
+         b := b.mnext;
+      END REPEAT;
+   END;
+   inst := build_subprogram(pat);
+   inst.members := binds;
+   inst.insts := g.insts;
+   g.insts := inst;
+   define(inst, line);
+   gen_subprogram(pat, inst);
+   close_scope;
+   fctx := saved_fctx;
+   in_func := saved_in;
+   cur_level := saved_level;
+   func_sym := saved_sym;
+   code := saved_code;
+   RETURN inst;
+END FUNC instantiate;
