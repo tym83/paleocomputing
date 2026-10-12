@@ -1,0 +1,81 @@
+-- Contrast 3, readers and a writer, in GREEN (1979). The data belongs to a
+-- server task; nobody else can touch it. A reader gets a copy in a short
+-- rendezvous and works on the copy; the writer prepares its value on its own
+-- and hands it over. The long work happens outside the server, so everyone
+-- overlaps, and each reader sees the value as it was at its rendezvous.
+restricted(TEXT_IO) procedure READERS is
+   use TEXT_IO;
+
+   function IMG(N : INTEGER) return STRING is
+   begin
+      return INTEGER'REP(N);
+   end IMG;
+
+   procedure LOG(S : STRING) is
+   begin
+      PUT("[" & IMG(INTEGER(SYSTEM'CLOCK * 1000.0 / SECONDS)) & " ms] " & S);
+      PUT(NEWLINE);
+   end LOG;
+
+   task DATA is
+      entry READ(V : out INTEGER);
+      entry WRITE(V : in INTEGER);
+   end DATA;
+
+   task READER(INTEGER range 1 .. 3) is
+      entry DONE;
+   end READER;
+
+   task WRITER is
+      entry DONE;
+   end WRITER;
+
+   task body DATA is
+      VALUE : INTEGER := 0;
+   begin
+      loop
+         select
+            accept READ(V : out INTEGER) do
+               V := VALUE;
+            end READ;
+         or
+            accept WRITE(V : in INTEGER) do
+               VALUE := V;
+            end WRITE;
+         end select;
+      end loop;
+   end DATA;
+
+   task body READER is
+      ID, SEEN : INTEGER;
+   begin
+      ID := READER'INDEX;
+      if ID = 2 then
+         delay 0.001 * SECONDS;
+      elsif ID = 3 then
+         delay 0.003 * SECONDS;
+      end if;
+      DATA.READ(SEEN);
+      delay 0.010 * SECONDS;
+      LOG("reader " & IMG(ID) & " read " & IMG(SEEN));
+      accept DONE;
+   end READER;
+
+   task body WRITER is
+   begin
+      delay 0.002 * SECONDS;
+      delay 0.010 * SECONDS;
+      DATA.WRITE(1);
+      LOG("writer wrote 1");
+      accept DONE;
+   end WRITER;
+
+begin
+   initiate DATA, READER(1 .. 3), WRITER;
+   for I in 1 .. 3 loop
+      READER(I).DONE;
+   end loop;
+   WRITER.DONE;
+   LOG("all done: the server owns the data, the work on copies overlaps");
+   abort DATA;
+end READERS;

@@ -53,7 +53,10 @@ need="index.html style.css ru/index.html ru/oberon/index.html cozystack/index.ht
       oberon/prom_sd.mem oberon/embed.js oberon/worker.js oberon/worker-core.js
       oberon/kube.html oberon/kube-air.js oberon/oberon-kube.dsk.gz
       oberon/book/index.html oberon/book/en/index.html
-      x8/index.html x8/x8page.js x8/x8.js x8/x8.wasm x8/the.tape x8/the.json"
+      x8/index.html x8/x8page.js x8/x8.js x8/x8.wasm x8/the.tape x8/the.json
+      red/index.html red/app.js red/paleo.js red/run.js red/thread.js red/clang-worker.js
+      red/flags.js red/pack.js red/examples.js red/coi-serviceworker.js
+      red/redc.wasm red/greenc.wasm red/toolchain.bin"
 miss=0
 for f in $need; do
   if [ -s "$out/$f" ]; then printf '  ✅ %s\n' "$f"; else printf '  ❌ missing or empty: %s\n' "$f"; miss=1; fi

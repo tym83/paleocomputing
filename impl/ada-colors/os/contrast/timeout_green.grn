@@ -1,0 +1,81 @@
+-- Contrast 1, timeouts, in GREEN (1979). The same silent producer. GREEN has
+-- no timed entry call (it came with Ada 83), so a consumer blocked in
+-- BUFFER.GET cannot give up. The timeout moves into the server: its select has
+-- a delay alternative, and when it fires with a caller queued on GET it answers
+-- "nothing". The decision to stop waiting is the server's, not the caller's.
+restricted(TEXT_IO) procedure TIMEOUT is
+   use TEXT_IO;
+
+   function IMG(N : INTEGER) return STRING is
+   begin
+      return INTEGER'REP(N);
+   end IMG;
+
+   procedure LOG(S : STRING) is
+   begin
+      PUT("[" & IMG(INTEGER(SYSTEM'CLOCK * 1000.0 / SECONDS)) & " ms] " & S);
+      PUT(NEWLINE);
+   end LOG;
+
+   task BUFFER is
+      entry PUT_ITEM(X : in INTEGER);
+      entry GET(X : out INTEGER; OK : out BOOLEAN);
+   end BUFFER;
+
+   task PRODUCER;
+
+   task body BUFFER is
+      ITEMS : array (1 .. 4) of INTEGER;
+      COUNT : INTEGER := 0;
+      HEAD : INTEGER := 1;
+   begin
+      loop
+         select
+            when COUNT < 4 =>
+               accept PUT_ITEM(X : in INTEGER) do
+                  ITEMS((HEAD + COUNT - 1) mod 4 + 1) := X;
+               end PUT_ITEM;
+               COUNT := COUNT + 1;
+         or
+            when COUNT > 0 =>
+               accept GET(X : out INTEGER; OK : out BOOLEAN) do
+                  X := ITEMS(HEAD);
+                  OK := TRUE;
+               end GET;
+               HEAD := HEAD mod 4 + 1;
+               COUNT := COUNT - 1;
+         or
+            delay 0.030 * SECONDS;
+            if GET'COUNT > 0 then
+               accept GET(X : out INTEGER; OK : out BOOLEAN) do
+                  X := 0;
+                  OK := FALSE;
+               end GET;
+            end if;
+         end select;
+      end loop;
+   end BUFFER;
+
+   task body PRODUCER is
+   begin
+      for I in 1 .. 2 loop
+         delay 0.010 * SECONDS;
+         BUFFER.PUT_ITEM(I);
+      end loop;
+      delay 1.0 * SECONDS;
+   end PRODUCER;
+
+   X : INTEGER;
+   OK : BOOLEAN := TRUE;
+begin
+   initiate BUFFER, PRODUCER;
+   while OK loop
+      BUFFER.GET(X, OK);
+      if OK then
+         LOG("got item " & IMG(X));
+      else
+         LOG("no item for 30 ms: the buffer server answered for the consumer");
+      end if;
+   end loop;
+   abort BUFFER, PRODUCER;
+end TIMEOUT;

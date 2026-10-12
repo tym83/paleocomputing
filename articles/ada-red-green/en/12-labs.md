@@ -1,6 +1,6 @@
 # Labs, and how to get your hands on all this
 
-As in the earlier parts, I wanted readers to be able not just to read about the language but to break something with their own hands. The `impl/ada-colors/labs` directory holds eleven RED exercises and a `check.sh` script that translates your version of a program, runs it and tells you whether you've completed the task. The tasks follow the same levels as before: look, change, break, measure and build. And since time in the programs is virtual and the scheduler is deterministic, you can compare your output with someone else's character for character.
+As in the earlier parts, I wanted readers to be able not just to read about the language but to break something with their own hands. The `impl/ada-colors/labs` directory holds twelve RED exercises and a `check.sh` script that translates your version of a program, runs it and tells you whether you've completed the task. The tasks follow the same levels as before: look, change, break, measure and build. And since time in the programs is virtual and the scheduler is deterministic, you can compare your output with someone else's character for character.
 
 Here's what's there:
 
@@ -12,6 +12,7 @@ Here's what's there:
 - priorities: give tasks equal priorities and see first-come, first-served ordering;
 - generics: write your own `max` for numbers and strings without instantiating anything by hand;
 - a process pair: move the primary's death to a different request, then swap the reply and the checkpoint and catch the missing transfer with the audit;
+- Dijkstra's THE: let the segment controller report every dump to the drum to the operator, and watch the whole system freeze, because the console needs the very controller that is waiting for it;
 - Kubernetes with a process-pair control plane: remove the queue draining in the node controller and get healthy nodes evicted after a failover;
 - the compiler itself: add a built-in `MAX` function to `redc`, rebuild it and make sure the fixed point still holds;
 - the 1979 program: drop one fix from the list and see which error in the original stops the translator.
@@ -37,4 +38,4 @@ cc -std=gnu11 -Irt program.c rt/paleo.c -lpthread -lm -o program
 
 If you have Cozystack at hand, you don't need to install anything. The series' application catalog has an environment for languages, and RED and GREEN arrived there as a separate image: you specify the `ada-colors-run` image, put in a source file, and the program runs as a one-off job whose output becomes its log. When the image is built, both compilers go the whole way from their seeds again and check that they reproduce themselves.
 
-None of this runs in the browser yet. The RED compiler is written in RED and translates into plain C, so building it for WebAssembly isn't hard. The catch is that a RED program is itself translated into C, so the browser also needs a C compiler. That's a job for next time.
+The easiest way, though, is to open [the page in your browser](https://tym83.github.io/paleocomputing/red/). Everything happens right there, with no server. redc and greenc, built to WebAssembly from the same C seeds, translate the source to C. Then clang, also built to WebAssembly, compiles that C, and the program runs with a thread for every task, on shared memory. The runtime is the same file as on Linux, with the same virtual clock, so the labs, the PAIRS kernel and all three Kubernetes print in the browser exactly what they print on an ordinary machine, byte for byte. CI checks it: it runs every example in headless Chrome and compares the output. The first run downloads the C compiler, about twenty megabytes, and after that the browser keeps it.

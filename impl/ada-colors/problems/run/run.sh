@@ -1,6 +1,5 @@
 #!/bin/sh
-# Make the 1979 RED and GREEN originals runnable (the originals are not in git: get them
-# as described in problems/README.md) and run them. Each sed file lists the
+# Make the 1979 RED and GREEN originals in problems/original/ runnable and run them. Each sed file lists the
 # changes a translator forced; *-units.red stand for what the problem assumes
 # to be present; *-main.red drive the program.
 set -eu

@@ -61,3 +61,20 @@ indicate actual or intended publication of this file»*. Из-за этого с
 утверждения — относительные дельты, и они переход переживают: цена команды
 проверки границ по площади **+1.04 %** против +0.32…0.85 % на Nangate45.
 Порядок и знак те же.
+
+## Страница RED и GREEN (`site/red/`)
+
+* `site/red/coi-serviceworker.js`: coi-serviceworker 0.1.7, Guido Zuidhof и
+  соавторы, MIT ([github.com/gzuidhof/coi-serviceworker](https://github.com/gzuidhof/coi-serviceworker)).
+  Уведомление — первая строка файла. Без изменений.
+* `site/red/toolchain.bin`: заголовки, `libc.a`, `libsetjmp.a` и
+  `crt1-command.o` из wasi-libc для `wasm32-wasip1-threads` и
+  `libclang_rt.builtins.a` из compiler-rt, взятые из
+  [wasi-sdk 34](https://github.com/WebAssembly/wasi-sdk/releases/tag/wasi-sdk-34).
+  wasi-libc — Apache-2.0 WITH LLVM-exception, Apache-2.0 или MIT, часть из musl —
+  MIT; compiler-rt — Apache-2.0 WITH LLVM-exception. Без изменений;
+  `impl/ada-colors/web/build.mjs` отбирает файлы и закрепляет загрузки
+  контрольной суммой.
+* Не в репозитории: страница загружает clang и lld, собранные в WebAssembly,
+  [@yowasp/clang](https://www.npmjs.com/package/@yowasp/clang) (ISC; LLVM —
+  Apache-2.0 WITH LLVM-exception), с jsDelivr.

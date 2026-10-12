@@ -1,0 +1,3 @@
+[1 ms] worker 1 holds the lock
+[6 ms] worker 1 failed while holding the lock
+[100 ms] 1 of 2 workers through, balance 100: worker 2 still waits on SEIZE, nothing released the lock
