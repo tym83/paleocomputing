@@ -528,7 +528,7 @@ cc -std=gnu11 -Irt program.c rt/paleo.c -lpthread -lm -o program
 
 If you have Cozystack at hand, you don't need to install anything. The series' application catalog has an environment for languages, and RED and GREEN arrived there as a separate image: you specify the `ada-colors-run` image, put in a source file, and the program runs as a one-off job whose output becomes its log. When the image is built, both compilers go the whole way from their seeds again and check that they reproduce themselves.
 
-None of this runs in the browser yet. The RED compiler is written in RED and translates into plain C, so building it for WebAssembly isn't hard. The catch is that a RED program is itself translated into C, so the browser also needs a C compiler. That's a job for next time.
+The easiest way, though, is to open [the page in your browser](https://tym83.github.io/paleocomputing/red/). Everything happens right there, with no server. redc and greenc, built to WebAssembly from the same C seeds, translate the source to C. Then clang, also built to WebAssembly, compiles that C, and the program runs with a thread for every task, on shared memory. The runtime is the same file as on Linux, with the same virtual clock, so the labs, the PAIRS kernel and all three Kubernetes print in the browser exactly what they print on an ordinary machine, byte for byte. CI checks it: it runs every example in headless Chrome and compares the output. The first run downloads the C compiler, about twenty megabytes, and after that the browser keeps it.
 
 # What I'm taking with me
 
@@ -544,6 +544,6 @@ Fourth, deterministic time. Almost everything interesting in this article was fo
 
 And fifth, not technical at all. Studying the losers is useful not out of nostalgia but so that you know in advance which ideas will come back, and don't pay for them a second time.
 
-What's next. The Blue and Yellow designs are apparently in that 4575-page DTIC volume, and I'll download it from a browser as soon as the DTIC site comes back from maintenance. I'd like to put the RED compiler in the browser, like Wirth's machine in the first part. And the emulator of the Rational R1000, a real Ada machine, now runs at the speed of the original hardware, so it can finally be used to measure what the rendezvous really cost, the cost that got Ada its protected objects in 1995.
+What's next. The Blue and Yellow designs are apparently in that 4575-page DTIC volume, and I'll download it from a browser as soon as the DTIC site comes back from maintenance. And the emulator of the Rational R1000, a real Ada machine, now runs at the speed of the original hardware, so it can finally be used to measure what the rendezvous really cost, the cost that got Ada its protected objects in 1995.
 
 The sources, tests, labs and all the notes are in the repository [github.com/tym83/paleocomputing](https://github.com/tym83/paleocomputing), under `impl/ada-colors`. If you find a mistake in my reading of the 1979 manuals, let me know; I'm genuinely curious.

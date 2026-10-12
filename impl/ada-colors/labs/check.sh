@@ -30,7 +30,7 @@ case "$lab/$task" in
   04/change) want "timeout" "The timeout won the race." "make the sender slower than the WAIT" ;;
   04/break)  want "X_EMPTY_MAILBOX" "RED forbids a SEND to a zero-size mailbox inside WAIT: it could deadlock (10.5)." "wait on SEND(m0, 1) where m0 is a MAILBOX[INT](0)" ;;
   05/break)  want "deadlock" "The exception left the task, its region was released, but main still waits for a message that never comes: the runtime sees every task blocked." "remove the GUARD around the REGION" ;;
-  06/change) want "^a" "Equal priorities run in the order they became eligible." "give a, b and c the same priority" ;;
+  06/change) [ "$(head -1 "$tmp/out")" = "a" ] && ok "Equal priorities run in the order they became eligible." || no "give a, b and c the same priority" ;;
   07/build)  want "max" "Your generic got an instance per type it was called with." "write GENERIC t : TYPE FUNC max(CONST a, b : t) => t and print \"max\" & something" ;;
   08/break)  want "disagree" "Replying before the checkpoint loses a confirmed transfer: the NonStop rule exists for this." "in the primary, swap the checkpoint SEND (with its IF) and the reply SEND, so the crash comes between them" ;;
   08/change) want "exactly once" "Wherever the primary dies, the audit holds." "change crash_after to another request number" ;;

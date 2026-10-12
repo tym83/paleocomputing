@@ -7,6 +7,9 @@
 #   the runtime follows the RED scheduler exactly and its clock is virtual.
 # green: the same for the compiler written in GREEN.
 # ada83: the comparison programs, built by GNAT in Ada 83 mode.
+# web: the browser page (site/red/): redc, greenc and the runtime rebuilt for
+#   WebAssembly must match what is committed, and every example run in headless
+#   Chrome must print byte for byte what the native build prints.
 # image: the ada-colors-run image for langpack is built and runs one program
 #   per language, so a broken image shows up in the pull request, not at release.
 name: ada-colors
@@ -14,9 +17,9 @@ name: ada-colors
 on:
   push:
     branches: [main]
-    paths: ['impl/ada-colors/**', 'impl/deploy/*ada-colors*', '.github/workflows/ada-colors.yml']
+    paths: ['impl/ada-colors/**', 'impl/deploy/*ada-colors*', 'site/red/**', '.github/workflows/ada-colors.yml']
   pull_request:
-    paths: ['impl/ada-colors/**', 'impl/deploy/*ada-colors*', '.github/workflows/ada-colors.yml']
+    paths: ['impl/ada-colors/**', 'impl/deploy/*ada-colors*', 'site/red/**', '.github/workflows/ada-colors.yml']
   workflow_dispatch:
 
 defaults:
@@ -39,6 +42,8 @@ jobs:
       - name: Labs
         run: |
           for lab in 01 02 03 04 05 06 07 08 09 12; do labs/check.sh $lab look; done
+      - name: Lab checker against reference solutions
+        run: labs/verify.sh
 
   green:
     runs-on: ubuntu-latest
@@ -73,3 +78,18 @@ jobs:
           [ "$(tr '\n' ' ' < red.txt)" = "c b a " ]
           docker run --rm -v "$PWD/impl/ada-colors/green/tests:/src:ro" ada-colors-run tasking.grn | tee green.txt
           grep -q 'sum 150' green.txt
+
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Native compilers, for the reference outputs
+        run: make fixpoint && make -C green fixpoint
+      - name: The WebAssembly build matches the repository
+        working-directory: impl/ada-colors/web
+        run: npm ci --no-audit --no-fund && node build.mjs --check
+      - name: Every example in headless Chrome, byte for byte
+        run: web/test-browser.sh

@@ -343,11 +343,28 @@ Writing it found a runtime bug. A task aborted while queued at an entry stayed
 in the queue, and the server later woke a finished task. RM79 9.10 cancels
 such a call, and now so does the runtime.
 
+## In the browser
+
+[https://tym83.github.io/paleocomputing/red/](https://tym83.github.io/paleocomputing/red/) runs RED and GREEN with no server. redc and greenc are built
+to WebAssembly from their seeds; the C they produce is compiled by clang and
+lld compiled to WebAssembly (`@yowasp/clang`, loaded from jsDelivr) for
+`wasm32-wasip1-threads`, and linked with `rt/paleo.c` and wasi-libc from
+wasi-sdk. Every task is a thread, every thread a worker on one shared memory,
+so the runtime runs unchanged: the same baton, the same virtual clock, and the
+same output as a native run. The other paths were weaker: a JavaScript back
+end would mean a third code generator in both compilers, and switching stacks
+in one thread needs either JSPI, which only Chrome ships, or Asyncify, which
+does not mix with the wasm exceptions that carry `setjmp`/`longjmp`. Shared
+memory needs cross-origin isolation; GitHub Pages cannot send the headers, so
+`coi-serviceworker` adds them. [`impl/ada-colors/web/build.mjs`](impl/ada-colors/web/build.mjs)
+rebuilds `site/red/` (the compilers, the runtime object, the libc subset, the
+examples); CI checks that the rebuild matches the repository and runs every
+example in headless Chrome against the native output and the `.out` files.
+After `make seed` the page must be rebuilt too: `cd impl/ada-colors/web && npm ci && node build.mjs`.
+
 ## Next
 
 - The Blue and Yellow designs, from DTIC ADB950587, downloaded by hand.
   DTIC was down for maintenance on 12 October 2026.
-- RED in the browser: redc is plain C, so the open question is a C back end
-  in WebAssembly or an interpreter.
 - The Rational R1000 emulator, to measure the cost of a rendezvous on the
   real Ada machine.

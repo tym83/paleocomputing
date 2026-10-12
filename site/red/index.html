@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RED and GREEN in the browser — Paleocomputing</title>
+<meta name="description" content="RED and GREEN, the two finalists of the 1979 DoD language competition, translated and run entirely in your browser by compilers written in themselves.">
+<!-- Shared memory for the program's threads needs cross-origin isolation, which
+     GitHub Pages cannot set in headers: this service worker adds them. -->
+<script src="coi-serviceworker.js"></script>
+<link rel="stylesheet" href="../style.css">
+<style>
+  .sheet { max-width: 72rem; }
+  .bar { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: center; margin: 0 0 0.8rem; }
+  .bar select, .bar button, .bar label { font-family: var(--f-mono); font-size: 0.82rem; }
+  .bar select { padding: 0.35rem 0.4rem; background: var(--surface); color: var(--ink); border: 1px solid var(--rule); max-width: 100%; }
+  .bar button { padding: 0.45rem 1.1rem; background: var(--ink); color: var(--ground); border: 1px solid var(--ink); cursor: pointer; }
+  .bar button:disabled { opacity: 0.5; cursor: default; }
+  .panes { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+  @media (max-width: 56rem) { .panes { grid-template-columns: 1fr; } }
+  textarea, #out { width: 100%; font-family: var(--f-mono); font-size: 0.8rem; line-height: 1.5;
+    background: var(--surface); color: var(--ink); border: 1px solid var(--rule); padding: 0.7rem; }
+  textarea#src { height: 34rem; resize: vertical; white-space: pre; tab-size: 3; }
+  textarea#stdin { height: 4.5rem; resize: vertical; }
+  #out { height: 34rem; overflow: auto; margin: 0; white-space: pre-wrap; }
+  #out .err { color: var(--red); }
+  #status { font-family: var(--f-mono); font-size: 0.75rem; color: var(--grey); min-height: 1.2em; }
+  details { margin: 0.6rem 0 0; font-size: 0.9rem; }
+  details summary { font-family: var(--f-mono); font-size: 0.75rem; color: var(--grey); cursor: pointer; }
+</style>
+</head>
+<body>
+<div class="sheet">
+  <header class="masthead">
+    <p class="eyebrow"><a href="../" id="home-link">← Paleocomputing</a> · <a id="lang-link" href="?lang=ru">Русский</a></p>
+    <h1 data-i18n="title">RED and GREEN in the browser</h1>
+    <p class="standfirst" data-i18n="standfirst">The two finalists of the 1979 Pentagon language competition. Your program is translated to C by a compiler written in RED or GREEN itself, compiled by clang and run here, with a thread for every task. Nothing leaves the page.</p>
+  </header>
+
+  <section>
+    <div class="bar">
+      <select id="pick" aria-label="Example"></select>
+      <label><input type="radio" name="lang" value="red" checked> RED</label>
+      <label><input type="radio" name="lang" value="green"> GREEN</label>
+      <button id="run" data-i18n="run">Run</button>
+      <span id="status"></span>
+    </div>
+    <div class="panes">
+      <div>
+        <textarea id="src" spellcheck="false" aria-label="Source"></textarea>
+        <details><summary data-i18n="stdin">Standard input</summary><textarea id="stdin" spellcheck="false" aria-label="Standard input"></textarea></details>
+      </div>
+      <pre id="out" aria-live="polite"></pre>
+    </div>
+  </section>
+
+  <section>
+    <h2 data-i18n="how">How it works</h2>
+    <p data-i18n="how1">redc and greenc, the compilers written in RED and GREEN, are built to WebAssembly from the same C seeds the repository bootstraps from. They translate your source to C. clang and lld, compiled to WebAssembly, turn that C into a program for wasm32 with threads. The runtime is the same C file as on Linux: it hands the processor from task to task by the RED rules, on a virtual clock, so the output here matches a native run byte for byte.</p>
+    <p data-i18n="how2">The first run downloads the C compiler, about 20 MB, from jsDelivr; after that the browser keeps it.</p>
+    <p><a href="https://github.com/tym83/paleocomputing/tree/main/impl/ada-colors" data-i18n="repo">Sources, labs and the article</a></p>
+  </section>
+
+  <footer>
+    <a href="https://github.com/tym83/paleocomputing">github.com/tym83/paleocomputing</a>
+  </footer>
+</div>
+<script type="module" src="app.js"></script>
+</body>
+</html>

@@ -51,3 +51,7 @@ sed -f problems/run/C1-matrix-vector.sed problems/original/red/C1-matrix-vector.
 cat problems/run/C1-main.red >> /tmp/c1.red
 labs/check.sh 11 break /tmp/c1.red
 ```
+
+Reference solutions for the change, break and build tasks are in
+`labs/solutions/`. `labs/verify.sh` checks the checker: each solution must pass,
+and the unchanged program must not. CI runs it on every pull request.
