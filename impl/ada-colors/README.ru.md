@@ -13,7 +13,7 @@
 | `red/redc/` | redc, компилятор RED, написанный на RED. `red/seed/redc.c` — то, что последний redc сделал из себя |
 | `red/tests/` | Тесты RED с ожидаемым выводом |
 | `green/` | То же для GREEN: затравка, greenc на GREEN, семя, тесты, примеры INTRO 1979 года |
-| `os/` | PAIRS, ядро в стиле Tandem NonStop на RED; система THE Дейкстры на RED и её семафоры на GREEN |
+| `os/` | PAIRS, ядро в стиле Tandem NonStop на RED; система THE Дейкстры на RED и её семафоры на GREEN; Kubernetes поверх THE на обоих языках; `contrast/`: три задачи на RED, GREEN и семафорах THE |
 | `kube/` | Управляющий цикл Kubernetes на RED, в виде процессной пары и на GREEN |
 | `labs/` | Двенадцать упражнений с проверкой |
 | `problems/` | Десять контрольных задач DoD: заметки и сравнение; `run/` делает оригиналы 1979 года работающими |

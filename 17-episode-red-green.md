@@ -189,6 +189,26 @@ GREEN. With neither semaphores nor mailboxes, each semaphore is a server task
 that accepts P only while its count is positive, and nine printed lines cost
 54 rendezvous.
 
+[`os/the_kube.red`](impl/ada-colors/os/the_kube.red) and
+[`os/the_kube_green.grn`](impl/ada-colors/os/the_kube_green.grn) put the
+Kubernetes control loop on top of THE as level-4 user programs that use only
+P, V, segments, the console and the clock. There is no API server: the store
+is segments under one semaphore, a watch is a wake-up semaphore saturating at
+one, and resync, heartbeats and lease checks come from a clock process,
+because P has no timeout. The first version cut a node's power with
+EXTERMINATE while its kubelet held the store's semaphore, and the whole
+control plane stopped for good. In GREEN the semaphores are server tasks
+again, and the same run costs 1168 rendezvous.
+
+Three contrasts in [`os/contrast/`](impl/ada-colors/os/contrast/), each
+written in RED, in GREEN and on THE's semaphores:
+
+| Problem | RED | GREEN (1979) | THE semaphores |
+|---|---|---|---|
+| Timeout: the producer goes silent | `WAIT` with `DELAY`: the waiter gives up | no timed entry call: the buffer server answers "nothing" for the caller | `P` has no timeout: a watchdog on the clock puts a sentinel item in the buffer |
+| Failure while holding a lock | a `REGION` releases its lock on an exception | a lock task stays seized; the other worker waits for ever | the `V` never comes; the other worker waits for ever |
+| Readers and a writer | an exclusive `REGION`: everyone takes turns, 40 ms | the server owns the data and hands out copies; the work overlaps, 13 ms | Courtois et al. 1971: readers overlap, and a late reader overtakes the waiting writer |
+
 ## Kubernetes on RED patterns
 
 [`kube/kube.red`](impl/ada-colors/kube/kube.red) maps each Kubernetes part onto

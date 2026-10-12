@@ -13,7 +13,7 @@ The episode is described in [`17-episode-red-green.md`](../../17-episode-red-gre
 | `red/redc/` | redc, a RED compiler written in RED. `red/seed/redc.c` is what the last redc made of itself |
 | `red/tests/` | RED tests with expected output |
 | `green/` | The same for GREEN: bootstrap, greenc written in GREEN, seed, tests, the 1979 INTRO examples |
-| `os/` | PAIRS, a Tandem NonStop style kernel in RED; Dijkstra's THE system in RED and its semaphore core in GREEN |
+| `os/` | PAIRS, a Tandem NonStop style kernel in RED; Dijkstra's THE system in RED and its semaphore core in GREEN; Kubernetes on top of THE in both; `contrast/`: three problems in RED, GREEN and on THE's semaphores |
 | `kube/` | The Kubernetes control loop in RED, as a process pair, and in GREEN |
 | `labs/` | Twelve exercises with a checker |
 | `problems/` | The ten DoD contract problems: notes and comparison; `run/` makes 1979 originals runnable |
