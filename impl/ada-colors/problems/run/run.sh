@@ -1,5 +1,5 @@
 #!/bin/sh
-# Make the 1979 RED originals runnable (the originals are not in git: get them
+# Make the 1979 RED and GREEN originals runnable (the originals are not in git: get them
 # as described in problems/README.md) and run them. Each sed file lists the
 # changes a translator forced; *-units.red stand for what the problem assumes
 # to be present; *-main.red drive the program.
@@ -26,5 +26,15 @@ for p in c1 p6 p8 p9; do
   cc -std=gnu11 -O1 -w -Irt "$tmp/$p.c" rt/paleo.c -o "$tmp/$p" -lpthread -lm
   perl -e 'alarm shift; exec @ARGV' 30 "$tmp/$p" < "$tmp/cards" > "$tmp/$p.txt" 2>&1
   if diff -u "problems/run/$p.out" "$tmp/$p.txt"; then echo "ok $p"; else echo "FAIL $p"; fail=1; fi
+done
+# GREEN problem 9, distributed output, with green/build/greenc
+gbody() { sed -n '/^-- -----/,$p' "$1" | tail -n +2; }
+{ gbody problems/original/green/09-distributed-output.grn \
+  | sed -f problems/run/green/09-distributed-output.sed; cat problems/run/green/09-main.grn; } > "$tmp/g9.grn"
+for p in g9; do
+  green/build/greenc < "$tmp/$p.grn" > "$tmp/$p.c"
+  cc -std=gnu11 -O1 -w -Irt "$tmp/$p.c" rt/paleo.c -o "$tmp/$p" -lpthread -lm
+  perl -e 'alarm shift; exec @ARGV' 30 "$tmp/$p" > "$tmp/$p.txt" 2>&1
+  if diff -u "problems/run/green/$p.out" "$tmp/$p.txt"; then echo "ok $p"; else echo "FAIL $p"; fail=1; fi
 done
 exit $fail

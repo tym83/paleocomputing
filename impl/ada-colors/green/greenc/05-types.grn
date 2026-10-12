@@ -21,6 +21,31 @@
       return null;
    end LOOKUP;
 
+   -- the entry of this name declared by task OWNER (RM79 9.5: a task accepts
+   -- only its own entries, so other tasks' entries of the same name do not count)
+   -- a task's symbol may be a copy made by a package or use clause: compare by C name
+   function SAME_TASK(A, B : SYM) return BOOLEAN is
+   begin
+      if A = B then
+         return TRUE;
+      elsif A = null or B = null then
+         return FALSE;
+      end if;
+      return A.CNAME.all = B.CNAME.all;
+   end SAME_TASK;
+
+   function LOOKUP_ENTRY(NAME : STRING; OWNER : SYM) return SYM is
+      Y : SYM := TABLE(HASH(NAME));
+   begin
+      while Y /= null loop
+         if Y.NAME.all = NAME and Y.KIND = Y_ENTRY and SAME_TASK(Y.MEMBERS, OWNER) then
+            return Y;
+         end if;
+         Y := Y.CHAIN;
+      end loop;
+      return LOOKUP(NAME);
+   end LOOKUP_ENTRY;
+
    function LOOKUP_DECL(D : NODE) return SYM is
       Y : SYM := TABLE(HASH(D.NAME.all));
    begin

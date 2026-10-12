@@ -1,0 +1,26 @@
+link1 sends packet1
+link3 sends packet1
+link1 sends packet2
+link4 sends packet1
+link3 sends packet2
+link1 sends packet3
+link7 sends packet1
+link4 sends packet2
+link3 sends packet3
+link1 sends packet4
+link9 sends packet1
+link7 sends packet2
+link4 sends packet3
+link3 sends packet4
+link1 sends packet5
+link9 sends packet2
+link7 sends packet3
+link4 sends packet4
+link3 sends packet5
+link9 sends packet3
+link7 sends packet4
+link4 sends packet5
+link9 sends packet4
+link7 sends packet5
+link9 sends packet5
+all links acknowledged: buffers of message 1 are free again

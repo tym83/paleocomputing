@@ -738,7 +738,7 @@
    -- the accept statement: the parameters are those of the waiting caller;
    -- an exception in the body goes to both partners (RM79 11.4)
    procedure GEN_ACCEPT(S : NODE) is
-      Y : SYM := LOOKUP(S.NAME.all);
+      Y : SYM := LOOKUP_ENTRY(S.NAME.all, CUR_TASK);
       ENT, EP, XF, X : TEXT;
       PM : PARM;
       F : NODE := S.A;
@@ -747,7 +747,7 @@
       if Y = null or else Y.KIND /= Y_ENTRY then
          FAIL(S.LINE, S.NAME.all & " is not an entry");
       end if;
-      if Y.MEMBERS /= CUR_TASK then
+      if not SAME_TASK(Y.MEMBERS, CUR_TASK) then
          FAIL(S.LINE, "a task accepts only its own entries (RM79 9.5)");
       end if;
       ENTRY_PATH(Y, "", ENT);
@@ -859,7 +859,7 @@
             CHECK_TYPE(VT, TY_BOOL, ALT.LINE);
          end if;
          if ALT.B.KIND = N_ACCEPT then
-            Y := LOOKUP(ALT.B.NAME.all);
+            Y := LOOKUP_ENTRY(ALT.B.NAME.all, CUR_TASK);
             if Y = null or else Y.KIND /= Y_ENTRY then
                FAIL(ALT.LINE, ALT.B.NAME.all & " is not an entry");
             end if;

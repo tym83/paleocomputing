@@ -1,0 +1,21 @@
+
+-- send message 1 to five links, then let each line acknowledge it
+restricted(MESSAGE_TRANSMISSION, TEXT_IO) procedure MAIN is
+   use MESSAGE_TRANSMISSION, TEXT_IO;
+   DEST : DEST_SET := (1, 3, 4, 7, 9);
+begin
+   AVAILABLE(1) := FALSE;
+   MESSAGE.SEND(1, DEST);
+   delay 0.010 * SECONDS;
+   for I in 1 .. 5 loop
+      LINE_ACK(DEST(I), 1);
+   end loop;
+   delay 0.010 * SECONDS;
+   if AVAILABLE(1) then
+      PUT("all links acknowledged: buffers of message 1 are free again");
+   else
+      PUT("message 1 still held");
+   end if;
+   PUT(NEWLINE);
+   SHUTDOWN;
+end MAIN;
