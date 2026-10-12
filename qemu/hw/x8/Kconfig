@@ -1,0 +1,4 @@
+config X8_MC
+    bool
+    default y
+    depends on X8

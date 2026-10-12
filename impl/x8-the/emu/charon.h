@@ -37,5 +37,6 @@ int charon_code(int ch);          /* ASCII -> our 6-bit code, -1 if none */
 uint64_t charon_drum_transfers(x8 *m);
 void charon_key_now(x8 *m, int code);           /* the operator presses a key now */
 void charon_ip_stream(x8 *m, FILE *f);          /* the tape in the IP reader */
+void charon_reopen_ip(x8 *m, const char *path);   /* the next tape in the IP reader */
 
 #endif

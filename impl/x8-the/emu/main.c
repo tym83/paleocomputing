@@ -68,7 +68,6 @@ int main(int argc, char **argv)
     x8_ip(&m);
     if (cfg.reader2) {
         /* after the prille begin the same reader goes on with the data tape */
-        extern void charon_reopen_ip(x8 *, const char *);
         charon_reopen_ip(&m, cfg.reader2);
     }
     x8_run(&m, 0);
