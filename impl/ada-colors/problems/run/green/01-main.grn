@@ -1,0 +1,36 @@
+
+-- Three programs read their keyboards through CHANNEL_HANDLER.READ: devices
+-- 3 and 7 print what arrives, device 9 counts the keys of its burst (a logical
+-- keyboard holds one character, so keys struck faster than read are lost).
+restricted(CHANNEL_HANDLER, TEXT_IO)
+procedure MAIN is
+   use CHANNEL_HANDLER, TEXT_IO;
+   GOT9 : INTEGER := 0;
+
+   task READER(1 .. 3);
+
+   task body READER is
+      DEV : DEVICE := 3;
+      C   : CHARACTER;
+   begin
+      if READER'INDEX = 2 then
+         DEV := 7;
+      elsif READER'INDEX = 3 then
+         DEV := 9;
+      end if;
+      loop
+         C := CHANNEL_HANDLER.READ(DEV);
+         if DEV = 9 then
+            GOT9 := GOT9 + 1;
+         else
+            PUT("device"); PUT(INTEGER(DEV), 2); PUT(": "); PUT(C); PUT(NEWLINE);
+         end if;
+      end loop;
+   end READER;
+
+begin
+   initiate CHANNEL_HANDLER, READER(1 .. 3);
+   delay 5.0 * SECONDS;
+   PUT("device 9 burst: 70 keys struck,"); PUT(GOT9, 3); PUT(" read"); PUT(NEWLINE);
+   abort READER(1 .. 3), CHANNEL_HANDLER;
+end MAIN;

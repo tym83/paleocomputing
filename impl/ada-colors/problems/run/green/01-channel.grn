@@ -1,0 +1,45 @@
+
+   -- The I/O channel and the keyboards, which the problem takes as hardware.
+   -- Device 3 types HELLO and device 7 types GREEN, a key every 0.2 seconds;
+   -- at 1.5 seconds 70 keys arrive on device 9 at once. The channel stores
+   -- each key in the ring and moves HEAD; when the ring is about to overflow it
+   -- raises the interrupt, and while the keyboards are disabled it holds keys.
+   task CHANNEL;
+
+   task body CHANNEL is
+      WORD3 : STRING(1 .. 5) := "HELLO";
+      WORD7 : STRING(1 .. 5) := "GREEN";
+      HELD  : INTEGER := 0;
+
+      procedure STRIKE(D : DEVICE; C : CHARACTER) is
+         USED : INTEGER;
+      begin
+         while not KEYBOARD_ENABLED loop
+            delay 0.01 * SECONDS;
+         end loop;
+         if HEAD = 8#676 then HEAD := 8#500; else HEAD := HEAD + 2; end if;
+         BUFFER((HEAD - 8#500) / 2) := (C, D);
+         USED := (HEAD - TAIL) / 2;
+         if USED < 0 then
+            USED := USED + 64;
+         end if;
+         if USED >= 60 and KEYBOARD_ENABLED then
+            POLLING.INTERRUPT;
+         end if;
+      end STRIKE;
+
+   begin
+      HEAD := 8#500;
+      TAIL := 8#500;
+      for I in 1 .. 5 loop
+         delay 0.1 * SECONDS;
+         STRIKE(3, WORD3(I));
+         delay 0.1 * SECONDS;
+         STRIKE(7, WORD7(I));
+      end loop;
+      delay 0.5 * SECONDS;
+      for I in 1 .. 70 loop
+         STRIKE(9, "x");
+      end loop;
+   end CHANNEL;
+
