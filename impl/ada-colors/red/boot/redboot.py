@@ -176,6 +176,10 @@ class Gen:
             if u.kind == t.kind and t.kind != "ptr" and same(u, t):
                 t.cname = u.cname
                 return
+        if t.kind == "ptr" and not hasattr(t, "target_type"):
+            self.finish_ptr(self.scope.lookup(t.name))
+            if hasattr(t, "cname"):
+                return
         t.cname = self.new({"array": "A", "record": "R", "ptr": "P"}[t.kind])
         self.types.append(t)
         if t.kind == "ptr":
@@ -261,7 +265,9 @@ class Gen:
 
     def init_storage(self, lval, t, cons, st=None):
         """Emit code that gives a fresh variable its storage."""
-        if t.kind == "string":
+        if t.kind == "ptr":
+            self.emit(f"{lval} = NULL;")
+        elif t.kind == "string":
             n = cons.get("len")
             if n is None:
                 raise SemError("a string variable needs a length")
@@ -1163,11 +1169,8 @@ class Gen:
                 except SemError:
                     v, vt = self.expr(a, pt)
                     self.check_type(vt, pt, e.line)
-                    args.append(f"&({self.ctype(pt)}){{{v}}}" if pt.kind not in ("string",) else f"&(rstr){{0}}")
-                    if pt.kind == "string":
-                        tmp = self.new("ro")
-                        self.emit(f"rstr {tmp} = {v};")
-                        args[-1] = f"&{tmp}"
+                    ct = self.ctype(pt)
+                    args.append(f"({{ {ct} *b_ = rt_alloc(sizeof({ct})); *b_ = {v}; b_; }})")
             else:
                 v, vt = self.expr(a, pt)
                 self.check_type(vt, pt, e.line)

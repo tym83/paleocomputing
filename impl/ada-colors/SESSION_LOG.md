@@ -40,3 +40,17 @@ Digest specs -> pick subsets -> bootstrap compilers.
   capsule opened as matrix_vector_package and closed as vector_matrix_package. Plus HTML
   transcription noise (stray backtick, nbsp, 1NT, SUBT_1OOP). Suggests the samples were
   typed, not compiled.
+### 2026-10-12 — agents done, bootstrap works
+- notes/red-grammar.md (83 diagrams, 105 examples), notes/green-digest.md (Preliminary Ada 1979
+  vs Ada 83 table), problems/ (all 10 contract problems on both sides; originals gitignored
+  pending a copyright decision), redboot.py runs a test with PTR/strings/GUARD/EXIT/CASE.
+- Plan: redc.red v1 = port of redboot (same subset) -> fixed point; then grow redc feature by
+  feature, each version compiled by the previous one. Runnable problems: P5 P6 P7 P8 P9 C1
+  (interrupt/REP-bound ones only with simulation, maybe later).
+### 2026-10-12 — FIXED POINT for RED v1
+- redc.red (3400 lines of RED, red/redc/*.red) built by redboot -> redc0; redc0 translates
+  redc.red -> redc1.c; redc1 -> redc2.c; cmp equal. `make fixpoint`.
+- Bugs found on the way: global `pos` hid the predefined POS (legit RED scoping); field named
+  LEN collides with the .LEN attribute (renamed slen); indirect vars must be reset to NIL at
+  every elaboration of a loop body; READONLY temporaries must be boxed per evaluation.
+- Debug aid: PALEO_ABORT=<exception id> prints a C backtrace at the raise.

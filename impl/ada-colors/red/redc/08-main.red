@@ -1,0 +1,56 @@
+% ---- the main capsule: translate, then print the C program ----------------------
+
+PROC translate(CONST cap : node) IMPORTS ALL;
+   declare_body(cap.c);
+   body_elements(cap.c);
+END PROC translate;
+
+PROC print_program IMPORTS ALL;
+   emit_helpers;
+   WRITELN("#include " & q & "paleo.h" & q);
+   WRITELN("#include <math.h>");
+   print_buffer(out_types);
+   print_buffer(out_helpers);
+   print_buffer(out_protos);
+   print_buffer(out_globals);
+   print_buffer(out_funcs);
+   WRITELN("int main(int argc, char **argv) {");
+   WRITELN("  rt_init(argc, argv);");
+   WRITELN("  rt_set_lang(0);");
+   print_buffer(out_excs);
+   print_buffer(out_init);
+   WRITELN("  rt_main_done();");
+   WRITELN("  return 0;");
+   WRITELN("}");
+END PROC print_program;
+
+% ---- start ---------------------------------------------------------------------
+
+ALLOC toks PTR (1000000);
+ALLOC table PTR (4093);
+out_types := new_buffer;
+out_helpers := new_buffer;
+out_protos := new_buffer;
+out_globals := new_buffer;
+out_funcs := new_buffer;
+out_init := new_buffer;
+out_excs := new_buffer;
+code := out_init;
+no_cons := new_cons;
+ty_int := new_typ(t_int);
+ty_bool := new_typ(t_bool);
+ty_float := new_typ(t_float);
+ty_string := new_typ(t_string);
+ty_void := new_typ(t_void);
+ty_file := new_typ(t_file);
+ty_nil := new_typ(t_nil);
+GUARD
+   init_ascii;
+   read_source;
+   translate(program);
+   print_program;
+BY
+   WHEN compile_error =>
+      HALT(1);
+END GUARD;
+END CAPSULE redc;

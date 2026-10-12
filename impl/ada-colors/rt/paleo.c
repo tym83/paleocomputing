@@ -1,6 +1,7 @@
 /* Runtime shared by the RED and GREEN compilers. See paleo.h. */
 #include "paleo.h"
 
+#include <execinfo.h>
 #include <math.h>
 #include <pthread.h>
 #include <stdio.h>
@@ -51,6 +52,12 @@ static void on_unhandled(int id);
 
 void rt_raise(int id) {
   rt_xcur = id;
+  if (getenv("PALEO_ABORT") && atoi(getenv("PALEO_ABORT")) == id) {
+    void *bt[32];
+    int n = backtrace(bt, 32);
+    backtrace_symbols_fd(bt, n, 2);
+    abort();
+  }
   if (!rt_xtop) on_unhandled(id);
   longjmp(rt_xtop->jb, 1);
 }
