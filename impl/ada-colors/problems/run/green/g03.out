@@ -1,0 +1,9 @@
+record  0:   0   0
+record  1:   1   1
+record  2:   2   4
+A: create an existing file: FILE_EXISTS
+B: write a file that does not exist: INVALID_FILE
+C: read a record that does not exist: ILLEGAL_READ
+D: destroy a file still being written: ILLEGAL_CLOSE
+read after destroy: INVALID_FILE
+new file, record 0:   7  49

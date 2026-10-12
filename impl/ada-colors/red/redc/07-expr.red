@@ -184,7 +184,7 @@ PROC select_on(READONLY base : STRING[ASCII], CONST bt : typ, CONST e : node, VA
       WHILE f /= NIL REPEAT
          IF f.name.ALL = e.name.ALL THEN
             c := f.c;
-            code := mk(base & "." & lower_s(e.name.ALL));
+            code := mk(base & "." & field_c(e.name.ALL));
             t := f.t;
             RETURN;
          END IF;
@@ -294,13 +294,13 @@ ABNORMAL FUNC gexpr(CONST e : node, CONST want : typ, OUT t : typ) => STRING[ASC
       t := ty_nil;
       RETURN "NULL";
    ELSEIF k = n_enum THEN
-      IF want /= NIL AND want.kind = t_enum THEN
+      IF want /= NIL AND base_of(want).kind = t_enum THEN
          t := want;
       ELSE
          t := enum_type_of(e.name.ALL, e.line);
       END IF;
       BEGIN
-         VAR i : INT := lit_index(t.lits, e.name.ALL);
+         VAR i : INT := lit_index(base_of(t).lits, e.name.ALL);
          IF i < 0 THEN
             fail(e.line, "'" & e.name.ALL & " is not a value of this type");
          END IF;
@@ -311,6 +311,10 @@ ABNORMAL FUNC gexpr(CONST e : node, CONST want : typ, OUT t : typ) => STRING[ASC
    ELSEIF k = n_name THEN
       VAR y : sym := lookup(e.name.ALL);
       IF y = NIL THEN
+         IF e.name.ALL = "ME" THEN
+            t := ty_act;
+            RETURN "rt_me()";
+         END IF;
          IF e.name.ALL = "SIZELN" OR e.name.ALL = "EOF" OR e.name.ALL = "SYS_IN"
                OR e.name.ALL = "SYS_OUT" OR e.name.ALL = "TIME" OR e.name.ALL = "MILLISECONDS"
                OR e.name.ALL = "SECONDS" OR e.name.ALL = "MINUTES" OR e.name.ALL = "HOURS" THEN
@@ -452,6 +456,11 @@ ABNORMAL FUNC enum_type_of(READONLY lit : STRING[ASCII], CONST line : INT) => ty
    WHILE y /= NIL REPEAT
       IF (y.kind = y_abbrev OR y.kind = y_type) AND y.st /= NIL AND y.st.kind = s_enum THEN
          IF lit_index(y.st.a, lit) >= 0 THEN
+            IF y.kind = y_type THEN
+               VAR st : node := nn(s_name, line);
+               st.name := y.name;
+               RETURN resolve_subtype(st, c);
+            END IF;
             RETURN resolve_subtype(y.st, c);
          END IF;
       END IF;
@@ -589,13 +598,13 @@ ABNORMAL FUNC gbinop(CONST e : node, CONST want : typ, OUT t : typ) => STRING[AS
       BEGIN
          CONST a := gexpr(e.a, hint, ta);
          CONST b := gexpr(e.b, ta, tb);
-         VAR ct : typ := ta;
+         VAR ct : typ := base_of(ta);
          t := ty_bool;
          IF ta.kind /= t_nil AND tb.kind /= t_nil THEN
             check_type(tb, ta, e.line);
          END IF;
          IF ta.kind = t_nil THEN
-            ct := tb;
+            ct := base_of(tb);
          END IF;
          IF ct.kind = t_string THEN
             IF op.ALL = "=" THEN
@@ -740,7 +749,7 @@ ABNORMAL FUNC constructor(CONST e : node, CONST want : typ, OUT t : typ) => STRI
             BEGIN
                CONST v := gexpr(it.b, f.t, vt);
                check_type(vt, f.t, e.line);
-               parts := mk(parts.ALL & " " & tmp & "." & lower_s(f.name.ALL) & " = "
+               parts := mk(parts.ALL & " " & tmp & "." & field_c(f.name.ALL) & " = "
                            & copy_code(f.t, v) & ";");
             END;
             it := it.next;
@@ -929,7 +938,7 @@ ABNORMAL FUNC builtin(READONLY name : STRING[ASCII], CONST tt : node, CONST args
    IF name = "POS" OR name = "SUCC" OR name = "PRED" THEN
       CONST a := gexpr(args, NIL, at);
       IF name = "POS" THEN
-         IF at.kind /= t_enum THEN
+         IF base_of(at).kind /= t_enum THEN
             fail(line, "POS needs an enumeration value");
          END IF;
          t := ty_int;
@@ -943,9 +952,9 @@ ABNORMAL FUNC builtin(READONLY name : STRING[ASCII], CONST tt : node, CONST args
          RETURN "rt_sub(" & a & ", 1)";
       END IF;
       IF name = "SUCC" THEN
-         RETURN "rt_range(" & a & " + 1, 0, " & itos(list_len(at.lits) - 1) & ")";
+         RETURN "rt_range(" & a & " + 1, 0, " & itos(list_len(base_of(at).lits) - 1) & ")";
       END IF;
-      RETURN "rt_range(" & a & " - 1, 0, " & itos(list_len(at.lits) - 1) & ")";
+      RETURN "rt_range(" & a & " - 1, 0, " & itos(list_len(base_of(at).lits) - 1) & ")";
    ELSEIF name = "SQRT" OR name = "SIN" OR name = "COS" OR name = "EXP" OR name = "LN"
          OR name = "FLOOR" THEN
       % FLOOR is in C.4; the others stand for a mathematical library capsule

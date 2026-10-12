@@ -1,0 +1,26 @@
+# RED and GREEN, the two finalists of the DoD-1 language competition (1979),
+# for one-off jobs: a source goes in, the program's output comes out.
+#
+# Both translators are written in their own languages and translate to C, so
+# the image carries a C compiler next to them. The build stage replays the
+# bootstrap from the committed seeds and refuses to finish unless each
+# compiler reproduces itself byte for byte.
+FROM docker.io/library/gcc:14-bookworm AS build
+WORKDIR /src
+COPY ada-colors/ ./
+RUN make clean >/dev/null 2>&1 || true; \
+    make fixpoint && make -C green fixpoint && \
+    red/tests/run.sh && make -C green test
+
+FROM docker.io/library/debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev \
+    && rm -rf /var/lib/apt/lists/* && useradd -u 10001 -m red
+COPY --from=build /src/build/redc /src/green/build/greenc /opt/ada-colors/bin/
+COPY --from=build /src/rt/paleo.c /src/rt/paleo.h /opt/ada-colors/rt/
+# the runtime is compiled once here, not on every run
+RUN cc -std=gnu11 -O1 -w -c /opt/ada-colors/rt/paleo.c -o /opt/ada-colors/rt/paleo.o
+COPY deploy/ada-colors-run.sh /usr/local/bin/ada-colors-run
+RUN chmod +x /usr/local/bin/ada-colors-run && mkdir -p /work && chown 10001 /work
+USER 10001
+WORKDIR /work
+ENTRYPOINT ["/usr/local/bin/ada-colors-run"]

@@ -275,7 +275,7 @@
       OWN : TEXT;
    begin
       PATH_AT(Y.LEVEL, Y.ACCESS_PATH.all, R);
-      if Y.MEMBERS /= null and then Y.MEMBERS.C /= null then
+      if Y.MEMBERS /= null and then Y.MEMBERS.C /= null and then not Y.RO then
          if I'LENGTH = 0 then
             OWN_INDEX(OWN);
             MEMBER(Y.MEMBERS, R.all, OWN.all, R);
@@ -356,6 +356,11 @@
    end ENTRY_FAMILY_SLOT;
 
    procedure TASK_SPEC(E : NODE) is
+      HAS_PROCS : BOOLEAN := FALSE;
+      SAVED_DEFER : BOOLEAN;
+      FIELDS, CT : TEXT;
+      PM : PARM;
+      FP, FLO, FHI : TEXT;
       Y, M, Z : SYM;
       SAVED : SYM := CUR_TASK;
       D, V, P, P2 : TEXT;
@@ -381,6 +386,8 @@
          DECLARE_SLOT("rt_int", Y.CNAME.all & "lo");
          DECLARE_SLOT("rt_int", Y.CNAME.all & "hi");
          GEXPR(R.A, TY_INT, VT, V);
+         -- the index type of the family: INTEGER or an enumeration (RM79 9.1)
+         Y.T := VT;
          PATH_AT(Y.LEVEL, Y.CNAME.all & "lo", P);
          EMIT(P.all & " = " & V.all & ";");
          GEXPR(R.B, TY_INT, VT, V);
@@ -399,14 +406,59 @@
       end if;
       OPEN_SCOPE;
       CUR_TASK := Y;
+      SAVED_DEFER := DEFER_ENTRY_STRUCTS;
+      DEFER_ENTRY_STRUCTS := TRUE;
       DECL_ELEMENTS(E.C);
       DECL_ELEMENTS(E.D);
+      DEFER_ENTRY_STRUCTS := SAVED_DEFER;
       M := SCOPE_STACK;
       while M /= null and then M.DEPTH = DEPTH loop
-         if M.KIND = Y_FUNC or M.KIND = Y_PROC then
-            FAIL(E.LINE, "procedures in the visible part of a task are not handled");
+         if M.KIND = Y_ENTRY and not M.FROM_USE then
+            FIELDS := MK(" int dummy_;");
+            PM := M.PARAMS;
+            while PM /= null loop
+               CTYPE(PM.T, CT);
+               if PM.MODE = M_IN then
+                  FIELDS := MK(FIELDS.all & " " & CT.all & " " & PM.CFIELD.all & ";");
+               else
+                  FIELDS := MK(FIELDS.all & " " & CT.all & " *" & PM.CFIELD.all & ";");
+               end if;
+               PM := PM.NEXT;
+            end loop;
+            PUT_TO(OUT_TYPES, "struct " & M.CNAME.all & "p {" & FIELDS.all & " };");
+         end if;
+         M := M.STACK;
+      end loop;
+      M := SCOPE_STACK;
+      while M /= null and then M.DEPTH = DEPTH loop
+         if (M.KIND = Y_FUNC or M.KIND = Y_PROC) and not M.FROM_USE then
+            -- a visible subprogram of the task runs in its caller and sees the
+            -- task's data (RM79 9.1): its static link is the frame of the task
+            -- body, kept in a global once the task runs
+            if not HAS_PROCS and Y.C /= null then
+               -- a family: one frame per member
+               DECLARE_SLOT("void **", Y.CNAME.all & "frames");
+               PATH_AT(Y.LEVEL, Y.CNAME.all & "frames", FP);
+               PATH_AT(Y.LEVEL, Y.CNAME.all & "lo", FLO);
+               PATH_AT(Y.LEVEL, Y.CNAME.all & "hi", FHI);
+               EMIT(FP.all & " = rt_alloc(sizeof(void *) * (size_t)(" & FHI.all & " >= "
+                    & FLO.all & " ? " & FHI.all & " - " & FLO.all & " + 1 : 1));");
+               HAS_PROCS := TRUE;
+            elsif not HAS_PROCS then
+               DECLARE_SLOT("void *", Y.CNAME.all & "frame");
+               PATH_AT(Y.LEVEL, Y.CNAME.all & "frame", FP);
+               EMIT(FP.all & " = NULL;");
+               HAS_PROCS := TRUE;
+            end if;
+            if Y.C /= null then
+               M.ACCESS_PATH := MK(Y.CNAME.all & "frames");
+            else
+               M.ACCESS_PATH := MK(Y.CNAME.all & "frame");
+            end if;
+            M.MEMBERS := Y;
          end if;
          COPY_SYM(M, Z);
+         Z.HIDDEN := M.FROM_USE;
          Z.MNEXT := Y.MEMBERS;
          Y.MEMBERS := Z;
          M := M.STACK;
@@ -447,7 +499,9 @@
          TAIL := PM;
          P := P.NEXT;
       end loop;
-      PUT_TO(OUT_TYPES, "struct " & Y.CNAME.all & "p {" & FIELDS.all & " };");
+      if not DEFER_ENTRY_STRUCTS then
+         PUT_TO(OUT_TYPES, "struct " & Y.CNAME.all & "p {" & FIELDS.all & " };");
+      end if;
       Y.RESULT := TY_VOID;
       Y.DECL := E;
       Y.MEMBERS := CUR_TASK;
@@ -456,12 +510,15 @@
       end if;
       Y.ACCESS_PATH := MK(Y.CNAME.all & "ent");
       PATH_AT(Y.LEVEL, Y.ACCESS_PATH.all, X);
+      -- an entry declared in the body of a family member is local to that
+      -- member (RM79 9.5): its queue lives in the member's frame (marked RO)
+      Y.RO := CUR_TASK.C /= null and IN_FUNC and CUR_LEVEL > CUR_TASK.LEVEL;
       if E.B /= null then
-         if CUR_TASK.C /= null then
+         if CUR_TASK.C /= null and not Y.RO then
             FAIL(E.LINE, "an entry family in a task family is not handled");
          end if;
          FAMILY_BOUNDS(E.B, Y, X);
-      elsif CUR_TASK.C /= null then
+      elsif CUR_TASK.C /= null and not Y.RO then
          DECLARE_SLOT("rt_entry *", Y.ACCESS_PATH.all);
          PATH_AT(CUR_TASK.LEVEL, CUR_TASK.CNAME.all & "lo", LO);
          PATH_AT(CUR_TASK.LEVEL, CUR_TASK.CNAME.all & "hi", HI);
@@ -481,6 +538,7 @@
    procedure TASK_BODY(E : NODE) is
       Y : SYM := LOOKUP(E.NAME.all);
       B, M, Z : SYM;
+      UPP : TEXT;
       SAVED : SYM := CUR_TASK;
    begin
       if Y /= null and then Y.KIND = Y_GENERIC then
@@ -503,6 +561,21 @@
       while M /= null loop
          COPY_SYM(M, Z);
          DEFINE(Z, E.LINE);
+         if (M.KIND = Y_FUNC or M.KIND = Y_PROC) and M.ACCESS_PATH /= null and then SAME_TASK(M.MEMBERS, Y) then
+            -- the statement runs in the body, whose frame is linked to the
+            -- frame where the task is declared
+            if Y.LEVEL > 0 then
+               UPP := MK("up_->");
+            else
+               UPP := MK("");
+            end if;
+            if Y.C /= null then
+               B.ACCESS_PATH := MK(UPP.all & M.ACCESS_PATH.all & "[index_ - " & UPP.all & Y.CNAME.all
+                                   & "lo] = F;");
+            else
+               B.ACCESS_PATH := MK(UPP.all & M.ACCESS_PATH.all & " = F;");
+            end if;
+         end if;
          M := M.MNEXT;
       end loop;
       CUR_TASK := Y;
@@ -541,9 +614,15 @@
 
    procedure TASK_FAILURE(S : NODE) is
       Y : SYM := LOOKUP(S.TAG.all);
-      A : TEXT;
+      A, I : TEXT;
+      IT : TYP;
    begin
-      ACT_PATH(Y, A);
+      if S.A /= null then
+         GEXPR(S.A, Y.T, IT, I);
+         ACT_PATH_I(Y, I.all, A);
+      else
+         ACT_PATH(Y, A);
+      end if;
       EMIT("rt_exterminate(&" & A.all & ");");
    end TASK_FAILURE;
 
@@ -674,6 +753,9 @@
          end if;
          OWN_INDEX(P);
          T := TY_INT;
+         if Y.T /= null then
+            T := Y.T;
+         end if;
          R := P;
       elsif Y.KIND = Y_TASK and A = "ACTIVE" then
          ACT_PATH(Y, P);
@@ -738,7 +820,8 @@
    -- the accept statement: the parameters are those of the waiting caller;
    -- an exception in the body goes to both partners (RM79 11.4)
    procedure GEN_ACCEPT(S : NODE) is
-      Y : SYM := LOOKUP(S.NAME.all);
+      Y : SYM := LOOKUP_ENTRY(S.NAME.all, CUR_TASK);
+      SAVED_AX : EXITS_T;
       ENT, EP, XF, X : TEXT;
       PM : PARM;
       F : NODE := S.A;
@@ -747,7 +830,7 @@
       if Y = null or else Y.KIND /= Y_ENTRY then
          FAIL(S.LINE, S.NAME.all & " is not an entry");
       end if;
-      if Y.MEMBERS /= CUR_TASK then
+      if not SAME_TASK(Y.MEMBERS, CUR_TASK) then
          FAIL(S.LINE, "a task accepts only its own entries (RM79 9.5)");
       end if;
       ENTRY_PATH(Y, "", ENT);
@@ -784,7 +867,10 @@
          PM := PM.NEXT;
       end loop;
       ACCEPT_DEPTH := ACCEPT_DEPTH + 1;
+      SAVED_AX := ACCEPT_EXITS;
+      ACCEPT_EXITS := EXITS;
       GEN_STATEMENTS(S.B);
+      ACCEPT_EXITS := SAVED_AX;
       ACCEPT_DEPTH := ACCEPT_DEPTH - 1;
       CLOSE_SCOPE;
       POP_CLEANUP;
@@ -859,7 +945,7 @@
             CHECK_TYPE(VT, TY_BOOL, ALT.LINE);
          end if;
          if ALT.B.KIND = N_ACCEPT then
-            Y := LOOKUP(ALT.B.NAME.all);
+            Y := LOOKUP_ENTRY(ALT.B.NAME.all, CUR_TASK);
             if Y = null or else Y.KIND /= Y_ENTRY then
                FAIL(ALT.LINE, ALT.B.NAME.all & " is not an entry");
             end if;

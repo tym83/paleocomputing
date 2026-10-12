@@ -62,6 +62,20 @@
          end if;
          Z := Z.CHAIN;
       end loop;
+      -- the body of a subprogram of the visible part of the task being compiled
+      if CUR_TASK /= null then
+         Z := CUR_TASK.MEMBERS;
+         while Z /= null loop
+            if Z.NAME.all = Y.NAME.all and then (Z.KIND = Y_FUNC or Z.KIND = Y_PROC)
+               and then Z.DECL /= null and then Z.DECL.IVAL = 1
+               and then SAME_SIGNATURE(Z.PARAMS, Y.PARAMS) and then SAME(Z.RESULT, Y.RESULT) then
+               Y.CNAME := Z.CNAME;
+               Z.DECL := E;
+               exit;
+            end if;
+            Z := Z.MNEXT;
+         end loop;
+      end if;
       DEFINE(Y, E.LINE);
    end DECLARE_ONE;
 
@@ -108,7 +122,9 @@
       DECLARED : BOOLEAN := FALSE;
    begin
       while E /= null loop
-         if (E.KIND = N_PROC or E.KIND = N_FUNC) and not DECLARED then
+         -- a specification given before its body is declared in place, and
+         -- the body completes it (RM79 6.2, 6.4)
+         if (E.KIND = N_PROC or E.KIND = N_FUNC) and E.IVAL /= 1 and not DECLARED then
             DECLARE_SUBPROGRAMS(E);
             DECLARED := TRUE;
          end if;
@@ -118,7 +134,7 @@
    end DECL_ELEMENTS;
 
    procedure DECL_ELEMENT(E : NODE) is
-      Y : SYM;
+      Y, Z : SYM;
       T, VT : TYP;
       C : CONS;
       ACC, V, X : TEXT;
@@ -155,6 +171,29 @@
             -- object declaration (RM79 3.2)
             RESOLVE(E.A, T, C);
             Y := NEW_SYM(Y_VAR, E.NAME);
+            if E.FLAG = 2 then
+               -- a renaming holds the address of the object it renames (RM79 8.5)
+               LVALUE(E.B, V, VT, C, Y.RO);
+               CHECK_TYPE(VT, T, E.LINE);
+               CTYPE(T, ACC);
+               NEW_NAME(LOWER_S(E.NAME.all) & "_", X);
+               if IN_FUNC then
+                  PUT_TO(FIELDS_BUF, " " & ACC.all & " *" & X.all & ";");
+                  EMIT("F->" & X.all & " = &(" & V.all & ");");
+                  Y.BYREF := TRUE;
+                  Y.LEVEL := CUR_LEVEL;
+                  Y.ACCESS_PATH := X;
+               else
+                  PUT_TO(OUT_GLOBALS, "static " & ACC.all & " *g_" & X.all & ";");
+                  EMIT("g_" & X.all & " = &(" & V.all & ");");
+                  Y.LEVEL := 0;
+                  Y.ACCESS_PATH := MK("(*g_" & X.all & ")");
+               end if;
+               Y.T := VT;
+               Y.C := C;
+               DEFINE(Y, E.LINE);
+               return;
+            end if;
             if T.KIND = T_STRING and C.SLEN = null and E.B /= null then
                -- the bounds come from the initial value (RM79 3.6)
                VRP_OK := TRUE;
@@ -199,6 +238,23 @@
             BIND(Y, ACC);
             DEFINE(Y, E.LINE);
          when 46 =>
+            if E.A /= null then
+               -- a renaming is the same exception under another name (RM79 8.5)
+               if E.A.KIND = N_SELECT and then IS_PACKAGE(E.A.A) then
+                  Y := MEMBER_OF(E.A.A.NAME.all, E.A.NAME.all, E.LINE);
+               elsif E.A.KIND = N_NAME then
+                  Y := LOOKUP(E.A.NAME.all);
+               else
+                  Y := null;
+               end if;
+               if Y = null or else Y.KIND /= Y_EXC then
+                  FAIL(E.LINE, "an exception is renamed only as an exception");
+               end if;
+               COPY_SYM(Y, Z);
+               Z.NAME := E.NAME;
+               DEFINE(Z, E.LINE);
+               return;
+            end if;
             -- an exception declaration is one exception, even in a recursive
             -- procedure (RM79 11.1)
             Y := NEW_SYM(Y_EXC, E.NAME);
@@ -309,7 +365,21 @@
          PUT_TO(FIELDS_BUF, " " & CT.all & " result_;");
       end if;
       DECL_ELEMENTS(D.C);
-      GUARDED(D.D, D.E, D.LINE);
+      if D.TAG /= null and then D.TAG.all = "INTERFACE" and Y.RESULT.KIND = T_VOID then
+         -- the foreign body is the runtime's rt_g_<name> (RM79 13.9)
+         X := MK("");
+         PM := Y.PARAMS;
+         while PM /= null loop
+            if X'LENGTH > 0 then
+               X := MK(X.all & ", ");
+            end if;
+            X := MK(X.all & "F->" & PM.CFIELD.all);
+            PM := PM.NEXT;
+         end loop;
+         EMIT("rt_g_" & LOWER_S(D.NAME.all) & "(" & X.all & ");");
+      else
+         GUARDED(D.D, D.E, D.LINE);
+      end if;
       TASK_AWAITS(D.C, AW);
       CLOSE_SCOPE;
       CUR_LEVEL := CUR_LEVEL - 1;
@@ -324,6 +394,10 @@
       PUT_TO(OUT_FRAMES, "};");
       PUT_TO(OUT_FUNCS, HEAD.all & " {");
       PUT_TO(OUT_FUNCS, "  struct " & FRAME.all & " *F = rt_alloc(sizeof *F);");
+      if Y.KIND = Y_PROC and then Y.ACCESS_PATH /= null then
+         -- a task body whose visible subprograms need its frame
+         PUT_TO(OUT_FUNCS, "  " & Y.ACCESS_PATH.all);
+      end if;
       SPLICE(OUT_FUNCS, CODE);
       if Y.RESULT.KIND /= T_VOID then
          -- leaving a function other than by return (RM79 6.5)
@@ -737,6 +811,9 @@
       V : TEXT;
    begin
       while X /= null loop
+         if ACCEPT_DEPTH > 0 and X = ACCEPT_EXITS then
+            FAIL(S.LINE, "an exit statement cannot leave an accept statement (RM79 5.7)");
+         end if;
          if (S.NAME = null and X.IS_LOOP) or else (S.NAME /= null and then X.MATCH /= null
             and then X.MATCH.all = S.NAME.all) then
             if S.A /= null then

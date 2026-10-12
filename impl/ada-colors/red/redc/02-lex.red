@@ -43,6 +43,21 @@ FUNC lower_s(READONLY s : STRING[ASCII]) => STRING[ASCII];
    RETURN r;
 END FUNC lower_s;
 
+% a component name in C: one that is a C keyword (char, int, ...) gets a '_'
+FUNC field_c(READONLY s : STRING[ASCII]) => STRING[ASCII];
+   CONST l := lower_s(s);
+   CONST kw := " auto break case char const continue default do double else enum extern float for goto "
+      & "if inline int long register restrict return short signed sizeof static struct switch "
+      & "typedef union unsigned void volatile while ";
+   CONST w := " " & l & " ";
+   FOR i : INT(1 .. kw.LEN - w.LEN + 1) REPEAT
+      IF kw(i .. i + w.LEN - 1) = w THEN
+         RETURN l & "_";
+      END IF;
+   END REPEAT;
+   RETURN l;
+END FUNC field_c;
+
 FUNC q => STRING[ASCII];
    RETURN chs('QUOTE);
 END FUNC q;

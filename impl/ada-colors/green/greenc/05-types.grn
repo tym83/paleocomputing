@@ -21,6 +21,31 @@
       return null;
    end LOOKUP;
 
+   -- the entry of this name declared by task OWNER (RM79 9.5: a task accepts
+   -- only its own entries, so other tasks' entries of the same name do not count)
+   -- a task's symbol may be a copy made by a package or use clause: compare by C name
+   function SAME_TASK(A, B : SYM) return BOOLEAN is
+   begin
+      if A = B then
+         return TRUE;
+      elsif A = null or B = null then
+         return FALSE;
+      end if;
+      return A.CNAME.all = B.CNAME.all;
+   end SAME_TASK;
+
+   function LOOKUP_ENTRY(NAME : STRING; OWNER : SYM) return SYM is
+      Y : SYM := TABLE(HASH(NAME));
+   begin
+      while Y /= null loop
+         if Y.NAME.all = NAME and Y.KIND = Y_ENTRY and SAME_TASK(Y.MEMBERS, OWNER) then
+            return Y;
+         end if;
+         Y := Y.CHAIN;
+      end loop;
+      return LOOKUP(NAME);
+   end LOOKUP_ENTRY;
+
    function LOOKUP_DECL(D : NODE) return SYM is
       Y : SYM := TABLE(HASH(D.NAME.all));
    begin
@@ -103,18 +128,18 @@
    procedure NEW_SYM(KIND : INTEGER; NAME : TEXT) return SYM is
    begin
       return new SYM_REC(KIND, NAME, null, null, null, null, FALSE, 0, FALSE, null, null, null,
-                         0, 0, FALSE, FALSE, FALSE, null, null, null, null);
+                         0, 0, FALSE, FALSE, FALSE, FALSE, null, null, null, null);
    end NEW_SYM;
 
    procedure NEW_TYP(KIND : INTEGER) return TYP is
    begin
       return new TYP_REC(KIND, null, null, null, null, null, null, null, null, null, null,
-                         FALSE, FALSE, FALSE, null);
+                         FALSE, FALSE, FALSE, null, null);
    end NEW_TYP;
 
    procedure NEW_CONS return CONS is
    begin
-      return new CONS_REC(null, null, null, 0, 0, FALSE);
+      return new CONS_REC(null, null, null, 0, 0, FALSE, null, null);
    end NEW_CONS;
 
    function KIND_NAME(T : TYP) return STRING is
@@ -326,6 +351,8 @@
          C.MLO := Y.C.MLO;
          C.MHI := Y.C.MHI;
          C.HASM := Y.C.HASM;
+         C.LO2 := Y.C.LO2;
+         C.HI2 := Y.C.HI2;
       end if;
       if T = null then
          FAIL(ST.LINE, "the type " & ST.NAME.all & " is used before its full declaration");
@@ -404,8 +431,8 @@
             T := TY_FLOAT;
          when 73 =>
             -- arrays (RM79 3.6)
-            if D.A.NEXT /= null then
-               FAIL(D.LINE, "arrays of more than one dimension are not handled yet");
+            if D.A.NEXT /= null and then D.A.NEXT.NEXT /= null then
+               FAIL(D.LINE, "arrays of more than two dimensions are not handled yet");
             end if;
             T := NEW_TYP(T_ARRAY);
             T.NAME := NAME;
@@ -425,6 +452,21 @@
                   T.TCONS.LO := IC.LO;
                end if;
             end if;
+            if D.A.NEXT /= null then
+               -- a second index (RM79 3.6): bounds known with the type
+               L := D.A.NEXT;
+               if L.KIND = N_RANGE then
+                  GEXPR(L.A, null, T.IDX2, C.LO2);
+                  GEXPR(L.B, T.IDX2, DUMMY, C.HI2);
+               else
+                  RESOLVE(L, T.IDX2, IC);
+                  C.LO2 := IC.LO;
+                  C.HI2 := IC.HI;
+               end if;
+               if C.LO = null or C.LO2 = null then
+                  FAIL(D.LINE, "a two-dimensional array needs the bounds of both indexes here");
+               end if;
+            end if;
             if C.LO /= null then
                T.TCONS := C;
             end if;
@@ -434,7 +476,7 @@
             T.NAME := NAME;
             COMP := D.A;
             while COMP /= null loop
-               F := new FIELD_REC(COMP.NAME, null, null, null);
+               F := new FIELD_REC(COMP.NAME, null, null, null, COMP.B);
                RESOLVE(COMP.A, F.T, F.C);
                if TAIL = null then
                   T.FIELDS := F;
@@ -468,7 +510,8 @@
    -- give a fresh object its storage: strings and arrays own buffers; access
    -- objects start as null (RM79 3.8)
    procedure INIT_STORAGE(LVAL : STRING; T : TYP; C : CONS) is
-      CT, I : TEXT;
+      CT, I, V, X : TEXT;
+      VT : TYP;
       F : FIELD;
    begin
       if T.KIND = T_PTR then
@@ -483,8 +526,13 @@
             FAIL(0, "an array object needs an index constraint");
          end if;
          CTYPE(T.ELEM, CT);
-         EMIT(LVAL & ".lo = " & C.LO.all & "; " & LVAL & ".hi = " & C.HI.all & "; " & LVAL
-              & ".lo2 = 1; " & LVAL & ".hi2 = 1;");
+         if C.LO2 /= null then
+            EMIT(LVAL & ".lo = " & C.LO.all & "; " & LVAL & ".hi = " & C.HI.all & "; " & LVAL
+                 & ".lo2 = " & C.LO2.all & "; " & LVAL & ".hi2 = " & C.HI2.all & ";");
+         else
+            EMIT(LVAL & ".lo = " & C.LO.all & "; " & LVAL & ".hi = " & C.HI.all & "; " & LVAL
+                 & ".lo2 = 1; " & LVAL & ".hi2 = 1;");
+         end if;
          EMIT(LVAL & ".p = rt_alloc(sizeof(" & CT.all & ") * (size_t)RT_CNT(" & LVAL & "));");
          if T.ELEM.KIND = T_STRING or T.ELEM.KIND = T_ARRAY or T.ELEM.KIND = T_RECORD then
             NEW_NAME("i", I);
@@ -496,6 +544,12 @@
          F := T.FIELDS;
          while F /= null loop
             INIT_STORAGE(LVAL & "." & C_FIELD(F.NAME.all), F.T, F.C);
+            if F.DFLT /= null then
+               GEXPR(F.DFLT, F.T, VT, V);
+               CHECK_TYPE(VT, F.T, 0);
+               ASSIGN_CODE(LVAL & "." & C_FIELD(F.NAME.all), F.T, V.all, F.C, X);
+               EMIT(X.all);
+            end if;
             F := F.NEXT;
          end loop;
       end if;

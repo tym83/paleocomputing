@@ -7,14 +7,16 @@
 #   the runtime follows the RED scheduler exactly and its clock is virtual.
 # green: the same for the compiler written in GREEN.
 # ada83: the comparison programs, built by GNAT in Ada 83 mode.
+# image: the ada-colors-run image for langpack is built and runs one program
+#   per language, so a broken image shows up in the pull request, not at release.
 name: ada-colors
 
 on:
   push:
     branches: [main]
-    paths: ['impl/ada-colors/**', '.github/workflows/ada-colors.yml']
+    paths: ['impl/ada-colors/**', 'impl/deploy/*ada-colors*', '.github/workflows/ada-colors.yml']
   pull_request:
-    paths: ['impl/ada-colors/**', '.github/workflows/ada-colors.yml']
+    paths: ['impl/ada-colors/**', 'impl/deploy/*ada-colors*', '.github/workflows/ada-colors.yml']
   workflow_dispatch:
 
 defaults:
@@ -54,3 +56,20 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y gnat
       - name: Ada 83 comparison programs
         run: ada83/run.sh
+
+  image:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: docker build -t ada-colors-run -f impl/deploy/Containerfile.ada-colors-run impl
+      - name: A RED and a GREEN program
+        run: |
+          set -euo pipefail
+          docker run --rm -v "$PWD/impl/ada-colors/labs/red:/src:ro" ada-colors-run 06-priority.red | tee red.txt
+          [ "$(tr '\n' ' ' < red.txt)" = "c b a " ]
+          docker run --rm -v "$PWD/impl/ada-colors/green/tests:/src:ro" ada-colors-run tasking.grn | tee green.txt
+          grep -q 'sum 150' green.txt

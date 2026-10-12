@@ -1,0 +1,46 @@
+
+-- Four nodes in a line 1-2-3-4, each link with delay 10. At 400 seconds a
+-- faster link 4-1 (delay 5) comes up, at 800 seconds link 2-3 goes down.
+-- Every 100 seconds the routes of every node are printed: for each
+-- destination 1..4, the neighbour a packet goes to (0: unreachable).
+restricted(NETWORK_INFO, NET_SIM, NETWORK, TEXT_IO)
+procedure MAIN is
+   use NETWORK_INFO, NET_SIM, NETWORK, TEXT_IO;
+   NOW : INTEGER := 0;
+
+   procedure SHOW is
+   begin
+      NOW := NOW + 100;
+      PUT("t="); PUT(NOW, 5);
+      for N in 1 .. N_NODES loop
+         PUT("  node"); PUT(N, 2); PUT(":");
+         for J in 1 .. N_NODES loop
+            PUT(ROUTES(N)(J), 2);
+         end loop;
+      end loop;
+      PUT(NEWLINE);
+   end SHOW;
+
+begin
+   SET_LINK(1, 2, 10);
+   SET_LINK(2, 3, 10);
+   SET_LINK(3, 4, 10);
+   initiate NODE_PROGRAM(1 .. 4);
+   for K in 1 .. 4 loop
+      delay 100.0 * SECONDS;
+      SHOW;
+   end loop;
+   PUT("link 4-1 up, delay 5"); PUT(NEWLINE);
+   SET_LINK(4, 1, 5);
+   for K in 1 .. 4 loop
+      delay 100.0 * SECONDS;
+      SHOW;
+   end loop;
+   PUT("link 2-3 down"); PUT(NEWLINE);
+   SET_LINK(2, 3, 0);
+   for K in 1 .. 4 loop
+      delay 100.0 * SECONDS;
+      SHOW;
+   end loop;
+   abort NODE_PROGRAM(1 .. 4);
+end MAIN;

@@ -1,0 +1,12 @@
+  100 ms  level  2 interrupt
+  100 ms  level  2 handler starts
+  300 ms  level  0 interrupt
+  300 ms  level  0 handler starts
+  350 ms  level  3 interrupt
+  400 ms  level  0 handler returns
+  400 ms  level  1 interrupt
+  400 ms  level  1 handler starts
+  500 ms  level  1 handler returns
+  600 ms  level  2 handler returns
+  600 ms  level  3 handler starts
+  700 ms  level  3 handler returns

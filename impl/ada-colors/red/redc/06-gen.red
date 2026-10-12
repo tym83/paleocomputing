@@ -136,7 +136,15 @@ PROC gen_capsule(CONST d : node) IMPORTS ALL;
    ctx.next := fctx;
    fctx := ctx;
    declare_body(d.c);
-   body_elements(d.c);
+   capsule_elements(d.c);
+   BEGIN
+      VAR w : waitrec;
+      ALLOC w PTR;
+      w.d := d;
+      w.w := mk(task_waits(d.c));
+      w.next := cap_waits;
+      cap_waits := w;
+   END;
    fctx := fctx.next;
    % fix the types while the capsule's own definitions are still known
    m := scope_stack;
@@ -507,19 +515,52 @@ END PROC gen_subprogram;
 
 % ---- statements --------------------------------------------------------------------------
 
-PROC body_elements(CONST elems : node) IMPORTS ALL;
+% leaving a scope waits for the activations of its tasks (10.1); the tasks of
+% a capsule live as long as the capsule's declaration (8.1), so they are
+% waited for where the scope that declares the capsule ends
+FUNC waits_of(CONST d : node) => STRING[ASCII] IMPORTS cap_waits;
+   VAR w : waitrec := cap_waits;
+   WHILE w /= NIL REPEAT
+      IF w.d = d THEN
+         RETURN w.w.ALL;
+      END IF;
+      w := w.next;
+   END REPEAT;
+   RETURN "";
+END FUNC waits_of;
+
+FUNC task_waits(CONST elems : node) => STRING[ASCII] IMPORTS ALL;
+   VAR e : node := elems;
+   VAR r : text := mk("");
+   WHILE e /= NIL REPEAT
+      IF e.kind = n_task THEN
+         r := mk(r.ALL & " rt_await_decl(&" & lookup(e.name.ALL).cname.ALL & "decl);");
+      ELSEIF e.kind = n_capsule THEN
+         r := mk(r.ALL & waits_of(e));
+      END IF;
+      e := e.next;
+   END REPEAT;
+   RETURN r.ALL;
+END FUNC task_waits;
+
+PROC await_tasks(CONST elems : node) IMPORTS ALL;
+   CONST w := task_waits(elems);
+   IF w.LEN > 0 THEN
+      emit(w);
+   END IF;
+END PROC await_tasks;
+
+PROC capsule_elements(CONST elems : node) IMPORTS ALL;
    VAR e : node := elems;
    WHILE e /= NIL REPEAT
       element(e);
       e := e.next;
    END REPEAT;
-   e := elems;
-   WHILE e /= NIL REPEAT
-      IF e.kind = n_task THEN
-         emit("rt_await_decl(&" & lookup(e.name.ALL).cname.ALL & "decl);");
-      END IF;
-      e := e.next;
-   END REPEAT;
+END PROC capsule_elements;
+
+PROC body_elements(CONST elems : node) IMPORTS ALL;
+   capsule_elements(elems);
+   await_tasks(elems);
 END PROC body_elements;
 
 % a body is an open scope (3.2)
@@ -726,9 +767,11 @@ PROC st_repeat(CONST s : node) IMPORTS ALL;
       RETURN;
    END IF;
    t := resolve_subtype(s.a, c);
-   IF t.kind = t_enum AND c.lo = NIL THEN
+   c := base_cons(t, c);
+   IF base_of(t).kind = t_enum AND c.lo = NIL THEN
+      c := new_cons;
       c.lo := mk("0");
-      c.hi := mk(itos(list_len(t.lits) - 1));
+      c.hi := mk(itos(list_len(base_of(t).lits) - 1));
    ELSEIF c.lo = NIL THEN
       fail(s.line, "a FOR index needs a range");
    END IF;
@@ -912,7 +955,8 @@ END PROC st_alloc;
 
 % ---- multitasking (chapter 10) ------------------------------------------------------------
 
-% an activation variable as an rt_act pointer; ME names the running activation
+% an activation variable as an rt_act pointer (the variable holds one); ME
+% names the running activation
 ABNORMAL FUNC act_ref(CONST e : node) => STRING[ASCII] IMPORTS ALL;
    VAR lv : text;
    VAR t : typ;
@@ -925,7 +969,7 @@ ABNORMAL FUNC act_ref(CONST e : node) => STRING[ASCII] IMPORTS ALL;
    IF t.kind /= t_act THEN
       fail(e.line, "an activation variable (ACT) is required");
    END IF;
-   RETURN "&" & lv.ALL;
+   RETURN lv.ALL;
 END FUNC act_ref;
 
 % CREATE task(args) NAMED actvar (10.1): a fresh frame holds the parameters

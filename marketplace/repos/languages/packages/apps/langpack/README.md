@@ -34,3 +34,25 @@ working directory.
 | `program` | `[]` | sources: `path`, `content` |
 | `command` / `args` | `[]` | what to run |
 | `host` | `""` | external host name; cannot be set in `job` mode |
+
+## RED and GREEN
+
+The `ada-colors-run` image carries RED and GREEN, the two finalists of the
+DoD-1 competition of 1979, each with a compiler written in the language itself.
+The extension picks the language: `.red` for RED, `.grn` for GREEN. Several
+files of one language are joined in the order given in `args`.
+
+```yaml
+language: RED
+image: ghcr.io/tym83/paleocomputing/ada-colors-run:dev
+mode: job
+program:
+  - path: hello.red
+    content: |
+      CAPSULE main EXPORTS NONE;
+         WRITELN("hello from 1979");
+      END CAPSULE main;
+```
+
+The output is the job's log. A translation error is printed as the
+translator's message with its line number, and the job fails.

@@ -175,11 +175,47 @@
       return Y /= null and then Y.KIND = Y_GENERIC;
    end IS_GENERIC_NAME;
 
+   -- the declarations visible at the body are kept too: an instance's body
+   -- sees them, wherever the instantiation is (RM79 12.3)
    procedure ATTACH_GENERIC_BODY(E : NODE) is
       Y : SYM := LOOKUP(E.NAME.all);
    begin
       Y.DECL.C := E;
+      GENERIC_CONTEXTS := new GCTX_REC(E, SCOPE_STACK, GENERIC_CONTEXTS);
    end ATTACH_GENERIC_BODY;
+
+   -- make visible again what the generic body saw, inner declarations first;
+   -- only what lives in static storage can be reached from the instance
+   procedure RESTORE_GENERIC_CONTEXT(BODY_NODE : NODE; LINE : INTEGER) is
+      CTX : GCTX := GENERIC_CONTEXTS;
+      M, Z : SYM;
+      SEEN : BOOLEAN;
+   begin
+      while CTX /= null and then CTX.BODY_NODE /= BODY_NODE loop
+         CTX := CTX.NEXT;
+      end loop;
+      if CTX = null then
+         return;
+      end if;
+      M := CTX.VISIBLE;
+      while M /= null loop
+         if M.LEVEL <= 0 and M.KIND /= Y_GENERIC then
+            Z := TABLE(HASH(M.NAME.all));
+            SEEN := FALSE;
+            while Z /= null loop
+               if Z.DEPTH = DEPTH and then Z.NAME.all = M.NAME.all then
+                  SEEN := TRUE;
+               end if;
+               Z := Z.CHAIN;
+            end loop;
+            if not SEEN then
+               COPY_SYM(M, Z);
+               DEFINE(Z, LINE);
+            end if;
+         end if;
+         M := M.STACK;
+      end loop;
+   end RESTORE_GENERIC_CONTEXT;
 
    -- the actual for generic formal P: positional by number, or named
    function GACTUAL(ARGS : NODE; NTH : INTEGER; NAME : STRING) return NODE is
@@ -288,6 +324,11 @@
          end if;
          F := F.NEXT;
       end loop;
+      -- the formals are bound in the context of the instantiation; the body
+      -- then also sees what was visible at the generic body
+      if GD.C /= null then
+         RESTORE_GENERIC_CONTEXT(GD.C, E.LINE);
+      end if;
       if PAT.KIND = N_PROC or PAT.KIND = N_FUNC then
          if PAT.IVAL = 1 then
             if GD.C = null then

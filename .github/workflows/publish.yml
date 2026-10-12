@@ -97,6 +97,10 @@ jobs:
           # what langpack uses for one-off runs and the permanent service.
           - name: oberon-run
             file: deploy/Containerfile.oberon-run
+          # RED and GREEN (1979), the DoD-1 finalists, translated by compilers written
+          # in themselves. The same langpack runs them as one-off jobs.
+          - name: ada-colors-run
+            file: deploy/Containerfile.ada-colors-run
           # The air relay that connects the radios of Oberon machines (Net.Mod).
           - name: oberon-air
             context: qemu/radio
@@ -171,6 +175,8 @@ jobs:
             oberon-run) want="prom.bin oberon.dsk"
                         dir=/opt/oberon/payload ;;
             oberon-air) want="relay.py"; dir="" ;;
+            ada-colors-run) want="bin/redc bin/greenc rt/paleo.o"
+                        dir=/opt/ada-colors ;;
             *)          want=""; dir="" ;;
           esac
           [ -n "$want" ] || { echo "no content check for ${{ matrix.image.name }}"; exit 0; }
@@ -182,6 +188,18 @@ jobs:
               || { echo "❌ the image has no $dir/$f"; exit 1; }
             echo "  ✅ $f"
           done
+
+      # Files are not enough for a compiler: translate and run one program per language.
+      - name: A RED and a GREEN program run in the image
+        if: matrix.image.name == 'ada-colors-run'
+        run: |
+          set -euo pipefail
+          ref="${{ steps.meta.outputs.image }}@${{ steps.build.outputs.digest }}"
+          run() { docker run --rm --platform linux/${{ matrix.platform.arch }} -v "$PWD/$1:/src:ro" "$ref" "$2"; }
+          run impl/ada-colors/labs/red 06-priority.red | tee red.txt
+          grep -q '^c' red.txt || { echo "❌ RED program gave no output"; exit 1; }
+          run impl/ada-colors/green/tests tasking.grn | tee green.txt
+          grep -q 'sum 150' green.txt || { echo "❌ GREEN program gave no output"; exit 1; }
 
       - name: Summary
         run: |
@@ -199,7 +217,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        name: [oberon-web, oberon-lab, oberon-run, oberon-air]
+        name: [oberon-web, oberon-lab, oberon-run, oberon-air, ada-colors-run]
     steps:
       - uses: actions/checkout@v4
         with:

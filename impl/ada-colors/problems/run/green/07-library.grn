@@ -1,0 +1,43 @@
+
+   -- The body of LIBRARY, which the problem leaves to a library. The task PORT
+   -- plays the node's line hardware: once a second it reads the node's table
+   -- through entry READ of TABLE and shows it to the line, asks GET_ROUTE for
+   -- the routes, and reports links coming up or going down to UPDATE_TABLE.
+   package body LIBRARY is
+      task PORT;
+
+      procedure READ_NEIGHBOR_TABLE(N : NODE;
+                   HIS_TABLE : out ALL_INFO) is
+      begin
+         HIS_TABLE := NET_SIM.PUBLISHED(N);
+      end READ_NEIGHBOR_TABLE;
+
+      task body PORT is
+         T  : ALL_INFO;
+         R  : EXTENDED_NODE;
+         UP : array (1 .. NET_SIM.N_NODES) of BOOLEAN := (1 .. NET_SIM.N_NODES => FALSE);
+      begin
+         loop
+            delay 1.0 * SECONDS;
+            TABLE.READ(T);
+            NET_SIM.PUBLISHED(ME) := T;
+            for J in 1 .. NET_SIM.N_NODES loop
+               TABLE.GET_ROUTE(J, R);
+               NET_SIM.ROUTES(ME)(J) := R;
+            end loop;
+            for N in 1 .. NET_SIM.N_NODES loop
+               if N /= ME and NET_SIM.LINK_DELAY(ME, N) > 0 and not UP(N) then
+                  UP(N) := TRUE;
+                  UPDATE_TABLE.ESTABLISH_LINK(N, NET_SIM.LINK_DELAY(ME, N));
+               elsif NET_SIM.LINK_DELAY(ME, N) = 0 and UP(N) then
+                  UP(N) := FALSE;
+                  UPDATE_TABLE.BREAK_LINK(N);
+               end if;
+            end loop;
+         end loop;
+      end PORT;
+
+   begin
+      initiate PORT;
+   end LIBRARY;
+

@@ -135,7 +135,7 @@ FUNC same(CONST a : typ, CONST b : typ) => BOOL;
       END IF;
       RETURN same(a.elem, b.elem) AND same(a.idx, b.idx);
    END IF;
-   IF a.kind = t_set THEN
+   IF a.kind = t_set OR a.kind = t_mbox THEN
       RETURN same(a.elem, b.elem);
    END IF;
    IF a.kind = t_record THEN
@@ -152,6 +152,22 @@ FUNC same(CONST a : typ, CONST b : typ) => BOOL;
    END IF;
    RETURN FALSE;
 END FUNC same;
+
+% a new type without parameters has the values of its underlying type (4.4.2)
+FUNC base_of(CONST t : typ) => typ;
+   IF t /= NIL AND t.kind = t_new AND t.tparams = NIL THEN
+      RETURN base_of(t.under);
+   END IF;
+   RETURN t;
+END FUNC base_of;
+
+% the constraint of a subtype, looking through a new type without parameters
+FUNC base_cons(CONST t : typ, CONST c : cons) => cons;
+   IF t /= NIL AND t.kind = t_new AND t.tparams = NIL AND t.elemcons /= NIL THEN
+      RETURN base_cons(t.under, t.elemcons);
+   END IF;
+   RETURN c;
+END FUNC base_cons;
 
 FUNC kind_name(CONST t : typ) => STRING[ASCII];
    CASE t.kind
@@ -191,7 +207,7 @@ ABNORMAL FUNC ctype(CONST t : typ) => STRING[ASCII] IMPORTS ALL;
       WHEN t_void => RETURN "void";
       WHEN t_mbox => RETURN "rt_mbox";
       WHEN t_lock => RETURN "rt_lock";
-      WHEN t_act => RETURN "rt_act";
+      WHEN t_act => RETURN "rt_act *";
       WHEN t_set => RETURN "rset";
       ELSE =>
          IF t.cname = NIL THEN
@@ -208,7 +224,7 @@ ABNORMAL FUNC field_decls(CONST t : typ) => STRING[ASCII] IMPORTS ALL;
    VAR f : field := t.fields;
    VAR s : text := mk(" ");
    WHILE f /= NIL REPEAT
-      s := mk(s.ALL & ctype(f.t) & " " & lower_s(f.name.ALL) & "; ");
+      s := mk(s.ALL & ctype(f.t) & " " & field_c(f.name.ALL) & "; ");
       f := f.next;
    END REPEAT;
    RETURN s.ALL;
@@ -365,6 +381,7 @@ ABNORMAL FUNC resolve_subtype(CONST st : node, OUT c : cons) => typ IMPORTS ALL;
             VAR ic, ic2, ec : cons;
             VAR it : typ := resolve_subtype(st.a, ic);
             VAR et : typ := resolve_subtype(st.b, ec);
+            ic := base_cons(it, ic);
             t := new_typ(t_array);
             t.idx := it;
             t.elem := et;
@@ -373,9 +390,9 @@ ABNORMAL FUNC resolve_subtype(CONST st : node, OUT c : cons) => typ IMPORTS ALL;
             IF ic.lo /= NIL THEN
                c.lo := ic.lo;
                c.hi := ic.hi;
-            ELSEIF it.kind = t_enum THEN
+            ELSEIF base_of(it).kind = t_enum THEN
                c.lo := mk("0");
-               c.hi := mk(itos(list_len(it.lits) - 1));
+               c.hi := mk(itos(list_len(base_of(it).lits) - 1));
             END IF;
             c.lo2 := mk("1");
             c.hi2 := mk("1");
@@ -596,7 +613,9 @@ PROC init_storage(READONLY lval : STRING[ASCII], CONST t : typ, CONST c : cons) 
    ELSEIF t.kind = t_lock THEN
       emit("rt_lock_init(&" & lval & ");");
    ELSEIF t.kind = t_act THEN
-      emit(lval & ".active = 0; " & lval & ".t = NULL; " & lval & ".waiters = NULL;");
+      % an ACT value is shared by assignment and compared by identity (C.10),
+      % so a variable holds a reference to its activation record
+      emit(lval & " = rt_alloc(sizeof(rt_act));");
    ELSEIF t.kind = t_ptr THEN
       % indirect variables start as NIL (4.4.3), at every elaboration
       emit(lval & " = NULL;");
@@ -623,7 +642,7 @@ PROC init_storage(READONLY lval : STRING[ASCII], CONST t : typ, CONST c : cons) 
    ELSEIF t.kind = t_record THEN
       VAR f : field := t.fields;
       WHILE f /= NIL REPEAT
-         init_storage(lval & "." & lower_s(f.name.ALL), f.t, f.c);
+         init_storage(lval & "." & field_c(f.name.ALL), f.t, f.c);
          f := f.next;
       END REPEAT;
    END IF;
@@ -732,8 +751,12 @@ ABNORMAL FUNC eq_code(CONST t : typ, READONLY a : STRING[ASCII], READONLY b : ST
    IF t.kind = t_set THEN
       RETURN "rt_set_eq(" & a & ", " & b & ")";
    END IF;
-   IF t.kind = t_mbox OR t.kind = t_lock OR t.kind = t_act THEN
-      % not comparable (C.10-C.12); only the generated helpers ask
+   IF t.kind = t_act THEN
+      % two ACT values are equal when they are the same activation variable (C.10)
+      RETURN "(" & a & " == " & b & ")";
+   END IF;
+   IF t.kind = t_mbox OR t.kind = t_lock THEN
+      % not comparable (C.11, C.12); only the generated helpers ask
       RETURN "0";
    END IF;
    IF t.kind = t_string THEN
@@ -819,7 +842,7 @@ PROC helper_bodies(CONST t : typ) IMPORTS ALL;
       VAR conds : text := mk("1");
       put(b, "static void as_" & c & "(" & c & " *d, " & c & " s) {");
       WHILE f /= NIL REPEAT
-         CONST fn := lower_s(f.name.ALL);
+         CONST fn := field_c(f.name.ALL);
          put(b, "  " & elem_assign("d->" & fn, f.t, "s." & fn));
          f := f.next;
       END REPEAT;
@@ -828,7 +851,7 @@ PROC helper_bodies(CONST t : typ) IMPORTS ALL;
       put(b, "  " & c & " d = s;");
       f := t.fields;
       WHILE f /= NIL REPEAT
-         CONST fn := lower_s(f.name.ALL);
+         CONST fn := field_c(f.name.ALL);
          put(b, "  d." & fn & " = " & copy_code(f.t, "s." & fn) & ";");
          conds := mk(conds.ALL & " && " & eq_code(f.t, "a." & fn, "b." & fn));
          f := f.next;

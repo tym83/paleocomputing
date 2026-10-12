@@ -228,4 +228,8 @@ rt_int rt_g_col(void);
 void rt_g_abort(rt_act *a);
 int rt_g_aborted(void);
 
+/* GREEN foreign body (RM79 13.9) for the 1979 file-handling problem: copy
+ * N bytes between two addresses in linear memory */
+void rt_g_move_bytes(rt_int from, rt_int to, rt_int n);
+
 #endif

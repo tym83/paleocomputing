@@ -1,0 +1,35 @@
+-- a function in the visible part of a task reads the task's data (RM79 9.1),
+-- as SEARCH_TASK does in GREEN 1979 problem 8
+package Q is
+   task T is
+      function CURRENT return INTEGER;
+      entry SET(V : INTEGER);
+   end T;
+end Q;
+package body Q is
+   task body T is
+      X : INTEGER := 0;
+      function CURRENT return INTEGER is
+      begin
+         return X;
+      end CURRENT;
+   begin
+      loop
+         accept SET(V : INTEGER) do
+            X := V + CURRENT;
+         end SET;
+      end loop;
+   end T;
+begin
+   initiate T;
+end Q;
+restricted(Q, TEXT_IO)
+procedure MAIN is
+   use Q, TEXT_IO;
+begin
+   T.SET(4);
+   T.SET(3);
+   PUT(T.CURRENT);
+   PUT(NEWLINE);
+   abort T;
+end MAIN;

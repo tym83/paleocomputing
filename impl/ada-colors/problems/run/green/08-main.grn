@@ -1,0 +1,73 @@
+
+-- Three user processes sign on by instantiating TASK_PATTERN. SAMPLER runs
+-- at 3 and then every 4 ticks. LOGGER waits until another process schedules
+-- it. OPERATOR schedules LOGGER at 10, suspends itself until 1 (earlier than
+-- every pending request), then at 9 disconnects SAMPLER and makes two wrong
+-- requests, which raise exceptions in the caller.
+restricted(SCHEDULER, TEXT_IO)
+package USERS is
+   task SAMPLER;
+   task LOGGER;
+   task OPERATOR;
+end USERS;
+
+package body USERS is
+   use SCHEDULER, TEXT_IO;
+
+   procedure SAY(WHO : STRING) is
+   begin
+      PUT("tick"); PUT(INTEGER(CLOCK), 3); PUT(": "); PUT(WHO); PUT(NEWLINE);
+   end SAY;
+
+   task body SAMPLER is
+      package P is new TASK_PATTERN("SAMPLER");
+   begin
+      P.EXECUTE(AT_TIME := 3, THEN_EVERY := 4);
+      loop
+         SAY("SAMPLER runs");
+         P.EXECUTE("SAMPLER");
+      end loop;
+   end SAMPLER;
+
+   task body LOGGER is
+      package P is new TASK_PATTERN("LOGGER");
+   begin
+      P.EXECUTE(AT_TIME := 0);
+      SAY("LOGGER runs");
+      P.SIGN_OFF;
+   end LOGGER;
+
+   task body OPERATOR is
+      package P is new TASK_PATTERN("OPERATOR");
+   begin
+      delay 0.1 * SECONDS;
+      P.EXECUTE("LOGGER", AT_TIME := 10);
+      P.EXECUTE(AT_TIME := 1);
+      SAY("OPERATOR runs");
+      P.EXECUTE(AT_TIME := 9);
+      SAY("OPERATOR disconnects SAMPLER");
+      P.DISCONNECT("SAMPLER");
+      begin
+         P.EXECUTE("NOBODY", AT_TIME := 20);
+      exception
+         when INEXISTENT_TASK => SAY("OPERATOR: INEXISTENT_TASK");
+      end;
+      begin
+         P.EXECUTE("LOGGER", AT_TIME := 5);
+      exception
+         when LATE_REQUEST => SAY("OPERATOR: LATE_REQUEST");
+      end;
+   end OPERATOR;
+
+begin
+   initiate SAMPLER, LOGGER, OPERATOR;
+end USERS;
+
+restricted(SCHEDULER, USERS)
+procedure MAIN is
+   use SCHEDULER, USERS;
+begin
+   delay 15.5 * SECONDS;
+   abort SAMPLER, LOGGER, OPERATOR;
+   SHUT_DOWN;
+end MAIN;

@@ -1,0 +1,22 @@
+-- The joysticks, which the problem takes as hardware: SAMPLE gives the four
+-- speed registers of a stick. Until 7 seconds the square's stick is pushed
+-- right at speed 20 and the circle's stick rests; after that both are pushed
+-- right at speed 20.
+package STICKS is
+   procedure SAMPLE(DEV : INTEGER; LEFT, RIGHT, FORWARD, BACK : out INTEGER);
+end STICKS;
+
+package body STICKS is
+   procedure SAMPLE(DEV : INTEGER; LEFT, RIGHT, FORWARD, BACK : out INTEGER) is
+   begin
+      LEFT := 0;
+      FORWARD := 0;
+      BACK := 0;
+      if DEV = 1 or SYSTEM'CLOCK > 7.0 * SECONDS then
+         RIGHT := 20;
+      else
+         RIGHT := 0;
+      end if;
+   end SAMPLE;
+end STICKS;
+

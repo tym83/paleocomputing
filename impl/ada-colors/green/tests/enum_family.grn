@@ -1,0 +1,37 @@
+-- a task family indexed by an enumeration: F'INDEX has the enumeration type;
+-- a use clause in a task's visible part does not make the used declarations
+-- members of the task
+package D is
+   type SHAPE is (SQUARE, CIRCLE);
+   procedure SHOW(S : SHAPE);
+end D;
+restricted(TEXT_IO)
+package body D is
+   use TEXT_IO;
+   procedure SHOW(S : SHAPE) is
+   begin
+      if S = SQUARE then PUT("square "); else PUT("circle "); end if;
+   end SHOW;
+end D;
+restricted(D)
+task F(D.SQUARE .. D.CIRCLE) is
+   use D;
+   entry GO;
+end;
+task body F is
+   use D;
+   ME : constant SHAPE := F'INDEX;
+begin
+   accept GO do
+      SHOW(ME);
+   end GO;
+end F;
+restricted(D, F, TEXT_IO)
+procedure MAIN is
+   use D, TEXT_IO;
+begin
+   initiate F(SQUARE .. CIRCLE);
+   F(CIRCLE).GO;
+   F(SQUARE).GO;
+   PUT(NEWLINE);
+end MAIN;
