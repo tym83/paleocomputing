@@ -53,6 +53,7 @@ typedef struct charon {
     uint64_t drum_transfers;
     FILE *telex;
     int echo_keys;
+    void (*on_char)(int dev, int ch, uint64_t cycles);
     uint64_t clock_next;
 } charon;
 
@@ -118,6 +119,7 @@ void charon_setup(x8 *m, const charon_cfg *cfg)
     c->drum = calloc(DRUM_WORDS, sizeof(word));
     c->telex = stdout;
     c->echo_keys = cfg->echo_keys;
+    c->on_char = cfg->on_char;
     c->d[DEV_READER].type = T_READER;
     c->d[DEV_TELEX].type = T_TELEX;
     c->d[DEV_KEYBOARD].type = T_KEYBOARD;
@@ -255,6 +257,10 @@ static void put_char(charon *c, dev *d, int code, uint64_t t)
 {
     int ch = charon_char(code);
     if (ch < 0) return;
+    if (c->on_char) {
+        c->on_char(d->type == T_TELEX ? DEV_TELEX : DEV_LINEPRINTER, ch, t);
+        return;
+    }
     if (d->type == T_TELEX) {
         if (d->col == 0) {
             fprintf(d->out, "[%8.3f s] ", (double)t / (1000.0 * CYCLES_PER_MS));
@@ -371,6 +377,26 @@ static void key_step(x8 *m, int n)
     unsigned ift = (CNT(ar1) + 1) & 511;
     wr(m, ar(n, 1), MKW(ift, ADR(ar1)));
     if (ift >= 1 && ift <= 255) x8_setq(m, 1, n, 1);
+}
+
+void charon_key_now(x8 *m, int code)
+{
+    dev *d = &C(m)->d[DEV_KEYBOARD];
+    uint64_t t = m->ccs + 100;
+    if (d->nkeys > d->kpos && d->keys[d->nkeys - 1].t + 100 * CYCLES_PER_MS > t)
+        t = d->keys[d->nkeys - 1].t + 100 * CYCLES_PER_MS;   /* ten keys a second */
+    d->keys = realloc(d->keys, sizeof(kev) * (size_t)(d->nkeys + 1));
+    d->keys[d->nkeys].t = t;
+    d->keys[d->nkeys].code = code;
+    d->nkeys++;
+    if (d->t_next == UINT64_MAX) d->t_next = d->keys[d->kpos].t;
+}
+
+void charon_ip_stream(x8 *m, FILE *f)
+{
+    dev *d = &C(m)->d[DEV_IPREADER];
+    if (d->in) fclose(d->in);
+    d->in = f;
 }
 
 /* --- the clock (section 9) ---------------------------------------------- */

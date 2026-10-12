@@ -20,6 +20,9 @@ enum { T_NONE, T_READER, T_TELEX, T_KEYBOARD, T_LINEPRINTER, T_PUNCH, T_DRUM,
 typedef struct charon_cfg {
     const char *reader, *reader2, *ip, *punch, *printer, *telex, *keys;
     int echo_keys;
+    /* if set, the teleprinter and the line printer call this instead of
+     * writing files (the browser build) */
+    void (*on_char)(int dev, int ch, uint64_t cycles);
 } charon_cfg;
 
 void charon_setup(x8 *m, const charon_cfg *cfg);
@@ -32,5 +35,7 @@ int charon_present(x8 *m, int dev);
 int charon_char(int code);        /* our 6-bit code -> ASCII, -1 for none */
 int charon_code(int ch);          /* ASCII -> our 6-bit code, -1 if none */
 uint64_t charon_drum_transfers(x8 *m);
+void charon_key_now(x8 *m, int code);           /* the operator presses a key now */
+void charon_ip_stream(x8 *m, FILE *f);          /* the tape in the IP reader */
 
 #endif

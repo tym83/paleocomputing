@@ -58,7 +58,7 @@ leaves the same integer in G.
 
 ## THE
 
-[`the/the.elan`](impl/x8-the/the/the.elan), about 2300 lines of ELAN, after
+[`the/the.elan`](impl/x8-the/the/the.elan), about 3200 lines of ELAN, after
 EWD 196:
 
 | Level | What | How |
@@ -71,33 +71,69 @@ EWD 196:
 | 5 | the operator | [`the/operator.keys`](impl/x8-the/the/operator.keys) |
 
 The machine starts as the X8 did: LS, then IP, and CHARON reads the tape
-through the IP reader and gives the interrupt. On six core pages the three
-programs need some fifteen segments; the drum does about fifty transfers, and
-the console says:
+through the IP reader and gives the interrupt. On eight core pages the user programs and the Kubernetes store need some
+twenty segments; the drum does about sixty transfers, and the console says:
 
 ```
-[   8.134 s] pm2: how many squares?
-[  12.701 s] pm2 12
-[  13.451 s] pm3: segments written and read twice: 6
-[  17.455 s] pm1: primes below 2048: 309
-[  20.258 s] pm2: squares printed: 12
-[  22.761 s] pm3: errors: 0
-...
-[  90.807 s] drum transfers: 54
-[  92.707 s] segment control buffer, most used: 3 places of 6
+[  11.825 s] pm2: how many squares?
+[  14.127 s] pm2 12
+[  14.886 s] pm3: segments written and read twice: 6
+[  18.924 s] pm2: squares printed: 12
+[  21.429 s] pm1: primes below 2048: 309
+[  24.232 s] pm3: errors: 0
+[  25.735 s] pm2: finished
+[  27.138 s] pm1: finished
+[  28.541 s] pm3: finished
+[  40.901 s] k kill 2
+[  42.978 s] node: not ready, node 2
+[  71.001 s] k scale 5
+[ 110.401 s] end
+[ 110.807 s] drum transfers: 56
+[ 112.707 s] segment control buffer, most used: 3 places of 7
 ```
 
 The whole output, console and line printer, is checked by
 [`tests/the.sh`](impl/x8-the/tests/the.sh) against [`the/the.out`](impl/x8-the/the/the.out).
 
-What the layers buy shows in two experiments (labs 02 and 03). With four core
-pages instead of six, the drum works three times as hard and the results do
+What the layers buy shows in two experiments (labs 02 and 03). With five core
+pages instead of eight, the drum works three times as hard and the results do
 not change: above level 1 nobody knows how much core there is. Let the
 segment controller report each dump through the message interpreter, one
 level up, and the machine waits for ever: the message interpreter needs its
 vocabulary segment, and only the segment controller brings segments. EWD 196
 gives exactly this reason for putting the message interpreter above segment
 control.
+
+## Kubernetes on THE
+
+THE gives a user program three things: semaphores, segments and the console.
+Level 4 now also runs a small Kubernetes control plane built from nothing
+else (in `the/the.elan`, section "level 4: Kube"):
+
+| Program | What it does | What the semaphore world made us build |
+|---|---|---|
+| kapi | the API server: owns the store, one segment, and serves requests one at a time | its request queue is a mailbox made of three semaphores (free places, filled places, a mutex for the writers): what RED had as `MAILBOX` and GREEN as an entry. The answer comes back on the client's private semaphore |
+| ctrl | the replica controller: one more pod per pass while there are too few | no watch: every pass takes a fresh snapshot of the store, a level-triggered loop |
+| schd | the scheduler: a pending pod goes to the ready node with fewer pods | the store is the truth: binding is accepted only for a pod that is still pending, so a scheduler with an old snapshot cannot bind twice |
+| kub1, kub2 | the kubelets: a heartbeat, and bound pods become running | |
+| node | the node lifecycle controller: silent for a second means not ready, and the pods are evicted | time has to come from somewhere: the kernel got its only new service, a delay on the clock (system call 3) |
+| kctl | kubectl: the operator's lines after `k` | the message interpreter is on level 2 and must not call level 4, so it only fills a buffer and does V on kctl's semaphore |
+
+In the standard run the deployment of three pods spreads over both nodes; at
+40 s the operator types `k kill 2` (the machine of node 2 is switched off), two
+seconds later the console says `node: not ready, node 2`, the line printer
+shows `deleted web-2`, `created web-4`, `bound web-4 to node 1`, `running web-4
+on node 1`; `k scale 5` adds two pods. THE in RED and GREEN, with the same
+patterns in the languages of 1979, is in `impl/ada-colors/os/`.
+
+## In the browser
+
+[`web/`](impl/x8-the/web/) is the emulator built with emscripten (the CI job
+rebuilds it with a pinned image and requires it to match the committed one)
+and a page that boots THE from its tape: the console teleprinter, a keyboard
+for the operator, the line printer, and the core table of segment control as
+it changes (which segment is in which page, holiness, the Victim). On the
+series site it is `/x8/`.
 
 ## Labs
 
@@ -106,9 +142,5 @@ measure) and `labs/check.sh`.
 
 ## Next
 
-- The emulator in the browser, with THE booting on a page of the series site.
 - A QEMU machine model of the X8, KubeVirt, and the X8 in the Cozystack catalog,
   like the Oberon machine of the earlier episodes.
-- A Kubernetes control loop as user programs on THE, with nothing but
-  semaphores, segments and the console (THE in RED and GREEN is a separate
-  piece of work, in the RED and GREEN episode).

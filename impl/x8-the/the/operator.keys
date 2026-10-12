@@ -1,5 +1,8 @@
 # What the operator types on the console keyboard: "milliseconds text".
-# pm2 asks how many squares; the operator answers, and at the end asks for
-# the report.
+# pm2 asks how many squares; the operator answers. Then the operator switches
+# off the machine of node 2 (kubectl gets the line: "k kill 2"), later asks
+# for five replicas, and at the end for the report.
 12000 pm2 12\n
-90000 end\n
+40000 k kill 2\n
+70000 k scale 5\n
+110000 end\n

@@ -1,17 +1,30 @@
 == console teleprinter
-[   8.134 s] pm2: how many squares?
-[  12.701 s] pm2 12
-[  13.451 s] pm3: segments written and read twice: 6
-[  17.455 s] pm1: primes below 2048: 309
-[  20.258 s] pm2: squares printed: 12
-[  22.761 s] pm3: errors: 0
-[  24.264 s] pm1: finished
-[  25.667 s] pm2: finished
-[  27.070 s] pm3: finished
-[  90.401 s] end
-[  90.807 s] drum transfers: 54
-[  92.707 s] segment control buffer, most used: 3 places of 6
+[  11.825 s] pm2: how many squares?
+[  14.127 s] pm2 12
+[  14.886 s] pm3: segments written and read twice: 6
+[  18.924 s] pm2: squares printed: 12
+[  21.429 s] pm1: primes below 2048: 309
+[  24.232 s] pm3: errors: 0
+[  25.735 s] pm2: finished
+[  27.138 s] pm1: finished
+[  28.541 s] pm3: finished
+[  40.901 s] k kill 2
+[  42.978 s] node: not ready, node 2
+[  71.001 s] k scale 5
+[ 110.401 s] end
+[ 110.807 s] drum transfers: 56
+[ 112.707 s] segment control buffer, most used: 3 places of 7
 == line printer
+-- kapi
+deployment web, replicas: 3
+created web-1
+bound web-1 to node 1
+running web-1 on node 1
+created web-2
+bound web-2 to node 2
+running web-2 on node 2
+created web-3
+bound web-3 to node 1
 -- pm1
 2 3 5 7 11 13 17 19 23 29
 31 37 41 43 47 53 59 61 67 71
@@ -24,7 +37,6 @@
 419 421 431 433 439 443 449 457 461 463
 467 479 487 491 499 503 509 521 523 541
 547 557 563 569 571 577 587 593 599 601
--- pm1
 607 613 617 619 631 641 643 647 653 659
 661 673 677 683 691 701 709 719 727 733
 739 743 751 757 761 769 773 787 797 809
@@ -35,7 +47,6 @@
 1087 1091 1093 1097 1103 1109 1117 1123 1129 1151
 1153 1163 1171 1181 1187 1193 1201 1213 1217 1223
 1229 1231 1237 1249 1259 1277 1279 1283 1289 1291
--- pm1
 1297 1301 1303 1307 1319 1321 1327 1361 1367 1373
 1381 1399 1409 1423 1427 1429 1433 1439 1447 1451
 1453 1459 1471 1481 1483 1487 1489 1493 1499 1511
@@ -45,8 +56,6 @@
 1741 1747 1753 1759 1777 1783 1787 1789 1801 1811
 1823 1831 1847 1861 1867 1871 1873 1877 1879 1889
 1901 1907 1913 1931 1933 1949 1951 1973 1979 1987
--- pm1
-1993 1997 1999 2003 2011 2017 2027 2029 2039 
 -- pm2
 1 1
 2 4
@@ -60,3 +69,19 @@
 10 100
 11 121
 12 144
+-- pm1
+1993 1997 1999 2003 2011 2017 2027 2029 2039 
+-- kapi
+running web-3 on node 1
+node 2 not ready
+deleted web-2
+created web-4
+bound web-4 to node 1
+running web-4 on node 1
+scaled to 5
+created web-5
+bound web-5 to node 1
+created web-6
+running web-5 on node 1
+bound web-6 to node 1
+running web-6 on node 1

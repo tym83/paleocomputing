@@ -81,34 +81,63 @@ There are three users. pm1 is the sieve of Eratosthenes over 2048 numbers spread
 The machine starts the way the X8 did: the LS button, then IP, and CHARON reads the system tape through the IP reader and gives the interrupt. Then the console speaks:
 
 ```
-[   8.134 s] pm2: how many squares?
-[  12.701 s] pm2 12
-[  13.451 s] pm3: segments written and read twice: 6
-[  17.455 s] pm1: primes below 2048: 309
-[  20.258 s] pm2: squares printed: 12
-[  22.761 s] pm3: errors: 0
-[  24.264 s] pm1: finished
-[  25.667 s] pm2: finished
-[  27.070 s] pm3: finished
-[  90.401 s] end
-[  90.807 s] drum transfers: 54
-[  92.707 s] segment control buffer, most used: 3 places of 6
+[  11.825 s] pm2: how many squares?
+[  14.127 s] pm2 12
+[  14.886 s] pm3: segments written and read twice: 6
+[  18.924 s] pm2: squares printed: 12
+[  21.429 s] pm1: primes below 2048: 309
+[  24.232 s] pm3: errors: 0
+[  25.735 s] pm2: finished
+[  27.138 s] pm1: finished
+[  28.541 s] pm3: finished
+[  40.901 s] k kill 2
+[  42.978 s] node: not ready, node 2
+[  71.001 s] k scale 5
+[ 110.401 s] end
+[ 110.807 s] drum transfers: 56
+[ 112.707 s] segment control buffer, most used: 3 places of 7
 ```
 
-There really are 309 primes below 2048. The three programs need about fifteen segments and there are six pages, so the drum makes fifty-four transfers in a run without spoiling a single word. On the line printer the primes come out in four pieces, as pm1 fills and hands over segments, followed by pm2's table of squares. pm3 prints nothing; it only reports on the console.
+There really are 309 primes below 2048. The user programs and the Kubernetes store need about twenty segments and there are eight pages, so the drum makes some fifty transfers in a run without spoiling a single word. On the line printer the primes come out in four pieces, as pm1 fills and hands over segments, followed by pm2's table of squares. pm3 prints nothing; it only reports on the console.
 # Experiments on the levels
 
 This is what it was all for. Dijkstra's paper persuades with words; now the system can be poked, and one can watch what happens.
 
-The first experiment is to give segment control less core. With six pages the drum makes 54 transfers, with five 128, with four 151. The programs' output doesn't change by a single character: the same 309 primes, the same twelve squares, no errors from pm3. The programs simply don't know how much core the machine has. Above level 1, as Dijkstra puts it, core pages and drum pages "have lost their identity".
+The first experiment is to give segment control less core. With eight pages the drum makes 56 transfers, with five 202. The programs' output doesn't change by a single character: the same 309 primes, the same twelve squares, no errors from pm3, the same Kubernetes log. The programs simply don't know how much core the machine has. Above level 1, as Dijkstra puts it, core pages and drum pages "have lost their identity".
 
-With three pages the system dies with "crash 1": every page except the Victim is holy at the same moment, and there is nothing to choose a new Victim from. EWD 113 forbids choosing a holy page and leaves it there: Dijkstra had enough pages for the question not to arise. I have five processes, each may hold a holy page, and only two pages are left to choose from. The holiness rule does its job honestly and runs into arithmetic.
+With four pages the system dies with "crash 1": every page except the Victim is holy at the same moment, and there is nothing to choose a new Victim from. EWD 113 forbids choosing a holy page and leaves it there: Dijkstra had enough pages for the question not to arise. I have six processes that ask for segments, each may hold a holy page, and only three pages are left to choose from. The holiness rule does its job honestly and runs into arithmetic.
 
 The second experiment is to break a level. Let the segment controller, a level 1 process, tell the operator about every page it dumps onto the drum. To do that it has to ask the message interpreter, which is one level up. The machine reaches the first dump and stops for ever. The message interpreter needs its vocabulary segment, the segment is on the drum, and the interpreter sends a message to the segment controller. The segment controller, meanwhile, waits for the interpreter to print its message. The clock ticks, the machine hears interrupts, and no process can take a step. In EWD 196 Dijkstra explains why the message interpreter is above segment control rather than beside it: otherwise its vocabulary would have to stay in core permanently. His argument is about memory; for me the same choice became a hang. A level 1 process cannot wait for a level 2 process that itself depends on level 1, and the hierarchy of levels is exactly the ban on such a loop.
 
 The third experiment is to change the time slice of the user programs from fifty milliseconds to ten, or to half a second. The output doesn't change by a character, and that is expected: Dijkstra's sequential processes make no assumptions about each other's speed, synchronisation is explicit, and correctness doesn't depend on the schedule. What is unexpected is that the times don't change either. The programs finish within a millisecond of the earlier run, because they spend nearly all their time waiting for the drum and the console, not for the processor. Dijkstra writes that one of the group's minor mistakes was "paying too much attention to speeding up what was not the real bottle neck". The time slice is just such a place.
 
 The fourth observation I didn't plan. Dijkstra writes that a segment controller buffer of N + 1 messages always suffices for N programs, and calls the condition absolutely necessary. I have N = 5 and six places, and the most I have seen in use is three. That is no refutation: N + 1 is a worst-case guarantee, for when every program is queued while one message still has a dump in progress. My load never gets there. But watching a guarantee that was never needed is instructive in its own way: Dijkstra computed it not for a typical day but for all of them.
+# Kubernetes in a world of semaphores
+
+In earlier parts of the series a Kubernetes control plane already ran on the Oberon machine, and then in RED and GREEN. Here I wanted to see what is left of it when a program has nothing but what THE gave user programs in 1968: semaphores, segments and the console.
+
+The first thing missing is a place for the objects. THE had no common database; Dijkstra says so plainly: users share only the machine and the library. So the store is a segment, owned by one program, the API server. The others send it requests. And then it turns out there is no request queue either. In RED it would be a mailbox, in GREEN a task entry. Here it has to be built from three semaphores: one counts the free places, one the filled ones, and the third keeps two clients from writing into the same place. It is the bounded buffer Dijkstra used to explain semaphores in EWD 123, only now the Kubernetes API rests on it.
+
+The second thing missing is time. The node controller has to notice that a node has been silent for more than a second, and a THE user program has no way to wait. The kernel got exactly one new service, a delay on the clock: a process says "wake me after so many ticks" and goes to sleep, and the clock interrupt wakes it on time.
+
+The third is watching for changes. I did not build it, and that turned out right: every controller takes a fresh snapshot of the store on every pass and compares what exists with what is wanted. That is how Kubernetes works at heart, by level, not by event, and in a world of semaphores it is the most natural way.
+
+The last lesson is about levels. The operator types `k kill 2` on the console, but the message interpreter lives on level 2 and may not call a level 4 program. So it only puts the line into a buffer and does V on the semaphore kubectl, a user program, waits on. The same hierarchy that forbids the segment controller to wait for the interpreter decides here how the operator's command reaches Kubernetes.
+
+In the standard run three pods spread over two nodes. At forty seconds the operator switches off node 2, two seconds later the console says `node: not ready, node 2`, and the API server's log on the line printer shows the rest:
+
+```
+node 2 not ready
+deleted web-2
+created web-4
+bound web-4 to node 1
+running web-4 on node 1
+scaled to 5
+created web-5
+...
+```
+
+All of this shares eight core pages with the sieve of Eratosthenes and a program that drives segments through the drum, and Kubernetes knows nothing about it: the store is just one more segment that now and then goes to the drum.
 # How to try it
 
 All you need is a C compiler and Python:
@@ -126,7 +155,7 @@ The test program is fetched from Dick Grune's page and isn't in the repository: 
 
 There are six labs, checked by `labs/check.sh`. They include the experiments of the previous chapter: fewer core pages, a broken level, another time slice. There is also an operator answering with another number, and a run of the X8 test program. Time in the emulator is virtual, so your output can be compared with anyone else's character by character, down to the milliseconds in the console stamps.
 
-None of this runs in the browser yet, and there is no X8 machine in Kubernetes yet either. Both will come, as with the Oberon machine in earlier parts of the series: the emulator is written in C and builds for WebAssembly without changes.
+In the browser all of this runs on the series page: [tym83.github.io/paleocomputing/x8/](https://tym83.github.io/paleocomputing/x8/). It is the same emulator, built for WebAssembly, and you are the operator at the console.
 # What I took from it
 
 First, how well Dijkstra wrote. Reports sixty years old about a machine that no longer exists turned out to be enough to build a working system from. In places they are nearly a specification: EWD 113 lists the bits of a segment variable, and EWD 149 warns about a race with the I/O processor that a programmer is bound to fall into. Where Dijkstra describes in words, the words are precise, and one can hold on to them.

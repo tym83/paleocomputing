@@ -38,6 +38,8 @@ copy_tree site "$out" '^oberon/'
 cp site/oberon/index.html "$out/oberon/index.html"
 copy_tree impl/web "$out/oberon" "$DEV|^index\.html$"
 cp impl/web/index.html "$out/oberon/run.html"
+# The X8 and THE (episode 18): the page and the machine built for the browser.
+copy_tree impl/x8-the/web "$out/x8" '(^|/)build\.sh$'
 
 # Required contents. An empty file counts as missing too: the built wasm can
 # come out zero-sized, and once it already did.
@@ -51,6 +53,7 @@ need="index.html style.css ru/index.html ru/oberon/index.html cozystack/index.ht
       oberon/prom_sd.mem oberon/embed.js oberon/worker.js oberon/worker-core.js
       oberon/kube.html oberon/kube-air.js oberon/oberon-kube.dsk.gz
       oberon/book/index.html oberon/book/en/index.html
+      x8/index.html x8/x8page.js x8/x8.js x8/x8.wasm x8/the.tape x8/the.json
       red/index.html red/app.js red/paleo.js red/run.js red/thread.js red/clang-worker.js
       red/flags.js red/pack.js red/examples.js red/coi-serviceworker.js
       red/redc.wasm red/greenc.wasm red/toolchain.bin"
