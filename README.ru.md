@@ -52,7 +52,8 @@ make check    # около восьми минут
 | `impl/docs/FINDING-*.md` | 85 находок: что измерено, что нашлось, что оказалось не так |
 | `impl/README.md` | устройство измерительной оснастки, цели Makefile, что чьё |
 | `16-episode-kube-radio.ru.md` | выпуск: узлы Kube — машины Оберона, связанные радио Вирта; выкатки, восстановление после аварий, OberonKube в Cozystack и лаборатория с кластером в браузере ([English](16-episode-kube-radio.md)) |
-| `17-episode-red-green.ru.md` | последний выпуск: RED и GREEN, два финалиста конкурса DoD-1 1979 года, собранные по документам; у каждого компилятор на нём самом, ядро в стиле NonStop и цикл Kubernetes на RED, Kubernetes на GREEN, лабораторные, сравнение с Адой 83 ([English](17-episode-red-green.md)) |
+| `17-episode-red-green.ru.md` | выпуск: RED и GREEN, два финалиста конкурса DoD-1 1979 года, собранные по документам; у каждого компилятор на нём самом, ядро в стиле NonStop и цикл Kubernetes на RED, Kubernetes на GREEN, лабораторные, сравнение с Адой 83 ([English](17-episode-red-green.md)) |
+| `18-episode-x8-the.ru.md` | последний выпуск: Electrologica X8, собранная по симулятору Математического центра 1971 года и EWD 149, и THE Дейкстры, заново написанная в машинном коде X8 по его статьям; тестовая программа X8 1971 года, лабораторные ([English](18-episode-x8-the.md)) |
 | `15-episode-kube.ru.md` | Kube, управляющий слой Kubernetes на Обероне, который работает внутри машины Оберон ([English](15-episode-kube.md)) |
 | `impl/kube/` | код Kube и как его запустить |
 | `marketplace/` | подключаемый каталог для Cozystack: те же машины как приложения |

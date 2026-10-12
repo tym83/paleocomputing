@@ -1,0 +1,2290 @@
+"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+" THE: the multiprogramming system of the Technische Hogeschool Eindhoven
+" (E.W. Dijkstra and others, 1965-68), reconstructed in X8 machine code from
+" Dijkstra's own descriptions: EWD 196 (the structure, CACM 1968), EWD 113
+" (segment control), EWD 126 (the processes), EWD 118 (buffering), EWD 123
+" (semaphores) and EWD 149 (the communication equipment). The original
+" program text is not known to survive; this is not it.
+"
+" The levels of EWD 196:
+"   0  processor allocation, semaphores, the clock          (the kernel)
+"   1  the segment controller, in step with the drum        (segment control)
+"   2  the message interpreter, owner of the console         (mi)
+"   3  buffering of output streams: the line printer         (lp)
+"   4  the user programs                                     (pm1, pm2, pm3)
+"   5  the operator                                          (the keys file)
+" A process of level n uses only what is on the levels below n.
+"
+" Conventions. A process runs hearing (IV = 1); the kernel and the sections
+" that must not be interrupted run deaf. A system call is the hardware
+" semaphore of device 36, whose IF the program can set (EWD 57: the IF as a
+" semaphore): A holds the operation (1 = P, 2 = V), S the semaphore, and
+" ifon(36) makes the interrupt. Subroutines are called with subc, B being the
+" stack pointer, and return with gotor(mc[-1]), which gives back IV and C as
+" they were at the call: a deaf section in a subroutine ends with its return.
+"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+
+'begin' telex = 1, kbd = 2, lpdev = 11, drum = 27, sysdev = 36, tooth = 38, clock = 39,
+    pcbsize = 48, nprocs = 6,
+    ncp = 6,                " core pages for segments
+    nscb = 6,               " segment control buffer: N + 1 places, N = 5 askers
+    slice = 5,              " time slice of the user programs, in clock ticks of 10 ms
+    cpbase = 16384,         " the first core page
+    ntsv = 8,               " segment variables of the transput area
+    layerbreak = 0,         " 1: the segment controller reports every dump through
+                            " the message interpreter, a level above it (lab 3)
+    ch = m[24],             " the interrupt instruction (EWD 149, 2)
+    tar0 = m[68], tar1 = m[69], tar2 = m[70],              " telex
+    kar0 = m[72], kar1 = m[73],                            " keyboard
+    lar0 = m[108], lar1 = m[109], lar2 = m[110],           " line printer
+    dar0 = m[172], dar1 = m[173], dar2 = m[174],           " drum
+    oar0 = m[216],                                         " tooth brush
+    car0 = m[220], car1 = m[221], car2 = m[222],           " clock
+
+    boot, int, intloop, sched, resume, idle, kp, kv, ready, crash, crashmsg,
+    drumint, telint, lpint, kbint, clkint, sysint,
+    cur, rq, resched, curblocked, sva, svs, svb, svd, kstack, ndrum,
+    sysp, sysv,
+    ask, askin, askready, askempty, askdrum, askcoming, askwait, profane, kill,
+    movesv, take, uncouple, designate, dump, newmsg, post, chain, zpage, selcand,
+    dalloc, dfree, victim, freecp, interest, lastdp, dpt, cttab, scb, scbw, scbr,
+    scbuse, scbmax, vw, msg, sc, scs, drumsem,
+    mi, mis, kbring, kbr, kbw, mreq, mrr, mrw, conv, line, linelen, out, outlen,
+    tlock, tnext, tcode, telsem, mprint, mtext, mnum, mname, mchar, mline, mreport,
+    lp, lpq, lpsem, tfree, tsv, towner, tq, tqr, tqw, llock, lnext, lcode,
+    opening, putc, putn, closeout, finish, dead, nfin,
+    pm1, pm2, pm3, pcbs, stacks, vocsv, voc, vocend, vidx, names,
+    d18, d19, d20, d25, mask18, mask20, mask25, holyu, freepat, dirw, idlelink,
+    stoplink, intinstr, tkbd, tclk, minus1, boottab
+
+"""""""""""""""""""""""""""""""""" level 0 """"""""""""""""""""""""""""""""""
+
+ch[0]:
+  goto(:boot)           " after the prille begin; boot puts sub(:int) here
+
+m[512]:
+
+" ---------------------------------------------------------------- the kernel
+" Entered by the interrupt (EWD 149, 2): the instruction at 24 is executed in
+" place of the next one, and afterwards the machine is deaf. sub(:int) leaves
+" the link of the interrupted process in link0. The registers of the process
+" go into its block: A S B D F T, the count registers and links 1..4.
+
+int:
+  sva = a
+  svs = s
+  svb = b
+  a = d
+  svd = a
+  a = cur, z
+y,goto(:intloop)        " the machine was idle: nothing to save
+  d = a
+  a = sva
+  md[0] = a
+  a = svs
+  md[1] = a
+  a = svb
+  md[2] = a
+  a = svd
+  md[3] = a
+  md[4] = f
+  a = link
+  md[6] = a
+  a = count0
+  md[7] = a
+  a = count1
+  md[8] = a
+  a = count2
+  md[9] = a
+  a = count3
+  md[10] = a
+  a = count4
+  md[11] = a
+  a = count5
+  md[12] = a
+  a = count6
+  md[13] = a
+  a = count7
+  md[14] = a
+  a = link1
+  md[15] = a
+  a = link2
+  md[16] = a
+  a = link3
+  md[17] = a
+  a = link4
+  md[18] = a
+
+" which devices ask for attention (IF and LVIF, EWD 149, 1.1)
+intloop:
+  b = :kstack
+  lvifa(0)
+  ifac(0)
+  lvifs(1)
+  ifsc(1)
+u,s '*' b27, z         " drum: device 27, bit 16 of word 1
+n,goto(:drumint)
+u,a '*' b36, z         " the system call: device 36
+n,goto(:sysint)
+u,a '*' b2, z          " keyboard: device 2
+n,goto(:kbint)
+u,a '*' b1, z          " telex: device 1
+n,goto(:telint)
+u,a '*' '100', z        " line printer: device 11
+n,goto(:lpint)
+  s = b39
+u,a '*' s, z            " clock: device 39
+n,goto(:clkint)
+  goto(:sched)
+
+" A start order is complete (EWD 149, 4.3.2): IF := false; IFT := IFT - 1,
+" with an additive instruction because CHARON may add at the same time; IF :=
+" true again if IFT > 0. Then V on the semaphore of the device.
+drumint:
+  ifoff(drum)
+  a = d18
+  dar1 - a
+  s = dar1, p
+n,goto(:drumint1)
+  rus(18), z
+n,ifon(drum)
+drumint1:
+  a = ndrum
+  a + 1
+  ndrum = a
+  s = :drumsem
+  subc(:kv)
+  goto(:intloop)
+
+telint:
+  ifoff(telex)
+  a = d18
+  tar1 - a
+  s = tar1, p
+n,goto(:telint1)
+  rus(18), z
+n,ifon(telex)
+telint1:
+  s = :telsem
+  subc(:kv)
+  goto(:intloop)
+
+lpint:
+  ifoff(lpdev)
+  a = d18
+  lar1 - a
+  s = lar1, p
+n,goto(:lpint1)
+  rus(18), z
+n,ifon(lpdev)
+lpint1:
+  s = :lpsem
+  subc(:kv)
+  goto(:intloop)
+
+" a key (EWD 149, 5): the character is in AR0; AF true again lets the next one
+" come there. The character goes into a ring for the message interpreter.
+kbint:
+  ifoff(kbd)
+  a = d18
+  kar1 - a
+  a = kar0, p
+n,goto(:kbint1)         " negative: characters came too fast and were lost
+  a = kbw
+  a + :kbring
+  d = a
+  a = kar0
+  md = a
+  a = kbw
+  a + 1
+  a '*' 15
+  kbw = a
+  s = :mis
+  subc(:kv)
+kbint1:
+  a = minus1
+  kar0 = a
+  afon(kbd)
+  goto(:intloop)
+
+" the cooking clock (EWD 149, 9.2) ends a time slice
+clkint:
+  ifoff(clock)
+  a = slice
+  car1 = a
+  a = 1
+  resched = a
+  goto(:intloop)
+
+" a system call: the operation is in the saved A, the semaphore in the saved S
+sysint:
+  ifoff(sysdev)
+  a = cur
+  d = a
+  s = md[1]
+  a = md[0]
+u,a - 1, z
+y,goto(:sysint1)
+  subc(:kv)
+  goto(:intloop)
+sysint1:
+  subc(:kp)
+  goto(:intloop)
+
+" P (EWD 123): the count goes down; below zero the process waits in the queue
+" of the semaphore. S points to the semaphore: count, first waiting process.
+kp:
+  a = ms
+  a - 1, z
+y,a = 0                 " (the X8 adder would give -0)
+  ms = a, p
+y,gotor(mc[-1])
+  a = cur
+  g = a
+  a = 0
+  mg[30] = a            " next := none
+  a = s
+  mg[36] = a            " the semaphore it waits on
+  a = 1
+  curblocked = a
+  a = ms[1], z
+y,goto(:kp2)
+kp1:
+  g = a
+  a = mg[30], z
+n,goto(:kp1)
+  a = cur
+  mg[30] = a
+  gotor(mc[-1])
+kp2:
+  a = cur
+  ms[1] = a
+  gotor(mc[-1])
+
+" V: the count goes up; if it was below zero the first waiting process is
+" ready again, and if it matters more than the running one, it will run
+kv:
+  a = ms, p
+n,goto(:kv1)
+  a + 1
+  ms = a
+  gotor(mc[-1])
+kv1:
+  a + 1, z
+y,a = 0
+  ms = a
+  a = ms[1]
+  g = a
+  a = mg[30]
+  ms[1] = a
+  a = 0
+  mg[36] = a
+  subc(:ready)
+  a = cur, z
+y,goto(:kv2)
+  d = a
+  a = mg[31]
+  a - md[31], z
+y,gotor(mc[-1])
+u,a = a, p
+n,goto(:kv2)
+  gotor(mc[-1])
+kv2:
+  a = 1
+  resched = a
+  gotor(mc[-1])
+
+" ready: the process block in G joins the ready queue behind the blocks of
+" the same or a higher priority (a smaller number)
+ready:
+  a = 0
+  mg[30] = a
+  a = rq, z
+y,goto(:ready9)
+  d = a
+  a = md[31]
+  a - mg[31], z
+y,goto(:ready1)
+u,a = a, p
+n,goto(:ready1)
+  goto(:ready9)         " the first one matters less: G goes in front
+ready1:
+  s = d                 " s: the block after which G may go
+  a = md[30], z
+y,goto(:ready2)
+  d = a
+  a = md[31]
+  a - mg[31], z
+y,goto(:ready1)
+u,a = a, p
+n,goto(:ready1)
+ready2:
+  a = ms[30]
+  mg[30] = a
+  a = g
+  ms[30] = a
+  gotor(mc[-1])
+ready9:
+  a = rq
+  mg[30] = a
+  a = g
+  rq = a
+  gotor(mc[-1])
+
+" the scheduler: the running process goes on unless it waits, a process of a
+" higher priority is ready, or its time slice is over while another user
+" program waits
+sched:
+  a = curblocked, z
+n,goto(:sched2)
+  a = cur, z
+y,goto(:sched2)
+  a = rq, z
+y,goto(:resume)
+  d = a
+  s = cur
+  a = md[31]
+  a - ms[31], z
+y,goto(:sched1)
+u,a = a, p
+n,goto(:sched3)
+  goto(:resume)
+sched1:
+  a = resched, z
+y,goto(:resume)
+sched3:
+  a = cur
+  g = a
+  subc(:ready)
+sched2:
+  a = 0
+  curblocked = a
+  a = rq, z
+y,goto(:idle)
+  cur = a
+  g = a
+  a = mg[30]
+  rq = a
+resume:
+  a = 0
+  resched = a
+  a = cur
+  d = a
+  f = md[4]
+  a = md[6]
+  link = a
+  a = md[7]
+  count0 = a
+  a = md[8]
+  count1 = a
+  a = md[9]
+  count2 = a
+  a = md[10]
+  count3 = a
+  a = md[11]
+  count4 = a
+  a = md[12]
+  count5 = a
+  a = md[13]
+  count6 = a
+  a = md[14]
+  count7 = a
+  a = md[15]
+  link1 = a
+  a = md[16]
+  link2 = a
+  a = md[17]
+  link3 = a
+  a = md[18]
+  link4 = a
+  s = md[1]
+  b = md[2]
+  a = md[0]
+  sva = a
+  a = md[3]
+  d = a
+  a = sva
+  gotor(link)           " IV comes back from the link: the process hears
+
+" nobody can go on: the dynamic stop, hearing, until the next interrupt
+idle:
+  a = 0
+  cur = a
+  a = 0
+  resched = a
+  gotor(idlelink)
+
+" crash(A = a digit): print "crash n" and stop deaf: the machine halts
+crash:
+  ivoff
+  crashmsg[6] = a
+  a = crashcode
+  tcode = a
+  a = d18
+  tar2 = a
+  afon(telex)
+crash1:
+  ifa(0)
+  a '*' b1, z
+y,goto(:crash1)
+  gotor(stoplink)
+
+" --------------------------------------------- system calls, used hearing
+sysp:                   " P(S)
+  a = 1
+  ifon(sysdev)
+  gotor(mc[-1])
+sysv:                   " V(S)
+  a = 2
+  ifon(sysdev)
+  gotor(mc[-1])
+
+"""""""""""""""""""""""""""""""""" level 1 """"""""""""""""""""""""""""""""""
+" Segment control after EWD 113. A segment variable (SV) is one word:
+"   -0                      the segment is empty
+"   d26 = 1, d25 = 0, DPB   it is on the drum page that starts at DPB
+"   :CTE                    it is in the core page of that core table entry
+"   -:CTE                   it is coming into that page
+" A core table entry (CTE) is four words: the address of the SV; the drum page
+" when the segment in core is a copy, -0 when it is the original; the core
+" page base; d25 designated, d24..d20 the holiness counter, d19..d0 the
+" interest. A free page and the Victim have 0 377 777 777 in the last word.
+" The transitions are made by the program that needs or kills a segment, deaf;
+" only Designated -> Occupied is left to the segment controller, which follows
+" the messages in order and the drum interrupts.
+
+" ask(S = :SV, A = 1 to write): A := the base of a core page that holds the
+" segment; the segment is holy until profane. Local words on the stack:
+" m[b - 3] the SV, m[b - 2] write, m[b - 1] spare.
+ask:
+  ivoff
+  b + 3
+  m[b - 3] = s
+  m[b - 2] = a
+  a = interest
+  a + 1
+  a '*' mask20
+  interest = a
+  a = ms, p
+n,goto(:askempty)
+" in core: one holiness more, a new interest
+askin:
+  d = a
+  a = md[3]
+  a + holyu
+askin1:
+  a '*' keephi          " keep designated and holiness
+  a + interest
+  md[3] = a
+askready:
+  a = m[b - 2], z
+y,goto(:askin2)
+  a = md[1], z          " written to: a copy becomes the original
+y,goto(:askin2)
+  s = md[1]
+  subc(:dfree)
+  a = -0
+  md[1] = a
+askin2:
+  a = md[2]
+  b - 3
+  gotor(mc[-1])
+
+askempty:
+  a = ms, z
+y,goto(:askempty1)
+u,a '*' d25, z
+n,goto(:askcoming)
+  goto(:askdrum)
+askempty1:
+" empty: a free page if there is one ...
+  a = freecp, z
+y,goto(:askempty2)
+  d = a
+  a = md[0]
+  freecp = a
+  subc(:take)
+  a = d
+  goto(:askin)
+askempty2:
+" ... else the choice of the new Victim comes first: a copy is handed over at
+" once, an original becomes the Victim and the old Victim comes in due time
+  subc(:selcand)
+  d = a
+  a = md[1], z
+y,goto(:askempty3)
+  subc(:uncouple)
+  subc(:take)
+  a = d
+  goto(:askin)
+askempty3:
+  a = d
+  sva = a               " the original that will be dumped
+  subc(:newmsg)
+  a = victim
+  d = a
+  subc(:designate)
+  a = 2                 " first half: zeros
+  mbuf[1] = a
+  a = sva
+  d = a
+  subc(:dump)
+  goto(:askwait)
+
+" on the drum: into the Victim, then a new Victim
+askdrum:
+  s = m[b - 3]
+  a = ms
+  a '*' mask25
+  sva = a               " the drum page, before the SV says coming
+  subc(:newmsg)
+  a = victim
+  d = a
+  subc(:designate)
+  a = sva
+  md[1] = a             " it will be a copy of that drum page
+  mbuf[7] = a            " start order 1: from the drum ...
+  a = md[2]
+  a - 1
+  mbuf[6] = a            " ... 512 words into the core page
+  a = 1
+  mbuf[1] = a            " first half: a drum transfer
+  a = freecp, z
+y,goto(:askdrum1)
+  d = a                 " the new Victim: a free page
+  a = md[0]
+  freecp = a
+  a = d
+  victim = a
+  goto(:askwait)
+askdrum1:
+  subc(:selcand)
+  d = a
+  a = md[1], z
+y,goto(:askdrum2)
+  subc(:uncouple)       " a copy: the drum has it already
+  a = d
+  victim = a
+  a = -0
+  md[1] = a
+  a = freepat
+  md[3] = a
+  goto(:askwait)
+askdrum2:
+  subc(:dump)
+  goto(:askwait)
+
+" coming: another program asked first; wait behind its message
+askcoming:
+  a = -a
+  d = a
+  a = md[3]
+  a + holyu
+  md[3] = a
+  subc(:newmsg)
+  a = d
+  mbuf[2] = a
+  a = 0
+  mbuf[1] = a
+
+" give the message, V(SCS), and wait on the private semaphore
+askwait:
+  subc(:post)
+  ivon
+  s = :scs
+  subc(:sysv)
+  a = cur
+  a + 32
+  s = a
+  subc(:sysp)
+  ivoff
+  s = m[b - 3]
+  a = ms
+  d = a
+  a = md[3]             " holy already: only the interest
+  goto(:askin1)
+
+" profane(S = :SV): one holiness less
+profane:
+  ivoff
+  a = ms
+  d = a
+  a = md[3]
+  a - holyu
+  md[3] = a
+  gotor(mc[-1])
+
+" kill(S = :SV): the segment ceases to exist (not while it is coming)
+kill:
+  ivoff
+  b + 1
+  m[b - 1] = s
+  a = ms, p
+n,goto(:kill2)
+  d = a                 " in core: the page is free again
+  a = md[1], z
+y,goto(:kill1)
+  s = md[1]
+  subc(:dfree)
+kill1:
+  a = freecp
+  md[0] = a
+  a = -0
+  md[1] = a
+  a = freepat
+  md[3] = a
+  a = d
+  freecp = a
+  goto(:kill3)
+kill2:
+  a = ms, z
+y,goto(:kill3)          " empty
+  s = ms
+  s '*' mask25
+  subc(:dfree)          " on the drum
+kill3:
+  s = m[b - 1]
+  a = -0
+  ms = a
+  b - 1
+  gotor(mc[-1])
+
+" movesv(S = from, A = to): move a segment variable (EWD 118: chaining moves
+" the SV, not the information); the core table entry follows it
+movesv:
+  ivoff
+  g = a
+  a = ms
+  mg = a
+  a = -0
+  ms = a
+  a = mg, p
+y,goto(:movesv1)        " in core
+  a = mg, z
+y,gotor(mc[-1])         " empty
+u,a '*' d25, z
+y,gotor(mc[-1])         " on the drum
+  a = -a                " coming
+movesv1:
+  d = a
+  a = g
+  md[0] = a
+  gotor(mc[-1])
+
+" take: the page of the CTE in D becomes the original of the SV of ask,
+" not yet holy, filled with zeros
+take:
+  a = m[b - 4]
+  md[0] = a
+  s = a
+  a = d
+  ms = a
+  a = -0
+  md[1] = a
+  a = 0
+  md[3] = a
+  s = md[2]
+  subc(:zpage)
+  gotor(mc[-1])
+
+" uncouple: the copy in the page of D lives on in its drum page
+uncouple:
+  a = md[0]
+  g = a
+  a = md[1]
+  a '+' sgn
+  mg = a
+  gotor(mc[-1])
+
+" designate: the page of D will hold the SV of ask, holy once
+designate:
+  a = m[b - 4]
+  md[0] = a
+  g = a
+  a = d
+  mbuf[2] = a
+  a = -a
+  mg = a                " the SV: coming
+  a = -0
+  md[1] = a
+  a = holyu
+  a + d25
+  a + interest
+  md[3] = a
+  gotor(mc[-1])
+
+" dump: the original in the page of D goes to a free drum page in the second
+" half of the message; its SV says drum at once (EWD 113, remark); the page
+" becomes the new Victim
+dump:
+  subc(:dalloc)         " a := the base of a free drum page
+  s = a
+  s '+' sgn
+  a '+' dirw
+  mbuf[11] = a           " start order 2: to the drum ...
+  a = md[2]
+  a - 1
+  mbuf[10] = a           " ... 512 words from the core page
+  a = md[0]
+  g = a
+  mg = s                " the SV: on the drum
+  a = mbuf[1]
+  a + 4
+  mbuf[1] = a            " the second half has a transfer
+  a = d
+  victim = a
+  a = -0
+  md[1] = a
+  a = freepat
+  md[3] = a
+  gotor(mc[-1])
+
+" newmsg: msg := the next place in the segment control buffer; the message
+" is put together in mbuf and copied there by post
+newmsg:
+  a = scbuse
+  a + 1
+  scbuse = a
+  a - scbmax, z
+y,goto(:newmsg1)
+u,a = a, p
+n,goto(:newmsg1)
+  a = scbuse
+  scbmax = a
+newmsg1:
+  a = scbuse
+  a - nscb, z
+y,goto(:newmsg2)
+u,a = a, p
+y,goto(:newmsg3)
+newmsg2:
+  a = scbw
+  msg = a
+  a = cur
+  a + 32
+  mbuf = a              " the private semaphore of the asker
+  a = 0
+  mbuf[1] = a
+  mbuf[2] = a
+  mbuf[3] = a
+  mbuf[4] = a
+  mbuf[5] = a
+  mbuf[6] = a
+  mbuf[7] = a
+  mbuf[8] = a
+  mbuf[9] = a
+  mbuf[10] = a
+  mbuf[11] = a
+  a = scbw
+  a + 12
+  scbw = a
+  a - (:scb + 12 * nscb), z
+n,gotor(mc[-1])
+  a = :scb
+  scbw = a
+  gotor(mc[-1])
+newmsg3:
+  a = 2                 " "the buffer overflows": what must never happen
+  goto(:crash)
+
+" post: the message into its place, its drum transfers on the drum chain,
+" in order
+post:
+  a = msg
+  d = a
+  a = :mbuf
+  g = a
+  s = 11
+  count3 = s
+post1:
+  a = mg
+  md = a
+  g + 1
+  a = d
+  a + 1
+  d = a
+  rep3e(:post1)
+  a = mbuf[1]
+u,a '*' 1, z
+y,goto(:post2)
+  a = msg
+  a + 5
+  subc(:chain)
+post2:
+  a = mbuf[1]
+u,a '*' 4, z
+y,gotor(mc[-1])
+  a = msg
+  a + 9
+  subc(:chain)
+  gotor(mc[-1])
+
+" chain(A = label): hang a start order on the drum chain, which may still be
+" active (EWD 149, 4.2.4)
+chain:
+  s = a
+  a = vw, z
+y,goto(:chain1)
+  g = a
+  mg = s                " 1) M[VW] := the new label
+chain1:
+  vw = s                " 2) VW := the new label
+  a = d18
+  plusa(dar2)           " 3) AFT := AFT + 1; the new value also in A
+  rua(18)
+u,a - 1, z
+n,gotor(mc[-1])         " 4) CHARON was still busy: it will come here
+  a = dar0              "    it had stopped: the new label into AR0, AF true
+  a '*' mask18
+  a = -a
+  a + s
+  dar0 + a
+  afon(drum)
+  gotor(mc[-1])
+
+" zpage(S = page base): 512 zeros
+zpage:
+  a = b
+  svb = a
+  b = s
+  s = 511
+  count1 = s
+  a = 0
+zpage1:
+  mc = a
+  rep1e(:zpage1)
+  b = svb
+  gotor(mc[-1])
+
+" selcand: A := the CTE of the occupied page with holiness 0 and the smallest
+" interest (EWD 113: never a page with a positive holiness counter)
+selcand:
+  b + 2
+  a = 0
+  m[b - 2] = a            " the best so far
+  a = mask20
+  a + 1
+  m[b - 1] = a            " its interest
+  a = :cttab
+  d = a
+  s = ncp - 1
+  count2 = s
+selcand1:
+  a = md[3]
+u,a '*' selmask, z     " designated, free, Victim or holy
+n,goto(:selcand2)
+  a '*' mask20
+  s = a
+  a - m[b - 1], z
+y,goto(:selcand2)
+u,a = a, p
+y,goto(:selcand2)
+  m[b - 1] = s
+  a = d
+  m[b - 2] = a
+selcand2:
+  a = d
+  a + 4
+  d = a
+  rep2e(:selcand1)
+  a = m[b - 2], z
+n,goto(:selcand3)
+  a = 1                 " every page holy: the disaster EWD 126 avoids
+  goto(:crash)
+selcand3:
+  b - 2
+  gotor(mc[-1])
+
+" dalloc: A := the base of a free drum page, the first free one after the
+" last (EWD 113: base = 1025 n mod 2^19; the pages pass the heads in order of n)
+dalloc:
+  a = lastdp
+dalloc1:
+  a + 1
+  a '*' 1023
+u,a - 1022, z           " pages 1 .. 1021
+y,goto(:dalloc1)
+u,a - 1022, p
+y,goto(:dalloc1)
+u,a = a, z
+y,goto(:dalloc1)
+  s = a
+  s + :dpt
+  g = s
+  s = mg, z
+n,goto(:dalloc1)
+  s = 1
+  mg = s
+  lastdp = a
+  s = a
+  lus(10)
+  a + s                 " 1025 n
+  a '*' mask19
+  gotor(mc[-1])
+
+" dfree(S = a drum page base)
+dfree:
+  s '*' 1023
+  s + :dpt
+  g = s
+  s = 0
+  mg = s
+  gotor(mc[-1])
+
+" the segment controller, a process of level 1 (EWD 113):
+"   LL: P(SCS); if the first half has a drum transport then P(drum);
+"       clerical processing of the first half; V(program semaphore);
+"       if the second half has a drum transport then P(drum);
+"       cyclic increase of the read pointer; goto LL
+sc:
+  s = :scs
+  subc(:sysp)
+  a = scbr
+  d = a
+  a = md[1]
+u,a '*' 1, z
+y,goto(:sc1)
+  s = :drumsem
+  subc(:sysp)
+sc1:
+  ivoff
+  a = scbr
+  d = a
+  a = md[1]
+u,a '*' 3, z
+y,goto(:sc3)            " only a wait behind a coming segment
+u,a '*' 2, z
+y,goto(:sc2)
+  a = md[2]
+  g = a
+  s = mg[2]
+  subc(:zpage)          " an empty segment: zeros
+sc2:
+  a = scbr
+  d = a
+  a = md[2]
+  g = a
+  a = mg[3]
+  a '*' -d25
+  mg[3] = a             " no longer designated: occupied
+  a = mg
+  s = a
+  a = g
+  ms = a                " the SV: in core
+sc3:
+  ivon
+  a = scbr
+  d = a
+  s = md
+  subc(:sysv)           " the asker may go on
+  a = scbr
+  d = a
+  a = md[1]
+u,a '*' 4, z
+y,goto(:sc4)
+  s = :drumsem
+  subc(:sysp)
+  a = layerbreak, z
+y,goto(:sc4)
+  a = scbr              " the forbidden call upwards: level 1 uses level 2
+  d = a
+  s = md[11]
+  s '*' mask25
+  a = 9
+  subc(:opening)
+sc4:
+  ivoff
+  a = scbuse
+  a - 1, z
+y,a = 0
+  scbuse = a
+  a = scbr
+  a + 12
+  scbr = a
+  a - (:scb + 12 * nscb), z
+n,goto(:sc5)
+  a = :scb
+  scbr = a
+sc5:
+  ivon
+  goto(:sc)
+
+"""""""""""""""""""""""""""""""""" level 2 """"""""""""""""""""""""""""""""""
+" The message interpreter (EWD 196) owns the console. A process opens a
+" conversation by naming itself; the operator opens one by naming the
+" process, which is known only once the line has been interpreted: hence a
+" process of its own. The texts of the messages live in a segment, so the
+" message interpreter is a level above segment control. One conversation at a
+" time: while a process waits for the answer of the operator, the others wait
+" to be heard.
+
+mi:
+  s = :mis
+  subc(:sysp)
+mi1:
+  ivoff
+  a = kbr
+u,a - kbw, z
+y,goto(:mi3)            " no character
+  a + :kbring
+  d = a
+  s = md
+  a = kbr
+  a + 1
+  a '*' 15
+  kbr = a
+  ivon
+  a = s
+u,a - 37, z
+y,goto(:mi2)            " the end of the line
+  a = linelen
+u,a - 60, p
+y,goto(:mi1)            " (a full line: the rest is lost)
+  a + :line
+  d = a
+  md = s
+  a = linelen
+  a + 1
+  linelen = a
+  goto(:mi1)
+mi2:
+  subc(:mline)
+  goto(:mi1)
+mi3:
+  a = conv, z
+n,goto(:mi4)            " a conversation is open: the others wait
+  a = mrr
+u,a - mrw, z
+y,goto(:mi4)
+  a + :mreq
+  d = a
+  s = md
+  a = mrr
+  a + 1
+  a '*' 7
+  mrr = a
+  ivon
+  a = s
+  subc(:mprint)
+  goto(:mi1)
+mi4:
+  ivon
+  goto(:mi)
+
+" mprint(A = the block of a process): print its message; if it wants an
+" answer the conversation stays open, else the process may go on
+mprint:
+  b + 1
+  m[b - 1] = a
+  a = 0
+  outlen = a
+  a = m[b - 1]
+  subc(:mname)
+  a = 40                " :
+  subc(:mchar)
+  a = 36
+  subc(:mchar)
+  a = m[b - 1]
+  d = a
+  a = md[37]
+  a '*' 63
+  subc(:mtext)
+  a = m[b - 1]
+  d = a
+  a = md[38], p
+n,goto(:mprint1)        " no number
+  a = 36
+  subc(:mchar)
+  a = m[b - 1]
+  d = a
+  a = md[38]
+  subc(:mnum)
+mprint1:
+  a = 37
+  subc(:mchar)
+  subc(:mtel)
+  a = m[b - 1]
+  d = a
+  a = md[37]
+u,a '*' 64, z
+y,goto(:mprint2)
+  a = m[b - 1]
+  conv = a              " open: the answer of the operator decides
+  b - 1
+  gotor(mc[-1])
+mprint2:
+  a = m[b - 1]
+  a + 32
+  s = a
+  subc(:sysv)
+  b - 1
+  gotor(mc[-1])
+
+" mline: the operator typed a line; show it, then interpret it
+mline:
+  a = 0
+  outlen = a
+  a = :line
+  g = a
+  a = linelen, z
+y,goto(:mline2)
+  a - 1
+  count3 = a
+mline1:
+  a = mg
+  subc(:mchar)
+  g + 1
+  rep3e(:mline1)
+mline2:
+  a = 37
+  subc(:mchar)
+  subc(:mtel)
+  a = linelen
+  sva = a
+  a = 0
+  linelen = a
+  a = sva
+u,a - 3, z
+y,goto(:mline3)
+u,a - 3, p
+n,goto(:mline9)         " shorter than three characters
+mline3:
+  a = line              " end: the report and the stop
+u,a - 14, z
+n,goto(:mline4)
+  a = line[1]
+u,a - 23, z
+n,goto(:mline4)
+  goto(:mreport)
+mline4:
+  a = line              " pm1, pm2, pm3 and a number: an answer
+u,a - 25, z
+n,goto(:mline9)
+  a = line[1]
+u,a - 22, z
+n,goto(:mline9)
+  a = line[2]
+  a - 1, z
+y,goto(:mline5)
+u,a = a, p
+n,goto(:mline9)
+u,a - 2, z
+y,goto(:mline5)
+u,a - 2, p
+y,goto(:mline9)
+mline5:
+  a + 3                 " pm1 is process 3
+  a + :pcbtab
+  d = a
+  a = md
+  s = a
+  a = conv
+u,a - s, z
+n,goto(:mline9)         " this process asked nothing
+  a = :line[4]
+  g = a
+  a = 0
+  mval = a
+  a = sva
+  a - 5
+  count3 = a            " the digits
+mline6:
+  s = mg
+u,s - 10, z
+y,goto(:mline7)
+u,s - 10, p
+y,goto(:mline7)
+  mdig = s
+  s = mval
+  muls(10)
+  s + mdig
+  mval = s
+  g + 1
+  rep3e(:mline6)
+mline7:
+  a = conv
+  d = a
+  a = mval
+  md[39] = a            " the answer
+  a = 0
+  conv = a
+  a = d
+  a + 32
+  s = a
+  subc(:sysv)
+  gotor(mc[-1])
+mline9:
+  a = 0
+  outlen = a
+  a = 46                " ?
+  subc(:mchar)
+  a = 37
+  subc(:mchar)
+  subc(:mtel)
+  gotor(mc[-1])
+
+" mreport: the statistics, then the machine stops
+mreport:
+  a = 0
+  outlen = a
+  a = 6
+  subc(:mtext)
+  a = 36
+  subc(:mchar)
+  a = ndrum
+  subc(:mnum)
+  a = 37
+  subc(:mchar)
+  a = 7
+  subc(:mtext)
+  a = 36
+  subc(:mchar)
+  a = scbmax
+  subc(:mnum)
+  a = 36
+  subc(:mchar)
+  a = 8
+  subc(:mtext)
+  a = 36
+  subc(:mchar)
+  a = nscb
+  subc(:mnum)
+  a = 37
+  subc(:mchar)
+  subc(:mtel)
+  ivoff
+  gotor(stoplink)
+
+" mchar(A = code): one character more in the output line
+mchar:
+  s = a
+  a = outlen
+  a + :out
+  d = a
+  md = s
+  a = outlen
+  a + 1
+  outlen = a
+  gotor(mc[-1])
+
+" mtel: print the output line on the console teleprinter (EWD 149, 4.2.2: one
+" start order for a passive device) and wait until CHARON has sent it
+mtel:
+  s = outlen
+  lus(18)
+  s + (:out - 1)
+  tcode = s
+  a = d18
+  tar2 = a
+  afon(telex)
+  s = :telsem
+  subc(:sysp)
+  gotor(mc[-1])
+
+" mname(A = the block of a process): its name
+mname:
+  d = a
+  a = md[35]
+  lus(2)
+  a = md[35]
+  a + a
+  a + a                 " four words a name
+  a + :names
+  g = a
+mname1:
+  a = mg
+u,a - 63, z
+y,gotor(mc[-1])
+  subc(:mchar)
+  g + 1
+  goto(:mname1)
+
+" mtext(A = the number of a message): its text, from the vocabulary segment
+mtext:
+  a + :vidx
+  d = a
+  a = md
+  b + 1
+  m[b - 1] = a
+  s = :vocsv
+  a = 0
+  subc(:ask)
+  a + m[b - 1]
+  g = a
+mtext1:
+  a = mg
+u,a - 63, z
+y,goto(:mtext2)
+  subc(:mchar)
+  g + 1
+  goto(:mtext1)
+mtext2:
+  s = :vocsv
+  subc(:profane)
+  b - 1
+  gotor(mc[-1])
+
+" mnum(A = a number >= 0): its decimal digits (the digit codes are 0..9).
+" The digits are pushed on the stack above a word that holds its own
+" address + 1, which marks the bottom.
+mnum:
+  b + 1
+  m[b - 1] = b
+  s = a
+mnum1:
+  a = 0
+  divas(10)             " s := s / 10, a := the remainder
+  mc = a
+u,s = s, z
+n,goto(:mnum1)
+mnum2:
+  a = mc[-1]
+  subc(:mchar)
+  a = b
+u,a - m[b - 1], z
+n,goto(:mnum2)
+  b - 1
+  gotor(mc[-1])
+
+"""""""""""""""""""""""""""""""""" level 3 """"""""""""""""""""""""""""""""""
+" The line printer process unbuffers output streams (EWD 126, EWD 118). A
+" user program fills a private segment and chains it to the transput area by
+" moving its segment variable; the printer prints the segments in the order
+" they were chained, each document with its owner on top.
+
+lp:
+  s = :lpq
+  subc(:sysp)
+  ivoff
+  a = tqr
+  a + :tq
+  d = a
+  a = md
+  lpslot = a
+  a = tqr
+  a + 1
+  a '*' 7
+  tqr = a
+  ivon
+" the name of the owner
+  a = 0
+  lplen = a
+  a = lpslot
+  a + :towner
+  d = a
+  a = md
+  a + a
+  a + a
+  a + :names
+  g = a
+  a = 41                " -
+  subc(:lpchar)
+  a = 41
+  subc(:lpchar)
+  a = 36
+  subc(:lpchar)
+lp1:
+  a = mg
+u,a - 63, z
+y,goto(:lp2)
+  subc(:lpchar)
+  g + 1
+  goto(:lp1)
+lp2:
+  a = 37
+  subc(:lpchar)
+  a = :lbuf
+  subc(:lpline)
+" the segment, line by line
+  a = lpslot
+  a + :tsv
+  s = a
+  a = 0
+  subc(:ask)
+  lpptr = a
+lp3:
+  a = lpptr
+  g = a
+  a = 0
+  lplen = a
+lp4:
+  a = mg
+u,a - 63, z
+y,goto(:lp6)
+  a = lplen
+  a + 1
+  lplen = a
+  a = mg
+u,a - 37, z
+y,goto(:lp5)
+  g + 1
+  goto(:lp4)
+lp5:
+  a = lpptr
+  subc(:lpline)
+  a = lpptr
+  a + lplen
+  lpptr = a
+  goto(:lp3)
+lp6:
+  a = lpslot
+  a + :tsv
+  s = a
+  subc(:profane)
+  a = lpslot
+  a + :tsv
+  s = a
+  subc(:kill)
+  ivoff
+  a = lpslot
+  a + :towner
+  d = a
+  a = 0
+  md = a
+  ivon
+  s = :tfree
+  subc(:sysv)
+  goto(:lp)
+
+lpchar:
+  s = a
+  a = lplen
+  a + :lbuf
+  d = a
+  md = s
+  a = lplen
+  a + 1
+  lplen = a
+  gotor(mc[-1])
+
+" lpline(A = the first word): print lplen words, wait for CHARON
+lpline:
+  a - 1
+  s = lplen
+  lus(18)
+  s + a
+  lcode = s
+  a = d18
+  lar2 = a
+  afon(lpdev)
+  s = :lpsem
+  subc(:sysp)
+  gotor(mc[-1])
+
+"""""""""""""""""""""""""""""""""" level 4 """"""""""""""""""""""""""""""""""
+" What a user program may call. Its block holds: 37 the message, 38 a number
+" for it, 39 the answer of the operator, 40 the SV of its output segment, 41
+" the place in it.
+
+" opening(A = message, + 64 if an answer is wanted; S = a number, or -1)
+" A := the answer
+opening:
+  b + 2
+  m[b - 2] = a
+  m[b - 1] = s
+  a = cur
+  d = a
+  a = m[b - 2]
+  md[37] = a
+  a = m[b - 1]
+  md[38] = a
+  ivoff
+  a = mrw
+  a + :mreq
+  g = a
+  a = cur
+  mg = a
+  a = mrw
+  a + 1
+  a '*' 7
+  mrw = a
+  ivon
+  s = :mis
+  subc(:sysv)
+  a = cur
+  a + 32
+  s = a
+  subc(:sysp)
+  a = cur
+  d = a
+  a = md[39]
+  b - 2
+  gotor(mc[-1])
+
+" putc(A = code): one character into the output segment (37: a new line)
+putc:
+  b + 1
+  m[b - 1] = a
+  a = cur
+  a + 40
+  s = a
+  a = 1
+  subc(:ask)
+  s = a
+  a = cur
+  d = a
+  a = md[41]
+  a + s
+  d = a
+  a = m[b - 1]
+  md = a
+  a = cur
+  a + 40
+  s = a
+  subc(:profane)
+  a = cur
+  d = a
+  a = md[41]
+  a + 1
+  md[41] = a
+  a = m[b - 1]
+  b - 1
+u,a - 37, z
+n,gotor(mc[-1])
+  a = md[41]
+u,a - 400, p
+n,gotor(mc[-1])
+  subc(:closeout)       " a full segment goes to the printer
+  gotor(mc[-1])
+
+" putn(A = a number >= 0), like mnum
+putn:
+  b + 1
+  m[b - 1] = b
+  s = a
+putn1:
+  a = 0
+  divas(10)
+  mc = a
+u,s = s, z
+n,goto(:putn1)
+putn2:
+  a = mc[-1]
+  subc(:putc)
+  a = b
+u,a - m[b - 1], z
+n,goto(:putn2)
+  b - 1
+  gotor(mc[-1])
+
+" closeout: the output segment, ended by 63, goes to the transput area and
+" the line printer (EWD 118: only its SV moves)
+closeout:
+  a = cur
+  d = a
+  a = md[41], z
+y,gotor(mc[-1])
+  a = cur
+  a + 40
+  s = a
+  a = 1
+  subc(:ask)
+  s = a
+  a = cur
+  d = a
+  a = md[41]
+  a + s
+  d = a
+  a = 63
+  md = a
+  a = cur
+  a + 40
+  s = a
+  subc(:profane)
+  s = :tfree
+  subc(:sysp)
+  ivoff
+  a = :towner
+  g = a
+closeout1:
+  a = mg, z
+y,goto(:closeout2)
+  g + 1
+  goto(:closeout1)
+closeout2:
+  a = cur
+  d = a
+  a = md[35]
+  mg = a                " the owner
+  a = g
+  a - :towner
+  lpslot2 = a
+  a + :tsv
+  b + 1
+  m[b - 1] = a
+  a = cur
+  a + 40
+  s = a
+  a = m[b - 1]
+  b - 1
+  subc(:movesv)
+  a = tqw
+  a + :tq
+  d = a
+  a = lpslot2
+  md = a
+  a = tqw
+  a + 1
+  a '*' 7
+  tqw = a
+  a = cur
+  d = a
+  a = 0
+  md[41] = a
+  ivon
+  s = :lpq
+  subc(:sysv)
+  gotor(mc[-1])
+
+" finish: the last output, a message, and the program stops for good
+finish:
+  subc(:closeout)
+  a = 5
+  s = -1
+  subc(:opening)
+  s = :dead
+  subc(:sysp)
+
+" pm1: the sieve of Eratosthenes over 2048 numbers in four segments
+pm1:
+  a = 0
+  pcount = a
+  pcol = a
+  a = 2
+  pp = a
+pm11:
+  a = pp
+  s = -1
+  subc(:flag)
+  a = a, z
+n,goto(:pm15)           " not a prime
+  a = pcount
+  a + 1
+  pcount = a
+  a = pp
+  subc(:putn)
+  a = pcol
+  a + 1
+  pcol = a
+u,a - 10, z
+y,goto(:pm12)
+  a = 36
+  subc(:putc)
+  goto(:pm13)
+pm12:
+  a = 0
+  pcol = a
+  a = 37
+  subc(:putc)
+pm13:
+  a = pp                " cross out the multiples, from p * p on
+u,a - 45, p
+y,goto(:pm15)           " p > 45: p * p > 2047
+pm14:
+  s = pp
+  muls(pp)
+  pm = s
+pm141:
+  a = pm
+  s = 1
+  subc(:flag)
+  a = pm
+  a + pp
+  pm = a
+u,a - 2047, p
+n,goto(:pm141)
+pm15:
+  a = pp
+  a + 1
+  pp = a
+u,a - 2047, p
+n,goto(:pm11)
+  a = 37
+  subc(:putc)
+  a = 0
+  s = pcount
+  subc(:opening)
+  subc(:finish)
+
+" flag(A = k, S = 1 to set, -1 to read): A := the flag of k
+flag:
+  b + 3
+  m[b - 2] = s          " what to do
+  s = a
+  a '*' 511
+  m[b - 1] = a          " the place in the segment
+  rus(9)
+  s + :pm1sv
+  m[b - 3] = s          " the SV
+  a = 1
+  subc(:ask)
+  a + m[b - 1]
+  d = a
+  a = m[b - 2], p
+y,goto(:flag1)
+  a = md
+  m[b - 1] = a
+  goto(:flag2)
+flag1:
+  a = 1
+  md = a
+  m[b - 1] = a
+flag2:
+  s = m[b - 3]
+  subc(:profane)
+  a = m[b - 1]
+  b - 3
+  gotor(mc[-1])
+
+" pm2: asks the operator how many squares, and prints them
+pm2:
+  a = 65                " message 1, an answer wanted
+  s = -1
+  subc(:opening)
+  qn = a
+  a = 1
+  qi = a
+pm21:
+  a = qi
+  s = qn
+  a - s, z
+y,goto(:pm22)
+u,a = a, p
+n,goto(:pm22)
+  goto(:pm23)
+pm22:
+  a = qi
+  subc(:putn)
+  a = 36
+  subc(:putc)
+  s = qi
+  muls(qi)
+  a = s
+  subc(:putn)
+  a = 37
+  subc(:putc)
+  a = qi
+  a + 1
+  qi = a
+  goto(:pm21)
+pm23:
+  a = 2
+  s = qn
+  subc(:opening)
+  subc(:finish)
+
+" pm3: writes six segments, more than there are core pages, and reads them
+" back twice
+pm3:
+  a = 0
+  rerr = a
+  rs = a
+pm31:
+  a = rs
+  a + :pm3sv
+  s = a
+  a = 1
+  subc(:ask)
+  d = a
+  s = rs
+  muls(1000)
+  rv = s
+  s = 511
+  count4 = s
+pm32:
+  a = rv
+  md = a
+  a + 1
+  rv = a
+  a = d
+  a + 1
+  d = a
+  rep4e(:pm32)
+  a = rs
+  a + :pm3sv
+  s = a
+  subc(:profane)
+  a = rs
+  a + 1
+  rs = a
+u,a - 6, z
+n,goto(:pm31)
+  a = 2
+  rpass = a
+pm33:
+  a = 0
+  rs = a
+pm34:
+  a = rs
+  a + :pm3sv
+  s = a
+  a = 0
+  subc(:ask)
+  d = a
+  s = rs
+  muls(1000)
+  rv = s
+  s = 511
+  count4 = s
+pm35:
+  a = md
+  a - rv, z
+y,goto(:pm36)
+  a = rerr
+  a + 1
+  rerr = a
+pm36:
+  a = rv
+  a + 1
+  rv = a
+  a = d
+  a + 1
+  d = a
+  rep4e(:pm35)
+  a = rs
+  a + :pm3sv
+  s = a
+  subc(:profane)
+  a = rs
+  a + 1
+  rs = a
+u,a - 6, z
+n,goto(:pm34)
+  a = rpass
+  a - 1
+  rpass = a, z
+n,goto(:pm33)
+  a = 3
+  s = 6
+  subc(:opening)
+  a = 4
+  s = rerr
+  subc(:opening)
+  subc(:finish)
+
+"""""""""""""""""""""""""""""""""" the start """"""""""""""""""""""""""""""""
+" After LS and IP the prille begin has read this tape and given the
+" interrupt of the IP reader (EWD 149, 10.1): we arrive here deaf.
+
+boot:
+  b = :bootstack
+  ifoff(5)
+  a = intinstr
+  ch = a
+" zeros where nothing was loaded
+  s = :pcbs
+  a = 6 * 48 - 1
+  subc(:zerof)
+  s = :dpt
+  a = 1023
+  subc(:zerof)
+  s = :scb
+  a = 12 * nscb - 1
+  subc(:zerof)
+" the core table: page 0 is the Victim, the others are free
+  a = :cttab
+  d = a
+  s = cpbase
+  a = 0
+  count5 = a
+  a = ncp - 1
+  count5 = a
+boot1:
+  a = 0
+  md = a
+  a = -0
+  md[1] = a
+  md[2] = s
+  a = freepat
+  md[3] = a
+  a = d
+  a + 4
+  md = a                " the free chain
+  d = a
+  a = s
+  a + 512
+  s = a
+  rep5e(:boot1)
+  a = d
+  a - 4
+  d = a
+  a = 0
+  md = a                " the end of the chain
+  a = :cttab
+  victim = a
+  a = :cttab[4]
+  freecp = a
+" the devices (EWD 149, 3): AR0 the label, AR1 IFT = 0 with an address part
+" that is not 0, AR2 AFT = 0
+  a = :tnext
+  tar0 = a
+  a = 1
+  tar1 = a
+  a = 0
+  tar2 = a
+  m[71] = a
+  a = :lnext
+  lar0 = a
+  a = 1
+  lar1 = a
+  a = 0
+  lar2 = a
+  m[111] = a
+  a = 0
+  dar0 = a
+  dar2 = a
+  m[175] = a
+  a = 1
+  dar1 = a
+  a = minus1
+  kar0 = a
+  a = 1
+  kar1 = a
+  a = 0
+  m[74] = a
+  m[75] = a
+  car0 = a
+  car2 = a
+  m[223] = a
+  a = slice
+  car1 = a
+" the tooth brush (EWD 149, 10.2): the keyboard and the clock must listen to
+" their announcements (LVCA)
+  a = tkbd
+  subc(:brush)
+  a = tclk
+  subc(:brush)
+  afon(kbd)
+" the vocabulary in a segment
+  s = :vocsv
+  a = 1
+  subc(:ask)
+  d = a
+  a = :voc
+  g = a
+  a = (:vocend - :voc - 1)
+  count5 = a
+boot2:
+  a = mg
+  md = a
+  g + 1
+  a = d
+  a + 1
+  d = a
+  rep5e(:boot2)
+  s = :vocsv
+  subc(:profane)
+" the processes: their blocks and the ready queue
+  a = :boottab
+  bootp = a
+boot3:
+  a = bootp
+  d = a
+  a = md, z             " the block
+y,goto(:boot4)
+  g = a
+  a = md[1]
+  a + d19
+  mg[6] = a             " T: the start address, hearing
+  a = md[2]
+  mg[2] = a             " B: the stack
+  a = md[3]
+  mg[31] = a            " the priority
+  a = md[4]
+  mg[35] = a            " the number
+  a = -0
+  mg[40] = a            " no output segment
+  subc(:ready)
+  a = bootp
+  a + 5
+  bootp = a
+  goto(:boot3)
+boot4:
+  a = 0
+  cur = a
+  goto(:sched)
+
+" brush(A = the order for the tooth brush): wait until it is done
+brush:
+  oar0 = a
+  afon(tooth)
+brush1:
+  ifa(0)
+  a '*' b38, z
+y,goto(:brush1)
+  ifoff(tooth)
+  gotor(mc[-1])
+
+" zerof(S = the first word, A = the number of words - 1)
+zerof:
+  count5 = a
+  a = b
+  svb = a
+  b = s
+  a = 0
+zerof1:
+  mc = a
+  rep5e(:zerof1)
+  b = svb
+  gotor(mc[-1])
+
+"""""""""""""""""""""""""""""""""" data """"""""""""""""""""""""""""""""""""
+
+" the processes: block, start, stack, priority, number
+boottab:
+  :pcbs
+  :sc
+  :stacks
+  +1
+  +0
+  :pcbs[48]
+  :mi
+  :stacks[64]
+  +2
+  +1
+  :pcbs[96]
+  :lp
+  :stacks[128]
+  +3
+  +2
+  :pcbs[144]
+  :pm1
+  :stacks[192]
+  +4
+  +3
+  :pcbs[192]
+  :pm2
+  :stacks[256]
+  +4
+  +4
+  :pcbs[240]
+  :pm3
+  :stacks[320]
+  +4
+  +5
+  +0
+pcbtab:
+  :pcbs
+  :pcbs[48]
+  :pcbs[96]
+  :pcbs[144]
+  :pcbs[192]
+  :pcbs[240]
+
+names:
+  'text' <sc>
+  '77'
+  '77'
+  'text' <mi>
+  '77'
+  '77'
+  'text' <lp>
+  '77'
+  '77'
+  'text' <pm1>
+  '77'
+  'text' <pm2>
+  '77'
+  'text' <pm3>
+  '77'
+
+" the vocabulary of the messages, copied into a segment at the start
+voc:
+v0:
+  'text' <primes below 2048:>
+  '77'
+v1:
+  'text' <how many squares?>
+  '77'
+v2:
+  'text' <squares printed:>
+  '77'
+v3:
+  'text' <segments written and read twice:>
+  '77'
+v4:
+  'text' <errors:>
+  '77'
+v5:
+  'text' <finished>
+  '77'
+v6:
+  'text' <drum transfers:>
+  '77'
+v7:
+  'text' <segment control buffer, most used:>
+  '77'
+v8:
+  'text' <places of>
+  '77'
+v9:
+  'text' <drum page written:>
+  '77'
+vocend:
+vidx:
+  (:v0 - :voc)
+  (:v1 - :voc)
+  (:v2 - :voc)
+  (:v3 - :voc)
+  (:v4 - :voc)
+  (:v5 - :voc)
+  (:v6 - :voc)
+  (:v7 - :voc)
+  (:v8 - :voc)
+  (:v9 - :voc)
+
+crashmsg:
+  'text' <crash  >
+  '45'
+crashcode:
+  (7 * '1 000 000' + :crashmsg - 1)
+
+" constants
+d18:     '1 000 000'
+d19:     '2 000 000'
+d25:     '200 000 000'
+sgn:     '400 000 000'
+mask18:  '777 777'
+mask19:  '1 777 777'
+mask20:  '3 777 777'
+mask25:  '177 777 777'
+holyu:   '4 000 000'
+keephi:  '377 000 000'
+selmask: '374 000 000'
+freepat: '377 777 777'
+dirw:    '200 000 000'
+idlelink: '2 777 777'
+stoplink: '777 777'
+minus1:  -1
+tkbd:    '4 004 002'
+tclk:    '4 000 047'
+b1:      '200 000'
+b2:      '100 000'
+b27:     '200 000'
+b36:     '20 000 000'
+b38:     '100 000 000'
+b39:     '200 000 000'
+intinstr:
+  sub(:int)
+
+" variables
+cur: +0
+rq: +0
+resched: +0
+curblocked: +0
+sva: +0
+svs: +0
+svb: +0
+svd: +0
+ndrum: +0
+victim: +0
+freecp: +0
+interest: +0
+lastdp: +0
+scbw: :scb
+scbr: :scb
+scbuse: +0
+scbmax: +0
+vw: +0
+msg: +0
+mbuf: 'skip' 12
+kbr: +0
+kbw: +0
+mrr: +0
+mrw: +0
+conv: +0
+linelen: +0
+outlen: +0
+mval: +0
+mdig: +0
+lplen: +0
+lpslot: +0
+lpslot2: +0
+lpptr: +0
+tqr: +0
+tqw: +0
+bootp: +0
+pcount: +0
+pcol: +0
+pp: +0
+pm: +0
+qn: +0
+qi: +0
+rerr: +0
+rs: +0
+rv: +0
+rpass: +0
+vocsv: -0
+pm1sv:
+  -0
+  -0
+  -0
+  -0
+pm3sv:
+  -0
+  -0
+  -0
+  -0
+  -0
+  -0
+tsv:
+  -0
+  -0
+  -0
+  -0
+  -0
+  -0
+  -0
+  -0
+towner:
+  +0
+  +0
+  +0
+  +0
+  +0
+  +0
+  +0
+  +0
+
+" semaphores: the count and the first waiting process
+scs:     +0
+  +0
+drumsem: +0
+  +0
+telsem:  +0
+  +0
+lpsem:   +0
+  +0
+mis:     +0
+  +0
+lpq:     +0
+  +0
+tfree:   +8
+  +0
+dead:    +0
+  +0
+
+" start orders (EWD 149, 4.1): lock word, label of the next one, code word
+tlock: +0
+tnext: +0
+tcode: +0
+llock: +0
+lnext: +0
+lcode: +0
+
+" storage that the start fills or that is written before it is read
+pcbs:      'skip' 288
+stacks:    'skip' 384
+bootstack: 'skip' 32
+kstack:    'skip' 32
+dpt:       'skip' 1024
+scb:       'skip' 72
+cttab:     'skip' 24
+kbring:    'skip' 16
+mreq:      'skip' 8
+tq:        'skip' 8
+line:      'skip' 64
+out:       'skip' 100
+lbuf:      'skip' 64
+
+'end'
