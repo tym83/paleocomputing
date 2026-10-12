@@ -1,0 +1,6 @@
+queue entry: T F dest  1023 length  200 packet    3
+queue entry: S R dest     5 length   12 packet    7
+queue entry: X X dest   513 length  255 packet   10
+queue entry: U P dest     0 length    1 packet   11
+queue entry: C P dest    77 length   64 packet  200
+five packets converted, the task is stopped

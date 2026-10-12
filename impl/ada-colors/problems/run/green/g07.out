@@ -1,0 +1,14 @@
+t=   100  node  1:  1  0  0  0  node  2:  0  2  0  0  node  3:  0  0  3  0  node  4:  0  0  0  4
+t=   200  node  1:  1  2  0  0  node  2:  1  2  3  0  node  3:  2  2  3  4  node  4:  0  3  3  4
+t=   300  node  1:  1  2  2  0  node  2:  1  2  3  3  node  3:  2  2  3  4  node  4:  3  3  3  4
+t=   400  node  1:  1  2  2  2  node  2:  1  2  3  3  node  3:  2  2  3  4  node  4:  3  3  3  4
+link 4-1 up, delay 5
+t=   500  node  1:  1  2  4  4  node  2:  1  2  3  3  node  3:  2  2  3  4  node  4:  1  1  3  4
+t=   600  node  1:  1  2  4  4  node  2:  1  2  3  1  node  3:  4  2  3  4  node  4:  1  1  3  4
+t=   700  node  1:  1  2  4  4  node  2:  1  2  3  1  node  3:  4  2  3  4  node  4:  1  1  3  4
+t=   800  node  1:  1  2  4  4  node  2:  1  2  3  1  node  3:  4  2  3  4  node  4:  1  1  3  4
+link 2-3 down
+t=   900  node  1:  1  2  4  4  node  2:  1  2  3  1  node  3:  4  2  3  4  node  4:  1  1  3  4
+t=  1000  node  1:  1  2  4  4  node  2:  1  2  1  1  node  3:  4  4  3  4  node  4:  1  1  3  4
+t=  1100  node  1:  1  2  4  4  node  2:  1  2  1  1  node  3:  4  4  3  4  node  4:  1  1  3  4
+t=  1200  node  1:  1  2  4  4  node  2:  1  2  1  1  node  3:  4  4  3  4  node  4:  1  1  3  4

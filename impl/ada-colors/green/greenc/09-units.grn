@@ -25,6 +25,13 @@
          end if;
          M := M.MNEXT;
       end loop;
+      -- inside a task body, T.E also names a local entry of T (RM79 9.5)
+      if Y.KIND = Y_TASK then
+         M := LOOKUP_ENTRY(NAME, Y);
+         if M /= null and then M.KIND = Y_ENTRY and then SAME_TASK(M.MEMBERS, Y) then
+            return M;
+         end if;
+      end if;
       return null;
    end MEMBER_OF;
 
@@ -47,7 +54,7 @@
    begin
       Z := new SYM_REC(Y.KIND, Y.NAME, Y.T, Y.C, Y.ACCESS_PATH, Y.CNAME, Y.RO, Y.MVALUE, Y.HASMV,
                        Y.DECL, Y.PARAMS, Y.RESULT, 0, Y.LEVEL, Y.BYREF, Y.VRP, Y.HIDDEN,
-                       Y.MEMBERS, null, null, null);
+                       FALSE, Y.MEMBERS, null, null, null);
    end COPY_SYM;
 
    -- the full declaration of a private type is copied into the type object
@@ -79,8 +86,10 @@
       -- every declaration of the spec; those of the private part are hidden
       M := SCOPE_STACK;
       while M /= null and then M.DEPTH = DEPTH loop
+         -- what a use clause of the specification made visible stays visible
+         -- in the body, but is not offered to the clients
          COPY_SYM(M, Z);
-         Z.HIDDEN := HIDDEN_FROM(M, FIRST_PRIVATE);
+         Z.HIDDEN := HIDDEN_FROM(M, FIRST_PRIVATE) or M.FROM_USE;
          Z.MNEXT := Y.MEMBERS;
          Y.MEMBERS := Z;
          M := M.STACK;
@@ -157,7 +166,7 @@
       CUR_PKG := SAVED;
    end PACKAGE_BODY;
 
-   -- use P; the visible declarations of P become directly visible, but never
+   -- use M; the visible declarations of module M become directly visible, but never
    -- hide another declaration (RM79 8.4)
    procedure USE_CLAUSE(E : NODE) is
       N : NODE := E.A;
@@ -169,8 +178,9 @@
             if N.NAME.all /= "TEXT_IO" then
                FAIL(N.LINE, N.NAME.all & " is not a package");
             end if;
-         elsif Y.KIND /= Y_PACKAGE then
-            FAIL(N.LINE, N.NAME.all & " is not a package");
+         elsif Y.KIND /= Y_PACKAGE and Y.KIND /= Y_TASK then
+            -- a use clause names modules: packages and tasks (RM79 8.4)
+            FAIL(N.LINE, N.NAME.all & " is not a package or a task");
          else
             M := Y.MEMBERS;
             while M /= null loop
@@ -178,6 +188,7 @@
                if not M.HIDDEN and then (OLD = null or else (OLD.DEPTH < DEPTH
                   and then OLD.KIND /= Y_VAR and then OLD.KIND /= Y_CONST)) then
                   COPY_SYM(M, Z);
+                  Z.FROM_USE := TRUE;
                   DEFINE(Z, N.LINE);
                end if;
                M := M.MNEXT;

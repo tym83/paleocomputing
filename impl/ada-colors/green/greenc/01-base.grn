@@ -159,6 +159,8 @@ procedure GREENC is
       LO, HI, SLEN : TEXT;
       MLO, MHI : INTEGER;
       HASM : BOOLEAN;
+      -- the bounds of the second index of a two-dimensional array
+      LO2, HI2 : TEXT;
    end record;
 
    type TYP_REC;
@@ -177,12 +179,14 @@ procedure GREENC is
       CNAME : TEXT;
       FORWARD, DEFINED, PRIV : BOOLEAN;
       NEXT : TYP;
+      IDX2 : TYP;
    end record;
    type FIELD_REC is record
       NAME : TEXT;
       T : TYP;
       C : CONS;
       NEXT : FIELD;
+      DFLT : NODE;  -- the initial value of the component, if any (RM79 3.7)
    end record;
 
    type PARM_REC;
@@ -213,6 +217,8 @@ procedure GREENC is
       RESULT : TYP;
       DEPTH, LEVEL : INTEGER;
       BYREF, VRP, HIDDEN : BOOLEAN;
+      -- made visible by a use clause, not declared here
+      FROM_USE : BOOLEAN;
       MEMBERS, MNEXT : SYM;
       CHAIN, STACK : SYM;
    end record;
@@ -228,6 +234,15 @@ procedure GREENC is
       HEAD, TAIL : LINES;
    end record;
    type BUFFER is access BUFFER_REC;
+
+   -- what a generic body saw where it was declared (RM79 12.3)
+   type GCTX_REC;
+   type GCTX is access GCTX_REC;
+   type GCTX_REC is record
+      BODY_NODE : NODE;
+      VISIBLE : SYM;
+      NEXT : GCTX;
+   end record;
 
    type EXIT_REC;
    type EXITS_T is access EXIT_REC;
@@ -259,6 +274,10 @@ procedure GREENC is
    ST_FIELD : TEXT;
    FUNC_SYM : SYM;
    EXITS : EXITS_T;
+   GENERIC_CONTEXTS : GCTX;
+   -- the loops that enclose the innermost accept statement: an exit cannot
+   -- reach them (RM79 5.7)
+   ACCEPT_EXITS : EXITS_T;
    FRAMES : INTEGER := 0;
    HANDLERS : LINES;
    CLEANUPS : LINES;
@@ -270,6 +289,13 @@ procedure GREENC is
    ACCEPT_DEPTH : INTEGER := 0;
    FAMARG_DONE : BOOLEAN := FALSE;
    FAM_IX : NODE;
+   -- the member index of F(I).P(...), a visible subprogram of a family member
+   CALL_TASK_IX : NODE;
+   -- pragma INTERFACE seen in the statements of the body being parsed (RM79 13.9)
+   SAW_INTERFACE : BOOLEAN := FALSE;
+   -- in a task specification the parameter structs of the entries wait until
+   -- the private part has completed the private types (RM79 7.4)
+   DEFER_ENTRY_STRUCTS : BOOLEAN := FALSE;
    OUT_AWAITS : BUFFER;
    NO_CONS : CONS;
    UNITS : NODE;

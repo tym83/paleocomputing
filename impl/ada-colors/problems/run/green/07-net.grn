@@ -1,0 +1,35 @@
+
+-- The network problem 7 runs in: which links are up, with what delay, and the
+-- tables each node shows to the line. A real node "tele"-reads a neighbour's
+-- table; here every node's line port copies its table into PUBLISHED.
+
+restricted(NETWORK_INFO)
+package NET_SIM is
+   use NETWORK_INFO;
+   N_NODES   : constant INTEGER := 4;
+   LINKS     : array (1 .. N_NODES * N_NODES) of INTEGER := (1 .. N_NODES * N_NODES => 0);
+   PUBLISHED : array (1 .. N_NODES) of ALL_INFO;
+   ROUTES    : array (1 .. N_NODES) of ROUTE_INFO;
+   function LINK_DELAY (A, B : NODE) return INTEGER;
+   procedure SET_LINK (A, B : NODE; D : INTEGER);
+end NET_SIM;
+
+package body NET_SIM is
+   function LINK_DELAY (A, B : NODE) return INTEGER is
+   begin
+      return LINKS((A - 1) * N_NODES + B);
+   end LINK_DELAY;
+
+   procedure SET_LINK (A, B : NODE; D : INTEGER) is
+   begin
+      LINKS((A - 1) * N_NODES + B) := D;
+      LINKS((B - 1) * N_NODES + A) := D;
+   end SET_LINK;
+
+begin
+   for N in 1 .. N_NODES loop
+      PUBLISHED(N) := (NODE'FIRST .. NODE'LAST => (DEL => INFINITY, DIST => NODE'LAST));
+      ROUTES(N) := (NODE'FIRST .. NODE'LAST => NULL_NODE);
+   end loop;
+end NET_SIM;
+

@@ -1,0 +1,20 @@
+-- GREEN 1979 problem 6 leaves its loop from inside an accept body (RM79 5.7)
+package P is
+   task B is
+      entry NEXT(N : INTEGER);
+   end;
+end P;
+package body P is
+   task body B is
+   begin
+      loop
+         accept NEXT(N : INTEGER) do
+            exit when N < 10;
+         end NEXT;
+      end loop;
+   end B;
+end P;
+procedure MAIN is
+begin
+   null;
+end MAIN;

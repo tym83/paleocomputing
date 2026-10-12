@@ -1,0 +1,60 @@
+
+-- A file of three records is written and read back; then the exceptions of
+-- requirements A to D, and the reuse of a file task after DESTROY.
+restricted(FILE_MANAGER, FILE_IO, TEXT_IO)
+procedure MAIN is
+   use TEXT_IO;
+   type REC is
+      record
+         N, SQUARE : INTEGER;
+      end record;
+begin
+   initiate FILE_MANAGER;
+   declare
+      package RECS is new FILE_IO(REC);
+      R : REC;
+   begin
+      RECS.CREATE("squares", 3);
+      for I in 0 .. 2 loop
+         RECS.WRITE("squares", (I, I * I));
+      end loop;
+      RECS.END_WRITE("squares");
+      for I in 0 .. 2 loop
+         RECS.READ("squares", I, R);
+         PUT("record"); PUT(I, 2); PUT(":"); PUT(R.N, 3); PUT(R.SQUARE, 3); PUT(NEWLINE);
+      end loop;
+      begin
+         RECS.CREATE("squares", 1);
+      exception
+         when RECS.FILE_EXISTS => PUT("A: create an existing file: FILE_EXISTS"); PUT(NEWLINE);
+      end;
+      begin
+         RECS.WRITE("cubes", (1, 1));
+      exception
+         when RECS.INVALID_FILE => PUT("B: write a file that does not exist: INVALID_FILE"); PUT(NEWLINE);
+      end;
+      begin
+         RECS.READ("squares", 3, R);
+      exception
+         when RECS.ILLEGAL_READ => PUT("C: read a record that does not exist: ILLEGAL_READ"); PUT(NEWLINE);
+      end;
+      RECS.CREATE("draft", 1);
+      begin
+         RECS.DESTROY("draft");
+      exception
+         when RECS.ILLEGAL_CLOSE => PUT("D: destroy a file still being written: ILLEGAL_CLOSE"); PUT(NEWLINE);
+      end;
+      RECS.DESTROY("squares");
+      begin
+         RECS.READ("squares", 0, R);
+      exception
+         when RECS.INVALID_FILE => PUT("read after destroy: INVALID_FILE"); PUT(NEWLINE);
+      end;
+      RECS.CREATE("squares", 1);
+      RECS.WRITE("squares", (7, 49));
+      RECS.END_WRITE("squares");
+      RECS.READ("squares", 0, R);
+      PUT("new file, record 0:"); PUT(R.N, 3); PUT(R.SQUARE, 3); PUT(NEWLINE);
+   end;
+   abort FILE_MANAGER;
+end MAIN;

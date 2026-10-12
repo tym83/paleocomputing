@@ -101,8 +101,13 @@
       BT : TYP;
       BC : CONS;
    begin
-      if E.KIND = N_NAME then
-         Y := LOOKUP(E.NAME.all);
+      if E.KIND = N_NAME or (E.KIND = N_SELECT and then IS_PACKAGE(E.A)) then
+         if E.KIND = N_SELECT then
+            -- P.X: a variable of the visible part of package P (RM79 4.1.2)
+            Y := MEMBER_OF(E.A.NAME.all, E.NAME.all, E.LINE);
+         else
+            Y := LOOKUP(E.NAME.all);
+         end if;
          if Y = null then
             FAIL(E.LINE, E.NAME.all & " is not declared");
          end if;
@@ -180,6 +185,19 @@
          INDEX_ON(D.all, BT.TARGET, E, RO, LV, CODE_OUT, T, C);
          return;
       end if;
+      if LIST_LEN(A) = 2 and BT.KIND = T_ARRAY and then BT.IDX2 /= null then
+         -- A(I, J): row-major in one block of components
+         GEXPR(A, BT.IDX, IT, I);
+         CHECK_TYPE(IT, BT.IDX, E.LINE);
+         GEXPR(A.NEXT, BT.IDX2, IT, D);
+         CHECK_TYPE(IT, BT.IDX2, E.LINE);
+         CODE_OUT := MK(BASE & ".p[(rt_index(" & I.all & ", " & BASE & ".lo, " & BASE & ".hi) - " & BASE
+                        & ".lo) * (" & BASE & ".hi2 - " & BASE & ".lo2 + 1) + rt_index(" & D.all & ", "
+                        & BASE & ".lo2, " & BASE & ".hi2) - " & BASE & ".lo2]");
+         T := BT.ELEM;
+         C := BT.ELEMCONS;
+         return;
+      end if;
       if LIST_LEN(A) /= 1 then
          FAIL(E.LINE, "one index expected");
       end if;
@@ -200,6 +218,18 @@
             CODE_OUT := MK("rt_str_get(" & BASE & ", " & I.all & ")");
             RO := TRUE;
          end if;
+         return;
+      end if;
+      if BT.KIND = T_ARRAY and A.KIND = N_RANGE then
+         -- a slice shares the components of the array (RM79 4.1.2)
+         GEXPR(A.A, BT.IDX, IT, LO);
+         GEXPR(A.B, BT.IDX, IT, HI);
+         CTYPE(BT, D);
+         CODE_OUT := MK("({ " & D.all & " s_ = " & BASE & "; rt_int l_ = " & LO.all & ", h_ = " & HI.all
+                        & "; if (l_ <= h_) { rt_index(l_, s_.lo, s_.hi); rt_index(h_, s_.lo, s_.hi); }"
+                        & " s_.p += l_ - s_.lo; s_.lo = l_; s_.hi = h_; s_; })");
+         T := BT;
+         RO := TRUE;
          return;
       end if;
       if BT.KIND = T_ARRAY then
@@ -319,6 +349,20 @@
                   CONVERSION(E, Y, T, R);
                   return;
                end if;
+            elsif E.A.KIND = N_SELECT and then E.A.A.KIND = N_APPLY and then E.A.A.A.KIND = N_NAME
+               and then IS_TASK_NAME(E.A.A.A.NAME.all) and then MEMBER_OF(E.A.A.A.NAME.all, E.A.NAME.all,
+               E.LINE) /= null and then MEMBER_OF(E.A.A.A.NAME.all, E.A.NAME.all, E.LINE).KIND = Y_FUNC then
+               CALL_WANT := WANT;
+               GCALL(E, FALSE, T, R);
+               return;
+            elsif E.A.KIND = N_SELECT and then IS_PACKAGE(E.A.A) then
+               -- P.F(...) calls a function of the visible part of P
+               Y := MEMBER_OF(E.A.A.NAME.all, E.A.NAME.all, E.LINE);
+               if Y /= null and then (Y.KIND = Y_FUNC or Y.KIND = Y_PROC or Y.KIND = Y_ENTRY) then
+                  CALL_WANT := WANT;
+                  GCALL(E, FALSE, T, R);
+                  return;
+               end if;
             end if;
             GEXPR(E.A, null, BT, BASE);
             RO := TRUE;
@@ -376,6 +420,12 @@
             FAIL(E.LINE, E.NAME.all & " needs an item");
          end if;
          FAIL(E.LINE, E.NAME.all & " is not declared");
+      end if;
+      if Y.KIND = Y_CONST and Y.HASMV then
+         -- a manifest integer constant is its value, wherever it is used
+         T := Y.T;
+         R := MK("((rt_int)" & INTEGER'REP(Y.MVALUE) & "LL)");
+         return;
       end if;
       if Y.KIND = Y_VAR or Y.KIND = Y_CONST then
          T := Y.T;
@@ -609,10 +659,33 @@
       V, D : TEXT;
       C : CONS;
       N : INTEGER;
+      RO : BOOLEAN;
    begin
       if E.A.KIND = N_APPLY and then E.A.A.KIND = N_NAME and then IS_TASK_NAME(E.A.A.NAME.all) then
          MEMBER_ATTR(E, T, R);
          return;
+      end if;
+      if A = "ADDRESS" then
+         -- the address of an object, an integer in linear memory (RM79 App. A)
+         LVALUE(E.A, V, ATY, C, RO);
+         T := TY_INT;
+         R := MK("((rt_int)(intptr_t)&(" & V.all & "))");
+         return;
+      end if;
+      if A = "COUNT" and then E.A.KIND = N_APPLY and then E.A.A.KIND = N_NAME then
+         Y := LOOKUP(E.A.A.NAME.all);
+         if Y /= null and then Y.KIND = Y_ENTRY and then Y.C /= null then
+            -- E(I)'COUNT: the callers queued on a member of an entry family (RM79 9.9)
+            if not SAME_TASK(Y.MEMBERS, CUR_TASK) then
+               FAIL(E.LINE, "E'COUNT is allowed only in the body of the task (RM79 9.9)");
+            end if;
+            ENTRY_PATH(Y, "", V);
+            GEXPR(E.A.B, null, ATY, D);
+            ENTRY_FAMILY_SLOT(Y, V.all, D.all, V);
+            T := TY_INT;
+            R := MK("rt_entry_count(&" & V.all & ")");
+            return;
+         end if;
       end if;
       if E.A.KIND = N_NAME then
          Y := LOOKUP(E.A.NAME.all);
@@ -622,10 +695,27 @@
             R := MK("((double)rt_time())");
             return;
          end if;
+         if Y = null and E.A.NAME.all = "SYSTEM" and (A = "MAX_PRIORITY" or A = "MIN_PRIORITY") then
+            -- the range of PRIORITY (RM79 9.8); the runtime runs the highest first
+            T := TY_INT;
+            if A = "MAX_PRIORITY" then
+               R := MK("((rt_int)255)");
+            else
+               R := MK("((rt_int)0)");
+            end if;
+            return;
+         end if;
       end if;
       if Y /= null and then Y.KIND = Y_TYPE then
          TT := Y.T;
          C := Y.C;
+         if A = "SIZE" then
+            -- the size of a value of the type, in bits (RM79 App. A)
+            CTYPE(TT, D);
+            T := TY_INT;
+            R := MK("((rt_int)(sizeof(" & D.all & ") * 8))");
+            return;
+         end if;
          if A = "ORD" then
             GEXPR(E.B, TT, ATY, V);
             CHECK_TYPE(ATY, TT, E.LINE);
@@ -744,7 +834,11 @@
       end if;
       FINISH_PTR(WANT);
       TARGET := WANT.TARGET;
-      CHECK_TYPE(Y.T, TARGET, E.LINE);
+      -- RM79 4.7 qualifies the value by the name of the access type, as in
+      -- new LIST(...); the name of the designated type is accepted too
+      if not SAME(Y.T, WANT) then
+         CHECK_TYPE(Y.T, TARGET, E.LINE);
+      end if;
       CTYPE(TARGET, CT);
       CTYPE(WANT, PT);
       NEW_NAME("cell", CELL);
@@ -773,6 +867,8 @@
       F : FIELD;
       VT : TYP;
       CT, TMP, V, X, PARTS, ET, LO, HI, KEY : TEXT;
+      -- the others choice fills the array before the named choices are stored
+      FILL : TEXT := MK("");
       N : INTEGER;
       LAB : NODE;
    begin
@@ -856,6 +952,7 @@
                   & TMP.all & ".hi = " & HI.all & "; " & TMP.all & ".lo2 = " & TMP.all & ".hi2 = 1; "
                   & TMP.all & ".p = rt_alloc(sizeof(" & ET.all & ") * (size_t)(RT_CNT(" & TMP.all
                   & ") + 1));");
+      N := PARTS.all'LENGTH;
       while IT /= null loop
          GEXPR(IT.B, WANT.ELEM, VT, V);
          CHECK_TYPE(VT, WANT.ELEM, E.LINE);
@@ -863,8 +960,8 @@
          LAB := IT.A;
          while LAB /= null loop
             if LAB.FLAG = 1 then
-               PARTS := MK(PARTS.all & " for (rt_int k_ = 0; k_ < RT_CNT(" & TMP.all & "); k_++) "
-                           & TMP.all & ".p[k_] = " & X.all & ";");
+               FILL := MK(" for (rt_int k_ = 0; k_ < RT_CNT(" & TMP.all & "); k_++) "
+                          & TMP.all & ".p[k_] = " & X.all & ";");
             elsif LAB.B /= null then
                GEXPR(LAB.A, WANT.IDX, VT, KEY);
                GEXPR(LAB.B, WANT.IDX, VT, HI);
@@ -880,7 +977,8 @@
          end loop;
          IT := IT.NEXT;
       end loop;
-      R := MK(PARTS.all & " " & TMP.all & "; })");
+      R := MK(PARTS.all(1 .. N) & FILL.all & PARTS.all(N + 1 .. PARTS.all'LENGTH) & " " & TMP.all
+              & "; })");
    end AGGREGATE;
 
    -- ---- subprogram calls (RM79 5.2) -----------------------------------------------------
@@ -922,6 +1020,19 @@
          NM.NAME := FN.NAME;
          NM.TAG := FN.A.NAME;
          FN := NM;
+      elsif FN.KIND = N_SELECT and then FN.A.KIND = N_APPLY and then FN.A.A.KIND = N_NAME
+         and then IS_TASK_NAME(FN.A.A.NAME.all) then
+         Y := MEMBER_OF(FN.A.A.NAME.all, FN.NAME.all, FN.LINE);
+         if Y /= null and then (Y.KIND = Y_FUNC or Y.KIND = Y_PROC) then
+            -- F(I).P(...): a visible subprogram of a family member (RM79 9.1)
+            RESOLVE_MEMBER_OVERLOAD(FN.A.A.NAME.all, FN.NAME.all, E.B, IS_STMT, CALL_WANT, E.LINE, Y);
+            CALL_TASK_IX := FN.A.B;
+            if IS_STMT and Y.RESULT.KIND /= T_VOID then
+               FAIL(E.LINE, FN.NAME.all & " returns a value; it is not a procedure call");
+            end if;
+            GCALL_WITH(E, Y, T, R);
+            return;
+         end if;
       end if;
       if FN.KIND /= N_NAME then
          OTHER_CALL(E, IS_STMT, T, R);
@@ -941,6 +1052,8 @@
             BUILTIN(FN.NAME.all, E.B, E.LINE, IS_STMT, T, R);
             return;
          end if;
+      elsif Y.KIND = Y_FUNC or Y.KIND = Y_PROC then
+         RESOLVE_MEMBER_OVERLOAD(FN.TAG.all, FN.NAME.all, E.B, IS_STMT, CALL_WANT, E.LINE, Y);
       end if;
       if Y.KIND = Y_ENTRY then
          OTHER_CALL(E, IS_STMT, T, R);
@@ -960,7 +1073,7 @@
 
    -- the C call of subprogram Y with the actuals of E (RM79 5.2)
    procedure GCALL_WITH(E : NODE; Y : SYM; T : out TYP; R : out TEXT) is
-      ARGS, LV, V : TEXT;
+      ARGS, LV, V, X1, X2 : TEXT;
       A : NODE;
       PM : PARM;
       LT, VT : TYP;
@@ -969,7 +1082,25 @@
    begin
       CHECK_CALL_RULES(E, Y);
       ARGS := MK("");
-      if Y.LEVEL > 0 then
+      if (Y.KIND = Y_FUNC or Y.KIND = Y_PROC) and then Y.ACCESS_PATH /= null
+         and then Y.MEMBERS /= null and then Y.MEMBERS.C /= null then
+         -- a visible subprogram of member I of a task family
+         if CALL_TASK_IX = null then
+            FAIL(E.LINE, Y.NAME.all & " needs the member of the family: F(I)." & Y.NAME.all);
+         end if;
+         GEXPR(CALL_TASK_IX, Y.MEMBERS.T, VT, V);
+         CALL_TASK_IX := null;
+         PATH_AT(Y.MEMBERS.LEVEL, Y.ACCESS_PATH.all, LV);
+         PATH_AT(Y.MEMBERS.LEVEL, Y.MEMBERS.CNAME.all & "lo", X1);
+         PATH_AT(Y.MEMBERS.LEVEL, Y.MEMBERS.CNAME.all & "hi", X2);
+         LV := MK(LV.all & "[rt_index(" & V.all & ", " & X1.all & ", " & X2.all & ") - " & X1.all & "]");
+         ARGS := MK("(" & LV.all & " ? " & LV.all & " : (rt_raise(RT_X_TASKING), (void *)0))");
+      elsif (Y.KIND = Y_FUNC or Y.KIND = Y_PROC) and then Y.ACCESS_PATH /= null then
+         -- a visible subprogram of a task: the task body's frame; before the
+         -- task runs there is none
+         PATH_AT(Y.MEMBERS.LEVEL, Y.ACCESS_PATH.all, LV);
+         ARGS := MK("(" & LV.all & " ? " & LV.all & " : (rt_raise(RT_X_TASKING), (void *)0))");
+      elsif Y.LEVEL > 0 then
          LINK_TO(Y.LEVEL, ARGS);
       end if;
       PM := Y.PARAMS;

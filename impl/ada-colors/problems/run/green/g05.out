@@ -1,0 +1,18 @@
+  100 ms  user  1: asks to read
+  100 ms  user  1: reads
+  200 ms  user  2: asks to read
+  200 ms  user  2: reads
+  300 ms  user  4: asks to write
+  300 ms  user  4: data set is busy
+  600 ms  user  1: frees
+  700 ms  user  1: asks to write
+ 1200 ms  user  2: frees
+ 1200 ms  user  1: writes
+ 1400 ms  user  2: asks to write
+ 1400 ms  user  2: access violation
+ 2000 ms  user  3: asks to write
+ 2000 ms  user  1: you have been preempted from data set :  1
+ 2000 ms  user  3: writes
+ 2200 ms  user  4: asks to write
+ 2200 ms  user  4: data set is busy
+ 2500 ms  user  3: frees

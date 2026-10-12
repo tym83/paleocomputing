@@ -1,0 +1,46 @@
+-- the body of a generic package sees what is visible where it is written,
+-- even when it is instantiated elsewhere (RM79 12.3); P.F(...) chooses among
+-- overloaded members; a specification may come before its body (RM79 6.4)
+package S is
+   generic (N : INTEGER)
+   package COUNTER is
+      procedure BUMP(BY : INTEGER);
+      procedure BUMP;
+      function VALUE return INTEGER;
+   end COUNTER;
+end S;
+package body S is
+   TOTAL : INTEGER := 0;
+   procedure ADD(K : INTEGER);
+   package body COUNTER is
+      MINE : INTEGER := N;
+      procedure BUMP(BY : INTEGER) is
+      begin
+         MINE := MINE + BY;
+         ADD(BY);
+      end BUMP;
+      procedure BUMP is
+      begin
+         BUMP(1);
+      end BUMP;
+      function VALUE return INTEGER is
+      begin
+         return MINE * 100 + TOTAL;
+      end VALUE;
+   end COUNTER;
+   procedure ADD(K : INTEGER) is
+   begin
+      TOTAL := TOTAL + K;
+   end ADD;
+end S;
+restricted(S, TEXT_IO)
+procedure MAIN is
+   use S, TEXT_IO;
+   package A is new COUNTER(10);
+   package B is new COUNTER(20);
+begin
+   A.BUMP;
+   B.BUMP(5);
+   PUT(A.VALUE); PUT(B.VALUE);
+   PUT(NEWLINE);
+end MAIN;

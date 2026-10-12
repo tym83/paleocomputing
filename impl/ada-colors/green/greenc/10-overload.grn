@@ -99,6 +99,44 @@
       Y := FIRST;
    end RESOLVE_OVERLOAD;
 
+   -- P.NAME(...): the overloaded declarations are those of the visible part of
+   -- module P
+   procedure RESOLVE_MEMBER_OVERLOAD(P, NAME : STRING; ARGS : NODE; IS_STMT : BOOLEAN; WANT : TYP;
+                                     LINE : INTEGER; Y : in out SYM) is
+      PK : SYM := LOOKUP(P);
+      Z : SYM;
+      N : INTEGER := 0;
+      OK : BOOLEAN;
+   begin
+      if PK = null then
+         return;
+      end if;
+      for PASS in 1 .. 2 loop
+         Z := PK.MEMBERS;
+         N := 0;
+         while Z /= null loop
+            if Z.NAME.all = NAME and then (Z.KIND = Y_FUNC or Z.KIND = Y_PROC) and then not Z.HIDDEN then
+               N := N + 1;
+               if (Z.RESULT.KIND = T_VOID) = IS_STMT then
+                  if PASS = 1 then
+                     FITS(Z, ARGS, WANT, OK);
+                  else
+                     FITS(Z, ARGS, null, OK);
+                  end if;
+                  if OK then
+                     Y := Z;
+                     return;
+                  end if;
+               end if;
+            end if;
+            Z := Z.MNEXT;
+         end loop;
+      end loop;
+      if N > 1 then
+         FAIL(LINE, "no declaration of " & NAME & " fits these actual parameters");
+      end if;
+   end RESOLVE_MEMBER_OVERLOAD;
+
    -- an operator with a user declaration that fits ("*" for matrices, ...);
    -- "/=" follows "=" and cannot be declared itself (RM79 6.6.1)
    procedure USER_OPERATOR(E : NODE; WANT : TYP; T : out TYP; R : out TEXT; DONE : out BOOLEAN) is

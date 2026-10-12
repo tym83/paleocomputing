@@ -96,6 +96,16 @@
       EXPECT_OP(":");
       if AT_KW("EXCEPTION") then
          SKIP;
+         if AT_KW("RENAMES") then
+            -- E : exception renames NAME; (RM79 8.5)
+            SKIP;
+            X := NN(N_EXC, LINE);
+            X.NAME := NAMES.NAME;
+            NAME_P(X.A);
+            EXPECT_OP(";");
+            RES := X;
+            return;
+         end if;
          EXPECT_OP(";");
          while NAMES /= null loop
             X := NN(N_EXC, LINE);
@@ -111,6 +121,18 @@
          IS_CONST := TRUE;
       end if;
       TYPE_SPEC(ST);
+      if AT_KW("RENAMES") and not IS_CONST then
+         -- X : T renames NAME; another name for an existing object (RM79 8.5)
+         SKIP;
+         X := NN(N_VAR, LINE);
+         X.NAME := NAMES.NAME;
+         X.A := ST;
+         X.FLAG := 2;
+         EXPR(X.B);
+         EXPECT_OP(";");
+         RES := X;
+         return;
+      end if;
       if AT_OP(":=") then
          SKIP;
          EXPR(INIT);
@@ -288,7 +310,13 @@
       DECL_PART(X.C);
       if AT_KW("BEGIN") then
          SKIP;
+         SAW_INTERFACE := FALSE;
          STATEMENTS(X.D);
+         if SAW_INTERFACE and X.D = null then
+            -- a body written in another language: only pragma INTERFACE (RM79 13.9)
+            X.TAG := MK("INTERFACE");
+         end if;
+         SAW_INTERFACE := FALSE;
       end if;
       if AT_KW("EXCEPTION") then
          PARSE_HANDLERS(X.E);
@@ -381,6 +409,9 @@
    begin
       while not AT_STATEMENTS_END loop
          if AT_KW("PRAGMA") then
+            if KIND_AT(1) = K_ID and then TEXT_AT(1) = "INTERFACE" then
+               SAW_INTERFACE := TRUE;
+            end if;
             SKIP_PRAGMA;
          else
             STATEMENT(X);
@@ -479,6 +510,12 @@
          end if;
          X := NN(N_RAISE, LINE);
          EXPECT_ID(X.NAME);
+         if AT_OP("(") then
+            -- raise F(I).FAILURE: a member of a task family (RM79 11.5)
+            SKIP;
+            EXPR(X.A);
+            EXPECT_OP(")");
+         end if;
          while AT_OP(".") loop
             SKIP;
             X.TAG := X.NAME;
