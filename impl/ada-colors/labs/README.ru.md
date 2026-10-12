@@ -48,3 +48,8 @@ sed -f problems/run/C1-matrix-vector.sed problems/original/red/C1-matrix-vector.
 cat problems/run/C1-main.red >> /tmp/c1.red
 labs/check.sh 11 break /tmp/c1.red
 ```
+
+Эталонные решения заданий «изменить», «сломать» и «построить» лежат в
+`labs/solutions/`. `labs/verify.sh` проверяет сам проверяющий скрипт: каждое
+решение должно проходить, а исходная программа без правки — нет. CI запускает
+его в каждом пулреквесте.

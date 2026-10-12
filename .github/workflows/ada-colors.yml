@@ -39,6 +39,8 @@ jobs:
       - name: Labs
         run: |
           for lab in 01 02 03 04 05 06 07 08 09; do labs/check.sh $lab look; done
+      - name: Lab checker against reference solutions
+        run: labs/verify.sh
 
   green:
     runs-on: ubuntu-latest
