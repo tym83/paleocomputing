@@ -228,7 +228,11 @@ symlinks that never reached the cluster) otherwise cost a release each.
 3. `tools/sandbox-e2e.sh`, in one run as a tenant: install a machine, wait for
    it to start, check the `VirtualMachine`, the launcher, `chk=on`, the screen
    through the console (reference: 18607 dark pixels), restart, delete and make
-   sure nothing is left.
+   sure nothing is left. `tools/sandbox-x8-e2e.sh` does the same for the X8:
+   `qemu-system-x8` in the machine pod, the THE tape as the kernel, the booted
+   console (reference: 373913 or 374041 dark pixels, the cursor blinks).
+   A new catalog app also needs the live `PackageSource` updated: its list of
+   components does not follow the tag (finding 46).
 4. A green run means merge, tag, `gh workflow run publish.yml --ref main -f tag=vX.Y.Z`.
 
 What is checked where. `kubevirt-e2e.yml` in CI brings up kind with every
@@ -237,7 +241,8 @@ platform component and a machine from the catalog, and compares the screen with
 the reference (finding 67), on every request, without access to a cluster. The
 sandbox is needed for what kind does not have: Cozystack tenant network
 policies, LINSTOR, tenant permissions and the dashboard. Its scenarios
-(`tools/sandbox-e2e.sh`, `tools/sandbox-platform-e2e.sh`) are run by hand on
+(`tools/sandbox-e2e.sh`, `tools/sandbox-x8-e2e.sh`,
+`tools/sandbox-platform-e2e.sh`) are run by hand on
 purpose: in CI they would require storing administrator keys of the shared
 cluster.
 
