@@ -1,0 +1,172 @@
+
+% ==== symbols and scopes (4.1) =============================================================
+
+FUNCTION NO_TEXT () RETURNS (TEXT);
+   RETURN (AT: 0, LEN: 0, H: 0);
+END FUNCTION NO_TEXT;
+
+FUNCTION NEW_SYM (KIND: INTEGER, NAME: TEXT) RETURNS (SYM);
+   VAR Y: SYM := NEW (SYM_REC);
+   Y@ := (KIND: KIND, DEPTH: W@.DEPTH, NAME: NAME, T: NIL, ACCESS: NO_TEXT (),
+          HASMV: FALSE, MV: 0, TS: NIL, BUSY: FALSE, FWD: NO_TEXT (), PARAMS: NIL,
+          RESULT: NIL, CHAIN: NIL, SNEXT: NIL);
+   RETURN Y;
+END FUNCTION NEW_SYM;
+
+FUNCTION BUCKET (NAME: TEXT) RETURNS (INTEGER);
+   IF NAME.H < 0 THEN
+      RETURN HASH_OF (STR (NAME, NAME.LEN));
+   END IF;
+   RETURN NAME.H;
+END FUNCTION BUCKET;
+
+FUNCTION LOOKUP (NAME: TEXT) RETURNS (SYM);
+   VAR Y: SYM := W@.TABLE(BUCKET (NAME));
+   LOOP UNTIL Y = NIL DO
+      IF TEQ (Y@.NAME, NAME) THEN
+         RETURN Y;
+      END IF;
+      Y := Y@.CHAIN;
+   END LOOP;
+   RETURN NIL;
+END FUNCTION LOOKUP;
+
+FUNCTION LOOKUPS (NAME: ASCII_STR(?L)) RETURNS (SYM);
+   RETURN LOOKUP (MKN (NAME));
+END FUNCTION LOOKUPS;
+
+% names local to a scope may not be redeclared in it (4.1)
+PROCEDURE DEFINE (Y: SYM, LINE: INTEGER);
+   CONST B: INTEGER := BUCKET (Y@.NAME);
+   CONST OLD: SYM := LOOKUP (Y@.NAME);
+   IF OLD <> NIL THEN
+      IF OLD@.DEPTH = W@.DEPTH THEN
+         FAILT (LINE, 'redeclared in the same scope: ', Y@.NAME);
+      END IF;
+   END IF;
+   Y@.DEPTH := W@.DEPTH;
+   Y@.CHAIN := W@.TABLE(B);
+   W@.TABLE(B) := Y;
+   Y@.SNEXT := W@.SCOPE;
+   W@.SCOPE := Y;
+END PROCEDURE DEFINE;
+
+PROCEDURE OPEN_SCOPE ();
+   W@.DEPTH := W@.DEPTH + 1;
+END PROCEDURE OPEN_SCOPE;
+
+PROCEDURE CLOSE_SCOPE ();
+   W@.DEPTH := W@.DEPTH - 1;
+   LOOP UNTIL W@.SCOPE = NIL DO
+      IF W@.SCOPE@.DEPTH <= W@.DEPTH THEN
+         EXIT;
+      END IF;
+      BLOCK
+         CONST Y: SYM := W@.SCOPE;
+         CONST B: INTEGER := BUCKET (Y@.NAME);
+         W@.TABLE(B) := Y@.CHAIN;
+         W@.SCOPE := Y@.SNEXT;
+      END BLOCK;
+   END LOOP;
+END PROCEDURE CLOSE_SCOPE;
+
+% ---- the predefined environment ----------------------------------------------------------
+
+FUNCTION NEW_TYP (KIND: INTEGER) RETURNS (TYP);
+   VAR T: TYP := NEW (TYP_REC);
+   T@ := (KIND: KIND, LO: NIL, HI: NIL, LEN: NIL, GEN: NO_TEXT (), ELEM: NIL,
+          TARGET: NIL, TARGET_TS: NIL, FIELDS: NIL, LITS: NIL, CNAME: NO_TEXT ());
+   RETURN T;
+END FUNCTION NEW_TYP;
+
+PROCEDURE PREDEF_TYPE (NAME: ASCII_STR(?L), T: TYP);
+   VAR Y: SYM := NEW_SYM (Y_TYPE, MKN (NAME));
+   Y@.T := T;
+   DEFINE (Y, 0);
+END PROCEDURE PREDEF_TYPE;
+
+PROCEDURE PREDEF_BUILTIN (NAME: ASCII_STR(?L));
+   DEFINE (NEW_SYM (Y_BUILTIN, MKN (NAME)), 0);
+END PROCEDURE PREDEF_BUILTIN;
+
+PROCEDURE PREDEFINE ();
+   W@.TY_INT := NEW_TYP (T_INT);
+   W@.TY_BOOL := NEW_TYP (T_BOOL);
+   W@.TY_STR := NEW_TYP (T_STR);
+   W@.TY_VOID := NEW_TYP (T_VOID);
+   W@.TY_NIL := NEW_TYP (T_NIL);
+   W@.TY_ASCII := NEW_TYP (T_ENUM);
+   PREDEF_TYPE ('INTEGER', W@.TY_INT);
+   PREDEF_TYPE ('BOOLEAN', W@.TY_BOOL);
+   PREDEF_TYPE ('ASCII', W@.TY_ASCII);
+   % the routines of the TERMINAL segment and the prelude functions
+   PREDEF_BUILTIN ('PUT');
+   PREDEF_BUILTIN ('PUT_LINE');
+   PREDEF_BUILTIN ('NEW_LINE');
+   PREDEF_BUILTIN ('GET_CODE');
+   PREDEF_BUILTIN ('STOP');
+   PREDEF_BUILTIN ('TO_CHAR');
+   PREDEF_BUILTIN ('BLANKS');
+   PREDEF_BUILTIN ('DUP');
+   PREDEF_BUILTIN ('ABS');
+   PREDEF_BUILTIN ('TO_FIXED');
+   OPEN_SCOPE;
+END PROCEDURE PREDEFINE;
+
+% 3.7.2, example 1: the code of an enumerated literal of ASCII, or -1
+FUNCTION ASCII_CODE (T: TEXT) RETURNS (INTEGER);
+   CONST CONTROLS: ASCII_STR(128) :=
+      ' NUL SOH STX EXT EOT ENQ ACK BEL BS  HT  LF  VT  FF  CR  SO  SI '
+      ' DLE DC1 DC2 DC3 DC4 NAK SYN ETB CAN EM  SUB ESC FS  GS  RS  US ';
+   CONST S: ASCII_STR(T.LEN) := STR (T, T.LEN);
+   CONST L: INTEGER := T.LEN;
+   IF L < 2 THEN
+      RETURN -1;
+   END IF;
+   IF S[1:1] = '''' THEN                            % \'C' or \''''
+      IF L = 5 THEN
+         RETURN 39;
+      END IF;
+      IF L = 4 THEN
+         BLOCK
+            CONST C: INTEGER := CODE_OF (S[2:2]);
+            IF C IN [32:95] THEN
+               RETURN C;
+            END IF;
+         END BLOCK;
+      END IF;
+      RETURN -1;
+   END IF;
+   IF L = 2 THEN
+      IF S[1:1] = '[' THEN
+         RETURN 123;
+      ORIF S[1:1] = ']' THEN
+         RETURN 125;
+      END IF;
+      BLOCK
+         CONST C: INTEGER := CODE_OF (S[1:1]);
+         IF C IN [65:90] THEN                       % \A is the lower case a
+            RETURN C + 32;
+         END IF;
+      END BLOCK;
+   END IF;
+   IF L <= 4 THEN
+      LOOP FOR I IN [0:31] DO
+         IF CONTROLS[I * 4 + 1 : I * 4 + L - 1] = S[1 : L - 1] THEN
+            IF CONTROLS[I * 4 + L : I * 4 + L] = ' ' THEN
+               RETURN I;
+            END IF;
+         END IF;
+      END LOOP I;
+   END IF;
+   IF TEQS (T, '\ACCENT') THEN
+      RETURN 96;
+   ORIF TEQS (T, '\BAR') THEN
+      RETURN 124;
+   ORIF TEQS (T, '\TILDE') THEN
+      RETURN 126;
+   ORIF TEQS (T, '\DEL') THEN
+      RETURN 127;
+   END IF;
+   RETURN -1;
+END FUNCTION ASCII_CODE;

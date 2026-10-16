@@ -1,0 +1,194 @@
+
+% ==== lexical structure (section 2) =======================================================
+
+PROCEDURE READ_SOURCE ();
+   VAR C: INTEGER := GET_CODE ();
+   LOOP UNTIL C < 0 DO
+      IF W@.NSRC >= MAX_SOURCE THEN
+         FAIL (0, 'the source is too long');
+      END IF;
+      W@.SRC(W@.NSRC) := C;
+      W@.NSRC := W@.NSRC + 1;
+      C := GET_CODE ();
+   END LOOP;
+   W@.SRC(W@.NSRC) := 0;
+END PROCEDURE READ_SOURCE;
+
+FUNCTION AT_SRC (I: INTEGER) RETURNS (INTEGER);
+   IF I >= W@.NSRC THEN
+      RETURN 0;
+   END IF;
+   RETURN W@.SRC(I);
+END FUNCTION AT_SRC;
+
+FUNCTION IS_LETTER (C: INTEGER) RETURNS (BOOLEAN);
+   RETURN C IN [65:90];
+END FUNCTION IS_LETTER;
+
+FUNCTION IS_DIGIT (C: INTEGER) RETURNS (BOOLEAN);
+   RETURN C IN [48:57];
+END FUNCTION IS_DIGIT;
+
+% a letter, digit or break may continue an identifier [2-10]
+FUNCTION IS_IDCHAR (C: INTEGER) RETURNS (BOOLEAN);
+   RETURN IS_LETTER (C) ! IS_DIGIT (C) ! C = 95;
+END FUNCTION IS_IDCHAR;
+
+% the text of the source characters FIRST .. BEYOND - 1, with the hash of a name
+FUNCTION SOURCE_TEXT (FIRST, BEYOND: INTEGER) RETURNS (TEXT);
+   CONST AT: INTEGER := W@.TOP;
+   CONST L: INTEGER := BEYOND - FIRST;
+   VAR T: TEXT;
+   IF AT + L > ARENA_SIZE THEN
+      FAIL (0, 'the arena is full');
+   END IF;
+   LOOP FOR I IN [FIRST : BEYOND - 1] DO
+      W@.ARENA[W@.TOP : W@.TOP] := CHAR_OF (W@.SRC(I));
+      W@.TOP := W@.TOP + 1;
+   END LOOP I;
+   T := (AT: AT, LEN: L, H: 0);
+   IF L > 0 THEN
+      T.H := HASH_CODES (L, W@.SRC(FIRST), W@.SRC(FIRST + L // 2), W@.SRC(BEYOND - 1));
+   END IF;
+   RETURN T;
+END FUNCTION SOURCE_TEXT;
+
+% the reserved words of 2.1.6
+FUNCTION IS_RESERVED (T: TEXT) RETURNS (BOOLEAN);
+   CONST WORDS: ASCII_STR(290) :=
+      ' AND ANY ARRAY ASSERT BIN BLOCK CONST DO ELSE END EXCEPT EXIT FALSE FOR FROM'
+      ' FUNCTION GO HEX IF IN INLINE LOOP MAIN MOD MODULE NAMING NEEDS NIL NOT OCT OF'
+      ' OR ORIF PAR_BLOCK PATH PROCEDURE RECORD REP RETURN SEGMENT SELECT SIGNAL TAG'
+      ' TERMINATE THEN TO TRUE TYPE UNTIL VAR WHEN WHERE WITH XOR ';
+   CONST L: INTEGER := T.LEN;
+   LOOP FOR I IN [0 : 290 - L - 2] DO
+      IF WORDS[I:I] = ' ' THEN
+         IF WORDS[I + L + 1 : I + L + 1] = ' ' THEN
+            IF WORDS[I + 1 : I + L] = STR (T, L) THEN
+               RETURN TRUE;
+            END IF;
+         END IF;
+      END IF;
+   END LOOP I;
+   RETURN FALSE;
+END FUNCTION IS_RESERVED;
+
+PROCEDURE ADD_TOKEN (KIND, LINE, IV: INTEGER, TX: TEXT);
+   IF W@.NTOKS >= MAX_TOKENS THEN
+      FAIL (LINE, 'too many tokens');
+   END IF;
+   W@.TOKS(W@.NTOKS) := (KIND: KIND, LINE: LINE, IV: IV, TX: TX);
+   W@.NTOKS := W@.NTOKS + 1;
+END PROCEDURE ADD_TOKEN;
+
+% the length of the other-symbol at I [2-12], longest first
+FUNCTION SYMBOL_LENGTH (I: INTEGER) RETURNS (INTEGER);
+   CONST C: INTEGER := AT_SRC (I);
+   CONST D: INTEGER := AT_SRC (I + 1);
+   IF C = 45 & D = 45 & AT_SRC (I + 2) = 62 THEN       % -->
+      RETURN 3;
+   END IF;
+   IF (C = 58 & D = 61) ! (C = 45 & D = 62) ! (C = 60 & D = 61) ! (C = 62 & D = 61)
+      ! (C = 60 & D = 62) ! (C = 42 & D = 42) ! (C = 47 & D = 47) ! (C = 36 & D = 36)
+      ! (C = 33 & D = 33) THEN                          % := -> <= >= <> ** // $$ !!
+      RETURN 2;
+   END IF;
+   RETURN 1;
+END FUNCTION SYMBOL_LENGTH;
+
+PROCEDURE LEX ();
+   VAR I: INTEGER := 0;
+   VAR LINE: INTEGER := 1;
+   VAR C, J, V: INTEGER;
+   LOOP UNTIL I >= W@.NSRC DO
+      C := W@.SRC(I);
+      IF C = 10 THEN
+         LINE := LINE + 1;
+         I := I + 1;
+      ORIF C = 32 ! C = 9 ! C = 13 ! C = 12 THEN
+         I := I + 1;
+      ORIF C = 37 THEN                                  % a comment, 2.1.8
+         I := I + 1;
+         LOOP UNTIL I >= W@.NSRC ! W@.SRC(I) = 37 ! W@.SRC(I) = 10 DO
+            I := I + 1;
+         END LOOP;
+         IF AT_SRC (I) = 37 THEN
+            I := I + 1;
+         END IF;
+      ORIF C = 39 THEN                                  % 'quoted', 3.7.2
+         BLOCK
+            CONST AT: INTEGER := W@.TOP;
+            I := I + 1;
+            LOOP
+               IF I >= W@.NSRC ! W@.SRC(I) = 10 THEN
+                  FAIL (LINE, 'a string must end on its line');
+               END IF;
+               IF W@.SRC(I) = 39 THEN
+                  IF AT_SRC (I + 1) <> 39 THEN
+                     I := I + 1;
+                     EXIT;
+                  END IF;
+                  I := I + 1;
+               END IF;
+               W@.ARENA[W@.TOP : W@.TOP] := CHAR_OF (W@.SRC(I));
+               W@.TOP := W@.TOP + 1;
+               I := I + 1;
+            END LOOP;
+            ADD_TOKEN (K_STR, LINE, 0, (AT: AT, LEN: W@.TOP - AT, H: -1));
+         END BLOCK;
+      ORIF C = 92 THEN                                  % \NAME or \'C', 3.4.2
+         J := I + 1;
+         IF AT_SRC (J) = 39 & AT_SRC (J + 1) = 39 & AT_SRC (J + 2) = 39 & AT_SRC (J + 3) = 39 THEN
+            J := I + 5;
+         ORIF AT_SRC (J) = 39 & AT_SRC (J + 2) = 39 THEN
+            J := I + 4;
+         ORIF AT_SRC (J) = 91 ! AT_SRC (J) = 93 THEN    % \[ and \] of the ASCII table
+            J := I + 2;
+         ELSE
+            LOOP UNTIL NOT IS_IDCHAR (AT_SRC (J)) DO
+               J := J + 1;
+            END LOOP;
+            IF J = I + 1 THEN
+               FAIL (LINE, 'a stray backslash');
+            END IF;
+         END IF;
+         ADD_TOKEN (K_ENUM, LINE, 0, SOURCE_TEXT (I, J));
+         I := J;
+      ORIF C = 63 THEN                                  % ?NAME, section 5
+         J := I + 1;
+         LOOP UNTIL NOT IS_IDCHAR (AT_SRC (J)) DO
+            J := J + 1;
+         END LOOP;
+         ADD_TOKEN (K_GEN, LINE, 0, SOURCE_TEXT (I, J));
+         I := J;
+      ORIF IS_LETTER (C) THEN
+         J := I;
+         LOOP UNTIL NOT IS_IDCHAR (AT_SRC (J)) DO
+            J := J + 1;
+         END LOOP;
+         BLOCK
+            CONST T: TEXT := SOURCE_TEXT (I, J);
+            IF IS_RESERVED (T) THEN
+               ADD_TOKEN (K_RES, LINE, 0, T);
+            ELSE
+               ADD_TOKEN (K_ID, LINE, 0, T);
+            END IF;
+         END BLOCK;
+         I := J;
+      ORIF IS_DIGIT (C) THEN
+         J := I;
+         V := 0;
+         LOOP UNTIL NOT IS_DIGIT (AT_SRC (J)) DO
+            V := V * 10 + AT_SRC (J) - 48;
+            J := J + 1;
+         END LOOP;
+         ADD_TOKEN (K_NUM, LINE, V, SOURCE_TEXT (I, J));
+         I := J;
+      ELSE
+         J := I + SYMBOL_LENGTH (I);
+         ADD_TOKEN (K_SYM, LINE, 0, SOURCE_TEXT (I, J));
+         I := J;
+      END IF;
+   END LOOP;
+   ADD_TOKEN (K_EOF, LINE, 0, MK (''));
+END PROCEDURE LEX;

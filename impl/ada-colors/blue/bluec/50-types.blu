@@ -1,0 +1,261 @@
+
+% ==== types (section 3) =====================================================================
+% A record or array type becomes a C struct with two helpers: I_ makes the storage
+% of a new object (the strings and arrays inside it), S_ assigns a value to an object
+% component by component (3.8.5, 3.9.5).
+
+% the C name of a named record, fixed before the record is resolved so that pointers
+% to it can be declared first (3.12.1: types are known throughout their scope)
+FUNCTION RECORD_NAME (Y: SYM) RETURNS (TEXT);
+   IF Y@.FWD.LEN = 0 THEN
+      Y@.FWD := NEW_NAME ('R');
+      EMIT (O_TYPEDEFS, FMT2 ('typedef struct @ @;', Y@.FWD, Y@.FWD));
+   END IF;
+   RETURN Y@.FWD;
+END FUNCTION RECORD_NAME;
+
+FUNCTION RESOLVE (TS: NODE) RETURNS (TYP);
+   RETURN RESOLVE_NAMED (TS, NO_TEXT ());
+END FUNCTION RESOLVE;
+
+FUNCTION RESOLVE_NAMED (TS: NODE, CNAME: TEXT) RETURNS (TYP);
+   VAR T: TYP;
+   CONST K: INTEGER := TS@.KIND;
+   IF K = TS_ARRAY THEN                              % [3-147]
+      T := NEW_TYP (T_ARR);
+      T@.LO := TS@.A;
+      T@.HI := TS@.B;
+      T@.ELEM := RESOLVE (TS@.C);
+      T@.CNAME := NEW_NAME ('A');
+      EMIT (O_TYPEDEFS, FMT2 ('typedef struct @ @;', T@.CNAME, T@.CNAME));
+      COMPLETE (T);
+      RETURN T;
+   END IF;
+   IF K = TS_RECORD THEN                             % [3-160]
+      T := NEW_TYP (T_REC);
+      IF CNAME.LEN > 0 THEN
+         T@.CNAME := CNAME;
+      ELSE
+         T@.CNAME := NEW_NAME ('R');
+         EMIT (O_TYPEDEFS, FMT2 ('typedef struct @ @;', T@.CNAME, T@.CNAME));
+      END IF;
+      BLOCK
+         VAR D: NODE := TS@.A;
+         VAR TAIL: FIELD := NIL;
+         LOOP UNTIL D = NIL DO
+            BLOCK
+               CONST FT: TYP := RESOLVE (D@.B);
+               VAR N: NODE := D@.A;
+               LOOP UNTIL N = NIL DO
+                  BLOCK
+                     VAR F: FIELD := NEW (FIELD_REC);
+                     F@ := (NAME: N@.NAME, T: FT, NEXT: NIL);
+                     IF TAIL = NIL THEN
+                        T@.FIELDS := F;
+                     ELSE
+                        TAIL@.NEXT := F;
+                     END IF;
+                     TAIL := F;
+                  END BLOCK;
+                  N := N@.NEXT;
+               END LOOP;
+            END BLOCK;
+            D := D@.NEXT;
+         END LOOP;
+      END BLOCK;
+      COMPLETE (T);
+      RETURN T;
+   END IF;
+   IF K = TS_ENUM THEN                               % [3-83]
+      T := NEW_TYP (T_ENUM);
+      T@.LITS := TS@.A;
+      RETURN T;
+   END IF;
+   % a type name, possibly with arguments and a range
+   IF TEQS (TS@.NAME, 'INTEGER') THEN
+      IF TS@.B <> NIL THEN
+         T := NEW_TYP (T_INT);
+         T@.LO := TS@.B@.A;
+         T@.HI := TS@.B@.B;
+         RETURN T;
+      END IF;
+      RETURN W@.TY_INT;
+   END IF;
+   IF TEQS (TS@.NAME, 'ASCII_STR') ! TEQS (TS@.NAME, 'CHAR_STR') THEN   % [3-131]
+      T := NEW_TYP (T_STR);
+      IF TS@.A@.KIND = TS_GEN THEN
+         T@.GEN := TS@.A@.NAME;
+      ELSE
+         T@.LEN := TS@.A;
+      END IF;
+      RETURN T;
+   END IF;
+   IF TEQS (TS@.NAME, 'PTR') THEN                    % [3-195]
+      T := NEW_TYP (T_PTR);
+      T@.TARGET_TS := TS@.A;
+      RETURN T;
+   END IF;
+   BLOCK
+      CONST Y: SYM := LOOKUP (TS@.NAME);
+      IF Y = NIL THEN
+         FAILT (TS@.LINE, 'unknown type ', TS@.NAME);
+      END IF;
+      IF Y@.KIND <> Y_TYPE THEN
+         FAILT (TS@.LINE, 'not a type: ', TS@.NAME);
+      END IF;
+      IF Y@.T = NIL THEN
+         IF Y@.BUSY THEN
+            FAILT (TS@.LINE, 'a circular type declaration: ', TS@.NAME);
+         END IF;
+         Y@.BUSY := TRUE;
+         IF Y@.TS@.KIND = TS_RECORD THEN
+            Y@.T := RESOLVE_NAMED (Y@.TS, RECORD_NAME (Y));
+         ELSE
+            Y@.T := RESOLVE (Y@.TS);
+         END IF;
+         Y@.BUSY := FALSE;
+      END IF;
+      IF TS@.B <> NIL & Y@.T@.KIND = T_INT THEN
+         T := NEW_TYP (T_INT);
+         T@.LO := TS@.B@.A;
+         T@.HI := TS@.B@.B;
+         RETURN T;
+      END IF;
+      RETURN Y@.T;
+   END BLOCK;
+END FUNCTION RESOLVE_NAMED;
+
+FUNCTION TARGET (T: TYP) RETURNS (TYP);
+   IF T@.TARGET = NIL THEN
+      T@.TARGET := RESOLVE (T@.TARGET_TS);
+   END IF;
+   RETURN T@.TARGET;
+END FUNCTION TARGET;
+
+FUNCTION IS_SCALAR (T: TYP) RETURNS (BOOLEAN);
+   RETURN T@.KIND = T_INT ! T@.KIND = T_BOOL ! T@.KIND = T_ENUM;
+END FUNCTION IS_SCALAR;
+
+FUNCTION CTYPE (T: TYP) RETURNS (TEXT);
+   CONST K: INTEGER := T@.KIND;
+   IF IS_SCALAR (T) THEN
+      RETURN MK ('rt_int');
+   ORIF K = T_STR THEN
+      RETURN MK ('rstr');
+   ORIF K = T_REC ! K = T_ARR THEN
+      RETURN T@.CNAME;
+   ORIF K = T_VOID THEN
+      RETURN MK ('void');
+   ORIF K = T_PTR THEN
+      % a pointer to a named record may be declared before the record
+      BLOCK
+         CONST TT: NODE := T@.TARGET_TS;
+         IF TT@.KIND = TS_NAME THEN
+            BLOCK
+               CONST Y: SYM := LOOKUP (TT@.NAME);
+               IF Y <> NIL THEN
+                  IF Y@.KIND = Y_TYPE & Y@.TS <> NIL THEN
+                     IF Y@.TS@.KIND = TS_RECORD THEN
+                        RETURN CATS (RECORD_NAME (Y), ' *');
+                     END IF;
+                  END IF;
+               END IF;
+            END BLOCK;
+         END IF;
+         RETURN CATS (CTYPE (TARGET (T)), ' *');
+      END BLOCK;
+   END IF;
+   FAIL (0, 'no C type');
+END FUNCTION CTYPE;
+
+FUNCTION NEEDS_INIT (T: TYP) RETURNS (BOOLEAN);
+   IF T@.KIND = T_STR THEN
+      RETURN T@.LEN <> NIL;
+   ORIF T@.KIND = T_ARR THEN
+      RETURN TRUE;
+   ORIF T@.KIND = T_REC THEN
+      BLOCK
+         VAR F: FIELD := T@.FIELDS;
+         LOOP UNTIL F = NIL DO
+            IF NEEDS_INIT (F@.T) THEN
+               RETURN TRUE;
+            END IF;
+            F := F@.NEXT;
+         END LOOP;
+      END BLOCK;
+   END IF;
+   RETURN FALSE;
+END FUNCTION NEEDS_INIT;
+
+FUNCTION FIELD_C (NAME: TEXT) RETURNS (TEXT);
+   RETURN FMT1 ('f_@', NAME);
+END FUNCTION FIELD_C;
+
+% the statement that makes the storage of a new object LV of type T
+FUNCTION INIT_CODE (T: TYP, LV: TEXT) RETURNS (TEXT);
+   IF T@.KIND = T_STR THEN
+      RETURN FMT2 ('@ = rt_str_new(@);', LV, EXPR (T@.LEN, NIL).C);
+   ORIF T@.KIND = T_ARR ! T@.KIND = T_REC THEN
+      RETURN FMT2 ('I_@(&@);', T@.CNAME, LV);
+   END IF;
+   RETURN NO_TEXT ();
+END FUNCTION INIT_CODE;
+
+% the statement that assigns the value RV to the object LV of type T
+FUNCTION ASSIGN_CODE (T: TYP, LV, RV: TEXT) RETURNS (TEXT);
+   IF T@.KIND = T_STR THEN
+      RETURN FMT2 ('rt_b_assign(&@, @);', LV, RV);
+   ORIF T@.KIND = T_ARR ! T@.KIND = T_REC THEN
+      RETURN FMT3 ('S_@(&@, @);', T@.CNAME, LV, RV);
+   END IF;
+   RETURN FMT2 ('@ = @;', LV, RV);
+END FUNCTION ASSIGN_CODE;
+
+% the value V checked against the range of T (3.2.5: RANGE)
+FUNCTION RANGE_CHECK (T: TYP, V: TEXT) RETURNS (TEXT);
+   IF T@.KIND = T_INT & T@.LO <> NIL THEN
+      RETURN FMT3 ('rt_range(@, @, @)', V, EXPR (T@.LO, NIL).C, EXPR (T@.HI, NIL).C);
+   END IF;
+   RETURN V;
+END FUNCTION RANGE_CHECK;
+
+% the struct body and the I_ and S_ helpers of a record or array type
+PROCEDURE COMPLETE (T: TYP);
+   CONST C: TEXT := T@.CNAME;
+   VAR INIT, ASSIGN: TEXT;
+   IF T@.KIND = T_ARR THEN
+      EMIT (O_STRUCTS, FMT2 ('struct @ { rt_int lo, hi; @ *p; };', C, CTYPE (T@.ELEM)));
+      INIT := FMT2 ('x->lo = @; x->hi = @; rt_int n = x->hi >= x->lo ? x->hi - x->lo + 1 : 0; '
+                    'x->p = rt_alloc(sizeof *x->p * (size_t)(n ? n : 1));',
+                    EXPR (T@.LO, NIL).C, EXPR (T@.HI, NIL).C);
+      IF NEEDS_INIT (T@.ELEM) THEN
+         INIT := FMT2 ('@ for (rt_int i = 0; i < n; i++) @', INIT,
+                       INIT_CODE (T@.ELEM, MK ('x->p[i]')));
+      END IF;
+      ASSIGN := FMT1 ('rt_int n = d->hi - d->lo; if (n != s.hi - s.lo) rt_raise(RT_B_SIZE); '
+                      'for (rt_int i = 0; i <= n; i++) @',
+                      ASSIGN_CODE (T@.ELEM, MK ('d->p[i]'), MK ('s.p[i]')));
+   ELSE
+      BLOCK
+         VAR F: FIELD := T@.FIELDS;
+         VAR BODY: TEXT := MK ('');
+         INIT := MK ('');
+         ASSIGN := MK ('');
+         LOOP UNTIL F = NIL DO
+            BODY := FMT3 ('@ @ @;', BODY, CTYPE (F@.T), FIELD_C (F@.NAME));
+            IF NEEDS_INIT (F@.T) THEN
+               INIT := FMT2 ('@ @', INIT, INIT_CODE (F@.T, FMT1 ('x->@', FIELD_C (F@.NAME))));
+            END IF;
+            ASSIGN := FMT2 ('@ @', ASSIGN,
+                            ASSIGN_CODE (F@.T, FMT1 ('d->@', FIELD_C (F@.NAME)),
+                                         FMT1 ('s.@', FIELD_C (F@.NAME))));
+            F := F@.NEXT;
+         END LOOP;
+         EMIT (O_STRUCTS, FMT2 ('struct @ { int dummy_;@ };', C, BODY));
+      END BLOCK;
+   END IF;
+   EMIT (O_PROTOS, FMT3 ('static void I_@(@ *x);', C, C, C));
+   EMIT (O_PROTOS, FMT3 ('static void S_@(@ *d, @ s);', C, C, C));
+   EMIT (O_HELPERS, FMT3 ('static void I_@(@ *x) { @ }', C, C, INIT));
+   EMIT (O_HELPERS, FMT4 ('static void S_@(@ *d, @ s) { @ }', C, C, C, ASSIGN));
+END PROCEDURE COMPLETE;

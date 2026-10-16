@@ -1223,3 +1223,68 @@ double rt_g_get_float(void) {
 void rt_g_move_bytes(rt_int from, rt_int to, rt_int n) {
   if (n > 0) memmove((void *)(intptr_t)to, (const void *)(intptr_t)from, (size_t)n);
 }
+
+/* BLUE additions */
+/* ---- BLUE (SofTech, 15 Feb 1978) --------------------------------------- */
+
+int RT_B_SIZE, RT_B_INVALID_SUBSTRING, RT_B_INVALID_LENGTH, RT_B_INVALID_SIZE,
+    RT_B_CONVERSION, RT_B_TYPE_MISMATCH;
+
+/* the exception names of the BLUE specification (sections 3 and 4) */
+void rt_b_lang(void) {
+  RT_X_RANGE = RT_X_CASE = RT_X_NEG_EXP = rt_exc("RANGE");
+  RT_X_SUBSCRIPT = rt_exc("SUBSCRIPT_RANGE");
+  RT_X_OVERFLOW = rt_exc("OVERFLOW");
+  RT_X_ZERO_DIVIDE = rt_exc("ZERO_DIVIDE");
+  RT_X_NIL = rt_exc("NULL_REF");
+  RT_X_ASSERT = rt_exc("ASSERTION_VIOLATED");
+  RT_X_TERMINATE = rt_exc("TERMINATED");
+  RT_X_INIT = rt_exc("UNINITIALIZED_VARIABLE");
+  RT_X_FREE = rt_exc("SPACE_EXHAUSTED");
+  RT_B_SIZE = RT_X_SUBTYPE = rt_exc("SIZE");
+  RT_B_TYPE_MISMATCH = RT_X_TAG = rt_exc("TYPE_MISMATCH");
+  RT_B_INVALID_SUBSTRING = rt_exc("INVALID_SUBSTRING");
+  RT_B_INVALID_LENGTH = rt_exc("INVALID_LENGTH");
+  RT_B_INVALID_SIZE = rt_exc("INVALID_SIZE");
+  RT_B_CONVERSION = rt_exc("CONVERSION");
+  RT_X_CREATE = RT_X_TASKING = RT_X_EMPTY_MAILBOX = rt_exc("TASKING");
+  RT_X_FILE = rt_exc("END_OF_INPUT");
+  RT_X_DEADLOCK = rt_exc("DEADLOCK");
+}
+
+rstr rt_b_slice(rstr s, rt_int l, rt_int u) {
+  if (u < l) {
+    if (l < 0 || l > s.len) rt_raise(RT_B_INVALID_SUBSTRING);
+    rstr r = {0, s.p};
+    return r;
+  }
+  if (l < 0 || u >= s.len) rt_raise(RT_B_INVALID_SUBSTRING);
+  rstr r = {u - l + 1, s.p + l};
+  return r;
+}
+
+void rt_b_assign(rstr *dst, rstr src) {
+  if (dst->len != src.len) rt_raise(RT_B_SIZE);
+  if (src.len) memmove(dst->p, src.p, (size_t)src.len);
+}
+
+void rt_b_slice_assign(rstr *dst, rt_int l, rt_int u, rstr src) {
+  rstr part = rt_b_slice(*dst, l, u);
+  rt_b_assign(&part, src);
+}
+
+int rt_b_eq(rstr a, rstr b) {
+  if (a.len != b.len) rt_raise(RT_B_INVALID_LENGTH);
+  return a.len == 0 || memcmp(a.p, b.p, (size_t)a.len) == 0;
+}
+
+rstr rt_b_dup(rstr c, rt_int n) {
+  if (n < 0) rt_raise(RT_B_INVALID_LENGTH);
+  rstr r = rt_str_new(n * c.len);
+  for (rt_int i = 0; i < n; i++) memcpy(r.p + i * c.len, c.p, (size_t)c.len);
+  return r;
+}
+
+rstr rt_b_image(rt_int v) { return rt_str_of_int(v); }
+
+rt_int rt_b_get_code(void) { return rt_getc(); }

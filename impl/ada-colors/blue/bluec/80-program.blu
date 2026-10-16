@@ -1,0 +1,153 @@
+
+% ==== routines (4.3) and the program (4.2) ==================================================
+
+% the C header of a routine: its name, its result and its formal parameters; input
+% parameters are passed by value, inout and output parameters by reference (4.3.2)
+PROCEDURE DECLARE_ROUTINE (R: NODE);
+   VAR Y: SYM := NEW_SYM (Y_ROUTINE, R@.NAME);
+   VAR P: NODE := R@.A;
+   VAR TAIL: PARM := NIL;
+   VAR PS: TEXT := MK ('');
+   VAR SEP: TEXT := MK ('');
+   LOOP UNTIL P = NIL DO
+      BLOCK
+         VAR PM: PARM := NEW (PARM_REC);
+         PM@ := (NAME: P@.NAME, MODE: P@.IV, T: RESOLVE (P@.B), NEXT: NIL);
+         IF TAIL = NIL THEN
+            Y@.PARAMS := PM;
+         ELSE
+            TAIL@.NEXT := PM;
+         END IF;
+         TAIL := PM;
+         IF PM@.MODE = M_IN THEN
+            PS := FMT4 ('@@@ p_@', PS, SEP, CTYPE (PM@.T), PM@.NAME);
+         ELSE
+            PS := FMT4 ('@@@ *p_@', PS, SEP, CTYPE (PM@.T), PM@.NAME);
+         END IF;
+         SEP := MK (', ');
+      END BLOCK;
+      P := P@.NEXT;
+   END LOOP;
+   IF PS.LEN = 0 THEN
+      PS := MK ('void');
+   END IF;
+   IF R@.B <> NIL THEN
+      Y@.RESULT := RESOLVE (R@.B);
+   ELSE
+      Y@.RESULT := W@.TY_VOID;
+   END IF;
+   Y@.ACCESS := FMT1 ('r_@', R@.NAME);
+   Y@.FWD := FMT3 ('static @ @(@)', CTYPE (Y@.RESULT), Y@.ACCESS, PS);
+   EMIT (O_PROTOS, CATS (Y@.FWD, ';'));
+   DEFINE (Y, R@.LINE);
+END PROCEDURE DECLARE_ROUTINE;
+
+PROCEDURE ROUTINE_BODY (R: NODE);
+   CONST Y: SYM := LOOKUP (R@.NAME);
+   CONST SAVED: BUF := W@.CODE;
+   VAR P: PARM := Y@.PARAMS;
+   W@.CODE := (HEAD: NIL, TAIL: NIL);
+   W@.RESULT := Y@.RESULT;
+   W@.IN_ROUTINE := TRUE;
+   W@.CTXS := NIL;
+   PUSH_CTX (1, NO_TEXT ());
+   OPEN_SCOPE;
+   LOOP UNTIL P = NIL DO
+      BLOCK
+         VAR V: SYM := NEW_SYM (Y_VAR, P@.NAME);
+         V@.T := P@.T;
+         IF P@.MODE = M_IN THEN
+            V@.ACCESS := FMT1 ('p_@', P@.NAME);
+         ELSE
+            V@.ACCESS := FMT1 ('(*p_@)', P@.NAME);
+         END IF;
+         DEFINE (V, R@.LINE);
+         IF P@.T@.GEN.LEN > 0 THEN                % ASCII_STR(?L): L is the length
+            BLOCK
+               VAR G: SYM := NEW_SYM (Y_GEN, P@.T@.GEN);
+               G@.NAME.H := -1;
+               G@.ACCESS := FMT1 ('(@).len', V@.ACCESS);
+               DEFINE (G, R@.LINE);
+            END BLOCK;
+         END IF;
+      END BLOCK;
+      P := P@.NEXT;
+   END LOOP;
+   BODY (R@.C);
+   CLOSE_SCOPE;
+   EMIT (O_FUNCS, CATS (Y@.FWD, ' {'));
+   APPEND_BUF (W@.CODE # W@.OUT(O_FUNCS));
+   IF Y@.RESULT@.KIND <> T_VOID THEN              % 4.3.2
+      EMITS (O_FUNCS, 'rt_raise(RT_X_INIT);');
+   END IF;
+   EMITS (O_FUNCS, '}');
+   W@.CODE := SAVED;
+   W@.IN_ROUTINE := FALSE;
+END PROCEDURE ROUTINE_BODY;
+
+PROCEDURE APPEND_BUF (SRC: BUF # DST: BUF);
+   VAR C: CHUNK := SRC.HEAD;
+   LOOP UNTIL C = NIL DO
+      APPEND (C@.T # DST);
+      C := C@.NEXT;
+   END LOOP;
+END PROCEDURE APPEND_BUF;
+
+PROCEDURE TRANSLATE (SEGS: NODE);
+   VAR D: NODE;
+   VAR R: NODE;
+   IF SEGS = NIL THEN
+      FAIL (0, 'no segment');
+   END IF;
+   IF SEGS@.NEXT <> NIL ! SEGS@.IV <> 1 THEN
+      FAIL (SEGS@.LINE, 'this translator takes one MAIN SEGMENT');
+   END IF;
+   EMITS (O_TYPEDEFS, '#include "paleo.h"');
+   EMITS (O_TYPEDEFS, '#include <string.h>');
+   W@.CODE := (HEAD: NIL, TAIL: NIL);
+   W@.CTXS := NIL;
+   PUSH_CTX (1, NO_TEXT ());
+   D := SEGS@.B@.A;
+   DECLARE_TYPES (D);
+   LOOP UNTIL D = NIL DO
+      IF D@.KIND = N_VAR ! D@.KIND = N_CONST THEN
+         DECLARE_OBJECTS (D, TRUE);
+      END IF;
+      D := D@.NEXT;
+   END LOOP;
+   R := SEGS@.C;
+   LOOP UNTIL R = NIL DO
+      DECLARE_ROUTINE (R);
+      R := R@.NEXT;
+   END LOOP;
+   BLOCK
+      VAR S: NODE := SEGS@.B@.B;
+      LOOP UNTIL S = NIL DO
+         STMT (S);
+         S := S@.NEXT;
+      END LOOP;
+   END BLOCK;
+   BLOCK
+      CONST MAIN_CODE: BUF := W@.CODE;
+      R := SEGS@.C;
+      LOOP UNTIL R = NIL DO
+         ROUTINE_BODY (R);
+         R := R@.NEXT;
+      END LOOP;
+      EMITS (O_MAINHEAD, 'int main(int argc, char **argv) {');
+      EMITS (O_MAINHEAD, 'rt_b_lang();');
+      EMITS (O_MAINHEAD, 'rt_init(argc, argv);');
+      BLOCK
+         VAR X: NODE := W@.EXCS;
+         LOOP UNTIL X = NIL DO
+            EMIT (O_GLOBALS, FMT1 ('static int x_@;', X@.NAME));
+            EMIT (O_MAINHEAD, FMT2 ('x_@ = rt_exc(@);', X@.NAME, CSTRING (X@.NAME)));
+            X := X@.NEXT;
+         END LOOP;
+      END BLOCK;
+      APPEND_BUF (MAIN_CODE # W@.OUT(O_MAIN));
+      EMITS (O_MAIN, 'rt_main_done();');
+      EMITS (O_MAIN, 'return 0;');
+      EMITS (O_MAIN, '}');
+   END BLOCK;
+END PROCEDURE TRANSLATE;

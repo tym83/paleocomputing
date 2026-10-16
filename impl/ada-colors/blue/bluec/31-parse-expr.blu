@@ -1,0 +1,266 @@
+
+% ==== the parser: expressions [3-15] .. [3-41] ===========================================
+% Precedence, from the loosest: ! OR XOR ->, then & AND, then the relations and IN,
+% then + - !!, then * / // MOD, then **, then the prefix + - NOT (3.1.4.1).
+
+FUNCTION BIN_NODE (OP: TEXT, LINE: INTEGER, A, B: NODE) RETURNS (NODE);
+   VAR N: NODE := NEW_NODE (N_BINOP, LINE);
+   N@.NAME := OP;
+   N@.A := A;
+   N@.B := B;
+   RETURN N;
+END FUNCTION BIN_NODE;
+
+FUNCTION PARSE_EXPR () RETURNS (NODE);
+   VAR LEFT: NODE := PARSE_CONJ ();
+   LOOP UNTIL NOT (IS ('OR') ! IS ('!') ! IS ('XOR') ! IS ('->')) DO
+      BLOCK
+         CONST T: TOKEN := CUR ();
+         SKIP;
+         LEFT := BIN_NODE (T.TX, T.LINE, LEFT, PARSE_CONJ ());
+      END BLOCK;
+   END LOOP;
+   RETURN LEFT;
+END FUNCTION PARSE_EXPR;
+
+FUNCTION PARSE_CONJ () RETURNS (NODE);
+   VAR LEFT: NODE := PARSE_RELATION ();
+   LOOP UNTIL NOT (IS ('AND') ! IS ('&')) DO
+      BLOCK
+         CONST T: TOKEN := CUR ();
+         SKIP;
+         LEFT := BIN_NODE (T.TX, T.LINE, LEFT, PARSE_RELATION ());
+      END BLOCK;
+   END LOOP;
+   RETURN LEFT;
+END FUNCTION PARSE_CONJ;
+
+FUNCTION PARSE_RELATION () RETURNS (NODE);
+   VAR LEFT: NODE := PARSE_SUM ();
+   LOOP
+      BLOCK
+         CONST T: TOKEN := CUR ();
+         IF IS ('=') ! IS ('<') ! IS ('>') ! IS ('<=') ! IS ('>=') ! IS ('<>') THEN
+            SKIP;
+            LEFT := BIN_NODE (T.TX, T.LINE, LEFT, PARSE_SUM ());
+         ORIF IS ('IN') THEN
+            BLOCK
+               VAR N: NODE := NEW_NODE (N_IN, T.LINE);
+               SKIP;
+               N@.A := LEFT;
+               N@.B := PARSE_RANGE ();
+               LEFT := N;
+            END BLOCK;
+         ELSE
+            RETURN LEFT;
+         END IF;
+      END BLOCK;
+   END LOOP;
+END FUNCTION PARSE_RELATION;
+
+FUNCTION PARSE_SUM () RETURNS (NODE);
+   VAR LEFT: NODE := PARSE_TERM ();
+   LOOP UNTIL NOT (IS ('+') ! IS ('-') ! IS ('!!')) DO
+      BLOCK
+         CONST T: TOKEN := CUR ();
+         SKIP;
+         LEFT := BIN_NODE (T.TX, T.LINE, LEFT, PARSE_TERM ());
+      END BLOCK;
+   END LOOP;
+   RETURN LEFT;
+END FUNCTION PARSE_SUM;
+
+FUNCTION PARSE_TERM () RETURNS (NODE);
+   VAR LEFT: NODE := PARSE_FACTOR ();
+   LOOP UNTIL NOT (IS ('*') ! IS ('/') ! IS ('//') ! IS ('MOD')) DO
+      BLOCK
+         CONST T: TOKEN := CUR ();
+         SKIP;
+         LEFT := BIN_NODE (T.TX, T.LINE, LEFT, PARSE_FACTOR ());
+      END BLOCK;
+   END LOOP;
+   RETURN LEFT;
+END FUNCTION PARSE_TERM;
+
+FUNCTION PARSE_FACTOR () RETURNS (NODE);
+   VAR LEFT: NODE := PARSE_SECONDARY ();
+   LOOP UNTIL NOT IS ('**') DO
+      BLOCK
+         CONST T: TOKEN := CUR ();
+         SKIP;
+         LEFT := BIN_NODE (T.TX, T.LINE, LEFT, PARSE_SECONDARY ());
+      END BLOCK;
+   END LOOP;
+   RETURN LEFT;
+END FUNCTION PARSE_FACTOR;
+
+FUNCTION PARSE_SECONDARY () RETURNS (NODE);
+   CONST T: TOKEN := CUR ();
+   IF IS ('+') ! IS ('-') ! IS ('NOT') THEN
+      BLOCK
+         VAR N: NODE := NEW_NODE (N_UNOP, T.LINE);
+         SKIP;
+         N@.NAME := T.TX;
+         N@.A := PARSE_POSTFIX ();
+         RETURN N;
+      END BLOCK;
+   END IF;
+   RETURN PARSE_POSTFIX ();
+END FUNCTION PARSE_SECONDARY;
+
+% input # inout # output argument lists [4-38]
+PROCEDURE PARSE_ARGS (N: NODE);
+   VAR HEAD, TAIL: NODE := NIL;
+   VAR GROUP: INTEGER := 0;
+   EXPECT ('(');
+   LOOP UNTIL IS (')') DO
+      IF ACCEPT ('#') THEN
+         SELECT GROUP FROM
+            0 --> N@.A := HEAD; END;
+            1 --> N@.B := HEAD; END;
+            ELSE --> FAIL (N@.LINE, 'too many # in an argument list'); END;
+         END SELECT;
+         GROUP := GROUP + 1;
+         HEAD := NIL;
+         TAIL := NIL;
+      ELSE
+         ADD_LIST (PARSE_EXPR () # HEAD, TAIL);
+         IF ACCEPT (',') THEN
+            ;
+         END IF;
+      END IF;
+   END LOOP;
+   EXPECT (')');
+   SELECT GROUP FROM
+      0 --> N@.A := HEAD; END;
+      1 --> N@.B := HEAD; END;
+      ELSE --> N@.C := HEAD; END;
+   END SELECT;
+END PROCEDURE PARSE_ARGS;
+
+FUNCTION PARSE_POSTFIX () RETURNS (NODE);
+   VAR E: NODE := PARSE_ATOM ();
+   VAR N: NODE;
+   LOOP
+      BLOCK
+         CONST LINE: INTEGER := LINE_NOW ();
+         IF IS ('(') & E@.KIND = N_NAME THEN          % a call or a subscript
+            E@.KIND := N_APPLY;
+            PARSE_ARGS (E);
+         ORIF IS ('(') THEN
+            N := NEW_NODE (N_INDEX, LINE);
+            PARSE_ARGS (N);
+            N@.B := N@.A;
+            N@.A := E;
+            E := N;
+         ORIF ACCEPT ('.') THEN                       % [3-191]
+            N := NEW_NODE (N_FIELD, LINE);
+            N@.A := E;
+            N@.NAME := IDENT ();
+            E := N;
+         ORIF ACCEPT ('@') THEN                       % [3-32]
+            N := NEW_NODE (N_DEREF, LINE);
+            N@.A := E;
+            E := N;
+         ORIF ACCEPT ('[') THEN                       % [3-34]
+            N := NEW_NODE (N_SUBSTR, LINE);
+            N@.A := E;
+            N@.B := PARSE_EXPR ();
+            EXPECT (':');
+            N@.C := PARSE_EXPR ();
+            EXPECT (']');
+            E := N;
+         ELSE
+            RETURN E;
+         END IF;
+      END BLOCK;
+   END LOOP;
+END FUNCTION PARSE_POSTFIX;
+
+FUNCTION PARSE_ATOM () RETURNS (NODE);
+   CONST T: TOKEN := CUR ();
+   VAR N: NODE;
+   IF T.KIND = K_NUM THEN
+      N := NEW_NODE (N_INT, T.LINE);
+      N@.IV := T.IV;
+      N@.NAME := T.TX;
+      SKIP;
+      RETURN N;
+   END IF;
+   IF T.KIND = K_STR ! T.KIND = K_ENUM THEN       % [3-135]
+      BLOCK
+         VAR HEAD, TAIL: NODE := NIL;
+         VAR STRINGS: INTEGER := 0;
+         LOOP UNTIL NOT (IS_KIND (K_STR) ! IS_KIND (K_ENUM)) DO
+            N := NEW_NODE (N_PART, LINE_NOW ());
+            N@.IV := CUR ().KIND;
+            N@.NAME := CUR ().TX;
+            IF N@.IV = K_STR THEN
+               STRINGS := STRINGS + 1;
+            END IF;
+            SKIP;
+            ADD_LIST (N # HEAD, TAIL);
+         END LOOP;
+         IF STRINGS = 0 THEN
+            IF HEAD@.NEXT <> NIL THEN
+               FAIL (T.LINE, 'two enumerated literals in a row');
+            END IF;
+            HEAD@.KIND := N_ENUMLIT;
+            RETURN HEAD;
+         END IF;
+         N := NEW_NODE (N_STR, T.LINE);
+         N@.A := HEAD;
+         RETURN N;
+      END BLOCK;
+   END IF;
+   IF ACCEPT ('TRUE') THEN
+      N := NEW_NODE (N_BOOL, T.LINE);
+      N@.IV := 1;
+      RETURN N;
+   ORIF ACCEPT ('FALSE') THEN
+      RETURN NEW_NODE (N_BOOL, T.LINE);
+   ORIF ACCEPT ('NIL') THEN
+      RETURN NEW_NODE (N_NIL, T.LINE);
+   END IF;
+   IF IS ('(') THEN
+      IF AHEAD (1).KIND = K_ID & TEQS (AHEAD (2).TX, ':') & AHEAD (2).KIND = K_SYM THEN
+         BLOCK                                   % a record constructor [3-178]
+            VAR HEAD, TAIL: NODE := NIL;
+            SKIP;
+            LOOP
+               N := NEW_NODE (N_FINIT, LINE_NOW ());
+               N@.NAME := IDENT ();
+               EXPECT (':');
+               N@.A := PARSE_EXPR ();
+               ADD_LIST (N # HEAD, TAIL);
+            END LOOP WHEN NOT ACCEPT (',');
+            EXPECT (')');
+            N := NEW_NODE (N_RECCONS, T.LINE);
+            N@.A := HEAD;
+            RETURN N;
+         END BLOCK;
+      END IF;
+      SKIP;
+      N := NEW_NODE (N_PAREN, T.LINE);
+      N@.A := PARSE_EXPR ();
+      EXPECT (')');
+      RETURN N;
+   END IF;
+   IF T.KIND = K_ID THEN
+      N := NEW_NODE (N_NAME, T.LINE);
+      N@.NAME := IDENT ();
+      IF IS ('$') & AHEAD (1).KIND = K_ID THEN      % T$NAME
+         SKIP;
+         N@.NAME := MKN (STR (T.TX, T.TX.LEN) !! '$' !! STR (CUR ().TX, CUR ().TX.LEN));
+         SKIP;
+      END IF;
+      IF TEQS (N@.NAME, 'NEW') ! TEQS (N@.NAME, 'PTR$NEW') THEN   % [3-198]
+         N@.KIND := N_NEW;
+         EXPECT ('(');
+         N@.A := PARSE_TYPE_SPEC ();
+         EXPECT (')');
+      END IF;
+      RETURN N;
+   END IF;
+   FAILT (T.LINE, 'an expression expected, not ', T.TX);
+END FUNCTION PARSE_ATOM;

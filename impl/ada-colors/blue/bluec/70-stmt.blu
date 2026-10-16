@@ -1,0 +1,371 @@
+
+% ==== statements (4.5) =======================================================================
+
+PROCEDURE PUSH_CTX (KIND: INTEGER, NAME: TEXT);
+   VAR C: CTX := NEW (CTX_REC);
+   C@ := (KIND: KIND, NAME: NAME, NEXT: W@.CTXS);
+   W@.CTXS := C;
+END PROCEDURE PUSH_CTX;
+
+PROCEDURE POP_CTX ();
+   W@.CTXS := W@.CTXS@.NEXT;
+END PROCEDURE POP_CTX;
+
+% leave the guarded statements out to the innermost construct of kind KIND
+% (2: a loop, 1: the routine); its exit label, or nothing if there is none
+FUNCTION LEAVE (KIND: INTEGER) RETURNS (CTX);
+   VAR C: CTX := W@.CTXS;
+   LOOP UNTIL C = NIL DO
+      IF C@.KIND = 3 THEN
+         CODE (FMT1 ('RT_POP(@);', C@.NAME));
+      END IF;
+      IF C@.KIND = KIND THEN
+         RETURN C;
+      END IF;
+      C := C@.NEXT;
+   END LOOP;
+   RETURN NIL;
+END FUNCTION LEAVE;
+
+% the C variable that holds the identity of an exception (4.5.7)
+FUNCTION EXC_NAME (NAME: TEXT) RETURNS (TEXT);
+   VAR N: NODE := W@.EXCS;
+   LOOP UNTIL N = NIL DO
+      IF TEQ (N@.NAME, NAME) THEN
+         RETURN FMT1 ('x_@', NAME);
+      END IF;
+      N := N@.NEXT;
+   END LOOP;
+   N := NEW_NODE (N_IDENT, 0);
+   N@.NAME := NAME;
+   N@.NEXT := W@.EXCS;
+   W@.EXCS := N;
+   RETURN FMT1 ('x_@', NAME);
+END FUNCTION EXC_NAME;
+
+PROCEDURE DECLARE_TYPES (DECLS: NODE);
+   VAR D: NODE := DECLS;
+   LOOP UNTIL D = NIL DO
+      IF D@.KIND = N_TYPE THEN
+         BLOCK
+            VAR Y: SYM := NEW_SYM (Y_TYPE, D@.NAME);
+            Y@.TS := D@.B;
+            DEFINE (Y, D@.LINE);
+         END BLOCK;
+      END IF;
+      D := D@.NEXT;
+   END LOOP;
+END PROCEDURE DECLARE_TYPES;
+
+% constant and variable declarations [3-4] [3-6]; at the segment level the objects
+% are C globals, elsewhere C locals
+PROCEDURE DECLARE_OBJECTS (D: NODE, GLOB: BOOLEAN);
+   CONST T: TYP := RESOLVE (D@.B);
+   VAR N: NODE := D@.A;
+   LOOP UNTIL N = NIL DO
+      BLOCK
+         VAR Y: SYM := NEW_SYM (Y_VAR, N@.NAME);
+         VAR CN: TEXT;
+         IF D@.KIND = N_CONST THEN
+            Y@.KIND := Y_CONST;
+            IF IS_SCALAR (T) THEN
+               BLOCK
+                  CONST M: MVAL := MANIFEST (D@.C);
+                  Y@.HASMV := M.OK;
+                  Y@.MV := M.V;
+               END BLOCK;
+            END IF;
+         END IF;
+         Y@.T := T;
+         IF GLOB THEN
+            CN := FMT1 ('g_@', N@.NAME);
+            EMIT (O_GLOBALS, FMT2 ('static @ @;', CTYPE (T), CN));
+         ELSE
+            CN := FMT2 ('l_@_@', N@.NAME, NEW_NAME (''));
+            CODE (FMT2 ('@ @;', CTYPE (T), CN));
+         END IF;
+         Y@.ACCESS := CN;
+         IF NEEDS_INIT (T) THEN
+            CODE (INIT_CODE (T, CN));
+         ELSE
+            CODE (FMT2 ('memset(&@, 0, sizeof @);', CN, CN));
+         END IF;
+         IF D@.C <> NIL THEN
+            CODE (ASSIGN_CODE (T, CN, RANGE_CHECK (T, EXPR (D@.C, T).C)));
+         END IF;
+         DEFINE (Y, N@.LINE);
+      END BLOCK;
+      N := N@.NEXT;
+   END LOOP;
+END PROCEDURE DECLARE_OBJECTS;
+
+% the declarations and statements of a body [4-1], in the current scope
+PROCEDURE BODY (B: NODE);
+   VAR D: NODE := B@.A;
+   VAR S: NODE := B@.B;
+   DECLARE_TYPES (B@.A);
+   LOOP UNTIL D = NIL DO
+      IF D@.KIND = N_VAR ! D@.KIND = N_CONST THEN
+         DECLARE_OBJECTS (D, FALSE);
+      END IF;
+      D := D@.NEXT;
+   END LOOP;
+   LOOP UNTIL S = NIL DO
+      STMT (S);
+      S := S@.NEXT;
+   END LOOP;
+END PROCEDURE BODY;
+
+% an open scope [4-1]: a C block
+PROCEDURE OPEN_BODY (B: NODE);
+   CODES ('{');
+   OPEN_SCOPE;
+   BODY (B);
+   CLOSE_SCOPE;
+   CODES ('}');
+END PROCEDURE OPEN_BODY;
+
+PROCEDURE STMT (S: NODE);
+   CONST K: INTEGER := S@.KIND;
+   IF K = N_NULL THEN
+      RETURN;
+   ORIF K = N_ASSIGN THEN
+      ASSIGN_STMT (S);
+   ORIF K = N_CALL THEN                             % [4-37]
+      S@.KIND := N_APPLY;
+      CODE (CATS (CALL (S).C, ';'));
+   ORIF K = N_IF THEN                               % [4-63]
+      BLOCK
+         VAR ARM: NODE := S@.A;
+         VAR WORD: TEXT := MK ('if');
+         LOOP UNTIL ARM = NIL DO
+            CODE (FMT2 ('@ (@)', WORD, EXPR (ARM@.A, W@.TY_BOOL).C));
+            OPEN_BODY (ARM@.B);
+            WORD := MK ('else if');
+            ARM := ARM@.NEXT;
+         END LOOP;
+         IF S@.B <> NIL THEN
+            CODES ('else');
+            OPEN_BODY (S@.B);
+         END IF;
+      END BLOCK;
+   ORIF K = N_CASE THEN
+      CASE_STMT (S);
+   ORIF K = N_LOOP THEN                             % [4-76]
+      BLOCK
+         CONST END_L: TEXT := NEW_NAME ('L_end');
+         CODES ('for (;;) {');
+         IF S@.A <> NIL THEN
+            CODE (FMT2 ('if (@) goto @;', EXPR (S@.A, W@.TY_BOOL).C, END_L));
+         END IF;
+         PUSH_CTX (2, END_L);
+         OPEN_BODY (S@.B);
+         POP_CTX;
+         IF S@.C <> NIL THEN
+            CODE (FMT2 ('if (@) goto @;', EXPR (S@.C, W@.TY_BOOL).C, END_L));
+         END IF;
+         CODE (FMT1 ('} @: ;', END_L));
+      END BLOCK;
+   ORIF K = N_FOR THEN                              % [4-79]
+      BLOCK
+         CONST END_L: TEXT := NEW_NAME ('L_end');
+         CONST IT: TEXT := NEW_NAME ('it');
+         CONST R: NODE := S@.A;
+         CONST LO: ET := EXPR (R@.A, NIL);
+         VAR LOC, HIC: TEXT;
+         LOC := LO.C;
+         HIC := EXPR (R@.B, LO.T).C;
+         IF R@.IV = 1 ! R@.IV = 3 THEN
+            LOC := FMT1 ('(@) + 1', LOC);
+         END IF;
+         IF R@.IV >= 2 THEN
+            HIC := FMT1 ('(@) - 1', HIC);
+         END IF;
+         CODE (FMT4 ('{ rt_int @_lo = @, @_hi = @;', IT, LOC, IT, HIC));
+         CODE (FMT4 ('for (rt_int @ = @_lo; @ <= @_hi; @++) {', IT, IT, IT, IT));
+         OPEN_SCOPE;
+         IF S@.NAME.LEN > 0 THEN
+            BLOCK
+               VAR Y: SYM := NEW_SYM (Y_CONST, S@.NAME);
+               Y@.ACCESS := IT;
+               IF LO.T@.KIND = T_ENUM THEN
+                  Y@.T := LO.T;
+               ELSE
+                  Y@.T := W@.TY_INT;
+               END IF;
+               DEFINE (Y, S@.LINE);
+            END BLOCK;
+         END IF;
+         PUSH_CTX (2, END_L);
+         OPEN_BODY (S@.B);
+         POP_CTX;
+         CLOSE_SCOPE;
+         CODE (FMT1 ('} } @: ;', END_L));
+      END BLOCK;
+   ORIF K = N_EXIT THEN                             % [4-78]
+      BLOCK
+         CONST C: CTX := LEAVE (2);
+         IF C = NIL THEN
+            FAIL (S@.LINE, 'EXIT outside a loop');
+         END IF;
+         CODE (FMT1 ('goto @;', C@.NAME));
+      END BLOCK;
+   ORIF K = N_RETURN THEN                           % [4-44]
+      BLOCK
+         CONST C: CTX := LEAVE (1);
+         IF S@.A = NIL THEN
+            IF W@.IN_ROUTINE THEN
+               CODES ('return;');
+            ELSE
+               CODES ('rt_main_done();');
+            END IF;
+         ELSE
+            CODE (FMT1 ('return @;', EXPR (S@.A, W@.RESULT).C));
+         END IF;
+      END BLOCK;
+   ORIF K = N_BLOCK THEN                            % [4-59]
+      OPEN_BODY (S@.A);
+   ORIF K = N_SIGNAL THEN                           % [4-83]
+      IF S@.NAME.LEN = 0 THEN
+         BLOCK
+            VAR C: CTX := W@.CTXS;
+            LOOP UNTIL C = NIL DO
+               IF C@.KIND = 4 THEN
+                  CODE (FMT1 ('rt_raise(@);', C@.NAME));
+                  RETURN;
+               END IF;
+               C := C@.NEXT;
+            END LOOP;
+            FAIL (S@.LINE, 'SIGNAL without a name outside a handler');
+         END BLOCK;
+      END IF;
+      CODE (FMT1 ('rt_raise(@);', EXC_NAME (S@.NAME)));
+   ORIF K = N_ASSERT THEN                           % [4-84]
+      CODE (FMT1 ('if (!(@)) rt_raise(RT_X_ASSERT);', EXPR (S@.A, W@.TY_BOOL).C));
+   ORIF K = N_EXCEPT THEN                           % [4-80]
+      BLOCK
+         CONST F: TEXT := NEW_NAME ('xf');
+         VAR H: NODE := S@.B;
+         VAR WORD: TEXT := MK ('if');
+         CODE (FMT2 ('{ rt_frame @; if (RT_TRY(@)) {', F, F));
+         PUSH_CTX (3, F);
+         STMT (S@.A);
+         POP_CTX;
+         CODE (FMT3 ('RT_POP(@); } else { RT_POP(@); int @x = rt_xcur;', F, F, F));
+         LOOP UNTIL H = NIL DO
+            BLOCK
+               VAR N: NODE := H@.A;
+               VAR COND: TEXT := MK ('0');
+               LOOP UNTIL N = NIL DO
+                  COND := FMT3 ('@ || @x == @', COND, F, EXC_NAME (N@.NAME));
+                  N := N@.NEXT;
+               END LOOP;
+               CODE (FMT2 ('@ (@)', WORD, COND));
+               WORD := MK ('else if');
+               PUSH_CTX (4, CATS (F, 'x'));
+               OPEN_BODY (H@.B);
+               POP_CTX;
+            END BLOCK;
+            H := H@.NEXT;
+         END LOOP;
+         CODE (FMT1 ('else rt_raise(@x); } }', F));
+      END BLOCK;
+   ELSE
+      FAIL (S@.LINE, 'this statement cannot be translated yet');
+   END IF;
+END PROCEDURE STMT;
+
+% [3-43]: a variable or a substring of one
+PROCEDURE ASSIGN_STMT (S: NODE);
+   CONST TG: NODE := S@.A;
+   IF TG@.KIND = N_SUBSTR THEN
+      CODE (FMT4 ('rt_b_slice_assign(&@, @, @, @);', EXPR (TG@.A, NIL).C,
+                  EXPR (TG@.B, NIL).C, EXPR (TG@.C, NIL).C, EXPR (S@.B, NIL).C));
+      RETURN;
+   END IF;
+   BLOCK
+      CONST LV: ET := EXPR (TG, NIL);
+      CODE (ASSIGN_CODE (LV.T, LV.C, RANGE_CHECK (LV.T, EXPR (S@.B, LV.T).C)));
+   END BLOCK;
+END PROCEDURE ASSIGN_STMT;
+
+% [4-67]: a C switch on integers and enumerated values, a chain of comparisons on
+% character strings
+PROCEDURE CASE_STMT (S: NODE);
+   CONST CH: ET := EXPR (S@.A, NIL);
+   VAR ARM: NODE := S@.B;
+   IF CH.T@.KIND = T_STR THEN
+      BLOCK
+         CONST TMP: TEXT := NEW_NAME ('cs');
+         VAR WORD: TEXT := MK ('if');
+         CODE (FMT2 ('{ rstr @ = @;', TMP, CH.C));
+         LOOP UNTIL ARM = NIL DO
+            BLOCK
+               VAR L: NODE := ARM@.A;
+               VAR COND: TEXT := MK ('0');
+               LOOP UNTIL L = NIL DO
+                  COND := FMT3 ('@ || rt_str_eq(@, @)', COND, TMP, EXPR (L, NIL).C);
+                  L := L@.NEXT;
+               END LOOP;
+               CODE (FMT2 ('@ (@)', WORD, COND));
+               WORD := MK ('else if');
+               OPEN_BODY (ARM@.B);
+            END BLOCK;
+            ARM := ARM@.NEXT;
+         END LOOP;
+         IF S@.C <> NIL THEN
+            CODES ('else');
+            OPEN_BODY (S@.C);
+         END IF;
+         CODES ('}');
+      END BLOCK;
+      RETURN;
+   END IF;
+   CODE (FMT1 ('switch (@) {', CH.C));
+   LOOP UNTIL ARM = NIL DO
+      BLOCK
+         VAR L: NODE := ARM@.A;
+         LOOP UNTIL L = NIL DO
+            IF L@.KIND = N_RANGE THEN
+               BLOCK
+                  CONST LO: MVAL := MANIFEST (L@.A);
+                  CONST HI: MVAL := MANIFEST (L@.B);
+                  VAR A: INTEGER := LO.V;
+                  VAR B: INTEGER := HI.V;
+                  IF NOT (LO.OK & HI.OK) THEN
+                     FAIL (L@.LINE, 'a case label must be manifest');
+                  END IF;
+                  IF L@.IV = 1 ! L@.IV = 3 THEN
+                     A := A + 1;
+                  END IF;
+                  IF L@.IV >= 2 THEN
+                     B := B - 1;
+                  END IF;
+                  CODE (FMT2 ('case @ ... @:', NUM (A), NUM (B)));
+               END BLOCK;
+            ELSE
+               BLOCK
+                  VAR M: MVAL := MANIFEST (L);
+                  IF L@.KIND = N_ENUMLIT & CH.T@.KIND = T_ENUM & CH.T <> W@.TY_ASCII THEN
+                     M := (OK: TRUE, V: LIT_INDEX (CH.T, L@.NAME));
+                  END IF;
+                  IF NOT M.OK THEN
+                     FAIL (L@.LINE, 'a case label must be manifest');
+                  END IF;
+                  CODE (FMT1 ('case @:', NUM (M.V)));
+               END BLOCK;
+            END IF;
+            L := L@.NEXT;
+         END LOOP;
+      END BLOCK;
+      OPEN_BODY (ARM@.B);
+      CODES ('break;');
+      ARM := ARM@.NEXT;
+   END LOOP;
+   IF S@.C <> NIL THEN
+      CODES ('default:');
+      OPEN_BODY (S@.C);
+      CODES ('break;');
+   END IF;
+   CODES ('}');
+END PROCEDURE CASE_STMT;

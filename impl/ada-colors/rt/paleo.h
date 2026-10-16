@@ -233,3 +233,17 @@ int rt_g_aborted(void);
 void rt_g_move_bytes(rt_int from, rt_int to, rt_int n);
 
 #endif
+
+/* BLUE additions */
+/* BLUE (SofTech, 1978): exception names of the language specification, character
+ * strings numbered from zero, the console of the TERMINAL segment */
+extern int RT_B_SIZE, RT_B_INVALID_SUBSTRING, RT_B_INVALID_LENGTH, RT_B_INVALID_SIZE,
+    RT_B_CONVERSION, RT_B_TYPE_MISMATCH;
+void rt_b_lang(void);                          /* call before rt_init */
+rstr rt_b_slice(rstr s, rt_int l, rt_int u);   /* S[L:U]; U < L is empty */
+void rt_b_assign(rstr *dst, rstr src);         /* SIZE unless lengths agree */
+void rt_b_slice_assign(rstr *dst, rt_int l, rt_int u, rstr src);
+int rt_b_eq(rstr a, rstr b);                   /* INVALID_LENGTH unless lengths agree */
+rstr rt_b_dup(rstr c, rt_int n);               /* DUP and BLANKS */
+rstr rt_b_image(rt_int v);                     /* TO_CHAR of an integer */
+rt_int rt_b_get_code(void);                    /* next input character, -1 at the end */
