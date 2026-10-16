@@ -1,0 +1,46 @@
+(* Part Three, III.D "File Manipulation", p.1111 (E-18) *)
+MODULE lineinput
+  IMPORT inchr,outchr,pdp11chars,MyStandardConventions;
+  EXPORT read,newline,newfile,eoln,eof,lno;
+  VAR lno: INT; (* line number *)
+      ch: pdp11chars; (* last character read *)
+      eof,eoln: BOOLEAN := TRUE;
+
+  PROCEDURE newfile()
+    IF NOT eof THEN
+      LOOP readchr
+        inchr(ch);
+        IF ch = 'fs' THEN EXIT readchr ENDIF
+      ENDLOOP readchr;
+    ENDIF;
+    eof := FALSE; lno := 0;
+  ENDPROCEDURE newfile;
+
+  PROCEDURE newline()
+    IF NOT eoln THEN
+      LOOP readchr
+        inchr(ch);
+        IF ch = 'lf' THEN EXIT readchr ENDIF
+      ENDLOOP readchr;
+      outchr('cr');
+      outchr('lf');
+    ENDIF;
+    eoln := FALSE; lno := lno + 1;
+  ENDPROCEDURE newline;
+
+  PROCEDURE read(VAR x: pdp11chars)
+    (* assume NOT eoln AND NOT eof. *)
+    LOOP nibble
+      inchr(ch); outchr(ch);
+      IF ch >= ' ' THEN x := ch; EXIT nibble ENDIF;
+      IF ch = 'lf' THEN x := ' '; eoln := TRUE; EXIT nibble ENDIF;
+      IF ch = 'fs'
+        THEN
+          x := ' ';
+          eoln := TRUE;
+          eof := TRUE;
+          EXIT nibble
+      ENDIF;
+    ENDLOOP nibble;
+  ENDPROCEDURE read;
+ENDMODULE lineinput;

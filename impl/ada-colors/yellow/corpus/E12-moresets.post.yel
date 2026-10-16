@@ -1,0 +1,11 @@
+;
+FOR i: INTEGER [1..4] DO
+  IF Armed IN m[i] THEN Write("A") ELSE Write("-") ENDIF;
+  IF m[i] = MissileStatus(Fired) THEN Write("F") ELSE Write("-") ENDIF
+ENDFOR;
+WriteLn();
+price := 99999.99P + 0.01P;
+WriteFixed(price, 2); WriteLn();
+Write(BASE2 011011100); Write(" "); Write(BASE8 737705); Write(" ");
+Write(BASE16 6A4B02); Write(" "); Write(BASE10 6950); WriteLn()
+ENDMODULE MoreSets

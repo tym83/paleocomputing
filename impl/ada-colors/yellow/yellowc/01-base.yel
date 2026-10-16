@@ -57,6 +57,7 @@ MODULE yellowc
       VAR deep: BOOLEAN;          (* holds array buffers *)
       VAR abstract: BOOLEAN;      (* a TYPE that has no representation yet *)
       VAR opaque: BOOLEAN;        (* exported OPAQUE: no components outside *)
+      VAR opaqueops: INT;         (* yet := (1) and = # (2) exported with it *)
       VAR ordered: BOOLEAN;
       VAR forward: Txt;           (* pointers: the base named before it is declared *)
       VAR fwdscope: INT;

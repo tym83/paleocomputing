@@ -209,7 +209,9 @@
       IF (r^.kind = R_FILE) OR (r^.kind = R_SEM) THEN
         FailS(s^.line, "assignment is not defined for files and semaphores (VII.B)")
       ENDIF;
-      IF r^.opaque THEN FailN(s^.line, r^.tname, " is opaque here: := is not exported (X.B.3)") ENDIF;
+      IF r^.opaque AND ((r^.opaqueops MOD 2) = 0) THEN
+        FailN(s^.line, r^.tname, " is opaque here: := is not exported (X.B.3)")
+      ENDIF;
       Expr(s^.b, r, c2, er);
       Store(c, r, c2, er, s^.line)
     ELSIF k = N_CALLST THEN

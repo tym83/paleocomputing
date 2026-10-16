@@ -1,0 +1,48 @@
+(* Part Three, III.C "Exception Handling", p.1110 (E-17): a fragment; "we *)
+(* assume that declarations for the program variables root, poly, denom, *)
+(* ..., etc. have been made in the scope that encloses the fragment" *)
+FOR k: INTEGER [1..n] DO
+  BEGIN
+    VAR repcount: INTEGER [0..maximum] := 0;
+    WHILE repcount # maximum DO
+      overflowscope:
+      BEGIN
+      (* Within this scope we evaluate the polynomial for *)
+      (* for the k'th root. On overflow we divide the     *)
+      (* root by 10 and repeat the evaluation, for up to  *)
+      (* "maximum" times. *)
+
+      EXCEPTION CASE overflow =>
+            repcount := repcount+1;
+            IF repcount < maximum
+              THEN root[k] := 0.1*root[k]
+              ELSE PROPAGATE_EXCEPTION rescale
+            ENDIF
+      ENDEXCEPTION;
+
+      poly := a[n];
+      FOR j : INTEGER [1..n] DO
+         poly := root[k]*poly + a[n-j]
+      ENDFOR;
+      repcount := maximum;
+      (* Evaluating the polynomial without overflow *)
+      (* forces exit from the WHILE loop. *)
+      END overflowscope
+    ENDWHILE
+  END;
+
+  denom := a[n];
+
+  BEGIN
+  (* If the calculation of denom causes overflow, or if denom is zero *)
+  (* causing zerodivide, then the root is perturbed and not recomputed. *)
+  EXCEPTION CASE overflow,zerodevide => root[k] := root[k] + epsilon(root[k],k)
+  ENDEXCEPTION;
+
+  FOR j : INTEGER [1..n] DO
+    IF j # k THEN denom := denom*(root[k] - root[j]) ENDIF
+  ENDFOR;
+  root[k] := root[k] - poly/denom
+  END
+
+ENDFOR;

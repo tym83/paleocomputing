@@ -1,0 +1,41 @@
+(* Part Three, II.A "How Many Female Employees Have Received Flu Shots?", *)
+(* pp.1096-1099 (E-3 to E-6). The fragments in the order printed, with *)
+(* their line numbers ("not part of our language", p.1096). *)
+101 REPRESENTATION FluShotRecord =
+102   RECORD
+103     CONST LastName: Name;
+104     CONST FirstName: Name;
+105     VAR BirthDay: Date;
+106     VAR Sex: UNORDERED(Male, Female);
+107     VAR FluShotDate: Date
+108   ENDRECORD
+201 REPRESENTATION Date =
+202   RECORD
+203     VAR Month: Months;
+204     VAR Day: INTEGER [1..31];
+205     VAR Year: INTEGER [1850..2050];
+206   ENDRECORD
+301 REPRESENTATION Months =
+302   ORDERED (Jan, Feb, Mar, Apr, May, Jun, Jul,
+              Aug, Sept, Oct, Nov, Dec)
+401 VAR D1, D2: Date;
+402 D1 := Date(Mar, 4, 1977);
+403 D2 := Date(Jul, 17, 1977);
+501 REPRESENTATION Name =
+502   ARRAY (INTEGER [1..5] OF ASCII ['A'..'Z'])
+601 VAR R1, R2: FluShotRecord;
+602 R1 := FluShotRecord("SMITH", "MABEL", Date(Apr,10,1916),
+                        Female, Date(Aug,22,1977));
+603 R2 := FluShotRecord("DAVIS", "KELLY", Date(Sept,4,1952),
+                        Male, Date(Jul,16,1972))
+701 R1.BirthDay.Year := 1917;
+702 R2.Sex := Female;
+801 VAR a: ARRAY (INTEGER [1..N] OF FluShotRecord);
+802     Count: INTEGER [0..N];
+803 Count := 0 (* Initialize Count to zero *);
+804 FOR i: INTEGER [1..N]
+805   DO IF (a[i].Sex = Female)
+806         AND (a[i].BirthDay.Year < 1918)
+807         AND (a[i].FluShotDate.Year >= 1976)
+808      THEN Count := Count +1 ENDIF;
+809 ENDFOR

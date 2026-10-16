@@ -1,0 +1,16 @@
+(* Part Three, II.C "Sets and the Sieve of Eratosthenes", p.1104 (E-11) *)
+1401 MODULE Eratosthenes
+1402   IMPORT N;
+1403   EXPORT TRANSPARENT IntegerSet;
+1404   EXPORT READONLY Primes;
+1405   REPRESENTATION IntegerSet = SET(INTEGER [2..N]);
+1406   VAR Primes: IntegerSet := IntegerSet();
+1407   VAR Sieve: IntegerSet := -IntegerSet();
+1408   FOR j: INTEGER [2..N] DO
+1409     IF j IN Sieve
+1410       THEN FOR jMultiple: INTEGER [1..N DIV j] DO
+1411              Sieve := Sieve-IntegerSet(j*jMultiple) ENDFOR;
+1412            Primes := Primes+IntegerSet(j);
+1413     ENDIF;
+1414   ENDFOR;
+1415 ENDMODULE Eratosthenes

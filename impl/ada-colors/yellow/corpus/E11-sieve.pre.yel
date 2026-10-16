@@ -1,0 +1,4 @@
+(* around the module of p.1104: N, which it imports, and output *)
+MODULE Sieve
+  IMPORT TextIO, StandardImplementationPrelude;
+  CONST N: INTEGER [2..100000] = 100;

@@ -13,7 +13,7 @@
     VAR r: Rep;
     NEW(r);
     r^ := RepRec(kind, tid, tid, 0, 0, 0, 0, FALSE, 0, 0, Rep NIL, Rep NIL, 0, Rep NIL,
-                 Node NIL, 0, Field NIL, Field NIL, 0, 0, 0, FALSE, FALSE, FALSE, FALSE, 0, 0,
+                 Node NIL, 0, Field NIL, Field NIL, 0, 0, 0, FALSE, FALSE, FALSE, 0, FALSE, 0, 0,
                  Sym NIL, 0);
     r^.serial := NewSerial();
     RETURN r

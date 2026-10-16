@@ -46,11 +46,19 @@
 
   (* one item of an import or export list, as aliases added to head; inner *)
   (* is the module whose names an export list speaks of, or NIL for imports *)
+  VAR ExportOps: INT := 0;          (* := and = exported by the module being closed *)
+
   PROCEDURE ResolveItem (CONST it: Node; VAR head: Sym; CONST exporting: BOOLEAN)
     VAR target, m, s: Sym;
         name: Txt;
         r: Rep;
         attr: INT := it^.flag;
+    IF exporting AND (it^.text = 0) AND ((it^.name = P_ASSIGN) OR (it^.name = P_EQ) OR (it^.name = P_NE)) THEN
+      IF FindHere(it^.name) = Sym NIL THEN
+        (* the standard := = # of the opaque types go out with them (p.1156) *)
+        RETURN
+      ENDIF
+    ENDIF;
     IF it^.text # 0 THEN
       (* x FROM M: M's exported x *)
       m := Real(Lookup(it^.text, it^.line));
@@ -92,6 +100,7 @@
           (* OPAQUE is assumed: the outside sees no components and no := = # *)
           r := CopyRep(m^.rep);
           r^.opaque := TRUE;
+          r^.opaqueops := ExportOps;
           s^.target := NewSym(m^.kind, m^.name);
           s^.target^.rep := r;
           s^.target^.decl := m^.decl
@@ -174,7 +183,19 @@
     BlockStatements(d^.c);
     BTop := BTop - 1;
     IF monitorHere THEN Emit(Join(T("y_mon_leave(&"), Path(CurMonitor^.level, CurMonitor^.cname), T(");"))) ENDIF;
-    (* exports are names of the module *)
+    (* exports are names of the module; := = # first, as they apply to *)
+    (* every opaque type exported with them *)
+    ExportOps := 0;
+    item := d^.b;
+    WHILE item # Node NIL DO
+      IF (item^.text = 0) AND (FindHere(item^.name) = Sym NIL) THEN
+        IF item^.name = P_ASSIGN THEN ExportOps := ExportOps + 1 ENDIF;
+        IF (item^.name = P_EQ) OR (item^.name = P_NE) THEN
+          IF (ExportOps DIV 2) = 0 THEN ExportOps := ExportOps + 2 ENDIF
+        ENDIF
+      ENDIF;
+      item := item^.next
+    ENDWHILE;
     exports := Sym NIL;
     item := d^.b;
     WHILE item # Node NIL DO

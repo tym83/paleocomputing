@@ -1,0 +1,4 @@
+(* around the fragments of pp.1100-1102: Sqrt, Sin and Cos come from the *)
+(* implementation's prelude (the module imports them, line 1302) *)
+MODULE Distances
+  IMPORT TextIO, MathLibrary, StandardImplementationPrelude;

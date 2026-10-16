@@ -1,0 +1,10 @@
+;
+VAR count: INTEGER64 := 0;
+FOR k: INTEGER [2..N] DO
+  IF k IN Primes THEN
+    count := count + 1;
+    IF k > 80 THEN Write(k); Write(" ") ENDIF
+  ENDIF
+ENDFOR;
+Write("- "); Write(count); Write(" primes up to "); Write(N); WriteLn()
+ENDMODULE Sieve

@@ -721,7 +721,9 @@
       IF (ra^.kind = R_SIGNAL) OR (ra^.kind = R_FILE) OR (ra^.kind = R_SEM) THEN
         FailS(n^.line, "= and # are not defined for signals, files and semaphores")
       ENDIF;
-      IF ra^.opaque THEN FailN(n^.line, ra^.tname, " is opaque here: = is not exported (X.B.3)") ENDIF;
+      IF ra^.opaque AND ((ra^.opaqueops DIV 2) = 0) THEN
+        FailN(n^.line, ra^.tname, " is opaque here: = is not exported (X.B.3)")
+      ENDIF;
       r := RBool;
       code := EqCode(a, ra, b, rb);
       IF op = P_NE THEN
