@@ -1,0 +1,427 @@
+
+  (* ---- declarations (Sections VII and X) -------------------------------------- *)
+  (* Simple declarations take effect in their order; the bodies of routines *)
+  (* wait until all the declarations of the scope are seen, so routines may *)
+  (* call each other in any order (X.G, p.1059). *)
+
+  (* the C name of a routine: its own when it is an identifier *)
+  PROCEDURE RoutineCName RETURNS Txt (CONST name: Txt)
+    VAR n: INT := NewSerial();
+        ok: BOOLEAN := TRUE;
+    FOR i: INTEGER [1..TL[name]] DO
+      IF NOT (IsLetter(TChar(name, i)) OR IsDigit(TChar(name, i))) THEN ok := FALSE ENDIF
+    ENDFOR;
+    SB();
+    SA("yr");
+    SI(n);
+    IF ok THEN
+      SA("_");
+      ST(name)
+    ENDIF;
+    RETURN SE()
+  ENDPROCEDURE RoutineCName;
+
+  (* the representation of a formal parameter (rules 85-86) *)
+  PROCEDURE FormalRep RETURNS Rep (CONST n: Node)
+    VAR r: Rep;
+        ok: BOOLEAN;
+        v: INT;
+    IF n^.kind = N_RUARRAY THEN
+      (* a length-unresolved array: integer indices, bounds of the actual *)
+      Manifest(n^.a, ok, v);
+      IF NOT ok OR (v < 1) OR (v > 4) THEN FailS(n^.line, "DIMENSIONS is a manifest constant from 1 to 4") ENDIF;
+      r := NewRep(R_UARRAY, T("length-unresolved array"));
+      r^.nidx := v;
+      r^.elem := MakeRep(n^.b, 0, FALSE);
+      CheckRepresented(r^.elem, n^.line);
+      r^.deep := TRUE;
+      RETURN r
+    ENDIF;
+    IF n^.kind = N_RSPACE THEN RETURN NewRep(R_SPACE, T("SPACE")) ENDIF;
+    r := MakeRep(n, 0, FALSE);
+    CheckRepresented(r, n^.line);
+    RETURN r
+  ENDPROCEDURE FormalRep;
+
+  PROCEDURE ParamCType RETURNS Txt (CONST p: Param)
+    VAR t: Txt := CType(p^.rep);
+    IF p^.cls = C_CONST THEN RETURN t ENDIF;
+    SB();
+    ST(t);
+    SA(" *");
+    RETURN SE()
+  ENDPROCEDURE ParamCType;
+
+  (* the header of a routine or process: its parameters and C prototype *)
+  PROCEDURE RoutineHeader (CONST d: Node; CONST kind: INT)
+    VAR s, old: Sym;
+        g, nm: Node;
+        p, last: Param;
+        r: Rep;
+        t: Txt;
+        first: BOOLEAN := TRUE;
+    s := NewSym(kind, d^.name);
+    s^.decl := d;
+    s^.func := d^.flag = 1;
+    s^.level := Level + 1;
+    s^.cname := RoutineCName(d^.name);
+    IF d^.b # Node NIL THEN
+      s^.ret := MakeRep(d^.b, 0, FALSE);
+      CheckRepresented(s^.ret, d^.line)
+    ELSE
+      s^.ret := RVoid;
+      IF s^.func THEN FailN(d^.line, d^.name, ": a FUNCTION has a RETURNS clause (X.A)") ENDIF
+    ENDIF;
+    last := Param NIL;
+    g := d^.a;
+    WHILE g # Node NIL DO
+      r := FormalRep(g^.b);
+      IF s^.func AND (g^.ival # C_CONST) THEN
+        FailN(g^.line, d^.name, ": the parameters of a FUNCTION are CONST (X.A.2)")
+      ENDIF;
+      IF (kind = S_PROCESS) AND (g^.ival = C_OUT) THEN
+        FailN(g^.line, d^.name, ": a process has no OUT parameters")
+      ENDIF;
+      nm := g^.a;
+      WHILE nm # Node NIL DO
+        NEW(p);
+        p^ := ParamRec(nm^.name, g^.ival, r, Fresh("p"), Param NIL);
+        IF last = Param NIL THEN s^.params := p ELSE last^.next := p ENDIF;
+        last := p;
+        s^.nparams := s^.nparams + 1;
+        nm := nm^.next
+      ENDWHILE;
+      g := g^.next
+    ENDWHILE;
+    (* overloading: EXTENDS adds to the visible definitions, REPLACES *)
+    (* overrides one of them, and neither hides them all (X.A.1) *)
+    old := Find(d^.name);
+    IF old # Sym NIL THEN old := Real(old) ENDIF;
+    IF (d^.ival # 0) AND (old # Sym NIL) AND (old^.kind = S_ROUTINE) THEN
+      s^.alt := old;
+      IF (d^.ival = W_EXTENDS) AND (SameSignature(s, old) # Sym NIL) THEN
+        FailN(d^.line, d^.name, " EXTENDS a definition for the same parameter types: use REPLACES")
+      ENDIF;
+      IF (d^.ival = W_REPLACES) AND (SameSignature(s, old) = Sym NIL) THEN
+        FailN(d^.line, d^.name, " REPLACES no definition for these parameter types")
+      ENDIF
+    ENDIF;
+    d^.sym := s;
+    Define(s, d^.line);
+    (* the frame struct is declared now and written with the body *)
+    FrameName[s^.level] := Fresh("yf");
+    s^.members := NewSym(S_STD, FrameName[s^.level]);
+    SB();
+    SA("struct ");
+    ST(FrameName[s^.level]);
+    SA(";");
+    t := SE();
+    Put(OTypes, t);
+    SB();
+    SA("static ");
+    IF kind = S_PROCESS THEN SA("void") ELSE ST(CType(s^.ret)) ENDIF;
+    SA(" ");
+    ST(s^.cname);
+    SA("(");
+    t := SE();
+    IF kind = S_PROCESS THEN
+      t := Join(t, T("void *arg"), 0);
+      first := FALSE
+    ELSIF Level > 0 THEN
+      SB();
+      ST(t);
+      SA("struct ");
+      ST(FrameName[Level]);
+      SA(" *up");
+      t := SE();
+      first := FALSE
+    ENDIF;
+    p := s^.params;
+    WHILE (p # Param NIL) AND (kind # S_PROCESS) DO
+      SB();
+      ST(t);
+      IF NOT first THEN SA(", ") ENDIF;
+      first := FALSE;
+      ST(ParamCType(p));
+      SA(" a_");
+      ST(p^.cname);
+      t := SE();
+      p := p^.next
+    ENDWHILE;
+    IF first THEN t := Join(t, T("void"), 0) ENDIF;
+    t := Join(t, T(")"), 0);
+    s^.mnext := NewSym(S_STD, t);
+    Put(OProtos, Join(t, T(";"), 0));
+    RETURN
+  ENDPROCEDURE RoutineHeader;
+
+  (* the definition among the alternatives with the parameter types of s *)
+  PROCEDURE SameSignature RETURNS Sym (CONST s, alts: Sym)
+    VAR a: Sym := alts;
+        p, q: Param;
+        same: BOOLEAN;
+    WHILE a # Sym NIL DO
+      IF a^.nparams = s^.nparams THEN
+        same := TRUE;
+        p := s^.params;
+        q := a^.params;
+        WHILE p # Param NIL DO
+          IF NOT SameType(p^.rep, q^.rep) THEN same := FALSE ENDIF;
+          p := p^.next;
+          q := q^.next
+        ENDWHILE;
+        IF same THEN RETURN a ENDIF
+      ENDIF;
+      a := a^.alt
+    ENDWHILE;
+    RETURN Sym NIL
+  ENDPROCEDURE SameSignature;
+
+  (* ---- the body of a routine: a C function with its frame ---------------------- *)
+
+  PROCEDURE RoutineBody (CONST d: Node)
+    VAR s: Sym := d^.sym;
+        saveBody, saveLocals: Buf;
+        saveLevel, saveX, saveXB, saveB, saveH, saveL, saveLB: INT;
+        saveRoutine: Sym;
+        saveHas: BOOLEAN;
+        p: Param;
+        ps: Sym;
+        frame, t: Txt;
+        fn: Buf;
+    saveBody := Body;
+    saveLocals := Locals;
+    saveLevel := Level;
+    saveX := XTop;
+    saveXB := XBase;
+    saveB := BTop;
+    saveH := HTop;
+    saveL := LTop;
+    saveLB := LoopBase;
+    saveRoutine := CurRoutine;
+    saveHas := HasHandler;
+    Body := Buf(Line NIL, Line NIL);
+    Locals := Buf(Line NIL, Line NIL);
+    fn := Buf(Line NIL, Line NIL);
+    Level := s^.level;
+    frame := s^.members^.name;
+    FrameName[Level] := frame;
+    XBase := XTop;
+    LoopBase := LTop;
+    HTop := 0;
+    CurRoutine := s;
+    HasHandler := FALSE;
+    OpenScope(FALSE);
+    (* the parameters live in the frame *)
+    p := s^.params;
+    WHILE p # Param NIL DO
+      IF p^.cls = C_CONST THEN ps := NewSym(S_CONST, p^.name) ELSE ps := NewSym(S_VAR, p^.name) ENDIF;
+      ps^.rep := p^.rep;
+      ps^.level := Level;
+      ps^.cname := p^.cname;
+      IF s^.kind = S_PROCESS THEN
+        (* the activation has filled the frame already *)
+        ps^.byref := p^.cls = C_VAR;
+        DeclStorage(ParamCType(p), p^.cname)
+      ELSIF p^.cls = C_VAR THEN
+        ps^.byref := TRUE;
+        DeclStorage(ParamCType(p), p^.cname);
+        Emit(Join(T("F."), p^.cname, Join(T(" = a_"), p^.cname, T(";"))))
+      ELSIF p^.cls = C_OUT THEN
+        (* computed in the frame and copied out at RETURN (X.A.2) *)
+        DeclStorage(CType(p^.rep), p^.cname);
+        DeclStorage(ParamCType(p), Join(p^.cname, T("_o"), 0));
+        Emit(Join(T("F."), p^.cname, Join(T("_o = a_"), p^.cname, T(";"))));
+        IF Deep(p^.rep) AND (p^.rep^.kind # R_UARRAY) THEN
+          Emit(Join(T("y_init("), DescOf(p^.rep), Join(T(", &F."), p^.cname, T(");"))))
+        ENDIF;
+        IF p^.rep^.kind = R_UARRAY THEN
+          Emit(Join(T("F."), p^.cname, Join(T(" = *a_"), p^.cname, T(";"))))
+        ENDIF
+      ELSE
+        DeclStorage(CType(p^.rep), p^.cname);
+        Emit(Join(T("F."), p^.cname, Join(T(" = a_"), p^.cname, T(";"))))
+      ENDIF;
+      Define(ps, d^.line);
+      p := p^.next
+    ENDWHILE;
+    EnterMonitor(s);
+    Declarations(d^.c^.a);
+    BlockStatements(d^.c);
+    IF s^.kind = S_PROCESS THEN
+      EmitS("rt_raise(Y_X_NO_RETURN);")
+    ELSE
+      EmitS("rt_raise(Y_X_NO_RETURN);")
+    ENDIF;
+    AwaitProcesses();
+    CloseScope();
+    (* the frame *)
+    SB();
+    SA("struct ");
+    ST(frame);
+    SA(" {");
+    IF Level > 1 THEN
+      SA(" struct ");
+      ST(FrameName[Level - 1]);
+      SA(" *up;")
+    ELSE
+      SA(" void *up;")
+    ENDIF;
+    t := SE();
+    Put(OFrames, t);
+    Append(OFrames, Locals);
+    PutS(OFrames, "};");
+    (* the function *)
+    Put(fn, Join(s^.mnext^.name, T(" {"), 0));
+    IF HasHandler THEN PutS(fn, "volatile") ENDIF;
+    Put(fn, Join(T("struct "), frame, T(" F;")));
+    PutS(fn, "memset((void *)&F, 0, sizeof F);");
+    IF s^.kind = S_PROCESS THEN
+      Put(fn, Join(T("F = *(struct "), frame, T(" *)arg;")))
+    ELSIF Level > 1 THEN
+      PutS(fn, "F.up = up;")
+    ENDIF;
+    Append(fn, Body);
+    PutS(fn, "}");
+    Append(OFuncs, fn);
+    Body := saveBody;
+    Locals := saveLocals;
+    Level := saveLevel;
+    FrameName[Level] := Fresh("unused");
+    IF saveRoutine # Sym NIL THEN FrameName[Level] := saveRoutine^.members^.name ENDIF;
+    XTop := saveX;
+    XBase := saveXB;
+    BTop := saveB;
+    HTop := saveH;
+    LTop := saveL;
+    LoopBase := saveLB;
+    CurRoutine := saveRoutine;
+    HasHandler := saveHas;
+    RETURN
+  ENDPROCEDURE RoutineBody;
+
+  (* ---- the simple declarations ------------------------------------------------------ *)
+
+  PROCEDURE DeclareStorage (CONST s: Sym; CONST r: Rep; CONST line: INT)
+    s^.rep := r;
+    s^.level := Level;
+    s^.cname := Fresh("v");
+    DeclStorage(CType(r), s^.cname);
+    IF Deep(r) THEN Emit(Join(T("y_init("), DescOf(r), Join(T(", &"), SymPath(s), T(");")))) ENDIF;
+    IF r^.kind = R_SET THEN
+      Emit(Join(SymPath(s), T(" = y_set_new("), Join(r^.elem^.lo, T(", "), Join(r^.elem^.hi, T(");"), 0))))
+    ENDIF;
+    IF r^.kind = R_SIGNAL THEN DeclareSignal(s, line) ENDIF;
+    IF r^.kind = R_SEM THEN Emit(Join(T("rt_lock_init(&"), SymPath(s), T(");"))) ENDIF;
+    RETURN
+  ENDPROCEDURE DeclareStorage;
+
+  PROCEDURE SimpleDecl (CONST d: Node)
+    VAR k: INT := d^.kind;
+        r, er: Rep;
+        nm: Node;
+        s: Sym;
+        c: Txt;
+        ok: BOOLEAN;
+        v: INT;
+    IF (k = N_CONST) OR (k = N_VAR) THEN
+      r := MakeRep(d^.b, 0, FALSE);
+      CheckRepresented(r, d^.line);
+      IF (k = N_CONST) AND ((r^.kind = R_SIGNAL) OR (r^.kind = R_FILE) OR (r^.kind = R_SEM)) THEN
+        FailS(d^.line, "signals, files and semaphores are variables (VII.B)")
+      ENDIF;
+      nm := d^.a;
+      WHILE nm # Node NIL DO
+        IF k = N_CONST THEN s := NewSym(S_CONST, nm^.name) ELSE s := NewSym(S_VAR, nm^.name) ENDIF;
+        DeclareStorage(s, r, d^.line);
+        IF d^.c # Node NIL THEN
+          Expr(d^.c, r, c, er);
+          Store(SymPath(s), r, c, er, d^.line);
+          IF k = N_CONST THEN
+            Manifest(d^.c, ok, v);
+            IF ok AND IsDiscrete(r) THEN
+              s^.hasmv := TRUE;
+              s^.mval := v
+            ENDIF
+          ENDIF
+        ENDIF;
+        IF nm^.a # Node NIL THEN AtLocation(s, nm^.a) ENDIF;
+        Define(s, nm^.line);
+        nm := nm^.next
+      ENDWHILE;
+      RETURN
+    ENDIF;
+    IF k = N_REPDECL THEN
+      r := MakeRep(d^.b, d^.name, FALSE);
+      CheckRepresented(r, d^.line);
+      s := NewSym(S_REP, d^.name);
+      s^.rep := r;
+      Define(s, d^.line);
+      ResolvePending(d^.name, r);
+      RETURN
+    ENDIF;
+    IF k = N_TYPE THEN
+      r := MakeRep(d^.b, d^.name, TRUE);
+      IF d^.b^.kind = N_RNAME THEN
+        (* TYPE T = INTEGER: a new type, with the operations of the old (VIII.A) *)
+        r := CopyRep(r);
+        r^.tid := NewTid(d^.name);
+        r^.tname := d^.name;
+        IF (r^.kind = R_INT) OR (r^.kind = R_FIXED) OR (r^.kind = R_FLOAT) THEN
+          IF d^.b^.a = Node NIL THEN r^.abstract := TRUE ENDIF
+        ENDIF
+      ENDIF;
+      s := NewSym(S_TYPE, d^.name);
+      s^.rep := r;
+      Define(s, d^.line);
+      ResolvePending(d^.name, r);
+      RETURN
+    ENDIF;
+    IF k = N_LABEL THEN
+      FailS(d^.line, "this translator has no labels yet");
+      RETURN
+    ENDIF;
+    FailS(d^.line, "not a simple declaration");
+    RETURN
+  ENDPROCEDURE SimpleDecl;
+
+  (* AT: the location of a variable is implementation-dependent (XIV.VII); *)
+  (* this implementation takes it for device signals only *)
+  PROCEDURE AtLocation (CONST s: Sym; CONST at: Node)
+    IF s^.rep^.kind = R_SIGNAL THEN
+      DeviceSignal(s, at);
+      RETURN
+    ENDIF;
+    RETURN
+  ENDPROCEDURE AtLocation;
+
+  PROCEDURE Declarations (CONST list: Node)
+    VAR d: Node := list;
+        deferred, dtail, n: Node := Node NIL;
+    WHILE d # Node NIL DO
+      CurLine := d^.line;
+      IF (d^.kind = N_ROUTINE) OR (d^.kind = N_PROCESS) THEN
+        IF d^.kind = N_ROUTINE THEN RoutineHeader(d, S_ROUTINE) ELSE RoutineHeader(d, S_PROCESS) ENDIF;
+        n := NewNode(N_NAMEL, d^.line);
+        n^.a := d;
+        Link(deferred, dtail, n);
+        IF d^.kind = N_PROCESS THEN DeclareProcess(d) ENDIF
+      ELSIF (d^.kind = N_MODULE) THEN
+        CompileModule(d)
+      ELSIF d^.kind = N_TEMPLATE THEN
+        DeclareTemplate(d)
+      ELSIF d^.kind = N_INSTANCE THEN
+        Instantiate(d)
+      ELSE
+        SimpleDecl(d)
+      ENDIF;
+      d := d^.next
+    ENDWHILE;
+    CheckPending();
+    n := deferred;
+    WHILE n # Node NIL DO
+      RoutineBody(n^.a);
+      n := n^.next
+    ENDWHILE;
+    RETURN
+  ENDPROCEDURE Declarations;

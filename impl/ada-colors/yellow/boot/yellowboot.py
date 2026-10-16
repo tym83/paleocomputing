@@ -409,8 +409,15 @@ class Gen:
             self.define(name, Sym("var" if byref else "const", name,
                                   cname=f"(*a_{name})" if byref else f"a_{name}", rep=pr,
                                   param=cls), d.line)
-        self.declarations(d.body.decls)
+        save_gl = self.global_level
+        self.global_level = False
+        self.in_routine = True
+        for dd in d.body.decls:
+            if dd.kind == "routine":
+                raise SemError(f"line {dd.line}: the bootstrap takes routines at module level only")
+            self.simple_decl(dd)
         self.block_stmts(d.body)
+        self.global_level = save_gl
         self.emit("rt_raise(Y_X_NO_RETURN);")
         self.scopes.pop()
         body = self.out
@@ -604,7 +611,7 @@ class Gen:
 
     def convert(self, code, r, er, line):
         if r.kind in ("int", "char", "enum") and r.lo is not None and r is not INT:
-            if r.mlo is not None and er.mlo is not None and r.mlo <= er.mlo and er.mhi <= r.mhi:
+            if None not in (r.mlo, r.mhi, er.mlo, er.mhi) and r.mlo <= er.mlo and er.mhi <= r.mhi:
                 return code
             return f"rt_range({code}, {r.lo}, {r.hi})"
         return code

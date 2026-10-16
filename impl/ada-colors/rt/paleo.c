@@ -1783,3 +1783,15 @@ rt_int y_fmt_fixed(double v, rt_int decimals, unsigned char *buf, rt_int cap) {
   if (fabs(v) < 0.5 * pow(10, -(double)decimals)) v = 0;   /* no "-0.00" */
   return y_fmt(b, snprintf(b, sizeof b, "%.*f", (int)decimals, v), buf, cap);
 }
+
+/* a descriptor for a one-dimensional array of elem, to compare the values
+ * of a length-unresolved array parameter (X.A.3) */
+const ydesc *y_desc_vector(const ydesc *elem) {
+  ydesc *d = rt_alloc(sizeof *d);
+  rt_int lo[1] = {1}, hi[1] = {0};
+  y_desc_array(d, 1, lo, hi, elem);
+  return d;
+}
+
+/* the descriptor of a string literal: a vector of characters */
+const ydesc y_d_str = {YK_ARRAY, sizeof(yarr), 1, 1, {1, 1, 1, 1}, {0, 1, 1, 1}, &y_d_byte, 0, NULL, NULL};

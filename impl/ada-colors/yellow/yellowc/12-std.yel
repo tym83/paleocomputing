@@ -1,0 +1,443 @@
+
+  (* ---- the standard operations (Sections XI, XII, XIV.XI) --------------------- *)
+
+  PROCEDURE Arg RETURNS Node (CONST n: Node; CONST i: INT)
+    VAR p: Node := n^.a;
+        k: INT := 1;
+    WHILE (p # Node NIL) AND (k < i) DO
+      p := p^.next;
+      k := k + 1
+    ENDWHILE;
+    IF p = Node NIL THEN FailN(n^.line, n^.name, ": too few actual parameters") ENDIF;
+    RETURN p
+  ENDPROCEDURE Arg;
+
+  PROCEDURE NArgs (CONST n: Node; CONST k: INT)
+    IF Count(n^.a) # k THEN FailN(n^.line, n^.name, ": the number of actual parameters is wrong") ENDIF;
+    RETURN
+  ENDPROCEDURE NArgs;
+
+  PROCEDURE Call1 RETURNS Txt (CONST f: ARRAY (1 DIMENSIONS OF ASCII); CONST a: Txt)
+    SB();
+    SA(f);
+    SA("(");
+    ST(a);
+    SA(")");
+    RETURN SE()
+  ENDPROCEDURE Call1;
+
+  PROCEDURE Addr RETURNS Txt (CONST a: Txt)
+    RETURN Join(T("&"), a, 0)
+  ENDPROCEDURE Addr;
+
+  (* a variable of one of the kinds listed, for VAR parameters of the *)
+  (* standard procedures *)
+  PROCEDURE StdVar (CONST n: Node; CONST kind: INT; OUT code: Txt; OUT r: Rep)
+    VAR t: Txt;
+    LValue(n, code, r);
+    IF (kind # R_ANY) AND (r^.kind # kind) THEN
+      SB();
+      SA("a ");
+      IF kind = R_FILE THEN SA("file")
+      ELSIF kind = R_SIGNAL THEN SA("signal")
+      ELSIF kind = R_SEM THEN SA("SEMAPHORE")
+      ELSIF kind = R_PTR THEN SA("pointer")
+      ELSE SA("variable")
+      ENDIF;
+      SA(" is needed here");
+      t := SE();
+      Fail(n^.line, t)
+    ENDIF;
+    RETURN
+  ENDPROCEDURE StdVar;
+
+  PROCEDURE NumArg (CONST n: Node; OUT code: Txt; OUT r: Rep)
+    Expr(n, Rep NIL, code, r);
+    IF NOT IsNumeric(r) THEN FailS(n^.line, "a number is needed here") ENDIF;
+    RETURN
+  ENDPROCEDURE NumArg;
+
+  PROCEDURE IntArg RETURNS Txt (CONST n: Node)
+    VAR c: Txt;
+        r: Rep;
+    Expr(n, RInt, c, r);
+    IF r^.kind # R_INT THEN FailS(n^.line, "an integer is needed here") ENDIF;
+    RETURN c
+  ENDPROCEDURE IntArg;
+
+  (* C_CODE_INSERT("..."): the implementation's code insert (XIV.XI.5). *)
+  (* The machine of this implementation is C: the text is put into the *)
+  (* program, with $name standing for the variable, constant or parameter *)
+  (* name visible here. *)
+  PROCEDURE CodeInsert (CONST n: Node)
+    VAR a: Node := Arg(n, 1);
+        text, w, t: Txt;
+        i, j, len: INT;
+        c: ASCII;
+        s: Sym;
+        alpha: ARRAY (INTEGER [1..1] OF Txt);
+    IF a^.kind # N_STRLIT THEN FailS(n^.line, "a code insert takes a string literal (XIV.XI.5)") ENDIF;
+    text := a^.text;
+    len := TL[text];
+    SB();
+    i := 1;
+    WHILE i <= len DO
+      c := TChar(text, i);
+      IF c = 'SQ' THEN
+        j := i + 1;
+        WHILE TChar(text, j) # 'SQ' DO j := j + 1 ENDWHILE;
+        w := Intern(TS[text] + i, (j - i) - 1);
+        SC(Chr[CharValue(RAscii, w, n^.line)]);
+        i := j + 1
+      ELSIF c = '$' THEN
+        j := i + 1;
+        WHILE (j <= len) AND (IsLetter(TChar(text, j)) OR IsDigit(TChar(text, j))) DO j := j + 1 ENDWHILE;
+        w := Intern(TS[text] + i, (j - i) - 1);
+        s := Find(w);
+        IF s = Sym NIL THEN
+          ScTop := 0;
+          SbDepth := 0;
+          FailN(n^.line, w, " in a code insert is not declared here")
+        ENDIF;
+        s := Real(s);
+        IF (s^.kind # S_VAR) AND (s^.kind # S_CONST) THEN
+          ScTop := 0;
+          SbDepth := 0;
+          FailN(n^.line, w, " in a code insert is not a variable or constant")
+        ENDIF;
+        ST(Paren(SymPath(s)));
+        i := j
+      ELSE
+        SC(c);
+        i := i + 1
+      ENDIF
+    ENDWHILE;
+    t := SE();
+    Emit(t);
+    RETURN
+  ENDPROCEDURE CodeInsert;
+
+  PROCEDURE StdCall (CONST f: INT; CONST n: Node; CONST statement: BOOLEAN;
+                     OUT code: Txt; OUT r: Rep)
+    VAR a, b, c, d, t: Txt;
+        ra, rb, rc, el: Rep;
+        nargs, i, dim: INT;
+        ok: BOOLEAN;
+        p: Node;
+        isproc: BOOLEAN;
+    r := RVoid;
+    code := T("((void)0)");
+    isproc := (f = F_NEW) OR (f = F_OPEN) OR (f = F_CLOSE) OR (f = F_GET) OR (f = F_PUT) OR
+              (f = F_MOVE) OR (f = F_DELAY) OR (f = F_WAIT) OR (f = F_SEND) OR (f = F_CLAIM) OR
+              (f = F_RELEASE) OR (f = F_CHANGE_PRIORITY) OR (f = F_RAISE_TERM) OR
+              (f = F_FREE_POINTER) OR (f = F_CODE_INSERT);
+    IF statement AND NOT isproc THEN FailN(n^.line, n^.name, " returns a value: it is called in an expression") ENDIF;
+    IF NOT statement AND isproc THEN FailN(n^.line, n^.name, " returns no value") ENDIF;
+    IF (f = F_LOW) OR (f = F_HIGH) THEN
+      NArgs(n, 2);
+      Expr(Arg(n, 1), Rep NIL, a, ra);
+      IF NOT IsArrayLike(ra) THEN FailN(n^.line, n^.name, " of something that is not an array") ENDIF;
+      b := IntArg(Arg(n, 2));
+      Manifest(Arg(n, 2), ok, dim);
+      r := Unbounded(RInt);
+      IF ok AND (ra^.kind = R_ARRAY) THEN
+        IF (dim < 1) OR (dim > ra^.nidx) THEN FailS(n^.line, "no such dimension") ENDIF;
+        el := ra^.idx;
+        FOR k: INTEGER [2..dim] DO el := el^.link ENDFOR;
+        r := el
+      ENDIF;
+      IF f = F_LOW THEN code := Call2("y_low", a, b) ELSE code := Call2("y_high", a, b) ENDIF;
+      RETURN
+    ENDIF;
+    IF (f = F_SUCC) OR (f = F_PRED) OR (f = F_FIRST) OR (f = F_LAST) THEN
+      NArgs(n, 1);
+      Expr(Arg(n, 1), Rep NIL, a, ra);
+      IF NOT IsDiscrete(ra) THEN FailN(n^.line, n^.name, " of something that is not integer or scalar") ENDIF;
+      IF ((f = F_FIRST) OR (f = F_LAST)) AND (ra^.kind = R_INT) THEN
+        FailS(n^.line, "FIRST and LAST apply to ordered enumerations and alphabets (XI)")
+      ENDIF;
+      IF (ra^.kind = R_ENUM) AND NOT ra^.ordered THEN
+        FailN(n^.line, n^.name, " applies to ordered enumerations (XI)")
+      ENDIF;
+      r := Unbounded(ra);
+      IF f = F_FIRST THEN
+        code := ra^.lo
+      ELSIF f = F_LAST THEN
+        code := ra^.hi
+      ELSE
+        SB();
+        IF ra^.lo # 0 THEN SA("rt_range(") ENDIF;
+        IF f = F_SUCC THEN SA("rt_add(") ELSE SA("rt_sub(") ENDIF;
+        ST(a);
+        SA(", 1)");
+        IF ra^.lo # 0 THEN
+          SA(", ");
+          ST(ra^.lo);
+          SA(", ");
+          ST(ra^.hi);
+          SA(")")
+        ENDIF;
+        code := SE()
+      ENDIF;
+      IF ra^.kind # R_INT THEN r := ra ENDIF;
+      RETURN
+    ENDIF;
+    IF f = F_NEW THEN
+      NArgs(n, 1);
+      StdVar(Arg(n, 1), R_PTR, a, ra);
+      IF ra^.elem = Rep NIL THEN FailN(n^.line, ra^.forward, " is not declared") ENDIF;
+      el := ra^.elem;
+      SB();
+      SA("({ ");
+      ST(a);
+      SA(" = rt_alloc(sizeof(");
+      ST(CType(el));
+      SA("));");
+      IF Deep(el) THEN
+        SA(" y_init(");
+        ST(DescOf(el));
+        SA(", ");
+        ST(a);
+        SA(");")
+      ENDIF;
+      SA(" })");
+      code := SE();
+      RETURN
+    ENDIF;
+    IF f = F_FREE_POINTER THEN
+      NArgs(n, 1);
+      StdVar(Arg(n, 1), R_PTR, a, ra);
+      code := Join(T("({ free("), a, Join(T("); "), a, T(" = 0; })")));
+      RETURN
+    ENDIF;
+    IF f = F_OPEN THEN
+      NArgs(n, 3);
+      StdVar(Arg(n, 1), R_FILE, a, ra);
+      Expr(Arg(n, 2), RAscii, b, rb);
+      IF NOT IsString(rb) THEN FailS(n^.line, "OPEN takes the name of the file as a string (XII.A)") ENDIF;
+      Expr(Arg(n, 3), ROpenMode, c, rc);
+      CheckType(n^.line, ROpenMode, rc);
+      SB();
+      SA("y_open(&");
+      ST(a);
+      SA(", ");
+      ST(b);
+      SA(", ");
+      ST(c);
+      SA(")");
+      code := SE();
+      RETURN
+    ENDIF;
+    IF (f = F_CLOSE) OR (f = F_CHECK_EOF) THEN
+      NArgs(n, 1);
+      StdVar(Arg(n, 1), R_FILE, a, ra);
+      IF f = F_CLOSE THEN code := Call1("y_close", Addr(a))
+      ELSE
+        r := RBool;
+        code := Call1("y_check_eof", Addr(a))
+      ENDIF;
+      RETURN
+    ENDIF;
+    IF f = F_GET THEN
+      NArgs(n, 2);
+      StdVar(Arg(n, 1), R_FILE, a, ra);
+      StdVar(Arg(n, 2), R_ANY, b, rb);
+      CheckType(n^.line, ra^.elem, rb);
+      IF Deep(rb) OR (rb^.kind = R_PTR) THEN FailS(n^.line, "files of this implementation hold no arrays or pointers") ENDIF;
+      SB();
+      SA("({ ");
+      ST(CType(rb));
+      SA(" g; y_get(&");
+      ST(a);
+      SA(", &g, sizeof g); ");
+      ST(b);
+      SA(" = ");
+      ST(Convert(T("g"), rb, ra^.elem));
+      SA("; })");
+      code := SE();
+      RETURN
+    ENDIF;
+    IF f = F_PUT THEN
+      NArgs(n, 2);
+      StdVar(Arg(n, 1), R_FILE, a, ra);
+      Expr(Arg(n, 2), ra^.elem, b, rb);
+      CheckType(n^.line, ra^.elem, rb);
+      IF Deep(rb) OR (rb^.kind = R_PTR) THEN FailS(n^.line, "files of this implementation hold no arrays or pointers") ENDIF;
+      SB();
+      SA("({ ");
+      ST(CType(ra^.elem));
+      SA(" pv = ");
+      ST(Convert(b, ra^.elem, rb));
+      SA("; y_put(&");
+      ST(a);
+      SA(", &pv, sizeof pv); })");
+      code := SE();
+      RETURN
+    ENDIF;
+    IF f = F_MOVE THEN
+      (* MOVE(object, i, source1, i1, j1, ...): the sources one after *)
+      (* another into the object from index i (XI) *)
+      nargs := Count(n^.a);
+      IF (nargs < 5) OR (((nargs - 2) MOD 3) # 0) THEN FailS(n^.line, "MOVE takes an object, an index and triples") ENDIF;
+      StdVar(Arg(n, 1), R_ANY, a, ra);
+      IF NOT ((ra^.kind = R_ARRAY) OR (ra^.kind = R_UARRAY)) OR (ra^.nidx # 1) THEN
+        FailS(n^.line, "MOVE works on one-dimensional arrays")
+      ENDIF;
+      b := IntArg(Arg(n, 2));
+      t := Fresh("at");
+      SB();
+      SA("({ rt_int ");
+      ST(t);
+      SA(" = ");
+      ST(b);
+      SA(";");
+      code := SE();
+      i := 3;
+      WHILE i < nargs DO
+        Expr(Arg(n, i), ra^.elem, c, rc);
+        IF NOT IsArrayLike(rc) OR NOT SameType(ra^.elem, rc^.elem) THEN FailS(n^.line, "MOVE: the components differ in type") ENDIF;
+        d := IntArg(Arg(n, i + 1));
+        b := IntArg(Arg(n, i + 2));
+        SB();
+        ST(code);
+        SA(" { rt_int mi = ");
+        ST(d);
+        SA(", mj = ");
+        ST(b);
+        SA("; y_move(&");
+        ST(a);
+        SA(", ");
+        ST(t);
+        SA(", ");
+        ST(c);
+        SA(", mi, mj, ");
+        ST(DescOf(ra^.elem));
+        SA("); if (mj >= mi) ");
+        ST(t);
+        SA(" += mj - mi + 1; }");
+        code := SE();
+        i := i + 3
+      ENDWHILE;
+      code := Join(code, T(" })"), 0);
+      RETURN
+    ENDIF;
+    IF (f = F_AND_LONG) OR (f = F_OR_LONG) THEN
+      (* both operands are evaluated (XI, p.1062) *)
+      NArgs(n, 2);
+      a := Cond(Arg(n, 1));
+      b := Cond(Arg(n, 2));
+      r := RBool;
+      IF f = F_AND_LONG THEN code := Infix(Paren(Infix(a, "!=", T("0"))), "&", Paren(Infix(b, "!=", T("0"))))
+      ELSE code := Infix(Paren(Infix(a, "!=", T("0"))), "|", Paren(Infix(b, "!=", T("0"))))
+      ENDIF;
+      RETURN
+    ENDIF;
+    IF f = F_DELAY THEN
+      NArgs(n, 1);
+      code := Call1("rt_delay", IntArg(Arg(n, 1)));
+      RETURN
+    ENDIF;
+    IF f = F_CLOCK_TIME THEN
+      NArgs(n, 0);
+      r := Unbounded(RInt);
+      code := T("rt_time()");
+      RETURN
+    ENDIF;
+    IF (f = F_WAIT) OR (f = F_SEND) OR (f = F_AWAITED) THEN
+      StdVar(Arg(n, 1), R_SIGNAL, a, ra);
+      IF f = F_WAIT THEN
+        (* WAIT(s) is WAIT(s, 1) *)
+        IF Count(n^.a) = 1 THEN b := T("1") ELSE
+          NArgs(n, 2);
+          b := IntArg(Arg(n, 2))
+        ENDIF;
+        code := Call2("y_wait", Addr(a), b)
+      ELSE
+        NArgs(n, 1);
+        IF f = F_SEND THEN code := Call1("y_send", Addr(a))
+        ELSE
+          r := RBool;
+          code := Call1("y_awaited", Addr(a))
+        ENDIF
+      ENDIF;
+      RETURN
+    ENDIF;
+    IF (f = F_FLOOR) OR (f = F_CEILING) OR (f = F_NEAR_INTEGER) THEN
+      NArgs(n, 1);
+      NumArg(Arg(n, 1), a, ra);
+      r := Unbounded(RInt);
+      IF ra^.kind = R_INT THEN code := a
+      ELSIF f = F_FLOOR THEN code := Call1("y_floor", a)
+      ELSIF f = F_CEILING THEN code := Call1("y_ceiling", a)
+      ELSE code := Call1("y_near_integer", a)
+      ENDIF;
+      RETURN
+    ENDIF;
+    IF f = F_NEAR_FLOATING THEN
+      NArgs(n, 1);
+      NumArg(Arg(n, 1), a, ra);
+      r := RFloat;
+      code := Join(T("((double)("), a, T("))"));
+      RETURN
+    ENDIF;
+    IF f = F_NEAR_FIXED THEN
+      NArgs(n, 2);
+      NumArg(Arg(n, 1), a, ra);
+      NumArg(Arg(n, 2), b, rb);
+      r := RFixed;
+      code := Call2("y_near_fixed", Join(T("(double)("), a, T(")")), b);
+      RETURN
+    ENDIF;
+    IF f = F_FIXED_DIV THEN
+      NArgs(n, 3);
+      NumArg(Arg(n, 1), a, ra);
+      NumArg(Arg(n, 2), b, rb);
+      NumArg(Arg(n, 3), c, rc);
+      r := RFixed;
+      code := Join(T("y_fixed_div("), a, Join(T(", "), b, Join(T(", "), c, T(")"))));
+      RETURN
+    ENDIF;
+    IF (f = F_CLAIM) OR (f = F_RELEASE) OR (f = F_COND_CLAIM) THEN
+      NArgs(n, 1);
+      StdVar(Arg(n, 1), R_SEM, a, ra);
+      IF f = F_CLAIM THEN code := Call1("rt_region_enter", Addr(a))
+      ELSIF f = F_RELEASE THEN code := Call1("rt_region_leave", Addr(a))
+      ELSE
+        r := RBool;
+        code := Call1("y_cond_claim", Addr(a))
+      ENDIF;
+      RETURN
+    ENDIF;
+    IF f = F_PROCESS_IDENTITY THEN
+      NArgs(n, 0);
+      r := Unbounded(RInt);
+      code := T("y_self()");
+      RETURN
+    ENDIF;
+    IF f = F_CHANGE_PRIORITY THEN
+      NArgs(n, 2);
+      code := Call2("y_change_priority", IntArg(Arg(n, 1)), IntArg(Arg(n, 2)));
+      RETURN
+    ENDIF;
+    IF f = F_RAISE_TERM THEN
+      NArgs(n, 1);
+      code := Call1("y_raise_termination", IntArg(Arg(n, 1)));
+      RETURN
+    ENDIF;
+    IF f = F_CODE_INSERT THEN
+      NArgs(n, 1);
+      CodeInsert(n);
+      RETURN
+    ENDIF;
+    IF (f = F_ADDR) OR (f = F_EXTENT) THEN
+      NArgs(n, 1);
+      Expr(Arg(n, 1), Rep NIL, a, ra);
+      r := Unbounded(RInt);
+      IF f = F_ADDR THEN code := Join(T("((rt_int)(intptr_t)&("), a, T("))"))
+      ELSE code := Join(T("((rt_int)sizeof("), a, T("))"))
+      ENDIF;
+      RETURN
+    ENDIF;
+    FailN(n^.line, n^.name, " is not translated");
+    RETURN
+  ENDPROCEDURE StdCall;

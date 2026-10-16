@@ -13,8 +13,9 @@
   (* the reserved words and punctuation marks are interned first, so a word *)
   (* is reserved when its Txt is at most NKW *)
   PROCEDURE InitWords ()
-    VAR start: INT := PoolTop + 1;
-        t: Txt;
+    VAR start: INT;
+        t, all: Txt;
+    SB();
     SA("ALIGNMENT ALPHABET AND ARRAY AS ASSERT AT BASE2 BASE8 BASE10 BASE16 BEGIN CASE ");
     SA("CONST DIMENSIONS DIV DO ELSE ELSIF END ENDEXCEPTION ENDFOR ENDFUNCTION ENDIF ");
     SA("ENDLOOP ENDMODULE ENDMONITOR ENDPROCEDURE ENDPROCESS ENDRECORD ENDSELECT ");
@@ -26,7 +27,10 @@
     SA("TRANSPARENT TYPE UNORDERED VAR WHILE XOR ");
     SA("<<<= >>>= ### === <<< >>> <<= >>= *** /// --- +++ := -> .. <= >= ## == << >> ");
     SA("** // -- ++ # + - * / = < > ( ) [ ] , ; : . ^ ");
-    FOR i: INTEGER [start..PoolTop] DO
+    all := SE();
+    NTxt := 0;
+    start := TS[all];
+    FOR i: INTEGER [TS[all]..(TS[all] + TL[all]) - 1] DO
       IF Pool[i] = ' ' THEN
         t := Intern(start, i - start);
         start := i + 1

@@ -210,8 +210,11 @@ MODULE yellowc
     TS, TL: TxtTable;               (* start and length of each Txt *)
     NTxt: INT := 0;
     Hash: HashTable;
-    Building: BOOLEAN := FALSE;      (* a Txt is being built: SB .. SE *)
-    BStart: INT := 0;
+    Building: BOOLEAN := FALSE;
+    Scratch: ARRAY (INTEGER [1..4000000] OF ASCII);
+    ScTop: INT := 0;
+    SbStart: ARRAY (INTEGER [1..4000] OF INT);
+    SbDepth: INT := 0;
     Serial: INT := 0;
     Code: ARRAY (ASCII OF INT);      (* the position of a character in ASCII *)
     Chr: ARRAY (INTEGER [0..127] OF ASCII);
@@ -251,28 +254,32 @@ MODULE yellowc
     RETURN
   ENDPROCEDURE PoolAdd;
 
-  (* start building a Txt; SA, SC, ST, SI add to it; SE finishes it *)
+  (* start building a Txt; SA, SC, ST, SI add to it; SE finishes it. The *)
+  (* text is built in a scratch area, so a Txt may be built while another *)
+  (* one is being built: the builds nest like calls *)
   PROCEDURE SB ()
-    IF Building THEN PROPAGATE_EXCEPTION nested_text ENDIF;
-    Building := TRUE;
-    BStart := PoolTop;
+    SbDepth := SbDepth + 1;
+    SbStart[SbDepth] := ScTop;
     RETURN
   ENDPROCEDURE SB;
 
-  PROCEDURE SA (CONST s: ARRAY (1 DIMENSIONS OF ASCII))
-    FOR i: INTEGER [LOW(s, 1)..HIGH(s, 1)] DO PoolAdd(s[i]) ENDFOR;
-    RETURN
-  ENDPROCEDURE SA;
-
   PROCEDURE SC (CONST c: ASCII)
-    PoolAdd(c);
+    ScTop := ScTop + 1;
+    Scratch[ScTop] := c;
     RETURN
   ENDPROCEDURE SC;
 
+  PROCEDURE SA (CONST s: ARRAY (1 DIMENSIONS OF ASCII))
+    FOR i: INTEGER [LOW(s, 1)..HIGH(s, 1)] DO SC(s[i]) ENDFOR;
+    RETURN
+  ENDPROCEDURE SA;
+
   PROCEDURE ST (CONST t: Txt)
-    VAR i: INT := TS[t];
+    VAR i: INT;
+    IF t = 0 THEN RETURN ENDIF;
+    i := TS[t];
     WHILE i < (TS[t] + TL[t]) DO
-      PoolAdd(Pool[i]);
+      SC(Pool[i]);
       i := i + 1
     ENDWHILE;
     RETURN
@@ -282,7 +289,7 @@ MODULE yellowc
     VAR digits: ARRAY (INTEGER [1..24] OF ASCII);
         k: INT := 0;
         v: INT := n;
-    IF v < 0 THEN PoolAdd('-'); v := -v ENDIF;
+    IF v < 0 THEN SC('-'); v := -v ENDIF;
     LOOP more
       k := k + 1;
       digits[k] := Chr[(v MOD 10) + 48];
@@ -290,17 +297,20 @@ MODULE yellowc
       IF v = 0 THEN EXIT more ENDIF
     ENDLOOP more;
     WHILE k > 0 DO
-      PoolAdd(digits[k]);
+      SC(digits[k]);
       k := k - 1
     ENDWHILE;
     RETURN
   ENDPROCEDURE SI;
 
   PROCEDURE SE RETURNS Txt ()
-    Building := FALSE;
+    VAR start: INT := SbStart[SbDepth];
+    SbDepth := SbDepth - 1;
     NTxt := NTxt + 1;
-    TS[NTxt] := BStart + 1;
-    TL[NTxt] := PoolTop - BStart;
+    TS[NTxt] := PoolTop + 1;
+    TL[NTxt] := ScTop - start;
+    FOR i: INTEGER [start + 1..ScTop] DO PoolAdd(Scratch[i]) ENDFOR;
+    ScTop := start;
     RETURN NTxt
   ENDPROCEDURE SE;
 
@@ -434,7 +444,8 @@ MODULE yellowc
   (* not a C program, and the translation stops *)
   PROCEDURE Fail (CONST line: INT; CONST msg: Txt)
     VAR t: Txt;
-    IF Building THEN Building := FALSE ENDIF;
+    SbDepth := 0;
+    ScTop := 0;
     SB();
     SA("line ");
     SI(line);

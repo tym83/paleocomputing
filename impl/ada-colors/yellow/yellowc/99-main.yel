@@ -1,0 +1,177 @@
+
+  (* ---- the standard environment (Sections VI, XI, XII, XIV) -------------------- *)
+
+  VAR
+    ROpenMode: Rep;
+    Program: Node;
+
+  PROCEDURE StdRep (CONST name: ARRAY (1 DIMENSIONS OF ASCII); CONST r: Rep)
+    VAR s: Sym := NewSym(S_TYPE, N(name));
+    s^.rep := r;
+    Define(s, 0);
+    RETURN
+  ENDPROCEDURE StdRep;
+
+  PROCEDURE StdOp (CONST name: ARRAY (1 DIMENSIONS OF ASCII); CONST code: INT)
+    VAR s: Sym := NewSym(S_STD, N(name));
+    s^.mval := code;
+    Define(s, 0);
+    RETURN
+  ENDPROCEDURE StdOp;
+
+  PROCEDURE LitList RETURNS Node (CONST a, b, c: ARRAY (1 DIMENSIONS OF ASCII); CONST three: BOOLEAN)
+    VAR head, tail, n: Node := Node NIL;
+    n := NewNode(N_NAMEL, 0);
+    n^.name := N(a);
+    Link(head, tail, n);
+    n := NewNode(N_NAMEL, 0);
+    n^.name := N(b);
+    Link(head, tail, n);
+    IF three THEN
+      n := NewNode(N_NAMEL, 0);
+      n^.name := N(c);
+      Link(head, tail, n)
+    ENDIF;
+    RETURN head
+  ENDPROCEDURE LitList;
+
+  PROCEDURE Abstract RETURNS Rep (CONST kind: INT; CONST name: ARRAY (1 DIMENSIONS OF ASCII))
+    VAR r: Rep := NewRep(kind, N(name));
+    r^.abstract := TRUE;
+    RETURN r
+  ENDPROCEDURE Abstract;
+
+  PROCEDURE Predefine ()
+    OpenScope(FALSE);
+    ProcList[Depth] := Node NIL;
+    RInt := Abstract(R_INT, "INTEGER");
+    RFixed := Abstract(R_FIXED, "FIXED");
+    RFloat := Abstract(R_FLOAT, "FLOATING");
+    RSignal := NewRep(R_SIGNAL, N("SIGNAL"));
+    RSem := NewRep(R_SEM, N("SEMAPHORE"));
+    RVoid := NewRep(R_VOID, N("no value"));
+    RAny := NewRep(R_ANY, N("any"));
+    (* BOOLEAN is UNORDERED(FALSE, TRUE) (VI.A.2.a) *)
+    RBool := NewRep(R_BOOL, N("BOOLEAN"));
+    RBool^.lits := LitList("FALSE", "TRUE", "", FALSE);
+    RBool^.nlits := 2;
+    SetRange(RBool, 0, 1);
+    DefineLits(RBool);
+    (* the implementation's standard alphabet: ASCII in its order *)
+    RAscii := NewRep(R_ALPHA, N("ASCII"));
+    RAscii^.ordered := TRUE;
+    RAscii^.nlits := 128;
+    SetRange(RAscii, 0, 127);
+    (* OPEN_MODE = UNORDERED(READ, WRITE, APPEND) (XII.A) *)
+    ROpenMode := NewRep(R_ENUM, N("OPEN_MODE"));
+    ROpenMode^.lits := LitList("READ", "WRITE", "APPEND", TRUE);
+    ROpenMode^.nlits := 3;
+    SetRange(ROpenMode, 0, 2);
+    DefineLits(ROpenMode);
+    StdRep("INTEGER", RInt);
+    StdRep("FIXED", RFixed);
+    StdRep("FLOATING", RFloat);
+    StdRep("BOOLEAN", RBool);
+    StdRep("SIGNAL", RSignal);
+    StdRep("SEMAPHORE", RSem);
+    StdRep("ASCII", RAscii);
+    StdRep("STANDARD_ALPHABET", RAscii);
+    StdRep("OPEN_MODE", ROpenMode);
+    StdOp("LOW", F_LOW);
+    StdOp("HIGH", F_HIGH);
+    StdOp("SUCC", F_SUCC);
+    StdOp("PRED", F_PRED);
+    StdOp("FIRST", F_FIRST);
+    StdOp("LAST", F_LAST);
+    StdOp("NEW", F_NEW);
+    StdOp("OPEN", F_OPEN);
+    StdOp("CLOSE", F_CLOSE);
+    StdOp("GET", F_GET);
+    StdOp("PUT", F_PUT);
+    StdOp("CHECK_EOF", F_CHECK_EOF);
+    StdOp("MOVE", F_MOVE);
+    StdOp("AND_LONG", F_AND_LONG);
+    StdOp("OR_LONG", F_OR_LONG);
+    StdOp("DELAY", F_DELAY);
+    StdOp("CLOCK_TIME", F_CLOCK_TIME);
+    StdOp("WAIT", F_WAIT);
+    StdOp("SEND", F_SEND);
+    StdOp("AWAITED", F_AWAITED);
+    StdOp("FLOOR", F_FLOOR);
+    StdOp("CEILING", F_CEILING);
+    StdOp("NEAR_INTEGER", F_NEAR_INTEGER);
+    StdOp("NEAR_FIXED", F_NEAR_FIXED);
+    StdOp("NEAR_FLOATING", F_NEAR_FLOATING);
+    StdOp("FIXED_DIV", F_FIXED_DIV);
+    StdOp("CLAIM", F_CLAIM);
+    StdOp("RELEASE", F_RELEASE);
+    StdOp("CONDITIONAL_CLAIM", F_COND_CLAIM);
+    StdOp("PROCESS_IDENTITY", F_PROCESS_IDENTITY);
+    StdOp("CHANGE_PRIORITY", F_CHANGE_PRIORITY);
+    StdOp("RAISE_PROCESS_TERMINATION", F_RAISE_TERM);
+    StdOp("FREE_POINTER", F_FREE_POINTER);
+    StdOp("C_CODE_INSERT", F_CODE_INSERT);
+    StdOp("ADDR", F_ADDR);
+    StdOp("EXTENT", F_EXTENT);
+    RETURN
+  ENDPROCEDURE Predefine;
+
+  (* the program: its segments, as the modules of one block (XIII.A) *)
+  PROCEDURE Translate ()
+    VAR m: Node := Program;
+    OpenScope(FALSE);
+    ProcList[Depth] := Node NIL;
+    Level := 0;
+    WHILE m # Node NIL DO
+      CompileModule(m);
+      m := m^.next
+    ENDWHILE;
+    AwaitProcesses();
+    RETURN
+  ENDPROCEDURE Translate;
+
+  PROCEDURE WriteProgram ()
+    PutS(OInit, "static void y_elaborate(void) {");
+    Append(OInit, Body);
+    PutS(OInit, "}");
+    PutS(OInit, "int main(int argc, char **argv) {");
+    PutS(OInit, "y_lang();");
+    PutS(OInit, "rt_init(argc, argv);");
+    PutS(OInit, "y_elaborate();");
+    PutS(OInit, "rt_main_done();");
+    PutS(OInit, "return 0;");
+    PutS(OInit, "}");
+    WriteTxt(T("#include 'DQ'paleo.h'DQ'"));
+    PUT(Output, 'LF');
+    WriteTxt(T("#include <math.h>"));
+    PUT(Output, 'LF');
+    WriteTxt(T("#include <string.h>"));
+    PUT(Output, 'LF');
+    WriteTxt(T("#include <stdlib.h>"));
+    PUT(Output, 'LF');
+    WriteBuf(OTypes);
+    WriteBuf(OStructs);
+    WriteBuf(OFrames);
+    WriteBuf(OGlobals);
+    WriteBuf(OProtos);
+    WriteBuf(OFuncs);
+    WriteBuf(OInit);
+    RETURN
+  ENDPROCEDURE WriteProgram;
+
+  (* ---- the translator --------------------------------------------------------- *)
+
+  InitChars();
+  InitWords();
+  FromWord := N("FROM");
+  DimensionWord := N("DIMENSION");
+  CharNames := T("NUL SOH STX ETX EOT ENQ ACK BEL BS HT LF VT FF CR SO SI DLE DC1 DC2 DC3 DC4 NAK SYN ETB CAN EM SUB ESC FS GS RS US SP DEL SQ DQ ");
+  OPEN(Output, "OUTPUT", WRITE);
+  ReadSource();
+  Lex();
+  Program := ParseProgram();
+  Predefine();
+  Translate();
+  WriteProgram();
+  CLOSE(Output)
+ENDMODULE yellowc
