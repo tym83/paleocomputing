@@ -1,0 +1,42 @@
+(* files (Section XII): OPEN, PUT, CLOSE, GET, CHECK_EOF *)
+MODULE Files
+  IMPORT TextIO, StandardImplementationPrelude;
+  REPRESENTATION
+    Reading = RECORD VAR station: INTEGER [1..99]; VAR value: INTEGER64 ENDRECORD;
+  VAR f: FILE (Reading);
+      t: FILE (ASCII);
+      r: Reading;
+      c: ASCII;
+      sum: INTEGER64 := 0;
+
+  OPEN(f, "build/files-test.dat", WRITE);
+  FOR i: INTEGER [1..5] DO PUT(f, Reading(i, i * 100)) ENDFOR;
+  CLOSE(f);
+  OPEN(f, "build/files-test.dat", APPEND);
+  PUT(f, Reading(6, 1));
+  CLOSE(f);
+  OPEN(f, "build/files-test.dat", READ);
+  WHILE NOT CHECK_EOF(f) DO
+    GET(f, r);
+    sum := sum + r.value
+  ENDWHILE;
+  Write(sum); WriteLn();
+  BEGIN
+    EXCEPTION CASE END_OF_FILE -> Write("END_OF_FILE"); WriteLn()
+    ENDEXCEPTION;
+    GET(f, r)
+  END;
+  CLOSE(f);
+  (* the standard input is a file of characters too *)
+  OPEN(t, "INPUT", READ);
+  WHILE NOT CHECK_EOF(t) DO
+    GET(t, c);
+    IF c # 'LF' THEN Write(c) ENDIF
+  ENDWHILE;
+  WriteLn();
+  BEGIN
+    EXCEPTION CASE FILE_ERROR -> Write("no such file"); WriteLn()
+    ENDEXCEPTION;
+    OPEN(t, "/nonexistent/file", READ)
+  END
+ENDMODULE Files

@@ -405,7 +405,15 @@
       ftail := Node NIL;
       LOOP actuals
         f := NewNode(N_NAMEL, TLn());
-        f^.name := ExtendedId();
+        (* rule 16 takes identifiers, but the Report's own instances pass *)
+        (* numbers (INSTANCE StackTemplate(100, INT), p.1162; p.1123) *)
+        IF TK() = K_INT THEN
+          f^.flag := 1;
+          f^.ival := TV();
+          Skip()
+        ELSE
+          f^.name := ExtendedId()
+        ENDIF;
         Link(n^.a, ftail, f);
         IF NOT Accept(P_COMMA) THEN EXIT actuals ENDIF
       ENDLOOP actuals;
@@ -513,9 +521,9 @@
     VAR n, x: Node;
     n := ParseConcrete1();
     IF Accept(W_PACKED) THEN
-      IF (TK() = K_INT) OR (TK() = K_ID) OR Is(P_LPAR) THEN x := ParseExpr() ENDIF
+      IF (TK() = K_INT) OR (TK() = K_ID) OR Is(P_LPAR) THEN x := ParseSimple() ENDIF
     ENDIF;
-    IF Accept(W_ALIGNMENT) THEN x := ParseExpr() ENDIF;
+    IF Accept(W_ALIGNMENT) THEN x := ParseSimple() ENDIF;
     RETURN n
   ENDPROCEDURE ParseConcrete;
 
@@ -658,8 +666,11 @@
     Expect(P_DOTDOT);
     q^.b := ParseExpr();
     Expect(P_RBRACK);
-    IF Accept(W_SCALE) THEN q^.c := ParseExpr()
-    ELSIF Accept(W_PRECISION) THEN q^.d := ParseExpr()
+    (* the manifest constant is read as a simple expression: in *)
+    (* "CONST Pi: FLOATING [0.0..4.0] PRECISION 7 = 3.14" (p.1100) the = *)
+    (* belongs to the declaration, though rule 83-84 allow any expression *)
+    IF Accept(W_SCALE) THEN q^.c := ParseSimple()
+    ELSIF Accept(W_PRECISION) THEN q^.d := ParseSimple()
     ENDIF;
     RETURN q
   ENDPROCEDURE ParseQualifier;

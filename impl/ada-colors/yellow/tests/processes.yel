@@ -1,0 +1,75 @@
+(* processes, monitors and signals (X.E): a bounded buffer between a *)
+(* producer and a consumer, delays on the virtual clock, priorities *)
+MODULE Processes
+  IMPORT TextIO, StandardImplementationPrelude;
+
+  MONITOR Buffer
+    IMPORT INTEGER64;
+    EXPORT Put, Take;
+    CONST size: INTEGER [1..10] = 2;
+    VAR slots: ARRAY (INTEGER [0..size - 1] OF INTEGER64);
+        count, inp, outp: INTEGER64 := 0;
+        nonfull, nonempty: SIGNAL;
+    PROCEDURE Put (CONST v: INTEGER64)
+      IF count = size THEN WAIT(nonfull) ENDIF;
+      slots[inp] := v;
+      inp := (inp + 1) MOD size;
+      count := count + 1;
+      SEND(nonempty);
+      RETURN
+    ENDPROCEDURE Put;
+    PROCEDURE Take RETURNS INTEGER64 ()
+      VAR v: INTEGER64;
+      IF count = 0 THEN WAIT(nonempty) ENDIF;
+      v := slots[outp];
+      outp := (outp + 1) MOD size;
+      count := count - 1;
+      SEND(nonfull);
+      RETURN v
+    ENDPROCEDURE Take
+  ENDMONITOR Buffer;
+
+  VAR total: INTEGER64 := 0;
+
+  (* a scope where processes are declared and activated ends when they *)
+  (* end (X.E.1) *)
+  BEGIN
+    PROCESS Producer (CONST n: INTEGER64)
+      FOR i: INTEGER [1..n] DO
+        Put(i * i);
+        Write("put "); Write(i * i); WriteLn()
+      ENDFOR;
+      TERMINATE_PROCESS
+    ENDPROCESS Producer;
+
+    PROCESS Consumer (CONST n: INTEGER64; VAR total: INTEGER64)
+      FOR i: INTEGER [1..n] DO
+        total := total + Take();
+        DELAY(10)
+      ENDFOR;
+      Write("consumer done at "); Write(CLOCK_TIME()); WriteLn();
+      TERMINATE_PROCESS
+    ENDPROCESS Consumer;
+
+    Producer(5);
+    Consumer(5, total)
+  END;
+  Write("total "); Write(total); WriteLn();
+  BEGIN
+    PROCESS Ticker (CONST name: ASCII; CONST period: INTEGER64) PRIORITY 5 INSTANCES 2
+      FOR i: INTEGER [1..3] DO
+        DELAY(period);
+        Write(name); Write(CLOCK_TIME()); Write(" ")
+      ENDFOR;
+      TERMINATE_PROCESS
+    ENDPROCESS Ticker;
+    Ticker('a', 7);
+    Ticker('b', 5);
+    BEGIN
+      EXCEPTION CASE TOO_MANY_PROCESS_INSTANCES -> Write("third ticker refused"); WriteLn()
+      ENDEXCEPTION;
+      Ticker('c', 1)
+    END
+  END;
+  WriteLn()
+ENDMODULE Processes

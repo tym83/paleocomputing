@@ -250,9 +250,14 @@
         f := t^.a;
         a := d^.a;
         WHILE f # Node NIL DO
-          IF f^.name = val THEN
-            val := a^.name;
-            IF val <= NKW THEN kind := K_KW ELSIF val <= NPUNCT THEN kind := K_OP ENDIF
+          IF (f^.name = val) AND (kind = K_ID) THEN
+            IF a^.flag = 1 THEN
+              kind := K_INT;
+              val := a^.ival
+            ELSE
+              val := a^.name;
+              IF val <= NKW THEN kind := K_KW ELSIF val <= NPUNCT THEN kind := K_OP ENDIF
+            ENDIF
           ENDIF;
           f := f^.next;
           a := a^.next

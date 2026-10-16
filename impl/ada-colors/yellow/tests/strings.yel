@@ -1,0 +1,38 @@
+(* strings, alphabets, length-unresolved arrays and MOVE (VI.A.2.c, X.A.3, XI) *)
+MODULE Strings
+  IMPORT TextIO, StandardImplementationPrelude;
+  REPRESENTATION
+    Line = ARRAY (INTEGER [1..20] OF ASCII);
+    Name = ARRAY (INTEGER [1..5] OF ASCII);
+    Roman = ALPHABET ('I', 'V', 'X', 'L', 'C', 'D', 'M');
+    RomanText = ARRAY (INTEGER [1..4] OF Roman);
+  VAR l: Line := Line(' ');
+      n: Name := "MABEL";
+      r: RomanText;
+      count: ARRAY (ASCII OF INTEGER64);
+
+  (* the length of any string: LOW and HIGH of the actual (X.A.3) *)
+  FUNCTION Length RETURNS INTEGER64 (CONST s: ARRAY (1 DIMENSIONS OF ASCII))
+    RETURN (HIGH(s, 1) - LOW(s, 1)) + 1
+  ENDFUNCTION Length;
+
+  PROCEDURE Upcase (VAR s: ARRAY (1 DIMENSIONS OF ASCII))
+    FOR i: INTEGER [LOW(s, 1)..HIGH(s, 1)] DO
+      IF (s[i] >= 'a') AND (s[i] <= 'z') THEN
+        FOR k: INTEGER [1..32] DO s[i] := PRED(s[i]) ENDFOR
+      ENDIF
+    ENDFOR;
+    RETURN
+  ENDPROCEDURE Upcase;
+
+  MOVE(l, 1, "hello", 1, 5, n, 1, 5, " world", 1, 6);
+  Write(l); Write("|"); WriteLn();
+  Upcase(l);
+  Write(l); Write(" "); Write(Length(l)); Write(" "); Write(Length("abc")); WriteLn();
+  r := Roman "MCMX";
+  Write(r[1] < r[2]); Write(r[2] > r[3]); Write(Roman 'I' = FIRST(r[4])); WriteLn();
+  FOR c: ASCII DO count[c] := 0 ENDFOR;
+  FOR i: INTEGER [1..20] DO count[l[i]] := count[l[i]] + 1 ENDFOR;
+  Write(count['L']); Write(" "); Write(count[' ']); WriteLn();
+  Write("tab'HT'bell'BEL'end" = "tab'HT'bell'BEL'end"); Write("ab" = "ac"); WriteLn()
+ENDMODULE Strings
