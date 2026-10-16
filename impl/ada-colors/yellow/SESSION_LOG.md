@@ -8,15 +8,16 @@ exceptions, files) -> tests and the 1978 tutorial corpus.
 ## Current state
 - Worktree ~/projects/paleo-yellow, branch feat/ada-yellow; area impl/ada-colors/yellow/.
 - Source: ~/projects/ada-colors-sources/blue-yellow/DTIC_ADB950587.pdf pages 977-1250
-  (text yellow-sri-1978.txt; page-numbered copy made in the scratchpad).
-- Spec read: Part Two (Language Report) in full, Part Three (tutorial) in full, Part Four.
-- yellowc (~4.5k lines of YELLOW, yellow/yellowc/) at its fixed point; seed and genesis in place
-  (`make -C yellow fixpoint genesis`).
-- rt additions appended to rt/paleo.{c,h} under `YELLOW additions`; RED/GREEN still pass.
+  (text yellow-sri-1978.txt; page-numbered copy and renders in the scratchpad).
+- yellowc (~6k lines of YELLOW) at its fixed point; seed refreshed; `make genesis` OK.
+- lib/prelude.yel: StandardImplementationPrelude, MathLibrary, TextIO (C code inserts).
+- tests/run.sh: 20 tests pass. corpus/run.sh: Part Three examples, 26 checks pass,
+  E14 realtime pending (needs the simulated PDP-11 line clock for its device signal).
+- rt additions appended to rt/paleo.{c,h} under `YELLOW additions`; RED/GREEN pass.
 
 ## Next step
-Tests per feature (tests/*.yel + run.sh), then the 1978 tutorial corpus; grow yellowc
-(GOTO/labels, variants checks, prelude library, purity of functions).
+Device signal for E14 realtime (line clock at BASE8 100), then notes/yellow-digest.md,
+corpus/CHANGES.md, README(.ru).md, CI.md; then GOTO/labels, purity of FUNCTIONs.
 
 ## Journal
 ### 2026-10-16 — reading
@@ -38,3 +39,14 @@ Tests per feature (tests/*.yel + run.sh), then the 1978 tutorial corpus; grow ye
 - The bootstrap made routine locals globals at first (recursion broke): fixed.
 - yellowc0 (from boot) -> yellowc1.c; yellowc1 -> yellowc2.c == yellowc1.c: fixed point on the
   first self-translation.
+### 2026-10-16 — tests and corpus
+- The CASE arrow is => (bold = glyph at 300 dpi), not ->: changed through a reseed.
+- PROPAGATE_EXCEPTION (and ASSERT) leave their own block: the block's handler does not see
+  them (p.1039, p.1058, D-44); traps raised by operations are handled by the current block.
+- PRECISION/SCALE operands are simple expressions ("PRECISION 7 = 3.14" in a CONST, p.1100).
+- INSTANCE takes numbers as actuals (the Report's own examples) though rule 16 says Ids.
+- Strict VI.A.3: chars of two visible alphabets and strings near two alphabets are qualified.
+- Corpus findings so far: missing ENDSELECT (distance), FLOAT range too small for the
+  distance of the example's own points, IMPORTS/EXPORTS, LENGTH, precedence slips, closing
+  names, routines falling out of their bottom, CONST without value, exchange sort's > logic,
+  convex hull algorithm wrong (checked in Python).
