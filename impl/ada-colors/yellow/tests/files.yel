@@ -22,7 +22,7 @@ MODULE Files
   ENDWHILE;
   Write(sum); WriteLn();
   BEGIN
-    EXCEPTION CASE END_OF_FILE -> Write("END_OF_FILE"); WriteLn()
+    EXCEPTION CASE END_OF_FILE => Write("END_OF_FILE"); WriteLn()
     ENDEXCEPTION;
     GET(f, r)
   END;
@@ -35,7 +35,7 @@ MODULE Files
   ENDWHILE;
   WriteLn();
   BEGIN
-    EXCEPTION CASE FILE_ERROR -> Write("no such file"); WriteLn()
+    EXCEPTION CASE FILE_ERROR => Write("no such file"); WriteLn()
     ENDEXCEPTION;
     OPEN(t, "/nonexistent/file", READ)
   END

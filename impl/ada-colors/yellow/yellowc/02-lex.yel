@@ -25,7 +25,7 @@
     SA("PROPAGATE_EXCEPTION READONLY RECORD REPLACES REPRESENTATION RETURN RETURNS ");
     SA("SCALE SELECT SET SIMULATED_TIME SIZE SPACE TEMPLATE TERMINATE_PROCESS THEN ");
     SA("TRANSPARENT TYPE UNORDERED VAR WHILE XOR ");
-    SA("<<<= >>>= ### === <<< >>> <<= >>= *** /// --- +++ := -> .. <= >= ## == << >> ");
+    SA("<<<= >>>= ### === <<< >>> <<= >>= *** /// --- +++ := => .. <= >= ## == << >> ");
     SA("** // -- ++ # + - * / = < > ( ) [ ] , ; : . ^ ");
     all := SE();
     NTxt := 0;

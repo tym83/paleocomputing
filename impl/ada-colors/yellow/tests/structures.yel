@@ -66,12 +66,12 @@ MODULE Structures
   ENDWHILE;
   WriteLn();
   BEGIN
-    EXCEPTION CASE OUT_OF_RANGE -> Write("subscript out of range"); WriteLn()
+    EXCEPTION CASE OUT_OF_RANGE => Write("subscript out of range"); WriteLn()
     ENDEXCEPTION;
     Write(m[4, 1])
   END;
   BEGIN
-    EXCEPTION CASE INVALID_POINTER -> Write("NIL dereferenced"); WriteLn()
+    EXCEPTION CASE INVALID_POINTER => Write("NIL dereferenced"); WriteLn()
     ENDEXCEPTION;
     Write(l^.v)
   END

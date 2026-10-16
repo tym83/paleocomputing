@@ -66,7 +66,7 @@ MODULE Processes
     Ticker('a', 7);
     Ticker('b', 5);
     BEGIN
-      EXCEPTION CASE TOO_MANY_PROCESS_INSTANCES -> Write("third ticker refused"); WriteLn()
+      EXCEPTION CASE TOO_MANY_PROCESS_INSTANCES => Write("third ticker refused"); WriteLn()
       ENDEXCEPTION;
       Ticker('c', 1)
     END

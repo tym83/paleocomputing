@@ -51,7 +51,7 @@ MODULE Templates
   Write(DepthI()); Write(" "); Write(PopI()); Write(" "); Write(PopC()); Write(PopC()); WriteLn();
   SafeSProcedure(); WriteLn();
   BEGIN
-    EXCEPTION CASE OUT_OF_RANGE -> Write("the small stack is full"); WriteLn()
+    EXCEPTION CASE OUT_OF_RANGE => Write("the small stack is full"); WriteLn()
     ENDEXCEPTION;
     FOR i: INTEGER [1..4] DO PushC('z') ENDFOR
   END

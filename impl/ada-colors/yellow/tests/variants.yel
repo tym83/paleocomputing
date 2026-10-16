@@ -6,16 +6,16 @@ MODULE Variants
     Figure = RECORD
       VAR x, y: INTEGER64;
       SELECT s: Shape
-        CASE RightTriangle -> VAR base, height: INTEGER64;
-        CASE Circle -> VAR diameter: INTEGER64;
+        CASE RightTriangle => VAR base, height: INTEGER64;
+        CASE Circle => VAR diameter: INTEGER64;
       ENDSELECT;
     ENDRECORD;
   VAR f, g, h: Figure;
 
   FUNCTION Area2 RETURNS INTEGER64 (CONST fig: Figure)
     SELECT fig.s
-      CASE RightTriangle -> RETURN fig.base * fig.height
-      CASE Circle -> RETURN ((3 * fig.diameter) * fig.diameter) DIV 2
+      CASE RightTriangle => RETURN fig.base * fig.height
+      CASE Circle => RETURN ((3 * fig.diameter) * fig.diameter) DIV 2
       ELSE RETURN 0
     ENDSELECT
   ENDFUNCTION Area2;
@@ -27,7 +27,7 @@ MODULE Variants
   f := g;
   Write(Area2(f)); Write(" "); Write(f = g); WriteLn();
   BEGIN
-    EXCEPTION CASE INVALID_VARIANT -> Write("no such component in this variant"); WriteLn()
+    EXCEPTION CASE INVALID_VARIANT => Write("no such component in this variant"); WriteLn()
     ENDEXCEPTION;
     Write(f.base)
   END

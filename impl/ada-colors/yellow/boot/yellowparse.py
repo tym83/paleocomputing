@@ -135,7 +135,7 @@ class Parser:
         if t.kind == "kw" and t.text in ("NOT", "AND", "OR", "DIV", "MOD", "XOR", "IN"):
             self.p += 1
             return t.text
-        if t.kind == "op" and t.text not in ("(", ")", "[", "]", ",", ";", ":", ".", "..", "->"):
+        if t.kind == "op" and t.text not in ("(", ")", "[", "]", ",", ";", ":", ".", "..", "=>"):
             self.p += 1
             return t.text
         raise ParseError(f"line {t.line}: expected a name, found {t.text}")
@@ -165,7 +165,7 @@ class Parser:
             names = [self.ident()]
             while self.accept(","):
                 names.append(self.ident())
-            self.take("->")
+            self.take("=>")
             cases.append((names, self.statements()))
         if self.accept("ELSE"):
             other = self.statements()
@@ -427,7 +427,7 @@ class Parser:
                     labels = [self.expression()]
                     while self.accept(","):
                         labels.append(self.expression())
-                    self.take("->")
+                    self.take("=>")
                     vf = []
                     while self.tok.kind == "kw" and self.tok.text in ("CONST", "VAR"):
                         vf.extend(self.field_group())
@@ -552,7 +552,7 @@ class Parser:
                 labels = [self.expression()]
                 while self.accept(","):
                     labels.append(self.expression())
-                self.take("->")
+                self.take("=>")
                 cases.append((labels, self.statements()))
             if self.accept("ELSE"):
                 other = self.statements()

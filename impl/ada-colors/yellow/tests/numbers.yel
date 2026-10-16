@@ -22,12 +22,12 @@ MODULE Numbers
   a := Pi / 4.0;
   WriteFloat(Sin(a) * Sin(a) + Cos(a) * Cos(a), 6); WriteLn();
   BEGIN
-    EXCEPTION CASE OUT_OF_RANGE -> Write("out of range"); WriteLn()
+    EXCEPTION CASE OUT_OF_RANGE => Write("out of range"); WriteLn()
     ENDEXCEPTION;
     x := 2000.0
   END;
   BEGIN
-    EXCEPTION CASE FIXED_NOT_REPRESENTABLE -> Write("not a multiple of the scale"); WriteLn()
+    EXCEPTION CASE FIXED_NOT_REPRESENTABLE => Write("not a multiple of the scale"); WriteLn()
     ENDEXCEPTION;
     price := 0.005P
   END;

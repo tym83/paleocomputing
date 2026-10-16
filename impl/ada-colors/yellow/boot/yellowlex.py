@@ -9,7 +9,8 @@ the mnemonic of a character, between apostrophes; a string is a sequence of
 such characters between quotation marks, where a one-character literal may
 drop its apostrophes, and strings separated only by blanks are joined.
 
-Two printed symbols have no ASCII spelling: the not-equal sign is written #
+The printed arrow of CASE is => (an equals sign and >). Two printed symbols
+have no ASCII spelling: the not-equal sign is written #
 (as in Modula, which YELLOW follows) and the dereferencing up-arrow is ^.
 """
 
@@ -26,7 +27,7 @@ TRANSPARENT TYPE UNORDERED VAR WHILE XOR""".split())
 
 # longest first
 OPS = ["<<<=", ">>>=", "###", "===", "<<<", ">>>", "<<=", ">>=", "***", "///",
-       "---", "+++", ":=", "->", "..", "<=", ">=", "##", "==", "<<", ">>", "**",
+       "---", "+++", ":=", "=>", "..", "<=", ">=", "##", "==", "<<", ">>", "**",
        "//", "--", "++", "#", "+", "-", "*", "/", "=", "<", ">", "(", ")", "[",
        "]", ",", ";", ":", ".", "^"]
 

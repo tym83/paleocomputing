@@ -25,8 +25,8 @@ MODULE Basics
   Write(7 MOD -2); WriteLn();
   FOR k: Day DO
     SELECT k
-      CASE Monday, Wednesday, Friday -> Write("M")
-      CASE Tuesday -> Write("T")
+      CASE Monday, Wednesday, Friday => Write("M")
+      CASE Tuesday => Write("T")
       ELSE Write("x")
     ENDSELECT
   ENDFOR;
