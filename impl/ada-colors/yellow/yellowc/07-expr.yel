@@ -332,6 +332,31 @@
     RETURN FALSE
   ENDPROCEDURE IsVariable;
 
+  (* a FUNCTION assigns only to its own variables (X.A.4; the Design *)
+  (* Discussion, p.1156, forbids "assignment in a function to any nonlocal *)
+  (* variable"): the variable at the root of a designator, or a dynamic one *)
+  PROCEDURE CheckPure (CONST n: Node)
+    VAR d: Node := n;
+        s: Sym;
+    IF CurRoutine = Sym NIL THEN RETURN ENDIF;
+    IF NOT CurRoutine^.func THEN RETURN ENDIF;
+    WHILE (d^.kind = N_SEL) OR (d^.kind = N_INDEX) DO d := d^.a ENDWHILE;
+    IF d^.kind = N_DEREF THEN
+      IF d^.flag = 0 THEN FailS(n^.line, "a FUNCTION does not assign to a dynamic variable (X.A.4)") ENDIF;
+      RETURN
+    ENDIF;
+    IF d^.kind = N_NAME THEN
+      s := Find(d^.name);
+      IF s # Sym NIL THEN
+        s := Real(s);
+        IF s^.level < CurRoutine^.level THEN
+          FailN(n^.line, d^.name, " is not local: a FUNCTION assigns only to its locals (X.A.4)")
+        ENDIF
+      ENDIF
+    ENDIF;
+    RETURN
+  ENDPROCEDURE CheckPure;
+
   PROCEDURE LValue (CONST n: Node; OUT code: Txt; OUT r: Rep)
     Expr(n, Rep NIL, code, r);
     IF NOT IsVariable(n) THEN FailS(n^.line, "a variable is needed here (IX.A.1)") ENDIF;

@@ -110,6 +110,7 @@
           Building := FALSE;
           FailN(ArgNode[i]^.line, p^.name, ": the actual of a VAR or OUT parameter must be a variable")
         ENDIF;
+        CheckPure(ArgNode[i]);
         SA("&");
         ST(ArgCode[i])
       ENDIF;

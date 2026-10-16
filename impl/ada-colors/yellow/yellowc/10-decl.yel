@@ -380,7 +380,14 @@
       RETURN
     ENDIF;
     IF k = N_LABEL THEN
-      FailS(d^.line, "this translator has no labels yet");
+      nm := d^.a;
+      WHILE nm # Node NIL DO
+        s := NewSym(S_LABEL, nm^.name);
+        s^.level := Level;
+        s^.cname := Fresh("lab");
+        Define(s, nm^.line);
+        nm := nm^.next
+      ENDWHILE;
       RETURN
     ENDIF;
     FailS(d^.line, "not a simple declaration");

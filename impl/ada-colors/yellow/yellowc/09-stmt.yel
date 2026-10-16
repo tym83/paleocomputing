@@ -6,6 +6,7 @@
     XTop: INT := 0;
     XBase: INT := 0;                 (* the first frame of the routine being written *)
     BlockFrame: ARRAY (INTEGER [1..1000] OF Txt);  (* per block: its handler frame or 0 *)
+    BlockXs: ARRAY (INTEGER [1..1000] OF Txt);     (* per block with labels: rt_xtop at its start *)
     BTop: INT := 0;
     HandlerXc: ARRAY (INTEGER [1..1000] OF Txt);   (* the exception a handler handles *)
     HTop: INT := 0;
@@ -68,11 +69,24 @@
     VAR f, xc, t: Txt;
         c, nm: Node;
         first: BOOLEAN;
+        d: Node := b^.a;
+        xs: Txt := 0;
+    (* a block with labels notes the handler frames at its start: a GOTO *)
+    (* to one of its statements leaves the frames entered since *)
+    WHILE d # Node NIL DO
+      IF (d^.kind = N_LABEL) AND (xs = 0) THEN
+        xs := Fresh("xs");
+        Emit3("rt_frame *", xs, " = rt_xtop;")
+      ENDIF;
+      d := d^.next
+    ENDWHILE;
     IF b^.b = Node NIL THEN
       BTop := BTop + 1;
       BlockFrame[BTop] := 0;
+      BlockXs[BTop] := xs;
       Statements(b^.c);
       BTop := BTop - 1;
+      CheckLabels(b^.a);
       RETURN
     ENDIF;
     HasHandler := TRUE;
@@ -83,9 +97,11 @@
     XFrames[XTop] := f;
     BTop := BTop + 1;
     BlockFrame[BTop] := f;
+    BlockXs[BTop] := xs;
     Statements(b^.c);
     BTop := BTop - 1;
     XTop := XTop - 1;
+    CheckLabels(b^.a);
     Emit3("RT_POP(", f, ");");
     EmitS("} else {");
     Emit3("RT_POP(", f, ");");
@@ -93,6 +109,7 @@
     Emit3("int ", xc, " = rt_xcur;");
     BTop := BTop + 1;
     BlockFrame[BTop] := 0;
+    BlockXs[BTop] := 0;
     HTop := HTop + 1;
     HandlerXc[HTop] := xc;
     first := TRUE;
@@ -200,11 +217,10 @@
         i, val: INT;
         sym: Sym;
     CurLine := s^.line;
-    IF s^.text # 0 THEN
-      FailS(s^.line, "this translator has no labelled statements yet")
-    ENDIF;
+    IF s^.text # 0 THEN PlaceLabel(s) ENDIF;
     IF k = N_ASSIGN THEN
       LValue(s^.a, c, r);
+      CheckPure(s^.a);
       IF r^.kind = R_SIGNAL THEN FailS(s^.line, "assignment is not defined for signals (VI.A.1.d)") ENDIF;
       IF (r^.kind = R_FILE) OR (r^.kind = R_SEM) THEN
         FailS(s^.line, "assignment is not defined for files and semaphores (VII.B)")
@@ -320,7 +336,7 @@
     ELSIF k = N_TERMINATE THEN
       TerminateStatement(s)
     ELSIF k = N_GOTO THEN
-      FailS(s^.line, "this translator has no GOTO yet")
+      GotoStatement(s)
     ELSE
       FailS(s^.line, "not a statement")
     ENDIF;
@@ -432,3 +448,56 @@
     EmitS("}");
     RETURN
   ENDPROCEDURE BeginStatement;
+
+  (* ---- labels and GOTO (VII.C, IX.A.4) ------------------------------------------- *)
+  (* A label is declared by LABEL at the head of a block and labels a *)
+  (* top-level statement of that block; a GOTO leaves lexical scopes but *)
+  (* not a routine, process or module. *)
+
+  PROCEDURE PlaceLabel (CONST s: Node)
+    VAR sym: Sym := FindHere(s^.text);
+    IF (sym = Sym NIL) OR (sym^.kind # S_LABEL) THEN
+      FailN(s^.line, s^.text, " labels a statement but is not declared by LABEL in this block (VII.C)")
+    ENDIF;
+    IF sym^.hasmv THEN FailN(s^.line, s^.text, " labels two statements") ENDIF;
+    sym^.hasmv := TRUE;
+    Emit3("", sym^.cname, ": ;");
+    IF BlockFrame[BTop] # 0 THEN
+      Emit3("rt_xtop = &", BlockFrame[BTop], ";")
+    ELSIF BlockXs[BTop] # 0 THEN
+      Emit3("rt_xtop = ", BlockXs[BTop], ";")
+    ENDIF;
+    RETURN
+  ENDPROCEDURE PlaceLabel;
+
+  PROCEDURE GotoStatement (CONST s: Node)
+    VAR sym: Sym := Lookup(s^.name, s^.line);
+    IF sym^.kind # S_LABEL THEN FailN(s^.line, s^.name, " is not a label") ENDIF;
+    IF sym^.level # Level THEN
+      FailN(s^.line, s^.name, ": GOTO does not leave a routine or process (IX.A.4)")
+    ENDIF;
+    sym^.readonly := TRUE;
+    Emit3("goto ", sym^.cname, ";");
+    RETURN
+  ENDPROCEDURE GotoStatement;
+
+  (* a label that a GOTO names must label a statement *)
+  PROCEDURE CheckLabels (CONST decls: Node)
+    VAR d: Node := decls;
+        nm: Node;
+        sym: Sym;
+    WHILE d # Node NIL DO
+      IF d^.kind = N_LABEL THEN
+        nm := d^.a;
+        WHILE nm # Node NIL DO
+          sym := FindHere(nm^.name);
+          IF (sym # Sym NIL) AND (sym^.kind = S_LABEL) AND sym^.readonly AND NOT sym^.hasmv THEN
+            FailN(nm^.line, nm^.name, " is the target of a GOTO but labels no statement of its block")
+          ENDIF;
+          nm := nm^.next
+        ENDWHILE
+      ENDIF;
+      d := d^.next
+    ENDWHILE;
+    RETURN
+  ENDPROCEDURE CheckLabels;
