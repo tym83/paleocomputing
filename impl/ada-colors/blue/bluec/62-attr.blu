@@ -1,0 +1,439 @@
+
+% ==== attribute queries [3-2], constructors [3-11], type-specifiers [3-40] ===============
+% The implementation's representation (3.x.3): STD fixed point values have 64 bits,
+% floating point values are IEEE doubles (15 digits), characters are stored in bytes.
+
+FUNCTION INT_ET (V: INTEGER) RETURNS (ET);
+   RETURN MKET (FMT1 ('((rt_int)@LL)', NUM (V)), W@.TY_INT);
+END FUNCTION INT_ET;
+
+% the number of bits for the values 0 .. N - 1 (ENUM_STD, 3.4.3)
+FUNCTION BITS_FOR (N: INTEGER) RETURNS (INTEGER);
+   VAR B: INTEGER := 0;
+   VAR P: INTEGER := 1;
+   LOOP UNTIL P >= N DO
+      B := B + 1;
+      P := P * 2;
+   END LOOP;
+   RETURN B;
+END FUNCTION BITS_FOR;
+
+% the SIZE of an enumerated type: of its ENUM_REP or ENUM_VAL_REP, or ENUM_STD
+FUNCTION ENUM_SIZE (T: TYP) RETURNS (INTEGER);
+   IF T@.REPS <> NIL THEN
+      IF T@.REPS@.A <> NIL THEN
+         BLOCK
+            CONST M: MVAL := MANIFEST (T@.REPS@.A);
+            IF M.OK THEN
+               RETURN M.V;
+            END IF;
+         END BLOCK;
+      END IF;
+   END IF;
+   RETURN BITS_FOR (T@.BASE@.NLITS);
+END FUNCTION ENUM_SIZE;
+
+% the attribute NAME of the value B (3.x.1, 3.x.3)
+FUNCTION ATTRIBUTE (B: ET, NAME: TEXT, LINE: INTEGER) RETURNS (ET);
+   CONST T: TYP := B.T;
+   CONST K: INTEGER := T@.KIND;
+   IF TEQS (NAME, 'SIZE') THEN
+      RETURN SIZE_OF (T, B.C);
+   END IF;
+   IF K = T_INT THEN                                 % 3.2.1, 3.2.3
+      IF TEQS (NAME, 'SCALE') THEN
+         RETURN INT_ET (T@.SCALE);
+      ORIF TEQS (NAME, 'RADIX') THEN
+         RETURN INT_ET (2);
+      ORIF TEQS (NAME, 'PRECISION') THEN
+         RETURN ENUM_LITERAL (LIT_NODE ('STD', LINE), NIL);
+      ORIF TEQS (NAME, 'SIGNING') THEN
+         RETURN ENUM_LITERAL (LIT_NODE ('SIGNED', LINE), NIL);
+      ORIF TEQS (NAME, 'MIN') THEN
+         IF T@.LO_C.LEN > 0 THEN
+            RETURN MKET (T@.LO_C, INT_TYPE (T@.SCALE));
+         END IF;
+         RETURN MKET (MK ('INT64_MIN'), INT_TYPE (T@.SCALE));
+      ORIF TEQS (NAME, 'MAX') THEN
+         IF T@.HI_C.LEN > 0 THEN
+            RETURN MKET (T@.HI_C, INT_TYPE (T@.SCALE));
+         END IF;
+         RETURN MKET (MK ('INT64_MAX'), INT_TYPE (T@.SCALE));
+      END IF;
+   ORIF K = T_FLOAT THEN                             % 3.3.1, 3.3.3
+      IF TEQS (NAME, 'NOM_PRECISION') THEN
+         RETURN INT_ET (T@.SCALE);
+      ORIF TEQS (NAME, 'IMP_PRECISION') THEN
+         RETURN INT_ET (15);
+      ORIF TEQS (NAME, 'RADIX') THEN
+         RETURN INT_ET (2);
+      ORIF TEQS (NAME, 'EXPONENT_MIN') THEN
+         RETURN INT_ET (-1022);
+      ORIF TEQS (NAME, 'EXPONENT_MAX') THEN
+         RETURN INT_ET (1023);
+      ORIF TEQS (NAME, 'MANTISSA_SIZE') THEN
+         RETURN INT_ET (53);
+      ORIF TEQS (NAME, 'EXPONENT_SIZE') THEN
+         RETURN INT_ET (11);
+      ORIF TEQS (NAME, 'MIN') THEN
+         IF T@.LO_C.LEN > 0 THEN
+            RETURN MKET (T@.LO_C, T);
+         END IF;
+         RETURN MKET (MK ('(-DBL_MAX)'), T);
+      ORIF TEQS (NAME, 'MAX') THEN
+         IF T@.HI_C.LEN > 0 THEN
+            RETURN MKET (T@.HI_C, T);
+         END IF;
+         RETURN MKET (MK ('DBL_MAX'), T);
+      END IF;
+   ORIF K = T_ENUM THEN                              % 3.4.1
+      IF TEQS (NAME, 'MIN') THEN
+         IF T@.LO_C.LEN > 0 THEN
+            RETURN MKET (T@.LO_C, T@.BASE);
+         END IF;
+         RETURN MKET (MK ('0'), T@.BASE);
+      ORIF TEQS (NAME, 'MAX') THEN
+         IF T@.HI_C.LEN > 0 THEN
+            RETURN MKET (T@.HI_C, T@.BASE);
+         END IF;
+         RETURN MKET (NUM (T@.BASE@.NLITS - 1), T@.BASE);
+      ORIF TEQS (NAME, 'EXTENT') THEN
+         IF T@.LO_C.LEN > 0 THEN
+            RETURN MKET (FMT2 ('((@) - (@) + 1)', T@.HI_C, T@.LO_C), W@.TY_INT);
+         END IF;
+         RETURN INT_ET (T@.BASE@.NLITS);
+      END IF;
+   ORIF K = T_STR ! K = T_BITS THEN                  % 3.6.1, 3.7.1, 3.7.3
+      IF TEQS (NAME, 'LENGTH') THEN
+         RETURN MKET (FMT1 ('(rt_int)(@).len', B.C), W@.TY_INT);
+      ORIF TEQS (NAME, 'PACKING') THEN
+         RETURN ENUM_LITERAL (LIT_NODE ('PACKED', LINE), NIL);
+      END IF;
+   ORIF K = T_ARR THEN                               % 3.8.1, 3.8.3
+      IF TEQS (NAME, 'DIMENSIONS') THEN
+         RETURN INT_ET (T@.DIMS);
+      ORIF TEQS (NAME, 'EXTENT') & T@.DIMS = 1 THEN
+         RETURN MKET (FMT1 ('rt_b_extent(1, (@).lo, (@).hi)', B.C), W@.TY_INT);
+      ORIF TEQS (NAME, 'PACKING') THEN
+         RETURN ENUM_LITERAL (LIT_NODE ('UNPACKED', LINE), NIL);
+      END IF;
+   ORIF K = T_SEM THEN                               % 3.11.1
+      IF TEQS (NAME, 'USAGE') THEN
+         IF T@.SCALE = 1 THEN
+            RETURN ENUM_LITERAL (LIT_NODE ('REGION', LINE), NIL);
+         END IF;
+         RETURN ENUM_LITERAL (LIT_NODE ('SYNCH', LINE), NIL);
+      END IF;
+   ORIF K = T_ABS ! K = T_REC THEN                   % the attributes of an abstract type
+      BLOCK                                          % are its formals (3.12.5)
+         VAR U: TYP := T;
+         IF K = T_ABS THEN
+            U := T@.BASE;
+         END IF;
+         IF U@.KIND = T_REC THEN
+            BLOCK
+               CONST F: FIELD := FIND_FIELD (U, NAME);
+               IF F <> NIL THEN
+                  IF F@.KIND <> 0 THEN
+                     RETURN MKET (FMT2 ('(@).@', B.C, F@.CNAME), F@.T);
+                  END IF;
+               END IF;
+            END BLOCK;
+         END IF;
+      END BLOCK;
+   END IF;
+   FAILT (LINE, 'no such field or attribute: ', NAME);
+END FUNCTION ATTRIBUTE;
+
+FUNCTION LIT_NODE (NAME: ASCII_STR(?L), LINE: INTEGER) RETURNS (NODE);
+   VAR N: NODE := NEW_NODE (N_ENUMLIT, LINE);
+   N@.NAME := MKN (NAME);
+   RETURN N;
+END FUNCTION LIT_NODE;
+
+% SIZE: the bits of the representation
+FUNCTION SIZE_OF (T: TYP, C: TEXT) RETURNS (ET);
+   CONST K: INTEGER := T@.KIND;
+   IF K = T_INT THEN
+      IF T@.REPS <> NIL THEN
+         IF T@.REPS@.A <> NIL THEN
+            RETURN MKET (EXPR (T@.REPS@.A, W@.TY_INT).C, W@.TY_INT);
+         END IF;
+      END IF;
+      RETURN INT_ET (64);
+   ORIF K = T_FLOAT THEN
+      RETURN INT_ET (64);
+   ORIF K = T_BOOL THEN
+      RETURN INT_ET (1);
+   ORIF K = T_ENUM THEN
+      RETURN INT_ET (ENUM_SIZE (T));
+   ORIF K = T_BITS THEN
+      RETURN MKET (FMT1 ('(rt_int)(@).len', C), W@.TY_INT);
+   ORIF K = T_STR THEN
+      RETURN MKET (FMT1 ('(rt_int)((@).len * 8)', C), W@.TY_INT);
+   ORIF K = T_PTR ! K = T_SEM THEN
+      RETURN INT_ET (64);
+   ORIF K = T_ABS THEN
+      RETURN SIZE_OF (T@.BASE, C);
+   ORIF K = T_ARR THEN
+      RETURN MKET (FMT4 ('(rt_int)(rt_b_extent(@, (@).lo, (@).hi) * sizeof (@) * 8)',
+                         NUM (T@.DIMS), C, C, CTYPE (T@.ELEM)), W@.TY_INT);
+   END IF;
+   RETURN MKET (FMT1 ('(rt_int)(sizeof (@) * 8)', CTYPE (T)), W@.TY_INT);
+END FUNCTION SIZE_OF;
+
+% T.ATTRIBUTE and (T.ATTRIBUTE).MAX for a type name T (3.1.1.1)
+FUNCTION TYPE_ATTRIBUTE (TNAME, NAME: TEXT, LINE: INTEGER) RETURNS (ET);
+   IF IS_TYPE_WORD (TNAME) THEN
+      FAILT (LINE, 'an attribute of a type class needs a member: ', TNAME);
+   END IF;
+   BLOCK
+      CONST T: TYP := RESOLVE_USER_NAME (TNAME, LINE);
+      RETURN ATTRIBUTE (MKET (FMT1 ('(*(@ *)0)', CTYPE (T)), T), NAME, LINE);
+   END BLOCK;
+END FUNCTION TYPE_ATTRIBUTE;
+
+% (A.B).C: the attribute C of the attribute B of A; for the maxima of the
+% implementation (3.6.1, 3.7.1, 3.3.1)
+FUNCTION ATTRIBUTE_OF_ATTRIBUTE (TNAME, A, B: TEXT, LINE: INTEGER) RETURNS (ET);
+   IF TEQS (A, 'LENGTH') & TEQS (B, 'MAX') THEN
+      RETURN INT_ET (100000000);
+   ORIF TEQS (A, 'NOM_PRECISION') & TEQS (B, 'MAX') THEN
+      RETURN INT_ET (15);
+   ORIF TEQS (A, 'LENGTH') & TEQS (B, 'MIN') THEN
+      RETURN INT_ET (0);
+   END IF;
+   FAILT (LINE, 'this attribute of an attribute is not implemented: ', B);
+END FUNCTION ATTRIBUTE_OF_ATTRIBUTE;
+
+% ---- constructors -------------------------------------------------------------------------
+
+% [type-spec]$$(field: value, ...) or (field: value, ...) where the type is known [3-178]
+FUNCTION RECORD_CONSTRUCTOR (E: NODE, WANT: TYP) RETURNS (ET);
+   VAR T: TYP := WANT;
+   IF E@.B <> NIL THEN
+      T := RESOLVE (E@.B);
+   END IF;
+   IF T = NIL THEN
+      FAIL (E@.LINE, 'the type of a record constructor is unknown (3.9.2)');
+   END IF;
+   T := REAL_TYPE (T);
+   IF T@.KIND <> T_REC THEN
+      FAIL (E@.LINE, 'a record constructor for something not a record');
+   END IF;
+   IF HAS_ANY (T) THEN
+      FAIL (E@.LINE, 'the constructor of a T(ANY) record needs [T(tag)]$$ (3.9.2)');
+   END IF;
+   BLOCK
+      CONST TMP: TEXT := NEW_NAME ('rc');
+      VAR R: TEXT := FMT4 ('({ @ @; memset(&@, 0, sizeof @); ', T@.CNAME, TMP, TMP, TMP);
+      VAR F: FIELD := T@.FIELDS;
+      R := FMT2 ('@@', R, INIT_CODE (T, TMP));
+      LOOP UNTIL F = NIL DO                         % every accessible field is given
+         IF F@.KIND = 0 THEN
+            IF F@.TAGF.LEN = 0 ! LABELS_HAVE (F@.LABELS, TAG_VALUE (T, F@.TAGF).V,
+                                             FIND_FIELD (T, F@.TAGF)@.T) THEN
+               BLOCK
+                  CONST INIT: NODE := FIND_INIT (E@.A, F@.NAME);
+                  IF INIT = NIL THEN
+                     FAILT (E@.LINE, 'the constructor must give the field ', F@.NAME);
+                  END IF;
+                  R := FMT2 ('@ @', R, STORE_CODE (F@.T, FMT2 ('@.@', TMP, F@.CNAME),
+                                                   EXPR (INIT@.A, F@.T), INIT@.LINE, TMP));
+               END BLOCK;
+            END IF;
+         END IF;
+         F := F@.NEXT;
+      END LOOP;
+      BLOCK
+         VAR P: NODE := E@.A;
+         LOOP UNTIL P = NIL DO
+            BLOCK
+               CONST G: FIELD := FIND_FIELD (T, P@.NAME);
+               IF G = NIL THEN
+                  FAILT (P@.LINE, 'no such field: ', P@.NAME);
+               END IF;
+               IF G@.KIND <> 0 THEN
+                  FAILT (P@.LINE, 'a parameter field comes from the type: ', P@.NAME);
+               END IF;
+               CHECK_VARIANT (G, T, NIL, P@.LINE);
+            END BLOCK;
+            P := P@.NEXT;
+         END LOOP;
+      END BLOCK;
+      RETURN MKET (FMT2 ('@ @; })', R, TMP), T);
+   END BLOCK;
+END FUNCTION RECORD_CONSTRUCTOR;
+
+FUNCTION FIND_INIT (L: NODE, NAME: TEXT) RETURNS (NODE);
+   VAR P: NODE := L;
+   LOOP UNTIL P = NIL DO
+      IF TEQ (P@.NAME, NAME) THEN
+         RETURN P;
+      END IF;
+      P := P@.NEXT;
+   END LOOP;
+   RETURN NIL;
+END FUNCTION FIND_INIT;
+
+% (e, e, ...) and ((e, ...), (e, ...)) [3-151]: bounds from zero in each dimension
+FUNCTION ARRAY_CONSTRUCTOR (E: NODE, WANT: TYP) RETURNS (ET);
+   VAR DIMS: INTEGER := 0;
+   VAR P: NODE := E;
+   VAR ELEM: TYP := NIL;
+   LOOP UNTIL P@.KIND <> N_ARRCONS DO
+      DIMS := DIMS + 1;
+      P := P@.A;
+   END LOOP;
+   IF WANT <> NIL THEN
+      IF REAL_TYPE (WANT)@.KIND = T_ARR THEN
+         ELEM := REAL_TYPE (WANT)@.ELEM;
+      END IF;
+   END IF;
+   IF ELEM = NIL THEN
+      ELEM := EXPR (P, NIL).T;
+      IF ELEM@.KIND = T_INT & ELEM@.SCALE = 0 THEN
+         ELEM := W@.TY_INT;
+      END IF;
+   END IF;
+   BLOCK
+      CONST A: TYP := ARRAY_OF (ELEM, DIMS);
+      CONST TMP: TEXT := NEW_NAME ('ac');
+      VAR R: TEXT := FMT3 ('({ @ @; memset(&@, 0, sizeof ', A@.CNAME, TMP, TMP);
+      VAR K: INTEGER := 0;
+      R := FMT2 ('@@); ', R, TMP);
+      P := E;
+      LOOP FOR D IN [0 : DIMS - 1] DO
+         R := FMT4 ('@ @.lo[@] = 0; @.hi[', R, TMP, NUM (D), TMP);
+         R := FMT3 ('@@] = @;', R, NUM (D), NUM (LIST_LENGTH (P@.A) - 1));
+         P := P@.A;
+      END LOOP D;
+      R := FMT4 ('@ @.p = rt_alloc(sizeof *@.p * (size_t)rt_b_extent(@, ', R, TMP, TMP, NUM (DIMS));
+      R := FMT3 ('@@.lo, @.hi) + 1);', R, TMP, TMP);
+      ARRAY_ELEMENTS (E, DIMS, A, TMP # R, K);
+      RETURN MKET (FMT2 ('@ @; })', R, TMP), A);
+   END BLOCK;
+END FUNCTION ARRAY_CONSTRUCTOR;
+
+% the elements of a constructor, row by row; K counts them
+PROCEDURE ARRAY_ELEMENTS (E: NODE, DIMS: INTEGER, A: TYP, TMP: TEXT # R: TEXT, K: INTEGER);
+   VAR P: NODE := E@.A;
+   IF E@.KIND <> N_ARRCONS THEN
+      FAIL (E@.LINE, 'the components of an array constructor must have the same shape');
+   END IF;
+   LOOP UNTIL P = NIL DO
+      IF DIMS > 1 THEN
+         ARRAY_ELEMENTS (P, DIMS - 1, A, TMP # R, K);
+      ELSE
+         IF P@.KIND = N_ARRCONS THEN
+            FAIL (P@.LINE, 'the components of an array constructor must have the same shape');
+         END IF;
+         IF NEEDS_INIT (A@.ELEM) THEN
+            R := FMT2 ('@ @', R, INIT_CODE (A@.ELEM, FMT2 ('@.p[@]', TMP, NUM (K))));
+         END IF;
+         R := FMT2 ('@ @', R, STORE_CODE (A@.ELEM, FMT2 ('@.p[@]', TMP, NUM (K)),
+                                          EXPR (P, A@.ELEM), P@.LINE, NO_TEXT ()));
+         K := K + 1;
+      END IF;
+      P := P@.NEXT;
+   END LOOP;
+END PROCEDURE ARRAY_ELEMENTS;
+
+FUNCTION ARRAY_OF (ELEM: TYP, DIMS: INTEGER) RETURNS (TYP);
+   VAR T: TYP := NEW_TYP (T_ARR);
+   T@.ELEM := ELEM;
+   T@.DIMS := DIMS;
+   T@.CNAME := ARRAY_STRUCT (ELEM, DIMS);
+   RETURN T;
+END FUNCTION ARRAY_OF;
+
+% [type-spec]$$(expression) [3-40]: a literal of that type, or (in a machine-dependent
+% part) a bitstring taken as the representation of a value of the type
+FUNCTION TYPE_SPECIFIER (E: NODE) RETURNS (ET);
+   CONST T: TYP := RESOLVE (E@.A);
+   CONST V: ET := EXPR (E@.B, T);
+   CONST RT: TYP := REAL_TYPE (T);
+   IF V.T@.KIND = T_BITS & RT@.KIND <> T_BITS THEN
+      REQUIRE_MACHINE (E@.LINE);
+      IF RT@.KIND = T_INT THEN
+         RETURN MKET (RANGE_CHECK (RT, FMT1 ('rt_b_int_of_bits(@)', V.C), NO_TEXT ()), T);
+      ORIF RT@.KIND = T_BOOL THEN
+         RETURN MKET (FMT1 ('rt_b_int_of_bits(@)', V.C), T);
+      ORIF RT@.KIND = T_ENUM THEN
+         RETURN MKET (ENUM_OF_BITS (RT, V.C), T);
+      ORIF RT@.KIND = T_FLOAT THEN
+         RETURN MKET (FMT1 ('rt_b_float_of_bits(@)', V.C), T);
+      ORIF RT@.KIND = T_STR THEN
+         RETURN MKET (FMT1 ('rt_b_str_of_bits(@)', V.C), T);
+      END IF;
+      FAIL (E@.LINE, 'this type-specifier on a bitstring is not implemented');
+   END IF;
+   RETURN MKET (CONVERT (V, T, E@.LINE, NO_TEXT ()), T);
+END FUNCTION TYPE_SPECIFIER;
+
+% the position of the literal whose representation is the bitstring C (3.4.3)
+FUNCTION ENUM_OF_BITS (T: TYP, C: TEXT) RETURNS (TEXT);
+   IF T@.REPS <> NIL THEN
+      IF T@.REPS@.B <> NIL THEN                        % ENUM_VAL_REP
+         RETURN FMT2 ('rt_b_enum_of_rep(@, @)', C, REP_TABLE (T));
+      END IF;
+   END IF;
+   RETURN FMT1 ('rt_b_int_of_bits(@)', C);
+END FUNCTION ENUM_OF_BITS;
+
+% a C array of the representations of the literals of T, in order of the literals
+FUNCTION REP_TABLE (T: TYP) RETURNS (TEXT);
+   CONST NAME: TEXT := NEW_NAME ('reps');
+   VAR L: NODE := T@.BASE@.LITS;
+   VAR R: TEXT := MK ('');
+   LOOP UNTIL L = NIL DO
+      BLOCK
+         VAR V: NODE := T@.REPS@.B;
+         VAR FOUND: BOOLEAN := FALSE;
+         LOOP UNTIL V = NIL DO
+            IF TEQ (V@.NAME, L@.NAME) THEN
+               R := FMT2 ('@@, ', R, EXPR (V@.A, NIL).C);
+               FOUND := TRUE;
+            END IF;
+            V := V@.NEXT;
+         END LOOP;
+         IF NOT FOUND THEN
+            FAILT (T@.REPS@.LINE, 'VALUES must give every literal (3.4.3): ', L@.NAME);
+         END IF;
+      END BLOCK;
+      L := L@.NEXT;
+   END LOOP;
+   EMIT (O_GLOBALS, FMT2 ('static rstr @[@];', NAME, NUM (T@.BASE@.NLITS)));
+   EMIT (O_STARTUP, FMT3 ('{ rstr t[] = { @ }; memcpy(@, t, sizeof @); }', R, NAME, NAME));
+   RETURN FMT2 ('@, @', NAME, NUM (T@.BASE@.NLITS));
+END FUNCTION REP_TABLE;
+
+% NEW(T) for a pointer, NEW(n) for a semaphore [3-198] [3-206]
+FUNCTION NEW_EXPR (E: NODE, WANT: TYP) RETURNS (ET);
+   VAR SEM: BOOLEAN := TEQS (E@.NAME, 'SEMAPHORE$NEW');
+   IF TEQS (E@.NAME, 'NEW') & WANT <> NIL THEN
+      SEM := REAL_TYPE (WANT)@.KIND = T_SEM;
+   END IF;
+   IF SEM THEN
+      BLOCK
+         VAR T: TYP := NEW_TYP (T_SEM);
+         IF WANT <> NIL THEN
+            IF WANT@.KIND = T_SEM THEN
+               T := WANT;
+            END IF;
+         END IF;
+         RETURN MKET (FMT2 ('rt_b_sem_value(@, @)', INT_EXPR (E@.A), NUM (T@.SCALE)), T);
+      END BLOCK;
+   END IF;
+   BLOCK
+      CONST T: TYP := RESOLVE (EXPR_TO_TS (E@.A));
+      VAR P: TYP := NEW_TYP (T_PTR);
+      P@.TARGET := T;
+      P@.TARGET_TS := E@.A;
+      IF NEEDS_INIT (T) THEN
+         RETURN MKET (FMT2 ('({ @ *p = rt_alloc(sizeof *p); @ p; })', CTYPE (T),
+                            INIT_CODE (T, MK ('(*p)'))), P);
+      END IF;
+      RETURN MKET (FMT2 ('((@ *)rt_alloc(sizeof (@)))', CTYPE (T), CTYPE (T)), P);
+   END BLOCK;
+END FUNCTION NEW_EXPR;

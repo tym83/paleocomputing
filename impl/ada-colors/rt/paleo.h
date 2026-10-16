@@ -247,3 +247,81 @@ int rt_b_eq(rstr a, rstr b);                   /* INVALID_LENGTH unless lengths 
 rstr rt_b_dup(rstr c, rt_int n);               /* DUP and BLANKS */
 rstr rt_b_image(rt_int v);                     /* TO_CHAR of an integer */
 rt_int rt_b_get_code(void);                    /* next input character, -1 at the end */
+
+/* BLUE additions: arrays, fixed point, bitstrings, conversions (3.2 - 3.8) */
+rt_int rt_b_ix1(rt_int i, rt_int lo, rt_int hi);  /* offset of A(I); SUBSCRIPT_RANGE */
+rt_int rt_b_ixn(int d, const rt_int *lo, const rt_int *hi, ...);
+rt_int rt_b_extent(int d, const rt_int *lo, const rt_int *hi);
+int rt_b_same_extents(int d, const rt_int *lo1, const rt_int *hi1, const rt_int *lo2,
+                      const rt_int *hi2);
+rt_int rt_b_dim_extent(const rt_int *lo, const rt_int *hi, rt_int i, int d);
+rt_int rt_b_fix_lit(const char *s, rt_int scale);  /* a literal, rounded to the scale */
+rt_int rt_b_shl(rt_int v, rt_int k);           /* v * 2**k; OVERFLOW */
+rt_int rt_b_shr(rt_int v, rt_int k);           /* truncated toward zero */
+rt_int rt_b_shr_round(rt_int v, rt_int k);     /* to nearest, ties to even */
+rt_int rt_b_rescale(rt_int v, rt_int from, rt_int to, int rounded);
+rt_int rt_b_div_round(rt_int a, rt_int b);
+rt_int rt_b_mod_round(rt_int a, rt_int b);
+rt_int rt_b_mul_sc(rt_int a, rt_int b, rt_int k, int rounded);  /* a*b*2**k */
+rt_int rt_b_div_sc(rt_int a, rt_int b, rt_int k, int rounded);  /* a*2**k/b */
+rstr rt_b_md(int op, rt_int a, rt_int b);      /* !op!: 128 bits */
+double rt_b_fchk(double v);                    /* OVERFLOW on infinity */
+rstr rt_b_zeros(rt_int n);
+rstr rt_b_one(rstr s);                         /* the first argument of DUP */
+rstr rt_b_and(rstr a, rstr b);
+rstr rt_b_or(rstr a, rstr b);
+rstr rt_b_xor(rstr a, rstr b);
+rstr rt_b_not(rstr a);
+rstr rt_b_bits_of_int(rt_int v, rt_int n);     /* the low n bits */
+rt_int rt_b_int_of_bits(rstr b);               /* unsigned */
+rstr rt_b_bits_of_float(double v);
+double rt_b_float_of_bits(rstr b);
+rstr rt_b_bits_of_str(rstr s);                 /* 8 bits a character */
+rstr rt_b_str_of_bits(rstr b);
+rstr rt_b_bits_of_digits(rstr s, int bits);    /* BIN_OF, OCT_OF, HEX_OF */
+rstr rt_b_rep_of_enum(rt_int v, const rstr *reps, rt_int n);
+rt_int rt_b_enum_of_rep(rstr b, const rstr *reps, rt_int n);
+rstr rt_b_fix_image(rt_int v, rt_int scale);
+rstr rt_b_float_image(double v, rt_int prec);
+rstr rt_b_bool_image(rt_int v);
+rstr rt_b_enum_image(const char **names, rt_int v);
+rt_int rt_b_fix_of_float(double v, rt_int scale, int rounded);
+rt_int rt_b_fix_of_str(rstr s, rt_int scale, int rounded);   /* CONVERSION */
+double rt_b_float_of_fix(rt_int v, rt_int scale);
+double rt_b_float_of_str(rstr s);
+rt_int rt_b_succ(rt_int v, rt_int n);
+rt_int rt_b_pred(rt_int v);
+_Noreturn void rt_b_no_target_code(const char *name);
+
+/* BLUE additions: parallel processing (4.6, D.7). Time is in virtual microseconds. */
+typedef struct rt_b_sem rt_b_sem;
+typedef struct rt_b_act rt_b_act;
+typedef struct rt_b_par rt_b_par;
+typedef struct {
+  rt_int lo, hi;
+  rt_b_act **a;
+} rt_b_paths;                                  /* the activations of a path */
+struct rt_b_par {
+  rt_taskdecl td;
+  int exc;                                     /* the last exception of a path */
+  rt_b_act *children;
+};
+rt_b_sem *rt_b_sem_new(int region);
+rt_b_sem *rt_b_sem_value(rt_int n, int region);  /* NEW(n) */
+void rt_b_sem_assign(rt_b_sem *dst, rt_b_sem *src);
+void rt_b_request(rt_b_sem *s);
+void rt_b_release(rt_b_sem *s);
+void rt_b_connect(rt_b_sem *s);
+rt_b_paths rt_b_paths_new(void);
+void rt_b_paths_range(rt_b_paths *p, rt_int lo, rt_int hi);
+rt_b_act *rt_b_paths_at(rt_b_paths *p, rt_int i);
+void rt_b_path_start(rt_b_paths *p, rt_int i, void (*fn)(void *), void *frame, rt_b_par *par,
+                     rt_int prio);
+void rt_b_par_begin(void);
+void rt_b_par_end(rt_b_par *par);
+void rt_b_path_failed(int exc, int allowed);
+rt_int rt_b_check_priority(rt_int p);
+void rt_b_terminate(rt_b_act *a);
+void rt_b_priority(rt_b_act *a, rt_int p);
+rt_int rt_b_clock(rt_b_act *a);                /* seconds, scale 20 */
+void rt_b_wait(rt_int v, rt_int scale);        /* seconds at the scale */

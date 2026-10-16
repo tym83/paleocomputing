@@ -8,6 +8,7 @@
 #include <unistd.h>
 #include <math.h>
 #include <pthread.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1288,3 +1289,581 @@ rstr rt_b_dup(rstr c, rt_int n) {
 rstr rt_b_image(rt_int v) { return rt_str_of_int(v); }
 
 rt_int rt_b_get_code(void) { return rt_getc(); }
+
+/* ---- BLUE: arrays ------------------------------------------------------- */
+
+rt_int rt_b_ix1(rt_int i, rt_int lo, rt_int hi) {
+  if (i < lo || i > hi) rt_raise(RT_X_SUBSCRIPT);
+  return i - lo;
+}
+
+rt_int rt_b_ixn(int d, const rt_int *lo, const rt_int *hi, ...) {
+  va_list ap;
+  rt_int off = 0;
+  va_start(ap, hi);
+  for (int k = 0; k < d; k++) {
+    rt_int i = va_arg(ap, rt_int);
+    if (i < lo[k] || i > hi[k]) {
+      va_end(ap);
+      rt_raise(RT_X_SUBSCRIPT);
+    }
+    off = off * (hi[k] - lo[k] + 1) + (i - lo[k]);
+  }
+  va_end(ap);
+  return off;
+}
+
+rt_int rt_b_extent(int d, const rt_int *lo, const rt_int *hi) {
+  rt_int n = 1;
+  for (int k = 0; k < d; k++) n *= hi[k] >= lo[k] ? hi[k] - lo[k] + 1 : 0;
+  return n;
+}
+
+int rt_b_same_extents(int d, const rt_int *lo1, const rt_int *hi1, const rt_int *lo2,
+                      const rt_int *hi2) {
+  for (int k = 0; k < d; k++) {
+    rt_int a = hi1[k] >= lo1[k] ? hi1[k] - lo1[k] + 1 : 0;
+    rt_int b = hi2[k] >= lo2[k] ? hi2[k] - lo2[k] + 1 : 0;
+    if (a != b) return 0;
+  }
+  return 1;
+}
+
+rt_int rt_b_dim_extent(const rt_int *lo, const rt_int *hi, rt_int i, int d) {
+  if (i < 0 || i >= d) rt_raise(RT_X_SUBSCRIPT);
+  return hi[i] >= lo[i] ? hi[i] - lo[i] + 1 : 0;
+}
+
+/* ---- BLUE: fixed point (3.2): a value is a mantissa m standing for m * 2**-scale - */
+
+typedef __int128 b_wide;
+
+static rt_int b_narrow(b_wide v) {
+  if (v > INT64_MAX || v < INT64_MIN) rt_raise(RT_X_OVERFLOW);
+  return (rt_int)v;
+}
+
+/* q = a / b, truncated toward zero or rounded to nearest with ties to even */
+static b_wide b_divide(b_wide a, b_wide b, int rounded) {
+  if (b == 0) rt_raise(RT_X_ZERO_DIVIDE);
+  b_wide q = a / b, r = a % b;
+  if (rounded && r != 0) {
+    b_wide r2 = (r < 0 ? -r : r) * 2, bb = b < 0 ? -b : b;
+    int neg = (a < 0) != (b < 0);
+    if (r2 > bb || (r2 == bb && (q & 1))) q += neg ? -1 : 1;
+  }
+  return q;
+}
+
+static b_wide b_pow2(rt_int k) {
+  if (k > 120) rt_raise(RT_X_OVERFLOW);
+  return (b_wide)1 << k;
+}
+
+rt_int rt_b_shl(rt_int v, rt_int k) { return b_narrow((b_wide)v * b_pow2(k)); }
+rt_int rt_b_shr(rt_int v, rt_int k) { return k > 120 ? 0 : b_narrow(b_divide(v, b_pow2(k), 0)); }
+rt_int rt_b_shr_round(rt_int v, rt_int k) { return k > 120 ? 0 : b_narrow(b_divide(v, b_pow2(k), 1)); }
+
+rt_int rt_b_rescale(rt_int v, rt_int from, rt_int to, int rounded) {
+  if (to >= from) return rt_b_shl(v, to - from);
+  return rounded ? rt_b_shr_round(v, from - to) : rt_b_shr(v, from - to);
+}
+
+rt_int rt_b_div_round(rt_int a, rt_int b) { return b_narrow(b_divide(a, b, 1)); }
+
+rt_int rt_b_mod_round(rt_int a, rt_int b) {
+  b_wide q = b_divide(a, b, 1);
+  return b_narrow((b_wide)a - q * b);
+}
+
+rt_int rt_b_mul_sc(rt_int a, rt_int b, rt_int k, int rounded) {
+  b_wide p = (b_wide)a * b;
+  if (k >= 0) {
+    if (k > 62 && p != 0) rt_raise(RT_X_OVERFLOW);
+    return b_narrow(p * ((b_wide)1 << k));
+  }
+  return b_narrow(b_divide(p, b_pow2(-k), rounded));
+}
+
+rt_int rt_b_div_sc(rt_int a, rt_int b, rt_int k, int rounded) {
+  if (k >= 0) {
+    if (k > 62 && a != 0) rt_raise(RT_X_OVERFLOW);
+    return b_narrow(b_divide((b_wide)a * ((b_wide)1 << k), b, rounded));
+  }
+  return b_narrow(b_divide(a, (b_wide)b * b_pow2(-k), rounded));
+}
+
+/* a decimal literal [+-]ddd[.ddd][E[+-]ee] as a mantissa at the scale, rounded */
+rt_int rt_b_fix_lit(const char *s, rt_int scale) {
+  b_wide num = 0, den = 1;
+  int neg = 0, frac = 0;
+  long e = 0;
+  if (*s == '+' || *s == '-') neg = *s++ == '-';
+  for (; *s && *s != 'E'; s++) {
+    if (*s == '.') {
+      frac = 1;
+      continue;
+    }
+    if (num > ((b_wide)1 << 100)) rt_raise(RT_X_OVERFLOW);
+    num = num * 10 + (*s - '0');
+    if (frac) den *= 10;
+  }
+  if (*s == 'E') e = strtol(s + 1, NULL, 10);
+  for (; e > 0; e--) num *= 10;
+  for (; e < 0; e++) den *= 10;
+  if (scale >= 0) num *= b_pow2(scale);
+  else den *= b_pow2(-scale);
+  b_wide q = b_divide(num, den, 1);
+  return b_narrow(neg ? -q : q);
+}
+
+rstr rt_b_md(int op, rt_int a, rt_int b) {
+  b_wide r = 0;
+  switch (op) {
+  case '+': r = (b_wide)a + b; break;
+  case '-': r = (b_wide)a - b; break;
+  case '*': r = (b_wide)a * b; break;
+  case '/': r = b == 0 ? 0 : a / b; break;
+  default: r = b == 0 ? 0 : a % b; break;
+  }
+  rstr s = rt_str_new(128);
+  unsigned __int128 u = (unsigned __int128)r;
+  for (int i = 127; i >= 0; i--, u >>= 1) s.p[i] = (unsigned char)('0' + (int)(u & 1));
+  return s;
+}
+
+double rt_b_fchk(double v) {
+  if (isinf(v) || isnan(v)) rt_raise(RT_X_OVERFLOW);
+  return v;
+}
+
+/* ---- BLUE: bitstrings (3.6): a value is a string of '0' and '1' ------------- */
+
+rstr rt_b_zeros(rt_int n) {
+  if (n < 0) rt_raise(RT_B_INVALID_LENGTH);
+  rstr r = rt_str_new(n);
+  memset(r.p, '0', (size_t)n);
+  return r;
+}
+
+rstr rt_b_one(rstr s) {
+  if (s.len != 1) rt_raise(RT_B_INVALID_LENGTH);
+  return s;
+}
+
+static rstr b_logic(rstr a, rstr b, int op) {
+  if (a.len != b.len) rt_raise(RT_B_INVALID_LENGTH);
+  rstr r = rt_str_new(a.len);
+  for (rt_int i = 0; i < a.len; i++) {
+    int x = a.p[i] == '1', y = b.p[i] == '1';
+    int z = op == 0 ? (x & y) : op == 1 ? (x | y) : (x ^ y);
+    r.p[i] = (unsigned char)('0' + z);
+  }
+  return r;
+}
+
+rstr rt_b_and(rstr a, rstr b) { return b_logic(a, b, 0); }
+rstr rt_b_or(rstr a, rstr b) { return b_logic(a, b, 1); }
+rstr rt_b_xor(rstr a, rstr b) { return b_logic(a, b, 2); }
+
+rstr rt_b_not(rstr a) {
+  rstr r = rt_str_new(a.len);
+  for (rt_int i = 0; i < a.len; i++) r.p[i] = a.p[i] == '1' ? '0' : '1';
+  return r;
+}
+
+rstr rt_b_bits_of_int(rt_int v, rt_int n) {
+  rstr r = rt_str_new(n);
+  uint64_t u = (uint64_t)v;
+  for (rt_int i = n - 1, k = 0; i >= 0; i--, k++)
+    r.p[i] = (unsigned char)(k < 64 ? '0' + (int)((u >> k) & 1) : (v < 0 ? '1' : '0'));
+  return r;
+}
+
+rt_int rt_b_int_of_bits(rstr b) {
+  uint64_t u = 0;
+  for (rt_int i = 0; i < b.len; i++) {
+    if (u >> 62) rt_raise(RT_X_OVERFLOW);
+    u = u * 2 + (b.p[i] == '1');
+  }
+  return (rt_int)u;
+}
+
+rstr rt_b_bits_of_float(double v) {
+  uint64_t u;
+  memcpy(&u, &v, sizeof u);
+  rstr r = rt_str_new(64);
+  for (int i = 63; i >= 0; i--, u >>= 1) r.p[i] = (unsigned char)('0' + (int)(u & 1));
+  return r;
+}
+
+double rt_b_float_of_bits(rstr b) {
+  if (b.len != 64) rt_raise(RT_B_INVALID_SIZE);
+  uint64_t u = 0;
+  for (int i = 0; i < 64; i++) u = u * 2 + (b.p[i] == '1');
+  double v;
+  memcpy(&v, &u, sizeof v);
+  return v;
+}
+
+rstr rt_b_bits_of_str(rstr s) {
+  rstr r = rt_str_new(s.len * 8);
+  for (rt_int i = 0; i < s.len; i++)
+    for (int k = 0; k < 8; k++) r.p[i * 8 + k] = (unsigned char)('0' + ((s.p[i] >> (7 - k)) & 1));
+  return r;
+}
+
+rstr rt_b_str_of_bits(rstr b) {
+  if (b.len % 8) rt_raise(RT_B_INVALID_SIZE);
+  rstr r = rt_str_new(b.len / 8);
+  for (rt_int i = 0; i < r.len; i++) {
+    int c = 0;
+    for (int k = 0; k < 8; k++) c = c * 2 + (b.p[i * 8 + k] == '1');
+    r.p[i] = (unsigned char)c;
+  }
+  return r;
+}
+
+rstr rt_b_bits_of_digits(rstr s, int bits) {
+  rstr r = rt_str_new(s.len * bits);
+  for (rt_int i = 0; i < s.len; i++) {
+    int c = s.p[i], v = c >= '0' && c <= '9' ? c - '0' : c >= 'A' && c <= 'F' ? c - 'A' + 10 : 99;
+    if (v >= (1 << bits)) rt_raise(RT_B_CONVERSION);
+    for (int k = 0; k < bits; k++) r.p[i * bits + k] = (unsigned char)('0' + ((v >> (bits - 1 - k)) & 1));
+  }
+  return r;
+}
+
+rstr rt_b_rep_of_enum(rt_int v, const rstr *reps, rt_int n) {
+  if (v < 0 || v >= n) rt_raise(RT_X_RANGE);
+  return reps[v];
+}
+
+rt_int rt_b_enum_of_rep(rstr b, const rstr *reps, rt_int n) {
+  for (rt_int i = 0; i < n; i++)
+    if (rt_str_eq(reps[i], b)) return i;
+  rt_raise(RT_X_RANGE);
+}
+
+/* ---- BLUE: conversions and images ------------------------------------- */
+
+rstr rt_b_fix_image(rt_int v, rt_int scale) {
+  if (scale <= 0) return rt_str_of_int(rt_b_shl(v, -scale));
+  /* m * 2**-s has exactly s decimal digits after the point */
+  char b[200];
+  int n = 0, neg = v < 0;
+  unsigned __int128 m = neg ? -(b_wide)v : (b_wide)v;
+  unsigned __int128 ip = scale >= 120 ? 0 : m >> scale;
+  unsigned __int128 fp = scale >= 120 ? m : m & (((unsigned __int128)1 << scale) - 1);
+  char ib[64];
+  int k = 0;
+  do {
+    ib[k++] = (char)('0' + (int)(ip % 10));
+    ip /= 10;
+  } while (ip);
+  if (neg) b[n++] = '-';
+  while (k) b[n++] = ib[--k];
+  b[n++] = '.';
+  /* fp / 2**scale, digit by digit; at most scale digits */
+  int digits = 0;
+  do {
+    fp *= 10;
+    b[n++] = (char)('0' + (int)(fp >> scale));
+    fp &= ((unsigned __int128)1 << scale) - 1;
+    digits++;
+  } while (fp && digits < scale && n < 190);
+  return rt_str_copy(rt_str(b, n));
+}
+
+rstr rt_b_float_image(double v, rt_int prec) {
+  char b[64];
+  if (prec < 1) prec = 1;
+  if (prec > 17) prec = 17;
+  int n = snprintf(b, sizeof b, "%.*G", (int)prec, v);
+  if (!strpbrk(b, ".EN")) b[n++] = '.';
+  return rt_str_copy(rt_str(b, n));
+}
+
+rstr rt_b_bool_image(rt_int v) { return v ? rt_str("TRUE", 4) : rt_str("FALSE", 5); }
+
+rstr rt_b_enum_image(const char **names, rt_int v) {
+  return rt_str_copy(rt_str(names[v], (rt_int)strlen(names[v])));
+}
+
+rt_int rt_b_fix_of_float(double v, rt_int scale, int rounded) {
+  double x = ldexp(v, (int)scale);
+  if (!(x > -9.2233720368547758e18 && x < 9.2233720368547758e18)) rt_raise(RT_X_OVERFLOW);
+  double t = trunc(x);
+  if (rounded) {
+    double r = x - t;
+    if (fabs(r) > 0.5 || (fabs(r) == 0.5 && fmod(t, 2) != 0)) t += x < 0 ? -1 : 1;
+  }
+  return (rt_int)t;
+}
+
+/* a fixed-literal with blanks around it (3.2.6.1) */
+rt_int rt_b_fix_of_str(rstr s, rt_int scale, int rounded) {
+  char b[256];
+  rt_int i = 0, n = 0;
+  (void)rounded;
+  while (i < s.len && s.p[i] == ' ') i++;
+  while (i < s.len && s.p[i] != ' ' && n < 255) b[n++] = (char)s.p[i++];
+  while (i < s.len && s.p[i] == ' ') i++;
+  b[n] = 0;
+  int ok = n > 0 && i == s.len, digits = 0;
+  for (int k = 0; ok && k < n; k++) {
+    char c = b[k];
+    if (c >= '0' && c <= '9') digits++;
+    else if (!((c == '+' || c == '-') && (k == 0 || b[k - 1] == 'E')) && c != '.' && c != 'E')
+      ok = 0;
+  }
+  if (!ok || !digits) rt_raise(RT_B_CONVERSION);
+  return rt_b_fix_lit(b, scale);
+}
+
+double rt_b_float_of_fix(rt_int v, rt_int scale) { return ldexp((double)v, (int)-scale); }
+
+double rt_b_float_of_str(rstr s) {
+  const char *c = rt_cstr(s);
+  char *end;
+  double v = strtod(c, &end);
+  while (*end == ' ') end++;
+  if (end == c || *end) rt_raise(RT_B_CONVERSION);
+  return v;
+}
+
+rt_int rt_b_succ(rt_int v, rt_int n) {
+  if (v + 1 >= n) rt_raise(RT_X_RANGE);
+  return v + 1;
+}
+
+rt_int rt_b_pred(rt_int v) {
+  if (v <= 0) rt_raise(RT_X_RANGE);
+  return v - 1;
+}
+
+void rt_b_no_target_code(const char *name) {
+  fflush(stdout);
+  fprintf(stderr, "*** the TARGET routine %s has no machine code here\n", name);
+  exit(1);
+}
+
+/* ---- BLUE: parallel processing (4.6) ------------------------------------- */
+
+struct rt_b_sem {
+  rt_int value;
+  rt_waiter *q;
+  int region, connected;
+};
+
+#define B_HOLDS 32
+struct rt_b_act {
+  rt_act act;
+  void (*fn)(void *);
+  void *frame;
+  rt_b_par *par;              /* the block it belongs to */
+  rt_b_par *waiting;          /* the block it waits on */
+  rt_b_act *sibling;
+  rt_int start, end;
+  int done, exc;
+  rt_b_sem *holds[B_HOLDS];   /* REGION semaphores requested and not released */
+  int nholds;
+};
+
+static rt_b_act b_main;
+static __thread rt_b_act *b_self;
+
+static rt_b_act *b_me(void) { return b_self ? b_self : &b_main; }
+
+rt_b_sem *rt_b_sem_new(int region) {
+  rt_b_sem *s = rt_alloc(sizeof *s);
+  s->region = region;
+  return s;
+}
+
+rt_b_sem *rt_b_sem_value(rt_int n, int region) {
+  if (n < 0) rt_raise(RT_X_RANGE);
+  rt_b_sem *s = rt_b_sem_new(region);
+  s->value = n;
+  return s;
+}
+
+/* 3.11.5: the value only; the list of blocked activations becomes empty */
+void rt_b_sem_assign(rt_b_sem *dst, rt_b_sem *src) {
+  dst->value = src->value;
+  dst->q = NULL;
+}
+
+static void b_hold(rt_b_sem *s) {
+  rt_b_act *a = b_me();
+  if (s->region && a->nholds < B_HOLDS) a->holds[a->nholds++] = s;
+}
+
+void rt_b_request(rt_b_sem *s) {
+  if (s->value > 0) {
+    s->value--;
+    b_hold(s);
+    return;
+  }
+  add_waiter(&s->q, 0, NULL);
+  block();
+  b_hold(s);
+}
+
+/* the highest priority waiter, the one that waited longest among equals (4.6.7) */
+void rt_b_release(rt_b_sem *s) {
+  rt_b_act *a = b_me();
+  for (int i = a->nholds - 1; i >= 0; i--)
+    if (a->holds[i] == s) {
+      a->holds[i] = a->holds[--a->nholds];
+      break;
+    }
+  rt_waiter *best = NULL;
+  for (rt_waiter *w = s->q; w; w = w->next)
+    if (!best || w->t->prio > best->t->prio) best = w;
+  if (!best) {
+    s->value++;
+    return;
+  }
+  satisfy(best);
+  maybe_preempt();
+}
+
+void rt_b_connect(rt_b_sem *s) {
+  if (s->connected) rt_raise(rt_exc("INTERRUPT"));
+  s->connected = 1;
+}
+
+rt_b_paths rt_b_paths_new(void) {
+  rt_b_paths p = {0, 0, rt_alloc(sizeof(rt_b_act *))};
+  return p;
+}
+
+void rt_b_paths_range(rt_b_paths *p, rt_int lo, rt_int hi) {
+  p->lo = lo;
+  p->hi = hi;
+  p->a = rt_alloc(sizeof(rt_b_act *) * (size_t)(hi >= lo ? hi - lo + 1 : 1));
+}
+
+rt_b_act *rt_b_paths_at(rt_b_paths *p, rt_int i) {
+  if (i < p->lo || i > p->hi || !p->a[i - p->lo]) rt_raise(RT_X_SUBSCRIPT);
+  return p->a[i - p->lo];
+}
+
+static void b_trampoline(void *arg) {
+  rt_b_act *a = arg;
+  b_self = a;
+  a->fn(a->frame);
+  a->done = 1;
+  a->end = rt_time();
+}
+
+void rt_b_par_begin(void) {}
+
+/* the activation is ready but does not run before its siblings are all ready (4.6.1) */
+void rt_b_path_start(rt_b_paths *p, rt_int i, void (*fn)(void *), void *frame, rt_b_par *par,
+                     rt_int prio) {
+  rt_b_act *a = rt_alloc(sizeof *a);
+  a->fn = fn;
+  a->frame = frame;
+  a->par = par;
+  a->start = rt_time();
+  a->sibling = par->children;
+  par->children = a;
+  p->a[i - p->lo] = a;
+  rt_task *t = rt_alloc(sizeof *t);
+  pthread_cond_init(&t->cv, NULL);
+  t->id = ++task_ids;
+  t->prio = prio;
+  t->fn = b_trampoline;
+  t->frame = a;
+  t->act = &a->act;
+  t->decl = &par->td;
+  t->term_alt = -1;
+  a->act.t = t;
+  a->act.active = 1;
+  par->td.live++;
+  t->all_next = all_tasks;
+  all_tasks = t;
+  make_ready(t);
+  pthread_attr_t attr;
+  pthread_attr_init(&attr);
+#ifdef __wasi__
+  pthread_attr_setstacksize(&attr, 1u << 20);
+#else
+  pthread_attr_setstacksize(&attr, 64u << 20);
+#endif
+  if (pthread_create(&t->th, &attr, task_main, t) != 0) {
+    fprintf(stderr, "*** cannot start a path\n");
+    exit(4);
+  }
+  pthread_detach(t->th);
+  trace("create", t);
+}
+
+void rt_b_par_end(rt_b_par *par) {
+  rt_b_act *me = b_me();
+  me->waiting = par;
+  rt_await_decl(&par->td);
+  me->waiting = NULL;
+  if (par->exc) rt_raise(par->exc);
+}
+
+/* an exception ended the path: one it may signal, or TERMINATED, is raised by the
+ * block (4.6.1); its REGION semaphores are released */
+void rt_b_path_failed(int exc, int allowed) {
+  rt_b_act *a = b_me();
+  while (a->nholds > 0) rt_b_release(a->holds[a->nholds - 1]);
+  if (!allowed && exc != RT_X_TERMINATE) {
+    fflush(stdout);
+    fprintf(stderr, "*** unhandled exception %s in a path\n", rt_exc_name(exc));
+    exit(1);
+  }
+  a->exc = exc;
+  if (a->par) a->par->exc = exc;
+}
+
+rt_int rt_b_check_priority(rt_int p) {
+  if (p < 0 || p > 255) rt_raise(RT_X_RANGE);
+  return p;
+}
+
+/* TERMINATED in the activation, or in the leaves of its tree of activations (4.6.3) */
+void rt_b_terminate(rt_b_act *a) {
+  if (!a) rt_raise(RT_X_TERMINATE);
+  if (a->done) return;
+  if (a->waiting) {
+    for (rt_b_act *c = a->waiting->children; c; c = c->sibling) rt_b_terminate(c);
+    return;
+  }
+  if (a == b_me()) rt_raise(RT_X_TERMINATE);
+  rt_exterminate(&a->act);
+}
+
+void rt_b_priority(rt_b_act *a, rt_int p) {
+  rt_b_check_priority(p);
+  if (!a) a = b_me();
+  if (a->done) return;
+  if (a == &b_main) {
+    rt_set_priority(rt_me(), p);
+    return;
+  }
+  rt_set_priority(&a->act, p);
+}
+
+/* the virtual time since the activation began: a deviation, see blue/notes */
+rt_int rt_b_clock(rt_b_act *a) {
+  if (!a) a = b_me();
+  rt_int us = (a->done ? a->end : rt_time()) - a->start;
+  return (rt_int)(((b_wide)us << 20) / 1000000);
+}
+
+void rt_b_wait(rt_int v, rt_int scale) {
+  if (v <= 0) {
+    rt_yield();
+    return;
+  }
+  b_wide us = (b_wide)v * 1000000;
+  b_wide ticks = scale >= 0 ? (us + b_pow2(scale) - 1) / b_pow2(scale) : us * b_pow2(-scale);
+  rt_delay(b_narrow(ticks));
+}

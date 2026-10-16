@@ -1,0 +1,259 @@
+
+% ==== parallel processing (4.6, D.7) =========================================================
+% A path activation is a task of rt/: the scheduler runs the highest priority first and
+% FIFO within a priority (4.6.1), and its clock is virtual, so every run prints the same.
+% A path is a closed scope; its frame holds its objects, the value of its loop
+% identifier and the frame of the scope around the parallel block. The activations of
+% the paths of a block are kept where the block is, for TERMINATE, PRIORITY and CLOCK.
+
+FUNCTION PATHS_TYPE () RETURNS (TYP);
+   VAR T: TYP := NEW_TYP (T_PATHS);
+   T@.NAME := MK ('PATH');
+   RETURN T;
+END FUNCTION PATHS_TYPE;
+
+% PAR_BLOCK path... END PAR_BLOCK [4-85]
+PROCEDURE PARALLEL_BLOCK (S: NODE);
+   CONST TD: TEXT := NEW_NAME ('td');
+   VAR P: NODE := S@.A;
+   IF W@.CS@.R <> NIL THEN
+      FAIL (S@.LINE, 'a parallel block may not be in a routine (4.6.1)');
+   END IF;
+   CODES ('{');
+   OPEN_SCOPE;
+   % the path names are known in all the paths of the block (4.6.1)
+   LOOP UNTIL P = NIL DO
+      BLOCK
+         VAR Y: SYM := NEW_SYM (Y_PATH, P@.NAME);
+         Y@.T := PATHS_TYPE ();
+         Y@.DECL := P;
+         CODE (FMT1 ('@ = rt_b_paths_new();', NEW_OBJECT (Y, '_path')));
+         Y@.INPUT := TRUE;
+         DEFINE (Y, P@.LINE);
+      END BLOCK;
+      P := P@.NEXT;
+   END LOOP;
+   CODE (FMT1 ('rt_taskdecl @ = {0};', TD));
+   CODES ('rt_b_par_begin();');
+   P := S@.A;
+   LOOP UNTIL P = NIL DO
+      ACTIVATE_PATH (P, TD);
+      P := P@.NEXT;
+   END LOOP;
+   CODE (FMT1 ('rt_b_par_end(&@);', TD));
+   CLOSE_SCOPE;
+   CODES ('}');
+END PROCEDURE PARALLEL_BLOCK;
+
+% the activations of a path [4-86]: one, or one for each value of its loop identifier
+PROCEDURE ACTIVATE_PATH (P: NODE, TD: TEXT);
+   CONST FN: TEXT := NEW_NAME ('path_');
+   CONST FT: TEXT := NEW_NAME ('fr_path');
+   CONST Y: SYM := LOOKUP (P@.NAME);
+   CONST H: TEXT := OBJ_ACCESS (Y);
+   CONST IT: TEXT := NEW_NAME ('pi');
+   VAR PRIO: TEXT := MK ('0');
+   VAR START: TEXT;
+   EMIT (O_TYPEDEFS, FMT2 ('typedef struct @ @;', FT, FT));
+   IF P@.C <> NIL THEN                               % PRIORITY priority-expr
+      PRIO := FMT1 ('rt_b_check_priority(@)', INT_EXPR (P@.C));
+   END IF;
+   IF P@.FL = 1 THEN                                  % FOR I IN range
+      BLOCK
+         CONST R: NODE := P@.A;
+         VAR LO: TEXT := INT_EXPR (R@.A);
+         VAR HI: TEXT := INT_EXPR (R@.B);
+         IF R@.IV = 1 ! R@.IV = 3 THEN
+            LO := FMT1 ('(@) + 1', LO);
+         END IF;
+         IF R@.IV >= 2 THEN
+            HI := FMT1 ('(@) - 1', HI);
+         END IF;
+         CODE (FMT3 ('rt_b_paths_range(&@, @, @);', H, LO, HI));
+         CODE (FMT2 ('@@++) {', FMT4 ('for (rt_int @ = @.lo; @ <= @.hi; ', IT, H, IT, H), IT));
+      END BLOCK;
+   ELSE
+      CODE (FMT1 ('{ rt_int @ = 0;', IT));
+   END IF;
+   CODE (FMT2 ('@ *f = rt_alloc(sizeof *f); f->up = @;', FT, UP_FRAME ()));
+   IF P@.FL = 1 THEN
+      CODE (FMT2 ('f->l_@ = @;', P@.E@.NAME, IT));
+   END IF;
+   IF P@.D <> NIL THEN                                % CONNECT (interrupt)
+      BLOCK
+         CONST V: ET := EXPR (P@.D, NIL);
+         IF REAL_TYPE (V.T)@.KIND <> T_SEM THEN
+            FAIL (P@.LINE, 'CONNECT names a semaphore (4.6.1)');
+         END IF;
+         CODE (FMT1 ('rt_b_connect(@);', V.C));
+      END BLOCK;
+   END IF;
+   START := FMT4 ('rt_b_path_start(&@, @, @, f, &', H, IT, FN, TD);
+   CODE (FMT3 ('@@, @); }', START, TD, PRIO));
+   PATH_BODY (P, FN, FT);
+END PROCEDURE ACTIVATE_PATH;
+
+% the C of the frame a path's frame points up to
+FUNCTION UP_FRAME () RETURNS (TEXT);
+   IF W@.CS@.LEVEL = 0 THEN
+      RETURN MK ('NULL');
+   END IF;
+   RETURN MK ('F');
+END FUNCTION UP_FRAME;
+
+% the C function of a path: its closed scope at the next level [4-88]
+PROCEDURE PATH_BODY (P: NODE, FN, FT: TEXT);
+   CONST SAVED_CODE: BUF := W@.CODE;
+   CONST SAVED_CTXS: CTX := W@.CTXS;
+   CONST OUTER: CSCOPE := W@.CS;
+   CONST H: NODE := P@.E@.A;
+   VAR CS: CSCOPE := NEW (SCOPE_REC);
+   VAR UPT: TEXT := MK ('void');
+   IF OUTER@.LEVEL > 0 THEN
+      UPT := OUTER@.FTYPE;
+   END IF;
+   CS@ := (LEVEL: OUTER@.LEVEL + 1, R: NIL, FRAMED: TRUE, FTYPE: FT,
+           FIELDS: (HEAD: NIL, TAIL: NIL), UP: OUTER, IMPORTS: H@.B, SIGNALS: H@.A,
+           RESULT: NIL, IS_PATH: TRUE);
+   APPEND (FMT1 (' @ *up;', UPT) # CS@.FIELDS);
+   W@.CS := CS;
+   W@.CODE := (HEAD: NIL, TAIL: NIL);
+   W@.CTXS := NIL;
+   PUSH_CTX (1, NO_TEXT ());
+   ENTER_ISCOPE (H@.B, H@.A, P@.NAME);
+   OPEN_SCOPE;
+   IF P@.FL = 1 THEN
+      BLOCK
+         VAR I: SYM := NEW_SYM (Y_CONST, P@.E@.NAME);
+         I@.T := W@.TY_INT;
+         I@.INPUT := TRUE;
+         I@.FIELD := FMT1 ('l_@', P@.E@.NAME);
+         I@.ACCESS := FMT1 ('F->l_@', P@.E@.NAME);
+         APPEND (FMT1 (' rt_int l_@;', P@.E@.NAME) # CS@.FIELDS);
+         DEFINE (I, P@.LINE);
+      END BLOCK;
+   END IF;
+   CLOSED_BODY (P@.B);
+   CLOSE_SCOPE;
+   LEAVE_ISCOPE;
+   EMIT (O_PROTOS, FMT1 ('static void @(void *arg);', FN));
+   EMIT (O_FUNCS, FMT2 ('static void @(void *arg) { @ *F = arg; (void)F;', FN, FT));
+   EMIT (O_FUNCS, MK ('rt_frame pf; if (RT_TRY(pf)) {'));
+   APPEND_BUF (W@.CODE # W@.OUT(O_FUNCS));
+   EMIT (O_FUNCS, MK ('RT_POP(pf); } else { RT_POP(pf); rt_b_path_failed(rt_xcur, '));
+   BLOCK                                             % the exceptions it may signal
+      VAR L: NODE := H@.A;
+      VAR C: TEXT := MK ('0');
+      LOOP UNTIL L = NIL DO
+         C := FMT2 ('@ || rt_xcur == @', C, EXC_NAME (L@.NAME));
+         L := L@.NEXT;
+      END LOOP;
+      EMIT (O_FUNCS, FMT1 ('@); } }', C));
+   END BLOCK;
+   EMIT (O_STRUCTS, FMT2 ('struct @ {@ };', FT, JOIN_BUF (CS@.FIELDS)));
+   W@.CS := OUTER;
+   W@.CODE := SAVED_CODE;
+   W@.CTXS := SAVED_CTXS;
+END PROCEDURE PATH_BODY;
+
+% the lines of B as one text
+FUNCTION JOIN_BUF (B: BUF) RETURNS (TEXT);
+   VAR C: CHUNK := B.HEAD;
+   VAR R: TEXT := MK ('');
+   LOOP UNTIL C = NIL DO
+      R := CAT (R, C@.T);
+      C := C@.NEXT;
+   END LOOP;
+   RETURN R;
+END FUNCTION JOIN_BUF;
+
+% path-reference [4-98]: the activation of a path, with a subscript for a loop path
+FUNCTION PATH_REF (E: NODE) RETURNS (TEXT);
+   VAR NAME: TEXT := E@.NAME;
+   VAR SUB: TEXT := MK ('0');
+   IF E@.KIND = N_APPLY THEN
+      IF E@.A = NIL ! E@.A@.NEXT <> NIL THEN
+         FAIL (E@.LINE, 'a path reference has one subscript (4.6.3)');
+      END IF;
+      SUB := INT_EXPR (E@.A);
+   ORIF E@.KIND <> N_NAME THEN
+      FAIL (E@.LINE, 'a path name expected');
+   END IF;
+   BLOCK
+      CONST Y: SYM := LOOKUP (NAME);
+      IF Y = NIL THEN
+         FAILT (E@.LINE, 'unknown path ', NAME);
+      END IF;
+      IF Y@.KIND <> Y_PATH THEN
+         FAILT (E@.LINE, 'not a path: ', NAME);
+      END IF;
+      IF E@.KIND = N_APPLY & Y@.DECL@.FL <> 1 THEN
+         FAIL (E@.LINE, 'a subscript only for a path with a loop prefix (4.6.3)');
+      END IF;
+      RETURN FMT2 ('rt_b_paths_at(&@, @)', OBJ_ACCESS (Y), SUB);
+   END BLOCK;
+END FUNCTION PATH_REF;
+
+% TERMINATE [(path-reference)] [4-97]
+PROCEDURE TERMINATE_STMT (S: NODE);
+   IF S@.A = NIL THEN
+      CODES ('rt_b_terminate(NULL);');
+   ELSE
+      CODE (FMT1 ('rt_b_terminate(@);', PATH_REF (S@.A)));
+   END IF;
+END PROCEDURE TERMINATE_STMT;
+
+% WAIT, PRIORITY, REQUEST, RELEASE, CLOCK and START_IO (4.6.2 - 4.6.7, 4.8.1)
+FUNCTION PARALLEL_BUILTIN (E: NODE, WANT: TYP) RETURNS (ET);
+   CONST NAME: TEXT := E@.NAME;
+   CONST LINE: INTEGER := E@.LINE;
+   IF TEQS (NAME, 'WAIT') THEN                      % [4-95]: seconds, any fixed scale
+      NEED_ARGS (E, 1, 1);
+      BLOCK
+         CONST V: ET := EXPR (E@.A, NIL);
+         IF REAL_TYPE (V.T)@.KIND <> T_INT THEN
+            FAIL (LINE, 'WAIT takes a fixed point time in seconds (4.6.2)');
+         END IF;
+         RETURN MKET (FMT2 ('rt_b_wait(@, @)', V.C, NUM (V.T@.SCALE)), W@.TY_VOID);
+      END BLOCK;
+   ORIF TEQS (NAME, 'PRIORITY') THEN                % [4-99]
+      NEED_ARGS (E, 1, 2);
+      IF E@.A@.NEXT = NIL THEN
+         RETURN MKET (FMT1 ('rt_b_priority(NULL, @)', INT_EXPR (E@.A)), W@.TY_VOID);
+      END IF;
+      RETURN MKET (FMT2 ('rt_b_priority(@, @)', PATH_REF (E@.A@.NEXT), INT_EXPR (E@.A)), W@.TY_VOID);
+   ORIF TEQS (NAME, 'CLOCK') THEN                   % [4-100]: scale 20
+      NEED_ARGS (E, 0, 1);
+      IF E@.A = NIL THEN
+         RETURN MKET (MK ('rt_b_clock(NULL)'), INT_TYPE (20));
+      END IF;
+      RETURN MKET (FMT1 ('rt_b_clock(@)', PATH_REF (E@.A)), INT_TYPE (20));
+   ORIF TEQS (NAME, 'REQUEST') ! TEQS (NAME, 'RELEASE') THEN   % [4-101] [4-103]
+      IF E@.A <> NIL ! E@.B = NIL ! E@.C <> NIL THEN
+         FAILT (LINE, 'the semaphore is passed inout: (# S) (4.6.6): ', NAME);
+      END IF;
+      BLOCK
+         CONST V: ET := EXPR (E@.B, NIL);
+         IF REAL_TYPE (V.T)@.KIND <> T_SEM THEN
+            FAIL (LINE, 'REQUEST and RELEASE take a semaphore variable');
+         END IF;
+         IF NOT V.LVAL THEN
+            FAIL (LINE, 'the semaphore is passed inout: it must be a variable');
+         END IF;
+         IF TEQS (NAME, 'REQUEST') THEN
+            RETURN MKET (FMT1 ('rt_b_request(@)', V.C), W@.TY_VOID);
+         END IF;
+         RETURN MKET (FMT1 ('rt_b_release(@)', V.C), W@.TY_VOID);
+      END BLOCK;
+   ORIF TEQS (NAME, 'START_IO') THEN                % [4-104]
+      REQUIRE_MACHINE (LINE);
+      RETURN START_IO_CALL (E);
+   END IF;
+   FAILT (LINE, 'unknown routine ', NAME);
+END FUNCTION PARALLEL_BUILTIN;
+
+% START_IO (device-object, device-operation, ...) [4-104]: the devices of this
+% implementation are the LT33 teletypes of Appendix C, simulated on the console
+FUNCTION START_IO_CALL (E: NODE) RETURNS (ET);
+   FAIL (E@.LINE, 'this implementation has no devices for START_IO yet');
+END FUNCTION START_IO_CALL;

@@ -1,0 +1,114 @@
+
+% ==== where objects live (4.1, 4.3.2) ========================================================
+% Objects of the segment scope, of the main program and of modules in it are C
+% globals (4.2: statically allocated). A routine's objects are C locals, unless the
+% routine has routines, modules or parallel paths in it, or exceptions clauses: then
+% they are fields of a frame allocated on each invocation, F, and a routine nested in
+% it reaches them through the chain of up pointers. A routine may only use the
+% variables it imports (4.1.1), so the chain is only followed for those.
+
+% the C of the frame of the closed scope at LEVEL, seen from the current scope
+FUNCTION FRAME_OF (LEVEL: INTEGER) RETURNS (TEXT);
+   CONST CS: CSCOPE := W@.CS;
+   VAR T: TEXT;
+   VAR LEV: INTEGER;
+   IF CS@.LEVEL = LEVEL THEN
+      RETURN MK ('F');
+   END IF;
+   IF CS@.FRAMED THEN
+      T := MK ('F->up');
+   ELSE
+      T := MK ('up_');
+   END IF;
+   LEV := CS@.LEVEL - 1;
+   LOOP UNTIL LEV <= LEVEL DO
+      T := CATS (T, '->up');
+      LEV := LEV - 1;
+   END LOOP;
+   RETURN T;
+END FUNCTION FRAME_OF;
+
+% the C that designates the object Y here
+FUNCTION OBJ_ACCESS (Y: SYM) RETURNS (TEXT);
+   IF Y@.LEVEL <= 0 ! Y@.LEVEL = CUR_LEVEL () THEN
+      RETURN Y@.ACCESS;
+   END IF;
+   IF Y@.FIELD.LEN = 0 THEN
+      RETURN Y@.ACCESS;
+   END IF;
+   IF Y@.BYREF THEN
+      RETURN FMT2 ('(*@->@)', FRAME_OF (Y@.LEVEL), Y@.FIELD);
+   END IF;
+   RETURN FMT2 ('@->@', FRAME_OF (Y@.LEVEL), Y@.FIELD);
+END FUNCTION OBJ_ACCESS;
+
+% make storage for an object called NAME of type T in the current scope: a global, a
+% field of the frame, or a C local; its access is returned and Y@.FIELD set
+FUNCTION NEW_OBJECT (Y: SYM, BASE: ASCII_STR(?L)) RETURNS (TEXT);
+   CONST CS: CSCOPE := W@.CS;
+   CONST T: TYP := Y@.T;
+   VAR CN: TEXT;
+   IF CS@.LEVEL = 0 THEN
+      IF W@.DEPTH <= 2 & W@.MODL = NIL THEN
+         CN := FMT2 ('g@_@', MK (BASE), Y@.NAME);
+      ELSE
+         CN := FMT3 ('g@_@_@', MK (BASE), Y@.NAME, NEW_NAME (''));
+      END IF;
+      EMIT (O_GLOBALS, FMT2 ('static @ @;', CTYPE (T), CN));
+      Y@.ACCESS := CN;
+      RETURN CN;
+   END IF;
+   CN := FMT3 ('l@_@_@', MK (BASE), Y@.NAME, NEW_NAME (''));
+   Y@.FIELD := CN;
+   IF CS@.FRAMED THEN
+      APPEND (FMT2 (' @ @;', CTYPE (T), CN) # CS@.FIELDS);
+      Y@.ACCESS := FMT1 ('F->@', CN);
+      RETURN Y@.ACCESS;
+   END IF;
+   CODE (FMT4 ('@ @; memset(&@, 0, sizeof @);', CTYPE (T), CN, CN, CN));
+   Y@.ACCESS := CN;
+   RETURN CN;
+END FUNCTION NEW_OBJECT;
+
+% constant and variable declarations [3-4] [3-6]: the type-spec is evaluated, then
+% the expression, which is assigned to each name (3.1.1.2, 3.1.1.3)
+PROCEDURE DECLARE_OBJECTS (D: NODE);
+   CONST T: TYP := RESOLVE (D@.B);
+   VAR N: NODE := D@.A;
+   VAR V: ET;
+   VAR HAVE_V: BOOLEAN := FALSE;
+   IF T@.KIND = T_TYPE ! T@.KIND = T_VOID THEN
+      FAIL (D@.LINE, 'not a type for an object');
+   END IF;
+   LOOP UNTIL N = NIL DO
+      BLOCK
+         VAR Y: SYM := NEW_SYM (Y_VAR, N@.NAME);
+         VAR CN: TEXT;
+         IF D@.KIND = N_CONST THEN
+            Y@.KIND := Y_CONST;
+            Y@.INPUT := TRUE;
+            IF IS_SCALAR (T) & T@.SCALE = 0 THEN
+               BLOCK
+                  CONST M: MVAL := MANIFEST (D@.C);
+                  Y@.HASMV := M.OK;
+                  Y@.MV := M.V;
+               END BLOCK;
+            END IF;
+         END IF;
+         Y@.T := T;
+         CN := NEW_OBJECT (Y, '');
+         IF NEEDS_INIT (T) THEN
+            CODE (INIT_CODE (T, CN));
+         END IF;
+         IF D@.C <> NIL THEN
+            IF NOT HAVE_V THEN
+               V := EXPR (D@.C, T);
+               HAVE_V := TRUE;
+            END IF;
+            CODE (STORE_CODE (T, CN, V, D@.C@.LINE, NO_TEXT ()));
+         END IF;
+         DEFINE (Y, N@.LINE);
+      END BLOCK;
+      N := N@.NEXT;
+   END LOOP;
+END PROCEDURE DECLARE_OBJECTS;

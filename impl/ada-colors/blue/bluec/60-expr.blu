@@ -2,8 +2,29 @@
 % ==== expressions (3.1.4) ===================================================================
 
 FUNCTION MKET (C: TEXT, T: TYP) RETURNS (ET);
-   RETURN (C: C, T: T);
+   RETURN (C: C, T: T, LVAL: FALSE, SELF: NO_TEXT ());
 END FUNCTION MKET;
+
+FUNCTION MKLV (C: TEXT, T: TYP, LVAL: BOOLEAN, SELF: TEXT) RETURNS (ET);
+   RETURN (C: C, T: T, LVAL: LVAL, SELF: SELF);
+END FUNCTION MKLV;
+
+FUNCTION INT_TYPE (SCALE: INTEGER) RETURNS (TYP);
+   VAR T: TYP;
+   IF SCALE = 0 THEN
+      RETURN W@.TY_INT;
+   END IF;
+   T := NEW_TYP (T_INT);
+   T@.SCALE := SCALE;
+   RETURN T;
+END FUNCTION INT_TYPE;
+
+FUNCTION STR_TYPE (LEN: TEXT, M: MVAL) RETURNS (TYP);
+   VAR T: TYP := NEW_TYP (T_STR);
+   T@.LEN_C := LEN;
+   T@.MLEN := M;
+   RETURN T;
+END FUNCTION STR_TYPE;
 
 % a C string literal holding the characters of T
 FUNCTION CSTRING (T: TEXT) RETURNS (TEXT);
@@ -38,163 +59,178 @@ FUNCTION MANIFEST (E: NODE) RETURNS (MVAL);
       RETURN (OK: TRUE, V: E@.IV);
    ORIF K = N_PAREN THEN
       RETURN MANIFEST (E@.A);
+   ORIF K = N_BOOL THEN
+      RETURN (OK: TRUE, V: E@.IV);
    ORIF K = N_UNOP THEN
-      IF TEQS (E@.NAME, '-') THEN
-         BLOCK
-            CONST A: MVAL := MANIFEST (E@.A);
+      BLOCK
+         CONST A: MVAL := MANIFEST (E@.A);
+         IF TEQS (E@.NAME, '-') THEN
             RETURN (OK: A.OK, V: -A.V);
-         END BLOCK;
-      END IF;
+         ORIF TEQS (E@.NAME, '+') THEN
+            RETURN A;
+         ORIF TEQS (E@.NAME, 'NOT') THEN
+            RETURN (OK: A.OK, V: 1 - A.V);
+         END IF;
+      END BLOCK;
    ORIF K = N_BINOP THEN
+      IF E@.FL <> 0 THEN
+         RETURN NO;
+      END IF;
       BLOCK
          CONST A: MVAL := MANIFEST (E@.A);
          CONST B: MVAL := MANIFEST (E@.B);
+         CONST OP: TEXT := E@.NAME;
+         IF TEQS (OP, '&') & A.OK THEN                 % 3.5.4.1
+            IF A.V = 0 THEN
+               RETURN A;
+            END IF;
+            RETURN B;
+         ORIF TEQS (OP, '!') & A.OK THEN
+            IF A.V = 1 THEN
+               RETURN A;
+            END IF;
+            RETURN B;
+         END IF;
          IF NOT (A.OK & B.OK) THEN
             RETURN NO;
          END IF;
-         IF TEQS (E@.NAME, '+') THEN
-            RETURN (OK: TRUE, V: A.V + B.V);
-         ORIF TEQS (E@.NAME, '-') THEN
-            RETURN (OK: TRUE, V: A.V - B.V);
-         ORIF TEQS (E@.NAME, '*') THEN
-            RETURN (OK: TRUE, V: A.V * B.V);
-         ORIF TEQS (E@.NAME, '//') & B.V <> 0 THEN
-            RETURN (OK: TRUE, V: A.V // B.V);
+         IF NOT (MANIFEST_INT (E@.A) & MANIFEST_INT (E@.B)) THEN
+            RETURN NO;
          END IF;
+         IF TEQS (OP, '+') THEN
+            RETURN (OK: TRUE, V: A.V + B.V);
+         ORIF TEQS (OP, '-') THEN
+            RETURN (OK: TRUE, V: A.V - B.V);
+         ORIF TEQS (OP, '*') THEN
+            RETURN (OK: TRUE, V: A.V * B.V);
+         ORIF TEQS (OP, '//') & B.V <> 0 THEN
+            RETURN (OK: TRUE, V: A.V // B.V);
+         ORIF TEQS (OP, 'MOD') & B.V <> 0 THEN
+            RETURN (OK: TRUE, V: A.V MOD B.V);
+         ORIF TEQS (OP, '=') THEN
+            RETURN (OK: TRUE, V: BOOL_INT (A.V = B.V));
+         ORIF TEQS (OP, '<>') THEN
+            RETURN (OK: TRUE, V: BOOL_INT (A.V <> B.V));
+         ORIF TEQS (OP, '<') THEN
+            RETURN (OK: TRUE, V: BOOL_INT (A.V < B.V));
+         ORIF TEQS (OP, '>') THEN
+            RETURN (OK: TRUE, V: BOOL_INT (A.V > B.V));
+         ORIF TEQS (OP, '<=') THEN
+            RETURN (OK: TRUE, V: BOOL_INT (A.V <= B.V));
+         ORIF TEQS (OP, '>=') THEN
+            RETURN (OK: TRUE, V: BOOL_INT (A.V >= B.V));
+         END IF;
+      END BLOCK;
+   ORIF K = N_IN THEN
+      BLOCK
+         CONST A: MVAL := MANIFEST (E@.A);
+         CONST L: MVAL := MANIFEST (E@.B@.A);
+         CONST U: MVAL := MANIFEST (E@.B@.B);
+         VAR LO, HI: INTEGER;
+         IF NOT (A.OK & L.OK & U.OK & MANIFEST_INT (E@.A)) THEN
+            RETURN NO;
+         END IF;
+         LO := L.V;
+         HI := U.V;
+         IF E@.B@.IV = 1 ! E@.B@.IV = 3 THEN
+            LO := LO + 1;
+         END IF;
+         IF E@.B@.IV >= 2 THEN
+            HI := HI - 1;
+         END IF;
+         RETURN (OK: TRUE, V: BOOL_INT (A.V >= LO & A.V <= HI));
       END BLOCK;
    ORIF K = N_NAME THEN
       BLOCK
          CONST Y: SYM := LOOKUP (E@.NAME);
          IF Y <> NIL THEN
-            IF Y@.KIND = Y_CONST & Y@.HASMV THEN
+            IF (Y@.KIND = Y_CONST ! Y@.KIND = Y_GEN) & Y@.HASMV THEN
                RETURN (OK: TRUE, V: Y@.MV);
+            END IF;
+            IF Y@.KIND = Y_ENUMLIT THEN
+               IF LITERAL_CLASSES (E@.NAME) = 1 THEN
+                  RETURN (OK: TRUE, V: Y@.MV);
+               END IF;
             END IF;
          END IF;
       END BLOCK;
    ORIF K = N_ENUMLIT THEN
-      BLOCK
-         CONST C: INTEGER := ASCII_CODE (E@.NAME);
-         IF C >= 0 THEN
-            RETURN (OK: TRUE, V: C);
-         END IF;
-      END BLOCK;
+      IF LITERAL_CLASSES (E@.NAME) = 1 THEN
+         RETURN (OK: TRUE, V: FIND_LITERAL (E@.NAME, NIL)@.MV);
+      END IF;
+   ORIF K = N_APPLY THEN
+      IF TEQS (E@.NAME, 'IS_MANIFEST') THEN
+         RETURN (OK: TRUE, V: BOOL_INT (MANIFEST (E@.A).OK));
+      END IF;
    END IF;
    RETURN NO;
 END FUNCTION MANIFEST;
 
-% the position of the literal NAME in the enumerated type T, or -1
-FUNCTION LIT_INDEX (T: TYP, NAME: TEXT) RETURNS (INTEGER);
-   VAR N: NODE := T@.LITS;
-   VAR I: INTEGER := 0;
-   LOOP UNTIL N = NIL DO
-      IF TEQ (N@.NAME, NAME) THEN
-         RETURN I;
-      END IF;
-      I := I + 1;
-      N := N@.NEXT;
-   END LOOP;
-   RETURN -1;
-END FUNCTION LIT_INDEX;
+% a manifest operand of + - * // is an integer, not a literal of an enumeration
+FUNCTION MANIFEST_INT (E: NODE) RETURNS (BOOLEAN);
+   RETURN E@.KIND <> N_ENUMLIT;
+END FUNCTION MANIFEST_INT;
 
-FUNCTION FIND_FIELD (T: TYP, NAME: TEXT) RETURNS (FIELD);
-   VAR F: FIELD := T@.FIELDS;
-   LOOP UNTIL F = NIL DO
-      IF TEQ (F@.NAME, NAME) THEN
-         RETURN F;
-      END IF;
-      F := F@.NEXT;
-   END LOOP;
-   RETURN NIL;
-END FUNCTION FIND_FIELD;
+FUNCTION BOOL_INT (B: BOOLEAN) RETURNS (INTEGER);
+   IF B THEN
+      RETURN 1;
+   END IF;
+   RETURN 0;
+END FUNCTION BOOL_INT;
 
+% ---- the expression dispatcher -------------------------------------------------------------
 FUNCTION EXPR (E: NODE, WANT: TYP) RETURNS (ET);
    CONST K: INTEGER := E@.KIND;
    IF K = N_INT THEN
       RETURN MKET (FMT1 ('((rt_int)@LL)', NUM (E@.IV)), W@.TY_INT);
+   ORIF K = N_REAL THEN
+      RETURN REAL_LITERAL (E);
    ORIF K = N_BOOL THEN
       RETURN MKET (NUM (E@.IV), W@.TY_BOOL);
    ORIF K = N_NIL THEN
       RETURN MKET (MK ('NULL'), W@.TY_NIL);
    ORIF K = N_PAREN THEN
-      RETURN EXPR (E@.A, WANT);
-   ORIF K = N_STR THEN                              % [3-135]
       BLOCK
-         CONST AT: INTEGER := W@.TOP;
-         VAR P: NODE := E@.A;
-         VAR R: TEXT;
-         LOOP UNTIL P = NIL DO
-            IF P@.IV = K_STR THEN
-               R := MK (STR (P@.NAME, P@.NAME.LEN));
-            ELSE
-               BLOCK
-                  CONST C: INTEGER := ASCII_CODE (P@.NAME);
-                  IF C < 0 THEN
-                     FAILT (P@.LINE, 'not a character of ASCII: ', P@.NAME);
-                  END IF;
-                  R := MK (CHAR_OF (C));
-               END BLOCK;
-            END IF;
-            P := P@.NEXT;
-         END LOOP;
-         BLOCK
-            CONST S: TEXT := (AT: AT, LEN: W@.TOP - AT, H: -1);
-            VAR T: TYP := NEW_TYP (T_STR);
-            T@.LEN := NEW_NODE (N_INT, E@.LINE);
-            T@.LEN@.IV := S.LEN;
-            RETURN MKET (FMT2 ('rt_str(@, @)', CSTRING (S), NUM (S.LEN)), T);
-         END BLOCK;
+         VAR V: ET := EXPR (E@.A, WANT);
+         V.C := FMT1 ('(@)', V.C);
+         RETURN V;
       END BLOCK;
+   ORIF K = N_STR THEN
+      RETURN STRING_LITERAL (E);
+   ORIF K = N_BITS THEN                             % [3-111]
+      RETURN MKET (FMT2 ('rt_str(@, @)', CSTRING (E@.NAME), NUM (E@.NAME.LEN)),
+                   BITS_TYPE (E@.NAME.LEN));
    ORIF K = N_ENUMLIT THEN
-      IF WANT <> NIL THEN
-         IF WANT@.KIND = T_ENUM & WANT <> W@.TY_ASCII THEN
-            BLOCK
-               CONST I: INTEGER := LIT_INDEX (WANT, E@.NAME);
-               IF I >= 0 THEN
-                  RETURN MKET (NUM (I), WANT);
-               END IF;
-            END BLOCK;
+      RETURN ENUM_LITERAL (E, WANT);
+   ORIF K = N_RECCONS THEN
+      RETURN RECORD_CONSTRUCTOR (E, WANT);
+   ORIF K = N_ARRCONS THEN
+      RETURN ARRAY_CONSTRUCTOR (E, WANT);
+   ORIF K = N_TYPESPEC THEN                         % [3-40]
+      RETURN TYPE_SPECIFIER (E);
+   ORIF K = N_QUAL THEN                             % [3-15]
+      BLOCK
+         CONST SAVED: BOOLEAN := W@.ROUNDED;
+         VAR V: ET;
+         IF E@.NAME.LEN > 0 THEN
+            W@.ROUNDED := TEQS (E@.NAME, 'ROUNDED') ! TEQS (E@.NAME, 'NATIVE_R');
+            IF TEQS (E@.NAME, 'NATIVE_R') ! TEQS (E@.NAME, 'NATIVE_T') THEN
+               REQUIRE_MACHINE (E@.LINE);
+            END IF;
          END IF;
-      END IF;
-      BLOCK
-         CONST C: INTEGER := ASCII_CODE (E@.NAME);
-         IF C < 0 THEN
-            FAILT (E@.LINE, 'unknown enumerated literal ', E@.NAME);
+         IF E@.B <> NIL THEN                         % WITH PREC: computed in double
+            IF NOT MANIFEST (E@.B).OK THEN
+               FAIL (E@.LINE, 'WITH PREC needs a manifest precision (3.3.4.4)');
+            END IF;
          END IF;
-         RETURN MKET (NUM (C), W@.TY_ASCII);
+         V := EXPR (E@.A, WANT);
+         W@.ROUNDED := SAVED;
+         RETURN V;
       END BLOCK;
-   ORIF K = N_RECCONS THEN                          % [3-178]
-      IF WANT = NIL THEN
-         FAIL (E@.LINE, 'the type of a record constructor is unknown');
-      END IF;
-      IF WANT@.KIND <> T_REC THEN
-         FAIL (E@.LINE, 'the type of a record constructor is unknown');
-      END IF;
-      BLOCK
-         VAR P: NODE := E@.A;
-         VAR PARTS: TEXT := MK ('0');
-         LOOP UNTIL P = NIL DO
-            BLOCK
-               CONST F: FIELD := FIND_FIELD (WANT, P@.NAME);
-               IF F = NIL THEN
-                  FAILT (P@.LINE, 'no such field: ', P@.NAME);
-               END IF;
-               PARTS := FMT3 ('@, .@ = @', PARTS, FIELD_C (F@.NAME), EXPR (P@.A, F@.T).C);
-            END BLOCK;
-            P := P@.NEXT;
-         END LOOP;
-         RETURN MKET (FMT2 ('((@){@})', WANT@.CNAME, PARTS), WANT);
-      END BLOCK;
-   ORIF K = N_NEW THEN                              % [3-198]
-      BLOCK
-         CONST T: TYP := RESOLVE (E@.A);
-         VAR P: TYP := NEW_TYP (T_PTR);
-         P@.TARGET := T;
-         P@.TARGET_TS := E@.A;
-         RETURN MKET (FMT2 ('({ @ *p = rt_alloc(sizeof *p); @ p; })', CTYPE (T),
-                            INIT_CODE (T, MK ('(*p)'))), P);
-      END BLOCK;
+   ORIF K = N_NEW THEN                              % [3-198] [3-206]
+      RETURN NEW_EXPR (E, WANT);
    ORIF K = N_NAME THEN
-      RETURN NAME_EXPR (E);
+      RETURN NAME_EXPR (E, WANT);
    ORIF K = N_APPLY THEN
       BLOCK
          CONST Y: SYM := LOOKUP (E@.NAME);
@@ -210,25 +246,10 @@ FUNCTION EXPR (E: NODE, WANT: TYP) RETURNS (ET);
                END BLOCK;
             END IF;
          END IF;
-         RETURN CALL (E);
+         RETURN CALL_EXPR (E, WANT);
       END BLOCK;
-   ORIF K = N_FIELD THEN                            % [3-191] and attributes [3-2]
-      BLOCK
-         CONST B: ET := EXPR (E@.A, NIL);
-         IF TEQS (E@.NAME, 'LENGTH') & B.T@.KIND = T_STR THEN
-            RETURN MKET (FMT1 ('(@).len', B.C), W@.TY_INT);
-         END IF;
-         IF B.T@.KIND <> T_REC THEN
-            FAILT (E@.LINE, 'a field of something not a record: ', E@.NAME);
-         END IF;
-         BLOCK
-            CONST F: FIELD := FIND_FIELD (B.T, E@.NAME);
-            IF F = NIL THEN
-               FAILT (E@.LINE, 'no such field: ', E@.NAME);
-            END IF;
-            RETURN MKET (FMT2 ('(@).@', B.C, FIELD_C (F@.NAME)), F@.T);
-         END BLOCK;
-      END BLOCK;
+   ORIF K = N_FIELD THEN
+      RETURN FIELD_EXPR (E);
    ORIF K = N_DEREF THEN                            % 3.10.4.2
       BLOCK
          CONST B: ET := EXPR (E@.A, NIL);
@@ -237,241 +258,422 @@ FUNCTION EXPR (E: NODE, WANT: TYP) RETURNS (ET);
          END IF;
          BLOCK
             CONST TT: TYP := TARGET (B.T);
-            RETURN MKET (FMT2 ('(*(@ *)rt_nil_check(@))', CTYPE (TT), B.C), TT);
+            RETURN MKLV (FMT2 ('(*(@ *)rt_nil_check(@))', CTYPE (TT), B.C), TT, TRUE, NO_TEXT ());
          END BLOCK;
       END BLOCK;
-   ORIF K = N_INDEX THEN                            % [3-156]
+   ORIF K = N_INDEX THEN
+      RETURN INDEX_EXPR (E);
+   ORIF K = N_SUBSTR THEN                           % [3-34]
       BLOCK
          CONST B: ET := EXPR (E@.A, NIL);
-         IF B.T@.KIND <> T_ARR THEN
-            FAIL (E@.LINE, 'a subscript of something not an array');
+         CONST BT: TYP := REAL_TYPE (B.T);
+         VAR LO, HI: TEXT;
+         IF NOT (BT@.KIND = T_STR ! BT@.KIND = T_BITS) THEN
+            IF B.T@.KIND = T_ABS THEN               % SUBSTRING_ of an abstract type (D.5)
+               RETURN OPERATOR_CALL3 (MK ('SUBSTRING_'), B, E@.B, E@.C, E@.LINE);
+            END IF;
+            FAIL (E@.LINE, 'a substring of something not a string');
          END IF;
-         RETURN MKET (FMT4 ('(@).p[rt_index(@, (@).lo, (@).hi) - (@).lo]', B.C,
-                            EXPR (E@.B, NIL).C, B.C, B.C), B.T@.ELEM);
-      END BLOCK;
-   ORIF K = N_SUBSTR THEN                           % [3-34]
-      RETURN MKET (FMT3 ('rt_b_slice(@, @, @)', EXPR (E@.A, NIL).C, EXPR (E@.B, NIL).C,
-                         EXPR (E@.C, NIL).C), W@.TY_STR);
-   ORIF K = N_UNOP THEN
-      BLOCK
-         CONST A: ET := EXPR (E@.A, NIL);
-         IF TEQS (E@.NAME, 'NOT') THEN
-            RETURN MKET (FMT1 ('(!@)', A.C), W@.TY_BOOL);
-         ORIF TEQS (E@.NAME, '-') THEN
-            RETURN MKET (FMT1 ('rt_neg(@)', A.C), W@.TY_INT);
-         END IF;
-         RETURN A;
-      END BLOCK;
-   ORIF K = N_IN THEN                               % 3.2.4.6
-      BLOCK
-         CONST V: TEXT := NEW_NAME ('iv');
-         VAR LO_OP, HI_OP: TEXT;
-         LO_OP := MK ('<=');
-         HI_OP := MK ('<=');
-         IF E@.B@.IV = 1 ! E@.B@.IV = 3 THEN
-            LO_OP := MK ('<');
-         END IF;
-         IF E@.B@.IV >= 2 THEN
-            HI_OP := MK ('<');
+         LO := INT_EXPR (E@.B);
+         HI := INT_EXPR (E@.C);
+         IF BT@.KIND = T_BITS THEN
+            RETURN MKET (FMT3 ('rt_b_slice(@, @, @)', B.C, LO, HI), BITS_TYPE (-1));
          END IF;
          BLOCK
-            CONST P1: TEXT := FMT4 ('({ rt_int @ = @; (@) @ ', V, EXPR (E@.A, NIL).C,
-                                    EXPR (E@.B@.A, NIL).C, LO_OP);
-            CONST P2: TEXT := FMT4 ('@@ && @ @ ', P1, V, V, HI_OP);
-            RETURN MKET (FMT2 ('@(@); })', P2, EXPR (E@.B@.B, NIL).C), W@.TY_BOOL);
+            VAR T: TYP := STR_TYPE (NO_TEXT (), NO_MVAL ());
+            T@.BASE := BT@.BASE;
+            RETURN MKET (FMT3 ('rt_b_slice(@, @, @)', B.C, LO, HI), T);
          END BLOCK;
       END BLOCK;
+   ORIF K = N_UNOP THEN
+      RETURN UNARY (E);
    ORIF K = N_BINOP THEN
       RETURN BINARY (E);
+   ORIF K = N_IN THEN
+      RETURN IN_EXPR (E);
+   ORIF K = N_ANY ! K = N_DONTCARE THEN
+      FAIL (E@.LINE, 'ANY and ? are not values');
+   ORIF K = TS_NAME ! K = TS_ARRAY ! K = TS_RECORD ! K = TS_ENUM ! K = TS_GEN THEN
+      FAIL (E@.LINE, 'a type is not a value');
    END IF;
-   FAIL (E@.LINE, 'this expression cannot be translated yet');
+   FAIL (E@.LINE, 'this expression cannot be translated');
 END FUNCTION EXPR;
 
-FUNCTION NAME_EXPR (E: NODE) RETURNS (ET);
+% an integer expression (3.2.4): subscripts, bounds, lengths
+FUNCTION INT_EXPR (E: NODE) RETURNS (TEXT);
+   CONST SAVED: BOOLEAN := W@.ROUNDED;
+   VAR V: ET;
+   W@.ROUNDED := FALSE;
+   V := EXPR (E, W@.TY_INT);
+   W@.ROUNDED := SAVED;
+   IF REAL_TYPE (V.T)@.KIND = T_ENUM THEN
+      RETURN V.C;
+   END IF;
+   IF REAL_TYPE (V.T)@.KIND <> T_INT ! V.T@.SCALE <> 0 THEN
+      FAILT (E@.LINE, 'an integer expected, not ', TYPE_NAME (V.T));
+   END IF;
+   RETURN V.C;
+END FUNCTION INT_EXPR;
+
+FUNCTION BOOL_EXPR (E: NODE) RETURNS (TEXT);
+   CONST V: ET := EXPR (E, W@.TY_BOOL);
+   IF REAL_TYPE (V.T)@.KIND <> T_BOOL THEN
+      FAILT (E@.LINE, 'a boolean expression expected, not ', TYPE_NAME (V.T));
+   END IF;
+   RETURN V.C;
+END FUNCTION BOOL_EXPR;
+
+FUNCTION BITS_TYPE (LEN: INTEGER) RETURNS (TYP);
+   VAR T: TYP := NEW_TYP (T_BITS);
+   IF LEN >= 0 THEN
+      T@.LEN_C := NUM (LEN);
+      T@.MLEN := SOME (LEN);
+   END IF;
+   RETURN T;
+END FUNCTION BITS_TYPE;
+
+% a decimal literal [3-51]: a float, or with a scale-spec a fixed point value; a
+% number with an exponent but no point is a fixed point value of scale 0 (3.2.2)
+FUNCTION REAL_LITERAL (E: NODE) RETURNS (ET);
+   CONST T: TEXT := E@.NAME;
+   CONST S: ASCII_STR(T.LEN) := STR (T, T.LEN);
+   VAR POINT: BOOLEAN := FALSE;
+   VAR DIGITS: INTEGER := 0;
+   LOOP FOR I IN [0 : T.LEN - 1] DO
+      IF S[I:I] = '.' THEN
+         POINT := TRUE;
+      ORIF S[I:I] = 'E' THEN
+         EXIT;
+      ELSE
+         DIGITS := DIGITS + 1;
+      END IF;
+   END LOOP I;
+   IF E@.FL = 1 THEN                                 % \S: rounded to the scale (3.2.2)
+      RETURN MKET (FMT2 ('rt_b_fix_lit(@, @)', CSTRING (T), NUM (E@.IV)), INT_TYPE (E@.IV));
+   END IF;
+   IF NOT POINT THEN
+      RETURN MKET (FMT1 ('rt_b_fix_lit(@, 0)', CSTRING (T)), W@.TY_INT);
+   END IF;
+   BLOCK
+      VAR F: TYP := NEW_TYP (T_FLOAT);
+      F@.SCALE := DIGITS;
+      IF DIGITS > 15 THEN
+         F@.SCALE := 15;
+      END IF;
+      IF DIGITS < 1 THEN
+         F@.SCALE := 1;
+      END IF;
+      IF S[T.LEN - 1 : T.LEN - 1] = '.' THEN
+         RETURN MKET (FMT1 ('(@0)', T), F);
+      END IF;
+      IF S[0:0] = '.' THEN
+         RETURN MKET (FMT1 ('(0@)', T), F);
+      END IF;
+      RETURN MKET (FMT1 ('(@)', T), F);
+   END BLOCK;
+END FUNCTION REAL_LITERAL;
+
+% a charstring literal [3-135]: quoted strings and enumerated literals of its
+% character set, by default ASCII (3.7.2)
+FUNCTION STRING_LITERAL (E: NODE) RETURNS (ET);
+   CONST AT: INTEGER := W@.TOP;
+   VAR CS: TYP := W@.TY_ASCII;
+   VAR P: NODE := E@.A;
+   VAR R: TEXT;
+   IF E@.NAME.LEN > 0 THEN
+      BLOCK
+         CONST Y: SYM := LOOKUP (E@.NAME);
+         IF Y = NIL THEN
+            FAILT (E@.LINE, 'unknown character set ', E@.NAME);
+         END IF;
+         IF Y@.KIND <> Y_TYPE THEN
+            FAILT (E@.LINE, 'not a character set: ', E@.NAME);
+         END IF;
+         CS := RESOLVE_USER_NAME (E@.NAME, E@.LINE);
+         IF CS@.KIND <> T_ENUM THEN
+            FAILT (E@.LINE, 'not a character set: ', E@.NAME);
+         END IF;
+      END BLOCK;
+   END IF;
+   LOOP UNTIL P = NIL DO
+      IF P@.IV = K_STR THEN
+         IF CS = W@.TY_ASCII THEN
+            R := MK (STR (P@.NAME, P@.NAME.LEN));
+         ELSE
+            BLOCK                                    % each C is the literal \'C'
+               CONST Q: TEXT := P@.NAME;
+               CONST QS: ASCII_STR(Q.LEN) := STR (Q, Q.LEN);
+               LOOP FOR I IN [0 : Q.LEN - 1] DO
+                  BLOCK
+                     CONST Y: SYM := FIND_LITERAL (MKN ('\''' !! QS[I:I] !! ''''), CS);
+                     IF Y = NIL THEN
+                        FAIL (P@.LINE, 'a character not in the character set: ' !! QS[I:I]);
+                     END IF;
+                     R := MK (CHAR_OF (Y@.MV));
+                  END BLOCK;
+               END LOOP I;
+            END BLOCK;
+         END IF;
+      ELSE
+         BLOCK
+            CONST Y: SYM := FIND_LITERAL (P@.NAME, CS);
+            IF Y = NIL THEN
+               FAILT (P@.LINE, 'not a literal of the character set: ', P@.NAME);
+            END IF;
+            R := MK (CHAR_OF (Y@.MV));
+         END BLOCK;
+      END IF;
+      P := P@.NEXT;
+   END LOOP;
+   BLOCK
+      CONST S: TEXT := (AT: AT, LEN: W@.TOP - AT, H: -1);
+      VAR T: TYP := STR_TYPE (NUM (S.LEN), SOME (S.LEN));
+      T@.BASE := CS;
+      RETURN MKET (FMT2 ('rt_str(@, @)', CSTRING (S), NUM (S.LEN)), T);
+   END BLOCK;
+END FUNCTION STRING_LITERAL;
+
+FUNCTION RESOLVE_USER_NAME (NAME: TEXT, LINE: INTEGER) RETURNS (TYP);
+   VAR TS: NODE := NEW_NODE (TS_NAME, LINE);
+   TS@.NAME := NAME;
+   RETURN RESOLVE (TS);
+END FUNCTION RESOLVE_USER_NAME;
+
+% an enumerated literal [3-85]: of the class wanted, or of the only visible class that
+% has it; when several have it and none is wanted, the one not ASCII (a deviation:
+% the specification asks for a type-specifier, 3.4.5)
+FUNCTION ENUM_LITERAL (E: NODE, WANT: TYP) RETURNS (ET);
+   VAR Y: SYM;
+   IF WANT <> NIL THEN
+      BLOCK
+         CONST WT: TYP := REAL_TYPE (WANT);
+         IF WT@.KIND = T_ENUM THEN
+            Y := FIND_LITERAL (E@.NAME, WT);
+            IF Y <> NIL THEN
+               RETURN MKET (NUM (Y@.MV), ENUM_RESULT (Y, WANT));
+            END IF;
+         END IF;
+      END BLOCK;
+   END IF;
+   Y := LOOKUP (E@.NAME);
+   BLOCK
+      VAR FOUND: SYM := NIL;
+      VAR N: INTEGER := 0;
+      LOOP UNTIL Y = NIL DO
+         IF Y@.KIND = Y_ENUMLIT THEN
+            IF Y@.T@.BASE <> W@.TY_ASCII ! FOUND = NIL THEN
+               IF FOUND = NIL ! FOUND@.T@.BASE = W@.TY_ASCII THEN
+                  FOUND := Y;
+               ELSE
+                  N := N + 1;
+               END IF;
+            END IF;
+         END IF;
+         Y := LOOKUP_NEXT (Y);
+      END LOOP;
+      IF FOUND = NIL THEN
+         FAILT (E@.LINE, 'unknown enumerated literal ', E@.NAME);
+      END IF;
+      IF N > 0 THEN
+         FAILT (E@.LINE, 'an ambiguous literal, use a type-specifier (3.4.5): ', E@.NAME);
+      END IF;
+      RETURN MKET (NUM (FOUND@.MV), FOUND@.T);
+   END BLOCK;
+END FUNCTION ENUM_LITERAL;
+
+% a literal of an abstract enumerated type keeps the abstract type
+FUNCTION ENUM_RESULT (Y: SYM, WANT: TYP) RETURNS (TYP);
+   IF WANT@.KIND = T_ABS THEN
+      RETURN WANT;
+   END IF;
+   RETURN Y@.T;
+END FUNCTION ENUM_RESULT;
+
+FUNCTION NAME_EXPR (E: NODE, WANT: TYP) RETURNS (ET);
    CONST Y: SYM := LOOKUP (E@.NAME);
    IF Y = NIL THEN
       FAILT (E@.LINE, 'unknown name ', E@.NAME);
    END IF;
    IF Y@.KIND = Y_VAR ! Y@.KIND = Y_CONST THEN
-      RETURN MKET (Y@.ACCESS, Y@.T);
+      BLOCK
+         CONST WRITABLE: BOOLEAN := CHECK_IMPORTED (Y, E@.LINE);
+         RETURN MKLV (OBJ_ACCESS (Y), Y@.T, Y@.KIND = Y_VAR & WRITABLE, NO_TEXT ());
+      END BLOCK;
    ORIF Y@.KIND = Y_GEN THEN
-      RETURN MKET (Y@.ACCESS, W@.TY_INT);
+      RETURN MKET (Y@.ACCESS, Y@.T);
+   ORIF Y@.KIND = Y_ENUMLIT THEN
+      RETURN ENUM_LITERAL (E, WANT);
    ORIF Y@.KIND = Y_ROUTINE ! Y@.KIND = Y_BUILTIN THEN
       BLOCK
          VAR N: NODE := NEW_NODE (N_APPLY, E@.LINE);
          N@.NAME := E@.NAME;
-         RETURN CALL (N);
+         RETURN CALL_EXPR (N, WANT);
       END BLOCK;
    END IF;
    FAILT (E@.LINE, 'not a value: ', E@.NAME);
 END FUNCTION NAME_EXPR;
 
-FUNCTION BINARY (E: NODE) RETURNS (ET);
-   CONST OP: TEXT := E@.NAME;
-   IF TEQS (OP, '&') ! TEQS (OP, '!') THEN          % 3.5.4.1, short circuit
-      BLOCK
-         CONST A: TEXT := EXPR (E@.A, NIL).C;
-         CONST B: TEXT := EXPR (E@.B, NIL).C;
-         IF TEQS (OP, '&') THEN
-            RETURN MKET (FMT2 ('(@ && @)', A, B), W@.TY_BOOL);
-         END IF;
-         RETURN MKET (FMT2 ('(@ || @)', A, B), W@.TY_BOOL);
-      END BLOCK;
-   END IF;
-   IF TEQS (OP, '=') ! TEQS (OP, '<>') THEN
-      BLOCK
-         VAR A: ET := EXPR (E@.A, NIL);
-         CONST B: ET := EXPR (E@.B, A.T);
-         VAR R: TEXT;
-         IF A.T@.KIND = T_NIL & B.T@.KIND <> T_NIL THEN
-            A := EXPR (E@.A, B.T);
-         END IF;
-         IF A.T@.KIND = T_STR THEN
-            R := FMT2 ('rt_b_eq(@, @)', A.C, B.C);
-         ELSE
-            R := FMT2 ('(@ == @)', A.C, B.C);
-         END IF;
-         IF TEQS (OP, '<>') THEN
-            R := FMT1 ('(!@)', R);
-         END IF;
-         RETURN MKET (R, W@.TY_BOOL);
-      END BLOCK;
-   END IF;
-   IF TEQS (OP, '<') ! TEQS (OP, '>') ! TEQS (OP, '<=') ! TEQS (OP, '>=') THEN
-      BLOCK
-         CONST A: ET := EXPR (E@.A, NIL);
-         CONST B: ET := EXPR (E@.B, A.T);
-         RETURN MKET (FMT3 ('(@ @ @)', A.C, OP, B.C), W@.TY_BOOL);
-      END BLOCK;
-   END IF;
-   IF TEQS (OP, '!!') THEN                          % 3.7.4.1
-      RETURN MKET (FMT2 ('rt_str_cat(@, @)', EXPR (E@.A, NIL).C, EXPR (E@.B, NIL).C), W@.TY_STR);
-   END IF;
-   BLOCK
-      CONST A: TEXT := EXPR (E@.A, NIL).C;
-      CONST B: TEXT := EXPR (E@.B, NIL).C;
-      VAR FN: TEXT;
-      IF TEQS (OP, '+') THEN
-         FN := MK ('rt_add');
-      ORIF TEQS (OP, '-') THEN
-         FN := MK ('rt_sub');
-      ORIF TEQS (OP, '*') THEN
-         FN := MK ('rt_mul');
-      ORIF TEQS (OP, '//') THEN                       % 3.2.4.2: truncating
-         FN := MK ('rt_quot');
-      ORIF TEQS (OP, 'MOD') THEN                      % E - (E//F)*F
-         FN := MK ('rt_rem');
-      ELSE
-         FAILT (E@.LINE, 'this operator cannot be translated yet: ', OP);
+% a field-reference [3-191], or an attribute-query [3-2]
+FUNCTION FIELD_EXPR (E: NODE) RETURNS (ET);
+   CONST A: NODE := E@.A;
+   IF A@.KIND = N_INDEX THEN                         % A.BOUNDS(I).MIN, .MAX (3.8.1)
+      IF A@.A@.KIND = N_FIELD & TEQS (A@.A@.NAME, 'BOUNDS') THEN
+         BLOCK
+            CONST B: ET := EXPR (A@.A@.A, NIL);
+            CONST I: TEXT := INT_EXPR (A@.B);
+            IF REAL_TYPE (B.T)@.KIND <> T_ARR THEN
+               FAIL (E@.LINE, 'BOUNDS of something not an array');
+            END IF;
+            IF TEQS (E@.NAME, 'MIN') THEN
+               RETURN MKET (FMT3 ('(@).lo[rt_index(@, 0, @)]', B.C, I, NUM (REAL_TYPE (B.T)@.DIMS - 1)),
+                            W@.TY_INT);
+            ORIF TEQS (E@.NAME, 'MAX') THEN
+               RETURN MKET (FMT3 ('(@).hi[rt_index(@, 0, @)]', B.C, I, NUM (REAL_TYPE (B.T)@.DIMS - 1)),
+                            W@.TY_INT);
+            END IF;
+            FAIL (E@.LINE, 'BOUNDS(I) has the fields MIN and MAX');
+         END BLOCK;
       END IF;
-      RETURN MKET (FMT3 ('@(@, @)', FN, A, B), W@.TY_INT);
-   END BLOCK;
-END FUNCTION BINARY;
-
-% the actual arguments of a call, in the order input # inout # output
-FUNCTION ALL_ARGS (E: NODE) RETURNS (NODE);
-   VAR HEAD, TAIL: NODE := NIL;
-   VAR P: NODE := E@.A;
-   LOOP UNTIL P = NIL DO
-      ADD_LIST (COPY_NODE (P) # HEAD, TAIL);
-      P := P@.NEXT;
-   END LOOP;
-   P := E@.B;
-   LOOP UNTIL P = NIL DO
-      ADD_LIST (COPY_NODE (P) # HEAD, TAIL);
-      P := P@.NEXT;
-   END LOOP;
-   P := E@.C;
-   LOOP UNTIL P = NIL DO
-      ADD_LIST (COPY_NODE (P) # HEAD, TAIL);
-      P := P@.NEXT;
-   END LOOP;
-   RETURN HEAD;
-END FUNCTION ALL_ARGS;
-
-FUNCTION COPY_NODE (N: NODE) RETURNS (NODE);
-   VAR C: NODE := NEW (NODE_REC);
-   C@ := N@;
-   C@.NEXT := NIL;
-   RETURN C;
-END FUNCTION COPY_NODE;
-
-FUNCTION CALL (E: NODE) RETURNS (ET);
-   CONST Y: SYM := LOOKUP (E@.NAME);
-   IF Y = NIL THEN
-      FAILT (E@.LINE, 'unknown routine ', E@.NAME);
    END IF;
-   IF Y@.KIND = Y_BUILTIN THEN
-      RETURN BUILTIN (E);
+   IF A@.KIND = N_PAREN THEN                         % (T.ATTRIBUTE).ATTRIBUTE
+      IF A@.A@.KIND = N_FIELD THEN
+         IF A@.A@.A@.KIND = N_NAME THEN
+            IF IS_TYPE_WORD (A@.A@.A@.NAME) THEN
+               RETURN ATTRIBUTE_OF_ATTRIBUTE (A@.A@.A@.NAME, A@.A@.NAME, E@.NAME, E@.LINE);
+            END IF;
+         END IF;
+      END IF;
    END IF;
-   IF Y@.KIND <> Y_ROUTINE THEN
-      FAILT (E@.LINE, 'not a routine: ', E@.NAME);
+   IF A@.KIND = N_NAME THEN                          % a type name: T.ATTRIBUTE
+      BLOCK
+         CONST Y: SYM := LOOKUP (A@.NAME);
+         IF Y <> NIL THEN
+            IF Y@.KIND = Y_TYPE THEN
+               RETURN TYPE_ATTRIBUTE (A@.NAME, E@.NAME, E@.LINE);
+            END IF;
+         ORIF IS_TYPE_WORD (A@.NAME) THEN
+            RETURN TYPE_ATTRIBUTE (A@.NAME, E@.NAME, E@.LINE);
+         END IF;
+      END BLOCK;
    END IF;
    BLOCK
-      VAR A: NODE := ALL_ARGS (E);
-      VAR P: PARM := Y@.PARAMS;
-      VAR ARGS: TEXT := MK ('');
-      VAR SEP: TEXT := MK ('');
-      LOOP UNTIL P = NIL DO
+      CONST B: ET := EXPR (A, NIL);
+      CONST BT: TYP := B.T;
+      IF BT@.KIND = T_REC THEN
+         BLOCK
+            CONST F: FIELD := FIND_FIELD (BT, E@.NAME);
+            IF F <> NIL THEN
+               CHECK_VARIANT (F, BT, A, E@.LINE);
+               RETURN MKLV (FMT2 ('(@).@', B.C, F@.CNAME), F@.T, B.LVAL & F@.KIND = 0, B.C);
+            END IF;
+         END BLOCK;
+      END IF;
+      RETURN ATTRIBUTE (B, E@.NAME, E@.LINE);
+   END BLOCK;
+END FUNCTION FIELD_EXPR;
+
+FUNCTION IS_TYPE_WORD (NAME: TEXT) RETURNS (BOOLEAN);
+   RETURN TEQS (NAME, 'FIXED') ! TEQS (NAME, 'FLOAT') ! TEQS (NAME, 'BIT')
+      ! TEQS (NAME, 'CHAR_STR') ! TEQS (NAME, 'ASCII_STR');
+END FUNCTION IS_TYPE_WORD;
+
+% the fields of a variant are accessible only for their tag values: by the type of a
+% specific variant, or in a discriminating case statement (3.9.4)
+PROCEDURE CHECK_VARIANT (F: FIELD, T: TYP, BASE: NODE, LINE: INTEGER);
+   IF F@.TAGF.LEN = 0 THEN
+      RETURN;
+   END IF;
+   BLOCK
+      CONST TAGV: MVAL := TAG_VALUE (T, F@.TAGF);
+      IF NOT TAGV.OK THEN
+         FAILT (LINE, 'a field of a variant of a T(ANY) record, outside a discriminating '
+                      !! 'case statement (3.9.4): ', F@.NAME);
+      END IF;
+      IF NOT LABELS_HAVE (F@.LABELS, TAGV.V, FIND_FIELD (T, F@.TAGF)@.T) THEN
+         FAILT (LINE, 'this variant has no field ', F@.NAME);
+      END IF;
+   END BLOCK;
+END PROCEDURE CHECK_VARIANT;
+
+% the manifest value of the tag TAG in the record type T, if T has one
+FUNCTION TAG_VALUE (T: TYP, TAGN: TEXT) RETURNS (MVAL);
+   VAR F: FIELD := T@.FIELDS;
+   VAR A: BND := T@.ARGS;
+   LOOP UNTIL F = NIL DO
+      IF F@.KIND <> 0 THEN
          IF A = NIL THEN
-            FAILT (E@.LINE, 'too few arguments for ', E@.NAME);
+            RETURN NO_MVAL ();
          END IF;
-         IF P@.MODE = M_IN THEN
-            ARGS := FMT3 ('@@@', ARGS, SEP, RANGE_CHECK (P@.T, EXPR (A, P@.T).C));
-         ELSE
-            ARGS := FMT3 ('@@&@', ARGS, SEP, EXPR (A, NIL).C);
+         IF TEQ (F@.NAME, TAGN) THEN
+            IF A@.ANYARG THEN
+               RETURN NO_MVAL ();
+            END IF;
+            RETURN A@.MLO;
          END IF;
-         SEP := MK (', ');
          A := A@.NEXT;
-         P := P@.NEXT;
-      END LOOP;
-      IF A <> NIL THEN
-         FAILT (E@.LINE, 'too many arguments for ', E@.NAME);
       END IF;
-      RETURN MKET (FMT2 ('@(@)', Y@.ACCESS, ARGS), Y@.RESULT);
-   END BLOCK;
-END FUNCTION CALL;
+      F := F@.NEXT;
+   END LOOP;
+   RETURN NO_MVAL ();
+END FUNCTION TAG_VALUE;
 
-% the routines of TERMINAL and the functions of the prelude
-FUNCTION BUILTIN (E: NODE) RETURNS (ET);
-   CONST NAME: TEXT := E@.NAME;
-   VAR A, B: TEXT;
-   VAR AT: TYP := W@.TY_VOID;
-   A := MK ('');
-   B := MK ('');
-   IF E@.A <> NIL THEN
+% does one of the variant names L have the value V?
+FUNCTION LABELS_HAVE (L: NODE, V: INTEGER, T: TYP) RETURNS (BOOLEAN);
+   VAR P: NODE := L;
+   LOOP UNTIL P = NIL DO
+      IF P@.KIND = N_RANGE THEN
+         IF V >= ENUM_MANIFEST (P@.A, T).V & V <= ENUM_MANIFEST (P@.B, T).V THEN
+            RETURN TRUE;
+         END IF;
+      ORIF ENUM_MANIFEST (P, T).V = V THEN
+         RETURN TRUE;
+      END IF;
+      P := P@.NEXT;
+   END LOOP;
+   RETURN FALSE;
+END FUNCTION LABELS_HAVE;
+
+% a subscripted variable or constant [3-156]
+FUNCTION INDEX_EXPR (E: NODE) RETURNS (ET);
+   IF E@.A@.KIND = N_FIELD & TEQS (E@.A@.NAME, 'EXTENT') THEN    % A.EXTENT(I) (3.8.1)
       BLOCK
-         CONST X: ET := EXPR (E@.A, NIL);
-         A := X.C;
-         AT := X.T;
+         CONST A: ET := EXPR (E@.A@.A, NIL);
+         CONST I: TEXT := INT_EXPR (E@.B);
+         IF REAL_TYPE (A.T)@.KIND = T_ARR THEN
+            RETURN MKET (FMT4 ('rt_b_dim_extent((@).lo, (@).hi, @, @)', A.C, A.C, I,
+                               NUM (REAL_TYPE (A.T)@.DIMS)), W@.TY_INT);
+         END IF;
       END BLOCK;
-      IF E@.A@.NEXT <> NIL THEN
-         B := EXPR (E@.A@.NEXT, NIL).C;
-      END IF;
    END IF;
-   IF TEQS (NAME, 'PUT') THEN
-      RETURN MKET (FMT1 ('rt_put(@)', A), W@.TY_VOID);
-   ORIF TEQS (NAME, 'PUT_LINE') THEN
-      RETURN MKET (FMT1 ('rt_putln(@)', A), W@.TY_VOID);
-   ORIF TEQS (NAME, 'NEW_LINE') THEN
-      RETURN MKET (MK ('rt_newline()'), W@.TY_VOID);
-   ORIF TEQS (NAME, 'GET_CODE') THEN
-      RETURN MKET (MK ('rt_b_get_code()'), W@.TY_INT);
-   ORIF TEQS (NAME, 'STOP') THEN
-      RETURN MKET (FMT1 ('rt_exit(@)', A), W@.TY_VOID);
-   ORIF TEQS (NAME, 'TO_CHAR') THEN
-      RETURN MKET (FMT1 ('rt_b_image(@)', A), W@.TY_STR);
-   ORIF TEQS (NAME, 'BLANKS') THEN
-      RETURN MKET (FMT1 ('rt_b_dup(rt_str(" ", 1), @)', A), W@.TY_STR);
-   ORIF TEQS (NAME, 'DUP') THEN
-      RETURN MKET (FMT2 ('rt_b_dup(@, @)', A, B), W@.TY_STR);
-   ORIF TEQS (NAME, 'ABS') THEN
-      RETURN MKET (FMT1 ('rt_abs(@)', A), W@.TY_INT);
-   ORIF TEQS (NAME, 'TO_FIXED') THEN
-      IF AT@.KIND = T_STR THEN
-         RETURN MKET (FMT1 ('rt_int_of_str(@)', A), W@.TY_INT);
-      END IF;
-      RETURN MKET (A, W@.TY_INT);
+   RETURN INDEX_EXPR2 (E);
+END FUNCTION INDEX_EXPR;
+
+FUNCTION INDEX_EXPR2 (E: NODE) RETURNS (ET);
+   CONST B: ET := EXPR (E@.A, NIL);
+   CONST T: TYP := REAL_TYPE (B.T);
+   VAR S: NODE := E@.B;
+   VAR IX: TEXT := MK ('');
+   VAR N: INTEGER := 0;
+   IF T@.KIND <> T_ARR THEN
+      FAIL (E@.LINE, 'a subscript of something not an array');
    END IF;
-   FAILT (E@.LINE, 'unknown routine ', NAME);
-END FUNCTION BUILTIN;
+   LOOP UNTIL S = NIL DO
+      IF N > 0 THEN
+         IX := CATS (IX, ', ');
+      END IF;
+      IX := CAT (IX, INT_EXPR (S));
+      N := N + 1;
+      S := S@.NEXT;
+   END LOOP;
+   IF N <> T@.DIMS THEN
+      FAIL (E@.LINE, 'the number of subscripts must be the number of dimensions (3.8.4)');
+   END IF;
+   IF N = 1 THEN
+      RETURN MKLV (FMT4 ('(@).p[rt_b_ix1(@, (@).lo[0], (@).hi[0])]', B.C, IX, B.C, B.C),
+                   T@.ELEM, B.LVAL, NO_TEXT ());
+   END IF;
+   BLOCK
+      CONST X: TEXT := FMT4 ('(@).p[rt_b_ixn(@, (@).lo, (@).hi, ', B.C, NUM (N), B.C, B.C);
+      RETURN MKLV (FMT2 ('@@)]', X, IX), T@.ELEM, B.LVAL, NO_TEXT ());
+   END BLOCK;
+END FUNCTION INDEX_EXPR2;

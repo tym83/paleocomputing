@@ -1,8 +1,646 @@
 
 % ==== types (section 3) =====================================================================
-% A record or array type becomes a C struct with two helpers: I_ makes the storage
-% of a new object (the strings and arrays inside it), S_ assigns a value to an object
-% component by component (3.8.5, 3.9.5).
+% A type is a TYP: its kind (the type class) and its attributes. Ranges, lengths and
+% array bounds are kept as the C that computes them where the type was specified;
+% inside a record type the C may contain $S, the record the component belongs to.
+
+FUNCTION IS_SCALAR (T: TYP) RETURNS (BOOLEAN);
+   RETURN T@.KIND = T_INT ! T@.KIND = T_BOOL ! T@.KIND = T_ENUM;
+END FUNCTION IS_SCALAR;
+
+% the underlying type of an abstract type; a type itself otherwise
+FUNCTION REAL_TYPE (T: TYP) RETURNS (TYP);
+   IF T@.KIND = T_ABS THEN
+      RETURN REAL_TYPE (T@.BASE);
+   END IF;
+   RETURN T;
+END FUNCTION REAL_TYPE;
+
+% a name for a type, for messages
+FUNCTION TYPE_NAME (T: TYP) RETURNS (TEXT);
+   CONST K: INTEGER := T@.KIND;
+   IF T@.NAME.LEN > 0 THEN
+      RETURN T@.NAME;
+   ORIF K = T_INT THEN
+      IF T@.SCALE = 0 THEN
+         RETURN MK ('INTEGER');
+      END IF;
+      RETURN FMT1 ('FIXED (@, 2, STD)', NUM (T@.SCALE));
+   ORIF K = T_BOOL THEN
+      RETURN MK ('BOOLEAN');
+   ORIF K = T_ENUM THEN
+      IF T@.BASE <> NIL & T@.BASE <> T THEN
+         RETURN TYPE_NAME (T@.BASE);
+      END IF;
+      RETURN MK ('an enumerated type');
+   ORIF K = T_STR THEN
+      RETURN MK ('CHAR_STR');
+   ORIF K = T_BITS THEN
+      RETURN MK ('BIT');
+   ORIF K = T_FLOAT THEN
+      RETURN FMT1 ('FLOAT (@)', NUM (T@.SCALE));
+   ORIF K = T_ARR THEN
+      RETURN FMT1 ('ARRAY OF @', TYPE_NAME (T@.ELEM));
+   ORIF K = T_REC THEN
+      IF T@.BASE <> NIL & T@.BASE <> T THEN
+         RETURN TYPE_NAME (T@.BASE);
+      END IF;
+      RETURN MK ('RECORD');
+   ORIF K = T_PTR THEN
+      RETURN MK ('PTR');
+   ORIF K = T_SEM THEN
+      RETURN MK ('SEMAPHORE');
+   ORIF K = T_NIL THEN
+      RETURN MK ('NIL');
+   ORIF K = T_VOID THEN
+      RETURN MK ('no value');
+   END IF;
+   RETURN MK ('a type');
+END FUNCTION TYPE_NAME;
+
+% the C text T with each $S replaced by SELF
+FUNCTION SUBST_SELF (T: TEXT, SELF: TEXT) RETURNS (TEXT);
+   CONST S: ASCII_STR(T.LEN) := STR (T, T.LEN);
+   CONST AT: INTEGER := W@.TOP;
+   VAR START: INTEGER := 0;
+   VAR R: TEXT;
+   VAR I: INTEGER := 0;
+   IF T.LEN < 2 THEN
+      RETURN T;
+   END IF;
+   LOOP UNTIL I >= T.LEN - 1 DO
+      IF S[I : I + 1] = '$S' THEN
+         R := MK (S[START : I - 1]);
+         R := MK (STR (SELF, SELF.LEN));
+         I := I + 2;
+         START := I;
+      ELSE
+         I := I + 1;
+      END IF;
+   END LOOP;
+   IF START = 0 THEN
+      W@.TOP := AT;
+      RETURN T;
+   END IF;
+   R := MK (S[START : T.LEN - 1]);
+   RETURN (AT: AT, LEN: W@.TOP - AT, H: -1);
+END FUNCTION SUBST_SELF;
+
+% ---- enumerated type classes (3.4) -------------------------------------------------------
+
+FUNCTION SAME_LITERALS (A, B: NODE) RETURNS (BOOLEAN);
+   VAR P: NODE := A;
+   VAR Q: NODE := B;
+   LOOP UNTIL P = NIL ! Q = NIL DO
+      IF NOT TEQ (P@.NAME, Q@.NAME) THEN
+         RETURN FALSE;
+      END IF;
+      P := P@.NEXT;
+      Q := Q@.NEXT;
+   END LOOP;
+   RETURN P = NIL & Q = NIL;
+END FUNCTION SAME_LITERALS;
+
+% the class of ENUM (LITS) or UNORDERED (LITS): one for each sequence of literals
+% (3.4.1); its literals are declared in the current scope
+FUNCTION ENUM_CLASS (LITS: NODE, UNORDERED: BOOLEAN, LINE: INTEGER) RETURNS (TYP);
+   VAR Y: SYM := W@.ENUMS;
+   VAR T: TYP;
+   LOOP UNTIL Y = NIL DO
+      IF Y@.T@.UNORDERED = UNORDERED & SAME_LITERALS (Y@.T@.LITS, LITS) THEN
+         DECLARE_LITERALS (Y@.T, LINE);
+         RETURN Y@.T;
+      END IF;
+      Y := Y@.INSTANCES;
+   END LOOP;
+   T := NEW_TYP (T_ENUM);
+   T@.BASE := T;
+   T@.LITS := LITS;
+   T@.NLITS := LIST_LENGTH (LITS);
+   T@.UNORDERED := UNORDERED;
+   T@.CNAME := NEW_NAME ('E');
+   Y := NEW_SYM (Y_TYPE, NO_TEXT ());
+   Y@.T := T;
+   Y@.INSTANCES := W@.ENUMS;
+   W@.ENUMS := Y;
+   % the names of the literals, for TO_CHAR
+   BLOCK
+      VAR P: NODE := LITS;
+      VAR NAMES: TEXT := MK ('');
+      LOOP UNTIL P = NIL DO
+         NAMES := FMT2 ('@@, ', NAMES, CSTRING (P@.NAME));
+         P := P@.NEXT;
+      END LOOP;
+      EMIT (O_GLOBALS, FMT2 ('static const char *@[] = { @0 };', T@.CNAME, NAMES));
+   END BLOCK;
+   DECLARE_LITERALS (T, LINE);
+   RETURN T;
+END FUNCTION ENUM_CLASS;
+
+PROCEDURE DECLARE_LITERALS (T: TYP, LINE: INTEGER);
+   VAR P: NODE := T@.LITS;
+   VAR I: INTEGER := 0;
+   LOOP UNTIL P = NIL DO
+      IF FIND_LITERAL (P@.NAME, T) = NIL THEN
+         BLOCK
+            VAR Y: SYM := NEW_SYM (Y_ENUMLIT, P@.NAME);
+            Y@.T := T;
+            Y@.MV := I;
+            Y@.HASMV := TRUE;
+            Y@.INPUT := TRUE;
+            DEFINE (Y, LINE);
+         END BLOCK;
+      END IF;
+      I := I + 1;
+      P := P@.NEXT;
+   END LOOP;
+END PROCEDURE DECLARE_LITERALS;
+
+% the visible literal NAME of the class of T, or of any class if T is nothing
+FUNCTION FIND_LITERAL (NAME: TEXT, T: TYP) RETURNS (SYM);
+   VAR Y: SYM := LOOKUP (NAME);
+   LOOP UNTIL Y = NIL DO
+      IF Y@.KIND = Y_ENUMLIT THEN
+         IF T = NIL THEN
+            RETURN Y;
+         END IF;
+         IF Y@.T@.BASE = T@.BASE THEN
+            RETURN Y;
+         END IF;
+      END IF;
+      Y := LOOKUP_NEXT (Y);
+   END LOOP;
+   RETURN NIL;
+END FUNCTION FIND_LITERAL;
+
+% the number of visible classes that have the literal NAME
+FUNCTION LITERAL_CLASSES (NAME: TEXT) RETURNS (INTEGER);
+   VAR Y: SYM := LOOKUP (NAME);
+   VAR N: INTEGER := 0;
+   LOOP UNTIL Y = NIL DO
+      IF Y@.KIND = Y_ENUMLIT THEN
+         N := N + 1;
+      END IF;
+      Y := LOOKUP_NEXT (Y);
+   END LOOP;
+   RETURN N;
+END FUNCTION LITERAL_CLASSES;
+
+% ---- type specifications (3.1.1.4, 3.12.2) -------------------------------------------------
+
+FUNCTION RESOLVE (TS: NODE) RETURNS (TYP);
+   RETURN RESOLVE_NAMED (TS, NO_TEXT ());
+END FUNCTION RESOLVE;
+
+% the C of an expression of a type-spec, and its manifest value
+PROCEDURE ATTR_VALUE (E: NODE # C: TEXT, M: MVAL);
+   C := EXPR (E, W@.TY_INT).C;
+   M := MANIFEST (E);
+   IF M.OK THEN
+      C := FMT1 ('((rt_int)@LL)', NUM (M.V));
+   END IF;
+END PROCEDURE ATTR_VALUE;
+
+% the range-spec R applied to the type T (3.2.1, 3.3.1, 3.4.1)
+FUNCTION WITH_RANGE (T: TYP, R: NODE) RETURNS (TYP);
+   VAR N: TYP;
+   IF R = NIL THEN
+      RETURN T;
+   END IF;
+   IF NOT (T@.KIND = T_INT ! T@.KIND = T_FLOAT ! T@.KIND = T_ENUM) THEN
+      FAIL (R@.LINE, 'a range is only for fixed, float and enumerated types (3.12.2)');
+   END IF;
+   N := COPY_TYP (T);
+   N@.NAME := NO_TEXT ();
+   N@.RLEVEL := CUR_LEVEL ();
+   BLOCK
+      VAR LO, HI: ET;
+      LO := EXPR (R@.A, T);
+      HI := EXPR (R@.B, T);
+      N@.LO_C := LO.C;
+      N@.HI_C := HI.C;
+      N@.MLO := MANIFEST (R@.A);
+      N@.MHI := MANIFEST (R@.B);
+      IF T@.KIND = T_ENUM THEN
+         N@.MLO := ENUM_MANIFEST (R@.A, T);
+         N@.MHI := ENUM_MANIFEST (R@.B, T);
+      END IF;
+      IF T@.KIND = T_INT & T@.SCALE <> 0 THEN
+         N@.LO_C := RESCALE (LO, T@.SCALE, R@.LINE);
+         N@.HI_C := RESCALE (HI, T@.SCALE, R@.LINE);
+         N@.MLO := NO_MVAL ();
+         N@.MHI := NO_MVAL ();
+      END IF;
+   END BLOCK;
+   IF R@.IV = 1 ! R@.IV = 3 THEN                     % (L: open below
+      IF T@.KIND = T_FLOAT THEN
+         N@.LO_C := FMT1 ('nextafter(@, INFINITY)', N@.LO_C);
+      ELSE
+         N@.LO_C := FMT1 ('((@) + 1)', N@.LO_C);
+         N@.MLO.V := N@.MLO.V + 1;
+      END IF;
+   END IF;
+   IF R@.IV >= 2 THEN                                % U) open above
+      IF T@.KIND = T_FLOAT THEN
+         N@.HI_C := FMT1 ('nextafter(@, -INFINITY)', N@.HI_C);
+      ELSE
+         N@.HI_C := FMT1 ('((@) - 1)', N@.HI_C);
+         N@.MHI.V := N@.MHI.V - 1;
+      END IF;
+   END IF;
+   RETURN N;
+END FUNCTION WITH_RANGE;
+
+% the manifest position of an enumerated literal of the class of T
+FUNCTION ENUM_MANIFEST (E: NODE, T: TYP) RETURNS (MVAL);
+   IF E@.KIND = N_ENUMLIT ! E@.KIND = N_NAME THEN
+      BLOCK
+         CONST Y: SYM := FIND_LITERAL (E@.NAME, T);
+         IF Y <> NIL THEN
+            RETURN SOME (Y@.MV);
+         END IF;
+      END BLOCK;
+   END IF;
+   RETURN MANIFEST (E);
+END FUNCTION ENUM_MANIFEST;
+
+FUNCTION CUR_LEVEL () RETURNS (INTEGER);
+   IF W@.CS = NIL THEN
+      RETURN 0;
+   END IF;
+   RETURN W@.CS@.LEVEL;
+END FUNCTION CUR_LEVEL;
+
+% the argument N of a type-spec, as a type (TYPE parameters, PTR, ELEMENT types)
+FUNCTION ARG_TYPE (N: NODE) RETURNS (TYP);
+   RETURN RESOLVE (EXPR_TO_TS (N));
+END FUNCTION ARG_TYPE;
+
+FUNCTION NTH_ARG (TS: NODE, K: INTEGER) RETURNS (NODE);
+   VAR A: NODE := TS@.A;
+   LOOP FOR I IN [1 : K] DO
+      IF A = NIL THEN
+         FAILT (TS@.LINE, 'too few arguments for ', TS@.NAME);
+      END IF;
+      A := A@.NEXT;
+   END LOOP I;
+   IF A = NIL THEN
+      FAILT (TS@.LINE, 'too few arguments for ', TS@.NAME);
+   END IF;
+   RETURN A;
+END FUNCTION NTH_ARG;
+
+FUNCTION RESOLVE_NAMED (TS: NODE, CNAME: TEXT) RETURNS (TYP);
+   VAR T: TYP;
+   CONST K: INTEGER := TS@.KIND;
+   IF K = TS_ARRAY THEN
+      RETURN RESOLVE_ARRAY (TS);
+   ORIF K = TS_RECORD THEN
+      RETURN RESOLVE_RECORD (TS, CNAME, NIL, NIL);
+   ORIF K = TS_ENUM THEN                             % [3-83]
+      T := ENUM_CLASS (TS@.A, TS@.IV = 1, TS@.LINE);
+      IF TS@.IV = 1 & TS@.B <> NIL THEN
+         FAIL (TS@.LINE, 'an UNORDERED type has no range');
+      END IF;
+      T := WITH_RANGE (T, TS@.B);
+      IF TS@.C <> NIL THEN
+         T := COPY_TYP (T);
+         T@.REPS := TS@.C;
+      END IF;
+      RETURN T;
+   ORIF K = TS_GEN THEN
+      RETURN GEN_TYPE (TS);
+   ORIF K <> TS_NAME THEN
+      FAIL (TS@.LINE, 'a type specification expected');
+   END IF;
+   T := RESOLVE_PREDEFINED (TS);
+   IF T = NIL THEN
+      T := RESOLVE_USER (TS);
+   END IF;
+   T := WITH_RANGE (T, TS@.B);
+   IF TS@.C <> NIL THEN
+      T := COPY_TYP (T);
+      T@.REPS := TS@.C;
+      IF TS@.C@.B <> NIL THEN                        % ENUM_VAL_REP: check the VALUES
+         IF T@.KIND <> T_ENUM ! NOT T@.UNORDERED THEN
+            FAIL (TS@.LINE, 'ENUM_VAL_REP is only for UNORDERED types (3.4.3)');
+         END IF;
+      END IF;
+   END IF;
+   RETURN T;
+END FUNCTION RESOLVE_NAMED;
+
+% ?T where a type is expected: what the generic parameter stands for
+FUNCTION GEN_TYPE (TS: NODE) RETURNS (TYP);
+   VAR B: BIND := W@.BINDS;
+   LOOP UNTIL B = NIL DO
+      IF TEQ (B@.NAME, TS@.NAME) & B@.T <> NIL THEN
+         RETURN B@.T;
+      END IF;
+      B := B@.NEXT;
+   END LOOP;
+   BLOCK
+      CONST Y: SYM := LOOKUP (TS@.NAME);
+      IF Y <> NIL THEN
+         IF Y@.KIND = Y_TYPE & Y@.T <> NIL THEN
+            RETURN Y@.T;
+         END IF;
+      END IF;
+   END BLOCK;
+   FAILT (TS@.LINE, 'a derived generic type outside a formal parameter list: ?', TS@.NAME);
+END FUNCTION GEN_TYPE;
+
+% the predefined type classes of section 3, or nothing
+FUNCTION RESOLVE_PREDEFINED (TS: NODE) RETURNS (TYP);
+   CONST NAME: TEXT := TS@.NAME;
+   VAR T: TYP;
+   IF TEQS (NAME, 'FIXED') THEN                     % [3-45]
+      BLOCK
+         CONST S: MVAL := MANIFEST (NTH_ARG (TS, 0));
+         CONST R: MVAL := MANIFEST (NTH_ARG (TS, 1));
+         CONST P: NODE := NTH_ARG (TS, 2);
+         IF NOT S.OK THEN
+            FAIL (TS@.LINE, 'the scale must be manifest (3.2.1)');
+         END IF;
+         IF NOT R.OK ! R.V <> 2 THEN
+            FAIL (TS@.LINE, 'only radix 2 is predefined (3.2.1)');
+         END IF;
+         IF NOT TEQS (P@.NAME, 'STD') THEN
+            FAIL (TS@.LINE, 'only STD precision is predefined (3.2.1)');
+         END IF;
+         IF S.V = 0 THEN
+            RETURN W@.TY_INT;
+         END IF;
+         T := NEW_TYP (T_INT);
+         T@.SCALE := S.V;
+         RETURN T;
+      END BLOCK;
+   ORIF TEQS (NAME, 'FLOAT') THEN                   % [3-68]
+      BLOCK
+         CONST P: MVAL := MANIFEST (NTH_ARG (TS, 0));
+         IF NOT P.OK THEN
+            FAIL (TS@.LINE, 'the precision must be manifest (3.3.1)');
+         END IF;
+         IF P.V < 1 ! P.V > 15 THEN
+            FAIL (TS@.LINE, 'precisions from 1 to 15 are implemented (3.3.1)');
+         END IF;
+         T := NEW_TYP (T_FLOAT);
+         T@.SCALE := P.V;
+         RETURN T;
+      END BLOCK;
+   ORIF TEQS (NAME, 'BIT') THEN                     % [3-108]
+      T := NEW_TYP (T_BITS);
+      STRING_LENGTH (T, NTH_ARG (TS, 0));
+      RETURN T;
+   ORIF TEQS (NAME, 'CHAR_STR') ! TEQS (NAME, 'ASCII_STR') THEN   % [3-131]
+      T := NEW_TYP (T_STR);
+      STRING_LENGTH (T, NTH_ARG (TS, 0));
+      IF TEQS (NAME, 'CHAR_STR') THEN
+         BLOCK
+            CONST CS: NODE := NTH_ARG (TS, 1);
+            IF NOT TEQS (CS@.NAME, 'ASCII') THEN
+               IF ARG_TYPE (CS)@.KIND <> T_ENUM THEN
+                  FAIL (TS@.LINE, 'a charset must be an enumerated type (3.7.1)');
+               END IF;
+            END IF;
+         END BLOCK;
+      END IF;
+      RETURN T;
+   ORIF TEQS (NAME, 'PTR') THEN                     % [3-195]
+      T := NEW_TYP (T_PTR);
+      T@.TARGET_TS := NTH_ARG (TS, 0);
+      RETURN T;
+   ORIF TEQS (NAME, 'SEMAPHORE') THEN               % [3-203]
+      T := NEW_TYP (T_SEM);
+      BLOCK
+         CONST U: NODE := NTH_ARG (TS, 0);
+         IF TEQS (U@.NAME, 'REGION') THEN
+            T@.SCALE := 1;
+         ORIF NOT TEQS (U@.NAME, 'SYNCH') THEN
+            FAIL (TS@.LINE, 'the use mode is SYNCH or REGION (3.11.1)');
+         END IF;
+      END BLOCK;
+      RETURN T;
+   END IF;
+   RETURN NIL;
+END FUNCTION RESOLVE_PREDEFINED;
+
+% the length of a string or bitstring type: an expression, ?L or ?
+PROCEDURE STRING_LENGTH (T: TYP, A: NODE);
+   IF A@.KIND = TS_GEN THEN
+      BLOCK
+         VAR B: BIND := W@.BINDS;
+         LOOP UNTIL B = NIL DO
+            IF TEQ (B@.NAME, A@.NAME) & B@.C.LEN > 0 THEN
+               T@.LEN_C := B@.C;
+               T@.MLEN := (OK: B@.HASMV, V: B@.MV);
+               RETURN;
+            END IF;
+            B := B@.NEXT;
+         END LOOP;
+      END BLOCK;
+      T@.GEN := A@.NAME;
+      RETURN;
+   ORIF A@.KIND = N_DONTCARE THEN
+      RETURN;
+   END IF;
+   BLOCK
+      VAR C: TEXT;
+      VAR M: MVAL;
+      ATTR_VALUE (A # C, M);
+      T@.LEN_C := C;
+      T@.MLEN := M;
+      T@.RLEVEL := CUR_LEVEL ();
+   END BLOCK;
+END PROCEDURE STRING_LENGTH;
+
+% [3-147]: bounds are integer or enumerated expressions (3.8.1)
+FUNCTION RESOLVE_ARRAY (TS: NODE) RETURNS (TYP);
+   VAR T: TYP := NEW_TYP (T_ARR);
+   VAR R: NODE := TS@.A;
+   VAR TAIL: BND := NIL;
+   LOOP UNTIL R = NIL DO
+      BLOCK
+         VAR B: BND := NEW (BND_REC);
+         CONST LO: ET := EXPR (R@.A, NIL);
+         CONST HI: ET := EXPR (R@.B, LO.T);
+         B@ := (LO: LO.C, HI: HI.C, MLO: MANIFEST (R@.A), MHI: MANIFEST (R@.B), ANYARG: FALSE,
+                NEXT: NIL);
+         IF LO.T@.KIND = T_ENUM THEN
+            B@.MLO := ENUM_MANIFEST (R@.A, LO.T);
+            B@.MHI := ENUM_MANIFEST (R@.B, LO.T);
+         ORIF REAL_TYPE (LO.T)@.KIND <> T_INT THEN
+            FAIL (R@.LINE, 'array bounds are integer or enumerated (3.8.1)');
+         END IF;
+         IF TAIL = NIL THEN
+            T@.BOUNDS := B;
+         ELSE
+            TAIL@.NEXT := B;
+         END IF;
+         TAIL := B;
+         T@.DIMS := T@.DIMS + 1;
+      END BLOCK;
+      R := R@.NEXT;
+   END LOOP;
+   T@.RLEVEL := CUR_LEVEL ();
+   T@.ELEM := RESOLVE (TS@.C);
+   IF T@.ELEM@.KIND = T_ARR THEN
+      FAIL (TS@.LINE, 'ARRAY ... OF ARRAY is forbidden (3.8.1)');
+   END IF;
+   T@.REPS := TS@.D;
+   T@.CNAME := ARRAY_STRUCT (T@.ELEM, T@.DIMS);
+   RETURN T;
+END FUNCTION RESOLVE_ARRAY;
+
+% a type name with its arguments: a declared type, an abstract type, a record type
+FUNCTION RESOLVE_USER (TS: NODE) RETURNS (TYP);
+   CONST Y: SYM := ORIG_LOOKUP (TS@.NAME);
+   IF Y = NIL THEN
+      FAILT (TS@.LINE, 'unknown type ', TS@.NAME);
+   END IF;
+   IF Y@.KIND = Y_GEN THEN
+      RETURN GEN_TYPE (TS);
+   END IF;
+   IF Y@.KIND <> Y_TYPE THEN
+      FAILT (TS@.LINE, 'not a type: ', TS@.NAME);
+   END IF;
+   IF Y@.DECL = NIL THEN                              % predefined, or bound
+      IF TS@.A <> NIL THEN
+         FAILT (TS@.LINE, 'this type has no parameters: ', TS@.NAME);
+      END IF;
+      RETURN Y@.T;
+   END IF;
+   BLOCK
+      CONST D: NODE := Y@.DECL;
+      VAR T: TYP;
+      IF D@.A = NIL THEN                              % no formals: resolved once
+         IF TS@.A <> NIL THEN
+            FAILT (TS@.LINE, 'this type has no parameters: ', TS@.NAME);
+         END IF;
+         IF Y@.T = NIL THEN
+            IF Y@.BUSY THEN
+               FAILT (TS@.LINE, 'a circular type declaration: ', TS@.NAME);
+            END IF;
+            Y@.BUSY := TRUE;
+            IF D@.B@.KIND = TS_RECORD THEN
+               Y@.T := RESOLVE_RECORD (D@.B, RECORD_NAME (Y), Y, NIL);
+            ELSE
+               Y@.T := RESOLVE_IN_DECL (Y, NIL);
+               IF Y@.T@.NAME.LEN = 0 & Y@.T@.KIND <> T_ENUM THEN
+                  Y@.T := COPY_TYP (Y@.T);
+               END IF;
+            END IF;
+            IF Y@.T@.NAME.LEN = 0 THEN
+               Y@.T@.NAME := Y@.NAME;
+            END IF;
+            Y@.BUSY := FALSE;
+         END IF;
+         T := Y@.T;
+      ELSE
+         IF D@.B@.KIND = TS_RECORD THEN
+            T := RECORD_INSTANCE (Y, TS);
+         ELSE
+            T := RESOLVE_IN_DECL (Y, TS);
+         END IF;
+      END IF;
+      RETURN ABSTRACT_VIEW (Y, T);
+   END BLOCK;
+END FUNCTION RESOLVE_USER;
+
+% outside the module that declares and exports it, a type is abstract (3.12.5, 4.4)
+FUNCTION ABSTRACT_VIEW (Y: SYM, T: TYP) RETURNS (TYP);
+   VAR A: TYP;
+   IF Y@.MODL = NIL ! NOT Y@.EXPORTED THEN
+      RETURN T;
+   END IF;
+   IF IN_MODULE (Y@.MODL) THEN
+      RETURN T;
+   END IF;
+   IF T@.KIND = T_ENUM THEN                          % its literals are exported too
+      RETURN T;
+   END IF;
+   A := NEW_TYP (T_ABS);
+   A@.BASE := T;
+   A@.NAME := Y@.NAME;
+   A@.MODL := Y@.MODL;
+   A@.DECL := Y;
+   A@.ARGS := T@.ARGS;
+   RETURN A;
+END FUNCTION ABSTRACT_VIEW;
+
+% is the module M the one being translated, or one that encloses it?
+FUNCTION IN_MODULE (M: SYM) RETURNS (BOOLEAN);
+   VAR P: SYM := W@.MODL;
+   LOOP UNTIL P = NIL DO
+      IF P = M THEN
+         RETURN TRUE;
+      END IF;
+      P := P@.MODL;
+   END LOOP;
+   RETURN FALSE;
+END FUNCTION IN_MODULE;
+
+% the type-definition of the declaration Y, with its formals bound to the arguments
+% of TS (3.12.1): TYPE formals stand for types, the others are constants
+FUNCTION RESOLVE_IN_DECL (Y: SYM, TS: NODE) RETURNS (TYP);
+   CONST D: NODE := Y@.DECL;
+   VAR T: TYP;
+   OPEN_SCOPE;
+   IF TS <> NIL THEN
+      BIND_FORMALS (D@.A, TS);
+   END IF;
+   T := RESOLVE (D@.B);
+   CLOSE_SCOPE;
+   RETURN T;
+END FUNCTION RESOLVE_IN_DECL;
+
+PROCEDURE BIND_FORMALS (FORMALS: NODE, TS: NODE);
+   VAR F: NODE := FORMALS;
+   VAR A: NODE := TS@.A;
+   LOOP UNTIL F = NIL DO
+      BLOCK
+         VAR N: NODE := F@.A;
+         LOOP UNTIL N = NIL DO
+            IF A = NIL THEN
+               FAILT (TS@.LINE, 'too few arguments for ', TS@.NAME);
+            END IF;
+            IF F@.B = NIL THEN                        % a TYPE formal
+               BLOCK
+                  VAR Y: SYM := NEW_SYM (Y_TYPE, N@.NAME);
+                  Y@.T := ARG_TYPE (A);
+                  DEFINE (Y, A@.LINE);
+               END BLOCK;
+            ELSE
+               BLOCK
+                  VAR Y: SYM := NEW_SYM (Y_CONST, N@.NAME);
+                  VAR C: TEXT;
+                  VAR M: MVAL;
+                  Y@.T := RESOLVE (F@.B);
+                  IF A@.KIND = N_ANY THEN
+                     FAIL (A@.LINE, 'ANY is only for TAG formals (3.12.2)');
+                  END IF;
+                  ATTR_VALUE (A # C, M);
+                  IF Y@.T@.KIND <> T_INT THEN
+                     C := EXPR (A, Y@.T).C;
+                     M := ENUM_MANIFEST (A, Y@.T);
+                  END IF;
+                  Y@.ACCESS := C;
+                  Y@.HASMV := M.OK;
+                  Y@.MV := M.V;
+                  Y@.INPUT := TRUE;
+                  DEFINE (Y, A@.LINE);
+               END BLOCK;
+            END IF;
+            A := A@.NEXT;
+            N := N@.NEXT;
+         END LOOP;
+      END BLOCK;
+      F := F@.NEXT;
+   END LOOP;
+   IF A <> NIL THEN
+      FAILT (TS@.LINE, 'too many arguments for ', TS@.NAME);
+   END IF;
+END PROCEDURE BIND_FORMALS;
 
 % the C name of a named record, fixed before the record is resolved so that pointers
 % to it can be declared first (3.12.1: types are known throughout their scope)
@@ -14,117 +652,6 @@ FUNCTION RECORD_NAME (Y: SYM) RETURNS (TEXT);
    RETURN Y@.FWD;
 END FUNCTION RECORD_NAME;
 
-FUNCTION RESOLVE (TS: NODE) RETURNS (TYP);
-   RETURN RESOLVE_NAMED (TS, NO_TEXT ());
-END FUNCTION RESOLVE;
-
-FUNCTION RESOLVE_NAMED (TS: NODE, CNAME: TEXT) RETURNS (TYP);
-   VAR T: TYP;
-   CONST K: INTEGER := TS@.KIND;
-   IF K = TS_ARRAY THEN                              % [3-147]
-      T := NEW_TYP (T_ARR);
-      T@.LO := TS@.A;
-      T@.HI := TS@.B;
-      T@.ELEM := RESOLVE (TS@.C);
-      T@.CNAME := NEW_NAME ('A');
-      EMIT (O_TYPEDEFS, FMT2 ('typedef struct @ @;', T@.CNAME, T@.CNAME));
-      COMPLETE (T);
-      RETURN T;
-   END IF;
-   IF K = TS_RECORD THEN                             % [3-160]
-      T := NEW_TYP (T_REC);
-      IF CNAME.LEN > 0 THEN
-         T@.CNAME := CNAME;
-      ELSE
-         T@.CNAME := NEW_NAME ('R');
-         EMIT (O_TYPEDEFS, FMT2 ('typedef struct @ @;', T@.CNAME, T@.CNAME));
-      END IF;
-      BLOCK
-         VAR D: NODE := TS@.A;
-         VAR TAIL: FIELD := NIL;
-         LOOP UNTIL D = NIL DO
-            BLOCK
-               CONST FT: TYP := RESOLVE (D@.B);
-               VAR N: NODE := D@.A;
-               LOOP UNTIL N = NIL DO
-                  BLOCK
-                     VAR F: FIELD := NEW (FIELD_REC);
-                     F@ := (NAME: N@.NAME, T: FT, NEXT: NIL);
-                     IF TAIL = NIL THEN
-                        T@.FIELDS := F;
-                     ELSE
-                        TAIL@.NEXT := F;
-                     END IF;
-                     TAIL := F;
-                  END BLOCK;
-                  N := N@.NEXT;
-               END LOOP;
-            END BLOCK;
-            D := D@.NEXT;
-         END LOOP;
-      END BLOCK;
-      COMPLETE (T);
-      RETURN T;
-   END IF;
-   IF K = TS_ENUM THEN                               % [3-83]
-      T := NEW_TYP (T_ENUM);
-      T@.LITS := TS@.A;
-      RETURN T;
-   END IF;
-   % a type name, possibly with arguments and a range
-   IF TEQS (TS@.NAME, 'INTEGER') THEN
-      IF TS@.B <> NIL THEN
-         T := NEW_TYP (T_INT);
-         T@.LO := TS@.B@.A;
-         T@.HI := TS@.B@.B;
-         RETURN T;
-      END IF;
-      RETURN W@.TY_INT;
-   END IF;
-   IF TEQS (TS@.NAME, 'ASCII_STR') ! TEQS (TS@.NAME, 'CHAR_STR') THEN   % [3-131]
-      T := NEW_TYP (T_STR);
-      IF TS@.A@.KIND = TS_GEN THEN
-         T@.GEN := TS@.A@.NAME;
-      ELSE
-         T@.LEN := TS@.A;
-      END IF;
-      RETURN T;
-   END IF;
-   IF TEQS (TS@.NAME, 'PTR') THEN                    % [3-195]
-      T := NEW_TYP (T_PTR);
-      T@.TARGET_TS := TS@.A;
-      RETURN T;
-   END IF;
-   BLOCK
-      CONST Y: SYM := LOOKUP (TS@.NAME);
-      IF Y = NIL THEN
-         FAILT (TS@.LINE, 'unknown type ', TS@.NAME);
-      END IF;
-      IF Y@.KIND <> Y_TYPE THEN
-         FAILT (TS@.LINE, 'not a type: ', TS@.NAME);
-      END IF;
-      IF Y@.T = NIL THEN
-         IF Y@.BUSY THEN
-            FAILT (TS@.LINE, 'a circular type declaration: ', TS@.NAME);
-         END IF;
-         Y@.BUSY := TRUE;
-         IF Y@.TS@.KIND = TS_RECORD THEN
-            Y@.T := RESOLVE_NAMED (Y@.TS, RECORD_NAME (Y));
-         ELSE
-            Y@.T := RESOLVE (Y@.TS);
-         END IF;
-         Y@.BUSY := FALSE;
-      END IF;
-      IF TS@.B <> NIL & Y@.T@.KIND = T_INT THEN
-         T := NEW_TYP (T_INT);
-         T@.LO := TS@.B@.A;
-         T@.HI := TS@.B@.B;
-         RETURN T;
-      END IF;
-      RETURN Y@.T;
-   END BLOCK;
-END FUNCTION RESOLVE_NAMED;
-
 FUNCTION TARGET (T: TYP) RETURNS (TYP);
    IF T@.TARGET = NIL THEN
       T@.TARGET := RESOLVE (T@.TARGET_TS);
@@ -132,130 +659,44 @@ FUNCTION TARGET (T: TYP) RETURNS (TYP);
    RETURN T@.TARGET;
 END FUNCTION TARGET;
 
-FUNCTION IS_SCALAR (T: TYP) RETURNS (BOOLEAN);
-   RETURN T@.KIND = T_INT ! T@.KIND = T_BOOL ! T@.KIND = T_ENUM;
-END FUNCTION IS_SCALAR;
-
 FUNCTION CTYPE (T: TYP) RETURNS (TEXT);
    CONST K: INTEGER := T@.KIND;
    IF IS_SCALAR (T) THEN
       RETURN MK ('rt_int');
-   ORIF K = T_STR THEN
+   ORIF K = T_FLOAT THEN
+      RETURN MK ('double');
+   ORIF K = T_STR ! K = T_BITS THEN
       RETURN MK ('rstr');
    ORIF K = T_REC ! K = T_ARR THEN
       RETURN T@.CNAME;
+   ORIF K = T_ABS THEN
+      RETURN CTYPE (T@.BASE);
+   ORIF K = T_SEM THEN
+      RETURN MK ('rt_b_sem *');
+   ORIF K = T_PATHS THEN
+      RETURN MK ('rt_b_paths');
    ORIF K = T_VOID THEN
       RETURN MK ('void');
    ORIF K = T_PTR THEN
       % a pointer to a named record may be declared before the record
-      BLOCK
-         CONST TT: NODE := T@.TARGET_TS;
-         IF TT@.KIND = TS_NAME THEN
-            BLOCK
-               CONST Y: SYM := LOOKUP (TT@.NAME);
-               IF Y <> NIL THEN
-                  IF Y@.KIND = Y_TYPE & Y@.TS <> NIL THEN
-                     IF Y@.TS@.KIND = TS_RECORD THEN
-                        RETURN CATS (RECORD_NAME (Y), ' *');
+      IF T@.TARGET = NIL THEN
+         BLOCK
+            CONST TT: NODE := T@.TARGET_TS;
+            IF TT@.KIND = TS_NAME & TT@.A = NIL THEN
+               BLOCK
+                  CONST Y: SYM := ORIG_LOOKUP (TT@.NAME);
+                  IF Y <> NIL THEN
+                     IF Y@.KIND = Y_TYPE & Y@.DECL <> NIL THEN
+                        IF Y@.DECL@.B@.KIND = TS_RECORD & Y@.DECL@.A = NIL THEN
+                           RETURN CATS (RECORD_NAME (Y), ' *');
+                        END IF;
                      END IF;
                   END IF;
-               END IF;
-            END BLOCK;
-         END IF;
-         RETURN CATS (CTYPE (TARGET (T)), ' *');
-      END BLOCK;
+               END BLOCK;
+            END IF;
+         END BLOCK;
+      END IF;
+      RETURN CATS (CTYPE (TARGET (T)), ' *');
    END IF;
    FAIL (0, 'no C type');
 END FUNCTION CTYPE;
-
-FUNCTION NEEDS_INIT (T: TYP) RETURNS (BOOLEAN);
-   IF T@.KIND = T_STR THEN
-      RETURN T@.LEN <> NIL;
-   ORIF T@.KIND = T_ARR THEN
-      RETURN TRUE;
-   ORIF T@.KIND = T_REC THEN
-      BLOCK
-         VAR F: FIELD := T@.FIELDS;
-         LOOP UNTIL F = NIL DO
-            IF NEEDS_INIT (F@.T) THEN
-               RETURN TRUE;
-            END IF;
-            F := F@.NEXT;
-         END LOOP;
-      END BLOCK;
-   END IF;
-   RETURN FALSE;
-END FUNCTION NEEDS_INIT;
-
-FUNCTION FIELD_C (NAME: TEXT) RETURNS (TEXT);
-   RETURN FMT1 ('f_@', NAME);
-END FUNCTION FIELD_C;
-
-% the statement that makes the storage of a new object LV of type T
-FUNCTION INIT_CODE (T: TYP, LV: TEXT) RETURNS (TEXT);
-   IF T@.KIND = T_STR THEN
-      RETURN FMT2 ('@ = rt_str_new(@);', LV, EXPR (T@.LEN, NIL).C);
-   ORIF T@.KIND = T_ARR ! T@.KIND = T_REC THEN
-      RETURN FMT2 ('I_@(&@);', T@.CNAME, LV);
-   END IF;
-   RETURN NO_TEXT ();
-END FUNCTION INIT_CODE;
-
-% the statement that assigns the value RV to the object LV of type T
-FUNCTION ASSIGN_CODE (T: TYP, LV, RV: TEXT) RETURNS (TEXT);
-   IF T@.KIND = T_STR THEN
-      RETURN FMT2 ('rt_b_assign(&@, @);', LV, RV);
-   ORIF T@.KIND = T_ARR ! T@.KIND = T_REC THEN
-      RETURN FMT3 ('S_@(&@, @);', T@.CNAME, LV, RV);
-   END IF;
-   RETURN FMT2 ('@ = @;', LV, RV);
-END FUNCTION ASSIGN_CODE;
-
-% the value V checked against the range of T (3.2.5: RANGE)
-FUNCTION RANGE_CHECK (T: TYP, V: TEXT) RETURNS (TEXT);
-   IF T@.KIND = T_INT & T@.LO <> NIL THEN
-      RETURN FMT3 ('rt_range(@, @, @)', V, EXPR (T@.LO, NIL).C, EXPR (T@.HI, NIL).C);
-   END IF;
-   RETURN V;
-END FUNCTION RANGE_CHECK;
-
-% the struct body and the I_ and S_ helpers of a record or array type
-PROCEDURE COMPLETE (T: TYP);
-   CONST C: TEXT := T@.CNAME;
-   VAR INIT, ASSIGN: TEXT;
-   IF T@.KIND = T_ARR THEN
-      EMIT (O_STRUCTS, FMT2 ('struct @ { rt_int lo, hi; @ *p; };', C, CTYPE (T@.ELEM)));
-      INIT := FMT2 ('x->lo = @; x->hi = @; rt_int n = x->hi >= x->lo ? x->hi - x->lo + 1 : 0; '
-                    'x->p = rt_alloc(sizeof *x->p * (size_t)(n ? n : 1));',
-                    EXPR (T@.LO, NIL).C, EXPR (T@.HI, NIL).C);
-      IF NEEDS_INIT (T@.ELEM) THEN
-         INIT := FMT2 ('@ for (rt_int i = 0; i < n; i++) @', INIT,
-                       INIT_CODE (T@.ELEM, MK ('x->p[i]')));
-      END IF;
-      ASSIGN := FMT1 ('rt_int n = d->hi - d->lo; if (n != s.hi - s.lo) rt_raise(RT_B_SIZE); '
-                      'for (rt_int i = 0; i <= n; i++) @',
-                      ASSIGN_CODE (T@.ELEM, MK ('d->p[i]'), MK ('s.p[i]')));
-   ELSE
-      BLOCK
-         VAR F: FIELD := T@.FIELDS;
-         VAR BODY: TEXT := MK ('');
-         INIT := MK ('');
-         ASSIGN := MK ('');
-         LOOP UNTIL F = NIL DO
-            BODY := FMT3 ('@ @ @;', BODY, CTYPE (F@.T), FIELD_C (F@.NAME));
-            IF NEEDS_INIT (F@.T) THEN
-               INIT := FMT2 ('@ @', INIT, INIT_CODE (F@.T, FMT1 ('x->@', FIELD_C (F@.NAME))));
-            END IF;
-            ASSIGN := FMT2 ('@ @', ASSIGN,
-                            ASSIGN_CODE (F@.T, FMT1 ('d->@', FIELD_C (F@.NAME)),
-                                         FMT1 ('s.@', FIELD_C (F@.NAME))));
-            F := F@.NEXT;
-         END LOOP;
-         EMIT (O_STRUCTS, FMT2 ('struct @ { int dummy_;@ };', C, BODY));
-      END BLOCK;
-   END IF;
-   EMIT (O_PROTOS, FMT3 ('static void I_@(@ *x);', C, C, C));
-   EMIT (O_PROTOS, FMT3 ('static void S_@(@ *d, @ s);', C, C, C));
-   EMIT (O_HELPERS, FMT3 ('static void I_@(@ *x) { @ }', C, C, INIT));
-   EMIT (O_HELPERS, FMT4 ('static void S_@(@ *d, @ s) { @ }', C, C, C, ASSIGN));
-END PROCEDURE COMPLETE;

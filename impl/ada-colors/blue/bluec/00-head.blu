@@ -28,36 +28,46 @@ CONST K_NUM: INTEGER := 4;
 CONST K_STR: INTEGER := 5;         % the quoted part of a charstring literal
 CONST K_ENUM: INTEGER := 6;        % \NAME or \'C'
 CONST K_GEN: INTEGER := 7;         % ?NAME, a derived generic parameter (5)
+CONST K_REAL: INTEGER := 8;        % a decimal literal without a scale-spec (3.3.2)
+CONST K_FIX: INTEGER := 9;         % a literal with a scale-spec, IV the scale (3.2.2)
 
 % ---- node kinds: expressions -------------------------------------------------------
-CONST N_INT: INTEGER := 1;
+CONST N_INT: INTEGER := 1;         % IV: the value, NAME: the digits
 CONST N_BOOL: INTEGER := 2;
 CONST N_NIL: INTEGER := 3;
-CONST N_STR: INTEGER := 4;         % A: list of N_PART
+CONST N_STR: INTEGER := 4;         % A: list of N_PART, NAME: charset or nothing
 CONST N_PART: INTEGER := 5;        % IV = K_STR or K_ENUM, NAME = the text
 CONST N_ENUMLIT: INTEGER := 6;
 CONST N_NAME: INTEGER := 7;
-CONST N_APPLY: INTEGER := 8;       % NAME (A: inputs, B: inouts, C: outputs)
+CONST N_APPLY: INTEGER := 8;       % NAME (A: inputs # B: inouts # C: outputs)
 CONST N_FIELD: INTEGER := 9;       % A . NAME
 CONST N_DEREF: INTEGER := 10;      % A @
-CONST N_INDEX: INTEGER := 11;      % A (B)
+CONST N_INDEX: INTEGER := 11;      % A (B: subscripts)
 CONST N_SUBSTR: INTEGER := 12;     % A [B : C]
 CONST N_UNOP: INTEGER := 13;       % NAME A
-CONST N_BINOP: INTEGER := 14;      % A NAME B
+CONST N_BINOP: INTEGER := 14;      % A NAME B; FL 1: scaled !op s!, D the scale;
+                                   % FL 2: machine-dependent !op!
 CONST N_IN: INTEGER := 15;         % A IN B
 CONST N_RANGE: INTEGER := 16;      % A : B, IV: 1 open below, 2 open above
 CONST N_PAREN: INTEGER := 17;
-CONST N_RECCONS: INTEGER := 18;    % A: list of N_FINIT
+CONST N_RECCONS: INTEGER := 18;    % A: list of N_FINIT, B: type of [T]$$( ... )
 CONST N_FINIT: INTEGER := 19;      % NAME : A
-CONST N_NEW: INTEGER := 20;        % NEW (A)
+CONST N_NEW: INTEGER := 20;        % NAME: NEW, PTR$NEW or SEMAPHORE$NEW; A: argument
+CONST N_REAL: INTEGER := 21;       % NAME: the literal, FL 1: scale-spec IV
+CONST N_BITS: INTEGER := 22;       % NAME: the binary digits
+CONST N_ARRCONS: INTEGER := 23;    % A: list of elements
+CONST N_TYPESPEC: INTEGER := 24;   % [A]$$(B)
+CONST N_QUAL: INTEGER := 25;       % A ROUNDED / TRUNCATED (NAME), WITH PREC B
+CONST N_ANY: INTEGER := 26;        % ANY
+CONST N_DONTCARE: INTEGER := 27;   % ? alone
 
 % ---- node kinds: statements ---------------------------------------------------------
 CONST N_NULL: INTEGER := 30;
 CONST N_ASSIGN: INTEGER := 31;     % A := B
 CONST N_CALL: INTEGER := 32;       % like N_APPLY
 CONST N_IF: INTEGER := 33;         % A: list of N_ARM, B: else body
-CONST N_ARM: INTEGER := 34;        % A: condition or labels, B: body
-CONST N_CASE: INTEGER := 35;       % A: choice, B: arms, C: else body
+CONST N_ARM: INTEGER := 34;        % A: condition or labels, B: body, C: handlers
+CONST N_CASE: INTEGER := 35;       % A: choice, B: arms, C: else body, D: its handlers
 CONST N_LOOP: INTEGER := 36;       % A: UNTIL, B: body, C: WHEN
 CONST N_FOR: INTEGER := 37;        % NAME, A: range, B: body
 CONST N_EXIT: INTEGER := 38;
@@ -67,22 +77,49 @@ CONST N_SIGNAL: INTEGER := 41;
 CONST N_ASSERT: INTEGER := 42;
 CONST N_EXCEPT: INTEGER := 43;     % A: statement, B: handlers
 CONST N_HANDLER: INTEGER := 44;    % A: names, B: body
-CONST N_BODY: INTEGER := 45;       % A: declarations, B: statements
+CONST N_BODY: INTEGER := 45;       % A: declarations, B: statements, C: routines, modules
+CONST N_LABELED: INTEGER := 46;    % NAME: A
+CONST N_GOTO: INTEGER := 47;       % GO TO NAME
+CONST N_WITH: INTEGER := 48;       % WITH NAME := A (IV 0) or NAMING A (IV 1); B: statement
+CONST N_PAR: INTEGER := 49;        % PAR_BLOCK A: paths
+CONST N_PATH: INTEGER := 57;       % NAME, A: loop range, B: body, C: priority,
+                                   % D: connect, E: the loop identifier (an N_IDENT,
+                                   % NAME empty if none) whose A is the N_HDR; FL 1: loop
+CONST N_TERMINATE: INTEGER := 58;  % TERMINATE (A)
 
 % ---- node kinds: declarations and type specifications --------------------------------
 CONST N_CONST: INTEGER := 50;      % A: names, B: type spec, C: value
 CONST N_VAR: INTEGER := 51;
-CONST N_TYPE: INTEGER := 52;       % NAME, B: type spec
+CONST N_TYPE: INTEGER := 52;       % NAME, A: formals, B: type spec
 CONST N_ROUTINE: INTEGER := 53;    % NAME, IV: 1 function, A: params, B: result,
-                                   % C: body, D: signals
-CONST N_PARAM: INTEGER := 54;      % NAME, IV: mode, B: type spec
-CONST N_SEGMENT: INTEGER := 55;    % NAME, IV: 1 main, A: uses, B: body, C: routines
+                                   % C: body, D: N_HDR, E: imports; FL 1 INLINE, 2 TARGET
+CONST N_PARAM: INTEGER := 54;      % NAME, IV: mode, B: type spec or routine spec, or
+                                   % nothing for TYPE
+CONST N_SEGMENT: INTEGER := 55;    % NAME, IV: 1 main, A: uses, B: body, C: defines,
+                                   % FL 1: DEFINES ALL
 CONST N_IDENT: INTEGER := 56;      % an element of a list of names
-CONST TS_NAME: INTEGER := 60;      % NAME, A: arguments, B: range
-CONST TS_ARRAY: INTEGER := 61;     % A: low, B: high, C: element type
-CONST TS_RECORD: INTEGER := 62;    % A: list of N_VAR
-CONST TS_ENUM: INTEGER := 63;      % A: list of N_IDENT
-CONST TS_GEN: INTEGER := 64;       % ?NAME in a type argument
+CONST N_MODULE: INTEGER := 59;     % NAME, A: imports, B: exports, C: body, FL 1: ALL
+CONST N_HDR: INTEGER := 65;        % A: signals, B: where clause
+CONST N_ITEMS: INTEGER := 66;      % A: data inputs, B: data inouts, C: routines,
+                                   % D: types, E: modules
+CONST N_USE: INTEGER := 67;        % NAME, A: N_ITEMS or nothing
+CONST N_EXPORT: INTEGER := 68;     % NAME, A: the WITH list
+CONST N_FORMAL: INTEGER := 69;     % A: names, B: type spec or nothing (TYPE), IV 1: TAG
+CONST N_REPTYPE: INTEGER := 70;    % NAME, A: formals, B: N_REP, C: base identifier
+CONST N_REP: INTEGER := 71;        % NAME, A: arguments, B: VALUES list
+CONST N_VALREP: INTEGER := 72;     % NAME AS A
+CONST N_VARIANT: INTEGER := 73;    % SELECT NAME FROM A: N_VARSPEC list
+CONST N_VARSPEC: INTEGER := 74;    % A: variant names, B: field declarations
+CONST N_NEEDS: INTEGER := 75;      % NAME NEEDS (A: N_TEMPLATE list)
+CONST N_TEMPLATE: INTEGER := 76;   % NAME, B: TS_ROUTINE
+CONST TS_NAME: INTEGER := 60;      % NAME, A: arguments, B: range, C: N_REP
+CONST TS_ARRAY: INTEGER := 61;     % A: list of N_RANGE, C: element type, D: N_REP
+CONST TS_RECORD: INTEGER := 62;    % A: N_VAR and N_VARIANT list, D: N_REP
+CONST TS_ENUM: INTEGER := 63;      % A: list of N_IDENT, B: range, C: N_REP,
+                                   % IV 1: UNORDERED
+CONST TS_GEN: INTEGER := 64;       % ?NAME, C: N_REP or TS_GEN of REP ?R
+CONST TS_ROUTINE: INTEGER := 77;   % IV 1: function, A: N_PARAM list, B: result,
+                                   % D: signals
 
 % ---- parameter modes (4.3.1) --------------------------------------------------------------
 CONST M_IN: INTEGER := 0;
@@ -90,7 +127,7 @@ CONST M_INOUT: INTEGER := 1;
 CONST M_OUT: INTEGER := 2;
 
 % ---- type kinds -----------------------------------------------------------------------------
-CONST T_INT: INTEGER := 1;
+CONST T_INT: INTEGER := 1;         % FIXED (S, 2, STD), INTEGER when S = 0 (3.2)
 CONST T_BOOL: INTEGER := 2;
 CONST T_ENUM: INTEGER := 3;
 CONST T_STR: INTEGER := 4;
@@ -99,14 +136,26 @@ CONST T_PTR: INTEGER := 6;
 CONST T_ARR: INTEGER := 7;
 CONST T_VOID: INTEGER := 8;
 CONST T_NIL: INTEGER := 9;
+CONST T_FLOAT: INTEGER := 10;
+CONST T_BITS: INTEGER := 11;
+CONST T_SEM: INTEGER := 12;
+CONST T_ABS: INTEGER := 13;        % an abstract type seen outside its module (3.12.5)
+CONST T_TYPE: INTEGER := 14;       % the type of a TYPE parameter
+CONST T_PATHS: INTEGER := 15;      % the activations of a path (4.6.1)
 
 % ---- symbol kinds --------------------------------------------------------------------------
 CONST Y_VAR: INTEGER := 1;
 CONST Y_CONST: INTEGER := 2;
 CONST Y_TYPE: INTEGER := 3;
 CONST Y_ROUTINE: INTEGER := 4;
-CONST Y_GEN: INTEGER := 5;         % a derived generic length, ?L
+CONST Y_GEN: INTEGER := 5;         % a derived generic attribute, ?L
 CONST Y_BUILTIN: INTEGER := 6;     % a routine of TERMINAL or of the prelude
+CONST Y_ENUMLIT: INTEGER := 7;
+CONST Y_MODULE: INTEGER := 8;
+CONST Y_LABEL: INTEGER := 9;
+CONST Y_PATH: INTEGER := 10;
+CONST Y_SEGMENT: INTEGER := 11;
+CONST Y_REPTYPE: INTEGER := 12;
 
 % ---- output sections --------------------------------------------------------------------------
 CONST O_TYPEDEFS: INTEGER := 0;
@@ -115,9 +164,10 @@ CONST O_GLOBALS: INTEGER := 2;
 CONST O_PROTOS: INTEGER := 3;
 CONST O_HELPERS: INTEGER := 4;
 CONST O_FUNCS: INTEGER := 5;
-CONST O_MAINHEAD: INTEGER := 6;  % int main(...) and the exception names
-CONST O_MAIN: INTEGER := 7;
-CONST O_LAST: INTEGER := 7;
+CONST O_MAINHEAD: INTEGER := 6;   % int main(...)
+CONST O_STARTUP: INTEGER := 7;    % the exception names, tables
+CONST O_MAIN: INTEGER := 8;
+CONST O_LAST: INTEGER := 8;
 
 % ---- capacities ---------------------------------------------------------------------------------
 CONST ARENA_SIZE: INTEGER := 64000000;
@@ -143,41 +193,78 @@ END RECORD;
 TYPE NODE_REC = RECORD
    VAR KIND, LINE, IV: INTEGER;
    VAR NAME: TEXT;
-   VAR A, B, C, D, NEXT: PTR(NODE_REC);
+   VAR A, B, C, D, E, NEXT: PTR(NODE_REC);
+   VAR FL: INTEGER;
 END RECORD;
 TYPE NODE = PTR(NODE_REC);
 
 TYPE TYP_REC = RECORD
    VAR KIND: INTEGER;
-   VAR LO, HI, LEN: NODE;           % range of an integer, length of a string
-   VAR GEN: TEXT;                   % ?L of ASCII_STR(?L)
+   VAR SCALE: INTEGER;              % of a fixed point type; the precision of a float
+   VAR LO_C, HI_C: TEXT;            % the C of the range, nothing for the default; $S
+   VAR MLO, MHI: MVAL;              % stands for the record that has the component
+   VAR RLEVEL: INTEGER;             % the closed scope whose C the range is
+   VAR LEN_C: TEXT;                 % the length of a string or bitstring ...
+   VAR MLEN: MVAL;                  % ... if manifest
+   VAR GEN: TEXT;                   % ?L of ASCII_STR(?L) in a generic header
+   VAR BASE: PTR(TYP_REC);          % an enumerated type class; a record class
    VAR ELEM, TARGET: PTR(TYP_REC);
    VAR TARGET_TS: NODE;             % a pointer's target, resolved when first needed
    VAR FIELDS: PTR(FIELD_REC);
    VAR LITS: NODE;                  % the literals of an enumerated type
-   VAR CNAME: TEXT;
+   VAR NLITS: INTEGER;
+   VAR UNORDERED: BOOLEAN;
+   VAR BOUNDS: PTR(BND_REC);        % the bounds of an array
+   VAR DIMS: INTEGER;
+   VAR ARGS: PTR(BND_REC);          % the arguments of a parameterized record type
+   VAR NAME: TEXT;                  % the declared name, for messages
+   VAR CNAME: TEXT;                 % the C type of records and arrays; name tables
+   VAR MODL: PTR(SYM_REC);        % the module that defines an abstract type
+   VAR REPS: NODE;                   % the reptype-spec
+   VAR DECL: PTR(SYM_REC);          % the type declaration of a record class
 END RECORD;
 TYPE TYP = PTR(TYP_REC);
 
 TYPE FIELD_REC = RECORD
    VAR NAME: TEXT;
+   VAR CNAME: TEXT;                 % unique within the C struct
    VAR T: TYP;
+   VAR KIND: INTEGER;               % 0 variable, 1 constant parameter, 2 tag
+   VAR TAGF: TEXT;                   % of a field in a variant part ...
+   VAR LABELS: NODE;                % ... and the variant names that make it accessible
    VAR NEXT: PTR(FIELD_REC);
 END RECORD;
 TYPE FIELD = PTR(FIELD_REC);
 
 TYPE SYM_REC = RECORD
    VAR KIND, DEPTH: INTEGER;
+   VAR LEVEL: INTEGER;              % the nesting of closed scopes it is declared in
    VAR NAME: TEXT;
    VAR T: TYP;
-   VAR ACCESS: TEXT;                % the C that designates the object
+   VAR ACCESS: TEXT;                % the C that designates the object at its level
+   VAR FIELD: TEXT;                 % its field in the frame, if it lives in one
+   VAR INPUT: BOOLEAN;              % may only be read (constants, inputs: 4.3.1)
+   VAR BYREF: BOOLEAN;              % an inout or output parameter: FIELD is a pointer
    VAR HASMV: BOOLEAN;              % a manifest constant (3.1.4.1) ...
    VAR MV: INTEGER;                 % ... and its value
    VAR TS: NODE;                    % a type declaration, resolved when first used
    VAR BUSY: BOOLEAN;
-   VAR FWD: TEXT;                   % the C name of a named record
+   VAR FWD: TEXT;                   % the C name of a named record; a routine's header
    VAR PARAMS: PTR(PARM_REC);
    VAR RESULT: TYP;
+   VAR DECL: NODE;                  % the routine, type or module declaration
+   VAR PREFIX: TEXT;                % T of T$NAME
+   VAR MODL: PTR(SYM_REC);        % the module it is declared in
+   VAR EXPORTED: BOOLEAN;
+   VAR GENERIC: BOOLEAN;            % a routine with ?, TYPE or routine parameters
+   VAR FRAMED: BOOLEAN;             % a routine whose locals live in a heap frame
+   VAR USES: NODE;                  % the variables a routine uses (4.1.1)
+   VAR INSTANCES: PTR(SYM_REC);     % of a generic routine
+   VAR BINDINGS: PTR(BIND_REC);     % of an instance
+   VAR ORIG: PTR(SYM_REC);          % an exported name, or T$NAME as NAME: the declaration
+   VAR MEMBERS: PTR(SYM_REC);       % the names declared in a module
+   VAR SAVED: PTR(SYM_REC);         % the module around an entered module
+   VAR OWNER: INTEGER;              % the closed scope it is declared in (4.1)
    VAR CHAIN: PTR(SYM_REC);         % next in the hash bucket
    VAR SNEXT: PTR(SYM_REC);         % next on the scope stack
 END RECORD;
@@ -187,15 +274,49 @@ TYPE PARM_REC = RECORD
    VAR NAME: TEXT;
    VAR MODE: INTEGER;
    VAR T: TYP;
+   VAR TS: NODE;                    % the formal's type-spec, of a generic routine
    VAR NEXT: PTR(PARM_REC);
 END RECORD;
 TYPE PARM = PTR(PARM_REC);
+
+% bounds, or the value of an argument of a record type (in LO; ANY for T(ANY))
+TYPE BND_REC = RECORD
+   VAR LO, HI: TEXT;
+   VAR MLO, MHI: MVAL;
+   VAR ANYARG: BOOLEAN;
+   VAR NEXT: PTR(BND_REC);
+END RECORD;
+TYPE BND = PTR(BND_REC);
+
+% a generic parameter and what it stands for in an instance (section 5)
+TYPE BIND_REC = RECORD
+   VAR NAME: TEXT;
+   VAR T: TYP;                      % a type, or ...
+   VAR C: TEXT;                     % ... the C of an attribute's value
+   VAR HASMV: BOOLEAN;
+   VAR MV: INTEGER;
+   VAR R: PTR(SYM_REC);             % a routine (routine parameters, WHERE)
+   VAR NEXT: PTR(BIND_REC);
+END RECORD;
+TYPE BIND = PTR(BIND_REC);
 
 % a translated expression: its C and its type
 TYPE ET = RECORD
    VAR C: TEXT;
    VAR T: TYP;
+   VAR LVAL: BOOLEAN;               % a variable: it may be assigned
+   VAR SELF: TEXT;                  % the C of the record a component belongs to
 END RECORD;
+
+% an actual argument of a call (4.3.2) or an operand of an operator (D.5)
+TYPE ARG_REC = RECORD
+   VAR E: NODE;                     % the expression, or nothing for an operand
+   VAR V: ET;                       % translated, if HAVE
+   VAR HAVE: BOOLEAN;
+   VAR MODE: INTEGER;               % M_IN, M_INOUT or M_OUT
+   VAR NEXT: PTR(ARG_REC);
+END RECORD;
+TYPE ARG = PTR(ARG_REC);
 
 % the value of a manifest expression, if it has one
 TYPE MVAL = RECORD
@@ -215,11 +336,37 @@ END RECORD;
 
 % the enclosing constructs a jump leaves: loops, guarded statements, handlers
 TYPE CTX_REC = RECORD
-   VAR KIND: INTEGER;               % 1 routine, 2 loop, 3 guarded, 4 handler
+   VAR KIND: INTEGER;               % 1 routine, 2 loop, 3 guarded, 4 handler, 5 label
    VAR NAME: TEXT;                  % exit label, frame or exception variable
+   VAR HANDLERS: NODE;              % of a guarded statement: its N_HANDLER list
    VAR NEXT: PTR(CTX_REC);
 END RECORD;
 TYPE CTX = PTR(CTX_REC);
+
+% a closed scope being translated: a routine, a path, or the segment (4.1)
+TYPE SCOPE_REC = RECORD
+   VAR LEVEL: INTEGER;
+   VAR R: SYM;                      % the routine, or nothing
+   VAR FRAMED: BOOLEAN;             % its objects live in the heap frame F
+   VAR FTYPE: TEXT;                 % the C struct of its frame
+   VAR FIELDS: BUF;                 % the fields of that struct
+   VAR UP: PTR(SCOPE_REC);          % the enclosing closed scope
+   VAR IMPORTS: NODE;               % N_ITEMS of its imports clause, or nothing
+   VAR SIGNALS: NODE;               % the exceptions it may signal
+   VAR RESULT: TYP;                 % of a function
+   VAR IS_PATH: BOOLEAN;
+END RECORD;
+
+% a closed scope for the rules of importing (4.1.1): routines, paths, modules
+TYPE ISCOPE_REC = RECORD
+   VAR ID: INTEGER;
+   VAR IMPORTS: NODE;               % N_ITEMS, or nothing
+   VAR SIGNALS: NODE;               % the signals clause
+   VAR NAME: TEXT;
+   VAR UP: PTR(ISCOPE_REC);
+END RECORD;
+TYPE ISCOPE = PTR(ISCOPE_REC);
+TYPE CSCOPE = PTR(SCOPE_REC);
 
 TYPE WORLD = RECORD
    VAR ARENA: ASCII_STR(ARENA_SIZE);
@@ -234,12 +381,22 @@ TYPE WORLD = RECORD
    VAR OUT: ARRAY [0:O_LAST] OF BUF;
    VAR CODE: BUF;                   % the body being translated
    VAR CTXS: CTX;
-   VAR RESULT: TYP;                 % of the function being translated
-   VAR IN_ROUTINE: BOOLEAN;
+   VAR CS: CSCOPE;                  % the closed scope being translated
+   VAR IS: ISCOPE;                  % the closed scope for importing
+   VAR NSCOPES: INTEGER;
+   VAR MODL: SYM;                 % the module being translated, if any
+   VAR BINDS: BIND;                 % of the generic instance being translated
+   VAR ROUNDED: BOOLEAN;            % in an expression qualified ROUNDED (3.2.4.1)
+   VAR MACHINE: BOOLEAN;            % in a machine-dependent part (4.5.5.2, 4.8)
    VAR SERIAL: INTEGER;
    VAR EXCS: NODE;                  % the exception names seen
-   VAR TY_INT, TY_BOOL, TY_STR, TY_VOID, TY_NIL, TY_ASCII: TYP;
-   VAR ASCII_LITS: NODE;
+   VAR TY_INT, TY_BOOL, TY_STR, TY_VOID, TY_NIL, TY_ASCII, TY_FLOAT, TY_BITS: TYP;
+   VAR TY_ROUNDINGS, TY_TYPE: TYP;
+   VAR PENDING: SYM;                % instances whose bodies are still to translate
+   VAR CNAMES: NODE;                % the C names of routines given so far
+   VAR ENUMS: SYM;                  % the enumerated type classes, linked by INSTANCES
+   VAR ARRAYS: SYM;                 % the array structs made so far, likewise
+   VAR RECS: SYM;                   % the record classes of parameterized types
 END RECORD;
 
 CONST W: PTR(WORLD) := NEW(WORLD);

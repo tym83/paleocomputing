@@ -175,14 +175,57 @@ PROCEDURE LEX ();
             END IF;
          END BLOCK;
          I := J;
-      ORIF IS_DIGIT (C) THEN
-         J := I;
-         V := 0;
-         LOOP UNTIL NOT IS_DIGIT (AT_SRC (J)) DO
-            V := V * 10 + AT_SRC (J) - 48;
-            J := J + 1;
-         END LOOP;
-         ADD_TOKEN (K_NUM, LINE, V, SOURCE_TEXT (I, J));
+      ORIF IS_DIGIT (C) ! (C = 46 & IS_DIGIT (AT_SRC (I + 1))) THEN   % [3-50] [3-51]
+         BLOCK
+            VAR KIND: INTEGER := K_NUM;
+            VAR SCALE: INTEGER := 0;
+            VAR NEG: BOOLEAN := FALSE;
+            J := I;
+            V := 0;
+            LOOP UNTIL NOT IS_DIGIT (AT_SRC (J)) DO
+               IF V < 100000000000000000 THEN
+                  V := V * 10 + AT_SRC (J) - 48;
+               END IF;
+               J := J + 1;
+            END LOOP;
+            IF AT_SRC (J) = 46 THEN                 % a decimal point
+               KIND := K_REAL;
+               J := J + 1;
+               LOOP UNTIL NOT IS_DIGIT (AT_SRC (J)) DO
+                  J := J + 1;
+               END LOOP;
+            END IF;
+            IF AT_SRC (J) = 69 & (IS_DIGIT (AT_SRC (J + 1)) ! ((AT_SRC (J + 1) = 43
+               ! AT_SRC (J + 1) = 45) & IS_DIGIT (AT_SRC (J + 2)))) THEN   % E exponent
+               KIND := K_REAL;
+               J := J + 2;
+               LOOP UNTIL NOT IS_DIGIT (AT_SRC (J)) DO
+                  J := J + 1;
+               END LOOP;
+            END IF;
+            BLOCK
+               CONST T: TEXT := SOURCE_TEXT (I, J);
+               IF AT_SRC (J) = 92 & AT_SRC (J + 1) = 83 THEN   % \S scale-spec
+                  KIND := K_FIX;
+                  J := J + 2;
+                  IF AT_SRC (J) = 45 THEN
+                     NEG := TRUE;
+                     J := J + 1;
+                  ORIF AT_SRC (J) = 43 THEN
+                     J := J + 1;
+                  END IF;
+                  LOOP UNTIL NOT IS_DIGIT (AT_SRC (J)) DO
+                     SCALE := SCALE * 10 + AT_SRC (J) - 48;
+                     J := J + 1;
+                  END LOOP;
+                  IF NEG THEN
+                     SCALE := -SCALE;
+                  END IF;
+                  V := SCALE;
+               END IF;
+               ADD_TOKEN (KIND, LINE, V, T);
+            END BLOCK;
+         END BLOCK;
          I := J;
       ELSE
          J := I + SYMBOL_LENGTH (I);

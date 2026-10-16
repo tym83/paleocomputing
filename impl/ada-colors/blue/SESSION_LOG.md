@@ -6,7 +6,9 @@ fixed point -> grow to the language of the 1978 specification -> tests and 1978 
 
 ## Current state
 - Spec read (PDF pp. 1361-1723). boot/blueboot.py (subset) -> bluec v1 (~3k lines BLUE):
-  genesis reproduced, fixed point holds, seed committed. tests/run.sh: 1 test.
+  genesis reproduced. bluec v2 (~9k lines): full Appendix A parser, new generator
+  (frames, modules, overloading, generics, fixed/float/bits, records with variants,
+  paths and semaphores) -- at its fixed point, seed refreshed. Features mostly untested.
 - rt: BLUE additions appended to paleo.{c,h} (exception names, 0-based strings, DUP,
   console). RED/GREEN fixpoints and tests re-run: identical.
 - Sources: /Users/tym83/projects/ada-colors-sources/blue-yellow/ (PDF + OCR text).
@@ -32,3 +34,10 @@ bitstrings, variants, imports checks, parallel paths.
 - bluec v1: one MAIN SEGMENT, state behind CONST W: PTR(WORLD); texts in a 64 MB arena;
   FMT1..FMT4 build C from patterns with @. Fixed point on the first try.
 - FROM and TO are reserved words (2.1.6): parameters had to be renamed.
+### v2: the whole grammar
+- Parser for all of Appendix A (REP specs parsed, RECORD_REP skipped).
+- Reserved words bit me again: MODULE, TAG, ANY, REP, NEEDS, PAR_BLOCK cannot be names.
+- A function may not have inout parameters: UNIFY keeps bindings behind a list head.
+- rt batch 2: fixed point with __int128, bitstrings as '0'/'1' strings, conversions,
+  semaphores (priority-ordered release), path activations (rt_b_act, trampoline sets a
+  thread-local self), virtual clock in microseconds.

@@ -1,0 +1,168 @@
+
+% ==== importing (4.1.1) and the exceptions a closed scope may signal (4.5.7) ===============
+% A closed scope -- a routine, a path, a module -- uses a variable of an enclosing
+% scope only if it imports it, for input or inout; it calls a routine that uses such a
+% variable only if it imports the variable or the routine. The segment scope is exempt
+% (4.4, example 2: the main program calls the operations of a module).
+
+FUNCTION IN_IDENTS (L: NODE, NAME: TEXT) RETURNS (BOOLEAN);
+   VAR P: NODE := L;
+   LOOP UNTIL P = NIL DO
+      IF TEQ (P@.NAME, NAME) THEN
+         RETURN TRUE;
+      END IF;
+      P := P@.NEXT;
+   END LOOP;
+   RETURN FALSE;
+END FUNCTION IN_IDENTS;
+
+% may the variable Y be used here? TRUE if it may also be changed
+FUNCTION CHECK_IMPORTED (Y: SYM, LINE: INTEGER) RETURNS (BOOLEAN);
+   CONST IS: ISCOPE := W@.IS;
+   IF Y@.KIND <> Y_VAR ! Y@.OWNER < 0 THEN
+      RETURN NOT Y@.INPUT;
+   END IF;
+   IF IS = NIL THEN
+      RETURN NOT Y@.INPUT;
+   END IF;
+   IF Y@.OWNER = IS@.ID ! IS@.ID = 0 THEN
+      RETURN NOT Y@.INPUT;
+   END IF;
+   IF IS@.IMPORTS <> NIL THEN
+      IF IN_IDENTS (IS@.IMPORTS@.B, Y@.NAME) THEN
+         RETURN NOT Y@.INPUT;
+      END IF;
+      IF IN_IDENTS (IS@.IMPORTS@.A, Y@.NAME) THEN
+         RETURN FALSE;                                % imported for input: a constant here
+      END IF;
+   END IF;
+   FAILT (LINE, 'a variable of an enclosing scope must be imported (4.1.1): ', Y@.NAME);
+END FUNCTION CHECK_IMPORTED;
+
+% the variables the routine Y imports, directly or through the routines it imports:
+% N_IDENT nodes, NAME the variable, IV the closed scope that declares it
+PROCEDURE COMPUTE_USES (Y: SYM);
+   CONST ITEMS: NODE := Y@.DECL@.E;
+   VAR HEAD, TAIL: NODE := NIL;
+   IF ITEMS = NIL THEN
+      RETURN;
+   END IF;
+   ADD_USES (ITEMS@.A # HEAD, TAIL);
+   ADD_USES (ITEMS@.B # HEAD, TAIL);
+   BLOCK                                             % the routines it imports
+      VAR R: NODE := ITEMS@.C;
+      LOOP UNTIL R = NIL DO
+         BLOCK
+            VAR Z: SYM := LOOKUP (R@.NAME);
+            IF Z = NIL THEN
+               FAILT (R@.LINE, 'an imported routine is not visible: ', R@.NAME);
+            END IF;
+            LOOP UNTIL Z = NIL DO
+               IF Z@.KIND = Y_ROUTINE THEN
+                  BLOCK
+                     CONST O: SYM := ORIGINAL (Z);
+                     VAR U: NODE := O@.USES;
+                     LOOP UNTIL U = NIL DO
+                        IF NOT IN_IDENTS (HEAD, U@.NAME) THEN
+                           BLOCK
+                              VAR N: NODE := NEW_NODE (N_IDENT, U@.LINE);
+                              N@.NAME := U@.NAME;
+                              N@.IV := U@.IV;
+                              ADD_LIST (N # HEAD, TAIL);
+                           END BLOCK;
+                        END IF;
+                        U := U@.NEXT;
+                     END LOOP;
+                  END BLOCK;
+               END IF;
+               Z := LOOKUP_NEXT (Z);
+            END LOOP;
+         END BLOCK;
+         R := R@.NEXT;
+      END LOOP;
+   END BLOCK;
+   Y@.USES := HEAD;
+END PROCEDURE COMPUTE_USES;
+
+PROCEDURE ADD_USES (L: NODE # HEAD, TAIL: NODE);
+   VAR P: NODE := L;
+   LOOP UNTIL P = NIL DO
+      BLOCK
+         CONST V: SYM := LOOKUP (P@.NAME);
+         VAR N: NODE := NEW_NODE (N_IDENT, P@.LINE);
+         IF V = NIL THEN
+            FAILT (P@.LINE, 'an imported name is not visible: ', P@.NAME);
+         END IF;
+         N@.NAME := P@.NAME;
+         N@.IV := V@.OWNER;
+         IF V@.KIND = Y_VAR THEN
+            ADD_LIST (N # HEAD, TAIL);
+         END IF;
+      END BLOCK;
+      P := P@.NEXT;
+   END LOOP;
+END PROCEDURE ADD_USES;
+
+% the variables a call of Y uses must be imported, or Y (4.1.1)
+PROCEDURE CHECK_CALL_IMPORTS (Y: SYM, LINE: INTEGER);
+   CONST IS: ISCOPE := W@.IS;
+   VAR U: NODE := Y@.USES;
+   IF IS = NIL THEN
+      RETURN;
+   END IF;
+   IF IS@.ID = 0 THEN
+      RETURN;
+   END IF;
+   LOOP UNTIL U = NIL DO
+      IF U@.IV <> IS@.ID THEN
+         IF IS@.IMPORTS = NIL THEN
+            FAIL (LINE, 'the routine ' !! STR (Y@.NAME, Y@.NAME.LEN) !! ' uses the variable '
+                  !! STR (U@.NAME, U@.NAME.LEN) !! ': import one of them (4.1.1)');
+         END IF;
+         IF NOT (IN_IDENTS (IS@.IMPORTS@.A, U@.NAME) ! IN_IDENTS (IS@.IMPORTS@.B, U@.NAME)
+               ! IN_IDENTS (IS@.IMPORTS@.C, Y@.NAME) ! IN_IDENTS (IS@.IMPORTS@.C, BASE_NAME (Y)))
+            THEN
+            FAIL (LINE, 'the routine ' !! STR (Y@.NAME, Y@.NAME.LEN) !! ' uses the variable '
+                  !! STR (U@.NAME, U@.NAME.LEN) !! ': import one of them (4.1.1)');
+         END IF;
+      END IF;
+      U := U@.NEXT;
+   END LOOP;
+END PROCEDURE CHECK_CALL_IMPORTS;
+
+% NAME of T$NAME
+FUNCTION BASE_NAME (Y: SYM) RETURNS (TEXT);
+   IF Y@.PREFIX.LEN = 0 THEN
+      RETURN Y@.NAME;
+   END IF;
+   RETURN MKN (STR (Y@.NAME, Y@.NAME.LEN)[Y@.PREFIX.LEN + 1 : Y@.NAME.LEN - 1]);
+END FUNCTION BASE_NAME;
+
+% is there a handler for the exception NAME around here, in this closed scope, or does
+% the closed scope signal it (3.5.6.1, 4.5.7)?
+FUNCTION HANDLER_EXISTS (NAME: TEXT) RETURNS (BOOLEAN);
+   VAR C: CTX := W@.CTXS;
+   LOOP UNTIL C = NIL DO
+      IF C@.KIND = 1 THEN
+         EXIT;
+      END IF;
+      IF C@.KIND = 3 THEN
+         BLOCK
+            VAR H: NODE := C@.HANDLERS;
+            LOOP UNTIL H = NIL DO
+               IF IN_IDENTS (H@.A, NAME) THEN
+                  RETURN TRUE;
+               END IF;
+               H := H@.NEXT;
+            END LOOP;
+         END BLOCK;
+      END IF;
+      C := C@.NEXT;
+   END LOOP;
+   IF W@.IS <> NIL THEN
+      IF IN_IDENTS (W@.IS@.SIGNALS, NAME) THEN
+         RETURN TRUE;
+      END IF;
+   END IF;
+   RETURN TEQS (NAME, 'TERMINATED');
+END FUNCTION HANDLER_EXISTS;
