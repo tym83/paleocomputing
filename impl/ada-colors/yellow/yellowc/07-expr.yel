@@ -321,7 +321,7 @@
       IF s^.readonly THEN RETURN FALSE ENDIF;
       RETURN Real(s)^.kind = S_VAR
     ENDIF;
-    IF n^.kind = N_DEREF THEN RETURN TRUE ENDIF;
+    IF n^.kind = N_DEREF THEN RETURN n^.flag = 0 ENDIF;
     IF n^.kind = N_INDEX THEN RETURN IsVariable(n^.a) ENDIF;
     IF n^.kind = N_SEL THEN
       IF NOT IsVariable(n^.a) THEN RETURN FALSE ENDIF;
@@ -468,6 +468,9 @@
         ST(n^.name);
         code := SE()
       ENDIF
+    ELSIF (k = N_DEREF) AND UserOp(n, P_UP, n^.a, Node NIL, code, r) THEN
+      (* ^ exported for an opaque pointer, as DerefRpointer AS ^ (p.1137) *)
+      n^.flag := 1
     ELSIF k = N_DEREF THEN
       Expr(n^.a, Rep NIL, c, a);
       IF a^.kind # R_PTR THEN FailS(n^.line, "^ of something that is not a pointer") ENDIF;

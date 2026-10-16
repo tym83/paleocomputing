@@ -1,0 +1,3 @@
+;
+Write(f(Red)); Write(f(Colors Orange)); Write(f(Lemon)); Write(f(Flavors Orange)); WriteLn()
+ENDMODULE Outer

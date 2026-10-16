@@ -1,0 +1,18 @@
+(* Part Four (Design Discussion) VI.H "Dynamic Types", p.1137 (D-12): a *)
+(* safe pointer by encapsulation *)
+MODULE DefineRpointer
+  IMPORT R;
+  EXPORT OPAQUE Rpointer;
+  EXPORT =, :=, #, NewRpointer, DerefRpointer AS ^;
+  REPRESENTATION Rpointer = POINTER(R);
+  PROCEDURE NewRpointer RETURNS Rpointer (CONST Init: R)
+    VAR Answer: Rpointer;
+    NEW(Answer);
+    Answer^ := Init;
+    RETURN Answer;
+  ENDPROCEDURE NewRpointer;
+
+  FUNCTION DerefRpointer RETURNS R (CONST RP: Rpointer)
+    RETURN RP^;
+  ENDFUNCTION DerefRpointer;
+ENDMODULE DefineRpointer
