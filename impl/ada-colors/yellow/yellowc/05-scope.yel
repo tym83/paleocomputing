@@ -79,9 +79,22 @@
     RETURN Sym NIL
   ENDPROCEDURE FindHere;
 
+  (* two modules of one scope may export the same name: it can then be *)
+  (* used only through FROM (X.B.4, p.1053) *)
   PROCEDURE Lookup RETURNS Sym (CONST name: Txt; CONST line: INT)
     VAR s: Sym := Find(name);
+        p: Sym;
     IF s = Sym NIL THEN FailN(line, name, " is not declared here") ENDIF;
+    IF s^.kind = S_EXPORT THEN
+      p := s^.chain;
+      WHILE p # Sym NIL DO
+        IF (p^.name = name) AND (p^.depth = s^.depth) AND (p^.kind = S_EXPORT) AND
+           (Real(p) # Real(s)) AND (Real(s)^.kind # S_LIT) THEN
+          FailN(line, name, " is exported here by two modules: name it with FROM (X.B.4)")
+        ENDIF;
+        p := p^.chain
+      ENDWHILE
+    ENDIF;
     RETURN s
   ENDPROCEDURE Lookup;
 
@@ -111,7 +124,9 @@
   PROCEDURE Define (CONST s: Sym; CONST line: INT)
     VAR old: Sym := FindHere(s^.name);
         h: INT := s^.name MOD 8192;
-    IF (old # Sym NIL) AND NOT ((old^.kind = S_LIT) AND (s^.kind = S_LIT)) THEN
+    IF (old # Sym NIL) AND NOT ((old^.kind = S_LIT) AND (s^.kind = S_LIT)) AND
+       NOT ((s^.kind = S_ROUTINE) AND (s^.alt = old)) AND
+       NOT ((s^.kind = S_EXPORT) AND (old^.kind = S_EXPORT)) THEN
       FailN(line, s^.name, " is declared twice in this scope")
     ENDIF;
     s^.depth := Depth;

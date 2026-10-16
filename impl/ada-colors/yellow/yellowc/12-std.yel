@@ -153,6 +153,7 @@
       NArgs(n, 1);
       Expr(Arg(n, 1), Rep NIL, a, ra);
       IF NOT IsDiscrete(ra) THEN FailN(n^.line, n^.name, " of something that is not integer or scalar") ENDIF;
+      IF ra^.elem # Rep NIL THEN ra := ra^.elem ENDIF;
       IF ((f = F_FIRST) OR (f = F_LAST)) AND (ra^.kind = R_INT) THEN
         FailS(n^.line, "FIRST and LAST apply to ordered enumerations and alphabets (XI)")
       ENDIF;

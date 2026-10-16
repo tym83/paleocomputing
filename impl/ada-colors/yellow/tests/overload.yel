@@ -1,0 +1,59 @@
+(* overloading: EXTENDS, REPLACES, operators and free operators (X.A.1, VIII.A) *)
+MODULE Overload
+  IMPORT TextIO, StandardImplementationPrelude;
+  REPRESENTATION
+    Colors = UNORDERED (Red, Orange, Yellow);
+    Flavors = UNORDERED (Lemon, Orange, Lime);
+    Vec = RECORD VAR x, y: INTEGER64 ENDRECORD;
+
+  FUNCTION Name RETURNS INTEGER64 (CONST c: Colors)
+    RETURN 1
+  ENDFUNCTION Name;
+
+  FUNCTION EXTENDS Name RETURNS INTEGER64 (CONST f: Flavors)
+    RETURN 2
+  ENDFUNCTION Name;
+
+  FUNCTION EXTENDS + RETURNS Vec (CONST a, b: Vec)
+    RETURN Vec(a.x + b.x, a.y + b.y)
+  ENDFUNCTION +;
+
+  (* a free operator: the language gives it no meaning (VIII.A) *)
+  FUNCTION EXTENDS ** RETURNS INTEGER64 (CONST a, b: INTEGER64)
+    VAR r: INTEGER64 := 1;
+    FOR i: INTEGER [1..b] DO r := r * a ENDFOR;
+    RETURN r
+  ENDFUNCTION **;
+
+  FUNCTION EXTENDS = RETURNS BOOLEAN (CONST a, b: Vec)
+    RETURN a.x = b.x
+  ENDFUNCTION =;
+
+  PROCEDURE Show (CONST v: Vec)
+    Write(v.x); Write(","); Write(v.y);
+    RETURN
+  ENDPROCEDURE Show;
+
+  VAR v: Vec := Vec(1, 2);
+
+  Write(Name(Red)); Write(Name(Lime)); Write(Name(Colors Orange)); Write(Name(Flavors Orange));
+  WriteLn();
+  Show(v + Vec(10, 20)); WriteLn();
+  Write(2 ** 10); WriteLn();
+  Write(Vec(1, 5) = Vec(1, 6)); WriteLn();
+  Write(3 + 4); WriteLn();
+  BEGIN
+    (* an inner scope may replace one definition for its parameter types *)
+    FUNCTION REPLACES Name RETURNS INTEGER64 (CONST c: Colors)
+      RETURN 10
+    ENDFUNCTION Name;
+    Write(Name(Yellow)); Write(" "); Write(Name(Lemon)); WriteLn()
+  END;
+  BEGIN
+    (* without EXTENDS or REPLACES a declaration hides the others *)
+    FUNCTION Name RETURNS INTEGER64 (CONST n: INTEGER64)
+      RETURN n
+    ENDFUNCTION Name;
+    Write(Name(42)); WriteLn()
+  END
+ENDMODULE Overload

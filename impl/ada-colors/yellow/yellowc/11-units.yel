@@ -213,6 +213,7 @@
       next := Alias(s^.name, s);
       next^.readonly := s^.readonly;
       IF FindHere(s^.name) = Sym NIL THEN Define(next, d^.line)
+      ELSIF (FindHere(s^.name)^.kind = S_EXPORT) AND (Real(FindHere(s^.name)) # Real(s)) THEN Define(next, d^.line)
       ELSIF Real(s)^.kind # S_LIT THEN FailN(d^.line, s^.name, " is exported into a scope that has it already")
       ENDIF;
       s := s^.mnext

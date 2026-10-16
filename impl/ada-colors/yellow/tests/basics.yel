@@ -1,0 +1,47 @@
+(* integers, booleans, characters, enumerations, loops and selections *)
+MODULE Basics
+  IMPORT TextIO, StandardImplementationPrelude;
+  REPRESENTATION
+    Small = INTEGER [1..10];
+    Day = ORDERED (Monday, Tuesday, Wednesday, Thursday, Friday);
+    Fruit = UNORDERED (Lemon, Blueberry, Strawberry);
+  VAR
+    i: Small := 1;
+    total: INTEGER64 := 0;
+    d: Day;
+    f: Fruit := Blueberry;
+    c: ASCII := 'A';
+
+  FUNCTION Square RETURNS INTEGER64 (CONST x: INTEGER64)
+    RETURN x * x
+  ENDFUNCTION Square;
+
+  WHILE i < 10 DO
+    total := total + Square(i);
+    i := i + 1
+  ENDWHILE;
+  Write("sum of squares 1..9 = "); Write(total); WriteLn();
+  Write(7 DIV 2); Write(" "); Write(-7 DIV 2); Write(" "); Write(-7 MOD 2); Write(" ");
+  Write(7 MOD -2); WriteLn();
+  FOR k: Day DO
+    SELECT k
+      CASE Monday, Wednesday, Friday -> Write("M")
+      CASE Tuesday -> Write("T")
+      ELSE Write("x")
+    ENDSELECT
+  ENDFOR;
+  WriteLn();
+  d := SUCC(Monday);
+  IF (d = Tuesday) AND (d < Friday) AND (FIRST(d) = Monday) AND (LAST(d) = Friday) THEN
+    Write("ordered ok")
+  ENDIF;
+  WriteLn();
+  IF f # Lemon THEN Write("unordered ok") ENDIF;
+  WriteLn();
+  FOR ch: ASCII ['a'..'e'] DO Write(ch) ENDFOR;
+  Write(SUCC(c)); Write('LF');
+  Write("quote 'DQ'x'DQ' and 'SQ'y'SQ'"); WriteLn();
+  Write(BASE16 FF); Write(" "); Write(BASE8 777); Write(" "); Write(BASE2 1010); WriteLn();
+  Write((3 > 2) AND NOT (2 > 3)); WriteLn();
+  Write("one " "string"); WriteLn()
+ENDMODULE Basics

@@ -161,7 +161,7 @@
     v := 0;
     FOR i: INTEGER [mstart..mend - 1] DO
       d := DigitVal(Pool[i]);
-      IF v > (4611686018427387903 DIV b) THEN LexError("integer literal too large") ENDIF;
+      IF v > ((LARGEST - d) DIV b) THEN LexError("integer literal too large") ENDIF;
       v := (v * b) + d
     ENDFOR;
     IF neg THEN v := -v ENDIF;

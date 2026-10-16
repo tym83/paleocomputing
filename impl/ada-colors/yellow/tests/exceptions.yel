@@ -1,0 +1,94 @@
+(* exceptions: handlers, PROPAGATE_EXCEPTION and traps (IX.A.8, X.F) *)
+MODULE Exceptions
+  IMPORT TextIO, StandardImplementationPrelude;
+  VAR n: INTEGER [0..5] := 0;
+      zero: INTEGER64 := 0;
+
+  PROCEDURE Fail (CONST k: INTEGER64)
+    IF k = 1 THEN PROPAGATE_EXCEPTION singular_matrix ENDIF;
+    IF k = 2 THEN PROPAGATE_EXCEPTION file_error ENDIF;
+    RETURN
+  ENDPROCEDURE Fail;
+
+  (* a handler case completes the routine: here with RETURN *)
+  PROCEDURE Try RETURNS INTEGER64 (CONST k: INTEGER64)
+    EXCEPTION
+      CASE singular_matrix -> RETURN 10
+      ELSE RETURN 20
+    ENDEXCEPTION;
+    Fail(k);
+    RETURN 0
+  ENDPROCEDURE Try;
+
+  (* PROPAGATE_EXCEPTION leaves the block it is in: its own handler is not *)
+  (* searched (p.1039: "within the dynamically enclosing context") *)
+  PROCEDURE Own RETURNS INTEGER64 ()
+    EXCEPTION CASE mine -> RETURN 1
+    ENDEXCEPTION;
+    PROPAGATE_EXCEPTION mine
+  ENDPROCEDURE Own;
+
+  PROCEDURE Reraise ()
+    EXCEPTION
+      CASE singular_matrix -> Write("inner handler; "); PROPAGATE_EXCEPTION
+    ENDEXCEPTION;
+    Fail(1);
+    RETURN
+  ENDPROCEDURE Reraise;
+
+  PROCEDURE NoReturn ()
+    n := 1
+  ENDPROCEDURE NoReturn;
+
+  Write(Try(0)); Write(" "); Write(Try(1)); Write(" "); Write(Try(2)); WriteLn();
+  BEGIN
+    EXCEPTION CASE mine -> Write("mine reached the caller"); WriteLn()
+    ENDEXCEPTION;
+    Write(Own())
+  END;
+  BEGIN
+    EXCEPTION CASE singular_matrix -> Write("outer handler"); WriteLn()
+    ENDEXCEPTION;
+    Reraise()
+  END;
+  BEGIN
+    EXCEPTION CASE OUT_OF_RANGE -> Write("range trap; n is still "); Write(n); WriteLn()
+    ENDEXCEPTION;
+    n := 6
+  END;
+  BEGIN
+    EXCEPTION CASE ZERO_DIVIDE -> Write("division by zero"); WriteLn()
+    ENDEXCEPTION;
+    Write(10 DIV zero)
+  END;
+  BEGIN
+    (* ASSERT is IF NOT e THEN PROPAGATE_EXCEPTION INVALID_ASSERTION (p.1038): *)
+    (* it too leaves its block *)
+    EXCEPTION CASE INVALID_ASSERTION -> Write("assertion"); WriteLn()
+    ENDEXCEPTION;
+    BEGIN ASSERT n = 3 END
+  END;
+  BEGIN
+    EXCEPTION CASE OVERFLOW -> Write("overflow"); WriteLn()
+    ENDEXCEPTION;
+    Write(LARGESTINTEGER + 1)
+  END;
+  BEGIN
+    EXCEPTION CASE NO_RETURN -> Write("fell out of a procedure"); WriteLn()
+    ENDEXCEPTION;
+    NoReturn()
+  END;
+  BEGIN
+    (* a second exception in a handler is handled by the handler's own block *)
+    EXCEPTION CASE first -> 
+      BEGIN
+        EXCEPTION CASE second -> Write("second handled, first done"); WriteLn()
+        ENDEXCEPTION;
+        BEGIN PROPAGATE_EXCEPTION second END
+      END
+    ENDEXCEPTION;
+    Fail(0);
+    BEGIN PROPAGATE_EXCEPTION first END
+  END;
+  PROPAGATE_EXCEPTION never_handled
+ENDMODULE Exceptions
