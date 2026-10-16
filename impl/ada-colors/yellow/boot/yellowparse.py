@@ -118,7 +118,9 @@ class Parser:
         line = self.tok.line
         name = self.extended_id()
         frm = alias = None
-        if self.accept("FROM"):
+        # FROM is not reserved (Appendix A) but rules 4-5 use it
+        if self.tok.kind == "id" and self.tok.text == "FROM":
+            self.take()
             frm = self.ident()
         if self.accept("AS"):
             alias = self.extended_id()

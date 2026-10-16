@@ -1,0 +1,478 @@
+(* yellowc -- a translator for YELLOW (SRI International, 1978), in YELLOW. *)
+(* *)
+(* It reads a program on the standard input -- a sequence of segments, *)
+(* each a module (Language Report XIII.A) -- and writes C that is linked *)
+(* with rt/paleo.c. References such as "L-55" or "p.1039" are to the 1978 *)
+(* report as reprinted in DTIC ADB950587. The whole translator is one *)
+(* module; its text is kept in several files joined in name order. *)
+(* *)
+(* YELLOW has no character strings beyond fixed arrays, so every piece of *)
+(* text lives in one large pool of characters and is named by a number *)
+(* (a Txt). Names are interned: two equal names have the same number. *)
+
+MODULE yellowc
+
+  REPRESENTATION
+    INT = INTEGER [-4611686018427387904..4611686018427387904];
+    Txt = INTEGER [0..4000000];
+    Text = FILE (ASCII);
+
+    Node = POINTER (NodeRec);
+    Rep = POINTER (RepRec);
+    Sym = POINTER (SymRec);
+    Line = POINTER (LineRec);
+    Field = POINTER (FieldRec);
+    Param = POINTER (ParamRec);
+    Scope = POINTER (ScopeRec);
+
+    (* the tree the parser builds *)
+    NodeRec = RECORD
+      VAR kind, line, ival, flag: INT;
+      VAR name, text: Txt;
+      VAR a, b, c, d, e, next: Node;
+      VAR rep: Rep;
+      VAR sym: Sym
+    ENDRECORD;
+
+    (* a representation (VI): a type with what the C needs to hold it *)
+    RepRec = RECORD
+      VAR kind: INT;
+      VAR tid: Txt;               (* the type: equal for two representations of one type *)
+      VAR tname: Txt;             (* how to name it in a message *)
+      VAR lo, hi: Txt;            (* C text of the bounds of a discrete representation *)
+      VAR mlo, mhi: INT;          (* the bounds when they are manifest *)
+      VAR hasm: BOOLEAN;
+      VAR scale, prec: Txt;       (* FIXED and FLOATING *)
+      VAR elem: Rep;              (* arrays: components; pointers, files, sets: base *)
+      VAR idx: Rep;               (* arrays: the index representations, by link *)
+      VAR nidx: INT;
+      VAR link: Rep;              (* the next index of an array *)
+      VAR lits: Node;             (* enumerations and alphabets: the literals *)
+      VAR nlits: INT;
+      VAR fields: Field;          (* records *)
+      VAR selector: Field;        (* variant records: the case-selection component *)
+      VAR cname: Txt;             (* records: the C struct *)
+      VAR dname: Txt;             (* arrays, records: the run-time descriptor ... *)
+      VAR dlevel: INT;            (* ... and the level of the frame that holds it *)
+      VAR deep: BOOLEAN;          (* holds array buffers *)
+      VAR abstract: BOOLEAN;      (* a TYPE that has no representation yet *)
+      VAR opaque: BOOLEAN;        (* exported OPAQUE: no components outside *)
+      VAR ordered: BOOLEAN;
+      VAR forward: Txt;           (* pointers: the base named before it is declared *)
+      VAR fwdscope: INT;
+      VAR monitor: Sym;           (* signals: the monitor they belong to *)
+      VAR serial: INT
+    ENDRECORD;
+
+    FieldRec = RECORD
+      VAR name: Txt;
+      VAR rep: Rep;
+      VAR isconst: BOOLEAN;
+      VAR variant: INT;           (* 0 in the common part, else the case it belongs to *)
+      VAR labels: Node;           (* the case labels of its variant *)
+      VAR next: Field
+    ENDRECORD;
+
+    ParamRec = RECORD
+      VAR name: Txt;
+      VAR cls: INT;               (* CONST OUT VAR *)
+      VAR rep: Rep;
+      VAR cname: Txt;
+      VAR next: Param
+    ENDRECORD;
+
+    (* a declared entity *)
+    SymRec = RECORD
+      VAR kind: INT;
+      VAR name: Txt;
+      VAR rep: Rep;
+      VAR cname: Txt;             (* C name of the storage, or of the routine *)
+      VAR level: INT;             (* the frame that holds it: 0 is global *)
+      VAR byref: BOOLEAN;         (* the storage holds a pointer to the entity *)
+      VAR readonly: BOOLEAN;
+      VAR mval: INT;
+      VAR hasmv: BOOLEAN;
+      VAR params: Param;
+      VAR nparams: INT;
+      VAR ret: Rep;
+      VAR func: BOOLEAN;
+      VAR decl: Node;
+      VAR depth: INT;             (* the scope it is declared in *)
+      VAR target: Sym;            (* imports, exports and renamings *)
+      VAR members: Sym;           (* modules: what they export *)
+      VAR mnext: Sym;
+      VAR chain: Sym;             (* the next with the same hash *)
+      VAR stack: Sym;             (* the next declared in the same scope *)
+      VAR alt: Sym;               (* overloaded routines: the next definition *)
+      VAR monitor: Sym;           (* routines and processes declared in a monitor *)
+      VAR serial: INT
+    ENDRECORD;
+
+    ScopeRec = RECORD
+      VAR syms: Sym;
+      VAR closed: BOOLEAN;        (* a module: only imports come in *)
+      VAR module: Sym;
+      VAR level: INT;
+      VAR deferred: Node;         (* routines whose bodies wait for the declarations *)
+      VAR up: Scope
+    ENDRECORD;
+
+    LineRec = RECORD VAR t: Txt; VAR next: Line ENDRECORD;
+    Buf = RECORD VAR head, tail: Line ENDRECORD;
+
+    Chars = ARRAY (INTEGER [1..64000000] OF ASCII);
+    TxtTable = ARRAY (INTEGER [1..4000000] OF INT);
+    TokTable = ARRAY (INTEGER [1..2000000] OF INT);
+    HashTable = ARRAY (INTEGER [0..262143] OF Txt);
+    SymTable = ARRAY (INTEGER [0..8191] OF Sym);
+
+  CONST
+    (* token kinds *)
+    K_EOF: INT = 0; K_ID: INT = 1; K_KW: INT = 2; K_OP: INT = 3;
+    K_INT: INT = 4; K_FIXED: INT = 5; K_FLOAT: INT = 6; K_CHAR: INT = 7; K_STR: INT = 8;
+
+    (* the reserved words, numbered as they are interned first (Appendix A) *)
+    W_ALIGNMENT: INT = 1; W_ALPHABET: INT = 2; W_AND: INT = 3; W_ARRAY: INT = 4;
+    W_AS: INT = 5; W_ASSERT: INT = 6; W_AT: INT = 7; W_BASE2: INT = 8; W_BASE8: INT = 9;
+    W_BASE10: INT = 10; W_BASE16: INT = 11; W_BEGIN: INT = 12; W_CASE: INT = 13;
+    W_CONST: INT = 14; W_DIMENSIONS: INT = 15; W_DIV: INT = 16; W_DO: INT = 17;
+    W_ELSE: INT = 18; W_ELSIF: INT = 19; W_END: INT = 20; W_ENDEXCEPTION: INT = 21;
+    W_ENDFOR: INT = 22; W_ENDFUNCTION: INT = 23; W_ENDIF: INT = 24; W_ENDLOOP: INT = 25;
+    W_ENDMODULE: INT = 26; W_ENDMONITOR: INT = 27; W_ENDPROCEDURE: INT = 28;
+    W_ENDPROCESS: INT = 29; W_ENDRECORD: INT = 30; W_ENDSELECT: INT = 31;
+    W_ENDTEMPLATE: INT = 32; W_ENDWHILE: INT = 33; W_EXCEPTION: INT = 34; W_EXIT: INT = 35;
+    W_EXPORT: INT = 36; W_EXTENDS: INT = 37; W_FILE: INT = 38; W_FOR: INT = 39;
+    W_FUNCTION: INT = 40; W_GOTO: INT = 41; W_IF: INT = 42; W_IMPORT: INT = 43; W_IN: INT = 44;
+    W_INLINE: INT = 45; W_INSTANCE: INT = 46; W_INSTANCES: INT = 47; W_LABEL: INT = 48;
+    W_LOOP: INT = 49; W_MOD: INT = 50; W_MODULE: INT = 51; W_MONITOR: INT = 52; W_NIL: INT = 53;
+    W_NOT: INT = 54; W_OF: INT = 55; W_OPAQUE: INT = 56; W_OR: INT = 57; W_ORDERED: INT = 58;
+    W_OUT: INT = 59; W_PACKED: INT = 60; W_POINTER: INT = 61; W_PRECISION: INT = 62;
+    W_PRIORITY: INT = 63; W_PROCEDURE: INT = 64; W_PROCESS: INT = 65;
+    W_PROPAGATE_EXCEPTION: INT = 66; W_READONLY: INT = 67; W_RECORD: INT = 68;
+    W_REPLACES: INT = 69; W_REPRESENTATION: INT = 70; W_RETURN: INT = 71; W_RETURNS: INT = 72;
+    W_SCALE: INT = 73; W_SELECT: INT = 74; W_SET: INT = 75; W_SIMULATED_TIME: INT = 76;
+    W_SIZE: INT = 77; W_SPACE: INT = 78; W_TEMPLATE: INT = 79; W_TERMINATE_PROCESS: INT = 80;
+    W_THEN: INT = 81; W_TRANSPARENT: INT = 82; W_TYPE: INT = 83; W_UNORDERED: INT = 84;
+    W_VAR: INT = 85; W_WHILE: INT = 86; W_XOR: INT = 87;
+    NKW: INT = 87;
+
+    (* the punctuation marks, longest first, numbered after the words *)
+    P_LE4: INT = 88; P_GE4: INT = 89; P_NE3: INT = 90; P_EQ3: INT = 91; P_LT3: INT = 92;
+    P_GT3: INT = 93; P_LE3: INT = 94; P_GE3: INT = 95; P_MUL3: INT = 96; P_DIV3: INT = 97;
+    P_SUB3: INT = 98; P_ADD3: INT = 99; P_ASSIGN: INT = 100; P_ARROW: INT = 101;
+    P_DOTDOT: INT = 102; P_LE: INT = 103; P_GE: INT = 104; P_NE2: INT = 105; P_EQ2: INT = 106;
+    P_LT2: INT = 107; P_GT2: INT = 108; P_MUL2: INT = 109; P_DIV2: INT = 110; P_SUB2: INT = 111;
+    P_ADD2: INT = 112; P_NE: INT = 113; P_PLUS: INT = 114; P_MINUS: INT = 115; P_STAR: INT = 116;
+    P_SLASH: INT = 117; P_EQ: INT = 118; P_LT: INT = 119; P_GT: INT = 120; P_LPAR: INT = 121;
+    P_RPAR: INT = 122; P_LBRACK: INT = 123; P_RBRACK: INT = 124; P_COMMA: INT = 125;
+    P_SEMI: INT = 126; P_COLON: INT = 127; P_DOT: INT = 128; P_UP: INT = 129;
+    NPUNCT: INT = 129;
+
+    (* nodes: declarations *)
+    N_MODULE: INT = 1; N_ITEM: INT = 2; N_BLOCK: INT = 3; N_HANDLER: INT = 4; N_HCASE: INT = 5;
+    N_CONST: INT = 6; N_VAR: INT = 7; N_LABEL: INT = 8; N_TYPE: INT = 9; N_REPDECL: INT = 10;
+    N_ROUTINE: INT = 11; N_PARAM: INT = 12; N_TEMPLATE: INT = 13; N_INSTANCE: INT = 14;
+    N_PROCESS: INT = 15; N_NAMEL: INT = 16;
+    (* nodes: representations *)
+    N_RNAME: INT = 20; N_RENUM: INT = 21; N_RALPHA: INT = 22; N_RARRAY: INT = 23;
+    N_RRECORD: INT = 24; N_RFILE: INT = 25; N_RPOINTER: INT = 26; N_RSET: INT = 27;
+    N_RUARRAY: INT = 28; N_RSPACE: INT = 29; N_QUAL: INT = 30; N_FIELD: INT = 31;
+    N_VARIANT: INT = 32; N_VCASE: INT = 33;
+    (* nodes: statements *)
+    N_ASSIGN: INT = 40; N_CALLST: INT = 41; N_ASSERT: INT = 42; N_GOTO: INT = 43;
+    N_EXIT: INT = 44; N_RETURN: INT = 45; N_TERMINATE: INT = 46; N_PROPAGATE: INT = 47;
+    N_IF: INT = 48; N_SELECT: INT = 49; N_WHILE: INT = 50; N_FOR: INT = 51; N_LOOP: INT = 52;
+    N_BEGIN: INT = 53; N_ARM: INT = 54;
+    (* nodes: expressions *)
+    N_INT: INT = 60; N_FIXED: INT = 61; N_FLOAT: INT = 62; N_CHARLIT: INT = 63;
+    N_STRLIT: INT = 64; N_NIL: INT = 65; N_NAME: INT = 66; N_CALL: INT = 67; N_SEL: INT = 68;
+    N_INDEX: INT = 69; N_DEREF: INT = 70; N_NOT: INT = 71; N_NEG: INT = 72; N_BIN: INT = 73;
+    N_PAREN: INT = 74;
+
+    (* kinds of representation *)
+    R_INT: INT = 1; R_FIXED: INT = 2; R_FLOAT: INT = 3; R_BOOL: INT = 4; R_ENUM: INT = 5;
+    R_ALPHA: INT = 6; R_ARRAY: INT = 7; R_RECORD: INT = 8; R_PTR: INT = 9; R_FILE: INT = 10;
+    R_SET: INT = 11; R_SIGNAL: INT = 12; R_SEM: INT = 13; R_UARRAY: INT = 14; R_STR: INT = 15;
+    R_NIL: INT = 16; R_VOID: INT = 17; R_SPACE: INT = 18; R_ANY: INT = 19;
+
+    (* kinds of entity *)
+    S_VAR: INT = 1; S_CONST: INT = 2; S_REP: INT = 3; S_TYPE: INT = 4; S_LIT: INT = 5;
+    S_ROUTINE: INT = 6; S_MODULE: INT = 7; S_TEMPLATE: INT = 8; S_PROCESS: INT = 9;
+    S_LABEL: INT = 10; S_STD: INT = 11; S_EXPORT: INT = 12;
+
+    (* parameter classes *)
+    C_CONST: INT = 1; C_OUT: INT = 2; C_VAR: INT = 3;
+
+  VAR
+    Input, Output: Text;
+    Pool: Chars;
+    PoolTop: INT := 0;
+    TS, TL: TxtTable;               (* start and length of each Txt *)
+    NTxt: INT := 0;
+    Hash: HashTable;
+    Building: BOOLEAN := FALSE;      (* a Txt is being built: SB .. SE *)
+    BStart: INT := 0;
+    Serial: INT := 0;
+    Code: ARRAY (ASCII OF INT);      (* the position of a character in ASCII *)
+    Chr: ARRAY (INTEGER [0..127] OF ASCII);
+
+    (* sections of the C program *)
+    OTypes, OStructs, OFrames, OGlobals, OProtos, OFuncs, OInit: Buf;
+    Body: Buf;                       (* the routine being written *)
+    Locals: Buf;                     (* the fields of its frame *)
+
+    CurLine: INT := 0;               (* for messages *)
+
+  (* ---- characters ------------------------------------------------------ *)
+
+  PROCEDURE InitChars ()
+    VAR n: INT := 0;
+    FOR c: ASCII DO
+      Code[c] := n;
+      Chr[n] := c;
+      n := n + 1
+    ENDFOR;
+    RETURN
+  ENDPROCEDURE InitChars;
+
+  FUNCTION IsLetter RETURNS BOOLEAN (CONST c: ASCII)
+    RETURN ((c >= 'A') AND (c <= 'Z')) OR ((c >= 'a') AND (c <= 'z')) OR (c = '_')
+  ENDFUNCTION IsLetter;
+
+  FUNCTION IsDigit RETURNS BOOLEAN (CONST c: ASCII)
+    RETURN (c >= '0') AND (c <= '9')
+  ENDFUNCTION IsDigit;
+
+  (* ---- the pool of text -------------------------------------------------- *)
+
+  PROCEDURE PoolAdd (CONST c: ASCII)
+    PoolTop := PoolTop + 1;
+    Pool[PoolTop] := c;
+    RETURN
+  ENDPROCEDURE PoolAdd;
+
+  (* start building a Txt; SA, SC, ST, SI add to it; SE finishes it *)
+  PROCEDURE SB ()
+    IF Building THEN PROPAGATE_EXCEPTION nested_text ENDIF;
+    Building := TRUE;
+    BStart := PoolTop;
+    RETURN
+  ENDPROCEDURE SB;
+
+  PROCEDURE SA (CONST s: ARRAY (1 DIMENSIONS OF ASCII))
+    FOR i: INTEGER [LOW(s, 1)..HIGH(s, 1)] DO PoolAdd(s[i]) ENDFOR;
+    RETURN
+  ENDPROCEDURE SA;
+
+  PROCEDURE SC (CONST c: ASCII)
+    PoolAdd(c);
+    RETURN
+  ENDPROCEDURE SC;
+
+  PROCEDURE ST (CONST t: Txt)
+    VAR i: INT := TS[t];
+    WHILE i < (TS[t] + TL[t]) DO
+      PoolAdd(Pool[i]);
+      i := i + 1
+    ENDWHILE;
+    RETURN
+  ENDPROCEDURE ST;
+
+  PROCEDURE SI (CONST n: INT)
+    VAR digits: ARRAY (INTEGER [1..24] OF ASCII);
+        k: INT := 0;
+        v: INT := n;
+    IF v < 0 THEN PoolAdd('-'); v := -v ENDIF;
+    LOOP more
+      k := k + 1;
+      digits[k] := Chr[(v MOD 10) + 48];
+      v := v DIV 10;
+      IF v = 0 THEN EXIT more ENDIF
+    ENDLOOP more;
+    WHILE k > 0 DO
+      PoolAdd(digits[k]);
+      k := k - 1
+    ENDWHILE;
+    RETURN
+  ENDPROCEDURE SI;
+
+  PROCEDURE SE RETURNS Txt ()
+    Building := FALSE;
+    NTxt := NTxt + 1;
+    TS[NTxt] := BStart + 1;
+    TL[NTxt] := PoolTop - BStart;
+    RETURN NTxt
+  ENDPROCEDURE SE;
+
+  (* a Txt of a literal *)
+  PROCEDURE T RETURNS Txt (CONST s: ARRAY (1 DIMENSIONS OF ASCII))
+    SB();
+    SA(s);
+    RETURN SE()
+  ENDPROCEDURE T;
+
+  (* the same name gives the same Txt: hashing over the pool *)
+  PROCEDURE Intern RETURNS Txt (CONST start, len: INT)
+    VAR h: INT := 0;
+        k: INT;
+        same: BOOLEAN;
+    FOR i: INTEGER [start..(start + len) - 1] DO
+      h := ((h * 31) + Code[Pool[i]]) MOD 262144
+    ENDFOR;
+    LOOP probe
+      IF Hash[h] = 0 THEN
+        NTxt := NTxt + 1;
+        TS[NTxt] := start;
+        TL[NTxt] := len;
+        Hash[h] := NTxt;
+        RETURN NTxt
+      ENDIF;
+      k := Hash[h];
+      IF TL[k] = len THEN
+        same := TRUE;
+        FOR i: INTEGER [0..len - 1] DO
+          IF Pool[TS[k] + i] # Pool[start + i] THEN same := FALSE ENDIF
+        ENDFOR;
+        IF same THEN RETURN k ENDIF
+      ENDIF;
+      h := (h + 1) MOD 262144
+    ENDLOOP probe
+  ENDPROCEDURE Intern;
+
+  (* intern the Txt t (made by SB .. SE) *)
+  PROCEDURE Name RETURNS Txt (CONST t: Txt)
+    RETURN Intern(TS[t], TL[t])
+  ENDPROCEDURE Name;
+
+  PROCEDURE N RETURNS Txt (CONST s: ARRAY (1 DIMENSIONS OF ASCII))
+    RETURN Name(T(s))
+  ENDPROCEDURE N;
+
+  PROCEDURE TEq RETURNS BOOLEAN (CONST a, b: Txt)
+    IF a = b THEN RETURN TRUE ENDIF;
+    IF TL[a] # TL[b] THEN RETURN FALSE ENDIF;
+    FOR i: INTEGER [0..TL[a] - 1] DO
+      IF Pool[TS[a] + i] # Pool[TS[b] + i] THEN RETURN FALSE ENDIF
+    ENDFOR;
+    RETURN TRUE
+  ENDPROCEDURE TEq;
+
+  (* does the Txt t start with the literal s *)
+  PROCEDURE TStarts RETURNS BOOLEAN (CONST t: Txt; CONST s: ARRAY (1 DIMENSIONS OF ASCII))
+    VAR k: INT := 0;
+    IF TL[t] < ((HIGH(s, 1) - LOW(s, 1)) + 1) THEN RETURN FALSE ENDIF;
+    FOR i: INTEGER [LOW(s, 1)..HIGH(s, 1)] DO
+      IF Pool[TS[t] + k] # s[i] THEN RETURN FALSE ENDIF;
+      k := k + 1
+    ENDFOR;
+    RETURN TRUE
+  ENDPROCEDURE TStarts;
+
+  PROCEDURE TChar RETURNS ASCII (CONST t: Txt; CONST i: INT)
+    RETURN Pool[(TS[t] + i) - 1]
+  ENDPROCEDURE TChar;
+
+  (* ---- output ------------------------------------------------------------- *)
+
+  PROCEDURE Put (VAR b: Buf; CONST t: Txt)
+    VAR l: Line;
+    NEW(l);
+    l^ := LineRec(t, Line NIL);
+    IF b.head = Line NIL THEN b.head := l ELSE b.tail^.next := l ENDIF;
+    b.tail := l;
+    RETURN
+  ENDPROCEDURE Put;
+
+  PROCEDURE PutS (VAR b: Buf; CONST s: ARRAY (1 DIMENSIONS OF ASCII))
+    Put(b, T(s));
+    RETURN
+  ENDPROCEDURE PutS;
+
+  (* move the lines of b to the end of a, emptying b *)
+  PROCEDURE Append (VAR a, b: Buf)
+    IF b.head = Line NIL THEN RETURN ENDIF;
+    IF a.head = Line NIL THEN a.head := b.head ELSE a.tail^.next := b.head ENDIF;
+    a.tail := b.tail;
+    b.head := Line NIL;
+    b.tail := Line NIL;
+    RETURN
+  ENDPROCEDURE Append;
+
+  (* a line of the routine being written *)
+  PROCEDURE Emit (CONST t: Txt)
+    Put(Body, t);
+    RETURN
+  ENDPROCEDURE Emit;
+
+  PROCEDURE EmitS (CONST s: ARRAY (1 DIMENSIONS OF ASCII))
+    Put(Body, T(s));
+    RETURN
+  ENDPROCEDURE EmitS;
+
+  PROCEDURE WriteTxt (CONST t: Txt)
+    VAR i: INT := TS[t];
+    WHILE i < (TS[t] + TL[t]) DO
+      PUT(Output, Pool[i]);
+      i := i + 1
+    ENDWHILE;
+    RETURN
+  ENDPROCEDURE WriteTxt;
+
+  PROCEDURE WriteBuf (CONST b: Buf)
+    VAR l: Line := b.head;
+    WHILE l # Line NIL DO
+      WriteTxt(l^.t);
+      PUT(Output, 'LF');
+      l := l^.next
+    ENDWHILE;
+    RETURN
+  ENDPROCEDURE WriteBuf;
+
+  (* ---- messages -------------------------------------------------------------- *)
+
+  (* a translation error: the message goes to the output, which is then *)
+  (* not a C program, and the translation stops *)
+  PROCEDURE Fail (CONST line: INT; CONST msg: Txt)
+    VAR t: Txt;
+    IF Building THEN Building := FALSE ENDIF;
+    SB();
+    SA("line ");
+    SI(line);
+    SA(": ");
+    ST(msg);
+    t := SE();
+    WriteTxt(t);
+    PUT(Output, 'LF');
+    CLOSE(Output);
+    PROPAGATE_EXCEPTION translation_error
+  ENDPROCEDURE Fail;
+
+  PROCEDURE FailS (CONST line: INT; CONST msg: ARRAY (1 DIMENSIONS OF ASCII))
+    Fail(line, T(msg));
+    RETURN
+  ENDPROCEDURE FailS;
+
+  (* "line N: <name> <msg>" *)
+  PROCEDURE FailN (CONST line: INT; CONST name: Txt; CONST msg: ARRAY (1 DIMENSIONS OF ASCII))
+    VAR t: Txt;
+    SB();
+    ST(name);
+    SA(msg);
+    t := SE();
+    Fail(line, t);
+    RETURN
+  ENDPROCEDURE FailN;
+
+  PROCEDURE NewSerial RETURNS INT ()
+    Serial := Serial + 1;
+    RETURN Serial
+  ENDPROCEDURE NewSerial;
+
+  (* a fresh C name: prefix and a number *)
+  PROCEDURE Fresh RETURNS Txt (CONST prefix: ARRAY (1 DIMENSIONS OF ASCII))
+    VAR n: INT := NewSerial();
+    SB();
+    SA(prefix);
+    SI(n);
+    RETURN SE()
+  ENDPROCEDURE Fresh;

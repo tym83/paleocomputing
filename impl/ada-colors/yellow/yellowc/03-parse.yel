@@ -1,0 +1,665 @@
+
+  (* ---- the parser: Appendix B of the Report (pp.1084-1089) --------------- *)
+  (* Rule numbers in comments are those of the Appendix. *)
+
+  VAR
+    TPos: INT := 1;
+    Labels: Node := Node NIL;       (* the LABEL names of the blocks being read *)
+    FromWord, DimensionWord: Txt := 0;
+
+  PROCEDURE NewNode RETURNS Node (CONST kind, line: INT)
+    VAR n: Node;
+    NEW(n);
+    n^ := NodeRec(kind, line, 0, 0, 0, 0, Node NIL, Node NIL, Node NIL, Node NIL, Node NIL,
+                  Node NIL, Rep NIL, Sym NIL);
+    RETURN n
+  ENDPROCEDURE NewNode;
+
+  PROCEDURE Link (VAR head, tail: Node; CONST n: Node)
+    IF head = Node NIL THEN head := n ELSE tail^.next := n ENDIF;
+    tail := n;
+    RETURN
+  ENDPROCEDURE Link;
+
+  FUNCTION Count RETURNS INT (CONST list: Node)
+    VAR n: INT := 0;
+        p: Node := list;
+    WHILE p # Node NIL DO
+      n := n + 1;
+      p := p^.next
+    ENDWHILE;
+    RETURN n
+  ENDFUNCTION Count;
+
+  PROCEDURE TK RETURNS INT ()
+    RETURN TKind[TPos]
+  ENDPROCEDURE TK;
+
+  PROCEDURE TV RETURNS INT ()
+    RETURN TVal[TPos]
+  ENDPROCEDURE TV;
+
+  PROCEDURE TLn RETURNS INT ()
+    RETURN TLine[TPos]
+  ENDPROCEDURE TLn;
+
+  (* is token TPos + k the word or mark w *)
+  PROCEDURE IsAt RETURNS BOOLEAN (CONST k, w: INT)
+    VAR kind: INT := TKind[TPos + k];
+    RETURN ((kind = K_KW) OR (kind = K_OP)) AND (TVal[TPos + k] = w)
+  ENDPROCEDURE IsAt;
+
+  PROCEDURE Is RETURNS BOOLEAN (CONST w: INT)
+    RETURN IsAt(0, w)
+  ENDPROCEDURE Is;
+
+  PROCEDURE IsIdAt RETURNS BOOLEAN (CONST k: INT)
+    RETURN TKind[TPos + k] = K_ID
+  ENDPROCEDURE IsIdAt;
+
+  PROCEDURE Skip ()
+    IF TKind[TPos] # K_EOF THEN TPos := TPos + 1 ENDIF;
+    RETURN
+  ENDPROCEDURE Skip;
+
+  PROCEDURE Accept RETURNS BOOLEAN (CONST w: INT)
+    IF Is(w) THEN
+      Skip();
+      RETURN TRUE
+    ENDIF;
+    RETURN FALSE
+  ENDPROCEDURE Accept;
+
+  (* the text of the current token, for a message *)
+  PROCEDURE TokText RETURNS Txt ()
+    VAR k: INT := TK();
+    IF (k = K_ID) OR (k = K_KW) OR (k = K_OP) OR (k = K_CHAR) THEN RETURN TV() ENDIF;
+    IF k = K_EOF THEN RETURN T("the end of the text") ENDIF;
+    IF k = K_INT THEN
+      SB();
+      SI(TV());
+      RETURN SE()
+    ENDIF;
+    RETURN T("a literal")
+  ENDPROCEDURE TokText;
+
+  PROCEDURE Expect (CONST w: INT)
+    VAR t: Txt;
+    IF NOT Accept(w) THEN
+      SB();
+      SA("expected ");
+      ST(w);
+      SA(", found ");
+      ST(TokText());
+      t := SE();
+      Fail(TLn(), t)
+    ENDIF;
+    RETURN
+  ENDPROCEDURE Expect;
+
+  PROCEDURE Ident RETURNS Txt ()
+    VAR t: Txt;
+    IF TK() # K_ID THEN
+      SB();
+      SA("expected an identifier, found ");
+      ST(TokText());
+      t := SE();
+      Fail(TLn(), t)
+    ENDIF;
+    t := TV();
+    Skip();
+    RETURN t
+  ENDPROCEDURE Ident;
+
+  (* the closing name must repeat the opening one *)
+  PROCEDURE CloseName (CONST open: Txt; CONST line: INT)
+    VAR t: Txt;
+    IF (TK() = K_ID) OR (TK() = K_KW) OR (TK() = K_OP) THEN
+      t := TV();
+      IF t = open THEN
+        Skip();
+        RETURN
+      ENDIF
+    ENDIF;
+    FailN(line, open, " is closed with another name");
+    RETURN
+  ENDPROCEDURE CloseName;
+
+  (* rule 56: a name that may also be an operator *)
+  PROCEDURE ExtendedId RETURNS Txt ()
+    VAR t: Txt := TV();
+    IF TK() = K_ID THEN
+      Skip();
+      RETURN t
+    ENDIF;
+    IF (TK() = K_KW) AND ((t = W_NOT) OR (t = W_AND) OR (t = W_OR) OR (t = W_DIV) OR
+                          (t = W_MOD) OR (t = W_XOR) OR (t = W_IN)) THEN
+      Skip();
+      RETURN t
+    ENDIF;
+    IF (TK() = K_OP) AND (t # P_LPAR) AND (t # P_RPAR) AND (t # P_LBRACK) AND (t # P_RBRACK) AND
+       (t # P_COMMA) AND (t # P_SEMI) AND (t # P_COLON) AND (t # P_DOT) AND (t # P_DOTDOT) AND
+       (t # P_ARROW) THEN
+      Skip();
+      RETURN t
+    ENDIF;
+    FailS(TLn(), "expected a name");
+    RETURN 0
+  ENDPROCEDURE ExtendedId;
+
+  PROCEDURE IsLabel RETURNS BOOLEAN (CONST name: Txt)
+    VAR p: Node := Labels;
+    WHILE p # Node NIL DO
+      IF p^.name = name THEN RETURN TRUE ENDIF;
+      p := p^.next
+    ENDWHILE;
+    RETURN FALSE
+  ENDPROCEDURE IsLabel;
+
+  (* ---- modules: rules 2-5 ------------------------------------------------- *)
+
+  PROCEDURE ImportItem RETURNS Node ()
+    VAR n: Node := NewNode(N_ITEM, TLn());
+    n^.name := ExtendedId();
+    (* FROM is not among the reserved words of Appendix A, but rules 4 *)
+    (* and 5 use it: it is read here as a word of the import list *)
+    IF IsIdAt(0) AND (TV() = FromWord) THEN
+      Skip();
+      n^.text := Ident()
+    ENDIF;
+    IF Accept(W_AS) THEN n^.ival := ExtendedId() ENDIF;
+    RETURN n
+  ENDPROCEDURE ImportItem;
+
+  PROCEDURE ParseModule RETURNS Node ()
+    VAR n: Node := NewNode(N_MODULE, TLn());
+        it, itail, etail: Node := Node NIL;
+        attr: INT;
+    IF Accept(W_MONITOR) THEN n^.flag := 1 ELSE Expect(W_MODULE) ENDIF;
+    n^.name := Ident();
+    WHILE Accept(W_IMPORT) DO
+      LOOP items
+        it := ImportItem();
+        Link(n^.a, itail, it);
+        IF NOT Accept(P_COMMA) THEN EXIT items ENDIF
+      ENDLOOP items;
+      Expect(P_SEMI)
+    ENDWHILE;
+    WHILE Accept(W_EXPORT) DO
+      attr := 0;
+      IF Is(W_OPAQUE) OR Is(W_TRANSPARENT) OR Is(W_READONLY) OR Is(W_VAR) THEN
+        attr := TV();
+        Skip()
+      ENDIF;
+      LOOP items
+        it := ImportItem();
+        it^.flag := attr;
+        Link(n^.b, etail, it);
+        IF NOT Accept(P_COMMA) THEN EXIT items ENDIF
+      ENDLOOP items;
+      Expect(P_SEMI)
+    ENDWHILE;
+    n^.c := ParseBlock();
+    IF n^.flag = 1 THEN Expect(W_ENDMONITOR) ELSE Expect(W_ENDMODULE) ENDIF;
+    CloseName(n^.name, n^.line);
+    RETURN n
+  ENDPROCEDURE ParseModule;
+
+  (* ---- blocks: rule 6 -------------------------------------------------------- *)
+
+  PROCEDURE IsDeclWord RETURNS BOOLEAN ()
+    VAR v: INT;
+    IF TK() # K_KW THEN RETURN FALSE ENDIF;
+    v := TV();
+    RETURN (v = W_CONST) OR (v = W_VAR) OR (v = W_LABEL) OR (v = W_TYPE) OR
+           (v = W_REPRESENTATION) OR (v = W_FUNCTION) OR (v = W_PROCEDURE) OR
+           (v = W_MODULE) OR (v = W_MONITOR) OR (v = W_TEMPLATE) OR (v = W_INSTANCE) OR
+           (v = W_PROCESS)
+  ENDPROCEDURE IsDeclWord;
+
+  PROCEDURE ParseBlock RETURNS Node ()
+    VAR n: Node := NewNode(N_BLOCK, TLn());
+        tail: Node := Node NIL;
+        saved: Node := Labels;
+        d: Node;
+    WHILE IsDeclWord() DO
+      ParseDeclGroup(n^.a, tail);
+      WHILE Accept(P_SEMI) DO ENDWHILE
+    ENDWHILE;
+    IF Is(W_EXCEPTION) THEN
+      n^.b := ParseHandler();
+      d := n^.b;
+      IF Accept(P_SEMI) THEN ENDIF
+    ENDIF;
+    n^.c := ParseStatements(TRUE);
+    Labels := saved;
+    RETURN n
+  ENDPROCEDURE ParseBlock;
+
+  (* rule 18 *)
+  PROCEDURE ParseHandler RETURNS Node ()
+    VAR n: Node := NewNode(N_HANDLER, TLn());
+        c, ctail, nm, ntail: Node := Node NIL;
+    Expect(W_EXCEPTION);
+    WHILE Accept(W_CASE) DO
+      c := NewNode(N_HCASE, TLn());
+      ntail := Node NIL;
+      LOOP names
+        nm := NewNode(N_NAMEL, TLn());
+        nm^.name := Ident();
+        Link(c^.a, ntail, nm);
+        IF NOT Accept(P_COMMA) THEN EXIT names ENDIF
+      ENDLOOP names;
+      Expect(P_ARROW);
+      c^.b := ParseStatements(FALSE);
+      Link(n^.a, ctail, c)
+    ENDWHILE;
+    IF Accept(W_ELSE) THEN
+      n^.flag := 1;
+      n^.b := ParseStatements(FALSE)
+    ENDIF;
+    Expect(W_ENDEXCEPTION);
+    RETURN n
+  ENDPROCEDURE ParseHandler;
+
+  (* ---- declarations: rules 7-17 ----------------------------------------------- *)
+
+  (* Names, rule 57: Id* [AT ManifestConstant] {, ...} *)
+  PROCEDURE ParseNames RETURNS Node ()
+    VAR head, tail, n: Node := Node NIL;
+    LOOP names
+      n := NewNode(N_NAMEL, TLn());
+      n^.name := Ident();
+      IF Accept(W_AT) THEN n^.a := ParseExpr() ENDIF;
+      Link(head, tail, n);
+      IF NOT Accept(P_COMMA) THEN EXIT names ENDIF
+    ENDLOOP names;
+    RETURN head
+  ENDPROCEDURE ParseNames;
+
+  PROCEDURE SimpleEntry RETURNS Node (CONST w: INT)
+    VAR n: Node;
+    IF w = W_CONST THEN
+      n := NewNode(N_CONST, TLn());
+      n^.a := ParseNames();
+      Expect(P_COLON);
+      n^.b := ParseRep();
+      Expect(P_EQ);
+      n^.c := ParseExpr()
+    ELSIF w = W_VAR THEN
+      n := NewNode(N_VAR, TLn());
+      n^.a := ParseNames();
+      Expect(P_COLON);
+      n^.b := ParseRep();
+      IF Accept(P_ASSIGN) THEN n^.c := ParseExpr() ENDIF
+    ELSIF w = W_TYPE THEN
+      n := NewNode(N_TYPE, TLn());
+      n^.name := Ident();
+      Expect(P_EQ);
+      n^.b := ParseConcrete1()
+    ELSE
+      n := NewNode(N_REPDECL, TLn());
+      n^.name := Ident();
+      Expect(P_EQ);
+      n^.b := ParseRep()
+    ENDIF;
+    RETURN n
+  ENDPROCEDURE SimpleEntry;
+
+  (* "VAR a: R; b: S" -- an entry goes on while an identifier (not a label) *)
+  (* is followed by "," or ":" (CONST, VAR) or by "=" (TYPE, REPRESENTATION) *)
+  PROCEDURE Continues RETURNS BOOLEAN (CONST w: INT)
+    IF NOT (Is(P_SEMI) AND IsIdAt(1)) THEN RETURN FALSE ENDIF;
+    IF IsLabel(TVal[TPos + 1]) THEN RETURN FALSE ENDIF;
+    IF (w = W_CONST) OR (w = W_VAR) THEN RETURN IsAt(2, P_COMMA) OR IsAt(2, P_COLON) ENDIF;
+    RETURN IsAt(2, P_EQ)
+  ENDPROCEDURE Continues;
+
+  PROCEDURE ParseDeclGroup (VAR head, tail: Node)
+    VAR w: INT := TV();
+        n, nm, ntail: Node;
+    IF (w = W_CONST) OR (w = W_VAR) OR (w = W_TYPE) OR (w = W_REPRESENTATION) THEN
+      Skip();
+      Link(head, tail, SimpleEntry(w));
+      WHILE Continues(w) DO
+        Skip();
+        Link(head, tail, SimpleEntry(w))
+      ENDWHILE;
+      RETURN
+    ENDIF;
+    IF w = W_LABEL THEN
+      n := NewNode(N_LABEL, TLn());
+      Skip();
+      ntail := Node NIL;
+      LOOP names
+        nm := NewNode(N_NAMEL, TLn());
+        nm^.name := Ident();
+        Link(n^.a, ntail, nm);
+        IF NOT Accept(P_COMMA) THEN EXIT names ENDIF
+      ENDLOOP names;
+      (* the labels of this block are known to the statement reader *)
+      nm := n^.a;
+      WHILE nm # Node NIL DO
+        n^.b := NewNode(N_NAMEL, nm^.line);
+        n^.b^.name := nm^.name;
+        n^.b^.next := Labels;
+        Labels := n^.b;
+        nm := nm^.next
+      ENDWHILE;
+      n^.b := Node NIL;
+      Link(head, tail, n);
+      RETURN
+    ENDIF;
+    Link(head, tail, ParseDecl());
+    RETURN
+  ENDPROCEDURE ParseDeclGroup;
+
+  PROCEDURE ParseDecl RETURNS Node ()
+    VAR n, f, ftail: Node;
+        w: INT := TV();
+        line: INT := TLn();
+        start: INT;
+    IF (w = W_FUNCTION) OR (w = W_PROCEDURE) THEN
+      n := NewNode(N_ROUTINE, line);
+      Skip();
+      IF w = W_FUNCTION THEN n^.flag := 1 ENDIF;
+      IF Is(W_EXTENDS) OR Is(W_REPLACES) THEN
+        n^.ival := TV();
+        Skip()
+      ENDIF;
+      n^.name := ExtendedId();
+      ParseFormals(n);
+      IF Accept(W_INLINE) THEN n^.e := NewNode(N_NAMEL, line) ENDIF;
+      n^.c := ParseBlock();
+      IF w = W_FUNCTION THEN Expect(W_ENDFUNCTION) ELSE Expect(W_ENDPROCEDURE) ENDIF;
+      CloseName(n^.name, line);
+      RETURN n
+    ENDIF;
+    IF (w = W_MODULE) OR (w = W_MONITOR) THEN RETURN ParseModule() ENDIF;
+    IF w = W_TEMPLATE THEN
+      n := NewNode(N_TEMPLATE, line);
+      Skip();
+      n^.name := Ident();
+      Expect(P_LPAR);
+      ftail := Node NIL;
+      LOOP formals
+        f := NewNode(N_NAMEL, TLn());
+        f^.name := Ident();
+        Link(n^.a, ftail, f);
+        IF NOT Accept(P_COMMA) THEN EXIT formals ENDIF
+      ENDLOOP formals;
+      Expect(P_RPAR);
+      start := TPos;
+      n^.b := ParseModule();
+      n^.ival := start;
+      n^.flag := TPos;
+      Expect(W_ENDTEMPLATE);
+      CloseName(n^.name, line);
+      RETURN n
+    ENDIF;
+    IF w = W_INSTANCE THEN
+      n := NewNode(N_INSTANCE, line);
+      Skip();
+      n^.name := Ident();
+      Expect(P_LPAR);
+      ftail := Node NIL;
+      LOOP actuals
+        f := NewNode(N_NAMEL, TLn());
+        f^.name := ExtendedId();
+        Link(n^.a, ftail, f);
+        IF NOT Accept(P_COMMA) THEN EXIT actuals ENDIF
+      ENDLOOP actuals;
+      Expect(P_RPAR);
+      RETURN n
+    ENDIF;
+    IF w = W_PROCESS THEN
+      n := NewNode(N_PROCESS, line);
+      Skip();
+      n^.name := Ident();
+      ParseFormals(n);
+      IF n^.b # Node NIL THEN FailS(line, "a process returns no value") ENDIF;
+      IF Accept(W_PRIORITY) THEN n^.d := ParseExpr() ENDIF;
+      IF Accept(W_INSTANCES) THEN n^.e := ParseExpr() ENDIF;
+      IF Accept(W_SIZE) THEN f := ParseExpr() ENDIF;
+      n^.c := ParseBlock();
+      Expect(W_ENDPROCESS);
+      CloseName(n^.name, line);
+      RETURN n
+    ENDIF;
+    FailS(line, "expected a declaration");
+    RETURN Node NIL
+  ENDPROCEDURE ParseDecl;
+
+  (* rule 87: [RETURNS Representation] ( {(CONST|OUT|VAR) {Names : FormalRep ;}} [;] ) *)
+  (* into n^.a (the parameters) and n^.b (the result) *)
+  PROCEDURE ParseFormals (CONST n: Node)
+    VAR p, tail: Node := Node NIL;
+        cls: INT;
+    IF Accept(W_RETURNS) THEN n^.b := ParseRep() ENDIF;
+    Expect(P_LPAR);
+    WHILE NOT Is(P_RPAR) DO
+      IF Accept(W_CONST) THEN cls := C_CONST
+      ELSIF Accept(W_OUT) THEN cls := C_OUT
+      ELSIF Accept(W_VAR) THEN cls := C_VAR
+      ELSE FailS(TLn(), "a formal parameter is CONST, OUT or VAR")
+      ENDIF;
+      LOOP group
+        p := NewNode(N_PARAM, TLn());
+        p^.ival := cls;
+        p^.a := ParseNames();
+        Expect(P_COLON);
+        p^.b := ParseFormalRep();
+        Link(n^.a, tail, p);
+        (* the class carries over "; name"; the 1978 examples also use "," *)
+        IF NOT ((Is(P_SEMI) OR Is(P_COMMA)) AND IsIdAt(1)) THEN EXIT group ENDIF;
+        Skip()
+      ENDLOOP group;
+      IF NOT Accept(P_SEMI) THEN
+        IF NOT Accept(P_COMMA) THEN Expect(P_RPAR); RETURN ENDIF
+      ENDIF
+    ENDWHILE;
+    Expect(P_RPAR);
+    RETURN
+  ENDPROCEDURE ParseFormals;
+
+  (* rules 85-86 *)
+  PROCEDURE ParseFormalRep RETURNS Node ()
+    VAR n: Node;
+    IF Is(W_ARRAY) AND IsAt(1, P_LPAR) AND (IsAt(3, W_DIMENSIONS) OR
+                                         (IsIdAt(3) AND (TVal[TPos + 3] = DimensionWord))) THEN
+      n := NewNode(N_RUARRAY, TLn());
+      Skip();
+      Skip();
+      n^.a := ParseExpr();
+      Skip();                         (* DIMENSIONS, or DIMENSION as on p.1063 *)
+      Expect(W_OF);
+      n^.b := ParseRep();
+      Expect(P_RPAR);
+      RETURN n
+    ENDIF;
+    IF Is(W_SPACE) THEN
+      n := NewNode(N_RSPACE, TLn());
+      Skip();
+      RETURN n
+    ENDIF;
+    RETURN ParseRep()
+  ENDPROCEDURE ParseFormalRep;
+
+  (* ---- representations: rules 61-84 ------------------------------------------- *)
+
+  PROCEDURE IsStructWord RETURNS BOOLEAN (CONST k: INT)
+    VAR v: INT := TVal[TPos + k];
+    IF TKind[TPos + k] # K_KW THEN RETURN FALSE ENDIF;
+    RETURN (v = W_UNORDERED) OR (v = W_ORDERED) OR (v = W_ALPHABET) OR (v = W_ARRAY) OR
+           (v = W_RECORD) OR (v = W_FILE) OR (v = W_POINTER) OR (v = W_SET)
+  ENDPROCEDURE IsStructWord;
+
+  (* rule 61: [Type] ConcreteType -- the Type is taken as a type identifier *)
+  PROCEDURE ParseRep RETURNS Node ()
+    VAR tname: Txt;
+        n: Node;
+    IF IsIdAt(0) AND (IsStructWord(1) OR (IsIdAt(1) AND IsAt(2, P_LBRACK))) THEN
+      tname := Ident();
+      n := ParseConcrete();
+      n^.text := tname;
+      RETURN n
+    ENDIF;
+    RETURN ParseConcrete()
+  ENDPROCEDURE ParseRep;
+
+  (* rule 72: ConcreteType1 [PACKED [ManifestConstant]] [ALIGNMENT ManifestConstant] *)
+  (* -- the storage directives of XIV are read and ignored *)
+  PROCEDURE ParseConcrete RETURNS Node ()
+    VAR n, x: Node;
+    n := ParseConcrete1();
+    IF Accept(W_PACKED) THEN
+      IF (TK() = K_INT) OR (TK() = K_ID) OR Is(P_LPAR) THEN x := ParseExpr() ENDIF
+    ENDIF;
+    IF Accept(W_ALIGNMENT) THEN x := ParseExpr() ENDIF;
+    RETURN n
+  ENDPROCEDURE ParseConcrete;
+
+  PROCEDURE ParseIds RETURNS Node ()
+    VAR head, tail, n: Node := Node NIL;
+    LOOP ids
+      n := NewNode(N_NAMEL, TLn());
+      n^.name := Ident();
+      Link(head, tail, n);
+      IF NOT Accept(P_COMMA) THEN EXIT ids ENDIF
+    ENDLOOP ids;
+    RETURN head
+  ENDPROCEDURE ParseIds;
+
+  PROCEDURE ParseFieldGroups RETURNS Node ()
+    VAR head, tail, f: Node := Node NIL;
+        cls: INT;
+    WHILE Is(W_CONST) OR Is(W_VAR) DO
+      cls := TV();
+      Skip();
+      LOOP group
+        f := NewNode(N_FIELD, TLn());
+        f^.ival := cls;
+        f^.a := ParseNames();
+        Expect(P_COLON);
+        f^.b := ParseRep();
+        Link(head, tail, f);
+        IF NOT (Is(P_SEMI) AND IsIdAt(1)) THEN EXIT group ENDIF;
+        Skip()
+      ENDLOOP group;
+      IF NOT Accept(P_SEMI) THEN RETURN head ENDIF
+    ENDWHILE;
+    RETURN head
+  ENDPROCEDURE ParseFieldGroups;
+
+  PROCEDURE ParseConcrete1 RETURNS Node ()
+    VAR n, v, c, ctail, lab, ltail: Node;
+        w: INT;
+        line: INT := TLn();
+    IF TK() = K_ID THEN
+      n := NewNode(N_RNAME, line);
+      n^.name := Ident();
+      n^.a := ParseQualifier();
+      RETURN n
+    ENDIF;
+    IF TK() # K_KW THEN FailS(line, "expected a representation") ENDIF;
+    w := TV();
+    IF (w = W_UNORDERED) OR (w = W_ORDERED) THEN
+      n := NewNode(N_RENUM, line);
+      IF w = W_ORDERED THEN n^.flag := 1 ENDIF;
+      Skip();
+      Expect(P_LPAR);
+      n^.a := ParseIds();
+      Expect(P_RPAR);
+      n^.b := ParseQualifier();
+      RETURN n
+    ENDIF;
+    IF w = W_ALPHABET THEN
+      n := NewNode(N_RALPHA, line);
+      Skip();
+      Expect(P_LPAR);
+      ltail := Node NIL;
+      LOOP chars
+        IF TK() # K_CHAR THEN FailS(TLn(), "an ALPHABET lists character literals") ENDIF;
+        lab := NewNode(N_CHARLIT, TLn());
+        lab^.text := TV();
+        Skip();
+        Link(n^.a, ltail, lab);
+        IF NOT Accept(P_COMMA) THEN EXIT chars ENDIF
+      ENDLOOP chars;
+      Expect(P_RPAR);
+      n^.b := ParseQualifier();
+      RETURN n
+    ENDIF;
+    IF w = W_ARRAY THEN
+      n := NewNode(N_RARRAY, line);
+      Skip();
+      Expect(P_LPAR);
+      ltail := Node NIL;
+      LOOP indices
+        Link(n^.a, ltail, ParseRep());
+        IF NOT Accept(P_COMMA) THEN EXIT indices ENDIF
+      ENDLOOP indices;
+      Expect(W_OF);
+      n^.b := ParseRep();
+      Expect(P_RPAR);
+      RETURN n
+    ENDIF;
+    IF w = W_RECORD THEN
+      n := NewNode(N_RRECORD, line);
+      Skip();
+      n^.a := ParseFieldGroups();
+      IF Accept(W_SELECT) THEN
+        v := NewNode(N_VARIANT, TLn());
+        v^.name := Ident();
+        Expect(P_COLON);
+        v^.b := ParseRep();
+        ctail := Node NIL;
+        WHILE Accept(W_CASE) DO
+          c := NewNode(N_VCASE, TLn());
+          ltail := Node NIL;
+          LOOP labels
+            Link(c^.a, ltail, ParseExpr());
+            IF NOT Accept(P_COMMA) THEN EXIT labels ENDIF
+          ENDLOOP labels;
+          Expect(P_ARROW);
+          c^.b := ParseFieldGroups();
+          WHILE Accept(P_SEMI) DO ENDWHILE;
+          Link(v^.a, ctail, c)
+        ENDWHILE;
+        Expect(W_ENDSELECT);
+        IF Accept(P_SEMI) THEN ENDIF;
+        n^.b := v
+      ENDIF;
+      Expect(W_ENDRECORD);
+      RETURN n
+    ENDIF;
+    IF (w = W_FILE) OR (w = W_POINTER) OR (w = W_SET) THEN
+      IF w = W_FILE THEN n := NewNode(N_RFILE, line)
+      ELSIF w = W_POINTER THEN n := NewNode(N_RPOINTER, line)
+      ELSE n := NewNode(N_RSET, line)
+      ENDIF;
+      Skip();
+      Expect(P_LPAR);
+      n^.a := ParseRep();
+      Expect(P_RPAR);
+      RETURN n
+    ENDIF;
+    FailS(line, "expected a representation");
+    RETURN Node NIL
+  ENDPROCEDURE ParseConcrete1;
+
+  (* rules 82-84 *)
+  PROCEDURE ParseQualifier RETURNS Node ()
+    VAR q: Node;
+    IF NOT Is(P_LBRACK) THEN RETURN Node NIL ENDIF;
+    q := NewNode(N_QUAL, TLn());
+    Skip();
+    q^.a := ParseExpr();
+    Expect(P_DOTDOT);
+    q^.b := ParseExpr();
+    Expect(P_RBRACK);
+    IF Accept(W_SCALE) THEN q^.c := ParseExpr()
+    ELSIF Accept(W_PRECISION) THEN q^.d := ParseExpr()
+    ENDIF;
+    RETURN q
+  ENDPROCEDURE ParseQualifier;
