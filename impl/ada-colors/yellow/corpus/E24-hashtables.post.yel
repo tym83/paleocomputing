@@ -1,0 +1,17 @@
+
+(* a user of the module of p.1117 *)
+MODULE UseTable
+  IMPORT NumberTableImplementation, TextIO, MyStandardConventions;
+  (* the module exports no way to make an empty table, and NumberTable is *)
+  (* opaque; this implementation starts every variable at zero, which is *)
+  (* the case "fresh" of every entry *)
+  VAR t: NumberTable;
+  FOR i: INTEGER [1..5] DO
+    IF NOT Insert(i * 1000, t) THEN Write("full") ENDIF
+  ENDFOR;
+  Write(Search(3000, t)); Write(Search(3001, t));
+  Delete(3000, t);
+  Write(Search(3000, t)); Write(Search(4000, t));
+  IF Insert(3000, t) THEN Write(Search(3000, t)) ENDIF;
+  WriteLn()
+ENDMODULE UseTable

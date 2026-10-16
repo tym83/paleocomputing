@@ -349,7 +349,7 @@
     SA("{ rt_int ");
     ST(hi);
     SA(" = ");
-    ST(r^.hi);
+    ST(HiText(r));
     SA(";");
     t := SE();
     Emit(t);
@@ -357,7 +357,7 @@
     SA("for (rt_int ");
     ST(v);
     SA(" = ");
-    ST(r^.lo);
+    ST(LoText(r));
     SA("; ");
     ST(v);
     SA(" <= ");

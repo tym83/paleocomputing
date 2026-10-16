@@ -323,9 +323,9 @@
     IF r^.kind = R_SET THEN
       SB();
       SA("y_set_new(");
-      ST(r^.elem^.lo);
+      ST(LoText(r^.elem));
       SA(", ");
-      ST(r^.elem^.hi);
+      ST(HiText(r^.elem));
       SA(")");
       code := SE();
       WHILE a # Node NIL DO

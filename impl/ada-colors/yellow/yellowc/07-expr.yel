@@ -215,9 +215,9 @@
       SA("rt_range(");
       ST(code);
       SA(", ");
-      ST(to^.lo);
+      ST(LoText(to));
       SA(", ");
-      ST(to^.hi);
+      ST(HiText(to));
       SA(")");
       RETURN SE()
     ENDIF;
@@ -226,9 +226,9 @@
       SA("rt_frange(");
       ST(code);
       SA(", ");
-      ST(to^.lo);
+      ST(LoText(to));
       SA(", ");
-      ST(to^.hi);
+      ST(HiText(to));
       SA(")");
       RETURN SE()
     ENDIF;
@@ -237,9 +237,9 @@
       SA("y_fixed(");
       ST(code);
       SA(", ");
-      ST(to^.lo);
+      ST(LoText(to));
       SA(", ");
-      ST(to^.hi);
+      ST(HiText(to));
       SA(", ");
       ST(to^.scale);
       SA(")");

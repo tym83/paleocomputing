@@ -162,9 +162,9 @@
       ENDIF;
       r := Unbounded(ra);
       IF f = F_FIRST THEN
-        code := ra^.lo
+        code := LoText(ra)
       ELSIF f = F_LAST THEN
-        code := ra^.hi
+        code := HiText(ra)
       ELSE
         SB();
         IF ra^.lo # 0 THEN SA("rt_range(") ENDIF;
@@ -173,9 +173,9 @@
         SA(", 1)");
         IF ra^.lo # 0 THEN
           SA(", ");
-          ST(ra^.lo);
+          ST(LoText(ra));
           SA(", ");
-          ST(ra^.hi);
+          ST(HiText(ra));
           SA(")")
         ENDIF;
         code := SE()

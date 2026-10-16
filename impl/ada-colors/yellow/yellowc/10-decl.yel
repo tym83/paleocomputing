@@ -309,7 +309,7 @@
     DeclStorage(CType(r), s^.cname);
     IF Deep(r) THEN Emit(Join(T("y_init("), DescOf(r), Join(T(", &"), SymPath(s), T(");")))) ENDIF;
     IF r^.kind = R_SET THEN
-      Emit(Join(SymPath(s), T(" = y_set_new("), Join(r^.elem^.lo, T(", "), Join(r^.elem^.hi, T(");"), 0))))
+      Emit(Join(SymPath(s), T(" = y_set_new("), Join(LoText(r^.elem), T(", "), Join(HiText(r^.elem), T(");"), 0))))
     ENDIF;
     IF r^.kind = R_SIGNAL THEN DeclareSignal(s, line) ENDIF;
     IF r^.kind = R_SEM THEN Emit(Join(T("rt_lock_init(&"), SymPath(s), T(");"))) ENDIF;

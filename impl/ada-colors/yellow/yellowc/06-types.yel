@@ -133,6 +133,47 @@
 
   (* ---- elaborating a representation from its tree ------------------------------- *)
 
+  (* a bound that is not a literal is a scope-entry constant (VI.C): it is *)
+  (* computed once where the representation is elaborated, into storage *)
+  (* at that level, so that a routine nested inside reaches it by its path *)
+  FUNCTION IsLiteralNode RETURNS BOOLEAN (CONST n: Node)
+    IF (n^.kind = N_INT) OR (n^.kind = N_FLOAT) OR (n^.kind = N_FIXED) OR (n^.kind = N_CHARLIT) THEN
+      RETURN n^.d = Node NIL
+    ENDIF;
+    IF (n^.kind = N_NEG) OR (n^.kind = N_PAREN) THEN RETURN IsLiteralNode(n^.a) ENDIF;
+    RETURN FALSE
+  ENDFUNCTION IsLiteralNode;
+
+  PROCEDURE StoreBounds (CONST r: Rep; CONST ct: ARRAY (1 DIMENSIONS OF ASCII))
+    VAR lo, hi: Txt;
+    lo := Fresh("lo");
+    hi := Fresh("hi");
+    DeclStorage(T(ct), lo);
+    DeclStorage(T(ct), hi);
+    Emit(Join(Path(Level, lo), T(" = "), Join(r^.lo, T(";"), 0)));
+    Emit(Join(Path(Level, hi), T(" = "), Join(r^.hi, T(";"), 0)));
+    r^.lo := lo;
+    r^.hi := hi;
+    r^.dname := lo;
+    r^.dlevel := Level;
+    RETURN
+  ENDPROCEDURE StoreBounds;
+
+  (* the C text of the bounds of a scalar or numeric representation *)
+  PROCEDURE LoText RETURNS Txt (CONST r: Rep)
+    IF (r^.dname # 0) AND (r^.lo # 0) AND (r^.kind # R_ARRAY) AND (r^.kind # R_RECORD) THEN
+      RETURN Path(r^.dlevel, r^.lo)
+    ENDIF;
+    RETURN r^.lo
+  ENDPROCEDURE LoText;
+
+  PROCEDURE HiText RETURNS Txt (CONST r: Rep)
+    IF (r^.dname # 0) AND (r^.hi # 0) AND (r^.kind # R_ARRAY) AND (r^.kind # R_RECORD) THEN
+      RETURN Path(r^.dlevel, r^.hi)
+    ENDIF;
+    RETURN r^.hi
+  ENDPROCEDURE HiText;
+
   (* the bounds [lo..hi] of a discrete representation *)
   PROCEDURE Qualify (CONST r: Rep; CONST q: Node)
     VAR lo, hi: Txt;
@@ -146,6 +187,8 @@
       CheckType(q^.line, r, hr);
       r^.lo := lo;
       r^.hi := hi;
+      r^.dname := 0;
+      IF NOT (IsLiteralNode(q^.a) AND IsLiteralNode(q^.b)) THEN StoreBounds(r, "double") ENDIF;
       IF r^.kind = R_FLOAT THEN
         IF q^.d = Node NIL THEN FailS(q^.line, "FLOATING needs PRECISION (VI.A.1.c)") ENDIF;
         Manifest(q^.d, ok, v);
@@ -171,6 +214,8 @@
     Manifest(q^.b, ok, r^.mhi);
     r^.hasm := r^.hasm AND ok;
     r^.abstract := FALSE;
+    r^.dname := 0;
+    IF NOT r^.hasm THEN StoreBounds(r, "rt_int") ENDIF;
     RETURN
   ENDPROCEDURE Qualify;
 
@@ -207,6 +252,7 @@
     r^.mlo := lo;
     r^.mhi := hi;
     r^.hasm := TRUE;
+    r^.dname := 0;
     RETURN
   ENDPROCEDURE SetRange;
 
@@ -382,7 +428,7 @@
     WHILE ix # Rep NIL DO
       IF NOT first THEN SA(", ") ENDIF;
       first := FALSE;
-      ST(ix^.lo);
+      ST(LoText(ix));
       ix := ix^.link
     ENDWHILE;
     SA("}, hi[");
@@ -393,7 +439,7 @@
     WHILE ix # Rep NIL DO
       IF NOT first THEN SA(", ") ENDIF;
       first := FALSE;
-      ST(ix^.hi);
+      ST(HiText(ix));
       ix := ix^.link
     ENDWHILE;
     SA("}; y_desc_array(");
