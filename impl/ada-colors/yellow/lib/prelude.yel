@@ -21,7 +21,10 @@ MODULE StandardImplementationPrelude
     LARGESTREAL: REAL64 = 1.7976931348623157E308;
     SINGLEPRECISION: INTEGER64 = 6;
     DOUBLEPRECISION: INTEGER64 = 15;
-    WORDLENGTH: INTEGER64 = 64
+  (* the length of a machine word, as the example of p.1107 asks for it *)
+  FUNCTION WORDLENGTH RETURNS INTEGER64 ()
+    RETURN 64
+  ENDFUNCTION WORDLENGTH
 ENDMODULE StandardImplementationPrelude;
 
 (* elementary functions, by code inserts *)

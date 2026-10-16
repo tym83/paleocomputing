@@ -348,6 +348,7 @@ rt_int y_fmt_fixed(double v, rt_int decimals, unsigned char *buf, rt_int cap);
 void y_lang(void);           /* the YELLOW exception names; call before rt_init */
 extern int Y_X_FIXED, Y_X_ZERO_DENOM, Y_X_NO_RETURN;
 const ydesc *y_desc_vector(const ydesc *elem);
+void y_device(ysig *s, rt_int address);   /* a SIGNAL AT a device location */
 extern const ydesc y_d_str;
 
 #endif

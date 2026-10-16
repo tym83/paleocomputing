@@ -1521,12 +1521,13 @@ void * p2668;
 void * p2669;
 rt_int v6167;
 rt_int v6169;
+rt_int v6171;
 };
 struct yf2677 { void *up;
 void * p2675;
 rt_int p2676;
-void * v6175;
-rt_int v6177;
+void * v6180;
+rt_int v6182;
 };
 struct yf2684 { void *up;
 void * p2682;
@@ -1546,7 +1547,7 @@ rt_int p2705;
 rt_int * p2705_o;
 void * p2706;
 void * * p2706_o;
-rt_int v6204;
+rt_int v6209;
 };
 struct yf2715 { void *up;
 void * p2712;
@@ -1557,22 +1558,22 @@ void * * p2714_o;
 };
 struct yf2721 { void *up;
 void * p2720;
-rt_int v6220;
-void * v6222;
+rt_int v6225;
+void * v6227;
 };
 struct yf2727 { void *up;
 void * p2726;
-void * v6228;
-rt_int v6231;
-rt_int v6233;
-rt_int v6235;
-rt_int v6237;
-rt_int v6239;
-rt_int v6241;
-unsigned char v6243;
-void * v6245;
-ydesc yd_6252;
-yarr v6254;
+void * v6233;
+rt_int v6236;
+rt_int v6238;
+rt_int v6240;
+rt_int v6242;
+rt_int v6244;
+rt_int v6246;
+unsigned char v6248;
+void * v6250;
+ydesc yd_6257;
+yarr v6259;
 };
 struct yf2737 { void *up;
 rt_int p2732;
@@ -1582,53 +1583,53 @@ rt_int p2735;
 rt_int * p2735_o;
 void * p2736;
 void * * p2736_o;
-rt_int v6293;
-rt_int v6295;
-rt_int v6297;
-rt_int v6299;
-rt_int v6301;
-void * v6303;
-void * v6305;
-void * v6307;
-void * v6309;
-rt_int v6311;
-rt_int v6313;
-rt_int v6315;
-rt_int v6317;
-void * v6319;
-rt_int v6321;
-rt_int lo6334;
-rt_int hi6335;
-rt_int c_6337;
+rt_int v6298;
+rt_int v6300;
+rt_int v6302;
+rt_int v6304;
+rt_int v6306;
+void * v6308;
+void * v6310;
+void * v6312;
+void * v6314;
+rt_int v6316;
+rt_int v6318;
+rt_int v6320;
+rt_int v6322;
+void * v6324;
+rt_int v6326;
+rt_int lo6339;
+rt_int hi6340;
+rt_int c_6342;
 };
 struct yf2749 { void *up;
 yarr p2747;
 void * p2748;
-void * v6511;
+void * v6516;
 };
 struct yf2757 { void *up;
 yarr p2755;
 rt_int p2756;
-void * v6517;
+void * v6522;
 };
 struct yf2767 { void *up;
 yarr p2763;
 yarr p2764;
 yarr p2765;
 rt_int p2766;
-void * v6525;
-void * v6527;
-void * v6529;
+void * v6530;
+void * v6532;
+void * v6534;
 };
 struct yf2775 { void *up;
 rt_int p2772;
 yarr p2774;
-void * v6538;
+void * v6543;
 };
 struct yf2780 { void *up;
 };
 struct yf2785 { void *up;
-void * v6618;
+void * v6623;
 };
 struct yf2790 { void *up;
 };
@@ -8581,6 +8582,14 @@ yr2060_Manifest(F.p2669, &F.v6167, &F.v6169);
 if ((!F.v6167)) {
 yr1124_FailS(((*(yR95 *)rt_nil_check(F.p2669))).f_line, y_str("an AT location is a manifest constant (XIV.VII)", 47));
 }
+yr986_SB();
+yr997_SA(y_str("y_device(&", 10));
+yr1004_ST(yr1671_SymPath(F.p2668));
+yr997_SA(y_str(", ", 2));
+yr1010_SI(F.v6169);
+yr997_SA(y_str(");", 2));
+F.v6171 = yr1016_SE();
+yr1092_Emit(F.v6171);
 return;
 rt_raise(Y_X_NO_RETURN);
 }
@@ -8589,17 +8598,17 @@ struct yf2677 F;
 memset((void *)&F, 0, sizeof F);
 F.p2675 = a_p2675;
 F.p2676 = a_p2676;
-F.v6175 = ((*(yR95 *)rt_nil_check(F.p2675))).f_a;
-F.v6177 = INT64_C(1);
-while ((((!(F.v6175 == ((void *)0)))) && ((F.v6177 < F.p2676)))) {
-F.v6175 = ((*(yR95 *)rt_nil_check(F.v6175))).f_next;
-F.v6177 = rt_range(rt_add(F.v6177, INT64_C(1)), INT64_C(-9223372036854775807), INT64_C(9223372036854775807));
+F.v6180 = ((*(yR95 *)rt_nil_check(F.p2675))).f_a;
+F.v6182 = INT64_C(1);
+while ((((!(F.v6180 == ((void *)0)))) && ((F.v6182 < F.p2676)))) {
+F.v6180 = ((*(yR95 *)rt_nil_check(F.v6180))).f_next;
+F.v6182 = rt_range(rt_add(F.v6182, INT64_C(1)), INT64_C(-9223372036854775807), INT64_C(9223372036854775807));
 }
-if ((F.v6175 == ((void *)0))) {
+if ((F.v6180 == ((void *)0))) {
 yr1132_FailN(((*(yR95 *)rt_nil_check(F.p2675))).f_line, ((*(yR95 *)rt_nil_check(F.p2675))).f_name, y_str(": too few actual parameters", 27));
 }
-{ void * rv6182 = F.v6175;
-return rv6182; }
+{ void * rv6187 = F.v6180;
+return rv6187; }
 rt_raise(Y_X_NO_RETURN);
 }
 static void yr2681_NArgs(void * a_p2682, rt_int a_p2683) {
@@ -8623,16 +8632,16 @@ yr997_SA(F.p2690);
 yr997_SA(y_str("(", 1));
 yr1004_ST(F.p2691);
 yr997_SA(y_str(")", 1));
-{ rt_int rv6192 = yr1016_SE();
-return rv6192; }
+{ rt_int rv6197 = yr1016_SE();
+return rv6197; }
 rt_raise(Y_X_NO_RETURN);
 }
 static rt_int yr2696_Addr(rt_int a_p2697) {
 struct yf2698 F;
 memset((void *)&F, 0, sizeof F);
 F.p2697 = a_p2697;
-{ rt_int rv6197 = yr2465_Join(yr1021_T(y_str("&", 1)), F.p2697, INT64_C(0));
-return rv6197; }
+{ rt_int rv6202 = yr2465_Join(yr1021_T(y_str("&", 1)), F.p2697, INT64_C(0));
+return rv6202; }
 rt_raise(Y_X_NO_RETURN);
 }
 static void yr2702_StdVar(void * a_p2703, rt_int a_p2704, rt_int * a_p2705, void * * a_p2706) {
@@ -8658,8 +8667,8 @@ yr997_SA(y_str("pointer", 7));
 yr997_SA(y_str("variable", 8));
 }
 yr997_SA(y_str(" is needed here", 15));
-F.v6204 = yr1016_SE();
-yr1117_Fail(((*(yR95 *)rt_nil_check(F.p2703))).f_line, F.v6204);
+F.v6209 = yr1016_SE();
+yr1117_Fail(((*(yR95 *)rt_nil_check(F.p2703))).f_line, F.v6209);
 }
 (*F.p2705_o) = F.p2705;
 (*F.p2706_o) = F.p2706;
@@ -8685,65 +8694,65 @@ static rt_int yr2719_IntArg(void * a_p2720) {
 struct yf2721 F;
 memset((void *)&F, 0, sizeof F);
 F.p2720 = a_p2720;
-yr2119_Expr(F.p2720, v1683, &F.v6220, &F.v6222);
-if ((!(((*(yR100 *)rt_nil_check(F.v6222))).f_kind == v774))) {
+yr2119_Expr(F.p2720, v1683, &F.v6225, &F.v6227);
+if ((!(((*(yR100 *)rt_nil_check(F.v6227))).f_kind == v774))) {
 yr1124_FailS(((*(yR95 *)rt_nil_check(F.p2720))).f_line, y_str("an integer is needed here", 25));
 }
-{ rt_int rv6224 = F.v6220;
-return rv6224; }
+{ rt_int rv6229 = F.v6225;
+return rv6229; }
 rt_raise(Y_X_NO_RETURN);
 }
 static void yr2725_CodeInsert(void * a_p2726) {
 struct yf2727 F;
 memset((void *)&F, 0, sizeof F);
 F.p2726 = a_p2726;
-F.v6228 = yr2674_Arg(F.p2726, INT64_C(1));
-{ rt_int lo[1] = {INT64_C(1)}, hi[1] = {INT64_C(1)}; y_desc_array(&F.yd_6252, 1, lo, hi, &y_d_int); }
-y_init(&F.yd_6252, &F.v6254);
-if ((!(((*(yR95 *)rt_nil_check(F.v6228))).f_kind == v741))) {
+F.v6233 = yr2674_Arg(F.p2726, INT64_C(1));
+{ rt_int lo[1] = {INT64_C(1)}, hi[1] = {INT64_C(1)}; y_desc_array(&F.yd_6257, 1, lo, hi, &y_d_int); }
+y_init(&F.yd_6257, &F.v6259);
+if ((!(((*(yR95 *)rt_nil_check(F.v6233))).f_kind == v741))) {
 yr1124_FailS(((*(yR95 *)rt_nil_check(F.p2726))).f_line, y_str("a code insert takes a string literal (XIV.XI.5)", 47));
 }
-F.v6231 = ((*(yR95 *)rt_nil_check(F.v6228))).f_text;
-F.v6241 = ((rt_int *)(v890).p)[y_ix1(v890, F.v6231)];
+F.v6236 = ((*(yR95 *)rt_nil_check(F.v6233))).f_text;
+F.v6246 = ((rt_int *)(v890).p)[y_ix1(v890, F.v6236)];
 yr986_SB();
-F.v6237 = INT64_C(1);
-while ((F.v6237 <= F.v6241)) {
-F.v6243 = yr1063_TChar(F.v6231, F.v6237);
-if ((F.v6243 == 39)) {
-F.v6239 = rt_range(rt_add(F.v6237, INT64_C(1)), INT64_C(-9223372036854775807), INT64_C(9223372036854775807));
-while ((!(yr1063_TChar(F.v6231, F.v6239) == 39))) {
-F.v6239 = rt_range(rt_add(F.v6239, INT64_C(1)), INT64_C(-9223372036854775807), INT64_C(9223372036854775807));
+F.v6242 = INT64_C(1);
+while ((F.v6242 <= F.v6246)) {
+F.v6248 = yr1063_TChar(F.v6236, F.v6242);
+if ((F.v6248 == 39)) {
+F.v6244 = rt_range(rt_add(F.v6242, INT64_C(1)), INT64_C(-9223372036854775807), INT64_C(9223372036854775807));
+while ((!(yr1063_TChar(F.v6236, F.v6244) == 39))) {
+F.v6244 = rt_range(rt_add(F.v6244, INT64_C(1)), INT64_C(-9223372036854775807), INT64_C(9223372036854775807));
 }
-F.v6233 = yr1028_Intern(rt_range(rt_add(((rt_int *)(v888).p)[y_ix1(v888, F.v6231)], F.v6237), INT64_C(-9223372036854775807), INT64_C(9223372036854775807)), rt_range(rt_sub((rt_sub(F.v6239, F.v6237)), INT64_C(1)), INT64_C(-9223372036854775807), INT64_C(9223372036854775807)));
-yr991_SC(((unsigned char *)(v940).p)[y_ix1(v940, yr2043_CharValue(v1687, F.v6233, ((*(yR95 *)rt_nil_check(F.p2726))).f_line))]);
-F.v6237 = rt_range(rt_add(F.v6239, INT64_C(1)), INT64_C(-9223372036854775807), INT64_C(9223372036854775807));
-} else if ((F.v6243 == 36)) {
-F.v6239 = rt_range(rt_add(F.v6237, INT64_C(1)), INT64_C(-9223372036854775807), INT64_C(9223372036854775807));
-while ((((F.v6239 <= F.v6241)) && ((yr968_IsLetter(yr1063_TChar(F.v6231, F.v6239)) || yr974_IsDigit(yr1063_TChar(F.v6231, F.v6239)))))) {
-F.v6239 = rt_range(rt_add(F.v6239, INT64_C(1)), INT64_C(-9223372036854775807), INT64_C(9223372036854775807));
+F.v6238 = yr1028_Intern(rt_range(rt_add(((rt_int *)(v888).p)[y_ix1(v888, F.v6236)], F.v6242), INT64_C(-9223372036854775807), INT64_C(9223372036854775807)), rt_range(rt_sub((rt_sub(F.v6244, F.v6242)), INT64_C(1)), INT64_C(-9223372036854775807), INT64_C(9223372036854775807)));
+yr991_SC(((unsigned char *)(v940).p)[y_ix1(v940, yr2043_CharValue(v1687, F.v6238, ((*(yR95 *)rt_nil_check(F.p2726))).f_line))]);
+F.v6242 = rt_range(rt_add(F.v6244, INT64_C(1)), INT64_C(-9223372036854775807), INT64_C(9223372036854775807));
+} else if ((F.v6248 == 36)) {
+F.v6244 = rt_range(rt_add(F.v6242, INT64_C(1)), INT64_C(-9223372036854775807), INT64_C(9223372036854775807));
+while ((((F.v6244 <= F.v6246)) && ((yr968_IsLetter(yr1063_TChar(F.v6236, F.v6244)) || yr974_IsDigit(yr1063_TChar(F.v6236, F.v6244)))))) {
+F.v6244 = rt_range(rt_add(F.v6244, INT64_C(1)), INT64_C(-9223372036854775807), INT64_C(9223372036854775807));
 }
-F.v6233 = yr1028_Intern(rt_range(rt_add(((rt_int *)(v888).p)[y_ix1(v888, F.v6231)], F.v6237), INT64_C(-9223372036854775807), INT64_C(9223372036854775807)), rt_range(rt_sub((rt_sub(F.v6239, F.v6237)), INT64_C(1)), INT64_C(-9223372036854775807), INT64_C(9223372036854775807)));
-F.v6245 = yr1612_Find(F.v6233);
-if ((F.v6245 == ((void *)0))) {
+F.v6238 = yr1028_Intern(rt_range(rt_add(((rt_int *)(v888).p)[y_ix1(v888, F.v6236)], F.v6242), INT64_C(-9223372036854775807), INT64_C(9223372036854775807)), rt_range(rt_sub((rt_sub(F.v6244, F.v6242)), INT64_C(1)), INT64_C(-9223372036854775807), INT64_C(9223372036854775807)));
+F.v6250 = yr1612_Find(F.v6238);
+if ((F.v6250 == ((void *)0))) {
 v909 = INT64_C(0);
 v921 = INT64_C(0);
-yr1132_FailN(((*(yR95 *)rt_nil_check(F.p2726))).f_line, F.v6233, y_str(" in a code insert is not declared here", 38));
+yr1132_FailN(((*(yR95 *)rt_nil_check(F.p2726))).f_line, F.v6238, y_str(" in a code insert is not declared here", 38));
 }
-F.v6245 = yr1677_Real(F.v6245);
-if ((((!(((*(yR115 *)rt_nil_check(F.v6245))).f_kind == v831))) && ((!(((*(yR115 *)rt_nil_check(F.v6245))).f_kind == v834))))) {
+F.v6250 = yr1677_Real(F.v6250);
+if ((((!(((*(yR115 *)rt_nil_check(F.v6250))).f_kind == v831))) && ((!(((*(yR115 *)rt_nil_check(F.v6250))).f_kind == v834))))) {
 v909 = INT64_C(0);
 v921 = INT64_C(0);
-yr1132_FailN(((*(yR95 *)rt_nil_check(F.p2726))).f_line, F.v6233, y_str(" in a code insert is not a variable or constant", 47));
+yr1132_FailN(((*(yR95 *)rt_nil_check(F.p2726))).f_line, F.v6238, y_str(" in a code insert is not a variable or constant", 47));
 }
-yr1004_ST(yr2100_Paren(yr1671_SymPath(F.v6245)));
-F.v6237 = F.v6239;
+yr1004_ST(yr2100_Paren(yr1671_SymPath(F.v6250)));
+F.v6242 = F.v6244;
 } else {
-yr991_SC(F.v6243);
-F.v6237 = rt_range(rt_add(F.v6237, INT64_C(1)), INT64_C(-9223372036854775807), INT64_C(9223372036854775807));
+yr991_SC(F.v6248);
+F.v6242 = rt_range(rt_add(F.v6242, INT64_C(1)), INT64_C(-9223372036854775807), INT64_C(9223372036854775807));
 }
 }
-F.v6235 = yr1016_SE();
-yr1092_Emit(F.v6235);
+F.v6240 = yr1016_SE();
+yr1092_Emit(F.v6240);
 return;
 rt_raise(Y_X_NO_RETURN);
 }
@@ -8757,40 +8766,40 @@ F.p2735_o = a_p2735;
 F.p2736_o = a_p2736;
 F.p2736 = v1689;
 F.p2735 = yr1021_T(y_str("((void)0)", 9));
-F.v6321 = ((((((((((((((((F.p2732 == v1934)) || ((F.p2732 == v1937))) || ((F.p2732 == v1940))) || ((F.p2732 == v1943))) || ((F.p2732 == v1946))) || ((F.p2732 == v1952))) || ((F.p2732 == v1961))) || ((F.p2732 == v1967))) || ((F.p2732 == v1970))) || ((F.p2732 == v1994))) || ((F.p2732 == v1997))) || ((F.p2732 == v2006))) || ((F.p2732 == v2009))) || ((F.p2732 == v2012))) || ((F.p2732 == v2015)));
-if ((F.p2734 && (!F.v6321))) {
+F.v6326 = ((((((((((((((((F.p2732 == v1934)) || ((F.p2732 == v1937))) || ((F.p2732 == v1940))) || ((F.p2732 == v1943))) || ((F.p2732 == v1946))) || ((F.p2732 == v1952))) || ((F.p2732 == v1961))) || ((F.p2732 == v1967))) || ((F.p2732 == v1970))) || ((F.p2732 == v1994))) || ((F.p2732 == v1997))) || ((F.p2732 == v2006))) || ((F.p2732 == v2009))) || ((F.p2732 == v2012))) || ((F.p2732 == v2015)));
+if ((F.p2734 && (!F.v6326))) {
 yr1132_FailN(((*(yR95 *)rt_nil_check(F.p2733))).f_line, ((*(yR95 *)rt_nil_check(F.p2733))).f_name, y_str(" returns a value: it is called in an expression", 47));
 }
-if (((!F.p2734) && F.v6321)) {
+if (((!F.p2734) && F.v6326)) {
 yr1132_FailN(((*(yR95 *)rt_nil_check(F.p2733))).f_line, ((*(yR95 *)rt_nil_check(F.p2733))).f_name, y_str(" returns no value", 17));
 }
 if ((((F.p2732 == v1916)) || ((F.p2732 == v1919)))) {
 yr2681_NArgs(F.p2733, INT64_C(2));
-yr2119_Expr(yr2674_Arg(F.p2733, INT64_C(1)), ((void *)0), &F.v6293, &F.v6303);
-if ((!yr1732_IsArrayLike(F.v6303))) {
+yr2119_Expr(yr2674_Arg(F.p2733, INT64_C(1)), ((void *)0), &F.v6298, &F.v6308);
+if ((!yr1732_IsArrayLike(F.v6308))) {
 yr1132_FailN(((*(yR95 *)rt_nil_check(F.p2733))).f_line, ((*(yR95 *)rt_nil_check(F.p2733))).f_name, y_str(" of something that is not an array", 34));
 }
-F.v6295 = yr2719_IntArg(yr2674_Arg(F.p2733, INT64_C(2)));
-yr2060_Manifest(yr2674_Arg(F.p2733, INT64_C(2)), &F.v6317, &F.v6315);
+F.v6300 = yr2719_IntArg(yr2674_Arg(F.p2733, INT64_C(2)));
+yr2060_Manifest(yr2674_Arg(F.p2733, INT64_C(2)), &F.v6322, &F.v6320);
 F.p2736 = yr2163_Unbounded(v1683);
-if ((F.v6317 && ((((*(yR100 *)rt_nil_check(F.v6303))).f_kind == v792)))) {
-if ((((F.v6315 < INT64_C(1))) || ((F.v6315 > ((*(yR100 *)rt_nil_check(F.v6303))).f_nidx)))) {
+if ((F.v6322 && ((((*(yR100 *)rt_nil_check(F.v6308))).f_kind == v792)))) {
+if ((((F.v6320 < INT64_C(1))) || ((F.v6320 > ((*(yR100 *)rt_nil_check(F.v6308))).f_nidx)))) {
 yr1124_FailS(((*(yR95 *)rt_nil_check(F.p2733))).f_line, y_str("no such dimension", 17));
 }
-F.v6309 = ((*(yR100 *)rt_nil_check(F.v6303))).f_idx;
-F.lo6334 = INT64_C(2);
-F.hi6335 = F.v6315;
-{ rt_int hi6339 = F.hi6335;
-for (rt_int i6338 = F.lo6334; i6338 <= hi6339; i6338++) { F.c_6337 = i6338;
-F.v6309 = ((*(yR100 *)rt_nil_check(F.v6309))).f_link;
-if (i6338 == hi6339) break;
+F.v6314 = ((*(yR100 *)rt_nil_check(F.v6308))).f_idx;
+F.lo6339 = INT64_C(2);
+F.hi6340 = F.v6320;
+{ rt_int hi6344 = F.hi6340;
+for (rt_int i6343 = F.lo6339; i6343 <= hi6344; i6343++) { F.c_6342 = i6343;
+F.v6314 = ((*(yR100 *)rt_nil_check(F.v6314))).f_link;
+if (i6343 == hi6344) break;
 }}
-F.p2736 = F.v6309;
+F.p2736 = F.v6314;
 }
 if ((F.p2732 == v1916)) {
-F.p2735 = yr2169_Call2(y_str("y_low", 5), F.v6293, F.v6295);
+F.p2735 = yr2169_Call2(y_str("y_low", 5), F.v6298, F.v6300);
 } else {
-F.p2735 = yr2169_Call2(y_str("y_high", 6), F.v6293, F.v6295);
+F.p2735 = yr2169_Call2(y_str("y_high", 6), F.v6298, F.v6300);
 }
 (*F.p2735_o) = F.p2735;
 (*F.p2736_o) = F.p2736;
@@ -8798,27 +8807,27 @@ return;
 }
 if ((((((F.p2732 == v1922)) || ((F.p2732 == v1925))) || ((F.p2732 == v1928))) || ((F.p2732 == v1931)))) {
 yr2681_NArgs(F.p2733, INT64_C(1));
-yr2119_Expr(yr2674_Arg(F.p2733, INT64_C(1)), ((void *)0), &F.v6293, &F.v6303);
-if ((!yr1720_IsDiscrete(F.v6303))) {
+yr2119_Expr(yr2674_Arg(F.p2733, INT64_C(1)), ((void *)0), &F.v6298, &F.v6308);
+if ((!yr1720_IsDiscrete(F.v6308))) {
 yr1132_FailN(((*(yR95 *)rt_nil_check(F.p2733))).f_line, ((*(yR95 *)rt_nil_check(F.p2733))).f_name, y_str(" of something that is not integer or scalar", 43));
 }
-if ((!(((*(yR100 *)rt_nil_check(F.v6303))).f_elem == ((void *)0)))) {
-F.v6303 = ((*(yR100 *)rt_nil_check(F.v6303))).f_elem;
+if ((!(((*(yR100 *)rt_nil_check(F.v6308))).f_elem == ((void *)0)))) {
+F.v6308 = ((*(yR100 *)rt_nil_check(F.v6308))).f_elem;
 }
-if ((((((F.p2732 == v1928)) || ((F.p2732 == v1931)))) && ((((*(yR100 *)rt_nil_check(F.v6303))).f_kind == v774)))) {
+if ((((((F.p2732 == v1928)) || ((F.p2732 == v1931)))) && ((((*(yR100 *)rt_nil_check(F.v6308))).f_kind == v774)))) {
 yr1124_FailS(((*(yR95 *)rt_nil_check(F.p2733))).f_line, y_str("FIRST and LAST apply to ordered enumerations and alphabets (XI)", 63));
 }
-if ((((((*(yR100 *)rt_nil_check(F.v6303))).f_kind == v786)) && (!((*(yR100 *)rt_nil_check(F.v6303))).f_ordered))) {
+if ((((((*(yR100 *)rt_nil_check(F.v6308))).f_kind == v786)) && (!((*(yR100 *)rt_nil_check(F.v6308))).f_ordered))) {
 yr1132_FailN(((*(yR95 *)rt_nil_check(F.p2733))).f_line, ((*(yR95 *)rt_nil_check(F.p2733))).f_name, y_str(" applies to ordered enumerations (XI)", 37));
 }
-F.p2736 = yr2163_Unbounded(F.v6303);
+F.p2736 = yr2163_Unbounded(F.v6308);
 if ((F.p2732 == v1928)) {
-F.p2735 = yr1812_LoText(F.v6303);
+F.p2735 = yr1812_LoText(F.v6308);
 } else if ((F.p2732 == v1931)) {
-F.p2735 = yr1818_HiText(F.v6303);
+F.p2735 = yr1818_HiText(F.v6308);
 } else {
 yr986_SB();
-if ((!(((*(yR100 *)rt_nil_check(F.v6303))).f_lo == INT64_C(0)))) {
+if ((!(((*(yR100 *)rt_nil_check(F.v6308))).f_lo == INT64_C(0)))) {
 yr997_SA(y_str("rt_range(", 9));
 }
 if ((F.p2732 == v1922)) {
@@ -8826,19 +8835,19 @@ yr997_SA(y_str("rt_add(", 7));
 } else {
 yr997_SA(y_str("rt_sub(", 7));
 }
-yr1004_ST(F.v6293);
+yr1004_ST(F.v6298);
 yr997_SA(y_str(", 1)", 4));
-if ((!(((*(yR100 *)rt_nil_check(F.v6303))).f_lo == INT64_C(0)))) {
+if ((!(((*(yR100 *)rt_nil_check(F.v6308))).f_lo == INT64_C(0)))) {
 yr997_SA(y_str(", ", 2));
-yr1004_ST(yr1812_LoText(F.v6303));
+yr1004_ST(yr1812_LoText(F.v6308));
 yr997_SA(y_str(", ", 2));
-yr1004_ST(yr1818_HiText(F.v6303));
+yr1004_ST(yr1818_HiText(F.v6308));
 yr997_SA(y_str(")", 1));
 }
 F.p2735 = yr1016_SE();
 }
-if ((!(((*(yR100 *)rt_nil_check(F.v6303))).f_kind == v774))) {
-F.p2736 = F.v6303;
+if ((!(((*(yR100 *)rt_nil_check(F.v6308))).f_kind == v774))) {
+F.p2736 = F.v6308;
 }
 (*F.p2735_o) = F.p2735;
 (*F.p2736_o) = F.p2736;
@@ -8846,22 +8855,22 @@ return;
 }
 if ((F.p2732 == v1934)) {
 yr2681_NArgs(F.p2733, INT64_C(1));
-yr2702_StdVar(yr2674_Arg(F.p2733, INT64_C(1)), v798, &F.v6293, &F.v6303);
-if ((((*(yR100 *)rt_nil_check(F.v6303))).f_elem == ((void *)0))) {
-yr1132_FailN(((*(yR95 *)rt_nil_check(F.p2733))).f_line, ((*(yR100 *)rt_nil_check(F.v6303))).f_forward, y_str(" is not declared", 16));
+yr2702_StdVar(yr2674_Arg(F.p2733, INT64_C(1)), v798, &F.v6298, &F.v6308);
+if ((((*(yR100 *)rt_nil_check(F.v6308))).f_elem == ((void *)0))) {
+yr1132_FailN(((*(yR95 *)rt_nil_check(F.p2733))).f_line, ((*(yR100 *)rt_nil_check(F.v6308))).f_forward, y_str(" is not declared", 16));
 }
-F.v6309 = ((*(yR100 *)rt_nil_check(F.v6303))).f_elem;
+F.v6314 = ((*(yR100 *)rt_nil_check(F.v6308))).f_elem;
 yr986_SB();
 yr997_SA(y_str("({ ", 3));
-yr1004_ST(F.v6293);
+yr1004_ST(F.v6298);
 yr997_SA(y_str(" = rt_alloc(sizeof(", 19));
-yr1004_ST(yr1750_CType(F.v6309));
+yr1004_ST(yr1750_CType(F.v6314));
 yr997_SA(y_str("));", 3));
-if (yr1744_Deep(F.v6309)) {
+if (yr1744_Deep(F.v6314)) {
 yr997_SA(y_str(" y_init(", 8));
-yr1004_ST(yr1756_DescOf(F.v6309));
+yr1004_ST(yr1756_DescOf(F.v6314));
 yr997_SA(y_str(", ", 2));
-yr1004_ST(F.v6293);
+yr1004_ST(F.v6298);
 yr997_SA(y_str(");", 2));
 }
 yr997_SA(y_str(" })", 3));
@@ -8872,28 +8881,28 @@ return;
 }
 if ((F.p2732 == v2012)) {
 yr2681_NArgs(F.p2733, INT64_C(1));
-yr2702_StdVar(yr2674_Arg(F.p2733, INT64_C(1)), v798, &F.v6293, &F.v6303);
-F.p2735 = yr2465_Join(yr1021_T(y_str("({ free(", 8)), F.v6293, yr2465_Join(yr1021_T(y_str("); ", 3)), F.v6293, yr1021_T(y_str(" = 0; })", 8))));
+yr2702_StdVar(yr2674_Arg(F.p2733, INT64_C(1)), v798, &F.v6298, &F.v6308);
+F.p2735 = yr2465_Join(yr1021_T(y_str("({ free(", 8)), F.v6298, yr2465_Join(yr1021_T(y_str("); ", 3)), F.v6298, yr1021_T(y_str(" = 0; })", 8))));
 (*F.p2735_o) = F.p2735;
 (*F.p2736_o) = F.p2736;
 return;
 }
 if ((F.p2732 == v1937)) {
 yr2681_NArgs(F.p2733, INT64_C(3));
-yr2702_StdVar(yr2674_Arg(F.p2733, INT64_C(1)), v801, &F.v6293, &F.v6303);
-yr2119_Expr(yr2674_Arg(F.p2733, INT64_C(2)), v1687, &F.v6295, &F.v6305);
-if ((!yr1738_IsString(F.v6305))) {
+yr2702_StdVar(yr2674_Arg(F.p2733, INT64_C(1)), v801, &F.v6298, &F.v6308);
+yr2119_Expr(yr2674_Arg(F.p2733, INT64_C(2)), v1687, &F.v6300, &F.v6310);
+if ((!yr1738_IsString(F.v6310))) {
 yr1124_FailS(((*(yR95 *)rt_nil_check(F.p2733))).f_line, y_str("OPEN takes the name of the file as a string (XII.A)", 51));
 }
-yr2119_Expr(yr2674_Arg(F.p2733, INT64_C(3)), v2741, &F.v6297, &F.v6307);
-yr1783_CheckType(((*(yR95 *)rt_nil_check(F.p2733))).f_line, v2741, F.v6307);
+yr2119_Expr(yr2674_Arg(F.p2733, INT64_C(3)), v2741, &F.v6302, &F.v6312);
+yr1783_CheckType(((*(yR95 *)rt_nil_check(F.p2733))).f_line, v2741, F.v6312);
 yr986_SB();
 yr997_SA(y_str("y_open(&", 8));
-yr1004_ST(F.v6293);
+yr1004_ST(F.v6298);
 yr997_SA(y_str(", ", 2));
-yr1004_ST(F.v6295);
+yr1004_ST(F.v6300);
 yr997_SA(y_str(", ", 2));
-yr1004_ST(F.v6297);
+yr1004_ST(F.v6302);
 yr997_SA(y_str(")", 1));
 F.p2735 = yr1016_SE();
 (*F.p2735_o) = F.p2735;
@@ -8902,12 +8911,12 @@ return;
 }
 if ((((F.p2732 == v1940)) || ((F.p2732 == v1949)))) {
 yr2681_NArgs(F.p2733, INT64_C(1));
-yr2702_StdVar(yr2674_Arg(F.p2733, INT64_C(1)), v801, &F.v6293, &F.v6303);
+yr2702_StdVar(yr2674_Arg(F.p2733, INT64_C(1)), v801, &F.v6298, &F.v6308);
 if ((F.p2732 == v1940)) {
-F.p2735 = yr2688_Call1(y_str("y_close", 7), yr2696_Addr(F.v6293));
+F.p2735 = yr2688_Call1(y_str("y_close", 7), yr2696_Addr(F.v6298));
 } else {
 F.p2736 = v1685;
-F.p2735 = yr2688_Call1(y_str("y_check_eof", 11), yr2696_Addr(F.v6293));
+F.p2735 = yr2688_Call1(y_str("y_check_eof", 11), yr2696_Addr(F.v6298));
 }
 (*F.p2735_o) = F.p2735;
 (*F.p2736_o) = F.p2736;
@@ -8915,21 +8924,21 @@ return;
 }
 if ((F.p2732 == v1943)) {
 yr2681_NArgs(F.p2733, INT64_C(2));
-yr2702_StdVar(yr2674_Arg(F.p2733, INT64_C(1)), v801, &F.v6293, &F.v6303);
-yr2702_StdVar(yr2674_Arg(F.p2733, INT64_C(2)), v828, &F.v6295, &F.v6305);
-yr1783_CheckType(((*(yR95 *)rt_nil_check(F.p2733))).f_line, ((*(yR100 *)rt_nil_check(F.v6303))).f_elem, F.v6305);
-if ((yr1744_Deep(F.v6305) || ((((*(yR100 *)rt_nil_check(F.v6305))).f_kind == v798)))) {
+yr2702_StdVar(yr2674_Arg(F.p2733, INT64_C(1)), v801, &F.v6298, &F.v6308);
+yr2702_StdVar(yr2674_Arg(F.p2733, INT64_C(2)), v828, &F.v6300, &F.v6310);
+yr1783_CheckType(((*(yR95 *)rt_nil_check(F.p2733))).f_line, ((*(yR100 *)rt_nil_check(F.v6308))).f_elem, F.v6310);
+if ((yr1744_Deep(F.v6310) || ((((*(yR100 *)rt_nil_check(F.v6310))).f_kind == v798)))) {
 yr1124_FailS(((*(yR95 *)rt_nil_check(F.p2733))).f_line, y_str("files of this implementation hold no arrays or pointers", 55));
 }
 yr986_SB();
 yr997_SA(y_str("({ ", 3));
-yr1004_ST(yr1750_CType(F.v6305));
+yr1004_ST(yr1750_CType(F.v6310));
 yr997_SA(y_str(" g; y_get(&", 11));
-yr1004_ST(F.v6293);
+yr1004_ST(F.v6298);
 yr997_SA(y_str(", &g, sizeof g); ", 17));
-yr1004_ST(F.v6295);
+yr1004_ST(F.v6300);
 yr997_SA(y_str(" = ", 3));
-yr1004_ST(yr2068_Convert(yr1021_T(y_str("g", 1)), F.v6305, ((*(yR100 *)rt_nil_check(F.v6303))).f_elem));
+yr1004_ST(yr2068_Convert(yr1021_T(y_str("g", 1)), F.v6310, ((*(yR100 *)rt_nil_check(F.v6308))).f_elem));
 yr997_SA(y_str("; })", 4));
 F.p2735 = yr1016_SE();
 (*F.p2735_o) = F.p2735;
@@ -8938,19 +8947,19 @@ return;
 }
 if ((F.p2732 == v1946)) {
 yr2681_NArgs(F.p2733, INT64_C(2));
-yr2702_StdVar(yr2674_Arg(F.p2733, INT64_C(1)), v801, &F.v6293, &F.v6303);
-yr2119_Expr(yr2674_Arg(F.p2733, INT64_C(2)), ((*(yR100 *)rt_nil_check(F.v6303))).f_elem, &F.v6295, &F.v6305);
-yr1783_CheckType(((*(yR95 *)rt_nil_check(F.p2733))).f_line, ((*(yR100 *)rt_nil_check(F.v6303))).f_elem, F.v6305);
-if ((yr1744_Deep(F.v6305) || ((((*(yR100 *)rt_nil_check(F.v6305))).f_kind == v798)))) {
+yr2702_StdVar(yr2674_Arg(F.p2733, INT64_C(1)), v801, &F.v6298, &F.v6308);
+yr2119_Expr(yr2674_Arg(F.p2733, INT64_C(2)), ((*(yR100 *)rt_nil_check(F.v6308))).f_elem, &F.v6300, &F.v6310);
+yr1783_CheckType(((*(yR95 *)rt_nil_check(F.p2733))).f_line, ((*(yR100 *)rt_nil_check(F.v6308))).f_elem, F.v6310);
+if ((yr1744_Deep(F.v6310) || ((((*(yR100 *)rt_nil_check(F.v6310))).f_kind == v798)))) {
 yr1124_FailS(((*(yR95 *)rt_nil_check(F.p2733))).f_line, y_str("files of this implementation hold no arrays or pointers", 55));
 }
 yr986_SB();
 yr997_SA(y_str("({ ", 3));
-yr1004_ST(yr1750_CType(((*(yR100 *)rt_nil_check(F.v6303))).f_elem));
+yr1004_ST(yr1750_CType(((*(yR100 *)rt_nil_check(F.v6308))).f_elem));
 yr997_SA(y_str(" pv = ", 6));
-yr1004_ST(yr2068_Convert(F.v6295, ((*(yR100 *)rt_nil_check(F.v6303))).f_elem, F.v6305));
+yr1004_ST(yr2068_Convert(F.v6300, ((*(yR100 *)rt_nil_check(F.v6308))).f_elem, F.v6310));
 yr997_SA(y_str("; y_put(&", 9));
-yr1004_ST(F.v6293);
+yr1004_ST(F.v6298);
 yr997_SA(y_str(", &pv, sizeof pv); })", 21));
 F.p2735 = yr1016_SE();
 (*F.p2735_o) = F.p2735;
@@ -8958,50 +8967,50 @@ F.p2735 = yr1016_SE();
 return;
 }
 if ((F.p2732 == v1952)) {
-F.v6311 = yr1260_Count(((*(yR95 *)rt_nil_check(F.p2733))).f_a);
-if ((((F.v6311 < INT64_C(5))) || ((!((rt_mod((rt_sub(F.v6311, INT64_C(2))), INT64_C(3))) == INT64_C(0)))))) {
+F.v6316 = yr1260_Count(((*(yR95 *)rt_nil_check(F.p2733))).f_a);
+if ((((F.v6316 < INT64_C(5))) || ((!((rt_mod((rt_sub(F.v6316, INT64_C(2))), INT64_C(3))) == INT64_C(0)))))) {
 yr1124_FailS(((*(yR95 *)rt_nil_check(F.p2733))).f_line, y_str("MOVE takes an object, an index and triples", 42));
 }
-yr2702_StdVar(yr2674_Arg(F.p2733, INT64_C(1)), v828, &F.v6293, &F.v6303);
-if (((!((((((*(yR100 *)rt_nil_check(F.v6303))).f_kind == v792)) || ((((*(yR100 *)rt_nil_check(F.v6303))).f_kind == v813))))) || ((!(((*(yR100 *)rt_nil_check(F.v6303))).f_nidx == INT64_C(1)))))) {
+yr2702_StdVar(yr2674_Arg(F.p2733, INT64_C(1)), v828, &F.v6298, &F.v6308);
+if (((!((((((*(yR100 *)rt_nil_check(F.v6308))).f_kind == v792)) || ((((*(yR100 *)rt_nil_check(F.v6308))).f_kind == v813))))) || ((!(((*(yR100 *)rt_nil_check(F.v6308))).f_nidx == INT64_C(1)))))) {
 yr1124_FailS(((*(yR95 *)rt_nil_check(F.p2733))).f_line, y_str("MOVE works on one-dimensional arrays", 36));
 }
-F.v6295 = yr2719_IntArg(yr2674_Arg(F.p2733, INT64_C(2)));
-F.v6301 = yr1146_Fresh(y_str("at", 2));
+F.v6300 = yr2719_IntArg(yr2674_Arg(F.p2733, INT64_C(2)));
+F.v6306 = yr1146_Fresh(y_str("at", 2));
 yr986_SB();
 yr997_SA(y_str("({ rt_int ", 10));
-yr1004_ST(F.v6301);
+yr1004_ST(F.v6306);
 yr997_SA(y_str(" = ", 3));
-yr1004_ST(F.v6295);
+yr1004_ST(F.v6300);
 yr997_SA(y_str(";", 1));
 F.p2735 = yr1016_SE();
-F.v6313 = INT64_C(3);
-while ((F.v6313 < F.v6311)) {
-yr2119_Expr(yr2674_Arg(F.p2733, F.v6313), ((*(yR100 *)rt_nil_check(F.v6303))).f_elem, &F.v6297, &F.v6307);
-if (((!yr1732_IsArrayLike(F.v6307)) || (!yr1768_SameType(((*(yR100 *)rt_nil_check(F.v6303))).f_elem, ((*(yR100 *)rt_nil_check(F.v6307))).f_elem)))) {
+F.v6318 = INT64_C(3);
+while ((F.v6318 < F.v6316)) {
+yr2119_Expr(yr2674_Arg(F.p2733, F.v6318), ((*(yR100 *)rt_nil_check(F.v6308))).f_elem, &F.v6302, &F.v6312);
+if (((!yr1732_IsArrayLike(F.v6312)) || (!yr1768_SameType(((*(yR100 *)rt_nil_check(F.v6308))).f_elem, ((*(yR100 *)rt_nil_check(F.v6312))).f_elem)))) {
 yr1124_FailS(((*(yR95 *)rt_nil_check(F.p2733))).f_line, y_str("MOVE: the components differ in type", 35));
 }
-F.v6299 = yr2719_IntArg(yr2674_Arg(F.p2733, rt_range(rt_add(F.v6313, INT64_C(1)), INT64_C(-9223372036854775807), INT64_C(9223372036854775807))));
-F.v6295 = yr2719_IntArg(yr2674_Arg(F.p2733, rt_range(rt_add(F.v6313, INT64_C(2)), INT64_C(-9223372036854775807), INT64_C(9223372036854775807))));
+F.v6304 = yr2719_IntArg(yr2674_Arg(F.p2733, rt_range(rt_add(F.v6318, INT64_C(1)), INT64_C(-9223372036854775807), INT64_C(9223372036854775807))));
+F.v6300 = yr2719_IntArg(yr2674_Arg(F.p2733, rt_range(rt_add(F.v6318, INT64_C(2)), INT64_C(-9223372036854775807), INT64_C(9223372036854775807))));
 yr986_SB();
 yr1004_ST(F.p2735);
 yr997_SA(y_str(" { rt_int mi = ", 15));
-yr1004_ST(F.v6299);
+yr1004_ST(F.v6304);
 yr997_SA(y_str(", mj = ", 7));
-yr1004_ST(F.v6295);
+yr1004_ST(F.v6300);
 yr997_SA(y_str("; y_move(&", 10));
-yr1004_ST(F.v6293);
+yr1004_ST(F.v6298);
 yr997_SA(y_str(", ", 2));
-yr1004_ST(F.v6301);
+yr1004_ST(F.v6306);
 yr997_SA(y_str(", ", 2));
-yr1004_ST(F.v6297);
+yr1004_ST(F.v6302);
 yr997_SA(y_str(", mi, mj, ", 10));
-yr1004_ST(yr1756_DescOf(((*(yR100 *)rt_nil_check(F.v6303))).f_elem));
+yr1004_ST(yr1756_DescOf(((*(yR100 *)rt_nil_check(F.v6308))).f_elem));
 yr997_SA(y_str("); if (mj >= mi) ", 17));
-yr1004_ST(F.v6301);
+yr1004_ST(F.v6306);
 yr997_SA(y_str(" += mj - mi + 1; }", 18));
 F.p2735 = yr1016_SE();
-F.v6313 = rt_range(rt_add(F.v6313, INT64_C(3)), INT64_C(-9223372036854775807), INT64_C(9223372036854775807));
+F.v6318 = rt_range(rt_add(F.v6318, INT64_C(3)), INT64_C(-9223372036854775807), INT64_C(9223372036854775807));
 }
 F.p2735 = yr2465_Join(F.p2735, yr1021_T(y_str(" })", 3)), INT64_C(0));
 (*F.p2735_o) = F.p2735;
@@ -9010,13 +9019,13 @@ return;
 }
 if ((((F.p2732 == v1955)) || ((F.p2732 == v1958)))) {
 yr2681_NArgs(F.p2733, INT64_C(2));
-F.v6293 = yr2435_Cond(yr2674_Arg(F.p2733, INT64_C(1)));
-F.v6295 = yr2435_Cond(yr2674_Arg(F.p2733, INT64_C(2)));
+F.v6298 = yr2435_Cond(yr2674_Arg(F.p2733, INT64_C(1)));
+F.v6300 = yr2435_Cond(yr2674_Arg(F.p2733, INT64_C(2)));
 F.p2736 = v1685;
 if ((F.p2732 == v1955)) {
-F.p2735 = yr2178_Infix(yr2100_Paren(yr2178_Infix(F.v6293, y_str("!=", 2), yr1021_T(y_str("0", 1)))), y_str("&", 1), yr2100_Paren(yr2178_Infix(F.v6295, y_str("!=", 2), yr1021_T(y_str("0", 1)))));
+F.p2735 = yr2178_Infix(yr2100_Paren(yr2178_Infix(F.v6298, y_str("!=", 2), yr1021_T(y_str("0", 1)))), y_str("&", 1), yr2100_Paren(yr2178_Infix(F.v6300, y_str("!=", 2), yr1021_T(y_str("0", 1)))));
 } else {
-F.p2735 = yr2178_Infix(yr2100_Paren(yr2178_Infix(F.v6293, y_str("!=", 2), yr1021_T(y_str("0", 1)))), y_str("|", 1), yr2100_Paren(yr2178_Infix(F.v6295, y_str("!=", 2), yr1021_T(y_str("0", 1)))));
+F.p2735 = yr2178_Infix(yr2100_Paren(yr2178_Infix(F.v6298, y_str("!=", 2), yr1021_T(y_str("0", 1)))), y_str("|", 1), yr2100_Paren(yr2178_Infix(F.v6300, y_str("!=", 2), yr1021_T(y_str("0", 1)))));
 }
 (*F.p2735_o) = F.p2735;
 (*F.p2736_o) = F.p2736;
@@ -9038,22 +9047,22 @@ F.p2735 = yr1021_T(y_str("rt_time()", 9));
 return;
 }
 if (((((F.p2732 == v1967)) || ((F.p2732 == v1970))) || ((F.p2732 == v1973)))) {
-yr2702_StdVar(yr2674_Arg(F.p2733, INT64_C(1)), v807, &F.v6293, &F.v6303);
+yr2702_StdVar(yr2674_Arg(F.p2733, INT64_C(1)), v807, &F.v6298, &F.v6308);
 if ((F.p2732 == v1967)) {
 if ((yr1260_Count(((*(yR95 *)rt_nil_check(F.p2733))).f_a) == INT64_C(1))) {
-F.v6295 = yr1021_T(y_str("1", 1));
+F.v6300 = yr1021_T(y_str("1", 1));
 } else {
 yr2681_NArgs(F.p2733, INT64_C(2));
-F.v6295 = yr2719_IntArg(yr2674_Arg(F.p2733, INT64_C(2)));
+F.v6300 = yr2719_IntArg(yr2674_Arg(F.p2733, INT64_C(2)));
 }
-F.p2735 = yr2169_Call2(y_str("y_wait", 6), yr2696_Addr(F.v6293), F.v6295);
+F.p2735 = yr2169_Call2(y_str("y_wait", 6), yr2696_Addr(F.v6298), F.v6300);
 } else {
 yr2681_NArgs(F.p2733, INT64_C(1));
 if ((F.p2732 == v1970)) {
-F.p2735 = yr2688_Call1(y_str("y_send", 6), yr2696_Addr(F.v6293));
+F.p2735 = yr2688_Call1(y_str("y_send", 6), yr2696_Addr(F.v6298));
 } else {
 F.p2736 = v1685;
-F.p2735 = yr2688_Call1(y_str("y_awaited", 9), yr2696_Addr(F.v6293));
+F.p2735 = yr2688_Call1(y_str("y_awaited", 9), yr2696_Addr(F.v6298));
 }
 }
 (*F.p2735_o) = F.p2735;
@@ -9062,16 +9071,16 @@ return;
 }
 if (((((F.p2732 == v1976)) || ((F.p2732 == v1979))) || ((F.p2732 == v1982)))) {
 yr2681_NArgs(F.p2733, INT64_C(1));
-yr2711_NumArg(yr2674_Arg(F.p2733, INT64_C(1)), &F.v6293, &F.v6303);
+yr2711_NumArg(yr2674_Arg(F.p2733, INT64_C(1)), &F.v6298, &F.v6308);
 F.p2736 = yr2163_Unbounded(v1683);
-if ((((*(yR100 *)rt_nil_check(F.v6303))).f_kind == v774)) {
-F.p2735 = F.v6293;
+if ((((*(yR100 *)rt_nil_check(F.v6308))).f_kind == v774)) {
+F.p2735 = F.v6298;
 } else if ((F.p2732 == v1976)) {
-F.p2735 = yr2688_Call1(y_str("y_floor", 7), F.v6293);
+F.p2735 = yr2688_Call1(y_str("y_floor", 7), F.v6298);
 } else if ((F.p2732 == v1979)) {
-F.p2735 = yr2688_Call1(y_str("y_ceiling", 9), F.v6293);
+F.p2735 = yr2688_Call1(y_str("y_ceiling", 9), F.v6298);
 } else {
-F.p2735 = yr2688_Call1(y_str("y_near_integer", 14), F.v6293);
+F.p2735 = yr2688_Call1(y_str("y_near_integer", 14), F.v6298);
 }
 (*F.p2735_o) = F.p2735;
 (*F.p2736_o) = F.p2736;
@@ -9079,44 +9088,44 @@ return;
 }
 if ((F.p2732 == v1988)) {
 yr2681_NArgs(F.p2733, INT64_C(1));
-yr2711_NumArg(yr2674_Arg(F.p2733, INT64_C(1)), &F.v6293, &F.v6303);
+yr2711_NumArg(yr2674_Arg(F.p2733, INT64_C(1)), &F.v6298, &F.v6308);
 F.p2736 = v1695;
-F.p2735 = yr2465_Join(yr1021_T(y_str("((double)(", 10)), F.v6293, yr1021_T(y_str("))", 2)));
+F.p2735 = yr2465_Join(yr1021_T(y_str("((double)(", 10)), F.v6298, yr1021_T(y_str("))", 2)));
 (*F.p2735_o) = F.p2735;
 (*F.p2736_o) = F.p2736;
 return;
 }
 if ((F.p2732 == v1985)) {
 yr2681_NArgs(F.p2733, INT64_C(2));
-yr2711_NumArg(yr2674_Arg(F.p2733, INT64_C(1)), &F.v6293, &F.v6303);
-yr2711_NumArg(yr2674_Arg(F.p2733, INT64_C(2)), &F.v6295, &F.v6305);
+yr2711_NumArg(yr2674_Arg(F.p2733, INT64_C(1)), &F.v6298, &F.v6308);
+yr2711_NumArg(yr2674_Arg(F.p2733, INT64_C(2)), &F.v6300, &F.v6310);
 F.p2736 = v1697;
-F.p2735 = yr2169_Call2(y_str("y_near_fixed", 12), yr2465_Join(yr1021_T(y_str("(double)(", 9)), F.v6293, yr1021_T(y_str(")", 1))), F.v6295);
+F.p2735 = yr2169_Call2(y_str("y_near_fixed", 12), yr2465_Join(yr1021_T(y_str("(double)(", 9)), F.v6298, yr1021_T(y_str(")", 1))), F.v6300);
 (*F.p2735_o) = F.p2735;
 (*F.p2736_o) = F.p2736;
 return;
 }
 if ((F.p2732 == v1991)) {
 yr2681_NArgs(F.p2733, INT64_C(3));
-yr2711_NumArg(yr2674_Arg(F.p2733, INT64_C(1)), &F.v6293, &F.v6303);
-yr2711_NumArg(yr2674_Arg(F.p2733, INT64_C(2)), &F.v6295, &F.v6305);
-yr2711_NumArg(yr2674_Arg(F.p2733, INT64_C(3)), &F.v6297, &F.v6307);
+yr2711_NumArg(yr2674_Arg(F.p2733, INT64_C(1)), &F.v6298, &F.v6308);
+yr2711_NumArg(yr2674_Arg(F.p2733, INT64_C(2)), &F.v6300, &F.v6310);
+yr2711_NumArg(yr2674_Arg(F.p2733, INT64_C(3)), &F.v6302, &F.v6312);
 F.p2736 = v1697;
-F.p2735 = yr2465_Join(yr1021_T(y_str("y_fixed_div(", 12)), F.v6293, yr2465_Join(yr1021_T(y_str(", ", 2)), F.v6295, yr2465_Join(yr1021_T(y_str(", ", 2)), F.v6297, yr1021_T(y_str(")", 1)))));
+F.p2735 = yr2465_Join(yr1021_T(y_str("y_fixed_div(", 12)), F.v6298, yr2465_Join(yr1021_T(y_str(", ", 2)), F.v6300, yr2465_Join(yr1021_T(y_str(", ", 2)), F.v6302, yr1021_T(y_str(")", 1)))));
 (*F.p2735_o) = F.p2735;
 (*F.p2736_o) = F.p2736;
 return;
 }
 if (((((F.p2732 == v1994)) || ((F.p2732 == v1997))) || ((F.p2732 == v2000)))) {
 yr2681_NArgs(F.p2733, INT64_C(1));
-yr2702_StdVar(yr2674_Arg(F.p2733, INT64_C(1)), v810, &F.v6293, &F.v6303);
+yr2702_StdVar(yr2674_Arg(F.p2733, INT64_C(1)), v810, &F.v6298, &F.v6308);
 if ((F.p2732 == v1994)) {
-F.p2735 = yr2688_Call1(y_str("rt_region_enter", 15), yr2696_Addr(F.v6293));
+F.p2735 = yr2688_Call1(y_str("rt_region_enter", 15), yr2696_Addr(F.v6298));
 } else if ((F.p2732 == v1997)) {
-F.p2735 = yr2688_Call1(y_str("rt_region_leave", 15), yr2696_Addr(F.v6293));
+F.p2735 = yr2688_Call1(y_str("rt_region_leave", 15), yr2696_Addr(F.v6298));
 } else {
 F.p2736 = v1685;
-F.p2735 = yr2688_Call1(y_str("y_cond_claim", 12), yr2696_Addr(F.v6293));
+F.p2735 = yr2688_Call1(y_str("y_cond_claim", 12), yr2696_Addr(F.v6298));
 }
 (*F.p2735_o) = F.p2735;
 (*F.p2736_o) = F.p2736;
@@ -9153,12 +9162,12 @@ return;
 }
 if ((((F.p2732 == v2018)) || ((F.p2732 == v2021)))) {
 yr2681_NArgs(F.p2733, INT64_C(1));
-yr2119_Expr(yr2674_Arg(F.p2733, INT64_C(1)), ((void *)0), &F.v6293, &F.v6303);
+yr2119_Expr(yr2674_Arg(F.p2733, INT64_C(1)), ((void *)0), &F.v6298, &F.v6308);
 F.p2736 = yr2163_Unbounded(v1683);
 if ((F.p2732 == v2018)) {
-F.p2735 = yr2465_Join(yr1021_T(y_str("((rt_int)(intptr_t)&(", 21)), F.v6293, yr1021_T(y_str("))", 2)));
+F.p2735 = yr2465_Join(yr1021_T(y_str("((rt_int)(intptr_t)&(", 21)), F.v6298, yr1021_T(y_str("))", 2)));
 } else {
-F.p2735 = yr2465_Join(yr1021_T(y_str("((rt_int)sizeof(", 16)), F.v6293, yr1021_T(y_str("))", 2)));
+F.p2735 = yr2465_Join(yr1021_T(y_str("((rt_int)sizeof(", 16)), F.v6298, yr1021_T(y_str("))", 2)));
 }
 (*F.p2735_o) = F.p2735;
 (*F.p2736_o) = F.p2736;
@@ -9175,9 +9184,9 @@ struct yf2749 F;
 memset((void *)&F, 0, sizeof F);
 F.p2747 = a_p2747;
 F.p2748 = a_p2748;
-F.v6511 = yr1588_NewSym(v840, yr1041_N(F.p2747));
-((*(yR115 *)rt_nil_check(F.v6511))).f_rep = F.p2748;
-yr1644_Define(F.v6511, INT64_C(0));
+F.v6516 = yr1588_NewSym(v840, yr1041_N(F.p2747));
+((*(yR115 *)rt_nil_check(F.v6516))).f_rep = F.p2748;
+yr1644_Define(F.v6516, INT64_C(0));
 return;
 rt_raise(Y_X_NO_RETURN);
 }
@@ -9186,9 +9195,9 @@ struct yf2757 F;
 memset((void *)&F, 0, sizeof F);
 F.p2755 = a_p2755;
 F.p2756 = a_p2756;
-F.v6517 = yr1588_NewSym(v861, yr1041_N(F.p2755));
-((*(yR115 *)rt_nil_check(F.v6517))).f_mval = F.p2756;
-yr1644_Define(F.v6517, INT64_C(0));
+F.v6522 = yr1588_NewSym(v861, yr1041_N(F.p2755));
+((*(yR115 *)rt_nil_check(F.v6522))).f_mval = F.p2756;
+yr1644_Define(F.v6522, INT64_C(0));
 return;
 rt_raise(Y_X_NO_RETURN);
 }
@@ -9199,22 +9208,22 @@ F.p2763 = a_p2763;
 F.p2764 = a_p2764;
 F.p2765 = a_p2765;
 F.p2766 = a_p2766;
-F.v6525 = ((void *)0);
-F.v6527 = ((void *)0);
-F.v6529 = ((void *)0);
-F.v6529 = yr1245_NewNode(v639, INT64_C(0));
-((*(yR95 *)rt_nil_check(F.v6529))).f_name = yr1041_N(F.p2763);
-yr1252_Link(&F.v6525, &F.v6527, F.v6529);
-F.v6529 = yr1245_NewNode(v639, INT64_C(0));
-((*(yR95 *)rt_nil_check(F.v6529))).f_name = yr1041_N(F.p2764);
-yr1252_Link(&F.v6525, &F.v6527, F.v6529);
+F.v6530 = ((void *)0);
+F.v6532 = ((void *)0);
+F.v6534 = ((void *)0);
+F.v6534 = yr1245_NewNode(v639, INT64_C(0));
+((*(yR95 *)rt_nil_check(F.v6534))).f_name = yr1041_N(F.p2763);
+yr1252_Link(&F.v6530, &F.v6532, F.v6534);
+F.v6534 = yr1245_NewNode(v639, INT64_C(0));
+((*(yR95 *)rt_nil_check(F.v6534))).f_name = yr1041_N(F.p2764);
+yr1252_Link(&F.v6530, &F.v6532, F.v6534);
 if (F.p2766) {
-F.v6529 = yr1245_NewNode(v639, INT64_C(0));
-((*(yR95 *)rt_nil_check(F.v6529))).f_name = yr1041_N(F.p2765);
-yr1252_Link(&F.v6525, &F.v6527, F.v6529);
+F.v6534 = yr1245_NewNode(v639, INT64_C(0));
+((*(yR95 *)rt_nil_check(F.v6534))).f_name = yr1041_N(F.p2765);
+yr1252_Link(&F.v6530, &F.v6532, F.v6534);
 }
-{ void * rv6533 = F.v6525;
-return rv6533; }
+{ void * rv6538 = F.v6530;
+return rv6538; }
 rt_raise(Y_X_NO_RETURN);
 }
 static void * yr2771_Abstract(rt_int a_p2772, yarr a_p2774) {
@@ -9222,10 +9231,10 @@ struct yf2775 F;
 memset((void *)&F, 0, sizeof F);
 F.p2772 = a_p2772;
 F.p2774 = a_p2774;
-F.v6538 = yr1707_NewRep(F.p2772, yr1041_N(F.p2774));
-((*(yR100 *)rt_nil_check(F.v6538))).f_abstract = 1;
-{ void * rv6540 = F.v6538;
-return rv6540; }
+F.v6543 = yr1707_NewRep(F.p2772, yr1041_N(F.p2774));
+((*(yR100 *)rt_nil_check(F.v6543))).f_abstract = 1;
+{ void * rv6545 = F.v6543;
+return rv6545; }
 rt_raise(Y_X_NO_RETURN);
 }
 static void yr2779_Predefine(void) {
@@ -9305,13 +9314,13 @@ rt_raise(Y_X_NO_RETURN);
 static void yr2784_Translate(void) {
 struct yf2785 F;
 memset((void *)&F, 0, sizeof F);
-F.v6618 = v2743;
+F.v6623 = v2743;
 yr1595_OpenScope(0);
 ((void * *)(v2566).p)[y_ix1(v2566, v1570)] = ((void *)0);
 v1576 = INT64_C(0);
-while ((!(F.v6618 == ((void *)0)))) {
-yr2601_CompileModule(F.v6618);
-F.v6618 = ((*(yR95 *)rt_nil_check(F.v6618))).f_next;
+while ((!(F.v6623 == ((void *)0)))) {
+yr2601_CompileModule(F.v6623);
+F.v6623 = ((*(yR95 *)rt_nil_check(F.v6623))).f_next;
 }
 yr2625_AwaitProcesses();
 return;

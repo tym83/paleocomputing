@@ -464,12 +464,23 @@
     RETURN
   ENDPROCEDURE DeclareSignal;
 
-  (* a device signal (XIV.VII): the address is kept; this implementation *)
-  (* has no devices, so such a signal is sent only by software *)
+  (* a device signal (XIV.VII): the device at that location sends it. The *)
+  (* runtime simulates the PDP-11 line clock at vector 100 (octal), which *)
+  (* the Report's examples use; at any other location the signal is sent *)
+  (* only by software *)
   PROCEDURE DeviceSignal (CONST s: Sym; CONST at: Node)
     VAR ok: BOOLEAN;
         v: INT;
+        t: Txt;
     Manifest(at, ok, v);
     IF NOT ok THEN FailS(at^.line, "an AT location is a manifest constant (XIV.VII)") ENDIF;
+    SB();
+    SA("y_device(&");
+    ST(SymPath(s));
+    SA(", ");
+    SI(v);
+    SA(");");
+    t := SE();
+    Emit(t);
     RETURN
   ENDPROCEDURE DeviceSignal;

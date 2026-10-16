@@ -1795,3 +1795,35 @@ const ydesc *y_desc_vector(const ydesc *elem) {
 
 /* the descriptor of a string literal: a vector of characters */
 const ydesc y_d_str = {YK_ARRAY, sizeof(yarr), 1, 1, {1, 1, 1, 1}, {0, 1, 1, 1}, &y_d_byte, 0, NULL, NULL};
+
+/* ---- device signals (XIV.VII) ------------------------------------------------ */
+/* A SIGNAL declared AT a machine location is sent by the device there. This
+ * implementation simulates one device of the PDP-11 the Report's examples
+ * use: the line clock, interrupt vector 100 (octal), which sends its signal
+ * every 20 ms of the virtual clock, as the KW11-L of a 50 Hz machine. It
+ * runs as a process of the highest priority and enters the monitor of the
+ * signal to send it, as a monitor procedure would. */
+
+typedef struct {
+  ysig *s;
+  rt_int period;
+} ydevice;
+
+static void y_device_loop(void *arg) {
+  ydevice *d = arg;
+  for (;;) {
+    rt_delay(d->period);
+    if (d->s->mon) y_mon_enter(d->s->mon);
+    y_send(d->s);
+    if (d->s->mon) y_mon_leave(d->s->mon);
+  }
+}
+
+void y_device(ysig *s, rt_int address) {
+  static rt_taskdecl devices;
+  if (address != 64) return;            /* only the line clock is simulated */
+  ydevice *d = rt_alloc(sizeof *d);
+  d->s = s;
+  d->period = 20;
+  y_create(&devices, 0, 1, 255, y_device_loop, d);
+}
