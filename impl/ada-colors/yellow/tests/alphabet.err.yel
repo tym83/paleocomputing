@@ -1,0 +1,5 @@
+MODULE Alphabets
+  REPRESENTATION Roman = ALPHABET ('I', 'V', 'X');
+  VAR c: Roman;
+  c := 'V'
+ENDMODULE Alphabets

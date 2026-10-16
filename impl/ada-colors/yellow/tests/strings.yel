@@ -4,11 +4,8 @@ MODULE Strings
   REPRESENTATION
     Line = ARRAY (INTEGER [1..20] OF ASCII);
     Name = ARRAY (INTEGER [1..5] OF ASCII);
-    Roman = ALPHABET ('I', 'V', 'X', 'L', 'C', 'D', 'M');
-    RomanText = ARRAY (INTEGER [1..4] OF Roman);
   VAR l: Line := Line(' ');
       n: Name := "MABEL";
-      r: RomanText;
       count: ARRAY (ASCII OF INTEGER64);
 
   (* the length of any string: LOW and HIGH of the actual (X.A.3) *)
@@ -29,8 +26,20 @@ MODULE Strings
   Write(l); Write("|"); WriteLn();
   Upcase(l);
   Write(l); Write(" "); Write(Length(l)); Write(" "); Write(Length("abc")); WriteLn();
-  r := Roman "MCMX";
-  Write(r[1] < r[2]); Write(r[2] > r[3]); Write(Roman 'I' = FIRST(r[4])); WriteLn();
+  BEGIN
+    (* a scope with a second alphabet: its strings say which alphabet they *)
+    (* belong to, and so do characters that both alphabets have (VI.A.3) *)
+    MODULE Numerals
+      IMPORT Write, WriteLn;
+      REPRESENTATION
+        Roman = ALPHABET ('I', 'V', 'X', 'L', 'C', 'D', 'M');
+        RomanText = ARRAY (INTEGER [1..4] OF Roman);
+      VAR r: RomanText;
+      r := Roman "MCMX";
+      Write(r[1] < r[2]); Write(r[2] > r[3]); Write(Roman 'I' = FIRST(r[4]));
+      Write(ASCII "!"); WriteLn()
+    ENDMODULE Numerals
+  END;
   FOR c: ASCII DO count[c] := 0 ENDFOR;
   FOR i: INTEGER [1..20] DO count[l[i]] := count[l[i]] + 1 ENDFOR;
   Write(count['L']); Write(" "); Write(count[' ']); WriteLn();

@@ -161,7 +161,7 @@
         c: Txt;
     IF (n^.kind = N_NAME) AND (n^.d = Node NIL) AND (r^.kind = R_ENUM) THEN
       s := FindLit(n^.name, r);
-      IF s # Sym NIL THEN RETURN s^.mval ENDIF
+      IF s # Sym NIL THEN RETURN Real(s)^.mval ENDIF
     ENDIF;
     Expr(n, r, c, lr);
     CheckType(n^.line, r, lr);

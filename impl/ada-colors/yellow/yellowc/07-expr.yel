@@ -18,6 +18,7 @@
 
   VAR
     CharNames: Txt := 0;             (* the mnemonics of ASCII, in order *)
+    Alphabets: Node := Node NIL;     (* the alphabets declared with a name *)
 
   (* ---- characters of an alphabet ----------------------------------------------- *)
 
@@ -58,10 +59,15 @@
     RETURN -1
   ENDPROCEDURE CharOrd;
 
-  (* the alphabet of an unqualified character or string: the one wanted *)
-  (* when it has the characters, else ASCII *)
+  (* the alphabet of an unqualified character or string literal (VI.A.3): *)
+  (* a character belongs to the one visible alphabet that has it, and must *)
+  (* be qualified when two have it; a string must be qualified in any scope *)
+  (* with more than one alphabet, "even if the alphabets are disjoint" *)
   PROCEDURE AlphabetFor RETURNS Rep (CONST n: Node; CONST want: Rep)
     VAR s: Sym;
+        p: Node;
+        found: Rep := Rep NIL;
+        count, visible: INT := 0;
     IF n^.d # Node NIL THEN
       s := Real(Lookup(n^.d^.name, n^.line));
       IF ((s^.kind # S_REP) AND (s^.kind # S_TYPE)) OR (s^.rep^.kind # R_ALPHA) THEN
@@ -69,13 +75,34 @@
       ENDIF;
       RETURN s^.rep
     ENDIF;
-    IF want # Rep NIL THEN
-      IF want^.kind = R_ALPHA THEN RETURN want ENDIF;
-      IF IsArrayLike(want) AND (want^.elem # Rep NIL) THEN
-        IF want^.elem^.kind = R_ALPHA THEN RETURN want^.elem ENDIF
-      ENDIF
+    visible := 1;
+    IF (n^.kind = N_STRLIT) OR (CharOrd(RAscii, n^.text) >= 0) THEN
+      count := 1;
+      found := RAscii
     ENDIF;
-    RETURN RAscii
+    p := Alphabets;
+    WHILE p # Node NIL DO
+      s := Find(p^.name);
+      IF s # Sym NIL THEN
+        s := Real(s);
+        IF ((s^.kind = S_REP) OR (s^.kind = S_TYPE)) AND (s^.rep^.tid = p^.rep^.tid) THEN
+          visible := visible + 1;
+          IF (n^.kind = N_CHARLIT) AND (CharOrd(p^.rep, n^.text) >= 0) THEN
+            count := count + 1;
+            found := p^.rep
+          ENDIF
+        ENDIF
+      ENDIF;
+      p := p^.next
+    ENDWHILE;
+    IF (n^.kind = N_STRLIT) AND (visible > 1) THEN
+      FailS(n^.line, "a string in a scope with two alphabets is qualified by its alphabet (VI.A.3)")
+    ENDIF;
+    IF count > 1 THEN
+      FailN(n^.line, Join(T("'SQ'"), n^.text, T("'SQ'")), " is a character of two alphabets here: qualify it (VI.A.3)")
+    ENDIF;
+    IF found = Rep NIL THEN RETURN RAscii ENDIF;
+    RETURN found
   ENDPROCEDURE AlphabetFor;
 
   PROCEDURE CharValue RETURNS INT (CONST a: Rep; CONST text: Txt; CONST line: INT)

@@ -1,0 +1,4 @@
+  ENDFOR;
+  FOR k: INTEGER [1..n] DO WriteFloat(root[k], 6); Write(" ") ENDFOR;
+  WriteLn()
+ENDMODULE Roots

@@ -115,7 +115,9 @@
   PROCEDURE FindLit RETURNS Sym (CONST name: Txt; CONST r: Rep)
     VAR s: Sym := Table[name MOD 8192];
     WHILE s # Sym NIL DO
-      IF (s^.name = name) AND (s^.kind = S_LIT) AND (s^.rep^.tid = r^.tid) THEN RETURN s ENDIF;
+      IF s^.name = name THEN
+        IF (Real(s)^.kind = S_LIT) AND (Real(s)^.rep^.tid = r^.tid) THEN RETURN s ENDIF
+      ENDIF;
       s := s^.chain
     ENDWHILE;
     RETURN Sym NIL

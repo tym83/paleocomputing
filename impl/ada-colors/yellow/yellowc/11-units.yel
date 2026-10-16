@@ -89,6 +89,14 @@
         head := target;
         s := s^.mnext
       ENDWHILE;
+      (* on an import list the module comes in too, so that a module *)
+      (* nested inside may import it in turn (the template of p.1108 *)
+      (* imports MyStandardConventions wherever it is instantiated) *)
+      IF NOT exporting THEN
+        target := Alias(m^.name, m);
+        target^.mnext := head;
+        head := target
+      ENDIF;
       RETURN
     ENDIF;
     s := Alias(name, target);

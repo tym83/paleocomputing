@@ -358,6 +358,7 @@
       s^.rep := r;
       Define(s, d^.line);
       ResolvePending(d^.name, r);
+      NoteAlphabet(d, r);
       RETURN
     ENDIF;
     IF k = N_TYPE THEN
@@ -375,6 +376,7 @@
       s^.rep := r;
       Define(s, d^.line);
       ResolvePending(d^.name, r);
+      NoteAlphabet(d, r);
       RETURN
     ENDIF;
     IF k = N_LABEL THEN
@@ -384,6 +386,20 @@
     FailS(d^.line, "not a simple declaration");
     RETURN
   ENDPROCEDURE SimpleDecl;
+
+  (* a new alphabet with a name: string and character literals must then *)
+  (* say which alphabet they belong to where both are visible *)
+  PROCEDURE NoteAlphabet (CONST d: Node; CONST r: Rep)
+    VAR p: Node;
+    IF (r^.kind = R_ALPHA) AND (d^.b^.kind = N_RALPHA) THEN
+      p := NewNode(N_NAMEL, d^.line);
+      p^.name := d^.name;
+      p^.rep := r;
+      p^.next := Alphabets;
+      Alphabets := p
+    ENDIF;
+    RETURN
+  ENDPROCEDURE NoteAlphabet;
 
   (* AT: the location of a variable is implementation-dependent (XIV.VII); *)
   (* this implementation takes it for device signals only *)

@@ -75,8 +75,8 @@ for t in corpus/*.asprinted; do
     ln=$(grep -m1 '^line ' "$tmp/$name.p.c" | sed 's/^line \([0-9]*\):.*/\1/')
     [ -n "$ln" ] && sed -n "${ln}p" "$tmp/$name.p.yel" | sed 's/^/    at: /'
   fi
-  # fixed, and run
-  [ -f "corpus/$name.out" ] || continue
+  # fixed, and run (only translated when there is nothing to run)
+  [ -f "corpus/$name.out" ] || [ -f "corpus/$name.sed" ] || continue
   program "$name" fixed > "$tmp/$name.yel"
   if ! build/yellowc < "$tmp/$name.yel" > "$tmp/$name.c" 2>/dev/null; then
     echo "FAIL $name: $(grep -m1 '^line ' "$tmp/$name.c")"; failn=$((failn+1)); continue
@@ -84,6 +84,7 @@ for t in corpus/*.asprinted; do
   if ! ${CC:-cc} -std=gnu11 -O1 -w -I../rt "$tmp/$name.c" ../rt/paleo.c -o "$tmp/$name" -lpthread -lm 2> "$tmp/cc.txt"; then
     echo "FAIL $name: C compiler"; head -5 "$tmp/cc.txt"; failn=$((failn+1)); continue
   fi
+  if [ ! -f "corpus/$name.out" ]; then pass=$((pass+1)); continue; fi
   perl -e 'alarm shift; exec @ARGV' 30 "$tmp/$name" < /dev/null > "$tmp/$name.txt" 2>&1
   if diff -u "corpus/$name.out" "$tmp/$name.txt" > "$tmp/diff.txt"; then pass=$((pass+1)); else
     echo "FAIL $name"; cat "$tmp/diff.txt"; failn=$((failn+1)); fi

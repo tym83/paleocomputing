@@ -1,0 +1,18 @@
+(* around the fragment of p.1110: "declarations for the program variables *)
+(* root, poly, denom, ..., etc. have been made in the scope that encloses *)
+(* the fragment". The fragment is one sweep of the simultaneous (Weierstrass *)
+(* or Durand-Kerner) iteration for the roots of a polynomial; it is run *)
+(* here twelve times on (x-1)(x-2)(x-3) *)
+MODULE Roots
+  IMPORT TextIO, MyStandardConventions;
+  CONST n: INTEGER [1..10] = 3;
+  CONST maximum: INTEGER [1..10] = 5;
+  VAR a: ARRAY (INTEGER [0..n] OF FLOAT);
+      root: ARRAY (INTEGER [1..n] OF FLOAT);
+      poly, denom: FLOAT;
+  FUNCTION epsilon RETURNS FLOAT (CONST x: FLOAT; CONST k: INT)
+    RETURN 0.001
+  ENDFUNCTION epsilon;
+  a[0] := -6.0; a[1] := 11.0; a[2] := -6.0; a[3] := 1.0;
+  root[1] := 0.4; root[2] := 1.7; root[3] := 3.9;
+  FOR iteration: INTEGER [1..12] DO
