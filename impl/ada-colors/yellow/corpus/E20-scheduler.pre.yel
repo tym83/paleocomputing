@@ -1,0 +1,18 @@
+(* what the scheduler of pp.1113-1114 imports from the rest of SIFT *)
+MODULE sift
+  IMPORT MyStandardConventions, Write, WriteLn;
+  EXPORT enable, disable, tickinterrupt, errorhelper, maxpriority, maxtasks;
+  EXPORT TRANSPARENT errortype;
+  EXPORT VAR framecount;
+  REPRESENTATION errortype = UNORDERED (aborted, overrun);
+  CONST tickinterrupt: INT = 7;
+        maxpriority: INT = 3;
+        maxtasks: INT = 4;
+  VAR framecount: INT := 0;
+  PROCEDURE enable (CONST i: INT) RETURN ENDPROCEDURE enable;
+  PROCEDURE disable (CONST i: INT) RETURN ENDPROCEDURE disable;
+  PROCEDURE errorhelper (CONST pri, job: INT; CONST e: errortype)
+    Write("error at level "); Write(pri); WriteLn();
+    RETURN
+  ENDPROCEDURE errorhelper
+ENDMODULE sift;

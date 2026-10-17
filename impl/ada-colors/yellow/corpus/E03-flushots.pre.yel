@@ -1,0 +1,4 @@
+(* around the fragments of pp.1096-1099: a module, N, and output *)
+MODULE FluShots
+  IMPORT TextIO, StandardImplementationPrelude;
+  CONST N: INTEGER [1..100] = 4;

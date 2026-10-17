@@ -1,0 +1,514 @@
+
+% ==== operators (3.1.4.2) and assignment (3.1.5) ==========================================
+% Each operator invokes a function (D.5): a predefined one for the predefined types,
+% or a routine of the operator's name -- ADD_, EQUAL_ and so on -- for an abstract type
+% or wherever a visible routine of that name accepts the operands.
+
+% the routine name of an operator (3.1.4.2)
+FUNCTION OP_NAME (OP: TEXT, UNARY: BOOLEAN) RETURNS (TEXT);
+   IF UNARY THEN
+      IF TEQS (OP, '-') THEN
+         RETURN MKN ('NEGATE_');
+      ORIF TEQS (OP, '+') THEN
+         RETURN MKN ('MON_PLUS_');
+      END IF;
+      RETURN MKN ('COMPLEMENT_');
+   END IF;
+   IF TEQS (OP, '+') THEN
+      RETURN MKN ('ADD_');
+   ORIF TEQS (OP, '-') THEN
+      RETURN MKN ('SUBTRACT_');
+   ORIF TEQS (OP, '*') THEN
+      RETURN MKN ('MULTIPLY_');
+   ORIF TEQS (OP, '/') ! TEQS (OP, '//') THEN
+      RETURN MKN ('DIVIDE_');
+   ORIF TEQS (OP, 'MOD') THEN
+      RETURN MKN ('MODULUS_');
+   ORIF TEQS (OP, '**') THEN
+      RETURN MKN ('EXPONENTIATE_');
+   ORIF TEQS (OP, '!!') THEN
+      RETURN MKN ('CONCATENATE_');
+   ORIF TEQS (OP, '=') THEN
+      RETURN MKN ('EQUAL_');
+   ORIF TEQS (OP, '<>') THEN
+      RETURN MKN ('UNEQUAL_');
+   ORIF TEQS (OP, '>') THEN
+      RETURN MKN ('GREATER_THAN_');
+   ORIF TEQS (OP, '<') THEN
+      RETURN MKN ('LESS_THAN_');
+   ORIF TEQS (OP, '>=') THEN
+      RETURN MKN ('GREATER_EQUAL_');
+   ORIF TEQS (OP, '<=') THEN
+      RETURN MKN ('LESS_EQUAL_');
+   ORIF TEQS (OP, 'AND') THEN
+      RETURN MKN ('AND_');
+   ORIF TEQS (OP, 'OR') THEN
+      RETURN MKN ('OR_');
+   ORIF TEQS (OP, 'XOR') THEN
+      RETURN MKN ('XOR_');
+   ORIF TEQS (OP, '->') THEN
+      RETURN MKN ('IMPLIES_');
+   END IF;
+   RETURN MKN ('NO_SUCH_OPERATOR_');
+END FUNCTION OP_NAME;
+
+FUNCTION VAL_ARG (V: ET, NEXT: ARG) RETURNS (ARG);
+   VAR A: ARG := NEW (ARG_REC);
+   A@ := (E: NIL, V: V, HAVE: TRUE, MODE: M_IN, NEXT: NEXT);
+   RETURN A;
+END FUNCTION VAL_ARG;
+
+FUNCTION NODE_ARG (E: NODE, MODE: INTEGER, NEXT: ARG) RETURNS (ARG);
+   VAR A: ARG := NEW (ARG_REC);
+   A@ := (E: E, V: MKET (NO_TEXT (), NIL), HAVE: FALSE, MODE: MODE, NEXT: NEXT);
+   RETURN A;
+END FUNCTION NODE_ARG;
+
+% a routine for the operator NAME and the operands ARGS, if one is visible: with the
+% name as the table of 3.1.4.2 gives it, or without its last break (as the BCD
+% example of 3.12.5 writes LESS_THAN)
+FUNCTION USER_OPERATOR (NAME: TEXT, ARGS: ARG, LINE: INTEGER) RETURNS (SYM);
+   VAR Y: SYM := FIND_ROUTINE (NAME, ARGS, LINE, FALSE);
+   IF Y = NIL & NAME.LEN > 1 THEN
+      Y := FIND_ROUTINE (MKN (STR (NAME, NAME.LEN)[0 : NAME.LEN - 2]), ARGS, LINE, FALSE);
+   END IF;
+   RETURN Y;
+END FUNCTION USER_OPERATOR;
+
+% the operator NAME applied to an abstract (or extended) operand A and expressions B, C
+FUNCTION OPERATOR_CALL3 (NAME: TEXT, A: ET, B, C: NODE, LINE: INTEGER) RETURNS (ET);
+   CONST ARGS: ARG := VAL_ARG (A, NODE_ARG (B, M_IN, NODE_ARG (C, M_IN, NIL)));
+   CONST Y: SYM := USER_OPERATOR (NAME, ARGS, LINE);
+   IF Y = NIL THEN
+      FAILT (LINE, 'no operation for this abstract type: ', NAME);
+   END IF;
+   RETURN CALL_SYM (Y, ARGS, LINE);
+END FUNCTION OPERATOR_CALL3;
+
+PROCEDURE REQUIRE_MACHINE (LINE: INTEGER);
+   IF NOT W@.MACHINE THEN
+      FAIL (LINE, 'this is only permitted in a machine-dependent part (4.5.5.2)');
+   END IF;
+END PROCEDURE REQUIRE_MACHINE;
+
+% a fixed point value of scale FROM at scale TO: exact when TO is larger, otherwise
+% truncated or rounded (3.2.4.1)
+FUNCTION RESCALE_C (C: TEXT, SFROM, STO: INTEGER) RETURNS (TEXT);
+   IF SFROM = STO THEN
+      RETURN C;
+   END IF;
+   IF STO > SFROM THEN
+      RETURN FMT2 ('rt_b_shl(@, @)', C, NUM (STO - SFROM));
+   END IF;
+   IF W@.ROUNDED THEN
+      RETURN FMT2 ('rt_b_shr_round(@, @)', C, NUM (SFROM - STO));
+   END IF;
+   RETURN FMT2 ('rt_b_shr(@, @)', C, NUM (SFROM - STO));
+END FUNCTION RESCALE_C;
+
+% V at the scale S without approximation (assignment, 3.2.5)
+FUNCTION RESCALE (V: ET, S: INTEGER, LINE: INTEGER) RETURNS (TEXT);
+   IF V.T@.SCALE > S THEN
+      FAIL (LINE, 'the scale of the value exceeds the scale of the variable (3.2.5)');
+   END IF;
+   RETURN RESCALE_C (V.C, V.T@.SCALE, S);
+END FUNCTION RESCALE;
+
+% the value V, of a type assignment compatible with T, as a value of T (3.x.5)
+FUNCTION CONVERT (V: ET, T: TYP, LINE: INTEGER, SELF: TEXT) RETURNS (TEXT);
+   CONST RT: TYP := REAL_TYPE (T);
+   CONST VT: TYP := V.T;
+   IF VT@.KIND = T_NIL & RT@.KIND = T_PTR THEN
+      RETURN V.C;
+   END IF;
+   IF T@.KIND = T_ABS ! VT@.KIND = T_ABS THEN
+      IF NOT SAME_CLASS (T, VT) THEN
+         FAILT (LINE, 'the types do not match: ', TYPE_NAME (T));
+      END IF;
+      RETURN V.C;
+   END IF;
+   IF NOT SAME_CLASS (RT, VT) THEN
+      FAIL (LINE, 'a value of ' !! STR (TYPE_NAME (VT), TYPE_NAME (VT).LEN) !! ' where '
+            !! STR (TYPE_NAME (RT), TYPE_NAME (RT).LEN) !! ' is required');
+   END IF;
+   IF RT@.KIND = T_INT THEN
+      RETURN RANGE_CHECK (RT, RESCALE (V, RT@.SCALE, LINE), SELF);
+   ORIF RT@.KIND = T_FLOAT ! RT@.KIND = T_ENUM THEN
+      RETURN RANGE_CHECK (RT, V.C, SELF);
+   ORIF RT@.KIND = T_STR ! RT@.KIND = T_BITS THEN
+      IF RT@.MLEN.OK & VT@.MLEN.OK THEN
+         IF RT@.MLEN.V <> VT@.MLEN.V THEN
+            FAIL (LINE, 'the lengths of the strings differ (3.7.5: SIZE)');
+         END IF;
+      END IF;
+   ORIF RT@.KIND = T_PTR THEN
+      IF NOT SAME_TYPE (TARGET (RT), TARGET (VT)) THEN
+         FAIL (LINE, 'the pointers are to different types (3.10.5)');
+      END IF;
+   ORIF RT@.KIND = T_REC THEN
+      IF NOT HAS_ANY (RT) & NOT HAS_ANY (VT) THEN
+         IF NOT SAME_ARGS (RT@.ARGS, VT@.ARGS) THEN
+            FAIL (LINE, 'the records are of different types (3.9.5)');
+         END IF;
+      END IF;
+   ORIF RT@.KIND = T_ARR THEN
+      IF NOT SAME_CLASS (RT@.ELEM, VT@.ELEM) THEN
+         FAIL (LINE, 'the elements of the arrays are of different types (3.8.5)');
+      END IF;
+   END IF;
+   RETURN V.C;
+END FUNCTION CONVERT;
+
+% the statement that assigns V to the object LV of type T [3-43]
+FUNCTION STORE_CODE (T: TYP, LV: TEXT, V: ET, LINE: INTEGER, SELF: TEXT) RETURNS (TEXT);
+   IF T@.KIND = T_ABS THEN                           % STORE_ of the abstract type (D.4)
+      BLOCK
+         CONST ARGS: ARG := VAL_ARG (V, VAL_ARG (MKLV (LV, T, TRUE, NO_TEXT ()), NIL));
+         VAR Y: SYM;
+         ARGS@.NEXT@.MODE := M_OUT;
+         Y := FIND_ROUTINE (MKN ('STORE_'), ARGS, LINE, FALSE);
+         IF Y = NIL THEN
+            ARGS@.NEXT@.MODE := M_INOUT;
+            Y := FIND_ROUTINE (MKN ('STORE_'), ARGS, LINE, FALSE);
+         END IF;
+         IF Y = NIL THEN
+            FAILT (LINE, 'no STORE_ for the abstract type ', TYPE_NAME (T));
+         END IF;
+         RETURN CATS (CALL_SYM (Y, ARGS, LINE).C, ';');
+      END BLOCK;
+   END IF;
+   RETURN ASSIGN_CODE (T, LV, CONVERT (V, T, LINE, SELF));
+END FUNCTION STORE_CODE;
+
+% ---- prefix operators ----------------------------------------------------------------------
+FUNCTION UNARY (E: NODE) RETURNS (ET);
+   CONST A: ET := EXPR (E@.A, NIL);
+   CONST T: TYP := A.T;
+   CONST OP: TEXT := E@.NAME;
+   IF T@.KIND = T_ABS THEN
+      BLOCK
+         CONST ARGS: ARG := VAL_ARG (A, NIL);
+         CONST Y: SYM := USER_OPERATOR (OP_NAME (OP, TRUE), ARGS, E@.LINE);
+         IF Y = NIL THEN
+            FAILT (E@.LINE, 'no prefix operator for the abstract type ', TYPE_NAME (T));
+         END IF;
+         RETURN CALL_SYM (Y, ARGS, E@.LINE);
+      END BLOCK;
+   END IF;
+   IF TEQS (OP, 'NOT') THEN                          % 3.5.4.2, 3.6.4.2
+      IF T@.KIND = T_BOOL THEN
+         RETURN MKET (FMT1 ('(!@)', A.C), W@.TY_BOOL);
+      ORIF T@.KIND = T_BITS THEN
+         RETURN MKET (FMT1 ('rt_b_not(@)', A.C), T);
+      END IF;
+      FAIL (E@.LINE, 'NOT applies to booleans and bitstrings');
+   END IF;
+   IF T@.KIND = T_INT THEN                           % 3.2.4.3
+      IF TEQS (OP, '-') THEN
+         RETURN MKET (FMT1 ('rt_neg(@)', A.C), INT_TYPE (T@.SCALE));
+      END IF;
+      RETURN MKET (A.C, INT_TYPE (T@.SCALE));
+   ORIF T@.KIND = T_FLOAT THEN                       % 3.3.4.3
+      IF TEQS (OP, '-') THEN
+         RETURN MKET (FMT1 ('(-@)', A.C), T);
+      END IF;
+      RETURN A;
+   END IF;
+   FAILT (E@.LINE, 'a prefix + or - of ', TYPE_NAME (T));
+END FUNCTION UNARY;
+
+% ---- infix operators -----------------------------------------------------------------------
+
+FUNCTION IS_LITERALISH (E: NODE) RETURNS (BOOLEAN);
+   RETURN E@.KIND = N_ENUMLIT ! E@.KIND = N_NIL ! E@.KIND = N_RECCONS ! E@.KIND = N_ARRCONS
+      ! (E@.KIND = N_NAME & LITERAL_CLASSES (E@.NAME) > 0);
+END FUNCTION IS_LITERALISH;
+
+FUNCTION BINARY (E: NODE) RETURNS (ET);
+   CONST OP: TEXT := E@.NAME;
+   VAR A, B: ET;
+   IF TEQS (OP, '&') ! TEQS (OP, '!') THEN           % 3.5.4.1: conditional
+      BLOCK
+         CONST MA: MVAL := MANIFEST (E@.A);
+         CONST CA: TEXT := BOOL_EXPR (E@.A);
+         CONST CB: TEXT := BOOL_EXPR (E@.B);
+         IF TEQS (OP, '&') THEN
+            RETURN MKET (FMT2 ('(@ && @)', CA, CB), W@.TY_BOOL);
+         END IF;
+         RETURN MKET (FMT2 ('(@ || @)', CA, CB), W@.TY_BOOL);
+      END BLOCK;
+   END IF;
+   % the operand that fixes the type of a literal is translated first
+   IF IS_LITERALISH (E@.A) & NOT IS_LITERALISH (E@.B) THEN
+      B := EXPR (E@.B, NIL);
+      A := EXPR (E@.A, B.T);
+   ELSE
+      A := EXPR (E@.A, NIL);
+      B := EXPR (E@.B, A.T);
+   END IF;
+   RETURN APPLY_OPERATOR (E, OP, A, B);
+END FUNCTION BINARY;
+
+FUNCTION APPLY_OPERATOR (E: NODE, OP: TEXT, A, B: ET) RETURNS (ET);
+   CONST AT: TYP := A.T;
+   CONST BT: TYP := B.T;
+   CONST LINE: INTEGER := E@.LINE;
+   % a routine of the operator's name, for abstract and extended types (D.5)
+   IF E@.FL = 0 THEN
+      BLOCK
+         CONST NAME: TEXT := OP_NAME (OP, FALSE);
+         IF LOOKUP (NAME) <> NIL ! LOOKUP (MKN (STR (NAME, NAME.LEN)[0 : NAME.LEN - 2])) <> NIL
+            ! AT@.KIND = T_ABS ! BT@.KIND = T_ABS THEN
+            BLOCK
+               CONST ARGS: ARG := VAL_ARG (A, VAL_ARG (B, NIL));
+               CONST Y: SYM := USER_OPERATOR (NAME, ARGS, LINE);
+               IF Y <> NIL THEN
+                  RETURN CALL_SYM (Y, ARGS, LINE);
+               END IF;
+               IF TEQS (OP, '<>') THEN               % <> is NOT (=) (3.8.4.1, 3.9.4.1)
+                  BLOCK
+                     CONST Q: SYM := USER_OPERATOR (MKN ('EQUAL_'), ARGS, LINE);
+                     IF Q <> NIL THEN
+                        RETURN MKET (FMT1 ('(!@)', CALL_SYM (Q, ARGS, LINE).C), W@.TY_BOOL);
+                     END IF;
+                  END BLOCK;
+               END IF;
+               IF AT@.KIND = T_ABS ! BT@.KIND = T_ABS THEN
+                  FAILT (LINE, 'no such operation for the abstract type: ', NAME);
+               END IF;
+            END BLOCK;
+         END IF;
+      END BLOCK;
+   END IF;
+   IF E@.FL <> 0 THEN
+      RETURN SCALED_OPERATOR (E, OP, A, B);
+   END IF;
+   IF TEQS (OP, '=') ! TEQS (OP, '<>') THEN
+      RETURN EQUALITY (E, OP, A, B);
+   END IF;
+   IF TEQS (OP, '<') ! TEQS (OP, '>') ! TEQS (OP, '<=') ! TEQS (OP, '>=') THEN
+      IF AT@.KIND = T_INT & BT@.KIND = T_INT THEN    % 3.2.4.6: at the larger scale
+         BLOCK
+            CONST S: INTEGER := MAX_INT (AT@.SCALE, BT@.SCALE);
+            RETURN MKET (FMT3 ('(@ @ @)', RESCALE_C (A.C, AT@.SCALE, S), OP,
+                               RESCALE_C (B.C, BT@.SCALE, S)), W@.TY_BOOL);
+         END BLOCK;
+      ORIF AT@.KIND = T_FLOAT & BT@.KIND = T_FLOAT THEN
+         RETURN MKET (FMT3 ('(@ @ @)', A.C, OP, B.C), W@.TY_BOOL);
+      ORIF AT@.KIND = T_ENUM & SAME_CLASS (AT, BT) THEN
+         IF AT@.BASE@.UNORDERED THEN
+            FAIL (LINE, 'an UNORDERED type has no ordering (3.4.4.1)');
+         END IF;
+         RETURN MKET (FMT3 ('(@ @ @)', A.C, OP, B.C), W@.TY_BOOL);
+      END IF;
+      FAILT (LINE, 'no ordering for these operands: ', OP);
+   END IF;
+   IF TEQS (OP, '!!') THEN                           % 3.6.4.1, 3.7.4.1
+      IF (AT@.KIND = T_STR & BT@.KIND = T_STR) ! (AT@.KIND = T_BITS & BT@.KIND = T_BITS) THEN
+         BLOCK
+            VAR T: TYP := NEW_TYP (AT@.KIND);
+            T@.BASE := AT@.BASE;
+            IF AT@.MLEN.OK & BT@.MLEN.OK THEN
+               T@.MLEN := SOME (AT@.MLEN.V + BT@.MLEN.V);
+               T@.LEN_C := NUM (T@.MLEN.V);
+            END IF;
+            RETURN MKET (FMT2 ('rt_str_cat(@, @)', A.C, B.C), T);
+         END BLOCK;
+      END IF;
+      FAIL (LINE, '!! concatenates strings and bitstrings');
+   END IF;
+   IF TEQS (OP, 'AND') ! TEQS (OP, 'OR') ! TEQS (OP, 'XOR') THEN    % 3.6.4.1
+      IF AT@.KIND = T_BITS & BT@.KIND = T_BITS THEN
+         RETURN MKET (FMT3 ('rt_b_@(@, @)', LOWER_OP (OP), A.C, B.C), AT);
+      END IF;
+      FAILT (LINE, 'predefined only for bitstrings (3.5.4.1): ', OP);
+   END IF;
+   IF AT@.KIND = T_INT & BT@.KIND = T_INT THEN
+      RETURN FIXED_ARITH (E, OP, A, B);
+   ORIF AT@.KIND = T_FLOAT & BT@.KIND = T_FLOAT THEN  % 3.3.4.2
+      BLOCK
+         VAR T: TYP := NEW_TYP (T_FLOAT);
+         T@.SCALE := MAX_INT (AT@.SCALE, BT@.SCALE);
+         IF TEQS (OP, '+') ! TEQS (OP, '-') ! TEQS (OP, '*') THEN
+            RETURN MKET (FMT3 ('rt_b_fchk(@ @ @)', A.C, OP, B.C), T);
+         ORIF TEQS (OP, '/') THEN
+            RETURN MKET (FMT2 ('rt_b_fchk(rt_fdiv(@, @))', A.C, B.C), T);
+         END IF;
+      END BLOCK;
+   END IF;
+   IF (AT@.KIND = T_INT & BT@.KIND = T_FLOAT) ! (AT@.KIND = T_FLOAT & BT@.KIND = T_INT) THEN
+      FAIL (LINE, 'fixed and float operands do not mix: use TO_FIXED or TO_FLOAT (3.1)');
+   END IF;
+   FAIL (LINE, 'no operator ' !! STR (OP, OP.LEN) !! ' for ' !! STR (TYPE_NAME (AT), TYPE_NAME (AT).LEN));
+END FUNCTION APPLY_OPERATOR;
+
+FUNCTION LOWER_OP (OP: TEXT) RETURNS (TEXT);
+   IF TEQS (OP, 'AND') THEN
+      RETURN MK ('and');
+   ORIF TEQS (OP, 'OR') THEN
+      RETURN MK ('or');
+   END IF;
+   RETURN MK ('xor');
+END FUNCTION LOWER_OP;
+
+FUNCTION MAX_INT (A, B: INTEGER) RETURNS (INTEGER);
+   IF A > B THEN
+      RETURN A;
+   END IF;
+   RETURN B;
+END FUNCTION MAX_INT;
+
+% = and <> for every predefined type (3.x.4)
+FUNCTION EQUALITY (E: NODE, OP: TEXT, A, B: ET) RETURNS (ET);
+   CONST AT: TYP := REAL_TYPE (A.T);
+   CONST BT: TYP := REAL_TYPE (B.T);
+   VAR R: TEXT;
+   IF AT@.KIND = T_NIL ! BT@.KIND = T_NIL THEN
+      IF NOT (AT@.KIND = T_PTR ! BT@.KIND = T_PTR ! (AT@.KIND = T_NIL & BT@.KIND = T_NIL)) THEN
+         FAIL (E@.LINE, 'NIL compares only with pointers');
+      END IF;
+      R := FMT2 ('(@ == @)', A.C, B.C);
+   ORIF AT@.KIND = T_INT & BT@.KIND = T_INT THEN
+      BLOCK
+         CONST S: INTEGER := MAX_INT (AT@.SCALE, BT@.SCALE);
+         R := FMT2 ('(@ == @)', RESCALE_C (A.C, AT@.SCALE, S), RESCALE_C (B.C, BT@.SCALE, S));
+      END BLOCK;
+   ELSE
+      IF NOT SAME_CLASS (AT, BT) THEN
+         FAIL (E@.LINE, 'comparing values of different types');
+      END IF;
+      IF AT@.KIND = T_SEM THEN
+         FAIL (E@.LINE, 'semaphores have no equality (3.11.4)');
+      END IF;
+      IF AT@.KIND = T_REC & (HAS_ANY (AT) ! HAS_ANY (BT)) THEN
+         FAIL (E@.LINE, 'a T(ANY) record cannot be compared (3.9.4.1)');
+      END IF;
+      R := EQUAL_CODE (AT, A.C, B.C);
+   END IF;
+   IF TEQS (OP, '<>') THEN
+      R := FMT1 ('(!@)', R);
+   END IF;
+   RETURN MKET (R, W@.TY_BOOL);
+END FUNCTION EQUALITY;
+
+% + - * // MOD of fixed point values (3.2.4.2)
+FUNCTION FIXED_ARITH (E: NODE, OP: TEXT, A, B: ET) RETURNS (ET);
+   CONST S1: INTEGER := A.T@.SCALE;
+   CONST S2: INTEGER := B.T@.SCALE;
+   IF TEQS (OP, '+') ! TEQS (OP, '-') THEN
+      BLOCK
+         CONST S: INTEGER := MAX_INT (S1, S2);
+         VAR FN: TEXT := MK ('rt_add');
+         IF TEQS (OP, '-') THEN
+            FN := MK ('rt_sub');
+         END IF;
+         RETURN MKET (FMT3 ('@(@, @)', FN, RESCALE_C (A.C, S1, S), RESCALE_C (B.C, S2, S)),
+                      INT_TYPE (S));
+      END BLOCK;
+   ORIF TEQS (OP, '*') THEN
+      RETURN MKET (FMT2 ('rt_mul(@, @)', A.C, B.C), INT_TYPE (S1 + S2));
+   ORIF TEQS (OP, '//') THEN
+      IF W@.ROUNDED THEN
+         RETURN MKET (FMT2 ('rt_b_div_round(@, @)', A.C, B.C), INT_TYPE (S1 - S2));
+      END IF;
+      RETURN MKET (FMT2 ('rt_quot(@, @)', A.C, B.C), INT_TYPE (S1 - S2));
+   ORIF TEQS (OP, 'MOD') THEN                        % E - (E//F)*F, at the scale of E
+      IF W@.ROUNDED THEN
+         RETURN MKET (FMT2 ('rt_b_mod_round(@, @)', A.C, B.C), INT_TYPE (S1));
+      END IF;
+      RETURN MKET (FMT2 ('rt_rem(@, @)', A.C, B.C), INT_TYPE (S1));
+   ORIF TEQS (OP, '/') THEN
+      FAIL (E@.LINE, '/ is for floating point; fixed point division is // (3.2.4.2)');
+   ORIF TEQS (OP, '**') THEN
+      FAIL (E@.LINE, '** has no predefined meaning (3.2.4.2)');
+   END IF;
+   FAILT (E@.LINE, 'no such operator for fixed point values: ', OP);
+END FUNCTION FIXED_ARITH;
+
+% !op s! with an explicit result scale (3.2.4.4), and the machine-dependent !op! (3.2.4.5)
+FUNCTION SCALED_OPERATOR (E: NODE, OP: TEXT, A, B: ET) RETURNS (ET);
+   CONST S1: INTEGER := A.T@.SCALE;
+   CONST S2: INTEGER := B.T@.SCALE;
+   VAR RND: TEXT := MK ('0');
+   IF A.T@.KIND <> T_INT ! B.T@.KIND <> T_INT THEN
+      FAIL (E@.LINE, 'scaled operators are for fixed point operands');
+   END IF;
+   IF W@.ROUNDED THEN
+      RND := MK ('1');
+   END IF;
+   IF E@.FL = 2 THEN                                 % !op!: a bitstring
+      REQUIRE_MACHINE (E@.LINE);
+      RETURN MKET (FMT3 ('rt_b_md(''@'', @, @)', MK (STR (OP, OP.LEN)[0:0]), A.C, B.C), BITS_TYPE (128));
+   END IF;
+   BLOCK
+      CONST SM: MVAL := MANIFEST (E@.D);
+      CONST S: INTEGER := SM.V;
+      CONST SR: INTEGER := MAX_INT (S1, S2);
+      IF NOT SM.OK THEN
+         FAIL (E@.LINE, 'the scale of a scaled operator must be manifest (3.2.4.4)');
+      END IF;
+      IF TEQS (OP, '*') THEN
+         RETURN MKET (FMT4 ('rt_b_mul_sc(@, @, @, @)', A.C, B.C, NUM (S - S1 - S2), RND), INT_TYPE (S));
+      ORIF TEQS (OP, '//') THEN
+         RETURN MKET (FMT4 ('rt_b_div_sc(@, @, @, @)', A.C, B.C, NUM (S - S1 + S2), RND), INT_TYPE (S));
+      ORIF TEQS (OP, 'MOD') THEN
+         RETURN MKET (FMT4 ('rt_b_rescale(@, @, @, @)', FMT2 ('rt_rem(@, @)', A.C, B.C),
+                            NUM (S1), NUM (S), RND), INT_TYPE (S));
+      ORIF TEQS (OP, '+') ! TEQS (OP, '-') THEN
+         BLOCK
+            VAR FN: TEXT := MK ('rt_add');
+            IF TEQS (OP, '-') THEN
+               FN := MK ('rt_sub');
+            END IF;
+            RETURN MKET (FMT4 ('rt_b_rescale(@, @, @, @)', FMT3 ('@(@, @)', FN,
+                               RESCALE_C (A.C, S1, SR), RESCALE_C (B.C, S2, SR)),
+                               NUM (SR), NUM (S), RND), INT_TYPE (S));
+         END BLOCK;
+      END IF;
+   END BLOCK;
+   FAIL (E@.LINE, 'there are no !MOD!, !**! or !/s! operators (3.1.4.1)');
+END FUNCTION SCALED_OPERATOR;
+
+% E IN range-spec (3.2.4.6, 3.3.4.6, 3.4.4.1): E is evaluated once
+FUNCTION IN_EXPR (E: NODE) RETURNS (ET);
+   CONST V: ET := EXPR (E@.A, NIL);
+   CONST T: TYP := REAL_TYPE (V.T);
+   CONST R: NODE := E@.B;
+   CONST TMP: TEXT := NEW_NAME ('iv');
+   VAR LO, HI: ET;
+   VAR LOC, HIC: TEXT;
+   VAR LO_OP: TEXT := MK ('<=');
+   VAR HI_OP: TEXT := MK ('<=');
+   LO := EXPR (R@.A, T);
+   HI := EXPR (R@.B, T);
+   IF T@.KIND = T_ENUM & T@.BASE@.UNORDERED THEN
+      FAIL (E@.LINE, 'IN needs an ordered type (3.4.4.1)');
+   END IF;
+   IF NOT (T@.KIND = T_INT ! T@.KIND = T_FLOAT ! T@.KIND = T_ENUM) THEN
+      FAIL (E@.LINE, 'IN is for fixed, float and enumerated values');
+   END IF;
+   LOC := CONVERT_TO_SCALE (LO, T, E@.LINE);
+   HIC := CONVERT_TO_SCALE (HI, T, E@.LINE);
+   IF R@.IV = 1 ! R@.IV = 3 THEN
+      LO_OP := MK ('<');
+   END IF;
+   IF R@.IV >= 2 THEN
+      HI_OP := MK ('<');
+   END IF;
+   BLOCK
+      CONST P1: TEXT := FMT4 ('({ @ @ = @; (@) ', CTYPE (T), TMP, V.C, LOC);
+      CONST P2: TEXT := FMT4 ('@@ @ && @ ', P1, LO_OP, TMP, TMP);
+      RETURN MKET (FMT3 ('@@ (@); })', P2, HI_OP, HIC), W@.TY_BOOL);
+   END BLOCK;
+END FUNCTION IN_EXPR;
+
+% a bound of a range of the type T (a fixed bound at the scale of T)
+FUNCTION CONVERT_TO_SCALE (V: ET, T: TYP, LINE: INTEGER) RETURNS (TEXT);
+   IF NOT SAME_CLASS (REAL_TYPE (V.T), T) THEN
+      FAIL (LINE, 'the bounds of the range are not of the type of the value');
+   END IF;
+   IF T@.KIND = T_INT THEN
+      RETURN RESCALE_C (V.C, V.T@.SCALE, T@.SCALE);
+   END IF;
+   RETURN V.C;
+END FUNCTION CONVERT_TO_SCALE;

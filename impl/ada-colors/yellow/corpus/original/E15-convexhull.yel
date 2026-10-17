@@ -1,0 +1,100 @@
+(* Part Three, III.B "Convex Hulls", pp.1108-1109 (E-15, E-16) *)
+TEMPLATE ConvexHullTemplate(size)
+  (* size required to be a manifest constant. *)
+  MODULE ConvexHullFinder
+  IMPORT MyStandardConventions, EXPT;
+  EXPORT reset,addpoint,getstatus,pointstatus,convexhull;
+
+    REPRESENTATION
+      setsize = INTEGER[1..size];
+      pointstatus = UNORDERED(inside,onhull,unknown);
+      point = RECORD VAR x,y: FLOAT; status: pointstatus ENDRECORD;
+      pointlist = ARRAY([1..(size+1)] OF point);
+    VAR
+      pointlistindex: INT := 0;
+      points: pointlist;
+
+    PROCEDURE reset() pointlistindex := 0; RETURN ENDPROCEDURE reset;
+
+    PROCEDURE addpoint RETURNS BOOLEAN (CONST x,y: FLOAT)
+      IF pointlistindex = size THEN RETURN FALSE
+      ELSE
+        pointlistindex := pointlistindex + 1;
+        points[pointlistindex] := point(x,y,unknown);
+        RETURN TRUE;
+      ENDIF;
+    ENDPROCEDURE addpoint;
+
+    PROCEDURE getstatus RETURNS pointstatus (CONST i: setsize)
+      RETURN points[i].status;
+    ENDPROCEDURE getstatus;
+
+    PROCEDURE convexhull()
+      (* Similar to Jarvis' algorithm. *)
+      VAR
+        a,b,c,d,z,xmin,ymin,zmin,base: FLOAT;
+        j,lastj,nextj: INT;
+        start: point;
+        done: BOOLEAN;
+
+      FOR i: setsize DO points[i].status := unknown ENDFOR;
+      j := 1;
+      xmin := points[1].x;
+      ymin := points[1].y;
+      FOR k : INTEGER [2..size] DO
+        IF points[k].x < xmin THEN xmin := points[k].x ENDIF;
+        IF points[k].y < ymin
+          THEN ymin := points[k].y; j := k;
+        ENDIF
+      ENDFOR;
+      start.x := points[j].x;
+      start.y := points[j].y;
+      points[j].status := onhull;
+      lastj := size+1;
+      points[lastj].x := xmin-1.0;
+      points[lastj].y := start.y;
+      base := EXPT((start.x-points[lastj].x),2);
+
+      LOOP grind
+        done := TRUE;
+        zmin := 4.01;
+        a := base;
+        FOR k : setsize DO
+          IF points[k].status = unknown
+          THEN
+            done := FALSE;
+            IF vorticity(points[j],points[k],start) > 0.0
+              THEN
+              points[k].status := inside;
+              ELSE
+              b := metric(points[j],points[k]);
+              c := metric(points[k],points[lastj]);
+              d := a+b-c;
+              IF b > 0.0
+                THEN
+                z := d*ABS(d)/(a*b);
+                IF z < zmin
+                  THEN zmin := z;
+                    nextj := k;
+                    base := b ENDIF
+                ELSE points[k].status := inside ENDIF;
+            ENDIF;
+          ENDIF;
+        ENDFOR;
+        points[nextj].status := onhull;
+        IF done THEN EXIT grind ENDIF;
+        lastj := j;
+        j := nextj
+      ENDLOOP grind
+    ENDPROCEDURE complexhull;
+
+    FUNCTION metric RETURNS FLOAT (CONST p,q: point)
+      RETURN EXPT((p.x-q.x),2) + EXPT((p.y-q.y),2)
+    ENDFUNCTION metric;
+
+    FUNCTION vorticity RETURNS FLOAT (CONST p,q,r: point) INLINE
+      RETURN p.x*(q.y-r.y)-p.y*(q.x-r.x)+r.y*q.x-r.x*q.y
+    ENDFUNCTION vorticity;
+
+  ENDMODULE ComplexHullFinder;
+ENDTEMPLATE ComplexHullMacro;

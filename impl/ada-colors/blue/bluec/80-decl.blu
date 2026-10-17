@@ -1,0 +1,754 @@
+
+% ==== closed scopes: segments (4.2), routines (4.3), modules (4.4) ========================
+% A closed-scope-body [4-2] is translated in this order: its type declarations and the
+% declarations of its modules and routines (known throughout the scope, 4.1), its
+% objects, the objects of its modules (initialized after those of the scope, 4.1), its
+% statements, then the bodies of its routines and of the routines of its modules.
+
+PROCEDURE ENTER_ISCOPE (IMPORTS, SIGNALS: NODE, NAME: TEXT);
+   VAR I: ISCOPE := NEW (ISCOPE_REC);
+   W@.NSCOPES := W@.NSCOPES + 1;
+   I@ := (ID: W@.NSCOPES, IMPORTS: IMPORTS, SIGNALS: SIGNALS, NAME: NAME, UP: W@.IS);
+   W@.IS := I;
+END PROCEDURE ENTER_ISCOPE;
+
+PROCEDURE LEAVE_ISCOPE ();
+   W@.IS := W@.IS@.UP;
+END PROCEDURE LEAVE_ISCOPE;
+
+% a C name for a routine, unique in the program
+FUNCTION ROUTINE_CNAME (NAME: TEXT) RETURNS (TEXT);
+   VAR BASE: TEXT := FMT1 ('r_@', NAME);
+   CONST S: ASCII_STR(BASE.LEN) := STR (BASE, BASE.LEN);
+   VAR N: NODE := W@.CNAMES;
+   LOOP FOR I IN [0 : BASE.LEN - 1] DO                % T$NAME
+      IF S[I:I] = '$' THEN
+         BASE := MK (S[0 : I - 1] !! '__' !! S[I + 1 : BASE.LEN - 1]);
+      END IF;
+   END LOOP I;
+   LOOP UNTIL N = NIL DO
+      IF TEQ (N@.NAME, BASE) THEN
+         RETURN FMT2 ('@_@', BASE, NEW_NAME (''));
+      END IF;
+      N := N@.NEXT;
+   END LOOP;
+   N := NEW_NODE (N_IDENT, 0);
+   N@.NAME := BASE;
+   N@.NEXT := W@.CNAMES;
+   W@.CNAMES := N;
+   RETURN BASE;
+END FUNCTION ROUTINE_CNAME;
+
+% does a body need a heap frame: nested routines or modules, or exceptions clauses?
+FUNCTION NEEDS_FRAME (B: NODE) RETURNS (BOOLEAN);
+   IF B = NIL THEN
+      RETURN FALSE;
+   END IF;
+   IF B@.C <> NIL THEN
+      RETURN TRUE;
+   END IF;
+   RETURN HAS_HANDLERS (B@.B);
+END FUNCTION NEEDS_FRAME;
+
+FUNCTION HAS_HANDLERS (S0: NODE) RETURNS (BOOLEAN);
+   VAR S: NODE := S0;
+   LOOP UNTIL S = NIL DO
+      IF S@.KIND = N_EXCEPT ! S@.KIND = N_PAR THEN
+         RETURN TRUE;
+      END IF;
+      IF S@.KIND = N_LABELED ! S@.KIND = N_WITH THEN
+         IF HAS_HANDLERS (S@.A) ! HAS_HANDLERS (S@.B) THEN
+            RETURN TRUE;
+         END IF;
+      ORIF S@.KIND = N_BLOCK THEN
+         IF HAS_HANDLERS (S@.A@.B) THEN
+            RETURN TRUE;
+         END IF;
+      ORIF S@.KIND = N_LOOP ! S@.KIND = N_FOR THEN
+         IF HAS_HANDLERS (S@.B@.B) THEN
+            RETURN TRUE;
+         END IF;
+      ORIF S@.KIND = N_IF ! S@.KIND = N_CASE THEN
+         BLOCK
+            VAR A: NODE := S@.A;
+            IF S@.KIND = N_CASE THEN
+               A := S@.B;
+               IF S@.D <> NIL THEN
+                  RETURN TRUE;
+               END IF;
+               IF S@.C <> NIL THEN
+                  IF HAS_HANDLERS (S@.C@.B) THEN
+                     RETURN TRUE;
+                  END IF;
+               END IF;
+            ORIF S@.B <> NIL THEN
+               IF HAS_HANDLERS (S@.B@.B) THEN
+                  RETURN TRUE;
+               END IF;
+            END IF;
+            LOOP UNTIL A = NIL DO
+               IF A@.C <> NIL THEN
+                  RETURN TRUE;
+               END IF;
+               IF HAS_HANDLERS (A@.B@.B) THEN
+                  RETURN TRUE;
+               END IF;
+               A := A@.NEXT;
+            END LOOP;
+         END BLOCK;
+      END IF;
+      S := S@.NEXT;
+   END LOOP;
+   RETURN FALSE;
+END FUNCTION HAS_HANDLERS;
+
+% the symbol of a routine declaration, and of its short name if it is T$NAME (4.4)
+PROCEDURE DECLARE_ROUTINE_SYM (R: NODE);
+   VAR Y: SYM := NEW_SYM (Y_ROUTINE, R@.NAME);
+   CONST S: ASCII_STR(R@.NAME.LEN) := STR (R@.NAME, R@.NAME.LEN);
+   Y@.DECL := R;
+   Y@.ACCESS := ROUTINE_CNAME (R@.NAME);
+   Y@.FRAMED := NEEDS_FRAME (R@.C);
+   IF W@.CS@.LEVEL >= 1 THEN
+      Y@.FIELD := W@.CS@.FTYPE;
+   END IF;
+   DEFINE (Y, R@.LINE);
+   LOOP FOR I IN [1 : R@.NAME.LEN - 2] DO
+      IF S[I:I] = '$' THEN
+         Y@.PREFIX := MKN (S[0 : I - 1]);
+         BLOCK
+            VAR SHORT: SYM := NEW_SYM (Y_ROUTINE, MKN (S[I + 1 : R@.NAME.LEN - 1]));
+            SHORT@.ORIG := Y;
+            SHORT@.PREFIX := Y@.PREFIX;
+            SHORT@.DECL := R;
+            DEFINE (SHORT, R@.LINE);
+         END BLOCK;
+         EXIT;
+      END IF;
+   END LOOP I;
+END PROCEDURE DECLARE_ROUTINE_SYM;
+
+% the names declared by the routines-and-modules of a body, and their headers
+PROCEDURE DECLARE_MEMBERS (RS: NODE);
+   VAR R: NODE := RS;
+   LOOP UNTIL R = NIL DO
+      IF R@.KIND = N_MODULE THEN
+         PREDECLARE_MODULE (R);
+      ELSE
+         DECLARE_ROUTINE_SYM (R);
+      END IF;
+      R := R@.NEXT;
+   END LOOP;
+END PROCEDURE DECLARE_MEMBERS;
+
+PROCEDURE ROUTINE_HEADERS (RS: NODE);
+   VAR R: NODE := RS;
+   LOOP UNTIL R = NIL DO
+      IF R@.KIND = N_MODULE THEN
+         BLOCK
+            CONST M: SYM := FIND_DECL (R);
+            ENTER_MODULE (M);
+            ROUTINE_HEADERS (R@.C@.C);
+            LEAVE_MODULE (M);
+         END BLOCK;
+      ELSE
+         BLOCK
+            CONST Y: SYM := FIND_DECL (R);
+            ROUTINE_HEADER (Y);
+         END BLOCK;
+      END IF;
+      R := R@.NEXT;
+   END LOOP;
+END PROCEDURE ROUTINE_HEADERS;
+
+% the symbol declared by the declaration D, visible here
+FUNCTION FIND_DECL (D: NODE) RETURNS (SYM);
+   VAR Y: SYM := LOOKUP (D@.NAME);
+   LOOP UNTIL Y = NIL DO
+      IF Y@.DECL = D & Y@.ORIG = NIL THEN
+         RETURN Y;
+      END IF;
+      Y := LOOKUP_NEXT (Y);
+   END LOOP;
+   FAILT (D@.LINE, 'lost the declaration of ', D@.NAME);
+END FUNCTION FIND_DECL;
+
+% enumerated types are resolved at once: their literals belong to the scope
+PROCEDURE RESOLVE_ENUM_TYPES (DECLS: NODE);
+   VAR D: NODE := DECLS;
+   LOOP UNTIL D = NIL DO
+      IF D@.KIND = N_TYPE & D@.A = NIL THEN
+         IF D@.B@.KIND = TS_ENUM THEN
+            BLOCK
+               CONST Y: SYM := FIND_DECL (D);
+               CONST T: TYP := RESOLVE_USER (TYPE_REF (D));
+            END BLOCK;
+         END IF;
+      END IF;
+      D := D@.NEXT;
+   END LOOP;
+END PROCEDURE RESOLVE_ENUM_TYPES;
+
+FUNCTION TYPE_REF (D: NODE) RETURNS (NODE);
+   VAR TS: NODE := NEW_NODE (TS_NAME, D@.LINE);
+   TS@.NAME := D@.NAME;
+   RETURN TS;
+END FUNCTION TYPE_REF;
+
+% ---- modules [4-45] -------------------------------------------------------------------------
+
+% the module's types, routines and nested modules are declared in its own scope, which
+% is then put aside; what it exports is declared outside (4.1.2)
+PROCEDURE PREDECLARE_MODULE (M: NODE);
+   VAR Y: SYM := NEW_SYM (Y_MODULE, M@.NAME);
+   CONST SAVED: SYM := W@.MODL;
+   Y@.DECL := M;
+   DEFINE (Y, M@.LINE);
+   IF M@.C@.B <> NIL THEN
+      FAIL (M@.LINE, 'a module body has no statements (4.4)');
+   END IF;
+   OPEN_SCOPE;
+   BLOCK
+      CONST MARK: SYM := W@.SCOPE;
+      W@.MODL := Y;
+      DECLARE_TYPES (M@.C@.A);
+      DECLARE_MEMBERS (M@.C@.C);
+      RESOLVE_ENUM_TYPES (M@.C@.A);
+      Y@.MEMBERS := TAKE_SCOPE (MARK);
+   END BLOCK;
+   W@.MODL := SAVED;
+   CLOSE_SCOPE;
+   EXPORT_MODULE (Y);
+END PROCEDURE PREDECLARE_MODULE;
+
+% make the members of the module M visible again, in a new scope
+PROCEDURE ENTER_MODULE (M: SYM);
+   VAR Y: SYM := M@.MEMBERS;
+   OPEN_SCOPE;
+   LOOP UNTIL Y = NIL DO
+      BLOCK
+         CONST NEXT: SYM := Y@.SNEXT;
+         DEFINE (Y, 0);
+         Y := NEXT;
+      END BLOCK;
+   END LOOP;
+   M@.BUSY := TRUE;
+   M@.FWD.H := W@.SCOPE@.DEPTH;
+   M@.SAVED := W@.MODL;
+   W@.MODL := M;
+   ENTER_ISCOPE (M@.DECL@.A, NIL, M@.NAME);
+END PROCEDURE ENTER_MODULE;
+
+PROCEDURE LEAVE_MODULE (M: SYM);
+   VAR MARK: SYM := W@.SCOPE;
+   LEAVE_ISCOPE;
+   W@.MODL := M@.SAVED;
+   % the scope of the module is what was defined at its depth
+   LOOP UNTIL MARK = NIL DO
+      IF MARK@.DEPTH < W@.DEPTH THEN
+         EXIT;
+      END IF;
+      MARK := MARK@.SNEXT;
+   END LOOP;
+   M@.MEMBERS := TAKE_SCOPE (MARK);
+   W@.DEPTH := W@.DEPTH - 1;
+   M@.BUSY := FALSE;
+END PROCEDURE LEAVE_MODULE;
+
+% the module that declares G, entered if it is not the one being translated
+PROCEDURE ENTER_MODULE_OF (G: SYM);
+   IF G@.MODL <> NIL THEN
+      IF NOT IN_MODULE (G@.MODL) & NOT G@.MODL@.BUSY THEN
+         ENTER_MODULE (G@.MODL);
+      END IF;
+   END IF;
+END PROCEDURE ENTER_MODULE_OF;
+
+% the module that declares G, entered if the translation is outside it: was it?
+FUNCTION ENTER_MODULE_FOR (G: SYM) RETURNS (BOOLEAN);
+   IF G@.MODL <> NIL THEN
+      IF NOT IN_MODULE (G@.MODL) & NOT G@.MODL@.BUSY THEN
+         ENTER_MODULE (G@.MODL);
+         RETURN TRUE;
+      END IF;
+   END IF;
+   RETURN FALSE;
+END FUNCTION ENTER_MODULE_FOR;
+
+PROCEDURE LEAVE_MODULE_OF (G: SYM);
+   IF G@.MODL <> NIL THEN
+      IF W@.MODL = G@.MODL & G@.MODL@.BUSY & W@.DEPTH = G@.MODL@.FWD.H THEN
+         LEAVE_MODULE (G@.MODL);
+      END IF;
+   END IF;
+END PROCEDURE LEAVE_MODULE_OF;
+
+% EXPORTS (names [WITH (operations)]) or EXPORTS ALL [4-50]
+PROCEDURE EXPORT_MODULE (M: SYM);
+   CONST D: NODE := M@.DECL;
+   VAR Y: SYM := M@.MEMBERS;
+   LOOP UNTIL Y = NIL DO
+      IF EXPORTED_BY (D, Y) THEN
+         Y@.EXPORTED := TRUE;
+         BLOCK
+            VAR A: SYM := NEW_SYM (Y@.KIND, Y@.NAME);
+            A@ := Y@;
+            A@.ORIG := ORIGINAL (Y);
+            A@.DEPTH := W@.DEPTH;
+            DEFINE (A, D@.LINE);
+         END BLOCK;
+      END IF;
+      Y := Y@.SNEXT;
+   END LOOP;
+   BLOCK                                             % every name listed must exist
+      VAR X: NODE := D@.B;
+      LOOP UNTIL X = NIL DO
+         IF NOT MEMBER_NAMED (M, X@.NAME) THEN
+            FAILT (X@.LINE, 'the module does not declare ', X@.NAME);
+         END IF;
+         X := X@.NEXT;
+      END LOOP;
+   END BLOCK;
+END PROCEDURE EXPORT_MODULE;
+
+FUNCTION MEMBER_NAMED (M: SYM, NAME: TEXT) RETURNS (BOOLEAN);
+   VAR Y: SYM := M@.MEMBERS;
+   LOOP UNTIL Y = NIL DO
+      IF TEQ (Y@.NAME, NAME) ! TEQ (Y@.PREFIX, NAME) THEN
+         RETURN TRUE;
+      END IF;
+      Y := Y@.SNEXT;
+   END LOOP;
+   RETURN FALSE;
+END FUNCTION MEMBER_NAMED;
+
+% is the member Y exported by the module declaration D? A type takes its operations
+% (T$NAME, or those of its WITH list) and its literals along (4.4)
+FUNCTION EXPORTED_BY (D: NODE, Y: SYM) RETURNS (BOOLEAN);
+   VAR X: NODE := D@.B;
+   IF Y@.KIND = Y_VAR ! Y@.KIND = Y_CONST ! Y@.KIND = Y_LABEL THEN
+      RETURN FALSE;                                   % data is not exported (4.1.2)
+   END IF;
+   IF D@.FL = 1 THEN                                  % EXPORTS ALL
+      RETURN Y@.KIND = Y_TYPE ! Y@.KIND = Y_ROUTINE ! Y@.KIND = Y_ENUMLIT
+         ! Y@.KIND = Y_MODULE;
+   END IF;
+   LOOP UNTIL X = NIL DO
+      IF TEQ (X@.NAME, Y@.NAME) THEN
+         RETURN TRUE;
+      END IF;
+      IF Y@.KIND = Y_ROUTINE & TEQ (X@.NAME, Y@.PREFIX) THEN
+         IF X@.A = NIL THEN
+            RETURN TRUE;
+         END IF;
+         IF IN_IDENTS (X@.A, BASE_NAME (ORIGINAL (Y))) THEN
+            RETURN TRUE;
+         END IF;
+      END IF;
+      IF Y@.KIND = Y_ENUMLIT THEN                     % the literals of an exported type
+         BLOCK
+            CONST T: SYM := ORIG_LOOKUP_MEMBER (X@.NAME, Y);
+            IF T <> NIL THEN
+               RETURN TRUE;
+            END IF;
+         END BLOCK;
+      END IF;
+      X := X@.NEXT;
+   END LOOP;
+   RETURN FALSE;
+END FUNCTION EXPORTED_BY;
+
+% the exported type NAME, if the literal Y is one of its literals
+FUNCTION ORIG_LOOKUP_MEMBER (NAME: TEXT, Y: SYM) RETURNS (SYM);
+   CONST M: SYM := Y@.MODL;
+   VAR Z: SYM;
+   IF M = NIL THEN
+      RETURN NIL;
+   END IF;
+   Z := M@.MEMBERS;
+   LOOP UNTIL Z = NIL DO
+      IF Z@.KIND = Y_TYPE & TEQ (Z@.NAME, NAME) THEN
+         IF Z@.T <> NIL THEN
+            IF Z@.T@.KIND = T_ENUM THEN
+               IF Z@.T@.BASE = Y@.T@.BASE THEN
+                  RETURN Z;
+               END IF;
+            END IF;
+         END IF;
+      END IF;
+      Z := Z@.SNEXT;
+   END LOOP;
+   RETURN NIL;
+END FUNCTION ORIG_LOOKUP_MEMBER;
+
+% the objects of the modules of a body, after those of the scope (4.1)
+PROCEDURE MODULE_DATA (RS: NODE);
+   VAR R: NODE := RS;
+   LOOP UNTIL R = NIL DO
+      IF R@.KIND = N_MODULE THEN
+         BLOCK
+            CONST M: SYM := FIND_DECL (R);
+            VAR D: NODE := R@.C@.A;
+            ENTER_MODULE (M);
+            LOOP UNTIL D = NIL DO
+               IF D@.KIND = N_VAR ! D@.KIND = N_CONST THEN
+                  DECLARE_OBJECTS (D);
+               END IF;
+               D := D@.NEXT;
+            END LOOP;
+            MODULE_DATA (R@.C@.C);
+            ROUTINE_USES (R@.C@.C);
+            LEAVE_MODULE (M);
+         END BLOCK;
+      END IF;
+      R := R@.NEXT;
+   END LOOP;
+END PROCEDURE MODULE_DATA;
+
+% the bodies of the routines of a body and of its modules
+PROCEDURE ROUTINE_BODIES (RS: NODE);
+   VAR R: NODE := RS;
+   LOOP UNTIL R = NIL DO
+      IF R@.KIND = N_MODULE THEN
+         BLOCK
+            CONST M: SYM := FIND_DECL (R);
+            ENTER_MODULE (M);
+            ROUTINE_BODIES (R@.C@.C);
+            LEAVE_MODULE (M);
+         END BLOCK;
+      ELSE
+         BLOCK
+            CONST Y: SYM := FIND_DECL (R);
+            IF NOT Y@.GENERIC THEN
+               ROUTINE_BODY (Y);
+            END IF;
+         END BLOCK;
+      END IF;
+      R := R@.NEXT;
+   END LOOP;
+END PROCEDURE ROUTINE_BODIES;
+
+% the instances made for generics declared at this level
+PROCEDURE PENDING_BODIES ();
+   CONST LEVEL: INTEGER := CUR_LEVEL ();
+   VAR MORE: BOOLEAN := TRUE;
+   LOOP UNTIL NOT MORE DO
+      MORE := FALSE;
+      BLOCK
+         VAR P: SYM := W@.PENDING;
+         VAR PREV: SYM := NIL;
+         LOOP UNTIL P = NIL DO
+            IF P@.LEVEL = LEVEL THEN
+               IF PREV = NIL THEN
+                  W@.PENDING := P@.MEMBERS;
+               ELSE
+                  PREV@.MEMBERS := P@.MEMBERS;
+               END IF;
+               ENTER_MODULE_OF (P);
+               ROUTINE_BODY (P);
+               LEAVE_MODULE_OF (P);
+               MORE := TRUE;
+               EXIT;
+            END IF;
+            PREV := P;
+            P := P@.MEMBERS;
+         END LOOP;
+      END BLOCK;
+   END LOOP;
+END PROCEDURE PENDING_BODIES;
+
+% a closed-scope-body [4-2] in the closed scope W@.CS
+PROCEDURE CLOSED_BODY (B: NODE);
+   VAR D: NODE := B@.A;
+   VAR S: NODE := B@.B;
+   DECLARE_TYPES (B@.A);
+   DECLARE_MEMBERS (B@.C);
+   RESOLVE_ENUM_TYPES (B@.A);
+   % the headers of the routines may use the constants (and the objects may call the
+   % routines: a call resolves the header it needs)
+   LOOP UNTIL D = NIL DO
+      IF D@.KIND = N_VAR ! D@.KIND = N_CONST THEN
+         DECLARE_OBJECTS (D);
+      END IF;
+      D := D@.NEXT;
+   END LOOP;
+   MODULE_DATA (B@.C);
+   ROUTINE_HEADERS (B@.C);
+   ROUTINE_USES (B@.C);
+   DECLARE_LABELS (B@.B);
+   LOOP UNTIL S = NIL DO
+      STMT (S);
+      S := S@.NEXT;
+   END LOOP;
+   ROUTINE_BODIES (B@.C);
+   PENDING_BODIES;
+END PROCEDURE CLOSED_BODY;
+
+% ---- routines [4-17] [4-30] -----------------------------------------------------------------
+
+PROCEDURE ROUTINE_BODY (Y: SYM);
+   CONST R: NODE := Y@.DECL;
+   CONST SAVED_CODE: BUF := W@.CODE;
+   CONST SAVED_CTXS: CTX := W@.CTXS;
+   CONST SAVED_BINDS: BIND := W@.BINDS;
+   CONST OUTER: CSCOPE := W@.CS;
+   VAR CS: CSCOPE := NEW (SCOPE_REC);
+   VAR PROLOGUE: TEXT := MK ('');
+   CS@ := (LEVEL: Y@.LEVEL + 1, R: Y, FRAMED: Y@.FRAMED, FTYPE: FMT1 ('fr_@', Y@.ACCESS),
+           FIELDS: (HEAD: NIL, TAIL: NIL), UP: OUTER, IMPORTS: R@.E, SIGNALS: R@.D@.A,
+           RESULT: Y@.RESULT, IS_PATH: FALSE);
+   IF Y@.FRAMED THEN
+      EMIT (O_TYPEDEFS, FMT2 ('typedef struct @ @;', CS@.FTYPE, CS@.FTYPE));
+      IF Y@.LEVEL >= 1 THEN
+         APPEND (FMT1 (' @ *up;', Y@.FIELD) # CS@.FIELDS);
+      ELSE
+         APPEND (MK (' void *up;') # CS@.FIELDS);
+      END IF;
+      PROLOGUE := FMT2 ('@ *F = rt_alloc(sizeof *F); (void)F;', CS@.FTYPE, CS@.FTYPE);
+      IF Y@.LEVEL >= 1 THEN
+         PROLOGUE := CATS (PROLOGUE, ' F->up = up_;');
+      END IF;
+   END IF;
+   W@.CS := CS;
+   W@.CODE := (HEAD: NIL, TAIL: NIL);
+   W@.CTXS := NIL;
+   W@.BINDS := Y@.BINDINGS;
+   PUSH_CTX (1, NO_TEXT ());
+   ENTER_ISCOPE (R@.E, R@.D@.A, Y@.NAME);
+   OPEN_SCOPE;
+   BIND_INSTANCE (Y@.BINDINGS, R@.LINE);
+   BLOCK                                             % the formal parameters
+      VAR P: PARM := Y@.PARAMS;
+      LOOP UNTIL P = NIL DO
+         IF P@.T <> NIL THEN
+            IF REAL_TYPE (P@.T)@.KIND <> T_VOID THEN
+               BLOCK
+                  VAR V: SYM := NEW_SYM (Y_VAR, P@.NAME);
+                  V@.T := P@.T;
+                  V@.INPUT := P@.MODE = M_IN;
+                  V@.BYREF := P@.MODE <> M_IN;
+                  V@.FIELD := FMT1 ('p_@', P@.NAME);
+                  IF Y@.FRAMED THEN
+                     IF V@.BYREF THEN
+                        APPEND (FMT2 (' @ *p_@;', CTYPE (P@.T), P@.NAME) # CS@.FIELDS);
+                        V@.ACCESS := FMT1 ('(*F->p_@)', P@.NAME);
+                     ELSE
+                        APPEND (FMT2 (' @ p_@;', CTYPE (P@.T), P@.NAME) # CS@.FIELDS);
+                        V@.ACCESS := FMT1 ('F->p_@', P@.NAME);
+                     END IF;
+                     PROLOGUE := FMT3 ('@ F->p_@ = p_@;', PROLOGUE, P@.NAME, P@.NAME);
+                  ORIF V@.BYREF THEN
+                     V@.ACCESS := FMT1 ('(*p_@)', P@.NAME);
+                  ELSE
+                     V@.ACCESS := FMT1 ('p_@', P@.NAME);
+                  END IF;
+                  DEFINE (V, R@.LINE);
+                  DEFINE_PARAM_GENS (P@.T, V@.ACCESS, R@.LINE, TRUE);
+               END BLOCK;
+            END IF;
+         END IF;
+         P := P@.NEXT;
+      END LOOP;
+   END BLOCK;
+   IF R@.FL >= 2 THEN                                % TARGET: no machine code here (4.8.2)
+      CODE (FMT1 ('rt_b_no_target_code(@);', CSTRING (R@.NAME)));
+   ELSE
+      CLOSED_BODY (R@.C);
+   END IF;
+   CLOSE_SCOPE;
+   LEAVE_ISCOPE;
+   IF Y@.FRAMED THEN
+      EMIT (O_STRUCTS, FMT2 ('struct @ {@ };', CS@.FTYPE, JOIN_BUF (CS@.FIELDS)));
+   END IF;
+   EMIT (O_FUNCS, FMT2 ('@ { @', Y@.FWD, PROLOGUE));
+   APPEND_BUF (W@.CODE # W@.OUT(O_FUNCS));
+   IF Y@.RESULT@.KIND <> T_VOID THEN                 % 4.3.2: no value to return
+      EMITS (O_FUNCS, 'rt_raise(RT_X_INIT);');
+   END IF;
+   EMITS (O_FUNCS, '}');
+   W@.CS := OUTER;
+   W@.CODE := SAVED_CODE;
+   W@.CTXS := SAVED_CTXS;
+   W@.BINDS := SAVED_BINDS;
+END PROCEDURE ROUTINE_BODY;
+
+% inside an instance, the generic parameters are declared: types, and values
+PROCEDURE BIND_INSTANCE (BS: BIND, LINE: INTEGER);
+   VAR B: BIND := BS;
+   LOOP UNTIL B = NIL DO
+      IF B@.T <> NIL THEN
+         BLOCK
+            VAR Y: SYM := NEW_SYM (Y_TYPE, B@.NAME);
+            Y@.T := B@.T;
+            DEFINE (Y, LINE);
+         END BLOCK;
+      ORIF B@.HASMV THEN
+         BLOCK
+            VAR Y: SYM := NEW_SYM (Y_GEN, B@.NAME);
+            Y@.T := W@.TY_INT;
+            Y@.HASMV := TRUE;
+            Y@.MV := B@.MV;
+            Y@.ACCESS := B@.C;
+            Y@.INPUT := TRUE;
+            DEFINE (Y, LINE);
+         END BLOCK;
+      END IF;
+      B := B@.NEXT;
+   END LOOP;
+END PROCEDURE BIND_INSTANCE;
+
+PROCEDURE APPEND_BUF (SRC: BUF # DST: BUF);
+   VAR C: CHUNK := SRC.HEAD;
+   LOOP UNTIL C = NIL DO
+      APPEND (C@.T # DST);
+      C := C@.NEXT;
+   END LOOP;
+END PROCEDURE APPEND_BUF;
+
+% ---- segments [4-4] and the program ---------------------------------------------------------
+
+FUNCTION USES_SEGMENT (S: NODE, NAME: ASCII_STR(?L)) RETURNS (BOOLEAN);
+   VAR U: NODE := S@.A;
+   LOOP UNTIL U = NIL DO
+      IF TEQS (U@.NAME, NAME) THEN
+         RETURN TRUE;
+      END IF;
+      U := U@.NEXT;
+   END LOOP;
+   RETURN FALSE;
+END FUNCTION USES_SEGMENT;
+
+% have the segments of this compilation that S uses been translated?
+FUNCTION SEGMENT_READY (S, SEGS: NODE) RETURNS (BOOLEAN);
+   VAR U: NODE := S@.A;
+   LOOP UNTIL U = NIL DO
+      BLOCK
+         VAR T: NODE := SEGS;
+         LOOP UNTIL T = NIL DO
+            IF T <> S & T@.D = NIL & TEQ (T@.NAME, U@.NAME) THEN
+               RETURN FALSE;
+            END IF;
+            T := T@.NEXT;
+         END LOOP;
+      END BLOCK;
+      U := U@.NEXT;
+   END LOOP;
+   RETURN TRUE;
+END FUNCTION SEGMENT_READY;
+
+PROCEDURE TRANSLATE (SEGS: NODE);
+   VAR S: NODE := SEGS;
+   VAR MAINS: INTEGER := 0;
+   VAR ROOT: CSCOPE := NEW (SCOPE_REC);
+   IF SEGS = NIL THEN
+      FAIL (0, 'no segment');
+   END IF;
+   ROOT@ := (LEVEL: 0, R: NIL, FRAMED: FALSE, FTYPE: NO_TEXT (), FIELDS: (HEAD: NIL, TAIL: NIL),
+             UP: NIL, IMPORTS: NIL, SIGNALS: NIL, RESULT: NIL, IS_PATH: FALSE);
+   W@.CS := ROOT;
+   W@.IS := NIL;
+   ENTER_ISCOPE (NIL, NIL, MK ('segment'));
+   W@.IS@.ID := 0;
+   W@.NSCOPES := 0;
+   EMITS (O_TYPEDEFS, '#include "paleo.h"');
+   EMITS (O_TYPEDEFS, '#include <float.h>');
+   EMITS (O_TYPEDEFS, '#include <math.h>');
+   EMITS (O_TYPEDEFS, '#include <string.h>');
+   EMITS (O_MAINHEAD, 'int main(int argc, char **argv) {');
+   EMITS (O_MAINHEAD, 'rt_b_lang();');
+   EMITS (O_MAINHEAD, 'rt_init(argc, argv);');
+   W@.CODE := (HEAD: NIL, TAIL: NIL);
+   W@.CTXS := NIL;
+   PUSH_CTX (1, NO_TEXT ());
+   % a segment is translated after the segments of this compilation it uses (4.2),
+   % otherwise in the order of the text
+   LOOP
+      S := SEGS;
+      LOOP UNTIL S = NIL DO
+         IF S@.D = NIL THEN
+            IF SEGMENT_READY (S, SEGS) THEN
+               EXIT;
+            END IF;
+         END IF;
+         S := S@.NEXT;
+      END LOOP;
+      IF S = NIL THEN
+         EXIT;
+      END IF;
+      S@.D := S;                                     % translated
+      MAINS := MAINS + S@.IV;
+      IF S@.IV = 0 & S@.B@.B <> NIL THEN
+         FAIL (S@.LINE, 'only the MAIN segment has statements (4.2)');
+      END IF;
+      OPEN_SCOPE;
+      IF USES_SEGMENT (S, 'TERMINAL') THEN
+         PREDEFINE_TERMINAL;
+      END IF;
+      CLOSED_BODY (S@.B);
+      SEGMENT_EXPORTS (S);
+   END LOOP;
+   S := SEGS;
+   LOOP UNTIL S = NIL DO
+      IF S@.D = NIL THEN
+         FAILT (S@.LINE, 'the segments use each other: ', S@.NAME);
+      END IF;
+      S := S@.NEXT;
+   END LOOP;
+   IF MAINS <> 1 THEN
+      FAIL (0, 'a program has exactly one MAIN segment (4.2)');
+   END IF;
+   BLOCK
+      VAR X: NODE := W@.EXCS;
+      LOOP UNTIL X = NIL DO
+         EMIT (O_GLOBALS, FMT1 ('static int x_@;', X@.NAME));
+         EMIT (O_STARTUP, FMT2 ('x_@ = rt_exc(@);', X@.NAME, CSTRING (X@.NAME)));
+         X := X@.NEXT;
+      END LOOP;
+   END BLOCK;
+   APPEND_BUF (W@.CODE # W@.OUT(O_MAIN));
+   EMITS (O_MAIN, 'rt_main_done();');
+   EMITS (O_MAIN, 'return 0;');
+   EMITS (O_MAIN, '}');
+END PROCEDURE TRANSLATE;
+
+% what a module named in DEFINES exports comes along with it (Appendix C: STANDARD_IO
+% DEFINES (TEXTUAL_IO, BINARY_IO) and the application uses STREAM_FILE, PRINT ...)
+FUNCTION FROM_DEFINED_MODULE (S: NODE, Y: SYM) RETURNS (BOOLEAN);
+   VAR M: SYM := Y@.MODL;
+   IF Y@.ORIG = NIL THEN
+      RETURN FALSE;                                   % not an exported name
+   END IF;
+   LOOP UNTIL M = NIL DO
+      IF IN_IDENTS (S@.C, M@.NAME) THEN
+         RETURN TRUE;
+      END IF;
+      M := M@.MODL;
+   END LOOP;
+   RETURN FALSE;
+END FUNCTION FROM_DEFINED_MODULE;
+
+% a segment's DEFINES names stay visible to the segments after it (4.2); the others go
+PROCEDURE SEGMENT_EXPORTS (S: NODE);
+   VAR MARK: SYM := W@.SCOPE;
+   VAR TAKEN: SYM;
+   LOOP UNTIL MARK = NIL DO
+      IF MARK@.DEPTH < W@.DEPTH THEN
+         EXIT;
+      END IF;
+      MARK := MARK@.SNEXT;
+   END LOOP;
+   TAKEN := TAKE_SCOPE (MARK);
+   W@.DEPTH := W@.DEPTH - 1;
+   LOOP UNTIL TAKEN = NIL DO
+      BLOCK
+         CONST NEXT: SYM := TAKEN@.SNEXT;
+         IF S@.FL = 1 ! IN_IDENTS (S@.C, TAKEN@.NAME) ! IN_IDENTS (S@.C, TAKEN@.PREFIX)
+            ! TAKEN@.KIND = Y_ENUMLIT ! FROM_DEFINED_MODULE (S, TAKEN)
+            ! (TAKEN@.KIND = Y_ROUTINE & IN_IDENTS (S@.C, BASE_NAME (TAKEN))) THEN
+            % (DEFINES (NEW) also defines T$NEW: "T$NEW for device-types T", C-5)
+            DEFINE (TAKEN, S@.LINE);
+         END IF;
+         TAKEN := NEXT;
+      END BLOCK;
+   END LOOP;
+END PROCEDURE SEGMENT_EXPORTS;

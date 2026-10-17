@@ -1,0 +1,29 @@
+(* sets and the sieve of Eratosthenes (Part Three, II.C-D, pp.1103-1105) *)
+MODULE Sets
+  IMPORT TextIO, StandardImplementationPrelude;
+  CONST N: INTEGER [1..10000] = 60;
+  REPRESENTATION
+    IntegerSet = SET (INTEGER [2..N]);
+    MissileStates = UNORDERED (Inoperative, Damaged, Armed, Fired, OnTheRail);
+    MissileStatus = SET (MissileStates);
+  VAR Primes: IntegerSet := IntegerSet();
+      Sieve: IntegerSet := -IntegerSet();
+      m: MissileStatus := MissileStatus(OnTheRail, Armed);
+
+  FOR j: INTEGER [2..N] DO
+    IF j IN Sieve THEN
+      FOR jMultiple: INTEGER [1..N DIV j] DO
+        Sieve := Sieve - IntegerSet(j * jMultiple)
+      ENDFOR;
+      Primes := Primes + IntegerSet(j)
+    ENDIF
+  ENDFOR;
+  FOR k: INTEGER [2..N] DO
+    IF k IN Primes THEN Write(k); Write(" ") ENDIF
+  ENDFOR;
+  WriteLn();
+  Write(Armed IN m); Write(Fired IN m); Write(m = MissileStatus(Armed, OnTheRail));
+  Write((m * MissileStatus(Armed, Fired)) = MissileStatus(Armed));
+  Write((m XOR MissileStatus(Armed)) = MissileStatus(OnTheRail));
+  WriteLn()
+ENDMODULE Sets

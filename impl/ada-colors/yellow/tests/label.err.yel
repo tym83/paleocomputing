@@ -1,0 +1,7 @@
+MODULE Label
+  VAR i: INTEGER [0..9] := 0;
+  WHILE i < 3 DO
+    i := i + 1;
+    GOTO nowhere
+  ENDWHILE
+ENDMODULE Label

@@ -1,0 +1,6 @@
+(* around the example of p.1054: the two types, and a user of f *)
+MODULE Outer
+  IMPORT TextIO;
+  REPRESENTATION
+    Colors = UNORDERED (Red, Orange);
+    Flavors = UNORDERED (Lemon, Orange);

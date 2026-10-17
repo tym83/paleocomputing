@@ -1,0 +1,7 @@
+
+% ==== the main program ==================================================================
+READ_SOURCE;
+LEX;
+PREDEFINE;
+TRANSLATE (PARSE_COMPILATION ());
+WRITE_OUTPUT;

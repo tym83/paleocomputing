@@ -1,0 +1,4 @@
+;
+R3 := FluShotRecord("JONES", "ALICE", Date(Feb,1,1910), Female, Date(Dec,31,1975));
+R4 := FluShotRecord("BROWN", "EDITH", Date(Jan,2,1900), Female, Date(Jan,5,1976));
+a[1] := R1; a[2] := R2; a[3] := R3; a[4] := R4;

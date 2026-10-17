@@ -1,0 +1,14 @@
+(* Part Three, II.D "More on Sets" and II.E "More on Numbers and *)
+(* Identifiers", p.1105 (E-12) *)
+1501 REPRESENTATION MissileStates =
+1502   UNORDERED (Inoperative, Damaged, Armed,
+1503            Fired, OnTheRail, GuidanceUpdated,
+1504            TrackingIndependently);
+1505 REPRESENTATION MissileStatus = SET(MissileStates);
+1506 VAR m : ARRAY(INTEGER [1..6] OF MissileStatus);
+1507 m[1] := MissileStatus(OnTheRail, Armed);
+1508 m[2] := MissileStatus(Fired);
+1509 m[3] := MissileStatus(Damaged);
+1510 m[4] := MissileStatus(Inoperative);
+1601 REPRESENTATION DOLLARS_AND_CENTS =
+1602   FIXED [0.0P..10P5] SCALE 0.01P;

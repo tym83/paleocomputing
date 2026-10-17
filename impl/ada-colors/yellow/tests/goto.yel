@@ -1,0 +1,38 @@
+(* labels and GOTO (VII.C, IX.A.4): a GOTO leaves blocks, loops and *)
+(* handlers of its routine *)
+MODULE Goto
+  IMPORT TextIO, StandardImplementationPrelude;
+  VAR n: INTEGER64 := 0;
+
+  PROCEDURE Search RETURNS INTEGER64 (CONST target: INTEGER64)
+    LABEL found, done;
+    VAR i: INTEGER64 := 0;
+    LOOP scan
+      i := i + 1;
+      BEGIN
+        EXCEPTION CASE never => Write("?")
+        ENDEXCEPTION;
+        IF (i * i) = target THEN GOTO found ENDIF
+      END;
+      IF i > target THEN GOTO done ENDIF
+    ENDLOOP scan;
+    found: RETURN i;
+    done: RETURN -1
+  ENDPROCEDURE Search;
+
+  Write(Search(49)); Write(" "); Write(Search(50)); WriteLn();
+  BEGIN
+    LABEL again;
+    again: n := n + 1;
+    IF n < 5 THEN GOTO again ENDIF;
+    Write(n); WriteLn()
+  END;
+  BEGIN
+    (* the handler frame left by the GOTO is gone: this exception is not *)
+    (* caught by the handler of the inner block *)
+    EXCEPTION CASE test => Write("outer handler"); WriteLn()
+    ENDEXCEPTION;
+    Write(Search(16)); WriteLn();
+    BEGIN PROPAGATE_EXCEPTION test END
+  END
+ENDMODULE Goto

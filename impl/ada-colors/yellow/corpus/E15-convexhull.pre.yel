@@ -1,0 +1,3 @@
+(* the template of pp.1108-1109 is declared in a module that uses it *)
+MODULE Hulls
+  IMPORT TextIO, MyStandardConventions, EXPT, ABS;

@@ -1,0 +1,51 @@
+MAIN SEGMENT FIXED_POINT
+   USES (TERMINAL);
+% fixed point (3.2) and floating point (3.3)
+VAR E, F: FIXED (2, 2, STD);
+VAR H: FIXED (4, 2, STD);
+VAR I: INTEGER [0:10];
+VAR X: FLOAT (6);
+CONST PI: FLOAT (6) := 3.14159;
+E := .25\S2;
+F := .75\S2;
+H := E * F;
+PUT_LINE ('E*F = ' !! TO_CHAR (H) !! ', scale ' !! TO_CHAR ((E * F).SCALE));
+PUT_LINE ('E !*2! F = ' !! TO_CHAR (E !*2! F));
+PUT_LINE ('7//2 = ' !! TO_CHAR (7 // 2) !! ', 7 MOD -2 = ' !! TO_CHAR (7 MOD -2)
+          !! ', -7//2 = ' !! TO_CHAR (-7 // 2) !! ', -7 MOD 2 = ' !! TO_CHAR (-7 MOD 2));
+PUT_LINE ('7//2 ROUNDED = ' !! TO_CHAR (7 // 2 ROUNDED) !! ', 9//2 ROUNDED = '
+          !! TO_CHAR (9 // 2 ROUNDED));
+PUT_LINE ('2\S0 // .75\S2 = ' !! TO_CHAR (2\S0 // .75\S2));
+PUT_LINE ('2\S2 // .75\S2 = ' !! TO_CHAR (2\S2 // .75\S2));
+PUT_LINE ('2 !//2! .75\S2 = ' !! TO_CHAR (2 !//2! .75\S2));
+PUT_LINE ('900 = ' !! TO_CHAR (9E2) !! ', 10E-5 = ' !! TO_CHAR (10E-5));
+PUT_LINE ('E + 1 = ' !! TO_CHAR (E + 1));
+X := PI * 2.0;
+PUT_LINE ('2 PI = ' !! TO_CHAR (X));
+PUT_LINE ('TO_FLOAT (E, 6) = ' !! TO_CHAR (TO_FLOAT (F, 6)));
+PUT_LINE ('TO_FIXED (2.7, 0) = ' !! TO_CHAR (TO_FIXED (2.7, 0)) !! ', ROUNDED = '
+          !! TO_CHAR (TO_FIXED (2.7, 0, ROUNDED)));
+PUT_LINE ('TO_FIXED (''  42 '', 0) = ' !! TO_CHAR (TO_FIXED ('  42 ', 0)));
+IF X IN [6.0 : 7.0) THEN
+   PUT_LINE ('in range');
+END IF;
+BLOCK
+   I := 11;
+EXCEPT
+   RANGE --> PUT_LINE ('RANGE'); END;
+END EXCEPT;
+END BLOCK;
+BLOCK
+   I := 1 // 0;
+EXCEPT
+   ZERO_DIVIDE --> PUT_LINE ('ZERO_DIVIDE'); END;
+END EXCEPT;
+END BLOCK;
+BLOCK
+   I := TO_FIXED ('4X', 0);
+EXCEPT
+   CONVERSION --> PUT_LINE ('CONVERSION'); END;
+END EXCEPT;
+END BLOCK;
+PUT_LINE (TO_CHAR (FIXED_MAX (0, 2, STD)) !! ' ' !! TO_CHAR (ABS (-5)) !! ' ' !! TO_CHAR (ABS (-2.5)));
+END SEGMENT FIXED_POINT;

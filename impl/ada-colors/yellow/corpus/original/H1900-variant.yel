@@ -1,0 +1,13 @@
+(* Section H, team 126-02, A 2.6.4 YELLOW, p.1900: a variant record *)
+REPRESENTATION SHAPE = UNORDERED (CIRCLE,RECT) ;
+REPRESENTATION POSITION = RECORD
+                     VAR X,Y : REAL ;
+                   ENDRECORD ;
+REPRESENTATION FIGURE  = RECORD
+                     VAR CENTRE : POSITION ;
+                     SELECT S   : SHAPE
+                        CASE CIRCLE => VAR RADIUS : REAL ;
+                        CASE RECT => VAR LENGTH, BREADTH : REAL ;
+                     ENDSELECT ;
+                   ENDRECORD ;
+Z.LENGTH ; (* EXAMPLE OF STRUCTURE REFERENCE *)

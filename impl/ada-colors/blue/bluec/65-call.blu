@@ -1,0 +1,358 @@
+
+% ==== routine invocation (4.3.2), overloading, generic instances (section 5) ============
+
+% the type of an actual argument, translated once
+PROCEDURE TYPE_ARG (A: ARG);
+   IF NOT A@.HAVE THEN
+      A@.V := EXPR (A@.E, NIL);
+      A@.HAVE := TRUE;
+   END IF;
+END PROCEDURE TYPE_ARG;
+
+% an argument whose type depends on what is wanted: a literal, NIL, a constructor
+FUNCTION WANT_SENSITIVE (A: ARG) RETURNS (BOOLEAN);
+   IF A@.HAVE THEN
+      RETURN FALSE;
+   END IF;
+   RETURN IS_LITERALISH (A@.E) ! A@.E@.KIND = N_INT ! A@.E@.KIND = N_NEW;
+END FUNCTION WANT_SENSITIVE;
+
+FUNCTION COUNT_ARGS (A: ARG) RETURNS (INTEGER);
+   VAR N: INTEGER := 0;
+   VAR P: ARG := A;
+   LOOP UNTIL P = NIL DO
+      N := N + 1;
+      P := P@.NEXT;
+   END LOOP;
+   RETURN N;
+END FUNCTION COUNT_ARGS;
+
+% the arguments of a call node, in the order input # inout # output
+FUNCTION CALL_ARGS (E: NODE) RETURNS (ARG);
+   VAR HEAD, TAIL: ARG := NIL;
+   VAR G: INTEGER := 0;
+   LOOP FOR M IN [0:2] DO
+      BLOCK
+         VAR P: NODE := E@.A;
+         IF M = 1 THEN
+            P := E@.B;
+         ORIF M = 2 THEN
+            P := E@.C;
+         END IF;
+         LOOP UNTIL P = NIL DO
+            BLOCK
+               CONST A: ARG := NODE_ARG (P, M, NIL);
+               IF TAIL = NIL THEN
+                  HEAD := A;
+               ELSE
+                  TAIL@.NEXT := A;
+               END IF;
+               TAIL := A;
+            END BLOCK;
+            P := P@.NEXT;
+         END LOOP;
+      END BLOCK;
+   END LOOP M;
+   RETURN HEAD;
+END FUNCTION CALL_ARGS;
+
+FUNCTION CALL_EXPR (E: NODE, WANT: TYP) RETURNS (ET);
+   CONST ARGS: ARG := CALL_ARGS (E);
+   VAR Y: SYM;
+   IF TEQS (E@.NAME, 'START_IO') THEN               % a start-io-stmt [4-104]
+      REQUIRE_MACHINE (E@.LINE);
+      RETURN START_IO_CALL (E);
+   END IF;
+   % a routine bound by a WHERE clause or a routine parameter of the instance
+   Y := BOUND_ROUTINE (E@.NAME);
+   IF Y <> NIL THEN
+      IF Y@.KIND = Y_BUILTIN THEN
+         RETURN BUILTIN (E, WANT);
+      END IF;
+      RETURN CALL_SYM (Y, ARGS, E@.LINE);
+   END IF;
+   Y := FIND_ROUTINE (E@.NAME, ARGS, E@.LINE, TRUE);
+   IF Y = NIL THEN
+      BLOCK                                          % a predefined routine of the name
+         VAR P: SYM := LOOKUP (E@.NAME);
+         LOOP UNTIL P = NIL DO
+            IF P@.KIND = Y_BUILTIN THEN
+               RETURN BUILTIN (E, WANT);
+            END IF;
+            P := LOOKUP_NEXT (P);
+         END LOOP;
+      END BLOCK;
+      BLOCK
+         CONST B: SYM := LOOKUP (E@.NAME);
+         IF B <> NIL THEN
+            IF B@.KIND = Y_BUILTIN THEN
+               RETURN BUILTIN (E, WANT);
+            END IF;
+            IF B@.KIND = Y_ROUTINE ! B@.ORIG <> NIL THEN
+               FAILT (E@.LINE, 'no declaration of the routine fits these arguments: ', E@.NAME);
+            END IF;
+            FAILT (E@.LINE, 'not a routine: ', E@.NAME);
+         END IF;
+      END BLOCK;
+      FAILT (E@.LINE, 'unknown routine ', E@.NAME);
+   END IF;
+   RETURN CALL_SYM (Y, ARGS, E@.LINE);
+END FUNCTION CALL_EXPR;
+
+FUNCTION BOUND_ROUTINE (NAME: TEXT) RETURNS (SYM);
+   VAR B: BIND := W@.BINDS;
+   % T$NAME, T a bound generic type: the routine NAME the WHERE clause bound (C-32:
+   % READ calls T$FROM_CHAR)
+   BLOCK
+      CONST S: ASCII_STR (NAME.LEN) := STR (NAME, NAME.LEN);
+      LOOP FOR I IN [1 : NAME.LEN - 2] DO
+         IF S[I:I] = '$' THEN
+            IF FIND_BIND (W@.BINDS, MKN (S[0:I - 1])) <> NIL THEN
+               RETURN BOUND_ROUTINE (MKN (S[I + 1 : NAME.LEN - 1]));
+            END IF;
+            EXIT;
+         END IF;
+      END LOOP I;
+   END BLOCK;
+   LOOP UNTIL B = NIL DO
+      IF B@.R <> NIL & TEQ (B@.NAME, NAME) THEN
+         RETURN B@.R;
+      END IF;
+      B := B@.NEXT;
+   END LOOP;
+   RETURN NIL;
+END FUNCTION BOUND_ROUTINE;
+
+% may the routine Y be invoked by this name here? the T$ operations of a module are
+% named with their prefix inside it (4.4)
+FUNCTION CANDIDATE (Y: SYM, NAME: TEXT) RETURNS (BOOLEAN);
+   IF Y@.KIND <> Y_ROUTINE THEN
+      RETURN FALSE;
+   END IF;
+   IF Y@.ORIG <> NIL & Y@.PREFIX.LEN > 0 & NOT TEQ (Y@.NAME, Y@.ORIG@.NAME) THEN
+      IF Y@.MODL <> NIL THEN
+         IF IN_MODULE (Y@.MODL) THEN
+            RETURN FALSE;                             % the short name, inside the module
+         END IF;
+      END IF;
+   END IF;
+   RETURN TRUE;
+END FUNCTION CANDIDATE;
+
+% the routine named NAME that the arguments fit (4.3.2): an exact match, else a unique
+% assignment-compatible one; nothing if none fits (or, if MUST, a translation error when
+% several do)
+FUNCTION FIND_ROUTINE (NAME: TEXT, ARGS: ARG, LINE: INTEGER, MUST: BOOLEAN) RETURNS (SYM);
+   VAR Y: SYM := LOOKUP (NAME);
+   VAR BEST: SYM := NIL;
+   VAR BEST_SCORE: INTEGER := 0;
+   VAR TIES: INTEGER := 0;
+   VAR COUNT: INTEGER := 0;
+   CONST N: INTEGER := COUNT_ARGS (ARGS);
+   LOOP UNTIL Y = NIL DO
+      IF NOT IS_ROUTINE (Y) THEN
+         IF Y@.KIND <> Y_ENUMLIT THEN
+            EXIT;                                     % a local non-routine hides them (4.1)
+         END IF;
+      ORIF CANDIDATE (Y, NAME) THEN
+         BLOCK
+            CONST R: SYM := ORIGINAL (Y);
+            VAR SCORE: INTEGER;
+            ROUTINE_HEADER (R);
+            IF PARAM_COUNT (R) = N & NOT SEEN_ROUTINE (R, NAME, Y) THEN
+               COUNT := COUNT + 1;
+               SCORE := MATCH_SCORE (R, ARGS);
+               IF SCORE > BEST_SCORE THEN
+                  BEST := R;
+                  BEST_SCORE := SCORE;
+                  TIES := 0;
+               ORIF SCORE = BEST_SCORE & SCORE > 0 THEN
+                  TIES := TIES + 1;
+               END IF;
+            END IF;
+         END BLOCK;
+      END IF;
+      Y := LOOKUP_NEXT (Y);
+   END LOOP;
+   IF TIES > 0 & MUST THEN
+      FAILT (LINE, 'an ambiguous invocation (4.3.2): ', NAME);
+   END IF;
+   RETURN BEST;
+END FUNCTION FIND_ROUTINE;
+
+% has the same declaration been met earlier in the bucket (an alias and its original)?
+FUNCTION SEEN_ROUTINE (R: SYM, NAME: TEXT, STOP: SYM) RETURNS (BOOLEAN);
+   VAR Y: SYM := LOOKUP (NAME);
+   LOOP UNTIL Y = STOP ! Y = NIL DO
+      IF Y@.KIND = Y_ROUTINE THEN
+         IF ORIGINAL (Y) = R THEN
+            RETURN TRUE;
+         END IF;
+      END IF;
+      Y := LOOKUP_NEXT (Y);
+   END LOOP;
+   RETURN FALSE;
+END FUNCTION SEEN_ROUTINE;
+
+FUNCTION PARAM_COUNT (R: SYM) RETURNS (INTEGER);
+   VAR N: INTEGER := 0;
+   VAR P: PARM := R@.PARAMS;
+   LOOP UNTIL P = NIL DO
+      N := N + 1;
+      P := P@.NEXT;
+   END LOOP;
+   RETURN N;
+END FUNCTION PARAM_COUNT;
+
+% 0: the arguments do not fit R; 1: assignment compatible; 2: exact
+FUNCTION MATCH_SCORE (R: SYM, ARGS: ARG) RETURNS (INTEGER);
+   VAR P: PARM := R@.PARAMS;
+   VAR A: ARG := ARGS;
+   VAR EXACT: BOOLEAN := TRUE;
+   CONST BS: BIND := NEW_BINDS ();                   % one unification for all parameters
+   LOOP UNTIL P = NIL DO
+      IF P@.MODE <> A@.MODE THEN
+         RETURN 0;
+      END IF;
+      IF R@.GENERIC & P@.TS <> NIL THEN
+         IF NOT GENERIC_FITS (P, A, BS) THEN
+            RETURN 0;
+         END IF;
+      ORIF P@.T = NIL THEN                            % a TYPE parameter: a type argument
+         IF A@.HAVE THEN
+            IF A@.V.T <> W@.TY_TYPE THEN              % (a WHERE template says TYPE)
+               RETURN 0;
+            END IF;
+         END IF;
+      ORIF WANT_SENSITIVE (A) THEN
+         IF NOT LITERAL_FITS (A@.E, P@.T) THEN
+            RETURN 0;
+         END IF;
+      ELSE
+         TYPE_ARG (A);
+         BLOCK
+            CONST AT: TYP := A@.V.T;
+            IF NOT (SAME_CLASS (P@.T, AT) ! (AT@.KIND = T_NIL & REAL_TYPE (P@.T)@.KIND = T_PTR)) THEN
+               RETURN 0;
+            END IF;
+            IF NOT SAME_TYPE (P@.T, AT) THEN
+               EXACT := FALSE;
+            END IF;
+            IF REAL_TYPE (AT)@.KIND = T_INT & REAL_TYPE (P@.T)@.KIND = T_INT THEN
+               IF AT@.SCALE > P@.T@.SCALE THEN
+                  RETURN 0;
+               END IF;
+            END IF;
+         END BLOCK;
+      END IF;
+      P := P@.NEXT;
+      A := A@.NEXT;
+   END LOOP;
+   IF EXACT THEN
+      RETURN 2;
+   END IF;
+   RETURN 1;
+END FUNCTION MATCH_SCORE;
+
+% could the literal-like expression E be of the type T?
+FUNCTION LITERAL_FITS (E: NODE, T: TYP) RETURNS (BOOLEAN);
+   CONST RT: TYP := REAL_TYPE (T);
+   IF E@.KIND = N_ENUMLIT ! E@.KIND = N_NAME THEN
+      IF RT@.KIND = T_ENUM THEN
+         RETURN FIND_LITERAL (E@.NAME, RT) <> NIL;
+      END IF;
+      RETURN FALSE;
+   ORIF E@.KIND = N_NIL THEN
+      RETURN RT@.KIND = T_PTR;
+   ORIF E@.KIND = N_RECCONS THEN
+      RETURN RT@.KIND = T_REC;
+   ORIF E@.KIND = N_ARRCONS THEN
+      RETURN RT@.KIND = T_ARR;
+   ORIF E@.KIND = N_INT THEN
+      RETURN RT@.KIND = T_INT;
+   ORIF E@.KIND = N_NEW THEN
+      RETURN RT@.KIND = T_PTR ! RT@.KIND = T_SEM;
+   END IF;
+   RETURN FALSE;
+END FUNCTION LITERAL_FITS;
+
+% the invocation of R with ARGS: inputs by value after the conversions of assignment,
+% inouts and outputs by reference (4.3.2)
+FUNCTION CALL_SYM (Y0: SYM, ARGS: ARG, LINE: INTEGER) RETURNS (ET);
+   VAR Y: SYM := ORIGINAL (Y0);
+   VAR P: PARM;
+   VAR A: ARG := ARGS;
+   VAR C: TEXT := MK ('');
+   VAR SEP: TEXT := MK ('');
+   IF Y@.GENERIC THEN
+      Y := INSTANCE (Y, ARGS, LINE);
+   END IF;
+   CHECK_CALL_IMPORTS (Y, LINE);
+   IF Y@.LEVEL >= 1 THEN                             % the frame of its parent
+      C := FRAME_OF (Y@.LEVEL);
+      SEP := MK (', ');
+   END IF;
+   P := Y@.PARAMS;
+   LOOP UNTIL P = NIL DO
+      IF A = NIL THEN
+         FAIL (LINE, 'too few arguments');
+      END IF;
+      IF P@.T = NIL THEN                              % a TYPE argument: nothing at run time
+         ;
+      ORIF P@.MODE = M_IN THEN
+         IF REAL_TYPE (P@.T)@.KIND = T_VOID THEN      % a routine argument
+            ;
+         ELSE
+            BLOCK
+               VAR V: ET;
+               IF A@.HAVE & NOT WANT_SENSITIVE (A) THEN
+                  V := A@.V;
+               ELSE
+                  V := EXPR (A@.E, P@.T);
+               END IF;
+               C := FMT3 ('@@@', C, SEP, CONVERT (V, P@.T, LINE, NO_TEXT ()));
+               SEP := MK (', ');
+            END BLOCK;
+         END IF;
+      ELSE
+         BLOCK
+            VAR V: ET;
+            IF A@.HAVE THEN
+               V := A@.V;
+            ELSE
+               V := EXPR (A@.E, P@.T);
+            END IF;
+            IF A@.E <> NIL & NOT V.LVAL THEN
+               IF A@.E@.KIND = N_SUBSTR THEN
+                  % the substring of a variable (Appendix C passes them, C-8 and C-31;
+                  % [4-41] says variable): the formal is a view of the variable's
+                  % characters, so what the routine stores lands there
+                  IF NOT EXPR (A@.E@.A, NIL).LVAL THEN
+                     FAIL (LINE, 'an inout or output argument must be a variable (4.3.2)');
+                  END IF;
+                  V := MKET (FMT1 ('(rstr[]){@}[0]', V.C), V.T);
+                  V.LVAL := TRUE;
+               END IF;
+            END IF;
+            IF NOT V.LVAL THEN
+               FAIL (LINE, 'an inout or output argument must be a variable (4.3.2)');
+            END IF;
+            IF NOT SAME_CLASS (P@.T, V.T) THEN
+               FAILT (LINE, 'the inout or output argument is not of the type of the parameter: ',
+                      TYPE_NAME (P@.T));
+            END IF;
+            IF P@.MODE = M_INOUT & NOT SAME_TYPE (P@.T, V.T) THEN
+               FAIL (LINE, 'an inout argument must match the parameter exactly (4.3.2)');
+            END IF;
+            C := FMT3 ('@@&@', C, SEP, V.C);
+            SEP := MK (', ');
+         END BLOCK;
+      END IF;
+      A := A@.NEXT;
+      P := P@.NEXT;
+   END LOOP;
+   IF A <> NIL THEN
+      FAIL (LINE, 'too many arguments');
+   END IF;
+   RETURN MKET (FMT2 ('@(@)', Y@.ACCESS, C), Y@.RESULT);
+END FUNCTION CALL_SYM;

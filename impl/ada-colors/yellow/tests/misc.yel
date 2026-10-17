@@ -1,0 +1,45 @@
+(* the remaining standard operations of XI and XIV.XI, and OUT parameters *)
+MODULE Misc
+  IMPORT TextIO, StandardImplementationPrelude;
+  REPRESENTATION
+    P = POINTER (INTEGER [0..100]);
+    Money = FIXED [0.0P..1000.0P] SCALE 0.05P;
+  VAR p: P;
+      calls: INTEGER64 := 0;
+      lo, hi: INTEGER64;
+      m: Money;
+
+  PROCEDURE Count RETURNS BOOLEAN (CONST v: BOOLEAN)
+    calls := calls + 1;
+    RETURN v
+  ENDPROCEDURE Count;
+
+  (* OUT parameters are copied back at RETURN only (X.A.2) *)
+  PROCEDURE Bounds (CONST s: ARRAY (1 DIMENSIONS OF ASCII); OUT first, last: INTEGER64)
+    first := LOW(s, 1);
+    last := HIGH(s, 1);
+    IF last > 10 THEN PROPAGATE_EXCEPTION too_long ENDIF;
+    RETURN
+  ENDPROCEDURE Bounds;
+
+  NEW(p);
+  p^ := 42;
+  Write(p^); Write(" ");
+  FREE_POINTER(p);
+  Write(p = P NIL); WriteLn();
+  IF Count(FALSE) AND Count(TRUE) THEN ENDIF;
+  IF AND_LONG(Count(FALSE), Count(TRUE)) THEN ENDIF;
+  IF Count(TRUE) OR Count(TRUE) THEN ENDIF;
+  IF OR_LONG(Count(TRUE), Count(TRUE)) THEN ENDIF;
+  Write(calls); WriteLn();
+  Bounds("abc", lo, hi);
+  Write(lo); Write(".."); Write(hi); Write(" ");
+  BEGIN
+    EXCEPTION CASE too_long => Write("unchanged "); Write(lo); Write(".."); Write(hi); WriteLn()
+    ENDEXCEPTION;
+    Bounds("a long string", lo, hi)
+  END;
+  m := NEAR_FIXED(12.37, 0.05P);
+  WriteFixed(m, 2); Write(" "); WriteFloat(NEAR_FLOATING(7), 1); WriteLn();
+  Write(ADDR(calls) # 0); Write(EXTENT(calls)); WriteLn()
+ENDMODULE Misc

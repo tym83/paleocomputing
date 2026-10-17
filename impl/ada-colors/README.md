@@ -4,6 +4,8 @@
 
 The two finalists of the US DoD-1 language competition of 1979, rebuilt from
 their documents. GREEN won and became Ada; RED (Intermetrics) disappeared.
+BLUE (SofTech) and YELLOW (SRI International), the two designs dropped after
+the first phase in 1978, are rebuilt too, from DTIC ADB950587.
 The episode is described in [`17-episode-red-green.md`](../../17-episode-red-green.md).
 
 | Directory | What is there |
@@ -13,6 +15,8 @@ The episode is described in [`17-episode-red-green.md`](../../17-episode-red-gre
 | `red/redc/` | redc, a RED compiler written in RED. `red/seed/redc.c` is what the last redc made of itself |
 | `red/tests/` | RED tests with expected output |
 | `green/` | The same for GREEN: bootstrap, greenc written in GREEN, seed, tests, the 1979 INTRO examples |
+| `blue/` | BLUE (SofTech, 1978): bootstrap, bluec written in BLUE, seed, tests, and the programs of its specification, Appendix C's I/O modules running on simulated LT33 teletypes |
+| `yellow/` | YELLOW (SRI International, 1978): bootstrap, yellowc written in YELLOW, seed, tests, and the tutorial programs of its report |
 | `os/` | PAIRS, a Tandem NonStop style kernel in RED; Dijkstra's THE system in RED and its semaphore core in GREEN; Kubernetes on top of THE in both; `contrast/`: three problems in RED, GREEN and on THE's semaphores |
 | `kube/` | The Kubernetes control loop in RED, as a process pair, and in GREEN |
 | `labs/` | Twelve exercises with a checker |

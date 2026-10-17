@@ -1,0 +1,5 @@
+MODULE ConstField
+  REPRESENTATION R = RECORD CONST key: INTEGER [0..9]; VAR v: INTEGER [0..9] ENDRECORD;
+  VAR r: R := R(1, 2);
+  r.key := 3
+ENDMODULE ConstField

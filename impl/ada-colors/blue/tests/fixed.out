@@ -1,0 +1,18 @@
+E*F = 0.1875, scale 4
+E !*2! F = 0.0
+7//2 = 3, 7 MOD -2 = 1, -7//2 = -3, -7 MOD 2 = -1
+7//2 ROUNDED = 4, 9//2 ROUNDED = 4
+2\S0 // .75\S2 = 0
+2\S2 // .75\S2 = 2
+2 !//2! .75\S2 = 2.5
+900 = 900, 10E-5 = 0
+E + 1 = 1.25
+2 PI = 6.28318
+TO_FLOAT (E, 6) = 0.75
+TO_FIXED (2.7, 0) = 2, ROUNDED = 3
+TO_FIXED ('  42 ', 0) = 42
+in range
+RANGE
+ZERO_DIVIDE
+CONVERSION
+9223372036854775807 5 2.5

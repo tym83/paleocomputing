@@ -8,6 +8,7 @@
 #include <unistd.h>
 #include <math.h>
 #include <pthread.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1222,4 +1223,1252 @@ double rt_g_get_float(void) {
 
 void rt_g_move_bytes(rt_int from, rt_int to, rt_int n) {
   if (n > 0) memmove((void *)(intptr_t)to, (const void *)(intptr_t)from, (size_t)n);
+}
+
+/* BLUE additions */
+/* ---- BLUE (SofTech, 15 Feb 1978) --------------------------------------- */
+
+int RT_B_SIZE, RT_B_INVALID_SUBSTRING, RT_B_INVALID_LENGTH, RT_B_INVALID_SIZE,
+    RT_B_CONVERSION, RT_B_TYPE_MISMATCH;
+
+/* the exception names of the BLUE specification (sections 3 and 4) */
+void rt_b_lang(void) {
+  RT_X_RANGE = RT_X_CASE = RT_X_NEG_EXP = rt_exc("RANGE");
+  RT_X_SUBSCRIPT = rt_exc("SUBSCRIPT_RANGE");
+  RT_X_OVERFLOW = rt_exc("OVERFLOW");
+  RT_X_ZERO_DIVIDE = rt_exc("ZERO_DIVIDE");
+  RT_X_NIL = rt_exc("NULL_REF");
+  RT_X_ASSERT = rt_exc("ASSERTION_VIOLATED");
+  RT_X_TERMINATE = rt_exc("TERMINATED");
+  RT_X_INIT = rt_exc("UNINITIALIZED_VARIABLE");
+  RT_X_FREE = rt_exc("SPACE_EXHAUSTED");
+  RT_B_SIZE = RT_X_SUBTYPE = rt_exc("SIZE");
+  RT_B_TYPE_MISMATCH = RT_X_TAG = rt_exc("TYPE_MISMATCH");
+  RT_B_INVALID_SUBSTRING = rt_exc("INVALID_SUBSTRING");
+  RT_B_INVALID_LENGTH = rt_exc("INVALID_LENGTH");
+  RT_B_INVALID_SIZE = rt_exc("INVALID_SIZE");
+  RT_B_CONVERSION = rt_exc("CONVERSION");
+  RT_X_CREATE = RT_X_TASKING = RT_X_EMPTY_MAILBOX = rt_exc("TASKING");
+  RT_X_FILE = rt_exc("END_OF_INPUT");
+  RT_X_DEADLOCK = rt_exc("DEADLOCK");
+}
+
+rstr rt_b_slice(rstr s, rt_int l, rt_int u) {
+  if (u < l) {
+    if (l < 0 || l > s.len) rt_raise(RT_B_INVALID_SUBSTRING);
+    rstr r = {0, s.p};
+    return r;
+  }
+  if (l < 0 || u >= s.len) rt_raise(RT_B_INVALID_SUBSTRING);
+  rstr r = {u - l + 1, s.p + l};
+  return r;
+}
+
+void rt_b_assign(rstr *dst, rstr src) {
+  if (dst->len != src.len) rt_raise(RT_B_SIZE);
+  if (src.len) memmove(dst->p, src.p, (size_t)src.len);
+}
+
+void rt_b_slice_assign(rstr *dst, rt_int l, rt_int u, rstr src) {
+  rstr part = rt_b_slice(*dst, l, u);
+  rt_b_assign(&part, src);
+}
+
+int rt_b_eq(rstr a, rstr b) {
+  if (a.len != b.len) rt_raise(RT_B_INVALID_LENGTH);
+  return a.len == 0 || memcmp(a.p, b.p, (size_t)a.len) == 0;
+}
+
+rstr rt_b_dup(rstr c, rt_int n) {
+  if (n < 0) rt_raise(RT_B_INVALID_LENGTH);
+  rstr r = rt_str_new(n * c.len);
+  for (rt_int i = 0; i < n; i++) memcpy(r.p + i * c.len, c.p, (size_t)c.len);
+  return r;
+}
+
+rstr rt_b_image(rt_int v) { return rt_str_of_int(v); }
+
+rt_int rt_b_get_code(void) { return rt_getc(); }
+
+/* ---- BLUE: arrays ------------------------------------------------------- */
+
+rt_int rt_b_ix1(rt_int i, rt_int lo, rt_int hi) {
+  if (i < lo || i > hi) rt_raise(RT_X_SUBSCRIPT);
+  return i - lo;
+}
+
+rt_int rt_b_ixn(int d, const rt_int *lo, const rt_int *hi, ...) {
+  va_list ap;
+  rt_int off = 0;
+  va_start(ap, hi);
+  for (int k = 0; k < d; k++) {
+    rt_int i = va_arg(ap, rt_int);
+    if (i < lo[k] || i > hi[k]) {
+      va_end(ap);
+      rt_raise(RT_X_SUBSCRIPT);
+    }
+    off = off * (hi[k] - lo[k] + 1) + (i - lo[k]);
+  }
+  va_end(ap);
+  return off;
+}
+
+rt_int rt_b_extent(int d, const rt_int *lo, const rt_int *hi) {
+  rt_int n = 1;
+  for (int k = 0; k < d; k++) n *= hi[k] >= lo[k] ? hi[k] - lo[k] + 1 : 0;
+  return n;
+}
+
+int rt_b_same_extents(int d, const rt_int *lo1, const rt_int *hi1, const rt_int *lo2,
+                      const rt_int *hi2) {
+  for (int k = 0; k < d; k++) {
+    rt_int a = hi1[k] >= lo1[k] ? hi1[k] - lo1[k] + 1 : 0;
+    rt_int b = hi2[k] >= lo2[k] ? hi2[k] - lo2[k] + 1 : 0;
+    if (a != b) return 0;
+  }
+  return 1;
+}
+
+rt_int rt_b_dim_extent(const rt_int *lo, const rt_int *hi, rt_int i, int d) {
+  if (i < 0 || i >= d) rt_raise(RT_X_SUBSCRIPT);
+  return hi[i] >= lo[i] ? hi[i] - lo[i] + 1 : 0;
+}
+
+/* ---- BLUE: fixed point (3.2): a value is a mantissa m standing for m * 2**-scale - */
+
+typedef __int128 b_wide;
+
+static rt_int b_narrow(b_wide v) {
+  if (v > INT64_MAX || v < INT64_MIN) rt_raise(RT_X_OVERFLOW);
+  return (rt_int)v;
+}
+
+/* q = a / b, truncated toward zero or rounded to nearest with ties to even */
+static b_wide b_divide(b_wide a, b_wide b, int rounded) {
+  if (b == 0) rt_raise(RT_X_ZERO_DIVIDE);
+  b_wide q = a / b, r = a % b;
+  if (rounded && r != 0) {
+    b_wide r2 = (r < 0 ? -r : r) * 2, bb = b < 0 ? -b : b;
+    int neg = (a < 0) != (b < 0);
+    if (r2 > bb || (r2 == bb && (q & 1))) q += neg ? -1 : 1;
+  }
+  return q;
+}
+
+static b_wide b_pow2(rt_int k) {
+  if (k > 120) rt_raise(RT_X_OVERFLOW);
+  return (b_wide)1 << k;
+}
+
+rt_int rt_b_shl(rt_int v, rt_int k) { return b_narrow((b_wide)v * b_pow2(k)); }
+rt_int rt_b_shr(rt_int v, rt_int k) { return k > 120 ? 0 : b_narrow(b_divide(v, b_pow2(k), 0)); }
+rt_int rt_b_shr_round(rt_int v, rt_int k) { return k > 120 ? 0 : b_narrow(b_divide(v, b_pow2(k), 1)); }
+
+rt_int rt_b_rescale(rt_int v, rt_int from, rt_int to, int rounded) {
+  if (to >= from) return rt_b_shl(v, to - from);
+  return rounded ? rt_b_shr_round(v, from - to) : rt_b_shr(v, from - to);
+}
+
+rt_int rt_b_div_round(rt_int a, rt_int b) { return b_narrow(b_divide(a, b, 1)); }
+
+rt_int rt_b_mod_round(rt_int a, rt_int b) {
+  b_wide q = b_divide(a, b, 1);
+  return b_narrow((b_wide)a - q * b);
+}
+
+rt_int rt_b_mul_sc(rt_int a, rt_int b, rt_int k, int rounded) {
+  b_wide p = (b_wide)a * b;
+  if (k >= 0) {
+    if (k > 62 && p != 0) rt_raise(RT_X_OVERFLOW);
+    return b_narrow(p * ((b_wide)1 << k));
+  }
+  return b_narrow(b_divide(p, b_pow2(-k), rounded));
+}
+
+rt_int rt_b_div_sc(rt_int a, rt_int b, rt_int k, int rounded) {
+  if (k >= 0) {
+    if (k > 62 && a != 0) rt_raise(RT_X_OVERFLOW);
+    return b_narrow(b_divide((b_wide)a * ((b_wide)1 << k), b, rounded));
+  }
+  return b_narrow(b_divide(a, (b_wide)b * b_pow2(-k), rounded));
+}
+
+/* a decimal literal [+-]ddd[.ddd][E[+-]ee] as a mantissa at the scale, rounded */
+rt_int rt_b_fix_lit(const char *s, rt_int scale) {
+  b_wide num = 0, den = 1;
+  int neg = 0, frac = 0;
+  long e = 0;
+  if (*s == '+' || *s == '-') neg = *s++ == '-';
+  for (; *s && *s != 'E'; s++) {
+    if (*s == '.') {
+      frac = 1;
+      continue;
+    }
+    if (num > ((b_wide)1 << 100)) rt_raise(RT_X_OVERFLOW);
+    num = num * 10 + (*s - '0');
+    if (frac) den *= 10;
+  }
+  if (*s == 'E') e = strtol(s + 1, NULL, 10);
+  for (; e > 0; e--) num *= 10;
+  for (; e < 0; e++) den *= 10;
+  if (scale >= 0) num *= b_pow2(scale);
+  else den *= b_pow2(-scale);
+  b_wide q = b_divide(num, den, 1);
+  return b_narrow(neg ? -q : q);
+}
+
+rstr rt_b_md(int op, rt_int a, rt_int b) {
+  b_wide r = 0;
+  switch (op) {
+  case '+': r = (b_wide)a + b; break;
+  case '-': r = (b_wide)a - b; break;
+  case '*': r = (b_wide)a * b; break;
+  case '/': r = b == 0 ? 0 : a / b; break;
+  default: r = b == 0 ? 0 : a % b; break;
+  }
+  rstr s = rt_str_new(128);
+  unsigned __int128 u = (unsigned __int128)r;
+  for (int i = 127; i >= 0; i--, u >>= 1) s.p[i] = (unsigned char)('0' + (int)(u & 1));
+  return s;
+}
+
+double rt_b_fchk(double v) {
+  if (isinf(v) || isnan(v)) rt_raise(RT_X_OVERFLOW);
+  return v;
+}
+
+/* ---- BLUE: bitstrings (3.6): a value is a string of '0' and '1' ------------- */
+
+rstr rt_b_zeros(rt_int n) {
+  if (n < 0) rt_raise(RT_B_INVALID_LENGTH);
+  rstr r = rt_str_new(n);
+  memset(r.p, '0', (size_t)n);
+  return r;
+}
+
+rstr rt_b_one(rstr s) {
+  if (s.len != 1) rt_raise(RT_B_INVALID_LENGTH);
+  return s;
+}
+
+static rstr b_logic(rstr a, rstr b, int op) {
+  if (a.len != b.len) rt_raise(RT_B_INVALID_LENGTH);
+  rstr r = rt_str_new(a.len);
+  for (rt_int i = 0; i < a.len; i++) {
+    int x = a.p[i] == '1', y = b.p[i] == '1';
+    int z = op == 0 ? (x & y) : op == 1 ? (x | y) : (x ^ y);
+    r.p[i] = (unsigned char)('0' + z);
+  }
+  return r;
+}
+
+rstr rt_b_and(rstr a, rstr b) { return b_logic(a, b, 0); }
+rstr rt_b_or(rstr a, rstr b) { return b_logic(a, b, 1); }
+rstr rt_b_xor(rstr a, rstr b) { return b_logic(a, b, 2); }
+
+rstr rt_b_not(rstr a) {
+  rstr r = rt_str_new(a.len);
+  for (rt_int i = 0; i < a.len; i++) r.p[i] = a.p[i] == '1' ? '0' : '1';
+  return r;
+}
+
+rstr rt_b_bits_of_int(rt_int v, rt_int n) {
+  rstr r = rt_str_new(n);
+  uint64_t u = (uint64_t)v;
+  for (rt_int i = n - 1, k = 0; i >= 0; i--, k++)
+    r.p[i] = (unsigned char)(k < 64 ? '0' + (int)((u >> k) & 1) : (v < 0 ? '1' : '0'));
+  return r;
+}
+
+rt_int rt_b_int_of_bits(rstr b) {
+  uint64_t u = 0;
+  for (rt_int i = 0; i < b.len; i++) {
+    if (u >> 62) rt_raise(RT_X_OVERFLOW);
+    u = u * 2 + (b.p[i] == '1');
+  }
+  return (rt_int)u;
+}
+
+rstr rt_b_bits_of_float(double v) {
+  uint64_t u;
+  memcpy(&u, &v, sizeof u);
+  rstr r = rt_str_new(64);
+  for (int i = 63; i >= 0; i--, u >>= 1) r.p[i] = (unsigned char)('0' + (int)(u & 1));
+  return r;
+}
+
+double rt_b_float_of_bits(rstr b) {
+  if (b.len != 64) rt_raise(RT_B_INVALID_SIZE);
+  uint64_t u = 0;
+  for (int i = 0; i < 64; i++) u = u * 2 + (b.p[i] == '1');
+  double v;
+  memcpy(&v, &u, sizeof v);
+  return v;
+}
+
+rstr rt_b_bits_of_str(rstr s) {
+  rstr r = rt_str_new(s.len * 8);
+  for (rt_int i = 0; i < s.len; i++)
+    for (int k = 0; k < 8; k++) r.p[i * 8 + k] = (unsigned char)('0' + ((s.p[i] >> (7 - k)) & 1));
+  return r;
+}
+
+rstr rt_b_str_of_bits(rstr b) {
+  if (b.len % 8) rt_raise(RT_B_INVALID_SIZE);
+  rstr r = rt_str_new(b.len / 8);
+  for (rt_int i = 0; i < r.len; i++) {
+    int c = 0;
+    for (int k = 0; k < 8; k++) c = c * 2 + (b.p[i * 8 + k] == '1');
+    r.p[i] = (unsigned char)c;
+  }
+  return r;
+}
+
+rstr rt_b_bits_of_digits(rstr s, int bits) {
+  rstr r = rt_str_new(s.len * bits);
+  for (rt_int i = 0; i < s.len; i++) {
+    int c = s.p[i], v = c >= '0' && c <= '9' ? c - '0' : c >= 'A' && c <= 'F' ? c - 'A' + 10 : 99;
+    if (v >= (1 << bits)) rt_raise(RT_B_CONVERSION);
+    for (int k = 0; k < bits; k++) r.p[i * bits + k] = (unsigned char)('0' + ((v >> (bits - 1 - k)) & 1));
+  }
+  return r;
+}
+
+rstr rt_b_rep_of_enum(rt_int v, const rstr *reps, rt_int n) {
+  if (v < 0 || v >= n) rt_raise(RT_X_RANGE);
+  return reps[v];
+}
+
+rt_int rt_b_enum_of_rep(rstr b, const rstr *reps, rt_int n) {
+  for (rt_int i = 0; i < n; i++)
+    if (rt_str_eq(reps[i], b)) return i;
+  rt_raise(RT_X_RANGE);
+}
+
+/* ---- BLUE: conversions and images ------------------------------------- */
+
+rstr rt_b_fix_image(rt_int v, rt_int scale) {
+  if (scale <= 0) return rt_str_of_int(rt_b_shl(v, -scale));
+  /* m * 2**-s has exactly s decimal digits after the point */
+  char b[200];
+  int n = 0, neg = v < 0;
+  unsigned __int128 m = neg ? -(b_wide)v : (b_wide)v;
+  unsigned __int128 ip = scale >= 120 ? 0 : m >> scale;
+  unsigned __int128 fp = scale >= 120 ? m : m & (((unsigned __int128)1 << scale) - 1);
+  char ib[64];
+  int k = 0;
+  do {
+    ib[k++] = (char)('0' + (int)(ip % 10));
+    ip /= 10;
+  } while (ip);
+  if (neg) b[n++] = '-';
+  while (k) b[n++] = ib[--k];
+  b[n++] = '.';
+  /* fp / 2**scale, digit by digit; at most scale digits */
+  int digits = 0;
+  do {
+    fp *= 10;
+    b[n++] = (char)('0' + (int)(fp >> scale));
+    fp &= ((unsigned __int128)1 << scale) - 1;
+    digits++;
+  } while (fp && digits < scale && n < 190);
+  return rt_str_copy(rt_str(b, n));
+}
+
+rstr rt_b_float_image(double v, rt_int prec) {
+  char b[64];
+  if (prec < 1) prec = 1;
+  if (prec > 17) prec = 17;
+  int n = snprintf(b, sizeof b, "%.*G", (int)prec, v);
+  if (!strpbrk(b, ".EN")) b[n++] = '.';
+  return rt_str_copy(rt_str(b, n));
+}
+
+rstr rt_b_bool_image(rt_int v) { return v ? rt_str("TRUE", 4) : rt_str("FALSE", 5); }
+
+rstr rt_b_enum_image(const char **names, rt_int v) {
+  return rt_str_copy(rt_str(names[v], (rt_int)strlen(names[v])));
+}
+
+rt_int rt_b_fix_of_float(double v, rt_int scale, int rounded) {
+  double x = ldexp(v, (int)scale);
+  if (!(x > -9.2233720368547758e18 && x < 9.2233720368547758e18)) rt_raise(RT_X_OVERFLOW);
+  double t = trunc(x);
+  if (rounded) {
+    double r = x - t;
+    if (fabs(r) > 0.5 || (fabs(r) == 0.5 && fmod(t, 2) != 0)) t += x < 0 ? -1 : 1;
+  }
+  return (rt_int)t;
+}
+
+/* a fixed-literal with blanks around it (3.2.6.1) */
+rt_int rt_b_fix_of_str(rstr s, rt_int scale, int rounded) {
+  char b[256];
+  rt_int i = 0, n = 0;
+  (void)rounded;
+  while (i < s.len && s.p[i] == ' ') i++;
+  while (i < s.len && s.p[i] != ' ' && n < 255) b[n++] = (char)s.p[i++];
+  while (i < s.len && s.p[i] == ' ') i++;
+  b[n] = 0;
+  int ok = n > 0 && i == s.len, digits = 0;
+  for (int k = 0; ok && k < n; k++) {
+    char c = b[k];
+    if (c >= '0' && c <= '9') digits++;
+    else if (!((c == '+' || c == '-') && (k == 0 || b[k - 1] == 'E')) && c != '.' && c != 'E')
+      ok = 0;
+  }
+  if (!ok || !digits) rt_raise(RT_B_CONVERSION);
+  return rt_b_fix_lit(b, scale);
+}
+
+double rt_b_float_of_fix(rt_int v, rt_int scale) { return ldexp((double)v, (int)-scale); }
+
+double rt_b_float_of_str(rstr s) {
+  const char *c = rt_cstr(s);
+  char *end;
+  double v = strtod(c, &end);
+  while (*end == ' ') end++;
+  if (end == c || *end) rt_raise(RT_B_CONVERSION);
+  return v;
+}
+
+rt_int rt_b_succ(rt_int v, rt_int n) {
+  if (v + 1 >= n) rt_raise(RT_X_RANGE);
+  return v + 1;
+}
+
+rt_int rt_b_pred(rt_int v) {
+  if (v <= 0) rt_raise(RT_X_RANGE);
+  return v - 1;
+}
+
+void rt_b_no_target_code(const char *name) {
+  fflush(stdout);
+  fprintf(stderr, "*** the TARGET routine %s has no machine code here\n", name);
+  exit(1);
+}
+
+/* ---- BLUE: parallel processing (4.6) ------------------------------------- */
+
+struct rt_b_sem {
+  rt_int value;
+  rt_waiter *q;
+  int region, connected;
+};
+
+#define B_HOLDS 32
+struct rt_b_act {
+  rt_act act;
+  void (*fn)(void *);
+  void *frame;
+  rt_b_par *par;              /* the block it belongs to */
+  rt_b_par *waiting;          /* the block it waits on */
+  rt_b_act *sibling;
+  rt_int start, end;
+  int done, exc;
+  rt_b_sem *holds[B_HOLDS];   /* REGION semaphores requested and not released */
+  int nholds;
+};
+
+static rt_b_act b_main;
+static __thread rt_b_act *b_self;
+
+static rt_b_act *b_me(void) { return b_self ? b_self : &b_main; }
+
+rt_b_sem *rt_b_sem_new(int region) {
+  rt_b_sem *s = rt_alloc(sizeof *s);
+  s->region = region;
+  return s;
+}
+
+rt_b_sem *rt_b_sem_value(rt_int n, int region) {
+  if (n < 0) rt_raise(RT_X_RANGE);
+  rt_b_sem *s = rt_b_sem_new(region);
+  s->value = n;
+  return s;
+}
+
+/* 3.11.5: the value only; the list of blocked activations becomes empty */
+void rt_b_sem_assign(rt_b_sem *dst, rt_b_sem *src) {
+  dst->value = src->value;
+  dst->q = NULL;
+}
+
+static void b_hold(rt_b_sem *s) {
+  rt_b_act *a = b_me();
+  if (s->region && a->nholds < B_HOLDS) a->holds[a->nholds++] = s;
+}
+
+void rt_b_request(rt_b_sem *s) {
+  if (s->value > 0) {
+    s->value--;
+    b_hold(s);
+    return;
+  }
+  add_waiter(&s->q, 0, NULL);
+  block();
+  b_hold(s);
+}
+
+/* the highest priority waiter, the one that waited longest among equals (4.6.7) */
+void rt_b_release(rt_b_sem *s) {
+  rt_b_act *a = b_me();
+  for (int i = a->nholds - 1; i >= 0; i--)
+    if (a->holds[i] == s) {
+      a->holds[i] = a->holds[--a->nholds];
+      break;
+    }
+  rt_waiter *best = NULL;
+  for (rt_waiter *w = s->q; w; w = w->next)
+    if (!best || w->t->prio > best->t->prio) best = w;
+  if (!best) {
+    s->value++;
+    return;
+  }
+  satisfy(best);
+  maybe_preempt();
+}
+
+void rt_b_connect(rt_b_sem *s) {
+  if (s->connected) rt_raise(rt_exc("INTERRUPT"));
+  s->connected = 1;
+}
+
+rt_b_paths rt_b_paths_new(void) {
+  rt_b_paths p = {0, 0, rt_alloc(sizeof(rt_b_act *))};
+  return p;
+}
+
+void rt_b_paths_range(rt_b_paths *p, rt_int lo, rt_int hi) {
+  p->lo = lo;
+  p->hi = hi;
+  p->a = rt_alloc(sizeof(rt_b_act *) * (size_t)(hi >= lo ? hi - lo + 1 : 1));
+}
+
+rt_b_act *rt_b_paths_at(rt_b_paths *p, rt_int i) {
+  if (i < p->lo || i > p->hi || !p->a[i - p->lo]) rt_raise(RT_X_SUBSCRIPT);
+  return p->a[i - p->lo];
+}
+
+static void b_trampoline(void *arg) {
+  rt_b_act *a = arg;
+  b_self = a;
+  a->fn(a->frame);
+  a->done = 1;
+  a->end = rt_time();
+}
+
+void rt_b_par_begin(void) {}
+
+/* the activation is ready but does not run before its siblings are all ready (4.6.1) */
+void rt_b_path_start(rt_b_paths *p, rt_int i, void (*fn)(void *), void *frame, rt_b_par *par,
+                     rt_int prio) {
+  rt_b_act *a = rt_alloc(sizeof *a);
+  a->fn = fn;
+  a->frame = frame;
+  a->par = par;
+  a->start = rt_time();
+  a->sibling = par->children;
+  par->children = a;
+  p->a[i - p->lo] = a;
+  rt_task *t = rt_alloc(sizeof *t);
+  pthread_cond_init(&t->cv, NULL);
+  t->id = ++task_ids;
+  t->prio = prio;
+  t->fn = b_trampoline;
+  t->frame = a;
+  t->act = &a->act;
+  t->decl = &par->td;
+  t->term_alt = -1;
+  a->act.t = t;
+  a->act.active = 1;
+  par->td.live++;
+  t->all_next = all_tasks;
+  all_tasks = t;
+  make_ready(t);
+  pthread_attr_t attr;
+  pthread_attr_init(&attr);
+#ifdef __wasi__
+  pthread_attr_setstacksize(&attr, 1u << 20);
+#else
+  pthread_attr_setstacksize(&attr, 64u << 20);
+#endif
+  if (pthread_create(&t->th, &attr, task_main, t) != 0) {
+    fprintf(stderr, "*** cannot start a path\n");
+    exit(4);
+  }
+  pthread_detach(t->th);
+  trace("create", t);
+}
+
+void rt_b_par_end(rt_b_par *par) {
+  rt_b_act *me = b_me();
+  me->waiting = par;
+  rt_await_decl(&par->td);
+  me->waiting = NULL;
+  if (par->exc) rt_raise(par->exc);
+}
+
+/* an exception ended the path: one it may signal, or TERMINATED, is raised by the
+ * block (4.6.1); its REGION semaphores are released */
+void rt_b_path_failed(int exc, int allowed) {
+  rt_b_act *a = b_me();
+  while (a->nholds > 0) rt_b_release(a->holds[a->nholds - 1]);
+  if (!allowed && exc != RT_X_TERMINATE) {
+    fflush(stdout);
+    fprintf(stderr, "*** unhandled exception %s in a path\n", rt_exc_name(exc));
+    exit(1);
+  }
+  a->exc = exc;
+  if (a->par) a->par->exc = exc;
+}
+
+rt_int rt_b_check_priority(rt_int p) {
+  if (p < 0 || p > 255) rt_raise(RT_X_RANGE);
+  return p;
+}
+
+/* TERMINATED in the activation, or in the leaves of its tree of activations (4.6.3) */
+void rt_b_terminate(rt_b_act *a) {
+  if (!a) rt_raise(RT_X_TERMINATE);
+  if (a->done) return;
+  if (a->waiting) {
+    for (rt_b_act *c = a->waiting->children; c; c = c->sibling) rt_b_terminate(c);
+    return;
+  }
+  if (a == b_me()) rt_raise(RT_X_TERMINATE);
+  rt_exterminate(&a->act);
+}
+
+void rt_b_priority(rt_b_act *a, rt_int p) {
+  rt_b_check_priority(p);
+  if (!a) a = b_me();
+  if (a->done) return;
+  if (a == &b_main) {
+    rt_set_priority(rt_me(), p);
+    return;
+  }
+  rt_set_priority(&a->act, p);
+}
+
+/* the virtual time since the activation began: a deviation, see blue/notes */
+rt_int rt_b_clock(rt_b_act *a) {
+  if (!a) a = b_me();
+  rt_int us = (a->done ? a->end : rt_time()) - a->start;
+  return (rt_int)(((b_wide)us << 20) / 1000000);
+}
+
+void rt_b_wait(rt_int v, rt_int scale) {
+  if (v <= 0) {
+    rt_yield();
+    return;
+  }
+  b_wide us = (b_wide)v * 1000000;
+  b_wide ticks = scale >= 0 ? (us + b_pow2(scale) - 1) / b_pow2(scale) : us * b_pow2(-scale);
+  rt_delay(b_narrow(ticks));
+}
+
+
+/* YELLOW additions */
+/* Support for the YELLOW translator (SRI International, 1978): arrays with
+ * run-time descriptors, sets over any range, files, monitors and signals,
+ * processes with priorities and identities. Only additions: nothing above
+ * changes. Page references are to DTIC ADB950587 (the 1978 YELLOW report). */
+
+/* ---- exception names (Appendix C, p.1092, and the text of the Report) ---- */
+
+int Y_X_EOF, Y_X_FILE, Y_X_INSTANCES, Y_X_FIXED, Y_X_ZERO_DENOM, Y_X_NO_RETURN;
+
+void y_lang(void) {
+  RT_X_RANGE = RT_X_SUBSCRIPT = RT_X_SUBTYPE = RT_X_CASE = RT_X_NEG_EXP =
+      rt_exc("OUT_OF_RANGE");                  /* XI: SUCC of the last value */
+  RT_X_OVERFLOW = rt_exc("OVERFLOW");
+  RT_X_ZERO_DIVIDE = rt_exc("ZERO_DIVIDE");
+  RT_X_NIL = RT_X_FREE = rt_exc("INVALID_POINTER");
+  RT_X_ASSERT = rt_exc("INVALID_ASSERTION");   /* IX.A.3, p.1038 */
+  RT_X_TAG = rt_exc("INVALID_VARIANT");
+  RT_X_INIT = rt_exc("UNINITIALIZED");
+  RT_X_TERMINATE = rt_exc("PROCESS_TERMINATION"); /* XIV.XI.3, p.1077 */
+  RT_X_CREATE = RT_X_TASKING = RT_X_EMPTY_MAILBOX = rt_exc("TASKING_ERROR");
+  RT_X_FILE = Y_X_EOF = rt_exc("END_OF_FILE"); /* XII.B, p.1064 */
+  RT_X_DEADLOCK = rt_exc("DEADLOCK");
+  Y_X_FILE = rt_exc("FILE_ERROR");
+  Y_X_INSTANCES = rt_exc("TOO_MANY_PROCESS_INSTANCES"); /* XIV.X.2 */
+  Y_X_FIXED = rt_exc("FIXED_NOT_REPRESENTABLE");
+  Y_X_ZERO_DENOM = rt_exc("ZERO_DENOMINATOR"); /* FIXED_DIV, p.1062 */
+  Y_X_NO_RETURN = rt_exc("NO_RETURN");         /* fell out of a routine, IX.A.6 */
+}
+
+/* ---- descriptors ------------------------------------------------------- */
+
+const ydesc y_d_int = {YK_INT, sizeof(rt_int), 0, 0, {0}, {0}, NULL, 0, NULL, NULL};
+const ydesc y_d_byte = {YK_BYTE, 1, 0, 0, {0}, {0}, NULL, 0, NULL, NULL};
+const ydesc y_d_float = {YK_FLOAT, sizeof(double), 0, 0, {0}, {0}, NULL, 0, NULL, NULL};
+const ydesc y_d_ptr = {YK_PTR, sizeof(void *), 0, 0, {0}, {0}, NULL, 0, NULL, NULL};
+const ydesc y_d_set = {YK_SET, sizeof(yset), 0, 0, {0}, {0}, NULL, 0, NULL, NULL};
+const ydesc y_d_opaque = {YK_OPAQUE, sizeof(void *), 0, 0, {0}, {0}, NULL, 0, NULL, NULL};
+
+void y_desc_array(ydesc *d, int nd, const rt_int *lo, const rt_int *hi, const ydesc *elem) {
+  memset(d, 0, sizeof *d);
+  d->kind = YK_ARRAY;
+  d->size = sizeof(yarr);
+  d->deep = 1;
+  d->nd = nd;
+  for (int k = 0; k < Y_MAXD; k++) {
+    d->lo[k] = k < nd ? lo[k] : 1;
+    d->hi[k] = k < nd ? hi[k] : 1;
+  }
+  d->elem = elem;
+}
+
+void y_desc_record(ydesc *d, size_t size, int nf, const size_t *off, const ydesc *const *fd) {
+  memset(d, 0, sizeof *d);
+  d->kind = YK_RECORD;
+  d->size = size;
+  d->nf = nf;
+  d->off = off;
+  d->fd = fd;
+  for (int i = 0; i < nf; i++)
+    if (fd[i]->deep) d->deep = 1;
+}
+
+static rt_int y_n(rt_int lo, rt_int hi) { return hi >= lo ? hi - lo + 1 : 0; }
+
+rt_int y_count(yarr a, int nd) {
+  rt_int n = 1;
+  for (int k = 0; k < nd; k++) n *= y_n(a.lo[k], a.hi[k]);
+  return n;
+}
+
+void y_init(const ydesc *d, void *v) {
+  memset(v, 0, d->size);
+  if (d->kind == YK_ARRAY) {
+    yarr *a = v;
+    for (int k = 0; k < Y_MAXD; k++) {
+      a->lo[k] = d->lo[k];
+      a->hi[k] = d->hi[k];
+    }
+    rt_int n = y_count(*a, d->nd);
+    a->p = rt_alloc((size_t)n * d->elem->size);
+    if (d->elem->deep)
+      for (rt_int i = 0; i < n; i++) y_init(d->elem, (char *)a->p + i * d->elem->size);
+  } else if (d->kind == YK_RECORD && d->deep) {
+    for (int i = 0; i < d->nf; i++)
+      if (d->fd[i]->deep) y_init(d->fd[i], (char *)v + d->off[i]);
+  }
+}
+
+void y_copy(const ydesc *d, void *dst, const void *src) {
+  if (!d->deep) {
+    memmove(dst, src, d->size);
+    return;
+  }
+  if (d->kind == YK_ARRAY) {
+    const yarr *s = src;
+    yarr t = *s;
+    rt_int n = y_count(*s, d->nd);
+    size_t esz = d->elem->size;
+    t.p = rt_alloc((size_t)n * esz);
+    if (s->p) {
+      if (d->elem->deep)
+        for (rt_int i = 0; i < n; i++)
+          y_copy(d->elem, (char *)t.p + i * esz, (const char *)s->p + i * esz);
+      else
+        memcpy(t.p, s->p, (size_t)n * esz);
+    }
+    *(yarr *)dst = t;
+  } else {
+    unsigned char *tmp = rt_alloc(d->size);
+    memcpy(tmp, src, d->size);
+    for (int i = 0; i < d->nf; i++)
+      if (d->fd[i]->deep) y_copy(d->fd[i], tmp + d->off[i], (const char *)src + d->off[i]);
+    memcpy(dst, tmp, d->size);
+    free(tmp);
+  }
+}
+
+void y_store(const ydesc *d, void *dst, const void *src) {
+  if (d->kind == YK_ARRAY) {
+    yarr *t = dst;
+    const yarr *s = src;
+    if (t->p)
+      for (int k = 0; k < d->nd; k++)
+        if (y_n(t->lo[k], t->hi[k]) != y_n(s->lo[k], s->hi[k]))
+          rt_raise_msg(RT_X_RANGE, "array lengths differ");
+    yarr keep = *t;
+    y_copy(d, dst, src);
+    if (keep.p)
+      for (int k = 0; k < Y_MAXD; k++) {
+        t->lo[k] = keep.lo[k];
+        t->hi[k] = keep.hi[k];
+      }
+  } else if (d->kind == YK_RECORD && d->deep) {
+    unsigned char *tmp = rt_alloc(d->size);
+    memcpy(tmp, dst, d->size);
+    for (int i = 0; i < d->nf; i++)
+      y_store(d->fd[i], tmp + d->off[i], (const char *)src + d->off[i]);
+    memcpy(dst, tmp, d->size);
+    free(tmp);
+  } else {
+    memmove(dst, src, d->size);
+  }
+}
+
+int y_eq(const ydesc *d, const void *a, const void *b) {
+  switch (d->kind) {
+  case YK_BYTE:
+    return *(const unsigned char *)a == *(const unsigned char *)b;
+  case YK_FLOAT:
+    return *(const double *)a == *(const double *)b;
+  case YK_SET:
+    return y_set_eq(*(const yset *)a, *(const yset *)b);
+  case YK_ARRAY: {
+    const yarr *x = a, *y = b;
+    for (int k = 0; k < d->nd; k++)
+      if (y_n(x->lo[k], x->hi[k]) != y_n(y->lo[k], y->hi[k])) return 0;
+    rt_int n = y_count(*x, d->nd);
+    size_t esz = d->elem->size;
+    for (rt_int i = 0; i < n; i++)
+      if (!y_eq(d->elem, (const char *)x->p + i * esz, (const char *)y->p + i * esz)) return 0;
+    return 1;
+  }
+  case YK_RECORD:
+    for (int i = 0; i < d->nf; i++)
+      if (!y_eq(d->fd[i], (const char *)a + d->off[i], (const char *)b + d->off[i])) return 0;
+    return 1;
+  default:
+    return memcmp(a, b, d->size) == 0;
+  }
+}
+
+yarr y_str(const char *s, rt_int n) {
+  yarr a;
+  for (int k = 0; k < Y_MAXD; k++) a.lo[k] = a.hi[k] = 1;
+  a.hi[0] = n;
+  a.p = (void *)s;
+  return a;
+}
+
+yarr y_fill(const ydesc *d, const void *v) {
+  yarr a;
+  y_init(d, &a);
+  rt_int n = y_count(a, d->nd);
+  size_t esz = d->elem->size;
+  for (rt_int i = 0; i < n; i++) {
+    if (d->elem->deep) y_copy(d->elem, (char *)a.p + i * esz, v);
+    else memcpy((char *)a.p + i * esz, v, esz);
+  }
+  return a;
+}
+
+void *y_elem_at(yarr a, const ydesc *d, rt_int k) { return (char *)a.p + k * d->elem->size; }
+
+static rt_int y_ix(yarr a, int k, rt_int i) {
+  if (i < a.lo[k] || i > a.hi[k]) rt_raise(RT_X_SUBSCRIPT);
+  return i - a.lo[k];
+}
+
+rt_int y_ix1(yarr a, rt_int i) { return y_ix(a, 0, i); }
+rt_int y_ix2(yarr a, rt_int i, rt_int j) {
+  return y_ix(a, 0, i) * y_n(a.lo[1], a.hi[1]) + y_ix(a, 1, j);
+}
+rt_int y_ix3(yarr a, rt_int i, rt_int j, rt_int k) {
+  return y_ix2(a, i, j) * y_n(a.lo[2], a.hi[2]) + y_ix(a, 2, k);
+}
+rt_int y_ix4(yarr a, rt_int i, rt_int j, rt_int k, rt_int l) {
+  return y_ix3(a, i, j, k) * y_n(a.lo[3], a.hi[3]) + y_ix(a, 3, l);
+}
+
+rt_int y_low(yarr a, rt_int dim) {
+  if (dim < 1 || dim > Y_MAXD) rt_raise(RT_X_RANGE);
+  return a.lo[dim - 1];
+}
+
+rt_int y_high(yarr a, rt_int dim) {
+  if (dim < 1 || dim > Y_MAXD) rt_raise(RT_X_RANGE);
+  return a.hi[dim - 1];
+}
+
+/* MOVE (XI, p.1061): one source range i .. j into the object from index at */
+void y_move(yarr *dst, rt_int at, yarr src, rt_int i, rt_int j, const ydesc *elem) {
+  if (j < i) return;
+  rt_int n = j - i + 1;
+  y_ix(src, 0, i);
+  y_ix(src, 0, j);
+  y_ix(*dst, 0, at);
+  y_ix(*dst, 0, at + n - 1);
+  size_t esz = elem->size;
+  char *t = (char *)dst->p + (at - dst->lo[0]) * esz;
+  const char *s = (const char *)src.p + (i - src.lo[0]) * esz;
+  if (elem->deep) {
+    unsigned char *tmp = rt_alloc((size_t)n * esz);
+    for (rt_int k = 0; k < n; k++) y_copy(elem, tmp + k * esz, s + k * esz);
+    memcpy(t, tmp, (size_t)n * esz);
+    free(tmp);
+  } else {
+    memmove(t, s, (size_t)n * esz);
+  }
+}
+
+/* ---- sets ------------------------------------------------------------ */
+
+static size_t set_words(rt_int lo, rt_int hi) { return (size_t)((y_n(lo, hi) + 63) / 64); }
+
+yset y_set_new(rt_int lo, rt_int hi) {
+  yset s;
+  s.lo = lo;
+  s.hi = hi;
+  s.w = rt_alloc(set_words(lo, hi) * sizeof(uint64_t));
+  return s;
+}
+
+static yset set_clone(yset s) {
+  yset r = y_set_new(s.lo, s.hi);
+  if (s.w) memcpy(r.w, s.w, set_words(s.lo, s.hi) * sizeof(uint64_t));
+  return r;
+}
+
+int y_set_in(rt_int e, yset s) {
+  if (!s.w || e < s.lo || e > s.hi) return 0;
+  rt_int b = e - s.lo;
+  return (int)((s.w[b >> 6] >> (b & 63)) & 1);
+}
+
+yset y_set_add(yset s, rt_int e) {
+  if (e < s.lo || e > s.hi) rt_raise(RT_X_RANGE);
+  yset r = set_clone(s);
+  rt_int b = e - s.lo;
+  r.w[b >> 6] |= 1ULL << (b & 63);
+  return r;
+}
+
+/* both operands have the same type, so normally the same base range; an
+ * operand that was never set has no words and counts as empty */
+static yset set_op(yset a, yset b, int op) {
+  if (!a.w && b.w) a = y_set_new(b.lo, b.hi);
+  yset r = y_set_new(a.lo, a.hi);
+  for (rt_int e = a.lo; e <= a.hi; e++) {
+    int x = y_set_in(e, a), y = y_set_in(e, b), z;
+    switch (op) {
+    case 0: z = x || y; break;
+    case 1: z = x && !y; break;
+    case 2: z = x && y; break;
+    default: z = x != y; break;
+    }
+    if (z) {
+      rt_int k = e - r.lo;
+      r.w[k >> 6] |= 1ULL << (k & 63);
+    }
+  }
+  return r;
+}
+
+yset y_set_union(yset a, yset b) { return set_op(a, b, 0); }
+yset y_set_diff(yset a, yset b) { return set_op(a, b, 1); }
+yset y_set_inter(yset a, yset b) { return set_op(a, b, 2); }
+yset y_set_xor(yset a, yset b) { return set_op(a, b, 3); }
+
+yset y_set_compl(yset a) {
+  yset r = y_set_new(a.lo, a.hi);
+  for (rt_int e = a.lo; e <= a.hi; e++)
+    if (!y_set_in(e, a)) {
+      rt_int k = e - r.lo;
+      r.w[k >> 6] |= 1ULL << (k & 63);
+    }
+  return r;
+}
+
+int y_set_eq(yset a, yset b) {
+  rt_int lo = a.lo < b.lo ? a.lo : b.lo, hi = a.hi > b.hi ? a.hi : b.hi;
+  if (!a.w) { lo = b.lo; hi = b.hi; }
+  if (!b.w) { lo = a.lo; hi = a.hi; }
+  for (rt_int e = lo; e <= hi; e++)
+    if (y_set_in(e, a) != y_set_in(e, b)) return 0;
+  return 1;
+}
+
+/* ---- files ------------------------------------------------------------- */
+
+struct yfile {
+  FILE *f;
+  int mode;
+};
+
+void y_open(yfile **fp, yarr name, rt_int mode) {
+  rt_int n = y_n(name.lo[0], name.hi[0]);
+  char *c = rt_alloc((size_t)n + 1);
+  memcpy(c, name.p, (size_t)n);
+  yfile *y = rt_alloc(sizeof *y);
+  y->mode = (int)mode;
+  /* the implementation's names for the two streams a program is given */
+  if (strcmp(c, "INPUT") == 0 && mode == 0) y->f = stdin;
+  else if (strcmp(c, "OUTPUT") == 0 && mode != 0) y->f = stdout;
+  else y->f = fopen(c, mode == 0 ? "rb" : mode == 1 ? "wb" : "ab");
+  if (!y->f) rt_raise_msg(Y_X_FILE, c);
+  *fp = y;
+}
+
+void y_close(yfile **fp) {
+  yfile *y = *fp;
+  if (!y) rt_raise_msg(Y_X_FILE, "CLOSE of a file that is not open");
+  if (y->f == stdout) fflush(stdout);
+  else if (y->f != stdin) fclose(y->f);
+  *fp = NULL;
+}
+
+static yfile *y_must(yfile **fp, int reading) {
+  yfile *y = *fp;
+  if (!y) rt_raise_msg(Y_X_FILE, "file not open");
+  if ((y->mode == 0) != reading) rt_raise_msg(Y_X_FILE, reading ? "GET on a file opened for WRITE" : "PUT on a file opened for READ");
+  return y;
+}
+
+void y_get(yfile **fp, void *dst, size_t n) {
+  yfile *y = y_must(fp, 1);
+  if (fread(dst, 1, n, y->f) != n) rt_raise(Y_X_EOF);
+}
+
+void y_put(yfile **fp, const void *src, size_t n) {
+  yfile *y = y_must(fp, 0);
+  fwrite(src, 1, n, y->f);
+}
+
+int y_check_eof(yfile **fp) {
+  yfile *y = y_must(fp, 1);
+  int c = getc(y->f);
+  if (c == EOF) return 1;
+  ungetc(c, y->f);
+  return 0;
+}
+
+/* ---- monitors and signals (X.E.3-4, p.1057) ------------------------------- */
+
+void y_mon_init(ymon *m) { memset(m, 0, sizeof *m); }
+
+/* hand the monitor on: senders waiting to come back go first (the sender of
+ * a signal is only delayed, p.1057), then processes waiting to enter */
+static void mon_release(ymon *m) {
+  rt_waiter *w = m->urgent ? m->urgent : m->q;
+  if (w) {
+    m->owner = w->t;
+    m->depth = (int)(intptr_t)w->data;
+    satisfy(w);
+  } else {
+    m->owner = NULL;
+    m->depth = 0;
+  }
+}
+
+void y_mon_enter(ymon *m) {
+  if (m->owner == cur) {
+    m->depth++;                       /* a monitor procedure calls another one */
+    return;
+  }
+  if (!m->owner) {
+    m->owner = cur;
+    m->depth = 1;
+    return;
+  }
+  add_waiter(&m->q, 0, (void *)(intptr_t)1);
+  block();
+}
+
+void y_mon_leave(ymon *m) {
+  if (m->owner != cur) return;
+  if (--m->depth > 0) return;
+  mon_release(m);
+  maybe_preempt();
+}
+
+void y_mon_drop(ymon *m) {
+  if (m->owner != cur) return;
+  m->depth = 1;
+  y_mon_leave(m);
+}
+
+void y_sig_init(ysig *s, ymon *m) {
+  s->mon = m;
+  s->q = NULL;
+}
+
+void y_wait(ysig *s, rt_int rank) {
+  if (rank < 1) rt_raise_msg(RT_X_RANGE, "WAIT with a delay rank below 1");
+  ymon *m = s->mon;
+  int depth = m && m->owner == cur ? m->depth : 0;
+  rt_waiter *w = add_waiter(&s->q, (int)rank, (void *)(intptr_t)depth);
+  /* keep the queue ordered by rank, first come first served within a rank */
+  for (rt_waiter **p = &s->q; *p; p = &(*p)->next)
+    if (*p == w) {
+      *p = w->next;
+      break;
+    }
+  rt_waiter **p = &s->q;
+  while (*p && (*p)->alt <= w->alt) p = &(*p)->next;
+  w->next = *p;
+  *p = w;
+  if (depth) mon_release(m);
+  block();
+}
+
+void y_send(ysig *s) {
+  rt_waiter *w = s->q;
+  if (!w) return;                     /* nobody waits: no effect */
+  ymon *m = s->mon;
+  int tdepth = (int)(intptr_t)w->data;
+  if (m && m->owner == cur && tdepth) {
+    /* the receiver goes on inside the monitor, the sender waits to return */
+    add_waiter(&m->urgent, 0, (void *)(intptr_t)m->depth);
+    m->owner = w->t;
+    m->depth = tdepth;
+    satisfy(w);
+    block();
+  } else {
+    if (m && tdepth) {
+      m->owner = w->t;
+      m->depth = tdepth;
+    }
+    satisfy(w);
+    maybe_preempt();
+  }
+}
+
+int y_awaited(ysig *s) { return s->q != NULL; }
+
+/* ---- processes (X.E, XIV.X.2, XIV.XI.3) ------------------------------------ */
+
+void y_create(rt_taskdecl *d, rt_int limit, int has_prio, rt_int prio,
+              void (*fn)(void *), void *frame) {
+  if (limit > 0 && d->live >= limit) rt_raise(Y_X_INSTANCES);
+  rt_act *a = rt_alloc(sizeof *a);
+  rt_create(a, d, fn, frame);
+  if (has_prio) rt_set_priority(a, prio);
+}
+
+rt_int y_self(void) { return cur->id; }
+
+static rt_task *task_by_id(rt_int id) {
+  for (rt_task *t = all_tasks; t; t = t->all_next)
+    if (t->id == id) return t;
+  return NULL;
+}
+
+void y_change_priority(rt_int id, rt_int p) {
+  rt_task *t = task_by_id(id);
+  if (!t || t->state == T_DONE) return;
+  if (p < 0 || p > 255) rt_raise(RT_X_RANGE);
+  t->prio = p;
+  maybe_preempt();
+}
+
+void y_raise_termination(rt_int id) {
+  rt_task *t = task_by_id(id);
+  if (!t || t->state == T_DONE) return;
+  rt_act a;
+  a.t = t;
+  a.active = 1;
+  a.waiters = NULL;
+  rt_exterminate(&a);
+}
+
+int y_cond_claim(rt_lock *l) {
+  if (l->owner) return 0;
+  l->owner = cur;
+  return 1;
+}
+
+/* ---- numeric conversions (XI, p.1062) -------------------------------------- */
+
+static rt_int y_toint(double v) {
+  if (!(v >= -9.2e18 && v <= 9.2e18)) rt_raise(RT_X_OVERFLOW);
+  return (rt_int)v;
+}
+
+rt_int y_floor(double v) { return y_toint(floor(v)); }
+rt_int y_ceiling(double v) { return y_toint(ceil(v)); }
+rt_int y_near_integer(double v) { return y_toint(round(v)); }
+double y_near_fixed(double v, double scale) { return round(v / scale) * scale; }
+
+/* a FIXED value is a multiple of its scale within its range (VI.A.1.b);
+ * values are kept in doubles, as p.1001 allows */
+double y_fixed(double v, double lo, double hi, double scale) {
+  double q = v / scale, r = round(q);
+  if (fabs(q - r) > 1e-6 * (fabs(q) > 1 ? fabs(q) : 1)) rt_raise(Y_X_FIXED);
+  v = r * scale;
+  if (v < lo - scale / 2 || v > hi + scale / 2) rt_raise(RT_X_RANGE);
+  return v;
+}
+
+double y_fixed_div(double a, double b, double scale) {
+  if (b == 0) rt_raise(Y_X_ZERO_DENOM);
+  return floor(a / b / scale + 1e-9) * scale;
+}
+
+static rt_int y_fmt(const char *b, int n, unsigned char *buf, rt_int cap) {
+  if (n > cap) n = (int)cap;
+  memcpy(buf, b, (size_t)n);
+  return n;
+}
+
+rt_int y_fmt_int(rt_int v, unsigned char *buf, rt_int cap) {
+  char b[32];
+  return y_fmt(b, snprintf(b, sizeof b, "%lld", (long long)v), buf, cap);
+}
+
+rt_int y_fmt_float(double v, rt_int digits, unsigned char *buf, rt_int cap) {
+  char b[64];
+  if (digits < 1) digits = 1;
+  if (digits > 17) digits = 17;
+  return y_fmt(b, snprintf(b, sizeof b, "%.*E", (int)digits - 1, v), buf, cap);
+}
+
+rt_int y_fmt_fixed(double v, rt_int decimals, unsigned char *buf, rt_int cap) {
+  char b[64];
+  if (decimals < 0) decimals = 0;
+  if (decimals > 17) decimals = 17;
+  if (fabs(v) < 0.5 * pow(10, -(double)decimals)) v = 0;   /* no "-0.00" */
+  return y_fmt(b, snprintf(b, sizeof b, "%.*f", (int)decimals, v), buf, cap);
+}
+
+/* a descriptor for a one-dimensional array of elem, to compare the values
+ * of a length-unresolved array parameter (X.A.3) */
+const ydesc *y_desc_vector(const ydesc *elem) {
+  ydesc *d = rt_alloc(sizeof *d);
+  rt_int lo[1] = {1}, hi[1] = {0};
+  y_desc_array(d, 1, lo, hi, elem);
+  return d;
+}
+
+/* the descriptor of a string literal: a vector of characters */
+const ydesc y_d_str = {YK_ARRAY, sizeof(yarr), 1, 1, {1, 1, 1, 1}, {0, 1, 1, 1}, &y_d_byte, 0, NULL, NULL};
+
+/* ---- device signals (XIV.VII) ------------------------------------------------ */
+/* A SIGNAL declared AT a machine location is sent by the device there. This
+ * implementation simulates one device of the PDP-11 the Report's examples
+ * use: the line clock, interrupt vector 100 (octal), which sends its signal
+ * every 20 ms of the virtual clock, as the KW11-L of a 50 Hz machine. It
+ * runs as a process of the highest priority and enters the monitor of the
+ * signal to send it, as a monitor procedure would. */
+
+typedef struct {
+  ysig *s;
+  rt_int period;
+} ydevice;
+
+static void y_device_loop(void *arg) {
+  ydevice *d = arg;
+  for (;;) {
+    rt_delay(d->period);
+    if (d->s->mon) y_mon_enter(d->s->mon);
+    y_send(d->s);
+    if (d->s->mon) y_mon_leave(d->s->mon);
+  }
+}
+
+void y_device(ysig *s, rt_int address) {
+  static rt_taskdecl devices;
+  if (address != 64) return;            /* only the line clock is simulated */
+  ydevice *d = rt_alloc(sizeof *d);
+  d->s = s;
+  d->period = 20;
+  y_create(&devices, 0, 1, 255, y_device_loop, d);
 }

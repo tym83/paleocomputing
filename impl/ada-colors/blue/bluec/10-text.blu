@@ -1,0 +1,192 @@
+
+% ==== texts, the arena and the output ====================================================
+
+% the character with code C, as a string of length one
+FUNCTION CHAR_OF (C: INTEGER) RETURNS (ASCII_STR(1));
+   IF C IN [32:126] THEN
+      RETURN GRAPHIC[C - 32 : C - 32];
+   ORIF C = 9 THEN
+      RETURN ''\HT;
+   ORIF C = 10 THEN
+      RETURN ''\LF;
+   ORIF C = 13 THEN
+      RETURN ''\CR;
+   END IF;
+   RETURN '?';
+END FUNCTION CHAR_OF;
+
+% the code of a character; the language gives no way to ask but through the
+% machine-dependent TO_BIT (3.6.6.1), so the printable characters are looked up
+FUNCTION CODE_OF (S: ASCII_STR(1)) RETURNS (INTEGER);
+   LOOP FOR I IN [0:94] DO
+      IF GRAPHIC[I:I] = S THEN
+         RETURN I + 32;
+      END IF;
+   END LOOP I;
+   IF S = ''\HT THEN
+      RETURN 9;
+   ORIF S = ''\LF THEN
+      RETURN 10;
+   END IF;
+   RETURN 13;
+END FUNCTION CODE_OF;
+
+% the hash of a name: its length and three of its characters
+FUNCTION HASH_CODES (L, C1, C2, C3: INTEGER) RETURNS (INTEGER);
+   RETURN (L * 31 + C1 * 7 + C2 * 3 + C3) MOD HASH_SIZE;
+END FUNCTION HASH_CODES;
+
+FUNCTION HASH_OF (S: ASCII_STR(?L)) RETURNS (INTEGER);
+   IF L = 0 THEN
+      RETURN 0;
+   END IF;
+   RETURN HASH_CODES (L, CODE_OF (S[0:0]), CODE_OF (S[L // 2 : L // 2]),
+                      CODE_OF (S[L - 1 : L - 1]));
+END FUNCTION HASH_OF;
+
+% a text holding a copy of S
+FUNCTION MK (S: ASCII_STR(?L)) RETURNS (TEXT);
+   CONST AT: INTEGER := W@.TOP;
+   IF AT + L > ARENA_SIZE THEN
+      PUT_LINE ('*** the arena is full');
+      STOP (2);
+   END IF;
+   W@.ARENA[AT : AT + L - 1] := S;
+   W@.TOP := AT + L;
+   RETURN (AT: AT, LEN: L, H: -1);
+END FUNCTION MK;
+
+% the same, with the hash of a name
+FUNCTION MKN (S: ASCII_STR(?L)) RETURNS (TEXT);
+   VAR T: TEXT := MK (S);
+   T.H := HASH_OF (S);
+   RETURN T;
+END FUNCTION MKN;
+
+% the characters of a text; L must be T.LEN
+FUNCTION STR (T: TEXT, L: INTEGER) RETURNS (ASCII_STR(L));
+   RETURN W@.ARENA[T.AT : T.AT + L - 1];
+END FUNCTION STR;
+
+FUNCTION TEQ (A, B: TEXT) RETURNS (BOOLEAN);
+   IF A.LEN <> B.LEN THEN
+      RETURN FALSE;
+   END IF;
+   RETURN STR (A, A.LEN) = STR (B, B.LEN);
+END FUNCTION TEQ;
+
+FUNCTION TEQS (A: TEXT, S: ASCII_STR(?L)) RETURNS (BOOLEAN);
+   IF A.LEN <> L THEN
+      RETURN FALSE;
+   END IF;
+   RETURN STR (A, A.LEN) = S;
+END FUNCTION TEQS;
+
+FUNCTION CAT (A, B: TEXT) RETURNS (TEXT);
+   RETURN MK (STR (A, A.LEN) !! STR (B, B.LEN));
+END FUNCTION CAT;
+
+FUNCTION CATS (A: TEXT, S: ASCII_STR(?L)) RETURNS (TEXT);
+   RETURN MK (STR (A, A.LEN) !! S);
+END FUNCTION CATS;
+
+% P with each @ replaced by the next of A, B, C, D
+FUNCTION FMT4 (P: ASCII_STR(?L), A, B, C, D: TEXT) RETURNS (TEXT);
+   CONST AT: INTEGER := W@.TOP;
+   VAR N: INTEGER := 0;
+   VAR START: INTEGER := 0;
+   VAR R: TEXT;
+   LOOP FOR I IN [0:L - 1] DO
+      IF P[I:I] = '@' THEN
+         R := MK (P[START : I - 1]);
+         SELECT N FROM
+            0 --> R := MK (STR (A, A.LEN)); END;
+            1 --> R := MK (STR (B, B.LEN)); END;
+            2 --> R := MK (STR (C, C.LEN)); END;
+            ELSE --> R := MK (STR (D, D.LEN)); END;
+         END SELECT;
+         N := N + 1;
+         START := I + 1;
+      END IF;
+   END LOOP I;
+   R := MK (P[START : L - 1]);
+   RETURN (AT: AT, LEN: W@.TOP - AT, H: -1);
+END FUNCTION FMT4;
+
+FUNCTION FMT1 (P: ASCII_STR(?L), A: TEXT) RETURNS (TEXT);
+   RETURN FMT4 (P, A, A, A, A);
+END FUNCTION FMT1;
+
+FUNCTION FMT2 (P: ASCII_STR(?L), A, B: TEXT) RETURNS (TEXT);
+   RETURN FMT4 (P, A, B, B, B);
+END FUNCTION FMT2;
+
+FUNCTION FMT3 (P: ASCII_STR(?L), A, B, C: TEXT) RETURNS (TEXT);
+   RETURN FMT4 (P, A, B, C, C);
+END FUNCTION FMT3;
+
+FUNCTION NUM (V: INTEGER) RETURNS (TEXT);
+   RETURN MK (TO_CHAR (V));
+END FUNCTION NUM;
+
+% a fresh C name: the base and a serial number
+FUNCTION NEW_NAME (BASE: ASCII_STR(?L)) RETURNS (TEXT);
+   W@.SERIAL := W@.SERIAL + 1;
+   RETURN MK (BASE !! TO_CHAR (W@.SERIAL));
+END FUNCTION NEW_NAME;
+
+PROCEDURE APPEND (T: TEXT # B: BUF);
+   VAR C: CHUNK := NEW (CHUNK_REC);
+   C@.T := T;
+   C@.NEXT := NIL;
+   IF B.TAIL = NIL THEN
+      B.HEAD := C;
+   ELSE
+      B.TAIL@.NEXT := C;
+   END IF;
+   B.TAIL := C;
+END PROCEDURE APPEND;
+
+PROCEDURE EMIT (SEC: INTEGER, T: TEXT);
+   APPEND (T # W@.OUT(SEC));
+END PROCEDURE EMIT;
+
+PROCEDURE EMITS (SEC: INTEGER, S: ASCII_STR(?L));
+   APPEND (MK (S) # W@.OUT(SEC));
+END PROCEDURE EMITS;
+
+% a line of the body being translated
+PROCEDURE CODE (T: TEXT);
+   APPEND (T # W@.CODE);
+END PROCEDURE CODE;
+
+PROCEDURE CODES (S: ASCII_STR(?L));
+   APPEND (MK (S) # W@.CODE);
+END PROCEDURE CODES;
+
+PROCEDURE PUT_BUF (B: BUF);
+   VAR C: CHUNK := B.HEAD;
+   LOOP UNTIL C = NIL DO
+      BLOCK
+         CONST T: TEXT := C@.T;
+         PUT_LINE (STR (T, T.LEN));
+      END BLOCK;
+      C := C@.NEXT;
+   END LOOP;
+END PROCEDURE PUT_BUF;
+
+PROCEDURE WRITE_OUTPUT ();
+   LOOP FOR SEC IN [0:O_LAST] DO
+      PUT_BUF (W@.OUT(SEC));
+   END LOOP SEC;
+END PROCEDURE WRITE_OUTPUT;
+
+% a translation-time error ends the translation
+PROCEDURE FAIL (LINE: INTEGER, MSG: ASCII_STR(?L));
+   PUT_LINE ('line ' !! TO_CHAR (LINE) !! ': ' !! MSG);
+   STOP (1);
+END PROCEDURE FAIL;
+
+PROCEDURE FAILT (LINE: INTEGER, MSG: ASCII_STR(?L), T: TEXT);
+   FAIL (LINE, MSG !! STR (T, T.LEN));
+END PROCEDURE FAILT;

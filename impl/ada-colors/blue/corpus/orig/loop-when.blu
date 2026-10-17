@@ -1,0 +1,11 @@
+% BLUE Language Specification, 15 Feb 1978, section 4.5.6.1, example 3, page 4-41
+% (DTIC ADB950587, PDF page 1587). Transcribed as printed; the lower-case
+% phrases are placeholders of the document.
+     VAR N: INTEGER;
+     ...
+     N := a positive integral value;
+     LOOP
+          CONST M: INTEGER := some expression using N;
+          ... using M;
+          N := N - 1;
+     END LOOP WHEN N <= 0;

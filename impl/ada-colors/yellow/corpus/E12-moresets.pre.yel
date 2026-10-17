@@ -1,0 +1,3 @@
+(* around the fragments of p.1105 *)
+MODULE MoreSets
+  IMPORT TextIO, StandardImplementationPrelude;

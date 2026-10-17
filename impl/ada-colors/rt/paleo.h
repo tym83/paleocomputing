@@ -233,3 +233,215 @@ int rt_g_aborted(void);
 void rt_g_move_bytes(rt_int from, rt_int to, rt_int n);
 
 #endif
+
+/* BLUE additions */
+/* BLUE (SofTech, 1978): exception names of the language specification, character
+ * strings numbered from zero, the console of the TERMINAL segment */
+extern int RT_B_SIZE, RT_B_INVALID_SUBSTRING, RT_B_INVALID_LENGTH, RT_B_INVALID_SIZE,
+    RT_B_CONVERSION, RT_B_TYPE_MISMATCH;
+void rt_b_lang(void);                          /* call before rt_init */
+rstr rt_b_slice(rstr s, rt_int l, rt_int u);   /* S[L:U]; U < L is empty */
+void rt_b_assign(rstr *dst, rstr src);         /* SIZE unless lengths agree */
+void rt_b_slice_assign(rstr *dst, rt_int l, rt_int u, rstr src);
+int rt_b_eq(rstr a, rstr b);                   /* INVALID_LENGTH unless lengths agree */
+rstr rt_b_dup(rstr c, rt_int n);               /* DUP and BLANKS */
+rstr rt_b_image(rt_int v);                     /* TO_CHAR of an integer */
+rt_int rt_b_get_code(void);                    /* next input character, -1 at the end */
+
+/* BLUE additions: arrays, fixed point, bitstrings, conversions (3.2 - 3.8) */
+rt_int rt_b_ix1(rt_int i, rt_int lo, rt_int hi);  /* offset of A(I); SUBSCRIPT_RANGE */
+rt_int rt_b_ixn(int d, const rt_int *lo, const rt_int *hi, ...);
+rt_int rt_b_extent(int d, const rt_int *lo, const rt_int *hi);
+int rt_b_same_extents(int d, const rt_int *lo1, const rt_int *hi1, const rt_int *lo2,
+                      const rt_int *hi2);
+rt_int rt_b_dim_extent(const rt_int *lo, const rt_int *hi, rt_int i, int d);
+rt_int rt_b_fix_lit(const char *s, rt_int scale);  /* a literal, rounded to the scale */
+rt_int rt_b_shl(rt_int v, rt_int k);           /* v * 2**k; OVERFLOW */
+rt_int rt_b_shr(rt_int v, rt_int k);           /* truncated toward zero */
+rt_int rt_b_shr_round(rt_int v, rt_int k);     /* to nearest, ties to even */
+rt_int rt_b_rescale(rt_int v, rt_int from, rt_int to, int rounded);
+rt_int rt_b_div_round(rt_int a, rt_int b);
+rt_int rt_b_mod_round(rt_int a, rt_int b);
+rt_int rt_b_mul_sc(rt_int a, rt_int b, rt_int k, int rounded);  /* a*b*2**k */
+rt_int rt_b_div_sc(rt_int a, rt_int b, rt_int k, int rounded);  /* a*2**k/b */
+rstr rt_b_md(int op, rt_int a, rt_int b);      /* !op!: 128 bits */
+double rt_b_fchk(double v);                    /* OVERFLOW on infinity */
+rstr rt_b_zeros(rt_int n);
+rstr rt_b_one(rstr s);                         /* the first argument of DUP */
+rstr rt_b_and(rstr a, rstr b);
+rstr rt_b_or(rstr a, rstr b);
+rstr rt_b_xor(rstr a, rstr b);
+rstr rt_b_not(rstr a);
+rstr rt_b_bits_of_int(rt_int v, rt_int n);     /* the low n bits */
+rt_int rt_b_int_of_bits(rstr b);               /* unsigned */
+rstr rt_b_bits_of_float(double v);
+double rt_b_float_of_bits(rstr b);
+rstr rt_b_bits_of_str(rstr s);                 /* 8 bits a character */
+rstr rt_b_str_of_bits(rstr b);
+rstr rt_b_bits_of_digits(rstr s, int bits);    /* BIN_OF, OCT_OF, HEX_OF */
+rstr rt_b_rep_of_enum(rt_int v, const rstr *reps, rt_int n);
+rt_int rt_b_enum_of_rep(rstr b, const rstr *reps, rt_int n);
+rstr rt_b_fix_image(rt_int v, rt_int scale);
+rstr rt_b_float_image(double v, rt_int prec);
+rstr rt_b_bool_image(rt_int v);
+rstr rt_b_enum_image(const char **names, rt_int v);
+rt_int rt_b_fix_of_float(double v, rt_int scale, int rounded);
+rt_int rt_b_fix_of_str(rstr s, rt_int scale, int rounded);   /* CONVERSION */
+double rt_b_float_of_fix(rt_int v, rt_int scale);
+double rt_b_float_of_str(rstr s);
+rt_int rt_b_succ(rt_int v, rt_int n);
+rt_int rt_b_pred(rt_int v);
+_Noreturn void rt_b_no_target_code(const char *name);
+
+/* BLUE additions: parallel processing (4.6, D.7). Time is in virtual microseconds. */
+typedef struct rt_b_sem rt_b_sem;
+typedef struct rt_b_act rt_b_act;
+typedef struct rt_b_par rt_b_par;
+typedef struct {
+  rt_int lo, hi;
+  rt_b_act **a;
+} rt_b_paths;                                  /* the activations of a path */
+struct rt_b_par {
+  rt_taskdecl td;
+  int exc;                                     /* the last exception of a path */
+  rt_b_act *children;
+};
+rt_b_sem *rt_b_sem_new(int region);
+rt_b_sem *rt_b_sem_value(rt_int n, int region);  /* NEW(n) */
+void rt_b_sem_assign(rt_b_sem *dst, rt_b_sem *src);
+void rt_b_request(rt_b_sem *s);
+void rt_b_release(rt_b_sem *s);
+void rt_b_connect(rt_b_sem *s);
+rt_b_paths rt_b_paths_new(void);
+void rt_b_paths_range(rt_b_paths *p, rt_int lo, rt_int hi);
+rt_b_act *rt_b_paths_at(rt_b_paths *p, rt_int i);
+void rt_b_path_start(rt_b_paths *p, rt_int i, void (*fn)(void *), void *frame, rt_b_par *par,
+                     rt_int prio);
+void rt_b_par_begin(void);
+void rt_b_par_end(rt_b_par *par);
+void rt_b_path_failed(int exc, int allowed);
+rt_int rt_b_check_priority(rt_int p);
+void rt_b_terminate(rt_b_act *a);
+void rt_b_priority(rt_b_act *a, rt_int p);
+rt_int rt_b_clock(rt_b_act *a);                /* seconds, scale 20 */
+void rt_b_wait(rt_int v, rt_int scale);        /* seconds at the scale */
+
+
+/* YELLOW additions */
+/* Runtime support for the YELLOW translator (SRI International, 1978). Nothing
+ * above is changed; these declarations only add to the runtime. */
+#ifndef PALEO_YELLOW_H
+#define PALEO_YELLOW_H
+
+/* ---- arrays: a value is a descriptor of its bounds and a buffer it owns ---- */
+#define Y_MAXD 4
+typedef struct {
+  rt_int lo[Y_MAXD], hi[Y_MAXD];
+  void *p;
+} yarr;
+
+/* A run-time description of a representation, enough to make, copy and
+ * compare values of it. Structured representations get one when they are
+ * elaborated, since their bounds are scope-entry constants (L-34). */
+typedef struct ydesc ydesc;
+enum { YK_INT, YK_BYTE, YK_FLOAT, YK_PTR, YK_SET, YK_ARRAY, YK_RECORD, YK_OPAQUE };
+struct ydesc {
+  int kind;
+  size_t size;                                 /* bytes of one value */
+  int deep;                                    /* holds array buffers */
+  int nd;                                      /* arrays: dimensions */
+  rt_int lo[Y_MAXD], hi[Y_MAXD];
+  const ydesc *elem;
+  int nf;                                      /* records: fields */
+  const size_t *off;
+  const ydesc *const *fd;
+};
+extern const ydesc y_d_int, y_d_byte, y_d_float, y_d_ptr, y_d_set, y_d_opaque;
+void y_desc_array(ydesc *d, int nd, const rt_int *lo, const rt_int *hi, const ydesc *elem);
+void y_desc_record(ydesc *d, size_t size, int nf, const size_t *off, const ydesc *const *fd);
+void y_init(const ydesc *d, void *v);          /* a fresh value: zeros, own buffers */
+void y_copy(const ydesc *d, void *dst, const void *src); /* deep copy, dst is fresh */
+void y_store(const ydesc *d, void *dst, const void *src); /* assignment: bounds must agree */
+int y_eq(const ydesc *d, const void *a, const void *b);
+yarr y_str(const char *s, rt_int n);           /* a string literal, 1 .. n */
+rt_int y_count(yarr a, int nd);                /* number of components */
+yarr y_fill(const ydesc *d, const void *v);    /* T(v): every component v */
+void *y_elem_at(yarr a, const ydesc *d, rt_int k); /* k-th component, row-major */
+rt_int y_ix1(yarr a, rt_int i);
+rt_int y_ix2(yarr a, rt_int i, rt_int j);
+rt_int y_ix3(yarr a, rt_int i, rt_int j, rt_int k);
+rt_int y_ix4(yarr a, rt_int i, rt_int j, rt_int k, rt_int l);
+rt_int y_low(yarr a, rt_int dim);
+rt_int y_high(yarr a, rt_int dim);
+void y_move(yarr *dst, rt_int at, yarr src, rt_int i, rt_int j, const ydesc *elem);
+
+/* ---- sets over any integer or scalar range (L-33) ---------------------- */
+typedef struct {
+  rt_int lo, hi;
+  uint64_t *w;
+} yset;
+yset y_set_new(rt_int lo, rt_int hi);          /* the empty set */
+yset y_set_add(yset s, rt_int e);              /* a new set with e */
+int y_set_in(rt_int e, yset s);
+yset y_set_union(yset a, yset b);
+yset y_set_diff(yset a, yset b);
+yset y_set_inter(yset a, yset b);
+yset y_set_xor(yset a, yset b);
+yset y_set_compl(yset a);
+int y_set_eq(yset a, yset b);
+
+/* ---- files (Section XII): OPEN CLOSE GET PUT CHECK_EOF ------------------- */
+typedef struct yfile yfile;
+void y_open(yfile **f, yarr name, rt_int mode); /* 0 READ, 1 WRITE, 2 APPEND */
+void y_close(yfile **f);
+void y_get(yfile **f, void *dst, size_t n);
+void y_put(yfile **f, const void *src, size_t n);
+int y_check_eof(yfile **f);
+extern int Y_X_EOF, Y_X_FILE;
+
+/* ---- processes, monitors and signals (Section X.E) ----------------------- */
+typedef struct {
+  rt_task *owner;
+  int depth;                                   /* nested monitor calls */
+  rt_waiter *q;                                /* processes waiting to enter */
+  rt_waiter *urgent;                           /* senders waiting to re-enter */
+} ymon;
+typedef struct {
+  ymon *mon;
+  rt_waiter *q;                                /* by delay rank, then FIFO */
+} ysig;
+void y_mon_init(ymon *m);
+void y_mon_enter(ymon *m);
+void y_mon_leave(ymon *m);
+void y_mon_drop(ymon *m);                      /* an exception leaves the monitor */
+void y_sig_init(ysig *s, ymon *m);
+void y_wait(ysig *s, rt_int rank);
+void y_send(ysig *s);
+int y_awaited(ysig *s);
+void y_create(rt_taskdecl *d, rt_int limit, int has_prio, rt_int prio,
+              void (*fn)(void *), void *frame);
+rt_int y_self(void);                           /* PROCESS_IDENTITY */
+void y_change_priority(rt_int id, rt_int p);
+void y_raise_termination(rt_int id);
+extern int Y_X_INSTANCES;
+
+/* ---- semaphores (XIV): binary, CLAIM RELEASE CONDITIONAL_CLAIM ----------- */
+int y_cond_claim(rt_lock *l);
+
+/* ---- conversions and text helpers ---------------------------------------- */
+rt_int y_floor(double v);
+rt_int y_ceiling(double v);
+rt_int y_near_integer(double v);               /* ties away from zero */
+double y_near_fixed(double v, double scale);
+double y_fixed(double v, double lo, double hi, double scale); /* checks a FIXED */
+double y_fixed_div(double a, double b, double scale);
+rt_int y_fmt_int(rt_int v, unsigned char *buf, rt_int cap);
+rt_int y_fmt_float(double v, rt_int digits, unsigned char *buf, rt_int cap);
+rt_int y_fmt_fixed(double v, rt_int decimals, unsigned char *buf, rt_int cap);
+void y_lang(void);           /* the YELLOW exception names; call before rt_init */
+extern int Y_X_FIXED, Y_X_ZERO_DENOM, Y_X_NO_RETURN;
+const ydesc *y_desc_vector(const ydesc *elem);
+void y_device(ysig *s, rt_int address);   /* a SIGNAL AT a device location */
+extern const ydesc y_d_str;
+
+#endif

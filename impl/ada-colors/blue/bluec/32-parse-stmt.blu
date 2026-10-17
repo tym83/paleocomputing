@@ -1,0 +1,324 @@
+
+% ==== the parser: statements [4-51] ========================================================
+
+FUNCTION AT_BODY_END () RETURNS (BOOLEAN);
+   RETURN IS_KIND (K_EOF) ! IS ('END') ! IS ('ELSE') ! IS ('ORIF') ! IS ('EXCEPT')
+      ! IS ('PROCEDURE') ! IS ('FUNCTION') ! IS ('INLINE') ! IS_TARGET_DECL () ! IS ('MODULE')
+      ! IS ('PATH');
+END FUNCTION AT_BODY_END;
+
+FUNCTION PARSE_STATEMENTS () RETURNS (NODE);
+   VAR HEAD, TAIL: NODE := NIL;
+   LOOP UNTIL AT_BODY_END () DO
+      ADD_LIST (PARSE_STATEMENT () # HEAD, TAIL);
+   END LOOP;
+   RETURN HEAD;
+END FUNCTION PARSE_STATEMENTS;
+
+% EXCEPT named-handler... END EXCEPT; [4-80]
+FUNCTION PARSE_HANDLERS () RETURNS (NODE);
+   VAR HEAD, TAIL: NODE := NIL;
+   EXPECT ('EXCEPT');
+   LOOP UNTIL IS ('END') DO
+      BLOCK
+         VAR H: NODE := NEW_NODE (N_HANDLER, LINE_NOW ());
+         H@.A := IDENT_LIST ();
+         EXPECT ('-->');
+         H@.B := PARSE_BODY ();
+         EXPECT ('END');
+         EXPECT (';');
+         ADD_LIST (H # HEAD, TAIL);
+      END BLOCK;
+   END LOOP;
+   EXPECT ('END');
+   EXPECT ('EXCEPT');
+   EXPECT (';');
+   RETURN HEAD;
+END FUNCTION PARSE_HANDLERS;
+
+% [label :]... unlabeled-stmt [exceptions-clause] [4-51]
+FUNCTION PARSE_STATEMENT () RETURNS (NODE);
+   VAR S: NODE;
+   IF IS_KIND (K_ID) & TOK_IS (AHEAD (1), ':') THEN
+      S := NEW_NODE (N_LABELED, LINE_NOW ());
+      S@.NAME := IDENT ();
+      SKIP;
+      S@.A := PARSE_STATEMENT ();
+      RETURN S;
+   END IF;
+   S := PARSE_UNLABELED ();
+   IF IS ('EXCEPT') THEN
+      BLOCK
+         VAR X: NODE := NEW_NODE (N_EXCEPT, LINE_NOW ());
+         X@.A := S;
+         X@.B := PARSE_HANDLERS ();
+         RETURN X;
+      END BLOCK;
+   END IF;
+   RETURN S;
+END FUNCTION PARSE_STATEMENT;
+
+% END keyword ; -- the semicolon may be left out before EXCEPT, as in 5.2, example 5
+PROCEDURE EXPECT_END (WORD: ASCII_STR(?L));
+   EXPECT ('END');
+   EXPECT (WORD);
+   IF NOT IS ('EXCEPT') THEN
+      EXPECT (';');
+   END IF;
+END PROCEDURE EXPECT_END;
+
+FUNCTION PARSE_UNLABELED () RETURNS (NODE);
+   CONST LINE: INTEGER := LINE_NOW ();
+   VAR S: NODE;
+   VAR T: NODE;
+   IF ACCEPT (';') THEN
+      RETURN NEW_NODE (N_NULL, LINE);
+   ORIF IS ('IF') THEN
+      RETURN PARSE_IF ();
+   ORIF IS ('SELECT') THEN
+      RETURN PARSE_CASE ();
+   ORIF IS ('LOOP') THEN
+      RETURN PARSE_LOOP ();
+   ORIF IS ('PAR_BLOCK') THEN
+      RETURN PARSE_PAR ();
+   ORIF ACCEPT ('BLOCK') THEN                      % [4-59]
+      S := NEW_NODE (N_BLOCK, LINE);
+      S@.A := PARSE_BODY ();
+      EXPECT_END ('BLOCK');
+      RETURN S;
+   ORIF ACCEPT ('WITH') THEN                       % [4-60]
+      S := NEW_NODE (N_WITH, LINE);
+      S@.NAME := IDENT ();
+      IF ACCEPT ('NAMING') THEN
+         S@.IV := 1;
+         S@.A := PARSE_POSTFIX ();
+      ELSE
+         EXPECT (':=');
+         S@.A := PARSE_EXPR ();
+      END IF;
+      IF ACCEPT (',') THEN                          % 4.5.4, example 2 has a comma
+         ;
+      END IF;
+      S@.B := PARSE_UNLABELED ();
+      RETURN S;
+   ORIF ACCEPT ('EXIT') THEN
+      EXPECT (';');
+      RETURN NEW_NODE (N_EXIT, LINE);
+   ORIF ACCEPT ('GO') THEN                         % [4-56]
+      EXPECT ('TO');
+      S := NEW_NODE (N_GOTO, LINE);
+      S@.NAME := IDENT ();
+      EXPECT (';');
+      RETURN S;
+   ORIF ACCEPT ('RETURN') THEN                     % [4-44]
+      S := NEW_NODE (N_RETURN, LINE);
+      IF NOT IS (';') THEN
+         S@.A := PARSE_EXPR ();
+      END IF;
+      EXPECT (';');
+      RETURN S;
+   ORIF ACCEPT ('SIGNAL') THEN                     % [4-83]
+      S := NEW_NODE (N_SIGNAL, LINE);
+      IF IS_KIND (K_ID) THEN
+         S@.NAME := IDENT ();
+      END IF;
+      EXPECT (';');
+      RETURN S;
+   ORIF ACCEPT ('ASSERT') THEN                     % [4-84]
+      S := NEW_NODE (N_ASSERT, LINE);
+      S@.A := PARSE_EXPR ();
+      EXPECT (';');
+      RETURN S;
+   ORIF ACCEPT ('TERMINATE') THEN                  % [4-97]
+      S := NEW_NODE (N_TERMINATE, LINE);
+      IF ACCEPT ('(') THEN
+         S@.A := PARSE_POSTFIX ();
+         EXPECT (')');
+      END IF;
+      EXPECT (';');
+      RETURN S;
+   END IF;
+   T := PARSE_POSTFIX ();
+   IF IS ('[') THEN
+      FAIL (LINE, 'a substring of a substring');
+   END IF;
+   IF ACCEPT (':=') THEN                           % [3-43]
+      S := NEW_NODE (N_ASSIGN, LINE);
+      S@.A := T;
+      S@.B := PARSE_EXPR ();
+      EXPECT (';');
+      RETURN S;
+   END IF;
+   EXPECT (';');                                   % [4-37]
+   IF T@.KIND = N_NAME ! T@.KIND = N_APPLY THEN
+      T@.KIND := N_CALL;
+   ELSE
+      FAIL (LINE, 'a statement expected');
+   END IF;
+   RETURN T;
+END FUNCTION PARSE_UNLABELED;
+
+% [4-63]
+FUNCTION PARSE_IF () RETURNS (NODE);
+   VAR S: NODE := NEW_NODE (N_IF, LINE_NOW ());
+   VAR HEAD, TAIL: NODE := NIL;
+   EXPECT ('IF');
+   LOOP
+      BLOCK
+         VAR ARM: NODE := NEW_NODE (N_ARM, LINE_NOW ());
+         ARM@.A := PARSE_EXPR ();
+         EXPECT ('THEN');
+         ARM@.B := PARSE_BODY ();
+         ADD_LIST (ARM # HEAD, TAIL);
+      END BLOCK;
+   END LOOP WHEN NOT ACCEPT ('ORIF');
+   S@.A := HEAD;
+   IF ACCEPT ('ELSE') THEN
+      S@.B := PARSE_BODY ();
+   END IF;
+   EXPECT_END ('IF');
+   RETURN S;
+END FUNCTION PARSE_IF;
+
+FUNCTION PARSE_CASE_LABEL () RETURNS (NODE);
+   IF IS ('[') ! (IS ('(') & RANGE_AHEAD ()) THEN
+      RETURN PARSE_RANGE ();
+   END IF;
+   RETURN PARSE_EXPR ();
+END FUNCTION PARSE_CASE_LABEL;
+
+% [4-67]
+FUNCTION PARSE_CASE () RETURNS (NODE);
+   VAR S: NODE := NEW_NODE (N_CASE, LINE_NOW ());
+   VAR HEAD, TAIL: NODE := NIL;
+   EXPECT ('SELECT');
+   S@.A := PARSE_EXPR ();
+   EXPECT ('FROM');
+   LOOP UNTIL IS ('END') DO
+      IF ACCEPT ('ELSE') THEN
+         EXPECT ('-->');
+         S@.C := PARSE_BODY ();
+         EXPECT ('END');
+         EXPECT (';');
+         IF IS ('EXCEPT') THEN
+            S@.D := PARSE_HANDLERS ();
+         END IF;
+      ELSE
+         BLOCK
+            VAR ARM: NODE := NEW_NODE (N_ARM, LINE_NOW ());
+            VAR LH, LT: NODE := NIL;
+            LOOP
+               ADD_LIST (PARSE_CASE_LABEL () # LH, LT);
+            END LOOP WHEN NOT ACCEPT (',');
+            EXPECT ('-->');
+            ARM@.A := LH;
+            ARM@.B := PARSE_BODY ();
+            EXPECT ('END');
+            EXPECT (';');
+            IF IS ('EXCEPT') THEN
+               ARM@.C := PARSE_HANDLERS ();
+            END IF;
+            ADD_LIST (ARM # HEAD, TAIL);
+         END BLOCK;
+      END IF;
+   END LOOP;
+   S@.B := HEAD;
+   EXPECT_END ('SELECT');
+   RETURN S;
+END FUNCTION PARSE_CASE;
+
+% [4-76] [4-79]
+FUNCTION PARSE_LOOP () RETURNS (NODE);
+   VAR S: NODE := NEW_NODE (N_LOOP, LINE_NOW ());
+   EXPECT ('LOOP');
+   IF ACCEPT ('FOR') THEN
+      S@.KIND := N_FOR;
+      IF IS_KIND (K_ID) THEN
+         S@.NAME := IDENT ();
+         EXPECT ('IN');
+      END IF;
+      S@.A := PARSE_RANGE ();
+      EXPECT ('DO');
+      S@.B := PARSE_BODY ();
+      EXPECT ('END');
+      EXPECT ('LOOP');
+      IF IS_KIND (K_ID) THEN
+         IF NOT TEQ (IDENT (), S@.NAME) THEN
+            FAIL (LINE_NOW (), 'END LOOP must name the loop identifier');
+         END IF;
+      ORIF S@.NAME.LEN > 0 THEN
+         FAIL (LINE_NOW (), 'END LOOP must name the loop identifier (4.5.6.3)');
+      END IF;
+      IF NOT IS ('EXCEPT') THEN
+         EXPECT (';');
+      END IF;
+      RETURN S;
+   END IF;
+   IF ACCEPT ('UNTIL') THEN
+      S@.A := PARSE_EXPR ();
+      EXPECT ('DO');
+   END IF;
+   S@.B := PARSE_BODY ();
+   EXPECT ('END');
+   EXPECT ('LOOP');
+   IF ACCEPT ('WHEN') THEN
+      IF S@.A <> NIL THEN
+         FAIL (LINE_NOW (), 'only one of UNTIL and WHEN (4.5.6.1)');
+      END IF;
+      S@.C := PARSE_EXPR ();
+   END IF;
+   IF NOT IS ('EXCEPT') THEN
+      EXPECT (';');
+   END IF;
+   RETURN S;
+END FUNCTION PARSE_LOOP;
+
+% PAR_BLOCK parallel-path... END PAR_BLOCK; [4-85]
+FUNCTION PARSE_PAR () RETURNS (NODE);
+   VAR S: NODE := NEW_NODE (N_PAR, LINE_NOW ());
+   VAR HEAD, TAIL: NODE := NIL;
+   EXPECT ('PAR_BLOCK');
+   LOOP UNTIL IS ('END') DO
+      BLOCK
+         VAR P: NODE := NEW_NODE (N_PATH, LINE_NOW ());
+         VAR H: NODE := NEW_NODE (N_HDR, LINE_NOW ());
+         EXPECT ('PATH');
+         P@.NAME := IDENT ();
+         P@.E := NEW_NODE (N_IDENT, P@.LINE);         % the loop identifier, if any
+         P@.E@.A := H;                                % signals and imports
+         IF ACCEPT ('FOR') THEN                       % [4-90]
+            P@.E@.NAME := IDENT ();
+            P@.FL := 1;
+            EXPECT ('IN');
+            P@.A := PARSE_RANGE ();
+         END IF;
+         LOOP
+            IF ACCEPT ('PRIORITY') THEN
+               P@.C := PARSE_EXPR ();
+            ORIF ACCEPT ('CONNECT') THEN
+               EXPECT ('(');
+               P@.D := PARSE_EXPR ();
+               EXPECT (')');
+            ORIF ACCEPT ('SIGNALS') THEN
+               H@.A := PAREN_IDENTS ();
+            ORIF ACCEPT ('IMPORTS') THEN
+               H@.B := PARSE_ITEMS ();
+            ELSE
+               EXIT;
+            END IF;
+         END LOOP;
+         EXPECT (';');
+         P@.B := PARSE_CLOSED_BODY ();
+         EXPECT ('END');
+         EXPECT ('PATH');
+         EXPECT_NAME (P@.NAME);
+         EXPECT (';');
+         ADD_LIST (P # HEAD, TAIL);
+      END BLOCK;
+   END LOOP;
+   S@.A := HEAD;
+   EXPECT ('END');
+   EXPECT ('PAR_BLOCK');
+   EXPECT (';');
+   RETURN S;
+END FUNCTION PARSE_PAR;

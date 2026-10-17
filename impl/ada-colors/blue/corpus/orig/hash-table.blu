@@ -1,0 +1,38 @@
+% BLUE Language Specification, 15 Feb 1978, section 4.5.7, page 4-49
+% (DTIC ADB950587, PDF page 1595). Transcribed as printed; the lower-case phrases
+% stand for code the example leaves open.
+        TYPE T = value type;
+        CONST M: INTEGER := max number of table entries;
+        VAR A: ARRAY [1:M] OF T;
+        VAR B: ARRAY [1:M] OF INTEGER;
+        CONST EMPTY: T := empty table slot value;
+        VAR X: T;
+        LOOP FOR I IN [1:M] DO
+             A(I) := EMPTY;
+             B(I) := 0;
+        END LOOP I;
+        ...
+        X := value to search for;
+        BLOCK
+             VAR I: INTEGER [1:M];
+             BLOCK
+                  CONST J: INTEGER [1:M] := (H(X) MOD M) + 1;
+                  I := J;
+                  LOOP
+                       IF A(I) = X THEN SIGNAL FOUND; END IF;
+                       IF A(I) = EMPTY THEN
+                            A(I) := X;
+                            SIGNAL FOUND;
+                       END IF;
+                       IF I = M
+                            THEN I := 1;
+                            ELSE I := I + 1;
+                       END IF;
+                       IF I = J THEN SIGNAL FULL; END IF;
+                  END LOOP;
+             END BLOCK;
+                  EXCEPT
+                       FOUND --> B(I) := B(I) + 1; END;
+                       FULL --> print error message; END;
+                  END EXCEPT;
+        END BLOCK;

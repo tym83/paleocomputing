@@ -1,0 +1,42 @@
+MAIN SEGMENT GENERIC_STACK
+   USES (TERMINAL);
+% a driver for the generic stack of 5.2, example 4: stacks of integers, of strings
+% and of colors, assignment through STORE_, and the exceptions
+TYPE COLOR = ENUM (\RED, \GREEN, \BLUE);
+VAR S: STACK (INTEGER, 100);
+VAR W, V: STACK (ASCII_STR (5), 2);
+VAR C: STACK (COLOR, 3);
+VAR I: INTEGER;
+VAR WORD: ASCII_STR (5);
+VAR K: COLOR;
+CLEAR (# S);
+CLEAR (# W);
+CLEAR (# C);
+LOOP FOR N IN [1:5] DO
+   PUSH (N * N # S);
+END LOOP N;
+PUSH ('BLUE ' # W);
+PUSH ('GREEN' # W);
+BLOCK
+   PUSH ('RED  ' # W);
+EXCEPT
+   STACK_OVERFLOW --> PUT_LINE ('STACK_OVERFLOW: ' !! TO_CHAR (W.LENGTH) !! ' words'); END;
+END EXCEPT;
+END BLOCK;
+V := W;
+POP (# W # WORD);
+PUT_LINE (WORD);
+POP (# V # WORD);
+PUT_LINE (WORD !! ' from the copy');
+PUSH (\GREEN # C);
+POP (# C # K);
+PUT_LINE (TO_CHAR (K));
+LOOP
+   POP (# S # I);
+   PUT (TO_CHAR (I) !! ' ');
+END LOOP;
+EXCEPT
+   STACK_EMPTY --> NEW_LINE; PUT_LINE ('STACK_EMPTY'); END;
+END EXCEPT;
+%%ORIGINAL%%
+END SEGMENT GENERIC_STACK;

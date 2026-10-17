@@ -1,0 +1,8 @@
+;
+VAR p, q: Rpointer := NewRpointer(R(42, 'x'));
+q := NewRpointer(R(7, 'y'));
+Write(p^.n); Write(p^.c); Write(" "); Write(q^.n); Write(q^.c); Write(" ");
+Write(p = q); Write(" ");
+q := p;
+Write(p = q); Write(" "); Write(q^.n); WriteLn()
+ENDMODULE Safe

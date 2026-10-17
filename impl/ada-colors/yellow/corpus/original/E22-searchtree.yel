@@ -1,0 +1,34 @@
+(* Part Three, III.G "Pointers and Opaque Exportation", pp.1115-1116 *)
+(* (E-22, E-23) *)
+MODULE SearchTree
+  EXPORT OPAQUE Tree;
+  EXPORT TRANSPARENT Zodiac;
+  EXPORT NewTree,Search,=,#;
+  REPRESENTATION
+    Zodiac =
+      ORDERED(Aquarius,Aries,Cancer,Capricorn,Gemini,
+              Leo,Libra,Pisces,Sagittarius,Scorpio,
+              Taurus,Virgo);
+    Tree = POINTER(Node);
+    Node = RECORD
+             CONST key: Zodiac;
+             VAR llink,rlink: Tree;
+           ENDRECORD;
+  CONST
+    newTree: Tree = Tree NIL;
+  PROCEDURE Search RETURNS Tree
+    (CONST SearchKey: key, VAR t: Tree)
+    IF t = newTree
+      THEN
+        NEW(t);  (* t to a new Tree *)
+        t^ := Node(SearchKey,newKey,newKey);
+        RETURN t
+      ELSIF SearchKey < t^.key
+        THEN RETURN Search(SearchKey, t^.llink)
+      ELSIF SearchKey > t^.key
+        THEN RETURN Search(SearchKey, t^.rlink)
+      ELSE
+        RETURN t
+      ENDIF;
+  ENDPROCEDURE Search;
+ENDMODULE SearchTree;

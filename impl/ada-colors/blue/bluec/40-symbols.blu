@@ -1,0 +1,330 @@
+
+% ==== symbols and scopes (4.1) =============================================================
+
+FUNCTION NO_TEXT () RETURNS (TEXT);
+   RETURN (AT: 0, LEN: 0, H: 0);
+END FUNCTION NO_TEXT;
+
+FUNCTION NO_MVAL () RETURNS (MVAL);
+   RETURN (OK: FALSE, V: 0);
+END FUNCTION NO_MVAL;
+
+FUNCTION SOME (V: INTEGER) RETURNS (MVAL);
+   RETURN (OK: TRUE, V: V);
+END FUNCTION SOME;
+
+FUNCTION NEW_SYM (KIND: INTEGER, NAME: TEXT) RETURNS (SYM);
+   VAR Y: SYM := NEW (SYM_REC);
+   VAR LEVEL: INTEGER := 0;
+   IF W@.CS <> NIL THEN
+      LEVEL := W@.CS@.LEVEL;
+   END IF;
+   Y@ := (KIND: KIND, DEPTH: W@.DEPTH, LEVEL: LEVEL, NAME: NAME, T: NIL,
+          ACCESS: NO_TEXT (), FIELD: NO_TEXT (), INPUT: FALSE, BYREF: FALSE, HASMV: FALSE, MV: 0,
+          TS: NIL, BUSY: FALSE, FWD: NO_TEXT (), PARAMS: NIL, RESULT: NIL, DECL: NIL,
+          PREFIX: NO_TEXT (), MODL: W@.MODL, EXPORTED: FALSE, GENERIC: FALSE,
+          FRAMED: FALSE, USES: NIL, INSTANCES: NIL, BINDINGS: NIL, ORIG: NIL, MEMBERS: NIL, SAVED: NIL,
+          OWNER: CUR_OWNER (), CHAIN: NIL, SNEXT: NIL);
+   RETURN Y;
+END FUNCTION NEW_SYM;
+
+FUNCTION CUR_OWNER () RETURNS (INTEGER);
+   IF W@.IS = NIL THEN
+      RETURN 0;
+   END IF;
+   RETURN W@.IS@.ID;
+END FUNCTION CUR_OWNER;
+
+% the declaration behind an exported name or an alias
+FUNCTION ORIGINAL (Y: SYM) RETURNS (SYM);
+   IF Y@.ORIG <> NIL THEN
+      RETURN Y@.ORIG;
+   END IF;
+   RETURN Y;
+END FUNCTION ORIGINAL;
+
+FUNCTION BUCKET (NAME: TEXT) RETURNS (INTEGER);
+   IF NAME.H < 0 THEN
+      RETURN HASH_OF (STR (NAME, NAME.LEN));
+   END IF;
+   RETURN NAME.H;
+END FUNCTION BUCKET;
+
+% the innermost visible declaration of NAME
+FUNCTION LOOKUP (NAME: TEXT) RETURNS (SYM);
+   VAR Y: SYM := W@.TABLE(BUCKET (NAME));
+   LOOP UNTIL Y = NIL DO
+      IF TEQ (Y@.NAME, NAME) THEN
+         RETURN Y;
+      END IF;
+      Y := Y@.CHAIN;
+   END LOOP;
+   RETURN NIL;
+END FUNCTION LOOKUP;
+
+FUNCTION ORIG_LOOKUP (NAME: TEXT) RETURNS (SYM);
+   CONST Y: SYM := LOOKUP (NAME);
+   IF Y = NIL THEN
+      RETURN NIL;
+   END IF;
+   RETURN ORIGINAL (Y);
+END FUNCTION ORIG_LOOKUP;
+
+FUNCTION LOOKUPS (NAME: ASCII_STR(?L)) RETURNS (SYM);
+   RETURN LOOKUP (MKN (NAME));
+END FUNCTION LOOKUPS;
+
+% the next declaration of the same name, further out
+FUNCTION LOOKUP_NEXT (Y: SYM) RETURNS (SYM);
+   VAR Z: SYM := Y@.CHAIN;
+   LOOP UNTIL Z = NIL DO
+      IF TEQ (Z@.NAME, Y@.NAME) THEN
+         RETURN Z;
+      END IF;
+      Z := Z@.CHAIN;
+   END LOOP;
+   RETURN NIL;
+END FUNCTION LOOKUP_NEXT;
+
+FUNCTION IS_ROUTINE (Y: SYM) RETURNS (BOOLEAN);
+   RETURN Y@.KIND = Y_ROUTINE ! Y@.KIND = Y_BUILTIN;
+END FUNCTION IS_ROUTINE;
+
+% names local to a scope may not be redeclared in it, except routines with other
+% signatures (4.1) and enumerated literals of other types (3.4)
+PROCEDURE DEFINE (Y: SYM, LINE: INTEGER);
+   CONST B: INTEGER := BUCKET (Y@.NAME);
+   VAR OLD: SYM := LOOKUP (Y@.NAME);
+   LOOP UNTIL OLD = NIL DO
+      IF OLD@.DEPTH <> W@.DEPTH THEN
+         EXIT;
+      END IF;
+      IF NOT ((IS_ROUTINE (OLD) & IS_ROUTINE (Y)) ! (OLD@.KIND = Y_ENUMLIT & Y@.KIND = Y_ENUMLIT)) THEN
+         FAILT (LINE, 'redeclared in the same scope: ', Y@.NAME);
+      END IF;
+      OLD := LOOKUP_NEXT (OLD);
+   END LOOP;
+   Y@.DEPTH := W@.DEPTH;
+   Y@.CHAIN := W@.TABLE(B);
+   W@.TABLE(B) := Y;
+   Y@.SNEXT := W@.SCOPE;
+   W@.SCOPE := Y;
+END PROCEDURE DEFINE;
+
+PROCEDURE OPEN_SCOPE ();
+   W@.DEPTH := W@.DEPTH + 1;
+END PROCEDURE OPEN_SCOPE;
+
+PROCEDURE CLOSE_SCOPE ();
+   W@.DEPTH := W@.DEPTH - 1;
+   LOOP UNTIL W@.SCOPE = NIL DO
+      IF W@.SCOPE@.DEPTH <= W@.DEPTH THEN
+         EXIT;
+      END IF;
+      UNLINK (W@.SCOPE);
+      W@.SCOPE := W@.SCOPE@.SNEXT;
+   END LOOP;
+END PROCEDURE CLOSE_SCOPE;
+
+% take Y out of its hash bucket
+PROCEDURE UNLINK (Y: SYM);
+   CONST B: INTEGER := BUCKET (Y@.NAME);
+   VAR P: SYM := W@.TABLE(B);
+   IF P = Y THEN
+      W@.TABLE(B) := Y@.CHAIN;
+      RETURN;
+   END IF;
+   LOOP UNTIL P = NIL DO
+      IF P@.CHAIN = Y THEN
+         P@.CHAIN := Y@.CHAIN;
+         RETURN;
+      END IF;
+      P := P@.CHAIN;
+   END LOOP;
+END PROCEDURE UNLINK;
+
+% the scope stack from the top down to (but not including) MARK, unlinked: what a
+% module declared, to be made visible again later
+FUNCTION TAKE_SCOPE (MARK: SYM) RETURNS (SYM);
+   VAR HEAD: SYM := NIL;
+   LOOP UNTIL W@.SCOPE = MARK DO
+      BLOCK
+         CONST Y: SYM := W@.SCOPE;
+         UNLINK (Y);
+         W@.SCOPE := Y@.SNEXT;
+         Y@.SNEXT := HEAD;
+         HEAD := Y;
+      END BLOCK;
+   END LOOP;
+   RETURN HEAD;
+END FUNCTION TAKE_SCOPE;
+
+% ---- the predefined environment ----------------------------------------------------------
+
+FUNCTION NEW_TYP (KIND: INTEGER) RETURNS (TYP);
+   VAR T: TYP := NEW (TYP_REC);
+   T@ := (KIND: KIND, SCALE: 0, LO_C: NO_TEXT (), HI_C: NO_TEXT (), MLO: NO_MVAL (),
+          MHI: NO_MVAL (), RLEVEL: 0, LEN_C: NO_TEXT (), MLEN: NO_MVAL (), GEN: NO_TEXT (),
+          BASE: NIL, ELEM: NIL, TARGET: NIL, TARGET_TS: NIL, FIELDS: NIL, LITS: NIL,
+          NLITS: 0, UNORDERED: FALSE, BOUNDS: NIL, DIMS: 0, ARGS: NIL, NAME: NO_TEXT (),
+          CNAME: NO_TEXT (), MODL: NIL, REPS: NIL, DECL: NIL);
+   RETURN T;
+END FUNCTION NEW_TYP;
+
+FUNCTION COPY_TYP (T: TYP) RETURNS (TYP);
+   VAR C: TYP := NEW (TYP_REC);
+   C@ := T@;
+   RETURN C;
+END FUNCTION COPY_TYP;
+
+PROCEDURE PREDEF_TYPE (NAME: ASCII_STR(?L), T: TYP);
+   VAR Y: SYM := NEW_SYM (Y_TYPE, MKN (NAME));
+   Y@.T := T;
+   IF T@.NAME.LEN = 0 THEN
+      T@.NAME := Y@.NAME;
+   END IF;
+   DEFINE (Y, 0);
+END PROCEDURE PREDEF_TYPE;
+
+PROCEDURE PREDEF_BUILTIN (NAME: ASCII_STR(?L));
+   DEFINE (NEW_SYM (Y_BUILTIN, MKN (NAME)), 0);
+END PROCEDURE PREDEF_BUILTIN;
+
+PROCEDURE PREDEF_CONST (NAME: ASCII_STR(?L), T: TYP, V: INTEGER);
+   VAR Y: SYM := NEW_SYM (Y_CONST, MKN (NAME));
+   Y@.T := T;
+   Y@.HASMV := TRUE;
+   Y@.MV := V;
+   Y@.INPUT := TRUE;
+   Y@.ACCESS := FMT1 ('((rt_int)@)', NUM (V));
+   DEFINE (Y, 0);
+END PROCEDURE PREDEF_CONST;
+
+% an enumerated type class with the literals named in NAMES, blank-separated
+FUNCTION PREDEF_ENUM (NAME: ASCII_STR(?L), NAMES: ASCII_STR(?M), UNORDERED: BOOLEAN)
+      RETURNS (TYP);
+   VAR HEAD, TAIL: NODE := NIL;
+   VAR START: INTEGER := 0;
+   LOOP FOR I IN [0 : M] DO
+      IF I = M ! NAMES[I : I] = ' ' THEN
+         IF I > START THEN
+            BLOCK
+               VAR N: NODE := NEW_NODE (N_IDENT, 0);
+               N@.NAME := MKN (NAMES[START : I - 1]);
+               ADD_LIST (N # HEAD, TAIL);
+            END BLOCK;
+         END IF;
+         START := I + 1;
+      END IF;
+   END LOOP I;
+   BLOCK
+      CONST T: TYP := ENUM_CLASS (HEAD, UNORDERED, 0);
+      PREDEF_TYPE (NAME, T);
+      RETURN T;
+   END BLOCK;
+END FUNCTION PREDEF_ENUM;
+
+PROCEDURE PREDEFINE ();
+   VAR T: TYP;
+   VAR ASCII_LITS: NODE := NIL;
+   VAR TAIL: NODE := NIL;
+   W@.TY_INT := NEW_TYP (T_INT);
+   W@.TY_BOOL := NEW_TYP (T_BOOL);
+   W@.TY_STR := NEW_TYP (T_STR);
+   W@.TY_VOID := NEW_TYP (T_VOID);
+   W@.TY_NIL := NEW_TYP (T_NIL);
+   W@.TY_FLOAT := NEW_TYP (T_FLOAT);
+   W@.TY_FLOAT@.SCALE := 15;
+   W@.TY_BITS := NEW_TYP (T_BITS);
+   W@.TY_TYPE := NEW_TYP (T_TYPE);
+   PREDEF_TYPE ('INTEGER', W@.TY_INT);
+   PREDEF_TYPE ('BOOLEAN', W@.TY_BOOL);
+   % 3.7.2, example 1: ASCII written with the 64-character subset
+   LOOP FOR C IN [0:127] DO
+      BLOCK
+         VAR N: NODE := NEW_NODE (N_IDENT, 0);
+         N@.NAME := ASCII_NAME (C);
+         ADD_LIST (N # ASCII_LITS, TAIL);
+      END BLOCK;
+   END LOOP C;
+   W@.TY_ASCII := ENUM_CLASS (ASCII_LITS, FALSE, 0);
+   PREDEF_TYPE ('ASCII', W@.TY_ASCII);
+   % 3.1.4.1, 3.2.1, 3.2.3, 3.7.3, 3.11.1
+   W@.TY_ROUNDINGS := PREDEF_ENUM ('ROUNDINGS', 'ROUNDED TRUNCATED NATIVE_R NATIVE_T', FALSE);
+   T := PREDEF_ENUM ('FIXED_PRECISIONS', 'STD', FALSE);
+   T := PREDEF_ENUM ('SIGNING', 'SIGNED UNSIGNED', TRUE);
+   T := PREDEF_ENUM ('PACKING', 'DENSE PACKED UNPACKED', TRUE);
+   T := PREDEF_ENUM ('USAGE', 'SYNCH REGION', TRUE);
+   PREDEF_CONST ('MIN_PRIORITY', W@.TY_INT, 0);
+   PREDEF_CONST ('MAX_PRIORITY', W@.TY_INT, 255);
+   % the functions of the prelude (3.x.6, 4.6.5) and the parallel support (D.7)
+   PREDEF_BUILTIN ('TO_CHAR');
+   PREDEF_BUILTIN ('TO_FIXED');
+   PREDEF_BUILTIN ('TO_FLOAT');
+   PREDEF_BUILTIN ('TO_BIT');
+   PREDEF_BUILTIN ('ABS');
+   PREDEF_BUILTIN ('SUCC');
+   PREDEF_BUILTIN ('PRED');
+   PREDEF_BUILTIN ('DUP');
+   PREDEF_BUILTIN ('BLANKS');
+   PREDEF_BUILTIN ('ZEROS');
+   PREDEF_BUILTIN ('BIN_OF');
+   PREDEF_BUILTIN ('OCT_OF');
+   PREDEF_BUILTIN ('HEX_OF');
+   PREDEF_BUILTIN ('FIXED_MIN');
+   PREDEF_BUILTIN ('FIXED_MAX');
+   PREDEF_BUILTIN ('FLOAT_MIN');
+   PREDEF_BUILTIN ('FLOAT_MAX');
+   PREDEF_BUILTIN ('EPSILON');
+   PREDEF_BUILTIN ('IMP_PRECISION');
+   PREDEF_BUILTIN ('HANDLER_EXISTS');
+   PREDEF_BUILTIN ('IS_MANIFEST');
+   PREDEF_BUILTIN ('CLOCK');
+   PREDEF_BUILTIN ('WAIT');
+   PREDEF_BUILTIN ('PRIORITY');
+   PREDEF_BUILTIN ('REQUEST');
+   PREDEF_BUILTIN ('RELEASE');
+   PREDEF_BUILTIN ('START_IO');
+   OPEN_SCOPE;
+END PROCEDURE PREDEFINE;
+
+% the routines of the implementation's TERMINAL segment (implementation-defined)
+PROCEDURE PREDEFINE_TERMINAL ();
+   PREDEF_BUILTIN ('PUT');
+   PREDEF_BUILTIN ('PUT_LINE');
+   PREDEF_BUILTIN ('NEW_LINE');
+   PREDEF_BUILTIN ('GET_CODE');
+   PREDEF_BUILTIN ('GET_LINE');
+   PREDEF_BUILTIN ('END_OF_INPUT');
+   PREDEF_BUILTIN ('STOP');
+END PROCEDURE PREDEFINE_TERMINAL;
+
+% the name of the literal of ASCII with code C (3.7.2, example 1)
+FUNCTION ASCII_NAME (C: INTEGER) RETURNS (TEXT);
+   CONST CONTROLS: ASCII_STR(128) :=
+      ' NUL SOH STX EXT EOT ENQ ACK BEL BS  HT  LF  VT  FF  CR  SO  SI '
+      ' DLE DC1 DC2 DC3 DC4 NAK SYN ETB CAN EM  SUB ESC FS  GS  RS  US ';
+   IF C < 32 THEN
+      IF CONTROLS[C * 4 + 3 : C * 4 + 3] = ' ' THEN
+         RETURN MKN ('\' !! CONTROLS[C * 4 + 1 : C * 4 + 2]);
+      END IF;
+      RETURN MKN ('\' !! CONTROLS[C * 4 + 1 : C * 4 + 3]);
+   ORIF C = 39 THEN
+      RETURN MKN ('\''''''''');
+   ORIF C < 96 THEN
+      RETURN MKN ('\''' !! CHAR_OF (C) !! '''');
+   ORIF C = 96 THEN
+      RETURN MKN ('\ACCENT');
+   ORIF C <= 122 THEN
+      RETURN MKN ('\' !! CHAR_OF (C - 32));
+   ORIF C = 123 THEN
+      RETURN MKN ('\[');
+   ORIF C = 124 THEN
+      RETURN MKN ('\BAR');
+   ORIF C = 125 THEN
+      RETURN MKN ('\]');
+   ORIF C = 126 THEN
+      RETURN MKN ('\TILDE');
+   END IF;
+   RETURN MKN ('\DEL');
+END FUNCTION ASCII_NAME;

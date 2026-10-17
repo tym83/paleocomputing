@@ -1,0 +1,21 @@
+% BLUE Language Specification, 15 Feb 1978, section 5.1, example 1, page 5-7
+% (DTIC ADB950587, PDF page 1628). Transcribed as printed; ... marks elided code.
+% The first argument of the second INTEGRATE reads as 0 in the scan; it is Q.
+     A := INTEGRATE (P,1,100);
+     B := INTEGRATE (Q,10\S14,20\S14);
+     ...
+     FUNCTION P (X: INTEGER [?LB: ?UB])
+              RETURNS (INTEGER [LB:UB]);
+          ...
+     END FUNCTION P;
+
+     FUNCTION Q (X: INTEGER (14,2,STD) [1:100])
+              RETURNS (INTEGER (14,2,STD) [1:100]);
+          ...
+     END FUNCTION Q;
+     FUNCTION INTEGRATE (FIRSTVAL,LASTVAL : FIXED(?S, ?R, ?P)[?:?],
+                         F: FUNCTION (FIXED(?S, ?R, ?P) [?:?])
+                                         RETURNS (FIXED (?S,?R,?P)[?:?]))
+                RETURNS (FIXED (S,R,P) [FIXED_MIN(S,R,P):FIXED_MAX(S,R,P)]);
+          ...
+     END FUNCTION INTEGRATE;

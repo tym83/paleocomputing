@@ -1,0 +1,34 @@
+(* Part Three, II.B "Distance Between Points in the Plane", pp.1100-1102 *)
+(* (E-7 to E-9), with the line numbers as printed. *)
+901 REPRESENTATION FLOAT = FLOATING [-1.0E3..1.0E3] PRECISION 7
+1001 REPRESENTATION Coordinate =
+1002   RECORD SELECT kind: UNORDERED(Cartesian, Polar)
+1003            CASE Cartesian => VAR x, y: FLOAT;
+1004            CASE Polar => VAR rho: FLOAT; theta: Angle;
+1005   ENDRECORD
+1101 CONST Pi: FLOATING [0.0..4.0] PRECISION 7 = 3.14159265;
+1102 REPRESENTATION Angle = FLOATING [-Pi..Pi] PRECISION 7;
+1201 VAR C, P: Coordinate;
+1202 C := Coordinate(Cartesian, 1.2, -3.4);
+1203 P := Coordinate(Polar, 256.12, -1.772);
+1301 MODULE ComputeDistance;
+1302   IMPORT Sqrt, Sin, Cos, Coordinate, FLOAT;
+1303   EXPORT Distance;
+1304   FUNCTION Square RETURNS FLOAT (CONST x: FLOAT)
+1305     RETURN x*x;
+1306   ENDFUNCTION Square;
+1307   PROCEDURE Rectify (CONST c: Coordinate, OUT x, y: FLOAT)
+1308     SELECT c.kind
+1309       CASE Cartesian => x := c.x; y := c.y;
+1310       CASE Polar => x := c.rho*Cos(c.theta);
+1311                     y := c.rho*Sin(c.theta);
+1312     ENDSELECT;
+1313     RETURN;
+1314   ENDPROCEDURE Rectify;
+1315   PROCEDURE Distance RETURNS FLOAT (CONST a, b: Coordinate)
+1316     VAR ax, ay, bx, by: FLOAT;
+1317     Rectify(a, ax, ay);
+1318     Rectify(b, bx, by);
+1319     RETURN Sqrt(Square(ax-bx)+Square(ay-by));
+1320   ENDPROCEDURE Distance;
+1321 ENDMODULE ComputeDistance

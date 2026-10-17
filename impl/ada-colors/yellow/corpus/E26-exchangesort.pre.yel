@@ -1,0 +1,6 @@
+(* the module of p.1119 imports String: "a fixed-length array of ASCII *)
+(* characters" *)
+MODULE Strings
+  EXPORT TRANSPARENT String;
+  REPRESENTATION String = ARRAY (INTEGER [1..6] OF ASCII)
+ENDMODULE Strings;

@@ -1,0 +1,12 @@
+% BLUE Language Specification, 15 Feb 1978, section 4.5.5.2, example 1, page 4-38
+% (DTIC ADB950587, PDF page 1584). Transcribed as printed; ... marks elided code.
+     TYPE COLOR = (\RED, \ORANGE, \YELLOW, \GREEN, \BLUE, \VIOLET);
+     VAR I: INTEGER [1:10];
+     VAR C: COLOR;
+     ...
+     SELECT I FROM
+          1 -->          C := \RED; END;
+          [2:4], 9 -->   C := \YELLOW; END;
+          [5:7] -->      C := \GREEN; END;
+          8,10 -->       C := \VIOLET;  END;
+     END SELECT;

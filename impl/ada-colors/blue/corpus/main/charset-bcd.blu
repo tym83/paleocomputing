@@ -1,0 +1,17 @@
+MAIN SEGMENT BCD_EXAMPLE
+   USES (TERMINAL);
+% a driver for the BCD character set of 3.12.5: the codes are not in the order of
+% the letters, the module gives the order
+VAR C: BCD := \'A';
+LOOP
+   PUT (TO_CHAR (TO_FIXED (C)) !! ':' !! TO_CHAR (TO_BIT (C)) !! ' ');
+   C := SUCC (C);
+END LOOP;
+EXCEPT
+   RANGE --> NEW_LINE; END;
+END EXCEPT;
+IF \'I' < \'J' & \'R' <= \'S' & \'Z' > \'A' & PRED (\'S') = \'R' THEN
+   PUT_LINE ('I < J, R <= S, Z > A, PRED (S) = R');
+END IF;
+%%ORIGINAL%%
+END SEGMENT BCD_EXAMPLE;

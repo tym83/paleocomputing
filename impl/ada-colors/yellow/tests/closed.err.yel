@@ -1,0 +1,7 @@
+MODULE Closed
+  VAR outer: INTEGER [0..9];
+  MODULE M
+    VAR inner: INTEGER [0..9];
+    inner := outer
+  ENDMODULE M
+ENDMODULE Closed

@@ -1,0 +1,46 @@
+MAIN SEGMENT VSTR_EXAMPLE
+   USES (TERMINAL);
+% a driver for the varying strings of 5.2, example 5
+VAR S : VAR_CHAR_STR (20, ASCII);
+VAR T : VAR_CHAR_STR (10, ASCII);
+VAR U : VAR_CHAR_STR (30, ASCII);
+S := TO_VAR_CHAR ('BLUE');
+T := TO_VAR_CHAR ('1978');
+U := S !! BLANKS (3, ASCII) !! T;
+PUT_LINE (TO_CHAR (CUR_LENGTH (U)));
+U := U [0:3];
+PUT_LINE ('U = S: ' !! TO_CHAR (U = S) !! ', U <> T: ' !! TO_CHAR (U <> T));
+S [1:2] := TO_VAR_CHAR ('LU');
+PUT_LINE ('S = BLUE: ' !! TO_CHAR (S = TO_VAR_CHAR ('BLUE')));
+S [1:2] := TO_VAR_CHAR ('AU');
+PUT_LINE ('S = BAUE: ' !! TO_CHAR (S = TO_VAR_CHAR ('BAUE')));
+T := DUP (TO_VAR_CHAR ('*'), 10);
+PUT_LINE (TO_CHAR (CUR_LENGTH (T)));
+BLOCK
+   T := S !! S !! S;
+EXCEPT
+   INVALID_SIZE --> PUT_LINE ('INVALID_SIZE'); END;
+END EXCEPT;
+END BLOCK;
+BLOCK
+   PUT_LINE (TO_CHAR (S = T));
+EXCEPT
+   INVALID_LENGTH --> PUT_LINE ('INVALID_LENGTH'); END;
+END EXCEPT;
+END BLOCK;
+BLOCK
+   S := S [2:7];
+EXCEPT
+   INVALID_SUBSTRING --> PUT_LINE ('INVALID_SUBSTRING'); END;
+END EXCEPT;
+END BLOCK;
+% MAX is used by the example but not predefined (it is a key word only for the
+% attribute .MAX, 2.1.7); the driver supplies it
+FUNCTION MAX (A, B: INTEGER) RETURNS (INTEGER);
+   IF A > B THEN
+      RETURN A;
+   END IF;
+   RETURN B;
+END FUNCTION MAX;
+%%ORIGINAL%%
+END SEGMENT VSTR_EXAMPLE;

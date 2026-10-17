@@ -1,0 +1,503 @@
+
+  (* ---- statements (Section IX) --------------------------------------------- *)
+
+  VAR
+    XFrames: ARRAY (INTEGER [1..1000] OF Txt);  (* the handler frames entered *)
+    XTop: INT := 0;
+    XBase: INT := 0;                 (* the first frame of the routine being written *)
+    BlockFrame: ARRAY (INTEGER [1..1000] OF Txt);  (* per block: its handler frame or 0 *)
+    BlockXs: ARRAY (INTEGER [1..1000] OF Txt);     (* per block with labels: rt_xtop at its start *)
+    BTop: INT := 0;
+    HandlerXc: ARRAY (INTEGER [1..1000] OF Txt);   (* the exception a handler handles *)
+    HTop: INT := 0;
+    LoopName, LoopLabel: ARRAY (INTEGER [1..1000] OF Txt);
+    LoopFrames: ARRAY (INTEGER [1..1000] OF INT);
+    LTop: INT := 0;
+    LoopBase: INT := 0;
+    CurRoutine: Sym := Sym NIL;      (* the routine or process being written *)
+    HasHandler: BOOLEAN := FALSE;    (* it has an exception handler *)
+
+  PROCEDURE Emit2 (CONST a: ARRAY (1 DIMENSIONS OF ASCII); CONST b: Txt)
+    VAR t: Txt;
+    SB();
+    SA(a);
+    ST(b);
+    t := SE();
+    Emit(t);
+    RETURN
+  ENDPROCEDURE Emit2;
+
+  PROCEDURE Emit3 (CONST a: ARRAY (1 DIMENSIONS OF ASCII); CONST b: Txt;
+                   CONST c: ARRAY (1 DIMENSIONS OF ASCII))
+    VAR t: Txt;
+    SB();
+    SA(a);
+    ST(b);
+    SA(c);
+    t := SE();
+    Emit(t);
+    RETURN
+  ENDPROCEDURE Emit3;
+
+  (* leave the handler frames entered after the first depth of them *)
+  PROCEDURE PopTo (CONST depth: INT)
+    IF XTop > depth THEN Emit3("rt_xtop = ", XFrames[depth + 1], ".prev;") ENDIF;
+    RETURN
+  ENDPROCEDURE PopTo;
+
+  (* PROPAGATE_EXCEPTION and ASSERT end the block they are in: its own *)
+  (* handler does not see them (IX.A.8, p.1039; X.F, p.1058) *)
+  PROCEDURE LeaveBlock ()
+    IF BTop > 0 THEN
+      IF BlockFrame[BTop] # 0 THEN Emit3("rt_xtop = ", BlockFrame[BTop], ".prev;") ENDIF
+    ENDIF;
+    RETURN
+  ENDPROCEDURE LeaveBlock;
+
+  PROCEDURE RaiseCode RETURNS Txt (CONST name: Txt)
+    SB();
+    SA("rt_raise(rt_exc(");
+    SC('DQ');
+    ST(name);
+    SC('DQ');
+    SA("));");
+    RETURN SE()
+  ENDPROCEDURE RaiseCode;
+
+  (* the statements of a block and its exception handler (X.F) *)
+  PROCEDURE BlockStatements (CONST b: Node)
+    VAR f, xc, t: Txt;
+        c, nm: Node;
+        first: BOOLEAN;
+        d: Node := b^.a;
+        xs: Txt := 0;
+    (* a block with labels notes the handler frames at its start: a GOTO *)
+    (* to one of its statements leaves the frames entered since *)
+    WHILE d # Node NIL DO
+      IF (d^.kind = N_LABEL) AND (xs = 0) THEN
+        xs := Fresh("xs");
+        Emit3("rt_frame *", xs, " = rt_xtop;")
+      ENDIF;
+      d := d^.next
+    ENDWHILE;
+    IF b^.b = Node NIL THEN
+      BTop := BTop + 1;
+      BlockFrame[BTop] := 0;
+      BlockXs[BTop] := xs;
+      Statements(b^.c);
+      BTop := BTop - 1;
+      CheckLabels(b^.a);
+      RETURN
+    ENDIF;
+    HasHandler := TRUE;
+    f := Fresh("xf");
+    Emit3("{ rt_frame ", f, ";");
+    Emit3("if (RT_TRY(", f, ")) {");
+    XTop := XTop + 1;
+    XFrames[XTop] := f;
+    BTop := BTop + 1;
+    BlockFrame[BTop] := f;
+    BlockXs[BTop] := xs;
+    Statements(b^.c);
+    BTop := BTop - 1;
+    XTop := XTop - 1;
+    CheckLabels(b^.a);
+    Emit3("RT_POP(", f, ");");
+    EmitS("} else {");
+    Emit3("RT_POP(", f, ");");
+    xc := Fresh("xc");
+    Emit3("int ", xc, " = rt_xcur;");
+    BTop := BTop + 1;
+    BlockFrame[BTop] := 0;
+    BlockXs[BTop] := 0;
+    HTop := HTop + 1;
+    HandlerXc[HTop] := xc;
+    first := TRUE;
+    c := b^.b^.a;
+    WHILE c # Node NIL DO
+      SB();
+      IF first THEN SA("if (") ELSE SA("} else if (") ENDIF;
+      first := FALSE;
+      nm := c^.a;
+      WHILE nm # Node NIL DO
+        ST(xc);
+        SA(" == rt_exc(");
+        SC('DQ');
+        ST(nm^.name);
+        SC('DQ');
+        SA(")");
+        IF nm^.next # Node NIL THEN SA(" || ") ENDIF;
+        nm := nm^.next
+      ENDWHILE;
+      SA(") {");
+      t := SE();
+      Emit(t);
+      Statements(c^.b);
+      c := c^.next
+    ENDWHILE;
+    IF NOT first THEN EmitS("} else {") ENDIF;
+    IF b^.b^.flag = 1 THEN
+      Statements(b^.b^.b)
+    ELSE
+      (* no ELSE: the same exception goes on (p.1059) *)
+      Emit3("rt_raise(", xc, ");")
+    ENDIF;
+    IF NOT first THEN EmitS("}") ENDIF;
+    HTop := HTop - 1;
+    BTop := BTop - 1;
+    EmitS("}}");
+    RETURN
+  ENDPROCEDURE BlockStatements;
+
+  PROCEDURE Statements (CONST list: Node)
+    VAR s: Node := list;
+    WHILE s # Node NIL DO
+      Statement(s);
+      s := s^.next
+    ENDWHILE;
+    RETURN
+  ENDPROCEDURE Statements;
+
+  (* a BOOLEAN expression *)
+  PROCEDURE Cond RETURNS Txt (CONST n: Node)
+    VAR c: Txt;
+        r: Rep;
+    Expr(n, RBool, c, r);
+    CheckType(n^.line, RBool, r);
+    RETURN c
+  ENDPROCEDURE Cond;
+
+  (* a CASE label of a SELECT on a value of representation r: the literals *)
+  (* of the selector's type need not be visible (VI.A.3 is about values *)
+  (* that could be of two types, and here there is one) *)
+  PROCEDURE Label RETURNS INT (CONST n: Node; CONST r: Rep)
+    VAR ok: BOOLEAN;
+        v: INT;
+        s: Sym;
+        lr: Rep;
+        c: Txt;
+    IF (n^.kind = N_NAME) AND (n^.d = Node NIL) AND (r^.kind = R_ENUM) THEN
+      s := FindLit(n^.name, r);
+      IF s # Sym NIL THEN RETURN Real(s)^.mval ENDIF
+    ENDIF;
+    Expr(n, r, c, lr);
+    CheckType(n^.line, r, lr);
+    Manifest(n, ok, v);
+    IF NOT ok THEN FailS(n^.line, "a CASE label is a manifest constant (IX.B.1)") ENDIF;
+    RETURN v
+  ENDPROCEDURE Label;
+
+  (* copy the OUT parameters back to their actuals (X.A.2) *)
+  PROCEDURE CopyOut ()
+    VAR p: Param;
+        t: Txt;
+    IF CurRoutine = Sym NIL THEN RETURN ENDIF;
+    p := CurRoutine^.params;
+    WHILE p # Param NIL DO
+      IF p^.cls = C_OUT THEN
+        SB();
+        SA("(*F.");
+        ST(p^.cname);
+        SA("_o)");
+        t := SE();
+        Store(t, p^.rep, Path(Level, p^.cname), p^.rep, 0)
+      ENDIF;
+      p := p^.next
+    ENDWHILE;
+    RETURN
+  ENDPROCEDURE CopyOut;
+
+  PROCEDURE Statement (CONST s: Node)
+    VAR k: INT := s^.kind;
+        c, c2, t, lab, v, hi: Txt;
+        r, er: Rep;
+        arm, l: Node;
+        first: BOOLEAN;
+        found: BOOLEAN;
+        i, val: INT;
+        sym: Sym;
+    CurLine := s^.line;
+    IF s^.text # 0 THEN PlaceLabel(s) ENDIF;
+    IF k = N_ASSIGN THEN
+      LValue(s^.a, c, r);
+      CheckPure(s^.a);
+      IF r^.kind = R_SIGNAL THEN FailS(s^.line, "assignment is not defined for signals (VI.A.1.d)") ENDIF;
+      IF (r^.kind = R_FILE) OR (r^.kind = R_SEM) THEN
+        FailS(s^.line, "assignment is not defined for files and semaphores (VII.B)")
+      ENDIF;
+      IF r^.opaque AND ((r^.opaqueops MOD 2) = 0) THEN
+        FailN(s^.line, r^.tname, " is opaque here: := is not exported (X.B.3)")
+      ENDIF;
+      Expr(s^.b, r, c2, er);
+      Store(c, r, c2, er, s^.line)
+    ELSIF k = N_CALLST THEN
+      sym := Find(s^.a^.name);
+      IF sym # Sym NIL THEN sym := Real(sym) ENDIF;
+      IF (sym # Sym NIL) AND (sym^.kind = S_PROCESS) THEN
+        Activate(s^.a, sym)
+      ELSE
+        CallExpr(s^.a, Rep NIL, TRUE, c, r);
+        Emit2("", c);
+        SB();
+        ST(c);
+        SA(";");
+        t := SE();
+        Body.tail^.t := t
+      ENDIF
+    ELSIF k = N_IF THEN
+      first := TRUE;
+      arm := s^.a;
+      WHILE arm # Node NIL DO
+        c := Cond(arm^.a);
+        IF first THEN Emit3("if (", c, ") {") ELSE Emit3("} else if (", c, ") {") ENDIF;
+        first := FALSE;
+        Statements(arm^.b);
+        arm := arm^.next
+      ENDWHILE;
+      IF s^.flag = 1 THEN
+        EmitS("} else {");
+        Statements(s^.b)
+      ENDIF;
+      EmitS("}")
+    ELSIF k = N_WHILE THEN
+      c := Cond(s^.a);
+      Emit3("while (", c, ") {");
+      Statements(s^.b);
+      EmitS("}")
+    ELSIF k = N_LOOP THEN
+      lab := Fresh("yl_");
+      LTop := LTop + 1;
+      LoopName[LTop] := s^.name;
+      LoopLabel[LTop] := lab;
+      LoopFrames[LTop] := XTop;
+      EmitS("for (;;) {");
+      Statements(s^.b);
+      EmitS("}");
+      Emit3("", lab, ": ;");
+      LTop := LTop - 1
+    ELSIF k = N_EXIT THEN
+      found := FALSE;
+      i := LTop;
+      WHILE (i > LoopBase) AND NOT found DO
+        IF LoopName[i] = s^.name THEN
+          found := TRUE;
+          PopTo(LoopFrames[i]);
+          Emit3("goto ", LoopLabel[i], ";")
+        ENDIF;
+        i := i - 1
+      ENDWHILE;
+      IF NOT found THEN FailN(s^.line, s^.name, ": EXIT names no LOOP around it here (IX.A.5)") ENDIF
+    ELSIF k = N_FOR THEN
+      ForStatement(s)
+    ELSIF k = N_SELECT THEN
+      Expr(s^.a, Rep NIL, c, r);
+      IF NOT IsDiscrete(r) THEN FailS(s^.line, "SELECT on a value that is not integer or scalar") ENDIF;
+      Emit3("switch (", c, ") {");
+      arm := s^.b;
+      WHILE arm # Node NIL DO
+        l := arm^.a;
+        WHILE l # Node NIL DO
+          val := Label(l, r);
+          SB();
+          SA("case ");
+          SI(val);
+          SA(":");
+          t := SE();
+          Emit(t);
+          l := l^.next
+        ENDWHILE;
+        EmitS("{");
+        Statements(arm^.b);
+        EmitS("} break;");
+        arm := arm^.next
+      ENDWHILE;
+      (* no case and no ELSE: nothing is done (IX.B.1) *)
+      EmitS("default: {");
+      IF s^.flag = 1 THEN Statements(s^.c) ENDIF;
+      EmitS("} break;");
+      EmitS("}")
+    ELSIF k = N_RETURN THEN
+      ReturnStatement(s)
+    ELSIF k = N_PROPAGATE THEN
+      IF s^.name = 0 THEN
+        IF HTop = 0 THEN FailS(s^.line, "PROPAGATE_EXCEPTION without a name is used in a handler (IX.A.8)") ENDIF;
+        Emit3("rt_raise(", HandlerXc[HTop], ");")
+      ELSE
+        LeaveBlock();
+        Emit(RaiseCode(s^.name))
+      ENDIF
+    ELSIF k = N_ASSERT THEN
+      c := Cond(s^.a);
+      Emit3("if (!(", c, ")) {");
+      LeaveBlock();
+      EmitS("rt_raise(RT_X_ASSERT); }")
+    ELSIF k = N_BEGIN THEN
+      BeginStatement(s)
+    ELSIF k = N_TERMINATE THEN
+      TerminateStatement(s)
+    ELSIF k = N_GOTO THEN
+      GotoStatement(s)
+    ELSE
+      FailS(s^.line, "not a statement")
+    ENDIF;
+    RETURN
+  ENDPROCEDURE Statement;
+
+  (* FOR Name : Representation DO ... ENDFOR -- the name is a constant of *)
+  (* each value of the representation in turn (IX.B.2) *)
+  PROCEDURE ForStatement (CONST s: Node)
+    VAR r: Rep;
+        v, hi, t: Txt;
+        sym: Sym;
+    r := MakeRep(s^.a, 0, FALSE);
+    IF NOT IsDiscrete(r) THEN FailS(s^.line, "FOR goes over an integer or scalar representation") ENDIF;
+    CheckRepresented(r, s^.line);
+    OpenScope(FALSE);
+    sym := NewSym(S_CONST, s^.name);
+    sym^.rep := r;
+    sym^.level := Level;
+    sym^.cname := Fresh("c_");
+    DeclStorage(T("rt_int"), sym^.cname);
+    Define(sym, s^.line);
+    v := Fresh("i");
+    hi := Fresh("hi");
+    SB();
+    SA("{ rt_int ");
+    ST(hi);
+    SA(" = ");
+    ST(HiText(r));
+    SA(";");
+    t := SE();
+    Emit(t);
+    SB();
+    SA("for (rt_int ");
+    ST(v);
+    SA(" = ");
+    ST(LoText(r));
+    SA("; ");
+    ST(v);
+    SA(" <= ");
+    ST(hi);
+    SA("; ");
+    ST(v);
+    SA("++) { ");
+    ST(SymPath(sym));
+    SA(" = ");
+    ST(v);
+    SA(";");
+    t := SE();
+    Emit(t);
+    Statements(s^.b);
+    Emit3("if (", v, " == ");
+    Body.tail^.t := Join(Body.tail^.t, hi, T(") break;"));
+    EmitS("}}");
+    CloseScope();
+    RETURN
+  ENDPROCEDURE ForStatement;
+
+  PROCEDURE Join RETURNS Txt (CONST a, b, c: Txt)
+    SB();
+    ST(a);
+    ST(b);
+    ST(c);
+    RETURN SE()
+  ENDPROCEDURE Join;
+
+  PROCEDURE ReturnStatement (CONST s: Node)
+    VAR c, t, tmp: Txt;
+        r, ret: Rep;
+    IF CurRoutine = Sym NIL THEN FailS(s^.line, "RETURN outside a routine (IX.A.6)") ENDIF;
+    IF CurRoutine^.kind = S_PROCESS THEN FailS(s^.line, "a process ends with TERMINATE_PROCESS (IX.A.7)") ENDIF;
+    ret := CurRoutine^.ret;
+    IF s^.a = Node NIL THEN
+      IF ret^.kind # R_VOID THEN FailS(s^.line, "RETURN needs a value here (IX.A.6)") ENDIF;
+      CopyOut();
+      LeaveMonitor();
+      PopTo(XBase);
+      EmitS("return;");
+      RETURN
+    ENDIF;
+    IF ret^.kind = R_VOID THEN FailS(s^.line, "this routine returns no value (IX.A.6)") ENDIF;
+    Expr(s^.a, ret, c, r);
+    CheckType(s^.line, ret, r);
+    tmp := Fresh("rv");
+    SB();
+    SA("{ ");
+    ST(CType(ret));
+    SA(" ");
+    ST(tmp);
+    SA(" = ");
+    ST(Convert(c, ret, r));
+    SA(";");
+    t := SE();
+    Emit(t);
+    CopyOut();
+    LeaveMonitor();
+    PopTo(XBase);
+    Emit3("return ", tmp, "; }");
+    RETURN
+  ENDPROCEDURE ReturnStatement;
+
+  PROCEDURE BeginStatement (CONST s: Node)
+    EmitS("{");
+    OpenScope(FALSE);
+    Declarations(s^.a^.a);
+    BlockStatements(s^.a);
+    AwaitProcesses();
+    CloseScope();
+    EmitS("}");
+    RETURN
+  ENDPROCEDURE BeginStatement;
+
+  (* ---- labels and GOTO (VII.C, IX.A.4) ------------------------------------------- *)
+  (* A label is declared by LABEL at the head of a block and labels a *)
+  (* top-level statement of that block; a GOTO leaves lexical scopes but *)
+  (* not a routine, process or module. *)
+
+  PROCEDURE PlaceLabel (CONST s: Node)
+    VAR sym: Sym := FindHere(s^.text);
+    IF (sym = Sym NIL) OR (sym^.kind # S_LABEL) THEN
+      FailN(s^.line, s^.text, " labels a statement but is not declared by LABEL in this block (VII.C)")
+    ENDIF;
+    IF sym^.hasmv THEN FailN(s^.line, s^.text, " labels two statements") ENDIF;
+    sym^.hasmv := TRUE;
+    Emit3("", sym^.cname, ": ;");
+    IF BlockFrame[BTop] # 0 THEN
+      Emit3("rt_xtop = &", BlockFrame[BTop], ";")
+    ELSIF BlockXs[BTop] # 0 THEN
+      Emit3("rt_xtop = ", BlockXs[BTop], ";")
+    ENDIF;
+    RETURN
+  ENDPROCEDURE PlaceLabel;
+
+  PROCEDURE GotoStatement (CONST s: Node)
+    VAR sym: Sym := Lookup(s^.name, s^.line);
+    IF sym^.kind # S_LABEL THEN FailN(s^.line, s^.name, " is not a label") ENDIF;
+    IF sym^.level # Level THEN
+      FailN(s^.line, s^.name, ": GOTO does not leave a routine or process (IX.A.4)")
+    ENDIF;
+    sym^.readonly := TRUE;
+    Emit3("goto ", sym^.cname, ";");
+    RETURN
+  ENDPROCEDURE GotoStatement;
+
+  (* a label that a GOTO names must label a statement *)
+  PROCEDURE CheckLabels (CONST decls: Node)
+    VAR d: Node := decls;
+        nm: Node;
+        sym: Sym;
+    WHILE d # Node NIL DO
+      IF d^.kind = N_LABEL THEN
+        nm := d^.a;
+        WHILE nm # Node NIL DO
+          sym := FindHere(nm^.name);
+          IF (sym # Sym NIL) AND (sym^.kind = S_LABEL) AND sym^.readonly AND NOT sym^.hasmv THEN
+            FailN(nm^.line, nm^.name, " is the target of a GOTO but labels no statement of its block")
+          ENDIF;
+          nm := nm^.next
+        ENDWHILE
+      ENDIF;
+      d := d^.next
+    ENDWHILE;
+    RETURN
+  ENDPROCEDURE CheckLabels;

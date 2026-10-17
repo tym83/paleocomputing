@@ -1,0 +1,38 @@
+(* Part Three, III.E "PDP11 Disk Track Reservation", p.1112 (E-19) *)
+MODULE trackreservation (* page 20 Modula Report [17]. *)
+  IMPORT MyStandardConventions;
+  EXPORT newtrack,returntrack;
+  CONST
+    m: INT = 64; w: INT = 16; (* there are m*w tracks *)
+  REPRESENTATION
+    bands = INTEGER [0..(m-1)];
+    bandtracks = INTEGER [0..(w-1)];
+    bits = ARRAY(bandtracks OF BOOLEAN);
+  VAR
+    reserved: ARRAY(bands OF bits);
+
+  PROCEDURE newtrack RETURNS INT ()
+    (* reserves a new track, yields its index as the *)
+    (* returned value if a free track is found. *)
+    (* otherwise, returns value -1. *)
+    FOR i : bands DO
+      FOR j : bandtracks DO
+        IF NOT reserved[i][j] THEN
+          reserved[i][j]:= TRUE;
+          RETURN i*w + j
+        ENDIF;
+      ENDFOR;
+    ENDFOR;
+    RETURN -1;
+  ENDPROCEDURE newtrack;
+
+  PROCEDURE returntrack(CONST k: INT)
+    (* assume 0 <= k < m*w *)
+    reserved[k DIV w][k MOD w] := FALSE;
+  ENDPROCEDURE returntrack;
+
+  (* body of module trackreservation--mark all tracks free *)
+
+  FOR i: bands DO reserved[i] := bits(FALSE) ENDFOR
+
+ENDMODULE trackreservation;

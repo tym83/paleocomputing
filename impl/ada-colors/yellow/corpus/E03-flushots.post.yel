@@ -1,0 +1,5 @@
+;
+Write("D1 before D2: "); Write((D1.Year = D2.Year) AND (D1.Month < D2.Month)); WriteLn();
+Write("female employees aged 60 or older with a flu shot since 1976: ");
+Write(Count); WriteLn()
+ENDMODULE FluShots

@@ -1,0 +1,12 @@
+(* Section H, team 126-02, A 2.5.4 YELLOW, p.1898: days in a month *)
+REPRESENTATION M = ORDERED (JAN,FEB,.....) ;
+VAR MONTH      :  M ;
+VAR DAYS       :  INTEGER [1..31] ;
+SELECT MONTH
+       CASE SEP,APR,JUN,NOV => DAYS := 30 ;
+       CASE FEB, => IF YEAR MOD 4 = 0
+                      THEN DAYS := 29
+                      ELSE DAYS := 28
+                      ENDIF
+       ELSE => DAYS := 31
+ENDSELECT ;

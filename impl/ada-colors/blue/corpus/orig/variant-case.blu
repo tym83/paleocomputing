@@ -1,0 +1,16 @@
+% BLUE Language Specification, 15 Feb 1978, section 4.5.5.2, example 2, page 4-39
+% (DTIC ADB950587, PDF page 1585). Transcribed as printed; ... marks elided code.
+     TYPE T(TAG B: BOOLEAN) =
+          RECORD
+               SELECT B FROM
+                    TRUE --> VAR X: INTEGER; END;
+                    FALSE --> VAR Y: FLOAT(8); END;
+               END SELECT;
+          END RECORD;
+     VAR V: ARRAY [1:5] OF T(ANY);
+     ...
+     WITH W NAMING V(3)
+          SELECT W.B FROM
+               TRUE --> W.X :=  W.X + 2; END;
+               FALSE --> W.Y := 3.5; END;
+          END SELECT;

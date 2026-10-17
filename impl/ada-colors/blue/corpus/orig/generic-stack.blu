@@ -1,0 +1,49 @@
+% BLUE Language Specification, 15 Feb 1978, section 5.2, example 4, page 5-12
+% (DTIC ADB950587, PDF page 1633). Transcribed as printed.
+   MODULE M EXPORTS (STACK);
+        TYPE STACK (ELEMENT_TYPE: TYPE,
+                    LENGTH: INTEGER [1:FIXED_MAX(0, 2, STD)]) =
+             RECORD
+                  VAR ELEMENTS: ARRAY [1:LENGTH] OF ELEMENT_TYPE;
+                  VAR TOP: INTEGER [0:LENGTH];
+             END RECORD;
+
+        PROCEDURE STACK$CLEAR (# S: STACK (?, ?));
+             S.TOP := 0;
+        END PROCEDURE STACK$CLEAR;
+
+        PROCEDURE STACK$PUSH (E: ?T # S: STACK (?T, ?LENGTH))
+                  SIGNALS (STACK_OVERFLOW)
+                  WHERE T NEEDS (STORE_(T ## T));
+
+             IF S.TOP < LENGTH THEN
+                  S.TOP := S.TOP + 1;
+                  S.ELEMENTS(S.TOP) := E;
+             ELSE
+                  SIGNAL STACK_OVERFLOW;
+             END IF;
+        END PROCEDURE STACK$PUSH;
+
+        PROCEDURE  STACK$POP (#S: STACK(?T, ?LENGTH) # E: ?T)
+                  SIGNALS (STACK_EMPTY)
+                  WHERE T NEEDS (STORE_(T ## T));
+
+             IF S.TOP > 0 THEN
+                  E := S.ELEMENTS (S.TOP);
+                  S.TOP := S.TOP - 1;
+             ELSE
+                  SIGNAL STACK_EMPTY;
+             END IF;
+        END PROCEDURE STACK$POP;
+
+        PROCEDURE STACK$STORE_ (S1: STACK (?T, ?LENGTH) ##
+                                S2: STACK (?T, ?LENGTH))
+             WHERE T NEEDS (STORE_ (T ## T));
+
+             LOOP FOR I IN [1:S1.TOP];
+                  S2.ELEMENTS (I) := S1.ELEMENTS(I);
+             END LOOP I;
+             S2.TOP := S1.TOP;
+        END PROCEDURE STACK$STORE_;
+
+   END MODULE M;

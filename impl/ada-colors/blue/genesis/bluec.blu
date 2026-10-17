@@ -1,0 +1,2978 @@
+MAIN SEGMENT BLUEC
+   USES (TERMINAL);
+% bluec -- a translator for BLUE (SofTech, Language Specification of 15 February
+% 1978), written in BLUE.
+%
+% It reads a BLUE compilation on the standard input and writes C on the standard
+% output; the C is linked with rt/paleo.c. The source of bluec is kept in several
+% files joined in name order: this one holds the declarations of the segment, the
+% next one the main program, the rest the routines (a closed scope lists its
+% declarations, then its statements, then its routines: production [4-2]).
+% References such as "4.5.7" or "[4-63]" are to sections and productions of the
+% 1978 specification.
+%
+% Two rules of the language shape the code. A routine must import every global
+% variable it uses, directly or through the routines it calls (4.1.1); constants
+% need not be imported. So the whole state of the translator lives in heap records
+% reached through the constant pointers W, and needs no imports: the report itself
+% notes that pointers escape the aliasing rules (4.3.4). And character strings have
+% a fixed length (3.7), so texts of any length are slices of one large string, the
+% arena: a TEXT is a position and a length in it.
+
+% ---- token kinds ----------------------------------------------------------------
+CONST K_EOF: INTEGER := 0;
+CONST K_ID: INTEGER := 1;          % identifier
+CONST K_RES: INTEGER := 2;         % reserved word (2.1.6)
+CONST K_SYM: INTEGER := 3;         % other symbol (2.1.5)
+CONST K_NUM: INTEGER := 4;
+CONST K_STR: INTEGER := 5;         % the quoted part of a charstring literal
+CONST K_ENUM: INTEGER := 6;        % \NAME or \'C'
+CONST K_GEN: INTEGER := 7;         % ?NAME, a derived generic parameter (5)
+
+% ---- node kinds: expressions -------------------------------------------------------
+CONST N_INT: INTEGER := 1;
+CONST N_BOOL: INTEGER := 2;
+CONST N_NIL: INTEGER := 3;
+CONST N_STR: INTEGER := 4;         % A: list of N_PART
+CONST N_PART: INTEGER := 5;        % IV = K_STR or K_ENUM, NAME = the text
+CONST N_ENUMLIT: INTEGER := 6;
+CONST N_NAME: INTEGER := 7;
+CONST N_APPLY: INTEGER := 8;       % NAME (A: inputs, B: inouts, C: outputs)
+CONST N_FIELD: INTEGER := 9;       % A . NAME
+CONST N_DEREF: INTEGER := 10;      % A @
+CONST N_INDEX: INTEGER := 11;      % A (B)
+CONST N_SUBSTR: INTEGER := 12;     % A [B : C]
+CONST N_UNOP: INTEGER := 13;       % NAME A
+CONST N_BINOP: INTEGER := 14;      % A NAME B
+CONST N_IN: INTEGER := 15;         % A IN B
+CONST N_RANGE: INTEGER := 16;      % A : B, IV: 1 open below, 2 open above
+CONST N_PAREN: INTEGER := 17;
+CONST N_RECCONS: INTEGER := 18;    % A: list of N_FINIT
+CONST N_FINIT: INTEGER := 19;      % NAME : A
+CONST N_NEW: INTEGER := 20;        % NEW (A)
+
+% ---- node kinds: statements ---------------------------------------------------------
+CONST N_NULL: INTEGER := 30;
+CONST N_ASSIGN: INTEGER := 31;     % A := B
+CONST N_CALL: INTEGER := 32;       % like N_APPLY
+CONST N_IF: INTEGER := 33;         % A: list of N_ARM, B: else body
+CONST N_ARM: INTEGER := 34;        % A: condition or labels, B: body
+CONST N_CASE: INTEGER := 35;       % A: choice, B: arms, C: else body
+CONST N_LOOP: INTEGER := 36;       % A: UNTIL, B: body, C: WHEN
+CONST N_FOR: INTEGER := 37;        % NAME, A: range, B: body
+CONST N_EXIT: INTEGER := 38;
+CONST N_RETURN: INTEGER := 39;
+CONST N_BLOCK: INTEGER := 40;
+CONST N_SIGNAL: INTEGER := 41;
+CONST N_ASSERT: INTEGER := 42;
+CONST N_EXCEPT: INTEGER := 43;     % A: statement, B: handlers
+CONST N_HANDLER: INTEGER := 44;    % A: names, B: body
+CONST N_BODY: INTEGER := 45;       % A: declarations, B: statements
+
+% ---- node kinds: declarations and type specifications --------------------------------
+CONST N_CONST: INTEGER := 50;      % A: names, B: type spec, C: value
+CONST N_VAR: INTEGER := 51;
+CONST N_TYPE: INTEGER := 52;       % NAME, B: type spec
+CONST N_ROUTINE: INTEGER := 53;    % NAME, IV: 1 function, A: params, B: result,
+                                   % C: body, D: signals
+CONST N_PARAM: INTEGER := 54;      % NAME, IV: mode, B: type spec
+CONST N_SEGMENT: INTEGER := 55;    % NAME, IV: 1 main, A: uses, B: body, C: routines
+CONST N_IDENT: INTEGER := 56;      % an element of a list of names
+CONST TS_NAME: INTEGER := 60;      % NAME, A: arguments, B: range
+CONST TS_ARRAY: INTEGER := 61;     % A: low, B: high, C: element type
+CONST TS_RECORD: INTEGER := 62;    % A: list of N_VAR
+CONST TS_ENUM: INTEGER := 63;      % A: list of N_IDENT
+CONST TS_GEN: INTEGER := 64;       % ?NAME in a type argument
+
+% ---- parameter modes (4.3.1) --------------------------------------------------------------
+CONST M_IN: INTEGER := 0;
+CONST M_INOUT: INTEGER := 1;
+CONST M_OUT: INTEGER := 2;
+
+% ---- type kinds -----------------------------------------------------------------------------
+CONST T_INT: INTEGER := 1;
+CONST T_BOOL: INTEGER := 2;
+CONST T_ENUM: INTEGER := 3;
+CONST T_STR: INTEGER := 4;
+CONST T_REC: INTEGER := 5;
+CONST T_PTR: INTEGER := 6;
+CONST T_ARR: INTEGER := 7;
+CONST T_VOID: INTEGER := 8;
+CONST T_NIL: INTEGER := 9;
+
+% ---- symbol kinds --------------------------------------------------------------------------
+CONST Y_VAR: INTEGER := 1;
+CONST Y_CONST: INTEGER := 2;
+CONST Y_TYPE: INTEGER := 3;
+CONST Y_ROUTINE: INTEGER := 4;
+CONST Y_GEN: INTEGER := 5;         % a derived generic length, ?L
+CONST Y_BUILTIN: INTEGER := 6;     % a routine of TERMINAL or of the prelude
+
+% ---- output sections --------------------------------------------------------------------------
+CONST O_TYPEDEFS: INTEGER := 0;
+CONST O_STRUCTS: INTEGER := 1;
+CONST O_GLOBALS: INTEGER := 2;
+CONST O_PROTOS: INTEGER := 3;
+CONST O_HELPERS: INTEGER := 4;
+CONST O_FUNCS: INTEGER := 5;
+CONST O_MAINHEAD: INTEGER := 6;  % int main(...) and the exception names
+CONST O_MAIN: INTEGER := 7;
+CONST O_LAST: INTEGER := 7;
+
+% ---- capacities ---------------------------------------------------------------------------------
+CONST ARENA_SIZE: INTEGER := 64000000;
+CONST MAX_SOURCE: INTEGER := 2000000;
+CONST MAX_TOKENS: INTEGER := 600000;
+CONST HASH_SIZE: INTEGER := 4096;
+
+% the printable characters of ASCII, in order from the blank (code 32)
+CONST GRAPHIC: ASCII_STR(95) :=
+   ' !"#$%&''()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\]^_`abcdefghijklmnopqrstuvwxyz{|}~';
+
+% ---- the data ------------------------------------------------------------------------------------
+TYPE TEXT = RECORD
+   VAR AT, LEN: INTEGER;            % a slice of the arena
+   VAR H: INTEGER;                  % hash of a name, -1 if not computed
+END RECORD;
+
+TYPE TOKEN = RECORD
+   VAR KIND, LINE, IV: INTEGER;   % IV: the value of a number
+   VAR TX: TEXT;
+END RECORD;
+
+TYPE NODE_REC = RECORD
+   VAR KIND, LINE, IV: INTEGER;
+   VAR NAME: TEXT;
+   VAR A, B, C, D, NEXT: PTR(NODE_REC);
+END RECORD;
+TYPE NODE = PTR(NODE_REC);
+
+TYPE TYP_REC = RECORD
+   VAR KIND: INTEGER;
+   VAR LO, HI, LEN: NODE;           % range of an integer, length of a string
+   VAR GEN: TEXT;                   % ?L of ASCII_STR(?L)
+   VAR ELEM, TARGET: PTR(TYP_REC);
+   VAR TARGET_TS: NODE;             % a pointer's target, resolved when first needed
+   VAR FIELDS: PTR(FIELD_REC);
+   VAR LITS: NODE;                  % the literals of an enumerated type
+   VAR CNAME: TEXT;
+END RECORD;
+TYPE TYP = PTR(TYP_REC);
+
+TYPE FIELD_REC = RECORD
+   VAR NAME: TEXT;
+   VAR T: TYP;
+   VAR NEXT: PTR(FIELD_REC);
+END RECORD;
+TYPE FIELD = PTR(FIELD_REC);
+
+TYPE SYM_REC = RECORD
+   VAR KIND, DEPTH: INTEGER;
+   VAR NAME: TEXT;
+   VAR T: TYP;
+   VAR ACCESS: TEXT;                % the C that designates the object
+   VAR HASMV: BOOLEAN;              % a manifest constant (3.1.4.1) ...
+   VAR MV: INTEGER;                 % ... and its value
+   VAR TS: NODE;                    % a type declaration, resolved when first used
+   VAR BUSY: BOOLEAN;
+   VAR FWD: TEXT;                   % the C name of a named record
+   VAR PARAMS: PTR(PARM_REC);
+   VAR RESULT: TYP;
+   VAR CHAIN: PTR(SYM_REC);         % next in the hash bucket
+   VAR SNEXT: PTR(SYM_REC);         % next on the scope stack
+END RECORD;
+TYPE SYM = PTR(SYM_REC);
+
+TYPE PARM_REC = RECORD
+   VAR NAME: TEXT;
+   VAR MODE: INTEGER;
+   VAR T: TYP;
+   VAR NEXT: PTR(PARM_REC);
+END RECORD;
+TYPE PARM = PTR(PARM_REC);
+
+% a translated expression: its C and its type
+TYPE ET = RECORD
+   VAR C: TEXT;
+   VAR T: TYP;
+END RECORD;
+
+% the value of a manifest expression, if it has one
+TYPE MVAL = RECORD
+   VAR OK: BOOLEAN;
+   VAR V: INTEGER;
+END RECORD;
+
+TYPE CHUNK_REC = RECORD
+   VAR T: TEXT;
+   VAR NEXT: PTR(CHUNK_REC);
+END RECORD;
+TYPE CHUNK = PTR(CHUNK_REC);
+
+TYPE BUF = RECORD
+   VAR HEAD, TAIL: CHUNK;
+END RECORD;
+
+% the enclosing constructs a jump leaves: loops, guarded statements, handlers
+TYPE CTX_REC = RECORD
+   VAR KIND: INTEGER;               % 1 routine, 2 loop, 3 guarded, 4 handler
+   VAR NAME: TEXT;                  % exit label, frame or exception variable
+   VAR NEXT: PTR(CTX_REC);
+END RECORD;
+TYPE CTX = PTR(CTX_REC);
+
+TYPE WORLD = RECORD
+   VAR ARENA: ASCII_STR(ARENA_SIZE);
+   VAR TOP: INTEGER;
+   VAR SRC: ARRAY [0:MAX_SOURCE] OF INTEGER;       % character codes
+   VAR NSRC: INTEGER;
+   VAR TOKS: ARRAY [0:MAX_TOKENS] OF TOKEN;
+   VAR NTOKS, POS: INTEGER;
+   VAR TABLE: ARRAY [0:HASH_SIZE] OF SYM;
+   VAR SCOPE: SYM;                  % the scope stack
+   VAR DEPTH: INTEGER;
+   VAR OUT: ARRAY [0:O_LAST] OF BUF;
+   VAR CODE: BUF;                   % the body being translated
+   VAR CTXS: CTX;
+   VAR RESULT: TYP;                 % of the function being translated
+   VAR IN_ROUTINE: BOOLEAN;
+   VAR SERIAL: INTEGER;
+   VAR EXCS: NODE;                  % the exception names seen
+   VAR TY_INT, TY_BOOL, TY_STR, TY_VOID, TY_NIL, TY_ASCII: TYP;
+   VAR ASCII_LITS: NODE;
+END RECORD;
+
+CONST W: PTR(WORLD) := NEW(WORLD);
+
+% ==== the main program ==================================================================
+READ_SOURCE;
+LEX;
+PREDEFINE;
+TRANSLATE (PARSE_COMPILATION ());
+WRITE_OUTPUT;
+
+% ==== texts, the arena and the output ====================================================
+
+% the character with code C, as a string of length one
+FUNCTION CHAR_OF (C: INTEGER) RETURNS (ASCII_STR(1));
+   IF C IN [32:126] THEN
+      RETURN GRAPHIC[C - 32 : C - 32];
+   ORIF C = 9 THEN
+      RETURN ''\HT;
+   ORIF C = 10 THEN
+      RETURN ''\LF;
+   ORIF C = 13 THEN
+      RETURN ''\CR;
+   END IF;
+   RETURN '?';
+END FUNCTION CHAR_OF;
+
+% the code of a character; the language gives no way to ask but through the
+% machine-dependent TO_BIT (3.6.6.1), so the printable characters are looked up
+FUNCTION CODE_OF (S: ASCII_STR(1)) RETURNS (INTEGER);
+   LOOP FOR I IN [0:94] DO
+      IF GRAPHIC[I:I] = S THEN
+         RETURN I + 32;
+      END IF;
+   END LOOP I;
+   IF S = ''\HT THEN
+      RETURN 9;
+   ORIF S = ''\LF THEN
+      RETURN 10;
+   END IF;
+   RETURN 13;
+END FUNCTION CODE_OF;
+
+% the hash of a name: its length and three of its characters
+FUNCTION HASH_CODES (L, C1, C2, C3: INTEGER) RETURNS (INTEGER);
+   RETURN (L * 31 + C1 * 7 + C2 * 3 + C3) MOD HASH_SIZE;
+END FUNCTION HASH_CODES;
+
+FUNCTION HASH_OF (S: ASCII_STR(?L)) RETURNS (INTEGER);
+   IF L = 0 THEN
+      RETURN 0;
+   END IF;
+   RETURN HASH_CODES (L, CODE_OF (S[0:0]), CODE_OF (S[L // 2 : L // 2]),
+                      CODE_OF (S[L - 1 : L - 1]));
+END FUNCTION HASH_OF;
+
+% a text holding a copy of S
+FUNCTION MK (S: ASCII_STR(?L)) RETURNS (TEXT);
+   CONST AT: INTEGER := W@.TOP;
+   IF AT + L > ARENA_SIZE THEN
+      PUT_LINE ('*** the arena is full');
+      STOP (2);
+   END IF;
+   W@.ARENA[AT : AT + L - 1] := S;
+   W@.TOP := AT + L;
+   RETURN (AT: AT, LEN: L, H: -1);
+END FUNCTION MK;
+
+% the same, with the hash of a name
+FUNCTION MKN (S: ASCII_STR(?L)) RETURNS (TEXT);
+   VAR T: TEXT := MK (S);
+   T.H := HASH_OF (S);
+   RETURN T;
+END FUNCTION MKN;
+
+% the characters of a text; L must be T.LEN
+FUNCTION STR (T: TEXT, L: INTEGER) RETURNS (ASCII_STR(L));
+   RETURN W@.ARENA[T.AT : T.AT + L - 1];
+END FUNCTION STR;
+
+FUNCTION TEQ (A, B: TEXT) RETURNS (BOOLEAN);
+   IF A.LEN <> B.LEN THEN
+      RETURN FALSE;
+   END IF;
+   RETURN STR (A, A.LEN) = STR (B, B.LEN);
+END FUNCTION TEQ;
+
+FUNCTION TEQS (A: TEXT, S: ASCII_STR(?L)) RETURNS (BOOLEAN);
+   IF A.LEN <> L THEN
+      RETURN FALSE;
+   END IF;
+   RETURN STR (A, A.LEN) = S;
+END FUNCTION TEQS;
+
+FUNCTION CAT (A, B: TEXT) RETURNS (TEXT);
+   RETURN MK (STR (A, A.LEN) !! STR (B, B.LEN));
+END FUNCTION CAT;
+
+FUNCTION CATS (A: TEXT, S: ASCII_STR(?L)) RETURNS (TEXT);
+   RETURN MK (STR (A, A.LEN) !! S);
+END FUNCTION CATS;
+
+% P with each @ replaced by the next of A, B, C, D
+FUNCTION FMT4 (P: ASCII_STR(?L), A, B, C, D: TEXT) RETURNS (TEXT);
+   CONST AT: INTEGER := W@.TOP;
+   VAR N: INTEGER := 0;
+   VAR START: INTEGER := 0;
+   VAR R: TEXT;
+   LOOP FOR I IN [0:L - 1] DO
+      IF P[I:I] = '@' THEN
+         R := MK (P[START : I - 1]);
+         SELECT N FROM
+            0 --> R := MK (STR (A, A.LEN)); END;
+            1 --> R := MK (STR (B, B.LEN)); END;
+            2 --> R := MK (STR (C, C.LEN)); END;
+            ELSE --> R := MK (STR (D, D.LEN)); END;
+         END SELECT;
+         N := N + 1;
+         START := I + 1;
+      END IF;
+   END LOOP I;
+   R := MK (P[START : L - 1]);
+   RETURN (AT: AT, LEN: W@.TOP - AT, H: -1);
+END FUNCTION FMT4;
+
+FUNCTION FMT1 (P: ASCII_STR(?L), A: TEXT) RETURNS (TEXT);
+   RETURN FMT4 (P, A, A, A, A);
+END FUNCTION FMT1;
+
+FUNCTION FMT2 (P: ASCII_STR(?L), A, B: TEXT) RETURNS (TEXT);
+   RETURN FMT4 (P, A, B, B, B);
+END FUNCTION FMT2;
+
+FUNCTION FMT3 (P: ASCII_STR(?L), A, B, C: TEXT) RETURNS (TEXT);
+   RETURN FMT4 (P, A, B, C, C);
+END FUNCTION FMT3;
+
+FUNCTION NUM (V: INTEGER) RETURNS (TEXT);
+   RETURN MK (TO_CHAR (V));
+END FUNCTION NUM;
+
+% a fresh C name: the base and a serial number
+FUNCTION NEW_NAME (BASE: ASCII_STR(?L)) RETURNS (TEXT);
+   W@.SERIAL := W@.SERIAL + 1;
+   RETURN MK (BASE !! TO_CHAR (W@.SERIAL));
+END FUNCTION NEW_NAME;
+
+PROCEDURE APPEND (T: TEXT # B: BUF);
+   VAR C: CHUNK := NEW (CHUNK_REC);
+   C@.T := T;
+   C@.NEXT := NIL;
+   IF B.TAIL = NIL THEN
+      B.HEAD := C;
+   ELSE
+      B.TAIL@.NEXT := C;
+   END IF;
+   B.TAIL := C;
+END PROCEDURE APPEND;
+
+PROCEDURE EMIT (SEC: INTEGER, T: TEXT);
+   APPEND (T # W@.OUT(SEC));
+END PROCEDURE EMIT;
+
+PROCEDURE EMITS (SEC: INTEGER, S: ASCII_STR(?L));
+   APPEND (MK (S) # W@.OUT(SEC));
+END PROCEDURE EMITS;
+
+% a line of the body being translated
+PROCEDURE CODE (T: TEXT);
+   APPEND (T # W@.CODE);
+END PROCEDURE CODE;
+
+PROCEDURE CODES (S: ASCII_STR(?L));
+   APPEND (MK (S) # W@.CODE);
+END PROCEDURE CODES;
+
+PROCEDURE PUT_BUF (B: BUF);
+   VAR C: CHUNK := B.HEAD;
+   LOOP UNTIL C = NIL DO
+      BLOCK
+         CONST T: TEXT := C@.T;
+         PUT_LINE (STR (T, T.LEN));
+      END BLOCK;
+      C := C@.NEXT;
+   END LOOP;
+END PROCEDURE PUT_BUF;
+
+PROCEDURE WRITE_OUTPUT ();
+   LOOP FOR SEC IN [0:O_LAST] DO
+      PUT_BUF (W@.OUT(SEC));
+   END LOOP SEC;
+END PROCEDURE WRITE_OUTPUT;
+
+% a translation-time error ends the translation
+PROCEDURE FAIL (LINE: INTEGER, MSG: ASCII_STR(?L));
+   PUT_LINE ('line ' !! TO_CHAR (LINE) !! ': ' !! MSG);
+   STOP (1);
+END PROCEDURE FAIL;
+
+PROCEDURE FAILT (LINE: INTEGER, MSG: ASCII_STR(?L), T: TEXT);
+   FAIL (LINE, MSG !! STR (T, T.LEN));
+END PROCEDURE FAILT;
+
+% ==== lexical structure (section 2) =======================================================
+
+PROCEDURE READ_SOURCE ();
+   VAR C: INTEGER := GET_CODE ();
+   LOOP UNTIL C < 0 DO
+      IF W@.NSRC >= MAX_SOURCE THEN
+         FAIL (0, 'the source is too long');
+      END IF;
+      W@.SRC(W@.NSRC) := C;
+      W@.NSRC := W@.NSRC + 1;
+      C := GET_CODE ();
+   END LOOP;
+   W@.SRC(W@.NSRC) := 0;
+END PROCEDURE READ_SOURCE;
+
+FUNCTION AT_SRC (I: INTEGER) RETURNS (INTEGER);
+   IF I >= W@.NSRC THEN
+      RETURN 0;
+   END IF;
+   RETURN W@.SRC(I);
+END FUNCTION AT_SRC;
+
+FUNCTION IS_LETTER (C: INTEGER) RETURNS (BOOLEAN);
+   RETURN C IN [65:90];
+END FUNCTION IS_LETTER;
+
+FUNCTION IS_DIGIT (C: INTEGER) RETURNS (BOOLEAN);
+   RETURN C IN [48:57];
+END FUNCTION IS_DIGIT;
+
+% a letter, digit or break may continue an identifier [2-10]
+FUNCTION IS_IDCHAR (C: INTEGER) RETURNS (BOOLEAN);
+   RETURN IS_LETTER (C) ! IS_DIGIT (C) ! C = 95;
+END FUNCTION IS_IDCHAR;
+
+% the text of the source characters FIRST .. BEYOND - 1, with the hash of a name
+FUNCTION SOURCE_TEXT (FIRST, BEYOND: INTEGER) RETURNS (TEXT);
+   CONST AT: INTEGER := W@.TOP;
+   CONST L: INTEGER := BEYOND - FIRST;
+   VAR T: TEXT;
+   IF AT + L > ARENA_SIZE THEN
+      FAIL (0, 'the arena is full');
+   END IF;
+   LOOP FOR I IN [FIRST : BEYOND - 1] DO
+      W@.ARENA[W@.TOP : W@.TOP] := CHAR_OF (W@.SRC(I));
+      W@.TOP := W@.TOP + 1;
+   END LOOP I;
+   T := (AT: AT, LEN: L, H: 0);
+   IF L > 0 THEN
+      T.H := HASH_CODES (L, W@.SRC(FIRST), W@.SRC(FIRST + L // 2), W@.SRC(BEYOND - 1));
+   END IF;
+   RETURN T;
+END FUNCTION SOURCE_TEXT;
+
+% the reserved words of 2.1.6
+FUNCTION IS_RESERVED (T: TEXT) RETURNS (BOOLEAN);
+   CONST WORDS: ASCII_STR(290) :=
+      ' AND ANY ARRAY ASSERT BIN BLOCK CONST DO ELSE END EXCEPT EXIT FALSE FOR FROM'
+      ' FUNCTION GO HEX IF IN INLINE LOOP MAIN MOD MODULE NAMING NEEDS NIL NOT OCT OF'
+      ' OR ORIF PAR_BLOCK PATH PROCEDURE RECORD REP RETURN SEGMENT SELECT SIGNAL TAG'
+      ' TERMINATE THEN TO TRUE TYPE UNTIL VAR WHEN WHERE WITH XOR ';
+   CONST L: INTEGER := T.LEN;
+   LOOP FOR I IN [0 : 290 - L - 2] DO
+      IF WORDS[I:I] = ' ' THEN
+         IF WORDS[I + L + 1 : I + L + 1] = ' ' THEN
+            IF WORDS[I + 1 : I + L] = STR (T, L) THEN
+               RETURN TRUE;
+            END IF;
+         END IF;
+      END IF;
+   END LOOP I;
+   RETURN FALSE;
+END FUNCTION IS_RESERVED;
+
+PROCEDURE ADD_TOKEN (KIND, LINE, IV: INTEGER, TX: TEXT);
+   IF W@.NTOKS >= MAX_TOKENS THEN
+      FAIL (LINE, 'too many tokens');
+   END IF;
+   W@.TOKS(W@.NTOKS) := (KIND: KIND, LINE: LINE, IV: IV, TX: TX);
+   W@.NTOKS := W@.NTOKS + 1;
+END PROCEDURE ADD_TOKEN;
+
+% the length of the other-symbol at I [2-12], longest first
+FUNCTION SYMBOL_LENGTH (I: INTEGER) RETURNS (INTEGER);
+   CONST C: INTEGER := AT_SRC (I);
+   CONST D: INTEGER := AT_SRC (I + 1);
+   IF C = 45 & D = 45 & AT_SRC (I + 2) = 62 THEN       % -->
+      RETURN 3;
+   END IF;
+   IF (C = 58 & D = 61) ! (C = 45 & D = 62) ! (C = 60 & D = 61) ! (C = 62 & D = 61)
+      ! (C = 60 & D = 62) ! (C = 42 & D = 42) ! (C = 47 & D = 47) ! (C = 36 & D = 36)
+      ! (C = 33 & D = 33) THEN                          % := -> <= >= <> ** // $$ !!
+      RETURN 2;
+   END IF;
+   RETURN 1;
+END FUNCTION SYMBOL_LENGTH;
+
+PROCEDURE LEX ();
+   VAR I: INTEGER := 0;
+   VAR LINE: INTEGER := 1;
+   VAR C, J, V: INTEGER;
+   LOOP UNTIL I >= W@.NSRC DO
+      C := W@.SRC(I);
+      IF C = 10 THEN
+         LINE := LINE + 1;
+         I := I + 1;
+      ORIF C = 32 ! C = 9 ! C = 13 ! C = 12 THEN
+         I := I + 1;
+      ORIF C = 37 THEN                                  % a comment, 2.1.8
+         I := I + 1;
+         LOOP UNTIL I >= W@.NSRC ! W@.SRC(I) = 37 ! W@.SRC(I) = 10 DO
+            I := I + 1;
+         END LOOP;
+         IF AT_SRC (I) = 37 THEN
+            I := I + 1;
+         END IF;
+      ORIF C = 39 THEN                                  % 'quoted', 3.7.2
+         BLOCK
+            CONST AT: INTEGER := W@.TOP;
+            I := I + 1;
+            LOOP
+               IF I >= W@.NSRC ! W@.SRC(I) = 10 THEN
+                  FAIL (LINE, 'a string must end on its line');
+               END IF;
+               IF W@.SRC(I) = 39 THEN
+                  IF AT_SRC (I + 1) <> 39 THEN
+                     I := I + 1;
+                     EXIT;
+                  END IF;
+                  I := I + 1;
+               END IF;
+               W@.ARENA[W@.TOP : W@.TOP] := CHAR_OF (W@.SRC(I));
+               W@.TOP := W@.TOP + 1;
+               I := I + 1;
+            END LOOP;
+            ADD_TOKEN (K_STR, LINE, 0, (AT: AT, LEN: W@.TOP - AT, H: -1));
+         END BLOCK;
+      ORIF C = 92 THEN                                  % \NAME or \'C', 3.4.2
+         J := I + 1;
+         IF AT_SRC (J) = 39 & AT_SRC (J + 1) = 39 & AT_SRC (J + 2) = 39 & AT_SRC (J + 3) = 39 THEN
+            J := I + 5;
+         ORIF AT_SRC (J) = 39 & AT_SRC (J + 2) = 39 THEN
+            J := I + 4;
+         ORIF AT_SRC (J) = 91 ! AT_SRC (J) = 93 THEN    % \[ and \] of the ASCII table
+            J := I + 2;
+         ELSE
+            LOOP UNTIL NOT IS_IDCHAR (AT_SRC (J)) DO
+               J := J + 1;
+            END LOOP;
+            IF J = I + 1 THEN
+               FAIL (LINE, 'a stray backslash');
+            END IF;
+         END IF;
+         ADD_TOKEN (K_ENUM, LINE, 0, SOURCE_TEXT (I, J));
+         I := J;
+      ORIF C = 63 THEN                                  % ?NAME, section 5
+         J := I + 1;
+         LOOP UNTIL NOT IS_IDCHAR (AT_SRC (J)) DO
+            J := J + 1;
+         END LOOP;
+         ADD_TOKEN (K_GEN, LINE, 0, SOURCE_TEXT (I, J));
+         I := J;
+      ORIF IS_LETTER (C) THEN
+         J := I;
+         LOOP UNTIL NOT IS_IDCHAR (AT_SRC (J)) DO
+            J := J + 1;
+         END LOOP;
+         BLOCK
+            CONST T: TEXT := SOURCE_TEXT (I, J);
+            IF IS_RESERVED (T) THEN
+               ADD_TOKEN (K_RES, LINE, 0, T);
+            ELSE
+               ADD_TOKEN (K_ID, LINE, 0, T);
+            END IF;
+         END BLOCK;
+         I := J;
+      ORIF IS_DIGIT (C) THEN
+         J := I;
+         V := 0;
+         LOOP UNTIL NOT IS_DIGIT (AT_SRC (J)) DO
+            V := V * 10 + AT_SRC (J) - 48;
+            J := J + 1;
+         END LOOP;
+         ADD_TOKEN (K_NUM, LINE, V, SOURCE_TEXT (I, J));
+         I := J;
+      ELSE
+         J := I + SYMBOL_LENGTH (I);
+         ADD_TOKEN (K_SYM, LINE, 0, SOURCE_TEXT (I, J));
+         I := J;
+      END IF;
+   END LOOP;
+   ADD_TOKEN (K_EOF, LINE, 0, MK (''));
+END PROCEDURE LEX;
+
+% ==== the parser: segments, declarations, statements ====================================
+% Productions are named as in Appendix A of the specification.
+
+FUNCTION CUR () RETURNS (TOKEN);
+   RETURN W@.TOKS(W@.POS);
+END FUNCTION CUR;
+
+FUNCTION AHEAD (K: INTEGER) RETURNS (TOKEN);
+   IF W@.POS + K >= W@.NTOKS THEN
+      RETURN W@.TOKS(W@.NTOKS - 1);
+   END IF;
+   RETURN W@.TOKS(W@.POS + K);
+END FUNCTION AHEAD;
+
+FUNCTION LINE_NOW () RETURNS (INTEGER);
+   RETURN W@.TOKS(W@.POS).LINE;
+END FUNCTION LINE_NOW;
+
+% is the current token the word or symbol S?
+FUNCTION IS (S: ASCII_STR(?L)) RETURNS (BOOLEAN);
+   CONST T: TOKEN := W@.TOKS(W@.POS);
+   IF T.KIND = K_SYM ! T.KIND = K_RES ! T.KIND = K_ID THEN
+      RETURN TEQS (T.TX, S);
+   END IF;
+   RETURN FALSE;
+END FUNCTION IS;
+
+FUNCTION IS_KIND (K: INTEGER) RETURNS (BOOLEAN);
+   RETURN W@.TOKS(W@.POS).KIND = K;
+END FUNCTION IS_KIND;
+
+PROCEDURE SKIP ();
+   IF W@.POS < W@.NTOKS - 1 THEN
+      W@.POS := W@.POS + 1;
+   END IF;
+END PROCEDURE SKIP;
+
+FUNCTION ACCEPT (S: ASCII_STR(?L)) RETURNS (BOOLEAN);
+   IF IS (S) THEN
+      SKIP;
+      RETURN TRUE;
+   END IF;
+   RETURN FALSE;
+END FUNCTION ACCEPT;
+
+PROCEDURE EXPECT (S: ASCII_STR(?L));
+   IF NOT ACCEPT (S) THEN
+      BLOCK
+         CONST T: TEXT := CUR ().TX;
+         FAIL (LINE_NOW (), S !! ' expected, not ' !! STR (T, T.LEN));
+      END BLOCK;
+   END IF;
+END PROCEDURE EXPECT;
+
+FUNCTION IDENT () RETURNS (TEXT);
+   CONST T: TOKEN := CUR ();
+   IF T.KIND <> K_ID THEN
+      FAILT (T.LINE, 'an identifier expected, not ', T.TX);
+   END IF;
+   SKIP;
+   RETURN T.TX;
+END FUNCTION IDENT;
+
+FUNCTION NEW_NODE (KIND, LINE: INTEGER) RETURNS (NODE);
+   VAR N: NODE := NEW (NODE_REC);
+   N@ := (KIND: KIND, LINE: LINE, IV: 0, NAME: (AT: 0, LEN: 0, H: 0),
+          A: NIL, B: NIL, C: NIL, D: NIL, NEXT: NIL);
+   RETURN N;
+END FUNCTION NEW_NODE;
+
+% append N to the list HEAD .. TAIL
+PROCEDURE ADD_LIST (N: NODE # HEAD, TAIL: NODE);
+   IF HEAD = NIL THEN
+      HEAD := N;
+   ELSE
+      TAIL@.NEXT := N;
+   END IF;
+   TAIL := N;
+END PROCEDURE ADD_LIST;
+
+FUNCTION LIST_LENGTH (N: NODE) RETURNS (INTEGER);
+   VAR K: INTEGER := 0;
+   VAR P: NODE := N;
+   LOOP UNTIL P = NIL DO
+      K := K + 1;
+      P := P@.NEXT;
+   END LOOP;
+   RETURN K;
+END FUNCTION LIST_LENGTH;
+
+FUNCTION IDENT_NODE () RETURNS (NODE);
+   VAR N: NODE := NEW_NODE (N_IDENT, LINE_NOW ());
+   N@.NAME := IDENT ();
+   RETURN N;
+END FUNCTION IDENT_NODE;
+
+% identifier,...
+FUNCTION IDENT_LIST () RETURNS (NODE);
+   VAR HEAD, TAIL: NODE := NIL;
+   ADD_LIST (IDENT_NODE () # HEAD, TAIL);
+   LOOP UNTIL NOT ACCEPT (',') DO
+      ADD_LIST (IDENT_NODE () # HEAD, TAIL);
+   END LOOP;
+   RETURN HEAD;
+END FUNCTION IDENT_LIST;
+
+% ---- segments [4-4] ---------------------------------------------------------------------
+FUNCTION PARSE_COMPILATION () RETURNS (NODE);
+   VAR HEAD, TAIL: NODE := NIL;
+   LOOP UNTIL IS_KIND (K_EOF) DO
+      ADD_LIST (PARSE_SEGMENT () # HEAD, TAIL);
+   END LOOP;
+   RETURN HEAD;
+END FUNCTION PARSE_COMPILATION;
+
+PROCEDURE SKIP_PARENS ();
+   VAR DEPTH: INTEGER := 0;
+   LOOP
+      IF IS ('(') THEN
+         DEPTH := DEPTH + 1;
+      ORIF IS (')') THEN
+         DEPTH := DEPTH - 1;
+      END IF;
+      SKIP;
+   END LOOP WHEN DEPTH = 0;
+END PROCEDURE SKIP_PARENS;
+
+FUNCTION PARSE_SEGMENT () RETURNS (NODE);
+   VAR S: NODE := NEW_NODE (N_SEGMENT, LINE_NOW ());
+   VAR HEAD, TAIL: NODE := NIL;
+   IF ACCEPT ('MAIN') THEN
+      S@.IV := 1;
+   END IF;
+   EXPECT ('SEGMENT');
+   S@.NAME := IDENT ();
+   IF ACCEPT ('USES') THEN                         % [4-6]
+      EXPECT ('(');
+      LOOP
+         ADD_LIST (IDENT_NODE () # HEAD, TAIL);
+         IF IS ('(') THEN
+            SKIP_PARENS;
+         END IF;
+      END LOOP WHEN NOT ACCEPT (',');
+      EXPECT (')');
+      S@.A := HEAD;
+   END IF;
+   IF ACCEPT ('DEFINES') THEN                      % [4-11]
+      IF IS ('(') THEN
+         SKIP_PARENS;
+      ELSE
+         SKIP;
+      END IF;
+   END IF;
+   EXPECT (';');
+   S@.B := PARSE_BODY ();
+   S@.C := PARSE_ROUTINES ();
+   EXPECT ('END');
+   EXPECT ('SEGMENT');
+   IF NOT TEQ (IDENT (), S@.NAME) THEN
+      FAILT (LINE_NOW (), 'END SEGMENT expected for ', S@.NAME);
+   END IF;
+   EXPECT (';');
+   RETURN S;
+END FUNCTION PARSE_SEGMENT;
+
+% declarations and statements [4-1]
+FUNCTION PARSE_BODY () RETURNS (NODE);
+   VAR B: NODE := NEW_NODE (N_BODY, LINE_NOW ());
+   B@.A := PARSE_DECLARATIONS ();
+   B@.B := PARSE_STATEMENTS ();
+   RETURN B;
+END FUNCTION PARSE_BODY;
+
+FUNCTION PARSE_ROUTINES () RETURNS (NODE);
+   VAR HEAD, TAIL: NODE := NIL;
+   LOOP UNTIL NOT (IS ('PROCEDURE') ! IS ('FUNCTION') ! IS ('INLINE')) DO
+      ADD_LIST (PARSE_ROUTINE () # HEAD, TAIL);
+   END LOOP;
+   RETURN HEAD;
+END FUNCTION PARSE_ROUTINES;
+
+FUNCTION PARSE_DECLARATIONS () RETURNS (NODE);
+   VAR HEAD, TAIL: NODE := NIL;
+   LOOP
+      IF IS ('CONST') ! IS ('VAR') THEN
+         ADD_LIST (PARSE_OBJECT_DECL () # HEAD, TAIL);
+      ORIF IS ('TYPE') THEN
+         ADD_LIST (PARSE_TYPE_DECL () # HEAD, TAIL);
+      ELSE
+         EXIT;
+      END IF;
+   END LOOP;
+   RETURN HEAD;
+END FUNCTION PARSE_DECLARATIONS;
+
+% [3-4] [3-6]
+FUNCTION PARSE_OBJECT_DECL () RETURNS (NODE);
+   VAR D: NODE := NEW_NODE (N_VAR, LINE_NOW ());
+   IF ACCEPT ('CONST') THEN
+      D@.KIND := N_CONST;
+   ELSE
+      EXPECT ('VAR');
+   END IF;
+   D@.A := IDENT_LIST ();
+   EXPECT (':');
+   D@.B := PARSE_TYPE_SPEC ();
+   IF ACCEPT (':=') THEN
+      D@.C := PARSE_EXPR ();
+   ORIF D@.KIND = N_CONST THEN
+      FAIL (D@.LINE, 'a constant needs a value');
+   END IF;
+   EXPECT (';');
+   RETURN D;
+END FUNCTION PARSE_OBJECT_DECL;
+
+% [3-211]
+FUNCTION PARSE_TYPE_DECL () RETURNS (NODE);
+   VAR D: NODE := NEW_NODE (N_TYPE, LINE_NOW ());
+   EXPECT ('TYPE');
+   D@.NAME := IDENT ();
+   EXPECT ('=');
+   D@.B := PARSE_TYPE_SPEC ();
+   EXPECT (';');
+   RETURN D;
+END FUNCTION PARSE_TYPE_DECL;
+
+% [3-8]
+FUNCTION PARSE_TYPE_SPEC () RETURNS (NODE);
+   VAR N: NODE;
+   VAR HEAD, TAIL: NODE := NIL;
+   CONST LINE: INTEGER := LINE_NOW ();
+   IF ACCEPT ('ARRAY') THEN                        % [3-147]
+      N := NEW_NODE (TS_ARRAY, LINE);
+      EXPECT ('[');
+      N@.A := PARSE_EXPR ();
+      EXPECT (':');
+      N@.B := PARSE_EXPR ();
+      EXPECT (']');
+      EXPECT ('OF');
+      N@.C := PARSE_TYPE_SPEC ();
+      RETURN N;
+   END IF;
+   IF ACCEPT ('RECORD') THEN                       % [3-160]
+      N := NEW_NODE (TS_RECORD, LINE);
+      LOOP UNTIL NOT IS ('VAR') DO
+         BLOCK
+            VAR F: NODE := NEW_NODE (N_VAR, LINE_NOW ());
+            SKIP;
+            F@.A := IDENT_LIST ();
+            EXPECT (':');
+            F@.B := PARSE_TYPE_SPEC ();
+            EXPECT (';');
+            ADD_LIST (F # HEAD, TAIL);
+         END BLOCK;
+      END LOOP;
+      N@.A := HEAD;
+      EXPECT ('END');
+      EXPECT ('RECORD');
+      RETURN N;
+   END IF;
+   N := NEW_NODE (TS_NAME, LINE);
+   N@.NAME := IDENT ();
+   IF TEQS (N@.NAME, 'ENUM') THEN                  % [3-83]
+      N@.KIND := TS_ENUM;
+      EXPECT ('(');
+      LOOP
+         BLOCK
+            VAR L: NODE := NEW_NODE (N_IDENT, LINE_NOW ());
+            L@.NAME := CUR ().TX;
+            SKIP;
+            ADD_LIST (L # HEAD, TAIL);
+         END BLOCK;
+      END LOOP WHEN NOT ACCEPT (',');
+      EXPECT (')');
+      N@.A := HEAD;
+      RETURN N;
+   END IF;
+   IF IS ('(') THEN                                 % type arguments [3-216]
+      SKIP;
+      LOOP
+         IF TEQS (N@.NAME, 'PTR') THEN
+            ADD_LIST (PARSE_TYPE_SPEC () # HEAD, TAIL);
+         ORIF IS_KIND (K_GEN) THEN
+            BLOCK
+               VAR G: NODE := NEW_NODE (TS_GEN, LINE_NOW ());
+               CONST T: TEXT := CUR ().TX;
+               G@.NAME := (AT: T.AT + 1, LEN: T.LEN - 1, H: -1);
+               SKIP;
+               ADD_LIST (G # HEAD, TAIL);
+            END BLOCK;
+         ELSE
+            ADD_LIST (PARSE_EXPR () # HEAD, TAIL);
+         END IF;
+      END LOOP WHEN NOT ACCEPT (',');
+      EXPECT (')');
+      N@.A := HEAD;
+   END IF;
+   IF IS ('[') THEN
+      N@.B := PARSE_RANGE ();
+   END IF;
+   RETURN N;
+END FUNCTION PARSE_TYPE_SPEC;
+
+% [3-35]: [L:U], (L:U], [L:U) or (L:U)
+FUNCTION PARSE_RANGE () RETURNS (NODE);
+   VAR R: NODE := NEW_NODE (N_RANGE, LINE_NOW ());
+   IF ACCEPT ('(') THEN
+      R@.IV := 1;
+   ELSE
+      EXPECT ('[');
+   END IF;
+   R@.A := PARSE_EXPR ();
+   EXPECT (':');
+   R@.B := PARSE_EXPR ();
+   IF ACCEPT (')') THEN
+      R@.IV := R@.IV + 2;
+   ELSE
+      EXPECT (']');
+   END IF;
+   RETURN R;
+END FUNCTION PARSE_RANGE;
+
+% ---- routines [4-17] [4-30] --------------------------------------------------------------
+FUNCTION PARSE_ROUTINE () RETURNS (NODE);
+   VAR R: NODE := NEW_NODE (N_ROUTINE, LINE_NOW ());
+   VAR HEAD, TAIL: NODE := NIL;
+   VAR MODE: INTEGER := M_IN;
+   IF ACCEPT ('INLINE') THEN
+      ;
+   END IF;
+   IF ACCEPT ('FUNCTION') THEN
+      R@.IV := 1;
+   ELSE
+      EXPECT ('PROCEDURE');
+   END IF;
+   R@.NAME := IDENT ();
+   IF ACCEPT ('(') THEN                            % [4-21]
+      LOOP UNTIL IS (')') DO
+         IF ACCEPT ('#') THEN
+            MODE := MODE + 1;
+         ELSE
+            BLOCK
+               CONST NAMES: NODE := IDENT_LIST ();
+               VAR TS: NODE;
+               VAR P: NODE := NAMES;
+               EXPECT (':');
+               TS := PARSE_TYPE_SPEC ();
+               LOOP UNTIL P = NIL DO
+                  BLOCK
+                     VAR PN: NODE := NEW_NODE (N_PARAM, P@.LINE);
+                     PN@.NAME := P@.NAME;
+                     PN@.IV := MODE;
+                     PN@.B := TS;
+                     ADD_LIST (PN # HEAD, TAIL);
+                  END BLOCK;
+                  P := P@.NEXT;
+               END LOOP;
+               IF ACCEPT (',') THEN
+                  ;
+               END IF;
+            END BLOCK;
+         END IF;
+      END LOOP;
+      EXPECT (')');
+   END IF;
+   R@.A := HEAD;
+   IF R@.IV = 1 THEN                                 % [4-35]
+      EXPECT ('RETURNS');
+      EXPECT ('(');
+      R@.B := PARSE_TYPE_SPEC ();
+      EXPECT (')');
+   END IF;
+   LOOP
+      IF ACCEPT ('SIGNALS') THEN                    % [4-29]
+         EXPECT ('(');
+         R@.D := IDENT_LIST ();
+         EXPECT (')');
+      ORIF IS ('IMPORTS') THEN                      % [4-28]
+         SKIP;
+         SKIP_PARENS;
+      ELSE
+         EXIT;
+      END IF;
+   END LOOP;
+   EXPECT (';');
+   R@.C := PARSE_BODY ();
+   IF IS ('PROCEDURE') ! IS ('FUNCTION') ! IS ('INLINE') THEN
+      FAIL (LINE_NOW (), 'this translator has no nested routines yet');
+   END IF;
+   EXPECT ('END');
+   IF R@.IV = 1 THEN
+      EXPECT ('FUNCTION');
+   ELSE
+      EXPECT ('PROCEDURE');
+   END IF;
+   IF NOT TEQ (IDENT (), R@.NAME) THEN
+      FAILT (LINE_NOW (), 'the trailer must name ', R@.NAME);
+   END IF;
+   EXPECT (';');
+   RETURN R;
+END FUNCTION PARSE_ROUTINE;
+
+% ---- statements [4-51] ----------------------------------------------------------------------
+FUNCTION AT_BODY_END () RETURNS (BOOLEAN);
+   RETURN IS_KIND (K_EOF) ! IS ('END') ! IS ('ELSE') ! IS ('ORIF') ! IS ('EXCEPT')
+      ! IS ('PROCEDURE') ! IS ('FUNCTION') ! IS ('INLINE');
+END FUNCTION AT_BODY_END;
+
+FUNCTION PARSE_STATEMENTS () RETURNS (NODE);
+   VAR HEAD, TAIL: NODE := NIL;
+   LOOP UNTIL AT_BODY_END () DO
+      ADD_LIST (PARSE_STATEMENT () # HEAD, TAIL);
+   END LOOP;
+   RETURN HEAD;
+END FUNCTION PARSE_STATEMENTS;
+
+% an unlabeled statement and its exceptions clause [4-80]
+FUNCTION PARSE_STATEMENT () RETURNS (NODE);
+   VAR S: NODE := PARSE_UNLABELED ();
+   VAR HEAD, TAIL: NODE := NIL;
+   IF IS ('EXCEPT') THEN
+      BLOCK
+         VAR X: NODE := NEW_NODE (N_EXCEPT, LINE_NOW ());
+         SKIP;
+         LOOP UNTIL IS ('END') DO
+            BLOCK
+               VAR H: NODE := NEW_NODE (N_HANDLER, LINE_NOW ());
+               H@.A := IDENT_LIST ();
+               EXPECT ('-->');
+               H@.B := PARSE_BODY ();
+               EXPECT ('END');
+               EXPECT (';');
+               ADD_LIST (H # HEAD, TAIL);
+            END BLOCK;
+         END LOOP;
+         EXPECT ('END');
+         EXPECT ('EXCEPT');
+         EXPECT (';');
+         X@.A := S;
+         X@.B := HEAD;
+         RETURN X;
+      END BLOCK;
+   END IF;
+   RETURN S;
+END FUNCTION PARSE_STATEMENT;
+
+FUNCTION PARSE_UNLABELED () RETURNS (NODE);
+   CONST LINE: INTEGER := LINE_NOW ();
+   VAR S: NODE;
+   VAR T: NODE;
+   IF ACCEPT (';') THEN
+      RETURN NEW_NODE (N_NULL, LINE);
+   ORIF IS ('IF') THEN
+      RETURN PARSE_IF ();
+   ORIF IS ('SELECT') THEN
+      RETURN PARSE_CASE ();
+   ORIF IS ('LOOP') THEN
+      RETURN PARSE_LOOP ();
+   ORIF ACCEPT ('BLOCK') THEN                      % [4-59]
+      S := NEW_NODE (N_BLOCK, LINE);
+      S@.A := PARSE_BODY ();
+      EXPECT ('END');
+      EXPECT ('BLOCK');
+      EXPECT (';');
+      RETURN S;
+   ORIF ACCEPT ('EXIT') THEN
+      EXPECT (';');
+      RETURN NEW_NODE (N_EXIT, LINE);
+   ORIF ACCEPT ('RETURN') THEN                     % [4-44]
+      S := NEW_NODE (N_RETURN, LINE);
+      IF NOT IS (';') THEN
+         S@.A := PARSE_EXPR ();
+      END IF;
+      EXPECT (';');
+      RETURN S;
+   ORIF ACCEPT ('SIGNAL') THEN                     % [4-83]
+      S := NEW_NODE (N_SIGNAL, LINE);
+      IF IS_KIND (K_ID) THEN
+         S@.NAME := IDENT ();
+      END IF;
+      EXPECT (';');
+      RETURN S;
+   ORIF ACCEPT ('ASSERT') THEN                     % [4-84]
+      S := NEW_NODE (N_ASSERT, LINE);
+      S@.A := PARSE_EXPR ();
+      EXPECT (';');
+      RETURN S;
+   END IF;
+   T := PARSE_POSTFIX ();
+   IF ACCEPT (':=') THEN                           % [3-43]
+      S := NEW_NODE (N_ASSIGN, LINE);
+      S@.A := T;
+      S@.B := PARSE_EXPR ();
+      EXPECT (';');
+      RETURN S;
+   END IF;
+   EXPECT (';');                                   % [4-37]
+   IF T@.KIND = N_NAME THEN
+      T@.KIND := N_CALL;
+   ORIF T@.KIND = N_APPLY THEN
+      T@.KIND := N_CALL;
+   ELSE
+      FAIL (LINE, 'a statement expected');
+   END IF;
+   RETURN T;
+END FUNCTION PARSE_UNLABELED;
+
+% [4-63]
+FUNCTION PARSE_IF () RETURNS (NODE);
+   VAR S: NODE := NEW_NODE (N_IF, LINE_NOW ());
+   VAR HEAD, TAIL: NODE := NIL;
+   EXPECT ('IF');
+   LOOP
+      BLOCK
+         VAR ARM: NODE := NEW_NODE (N_ARM, LINE_NOW ());
+         ARM@.A := PARSE_EXPR ();
+         EXPECT ('THEN');
+         ARM@.B := PARSE_BODY ();
+         ADD_LIST (ARM # HEAD, TAIL);
+      END BLOCK;
+   END LOOP WHEN NOT ACCEPT ('ORIF');
+   S@.A := HEAD;
+   IF ACCEPT ('ELSE') THEN
+      S@.B := PARSE_BODY ();
+   END IF;
+   EXPECT ('END');
+   EXPECT ('IF');
+   EXPECT (';');
+   RETURN S;
+END FUNCTION PARSE_IF;
+
+% does a range start here, rather than a parenthesized expression?
+FUNCTION RANGE_AHEAD () RETURNS (BOOLEAN);
+   VAR DEPTH: INTEGER := 0;
+   VAR K: INTEGER := 0;
+   LOOP
+      BLOCK
+         CONST T: TOKEN := AHEAD (K);
+         IF T.KIND = K_EOF THEN
+            RETURN FALSE;
+         END IF;
+         IF T.KIND = K_SYM THEN
+            IF TEQS (T.TX, '(') ! TEQS (T.TX, '[') THEN
+               DEPTH := DEPTH + 1;
+            ORIF TEQS (T.TX, ')') ! TEQS (T.TX, ']') THEN
+               DEPTH := DEPTH - 1;
+               IF DEPTH = 0 THEN
+                  RETURN FALSE;
+               END IF;
+            ORIF DEPTH = 1 & TEQS (T.TX, ':') THEN
+               RETURN TRUE;
+            END IF;
+         END IF;
+      END BLOCK;
+      K := K + 1;
+   END LOOP;
+END FUNCTION RANGE_AHEAD;
+
+FUNCTION PARSE_CASE_LABEL () RETURNS (NODE);
+   IF IS ('[') ! (IS ('(') & RANGE_AHEAD ()) THEN
+      RETURN PARSE_RANGE ();
+   END IF;
+   RETURN PARSE_EXPR ();
+END FUNCTION PARSE_CASE_LABEL;
+
+% [4-67]
+FUNCTION PARSE_CASE () RETURNS (NODE);
+   VAR S: NODE := NEW_NODE (N_CASE, LINE_NOW ());
+   VAR HEAD, TAIL: NODE := NIL;
+   EXPECT ('SELECT');
+   S@.A := PARSE_EXPR ();
+   EXPECT ('FROM');
+   LOOP UNTIL IS ('END') DO
+      IF ACCEPT ('ELSE') THEN
+         EXPECT ('-->');
+         S@.C := PARSE_BODY ();
+         EXPECT ('END');
+         EXPECT (';');
+      ELSE
+         BLOCK
+            VAR ARM: NODE := NEW_NODE (N_ARM, LINE_NOW ());
+            VAR LH, LT: NODE := NIL;
+            LOOP
+               ADD_LIST (PARSE_CASE_LABEL () # LH, LT);
+            END LOOP WHEN NOT ACCEPT (',');
+            EXPECT ('-->');
+            ARM@.A := LH;
+            ARM@.B := PARSE_BODY ();
+            EXPECT ('END');
+            EXPECT (';');
+            ADD_LIST (ARM # HEAD, TAIL);
+         END BLOCK;
+      END IF;
+   END LOOP;
+   S@.B := HEAD;
+   EXPECT ('END');
+   EXPECT ('SELECT');
+   EXPECT (';');
+   RETURN S;
+END FUNCTION PARSE_CASE;
+
+% [4-76] [4-79]
+FUNCTION PARSE_LOOP () RETURNS (NODE);
+   VAR S: NODE := NEW_NODE (N_LOOP, LINE_NOW ());
+   EXPECT ('LOOP');
+   IF ACCEPT ('FOR') THEN
+      S@.KIND := N_FOR;
+      IF IS_KIND (K_ID) THEN
+         S@.NAME := IDENT ();
+         EXPECT ('IN');
+      END IF;
+      S@.A := PARSE_RANGE ();
+      EXPECT ('DO');
+      S@.B := PARSE_BODY ();
+      EXPECT ('END');
+      EXPECT ('LOOP');
+      IF IS_KIND (K_ID) THEN
+         IF NOT TEQ (IDENT (), S@.NAME) THEN
+            FAIL (LINE_NOW (), 'END LOOP must name the loop identifier');
+         END IF;
+      END IF;
+      EXPECT (';');
+      RETURN S;
+   END IF;
+   IF ACCEPT ('UNTIL') THEN
+      S@.A := PARSE_EXPR ();
+      EXPECT ('DO');
+   END IF;
+   S@.B := PARSE_BODY ();
+   EXPECT ('END');
+   EXPECT ('LOOP');
+   IF ACCEPT ('WHEN') THEN
+      S@.C := PARSE_EXPR ();
+   END IF;
+   EXPECT (';');
+   RETURN S;
+END FUNCTION PARSE_LOOP;
+
+% ==== the parser: expressions [3-15] .. [3-41] ===========================================
+% Precedence, from the loosest: ! OR XOR ->, then & AND, then the relations and IN,
+% then + - !!, then * / // MOD, then **, then the prefix + - NOT (3.1.4.1).
+
+FUNCTION BIN_NODE (OP: TEXT, LINE: INTEGER, A, B: NODE) RETURNS (NODE);
+   VAR N: NODE := NEW_NODE (N_BINOP, LINE);
+   N@.NAME := OP;
+   N@.A := A;
+   N@.B := B;
+   RETURN N;
+END FUNCTION BIN_NODE;
+
+FUNCTION PARSE_EXPR () RETURNS (NODE);
+   VAR LEFT: NODE := PARSE_CONJ ();
+   LOOP UNTIL NOT (IS ('OR') ! IS ('!') ! IS ('XOR') ! IS ('->')) DO
+      BLOCK
+         CONST T: TOKEN := CUR ();
+         SKIP;
+         LEFT := BIN_NODE (T.TX, T.LINE, LEFT, PARSE_CONJ ());
+      END BLOCK;
+   END LOOP;
+   RETURN LEFT;
+END FUNCTION PARSE_EXPR;
+
+FUNCTION PARSE_CONJ () RETURNS (NODE);
+   VAR LEFT: NODE := PARSE_RELATION ();
+   LOOP UNTIL NOT (IS ('AND') ! IS ('&')) DO
+      BLOCK
+         CONST T: TOKEN := CUR ();
+         SKIP;
+         LEFT := BIN_NODE (T.TX, T.LINE, LEFT, PARSE_RELATION ());
+      END BLOCK;
+   END LOOP;
+   RETURN LEFT;
+END FUNCTION PARSE_CONJ;
+
+FUNCTION PARSE_RELATION () RETURNS (NODE);
+   VAR LEFT: NODE := PARSE_SUM ();
+   LOOP
+      BLOCK
+         CONST T: TOKEN := CUR ();
+         IF IS ('=') ! IS ('<') ! IS ('>') ! IS ('<=') ! IS ('>=') ! IS ('<>') THEN
+            SKIP;
+            LEFT := BIN_NODE (T.TX, T.LINE, LEFT, PARSE_SUM ());
+         ORIF IS ('IN') THEN
+            BLOCK
+               VAR N: NODE := NEW_NODE (N_IN, T.LINE);
+               SKIP;
+               N@.A := LEFT;
+               N@.B := PARSE_RANGE ();
+               LEFT := N;
+            END BLOCK;
+         ELSE
+            RETURN LEFT;
+         END IF;
+      END BLOCK;
+   END LOOP;
+END FUNCTION PARSE_RELATION;
+
+FUNCTION PARSE_SUM () RETURNS (NODE);
+   VAR LEFT: NODE := PARSE_TERM ();
+   LOOP UNTIL NOT (IS ('+') ! IS ('-') ! IS ('!!')) DO
+      BLOCK
+         CONST T: TOKEN := CUR ();
+         SKIP;
+         LEFT := BIN_NODE (T.TX, T.LINE, LEFT, PARSE_TERM ());
+      END BLOCK;
+   END LOOP;
+   RETURN LEFT;
+END FUNCTION PARSE_SUM;
+
+FUNCTION PARSE_TERM () RETURNS (NODE);
+   VAR LEFT: NODE := PARSE_FACTOR ();
+   LOOP UNTIL NOT (IS ('*') ! IS ('/') ! IS ('//') ! IS ('MOD')) DO
+      BLOCK
+         CONST T: TOKEN := CUR ();
+         SKIP;
+         LEFT := BIN_NODE (T.TX, T.LINE, LEFT, PARSE_FACTOR ());
+      END BLOCK;
+   END LOOP;
+   RETURN LEFT;
+END FUNCTION PARSE_TERM;
+
+FUNCTION PARSE_FACTOR () RETURNS (NODE);
+   VAR LEFT: NODE := PARSE_SECONDARY ();
+   LOOP UNTIL NOT IS ('**') DO
+      BLOCK
+         CONST T: TOKEN := CUR ();
+         SKIP;
+         LEFT := BIN_NODE (T.TX, T.LINE, LEFT, PARSE_SECONDARY ());
+      END BLOCK;
+   END LOOP;
+   RETURN LEFT;
+END FUNCTION PARSE_FACTOR;
+
+FUNCTION PARSE_SECONDARY () RETURNS (NODE);
+   CONST T: TOKEN := CUR ();
+   IF IS ('+') ! IS ('-') ! IS ('NOT') THEN
+      BLOCK
+         VAR N: NODE := NEW_NODE (N_UNOP, T.LINE);
+         SKIP;
+         N@.NAME := T.TX;
+         N@.A := PARSE_POSTFIX ();
+         RETURN N;
+      END BLOCK;
+   END IF;
+   RETURN PARSE_POSTFIX ();
+END FUNCTION PARSE_SECONDARY;
+
+% input # inout # output argument lists [4-38]
+PROCEDURE PARSE_ARGS (N: NODE);
+   VAR HEAD, TAIL: NODE := NIL;
+   VAR GROUP: INTEGER := 0;
+   EXPECT ('(');
+   LOOP UNTIL IS (')') DO
+      IF ACCEPT ('#') THEN
+         SELECT GROUP FROM
+            0 --> N@.A := HEAD; END;
+            1 --> N@.B := HEAD; END;
+            ELSE --> FAIL (N@.LINE, 'too many # in an argument list'); END;
+         END SELECT;
+         GROUP := GROUP + 1;
+         HEAD := NIL;
+         TAIL := NIL;
+      ELSE
+         ADD_LIST (PARSE_EXPR () # HEAD, TAIL);
+         IF ACCEPT (',') THEN
+            ;
+         END IF;
+      END IF;
+   END LOOP;
+   EXPECT (')');
+   SELECT GROUP FROM
+      0 --> N@.A := HEAD; END;
+      1 --> N@.B := HEAD; END;
+      ELSE --> N@.C := HEAD; END;
+   END SELECT;
+END PROCEDURE PARSE_ARGS;
+
+FUNCTION PARSE_POSTFIX () RETURNS (NODE);
+   VAR E: NODE := PARSE_ATOM ();
+   VAR N: NODE;
+   LOOP
+      BLOCK
+         CONST LINE: INTEGER := LINE_NOW ();
+         IF IS ('(') & E@.KIND = N_NAME THEN          % a call or a subscript
+            E@.KIND := N_APPLY;
+            PARSE_ARGS (E);
+         ORIF IS ('(') THEN
+            N := NEW_NODE (N_INDEX, LINE);
+            PARSE_ARGS (N);
+            N@.B := N@.A;
+            N@.A := E;
+            E := N;
+         ORIF ACCEPT ('.') THEN                       % [3-191]
+            N := NEW_NODE (N_FIELD, LINE);
+            N@.A := E;
+            N@.NAME := IDENT ();
+            E := N;
+         ORIF ACCEPT ('@') THEN                       % [3-32]
+            N := NEW_NODE (N_DEREF, LINE);
+            N@.A := E;
+            E := N;
+         ORIF ACCEPT ('[') THEN                       % [3-34]
+            N := NEW_NODE (N_SUBSTR, LINE);
+            N@.A := E;
+            N@.B := PARSE_EXPR ();
+            EXPECT (':');
+            N@.C := PARSE_EXPR ();
+            EXPECT (']');
+            E := N;
+         ELSE
+            RETURN E;
+         END IF;
+      END BLOCK;
+   END LOOP;
+END FUNCTION PARSE_POSTFIX;
+
+FUNCTION PARSE_ATOM () RETURNS (NODE);
+   CONST T: TOKEN := CUR ();
+   VAR N: NODE;
+   IF T.KIND = K_NUM THEN
+      N := NEW_NODE (N_INT, T.LINE);
+      N@.IV := T.IV;
+      N@.NAME := T.TX;
+      SKIP;
+      RETURN N;
+   END IF;
+   IF T.KIND = K_STR ! T.KIND = K_ENUM THEN       % [3-135]
+      BLOCK
+         VAR HEAD, TAIL: NODE := NIL;
+         VAR STRINGS: INTEGER := 0;
+         LOOP UNTIL NOT (IS_KIND (K_STR) ! IS_KIND (K_ENUM)) DO
+            N := NEW_NODE (N_PART, LINE_NOW ());
+            N@.IV := CUR ().KIND;
+            N@.NAME := CUR ().TX;
+            IF N@.IV = K_STR THEN
+               STRINGS := STRINGS + 1;
+            END IF;
+            SKIP;
+            ADD_LIST (N # HEAD, TAIL);
+         END LOOP;
+         IF STRINGS = 0 THEN
+            IF HEAD@.NEXT <> NIL THEN
+               FAIL (T.LINE, 'two enumerated literals in a row');
+            END IF;
+            HEAD@.KIND := N_ENUMLIT;
+            RETURN HEAD;
+         END IF;
+         N := NEW_NODE (N_STR, T.LINE);
+         N@.A := HEAD;
+         RETURN N;
+      END BLOCK;
+   END IF;
+   IF ACCEPT ('TRUE') THEN
+      N := NEW_NODE (N_BOOL, T.LINE);
+      N@.IV := 1;
+      RETURN N;
+   ORIF ACCEPT ('FALSE') THEN
+      RETURN NEW_NODE (N_BOOL, T.LINE);
+   ORIF ACCEPT ('NIL') THEN
+      RETURN NEW_NODE (N_NIL, T.LINE);
+   END IF;
+   IF IS ('(') THEN
+      IF AHEAD (1).KIND = K_ID & TEQS (AHEAD (2).TX, ':') & AHEAD (2).KIND = K_SYM THEN
+         BLOCK                                   % a record constructor [3-178]
+            VAR HEAD, TAIL: NODE := NIL;
+            SKIP;
+            LOOP
+               N := NEW_NODE (N_FINIT, LINE_NOW ());
+               N@.NAME := IDENT ();
+               EXPECT (':');
+               N@.A := PARSE_EXPR ();
+               ADD_LIST (N # HEAD, TAIL);
+            END LOOP WHEN NOT ACCEPT (',');
+            EXPECT (')');
+            N := NEW_NODE (N_RECCONS, T.LINE);
+            N@.A := HEAD;
+            RETURN N;
+         END BLOCK;
+      END IF;
+      SKIP;
+      N := NEW_NODE (N_PAREN, T.LINE);
+      N@.A := PARSE_EXPR ();
+      EXPECT (')');
+      RETURN N;
+   END IF;
+   IF T.KIND = K_ID THEN
+      N := NEW_NODE (N_NAME, T.LINE);
+      N@.NAME := IDENT ();
+      IF IS ('$') & AHEAD (1).KIND = K_ID THEN      % T$NAME
+         SKIP;
+         N@.NAME := MKN (STR (T.TX, T.TX.LEN) !! '$' !! STR (CUR ().TX, CUR ().TX.LEN));
+         SKIP;
+      END IF;
+      IF TEQS (N@.NAME, 'NEW') ! TEQS (N@.NAME, 'PTR$NEW') THEN   % [3-198]
+         N@.KIND := N_NEW;
+         EXPECT ('(');
+         N@.A := PARSE_TYPE_SPEC ();
+         EXPECT (')');
+      END IF;
+      RETURN N;
+   END IF;
+   FAILT (T.LINE, 'an expression expected, not ', T.TX);
+END FUNCTION PARSE_ATOM;
+
+% ==== symbols and scopes (4.1) =============================================================
+
+FUNCTION NO_TEXT () RETURNS (TEXT);
+   RETURN (AT: 0, LEN: 0, H: 0);
+END FUNCTION NO_TEXT;
+
+FUNCTION NEW_SYM (KIND: INTEGER, NAME: TEXT) RETURNS (SYM);
+   VAR Y: SYM := NEW (SYM_REC);
+   Y@ := (KIND: KIND, DEPTH: W@.DEPTH, NAME: NAME, T: NIL, ACCESS: NO_TEXT (),
+          HASMV: FALSE, MV: 0, TS: NIL, BUSY: FALSE, FWD: NO_TEXT (), PARAMS: NIL,
+          RESULT: NIL, CHAIN: NIL, SNEXT: NIL);
+   RETURN Y;
+END FUNCTION NEW_SYM;
+
+FUNCTION BUCKET (NAME: TEXT) RETURNS (INTEGER);
+   IF NAME.H < 0 THEN
+      RETURN HASH_OF (STR (NAME, NAME.LEN));
+   END IF;
+   RETURN NAME.H;
+END FUNCTION BUCKET;
+
+FUNCTION LOOKUP (NAME: TEXT) RETURNS (SYM);
+   VAR Y: SYM := W@.TABLE(BUCKET (NAME));
+   LOOP UNTIL Y = NIL DO
+      IF TEQ (Y@.NAME, NAME) THEN
+         RETURN Y;
+      END IF;
+      Y := Y@.CHAIN;
+   END LOOP;
+   RETURN NIL;
+END FUNCTION LOOKUP;
+
+FUNCTION LOOKUPS (NAME: ASCII_STR(?L)) RETURNS (SYM);
+   RETURN LOOKUP (MKN (NAME));
+END FUNCTION LOOKUPS;
+
+% names local to a scope may not be redeclared in it (4.1)
+PROCEDURE DEFINE (Y: SYM, LINE: INTEGER);
+   CONST B: INTEGER := BUCKET (Y@.NAME);
+   CONST OLD: SYM := LOOKUP (Y@.NAME);
+   IF OLD <> NIL THEN
+      IF OLD@.DEPTH = W@.DEPTH THEN
+         FAILT (LINE, 'redeclared in the same scope: ', Y@.NAME);
+      END IF;
+   END IF;
+   Y@.DEPTH := W@.DEPTH;
+   Y@.CHAIN := W@.TABLE(B);
+   W@.TABLE(B) := Y;
+   Y@.SNEXT := W@.SCOPE;
+   W@.SCOPE := Y;
+END PROCEDURE DEFINE;
+
+PROCEDURE OPEN_SCOPE ();
+   W@.DEPTH := W@.DEPTH + 1;
+END PROCEDURE OPEN_SCOPE;
+
+PROCEDURE CLOSE_SCOPE ();
+   W@.DEPTH := W@.DEPTH - 1;
+   LOOP UNTIL W@.SCOPE = NIL DO
+      IF W@.SCOPE@.DEPTH <= W@.DEPTH THEN
+         EXIT;
+      END IF;
+      BLOCK
+         CONST Y: SYM := W@.SCOPE;
+         CONST B: INTEGER := BUCKET (Y@.NAME);
+         W@.TABLE(B) := Y@.CHAIN;
+         W@.SCOPE := Y@.SNEXT;
+      END BLOCK;
+   END LOOP;
+END PROCEDURE CLOSE_SCOPE;
+
+% ---- the predefined environment ----------------------------------------------------------
+
+FUNCTION NEW_TYP (KIND: INTEGER) RETURNS (TYP);
+   VAR T: TYP := NEW (TYP_REC);
+   T@ := (KIND: KIND, LO: NIL, HI: NIL, LEN: NIL, GEN: NO_TEXT (), ELEM: NIL,
+          TARGET: NIL, TARGET_TS: NIL, FIELDS: NIL, LITS: NIL, CNAME: NO_TEXT ());
+   RETURN T;
+END FUNCTION NEW_TYP;
+
+PROCEDURE PREDEF_TYPE (NAME: ASCII_STR(?L), T: TYP);
+   VAR Y: SYM := NEW_SYM (Y_TYPE, MKN (NAME));
+   Y@.T := T;
+   DEFINE (Y, 0);
+END PROCEDURE PREDEF_TYPE;
+
+PROCEDURE PREDEF_BUILTIN (NAME: ASCII_STR(?L));
+   DEFINE (NEW_SYM (Y_BUILTIN, MKN (NAME)), 0);
+END PROCEDURE PREDEF_BUILTIN;
+
+PROCEDURE PREDEFINE ();
+   W@.TY_INT := NEW_TYP (T_INT);
+   W@.TY_BOOL := NEW_TYP (T_BOOL);
+   W@.TY_STR := NEW_TYP (T_STR);
+   W@.TY_VOID := NEW_TYP (T_VOID);
+   W@.TY_NIL := NEW_TYP (T_NIL);
+   W@.TY_ASCII := NEW_TYP (T_ENUM);
+   PREDEF_TYPE ('INTEGER', W@.TY_INT);
+   PREDEF_TYPE ('BOOLEAN', W@.TY_BOOL);
+   PREDEF_TYPE ('ASCII', W@.TY_ASCII);
+   % the routines of the TERMINAL segment and the prelude functions
+   PREDEF_BUILTIN ('PUT');
+   PREDEF_BUILTIN ('PUT_LINE');
+   PREDEF_BUILTIN ('NEW_LINE');
+   PREDEF_BUILTIN ('GET_CODE');
+   PREDEF_BUILTIN ('STOP');
+   PREDEF_BUILTIN ('TO_CHAR');
+   PREDEF_BUILTIN ('BLANKS');
+   PREDEF_BUILTIN ('DUP');
+   PREDEF_BUILTIN ('ABS');
+   PREDEF_BUILTIN ('TO_FIXED');
+   OPEN_SCOPE;
+END PROCEDURE PREDEFINE;
+
+% 3.7.2, example 1: the code of an enumerated literal of ASCII, or -1
+FUNCTION ASCII_CODE (T: TEXT) RETURNS (INTEGER);
+   CONST CONTROLS: ASCII_STR(128) :=
+      ' NUL SOH STX EXT EOT ENQ ACK BEL BS  HT  LF  VT  FF  CR  SO  SI '
+      ' DLE DC1 DC2 DC3 DC4 NAK SYN ETB CAN EM  SUB ESC FS  GS  RS  US ';
+   CONST S: ASCII_STR(T.LEN) := STR (T, T.LEN);
+   CONST L: INTEGER := T.LEN;
+   IF L < 2 THEN
+      RETURN -1;
+   END IF;
+   IF S[1:1] = '''' THEN                            % \'C' or \''''
+      IF L = 5 THEN
+         RETURN 39;
+      END IF;
+      IF L = 4 THEN
+         BLOCK
+            CONST C: INTEGER := CODE_OF (S[2:2]);
+            IF C IN [32:95] THEN
+               RETURN C;
+            END IF;
+         END BLOCK;
+      END IF;
+      RETURN -1;
+   END IF;
+   IF L = 2 THEN
+      IF S[1:1] = '[' THEN
+         RETURN 123;
+      ORIF S[1:1] = ']' THEN
+         RETURN 125;
+      END IF;
+      BLOCK
+         CONST C: INTEGER := CODE_OF (S[1:1]);
+         IF C IN [65:90] THEN                       % \A is the lower case a
+            RETURN C + 32;
+         END IF;
+      END BLOCK;
+   END IF;
+   IF L <= 4 THEN
+      LOOP FOR I IN [0:31] DO
+         IF CONTROLS[I * 4 + 1 : I * 4 + L - 1] = S[1 : L - 1] THEN
+            IF CONTROLS[I * 4 + L : I * 4 + L] = ' ' THEN
+               RETURN I;
+            END IF;
+         END IF;
+      END LOOP I;
+   END IF;
+   IF TEQS (T, '\ACCENT') THEN
+      RETURN 96;
+   ORIF TEQS (T, '\BAR') THEN
+      RETURN 124;
+   ORIF TEQS (T, '\TILDE') THEN
+      RETURN 126;
+   ORIF TEQS (T, '\DEL') THEN
+      RETURN 127;
+   END IF;
+   RETURN -1;
+END FUNCTION ASCII_CODE;
+
+% ==== types (section 3) =====================================================================
+% A record or array type becomes a C struct with two helpers: I_ makes the storage
+% of a new object (the strings and arrays inside it), S_ assigns a value to an object
+% component by component (3.8.5, 3.9.5).
+
+% the C name of a named record, fixed before the record is resolved so that pointers
+% to it can be declared first (3.12.1: types are known throughout their scope)
+FUNCTION RECORD_NAME (Y: SYM) RETURNS (TEXT);
+   IF Y@.FWD.LEN = 0 THEN
+      Y@.FWD := NEW_NAME ('R');
+      EMIT (O_TYPEDEFS, FMT2 ('typedef struct @ @;', Y@.FWD, Y@.FWD));
+   END IF;
+   RETURN Y@.FWD;
+END FUNCTION RECORD_NAME;
+
+FUNCTION RESOLVE (TS: NODE) RETURNS (TYP);
+   RETURN RESOLVE_NAMED (TS, NO_TEXT ());
+END FUNCTION RESOLVE;
+
+FUNCTION RESOLVE_NAMED (TS: NODE, CNAME: TEXT) RETURNS (TYP);
+   VAR T: TYP;
+   CONST K: INTEGER := TS@.KIND;
+   IF K = TS_ARRAY THEN                              % [3-147]
+      T := NEW_TYP (T_ARR);
+      T@.LO := TS@.A;
+      T@.HI := TS@.B;
+      T@.ELEM := RESOLVE (TS@.C);
+      T@.CNAME := NEW_NAME ('A');
+      EMIT (O_TYPEDEFS, FMT2 ('typedef struct @ @;', T@.CNAME, T@.CNAME));
+      COMPLETE (T);
+      RETURN T;
+   END IF;
+   IF K = TS_RECORD THEN                             % [3-160]
+      T := NEW_TYP (T_REC);
+      IF CNAME.LEN > 0 THEN
+         T@.CNAME := CNAME;
+      ELSE
+         T@.CNAME := NEW_NAME ('R');
+         EMIT (O_TYPEDEFS, FMT2 ('typedef struct @ @;', T@.CNAME, T@.CNAME));
+      END IF;
+      BLOCK
+         VAR D: NODE := TS@.A;
+         VAR TAIL: FIELD := NIL;
+         LOOP UNTIL D = NIL DO
+            BLOCK
+               CONST FT: TYP := RESOLVE (D@.B);
+               VAR N: NODE := D@.A;
+               LOOP UNTIL N = NIL DO
+                  BLOCK
+                     VAR F: FIELD := NEW (FIELD_REC);
+                     F@ := (NAME: N@.NAME, T: FT, NEXT: NIL);
+                     IF TAIL = NIL THEN
+                        T@.FIELDS := F;
+                     ELSE
+                        TAIL@.NEXT := F;
+                     END IF;
+                     TAIL := F;
+                  END BLOCK;
+                  N := N@.NEXT;
+               END LOOP;
+            END BLOCK;
+            D := D@.NEXT;
+         END LOOP;
+      END BLOCK;
+      COMPLETE (T);
+      RETURN T;
+   END IF;
+   IF K = TS_ENUM THEN                               % [3-83]
+      T := NEW_TYP (T_ENUM);
+      T@.LITS := TS@.A;
+      RETURN T;
+   END IF;
+   % a type name, possibly with arguments and a range
+   IF TEQS (TS@.NAME, 'INTEGER') THEN
+      IF TS@.B <> NIL THEN
+         T := NEW_TYP (T_INT);
+         T@.LO := TS@.B@.A;
+         T@.HI := TS@.B@.B;
+         RETURN T;
+      END IF;
+      RETURN W@.TY_INT;
+   END IF;
+   IF TEQS (TS@.NAME, 'ASCII_STR') ! TEQS (TS@.NAME, 'CHAR_STR') THEN   % [3-131]
+      T := NEW_TYP (T_STR);
+      IF TS@.A@.KIND = TS_GEN THEN
+         T@.GEN := TS@.A@.NAME;
+      ELSE
+         T@.LEN := TS@.A;
+      END IF;
+      RETURN T;
+   END IF;
+   IF TEQS (TS@.NAME, 'PTR') THEN                    % [3-195]
+      T := NEW_TYP (T_PTR);
+      T@.TARGET_TS := TS@.A;
+      RETURN T;
+   END IF;
+   BLOCK
+      CONST Y: SYM := LOOKUP (TS@.NAME);
+      IF Y = NIL THEN
+         FAILT (TS@.LINE, 'unknown type ', TS@.NAME);
+      END IF;
+      IF Y@.KIND <> Y_TYPE THEN
+         FAILT (TS@.LINE, 'not a type: ', TS@.NAME);
+      END IF;
+      IF Y@.T = NIL THEN
+         IF Y@.BUSY THEN
+            FAILT (TS@.LINE, 'a circular type declaration: ', TS@.NAME);
+         END IF;
+         Y@.BUSY := TRUE;
+         IF Y@.TS@.KIND = TS_RECORD THEN
+            Y@.T := RESOLVE_NAMED (Y@.TS, RECORD_NAME (Y));
+         ELSE
+            Y@.T := RESOLVE (Y@.TS);
+         END IF;
+         Y@.BUSY := FALSE;
+      END IF;
+      IF TS@.B <> NIL & Y@.T@.KIND = T_INT THEN
+         T := NEW_TYP (T_INT);
+         T@.LO := TS@.B@.A;
+         T@.HI := TS@.B@.B;
+         RETURN T;
+      END IF;
+      RETURN Y@.T;
+   END BLOCK;
+END FUNCTION RESOLVE_NAMED;
+
+FUNCTION TARGET (T: TYP) RETURNS (TYP);
+   IF T@.TARGET = NIL THEN
+      T@.TARGET := RESOLVE (T@.TARGET_TS);
+   END IF;
+   RETURN T@.TARGET;
+END FUNCTION TARGET;
+
+FUNCTION IS_SCALAR (T: TYP) RETURNS (BOOLEAN);
+   RETURN T@.KIND = T_INT ! T@.KIND = T_BOOL ! T@.KIND = T_ENUM;
+END FUNCTION IS_SCALAR;
+
+FUNCTION CTYPE (T: TYP) RETURNS (TEXT);
+   CONST K: INTEGER := T@.KIND;
+   IF IS_SCALAR (T) THEN
+      RETURN MK ('rt_int');
+   ORIF K = T_STR THEN
+      RETURN MK ('rstr');
+   ORIF K = T_REC ! K = T_ARR THEN
+      RETURN T@.CNAME;
+   ORIF K = T_VOID THEN
+      RETURN MK ('void');
+   ORIF K = T_PTR THEN
+      % a pointer to a named record may be declared before the record
+      BLOCK
+         CONST TT: NODE := T@.TARGET_TS;
+         IF TT@.KIND = TS_NAME THEN
+            BLOCK
+               CONST Y: SYM := LOOKUP (TT@.NAME);
+               IF Y <> NIL THEN
+                  IF Y@.KIND = Y_TYPE & Y@.TS <> NIL THEN
+                     IF Y@.TS@.KIND = TS_RECORD THEN
+                        RETURN CATS (RECORD_NAME (Y), ' *');
+                     END IF;
+                  END IF;
+               END IF;
+            END BLOCK;
+         END IF;
+         RETURN CATS (CTYPE (TARGET (T)), ' *');
+      END BLOCK;
+   END IF;
+   FAIL (0, 'no C type');
+END FUNCTION CTYPE;
+
+FUNCTION NEEDS_INIT (T: TYP) RETURNS (BOOLEAN);
+   IF T@.KIND = T_STR THEN
+      RETURN T@.LEN <> NIL;
+   ORIF T@.KIND = T_ARR THEN
+      RETURN TRUE;
+   ORIF T@.KIND = T_REC THEN
+      BLOCK
+         VAR F: FIELD := T@.FIELDS;
+         LOOP UNTIL F = NIL DO
+            IF NEEDS_INIT (F@.T) THEN
+               RETURN TRUE;
+            END IF;
+            F := F@.NEXT;
+         END LOOP;
+      END BLOCK;
+   END IF;
+   RETURN FALSE;
+END FUNCTION NEEDS_INIT;
+
+FUNCTION FIELD_C (NAME: TEXT) RETURNS (TEXT);
+   RETURN FMT1 ('f_@', NAME);
+END FUNCTION FIELD_C;
+
+% the statement that makes the storage of a new object LV of type T
+FUNCTION INIT_CODE (T: TYP, LV: TEXT) RETURNS (TEXT);
+   IF T@.KIND = T_STR THEN
+      RETURN FMT2 ('@ = rt_str_new(@);', LV, EXPR (T@.LEN, NIL).C);
+   ORIF T@.KIND = T_ARR ! T@.KIND = T_REC THEN
+      RETURN FMT2 ('I_@(&@);', T@.CNAME, LV);
+   END IF;
+   RETURN NO_TEXT ();
+END FUNCTION INIT_CODE;
+
+% the statement that assigns the value RV to the object LV of type T
+FUNCTION ASSIGN_CODE (T: TYP, LV, RV: TEXT) RETURNS (TEXT);
+   IF T@.KIND = T_STR THEN
+      RETURN FMT2 ('rt_b_assign(&@, @);', LV, RV);
+   ORIF T@.KIND = T_ARR ! T@.KIND = T_REC THEN
+      RETURN FMT3 ('S_@(&@, @);', T@.CNAME, LV, RV);
+   END IF;
+   RETURN FMT2 ('@ = @;', LV, RV);
+END FUNCTION ASSIGN_CODE;
+
+% the value V checked against the range of T (3.2.5: RANGE)
+FUNCTION RANGE_CHECK (T: TYP, V: TEXT) RETURNS (TEXT);
+   IF T@.KIND = T_INT & T@.LO <> NIL THEN
+      RETURN FMT3 ('rt_range(@, @, @)', V, EXPR (T@.LO, NIL).C, EXPR (T@.HI, NIL).C);
+   END IF;
+   RETURN V;
+END FUNCTION RANGE_CHECK;
+
+% the struct body and the I_ and S_ helpers of a record or array type
+PROCEDURE COMPLETE (T: TYP);
+   CONST C: TEXT := T@.CNAME;
+   VAR INIT, ASSIGN: TEXT;
+   IF T@.KIND = T_ARR THEN
+      EMIT (O_STRUCTS, FMT2 ('struct @ { rt_int lo, hi; @ *p; };', C, CTYPE (T@.ELEM)));
+      INIT := FMT2 ('x->lo = @; x->hi = @; rt_int n = x->hi >= x->lo ? x->hi - x->lo + 1 : 0; '
+                    'x->p = rt_alloc(sizeof *x->p * (size_t)(n ? n : 1));',
+                    EXPR (T@.LO, NIL).C, EXPR (T@.HI, NIL).C);
+      IF NEEDS_INIT (T@.ELEM) THEN
+         INIT := FMT2 ('@ for (rt_int i = 0; i < n; i++) @', INIT,
+                       INIT_CODE (T@.ELEM, MK ('x->p[i]')));
+      END IF;
+      ASSIGN := FMT1 ('rt_int n = d->hi - d->lo; if (n != s.hi - s.lo) rt_raise(RT_B_SIZE); '
+                      'for (rt_int i = 0; i <= n; i++) @',
+                      ASSIGN_CODE (T@.ELEM, MK ('d->p[i]'), MK ('s.p[i]')));
+   ELSE
+      BLOCK
+         VAR F: FIELD := T@.FIELDS;
+         VAR BODY: TEXT := MK ('');
+         INIT := MK ('');
+         ASSIGN := MK ('');
+         LOOP UNTIL F = NIL DO
+            BODY := FMT3 ('@ @ @;', BODY, CTYPE (F@.T), FIELD_C (F@.NAME));
+            IF NEEDS_INIT (F@.T) THEN
+               INIT := FMT2 ('@ @', INIT, INIT_CODE (F@.T, FMT1 ('x->@', FIELD_C (F@.NAME))));
+            END IF;
+            ASSIGN := FMT2 ('@ @', ASSIGN,
+                            ASSIGN_CODE (F@.T, FMT1 ('d->@', FIELD_C (F@.NAME)),
+                                         FMT1 ('s.@', FIELD_C (F@.NAME))));
+            F := F@.NEXT;
+         END LOOP;
+         EMIT (O_STRUCTS, FMT2 ('struct @ { int dummy_;@ };', C, BODY));
+      END BLOCK;
+   END IF;
+   EMIT (O_PROTOS, FMT3 ('static void I_@(@ *x);', C, C, C));
+   EMIT (O_PROTOS, FMT3 ('static void S_@(@ *d, @ s);', C, C, C));
+   EMIT (O_HELPERS, FMT3 ('static void I_@(@ *x) { @ }', C, C, INIT));
+   EMIT (O_HELPERS, FMT4 ('static void S_@(@ *d, @ s) { @ }', C, C, C, ASSIGN));
+END PROCEDURE COMPLETE;
+
+% ==== expressions (3.1.4) ===================================================================
+
+FUNCTION MKET (C: TEXT, T: TYP) RETURNS (ET);
+   RETURN (C: C, T: T);
+END FUNCTION MKET;
+
+% a C string literal holding the characters of T
+FUNCTION CSTRING (T: TEXT) RETURNS (TEXT);
+   CONST S: ASCII_STR(T.LEN) := STR (T, T.LEN);
+   CONST AT: INTEGER := W@.TOP;
+   VAR R: TEXT := MK ('"');
+   LOOP FOR I IN [0 : T.LEN - 1] DO
+      IF S[I:I] = '"' ! S[I:I] = '\' THEN
+         R := MK ('\' !! S[I:I]);
+      ORIF S[I:I] = '?' THEN                      % no trigraphs
+         R := MK ('\?');
+      ELSE
+         BLOCK
+            CONST C: INTEGER := CODE_OF (S[I:I]);
+            IF C IN [32:126] THEN
+               R := MK (S[I:I]);
+            ELSE
+               R := MK ('\' !! TO_CHAR (C // 64) !! TO_CHAR ((C // 8) MOD 8) !! TO_CHAR (C MOD 8));
+            END IF;
+         END BLOCK;
+      END IF;
+   END LOOP I;
+   R := MK ('"');
+   RETURN (AT: AT, LEN: W@.TOP - AT, H: -1);
+END FUNCTION CSTRING;
+
+% the value of a manifest integer expression (3.1.4.1), if it is one
+FUNCTION MANIFEST (E: NODE) RETURNS (MVAL);
+   CONST K: INTEGER := E@.KIND;
+   CONST NO: MVAL := (OK: FALSE, V: 0);
+   IF K = N_INT THEN
+      RETURN (OK: TRUE, V: E@.IV);
+   ORIF K = N_PAREN THEN
+      RETURN MANIFEST (E@.A);
+   ORIF K = N_UNOP THEN
+      IF TEQS (E@.NAME, '-') THEN
+         BLOCK
+            CONST A: MVAL := MANIFEST (E@.A);
+            RETURN (OK: A.OK, V: -A.V);
+         END BLOCK;
+      END IF;
+   ORIF K = N_BINOP THEN
+      BLOCK
+         CONST A: MVAL := MANIFEST (E@.A);
+         CONST B: MVAL := MANIFEST (E@.B);
+         IF NOT (A.OK & B.OK) THEN
+            RETURN NO;
+         END IF;
+         IF TEQS (E@.NAME, '+') THEN
+            RETURN (OK: TRUE, V: A.V + B.V);
+         ORIF TEQS (E@.NAME, '-') THEN
+            RETURN (OK: TRUE, V: A.V - B.V);
+         ORIF TEQS (E@.NAME, '*') THEN
+            RETURN (OK: TRUE, V: A.V * B.V);
+         ORIF TEQS (E@.NAME, '//') & B.V <> 0 THEN
+            RETURN (OK: TRUE, V: A.V // B.V);
+         END IF;
+      END BLOCK;
+   ORIF K = N_NAME THEN
+      BLOCK
+         CONST Y: SYM := LOOKUP (E@.NAME);
+         IF Y <> NIL THEN
+            IF Y@.KIND = Y_CONST & Y@.HASMV THEN
+               RETURN (OK: TRUE, V: Y@.MV);
+            END IF;
+         END IF;
+      END BLOCK;
+   ORIF K = N_ENUMLIT THEN
+      BLOCK
+         CONST C: INTEGER := ASCII_CODE (E@.NAME);
+         IF C >= 0 THEN
+            RETURN (OK: TRUE, V: C);
+         END IF;
+      END BLOCK;
+   END IF;
+   RETURN NO;
+END FUNCTION MANIFEST;
+
+% the position of the literal NAME in the enumerated type T, or -1
+FUNCTION LIT_INDEX (T: TYP, NAME: TEXT) RETURNS (INTEGER);
+   VAR N: NODE := T@.LITS;
+   VAR I: INTEGER := 0;
+   LOOP UNTIL N = NIL DO
+      IF TEQ (N@.NAME, NAME) THEN
+         RETURN I;
+      END IF;
+      I := I + 1;
+      N := N@.NEXT;
+   END LOOP;
+   RETURN -1;
+END FUNCTION LIT_INDEX;
+
+FUNCTION FIND_FIELD (T: TYP, NAME: TEXT) RETURNS (FIELD);
+   VAR F: FIELD := T@.FIELDS;
+   LOOP UNTIL F = NIL DO
+      IF TEQ (F@.NAME, NAME) THEN
+         RETURN F;
+      END IF;
+      F := F@.NEXT;
+   END LOOP;
+   RETURN NIL;
+END FUNCTION FIND_FIELD;
+
+FUNCTION EXPR (E: NODE, WANT: TYP) RETURNS (ET);
+   CONST K: INTEGER := E@.KIND;
+   IF K = N_INT THEN
+      RETURN MKET (FMT1 ('((rt_int)@LL)', NUM (E@.IV)), W@.TY_INT);
+   ORIF K = N_BOOL THEN
+      RETURN MKET (NUM (E@.IV), W@.TY_BOOL);
+   ORIF K = N_NIL THEN
+      RETURN MKET (MK ('NULL'), W@.TY_NIL);
+   ORIF K = N_PAREN THEN
+      RETURN EXPR (E@.A, WANT);
+   ORIF K = N_STR THEN                              % [3-135]
+      BLOCK
+         CONST AT: INTEGER := W@.TOP;
+         VAR P: NODE := E@.A;
+         VAR R: TEXT;
+         LOOP UNTIL P = NIL DO
+            IF P@.IV = K_STR THEN
+               R := MK (STR (P@.NAME, P@.NAME.LEN));
+            ELSE
+               BLOCK
+                  CONST C: INTEGER := ASCII_CODE (P@.NAME);
+                  IF C < 0 THEN
+                     FAILT (P@.LINE, 'not a character of ASCII: ', P@.NAME);
+                  END IF;
+                  R := MK (CHAR_OF (C));
+               END BLOCK;
+            END IF;
+            P := P@.NEXT;
+         END LOOP;
+         BLOCK
+            CONST S: TEXT := (AT: AT, LEN: W@.TOP - AT, H: -1);
+            VAR T: TYP := NEW_TYP (T_STR);
+            T@.LEN := NEW_NODE (N_INT, E@.LINE);
+            T@.LEN@.IV := S.LEN;
+            RETURN MKET (FMT2 ('rt_str(@, @)', CSTRING (S), NUM (S.LEN)), T);
+         END BLOCK;
+      END BLOCK;
+   ORIF K = N_ENUMLIT THEN
+      IF WANT <> NIL THEN
+         IF WANT@.KIND = T_ENUM & WANT <> W@.TY_ASCII THEN
+            BLOCK
+               CONST I: INTEGER := LIT_INDEX (WANT, E@.NAME);
+               IF I >= 0 THEN
+                  RETURN MKET (NUM (I), WANT);
+               END IF;
+            END BLOCK;
+         END IF;
+      END IF;
+      BLOCK
+         CONST C: INTEGER := ASCII_CODE (E@.NAME);
+         IF C < 0 THEN
+            FAILT (E@.LINE, 'unknown enumerated literal ', E@.NAME);
+         END IF;
+         RETURN MKET (NUM (C), W@.TY_ASCII);
+      END BLOCK;
+   ORIF K = N_RECCONS THEN                          % [3-178]
+      IF WANT = NIL THEN
+         FAIL (E@.LINE, 'the type of a record constructor is unknown');
+      END IF;
+      IF WANT@.KIND <> T_REC THEN
+         FAIL (E@.LINE, 'the type of a record constructor is unknown');
+      END IF;
+      BLOCK
+         VAR P: NODE := E@.A;
+         VAR PARTS: TEXT := MK ('0');
+         LOOP UNTIL P = NIL DO
+            BLOCK
+               CONST F: FIELD := FIND_FIELD (WANT, P@.NAME);
+               IF F = NIL THEN
+                  FAILT (P@.LINE, 'no such field: ', P@.NAME);
+               END IF;
+               PARTS := FMT3 ('@, .@ = @', PARTS, FIELD_C (F@.NAME), EXPR (P@.A, F@.T).C);
+            END BLOCK;
+            P := P@.NEXT;
+         END LOOP;
+         RETURN MKET (FMT2 ('((@){@})', WANT@.CNAME, PARTS), WANT);
+      END BLOCK;
+   ORIF K = N_NEW THEN                              % [3-198]
+      BLOCK
+         CONST T: TYP := RESOLVE (E@.A);
+         VAR P: TYP := NEW_TYP (T_PTR);
+         P@.TARGET := T;
+         P@.TARGET_TS := E@.A;
+         RETURN MKET (FMT2 ('({ @ *p = rt_alloc(sizeof *p); @ p; })', CTYPE (T),
+                            INIT_CODE (T, MK ('(*p)'))), P);
+      END BLOCK;
+   ORIF K = N_NAME THEN
+      RETURN NAME_EXPR (E);
+   ORIF K = N_APPLY THEN
+      BLOCK
+         CONST Y: SYM := LOOKUP (E@.NAME);
+         IF Y <> NIL THEN
+            IF Y@.KIND = Y_VAR ! Y@.KIND = Y_CONST THEN      % a subscript
+               BLOCK
+                  VAR N: NODE := NEW_NODE (N_INDEX, E@.LINE);
+                  VAR A: NODE := NEW_NODE (N_NAME, E@.LINE);
+                  A@.NAME := E@.NAME;
+                  N@.A := A;
+                  N@.B := E@.A;
+                  RETURN EXPR (N, WANT);
+               END BLOCK;
+            END IF;
+         END IF;
+         RETURN CALL (E);
+      END BLOCK;
+   ORIF K = N_FIELD THEN                            % [3-191] and attributes [3-2]
+      BLOCK
+         CONST B: ET := EXPR (E@.A, NIL);
+         IF TEQS (E@.NAME, 'LENGTH') & B.T@.KIND = T_STR THEN
+            RETURN MKET (FMT1 ('(@).len', B.C), W@.TY_INT);
+         END IF;
+         IF B.T@.KIND <> T_REC THEN
+            FAILT (E@.LINE, 'a field of something not a record: ', E@.NAME);
+         END IF;
+         BLOCK
+            CONST F: FIELD := FIND_FIELD (B.T, E@.NAME);
+            IF F = NIL THEN
+               FAILT (E@.LINE, 'no such field: ', E@.NAME);
+            END IF;
+            RETURN MKET (FMT2 ('(@).@', B.C, FIELD_C (F@.NAME)), F@.T);
+         END BLOCK;
+      END BLOCK;
+   ORIF K = N_DEREF THEN                            % 3.10.4.2
+      BLOCK
+         CONST B: ET := EXPR (E@.A, NIL);
+         IF B.T@.KIND <> T_PTR THEN
+            FAIL (E@.LINE, '@ applied to something not a pointer');
+         END IF;
+         BLOCK
+            CONST TT: TYP := TARGET (B.T);
+            RETURN MKET (FMT2 ('(*(@ *)rt_nil_check(@))', CTYPE (TT), B.C), TT);
+         END BLOCK;
+      END BLOCK;
+   ORIF K = N_INDEX THEN                            % [3-156]
+      BLOCK
+         CONST B: ET := EXPR (E@.A, NIL);
+         IF B.T@.KIND <> T_ARR THEN
+            FAIL (E@.LINE, 'a subscript of something not an array');
+         END IF;
+         RETURN MKET (FMT4 ('(@).p[rt_index(@, (@).lo, (@).hi) - (@).lo]', B.C,
+                            EXPR (E@.B, NIL).C, B.C, B.C), B.T@.ELEM);
+      END BLOCK;
+   ORIF K = N_SUBSTR THEN                           % [3-34]
+      RETURN MKET (FMT3 ('rt_b_slice(@, @, @)', EXPR (E@.A, NIL).C, EXPR (E@.B, NIL).C,
+                         EXPR (E@.C, NIL).C), W@.TY_STR);
+   ORIF K = N_UNOP THEN
+      BLOCK
+         CONST A: ET := EXPR (E@.A, NIL);
+         IF TEQS (E@.NAME, 'NOT') THEN
+            RETURN MKET (FMT1 ('(!@)', A.C), W@.TY_BOOL);
+         ORIF TEQS (E@.NAME, '-') THEN
+            RETURN MKET (FMT1 ('rt_neg(@)', A.C), W@.TY_INT);
+         END IF;
+         RETURN A;
+      END BLOCK;
+   ORIF K = N_IN THEN                               % 3.2.4.6
+      BLOCK
+         CONST V: TEXT := NEW_NAME ('iv');
+         VAR LO_OP, HI_OP: TEXT;
+         LO_OP := MK ('<=');
+         HI_OP := MK ('<=');
+         IF E@.B@.IV = 1 ! E@.B@.IV = 3 THEN
+            LO_OP := MK ('<');
+         END IF;
+         IF E@.B@.IV >= 2 THEN
+            HI_OP := MK ('<');
+         END IF;
+         BLOCK
+            CONST P1: TEXT := FMT4 ('({ rt_int @ = @; (@) @ ', V, EXPR (E@.A, NIL).C,
+                                    EXPR (E@.B@.A, NIL).C, LO_OP);
+            CONST P2: TEXT := FMT4 ('@@ && @ @ ', P1, V, V, HI_OP);
+            RETURN MKET (FMT2 ('@(@); })', P2, EXPR (E@.B@.B, NIL).C), W@.TY_BOOL);
+         END BLOCK;
+      END BLOCK;
+   ORIF K = N_BINOP THEN
+      RETURN BINARY (E);
+   END IF;
+   FAIL (E@.LINE, 'this expression cannot be translated yet');
+END FUNCTION EXPR;
+
+FUNCTION NAME_EXPR (E: NODE) RETURNS (ET);
+   CONST Y: SYM := LOOKUP (E@.NAME);
+   IF Y = NIL THEN
+      FAILT (E@.LINE, 'unknown name ', E@.NAME);
+   END IF;
+   IF Y@.KIND = Y_VAR ! Y@.KIND = Y_CONST THEN
+      RETURN MKET (Y@.ACCESS, Y@.T);
+   ORIF Y@.KIND = Y_GEN THEN
+      RETURN MKET (Y@.ACCESS, W@.TY_INT);
+   ORIF Y@.KIND = Y_ROUTINE ! Y@.KIND = Y_BUILTIN THEN
+      BLOCK
+         VAR N: NODE := NEW_NODE (N_APPLY, E@.LINE);
+         N@.NAME := E@.NAME;
+         RETURN CALL (N);
+      END BLOCK;
+   END IF;
+   FAILT (E@.LINE, 'not a value: ', E@.NAME);
+END FUNCTION NAME_EXPR;
+
+FUNCTION BINARY (E: NODE) RETURNS (ET);
+   CONST OP: TEXT := E@.NAME;
+   IF TEQS (OP, '&') ! TEQS (OP, '!') THEN          % 3.5.4.1, short circuit
+      BLOCK
+         CONST A: TEXT := EXPR (E@.A, NIL).C;
+         CONST B: TEXT := EXPR (E@.B, NIL).C;
+         IF TEQS (OP, '&') THEN
+            RETURN MKET (FMT2 ('(@ && @)', A, B), W@.TY_BOOL);
+         END IF;
+         RETURN MKET (FMT2 ('(@ || @)', A, B), W@.TY_BOOL);
+      END BLOCK;
+   END IF;
+   IF TEQS (OP, '=') ! TEQS (OP, '<>') THEN
+      BLOCK
+         VAR A: ET := EXPR (E@.A, NIL);
+         CONST B: ET := EXPR (E@.B, A.T);
+         VAR R: TEXT;
+         IF A.T@.KIND = T_NIL & B.T@.KIND <> T_NIL THEN
+            A := EXPR (E@.A, B.T);
+         END IF;
+         IF A.T@.KIND = T_STR THEN
+            R := FMT2 ('rt_b_eq(@, @)', A.C, B.C);
+         ELSE
+            R := FMT2 ('(@ == @)', A.C, B.C);
+         END IF;
+         IF TEQS (OP, '<>') THEN
+            R := FMT1 ('(!@)', R);
+         END IF;
+         RETURN MKET (R, W@.TY_BOOL);
+      END BLOCK;
+   END IF;
+   IF TEQS (OP, '<') ! TEQS (OP, '>') ! TEQS (OP, '<=') ! TEQS (OP, '>=') THEN
+      BLOCK
+         CONST A: ET := EXPR (E@.A, NIL);
+         CONST B: ET := EXPR (E@.B, A.T);
+         RETURN MKET (FMT3 ('(@ @ @)', A.C, OP, B.C), W@.TY_BOOL);
+      END BLOCK;
+   END IF;
+   IF TEQS (OP, '!!') THEN                          % 3.7.4.1
+      RETURN MKET (FMT2 ('rt_str_cat(@, @)', EXPR (E@.A, NIL).C, EXPR (E@.B, NIL).C), W@.TY_STR);
+   END IF;
+   BLOCK
+      CONST A: TEXT := EXPR (E@.A, NIL).C;
+      CONST B: TEXT := EXPR (E@.B, NIL).C;
+      VAR FN: TEXT;
+      IF TEQS (OP, '+') THEN
+         FN := MK ('rt_add');
+      ORIF TEQS (OP, '-') THEN
+         FN := MK ('rt_sub');
+      ORIF TEQS (OP, '*') THEN
+         FN := MK ('rt_mul');
+      ORIF TEQS (OP, '//') THEN                       % 3.2.4.2: truncating
+         FN := MK ('rt_quot');
+      ORIF TEQS (OP, 'MOD') THEN                      % E - (E//F)*F
+         FN := MK ('rt_rem');
+      ELSE
+         FAILT (E@.LINE, 'this operator cannot be translated yet: ', OP);
+      END IF;
+      RETURN MKET (FMT3 ('@(@, @)', FN, A, B), W@.TY_INT);
+   END BLOCK;
+END FUNCTION BINARY;
+
+% the actual arguments of a call, in the order input # inout # output
+FUNCTION ALL_ARGS (E: NODE) RETURNS (NODE);
+   VAR HEAD, TAIL: NODE := NIL;
+   VAR P: NODE := E@.A;
+   LOOP UNTIL P = NIL DO
+      ADD_LIST (COPY_NODE (P) # HEAD, TAIL);
+      P := P@.NEXT;
+   END LOOP;
+   P := E@.B;
+   LOOP UNTIL P = NIL DO
+      ADD_LIST (COPY_NODE (P) # HEAD, TAIL);
+      P := P@.NEXT;
+   END LOOP;
+   P := E@.C;
+   LOOP UNTIL P = NIL DO
+      ADD_LIST (COPY_NODE (P) # HEAD, TAIL);
+      P := P@.NEXT;
+   END LOOP;
+   RETURN HEAD;
+END FUNCTION ALL_ARGS;
+
+FUNCTION COPY_NODE (N: NODE) RETURNS (NODE);
+   VAR C: NODE := NEW (NODE_REC);
+   C@ := N@;
+   C@.NEXT := NIL;
+   RETURN C;
+END FUNCTION COPY_NODE;
+
+FUNCTION CALL (E: NODE) RETURNS (ET);
+   CONST Y: SYM := LOOKUP (E@.NAME);
+   IF Y = NIL THEN
+      FAILT (E@.LINE, 'unknown routine ', E@.NAME);
+   END IF;
+   IF Y@.KIND = Y_BUILTIN THEN
+      RETURN BUILTIN (E);
+   END IF;
+   IF Y@.KIND <> Y_ROUTINE THEN
+      FAILT (E@.LINE, 'not a routine: ', E@.NAME);
+   END IF;
+   BLOCK
+      VAR A: NODE := ALL_ARGS (E);
+      VAR P: PARM := Y@.PARAMS;
+      VAR ARGS: TEXT := MK ('');
+      VAR SEP: TEXT := MK ('');
+      LOOP UNTIL P = NIL DO
+         IF A = NIL THEN
+            FAILT (E@.LINE, 'too few arguments for ', E@.NAME);
+         END IF;
+         IF P@.MODE = M_IN THEN
+            ARGS := FMT3 ('@@@', ARGS, SEP, RANGE_CHECK (P@.T, EXPR (A, P@.T).C));
+         ELSE
+            ARGS := FMT3 ('@@&@', ARGS, SEP, EXPR (A, NIL).C);
+         END IF;
+         SEP := MK (', ');
+         A := A@.NEXT;
+         P := P@.NEXT;
+      END LOOP;
+      IF A <> NIL THEN
+         FAILT (E@.LINE, 'too many arguments for ', E@.NAME);
+      END IF;
+      RETURN MKET (FMT2 ('@(@)', Y@.ACCESS, ARGS), Y@.RESULT);
+   END BLOCK;
+END FUNCTION CALL;
+
+% the routines of TERMINAL and the functions of the prelude
+FUNCTION BUILTIN (E: NODE) RETURNS (ET);
+   CONST NAME: TEXT := E@.NAME;
+   VAR A, B: TEXT;
+   VAR AT: TYP := W@.TY_VOID;
+   A := MK ('');
+   B := MK ('');
+   IF E@.A <> NIL THEN
+      BLOCK
+         CONST X: ET := EXPR (E@.A, NIL);
+         A := X.C;
+         AT := X.T;
+      END BLOCK;
+      IF E@.A@.NEXT <> NIL THEN
+         B := EXPR (E@.A@.NEXT, NIL).C;
+      END IF;
+   END IF;
+   IF TEQS (NAME, 'PUT') THEN
+      RETURN MKET (FMT1 ('rt_put(@)', A), W@.TY_VOID);
+   ORIF TEQS (NAME, 'PUT_LINE') THEN
+      RETURN MKET (FMT1 ('rt_putln(@)', A), W@.TY_VOID);
+   ORIF TEQS (NAME, 'NEW_LINE') THEN
+      RETURN MKET (MK ('rt_newline()'), W@.TY_VOID);
+   ORIF TEQS (NAME, 'GET_CODE') THEN
+      RETURN MKET (MK ('rt_b_get_code()'), W@.TY_INT);
+   ORIF TEQS (NAME, 'STOP') THEN
+      RETURN MKET (FMT1 ('rt_exit(@)', A), W@.TY_VOID);
+   ORIF TEQS (NAME, 'TO_CHAR') THEN
+      RETURN MKET (FMT1 ('rt_b_image(@)', A), W@.TY_STR);
+   ORIF TEQS (NAME, 'BLANKS') THEN
+      RETURN MKET (FMT1 ('rt_b_dup(rt_str(" ", 1), @)', A), W@.TY_STR);
+   ORIF TEQS (NAME, 'DUP') THEN
+      RETURN MKET (FMT2 ('rt_b_dup(@, @)', A, B), W@.TY_STR);
+   ORIF TEQS (NAME, 'ABS') THEN
+      RETURN MKET (FMT1 ('rt_abs(@)', A), W@.TY_INT);
+   ORIF TEQS (NAME, 'TO_FIXED') THEN
+      IF AT@.KIND = T_STR THEN
+         RETURN MKET (FMT1 ('rt_int_of_str(@)', A), W@.TY_INT);
+      END IF;
+      RETURN MKET (A, W@.TY_INT);
+   END IF;
+   FAILT (E@.LINE, 'unknown routine ', NAME);
+END FUNCTION BUILTIN;
+
+% ==== statements (4.5) =======================================================================
+
+PROCEDURE PUSH_CTX (KIND: INTEGER, NAME: TEXT);
+   VAR C: CTX := NEW (CTX_REC);
+   C@ := (KIND: KIND, NAME: NAME, NEXT: W@.CTXS);
+   W@.CTXS := C;
+END PROCEDURE PUSH_CTX;
+
+PROCEDURE POP_CTX ();
+   W@.CTXS := W@.CTXS@.NEXT;
+END PROCEDURE POP_CTX;
+
+% leave the guarded statements out to the innermost construct of kind KIND
+% (2: a loop, 1: the routine); its exit label, or nothing if there is none
+FUNCTION LEAVE (KIND: INTEGER) RETURNS (CTX);
+   VAR C: CTX := W@.CTXS;
+   LOOP UNTIL C = NIL DO
+      IF C@.KIND = 3 THEN
+         CODE (FMT1 ('RT_POP(@);', C@.NAME));
+      END IF;
+      IF C@.KIND = KIND THEN
+         RETURN C;
+      END IF;
+      C := C@.NEXT;
+   END LOOP;
+   RETURN NIL;
+END FUNCTION LEAVE;
+
+% the C variable that holds the identity of an exception (4.5.7)
+FUNCTION EXC_NAME (NAME: TEXT) RETURNS (TEXT);
+   VAR N: NODE := W@.EXCS;
+   LOOP UNTIL N = NIL DO
+      IF TEQ (N@.NAME, NAME) THEN
+         RETURN FMT1 ('x_@', NAME);
+      END IF;
+      N := N@.NEXT;
+   END LOOP;
+   N := NEW_NODE (N_IDENT, 0);
+   N@.NAME := NAME;
+   N@.NEXT := W@.EXCS;
+   W@.EXCS := N;
+   RETURN FMT1 ('x_@', NAME);
+END FUNCTION EXC_NAME;
+
+PROCEDURE DECLARE_TYPES (DECLS: NODE);
+   VAR D: NODE := DECLS;
+   LOOP UNTIL D = NIL DO
+      IF D@.KIND = N_TYPE THEN
+         BLOCK
+            VAR Y: SYM := NEW_SYM (Y_TYPE, D@.NAME);
+            Y@.TS := D@.B;
+            DEFINE (Y, D@.LINE);
+         END BLOCK;
+      END IF;
+      D := D@.NEXT;
+   END LOOP;
+END PROCEDURE DECLARE_TYPES;
+
+% constant and variable declarations [3-4] [3-6]; at the segment level the objects
+% are C globals, elsewhere C locals
+PROCEDURE DECLARE_OBJECTS (D: NODE, GLOB: BOOLEAN);
+   CONST T: TYP := RESOLVE (D@.B);
+   VAR N: NODE := D@.A;
+   LOOP UNTIL N = NIL DO
+      BLOCK
+         VAR Y: SYM := NEW_SYM (Y_VAR, N@.NAME);
+         VAR CN: TEXT;
+         IF D@.KIND = N_CONST THEN
+            Y@.KIND := Y_CONST;
+            IF IS_SCALAR (T) THEN
+               BLOCK
+                  CONST M: MVAL := MANIFEST (D@.C);
+                  Y@.HASMV := M.OK;
+                  Y@.MV := M.V;
+               END BLOCK;
+            END IF;
+         END IF;
+         Y@.T := T;
+         IF GLOB THEN
+            CN := FMT1 ('g_@', N@.NAME);
+            EMIT (O_GLOBALS, FMT2 ('static @ @;', CTYPE (T), CN));
+         ELSE
+            CN := FMT2 ('l_@_@', N@.NAME, NEW_NAME (''));
+            CODE (FMT2 ('@ @;', CTYPE (T), CN));
+         END IF;
+         Y@.ACCESS := CN;
+         IF NEEDS_INIT (T) THEN
+            CODE (INIT_CODE (T, CN));
+         ELSE
+            CODE (FMT2 ('memset(&@, 0, sizeof @);', CN, CN));
+         END IF;
+         IF D@.C <> NIL THEN
+            CODE (ASSIGN_CODE (T, CN, RANGE_CHECK (T, EXPR (D@.C, T).C)));
+         END IF;
+         DEFINE (Y, N@.LINE);
+      END BLOCK;
+      N := N@.NEXT;
+   END LOOP;
+END PROCEDURE DECLARE_OBJECTS;
+
+% the declarations and statements of a body [4-1], in the current scope
+PROCEDURE BODY (B: NODE);
+   VAR D: NODE := B@.A;
+   VAR S: NODE := B@.B;
+   DECLARE_TYPES (B@.A);
+   LOOP UNTIL D = NIL DO
+      IF D@.KIND = N_VAR ! D@.KIND = N_CONST THEN
+         DECLARE_OBJECTS (D, FALSE);
+      END IF;
+      D := D@.NEXT;
+   END LOOP;
+   LOOP UNTIL S = NIL DO
+      STMT (S);
+      S := S@.NEXT;
+   END LOOP;
+END PROCEDURE BODY;
+
+% an open scope [4-1]: a C block
+PROCEDURE OPEN_BODY (B: NODE);
+   CODES ('{');
+   OPEN_SCOPE;
+   BODY (B);
+   CLOSE_SCOPE;
+   CODES ('}');
+END PROCEDURE OPEN_BODY;
+
+PROCEDURE STMT (S: NODE);
+   CONST K: INTEGER := S@.KIND;
+   IF K = N_NULL THEN
+      RETURN;
+   ORIF K = N_ASSIGN THEN
+      ASSIGN_STMT (S);
+   ORIF K = N_CALL THEN                             % [4-37]
+      S@.KIND := N_APPLY;
+      CODE (CATS (CALL (S).C, ';'));
+   ORIF K = N_IF THEN                               % [4-63]
+      BLOCK
+         VAR ARM: NODE := S@.A;
+         VAR WORD: TEXT := MK ('if');
+         LOOP UNTIL ARM = NIL DO
+            CODE (FMT2 ('@ (@)', WORD, EXPR (ARM@.A, W@.TY_BOOL).C));
+            OPEN_BODY (ARM@.B);
+            WORD := MK ('else if');
+            ARM := ARM@.NEXT;
+         END LOOP;
+         IF S@.B <> NIL THEN
+            CODES ('else');
+            OPEN_BODY (S@.B);
+         END IF;
+      END BLOCK;
+   ORIF K = N_CASE THEN
+      CASE_STMT (S);
+   ORIF K = N_LOOP THEN                             % [4-76]
+      BLOCK
+         CONST END_L: TEXT := NEW_NAME ('L_end');
+         CODES ('for (;;) {');
+         IF S@.A <> NIL THEN
+            CODE (FMT2 ('if (@) goto @;', EXPR (S@.A, W@.TY_BOOL).C, END_L));
+         END IF;
+         PUSH_CTX (2, END_L);
+         OPEN_BODY (S@.B);
+         POP_CTX;
+         IF S@.C <> NIL THEN
+            CODE (FMT2 ('if (@) goto @;', EXPR (S@.C, W@.TY_BOOL).C, END_L));
+         END IF;
+         CODE (FMT1 ('} @: ;', END_L));
+      END BLOCK;
+   ORIF K = N_FOR THEN                              % [4-79]
+      BLOCK
+         CONST END_L: TEXT := NEW_NAME ('L_end');
+         CONST IT: TEXT := NEW_NAME ('it');
+         CONST R: NODE := S@.A;
+         CONST LO: ET := EXPR (R@.A, NIL);
+         VAR LOC, HIC: TEXT;
+         LOC := LO.C;
+         HIC := EXPR (R@.B, LO.T).C;
+         IF R@.IV = 1 ! R@.IV = 3 THEN
+            LOC := FMT1 ('(@) + 1', LOC);
+         END IF;
+         IF R@.IV >= 2 THEN
+            HIC := FMT1 ('(@) - 1', HIC);
+         END IF;
+         CODE (FMT4 ('{ rt_int @_lo = @, @_hi = @;', IT, LOC, IT, HIC));
+         CODE (FMT4 ('for (rt_int @ = @_lo; @ <= @_hi; @++) {', IT, IT, IT, IT));
+         OPEN_SCOPE;
+         IF S@.NAME.LEN > 0 THEN
+            BLOCK
+               VAR Y: SYM := NEW_SYM (Y_CONST, S@.NAME);
+               Y@.ACCESS := IT;
+               IF LO.T@.KIND = T_ENUM THEN
+                  Y@.T := LO.T;
+               ELSE
+                  Y@.T := W@.TY_INT;
+               END IF;
+               DEFINE (Y, S@.LINE);
+            END BLOCK;
+         END IF;
+         PUSH_CTX (2, END_L);
+         OPEN_BODY (S@.B);
+         POP_CTX;
+         CLOSE_SCOPE;
+         CODE (FMT1 ('} } @: ;', END_L));
+      END BLOCK;
+   ORIF K = N_EXIT THEN                             % [4-78]
+      BLOCK
+         CONST C: CTX := LEAVE (2);
+         IF C = NIL THEN
+            FAIL (S@.LINE, 'EXIT outside a loop');
+         END IF;
+         CODE (FMT1 ('goto @;', C@.NAME));
+      END BLOCK;
+   ORIF K = N_RETURN THEN                           % [4-44]
+      BLOCK
+         CONST C: CTX := LEAVE (1);
+         IF S@.A = NIL THEN
+            IF W@.IN_ROUTINE THEN
+               CODES ('return;');
+            ELSE
+               CODES ('rt_main_done();');
+            END IF;
+         ELSE
+            CODE (FMT1 ('return @;', EXPR (S@.A, W@.RESULT).C));
+         END IF;
+      END BLOCK;
+   ORIF K = N_BLOCK THEN                            % [4-59]
+      OPEN_BODY (S@.A);
+   ORIF K = N_SIGNAL THEN                           % [4-83]
+      IF S@.NAME.LEN = 0 THEN
+         BLOCK
+            VAR C: CTX := W@.CTXS;
+            LOOP UNTIL C = NIL DO
+               IF C@.KIND = 4 THEN
+                  CODE (FMT1 ('rt_raise(@);', C@.NAME));
+                  RETURN;
+               END IF;
+               C := C@.NEXT;
+            END LOOP;
+            FAIL (S@.LINE, 'SIGNAL without a name outside a handler');
+         END BLOCK;
+      END IF;
+      CODE (FMT1 ('rt_raise(@);', EXC_NAME (S@.NAME)));
+   ORIF K = N_ASSERT THEN                           % [4-84]
+      CODE (FMT1 ('if (!(@)) rt_raise(RT_X_ASSERT);', EXPR (S@.A, W@.TY_BOOL).C));
+   ORIF K = N_EXCEPT THEN                           % [4-80]
+      BLOCK
+         CONST F: TEXT := NEW_NAME ('xf');
+         VAR H: NODE := S@.B;
+         VAR WORD: TEXT := MK ('if');
+         CODE (FMT2 ('{ rt_frame @; if (RT_TRY(@)) {', F, F));
+         PUSH_CTX (3, F);
+         STMT (S@.A);
+         POP_CTX;
+         CODE (FMT3 ('RT_POP(@); } else { RT_POP(@); int @x = rt_xcur;', F, F, F));
+         LOOP UNTIL H = NIL DO
+            BLOCK
+               VAR N: NODE := H@.A;
+               VAR COND: TEXT := MK ('0');
+               LOOP UNTIL N = NIL DO
+                  COND := FMT3 ('@ || @x == @', COND, F, EXC_NAME (N@.NAME));
+                  N := N@.NEXT;
+               END LOOP;
+               CODE (FMT2 ('@ (@)', WORD, COND));
+               WORD := MK ('else if');
+               PUSH_CTX (4, CATS (F, 'x'));
+               OPEN_BODY (H@.B);
+               POP_CTX;
+            END BLOCK;
+            H := H@.NEXT;
+         END LOOP;
+         CODE (FMT1 ('else rt_raise(@x); } }', F));
+      END BLOCK;
+   ELSE
+      FAIL (S@.LINE, 'this statement cannot be translated yet');
+   END IF;
+END PROCEDURE STMT;
+
+% [3-43]: a variable or a substring of one
+PROCEDURE ASSIGN_STMT (S: NODE);
+   CONST TG: NODE := S@.A;
+   IF TG@.KIND = N_SUBSTR THEN
+      CODE (FMT4 ('rt_b_slice_assign(&@, @, @, @);', EXPR (TG@.A, NIL).C,
+                  EXPR (TG@.B, NIL).C, EXPR (TG@.C, NIL).C, EXPR (S@.B, NIL).C));
+      RETURN;
+   END IF;
+   BLOCK
+      CONST LV: ET := EXPR (TG, NIL);
+      CODE (ASSIGN_CODE (LV.T, LV.C, RANGE_CHECK (LV.T, EXPR (S@.B, LV.T).C)));
+   END BLOCK;
+END PROCEDURE ASSIGN_STMT;
+
+% [4-67]: a C switch on integers and enumerated values, a chain of comparisons on
+% character strings
+PROCEDURE CASE_STMT (S: NODE);
+   CONST CH: ET := EXPR (S@.A, NIL);
+   VAR ARM: NODE := S@.B;
+   IF CH.T@.KIND = T_STR THEN
+      BLOCK
+         CONST TMP: TEXT := NEW_NAME ('cs');
+         VAR WORD: TEXT := MK ('if');
+         CODE (FMT2 ('{ rstr @ = @;', TMP, CH.C));
+         LOOP UNTIL ARM = NIL DO
+            BLOCK
+               VAR L: NODE := ARM@.A;
+               VAR COND: TEXT := MK ('0');
+               LOOP UNTIL L = NIL DO
+                  COND := FMT3 ('@ || rt_str_eq(@, @)', COND, TMP, EXPR (L, NIL).C);
+                  L := L@.NEXT;
+               END LOOP;
+               CODE (FMT2 ('@ (@)', WORD, COND));
+               WORD := MK ('else if');
+               OPEN_BODY (ARM@.B);
+            END BLOCK;
+            ARM := ARM@.NEXT;
+         END LOOP;
+         IF S@.C <> NIL THEN
+            CODES ('else');
+            OPEN_BODY (S@.C);
+         END IF;
+         CODES ('}');
+      END BLOCK;
+      RETURN;
+   END IF;
+   CODE (FMT1 ('switch (@) {', CH.C));
+   LOOP UNTIL ARM = NIL DO
+      BLOCK
+         VAR L: NODE := ARM@.A;
+         LOOP UNTIL L = NIL DO
+            IF L@.KIND = N_RANGE THEN
+               BLOCK
+                  CONST LO: MVAL := MANIFEST (L@.A);
+                  CONST HI: MVAL := MANIFEST (L@.B);
+                  VAR A: INTEGER := LO.V;
+                  VAR B: INTEGER := HI.V;
+                  IF NOT (LO.OK & HI.OK) THEN
+                     FAIL (L@.LINE, 'a case label must be manifest');
+                  END IF;
+                  IF L@.IV = 1 ! L@.IV = 3 THEN
+                     A := A + 1;
+                  END IF;
+                  IF L@.IV >= 2 THEN
+                     B := B - 1;
+                  END IF;
+                  CODE (FMT2 ('case @ ... @:', NUM (A), NUM (B)));
+               END BLOCK;
+            ELSE
+               BLOCK
+                  VAR M: MVAL := MANIFEST (L);
+                  IF L@.KIND = N_ENUMLIT & CH.T@.KIND = T_ENUM & CH.T <> W@.TY_ASCII THEN
+                     M := (OK: TRUE, V: LIT_INDEX (CH.T, L@.NAME));
+                  END IF;
+                  IF NOT M.OK THEN
+                     FAIL (L@.LINE, 'a case label must be manifest');
+                  END IF;
+                  CODE (FMT1 ('case @:', NUM (M.V)));
+               END BLOCK;
+            END IF;
+            L := L@.NEXT;
+         END LOOP;
+      END BLOCK;
+      OPEN_BODY (ARM@.B);
+      CODES ('break;');
+      ARM := ARM@.NEXT;
+   END LOOP;
+   IF S@.C <> NIL THEN
+      CODES ('default:');
+      OPEN_BODY (S@.C);
+      CODES ('break;');
+   END IF;
+   CODES ('}');
+END PROCEDURE CASE_STMT;
+
+% ==== routines (4.3) and the program (4.2) ==================================================
+
+% the C header of a routine: its name, its result and its formal parameters; input
+% parameters are passed by value, inout and output parameters by reference (4.3.2)
+PROCEDURE DECLARE_ROUTINE (R: NODE);
+   VAR Y: SYM := NEW_SYM (Y_ROUTINE, R@.NAME);
+   VAR P: NODE := R@.A;
+   VAR TAIL: PARM := NIL;
+   VAR PS: TEXT := MK ('');
+   VAR SEP: TEXT := MK ('');
+   LOOP UNTIL P = NIL DO
+      BLOCK
+         VAR PM: PARM := NEW (PARM_REC);
+         PM@ := (NAME: P@.NAME, MODE: P@.IV, T: RESOLVE (P@.B), NEXT: NIL);
+         IF TAIL = NIL THEN
+            Y@.PARAMS := PM;
+         ELSE
+            TAIL@.NEXT := PM;
+         END IF;
+         TAIL := PM;
+         IF PM@.MODE = M_IN THEN
+            PS := FMT4 ('@@@ p_@', PS, SEP, CTYPE (PM@.T), PM@.NAME);
+         ELSE
+            PS := FMT4 ('@@@ *p_@', PS, SEP, CTYPE (PM@.T), PM@.NAME);
+         END IF;
+         SEP := MK (', ');
+      END BLOCK;
+      P := P@.NEXT;
+   END LOOP;
+   IF PS.LEN = 0 THEN
+      PS := MK ('void');
+   END IF;
+   IF R@.B <> NIL THEN
+      Y@.RESULT := RESOLVE (R@.B);
+   ELSE
+      Y@.RESULT := W@.TY_VOID;
+   END IF;
+   Y@.ACCESS := FMT1 ('r_@', R@.NAME);
+   Y@.FWD := FMT3 ('static @ @(@)', CTYPE (Y@.RESULT), Y@.ACCESS, PS);
+   EMIT (O_PROTOS, CATS (Y@.FWD, ';'));
+   DEFINE (Y, R@.LINE);
+END PROCEDURE DECLARE_ROUTINE;
+
+PROCEDURE ROUTINE_BODY (R: NODE);
+   CONST Y: SYM := LOOKUP (R@.NAME);
+   CONST SAVED: BUF := W@.CODE;
+   VAR P: PARM := Y@.PARAMS;
+   W@.CODE := (HEAD: NIL, TAIL: NIL);
+   W@.RESULT := Y@.RESULT;
+   W@.IN_ROUTINE := TRUE;
+   W@.CTXS := NIL;
+   PUSH_CTX (1, NO_TEXT ());
+   OPEN_SCOPE;
+   LOOP UNTIL P = NIL DO
+      BLOCK
+         VAR V: SYM := NEW_SYM (Y_VAR, P@.NAME);
+         V@.T := P@.T;
+         IF P@.MODE = M_IN THEN
+            V@.ACCESS := FMT1 ('p_@', P@.NAME);
+         ELSE
+            V@.ACCESS := FMT1 ('(*p_@)', P@.NAME);
+         END IF;
+         DEFINE (V, R@.LINE);
+         IF P@.T@.GEN.LEN > 0 THEN                % ASCII_STR(?L): L is the length
+            BLOCK
+               VAR G: SYM := NEW_SYM (Y_GEN, P@.T@.GEN);
+               G@.NAME.H := -1;
+               G@.ACCESS := FMT1 ('(@).len', V@.ACCESS);
+               DEFINE (G, R@.LINE);
+            END BLOCK;
+         END IF;
+      END BLOCK;
+      P := P@.NEXT;
+   END LOOP;
+   BODY (R@.C);
+   CLOSE_SCOPE;
+   EMIT (O_FUNCS, CATS (Y@.FWD, ' {'));
+   APPEND_BUF (W@.CODE # W@.OUT(O_FUNCS));
+   IF Y@.RESULT@.KIND <> T_VOID THEN              % 4.3.2
+      EMITS (O_FUNCS, 'rt_raise(RT_X_INIT);');
+   END IF;
+   EMITS (O_FUNCS, '}');
+   W@.CODE := SAVED;
+   W@.IN_ROUTINE := FALSE;
+END PROCEDURE ROUTINE_BODY;
+
+PROCEDURE APPEND_BUF (SRC: BUF # DST: BUF);
+   VAR C: CHUNK := SRC.HEAD;
+   LOOP UNTIL C = NIL DO
+      APPEND (C@.T # DST);
+      C := C@.NEXT;
+   END LOOP;
+END PROCEDURE APPEND_BUF;
+
+PROCEDURE TRANSLATE (SEGS: NODE);
+   VAR D: NODE;
+   VAR R: NODE;
+   IF SEGS = NIL THEN
+      FAIL (0, 'no segment');
+   END IF;
+   IF SEGS@.NEXT <> NIL ! SEGS@.IV <> 1 THEN
+      FAIL (SEGS@.LINE, 'this translator takes one MAIN SEGMENT');
+   END IF;
+   EMITS (O_TYPEDEFS, '#include "paleo.h"');
+   EMITS (O_TYPEDEFS, '#include <string.h>');
+   W@.CODE := (HEAD: NIL, TAIL: NIL);
+   W@.CTXS := NIL;
+   PUSH_CTX (1, NO_TEXT ());
+   D := SEGS@.B@.A;
+   DECLARE_TYPES (D);
+   LOOP UNTIL D = NIL DO
+      IF D@.KIND = N_VAR ! D@.KIND = N_CONST THEN
+         DECLARE_OBJECTS (D, TRUE);
+      END IF;
+      D := D@.NEXT;
+   END LOOP;
+   R := SEGS@.C;
+   LOOP UNTIL R = NIL DO
+      DECLARE_ROUTINE (R);
+      R := R@.NEXT;
+   END LOOP;
+   BLOCK
+      VAR S: NODE := SEGS@.B@.B;
+      LOOP UNTIL S = NIL DO
+         STMT (S);
+         S := S@.NEXT;
+      END LOOP;
+   END BLOCK;
+   BLOCK
+      CONST MAIN_CODE: BUF := W@.CODE;
+      R := SEGS@.C;
+      LOOP UNTIL R = NIL DO
+         ROUTINE_BODY (R);
+         R := R@.NEXT;
+      END LOOP;
+      EMITS (O_MAINHEAD, 'int main(int argc, char **argv) {');
+      EMITS (O_MAINHEAD, 'rt_b_lang();');
+      EMITS (O_MAINHEAD, 'rt_init(argc, argv);');
+      BLOCK
+         VAR X: NODE := W@.EXCS;
+         LOOP UNTIL X = NIL DO
+            EMIT (O_GLOBALS, FMT1 ('static int x_@;', X@.NAME));
+            EMIT (O_MAINHEAD, FMT2 ('x_@ = rt_exc(@);', X@.NAME, CSTRING (X@.NAME)));
+            X := X@.NEXT;
+         END LOOP;
+      END BLOCK;
+      APPEND_BUF (MAIN_CODE # W@.OUT(O_MAIN));
+      EMITS (O_MAIN, 'rt_main_done();');
+      EMITS (O_MAIN, 'return 0;');
+      EMITS (O_MAIN, '}');
+   END BLOCK;
+END PROCEDURE TRANSLATE;
+
+END SEGMENT BLUEC;

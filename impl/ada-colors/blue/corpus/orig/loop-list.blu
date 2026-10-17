@@ -1,0 +1,14 @@
+% BLUE Language Specification, 15 Feb 1978, section 4.5.6.1, example 1, page 4-41
+% (DTIC ADB950587, PDF page 1587). Transcribed as printed; the lower-case
+% phrases are placeholders of the document.
+     TYPE NODE = RECORD
+                      VAR DATA: some type;
+                      VAR NEXT: PTR(NODE);
+                 END RECORD;
+     VAR P: PTR(NODE);
+     ...
+     P := list of nodes;
+     LOOP UNTIL P = NIL DO
+          R(P@.DATA);
+          P := P@.NEXT;
+     END LOOP;

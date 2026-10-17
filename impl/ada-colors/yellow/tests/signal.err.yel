@@ -1,0 +1,6 @@
+MODULE Signal
+  MONITOR M
+    EXPORT s;
+    VAR s: SIGNAL
+  ENDMONITOR M
+ENDMODULE Signal

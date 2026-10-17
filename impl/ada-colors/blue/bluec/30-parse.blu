@@ -1,0 +1,903 @@
+
+% ==== the parser: segments, modules, declarations, types =================================
+% Productions are named as in Appendix A of the specification.
+
+FUNCTION CUR () RETURNS (TOKEN);
+   RETURN W@.TOKS(W@.POS);
+END FUNCTION CUR;
+
+FUNCTION AHEAD (K: INTEGER) RETURNS (TOKEN);
+   IF W@.POS + K >= W@.NTOKS THEN
+      RETURN W@.TOKS(W@.NTOKS - 1);
+   END IF;
+   RETURN W@.TOKS(W@.POS + K);
+END FUNCTION AHEAD;
+
+FUNCTION LINE_NOW () RETURNS (INTEGER);
+   RETURN W@.TOKS(W@.POS).LINE;
+END FUNCTION LINE_NOW;
+
+% is the token the word or symbol S?
+FUNCTION TOK_IS (T: TOKEN, S: ASCII_STR(?L)) RETURNS (BOOLEAN);
+   IF T.KIND = K_SYM ! T.KIND = K_RES ! T.KIND = K_ID THEN
+      RETURN TEQS (T.TX, S);
+   END IF;
+   RETURN FALSE;
+END FUNCTION TOK_IS;
+
+FUNCTION IS (S: ASCII_STR(?L)) RETURNS (BOOLEAN);
+   RETURN TOK_IS (W@.TOKS(W@.POS), S);
+END FUNCTION IS;
+
+% TARGET is a predefined name, not a reserved word: a target routine starts with
+% TARGET PROCEDURE, TARGET INLINE ... or TARGET FUNCTION
+FUNCTION IS_TARGET_DECL () RETURNS (BOOLEAN);
+   IF NOT IS ('TARGET') ! W@.POS >= W@.NTOKS - 1 THEN
+      RETURN FALSE;
+   END IF;
+   RETURN TOK_IS (W@.TOKS(W@.POS + 1), 'PROCEDURE') ! TOK_IS (W@.TOKS(W@.POS + 1), 'FUNCTION')
+      ! TOK_IS (W@.TOKS(W@.POS + 1), 'INLINE');
+END FUNCTION IS_TARGET_DECL;
+
+FUNCTION IS_KIND (K: INTEGER) RETURNS (BOOLEAN);
+   RETURN W@.TOKS(W@.POS).KIND = K;
+END FUNCTION IS_KIND;
+
+PROCEDURE SKIP ();
+   IF W@.POS < W@.NTOKS - 1 THEN
+      W@.POS := W@.POS + 1;
+   END IF;
+END PROCEDURE SKIP;
+
+FUNCTION ACCEPT (S: ASCII_STR(?L)) RETURNS (BOOLEAN);
+   IF IS (S) THEN
+      SKIP;
+      RETURN TRUE;
+   END IF;
+   RETURN FALSE;
+END FUNCTION ACCEPT;
+
+PROCEDURE EXPECT (S: ASCII_STR(?L));
+   IF NOT ACCEPT (S) THEN
+      BLOCK
+         CONST T: TEXT := CUR ().TX;
+         FAIL (LINE_NOW (), S !! ' expected, not ' !! STR (T, T.LEN));
+      END BLOCK;
+   END IF;
+END PROCEDURE EXPECT;
+
+FUNCTION IDENT () RETURNS (TEXT);
+   CONST T: TOKEN := CUR ();
+   IF T.KIND <> K_ID THEN
+      FAILT (T.LINE, 'an identifier expected, not ', T.TX);
+   END IF;
+   SKIP;
+   RETURN T.TX;
+END FUNCTION IDENT;
+
+% a trailer must repeat the name of its construct
+PROCEDURE EXPECT_NAME (NAME: TEXT);
+   IF NOT TEQ (IDENT (), NAME) THEN
+      FAILT (LINE_NOW (), 'the trailer must name ', NAME);
+   END IF;
+END PROCEDURE EXPECT_NAME;
+
+FUNCTION NEW_NODE (KIND, LINE: INTEGER) RETURNS (NODE);
+   VAR N: NODE := NEW (NODE_REC);
+   N@ := (KIND: KIND, LINE: LINE, IV: 0, NAME: (AT: 0, LEN: 0, H: 0),
+          A: NIL, B: NIL, C: NIL, D: NIL, E: NIL, NEXT: NIL, FL: 0);
+   RETURN N;
+END FUNCTION NEW_NODE;
+
+% append N to the list HEAD .. TAIL
+PROCEDURE ADD_LIST (N: NODE # HEAD, TAIL: NODE);
+   IF HEAD = NIL THEN
+      HEAD := N;
+   ELSE
+      TAIL@.NEXT := N;
+   END IF;
+   TAIL := N;
+END PROCEDURE ADD_LIST;
+
+FUNCTION LIST_LENGTH (N: NODE) RETURNS (INTEGER);
+   VAR K: INTEGER := 0;
+   VAR P: NODE := N;
+   LOOP UNTIL P = NIL DO
+      K := K + 1;
+      P := P@.NEXT;
+   END LOOP;
+   RETURN K;
+END FUNCTION LIST_LENGTH;
+
+FUNCTION IDENT_NODE () RETURNS (NODE);
+   VAR N: NODE := NEW_NODE (N_IDENT, LINE_NOW ());
+   N@.NAME := IDENT ();
+   RETURN N;
+END FUNCTION IDENT_NODE;
+
+% identifier,... [ '$' names of routines allowed ]
+FUNCTION IDENT_LIST () RETURNS (NODE);
+   VAR HEAD, TAIL: NODE := NIL;
+   LOOP
+      ADD_LIST (ROUTINE_NAME_NODE () # HEAD, TAIL);
+   END LOOP WHEN NOT ACCEPT (',');
+   RETURN HEAD;
+END FUNCTION IDENT_LIST;
+
+% identifier, or type-name$identifier [4-26]
+FUNCTION ROUTINE_NAME_NODE () RETURNS (NODE);
+   VAR N: NODE := IDENT_NODE ();
+   IF IS ('$') & AHEAD (1).KIND = K_ID THEN
+      SKIP;
+      N@.NAME := MKN (STR (N@.NAME, N@.NAME.LEN) !! '$' !! STR (CUR ().TX, CUR ().TX.LEN));
+      SKIP;
+   END IF;
+   RETURN N;
+END FUNCTION ROUTINE_NAME_NODE;
+
+% ( identifier,... )
+FUNCTION PAREN_IDENTS () RETURNS (NODE);
+   VAR L: NODE := NIL;
+   EXPECT ('(');
+   IF NOT IS (')') THEN
+      L := IDENT_LIST ();
+   END IF;
+   EXPECT (')');
+   RETURN L;
+END FUNCTION PAREN_IDENTS;
+
+PROCEDURE SKIP_PARENS ();
+   VAR DEPTH: INTEGER := 0;
+   LOOP
+      IF IS ('(') THEN
+         DEPTH := DEPTH + 1;
+      ORIF IS (')') THEN
+         DEPTH := DEPTH - 1;
+      END IF;
+      SKIP;
+   END LOOP WHEN DEPTH = 0;
+END PROCEDURE SKIP_PARENS;
+
+% ---- segments [4-4] ---------------------------------------------------------------------
+FUNCTION PARSE_COMPILATION () RETURNS (NODE);
+   VAR HEAD, TAIL: NODE := NIL;
+   LOOP UNTIL IS_KIND (K_EOF) DO
+      ADD_LIST (PARSE_SEGMENT () # HEAD, TAIL);
+   END LOOP;
+   RETURN HEAD;
+END FUNCTION PARSE_COMPILATION;
+
+% item-list [4-7]: (DATA: (inputs # inouts), ROUTINES: (...), TYPES: (...), MODULES: (...))
+FUNCTION PARSE_ITEMS () RETURNS (NODE);
+   VAR N: NODE := NEW_NODE (N_ITEMS, LINE_NOW ());
+   EXPECT ('(');
+   LOOP UNTIL IS (')') DO
+      IF ACCEPT ('DATA') THEN
+         EXPECT (':');
+         EXPECT ('(');
+         IF NOT IS ('#') THEN
+            N@.A := IDENT_LIST ();
+         END IF;
+         IF ACCEPT ('#') THEN
+            N@.B := IDENT_LIST ();
+         END IF;
+         EXPECT (')');
+      ORIF ACCEPT ('ROUTINES') THEN
+         EXPECT (':');
+         N@.C := PAREN_IDENTS ();
+      ORIF ACCEPT ('TYPES') THEN
+         EXPECT (':');
+         N@.D := PAREN_IDENTS ();
+      ORIF ACCEPT ('MODULES') THEN
+         EXPECT (':');
+         N@.E := PAREN_IDENTS ();
+      ELSE
+         BLOCK
+            CONST T: TEXT := CUR ().TX;
+            FAILT (LINE_NOW (), 'DATA, ROUTINES, TYPES or MODULES expected, not ', T);
+         END BLOCK;
+      END IF;
+      IF ACCEPT (',') THEN
+         ;
+      END IF;
+   END LOOP;
+   EXPECT (')');
+   RETURN N;
+END FUNCTION PARSE_ITEMS;
+
+FUNCTION PARSE_SEGMENT () RETURNS (NODE);
+   VAR S: NODE := NEW_NODE (N_SEGMENT, LINE_NOW ());
+   VAR HEAD, TAIL: NODE := NIL;
+   IF ACCEPT ('MAIN') THEN
+      S@.IV := 1;
+   END IF;
+   EXPECT ('SEGMENT');
+   S@.NAME := IDENT ();
+   IF ACCEPT ('USES') THEN                         % [4-6]
+      EXPECT ('(');
+      LOOP
+         BLOCK
+            VAR U: NODE := NEW_NODE (N_USE, LINE_NOW ());
+            U@.NAME := IDENT ();
+            IF IS ('(') THEN
+               U@.A := PARSE_ITEMS ();
+            END IF;
+            ADD_LIST (U # HEAD, TAIL);
+         END BLOCK;
+      END LOOP WHEN NOT ACCEPT (',');
+      EXPECT (')');
+      S@.A := HEAD;
+   END IF;
+   IF ACCEPT ('DEFINES') THEN                      % [4-11]
+      IF ACCEPT ('ALL') THEN
+         S@.FL := 1;
+      ELSE
+         S@.C := PAREN_IDENTS ();
+      END IF;
+   END IF;
+   EXPECT (';');
+   S@.B := PARSE_CLOSED_BODY ();
+   EXPECT ('END');
+   EXPECT ('SEGMENT');
+   EXPECT_NAME (S@.NAME);
+   EXPECT (';');
+   RETURN S;
+END FUNCTION PARSE_SEGMENT;
+
+% closed-scope-body [4-2]: declarations, statements, routines and modules
+FUNCTION PARSE_CLOSED_BODY () RETURNS (NODE);
+   VAR B: NODE := NEW_NODE (N_BODY, LINE_NOW ());
+   VAR HEAD, TAIL: NODE := NIL;
+   B@.A := PARSE_DECLARATIONS ();
+   B@.B := PARSE_STATEMENTS ();
+   LOOP
+      IF IS ('PROCEDURE') ! IS ('FUNCTION') ! IS ('INLINE') ! IS_TARGET_DECL () THEN
+         ADD_LIST (PARSE_ROUTINE () # HEAD, TAIL);
+      ORIF IS ('MODULE') THEN
+         ADD_LIST (PARSE_MODULE () # HEAD, TAIL);
+      ELSE
+         EXIT;
+      END IF;
+   END LOOP;
+   B@.C := HEAD;
+   RETURN B;
+END FUNCTION PARSE_CLOSED_BODY;
+
+% open-scope-body [4-1]
+FUNCTION PARSE_BODY () RETURNS (NODE);
+   VAR B: NODE := NEW_NODE (N_BODY, LINE_NOW ());
+   B@.A := PARSE_DECLARATIONS ();
+   B@.B := PARSE_STATEMENTS ();
+   RETURN B;
+END FUNCTION PARSE_BODY;
+
+% [4-45]
+FUNCTION PARSE_MODULE () RETURNS (NODE);
+   VAR M: NODE := NEW_NODE (N_MODULE, LINE_NOW ());
+   VAR HEAD, TAIL: NODE := NIL;
+   EXPECT ('MODULE');
+   M@.NAME := IDENT ();
+   LOOP
+      IF ACCEPT ('IMPORTS') THEN
+         M@.A := PARSE_ITEMS ();
+      ORIF ACCEPT ('EXPORTS') THEN                 % [4-50]
+         IF ACCEPT ('ALL') THEN
+            M@.FL := 1;
+         ELSE
+            BLOCK
+               CONST PAREN: BOOLEAN := ACCEPT ('(');
+               LOOP
+                  BLOCK
+                     VAR X: NODE := NEW_NODE (N_EXPORT, LINE_NOW ());
+                     X@.NAME := IDENT ();
+                     IF ACCEPT ('WITH') THEN
+                        X@.A := PAREN_IDENTS ();
+                     END IF;
+                     ADD_LIST (X # HEAD, TAIL);
+                  END BLOCK;
+               END LOOP WHEN NOT ACCEPT (',');
+               IF PAREN THEN
+                  EXPECT (')');
+               END IF;
+            END BLOCK;
+            M@.B := HEAD;
+         END IF;
+      ELSE
+         EXIT;
+      END IF;
+   END LOOP;
+   EXPECT (';');
+   M@.C := PARSE_CLOSED_BODY ();
+   EXPECT ('END');
+   EXPECT ('MODULE');
+   EXPECT_NAME (M@.NAME);
+   EXPECT (';');
+   RETURN M;
+END FUNCTION PARSE_MODULE;
+
+FUNCTION PARSE_DECLARATIONS () RETURNS (NODE);
+   VAR HEAD, TAIL: NODE := NIL;
+   LOOP
+      IF IS ('CONST') ! IS ('VAR') THEN
+         ADD_LIST (PARSE_OBJECT_DECL () # HEAD, TAIL);
+      ORIF IS ('TYPE') THEN
+         ADD_LIST (PARSE_TYPE_DECL () # HEAD, TAIL);
+      ORIF IS ('REPTYPE') THEN
+         ADD_LIST (PARSE_REPTYPE_DECL () # HEAD, TAIL);
+      ELSE
+         EXIT;
+      END IF;
+   END LOOP;
+   RETURN HEAD;
+END FUNCTION PARSE_DECLARATIONS;
+
+% [3-4] [3-6]
+FUNCTION PARSE_OBJECT_DECL () RETURNS (NODE);
+   VAR D: NODE := NEW_NODE (N_VAR, LINE_NOW ());
+   IF ACCEPT ('CONST') THEN
+      D@.KIND := N_CONST;
+   ELSE
+      EXPECT ('VAR');
+   END IF;
+   D@.A := IDENT_LIST ();
+   EXPECT (':');
+   D@.B := PARSE_TYPE_SPEC ();
+   IF ACCEPT (':=') THEN
+      D@.C := PARSE_EXPR ();
+   ORIF D@.KIND = N_CONST THEN
+      FAIL (D@.LINE, 'a constant needs a value');
+   END IF;
+   EXPECT (';');
+   RETURN D;
+END FUNCTION PARSE_OBJECT_DECL;
+
+% type-formal,... [3-213]: names: type-spec, names: TYPE, TAG names: type-spec
+FUNCTION PARSE_FORMALS () RETURNS (NODE);
+   VAR HEAD, TAIL: NODE := NIL;
+   EXPECT ('(');
+   LOOP
+      BLOCK
+         VAR F: NODE := NEW_NODE (N_FORMAL, LINE_NOW ());
+         IF ACCEPT ('TAG') THEN
+            F@.IV := 1;
+         END IF;
+         F@.A := IDENT_LIST ();
+         EXPECT (':');
+         IF NOT ACCEPT ('TYPE') THEN
+            F@.B := PARSE_TYPE_SPEC ();
+         END IF;
+         ADD_LIST (F # HEAD, TAIL);
+      END BLOCK;
+   END LOOP WHEN NOT ACCEPT (',');
+   EXPECT (')');
+   RETURN HEAD;
+END FUNCTION PARSE_FORMALS;
+
+% [3-211] [3-167]
+FUNCTION PARSE_TYPE_DECL () RETURNS (NODE);
+   VAR D: NODE := NEW_NODE (N_TYPE, LINE_NOW ());
+   EXPECT ('TYPE');
+   D@.NAME := IDENT ();
+   IF IS ('(') THEN
+      D@.A := PARSE_FORMALS ();
+   END IF;
+   EXPECT ('=');
+   D@.B := PARSE_TYPE_SPEC ();
+   EXPECT (';');
+   RETURN D;
+END FUNCTION PARSE_TYPE_DECL;
+
+% [3-221]
+FUNCTION PARSE_REPTYPE_DECL () RETURNS (NODE);
+   VAR D: NODE := NEW_NODE (N_REPTYPE, LINE_NOW ());
+   EXPECT ('REPTYPE');
+   D@.NAME := IDENT ();
+   IF IS ('(') THEN
+      D@.A := PARSE_FORMALS ();
+   END IF;
+   IF ACCEPT ('OF') THEN
+      D@.C := IDENT_NODE ();
+   END IF;
+   EXPECT ('=');
+   D@.B := PARSE_REP ();
+   EXPECT (';');
+   RETURN D;
+END FUNCTION PARSE_REPTYPE_DECL;
+
+% a reptype-spec [3-12]: a name with arguments; ENUM_VAL_REP has a VALUES list
+% [3-90] and RECORD_REP a packing specification [3-181] that is kept unparsed
+FUNCTION PARSE_REP () RETURNS (NODE);
+   VAR R: NODE := NEW_NODE (N_REP, LINE_NOW ());
+   VAR HEAD, TAIL: NODE := NIL;
+   IF IS_KIND (K_GEN) THEN
+      R@.KIND := TS_GEN;
+      R@.NAME := GEN_NAME ();
+      RETURN R;
+   END IF;
+   R@.NAME := IDENT ();
+   IF NOT IS ('(') THEN
+      RETURN R;
+   END IF;
+   IF TEQS (R@.NAME, 'RECORD_REP') THEN
+      SKIP_PARENS;
+      RETURN R;
+   END IF;
+   SKIP;
+   LOOP UNTIL IS (')') DO
+      IF ACCEPT ('VALUES') THEN
+         BLOCK
+            VAR VH, VT: NODE := NIL;
+            EXPECT ('(');
+            LOOP
+               BLOCK
+                  VAR V: NODE := NEW_NODE (N_VALREP, LINE_NOW ());
+                  V@.NAME := CUR ().TX;
+                  SKIP;
+                  EXPECT ('AS');
+                  V@.A := PARSE_EXPR ();
+                  ADD_LIST (V # VH, VT);
+               END BLOCK;
+            END LOOP WHEN NOT ACCEPT (',');
+            EXPECT (')');
+            R@.B := VH;
+         END BLOCK;
+      ELSE
+         ADD_LIST (PARSE_TYPE_ARG () # HEAD, TAIL);
+      END IF;
+      IF ACCEPT (',') THEN
+         ;
+      END IF;
+   END LOOP;
+   EXPECT (')');
+   R@.A := HEAD;
+   RETURN R;
+END FUNCTION PARSE_REP;
+
+% the name of ?NAME without the question mark; nothing for ? alone
+FUNCTION GEN_NAME () RETURNS (TEXT);
+   CONST T: TEXT := CUR ().TX;
+   SKIP;
+   IF T.LEN = 1 THEN
+      RETURN NO_TEXT ();
+   END IF;
+   RETURN MKN (STR (T, T.LEN)[1 : T.LEN - 1]);
+END FUNCTION GEN_NAME;
+
+% a type-argument [3-220]: a type-spec, an expression, ANY, ?NAME or ?
+FUNCTION PARSE_TYPE_ARG () RETURNS (NODE);
+   VAR N: NODE;
+   IF IS_KIND (K_GEN) THEN
+      BLOCK
+         CONST T: TEXT := CUR ().TX;
+         IF T.LEN = 1 THEN
+            SKIP;
+            RETURN NEW_NODE (N_DONTCARE, LINE_NOW ());
+         END IF;
+      END BLOCK;
+      N := NEW_NODE (TS_GEN, LINE_NOW ());
+      N@.NAME := GEN_NAME ();
+      IF ACCEPT ('REP') THEN
+         N@.C := PARSE_REP ();
+      END IF;
+      RETURN N;
+   END IF;
+   IF ACCEPT ('ANY') THEN
+      RETURN NEW_NODE (N_ANY, LINE_NOW ());
+   END IF;
+   IF IS ('ARRAY') ! IS ('RECORD') THEN
+      RETURN PARSE_TYPE_SPEC ();
+   END IF;
+   IF IS ('(') & AHEAD (1).KIND = K_ENUM THEN     % (\A, \B): an enumerated type
+      RETURN PARSE_TYPE_SPEC ();
+   END IF;
+   N := PARSE_EXPR ();
+   IF IS ('REP') ! IS ('[') THEN                  % T REP R, T [L:U]: a type-spec
+      RETURN TYPE_SPEC_TAIL (EXPR_TO_TS (N));
+   END IF;
+   RETURN N;
+END FUNCTION PARSE_TYPE_ARG;
+
+% an expression read where a type-spec may be meant: a name or a name with arguments
+FUNCTION EXPR_TO_TS (E: NODE) RETURNS (NODE);
+   VAR N: NODE;
+   IF E@.KIND = TS_NAME ! E@.KIND = TS_ARRAY ! E@.KIND = TS_RECORD ! E@.KIND = TS_ENUM
+      ! E@.KIND = TS_GEN THEN
+      RETURN E;
+   END IF;
+   N := NEW_NODE (TS_NAME, E@.LINE);
+   IF E@.KIND = N_NAME THEN
+      N@.NAME := E@.NAME;
+      RETURN N;
+   END IF;
+   IF E@.KIND = N_APPLY THEN
+      N@.NAME := E@.NAME;
+      N@.A := E@.A;
+      RETURN N;
+   END IF;
+   FAIL (E@.LINE, 'a type specification expected');
+END FUNCTION EXPR_TO_TS;
+
+% the range and representation that may follow a type-spec
+FUNCTION TYPE_SPEC_TAIL (N: NODE) RETURNS (NODE);
+   IF IS ('[') ! (IS ('(') & RANGE_AHEAD ()) THEN
+      N@.B := PARSE_RANGE ();
+   END IF;
+   IF ACCEPT ('REP') THEN
+      N@.C := PARSE_REP ();
+   END IF;
+   RETURN N;
+END FUNCTION TYPE_SPEC_TAIL;
+
+% [3-8]
+FUNCTION PARSE_TYPE_SPEC () RETURNS (NODE);
+   VAR N: NODE;
+   VAR HEAD, TAIL: NODE := NIL;
+   CONST LINE: INTEGER := LINE_NOW ();
+   IF ACCEPT ('ARRAY') THEN                        % [3-147]
+      N := NEW_NODE (TS_ARRAY, LINE);
+      EXPECT ('[');
+      LOOP
+         BLOCK
+            VAR R: NODE := NEW_NODE (N_RANGE, LINE_NOW ());
+            R@.A := PARSE_EXPR ();
+            EXPECT (':');
+            R@.B := PARSE_EXPR ();
+            ADD_LIST (R # HEAD, TAIL);
+         END BLOCK;
+      END LOOP WHEN NOT ACCEPT (',');
+      EXPECT (']');
+      N@.A := HEAD;
+      IF ACCEPT ('REP') THEN
+         N@.D := PARSE_REP ();
+      END IF;
+      EXPECT ('OF');
+      N@.C := PARSE_TYPE_SPEC ();
+      RETURN N;
+   END IF;
+   IF ACCEPT ('RECORD') THEN                       % [3-160]
+      N := NEW_NODE (TS_RECORD, LINE);
+      N@.A := PARSE_FIELDS ();
+      EXPECT ('END');
+      EXPECT ('RECORD');
+      IF ACCEPT ('REP') THEN
+         N@.D := PARSE_REP ();
+      END IF;
+      RETURN N;
+   END IF;
+   IF IS_KIND (K_GEN) THEN                          % ?T [REP ?R]
+      RETURN PARSE_TYPE_ARG ();
+   END IF;
+   IF IS ('(') THEN                                 % (\A, \B) for ENUM (\A, \B)
+      N := NEW_NODE (TS_ENUM, LINE);
+      N@.A := PARSE_LITERALS ();
+      RETURN TYPE_SPEC_TAIL (N);
+   END IF;
+   N := NEW_NODE (TS_NAME, LINE);
+   N@.NAME := IDENT ();
+   IF TEQS (N@.NAME, 'ENUM') ! TEQS (N@.NAME, 'UNORDERED') THEN    % [3-83]
+      IF TEQS (N@.NAME, 'UNORDERED') THEN
+         N@.IV := 1;
+      END IF;
+      N@.KIND := TS_ENUM;
+      N@.A := PARSE_LITERALS ();
+      RETURN TYPE_SPEC_TAIL (N);
+   END IF;
+   IF IS ('(') & NOT RANGE_AHEAD () THEN            % type arguments [3-216]
+      SKIP;
+      LOOP
+         IF TEQS (N@.NAME, 'PTR') THEN
+            ADD_LIST (PARSE_TYPE_SPEC () # HEAD, TAIL);
+         ELSE
+            ADD_LIST (PARSE_TYPE_ARG () # HEAD, TAIL);
+         END IF;
+      END LOOP WHEN NOT ACCEPT (',');
+      EXPECT (')');
+      N@.A := HEAD;
+   END IF;
+   RETURN TYPE_SPEC_TAIL (N);
+END FUNCTION PARSE_TYPE_SPEC;
+
+% ( enumerated-literal,... )
+FUNCTION PARSE_LITERALS () RETURNS (NODE);
+   VAR HEAD, TAIL: NODE := NIL;
+   EXPECT ('(');
+   LOOP
+      BLOCK
+         VAR L: NODE := NEW_NODE (N_IDENT, LINE_NOW ());
+         IF NOT (IS_KIND (K_ENUM) ! IS_KIND (K_ID)) THEN
+            FAIL (LINE_NOW (), 'an enumerated literal expected');
+         END IF;
+         L@.NAME := CUR ().TX;
+         SKIP;
+         ADD_LIST (L # HEAD, TAIL);
+      END BLOCK;
+   END LOOP WHEN NOT ACCEPT (',');
+   EXPECT (')');
+   RETURN HEAD;
+END FUNCTION PARSE_LITERALS;
+
+% field-declarations [3-161]: VAR fields and variant parts
+FUNCTION PARSE_FIELDS () RETURNS (NODE);
+   VAR HEAD, TAIL: NODE := NIL;
+   LOOP
+      IF IS ('VAR') THEN
+         BLOCK
+            VAR F: NODE := NEW_NODE (N_VAR, LINE_NOW ());
+            SKIP;
+            F@.A := IDENT_LIST ();
+            EXPECT (':');
+            F@.B := PARSE_TYPE_SPEC ();
+            IF NOT ACCEPT (';') THEN
+               EXPECT (',');                          % Appendix C writes commas
+            END IF;
+            ADD_LIST (F # HEAD, TAIL);
+         END BLOCK;
+      ORIF IS ('SELECT') THEN                        % [3-164]
+         BLOCK
+            VAR V: NODE := NEW_NODE (N_VARIANT, LINE_NOW ());
+            VAR VH, VT: NODE := NIL;
+            SKIP;
+            V@.NAME := IDENT ();
+            EXPECT ('FROM');
+            LOOP UNTIL IS ('END') DO
+               BLOCK
+                  VAR S: NODE := NEW_NODE (N_VARSPEC, LINE_NOW ());
+                  VAR LH, LT: NODE := NIL;
+                  LOOP
+                     ADD_LIST (PARSE_CASE_LABEL () # LH, LT);
+                  END LOOP WHEN NOT ACCEPT (',');
+                  EXPECT ('-->');
+                  S@.A := LH;
+                  S@.B := PARSE_FIELDS ();
+                  EXPECT ('END');
+                  EXPECT (';');
+                  ADD_LIST (S # VH, VT);
+               END BLOCK;
+            END LOOP;
+            EXPECT ('END');
+            EXPECT ('SELECT');
+            EXPECT (';');
+            V@.A := VH;
+            ADD_LIST (V # HEAD, TAIL);
+         END BLOCK;
+      ELSE
+         EXIT;
+      END IF;
+   END LOOP;
+   RETURN HEAD;
+END FUNCTION PARSE_FIELDS;
+
+% [3-35]: [L:U], (L:U], [L:U) or (L:U)
+FUNCTION PARSE_RANGE () RETURNS (NODE);
+   VAR R: NODE := NEW_NODE (N_RANGE, LINE_NOW ());
+   IF ACCEPT ('(') THEN
+      R@.IV := 1;
+   ELSE
+      EXPECT ('[');
+   END IF;
+   R@.A := PARSE_EXPR ();
+   EXPECT (':');
+   R@.B := PARSE_EXPR ();
+   IF ACCEPT (')') THEN
+      R@.IV := R@.IV + 2;
+   ELSE
+      EXPECT (']');
+   END IF;
+   RETURN R;
+END FUNCTION PARSE_RANGE;
+
+% does a range start here, rather than a parenthesized expression?
+FUNCTION RANGE_AHEAD () RETURNS (BOOLEAN);
+   VAR DEPTH: INTEGER := 0;
+   VAR K: INTEGER := 0;
+   LOOP
+      BLOCK
+         CONST T: TOKEN := AHEAD (K);
+         IF T.KIND = K_EOF THEN
+            RETURN FALSE;
+         END IF;
+         IF T.KIND = K_SYM THEN
+            IF TEQS (T.TX, '(') ! TEQS (T.TX, '[') THEN
+               DEPTH := DEPTH + 1;
+            ORIF TEQS (T.TX, ')') ! TEQS (T.TX, ']') THEN
+               DEPTH := DEPTH - 1;
+               IF DEPTH = 0 THEN
+                  RETURN FALSE;
+               END IF;
+            ORIF DEPTH = 1 & (TEQS (T.TX, ':') ! TEQS (T.TX, ',')) THEN
+               RETURN TEQS (T.TX, ':');
+            END IF;
+         END IF;
+      END BLOCK;
+      K := K + 1;
+   END LOOP;
+END FUNCTION RANGE_AHEAD;
+
+% ---- routines [4-17] [4-30] and routine specs [5-1] ----------------------------------------
+% formal-parameter,... in groups separated by #; names: type-spec, routine-spec or TYPE
+FUNCTION PARSE_PARAMS () RETURNS (NODE);
+   VAR HEAD, TAIL: NODE := NIL;
+   VAR MODE: INTEGER := M_IN;
+   EXPECT ('(');
+   LOOP UNTIL IS (')') DO
+      IF ACCEPT ('#') THEN
+         MODE := MODE + 1;
+      ELSE
+         BLOCK
+            CONST NAMES: NODE := IDENT_LIST ();
+            VAR TS: NODE := NIL;
+            VAR P: NODE := NAMES;
+            EXPECT (':');
+            IF ACCEPT ('TYPE') THEN
+               ;
+            ORIF IS ('PROCEDURE') ! IS ('FUNCTION') THEN
+               TS := PARSE_ROUTINE_SPEC ();
+            ELSE
+               TS := PARSE_TYPE_SPEC ();
+            END IF;
+            LOOP UNTIL P = NIL DO
+               BLOCK
+                  VAR PN: NODE := NEW_NODE (N_PARAM, P@.LINE);
+                  PN@.NAME := P@.NAME;
+                  PN@.IV := MODE;
+                  PN@.B := TS;
+                  ADD_LIST (PN # HEAD, TAIL);
+               END BLOCK;
+               P := P@.NEXT;
+            END LOOP;
+            IF ACCEPT (',') THEN
+               ;
+            END IF;
+         END BLOCK;
+      END IF;
+   END LOOP;
+   EXPECT (')');
+   RETURN HEAD;
+END FUNCTION PARSE_PARAMS;
+
+% a template [5-3] [5-5]: (types # types # types) [RETURNS (type)] [SIGNALS (...)]
+FUNCTION PARSE_TEMPLATE (FUNC: BOOLEAN) RETURNS (NODE);
+   VAR R: NODE := NEW_NODE (TS_ROUTINE, LINE_NOW ());
+   VAR HEAD, TAIL: NODE := NIL;
+   VAR MODE: INTEGER := M_IN;
+   IF FUNC THEN
+      R@.IV := 1;
+   END IF;
+   EXPECT ('(');
+   LOOP UNTIL IS (')') DO
+      IF ACCEPT ('#') THEN
+         MODE := MODE + 1;
+      ELSE
+         BLOCK
+            VAR P: NODE := NEW_NODE (N_PARAM, LINE_NOW ());
+            P@.IV := MODE;
+            IF ACCEPT ('TYPE') THEN
+               ;
+            ELSE
+               P@.B := PARSE_TYPE_SPEC ();
+            END IF;
+            ADD_LIST (P # HEAD, TAIL);
+            IF ACCEPT (',') THEN
+               ;
+            END IF;
+         END BLOCK;
+      END IF;
+   END LOOP;
+   EXPECT (')');
+   R@.A := HEAD;
+   IF ACCEPT ('RETURNS') THEN
+      R@.IV := 1;
+      IF ACCEPT ('(') THEN
+         R@.B := PARSE_TYPE_SPEC ();
+         EXPECT (')');
+      ELSE
+         R@.B := PARSE_TYPE_SPEC ();
+      END IF;
+   END IF;
+   IF ACCEPT ('SIGNALS') THEN
+      R@.D := PAREN_IDENTS ();
+   END IF;
+   RETURN R;
+END FUNCTION PARSE_TEMPLATE;
+
+% PROCEDURE proc-template or FUNCTION func-template [5-1]
+FUNCTION PARSE_ROUTINE_SPEC () RETURNS (NODE);
+   IF ACCEPT ('FUNCTION') THEN
+      RETURN PARSE_TEMPLATE (TRUE);
+   END IF;
+   EXPECT ('PROCEDURE');
+   RETURN PARSE_TEMPLATE (FALSE);
+END FUNCTION PARSE_ROUTINE_SPEC;
+
+% WHERE needs-spec,... [5-10]
+FUNCTION PARSE_WHERE () RETURNS (NODE);
+   VAR HEAD, TAIL: NODE := NIL;
+   LOOP
+      BLOCK
+         VAR N: NODE := NEW_NODE (N_NEEDS, LINE_NOW ());
+         VAR TH, TT: NODE := NIL;
+         N@.NAME := IDENT ();
+         EXPECT ('NEEDS');
+         EXPECT ('(');
+         LOOP
+            BLOCK
+               VAR T: NODE := NEW_NODE (N_TEMPLATE, LINE_NOW ());
+               T@.NAME := ROUTINE_NAME_NODE ()@.NAME;
+               T@.B := PARSE_TEMPLATE (FALSE);
+               ADD_LIST (T # TH, TT);
+            END BLOCK;
+            IF ACCEPT (';') THEN                      % Appendix C writes ;) at the end
+               ;
+            END IF;
+         END LOOP WHEN NOT ACCEPT (',');
+         EXPECT (')');
+         N@.A := TH;
+         ADD_LIST (N # HEAD, TAIL);
+      END BLOCK;
+   END LOOP WHEN NOT ACCEPT (',');
+   RETURN HEAD;
+END FUNCTION PARSE_WHERE;
+
+FUNCTION PARSE_ROUTINE () RETURNS (NODE);
+   VAR R: NODE := NEW_NODE (N_ROUTINE, LINE_NOW ());
+   VAR H: NODE := NEW_NODE (N_HDR, LINE_NOW ());
+   IF IS_TARGET_DECL () THEN
+      SKIP;
+      R@.FL := 2;
+   END IF;
+   IF ACCEPT ('INLINE') THEN
+      R@.FL := R@.FL + 1;
+   END IF;
+   IF ACCEPT ('FUNCTION') THEN
+      R@.IV := 1;
+   ELSE
+      EXPECT ('PROCEDURE');
+   END IF;
+   R@.NAME := ROUTINE_NAME_NODE ()@.NAME;
+   IF IS ('(') THEN                                 % [4-21]
+      R@.A := PARSE_PARAMS ();
+   END IF;
+   IF R@.IV = 1 THEN                                 % [4-35]
+      EXPECT ('RETURNS');
+      IF ACCEPT ('(') THEN
+         R@.B := PARSE_TYPE_SPEC ();
+         EXPECT (')');
+      ELSE
+         R@.B := PARSE_TYPE_SPEC ();
+      END IF;
+   END IF;
+   LOOP
+      IF ACCEPT ('SIGNALS') THEN                    % [4-29]
+         H@.A := PAREN_IDENTS ();
+      ORIF ACCEPT ('IMPORTS') THEN                  % [4-28]
+         R@.E := PARSE_ITEMS ();
+      ORIF ACCEPT ('WHERE') THEN                    % [5-10]
+         H@.B := PARSE_WHERE ();
+      ELSE
+         EXIT;
+      END IF;
+   END LOOP;
+   R@.D := H;
+   EXPECT (';');
+   IF R@.FL >= 2 THEN                                % [4-109]: DYNSIZE and machine code
+      EXPECT ('DYNSIZE');
+      SKIP_PARENS;
+      EXPECT (';');
+      LOOP UNTIL IS ('END') & (TOK_IS (AHEAD (1), 'PROCEDURE') ! TOK_IS (AHEAD (1), 'FUNCTION')) DO
+         SKIP;
+      END LOOP;
+   ELSE
+      R@.C := PARSE_CLOSED_BODY ();
+   END IF;
+   EXPECT ('END');
+   IF R@.IV = 1 THEN
+      EXPECT ('FUNCTION');
+   ELSE
+      EXPECT ('PROCEDURE');
+   END IF;
+   IF NOT TEQ (ROUTINE_NAME_NODE ()@.NAME, R@.NAME) THEN
+      FAILT (LINE_NOW (), 'the trailer must name ', R@.NAME);
+   END IF;
+   EXPECT (';');
+   RETURN R;
+END FUNCTION PARSE_ROUTINE;
