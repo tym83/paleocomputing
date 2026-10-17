@@ -3,8 +3,8 @@
 # BLUE
 
 SofTech's language for the DoD-1 competition, rebuilt from its specification of
-15 February 1978 (DTIC ADB950587). BLUE reached the second phase with RED, GREEN
-and YELLOW and was dropped in spring 1978. Like RED and GREEN here, it has a
+15 February 1978 (DTIC ADB950587). BLUE was one of the four designs, with RED,
+GREEN and YELLOW, paid for in 1977; in spring 1978 only RED and GREEN went on. Like RED and GREEN here, it has a
 translator written in itself, which reproduces itself byte for byte.
 
 | Directory | What is there |

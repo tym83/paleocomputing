@@ -1,7 +1,7 @@
 # BLUE (SofTech, 1978): implementation digest
 
-BLUE is SofTech's design for the DoD-1 competition. It reached phase 2 with RED,
-GREEN and YELLOW and was dropped in spring 1978, before the RED/GREEN final. This
+BLUE is SofTech's design for the DoD-1 competition, one of the four designs (with
+RED, GREEN and YELLOW) paid for in 1977; in spring 1978 only RED and GREEN went on. This
 file is what bluec implements and why, with the places in the document.
 
 Source: *Language Specification* and *Language Design Justification*, SofTech,
