@@ -11174,7 +11174,7 @@ r_DEFINE(l_Y_1071, ((*(R11 *)rt_nil_check(l_P_1069))).f_LINE);
 l_P_1069 = ((*(R11 *)rt_nil_check(l_P_1069))).f_NEXT;
 }
 } L_end1070: ;
-r_CODE(r_FMT1(rt_str("rt_taskdecl @ = {0};", 20), l_TD_1068));
+r_CODE(r_FMT1(rt_str("rt_b_par @ = {0};", 17), l_TD_1068));
 r_CODES(rt_str("rt_b_par_begin();", 17));
 l_P_1069 = ((*(R11 *)rt_nil_check(p_S))).f_A;
 for (;;) {

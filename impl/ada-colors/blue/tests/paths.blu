@@ -1,0 +1,48 @@
+MAIN SEGMENT PATHS
+   USES (TERMINAL);
+% parallel processing (4.6): paths, priorities, semaphores, WAIT, TERMINATE, CLOCK
+VAR S: SEMAPHORE (SYNCH) := NEW (0);
+VAR MUTEX: SEMAPHORE (REGION) := NEW (1);
+VAR LOG: INTEGER := 0;
+PAR_BLOCK
+   PATH LOW IMPORTS (DATA: (# S));
+      PUT_LINE ('LOW starts');
+      REQUEST (# S);
+      PUT_LINE ('LOW got S');
+   END PATH LOW;
+   PATH HIGH PRIORITY 5 IMPORTS (DATA: (# S));
+      PUT_LINE ('HIGH starts');
+      WAIT (1);
+      PUT_LINE ('HIGH after WAIT (1), releases S');
+      RELEASE (# S);
+      PUT_LINE ('HIGH done');
+   END PATH HIGH;
+   PATH WORKER FOR I IN [1:3] IMPORTS (DATA: (# MUTEX, LOG));
+      REQUEST (# MUTEX);
+      LOG := LOG * 10 + I;
+      WAIT (.25\S2);
+      RELEASE (# MUTEX);
+   END PATH WORKER;
+END PAR_BLOCK;
+PUT_LINE ('LOG ' !! TO_CHAR (LOG));
+BLOCK
+   PAR_BLOCK
+      PATH SPINNER SIGNALS (TERMINATED);
+         LOOP
+            WAIT (1);
+         END LOOP;
+      EXCEPT
+         TERMINATED --> PUT_LINE ('SPINNER terminated'); SIGNAL; END;
+      END EXCEPT;
+      END PATH SPINNER;
+      PATH KILLER;
+         WAIT (3);
+         PUT_LINE ('KILLER: SPINNER ran ' !! TO_CHAR (TO_FIXED (CLOCK (SPINNER), 0)) !! ' s');
+         TERMINATE (SPINNER);
+      END PATH KILLER;
+   END PAR_BLOCK;
+EXCEPT
+   TERMINATED --> PUT_LINE ('the block raised TERMINATED'); END;
+END EXCEPT;
+END BLOCK;
+END SEGMENT PATHS;

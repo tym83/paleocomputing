@@ -1,0 +1,9 @@
+HIGH starts
+LOW starts
+HIGH after WAIT (1), releases S
+HIGH done
+LOW got S
+LOG 123
+KILLER: SPINNER ran 3 s
+SPINNER terminated
+the block raised TERMINATED

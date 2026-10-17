@@ -33,7 +33,7 @@ PROCEDURE PARALLEL_BLOCK (S: NODE);
       END BLOCK;
       P := P@.NEXT;
    END LOOP;
-   CODE (FMT1 ('rt_taskdecl @ = {0};', TD));
+   CODE (FMT1 ('rt_b_par @ = {0};', TD));
    CODES ('rt_b_par_begin();');
    P := S@.A;
    LOOP UNTIL P = NIL DO
