@@ -244,8 +244,32 @@ SEGMENT APPLICATION_CODE
       CLEAR (# OTHER);
       OPEN ('TTY1', \OLD, \READ_WRITE, 0, FALSE # CONSOLE);
       OPEN ('TTY2', \OLD, \WRITE, 0, FALSE # OTHER);
-      PRINT (CONSOLE, 1978);
+      PRINT (CONSOLE, 'BLUE 1978, Appendix C');
       NEWLINE (CONSOLE);
+      PRINT (CONSOLE, 1978);
+      FORMPRINT (CONSOLE, 'S2');
+      PRINT (CONSOLE, -42);
+      FORMPRINT (CONSOLE, 'N');
+      FORMPRINT (CONSOLE, 'S4#W6#N', 1978);
+      FORMPRINT (CONSOLE, 'W3', 7);
+      FORMPRINT (CONSOLE, '#Z5#L', 42);
+      FORMPRINT (CONSOLE, 'N');
+      BLOCK
+         VAR N, M: INTEGER;
+         READ (CONSOLE ## N);
+         READ (CONSOLE ## M);
+         PRINT (CONSOLE, N + M);
+         NEWLINE (CONSOLE);
+         FORMREAD (CONSOLE, '2#W3#1' ## N);       % skip 2, 3 digits, skip 1
+         FORMREAD (CONSOLE, 'W2' ## M);
+         FORMPRINT (CONSOLE, '#Z4#N', N * M);
+      END BLOCK;
+      BLOCK
+         REWIND (CONSOLE);
+      EXCEPT
+         IO_ERROR --> PRINT (CONSOLE, 'a teletype does not rewind'); NEWLINE (CONSOLE); END;
+      END EXCEPT;
+      END BLOCK;
       PRINT (OTHER, 'the second teletype');
       NEWLINE (OTHER);
       CLOSE (\SAVE, \READ_WRITE # CONSOLE);
@@ -254,5 +278,55 @@ SEGMENT APPLICATION_CODE
       WAIT (1);
       STOP (0);
    END PROCEDURE APPLICATION_BODY;
+
+   % the character conversions TEXTUAL_IO takes from its caller (C-25, C-28, C-32):
+   % TO_CHAR of a string is the string
+   FUNCTION TO_CHAR (S: ASCII_STR (?L)) RETURNS (ASCII_STR (L));
+      RETURN S;
+   END FUNCTION TO_CHAR;
+
+   % FROM_CHAR as the comment of READ defines it for FIXED (C-32)
+   FUNCTION FROM_CHAR (STR: ASCII_STR (?), T: TYPE) RETURNS (T)
+         WHERE T NEEDS (STORE_ (T ## T));
+      VAR VAL: T;
+      VAL := TO_FIXED (STR, VAL.SCALE, VAL.RADIX, VAL.PRECISION);
+      RETURN (VAL);
+   END FUNCTION FROM_CHAR;
+
+   % formatted input (C-33, C-34): W<n> reads n characters
+   FUNCTION FORM_CHAR_LEN (FORMAT: ASCII_STR (?FS), T: TYPE) RETURNS (INTEGER [0:100]);
+      RETURN TO_FIXED (FORMAT[1:FS - 1], 0);
+   END FUNCTION FORM_CHAR_LEN;
+
+   FUNCTION FROM_FORM_CHAR (FORMAT: ASCII_STR (?), T: TYPE, STR: ASCII_STR (?)) RETURNS (T)
+         WHERE T NEEDS (STORE_ (T ## T));
+      VAR VAL: T;
+      VAL := TO_FIXED (STR, VAL.SCALE, VAL.RADIX, VAL.PRECISION);
+      RETURN (VAL);
+   END FUNCTION FROM_FORM_CHAR;
+
+   % formats for integers: W<n> right-aligned in n columns, Z<n> with leading zeros
+   FUNCTION FORM_CHAR_LEN (FORMAT: ASCII_STR (?FS), VAL: INTEGER) RETURNS (INTEGER [0:100]);
+      IF FS > 1 THEN
+         BLOCK
+            CONST N: INTEGER := TO_FIXED (FORMAT[1:FS - 1], 0);
+            IF N > TO_CHAR (VAL).LENGTH THEN
+               RETURN N;
+            END IF;
+         END BLOCK;
+      END IF;
+      RETURN TO_CHAR (VAL).LENGTH;
+   END FUNCTION FORM_CHAR_LEN;
+
+   FUNCTION TO_FORM_CHAR (FORMAT: ASCII_STR (?FS), LEN: INTEGER [0:100], VAL: INTEGER)
+         RETURNS (ASCII_STR (LEN));
+      VAR PAD: ASCII_STR (1) := ' ';
+      IF FS > 0 THEN
+         IF FORMAT[0:0] = 'Z' THEN
+            PAD := '0';
+         END IF;
+      END IF;
+      RETURN DUP (PAD, LEN - TO_CHAR (VAL).LENGTH) !! TO_CHAR (VAL);
+   END FUNCTION TO_FORM_CHAR;
 
 END SEGMENT APPLICATION_CODE;

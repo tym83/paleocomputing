@@ -587,6 +587,9 @@ FUNCTION SAME_STATIC_BINDS (A, B: BIND) RETURNS (BOOLEAN);
             IF NOT SAME_TYPE (P@.T, Q@.T) THEN
                RETURN FALSE;
             END IF;
+            IF NOT SAME_LENGTH (P@.T, Q@.T) THEN       % an instance per string length:
+               RETURN FALSE;                          % T stands for its whole type
+            END IF;
          END IF;
          IF P@.HASMV <> Q@.HASMV ! P@.MV <> Q@.MV ! P@.R <> Q@.R THEN
             RETURN FALSE;
@@ -596,6 +599,19 @@ FUNCTION SAME_STATIC_BINDS (A, B: BIND) RETURNS (BOOLEAN);
    END LOOP;
    RETURN TRUE;
 END FUNCTION SAME_STATIC_BINDS;
+
+% do two string or bitstring types have the same known length (or are not such)?
+FUNCTION SAME_LENGTH (A, B: TYP) RETURNS (BOOLEAN);
+   CONST RA: TYP := REAL_TYPE (A);
+   CONST RB: TYP := REAL_TYPE (B);
+   IF (RA@.KIND <> T_STR & RA@.KIND <> T_BITS) ! RA@.KIND <> RB@.KIND THEN
+      RETURN TRUE;
+   END IF;
+   IF RA@.MLEN.OK & RB@.MLEN.OK THEN
+      RETURN RA@.MLEN.V = RB@.MLEN.V;
+   END IF;
+   RETURN RA@.MLEN.OK = RB@.MLEN.OK;
+END FUNCTION SAME_LENGTH;
 
 % the routine passed for a routine parameter whose template is TS [5-8]
 FUNCTION ROUTINE_ARGUMENT (TS: NODE, E: NODE, LINE: INTEGER) RETURNS (SYM);
@@ -643,6 +659,9 @@ PROCEDURE WHERE_BINDINGS (G: SYM, LINE: INTEGER, BS: BIND);
                   VAR ARGS, TAIL: ARG := NIL;
                   VAR P: NODE := T@.B@.A;
                   VAR R: SYM;
+                  % the types are the generic's (its module's constants), the routine
+                  % is the caller's (5.2)
+                  CONST ENTERED: BOOLEAN := ENTER_MODULE_FOR (G);
                   LOOP UNTIL P = NIL DO
                      BLOCK
                         VAR A: ARG;
@@ -661,19 +680,18 @@ PROCEDURE WHERE_BINDINGS (G: SYM, LINE: INTEGER, BS: BIND);
                      END BLOCK;
                      P := P@.NEXT;
                   END LOOP;
+                  IF ENTERED THEN
+                     LEAVE_MODULE (G@.MODL);
+                  END IF;
                   R := FIND_ROUTINE (T@.NAME, ARGS, LINE, FALSE);
-                  IF R = NIL THEN
-                     R := LOOKUP (T@.NAME);
-                     IF R <> NIL THEN
-                        IF R@.KIND <> Y_BUILTIN & R@.KIND <> Y_ROUTINE THEN
-                           R := NIL;
+                  IF R = NIL THEN                     % a predefined routine of the name,
+                     R := LOOKUP (T@.NAME);           % also behind routines that overload it
+                     LOOP UNTIL R = NIL DO
+                        IF R@.KIND = Y_BUILTIN THEN
+                           EXIT;
                         END IF;
-                     END IF;
-                     IF R <> NIL THEN
-                        IF R@.KIND = Y_ROUTINE THEN
-                           R := NIL;
-                        END IF;
-                     END IF;
+                        R := LOOKUP_NEXT (R);
+                     END LOOP;
                   END IF;
                   IF R = NIL & NOT IS_OPERATOR_NAME (T@.NAME) THEN
                      FAILT (LINE, 'no routine for the WHERE clause (5.2): ', T@.NAME);

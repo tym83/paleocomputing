@@ -101,6 +101,19 @@ END FUNCTION CALL_EXPR;
 
 FUNCTION BOUND_ROUTINE (NAME: TEXT) RETURNS (SYM);
    VAR B: BIND := W@.BINDS;
+   % T$NAME, T a bound generic type: the routine NAME the WHERE clause bound (C-32:
+   % READ calls T$FROM_CHAR)
+   BLOCK
+      CONST S: ASCII_STR (NAME.LEN) := STR (NAME, NAME.LEN);
+      LOOP FOR I IN [1 : NAME.LEN - 2] DO
+         IF S[I:I] = '$' THEN
+            IF FIND_BIND (W@.BINDS, MKN (S[0:I - 1])) <> NIL THEN
+               RETURN BOUND_ROUTINE (MKN (S[I + 1 : NAME.LEN - 1]));
+            END IF;
+            EXIT;
+         END IF;
+      END LOOP I;
+   END BLOCK;
    LOOP UNTIL B = NIL DO
       IF B@.R <> NIL & TEQ (B@.NAME, NAME) THEN
          RETURN B@.R;
@@ -207,7 +220,9 @@ FUNCTION MATCH_SCORE (R: SYM, ARGS: ARG) RETURNS (INTEGER);
          END IF;
       ORIF P@.T = NIL THEN                            % a TYPE parameter: a type argument
          IF A@.HAVE THEN
-            RETURN 0;
+            IF A@.V.T <> W@.TY_TYPE THEN              % (a WHERE template says TYPE)
+               RETURN 0;
+            END IF;
          END IF;
       ORIF WANT_SENSITIVE (A) THEN
          IF NOT LITERAL_FITS (A@.E, P@.T) THEN

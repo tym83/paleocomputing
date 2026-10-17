@@ -165,6 +165,22 @@ FUNCTION MANIFEST (E: NODE) RETURNS (MVAL);
       IF LITERAL_CLASSES (E@.NAME) = 1 THEN
          RETURN (OK: TRUE, V: FIND_LITERAL (E@.NAME, NIL)@.MV);
       END IF;
+   ORIF K = N_FIELD THEN                            % X.SCALE, X.RADIX: of X's type (3.2.1)
+      IF (TEQS (E@.NAME, 'SCALE') ! TEQS (E@.NAME, 'RADIX')) & E@.A@.KIND = N_NAME THEN
+         BLOCK
+            CONST Y: SYM := LOOKUP (E@.A@.NAME);
+            IF Y <> NIL THEN
+               IF (Y@.KIND = Y_VAR ! Y@.KIND = Y_CONST ! Y@.KIND = Y_TYPE) & Y@.T <> NIL THEN
+                  IF REAL_TYPE (Y@.T)@.KIND = T_INT THEN
+                     IF TEQS (E@.NAME, 'RADIX') THEN
+                        RETURN (OK: TRUE, V: 2);
+                     END IF;
+                     RETURN (OK: TRUE, V: REAL_TYPE (Y@.T)@.SCALE);
+                  END IF;
+               END IF;
+            END IF;
+         END BLOCK;
+      END IF;
    ORIF K = N_APPLY THEN
       IF TEQS (E@.NAME, 'IS_MANIFEST') THEN
          RETURN (OK: TRUE, V: BOOL_INT (MANIFEST (E@.A).OK));
@@ -283,6 +299,18 @@ FUNCTION EXPR (E: NODE, WANT: TYP) RETURNS (ET);
          END IF;
          LO := INT_EXPR (E@.B);
          HI := INT_EXPR (E@.C);
+         IF E@.B@.KIND = N_NAME & E@.C@.KIND = N_NAME THEN
+            IF TEQ (E@.B@.NAME, E@.C@.NAME) THEN       % S[I:I]: one character
+               IF BT@.KIND = T_BITS THEN
+                  RETURN MKET (FMT3 ('rt_b_slice(@, @, @)', B.C, LO, HI), BITS_TYPE (1));
+               END IF;
+               BLOCK
+                  VAR T: TYP := STR_TYPE (MK ('1'), SOME (1));
+                  T@.BASE := BT@.BASE;
+                  RETURN MKET (FMT3 ('rt_b_slice(@, @, @)', B.C, LO, HI), T);
+               END BLOCK;
+            END IF;
+         END IF;
          IF BT@.KIND = T_BITS THEN
             RETURN MKET (FMT3 ('rt_b_slice(@, @, @)', B.C, LO, HI), BITS_TYPE (-1));
          END IF;

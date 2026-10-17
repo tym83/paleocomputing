@@ -140,7 +140,8 @@ PROCEDURE CHECK_CALL_IMPORTS (Y: SYM, LINE: INTEGER);
          END IF;
          IF NOT (IN_IDENTS (IS@.IMPORTS@.A, U@.NAME) ! IN_IDENTS (IS@.IMPORTS@.B, U@.NAME)
                ! IN_IDENTS (IS@.IMPORTS@.C, Y@.NAME) ! IN_IDENTS (IS@.IMPORTS@.C, BASE_NAME (Y))
-               ! MODULE_IMPORTED (IS@.IMPORTS@.E, Y))
+               ! MODULE_IMPORTED (IS@.IMPORTS@.E, Y)
+               ! IMPORTED_ROUTINE_USES (IS@.IMPORTS@.C, U@.NAME))
             THEN
             FAIL (LINE, 'the routine ' !! STR (Y@.NAME, Y@.NAME.LEN) !! ' uses the variable '
                   !! STR (U@.NAME, U@.NAME.LEN) !! ': import one of them (4.1.1)');
@@ -149,6 +150,33 @@ PROCEDURE CHECK_CALL_IMPORTS (Y: SYM, LINE: INTEGER);
       U := U@.NEXT;
    END LOOP;
 END PROCEDURE CHECK_CALL_IMPORTS;
+
+% does a routine the scope imports use the variable NAME? Then the scope may use it
+% indirectly (4.1.1: "the routine that uses the variable may be imported"), also
+% through its own local routines (C-28: FORMPRINT imports STRPUT, its local
+% CONVERT_AND_PUT calls STRPUT)
+FUNCTION IMPORTED_ROUTINE_USES (RS: NODE, NAME: TEXT) RETURNS (BOOLEAN);
+   VAR R: NODE := RS;
+   LOOP UNTIL R = NIL DO
+      BLOCK
+         VAR Z: SYM := LOOKUP (R@.NAME);
+         LOOP UNTIL Z = NIL DO
+            IF Z@.KIND = Y_ROUTINE THEN
+               BLOCK
+                  CONST O: SYM := ORIGINAL (Z);
+                  COMPUTE_USES (O);
+                  IF IN_IDENTS (O@.USES, NAME) THEN
+                     RETURN TRUE;
+                  END IF;
+               END BLOCK;
+            END IF;
+            Z := LOOKUP_NEXT (Z);
+         END LOOP;
+      END BLOCK;
+      R := R@.NEXT;
+   END LOOP;
+   RETURN FALSE;
+END FUNCTION IMPORTED_ROUTINE_USES;
 
 % does MODULES: (...) name a module that declares Y? (4.2: a MODULES item imports all
 % the routines the module exports)
