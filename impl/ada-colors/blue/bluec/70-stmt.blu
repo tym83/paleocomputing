@@ -365,8 +365,9 @@ END PROCEDURE FOR_STMT;
 
 PROCEDURE RETURN_STMT (S: NODE);
    CONST CS: CSCOPE := W@.CS;
-   CONST C: CTX := LEAVE (1);
+   VAR C: CTX;
    IF S@.A = NIL THEN
+      C := LEAVE (1);
       IF CS@.RESULT <> NIL THEN
          IF CS@.RESULT@.KIND <> T_VOID THEN
             FAIL (S@.LINE, 'a function must return a value (4.3.2)');
@@ -387,7 +388,13 @@ PROCEDURE RETURN_STMT (S: NODE);
    IF CS@.RESULT@.KIND = T_VOID THEN
       FAIL (S@.LINE, 'only a function returns a value (4.3.2)');
    END IF;
-   CODE (FMT1 ('return @;', CONVERT (EXPR (S@.A, CS@.RESULT), CS@.RESULT, S@.LINE, NO_TEXT ())));
+   BLOCK                                             % the value first, in the guards
+      CONST V: TEXT := NEW_NAME ('rv');
+      CODE (FMT3 ('{ @ @ = @;', CTYPE (CS@.RESULT), V,
+                  CONVERT (EXPR (S@.A, CS@.RESULT), CS@.RESULT, S@.LINE, NO_TEXT ())));
+      C := LEAVE (1);
+      CODE (FMT1 ('return @; }', V));
+   END BLOCK;
 END PROCEDURE RETURN_STMT;
 
 % [4-83]: the exception must have a handler here, or the closed scope must signal it

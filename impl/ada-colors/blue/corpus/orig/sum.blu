@@ -1,0 +1,15 @@
+% BLUE Language Specification, 15 Feb 1978, section 4.5.7, page 4-48
+% (DTIC ADB950587, PDF page 1594). Transcribed as printed.
+        FUNCTION SUM(S: STREAM) RETURNS (INTEGER)
+                                SIGNALS (OVERFLOW, INVALID_FORMAT)
+                                IMPORTS (ROUTINES: (GET_ITEM));
+             VAR T: INTEGER := 0;
+             LOOP
+                  T := T + GET_ITEM(S);
+             END LOOP;
+                  EXCEPT
+                       EOF --> RETURN T; END;
+                       OVERFLOW --> SIGNAL; END;  % same as SIGNAL OVERFLOW;
+                       INVALID_ITEM --> SIGNAL INVALID_FORMAT; END;
+                  END EXCEPT;
+        END FUNCTION SUM;
