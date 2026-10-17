@@ -514,6 +514,12 @@ FUNCTION SAME_CLASS (A, B: TYP) RETURNS (BOOLEAN);
    IF A = B THEN
       RETURN TRUE;
    END IF;
+   % an abstract type is its underlying type to the operations of its module
+   IF A@.KIND = T_ABS & B@.KIND <> T_ABS THEN
+      RETURN SAME_CLASS (A@.BASE, B);
+   ORIF B@.KIND = T_ABS & A@.KIND <> T_ABS THEN
+      RETURN SAME_CLASS (A, B@.BASE);
+   END IF;
    IF A@.KIND <> B@.KIND THEN
       RETURN FALSE;
    END IF;
@@ -533,6 +539,11 @@ END FUNCTION SAME_CLASS;
 FUNCTION SAME_TYPE (A, B: TYP) RETURNS (BOOLEAN);
    IF A = B THEN
       RETURN TRUE;
+   END IF;
+   IF A@.KIND = T_ABS & B@.KIND <> T_ABS THEN
+      RETURN SAME_TYPE (A@.BASE, B);
+   ORIF B@.KIND = T_ABS & A@.KIND <> T_ABS THEN
+      RETURN SAME_TYPE (A, B@.BASE);
    END IF;
    IF NOT SAME_CLASS (A, B) THEN
       RETURN FALSE;

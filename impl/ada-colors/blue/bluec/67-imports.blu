@@ -44,7 +44,12 @@ END FUNCTION CHECK_IMPORTED;
 PROCEDURE COMPUTE_USES (Y: SYM);
    CONST ITEMS: NODE := Y@.DECL@.E;
    VAR HEAD, TAIL: NODE := NIL;
+   IF Y@.MV <> 0 THEN                                % done, or being done (recursion)
+      RETURN;
+   END IF;
+   Y@.MV := 2;
    IF ITEMS = NIL THEN
+      Y@.MV := 1;
       RETURN;
    END IF;
    ADD_USES (ITEMS@.A # HEAD, TAIL);
@@ -61,7 +66,9 @@ PROCEDURE COMPUTE_USES (Y: SYM);
                IF Z@.KIND = Y_ROUTINE THEN
                   BLOCK
                      CONST O: SYM := ORIGINAL (Z);
-                     VAR U: NODE := O@.USES;
+                     VAR U: NODE;
+                     COMPUTE_USES (O);
+                     U := O@.USES;
                      LOOP UNTIL U = NIL DO
                         IF NOT IN_IDENTS (HEAD, U@.NAME) THEN
                            BLOCK
@@ -82,7 +89,19 @@ PROCEDURE COMPUTE_USES (Y: SYM);
       END LOOP;
    END BLOCK;
    Y@.USES := HEAD;
+   Y@.MV := 1;
 END PROCEDURE COMPUTE_USES;
+
+% the uses of the routines of a body, once its objects are declared
+PROCEDURE ROUTINE_USES (RS: NODE);
+   VAR R: NODE := RS;
+   LOOP UNTIL R = NIL DO
+      IF R@.KIND = N_ROUTINE THEN
+         COMPUTE_USES (FIND_DECL (R));
+      END IF;
+      R := R@.NEXT;
+   END LOOP;
+END PROCEDURE ROUTINE_USES;
 
 PROCEDURE ADD_USES (L: NODE # HEAD, TAIL: NODE);
    VAR P: NODE := L;

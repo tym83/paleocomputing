@@ -1,0 +1,86 @@
+MAIN SEGMENT RECORDS
+   USES (TERMINAL);
+% records (3.9), arrays (3.8), pointers (3.10)
+TYPE STRING (LEN: INTEGER [1:100]) = RECORD
+   VAR LENGTH: INTEGER [0 : LEN];
+   VAR VALUE: ASCII_STR (LEN);
+END RECORD;
+TYPE T (TAG B: BOOLEAN) =
+   RECORD
+      SELECT B FROM
+         TRUE --> VAR X: INTEGER; END;
+         FALSE --> VAR Y: FLOAT (8); END;
+      END SELECT;
+   END RECORD;
+TYPE NODE = RECORD
+   VAR VALUE: INTEGER;
+   VAR NEXT: PTR (NODE);
+END RECORD;
+VAR S50: STRING (50);
+VAR S10: STRING (10);
+VAR V: ARRAY [1:5] OF T (ANY);
+VAR M: ARRAY [0:2, 0:3] OF INTEGER := ((1,2,3,4), (5,6,7,8), (9,10,11,12));
+VAR DATE: RECORD
+   VAR DAY: INTEGER [1:31];
+   VAR MONTH: ENUM (\JAN, \FEB, \MAR, \APR, \MAY, \JUN, \JUL, \AUG, \SEP, \OCT, \NOV, \DEC);
+   VAR YEAR: INTEGER [1900:2100];
+END RECORD := (DAY: 15, MONTH: \FEB, YEAR: 1978);
+VAR LIST: PTR (NODE) := NIL;
+S50.LENGTH := 4;
+S50.VALUE[0:3] := 'BLUE';
+PUT_LINE (TO_CHAR (S50.LEN) !! ' ' !! S50.VALUE[0 : S50.LENGTH - 1] !! ' '
+          !! TO_CHAR (S10.LEN) !! ' ' !! TO_CHAR (S10.VALUE.LENGTH));
+PUT_LINE (TO_CHAR (M (2, 1)) !! ' ' !! TO_CHAR (M.DIMENSIONS) !! ' ' !! TO_CHAR (M.EXTENT (1))
+          !! ' ' !! TO_CHAR (M.BOUNDS (1).MAX));
+PUT_LINE (TO_CHAR (DATE.DAY) !! ' ' !! TO_CHAR (DATE.MONTH) !! ' ' !! TO_CHAR (DATE.YEAR));
+V (3) := [T (TRUE)]$$(X: 40);
+V (4) := [T (FALSE)]$$(Y: 3.5);
+LOOP FOR I IN [3:4] DO
+   WITH W NAMING V (I)
+   SELECT W.B FROM
+      TRUE --> W.X := W.X + 2; PUT_LINE ('X ' !! TO_CHAR (W.X)); END;
+      FALSE --> PUT_LINE ('Y ' !! TO_CHAR (W.Y)); END;
+   END SELECT;
+END LOOP I;
+LOOP FOR I IN [1:3] DO
+   BLOCK
+      VAR P: PTR (NODE) := NEW (NODE);
+      P@ := (VALUE: I * 10, NEXT: LIST);
+      LIST := P;
+   END BLOCK;
+END LOOP I;
+BLOCK
+   VAR P: PTR (NODE) := LIST;
+   LOOP UNTIL P = NIL DO
+      PUT (TO_CHAR (P@.VALUE) !! ' ');
+      P := P@.NEXT;
+   END LOOP;
+   NEW_LINE;
+END BLOCK;
+BLOCK
+   VAR A, B: ARRAY [1:3] OF INTEGER := (1, 2, 3);
+   VAR C: ARRAY [0:2] OF INTEGER := (1, 2, 3);
+   IF A = C THEN
+      PUT_LINE ('equal arrays');
+   END IF;
+   B (2) := 7;
+   IF A <> B THEN
+      PUT_LINE ('different arrays');
+   END IF;
+   A := B;
+   PUT_LINE (TO_CHAR (A (2)));
+END BLOCK;
+BLOCK
+   VAR Q: PTR (NODE) := NIL;
+   PUT_LINE (TO_CHAR (Q@.VALUE));
+EXCEPT
+   NULL_REF --> PUT_LINE ('NULL_REF'); END;
+END EXCEPT;
+END BLOCK;
+BLOCK
+   PUT_LINE (TO_CHAR (M (3, 0)));
+EXCEPT
+   SUBSCRIPT_RANGE --> PUT_LINE ('SUBSCRIPT_RANGE'); END;
+END EXCEPT;
+END BLOCK;
+END SEGMENT RECORDS;

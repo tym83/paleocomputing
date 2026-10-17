@@ -155,7 +155,6 @@ PROCEDURE ROUTINE_HEADERS (RS: NODE);
          BLOCK
             CONST Y: SYM := FIND_DECL (R);
             ROUTINE_HEADER (Y);
-            COMPUTE_USES (Y);
          END BLOCK;
       END IF;
       R := R@.NEXT;
@@ -387,6 +386,7 @@ PROCEDURE MODULE_DATA (RS: NODE);
                D := D@.NEXT;
             END LOOP;
             MODULE_DATA (R@.C@.C);
+            ROUTINE_USES (R@.C@.C);
             LEAVE_MODULE (M);
          END BLOCK;
       END IF;
@@ -461,6 +461,7 @@ PROCEDURE CLOSED_BODY (B: NODE);
       D := D@.NEXT;
    END LOOP;
    MODULE_DATA (B@.C);
+   ROUTINE_USES (B@.C);
    DECLARE_LABELS (B@.B);
    LOOP UNTIL S = NIL DO
       STMT (S);

@@ -585,10 +585,11 @@ END FUNCTION IN_MODULE;
 FUNCTION RESOLVE_IN_DECL (Y: SYM, TS: NODE) RETURNS (TYP);
    CONST D: NODE := Y@.DECL;
    VAR T: TYP;
-   OPEN_SCOPE;
-   IF TS <> NIL THEN
-      BIND_FORMALS (D@.A, TS);
+   IF TS = NIL THEN                                  % the literals stay in this scope
+      RETURN RESOLVE (D@.B);
    END IF;
+   OPEN_SCOPE;
+   BIND_FORMALS (D@.A, TS);
    T := RESOLVE (D@.B);
    CLOSE_SCOPE;
    RETURN T;
