@@ -159,6 +159,12 @@ FUNCTION RECORD_INSTANCE (Y: SYM, TS: NODE) RETURNS (TYP);
                         FAIL (A@.LINE, 'ANY is only for TAG parameters (3.9.1)');
                      END IF;
                      V@.ANYARG := TRUE;
+                  ORIF A@.KIND = N_DONTCARE THEN       % ? in a formal: any value
+                     V@.ANYARG := TRUE;
+                     V@.HI := MK ('?');
+                  ORIF A@.KIND = TS_GEN THEN           % ?N: the value of the argument
+                     V@.ANYARG := TRUE;
+                     V@.HI := MK ('?' !! STR (A@.NAME, A@.NAME.LEN));
                   ELSE
                      BLOCK
                         CONST FT: TYP := RESOLVE (F@.B);
@@ -530,7 +536,7 @@ FUNCTION SAME_CLASS (A, B: TYP) RETURNS (BOOLEAN);
    ORIF A@.KIND = T_PTR THEN
       RETURN SAME_TYPE (TARGET (A), TARGET (B));
    ORIF A@.KIND = T_ABS THEN
-      RETURN A@.DECL = B@.DECL;
+      RETURN ORIGINAL (A@.DECL) = ORIGINAL (B@.DECL) & SAME_CLASS (A@.BASE, B@.BASE);
    END IF;
    RETURN TRUE;
 END FUNCTION SAME_CLASS;
@@ -554,15 +560,26 @@ FUNCTION SAME_TYPE (A, B: TYP) RETURNS (BOOLEAN);
       RETURN SAME_TYPE (A@.ELEM, B@.ELEM);
    ORIF A@.KIND = T_REC THEN
       RETURN SAME_ARGS (A@.ARGS, B@.ARGS);
+   ORIF A@.KIND = T_ABS THEN
+      RETURN SAME_TYPE (A@.BASE, B@.BASE);
    END IF;
    RETURN TRUE;
 END FUNCTION SAME_TYPE;
+
+FUNCTION IS_GEN_ARG (B: BND) RETURNS (BOOLEAN);
+   IF B@.HI.LEN = 0 THEN
+      RETURN FALSE;
+   END IF;
+   RETURN STR (B@.HI, B@.HI.LEN)[0:0] = '?';
+END FUNCTION IS_GEN_ARG;
 
 FUNCTION SAME_ARGS (A, B: BND) RETURNS (BOOLEAN);
    VAR P: BND := A;
    VAR Q: BND := B;
    LOOP UNTIL P = NIL ! Q = NIL DO
-      IF P@.ANYARG <> Q@.ANYARG THEN
+      IF IS_GEN_ARG (P) ! IS_GEN_ARG (Q) THEN         % derived: matches any value
+         ;
+      ORIF P@.ANYARG <> Q@.ANYARG THEN
          RETURN FALSE;
       END IF;
       IF P@.MLO.OK & Q@.MLO.OK THEN

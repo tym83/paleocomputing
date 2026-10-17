@@ -207,6 +207,9 @@ FUNCTION WITH_RANGE (T: TYP, R: NODE) RETURNS (TYP);
    IF R = NIL THEN
       RETURN T;
    END IF;
+   IF IS_GENERIC_NODE (R@.A) ! IS_GENERIC_NODE (R@.B) THEN
+      RETURN T;                                     % [?LB : ?UB] in a formal: any range
+   END IF;
    IF NOT (T@.KIND = T_INT ! T@.KIND = T_FLOAT ! T@.KIND = T_ENUM) THEN
       FAIL (R@.LINE, 'a range is only for fixed, float and enumerated types (3.12.2)');
    END IF;
@@ -365,8 +368,10 @@ FUNCTION RESOLVE_PREDEFINED (TS: NODE) RETURNS (TYP);
          IF NOT R.OK ! R.V <> 2 THEN
             FAIL (TS@.LINE, 'only radix 2 is predefined (3.2.1)');
          END IF;
-         IF NOT TEQS (P@.NAME, 'STD') THEN
-            FAIL (TS@.LINE, 'only STD precision is predefined (3.2.1)');
+         IF P@.KIND = N_NAME ! P@.KIND = N_ENUMLIT THEN
+            IF FIND_LITERAL (P@.NAME, NIL) <> NIL & NOT TEQS (P@.NAME, 'STD') THEN
+               FAIL (TS@.LINE, 'only STD precision is predefined (3.2.1)');
+            END IF;
          END IF;
          IF S.V = 0 THEN
             RETURN W@.TY_INT;
@@ -495,6 +500,17 @@ END FUNCTION RESOLVE_ARRAY;
 % a type name with its arguments: a declared type, an abstract type, a record type
 FUNCTION RESOLVE_USER (TS: NODE) RETURNS (TYP);
    CONST Y: SYM := ORIG_LOOKUP (TS@.NAME);
+   IF TS@.A = NIL THEN                              % a TYPE parameter of an instance
+      BLOCK
+         VAR B: BIND := W@.BINDS;
+         LOOP UNTIL B = NIL DO
+            IF TEQ (B@.NAME, TS@.NAME) & B@.T <> NIL THEN
+               RETURN B@.T;
+            END IF;
+            B := B@.NEXT;
+         END LOOP;
+      END BLOCK;
+   END IF;
    IF Y = NIL THEN
       FAILT (TS@.LINE, 'unknown type ', TS@.NAME);
    END IF;
@@ -701,3 +717,7 @@ FUNCTION CTYPE (T: TYP) RETURNS (TEXT);
    END IF;
    FAIL (0, 'no C type');
 END FUNCTION CTYPE;
+
+FUNCTION IS_GENERIC_NODE (E: NODE) RETURNS (BOOLEAN);
+   RETURN E@.KIND = TS_GEN ! E@.KIND = N_DONTCARE;
+END FUNCTION IS_GENERIC_NODE;

@@ -512,6 +512,9 @@ FUNCTION INSTANCE (G: SYM, ARGS: ARG, LINE: INTEGER) RETURNS (SYM);
          IF NOT UNIFY (P@.TS, A@.V.T, BS) THEN
             FAILT (LINE, 'the argument does not fit the generic parameter ', P@.NAME);
          END IF;
+         IF DONTCARE_TYPE_ARG (P@.TS) THEN             % its type tells the instances apart
+            ADD_BIND (MKN ('?' !! STR (P@.NAME, P@.NAME.LEN)), A@.V.T, NO_MVAL (), NIL, BS);
+         END IF;
       END IF;
       P := P@.NEXT;
       A := A@.NEXT;
@@ -527,7 +530,7 @@ FUNCTION INSTANCE (G: SYM, ARGS: ARG, LINE: INTEGER) RETURNS (SYM);
          I := I@.INSTANCES;
       END LOOP;
    END BLOCK;
-   RETURN NEW_INSTANCE (G, BS@.NEXT);
+   RETURN NEW_INSTANCE (G, BS@.NEXT, ARGS);
 END FUNCTION INSTANCE;
 
 FUNCTION SAME_STATIC_BINDS (A, B: BIND) RETURNS (BOOLEAN);
@@ -633,10 +636,12 @@ PROCEDURE WHERE_BINDINGS (G: SYM, LINE: INTEGER, BS: BIND);
                         END IF;
                      END IF;
                   END IF;
-                  IF R = NIL THEN
+                  IF R = NIL & NOT IS_OPERATOR_NAME (T@.NAME) THEN
                      FAILT (LINE, 'no routine for the WHERE clause (5.2): ', T@.NAME);
                   END IF;
-                  ADD_BIND (T@.NAME, NIL, NO_MVAL (), R, BS);
+                  IF R <> NIL THEN                    % else the predefined operation
+                     ADD_BIND (T@.NAME, NIL, NO_MVAL (), R, BS);
+                  END IF;
                   W@.BINDS := BS@.NEXT;
                END BLOCK;
             END IF;
@@ -650,7 +655,44 @@ END PROCEDURE WHERE_BINDINGS;
 
 % a new instance: the header resolved with the bindings, the body translated later in
 % the scope of the generic
-FUNCTION NEW_INSTANCE (G: SYM, BS: BIND) RETURNS (SYM);
+% a formal type with ? for a TYPE formal of a record type: the argument's type is taken
+FUNCTION DONTCARE_TYPE_ARG (TS: NODE) RETURNS (BOOLEAN);
+   IF TS@.KIND <> TS_NAME THEN
+      RETURN FALSE;
+   END IF;
+   BLOCK
+      CONST Y: SYM := ORIG_LOOKUP (TS@.NAME);
+      VAR A: NODE := TS@.A;
+      VAR F: NODE;
+      IF Y = NIL THEN
+         RETURN FALSE;
+      END IF;
+      IF Y@.KIND <> Y_TYPE ! Y@.DECL = NIL THEN
+         RETURN FALSE;
+      END IF;
+      F := Y@.DECL@.A;
+      LOOP UNTIL F = NIL DO
+         BLOCK
+            VAR N: NODE := F@.A;
+            LOOP UNTIL N = NIL DO
+               IF A = NIL THEN
+                  RETURN FALSE;
+               END IF;
+               IF F@.B = NIL & A@.KIND = N_DONTCARE THEN
+                  RETURN TRUE;
+               END IF;
+               A := A@.NEXT;
+               N := N@.NEXT;
+            END LOOP;
+         END BLOCK;
+         F := F@.NEXT;
+      END LOOP;
+   END BLOCK;
+   RETURN FALSE;
+END FUNCTION DONTCARE_TYPE_ARG;
+
+FUNCTION NEW_INSTANCE (G: SYM, BS: BIND, ARGS: ARG) RETURNS (SYM);
+   VAR A: ARG := ARGS;
    VAR I: SYM := NEW_SYM (Y_ROUTINE, G@.NAME);
    CONST SAVED: BIND := W@.BINDS;
    VAR P: PARM := G@.PARAMS;
@@ -673,6 +715,13 @@ FUNCTION NEW_INSTANCE (G: SYM, BS: BIND) RETURNS (SYM);
             PM@.T := NIL;
          ORIF P@.TS@.KIND = TS_ROUTINE THEN
             PM@.T := W@.TY_VOID;
+         ORIF DONTCARE_TYPE_ARG (P@.TS) & A@.HAVE THEN
+            PM@.T := A@.V.T;
+            IF PM@.T@.KIND = T_ABS THEN               % inside its module: the underlying
+               IF PM@.T@.MODL = G@.MODL THEN
+                  PM@.T := PM@.T@.BASE;
+               END IF;
+            END IF;
          ELSE
             PM@.T := RESOLVE (P@.TS);
          END IF;
@@ -685,6 +734,7 @@ FUNCTION NEW_INSTANCE (G: SYM, BS: BIND) RETURNS (SYM);
          TAIL := PM;
       END BLOCK;
       P := P@.NEXT;
+      A := A@.NEXT;
    END LOOP;
    I@.RESULT := RESULT_TYPE (I);
    LEAVE_MODULE_OF (G);
@@ -695,3 +745,11 @@ FUNCTION NEW_INSTANCE (G: SYM, BS: BIND) RETURNS (SYM);
    W@.PENDING := I;
    RETURN I;
 END FUNCTION NEW_INSTANCE;
+
+% STORE_, EQUAL_ and the other names of operators (3.1.4.2, D.5)
+FUNCTION IS_OPERATOR_NAME (NAME: TEXT) RETURNS (BOOLEAN);
+   IF NAME.LEN < 2 THEN
+      RETURN FALSE;
+   END IF;
+   RETURN STR (NAME, NAME.LEN)[NAME.LEN - 1 : NAME.LEN - 1] = '_';
+END FUNCTION IS_OPERATOR_NAME;

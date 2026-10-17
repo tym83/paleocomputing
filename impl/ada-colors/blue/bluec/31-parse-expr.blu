@@ -354,6 +354,9 @@ FUNCTION PARSE_ATOM () RETURNS (NODE);
       SKIP;
       RETURN N;
    END IF;
+   IF T.KIND = K_GEN THEN                          % ?NAME or ? in a range or bound
+      RETURN PARSE_TYPE_ARG ();
+   END IF;
    IF IS ('BIN') ! IS ('OCT') ! IS ('HEX') THEN
       SKIP;
       IF TOK_IS (T, 'BIN') THEN

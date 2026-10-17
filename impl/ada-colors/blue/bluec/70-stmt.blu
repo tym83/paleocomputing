@@ -200,7 +200,6 @@ PROCEDURE STMT (S: NODE);
    ORIF K = N_ASSIGN THEN
       ASSIGN_STMT (S);
    ORIF K = N_CALL THEN                             % [4-37]
-      S@.KIND := N_APPLY;
       BLOCK
          CONST V: ET := PROCEDURE_CALL (S);
          IF V.T <> NIL THEN

@@ -140,9 +140,16 @@ FUNCTION MANIFEST (E: NODE) RETURNS (MVAL);
          END IF;
          RETURN (OK: TRUE, V: BOOL_INT (A.V >= LO & A.V <= HI));
       END BLOCK;
-   ORIF K = N_NAME THEN
+   ORIF K = N_NAME ! K = TS_GEN THEN
       BLOCK
          CONST Y: SYM := LOOKUP (E@.NAME);
+         VAR B: BIND := W@.BINDS;
+         LOOP UNTIL B = NIL DO                         % a value of an instance
+            IF TEQ (B@.NAME, E@.NAME) & B@.HASMV THEN
+               RETURN (OK: TRUE, V: B@.MV);
+            END IF;
+            B := B@.NEXT;
+         END LOOP;
          IF Y <> NIL THEN
             IF (Y@.KIND = Y_CONST ! Y@.KIND = Y_GEN) & Y@.HASMV THEN
                RETURN (OK: TRUE, V: Y@.MV);

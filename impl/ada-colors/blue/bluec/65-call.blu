@@ -297,7 +297,8 @@ FUNCTION CALL_SYM (Y0: SYM, ARGS: ARG, LINE: INTEGER) RETURNS (ET);
                FAIL (LINE, 'an inout or output argument must be a variable (4.3.2)');
             END IF;
             IF NOT SAME_CLASS (P@.T, V.T) THEN
-               FAIL (LINE, 'the inout or output argument is not of the type of the parameter');
+               FAILT (LINE, 'the inout or output argument is not of the type of the parameter: ',
+                      TYPE_NAME (P@.T));
             END IF;
             IF P@.MODE = M_INOUT & NOT SAME_TYPE (P@.T, V.T) THEN
                FAIL (LINE, 'an inout argument must match the parameter exactly (4.3.2)');
