@@ -1,0 +1,13 @@
+% BLUE Language Specification, 15 Feb 1978, section 4.5.5.1, example 1, page 4-36
+% (DTIC ADB950587, PDF page 1582). Transcribed as printed; ... marks elided code.
+     VAR X: FLOAT(8);
+     VAR RC: FLOAT(8);
+     ...
+     IF RC IN [0.:500.) THEN
+          X := 2.79 + 3.85 * RC;
+     ORIF RC IN [500.:1500.) THEN
+          X := 1927.79 + 4.76 * (RC - 500.);
+     ORIF RC IN [1500.:3000.) THEN
+          X := 6687.79 + 6.25 * (RC - 1500.);
+     ELSE X := 16062.79 + 8.37 * (RC - 3000.);
+     END IF;
