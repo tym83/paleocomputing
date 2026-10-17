@@ -440,7 +440,11 @@ PROCEDURE ASSIGN_STMT (S: NODE);
                                   NODE_ARG (TG@.C, M_IN, VAL_ARG (B, NIL))));
                VAR Y: SYM;
                ARGS@.NEXT@.NEXT@.NEXT@.MODE := M_INOUT;
-               Y := FIND_ROUTINE (MKN ('SUBSTRING_STORE_'), ARGS, S@.LINE, TRUE);
+               Y := FIND_ROUTINE (MKN ('SUBSTRING_STORE_'), ARGS, S@.LINE, FALSE);
+               IF Y = NIL THEN                       % (S, L, U ## V): the target is out
+                  ARGS@.NEXT@.NEXT@.NEXT@.MODE := M_OUT;
+                  Y := FIND_ROUTINE (MKN ('SUBSTRING_STORE_'), ARGS, S@.LINE, TRUE);
+               END IF;
                IF Y = NIL THEN
                   FAIL (S@.LINE, 'no SUBSTRING_STORE_ for this abstract type');
                END IF;

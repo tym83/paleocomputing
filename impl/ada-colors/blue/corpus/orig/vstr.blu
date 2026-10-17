@@ -1,0 +1,187 @@
+% BLUE Language Specification, 15 Feb 1978, section 5.2, example 5, pages 5-13 .. 5-17
+% (DTIC ADB950587, PDF pages 1634 .. 1638). Transcribed as printed. The comment
+% marks print as $ (the typewriter glyph of the percent sign); kept as printed. On page
+% 5-16 the 1 of S1 is broken in the scan in two places (printed S'); read as S1.
+MODULE VSTR EXPORTS(VAR_CHAR_STR);
+
+        TYPE VAR_CHAR_STR(MAX_LENGTH: INTEGER[0:(CHAR_STR.LENGTH).MAX],
+                          CHAR_SET: TYPE) =
+             RECORD
+                  CUR_LENGTH: INTEGER [0:MAX_LENGTH];
+                  STRING: CHAR_STR(MAX_LENGTH,CHAR_SET);
+             END RECORD;
+
+        PROCEDURE VAR_CHAR_STR$STORE_    $ assignment operator
+             (SOURCE: VAR_CHAR_STR(?,?CHAR_SET)
+              ##
+              TARGET: VAR_CHAR_STR(?TARGET_MAX_LENGTH, ?CHAR_SET))
+
+             SIGNALS (INVALID_SIZE);
+
+             IF SOURCE.CUR_LENGTH > TARGET_MAX_LENGTH THEN
+                  SIGNAL INVALID_SIZE;
+             END IF;
+
+             TARGET.CUR_LENGTH := SOURCE.CUR_LENGTH;
+             TARGET.STRING[0:SOURCE.CUR_LENGTH-1] :=
+                  SOURCE.STRING[0:SOURCE.CUR_LENGTH-1];
+
+        END PROCEDURE VAR_CHAR_STR$STORE_;
+
+
+        FUNCTION VAR_CHAR_STR$SUBSTRING_    $ handles V[L:U] in exprs.
+             (V: VAR_CHAR_STR(?V_MAX_LENGTH,?CHAR_SET),
+              L,U: INTEGER)
+             RETURNS (VAR_CHAR_STR(V_MAX_LENGTH,CHAR_SET))
+
+             SIGNALS (INVALID_SUBSTRING);
+
+             BLOCK
+                  VAR SUBV: VAR_CHAR_STR(V_MAX_LENGTH,CHAR_SET);
+
+                  IF (L<0) ! (U>V.CUR_LENGTH-1) THEN
+                       SIGNAL INVALID_SUBSTRING;
+                  END IF;
+
+                  SUBV.CUR_LENGTH := MAX(U-L+1,0);
+                  SUBV.STRING := V.STRING[L:U];
+                  RETURN (SUBV);
+             END BLOCK
+                      EXCEPT  $in case U-L+1 causes overflow
+                           OVERFLOW--> SIGNAL INVALID_SUBSTRING; END;
+                      END EXCEPT;
+        END FUNCTION VAR_CHAR_STR$SUBSTRING_;
+
+        PROCEDURE VAR_CHAR_STR$SUBSTRING_STORE_
+             (S: VAR_CHAR_STR(?,?CHAR_SET),
+              L,U: INTEGER
+              ##
+              V: VAR_CHAR_STR(?,?CHAR_SET))
+
+             SIGNALS (INVALID_SIZE,INVALID_SUBSTRING);
+
+             IF (L<0) ! (U>V.CUR_LENGTH-1) THEN
+                  SIGNAL INVALID_SUBSTRING;
+             END IF;
+
+             IF MAX(U-L+1)<>S.CUR_LENGTH THEN
+                  SIGNAL INVALID_SIZE;
+             END IF;
+
+             V.STRING[L:U] := S.STRING[0:S.CUR_LENGTH-1];
+
+        END PROCEDURE VAR_CHAR_STR$SUBSTRING_STORE_;
+
+
+        FUNCTION VAR_CHAR_STR$CONCATENATE_
+             (S1: VAR_CHAR_STR(?S1_MAX_LENGTH,?CHAR_SET),
+              S2: VAR_CHAR_STR(?S2_MAX_LENGTH,?CHAR_SET))
+             RETURNS (VAR_CHAR_STR(S1_MAX_LENGTH+S2_MAX_LENGTH,CHAR_SET))
+
+             SIGNALS (INVALID_SIZE);
+
+             BLOCK
+                  VAR S1S2: VAR_CHAR_STR(S1_MAX_LENGTH+S2_MAX_LENGTH,
+                                         CHAR_SET);
+
+                  S1S2.CUR_LENGTH := S1.CUR_LENGTH + S2.CUR_LENGTH;
+                  S1S2.STRING := S1.STRING[0:S1.CUR_LENGTH-1]
+                              !! S2.STRING[0:S2.CUR_LENGTH-1];
+                  RETURN (S1S2);
+             END BLOCK
+                      EXCEPT     $ in the case of length addition overflow
+                           OVERFLOW --> SIGNAL INVALID_SIZE; END;
+                      END EXCEPT;
+        END FUNCTION VAR_CHAR_STR$CONCATENATE_;
+
+
+        FUNCTION VAR_CHAR_STR$CUR_LENGTH
+             (S: VAR_CHAR_STR(?,?))
+             RETURNS (INTEGER);
+
+             RETURN (S.CUR_LENGTH);
+
+        END FUNCTION VAR_CHAR_STR$CUR_LENGTH;
+
+        FUNCTION VAR_CHAR_STR$TO_VAR_CHAR    $ convert from fixed length
+             (FIXED_STR:CHAR_STR(?FIXED_LENGTH,?CHAR_SET))
+             RETURNS (VAR_CHAR_SET(FIXED_LENGTH,CHAR_SET));
+
+             VAR TEMP: VAR_CHAR_STR(FIXED_LENGTH,CHAR_SET);
+
+             TEMP.CUR_LENGTH := FIXED_LENGTH;
+             TEMP.STRING := FIXED_STRING;
+
+             RETURN (TEMP);
+
+        END FUNCTION VAR_CHAR_STR$TO_VAR_CHAR;
+
+
+        FUNCTION VAR_CHAR_STR$EQUAL_    $ equality operator
+             (S1,S2: VAR_CHAR_STR(?,?CHAR_SET))
+             RETURNS (BOOLEAN)
+
+             SIGNALS (INVALID_LENGTH);
+
+             IF S1.CUR_LENGTH <> S2.CUR_LENGTH THEN
+                  SIGNAL INVALID_LENGTH;
+             END IF;
+
+             RETURN (S1.STRING[0:S1.CUR_LENGTH-1] =
+                     S2.STRING[0:S2.CUR_LENGTH-1]);
+
+        END FUNCTION VAR_CHAR_STR$EQUAL_;
+
+
+        FUNCTION VAR_CHAR_STR$UNEQUAL_    $ inequality operator
+             (S1,S2: VAR_CHAR_STR(?,?CHAR_SET))
+             RETURNS (BOOLEAN)
+
+             SIGNALS (INVALID_LENGTH);
+
+             RETURN (NOT VAR_CHAR_STR$EQUAL_(S1,S2))
+                 EXCEPT   $ reissue signal
+                      INVALID_LENGTH--> SIGNAL; END;
+                 END EXCEPT;
+
+        END FUNCTION VAR_CHAR_STR$UNEQUAL_;
+
+        FUNCTION VAR_CHAR_STR$DUP
+             (CHAR_TO_DUP: VAR_CHAR_STR(?,?CHAR_SET),
+              NUM_DUPS: INTEGER)
+             RETURNS (VAR_CHAR_STR(NUM_DUPS,CHAR_SET))
+
+             SIGNALS (INVALID_LENGTH);
+
+             VAR RET_STR: VAR_CHAR_STR(NUM_DUPS,CHAR_SET);
+
+             IF (NUM_DUPS<0) ! (CHAR_TO_DUP.CUR_LENGTH<>1) THEN
+                  SIGNAL INVALID_LENGTH;
+             END IF;
+
+             RET_STR.CUR_LENGTH := NUM_DUPS;
+             RET_STR.STRING := DUP(CHAR_TO_DUP.STRING,NUM_DUPS);
+
+             RETURN (RET_STR);
+
+        END FUNCTION VAR_CHAR_STR$DUP;
+
+
+        FUNCTION VAR_CHAR_STR$BLANKS
+             (NUM_BLANKS: INTEGER,
+              CHAR_SET: TYPE)
+             RETURNS (VAR_CHAR_STR(NUM_BLANKS,CHAR_SET))
+
+             SIGNALS (INVALID_LENGTH);
+
+             VAR BLANK_OF_CHAR_SET: VAR_CHAR_STR(1,CHAR_SET) :=
+                  VAR_CHAR_STR$TO_VAR_CHAR(CHAR_SET' ');
+
+             RETURN (VAR_CHAR_STR$DUP(BLANK_OF_CHAR_SET,NUM_BLANKS))
+                  EXCEPT
+                       INVALID_LENGTH--> SIGNAL; END;
+                  END EXCEPT;
+
+        END FUNCTION VAR_CHAR_STR$BLANKS:
+
+END MODULE VSTR;

@@ -411,6 +411,9 @@ FUNCTION RESOLVE_PREDEFINED (TS: NODE) RETURNS (TYP);
       IF TEQS (NAME, 'CHAR_STR') THEN
          BLOCK
             CONST CS: NODE := NTH_ARG (TS, 1);
+            IF CS@.KIND = TS_GEN ! CS@.KIND = N_DONTCARE THEN
+               RETURN T;                            % CHAR_STR (?L, ?C) in a formal
+            END IF;
             IF NOT TEQS (CS@.NAME, 'ASCII') THEN
                IF ARG_TYPE (CS)@.KIND <> T_ENUM THEN
                   FAIL (TS@.LINE, 'a charset must be an enumerated type (3.7.1)');
