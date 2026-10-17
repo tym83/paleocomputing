@@ -1,0 +1,15 @@
+(* Section H, team 126-02, A 2.4.4 YELLOW, p.1895: the summation as a *)
+(* function *)
+REPRESENTATION R =  INTEGER [1..100] ;
+               R2 = FLOATING [-1.0E50..1.0E50] PRECISION 8 ;
+VAR A          :    ARRAY (R OF R2) ;
+VAR TOTAL      ;    R2 ;
+FUNCTION ADD RETURNS R2 (CONST AA : ARRAY (1 DIMENSIONS OF R2)) ;
+
+     VAR SUM   :    R2 := 0. ;
+     FOR I     :    INTEGER [LOW(AA,1)..HIGH(AA,1)]
+       DO SUM  :=   SUM + AA [I] ;
+     ENDFOR ;
+     RETURN SUM ;
+ENDFUNCTION ;
+TOTAL := ADD(A) ;  (* EXAMPLE OF FUNCTION USE *)

@@ -31,7 +31,8 @@ exception handling.
 - **Printed symbols with no ASCII form**: not-equal `≠` is written `#` (Modula's spelling) and
   the dereferencing up-arrow `↑` is written `^`. Free operators `≠≠ ≠≠≠` are `## ###`.
 - **The CASE arrow is `=>`.** The OCR reads "->"; at 300 dpi the bold glyph is the same as in
-  `:=` and in `=` (rules 18, 28, 78, p.1085, p.1100).
+  `:=` and in `=` (rules 18, 28, 78, p.1085, p.1100). The 1978 evaluators typed it `=>` in
+  their own YELLOW examples (Section H, team 126-02, p.1898, p.1900).
 
 ## 2. Grammar (Appendix B, pp.1084-1089)
 

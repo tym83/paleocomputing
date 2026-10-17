@@ -1,6 +1,7 @@
 #!/bin/sh
 # The programs of Part Three of the 1978 YELLOW report (DTIC ADB950587,
-# pp.1096-1124), transcribed in original/ as printed.
+# pp.1096-1124), two of Parts Two and Four, and the evaluators' YELLOW of
+# Section H, transcribed in original/ as printed.
 #
 # For each example two programs are made and translated with build/yellowc:
 #  - as printed: the original text, with only what the example says it

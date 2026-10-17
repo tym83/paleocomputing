@@ -98,3 +98,20 @@ relations bind loosest, `-` is not associative, routines must not fall out of th
 labels are declared, a CONST has a value, a signal is not exported. Three programs that
 compile are wrong when run (convex hull, exchange sort, and the distance example with its own
 data), and one (real time) shows a consequence of the monitor semantics the Report chose.
+
+## The evaluators' YELLOW (Section H)
+
+Team 126-02 of the 1978 evaluation wrote small comparative programs in all four languages
+(DTIC ADB950587, Section H, Appendix 2). Their YELLOW is the only YELLOW written in 1978 by
+people other than its designers, and they too read the CASE arrow as `=>`.
+
+| Example | Page | As printed | Changes |
+|---|---|---|---|
+| H1893 array summation | 1893 | accepted | data added |
+| H1895 summation as a function | 1895 | `expected :, found ;` | `VAR TOTAL ; R2`; a `;` between formals and body; `ENDFUNCTION` without its name |
+| H1898 days in a month | 1898 | `expected an identifier, found ..` | the elided months; `CASE FEB, =>`; `ELSE =>` (ELSE takes no arrow); YEAR undeclared |
+| H1900 variant record | 1900 | `expected a statement` | REAL is not a YELLOW type; `Z.LENGTH ;` is not a statement and a variant component is reached only inside a SELECT on its case |
+
+"The YELLOW example is a little tedious", they wrote of the second; the language report gave
+them, by their account, "insufficient information ... to allow construction of the fixed point
+square root example".
