@@ -10,13 +10,18 @@ fixed point -> grow to the language of the 1978 specification -> tests and 1978 
 - tests/run.sh: 24 pass (enums, fixed/float, records/variants/arrays/pointers, strings and
   bitstrings, modules/abstract types/STORE_, generics, scopes/imports/labels/exceptions,
   paths/semaphores, 15 rejected programs).
+- corpus/run.sh: 16 programs of the 1978 document pass (4.4 stack module and segment Z,
+  4.5.5 IF/case, 4.5.6 loops, 4.5.7 SUM and hash table, 4.6.8 producer/consumer, 3.12.5 BCD
+  charset, 5.1 INTEGRATE, 5.2 matrices, generic stack, VSTR varying strings).
 - rt: BLUE additions appended (batch 1 strings/console, batch 2 fixed/bits/conversions/
   paths/semaphores). RED/GREEN fixed points and tests re-checked after each rt change.
 
 ## Next step
-Corpus: transcribe the program examples of the 1978 document into blue/corpus (with page
-numbers), patch files for what does not compile as printed, then Appendix C (I/O modules)
-with simulated LT33 teletypes; then notes/blue-digest.md, README(.ru), CI.md.
+Appendix C (pp. C-5 .. C-36, PDF 1678-1709): SYSTEM/APPLICATION/STANDARD_IO with
+SAFE_TELETYPE, TELETYPE, BINARY_IO, TEXTUAL_IO, run on simulated LT33 teletypes (a machine
+segment in the driver gives LT33_DEVICE_, LT33_OP_, START_IO, the interrupt semaphores).
+Segments must be translated in USES order (the appendix prints SYSTEM first).
+Then notes/blue-digest.md, README(.ru), CI.md.
 
 ## Journal
 ### design decisions (before code)
@@ -49,3 +54,17 @@ with simulated LT33 teletypes; then notes/blue-digest.md, README(.ru), CI.md.
 - A call node was rewritten to N_APPLY on first translation; a generic body translated
   twice then failed. Nodes are not mutated by translation any more.
 - PAR_BLOCK used rt_taskdecl where the runtime wanted rt_b_par.
+### corpus (2026-10-17)
+- Each entry: orig/ as printed (page numbers in a header comment), fix/NAME.sed for every
+  forced change with its reason, main/NAME.blu driver, NAME.out.
+- Misprints met: missing ; and colons, BUFF for BUF, M1(1,J) for M2(1,J) in the matrix
+  product, LOOP FOR ...; for DO, VAR_CHAR_SET for VAR_CHAR_STR, $ printed for %, record
+  fields without VAR, MAX with one argument, BOUNDS(1) where BOUNDS is ARRAY [0:n],
+  INTEGER (14,2,STD) for FIXED, INTEGRATE arguments in the wrong order, string assignments
+  of unequal length in VSTR (SIZE by 3.7.5).
+- Compiler changes the corpus forced: parameters of a generic routine unified together;
+  abbreviations of arrays unified through their definition; derived bounds of array
+  parameters are extents ([1:?M] fits any array of that extent); derived range bounds
+  are the widest values; CHAR_STR generic over its character set; TARGET is a predefined
+  name, not reserved; SUBSTRING_STORE_ target may be out (##) or inout.
+- MAX/MIN are key words for attributes only; examples that call MAX get it from the driver.
