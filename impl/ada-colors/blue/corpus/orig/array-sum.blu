@@ -1,0 +1,9 @@
+% BLUE Language Specification, 15 Feb 1978, section 4.5.6.3, example 2, page 4-44
+% (DTIC ADB950587, PDF page 1590). Transcribed as printed; ... marks elided code.
+     VAR A: ARRAY[1:100] OF FLOAT(8);
+     VAR SUM: FLOAT(8);
+     ...
+     SUM := 0.;
+     LOOP FOR I IN [A.BOUNDS(1).MIN : A.BOUNDS(1).MAX] DO
+          SUM := SUM + A(I);
+     END LOOP I;
