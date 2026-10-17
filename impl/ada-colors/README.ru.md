@@ -4,7 +4,9 @@
 
 Два финалиста конкурса языков DoD-1 Министерства обороны США 1979 года,
 собранные заново по их документам. GREEN победил и стал Адой, RED (Intermetrics)
-исчез. Эпизод описан в [`17-episode-red-green.ru.md`](../../17-episode-red-green.ru.md).
+исчез. BLUE (SofTech) и YELLOW (SRI International), два проекта, выбывшие после
+первого этапа в 1978 году, тоже собраны заново, по DTIC ADB950587.
+Эпизод описан в [`17-episode-red-green.ru.md`](../../17-episode-red-green.ru.md).
 
 | Каталог | Что там |
 |---|---|
@@ -13,6 +15,8 @@
 | `red/redc/` | redc, компилятор RED, написанный на RED. `red/seed/redc.c` — то, что последний redc сделал из себя |
 | `red/tests/` | Тесты RED с ожидаемым выводом |
 | `green/` | То же для GREEN: затравка, greenc на GREEN, семя, тесты, примеры INTRO 1979 года |
+| `blue/` | BLUE (SofTech, 1978): затравка, bluec на BLUE, семя, тесты и программы из спецификации; модули ввода-вывода приложения C работают на имитированных телетайпах LT33 |
+| `yellow/` | YELLOW (SRI International, 1978): затравка, yellowc на YELLOW, семя, тесты и учебные программы из отчёта |
 | `os/` | PAIRS, ядро в стиле Tandem NonStop на RED; система THE Дейкстры на RED и её семафоры на GREEN; Kubernetes поверх THE на обоих языках; `contrast/`: три задачи на RED, GREEN и семафорах THE |
 | `kube/` | Управляющий цикл Kubernetes на RED, в виде процессной пары и на GREEN |
 | `labs/` | Двенадцать упражнений с проверкой |

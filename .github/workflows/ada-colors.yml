@@ -6,6 +6,8 @@
 #   Kubernetes loops and the labs run. Everything prints the same on every run:
 #   the runtime follows the RED scheduler exactly and its clock is virtual.
 # green: the same for the compiler written in GREEN.
+# blue, yellow: the same for BLUE (SofTech) and YELLOW (SRI), the two designs
+#   dropped after phase 1 in 1978, plus the programs printed in their reports.
 # ada83: the comparison programs, built by GNAT in Ada 83 mode.
 # web: the browser page (site/red/): redc, greenc and the runtime rebuilt for
 #   WebAssembly must match what is committed, and every example run in headless
@@ -52,6 +54,32 @@ jobs:
       - name: Fixed point and tests
         run: |
           if [ -f green/Makefile ]; then make -C green fixpoint test; else echo "no green yet"; fi
+
+  blue:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fixed point (bluec rebuilt from its seed twice, the C must be identical)
+        run: make -C blue fixpoint
+      - name: Genesis (the first step, from the Python bootstrap)
+        run: make -C blue genesis
+      - name: Tests
+        run: blue/tests/run.sh
+      - name: The 1978 programs (corpus, Appendix C on simulated LT33 teletypes)
+        run: blue/corpus/run.sh
+
+  yellow:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fixed point
+        run: make -C yellow fixpoint
+      - name: Genesis (the first step, from the Python bootstrap)
+        run: make -C yellow genesis
+      - name: Tests
+        run: make -C yellow test
+      - name: The 1978 tutorial corpus
+        run: yellow/corpus/run.sh
 
   ada83:
     runs-on: ubuntu-latest
