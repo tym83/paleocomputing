@@ -1,0 +1,80 @@
+% BLUE Language Specification, 15 Feb 1978, section 3.12.5, example 2, pages 3-159,
+% 3-160 (DTIC ADB950587, PDF pages 1544, 1545). Transcribed as printed.
+     MODULE CHARSET EXPORTS (BCD);
+     TYPE BCD = UNORDERED (
+          \'A', \'B', \'C', \'D', \'E', \'F', \'G', \'H',
+          \'I', \'J', \'K', \'L', \'M', \'N', \'O',
+          \'P', \'Q', \'R', \'S', \'T', \'U', \'V', \'W',  \'X', \'Y', \'Z')
+     REP ENUM_VAL_REP (%SIZE% 6, VALUES (
+          \'A' AS OCT '61', \'B' AS OCT '62', \'C' AS OCT '63',
+          \'D' AS OCT '64', \'E' AS OCT '65', \'F' AS OCT '66',
+          \'G' AS OCT '67', \'H' AS OCT '70', \'I' AS OCT '71',
+          \'J' AS OCT '41', \'K' AS OCT '42', \'L' AS OCT '43',
+          \'M' AS OCT '44', \'N' AS OCT '45', \'O' AS OCT '46',
+          \'P' AS OCT '47', \'Q' AS OCT '50', \'R' AS OCT '51',
+          \'S' AS OCT '22', \'T' AS OCT '23', \'U' AS OCT '24',
+          \'V' AS OCT '25', \'W' AS OCT '26', \'X' AS OCT '27',
+          \'Y' AS OCT '30', \'Z' AS OCT '31'));
+
+      INLINE FUNCTION REORDER (OLD_CODE: BIT(6)) RETURNS (BIT(6));
+           RETURN (OLD_CODE XOR OCT '60');
+      END FUNCTION REORDER;
+
+      INLINE FUNCTION INT_OF (ARG: BCD) RETURNS (INTEGER);
+           RETURN (TO_FIXED(REORDER(TO_BIT(ARG)), 0));
+      END FUNCTION INT_OF;
+
+      INLINE FUNCTION BCD$LESS_THAN (OP1,OP2: BCD) RETURNS (BOOLEAN);
+           RETURN (INT_OF(OP1) < INT_OF(OP2));
+      END FUNCTION BCD$LESS_THAN;
+
+      INLINE FUNCTION BCD$LESS_EQUAL (OP1,OP2: BCD) RETURNS (BOOLEAN);
+           RETURN (INT_OF(OP1) <= INT_OF(OP2));
+      END FUNCTION BCD$LESS_EQUAL;
+
+    INLINE FUNCTION BCD$GREATER_THAN (OP1,OP2: BCD) RETURNS (BOOLEAN);
+         RETURN (INT_OF(OP1) > INT_OF(OP2));
+    END FUNCTION BCD$GREATER_THAN;
+
+    INLINE FUNCTION BCD$GREATER_EQUAL (OP1, OP2: BCD) RETURNS (BOOLEAN);
+         RETURN (INT_OF(OP1) >= INT_OF(OP2));
+    END FUNCTION BCD$GREATER_EQUAL;
+
+    FUNCTION BCD$SUCC(OP: BCD) RETURNS (BCD) SIGNALS (RANGE);
+         SELECT OP FROM
+              \'I' --> RETURN(\'J'); END;
+              \'R' --> RETURN(\'S'); END;
+              \'Z' --> SIGNAL RANGE; END;
+              ELSE --> CONST NEXT: INTEGER := TO_FIXED(TO_BIT(OP), 0) + 1;
+                       CONST BITS: BIT(NEXT.SIZE) := TO_BIT(NEXT);
+                       RETURN [BCD]$$(BITS[BITS.SIZE-BCD.SIZE : BITS.SIZE-1]);
+                             % extracts low order bits of integer value
+                             % remember that bitstrings are indexed from zero
+                       END;
+         END SELECT;
+    END FUNCTION BCD$SUCC;
+
+
+    FUNCTION BCD$PRED (OP: BCD) RETURNS (BCD) SIGNALS (RANGE);
+         SELECT OP FROM
+              \'J' --> RETURN (\'I'); END;
+              \'S' --> RETURN (\'R'); END;
+              \'A' --> SIGNAL RANGE; END;
+              ELSE --> CONST NEXT: INTEGER := TO_FIXED(TO_BIT(OP), 0) - 1;
+                       CONST BITS: BIT(NEXT.SIZE) := TO_BIT(NEXT);
+                       RETURN [BCD]$$(BITS[BITS.SIZE-BCD.SIZE : BITS.SIZE-1]);
+                             % extracts low order bits of integer value
+                             % remember that bitstrings are indexed from zero
+                       END;
+         END SELECT;
+    END FUNCTION BCD$PRED;
+
+    FUNCTION BCD$TO_FIXED (OP: BCD) RETURNS(INTEGER [0:25]);
+         CONST INT_REP INTEGER [0:63] := TO_FIXED(TO_BIT(OP),0);
+         SELECT INT_REP FROM
+              [49:57] --> RETURN (INT_REP-49);      % \'A' = OCT '61' = 49
+              [33:41] --> RETURN (INT_REP-24);      % \'J' = OCT '41' = 33
+              [18:25] --> RETURN (INT_REP);         % \'S' = OCT '22' = 18
+         END SELECT;
+    END FUNCTION BCD$TO_FIXED;
+    END MODULE CHARSET;

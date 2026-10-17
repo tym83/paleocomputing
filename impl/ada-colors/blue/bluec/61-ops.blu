@@ -257,7 +257,8 @@ FUNCTION APPLY_OPERATOR (E: NODE, OP: TEXT, A, B: ET) RETURNS (ET);
    IF E@.FL = 0 THEN
       BLOCK
          CONST NAME: TEXT := OP_NAME (OP, FALSE);
-         IF LOOKUP (NAME) <> NIL ! AT@.KIND = T_ABS ! BT@.KIND = T_ABS THEN
+         IF LOOKUP (NAME) <> NIL ! LOOKUP (MKN (STR (NAME, NAME.LEN)[0 : NAME.LEN - 2])) <> NIL
+            ! AT@.KIND = T_ABS ! BT@.KIND = T_ABS THEN
             BLOCK
                CONST ARGS: ARG := VAL_ARG (A, VAL_ARG (B, NIL));
                CONST Y: SYM := USER_OPERATOR (NAME, ARGS, LINE);

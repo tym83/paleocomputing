@@ -69,6 +69,15 @@ FUNCTION CALL_EXPR (E: NODE, WANT: TYP) RETURNS (ET);
    END IF;
    Y := FIND_ROUTINE (E@.NAME, ARGS, E@.LINE, TRUE);
    IF Y = NIL THEN
+      BLOCK                                          % a predefined routine of the name
+         VAR P: SYM := LOOKUP (E@.NAME);
+         LOOP UNTIL P = NIL DO
+            IF P@.KIND = Y_BUILTIN THEN
+               RETURN BUILTIN (E, WANT);
+            END IF;
+            P := LOOKUP_NEXT (P);
+         END LOOP;
+      END BLOCK;
       BLOCK
          CONST B: SYM := LOOKUP (E@.NAME);
          IF B <> NIL THEN
