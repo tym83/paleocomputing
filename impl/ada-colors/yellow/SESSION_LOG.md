@@ -7,17 +7,16 @@ exceptions, files) -> tests and the 1978 tutorial corpus.
 
 ## Current state
 - Worktree ~/projects/paleo-yellow, branch feat/ada-yellow; area impl/ada-colors/yellow/.
-- Source: ~/projects/ada-colors-sources/blue-yellow/DTIC_ADB950587.pdf pages 977-1250
-  (text yellow-sri-1978.txt; page-numbered copy and renders in the scratchpad).
-- yellowc (~6k lines of YELLOW) at its fixed point; seed refreshed; `make genesis` OK.
-- lib/prelude.yel: StandardImplementationPrelude, MathLibrary, TextIO (C code inserts).
-- tests/run.sh: 20 tests pass. corpus/run.sh: Part Three examples, 26 checks pass,
-  E14 realtime pending (needs the simulated PDP-11 line clock for its device signal).
-- rt additions appended to rt/paleo.{c,h} under `YELLOW additions`; RED/GREEN pass.
+- yellowc (~6k lines of YELLOW) at its fixed point; seed refreshed; `make genesis` reproduces.
+- tests/run.sh: 29 pass (incl. 11 rejection tests). corpus/run.sh: 40 checks pass
+  (15 Part Three programs, 2 of Parts Two/Four, 4 of the evaluators of Section H).
+- Docs: README.md/.ru.md, notes/yellow-digest.md, corpus/CHANGES.md, CI.md (job for the
+  coordinator to integrate).
+- rt additions appended under `YELLOW additions`; RED, GREEN, os/kube, labs still pass.
 
 ## Next step
-Device signal for E14 realtime (line clock at BASE8 100), then notes/yellow-digest.md,
-corpus/CHANGES.md, README(.ru).md, CI.md; then GOTO/labels, purity of FUNCTIONs.
+Later phases: THE/Kubernetes ports (os/, kube/), labs, wasm build, langpack, article.
+Known gaps: aliasing rules, process life-scope rule, transitive purity, redefined :=.
 
 ## Journal
 ### 2026-10-16 — reading
@@ -50,3 +49,9 @@ corpus/CHANGES.md, README(.ru).md, CI.md; then GOTO/labels, purity of FUNCTIONs.
   distance of the example's own points, IMPORTS/EXPORTS, LENGTH, precedence slips, closing
   names, routines falling out of their bottom, CONST without value, exchange sort's > logic,
   convex hull algorithm wrong (checked in Python).
+### 2026-10-17 — device signals, labels, docs
+- Simulated PDP-11 line clock for signals AT BASE8 100: the RealTime monitor runs; with X.E.4
+  send semantics Pause(n) returns after one tick (finding).
+- LABEL/GOTO, FUNCTION purity, export of the standard := = # with opaque types (D-33),
+  user-defined ^ (p.1137), strict VI.A.3 for characters and strings.
+- The evaluators' YELLOW (Section H, team 126-02) added to the corpus; they write => too.
