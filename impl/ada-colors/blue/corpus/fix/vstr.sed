@@ -1,7 +1,8 @@
 # record fields are declared with VAR (3.9)
 s/^                  CUR_LENGTH: INTEGER/                  VAR CUR_LENGTH: INTEGER/
 s/^                  STRING: CHAR_STR/                  VAR STRING: CHAR_STR/
-# MAX takes two values (6.1); the second, 0, is the one in SUBSTRING_
+# MAX (not defined by the document; the driver supplies it) takes two values; the
+# second, 0, is the one SUBSTRING_ uses
 s/IF MAX(U-L+1)<>/IF MAX(U-L+1,0)<>/
 # misprints: VAR_CHAR_SET for VAR_CHAR_STR, FIXED_STRING for FIXED_STR, : for ;
 s/RETURNS (VAR_CHAR_SET(/RETURNS (VAR_CHAR_STR(/
