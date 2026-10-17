@@ -264,6 +264,17 @@ PROCEDURE ENTER_MODULE_OF (G: SYM);
    END IF;
 END PROCEDURE ENTER_MODULE_OF;
 
+% the module that declares G, entered if the translation is outside it: was it?
+FUNCTION ENTER_MODULE_FOR (G: SYM) RETURNS (BOOLEAN);
+   IF G@.MODL <> NIL THEN
+      IF NOT IN_MODULE (G@.MODL) & NOT G@.MODL@.BUSY THEN
+         ENTER_MODULE (G@.MODL);
+         RETURN TRUE;
+      END IF;
+   END IF;
+   RETURN FALSE;
+END FUNCTION ENTER_MODULE_FOR;
+
 PROCEDURE LEAVE_MODULE_OF (G: SYM);
    IF G@.MODL <> NIL THEN
       IF W@.MODL = G@.MODL & G@.MODL@.BUSY & W@.DEPTH = G@.MODL@.FWD.H THEN
@@ -453,7 +464,8 @@ PROCEDURE CLOSED_BODY (B: NODE);
    DECLARE_TYPES (B@.A);
    DECLARE_MEMBERS (B@.C);
    RESOLVE_ENUM_TYPES (B@.A);
-   ROUTINE_HEADERS (B@.C);
+   % the headers of the routines may use the constants (and the objects may call the
+   % routines: a call resolves the header it needs)
    LOOP UNTIL D = NIL DO
       IF D@.KIND = N_VAR ! D@.KIND = N_CONST THEN
          DECLARE_OBJECTS (D);
@@ -461,6 +473,7 @@ PROCEDURE CLOSED_BODY (B: NODE);
       D := D@.NEXT;
    END LOOP;
    MODULE_DATA (B@.C);
+   ROUTINE_HEADERS (B@.C);
    ROUTINE_USES (B@.C);
    DECLARE_LABELS (B@.B);
    LOOP UNTIL S = NIL DO
@@ -605,6 +618,24 @@ FUNCTION USES_SEGMENT (S: NODE, NAME: ASCII_STR(?L)) RETURNS (BOOLEAN);
    RETURN FALSE;
 END FUNCTION USES_SEGMENT;
 
+% have the segments of this compilation that S uses been translated?
+FUNCTION SEGMENT_READY (S, SEGS: NODE) RETURNS (BOOLEAN);
+   VAR U: NODE := S@.A;
+   LOOP UNTIL U = NIL DO
+      BLOCK
+         VAR T: NODE := SEGS;
+         LOOP UNTIL T = NIL DO
+            IF T <> S & T@.D = NIL & TEQ (T@.NAME, U@.NAME) THEN
+               RETURN FALSE;
+            END IF;
+            T := T@.NEXT;
+         END LOOP;
+      END BLOCK;
+      U := U@.NEXT;
+   END LOOP;
+   RETURN TRUE;
+END FUNCTION SEGMENT_READY;
+
 PROCEDURE TRANSLATE (SEGS: NODE);
    VAR S: NODE := SEGS;
    VAR MAINS: INTEGER := 0;
@@ -629,7 +660,22 @@ PROCEDURE TRANSLATE (SEGS: NODE);
    W@.CODE := (HEAD: NIL, TAIL: NIL);
    W@.CTXS := NIL;
    PUSH_CTX (1, NO_TEXT ());
-   LOOP UNTIL S = NIL DO
+   % a segment is translated after the segments of this compilation it uses (4.2),
+   % otherwise in the order of the text
+   LOOP
+      S := SEGS;
+      LOOP UNTIL S = NIL DO
+         IF S@.D = NIL THEN
+            IF SEGMENT_READY (S, SEGS) THEN
+               EXIT;
+            END IF;
+         END IF;
+         S := S@.NEXT;
+      END LOOP;
+      IF S = NIL THEN
+         EXIT;
+      END IF;
+      S@.D := S;                                     % translated
       MAINS := MAINS + S@.IV;
       IF S@.IV = 0 & S@.B@.B <> NIL THEN
          FAIL (S@.LINE, 'only the MAIN segment has statements (4.2)');
@@ -640,6 +686,12 @@ PROCEDURE TRANSLATE (SEGS: NODE);
       END IF;
       CLOSED_BODY (S@.B);
       SEGMENT_EXPORTS (S);
+   END LOOP;
+   S := SEGS;
+   LOOP UNTIL S = NIL DO
+      IF S@.D = NIL THEN
+         FAILT (S@.LINE, 'the segments use each other: ', S@.NAME);
+      END IF;
       S := S@.NEXT;
    END LOOP;
    IF MAINS <> 1 THEN
@@ -659,6 +711,22 @@ PROCEDURE TRANSLATE (SEGS: NODE);
    EMITS (O_MAIN, '}');
 END PROCEDURE TRANSLATE;
 
+% what a module named in DEFINES exports comes along with it (Appendix C: STANDARD_IO
+% DEFINES (TEXTUAL_IO, BINARY_IO) and the application uses STREAM_FILE, PRINT ...)
+FUNCTION FROM_DEFINED_MODULE (S: NODE, Y: SYM) RETURNS (BOOLEAN);
+   VAR M: SYM := Y@.MODL;
+   IF Y@.ORIG = NIL THEN
+      RETURN FALSE;                                   % not an exported name
+   END IF;
+   LOOP UNTIL M = NIL DO
+      IF IN_IDENTS (S@.C, M@.NAME) THEN
+         RETURN TRUE;
+      END IF;
+      M := M@.MODL;
+   END LOOP;
+   RETURN FALSE;
+END FUNCTION FROM_DEFINED_MODULE;
+
 % a segment's DEFINES names stay visible to the segments after it (4.2); the others go
 PROCEDURE SEGMENT_EXPORTS (S: NODE);
    VAR MARK: SYM := W@.SCOPE;
@@ -675,7 +743,9 @@ PROCEDURE SEGMENT_EXPORTS (S: NODE);
       BLOCK
          CONST NEXT: SYM := TAKEN@.SNEXT;
          IF S@.FL = 1 ! IN_IDENTS (S@.C, TAKEN@.NAME) ! IN_IDENTS (S@.C, TAKEN@.PREFIX)
-            ! TAKEN@.KIND = Y_ENUMLIT THEN
+            ! TAKEN@.KIND = Y_ENUMLIT ! FROM_DEFINED_MODULE (S, TAKEN)
+            ! (TAKEN@.KIND = Y_ROUTINE & IN_IDENTS (S@.C, BASE_NAME (TAKEN))) THEN
+            % (DEFINES (NEW) also defines T$NEW: "T$NEW for device-types T", C-5)
             DEFINE (TAKEN, S@.LINE);
          END IF;
          TAKEN := NEXT;

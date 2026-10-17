@@ -1,7 +1,7 @@
 % BLUE Language Specification, 15 Feb 1978, Appendix C (Input-Output, dated 2/10/78),
 % pages C-5 .. C-36 (DTIC ADB950587, PDF pages 1678 .. 1709). Transcribed as printed,
 % page by page; ... marks elided code, the lower-case phrases are placeholders of the
-% document. Page breaks are marked with a comment line % [C-n]. Read from broken
+% document. Page breaks are marked by comment lines [C-n]. Read from broken
 % glyphs: DEVICE_IN in the \CR11 case of IN (C-21) and the 1 of STR[0:LEN-1] in READ
 % (C-32).
 % [C-5]

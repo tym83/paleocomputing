@@ -126,7 +126,7 @@ END PROCEDURE ADD_USES;
 PROCEDURE CHECK_CALL_IMPORTS (Y: SYM, LINE: INTEGER);
    CONST IS: ISCOPE := W@.IS;
    VAR U: NODE := Y@.USES;
-   IF IS = NIL THEN
+   IF IS = NIL ! W@.START_IO THEN                    % START_IO is not an invocation
       RETURN;
    END IF;
    IF IS@.ID = 0 THEN
@@ -139,7 +139,8 @@ PROCEDURE CHECK_CALL_IMPORTS (Y: SYM, LINE: INTEGER);
                   !! STR (U@.NAME, U@.NAME.LEN) !! ': import one of them (4.1.1)');
          END IF;
          IF NOT (IN_IDENTS (IS@.IMPORTS@.A, U@.NAME) ! IN_IDENTS (IS@.IMPORTS@.B, U@.NAME)
-               ! IN_IDENTS (IS@.IMPORTS@.C, Y@.NAME) ! IN_IDENTS (IS@.IMPORTS@.C, BASE_NAME (Y)))
+               ! IN_IDENTS (IS@.IMPORTS@.C, Y@.NAME) ! IN_IDENTS (IS@.IMPORTS@.C, BASE_NAME (Y))
+               ! MODULE_IMPORTED (IS@.IMPORTS@.E, Y))
             THEN
             FAIL (LINE, 'the routine ' !! STR (Y@.NAME, Y@.NAME.LEN) !! ' uses the variable '
                   !! STR (U@.NAME, U@.NAME.LEN) !! ': import one of them (4.1.1)');
@@ -148,6 +149,19 @@ PROCEDURE CHECK_CALL_IMPORTS (Y: SYM, LINE: INTEGER);
       U := U@.NEXT;
    END LOOP;
 END PROCEDURE CHECK_CALL_IMPORTS;
+
+% does MODULES: (...) name a module that declares Y? (4.2: a MODULES item imports all
+% the routines the module exports)
+FUNCTION MODULE_IMPORTED (MODS: NODE, Y: SYM) RETURNS (BOOLEAN);
+   VAR M: SYM := Y@.MODL;
+   LOOP UNTIL M = NIL DO
+      IF IN_IDENTS (MODS, M@.NAME) THEN
+         RETURN TRUE;
+      END IF;
+      M := M@.MODL;
+   END LOOP;
+   RETURN FALSE;
+END FUNCTION MODULE_IMPORTED;
 
 % NAME of T$NAME
 FUNCTION BASE_NAME (Y: SYM) RETURNS (TEXT);

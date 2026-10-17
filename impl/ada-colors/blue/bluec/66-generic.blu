@@ -299,6 +299,9 @@ FUNCTION UNIFY (TS: NODE, T: TYP, BS: BIND) RETURNS (BOOLEAN);
    IF TS = NIL THEN
       RETURN TRUE;
    END IF;
+   IF TS@.KIND = N_APPLY ! TS@.KIND = N_NAME THEN   % a type argument read as an expression
+      RETURN UNIFY (EXPR_TO_TS (TS), T, BS);
+   END IF;
    IF TS@.KIND = N_DONTCARE THEN
       RETURN TRUE;
    ORIF TS@.KIND = TS_GEN THEN
@@ -314,6 +317,13 @@ FUNCTION UNIFY (TS: NODE, T: TYP, BS: BIND) RETURNS (BOOLEAN);
             RETURN SAME_TYPE (B@.T, T);
          END IF;
          ADD_BIND (TS@.NAME, T, NO_MVAL (), NIL, BS);
+         IF TS@.C <> NIL THEN                        % ?T REP ?R: R names the reptype of
+            IF TS@.C@.KIND = TS_GEN & TS@.C@.NAME.LEN > 0 THEN   % the type, here its own
+               IF FIND_BIND (BS@.NEXT, TS@.C@.NAME) = NIL THEN
+                  ADD_BIND (TS@.C@.NAME, T, NO_MVAL (), NIL, BS);
+               END IF;
+            END IF;
+         END IF;
          RETURN TRUE;
       END BLOCK;
    ORIF TS@.KIND = TS_ARRAY THEN
@@ -384,7 +394,7 @@ FUNCTION UNIFY (TS: NODE, T: TYP, BS: BIND) RETURNS (BOOLEAN);
          RETURN FALSE;
       END IF;
       IF T@.KIND = T_ABS THEN
-         IF ORIGINAL (T@.DECL) <> Y THEN
+         IF ORIGINAL (T@.DECL) <> ORIGINAL (Y) THEN
             RETURN FALSE;
          END IF;
       END IF;
@@ -392,8 +402,11 @@ FUNCTION UNIFY (TS: NODE, T: TYP, BS: BIND) RETURNS (BOOLEAN);
          IF RT@.KIND <> T_REC THEN
             RETURN FALSE;
          END IF;
-         IF RT@.BASE@.DECL <> Y THEN
+         IF RT@.BASE@.DECL = NIL THEN
             RETURN FALSE;
+         END IF;
+         IF ORIGINAL (RT@.BASE@.DECL) <> ORIGINAL (Y) THEN   % the class may have been made
+            RETURN FALSE;                             % through an exported alias
          END IF;
       ELSE
          IF NOT HAS_GEN_ARG (TS@.A) THEN
@@ -527,6 +540,9 @@ FUNCTION INSTANCE (G: SYM, ARGS: ARG, LINE: INTEGER) RETURNS (SYM);
          ADD_BIND (P@.NAME, ARG_TYPE (A@.E), NO_MVAL (), NIL, BS);
       ORIF P@.TS@.KIND = TS_ROUTINE THEN               % a routine argument [5-7]
          ADD_BIND (P@.NAME, NIL, NO_MVAL (), ROUTINE_ARGUMENT (P@.TS, A@.E, LINE), BS);
+      ORIF A@.E <> NIL & NOT A@.HAVE & NOT STATIC_GENERIC (P@.TS) & A@.E@.KIND = N_ENUMLIT THEN
+         ;                                            % a literal of the parameter's type:
+                                                      % typed by it at the call (3.4.5)
       ELSE
          IF NOT A@.HAVE THEN
             A@.V := EXPR (A@.E, NIL);

@@ -1,0 +1,258 @@
+% Driver for Appendix C. The appendix needs four things it does not print: the
+% machine (LT33_DEVICE_, LT33_OP_, the START_IO cases and the interrupt semaphores
+% LT33_PS and LT33_KS, which "are built into a given implementation", C-9), the
+% BUFFER type of 4.6.8 (MONITORED_BUFFER_SEG), a file system (FILE_SYSTEM_SEG)
+% and the application. They are the segments here; segments are translated
+% after the segments they use, so the order of the text does not matter.
+
+% ---- the simulated machine: a PDP-11 with LT33 teletypes ---------------------------
+% Teletype 1 is the console: it prints on standard output and its keyboard reads
+% standard input. Teletype 2 prints on standard output too, each line after "LT33-2|";
+% its keyboard has nothing to type. CR is not printed (LF ends the line). A printer
+% interrupts when it is enabled and after each byte; a keyboard interrupts when a
+% byte is waiting in its data register.
+SEGMENT PDP_11_LT33
+   USES (TERMINAL)
+   DEFINES (LT33_DEVICE_, LT33_OP_, START_IO, LT33_PS, LT33_KS, MAX_LT33);
+
+   CONST MAX_LT33: INTEGER := 8;
+
+   TYPE LT33_OP_ = ENUM (\READ_BYTE,
+                         \PRINT_BYTE,
+                         \ENABLE_PRINTER_INTERRUPT,
+                         \ENABLE_KEYBOARD_INTERRUPT,
+                         \ENABLE_TAPE_READER,
+                         \ENABLE_PUNCH_MAINTENANCE,
+                         \READER_BUSY,
+                         \READER_DONE,
+                         \KEYBOARD_INTERRUPT_ENABLED,
+                         \TAPE_READER_ENABLED,
+                         \PRINTER_READY,
+                         \PRINTER_INTERRUPT_ENABLED,
+                         \PUNCH_MAINTENANCE_ENABLED);
+
+   VAR LT33_PS: ARRAY [1:MAX_LT33] OF SEMAPHORE (SYNCH) := NO_INTERRUPTS ();
+   VAR LT33_KS: ARRAY [1:MAX_LT33] OF SEMAPHORE (SYNCH) := NO_INTERRUPTS ();
+
+   FUNCTION NO_INTERRUPTS () RETURNS (ARRAY [1:MAX_LT33] OF SEMAPHORE (SYNCH));
+      VAR S: ARRAY [1:MAX_LT33] OF SEMAPHORE (SYNCH);
+      LOOP FOR I IN [1:MAX_LT33] DO
+         S(I) := SEMAPHORE$NEW (0);
+      END LOOP I;
+      RETURN S;
+   END FUNCTION NO_INTERRUPTS;
+
+   MODULE LT33_HARDWARE
+         IMPORTS (DATA: (# LT33_PS, LT33_KS))
+         EXPORTS (LT33_DEVICE_ WITH (NEW), START_IO);
+
+      TYPE LT33_DEVICE_ = INTEGER [1:MAX_LT33];
+
+      VAR AT_LINE_START: ARRAY [1:MAX_LT33] OF BOOLEAN := ALL_TRUE ();
+
+      FUNCTION ALL_TRUE () RETURNS (ARRAY [1:MAX_LT33] OF BOOLEAN);
+         VAR B: ARRAY [1:MAX_LT33] OF BOOLEAN;
+         LOOP FOR I IN [1:MAX_LT33] DO
+            B(I) := TRUE;
+         END LOOP I;
+         RETURN B;
+      END FUNCTION ALL_TRUE;
+
+      FUNCTION LT33_DEVICE_$NEW (N: INTEGER [1:MAX_LT33]) RETURNS (LT33_DEVICE_);
+         RETURN N;
+      END FUNCTION LT33_DEVICE_$NEW;
+
+      % a byte is waiting in the keyboard's data register: the keyboard interrupts
+      PROCEDURE KEY_ARRIVES (D: LT33_DEVICE_) IMPORTS (DATA: (# LT33_KS));
+         IF D = 1 THEN
+            IF NOT END_OF_INPUT () THEN
+               RELEASE (# LT33_KS(D));
+            END IF;
+         END IF;
+      END PROCEDURE KEY_ARRIVES;
+
+      % the control operations [\ENABLE_PRINTER_INTERRUPT : \ENABLE_PUNCH_MAINTENANCE]
+      PROCEDURE START_IO (D: LT33_DEVICE_, C: LT33_OP_)
+            IMPORTS (DATA: (# LT33_PS, LT33_KS));
+         SELECT C FROM
+            \ENABLE_PRINTER_INTERRUPT --> RELEASE (# LT33_PS(D)); END;   % ready
+            \ENABLE_KEYBOARD_INTERRUPT --> KEY_ARRIVES (D); END;
+            ELSE --> END;
+         END SELECT;
+      END PROCEDURE START_IO;
+
+      % \PRINT_BYTE: the byte goes to the printer, which interrupts when it is done
+      PROCEDURE START_IO (D: LT33_DEVICE_, C: LT33_OP_, BS: BIT (8))
+            IMPORTS (DATA: (# LT33_PS, AT_LINE_START));
+         SELECT OBJECT_MACHINE FROM
+            PDP_11 -->
+               BLOCK
+                  CONST CH: ASCII_STR (1) := [ASCII_STR (1)]$$(BS);
+                  IF CH = ''\LF THEN
+                     NEW_LINE;
+                     AT_LINE_START(D) := TRUE;
+                  ORIF CH <> ''\CR THEN
+                     IF D > 1 & AT_LINE_START(D) THEN
+                        PUT ('LT33-' !! TO_CHAR (D) !! '| ');
+                     END IF;
+                     PUT (CH);
+                     AT_LINE_START(D) := FALSE;
+                  END IF;
+               END BLOCK;
+            END;
+         END SELECT;
+         RELEASE (# LT33_PS(D));
+      END PROCEDURE START_IO;
+
+      % \READ_BYTE: the byte in the keyboard's data register
+      PROCEDURE START_IO (D: LT33_DEVICE_, C: LT33_OP_ ## BS: BIT (8))
+            IMPORTS (DATA: (# LT33_KS));
+         SELECT OBJECT_MACHINE FROM
+            PDP_11 --> BS := TO_BIT (GET_CODE ())[56:63]; END;
+         END SELECT;
+         KEY_ARRIVES (D);
+      END PROCEDURE START_IO;
+
+      % the status inquiries [\READER_BUSY : \PUNCH_MAINTENANCE_ENABLED]
+      PROCEDURE START_IO (D: LT33_DEVICE_, C: LT33_OP_ ## F: BOOLEAN);
+         F := C = \PRINTER_READY ! C = \KEYBOARD_INTERRUPT_ENABLED
+              ! C = \PRINTER_INTERRUPT_ENABLED;
+      END PROCEDURE START_IO;
+
+   END MODULE LT33_HARDWARE;
+
+END SEGMENT PDP_11_LT33;
+
+% ---- the BUFFER of 4.6.8, example 2 (pages 4-66, 4-67, the fixes of the corpus
+% entry producer-consumer applied) ----------------------------------------------------
+SEGMENT MONITORED_BUFFER_SEG
+   DEFINES (BUFFER);
+
+        MODULE BOUNDED_BUFFER_MONITOR EXPORTS (BUFFER);
+
+        TYPE BUFFER (LENGTH: INTEGER) = RECORD
+             VAR SLOTS: ARRAY [0:LENGTH-1] OF BIT(8);
+             VAR LASTPOINTER, FIRSTPOINTER: INTEGER [0:LENGTH-1];
+             VAR EMPTY_SLOT,FULL_SLOT: SEMAPHORE (SYNCH);
+             VAR MUTEX: SEMAPHORE (REGION);
+        END RECORD;
+
+        PROCEDURE BUFFER$CLEAR (# B: BUFFER(?N));
+             B.LASTPOINTER := 0;
+             B.FIRSTPOINTER := 0;
+             B.EMPTY_SLOT := SEMAPHORE$NEW(N);
+             B.FULL_SLOT := SEMAPHORE$NEW (0);
+             B.MUTEX := SEMAPHORE$NEW (1);
+        END PROCEDURE BUFFER$CLEAR;
+
+        PROCEDURE BUFFER$APPEND (X: BIT(8) # B:BUFFER (?N));
+             REQUEST (# B.EMPTY_SLOT);
+             REQUEST (# B.MUTEX);
+                  B.SLOTS (B.LASTPOINTER) := X;
+                  IF B.LASTPOINTER = N-1 THEN
+                       B.LASTPOINTER := 0;
+                  ELSE
+                       B.LASTPOINTER := B.LASTPOINTER +1;
+                  END IF;
+                  RELEASE (# B.FULL_SLOT);
+             RELEASE (# B.MUTEX);
+        END PROCEDURE BUFFER$APPEND;
+
+        PROCEDURE BUFFER$REMOVE (# B: BUFFER (?N) # X: BIT(8));
+             REQUEST (# B.FULL_SLOT);
+             REQUEST (# B.MUTEX);
+                  X := B.SLOTS (B.FIRSTPOINTER);
+                  IF B.FIRSTPOINTER = N-1 THEN
+                       B.FIRSTPOINTER := 0;
+                  ELSE
+                       B.FIRSTPOINTER := B.FIRSTPOINTER + 1;
+                  END IF;
+                  RELEASE (# B.EMPTY_SLOT);
+             RELEASE (# B.MUTEX);
+        END PROCEDURE BUFFER$REMOVE;
+
+        END MODULE BOUNDED_BUFFER_MONITOR;
+
+END SEGMENT MONITORED_BUFFER_SEG;
+
+% ---- the file system: pathnames TTY1 and TTY2 name the two teletypes ----------------
+% INTEGER_MAX is used by Appendix C and not defined in the document: it is the
+% largest STD integer (FIXED_MAX (0, 2, STD), 3.2.6).
+SEGMENT FILE_SYSTEM_SEG
+   USES (PDP_11_LT33)
+   DEFINES (PATHNAME_SIZE, INTEGER_MAX, FSYS_CREATE, FSYS_CHECK, FSYS_UPDATE,
+            FSYS_DELETE);
+
+   CONST PATHNAME_SIZE: INTEGER := 4;
+   CONST INTEGER_MAX: INTEGER := FIXED_MAX (0, 2, STD);
+
+   PROCEDURE FSYS_CREATE (PATHNAME: ASCII_STR (PATHNAME_SIZE),
+                          SIZE: INTEGER [0:INTEGER_MAX],
+                          OPERATIONS: ENUM (\READ, \WRITE, \READ_WRITE),
+                          LOCKED: BOOLEAN
+                          ##
+                          DEV_NAME: ENUM (\LT33, \CR11, \RP03),
+                          DEV_NUMBER: INTEGER [1:INTEGER_MAX],
+                          FILE_ADDRESS: INTEGER [0:INTEGER_MAX])
+         SIGNALS (IO_ERROR);
+      SIGNAL IO_ERROR;                      % no disks: nothing can be created
+   END PROCEDURE FSYS_CREATE;
+
+   PROCEDURE FSYS_CHECK (PATHNAME: ASCII_STR (PATHNAME_SIZE),
+                         SIZE: INTEGER [0:INTEGER_MAX],
+                         OPERATIONS: ENUM (\READ, \WRITE, \READ_WRITE),
+                         LOCKED: BOOLEAN
+                         ##
+                         DEV_NAME: ENUM (\LT33, \CR11, \RP03),
+                         DEV_NUMBER: INTEGER [1:INTEGER_MAX],
+                         FILE_ADDRESS: INTEGER [0:INTEGER_MAX])
+         SIGNALS (IO_ERROR);
+      IF PATHNAME = 'TTY1' THEN
+         DEV_NUMBER := 1;
+      ORIF PATHNAME = 'TTY2' THEN
+         DEV_NUMBER := 2;
+      ELSE
+         SIGNAL IO_ERROR;
+      END IF;
+      DEV_NAME := \LT33;
+      FILE_ADDRESS := 0;
+   END PROCEDURE FSYS_CHECK;
+
+   PROCEDURE FSYS_UPDATE (PATHNAME: ASCII_STR (PATHNAME_SIZE),
+                          OPERATIONS: ENUM (\READ, \WRITE, \READ_WRITE),
+                          LOCKED: BOOLEAN);
+   END PROCEDURE FSYS_UPDATE;
+
+   PROCEDURE FSYS_DELETE (PATHNAME: ASCII_STR (PATHNAME_SIZE))
+         SIGNALS (IO_ERROR);
+      SIGNAL IO_ERROR;                      % a teletype cannot be deleted
+   END PROCEDURE FSYS_DELETE;
+
+END SEGMENT FILE_SYSTEM_SEG;
+
+%%ORIGINAL%%
+
+% ---- the application: what APPLICATION_ROUTINE (C-6) calls ----------------------------
+SEGMENT APPLICATION_CODE
+   USES (STANDARD_IO (MODULES: (TEXTUAL_IO, BINARY_IO)), TERMINAL)
+   DEFINES (APPLICATION_BODY);
+
+   PROCEDURE APPLICATION_BODY ( ) IMPORTS (MODULES: (TEXTUAL_IO, BINARY_IO));
+      VAR CONSOLE: STREAM_FILE (ASCII_STR (1));
+      VAR OTHER: STREAM_FILE (ASCII_STR (1));
+      CLEAR (# CONSOLE);
+      CLEAR (# OTHER);
+      OPEN ('TTY1', \OLD, \READ_WRITE, 0, FALSE # CONSOLE);
+      OPEN ('TTY2', \OLD, \WRITE, 0, FALSE # OTHER);
+      PRINT (CONSOLE, 1978);
+      NEWLINE (CONSOLE);
+      PRINT (OTHER, 'the second teletype');
+      NEWLINE (OTHER);
+      CLOSE (\SAVE, \READ_WRITE # CONSOLE);
+      CLOSE (\SAVE, \WRITE # OTHER);
+      % the drivers run forever (C-5): let the printers finish, then stop the machine
+      WAIT (1);
+      STOP (0);
+   END PROCEDURE APPLICATION_BODY;
+
+END SEGMENT APPLICATION_CODE;

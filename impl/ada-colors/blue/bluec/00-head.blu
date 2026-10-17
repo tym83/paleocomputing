@@ -387,6 +387,7 @@ TYPE WORLD = RECORD
    VAR MODL: SYM;                 % the module being translated, if any
    VAR BINDS: BIND;                 % of the generic instance being translated
    VAR ROUNDED: BOOLEAN;            % in an expression qualified ROUNDED (3.2.4.1)
+   VAR START_IO: BOOLEAN;           % translating a start-io-stmt (4.8.1)
    VAR MACHINE: BOOLEAN;            % in a machine-dependent part (4.5.5.2, 4.8)
    VAR SERIAL: INTEGER;
    VAR EXCS: NODE;                  % the exception names seen

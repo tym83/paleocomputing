@@ -208,10 +208,12 @@ FUNCTION RECORD_INSTANCE (Y: SYM, TS: NODE) RETURNS (TYP);
          VAR R: SYM := NEW_SYM (Y_TYPE, Y@.NAME);
          VAR B: BIND := TARGS;
          CONST SAVED: BIND := W@.BINDS;
+         VAR ENTERED: BOOLEAN;
          R@.DECL := D;
          R@.BINDINGS := TARGS;
          R@.INSTANCES := W@.RECS;
          W@.RECS := R;
+         ENTERED := ENTER_MODULE_FOR (Y);            % its definition is the module's
          OPEN_SCOPE;
          LOOP UNTIL B = NIL DO
             BLOCK
@@ -249,6 +251,9 @@ FUNCTION RECORD_INSTANCE (Y: SYM, TS: NODE) RETURNS (TYP);
          CLASS@.NAME := Y@.NAME;
          R@.T := CLASS;
          CLOSE_SCOPE;
+         IF ENTERED THEN
+            LEAVE_MODULE (Y@.MODL);
+         END IF;
          W@.BINDS := SAVED;
       END BLOCK;
    END IF;

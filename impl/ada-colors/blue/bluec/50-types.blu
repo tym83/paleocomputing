@@ -141,7 +141,7 @@ PROCEDURE DECLARE_LITERALS (T: TYP, LINE: INTEGER);
    VAR P: NODE := T@.LITS;
    VAR I: INTEGER := 0;
    LOOP UNTIL P = NIL DO
-      IF FIND_LITERAL (P@.NAME, T) = NIL THEN
+      IF VISIBLE_LITERAL (P@.NAME, T) = NIL THEN
          BLOCK
             VAR Y: SYM := NEW_SYM (Y_ENUMLIT, P@.NAME);
             Y@.T := T;
@@ -156,8 +156,40 @@ PROCEDURE DECLARE_LITERALS (T: TYP, LINE: INTEGER);
    END LOOP;
 END PROCEDURE DECLARE_LITERALS;
 
-% the visible literal NAME of the class of T, or of any class if T is nothing
+% the literal NAME of the class of T: a visible one, else, the class being known from
+% the context, its literal of that name (Appendix C passes \OLD to a parameter of type
+% (\NEW, \OLD) declared in a module); of any visible class if T is nothing
 FUNCTION FIND_LITERAL (NAME: TEXT, T: TYP) RETURNS (SYM);
+   CONST V: SYM := VISIBLE_LITERAL (NAME, T);
+   IF V <> NIL ! T = NIL THEN
+      RETURN V;
+   END IF;
+   IF T@.BASE = NIL THEN
+      RETURN NIL;
+   END IF;
+   BLOCK
+      VAR P: NODE := T@.BASE@.LITS;
+      VAR I: INTEGER := 0;
+      LOOP UNTIL P = NIL DO
+         IF TEQ (P@.NAME, NAME) THEN
+            BLOCK
+               VAR Y: SYM := NEW_SYM (Y_ENUMLIT, NAME);
+               Y@.T := T@.BASE;
+               Y@.MV := I;
+               Y@.HASMV := TRUE;
+               Y@.INPUT := TRUE;
+               RETURN Y;
+            END BLOCK;
+         END IF;
+         I := I + 1;
+         P := P@.NEXT;
+      END LOOP;
+   END BLOCK;
+   RETURN NIL;
+END FUNCTION FIND_LITERAL;
+
+% the visible literal NAME of the class of T, or of any class if T is nothing
+FUNCTION VISIBLE_LITERAL (NAME: TEXT, T: TYP) RETURNS (SYM);
    VAR Y: SYM := LOOKUP (NAME);
    LOOP UNTIL Y = NIL DO
       IF Y@.KIND = Y_ENUMLIT THEN
@@ -171,7 +203,7 @@ FUNCTION FIND_LITERAL (NAME: TEXT, T: TYP) RETURNS (SYM);
       Y := LOOKUP_NEXT (Y);
    END LOOP;
    RETURN NIL;
-END FUNCTION FIND_LITERAL;
+END FUNCTION VISIBLE_LITERAL;
 
 % the number of visible classes that have the literal NAME
 FUNCTION LITERAL_CLASSES (NAME: TEXT) RETURNS (INTEGER);

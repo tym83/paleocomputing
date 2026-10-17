@@ -81,7 +81,22 @@ PROCEDURE ACTIVATE_PATH (P: NODE, TD: TEXT);
    END IF;
    IF P@.D <> NIL THEN                                % CONNECT (interrupt)
       BLOCK
-         CONST V: ET := EXPR (P@.D, NIL);
+         VAR V: ET;
+         % the loop identifier is known in the path header (4.6.1): Appendix C connects
+         % each LT33_PRINTERS(I) to LT33_PS(I) ([4-93] says semaphore-name)
+         OPEN_SCOPE;
+         IF P@.FL = 1 THEN
+            BLOCK
+               VAR I: SYM := NEW_SYM (Y_CONST, P@.E@.NAME);
+               I@.T := W@.TY_INT;
+               I@.INPUT := TRUE;
+               I@.ACCESS := IT;
+               I@.LEVEL := -1;
+               DEFINE (I, P@.LINE);
+            END BLOCK;
+         END IF;
+         V := EXPR (P@.D, NIL);
+         CLOSE_SCOPE;
          IF REAL_TYPE (V.T)@.KIND <> T_SEM THEN
             FAIL (P@.LINE, 'CONNECT names a semaphore (4.6.1)');
          END IF;
@@ -252,8 +267,20 @@ FUNCTION PARALLEL_BUILTIN (E: NODE, WANT: TYP) RETURNS (ET);
    FAILT (LINE, 'unknown routine ', NAME);
 END FUNCTION PARALLEL_BUILTIN;
 
-% START_IO (device-object, device-operation, ...) [4-104]: the devices of this
-% implementation are the LT33 teletypes of Appendix C, simulated on the console
+% START_IO (device-object, device-operation, ...) [4-104]: "the various cases of
+% START_IO are built into a given implementation" (C-9). Here they are the routines
+% named START_IO of the machine's segment (the corpus driver of Appendix C gives a
+% simulated PDP-11 with LT33 teletypes); the statement starts a device, it does not
+% invoke a routine, so what the cases import is not the caller's concern (4.1.1)
 FUNCTION START_IO_CALL (E: NODE) RETURNS (ET);
-   FAIL (E@.LINE, 'this implementation has no devices for START_IO yet');
+   CONST ARGS: ARG := CALL_ARGS (E);
+   CONST Y: SYM := FIND_ROUTINE (E@.NAME, ARGS, E@.LINE, TRUE);
+   VAR R: ET;
+   IF Y = NIL THEN
+      FAIL (E@.LINE, 'no START_IO case of this implementation fits these arguments (4.8.1)');
+   END IF;
+   W@.START_IO := TRUE;
+   R := CALL_SYM (Y, ARGS, E@.LINE);
+   W@.START_IO := FALSE;
+   RETURN R;
 END FUNCTION START_IO_CALL;

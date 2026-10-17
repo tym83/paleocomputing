@@ -168,8 +168,14 @@ FUNCTION SIZE_OF (T: TYP, C: TEXT) RETURNS (ET);
    ORIF K = T_ENUM THEN
       RETURN INT_ET (ENUM_SIZE (T));
    ORIF K = T_BITS THEN
+      IF T@.LEN_C.LEN > 0 THEN                       % the length is the type's
+         RETURN MKET (FMT1 ('(rt_int)(@)', T@.LEN_C), W@.TY_INT);
+      END IF;
       RETURN MKET (FMT1 ('(rt_int)(@).len', C), W@.TY_INT);
    ORIF K = T_STR THEN
+      IF T@.LEN_C.LEN > 0 THEN
+         RETURN MKET (FMT1 ('(rt_int)((@) * 8)', T@.LEN_C), W@.TY_INT);
+      END IF;
       RETURN MKET (FMT1 ('(rt_int)((@).len * 8)', C), W@.TY_INT);
    ORIF K = T_PTR ! K = T_SEM THEN
       RETURN INT_ET (64);

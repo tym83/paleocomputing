@@ -323,6 +323,11 @@ FUNCTION BITS_OF (V: ET, LINE: INTEGER) RETURNS (ET);
          END IF;
       END IF;
       RETURN MKET (FMT2 ('rt_b_bits_of_int(@, @)', V.C, NUM (ENUM_SIZE (T))), BITS_TYPE (ENUM_SIZE (T)));
+   ORIF K = T_STR THEN
+      % a charstring is a sequence of values of its (enumerated) character set, whose
+      % representation the language defines: the reason J3.6-6 gives for enumerated
+      % values holds (Appendix C writes PUT_OUT's TO_BIT outside any machine part)
+      RETURN MKET (FMT1 ('rt_b_bits_of_str(@)', V.C), BITS_TYPE (-1));
    END IF;
    REQUIRE_MACHINE (LINE);
    IF K = T_INT THEN

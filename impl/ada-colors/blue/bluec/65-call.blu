@@ -59,6 +59,10 @@ END FUNCTION CALL_ARGS;
 FUNCTION CALL_EXPR (E: NODE, WANT: TYP) RETURNS (ET);
    CONST ARGS: ARG := CALL_ARGS (E);
    VAR Y: SYM;
+   IF TEQS (E@.NAME, 'START_IO') THEN               % a start-io-stmt [4-104]
+      REQUIRE_MACHINE (E@.LINE);
+      RETURN START_IO_CALL (E);
+   END IF;
    % a routine bound by a WHERE clause or a routine parameter of the instance
    Y := BOUND_ROUTINE (E@.NAME);
    IF Y <> NIL THEN
@@ -302,6 +306,18 @@ FUNCTION CALL_SYM (Y0: SYM, ARGS: ARG, LINE: INTEGER) RETURNS (ET);
                V := A@.V;
             ELSE
                V := EXPR (A@.E, P@.T);
+            END IF;
+            IF A@.E <> NIL & NOT V.LVAL THEN
+               IF A@.E@.KIND = N_SUBSTR THEN
+                  % the substring of a variable (Appendix C passes them, C-8 and C-31;
+                  % [4-41] says variable): the formal is a view of the variable's
+                  % characters, so what the routine stores lands there
+                  IF NOT EXPR (A@.E@.A, NIL).LVAL THEN
+                     FAIL (LINE, 'an inout or output argument must be a variable (4.3.2)');
+                  END IF;
+                  V := MKET (FMT1 ('(rstr[]){@}[0]', V.C), V.T);
+                  V.LVAL := TRUE;
+               END IF;
             END IF;
             IF NOT V.LVAL THEN
                FAIL (LINE, 'an inout or output argument must be a variable (4.3.2)');
