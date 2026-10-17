@@ -1,0 +1,5 @@
+MAIN SEGMENT E
+   USES (TERMINAL);
+VAR X: FLOAT (6) := 1.0;
+X := X + 1;
+END SEGMENT E;
