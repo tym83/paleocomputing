@@ -5,23 +5,17 @@ BLUE (SofTech, 15 Feb 1978) like RED and GREEN: Python bootstrap -> bluec writte
 fixed point -> grow to the language of the 1978 specification -> tests and 1978 corpus.
 
 ## Current state
-- bluec (~9.5k lines BLUE, blue/bluec/) at its fixed point, seed refreshed after each step;
-  `make genesis` replays the Python bootstrap step (v1 source in genesis/).
-- tests/run.sh: 24 pass (enums, fixed/float, records/variants/arrays/pointers, strings and
-  bitstrings, modules/abstract types/STORE_, generics, scopes/imports/labels/exceptions,
-  paths/semaphores, 15 rejected programs).
-- corpus/run.sh: 16 programs of the 1978 document pass (4.4 stack module and segment Z,
-  4.5.5 IF/case, 4.5.6 loops, 4.5.7 SUM and hash table, 4.6.8 producer/consumer, 3.12.5 BCD
-  charset, 5.1 INTEGRATE, 5.2 matrices, generic stack, VSTR varying strings).
-- rt: BLUE additions appended (batch 1 strings/console, batch 2 fixed/bits/conversions/
-  paths/semaphores). RED/GREEN fixed points and tests re-checked after each rt change.
+- bluec (~9.6k lines BLUE, blue/bluec/) at its fixed point; seed refreshed; `make genesis`
+  reproduces the Python bootstrap step.
+- tests/run.sh: 24 pass. corpus/run.sh: 17 pass, including Appendix C (C-5 .. C-36) on
+  simulated LT33 teletypes (driver segments: PDP_11_LT33 machine, MONITORED_BUFFER_SEG,
+  FILE_SYSTEM_SEG, APPLICATION_CODE).
+- notes/blue-digest.md, corpus/CHANGES.md, README.md, README.ru.md, CI.md written.
+- rt: BLUE additions only (appended); RED fixpoint, RED 5 and GREEN 28 tests pass.
 
 ## Next step
-Appendix C (pp. C-5 .. C-36, PDF 1678-1709): SYSTEM/APPLICATION/STANDARD_IO with
-SAFE_TELETYPE, TELETYPE, BINARY_IO, TEXTUAL_IO, run on simulated LT33 teletypes (a machine
-segment in the driver gives LT33_DEVICE_, LT33_OP_, START_IO, the interrupt semaphores).
-Segments must be translated in USES order (the appendix prints SYSTEM first).
-Then notes/blue-digest.md, README(.ru), CI.md.
+Done for this round. Open: record/array representation clauses, aliasing and
+side-effect checks, a RANDOM_FILE device for Appendix C, the CI job of CI.md.
 
 ## Journal
 ### design decisions (before code)
@@ -68,3 +62,16 @@ Then notes/blue-digest.md, README(.ru), CI.md.
   are the widest values; CHAR_STR generic over its character set; TARGET is a predefined
   name, not reserved; SUBSTRING_STORE_ target may be out (##) or inout.
 - MAX/MIN are key words for attributes only; examples that call MAX get it from the driver.
+### Appendix C (2026-10-17)
+- Transcribed from the page images (the OCR is unusable); misprints and broken rules
+  in fix/appendix-c.sed: IN is reserved (FILE_IN), constants exported from modules,
+  closed scopes without imports, ; before IMPORTS, BIN(''), then, END LOOP without I.
+- Compiler work it forced: USES-ordered segments; objects before routine headers;
+  record definitions in their module; DEFINES of modules and of NEW; MODULES imports;
+  START_IO as the machine's cases; substrings as output arguments; I in CONNECT;
+  ?T REP ?R; literals typed by parameters; WHERE templates with TYPE, built-ins
+  behind overloads, types from the generic's module; T$NAME of bound routines; an
+  instance per string length; X.SCALE manifest; S[I:I] of length one.
+- A bug of mine committed once (BASE_NAME of a short alias cut past the end):
+  fixed in the next commit.
+- The drivers run forever (C-5); the application ends with WAIT (1); STOP (0).
