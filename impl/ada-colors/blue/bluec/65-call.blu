@@ -192,12 +192,13 @@ FUNCTION MATCH_SCORE (R: SYM, ARGS: ARG) RETURNS (INTEGER);
    VAR P: PARM := R@.PARAMS;
    VAR A: ARG := ARGS;
    VAR EXACT: BOOLEAN := TRUE;
+   CONST BS: BIND := NEW_BINDS ();                   % one unification for all parameters
    LOOP UNTIL P = NIL DO
       IF P@.MODE <> A@.MODE THEN
          RETURN 0;
       END IF;
       IF R@.GENERIC & P@.TS <> NIL THEN
-         IF NOT GENERIC_FITS (P, A) THEN
+         IF NOT GENERIC_FITS (P, A, BS) THEN
             RETURN 0;
          END IF;
       ORIF P@.T = NIL THEN                            % a TYPE parameter: a type argument

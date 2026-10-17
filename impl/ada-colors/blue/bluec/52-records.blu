@@ -500,6 +500,9 @@ FUNCTION RANGE_CHECK (T: TYP, V: TEXT, SELF: TEXT) RETURNS (TEXT);
    IF T@.LO_C.LEN = 0 ! NOT IS_NUMERIC_OR_ENUM (T) THEN
       RETURN V;
    END IF;
+   IF IS_GEN_TEXT (T@.LO_C) ! IS_GEN_TEXT (T@.HI_C) THEN
+      RETURN V;
+   END IF;
    IF T@.RLEVEL > 0 & T@.RLEVEL <> CUR_LEVEL () & NOT (T@.MLO.OK & T@.MHI.OK) THEN
       RETURN V;                                     % its bounds are not visible here
    END IF;

@@ -1,0 +1,85 @@
+% BLUE Language Specification, 15 Feb 1978, section 5.2, example 3, pages 5-10, 5-11
+% (DTIC ADB950587, PDF pages 1631, 1632). Transcribed as printed.
+     MODULE MATRIX_ARITHMETIC EXPORTS(MATRIX);
+          TYPE MATRIX (M: INTEGER, N: INTEGER, E: TYPE) = ARRAY [1:M, 1:N] OF E;
+
+          FUNCTION MATRIX$MULTIPLY_ (M1: MATRIX(?M, ?N, ?E),
+                                     M2: MATRIX(?N, ?P, ?E))
+                   RETURNS (MATRIX(M, P, E))
+                   SIGNALS (OVERFLOW)
+                   WHERE E NEEDS (MULTIPLY_ (E, E) RETURNS (E),
+                                  ADD_ (E, E) RETURNS (E),
+                                  STORE_ (E ## E));
+
+               VAR RESULT: MATRIX (M, P, E);
+
+               LOOP FOR I IN [1:M] DO
+                    LOOP FOR J IN [1:P] DO
+                         RESULT(I, J) := M1(I, 1) * M1(1, J);
+                         LOOP FOR K IN [2:N] DO
+                              RESULT(I, J) := RESULT(I, J) +
+                                                M1(I, K) * M2(K, J);
+                         END LOOP K;
+                    END LOOP J;
+               END LOOP I; EXCEPT
+                              OVERFLOW --> SIGNAL OVERFLOW; END;
+                         END EXCEPT;
+               RETURN (RESULT);
+          END FUNCTION MATRIX$MULTIPLY_;
+
+          FUNCTION MATRIX$MULTIPLY_ (C: ?E, M1: MATRIX (?M, ?N, ?E))
+                   RETURNS (MATRIX (M, N, E))
+                   SIGNALS (OVERFLOW)
+                   WHERE E NEEDS (MULTIPLY_ (E,E) RETURNS (E),
+                                  STORE_ (E ## E));
+
+               VAR RESULT: MATRIX (M, N, E);
+
+               LOOP FOR I IN [1:M] DO
+                    LOOP FOR J IN [1:N] DO
+                         RESULT(I, J) := C * M1(I, J);
+                    END LOOP J;
+               END LOOP I; EXCEPT
+                              OVERFLOW --> SIGNAL OVERFLOW; END;
+                         END EXCEPT;
+               RETURN (RESULT);
+          END FUNCTION MATRIX$MULTIPLY_;
+
+          FUNCTION MATRIX$ADD_ (M1, M2: MATRIX (?M, ?N, ?E))
+                   RETURNS (MATRIX (M, N, E))
+                   SIGNALS (OVERFLOW)
+                   WHERE E NEEDS (ADD_ (E, E) RETURNS (E),
+                                  STORE_ (E ## E));
+
+               VAR RESULT: MATRIX (M, N, E);
+
+               LOOP FOR I IN [1:M] DO
+                    LOOP FOR J IN [1:N] DO
+                         RESULT(I, J) := M1(I, J) + M2(I, J);
+                    END LOOP J;
+               END LOOP I; EXCEPT
+                              OVERFLOW --> SIGNAL OVERFLOW; END;
+                         END EXCEPT;
+               RETURN (RESULT);
+          END FUNCTION MATRIX$ADD_;
+
+          FUNCTION MATRIX$EQUAL_ (M1, M2: MATRIX (?M, ?N, ?E))
+                   RETURNS (BOOLEAN)
+                   WHERE E NEEDS (EQUAL_ (E, E) RETURNS (BOOLEAN));
+
+               RETURN (M1=M2);
+          END FUNCTION MATRIX$EQUAL_;
+
+          FUNCTION MATRIX$NEW (A:ARRAY [?L1 : ?U1, ?L2 : ?U2] OF ?T)
+                   RETURNS MATRIX (U1 - L1 + 1, U2 - L2 + 1, T);
+
+               RETURN (A);
+          END FUNCTION MATRIX$NEW;
+
+          PROCEDURE MATRIX$STORE_ (M1: MATRIX (?M, ?N, ?E) ##
+                                   M2: MATRIX (?M, ?N, ?E))
+                   WHERE E NEEDS (STORE_ (E ## E));
+
+               M2 := M1;
+          END PROCEDURE MATRIX$STORE_;
+     END MODULE MATRIX_ARITHMETIC;

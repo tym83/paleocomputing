@@ -18,11 +18,6 @@ FUNCTION STATIC_GENERIC (TS: NODE) RETURNS (BOOLEAN);
    ORIF TS@.KIND = TS_ARRAY THEN
       RETURN STATIC_GENERIC (TS@.C);
    ORIF TS@.KIND = TS_NAME THEN
-      IF TS@.B <> NIL THEN
-         IF TS@.B@.A@.KIND = TS_GEN ! TS@.B@.B@.KIND = TS_GEN THEN
-            RETURN TRUE;
-         END IF;
-      END IF;
       IF TEQS (TS@.NAME, 'FIXED') ! TEQS (TS@.NAME, 'FLOAT') THEN
          RETURN HAS_GEN_ARG (TS@.A);
       ORIF TEQS (TS@.NAME, 'PTR') THEN
@@ -186,6 +181,13 @@ END FUNCTION C_HEADER;
 % PC: ?L of ASCII_STR(?L), ?L : ?U of array bounds, ?N of a record argument; CHECK
 % compares the values of a name used twice (section 5)
 PROCEDURE DEFINE_PARAM_GENS (T: TYP, PC: TEXT, LINE: INTEGER, CHECK: BOOLEAN);
+   % [?LB : ?UB]: ranges do not travel with values; the derived bounds are the widest
+   IF IS_GEN_TEXT (T@.LO_C) THEN
+      DEFINE_GEN (GEN_TEXT_NAME (T@.LO_C), MK ('INT64_MIN'), LINE, FALSE);
+   END IF;
+   IF IS_GEN_TEXT (T@.HI_C) THEN
+      DEFINE_GEN (GEN_TEXT_NAME (T@.HI_C), MK ('INT64_MAX'), LINE, FALSE);
+   END IF;
    IF T@.GEN.LEN > 0 THEN
       DEFINE_GEN (T@.GEN, FMT1 ('(rt_int)(@).len', PC), LINE, CHECK);
    END IF;
@@ -198,7 +200,13 @@ PROCEDURE DEFINE_PARAM_GENS (T: TYP, PC: TEXT, LINE: INTEGER, CHECK: BOOLEAN);
                DEFINE_GEN (GEN_TEXT_NAME (B@.LO), FMT2 ('(@).lo[@]', PC, NUM (I)), LINE, CHECK);
             END IF;
             IF IS_GEN_TEXT (B@.HI) THEN
-               DEFINE_GEN (GEN_TEXT_NAME (B@.HI), FMT2 ('(@).hi[@]', PC, NUM (I)), LINE, CHECK);
+               IF IS_GEN_TEXT (B@.LO) ! B@.LO.LEN = 0 THEN
+                  DEFINE_GEN (GEN_TEXT_NAME (B@.HI), FMT2 ('(@).hi[@]', PC, NUM (I)), LINE, CHECK);
+               ELSE                                   % [1:?M]: an array with the same
+                  DEFINE_GEN (GEN_TEXT_NAME (B@.HI), % extent fits, whatever its bounds
+                              FMT2 ('@@)', FMT4 ('((@).hi[@] - (@).lo[@] + ', PC, NUM (I), PC,
+                                                 NUM (I)), B@.LO), LINE, CHECK);
+               END IF;
             END IF;
             I := I + 1;
             B := B@.NEXT;
@@ -366,7 +374,8 @@ FUNCTION UNIFY (TS: NODE, T: TYP, BS: BIND) RETURNS (BOOLEAN);
          IF ORIGINAL (T@.DECL) <> Y THEN
             RETURN FALSE;
          END IF;
-      ORIF Y@.DECL@.B@.KIND = TS_RECORD THEN
+      END IF;
+      IF Y@.DECL@.B@.KIND = TS_RECORD THEN
          IF RT@.KIND <> T_REC THEN
             RETURN FALSE;
          END IF;
@@ -377,6 +386,8 @@ FUNCTION UNIFY (TS: NODE, T: TYP, BS: BIND) RETURNS (BOOLEAN);
          IF NOT HAS_GEN_ARG (TS@.A) THEN
             RETURN SAME_CLASS (RESOLVE (TS), T);
          END IF;
+         % an abbreviation: its definition, the TYPE formals replaced by the arguments
+         RETURN UNIFY (SUBST_FORMALS (Y@.DECL@.B, Y@.DECL@.A, TS@.A), RT, BS);
       END IF;
       % the arguments: TYPE formals from the record class, value formals from T
       BLOCK
@@ -476,8 +487,7 @@ FUNCTION UNIFY_VALUE (A: NODE, M: MVAL, BS: BIND) RETURNS (BOOLEAN);
 END FUNCTION UNIFY_VALUE;
 
 % does the argument A fit the generic parameter P?
-FUNCTION GENERIC_FITS (P: PARM, A: ARG) RETURNS (BOOLEAN);
-   CONST BS: BIND := NEW_BINDS ();
+FUNCTION GENERIC_FITS (P: PARM, A: ARG, BS: BIND) RETURNS (BOOLEAN);
    IF P@.TS@.KIND = TS_ROUTINE THEN
       IF A@.HAVE THEN
          RETURN FALSE;
@@ -753,3 +763,48 @@ FUNCTION IS_OPERATOR_NAME (NAME: TEXT) RETURNS (BOOLEAN);
    END IF;
    RETURN STR (NAME, NAME.LEN)[NAME.LEN - 1 : NAME.LEN - 1] = '_';
 END FUNCTION IS_OPERATOR_NAME;
+
+% a copy of the type-spec TS where the TYPE formals among FORMALS stand for ARGS
+FUNCTION SUBST_FORMALS (TS: NODE, FORMALS, ARGS: NODE) RETURNS (NODE);
+   VAR C: NODE;
+   IF TS = NIL THEN
+      RETURN NIL;
+   END IF;
+   IF TS@.KIND = TS_NAME & TS@.A = NIL THEN
+      BLOCK
+         VAR F: NODE := FORMALS;
+         VAR A: NODE := ARGS;
+         LOOP UNTIL F = NIL DO
+            BLOCK
+               VAR N: NODE := F@.A;
+               LOOP UNTIL N = NIL DO
+                  IF A = NIL THEN
+                     RETURN TS;
+                  END IF;
+                  IF F@.B = NIL & TEQ (N@.NAME, TS@.NAME) THEN
+                     RETURN A;
+                  END IF;
+                  A := A@.NEXT;
+                  N := N@.NEXT;
+               END LOOP;
+            END BLOCK;
+            F := F@.NEXT;
+         END LOOP;
+      END BLOCK;
+      RETURN TS;
+   END IF;
+   C := COPY_NODE (TS);
+   IF TS@.KIND = TS_ARRAY THEN
+      C@.C := SUBST_FORMALS (TS@.C, FORMALS, ARGS);
+   ORIF TS@.KIND = TS_NAME & TEQS (TS@.NAME, 'PTR') THEN
+      C@.A := SUBST_FORMALS (TS@.A, FORMALS, ARGS);
+   END IF;
+   RETURN C;
+END FUNCTION SUBST_FORMALS;
+
+FUNCTION COPY_NODE (N: NODE) RETURNS (NODE);
+   VAR C: NODE := NEW (NODE_REC);
+   C@ := N@;
+   C@.NEXT := NIL;
+   RETURN C;
+END FUNCTION COPY_NODE;

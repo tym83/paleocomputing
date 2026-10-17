@@ -1,0 +1,16 @@
+MAIN SEGMENT MATRIX_EXAMPLE
+   USES (TERMINAL);
+% a driver for the matrices of 5.2: the elements are not accessible outside the
+% module, so results are compared with MATRIX values made by NEW
+VAR A: MATRIX (2, 3, INTEGER) := MATRIX$NEW (((1, 2, 3), (4, 5, 6)));
+VAR B: MATRIX (3, 2, INTEGER) := MATRIX$NEW (((7, 8), (9, 10), (11, 12)));
+VAR C: MATRIX (2, 2, INTEGER) := MATRIX$NEW (((0, 0), (0, 0)));
+VAR F: MATRIX (2, 2, FLOAT (6)) := MATRIX$NEW (((0.50000, 1.50000), (2.50000, 3.50000)));
+C := A * B;
+PUT_LINE ('A * B = ((58, 64), (139, 154)): '
+          !! TO_CHAR (C = MATRIX$NEW (((58, 64), (139, 154)))));
+PUT_LINE ('A + A = 2 * A: ' !! TO_CHAR (A + A = 2 * A));
+PUT_LINE ('2.00000 * F = F + F: ' !! TO_CHAR (2.00000 * F = F + F));
+PUT_LINE ('A * B = ((1, 2), (3, 4)): ' !! TO_CHAR (C = MATRIX$NEW (((1, 2), (3, 4)))));
+%%ORIGINAL%%
+END SEGMENT MATRIX_EXAMPLE;
