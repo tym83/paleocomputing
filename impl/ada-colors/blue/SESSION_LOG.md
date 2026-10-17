@@ -5,18 +5,18 @@ BLUE (SofTech, 15 Feb 1978) like RED and GREEN: Python bootstrap -> bluec writte
 fixed point -> grow to the language of the 1978 specification -> tests and 1978 corpus.
 
 ## Current state
-- Spec read (PDF pp. 1361-1723). boot/blueboot.py (subset) -> bluec v1 (~3k lines BLUE):
-  genesis reproduced. bluec v2 (~9k lines): full Appendix A parser, new generator
-  (frames, modules, overloading, generics, fixed/float/bits, records with variants,
-  paths and semaphores) -- at its fixed point, seed refreshed. Features mostly untested.
-- rt: BLUE additions appended to paleo.{c,h} (exception names, 0-based strings, DUP,
-  console). RED/GREEN fixpoints and tests re-run: identical.
-- Sources: /Users/tym83/projects/ada-colors-sources/blue-yellow/ (PDF + OCR text).
-  Compact page-marked text: scratchpad blue/blue.txt (awk over blue-softech-1978.txt).
+- bluec (~9.5k lines BLUE, blue/bluec/) at its fixed point, seed refreshed after each step;
+  `make genesis` replays the Python bootstrap step (v1 source in genesis/).
+- tests/run.sh: 24 pass (enums, fixed/float, records/variants/arrays/pointers, strings and
+  bitstrings, modules/abstract types/STORE_, generics, scopes/imports/labels/exceptions,
+  paths/semaphores, 15 rejected programs).
+- rt: BLUE additions appended (batch 1 strings/console, batch 2 fixed/bits/conversions/
+  paths/semaphores). RED/GREEN fixed points and tests re-checked after each rt change.
 
 ## Next step
-Grow bluec: nested routines/frames, enums, overloading, modules, generics, fixed/float,
-bitstrings, variants, imports checks, parallel paths.
+Corpus: transcribe the program examples of the 1978 document into blue/corpus (with page
+numbers), patch files for what does not compile as printed, then Appendix C (I/O modules)
+with simulated LT33 teletypes; then notes/blue-digest.md, README(.ru), CI.md.
 
 ## Journal
 ### design decisions (before code)
@@ -41,3 +41,11 @@ bitstrings, variants, imports checks, parallel paths.
 - rt batch 2: fixed point with __int128, bitstrings as '0'/'1' strings, conversions,
   semaphores (priority-ordered release), path activations (rt_b_act, trampoline sets a
   thread-local self), virtual clock in microseconds.
+### tests per feature (2026-10-17)
+- Enum literals of a TYPE declaration must stay in that scope (RESOLVE_IN_DECL opened one).
+- Abstract types: the module's operations see the underlying type; parameterized abstract
+  types compare by underlying type (STACK(INTEGER,10) vs STACK(COLOR,3)).
+- ? for a TYPE formal: the instance takes the argument's type; a hidden binding keys it.
+- A call node was rewritten to N_APPLY on first translation; a generic body translated
+  twice then failed. Nodes are not mutated by translation any more.
+- PAR_BLOCK used rt_taskdecl where the runtime wanted rt_b_par.

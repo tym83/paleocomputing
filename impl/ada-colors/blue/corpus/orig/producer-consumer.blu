@@ -1,0 +1,68 @@
+% BLUE Language Specification, 15 Feb 1978, section 4.6.8, example 2, pages 4-66, 4-67
+% (DTIC ADB950587, PDF pages 1612, 1613). Transcribed as printed; ... marks elided code.
+MAIN SEGMENT PRODUCER_CONSUMER;
+
+        VAR BUF: BUFFER(100);
+
+        CLEAR(BUF);
+        PAR_BLOCK
+             PATH PRODUCER IMPORTS (DATA: (# BUF));
+                  VAR ITEM: BIT(8);
+                  ...
+                  APPEND (ITEM # BUFF);
+                  ...
+             END PATH PRODUCER;
+
+             PATH CONSUMER IMPORTS (DATA: (# BUF));
+                  VAR ITEM: BIT(8);
+                  ...
+                  REMOVE (# BUF # ITEM);
+                  ...
+             END PATH CONSUMER;
+        END PAR_BLOCK;
+
+        MODULE BOUNDED_BUFFER_MONITOR EXPORTS (BUFFER);
+
+        TYPE BUFFER (LENGTH: INTEGER) = RECORD
+             VAR SLOTS: ARRAY [0:LENGTH-1] OF BIT(8);
+             VAR LASTPOINTER, FIRSTPOINTER: INTEGER [0:LENGTH-1];
+             VAR EMPTY_SLOT,FULL_SLOT: SEMAPHORE (SYNCH);
+             VAR MUTEX: SEMAPHORE (REGION);
+        END RECORD;
+
+        PROCEDURE BUFFER$CLEAR (# B: BUFFER(?N));
+             B.LASTPOINTER := 0
+             B.FIRSTPOINTER := 0
+             B.EMPTY_SLOT := SEMAPHORE$NEW(N);
+             B.FULL_SLOT := SEMAPHORE$NEW (0);
+             B.MUTEX := SEMAPHORE$NEW (1);
+        END PROCEDURE BUFFER$CLEAR;
+
+        PROCEDURE BUFFER$APPEND (X: BIT(8) # B:BUFFER (?N));
+             REQUEST (# B.EMPTY_SLOT);
+             REQUEST (# B.MUTEX);
+                  B.SLOTS (B.LASTPOINTER) := X;
+                  IF B.LASTPOINTER = N-1 THEN
+                       B.LASTPOINTER := 0;
+                  ELSE
+                       B.LASTPOINTER := B.LASTPOINTER +1;
+                  END IF;
+                  RELEASE (# B.FULL_SLOT);
+             RELEASE (# B.MUTEX);
+        END PROCEDURE BUFFER$APPEND;
+
+        PROCEDURE BUFFER$REMOVE (# B: BUFFER (?N) # X: BIT(8));
+             REQUEST (# B.FULL_SLOT);
+             REQUEST (# B.MUTEX);
+                  X := B.SLOTS (B.FIRSTPOINTER);
+                  IF B.FIRSTPOINTER = N-1 THEN
+                       B.FIRSTPOINTER := 0;
+                  ELSE
+                       B.FIRSTPOINTER := B.FIRSTPOINTER + 1;
+                  END IF;
+                  RELEASE (# B.EMPTY_SLOT);
+             RELEASE (# B.MUTEX);
+        END PROCEDURE BUFFER$REMOVE;
+
+        END MODULE BOUNDED_BUFFER_MONITOR;
+     END SEGMENT PRODUCER_CONSUMER;

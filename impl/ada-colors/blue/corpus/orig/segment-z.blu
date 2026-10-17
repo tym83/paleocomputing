@@ -1,0 +1,32 @@
+% BLUE Language Specification, 15 Feb 1978, section 4.4, example 2, page 4-28
+% (DTIC ADB950587, PDF page 1574). Transcribed as printed; ... marks elided code.
+MAIN SEGMENT Z;
+     ...
+     VAR D,E: T;
+     ...
+     P(#D);
+     ...
+     Q(#E);
+     ...
+     MODULE M EXPORTS (T);
+          VAR P_COUNT: INTEGER [1:1000] := 0;
+          VAR Q_COUNT: INTEGER [1:1000] := 0;
+          TYPE T = RECORD
+                     VAR A: INTEGER [1:10];
+                     VAR B: BOOLEAN;
+          END RECORD;
+          PROCEDURE T$P (#X: T) IMPORTS (DATA: (#P_COUNT));
+               ...
+               P_COUNT := P_COUNT +1;
+               X.B := FALSE;
+               X.A := 2 * X.A;
+               ...
+          END PROCEDURE T$P;
+          PROCEDURE T$Q (#Y: T) IMPORTS (DATA: (#Q_COUNT));
+               ...
+               Q_COUNT := Q_COUNT +1;
+               Y.B := TRUE;
+               Y.A := 5 * Y.A;
+          END PROCEDURE T$Q;
+     END MODULE M;
+END SEGMENT Z;

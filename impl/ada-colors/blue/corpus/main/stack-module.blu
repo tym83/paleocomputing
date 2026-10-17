@@ -1,0 +1,21 @@
+MAIN SEGMENT STACK_EXAMPLE
+   USES (TERMINAL);
+% a driver for the module of 4.4, example 1
+VAR S, T: STACK;
+VAR E: INTEGER;
+CLEAR (# S);
+LOOP FOR I IN [1:3] DO
+   PUSH (I * I # S);
+END LOOP I;
+T := S;
+POP (# S # E);
+PUT_LINE ('popped ' !! TO_CHAR (E));
+LOOP
+   POP (# T # E);
+   PUT_LINE ('from the copy ' !! TO_CHAR (E));
+END LOOP;
+EXCEPT
+   STACK_EMPTY --> PUT_LINE ('STACK_EMPTY'); END;
+END EXCEPT;
+%%ORIGINAL%%
+END SEGMENT STACK_EXAMPLE;

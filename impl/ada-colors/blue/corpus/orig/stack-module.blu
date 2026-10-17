@@ -1,0 +1,41 @@
+% BLUE Language Specification, 15 Feb 1978, section 4.4, example 1, page 4-27
+% (DTIC ADB950587, PDF page 1573). Transcribed as printed.
+MODULE M EXPORTS (STACK);
+
+        TYPE STACK = RECORD
+                        VAR ELEMENTS: ARRAY [1:100] OF INTEGER;
+                        VAR TOP: INTEGER [0:100];
+                     END RECORD;
+
+        PROCEDURE STACK$CLEAR (#S: STACK);
+             S.TOP := 0;
+        END PROCEDURE STACK$CLEAR;
+
+        PROCEDURE STACK$PUSH (E: INTEGER # S: STACK)
+                  SIGNALS (STACK_OVERFLOW);
+             IF S.TOP < 100 THEN
+                  S.TOP := S.TOP + 1;
+                  S.ELEMENTS(S.TOP) := E;
+             ELSE
+                  SIGNAL STACK_OVERFLOW;
+             END IF;
+        END PROCEDURE STACK$PUSH;
+
+        PROCEDURE STACK$POP (# S: STACK # E: INTEGER)
+                  SIGNALS (STACK_EMPTY);
+             IF S.TOP > 0 THEN
+                  E := S.ELEMENTS(S.TOP);
+                  S.TOP := S.TOP - 1
+             ELSE
+                  SIGNAL STACK_EMPTY;
+             END IF;
+        END PROCEDURE STACK$POP;
+
+        PROCEDURE STACK$STORE_ (S1: STACK ## S2: STACK);
+             LOOP FOR I IN [1:S1.TOP];
+                  S2.ELEMENTS(I) := S1.ELEMENTS(I);
+             END LOOP I;
+             S2.TOP := S1.TOP;
+        END PROCEDURE STACK$STORE_;
+
+    END MODULE M;
