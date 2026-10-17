@@ -58,7 +58,7 @@ Then notes/blue-digest.md, README(.ru), CI.md.
 - Each entry: orig/ as printed (page numbers in a header comment), fix/NAME.sed for every
   forced change with its reason, main/NAME.blu driver, NAME.out.
 - Misprints met: missing ; and colons, BUFF for BUF, M1(1,J) for M2(1,J) in the matrix
-  product, LOOP FOR ...; for DO, VAR_CHAR_SET for VAR_CHAR_STR, $ printed for %, record
+  product, LOOP FOR ...; for DO, VAR_CHAR_SET for VAR_CHAR_STR, record
   fields without VAR, MAX with one argument, BOUNDS(1) where BOUNDS is ARRAY [0:n],
   INTEGER (14,2,STD) for FIXED, INTEGRATE arguments in the wrong order, string assignments
   of unequal length in VSTR (SIZE by 3.7.5).

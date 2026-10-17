@@ -1,7 +1,6 @@
 % BLUE Language Specification, 15 Feb 1978, section 5.2, example 5, pages 5-13 .. 5-17
-% (DTIC ADB950587, PDF pages 1634 .. 1638). Transcribed as printed. The comment
-% marks print as $ (the typewriter glyph of the percent sign); kept as printed. On page
-% 5-16 the 1 of S1 is broken in the scan in two places (printed S'); read as S1.
+% (DTIC ADB950587, PDF pages 1634 .. 1638). Transcribed as printed. On page 5-16
+% the 1 of S1 is broken in the scan in two places (printed S'); read as S1.
 MODULE VSTR EXPORTS(VAR_CHAR_STR);
 
         TYPE VAR_CHAR_STR(MAX_LENGTH: INTEGER[0:(CHAR_STR.LENGTH).MAX],
@@ -11,7 +10,7 @@ MODULE VSTR EXPORTS(VAR_CHAR_STR);
                   STRING: CHAR_STR(MAX_LENGTH,CHAR_SET);
              END RECORD;
 
-        PROCEDURE VAR_CHAR_STR$STORE_    $ assignment operator
+        PROCEDURE VAR_CHAR_STR$STORE_    % assignment operator
              (SOURCE: VAR_CHAR_STR(?,?CHAR_SET)
               ##
               TARGET: VAR_CHAR_STR(?TARGET_MAX_LENGTH, ?CHAR_SET))
@@ -29,7 +28,7 @@ MODULE VSTR EXPORTS(VAR_CHAR_STR);
         END PROCEDURE VAR_CHAR_STR$STORE_;
 
 
-        FUNCTION VAR_CHAR_STR$SUBSTRING_    $ handles V[L:U] in exprs.
+        FUNCTION VAR_CHAR_STR$SUBSTRING_    % handles V[L:U] in exprs.
              (V: VAR_CHAR_STR(?V_MAX_LENGTH,?CHAR_SET),
               L,U: INTEGER)
              RETURNS (VAR_CHAR_STR(V_MAX_LENGTH,CHAR_SET))
@@ -47,7 +46,7 @@ MODULE VSTR EXPORTS(VAR_CHAR_STR);
                   SUBV.STRING := V.STRING[L:U];
                   RETURN (SUBV);
              END BLOCK
-                      EXCEPT  $in case U-L+1 causes overflow
+                      EXCEPT  %in case U-L+1 causes overflow
                            OVERFLOW--> SIGNAL INVALID_SUBSTRING; END;
                       END EXCEPT;
         END FUNCTION VAR_CHAR_STR$SUBSTRING_;
@@ -89,7 +88,7 @@ MODULE VSTR EXPORTS(VAR_CHAR_STR);
                               !! S2.STRING[0:S2.CUR_LENGTH-1];
                   RETURN (S1S2);
              END BLOCK
-                      EXCEPT     $ in the case of length addition overflow
+                      EXCEPT     % in the case of length addition overflow
                            OVERFLOW --> SIGNAL INVALID_SIZE; END;
                       END EXCEPT;
         END FUNCTION VAR_CHAR_STR$CONCATENATE_;
@@ -103,7 +102,7 @@ MODULE VSTR EXPORTS(VAR_CHAR_STR);
 
         END FUNCTION VAR_CHAR_STR$CUR_LENGTH;
 
-        FUNCTION VAR_CHAR_STR$TO_VAR_CHAR    $ convert from fixed length
+        FUNCTION VAR_CHAR_STR$TO_VAR_CHAR    % convert from fixed length
              (FIXED_STR:CHAR_STR(?FIXED_LENGTH,?CHAR_SET))
              RETURNS (VAR_CHAR_SET(FIXED_LENGTH,CHAR_SET));
 
@@ -117,7 +116,7 @@ MODULE VSTR EXPORTS(VAR_CHAR_STR);
         END FUNCTION VAR_CHAR_STR$TO_VAR_CHAR;
 
 
-        FUNCTION VAR_CHAR_STR$EQUAL_    $ equality operator
+        FUNCTION VAR_CHAR_STR$EQUAL_    % equality operator
              (S1,S2: VAR_CHAR_STR(?,?CHAR_SET))
              RETURNS (BOOLEAN)
 
@@ -133,14 +132,14 @@ MODULE VSTR EXPORTS(VAR_CHAR_STR);
         END FUNCTION VAR_CHAR_STR$EQUAL_;
 
 
-        FUNCTION VAR_CHAR_STR$UNEQUAL_    $ inequality operator
+        FUNCTION VAR_CHAR_STR$UNEQUAL_    % inequality operator
              (S1,S2: VAR_CHAR_STR(?,?CHAR_SET))
              RETURNS (BOOLEAN)
 
              SIGNALS (INVALID_LENGTH);
 
              RETURN (NOT VAR_CHAR_STR$EQUAL_(S1,S2))
-                 EXCEPT   $ reissue signal
+                 EXCEPT   % reissue signal
                       INVALID_LENGTH--> SIGNAL; END;
                  END EXCEPT;
 

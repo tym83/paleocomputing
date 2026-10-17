@@ -1,5 +1,3 @@
-# the comment mark is % (2.2); the typewriter printed it as $
-s/  *\$ *\([a-z].*\)$/   % \1/
 # record fields are declared with VAR (3.9)
 s/^                  CUR_LENGTH: INTEGER/                  VAR CUR_LENGTH: INTEGER/
 s/^                  STRING: CHAR_STR/                  VAR STRING: CHAR_STR/
