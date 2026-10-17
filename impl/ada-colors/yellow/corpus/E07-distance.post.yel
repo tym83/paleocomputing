@@ -1,0 +1,8 @@
+;
+WriteFloat(Distance(C, C), 4); WriteLn();
+WriteFloat(Distance(C, Coordinate(Polar, 2.0, Pi / 2.0)), 4); WriteLn();
+WriteFloat(Distance(Coordinate(Cartesian, 3.0, 0.0), Coordinate(Cartesian, 0.0, 4.0)), 4); WriteLn();
+(* the two points of p.1101: a square of their difference is above the *)
+(* 1000 that FLOAT (line 901) can hold *)
+WriteFloat(Distance(C, P), 4); WriteLn()
+ENDMODULE Distances

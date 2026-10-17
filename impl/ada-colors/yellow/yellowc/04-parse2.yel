@@ -1,0 +1,429 @@
+
+  (* ---- statements: rules 19-33 ------------------------------------------------ *)
+
+  (* the words that end a sequence of statements *)
+  PROCEDURE IsStop RETURNS BOOLEAN ()
+    VAR v: INT;
+    IF TK() = K_EOF THEN RETURN TRUE ENDIF;
+    IF TK() # K_KW THEN RETURN FALSE ENDIF;
+    v := TV();
+    RETURN (v = W_ELSIF) OR (v = W_ELSE) OR (v = W_ENDIF) OR (v = W_CASE) OR
+           (v = W_ENDSELECT) OR (v = W_ENDWHILE) OR (v = W_ENDFOR) OR (v = W_ENDLOOP) OR
+           (v = W_END) OR (v = W_ENDEXCEPTION) OR (v = W_ENDPROCEDURE) OR
+           (v = W_ENDFUNCTION) OR (v = W_ENDPROCESS) OR (v = W_ENDMODULE) OR
+           (v = W_ENDMONITOR)
+  ENDPROCEDURE IsStop;
+
+  (* rule 33, and the labelled statements of a block (rule 6) *)
+  PROCEDURE ParseStatements RETURNS Node (CONST labelled: BOOLEAN)
+    VAR head, tail, s: Node := Node NIL;
+        label: Txt;
+    LOOP stmts
+      WHILE Accept(P_SEMI) DO ENDWHILE;
+      IF IsStop() THEN EXIT stmts ENDIF;
+      label := 0;
+      IF labelled AND IsIdAt(0) AND IsAt(1, P_COLON) THEN
+        label := Ident();
+        Skip()
+      ENDIF;
+      s := ParseStatement();
+      s^.text := label;
+      Link(head, tail, s);
+      IF NOT Is(P_SEMI) THEN EXIT stmts ENDIF
+    ENDLOOP stmts;
+    RETURN head
+  ENDPROCEDURE ParseStatements;
+
+  PROCEDURE ParseStatement RETURNS Node ()
+    VAR n, arm, tail, lab, ltail, d: Node;
+        w: INT;
+        line: INT := TLn();
+    IF TK() = K_KW THEN
+      w := TV();
+      IF w = W_ASSERT THEN
+        Skip();
+        n := NewNode(N_ASSERT, line);
+        n^.a := ParseExpr();
+        RETURN n
+      ENDIF;
+      IF w = W_GOTO THEN
+        Skip();
+        n := NewNode(N_GOTO, line);
+        n^.name := Ident();
+        RETURN n
+      ENDIF;
+      IF w = W_EXIT THEN
+        Skip();
+        n := NewNode(N_EXIT, line);
+        n^.name := Ident();
+        RETURN n
+      ENDIF;
+      IF w = W_RETURN THEN
+        Skip();
+        n := NewNode(N_RETURN, line);
+        IF NOT (Is(P_SEMI) OR IsStop()) THEN n^.a := ParseExpr() ENDIF;
+        RETURN n
+      ENDIF;
+      IF w = W_TERMINATE_PROCESS THEN
+        Skip();
+        RETURN NewNode(N_TERMINATE, line)
+      ENDIF;
+      IF w = W_PROPAGATE_EXCEPTION THEN
+        Skip();
+        n := NewNode(N_PROPAGATE, line);
+        IF IsIdAt(0) THEN n^.name := Ident() ENDIF;
+        RETURN n
+      ENDIF;
+      IF w = W_IF THEN
+        Skip();
+        n := NewNode(N_IF, line);
+        tail := Node NIL;
+        arm := NewNode(N_ARM, line);
+        arm^.a := ParseExpr();
+        Expect(W_THEN);
+        arm^.b := ParseStatements(FALSE);
+        Link(n^.a, tail, arm);
+        WHILE Is(W_ELSIF) DO
+          arm := NewNode(N_ARM, TLn());
+          Skip();
+          arm^.a := ParseExpr();
+          Expect(W_THEN);
+          arm^.b := ParseStatements(FALSE);
+          Link(n^.a, tail, arm)
+        ENDWHILE;
+        IF Accept(W_ELSE) THEN
+          n^.flag := 1;
+          n^.b := ParseStatements(FALSE)
+        ENDIF;
+        Expect(W_ENDIF);
+        RETURN n
+      ENDIF;
+      IF w = W_SELECT THEN
+        Skip();
+        n := NewNode(N_SELECT, line);
+        n^.a := ParseExpr();
+        tail := Node NIL;
+        WHILE Is(W_CASE) DO
+          arm := NewNode(N_ARM, TLn());
+          Skip();
+          ltail := Node NIL;
+          LOOP labels
+            Link(arm^.a, ltail, ParseExpr());
+            IF NOT Accept(P_COMMA) THEN EXIT labels ENDIF
+          ENDLOOP labels;
+          Expect(P_ARROW);
+          arm^.b := ParseStatements(FALSE);
+          Link(n^.b, tail, arm)
+        ENDWHILE;
+        IF Accept(W_ELSE) THEN
+          n^.flag := 1;
+          n^.c := ParseStatements(FALSE)
+        ENDIF;
+        Expect(W_ENDSELECT);
+        RETURN n
+      ENDIF;
+      IF w = W_WHILE THEN
+        Skip();
+        n := NewNode(N_WHILE, line);
+        n^.a := ParseExpr();
+        Expect(W_DO);
+        n^.b := ParseStatements(FALSE);
+        Expect(W_ENDWHILE);
+        RETURN n
+      ENDIF;
+      IF w = W_FOR THEN
+        Skip();
+        n := NewNode(N_FOR, line);
+        n^.name := Ident();
+        Expect(P_COLON);
+        n^.a := ParseRep();
+        Expect(W_DO);
+        n^.b := ParseStatements(FALSE);
+        Expect(W_ENDFOR);
+        RETURN n
+      ENDIF;
+      IF w = W_LOOP THEN
+        Skip();
+        n := NewNode(N_LOOP, line);
+        n^.name := Ident();
+        n^.b := ParseStatements(FALSE);
+        Expect(W_ENDLOOP);
+        CloseName(n^.name, line);
+        RETURN n
+      ENDIF;
+      IF (w = W_BEGIN) OR (w = W_SIMULATED_TIME) THEN
+        n := NewNode(N_BEGIN, line);
+        IF Accept(W_SIMULATED_TIME) THEN n^.flag := 1 ENDIF;
+        Expect(W_BEGIN);
+        n^.a := ParseBlock();
+        Expect(W_END);
+        RETURN n
+      ENDIF
+    ENDIF;
+    (* rules 19-20: an assignment, or a call of a procedure or process *)
+    d := ParseDesignator();
+    IF Accept(P_ASSIGN) THEN
+      n := NewNode(N_ASSIGN, line);
+      n^.a := d;
+      n^.b := ParseExpr();
+      RETURN n
+    ENDIF;
+    IF d^.kind # N_CALL THEN FailS(line, "expected a statement") ENDIF;
+    n := NewNode(N_CALLST, line);
+    n^.a := d;
+    RETURN n
+  ENDPROCEDURE ParseStatement;
+
+  (* ---- expressions: rules 34-54 --------------------------------------------- *)
+
+  (* the operator at TPos, as a Txt (a word or a mark), or 0 *)
+  PROCEDURE OpAt RETURNS Txt ()
+    IF (TK() = K_OP) OR (TK() = K_KW) THEN RETURN TV() ENDIF;
+    RETURN 0
+  ENDPROCEDURE OpAt;
+
+  FUNCTION IsRel RETURNS BOOLEAN (CONST o: Txt)
+    RETURN (o = W_IN) OR (o = P_NE) OR (o = P_EQ) OR (o = P_LT) OR (o = P_LE) OR (o = P_GT) OR
+           (o = P_GE) OR (o = P_NE2) OR (o = P_NE3) OR (o = P_EQ2) OR (o = P_EQ3) OR
+           (o = P_LT2) OR (o = P_LE3) OR (o = P_LT3) OR (o = P_LE4) OR (o = P_GT2) OR
+           (o = P_GE3) OR (o = P_GT3) OR (o = P_GE4)
+  ENDFUNCTION IsRel;
+
+  FUNCTION IsAssocMul RETURNS BOOLEAN (CONST o: Txt)
+    RETURN (o = P_STAR) OR (o = W_AND)
+  ENDFUNCTION IsAssocMul;
+
+  FUNCTION IsNonAssocMul RETURNS BOOLEAN (CONST o: Txt)
+    RETURN (o = P_SLASH) OR (o = W_DIV) OR (o = W_MOD) OR (o = P_MUL2) OR (o = P_MUL3) OR
+           (o = P_DIV2) OR (o = P_DIV3)
+  ENDFUNCTION IsNonAssocMul;
+
+  FUNCTION IsAssocAdd RETURNS BOOLEAN (CONST o: Txt)
+    RETURN (o = P_PLUS) OR (o = W_OR)
+  ENDFUNCTION IsAssocAdd;
+
+  FUNCTION IsNonAssocAdd RETURNS BOOLEAN (CONST o: Txt)
+    RETURN (o = P_MINUS) OR (o = W_XOR) OR (o = P_SUB2) OR (o = P_SUB3) OR (o = P_ADD2) OR
+           (o = P_ADD3)
+  ENDFUNCTION IsNonAssocAdd;
+
+  PROCEDURE Bin RETURNS Node (CONST op: Txt; CONST a, b: Node; CONST line: INT)
+    VAR n: Node := NewNode(N_BIN, line);
+    n^.name := op;
+    n^.a := a;
+    n^.b := b;
+    RETURN n
+  ENDPROCEDURE Bin;
+
+  (* non-associative operators need parentheses next to an operator of *)
+  (* their level (VIII.A, p.1031; Design Discussion VIII.B) *)
+  PROCEDURE NeedParens (CONST op: Txt; CONST line: INT)
+    VAR t: Txt;
+    SB();
+    ST(op);
+    SA(" next to another operator of its level needs parentheses (VIII.A)");
+    t := SE();
+    Fail(line, t);
+    RETURN
+  ENDPROCEDURE NeedParens;
+
+  (* rule 34 *)
+  PROCEDURE ParseExpr RETURNS Node ()
+    VAR a: Node;
+        op: Txt;
+        line: INT := TLn();
+    a := ParseSimple();
+    op := OpAt();
+    IF IsRel(op) THEN
+      Skip();
+      a := Bin(op, a, ParseSimple(), line);
+      IF IsRel(OpAt()) THEN NeedParens(op, line) ENDIF
+    ENDIF;
+    RETURN a
+  ENDPROCEDURE ParseExpr;
+
+  (* rules 35-37 *)
+  PROCEDURE ParseSimple RETURNS Node ()
+    VAR a, n: Node;
+        op: Txt;
+        line: INT := TLn();
+    IF Is(P_MINUS) THEN
+      Skip();
+      n := NewNode(N_NEG, line);
+      n^.a := ParseTerm();
+      op := OpAt();
+      IF IsAssocAdd(op) OR IsNonAssocAdd(op) THEN NeedParens(P_MINUS, line) ENDIF;
+      RETURN n
+    ENDIF;
+    a := ParseTerm();
+    op := OpAt();
+    IF IsNonAssocAdd(op) THEN
+      Skip();
+      a := Bin(op, a, ParseTerm(), line);
+      IF IsAssocAdd(OpAt()) OR IsNonAssocAdd(OpAt()) THEN NeedParens(op, line) ENDIF;
+      RETURN a
+    ENDIF;
+    WHILE IsAssocAdd(op) DO
+      Skip();
+      a := Bin(op, a, ParseTerm(), line);
+      IF IsNonAssocAdd(OpAt()) THEN NeedParens(OpAt(), line) ENDIF;
+      op := OpAt()
+    ENDWHILE;
+    RETURN a
+  ENDPROCEDURE ParseSimple;
+
+  (* rules 38-39 *)
+  PROCEDURE ParseTerm RETURNS Node ()
+    VAR a: Node;
+        op: Txt;
+        line: INT := TLn();
+    a := ParseFactor();
+    op := OpAt();
+    IF IsNonAssocMul(op) THEN
+      Skip();
+      a := Bin(op, a, ParseFactor(), line);
+      IF IsAssocMul(OpAt()) OR IsNonAssocMul(OpAt()) THEN NeedParens(op, line) ENDIF;
+      RETURN a
+    ENDIF;
+    WHILE IsAssocMul(op) DO
+      Skip();
+      a := Bin(op, a, ParseFactor(), line);
+      IF IsNonAssocMul(OpAt()) THEN NeedParens(OpAt(), line) ENDIF;
+      op := OpAt()
+    ENDWHILE;
+    RETURN a
+  ENDPROCEDURE ParseTerm;
+
+  PROCEDURE IsLiteralAt RETURNS BOOLEAN (CONST k: INT)
+    VAR kind: INT := TKind[TPos + k];
+    RETURN (kind = K_INT) OR (kind = K_FIXED) OR (kind = K_FLOAT) OR (kind = K_CHAR) OR
+           (kind = K_STR) OR IsAt(k, W_NIL)
+  ENDPROCEDURE IsLiteralAt;
+
+  PROCEDURE ParseLiteral RETURNS Node ()
+    VAR n: Node;
+        kind: INT := TK();
+        line: INT := TLn();
+    IF kind = K_INT THEN
+      n := NewNode(N_INT, line);
+      n^.ival := TV()
+    ELSIF kind = K_FIXED THEN
+      n := NewNode(N_FIXED, line);
+      n^.text := TV()
+    ELSIF kind = K_FLOAT THEN
+      n := NewNode(N_FLOAT, line);
+      n^.text := TV()
+    ELSIF kind = K_CHAR THEN
+      n := NewNode(N_CHARLIT, line);
+      n^.text := TV()
+    ELSIF kind = K_STR THEN
+      n := NewNode(N_STRLIT, line);
+      n^.text := TV()
+    ELSE
+      n := NewNode(N_NIL, line)
+    ENDIF;
+    Skip();
+    RETURN n
+  ENDPROCEDURE ParseLiteral;
+
+  (* rule 40: {NOT} ( "(" Expression ")" | Designator | [Id*] Literal ) *)
+  PROCEDURE ParseFactor RETURNS Node ()
+    VAR n: Node;
+        q: Txt;
+        line: INT := TLn();
+    IF Is(W_NOT) THEN
+      Skip();
+      n := NewNode(N_NOT, line);
+      n^.a := ParseFactor();
+      RETURN n
+    ENDIF;
+    IF Is(P_LPAR) THEN
+      Skip();
+      n := NewNode(N_PAREN, line);
+      n^.a := ParseExpr();
+      Expect(P_RPAR);
+      RETURN n
+    ENDIF;
+    IF IsLiteralAt(0) THEN RETURN ParseLiteral() ENDIF;
+    IF IsIdAt(0) THEN
+      (* a literal qualified by the name of its type: Colors Orange, *)
+      (* Tree NIL, BASE-less numbers of another integer type (VI.A.3) *)
+      IF IsLiteralAt(1) OR (IsIdAt(1) AND NOT (IsAt(2, P_LPAR) OR IsAt(2, P_LBRACK) OR
+                            IsAt(2, P_DOT) OR IsAt(2, P_UP) OR IsAt(2, P_ASSIGN) OR
+                            IsAt(2, P_COLON))) THEN
+        q := Ident();
+        IF IsIdAt(0) THEN
+          n := NewNode(N_NAME, line);
+          n^.name := Ident()
+        ELSE
+          n := ParseLiteral()
+        ENDIF;
+        n^.d := NewNode(N_NAMEL, line);
+        n^.d^.name := q;
+        RETURN n
+      ENDIF;
+      RETURN ParseDesignator()
+    ENDIF;
+    FailN(line, TokText(), " cannot begin an operand");
+    RETURN Node NIL
+  ENDPROCEDURE ParseFactor;
+
+  (* rules 41-43 *)
+  PROCEDURE ParseDesignator RETURNS Node ()
+    VAR d, n, tail: Node;
+        line: INT := TLn();
+    d := NewNode(N_NAME, line);
+    d^.name := Ident();
+    IF Accept(P_LPAR) THEN
+      d^.kind := N_CALL;
+      tail := Node NIL;
+      WHILE NOT Is(P_RPAR) DO
+        Link(d^.a, tail, ParseExpr());
+        IF NOT Accept(P_COMMA) THEN EXIT_ARGS() ENDIF
+      ENDWHILE;
+      Expect(P_RPAR)
+    ENDIF;
+    LOOP sel
+      IF Accept(P_DOT) THEN
+        n := NewNode(N_SEL, TLn());
+        n^.a := d;
+        n^.name := Ident();
+        d := n
+      ELSIF Accept(P_LBRACK) THEN
+        n := NewNode(N_INDEX, TLn());
+        n^.a := d;
+        tail := Node NIL;
+        LOOP subscripts
+          Link(n^.b, tail, ParseExpr());
+          IF NOT Accept(P_COMMA) THEN EXIT subscripts ENDIF
+        ENDLOOP subscripts;
+        Expect(P_RBRACK);
+        d := n
+      ELSIF Accept(P_UP) THEN
+        n := NewNode(N_DEREF, TLn());
+        n^.a := d;
+        d := n
+      ELSE
+        EXIT sel
+      ENDIF
+    ENDLOOP sel;
+    RETURN d
+  ENDPROCEDURE ParseDesignator;
+
+  (* the arguments of a call end at ")" *)
+  PROCEDURE EXIT_ARGS ()
+    IF NOT Is(P_RPAR) THEN Expect(P_RPAR) ENDIF;
+    RETURN
+  ENDPROCEDURE EXIT_ARGS;
+
+  (* ---- the program: a sequence of segments (XIII.A) ----------------------------- *)
+
+  PROCEDURE ParseProgram RETURNS Node ()
+    VAR head, tail: Node := Node NIL;
+    WHILE TK() # K_EOF DO
+      IF NOT (Is(W_MODULE) OR Is(W_MONITOR)) THEN FailS(TLn(), "a segment is a module (XIII.A)") ENDIF;
+      Link(head, tail, ParseModule());
+      WHILE Accept(P_SEMI) DO ENDWHILE
+    ENDWHILE;
+    RETURN head
+  ENDPROCEDURE ParseProgram;

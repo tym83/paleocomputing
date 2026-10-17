@@ -1,0 +1,8 @@
+MODULE Purity
+  VAR total: INTEGER [0..100] := 0;
+  FUNCTION Next RETURNS INTEGER [0..100] (CONST x: INTEGER [0..100])
+    total := total + x;
+    RETURN total
+  ENDFUNCTION Next;
+  total := Next(1)
+ENDMODULE Purity

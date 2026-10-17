@@ -1,0 +1,10 @@
+MODULE ConstParam
+  PROCEDURE Inc (VAR x: INTEGER [0..9])
+    x := x + 1;
+    RETURN
+  ENDPROCEDURE Inc;
+  PROCEDURE P (CONST y: INTEGER [0..9])
+    Inc(y);
+    RETURN
+  ENDPROCEDURE P
+ENDMODULE ConstParam

@@ -1,0 +1,58 @@
+(* module templates and their instances (X.C-D): the actuals are put for *)
+(* the formals throughout the module *)
+MODULE Templates
+  IMPORT TextIO, StandardImplementationPrelude;
+
+  TEMPLATE StackTemplate (size, Item, Stack, Push, Pop, Depth)
+    MODULE Stack
+      IMPORT Item, INTEGER64;
+      EXPORT Push, Pop, Depth;
+      VAR items: ARRAY (INTEGER [1..size] OF Item);
+          top: INTEGER64 := 0;
+      PROCEDURE Push (CONST x: Item)
+        top := top + 1;
+        items[top] := x;
+        RETURN
+      ENDPROCEDURE Push;
+      PROCEDURE Pop RETURNS Item ()
+        top := top - 1;
+        RETURN items[top + 1]
+      ENDPROCEDURE Pop;
+      FUNCTION Depth RETURNS INTEGER64 ()
+        RETURN top
+      ENDFUNCTION Depth
+    ENDMODULE Stack
+  ENDTEMPLATE StackTemplate;
+
+  (* the example of p.1055: safe execution of a statement *)
+  TEMPLATE Safe (P, SafeP, Name)
+    MODULE Name
+      IMPORT Lock, Unlock, P;
+      EXPORT SafeP;
+      PROCEDURE SafeP ()
+        Lock(); P(); Unlock();
+        RETURN
+      ENDPROCEDURE SafeP
+    ENDMODULE Name
+  ENDTEMPLATE Safe;
+
+  REPRESENTATION Letter = ASCII ['a'..'z'];
+
+  PROCEDURE Lock () Write("["); RETURN ENDPROCEDURE Lock;
+  PROCEDURE Unlock () Write("]"); RETURN ENDPROCEDURE Unlock;
+  PROCEDURE SProcedure () Write("S"); RETURN ENDPROCEDURE SProcedure;
+
+  INSTANCE StackTemplate (10, INTEGER64, IntStack, PushI, PopI, DepthI);
+  INSTANCE StackTemplate (3, Letter, CharStack, PushC, PopC, DepthC);
+  INSTANCE Safe (SProcedure, SafeSProcedure, NewName);
+
+  FOR i: INTEGER [1..4] DO PushI(i * 11) ENDFOR;
+  PushC('x'); PushC('y');
+  Write(DepthI()); Write(" "); Write(PopI()); Write(" "); Write(PopC()); Write(PopC()); WriteLn();
+  SafeSProcedure(); WriteLn();
+  BEGIN
+    EXCEPTION CASE OUT_OF_RANGE => Write("the small stack is full"); WriteLn()
+    ENDEXCEPTION;
+    FOR i: INTEGER [1..4] DO PushC('z') ENDFOR
+  END
+ENDMODULE Templates

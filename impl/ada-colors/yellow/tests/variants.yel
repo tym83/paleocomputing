@@ -1,0 +1,34 @@
+(* variant records (VI.B.2) and the SELECT statement on their selector *)
+MODULE Variants
+  IMPORT TextIO, StandardImplementationPrelude;
+  REPRESENTATION
+    Shape = UNORDERED (RightTriangle, Circle, Dot);
+    Figure = RECORD
+      VAR x, y: INTEGER64;
+      SELECT s: Shape
+        CASE RightTriangle => VAR base, height: INTEGER64;
+        CASE Circle => VAR diameter: INTEGER64;
+      ENDSELECT;
+    ENDRECORD;
+  VAR f, g, h: Figure;
+
+  FUNCTION Area2 RETURNS INTEGER64 (CONST fig: Figure)
+    SELECT fig.s
+      CASE RightTriangle => RETURN fig.base * fig.height
+      CASE Circle => RETURN ((3 * fig.diameter) * fig.diameter) DIV 2
+      ELSE RETURN 0
+    ENDSELECT
+  ENDFUNCTION Area2;
+
+  f := Figure(1, 2, RightTriangle, 5, 24);
+  g := Figure(3, 4, Circle, 10);
+  h := Figure(0, 0, Dot);
+  Write(Area2(f)); Write(" "); Write(Area2(g)); Write(" "); Write(Area2(h)); WriteLn();
+  f := g;
+  Write(Area2(f)); Write(" "); Write(f = g); WriteLn();
+  BEGIN
+    EXCEPTION CASE INVALID_VARIANT => Write("no such component in this variant"); WriteLn()
+    ENDEXCEPTION;
+    Write(f.base)
+  END
+ENDMODULE Variants

@@ -1,0 +1,19 @@
+
+(* a user of the monitor of p.1107: two processes pause for some ticks of *)
+(* the simulated line clock (20 ms each) *)
+MODULE Clocks
+  IMPORT RealTime, TextIO, MyStandardConventions;
+  BEGIN
+    PROCESS Sleeper (CONST name: ASCII; CONST n: INT)
+      Pause(n);
+      Write(name); Write(" woke at tick "); Write(time); Write(", ");
+      Write(CLOCK_TIME()); Write(" ms"); WriteLn();
+      TERMINATE_PROCESS
+    ENDPROCESS Sleeper;
+    Sleeper('a', 5);
+    Sleeper('b', 2)
+  END;
+  (* the clock process runs for ever; the scope of the program could not end *)
+  (* (X.E.1): it is the second process created (the line clock is the first) *)
+  RAISE_PROCESS_TERMINATION(2)
+ENDMODULE Clocks

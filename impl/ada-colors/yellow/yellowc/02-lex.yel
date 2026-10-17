@@ -1,0 +1,284 @@
+
+  (* ---- lexical analysis: Sections III and IV of the Report (pp.992-998) ---- *)
+  (* The source is read into the pool, so names are interned in place. *)
+
+  VAR
+    TKind, TVal, TLine: TokTable;
+    NTok: INT := 0;
+    SrcStart, SrcEnd: INT := 0;
+    Pos: INT := 0;
+    LineNo: INT := 1;
+    Base: INT := 0;                 (* a BASE word was just read *)
+
+  (* the reserved words and punctuation marks are interned first, so a word *)
+  (* is reserved when its Txt is at most NKW *)
+  PROCEDURE InitWords ()
+    VAR start: INT;
+        t, all: Txt;
+    SB();
+    SA("ALIGNMENT ALPHABET AND ARRAY AS ASSERT AT BASE2 BASE8 BASE10 BASE16 BEGIN CASE ");
+    SA("CONST DIMENSIONS DIV DO ELSE ELSIF END ENDEXCEPTION ENDFOR ENDFUNCTION ENDIF ");
+    SA("ENDLOOP ENDMODULE ENDMONITOR ENDPROCEDURE ENDPROCESS ENDRECORD ENDSELECT ");
+    SA("ENDTEMPLATE ENDWHILE EXCEPTION EXIT EXPORT EXTENDS FILE FOR FUNCTION GOTO IF ");
+    SA("IMPORT IN INLINE INSTANCE INSTANCES LABEL LOOP MOD MODULE MONITOR NIL NOT OF ");
+    SA("OPAQUE OR ORDERED OUT PACKED POINTER PRECISION PRIORITY PROCEDURE PROCESS ");
+    SA("PROPAGATE_EXCEPTION READONLY RECORD REPLACES REPRESENTATION RETURN RETURNS ");
+    SA("SCALE SELECT SET SIMULATED_TIME SIZE SPACE TEMPLATE TERMINATE_PROCESS THEN ");
+    SA("TRANSPARENT TYPE UNORDERED VAR WHILE XOR ");
+    SA("<<<= >>>= ### === <<< >>> <<= >>= *** /// --- +++ := => .. <= >= ## == << >> ");
+    SA("** // -- ++ # + - * / = < > ( ) [ ] , ; : . ^ ");
+    all := SE();
+    NTxt := 0;
+    start := TS[all];
+    FOR i: INTEGER [TS[all]..(TS[all] + TL[all]) - 1] DO
+      IF Pool[i] = ' ' THEN
+        t := Intern(start, i - start);
+        start := i + 1
+      ENDIF
+    ENDFOR;
+    IF NTxt # NPUNCT THEN PROPAGATE_EXCEPTION word_table ENDIF;
+    RETURN
+  ENDPROCEDURE InitWords;
+
+  PROCEDURE ReadSource ()
+    VAR c: ASCII;
+    OPEN(Input, "INPUT", READ);
+    SrcStart := PoolTop + 1;
+    WHILE NOT CHECK_EOF(Input) DO
+      GET(Input, c);
+      PoolAdd(c)
+    ENDWHILE;
+    SrcEnd := PoolTop;
+    CLOSE(Input);
+    RETURN
+  ENDPROCEDURE ReadSource;
+
+  PROCEDURE AddTok (CONST kind, val: INT)
+    NTok := NTok + 1;
+    TKind[NTok] := kind;
+    TVal[NTok] := val;
+    TLine[NTok] := LineNo;
+    RETURN
+  ENDPROCEDURE AddTok;
+
+  PROCEDURE At RETURNS ASCII (CONST i: INT)
+    IF i > SrcEnd THEN RETURN 'NUL' ENDIF;
+    RETURN Pool[i]
+  ENDPROCEDURE At;
+
+  (* after an operand a sign is an operator; elsewhere it may begin a literal *)
+  PROCEDURE EndsOperand RETURNS BOOLEAN ()
+    VAR k, v: INT;
+    IF NTok = 0 THEN RETURN FALSE ENDIF;
+    k := TKind[NTok];
+    v := TVal[NTok];
+    IF (k = K_ID) OR (k = K_INT) OR (k = K_FIXED) OR (k = K_FLOAT) OR (k = K_CHAR) OR (k = K_STR) THEN
+      RETURN TRUE
+    ENDIF;
+    IF k = K_OP THEN RETURN (v = P_RPAR) OR (v = P_RBRACK) OR (v = P_UP) ENDIF;
+    IF k = K_KW THEN RETURN v = W_NIL ENDIF;
+    RETURN FALSE
+  ENDPROCEDURE EndsOperand;
+
+  FUNCTION DigitVal RETURNS INT (CONST c: ASCII)
+    IF (c >= '0') AND (c <= '9') THEN RETURN Code[c] - 48 ENDIF;
+    IF (c >= 'A') AND (c <= 'F') THEN RETURN Code[c] - 55 ENDIF;
+    RETURN 99
+  ENDFUNCTION DigitVal;
+
+  PROCEDURE LexError (CONST msg: ARRAY (1 DIMENSIONS OF ASCII))
+    FailS(LineNo, msg);
+    RETURN
+  ENDPROCEDURE LexError;
+
+  (* a number at Pos (VI.B): integer, fixed (with P) or floating (with a point) *)
+  PROCEDURE LexNumber (CONST neg: BOOLEAN)
+    VAR b: INT := 10;
+        mstart, mend, fstart, fend: INT;
+        hasfrac: BOOLEAN := FALSE;
+        v, d, exp, esign, nfrac: INT := 0;
+        t: Txt;
+    IF Base # 0 THEN b := Base ENDIF;
+    Base := 0;
+    mstart := Pos;
+    WHILE DigitVal(At(Pos)) < b DO Pos := Pos + 1 ENDWHILE;
+    mend := Pos;
+    fstart := Pos;
+    fend := Pos;
+    IF (At(Pos) = '.') AND (At(Pos + 1) # '.') THEN
+      hasfrac := TRUE;
+      Pos := Pos + 1;
+      fstart := Pos;
+      WHILE DigitVal(At(Pos)) < b DO Pos := Pos + 1 ENDWHILE;
+      fend := Pos
+    ENDIF;
+    IF At(Pos) = 'P' THEN
+      (* a fixed-point literal: mantissa times base to the power given *)
+      Pos := Pos + 1;
+      esign := 1;
+      IF ((At(Pos) = '-') OR (At(Pos) = '+')) AND IsDigit(At(Pos + 1)) THEN
+        IF At(Pos) = '-' THEN esign := -1 ENDIF;
+        Pos := Pos + 1
+      ENDIF;
+      exp := 0;
+      WHILE IsDigit(At(Pos)) DO
+        exp := (exp * 10) + DigitVal(At(Pos));
+        Pos := Pos + 1
+      ENDWHILE;
+      exp := exp * esign;
+      v := 0;
+      FOR i: INTEGER [mstart..mend - 1] DO v := (v * b) + DigitVal(Pool[i]) ENDFOR;
+      nfrac := fend - fstart;
+      FOR i: INTEGER [fstart..fend - 1] DO v := (v * b) + DigitVal(Pool[i]) ENDFOR;
+      SB();
+      SA("(");
+      IF neg THEN SA("-") ENDIF;
+      SA("(double)");
+      SI(v);
+      SA(" * pow(");
+      SI(b);
+      SA(", ");
+      SI(exp - nfrac);
+      SA("))");
+      t := SE();
+      AddTok(K_FIXED, t);
+      RETURN
+    ENDIF;
+    IF hasfrac THEN
+      IF b # 10 THEN LexError("a floating-point literal is decimal") ENDIF;
+      IF At(Pos) = 'E' THEN
+        Pos := Pos + 1;
+        IF (At(Pos) = '-') OR (At(Pos) = '+') THEN Pos := Pos + 1 ENDIF;
+        WHILE IsDigit(At(Pos)) DO Pos := Pos + 1 ENDWHILE
+      ENDIF;
+      SB();
+      IF neg THEN SA("-") ENDIF;
+      FOR i: INTEGER [mstart..Pos - 1] DO SC(Pool[i]) ENDFOR;
+      t := SE();
+      AddTok(K_FLOAT, t);
+      RETURN
+    ENDIF;
+    v := 0;
+    FOR i: INTEGER [mstart..mend - 1] DO
+      d := DigitVal(Pool[i]);
+      IF v > ((LARGEST - d) DIV b) THEN LexError("integer literal too large") ENDIF;
+      v := (v * b) + d
+    ENDFOR;
+    IF neg THEN v := -v ENDIF;
+    AddTok(K_INT, v);
+    RETURN
+  ENDPROCEDURE LexNumber;
+
+  (* a string: "..." with 'MNEMONIC' inside; strings separated only by *)
+  (* blanks and line ends make one literal (p.998). The Txt keeps the text *)
+  (* between the quotation marks, the mnemonics still in apostrophes. *)
+  PROCEDURE LexString ()
+    VAR t: Txt;
+        k, nl: INT;
+        more: BOOLEAN;
+    SB();
+    LOOP parts
+      Pos := Pos + 1;
+      WHILE At(Pos) # 'DQ' DO
+        IF (At(Pos) = 'LF') OR (Pos > SrcEnd) THEN
+          Building := FALSE;
+          LexError("a string must close on its line")
+        ENDIF;
+        SC(At(Pos));
+        Pos := Pos + 1
+      ENDWHILE;
+      Pos := Pos + 1;
+      k := Pos;
+      nl := 0;
+      more := TRUE;
+      WHILE more DO
+        IF (At(k) = ' ') OR (At(k) = 'HT') OR (At(k) = 'CR') THEN
+          k := k + 1
+        ELSIF At(k) = 'LF' THEN
+          nl := nl + 1;
+          k := k + 1
+        ELSE
+          more := FALSE
+        ENDIF
+      ENDWHILE;
+      IF At(k) # 'DQ' THEN EXIT parts ENDIF;
+      LineNo := LineNo + nl;
+      Pos := k
+    ENDLOOP parts;
+    t := SE();
+    AddTok(K_STR, t);
+    RETURN
+  ENDPROCEDURE LexString;
+
+  PROCEDURE Lex ()
+    VAR c: ASCII;
+        start, k, best, len: INT;
+        t: Txt;
+        neg, match: BOOLEAN;
+    Pos := SrcStart;
+    WHILE Pos <= SrcEnd DO
+      c := Pool[Pos];
+      IF c = 'LF' THEN
+        LineNo := LineNo + 1;
+        Pos := Pos + 1
+      ELSIF (c = ' ') OR (c = 'HT') OR (c = 'CR') OR (c = 'FF') THEN
+        Pos := Pos + 1
+      ELSIF (c = '(') AND (At(Pos + 1) = '*') THEN
+        (* a comment closes on its line (p.994) *)
+        Pos := Pos + 2;
+        WHILE NOT ((At(Pos) = '*') AND (At(Pos + 1) = ')')) DO
+          IF (At(Pos) = 'LF') OR (Pos > SrcEnd) THEN LexError("a comment must close on its line") ENDIF;
+          Pos := Pos + 1
+        ENDWHILE;
+        Pos := Pos + 2
+      ELSIF IsDigit(c) OR ((Base = 16) AND (DigitVal(c) < 16)) THEN
+        LexNumber(FALSE)
+      ELSIF ((c = '-') OR (c = '+')) AND NOT EndsOperand() AND
+            (IsDigit(At(Pos + 1)) OR ((Base = 16) AND (DigitVal(At(Pos + 1)) < 16))) THEN
+        Pos := Pos + 1;
+        LexNumber(c = '-')
+      ELSIF IsLetter(c) THEN
+        start := Pos;
+        WHILE IsLetter(At(Pos)) OR IsDigit(At(Pos)) DO Pos := Pos + 1 ENDWHILE;
+        t := Intern(start, Pos - start);
+        IF t = W_BASE2 THEN Base := 2
+        ELSIF t = W_BASE8 THEN Base := 8
+        ELSIF t = W_BASE10 THEN Base := 10
+        ELSIF t = W_BASE16 THEN Base := 16
+        ELSIF t <= NKW THEN AddTok(K_KW, t)
+        ELSE AddTok(K_ID, t)
+        ENDIF
+      ELSIF c = 'SQ' THEN
+        start := Pos + 1;
+        k := start;
+        WHILE At(k) # 'SQ' DO
+          IF (At(k) = 'LF') OR (At(k) = 'DQ') OR (k > SrcEnd) THEN LexError("bad character literal") ENDIF;
+          k := k + 1
+        ENDWHILE;
+        IF k = start THEN LexError("empty character literal") ENDIF;
+        t := Intern(start, k - start);
+        AddTok(K_CHAR, t);
+        Pos := k + 1
+      ELSIF c = 'DQ' THEN
+        LexString()
+      ELSE
+        (* the longest punctuation mark that matches *)
+        best := 0;
+        k := NKW + 1;
+        WHILE (best = 0) AND (k <= NPUNCT) DO
+          len := TL[k];
+          match := TRUE;
+          FOR i: INTEGER [0..len - 1] DO
+            IF At(Pos + i) # Pool[TS[k] + i] THEN match := FALSE ENDIF
+          ENDFOR;
+          IF match THEN best := k ENDIF;
+          k := k + 1
+        ENDWHILE;
+        IF best = 0 THEN LexError("a character that is not in the language") ENDIF;
+        AddTok(K_OP, best);
+        Pos := Pos + TL[best]
+      ENDIF
+    ENDWHILE;
+    AddTok(K_EOF, 0);
+    RETURN
+  ENDPROCEDURE Lex;

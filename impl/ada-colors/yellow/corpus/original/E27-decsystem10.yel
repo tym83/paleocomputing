@@ -1,0 +1,245 @@
+(* Part Three, III.J "Machine-Level Input-Output for Decsystem 10", *)
+(* pp.1120-1124 (E-27 to E-31). In the SIXBIT alphabet the characters of *)
+(* the scan are hard to read: those marked with ? in a comment there are *)
+(* the transcriber's reading. *)
+MODULE DECSYSTEM10
+  (* this is only a fragment of the actual Decsystsem10 machine *)
+  (* dependencies, provided for concreteness; Many other routines *)
+  (* used to describe machine code inserts, exception names, etc. are *)
+  (* omitted for brevity but alluded to below *)
+  EXPORT TRANSPARENT
+    INT36, WORD, HALFWORD, ADDRESS, ONEBIT,
+    SIXBIT_ALPHABET, SIXBIT, BYTE_POINTER, SIXBIT;
+  REPRESENTATION
+    INT36 = INTEGER [BASE8 0..BASE8 777777777777] PACKED 36;
+    WORD = ARRAY (INTEGER [0..35] OF BOOLEAN) PACKED 36;
+    HALFWORD = ARRAY (INTEGER [0..17] OF BOOLEAN) PACKED 18;
+    ADDRESS = HALFWORD;
+    ONEBIT = BOOLEAN PACKED 1;
+    SIXBIT_ALPHABET =
+      ALPHABET (' ','!','dq'(*double quote*),'#',
+                '$','%','&','sq'(*single quote*),
+                '(',')','*','+',',','-','.','/',
+                '0','1','2','3','4','5','6','7',
+                '8','9',':',';','<','=','>','?',
+                '@','A','B','C','D','E','F','G',
+                'H','I','J','K','L','M','N','O',
+                'P','Q','R','S','T','U','V','W',
+                'X','Y','Z','[','\',']','^','_');
+    SIXBIT = ARRAY (INTEGER [1..6] OF SIXBIT_ALPHABET);
+    BYTE_POINTER =
+      RECORD VAR
+        p AT 0: INTEGER [0..36] PACKED 6; (* bits remaining *)
+        s AT 6: INTEGER [0..36] PACKED 6; (* byte size      *)
+        i AT 13: ONEBIT;                  (* indirect bit   *)
+        x AT 14: INTEGER [0..15] PACKED 4; (* index register *)
+        y AT 18: ADDRESS (* word base address *)
+      ENDRECORD;
+ENDMODULE DECSYSTEM10;
+
+TEMPLATE getBufferRing(numberOfBuffers,numberOfWords)
+  MODULE bufferRing
+
+  IMPORT DECSYSTEM10;
+  EXPORT TRANSPARENT ioData, initializeBuffers;
+
+  REPRESENTATION
+    ioData =
+(* this structure defines all the information needed to do io *)
+(* to a device on a specified channel: a buffer header,        *)
+(* a buffer ring, and data needed in the "open" operation      *)
+      RECORD VAR
+        buffers: (* see pp. 466+, paragraph 4.3 *)
+          ARRAY (INTEGER [1..numberOfBuffers] OF
+            RECORD VAR
+              fileStatus AT 18: HALFWORD;
+              useBit AT 36: ONEBIT;
+              dataAreaSize AT 37: INTEGER [0..131071] PACKED 17;
+              nextBuffer AT 54: ADDRESS;
+              bookkeeping AT 72 : HALFWORD;
+              wordCount AT 90 : INTEGER [0..262143] PACKED 18;
+              data AT 108: ARRAY (INTEGER [1..numberOfWords] OF WORD)
+            ENDRECORD)
+
+        bufferHeader: (* see pp. 466+, paragraph 4.3.1 *)
+          RECORD VAR
+              useBit AT 0: ONEBIT;
+              currentBuffer AT 18: ADDRESS,
+              bufferPointer AT 36: BYTE_POINTER;
+              byteCounter AT 72: INT36;
+              openDescriptor: openSpec
+          ENDRECORD;
+      ENDRECORD;
+
+  REPRESENTATION openSpec =
+    RECORD VAR (* see pp. 462+, paragraph 4.2 *)
+      status AT 0: HALFWORD;
+      deviceName AT 36: SIXBIT;
+      outBuffer AT 72: ADDRESS;
+      inBuffer AT 90: ADDRESS
+    ENDRECORD;
+
+  PROCEDURE initializeBuffers(VAR io: ioData; CONST deviceName: SIXBIT)
+    (* first, make the buffer header point to the first buffer *)
+    io.bufferHeader.currentBuffer := ADDR(io.buffers[1]);
+    (* next, link the buffers in a ring - each to the next...*)
+    FOR i: [1..numberOfBuffers-1] DO
+      io.buffers[i].nextBuffer := ADDR(io.buffers[i+1])
+    ENDFOR;
+    (*...and the last to the first *)
+    io.buffers[numberOfBuffers] := ADDR(io.buffers[1]);
+    (* the first halfword of the open descriptor is a "don't care" *)
+    (* the first field, the second halfword, is the DECSYSTEM10 *)
+    (* code for "ascii line mode"; the second field is filled with *)
+    (* 6 SIXBIT characters; the third and fourth fields are the *)
+    (* addresses of the input and/or output buffer headers; *)
+    (* for us, there will only be one, and--not caring to know *)
+    (* whether it is input or output--we put it in both fields *)
+    io.openDescriptor :=
+      openSpec(integerToHalfword(1), deviceName,
+               ADDR(io.bufferHeader), ADDR(io.bufferHeader));
+  ENDPROCEDURE initializeBuffers
+  ENDMODULE bufferRing
+ENDTEMPLATE getBufferRing;
+
+MODULE doio
+
+  EXPORT get, put, finishIo;
+  IMPORT machineTypes, getBufferRing, DECSYSTEM10;
+
+(*     Whereever DECSYSTEM10 is used, the straightforward          *)
+(*     way to achieve the desired effect is to run actual machine  *)
+(*     code. For this example, we presume that the machine is that *)
+(*     virtual machine presented by the DECSYSTEM10 Operating      *)
+(*     System. The procedures SOSGE, JRST, ILDB, etc. produce      *)
+(*     the obvious machine instructions (see the cited machine     *)
+(*     language manual); the special 'instruction' procedures used *)
+(*     are MRETURN and MTRIGGER_EXCEPTION, which are analogs of the *)
+(*     high level primitives RETURN and PROPAGATE_EXCEPTION.       *)
+(*     The first of these causes the enclosing DECSYSTEM10 call to *)
+(*     return whatever value is in the cited accumulator. The      *)
+(*     second triggers the named exeception, so that it may be     *)
+(*     handled by an enclosing exception handler. The special      *)
+(*     function THIS_ADDRESS returns the machine address at which  *)
+(*     the containing instruction is to be placed. None of these   *)
+(*     are available except in a context where DECSYSTEM10 has been *)
+(*     imported *)
+
+  CONST inChannel: INT36 = 1; outChannel: INT36 = 2;
+     (* thus we forbear gratuitous generality *)
+
+  REPRESENTATION fileSpec =
+(* the mysteries of this data structure are defined by the system; *)
+(* it suffices to know that if the user fills in the file name and *)
+(* the file name extension, and sets all else to zero, as is done *)
+(* by the initializing procedure below, then the DECSYSTEM10 will *)
+(* fill in the rest correctly; for further details consult         *)
+(* pp. 564+, paragraph 6.2.8.1                                     *)
+
+    RECORD VAR
+      name AT 0: SIXBIT;
+      ext AT 36: ARRAY(INTEGER [1..3] OF SIXBIT_ALPHABET) PACKED;
+      hd2 AT 54: ARRAY(INTEGER [1..3] OF BOOLEAN) PACKED 3;
+      dl AT 57: ARRAY(INTEGER [1..15] OF BOOLEAN) PACKED 15;
+      hd2dl AT 57: INTEGER [0..16777215] PACKED 24;
+        (* to permit wholesale zeroing of hd2 and dl *)
+      prot AT 72: ARRAY(INTEGER [1..9] OF BOOLEAN) PACKED 9;
+      m AT 81: ARRAY(INTEGER [1..4] OF BOOLEAN) PACKED 4;
+      time AT 85: ARRAY(INTEGER [1..11] OF BOOLEAN) PACKED 11;
+      ld2 AT 96: ARRAY(INTEGER [1..12] OF BOOLEAN) PACKED 12;
+      word3 AT 72: INT36;
+        (* to permit wholesale zeroing of prot thru ld2 *)
+      ppn AT 108: WORD
+    ENDRECORD;
+
+  PROCEDURE initializeFileSpec
+      (CONST name: SIXBIT; ext: ARRAY(INTEGER [1..3] OF SIXBIT);
+       OUT f: fileSpec)
+    f.name := name; f.ext := ext; f.hdsdl := 0; f.word3 := 0;
+    f.ppn := WORD(FALSE) (* specifying default directory *);
+  ENDPROCEDURE initializeFileSpec;
+
+  PROCEDURE finishIo() (* invoked when end-of-file is encountered *)
+    PDP10(CLOSE(inChannel),
+          CLOSE(outChannel),
+          RELEAS(inChannel),
+          RELEAS(outChannel));
+    RETURN;
+  ENDPROCEDURE finishIo;
+  MODULE input
+
+    IMPORT getBufferRing, inChannel, DECSYSTEM10;
+    EXPORT get, VAR inputData;
+
+    INSTANCE getBufferRing(3,64); (* triple buffering for output *)
+    VAR inputData: ioData;
+    PROCEDURE get RETURNS ASCII ()
+      PDP10(
+        SOSGE(ADDRESS(inputData.bufferHeader.byteCounter)),
+        JRST(THIS_ADDRESS()+4),
+        ILDB(AC3,ADDRESS(inputData.bufferHeader.bufferPointer)),
+        JUMPE(AC3,THIS_ADDRESS()-3),
+        MRETURN(AC3),
+        IN(inChannel),
+        JRST(THIS_ADDRESS()-6),
+        STATZ(inChannel,74N8S12),
+        MTRIGGER_EXCEPTION(READ_ERROR),
+        MTRIGGER_EXCEPTION(EOF))
+    ENDPROCEDURE get;
+    initializeBuffers(inputData, SIXBIT_ALPHABET "DATA  ");
+  ENDMODULE input;
+
+  MODULE output
+
+    IMPORT getBufferRing, outChannel, DECSYSTEM10;
+    EXPORT put;
+
+    VAR outputData;
+    INSTANCE getBufferRing(2,64); (* double buffering for output *)
+    VAR outputData: ioData;
+
+    PROCEDURE put(CONST c AT AC3: ASCII)
+      PDP10(
+        SOSG(ADDRESS(outputData.bufferHeader.byteCounter)),
+        JRST(THIS_ADDRESS()+3),
+        IDPB(AC3,ADDRESS(outputData.bufferHeader.bufferPointer)),
+        MRETURN(),
+        OUT(outChannel),
+        JRST(THIS_ADDRESS()-3),
+        MTRIGGER_EXCEPTION(OUTPUT_ERROR))
+    ENDPROCEDURE put;
+
+    initializeBuffers(outputData, SIXBIT_ALPHABET "LIST  ");
+
+  ENDMODULE input;
+
+  VAR l1, e2: fileSpec;
+
+  initializeFileSpec
+    (SIXBIT_ALPHABET "INFILE", SIXBIT_ALPHABET "DAT", l1);
+  initializeFileSpec
+    (SIXBIT_ALPHABET "OUTFIL", SIXBIT_ALPHABET "LST", e2);
+  PDP10(
+    RESET(),
+    OPEN(inChannel,ADDRESS(inputData.openSpec)),
+    MTRIGGER_EXCEPTION(INPUT_OPEN_ERROR))
+    OPEN(outChannel,ADDRESS(outputData.openSpec)),
+    MTRIGGER_EXCEPTION(OUTPUT_OPEN_ERROR),
+    LOOKUP(inChannel,ADDRESS(l1)),
+    MTRIGGER_EXCEPTION(LOOKUP_ERROR),
+    ENTER(outChannel,ADDRESS(e2)),
+    MTRIGGER_EXCEPTION(ENTER_ERROR))
+ENDMODULE doio;
+
+MODULE filtrn
+  (* This is the main program: like NEWCHR loop on *)
+  (* pp. 486-487, paragraph 4.9.3 *)
+  IMPORT doio, DECSYSTEM10;
+
+  EXCEPTION
+    CASE EOF => finishIo() ELSE DECSYSTEM10(HALT())
+  ENDEXCEPTION;
+
+  LOOP tiny put(get()) ENDLOOP tiny;
+
+ENDMODULE filtrn;

@@ -1,0 +1,10 @@
+(* Part Three, III "Advanced Examples", p.1106 (E-13) *)
+MODULE MyStandardConventions
+  IMPORT StandardImplementationPrelude;
+  EXPORT TRANSPARENT INT,FIX,FLOAT;
+  REPRESENTATION
+    INT = INTEGER [SMALLESTINTEGER..LARGESTINTEGER];
+    FIX = FIXED [-1P..1P] SCALE 0.000001P;
+    FLOAT = FLOATING [SMALLESTREAL..LARGESTREAL]
+                      PRECISION SINGLEPRECISION;
+ENDMODULE MyStandardConventions;

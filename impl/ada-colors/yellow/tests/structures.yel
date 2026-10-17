@@ -1,0 +1,78 @@
+(* arrays, records, pointers and the denotations of their values (VI.B) *)
+MODULE Structures
+  IMPORT TextIO, StandardImplementationPrelude;
+  REPRESENTATION
+    Months = ORDERED (Jan, Feb, Mar, Apr, May, Jun, Jul, Aug, Sept, Oct, Nov, Dec);
+    Date = RECORD
+      VAR Month: Months;
+      VAR Day: INTEGER [1..31];
+      VAR Year: INTEGER [1850..2050]
+    ENDRECORD;
+    Name = ARRAY (INTEGER [1..5] OF ASCII ['A'..'Z']);
+    Person = RECORD CONST Last: Name; VAR Born: Date ENDRECORD;
+    Matrix = ARRAY (INTEGER [1..3], INTEGER [1..3] OF INTEGER64);
+    Tally = ARRAY (Months OF INTEGER64);
+    List = POINTER (Cell);
+    Cell = RECORD VAR v: INTEGER64; VAR next: List ENDRECORD;
+  VAR
+    d1, d2: Date;
+    p, q: Person;
+    m: Matrix := Matrix(0);
+    t: Tally;
+    l: List := List NIL;
+    c: List;
+
+  PROCEDURE WriteDate (CONST d: Date)
+    Write(d.Day); Write("/"); Write(d.Year);
+    RETURN
+  ENDPROCEDURE WriteDate;
+
+  PROCEDURE Fill (VAR a: Matrix; CONST base: INTEGER64)
+    FOR i: INTEGER [1..3] DO
+      FOR j: INTEGER [1..3] DO a[i, j] := (base * i) + j ENDFOR
+    ENDFOR;
+    RETURN
+  ENDPROCEDURE Fill;
+
+  FUNCTION Trace RETURNS INTEGER64 (CONST a: Matrix)
+    VAR s: INTEGER64 := 0;
+    FOR i: INTEGER [1..3] DO s := s + a[i, i] ENDFOR;
+    RETURN s
+  ENDFUNCTION Trace;
+
+  d1 := Date(Mar, 4, 1977);
+  d2 := Date(Jul, 17, 1977);
+  IF (d1.Year = d2.Year) AND (d1.Month < d2.Month) THEN Write("Mar before Jul") ENDIF;
+  WriteLn();
+  p := Person("SMITH", Date(Apr, 10, 1916));
+  q := p;
+  q.Born.Year := 1917;
+  WriteDate(p.Born); Write(" "); WriteDate(q.Born); WriteLn();
+  Write(p.Last); Write(" "); Write(p = q); Write(" "); Write(p.Last = q.Last); WriteLn();
+  Fill(m, 10);
+  Write(Trace(m)); Write(" "); Write(m[2, 3]); WriteLn();
+  t := Tally(0);
+  t[Feb] := 28;
+  t[SUCC(Feb)] := 31;
+  Write(t[Feb] + t[Mar]); WriteLn();
+  FOR i: INTEGER [1..4] DO
+    NEW(c);
+    c^ := Cell(i * 10, l);
+    l := c
+  ENDFOR;
+  WHILE l # List NIL DO
+    Write(l^.v); Write(" ");
+    l := l^.next
+  ENDWHILE;
+  WriteLn();
+  BEGIN
+    EXCEPTION CASE OUT_OF_RANGE => Write("subscript out of range"); WriteLn()
+    ENDEXCEPTION;
+    Write(m[4, 1])
+  END;
+  BEGIN
+    EXCEPTION CASE INVALID_POINTER => Write("NIL dereferenced"); WriteLn()
+    ENDEXCEPTION;
+    Write(l^.v)
+  END
+ENDMODULE Structures

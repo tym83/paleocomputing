@@ -1,0 +1,11 @@
+
+(* a user of the module of p.1112 *)
+MODULE UseTracks
+  IMPORT trackreservation, TextIO, MyStandardConventions;
+  VAR t: INT;
+  FOR i: INTEGER [1..3] DO Write(newtrack()); Write(" ") ENDFOR;
+  returntrack(1);
+  Write(newtrack()); Write(" ");
+  FOR i: INTEGER [1..1021] DO t := newtrack() ENDFOR;
+  Write(t); Write(" "); Write(newtrack()); WriteLn()
+ENDMODULE UseTracks

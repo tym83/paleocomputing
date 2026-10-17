@@ -1,0 +1,32 @@
+(* what the module of p.1111 imports: a PDP-11 character set and the *)
+(* character input and output of Modula's example; the input is a text *)
+(* of two lines and the file separator *)
+MODULE pdp11
+  IMPORT Write;
+  EXPORT TRANSPARENT pdp11chars;
+  EXPORT inchr, outchr;
+  REPRESENTATION
+    pdp11chars = ALPHABET ('fs', 'lf', 'cr', ' ', '.', 'A', 'B', 'C', 'D', 'E', 'F', 'G',
+                           'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S',
+                           'T', 'U', 'V', 'W', 'X', 'Y', 'Z');
+  VAR text: ARRAY (INTEGER [1..30] OF pdp11chars) :=
+        pdp11chars "TWO LINES'lf'OF TEXT.'lf''fs'XXXXXXXXXX";
+      pos: INTEGER [1..31] := 1;
+      echo: ARRAY (pdp11chars OF ASCII);
+      shown: ARRAY (INTEGER [1..31] OF ASCII) :=
+        ASCII "|'LF'| .ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+      i: INTEGER [1..32] := 1;
+  PROCEDURE inchr (VAR c: pdp11chars)
+    c := text[pos];
+    pos := pos + 1;
+    RETURN
+  ENDPROCEDURE inchr;
+  PROCEDURE outchr (CONST c: pdp11chars)
+    IF c # pdp11chars 'cr' THEN Write(echo[c]) ENDIF;
+    RETURN
+  ENDPROCEDURE outchr;
+  FOR c: pdp11chars DO
+    echo[c] := shown[i];
+    i := i + 1
+  ENDFOR
+ENDMODULE pdp11;

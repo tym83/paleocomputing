@@ -1,0 +1,68 @@
+(* Part Three, III.H "Hash Tables", pp.1117-1118 (E-24, E-25) *)
+MODULE NumberTableImplementation
+  IMPORT MyStandardConventions;     (* defines INT, FLOAT, etc. *)
+  EXPORT NumberTable, Search, Delete, Insert;
+  CONST
+  tablesize: INT = 763;
+  REPRESENTATION
+  tableRange = INTEGER [1..tableSize];
+  State = UNORDERED (fresh, full, deleted);
+  TableEntry =
+    RECORD
+      SELECT flag:State
+        CASE full => VAR key: INT;
+        CASE fresh, deleted => (* no components *);
+      ENDSELECT
+    ENDRECORD;
+
+  IndexSlot = RECORD CONST index, slot: tableRange ENDRECORD;
+  NumberTable = ARRAY(tableRange OF TableEntry);
+
+  FUNCTION Scan RETURNS IndexSlot
+   (CONST key: INT; table: NumberTable)
+   VAR slot: tableRange := 0;
+   FOR i: tableRange DO
+     BEGIN
+       CONST probe: tableRange = (key+i) MOD tableRange + 1;
+       SELECT Tag(table[probe])
+         CASE full =>
+           IF table[probe].key=key
+             THEN RETURN IndexSlot(probe, slot) ENDIF;
+         CASE deleted => IF slot=0 THEN slot:=probe ENDIF;
+         CASE fresh =>
+           IF slot=0 THEN slot:=probe ENDIF;
+           RETURN IndexSlot(0, slot)
+       ENDSELECT
+     END
+   ENDFOR;
+   RETURN IndexSlot(0, slot);
+  ENDFUNCTION Scan;
+
+  PROCEDURE Delete(CONST key: INT; VAR table: NumberTable)
+    CONST index = Scan(key, table).index;
+    IF index # 0
+      THEN table[index] := TableEntry(deleted) ENDIF
+  ENDPROCEDURE Delete;
+
+  PROCEDURE Insert RETURNS BOOLEAN
+    (CONST key: INT; VAR table: NumberTable)
+    (* Returns TRUE if and only if the key is in the table *)
+    (* afterward; FALSE means the item wasn't there and    *)
+    (* table was full *)
+    CONST indexSlot: IndexSlot = Scan(key, table);
+    IF indexSlot.index=0
+      THEN
+      IF indexSlot.slot#0
+        THEN table[slot]:=TableEntry(full, key); RETURN TRUE
+        ELSE RETURN FALSE
+      ENDIF
+      ELSE RETURN TRUE
+    ENDIF;
+  ENDPROCEDURE Insert;
+
+  FUNCTION Search RETURNS BOOLEAN
+    (CONST key: INT; CONST table: NumberTable)
+    RETURN Scan(key, table).index # 0
+  ENDFUNCTION Search;
+
+ENDMODULE NumberTableImplementation;

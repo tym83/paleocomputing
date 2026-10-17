@@ -1,0 +1,18 @@
+(* Part Two (Language Report) X.B.5 "Modules and Overloaded Functions", *)
+(* p.1054 (L-70); the bodies are elided in the Report *)
+MODULE M
+  EXPORT f;
+
+  MODULE N
+    EXPORT f;
+    FUNCTION f RETURNS BOOLEAN (CONST x: Colors)
+      ...body of f...
+    ENDFUNCTION f;
+  ENDMODULE N;
+
+  FUNCTION EXTENDS f RETURNS BOOLEAN (CONST x: Flavors)
+    ...body of extension...
+  ENDFUNCTION f;
+
+  ...body of M...
+ENDMODULE M

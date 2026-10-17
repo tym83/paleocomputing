@@ -1,0 +1,10 @@
+0 10 20
+mine reached the caller
+inner handler; outer handler
+range trap; n is still 0
+division by zero
+assertion
+overflow
+fell out of a procedure
+second handled, first done
+*** unhandled exception never_handled

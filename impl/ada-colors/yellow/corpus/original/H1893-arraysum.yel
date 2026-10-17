@@ -1,0 +1,10 @@
+(* Section H, team 126-02, Appendix 2 "Comparative Examples", A 2.3.4 *)
+(* YELLOW, p.1893: array summation, written by the evaluators in 1978 *)
+REPRESENTATION R = INTEGER [1..100] ;
+               R2 = FLOATING [-1.0E50..1.0E50] PRECISION 8 ;
+VAR SUM        :  R2 := 0. ;
+VAR A          :  ARRAY (R OF R2) ;
+REPRESENTATION A_ARRAYBOUNDS = INTEGER [LOW(A,1)..HIGH(A,1)] ;
+FOR I : A_ARRAYBOUNDS DO
+       SUM := SUM + A [I];
+ENDFOR ;

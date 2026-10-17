@@ -1,0 +1,7 @@
+MODULE Ambiguous
+  REPRESENTATION
+    Colors = UNORDERED (Red, Orange);
+    Flavors = UNORDERED (Lemon, Orange);
+  VAR c: Colors;
+  c := Orange
+ENDMODULE Ambiguous

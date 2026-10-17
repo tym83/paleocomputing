@@ -1,0 +1,486 @@
+
+  (* ---- modules, monitors, templates and processes (X.B-X.E) ------------------ *)
+
+  VAR
+    CurMonitor: Sym := Sym NIL;      (* the monitor around the declarations being read *)
+    ProcList: ARRAY (INTEGER [0..400] OF Node);  (* per scope: processes declared there *)
+
+  (* ---- importing and exporting ---------------------------------------------- *)
+
+  PROCEDURE Alias RETURNS Sym (CONST name: Txt; CONST target: Sym)
+    VAR a: Sym := NewSym(S_EXPORT, name);
+    a^.target := target;
+    a^.readonly := target^.readonly;
+    RETURN a
+  ENDPROCEDURE Alias;
+
+  (* the literals of the enumerations a representation is made of come with *)
+  (* it (so that a user of Coordinate can write Polar, p.1102) *)
+  PROCEDURE AddLits (VAR head: Sym; CONST r: Rep; CONST depth: INT)
+    VAR p: Node;
+        s: Sym;
+        f: Field;
+    IF (depth > 8) OR r^.opaque THEN RETURN ENDIF;
+    IF r^.kind = R_ENUM THEN
+      p := r^.lits;
+      WHILE p # Node NIL DO
+        s := FindLit(p^.name, r);
+        IF s # Sym NIL THEN
+          s := Alias(p^.name, s);
+          s^.mnext := head;
+          head := s
+        ENDIF;
+        p := p^.next
+      ENDWHILE
+    ELSIF r^.kind = R_RECORD THEN
+      f := r^.fields;
+      WHILE f # Field NIL DO
+        AddLits(head, f^.rep, depth + 1);
+        f := f^.next
+      ENDWHILE
+    ELSIF (r^.kind = R_ARRAY) OR (r^.kind = R_SET) OR (r^.kind = R_FILE) THEN
+      AddLits(head, r^.elem, depth + 1)
+    ENDIF;
+    RETURN
+  ENDPROCEDURE AddLits;
+
+  (* one item of an import or export list, as aliases added to head; inner *)
+  (* is the module whose names an export list speaks of, or NIL for imports *)
+  VAR ExportOps: INT := 0;          (* := and = exported by the module being closed *)
+
+  PROCEDURE ResolveItem (CONST it: Node; VAR head: Sym; CONST exporting: BOOLEAN)
+    VAR target, m, s: Sym;
+        name: Txt;
+        r: Rep;
+        attr: INT := it^.flag;
+    IF exporting AND (it^.text = 0) AND ((it^.name = P_ASSIGN) OR (it^.name = P_EQ) OR (it^.name = P_NE)) THEN
+      IF FindHere(it^.name) = Sym NIL THEN
+        (* the standard := = # of the opaque types go out with them (p.1156) *)
+        RETURN
+      ENDIF
+    ENDIF;
+    IF it^.text # 0 THEN
+      (* x FROM M: M's exported x *)
+      m := Real(Lookup(it^.text, it^.line));
+      IF m^.kind # S_MODULE THEN FailN(it^.line, it^.text, " is not a module") ENDIF;
+      target := m^.members;
+      WHILE (target # Sym NIL) AND (target^.name # it^.name) DO target := target^.mnext ENDWHILE;
+      IF target = Sym NIL THEN FailN(it^.line, it^.name, " is not exported by that module") ENDIF
+    ELSE
+      IF exporting THEN target := FindHere(it^.name) ELSE target := Find(it^.name) ENDIF;
+      IF target = Sym NIL THEN
+        IF exporting THEN FailN(it^.line, it^.name, " is not declared in this module")
+        ELSE FailN(it^.line, it^.name, " is not declared around this module (X.B.2)")
+        ENDIF
+      ENDIF
+    ENDIF;
+    name := it^.name;
+    IF it^.ival # 0 THEN name := it^.ival ENDIF;
+    m := Real(target);
+    IF (m^.kind = S_MODULE) AND (it^.text = 0) THEN
+      (* a module stands for the list of what it exports (X.B.2) *)
+      IF (attr # 0) OR (it^.ival # 0) THEN
+        FailS(it^.line, "a module name in a list takes no attribute and no AS (X.B.3)")
+      ENDIF;
+      s := m^.members;
+      WHILE s # Sym NIL DO
+        target := Alias(s^.name, s);
+        target^.mnext := head;
+        head := target;
+        s := s^.mnext
+      ENDWHILE;
+      (* on an import list the module comes in too, so that a module *)
+      (* nested inside may import it in turn (the template of p.1108 *)
+      (* imports MyStandardConventions wherever it is instantiated) *)
+      IF NOT exporting THEN
+        target := Alias(m^.name, m);
+        target^.mnext := head;
+        head := target
+      ENDIF;
+      RETURN
+    ENDIF;
+    s := Alias(name, target);
+    IF exporting THEN
+      (* the attributes restrict, they never relax (X.B.3, p.1052) *)
+      IF (m^.kind = S_REP) OR (m^.kind = S_TYPE) THEN
+        IF (attr = W_READONLY) OR (attr = W_VAR) THEN FailS(it^.line, "READONLY and VAR are for variables") ENDIF;
+        IF (attr # W_TRANSPARENT) OR m^.rep^.opaque THEN
+          (* OPAQUE is assumed: the outside sees no components and no := = # *)
+          r := CopyRep(m^.rep);
+          r^.opaque := TRUE;
+          r^.opaqueops := ExportOps;
+          s^.target := NewSym(m^.kind, m^.name);
+          s^.target^.rep := r;
+          s^.target^.decl := m^.decl
+        ELSE
+          AddLits(head, m^.rep, 0)
+        ENDIF
+      ELSIF m^.kind = S_VAR THEN
+        IF (attr = W_OPAQUE) OR (attr = W_TRANSPARENT) THEN FailS(it^.line, "OPAQUE and TRANSPARENT are for types") ENDIF;
+        IF attr # W_VAR THEN s^.readonly := TRUE ENDIF
+      ELSIF attr # 0 THEN
+        FailS(it^.line, "an attribute is for a type, a representation or a variable")
+      ENDIF;
+      IF (m^.kind = S_VAR) AND (m^.rep^.kind = R_SIGNAL) THEN
+        FailS(it^.line, "a signal may not be exported from its monitor (X.E.4)")
+      ENDIF
+    ELSIF (m^.kind = S_REP) OR (m^.kind = S_TYPE) THEN
+      AddLits(head, m^.rep, 0)
+    ENDIF;
+    s^.mnext := head;
+    head := s;
+    RETURN
+  ENDPROCEDURE ResolveItem;
+
+  PROCEDURE DefineAll (CONST list: Sym; CONST line: INT)
+    VAR s, next, old: Sym := list;
+    WHILE s # Sym NIL DO
+      next := s^.mnext;
+      old := FindHere(s^.name);
+      IF (old = Sym NIL) OR (Real(old) # Real(s)) THEN
+        IF (old # Sym NIL) AND (Real(s)^.kind = S_LIT) AND (Real(old)^.kind = S_LIT) THEN
+          Define(s, line)
+        ELSIF old = Sym NIL THEN
+          Define(s, line)
+        ELSE
+          FailN(line, s^.name, " comes into this scope twice")
+        ENDIF
+      ENDIF;
+      s := next
+    ENDWHILE;
+    RETURN
+  ENDPROCEDURE DefineAll;
+
+  (* ---- modules (X.B) and monitors (X.E.3) ------------------------------------------- *)
+
+  PROCEDURE CompileModule (CONST d: Node)
+    VAR imports, exports, it, m, s, saveMon, mon, next: Sym;
+        item, p: Node;
+        saveVis: INT;
+        t: Txt;
+        monitorHere: BOOLEAN := FALSE;
+    (* imports are names of the scope around the module *)
+    imports := Sym NIL;
+    item := d^.a;
+    WHILE item # Node NIL DO
+      ResolveItem(item, imports, FALSE);
+      item := item^.next
+    ENDWHILE;
+    saveMon := CurMonitor;
+    IF (d^.flag = 1) AND (CurMonitor = Sym NIL) THEN
+      (* a monitor: its lock; a monitor inside a monitor adds no exclusion *)
+      mon := NewSym(S_VAR, d^.name);
+      mon^.level := Level;
+      mon^.cname := Fresh("mon");
+      mon^.rep := RVoid;
+      DeclStorage(T("ymon"), mon^.cname);
+      Emit(Join(T("y_mon_init(&"), Path(Level, mon^.cname), T(");")));
+      CurMonitor := mon;
+      monitorHere := TRUE
+    ENDIF;
+    OpenScope(TRUE);
+    ProcList[Depth] := Node NIL;
+    saveVis := VisibleFrom;
+    VisibleFrom := Depth;
+    DefineAll(imports, d^.line);
+    Declarations(d^.c^.a);
+    (* the body initializes the module, inside the monitor if it is one *)
+    IF monitorHere THEN Emit(Join(T("y_mon_enter(&"), Path(CurMonitor^.level, CurMonitor^.cname), T(");"))) ENDIF;
+    BTop := BTop + 1;
+    BlockFrame[BTop] := 0;
+    BlockStatements(d^.c);
+    BTop := BTop - 1;
+    IF monitorHere THEN Emit(Join(T("y_mon_leave(&"), Path(CurMonitor^.level, CurMonitor^.cname), T(");"))) ENDIF;
+    (* exports are names of the module; := = # first, as they apply to *)
+    (* every opaque type exported with them *)
+    ExportOps := 0;
+    item := d^.b;
+    WHILE item # Node NIL DO
+      IF (item^.text = 0) AND (FindHere(item^.name) = Sym NIL) THEN
+        IF item^.name = P_ASSIGN THEN ExportOps := ExportOps + 1 ENDIF;
+        IF (item^.name = P_EQ) OR (item^.name = P_NE) THEN
+          IF (ExportOps DIV 2) = 0 THEN ExportOps := ExportOps + 2 ENDIF
+        ENDIF
+      ENDIF;
+      item := item^.next
+    ENDWHILE;
+    exports := Sym NIL;
+    item := d^.b;
+    WHILE item # Node NIL DO
+      ResolveItem(item, exports, TRUE);
+      item := item^.next
+    ENDWHILE;
+    p := ProcList[Depth];
+    VisibleFrom := saveVis;
+    CloseScope();
+    (* processes of a module hold the scope around it (X.E.1) *)
+    WHILE p # Node NIL DO
+      item := p^.next;
+      p^.next := ProcList[Depth];
+      ProcList[Depth] := p;
+      p := item
+    ENDWHILE;
+    CurMonitor := saveMon;
+    m := NewSym(S_MODULE, d^.name);
+    m^.members := exports;
+    Define(m, d^.line);
+    (* the exports are names of the scope around; a list of aliases is kept *)
+    (* in the module for IMPORT M and FROM M *)
+    s := exports;
+    exports := Sym NIL;
+    WHILE s # Sym NIL DO
+      next := s^.mnext;
+      it := Alias(s^.name, s);
+      it^.readonly := s^.readonly;
+      it^.mnext := exports;
+      exports := it;
+      s := next
+    ENDWHILE;
+    m^.members := exports;
+    s := exports;
+    WHILE s # Sym NIL DO
+      next := Alias(s^.name, s);
+      next^.readonly := s^.readonly;
+      IF FindHere(s^.name) = Sym NIL THEN Define(next, d^.line)
+      ELSIF (FindHere(s^.name)^.kind = S_EXPORT) AND (Real(FindHere(s^.name)) # Real(s)) THEN Define(next, d^.line)
+      ELSIF Real(s)^.kind # S_LIT THEN FailN(d^.line, s^.name, " is exported into a scope that has it already")
+      ENDIF;
+      s := s^.mnext
+    ENDWHILE;
+    RETURN
+  ENDPROCEDURE CompileModule;
+
+  (* ---- module templates and their instances (X.C-D) ---------------------------------- *)
+
+  PROCEDURE DeclareTemplate (CONST d: Node)
+    VAR s: Sym := NewSym(S_TEMPLATE, d^.name);
+    s^.decl := d;
+    Define(s, d^.line);
+    RETURN
+  ENDPROCEDURE DeclareTemplate;
+
+  (* the module of the template, with the actuals put for the formals *)
+  (* throughout (p.1055): its tokens are copied with the names replaced *)
+  (* and read again *)
+  PROCEDURE Instantiate (CONST d: Node)
+    VAR s: Sym := Real(Lookup(d^.name, d^.line));
+        t: Node;
+        f, a: Node;
+        start, saveT, kind, val: INT;
+        n: Node;
+    IF s^.kind # S_TEMPLATE THEN FailN(d^.line, d^.name, " is not a template") ENDIF;
+    t := s^.decl;
+    IF Count(t^.a) # Count(d^.a) THEN FailN(d^.line, d^.name, ": the number of actuals is wrong") ENDIF;
+    start := NTok + 1;
+    FOR i: INTEGER [t^.ival..t^.flag - 1] DO
+      kind := TKind[i];
+      val := TVal[i];
+      IF kind = K_ID THEN
+        f := t^.a;
+        a := d^.a;
+        WHILE f # Node NIL DO
+          IF (f^.name = val) AND (kind = K_ID) THEN
+            IF a^.flag = 1 THEN
+              kind := K_INT;
+              val := a^.ival
+            ELSE
+              val := a^.name;
+              IF val <= NKW THEN kind := K_KW ELSIF val <= NPUNCT THEN kind := K_OP ENDIF
+            ENDIF
+          ENDIF;
+          f := f^.next;
+          a := a^.next
+        ENDWHILE
+      ENDIF;
+      NTok := NTok + 1;
+      TKind[NTok] := kind;
+      TVal[NTok] := val;
+      TLine[NTok] := TLine[i]
+    ENDFOR;
+    NTok := NTok + 1;
+    TKind[NTok] := K_EOF;
+    TVal[NTok] := 0;
+    TLine[NTok] := d^.line;
+    saveT := TPos;
+    TPos := start;
+    n := ParseModule();
+    TPos := saveT;
+    CompileModule(n);
+    RETURN
+  ENDPROCEDURE Instantiate;
+
+  (* ---- processes (X.E.1-2, XIV.X.2) -------------------------------------------------- *)
+
+  (* a process declaration: its routine, and the count of its activations *)
+  (* that the scope waits for before it ends *)
+  PROCEDURE DeclareProcess (CONST d: Node)
+    VAR s: Sym := d^.sym;
+        p: Node;
+    s^.monitor := CurMonitor;
+    DeclStorage(T("rt_taskdecl"), Join(s^.cname, T("_d"), 0));
+    p := NewNode(N_NAMEL, d^.line);
+    p^.sym := s;
+    p^.next := ProcList[Depth];
+    ProcList[Depth] := p;
+    RETURN
+  ENDPROCEDURE DeclareProcess;
+
+  (* the scope ends when its processes have ended (X.E.1) *)
+  PROCEDURE AwaitProcesses ()
+    VAR p: Node := ProcList[Depth];
+    WHILE p # Node NIL DO
+      Emit(Join(T("rt_await_decl(&"), Path(p^.sym^.level - 1, Join(p^.sym^.cname, T("_d"), 0)), T(");")));
+      p := p^.next
+    ENDWHILE;
+    ProcList[Depth] := Node NIL;
+    RETURN
+  ENDPROCEDURE AwaitProcesses;
+
+  (* a process activation: a new frame, filled with the actuals, and a new *)
+  (* process running the body on it (IX.A.2, X.E.2) *)
+  PROCEDURE Activate (CONST n: Node; CONST s: Sym)
+    VAR base, nargs, i: INT;
+        p: Param;
+        pf, t, c, pc, lim, pr: Txt;
+        d: Node := s^.decl;
+        r: Rep;
+    CompileArgs(n^.a, s, base, nargs);
+    IF nargs # s^.nparams THEN FailN(n^.line, s^.name, ": the number of actual parameters is wrong") ENDIF;
+    pf := Fresh("pf");
+    Emit(Join(T("{ struct "), s^.members^.name, Join(T(" *"), pf, Join(T(" = rt_alloc(sizeof *"), pf, T(");")))));
+    IF s^.level > 1 THEN
+      Emit(Join(pf, T("->up = "), Join(FramePtr(s^.level - 1), T(";"), 0)))
+    ENDIF;
+    p := s^.params;
+    i := base + 1;
+    WHILE p # Param NIL DO
+      IF NOT Fits(p^.rep, ArgRep[i]) THEN TypeClash(ArgNode[i]^.line, p^.rep, ArgRep[i]) ENDIF;
+      pc := Join(pf, T("->"), p^.cname);
+      IF p^.cls = C_VAR THEN
+        IF NOT IsVariable(ArgNode[i]) THEN FailN(ArgNode[i]^.line, p^.name, ": the actual of a VAR parameter must be a variable") ENDIF;
+        Emit(Join(pc, T(" = &"), Join(ArgCode[i], T(";"), 0)))
+      ELSIF Deep(p^.rep) THEN
+        (* the process may outlive the value: it gets its own copy *)
+        t := Fresh("t");
+        Emit(Join(T("{ "), CType(p^.rep), Join(T(" "), t, Join(T(" = "), ArgCode[i], T(";")))));
+        IF p^.rep^.kind = R_UARRAY THEN
+          Emit(Join(T("y_copy(y_desc_vector("), DescOf(p^.rep^.elem), Join(T("), &"), pc, Join(T(", &"), t, T("); }")))))
+        ELSE
+          Emit(Join(T("y_copy("), DescOf(p^.rep), Join(T(", &"), pc, Join(T(", &"), t, T("); }")))))
+        ENDIF
+      ELSE
+        Emit(Join(pc, T(" = "), Join(Convert(ArgCode[i], p^.rep, ArgRep[i]), T(";"), 0)))
+      ENDIF;
+      i := i + 1;
+      p := p^.next
+    ENDWHILE;
+    ArgTop := base;
+    lim := T("0");
+    IF d^.e # Node NIL THEN
+      Expr(d^.e, RInt, lim, r);
+      CheckType(d^.line, RInt, r)
+    ENDIF;
+    pr := T("0, 0");
+    IF d^.d # Node NIL THEN
+      Expr(d^.d, RInt, c, r);
+      CheckType(d^.line, RInt, r);
+      pr := Join(T("1, "), c, 0)
+    ENDIF;
+    SB();
+    SA("y_create(&");
+    ST(Path(s^.level - 1, Join(s^.cname, T("_d"), 0)));
+    SA(", ");
+    ST(lim);
+    SA(", ");
+    ST(pr);
+    SA(", ");
+    ST(s^.cname);
+    SA(", ");
+    ST(pf);
+    SA("); }");
+    t := SE();
+    Emit(t);
+    RETURN
+  ENDPROCEDURE Activate;
+
+  PROCEDURE MonitorPath RETURNS Txt (CONST m: Sym)
+    RETURN Join(T("&"), Path(m^.level, m^.cname), 0)
+  ENDPROCEDURE MonitorPath;
+
+  (* a monitor procedure or a process of a monitor holds the monitor while *)
+  (* it runs; an exception that leaves it lets the monitor go (X.E.3) *)
+  PROCEDURE EnterMonitor (CONST s: Sym)
+    VAR f: Txt;
+    IF s^.kind = S_ROUTINE THEN s^.monitor := CurMonitor ENDIF;
+    IF s^.monitor = Sym NIL THEN RETURN ENDIF;
+    Emit(Join(T("y_mon_enter("), MonitorPath(s^.monitor), T(");")));
+    f := Fresh("mf");
+    HasHandler := TRUE;
+    Emit(Join(T("rt_frame "), f, T(";")));
+    SB();
+    SA("if (!RT_TRY(");
+    ST(f);
+    SA(")) { RT_POP(");
+    ST(f);
+    SA("); ");
+    IF s^.kind = S_PROCESS THEN SA("y_mon_drop(") ELSE SA("y_mon_leave(") ENDIF;
+    ST(MonitorPath(s^.monitor));
+    SA("); rt_raise(rt_xcur); }");
+    Emit(SE());
+    XTop := XTop + 1;
+    XFrames[XTop] := f;
+    RETURN
+  ENDPROCEDURE EnterMonitor;
+
+  PROCEDURE LeaveMonitor ()
+    IF CurRoutine = Sym NIL THEN RETURN ENDIF;
+    IF CurRoutine^.monitor = Sym NIL THEN RETURN ENDIF;
+    IF CurRoutine^.kind = S_PROCESS THEN
+      Emit(Join(T("y_mon_drop("), MonitorPath(CurRoutine^.monitor), T(");")))
+    ELSE
+      Emit(Join(T("y_mon_leave("), MonitorPath(CurRoutine^.monitor), T(");")))
+    ENDIF;
+    RETURN
+  ENDPROCEDURE LeaveMonitor;
+
+  PROCEDURE TerminateStatement (CONST s: Node)
+    IF (CurRoutine = Sym NIL) OR (CurRoutine^.kind # S_PROCESS) THEN
+      FailS(s^.line, "TERMINATE_PROCESS ends a process (IX.A.7)")
+    ENDIF;
+    AwaitProcesses();
+    LeaveMonitor();
+    PopTo(XBase);
+    EmitS("return;");
+    RETURN
+  ENDPROCEDURE TerminateStatement;
+
+  (* ---- signals (X.E.4) ----------------------------------------------------------- *)
+
+  PROCEDURE DeclareSignal (CONST s: Sym; CONST line: INT)
+    IF CurMonitor = Sym NIL THEN FailS(line, "signal variables are declared in a monitor (X.E.4)") ENDIF;
+    s^.rep := CopyRep(s^.rep);
+    s^.rep^.monitor := CurMonitor;
+    Emit(Join(T("y_sig_init(&"), SymPath(s), Join(T(", "), MonitorPath(CurMonitor), T(");"))));
+    RETURN
+  ENDPROCEDURE DeclareSignal;
+
+  (* a device signal (XIV.VII): the device at that location sends it. The *)
+  (* runtime simulates the PDP-11 line clock at vector 100 (octal), which *)
+  (* the Report's examples use; at any other location the signal is sent *)
+  (* only by software *)
+  PROCEDURE DeviceSignal (CONST s: Sym; CONST at: Node)
+    VAR ok: BOOLEAN;
+        v: INT;
+        t: Txt;
+    Manifest(at, ok, v);
+    IF NOT ok THEN FailS(at^.line, "an AT location is a manifest constant (XIV.VII)") ENDIF;
+    SB();
+    SA("y_device(&");
+    ST(SymPath(s));
+    SA(", ");
+    SI(v);
+    SA(");");
+    t := SE();
+    Emit(t);
+    RETURN
+  ENDPROCEDURE DeviceSignal;

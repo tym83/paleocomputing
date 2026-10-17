@@ -1,0 +1,34 @@
+(* Part Three, III.A "Real Time", p.1107 (E-14) *)
+MONITOR RealTime
+  IMPORT MyStandardConventions;
+  EXPORT time, tick, Pause;
+
+  REPRESENTATION word =
+    ARRAY(INTEGER[1..WORDLENGTH()] OF BOOLEAN) PACKED;
+  VAR time: INT;
+      tick: SIGNAL;
+      lcs AT BASE8 177546: word;
+        (* line clock status. *)
+      clockSignal AT BASE8 100: SIGNAL;
+        (* this is the signal set by hardware. *)
+
+  PROCEDURE Pause(CONST n: INT)
+    VAR delay: INT := n;
+    WHILE delay >0 DO
+      WAIT(tick); delay := delay - 1;
+    ENDWHILE;
+  ENDPROCEDURE Pause;
+
+  PROCESS Clock() PRIORITY 6
+    lcs[6] := TRUE;
+    LOOP forever
+      WAIT(clocksignal);
+      time := time + 1;
+      WHILE AWAITED(tick) DO SEND(tick) ENDWHILE
+    ENDLOOP forever;
+  ENDPROCESS clock;
+
+  (* body of module realtime follows. *)
+  time := 0; Clock();
+
+ENDMONITOR RealTime;

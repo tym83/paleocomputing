@@ -325,3 +325,123 @@ void rt_b_terminate(rt_b_act *a);
 void rt_b_priority(rt_b_act *a, rt_int p);
 rt_int rt_b_clock(rt_b_act *a);                /* seconds, scale 20 */
 void rt_b_wait(rt_int v, rt_int scale);        /* seconds at the scale */
+
+
+/* YELLOW additions */
+/* Runtime support for the YELLOW translator (SRI International, 1978). Nothing
+ * above is changed; these declarations only add to the runtime. */
+#ifndef PALEO_YELLOW_H
+#define PALEO_YELLOW_H
+
+/* ---- arrays: a value is a descriptor of its bounds and a buffer it owns ---- */
+#define Y_MAXD 4
+typedef struct {
+  rt_int lo[Y_MAXD], hi[Y_MAXD];
+  void *p;
+} yarr;
+
+/* A run-time description of a representation, enough to make, copy and
+ * compare values of it. Structured representations get one when they are
+ * elaborated, since their bounds are scope-entry constants (L-34). */
+typedef struct ydesc ydesc;
+enum { YK_INT, YK_BYTE, YK_FLOAT, YK_PTR, YK_SET, YK_ARRAY, YK_RECORD, YK_OPAQUE };
+struct ydesc {
+  int kind;
+  size_t size;                                 /* bytes of one value */
+  int deep;                                    /* holds array buffers */
+  int nd;                                      /* arrays: dimensions */
+  rt_int lo[Y_MAXD], hi[Y_MAXD];
+  const ydesc *elem;
+  int nf;                                      /* records: fields */
+  const size_t *off;
+  const ydesc *const *fd;
+};
+extern const ydesc y_d_int, y_d_byte, y_d_float, y_d_ptr, y_d_set, y_d_opaque;
+void y_desc_array(ydesc *d, int nd, const rt_int *lo, const rt_int *hi, const ydesc *elem);
+void y_desc_record(ydesc *d, size_t size, int nf, const size_t *off, const ydesc *const *fd);
+void y_init(const ydesc *d, void *v);          /* a fresh value: zeros, own buffers */
+void y_copy(const ydesc *d, void *dst, const void *src); /* deep copy, dst is fresh */
+void y_store(const ydesc *d, void *dst, const void *src); /* assignment: bounds must agree */
+int y_eq(const ydesc *d, const void *a, const void *b);
+yarr y_str(const char *s, rt_int n);           /* a string literal, 1 .. n */
+rt_int y_count(yarr a, int nd);                /* number of components */
+yarr y_fill(const ydesc *d, const void *v);    /* T(v): every component v */
+void *y_elem_at(yarr a, const ydesc *d, rt_int k); /* k-th component, row-major */
+rt_int y_ix1(yarr a, rt_int i);
+rt_int y_ix2(yarr a, rt_int i, rt_int j);
+rt_int y_ix3(yarr a, rt_int i, rt_int j, rt_int k);
+rt_int y_ix4(yarr a, rt_int i, rt_int j, rt_int k, rt_int l);
+rt_int y_low(yarr a, rt_int dim);
+rt_int y_high(yarr a, rt_int dim);
+void y_move(yarr *dst, rt_int at, yarr src, rt_int i, rt_int j, const ydesc *elem);
+
+/* ---- sets over any integer or scalar range (L-33) ---------------------- */
+typedef struct {
+  rt_int lo, hi;
+  uint64_t *w;
+} yset;
+yset y_set_new(rt_int lo, rt_int hi);          /* the empty set */
+yset y_set_add(yset s, rt_int e);              /* a new set with e */
+int y_set_in(rt_int e, yset s);
+yset y_set_union(yset a, yset b);
+yset y_set_diff(yset a, yset b);
+yset y_set_inter(yset a, yset b);
+yset y_set_xor(yset a, yset b);
+yset y_set_compl(yset a);
+int y_set_eq(yset a, yset b);
+
+/* ---- files (Section XII): OPEN CLOSE GET PUT CHECK_EOF ------------------- */
+typedef struct yfile yfile;
+void y_open(yfile **f, yarr name, rt_int mode); /* 0 READ, 1 WRITE, 2 APPEND */
+void y_close(yfile **f);
+void y_get(yfile **f, void *dst, size_t n);
+void y_put(yfile **f, const void *src, size_t n);
+int y_check_eof(yfile **f);
+extern int Y_X_EOF, Y_X_FILE;
+
+/* ---- processes, monitors and signals (Section X.E) ----------------------- */
+typedef struct {
+  rt_task *owner;
+  int depth;                                   /* nested monitor calls */
+  rt_waiter *q;                                /* processes waiting to enter */
+  rt_waiter *urgent;                           /* senders waiting to re-enter */
+} ymon;
+typedef struct {
+  ymon *mon;
+  rt_waiter *q;                                /* by delay rank, then FIFO */
+} ysig;
+void y_mon_init(ymon *m);
+void y_mon_enter(ymon *m);
+void y_mon_leave(ymon *m);
+void y_mon_drop(ymon *m);                      /* an exception leaves the monitor */
+void y_sig_init(ysig *s, ymon *m);
+void y_wait(ysig *s, rt_int rank);
+void y_send(ysig *s);
+int y_awaited(ysig *s);
+void y_create(rt_taskdecl *d, rt_int limit, int has_prio, rt_int prio,
+              void (*fn)(void *), void *frame);
+rt_int y_self(void);                           /* PROCESS_IDENTITY */
+void y_change_priority(rt_int id, rt_int p);
+void y_raise_termination(rt_int id);
+extern int Y_X_INSTANCES;
+
+/* ---- semaphores (XIV): binary, CLAIM RELEASE CONDITIONAL_CLAIM ----------- */
+int y_cond_claim(rt_lock *l);
+
+/* ---- conversions and text helpers ---------------------------------------- */
+rt_int y_floor(double v);
+rt_int y_ceiling(double v);
+rt_int y_near_integer(double v);               /* ties away from zero */
+double y_near_fixed(double v, double scale);
+double y_fixed(double v, double lo, double hi, double scale); /* checks a FIXED */
+double y_fixed_div(double a, double b, double scale);
+rt_int y_fmt_int(rt_int v, unsigned char *buf, rt_int cap);
+rt_int y_fmt_float(double v, rt_int digits, unsigned char *buf, rt_int cap);
+rt_int y_fmt_fixed(double v, rt_int decimals, unsigned char *buf, rt_int cap);
+void y_lang(void);           /* the YELLOW exception names; call before rt_init */
+extern int Y_X_FIXED, Y_X_ZERO_DENOM, Y_X_NO_RETURN;
+const ydesc *y_desc_vector(const ydesc *elem);
+void y_device(ysig *s, rt_int address);   /* a SIGNAL AT a device location */
+extern const ydesc y_d_str;
+
+#endif

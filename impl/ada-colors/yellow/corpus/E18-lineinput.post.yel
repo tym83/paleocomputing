@@ -1,0 +1,13 @@
+
+(* a user of the module of p.1111: the lines are read and echoed *)
+MODULE Lines
+  IMPORT lineinput, pdp11chars, TextIO;
+  VAR x: pdp11chars;
+  newfile();
+  WHILE NOT eof DO
+    newline();
+    Write(ASCII "<"); Write(lno); Write(ASCII ">");
+    WHILE NOT eoln DO read(x) ENDWHILE
+  ENDWHILE;
+  WriteLn()
+ENDMODULE Lines

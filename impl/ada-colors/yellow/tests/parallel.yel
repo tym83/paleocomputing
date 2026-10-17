@@ -1,0 +1,49 @@
+(* semaphores (XIV.XI.1), process identities, priorities and termination *)
+(* (XIV.XI.3), and a SIMULATED_TIME block (X.E.5) *)
+MODULE Parallel
+  IMPORT TextIO, StandardImplementationPrelude;
+  VAR s: SEMAPHORE;
+      shared: INTEGER64 := 0;
+      victim: INTEGER64 := 0;
+
+  SIMULATED_TIME BEGIN
+    PROCESS Worker (CONST name: ASCII; CONST rounds: INTEGER64)
+      FOR i: INTEGER [1..rounds] DO
+        CLAIM(s);
+        shared := shared + 1;
+        DELAY(3);
+        Write(name); Write(shared); Write(" ");
+        RELEASE(s);
+        DELAY(1)
+      ENDFOR;
+      TERMINATE_PROCESS
+    ENDPROCESS Worker;
+
+    PROCESS Sleeper ()
+      EXCEPTION CASE PROCESS_TERMINATION =>
+        Write("sleeper terminated at "); Write(CLOCK_TIME()); WriteLn();
+        TERMINATE_PROCESS
+      ENDEXCEPTION;
+      victim := PROCESS_IDENTITY();
+      DELAY(1000);
+      Write("sleeper woke"); WriteLn();
+      TERMINATE_PROCESS
+    ENDPROCESS Sleeper;
+
+    PROCESS Killer ()
+      DELAY(50);
+      RAISE_PROCESS_TERMINATION(victim);
+      TERMINATE_PROCESS
+    ENDPROCESS Killer;
+
+    Worker('x', 3);
+    Worker('y', 3);
+    DELAY(30);
+    WriteLn();
+    Write(CONDITIONAL_CLAIM(s)); Write(CONDITIONAL_CLAIM(s)); RELEASE(s); WriteLn();
+    Sleeper();
+    Killer();
+    CHANGE_PRIORITY(PROCESS_IDENTITY(), 1)
+  END;
+  Write("all done at "); Write(CLOCK_TIME()); WriteLn()
+ENDMODULE Parallel

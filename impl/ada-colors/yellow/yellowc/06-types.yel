@@ -1,0 +1,593 @@
+
+  (* ---- representations (Section VI, VII.D-H) ------------------------------- *)
+  (* A Rep is a representation; its tid names its type. Two declarations *)
+  (* have the same type when their representations derive from the same type *)
+  (* identifier (VII.G, p.1039): INTEGER [1..5] and INTEGER [0..9] are both *)
+  (* INTEGER, but two RECORD ... ENDRECORD written apart are different types. *)
+
+  VAR
+    RInt, RBool, RAscii, RVoid, RNil, RStr, RFloat, RFixed, RSignal, RSem, RAny: Rep;
+    Pending: Node := Node NIL;       (* pointer representations waiting for their base *)
+
+  PROCEDURE NewRep RETURNS Rep (CONST kind: INT; CONST tid: Txt)
+    VAR r: Rep;
+    NEW(r);
+    r^ := RepRec(kind, tid, tid, 0, 0, 0, 0, FALSE, 0, 0, Rep NIL, Rep NIL, 0, Rep NIL,
+                 Node NIL, 0, Field NIL, Field NIL, 0, 0, 0, FALSE, FALSE, FALSE, 0, FALSE, 0, 0,
+                 Sym NIL, 0);
+    r^.serial := NewSerial();
+    RETURN r
+  ENDPROCEDURE NewRep;
+
+  (* a new representation of the same type *)
+  PROCEDURE CopyRep RETURNS Rep (CONST r: Rep)
+    VAR c: Rep;
+    NEW(c);
+    c^ := r^;
+    c^.serial := NewSerial();
+    RETURN c
+  ENDPROCEDURE CopyRep;
+
+  FUNCTION IsDiscrete RETURNS BOOLEAN (CONST r: Rep)
+    RETURN (r^.kind = R_INT) OR (r^.kind = R_BOOL) OR (r^.kind = R_ENUM) OR (r^.kind = R_ALPHA)
+  ENDFUNCTION IsDiscrete;
+
+  FUNCTION IsNumeric RETURNS BOOLEAN (CONST r: Rep)
+    RETURN (r^.kind = R_INT) OR (r^.kind = R_FIXED) OR (r^.kind = R_FLOAT)
+  ENDFUNCTION IsNumeric;
+
+  FUNCTION IsArrayLike RETURNS BOOLEAN (CONST r: Rep)
+    RETURN (r^.kind = R_ARRAY) OR (r^.kind = R_UARRAY) OR (r^.kind = R_STR)
+  ENDFUNCTION IsArrayLike;
+
+  (* a string literal (any one-dimensional array of an alphabet) *)
+  FUNCTION IsString RETURNS BOOLEAN (CONST r: Rep)
+    IF r^.kind = R_STR THEN RETURN TRUE ENDIF;
+    IF (r^.kind = R_ARRAY) AND (r^.nidx = 1) THEN RETURN r^.elem^.kind = R_ALPHA ENDIF;
+    IF (r^.kind = R_UARRAY) AND (r^.nidx = 1) THEN RETURN r^.elem^.kind = R_ALPHA ENDIF;
+    RETURN FALSE
+  ENDFUNCTION IsString;
+
+  PROCEDURE Deep RETURNS BOOLEAN (CONST r: Rep)
+    IF (r^.kind = R_ARRAY) OR (r^.kind = R_UARRAY) OR (r^.kind = R_STR) THEN RETURN TRUE ENDIF;
+    RETURN (r^.kind = R_RECORD) AND r^.deep
+  ENDPROCEDURE Deep;
+
+  (* the C type of a value *)
+  PROCEDURE CType RETURNS Txt (CONST r: Rep)
+    VAR k: INT := r^.kind;
+    IF (k = R_INT) OR (k = R_BOOL) OR (k = R_ENUM) THEN RETURN T("rt_int") ENDIF;
+    IF k = R_ALPHA THEN RETURN T("unsigned char") ENDIF;
+    IF (k = R_FLOAT) OR (k = R_FIXED) THEN RETURN T("double") ENDIF;
+    IF (k = R_ARRAY) OR (k = R_UARRAY) OR (k = R_STR) THEN RETURN T("yarr") ENDIF;
+    IF k = R_RECORD THEN RETURN r^.cname ENDIF;
+    IF (k = R_PTR) OR (k = R_NIL) THEN RETURN T("void *") ENDIF;
+    IF k = R_FILE THEN RETURN T("yfile *") ENDIF;
+    IF k = R_SET THEN RETURN T("yset") ENDIF;
+    IF k = R_SIGNAL THEN RETURN T("ysig") ENDIF;
+    IF k = R_SEM THEN RETURN T("rt_lock") ENDIF;
+    RETURN T("void")
+  ENDPROCEDURE CType;
+
+  (* the C text of the descriptor of a representation *)
+  PROCEDURE DescOf RETURNS Txt (CONST r: Rep)
+    VAR k: INT := r^.kind;
+    IF (k = R_INT) OR (k = R_BOOL) OR (k = R_ENUM) THEN RETURN T("&y_d_int") ENDIF;
+    IF k = R_ALPHA THEN RETURN T("&y_d_byte") ENDIF;
+    IF (k = R_FLOAT) OR (k = R_FIXED) THEN RETURN T("&y_d_float") ENDIF;
+    IF (k = R_PTR) OR (k = R_NIL) THEN RETURN T("&y_d_ptr") ENDIF;
+    IF k = R_SET THEN RETURN T("&y_d_set") ENDIF;
+    IF (k = R_ARRAY) OR (k = R_RECORD) THEN
+      SB();
+      SA("&");
+      ST(Path(r^.dlevel, r^.dname));
+      RETURN SE()
+    ENDIF;
+    IF k = R_STR THEN RETURN T("&y_d_str") ENDIF;
+    RETURN T("&y_d_opaque")
+  ENDPROCEDURE DescOf;
+
+  (* storage for the run-time descriptor of r, at this level *)
+  PROCEDURE NewDesc (CONST r: Rep)
+    r^.dname := Fresh("yd_");
+    r^.dlevel := Level;
+    DeclStorage(T("ydesc"), r^.dname);
+    RETURN
+  ENDPROCEDURE NewDesc;
+
+  (* types are equal when their identities are (VII.G) *)
+  PROCEDURE SameType RETURNS BOOLEAN (CONST a, b: Rep)
+    IF a^.tid = b^.tid THEN RETURN TRUE ENDIF;
+    IF (a^.kind = R_STR) AND IsString(b) THEN RETURN TRUE ENDIF;
+    IF (b^.kind = R_STR) AND IsString(a) THEN RETURN TRUE ENDIF;
+    IF (a^.kind = R_NIL) AND (b^.kind = R_PTR) THEN RETURN TRUE ENDIF;
+    IF (b^.kind = R_NIL) AND (a^.kind = R_PTR) THEN RETURN TRUE ENDIF;
+    IF (a^.kind = R_ANY) OR (b^.kind = R_ANY) THEN RETURN TRUE ENDIF;
+    RETURN FALSE
+  ENDPROCEDURE SameType;
+
+  PROCEDURE TypeClash (CONST line: INT; CONST want, got: Rep)
+    VAR t: Txt;
+    SB();
+    SA("type conflict: ");
+    ST(want^.tname);
+    SA(" expected, ");
+    ST(got^.tname);
+    SA(" found");
+    t := SE();
+    Fail(line, t);
+    RETURN
+  ENDPROCEDURE TypeClash;
+
+  PROCEDURE CheckType (CONST line: INT; CONST want, got: Rep)
+    IF NOT SameType(want, got) THEN TypeClash(line, want, got) ENDIF;
+    RETURN
+  ENDPROCEDURE CheckType;
+
+  (* a representation fit to declare entities with: numbers need a range *)
+  (* (VI.A.1, "an explicit representation is always required") *)
+  PROCEDURE CheckRepresented (CONST r: Rep; CONST line: INT)
+    IF r^.abstract THEN FailN(line, r^.tname, " is a type, not a representation (VI.A.1)") ENDIF;
+    RETURN
+  ENDPROCEDURE CheckRepresented;
+
+  (* ---- elaborating a representation from its tree ------------------------------- *)
+
+  (* a bound that is not a literal is a scope-entry constant (VI.C): it is *)
+  (* computed once where the representation is elaborated, into storage *)
+  (* at that level, so that a routine nested inside reaches it by its path *)
+  FUNCTION IsLiteralNode RETURNS BOOLEAN (CONST n: Node)
+    IF (n^.kind = N_INT) OR (n^.kind = N_FLOAT) OR (n^.kind = N_FIXED) OR (n^.kind = N_CHARLIT) THEN
+      RETURN n^.d = Node NIL
+    ENDIF;
+    IF (n^.kind = N_NEG) OR (n^.kind = N_PAREN) THEN RETURN IsLiteralNode(n^.a) ENDIF;
+    RETURN FALSE
+  ENDFUNCTION IsLiteralNode;
+
+  PROCEDURE StoreBounds (CONST r: Rep; CONST ct: ARRAY (1 DIMENSIONS OF ASCII))
+    VAR lo, hi: Txt;
+    lo := Fresh("lo");
+    hi := Fresh("hi");
+    DeclStorage(T(ct), lo);
+    DeclStorage(T(ct), hi);
+    Emit(Join(Path(Level, lo), T(" = "), Join(r^.lo, T(";"), 0)));
+    Emit(Join(Path(Level, hi), T(" = "), Join(r^.hi, T(";"), 0)));
+    r^.lo := lo;
+    r^.hi := hi;
+    r^.dname := lo;
+    r^.dlevel := Level;
+    RETURN
+  ENDPROCEDURE StoreBounds;
+
+  (* the C text of the bounds of a scalar or numeric representation *)
+  PROCEDURE LoText RETURNS Txt (CONST r: Rep)
+    IF (r^.dname # 0) AND (r^.lo # 0) AND (r^.kind # R_ARRAY) AND (r^.kind # R_RECORD) THEN
+      RETURN Path(r^.dlevel, r^.lo)
+    ENDIF;
+    RETURN r^.lo
+  ENDPROCEDURE LoText;
+
+  PROCEDURE HiText RETURNS Txt (CONST r: Rep)
+    IF (r^.dname # 0) AND (r^.hi # 0) AND (r^.kind # R_ARRAY) AND (r^.kind # R_RECORD) THEN
+      RETURN Path(r^.dlevel, r^.hi)
+    ENDIF;
+    RETURN r^.hi
+  ENDPROCEDURE HiText;
+
+  (* the bounds [lo..hi] of a discrete representation *)
+  PROCEDURE Qualify (CONST r: Rep; CONST q: Node)
+    VAR lo, hi: Txt;
+        lr, hr: Rep;
+        ok: BOOLEAN;
+        v: INT;
+    Expr(q^.a, r, lo, lr);
+    Expr(q^.b, r, hi, hr);
+    IF (r^.kind = R_FLOAT) OR (r^.kind = R_FIXED) THEN
+      CheckType(q^.line, r, lr);
+      CheckType(q^.line, r, hr);
+      r^.lo := lo;
+      r^.hi := hi;
+      r^.dname := 0;
+      IF NOT (IsLiteralNode(q^.a) AND IsLiteralNode(q^.b)) THEN StoreBounds(r, "double") ENDIF;
+      IF r^.kind = R_FLOAT THEN
+        IF q^.d = Node NIL THEN FailS(q^.line, "FLOATING needs PRECISION (VI.A.1.c)") ENDIF;
+        Manifest(q^.d, ok, v);
+        IF NOT ok THEN FailS(q^.line, "PRECISION is a manifest constant") ENDIF;
+        SB();
+        SI(v);
+        r^.prec := SE()
+      ELSE
+        IF q^.c = Node NIL THEN FailS(q^.line, "FIXED needs SCALE (VI.A.1.b)") ENDIF;
+        Expr(q^.c, r, r^.scale, lr)
+      ENDIF;
+      r^.abstract := FALSE;
+      RETURN
+    ENDIF;
+    IF NOT IsDiscrete(r) THEN FailS(q^.line, "only a scalar or integer representation takes a range") ENDIF;
+    IF (q^.c # Node NIL) OR (q^.d # Node NIL) THEN FailS(q^.line, "SCALE and PRECISION qualify numbers") ENDIF;
+    CheckType(q^.line, r, lr);
+    CheckType(q^.line, r, hr);
+    r^.lo := lo;
+    r^.hi := hi;
+    Manifest(q^.a, ok, r^.mlo);
+    r^.hasm := ok;
+    Manifest(q^.b, ok, r^.mhi);
+    r^.hasm := r^.hasm AND ok;
+    r^.abstract := FALSE;
+    r^.dname := 0;
+    IF NOT r^.hasm THEN StoreBounds(r, "rt_int") ENDIF;
+    RETURN
+  ENDPROCEDURE Qualify;
+
+  (* the literals of an enumeration become names in this scope *)
+  PROCEDURE DefineLits (CONST r: Rep)
+    VAR p: Node := r^.lits;
+        s: Sym;
+        i: INT := 0;
+    WHILE p # Node NIL DO
+      IF Find(p^.name) # Sym NIL THEN
+        s := Find(p^.name);
+        IF (s^.kind # S_LIT) AND (s^.depth = Depth) THEN
+          FailN(p^.line, p^.name, " is declared twice in this scope")
+        ENDIF
+      ENDIF;
+      s := NewSym(S_LIT, p^.name);
+      s^.rep := r;
+      s^.mval := i;
+      s^.hasmv := TRUE;
+      Define(s, p^.line);
+      i := i + 1;
+      p := p^.next
+    ENDWHILE;
+    RETURN
+  ENDPROCEDURE DefineLits;
+
+  PROCEDURE SetRange (CONST r: Rep; CONST lo, hi: INT)
+    SB();
+    SI(lo);
+    r^.lo := SE();
+    SB();
+    SI(hi);
+    r^.hi := SE();
+    r^.mlo := lo;
+    r^.mhi := hi;
+    r^.hasm := TRUE;
+    r^.dname := 0;
+    RETURN
+  ENDPROCEDURE SetRange;
+
+  (* a fresh type identity, from a declared name when there is one *)
+  PROCEDURE NewTid RETURNS Txt (CONST name: Txt)
+    VAR n: INT := NewSerial();
+    SB();
+    IF name # 0 THEN ST(name) ELSE SA("anonymous") ENDIF;
+    SA("#");
+    SI(n);
+    RETURN SE()
+  ENDPROCEDURE NewTid;
+
+  (* elaborate the representation n; name is the declared name or 0, and *)
+  (* typeonly is set for a TYPE declaration (rules 63-71) *)
+  PROCEDURE MakeRep RETURNS Rep (CONST n: Node; CONST name: Txt; CONST typeonly: BOOLEAN)
+    VAR r, b, ix, last: Rep;
+        s: Sym;
+        k: INT := n^.kind;
+        p: Node;
+        tid, tname: Txt;
+    tid := 0;
+    tname := name;
+    (* [Type] ConcreteType: the type comes from the named type (rule 61) *)
+    IF n^.text # 0 THEN
+      s := Real(Lookup(n^.text, n^.line));
+      IF (s^.kind # S_TYPE) AND (s^.kind # S_REP) THEN FailN(n^.line, n^.text, " is not a type") ENDIF;
+      tid := s^.rep^.tid;
+      tname := s^.rep^.tname
+    ENDIF;
+    IF k = N_RNAME THEN
+      s := Real(Lookup(n^.name, n^.line));
+      IF (s^.kind # S_TYPE) AND (s^.kind # S_REP) THEN FailN(n^.line, n^.name, " is not a representation") ENDIF;
+      r := s^.rep;
+      IF n^.a # Node NIL THEN
+        r := CopyRep(r);
+        Qualify(r, n^.a)
+      ENDIF;
+      RETURN r
+    ENDIF;
+    IF tid = 0 THEN
+      tid := NewTid(name);
+      IF tname = 0 THEN tname := tid ENDIF
+    ENDIF;
+    IF k = N_RENUM THEN
+      r := NewRep(R_ENUM, tid);
+      r^.tname := tname;
+      r^.ordered := n^.flag = 1;
+      r^.lits := n^.a;
+      r^.nlits := Count(n^.a);
+      SetRange(r, 0, r^.nlits - 1);
+      DefineLits(r);
+      IF n^.b # Node NIL THEN Qualify(r, n^.b) ENDIF;
+      RETURN r
+    ENDIF;
+    IF k = N_RALPHA THEN
+      r := NewRep(R_ALPHA, tid);
+      r^.tname := tname;
+      r^.ordered := TRUE;
+      r^.lits := n^.a;
+      r^.nlits := Count(n^.a);
+      IF r^.nlits > 256 THEN FailS(n^.line, "this implementation takes alphabets of up to 256 characters") ENDIF;
+      SetRange(r, 0, r^.nlits - 1);
+      IF n^.b # Node NIL THEN Qualify(r, n^.b) ENDIF;
+      RETURN r
+    ENDIF;
+    IF k = N_RARRAY THEN
+      r := NewRep(R_ARRAY, tid);
+      r^.tname := tname;
+      p := n^.a;
+      last := Rep NIL;
+      WHILE p # Node NIL DO
+        ix := CopyRep(MakeRep(p, 0, FALSE));
+        IF NOT IsDiscrete(ix) THEN FailS(p^.line, "an index is an integer or scalar representation") ENDIF;
+        CheckRepresented(ix, p^.line);
+        ix^.link := Rep NIL;
+        IF last = Rep NIL THEN r^.idx := ix ELSE last^.link := ix ENDIF;
+        last := ix;
+        r^.nidx := r^.nidx + 1;
+        p := p^.next
+      ENDWHILE;
+      IF r^.nidx > 4 THEN FailS(n^.line, "this implementation takes arrays of up to 4 dimensions") ENDIF;
+      r^.elem := MakeRep(n^.b, 0, typeonly);
+      IF NOT typeonly THEN
+        CheckRepresented(r^.elem, n^.line);
+        BuildArrayDesc(r)
+      ELSE
+        r^.abstract := r^.elem^.abstract;
+        IF NOT r^.abstract THEN BuildArrayDesc(r) ENDIF
+      ENDIF;
+      r^.deep := TRUE;
+      RETURN r
+    ENDIF;
+    IF k = N_RRECORD THEN
+      r := NewRep(R_RECORD, tid);
+      r^.tname := tname;
+      MakeRecord(r, n, typeonly);
+      RETURN r
+    ENDIF;
+    IF (k = N_RPOINTER) OR (k = N_RFILE) OR (k = N_RSET) THEN
+      IF k = N_RPOINTER THEN
+        r := NewRep(R_PTR, tid);
+        r^.tname := tname;
+        (* a pointer may name its base before the base is declared (VII.I) *)
+        IF (n^.a^.kind = N_RNAME) AND (n^.a^.a = Node NIL) AND (Find(n^.a^.name) = Sym NIL) THEN
+          r^.forward := n^.a^.name;
+          r^.fwdscope := Depth;
+          p := NewNode(N_NAMEL, n^.line);
+          p^.rep := r;
+          p^.next := Pending;
+          Pending := p;
+          RETURN r
+        ENDIF;
+        r^.elem := MakeRep(n^.a, 0, FALSE);
+        RETURN r
+      ENDIF;
+      IF k = N_RFILE THEN
+        r := NewRep(R_FILE, tid);
+        r^.tname := tname;
+        r^.elem := MakeRep(n^.a, 0, typeonly);
+        RETURN r
+      ENDIF;
+      r := NewRep(R_SET, tid);
+      r^.tname := tname;
+      r^.elem := MakeRep(n^.a, 0, FALSE);
+      IF NOT IsDiscrete(r^.elem) THEN FailS(n^.line, "a set is of an integer or scalar representation") ENDIF;
+      CheckRepresented(r^.elem, n^.line);
+      RETURN r
+    ENDIF;
+    FailS(n^.line, "this representation is not translated");
+    RETURN Rep NIL
+  ENDPROCEDURE MakeRep;
+
+  (* a pointer named before its base: the base is now declared *)
+  PROCEDURE ResolvePending (CONST name: Txt; CONST r: Rep)
+    VAR p: Node := Pending;
+        prev: Node := Node NIL;
+    WHILE p # Node NIL DO
+      IF p^.rep^.forward = name THEN
+        p^.rep^.elem := r;
+        p^.rep^.forward := 0;
+        IF prev = Node NIL THEN Pending := p^.next ELSE prev^.next := p^.next ENDIF
+      ELSE
+        prev := p
+      ENDIF;
+      p := p^.next
+    ENDWHILE;
+    RETURN
+  ENDPROCEDURE ResolvePending;
+
+  PROCEDURE CheckPending ()
+    VAR p: Node := Pending;
+    WHILE p # Node NIL DO
+      IF p^.rep^.fwdscope >= Depth THEN
+        FailN(p^.line, p^.rep^.forward, " is named by a pointer but not declared")
+      ENDIF;
+      p := p^.next
+    ENDWHILE;
+    RETURN
+  ENDPROCEDURE CheckPending;
+
+  PROCEDURE BuildArrayDesc (CONST r: Rep)
+    VAR ix: Rep;
+        t: Txt;
+        first: BOOLEAN;
+    NewDesc(r);
+    SB();
+    SA("{ rt_int lo[");
+    SI(r^.nidx);
+    SA("] = {");
+    ix := r^.idx;
+    first := TRUE;
+    WHILE ix # Rep NIL DO
+      IF NOT first THEN SA(", ") ENDIF;
+      first := FALSE;
+      ST(LoText(ix));
+      ix := ix^.link
+    ENDWHILE;
+    SA("}, hi[");
+    SI(r^.nidx);
+    SA("] = {");
+    ix := r^.idx;
+    first := TRUE;
+    WHILE ix # Rep NIL DO
+      IF NOT first THEN SA(", ") ENDIF;
+      first := FALSE;
+      ST(HiText(ix));
+      ix := ix^.link
+    ENDWHILE;
+    SA("}; y_desc_array(");
+    ST(DescOf(r));
+    SA(", ");
+    SI(r^.nidx);
+    SA(", lo, hi, ");
+    ST(DescOf(r^.elem));
+    SA("); }");
+    t := SE();
+    Emit(t);
+    RETURN
+  ENDPROCEDURE BuildArrayDesc;
+
+  (* the fields of a record, and its C struct (VI.B.2) *)
+  PROCEDURE AddField (CONST r: Rep; VAR last: Field; CONST name: Txt; CONST fr: Rep;
+                      CONST isconst: BOOLEAN; CONST variant: INT; CONST labels: Node;
+                      CONST line: INT)
+    VAR f: Field := r^.fields;
+    WHILE f # Field NIL DO
+      IF f^.name = name THEN FailN(line, name, " is a component twice") ENDIF;
+      f := f^.next
+    ENDWHILE;
+    NEW(f);
+    f^ := FieldRec(name, fr, isconst, variant, labels, Field NIL);
+    IF last = Field NIL THEN r^.fields := f ELSE last^.next := f ENDIF;
+    last := f;
+    IF Deep(fr) THEN r^.deep := TRUE ENDIF;
+    IF fr^.abstract THEN r^.abstract := TRUE ENDIF;
+    RETURN
+  ENDPROCEDURE AddField;
+
+  PROCEDURE AddFields (CONST r: Rep; VAR last: Field; CONST groups: Node; CONST variant: INT;
+                       CONST labels: Node; CONST typeonly: BOOLEAN)
+    VAR g, nm: Node := groups;
+        fr: Rep;
+    WHILE g # Node NIL DO
+      fr := MakeRep(g^.b, 0, typeonly);
+      IF NOT typeonly THEN CheckRepresented(fr, g^.line) ENDIF;
+      IF (fr^.kind = R_SIGNAL) OR (fr^.kind = R_FILE) THEN
+        FailS(g^.line, "this implementation does not keep signals or files in records")
+      ENDIF;
+      nm := g^.a;
+      WHILE nm # Node NIL DO
+        AddField(r, last, nm^.name, fr, g^.ival = W_CONST, variant, labels, nm^.line);
+        nm := nm^.next
+      ENDWHILE;
+      g := g^.next
+    ENDWHILE;
+    RETURN
+  ENDPROCEDURE AddFields;
+
+  PROCEDURE MakeRecord (CONST r: Rep; CONST n: Node; CONST typeonly: BOOLEAN)
+    VAR last: Field := Field NIL;
+        v, c: Node;
+        sr: Rep;
+        i: INT := 0;
+        f: Field;
+        t: Txt;
+        nf: INT := 0;
+    AddFields(r, last, n^.a, 0, Node NIL, typeonly);
+    IF n^.b # Node NIL THEN
+      (* a variant record: the case-selection component is CONST (VI.B.2) *)
+      v := n^.b;
+      sr := MakeRep(v^.b, 0, FALSE);
+      IF NOT IsDiscrete(sr) THEN FailS(v^.line, "the case-selection component is integer or scalar") ENDIF;
+      AddField(r, last, v^.name, sr, TRUE, 0, Node NIL, v^.line);
+      r^.selector := last;
+      c := v^.a;
+      WHILE c # Node NIL DO
+        i := i + 1;
+        AddFields(r, last, c^.b, i, c^.a, typeonly);
+        c := c^.next
+      ENDWHILE
+    ENDIF;
+    IF typeonly AND r^.abstract THEN RETURN ENDIF;
+    r^.abstract := FALSE;
+    r^.cname := Fresh("yR");
+    SB();
+    SA("typedef struct ");
+    ST(r^.cname);
+    SA(" ");
+    ST(r^.cname);
+    SA(";");
+    t := SE();
+    Put(OTypes, t);
+    SB();
+    SA("struct ");
+    ST(r^.cname);
+    SA(" {");
+    f := r^.fields;
+    WHILE f # Field NIL DO
+      SA(" ");
+      ST(CType(f^.rep));
+      SA(" f_");
+      ST(f^.name);
+      SA(";");
+      nf := nf + 1;
+      f := f^.next
+    ENDWHILE;
+    IF nf = 0 THEN SA(" int empty_;") ENDIF;
+    SA(" };");
+    t := SE();
+    Put(OStructs, t);
+    (* its descriptor *)
+    NewDesc(r);
+    SB();
+    SA("{ static const size_t o[] = {");
+    f := r^.fields;
+    WHILE f # Field NIL DO
+      SA("offsetof(");
+      ST(r^.cname);
+      SA(", f_");
+      ST(f^.name);
+      SA("), ");
+      f := f^.next
+    ENDWHILE;
+    SA("0}; const ydesc **f = rt_alloc(");
+    SI(nf + 1);
+    SA(" * sizeof *f);");
+    i := 0;
+    f := r^.fields;
+    WHILE f # Field NIL DO
+      SA(" f[");
+      SI(i);
+      SA("] = ");
+      ST(DescOf(f^.rep));
+      SA(";");
+      i := i + 1;
+      f := f^.next
+    ENDWHILE;
+    SA(" y_desc_record(");
+    ST(DescOf(r));
+    SA(", sizeof(");
+    ST(r^.cname);
+    SA("), ");
+    SI(nf);
+    SA(", o, (const ydesc *const *)f); }");
+    t := SE();
+    Emit(t);
+    RETURN
+  ENDPROCEDURE MakeRecord;
+
+  PROCEDURE FindField RETURNS Field (CONST r: Rep; CONST name: Txt)
+    VAR f: Field := r^.fields;
+    WHILE f # Field NIL DO
+      IF f^.name = name THEN RETURN f ENDIF;
+      f := f^.next
+    ENDWHILE;
+    RETURN Field NIL
+  ENDPROCEDURE FindField;

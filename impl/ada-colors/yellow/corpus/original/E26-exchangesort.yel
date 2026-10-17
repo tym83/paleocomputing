@@ -1,0 +1,43 @@
+(* Part Three, III.I "Exchange Sort", p.1119 (E-26) *)
+MODULE ExchangeSort
+  IMPORTS String, ASCII;
+    (* the representation String is a fixed-length array of ASCII *)
+    (* characters; ASCII is the Ascii alphabet representation    *)
+  EXPORTS Sort;
+
+  FUNCTION EXTENDS > RETURNS BOOLEAN (CONST s1, s2: String)
+    VAR char: INTEGER [1..LENGTH(s1)] := 1;
+    WHILE s1[char] > s2[char] AND char <= LENGTH(s1) DO
+      char := char+1;
+    ENDWHILE;
+    IF char > LENGTH(s1) THEN RETURN TRUE ELSE RETURN FALSE ENDIF;
+  ENDFUNCTION >;
+
+  PROCEDURE Sort (VAR stringArray: ARRAY(1 DIMENSIONS OF String))
+    PROCEDURE Exchange (VAR i1, i2: INTEGER [1..LENGTH(stringArray)])
+      VAR temp: ASCII;
+      FOR char: INTEGER [1..LENGTH(stringARRAY[1])] DO
+        temp := stringArray[i1][char];
+        stringArray[i1][char] := stringArray[i2][char];
+        stringArray[i2][char] := temp;
+      ENDFOR;
+      lastSorted := i1;
+    ENDPROCEDURE Exchange;
+    VAR
+      lastUnsorted: INTEGER [1..LENGTH(stringArray)-1]
+                  := LENGTH(stringArray)-1;
+      lastSorted: INTEGER [1..LENGTH(stringArray)]
+                  := LENGTH(stringArray);
+    LOOP unsorted
+      FOR i: INTEGER [1..lastUnsorted] DO
+        IF lastSorted = i THEN EXIT unsorted ENDIF;
+        IF stringArray[i] > stringArray[i+1]
+          THEN Exchange(i, i+1)
+        ENDIF;
+      ENDFOR;
+      IF lastSorted > lastUnsorted THEN EXIT unsorted ENDIF;
+      lastUnsorted := lastUnsorted-1;
+    ENDLOOP unsorted;
+  ENDPROCEDURE Sort;
+
+ENDMODULE ExchangeSort;

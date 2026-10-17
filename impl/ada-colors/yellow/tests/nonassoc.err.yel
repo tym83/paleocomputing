@@ -1,0 +1,4 @@
+MODULE NonAssoc
+  VAR a: INTEGER [0..99] := 1;
+  a := a - 1 + 2
+ENDMODULE NonAssoc

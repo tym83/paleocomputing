@@ -1,0 +1,85 @@
+(* Part Three, III.F "Fault-Tolerant Avionics", pp.1113-1114 (E-20, E-21) *)
+MODULE scheduler
+  IMPORT
+    MyStandardConventions,
+    enable,disable,tickinterrupt,errorhelper,
+    framecount,errortype,maxpriority,maxtasks;
+  EXPORT
+    call,schedule;
+  REPRESENTATION
+    levels = INTEGER [1..(maxpriority+1)];
+    call = UNORDERED (normal,abnormal,clocktick);
+  CONST
+    period: ARRAY(levels OF INT);
+  VAR
+    sked: ARRAY(levels,INTEGER [1..maxtasks] OF INT);
+    enabled: ARRAY(levels OF BOOLEAN);
+    job: ARRAY(INTEGER [1..maxtasks] OF INT);
+    entry: ARRAY(levels OF INT);
+    pri,ept: INT;
+
+(* Initially, sked[i,j] contains the absolute entry-point address    *)
+(* of the jth task at priority-level i, where j is a scheduled task  *)
+(* on the host processor. Other values of sked[i,j] are initially    *)
+(* set to a value out of the bounds 0..memsize. (a negative integer).*)
+(* Initially, entry[i] = sked[i,1], pri = priority of the diagnostic *)
+(* task d. period[i] contains the number of timer ticks per frame of *)
+(* tasks having priority-level i. job[pri] = the j index of d.       *)
+(* All other values of job[i] = 0. enabled[i] is initially TRUE.     *)
+
+  PROCEDURE schedule RETURNS INT
+    (CONST progcounter: INT; CONST calltype: call)
+    disable(tickinterrupt);
+    SELECT calltype
+      CASE abnormal =>
+        errorhelper(pri,job[pri],aborted);
+      CASE clocktick =>
+        IF framecount MOD period[pri] # 0
+        THEN
+          entry[pri] := progcounter + 1 (* new entry-point *)
+        ELSE
+          errorhelper(pri,job[pri],overrun);
+          job[pri] := job[pri] + 1; (* job overrun.     *)
+          entry[pri] := sked[pri,job[pri]]
+        ENDIF;
+        pri := 1; (* return to top   *)
+        job[1] := 0; (* level priority. *)
+    ENDSELECT;
+
+    (* The code for the normal job termination case follows.   *)
+    (* We drop into this code after servicing either of the     *)
+    (* other calltypes.                                         *)
+
+    job[pri] := job[pri] + 1; (* go to next job *)
+    ept := sked[pri,job[pri]]; (* get entry-point *)
+    IF ept > 0 AND enabled[pri]
+    THEN RETURN ept
+    ELSE
+      LOOP quickly
+        entry[pri] := ept;   (* all jobs done   *)
+        pri := pri + 1;      (* drop one level  *)
+        ept := entry[pri];   (* get saved ept   *)
+        IF ept > 0 AND enabled[pri]
+        THEN
+          RETURN ept
+        ELSE
+          IF framecount MOD period[pri] = 0
+          THEN              (* ready to run jobs *)
+            job[pri] := 1;  (* at this level.  *)
+            ept := sked[pri,1];   (* reset to 1-st job *)
+            RETURN ept
+        ENDIF;
+      ENDLOOP quickly;
+
+    (* The above loop cannot fail to terminate or run off the  *)
+    (* bottom of the sked array because the diagnostic task    *)
+    (* has the lowest priority level and never terminates      *)
+    (* normally. That is, an enabled ept will always exist     *)
+    (* at that priority level.                                 *)
+
+    ENDIF;
+
+    enable(tickinterrupt);
+
+  ENDPROCEDURE schedule;
+ENDMODULE scheduler;

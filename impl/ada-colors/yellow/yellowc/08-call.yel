@@ -1,0 +1,364 @@
+
+  (* ---- calls, overloading and the standard operations (X.A, XI, XII) -------- *)
+  (* A routine name may have several definitions, told apart by the types of *)
+  (* their parameters (X.A.1): EXTENDS adds a definition, REPLACES overrides *)
+  (* one, and a definition with neither hides all others. The alternatives *)
+  (* of a name are chained by alt, newest first. *)
+
+  (* the compiled actuals of the calls being compiled, as a stack: the *)
+  (* actuals of a call inside an actual go above those of the outer call *)
+  VAR
+    ArgCode: ARRAY (INTEGER [1..4096] OF Txt);
+    ArgRep: ARRAY (INTEGER [1..4096] OF Rep);
+    ArgNode: ARRAY (INTEGER [1..4096] OF Node);
+    ArgTop: INT := 0;
+
+  (* does an actual of representation a fit a formal of representation f *)
+  PROCEDURE Fits RETURNS BOOLEAN (CONST f, a: Rep)
+    IF f^.kind = R_UARRAY THEN
+      IF NOT IsArrayLike(a) THEN RETURN FALSE ENDIF;
+      IF a^.nidx # f^.nidx THEN RETURN FALSE ENDIF;
+      RETURN SameType(f^.elem, a^.elem)
+    ENDIF;
+    IF f^.kind = R_SPACE THEN RETURN TRUE ENDIF;
+    RETURN SameType(f, a)
+  ENDPROCEDURE Fits;
+
+  (* the definition among the alternatives of s that takes these actuals *)
+  PROCEDURE Choose RETURNS Sym (CONST s0: Sym; CONST base, nargs: INT)
+    VAR s: Sym := s0;
+        p: Param;
+        ok: BOOLEAN;
+        i: INT;
+    WHILE s # Sym NIL DO
+      IF s^.nparams = nargs THEN
+        ok := TRUE;
+        p := s^.params;
+        i := 1;
+        WHILE p # Param NIL DO
+          IF NOT Fits(p^.rep, ArgRep[base + i]) THEN ok := FALSE ENDIF;
+          i := i + 1;
+          p := p^.next
+        ENDWHILE;
+        IF ok THEN RETURN s ENDIF
+      ENDIF;
+      s := s^.alt
+    ENDWHILE;
+    RETURN Sym NIL
+  ENDPROCEDURE Choose;
+
+  (* the alternatives of name s hide the standard operations unless all of *)
+  (* them were declared with EXTENDS or REPLACES *)
+  PROCEDURE HidesStandard RETURNS BOOLEAN (CONST s0: Sym)
+    VAR s: Sym := s0;
+    WHILE s # Sym NIL DO
+      IF (s^.decl # Node NIL) AND (s^.decl^.ival = 0) THEN RETURN TRUE ENDIF;
+      s := s^.alt
+    ENDWHILE;
+    RETURN FALSE
+  ENDPROCEDURE HidesStandard;
+
+  (* compile the actuals; with one definition the formals guide literals *)
+  PROCEDURE CompileArgs (CONST args: Node; CONST guide: Sym; OUT base, nargs: INT)
+    VAR a: Node := args;
+        p: Param := Param NIL;
+        want: Rep;
+    base := ArgTop;
+    nargs := 0;
+    IF guide # Sym NIL THEN p := guide^.params ENDIF;
+    WHILE a # Node NIL DO
+      IF ArgTop >= 4000 THEN FailS(a^.line, "calls nested too deeply") ENDIF;
+      nargs := nargs + 1;
+      ArgTop := base + nargs;
+      want := Rep NIL;
+      IF p # Param NIL THEN
+        want := p^.rep;
+        p := p^.next
+      ENDIF;
+      Expr(a, want, ArgCode[base + nargs], ArgRep[base + nargs]);
+      ArgNode[base + nargs] := a;
+      a := a^.next
+    ENDWHILE;
+    RETURN
+  ENDPROCEDURE CompileArgs;
+
+  (* the C call of routine s with the compiled actuals *)
+  PROCEDURE CallCode RETURNS Txt (CONST s: Sym; CONST base, nargs: INT; CONST line: INT)
+    VAR p: Param := s^.params;
+        i: INT := base + 1;
+        first: BOOLEAN := TRUE;
+    IF nargs # s^.nparams THEN FailN(line, s^.name, ": the number of actual parameters is wrong") ENDIF;
+    SB();
+    ST(s^.cname);
+    SA("(");
+    IF s^.level > 1 THEN
+      ST(FramePtr(s^.level - 1));
+      first := FALSE
+    ENDIF;
+    WHILE p # Param NIL DO
+      IF NOT first THEN SA(", ") ENDIF;
+      first := FALSE;
+      IF NOT Fits(p^.rep, ArgRep[i]) THEN
+        Building := FALSE;
+        TypeClash(ArgNode[i]^.line, p^.rep, ArgRep[i])
+      ENDIF;
+      IF p^.cls = C_CONST THEN
+        ST(Convert(ArgCode[i], p^.rep, ArgRep[i]))
+      ELSE
+        (* VAR and OUT actuals are variables (X.A.2) *)
+        IF NOT IsVariable(ArgNode[i]) THEN
+          Building := FALSE;
+          FailN(ArgNode[i]^.line, p^.name, ": the actual of a VAR or OUT parameter must be a variable")
+        ENDIF;
+        CheckPure(ArgNode[i]);
+        SA("&");
+        ST(ArgCode[i])
+      ENDIF;
+      i := i + 1;
+      p := p^.next
+    ENDWHILE;
+    SA(")");
+    ArgTop := base;
+    RETURN SE()
+  ENDPROCEDURE CallCode;
+
+  (* an operator with user definitions visible: a call, when one fits *)
+  PROCEDURE UserOp RETURNS BOOLEAN (CONST n: Node; CONST op: Txt; CONST x, y: Node;
+                                    OUT code: Txt; OUT r: Rep)
+    VAR s, c: Sym;
+        base, nargs: INT;
+    s := Find(op);
+    IF s = Sym NIL THEN RETURN FALSE ENDIF;
+    s := Real(s);
+    IF s^.kind # S_ROUTINE THEN RETURN FALSE ENDIF;
+    x^.next := y;
+    IF y # Node NIL THEN y^.next := Node NIL ENDIF;
+    CompileArgs(x, Sym NIL, base, nargs);
+    c := Choose(s, base, nargs);
+    IF c = Sym NIL THEN
+      ArgTop := base;
+      IF HidesStandard(s) THEN FailN(n^.line, op, ": no definition takes operands of these types") ENDIF;
+      RETURN FALSE
+    ENDIF;
+    code := CallCode(c, base, nargs, n^.line);
+    r := c^.ret;
+    RETURN TRUE
+  ENDPROCEDURE UserOp;
+
+  (* Id ( args ): a function or value-returning procedure, a standard *)
+  (* operation, or the denotation of a structured value (VIII.B) *)
+  PROCEDURE CallExpr (CONST n: Node; CONST want: Rep; CONST statement: BOOLEAN;
+                      OUT code: Txt; OUT r: Rep)
+    VAR s, c: Sym;
+        base, nargs: INT;
+    s := Real(Lookup(n^.name, n^.line));
+    IF s^.kind = S_STD THEN
+      StdCall(s^.mval, n, statement, code, r);
+      RETURN
+    ENDIF;
+    IF (s^.kind = S_REP) OR (s^.kind = S_TYPE) THEN
+      IF statement THEN FailS(n^.line, "a value is not a statement") ENDIF;
+      Denote(s^.rep, n, code, r);
+      RETURN
+    ENDIF;
+    IF s^.kind # S_ROUTINE THEN FailN(n^.line, n^.name, " is not a routine") ENDIF;
+    IF s^.alt = Sym NIL THEN
+      CompileArgs(n^.a, s, base, nargs);
+      c := s
+    ELSE
+      CompileArgs(n^.a, Sym NIL, base, nargs);
+      c := Choose(s, base, nargs);
+      IF c = Sym NIL THEN FailN(n^.line, n^.name, ": no definition takes actuals of these types") ENDIF
+    ENDIF;
+    code := CallCode(c, base, nargs, n^.line);
+    r := c^.ret;
+    IF statement AND (r^.kind # R_VOID) THEN
+      FailN(n^.line, n^.name, " returns a value: it is called in an expression (IX.A.2)")
+    ENDIF;
+    IF NOT statement AND (r^.kind = R_VOID) THEN
+      FailN(n^.line, n^.name, " returns no value")
+    ENDIF;
+    RETURN
+  ENDPROCEDURE CallExpr;
+
+  (* ---- denotations of structured values (VI.B) ---------------------------------- *)
+
+  PROCEDURE Denote (CONST r: Rep; CONST n: Node; OUT code: Txt; OUT res: Rep)
+    VAR a: Node := n^.a;
+        f: Field;
+        c, t, el: Txt;
+        ar: Rep;
+        nargs, count, i: INT;
+        ok: BOOLEAN;
+        variant: INT := 0;
+        sel: INT;
+        lab: Node;
+        first: BOOLEAN := TRUE;
+    res := r;
+    IF r^.abstract THEN FailN(n^.line, r^.tname, " has no representation to denote a value of") ENDIF;
+    IF r^.kind = R_RECORD THEN
+      IF r^.opaque THEN FailN(n^.line, r^.tname, " is opaque here (X.B.3)") ENDIF;
+      SB();
+      SA("((");
+      ST(r^.cname);
+      SA("){ ");
+      t := SE();
+      f := r^.fields;
+      WHILE f # Field NIL DO
+        IF (f^.variant = 0) OR (f^.variant = variant) THEN
+          IF a = Node NIL THEN FailS(n^.line, "too few components in this record value") ENDIF;
+          Expr(a, f^.rep, c, ar);
+          CheckType(a^.line, f^.rep, ar);
+          IF f = r^.selector THEN
+            (* the case-selection value is a manifest constant (VI.C) *)
+            Manifest(a, ok, sel);
+            IF NOT ok THEN FailS(a^.line, "the case-selection value is a manifest constant") ENDIF;
+            variant := VariantOf(r, sel, a^.line)
+          ENDIF;
+          SB();
+          ST(t);
+          IF NOT first THEN SA(", ") ENDIF;
+          first := FALSE;
+          SA(".f_");
+          ST(f^.name);
+          SA(" = ");
+          ST(Convert(c, f^.rep, ar));
+          t := SE();
+          a := a^.next
+        ENDIF;
+        f := f^.next
+      ENDWHILE;
+      IF a # Node NIL THEN FailS(n^.line, "too many components in this record value") ENDIF;
+      SB();
+      ST(t);
+      SA(" })");
+      code := SE();
+      RETURN
+    ENDIF;
+    IF r^.kind = R_ARRAY THEN
+      nargs := Count(a);
+      t := Fresh("da");
+      IF nargs = 1 THEN
+        (* every component gets the one value *)
+        Expr(a, r^.elem, c, ar);
+        CheckType(a^.line, r^.elem, ar);
+        el := Fresh("dv");
+        SB();
+        SA("({ ");
+        ST(CType(r^.elem));
+        SA(" ");
+        ST(el);
+        SA(" = ");
+        ST(Convert(c, r^.elem, ar));
+        SA("; y_fill(");
+        ST(DescOf(r));
+        SA(", &");
+        ST(el);
+        SA("); })");
+        code := SE();
+        RETURN
+      ENDIF;
+      (* the components in row-major order; their number must be exact *)
+      SB();
+      SA("({ yarr ");
+      ST(t);
+      SA("; y_init(");
+      ST(DescOf(r));
+      SA(", &");
+      ST(t);
+      SA("); if (y_count(");
+      ST(t);
+      SA(", ");
+      SI(r^.nidx);
+      SA(") != ");
+      SI(nargs);
+      SA(") rt_raise_msg(RT_X_RANGE, ");
+      SC('DQ');
+      SA("wrong number of components");
+      SC('DQ');
+      SA(");");
+      code := SE();
+      i := 0;
+      WHILE a # Node NIL DO
+        Expr(a, r^.elem, c, ar);
+        CheckType(a^.line, r^.elem, ar);
+        SB();
+        ST(code);
+        IF Deep(r^.elem) THEN
+          SA(" { ");
+          ST(CType(r^.elem));
+          SA(" dv = ");
+          ST(c);
+          SA("; y_copy(");
+          ST(DescOf(r^.elem));
+          SA(", &((");
+          ST(CType(r^.elem));
+          SA(" *)");
+          ST(t);
+          SA(".p)[");
+          SI(i);
+          SA("], &dv); }")
+        ELSE
+          SA(" ((");
+          ST(CType(r^.elem));
+          SA(" *)");
+          ST(t);
+          SA(".p)[");
+          SI(i);
+          SA("] = ");
+          ST(Convert(c, r^.elem, ar));
+          SA(";")
+        ENDIF;
+        code := SE();
+        i := i + 1;
+        a := a^.next
+      ENDWHILE;
+      SB();
+      ST(code);
+      SA(" ");
+      ST(t);
+      SA("; })");
+      code := SE();
+      RETURN
+    ENDIF;
+    IF r^.kind = R_SET THEN
+      SB();
+      SA("y_set_new(");
+      ST(LoText(r^.elem));
+      SA(", ");
+      ST(HiText(r^.elem));
+      SA(")");
+      code := SE();
+      WHILE a # Node NIL DO
+        Expr(a, r^.elem, c, ar);
+        CheckType(a^.line, r^.elem, ar);
+        code := Call2("y_set_add", code, c);
+        a := a^.next
+      ENDWHILE;
+      RETURN
+    ENDIF;
+    FailN(n^.line, r^.tname, " has no denotations of values");
+    RETURN
+  ENDPROCEDURE Denote;
+
+  (* the variant whose case labels hold the selector value v *)
+  PROCEDURE VariantOf RETURNS INT (CONST r: Rep; CONST v: INT; CONST line: INT)
+    VAR f: Field := r^.fields;
+        l: Node;
+        ok: BOOLEAN;
+        lv: INT;
+    WHILE f # Field NIL DO
+      IF f^.variant # 0 THEN
+        l := f^.labels;
+        WHILE l # Node NIL DO
+          Manifest(l, ok, lv);
+          IF ok AND (lv = v) THEN RETURN f^.variant ENDIF;
+          l := l^.next
+        ENDWHILE
+      ENDIF;
+      f := f^.next
+    ENDWHILE;
+    (* a case with no components has no field to find it by: any other value *)
+    (* chooses no components *)
+    RETURN -1
+  ENDPROCEDURE VariantOf;

@@ -1,0 +1,20 @@
+
+(* a user of the module of p.1116: the signs of Figure 2 go into a tree. *)
+(* The module exports = and # but not :=, so a Tree can be initialized but *)
+(* not assigned (X.B.3); a value-returning procedure is called in an *)
+(* expression only (IX.A.2) *)
+MODULE UseTree
+  IMPORT SearchTree, TextIO;
+  VAR t: Tree := newTree;
+  CONST root: Tree = Search(Libra, t);
+  IF Search(Gemini, t) = newTree THEN Write("?") ENDIF;
+  IF Search(Pisces, t) = newTree THEN Write("?") ENDIF;
+  IF Search(Aries, t) = newTree THEN Write("?") ENDIF;
+  IF Search(Leo, t) = newTree THEN Write("?") ENDIF;
+  IF Search(Virgo, t) = newTree THEN Write("?") ENDIF;
+  Write(Search(Virgo, t) = Search(Virgo, t)); Write(" ");
+  Write(Search(Aries, t) = Search(Leo, t)); Write(" ");
+  Write(t = newTree); Write(" ");
+  Write(Search(Libra, t) = root); Write(" ");
+  Write(root # t); WriteLn()
+ENDMODULE UseTree

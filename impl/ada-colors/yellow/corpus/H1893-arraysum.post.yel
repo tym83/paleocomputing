@@ -1,0 +1,2 @@
+WriteFloat(SUM, 1); WriteLn()
+ENDMODULE Evaluators

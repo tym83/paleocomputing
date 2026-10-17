@@ -1,0 +1,7 @@
+MODULE ReadOnly
+  MODULE Counter
+    EXPORT count;
+    VAR count: INTEGER [0..10] := 0
+  ENDMODULE Counter;
+  count := 1
+ENDMODULE ReadOnly

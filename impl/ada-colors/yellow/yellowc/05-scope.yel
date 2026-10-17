@@ -1,0 +1,210 @@
+
+  (* ---- entities and scopes (VII.J, X.B) ------------------------------------ *)
+  (* Every name is kept in a hash table of chains; a scope is a level of the *)
+  (* scope stack. A module is a closed scope: inside it only its own names, *)
+  (* the names it imports and the standard names are visible (X.B.2), so *)
+  (* the search stops at the module and goes on in the standard scope. *)
+
+  VAR
+    Table: SymTable;
+    Scopes: ARRAY (INTEGER [0..400] OF Scope);
+    Depth: INT := -1;
+    VisibleFrom: INT := 0;          (* scopes below this one are hidden *)
+    Level: INT := 0;                (* the frame being written: 0 is global *)
+    FrameName: ARRAY (INTEGER [0..400] OF Txt);  (* C struct of the frame of each level *)
+
+  PROCEDURE NewSym RETURNS Sym (CONST kind: INT; CONST name: Txt)
+    VAR s: Sym;
+    NEW(s);
+    s^ := SymRec(kind, name, Rep NIL, 0, 0, FALSE, FALSE, 0, FALSE, Param NIL, 0, Rep NIL,
+                 FALSE, Node NIL, 0, Sym NIL, Sym NIL, Sym NIL, Sym NIL, Sym NIL, Sym NIL,
+                 Sym NIL, 0);
+    s^.serial := NewSerial();
+    RETURN s
+  ENDPROCEDURE NewSym;
+
+  PROCEDURE OpenScope (CONST closed: BOOLEAN)
+    VAR s: Scope;
+    NEW(s);
+    s^ := ScopeRec(Sym NIL, closed, Sym NIL, Level, Node NIL, Scope NIL);
+    IF Depth >= 0 THEN s^.up := Scopes[Depth] ENDIF;
+    Depth := Depth + 1;
+    Scopes[Depth] := s;
+    RETURN
+  ENDPROCEDURE OpenScope;
+
+  (* take the names of the innermost scope out of the table *)
+  PROCEDURE CloseScope ()
+    VAR s, p, prev: Sym;
+        h: INT;
+    s := Scopes[Depth]^.syms;
+    WHILE s # Sym NIL DO
+      h := s^.name MOD 8192;
+      p := Table[h];
+      prev := Sym NIL;
+      WHILE (p # Sym NIL) AND (p # s) DO
+        prev := p;
+        p := p^.chain
+      ENDWHILE;
+      IF p = s THEN
+        IF prev = Sym NIL THEN Table[h] := s^.chain ELSE prev^.chain := s^.chain ENDIF
+      ENDIF;
+      s := s^.stack
+    ENDWHILE;
+    Depth := Depth - 1;
+    RETURN
+  ENDPROCEDURE CloseScope;
+
+  PROCEDURE Visible RETURNS BOOLEAN (CONST s: Sym)
+    RETURN (s^.depth >= VisibleFrom) OR (s^.depth = 0)
+  ENDPROCEDURE Visible;
+
+  (* the entity a name denotes here, or NIL *)
+  PROCEDURE Find RETURNS Sym (CONST name: Txt)
+    VAR s: Sym := Table[name MOD 8192];
+    WHILE s # Sym NIL DO
+      IF (s^.name = name) AND Visible(s) THEN RETURN s ENDIF;
+      s := s^.chain
+    ENDWHILE;
+    RETURN Sym NIL
+  ENDPROCEDURE Find;
+
+  (* the entity named in this very scope, or NIL *)
+  PROCEDURE FindHere RETURNS Sym (CONST name: Txt)
+    VAR s: Sym := Table[name MOD 8192];
+    WHILE s # Sym NIL DO
+      IF (s^.name = name) AND (s^.depth = Depth) THEN RETURN s ENDIF;
+      s := s^.chain
+    ENDWHILE;
+    RETURN Sym NIL
+  ENDPROCEDURE FindHere;
+
+  (* two modules of one scope may export the same name: it can then be *)
+  (* used only through FROM (X.B.4, p.1053) *)
+  PROCEDURE Lookup RETURNS Sym (CONST name: Txt; CONST line: INT)
+    VAR s: Sym := Find(name);
+        p: Sym;
+    IF s = Sym NIL THEN FailN(line, name, " is not declared here") ENDIF;
+    IF s^.kind = S_EXPORT THEN
+      p := s^.chain;
+      WHILE p # Sym NIL DO
+        IF (p^.name = name) AND (p^.depth = s^.depth) AND (p^.kind = S_EXPORT) AND
+           (Real(p) # Real(s)) AND (Real(s)^.kind # S_LIT) THEN
+          FailN(line, name, " is exported here by two modules: name it with FROM (X.B.4)")
+        ENDIF;
+        p := p^.chain
+      ENDWHILE
+    ENDIF;
+    RETURN s
+  ENDPROCEDURE Lookup;
+
+  (* an enumeration literal named in more than one visible type must be *)
+  (* qualified by its type (VI.A.3) *)
+  PROCEDURE Ambiguous RETURNS BOOLEAN (CONST s: Sym)
+    VAR p: Sym := s^.chain;
+    WHILE p # Sym NIL DO
+      IF (p^.name = s^.name) AND Visible(p) AND (p^.kind = S_LIT) AND (p^.rep^.tid # s^.rep^.tid) THEN
+        RETURN TRUE
+      ENDIF;
+      p := p^.chain
+    ENDWHILE;
+    RETURN FALSE
+  ENDPROCEDURE Ambiguous;
+
+  (* the literal name of the enumeration rep, among the visible ones *)
+  PROCEDURE FindLit RETURNS Sym (CONST name: Txt; CONST r: Rep)
+    VAR s: Sym := Table[name MOD 8192];
+    WHILE s # Sym NIL DO
+      IF s^.name = name THEN
+        IF (Real(s)^.kind = S_LIT) AND (Real(s)^.rep^.tid = r^.tid) THEN RETURN s ENDIF
+      ENDIF;
+      s := s^.chain
+    ENDWHILE;
+    RETURN Sym NIL
+  ENDPROCEDURE FindLit;
+
+  PROCEDURE Define (CONST s: Sym; CONST line: INT)
+    VAR old: Sym := FindHere(s^.name);
+        h: INT := s^.name MOD 8192;
+    IF (old # Sym NIL) AND NOT ((old^.kind = S_LIT) AND (s^.kind = S_LIT)) AND
+       NOT ((s^.kind = S_ROUTINE) AND (s^.alt # Sym NIL) AND (s^.alt = Real(old))) AND
+       NOT ((s^.kind = S_EXPORT) AND (old^.kind = S_EXPORT)) THEN
+      FailN(line, s^.name, " is declared twice in this scope")
+    ENDIF;
+    s^.depth := Depth;
+    s^.chain := Table[h];
+    Table[h] := s;
+    s^.stack := Scopes[Depth]^.syms;
+    Scopes[Depth]^.syms := s;
+    RETURN
+  ENDPROCEDURE Define;
+
+  (* ---- storage and the frames of routines ------------------------------------ *)
+  (* Each routine (and process) has a frame, a C struct with its parameters *)
+  (* and locals and a link "up" to the frame of the routine around it. Level *)
+  (* 0 is the global level: its storage is C globals. *)
+
+  (* the C text that reaches storage cname held at level lev *)
+  PROCEDURE Path RETURNS Txt (CONST lev: INT; CONST cname: Txt)
+    VAR hops: INT := Level - lev;
+    IF lev = 0 THEN RETURN cname ENDIF;
+    SB();
+    IF hops = 0 THEN
+      SA("F.")
+    ELSE
+      SA("F.up->");
+      WHILE hops > 1 DO
+        SA("up->");
+        hops := hops - 1
+      ENDWHILE
+    ENDIF;
+    ST(cname);
+    RETURN SE()
+  ENDPROCEDURE Path;
+
+  (* the C text of a pointer to the frame of level lev, from here *)
+  PROCEDURE FramePtr RETURNS Txt (CONST lev: INT)
+    VAR hops: INT := Level - lev;
+    IF hops = 0 THEN RETURN T("&F") ENDIF;
+    SB();
+    SA("F.up");
+    WHILE hops > 1 DO
+      SA("->up");
+      hops := hops - 1
+    ENDWHILE;
+    RETURN SE()
+  ENDPROCEDURE FramePtr;
+
+  (* declare storage of C type ct named cname at the current level *)
+  PROCEDURE DeclStorage (CONST ct, cname: Txt)
+    VAR t: Txt;
+    SB();
+    IF Level = 0 THEN SA("static ") ENDIF;
+    ST(ct);
+    SA(" ");
+    ST(cname);
+    SA(";");
+    t := SE();
+    IF Level = 0 THEN Put(OGlobals, t) ELSE Put(Locals, t) ENDIF;
+    RETURN
+  ENDPROCEDURE DeclStorage;
+
+  (* the access path of a variable, constant or parameter *)
+  PROCEDURE SymPath RETURNS Txt (CONST s: Sym)
+    VAR p: Txt := Path(s^.level, s^.cname);
+    IF s^.byref THEN
+      SB();
+      SA("(*");
+      ST(p);
+      SA(")");
+      RETURN SE()
+    ENDIF;
+    RETURN p
+  ENDPROCEDURE SymPath;
+
+  (* follow imports and renamings to the entity itself *)
+  PROCEDURE Real RETURNS Sym (CONST s: Sym)
+    VAR p: Sym := s;
+    WHILE p^.kind = S_EXPORT DO p := p^.target ENDWHILE;
+    RETURN p
+  ENDPROCEDURE Real;

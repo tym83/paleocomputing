@@ -1,0 +1,20 @@
+
+(* a user of the module of p.1119. The printed > goes on while every *)
+(* character of s1 is above the one of s2, and is TRUE only if that lasts *)
+(* to the end: no two of the first names compare greater, so nothing *)
+(* moves; for a pair that does, char goes past the end of the string *)
+MODULE UseSort
+  IMPORT ExchangeSort, String, TextIO;
+  VAR names: ARRAY (INTEGER [1..5] OF String);
+  names[1] := "PEARL ";
+  names[2] := "ABACUS";
+  names[3] := "ZEBRA ";
+  names[4] := "MANGO ";
+  names[5] := "APPLE ";
+  Sort(names);
+  FOR i: INTEGER [1..5] DO Write(names[i]); Write("|") ENDFOR;
+  WriteLn();
+  names[1] := "ZZZZZZ";
+  names[2] := "AAAAAA";
+  Sort(names)
+ENDMODULE UseSort

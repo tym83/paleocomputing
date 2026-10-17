@@ -1,0 +1,4 @@
+(* the module of p.1137 imports R, the representation pointed to *)
+MODULE Safe
+  IMPORT TextIO, StandardImplementationPrelude;
+  REPRESENTATION R = RECORD VAR n: INTEGER64; VAR c: ASCII ENDRECORD;
