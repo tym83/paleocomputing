@@ -11257,7 +11257,7 @@ return rv1811; }
 rt_raise(RT_X_INIT);
 }
 static R10 r_BASE_NAME(R12 * p_Y) { 
-if (((((*(R12 *)rt_nil_check(p_Y))).f_PREFIX).f_LEN == ((rt_int)0LL)))
+if ((((((*(R12 *)rt_nil_check(p_Y))).f_PREFIX).f_LEN == ((rt_int)0LL)) || ((((*(R12 *)rt_nil_check(p_Y))).f_NAME).f_LEN <= rt_add((((*(R12 *)rt_nil_check(p_Y))).f_PREFIX).f_LEN, ((rt_int)1LL)))))
 {
 { R10 rv1812 = ((*(R12 *)rt_nil_check(p_Y))).f_NAME;
 return rv1812; }

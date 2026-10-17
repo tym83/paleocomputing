@@ -165,8 +165,8 @@ END FUNCTION MODULE_IMPORTED;
 
 % NAME of T$NAME
 FUNCTION BASE_NAME (Y: SYM) RETURNS (TEXT);
-   IF Y@.PREFIX.LEN = 0 THEN
-      RETURN Y@.NAME;
+   IF Y@.PREFIX.LEN = 0 ! Y@.NAME.LEN <= Y@.PREFIX.LEN + 1 THEN
+      RETURN Y@.NAME;                                 % no prefix, or the short alias
    END IF;
    RETURN MKN (STR (Y@.NAME, Y@.NAME.LEN)[Y@.PREFIX.LEN + 1 : Y@.NAME.LEN - 1]);
 END FUNCTION BASE_NAME;
