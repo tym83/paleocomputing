@@ -1,0 +1,1357 @@
+% BLUE Language Specification, 15 Feb 1978, Appendix C (Input-Output, dated 2/10/78),
+% pages C-5 .. C-36 (DTIC ADB950587, PDF pages 1678 .. 1709). Transcribed as printed,
+% page by page; ... marks elided code, the lower-case phrases are placeholders of the
+% document. Page breaks are marked with a comment line % [C-n]. Read from broken
+% glyphs: DEVICE_IN in the \CR11 case of IN (C-21) and the 1 of STR[0:LEN-1] in READ
+% (C-32).
+% [C-5]
+MAIN SEGMENT SYSTEM
+
+        USES (STANDARD_IO (DATA: (NUM_OF_LT33,...
+                                   % etcetera for constants
+                                   %numbering other devices
+                                   ),
+                   ROUTINES: (INPUT_DRIVER,
+                              OUTPUT_DRIVER,
+                              NEW)), % T$NEW for device-types T
+              APPLICATION);
+
+        PAR_BLOCK
+
+             LT33_PRINTERS
+                  FOR I IN [1:NUM_OF_LT33] CONNECT (LT33_PS(I));
+                       OUTPUT_DRIVER (LT33_DEVICE$NEW(I) # LT33_PS(I));
+                       END PATH LT33-PRINTERS;
+
+             LT33_KEYBOARDS
+                  FOR I IN [1:NUM_OF_LT33] CONNECT (LT33_KS(I));
+                       INPUT_DRIVER (LT33_DEVICE$NEW(I) # LT33_KS(I));
+                       END PATH LT33_KEYBOARDS;
+
+% etcetera for paths for other device drivers
+
+             SCHEDULE_APPLICATION
+                       APPLICATION_ROUTINE ( );
+                       END PATH SCHEDULE_APPLICATION;
+
+             END PAR_BLOCK;
+
+        END SEGMENT SYSTEM;
+% [C-6]
+SEGMENT APPLICATION
+
+        USES (STANDARD_IO (MODULES: (TEXTUAL_IO,
+                                     BINARY_IO)),
+              OTHER_SEGS ...)
+        DEFINES (APPLICATION_ROUTINE);
+
+        PROCEDURE APPLICATION_ROUTINE ( );
+
+% which calls OPEN, CLOSE, PUT, GET, PRINT, READ, and so on for STREAM_FILEs
+% and RANDOM_FILEs; note that for textual IO, appropriate character conversion
+% routines (i.e., FROM_CHAR, TO_FORM_CHAR, etc.) must be defined in the
+% calling environment.  (cf. the WHERE clauses in the IO routine headers).
+
+             END PROCEDURE APPLICATION_ROUTINE;
+
+        END SEGMENT APPLICATION;
+
+SEGMENT STANDARD_IO
+
+        USES (MONITORED_BUFFER_SEG,
+              FILE_SYSTEM_SEG)
+        DEFINES (TEXTUAL_IO, % modules
+                 BINARY_IO,
+                 INPUT_DRIVER, %overloaded device routines
+                 OUTPUT_DRIVER,
+                 NEW,
+                 NUM_OF_LT33,...); % numbers of devices
+
+ MODULE SAFE_TELETYPE
+
+% This module defines procedures to input and output an arbitrary number of
+% bytes to a teletype.  Semaphores are used to control processes that are
+% competing for the same device so that the byte streams will not be
+% intermixed.  The module makes use of the lower-level commands provided by
+% the TELETYPE module.
+
+         IMPORTS (TYPES:(BUFFER)) % See Section 4.6.8
+
+         EXPORTS (NUM_OF_LT33,
+                  LT33_DEVICE WITH
+                       (NEW,
+                        INPUT_DRIVER,
+                        OUTPUT_DRIVER),
+                  DEVICE_OUT, DEVICE_IN);
+
+         VAR S:  ARRAY [1:NUM_OF_LT33] OF SEMAPHORE (REGION)
+                      := SEM_INIT( );
+
+         CONST BYTESIZE : INTEGER := 8;
+% [C-7]
+         FUNCTION SEM_INIT ( )
+              RETURNS (ARRAY[1:NUM_OF_LT33] OF SEMAPHORE(REGION));
+
+              VAR S:   ARRAY[1:NUM_OF_LT33] OF SEMAPHORE(REGION);
+
+              LOOP FOR I IN [1:NUM_OF_LT33] DO
+                   S(I) := SEMAPHORE$NEW(1);
+                   END LOOP I;
+
+              RETURN (S);
+
+              END FUNCTION SEM_INIT;
+
+         PROCEDURE DEVICE_OUT
+              (DEV_OBJ: LT33_DEVICE,
+              BS: BIT(?LEN))
+
+              IMPORTS (DATA:(#S),
+                       ROUTINES:(BYTE_OUT))
+              SIGNALS (IO_ERROR);
+
+              VAR I: INTEGER [0:LEN] := 0;
+
+              IF LEN = 0 THEN
+                   RETURN;
+                   END IF;
+
+              IF REM(LEN, BYTESIZE) <> 0 THEN
+                   SIGNAL IO_ERROR;         %only output whole bytes
+                   END IF;
+
+              REQUEST (#S(NUMBER(DEV_OBJ)));
+
+              LOOP
+                   BYTE_OUT(DEV_OBJ,BS[I:I+BYTESIZE-1]);
+                   I := I + BYTESIZE;
+                   END LOOP WHEN I = LEN;
+
+              RELEASE (#S(NUMBER(DEV_OBJ)));
+
+              END PROCEDURE DEVICE_OUT;
+
+          PROCEDURE DEVICE_IN
+              (DEV_OBJ: LT33_DEVICE
+              ##
+              BS: BIT (?LEN))
+
+              IMPORTS (DATA:(#S),
+                       ROUTINES:(BYTE_IN))
+              SIGNALS (IO_ERROR);
+
+              VAR I: INTEGER [0: LEN] := 0;
+
+              IF  LEN=0 THEN
+% [C-8]
+                   BS := BIN('');
+                   RETURN;
+                   END IF;
+
+              IF REM (LEN, BYTESIZE) <> 0 THEN
+                   SIGNAL IO_ERROR; % only input whole bytes
+                   END IF;
+
+              REQUEST (#S(NUMBER(DEV_OBJ)));
+
+              LOOP
+                   BYTE_IN(DEV_OBJ ## BS[I:I+BYTESIZE-1]);
+                   I := I + BYTESIZE;
+                   END LOOP WHEN I = LEN;
+
+              RELEASE (#S(NUMBER(DEV_OBJ)));
+
+              END PROCEDURE DEVICE_IN;
+% [C-9]
+         MODULE TELETYPE
+
+% This module defines procedures to input and output single bytes via a
+% buffering scheme to LT33 teletype devices.  Routines called from parallel
+% application paths place information in, and retrieve information from, a set
+% of monitored buffers.  Independent device-driver paths transmit the
+% information between the buffers and the actual devices.  This module
+% requires overloaded cases of the low-level START_IO command that take
+% objects of type LT33_DEVICE_ as their first parameters -- in particular:
+%
+% START_IO (D: LT33_DEVICE_,
+%           C: LT33_OP_ [\READ_BYTE:\READ_BYTE]
+%           ##
+%           BS: BIT (BYTESIZE));
+% which uses the device object D to determine the storage location of
+% the input data register and copies its contents to BS -- e.g.,
+%      MOVB ADDR_TABLE(NUMBER(D)) + 2, address (BS)
+%
+% START_IO (D: LT33_DEVICE_,
+%           C: LT33_OP_ [\PRINT_BYTE:\PRINT_BYTE],
+%           BS: BIT (BYTESIZE));
+% which copies the contents of BS into the appropriate output data
+% register -- e.g.,
+%      MOVB address (BS), ADDR_TABLE(NUMBER(D)) + 6
+%
+% START_IO (D: LT33_DEVICE_,
+%           C: LT33_OP_ [\ENABLE_PRINTER_INTERRUPT:
+%                        \ENABLE_PUNCH_MAINTENANCE]);
+% which sets control bits in the appropriate status register -- e.g.,
+%      at ADDR_TABLE(NUMBER(D))
+%      or ADDR_TABLE(NUMBER(D)) + 4
+%
+% START_IO (D: LT33_DEVICE_,
+%           C: LT33_OP_ [\READER_BUSY:
+%                        \PUNCH_MAINTENANCE_ENABLED]
+%           ##
+%           F: BOOLEAN);
+% which inquires about bits in the appropriate status register.
+%
+% Just as the various cases of START_IO are built into a given implementation,
+% so must the types of the parameters for those cases.  Thus the TELETYPE
+% [C-10]
+% module assumes the existence of LT33_DEVICE_, whose only operation is a NEW
+% construction, and LT33_OP_, whose declaration would be:
+%
+% TYPE LT33_OP_ = ENUM (\READ_BYTE,
+%                       \PRINT_BYTE,
+%                       \ENABLE_PRINTER_INTERRUPT,
+%                       \ENABLE_KEYBOARD_INTERRUPT,
+%                       \ENABLE_TAPE_READER,
+%                       \ENABLE_PUNCH_MAINTENANCE,
+%                       \READER_BUSY,
+%                       \READER_DONE,
+%                       \KEYBOARD_INTERRUPT_ENABLED,
+%                       \TAPE_READER_ENABLED,
+%                       \PRINTER_READY,
+%                       \PRINTER_INTERRUPT_ENABLED,
+%                       \PUNCH_MAINTENANCE_ENABLED);
+%
+%          * * * * *
+%
+
+            IMPORTS (TYPES: (BUFFER))
+
+            EXPORTS (NUM_OF_LT33,
+                     LT33_DEVICE);
+
+            CONST NUM_OF_LT33 : INTEGER := ...;
+
+            TYPE LT33_DEVICE = INTEGER [1:NUM_OF_LT33];
+
+            CONST BYTESIZE: INTEGER := 8;
+            CONST BUF_SIZE: INTEGER := 64;
+
+            VAR IN_BUF:  ARRAY [1:NUM_OF_LT33] OF BUFFER(BUF_SIZE)
+                              := BUF_INIT( );
+            VAR OUT_BUF: ARRAY [1:NUM_OF_LT33] OF BUFFER(BUF_SIZE)
+                              := BUF_INIT( );
+% [C-11]
+            FUNCTION BUF_INIT ( )
+                 RETURNS (ARRAY [1:NUM_OF_LT33] OF BUFFER (BUF_SIZE));
+
+                 VAR B:   ARRAY [1:NUM_OF_LT33] OF BUFFER (BUF_SIZE);
+
+                 LOOP FOR I IN [1:NUM_OF_LT33] DO
+                      CLEAR (# B(I));
+                      END LOOP I;
+
+                 RETURN (B);
+
+                 END FUNCTION BUF_INIT;
+
+            FUNCTION LT33_DEVICE$NEW
+                 (DEV_NUM : INTEGER [1:NUM_OF_LT33])
+                 RETURNS (LT33_DEVICE);
+
+                 RETURN (DEV_NUM);
+
+                 END FUNCTION LT33_DEVICE$NEW;
+
+            FUNCTION LT33_DEVICE$NUMBER
+                 (DEV_OBJ : LT33_DEVICE)
+                 RETURNS (INTEGER [1:NUM_OF_LT33]);
+
+                 RETURN (DEV_OBJ);
+
+                 END FUNCTION LT33_DEVICE$NUMBER;
+
+            PROCEDURE LT33_DEVICE$BYTE_OUT
+                 (DEV_OBJ: LT33_DEVICE,
+                 BS: BIT (BYTESIZE));
+                 IMPORTS (DATA: (#OUT_BUF));
+
+                 APPEND (BS # OUT_BUF(DEV_OBJ));
+
+                 END PROCEDURE LT33_DEVICE$BYTE_OUT;
+
+            PROCEDURE LT33_DEVICE$BYTE_IN
+                 (DEV_OBJ: LT33_DEVICE
+                 ##
+                 BS: BIT (BYTESIZE))
+                 IMPORTS (DATA:(#IN_BUF));
+
+                 REMOVE (#IN_BUF(DEV_OBJ) # BS);
+
+                 END PROCEDURE LT33_DEVICE$BYTE_IN;
+% [C-12]
+            PROCEDURE LT33_DEVICE$OUTPUT_DRIVER
+                 (DEV_OBJ: LT33_DEVICE
+                 #
+                 READY: SEMAPHORE (SYNCH))
+                 IMPORTS (DATA:(#OUT_BUF));
+
+                 VAR BS: BIT (BYTESIZE);
+
+                 SELECT OBJECT_MACHINE FROM
+
+            PDP_11 -->
+                      START_IO (LT33_DEVICE_$NEW(DEV_OBJ),
+                                %map to built-in type
+                                \ENABLE_PRINTER_INTERRUPT);
+                      LOOP
+                           REMOVE (#OUT_BUF(DEV_OBJ) # BS);
+                           REQUEST (# READY);
+                           START_IO (LT33_DEVICE_$NEW(DEV_OBJ),
+                                     \PRINT_BYTE,
+                                     BS);
+                           END LOOP;
+                      END;
+
+                      END SELECT;
+
+                 END PROCEDURE LT33_DEVICE$OUTPUT_DRIVER;
+% [C-13]
+            PROCEDURE LT33_DEVICE$INPUT_DRIVER
+                 (DEV_OBJ: LT33_DEVICE
+                 #
+                 DONE: SEMAPHORE (SYNCH))
+                 IMPORTS (DATA: (#IN_BUF));
+
+                 VAR BS: BIT (BYTESIZE);
+
+                 SELECT OBJECT_MACHINE FROM
+
+            PDP_11 -->
+                      START_IO (LT33_DEVICE_$NEW(DEV_OBJ),
+                                \ENABLE_KEYBOARD_INTERRUPT);
+                      LOOP
+                           REQUEST (# DONE);
+                           START_IO (LT33_DEVICE_$NEW(DEV_OBJ),
+                                     \READ_BYTE
+                                     ##
+                                     BS);
+                           APPEND (BS # IN_BUF(DEV_OBJ));
+                           END LOOP;
+                      END;
+
+                      END SELECT;
+
+                 END PROCEDURE LT33_DEVICE$INPUT_DRIVER;
+
+            END MODULE TELETYPE;
+
+       END MODULE SAFE_TELETYPE;
+
+
+% etcetera for other device-specific modules
+% [C-14]
+MODULE BINARY_IO
+
+% This module defines the STREAM_FILE and RANDOM_FILE data types, and their
+% corresponding operations.  These operations provide capabilities for
+% dynamically linking external devices and physical files to logical file
+% objects, for creating, deleting, and positioning files, and for transferring
+% information to and from the files.  The routines also form the basis for
+% other procedures that handle textual IO.
+
+        IMPORTS (DATA:(PATHNAME_SIZE), % from FILE_SYSTEM_SEG
+                 ROUTINES:(FSYS_CREATE,FSYS_DELETE,
+                           FSYS_UPDATE,FSYS_CHECK),
+                 MODULES:(SAFE_TELETYPE,...))
+                                  %etcetera for other device-specific modules.
+        EXPORTS (STREAM_FILE, RANDOM_FILE,
+                 CLEAR, REWIND,
+                 GET, PUT,
+                 OPEN, CLOSE);
+
+% Objects for stream and random file types have the same underlying
+% representation, which is defined by the FILE type and hidden (i.e., not
+% exported) by the module.
+
+        TYPE DEVICE_NAME = ENUM (\LT33, \CR11,\RP03,...);
+
+        TYPE FILE (ELEMENT_TYPE : TYPE) =
+             RECORD
+                  VAR OPEN: BOOLEAN,
+                  VAR PATHNAME: ASCII_STR(PATHNAME_SIZE),
+                  VAR DEV_NAME: DEVICE_NAME,
+                  VAR DEV_NUMBER: INTEGER [1:INTEGER_MAX],
+                  VAR FILE_ADDRESS: INTEGER [0:INTEGER_MAX],
+                  VAR OPERATIONS: ENUM(\READ, \WRITE, \READ_WRITE),
+                  VAR SIZE: INTEGER [0:INTEGER_MAX],
+                  VAR LOCKED: BOOLEAN
+             END RECORD;
+
+         TYPE STREAM_FILE (ELEMENT_TYPE : TYPE) =
+              RECORD
+                   VAR BODY: FILE (ELEMENT_TYPE)
+              END RECORD;
+
+         TYPE RANDOM_FILE (ELEMENT_TYPE : TYPE,
+                           NUM_OF_ELEM: INTEGER [0:INTEGER_MAX]) =
+              %Random file elements are accessed via logical
+              %addresses in the range [0:NUM_OF_ELEM-1].
+              RECORD
+                   VAR BODY: FILE (ELEMENT_TYPE)
+              END RECORD;
+% [C-15]
+        PROCEDURE CLEAR (#SF:  STREAM_FILE(?));
+
+             %CLEAR must be called prior to OPEN and CLOSE
+
+             SF.BODY.OPEN := FALSE;
+
+             END PROCEDURE CLEAR;
+
+        PROCEDURE CLEAR (# RF: RANDOM_FILE (?,?));
+
+             %Overloaded case of CLEAR for random files.
+
+             RF.BODY.OPEN := FALSE;
+
+             END PROCEDURE CLEAR;
+
+% The overloaded cases of the OPEN and CLOSE procedures for stream and random
+% files utilize corresponding FOPEN and FCLOSE routines for the underlying
+% FILE objects.  These procedures rely heavily on functional capabilities
+% imported from an independent file-system segment.  Observe that a 'standard'
+% file system could also be defined for the language, but that is beyond the
+% scope of this IO illustration.
+
+        PROCEDURE FOPEN (PATHNAME: ASCII_STR(PATHNAME_SIZE),
+                         VINTAGE: (\NEW, \OLD),
+                         OPERATIONS:  (\READ, \WRITE, \READ_WRITE),
+                         SIZE: INTEGER [0:INTEGER_MAX],
+                         LOCKED: BOOLEAN
+                         #
+                         F:FILE(?))
+             SIGNALS (IO_ERROR);
+
+             IF F.OPEN THEN              %field must be set
+                  SIGNAL IO-ERROR;           %by CLEAR prior to OPEN
+                  END IF;
+
+             IF VINTAGE = \NEW THEN
+                  FSYS_CREATE( PATHNAME,
+                               SIZE,
+                               OPERATIONS,            %write onto file header
+                               LOCKED                 %write onto file header
+                               ##
+                               F.DEV_NAME,            %names a device class
+                               F.DEV_NUMBER,          %number within a class
+                               F.FILE_ADDRESS);       %file address on device
+% FYS_CREATE creates a new file, with an appropriate 'header', in the
+% external file system -- exceptions are signalled for invalid pathnames,
+% pathnames for existing files or devices, SIZE amount of storage  not
+% available, OPERATIONS inconsistent with the device, and so on.
+% [C-16]
+             ELSE                        %VINTAGE = \OLD
+                  FYS_CHECK (PATHNAME,
+                             SIZE,
+                             OPERATIONS,
+                             LOCKED
+                             ##
+                             F.DEV_NAME,
+                             F.DEV_NUMBER,
+                             F.FILE_ADDRESS);
+% FYS_CHECK checks an old file or device specified by a PATHNAME and returns
+% its device name (e.g.\LT33), its number within that class of devices, and,
+% for appropriate devices, a file address on the device -- exceptions are
+% signalled for invalid pathnames, syntactically valid pathnames with no
+% corresponding file or device, mismatched SIZE, incompatible OPERATIONS,
+% LOCKED = TRUE and an external entity currently linked to another open file
+% with \WRITE or \READ_WRITE permission, OPERATIONS = \WRITE or \READ_WRITE
+% and an external entity already linked with a lock to another open file, and
+% so on.
+                  END IF;
+
+             F.PATHNAME := PATHNAME;
+             F.OPERATIONS := OPERATIONS;
+             F.SIZE := SIZE;
+             F.LOCKED := LOCKED;
+             F.OPEN := TRUE;
+
+             END PROCEDURE  FOPEN;
+
+        PROCEDURE FCLOSE (DISPOSITION: (\SAVE, \DELETE),
+                          OPERATIONS: (\READ, \WRITE, \READ_WRITE)
+                          #
+                          F: FILE(?))
+             SIGNALS (IO_ERROR);
+
+             IF NOT F.OPEN THEN
+                  SIGNAL IO_ERROR;
+                  END IF;
+
+             IF DISPOSITION = \SAVE THEN
+                  FSYS_UPDATE (F.PATHNAME,
+                               OPERATIONS,
+                               F.LOCKED);
+% FSYS_UPDATE updates the valid operations recorded in the file's header and
+% resets the lock flag on the external entity if that flag was set for this
+% file -- exceptions are signalled for OPERATIONS inconsistent with device,
+% user not allowed to change OPERATIONS permissions, new OPERATIONS
+% inconsistent with those of other files currently linked to the external
+% object, and so on.
+% [C-17]
+             ELSE                        %DISPOSITION = \DELETE
+                  FSYS_DELETE (F.PATHNAME);
+% FSYS_DELETE deletes the entity from the external file system -- exceptions
+% are signalled for a user without DELETE permission, an external entity still
+% linked to other open files, and so on.
+                  END IF;
+
+             F.OPEN := FALSE;
+
+             END PROCEDURE FCLOSE;
+
+        PROCEDURE OPEN (PATHNAME: ASCII_STR(PATHNAME_SIZE),
+                        VINTAGE : (\NEW,\OLD),
+                        OPERATIONS: (\READ, \WRITE, \READ_WRITE),
+                        LOCKED: BOOLEAN
+                        #
+                        RF: RANDOM_FILE (?T REP ?R, ?S));
+
+             FOPEN (PATHNAME, VINTAGE, OPERATIONS,
+                    S * R.SIZE, LOCKED
+                    # RF.BODY);
+
+             END PROCEDURE OPEN;
+
+        PROCEDURE OPEN (PATHNAME: ASCII_STR(PATHNAME_SIZE),
+                        VINTAGE: (\NEW, \OLD),
+                        OPERATIONS: (\READ, \WRITE, \READ_WRITE),
+                        SIZE: INTEGER [0:INTEGER_MAX],
+                        LOCKED: BOOLEAN
+                        #
+                        SF: STREAM_FILE (?T REP ?R));
+
+             FOPEN (PATHNAME, VINTAGE, OPERATIONS,
+                    SIZE * R.SIZE, LOCKED
+                    # SF.BODY);
+
+             END PROCEDURE OPEN;
+
+        PROCEDURE CLOSE (DISPOSITION:  (\SAVE, \DELETE),
+                         OPERATIONS: (\READ, \WRITE, \READ_WRITE)
+                         #
+                         RF: RANDOM_FILE (?,?));
+
+             FCLOSE (DISPOSITION, OPERATIONS # RF.BODY);
+
+             END PROCEDURE CLOSE;
+% [C-18]
+        PROCEDURE CLOSE (DISPOSITION: (\SAVE, \DELETE),
+                         OPERATIONS: (\READ, \WRITE, \READ_WRITE)
+                         #
+                         SF: STREAM_FILE (?));
+
+             FCLOSE (DISPOSITION, OPERATIONS # SF.BODY);
+
+             END PROCEDURE CLOSE;
+
+% The GET procedure also has two overloaded cases which are promoted --  one
+% for stream files and one for random files.  The fact that they map to the
+% same underlying IO primitives is hidden by the module.
+
+        PROCEDURE GET (SF: STREAM_FILE (?T REP ?R)
+                       ##
+                       VAL: ?T REP ?R)
+             IMPORTS (ROUTINES:(GET_IN));
+
+             GET_IN (SF.BODY ## VAL);
+
+             END PROCEDURE GET;
+
+        PROCEDURE GET (RF: RANDOM_FILE (?T REP ?R, ?),
+                       IND: INTEGER [0:INTEGER_MAX]
+                       ##
+                       VAL: ?T REP ?R)
+             IMPORTS (ROUTINES: (GET_IN, POSITION));
+
+             POSITION (RF, IND);
+             GET_IN (RF.BODY ## VAL);
+
+             END PROCEDURE GET;
+
+% The overloaded PUT procedure is similar to GET, except that the value is
+% output.
+
+        PROCEDURE PUT (SF: STREAM_FILE (?T REP ?R),
+                       VAL: ?T REP ?R)
+             IMPORTS (ROUTINES: (PUT_OUT));
+
+             PUT_OUT(SF.BODY, VAL);
+
+             END PROCEDURE PUT;
+% [C-19]
+        PROCEDURE PUT(RF: RANDOM_FILE (?T REP ?R, ?),
+                      IND: INTEGER [0:INTEGER_MAX],
+                      VAL: ?T REP ?R)
+             IMPORTS (ROUTINES: (PUT_OUT, POSITION));
+
+             POSITION (RF, IND);
+             PUT_OUT(RF.BODY, VAL);
+
+             END PROCEDURE PUT;
+
+        PROCEDURE GET_IN (F: FILE(?T REP ?R)
+                          ##
+                          VAL: ?T REP ?R)
+
+% The GET_IN procedure provides the interface between the lower-level IN
+% procedure and the overloaded cases of GET for stream and random files.
+% Observe that the types of objects read in must agree with the type of
+% elements in the file.
+
+             WHERE T NEEDS (STORE_(T##T))
+             IMPORTS (ROUTINES:(IN));
+
+             VAR BS: BIT (R.SIZE);
+
+             IN (F ## BS);              %read in the bit-string rep
+
+             SELECT OBJECT_MACHINE FROM      %interpret machine-dependent
+        PDP_11 -->                      %bit representation according to T
+                  VAL := [T REP R]$$(BS);
+                  END;
+        UYK_99 -->
+                  VAL := [T REP R]$$(BS);         %different BS length check
+                  END;
+             END SELECT;
+
+             END PROCEDURE GET_IN;
+% [C-20]
+        PROCEDURE PUT_OUT (F: FILE(?T REP ?R),
+                           VAL: ?T REP ?R)
+
+% The PUT_OUT procedure is similar to GET_IN except that it provides an
+% interface between the lower-level OUT procedure and the overloaded cases of
+% PUT.
+
+             WHERE T NEEDS (TO_BIT (T REP R) RETURNS (BIT(?)));
+% which is provided for built-in types;  overloaded cases of TO_BIT must be
+% supplied for user-defined types desiring output capability.
+
+             IMPORTS (ROUTINES:(OUT));
+
+             OUT (F, TO_BIT(VAL));
+
+             END PROCEDURE PUT_OUT;
+% [C-21]
+        PROCEDURE IN (F:FILE (?)
+                      ##
+                      BS: BIT(?LEN))
+             IMPORTS (ROUTINES: (DEVICE_IN))
+             SIGNALS (IO_ERROR);
+
+% The IN procedure reads in a bit string from the physical file or device
+% associated with the FILE object.  The 'current' position of the file is
+% used; random files are assumed to be positioned at the desired logical
+% address.  If a stream file is positioned at the 'end-of-file', an exception
+% will be raised by the lower-level device handler. The number of bits to be
+% read is determined by the size of the bit string parameter.
+
+             IF NOT F.OPEN THEN
+                  SIGNAL IO_ERROR;          %unopened file
+                  END IF;
+             IF F.OPERATIONS <> \READ & F.OPERATIONS <> \READ_WRITE THEN
+                  SIGNAL IO_ERROR;          %no read permission
+                  END IF;
+
+             SELECT F.DEV_NAME FROM
+
+        \LT33 -->
+                  DEVICE_IN (LT33_DEVICE$NEW (F.DEV_NUMBER)
+                             ##
+                             BS);
+                  END;
+% Note: No end-in-file exception at lower levels of  LT33 case -- the 'EOF'
+% character is read like any other.
+
+        \CR11 -->
+                  DEVICE_IN (CR11_DEVICE$NEW(F.DEV_NUMBER)
+                             ##
+                             BS);
+                  END;
+
+             %etc. for other devices
+
+        ELSE  --> SIGNAL IO_ERROR;          %unsupported device
+                  END;
+
+             END SELECT;
+
+             END PROCEDURE IN;
+% [C-22]
+        PROCEDURE OUT (F:FILE (?),
+                       BS: BIT (?LEN))
+             IMPORTS(ROUTINES:(DEVICE_OUT))
+             SIGNALS (IO_ERROR);
+
+% The OUT procedure is similar to IN, except that the bit string is output to
+% a physical file or device.
+
+             IF NOT F.OPEN THEN
+                  SIGNAL IO_ERROR;          %unopened file
+                  END IF;
+             IF F.OPERATIONS <> \WRITE & F.OPERATIONS <> \READ_WRITE THEN
+                  SIGNAL IO_ERROR;          %no write permision
+                  END IF;
+
+             SELECT F.DEV_NAME FROM
+
+        \LT33 --> DEVICE_OUT(LT33_DEVICE$NEW(F.DEV_NUMBER), BS);
+                  END;
+
+             %etcetera for other devices
+
+        ELSE  --> SIGNAL IO_ERROR;          %unsupported device
+                  END;
+
+             END SELECT;
+
+             END PROCEDURE OUT;
+% [C-23]
+        PROCEDURE REWIND (SF: STREAM_FILE(?))
+             SIGNALS(IO_ERROR);
+
+             IF NOT SF.BODY.OPEN THEN
+                  SIGNAL IO_ERROR;          %unopened file
+                  END IF;
+
+% Select an appropriate call on a device-driver to rewind the file -- this
+% will (ultimately) result in a call on one of the overloaded cases of
+% START_IO.
+
+             SELECT SF.BODY.DEV_NAME FROM
+
+        \LT33 --> SIGNAL IO_ERROR;          %operation invalid for the device
+                  END;
+
+% etcetera for other devices, calling appropriate device routine or
+% signalling exception
+
+        ELSE  --> SIGNAL IO_ERROR;          %unsupported device
+                  END;
+
+             END SELECT;
+
+             END PROCEDURE REWIND;
+% [C-24]
+        PROCEDURE POSITION (RF: RANDOM_FILE (?T REP ?R, ?S),
+                            IND: INTEGER [0:INTEGER_MAX])
+             SIGNALS(IO_ERROR);
+
+             IF NOT RF.BODY.OPEN THEN
+                  SIGNAL IO_ERROR;          %unopened file
+                  END IF;
+             IF IND >= S THEN
+                  SIGNAL IO_ERROR;          %illegal element index
+                  END IF;
+
+% Select appropriate call of a device-specific routine or START_IO case
+% according to the type of device.
+
+             SELECT RF.BODY.DEV_NAME FROM
+
+        \LT33 --> SIGNAL IO_ERROR;          %can't position teletype
+                  END;
+
+% etcetera for other devices, calling appropriate routine to position them --
+% note, the physical address is computed from the file address
+% (RF.BODY.FILE_ADDRESS) plus some offset (e.g., R.SIZE * IND).
+
+        ELSE  --> SIGNAL IO_ERROR;          %unsupported device.
+                  END;
+
+             END SELECT;
+
+             END PROCEDURE POSITION;
+
+% Note -- unlike REWIND, POSITION is not exported from the module since its
+% only meaningful use is prior to an IN or OUT call, which are also not
+% directly accessible.  POSITION, IN, and OUT are indirectly invoked via
+% higher-level calls on the exported procedures GET and PUT.
+
+        END MODULE BINARY_IO;
+% [C-25]
+        MODULE TEXTUAL_IO
+
+% This module defines procedures for transfering data to and from files of
+% characters -- i.e., those with type STREAM_FILE(ASCII_STR(1)).  They are
+% built on the more 'primitive' routines for binary IO, and handle both
+% unformatted and formatted text.
+
+             IMPORTS (MODULES:(BINARY_IO))
+
+             EXPORTS (NEWLINE,
+                      PRINT, FORMPRINT,
+                      READ, FORMREAD);
+
+             CONST CHAR_MAX: INTEGER := (ASCII_STR.LENGTH).MAX;
+
+             PROCEDURE NEWLINE (SF: STREAM_FILE(ASCII_STR(1)))
+                  IMPORTS (ROUTINES:(PUT));
+
+                  PUT(SF,''\CR);
+                  PUT(SF,''\LF);
+
+                  END PROCEDURE NEWLINE;
+
+             PROCEDURE STRPUT(SF: STREAM_FILE(ASCII_STR(1)),
+                              STR: ASCII_STR(?S))
+                  IMPORTS(ROUTINES:(PUT));
+
+                  LOOP FOR I IN [0:S-1] DO
+                       PUT(SF,STR[I:I]);
+                       END LOOP I;
+
+                  END PROCEDURE STRPUT;
+
+             PROCEDURE PRINT (SF: STREAM_FILE(ASCII_STR(1)),
+                              VAL: ?T REP ?R)
+
+% PRINT assumes the output is to be ASCII and thus can use 'TO_CHAR' routines
+% that produce character strings whose bit representation reflects an ASCII
+% encoding.
+
+                  WHERE T NEEDS (TO_CHAR(T REP R)
+                                       RETURNS (ASCII_STR(?)))
+                  IMPORTS(ROUTINES:(STRPUT));
+
+                  STRPUT(SF,TO_CHAR(VAL));
+
+                  END PROCEDURE PRINT;
+% [C-26]
+        PROCEDURE FORMPRINT (SF: STREAM_FILE(ASCII_STR(1)),
+                             FORMAT : ASCII_STR(?FS))
+
+% This overloaded case of the FORMPRINT procedure is used for doing
+% formatting that is independent of any output value -- such as issuing
+% spaces, linefeeds, and so on.
+
+             IMPORTS(ROUTINES:(STRPUT))
+             SIGNALS(IO_ERROR);
+
+             VAR INDEX : INTEGER [0:FS] := 0;
+             VAR AHEAD : INTEGER [1:FS] ;
+             VAR NUM_OF_ITERATIONS : INTEGER [0:INTEGER_MAX];
+
+             LOOP UNTIL INDEX = FS DO
+
+                  AHEAD := INDEX + 1;
+
+                  LOOP UNTIL (AHEAD = FS !
+                              NOT DIGIT(FORMAT[AHEAD:AHEAD])) DO
+                       AHEAD := AHEAD + 1;
+                       END LOOP;
+
+                  IF AHEAD > INDEX + 1 THEN
+                       NUM_OF_ITERATIONS :=
+                            TO_FIXED(FORMAT[INDEX+1:AHEAD-1],0);
+                  ELSE
+                       NUM_OF_ITERATIONS := 1;
+                       END IF;
+
+                  BLOCK                         %need constant for STRDUP
+                       CONST N_O_I : INTEGER := NUM_OF_ITERATIONS;
+
+                       SELECT FORMAT [INDEX:INDEX] FROM
+
+                  'S' -->                       %skip spaces
+                            STRPUT (SF, STRDUP ('', N_O_I));
+                            END;
+                  'L' -->                       %line feed
+                            STRPUT (SF, STRDUP (''LF, N_O_I));
+                            END;
+                  'N' -->                       %new line
+                            STRPUT (SF, STRDUP (''CR LF, N_O_I));
+                            END;
+
+% etcetera for other format indicators
+
+                   ELSE --> SIGNAL IO_ERROR        %illegal format string
+                            END;
+
+                       END SELECT;
+
+                       END BLOCK;
+% [C-27]
+                  INDEX := AHEAD;
+
+                  END LOOP;
+
+% end of FORMPRINT body
+
+             FUNCTION DIGIT (C: ASCII_STR(1)) RETURNS (BOOLEAN);
+
+                  SELECT C FROM
+
+             '0', '1', '2', '3', '4',
+             '5', '6', '7', '8', '9' -->
+                       RETURN (TRUE);
+                       END;
+
+             ELSE -->
+                       RETURN (FALSE);
+                       END;
+
+                  END SELECT;
+
+                  END FUNCTION DIGIT;
+
+             FUNCTION STRDUP (S: ASCII_STR(?L),
+                              N: INTEGER [0: INTEGER_MAX])
+                    RETURNS (ASCII_STR(N*L));
+
+                  VAR RS: ASCII_STR(N*L);
+                  VAR I: INTEGER [0:N*L] := 0;
+
+                  IF (N*L = 0) THEN
+                       RETURN('');
+                       END IF;
+
+                  LOOP
+                       RS[I:I+L-1] := S;
+                       I := I + L;
+                       END LOOP WHEN I = N*L;
+
+                  RETURN (RS);
+
+                  END FUNCTION STRDUP;
+
+             END PROCEDURE FORMPRINT;
+% [C-28]
+        PROCEDURE FORMPRINT (SF: STREAM_FILE(ASCII_STR(1)),
+                             FORMAT: ASCII_STR(?FS),
+                             VAL : ?T REP ?R)
+
+% This overloaded case of the FORMPRINT procedure outputs a formatted string
+% representation of its VAL parameter.  The FORMAT specification string
+% consists of three delimited, possibly-empty substrings in the form:
+%
+%                    [fstr #] vstr [# fstr]
+%
+% If present the fstr substrings are used to output value-independent format
+% controls before and after the value is output.  The vstr substring is passed
+% to a TO_FORM_CHAR routine that must be supplied for each type on which
+% formatted output is desired.  These routines produce character-string
+% representations for values of the types.  They are similar to the TO_CHAR
+% routines, except that they return character strings of differing values and
+% generic lengths depending upon the specific format for the value being
+% converted.  Because the returned lengths must be generically determined, a
+% length value must be provided as an input parameter.  This length is
+% computed by a FORM_CHAR_LEN function, also overloaded on the type of VAL.
+% Examples of these functions' headers for one overloaded case are:
+%
+% FUNCTION TO_FORM_CHAR (FORMAT: ASCII_STR(?FS),
+%                        LEN : INTEGER [0: CHAR_MAX],
+%                        VAL: SOME_TYPE REP ?R)
+%                 RETURNS (ASCII_STR(LEN));
+%
+% and
+%
+% FUNCTION FORM_CHAR_LEN (FORMAT: ASCII_STR(?FS),
+%                         VAL: SOME_TYPE REP ?R)
+%                  RETURNS (INTEGER [0:CHAR_MAX]);
+%
+%          * * * * *
+%
+
+             WHERE T NEEDS (
+                  TO_FORM_CHAR (ASCII_STR(?),
+                                INTEGER [0: CHAR_MAX],
+                                T REP R)
+                           RETURNS (ASCII_STR(?)),
+                  FORM_CHAR_LEN (ASCII_STR(?),
+                                 T REP R)
+                           RETURNS (INTEGER [0: CHAR_MAX]))
+
+             IMPORTS (ROUTINES: (FORMPRINT,  %the other overloaded case
+                                 STRPUT));
+
+             CONST DELIM: ASCII_STR(1) := '#';
+
+             VAR I    : INTEGER[0:FS] := 0;
+             VAR MARK : INTEGER[1:FS];
+% [C-29]
+             IF I=FS then                    %null format string
+                  CONVERT_AND_PUT(SF,'', VAL);
+                  RETURN;
+                  END IF;
+
+             LOOP UNTIL (I=FS ! FORMAT[I:I] = DELIM) DO
+                  I := I + 1;                        %search for delimiter
+                  END LOOP;
+
+             IF I = FS THEN                  %only value format string
+                  CONVERT_AND_PUT(SF, FORMAT[0:I-1],VAL);
+                  RETURN;
+                  END IF;
+
+% else I points to first delimiter
+
+             IF I > 0 THEN                   %format preceding value part
+                  FORMPRINT (SF, FORMAT[0:I-1]);
+                  %continue -- no return
+                  END IF;
+
+             I := I + 1;
+             MARK := I;
+
+             IF I = FS THEN                  %remaining string, including
+                  CONVERT_AND_PUT(SF, '', VAL);     %value part, null
+                  RETURN;
+                  END IF;
+
+             LOOP UNTIL (I = FS ! FORMAT[I:I] = DELIM) DO
+                  I := I + 1;                        %search for delimiter
+                  END LOOP;
+
+             IF I=FS THEN                    %only value part remains
+                  CONVERT_AND_PUT(SF, FORMAT[MARK:I-1], VAL);
+                  RETURN;
+                  END IF;
+
+% else I points to second delimiter
+
+             IF I > MARK THEN                %non-null value part
+                  CONVERT_AND_PUT(SF, FORMAT [MARK:I-1], VAL);
+             ELSE
+                  CONVERT_AND_PUT(SF,'',VAL);
+                  END IF;
+
+             I := I + 1;
+% [C-30]
+             IF I < FS THEN                  %format following value part
+                  FORMPRINT (SF, FORMAT [I: FS-1]);
+                  END IF;
+
+% end body of FORMPRINT
+
+             PROCEDURE CONVERT_AND_PUT (SF:STREAM_FILE(ASCII_STR(1)),
+                                        FORMAT: ASCII_STR(?),
+                                        VAL : ?T REP ?R)
+
+% The TO_FORM_CHAR and FORM_CHAR_LEN routines used here must be taken from
+% the point of call within FORMPRINT, and thus are indirectly taken from the
+% point where FORMPRINT is called.
+
+                  WHERE T NEEDS (
+                       TO_FORM_CHAR (ASCII_STR(?),
+                                     INTEGER [0:CHAR_MAX],
+                                     T REP R)
+                                RETURNS (ASCII_STR(?)),
+                       FORM_CHAR_LEN (ASCII_STR(?),
+                                      T REP R)
+                                RETURNS (INTEGER [0:CHAR_MAX]))
+
+                  IMPORTS (ROUTINES:(STRPUT));
+
+% need constant for TO_FORM_CHAR
+                  CONST LEN: INTEGER
+                            := FORM_CHAR_LEN (FORMAT, VAL);
+
+                  STRPUT (SF, TO_FORM_CHAR(FORMAT,
+                                           LEN,
+                                           VAL));
+
+                  END PROCEDURE CONVERT_AND_PUT;
+
+             END PROCEDURE FORMPRINT;
+
+        PROCEDURE STRGET (SF: STREAM_FILE(ASCII_STR(1))
+                          ##
+                          LEN: INTEGER [0:CHAR_MAX],
+                          STR: ASCII_STR(CHAR_MAX))
+             IMPORTS (ROUTINES: (GET));
+
+% This overloaded case of the STRGET routine is used to read in an arbitrary
+% number of characters, until a delimiting character is found in the input
+% stream.  It returns the number and values of the characters it has read.
+% This case of STRGET is used by the READ routine for unformatted text.
+% [C-31]
+             VAR C: ASCII_STR(1);
+
+             LOOP
+                  GET (SF ## C);
+                  END LOOP WHEN NOT DELIMITER(C);
+
+             LEN := 0;
+
+             LOOP
+                  STR[LEN:LEN] := C;
+                  LEN := LEN +1;
+                  GET (SF ## C);
+                  END LOOP WHEN DELIMITER(C);
+
+% end of STRGET body
+
+             FUNCTION DELIMITER (C: ASCII_STR(1)) RETURNS(BOOLEAN);
+
+                  SELECT C FROM
+
+             ' ', ''CR, ''LF -->
+                       RETURN (TRUE);
+                       END;
+             ELSE -->
+                       RETURN (FALSE);
+                       END;
+
+                  END SELECT;
+
+                  END FUNCTION DELIMITER;
+
+             END PROCEDURE STRGET;
+
+        FUNCTION STRGET (SF: STREAM_FILE(ASCII_STR(1)),
+                         LEN: INTEGER [0:CHAR_MAX])
+                 RETURNS (ASCII_STR(LEN))
+             IMPORTS (ROUTINES:(GET));
+
+% This overloaded case of the STRGET routine is used to read in a specified
+% number of arbitrary characters.  It is used by the FORMREAD routines for
+% formatted text.
+
+             VAR STR: ASCII_STR(LEN);
+
+             LOOP FOR I IN [0:LEN-1] DO
+                  GET (SF ## STR[I:I]);
+                  END LOOP;
+
+             RETURN (STR);
+
+             END FUNCTION STRGET;
+% [C-32]
+        PROCEDURE READ (SF: STREAM_FILE (ASCII_STR(1))
+                        ##
+                        VAL: ?T REP ?R)
+
+% The READ procedure for unformatted text is similar to PRINT, except that
+% the values are input.  The size of the character-string representation is
+% inferred by delimiters in the input stream.  All types for which text input
+% is desired must have a FROM_CHAR operation (to perform the inverse of
+% TO_CHAR).  For example, a FROM_CHAR for the FIXED type can be added to the
+% standard prelude as:
+%
+% FUNCTION FIXED$FROM_CHAR (STR: ASCII_STR(?), T:TYPE)
+%                  RETURNS (T)
+%      WHERE T NEEDS (STORE_(T##T));
+%      VAR VAL: T := TO_FIXED(STR
+%                             VAL.SCALE,
+%                             VAL.RADIX,
+%                             VAL.PRECISION);
+%      RETURN (VAL);
+%      END FUNCTION FIXED$FROM_CHAR;
+%
+% Similar routines must be defined for other types.
+%
+%          * * * * *
+%
+
+             WHERE T NEEDS (FROM_CHAR(ASCII_STR(?),TYPE)
+                                 RETURNS (T),
+                            STORE_(T ## T))
+             IMPORTS (ROUTINES: (STRGET));
+
+             VAR LEN: INTEGER [0:CHAR_MAX];
+             VAR STR: ASCII_STR(CHAR_MAX);
+
+             STRGET (SF ## LEN, STR);
+
+             VAL := T$FROM_CHAR (STR[0:LEN-1], T REP R);
+
+             END PROCEDURE READ;
+% [C-33]
+        PROCEDURE FORMREAD (SF: STREAM_FILE (ASCII_STR(1)),
+                            FORMAT: ASCII_STR(?FS))
+             IMPORTS (ROUTINES:(STRGET));
+
+% This overloaded case of the FORMREAD procedure is similar to FORMPRINT for
+% characters that are interspersed between those representing values in the
+% stream file.  In the current example, the format simply specifies a number
+% of characters to be "gobbled up".  However, a more sophisticated routine can
+% be written to check the input characters for consistency with tightly-
+% constrained format specifiers and signal errors when detected.
+
+% need constant for STRGET call
+             CONST LEN: INTEGER [0:CHAR_MAX]
+                       := TO_FIXED (FORMAT,0);
+
+             VAR S: ASCII_STR(LEN) := STRGET(SF, LEN);
+
+% STRGET accomplishes desired action
+
+             END PROCEDURE FORM_READ;
+
+        PROCEDURE FORMREAD (SF:STREAM_FILE(ASCII_STR(1)),
+                            FORMAT: ASCII_STR(?FS)
+                            ##
+                            VAL: ?T REP ?R)
+
+% This overloaded case of FORMREAD reads in a formatted character string
+% representation for its VAL parameter.  The format string is parsed for
+% delimiters in the same way as the corresponding case of FORMPRINT. As with
+% the unformatted READ procedure, a character-string conversion function must
+% be provided for types on which formatted input is desired.  A simple example
+% of such a formatted conversion for FIXED is:
+%
+% FUNCTION FIXED$FROM_FORM_CHAR
+%               (FORMAT: ASCII_STR(?FS),
+%                T: TYPE,
+%                STR: ASCII_STR(?LEN))
+%           RETURNS (T)
+%      WHERE T NEEDS (STORE_(T ## T))
+%      SIGNALS (CONVERSION_ERROR,
+%               FORMAT_ERROR);
+%
+% [C-34]
+%
+%      VAR VAL: T;
+%      IF (FS=0 ! FORMAT[0:0] = 'S') THEN
+%           VAL := TO_FIXED(STR,0);
+%      ORIF (FORMAT[0:0] = 'Q') THEN
+%           IF (LEN < 3 ! STR[0:0] <> '"' !
+%                         STR[LEN-1:LEN-1] <> '"') THEN
+%                SIGNAL CONVERSION_ERROR;
+%           ELSE
+%                VAL := TO_FIXED (STR[1:LEN-2],
+%                                 VAL.SCALE,
+%                                 VAL.RADIX,
+%                                 VAL.PRECISION);
+%                END IF;
+%      ELSE
+%           SIGNAL FORMAT_ERROR;
+%           END IF;
+%      RETURN (VAL);
+%      END FUNCTION FIXED$FROM_FORM_CHAR;
+%
+%
+% Obviously conversions with more sophisticated formats could be defined.
+%
+% Also required by FORMREAD is a type-specific FORM_CHAR_LEN routine that
+% computes the length of the formatted character representation to be read.
+% The computation is based upon the format specified and upon the actual type
+% (including representation information) of the value being input.  Unlike
+% those overloaded FORM_CHAR_LEN routines used by FORMPRINT, the cases used
+% for input cannot use the value of the type.  That is, for a given format and
+% type, a fixed number of characters are read independent of the inter-
+% pretation of individual characters.  More complicated input routines can be
+% written to read in a variable number of characters by reading and
+% interpreting them (according to the format) one at a time.  However, such
+% routines are type-dependent and are more appropriately defined with the
+% type, using the standard GET routine to retrieve the individual characters.
+%
+
+             WHERE T NEEDS (
+                  STORE_(T ## T),
+                  FROM_FORM_CHAR(ASCII_STR(?),
+                                 TYPE,
+                                 ASCII_STR(?)),
+                           RETURNS (T),
+                  FORM_CHAR_LEN (ASCII_STR(?),
+                                 TYPE)
+                           RETURNS (INTEGER [0:CHAR_MAX]))
+             IMPORTS (ROUTINES:(STRGET));
+
+             CONST DELIM: ASCII_STR(1) := '#';
+
+             VAR I   : INTEGER [0:FS] := 0;
+             VAR MARK: INTEGER [1:FS];
+% [C-35]
+             IF I=FS THEN                    %null format string
+                  GET_AND_CONVERT (SF,'' ## VAL);
+                  RETURN;
+                  END IF;
+
+             LOOP UNTIL (I=FS ! FORMAT [I:I] = DELIM) DO
+                  I := I+1;                          %search for delimiter
+                  END LOOP;
+
+             IF I=FS THEN                    %only value format string
+                  GET_AND_CONVERT(SF, FORMAT[0:I-1]## VAL);
+                  RETURN;
+                  END IF;
+
+% else I points to first delimiter
+
+             IF I > 0 THEN                   %format preceding value part
+                  FORMREAD (SF, FORMAT [0:I-1]);
+                  %continue -- no return
+                  END IF;
+
+             I := I+1;
+             MARK := I;
+
+             IF I=FS THEN                    %remaining string, including
+                  GET_AND_CONVERT (SF, '' ## VAL);     %value part, null
+                  RETURN;
+                  END IF;
+
+             LOOP UNTIL (I=FS ! FORMAT [I:I] = DELIM) DO
+                  I := I+1;                          %search for delimiter
+                  END LOOP;
+
+             IF I = FS THEN                  %only value part remains
+                  GET_AND_CONVERT (SF, FORMAT[MARK:I-1] ## VAL);
+                  RETURN;
+                  END IF;
+
+% else I points to second delimiter
+
+             IF I > MARK THEN                %non-null value part
+                  GET_AND_CONVERT (SF, FORMAT [MARK:I-1] ## VAL);
+             ELSE
+                  GET_AND_CONVERT(SF, '' ## VAL);
+                  END IF;
+
+             I := I + 1;
+
+             IF I < FS THEN                  %format following value part
+                  FORMREAD (SF, FORMAT[I:FS-1]);
+                  END IF;
+
+% end of FORMREAD body
+% [C-36]
+             PROCEDURE GET_AND_CONVERT (SF: STREAM_FILE(ASCII_STR(1)),
+                                        FORMAT : ASCII_STR(?)
+                                        ##
+                                        VAL : ?T REP ?R)
+
+% The FROM_FORM_CHAR and FORM_CHAR_LEN routines used here are taken from the
+% point of call within  FORMREAD, and thus indirectly from the point where
+% FORMREAD is called. (cf. CONVERT_AND_PUT in FORMPRINT)
+
+                  WHERE T NEEDS (
+                       STORE_(T ## T),
+                       FROM_FORM_CHAR(ASCII_STR(?),
+                                      TYPE,
+                                      ASCII_STR(?))
+                                RETURNS (T),
+                       FORM_CHAR_LEN (ASCII_STR(?),
+                                      TYPE)
+                                RETURNS (INTEGER [0:CHAR_MAX]))
+                  IMPORTS (ROUTINES:(STRGET));
+
+% constant needed in STRGET call
+                  CONST LEN : INTEGER
+                            := T$FORM_CHAR_LEN(FORMAT, T REP R);
+
+                  VAL := T$FROM_FORM_CHAR(FORMAT,T REP R,
+                                          STRGET (SF,LEN));
+
+                  END PROCEDURE GET_AND_CONVERT;
+
+             END PROCEDURE FORMREAD;
+
+        END MODULE TEXTUAL_IO;
+
+
+        END SEGMENT STANDARD_IO;
