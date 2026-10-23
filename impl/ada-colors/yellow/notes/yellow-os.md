@@ -58,15 +58,19 @@ workaround is named in the program and listed here.
   wait for the segment controller's answer, a monitor lets the asking process do the work under
   exclusion, and the monitor's entry queue is the queue of requests.
 
-## Where yellowc falls short of the Report
+## Where yellowc fell short of the Report, and was fixed
 
-- **Arrays of signals.** The Report does not forbid `ARRAY (... OF SIGNAL)` in a monitor, and
-  yellowc accepts one, but it does not tie the components to their monitor: a WAIT on one does
-  not let the monitor go, and the program stops in a deadlock. The programs here use template
-  instances instead. (Simple SIGNAL variables are tied to their monitor as they should be.)
+- **Arrays of signals.** The Report does not forbid `ARRAY (... OF SIGNAL)` in a monitor.
+  yellowc accepted one but did not tie its components to the monitor (and sized them as
+  pointers): a WAIT on a component kept the monitor, and the program stopped in a deadlock.
+  Each component now belongs to the monitor (`tests/signalarrays.yel`). The programs here were
+  written before the fix and still use template instances picked by a SELECT, where an array
+  of signals in one monitor would now do (the watch streams, the wake-ups). Arrays of monitors
+  remain impossible: a monitor is a module, not a value.
 - **Order of modules.** X.G puts "no lexical ordering restriction" on the composite
-  declarations of a scope: a module may import what a later module exports. yellowc resolves
-  imports in text order, so a module can name only modules declared before it. In THE this
-  happens to be Dijkstra's hierarchy read as a rule of the translator: the segment controller
-  (level 1) can call the console only because the console's mailbox is declared first, as a
-  level 0 mechanism.
+  declarations of a scope. yellowc resolved imports in text order, so a module could name
+  only modules declared before it. Now a module may import from one declared later, which
+  yellowc translates first (`tests/forward.yel`). Modules that import from each other in a
+  circle are still refused (`tests/circle.err.yel`): yellowc needs an order without one. In
+  THE the console's mailbox stays declared before the segment controller, in the order of
+  the levels, but it no longer has to be.

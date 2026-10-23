@@ -18,7 +18,7 @@ ADB950587, the way RED and GREEN are in the directories next door.
 | `tests/` | tests with expected output; `*.err.yel` must be rejected with the message in `.out` |
 | `corpus/` | the programs of the 1978 tutorial as printed, what the translator says of them, the fixes it forced, and their runs (`corpus/CHANGES.md`) |
 | `notes/yellow-digest.md` | the language as reconstructed, with page references and every decision taken where the report is unclear |
-| `notes/yellow-os.md` | YELLOW put to THE and Kubernetes (`../os/*_yellow.yel`, `../kube/kube_yellow.yel`, `../labs/yellow/`): what it had no word for, and where yellowc falls short of the Report |
+| `notes/yellow-os.md` | YELLOW put to THE and Kubernetes (`../os/*_yellow.yel`, `../kube/kube_yellow.yel`, `../labs/yellow/`): what it had no word for, and two shortfalls of yellowc against the Report, now fixed |
 
 ```sh
 make fixpoint       # yellowc from its seed, twice; the C must be identical

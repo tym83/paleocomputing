@@ -18,7 +18,7 @@ GREEN в соседних каталогах.
 | `tests/` | тесты с ожидаемым выводом; `*.err.yel` должны отвергаться с сообщением из `.out` |
 | `corpus/` | программы учебника 1978 года в напечатанном виде, что о них говорит транслятор, вынужденные правки и прогоны (`corpus/CHANGES.md`) |
 | `notes/yellow-digest.md` | язык в реконструкции, со ссылками на страницы и всеми решениями там, где отчёт неясен |
-| `notes/yellow-os.md` | YELLOW в работе над THE и Kubernetes (`../os/*_yellow.yel`, `../kube/kube_yellow.yel`, `../labs/yellow/`): для чего в нём не нашлось слов и где yellowc не дотягивает до отчёта |
+| `notes/yellow-os.md` | YELLOW в работе над THE и Kubernetes (`../os/*_yellow.yel`, `../kube/kube_yellow.yel`, `../labs/yellow/`): для чего в нём не нашлось слов и два места, где yellowc не дотягивал до отчёта (теперь исправлены) |
 
 ```sh
 make fixpoint       # yellowc из seed дважды; C должен совпасть
