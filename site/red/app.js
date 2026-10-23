@@ -3,10 +3,10 @@ import { run } from './paleo.js';
 
 const RU = new URLSearchParams(location.search).get('lang') === 'ru';
 const T = RU ? {
-  title: 'RED и GREEN в браузере',
-  standfirst: 'Два финалиста конкурса языков Пентагона 1979 года. Программа переводится в C компилятором, написанным на самом RED или GREEN, компилируется clang и выполняется здесь же, по потоку на каждую задачу. Ничего не уходит со страницы.',
+  title: 'RED, GREEN, BLUE и YELLOW в браузере',
+  standfirst: 'Четыре проекта конкурса языков Пентагона: RED и GREEN, финалисты 1979 года, и BLUE и YELLOW, выбывшие после первого этапа в 1978-м. Программа переводится в C транслятором, написанным на её же языке, компилируется clang и выполняется здесь же, по потоку на каждую задачу. Ничего не уходит со страницы.',
   run: 'Запустить', stdin: 'Стандартный ввод', how: 'Как это устроено',
-  how1: 'redc и greenc, компиляторы, написанные на RED и GREEN, собраны в WebAssembly из тех же семян на C, от которых раскручивается репозиторий. Они переводят исходник в C. clang и lld, тоже собранные в WebAssembly, делают из этого C программу для wasm32 с потоками. Рантайм — тот же файл на C, что и в Linux: он передаёт процессор от задачи к задаче по правилам RED на виртуальных часах, поэтому вывод здесь совпадает с запуском на обычной машине байт в байт.',
+  how1: 'redc, greenc, bluec и yellowc, трансляторы, написанные на RED, GREEN, BLUE и YELLOW, собраны в WebAssembly из тех же семян на C, от которых раскручивается репозиторий. Они переводят исходник в C; перед программой на YELLOW ставится стандартная прелюдия, как и в Linux. clang и lld, тоже собранные в WebAssembly, делают из этого C программу для wasm32 с потоками. Рантайм — тот же файл на C, что и в Linux: он передаёт процессор от задачи к задаче по правилам RED на виртуальных часах, поэтому вывод здесь совпадает с запуском на обычной машине байт в байт.',
   how2: 'Первый запуск скачивает компилятор C, около 20 МБ, с jsDelivr; потом браузер держит его у себя.',
   repo: 'Исходники, лабораторные и статья', home: '← Палеокомпьютинг',
   translate: 'перевод в C…', compile: 'компиляция C…', running: 'выполнение…',
@@ -19,7 +19,7 @@ const T = RU ? {
 };
 if (RU) {
   document.documentElement.lang = 'ru';
-  document.title = 'RED и GREEN в браузере — Палеокомпьютинг';
+  document.title = 'RED, GREEN, BLUE и YELLOW в браузере — Палеокомпьютинг';
   for (const el of document.querySelectorAll('[data-i18n]')) if (T[el.dataset.i18n]) el.textContent = T[el.dataset.i18n];
   const home = document.getElementById('home-link');
   home.textContent = T.home; home.href = '../ru/';
@@ -28,13 +28,23 @@ if (RU) {
 
 const $ = (id) => document.getElementById(id);
 const pick = $('pick'), src = $('src'), out = $('out'), status = $('status'), btn = $('run');
+const groups = {};
 for (const [i, e] of EXAMPLES.entries()) {
+  if (!groups[e.lang]) {
+    groups[e.lang] = document.createElement('optgroup');
+    groups[e.lang].label = e.lang.toUpperCase();
+    pick.append(groups[e.lang]);
+  }
   const o = document.createElement('option');
   o.value = i; o.textContent = e.path;
-  pick.append(o);
+  groups[e.lang].append(o);
 }
 const setLang = (l) => { for (const r of document.querySelectorAll('input[name=lang]')) r.checked = r.value === l; };
-const load = () => { const e = EXAMPLES[pick.value]; src.value = e.source; setLang(e.lang); out.textContent = ''; };
+const load = () => {
+  const e = EXAMPLES[pick.value];
+  src.value = e.source; $('stdin').value = e.input || ''; setLang(e.lang); out.textContent = '';
+  if (e.input) $('stdin').closest('details').open = true;
+};
 pick.onchange = load;
 load();
 
@@ -72,14 +82,16 @@ btn.onclick = async () => {
   btn.disabled = false;
 };
 
-// ?test=1: run every example and leave the outputs in the page, for CI
-if (new URLSearchParams(location.search).get('test')) {
+// ?test=1: run every example and leave the outputs in the page, for CI;
+// ?test=blue runs only the examples of one language
+const TEST = new URLSearchParams(location.search).get('test');
+if (TEST) {
   (async () => {
     const res = [];
-    for (const e of EXAMPLES) {
+    for (const e of EXAMPLES.filter((x) => TEST === '1' || x.lang === TEST)) {
       document.body.dataset.testAt = e.path;
       let r;
-      try { r = await runOne(e.lang, e.source, '', () => {}); }
+      try { r = await runOne(e.lang, e.source, e.input || '', () => {}); }
       catch (x) { r = { stage: 'page', code: -1, error: String(x && x.stack || x) }; }
       res.push({ path: e.path, code: r.code, out: r.error ? r.error : r.all, stage: r.stage });
     }

@@ -1,5 +1,5 @@
-// Compiles the C that redc or greenc produced and links it with the runtime,
-// using clang and lld compiled to WebAssembly. Runs in a worker: the first
+// Compiles the C that redc, greenc, bluec or yellowc produced and links it with
+// the runtime, using clang and lld compiled to WebAssembly. Runs in a worker: the first
 // compile downloads the compiler (about 20 MB) and the page must stay alive.
 import { CFLAGS, CLANG_URL, ldflags } from './flags.js';
 import { unpack, tree } from './pack.js';

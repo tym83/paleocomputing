@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>RED and GREEN in the browser — Paleocomputing</title>
-<meta name="description" content="RED and GREEN, the two finalists of the 1979 DoD language competition, translated and run entirely in your browser by compilers written in themselves.">
+<title>RED, GREEN, BLUE and YELLOW in the browser — Paleocomputing</title>
+<meta name="description" content="RED, GREEN, BLUE and YELLOW, the four designs of the DoD language competition of 1978-79, translated and run entirely in your browser by compilers written in themselves.">
 <!-- Shared memory for the program's threads needs cross-origin isolation, which
      GitHub Pages cannot set in headers: this service worker adds them. -->
 <script src="coi-serviceworker.js"></script>
@@ -33,8 +33,8 @@
 <div class="sheet">
   <header class="masthead">
     <p class="eyebrow"><a href="../" id="home-link">← Paleocomputing</a> · <a id="lang-link" href="?lang=ru">Русский</a></p>
-    <h1 data-i18n="title">RED and GREEN in the browser</h1>
-    <p class="standfirst" data-i18n="standfirst">The two finalists of the 1979 Pentagon language competition. Your program is translated to C by a compiler written in RED or GREEN itself, compiled by clang and run here, with a thread for every task. Nothing leaves the page.</p>
+    <h1 data-i18n="title">RED, GREEN, BLUE and YELLOW in the browser</h1>
+    <p class="standfirst" data-i18n="standfirst">The four designs of the Pentagon language competition: RED and GREEN, the finalists of 1979, and BLUE and YELLOW, dropped after the first phase in 1978. Your program is translated to C by a translator written in its own language, compiled by clang and run here, with a thread for every task. Nothing leaves the page.</p>
   </header>
 
   <section>
@@ -42,6 +42,8 @@
       <select id="pick" aria-label="Example"></select>
       <label><input type="radio" name="lang" value="red" checked> RED</label>
       <label><input type="radio" name="lang" value="green"> GREEN</label>
+      <label><input type="radio" name="lang" value="blue"> BLUE</label>
+      <label><input type="radio" name="lang" value="yellow"> YELLOW</label>
       <button id="run" data-i18n="run">Run</button>
       <span id="status"></span>
     </div>
@@ -56,7 +58,7 @@
 
   <section>
     <h2 data-i18n="how">How it works</h2>
-    <p data-i18n="how1">redc and greenc, the compilers written in RED and GREEN, are built to WebAssembly from the same C seeds the repository bootstraps from. They translate your source to C. clang and lld, compiled to WebAssembly, turn that C into a program for wasm32 with threads. The runtime is the same C file as on Linux: it hands the processor from task to task by the RED rules, on a virtual clock, so the output here matches a native run byte for byte.</p>
+    <p data-i18n="how1">redc, greenc, bluec and yellowc, the translators written in RED, GREEN, BLUE and YELLOW, are built to WebAssembly from the same C seeds the repository bootstraps from. They translate your source to C; a YELLOW program gets the standard prelude in front of it, as on Linux. clang and lld, compiled to WebAssembly, turn that C into a program for wasm32 with threads. The runtime is the same C file as on Linux: it hands the processor from task to task by the RED rules, on a virtual clock, so the output here matches a native run byte for byte.</p>
     <p data-i18n="how2">The first run downloads the C compiler, about 20 MB, from jsDelivr; after that the browser keeps it.</p>
     <p><a href="https://github.com/tym83/paleocomputing/tree/main/impl/ada-colors" data-i18n="repo">Sources, labs and the article</a></p>
   </section>
