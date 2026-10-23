@@ -1,0 +1,582 @@
+MAIN SEGMENT KUBE_BLUE
+   USES (TERMINAL);
+% KUBE/BLUE: the Kubernetes control loop of kube/kube.red, written in BLUE
+% (SofTech, 15 Feb 1978), next to kube/kube_green.grn. The design is the same: an
+% API server owns the store, controllers keep caches and reconcile on an event or
+% a timed resync, writes are optimistic, kubelets renew leases. What changes is
+% what BLUE gives:
+%
+%   * no message passing and no server processes: the API server is a module,
+%     its store guarded by a REGION semaphore, and whoever writes runs the
+%     server's code. A watch stream is a MAILBOX, a generic module built from
+%     three semaphores (os/the.blu), one instance per port;
+%   * REQUEST has no timeout, so "an event or 20 ms" is a race of two paths,
+%     GET and TIMER, that TERMINATE each other, in a parallel block built anew
+%     for every wait (the 1978 evaluators' idiom, os/contrast/timeout_blue.blu).
+%     A parallel block may not stand in a routine (4.6.1), so each wait loop
+%     is written out where it runs: once for the four controllers, a family of
+%     paths, and once for the kubelets;
+%   * kinds of objects and write operations are enumerations (\POD, \UPDATE);
+%     the watch table is indexed by kind.
+%
+% Time is virtual; every process is a path of one parallel block started at 0,
+% so CLOCK is the system's time, in ms here.
+
+CONST NOBJ: INTEGER := 64;
+CONST NNODES: INTEGER := 3;
+CONST NPORTS: INTEGER := 8;
+
+CONST P_DEPLOY: INTEGER := 1;
+CONST P_RS: INTEGER := 2;
+CONST P_SCHED: INTEGER := 3;
+CONST P_NODES: INTEGER := 4;
+CONST P_USER: INTEGER := 5;
+CONST P_KUBELET: INTEGER := 6;          % node N listens on P_KUBELET + N - 1
+
+CONST PENDING: INTEGER := 0;
+CONST RUNNING: INTEGER := 1;
+CONST READY: INTEGER := 1;
+CONST NOT_READY: INTEGER := 2;
+
+TYPE KIND = ENUM (\NONE, \DEPLOYMENT, \REPLICASET, \POD, \NODE, \LEASE);
+TYPE OPERATION = ENUM (\CREATE, \UPDATE, \DELETE);
+
+% one shape for every kind; unused fields stay 0
+%   deployment: replicas, version     replicaset: owner (deployment), replicas, version
+%   pod: owner (replicaset), node, phase, version     node: owner (its number), phase, beat
+TYPE OBJ = RECORD
+   VAR K: KIND;
+   VAR ID, RV, OWNER, REPLICAS, VERSION, NODE, PHASE, BEAT, GONE: INTEGER;
+END RECORD;
+TYPE CACHE = ARRAY [1:NOBJ] OF OBJ;
+
+% the watch streams
+VAR PORTS: ARRAY [1:NPORTS] OF MAILBOX (OBJ, 256);
+VAR POWERED: ARRAY [1:NNODES] OF BOOLEAN;
+
+LOOP FOR P IN [1:NPORTS] DO
+   OPEN (# PORTS (P));
+END LOOP P;
+LOOP FOR N IN [1:NNODES] DO
+   POWERED (N) := TRUE;
+END LOOP N;
+
+PAR_BLOCK
+   % ---- the controllers: one wait loop, four reconcilers -----------------------------
+   PATH CONTROLLER FOR ME IN [P_DEPLOY : P_NODES]
+         IMPORTS (ROUTINES: (WATCH, ABSORB, NOTE, RECONCILE_DEPLOY, RECONCILE_RS,
+                             RECONCILE_SCHED, RECONCILE_NODES),
+                  DATA: (# PORTS));
+      VAR C: CACHE;
+      VAR M: OBJ;
+      VAR GOT, FRESH, QUIET: BOOLEAN := FALSE;
+      VAR MARK: ARRAY [1:NOBJ] OF INTEGER;      % deployment: version asked for; rs: pods expected
+      VAR PERIOD: INTEGER := 20;
+      SELECT ME FROM
+         P_DEPLOY --> WATCH (ME, \DEPLOYMENT); WATCH (ME, \REPLICASET); END;
+         P_RS --> WATCH (ME, \REPLICASET); WATCH (ME, \POD); END;
+         P_SCHED --> WATCH (ME, \POD); WATCH (ME, \NODE); END;
+         ELSE --> WATCH (ME, \NODE); WATCH (ME, \LEASE); WATCH (ME, \POD); PERIOD := 10; END;
+      END SELECT;
+      LOOP
+         GOT := FALSE;
+         BLOCK
+            PAR_BLOCK
+               PATH GET PRIORITY 1 IMPORTS (DATA: (# PORTS, M, GOT));
+                  RECEIVE (# PORTS (ME) # M);
+                  GOT := TRUE;
+                  TERMINATE (TIMER);
+               END PATH GET;
+               PATH TIMER IMPORTS (DATA: (PERIOD));
+                  PAUSE (PERIOD);
+                  TERMINATE (GET);
+               END PATH TIMER;
+            END PAR_BLOCK;
+         EXCEPT
+            TERMINATED --> END;                  % the loser of the race
+         END EXCEPT;
+         END BLOCK;
+         SELECT ME FROM
+            P_DEPLOY -->
+               IF GOT THEN ABSORB (M # C # FRESH); END IF;
+               RECONCILE_DEPLOY (# C, MARK);
+            END;
+            P_RS -->
+               IF GOT THEN
+                  ABSORB (M # C # FRESH);
+                  IF FRESH & M.K = \POD & MARK (M.OWNER) > 0 THEN
+                     MARK (M.OWNER) := MARK (M.OWNER) - 1;
+                  END IF;
+               END IF;
+               RECONCILE_RS (# C, MARK);
+            END;
+            P_SCHED -->
+               IF GOT THEN ABSORB (M # C # FRESH); END IF;
+               RECONCILE_SCHED (# C);
+            END;
+            ELSE -->
+               IF GOT THEN NOTE (M # C); END IF;
+               % take in everything already queued before deciding anything: the
+               % race reads one event, and the relist after a failover is many
+               LOOP UNTIL WAITING (PORTS (ME)) = 0 DO
+                  RECEIVE (# PORTS (ME) # M);
+                  NOTE (M # C);
+               END LOOP;
+               RECONCILE_NODES (# C, QUIET);
+            END;
+         END SELECT;
+      END LOOP;
+   END PATH CONTROLLER;
+
+   % ---- kubelet: runs the pods bound to its node, renews its lease -----------------
+   PATH KUBELET FOR N IN [1:NNODES] IMPORTS (ROUTINES: (WATCH, ABSORB, WRITE, BEAT),
+                                            DATA: (POWERED # PORTS));
+      CONST ME: INTEGER := P_KUBELET + N - 1;
+      VAR C: CACHE;
+      VAR M: OBJ;
+      VAR GOT, FRESH: BOOLEAN := FALSE;
+      WATCH (ME, \POD);
+      LOOP
+         GOT := FALSE;
+         BLOCK
+            PAR_BLOCK
+               PATH GET PRIORITY 1 IMPORTS (DATA: (# PORTS, M, GOT));
+                  RECEIVE (# PORTS (ME) # M);
+                  GOT := TRUE;
+                  TERMINATE (TIMER);
+               END PATH GET;
+               PATH TIMER;
+                  PAUSE (10);
+                  TERMINATE (GET);
+               END PATH TIMER;
+            END PAR_BLOCK;
+         EXCEPT
+            % the loser of the race, or the power cut: a TERMINATED does not
+            % say who sent it, so the user leaves a note before sending it
+            TERMINATED -->
+               IF NOT POWERED (N) THEN
+                  SIGNAL;                         % end the path
+               END IF;
+            END;
+         END EXCEPT;
+         END BLOCK;
+         IF GOT THEN
+            ABSORB (M # C # FRESH);
+         ELSE
+            BEAT (N);
+         END IF;
+         LOOP FOR P IN [1:NOBJ] DO
+            IF C (P).K = \POD & C (P).GONE = 0 & C (P).NODE = N & C (P).PHASE = PENDING THEN
+               BLOCK
+                  VAR O: OBJ := C (P);
+                  O.PHASE := RUNNING;
+                  WRITE (\UPDATE, O);
+                  C (P).PHASE := RUNNING;
+                  LOG ('kubelet ' !! TO_CHAR (N) !! ': pod ' !! TO_CHAR (P) !! ' (version '
+                       !! TO_CHAR (O.VERSION) !! ') running');
+               END BLOCK;
+            END IF;
+         END LOOP P;
+      END LOOP;
+   END PATH KUBELET;
+
+   % ---- the user ---------------------------------------------------------------------
+   PATH USER IMPORTS (ROUTINES: (WRITE, READ_OBJ, SHOW), DATA: (# POWERED));
+      CONST WEB: INTEGER := 4;                % the three nodes take ids 1 to 3
+      VAR D, STALE: OBJ := BLANK (\DEPLOYMENT);
+      LOOP FOR N IN [1:NNODES] DO
+         BLOCK
+            VAR O: OBJ := BLANK (\NODE);
+            O.OWNER := N;
+            O.PHASE := READY;
+            WRITE (\CREATE, O);
+         END BLOCK;
+      END LOOP N;
+
+      LOG ('user: create deployment web, 3 replicas');
+      D.REPLICAS := 3;
+      D.VERSION := 1;
+      WRITE (\CREATE, D);
+      PAUSE (60);
+      SHOW;
+
+      LOG ('user: scale web to 5');
+      READ_OBJ (WEB ## STALE);
+      READ_OBJ (WEB ## D);
+      D.REPLICAS := 5;
+      WRITE (\UPDATE, D);
+      LOG ('user: a second client writes 4 replicas from the copy it read before');
+      STALE.REPLICAS := 4;
+      WRITE (\UPDATE, STALE);
+      PAUSE (60);
+      SHOW;
+
+      LOG ('user: node 2 loses power');
+      POWERED (2) := FALSE;
+      TERMINATE (KUBELET (2));
+      PAUSE (120);
+      SHOW;
+
+      LOG ('user: roll out version 2');
+      READ_OBJ (WEB ## D);
+      D.VERSION := 2;
+      WRITE (\UPDATE, D);
+      PAUSE (80);
+      SHOW;
+      STOP (0);
+   END PATH USER;
+END PAR_BLOCK;
+
+% ==== time =============================================================================
+FUNCTION NOW () RETURNS (INTEGER);
+   RETURN TO_FIXED (CLOCK * 1000, 0, ROUNDED);
+END FUNCTION NOW;
+
+PROCEDURE PAUSE (MS: INTEGER);
+   CONST S: FIXED (30, 2, STD) := MS !//30! 1000;
+   WAIT (S);
+END PROCEDURE PAUSE;
+
+PROCEDURE LOG (S: ASCII_STR (?L));
+   PUT_LINE ('[' !! TO_CHAR (NOW ()) !! ' ms] ' !! S);
+END PROCEDURE LOG;
+
+FUNCTION BLANK (K: KIND) RETURNS (OBJ);
+   VAR O: OBJ := (K: K, ID: 0, RV: 0, OWNER: 0, REPLICAS: 0, VERSION: 0, NODE: 0, PHASE: 0,
+                  BEAT: 0, GONE: 0);
+   RETURN O;
+END FUNCTION BLANK;
+
+% ==== informer: keep the cache current from one event; FRESH if it was new ==============
+PROCEDURE ABSORB (O: OBJ # C: CACHE # FRESH: BOOLEAN);
+   FRESH := C (O.ID).ID = 0;
+   IF O.RV > C (O.ID).RV THEN
+      C (O.ID) := O;
+   END IF;
+END PROCEDURE ABSORB;
+
+% ==== deployment controller: one replica set per template version =======================
+PROCEDURE RECONCILE_DEPLOY (# C: CACHE, ASKED: ARRAY [1:NOBJ] OF INTEGER)
+      IMPORTS (ROUTINES: (WRITE));
+   LOOP FOR D IN [1:NOBJ] DO
+      IF C (D).K = \DEPLOYMENT & C (D).GONE = 0 THEN
+         BLOCK
+            VAR FOUND: BOOLEAN := FALSE;
+            LOOP FOR R IN [1:NOBJ] DO
+               IF C (R).K = \REPLICASET & C (R).GONE = 0 & C (R).OWNER = D THEN
+                  IF C (R).VERSION = C (D).VERSION THEN
+                     FOUND := TRUE;
+                     IF C (R).REPLICAS <> C (D).REPLICAS THEN
+                        BLOCK
+                           VAR O: OBJ := C (R);
+                           O.REPLICAS := C (D).REPLICAS;
+                           WRITE (\UPDATE, O);
+                           LOG ('deployment ' !! TO_CHAR (D) !! ': scale replicaset ' !! TO_CHAR (R)
+                                !! ' to ' !! TO_CHAR (O.REPLICAS));
+                        END BLOCK;
+                     END IF;
+                  ORIF C (R).REPLICAS > 0 THEN
+                     BLOCK
+                        VAR O: OBJ := C (R);
+                        O.REPLICAS := 0;
+                        WRITE (\UPDATE, O);
+                        LOG ('deployment ' !! TO_CHAR (D) !! ': old replicaset ' !! TO_CHAR (R)
+                             !! ' scaled to 0');
+                     END BLOCK;
+                  END IF;
+               END IF;
+            END LOOP R;
+            IF NOT FOUND & ASKED (D) <> C (D).VERSION THEN
+               BLOCK
+                  VAR O: OBJ := BLANK (\REPLICASET);
+                  ASKED (D) := C (D).VERSION;
+                  O.OWNER := D;
+                  O.REPLICAS := C (D).REPLICAS;
+                  O.VERSION := C (D).VERSION;
+                  WRITE (\CREATE, O);
+                  LOG ('deployment ' !! TO_CHAR (D) !! ': new replicaset for version '
+                       !! TO_CHAR (O.VERSION));
+               END BLOCK;
+            END IF;
+         END BLOCK;
+      END IF;
+   END LOOP D;
+END PROCEDURE RECONCILE_DEPLOY;
+
+% ==== replica set controller: as many live pods as replicas ============================
+PROCEDURE RECONCILE_RS (# C: CACHE, EXPECT: ARRAY [1:NOBJ] OF INTEGER)
+      IMPORTS (ROUTINES: (WRITE));
+   LOOP FOR R IN [1:NOBJ] DO
+      IF C (R).K = \REPLICASET & C (R).GONE = 0 THEN
+         BLOCK
+            VAR HAVE: INTEGER := 0;
+            LOOP FOR P IN [1:NOBJ] DO
+               IF C (P).K = \POD & C (P).GONE = 0 & C (P).OWNER = R THEN
+                  HAVE := HAVE + 1;
+                  IF HAVE > C (R).REPLICAS THEN
+                     WRITE (\DELETE, C (P));
+                     LOG ('replicaset ' !! TO_CHAR (R) !! ': delete pod ' !! TO_CHAR (P));
+                     C (P).GONE := 1;
+                  END IF;
+               END IF;
+            END LOOP P;
+            IF HAVE + EXPECT (R) < C (R).REPLICAS THEN
+               LOG ('replicaset ' !! TO_CHAR (R) !! ': ' !! TO_CHAR (HAVE) !! ' of '
+                    !! TO_CHAR (C (R).REPLICAS) !! ' pods, creating '
+                    !! TO_CHAR (C (R).REPLICAS - HAVE - EXPECT (R)));
+            END IF;
+            LOOP FOR K IN [HAVE + EXPECT (R) + 1 : C (R).REPLICAS] DO
+               BLOCK
+                  VAR O: OBJ := BLANK (\POD);
+                  O.OWNER := R;
+                  O.VERSION := C (R).VERSION;
+                  WRITE (\CREATE, O);
+                  EXPECT (R) := EXPECT (R) + 1;
+               END BLOCK;
+            END LOOP K;
+         END BLOCK;
+      END IF;
+   END LOOP R;
+END PROCEDURE RECONCILE_RS;
+
+% ==== scheduler: bind each pending pod to the ready node with fewest pods ==============
+PROCEDURE RECONCILE_SCHED (# C: CACHE) IMPORTS (ROUTINES: (WRITE));
+   LOOP FOR P IN [1:NOBJ] DO
+      IF C (P).K = \POD & C (P).GONE = 0 & C (P).NODE = 0 THEN
+         BLOCK
+            VAR BEST: INTEGER := 0;
+            VAR BEST_LOAD: INTEGER := NOBJ;
+            LOOP FOR N IN [1:NOBJ] DO
+               IF C (N).K = \NODE & C (N).GONE = 0 & C (N).PHASE = READY THEN
+                  BLOCK
+                     VAR LOAD: INTEGER := 0;
+                     LOOP FOR Q IN [1:NOBJ] DO
+                        IF C (Q).K = \POD & C (Q).GONE = 0 & C (Q).NODE = N THEN
+                           LOAD := LOAD + 1;
+                        END IF;
+                     END LOOP Q;
+                     IF LOAD < BEST_LOAD THEN
+                        BEST := N;
+                        BEST_LOAD := LOAD;
+                     END IF;
+                  END BLOCK;
+               END IF;
+            END LOOP N;
+            IF BEST > 0 THEN
+               BLOCK
+                  VAR O: OBJ := C (P);
+                  O.NODE := BEST;
+                  WRITE (\UPDATE, O);
+                  C (P).NODE := BEST;              % optimistic; the event will confirm
+                  LOG ('scheduler: pod ' !! TO_CHAR (P) !! ' -> node ' !! TO_CHAR (C (BEST).OWNER));
+               END BLOCK;
+            END IF;
+         END BLOCK;
+      END IF;
+   END LOOP P;
+END PROCEDURE RECONCILE_SCHED;
+
+% ==== node controller: leases, NotReady, eviction ========================================
+% freshness is when this controller saw the lease renewed (or the node listed
+% anew), not the time written in it
+PROCEDURE NOTE (M: OBJ # C: CACHE);
+   VAR FRESH: BOOLEAN;
+   IF M.K = \LEASE ! M.K = \NODE THEN
+      IF M.K = \LEASE ! C (M.ID).ID = 0 THEN
+         C (M.ID).BEAT := NOW ();
+      END IF;
+      C (M.ID).K := \NODE;
+      C (M.ID).OWNER := M.OWNER;
+      C (M.ID).ID := M.ID;
+      IF M.RV > C (M.ID).RV THEN
+         C (M.ID).RV := M.RV;
+         C (M.ID).PHASE := M.PHASE;
+      END IF;
+   ELSE
+      ABSORB (M # C # FRESH);
+   END IF;
+END PROCEDURE NOTE;
+
+PROCEDURE RECONCILE_NODES (# C: CACHE, QUIET: BOOLEAN) IMPORTS (ROUTINES: (WRITE));
+   VAR LIVE, SILENT: INTEGER := 0;
+   % a lease renewed again brings the node back
+   LOOP FOR N IN [1:NOBJ] DO
+      IF C (N).K = \NODE & C (N).PHASE = NOT_READY & NOW () - C (N).BEAT <= 30 THEN
+         BLOCK
+            VAR O: OBJ := C (N);
+            O.PHASE := READY;
+            WRITE (\UPDATE, O);
+            C (N).PHASE := READY;
+            LOG ('node controller: node ' !! TO_CHAR (C (N).OWNER) !! ' renews its lease, Ready again');
+         END BLOCK;
+      END IF;
+   END LOOP N;
+   % when every node goes silent at once, it is the control plane that was away,
+   % not the nodes: evict nothing
+   LOOP FOR N IN [1:NOBJ] DO
+      IF C (N).K = \NODE & C (N).PHASE = READY THEN
+         LIVE := LIVE + 1;
+         IF NOW () - C (N).BEAT > 30 THEN
+            SILENT := SILENT + 1;
+         END IF;
+      END IF;
+   END LOOP N;
+   IF SILENT > 0 & SILENT = LIVE THEN
+      IF NOT QUIET THEN
+         LOG ('node controller: all ' !! TO_CHAR (LIVE) !! ' nodes silent at once, no eviction');
+      END IF;
+      QUIET := TRUE;
+   ELSE
+      QUIET := FALSE;
+   END IF;
+   LOOP FOR N IN [1:NOBJ] DO
+      IF NOT QUIET & C (N).K = \NODE & C (N).PHASE = READY & NOW () - C (N).BEAT > 30 THEN
+         BLOCK
+            VAR O: OBJ := C (N);
+            O.PHASE := NOT_READY;
+            WRITE (\UPDATE, O);
+            C (N).PHASE := NOT_READY;
+            LOG ('node controller: node ' !! TO_CHAR (C (N).OWNER) !! ' is NotReady, evicting its pods');
+            LOOP FOR P IN [1:NOBJ] DO
+               IF C (P).K = \POD & C (P).GONE = 0 & C (P).NODE = N THEN
+                  WRITE (\DELETE, C (P));
+                  C (P).GONE := 1;
+               END IF;
+            END LOOP P;
+         END BLOCK;
+      END IF;
+   END LOOP N;
+END PROCEDURE RECONCILE_NODES;
+
+% ==== the API server: a module, not a process =============================================
+% Its store is its own; a REGION semaphore lets one caller in at a time, and a
+% caller that dies inside gives it back. Every change goes to the mailboxes of
+% the ports that watch its kind.
+MODULE API EXPORTS (WATCH, WRITE, BEAT, READ_OBJ, SHOW);
+   VAR STORE: CACHE;
+   VAR WANTS: ARRAY [1:NPORTS, \DEPLOYMENT : \LEASE] OF BOOLEAN;
+   VAR NEXT_ID, NEXT_RV, CONFLICTS: INTEGER := 0;
+   VAR LOCK: SEMAPHORE (REGION) := NEW (1);
+
+   PROCEDURE BROADCAST (O: OBJ) IMPORTS (DATA: (WANTS # PORTS));
+      LOOP FOR P IN [1:NPORTS] DO
+         IF WANTS (P, O.K) THEN
+            SEND (O # PORTS (P));
+         END IF;
+      END LOOP P;
+   END PROCEDURE BROADCAST;
+
+   % a new watcher first gets everything of that kind: list, then watch
+   PROCEDURE WATCH (PORT: INTEGER, K: KIND) IMPORTS (DATA: (STORE, NEXT_ID # LOCK, WANTS, PORTS));
+      REQUEST (# LOCK);
+      WANTS (PORT, K) := TRUE;
+      LOOP FOR I IN [1:NEXT_ID] DO
+         IF STORE (I).GONE = 0 & STORE (I).K = K THEN
+            SEND (STORE (I) # PORTS (PORT));
+         END IF;
+      END LOOP I;
+      RELEASE (# LOCK);
+   END PROCEDURE WATCH;
+
+   % an update or delete carries the resource version it was based on
+   PROCEDURE WRITE (OP: OPERATION, OBJECT: OBJ)
+         IMPORTS (ROUTINES: (BROADCAST), DATA: (# LOCK, STORE, NEXT_ID, NEXT_RV, CONFLICTS));
+      VAR O: OBJ := OBJECT;
+      REQUEST (# LOCK);
+      SELECT OP FROM
+         \CREATE -->
+            NEXT_ID := NEXT_ID + 1;
+            NEXT_RV := NEXT_RV + 1;
+            O.ID := NEXT_ID;
+            O.RV := NEXT_RV;
+            STORE (NEXT_ID) := O;
+            BROADCAST (O);
+         END;
+         ELSE -->
+            IF STORE (O.ID).RV <> O.RV ! STORE (O.ID).GONE = 1 THEN
+               CONFLICTS := CONFLICTS + 1;
+            ELSE
+               NEXT_RV := NEXT_RV + 1;
+               O.RV := NEXT_RV;
+               IF OP = \DELETE THEN
+                  O.GONE := 1;
+               END IF;
+               STORE (O.ID) := O;
+               BROADCAST (O);
+            END IF;
+         END;
+      END SELECT;
+      RELEASE (# LOCK);
+   END PROCEDURE WRITE;
+
+   % a node lease: renewed in place, sent only to lease watchers
+   PROCEDURE BEAT (ID: INTEGER) IMPORTS (ROUTINES: (BROADCAST), DATA: (# LOCK, STORE));
+      VAR L: OBJ;
+      REQUEST (# LOCK);
+      STORE (ID).BEAT := NOW ();
+      L := STORE (ID);
+      L.K := \LEASE;
+      BROADCAST (L);
+      RELEASE (# LOCK);
+   END PROCEDURE BEAT;
+
+   PROCEDURE READ_OBJ (ID: INTEGER ## O: OBJ) IMPORTS (DATA: (STORE # LOCK));
+      REQUEST (# LOCK);
+      O := STORE (ID);
+      RELEASE (# LOCK);
+   END PROCEDURE READ_OBJ;
+
+   PROCEDURE SHOW () IMPORTS (DATA: (STORE, NEXT_ID, CONFLICTS # LOCK));
+      REQUEST (# LOCK);
+      LOG ('api server: ' !! TO_CHAR (CONFLICTS) !! ' stale writes refused so far');
+      LOOP FOR I IN [1:NEXT_ID] DO
+         IF STORE (I).GONE = 0 & STORE (I).K = \POD THEN
+            LOG ('  pod ' !! TO_CHAR (I) !! '  rs ' !! TO_CHAR (STORE (I).OWNER) !! '  version '
+                 !! TO_CHAR (STORE (I).VERSION) !! '  node-id ' !! TO_CHAR (STORE (I).NODE)
+                 !! '  phase ' !! TO_CHAR (STORE (I).PHASE));
+         END IF;
+      END LOOP I;
+      RELEASE (# LOCK);
+   END PROCEDURE SHOW;
+END MODULE API;
+
+% ==== a watch stream: a bounded buffer of three semaphores, as in os/the.blu ===============
+MODULE MAILBOXES EXPORTS (MAILBOX);
+   TYPE MAILBOX (ELEMENT: TYPE, LENGTH: INTEGER [1:1000]) =
+      RECORD
+         VAR ITEMS: ARRAY [1 : LENGTH] OF ELEMENT;
+         VAR HEAD, COUNT: INTEGER;
+         VAR LOCK: SEMAPHORE (REGION);
+         VAR FULL, EMPTY: SEMAPHORE (SYNCH);
+      END RECORD;
+   PROCEDURE MAILBOX$OPEN (# B: MAILBOX (?T, ?LENGTH));
+      B.HEAD := 1;
+      B.COUNT := 0;
+      B.LOCK := NEW (1);
+      B.FULL := NEW (0);
+      B.EMPTY := NEW (LENGTH);
+   END PROCEDURE MAILBOX$OPEN;
+   PROCEDURE MAILBOX$SEND (X: ?T # B: MAILBOX (?T, ?LENGTH))
+         WHERE T NEEDS (STORE_ (T ## T));
+      REQUEST (# B.EMPTY);
+      REQUEST (# B.LOCK);
+      B.ITEMS ((B.HEAD + B.COUNT - 1) MOD LENGTH + 1) := X;
+      B.COUNT := B.COUNT + 1;
+      RELEASE (# B.LOCK);
+      RELEASE (# B.FULL);
+   END PROCEDURE MAILBOX$SEND;
+   PROCEDURE MAILBOX$RECEIVE (# B: MAILBOX (?T, ?LENGTH) # X: ?T)
+         WHERE T NEEDS (STORE_ (T ## T));
+      REQUEST (# B.FULL);
+      REQUEST (# B.LOCK);
+      X := B.ITEMS (B.HEAD);
+      B.HEAD := B.HEAD MOD LENGTH + 1;
+      B.COUNT := B.COUNT - 1;
+      RELEASE (# B.LOCK);
+      RELEASE (# B.EMPTY);
+   END PROCEDURE MAILBOX$RECEIVE;
+   FUNCTION MAILBOX$WAITING (B: MAILBOX (?T, ?LENGTH)) RETURNS (INTEGER);
+      RETURN B.COUNT;
+   END FUNCTION MAILBOX$WAITING;
+END MODULE MAILBOXES;
+END SEGMENT KUBE_BLUE;
