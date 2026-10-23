@@ -18,6 +18,7 @@ ADB950587, the way RED and GREEN are in the directories next door.
 | `tests/` | tests with expected output; `*.err.yel` must be rejected with the message in `.out` |
 | `corpus/` | the programs of the 1978 tutorial as printed, what the translator says of them, the fixes it forced, and their runs (`corpus/CHANGES.md`) |
 | `notes/yellow-digest.md` | the language as reconstructed, with page references and every decision taken where the report is unclear |
+| `notes/yellow-os.md` | YELLOW put to THE and Kubernetes (`../os/*_yellow.yel`, `../kube/kube_yellow.yel`, `../labs/yellow/`): what it had no word for, and where yellowc falls short of the Report |
 
 ```sh
 make fixpoint       # yellowc from its seed, twice; the C must be identical
@@ -38,3 +39,8 @@ the block it is in. Two printed symbols have no ASCII form: `≠` is written `#`
 
 Of the fifteen programs of the tutorial, five are accepted as printed; the others show the
 slips of a text never put through a translator, and three that compile are wrong when run.
+
+YELLOW also runs the operating-system programs of `../os/` and `../kube/`: Dijkstra's THE
+system, Kubernetes on top of it, the Kubernetes control loop and the three contrast problems,
+built from monitors, signals and module templates. `../labs/yellow/` has eight exercises on
+what is particular to the language (`../labs/README.md`).
