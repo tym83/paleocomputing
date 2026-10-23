@@ -1699,7 +1699,10 @@ static void b_hold(rt_b_sem *s) {
   if (s->region && a->nholds < B_HOLDS) a->holds[a->nholds++] = s;
 }
 
+/* a path TERMINATEd before it first ran has had no blocking point yet: REQUEST and
+ * WAIT are where it learns of it, so it neither takes a semaphore nor waits */
 void rt_b_request(rt_b_sem *s) {
+  check_terminate();
   if (s->value > 0) {
     s->value--;
     b_hold(s);
@@ -1859,6 +1862,7 @@ rt_int rt_b_clock(rt_b_act *a) {
 }
 
 void rt_b_wait(rt_int v, rt_int scale) {
+  check_terminate();
   if (v <= 0) {
     rt_yield();
     return;
