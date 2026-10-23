@@ -427,6 +427,8 @@
   PROCEDURE Declarations (CONST list: Node)
     VAR d: Node := list;
         deferred, dtail, n: Node := Node NIL;
+        saveList: Node := DeclList[Depth];
+    DeclList[Depth] := list;
     WHILE d # Node NIL DO
       CurLine := d^.line;
       IF (d^.kind = N_ROUTINE) OR (d^.kind = N_PROCESS) THEN
@@ -436,7 +438,8 @@
         Link(deferred, dtail, n);
         IF d^.kind = N_PROCESS THEN DeclareProcess(d) ENDIF
       ELSIF (d^.kind = N_MODULE) THEN
-        CompileModule(d)
+        (* unless an earlier module's import had it translated already *)
+        IF d^.ival = 0 THEN CompileModule(d) ENDIF
       ELSIF d^.kind = N_TEMPLATE THEN
         DeclareTemplate(d)
       ELSIF d^.kind = N_INSTANCE THEN
@@ -446,6 +449,7 @@
       ENDIF;
       d := d^.next
     ENDWHILE;
+    DeclList[Depth] := saveList;
     CheckPending();
     n := deferred;
     WHILE n # Node NIL DO

@@ -122,8 +122,9 @@
     OpenScope(FALSE);
     ProcList[Depth] := Node NIL;
     Level := 0;
+    DeclList[Depth] := Program;
     WHILE m # Node NIL DO
-      CompileModule(m);
+      IF m^.ival = 0 THEN CompileModule(m) ENDIF;
       m := m^.next
     ENDWHILE;
     AwaitProcesses();
