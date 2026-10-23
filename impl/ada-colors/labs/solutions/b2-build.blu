@@ -1,0 +1,47 @@
+MAIN SEGMENT GENERIC_LAB
+   USES (TERMINAL);
+% Lab B2: generic routines (section 5). A formal written ?T derives its type
+% from the argument: SWAP is one text and gets an instance per type it is
+% called with, and nobody names the instances. WHERE T NEEDS lists the routines
+% the body uses on T; they are looked up where SWAP is called. A ? can derive a
+% value too: ASCII_STR (?L) takes the length of the string it is given.
+TYPE COLOR = ENUM (\RED, \GREEN, \BLUE);
+VAR I, J: INTEGER;
+VAR A, B: ASCII_STR (4);
+VAR K, M: COLOR;
+I := 1;
+J := 2;
+A := 'BLUE';
+B := '1978';
+K := \RED;
+M := \BLUE;
+SWAP (# I, J);
+SWAP (# A, B);
+SWAP (# K, M);
+SHOW (I, J);
+SHOW (A, B);
+SHOW (K, M);
+PUT_LINE (FRAME ('SofTech') !! ' ' !! FRAME ('15 Feb 1978'));
+PUT_LINE ('bigger ' !! TO_CHAR (BIGGER (3, 7)) !! ' ' !! TO_CHAR (BIGGER (\GREEN, K)));
+
+PROCEDURE SWAP (# X, Y: ?T) WHERE T NEEDS (STORE_ (T ## T));
+   VAR TMP: T;
+   TMP := X;
+   X := Y;
+   Y := TMP;
+END PROCEDURE SWAP;
+
+PROCEDURE SHOW (X, Y: ?T) WHERE T NEEDS (TO_CHAR (T) RETURNS (ASCII_STR (?)));
+   PUT_LINE ('swapped: ' !! TO_CHAR (X) !! ' ' !! TO_CHAR (Y));
+END PROCEDURE SHOW;
+
+FUNCTION FRAME (S: ASCII_STR (?L)) RETURNS (ASCII_STR (L + 2));
+   RETURN '[' !! S !! ']';
+END FUNCTION FRAME;
+FUNCTION BIGGER (X, Y: ?T) RETURNS (T) WHERE T NEEDS (LESS_THAN_ (T, T) RETURNS (BOOLEAN));
+   IF X < Y THEN
+      RETURN Y;
+   END IF;
+   RETURN X;
+END FUNCTION BIGGER;
+END SEGMENT GENERIC_LAB;

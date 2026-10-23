@@ -1,0 +1,24 @@
+MAIN SEGMENT REP_LAB
+   USES (TERMINAL);
+% Lab B4: representations (3.4.3, 3.12.5). The status register of a device has
+% codes the hardware chose. In BLUE the type keeps its own literals and names
+% the codes in a REP clause: ENUM_VAL_REP, which only an UNORDERED type may have,
+% since codes in any order cannot carry an ordering. TO_BIT gives the code of a
+% value anywhere; going the other way, reading a code from the machine as a
+% value, is permitted only in a machine-dependent part: a SELECT on
+% OBJECT_MACHINE (4.5.5.2), here PDP_11.
+TYPE STATUS = UNORDERED (\IDLE, \BUSY, \DONE, \FAULT, \OFFLINE)
+   REP ENUM_VAL_REP (4, VALUES (\IDLE AS BIN '0000', \BUSY AS BIN '0001',
+                                \DONE AS BIN '1000', \FAULT AS BIN '1111',
+                                \OFFLINE AS BIN '0100'));
+VAR S: STATUS := \DONE;
+VAR REGISTER: BIT (4);
+PUT_LINE ('code of \DONE ' !! TO_CHAR (TO_BIT (S)) !! ', of \FAULT ' !! TO_CHAR (TO_BIT ([STATUS]$$(\FAULT))));
+REGISTER := BIN '0100';
+SELECT OBJECT_MACHINE FROM
+   PDP_11 -->
+      S := [STATUS]$$(REGISTER);
+   END;
+END SELECT;
+PUT_LINE ('register ' !! TO_CHAR (REGISTER) !! ' reads ' !! TO_CHAR (S));
+END SEGMENT REP_LAB;
