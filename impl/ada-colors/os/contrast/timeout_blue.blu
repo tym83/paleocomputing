@@ -1,0 +1,105 @@
+MAIN SEGMENT TIMEOUT_BLUE
+   USES (TERMINAL);
+% Contrast 1, timeouts, in BLUE (SofTech, 1978). The same silent producer.
+% REQUEST has no timeout and a path waits on one semaphore at a time, as in
+% THE. BLUE's answer is the one its evaluators wrote down in 1978 (problem
+% A 2.8, "I/O with timeout", DTIC ADB950587 PDF 4300): two paths race, and
+% whichever finishes first TERMINATEs the other (4.6.3). The consumer's
+% timeout is a parallel block of its own, built anew for every item.
+%
+% The race is safe only because GET runs at a higher priority than TIMER: a
+% RELEASE that wakes GET lets it run before TIMER can terminate it with the
+% item already taken. And if TIMER cuts GET down inside RECEIVE, while it holds
+% the mailbox's REGION semaphore, the semaphore is given back (3.11.1).
+VAR BOX: MAILBOX (INTEGER, 4);
+VAR X: INTEGER;
+VAR GOT: BOOLEAN;
+OPEN (# BOX);
+PAR_BLOCK
+   PATH PRODUCER IMPORTS (DATA: (# BOX));
+      LOOP FOR I IN [1:2] DO
+         PAUSE (10);
+         SEND (I # BOX);
+      END LOOP I;
+      PAUSE (1000);
+   END PATH PRODUCER;
+   PATH CONSUMER IMPORTS (DATA: (# BOX, X, GOT));
+      LOOP
+         GOT := FALSE;
+         BLOCK
+            PAR_BLOCK
+               PATH GET PRIORITY 1 IMPORTS (DATA: (# BOX, X, GOT));
+                  RECEIVE (# BOX # X);
+                  GOT := TRUE;
+                  TERMINATE (TIMER);
+               END PATH GET;
+               PATH TIMER;
+                  PAUSE (30);
+                  TERMINATE (GET);
+               END PATH TIMER;
+            END PAR_BLOCK;
+         EXCEPT
+            TERMINATED --> END;                  % the loser of the race
+         END EXCEPT;
+         END BLOCK;
+         IF NOT GOT THEN
+            LOG ('no item for 30 ms: a racing path terminated the waiting one');
+            STOP (0);
+         END IF;
+         LOG ('got item ' !! TO_CHAR (X));
+      END LOOP;
+   END PATH CONSUMER;
+END PAR_BLOCK;
+
+FUNCTION NOW () RETURNS (INTEGER);
+   RETURN TO_FIXED (CLOCK * 1000, 0, ROUNDED);
+END FUNCTION NOW;
+
+PROCEDURE PAUSE (MS: INTEGER);
+   CONST S: FIXED (30, 2, STD) := MS !//30! 1000;
+   WAIT (S);
+END PROCEDURE PAUSE;
+
+PROCEDURE LOG (S: ASCII_STR (?L));
+   PUT_LINE ('[' !! TO_CHAR (NOW ()) !! ' ms] ' !! S);
+END PROCEDURE LOG;
+
+MODULE MAILBOXES EXPORTS (MAILBOX);
+   TYPE MAILBOX (ELEMENT: TYPE, LENGTH: INTEGER [1:1000]) =
+      RECORD
+         VAR ITEMS: ARRAY [1 : LENGTH] OF ELEMENT;
+         VAR HEAD, COUNT: INTEGER;
+         VAR LOCK: SEMAPHORE (REGION);
+         VAR FULL, EMPTY: SEMAPHORE (SYNCH);
+      END RECORD;
+   PROCEDURE MAILBOX$OPEN (# B: MAILBOX (?T, ?LENGTH));
+      B.HEAD := 1;
+      B.COUNT := 0;
+      B.LOCK := NEW (1);
+      B.FULL := NEW (0);
+      B.EMPTY := NEW (LENGTH);
+   END PROCEDURE MAILBOX$OPEN;
+   PROCEDURE MAILBOX$SEND (X: ?T # B: MAILBOX (?T, ?LENGTH))
+         WHERE T NEEDS (STORE_ (T ## T));
+      REQUEST (# B.EMPTY);
+      REQUEST (# B.LOCK);
+      B.ITEMS ((B.HEAD + B.COUNT - 1) MOD LENGTH + 1) := X;
+      B.COUNT := B.COUNT + 1;
+      RELEASE (# B.LOCK);
+      RELEASE (# B.FULL);
+   END PROCEDURE MAILBOX$SEND;
+   PROCEDURE MAILBOX$RECEIVE (# B: MAILBOX (?T, ?LENGTH) # X: ?T)
+         WHERE T NEEDS (STORE_ (T ## T));
+      REQUEST (# B.FULL);
+      REQUEST (# B.LOCK);
+      X := B.ITEMS (B.HEAD);
+      B.HEAD := B.HEAD MOD LENGTH + 1;
+      B.COUNT := B.COUNT - 1;
+      RELEASE (# B.LOCK);
+      RELEASE (# B.EMPTY);
+   END PROCEDURE MAILBOX$RECEIVE;
+   FUNCTION MAILBOX$WAITING (B: MAILBOX (?T, ?LENGTH)) RETURNS (INTEGER);
+      RETURN B.COUNT;
+   END FUNCTION MAILBOX$WAITING;
+END MODULE MAILBOXES;
+END SEGMENT TIMEOUT_BLUE;

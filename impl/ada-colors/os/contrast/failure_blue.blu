@@ -1,0 +1,49 @@
+MAIN SEGMENT FAILURE_BLUE
+   USES (TERMINAL);
+% Contrast 2, failure under a lock, in BLUE (SofTech, 1978). Worker 1 takes a
+% REGION semaphore and fails halfway through an update. Its exception leaves
+% the path, so the path terminates abnormally, and that gives back every REGION
+% semaphore it requested and did not release (3.11.1, 4.6.1). Worker 2 gets in.
+%
+% The release is tied to the death of the path, not to a block of text as in
+% RED: the Justification (J3.11-1) argues that only REQUEST itself can record
+% "this path holds it" indivisibly. A SYNCH semaphore would stay taken, so as
+% not to send false signals; and a path that catches the exception itself and
+% goes on keeps its REGION semaphores too (lab B5).
+VAR MUTEX: SEMAPHORE (REGION) := NEW (1);
+VAR BALANCE: INTEGER := 100;
+BLOCK
+   PAR_BLOCK
+      PATH WORKER FOR ID IN [1:2] SIGNALS (FAILED) IMPORTS (DATA: (# MUTEX, BALANCE));
+         PAUSE (ID);
+         REQUEST (# MUTEX);
+         LOG ('worker ' !! TO_CHAR (ID) !! ' holds the semaphore');
+         PAUSE (5);
+         IF ID = 1 THEN
+            LOG ('worker 1 fails holding it');
+            SIGNAL FAILED;
+         END IF;
+         BALANCE := BALANCE + 10;
+         RELEASE (# MUTEX);
+      END PATH WORKER;
+   END PAR_BLOCK;
+EXCEPT
+   FAILED --> LOG ('the block signals FAILED: worker 1 ended abnormally'); END;
+END EXCEPT;
+END BLOCK;
+LOG ('both workers are through, balance ' !! TO_CHAR (BALANCE)
+     !! ': the path''s end released its REGION semaphore');
+
+FUNCTION NOW () RETURNS (INTEGER);
+   RETURN TO_FIXED (CLOCK * 1000, 0, ROUNDED);
+END FUNCTION NOW;
+
+PROCEDURE PAUSE (MS: INTEGER);
+   CONST S: FIXED (30, 2, STD) := MS !//30! 1000;
+   WAIT (S);
+END PROCEDURE PAUSE;
+
+PROCEDURE LOG (S: ASCII_STR (?L));
+   PUT_LINE ('[' !! TO_CHAR (NOW ()) !! ' ms] ' !! S);
+END PROCEDURE LOG;
+END SEGMENT FAILURE_BLUE;
