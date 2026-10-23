@@ -1,7 +1,9 @@
-// Builds what the RED and GREEN page (site/red/) needs, with the same clang the
-// page itself runs, compiled to WebAssembly:
+// Builds what the RED, GREEN, BLUE and YELLOW page (site/red/) needs, with the
+// same clang the page itself runs, compiled to WebAssembly:
 //
 //   redc.wasm, greenc.wasm  the two compilers, from their seeds
+//   bluec.wasm, yellowc.wasm  the BLUE and YELLOW translators, from their seeds
+//   prelude.yel             the YELLOW standard prelude, put before every program
 //   toolchain.bin           zlib: the runtime object, its header, the libc
 //                           headers a translated program includes, libc and
 //                           the compiler builtins for wasm32-wasip1-threads
@@ -104,11 +106,14 @@ async function compiler(name, seed) {
 }
 const redc = await compiler('redc', 'red/seed/redc.c');
 const greenc = await compiler('greenc', 'green/seed/greenc.c');
+const bluec = await compiler('bluec', 'blue/seed/bluec.c');
+const yellowc = await compiler('yellowc', 'yellow/seed/yellowc.c');
 
-// The headers a translated program includes: paleo.h and math.h, and whatever
-// those pull in. Taken from the dependency list clang writes.
+// The headers a translated program includes: paleo.h, math.h, and for BLUE and
+// YELLOW float.h, string.h and stdlib.h, and whatever those pull in. Taken from
+// the dependency list clang writes.
 const probe = await clang([...CFLAGS, '-c', '/probe.c', '-o', '/probe.o', '-MD', '-MF', '/probe.d'],
-  { 'probe.c': '#include "paleo.h"\n#include <math.h>\n' });
+  { 'probe.c': ['"paleo.h"', '<math.h>', '<float.h>', '<string.h>', '<stdlib.h>'].map((h) => `#include ${h}\n`).join('') });
 const depText = probe['probe.d'];
 const deps = (typeof depText === 'string' ? depText : new TextDecoder().decode(depText)).replace(/\\\n/g, ' ').split(/\s+/)
   .filter((p) => p.startsWith(`/sysroot/include/${T}/`));
@@ -116,23 +121,56 @@ const toolchain = { 'rt/paleo.h': rtFiles['paleo.h'], 'paleo.o': paleo, 'rtlib/l
 for (const d of deps) toolchain[d.slice(1)] = fs.readFileSync(path.join(inc, d.slice(`/sysroot/include/${T}/`.length)));
 for (const n of LIBS) toolchain[`sysroot/lib/${T}/${n}`] = fs.readFileSync(path.join(lib, n));
 
-// Examples: the labs, the NonStop kernel, the Kubernetes loops, GREEN tasking.
+// Examples: the labs, the NonStop kernel, the Kubernetes loops, GREEN tasking,
+// and for BLUE and YELLOW some tests and programs of their 1978 reports.
+const LANGS = { '.red': 'red', '.grn': 'green', '.blu': 'blue', '.yel': 'yellow' };
+const read = (p) => fs.readFileSync(path.join(A, p), 'utf8');
+const sed = (script, text) => execFileSync('sed', ['-f', path.join(A, script)],
+  { input: text, env: { ...process.env, LC_ALL: 'C' } }).toString();
+const fixed = (script, text) => fs.existsSync(path.join(A, script)) ? sed(script, text) : text;
+const part = (p) => fs.existsSync(path.join(A, p)) ? read(p) : '';
+
+// BLUE corpus, as blue/corpus/run.sh makes it: the original with its fixes,
+// put in its driver at the %%ORIGINAL%% line
+function blueCorpus(n) {
+  const orig = fixed(`blue/corpus/fix/${n}.sed`, read(`blue/corpus/orig/${n}.blu`));
+  const lines = read(`blue/corpus/main/${n}.blu`).split(/(?<=\n)/);
+  return lines.map((l) => l === '%%ORIGINAL%%\n' ? orig.replace(/([^\n])$/, '$1\n') : l).join('');
+}
+// YELLOW corpus, as yellow/corpus/run.sh makes it, without the standard
+// prelude (the page puts it in front of every YELLOW program)
+function yellowCorpus(n) {
+  return (/^E(1[4-9]|2)/.test(n) ? read('yellow/corpus/original/E13-conventions.yel') : '') +
+    part(`yellow/corpus/${n}.pre.yel`) +
+    fixed(`yellow/corpus/${n}.sed`, read(`yellow/corpus/original/${n}.yel`)) +
+    part(`yellow/corpus/${n}.post.yel`);
+}
+
 const EXAMPLES = [
   ...fs.readdirSync(path.join(A, 'labs/red')).filter((f) => f.endsWith('.red')).sort().map((f) => `labs/red/${f}`),
   'os/pairs.red', 'kube/kube.red', 'kube/kube_ha.red',
   'green/tests/tasking.grn', 'kube/kube_green.grn',
-];
-const examples = EXAMPLES.map((p) => ({
-  path: p,
-  lang: p.endsWith('.grn') ? 'green' : 'red',
-  source: fs.readFileSync(path.join(A, p), 'utf8'),
-}));
+  'blue/tests/basics.blu', 'blue/tests/generics.blu', 'blue/tests/modules.blu',
+  'yellow/tests/basics.yel', 'yellow/tests/templates.yel', 'yellow/tests/processes.yel', 'yellow/tests/parallel.yel',
+].map((p) => ({ path: p, source: read(p), input: part(p.replace(/\.\w+$/, '.in')) }));
+// the corpus programs are assembled; their path is the one of their .out file
+for (const n of ['integrate', 'generic-stack', 'producer-consumer', 'sum', 'appendix-c'])
+  EXAMPLES.push({ path: `blue/corpus/${n}.blu`, source: blueCorpus(n), input: part(`blue/corpus/${n}.in`) });
+for (const n of ['H1893-arraysum', 'E14-realtime', 'E17-exceptions', 'E22-searchtree', 'E26-exchangesort'])
+  EXAMPLES.push({ path: `yellow/corpus/${n}.yel`, source: yellowCorpus(n), input: '' });
+const ORDER = Object.values(LANGS);
+const examples = EXAMPLES.map(({ path: p, source, input }) => ({
+  path: p, lang: LANGS[path.extname(p)], source, ...(input ? { input } : {}),
+})).sort((x, y) => ORDER.indexOf(x.lang) - ORDER.indexOf(y.lang));
 const examplesJs = '// Generated by impl/ada-colors/web/build.mjs from the repository; do not edit.\n' +
   'export const EXAMPLES = ' + JSON.stringify(examples, null, 1) + ';\n';
 
 const outputs = {
   'redc.wasm': redc,
   'greenc.wasm': greenc,
+  'bluec.wasm': bluec,
+  'yellowc.wasm': yellowc,
+  'prelude.yel': fs.readFileSync(path.join(A, 'yellow/lib/prelude.yel')),
   'toolchain.bin': zlib.deflateSync(pack(toolchain), { level: 9 }),
   'examples.js': Buffer.from(examplesJs),
 };

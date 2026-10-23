@@ -1,5 +1,5 @@
 // Compiler and linker flags for translated programs, shared by the page and by
-// impl/ada-colors/web/build.mjs, which builds redc, greenc and the runtime the
+// impl/ada-colors/web/build.mjs, which builds the translators and the runtime the
 // same way. The page and the build must agree, or a program compiled in the
 // browser would link against a runtime built differently.
 
