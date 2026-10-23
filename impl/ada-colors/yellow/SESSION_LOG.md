@@ -10,7 +10,8 @@ exceptions, files) -> tests and the 1978 tutorial corpus.
 - os/the_yellow.yel, os/the_kube_yellow.yel, kube/kube_yellow.yel, os/contrast/*_yellow.yel
   with .out; os/run.sh runs .yel (23 programs pass). labs/yellow/y1..y8 with solutions;
   check.sh/verify.sh know them (61 checks pass). notes/yellow-os.md lists what YELLOW
-  could not say. RED/GREEN/YELLOW fixpoints, tests (5/28/29), corpus (40) green.
+  could not say. RED/GREEN/YELLOW fixpoints, tests (5/28/33), corpus (40) green; signal arrays and
+  forward module imports fixed in yellowc (circular imports still refused).
 
 ## Next step
 Coordinator: merge with the BLUE branch (both edit os/run.sh, labs/check.sh, labs/verify.sh,
@@ -73,3 +74,12 @@ labs/README*); top-level impl/ada-colors/README* still describe os/kube/labs as 
   does not require it. Both noted in notes/yellow-os.md; compiler not touched.
 - Labs y1..y8 (operators, parameters, enumerations, templates, monitor, functions, modules,
   THE); check.sh gives yellowc's line numbers in the lab's file.
+### 2026-10-23 — two yellowc shortfalls fixed
+- Signal arrays: components were zeroed opaque pointers (wrong size, no monitor), so WAIT on
+  one kept the monitor. DeclareSignalArray ties each component to the monitor; rt gets
+  `y_d_sig` (inside the YELLOW block); whole-array assignment and export refused.
+  tests/signalarrays.yel (deadlocked with the old seed).
+- X.G module order: Declarations keeps the scope's list (DeclList[Depth]); an import that is
+  not found translates the later sibling module that provides it first (node ival 0/1/2).
+  A circle of imports is refused. tests/forward.yel, tests/circle.err.yel.
+- Seed refreshed, genesis reproduced; yellow tests 33, corpus 40, os/run 23, verify 61.
