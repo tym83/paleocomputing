@@ -1,6 +1,6 @@
 [Русская версия](17-episode-red-green.ru.md)
 
-# Episode: the two Adas, RED and GREEN
+# Episode: the two Adas, RED and GREEN, and the dropped BLUE and YELLOW
 
 Status: working. In May 1979 the US Department of Defense chose GREEN (CII-
 Honeywell-Bull, Jean Ichbiah) over RED (Intermetrics) as its common language,
@@ -384,8 +384,9 @@ itself, is in [`blue/notes/blue-digest.md`](impl/ada-colors/blue/notes/blue-dige
 - `PAR_BLOCK` with paths, and semaphores of two kinds: `SYNCH` (a signal) and
   `REGION` (a lock released when its path ends abnormally).
 - The 1978 corpus: 17 programs as printed, with the fixes and their reasons
-  ([`blue/corpus/CHANGES.md`](impl/ada-colors/blue/corpus/CHANGES.md)). Seven
-  translate as printed once the elided parts are filled in. Appendix C, the
+  ([`blue/corpus/CHANGES.md`](impl/ada-colors/blue/corpus/CHANGES.md)). Once
+  the elided parts are filled in, seven run as printed, three more translate
+  but run wrong, and seven are rejected by the translator. Appendix C, the
   standard I/O library with its device drivers, runs on a simulated PDP-11
   with two LT33 teletypes.
 - [`os/the.blu`](impl/ada-colors/os/the.blu) prints exactly what `os/the.red`
