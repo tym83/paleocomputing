@@ -88,7 +88,7 @@ git checkout labs/blue       # start over
 | | | **change**: wrap the work in a `BLOCK`, catch `FAILED` after it inside the path and `RELEASE` there | Both through and the block signals nothing. Catch without the `RELEASE`, and the path ends normally still holding the semaphore: deadlock again |
 | b6 | `b6-the.blu` | **look**: THE in BLUE, the same run as `12-the.red`, on BLUE's own semaphores | No process waits for one above it |
 | | | **change**: `CONST NCORE: INTEGER := 8;` | `drum transfers 0` |
-| | | **break**: set `REPORT_DUMPS` to `TRUE`. bluec refuses until `DUMP` (level 1) imports `TELL_OPERATOR` (level 2): add it | Deadlock. The broken order had to be written into the IMPORTS before it could run |
+| | | **break**: set `REPORT_DUMPS` to `TRUE` | Deadlock. The call upwards was written in the IMPORTS all along: `DUMP` (level 1) imports `TELL_OPERATOR` (level 2), since bluec checks a switched-off call too |
 | b7 | `b7-race.blu` | **look**: a timeout is a race of two paths, `GET` and `TIMER`, that `TERMINATE` each other | `2 received` |
 | | | **change**: `CONST TIMEOUT: INTEGER := 5;` | `no item for 5 ms` |
 | | | **break**: remove `PRIORITY 1` from `GET` | `1 still in the box`: `TIMER` cut `GET` down after it had taken the item's token, so the item stays in the box and no `RECEIVE` will get it. The higher priority makes `GET` run before `TIMER` can do that |

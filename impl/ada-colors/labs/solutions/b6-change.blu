@@ -32,7 +32,9 @@ MAIN SEGMENT THE
 % (4.6.5); every process of the system is a path of one parallel block that
 % starts at 0, so CLOCK is the system's time. WAIT takes seconds; PAUSE waits
 % whole milliseconds. Set REPORT_DUMPS to TRUE (lab B6) and the segment
-% controller calls on level 2: the deadlock THE's order exists to prevent.
+% controller calls on level 2: the deadlock THE's order exists to prevent. The
+% call is checked even while it is switched off, so DUMP, a level-1 routine,
+% must import TELL_OPERATOR: the reach upwards is in the IMPORTS either way.
 
 CONST REPORT_DUMPS: BOOLEAN := FALSE;
 
@@ -340,7 +342,7 @@ MODULE SEGMENTS EXPORTS (PRESENT, CORE_READ, CORE_WRITE, BOOT_VOCABULARY, TRANSF
    END PROCEDURE DRUM_WAIT;
 
    PROCEDURE DUMP (C: INTEGER)
-         IMPORTS (ROUTINES: (DRUM_WAIT), DATA: (CORE_SEG, CORE_WORD # DRUM_USED, DRUM_WORD, SEG_WHERE));
+         IMPORTS (ROUTINES: (DRUM_WAIT, TELL_OPERATOR), DATA: (CORE_SEG, CORE_WORD # DRUM_USED, DRUM_WORD, SEG_WHERE));
       VAR BEST: INTEGER := 0;
       CONST S: INTEGER := CORE_SEG (C);
       LOOP FOR D IN [1:NDRUM] DO

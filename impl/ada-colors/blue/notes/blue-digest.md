@@ -211,8 +211,8 @@ what it said another way, and what it could not say:
 1. **THE is native.** BLUE's semaphores are THE's P and V, with nothing built in
    between; `os/the.blu` prints exactly what `os/the.red` prints, and both share
    `os/the.out`. Each level's state is a module, so a path's IMPORTS name the
-   levels it calls on, and the broken order of lab B6 must be written into an
-   IMPORTS list before it can run.
+   levels it calls on; even the switched-off call of lab B6 from level 1 to
+   level 2 shows in DUMP's IMPORTS.
 2. **No message passing.** There are no mailboxes and no rendezvous. A queue is
    a generic module, `MAILBOXES`, a record of items with one REGION and two
    SYNCH semaphores, instantiated per element type (section 5). It costs thirty
@@ -260,10 +260,12 @@ what it said another way, and what it could not say:
     `RETURNS (ASCII_STR (?))` and gives each RETURN the length of its value; the
     specification writes a result with `?` only in the routine templates of
     `WHERE ... NEEDS` (Appendix C).
-12. **A manifest condition decides at translation time.** An IF arm whose
-    condition is a manifest FALSE is not translated, so its errors, the import
-    checks included, are not reported (lab B6 relies on it to keep
-    `REPORT_DUMPS` off). The specification does not say this.
+12. **A manifest condition selects its arm alone** (4.5.5.1): the arms it rules
+    out emit no code. bluec first skipped them entirely, so their errors, the
+    import checks included, went unreported (`os/the.blu` compiled with a call
+    its IMPORTS did not cover while `REPORT_DUMPS` was FALSE). They are now
+    translated for their errors and the code dropped (`tests/dead_arm.err.blu`,
+    `tests/dead_else.err.blu`).
 
 Found and fixed on the way: a path TERMINATEd before it first ran still waited
 out its first WAIT or took a free semaphore; REQUEST and WAIT now check for it

@@ -108,3 +108,8 @@ labs/check.sh, labs/verify.sh wired for .blu.
   SYNCH, b6 THE, b7 race. check.sh: compiler by extension; verify.sh: *.blu solutions.
 - bluec does not translate a manifest-FALSE IF arm, so REPORT_DUMPS=FALSE hides the
   missing import; lab b6 break uses that (noted in the digest).
+### dead arms checked (2026-10-23)
+- IF arms ruled out by a manifest condition (and everything after a manifest TRUE arm)
+  are translated into a dropped buffer: errors reported, no code. Tests dead_arm,
+  dead_else (27 pass). Seed refreshed; genesis reproduced.
+- os/the.blu: DUMP imports TELL_OPERATOR; lab b6 break is now only REPORT_DUMPS := TRUE.

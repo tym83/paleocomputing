@@ -60,7 +60,7 @@ case "$lab/$task" in
   b5/break)  want "deadlock" "A SYNCH semaphore is a signal, not a lock: a dying path does not give it back (J3.11-1)." "declare MUTEX as SEMAPHORE (SYNCH)" ;;
   b6/look)   want "no circle of waiting" "Every process waits only for processes below it; the society finishes." "run it unchanged" ;;
   b6/change) want "drum transfers 0" "With a core page per segment the segment controller never touches the drum." "set CONST NCORE: INTEGER := 8;" ;;
-  b6/break)  want "deadlock" "Level 1 called level 2, which needed level 1 to read its vocabulary; bluec made you write that call into DUMP's IMPORTS first." "set REPORT_DUMPS to TRUE and import TELL_OPERATOR in DUMP" ;;
+  b6/break)  want "deadlock" "Level 1 called level 2, which needed level 1 to read its vocabulary. DUMP's IMPORTS said it could all along." "set REPORT_DUMPS to TRUE" ;;
   b7/look)   want "2 received" "Each wait is a parallel block of two paths, and the item at 30 ms is not lost." "run it unchanged" ;;
   b7/change) want "no item for 5 ms" "The timer path won the race." "set CONST TIMEOUT: INTEGER := 5;" ;;
   b7/break)  want "1 still in the box" "TIMER terminated GET after GET had taken the item's token: the item stays in the box and no RECEIVE will get it." "remove PRIORITY 1 from GET" ;;
