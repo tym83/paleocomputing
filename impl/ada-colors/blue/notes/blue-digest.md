@@ -199,3 +199,72 @@ The misprints of the program examples and the rules they break are in
 - Aliasing and side-effect enforcement (§4.3.3–4.3.4, Appendix A.3).
 - LIBRARIES (§4.7), simulation (§4.6.9).
 - FLOAT precisions are not modelled (always 15 digits).
+
+---
+
+## 11. BLUE under an operating system (`../os`, `../kube`, `../labs/blue`)
+
+THE, Kubernetes on THE, the Kubernetes control loop and the three contrast
+problems were written in BLUE after RED and GREEN. What BLUE could say directly,
+what it said another way, and what it could not say:
+
+1. **THE is native.** BLUE's semaphores are THE's P and V, with nothing built in
+   between; `os/the.blu` prints exactly what `os/the.red` prints, and both share
+   `os/the.out`. Each level's state is a module, so a path's IMPORTS name the
+   levels it calls on, and the broken order of lab B6 must be written into an
+   IMPORTS list before it can run.
+2. **No message passing.** There are no mailboxes and no rendezvous. A queue is
+   a generic module, `MAILBOXES`, a record of items with one REGION and two
+   SYNCH semaphores, instantiated per element type (section 5). It costs thirty
+   lines and works for records, integers and arrays of mailboxes alike.
+3. **No timed wait, and one semaphore at a time.** REQUEST has no timeout. The
+   BLUE answer is the 1978 evaluators' (problem A 2.8, DTIC ADB950587 PDF 4300):
+   two paths race and the winner TERMINATEs the loser. That is a parallel block,
+   two activations, for every wait. A parallel block may not stand in a routine
+   (4.6.1), so the wait cannot be made a procedure: `kube/kube_blue.blu` writes it
+   out twice, once for a family of four controllers and once for the kubelets.
+   The race is safe only when the waiting path runs at a higher priority than
+   the timer: otherwise the timer can terminate it after it took the token and
+   before it said so, and the item is stranded (lab B7; J3.11-1 makes the same
+   argument for REGION semaphores). Waiting for "a conversation or a key"
+   (the message interpreter) is one SYNCH semaphore and a look at the queues.
+4. **TERMINATED does not say who sent it.** A path inside a race cannot tell its
+   own race's TERMINATED from a TERMINATE aimed at it from outside, when the
+   outside one arrives after the race was decided. The kubelet of
+   `kube/kube_blue.blu` reads a note (`POWERED`) left by the user before the
+   TERMINATE.
+5. **No time of day.** CLOCK is the time of one path activation (4.6.5; the
+   specification says processing time, bluec gives elapsed time, decision 2).
+   The programs log time by making every process a path of one parallel block
+   started at 0, so that CLOCK is the system's time. Under the specification's
+   reading no program here could print a timestamp at all.
+6. **WAIT takes seconds in binary fixed point.** A millisecond is no binary
+   fraction; `PAUSE` rounds it down at scale 30 and the runtime rounds up to the
+   microsecond tick, so the runs keep the whole milliseconds of RED's.
+7. **A semaphore's value cannot be read.** RED's THE/KUBE saturates its wake-up
+   mailboxes by looking at FULL_SLOTS; in BLUE a wake-up pending flag sits under
+   a REGION semaphore next to each SYNCH one.
+8. **A module body has no statements** (4.4), so a module's variables start at
+   zero unless an exported routine sets them: `DRUM_USED` replaces RED's
+   `drum_free`, and the vocabulary is loaded by `BOOT_VOCABULARY`.
+9. **REGION semaphores change the failure stories.** In `os/the_kube_blue.blu`
+   the power cut terminates a kubelet in the middle of its pass, holding the
+   store's semaphore, and the control plane goes on; RED and GREEN had to wait
+   until the kubelet was between passes. In `os/contrast/readers_blue.blu` the
+   writer's semaphore must be SYNCH, since the reader that releases it is often
+   not the one that took it.
+10. **Exception handlers belong to the statement they follow** ([4-80]).
+    `BLOCK ... EXCEPT ... END BLOCK;` attaches the handler to the last statement
+    of the block, not to the block; `BLOCK ... END BLOCK; EXCEPT ...` covers it.
+11. **Functions returning strings of different lengths.** bluec accepts
+    `RETURNS (ASCII_STR (?))` and gives each RETURN the length of its value; the
+    specification writes a result with `?` only in the routine templates of
+    `WHERE ... NEEDS` (Appendix C).
+12. **A manifest condition decides at translation time.** An IF arm whose
+    condition is a manifest FALSE is not translated, so its errors, the import
+    checks included, are not reported (lab B6 relies on it to keep
+    `REPORT_DUMPS` off). The specification does not say this.
+
+Found and fixed on the way: a path TERMINATEd before it first ran still waited
+out its first WAIT or took a free semaphore; REQUEST and WAIT now check for it
+(`tests/terminate_early.blu`).

@@ -75,3 +75,14 @@ side-effect checks, a RANDOM_FILE device for Appendix C, the CI job of CI.md.
 - A bug of mine committed once (BASE_NAME of a short alias cut past the end):
   fixed in the next commit.
 - The drivers run forever (C-5); the application ends with WAIT (1); STOP (0).
+
+## Phase 2 (2026-10-23): BLUE under THE, Kubernetes, contrasts, labs
+Worktree paleo-blue-os, branch feat/ada-blue-os. Plan: os/the.blu, os/the_kube_blue.blu,
+kube/kube_blue.blu, os/contrast/*_blue.blu, labs/blue/ + solutions, os/run.sh and
+labs/check.sh, labs/verify.sh wired for .blu.
+### findings before code
+- No timed REQUEST: the BLUE idiom is two racing paths that TERMINATE each other
+  (evaluation example A 2.8.1, DTIC ADB950587 PDF 4300).
+- REGION semaphores are released when a path terminates abnormally (3.11.1, J3.11-1).
+- CLOCK is per activation (4.6.5); there is no time of day.
+- A PAR_BLOCK may not be inside a routine (4.6.1).

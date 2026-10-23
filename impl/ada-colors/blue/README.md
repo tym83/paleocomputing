@@ -21,6 +21,14 @@ document: SAFE_TELETYPE, TELETYPE, BINARY_IO and TEXTUAL_IO, with device driver
 paths connected to interrupts. It runs on a simulated PDP-11 with two LT33
 teletypes: the first is the console, the second prints on standard output too.
 
+BLUE also runs what RED and GREEN run in `../os` and `../kube`: Dijkstra's THE
+system (`os/the.blu`, on BLUE's own semaphores; it prints exactly what the RED
+version prints), Kubernetes on THE (`os/the_kube_blue.blu`), the Kubernetes
+control loop (`kube/kube_blue.blu`) and the three contrast problems
+(`os/contrast/*_blue.blu`). Seven labs in `../labs/blue` show what is BLUE's own.
+Section 11 of `notes/blue-digest.md` lists what BLUE said directly, what it said
+another way (a timeout is a race of two paths) and what it could not say.
+
 ```sh
 make fixpoint        # bluec from its seed, twice; the C must be identical
 make genesis         # the first step, from the Python bootstrap
