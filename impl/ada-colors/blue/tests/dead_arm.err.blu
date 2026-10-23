@@ -1,0 +1,12 @@
+MAIN SEGMENT E
+   USES (TERMINAL);
+% an arm ruled out by a manifest condition emits no code but is still checked
+CONST DEBUG: BOOLEAN := FALSE;
+VAR X: INTEGER := 0;
+P;
+PROCEDURE P ();
+   IF DEBUG THEN
+      X := 1;
+   END IF;
+END PROCEDURE P;
+END SEGMENT E;

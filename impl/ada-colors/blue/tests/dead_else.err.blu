@@ -1,0 +1,10 @@
+MAIN SEGMENT E
+   USES (TERMINAL);
+% after a manifest TRUE arm, the ELSE is never run, and still checked
+CONST FAST: BOOLEAN := TRUE;
+IF FAST THEN
+   PUT_LINE ('fast');
+ELSE
+   PUT_LINE (UNDECLARED);
+END IF;
+END SEGMENT E;
