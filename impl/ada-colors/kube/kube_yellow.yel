@@ -1,0 +1,537 @@
+(* KUBE/YELLOW: the Kubernetes control loop of kube/kube.red and *)
+(* kube/kube_green.grn, written in YELLOW (SRI International, February 1978). *)
+(* The design is the same: an API server owns the store, controllers keep *)
+(* caches and reconcile on an event or a timed resync, writes are optimistic, *)
+(* kubelets renew leases. What YELLOW gives instead: *)
+(*   - the API server is a MONITOR: its procedures exclude each other, and a *)
+(*     caller simply calls them. There is no server process to wake; *)
+(*   - a watch stream is a monitor too, a ring of events with a SIGNAL, made *)
+(*     from one module TEMPLATE. Signals cannot be put in arrays, so there is *)
+(*     no array of streams: there are eight INSTANCEs with eight names, and *)
+(*     Deliver and Next pick one by a SELECT on the port number; *)
+(*   - WAIT has no timeout. A clock process puts a Tick in every quiet stream *)
+(*     each 20 ms, and the controller resyncs on it, as in GREEN; *)
+(*   - the API monitor calls the streams and never the other way round, so a *)
+(*     process holding the API's exclusion never waits for one waiting on it. *)
+(*     The rings are large, as in GREEN, so a Put never waits; *)
+(*   - kinds of object, phases and operations are UNORDERED enumerations, and *)
+(*     what a watcher asked for is a SET of kinds; *)
+(*   - node 2 loses power by RAISE_PROCESS_TERMINATION, an exception raised *)
+(*     in its kubelet, which leaves the stream monitor it is waiting in; *)
+(*   - a scope ends only when its processes end (X.E.1), so at the end the *)
+(*     user asks the controllers to stop and the clock's last tick wakes them. *)
+(* Time is virtual and the scheduler deterministic (rt/paleo.c). *)
+MODULE KubeYellow
+  IMPORT TextIO, StandardImplementationPrelude;
+
+  MODULE Types
+    IMPORT INTEGER64;
+    EXPORT TRANSPARENT Kind, Kinds, Phase, Op, Obj, Cache, Counts;
+    EXPORT Blank;
+    REPRESENTATION
+      Kind = UNORDERED (NoKind, Deployment, ReplicaSet, Pod, Node, Lease, Tick);
+      Kinds = SET (Kind);
+      Phase = UNORDERED (NoPhase, Pending, Running, Ready, NotReady);
+      Op = UNORDERED (Create, Update, Delete);
+      Obj = RECORD
+        VAR kind: Kind;
+        VAR id, rv, owner, replicas, version, node: INTEGER64;
+        VAR phase: Phase;
+        VAR beat: INTEGER64;
+        VAR gone: BOOLEAN
+      ENDRECORD;
+      Cache = ARRAY (INTEGER [1..64] OF Obj);
+      Counts = ARRAY (INTEGER [1..64] OF INTEGER64);
+    FUNCTION Blank RETURNS Obj (CONST k: Kind)
+      RETURN Obj(k, 0, 0, 0, 0, 0, 0, NoPhase, 0, FALSE)
+    ENDFUNCTION Blank
+  ENDMODULE Types;
+
+  PROCEDURE Stamp ()
+    Write("["); Write(CLOCK_TIME()); Write(" ms] ");
+    RETURN
+  ENDPROCEDURE Stamp;
+
+  PROCEDURE WritePhase (CONST p: Phase)
+    SELECT p
+      CASE Pending => Write("Pending")
+      CASE Running => Write("Running")
+      CASE Ready => Write("Ready")
+      CASE NotReady => Write("NotReady")
+      ELSE Write("-")
+    ENDSELECT;
+    RETURN
+  ENDPROCEDURE WritePhase;
+
+  (* ---- watch streams: a template of a monitor, one instance per port --------- *)
+  TEMPLATE StreamTemplate (Stream, PutE, GetE)
+    MONITOR Stream
+      IMPORT Types, INTEGER64;
+      EXPORT PutE, GetE;
+      VAR items: ARRAY (INTEGER [0..255] OF Obj);
+          head, count: INTEGER64 := 0;
+          nonempty: SIGNAL;
+      (* quiet: only when the stream is empty (the clock's ticks) *)
+      PROCEDURE PutE (CONST e: Obj; CONST quiet: BOOLEAN)
+        IF quiet AND (count > 0) THEN RETURN ENDIF;
+        IF count = 256 THEN PROPAGATE_EXCEPTION OVERFLOW ENDIF;
+        items[(head + count) MOD 256] := e;
+        count := count + 1;
+        SEND(nonempty);
+        RETURN
+      ENDPROCEDURE PutE;
+      PROCEDURE GetE (OUT e: Obj)
+        IF count = 0 THEN WAIT(nonempty) ENDIF;
+        e := items[head];
+        head := (head + 1) MOD 256;
+        count := count - 1;
+        RETURN
+      ENDPROCEDURE GetE
+    ENDMONITOR Stream
+  ENDTEMPLATE StreamTemplate;
+
+  INSTANCE StreamTemplate (DeployStream, Put1, Get1);
+  INSTANCE StreamTemplate (RsStream, Put2, Get2);
+  INSTANCE StreamTemplate (SchedStream, Put3, Get3);
+  INSTANCE StreamTemplate (NodesStream, Put4, Get4);
+  INSTANCE StreamTemplate (UserStream, Put5, Get5);
+  INSTANCE StreamTemplate (Kubelet1Stream, Put6, Get6);
+  INSTANCE StreamTemplate (Kubelet2Stream, Put7, Get7);
+  INSTANCE StreamTemplate (Kubelet3Stream, Put8, Get8);
+
+  CONST
+    NOBJ: INTEGER64 = 64;
+    NNODES: INTEGER64 = 3;
+    NPORTS: INTEGER64 = 8;
+    PDeploy: INTEGER64 = 1;
+    PRs: INTEGER64 = 2;
+    PSched: INTEGER64 = 3;
+    PNodes: INTEGER64 = 4;
+    PUser: INTEGER64 = 5;
+    PKubelet: INTEGER64 = 6;      (* node n listens on PKubelet + n - 1 *)
+
+  PROCEDURE Deliver (CONST port: INTEGER64; CONST e: Obj; CONST quiet: BOOLEAN)
+    SELECT port
+      CASE 1 => Put1(e, quiet)
+      CASE 2 => Put2(e, quiet)
+      CASE 3 => Put3(e, quiet)
+      CASE 4 => Put4(e, quiet)
+      CASE 5 => Put5(e, quiet)
+      CASE 6 => Put6(e, quiet)
+      CASE 7 => Put7(e, quiet)
+      CASE 8 => Put8(e, quiet)
+    ENDSELECT;
+    RETURN
+  ENDPROCEDURE Deliver;
+
+  PROCEDURE Next (CONST port: INTEGER64; OUT e: Obj)
+    SELECT port
+      CASE 1 => Get1(e)
+      CASE 2 => Get2(e)
+      CASE 3 => Get3(e)
+      CASE 4 => Get4(e)
+      CASE 5 => Get5(e)
+      CASE 6 => Get6(e)
+      CASE 7 => Get7(e)
+      CASE 8 => Get8(e)
+    ENDSELECT;
+    RETURN
+  ENDPROCEDURE Next;
+
+  (* ---- the API server ----------------------------------------------------------- *)
+  MONITOR Api
+    IMPORT Types, INTEGER64, Deliver, Stamp, Write, WriteLn, NOBJ, NPORTS;
+    EXPORT Watch, Change, Beat, Get, List;
+    VAR store: Cache;
+        watchers: ARRAY (INTEGER [1..8] OF Kinds);
+        nextId, nextRv, conflicts: INTEGER64 := 0;
+
+    PROCEDURE Notify (CONST changed: Obj)
+      FOR p: INTEGER [1..NPORTS] DO
+        IF changed.kind IN watchers[p] THEN Deliver(p, changed, FALSE) ENDIF
+      ENDFOR;
+      RETURN
+    ENDPROCEDURE Notify;
+
+    (* a new watcher first gets what it asked for: list, then watch *)
+    PROCEDURE Watch (CONST port: INTEGER64; CONST kinds: Kinds)
+      watchers[port] := kinds;
+      FOR i: INTEGER [1..nextId] DO
+        IF (NOT store[i].gone) AND (store[i].kind IN kinds) THEN Deliver(port, store[i], FALSE) ENDIF
+      ENDFOR;
+      RETURN
+    ENDPROCEDURE Watch;
+
+    PROCEDURE Change (CONST op: Op; CONST o: Obj)
+      VAR changed: Obj := o;
+      IF op = Create THEN
+        nextId := nextId + 1;
+        changed.id := nextId
+      ELSIF (store[o.id].rv # o.rv) OR store[o.id].gone THEN
+        conflicts := conflicts + 1;
+        RETURN
+      ELSIF op = Delete THEN
+        changed.gone := TRUE
+      ENDIF;
+      nextRv := nextRv + 1;
+      changed.rv := nextRv;
+      store[changed.id] := changed;
+      Notify(changed);
+      RETURN
+    ENDPROCEDURE Change;
+
+    PROCEDURE Beat (CONST id: INTEGER64)
+      VAR changed: Obj;
+      store[id].beat := CLOCK_TIME();
+      changed := store[id];
+      changed.kind := Lease;
+      Notify(changed);
+      RETURN
+    ENDPROCEDURE Beat;
+
+    PROCEDURE Get (CONST id: INTEGER64; OUT o: Obj)
+      o := store[id];
+      RETURN
+    ENDPROCEDURE Get;
+
+    PROCEDURE List (CONST port: INTEGER64)
+      FOR i: INTEGER [1..nextId] DO
+        IF (NOT store[i].gone) AND (store[i].kind = Pod) THEN Deliver(port, store[i], FALSE) ENDIF
+      ENDFOR;
+      Deliver(port, Blank(NoKind), FALSE);
+      Stamp(); Write("api server: "); Write(conflicts); Write(" stale writes refused so far");
+      WriteLn();
+      RETURN
+    ENDPROCEDURE List;
+
+    FOR p: INTEGER [1..NPORTS] DO watchers[p] := Kinds() ENDFOR;
+    FOR i: INTEGER [1..NOBJ] DO store[i] := Blank(NoKind) ENDFOR
+  ENDMONITOR Api;
+
+  (* an informer: keep the cache current from one event *)
+  PROCEDURE Absorb (VAR c: Cache; CONST o: Obj; OUT fresh: BOOLEAN)
+    fresh := c[o.id].id = 0;
+    IF o.rv > c[o.id].rv THEN c[o.id] := o ENDIF;
+    RETURN
+  ENDPROCEDURE Absorb;
+
+  PROCEDURE Clear (OUT c: Cache)
+    FOR i: INTEGER [1..NOBJ] DO c[i] := Blank(NoKind) ENDFOR;
+    RETURN
+  ENDPROCEDURE Clear;
+
+  FUNCTION Live RETURNS BOOLEAN (CONST o: Obj; CONST k: Kind)
+    RETURN (o.kind = k) AND NOT o.gone
+  ENDFUNCTION Live;
+
+  VAR stopping: BOOLEAN := FALSE;
+      kubeletPid: ARRAY (INTEGER [1..3] OF INTEGER64);
+      d, stale, n: Obj;
+  CONST web: INTEGER64 = 4;          (* the deployment's id *)
+
+  PROCEDURE Show ()
+    VAR e: Obj;
+    List(PUser);
+    LOOP reading
+      Next(PUser, e);
+      IF e.kind = NoKind THEN EXIT reading ENDIF;
+      IF e.kind = Pod THEN
+        Stamp(); Write("  pod "); Write(e.id); Write("  rs "); Write(e.owner);
+        Write("  version "); Write(e.version); Write("  node-id "); Write(e.node);
+        Write("  "); WritePhase(e.phase); WriteLn()
+      ENDIF
+    ENDLOOP reading;
+    RETURN
+  ENDPROCEDURE Show;
+
+  FOR k: INTEGER [1..NNODES] DO
+    n := Blank(Node);
+    n.owner := k;
+    n.phase := Ready;
+    Change(Create, n)
+  ENDFOR;
+
+  BEGIN
+    (* ---- the clock: a Tick in every quiet stream each 20 ms ----------------- *)
+    PROCESS Clock ()
+      WHILE NOT stopping DO
+        DELAY(20);
+        FOR p: INTEGER [1..NPORTS] DO
+          IF p # PUser THEN Deliver(p, Blank(Tick), TRUE) ENDIF
+        ENDFOR
+      ENDWHILE;
+      TERMINATE_PROCESS
+    ENDPROCESS Clock;
+
+    (* ---- deployment controller: one replica set per template version --------- *)
+    PROCESS DeployCtl ()
+      VAR c: Cache;
+          e, o: Obj;
+          fresh, found: BOOLEAN;
+          asked: Counts := Counts(0);
+      Clear(c);
+      Watch(PDeploy, Kinds(Deployment, ReplicaSet));
+      LOOP events
+        Next(PDeploy, e);
+        IF stopping THEN EXIT events ENDIF;
+        IF e.kind = Tick THEN
+          FOR i: INTEGER [1..NOBJ] DO asked[i] := 0 ENDFOR
+        ELSE
+          Absorb(c, e, fresh)
+        ENDIF;
+        FOR dd: INTEGER [1..NOBJ] DO
+          IF Live(c[dd], Deployment) THEN
+            found := FALSE;
+            FOR r: INTEGER [1..NOBJ] DO
+              IF Live(c[r], ReplicaSet) AND (c[r].owner = dd) THEN
+                IF c[r].version = c[dd].version THEN
+                  found := TRUE;
+                  IF c[r].replicas # c[dd].replicas THEN
+                    o := c[r];
+                    o.replicas := c[dd].replicas;
+                    Change(Update, o);
+                    Stamp(); Write("deployment "); Write(dd); Write(": scale replicaset ");
+                    Write(r); Write(" to "); Write(o.replicas); WriteLn()
+                  ENDIF
+                ELSIF c[r].replicas > 0 THEN
+                  o := c[r];
+                  o.replicas := 0;
+                  Change(Update, o);
+                  Stamp(); Write("deployment "); Write(dd); Write(": old replicaset ");
+                  Write(r); Write(" scaled to 0"); WriteLn()
+                ENDIF
+              ENDIF
+            ENDFOR;
+            IF (NOT found) AND (asked[dd] # c[dd].version) THEN
+              asked[dd] := c[dd].version;
+              o := Blank(ReplicaSet);
+              o.owner := dd;
+              o.replicas := c[dd].replicas;
+              o.version := c[dd].version;
+              Change(Create, o);
+              Stamp(); Write("deployment "); Write(dd); Write(": new replicaset for version ");
+              Write(o.version); WriteLn()
+            ENDIF
+          ENDIF
+        ENDFOR
+      ENDLOOP events;
+      TERMINATE_PROCESS
+    ENDPROCESS DeployCtl;
+
+    (* ---- replica set controller: as many live pods as replicas --------------- *)
+    PROCESS RsCtl ()
+      VAR c: Cache;
+          e, o: Obj;
+          fresh: BOOLEAN;
+          have: INTEGER64;
+          expect: Counts := Counts(0);
+      Clear(c);
+      Watch(PRs, Kinds(ReplicaSet, Pod));
+      LOOP events
+        Next(PRs, e);
+        IF stopping THEN EXIT events ENDIF;
+        IF e.kind = Tick THEN
+          FOR i: INTEGER [1..NOBJ] DO expect[i] := 0 ENDFOR
+        ELSE
+          Absorb(c, e, fresh);
+          IF fresh AND (e.kind = Pod) AND (expect[e.owner] > 0) THEN
+            expect[e.owner] := expect[e.owner] - 1
+          ENDIF
+        ENDIF;
+        FOR r: INTEGER [1..NOBJ] DO
+          IF Live(c[r], ReplicaSet) THEN
+            have := 0;
+            FOR p: INTEGER [1..NOBJ] DO
+              IF Live(c[p], Pod) AND (c[p].owner = r) THEN
+                have := have + 1;
+                IF have > c[r].replicas THEN
+                  Change(Delete, c[p]);
+                  Stamp(); Write("replicaset "); Write(r); Write(": delete pod "); Write(p);
+                  WriteLn();
+                  c[p].gone := TRUE
+                ENDIF
+              ENDIF
+            ENDFOR;
+            IF (have + expect[r]) < c[r].replicas THEN
+              Stamp(); Write("replicaset "); Write(r); Write(": "); Write(have); Write(" of ");
+              Write(c[r].replicas); Write(" pods, creating ");
+              Write(c[r].replicas - (have + expect[r])); WriteLn();
+              WHILE (have + expect[r]) < c[r].replicas DO
+                o := Blank(Pod);
+                o.owner := r;
+                o.version := c[r].version;
+                o.phase := Pending;
+                Change(Create, o);
+                expect[r] := expect[r] + 1
+              ENDWHILE
+            ENDIF
+          ENDIF
+        ENDFOR
+      ENDLOOP events;
+      TERMINATE_PROCESS
+    ENDPROCESS RsCtl;
+
+    (* ---- scheduler: each pending pod to the ready node with fewest pods ------- *)
+    PROCESS Scheduler ()
+      VAR c: Cache;
+          e, o: Obj;
+          fresh: BOOLEAN;
+          best, bestLoad, load: INTEGER64;
+      Clear(c);
+      Watch(PSched, Kinds(Pod, Node));
+      LOOP events
+        Next(PSched, e);
+        IF stopping THEN EXIT events ENDIF;
+        IF e.kind # Tick THEN Absorb(c, e, fresh) ENDIF;
+        FOR p: INTEGER [1..NOBJ] DO
+          IF Live(c[p], Pod) AND (c[p].node = 0) THEN
+            best := 0;
+            bestLoad := NOBJ;
+            FOR nd: INTEGER [1..NOBJ] DO
+              IF Live(c[nd], Node) AND (c[nd].phase = Ready) THEN
+                load := 0;
+                FOR q: INTEGER [1..NOBJ] DO
+                  IF Live(c[q], Pod) AND (c[q].node = nd) THEN load := load + 1 ENDIF
+                ENDFOR;
+                IF load < bestLoad THEN
+                  best := nd;
+                  bestLoad := load
+                ENDIF
+              ENDIF
+            ENDFOR;
+            IF best > 0 THEN
+              o := c[p];
+              o.node := best;
+              Change(Update, o);
+              c[p].node := best;
+              Stamp(); Write("scheduler: pod "); Write(p); Write(" -> node ");
+              Write(c[best].owner); WriteLn()
+            ENDIF
+          ENDIF
+        ENDFOR
+      ENDLOOP events;
+      TERMINATE_PROCESS
+    ENDPROCESS Scheduler;
+
+    (* ---- node controller: leases by the time it saw them, NotReady, eviction -- *)
+    PROCESS NodeCtl ()
+      VAR c: Cache;
+          e, o: Obj;
+          fresh: BOOLEAN;
+          now: INTEGER64;
+      Clear(c);
+      Watch(PNodes, Kinds(Node, Lease, Pod));
+      LOOP events
+        Next(PNodes, e);
+        IF stopping THEN EXIT events ENDIF;
+        now := CLOCK_TIME();
+        IF (e.kind = Lease) OR (e.kind = Node) THEN
+          IF (e.kind = Lease) OR (c[e.id].id = 0) THEN c[e.id].beat := now ENDIF;
+          c[e.id].kind := Node;
+          c[e.id].owner := e.owner;
+          c[e.id].id := e.id;
+          IF e.rv > c[e.id].rv THEN
+            c[e.id].rv := e.rv;
+            c[e.id].phase := e.phase
+          ENDIF
+        ELSIF e.kind # Tick THEN
+          Absorb(c, e, fresh)
+        ENDIF;
+        FOR nd: INTEGER [1..NOBJ] DO
+          IF (c[nd].kind = Node) AND (c[nd].phase = Ready) AND ((now - c[nd].beat) > 30) THEN
+            o := c[nd];
+            o.phase := NotReady;
+            Change(Update, o);
+            c[nd].phase := NotReady;
+            Stamp(); Write("node controller: node "); Write(c[nd].owner);
+            Write(" is NotReady, evicting its pods"); WriteLn();
+            FOR p: INTEGER [1..NOBJ] DO
+              IF Live(c[p], Pod) AND (c[p].node = nd) THEN
+                Change(Delete, c[p]);
+                c[p].gone := TRUE
+              ENDIF
+            ENDFOR
+          ENDIF
+        ENDFOR
+      ENDLOOP events;
+      TERMINATE_PROCESS
+    ENDPROCESS NodeCtl;
+
+    (* ---- kubelets: one process per node ------------------------------------- *)
+    PROCESS Kubelet (CONST nd: INTEGER64) INSTANCES 3
+      VAR c: Cache;
+          e, o: Obj;
+          fresh: BOOLEAN;
+          me: INTEGER64 := (PKubelet + nd) - 1;
+          nextBeat: INTEGER64 := 0;
+      EXCEPTION CASE PROCESS_TERMINATION =>
+        Stamp(); Write("kubelet "); Write(nd); Write(": power gone, the node stops"); WriteLn();
+        TERMINATE_PROCESS
+      ENDEXCEPTION;
+      kubeletPid[nd] := PROCESS_IDENTITY();
+      Clear(c);
+      Watch(me, Kinds(Pod));
+      LOOP events
+        Next(me, e);
+        IF stopping THEN EXIT events ENDIF;
+        IF e.kind # Tick THEN Absorb(c, e, fresh) ENDIF;
+        IF CLOCK_TIME() >= nextBeat THEN
+          Beat(nd);
+          nextBeat := CLOCK_TIME() + 10
+        ENDIF;
+        FOR p: INTEGER [1..NOBJ] DO
+          IF Live(c[p], Pod) AND (c[p].node = nd) AND (c[p].phase = Pending) THEN
+            o := c[p];
+            o.phase := Running;
+            Change(Update, o);
+            c[p].phase := Running;
+            Stamp(); Write("kubelet "); Write(nd); Write(": pod "); Write(p); Write(" (version ");
+            Write(o.version); Write(") running"); WriteLn()
+          ENDIF
+        ENDFOR
+      ENDLOOP events;
+      TERMINATE_PROCESS
+    ENDPROCESS Kubelet;
+
+    Clock();
+    DeployCtl();
+    RsCtl();
+    Scheduler();
+    NodeCtl();
+    FOR k: INTEGER [1..NNODES] DO Kubelet(k) ENDFOR;
+
+    (* ---- the user --------------------------------------------------------------- *)
+    Stamp(); Write("user: create deployment web, 3 replicas"); WriteLn();
+    d := Blank(Deployment);
+    d.replicas := 3;
+    d.version := 1;
+    Change(Create, d);
+    DELAY(60);
+    Show();
+
+    Stamp(); Write("user: scale web to 5"); WriteLn();
+    Get(web, stale);
+    Get(web, d);
+    d.replicas := 5;
+    Change(Update, d);
+    Stamp(); Write("user: a second client writes 4 replicas from the copy it read before");
+    WriteLn();
+    stale.replicas := 4;
+    Change(Update, stale);
+    DELAY(60);
+    Show();
+
+    Stamp(); Write("user: node 2 loses power"); WriteLn();
+    RAISE_PROCESS_TERMINATION(kubeletPid[2]);
+    DELAY(120);
+    Show();
+
+    Stamp(); Write("user: roll out version 2"); WriteLn();
+    Get(web, d);
+    d.version := 2;
+    Change(Update, d);
+    DELAY(80);
+    Show();
+    stopping := TRUE
+  END
+ENDMODULE KubeYellow
