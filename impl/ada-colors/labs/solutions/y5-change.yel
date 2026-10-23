@@ -1,0 +1,45 @@
+(* Lab Y5. A monitor with Hoare's signals (X.E.4, p.1057). SEND hands the *)
+(* monitor straight to the process that waits, and the sender waits until *)
+(* it is let back in: nobody can slip in between, so the waiter may test its *)
+(* condition with IF, not WHILE. WAIT(s, rank) queues by rank: SEND wakes the *)
+(* smallest rank first, and the first come within one rank. *)
+MODULE MonitorLab
+  IMPORT TextIO, StandardImplementationPrelude;
+
+  MONITOR Box
+    IMPORT INTEGER64, Write, WriteLn;
+    EXPORT Take, Give;
+    VAR item: INTEGER64 := 0;
+        full: BOOLEAN := FALSE;
+        arrived: SIGNAL;
+    PROCEDURE Take (CONST name: ASCII; CONST rank: INTEGER64)
+      IF NOT full THEN WAIT(arrived, rank) ENDIF;
+      full := FALSE;
+      Write(name); Write(" got "); Write(item); WriteLn();
+      RETURN
+    ENDPROCEDURE Take;
+    PROCEDURE Give (CONST v: INTEGER64)
+      item := v;
+      full := TRUE;
+      SEND(arrived);
+      Write("producer goes on after "); Write(v); WriteLn();
+      RETURN
+    ENDPROCEDURE Give
+  ENDMONITOR Box;
+
+  BEGIN
+    PROCESS Consumer (CONST name: ASCII; CONST rank: INTEGER64) INSTANCES 2
+      Take(name, rank);
+      TERMINATE_PROCESS
+    ENDPROCESS Consumer;
+    PROCESS Producer ()
+      DELAY(1);
+      Give(1);
+      Give(2);
+      TERMINATE_PROCESS
+    ENDPROCESS Producer;
+    Consumer('A', 2);       (* A comes first, *)
+    Consumer('B', 2);       (* and B now has the same rank *)
+    Producer()
+  END
+ENDMODULE MonitorLab

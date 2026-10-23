@@ -2,7 +2,7 @@
   "name": "ada-colors-web",
   "private": true,
   "type": "module",
-  "description": "Builds redc, greenc and the runtime for the browser page site/red/",
+  "description": "Builds redc, greenc, bluec, yellowc and the runtime for the browser page site/red/",
   "devDependencies": {
     "@yowasp/clang": "22.0.0-git20542-10"
   }

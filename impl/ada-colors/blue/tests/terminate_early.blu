@@ -1,0 +1,28 @@
+MAIN SEGMENT TERMINATE_EARLY
+   USES (TERMINAL);
+% TERMINATE (4.6.3) of a path that has not run yet: it must neither wait nor take
+% a semaphore. FAST runs first (higher priority) and terminates SLOW and GREEDY
+% before their first statement; the block ends at once, and S keeps its token.
+VAR S: SEMAPHORE (SYNCH) := NEW (1);
+BLOCK
+   PAR_BLOCK
+      PATH FAST PRIORITY 1;
+         TERMINATE (SLOW);
+         TERMINATE (GREEDY);
+      END PATH FAST;
+      PATH SLOW;
+         WAIT (5);
+         PUT_LINE ('SLOW was not terminated');
+      END PATH SLOW;
+      PATH GREEDY IMPORTS (DATA: (# S));
+         REQUEST (# S);
+         PUT_LINE ('GREEDY took S');
+      END PATH GREEDY;
+   END PAR_BLOCK;
+EXCEPT
+   TERMINATED --> PUT_LINE ('TERMINATED after ' !! TO_CHAR (TO_FIXED (CLOCK, 0)) !! ' s'); END;
+END EXCEPT;
+END BLOCK;
+REQUEST (# S);
+PUT_LINE ('S still has its token');
+END SEGMENT TERMINATE_EARLY;

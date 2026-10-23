@@ -1,0 +1,146 @@
+(* The standard prelude of this implementation of YELLOW. *)
+(* *)
+(* The Report leaves the configuration modules to each implementation *)
+(* (XIV.XIII.1): what depends on the machine is defined in modules of a *)
+(* standard prelude, and a program imports it explicitly. These are the *)
+(* segments that come before every program (XIII.A); the machine of this *)
+(* implementation is C, so its code inserts (XIV.XI.5) are C. *)
+
+(* the constants the 1978 examples import (Part Three, p.1106) *)
+MODULE StandardImplementationPrelude
+  EXPORT TRANSPARENT INTEGER64, REAL64;
+  EXPORT SMALLESTINTEGER, LARGESTINTEGER, SMALLESTREAL, LARGESTREAL, SINGLEPRECISION,
+         DOUBLEPRECISION, WORDLENGTH;
+  REPRESENTATION
+    INTEGER64 = INTEGER [-9223372036854775807..9223372036854775807];
+    REAL64 = FLOATING [-1.7976931348623157E308..1.7976931348623157E308] PRECISION 15;
+  CONST
+    SMALLESTINTEGER: INTEGER64 = -9223372036854775807;
+    LARGESTINTEGER: INTEGER64 = 9223372036854775807;
+    SMALLESTREAL: REAL64 = -1.7976931348623157E308;
+    LARGESTREAL: REAL64 = 1.7976931348623157E308;
+    SINGLEPRECISION: INTEGER64 = 6;
+    DOUBLEPRECISION: INTEGER64 = 15;
+  (* the length of a machine word, as the example of p.1107 asks for it *)
+  FUNCTION WORDLENGTH RETURNS INTEGER64 ()
+    RETURN 64
+  ENDFUNCTION WORDLENGTH
+ENDMODULE StandardImplementationPrelude;
+
+(* elementary functions, by code inserts *)
+MODULE MathLibrary
+  IMPORT StandardImplementationPrelude;
+  EXPORT Sqrt, Sin, Cos, Exp, Ln, Arctan, EXPT, ABS;
+
+  FUNCTION Sqrt RETURNS REAL64 (CONST x: REAL64)
+    VAR r: REAL64;
+    IF x < 0.0 THEN PROPAGATE_EXCEPTION OUT_OF_RANGE ENDIF;
+    C_CODE_INSERT("$r = sqrt($x);");
+    RETURN r
+  ENDFUNCTION Sqrt;
+
+  FUNCTION Sin RETURNS REAL64 (CONST x: REAL64)
+    VAR r: REAL64;
+    C_CODE_INSERT("$r = sin($x);");
+    RETURN r
+  ENDFUNCTION Sin;
+
+  FUNCTION Cos RETURNS REAL64 (CONST x: REAL64)
+    VAR r: REAL64;
+    C_CODE_INSERT("$r = cos($x);");
+    RETURN r
+  ENDFUNCTION Cos;
+
+  FUNCTION Exp RETURNS REAL64 (CONST x: REAL64)
+    VAR r: REAL64;
+    C_CODE_INSERT("$r = exp($x);");
+    RETURN r
+  ENDFUNCTION Exp;
+
+  FUNCTION Ln RETURNS REAL64 (CONST x: REAL64)
+    VAR r: REAL64;
+    IF x <= 0.0 THEN PROPAGATE_EXCEPTION OUT_OF_RANGE ENDIF;
+    C_CODE_INSERT("$r = log($x);");
+    RETURN r
+  ENDFUNCTION Ln;
+
+  FUNCTION Arctan RETURNS REAL64 (CONST x: REAL64)
+    VAR r: REAL64;
+    C_CODE_INSERT("$r = atan($x);");
+    RETURN r
+  ENDFUNCTION Arctan;
+
+  (* x to an integer power *)
+  FUNCTION EXPT RETURNS REAL64 (CONST x: REAL64; CONST n: INTEGER64)
+    VAR r: REAL64;
+    C_CODE_INSERT("$r = rt_fpow($x, $n);");
+    RETURN r
+  ENDFUNCTION EXPT;
+
+  FUNCTION ABS RETURNS REAL64 (CONST x: REAL64)
+    IF x < 0.0 THEN RETURN -x ENDIF;
+    RETURN x
+  ENDFUNCTION ABS;
+
+  FUNCTION EXTENDS ABS RETURNS INTEGER64 (CONST x: INTEGER64)
+    IF x < 0 THEN RETURN -x ENDIF;
+    RETURN x
+  ENDFUNCTION ABS
+ENDMODULE MathLibrary;
+
+(* text on the standard output: Write is overloaded on the types of what *)
+(* it writes (X.A.1) *)
+MODULE TextIO
+  IMPORT StandardImplementationPrelude;
+  EXPORT Write, WriteLn, WriteFixed, WriteFloat;
+  EXPORT VAR Out;
+  VAR Out: FILE (ASCII);
+
+  PROCEDURE Write (CONST s: ARRAY (1 DIMENSIONS OF ASCII))
+    FOR i: INTEGER [LOW(s, 1)..HIGH(s, 1)] DO PUT(Out, s[i]) ENDFOR;
+    RETURN
+  ENDPROCEDURE Write;
+
+  PROCEDURE EXTENDS Write (CONST c: ASCII)
+    PUT(Out, c);
+    RETURN
+  ENDPROCEDURE Write;
+
+  PROCEDURE EXTENDS Write (CONST n: INTEGER64)
+    VAR buf: ARRAY (INTEGER [1..32] OF ASCII);
+        len: INTEGER64;
+    C_CODE_INSERT("$len = y_fmt_int($n, (unsigned char *)$buf.p, 32);");
+    FOR i: INTEGER [1..len] DO PUT(Out, buf[i]) ENDFOR;
+    RETURN
+  ENDPROCEDURE Write;
+
+  PROCEDURE EXTENDS Write (CONST b: BOOLEAN)
+    IF b THEN Write("TRUE") ELSE Write("FALSE") ENDIF;
+    RETURN
+  ENDPROCEDURE Write;
+
+  (* a floating-point value with the given number of digits after the point *)
+  PROCEDURE WriteFloat (CONST x: REAL64; CONST decimals: INTEGER64)
+    VAR buf: ARRAY (INTEGER [1..64] OF ASCII);
+        len: INTEGER64;
+    C_CODE_INSERT("$len = y_fmt_fixed($x, $decimals, (unsigned char *)$buf.p, 64);");
+    FOR i: INTEGER [1..len] DO PUT(Out, buf[i]) ENDFOR;
+    RETURN
+  ENDPROCEDURE WriteFloat;
+
+  (* a fixed-point value is held as a multiple of its scale *)
+  PROCEDURE WriteFixed (CONST x: FIXED [-1P15..1P15] SCALE 1P-6; CONST decimals: INTEGER64)
+    VAR buf: ARRAY (INTEGER [1..64] OF ASCII);
+        len: INTEGER64;
+    C_CODE_INSERT("$len = y_fmt_fixed($x, $decimals, (unsigned char *)$buf.p, 64);");
+    FOR i: INTEGER [1..len] DO PUT(Out, buf[i]) ENDFOR;
+    RETURN
+  ENDPROCEDURE WriteFixed;
+
+  PROCEDURE WriteLn ()
+    PUT(Out, 'LF');
+    RETURN
+  ENDPROCEDURE WriteLn;
+
+  OPEN(Out, "OUTPUT", WRITE)
+ENDMODULE TextIO;

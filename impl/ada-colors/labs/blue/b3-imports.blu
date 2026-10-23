@@ -1,0 +1,27 @@
+MAIN SEGMENT IMPORTS_LAB
+   USES (TERMINAL);
+% Lab B3: the IMPORTS discipline (4.1.1). A routine is a closed scope: a variable
+% from outside is known only if it is imported, as input (before the #) or as
+% inout (after it). The rule reaches further than RED's: a routine that calls
+% another must import either that routine or every variable the routine uses,
+% so what a call can touch is written at every level above it. Constants need
+% no import.
+CONST ROUNDS: INTEGER := 5;
+VAR HITS: INTEGER := 0;
+VAR LIMIT: INTEGER := 3;
+PLAY;
+PUT_LINE ('hits ' !! TO_CHAR (HITS) !! ' of ' !! TO_CHAR (ROUNDS) !! ', limit '
+          !! TO_CHAR (LIMIT));
+
+PROCEDURE PLAY () IMPORTS (ROUTINES: (HIT));
+   LOOP FOR I IN [1:ROUNDS] DO
+      HIT;
+   END LOOP I;
+END PROCEDURE PLAY;
+
+PROCEDURE HIT () IMPORTS (DATA: (LIMIT # HITS));
+   IF HITS < LIMIT THEN
+      HITS := HITS + 1;
+   END IF;
+END PROCEDURE HIT;
+END SEGMENT IMPORTS_LAB;

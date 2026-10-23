@@ -270,26 +270,30 @@ FUNCTION PROCEDURE_CALL (S: NODE) RETURNS (ET);
    RETURN CALL_EXPR (S, NIL);
 END FUNCTION PROCEDURE_CALL;
 
-% IF with ORIF arms [4-63]; a manifest condition selects its arm alone (4.5.5.1)
+% IF with ORIF arms [4-63]; a manifest condition selects its arm alone (4.5.5.1). The
+% arms it rules out emit no code, but they are still checked: names, IMPORTS, types
 PROCEDURE IF_STMT (ARMS: NODE, ELSE_BODY: NODE);
    VAR ARM: NODE := ARMS;
    VAR WORD: TEXT := MK ('if');
    VAR OPEN: INTEGER := 0;
+   VAR CHOSEN: BOOLEAN := FALSE;
    LOOP UNTIL ARM = NIL DO
       BLOCK
          CONST M: MVAL := MANIFEST (ARM@.A);
-         IF M.OK & NOT TEQS (WORD, 'if') THEN
-            CODES ('else {');
-            OPEN := OPEN + 1;
-            WORD := MK ('if');
-         END IF;
-         IF M.OK THEN
+         IF CHOSEN THEN
+            CHECK_COND (ARM@.A);
+            CHECK_BODY (ARM@.B);
+         ORIF M.OK THEN
+            IF NOT TEQS (WORD, 'if') THEN
+               CODES ('else {');
+               OPEN := OPEN + 1;
+               WORD := MK ('if');
+            END IF;
             IF M.V = 1 THEN
                OPEN_BODY (ARM@.B);
-               LOOP FOR I IN [1 : OPEN] DO
-                  CODES ('}');
-               END LOOP I;
-               RETURN;
+               CHOSEN := TRUE;
+            ELSE
+               CHECK_BODY (ARM@.B);
             END IF;
          ELSE
             CODE (FMT2 ('@ (@)', WORD, BOOL_EXPR (ARM@.A)));
@@ -300,15 +304,31 @@ PROCEDURE IF_STMT (ARMS: NODE, ELSE_BODY: NODE);
       ARM := ARM@.NEXT;
    END LOOP;
    IF ELSE_BODY <> NIL THEN
-      IF NOT TEQS (WORD, 'if') THEN
-         CODES ('else');
+      IF CHOSEN THEN
+         CHECK_BODY (ELSE_BODY);
+      ELSE
+         IF NOT TEQS (WORD, 'if') THEN
+            CODES ('else');
+         END IF;
+         OPEN_BODY (ELSE_BODY);
       END IF;
-      OPEN_BODY (ELSE_BODY);
    END IF;
    LOOP FOR I IN [1 : OPEN] DO
       CODES ('}');
    END LOOP I;
 END PROCEDURE IF_STMT;
+
+% translate a body that is never run, for its errors only: its code is dropped
+PROCEDURE CHECK_BODY (B: NODE);
+   CONST SAVED_CODE: BUF := W@.CODE;
+   W@.CODE := (HEAD: NIL, TAIL: NIL);
+   OPEN_BODY (B);
+   W@.CODE := SAVED_CODE;
+END PROCEDURE CHECK_BODY;
+
+PROCEDURE CHECK_COND (E: NODE);
+   CONST C: TEXT := BOOL_EXPR (E);
+END PROCEDURE CHECK_COND;
 
 % [4-79]: over the values of an integer or ordered enumerated range, evaluated once
 PROCEDURE FOR_STMT (S: NODE);

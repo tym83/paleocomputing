@@ -1,0 +1,35 @@
+MAIN SEGMENT ENUM_LAB
+   USES (TERMINAL);
+% Lab B1: enumerated types (3.4). A literal is written \NAME, and it is a literal
+% of every enumerated type that lists it: \GREEN below is a LIGHT and a COLOR, at
+% a different position in each. The context says which is meant, or a type
+% specifier does: [COLOR]$$(\GREEN). An UNORDERED type has equality and nothing
+% else; its literals are names, not numbers in disguise.
+TYPE LIGHT = ENUM (\RED, \AMBER, \GREEN);
+TYPE COLOR = ENUM (\RED, \ORANGE, \YELLOW, \GREEN, \BLUE);
+TYPE SUIT = UNORDERED (\CLUBS, \DIAMONDS, \HEARTS, \SPADES);
+VAR L: LIGHT := \RED;
+VAR C: COLOR := \YELLOW;
+VAR S: SUIT := \HEARTS;
+LOOP FOR I IN [1:5] DO
+   PUT (TO_CHAR (L) !! ' ');
+   L := NEXT_LIGHT (L);
+END LOOP I;
+NEW_LINE;
+PUT_LINE ('\GREEN is light number ' !! TO_CHAR (TO_FIXED ([LIGHT]$$(\GREEN)))
+          !! ' and color number ' !! TO_CHAR (TO_FIXED ([COLOR]$$(\GREEN))));
+PUT_LINE ('after ' !! TO_CHAR (C) !! ' comes ' !! TO_CHAR (SUCC (C)) !! ', the last color is '
+          !! TO_CHAR (C.MAX));
+IF S = \HEARTS THEN
+   PUT_LINE ('a suit can be compared for equality: ' !! TO_CHAR (S));
+END IF;
+
+% a traffic light: red, green, amber, red
+FUNCTION NEXT_LIGHT (X: LIGHT) RETURNS (LIGHT);
+   SELECT X FROM
+      \RED --> RETURN \GREEN; END;
+      \GREEN --> RETURN \AMBER; END;
+      ELSE --> RETURN \RED; END;
+   END SELECT;
+END FUNCTION NEXT_LIGHT;
+END SEGMENT ENUM_LAB;

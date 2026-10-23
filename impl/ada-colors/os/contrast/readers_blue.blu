@@ -1,0 +1,64 @@
+MAIN SEGMENT READERS_BLUE
+   USES (TERMINAL);
+% Contrast 3, readers and a writer, in BLUE (SofTech, 1978): the solution of
+% Courtois, Heymans and Parnas (CACM 1971), as on THE, since BLUE's semaphores
+% are THE's. Readers come at 0, 1 and 3 ms, the writer at 2 ms; a read or a
+% write takes 10 ms. Readers overlap, and reader 3 overtakes the waiting writer.
+%
+% What BLUE adds is that each semaphore says what it is for. MUTEX guards
+% READCOUNT and is released by the path that took it: a REGION. SHARED is taken
+% by the first reader in and released by the last one out, often another path:
+% that is signalling, so it must be SYNCH. Were it a REGION, a first reader
+% that died would release it on its way out while other readers still read.
+VAR MUTEX: SEMAPHORE (REGION) := NEW (1);
+VAR SHARED: SEMAPHORE (SYNCH) := NEW (1);
+VAR READCOUNT: INTEGER := 0;
+VAR VALUE: INTEGER := 0;
+PAR_BLOCK
+   PATH READER FOR ID IN [1:3] IMPORTS (DATA: (VALUE # MUTEX, SHARED, READCOUNT));
+      VAR SEEN: INTEGER;
+      SELECT ID FROM
+         2 --> PAUSE (1); END;
+         3 --> PAUSE (3); END;
+         ELSE --> END;
+      END SELECT;
+      REQUEST (# MUTEX);
+      READCOUNT := READCOUNT + 1;
+      IF READCOUNT = 1 THEN
+         REQUEST (# SHARED);
+      END IF;
+      RELEASE (# MUTEX);
+      SEEN := VALUE;
+      PAUSE (10);
+      REQUEST (# MUTEX);
+      READCOUNT := READCOUNT - 1;
+      IF READCOUNT = 0 THEN
+         RELEASE (# SHARED);
+      END IF;
+      RELEASE (# MUTEX);
+      LOG ('reader ' !! TO_CHAR (ID) !! ' read ' !! TO_CHAR (SEEN));
+   END PATH READER;
+   PATH WRITER IMPORTS (DATA: (# SHARED, VALUE));
+      PAUSE (2);
+      REQUEST (# SHARED);
+      PAUSE (10);
+      VALUE := 1;
+      RELEASE (# SHARED);
+      LOG ('writer wrote 1');
+   END PATH WRITER;
+END PAR_BLOCK;
+LOG ('all done: readers overlapped, and reader 3 overtook the waiting writer');
+
+FUNCTION NOW () RETURNS (INTEGER);
+   RETURN TO_FIXED (CLOCK * 1000, 0, ROUNDED);
+END FUNCTION NOW;
+
+PROCEDURE PAUSE (MS: INTEGER);
+   CONST S: FIXED (30, 2, STD) := MS !//30! 1000;
+   WAIT (S);
+END PROCEDURE PAUSE;
+
+PROCEDURE LOG (S: ASCII_STR (?L));
+   PUT_LINE ('[' !! TO_CHAR (NOW ()) !! ' ms] ' !! S);
+END PROCEDURE LOG;
+END SEGMENT READERS_BLUE;

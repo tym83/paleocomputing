@@ -1,0 +1,42 @@
+MAIN SEGMENT REGION_LAB
+   USES (TERMINAL);
+% Lab B5: REGION and SYNCH semaphores (3.11.1, 4.6.1). Worker 1 takes MUTEX and
+% fails halfway; the exception leaves its path, the path ends abnormally, and
+% every REGION semaphore it requested and did not release is released for it.
+% Worker 2 gets in. The release belongs to the end of the path, not to a block
+% of text: a SYNCH semaphore is never given back this way, and neither is a
+% REGION one if the path catches the exception itself and carries on.
+VAR MUTEX: SEMAPHORE (REGION) := NEW (1);
+VAR BALANCE: INTEGER := 100;
+PAR_BLOCK
+   PATH WORKER FOR ID IN [1:2] SIGNALS (FAILED) IMPORTS (DATA: (# MUTEX, BALANCE));
+      PAUSE (ID);
+      REQUEST (# MUTEX);
+      LOG ('worker ' !! TO_CHAR (ID) !! ' holds the semaphore');
+      PAUSE (5);
+      IF ID = 1 THEN
+         LOG ('worker 1 fails holding it');
+         SIGNAL FAILED;
+      END IF;
+      BALANCE := BALANCE + 10;
+      RELEASE (# MUTEX);
+   END PATH WORKER;
+END PAR_BLOCK;
+EXCEPT
+   FAILED --> LOG ('the block signals FAILED: worker 1 ended abnormally'); END;
+END EXCEPT;
+LOG ('both workers are through, balance ' !! TO_CHAR (BALANCE));
+
+FUNCTION NOW () RETURNS (INTEGER);
+   RETURN TO_FIXED (CLOCK * 1000, 0, ROUNDED);
+END FUNCTION NOW;
+
+PROCEDURE PAUSE (MS: INTEGER);
+   CONST S: FIXED (30, 2, STD) := MS !//30! 1000;
+   WAIT (S);
+END PROCEDURE PAUSE;
+
+PROCEDURE LOG (S: ASCII_STR (?L));
+   PUT_LINE ('[' !! TO_CHAR (NOW ()) !! ' ms] ' !! S);
+END PROCEDURE LOG;
+END SEGMENT REGION_LAB;

@@ -1,0 +1,5 @@
+[1 ms] worker 1 holds the semaphore
+[6 ms] worker 1 fails holding it
+[6 ms] worker 2 holds the semaphore
+[11 ms] the block signals FAILED: worker 1 ended abnormally
+[11 ms] both workers are through, balance 110: the path's end released its REGION semaphore

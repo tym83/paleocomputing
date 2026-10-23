@@ -1,0 +1,538 @@
+MAIN SEGMENT THE_KUBE_BLUE
+   USES (TERMINAL);
+% THE/KUBE in BLUE: the Kubernetes control loop of kube/kube.red, rebuilt as user
+% programs (level 4) on top of Dijkstra's THE system (os/the.blu), next to
+% os/the_kube.red and os/the_kube_green.grn.
+%
+% The controllers use only what THE gives its user programs: semaphores,
+% segments (whose pages the segment controller moves between core and drum), the
+% console through the message interpreter, and the clock. As in the RED version:
+%
+%   * there is no API server process: the store is segments, guarded by one
+%     semaphore. A watch is a wake-up semaphore per controller; a writer wakes
+%     them all. The wake-ups saturate at one, so the controllers are
+%     level-triggered by construction: a wake says "look again";
+%   * a path waits on one semaphore at a time, so the resync, the heartbeats and
+%     the node controller's lease check all come from a clock process at level 0
+%     that wakes everyone every 10 ms.
+%
+% What BLUE changes is the power cut. In RED and GREEN a kubelet killed while it
+% held the store's semaphore stopped the control plane for good, so their power
+% cut waits until the kubelet is between two passes. Here STORE is a REGION
+% semaphore, and the user TERMINATEs the kubelet's path wherever it is: if it
+% held STORE, its abnormal end gives STORE back (3.11.1). The store may be left
+% half-written, as the Justification admits (J3.11-1); a level-triggered
+% controller repairs that on its next pass.
+%
+% Time is virtual; every process is a path of one parallel block started at 0,
+% so CLOCK is the system's time.
+
+CONST P_INTERP: INTEGER := 1;
+CONST P_DEPLOY: INTEGER := 2;
+CONST P_SCHED: INTEGER := 3;
+CONST P_NODES: INTEGER := 4;
+CONST P_KUBELET: INTEGER := 5;           % kubelets 5, 6, 7
+CONST P_USER: INTEGER := 8;
+CONST NPROC: INTEGER := 8;
+CONST NNODES: INTEGER := 3;
+CONST NPODS: INTEGER := 8;
+
+% level 1
+CONST NCORE: INTEGER := 3;
+CONST NDRUM: INTEGER := 8;
+CONST NSEG: INTEGER := 4;
+CONST WORDS: INTEGER := 8;
+CONST REV: INTEGER := 40;
+CONST SEG_VOCAB: INTEGER := 1;
+CONST SEG_CLUSTER: INTEGER := 2;         % 1 desired replicas, 2 operator inbox, 3-5 heartbeats, 6-8 node ready
+CONST SEG_PODS: INTEGER := 3;            % pod i: 0 none, -1 pending, n bound to node n
+CONST SEG_RUNNING: INTEGER := 4;         % pod i: 1 when its kubelet started it
+CONST OP_READ: INTEGER := 1;
+CONST OP_WRITE: INTEGER := 2;
+
+CONST MSG_LOST: INTEGER := 1;
+
+TYPE SEG_REQ = RECORD
+   VAR OP, SEG, OFF, VAL, WHO: INTEGER;
+END RECORD;
+TYPE CONV = RECORD
+   VAR WHO, M, V: INTEGER;
+END RECORD;
+
+% ---- level 0 ----------------------------------------------------------------------
+VAR STORE: SEMAPHORE (REGION) := NEW (1);     % the store: one writer at a time
+VAR WAKE: ARRAY [1:NPROC] OF SEMAPHORE (SYNCH);
+VAR WOKEN: ARRAY [1:NPROC] OF BOOLEAN;        % a wake-up is pending: it saturates at one
+VAR WAKE_LOCK: SEMAPHORE (REGION) := NEW (1);
+VAR REPLY: ARRAY [1:NPROC] OF SEMAPHORE (SYNCH);
+VAR ANSWER: ARRAY [1:NPROC] OF INTEGER;
+VAR HOLDER: INTEGER := 0;                     % who holds STORE, for the log only
+
+VAR SEG_REQUESTS: MAILBOX (SEG_REQ, 16);
+VAR CONVERSATIONS: MAILBOX (CONV, 16);
+VAR KEYBOARD: MAILBOX (INTEGER, 8);
+VAR ATTENTION: SEMAPHORE (SYNCH) := NEW (0);
+
+LOOP FOR P IN [1:NPROC] DO
+   WAKE (P) := NEW (0);
+   REPLY (P) := NEW (0);
+END LOOP P;
+OPEN (# SEG_REQUESTS);
+OPEN (# CONVERSATIONS);
+OPEN (# KEYBOARD);
+BOOT_SEGMENTS;
+
+PAR_BLOCK
+   % ==== level 0: the real-time clock interrupt ===================================
+   PATH CLOCK_INTERRUPT IMPORTS (ROUTINES: (WAKE_ALL));
+      LOOP
+         PAUSE (10);
+         WAKE_ALL;
+      END LOOP;
+   END PATH CLOCK_INTERRUPT;
+
+   % ==== level 1: the segment controller ==========================================
+   PATH SEGMENT_CONTROLLER IMPORTS (ROUTINES: (PRESENT, CORE_READ, CORE_WRITE),
+                                    DATA: (# SEG_REQUESTS, REPLY, ANSWER));
+      VAR R: SEG_REQ;
+      VAR C: INTEGER;
+      LOOP
+         RECEIVE (# SEG_REQUESTS # R);
+         PRESENT (R.SEG ## C);
+         IF R.OP = OP_READ THEN
+            ANSWER (R.WHO) := CORE_READ (C, R.OFF);
+         ELSE
+            CORE_WRITE (C, R.OFF, R.VAL);
+         END IF;
+         RELEASE (# REPLY (R.WHO));
+      END LOOP;
+   END PATH SEGMENT_CONTROLLER;
+
+   % ==== level 2: the message interpreter =========================================
+   PATH MESSAGE_INTERPRETER IMPORTS (ROUTINES: (SEG_READ, SEG_WRITE, WAKE_ONE),
+                                     DATA: (# CONVERSATIONS, KEYBOARD, ATTENTION, REPLY));
+      VAR CV: CONV;
+      VAR K, W: INTEGER;
+      LOOP
+         REQUEST (# ATTENTION);
+         IF WAITING (CONVERSATIONS) > 0 THEN
+            RECEIVE (# CONVERSATIONS # CV);
+            SEG_READ (P_INTERP, SEG_VOCAB, CV.M ## W);
+            PAUSE (20);
+            IF W = 21 THEN
+               LOG ('CONSOLE  node controller: node ' !! TO_CHAR (CV.V)
+                    !! ' has no heartbeat, its pods go back to the scheduler');
+            END IF;
+            RELEASE (# REPLY (CV.WHO));
+         ELSE
+            % "scale to k": interpreted, the command is left in the cluster
+            % segment and the deployment controller is woken
+            RECEIVE (# KEYBOARD # K);
+            PAUSE (20);
+            LOG ('CONSOLE  operator to deployment controller: scale to ' !! TO_CHAR (K));
+            SEG_WRITE (P_INTERP, SEG_CLUSTER, 2, K);
+            WAKE_ONE (P_DEPLOY);
+         END IF;
+      END LOOP;
+   END PATH MESSAGE_INTERPRETER;
+
+   % ==== level 4: the controllers, as user programs ===============================
+   % store access: every read-modify-write holds STORE
+   PATH DEPLOYMENT_CONTROLLER IMPORTS (ROUTINES: (SEG_READ, SEG_WRITE, SLEEP, TAKE_STORE, GIVE_STORE));
+      CONST ME: INTEGER := P_DEPLOY;
+      VAR DESIRED, CMD, HAVE, W: INTEGER;
+      LOOP
+         SLEEP (ME);
+         TAKE_STORE (ME);
+         SEG_READ (ME, SEG_CLUSTER, 2 ## CMD);
+         IF CMD > 0 THEN
+            SEG_WRITE (ME, SEG_CLUSTER, 1, CMD);
+            SEG_WRITE (ME, SEG_CLUSTER, 2, 0);
+            LOG ('deployment controller: desired replicas ' !! TO_CHAR (CMD));
+         END IF;
+         SEG_READ (ME, SEG_CLUSTER, 1 ## DESIRED);
+         HAVE := 0;
+         LOOP FOR I IN [1:NPODS] DO
+            SEG_READ (ME, SEG_PODS, I ## W);
+            IF W <> 0 THEN
+               HAVE := HAVE + 1;
+            END IF;
+         END LOOP I;
+         LOOP FOR I IN [1:NPODS] DO
+            SEG_READ (ME, SEG_PODS, I ## W);
+            IF W = 0 & HAVE < DESIRED THEN
+               SEG_WRITE (ME, SEG_PODS, I, -1);
+               HAVE := HAVE + 1;
+               LOG ('deployment controller: pod ' !! TO_CHAR (I) !! ' created');
+            END IF;
+         END LOOP I;
+         GIVE_STORE;
+      END LOOP;
+   END PATH DEPLOYMENT_CONTROLLER;
+
+   PATH SCHEDULER IMPORTS (ROUTINES: (SEG_READ, SEG_WRITE, SLEEP, TAKE_STORE, GIVE_STORE));
+      CONST ME: INTEGER := P_SCHED;
+      VAR W, BEST, R: INTEGER;
+      VAR LOAD: ARRAY [1:NNODES] OF INTEGER;
+      LOOP
+         SLEEP (ME);
+         TAKE_STORE (ME);
+         LOOP FOR N IN [1:NNODES] DO
+            LOAD (N) := 0;
+         END LOOP N;
+         LOOP FOR I IN [1:NPODS] DO
+            SEG_READ (ME, SEG_PODS, I ## W);
+            IF W > 0 THEN
+               LOAD (W) := LOAD (W) + 1;
+            END IF;
+         END LOOP I;
+         LOOP FOR I IN [1:NPODS] DO
+            SEG_READ (ME, SEG_PODS, I ## W);
+            IF W = -1 THEN
+               BEST := 0;
+               LOOP FOR N IN [1:NNODES] DO
+                  SEG_READ (ME, SEG_CLUSTER, 5 + N ## R);
+                  IF R = 1 THEN
+                     IF BEST = 0 THEN
+                        BEST := N;
+                     ORIF LOAD (N) < LOAD (BEST) THEN
+                        BEST := N;
+                     END IF;
+                  END IF;
+               END LOOP N;
+               IF BEST > 0 THEN
+                  SEG_WRITE (ME, SEG_PODS, I, BEST);
+                  LOAD (BEST) := LOAD (BEST) + 1;
+                  LOG ('scheduler: pod ' !! TO_CHAR (I) !! ' bound to node ' !! TO_CHAR (BEST));
+               END IF;
+            END IF;
+         END LOOP I;
+         GIVE_STORE;
+      END LOOP;
+   END PATH SCHEDULER;
+
+   % the node lifecycle controller: a node whose heartbeat it has not seen change
+   % for 60 ms is not ready, and its pods are unbound. It judges by when it SAW
+   % the heartbeat change, not by the time written in it.
+   PATH NODE_CONTROLLER IMPORTS (ROUTINES: (SEG_READ, SEG_WRITE, SLEEP, TAKE_STORE, GIVE_STORE,
+                                            SAY, WAKE_ALL));
+      CONST ME: INTEGER := P_NODES;
+      VAR HB, R, W, LOST: INTEGER;
+      VAR LAST_HB, SEEN_AT: ARRAY [1:NNODES] OF INTEGER;
+      LOOP FOR N IN [1:NNODES] DO
+         LAST_HB (N) := -1;
+         SEEN_AT (N) := 0;
+      END LOOP N;
+      LOOP
+         SLEEP (ME);
+         LOST := 0;
+         TAKE_STORE (ME);
+         LOOP FOR N IN [1:NNODES] DO
+            SEG_READ (ME, SEG_CLUSTER, 2 + N ## HB);
+            SEG_READ (ME, SEG_CLUSTER, 5 + N ## R);
+            IF HB <> LAST_HB (N) THEN
+               LAST_HB (N) := HB;
+               SEEN_AT (N) := NOW ();
+            END IF;
+            IF R = 1 & NOW () - SEEN_AT (N) > 60 THEN
+               SEG_WRITE (ME, SEG_CLUSTER, 5 + N, 0);
+               LOOP FOR I IN [1:NPODS] DO
+                  SEG_READ (ME, SEG_PODS, I ## W);
+                  IF W = N THEN
+                     SEG_WRITE (ME, SEG_PODS, I, -1);
+                     SEG_WRITE (ME, SEG_RUNNING, I, 0);
+                  END IF;
+               END LOOP I;
+               LOST := N;
+            END IF;
+         END LOOP N;
+         GIVE_STORE;
+         IF LOST > 0 THEN
+            SAY (ME, MSG_LOST, LOST);
+            WAKE_ALL;
+         END IF;
+      END LOOP;
+   END PATH NODE_CONTROLLER;
+
+   % the kubelet: renews its heartbeat and starts the pods bound to its node. It
+   % has no notion of power: it is TERMINATEd from outside, anywhere in its pass.
+   PATH KUBELET FOR N IN [1:NNODES] IMPORTS (ROUTINES: (SEG_READ, SEG_WRITE, SLEEP, TAKE_STORE,
+                                                       GIVE_STORE));
+      CONST ME: INTEGER := P_KUBELET + N - 1;
+      VAR W, RUN: INTEGER;
+      LOOP
+         SLEEP (ME);
+         TAKE_STORE (ME);
+         SEG_WRITE (ME, SEG_CLUSTER, 2 + N, NOW ());
+         SEG_WRITE (ME, SEG_CLUSTER, 5 + N, 1);
+         LOOP FOR I IN [1:NPODS] DO
+            SEG_READ (ME, SEG_PODS, I ## W);
+            IF W = N THEN
+               SEG_READ (ME, SEG_RUNNING, I ## RUN);
+               IF RUN = 0 THEN
+                  SEG_WRITE (ME, SEG_RUNNING, I, 1);
+                  LOG ('kubelet ' !! TO_CHAR (N) !! ': pod ' !! TO_CHAR (I) !! ' running');
+               END IF;
+            END IF;
+         END LOOP I;
+         GIVE_STORE;
+      END LOOP;
+   EXCEPT
+      TERMINATED -->
+         LOG ('kubelet ' !! TO_CHAR (N) !! ': power gone, the node stops' !! HOLDING (ME));
+         SIGNAL;                                   % end abnormally: REGION semaphores go back
+      END;
+   END EXCEPT;
+   END PATH KUBELET;
+
+   % ==== level 5: the operator =======================================================
+   PATH OPERATOR IMPORTS (DATA: (# KEYBOARD, ATTENTION));
+      PAUSE (250);
+      SEND (5 # KEYBOARD);
+      RELEASE (# ATTENTION);
+   END PATH OPERATOR;
+
+   % ---- the user: cuts the power of node 2, then counts what runs where -------------
+   % The cut is aimed: at 120 ms the user waits (WAIT (0) gives the processor
+   % away) until kubelet 2 is inside its pass, holding STORE, and cuts it there.
+   PATH USER IMPORTS (ROUTINES: (SEG_READ, TAKE_STORE, GIVE_STORE, TRANSFERS, WAKE_ALL), DATA: (HOLDER));
+      VAR W, RUN: INTEGER;
+      VAR ON: ARRAY [1:NNODES] OF INTEGER;
+      WAKE_ALL;
+      PAUSE (120);
+      LOOP UNTIL HOLDER = P_KUBELET + 1 DO
+         WAIT (0);
+      END LOOP;
+      LOG ('node 2 loses power');
+      TERMINATE (KUBELET (2));
+      PAUSE (400);
+      TAKE_STORE (P_USER);
+      LOOP FOR N IN [1:NNODES] DO
+         ON (N) := 0;
+      END LOOP N;
+      LOOP FOR I IN [1:NPODS] DO
+         SEG_READ (P_USER, SEG_PODS, I ## W);
+         SEG_READ (P_USER, SEG_RUNNING, I ## RUN);
+         IF W > 0 & RUN = 1 THEN
+            ON (W) := ON (W) + 1;
+         END IF;
+      END LOOP I;
+      GIVE_STORE;
+      LOG ('running pods: node 1 ' !! TO_CHAR (ON (1)) !! ', node 2 ' !! TO_CHAR (ON (2))
+           !! ', node 3 ' !! TO_CHAR (ON (3)) !! '; drum transfers ' !! TO_CHAR (TRANSFERS ()));
+      STOP (0);
+   END PATH USER;
+END PAR_BLOCK;
+
+% ==== time ============================================================================
+FUNCTION NOW () RETURNS (INTEGER);
+   RETURN TO_FIXED (CLOCK * 1000, 0, ROUNDED);
+END FUNCTION NOW;
+
+PROCEDURE PAUSE (MS: INTEGER);
+   CONST S: FIXED (30, 2, STD) := MS !//30! 1000;
+   WAIT (S);
+END PROCEDURE PAUSE;
+
+PROCEDURE LOG (S: ASCII_STR (?L));
+   PUT_LINE ('[' !! TO_CHAR (NOW ()) !! ' ms] ' !! S);
+END PROCEDURE LOG;
+
+% ==== level 0: wake-ups that saturate at one, and the store's semaphore ===============
+PROCEDURE WAKE_ONE (P: INTEGER) IMPORTS (DATA: (# WAKE, WOKEN, WAKE_LOCK));
+   REQUEST (# WAKE_LOCK);
+   IF NOT WOKEN (P) THEN
+      WOKEN (P) := TRUE;
+      RELEASE (# WAKE (P));
+   END IF;
+   RELEASE (# WAKE_LOCK);
+END PROCEDURE WAKE_ONE;
+
+PROCEDURE WAKE_ALL () IMPORTS (ROUTINES: (WAKE_ONE));
+   LOOP FOR P IN [P_DEPLOY : P_KUBELET + NNODES - 1] DO
+      WAKE_ONE (P);
+   END LOOP P;
+END PROCEDURE WAKE_ALL;
+
+PROCEDURE SLEEP (P: INTEGER) IMPORTS (DATA: (# WAKE, WOKEN, WAKE_LOCK));
+   REQUEST (# WAKE (P));
+   REQUEST (# WAKE_LOCK);
+   WOKEN (P) := FALSE;
+   RELEASE (# WAKE_LOCK);
+END PROCEDURE SLEEP;
+
+PROCEDURE TAKE_STORE (P: INTEGER) IMPORTS (DATA: (# STORE, HOLDER));
+   REQUEST (# STORE);
+   HOLDER := P;
+END PROCEDURE TAKE_STORE;
+
+PROCEDURE GIVE_STORE () IMPORTS (DATA: (# STORE, HOLDER));
+   HOLDER := 0;
+   RELEASE (# STORE);
+END PROCEDURE GIVE_STORE;
+
+FUNCTION HOLDING (P: INTEGER) RETURNS (ASCII_STR (?)) IMPORTS (DATA: (HOLDER));
+   IF HOLDER = P THEN
+      RETURN ' (it held the store''s semaphore)';
+   END IF;
+   RETURN '';
+END FUNCTION HOLDING;
+
+% ==== level 1 and 2, called from above ==================================================
+PROCEDURE SEG_READ (WHO, SEG, OFF: INTEGER ## VAL: INTEGER)
+      IMPORTS (DATA: (ANSWER # SEG_REQUESTS, REPLY));
+   VAR R: SEG_REQ := (OP: OP_READ, SEG: SEG, OFF: OFF, VAL: 0, WHO: WHO);
+   SEND (R # SEG_REQUESTS);
+   REQUEST (# REPLY (WHO));
+   VAL := ANSWER (WHO);
+END PROCEDURE SEG_READ;
+
+PROCEDURE SEG_WRITE (WHO, SEG, OFF, VAL: INTEGER)
+      IMPORTS (DATA: (# SEG_REQUESTS, REPLY));
+   VAR R: SEG_REQ := (OP: OP_WRITE, SEG: SEG, OFF: OFF, VAL: VAL, WHO: WHO);
+   SEND (R # SEG_REQUESTS);
+   REQUEST (# REPLY (WHO));
+END PROCEDURE SEG_WRITE;
+
+PROCEDURE SAY (WHO, M, ARG: INTEGER) IMPORTS (DATA: (# CONVERSATIONS, ATTENTION, REPLY));
+   VAR CV: CONV := (WHO: WHO, M: M, V: ARG);
+   SEND (CV # CONVERSATIONS);
+   RELEASE (# ATTENTION);
+   REQUEST (# REPLY (WHO));
+END PROCEDURE SAY;
+
+% ==== level 1: the store of segments (os/the.blu, without the log) =====================
+MODULE SEGMENTS EXPORTS (PRESENT, CORE_READ, CORE_WRITE, BOOT_SEGMENTS, TRANSFERS);
+   VAR SEG_WHERE: ARRAY [1:NSEG] OF INTEGER;
+   VAR CORE_SEG: ARRAY [1:NCORE] OF INTEGER;
+   VAR CORE_WORD: ARRAY [1:NCORE * WORDS] OF INTEGER;
+   VAR DRUM_USED: ARRAY [1:NDRUM] OF BOOLEAN;
+   VAR DRUM_WORD: ARRAY [1:NDRUM * WORDS] OF INTEGER;
+   VAR NEXT_VICTIM: INTEGER := 1;
+   VAR N_TRANSFERS: INTEGER := 0;
+
+   FUNCTION LATENCY (D: INTEGER) RETURNS (INTEGER);
+      RETURN ((D - 1) * (REV // NDRUM) - NOW () MOD REV + 2 * REV) MOD REV;
+   END FUNCTION LATENCY;
+
+   PROCEDURE DRUM_WAIT (D: INTEGER) IMPORTS (DATA: (# N_TRANSFERS));
+      PAUSE (LATENCY (D) + REV // NDRUM);
+      N_TRANSFERS := N_TRANSFERS + 1;
+   END PROCEDURE DRUM_WAIT;
+
+   PROCEDURE PRESENT (S: INTEGER ## C: INTEGER)
+         IMPORTS (ROUTINES: (DRUM_WAIT),
+                  DATA: (# SEG_WHERE, CORE_SEG, CORE_WORD, DRUM_USED, DRUM_WORD, NEXT_VICTIM));
+      VAR D, BEST: INTEGER;
+      IF SEG_WHERE (S) > 0 THEN
+         C := SEG_WHERE (S);
+         RETURN;
+      END IF;
+      C := 0;
+      LOOP FOR I IN [1:NCORE] DO
+         IF C = 0 & CORE_SEG (I) = 0 THEN
+            C := I;
+         END IF;
+      END LOOP I;
+      IF C = 0 THEN
+         C := NEXT_VICTIM;
+         NEXT_VICTIM := NEXT_VICTIM MOD NCORE + 1;
+         BEST := 0;
+         LOOP FOR K IN [1:NDRUM] DO
+            IF NOT DRUM_USED (K) THEN
+               IF BEST = 0 THEN
+                  BEST := K;
+               ORIF LATENCY (K) < LATENCY (BEST) THEN
+                  BEST := K;
+               END IF;
+            END IF;
+         END LOOP K;
+         DRUM_WAIT (BEST);
+         LOOP FOR I IN [1:WORDS] DO
+            DRUM_WORD ((BEST - 1) * WORDS + I) := CORE_WORD ((C - 1) * WORDS + I);
+         END LOOP I;
+         DRUM_USED (BEST) := TRUE;
+         SEG_WHERE (CORE_SEG (C)) := -BEST;
+      END IF;
+      IF SEG_WHERE (S) < 0 THEN
+         D := -SEG_WHERE (S);
+         DRUM_WAIT (D);
+         LOOP FOR I IN [1:WORDS] DO
+            CORE_WORD ((C - 1) * WORDS + I) := DRUM_WORD ((D - 1) * WORDS + I);
+         END LOOP I;
+         DRUM_USED (D) := FALSE;
+      ELSE
+         LOOP FOR I IN [1:WORDS] DO
+            CORE_WORD ((C - 1) * WORDS + I) := 0;
+         END LOOP I;
+      END IF;
+      CORE_SEG (C) := S;
+      SEG_WHERE (S) := C;
+   END PROCEDURE PRESENT;
+
+   FUNCTION CORE_READ (C, OFF: INTEGER) RETURNS (INTEGER) IMPORTS (DATA: (CORE_WORD));
+      RETURN CORE_WORD ((C - 1) * WORDS + OFF);
+   END FUNCTION CORE_READ;
+
+   PROCEDURE CORE_WRITE (C, OFF, V: INTEGER) IMPORTS (DATA: (# CORE_WORD));
+      CORE_WORD ((C - 1) * WORDS + OFF) := V;
+   END PROCEDURE CORE_WRITE;
+
+   % the loader: the vocabulary and the cluster segment are in core at the start
+   PROCEDURE BOOT_SEGMENTS () IMPORTS (DATA: (# SEG_WHERE, CORE_SEG, CORE_WORD));
+      SEG_WHERE (SEG_VOCAB) := 1;
+      CORE_SEG (1) := SEG_VOCAB;
+      CORE_WORD (MSG_LOST) := 21;
+      SEG_WHERE (SEG_CLUSTER) := 2;
+      CORE_SEG (2) := SEG_CLUSTER;
+      CORE_WORD (WORDS + 1) := 3;                % desired replicas
+      LOOP FOR N IN [1:NNODES] DO
+         CORE_WORD (WORDS + 5 + N) := 1;         % ready; heartbeats 0
+      END LOOP N;
+   END PROCEDURE BOOT_SEGMENTS;
+
+   FUNCTION TRANSFERS () RETURNS (INTEGER) IMPORTS (DATA: (N_TRANSFERS));
+      RETURN N_TRANSFERS;
+   END FUNCTION TRANSFERS;
+END MODULE SEGMENTS;
+
+% ==== level 0: a bounded buffer, as in os/the.blu ======================================
+MODULE MAILBOXES EXPORTS (MAILBOX);
+   TYPE MAILBOX (ELEMENT: TYPE, LENGTH: INTEGER [1:1000]) =
+      RECORD
+         VAR ITEMS: ARRAY [1 : LENGTH] OF ELEMENT;
+         VAR HEAD, COUNT: INTEGER;
+         VAR LOCK: SEMAPHORE (REGION);
+         VAR FULL, EMPTY: SEMAPHORE (SYNCH);
+      END RECORD;
+   PROCEDURE MAILBOX$OPEN (# B: MAILBOX (?T, ?LENGTH));
+      B.HEAD := 1;
+      B.COUNT := 0;
+      B.LOCK := NEW (1);
+      B.FULL := NEW (0);
+      B.EMPTY := NEW (LENGTH);
+   END PROCEDURE MAILBOX$OPEN;
+   PROCEDURE MAILBOX$SEND (X: ?T # B: MAILBOX (?T, ?LENGTH))
+         WHERE T NEEDS (STORE_ (T ## T));
+      REQUEST (# B.EMPTY);
+      REQUEST (# B.LOCK);
+      B.ITEMS ((B.HEAD + B.COUNT - 1) MOD LENGTH + 1) := X;
+      B.COUNT := B.COUNT + 1;
+      RELEASE (# B.LOCK);
+      RELEASE (# B.FULL);
+   END PROCEDURE MAILBOX$SEND;
+   PROCEDURE MAILBOX$RECEIVE (# B: MAILBOX (?T, ?LENGTH) # X: ?T)
+         WHERE T NEEDS (STORE_ (T ## T));
+      REQUEST (# B.FULL);
+      REQUEST (# B.LOCK);
+      X := B.ITEMS (B.HEAD);
+      B.HEAD := B.HEAD MOD LENGTH + 1;
+      B.COUNT := B.COUNT - 1;
+      RELEASE (# B.LOCK);
+      RELEASE (# B.EMPTY);
+   END PROCEDURE MAILBOX$RECEIVE;
+   FUNCTION MAILBOX$WAITING (B: MAILBOX (?T, ?LENGTH)) RETURNS (INTEGER);
+      RETURN B.COUNT;
+   END FUNCTION MAILBOX$WAITING;
+END MODULE MAILBOXES;
+END SEGMENT THE_KUBE_BLUE;

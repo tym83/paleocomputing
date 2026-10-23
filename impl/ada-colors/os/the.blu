@@ -1,0 +1,487 @@
+MAIN SEGMENT THE
+   USES (TERMINAL);
+% THE -- Dijkstra's THE multiprogramming system (Eindhoven, 1965-68), rebuilt in
+% BLUE (SofTech, 15 Feb 1978), next to os/the.red. Source: E.W. Dijkstra, "The
+% structure of the 'THE'-multiprogramming system", CACM 11(5), 1968 (EWD 196).
+%
+% The levels are those of os/the.red:
+%
+%   level 0  processor allocation and the semaphores: here BLUE itself. Its
+%            paths are THE's sequential processes, REQUEST and RELEASE are P
+%            and V (4.6.6, 4.6.7), with no translation in between
+%   level 1  the segment controller: segments in core pages, backed by a drum
+%   level 2  the message interpreter: the one console, shared by conversations
+%   level 3  buffering of input streams (three tape readers) and unbuffering
+%            of output (the line printer)
+%   level 4  user programs
+%   level 5  the operator
+%
+% RED had to build P and V out of mailboxes and GREEN out of server tasks;
+% BLUE is the one of the four that has THE's primitive in the language, and
+% two kinds of it: SYNCH semaphores signal between processes, REGION ones
+% guard data and are given back if the process holding them dies (3.11.1).
+% BLUE has no message passing, so the queues between the levels are what THE
+% had: a buffer and semaphores. Here it is one generic module, MAILBOXES,
+% instantiated for each kind of request (section 5 of the specification).
+%
+% Each level's state is a module, and a routine of a module that uses its own
+% variables must be imported by whoever calls it (4.1.1). So the IMPORTS of a
+% path name the levels it calls on: the hierarchy is written in the program.
+%
+% Time: BLUE has no time of day. CLOCK is the time of one path activation
+% (4.6.5); every process of the system is a path of one parallel block that
+% starts at 0, so CLOCK is the system's time. WAIT takes seconds; PAUSE waits
+% whole milliseconds. Set REPORT_DUMPS to TRUE (lab B6) and the segment
+% controller calls on level 2: the deadlock THE's order exists to prevent. The
+% call is checked even while it is switched off, so DUMP, a level-1 routine,
+% must import TELL_OPERATOR: the reach upwards is in the IMPORTS either way.
+
+CONST REPORT_DUMPS: BOOLEAN := FALSE;
+
+% the processes, numbered for their private semaphores
+CONST P_INTERP: INTEGER := 1;
+CONST P_SEGCTL: INTEGER := 2;
+CONST P_PRINTER: INTEGER := 3;
+CONST P_READER: INTEGER := 4;            % readers 4, 5, 6
+CONST P_USER: INTEGER := 7;              % users 7, 8, 9
+CONST NPROC: INTEGER := 9;
+CONST NUSERS: INTEGER := 3;
+
+% level 1
+CONST NCORE: INTEGER := 3;               % core pages
+CONST NDRUM: INTEGER := 8;               % drum pages, evenly round one track
+CONST NSEG: INTEGER := 8;
+CONST WORDS: INTEGER := 8;               % words per page
+CONST REV: INTEGER := 40;                % drum revolution, ms
+CONST SEG_VOCAB: INTEGER := 1;
+CONST SEG_PRINT: INTEGER := 2;
+CONST SEG_INPUT: INTEGER := 3;           % 3, 4, 5
+CONST SEG_WORK: INTEGER := 6;            % 6, 7, 8
+CONST OP_READ: INTEGER := 1;
+CONST OP_WRITE: INTEGER := 2;
+
+% level 2
+CONST MSG_READY: INTEGER := 1;
+CONST MSG_PAPER: INTEGER := 2;
+CONST MSG_DONE: INTEGER := 3;
+CONST MSG_DUMPED: INTEGER := 4;
+CONST KEY_PAPER: INTEGER := 1;
+
+% level 3
+CONST TAPE_LEN: INTEGER := 4;
+CONST NLINES: INTEGER := 3;
+
+TYPE SEG_REQ = RECORD
+   VAR OP, SEG, OFF, VAL, WHO: INTEGER;
+END RECORD;
+TYPE CONV = RECORD
+   VAR WHO, M, V: INTEGER;
+END RECORD;
+
+% ---- level 0: the private semaphores of the processes, with their answers ------
+VAR REPLY: ARRAY [1:NPROC] OF SEMAPHORE (SYNCH);
+VAR ANSWER: ARRAY [1:NPROC] OF INTEGER;
+VAR DONE: SEMAPHORE (SYNCH) := NEW (0);
+
+% ---- the queues between the levels -----------------------------------------------
+VAR SEG_REQUESTS: MAILBOX (SEG_REQ, 16);
+VAR CONVERSATIONS: MAILBOX (CONV, 16);
+VAR KEYBOARD: MAILBOX (INTEGER, 8);
+VAR ATTENTION: SEMAPHORE (SYNCH) := NEW (0);  % a conversation or a key: the interpreter looks
+VAR CONSOLE_IN: ARRAY [1:NPROC] OF SEMAPHORE (SYNCH);
+
+% ---- level 3: the buffers' semaphores ----------------------------------------------
+VAR PRINT_FULL: SEMAPHORE (SYNCH) := NEW (0);
+VAR PRINT_EMPTY: SEMAPHORE (SYNCH) := NEW (WORDS);
+VAR PRINT_MUTEX: SEMAPHORE (REGION) := NEW (1);
+VAR PRINT_SLOT: INTEGER := 0;
+VAR IN_FULL: ARRAY [1:NUSERS] OF SEMAPHORE (SYNCH);
+VAR IN_EMPTY: ARRAY [1:NUSERS] OF SEMAPHORE (SYNCH);
+
+LOOP FOR P IN [1:NPROC] DO
+   REPLY (P) := NEW (0);
+   CONSOLE_IN (P) := NEW (0);
+END LOOP P;
+LOOP FOR N IN [1:NUSERS] DO
+   IN_FULL (N) := NEW (0);
+   IN_EMPTY (N) := NEW (WORDS);
+END LOOP N;
+OPEN (# SEG_REQUESTS);
+OPEN (# CONVERSATIONS);
+OPEN (# KEYBOARD);
+% the vocabulary: words 1..4 map message numbers to phrases, words 5..8 map the
+% operator's keys to the process they address. It is put on its segment before
+% the processes start, as a loader would.
+BOOT_VOCABULARY;
+
+PAR_BLOCK
+   % ==== level 1: the segment controller ======================================
+   PATH SEGMENT_CONTROLLER IMPORTS (ROUTINES: (PRESENT, CORE_READ, CORE_WRITE),
+                                    DATA: (# SEG_REQUESTS, REPLY, ANSWER));
+      VAR R: SEG_REQ;
+      VAR C: INTEGER;
+      LOOP
+         RECEIVE (# SEG_REQUESTS # R);
+         PRESENT (R.SEG ## C);
+         IF R.OP = OP_READ THEN
+            ANSWER (R.WHO) := CORE_READ (C, R.OFF);
+         ELSE
+            CORE_WRITE (C, R.OFF, R.VAL);
+         END IF;
+         RELEASE (# REPLY (R.WHO));
+      END LOOP;
+   END PATH SEGMENT_CONTROLLER;
+
+   % ==== level 2: the message interpreter =====================================
+   % "Above this level it is as if each process had its private conversational
+   % console." A process waits on one semaphore at a time, so conversations and
+   % keys share one: ATTENTION says "look", the queues say what came.
+   PATH MESSAGE_INTERPRETER IMPORTS (ROUTINES: (SEG_READ),
+                                     DATA: (# CONVERSATIONS, KEYBOARD, ATTENTION, REPLY, CONSOLE_IN));
+      VAR CV: CONV;
+      VAR K, W: INTEGER;
+      LOOP
+         REQUEST (# ATTENTION);
+         IF WAITING (CONVERSATIONS) > 0 THEN
+            RECEIVE (# CONVERSATIONS # CV);
+            SEG_READ (P_INTERP, SEG_VOCAB, CV.M ## W);
+            PAUSE (20);                            % the teleprinter types
+            IF CV.M = MSG_DUMPED THEN
+               LOG ('CONSOLE  ' !! WHO_NAME (CV.WHO) !! ': ' !! PHRASE (W) !! ' ' !! TO_CHAR (CV.V));
+            ELSE
+               LOG ('CONSOLE  ' !! WHO_NAME (CV.WHO) !! ': ' !! PHRASE (W));
+            END IF;
+            RELEASE (# REPLY (CV.WHO));
+         ELSE
+            % the operator opened the conversation: its first words say whom it is
+            % for, and they must be interpreted before that is known
+            RECEIVE (# KEYBOARD # K);
+            SEG_READ (P_INTERP, SEG_VOCAB, 4 + K ## W);
+            PAUSE (20);
+            LOG ('CONSOLE  operator to ' !! WHO_NAME (W) !! ': paper loaded');
+            RELEASE (# CONSOLE_IN (W));
+         END IF;
+      END LOOP;
+   END PATH MESSAGE_INTERPRETER;
+
+   % ==== level 3: the line printer =============================================
+   % three lines fit on the paper, then it asks the operator
+   PATH PRINTER IMPORTS (ROUTINES: (SAY, SEG_READ),
+                         DATA: (# PRINT_FULL, PRINT_EMPTY, CONSOLE_IN, DONE));
+      VAR ITEM: INTEGER;
+      LOOP FOR LINE IN [1:NUSERS] DO
+         IF LINE = NLINES THEN
+            SAY (P_PRINTER, MSG_PAPER, 0);
+            REQUEST (# CONSOLE_IN (P_PRINTER));
+         END IF;
+         REQUEST (# PRINT_FULL);
+         SEG_READ (P_PRINTER, SEG_PRINT, (LINE - 1) MOD WORDS + 1 ## ITEM);
+         RELEASE (# PRINT_EMPTY);
+         PAUSE (10);
+         LOG ('PRINTER  program ' !! TO_CHAR (ITEM // 100000) !! ': sum of squares '
+              !! TO_CHAR (ITEM MOD 100000));
+      END LOOP LINE;
+      RELEASE (# DONE);
+   END PATH PRINTER;
+
+   % ==== level 5: the operator ==================================================
+   PATH OPERATOR IMPORTS (DATA: (# KEYBOARD, ATTENTION));
+      PAUSE (400);
+      SEND (KEY_PAPER # KEYBOARD);
+      RELEASE (# ATTENTION);
+   END PATH OPERATOR;
+
+   % ==== level 3: the tape readers buffer their input streams in segments =======
+   PATH READER FOR N IN [1:NUSERS] IMPORTS (ROUTINES: (SAY, SEG_WRITE),
+                                            DATA: (# IN_FULL, IN_EMPTY));
+      CONST ME: INTEGER := P_READER + N - 1;
+      SAY (ME, MSG_READY, 0);
+      LOOP FOR I IN [1:TAPE_LEN] DO
+         PAUSE (1);                                % 1000 characters a second
+         REQUEST (# IN_EMPTY (N));
+         SEG_WRITE (ME, SEG_INPUT + N - 1, (I - 1) MOD WORDS + 1, 10 * N + I);
+         RELEASE (# IN_FULL (N));
+      END LOOP I;
+   END PATH READER;
+
+   % ==== level 4: user programs ===================================================
+   PATH PROGRAM FOR U IN [1:NUSERS] IMPORTS (ROUTINES: (GET, PUT_RESULT, SAY, SEG_READ, SEG_WRITE),
+                                             DATA: (# DONE));
+      CONST ME: INTEGER := P_USER + U - 1;
+      VAR X, SUM, W: INTEGER;
+      LOOP FOR I IN [1:TAPE_LEN] DO
+         GET (U, I ## X);
+         SEG_WRITE (ME, SEG_WORK + U - 1, I, X * X);
+      END LOOP I;
+      SUM := 0;
+      LOOP FOR I IN [1:TAPE_LEN] DO
+         SEG_READ (ME, SEG_WORK + U - 1, I ## W);
+         SUM := SUM + W;
+      END LOOP I;
+      PUT_RESULT (U, SUM);
+      SAY (ME, MSG_DONE, 0);
+      RELEASE (# DONE);
+   END PATH PROGRAM;
+
+   % ---- the end of the run: every program and the printer said DONE ---------------
+   PATH SUPERVISOR IMPORTS (ROUTINES: (TRANSFERS, FAULTS), DATA: (# DONE));
+      LOOP FOR I IN [1:NUSERS + 1] DO
+         REQUEST (# DONE);
+      END LOOP I;
+      LOG ('all programs finished, the printer is empty');
+      LOG ('drum transfers ' !! TO_CHAR (TRANSFERS ()) !! ', segment faults '
+           !! TO_CHAR (FAULTS ()) !! ', with ' !! TO_CHAR (NSEG) !! ' segments in '
+           !! TO_CHAR (NCORE) !! ' core pages');
+      LOG ('no process waited for one on a higher level, so no circle of waiting could form');
+      STOP (0);
+   END PATH SUPERVISOR;
+END PAR_BLOCK;
+
+% ==== time =========================================================================
+FUNCTION NOW () RETURNS (INTEGER);
+   RETURN TO_FIXED (CLOCK * 1000, 0, ROUNDED);
+END FUNCTION NOW;
+
+% WAIT takes seconds at any scale (4.6.2); a millisecond is no binary fraction, so
+% the time is rounded down at scale 30 and the runtime rounds it up to the tick
+PROCEDURE PAUSE (MS: INTEGER);
+   CONST S: FIXED (30, 2, STD) := MS !//30! 1000;
+   WAIT (S);
+END PROCEDURE PAUSE;
+
+PROCEDURE LOG (S: ASCII_STR (?L));
+   PUT_LINE ('[' !! TO_CHAR (NOW ()) !! ' ms] ' !! S);
+END PROCEDURE LOG;
+
+% ==== called by levels 2 and up: the identity of pages is gone above level 1 ========
+PROCEDURE SEG_READ (WHO, SEG, OFF: INTEGER ## VAL: INTEGER)
+      IMPORTS (DATA: (ANSWER # SEG_REQUESTS, REPLY));
+   VAR R: SEG_REQ := (OP: OP_READ, SEG: SEG, OFF: OFF, VAL: 0, WHO: WHO);
+   SEND (R # SEG_REQUESTS);
+   REQUEST (# REPLY (WHO));
+   VAL := ANSWER (WHO);
+END PROCEDURE SEG_READ;
+
+PROCEDURE SEG_WRITE (WHO, SEG, OFF, VAL: INTEGER)
+      IMPORTS (DATA: (# SEG_REQUESTS, REPLY));
+   VAR R: SEG_REQ := (OP: OP_WRITE, SEG: SEG, OFF: OFF, VAL: VAL, WHO: WHO);
+   SEND (R # SEG_REQUESTS);
+   REQUEST (# REPLY (WHO));
+END PROCEDURE SEG_WRITE;
+
+% ==== level 2, called from above: one conversation, answered when it is typed =====
+PROCEDURE SAY (WHO, M, ARG: INTEGER) IMPORTS (DATA: (# CONVERSATIONS, ATTENTION, REPLY));
+   VAR CV: CONV := (WHO: WHO, M: M, V: ARG);
+   SEND (CV # CONVERSATIONS);
+   RELEASE (# ATTENTION);
+   REQUEST (# REPLY (WHO));
+END PROCEDURE SAY;
+
+FUNCTION PHRASE (W: INTEGER) RETURNS (ASCII_STR (?));
+   SELECT W FROM
+      11 --> RETURN 'tape loaded, reading'; END;
+      12 --> RETURN 'out of paper, waiting for the operator'; END;
+      13 --> RETURN 'finished, result queued for the printer'; END;
+      14 --> RETURN 'dumped a segment to the drum:'; END;
+      ELSE --> RETURN '?'; END;
+   END SELECT;
+END FUNCTION PHRASE;
+
+FUNCTION WHO_NAME (P: INTEGER) RETURNS (ASCII_STR (?));
+   IF P = P_SEGCTL THEN
+      RETURN 'segment controller';
+   ORIF P = P_PRINTER THEN
+      RETURN 'printer';
+   ORIF P >= P_READER & P < P_USER THEN
+      RETURN 'reader ' !! TO_CHAR (P - P_READER + 1);
+   ORIF P >= P_USER THEN
+      RETURN 'program ' !! TO_CHAR (P - P_USER + 1);
+   END IF;
+   RETURN '?';
+END FUNCTION WHO_NAME;
+
+% ==== level 3, called from level 4: the logical communication units =================
+PROCEDURE GET (U, I: INTEGER ## X: INTEGER) IMPORTS (ROUTINES: (SEG_READ),
+                                                     DATA: (# IN_FULL, IN_EMPTY));
+   REQUEST (# IN_FULL (U));
+   SEG_READ (P_USER + U - 1, SEG_INPUT + U - 1, (I - 1) MOD WORDS + 1 ## X);
+   RELEASE (# IN_EMPTY (U));
+END PROCEDURE GET;
+
+PROCEDURE PUT_RESULT (U, RESULT: INTEGER)
+      IMPORTS (ROUTINES: (SEG_WRITE), DATA: (# PRINT_FULL, PRINT_EMPTY, PRINT_MUTEX, PRINT_SLOT));
+   REQUEST (# PRINT_EMPTY);
+   REQUEST (# PRINT_MUTEX);
+   PRINT_SLOT := PRINT_SLOT MOD WORDS + 1;
+   SEG_WRITE (P_USER + U - 1, SEG_PRINT, PRINT_SLOT, 100000 * U + RESULT);
+   RELEASE (# PRINT_MUTEX);
+   RELEASE (# PRINT_FULL);
+END PROCEDURE PUT_RESULT;
+
+% ==== level 1: the store of segments ===============================================
+% "Storage allocation": segments are units of information, pages are units of
+% store. A segment dumped to the drum goes to the free drum page with the minimum
+% latency, not back where it came from.
+MODULE SEGMENTS EXPORTS (PRESENT, CORE_READ, CORE_WRITE, BOOT_VOCABULARY, TRANSFERS, FAULTS);
+   VAR SEG_WHERE: ARRAY [1:NSEG] OF INTEGER;           % 0 empty, c > 0 core page, -d drum page
+   VAR CORE_SEG: ARRAY [1:NCORE] OF INTEGER;           % 0 free
+   VAR CORE_WORD: ARRAY [1:NCORE * WORDS] OF INTEGER;
+   VAR DRUM_USED: ARRAY [1:NDRUM] OF BOOLEAN;          % FALSE: free (a module has no statements)
+   VAR DRUM_WORD: ARRAY [1:NDRUM * WORDS] OF INTEGER;
+   VAR NEXT_VICTIM: INTEGER := 1;
+   VAR N_TRANSFERS, N_FAULTS: INTEGER := 0;
+
+   % "among the free drum pages the one with the minimum latency is selected"
+   FUNCTION LATENCY (D: INTEGER) RETURNS (INTEGER);
+      RETURN ((D - 1) * (REV // NDRUM) - NOW () MOD REV + 2 * REV) MOD REV;
+   END FUNCTION LATENCY;
+
+   PROCEDURE DRUM_WAIT (D: INTEGER) IMPORTS (DATA: (# N_TRANSFERS));
+      PAUSE (LATENCY (D) + REV // NDRUM);
+      N_TRANSFERS := N_TRANSFERS + 1;
+   END PROCEDURE DRUM_WAIT;
+
+   PROCEDURE DUMP (C: INTEGER)
+         IMPORTS (ROUTINES: (DRUM_WAIT, TELL_OPERATOR), DATA: (CORE_SEG, CORE_WORD # DRUM_USED, DRUM_WORD, SEG_WHERE));
+      VAR BEST: INTEGER := 0;
+      CONST S: INTEGER := CORE_SEG (C);
+      LOOP FOR D IN [1:NDRUM] DO
+         IF NOT DRUM_USED (D) THEN
+            IF BEST = 0 THEN
+               BEST := D;
+            ORIF LATENCY (D) < LATENCY (BEST) THEN
+               BEST := D;
+            END IF;
+         END IF;
+      END LOOP D;
+      DRUM_WAIT (BEST);
+      LOOP FOR I IN [1:WORDS] DO
+         DRUM_WORD ((BEST - 1) * WORDS + I) := CORE_WORD ((C - 1) * WORDS + I);
+      END LOOP I;
+      DRUM_USED (BEST) := TRUE;
+      SEG_WHERE (S) := -BEST;
+      LOG ('  segment controller: segment ' !! TO_CHAR (S) !! ' dumped from core page '
+           !! TO_CHAR (C) !! ' to drum page ' !! TO_CHAR (BEST));
+      IF REPORT_DUMPS THEN
+         % the broken order: level 1 waits for a conversation on level 2
+         TELL_OPERATOR (S);
+      END IF;
+   END PROCEDURE DUMP;
+
+   % make segment S present in core and return its core page
+   PROCEDURE PRESENT (S: INTEGER ## C: INTEGER)
+         IMPORTS (ROUTINES: (DUMP, DRUM_WAIT),
+                  DATA: (# SEG_WHERE, CORE_SEG, CORE_WORD, DRUM_USED, DRUM_WORD, NEXT_VICTIM, N_FAULTS));
+      VAR D: INTEGER;
+      IF SEG_WHERE (S) > 0 THEN
+         C := SEG_WHERE (S);
+         RETURN;
+      END IF;
+      N_FAULTS := N_FAULTS + 1;
+      C := 0;
+      LOOP FOR I IN [1:NCORE] DO
+         IF C = 0 & CORE_SEG (I) = 0 THEN
+            C := I;
+         END IF;
+      END LOOP I;
+      IF C = 0 THEN
+         C := NEXT_VICTIM;
+         NEXT_VICTIM := NEXT_VICTIM MOD NCORE + 1;
+         % a segment read in from the drum gave its drum page back, so every
+         % segment leaving core is written out
+         DUMP (C);
+      END IF;
+      IF SEG_WHERE (S) < 0 THEN
+         D := -SEG_WHERE (S);
+         DRUM_WAIT (D);
+         LOOP FOR I IN [1:WORDS] DO
+            CORE_WORD ((C - 1) * WORDS + I) := DRUM_WORD ((D - 1) * WORDS + I);
+         END LOOP I;
+         DRUM_USED (D) := FALSE;
+         LOG ('  segment controller: segment ' !! TO_CHAR (S) !! ' read from drum page '
+              !! TO_CHAR (D) !! ' into core page ' !! TO_CHAR (C));
+      ELSE
+         LOOP FOR I IN [1:WORDS] DO
+            CORE_WORD ((C - 1) * WORDS + I) := 0;
+         END LOOP I;
+      END IF;
+      CORE_SEG (C) := S;
+      SEG_WHERE (S) := C;
+   END PROCEDURE PRESENT;
+
+   FUNCTION CORE_READ (C, OFF: INTEGER) RETURNS (INTEGER) IMPORTS (DATA: (CORE_WORD));
+      RETURN CORE_WORD ((C - 1) * WORDS + OFF);
+   END FUNCTION CORE_READ;
+
+   PROCEDURE CORE_WRITE (C, OFF, V: INTEGER) IMPORTS (DATA: (# CORE_WORD));
+      CORE_WORD ((C - 1) * WORDS + OFF) := V;
+   END PROCEDURE CORE_WRITE;
+
+   % the loader: the vocabulary is the first segment in core
+   PROCEDURE BOOT_VOCABULARY () IMPORTS (DATA: (# SEG_WHERE, CORE_SEG, CORE_WORD, N_FAULTS));
+      SEG_WHERE (SEG_VOCAB) := 1;
+      CORE_SEG (1) := SEG_VOCAB;
+      N_FAULTS := 1;
+      CORE_WORD (MSG_READY) := 11;
+      CORE_WORD (MSG_PAPER) := 12;
+      CORE_WORD (MSG_DONE) := 13;
+      CORE_WORD (MSG_DUMPED) := 14;
+      CORE_WORD (4 + KEY_PAPER) := P_PRINTER;
+   END PROCEDURE BOOT_VOCABULARY;
+
+   FUNCTION TRANSFERS () RETURNS (INTEGER) IMPORTS (DATA: (N_TRANSFERS));
+      RETURN N_TRANSFERS;
+   END FUNCTION TRANSFERS;
+
+   FUNCTION FAULTS () RETURNS (INTEGER) IMPORTS (DATA: (N_FAULTS));
+      RETURN N_FAULTS;
+   END FUNCTION FAULTS;
+END MODULE SEGMENTS;
+
+% only the broken variant (REPORT_DUMPS) calls this from level 1
+PROCEDURE TELL_OPERATOR (S: INTEGER) IMPORTS (ROUTINES: (SAY));
+   SAY (P_SEGCTL, MSG_DUMPED, S);
+END PROCEDURE TELL_OPERATOR;
+
+% ==== level 0: a bounded buffer is a REGION semaphore and two SYNCH ones ==============
+% BLUE has semaphores and no message passing; one generic module gives a queue of
+% any element type (5.1), an instance per type it is used with.
+MODULE MAILBOXES EXPORTS (MAILBOX);
+   TYPE MAILBOX (ELEMENT: TYPE, LENGTH: INTEGER [1:1000]) =
+      RECORD
+         VAR ITEMS: ARRAY [1 : LENGTH] OF ELEMENT;
+         VAR HEAD, COUNT: INTEGER;
+         VAR LOCK: SEMAPHORE (REGION);
+         VAR FULL, EMPTY: SEMAPHORE (SYNCH);
+      END RECORD;
+   PROCEDURE MAILBOX$OPEN (# B: MAILBOX (?T, ?LENGTH));
+      B.HEAD := 1;
+      B.COUNT := 0;
+      B.LOCK := NEW (1);
+      B.FULL := NEW (0);
+      B.EMPTY := NEW (LENGTH);
+   END PROCEDURE MAILBOX$OPEN;
+   PROCEDURE MAILBOX$SEND (X: ?T # B: MAILBOX (?T, ?LENGTH))
+         WHERE T NEEDS (STORE_ (T ## T));
+      REQUEST (# B.EMPTY);
+      REQUEST (# B.LOCK);
+      B.ITEMS ((B.HEAD + B.COUNT - 1) MOD LENGTH + 1) := X;
+      B.COUNT := B.COUNT + 1;
+      RELEASE (# B.LOCK);
+      RELEASE (# B.FULL);
+   END PROCEDURE MAILBOX$SEND;
+   PROCEDURE MAILBOX$RECEIVE (# B: MAILBOX (?T, ?LENGTH) # X: ?T)
+         WHERE T NEEDS (STORE_ (T ## T));
+      REQUEST (# B.FULL);
+      REQUEST (# B.LOCK);
+      X := B.ITEMS (B.HEAD);
+      B.HEAD := B.HEAD MOD LENGTH + 1;
+      B.COUNT := B.COUNT - 1;
+      RELEASE (# B.LOCK);
+      RELEASE (# B.EMPTY);
+   END PROCEDURE MAILBOX$RECEIVE;
+   FUNCTION MAILBOX$WAITING (B: MAILBOX (?T, ?LENGTH)) RETURNS (INTEGER);
+      RETURN B.COUNT;
+   END FUNCTION MAILBOX$WAITING;
+END MODULE MAILBOXES;
+END SEGMENT THE;

@@ -1,11 +1,11 @@
 [Русская версия](README.ru.md)
 
-# Labs: what RED can do
+# Labs: what RED, BLUE and YELLOW can do
 
 Twelve short exercises on RED, the language that lost the DoD-1 competition to
 GREEN in 1979. Each one takes 10–20 minutes. The programs are in `labs/red/`, and
 `labs/check.sh` tells you whether a task is done. It translates your file with
-`build/redc`, runs it and looks at what came out.
+`build/redc`, runs it and looks at what came out. BLUE and YELLOW have their own sections below.
 
 ```sh
 make                         # builds redc from its seed and checks the fixed point
@@ -55,3 +55,88 @@ labs/check.sh 11 break /tmp/c1.red
 Reference solutions for the change, break and build tasks are in
 `labs/solutions/`. `labs/verify.sh` checks the checker: each solution must pass,
 and the unchanged program must not. CI runs it on every pull request.
+
+## BLUE
+
+Seven more exercises on BLUE, SofTech's design of 1978, dropped after the first
+phase (see `../blue/`). They show what BLUE has and the others do not, or has in
+another shape. The programs are in `labs/blue/`, the lab numbers start with `b`,
+and `labs/check.sh` translates `.blu` files with `blue/build/bluec`.
+
+```sh
+make -C blue fixpoint        # builds bluec from its seed and checks the fixed point
+labs/check.sh b1 look        # run lab B1 as it is
+labs/check.sh b5 break       # check your change to labs/blue/b5-region.blu
+git checkout labs/blue       # start over
+```
+
+| # | Program | Task | What you should see |
+|---|---|---|---|
+| b1 | `b1-enums.blu` | **look**: the literal `\GREEN` belongs to two types, at a different position in each | `light number 2 and color number 3` |
+| | | **change**: add `\FLASHING` to `LIGHT` and make `NEXT_LIGHT` go from `\AMBER` to it | `\FLASHING` in the cycle |
+| | | **break**: write `IF S < \SPADES THEN ... END IF;` | An `UNORDERED` type has `=` and `<>` and nothing else (3.4.4.1) |
+| b2 | `b2-generic.blu` | **look**: one `SWAP` with `?T`, called with integers, strings and colours; nobody names the instances | `swapped: 1978 BLUE` |
+| | | **build**: write `FUNCTION BIGGER (X, Y: ?T) RETURNS (T) WHERE T NEEDS (LESS_THAN_ (T, T) RETURNS (BOOLEAN))`, call it with integers and colours, print `'bigger ...'` | Each instance takes `LESS_THAN_` from where it is called (section 5) |
+| | | **break**: `SWAP (# I, K);` | `?T` is bound by one argument, and the other does not fit |
+| b3 | `b3-imports.blu` | **break**: remove `ROUTINES: (HIT)` from `PLAY` | `PLAY` calls `HIT`, so it must import `HIT` or every variable `HIT` uses (4.1.1). |
+| | | **change**: assign to `LIMIT` inside `HIT` | `LIMIT` is imported as input, before the `#` |
+| b4 | `b4-rep.blu` | **look**: a device's status codes as an `UNORDERED` type with `REP ENUM_VAL_REP` | `register 0001 reads \BUSY` |
+| | | **change**: add `\OFFLINE AS BIN '0100'` and read `BIN '0100'` from the register | `reads \OFFLINE` |
+| | | **break**: move `S := [STATUS]$$(REGISTER);` out of the `SELECT OBJECT_MACHINE` | Bits become a value only in a machine-dependent part (4.5.5.2) |
+| b5 | `b5-region.blu` | **look**: worker 1 dies holding a `REGION` semaphore, and worker 2 gets in | The end of the path released it (3.11.1) |
+| | | **break**: declare `MUTEX` as `SEMAPHORE (SYNCH)` | Deadlock. A `SYNCH` semaphore is a signal, and a dying path must not send false signals (J3.11-1) |
+| | | **change**: wrap the work in a `BLOCK`, catch `FAILED` after it inside the path and `RELEASE` there | Both through and the block signals nothing. Catch without the `RELEASE`, and the path ends normally still holding the semaphore: deadlock again |
+| b6 | `b6-the.blu` | **look**: THE in BLUE, the same run as `12-the.red`, on BLUE's own semaphores | No process waits for one above it |
+| | | **change**: `CONST NCORE: INTEGER := 8;` | `drum transfers 0` |
+| | | **break**: set `REPORT_DUMPS` to `TRUE` | Deadlock. The call upwards was written in the IMPORTS all along: `DUMP` (level 1) imports `TELL_OPERATOR` (level 2), since bluec checks a switched-off call too |
+| b7 | `b7-race.blu` | **look**: a timeout is a race of two paths, `GET` and `TIMER`, that `TERMINATE` each other | `2 received` |
+| | | **change**: `CONST TIMEOUT: INTEGER := 5;` | `no item for 5 ms` |
+| | | **break**: remove `PRIORITY 1` from `GET` | `1 still in the box`: `TIMER` cut `GET` down after it had taken the item's token, so the item stays in the box and no `RECEIVE` will get it. The higher priority makes `GET` run before `TIMER` can do that |
+
+The solutions are in `labs/solutions/b*.blu`, and `labs/verify.sh` checks them
+with the RED ones.
+
+## YELLOW
+
+Eight exercises on YELLOW, SRI International's design of 1978, the one that
+was told to modify Pascal to fit Ironman (see `yellow/README.md`). The programs
+are in `labs/yellow/`; the lab numbers are `y1` to `y8`, and `check.sh`
+translates them with `yellow/build/yellowc` after the standard prelude. Line
+numbers in the translator's messages are given in your file.
+
+```sh
+make -C yellow fixpoint      # builds yellowc from its seed
+labs/check.sh y1 look        # run lab Y1 as it is
+labs/check.sh y1 break       # check your change to labs/yellow/y1-operators.yel
+git checkout labs/yellow     # start over
+```
+
+| # | Program | Task | What you should see |
+|---|---|---|---|
+| Y1 | `y1-operators.yel` | **look**: `(a - b) - c` and `a - (b - c)` | `-` is not associative, and YELLOW makes you say which subtraction comes first |
+| | | **change**: print `(a * b) DIV c`, a space, and `a * (b DIV c)` | `13 10`: `*` and `DIV` are on one level and `DIV` is not associative either |
+| | | **break**: write `a - b - c` without parentheses | `needs parentheses` (VIII.A). Pascal reads it left to right; YELLOW does not read it at all |
+| Y2 | `y2-parameters.yel` | **look**: `Divide` sets its OUT parameter, then fails | `q = 3`: an OUT parameter reaches the actual only at RETURN (X.A.2) |
+| | | **change**: add `OUT r` to `Divide`, set `r := a MOD b`, print `"remainder "` and `r` | `remainder 1` |
+| | | **break**: write `a := 0` inside `Divide` | `a variable is needed here`: a CONST parameter is never changed, not even by its own routine |
+| Y3 | `y3-enumerations.yel` | **look**: an ORDERED `Phase` and an UNORDERED `Fruit` | `SUCC`, `LAST` and `FOR` work on the ordered one |
+| | | **change**: add `Failed` at the end of `Phase` and a CASE for it in `WritePhase` | `last phase Failed` |
+| | | **break**: compare two fruits with `<` | `< <= > >= apply to ordered values`: an UNORDERED enumeration has only `=` and `#`. Try also adding `Colors = UNORDERED (Red, Orange)`: an unqualified `Orange` then names values of two types |
+| Y4 | `y4-templates.yel` | **look**: one TEMPLATE, two INSTANCEs | Each instance is the module written out again with the actuals in place of the formals |
+| | | **change**: add a second INTEGER64 instance (`OtherStack`, `PushO`, ...), push 5 on it, print `"two integer stacks, depths "` with both depths | `depths 3 1`: two instances of one type are two modules with their own state |
+| | | **break**: instantiate `StackTemplate` for `Fruit` | `apply to ordered values`, from inside the template: it is checked only when an instance is made, and `Largest` uses `<` |
+| Y5 | `y5-monitor.yel` | **look**: A waits first with rank 2, B second with rank 1 | `B got 1`, and the waiter runs before the producer goes on: Hoare's SEND hands the monitor over (X.E.4) |
+| | | **change**: give A and B the same rank | `A got 1`: first come, first served within a rank |
+| | | **break**: remove `SEND(arrived)` from `Give` | `deadlock`: a signal is not a state, and nobody wakes the consumers |
+| Y6 | `y6-functions.yel` | **look**: a FUNCTION and a value-returning PROCEDURE | `calls 0` |
+| | | **change**: make `Square` a `PROCEDURE ... RETURNS` that adds 1 to `calls` | `calls 2`: a value-returning procedure may have side effects |
+| | | **break**: write `calls := calls + 1` inside the FUNCTION `Square` | `calls is not local`: a FUNCTION assigns only to its own locals (D-33) |
+| Y7 | `y7-modules.yel` | **look**: `Counter` exports `count` READONLY, `Stack` exports `S` OPAQUE | `count 2` |
+| | | **change**: export `count` VAR, set `count := 0` in the main part, print `"count after reset "` and `count` | `count after reset 0` |
+| | | **break**: write `st.top := 0` in the main part | `its components are hidden` (X.B.3). Assigning `count` without the change gives `a variable is needed here` |
+| Y8 | `y8-the.yel` | **look**: Dijkstra's THE system with YELLOW's monitors (`os/the_yellow.yel`) | No process waits for one above it, and the society finishes |
+| | | **change**: set `ncore` to 8 | `drum transfers 0` |
+| | | **break**: set `reportDumps` to `TRUE` | Deadlock: the segment controller, a monitor on level 1, waits for the console, whose interpreter needs the segment controller to read its vocabulary |
+
+The reference solutions are `labs/solutions/y*.yel`; `labs/verify.sh` checks
+them with the RED ones.

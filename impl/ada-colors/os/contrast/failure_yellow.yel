@@ -1,0 +1,88 @@
+(* Contrast 2, failure under a lock, in YELLOW (SRI International, 1978). *)
+(* YELLOW has two locks, and they behave differently here. *)
+(*   - A MONITOR: the update is a monitor procedure. Worker 1 fails halfway; *)
+(*     an exception that leaves a monitor procedure leaves the monitor too, *)
+(*     so worker 2 gets in at once, as with RED's REGION. *)
+(*   - A SEMAPHORE (XIV.XI.1): CLAIM and RELEASE are two statements, as P and *)
+(*     V are in THE. Worker 3 fails between them and nothing gives the *)
+(*     semaphore back; worker 4 asks with CONDITIONAL_CLAIM for 100 ms and *)
+(*     never gets it. *)
+MODULE FailureYellow
+  IMPORT TextIO, StandardImplementationPrelude;
+
+  PROCEDURE Stamp ()
+    Write("["); Write(CLOCK_TIME()); Write(" ms] ");
+    RETURN
+  ENDPROCEDURE Stamp;
+
+  MONITOR Account
+    IMPORT INTEGER64, Stamp, Write, WriteLn;
+    EXPORT Update, Balance;
+    VAR balance: INTEGER64 := 100;
+    PROCEDURE Update (CONST id: INTEGER64)
+      Stamp(); Write("worker "); Write(id); Write(" holds the monitor"); WriteLn();
+      DELAY(5);
+      IF id = 1 THEN PROPAGATE_EXCEPTION OUT_OF_RANGE ENDIF;
+      balance := balance + 10;
+      RETURN
+    ENDPROCEDURE Update;
+    PROCEDURE Balance RETURNS INTEGER64 ()
+      RETURN balance
+    ENDPROCEDURE Balance
+  ENDMONITOR Account;
+
+  VAR s: SEMAPHORE;
+      through: INTEGER64 := 0;
+      tries: INTEGER64 := 0;
+
+  BEGIN
+    PROCESS Worker (CONST id: INTEGER64)
+      DELAY(id);
+      BEGIN
+        EXCEPTION CASE OUT_OF_RANGE =>
+          Stamp(); Write("worker 1 failed inside the monitor"); WriteLn()
+        ENDEXCEPTION;
+        Update(id)
+      END;
+      through := through + 1;
+      TERMINATE_PROCESS
+    ENDPROCESS Worker;
+    Worker(1);
+    Worker(2)
+  END;
+  Stamp(); Write("both workers are through, balance "); Write(Balance());
+  Write(": leaving the monitor by an exception gave it up"); WriteLn();
+
+  BEGIN
+    PROCESS Claimer ()
+      BEGIN
+        EXCEPTION CASE OUT_OF_RANGE =>
+          Stamp(); Write("worker 3 failed between CLAIM and RELEASE"); WriteLn()
+        ENDEXCEPTION;
+        (* PROPAGATE_EXCEPTION leaves the block it is in, so the handler *)
+        (* above sees it only from an inner block *)
+        BEGIN
+          CLAIM(s);
+          Stamp(); Write("worker 3 claimed the semaphore"); WriteLn();
+          DELAY(5);
+          PROPAGATE_EXCEPTION OUT_OF_RANGE;
+          RELEASE(s)
+        END
+      END;
+      TERMINATE_PROCESS
+    ENDPROCESS Claimer;
+
+    PROCESS Asker ()
+      DELAY(1);
+      WHILE (tries < 100) AND NOT CONDITIONAL_CLAIM(s) DO
+        tries := tries + 1;
+        DELAY(1)
+      ENDWHILE;
+      TERMINATE_PROCESS
+    ENDPROCESS Asker;
+    Claimer();
+    Asker()
+  END;
+  Stamp(); Write("worker 4 asked "); Write(tries);
+  Write(" times: no exception gives a semaphore back"); WriteLn()
+ENDMODULE FailureYellow

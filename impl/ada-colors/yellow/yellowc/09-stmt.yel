@@ -221,7 +221,9 @@
     IF k = N_ASSIGN THEN
       LValue(s^.a, c, r);
       CheckPure(s^.a);
-      IF r^.kind = R_SIGNAL THEN FailS(s^.line, "assignment is not defined for signals (VI.A.1.d)") ENDIF;
+      IF (r^.kind = R_SIGNAL) OR HoldsSignal(r) THEN
+        FailS(s^.line, "assignment is not defined for signals (VI.A.1.d)")
+      ENDIF;
       IF (r^.kind = R_FILE) OR (r^.kind = R_SEM) THEN
         FailS(s^.line, "assignment is not defined for files and semaphores (VII.B)")
       ENDIF;
