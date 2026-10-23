@@ -17,9 +17,9 @@ The episode is described in [`17-episode-red-green.md`](../../17-episode-red-gre
 | `green/` | The same for GREEN: bootstrap, greenc written in GREEN, seed, tests, the 1979 INTRO examples |
 | `blue/` | BLUE (SofTech, 1978): bootstrap, bluec written in BLUE, seed, tests, and the programs of its specification, Appendix C's I/O modules running on simulated LT33 teletypes |
 | `yellow/` | YELLOW (SRI International, 1978): bootstrap, yellowc written in YELLOW, seed, tests, and the tutorial programs of its report |
-| `os/` | PAIRS, a Tandem NonStop style kernel in RED; Dijkstra's THE system in RED and its semaphore core in GREEN; Kubernetes on top of THE in both; `contrast/`: three problems in RED, GREEN and on THE's semaphores |
-| `kube/` | The Kubernetes control loop in RED, as a process pair, and in GREEN |
-| `labs/` | Twelve exercises with a checker |
+| `os/` | PAIRS, a Tandem NonStop style kernel in RED; Dijkstra's THE system in RED, BLUE and YELLOW and its semaphore core in GREEN; Kubernetes on top of THE in all four; `contrast/`: three problems in each language and on THE's semaphores |
+| `kube/` | The Kubernetes control loop in RED, as a process pair, and in GREEN, BLUE and YELLOW |
+| `labs/` | Exercises with a checker: twelve on RED, seven on BLUE, eight on YELLOW |
 | `problems/` | The ten DoD contract problems: notes and comparison; `run/` makes 1979 originals runnable |
 | `ada83/` | The same situations in Ada 83, for GNAT `-gnat83` |
 | `notes/` | The RED grammar, a GREEN digest, history, GREEN findings |
