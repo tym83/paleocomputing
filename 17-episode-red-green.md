@@ -9,7 +9,11 @@ not let anyone count, and it disappeared. This episode rebuilds both
 languages from their 1979 documents. Each gets a compiler written in itself
 that reaches a fixed point. On RED there is also a NonStop-style kernel and
 the Kubernetes control loop, with the control plane run as a Tandem process
-pair. There are twelve labs and a comparison with Ada 83. The code is in
+pair. BLUE (SofTech) and YELLOW (SRI International), dropped in 1978, are
+rebuilt the same way from their preliminary designs, each with a compiler
+written in itself, and THE and the Kubernetes loop run in all four languages.
+There are twelve labs on RED, seven on BLUE and eight on YELLOW, and a
+comparison with Ada 83. The code is in
 [`impl/ada-colors/`](impl/ada-colors/); the research notes are in
 [`impl/ada-colors/notes/`](impl/ada-colors/notes/).
 
@@ -40,9 +44,25 @@ The working notes are:
 - [`notes/history.md`](impl/ada-colors/notes/history.md): the competition, people and influence. Every claim there has a source, and each is marked verified or not.
 - [`problems/README.md`](impl/ada-colors/problems/README.md): both teams' solutions to all ten contract problems side by side, with a feature matrix. GREEN's solutions are about twice as long, 1660 against 815 non-comment lines.
 
-Not found: the Blue and Yellow designs. DTIC ADB950587 (4,575 pages, phase 1)
-reportedly contains all four, but it is reachable only from a browser. The
-RED translator itself was not found either.
+The BLUE and YELLOW designs were found in DTIC ADB950587, *DoD Common High
+Order Language, Phase 1: Reports and Analyses* (1978, 4,575 pages, Distribution
+Statement A). DTIC itself refuses the request; the copy comes from the Wayback
+Machine (a snapshot of https://apps.dtic.mil/sti/trecms/pdf/ADB950587.pdf taken
+on 2 September 2023). The preface (p. 16) gives the color key: GREEN is CII
+Honeywell Bull, RED Intermetrics, YELLOW SRI International, BLUE SofTech. The
+volume holds:
+
+| PDF pages | What |
+|---|---|
+| 129–358, 459–543 | GREEN, preliminary design (15 Feb 1978) |
+| 545–975 | RED in its first edition (REDL) |
+| 977–1250 | YELLOW: *Preliminary Design Phase Report and Language Specification* |
+| 1251–1723 | BLUE: *Preliminary Design Phase Report* and *Language Specification* |
+| from ~1724 | Section H: the analyses of some eighty teams |
+| Section I | the Pittsburgh Panel report and statistics of the ratings |
+
+The 1979 final-round reports are not in it. The RED translator itself was not
+found either.
 
 ## One runtime, two languages
 
@@ -251,8 +271,8 @@ they were fixed in the same way as upstream:
 
 ## Labs and comparisons
 
-- [`labs/`](impl/ada-colors/labs/README.md): twelve exercises (look, change,
-  break, build) and `labs/check.sh`, which says whether a task is done.
+- [`labs/`](impl/ada-colors/labs/README.md): twelve exercises on RED, seven on
+  BLUE and eight on YELLOW (look, change, break, build) and `labs/check.sh`, which says whether a task is done.
 - [`problems/run/`](impl/ada-colors/problems/run/): all twenty 1979 contract
   solutions run, ten RED and ten GREEN, plus RED's C.1. Each has a sed file
   with the changes a translator forced, one commented line per change, and an
@@ -271,9 +291,10 @@ they were fixed in the same way as upstream:
   first ready alternative always taken, the operator's DONE starves. RED leaves
   the choice undefined, and the runtime now takes ready alternatives in turn.
 - [`impl/deploy/Containerfile.ada-colors-run`](impl/deploy/Containerfile.ada-colors-run):
-  RED and GREEN for the `langpack` application of the Cozystack catalog. A
-  `.red` or `.grn` source runs as a one-off job; the image build replays both
-  bootstraps and refuses to finish without the fixed points.
+  all four languages for the `langpack` application of the Cozystack catalog.
+  A `.red`, `.grn`, `.blu` or `.yel` source runs as a one-off job; the image
+  build replays all four bootstraps and refuses to finish without the fixed
+  points.
 - [`r1000/`](impl/ada-colors/r1000/README.md): the cost of a rendezvous on
   the Rational R1000, measured in the Rational Environment on DataMuseum.dk's
   emulator by the machine's microcycle count, in CI. A procedure call took
@@ -348,10 +369,66 @@ Writing it found a runtime bug. A task aborted while queued at an entry stayed
 in the queue, and the server later woke a finished task. RM79 9.10 cancels
 such a call, and now so does the runtime.
 
+## BLUE
+
+[`blue/`](impl/ada-colors/blue/README.md): SofTech's language from the
+specification of 15 February 1978. A Python bootstrap, then bluec, a BLUE
+translator written in BLUE, about 9,600 lines; fixed point on the first try.
+The language, with every decision where the document is silent or contradicts
+itself, is in [`blue/notes/blue-digest.md`](impl/ada-colors/blue/notes/blue-digest.md).
+
+- Enumeration literals `\NAME`, parameters `(in # inout # out)`, fixed point
+  with a scale, every operator a function with a fixed name (`ADD_`, `STORE_`),
+  generics with `?T` and implicit instantiation, `WHERE T NEEDS`,
+  machine-dependent parts in `SELECT OBJECT_MACHINE`.
+- `PAR_BLOCK` with paths, and semaphores of two kinds: `SYNCH` (a signal) and
+  `REGION` (a lock released when its path ends abnormally).
+- The 1978 corpus: 17 programs as printed, with the fixes and their reasons
+  ([`blue/corpus/CHANGES.md`](impl/ada-colors/blue/corpus/CHANGES.md)). Seven
+  translate as printed once the elided parts are filled in. Appendix C, the
+  standard I/O library with its device drivers, runs on a simulated PDP-11
+  with two LT33 teletypes.
+- [`os/the.blu`](impl/ada-colors/os/the.blu) prints exactly what `os/the.red`
+  prints: BLUE's semaphores are P and V. In
+  [`os/the_kube_blue.blu`](impl/ada-colors/os/the_kube_blue.blu) the store is
+  guarded by a `REGION` semaphore, so a kubelet can lose power holding it and
+  the control plane goes on.
+- [`kube/kube_blue.blu`](impl/ada-colors/kube/kube_blue.blu): no messages, a
+  queue is a generic module of three semaphores; `REQUEST` has no timeout, so
+  every wait is a race of two paths that terminate each other, as in the 1978
+  evaluators' example (PDF p. 4300). Section 11 of the digest lists what BLUE
+  could not say.
+
+## YELLOW
+
+[`yellow/`](impl/ada-colors/yellow/README.md): SRI International's language,
+Pascal modified to comply with Ironman, from the report of February 1978. A
+Python bootstrap, then yellowc in YELLOW, about 6,000 lines; fixed point on the
+first self-translation. The language is in
+[`yellow/notes/yellow-digest.md`](impl/ada-colors/yellow/notes/yellow-digest.md).
+
+- Modula's modules, monitors and signals with Hoare semantics, types apart
+  from representations, overloading by `EXTENDS` and `REPLACES`, module
+  templates, a non-associative `-`, undeclared exceptions,
+  `PROPAGATE_EXCEPTION` leaving its own block. `≠` is written `#`, `↑` `^`.
+- The 1978 corpus ([`yellow/corpus/CHANGES.md`](impl/ada-colors/yellow/corpus/CHANGES.md)):
+  of fifteen tutorial programs five are accepted as printed, and three of
+  those that translate are wrong when run (convex hull, exchange sort, distance
+  on the example's own data). Plus four YELLOW programs written by the 1978
+  evaluators.
+- THE, Kubernetes on THE, the Kubernetes loop and three contrasts on monitors
+  ([`yellow/notes/yellow-os.md`](impl/ada-colors/yellow/notes/yellow-os.md)):
+  `os/the_kube_yellow.yel` prints what RED prints, byte for byte. Timeouts are
+  watchdog processes; there are no arrays of monitors and no process handles.
+  Readers and a writer on Hoare's monitor: readers overlap and none overtakes a
+  waiting writer.
+- On the way, yellowc got signal arrays in monitors and the module order of
+  X.G right.
+
 ## In the browser
 
-[https://tym83.github.io/paleocomputing/red/](https://tym83.github.io/paleocomputing/red/) runs RED and GREEN with no server. redc and greenc are built
-to WebAssembly from their seeds; the C they produce is compiled by clang and
+[https://tym83.github.io/paleocomputing/red/](https://tym83.github.io/paleocomputing/red/) runs RED, GREEN, BLUE and YELLOW with no server. All four
+translators are built to WebAssembly from their seeds; the C they produce is compiled by clang and
 lld compiled to WebAssembly (`@yowasp/clang`, loaded from jsDelivr) for
 `wasm32-wasip1-threads`, and linked with `rt/paleo.c` and wasi-libc from
 wasi-sdk. Every task is a thread, every thread a worker on one shared memory,
@@ -369,5 +446,10 @@ After `make seed` the page must be rebuilt too: `cd impl/ada-colors/web && npm c
 
 ## Next
 
-- The Blue and Yellow designs, from DTIC ADB950587, downloaded by hand.
-  DTIC was down for maintenance on 12 October 2026.
+- The reviewers' reports on the 1979 final (apparently on microfiche only) and
+  the RED translator itself.
+- BLUE: record and array representations, aliasing and side-effect checks, a
+  RANDOM_FILE device for Appendix C.
+- YELLOW: aliasing rules, modules importing from each other in a circle, a
+  user-defined `:=`.
+- The Kubernetes control plane as a process pair on a real cluster.
