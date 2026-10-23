@@ -7,15 +7,16 @@ fixed point -> grow to the language of the 1978 specification -> tests and 1978 
 ## Current state
 - bluec (~9.6k lines BLUE, blue/bluec/) at its fixed point; seed refreshed; `make genesis`
   reproduces the Python bootstrap step.
-- tests/run.sh: 24 pass. corpus/run.sh: 17 pass, including Appendix C (C-5 .. C-36) on
-  simulated LT33 teletypes (driver segments: PDP_11_LT33 machine, MONITORED_BUFFER_SEG,
-  FILE_SYSTEM_SEG, APPLICATION_CODE).
-- notes/blue-digest.md, corpus/CHANGES.md, README.md, README.ru.md, CI.md written.
-- rt: BLUE additions only (appended); RED fixpoint, RED 5 and GREEN 28 tests pass.
+- tests/run.sh: 25 pass. corpus/run.sh: 17 pass, including Appendix C.
+- Phase 2 (2026-10-23, branch feat/ada-blue-os, not pushed): os/the.blu (prints os/the.out
+  exactly), os/the_kube_blue.blu, kube/kube_blue.blu, os/contrast/{timeout,failure,readers}_blue.blu;
+  os/run.sh runs .blu (23 pass); labs/blue b1..b7 with solutions, check.sh/verify.sh wired
+  (57 ok); notes/blue-digest.md section 11; rt fix: TERMINATE before a path first runs.
 
 ## Next step
 Done for this round. Open: record/array representation clauses, aliasing and
-side-effect checks, a RANDOM_FILE device for Appendix C, the CI job of CI.md.
+side-effect checks, a RANDOM_FILE device for Appendix C; the top-level README's os/ line
+does not mention BLUE yet; web/ toolchain needs a rebuild for the rt fix.
 
 ## Journal
 ### design decisions (before code)
@@ -86,3 +87,24 @@ labs/check.sh, labs/verify.sh wired for .blu.
 - REGION semaphores are released when a path terminates abnormally (3.11.1, J3.11-1).
 - CLOCK is per activation (4.6.5); there is no time of day.
 - A PAR_BLOCK may not be inside a routine (4.6.1).
+### THE in BLUE (2026-10-23)
+- Paths of one PAR_BLOCK started at 0 = THE's processes; CLOCK is then system time.
+- Generic MAILBOXES module (REGION + two SYNCH semaphores) for the queues between levels.
+- Each level's state a module; routines using own variables must be imported: IMPORTS
+  show the hierarchy. Output identical to os/the.out at the first run.
+- A module body has no statements: DRUM_FREE became DRUM_USED (zero default).
+### contrasts, THE/KUBE, KUBE (2026-10-23)
+- Timeout = race GET/TIMER; GET needs the higher priority or a taken token is lost.
+- failure_blue: REGION released at abnormal path end. readers_blue: writer sem must be SYNCH.
+- the_kube_blue: the user TERMINATEs kubelet 2 while it holds STORE (REGION): survives.
+- rt bug found: a path TERMINATEd before it first ran still waited out WAIT / took a free
+  semaphore (term_pending checked only after block()). Fix in rt_b_request/rt_b_wait,
+  test tests/terminate_early.blu. All RED/GREEN/BLUE/YELLOW tests still pass.
+- kube_blue: TERMINATED does not say who sent it; the kubelet reads POWERED.
+- My mistake: BLOCK ... EXCEPT ... END BLOCK attaches the handler to the last statement
+  ([4-80]); handlers moved after END PAR_BLOCK.
+### labs (2026-10-23)
+- b1 enums, b2 ?T generics, b3 IMPORTS, b4 REP/ENUM_VAL_REP + OBJECT_MACHINE, b5 REGION vs
+  SYNCH, b6 THE, b7 race. check.sh: compiler by extension; verify.sh: *.blu solutions.
+- bluec does not translate a manifest-FALSE IF arm, so REPORT_DUMPS=FALSE hides the
+  missing import; lab b6 break uses that (noted in the digest).
