@@ -30,7 +30,7 @@
 (* *)
 (* The paper's claim is that the order of the levels makes the society free of *)
 (* deadlock: no process waits for one above it. Set reportDumps to TRUE (lab *)
-(* Y08) and the segment controller tells the operator about every dump through *)
+(* Y8) and the segment controller tells the operator about every dump through *)
 (* the console: level 1 waits for level 2, which needs level 1 to read its *)
 (* vocabulary. *)
 (* *)

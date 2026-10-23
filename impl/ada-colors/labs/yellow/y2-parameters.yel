@@ -1,0 +1,33 @@
+(* Lab Y2. CONST, VAR and OUT parameters (X.A.2). A CONST parameter is never *)
+(* changed, by anyone. A VAR parameter is the actual itself. An OUT parameter *)
+(* is a local of the routine, copied to the actual only when the routine *)
+(* RETURNs: if it ends by an exception, the actual keeps its old value. *)
+MODULE Parameters
+  IMPORT TextIO, StandardImplementationPrelude;
+  VAR q: INTEGER64 := 0;
+      calls: INTEGER64 := 0;
+
+  PROCEDURE Count (VAR n: INTEGER64)
+    n := n + 1;
+    RETURN
+  ENDPROCEDURE Count;
+
+  PROCEDURE Divide (CONST a, b: INTEGER64; OUT q: INTEGER64)
+    q := -1;                     (* a first answer, in the local copy *)
+    IF b = 0 THEN PROPAGATE_EXCEPTION ZERO_DIVIDE ENDIF;
+    q := a DIV b;
+    RETURN
+  ENDPROCEDURE Divide;
+
+  Divide(7, 2, q);
+  Count(calls);
+  Write("7 DIV 2 = "); Write(q); WriteLn();
+  BEGIN
+    EXCEPTION CASE ZERO_DIVIDE =>
+      Write("7 DIV 0 failed and q was not copied back: q = "); Write(q); WriteLn()
+    ENDEXCEPTION;
+    Count(calls);
+    Divide(7, 0, q)
+  END;
+  Write("calls "); Write(calls); WriteLn()
+ENDMODULE Parameters

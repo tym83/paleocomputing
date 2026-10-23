@@ -1,0 +1,49 @@
+(* Lab Y4. Module templates (X.C-D). A TEMPLATE is not a generic unit that *)
+(* is checked once: an INSTANCE writes the module out again with the actuals *)
+(* in place of the formals, and only then is it translated. Each instance *)
+(* is a new module with its own state, and a mistake in the template shows *)
+(* only when an instance makes it. *)
+MODULE Templates
+  IMPORT TextIO, StandardImplementationPrelude;
+
+  TEMPLATE StackTemplate (size, Item, Stack, Push, Pop, Depth, Largest)
+    MODULE Stack
+      IMPORT Item, INTEGER64;
+      EXPORT Push, Pop, Depth, Largest;
+      VAR items: ARRAY (INTEGER [1..size] OF Item);
+          top: INTEGER64 := 0;
+      PROCEDURE Push (CONST x: Item)
+        top := top + 1;
+        items[top] := x;
+        RETURN
+      ENDPROCEDURE Push;
+      PROCEDURE Pop RETURNS Item ()
+        top := top - 1;
+        RETURN items[top + 1]
+      ENDPROCEDURE Pop;
+      FUNCTION Depth RETURNS INTEGER64 ()
+        RETURN top
+      ENDFUNCTION Depth;
+      FUNCTION Largest RETURNS Item ()
+        VAR m: Item := items[1];
+        FOR i: INTEGER [2..top] DO
+          IF m < items[i] THEN m := items[i] ENDIF
+        ENDFOR;
+        RETURN m
+      ENDFUNCTION Largest
+    ENDMODULE Stack
+  ENDTEMPLATE StackTemplate;
+
+  REPRESENTATION
+    Letter = ASCII ['a'..'z'];
+    Fruit = UNORDERED (Lemon, Lime);
+
+  INSTANCE StackTemplate (10, INTEGER64, IntStack, PushI, PopI, DepthI, LargestI);
+  INSTANCE StackTemplate (3, Letter, CharStack, PushC, PopC, DepthC, LargestC);
+
+  FOR i: INTEGER [1..4] DO PushI((i * 7) MOD 5) ENDFOR;
+  PushC('y'); PushC('z'); PushC('x');
+  Write("largest "); Write(LargestI()); Write(" "); Write(LargestC()); WriteLn();
+  Write("popped "); Write(PopI()); Write(" "); Write(PopC()); WriteLn();
+  Write("depths "); Write(DepthI()); Write(" "); Write(DepthC()); WriteLn()
+ENDMODULE Templates

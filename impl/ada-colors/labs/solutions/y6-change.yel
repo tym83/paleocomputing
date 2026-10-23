@@ -1,0 +1,25 @@
+(* Lab Y6. Pure FUNCTIONs (X.A.1, D-33). A FUNCTION has only CONST *)
+(* parameters and assigns only to its own locals: the same arguments give the *)
+(* same result, wherever it is called. Stricter than Ironman asked. A routine *)
+(* with side effects that gives a value is a PROCEDURE ... RETURNS, and it can *)
+(* be called only inside an expression. *)
+MODULE Functions
+  IMPORT TextIO, StandardImplementationPrelude;
+  VAR calls: INTEGER64 := 0;
+      ticket: INTEGER64 := 0;
+
+  PROCEDURE Square RETURNS INTEGER64 (CONST x: INTEGER64)
+    calls := calls + 1;
+    RETURN x * x
+  ENDPROCEDURE Square;
+
+  (* impure: each call gives the next number *)
+  PROCEDURE NextTicket RETURNS INTEGER64 ()
+    ticket := ticket + 1;
+    RETURN ticket
+  ENDPROCEDURE NextTicket;
+
+  Write("3*3 + 4*4 = "); Write(Square(3) + Square(4)); WriteLn();
+  Write("tickets "); Write(NextTicket()); Write(" "); Write(NextTicket()); WriteLn();
+  Write("calls "); Write(calls); WriteLn()
+ENDMODULE Functions
