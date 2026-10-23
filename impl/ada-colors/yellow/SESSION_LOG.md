@@ -6,14 +6,15 @@ in YELLOW -> fixed point -> grow (modules, templates, overloading, processes/mon
 exceptions, files) -> tests and the 1978 tutorial corpus.
 
 ## Current state
-- Phase 2 (THE, Kubernetes, contrast, labs) in worktree ~/projects/paleo-yellow-os, branch
-  feat/ada-yellow-os (from origin/main). Phase 1 (compiler, tests, corpus) is merged.
-- Phase 2 deliverables: os/the.yel, os/the_kube_yellow.yel, kube/kube_yellow.yel,
-  os/contrast/*_yellow.yel, labs/yellow/ + labs/solutions/*.yel; os/run.sh, labs/check.sh,
-  labs/verify.sh learn .yel. Status: started.
+- Phase 2 done in worktree ~/projects/paleo-yellow-os, branch feat/ada-yellow-os (not pushed).
+- os/the_yellow.yel, os/the_kube_yellow.yel, kube/kube_yellow.yel, os/contrast/*_yellow.yel
+  with .out; os/run.sh runs .yel (23 programs pass). labs/yellow/y1..y8 with solutions;
+  check.sh/verify.sh know them (61 checks pass). notes/yellow-os.md lists what YELLOW
+  could not say. RED/GREEN/YELLOW fixpoints, tests (5/28/29), corpus (40) green.
 
 ## Next step
-Write os/contrast/timeout_yellow.yel first (smallest), then wire os/run.sh.
+Coordinator: merge with the BLUE branch (both edit os/run.sh, labs/check.sh, labs/verify.sh,
+labs/README*); top-level impl/ada-colors/README* still describe os/kube/labs as RED+GREEN.
 
 ## Journal
 ### 2026-10-16 — reading
@@ -55,3 +56,20 @@ Write os/contrast/timeout_yellow.yel first (smallest), then wire os/run.sh.
 ### 2026-10-23 — phase 2 starts
 - New worktree paleo-yellow-os from origin/main; RED/GREEN/YELLOW fixpoints and os/run.sh
   (17) green before any change.
+### 2026-10-23 — contrast, kube, THE, labs
+- Contrast in YELLOW: timeout by a watchdog that SENDs the consumer's signal (the waiter
+  decides), failure (monitor released by the exception, SEMAPHORE not), Hoare's readers and
+  writers monitor. PROPAGATE_EXCEPTION leaves its own block: the failing part needs an inner
+  block for the handler to see it.
+- kube_yellow: API server a monitor, watch streams one monitor template x 8 instances with a
+  SELECT dispatch; clock process for resync ticks; RAISE_PROCESS_TERMINATION for node 2.
+- the_yellow (named so: the.out belongs to the.red): segment controller a monitor, level 3
+  buffers a template, console keeps its process, answers by WAIT rank = ticket. RED's run but
+  for two lines at 90 ms. reportDumps TRUE deadlocks as in RED.
+- the_kube_yellow: store lock = binary SEMAPHORE, wake-ups = template monitors: output is
+  byte-for-byte the RED one.
+- Found: yellowc accepts ARRAY OF SIGNAL but does not bind the components to the monitor
+  (WAIT keeps the monitor: deadlock); yellowc resolves imports in text order, the Report (X.G)
+  does not require it. Both noted in notes/yellow-os.md; compiler not touched.
+- Labs y1..y8 (operators, parameters, enumerations, templates, monitor, functions, modules,
+  THE); check.sh gives yellowc's line numbers in the lab's file.
