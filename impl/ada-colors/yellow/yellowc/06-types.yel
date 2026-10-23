@@ -53,6 +53,13 @@
     RETURN (r^.kind = R_RECORD) AND r^.deep
   ENDPROCEDURE Deep;
 
+  (* an array whose components are signals, at any depth *)
+  PROCEDURE HoldsSignal RETURNS BOOLEAN (CONST r: Rep)
+    IF r^.kind # R_ARRAY THEN RETURN FALSE ENDIF;
+    IF r^.elem^.kind = R_SIGNAL THEN RETURN TRUE ENDIF;
+    RETURN HoldsSignal(r^.elem)
+  ENDPROCEDURE HoldsSignal;
+
   (* the C type of a value *)
   PROCEDURE CType RETURNS Txt (CONST r: Rep)
     VAR k: INT := r^.kind;
@@ -84,6 +91,7 @@
       RETURN SE()
     ENDIF;
     IF k = R_STR THEN RETURN T("&y_d_str") ENDIF;
+    IF k = R_SIGNAL THEN RETURN T("&y_d_sig") ENDIF;
     RETURN T("&y_d_opaque")
   ENDPROCEDURE DescOf;
 

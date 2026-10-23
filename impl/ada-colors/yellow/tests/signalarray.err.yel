@@ -1,0 +1,6 @@
+MODULE SignalArray
+  MONITOR M
+    VAR a, b: ARRAY (INTEGER [1..2] OF SIGNAL);
+    a := b
+  ENDMONITOR M
+ENDMODULE SignalArray

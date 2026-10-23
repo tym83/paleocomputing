@@ -121,7 +121,7 @@
       ELSIF attr # 0 THEN
         FailS(it^.line, "an attribute is for a type, a representation or a variable")
       ENDIF;
-      IF (m^.kind = S_VAR) AND (m^.rep^.kind = R_SIGNAL) THEN
+      IF (m^.kind = S_VAR) AND ((m^.rep^.kind = R_SIGNAL) OR HoldsSignal(m^.rep)) THEN
         FailS(it^.line, "a signal may not be exported from its monitor (X.E.4)")
       ENDIF
     ELSIF (m^.kind = S_REP) OR (m^.kind = S_TYPE) THEN
@@ -463,6 +463,28 @@
     Emit(Join(T("y_sig_init(&"), SymPath(s), Join(T(", "), MonitorPath(CurMonitor), T(");"))));
     RETURN
   ENDPROCEDURE DeclareSignal;
+
+  (* an array of signals (VI.A.1.d puts no limit on them): every component *)
+  (* is tied to the monitor, so that a WAIT on one lets the monitor go *)
+  PROCEDURE DeclareSignalArray (CONST s: Sym; CONST line: INT)
+    VAR t: Txt;
+    IF CurMonitor = Sym NIL THEN FailS(line, "signal variables are declared in a monitor (X.E.4)") ENDIF;
+    SB();
+    SA("{ rt_int yk, yn = y_count(");
+    ST(SymPath(s));
+    SA(", ");
+    SI(s^.rep^.nidx);
+    SA("); for (yk = 0; yk < yn; yk++) y_sig_init((ysig *)y_elem_at(");
+    ST(SymPath(s));
+    SA(", ");
+    ST(DescOf(s^.rep));
+    SA(", yk), ");
+    ST(MonitorPath(CurMonitor));
+    SA("); }");
+    t := SE();
+    Emit(t);
+    RETURN
+  ENDPROCEDURE DeclareSignalArray;
 
   (* a device signal (XIV.VII): the device at that location sends it. The *)
   (* runtime simulates the PDP-11 line clock at vector 100 (octal), which *)
