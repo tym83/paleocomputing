@@ -12,25 +12,23 @@ MAIN SEGMENT FAILURE_BLUE
 % goes on keeps its REGION semaphores too (lab B5).
 VAR MUTEX: SEMAPHORE (REGION) := NEW (1);
 VAR BALANCE: INTEGER := 100;
-BLOCK
-   PAR_BLOCK
-      PATH WORKER FOR ID IN [1:2] SIGNALS (FAILED) IMPORTS (DATA: (# MUTEX, BALANCE));
-         PAUSE (ID);
-         REQUEST (# MUTEX);
-         LOG ('worker ' !! TO_CHAR (ID) !! ' holds the semaphore');
-         PAUSE (5);
-         IF ID = 1 THEN
-            LOG ('worker 1 fails holding it');
-            SIGNAL FAILED;
-         END IF;
-         BALANCE := BALANCE + 10;
-         RELEASE (# MUTEX);
-      END PATH WORKER;
-   END PAR_BLOCK;
+PAR_BLOCK
+   PATH WORKER FOR ID IN [1:2] SIGNALS (FAILED) IMPORTS (DATA: (# MUTEX, BALANCE));
+      PAUSE (ID);
+      REQUEST (# MUTEX);
+      LOG ('worker ' !! TO_CHAR (ID) !! ' holds the semaphore');
+      PAUSE (5);
+      IF ID = 1 THEN
+         LOG ('worker 1 fails holding it');
+         SIGNAL FAILED;
+      END IF;
+      BALANCE := BALANCE + 10;
+      RELEASE (# MUTEX);
+   END PATH WORKER;
+END PAR_BLOCK;
 EXCEPT
    FAILED --> LOG ('the block signals FAILED: worker 1 ended abnormally'); END;
 END EXCEPT;
-END BLOCK;
 LOG ('both workers are through, balance ' !! TO_CHAR (BALANCE)
      !! ': the path''s end released its REGION semaphore');
 

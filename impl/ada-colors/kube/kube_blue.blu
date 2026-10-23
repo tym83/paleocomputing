@@ -80,22 +80,20 @@ PAR_BLOCK
       END SELECT;
       LOOP
          GOT := FALSE;
-         BLOCK
-            PAR_BLOCK
-               PATH GET PRIORITY 1 IMPORTS (DATA: (# PORTS, M, GOT));
-                  RECEIVE (# PORTS (ME) # M);
-                  GOT := TRUE;
-                  TERMINATE (TIMER);
-               END PATH GET;
-               PATH TIMER IMPORTS (DATA: (PERIOD));
-                  PAUSE (PERIOD);
-                  TERMINATE (GET);
-               END PATH TIMER;
-            END PAR_BLOCK;
+         PAR_BLOCK
+            PATH GET PRIORITY 1 IMPORTS (DATA: (# PORTS, M, GOT));
+               RECEIVE (# PORTS (ME) # M);
+               GOT := TRUE;
+               TERMINATE (TIMER);
+            END PATH GET;
+            PATH TIMER IMPORTS (DATA: (PERIOD));
+               PAUSE (PERIOD);
+               TERMINATE (GET);
+            END PATH TIMER;
+         END PAR_BLOCK;
          EXCEPT
             TERMINATED --> END;                  % the loser of the race
          END EXCEPT;
-         END BLOCK;
          SELECT ME FROM
             P_DEPLOY -->
                IF GOT THEN ABSORB (M # C # FRESH); END IF;
@@ -138,18 +136,17 @@ PAR_BLOCK
       WATCH (ME, \POD);
       LOOP
          GOT := FALSE;
-         BLOCK
-            PAR_BLOCK
-               PATH GET PRIORITY 1 IMPORTS (DATA: (# PORTS, M, GOT));
-                  RECEIVE (# PORTS (ME) # M);
-                  GOT := TRUE;
-                  TERMINATE (TIMER);
-               END PATH GET;
-               PATH TIMER;
-                  PAUSE (10);
-                  TERMINATE (GET);
-               END PATH TIMER;
-            END PAR_BLOCK;
+         PAR_BLOCK
+            PATH GET PRIORITY 1 IMPORTS (DATA: (# PORTS, M, GOT));
+               RECEIVE (# PORTS (ME) # M);
+               GOT := TRUE;
+               TERMINATE (TIMER);
+            END PATH GET;
+            PATH TIMER;
+               PAUSE (10);
+               TERMINATE (GET);
+            END PATH TIMER;
+         END PAR_BLOCK;
          EXCEPT
             % the loser of the race, or the power cut: a TERMINATED does not
             % say who sent it, so the user leaves a note before sending it
@@ -159,7 +156,6 @@ PAR_BLOCK
                END IF;
             END;
          END EXCEPT;
-         END BLOCK;
          IF GOT THEN
             ABSORB (M # C # FRESH);
          ELSE

@@ -26,22 +26,20 @@ PAR_BLOCK
    PATH CONSUMER IMPORTS (DATA: (# BOX, X, GOT));
       LOOP
          GOT := FALSE;
-         BLOCK
-            PAR_BLOCK
-               PATH GET PRIORITY 1 IMPORTS (DATA: (# BOX, X, GOT));
-                  RECEIVE (# BOX # X);
-                  GOT := TRUE;
-                  TERMINATE (TIMER);
-               END PATH GET;
-               PATH TIMER;
-                  PAUSE (30);
-                  TERMINATE (GET);
-               END PATH TIMER;
-            END PAR_BLOCK;
+         PAR_BLOCK
+            PATH GET PRIORITY 1 IMPORTS (DATA: (# BOX, X, GOT));
+               RECEIVE (# BOX # X);
+               GOT := TRUE;
+               TERMINATE (TIMER);
+            END PATH GET;
+            PATH TIMER;
+               PAUSE (30);
+               TERMINATE (GET);
+            END PATH TIMER;
+         END PAR_BLOCK;
          EXCEPT
             TERMINATED --> END;                  % the loser of the race
          END EXCEPT;
-         END BLOCK;
          IF NOT GOT THEN
             LOG ('no item for 30 ms: a racing path terminated the waiting one');
             STOP (0);
