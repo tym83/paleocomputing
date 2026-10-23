@@ -1,6 +1,6 @@
 [English version](README.md)
 
-# RED и GREEN
+# RED, GREEN, BLUE и YELLOW
 
 Два финалиста конкурса языков DoD-1 Министерства обороны США 1979 года,
 собранные заново по их документам. GREEN победил и стал Адой, RED (Intermetrics)

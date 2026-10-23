@@ -2,7 +2,7 @@
 
 At the end of each part of the series I ask myself what's worth carrying over from what I found into today's infrastructure. This time there turned out to be a surprising number of such things.
 
-First, keeping mechanisms separate. Messages for communication, locks for shared data, and neither pretends to be the other. Ada spent sixteen years arriving at the same place, and in the Kubernetes world we constantly see people trying to cover everything with one mechanism: a queue used as a database, or a database used as a queue. The Red team understood perfectly well in 1979 why that won't do.
+First, keeping mechanisms separate. Messages for communication, locks for shared data, and neither pretends to be the other. Ada spent sixteen years arriving at the same place, and in the Kubernetes world we constantly see people trying to cover everything with one mechanism: a queue used as a database, or a database used as a queue. The Red team understood perfectly well in 1979 why that won't do. And the Blue and Yellow designs, which had a single mechanism each, semaphores or monitors, showed the other side: without messages and without a timed wait, every timeout becomes a separate watchdog process or a race of two paths.
 
 Second, explicit interfaces to state. `IMPORTS` in RED annoyed me at first and then started helping me read and check my own code, even though in the compiler itself the most honest thing turned out to be writing `IMPORTS ALL` in most procedures. In infrastructure code, where controllers, operators and hooks all touch the same store, a list like that would be priceless, and in places it's effectively already being introduced through access rights and field-level restrictions.
 
@@ -12,6 +12,6 @@ Fourth, deterministic time. Almost everything interesting in this article was fo
 
 And fifth, not technical at all. Studying the losers is useful not out of nostalgia but so that you know in advance which ideas will come back, and don't pay for them a second time.
 
-What's next. The Blue and Yellow designs are apparently in that 4575-page DTIC volume, and I'll download it from a browser as soon as the DTIC site comes back from maintenance.
+What's next. The reviewers' reports on the 1979 final, which decided between Red and Green, apparently still exist only on microfiche, and Red's translator never turned up. If you have access to either, let me know.
 
 The sources, tests, labs and all the notes are in the repository [github.com/tym83/paleocomputing](https://github.com/tym83/paleocomputing), under `impl/ada-colors`. If you find a mistake in my reading of the 1979 manuals, let me know; I'm genuinely curious.
