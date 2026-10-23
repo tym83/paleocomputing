@@ -1,12 +1,14 @@
 #!/bin/sh
-# Translate and run every RED and GREEN program in os/ and kube/; compare with .out
+# Translate and run every RED, GREEN and YELLOW program in os/ and kube/; compare with .out
 set -u
 cd "$(dirname "$0")/.."
 pass=0; failn=0; tmp=$(mktemp -d)
 [ -x green/build/greenc ] || make -s -C green fixpoint > /dev/null
-for src in os/*.red os/*.grn os/contrast/*.red os/contrast/*.grn kube/*.red kube/*.grn; do
+[ -x yellow/build/yellowc ] || make -s -C yellow fixpoint > /dev/null
+yellowc() { cat yellow/lib/prelude.yel - | yellow/build/yellowc; }   # after the prelude
+for src in os/*.red os/*.grn os/contrast/*.red os/contrast/*.grn kube/*.red kube/*.grn os/*.yel os/contrast/*.yel kube/*.yel; do
   [ -f "$src" ] || continue
-  case "$src" in *.grn) cc=green/build/greenc; name=$(basename "$src" .grn)g;; *) cc=build/redc; name=$(basename "$src" .red);; esac
+  case "$src" in *.yel) cc=yellowc; name=$(basename "$src" .yel)y;; *.grn) cc=green/build/greenc; name=$(basename "$src" .grn)g;; *) cc=build/redc; name=$(basename "$src" .red);; esac
   exp="${src%.*}.out"
   $cc < "$src" > "$tmp/$name.c" || { echo "FAIL $src: $(tail -1 "$tmp/$name.c")"; failn=$((failn+1)); continue; }
   ${CC:-cc} -std=gnu11 -O1 -w -Irt "$tmp/$name.c" rt/paleo.c -o "$tmp/$name" -lpthread -lm || { echo "FAIL $src: C"; failn=$((failn+1)); continue; }

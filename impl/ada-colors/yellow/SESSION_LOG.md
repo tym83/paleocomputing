@@ -6,17 +6,14 @@ in YELLOW -> fixed point -> grow (modules, templates, overloading, processes/mon
 exceptions, files) -> tests and the 1978 tutorial corpus.
 
 ## Current state
-- Worktree ~/projects/paleo-yellow, branch feat/ada-yellow; area impl/ada-colors/yellow/.
-- yellowc (~6k lines of YELLOW) at its fixed point; seed refreshed; `make genesis` reproduces.
-- tests/run.sh: 29 pass (incl. 11 rejection tests). corpus/run.sh: 40 checks pass
-  (15 Part Three programs, 2 of Parts Two/Four, 4 of the evaluators of Section H).
-- Docs: README.md/.ru.md, notes/yellow-digest.md, corpus/CHANGES.md, CI.md (job for the
-  coordinator to integrate).
-- rt additions appended under `YELLOW additions`; RED, GREEN, os/kube, labs still pass.
+- Phase 2 (THE, Kubernetes, contrast, labs) in worktree ~/projects/paleo-yellow-os, branch
+  feat/ada-yellow-os (from origin/main). Phase 1 (compiler, tests, corpus) is merged.
+- Phase 2 deliverables: os/the.yel, os/the_kube_yellow.yel, kube/kube_yellow.yel,
+  os/contrast/*_yellow.yel, labs/yellow/ + labs/solutions/*.yel; os/run.sh, labs/check.sh,
+  labs/verify.sh learn .yel. Status: started.
 
 ## Next step
-Later phases: THE/Kubernetes ports (os/, kube/), labs, wasm build, langpack, article.
-Known gaps: aliasing rules, process life-scope rule, transitive purity, redefined :=.
+Write os/contrast/timeout_yellow.yel first (smallest), then wire os/run.sh.
 
 ## Journal
 ### 2026-10-16 — reading
@@ -55,3 +52,6 @@ Known gaps: aliasing rules, process life-scope rule, transitive purity, redefine
 - LABEL/GOTO, FUNCTION purity, export of the standard := = # with opaque types (D-33),
   user-defined ^ (p.1137), strict VI.A.3 for characters and strings.
 - The evaluators' YELLOW (Section H, team 126-02) added to the corpus; they write => too.
+### 2026-10-23 — phase 2 starts
+- New worktree paleo-yellow-os from origin/main; RED/GREEN/YELLOW fixpoints and os/run.sh
+  (17) green before any change.

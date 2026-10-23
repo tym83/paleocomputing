@@ -1,0 +1,7 @@
+[1 ms] worker 1 holds the monitor
+[6 ms] worker 1 failed inside the monitor
+[6 ms] worker 2 holds the monitor
+[11 ms] both workers are through, balance 110: leaving the monitor by an exception gave it up
+[11 ms] worker 3 claimed the semaphore
+[16 ms] worker 3 failed between CLAIM and RELEASE
+[112 ms] worker 4 asked 100 times: no exception gives a semaphore back

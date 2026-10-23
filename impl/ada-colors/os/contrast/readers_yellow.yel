@@ -1,0 +1,81 @@
+(* Contrast 3, readers and a writer, in YELLOW (SRI International, 1978). *)
+(* The monitor of Hoare's "Monitors: an operating system structuring *)
+(* concept" (CACM 1974), which YELLOW's SEND and WAIT follow: the monitor does *)
+(* not hold the data, it holds the permission. Readers read together outside *)
+(* it; a reader who comes while a writer waits (AWAITED) goes behind the *)
+(* writer, and a writer that finishes lets the waiting readers in first. *)
+(* Readers come at 0, 1 and 3 ms, the writer at 2 ms; a read or a write takes *)
+(* 10 ms. *)
+MODULE ReadersYellow
+  IMPORT TextIO, StandardImplementationPrelude;
+
+  PROCEDURE Stamp ()
+    Write("["); Write(CLOCK_TIME()); Write(" ms] ");
+    RETURN
+  ENDPROCEDURE Stamp;
+
+  MONITOR ReadersAndWriters
+    IMPORT INTEGER64;
+    EXPORT StartRead, EndRead, StartWrite, EndWrite;
+    VAR readers: INTEGER64 := 0;
+        busy: BOOLEAN := FALSE;
+        okToRead, okToWrite: SIGNAL;
+
+    PROCEDURE StartRead ()
+      IF busy OR AWAITED(okToWrite) THEN WAIT(okToRead) ENDIF;
+      readers := readers + 1;
+      SEND(okToRead);                    (* the next waiting reader, if any *)
+      RETURN
+    ENDPROCEDURE StartRead;
+
+    PROCEDURE EndRead ()
+      readers := readers - 1;
+      IF readers = 0 THEN SEND(okToWrite) ENDIF;
+      RETURN
+    ENDPROCEDURE EndRead;
+
+    PROCEDURE StartWrite ()
+      IF busy OR (readers # 0) THEN WAIT(okToWrite) ENDIF;
+      busy := TRUE;
+      RETURN
+    ENDPROCEDURE StartWrite;
+
+    PROCEDURE EndWrite ()
+      busy := FALSE;
+      IF AWAITED(okToRead) THEN SEND(okToRead) ELSE SEND(okToWrite) ENDIF;
+      RETURN
+    ENDPROCEDURE EndWrite
+  ENDMONITOR ReadersAndWriters;
+
+  VAR value: INTEGER64 := 0;
+
+  BEGIN
+    PROCESS Reader (CONST id, at: INTEGER64)
+      VAR seen: INTEGER64;
+      DELAY(at);
+      StartRead();
+      seen := value;
+      DELAY(10);
+      EndRead();
+      Stamp(); Write("reader "); Write(id); Write(" read "); Write(seen); WriteLn();
+      TERMINATE_PROCESS
+    ENDPROCESS Reader;
+
+    PROCESS Writer (CONST at: INTEGER64)
+      DELAY(at);
+      StartWrite();
+      DELAY(10);
+      value := 1;
+      EndWrite();
+      Stamp(); Write("writer wrote 1"); WriteLn();
+      TERMINATE_PROCESS
+    ENDPROCESS Writer;
+
+    Reader(1, 0);
+    Reader(2, 1);
+    Writer(2);
+    Reader(3, 3)
+  END;
+  Stamp(); Write("all done: readers overlapped, and reader 3 waited behind the waiting writer");
+  WriteLn()
+ENDMODULE ReadersYellow
