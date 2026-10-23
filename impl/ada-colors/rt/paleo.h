@@ -443,5 +443,6 @@ extern int Y_X_FIXED, Y_X_ZERO_DENOM, Y_X_NO_RETURN;
 const ydesc *y_desc_vector(const ydesc *elem);
 void y_device(ysig *s, rt_int address);   /* a SIGNAL AT a device location */
 extern const ydesc y_d_str;
+extern const ydesc y_d_sig;                  /* a SIGNAL as an array component */
 
 #endif

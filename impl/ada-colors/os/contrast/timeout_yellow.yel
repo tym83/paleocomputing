@@ -1,0 +1,94 @@
+(* Contrast 1, timeouts, in YELLOW (SRI International, 1978). The same silent *)
+(* producer. WAIT on a signal has no timeout either, but a waiter in a monitor *)
+(* can be woken without its condition being true: a watchdog process looks *)
+(* at the clock every 5 ms and, when the buffer has been quiet for 30 ms, *)
+(* SENDs the signal the consumer waits on. With Hoare's rule the consumer *)
+(* gets the monitor at once, finds the buffer still empty and decides itself *)
+(* to give up. No item is fabricated: the timeout is a wake-up, not a value. *)
+MODULE TimeoutYellow
+  IMPORT TextIO, StandardImplementationPrelude;
+
+  PROCEDURE Stamp ()
+    Write("["); Write(CLOCK_TIME()); Write(" ms] ");
+    RETURN
+  ENDPROCEDURE Stamp;
+
+  MONITOR Buffer
+    IMPORT INTEGER64;
+    EXPORT Put, Take, Watch;
+    VAR slots: ARRAY (INTEGER [0..3] OF INTEGER64);
+        count, inp, outp: INTEGER64 := 0;
+        lastPut: INTEGER64 := 0;
+        nonfull, nonempty: SIGNAL;
+
+    PROCEDURE Put (CONST v: INTEGER64)
+      IF count = 4 THEN WAIT(nonfull) ENDIF;
+      slots[inp] := v;
+      inp := (inp + 1) MOD 4;
+      count := count + 1;
+      lastPut := CLOCK_TIME();
+      SEND(nonempty);
+      RETURN
+    ENDPROCEDURE Put;
+
+    (* an item, or FALSE when the watchdog woke the consumer with none *)
+    PROCEDURE Take (OUT v: INTEGER64; OUT ok: BOOLEAN)
+      IF count = 0 THEN WAIT(nonempty) ENDIF;
+      IF count = 0 THEN
+        v := 0; ok := FALSE;
+        RETURN
+      ENDIF;
+      v := slots[outp];
+      outp := (outp + 1) MOD 4;
+      count := count - 1;
+      ok := TRUE;
+      SEND(nonfull);
+      RETURN
+    ENDPROCEDURE Take;
+
+    (* the watchdog's look: TRUE when it has woken a waiter *)
+    PROCEDURE Watch RETURNS BOOLEAN (CONST quiet: INTEGER64)
+      IF (count = 0) AND AWAITED(nonempty) AND ((CLOCK_TIME() - lastPut) >= quiet) THEN
+        SEND(nonempty);
+        RETURN TRUE
+      ENDIF;
+      RETURN FALSE
+    ENDPROCEDURE Watch
+  ENDMONITOR Buffer;
+
+  VAR x: INTEGER64;
+      ok, going: BOOLEAN := TRUE;
+
+  BEGIN
+    PROCESS Producer ()
+      FOR i: INTEGER [1..2] DO
+        DELAY(10);
+        Put(i)
+      ENDFOR;
+      TERMINATE_PROCESS
+    ENDPROCESS Producer;
+
+    PROCESS Watchdog ()
+      VAR fired: BOOLEAN := FALSE;
+      WHILE NOT fired DO
+        DELAY(5);
+        fired := Watch(30)
+      ENDWHILE;
+      TERMINATE_PROCESS
+    ENDPROCESS Watchdog;
+
+    Producer();
+    Watchdog();
+    WHILE going DO
+      Take(x, ok);
+      Stamp();
+      IF ok THEN
+        Write("got item "); Write(x)
+      ELSE
+        Write("no item for 30 ms: the watchdog woke the consumer, who gave up itself");
+        going := FALSE
+      ENDIF;
+      WriteLn()
+    ENDWHILE
+  END
+ENDMODULE TimeoutYellow

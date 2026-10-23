@@ -1,0 +1,454 @@
+(* THE/KUBE in YELLOW: the Kubernetes control loop of kube/kube_yellow.yel, *)
+(* rebuilt as user programs (level 4) on top of Dijkstra's THE system as *)
+(* os/the_yellow.yel builds it, the way os/the_kube.red does in RED. *)
+(* *)
+(* The controllers use only what THE gives its user programs: the store is *)
+(* segments (whose pages the segment controller moves between core and drum), *)
+(* guarded by one lock; the console through the message interpreter; the *)
+(* clock. They do not call the API monitor of kube/kube_yellow.yel; there is *)
+(* none. What it looks like in YELLOW: *)
+(*   - the store's lock is YELLOW's binary SEMAPHORE (XIV.XI.1): CLAIM and *)
+(*     RELEASE, THE's P and V on a mutex; *)
+(*   - a watch is a wake-up per controller that saturates at one: a monitor *)
+(*     with a flag and a SIGNAL, from one TEMPLATE, six instances picked by a *)
+(*     SELECT (one monitor with an array of signals would do as well). A *)
+(*     wake says "look again", never "this changed": the controllers are *)
+(*     level-triggered by construction; *)
+(*   - WAIT has no timeout and a process waits on one signal at a time, so the *)
+(*     resync, the heartbeats and the node controller's lease check come from *)
+(*     a clock process that wakes everyone every 10 ms, and the operator's *)
+(*     command reaches the deployment controller through its wake-up, with *)
+(*     the command left in a segment; *)
+(*   - a node that dies just stops. It must not die holding the store's *)
+(*     semaphore: an exception does not RELEASE it (os/contrast/failure_yellow), *)
+(*     so power is cut between two passes of the kubelet's loop. *)
+(* Levels 0-2 are those of os/the_yellow.yel, condensed. Time is virtual (ms). *)
+MODULE TheKubeYellow
+  IMPORT TextIO, StandardImplementationPrelude;
+
+  PROCEDURE Stamp ()
+    Write("["); Write(CLOCK_TIME()); Write(" ms] ");
+    RETURN
+  ENDPROCEDURE Stamp;
+
+  CONST
+    pInterp: INTEGER64 = 1;
+    pDeploy: INTEGER64 = 2;
+    pSched: INTEGER64 = 3;
+    pNodes: INTEGER64 = 4;
+    pKubelet: INTEGER64 = 5;    (* kubelets 5, 6, 7 *)
+    nnodes: INTEGER64 = 3;
+    npods: INTEGER64 = 8;
+    msgLost: INTEGER64 = 1;
+    keyStop: INTEGER64 = 0;
+
+  VAR stopping: BOOLEAN := FALSE;
+      store: SEMAPHORE;          (* the store: one writer at a time *)
+      powered: ARRAY (INTEGER [1..3] OF BOOLEAN);
+
+  (* ==== level 0: wake-ups and the clock ======================================== *)
+  TEMPLATE WakeTemplate (Wake, AwaitW, PokeW)
+    MONITOR Wake
+      EXPORT AwaitW, PokeW;
+      VAR pending: BOOLEAN := FALSE;
+          poked: SIGNAL;
+      PROCEDURE AwaitW ()
+        IF NOT pending THEN WAIT(poked) ENDIF;
+        pending := FALSE;
+        RETURN
+      ENDPROCEDURE AwaitW;
+      (* V on a wake-up: its value saturates at one *)
+      PROCEDURE PokeW ()
+        pending := TRUE;
+        SEND(poked);
+        RETURN
+      ENDPROCEDURE PokeW
+    ENDMONITOR Wake
+  ENDTEMPLATE WakeTemplate;
+
+  INSTANCE WakeTemplate (WakeDeploy, Await2, Poke2);
+  INSTANCE WakeTemplate (WakeSched, Await3, Poke3);
+  INSTANCE WakeTemplate (WakeNodes, Await4, Poke4);
+  INSTANCE WakeTemplate (WakeKubelet1, Await5, Poke5);
+  INSTANCE WakeTemplate (WakeKubelet2, Await6, Poke6);
+  INSTANCE WakeTemplate (WakeKubelet3, Await7, Poke7);
+
+  PROCEDURE Wake (CONST p: INTEGER64)
+    SELECT p
+      CASE 2 => Poke2()
+      CASE 3 => Poke3()
+      CASE 4 => Poke4()
+      CASE 5 => Poke5()
+      CASE 6 => Poke6()
+      CASE 7 => Poke7()
+    ENDSELECT;
+    RETURN
+  ENDPROCEDURE Wake;
+
+  PROCEDURE Await (CONST p: INTEGER64)
+    SELECT p
+      CASE 2 => Await2()
+      CASE 3 => Await3()
+      CASE 4 => Await4()
+      CASE 5 => Await5()
+      CASE 6 => Await6()
+      CASE 7 => Await7()
+    ENDSELECT;
+    RETURN
+  ENDPROCEDURE Await;
+
+  PROCEDURE WakeAll ()
+    FOR p: INTEGER [pDeploy..(pKubelet + nnodes) - 1] DO Wake(p) ENDFOR;
+    RETURN
+  ENDPROCEDURE WakeAll;
+
+  (* the console's mailbox, as in os/the_yellow.yel *)
+  MONITOR Console
+    IMPORT INTEGER64;
+    EXPORT Say, Press, Take, Answer;
+    REPRESENTATION Conv = RECORD VAR who, m, v: INTEGER64 ENDRECORD;
+    VAR queue: ARRAY (INTEGER [0..15] OF Conv);
+        head, count, tickets: INTEGER64 := 0;
+        work, answered: SIGNAL;
+    PROCEDURE Put (CONST who, m, v: INTEGER64)
+      queue[(head + count) MOD 16] := Conv(who, m, v);
+      count := count + 1;
+      SEND(work);
+      RETURN
+    ENDPROCEDURE Put;
+    PROCEDURE Say (CONST who, m, arg: INTEGER64)
+      VAR ticket: INTEGER64;
+      tickets := tickets + 1;
+      ticket := tickets;
+      Put(who, m, arg);
+      WAIT(answered, ticket);
+      RETURN
+    ENDPROCEDURE Say;
+    PROCEDURE Press (CONST k: INTEGER64)
+      Put(0, k, 0);
+      RETURN
+    ENDPROCEDURE Press;
+    PROCEDURE Take (OUT who, m, v: INTEGER64)
+      IF count = 0 THEN WAIT(work) ENDIF;
+      who := queue[head].who;
+      m := queue[head].m;
+      v := queue[head].v;
+      head := (head + 1) MOD 16;
+      count := count - 1;
+      RETURN
+    ENDPROCEDURE Take;
+    PROCEDURE Answer ()
+      SEND(answered);
+      RETURN
+    ENDPROCEDURE Answer
+  ENDMONITOR Console;
+
+  (* ==== level 1: the segment controller ======================================= *)
+  CONST
+    ncore: INTEGER64 = 3;
+    ndrum: INTEGER64 = 8;
+    nseg: INTEGER64 = 4;
+    words: INTEGER64 = 8;
+    rev: INTEGER64 = 40;
+    segVocab: INTEGER64 = 1;
+    segCluster: INTEGER64 = 2;  (* 1 desired replicas, 2 operator's command, 3-5 heartbeats, 6-8 node ready *)
+    segPods: INTEGER64 = 3;     (* pod i: 0 none, -1 pending, n bound to node n *)
+    segRunning: INTEGER64 = 4;  (* pod i: 1 when its kubelet started it *)
+
+  MONITOR Segments
+    IMPORT INTEGER64, ncore, ndrum, nseg, words, rev;
+    EXPORT SegRead, SegWrite, Transfers;
+    VAR segWhere: ARRAY (INTEGER [1..nseg] OF INTEGER64);
+        coreSeg: ARRAY (INTEGER [1..ncore] OF INTEGER64);
+        coreWord: ARRAY (INTEGER [1..ncore * words] OF INTEGER64);
+        drumFree: ARRAY (INTEGER [1..ndrum] OF BOOLEAN);
+        drumWord: ARRAY (INTEGER [1..ndrum * words] OF INTEGER64);
+        nextVictim: INTEGER64 := 1;
+        transfers: INTEGER64 := 0;
+
+    FUNCTION Latency RETURNS INTEGER64 (CONST d: INTEGER64)
+      RETURN ((((d - 1) * (rev DIV ndrum)) - (CLOCK_TIME() MOD rev)) + (2 * rev)) MOD rev
+    ENDFUNCTION Latency;
+
+    PROCEDURE Present (CONST s: INTEGER64; OUT c: INTEGER64)
+      VAR d, best, page: INTEGER64;
+      IF segWhere[s] > 0 THEN
+        c := segWhere[s];
+        RETURN
+      ENDIF;
+      page := 0;
+      FOR i: INTEGER [1..ncore] DO
+        IF (page = 0) AND (coreSeg[i] = 0) THEN page := i ENDIF
+      ENDFOR;
+      IF page = 0 THEN
+        page := nextVictim;
+        nextVictim := (nextVictim MOD ncore) + 1;
+        best := 0;
+        FOR k: INTEGER [1..ndrum] DO
+          IF drumFree[k] THEN
+            IF best = 0 THEN best := k
+            ELSIF Latency(k) < Latency(best) THEN best := k
+            ENDIF
+          ENDIF
+        ENDFOR;
+        DELAY(Latency(best) + (rev DIV ndrum));
+        transfers := transfers + 1;
+        FOR i: INTEGER [1..words] DO
+          drumWord[((best - 1) * words) + i] := coreWord[((page - 1) * words) + i]
+        ENDFOR;
+        drumFree[best] := FALSE;
+        segWhere[coreSeg[page]] := -best
+      ENDIF;
+      IF segWhere[s] < 0 THEN
+        d := -segWhere[s];
+        DELAY(Latency(d) + (rev DIV ndrum));
+        transfers := transfers + 1;
+        FOR i: INTEGER [1..words] DO
+          coreWord[((page - 1) * words) + i] := drumWord[((d - 1) * words) + i]
+        ENDFOR;
+        drumFree[d] := TRUE
+      ELSE
+        FOR i: INTEGER [1..words] DO coreWord[((page - 1) * words) + i] := 0 ENDFOR
+      ENDIF;
+      coreSeg[page] := s;
+      segWhere[s] := page;
+      c := page;
+      RETURN
+    ENDPROCEDURE Present;
+
+    PROCEDURE SegRead RETURNS INTEGER64 (CONST seg, off: INTEGER64)
+      VAR c: INTEGER64;
+      Present(seg, c);
+      RETURN coreWord[((c - 1) * words) + off]
+    ENDPROCEDURE SegRead;
+
+    PROCEDURE SegWrite (CONST seg, off, val: INTEGER64)
+      VAR c: INTEGER64;
+      Present(seg, c);
+      coreWord[((c - 1) * words) + off] := val;
+      RETURN
+    ENDPROCEDURE SegWrite;
+
+    PROCEDURE Transfers RETURNS INTEGER64 () RETURN transfers ENDPROCEDURE Transfers;
+
+    FOR i: INTEGER [1..nseg] DO segWhere[i] := 0 ENDFOR;
+    FOR c: INTEGER [1..ncore] DO coreSeg[c] := 0 ENDFOR;
+    FOR d: INTEGER [1..ndrum] DO drumFree[d] := TRUE ENDFOR
+  ENDMONITOR Segments;
+
+  (* store offsets in the cluster segment: pure functions of the node *)
+  FUNCTION HbOff RETURNS INTEGER64 (CONST n: INTEGER64) RETURN 2 + n ENDFUNCTION HbOff;
+  FUNCTION ReadyOff RETURNS INTEGER64 (CONST n: INTEGER64) RETURN 5 + n ENDFUNCTION ReadyOff;
+
+  VAR on: ARRAY (INTEGER [1..3] OF INTEGER64);
+
+  (* ---- boot ---------------------------------------------------------------------- *)
+  FOR n: INTEGER [1..nnodes] DO
+    powered[n] := TRUE;
+    on[n] := 0
+  ENDFOR;
+  SegWrite(segVocab, msgLost, 21);
+  SegWrite(segCluster, 1, 3);
+  FOR n: INTEGER [1..nnodes] DO
+    SegWrite(segCluster, ReadyOff(n), 1);
+    SegWrite(segCluster, HbOff(n), 0)
+  ENDFOR;
+
+  BEGIN
+    (* the real-time clock interrupt, level 0 *)
+    PROCESS Clock ()
+      WHILE NOT stopping DO
+        DELAY(10);
+        WakeAll()
+      ENDWHILE;
+      TERMINATE_PROCESS
+    ENDPROCESS Clock;
+
+    (* ==== level 2: the message interpreter ===================================== *)
+    PROCESS Interpreter ()
+      VAR who, m, v, w: INTEGER64;
+      LOOP serving
+        Take(who, m, v);
+        IF who = 0 THEN
+          IF m = keyStop THEN EXIT serving ENDIF;
+          (* "scale to m": interpreted, the command is left in the cluster *)
+          (* segment and the deployment controller is woken *)
+          DELAY(20);
+          Stamp(); Write("CONSOLE  operator to deployment controller: scale to "); Write(m); WriteLn();
+          SegWrite(segCluster, 2, m);
+          Wake(pDeploy)
+        ELSE
+          w := SegRead(segVocab, m);
+          DELAY(20);
+          IF w = 21 THEN
+            Stamp(); Write("CONSOLE  node controller: node "); Write(v);
+            Write(" has no heartbeat, its pods go back to the scheduler"); WriteLn()
+          ENDIF;
+          Answer()
+        ENDIF
+      ENDLOOP serving;
+      TERMINATE_PROCESS
+    ENDPROCESS Interpreter;
+
+    (* ==== level 4: the controllers, as user programs ============================ *)
+    (* store access: every read-modify-write holds the store's semaphore *)
+    PROCESS DeploymentController ()
+      VAR desired, cmd, have: INTEGER64;
+      LOOP passes
+        Await(pDeploy);
+        IF stopping THEN EXIT passes ENDIF;
+        CLAIM(store);
+        cmd := SegRead(segCluster, 2);
+        IF cmd > 0 THEN
+          SegWrite(segCluster, 1, cmd);
+          SegWrite(segCluster, 2, 0);
+          Stamp(); Write("deployment controller: desired replicas "); Write(cmd); WriteLn()
+        ENDIF;
+        desired := SegRead(segCluster, 1);
+        have := 0;
+        FOR i: INTEGER [1..npods] DO
+          IF SegRead(segPods, i) # 0 THEN have := have + 1 ENDIF
+        ENDFOR;
+        FOR i: INTEGER [1..npods] DO
+          IF (SegRead(segPods, i) = 0) AND (have < desired) THEN
+            SegWrite(segPods, i, -1);
+            have := have + 1;
+            Stamp(); Write("deployment controller: pod "); Write(i); Write(" created"); WriteLn()
+          ENDIF
+        ENDFOR;
+        RELEASE(store)
+      ENDLOOP passes;
+      TERMINATE_PROCESS
+    ENDPROCESS DeploymentController;
+
+    PROCESS Scheduler ()
+      VAR w, best: INTEGER64;
+          load: ARRAY (INTEGER [1..3] OF INTEGER64);
+      LOOP passes
+        Await(pSched);
+        IF stopping THEN EXIT passes ENDIF;
+        CLAIM(store);
+        FOR n: INTEGER [1..nnodes] DO load[n] := 0 ENDFOR;
+        FOR i: INTEGER [1..npods] DO
+          w := SegRead(segPods, i);
+          IF w > 0 THEN load[w] := load[w] + 1 ENDIF
+        ENDFOR;
+        FOR i: INTEGER [1..npods] DO
+          IF SegRead(segPods, i) = -1 THEN
+            best := 0;
+            FOR n: INTEGER [1..nnodes] DO
+              IF SegRead(segCluster, ReadyOff(n)) = 1 THEN
+                IF best = 0 THEN best := n
+                ELSIF load[n] < load[best] THEN best := n
+                ENDIF
+              ENDIF
+            ENDFOR;
+            IF best > 0 THEN
+              SegWrite(segPods, i, best);
+              load[best] := load[best] + 1;
+              Stamp(); Write("scheduler: pod "); Write(i); Write(" bound to node "); Write(best);
+              WriteLn()
+            ENDIF
+          ENDIF
+        ENDFOR;
+        RELEASE(store)
+      ENDLOOP passes;
+      TERMINATE_PROCESS
+    ENDPROCESS Scheduler;
+
+    PROCESS Kubelet (CONST n: INTEGER64) INSTANCES 3
+      VAR me: INTEGER64 := (pKubelet + n) - 1;
+      LOOP passes
+        Await(me);
+        IF stopping THEN EXIT passes ENDIF;
+        IF NOT powered[n] THEN
+          Stamp(); Write("kubelet "); Write(n); Write(": power gone, the node stops"); WriteLn();
+          EXIT passes
+        ENDIF;
+        CLAIM(store);
+        SegWrite(segCluster, HbOff(n), CLOCK_TIME());
+        SegWrite(segCluster, ReadyOff(n), 1);
+        FOR i: INTEGER [1..npods] DO
+          IF (SegRead(segPods, i) = n) AND (SegRead(segRunning, i) = 0) THEN
+            SegWrite(segRunning, i, 1);
+            Stamp(); Write("kubelet "); Write(n); Write(": pod "); Write(i); Write(" running"); WriteLn()
+          ENDIF
+        ENDFOR;
+        RELEASE(store)
+      ENDLOOP passes;
+      TERMINATE_PROCESS
+    ENDPROCESS Kubelet;
+
+    (* the node lifecycle controller: a node whose heartbeat it has not seen *)
+    (* change for 60 ms is not ready, and its pods are unbound. It judges by *)
+    (* when it SAW the heartbeat change, not by the time written in it. *)
+    PROCESS NodeController ()
+      VAR hb, lost: INTEGER64;
+          lastHb, seenAt: ARRAY (INTEGER [1..3] OF INTEGER64);
+      FOR n: INTEGER [1..nnodes] DO
+        lastHb[n] := -1;
+        seenAt[n] := 0
+      ENDFOR;
+      LOOP passes
+        Await(pNodes);
+        IF stopping THEN EXIT passes ENDIF;
+        lost := 0;
+        CLAIM(store);
+        FOR n: INTEGER [1..nnodes] DO
+          hb := SegRead(segCluster, HbOff(n));
+          IF hb # lastHb[n] THEN
+            lastHb[n] := hb;
+            seenAt[n] := CLOCK_TIME()
+          ENDIF;
+          IF (SegRead(segCluster, ReadyOff(n)) = 1) AND ((CLOCK_TIME() - seenAt[n]) > 60) THEN
+            SegWrite(segCluster, ReadyOff(n), 0);
+            FOR i: INTEGER [1..npods] DO
+              IF SegRead(segPods, i) = n THEN
+                SegWrite(segPods, i, -1);
+                SegWrite(segRunning, i, 0)
+              ENDIF
+            ENDFOR;
+            lost := n
+          ENDIF
+        ENDFOR;
+        RELEASE(store);
+        IF lost > 0 THEN
+          Say(pNodes, msgLost, lost);
+          WakeAll()
+        ENDIF
+      ENDLOOP passes;
+      TERMINATE_PROCESS
+    ENDPROCESS NodeController;
+
+    (* ==== level 5: the operator ================================================ *)
+    PROCESS Operator ()
+      DELAY(250);
+      Press(5);
+      TERMINATE_PROCESS
+    ENDPROCESS Operator;
+
+    Interpreter();
+    DeploymentController();
+    Scheduler();
+    NodeController();
+    FOR n: INTEGER [1..nnodes] DO Kubelet(n) ENDFOR;
+    Operator();
+    Clock();
+    WakeAll();
+    DELAY(120);
+    Stamp(); Write("node 2 loses power"); WriteLn();
+    powered[2] := FALSE;
+    DELAY(400);
+    CLAIM(store);
+    FOR i: INTEGER [1..npods] DO
+      IF (SegRead(segPods, i) > 0) AND (SegRead(segRunning, i) = 1) THEN
+        on[SegRead(segPods, i)] := on[SegRead(segPods, i)] + 1
+      ENDIF
+    ENDFOR;
+    RELEASE(store);
+    Stamp(); Write("running pods: node 1 "); Write(on[1]); Write(", node 2 "); Write(on[2]);
+    Write(", node 3 "); Write(on[3]); Write("; drum transfers "); Write(Transfers()); WriteLn();
+    stopping := TRUE;
+    Press(keyStop)
+  END
+ENDMODULE TheKubeYellow

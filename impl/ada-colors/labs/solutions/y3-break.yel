@@ -1,0 +1,28 @@
+(* Lab Y3. ORDERED and UNORDERED enumerations (VI.A.2). An ORDERED one has *)
+(* < <= > >=, SUCC, PRED, FIRST and LAST, and can drive a FOR loop. An *)
+(* UNORDERED one has only = and #: its values are names, not positions. *)
+(* BOOLEAN is UNORDERED (FALSE, TRUE). *)
+MODULE Enumerations
+  IMPORT TextIO, StandardImplementationPrelude;
+  REPRESENTATION
+    Phase = ORDERED (Pending, Running, Succeeded);
+    Fruit = UNORDERED (Lemon, Lime, Orange);
+  VAR p: Phase := Pending;
+      f: Fruit := Lime;
+
+  PROCEDURE WritePhase (CONST p: Phase)
+    SELECT p
+      CASE Pending => Write("Pending")
+      CASE Running => Write("Running")
+      CASE Succeeded => Write("Succeeded")
+    ENDSELECT;
+    RETURN
+  ENDPROCEDURE WritePhase;
+
+  FOR q: Phase DO WritePhase(q); Write(" ") ENDFOR;
+  WriteLn();
+  WritePhase(SUCC(p)); Write(" comes after "); WritePhase(p); WriteLn();
+  Write("last phase "); WritePhase(LAST(p)); WriteLn();
+  IF f < Orange THEN Write("a fruit is equal or not, nothing more") ENDIF;
+  WriteLn()
+ENDMODULE Enumerations

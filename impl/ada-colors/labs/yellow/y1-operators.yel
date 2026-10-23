@@ -1,0 +1,14 @@
+(* Lab Y1. Non-associative operators (VIII.A, D-19). + * AND OR are *)
+(* associative, so a + b + c needs no parentheses. - / DIV MOD XOR are not: *)
+(* Pascal reads a - b - c as (a - b) - c, YELLOW makes you write which one *)
+(* you mean. And relations bind loosest of all, below AND and OR. *)
+MODULE Operators
+  IMPORT TextIO, StandardImplementationPrelude;
+  VAR a: INTEGER64 := 10;
+      b: INTEGER64 := 4;
+      c: INTEGER64 := 3;
+  Write("(a - b) - c = "); Write((a - b) - c); WriteLn();
+  Write("a - (b - c) = "); Write(a - (b - c)); WriteLn();
+  Write("a + b + c = "); Write(a + b + c); WriteLn();
+  Write("(a > b) AND (b > c) = "); Write((a > b) AND (b > c)); WriteLn()
+ENDMODULE Operators

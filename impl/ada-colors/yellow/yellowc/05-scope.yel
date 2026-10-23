@@ -12,6 +12,10 @@
     VisibleFrom: INT := 0;          (* scopes below this one are hidden *)
     Level: INT := 0;                (* the frame being written: 0 is global *)
     FrameName: ARRAY (INTEGER [0..400] OF Txt);  (* C struct of the frame of each level *)
+    (* per scope: the list of declarations being read, so that a module *)
+    (* importing from a module declared later can have it translated first *)
+    (* (X.G); a module node's ival is 0 unread, 1 being read, 2 read *)
+    DeclList: ARRAY (INTEGER [0..400] OF Node);
 
   PROCEDURE NewSym RETURNS Sym (CONST kind: INT; CONST name: Txt)
     VAR s: Sym;

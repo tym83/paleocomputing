@@ -2476,3 +2476,6 @@ void y_device(ysig *s, rt_int address) {
   d->period = 20;
   y_create(&devices, 0, 1, 255, y_device_loop, d);
 }
+
+/* a SIGNAL as a component of an array: tied to its monitor by y_sig_init */
+const ydesc y_d_sig = {YK_OPAQUE, sizeof(ysig), 0, 0, {0}, {0}, NULL, 0, NULL, NULL};

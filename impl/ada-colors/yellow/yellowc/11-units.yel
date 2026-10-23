@@ -48,6 +48,39 @@
   (* is the module whose names an export list speaks of, or NIL for imports *)
   VAR ExportOps: INT := 0;          (* := and = exported by the module being closed *)
 
+  (* X.G: "no lexical ordering restriction is placed on the various *)
+  (* composite declarations of a scope". A name imported from a module *)
+  (* declared later in this scope: that module is translated now, which is *)
+  (* the order the Report says must exist. A circle of imports between *)
+  (* modules has no such order here. *)
+  PROCEDURE Provides RETURNS BOOLEAN (CONST d: Node; CONST name: Txt)
+    VAR it: Node := d^.b;
+    IF d^.name = name THEN RETURN TRUE ENDIF;
+    WHILE it # Node NIL DO
+      IF (it^.ival # 0) AND (it^.ival = name) THEN RETURN TRUE ENDIF;
+      IF (it^.ival = 0) AND (it^.name = name) THEN RETURN TRUE ENDIF;
+      it := it^.next
+    ENDWHILE;
+    RETURN FALSE
+  ENDPROCEDURE Provides;
+
+  PROCEDURE ImportLater (CONST name: Txt; CONST line: INT)
+    VAR d: Node;
+    IF Depth < 0 THEN RETURN ENDIF;
+    d := DeclList[Depth];
+    WHILE d # Node NIL DO
+      IF (d^.kind = N_MODULE) AND (d^.ival # 2) AND Provides(d, name) THEN
+        IF d^.ival = 1 THEN
+          FailN(line, name, ": modules import from each other here, and this implementation needs an order without a circle (X.G)")
+        ENDIF;
+        CompileModule(d);
+        RETURN
+      ENDIF;
+      d := d^.next
+    ENDWHILE;
+    RETURN
+  ENDPROCEDURE ImportLater;
+
   PROCEDURE ResolveItem (CONST it: Node; VAR head: Sym; CONST exporting: BOOLEAN)
     VAR target, m, s: Sym;
         name: Txt;
@@ -61,6 +94,7 @@
     ENDIF;
     IF it^.text # 0 THEN
       (* x FROM M: M's exported x *)
+      IF (NOT exporting) AND (Find(it^.text) = Sym NIL) THEN ImportLater(it^.text, it^.line) ENDIF;
       m := Real(Lookup(it^.text, it^.line));
       IF m^.kind # S_MODULE THEN FailN(it^.line, it^.text, " is not a module") ENDIF;
       target := m^.members;
@@ -68,6 +102,10 @@
       IF target = Sym NIL THEN FailN(it^.line, it^.name, " is not exported by that module") ENDIF
     ELSE
       IF exporting THEN target := FindHere(it^.name) ELSE target := Find(it^.name) ENDIF;
+      IF (target = Sym NIL) AND NOT exporting THEN
+        ImportLater(it^.name, it^.line);
+        target := Find(it^.name)
+      ENDIF;
       IF target = Sym NIL THEN
         IF exporting THEN FailN(it^.line, it^.name, " is not declared in this module")
         ELSE FailN(it^.line, it^.name, " is not declared around this module (X.B.2)")
@@ -121,7 +159,7 @@
       ELSIF attr # 0 THEN
         FailS(it^.line, "an attribute is for a type, a representation or a variable")
       ENDIF;
-      IF (m^.kind = S_VAR) AND (m^.rep^.kind = R_SIGNAL) THEN
+      IF (m^.kind = S_VAR) AND ((m^.rep^.kind = R_SIGNAL) OR HoldsSignal(m^.rep)) THEN
         FailS(it^.line, "a signal may not be exported from its monitor (X.E.4)")
       ENDIF
     ELSIF (m^.kind = S_REP) OR (m^.kind = S_TYPE) THEN
@@ -159,6 +197,7 @@
         saveVis: INT;
         t: Txt;
         monitorHere: BOOLEAN := FALSE;
+    d^.ival := 1;
     (* imports are names of the scope around the module *)
     imports := Sym NIL;
     item := d^.a;
@@ -237,6 +276,7 @@
       s := next
     ENDWHILE;
     m^.members := exports;
+    d^.ival := 2;
     s := exports;
     WHILE s # Sym NIL DO
       next := Alias(s^.name, s);
@@ -463,6 +503,28 @@
     Emit(Join(T("y_sig_init(&"), SymPath(s), Join(T(", "), MonitorPath(CurMonitor), T(");"))));
     RETURN
   ENDPROCEDURE DeclareSignal;
+
+  (* an array of signals (VI.A.1.d puts no limit on them): every component *)
+  (* is tied to the monitor, so that a WAIT on one lets the monitor go *)
+  PROCEDURE DeclareSignalArray (CONST s: Sym; CONST line: INT)
+    VAR t: Txt;
+    IF CurMonitor = Sym NIL THEN FailS(line, "signal variables are declared in a monitor (X.E.4)") ENDIF;
+    SB();
+    SA("{ rt_int yk, yn = y_count(");
+    ST(SymPath(s));
+    SA(", ");
+    SI(s^.rep^.nidx);
+    SA("); for (yk = 0; yk < yn; yk++) y_sig_init((ysig *)y_elem_at(");
+    ST(SymPath(s));
+    SA(", ");
+    ST(DescOf(s^.rep));
+    SA(", yk), ");
+    ST(MonitorPath(CurMonitor));
+    SA("); }");
+    t := SE();
+    Emit(t);
+    RETURN
+  ENDPROCEDURE DeclareSignalArray;
 
   (* a device signal (XIV.VII): the device at that location sends it. The *)
   (* runtime simulates the PDP-11 line clock at vector 100 (octal), which *)

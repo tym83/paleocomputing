@@ -117,7 +117,10 @@ ENDLOOP name, [SIMULATED_TIME] BEGIN block END.
   sibling modules may export one name, usable only through FROM. Exporting `:=`, `=`, `#`
   without declaring them gives the standard ones with the opaque types (D-33).
 - Composite declarations may refer to each other in any order; simple ones are declared
-  before use (pointer bases excepted).
+  before use (pointer bases excepted). A module may import from a module declared later in
+  its scope (X.G: the program is valid if an order exists): yellowc then translates that
+  module first, and its initialization runs first. Modules that import from each other in a
+  circle are refused, since yellowc needs that order to exist.
 - TEMPLATE T(formals) MODULE ... ENDTEMPLATE T; INSTANCE T(actuals) writes the module with
   the actuals for the formals (X.C-D): yellowc copies the tokens with the names replaced.
 
@@ -127,7 +130,9 @@ ENDLOOP name, [SIMULATED_TIME] BEGIN block END.
   instance; the scope where it is declared and activated ends only when it ends (processes of
   a module hold the scope around the module).
 - MONITOR: a module whose procedures exclude each other; a process declared in a monitor runs
-  inside it. SIGNAL variables live in monitors and are not exported. `WAIT(s[, rank])` lets
+  inside it. SIGNAL variables, and arrays of them, live in monitors and are not exported;
+  every component of an array of signals belongs to the monitor (signals in records are not
+  kept). `WAIT(s[, rank])` lets
   the monitor go; `SEND(s)` passes the monitor to the waiter with the smallest rank (first
   come first served within a rank) and delays the sender (Hoare semantics, p.1057);
   `AWAITED(s)`. Nested monitors add no exclusion.
@@ -191,3 +196,4 @@ other than the prelude are not provided.
 - Representations of one type with different structured layouts are converted by copying.
 - The `:=` of a user definition (exporting a redefined `:=`) is not called by assignment.
 - Initialization of a variable of an opaque type is allowed though `:=` is not exported.
+- Modules importing from each other in a circle (allowed by X.G for routines) are refused.

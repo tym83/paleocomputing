@@ -1,0 +1,453 @@
+(* THE -- Dijkstra's THE multiprogramming system (Eindhoven, 1965-68), rebuilt *)
+(* in YELLOW (SRI International, February 1978), next to os/the.red. Source: *)
+(* E.W. Dijkstra, "The structure of the 'THE'-multiprogramming system", *)
+(* CACM 11(5), 1968 (EWD 196). *)
+(* *)
+(* The levels are those of the paper and of os/the.red: *)
+(*   level 0  processor allocation and synchronization: YELLOW's own processes *)
+(*            and monitors, and a mailbox monitor for the console *)
+(*   level 1  the segment controller: segments in core pages, backed by a drum *)
+(*   level 2  the message interpreter: the one console *)
+(*   level 3  buffering of input (three tape readers) and output (the printer) *)
+(*   level 4  user programs *)
+(*   level 5  the operator *)
+(* *)
+(* What YELLOW changes against RED: *)
+(*   - P and V become WAIT and SEND inside monitors. A buffer of level 3 is a *)
+(*     monitor (Hoare's bounded buffer) made from a TEMPLATE; its exclusion *)
+(*     replaces THE's mutex semaphore, and its two signals replace "full" and *)
+(*     "empty". The words themselves stay in a segment; *)
+(*   - the segment controller is a MONITOR, not a process: where THE gives each *)
+(*     process a private semaphore to wait for its answer, a monitor lets the *)
+(*     asking process do the work under exclusion, and the entry queue is the *)
+(*     queue of requests. Its drum waits happen while it holds the monitor, as *)
+(*     the RED segment controller holds its one thread; *)
+(*   - the console keeps its process (the message interpreter), since it serves *)
+(*     the operator as well. A process saying something waits for its answer *)
+(*     with a ranked WAIT: the rank is its ticket, so SEND wakes the oldest; *)
+(*   - the program ends by itself: a scope ends when its processes end (X.E.1), *)
+(*     and the interpreter is told to stop when the work is done. *)
+(* *)
+(* The paper's claim is that the order of the levels makes the society free of *)
+(* deadlock: no process waits for one above it. Set reportDumps to TRUE (lab *)
+(* Y8) and the segment controller tells the operator about every dump through *)
+(* the console: level 1 waits for level 2, which needs level 1 to read its *)
+(* vocabulary. *)
+(* *)
+(* The run is deterministic: the scheduler is followed exactly and the clock is *)
+(* virtual. Time is in milliseconds. *)
+MODULE TheYellow
+  IMPORT TextIO, StandardImplementationPrelude;
+
+  VAR reportDumps: BOOLEAN := TRUE;
+
+  PROCEDURE Stamp ()
+    Write("["); Write(CLOCK_TIME()); Write(" ms] ");
+    RETURN
+  ENDPROCEDURE Stamp;
+
+  (* the processes, numbered as in os/the.red *)
+  CONST
+    pInterp: INTEGER64 = 1;
+    pSegctl: INTEGER64 = 2;
+    pPrinter: INTEGER64 = 3;
+    pReader: INTEGER64 = 4;     (* readers 4, 5, 6: one per paper tape reader *)
+    pUser: INTEGER64 = 7;       (* users 7, 8, 9 *)
+    nusers: INTEGER64 = 3;
+
+  (* the console's messages and the operator's keys *)
+  CONST
+    msgReady: INTEGER64 = 1;
+    msgPaper: INTEGER64 = 2;
+    msgDone: INTEGER64 = 3;
+    msgDumped: INTEGER64 = 4;
+    keyPaper: INTEGER64 = 1;    (* "printer: paper loaded" *)
+    keyStop: INTEGER64 = 0;     (* not THE's: tells the interpreter the run is over *)
+
+  PROCEDURE WriteWho (CONST p: INTEGER64)
+    IF p = pSegctl THEN Write("segment controller")
+    ELSIF p = pPrinter THEN Write("printer")
+    ELSIF (p >= pReader) AND (p < pUser) THEN Write("reader "); Write((p - pReader) + 1)
+    ELSIF p >= pUser THEN Write("program "); Write((p - pUser) + 1)
+    ELSE Write("?")
+    ENDIF;
+    RETURN
+  ENDPROCEDURE WriteWho;
+
+  PROCEDURE WritePhrase (CONST w: INTEGER64)
+    SELECT w
+      CASE 11 => Write("tape loaded, reading")
+      CASE 12 => Write("out of paper, waiting for the operator")
+      CASE 13 => Write("finished, result queued for the printer")
+      CASE 14 => Write("dumped a segment to the drum:")
+      ELSE Write("?")
+    ENDSELECT;
+    RETURN
+  ENDPROCEDURE WritePhrase;
+
+  (* ==== level 0: the console's mailbox ======================================== *)
+  (* Conversations and the operator's keys arrive here in order. A process that *)
+  (* says something waits for its answer with WAIT(answered, ticket): SEND *)
+  (* wakes the smallest rank, and the interpreter answers in ticket order. *)
+  MONITOR Console
+    IMPORT INTEGER64;
+    EXPORT Say, Press, Take, Answer, Deliver, AwaitOperator;
+    REPRESENTATION
+      Conv = RECORD VAR who, m, v: INTEGER64 ENDRECORD;
+      Flags = ARRAY (INTEGER [1..9] OF BOOLEAN);
+    VAR queue: ARRAY (INTEGER [0..15] OF Conv);
+        head, count, tickets: INTEGER64 := 0;
+        keyed: Flags := Flags(FALSE);
+        work, answered, operatorSpoke: SIGNAL;
+
+    PROCEDURE Put (CONST who, m, v: INTEGER64)
+      queue[(head + count) MOD 16] := Conv(who, m, v);
+      count := count + 1;
+      SEND(work);
+      RETURN
+    ENDPROCEDURE Put;
+
+    (* a conversation: wait until the interpreter has typed it *)
+    PROCEDURE Say (CONST who, m, arg: INTEGER64)
+      VAR ticket: INTEGER64;
+      tickets := tickets + 1;
+      ticket := tickets;
+      Put(who, m, arg);
+      WAIT(answered, ticket);
+      RETURN
+    ENDPROCEDURE Say;
+
+    (* the operator's key: who = 0 *)
+    PROCEDURE Press (CONST k: INTEGER64)
+      Put(0, k, 0);
+      RETURN
+    ENDPROCEDURE Press;
+
+    PROCEDURE Take (OUT who, m, v: INTEGER64)
+      IF count = 0 THEN WAIT(work) ENDIF;
+      who := queue[head].who;
+      m := queue[head].m;
+      v := queue[head].v;
+      head := (head + 1) MOD 16;
+      count := count - 1;
+      RETURN
+    ENDPROCEDURE Take;
+
+    PROCEDURE Answer ()
+      SEND(answered);
+      RETURN
+    ENDPROCEDURE Answer;
+
+    (* the operator's words reached process p *)
+    PROCEDURE Deliver (CONST p: INTEGER64)
+      keyed[p] := TRUE;
+      SEND(operatorSpoke);
+      RETURN
+    ENDPROCEDURE Deliver;
+
+    PROCEDURE AwaitOperator (CONST p: INTEGER64)
+      IF NOT keyed[p] THEN WAIT(operatorSpoke) ENDIF;
+      keyed[p] := FALSE;
+      RETURN
+    ENDPROCEDURE AwaitOperator
+  ENDMONITOR Console;
+
+  (* ==== level 1: the segment controller ======================================= *)
+  (* "Storage allocation": segments are units of information, pages are units of *)
+  (* store. A segment dumped to the drum goes to the free drum page with the *)
+  (* minimum latency, not back where it came from. *)
+  CONST
+    ncore: INTEGER64 = 3;       (* core pages *)
+    ndrum: INTEGER64 = 8;       (* drum pages, evenly round one track *)
+    nseg: INTEGER64 = 8;        (* segments *)
+    words: INTEGER64 = 8;       (* words per page *)
+    rev: INTEGER64 = 40;        (* drum revolution, ms *)
+    segVocab: INTEGER64 = 1;    (* the message interpreter's vocabulary *)
+    segPrint: INTEGER64 = 2;    (* the printer's output buffer *)
+    segInput: INTEGER64 = 3;    (* input buffers 3, 4, 5 *)
+    segWork: INTEGER64 = 6;     (* working storage 6, 7, 8 *)
+
+  MONITOR Segments
+    IMPORT INTEGER64, Stamp, Write, WriteLn, Say, reportDumps, ncore, ndrum, nseg, words, rev,
+           pSegctl, msgDumped;
+    EXPORT SegRead, SegWrite, Transfers, Faults;
+    VAR segWhere: ARRAY (INTEGER [1..nseg] OF INTEGER64);     (* 0 empty, c > 0 core, -d drum *)
+        coreSeg: ARRAY (INTEGER [1..ncore] OF INTEGER64);
+        coreWord: ARRAY (INTEGER [1..ncore * words] OF INTEGER64);
+        drumFree: ARRAY (INTEGER [1..ndrum] OF BOOLEAN);
+        drumWord: ARRAY (INTEGER [1..ndrum * words] OF INTEGER64);
+        nextVictim: INTEGER64 := 1;
+        transfers, faults: INTEGER64 := 0;
+
+    (* "among the free drum pages the one with the minimum latency is selected" *)
+    FUNCTION Latency RETURNS INTEGER64 (CONST d: INTEGER64)
+      RETURN ((((d - 1) * (rev DIV ndrum)) - (CLOCK_TIME() MOD rev)) + (2 * rev)) MOD rev
+    ENDFUNCTION Latency;
+
+    PROCEDURE DrumWait (CONST d: INTEGER64)
+      DELAY(Latency(d) + (rev DIV ndrum));
+      transfers := transfers + 1;
+      RETURN
+    ENDPROCEDURE DrumWait;
+
+    PROCEDURE Dump (CONST c: INTEGER64)
+      VAR best: INTEGER64 := 0;
+          s: INTEGER64 := coreSeg[c];
+      FOR d: INTEGER [1..ndrum] DO
+        IF drumFree[d] THEN
+          IF best = 0 THEN best := d
+          ELSIF Latency(d) < Latency(best) THEN best := d
+          ENDIF
+        ENDIF
+      ENDFOR;
+      DrumWait(best);
+      FOR i: INTEGER [1..words] DO
+        drumWord[((best - 1) * words) + i] := coreWord[((c - 1) * words) + i]
+      ENDFOR;
+      drumFree[best] := FALSE;
+      segWhere[s] := -best;
+      Stamp(); Write("  segment controller: segment "); Write(s); Write(" dumped from core page ");
+      Write(c); Write(" to drum page "); Write(best); WriteLn();
+      IF reportDumps THEN
+        (* the broken order: level 1 waits for a conversation on level 2 *)
+        Say(pSegctl, msgDumped, s)
+      ENDIF;
+      RETURN
+    ENDPROCEDURE Dump;
+
+    (* make segment s present in core and give its core page *)
+    PROCEDURE Present (CONST s: INTEGER64; OUT c: INTEGER64)
+      VAR d, page: INTEGER64;
+      IF segWhere[s] > 0 THEN
+        c := segWhere[s];
+        RETURN
+      ENDIF;
+      faults := faults + 1;
+      page := 0;
+      FOR i: INTEGER [1..ncore] DO
+        IF (page = 0) AND (coreSeg[i] = 0) THEN page := i ENDIF
+      ENDFOR;
+      IF page = 0 THEN
+        page := nextVictim;
+        nextVictim := (nextVictim MOD ncore) + 1;
+        (* a segment read in from the drum gave its drum page back, so every *)
+        (* segment leaving core is written out *)
+        Dump(page)
+      ENDIF;
+      IF segWhere[s] < 0 THEN
+        d := -segWhere[s];
+        DrumWait(d);
+        FOR i: INTEGER [1..words] DO
+          coreWord[((page - 1) * words) + i] := drumWord[((d - 1) * words) + i]
+        ENDFOR;
+        drumFree[d] := TRUE;
+        Stamp(); Write("  segment controller: segment "); Write(s); Write(" read from drum page ");
+        Write(d); Write(" into core page "); Write(page); WriteLn()
+      ELSE
+        FOR i: INTEGER [1..words] DO coreWord[((page - 1) * words) + i] := 0 ENDFOR
+      ENDIF;
+      coreSeg[page] := s;
+      segWhere[s] := page;
+      c := page;
+      RETURN
+    ENDPROCEDURE Present;
+
+    (* called by levels 2 and up: the identity of pages is gone above level 1 *)
+    PROCEDURE SegRead RETURNS INTEGER64 (CONST seg, off: INTEGER64)
+      VAR c: INTEGER64;
+      Present(seg, c);
+      RETURN coreWord[((c - 1) * words) + off]
+    ENDPROCEDURE SegRead;
+
+    PROCEDURE SegWrite (CONST seg, off, val: INTEGER64)
+      VAR c: INTEGER64;
+      Present(seg, c);
+      coreWord[((c - 1) * words) + off] := val;
+      RETURN
+    ENDPROCEDURE SegWrite;
+
+    PROCEDURE Transfers RETURNS INTEGER64 () RETURN transfers ENDPROCEDURE Transfers;
+    PROCEDURE Faults RETURNS INTEGER64 () RETURN faults ENDPROCEDURE Faults;
+
+    FOR i: INTEGER [1..nseg] DO segWhere[i] := 0 ENDFOR;
+    FOR c: INTEGER [1..ncore] DO coreSeg[c] := 0 ENDFOR;
+    FOR d: INTEGER [1..ndrum] DO drumFree[d] := TRUE ENDFOR
+  ENDMONITOR Segments;
+
+  (* ==== level 3: buffering of input and output streams ======================== *)
+  (* Buffers are segments ("buffering ... occurs in terms of segments"): a ring *)
+  (* of `words` slots in segment seg, guarded by a monitor. One template, four *)
+  (* buffers: one per tape reader and the printer's. *)
+  TEMPLATE BufferTemplate (Buffer, Put, Get, seg)
+    MONITOR Buffer
+      IMPORT INTEGER64, SegRead, SegWrite, words;
+      EXPORT Put, Get;
+      VAR count, inp, outp: INTEGER64 := 0;
+          nonfull, nonempty: SIGNAL;
+      PROCEDURE Put (CONST v: INTEGER64)
+        IF count = words THEN WAIT(nonfull) ENDIF;
+        inp := (inp MOD words) + 1;
+        SegWrite(seg, inp, v);
+        count := count + 1;
+        SEND(nonempty);
+        RETURN
+      ENDPROCEDURE Put;
+      PROCEDURE Get RETURNS INTEGER64 ()
+        VAR v: INTEGER64;
+        IF count = 0 THEN WAIT(nonempty) ENDIF;
+        outp := (outp MOD words) + 1;
+        v := SegRead(seg, outp);
+        count := count - 1;
+        SEND(nonfull);
+        RETURN v
+      ENDPROCEDURE Get
+    ENDMONITOR Buffer
+  ENDTEMPLATE BufferTemplate;
+
+  INSTANCE BufferTemplate (Input1, PutIn1, GetIn1, 3);
+  INSTANCE BufferTemplate (Input2, PutIn2, GetIn2, 4);
+  INSTANCE BufferTemplate (Input3, PutIn3, GetIn3, 5);
+  INSTANCE BufferTemplate (Output, PutPrint, GetPrint, 2);
+
+  (* the logical communication units seen from level 4 *)
+  PROCEDURE PutIn (CONST u, x: INTEGER64)
+    SELECT u
+      CASE 1 => PutIn1(x)
+      CASE 2 => PutIn2(x)
+      CASE 3 => PutIn3(x)
+    ENDSELECT;
+    RETURN
+  ENDPROCEDURE PutIn;
+
+  PROCEDURE GetIn RETURNS INTEGER64 (CONST u: INTEGER64)
+    SELECT u
+      CASE 1 => RETURN GetIn1()
+      CASE 2 => RETURN GetIn2()
+      ELSE RETURN GetIn3()
+    ENDSELECT
+  ENDPROCEDURE GetIn;
+
+  (* the run is over when every program and the printer have said so *)
+  MONITOR Finish
+    IMPORT INTEGER64;
+    EXPORT Done, AwaitAll;
+    VAR finished: INTEGER64 := 0;
+        another: SIGNAL;
+    PROCEDURE Done ()
+      finished := finished + 1;
+      SEND(another);
+      RETURN
+    ENDPROCEDURE Done;
+    PROCEDURE AwaitAll (CONST n: INTEGER64)
+      WHILE finished < n DO WAIT(another) ENDWHILE;
+      RETURN
+    ENDPROCEDURE AwaitAll
+  ENDMONITOR Finish;
+
+  CONST tapeLen: INTEGER64 = 4;
+        nlines: INTEGER64 = 3;    (* lines on the paper before the operator is needed *)
+
+  (* the vocabulary: words 1..4 map message numbers to phrases, words 5..8 map *)
+  (* the operator's keys to the process they address *)
+  SegWrite(segVocab, msgReady, 11);
+  SegWrite(segVocab, msgPaper, 12);
+  SegWrite(segVocab, msgDone, 13);
+  SegWrite(segVocab, msgDumped, 14);
+  SegWrite(segVocab, 4 + keyPaper, pPrinter);
+
+  BEGIN
+    (* ==== level 2: the message interpreter ===================================== *)
+    (* "Above this level it is as if each process had its private conversational *)
+    (* console." One conversation at a time; the vocabulary sits on a segment, *)
+    (* so the interpreter calls on level 1 for every message it prints. *)
+    PROCESS Interpreter ()
+      VAR who, m, v, w: INTEGER64;
+      LOOP serving
+        Take(who, m, v);
+        IF who = 0 THEN
+          IF m = keyStop THEN EXIT serving ENDIF;
+          (* the operator opened the conversation: its first words say whom it *)
+          (* is for, and they must be interpreted before that is known *)
+          w := SegRead(segVocab, 4 + m);
+          DELAY(20);
+          Stamp(); Write("CONSOLE  operator to "); WriteWho(w); Write(": paper loaded"); WriteLn();
+          Deliver(w)
+        ELSE
+          w := SegRead(segVocab, m);
+          DELAY(20);                          (* the teleprinter types *)
+          Stamp(); Write("CONSOLE  "); WriteWho(who); Write(": "); WritePhrase(w);
+          IF m = msgDumped THEN Write(" "); Write(v) ENDIF;
+          WriteLn();
+          Answer()
+        ENDIF
+      ENDLOOP serving;
+      TERMINATE_PROCESS
+    ENDPROCESS Interpreter;
+
+    (* ==== level 3: the tape readers and the line printer ======================= *)
+    PROCESS Reader (CONST n: INTEGER64) INSTANCES 3
+      Say((pReader + n) - 1, msgReady, 0);
+      FOR i: INTEGER [1..tapeLen] DO
+        DELAY(1);                             (* 1000 characters a second *)
+        PutIn(n, (10 * n) + i)
+      ENDFOR;
+      TERMINATE_PROCESS
+    ENDPROCESS Reader;
+
+    (* three lines fit on the paper, then the printer asks the operator *)
+    PROCESS Printer ()
+      VAR item: INTEGER64;
+      FOR line: INTEGER [1..nusers] DO
+        IF line = nlines THEN
+          Say(pPrinter, msgPaper, 0);
+          AwaitOperator(pPrinter)
+        ENDIF;
+        item := GetPrint();
+        DELAY(10);
+        Stamp(); Write("PRINTER  program "); Write(item DIV 100000); Write(": sum of squares ");
+        Write(item MOD 100000); WriteLn()
+      ENDFOR;
+      Done();
+      TERMINATE_PROCESS
+    ENDPROCESS Printer;
+
+    (* ==== level 4: user programs ============================================== *)
+    PROCESS Program (CONST u: INTEGER64) INSTANCES 3
+      VAR x, sum: INTEGER64;
+      FOR i: INTEGER [1..tapeLen] DO
+        x := GetIn(u);
+        SegWrite((segWork + u) - 1, i, x * x)
+      ENDFOR;
+      sum := 0;
+      FOR i: INTEGER [1..tapeLen] DO sum := sum + SegRead((segWork + u) - 1, i) ENDFOR;
+      PutPrint((100000 * u) + sum);
+      Say((pUser + u) - 1, msgDone, 0);
+      Done();
+      TERMINATE_PROCESS
+    ENDPROCESS Program;
+
+    (* ==== level 5: the operator =============================================== *)
+    (* the operator reads the console and loads paper a while after being asked *)
+    PROCESS Operator ()
+      DELAY(400);
+      Press(keyPaper);
+      TERMINATE_PROCESS
+    ENDPROCESS Operator;
+
+    Interpreter();
+    Printer();
+    Operator();
+    FOR n: INTEGER [1..nusers] DO
+      Reader(n);
+      Program(n)
+    ENDFOR;
+    AwaitAll(nusers + 1);
+    Stamp(); Write("all programs finished, the printer is empty"); WriteLn();
+    Stamp(); Write("drum transfers "); Write(Transfers()); Write(", segment faults ");
+    Write(Faults()); Write(", with "); Write(nseg); Write(" segments in "); Write(ncore);
+    Write(" core pages"); WriteLn();
+    Stamp(); Write("no process waited for one on a higher level, so no circle of waiting could form");
+    WriteLn();
+    Press(keyStop)
+  END
+ENDMODULE TheYellow

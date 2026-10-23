@@ -1,0 +1,45 @@
+(* the order of modules (X.G): "no lexical ordering restriction is placed *)
+(* on the various composite declarations of a scope". A module imports *)
+(* from modules declared after it; the translator reads them first *)
+MODULE Forward
+  IMPORT TextIO, StandardImplementationPrelude;
+
+  (* level 2 calls level 1, which is written below it, as in a listing *)
+  (* that goes from the top of a system down *)
+  MODULE Console
+    IMPORT Segments, Write, WriteLn, INTEGER64;
+    EXPORT Say;
+    PROCEDURE Say (CONST w: INTEGER64)
+      Write("console: word "); Write(w); Write(" is "); Write(SegRead(w)); WriteLn();
+      RETURN
+    ENDPROCEDURE Say
+  ENDMODULE Console;
+
+  MONITOR Segments
+    IMPORT Store, Cell, INTEGER64;
+    EXPORT SegRead;
+    PROCEDURE SegRead RETURNS INTEGER64 (CONST w: INTEGER64)
+      RETURN Cell(w)
+    ENDPROCEDURE SegRead
+  ENDMONITOR Segments;
+
+  (* x FROM M names a module declared later too *)
+  MODULE Report
+    IMPORT Write, WriteLn, size FROM Store AS words;
+    Write("store of "); Write(words); Write(" words"); WriteLn()
+  ENDMODULE Report;
+
+  MODULE Store
+    IMPORT INTEGER64;
+    EXPORT Cell, size;              (* a variable goes out READONLY *)
+    VAR size: INTEGER64 := 4;
+        cells: ARRAY (INTEGER [1..4] OF INTEGER64);
+    FUNCTION Cell RETURNS INTEGER64 (CONST w: INTEGER64)
+      RETURN cells[w]
+    ENDFUNCTION Cell;
+    FOR i: INTEGER [1..4] DO cells[i] := 10 * i ENDFOR
+  ENDMODULE Store;
+
+  Say(3);
+  Say(1)
+ENDMODULE Forward

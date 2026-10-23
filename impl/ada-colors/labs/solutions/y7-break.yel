@@ -1,0 +1,53 @@
+(* Lab Y7. Modules (X.B). A module is a closed scope: inside, only its own *)
+(* names, what it IMPORTs and the standard names are seen. What it EXPORTs *)
+(* goes out with an attribute: a variable is READONLY unless exported VAR, a *)
+(* representation is OPAQUE unless exported TRANSPARENT, so its components *)
+(* stay hidden and only the module's routines can touch them. *)
+MODULE Modules
+  IMPORT TextIO, StandardImplementationPrelude;
+
+  MODULE Counter
+    IMPORT INTEGER64;
+    EXPORT READONLY count;
+    EXPORT Bump;
+    VAR count: INTEGER64 := 0;
+    PROCEDURE Bump ()
+      count := count + 1;
+      RETURN
+    ENDPROCEDURE Bump
+  ENDMODULE Counter;
+
+  MODULE Stack
+    IMPORT INTEGER64;
+    EXPORT OPAQUE S;
+    EXPORT New, Push, Pop, Empty;
+    REPRESENTATION
+      S = RECORD VAR top: INTEGER64; VAR items: ARRAY (INTEGER [1..10] OF INTEGER64) ENDRECORD;
+    PROCEDURE New RETURNS S ()
+      VAR s: S;
+      s.top := 0;
+      RETURN s
+    ENDPROCEDURE New;
+    PROCEDURE Push (VAR s: S; CONST v: INTEGER64)
+      s.top := s.top + 1;
+      s.items[s.top] := v;
+      RETURN
+    ENDPROCEDURE Push;
+    PROCEDURE Pop RETURNS INTEGER64 (VAR s: S)
+      s.top := s.top - 1;
+      RETURN s.items[s.top + 1]
+    ENDPROCEDURE Pop;
+    FUNCTION Empty RETURNS BOOLEAN (CONST s: S)
+      RETURN s.top = 0
+    ENDFUNCTION Empty
+  ENDMODULE Stack;
+
+  VAR st: S := New();
+
+  Bump(); Bump();
+  Write("count "); Write(count); WriteLn();
+  FOR i: INTEGER [1..3] DO Push(st, i * i) ENDFOR;
+  st.top := 0;
+  WHILE NOT Empty(st) DO Write(Pop(st)); Write(" ") ENDWHILE;
+  WriteLn()
+ENDMODULE Modules

@@ -5,7 +5,7 @@
 set -u
 cd "$(dirname "$0")/.."
 fail=0
-for f in labs/solutions/*.red labs/solutions/*.blu; do
+for f in labs/solutions/*.red labs/solutions/*.blu labs/solutions/*.yel; do
   t=$(basename "$f"); t=${t%.*}; lab=${t%%-*}; task=${t#*-}
   if labs/check.sh "$lab" "$task" "$f" > /dev/null 2>&1; then echo "ok   $lab/$task solution passes"
   else echo "FAIL $lab/$task solution does not pass"; fail=1; fi
