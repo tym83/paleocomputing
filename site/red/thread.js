@@ -1,4 +1,4 @@
-// One thread of a RED or GREEN program: the main thread or a task.
+// One thread of a RED, GREEN, BLUE or YELLOW program: the main thread or a task.
 //
 // The program is wasm32-wasip1-threads. Every thread is a worker that
 // instantiates the same module on the same shared memory, so the runtime's
@@ -13,7 +13,7 @@
 // seq is taken from a shared counter at the moment of the write, so the page
 // can put writes from different workers back into the order they happened.
 
-const ERRNO_BADF = 8, ERRNO_SPIPE = 70;
+const ERRNO_BADF = 8, ERRNO_NOENT = 44, ERRNO_SPIPE = 70;
 
 class Exit extends Error {
   constructor(code) { super('exit ' + code); this.code = code; }
@@ -65,6 +65,9 @@ self.onmessage = (ev) => {
       v.setBigUint64(out + 16, 0xffffffffn, true);
       return 0;
     },
+    fd_fdstat_set_flags() { return 0; },
+    // there is no file system on the page: YELLOW files cannot be opened
+    path_open() { return ERRNO_NOENT; },
     fd_prestat_get() { return ERRNO_BADF; },
     fd_prestat_dir_name() { return ERRNO_BADF; },
     fd_seek() { return ERRNO_SPIPE; },
@@ -130,5 +133,10 @@ self.onmessage = (ev) => {
         postMessage({ t: 'exit', code: 134, seq: seq() });
       }
     }
+  }, (e) => {
+    // an import the host lacks: say so instead of leaving the page waiting
+    const msg = new TextEncoder().encode('*** cannot start: ' + (e && e.message || e) + '\n');
+    postMessage({ t: 'out', fd: 2, seq: seq(), bytes: msg });
+    postMessage({ t: 'exit', code: 134, seq: seq() });
   });
 };
