@@ -8,9 +8,9 @@ This is the third part of my series on paleocomputing. In [the first](https://ha
 
 I'm interested in the ideas that lived inside technologies that lost: what we threw away along with them, and which of the things we threw away came back later under other names. Ada is especially good material for that. Its requirements were written over years, in public, by the whole world; dozens of review teams picked the finalists apart; and the whole story is well documented.
 
-The article came out long. First, briefly, how the competition came about, why the Greens won, and what was left of the losers. Then a tour of both languages, the story of the compilers, and how a 1979 program ran for the first time. After that come the operating system, Kubernetes, a comparison with classic Ada and labs, and at the end an alternative history: what the industry might have become if different hands had gone up in May 1979.
+The article came out long. First, briefly, how the competition came about, why the Greens won, and what was left of the losers. Then a tour of both languages, the story of the compilers, and how a 1979 program ran for the first time. After that come the operating system, Kubernetes, the Blue and Yellow designs that dropped out back in 1978, a comparison with classic Ada and labs, and at the end an alternative history: what the industry might have become if different hands had gone up in May 1979.
 
-I'll say up front that almost all of the code in the project was written not by me but by AI agents, just as in the earlier parts of the series. My part was the idea, the decisions, the checking, and an endless stream of questions along the lines of "are you sure that's what the Reference Manual says?" Some of the work ran in parallel: one agent reconstructed the grammar of the red language from images of syntax diagrams, another went through the green documents, a third ported the competition's contract problems, a fourth dug into the history, and yet another, while I was busy with the red language, built the whole toolchain for the green one. Wherever "agents" show up in the text, that's who they are.
+I'll say up front that almost all of the code in the project was written not by me but by AI agents, just as in the earlier parts of the series. My part was the idea, the decisions, the checking, and an endless stream of questions along the lines of "are you sure that's what the Reference Manual says?" Some of the work ran in parallel: one agent reconstructed the grammar of the red language from images of syntax diagrams, another went through the green documents, a third ported the competition's contract problems, a fourth dug into the history, and yet another, while I was busy with the red language, built the whole toolchain for the green one, and later two more restored the blue and yellow designs the same way. Wherever "agents" show up in the text, that's who they are.
 
 All the sources, notes and instructions are in the repository [github.com/tym83/paleocomputing](https://github.com/tym83/paleocomputing), under `impl/ada-colors`.
 
@@ -30,7 +30,7 @@ Red's translator worked. It was built by Mark Davis's group, and in the recollec
 
 On May 2, 1979, the group chose Green. That same day Whitaker sent out three thousand green postcards reading "Green is Ada!" The vote was unanimous, like every vote this group ever took: Whitaker admits he only put a question to a formal vote once everyone already agreed. Van Deusen tells a story from the losing side about a young Air Force representative who had been ordered to vote for Green, discuss nothing and not change his mind. I found no confirmation of this, so let it stand as one side's account.
 
-Why Green won is written, in the documents available, mostly between the lines. The reviewers' reports, as far as I could find out, exist only on microfiche and aren't online. Tucker Taft, who joined Intermetrics in 1980 and later led the design of Ada 95, says Green reached stability and completeness earlier than the others, and that Ichbiah was remarkably good at presenting it to the reviewers. Van Deusen recalls that the Green team had a very fine sense of politics from day one, and that its first design decision was the length of the book. And a popular Time-Life book on programming languages from 1986 has what I think is the most accurate line of all, put in the mouth of one of the competitors: in the final, both languages changed, with Red growing bolder and Green more conservative.
+Why Green won is written, in the documents available, mostly between the lines. The reviewers' reports on the final, as far as I could find out, exist only on microfiche and aren't online. The analyses of the first round, as it later turned out, did survive, and they get a chapter of their own. Tucker Taft, who joined Intermetrics in 1980 and later led the design of Ada 95, says Green reached stability and completeness earlier than the others, and that Ichbiah was remarkably good at presenting it to the reviewers. Van Deusen recalls that the Green team had a very fine sense of politics from day one, and that its first design decision was the length of the book. And a popular Time-Life book on programming languages from 1986 has what I think is the most accurate line of all, put in the mouth of one of the competitors: in the final, both languages changed, with Red growing bolder and Green more conservative.
 
 Then came a long polishing period. The Preliminary Ada Reference Manual was published in June 1979 in SIGPLAN Notices; it was picked apart and reworked, and only in February 1983 did the ANSI/MIL-STD-1815A standard appear, the one we now call Ada 83. The standard's number comes from the year Ada Lovelace was born. Intermetrics buried the red language quickly and, according to Van Deusen, completely. But this story has a sequel that I'll come back to.
 
@@ -46,7 +46,7 @@ With the green language I expected the opposite: Ada won, after all, so its docu
 
 The contract problems deserve a word of their own. These are ten problems the DoD handed to every team: polling keyboards through a shared ring buffer, an interrupt system with four priority levels, a file package, dynamic graphics with joysticks, protecting a database from concurrent access, process control, adaptive routing, a real-time scheduler, distributed broadcast, and unpacking bit-level message headers. Both teams worked from the same problem text, so for the first time in forty-seven years the red and green solutions can be laid side by side. An agent transcribed all twenty solutions from images and scans into source files. The Red team got by in 815 lines of code without comments, the Green team needed 1660, twice as many. Three quarters of the difference comes from three problems where the Green team had to write server tasks in places where Red has built-in mailboxes, critical sections and deferred activation.
 
-What I couldn't find. The Blue and Yellow designs, judging by a 2023 thread on the systemsafety mailing list, are inside a huge 4575-page volume of first-round reports in the same DTIC, but the DTIC site refuses to serve it to scripts, and that's a job for a separate evening in a browser. And Red's translator itself. All that remains of it is a bibliographic reference in a 1981 article by Van Deusen ("M. Davis and D. Levine, RED Translator, Intermetrics, Inc., March 1979"), a couple of paragraphs in the Rationale about what input/output it supported and how the syntax of the contract problems was run through it, and Van Deusen's own recollections. No source code. So we won't see the compiler that existed in 1979, but we can write a new one, and it's probably the first publicly available RED compiler in the language's entire history.
+The Blue and Yellow designs, judging by a 2023 thread on the systemsafety mailing list, are inside a huge 4575-page volume of first-round reports in the same DTIC. DTIC itself never handed it over, but a copy turned up elsewhere, and it gets a chapter of its own, along with the blue and yellow languages. What I couldn't find is Red's translator itself. All that remains of it is a bibliographic reference in a 1981 article by Van Deusen ("M. Davis and D. Levine, RED Translator, Intermetrics, Inc., March 1979"), a couple of paragraphs in the Rationale about what input/output it supported and how the syntax of the contract problems was run through it, and Van Deusen's own recollections. No source code. So we won't see the compiler that existed in 1979, but we can write a new one, and it's probably the first publicly available RED compiler in the language's entire history.
 
 # A tour of RED
 
@@ -422,6 +422,129 @@ And there's a trap that I described in the file header in advance and then verif
 
 The green version, by the way, found a bug in my shared runtime. When a node loses power, its kubelet is terminated with `abort`, and at that moment it's standing in the queue at an entry of its mailbox. The runtime made the aborted task ready but forgot to remove its record from the entry queue, and a moment later the mailbox "accepted" a call from a task that had already finished and woke the dead. Section 9.10 of the 1979 manual says plainly that an aborted caller is removed from the queue, so this was my bug, not the language's.
 
+# Blue and Yellow
+
+Everything I've told so far concerned two languages out of four. SofTech's Blue design and SRI International's Yellow design dropped out in the spring of 1978, after the first round, and when I started on this story their documents seemed out of reach. Then it turned out they're sitting in one book together with the whole first round, and that book can be reached after all.
+
+## A book made for microfiche
+
+That same 2023 thread on the systemsafety mailing list mentioned a DTIC volume numbered ADB950587, "DoD Common High Order Language, Phase 1," 4575 pages long. While I was busy with Red and Green, the DTIC site first went down for maintenance and then started answering requests with a refusal. The Wayback Machine came to the rescue. In September 2023 someone saved the whole PDF there, all 4575 pages with a text layer, and it carries the same marking as the RED manual: approved for public release.
+
+The book's preface is a small historical document in its own right. The compilers write that the book was made for microfiche and no bound version ever existed, and that the two hundred copies of the designs handed out to reviewers were all used up, so this volume is the only set that can be distributed at all. The colors are revealed there too: Green is CII Honeywell Bull, Red is Intermetrics, Yellow is SRI International, Blue is SofTech. Nobody tried very hard to hide the authors, and the compilers admit that people who had followed the program closely recognized the teams by their style, but most reviewers praised the color disguise. And the preface ends with a sentence I reread several times. The losing designs will not be continued and should be of interest only to researchers; the goal of the program is convergence, and it is not appropriate at this time to foster alternatives.
+
+Inside are the four preliminary designs as they were delivered on February 15, 1978: Green, Red in its first edition, that is, the very REDL the Red team later threw out, Yellow in three hundred pages and Blue in almost five hundred. After them come the analyses sent in by some eighty teams, from universities to defense contractors, the report of the so-called Pittsburgh Panel, which spent two weeks reading those analyses and questioning the authors, and at the very end Steelman. The 1979 final-round reports that decided between Red and Green aren't here; the book is about the first round only. The recognized text is awful in places, a zero for the letter O and a lowercase l for the percent sign, so every program was checked against the page image, and the Blue ones were simply retyped from the pictures.
+
+Two more agents took on these two languages, in parallel and along the same path Red and Green had taken.
+
+## BLUE: a language held together by types
+
+Of the four, the blue language looks the strangest. Here's a piece from one of the labs, a generic swap of two values:
+
+```
+TYPE COLOR = ENUM (\RED, \GREEN, \BLUE);
+
+PROCEDURE SWAP (# X, Y: ?T) WHERE T NEEDS (STORE_ (T ## T));
+   VAR TMP: T;
+   TMP := X;
+   X := Y;
+   Y := TMP;
+END PROCEDURE SWAP;
+
+SWAP (# I, J);       % integers
+SWAP (# A, B);       % strings
+SWAP (# K, M);       % colors
+```
+
+Enumeration literals are written with a backslash, `\GREEN`, which is why one and the same literal can comfortably belong to two types at once. A hash mark in a parameter list separates the input parameters from the modifiable ones, and a second hash mark separates the outputs, so `(# X, Y)` means there are no inputs and both parameters are modifiable. The type `?T` is derived from the argument, and the instance is created at the point of call, as in RED. The `WHERE T NEEDS` list names the operations the body needs and takes them from wherever the procedure was called. And `STORE_` isn't a typo: in the blue language every operator is a call of a function with a fixed name, `ADD_`, `LESS_THAN_`, `CONCATENATE_`, and so is assignment, so an abstract type defines both its addition and its assignment the same way. Fixed-point numbers are given by scale, radix and precision, and an integer is simply `FIXED` with a scale of zero. The machine-dependent parts of a program live inside `SELECT OBJECT_MACHINE`, where the bits of a register can be read as an enumeration value. One of the 1978 reviewers wrote that Blue came closest to using the concept of type as a unifying force in the language, and that, I think, is the best short description of Blue there is.
+
+Parallelism is stricter. There's a parallel block, `PAR_BLOCK`, with paths inside it, `PATH`, and there are semaphores. No mailboxes, no rendezvous. But semaphores come in two kinds, and the difference between them is thought through very carefully. A `SYNCH` semaphore is a signal: one path releases it, another waits, exactly like Dijkstra's P and V. A `REGION` semaphore is a lock around shared data, and if the path holding it dies, the lock is released by itself. A signal semaphore is not released when a path dies, and SofTech's justification explains why: a dying path must not send false signals.
+
+## YELLOW: Pascal, told to satisfy Ironman
+
+With the yellow design everything was clear from the first page. SRI says outright that it was required to design its language by modifying Pascal to comply with Ironman, and so the language report is built parallel to Wirth's Pascal Report, chapter for chapter. To Pascal's statements, which are closed here with `ENDIF` and `ENDWHILE`, it adds Modula's modules, monitors and signals:
+
+```
+MONITOR ReadersAndWriters
+  IMPORT INTEGER64;
+  EXPORT StartRead, EndRead, StartWrite, EndWrite;
+  VAR readers: INTEGER64 := 0;
+      busy: BOOLEAN := FALSE;
+      okToRead, okToWrite: SIGNAL;
+
+  PROCEDURE StartRead ()
+    IF busy OR AWAITED(okToWrite) THEN WAIT(okToRead) ENDIF;
+    readers := readers + 1;
+    SEND(okToRead);
+    RETURN
+  ENDPROCEDURE StartRead;
+  ...
+ENDMONITOR ReadersAndWriters;
+```
+
+This is Hoare's monitor from his 1974 paper, and the yellow language's semantics are Hoare's: `SEND` hands the monitor straight to the woken process, and the sender waits. That's why the woken process tests its condition with `IF` rather than `WHILE`, as it would have to in the monitors of later languages.
+
+Then SRI's own ideas begin. Type and representation are different things in the yellow language: `INTEGER` is a type, `INTEGER [1..10]` is its representation, and you can't declare a variable without a representation. Overloading is only explicit, through `EXTENDS`, which adds another definition, and `REPLACES`, which overrides the old one. Exceptions aren't declared, and `PROPAGATE_EXCEPTION` leaves its own block, so the handler of that same block doesn't see it. Functions are pure, and for everything else there are value-returning procedures. And there are two rules about expressions that trip you up on the very first day. Subtraction isn't associative, so `a - b - c` is a syntax error, and the language makes you say with parentheses which subtraction comes first. And comparisons bind loosest of all, so `x > 0 AND b` reads as `x > (0 AND b)`. Two symbols in the printed text have no ASCII form at all, the not-equal sign and the dereferencing arrow, and in the implementation they became `#` and `^`, as in Modula. The arrow in `CASE` branches came out of text recognition as `->`, but the page image shows it's `=>`, and the 1978 reviewers wrote it that way too in their own Yellow examples.
+
+## Two compilers, and programs nobody had ever compiled
+
+The path was a familiar one: a Python bootstrap, a compiler in the language itself, a fixed point, growth. Both compilers reproduced themselves byte for byte on their very first self-translation. The blue translator grew to about nine and a half thousand lines of Blue, the yellow one to about six thousand lines of Yellow.
+
+Each language showed its character, of course. In Blue, `FROM`, `TO`, `MODULE`, `TAG`, `ANY`, `REP` and `NEEDS` are reserved, and parameters with those names had to be renamed, and a function may not have modifiable parameters. Yellow has no strings as values, not even concatenation, and all the text in its compiler lives in one big pool of characters where every string is a number. That's roughly how Pascal compilers lived in the same seventies.
+
+The programs in the documents made a more interesting story than Red's and Green's. There was no implementation at all in the first round; the book's preface says so plainly: the first phase was meant as an extensive feasibility study. That means nobody ever translated a single program from the blue and yellow designs, not in 1978 and not since.
+
+The blue document has seventeen programs. Once you fill in what the original replaces with an ellipsis, seven of them translate as printed. The rest have errors like `BUFF` for `BUF`, the arguments of `INTEGRATE` in the wrong order, and a matrix product that, because of one letter, multiplies the first matrix by itself. The biggest and most interesting program is Appendix C, the standard input/output library, about thirteen hundred and fifty lines: a safe teletype, an ordinary teletype, binary and textual I/O, and device-driver paths tied to the PDP-11's interrupts. To translate it, I had to rename a procedure called `IN`, though `IN` is a reserved word; remove a constant exported by two modules at once, though a module exports only types and routines; and add imports to closed scopes that imported nothing. After that the library ran on a simulated PDP-11 with two LT33 teletypes. The first is the console, the second prints alongside, and when asked to rewind a file on a teletype, the 1978 library politely replies that a teletype does not rewind.
+
+The yellow tutorial has fifteen programs, and five of them translate as printed. The rest collected the errors any text collects when nobody runs it through a translator: the name at the end of a module drifts away from the name at the start, so `ConvexHullFinder` is closed as `ComplexHullFinder`; one name is spelled two ways; and the sorting example writes `IMPORTS` and `EXPORTS` from some other language. But most often the authors forgot the rules of their own language. In a scheduler for SIFT, the fault-tolerant flight computer SRI was working on at the time, the condition `ept > 0 AND enabled[pri]` means, by the yellow language's rules, something quite different from what was intended. And the track-reservation procedure, though it translates, falls out of its own bottom without a `RETURN`, which by the language's rules is an error on the very first call.
+
+Three programs translate and work incorrectly. The distance example, on the example's own points, overflows the representation that the square of the difference has to fit into. The exchange sort compares strings in such a way that ordinary names are never swapped, and if a pair does qualify, the index runs off the end of the string. And the convex hull for eight points whose hull has five marks only two. At first I naturally assumed the translator was wrong, so the same algorithm was rewritten in Python. It marked the same two points. One more program, a real-time clock, translates and runs, but shows a consequence of the chosen monitor semantics: because `SEND` hands the monitor straight to the waiter, a pause of five ticks ends after one.
+
+## THE and Kubernetes without messages
+
+Then the same things I'd written in Red and Green were written in both languages: the THE system, Kubernetes on top of it, the Kubernetes control loop and three small problems for comparison. And it immediately became clear how these two languages resemble each other and how they differ from the finalists. Neither has messages. Neither can wait for two things at once. Neither has a timeout on a wait.
+
+THE in the blue language turned out to be almost native. Blue's semaphores are Dijkstra's P and V with no layer in between, and the program prints exactly what the RED version prints, character for character. The queue between levels, which the language doesn't have, became a generic module of thirty lines: one `REGION` semaphore and two `SYNCH` ones. And then came the thing that, it seems, made it worth restoring the whole blue language. Remember how in Kubernetes on THE a kubelet died with the store's semaphore in its hands and took the whole control plane with it? In Red and Green I had to move the power cut into the gap between two of the kubelet's passes. In Blue the store's semaphore is declared `REGION`, and a node can lose power at any moment, even in the middle of a write. The path's death releases the semaphore, and the control plane lives on. SofTech's justification honestly admits that the data under the lock may then be left half-written, but Kubernetes controllers compare states, and the next pass fixes it. The distinction between the two semaphores, which in the 1978 document looks like pedantry, in practice solves exactly the problem Dijkstra named as his group's first big mistake.
+
+Timeouts are harder. `REQUEST` has none, and the blue language has no way to say "wait for an item, but not longer than thirty milliseconds." The answer turned up in the same book, from the reviewers. One of the teams wrote an input-with-timeout problem in all four languages, and here's the blue version, with the text recognition corrected:
+
+```
+REQUEST (# TTY);
+WRITES ('FUEL FLOW?' \CR \LF);
+PAR_BLOCK
+   PATH PATH1
+      INPUT (## RATE);
+      TERMINATE (PATH2);
+   END PATH PATH1;
+   PATH PATH2
+      WAIT (30);
+      TERMINATE (PATH1);
+      WRITES ('5 GALLS/SEC ASSUMED' \CR \LF);
+      RATE := 5;
+   END PATH PATH2;
+END PAR_BLOCK;
+RELEASE (# TTY);
+```
+
+Two paths race, and whichever finishes first kills the other. If the operator hasn't answered within thirty seconds, the fuel flow is taken to be five gallons per second. I love that this example holds a whole era: a military console, a teletype, a sensible default. Every wait in the blue Kubernetes is built this way, and the price of the idiom shows at once. Every wait takes a parallel block of two paths. A parallel block can't be placed inside a routine, so the waiting loop can't be hidden in a procedure, and it had to be written out twice, for the controllers and for the kubelets. The race is safe only if the waiting path has a higher priority than the timer. Otherwise the timer can kill it at the moment it has already taken an item from the queue but hasn't yet said so, and the item is lost; that became one of the labs. Finally, the termination exception doesn't say who sent it, so a kubelet whose power was cut can't tell that from a lost race. It had to be left a note. And one small thing that turned out not to be small: the clock in the blue language shows the running time of a particular path, and there is no time of day at all. To print timestamps, every process in the system had to be made a path of one parallel block started at time zero.
+
+The yellow language builds everything on monitors, and THE fits onto them in its own way. Yellow only has binary semaphores, so Dijkstra's counting semaphores became monitors with a counter and two signals, the very bounded buffer Hoare invented monitors for. The segment controller became a monitor too: the process that needs a segment does the work itself under mutual exclusion, and the queue at the monitor's entrance is the queue of requests. The console answers strictly in ticket order, because each process waits with a rank equal to its ticket, and `SEND` wakes the smallest. Kubernetes on THE in Yellow prints the same as in Red, byte for byte.
+
+What Yellow lacks shows in the workarounds. Every timeout is a separate watchdog process that watches the clock and sends a signal at the right moment. Unlike THE, where the watchdog had to slip a fake item into the buffer, the woken process in Yellow sees that its condition is still false and decides by itself to stop waiting. There can be no array of monitors, because a monitor is a module, not a value, so eight event streams are eight named instances of one template, and the right one is picked with a `SELECT` on its number. Starting a process returns nothing, no name or number for it, so to cut power to the second node, the kubelet itself writes its identity where the user will find it. You can't end a program while processes are running: a scope ends when its processes end, and there's no stop statement. And an exception leaves a monitor just as reliably as `REGION` in Red releases its lock, but it doesn't release a binary semaphore. That's why in the yellow Kubernetes on THE, where the store is guarded by just such a semaphore, the power is cut between passes, as in Red.
+
+Along the way two places turned up where the yellow translator fell short of SRI's report: arrays of signals inside a monitor weren't tied to it, so a wait on an element of such an array didn't release the monitor, and modules could import only from modules declared earlier, though the report doesn't require that. Both were my mistakes, and both are fixed.
+
+Readers and a writer, the third comparison problem, now has four answers instead of three. In RED an exclusive `REGION` lines everyone up in a queue. In GREEN a server hands out copies. On the semaphores of THE and of Blue, readers read together, but a late reader overtakes a waiting writer, and in Blue the writer's semaphore must be a signal one, because the reader who releases it is often not the one who took it. And Hoare's monitor in the yellow language gives what none of the others did: readers read together, and nobody overtakes a waiting writer.
+
+## Why they lost
+
+The Pittsburgh Panel boiled the analyses down into tables, and its conclusion came out simple. The reviewers rated Green the best, Blue the worst, and saw almost no difference between Red and Yellow. If you read the analyses themselves, though, the picture is far more colorful. Some teams put Yellow first, others last. One recommended continuing Green and Blue, another Red and Blue. Yet another wrote that Yellow was much the worst designed and should not be carried further, and the next that Yellow seemed to be on the safe side from a systems programmer's point of view and might well be the cheapest of all to implement. And the summary of comments holds my favorite piece of advice: the best next move the DoD can make is to ask the Red team to implement the Yellow language. That, the compilers write, came from a number of analysts independently. Well, the yellow language is implemented now.
+
+On Blue the panel was briefest of all: reject it. The design is careful and complete, but overwhelmed by a pervasive complexity, and the simple underlying semantic model claimed by its designers is not evident. One team admitted that Blue suffered from its own presentation and that this doubtless affected its overall view; another hoped the designers would clean up the syntax enough that it stopped overshadowing the design's virtues. In one of the comparison tables, Blue and Yellow are rated severe for typographic volatility, that is, for their profusion of symbols, while Red and Green are rated good. The restoration confirmed both halves of the verdict. The care is real: the I/O library with its drivers ran after a dozen typos, and the two kinds of semaphores turned out to be more precise than anything the finalists had. But the complexity is real too: the blue translator came out the largest of the four, nearly twice the size of Red's, and the backslashes, hash marks, double hash marks and double exclamation marks read worse than any of its neighbors.
+
+Yellow lost by a hair. The panel wrote that the choice between Red and Yellow was not clear-cut, and the majority of its members only slightly preferred Red. But in the section on Yellow itself the words are harsh: type and representation are confused, there's no workable way to identify a process, monitors have not been used for significant systems, and on the whole the attempt to build on Pascal and its cousin Modula has not been successful. Here my experience agrees with the panel by half. On process identification it's right in exactly the spot where I tripped myself, when the kubelet wrote down its own number for the user. But monitors turned out to be the most convenient part of the yellow language for THE and Kubernetes, and by 1978 Brinch Hansen had already, two years earlier, described the Solo operating system, written on the monitors of Concurrent Pascal. There's a further irony: the red design that beat Yellow by a hair was thrown out a year later by the Red team itself.
+
+Put the four languages side by side and you see four answers to one question: how many synchronization mechanisms does a language need? Green chose the rendezvous, Blue semaphores, Yellow monitors, and only Red offered several mechanisms at once. Three designs out of four bet on a single mechanism, and in none of the three, as I restored them, can the one who waits limit the wait by time on its own. And in the chapter on Ada you'll see that Ada eventually won the monitor back too, under the name of the protected object. The book's compilers wrote that the losing designs should be of interest only to researchers. It seems they were right; it's just that the researchers showed up forty-eight years later.
+
 # Ada 83, and what came back later
 
 The winning Ada didn't become the Ada everyone knows right away. Four years of revisions separate the green language of spring 1979 from the 1983 standard, and I compare both of them with the red language.
@@ -509,14 +632,17 @@ Here's what's there:
 - the compiler itself: add a built-in `MAX` function to `redc`, rebuild it and make sure the fixed point still holds;
 - the 1979 program: drop one fix from the list and see which error in the original stops the translator.
 
+Next to them are fifteen more exercises, seven in the blue language and eight in the yellow one, and they're about what only those languages have. In Blue you can play with a literal that belongs to two enumerations, read the bits of a device register as an enumeration value, declare a lock as a signal semaphore instead of `REGION` and watch the death of a worker path hang everything else, and in a race of two paths take the priority away from the waiting one and lose an item in the queue. In Yellow you can write `a - b - c` without parentheses and get rejected, remove a `SEND` from a monitor and see that a signal isn't a state and nobody wakes the waiters without it, and instantiate a template for a type with no ordering. And both have THE, which you can break with the same arrow pointing up.
+
 To run all of this, you only need a C compiler and make:
 
 ```sh
 git clone https://github.com/tym83/paleocomputing
 cd paleocomputing/impl/ada-colors
 make                     # builds redc from the seed and checks the fixed point
+make -C blue fixpoint    # the same for bluec, and make -C yellow fixpoint for yellowc
 red/tests/run.sh         # language tests
-os/run.sh                # the operating system and all three Kubernetes variants
+os/run.sh                # the operating systems and every Kubernetes variant in every language
 labs/check.sh 03 look    # the mailbox lab
 ```
 
@@ -528,15 +654,15 @@ cc -std=gnu11 -Irt program.c rt/paleo.c -lpthread -lm -o program
 ./program
 ```
 
-If you have Cozystack at hand, you don't need to install anything. The series' application catalog has an environment for languages, and RED and GREEN arrived there as a separate image: you specify the `ada-colors-run` image, put in a source file, and the program runs as a one-off job whose output becomes its log. When the image is built, both compilers go the whole way from their seeds again and check that they reproduce themselves.
+If you have Cozystack at hand, you don't need to install anything. The series' application catalog has an environment for languages, and all four languages arrived there as a separate image: you specify the `ada-colors-run` image, put in a source file, and the program runs as a one-off job whose output becomes its log. When the image is built, all four compilers go the whole way from their seeds again and check that they reproduce themselves.
 
-The easiest way, though, is to open [the page in your browser](https://tym83.github.io/paleocomputing/red/). Everything happens right there, with no server. redc and greenc, built to WebAssembly from the same C seeds, translate the source to C. Then clang, also built to WebAssembly, compiles that C, and the program runs with a thread for every task, on shared memory. The runtime is the same file as on Linux, with the same virtual clock, so the labs, the PAIRS kernel and all three Kubernetes print in the browser exactly what they print on an ordinary machine, byte for byte. CI checks it: it runs every example in headless Chrome and compares the output. The first run downloads the C compiler, about twenty megabytes, and after that the browser keeps it.
+The easiest way, though, is to open [the page in your browser](https://tym83.github.io/paleocomputing/red/). Everything happens right there, with no server. All four translators, built to WebAssembly from the same C seeds, translate the source to C. Then clang, also built to WebAssembly, compiles that C, and the program runs with a thread for every task, on shared memory. The runtime is the same file as on Linux, with the same virtual clock, so the labs, the PAIRS kernel and all three Kubernetes print in the browser exactly what they print on an ordinary machine, byte for byte. CI checks it: it runs every example in headless Chrome and compares the output. The first run downloads the C compiler, about twenty megabytes, and after that the browser keeps it.
 
 # What I'm taking with me
 
 At the end of each part of the series I ask myself what's worth carrying over from what I found into today's infrastructure. This time there turned out to be a surprising number of such things.
 
-First, keeping mechanisms separate. Messages for communication, locks for shared data, and neither pretends to be the other. Ada spent sixteen years arriving at the same place, and in the Kubernetes world we constantly see people trying to cover everything with one mechanism: a queue used as a database, or a database used as a queue. The Red team understood perfectly well in 1979 why that won't do.
+First, keeping mechanisms separate. Messages for communication, locks for shared data, and neither pretends to be the other. Ada spent sixteen years arriving at the same place, and in the Kubernetes world we constantly see people trying to cover everything with one mechanism: a queue used as a database, or a database used as a queue. The Red team understood perfectly well in 1979 why that won't do. And the Blue and Yellow designs, which had a single mechanism each, semaphores or monitors, showed the other side: without messages and without a timed wait, every timeout becomes a separate watchdog process or a race of two paths.
 
 Second, explicit interfaces to state. `IMPORTS` in RED annoyed me at first and then started helping me read and check my own code, even though in the compiler itself the most honest thing turned out to be writing `IMPORTS ALL` in most procedures. In infrastructure code, where controllers, operators and hooks all touch the same store, a list like that would be priceless, and in places it's effectively already being introduced through access rights and field-level restrictions.
 
@@ -546,6 +672,6 @@ Fourth, deterministic time. Almost everything interesting in this article was fo
 
 And fifth, not technical at all. Studying the losers is useful not out of nostalgia but so that you know in advance which ideas will come back, and don't pay for them a second time.
 
-What's next. The Blue and Yellow designs are apparently in that 4575-page DTIC volume, and I'll download it from a browser as soon as the DTIC site comes back from maintenance.
+What's next. The reviewers' reports on the 1979 final, which decided between Red and Green, apparently still exist only on microfiche, and Red's translator never turned up. If you have access to either, let me know.
 
 The sources, tests, labs and all the notes are in the repository [github.com/tym83/paleocomputing](https://github.com/tym83/paleocomputing), under `impl/ada-colors`. If you find a mistake in my reading of the 1979 manuals, let me know; I'm genuinely curious.
