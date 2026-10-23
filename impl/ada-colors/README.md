@@ -1,6 +1,6 @@
 [Русская версия](README.ru.md)
 
-# RED and GREEN
+# RED, GREEN, BLUE and YELLOW
 
 The two finalists of the US DoD-1 language competition of 1979, rebuilt from
 their documents. GREEN won and became Ada; RED (Intermetrics) disappeared.
