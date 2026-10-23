@@ -55,3 +55,48 @@ labs/check.sh 11 break /tmp/c1.red
 Reference solutions for the change, break and build tasks are in
 `labs/solutions/`. `labs/verify.sh` checks the checker: each solution must pass,
 and the unchanged program must not. CI runs it on every pull request.
+
+## YELLOW
+
+Eight exercises on YELLOW, SRI International's design of 1978, the one that
+was told to modify Pascal to fit Ironman (see `yellow/README.md`). The programs
+are in `labs/yellow/`; the lab numbers are `y1` to `y8`, and `check.sh`
+translates them with `yellow/build/yellowc` after the standard prelude. Line
+numbers in the translator's messages are given in your file.
+
+```sh
+make -C yellow fixpoint      # builds yellowc from its seed
+labs/check.sh y1 look        # run lab Y1 as it is
+labs/check.sh y1 break       # check your change to labs/yellow/y1-operators.yel
+git checkout labs/yellow     # start over
+```
+
+| # | Program | Task | What you should see |
+|---|---|---|---|
+| Y1 | `y1-operators.yel` | **look**: `(a - b) - c` and `a - (b - c)` | `-` is not associative, and YELLOW makes you say which subtraction comes first |
+| | | **change**: print `(a * b) DIV c`, a space, and `a * (b DIV c)` | `13 10`: `*` and `DIV` are on one level and `DIV` is not associative either |
+| | | **break**: write `a - b - c` without parentheses | `needs parentheses` (VIII.A). Pascal reads it left to right; YELLOW does not read it at all |
+| Y2 | `y2-parameters.yel` | **look**: `Divide` sets its OUT parameter, then fails | `q = 3`: an OUT parameter reaches the actual only at RETURN (X.A.2) |
+| | | **change**: add `OUT r` to `Divide`, set `r := a MOD b`, print `"remainder "` and `r` | `remainder 1` |
+| | | **break**: write `a := 0` inside `Divide` | `a variable is needed here`: a CONST parameter is never changed, not even by its own routine |
+| Y3 | `y3-enumerations.yel` | **look**: an ORDERED `Phase` and an UNORDERED `Fruit` | `SUCC`, `LAST` and `FOR` work on the ordered one |
+| | | **change**: add `Failed` at the end of `Phase` and a CASE for it in `WritePhase` | `last phase Failed` |
+| | | **break**: compare two fruits with `<` | `< <= > >= apply to ordered values`: an UNORDERED enumeration has only `=` and `#`. Try also adding `Colors = UNORDERED (Red, Orange)`: an unqualified `Orange` then names values of two types |
+| Y4 | `y4-templates.yel` | **look**: one TEMPLATE, two INSTANCEs | Each instance is the module written out again with the actuals in place of the formals |
+| | | **change**: add a second INTEGER64 instance (`OtherStack`, `PushO`, ...), push 5 on it, print `"two integer stacks, depths "` with both depths | `depths 3 1`: two instances of one type are two modules with their own state |
+| | | **break**: instantiate `StackTemplate` for `Fruit` | `apply to ordered values`, from inside the template: it is checked only when an instance is made, and `Largest` uses `<` |
+| Y5 | `y5-monitor.yel` | **look**: A waits first with rank 2, B second with rank 1 | `B got 1`, and the waiter runs before the producer goes on: Hoare's SEND hands the monitor over (X.E.4) |
+| | | **change**: give A and B the same rank | `A got 1`: first come, first served within a rank |
+| | | **break**: remove `SEND(arrived)` from `Give` | `deadlock`: a signal is not a state, and nobody wakes the consumers |
+| Y6 | `y6-functions.yel` | **look**: a FUNCTION and a value-returning PROCEDURE | `calls 0` |
+| | | **change**: make `Square` a `PROCEDURE ... RETURNS` that adds 1 to `calls` | `calls 2`: a value-returning procedure may have side effects |
+| | | **break**: write `calls := calls + 1` inside the FUNCTION `Square` | `calls is not local`: a FUNCTION assigns only to its own locals (D-33) |
+| Y7 | `y7-modules.yel` | **look**: `Counter` exports `count` READONLY, `Stack` exports `S` OPAQUE | `count 2` |
+| | | **change**: export `count` VAR, set `count := 0` in the main part, print `"count after reset "` and `count` | `count after reset 0` |
+| | | **break**: write `st.top := 0` in the main part | `its components are hidden` (X.B.3). Assigning `count` without the change gives `a variable is needed here` |
+| Y8 | `y8-the.yel` | **look**: Dijkstra's THE system with YELLOW's monitors (`os/the_yellow.yel`) | No process waits for one above it, and the society finishes |
+| | | **change**: set `ncore` to 8 | `drum transfers 0` |
+| | | **break**: set `reportDumps` to `TRUE` | Deadlock: the segment controller, a monitor on level 1, waits for the console, whose interpreter needs the segment controller to read its vocabulary |
+
+The reference solutions are `labs/solutions/y*.yel`; `labs/verify.sh` checks
+them with the RED ones.
