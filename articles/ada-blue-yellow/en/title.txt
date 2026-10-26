@@ -1,0 +1,1 @@
+Two more Adas: I rebuilt the blue and yellow languages the Pentagon rejected in 1978 and wrote Dijkstra's operating system and Kubernetes in them

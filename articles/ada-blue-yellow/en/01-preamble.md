@@ -1,0 +1,17 @@
+# Two more Adas: I rebuilt the blue and yellow languages the Pentagon rejected in 1978 and wrote Dijkstra's operating system and Kubernetes in them
+
+In February 1978 four teams handed the US Department of Defense preliminary designs for the language that a year later would be named Ada. The designs were anonymized by colour. Green came from Jean Ichbiah's French-American team, Red from Intermetrics of Boston, Blue from SofTech, Yellow from SRI International. In the spring of 1978 Green and Red went through to the second round, while Blue and Yellow went to the archive. A year later Green won and became Ada.
+
+In [the article about the finalists](LINK) I rebuilt the red and green languages: I put them together from the 1979 documents, wrote a self-compiling compiler in each, and grew an operating system and Kubernetes on top of them. Back then Blue and Yellow seemed out of reach. Their documents sat in a volume of four and a half thousand pages that the DoD archive had stopped handing out. Then a copy turned up in a web archive, and I did the same thing with these two languages.
+
+This is the story of the two designs that lost first. Blue is a language in which everything rests on types, even assignment. Yellow is Pascal reworked to meet the military's requirements. Its tasks talk to each other not through the rendezvous, as in the green language and in Ada, where one task waits for another at a "door" and the two meet, but through Hoare's monitors: modules with shared data that only one process can enter at a time. For both languages I wrote compilers in the languages themselves, both ran programs that their authors wrote in 1978 and never saw working, and both now run Dijkstra's THE system with Kubernetes on top of it.
+
+<cut />
+
+But the main thing here isn't the languages themselves. It's that all four designs can now be put side by side and compared not by the reviews but by working code. The same task in the four languages behaves differently, and those differences turned out to be far more interesting than I expected. In the 1978 blue language, a parallel block hands the error of a failed branch to whoever opened the block, something the industry has arrived at only in the last few years. And a lock in it releases itself if its owner has died. Yellow has simulated time built right into the language, where the clock moves only when the program wants it to.
+
+The article is long, so here's a quick map. First, the 1978 book the texts came from, and the people who made these languages. Then a tour of the blue and yellow languages. After that, one and the same task in all four languages and a summary table of the differences, the compilers and the 1978 programs, THE and Kubernetes, and why these designs lost. At the end: what Ada later inherited from them, and what the industry might have become if Blue or Yellow had won the competition.
+
+This is the next part of my series on paleocomputing. I'm interested in the ideas that lived inside technologies that lost: what we lost along with them, and which of the lost things came back later in other technologies. You don't need to read the article about the finalists first: where needed, I'll briefly recall how the red and green languages work.
+
+All the sources, notes and instructions are in the repository [github.com/tym83/paleocomputing](https://github.com/tym83/paleocomputing), under `impl/ada-colors`, available under the Apache 2.0 license.
