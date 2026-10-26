@@ -1,6 +1,6 @@
 # GREEN in the spring of 1979
 
-It's easy to take the green language for early Ada, but that's deceptive. The preliminary manual of May 1979 describes a language that looks like Ada 83 in its syntax and yet in places is something else entirely. A separate agent built a compiler for the green language in the green language itself while I was busy with the red one, and along the way the language showed as much character as RED did.
+It's easy to take the green language for early Ada, but that's deceptive. The preliminary manual of May 1979 describes a language that looks like Ada 83 in its syntax and yet in places is something else entirely. I built a compiler for the green language in the green language itself alongside the red one, and along the way the language showed as much character as RED did.
 
 ## What a program looks like
 
@@ -27,7 +27,7 @@ A character literal in the green language is a string of length one, `"A"`; ther
 
 ## Rules that shape the compiler
 
-The main thing the agent tripped over was the function purity rules in section 6.5 of the manual. A function in the green language may not assign to anything nonlocal, modify objects through pointers, allocate memory, or, since input/output and external procedures can have side effects, call them. For generators like "give me the next unique number" there are value-returning procedures: `procedure NEXT return INTEGER`. They're allowed to change global variables, but they may be called only in an assignment, an initialization or a procedure call, and only where those global variables are out of scope.
+The main thing I tripped over was the function purity rules in section 6.5 of the manual. A function in the green language may not assign to anything nonlocal, modify objects through pointers, allocate memory, or, since input/output and external procedures can have side effects, call them. For generators like "give me the next unique number" there are value-returning procedures: `procedure NEXT return INTEGER`. They're allowed to change global variables, but they may be called only in an assignment, an initialization or a procedure call, and only where those global variables are out of scope.
 
 That sounds like a formality until you start writing a parser. An ordinary recursive descent parser works like this: there's a pointer to the current token, and an `EXPR` function parses an expression, advancing the pointer and returning a tree. In the green language you can't do that. A function can't advance the pointer, and a value-returning procedure can't be called where the pointer is visible, and inside a parser it's visible everywhere. So the entire parser of the green-language compiler is written as procedures with out parameters: `EXPR(X)` instead of `X := EXPR`. The compiler checks these rules for other people's programs too, and its own source passes them.
 
