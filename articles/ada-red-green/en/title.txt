@@ -1,1 +1,1 @@
-Two Adas: I resurrected both finalists of the Pentagon's 1979 language competition and wrote an OS and Kubernetes in the one that lost
+Paleocomputing, part 3. Two Adas: building programming languages that never existed, from the specs of a Pentagon tender
