@@ -122,7 +122,8 @@ for (const d of deps) toolchain[d.slice(1)] = fs.readFileSync(path.join(inc, d.s
 for (const n of LIBS) toolchain[`sysroot/lib/${T}/${n}`] = fs.readFileSync(path.join(lib, n));
 
 // Examples: the labs, the NonStop kernel, the Kubernetes loops, GREEN tasking,
-// and for BLUE and YELLOW some tests and programs of their 1978 reports.
+// THE and its contrast programs in BLUE and YELLOW, and for BLUE and YELLOW
+// some tests and programs of their 1978 reports.
 const LANGS = { '.red': 'red', '.grn': 'green', '.blu': 'blue', '.yel': 'yellow' };
 const read = (p) => fs.readFileSync(path.join(A, p), 'utf8');
 const sed = (script, text) => execFileSync('sed', ['-f', path.join(A, script)],
@@ -146,10 +147,17 @@ function yellowCorpus(n) {
     part(`yellow/corpus/${n}.post.yel`);
 }
 
+const labs = (lang, ext) => fs.readdirSync(path.join(A, `labs/${lang}`)).filter((f) => f.endsWith(ext)).sort()
+  .map((f) => `labs/${lang}/${f}`);
+const contrast = (lang, ext) => ['failure', 'readers', 'timeout'].map((n) => `os/contrast/${n}_${lang}${ext}`);
 const EXAMPLES = [
-  ...fs.readdirSync(path.join(A, 'labs/red')).filter((f) => f.endsWith('.red')).sort().map((f) => `labs/red/${f}`),
+  ...labs('red', '.red'),
   'os/pairs.red', 'kube/kube.red', 'kube/kube_ha.red',
   'green/tests/tasking.grn', 'kube/kube_green.grn',
+  ...labs('blue', '.blu'),
+  'os/the.blu', 'os/the_kube_blue.blu', 'kube/kube_blue.blu', ...contrast('blue', '.blu'),
+  ...labs('yellow', '.yel'),
+  'os/the_yellow.yel', 'os/the_kube_yellow.yel', 'kube/kube_yellow.yel', ...contrast('yellow', '.yel'),
   'blue/tests/basics.blu', 'blue/tests/generics.blu', 'blue/tests/modules.blu',
   'yellow/tests/basics.yel', 'yellow/tests/templates.yel', 'yellow/tests/processes.yel', 'yellow/tests/parallel.yel',
 ].map((p) => ({ path: p, source: read(p), input: part(p.replace(/\.\w+$/, '.in')) }));
