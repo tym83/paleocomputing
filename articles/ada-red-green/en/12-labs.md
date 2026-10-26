@@ -17,15 +17,12 @@ Here's what's there:
 - the compiler itself: add a built-in `MAX` function to `redc`, rebuild it and make sure the fixed point still holds;
 - the 1979 program: drop one fix from the list and see which error in the original stops the translator.
 
-Next to them are fifteen more exercises, seven in the blue language and eight in the yellow one, and they're about what only those languages have. In Blue you can play with a literal that belongs to two enumerations, read the bits of a device register as an enumeration value, declare a lock as a signal semaphore instead of `REGION` and watch the death of a worker path hang everything else, and in a race of two paths take the priority away from the waiting one and lose an item in the queue. In Yellow you can write `a - b - c` without parentheses and get rejected, remove a `SEND` from a monitor and see that a signal isn't a state and nobody wakes the waiters without it, and instantiate a template for a type with no ordering. And both have THE, which you can break with the same call from a lower level to a higher one.
-
 To run all of this, you only need a C compiler and make:
 
 ```sh
 git clone https://github.com/tym83/paleocomputing
 cd paleocomputing/impl/ada-colors
 make                     # builds redc from the seed and checks the fixed point
-make -C blue fixpoint    # the same for bluec, and make -C yellow fixpoint for yellowc
 red/tests/run.sh         # language tests
 os/run.sh                # the operating systems and every Kubernetes variant in every language
 labs/check.sh 03 look    # the mailbox lab
@@ -39,6 +36,6 @@ cc -std=gnu11 -Irt program.c rt/paleo.c -lpthread -lm -o program
 ./program
 ```
 
-If you have Cozystack at hand, you don't need to install anything. The series' application catalog has an environment for languages, and all four languages arrived there as a separate image: you specify the `ada-colors-run` image, put in a source file, and the program runs as a one-off job whose output becomes its log. When the image is built, all four compilers go the whole way from their seeds again and check that they reproduce themselves.
+If you have Cozystack at hand, you don't need to install anything. The series' application catalog has an environment for languages, and the languages arrived there as a separate image: you specify the `ada-colors-run` image, put in a source file, and the program runs as a one-off job whose output becomes its log. When the image is built, the compilers go the whole way from their seeds again and check that they reproduce themselves.
 
-The easiest way, though, is to open [the page in your browser](https://tym83.github.io/paleocomputing/red/). Everything happens right there, with no server. All four translators, built to WebAssembly from the same C seeds, translate the source to C. Then clang, also built to WebAssembly, compiles that C, and the program runs with a thread for every task, on shared memory. The runtime is the same file as on Linux, with the same virtual clock, so the labs, the PAIRS kernel and all three Kubernetes print in the browser exactly what they print on an ordinary machine, byte for byte. CI checks it: it runs every example in headless Chrome and compares the output. The first run downloads the C compiler, about twenty megabytes, and after that the browser keeps it.
+The easiest way, though, is to open [the page in your browser](https://tym83.github.io/paleocomputing/red/). Everything happens right there, with no server. The translators, built to WebAssembly from the same C seeds, translate the source to C. Then clang, also built to WebAssembly, compiles that C, and the program runs with a thread for every task, on shared memory. The runtime is the same file as on Linux, with the same virtual clock, so the labs, the PAIRS kernel and all three Kubernetes print in the browser exactly what they print on an ordinary machine, byte for byte. CI checks it: it runs every example in headless Chrome and compares the output. The first run downloads the C compiler, about twenty megabytes, and after that the browser keeps it.
