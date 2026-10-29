@@ -1,0 +1,34 @@
+MAIN SEGMENT OUTPUTS
+   USES (TERMINAL);
+% outputs (4.3.2): the formal is a local object, stored into the argument
+% only when the procedure completes normally
+VAR A: INTEGER := 1;
+VAR S: ASCII_STR(3) := 'old';
+SET_THEN_FAIL (# # A);
+EXCEPT
+   FAILED --> PUT_LINE ('after the exception A = ' !! TO_CHAR (A)); END;
+END EXCEPT;
+SET_AND_WATCH (# A # A);
+PUT_LINE ('after the call A = ' !! TO_CHAR (A));
+NAME_THEN_FAIL (# # S);
+EXCEPT
+   FAILED --> PUT_LINE ('after the exception S = ' !! S); END;
+END EXCEPT;
+NAME_THEN_FAIL_NOT (# # S);
+PUT_LINE ('after a normal return S = ' !! S);
+PROCEDURE SET_THEN_FAIL (# # X: INTEGER) SIGNALS (FAILED);
+   X := 5;
+   SIGNAL FAILED;
+END PROCEDURE SET_THEN_FAIL;
+PROCEDURE SET_AND_WATCH (# Y: INTEGER # X: INTEGER);
+   X := 10;
+   PUT_LINE ('the inout during the call = ' !! TO_CHAR (Y));
+END PROCEDURE SET_AND_WATCH;
+PROCEDURE NAME_THEN_FAIL (# # T: ASCII_STR(?L)) SIGNALS (FAILED);
+   T := 'new';
+   SIGNAL FAILED;
+END PROCEDURE NAME_THEN_FAIL;
+PROCEDURE NAME_THEN_FAIL_NOT (# # T: ASCII_STR(?L));
+   T := 'new';
+END PROCEDURE NAME_THEN_FAIL_NOT;
+END SEGMENT OUTPUTS;

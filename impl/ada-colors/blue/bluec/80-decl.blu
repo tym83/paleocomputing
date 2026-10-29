@@ -496,7 +496,7 @@ PROCEDURE ROUTINE_BODY (Y: SYM);
    VAR PROLOGUE: TEXT := MK ('');
    CS@ := (LEVEL: Y@.LEVEL + 1, R: Y, FRAMED: Y@.FRAMED, FTYPE: FMT1 ('fr_@', Y@.ACCESS),
            FIELDS: (HEAD: NIL, TAIL: NIL), UP: OUTER, IMPORTS: R@.E, SIGNALS: R@.D@.A,
-           RESULT: Y@.RESULT, IS_PATH: FALSE);
+           RESULT: Y@.RESULT, IS_PATH: FALSE, COPYOUT: MK (''));
    IF Y@.FRAMED THEN
       EMIT (O_TYPEDEFS, FMT2 ('typedef struct @ @;', CS@.FTYPE, CS@.FTYPE));
       IF Y@.LEVEL >= 1 THEN
@@ -542,8 +542,31 @@ PROCEDURE ROUTINE_BODY (Y: SYM);
                   ELSE
                      V@.ACCESS := FMT1 ('p_@', P@.NAME);
                   END IF;
-                  DEFINE (V, R@.LINE);
-                  DEFINE_PARAM_GENS (P@.T, V@.ACCESS, R@.LINE, TRUE);
+                  IF P@.MODE = M_OUT THEN
+                     % an output is a local object, stored into the argument only
+                     % when the procedure completes normally (4.3.2)
+                     BLOCK
+                        CONST ARGA: TEXT := V@.ACCESS;
+                        DEFINE_PARAM_GENS (P@.T, ARGA, R@.LINE, TRUE);
+                        V@.BYREF := FALSE;
+                        IF Y@.FRAMED THEN
+                           APPEND (FMT2 (' @ o_@;', CTYPE (P@.T), P@.NAME) # CS@.FIELDS);
+                           V@.ACCESS := FMT1 ('F->o_@', P@.NAME);
+                        ELSE
+                           PROLOGUE := FMT3 ('@ @ o_@;', PROLOGUE, CTYPE (P@.T), P@.NAME);
+                           V@.ACCESS := FMT1 ('o_@', P@.NAME);
+                        END IF;
+                        PROLOGUE := FMT3 ('@ @ = @;', PROLOGUE, V@.ACCESS, ARGA);
+                        IF NEEDS_INIT (P@.T) THEN
+                           PROLOGUE := FMT3 ('@ @ = @;', PROLOGUE, V@.ACCESS, COPY_OF (P@.T, ARGA));
+                        END IF;
+                        CS@.COPYOUT := CAT (CS@.COPYOUT, ASSIGN_CODE (P@.T, ARGA, V@.ACCESS));
+                        DEFINE (V, R@.LINE);
+                     END BLOCK;
+                  ELSE
+                     DEFINE (V, R@.LINE);
+                     DEFINE_PARAM_GENS (P@.T, V@.ACCESS, R@.LINE, TRUE);
+                  END IF;
                END BLOCK;
             END IF;
          END IF;
@@ -564,6 +587,8 @@ PROCEDURE ROUTINE_BODY (Y: SYM);
    APPEND_BUF (W@.CODE # W@.OUT(O_FUNCS));
    IF Y@.RESULT@.KIND <> T_VOID THEN                 % 4.3.2: no value to return
       EMITS (O_FUNCS, 'rt_raise(RT_X_INIT);');
+   ORIF CS@.COPYOUT.LEN > 0 THEN
+      EMIT (O_FUNCS, CS@.COPYOUT);
    END IF;
    EMITS (O_FUNCS, '}');
    W@.CS := OUTER;
@@ -644,7 +669,7 @@ PROCEDURE TRANSLATE (SEGS: NODE);
       FAIL (0, 'no segment');
    END IF;
    ROOT@ := (LEVEL: 0, R: NIL, FRAMED: FALSE, FTYPE: NO_TEXT (), FIELDS: (HEAD: NIL, TAIL: NIL),
-             UP: NIL, IMPORTS: NIL, SIGNALS: NIL, RESULT: NIL, IS_PATH: FALSE);
+             UP: NIL, IMPORTS: NIL, SIGNALS: NIL, RESULT: NIL, IS_PATH: FALSE, COPYOUT: MK (''));
    W@.CS := ROOT;
    W@.IS := NIL;
    ENTER_ISCOPE (NIL, NIL, MK ('segment'));

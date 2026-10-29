@@ -355,6 +355,7 @@ TYPE SCOPE_REC = RECORD
    VAR SIGNALS: NODE;               % the exceptions it may signal
    VAR RESULT: TYP;                 % of a function
    VAR IS_PATH: BOOLEAN;
+   VAR COPYOUT: TEXT;               % stores the outputs into the arguments (4.3.2)
 END RECORD;
 
 % a closed scope for the rules of importing (4.1.1): routines, paths, modules

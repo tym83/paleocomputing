@@ -398,7 +398,7 @@ PROCEDURE RETURN_STMT (S: NODE);
       ORIF CS@.IS_PATH THEN
          CODES ('return;');
       ELSE
-         CODES ('return;');
+         CODE (CATS (CS@.COPYOUT, 'return;'));
       END IF;
       RETURN;
    END IF;
