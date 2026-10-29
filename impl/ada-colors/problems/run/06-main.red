@@ -5,7 +5,7 @@ CAPSULE main EXPORTS NONE;
    GUARD
       d;
    BY
-      WHEN X_FILE => WRITELN("end of the operator's cards");
+      WHEN X_FILE => WRITELN("end of the operator" & 'APOS & "s cards");
    END GUARD;
    HALT(0);
 END CAPSULE main;

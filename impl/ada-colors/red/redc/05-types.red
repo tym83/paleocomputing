@@ -54,7 +54,7 @@ PROC define(CONST y : sym, CONST line : INT) IMPORTS table, depth, scope_stack;
    VAR z : sym := table(h);
    WHILE z /= NIL REPEAT
       IF z.depth = depth AND z.name.ALL = y.name.ALL AND NOT (overloadable(y) AND overloadable(z)
-            AND z.kind = y.kind AND NOT same_signature(y.params, z.params)) THEN
+            AND z.kind = y.kind AND NOT (same_signature(y.params, z.params) AND same_tt(y.decl, z.decl))) THEN
          fail(line, y.name.ALL & " is already defined in this scope");
       END IF;
       z := z.chain;
@@ -71,6 +71,24 @@ FUNC overloadable(CONST y : sym) => BOOL;
 END FUNC overloadable;
 
 % signatures match when they have the same length and the same types (11.1.1)
+% and the same translation time property lists (11.1, 13.5)
+FUNC same_tt(CONST a : node, CONST b : node) => BOOL;
+   VAR x, y : node;
+   IF a = NIL OR b = NIL THEN
+      RETURN TRUE;
+   END IF;
+   x := a.e;
+   y := b.e;
+   WHILE x /= NIL AND y /= NIL REPEAT
+      IF x.name.ALL /= y.name.ALL THEN
+         RETURN FALSE;
+      END IF;
+      x := x.next;
+      y := y.next;
+   END REPEAT;
+   RETURN x = NIL AND y = NIL;
+END FUNC same_tt;
+
 FUNC same_signature(CONST a : parm, CONST b : parm) => BOOL;
    VAR x : parm := a;
    VAR y : parm := b;
@@ -243,7 +261,7 @@ END FUNC freeze;
 
 % a scalar value checked against the subtype it is assigned to (4.1.4)
 ABNORMAL FUNC checked(CONST t : typ, CONST c : cons, READONLY v : STRING[ASCII]) => STRING[ASCII] IMPORTS ALL;
-   IF c = NIL OR NOT scalar_kind(t) THEN
+   IF c = NIL OR NOT scalar_kind(t) OR suppressed("X_RANGE") THEN
       RETURN v;
    ELSEIF t.kind /= t_float AND c.hasm THEN
       RETURN "rt_range(" & v & ", " & itos(c.mlo) & ", " & itos(c.mhi) & ")";
@@ -1090,6 +1108,13 @@ ABNORMAL FUNC meval(CONST e : node, OUT ok : BOOL) => mval IMPORTS ALL;
    RETURN NIL;
 END FUNC meval;
 
+FUNC bool_text(CONST b : BOOL) => STRING[ASCII];
+   IF b THEN
+      RETURN "1";
+   END IF;
+   RETURN "0";
+END FUNC bool_text;
+
 FUNC bool_i(CONST b : BOOL) => INT;
    IF b THEN
       RETURN 1;
@@ -1106,7 +1131,7 @@ FUNC mstr(CONST v : mval) => STRING[ASCII];
 END FUNC mstr;
 
 FUNC ascii_char(CONST i : INT) => ASCII;
-   CONST printable := " !" & chs('QUOTE) & "#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\]^_`abcdefghijklmnopqrstuvwxyz{|}~";
+   CONST printable := " !" & chs('QUOTE) & "#$%&" & chs('APOS) & "()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\]^_`abcdefghijklmnopqrstuvwxyz{|}~";
    IF i >= 32 AND i <= 126 THEN
       RETURN printable(i - 31);
    END IF;

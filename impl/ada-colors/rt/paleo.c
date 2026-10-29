@@ -3117,3 +3117,53 @@ rstr rt_r_strsub(rstr s, rt_int len) {
   if (s.len != len) rt_raise_msg(RT_X_SUBTYPE, "string length");
   return s;
 }
+
+void rt_r_free_unchecked(void **v) {
+  uintptr_t target = (uintptr_t)*v;
+  if (!target) return;
+  blockrec *tb = bfind(target);
+  forget_fin(target);
+  if (tb) {
+    tb->p = DEAD_BLOCK;
+    free((void *)target);
+  }
+  *v = NULL;
+}
+
+struct rt_r_inside {
+  rt_act *who;
+  int depth;
+  rt_r_inside *next;
+};
+
+void rt_r_nonrec_enter(rt_r_nonrec *n, int nonrec, int nonreent, const char *name) {
+  rt_act *me = rt_me();
+  rt_r_inside *i;
+  for (i = n->in; i; i = i->next)
+    if (i->depth > 0) {
+      if ((nonrec && i->who == me) || (nonreent && i->who != me)) {
+        fflush(stdout);
+        fprintf(stderr, "*** %s invoked %s against its pragmat\n", name,
+                i->who == me ? "recursively" : "reentrantly");
+        exit(1);
+      }
+    }
+  for (i = n->in; i && i->who != me; i = i->next) {
+  }
+  if (!i) {
+    i = calloc(1, sizeof *i);
+    i->who = me;
+    i->next = n->in;
+    n->in = i;
+  }
+  i->depth++;
+}
+
+void rt_r_nonrec_leave(rt_r_nonrec *n) {
+  rt_act *me = rt_me();
+  for (rt_r_inside *i = n->in; i; i = i->next)
+    if (i->who == me && i->depth > 0) {
+      i->depth--;
+      return;
+    }
+}

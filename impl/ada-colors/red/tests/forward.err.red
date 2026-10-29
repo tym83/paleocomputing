@@ -1,0 +1,10 @@
+CAPSULE main EXPORTS NONE;
+   VAR y : INT := g(1);
+   VAR x : INT := 1;
+   FUNC f(a : INT) => INT IMPORTS x;
+      RETURN a + x;
+   END FUNC f;
+   FUNC g(a : INT) => INT;
+      RETURN f(a);
+   END FUNC g;
+END CAPSULE main;

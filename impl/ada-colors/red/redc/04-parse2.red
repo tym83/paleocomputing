@@ -6,16 +6,37 @@ ABNORMAL FUNC at_body_end => BOOL IMPORTS ALL;
 END FUNC at_body_end;
 
 % body (3.2, diagram 2): declarations, statements and assertions
+% an immediate declaration must precede all statements; a deferred or
+% generic one may precede or follow them all (3.2)
 ABNORMAL FUNC body => node IMPORTS ALL;
    VAR head, tail : node;
+   VAR stmts : BOOL := FALSE;
+   VAR after : node;
    WHILE NOT at_body_end REPEAT
-      append(head, tail, body_element);
+      VAR x : node := body_element;
+      IF x /= NIL AND (x.kind = n_var OR x.kind = n_const OR x.kind = n_exception OR x.kind = n_expose) THEN
+         IF stmts THEN
+            fail(x.line, "an immediate declaration must precede the statements of its body");
+         END IF;
+      ELSEIF x /= NIL AND x.kind >= n_abbrev AND x.kind <= n_generic THEN
+         IF stmts AND after = NIL THEN
+            after := x;
+         END IF;
+      ELSEIF x /= NIL AND x.kind /= n_assert THEN
+         IF after /= NIL THEN
+            fail(after.line, "a deferred declaration must precede or follow all the statements of its body");
+         END IF;
+         stmts := TRUE;
+      END IF;
+      append(head, tail, x);
    END REPEAT;
    RETURN head;
 END FUNC body;
 
 ABNORMAL FUNC body_element => node IMPORTS ALL;
    VAR x : node;
+   % pragmats on a scope stand just before its first token (B)
+   VAR pr : text := toks(tpos).prags;
    IF at_kw("VAR") OR at_kw("CONST") OR at_kw("ABBREV") OR at_kw("TYPE")
          OR at_kw("PROC") OR at_kw("FUNC") OR at_kw("ABNORMAL") OR at_kw("CAPSULE")
          OR at_kw("EXPOSE") OR at_kw("EXCEPTION") OR at_kw("TASK") OR at_kw("GENERIC") THEN
@@ -26,6 +47,17 @@ ABNORMAL FUNC body_element => node IMPORTS ALL;
       x.a := expr;
    ELSE
       x := statement;
+   END IF;
+   IF pr /= NIL THEN
+      VAR p : node := x;
+      WHILE p /= NIL REPEAT
+         IF p.prags = NIL THEN
+            p.prags := pr;
+         ELSE
+            p.prags := mk(pr.ALL & p.prags.ALL);
+         END IF;
+         p := p.next;
+      END REPEAT;
    END IF;
    expect_op(";");
    RETURN x;
@@ -293,6 +325,14 @@ ABNORMAL FUNC subprogram_decl => node IMPORTS ALL;
       x.b := p_subtype;
    END IF;
    dummy := imports_list(x);
+   % pragmats on a deferred declaration stand before the ; of its header (B)
+   IF toks(tpos).prags /= NIL THEN
+      IF x.prags = NIL THEN
+         x.prags := toks(tpos).prags;
+      ELSE
+         x.prags := mk(x.prags.ALL & toks(tpos).prags.ALL);
+      END IF;
+   END IF;
    expect_op(";");
    x.c := body;
    expect_kw("END");
@@ -544,9 +584,7 @@ ABNORMAL FUNC statement => node IMPORTS ALL;
       END IF;
       s.tag := match;
    END IF;
-   IF labels /= NIL THEN
-      fail(s.line, "goto labels are not handled yet");
-   END IF;
+   s.labels := labels;
    RETURN s;
 END FUNC statement;
 
@@ -578,6 +616,11 @@ ABNORMAL FUNC unlabeled_statement => node IMPORTS ALL;
       IF NOT at_op(";") THEN
          x.a := expr;
       END IF;
+      RETURN x;
+   ELSEIF at_kw("GOTO") THEN
+      x := nn(n_goto, line);
+      tpos := tpos + 1;
+      x.name := expect_id;
       RETURN x;
    ELSEIF at_kw("RAISE") THEN
       x := nn(n_raise, line);
@@ -781,7 +824,12 @@ ABNORMAL FUNC program => node IMPORTS ALL;
       IF NOT at_kw("CAPSULE") THEN
          perror("a translation unit is a capsule declaration");
       END IF;
-      append(head, tail, capsule_decl);
+      BEGIN
+         VAR pr : text := toks(tpos).prags;
+         VAR u : node := capsule_decl;
+         u.prags := pr;
+         append(head, tail, u);
+      END;
       expect_op(";");
    END REPEAT;
    RETURN head;

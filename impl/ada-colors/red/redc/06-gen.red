@@ -38,7 +38,10 @@ PROC declare_body(CONST elems : node) IMPORTS ALL;
    e := elems;
    WHILE e /= NIL REPEAT
       IF e.kind = n_proc OR e.kind = n_func OR e.kind = n_task THEN
+         VAR y : sym;
          declare_subprogram(e);
+         y := lookup_decl(e);
+         y.home := elems;
       ELSEIF e.kind = n_generic THEN
          VAR g : sym := new_sym(y_generic, e.name);
          g.decl := e;
@@ -183,9 +186,12 @@ END FUNC copy_sym;
 % where it is invoked as NEW
 PROC gen_capsule(CONST d : node) IMPORTS ALL;
    VAR y : sym := new_sym(y_capsule, d.name);
+   VAR saved : text := suppress;
    y.decl := d;
    IF d.b = NIL THEN
+      suppress := suppressing(d.prags);
       elaborate_capsule(d, y, NIL, d);
+      suppress := saved;
    END IF;
    define(y, d.line);
 END PROC gen_capsule;
@@ -257,6 +263,7 @@ END PROC capsule_params;
 PROC elaborate_capsule(CONST d : node, CONST y : sym, CONST args : node, CONST owner : node) IMPORTS ALL;
    VAR cr : caprec;
    VAR ctx : fctxrec;
+   VAR saved_gotos : exitrec;
    VAR m : sym;
    VAR p : node := d.a;
    VAR ro : BOOL;
@@ -274,6 +281,9 @@ PROC elaborate_capsule(CONST d : node, CONST y : sym, CONST args : node, CONST o
    ctx.all_imp := d.flag >= 2;
    ctx.next := fctx;
    fctx := ctx;
+   saved_gotos := gotos;
+   gotos := NIL;
+   declare_labels(d.c);
    declare_body(d.c);
    capsule_body(d.c);
    BEGIN
@@ -319,6 +329,7 @@ PROC elaborate_capsule(CONST d : node, CONST y : sym, CONST args : node, CONST o
    END REPEAT;
    close_scope;
    caps := caps.next;
+   gotos := saved_gotos;
 END PROC elaborate_capsule;
 
 % EXPOSE visible-list FROM capsule (8.1, 8.2)
@@ -499,7 +510,71 @@ ABNORMAL FUNC build_subprogram(CONST d : node) => sym IMPORTS ALL;
    RETURN y;
 END FUNC build_subprogram;
 
+% a pragmat list has this pragmat (B)
+FUNC has_pragmat(CONST pr : text, READONLY p : STRING[ASCII]) => BOOL;
+   IF pr = NIL THEN
+      RETURN FALSE;
+   END IF;
+   FOR i : INT(1 .. pr.LEN - p.LEN) REPEAT
+      IF pr(i .. i + p.LEN - 1) = p AND pr(i + p.LEN) = 'SEMI AND (i = 1 OR pr(i - 1) = 'SEMI) THEN
+         RETURN TRUE;
+      END IF;
+   END REPEAT;
+   RETURN FALSE;
+END FUNC has_pragmat;
+
+% the exceptions suppressed in a scope: those of its SUPPRESS pragmats added
+% to those of the enclosing scope (B)
+ABNORMAL FUNC suppressing(CONST pr : text) => text IMPORTS suppress;
+   VAR r : text := suppress;
+   VAR i : INT := 1;
+   IF pr = NIL THEN
+      RETURN r;
+   END IF;
+   IF r = NIL THEN
+      r := mk(" ");
+   END IF;
+   WHILE i + 9 <= pr.LEN REPEAT
+      IF pr(i .. i + 8) = "SUPPRESS(" THEN
+         VAR j : INT := i + 9;
+         VAR k : INT := j;
+         WHILE pr(k) /= 'RPAREN REPEAT
+            IF pr(k) = 'COMMA THEN
+               r := mk(r.ALL & pr(j .. k - 1) & " ");
+               j := k + 1;
+            END IF;
+            k := k + 1;
+         END REPEAT;
+         r := mk(r.ALL & pr(j .. k - 1) & " ");
+         i := k;
+      END IF;
+      i := i + 1;
+   END REPEAT;
+   RETURN r;
+END FUNC suppressing;
+
+% is the check for this exception suppressed here?
+ABNORMAL FUNC suppressed(READONLY x : STRING[ASCII]) => BOOL IMPORTS suppress;
+   VAR w : STRING[ASCII](x.LEN + 2) := " " & x & " ";
+   IF suppress = NIL THEN
+      RETURN FALSE;
+   END IF;
+   FOR i : INT(1 .. suppress.LEN - w.LEN + 1) REPEAT
+      IF suppress(i .. i + w.LEN - 1) = w THEN
+         RETURN TRUE;
+      END IF;
+   END REPEAT;
+   RETURN FALSE;
+END FUNC suppressed;
+
 PROC element(CONST e : node) IMPORTS ALL;
+   VAR saved : text := suppress;
+   suppress := suppressing(e.prags);
+   element1(e);
+   suppress := saved;
+END PROC element;
+
+PROC element1(CONST e : node) IMPORTS ALL;
    VAR k : INT := e.kind;
    IF k = n_expose AND (e.flag = 1 OR e.flag = 3) THEN
       % a new invocation is elaborated in order with the declarations (8.1)
@@ -532,7 +607,7 @@ PROC element(CONST e : node) IMPORTS ALL;
    ELSE
       gen_statement(e);
    END IF;
-END PROC element;
+END PROC element1;
 
 % storage for a variable: a global at capsule level, a frame field in a subprogram
 ABNORMAL FUNC storage(READONLY name : STRING[ASCII], CONST t : typ) => STRING[ASCII] IMPORTS ALL;
@@ -670,6 +745,7 @@ PROC gen_subprogram(CONST d : node, CONST y : sym) IMPORTS ALL;
    VAR saved_in : BOOL := in_func;
    VAR saved_sym : sym := func_sym;
    VAR saved_exits : exitrec := exits;
+   VAR saved_gotos : exitrec := gotos;
    VAR saved_frames : INT := frames;
    VAR args : text := mk("");
    VAR pm : parm := y.params;
@@ -686,6 +762,8 @@ PROC gen_subprogram(CONST d : node, CONST y : sym) IMPORTS ALL;
    VAR saved_ret : text := cap_ret;
    VAR saved_rflag : text := cap_rflag;
    VAR pn : node := d.a;
+   VAR nonrec_end : text;
+   VAR has_pfin : BOOL;
    IF in_func THEN
       parent := mk(func_sym.cname.ALL & "fr");
    END IF;
@@ -698,6 +776,7 @@ PROC gen_subprogram(CONST d : node, CONST y : sym) IMPORTS ALL;
    in_func := TRUE;
    func_sym := y;
    exits := NIL;
+   gotos := NIL;
    frames := 0;
    handlers := NIL;
    cleanups := NIL;
@@ -822,14 +901,32 @@ PROC gen_subprogram(CONST d : node, CONST y : sym) IMPORTS ALL;
       END IF;
    END IF;
    % the formals are finalized when the invocation ends, however it ends
-   IF pfin.LEN > 0 THEN
+   has_pfin := pfin.LEN > 0;
+   IF has_pfin THEN
       emit("rt_frame pf_; if (RT_TRY(pf_)) {");
       push_cleanup("RT_POP(pf_);");
    END IF;
+   % NONRECURSIVE and NONREENTRANT (B) are checked while the body runs
+   IF has_pragmat(d.prags, "NONRECURSIVE") OR has_pragmat(d.prags, "NONREENTRANT") THEN
+      CONST g := new_name("g_nonrec_");
+      VAR leave : text := mk("rt_r_nonrec_leave(&" & g & ");");
+      put(out_globals, "static rt_r_nonrec " & g & ";");
+      emit("rt_r_nonrec_enter(&" & g & ", " & bool_text(has_pragmat(d.prags, "NONRECURSIVE")) & ", "
+           & bool_text(has_pragmat(d.prags, "NONREENTRANT")) & ", " & q & d.name.ALL & q & ");");
+      emit("rt_frame nr_; if (RT_TRY(nr_)) {");
+      push_cleanup("RT_POP(nr_);");
+      copy_back := mk(copy_back.ALL & "  " & leave.ALL);
+      nonrec_end := mk("RT_POP(nr_); } else { RT_POP(nr_); " & leave.ALL & " rt_raise(rt_xcur); }");
+   END IF;
+   declare_labels(d.c);
    declare_body(d.c);
    body_elements(d.c);
    close_fins(NIL);
-   IF pfin.LEN > 0 THEN
+   IF nonrec_end /= NIL THEN
+      emit(nonrec_end.ALL);
+      pop_cleanup;
+   END IF;
+   IF has_pfin THEN
       emit("RT_POP(pf_); } else { RT_POP(pf_); " & pfin.ALL & " rt_raise(rt_xcur); }");
       pop_cleanup;
       copy_back := mk(copy_back.ALL & "  " & pfin.ALL);
@@ -879,6 +976,7 @@ PROC gen_subprogram(CONST d : node, CONST y : sym) IMPORTS ALL;
    in_func := saved_in;
    func_sym := saved_sym;
    exits := saved_exits;
+   gotos := saved_gotos;
    frames := saved_frames;
    handlers := saved_handlers;
    cleanups := saved_cleanups;
@@ -928,10 +1026,59 @@ END PROC await_tasks;
 PROC capsule_elements(CONST elems : node) IMPORTS ALL;
    VAR e : node := elems;
    WHILE e /= NIL REPEAT
+      IF e.kind >= n_assign AND e.kind <= n_region THEN
+         start_labels;
+      END IF;
       element(e);
       e := e.next;
    END REPEAT;
 END PROC capsule_elements;
+
+% the goto labels of a body (6.8): defined in it, known in the open scopes
+% within it
+PROC declare_labels(CONST elems : node) IMPORTS ALL;
+   VAR e : node := elems;
+   WHILE e /= NIL REPEAT
+      VAR l : node := e.labels;
+      WHILE l /= NIL REPEAT
+         VAR x : exitrec := gotos;
+         WHILE x /= NIL AND x.depth = -1 REPEAT
+            IF x.match.ALL = l.name.ALL THEN
+               fail(l.line, "goto label " & l.name.ALL & " is already defined in this body");
+            END IF;
+            x := x.next;
+         END REPEAT;
+         ALLOC x PTR;
+         x.match := l.name;
+         x.label := mk(new_name("L_go_"));
+         x.depth := -1;
+         x.next := gotos;
+         gotos := x;
+         l := l.next;
+      END REPEAT;
+      e := e.next;
+   END REPEAT;
+END PROC declare_labels;
+
+% the statements of a body begin: its labels are at the current frame depth
+PROC start_labels IMPORTS ALL;
+   VAR x : exitrec := gotos;
+   WHILE x /= NIL AND x.depth = -1 REPEAT
+      x.depth := frames;
+      x := x.next;
+   END REPEAT;
+END PROC start_labels;
+
+FUNC goto_label(READONLY name : STRING[ASCII]) => exitrec IMPORTS gotos;
+   VAR x : exitrec := gotos;
+   WHILE x /= NIL REPEAT
+      IF x.match.ALL = name THEN
+         RETURN x;
+      END IF;
+      x := x.next;
+   END REPEAT;
+   RETURN NIL;
+END FUNC goto_label;
 
 % does a capsule body have a RETURN of its own (6.7)? Bodies of the compound
 % declarations in it do not count
@@ -972,6 +1119,7 @@ PROC capsule_body(CONST elems : node) IMPORTS ALL;
          cap_ret := mk(new_name("L_capret_"));
          ret_frames := frames;
          IF stmt THEN
+            start_labels;
             emit("if (!" & cap_rflag.ALL & ") {");
          END IF;
          element(e);
@@ -995,11 +1143,14 @@ END PROC body_elements;
 % a body is an open scope (3.2)
 PROC gen_body(CONST elems : node) IMPORTS ALL;
    VAR saved : lines := fins;
+   VAR saved_gotos : exitrec := gotos;
    open_scope;
+   declare_labels(elems);
    declare_body(elems);
    body_elements(elems);
    close_fins(saved);
    close_scope;
+   gotos := saved_gotos;
 END PROC gen_body;
 
 % leaving open frames by EXIT or RETURN: pop guards, unlock regions (10.7)
@@ -1029,6 +1180,11 @@ END PROC pop_cleanup;
 
 PROC gen_statement(CONST s : node) IMPORTS ALL;
    VAR label : text;
+   VAR gl : node := s.labels;
+   WHILE gl /= NIL REPEAT
+      emit(goto_label(gl.name.ALL).label.ALL & ": ;");
+      gl := gl.next;
+   END REPEAT;
    IF s.tag /= NIL THEN
       VAR x : exitrec;
       ALLOC x PTR;
@@ -1050,6 +1206,15 @@ PROC gen_statement(CONST s : node) IMPORTS ALL;
          gen_body(s.a);
          emit("}");
       WHEN n_exit => st_exit(s);
+      WHEN n_goto =>
+         BEGIN
+            VAR x : exitrec := goto_label(s.name.ALL);
+            IF x = NIL THEN
+               fail(s.line, s.name.ALL & " is not a goto label of this or an enclosing open scope");
+            END IF;
+            pop_frames(x.depth);
+            emit("goto " & x.label.ALL & ";");
+         END;
       WHEN n_return => st_return(s);
       WHEN n_raise =>
          emit("rt_raise(" & exc_id(s.name.ALL, s.line) & ");");

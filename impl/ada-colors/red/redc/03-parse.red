@@ -280,8 +280,8 @@ END FUNC is_type_word;
 % actual translation time properties (diagram 67): types or manifest values
 ABNORMAL FUNC actual_tt => node IMPORTS ALL;
    VAR head, tail : node;
-   expect_op("[");
    VAR more : BOOL := TRUE;
+   expect_op("[");
    WHILE more REPEAT
       IF at_kind(k_id) AND is_type_word(toks(tpos).s.ALL) THEN
          append(head, tail, p_subtype);

@@ -51,7 +51,7 @@ CAPSULE main EXPORTS NONE;
    VAR outer, got : res;
    VAR p : link;
 
-   WRITELN("a procedure's variable:");
+   WRITELN("a procedure" & 'APOS & "s variable:");
    block_scope;
    WRITELN("left by an exception:");
    GUARD

@@ -82,6 +82,9 @@ FUNC c_ident(READONLY s : STRING[ASCII]) => STRING[ASCII];
 END FUNC c_ident;
 
 ABNORMAL FUNC deref(READONLY base : STRING[ASCII], CONST t : typ) => STRING[ASCII] IMPORTS ALL;
+   IF suppressed("X_NIL") THEN
+      RETURN "(*(" & ctype(t) & ")(" & base & "))";
+   END IF;
    RETURN "(*(" & ctype(t) & ")rt_nil_check(" & base & "))";
 END FUNC deref;
 
@@ -201,6 +204,15 @@ PROC select_on(READONLY base : STRING[ASCII], CONST bt : typ, CONST e : node, VA
    fail(e.line, "cannot select " & e.name.ALL & " here");
 END PROC select_on;
 
+% a subscript, checked unless X_SUBSCRIPT is suppressed (B)
+ABNORMAL FUNC ix(READONLY i : STRING[ASCII], READONLY lo : STRING[ASCII], READONLY hi : STRING[ASCII])
+      => STRING[ASCII] IMPORTS suppress;
+   IF suppressed("X_SUBSCRIPT") THEN
+      RETURN "(" & i & ")";
+   END IF;
+   RETURN "rt_index(" & i & ", " & lo & ", " & hi & ")";
+END FUNC ix;
+
 PROC index_on(READONLY base : STRING[ASCII], CONST bt : typ, CONST e : node, VAR ro : BOOL,
               CONST lv : BOOL, OUT code : text, OUT t : typ, OUT c : cons) IMPORTS ALL;
    VAR a : node := e.b;
@@ -230,9 +242,9 @@ PROC index_on(READONLY base : STRING[ASCII], CONST bt : typ, CONST e : node, VAR
       BEGIN
          CONST i := gexpr(a, bt.idx, it);
          CONST j := gexpr(a.next, bt.idx2, it);
-         code := mk(base & ".p[(rt_index(" & i & ", " & base & ".lo, " & base & ".hi) - " & base
-                    & ".lo) * (" & base & ".hi2 - " & base & ".lo2 + 1) + rt_index(" & j & ", "
-                    & base & ".lo2, " & base & ".hi2) - " & base & ".lo2]");
+         code := mk(base & ".p[(" & ix(i, base & ".lo", base & ".hi") & " - " & base
+                    & ".lo) * (" & base & ".hi2 - " & base & ".lo2 + 1) + " & ix(j, base & ".lo2", base & ".hi2")
+                    & " - " & base & ".lo2]");
          t := bt.elem;
          c := bt.elemcons;
       END;
@@ -264,7 +276,7 @@ PROC index_on(READONLY base : STRING[ASCII], CONST bt : typ, CONST e : node, VAR
    END IF;
    IF bt.kind = t_array THEN
       CONST i := gexpr(a, bt.idx, it);
-      code := mk(base & ".p[rt_index(" & i & ", " & base & ".lo, " & base & ".hi) - " & base & ".lo]");
+      code := mk(base & ".p[" & ix(i, base & ".lo", base & ".hi") & " - " & base & ".lo]");
       t := bt.elem;
       c := bt.elemcons;
       RETURN;
@@ -340,7 +352,7 @@ ABNORMAL FUNC gexpr(CONST e : node, CONST want : typ, OUT t : typ) => STRING[ASC
       BEGIN
          VAR i : INT := lit_index(base_of(t).lits, e.name.ALL);
          IF i < 0 THEN
-            fail(e.line, "'" & e.name.ALL & " is not a value of this type");
+            fail(e.line, chs('APOS) & e.name.ALL & " is not a value of this type");
          END IF;
          RETURN itos(i);
       END;
@@ -441,10 +453,40 @@ ABNORMAL FUNC gexpr(CONST e : node, CONST want : typ, OUT t : typ) => STRING[ASC
       RETURN gcall(wrap_apply(e), FALSE, t);
    ELSEIF k = n_cons THEN
       RETURN constructor(e, want, t);
+   ELSEIF k = n_resolve THEN
+      RETURN resolved(e, t);
    END IF;
    fail(e.line, "this expression is not handled yet");
    RETURN "";
 END FUNC gexpr;
+
+% x # t (5.7): a user-defined # with property list [t] (13.5), or x resolved
+% to the type or subtype t
+ABNORMAL FUNC resolved(CONST e : node, OUT t : typ) => STRING[ASCII] IMPORTS ALL;
+   VAR c : cons;
+   VAR vt : typ;
+   VAR y : sym := lookup("#");
+   VAR tt : node := copy_node(e.b);
+   tt.next := NIL;
+   IF y /= NIL AND (y.kind = y_generic OR resolve_overload("#", tt, copy_node(e.a), FALSE, e.line) /= NIL) THEN
+      VAR call : node := nn(n_apply, e.line);
+      VAR f : node := nn(n_ttapply, e.line);
+      VAR fname : node := nn(n_name, e.line);
+      fname.name := mk("#");
+      f.a := fname;
+      f.b := tt;
+      call.a := f;
+      call.b := copy_node(e.a);
+      call.b.next := NIL;
+      RETURN gcall(call, FALSE, t);
+   END IF;
+   t := resolve_subtype(e.b, c);
+   BEGIN
+      CONST v := gexpr(e.a, t, vt);
+      check_type(vt, t, e.line);
+      RETURN checked(t, c, v);
+   END;
+END FUNC resolved;
 
 % a node used in an argument list needs its own next link
 ABNORMAL FUNC copy_node(CONST e : node) => node;
@@ -513,7 +555,7 @@ ABNORMAL FUNC enum_type_of(READONLY lit : STRING[ASCII], CONST line : INT) => ty
       END IF;
       y := y.stack;
    END REPEAT;
-   fail(line, "cannot tell the type of '" & lit);
+   fail(line, "cannot tell the type of " & chs('APOS) & lit);
    RETURN NIL;
 END FUNC enum_type_of;
 
@@ -851,8 +893,8 @@ ABNORMAL FUNC fits(CONST y : sym, CONST args : node) => BOOL IMPORTS ALL;
 END FUNC fits;
 
 % the visible deferred unit of this name whose interface matches the actuals
-ABNORMAL FUNC resolve_overload(READONLY name : STRING[ASCII], CONST args : node, CONST is_stmt : BOOL,
-                               CONST line : INT) => sym IMPORTS ALL;
+ABNORMAL FUNC resolve_overload(READONLY name : STRING[ASCII], CONST tt : node, CONST args : node,
+                               CONST is_stmt : BOOL, CONST line : INT) => sym IMPORTS ALL;
    VAR y : sym;
    VAR first : sym;
    VAR n : INT := 0;
@@ -865,7 +907,7 @@ ABNORMAL FUNC resolve_overload(READONLY name : STRING[ASCII], CONST args : node,
             IF first = NIL THEN
                first := y;
             END IF;
-            IF ((y.kind = y_proc) = is_stmt) AND fits(y, args) THEN
+            IF ((y.kind = y_proc) = is_stmt) AND tt_fits(y, tt) AND fits(y, args) THEN
                RETURN y;
             END IF;
          END IF;
@@ -880,6 +922,49 @@ ABNORMAL FUNC resolve_overload(READONLY name : STRING[ASCII], CONST args : node,
    END IF;
    RETURN first;
 END FUNC resolve_overload;
+
+% does the actual translation time property list tt fit the list of a
+% (non-generic) subprogram, such as # [money] (13.5)? Each is a type
+ABNORMAL FUNC tt_fits(CONST y : sym, CONST tt : node) => BOOL IMPORTS ALL;
+   VAR f, a : node;
+   VAR saved : buffer := code;
+   VAR ok : BOOL := TRUE;
+   IF y.decl = NIL OR y.decl.e = NIL THEN
+      RETURN tt = NIL;
+   ELSEIF tt = NIL THEN
+      RETURN FALSE;
+   END IF;
+   f := y.decl.e;
+   a := tt;
+   trial := trial + 1;
+   code := new_buffer;
+   GUARD
+      WHILE ok AND f /= NIL AND a /= NIL REPEAT
+         VAR fc, ac : cons;
+         VAR fst : node := nn(s_name, f.line);
+         VAR ft, at : typ;
+         fst.name := f.name;
+         ft := resolve_subtype(fst, fc);
+         IF a.kind >= s_int THEN
+            at := resolve_subtype(a, ac);
+         ELSE
+            VAR ast : node := nn(s_name, a.line);
+            ast.name := a.name;
+            at := resolve_subtype(ast, ac);
+         END IF;
+         ok := same(ft, at);
+         f := f.next;
+         a := a.next;
+      END REPEAT;
+      ok := ok AND f = NIL AND a = NIL;
+   BY
+      WHEN compile_error =>
+         ok := FALSE;
+   END GUARD;
+   trial := trial - 1;
+   code := saved;
+   RETURN ok;
+END FUNC tt_fits;
 
 % the definitions of a name to try, in order (11.3): in an instance, its own
 % (pass 1), those of the generic's definition environment (2), then the rest
@@ -976,7 +1061,7 @@ ABNORMAL FUNC gcall(CONST e : node, CONST is_stmt : BOOL, OUT t : typ) => STRING
    END IF;
    IF y.kind /= y_func AND y.kind /= y_proc AND y.kind /= y_generic THEN
       % a data item may share its name with visible deferred units (11.1)
-      VAR alt : sym := resolve_overload(fn.name.ALL, e.b, is_stmt, e.line);
+      VAR alt : sym := resolve_overload(fn.name.ALL, tt, e.b, is_stmt, e.line);
       IF alt /= NIL THEN
          y := alt;
       ELSEIF is_builtin(fn.name.ALL) THEN
@@ -986,7 +1071,7 @@ ABNORMAL FUNC gcall(CONST e : node, CONST is_stmt : BOOL, OUT t : typ) => STRING
    IF y.kind = y_generic THEN
       y := instantiate(y, tt, e.b, e.line);
    ELSEIF y.kind = y_func OR y.kind = y_proc THEN
-      y := resolve_overload(fn.name.ALL, e.b, is_stmt, e.line);
+      y := resolve_overload(fn.name.ALL, tt, e.b, is_stmt, e.line);
       IF y = NIL THEN
          RETURN builtin(fn.name.ALL, tt, e.b, e.line, is_stmt, t);
       END IF;
@@ -994,6 +1079,7 @@ ABNORMAL FUNC gcall(CONST e : node, CONST is_stmt : BOOL, OUT t : typ) => STRING
    IF y.kind /= y_func AND y.kind /= y_proc THEN
       fail(e.line, fn.name.ALL & " cannot be invoked");
    END IF;
+   check_requires(y, e.line);
    IF is_stmt AND y.kind /= y_proc THEN
       fail(e.line, fn.name.ALL & " is a function, not a procedure");
    END IF;
@@ -1045,6 +1131,98 @@ ABNORMAL FUNC gcall(CONST e : node, CONST is_stmt : BOOL, OUT t : typ) => STRING
    t := y.result;
    RETURN y.cname.ALL & "(" & args.ALL & ")";
 END FUNC gcall;
+
+% the variables a deferred unit requires (3.6): those it imports and those
+% required by the deferred units it invokes
+ABNORMAL FUNC requires(CONST y : sym) => lines IMPORTS ALL;
+   IF y.reqdone THEN
+      RETURN y.reqs;
+   END IF;
+   y.reqdone := TRUE;
+   IF y.decl /= NIL AND (y.decl.kind = n_proc OR y.decl.kind = n_func OR y.decl.kind = n_task) THEN
+      VAR imp : node := y.decl.d;
+      WHILE imp /= NIL REPEAT
+         add_req(y, imp.name.ALL);
+         imp := imp.next;
+      END REPEAT;
+      require_calls(y, y.decl.c);
+   END IF;
+   RETURN y.reqs;
+END FUNC requires;
+
+PROC add_req(CONST y : sym, READONLY name : STRING[ASCII]);
+   VAR l : lines;
+   IF NOT seen_name(y.reqs, name) THEN
+      ALLOC l PTR;
+      l.s := mk(name);
+      l.next := y.reqs;
+      y.reqs := l;
+   END IF;
+END PROC add_req;
+
+PROC require_calls(CONST y : sym, CONST e : node) IMPORTS ALL;
+   VAR x : node := e;
+   WHILE x /= NIL REPEAT
+      IF x.kind = n_proc OR x.kind = n_func OR x.kind = n_task OR x.kind = n_capsule OR x.kind = n_generic THEN
+         % invoked only if something invokes it
+         x := x.next;
+      ELSE
+         VAR callee : node;
+         IF (x.kind = n_apply OR x.kind = n_call) AND x.a /= NIL AND x.a.kind = n_name THEN
+            callee := x.a;
+         END IF;
+         IF callee /= NIL THEN
+            VAR z : sym := lookup(callee.name.ALL);
+            IF z /= NIL AND z /= y AND (z.kind = y_proc OR z.kind = y_func) THEN
+               VAR l : lines := requires(z);
+               WHILE l /= NIL REPEAT
+                  add_req(y, l.s.ALL);
+                  l := l.next;
+               END REPEAT;
+            END IF;
+         END IF;
+         IF x.a /= NIL THEN
+            require_calls(y, x.a);
+         END IF;
+         IF x.b /= NIL THEN
+            require_calls(y, x.b);
+         END IF;
+         IF x.c /= NIL THEN
+            require_calls(y, x.c);
+         END IF;
+         x := x.next;
+      END IF;
+   END REPEAT;
+END PROC require_calls;
+
+FUNC declared_in(CONST elems : node, READONLY name : STRING[ASCII]) => BOOL;
+   VAR e : node := elems;
+   WHILE e /= NIL REPEAT
+      IF (e.kind = n_var OR e.kind = n_const) AND e.name.ALL = name THEN
+         RETURN TRUE;
+      END IF;
+      e := e.next;
+   END REPEAT;
+   RETURN FALSE;
+END FUNC declared_in;
+
+% no invocation of a deferred unit that requires a variable may appear before
+% the definition of the variable (3.6)
+PROC check_requires(CONST y : sym, CONST line : INT) IMPORTS ALL;
+   VAR l : lines := requires(y);
+   % invocations elaborated with the body that declares the unit; one inside
+   % another deferred unit is elaborated when that unit is invoked
+   IF y.home = NIL OR y.level /= cur_level THEN
+      RETURN;
+   END IF;
+   WHILE l /= NIL REPEAT
+      VAR z : sym := lookup(l.s.ALL);
+      IF declared_in(y.home, l.s.ALL) AND (z = NIL OR z.depth < y.depth) THEN
+         fail(line, y.name.ALL & " requires " & l.s.ALL & ", which is not yet defined here");
+      END IF;
+      l := l.next;
+   END REPEAT;
+END PROC check_requires;
 
 % the subtype of an actual bound to a VAR, OUT or READONLY scalar formal (7.3)
 ABNORMAL FUNC actual_bounds(CONST ft : typ, CONST t : typ, CONST c : cons) => STRING[ASCII] IMPORTS ALL;
@@ -1304,7 +1482,14 @@ ABNORMAL FUNC builtin(READONLY name : STRING[ASCII], CONST tt : node, CONST args
       END IF;
       uses_free := TRUE;
       finish_ptr(pt);
-      IF needs_fin(pt.target) THEN
+      IF suppressed("X_FREE") THEN
+         % no look for other pointers to the variable (B)
+         IF needs_fin(pt.target) THEN
+            RETURN "({ if (" & pv.ALL & ") { " & fin_code("(*" & pv.ALL & ")", pt.target)
+                   & " } rt_r_free_unchecked((void **)&" & pv.ALL & "); })";
+         END IF;
+         RETURN "rt_r_free_unchecked((void **)&" & pv.ALL & ")";
+      ELSEIF needs_fin(pt.target) THEN
          % the variable ceases to exist: finalized once FREE may reclaim it (13.3)
          RETURN "({ rt_free_check((void **)&" & pv.ALL & "); if (" & pv.ALL & ") { "
                 & fin_code("(*" & pv.ALL & ")", pt.target) & " } rt_free((void **)&" & pv.ALL & "); })";

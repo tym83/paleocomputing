@@ -125,11 +125,13 @@ CONST y_generic := 10;
 % ---- the data ---------------------------------------------------------------
 TYPE text : PTR (n : INT) STRING[ASCII](n);
 
-TYPE token : PTR RECORD[kind : INT, line : INT, ival : INT, s : text];
+% prags: the pragmats written just before the token (2.4.2, B), as
+% NAME(ARG,...); items each ended by a semicolon
+TYPE token : PTR RECORD[kind : INT, line : INT, ival : INT, s : text, prags : text];
 TYPE tokens : PTR (n : INT) ARRAY INT(1 .. n) OF token;
 
 TYPE node : PTR RECORD[kind : INT, line : INT, ival : INT, flag : INT,
-                       name : text, tag : text,
+                       name : text, tag : text, prags : text, labels : node,
                        a, b, c, d, e : node, next : node];
 
 % a constraint: its bounds as C; dyn when the bounds were kept in storage of
@@ -154,7 +156,8 @@ TYPE sym : PTR RECORD[kind : INT, name : text, t : typ, c : cons,
                       params : parm, result : typ, depth : INT,
                       level : INT, byref : BOOL, members, mnext : sym,
                       binds : node, insts : sym, env : buckets,
-                      chain, stack : sym, owner : sym, gctx : fctxrec, mv : mval];
+                      chain, stack : sym, owner : sym, gctx : fctxrec, mv : mval,
+                      reqs : lines, reqdone : BOOL, home : node];
 
 % a value known during translation (5.5): kind is t_int, t_bool, t_enum or
 % t_string; i holds an INT, a BOOL (0, 1) or the position of a literal
@@ -182,6 +185,7 @@ VAR toks : tokens;
 VAR ntoks : INT := 0;
 VAR tpos : INT := 1;
 VAR src_line : INT := 0;
+VAR pending_prag : text;
 
 CONST nbuckets := 4093;
 VAR table : buckets;
@@ -223,7 +227,13 @@ VAR cap_ret, cap_rflag : text;
 VAR ret_frames : INT := 0;
 % while a generic is instantiated: the scope depth of the instance itself
 VAR gdepth : INT := 0;
+% the exceptions a SUPPRESS pragmat names for the scope being translated (B),
+% each with a blank on either side
+VAR suppress : text;
 VAR exits : exitrec;
+% the goto labels known in the scope being translated (6.8); depth -1 until
+% the statements of their body begin
+VAR gotos : exitrec;
 VAR frames : INT := 0;
 VAR handlers : lines;
 VAR cleanups : lines;

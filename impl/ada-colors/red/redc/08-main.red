@@ -6,6 +6,7 @@ PROC translate(CONST units : node) IMPORTS ALL;
       IF u.next = NIL THEN
          ALLOC caps PTR;
          caps.d := u;
+         declare_labels(u.c);
          declare_body(u.c);
          capsule_body(u.c);
          await_tasks(u.c);

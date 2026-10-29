@@ -537,4 +537,11 @@ extern const ydesc y_d_sig;                  /* a SIGNAL as an array component *
 #define RT_FMAX 1.7976931348623157e308
 int rt_r_active(rt_act *a);                    /* NIL_ACT is always active */
 rstr rt_r_strsub(rstr s, rt_int len);          /* X_SUBTYPE unless s has len characters */
+void rt_r_free_unchecked(void **v);            /* FREE under SUPPRESS(X_FREE) */
+/* PRAG(NONRECURSIVE) and PRAG(NONREENTRANT): the activations inside a
+ * subprogram; entering it again where the pragmat forbids it is an error */
+typedef struct rt_r_inside rt_r_inside;
+typedef struct { rt_r_inside *in; } rt_r_nonrec;
+void rt_r_nonrec_enter(rt_r_nonrec *n, int nonrec, int nonreent, const char *name);
+void rt_r_nonrec_leave(rt_r_nonrec *n);
 #endif

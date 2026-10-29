@@ -1,7 +1,7 @@
 % names in generic instances (11.3) and RETURN in a capsule body (6.7)
 CAPSULE main EXPORTS NONE;
    PROC helper;
-      WRITELN("the helper of the generic's definition environment");
+      WRITELN("the helper of the generic" & 'APOS & "s definition environment");
    END PROC helper;
    GENERIC t : TYPE
       PROC run(x : t);
@@ -9,7 +9,7 @@ CAPSULE main EXPORTS NONE;
       END PROC run;
    PROC user;
       PROC helper;
-         WRITELN("the invoker's helper");
+         WRITELN("the invoker" & 'APOS & "s helper");
       END PROC helper;
       run(1);
    END PROC user;
