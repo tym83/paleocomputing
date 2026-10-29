@@ -17,6 +17,12 @@ excess locks when free: 0
 first COND_LOCK yes
 second COND_LOCK no
 a region on a latch
+counted LOCK, entry 1
+inside the counted region
+counted UNLOCK
+counted LOCK, entry 2
+counted UNLOCK
+X_RANGE left the region, lock free: yes
 empty slots: 1
 full slots: 1
 m = m2 before: no

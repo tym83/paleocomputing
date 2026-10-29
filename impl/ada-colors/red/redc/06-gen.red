@@ -1039,7 +1039,8 @@ END PROC st_create;
 
 % one waiting invocation of a WAIT statement (10.5) as an rt_alt initializer;
 % a SEND gets a temporary holding its message
-ABNORMAL FUNC wait_alt(CONST inv : node, READONLY arr : STRING[ASCII], CONST i : INT) => STRING[ASCII] IMPORTS ALL;
+ABNORMAL FUNC wait_alt(CONST inv : node, READONLY arr : STRING[ASCII], CONST i : INT, CONST mixed : BOOL)
+      => STRING[ASCII] IMPORTS ALL;
    VAR lv : text;
    VAR t, vt : typ;
    VAR c : cons;
@@ -1073,7 +1074,10 @@ ABNORMAL FUNC wait_alt(CONST inv : node, READONLY arr : STRING[ASCII], CONST i :
       END;
    ELSEIF fn.name.ALL = "DELAY" OR fn.name.ALL = "DELAY_UNTIL" THEN
       CONST v := gexpr(args, ty_int, vt);
-      IF fn.name.ALL = "DELAY" THEN
+      IF fn.name.ALL = "DELAY" AND mixed THEN
+         % the WAIT may go round its loop several times: the deadline is fixed once
+         RETURN slot & " = (rt_alt){RT_ALT_DELAY_UNTIL, 1, NULL, NULL, rt_time() + " & v & "};";
+      ELSEIF fn.name.ALL = "DELAY" THEN
          RETURN slot & " = (rt_alt){RT_ALT_DELAY, 1, NULL, NULL, " & v & "};";
       END IF;
       RETURN slot & " = (rt_alt){RT_ALT_DELAY_UNTIL, 1, NULL, NULL, " & v & "};";
@@ -1084,31 +1088,146 @@ ABNORMAL FUNC wait_alt(CONST inv : node, READONLY arr : STRING[ASCII], CONST i :
    RETURN "";
 END FUNC wait_alt;
 
+% is this waiting invocation one of the built-in ones (10.5), rather than one
+% defined by the program with name_ST, name_REQUEST, name_TEST, name_COMPLETE
+% and name_REVOKE (14.3.1)?
+ABNORMAL FUNC builtin_wait(CONST inv : node) => BOOL IMPORTS ALL;
+   VAR lv : text;
+   VAR t : typ;
+   VAR c : cons;
+   VAR ro : BOOL;
+   VAR saved : buffer := code;
+   VAR ok : BOOL := FALSE;
+   IF inv.kind /= n_apply OR inv.a.kind /= n_name THEN
+      RETURN TRUE;
+   END IF;
+   IF inv.a.name.ALL = "DELAY" OR inv.a.name.ALL = "DELAY_UNTIL" OR inv.a.name.ALL = "DELAY_UNTIL_INACTIVE" THEN
+      RETURN TRUE;
+   END IF;
+   IF inv.a.name.ALL /= "SEND" AND inv.a.name.ALL /= "RECEIVE" THEN
+      RETURN FALSE;
+   END IF;
+   trial := trial + 1;
+   code := new_buffer;
+   GUARD
+      lvalue(inv.b, lv, t, c, ro);
+      ok := t.kind = t_mbox;
+   BY
+      WHEN compile_error =>
+         ok := FALSE;
+   END GUARD;
+   trial := trial - 1;
+   code := saved;
+   RETURN ok;
+END FUNC builtin_wait;
+
+% name(q, args) for a user-defined waiting invocation
+ABNORMAL FUNC wait_op(CONST inv : node, READONLY op : STRING[ASCII], READONLY q : STRING[ASCII],
+                      CONST is_stmt : BOOL) => STRING[ASCII] IMPORTS ALL;
+   VAR x : node := nn(n_apply, inv.line);
+   VAR f : node := nn(n_name, inv.line);
+   VAR qn : node := nn(n_name, inv.line);
+   VAR t : typ;
+   f.name := mk(inv.a.name.ALL & "_" & op);
+   qn.name := mk(q);
+   qn.next := inv.b;
+   x.a := f;
+   x.b := qn;
+   BEGIN
+      CONST r := gcall(x, is_stmt, t);
+      IF NOT is_stmt THEN
+         check_type(t, ty_bool, inv.line);
+      END IF;
+      RETURN r;
+   END;
+END FUNC wait_op;
+
+% a WAIT with user-defined waiting invocations, expanded as in 14.3.3
+PROC user_wait(CONST s : node, READONLY arr : STRING[ASCII], READONLY w : STRING[ASCII], CONST n : INT)
+      IMPORTS ALL;
+   VAR a : node := s.a;
+   VAR i : INT := 0;
+   VAR tests : text := mk("");
+   VAR revokes : text := mk("");
+   open_scope;
+   WHILE a /= NIL REPEAT
+      VAR inv : node := a.a;
+      WHILE inv /= NIL REPEAT
+         IF builtin_wait(inv) THEN
+            emit(wait_alt(inv, arr, i, TRUE));
+         ELSE
+            VAR st : node := nn(s_name, inv.line);
+            VAR c : cons;
+            VAR qt : typ;
+            CONST qname := new_name("WAIT_Q");
+            VAR y : sym := new_sym(y_var, mk(qname));
+            emit(arr & "[" & itos(i) & "] = (rt_alt){RT_ALT_USER, 1, NULL, NULL, 0};");
+            st.name := mk(inv.a.name.ALL & "_ST");
+            qt := resolve_subtype(st, c);
+            BEGIN
+               CONST access := storage(qname, qt);
+               init_storage(access, qt, c);
+               y.t := qt;
+               y.c := c;
+               bind(y, access);
+               define(y, inv.line);
+            END;
+            emit(wait_op(inv, "REQUEST", qname, TRUE) & ";");
+            tests := mk(tests.ALL & "if (" & wait_op(inv, "TEST", qname, FALSE) & ") { "
+                        & wait_op(inv, "COMPLETE", qname, TRUE) & "; " & w & " = " & itos(i) & "; break; } ");
+            revokes := mk(revokes.ALL & wait_op(inv, "REVOKE", qname, TRUE) & "; ");
+         END IF;
+         i := i + 1;
+         inv := inv.next;
+      END REPEAT;
+      a := a.next;
+   END REPEAT;
+   close_scope;
+   emit("int " & w & " = -1;");
+   emit("for (;;) { rt_sync_reset(); " & tests.ALL);
+   emit(w & " = rt_wait_poll(" & itos(n) & ", " & arr & "); if (" & w & " >= 0) break;");
+   emit("rt_wait_arm(" & itos(n) & ", " & arr & "); rt_sync_wait(); " & w & " = rt_wait_disarm(); if (" & w
+        & " >= 0) break; }");
+   emit(revokes.ALL);
+END PROC user_wait;
+
 PROC st_wait(CONST s : node) IMPORTS ALL;
    VAR a : node := s.a;
    VAR n : INT := 0;
    VAR first : BOOL := TRUE;
    VAR inits : buffer := new_buffer;
+   VAR user : BOOL := FALSE;
    CONST arr := new_name("alts");
    CONST w := new_name("w");
    WHILE a /= NIL REPEAT
-      n := n + list_len(a.a);
-      a := a.next;
-   END REPEAT;
-   emit("{ rt_alt " & arr & "[" & itos(n) & "];");
-   a := s.a;
-   n := 0;
-   WHILE a /= NIL REPEAT
       VAR inv : node := a.a;
+      n := n + list_len(a.a);
       WHILE inv /= NIL REPEAT
-         put(inits, wait_alt(inv, arr, n));
-         n := n + 1;
+         IF NOT builtin_wait(inv) THEN
+            user := TRUE;
+         END IF;
          inv := inv.next;
       END REPEAT;
       a := a.next;
    END REPEAT;
-   splice(code, inits);
-   emit("int " & w & " = rt_wait(" & itos(n) & ", " & arr & ");");
+   emit("{ rt_alt " & arr & "[" & itos(n) & "];");
+   IF user THEN
+      user_wait(s, arr, w, n);
+   ELSE
+      a := s.a;
+      n := 0;
+      WHILE a /= NIL REPEAT
+         VAR inv : node := a.a;
+         WHILE inv /= NIL REPEAT
+            put(inits, wait_alt(inv, arr, n, FALSE));
+            n := n + 1;
+            inv := inv.next;
+         END REPEAT;
+         a := a.next;
+      END REPEAT;
+      splice(code, inits);
+      emit("int " & w & " = rt_wait(" & itos(n) & ", " & arr & ");");
+   END IF;
    a := s.a;
    n := 0;
    WHILE a /= NIL REPEAT
@@ -1130,6 +1249,38 @@ PROC st_wait(CONST s : node) IMPORTS ALL;
    emit("}");
 END PROC st_wait;
 
+% an invocation name(arg) made by the translator
+ABNORMAL FUNC call_node(READONLY name : STRING[ASCII], CONST arg : node, CONST line : INT) => node;
+   VAR x : node := nn(n_apply, line);
+   VAR f : node := nn(n_name, line);
+   f.name := mk(name);
+   x.a := f;
+   x.b := copy_node(arg);
+   x.b.next := NIL;
+   RETURN x;
+END FUNC call_node;
+
+% REGION over a variable of any type with LOCK and UNLOCK (14.4.1): LOCK at
+% entry and UNLOCK however the body is left, both run as critical
+PROC user_region(CONST s : node) IMPORTS ALL;
+   VAR t : typ;
+   CONST f := new_name("xf");
+   CONST lock := gcall(call_node("LOCK", s.a, s.line), TRUE, t);
+   CONST unlock := "{ int cr_ = rt_critical_save(); " & gcall(call_node("UNLOCK", s.a, s.line), TRUE, t)
+                   & "; rt_critical_restore(cr_); }";
+   emit("{ { int cr_ = rt_critical_save(); " & lock & "; rt_critical_restore(cr_); }");
+   emit("rt_frame " & f & ";");
+   emit("if (RT_TRY(" & f & ")) {");
+   push_cleanup("RT_POP(" & f & "); " & unlock);
+   gen_body(s.b);
+   pop_cleanup;
+   emit("RT_POP(" & f & "); " & unlock);
+   emit("} else {");
+   emit("RT_POP(" & f & "); " & unlock & " rt_raise(rt_xcur);");
+   emit("}");
+   emit("}");
+END PROC user_region;
+
 % REGION lock DO body END REGION (10.7): the lock is released however the body ends
 PROC st_region(CONST s : node) IMPORTS ALL;
    VAR lv : text;
@@ -1140,7 +1291,8 @@ PROC st_region(CONST s : node) IMPORTS ALL;
    CONST f := new_name("xf");
    lvalue(s.a, lv, t, c, ro);
    IF t.kind /= t_lock THEN
-      fail(s.line, "REGION needs a DATA_LOCK variable");
+      user_region(s);
+      RETURN;
    END IF;
    emit("{ rt_lock *" & lk & " = &" & lv.ALL & "; rt_region_enter(" & lk & ");");
    emit("rt_frame " & f & ";");

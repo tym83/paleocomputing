@@ -12,6 +12,21 @@ CAPSULE main EXPORTS NONE;
    VAR flag : INT := 0;
    VAR ch : INT;
 
+   % 14.4.1: a region over any type with LOCK and UNLOCK
+   TYPE counted : RECORD[d : DATA_LOCK, entries : INT];
+   VAR g : counted;
+
+   PROC LOCK(VAR c : counted);
+      LOCK(c.d);
+      c.entries := c.entries + 1;
+      WRITELN("counted LOCK, entry " & CNVT[STRING[ASCII]](c.entries));
+   END PROC LOCK;
+
+   PROC UNLOCK(VAR c : counted);
+      WRITELN("counted UNLOCK");
+      UNLOCK(c.d);
+   END PROC UNLOCK;
+
    PROC show(READONLY what : STRING[ASCII], CONST v : INT);
       WRITELN(what & " " & CNVT[STRING[ASCII]](v));
    END PROC show;
@@ -96,6 +111,18 @@ CAPSULE main EXPORTS NONE;
    REGION l DO
       WRITELN("a region on a latch");
    END REGION;
+
+   g.entries := 0;
+   REGION g DO
+      WRITELN("inside the counted region");
+   END REGION;
+   GUARD
+      REGION g DO
+         RAISE X_RANGE;
+      END REGION;
+   BY
+      WHEN X_RANGE => WRITELN("X_RANGE left the region, lock free: " & yes(EXCESS_LOCKS(g.d) = 0));
+   END GUARD;
 
    % 14.1.1: slot counts
    SEND(m, 1);
