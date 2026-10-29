@@ -1274,6 +1274,12 @@ ABNORMAL FUNC builtin(READONLY name : STRING[ASCII], CONST tt : node, CONST args
          fail(line, "FREE needs a variable of an indirect type");
       END IF;
       uses_free := TRUE;
+      finish_ptr(pt);
+      IF needs_fin(pt.target) THEN
+         % the variable ceases to exist: finalized once FREE may reclaim it (13.3)
+         RETURN "({ rt_free_check((void **)&" & pv.ALL & "); if (" & pv.ALL & ") { "
+                & fin_code("(*" & pv.ALL & ")", pt.target) & " } rt_free((void **)&" & pv.ALL & "); })";
+      END IF;
       RETURN "rt_free((void **)&" & pv.ALL & ")";
    ELSEIF name = "LOW_IO" THEN
       CONST dev := gexpr(args, ty_int, at);

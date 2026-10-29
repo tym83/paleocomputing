@@ -21,6 +21,11 @@ PROC translate(CONST units : node) IMPORTS ALL;
                l := l.next;
             END REPEAT;
          END;
+         % the program ends: its declared data items, then its dynamic ones (13.3)
+         close_fins(NIL);
+         IF uses_findyn THEN
+            emit("rt_finalize_all();");
+         END IF;
       ELSE
          gen_capsule(u);
       END IF;

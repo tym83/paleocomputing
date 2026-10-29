@@ -1572,14 +1572,16 @@ static void scan_word(uintptr_t w) {
   }
 }
 
-void rt_free(void **v) {
-  uintptr_t target = (uintptr_t)*v;
-  blockrec *tb;
+/* the dynamic variables of types with FINALIZE, and how to finalize them */
+typedef struct { uintptr_t p; rt_finfn fin; void *env; } finrec;
+static finrec *fins;
+static size_t nfins, cfins;
+
+/* mark everything reachable; count the words that point into [target,
+ * target + tn), skipping the word at skip and the target's own contents */
+static size_t mark_reachable(uintptr_t target, size_t tn, uintptr_t skip) {
   size_t refs = 0;
-  if (!target) return;
-  tb = bfind(target);
-  if (!tb) rt_raise_msg(RT_X_FREE, "not a dynamic variable");
-  size_t tn = tb->n;
+  blockrec *tb = target ? bfind(target) : NULL;
   mark_epoch++;
   nwork = 0;
   for (size_t i = 0; i < nroots; i++) push_range(&work, &nwork, &cwork, roots[i].p, roots[i].n);
@@ -1587,22 +1589,96 @@ void rt_free(void **v) {
     for (size_t i = 0; i < s->depth; i++) push_range(&work, &nwork, &cwork, s->f[i].p, s->f[i].n);
   for (rt_task *t = all_tasks; t; t = t->all_next)
     if (t->state != T_DONE && t->frame) scan_word((uintptr_t)t->frame);
-  tb->mark = mark_epoch; /* the variable's own contents do not count */
+  if (tb) tb->mark = mark_epoch;
   while (nwork > 0) {
     range r = work[--nwork];
     uintptr_t a = ((uintptr_t)r.p + sizeof(void *) - 1) & ~(uintptr_t)(sizeof(void *) - 1);
     uintptr_t end = (uintptr_t)r.p + r.n;
     for (; a + sizeof(void *) <= end; a += sizeof(void *)) {
-      if (a == (uintptr_t)v) continue;
+      if (a == skip) continue;
       uintptr_t w = *(uintptr_t *)a;
-      if (w >= target && w < target + tn) refs++;
+      if (target && w >= target && w < target + tn) refs++;
       scan_word(w);
     }
   }
-  if (refs > 0) rt_raise(RT_X_FREE);
+  return refs;
+}
+
+static void forget_fin(uintptr_t p) {
+  for (size_t i = 0; i < nfins; i++)
+    if (fins[i].p == p) {
+      fins[i] = fins[--nfins];
+      return;
+    }
+}
+
+void rt_free_check(void **v) {
+  uintptr_t target = (uintptr_t)*v;
+  if (!target) return;
+  blockrec *tb = bfind(target);
+  if (!tb) rt_raise_msg(RT_X_FREE, "not a dynamic variable");
+  if (mark_reachable(target, tb->n, (uintptr_t)v) > 0) rt_raise(RT_X_FREE);
+}
+
+void rt_free(void **v) {
+  uintptr_t target = (uintptr_t)*v;
+  if (!target) return;
+  rt_free_check(v);
+  blockrec *tb = bfind(target);
+  forget_fin(target);
   tb->p = DEAD_BLOCK; /* stays counted in the load until the table grows */
   free((void *)target);
   *v = NULL;
+}
+
+void *rt_salloc_fin(size_t n, rt_finfn fin, void *env) {
+  void *p = rt_salloc(n);
+  if (nfins == cfins) {
+    cfins = cfins ? cfins * 2 : 64;
+    fins = realloc(fins, cfins * sizeof *fins);
+    if (!fins) {
+      fprintf(stderr, "*** out of memory\n");
+      exit(4);
+    }
+  }
+  fins[nfins++] = (finrec){(uintptr_t)p, fin, env};
+  return p;
+}
+
+/* a dynamic variable no pointer refers to has ceased to exist (13.3): it is
+ * finalized, and reclaimed unless its FINALIZE made it reachable again */
+void rt_collect(void) {
+  if (!nfins) return;
+  mark_reachable(0, 0, 0);
+  size_t n = 0;
+  finrec *dead = malloc(nfins * sizeof *dead);
+  for (size_t i = 0; i < nfins;) {
+    blockrec *b = bfind(fins[i].p);
+    if (b && b->mark != mark_epoch) {
+      dead[n++] = fins[i];
+      fins[i] = fins[--nfins];
+    } else {
+      i++;
+    }
+  }
+  for (size_t i = 0; i < n; i++) dead[i].fin((void *)dead[i].p, dead[i].env);
+  mark_reachable(0, 0, 0);
+  for (size_t i = 0; i < n; i++) {
+    blockrec *b = bfind(dead[i].p);
+    if (b && b->mark != mark_epoch) {
+      b->p = DEAD_BLOCK;
+      free((void *)dead[i].p);
+    }
+  }
+  free(dead);
+}
+
+/* the program ends: so does every dynamic variable still there */
+void rt_finalize_all(void) {
+  while (nfins > 0) {
+    finrec f = fins[--nfins];
+    f.fin((void *)f.p, f.env);
+  }
 }
 
 /* ---- start-up and shutdown ----------------------------------------------- */

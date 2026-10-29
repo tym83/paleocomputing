@@ -139,7 +139,7 @@ TYPE typ : PTR RECORD[kind : INT, name : text, lits : node,
                       under : typ, tparams : node, ocap : node,
                       fields : field, target : typ, decl : node,
                       cname : text, forward, defined, helpers : BOOL,
-                      initp, tpsyms : sym, gen, gbinds : sym, next : typ];
+                      initp, finalp, tpsyms : sym, gen, gbinds : sym, next : typ];
 
 TYPE field : PTR RECORD[name : text, t : typ, c : cons, st : node, next : field];
 
@@ -203,6 +203,10 @@ VAR out_frames : buffer;
 % the globals, registered for FREE (4.4.3), and whether FREE is used
 VAR out_roots : buffer;
 VAR uses_free : BOOL := FALSE;
+% data items to be finalized when their scope is left (13.3): the code that
+% closes each, the most recent first; and whether dynamic ones exist
+VAR fins : lines;
+VAR uses_findyn : BOOL := FALSE;
 VAR func_sym : sym;
 VAR exits : exitrec;
 VAR frames : INT := 0;

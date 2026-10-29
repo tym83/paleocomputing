@@ -609,6 +609,57 @@ FUNC init_call(CONST y : sym, READONLY lval : STRING[ASCII]) => STRING[ASCII] IM
    RETURN y.cname.ALL & "(" & link.ALL & "&" & lval & ");";
 END FUNC init_call;
 
+% does a data item of type t need FINALIZE, for itself or a component? (13.3)
+FUNC needs_fin(CONST t : typ) => BOOL;
+   IF t = NIL THEN
+      RETURN FALSE;
+   END IF;
+   IF t.finalp /= NIL THEN
+      RETURN TRUE;
+   END IF;
+   IF t.kind = t_new THEN
+      RETURN needs_fin(t.under);
+   ELSEIF t.kind = t_array THEN
+      RETURN needs_fin(t.elem);
+   ELSEIF t.kind = t_record THEN
+      VAR f : field := t.fields;
+      WHILE f /= NIL REPEAT
+         IF needs_fin(f.t) THEN
+            RETURN TRUE;
+         END IF;
+         f := f.next;
+      END REPEAT;
+   END IF;
+   RETURN FALSE;
+END FUNC needs_fin;
+
+% the C that finalizes the data item lval of type t: its FINALIZE, then its
+% components
+ABNORMAL FUNC fin_code(READONLY lval : STRING[ASCII], CONST t : typ) => STRING[ASCII] IMPORTS ALL;
+   VAR r : text := mk("");
+   IF t.finalp /= NIL THEN
+      r := mk(init_call(t.finalp, lval) & " ");
+   END IF;
+   IF t.kind = t_new AND t.tparams = NIL THEN
+      RETURN r.ALL & fin_code(lval, t.under);
+   ELSEIF t.kind = t_new THEN
+      RETURN r.ALL & fin_code(lval & ".all", t.under);
+   ELSEIF t.kind = t_array AND needs_fin(t.elem) THEN
+      CONST i := new_name("fi");
+      RETURN r.ALL & "for (rt_int " & i & " = 0; " & i & " < RT_CNT(" & lval & "); " & i & "++) { "
+             & fin_code(lval & ".p[" & i & "]", t.elem) & " }";
+   ELSEIF t.kind = t_record THEN
+      VAR f : field := t.fields;
+      WHILE f /= NIL REPEAT
+         IF needs_fin(f.t) THEN
+            r := mk(r.ALL & fin_code(lval & "." & field_c(f.name.ALL), f.t) & " ");
+         END IF;
+         f := f.next;
+      END REPEAT;
+   END IF;
+   RETURN r.ALL;
+END FUNC fin_code;
+
 % the type of a type parameter (4.5.3)
 FUNC tparam_type(CONST t : typ, READONLY name : STRING[ASCII]) => typ IMPORTS ty_int;
    VAR z : sym := t.tpsyms;

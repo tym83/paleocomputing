@@ -70,11 +70,15 @@ PROC declare_body(CONST elems : node) IMPORTS ALL;
    % INITIALIZE with a single parameter of a new type of this scope (13.3)
    e := elems;
    WHILE e /= NIL REPEAT
-      IF e.kind = n_proc AND e.name.ALL = "INITIALIZE" THEN
+      IF e.kind = n_proc AND (e.name.ALL = "INITIALIZE" OR e.name.ALL = "FINALIZE") THEN
          VAR y : sym := lookup_decl(e);
          IF y /= NIL AND y.params /= NIL AND y.params.next = NIL
                AND (y.params.t.kind = t_new OR y.params.t.kind = t_ptr) THEN
-            y.params.t.initp := y;
+            IF e.name.ALL = "INITIALIZE" THEN
+               y.params.t.initp := y;
+            ELSE
+               y.params.t.finalp := y;
+            END IF;
          END IF;
       END IF;
       e := e.next;
@@ -538,7 +542,32 @@ PROC var_decl(CONST d : node) IMPORTS ALL;
    y.c := c;
    bind(y, access);
    define(y, d.line);
+   IF needs_fin(t) THEN
+      open_fin(fin_code(access, t));
+   END IF;
 END PROC var_decl;
+
+% from here to the end of the scope, a data item will be finalized however
+% the scope is left (13.3): normally, by EXIT or RETURN, or by an exception
+PROC open_fin(READONLY fc : STRING[ASCII]) IMPORTS ALL;
+   CONST f := new_name("ff");
+   VAR l : lines;
+   emit("rt_frame " & f & "; if (RT_TRY(" & f & ")) {");
+   push_cleanup("RT_POP(" & f & "); " & fc);
+   ALLOC l PTR;
+   l.s := mk("RT_POP(" & f & "); " & fc & " } else { RT_POP(" & f & "); " & fc & " rt_raise(rt_xcur); }");
+   l.next := fins;
+   fins := l;
+END PROC open_fin;
+
+% the end of a scope: close what open_fin opened since saved
+PROC close_fins(CONST saved : lines) IMPORTS ALL;
+   WHILE fins /= saved AND fins /= NIL REPEAT
+      emit(fins.s.ALL);
+      pop_cleanup;
+      fins := fins.next;
+   END REPEAT;
+END PROC close_fins;
 
 PROC const_decl(CONST d : node) IMPORTS ALL;
    VAR c : cons := new_cons;
@@ -561,8 +590,14 @@ PROC const_decl(CONST d : node) IMPORTS ALL;
       END IF;
       BEGIN
          CONST access := storage(d.name.ALL, t);
+         IF t.initp /= NIL THEN
+            emit(init_call(t.initp, access));
+         END IF;
          emit(access & " = " & copy_code(t, v) & ";");
          bind(y, access);
+         IF needs_fin(t) THEN
+            open_fin(fin_code(access, t));
+         END IF;
       END;
    END;
    y.t := t;
@@ -593,9 +628,12 @@ PROC gen_subprogram(CONST d : node, CONST y : sym) IMPORTS ALL;
    VAR frame : text := mk(y.cname.ALL & "fr");
    VAR parent : text;
    VAR copy_back : text := mk("");
+   VAR pfin : text := mk("");
+   VAR saved_fins : lines := fins;
    IF in_func THEN
       parent := mk(func_sym.cname.ALL & "fr");
    END IF;
+   fins := NIL;
    code := new_buffer;
    fields_buf := new_buffer;
    in_func := TRUE;
@@ -632,7 +670,14 @@ PROC gen_subprogram(CONST d : node, CONST y : sym) IMPORTS ALL;
          args := mk(args.ALL & ct & " " & f);
          p.access := mk(f);
          IF y.kind /= y_task THEN
+            % a CONST formal is a new data item (13.3)
+            IF pm.t.initp /= NIL THEN
+               emit(init_call(pm.t.initp, "F->" & f));
+            END IF;
             emit("F->" & f & " = " & copy_code(pm.t, f) & ";");
+            IF needs_fin(pm.t) THEN
+               pfin := mk(pfin.ALL & fin_code("F->" & f, pm.t) & " ");
+            END IF;
          END IF;
       ELSE
          p := new_sym(y_var, pm.name);
@@ -650,7 +695,14 @@ PROC gen_subprogram(CONST d : node, CONST y : sym) IMPORTS ALL;
          IF pm.mode = m_out AND y.kind /= y_task THEN
             put(fields_buf, " " & ct & " " & f & "v;");
             emit("F->" & f & "v = " & copy_code(pm.t, "*F->" & f) & ";");
+            % so is an OUT formal (13.3)
+            IF pm.t.initp /= NIL THEN
+               emit(init_call(pm.t.initp, "F->" & f & "v"));
+            END IF;
             copy_back := mk(copy_back.ALL & "  " & assign_code("(*F->" & f & ")", pm.t, "F->" & f & "v", pm.c));
+            IF needs_fin(pm.t) THEN
+               pfin := mk(pfin.ALL & fin_code("F->" & f & "v", pm.t) & " ");
+            END IF;
             p.access := mk(f & "v");
             p.byref := FALSE;
          END IF;
@@ -664,9 +716,24 @@ PROC gen_subprogram(CONST d : node, CONST y : sym) IMPORTS ALL;
    END REPEAT;
    IF y.result.kind /= t_void THEN
       put(fields_buf, " " & ctype(y.result) & " result_;");
+      % and so is the result of a function (13.3)
+      IF y.result.initp /= NIL THEN
+         emit(init_call(y.result.initp, "F->result_"));
+      END IF;
+   END IF;
+   % the formals are finalized when the invocation ends, however it ends
+   IF pfin.LEN > 0 THEN
+      emit("rt_frame pf_; if (RT_TRY(pf_)) {");
+      push_cleanup("RT_POP(pf_);");
    END IF;
    declare_body(d.c);
    body_elements(d.c);
+   close_fins(NIL);
+   IF pfin.LEN > 0 THEN
+      emit("RT_POP(pf_); } else { RT_POP(pf_); " & pfin.ALL & " rt_raise(rt_xcur); }");
+      pop_cleanup;
+      copy_back := mk(copy_back.ALL & "  " & pfin.ALL);
+   END IF;
    close_scope;
    fctx := fctx.next;
    cur_level := cur_level - 1;
@@ -715,6 +782,7 @@ PROC gen_subprogram(CONST d : node, CONST y : sym) IMPORTS ALL;
    frames := saved_frames;
    handlers := saved_handlers;
    cleanups := saved_cleanups;
+   fins := saved_fins;
 END PROC gen_subprogram;
 
 % ---- statements --------------------------------------------------------------------------
@@ -769,9 +837,11 @@ END PROC body_elements;
 
 % a body is an open scope (3.2)
 PROC gen_body(CONST elems : node) IMPORTS ALL;
+   VAR saved : lines := fins;
    open_scope;
    declare_body(elems);
    body_elements(elems);
+   close_fins(saved);
    close_scope;
 END PROC gen_body;
 
@@ -1129,7 +1199,28 @@ PROC st_alloc(CONST s : node) IMPORTS ALL;
    BEGIN
       CONST tcn := ctype(target);
       CONST cell := new_name("cell");
-      emit("{ " & tcn & " *" & cell & " = rt_alloc(sizeof(" & tcn & "));");
+      IF needs_fin(target) THEN
+         % a dynamic variable to finalize: collect the unreachable ones first (13.3)
+         CONST fn := new_name("fin");
+         uses_free := TRUE;
+         uses_findyn := TRUE;
+         put(out_protos, "static void " & fn & "(void *cell_, void *env_);");
+         put(out_funcs, "static void " & fn & "(void *cell_, void *env_) {");
+         IF in_func THEN
+            put(out_funcs, "  struct " & func_sym.cname.ALL & "fr *F = env_;");
+         ELSE
+            put(out_funcs, "  (void)env_;");
+         END IF;
+         put(out_funcs, "  " & fin_code("(*(" & tcn & " *)cell_)", target));
+         put(out_funcs, "}");
+         IF in_func THEN
+            emit("rt_collect(); { " & tcn & " *" & cell & " = rt_salloc_fin(sizeof(" & tcn & "), " & fn & ", F);");
+         ELSE
+            emit("rt_collect(); { " & tcn & " *" & cell & " = rt_salloc_fin(sizeof(" & tcn & "), " & fn & ", NULL);");
+         END IF;
+      ELSE
+         emit("{ " & tcn & " *" & cell & " = rt_alloc(sizeof(" & tcn & "));");
+      END IF;
       open_scope;
       p := d.b;
       a := s.b;

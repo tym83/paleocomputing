@@ -38,6 +38,13 @@ void rt_set_fdepth(int d);
 void rt_fpush(void *f, size_t n);
 void rt_fpop(void);
 void rt_free(void **v);
+void rt_free_check(void **v);                  /* X_FREE if another pointer refers */
+/* RED 13.3: a dynamic variable of a type with FINALIZE is finalized when it
+ * is FREEd, when a collection finds it unreachable, or when the program ends */
+typedef void (*rt_finfn)(void *cell, void *env);
+void *rt_salloc_fin(size_t n, rt_finfn fin, void *env);
+void rt_collect(void);
+void rt_finalize_all(void);
 #ifdef RT_SCAN
 #define rt_alloc rt_salloc
 #define RT_FPUSH(f) rt_fpush((f), sizeof *(f))
