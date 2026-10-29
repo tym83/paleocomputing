@@ -24,6 +24,31 @@ typedef int64_t rt_int;
 /* ---- memory ---------------------------------------------------------- */
 void *rt_alloc(size_t n);
 
+/* RED 4.4.3: FREE(v) reclaims a dynamic variable only when no other pointer
+ * refers to it, else it raises X_FREE. A program that uses FREE is translated
+ * with RT_SCAN: its storage is allocated where the runtime can find it again,
+ * each task keeps a stack of the frames of its active subprograms, and the
+ * globals are registered, so FREE can look through everything reachable. */
+void *rt_salloc(size_t n);                     /* storage that can be scanned */
+void rt_add_root(void *p, size_t n);
+typedef struct rt_fstack rt_fstack;
+extern __thread rt_fstack *rt_fs;
+int rt_fdepth(void);
+void rt_set_fdepth(int d);
+void rt_fpush(void *f, size_t n);
+void rt_fpop(void);
+void rt_free(void **v);
+#ifdef RT_SCAN
+#define rt_alloc rt_salloc
+#define RT_FPUSH(f) rt_fpush((f), sizeof *(f))
+#define RT_FPOP() rt_fpop()
+#define RT_ROOT(g) rt_add_root(&(g), sizeof (g))
+#else
+#define RT_FPUSH(f) ((void)0)
+#define RT_FPOP() ((void)0)
+#define RT_ROOT(g) ((void)0)
+#endif
+
 /* ---- strings: a value is a length and a buffer the value owns ---------- */
 typedef struct {
   rt_int len;
@@ -56,6 +81,7 @@ const char *rt_cstr(rstr s);                   /* NUL-terminated copy */
 typedef struct rt_frame {
   jmp_buf jb;
   struct rt_frame *prev;
+  int fdepth;                                  /* frames active at the TRY */
 } rt_frame;
 
 extern __thread rt_frame *rt_xtop;
@@ -67,7 +93,9 @@ _Noreturn void rt_raise(int id);
 _Noreturn void rt_raise_msg(int id, const char *msg);
 void *rt_nil_check(void *p);                   /* raises RT_X_NIL */
 
-#define RT_TRY(f) ((f).prev = rt_xtop, rt_xtop = &(f), setjmp((f).jb) == 0)
+/* an exception caught here ends the frames above the TRY */
+#define RT_TRY(f) ((f).prev = rt_xtop, rt_xtop = &(f), (f).fdepth = rt_fs ? rt_fdepth() : 0, \
+                   setjmp((f).jb) == 0 || (rt_fs && (rt_set_fdepth((f).fdepth), 0)))
 #define RT_POP(f) (rt_xtop = (f).prev)
 
 /* Exceptions the runtime itself raises. Front ends map their own names

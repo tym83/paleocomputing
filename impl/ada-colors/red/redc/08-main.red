@@ -30,6 +30,9 @@ END PROC translate;
 
 PROC print_program IMPORTS ALL;
    emit_helpers;
+   IF uses_free THEN
+      WRITELN("#define RT_SCAN 1");
+   END IF;
    WRITELN("#include " & q & "paleo.h" & q);
    WRITELN("#include <math.h>");
    print_buffer(out_types);
@@ -41,6 +44,7 @@ PROC print_program IMPORTS ALL;
    WRITELN("int main(int argc, char **argv) {");
    WRITELN("  rt_init(argc, argv);");
    WRITELN("  rt_set_lang(0);");
+   print_buffer(out_roots);
    print_buffer(out_excs);
    print_buffer(out_init);
    WRITELN("  rt_main_done();");
@@ -60,6 +64,7 @@ out_funcs := new_buffer;
 out_init := new_buffer;
 out_excs := new_buffer;
 out_frames := new_buffer;
+out_roots := new_buffer;
 code := out_init;
 no_cons := new_cons;
 ty_int := new_typ(t_int);

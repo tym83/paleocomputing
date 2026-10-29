@@ -189,6 +189,7 @@ PROC capsule_params(CONST d : node, CONST args : node, CONST line : INT) IMPORTS
          ELSE
             CONST g := new_name("g_" & lower_s(p.name.ALL) & "_");
             put(out_globals, "static " & ctype(t) & " *" & g & ";");
+            put(out_roots, "  RT_ROOT(" & g & ");");
             emit(g & " = &" & lv.ALL & ";");
             y.level := 0;
             y.access := mk("(*" & g & ")");
@@ -483,6 +484,7 @@ ABNORMAL FUNC storage(READONLY name : STRING[ASCII], CONST t : typ) => STRING[AS
    IF NOT in_func THEN
       CONST g := new_name("g_" & lower_s(name) & "_");
       put(out_globals, "static " & ctype(t) & " " & g & ";");
+      put(out_roots, "  RT_ROOT(" & g & ");");
       st_field := mk(g);
       RETURN g;
    END IF;
@@ -685,6 +687,7 @@ PROC gen_subprogram(CONST d : node, CONST y : sym) IMPORTS ALL;
    ELSE
       put(out_funcs, "  struct " & frame.ALL & " *F = rt_alloc(sizeof *F);");
    END IF;
+   put(out_funcs, "  RT_FPUSH(F);");
    splice(out_funcs, code);
    IF y.result.kind /= t_void THEN
       put(out_funcs, "  rt_raise_msg(RT_X_ASSERT, " & q & "function ended without RETURN" & q & ");");
@@ -692,12 +695,14 @@ PROC gen_subprogram(CONST d : node, CONST y : sym) IMPORTS ALL;
       IF copy_back.LEN > 0 THEN
          put(out_funcs, copy_back.ALL);
       END IF;
+      put(out_funcs, "  RT_FPOP();");
       put(out_funcs, "  return F->result_;");
    ELSE
       put(out_funcs, "ret_:");
       IF copy_back.LEN > 0 THEN
          put(out_funcs, copy_back.ALL);
       END IF;
+      put(out_funcs, "  RT_FPOP();");
       put(out_funcs, "  return;");
    END IF;
    put(out_funcs, "}");

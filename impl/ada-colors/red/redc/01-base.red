@@ -200,6 +200,9 @@ VAR cap_waits : waitrec;
 VAR psub : lines;          % parameter placeholders of the new type being created
 VAR st_field : text;
 VAR out_frames : buffer;
+% the globals, registered for FREE (4.4.3), and whether FREE is used
+VAR out_roots : buffer;
+VAR uses_free : BOOL := FALSE;
 VAR func_sym : sym;
 VAR exits : exitrec;
 VAR frames : INT := 0;

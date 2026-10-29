@@ -27,6 +27,100 @@ void *rt_alloc(size_t n) {
 /* ---- exceptions ------------------------------------------------------ */
 
 __thread rt_frame *rt_xtop;
+
+/* ---- scannable storage, for FREE (RED 4.4.3) ------------------------------ */
+
+/* the blocks rt_salloc made: an open-addressing table from address to size */
+typedef struct { uintptr_t p; size_t n; unsigned mark; } blockrec;
+static blockrec *blocks;
+static size_t nblocks, cblocks;
+static unsigned mark_epoch;
+#define DEAD_BLOCK ((uintptr_t)1)
+
+static size_t bslot(uintptr_t p) { return (size_t)((p >> 4) * 2654435761u) & (cblocks - 1); }
+
+static blockrec *bfind(uintptr_t p) {
+  if (!cblocks) return NULL;
+  for (size_t i = bslot(p);; i = (i + 1) & (cblocks - 1)) {
+    if (blocks[i].p == p) return &blocks[i];
+    if (blocks[i].p == 0) return NULL;
+  }
+}
+
+static void binsert(uintptr_t p, size_t n) {
+  if ((nblocks + 1) * 2 > cblocks) {
+    blockrec *old = blocks;
+    size_t oc = cblocks;
+    cblocks = cblocks ? cblocks * 2 : 1024;
+    blocks = calloc(cblocks, sizeof *blocks);
+    if (!blocks) {
+      fprintf(stderr, "*** out of memory\n");
+      exit(4);
+    }
+    nblocks = 0;
+    for (size_t i = 0; i < oc; i++)
+      if (old[i].p > DEAD_BLOCK) binsert(old[i].p, old[i].n);
+    free(old);
+  }
+  size_t i = bslot(p);
+  while (blocks[i].p > DEAD_BLOCK) i = (i + 1) & (cblocks - 1);
+  blocks[i].p = p;
+  blocks[i].n = n;
+  blocks[i].mark = 0;
+  nblocks++;
+}
+
+void *rt_salloc(size_t n) {
+  void *p = rt_alloc(n ? n : 1);
+  binsert((uintptr_t)p, n ? n : 1);
+  return p;
+}
+
+typedef struct { void *p; size_t n; } range;
+static range *roots;
+static size_t nroots, croots;
+
+static void push_range(range **a, size_t *len, size_t *cap, void *p, size_t n) {
+  if (*len == *cap) {
+    *cap = *cap ? *cap * 2 : 64;
+    *a = realloc(*a, *cap * sizeof **a);
+    if (!*a) {
+      fprintf(stderr, "*** out of memory\n");
+      exit(4);
+    }
+  }
+  (*a)[(*len)++] = (range){p, n};
+}
+
+void rt_add_root(void *p, size_t n) { push_range(&roots, &nroots, &croots, p, n); }
+
+/* the frames of the active subprograms of one task */
+struct rt_fstack {
+  range *f;
+  size_t depth, cap;
+  rt_fstack *next;
+};
+__thread rt_fstack *rt_fs;
+static rt_fstack *all_fstacks;
+
+int rt_fdepth(void) { return rt_fs ? (int)rt_fs->depth : 0; }
+void rt_set_fdepth(int d) {
+  if (rt_fs) rt_fs->depth = (size_t)d;
+}
+
+void rt_fpush(void *f, size_t n) {
+  if (!rt_fs) {
+    rt_fs = calloc(1, sizeof *rt_fs);
+    rt_fs->next = all_fstacks;
+    all_fstacks = rt_fs;
+  }
+  push_range(&rt_fs->f, &rt_fs->depth, &rt_fs->cap, f, n);
+}
+
+void rt_fpop(void) {
+  if (rt_fs && rt_fs->depth > 0) rt_fs->depth--;
+}
+
 __thread int rt_xcur;
 
 static const char *exc_names[4096];
@@ -810,6 +904,8 @@ static void *task_main(void *arg) {
       if (getenv("PALEO_TRACE"))
         fprintf(stderr, "task %d ended by %s\n", t->id, rt_exc_name(rt_xcur));
   }
+  /* its subprograms are over, however the task ended */
+  if (rt_fs) rt_fs->depth = 0;
   /* RED 14.5.3: TASK_END(ME) lets the scheduler drop the activation */
   if (t->act && t->act->hook) {
     rt_frame f2;
@@ -968,7 +1064,8 @@ void rt_mbox_init(rt_mbox *m, rt_int cap, size_t esz, rt_copyfn copy) {
   m->cap = cap;
   m->esz = esz;
   m->copy = copy;
-  m->buf = cap ? rt_alloc((size_t)cap * esz) : NULL;
+  /* messages may hold pointers that FREE must see */
+  m->buf = cap ? rt_salloc((size_t)cap * esz) : NULL;
   m->head = m->count = 0;
   m->senders = m->receivers = NULL;
 }
@@ -993,6 +1090,8 @@ static int try_send(rt_mbox *m, const void *msg) {
 static int try_receive(rt_mbox *m, void *dst) {
   if (m->count > 0) {
     m->copy(dst, slot(m, 0));
+    /* a received message leaves no copy behind for FREE to find */
+    memset(slot(m, 0), 0, m->esz);
     m->head = (m->head + 1) % m->cap;
     m->count--;
     if (m->senders) {
@@ -1453,6 +1552,57 @@ int rt_wait_disarm(void) {
   cur->armed = 0;
   cur->satisfied = 0;
   return r;
+}
+
+/* ---- FREE (RED 4.4.3) ---------------------------------------------------- */
+
+/* Everything reachable from the globals, the active frames of every task and
+ * the frames of activations not yet started is scanned word by word; a word
+ * equal to the start of a block makes that block reachable, and a word inside
+ * the freed variable is another pointer to it. Values held only in C
+ * temporaries of the translated code are not seen. */
+static range *work;
+static size_t nwork, cwork;
+
+static void scan_word(uintptr_t w) {
+  blockrec *b = bfind(w);
+  if (b && b->mark != mark_epoch) {
+    b->mark = mark_epoch;
+    push_range(&work, &nwork, &cwork, (void *)b->p, b->n);
+  }
+}
+
+void rt_free(void **v) {
+  uintptr_t target = (uintptr_t)*v;
+  blockrec *tb;
+  size_t refs = 0;
+  if (!target) return;
+  tb = bfind(target);
+  if (!tb) rt_raise_msg(RT_X_FREE, "not a dynamic variable");
+  size_t tn = tb->n;
+  mark_epoch++;
+  nwork = 0;
+  for (size_t i = 0; i < nroots; i++) push_range(&work, &nwork, &cwork, roots[i].p, roots[i].n);
+  for (rt_fstack *s = all_fstacks; s; s = s->next)
+    for (size_t i = 0; i < s->depth; i++) push_range(&work, &nwork, &cwork, s->f[i].p, s->f[i].n);
+  for (rt_task *t = all_tasks; t; t = t->all_next)
+    if (t->state != T_DONE && t->frame) scan_word((uintptr_t)t->frame);
+  tb->mark = mark_epoch; /* the variable's own contents do not count */
+  while (nwork > 0) {
+    range r = work[--nwork];
+    uintptr_t a = ((uintptr_t)r.p + sizeof(void *) - 1) & ~(uintptr_t)(sizeof(void *) - 1);
+    uintptr_t end = (uintptr_t)r.p + r.n;
+    for (; a + sizeof(void *) <= end; a += sizeof(void *)) {
+      if (a == (uintptr_t)v) continue;
+      uintptr_t w = *(uintptr_t *)a;
+      if (w >= target && w < target + tn) refs++;
+      scan_word(w);
+    }
+  }
+  if (refs > 0) rt_raise(RT_X_FREE);
+  tb->p = DEAD_BLOCK; /* stays counted in the load until the table grows */
+  free((void *)target);
+  *v = NULL;
 }
 
 /* ---- start-up and shutdown ----------------------------------------------- */

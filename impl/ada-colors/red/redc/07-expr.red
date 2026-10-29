@@ -1263,6 +1263,18 @@ ABNORMAL FUNC builtin(READONLY name : STRING[ASCII], CONST tt : node, CONST args
    ELSEIF name = "OWNER" THEN
       t := ty_act;
       RETURN "rt_lock_owner(" & lock_ref(args, name) & ")";
+   ELSEIF name = "FREE" THEN
+      % FREE(v) (4.4.3): X_FREE if another pointer refers to the variable
+      VAR pv : text;
+      VAR pc : cons;
+      VAR ro : BOOL;
+      VAR pt : typ;
+      lvalue(args, pv, pt, pc, ro);
+      IF pt.kind /= t_ptr OR ro THEN
+         fail(line, "FREE needs a variable of an indirect type");
+      END IF;
+      uses_free := TRUE;
+      RETURN "rt_free((void **)&" & pv.ALL & ")";
    ELSEIF name = "LOW_IO" THEN
       CONST dev := gexpr(args, ty_int, at);
       CONST cmd := gexpr(args.next, ty_int, at);
