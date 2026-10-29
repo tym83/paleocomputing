@@ -40,6 +40,10 @@ jobs:
         run: make genesis
       - name: Tests
         run: red/tests/run.sh
+      - name: The examples of chapter 14 of the manual
+        run: red/manual/run/run.sh
+      - name: The contract problems of 1979, RED and GREEN
+        run: make -C green fixpoint && problems/run/run.sh
       - name: NonStop kernel and Kubernetes loops
         run: os/run.sh
       - name: Labs

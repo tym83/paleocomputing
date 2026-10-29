@@ -14,6 +14,7 @@
 | `red/boot/` | Затравка RED на Python (только для genesis) |
 | `red/redc/` | redc, компилятор RED, написанный на RED. `red/seed/redc.c` — то, что последний redc сделал из себя |
 | `red/tests/` | Тесты RED с ожидаемым выводом |
+| `red/manual/` | Примеры главы 14 руководства по RED, средств нижнего уровня: пользовательские планировщики, мониторы, MAILBOX, определённый средствами языка; переписаны как напечатаны и запускаются |
 | `green/` | То же для GREEN: затравка, greenc на GREEN, семя, тесты, примеры INTRO 1979 года |
 | `blue/` | BLUE (SofTech, 1978): затравка, bluec на BLUE, семя, тесты и программы из спецификации; модули ввода-вывода приложения C работают на имитированных телетайпах LT33 |
 | `yellow/` | YELLOW (SRI International, 1978): затравка, yellowc на YELLOW, семя, тесты и учебные программы из отчёта |
@@ -28,11 +29,13 @@
 make                   # redc из семени, дважды; файлы C должны совпасть
 make genesis           # первый шаг, от затравки на Python
 red/tests/run.sh
+red/manual/run/run.sh  # примеры главы 14 руководства по RED
 make -C green fixpoint test genesis
+problems/run/run.sh    # контрольные задачи, RED и GREEN (нужен greenc)
 os/run.sh              # PAIRS, THE и три цикла Kubernetes
 labs/check.sh 03 look
 ```
 
 Нужны компилятор C, make, Python 3 (только для genesis) и perl (для таймаутов).
-Оригиналов 1979 года из `problems/original/` в git нет; откуда они берутся,
-написано в `problems/README.md`.
+Откуда взяты оригиналы 1979 года в `problems/original/` и `red/manual/original/`,
+написано в `problems/README.md` и `red/manual/README.md`.

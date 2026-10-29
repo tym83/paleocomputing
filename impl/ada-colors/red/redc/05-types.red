@@ -3,12 +3,12 @@
 FUNC hash(READONLY s : STRING[ASCII]) => INT;
    VAR h : INT := 0;
    FOR i : INT(1 .. s.LEN) REPEAT
-      h := (h * 31 + POS(s(i))) MOD 4093;
+      h := (h * 31 + POS(s(i))) MOD nbuckets;
    END REPEAT;
    RETURN h;
 END FUNC hash;
 
-ABNORMAL FUNC lookup(READONLY name : STRING[ASCII]) => sym IMPORTS table;
+ABNORMAL FUNC lookup(READONLY name : STRING[ASCII]) => sym IMPORTS table, genv;
    VAR y : sym := table(hash(name));
    WHILE y /= NIL REPEAT
       IF y.name.ALL = name THEN
@@ -16,6 +16,15 @@ ABNORMAL FUNC lookup(READONLY name : STRING[ASCII]) => sym IMPORTS table;
       END IF;
       y := y.chain;
    END REPEAT;
+   IF genv /= NIL THEN
+      y := genv(hash(name));
+      WHILE y /= NIL REPEAT
+         IF y.name.ALL = name THEN
+            RETURN y;
+         END IF;
+         y := y.chain;
+      END REPEAT;
+   END IF;
    RETURN NIL;
 END FUNC lookup;
 
@@ -205,7 +214,7 @@ ABNORMAL FUNC ctype(CONST t : typ) => STRING[ASCII] IMPORTS ALL;
       WHEN t_float => RETURN "double";
       WHEN t_string => RETURN "rstr";
       WHEN t_void => RETURN "void";
-      WHEN t_mbox => RETURN "rt_mbox";
+      WHEN t_mbox => RETURN "rt_mbox *";
       WHEN t_lock => RETURN "rt_lock";
       WHEN t_act => RETURN "rt_act *";
       WHEN t_set => RETURN "rset";
@@ -284,7 +293,7 @@ PROC declare_ctype(CONST t : typ) IMPORTS ALL;
       VAR p : node := t.tparams;
       VAR fs : text := mk(" ");
       WHILE p /= NIL REPEAT
-         fs := mk(fs.ALL & "rt_int p_" & lower_s(p.name.ALL) & "; ");
+         fs := mk(fs.ALL & ctype(tparam_type(t, p.name.ALL)) & " p_" & lower_s(p.name.ALL) & "; ");
          p := p.next;
       END REPEAT;
       put(out_types, "typedef struct " & t.cname.ALL & " " & t.cname.ALL & ";");
@@ -442,7 +451,13 @@ ABNORMAL FUNC resolve_subtype(CONST st : node, OUT c : cons) => typ IMPORTS ALL;
       WHEN s_file =>
          RETURN ty_file;
       WHEN s_mailbox =>
-         % MAILBOX[message subtype](size) (10.3)
+         % MAILBOX[message subtype](size) (10.3), unless the program defines
+         % its own generic MAILBOX type, as in 14.3.1
+         IF lookup("MAILBOX") /= NIL AND lookup("MAILBOX").kind = y_generic THEN
+            VAR gt : node := copy_node(st.a);
+            gt.next := NIL;
+            RETURN instantiate_type(lookup("MAILBOX"), gt, st.b, c, st.line);
+         END IF;
          BEGIN
             VAR ec : cons;
             t := new_typ(t_mbox);
@@ -460,6 +475,8 @@ ABNORMAL FUNC resolve_subtype(CONST st : node, OUT c : cons) => typ IMPORTS ALL;
             RETURN ty_ascii;
          ELSEIF st.name.ALL = "DATA_LOCK" THEN
             RETURN ty_lock;
+         ELSEIF st.name.ALL = "LATCH" THEN
+            RETURN ty_latch;
          ELSEIF st.name.ALL = "ACT" THEN
             RETURN ty_act;
          END IF;
@@ -467,6 +484,9 @@ ABNORMAL FUNC resolve_subtype(CONST st : node, OUT c : cons) => typ IMPORTS ALL;
             VAR y : sym := lookup(st.name.ALL);
             IF y = NIL THEN
                fail(st.line, "unknown type " & st.name.ALL);
+            END IF;
+            IF y.kind = y_generic AND (y.decl.b.kind = n_newtype OR y.decl.b.kind = n_ptrtype) THEN
+               RETURN instantiate_type(y, st.a, st.b, c, st.line);
             END IF;
             IF y.kind = y_type AND y.t /= NIL AND y.t.kind = t_new THEN
                RETURN new_type(y, st, c);
@@ -552,7 +572,10 @@ ABNORMAL FUNC new_type(CONST y : sym, CONST st : node, OUT c : cons) => typ IMPO
       p := d.b;
       WHILE p /= NIL REPEAT
          VAR z : sym := new_sym(y_const, p.name);
-         z.t := ty_int;
+         VAR zc : cons;
+         z.t := resolve_subtype(p.a, zc);
+         z.mnext := y.t.tpsyms;
+         y.t.tpsyms := z;
          z.access := mk("@P_" & lower_s(p.name.ALL) & "@");
          define(z, d.line);
          p := p.next;
@@ -566,7 +589,39 @@ ABNORMAL FUNC new_type(CONST y : sym, CONST st : node, OUT c : cons) => typ IMPO
 END FUNC new_type;
 
 % give a fresh variable its storage (strings, arrays and records own buffers)
+% a fresh data item: its storage, then its type's INITIALIZE (13.3)
 PROC init_storage(READONLY lval : STRING[ASCII], CONST t : typ, CONST c : cons) IMPORTS ALL;
+   make_storage(lval, t, c);
+   IF t.initp /= NIL THEN
+      emit(init_call(t.initp, lval));
+   END IF;
+END PROC init_storage;
+
+FUNC init_call(CONST y : sym, READONLY lval : STRING[ASCII]) => STRING[ASCII] IMPORTS cur_level;
+   VAR link : text := mk("");
+   IF y.level > 0 THEN
+      link := mk("F");
+      FOR i : INT(1 .. cur_level - y.level) REPEAT
+         link := mk(link.ALL & "->up");
+      END REPEAT;
+      link := mk(link.ALL & ", ");
+   END IF;
+   RETURN y.cname.ALL & "(" & link.ALL & "&" & lval & ");";
+END FUNC init_call;
+
+% the type of a type parameter (4.5.3)
+FUNC tparam_type(CONST t : typ, READONLY name : STRING[ASCII]) => typ IMPORTS ty_int;
+   VAR z : sym := t.tpsyms;
+   WHILE z /= NIL REPEAT
+      IF z.name.ALL = name THEN
+         RETURN z.t;
+      END IF;
+      z := z.mnext;
+   END REPEAT;
+   RETURN ty_int;
+END FUNC tparam_type;
+
+PROC make_storage(READONLY lval : STRING[ASCII], CONST t : typ, CONST c : cons) IMPORTS ALL;
    IF t.kind = t_new THEN
       VAR p : node := t.tparams;
       VAR a : node := c.args;
@@ -576,7 +631,9 @@ PROC init_storage(READONLY lval : STRING[ASCII], CONST t : typ, CONST c : cons) 
          fail(0, "a variable of type " & t.name.ALL & " needs " & itos(list_len(p)) & " constraint values");
       END IF;
       WHILE p /= NIL REPEAT
-         CONST v := gexpr(a, ty_int, at);
+         CONST pt := tparam_type(t, p.name.ALL);
+         CONST v := gexpr(a, pt, at);
+         check_type(at, pt, a.line);
          emit(lval & ".p_" & lower_s(p.name.ALL) & " = " & v & ";");
          p := p.next;
          a := a.next;
@@ -608,7 +665,9 @@ PROC init_storage(READONLY lval : STRING[ASCII], CONST t : typ, CONST c : cons) 
       IF c.lo = NIL THEN
          fail(0, "a mailbox variable needs a size");
       END IF;
-      emit("rt_mbox_init(&" & lval & ", " & subst(c.lo.ALL) & ", sizeof(" & ctype(t.elem) & "), "
+      % a mailbox is an indirect type (14.1.3): the variable refers to it
+      emit(lval & " = rt_alloc(sizeof(rt_mbox));");
+      emit("rt_mbox_init(" & lval & ", " & subst(c.lo.ALL) & ", sizeof(" & ctype(t.elem) & "), "
            & mcopy(t.elem) & ");");
    ELSEIF t.kind = t_lock THEN
       emit("rt_lock_init(&" & lval & ");");
@@ -646,7 +705,7 @@ PROC init_storage(READONLY lval : STRING[ASCII], CONST t : typ, CONST c : cons) 
          f := f.next;
       END REPEAT;
    END IF;
-END PROC init_storage;
+END PROC make_storage;
 
 % manifest expressions (5.5)
 ABNORMAL FUNC manifest(CONST e : node, OUT ok : BOOL) => INT IMPORTS ALL;
@@ -755,8 +814,12 @@ ABNORMAL FUNC eq_code(CONST t : typ, READONLY a : STRING[ASCII], READONLY b : ST
       % two ACT values are equal when they are the same activation variable (C.10)
       RETURN "(" & a & " == " & b & ")";
    END IF;
-   IF t.kind = t_mbox OR t.kind = t_lock THEN
-      % not comparable (C.11, C.12); only the generated helpers ask
+   IF t.kind = t_mbox THEN
+      % two mailboxes are equal when they are the same mailbox (14.1.3)
+      RETURN "(" & a & " == " & b & ")";
+   END IF;
+   IF t.kind = t_lock THEN
+      % not comparable (C.12); only the generated helpers ask
       RETURN "0";
    END IF;
    IF t.kind = t_string THEN

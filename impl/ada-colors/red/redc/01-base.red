@@ -139,7 +139,7 @@ TYPE typ : PTR RECORD[kind : INT, name : text, lits : node,
                       under : typ, tparams : node, ocap : node,
                       fields : field, target : typ, decl : node,
                       cname : text, forward, defined, helpers : BOOL,
-                      next : typ];
+                      initp, tpsyms : sym, gen, gbinds : sym, next : typ];
 
 TYPE field : PTR RECORD[name : text, t : typ, c : cons, st : node, next : field];
 
@@ -150,7 +150,7 @@ TYPE sym : PTR RECORD[kind : INT, name : text, t : typ, c : cons,
                       mvalue : INT, hasmv : BOOL, st : node, decl : node,
                       params : parm, result : typ, depth : INT,
                       level : INT, byref : BOOL, members, mnext : sym,
-                      binds : node, insts : sym,
+                      binds : node, insts : sym, env : buckets,
                       chain, stack : sym];
 
 TYPE lines : PTR RECORD[s : text, next : lines];
@@ -176,7 +176,13 @@ VAR ntoks : INT := 0;
 VAR tpos : INT := 1;
 VAR src_line : INT := 0;
 
+CONST nbuckets := 4093;
 VAR table : buckets;
+% while a generic is instantiated: the names visible where it was declared,
+% for what the scope of the invocation does not know (11.3)
+VAR genv : buckets;
+% every instance of a generic, whichever copy of its symbol made it (11.3)
+VAR all_insts : sym;
 VAR depth : INT := 0;
 VAR scope_stack : sym;
 
@@ -194,6 +200,9 @@ VAR cap_waits : waitrec;
 VAR psub : lines;          % parameter placeholders of the new type being created
 VAR st_field : text;
 VAR out_frames : buffer;
+% the globals, registered for FREE (4.4.3), and whether FREE is used
+VAR out_roots : buffer;
+VAR uses_free : BOOL := FALSE;
 VAR func_sym : sym;
 VAR exits : exitrec;
 VAR frames : INT := 0;
@@ -203,5 +212,5 @@ VAR trial : INT := 0;
 VAR mcopies : lines;
 
 VAR ty_int, ty_bool, ty_float, ty_ascii, ty_string, ty_void, ty_file, ty_nil : typ;
-VAR ty_lock, ty_act : typ;
+VAR ty_lock, ty_latch, ty_act : typ;
 VAR no_cons : cons;

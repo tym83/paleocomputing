@@ -8,7 +8,7 @@ PROC declare_body(CONST elems : node) IMPORTS ALL;
          manifest_const(e);
       ELSEIF e.kind = n_capsule THEN
          gen_capsule(e);
-      ELSEIF e.kind = n_expose THEN
+      ELSEIF e.kind = n_expose AND e.flag /= 1 AND e.flag /= 3 THEN
          gen_expose(e);
       ELSEIF e.kind = n_exception THEN
          VAR y : sym := new_sym(y_exc, e.name);
@@ -44,6 +44,38 @@ PROC declare_body(CONST elems : node) IMPORTS ALL;
          g.decl := e;
          g.level := cur_level;
          define(g, e.line);
+      END IF;
+      e := e.next;
+   END REPEAT;
+   % the generics of this scope remember what is visible here (11.3)
+   e := elems;
+   BEGIN
+      VAR snap : buckets;
+      WHILE e /= NIL REPEAT
+         IF e.kind = n_generic THEN
+            IF snap = NIL THEN
+               ALLOC snap PTR (nbuckets);
+               FOR i : INT(0 .. nbuckets) REPEAT
+                  snap(i) := table(i);
+               END REPEAT;
+            END IF;
+            BEGIN
+               VAR g : sym := lookup(e.name.ALL);
+               g.env := snap;
+            END;
+         END IF;
+         e := e.next;
+      END REPEAT;
+   END;
+   % INITIALIZE with a single parameter of a new type of this scope (13.3)
+   e := elems;
+   WHILE e /= NIL REPEAT
+      IF e.kind = n_proc AND e.name.ALL = "INITIALIZE" THEN
+         VAR y : sym := lookup_decl(e);
+         IF y /= NIL AND y.params /= NIL AND y.params.next = NIL
+               AND (y.params.t.kind = t_new OR y.params.t.kind = t_ptr) THEN
+            y.params.t.initp := y;
+         END IF;
       END IF;
       e := e.next;
    END REPEAT;
@@ -111,24 +143,99 @@ ABNORMAL FUNC copy_sym(CONST y : sym) => sym;
    z.level := y.level;
    z.byref := y.byref;
    z.members := y.members;
+   z.env := y.env;
    RETURN z;
 END FUNC copy_sym;
 
-% a capsule invoked as old (8.1): its body is elaborated once, on entry to the
-% scope where it is declared; the exported definitions are kept for EXPOSE
+% a capsule declaration (8.1); one with formal parameters is elaborated only
+% where it is invoked as NEW
 PROC gen_capsule(CONST d : node) IMPORTS ALL;
    VAR y : sym := new_sym(y_capsule, d.name);
+   y.decl := d;
+   IF d.b = NIL THEN
+      elaborate_capsule(d, y, NIL, d);
+   END IF;
+   define(y, d.line);
+END PROC gen_capsule;
+
+% the formal parameters of a capsule invoked as NEW, bound to the actuals (7.3)
+PROC capsule_params(CONST d : node, CONST args : node, CONST line : INT) IMPORTS ALL;
+   VAR p : node := d.b;
+   VAR a : node := args;
+   VAR t, vt : typ;
+   VAR c : cons;
+   WHILE p /= NIL AND a /= NIL REPEAT
+      t := resolve_subtype(p.a, c);
+      IF p.ival = m_out THEN
+         fail(line, "a capsule may not have OUT formal parameters");
+      ELSEIF p.ival = m_var OR p.ival = m_readonly THEN
+         VAR lv : text;
+         VAR lc : cons;
+         VAR ro : BOOL;
+         VAR y : sym := new_sym(y_var, p.name);
+         lvalue(a, lv, vt, lc, ro);
+         check_type(vt, t, line);
+         IF ro AND p.ival = m_var THEN
+            fail(line, p.name.ALL & " needs a variable");
+         END IF;
+         % a local name for the actual (7.3): the capsule keeps its address
+         IF in_func THEN
+            CONST f := new_name(lower_s(p.name.ALL) & "_");
+            put(fields_buf, " " & ctype(t) & " *" & f & ";");
+            emit("F->" & f & " = &" & lv.ALL & ";");
+            y.level := cur_level;
+            y.access := mk(f);
+            y.byref := TRUE;
+         ELSE
+            CONST g := new_name("g_" & lower_s(p.name.ALL) & "_");
+            put(out_globals, "static " & ctype(t) & " *" & g & ";");
+            put(out_roots, "  RT_ROOT(" & g & ");");
+            emit(g & " = &" & lv.ALL & ";");
+            y.level := 0;
+            y.access := mk("(*" & g & ")");
+         END IF;
+         y.t := t;
+         y.c := lc;
+         y.ro_flag := p.ival = m_readonly;
+         define(y, line);
+      ELSE
+         VAR y : sym := new_sym(y_const, p.name);
+         CONST v := gexpr(a, t, vt);
+         check_type(vt, t, line);
+         BEGIN
+            CONST access := storage(p.name.ALL, t);
+            emit(access & " = " & copy_code(t, v) & ";");
+            bind(y, access);
+         END;
+         y.t := t;
+         y.c := c;
+         y.ro_flag := TRUE;
+         define(y, line);
+      END IF;
+      p := p.next;
+      a := a.next;
+   END REPEAT;
+   IF p /= NIL OR a /= NIL THEN
+      fail(line, "wrong number of actual parameters for capsule " & d.name.ALL);
+   END IF;
+END PROC capsule_params;
+
+% elaborate a capsule body into y's members; owner is the node whose scope
+% waits for the capsule's tasks
+PROC elaborate_capsule(CONST d : node, CONST y : sym, CONST args : node, CONST owner : node) IMPORTS ALL;
    VAR cr : caprec;
    VAR ctx : fctxrec;
    VAR m : sym;
    VAR p : node := d.a;
    VAR ro : BOOL;
-   y.decl := d;
    ALLOC cr PTR;
    cr.d := d;
    cr.next := caps;
    caps := cr;
    open_scope;
+   IF d.b /= NIL THEN
+      capsule_params(d, args, owner.line);
+   END IF;
    ALLOC ctx PTR;
    ctx.depth := depth;
    ctx.imps := d.d;
@@ -140,7 +247,7 @@ PROC gen_capsule(CONST d : node) IMPORTS ALL;
    BEGIN
       VAR w : waitrec;
       ALLOC w PTR;
-      w.d := d;
+      w.d := owner;
       w.w := mk(task_waits(d.c));
       w.next := cap_waits;
       cap_waits := w;
@@ -171,28 +278,85 @@ PROC gen_capsule(CONST d : node) IMPORTS ALL;
       m := m.stack;
    END REPEAT;
    WHILE p /= NIL REPEAT
-      IF lookup(p.name.ALL) = NIL OR lookup(p.name.ALL).depth /= depth THEN
+      % := and = of the capsule's new types are defined automatically (13.2)
+      IF p.name.ALL /= ":=" AND p.name.ALL /= "="
+            AND (lookup(p.name.ALL) = NIL OR lookup(p.name.ALL).depth /= depth) THEN
          fail(d.line, p.name.ALL & " is exported but not defined in capsule " & d.name.ALL);
       END IF;
       p := p.next;
    END REPEAT;
    close_scope;
    caps := caps.next;
-   define(y, d.line);
-END PROC gen_capsule;
+END PROC elaborate_capsule;
 
 % EXPOSE visible-list FROM capsule (8.1, 8.2)
+% does the capsule export this operator symbol? (8.1)
+FUNC exports_op(CONST d : node, READONLY op : STRING[ASCII]) => BOOL;
+   VAR p : node;
+   IF d = NIL THEN
+      RETURN FALSE;
+   END IF;
+   p := d.a;
+   WHILE p /= NIL REPEAT
+      IF p.name.ALL = op THEN
+         RETURN TRUE;
+      END IF;
+      p := p.next;
+   END REPEAT;
+   RETURN FALSE;
+END FUNC exports_op;
+
+% the name a definition is known by after RENAMING (8.1)
+FUNC renamed(CONST d : node, CONST z : sym) => text;
+   VAR r : node := d.c;
+   WHILE r /= NIL REPEAT
+      IF r.name.ALL = z.name.ALL THEN
+         RETURN r.a.name;
+      END IF;
+      r := r.next;
+   END REPEAT;
+   RETURN z.name;
+END FUNC renamed;
+
 PROC gen_expose(CONST d : node) IMPORTS ALL;
    VAR y : sym := lookup(d.name.ALL);
    VAR m : sym;
    VAR p : node := d.a;
+   VAR r : node := d.c;
    IF y = NIL OR y.kind /= y_capsule THEN
       fail(d.line, d.name.ALL & " is not a capsule");
    END IF;
+   IF d.flag = 1 OR d.flag = 3 THEN
+      % a new invocation elaborates the capsule again, here (8.1)
+      VAR inst : sym := new_sym(y_capsule, y.name);
+      inst.decl := y.decl;
+      elaborate_capsule(y.decl, inst, d.b, d);
+      y := inst;
+   ELSEIF y.decl /= NIL AND y.decl.b /= NIL THEN
+      fail(d.line, "capsule " & d.name.ALL & " has formal parameters and can only be invoked as NEW");
+   ELSEIF d.b /= NIL THEN
+      fail(d.line, "only a capsule invoked as NEW takes actual parameters");
+   END IF;
+   WHILE r /= NIL REPEAT
+      VAR found : BOOL := FALSE;
+      m := y.members;
+      WHILE m /= NIL REPEAT
+         IF m.name.ALL = r.name.ALL THEN
+            found := TRUE;
+         END IF;
+         m := m.mnext;
+      END REPEAT;
+      IF NOT found THEN
+         fail(d.line, r.name.ALL & " is renamed but not made known by " & d.name.ALL);
+      END IF;
+      r := r.next;
+   END REPEAT;
    IF d.ival = 1 THEN
       m := y.members;
       WHILE m /= NIL REPEAT
-         define(copy_sym(m), d.line);
+         VAR z : sym := copy_sym(m);
+         z.name := renamed(d, m);
+         define(z, d.line);
          m := m.mnext;
       END REPEAT;
       RETURN;
@@ -206,6 +370,7 @@ PROC gen_expose(CONST d : node) IMPORTS ALL;
             IF p.ival = 1 THEN
                z.ro_flag := TRUE;
             END IF;
+            z.name := renamed(d, m);
             define(z, d.line);
             found := TRUE;
          END IF;
@@ -289,7 +454,10 @@ END FUNC build_subprogram;
 
 PROC element(CONST e : node) IMPORTS ALL;
    VAR k : INT := e.kind;
-   IF k = n_proc OR k = n_func OR k = n_task THEN
+   IF k = n_expose AND (e.flag = 1 OR e.flag = 3) THEN
+      % a new invocation is elaborated in order with the declarations (8.1)
+      gen_expose(e);
+   ELSEIF k = n_proc OR k = n_func OR k = n_task THEN
       subprogram(e);
    ELSEIF k = n_exception OR k = n_abbrev OR k = n_newtype OR k = n_capsule OR k = n_expose
          OR k = n_generic THEN
@@ -316,6 +484,7 @@ ABNORMAL FUNC storage(READONLY name : STRING[ASCII], CONST t : typ) => STRING[AS
    IF NOT in_func THEN
       CONST g := new_name("g_" & lower_s(name) & "_");
       put(out_globals, "static " & ctype(t) & " " & g & ";");
+      put(out_roots, "  RT_ROOT(" & g & ");");
       st_field := mk(g);
       RETURN g;
    END IF;
@@ -345,6 +514,20 @@ PROC var_decl(CONST d : node) IMPORTS ALL;
    VAR y : sym := new_sym(y_var, d.name);
    CONST access := storage(d.name.ALL, t);
    init_storage(access, t, c);
+   IF d.ival = 1 THEN
+      VAR it : typ;
+      CONST n := gexpr(d.c, ty_int, it);
+      IF t.kind /= t_mbox THEN
+         fail(d.line, "only a mailbox can be located at an interrupt");
+      END IF;
+      IF same(t.elem, ty_ascii) THEN
+         emit("rt_interrupt_bind(" & access & ", " & n & ", 1);");
+      ELSE
+         emit("rt_interrupt_bind(" & access & ", " & n & ", 0);");
+      END IF;
+   ELSEIF d.ival = 2 THEN
+      fail(d.line, "the simulated machine has no addressable memory: LOCATION takes INTERRUPT n only");
+   END IF;
    IF d.b /= NIL THEN
       VAR vt : typ;
       CONST v := gexpr(d.b, t, vt);
@@ -409,6 +592,7 @@ PROC gen_subprogram(CONST d : node, CONST y : sym) IMPORTS ALL;
    VAR head : text;
    VAR frame : text := mk(y.cname.ALL & "fr");
    VAR parent : text;
+   VAR copy_back : text := mk("");
    IF in_func THEN
       parent := mk(func_sym.cname.ALL & "fr");
    END IF;
@@ -459,6 +643,17 @@ PROC gen_subprogram(CONST d : node, CONST y : sym) IMPORTS ALL;
          IF y.kind /= y_task THEN
             emit("F->" & f & " = " & f & ";");
          END IF;
+         % an OUT formal is a local variable assigned (via :=) to the actual on
+         % normal completion only (7.3), so an unhandled exception leaves the
+         % actual as it was. The local starts as a copy of the actual, which
+         % gives it the actual's subtype; its value is not meant to be read
+         IF pm.mode = m_out AND y.kind /= y_task THEN
+            put(fields_buf, " " & ct & " " & f & "v;");
+            emit("F->" & f & "v = " & copy_code(pm.t, "*F->" & f) & ";");
+            copy_back := mk(copy_back.ALL & "  " & assign_code("(*F->" & f & ")", pm.t, "F->" & f & "v", pm.c));
+            p.access := mk(f & "v");
+            p.byref := FALSE;
+         END IF;
       END IF;
       p.t := pm.t;
       p.c := pm.c;
@@ -492,13 +687,22 @@ PROC gen_subprogram(CONST d : node, CONST y : sym) IMPORTS ALL;
    ELSE
       put(out_funcs, "  struct " & frame.ALL & " *F = rt_alloc(sizeof *F);");
    END IF;
+   put(out_funcs, "  RT_FPUSH(F);");
    splice(out_funcs, code);
    IF y.result.kind /= t_void THEN
       put(out_funcs, "  rt_raise_msg(RT_X_ASSERT, " & q & "function ended without RETURN" & q & ");");
       put(out_funcs, "ret_:");
+      IF copy_back.LEN > 0 THEN
+         put(out_funcs, copy_back.ALL);
+      END IF;
+      put(out_funcs, "  RT_FPOP();");
       put(out_funcs, "  return F->result_;");
    ELSE
       put(out_funcs, "ret_:");
+      IF copy_back.LEN > 0 THEN
+         put(out_funcs, copy_back.ALL);
+      END IF;
+      put(out_funcs, "  RT_FPOP();");
       put(out_funcs, "  return;");
    END IF;
    put(out_funcs, "}");
@@ -535,7 +739,7 @@ FUNC task_waits(CONST elems : node) => STRING[ASCII] IMPORTS ALL;
    WHILE e /= NIL REPEAT
       IF e.kind = n_task THEN
          r := mk(r.ALL & " rt_await_decl(&" & lookup(e.name.ALL).cname.ALL & "decl);");
-      ELSEIF e.kind = n_capsule THEN
+      ELSEIF e.kind = n_capsule OR (e.kind = n_expose AND (e.flag = 1 OR e.flag = 3)) THEN
          r := mk(r.ALL & waits_of(e));
       END IF;
       e := e.next;
@@ -664,7 +868,7 @@ PROC st_assign(CONST s : node) IMPORTS ALL;
    IF ro THEN
       fail(s.line, "assignment to a readonly data item");
    END IF;
-   IF NOT opened(t) THEN
+   IF NOT opened(t) AND NOT exports_op(t.ocap, ":=") THEN
       fail(s.line, ":= for " & t.name.ALL & " is not exported by its capsule");
    END IF;
    BEGIN
@@ -965,6 +1169,14 @@ ABNORMAL FUNC act_ref(CONST e : node) => STRING[ASCII] IMPORTS ALL;
    IF e.kind = n_name AND e.name.ALL = "ME" AND lookup("ME") = NIL THEN
       RETURN "rt_me()";
    END IF;
+   IF NOT is_lvalue(e) THEN
+      % an ACT value computed by an expression, such as FIRST(queue)
+      CONST v := gexpr(e, ty_act, t);
+      IF t.kind /= t_act THEN
+         fail(e.line, "an activation variable (ACT) is required");
+      END IF;
+      RETURN v;
+   END IF;
    lvalue(e, lv, t, c, ro);
    IF t.kind /= t_act THEN
       fail(e.line, "an activation variable (ACT) is required");
@@ -989,8 +1201,15 @@ PROC st_create(CONST s : node) IMPORTS ALL;
    END IF;
    pm := y.params;
    BEGIN
+      VAR at : typ;
+      VAR ac : cons;
+      VAR aro : BOOL;
+      VAR act : text;
       CONST nf := new_name("nf");
-      CONST act := act_ref(s.a);
+      lvalue(s.a, lv, at, ac, aro);
+      IF at.kind = t_act THEN
+         act := mk(act_ref(s.a));
+      END IF;
       emit("{ struct " & y.cname.ALL & "fr *" & nf & " = rt_alloc(sizeof *" & nf & ");");
       IF y.level > 0 THEN
          VAR link : text := mk("F");
@@ -1015,13 +1234,78 @@ PROC st_create(CONST s : node) IMPORTS ALL;
       IF a /= NIL OR pm /= NIL THEN
          fail(s.line, "wrong number of actual parameters for task " & s.name.ALL);
       END IF;
-      emit("rt_create(" & act & ", &" & y.cname.ALL & "decl, " & y.cname.ALL & ", " & nf & "); }");
+      IF act /= NIL THEN
+         emit("rt_create(" & act.ALL & ", &" & y.cname.ALL & "decl, " & y.cname.ALL & ", " & nf & "); }");
+      ELSE
+         user_create(s, y, lv.ALL, at, nf);
+         emit("}");
+      END IF;
    END;
 END PROC st_create;
 
+% a translator-made variable at a C place (a local or an expression)
+PROC hidden_var(READONLY name : STRING[ASCII], CONST t : typ, READONLY place : STRING[ASCII]) IMPORTS ALL;
+   VAR y : sym := new_sym(y_var, mk(name));
+   y.t := t;
+   y.level := 0;
+   y.access := mk(place);
+   define(y, 0);
+END PROC hidden_var;
+
+% CREATE t NAMED ua where ua belongs to a user-defined scheduler (14.5.3): a
+% fresh ACT variable aa gets the activation, held until the scheduler's
+% TASK_START(ua, aa) starts it, and the procedures SYNC_RESET, SYNC_WAIT,
+% SYNC_SIGNAL and TASK_END of ua, which the ACT scheduler reaches from aa
+PROC user_create(CONST s : node, CONST y : sym, READONLY uv : STRING[ASCII], CONST ut : typ,
+                 READONLY nf : STRING[ASCII]) IMPORTS ALL;
+   VAR t : typ;
+   VAR saved : buffer := code;
+   VAR hook : buffer := new_buffer;
+   VAR un : node := nn(n_name, s.line);
+   CONST hn := new_name("sched_hook");
+   CONST aa := new_name("aa");
+   CONST uname := new_name("SCHED_UA");
+   CONST aname := new_name("SCHED_AA");
+   open_scope;
+   hidden_var(uname, ut, "(*(" & ctype(ut) & " *)aa_->ua)");
+   un.name := mk(uname);
+   code := hook;
+   emit("switch (op) {");
+   emit("case RT_HOOK_RESET: " & gcall(call_node("SYNC_RESET", un, s.line), TRUE, t) & "; break;");
+   emit("case RT_HOOK_WAIT: " & gcall(call_node("SYNC_WAIT", un, s.line), TRUE, t) & "; break;");
+   emit("case RT_HOOK_SIGNAL: " & gcall(call_node("SYNC_SIGNAL", un, s.line), TRUE, t) & "; break;");
+   emit("case RT_HOOK_END: " & gcall(call_node("TASK_END", un, s.line), TRUE, t) & "; break;");
+   emit("}");
+   code := saved;
+   put(out_protos, "static void " & hn & "(int op, rt_act *aa_);");
+   put(out_funcs, "static void " & hn & "(int op, rt_act *aa_) {");
+   IF in_func THEN
+      put(out_funcs, "  struct " & func_sym.cname.ALL & "fr *F = aa_->env;");
+   END IF;
+   splice(out_funcs, hook);
+   put(out_funcs, "}");
+   put(out_funcs, "");
+   emit("rt_act *" & aa & " = rt_alloc(sizeof(rt_act));");
+   emit(aa & "->hook = " & hn & "; " & aa & "->ua = &" & uv & "; " & aa & "->utype = " & q & type_tag(ut) & q & ";");
+   IF in_func THEN
+      emit(aa & "->env = F;");
+   END IF;
+   emit("rt_create_held(" & aa & ", &" & y.cname.ALL & "decl, " & y.cname.ALL & ", " & nf & ");");
+   hidden_var(aname, ty_act, aa);
+   BEGIN
+      VAR start : node := call_node("TASK_START", s.a, s.line);
+      VAR an : node := nn(n_name, s.line);
+      an.name := mk(aname);
+      start.b.next := an;
+      emit(gcall(start, TRUE, t) & ";");
+   END;
+   close_scope;
+END PROC user_create;
+
 % one waiting invocation of a WAIT statement (10.5) as an rt_alt initializer;
 % a SEND gets a temporary holding its message
-ABNORMAL FUNC wait_alt(CONST inv : node, READONLY arr : STRING[ASCII], CONST i : INT) => STRING[ASCII] IMPORTS ALL;
+ABNORMAL FUNC wait_alt(CONST inv : node, READONLY arr : STRING[ASCII], CONST i : INT, CONST mixed : BOOL)
+      => STRING[ASCII] IMPORTS ALL;
    VAR lv : text;
    VAR t, vt : typ;
    VAR c : cons;
@@ -1044,18 +1328,21 @@ ABNORMAL FUNC wait_alt(CONST inv : node, READONLY arr : STRING[ASCII], CONST i :
          VAR dt : typ;
          lvalue(args.next, dv, dt, c, ro);
          check_type(dt, t.elem, inv.line);
-         RETURN slot & " = (rt_alt){RT_ALT_RECEIVE, 1, &" & lv.ALL & ", &" & dv.ALL & ", 0};";
+         RETURN slot & " = (rt_alt){RT_ALT_RECEIVE, 1, " & lv.ALL & ", &" & dv.ALL & ", 0};";
       END IF;
       BEGIN
          CONST tmp := new_name("msg");
          CONST v := gexpr(args.next, t.elem, vt);
          check_type(vt, t.elem, inv.line);
          emit(ctype(t.elem) & " " & tmp & " = " & v & ";");
-         RETURN slot & " = (rt_alt){RT_ALT_SEND, 1, &" & lv.ALL & ", &" & tmp & ", 0};";
+         RETURN slot & " = (rt_alt){RT_ALT_SEND, 1, " & lv.ALL & ", &" & tmp & ", 0};";
       END;
    ELSEIF fn.name.ALL = "DELAY" OR fn.name.ALL = "DELAY_UNTIL" THEN
       CONST v := gexpr(args, ty_int, vt);
-      IF fn.name.ALL = "DELAY" THEN
+      IF fn.name.ALL = "DELAY" AND mixed THEN
+         % the WAIT may go round its loop several times: the deadline is fixed once
+         RETURN slot & " = (rt_alt){RT_ALT_DELAY_UNTIL, 1, NULL, NULL, rt_time() + " & v & "};";
+      ELSEIF fn.name.ALL = "DELAY" THEN
          RETURN slot & " = (rt_alt){RT_ALT_DELAY, 1, NULL, NULL, " & v & "};";
       END IF;
       RETURN slot & " = (rt_alt){RT_ALT_DELAY_UNTIL, 1, NULL, NULL, " & v & "};";
@@ -1066,31 +1353,146 @@ ABNORMAL FUNC wait_alt(CONST inv : node, READONLY arr : STRING[ASCII], CONST i :
    RETURN "";
 END FUNC wait_alt;
 
+% is this waiting invocation one of the built-in ones (10.5), rather than one
+% defined by the program with name_ST, name_REQUEST, name_TEST, name_COMPLETE
+% and name_REVOKE (14.3.1)?
+ABNORMAL FUNC builtin_wait(CONST inv : node) => BOOL IMPORTS ALL;
+   VAR lv : text;
+   VAR t : typ;
+   VAR c : cons;
+   VAR ro : BOOL;
+   VAR saved : buffer := code;
+   VAR ok : BOOL := FALSE;
+   IF inv.kind /= n_apply OR inv.a.kind /= n_name THEN
+      RETURN TRUE;
+   END IF;
+   IF inv.a.name.ALL = "DELAY" OR inv.a.name.ALL = "DELAY_UNTIL" OR inv.a.name.ALL = "DELAY_UNTIL_INACTIVE" THEN
+      RETURN TRUE;
+   END IF;
+   IF inv.a.name.ALL /= "SEND" AND inv.a.name.ALL /= "RECEIVE" THEN
+      RETURN FALSE;
+   END IF;
+   trial := trial + 1;
+   code := new_buffer;
+   GUARD
+      lvalue(inv.b, lv, t, c, ro);
+      ok := t.kind = t_mbox;
+   BY
+      WHEN compile_error =>
+         ok := FALSE;
+   END GUARD;
+   trial := trial - 1;
+   code := saved;
+   RETURN ok;
+END FUNC builtin_wait;
+
+% name(q, args) for a user-defined waiting invocation
+ABNORMAL FUNC wait_op(CONST inv : node, READONLY op : STRING[ASCII], READONLY q : STRING[ASCII],
+                      CONST is_stmt : BOOL) => STRING[ASCII] IMPORTS ALL;
+   VAR x : node := nn(n_apply, inv.line);
+   VAR f : node := nn(n_name, inv.line);
+   VAR qn : node := nn(n_name, inv.line);
+   VAR t : typ;
+   f.name := mk(inv.a.name.ALL & "_" & op);
+   qn.name := mk(q);
+   qn.next := inv.b;
+   x.a := f;
+   x.b := qn;
+   BEGIN
+      CONST r := gcall(x, is_stmt, t);
+      IF NOT is_stmt THEN
+         check_type(t, ty_bool, inv.line);
+      END IF;
+      RETURN r;
+   END;
+END FUNC wait_op;
+
+% a WAIT with user-defined waiting invocations, expanded as in 14.3.3
+PROC user_wait(CONST s : node, READONLY arr : STRING[ASCII], READONLY w : STRING[ASCII], CONST n : INT)
+      IMPORTS ALL;
+   VAR a : node := s.a;
+   VAR i : INT := 0;
+   VAR tests : text := mk("");
+   VAR revokes : text := mk("");
+   open_scope;
+   WHILE a /= NIL REPEAT
+      VAR inv : node := a.a;
+      WHILE inv /= NIL REPEAT
+         IF builtin_wait(inv) THEN
+            emit(wait_alt(inv, arr, i, TRUE));
+         ELSE
+            VAR st : node := nn(s_name, inv.line);
+            VAR c : cons;
+            VAR qt : typ;
+            CONST qname := new_name("WAIT_Q");
+            VAR y : sym := new_sym(y_var, mk(qname));
+            emit(arr & "[" & itos(i) & "] = (rt_alt){RT_ALT_USER, 1, NULL, NULL, 0};");
+            st.name := mk(inv.a.name.ALL & "_ST");
+            qt := resolve_subtype(st, c);
+            BEGIN
+               CONST access := storage(qname, qt);
+               init_storage(access, qt, c);
+               y.t := qt;
+               y.c := c;
+               bind(y, access);
+               define(y, inv.line);
+            END;
+            emit(wait_op(inv, "REQUEST", qname, TRUE) & ";");
+            tests := mk(tests.ALL & "if (" & wait_op(inv, "TEST", qname, FALSE) & ") { "
+                        & wait_op(inv, "COMPLETE", qname, TRUE) & "; " & w & " = " & itos(i) & "; break; } ");
+            revokes := mk(revokes.ALL & wait_op(inv, "REVOKE", qname, TRUE) & "; ");
+         END IF;
+         i := i + 1;
+         inv := inv.next;
+      END REPEAT;
+      a := a.next;
+   END REPEAT;
+   close_scope;
+   emit("int " & w & " = -1;");
+   emit("for (;;) { rt_sync_reset(); " & tests.ALL);
+   emit(w & " = rt_wait_poll(" & itos(n) & ", " & arr & "); if (" & w & " >= 0) break;");
+   emit("rt_wait_arm(" & itos(n) & ", " & arr & "); rt_sync_wait(); " & w & " = rt_wait_disarm(); if (" & w
+        & " >= 0) break; }");
+   emit(revokes.ALL);
+END PROC user_wait;
+
 PROC st_wait(CONST s : node) IMPORTS ALL;
    VAR a : node := s.a;
    VAR n : INT := 0;
    VAR first : BOOL := TRUE;
    VAR inits : buffer := new_buffer;
+   VAR user : BOOL := FALSE;
    CONST arr := new_name("alts");
    CONST w := new_name("w");
    WHILE a /= NIL REPEAT
-      n := n + list_len(a.a);
-      a := a.next;
-   END REPEAT;
-   emit("{ rt_alt " & arr & "[" & itos(n) & "];");
-   a := s.a;
-   n := 0;
-   WHILE a /= NIL REPEAT
       VAR inv : node := a.a;
+      n := n + list_len(a.a);
       WHILE inv /= NIL REPEAT
-         put(inits, wait_alt(inv, arr, n));
-         n := n + 1;
+         IF NOT builtin_wait(inv) THEN
+            user := TRUE;
+         END IF;
          inv := inv.next;
       END REPEAT;
       a := a.next;
    END REPEAT;
-   splice(code, inits);
-   emit("int " & w & " = rt_wait(" & itos(n) & ", " & arr & ");");
+   emit("{ rt_alt " & arr & "[" & itos(n) & "];");
+   IF user THEN
+      user_wait(s, arr, w, n);
+   ELSE
+      a := s.a;
+      n := 0;
+      WHILE a /= NIL REPEAT
+         VAR inv : node := a.a;
+         WHILE inv /= NIL REPEAT
+            put(inits, wait_alt(inv, arr, n, FALSE));
+            n := n + 1;
+            inv := inv.next;
+         END REPEAT;
+         a := a.next;
+      END REPEAT;
+      splice(code, inits);
+      emit("int " & w & " = rt_wait(" & itos(n) & ", " & arr & ");");
+   END IF;
    a := s.a;
    n := 0;
    WHILE a /= NIL REPEAT
@@ -1112,6 +1514,38 @@ PROC st_wait(CONST s : node) IMPORTS ALL;
    emit("}");
 END PROC st_wait;
 
+% an invocation name(arg) made by the translator
+ABNORMAL FUNC call_node(READONLY name : STRING[ASCII], CONST arg : node, CONST line : INT) => node;
+   VAR x : node := nn(n_apply, line);
+   VAR f : node := nn(n_name, line);
+   f.name := mk(name);
+   x.a := f;
+   x.b := copy_node(arg);
+   x.b.next := NIL;
+   RETURN x;
+END FUNC call_node;
+
+% REGION over a variable of any type with LOCK and UNLOCK (14.4.1): LOCK at
+% entry and UNLOCK however the body is left, both run as critical
+PROC user_region(CONST s : node) IMPORTS ALL;
+   VAR t : typ;
+   CONST f := new_name("xf");
+   CONST lock := gcall(call_node("LOCK", s.a, s.line), TRUE, t);
+   CONST unlock := "{ int cr_ = rt_critical_save(); " & gcall(call_node("UNLOCK", s.a, s.line), TRUE, t)
+                   & "; rt_critical_restore(cr_); }";
+   emit("{ { int cr_ = rt_critical_save(); " & lock & "; rt_critical_restore(cr_); }");
+   emit("rt_frame " & f & ";");
+   emit("if (RT_TRY(" & f & ")) {");
+   push_cleanup("RT_POP(" & f & "); " & unlock);
+   gen_body(s.b);
+   pop_cleanup;
+   emit("RT_POP(" & f & "); " & unlock);
+   emit("} else {");
+   emit("RT_POP(" & f & "); " & unlock & " rt_raise(rt_xcur);");
+   emit("}");
+   emit("}");
+END PROC user_region;
+
 % REGION lock DO body END REGION (10.7): the lock is released however the body ends
 PROC st_region(CONST s : node) IMPORTS ALL;
    VAR lv : text;
@@ -1122,7 +1556,8 @@ PROC st_region(CONST s : node) IMPORTS ALL;
    CONST f := new_name("xf");
    lvalue(s.a, lv, t, c, ro);
    IF t.kind /= t_lock THEN
-      fail(s.line, "REGION needs a DATA_LOCK variable");
+      user_region(s);
+      RETURN;
    END IF;
    emit("{ rt_lock *" & lk & " = &" & lv.ALL & "; rt_region_enter(" & lk & ");");
    emit("rt_frame " & f & ";");
@@ -1185,25 +1620,15 @@ FUNC same_binding(CONST a : sym, CONST b : sym) => BOOL;
    RETURN a.cname /= NIL AND b.cname /= NIL AND a.cname.ALL = b.cname.ALL;
 END FUNC same_binding;
 
-% the instance of generic g for the actual properties tt and actual parameters
-% args; replacement elements come from [..] and from the types of the actuals
-ABNORMAL FUNC instantiate(CONST g : sym, CONST tt : node, CONST args : node, CONST line : INT) => sym
+% the bindings of a generic's parameters to the actual translation time
+% properties f (formal names, or NIL for positional) and a
+ABNORMAL FUNC tt_binds(CONST gd : node, CONST formals : node, CONST actuals : node, CONST line : INT) => sym
       IMPORTS ALL;
-   VAR gd : node := g.decl;
-   VAR pat : node := gd.b;
+   VAR f : node := formals;
+   VAR a : node := actuals;
    VAR binds : sym;
-   VAR f : node := pat.e;
-   VAR a : node := tt;
-   VAR fp : node := pat.a;
-   VAR inst : sym;
-   VAR at : typ;
    VAR c : cons;
-   VAR saved_fctx : fctxrec := fctx;
-   VAR saved_in : BOOL := in_func;
-   VAR saved_level : INT := cur_level;
-   VAR saved_sym : sym := func_sym;
-   VAR saved_code : buffer := code;
-   % from the actual translation time property list
+   VAR at : typ;
    WHILE f /= NIL AND a /= NIL REPEAT
       VAR p : node := gparam(gd, f.name.ALL);
       VAR b : sym;
@@ -1238,10 +1663,158 @@ ABNORMAL FUNC instantiate(CONST g : sym, CONST tt : node, CONST args : node, CON
       f := f.next;
       a := a.next;
    END REPEAT;
+   RETURN binds;
+END FUNC tt_binds;
+
+% is this subtype a use of a generic type, X[...]?
+FUNC generic_use(CONST st : node) => BOOL IMPORTS ALL;
+   IF st.kind = s_mailbox THEN
+      RETURN lookup("MAILBOX") /= NIL AND lookup("MAILBOX").kind = y_generic;
+   END IF;
+   RETURN st.kind = s_name AND st.a /= NIL AND lookup(st.name.ALL) /= NIL
+          AND lookup(st.name.ALL).kind = y_generic;
+END FUNC generic_use;
+
+% bind the generic parameters named in pattern X[p1, ...] to the properties
+% that the instance type t of X was made with
+ABNORMAL FUNC infer_from(CONST gd : node, CONST pat : node, CONST t : typ, CONST known : sym) => sym IMPORTS ALL;
+   VAR binds : sym := known;
+   VAR e : node := pat.a;
+   VAR tp : node;
+   IF t = NIL OR t.gen = NIL THEN
+      RETURN binds;
+   END IF;
+   tp := t.gen.decl.a;
+   IF pat.kind = s_mailbox THEN
+      e := copy_node(pat.a);
+      e.next := NIL;
+   END IF;
+   WHILE e /= NIL AND tp /= NIL REPEAT
+      VAR nm : text;
+      IF e.kind = n_name OR e.kind = s_name THEN
+         nm := e.name;
+      END IF;
+      IF nm /= NIL AND gparam(gd, nm.ALL) /= NIL AND gparam(gd, nm.ALL).ival <= 2 THEN
+         VAR q : sym := binds;
+         VAR have : BOOL := FALSE;
+         WHILE q /= NIL REPEAT
+            IF q.name.ALL = nm.ALL THEN
+               have := TRUE;
+            END IF;
+            q := q.mnext;
+         END REPEAT;
+         IF NOT have THEN
+            VAR g : sym := t.gbinds;
+            WHILE g /= NIL REPEAT
+               IF g.name.ALL = tp.name.ALL THEN
+                  VAR b : sym := bind_sym(gparam(gd, nm.ALL));
+                  b.t := g.t;
+                  b.c := g.c;
+                  b.mnext := binds;
+                  binds := b;
+               END IF;
+               g := g.mnext;
+            END REPEAT;
+         END IF;
+      END IF;
+      e := e.next;
+      tp := tp.next;
+   END REPEAT;
+   RETURN binds;
+END FUNC infer_from;
+
+% the instance of a generic type for the actual properties tt (11.3), the
+% same type for the same properties; args are the constraint's actuals
+ABNORMAL FUNC instantiate_type(CONST g : sym, CONST tt : node, CONST args : node, OUT c : cons,
+                               CONST line : INT) => typ IMPORTS ALL;
+   VAR gd : node := g.decl;
+   VAR pat : node := gd.b;
+   VAR binds : sym := tt_binds(gd, pat.e, tt, line);
+   VAR inst : sym := all_insts;
+   VAR t : typ;
+   VAR saved_caps : caprec := caps;
+   VAR saved_env : buckets := genv;
+   c := new_cons;
+   c.args := args;
+   WHILE inst /= NIL REPEAT
+      IF inst.decl = pat AND same_binds(inst.members, binds) THEN
+         RETURN inst.t;
+      END IF;
+      inst := inst.insts;
+   END REPEAT;
+   open_scope;
+   BEGIN
+      VAR b : sym := binds;
+      WHILE b /= NIL REPEAT
+         define(b, line);
+         b := b.mnext;
+      END REPEAT;
+   END;
+   % an instance belongs to no capsule: its components are known where it is
+   caps := NIL;
+   genv := g.env;
+   BEGIN
+      VAR y : sym := new_sym(y_type, pat.name);
+      VAR yc : cons;
+      y.decl := pat;
+      IF pat.kind = n_ptrtype THEN
+         t := new_typ(t_ptr);
+         t.name := pat.name;
+         t.decl := pat;
+         y.t := t;
+         define(y, line);
+         finish_ptr(t);
+      ELSE
+         define(y, line);
+         t := new_type(y, nn(s_name, line), yc);
+      END IF;
+   END;
+   caps := saved_caps;
+   genv := saved_env;
+   t.gen := g;
+   t.gbinds := binds;
+   close_scope;
+   ALLOC inst PTR;
+   inst.kind := y_type;
+   inst.name := g.name;
+   inst.decl := pat;
+   inst.t := t;
+   inst.members := binds;
+   inst.insts := all_insts;
+   all_insts := inst;
+   RETURN t;
+END FUNC instantiate_type;
+
+% the instance of generic g for the actual properties tt and actual parameters
+% args; replacement elements come from [..] and from the types of the actuals
+ABNORMAL FUNC instantiate(CONST g : sym, CONST tt : node, CONST args : node, CONST line : INT) => sym
+      IMPORTS ALL;
+   VAR gd : node := g.decl;
+   VAR pat : node := gd.b;
+   VAR binds : sym;
+   VAR f : node := pat.e;
+   VAR a : node := tt;
+   VAR fp : node := pat.a;
+   VAR inst : sym;
+   VAR at : typ;
+   VAR c : cons;
+   VAR saved_fctx : fctxrec := fctx;
+   VAR saved_in : BOOL := in_func;
+   VAR saved_level : INT := cur_level;
+   VAR saved_sym : sym := func_sym;
+   VAR saved_code : buffer := code;
+   VAR saved_env : buckets := genv;
+   % from the actual translation time property list
+   binds := tt_binds(gd, f, a, line);
    % from the types of the actual parameters
    a := args;
    WHILE fp /= NIL AND a /= NIL REPEAT
-      IF fp.a.kind = s_name AND gparam(gd, fp.a.name.ALL) /= NIL AND gparam(gd, fp.a.name.ALL).ival <= 2 THEN
+      IF generic_use(fp.a) THEN
+         % a formal of a generic type, MAILBOX[t]: t is the property the
+         % actual's type was made with
+         CONST v := gexpr(a, NIL, at);
+         binds := infer_from(gd, fp.a, at, binds);
+      ELSEIF fp.a.kind = s_name AND gparam(gd, fp.a.name.ALL) /= NIL AND gparam(gd, fp.a.name.ALL).ival <= 2 THEN
          VAR known : BOOL := FALSE;
          VAR q : sym := binds;
          WHILE q /= NIL REPEAT
@@ -1263,9 +1836,9 @@ ABNORMAL FUNC instantiate(CONST g : sym, CONST tt : node, CONST args : node, CON
       a := a.next;
    END REPEAT;
    % an earlier instance with the same replacement elements?
-   inst := g.insts;
+   inst := all_insts;
    WHILE inst /= NIL REPEAT
-      IF same_binds(inst.members, binds) THEN
+      IF inst.decl = pat AND same_binds(inst.members, binds) THEN
          RETURN inst;
       END IF;
       inst := inst.insts;
@@ -1284,10 +1857,11 @@ ABNORMAL FUNC instantiate(CONST g : sym, CONST tt : node, CONST args : node, CON
          b := b.mnext;
       END REPEAT;
    END;
+   genv := g.env;
    inst := build_subprogram(pat);
    inst.members := binds;
-   inst.insts := g.insts;
-   g.insts := inst;
+   inst.insts := all_insts;
+   all_insts := inst;
    define(inst, line);
    gen_subprogram(pat, inst);
    close_scope;
@@ -1296,5 +1870,6 @@ ABNORMAL FUNC instantiate(CONST g : sym, CONST tt : node, CONST args : node, CON
    cur_level := saved_level;
    func_sym := saved_sym;
    code := saved_code;
+   genv := saved_env;
    RETURN inst;
 END FUNC instantiate;

@@ -1,0 +1,12 @@
+cond_receive on an empty mailbox: FALSE
+sent 1 at 0, full 1, empty 1
+sent 2 at 0, full 2, empty 0
+received 1 at 0, full 2, empty 1
+sent 3 at 0, full 2, empty 0
+received 2 at 10, full 2, empty 1
+sent 4 at 10, full 2, empty 0
+received 3 at 20, full 1, empty 1
+received 4 at 30, full 0, empty 2
+nothing within 25 ms at 65, full 0, empty 2
+third cond_send on a mailbox of two: FALSE
+main at 75, full 2, empty 0

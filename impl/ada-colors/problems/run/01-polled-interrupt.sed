@@ -20,15 +20,12 @@ s/^ABBREV device:  INT(1..numdevices);/ABBREV device:  INT(0..numdevices-1);/
 # them, and ends under another name
 s/^        IMPORTS buffers, tailpointer;/        IMPORTS buffers, tailpointer, headpointer, hw_buffer, d;/
 s/^    END PROC transfer_chars;/    END PROC transfer_char;/
-# the interrupt mailbox (LOCATION (INTERRUPT 440)) is one the channel can
-# reach: it moves out of the task, and keyboard sends to it when the head
-# pointer reaches the entry just below the tail
-s/^   VAR m:MAILBOX \[BOOL\](5) LOCATION (INTERRUPT 440);//
-s/^TASK interrupt_handler;/VAR m: MAILBOX [BOOL](5);\
-\
-PROC key (c: character, k: device) IMPORTS hw_buffer, headpointer, tailpointer, m;\
+# the channel raises interrupt 440 through the interrupt controller, device 2
+# of LOW_IO, when the head pointer reaches the entry just below the tail
+s/^TASK interrupt_handler;/PROC key (c: character, k: device) IMPORTS hw_buffer, headpointer, tailpointer;\
     CONST index := (headpointer - hw_buff_start) DIV 2;\
     VAR next: INT;\
+    VAR x: INT := 1;\
     hw_buffer(index).char := c;\
     hw_buffer(index).dev := k;\
     headpointer := headpointer + 2;\
@@ -38,7 +35,7 @@ PROC key (c: character, k: device) IMPORTS hw_buffer, headpointer, tailpointer, 
     END IF;\
     next := headpointer + 2;\
     IF next >= hw_buff_end THEN next := hw_buff_start; END IF;\
-    IF next = tailpointer THEN SEND (m, TRUE); END IF;\
+    IF next = tailpointer THEN LOW_IO (2, 440, x); END IF;\
     END PROC key;\
 \
 TASK keyboard (CONST s: STRING[ASCII], CONST k: device, CONST start, gap: INT);\
@@ -46,7 +43,7 @@ TASK keyboard (CONST s: STRING[ASCII], CONST k: device, CONST start, gap: INT);\
     FOR i: INT(1..s.LEN) REPEAT key (s(i), k); DELAY (gap); END REPEAT;\
     END TASK keyboard;\
 \
-TASK interrupt_handler IMPORTS m;/
+TASK interrupt_handler;/
 # time_out, the polling period of read, is never declared
 s/^FUNC read (dev:DEVICE) => CHARACTER IMPORTS buffers;/CONST time_out := 50;\
 \

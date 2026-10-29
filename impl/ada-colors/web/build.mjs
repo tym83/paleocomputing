@@ -121,9 +121,10 @@ const toolchain = { 'rt/paleo.h': rtFiles['paleo.h'], 'paleo.o': paleo, 'rtlib/l
 for (const d of deps) toolchain[d.slice(1)] = fs.readFileSync(path.join(inc, d.slice(`/sysroot/include/${T}/`.length)));
 for (const n of LIBS) toolchain[`sysroot/lib/${T}/${n}`] = fs.readFileSync(path.join(lib, n));
 
-// Examples: the labs, the NonStop kernel, the Kubernetes loops, GREEN tasking,
-// THE and its contrast programs in BLUE and YELLOW, and for BLUE and YELLOW
-// some tests and programs of their 1978 reports.
+// Examples: the labs, the NonStop kernel, the Kubernetes loops, the examples of
+// chapter 14 of the RED manual, GREEN tasking, THE and its contrast programs in
+// BLUE and YELLOW, and for BLUE and YELLOW some tests and programs of their
+// 1978 reports.
 const LANGS = { '.red': 'red', '.grn': 'green', '.blu': 'blue', '.yel': 'yellow' };
 const read = (p) => fs.readFileSync(path.join(A, p), 'utf8');
 const sed = (script, text) => execFileSync('sed', ['-f', path.join(A, script)],
@@ -147,6 +148,21 @@ function yellowCorpus(n) {
     part(`yellow/corpus/${n}.post.yel`);
 }
 
+// the examples of chapter 14 of the RED manual, as red/manual/run/run.sh makes them
+const manualBody = (n) => fixed(`red/manual/run/${n}.sed`,
+  read(`red/manual/original/${n}.red`).split('% -----\n').slice(1).join('% -----\n'));
+const R = (f) => part(`red/manual/run/${f}`);
+const RED_MANUAL = {
+  '14.1.1-pulsed-events': () => manualBody('14.1.1-pulsed-events') + R('14.1.1-main.red'),
+  '14.1.3-replies': () => R('14.1.3-head.red') + manualBody('14.1.3-replies') + R('14.1.3-main.red'),
+  '14.1.4-keyboard': () => R('14.1.4-head.red') + manualBody('14.1.4-keyboard') + R('14.1.4-main.red'),
+  '14.3.1-mailboxes': () => R('14.3.1-units.red') + manualBody('14.3.1-mailboxes') + R('14.3.1-main.red'),
+  '14.4.1-monitors': () => manualBody('14.4.1-monitor-defs') + R('14.4.1-head.red') +
+    manualBody('14.4.1-monitor-use').replace(/^/gm, '   ').replace(/^   $/gm, '').replace(/   $/, '') +
+    R('14.4.1-main.red'),
+  '14.5.3-round-robin': () => manualBody('14.5.3-round-robin') + R('14.5.3-main.red'),
+};
+
 const labs = (lang, ext) => fs.readdirSync(path.join(A, `labs/${lang}`)).filter((f) => f.endsWith(ext)).sort()
   .map((f) => `labs/${lang}/${f}`);
 const contrast = (lang, ext) => ['failure', 'readers', 'timeout'].map((n) => `os/contrast/${n}_${lang}${ext}`);
@@ -161,7 +177,9 @@ const EXAMPLES = [
   'blue/tests/basics.blu', 'blue/tests/generics.blu', 'blue/tests/modules.blu',
   'yellow/tests/basics.yel', 'yellow/tests/templates.yel', 'yellow/tests/processes.yel', 'yellow/tests/parallel.yel',
 ].map((p) => ({ path: p, source: read(p), input: part(p.replace(/\.\w+$/, '.in')) }));
-// the corpus programs are assembled; their path is the one of their .out file
+// the assembled programs: their path is the one of their .out file
+for (const [n, make] of Object.entries(RED_MANUAL))
+  EXAMPLES.push({ path: `red/manual/run/${n}.red`, source: make(), input: part(`red/manual/run/${n}.in`) });
 for (const n of ['integrate', 'generic-stack', 'producer-consumer', 'sum', 'appendix-c'])
   EXAMPLES.push({ path: `blue/corpus/${n}.blu`, source: blueCorpus(n), input: part(`blue/corpus/${n}.in`) });
 for (const n of ['H1893-arraysum', 'E14-realtime', 'E17-exceptions', 'E22-searchtree', 'E26-exchangesort'])

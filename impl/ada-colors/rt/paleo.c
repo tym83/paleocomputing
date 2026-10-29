@@ -27,6 +27,100 @@ void *rt_alloc(size_t n) {
 /* ---- exceptions ------------------------------------------------------ */
 
 __thread rt_frame *rt_xtop;
+
+/* ---- scannable storage, for FREE (RED 4.4.3) ------------------------------ */
+
+/* the blocks rt_salloc made: an open-addressing table from address to size */
+typedef struct { uintptr_t p; size_t n; unsigned mark; } blockrec;
+static blockrec *blocks;
+static size_t nblocks, cblocks;
+static unsigned mark_epoch;
+#define DEAD_BLOCK ((uintptr_t)1)
+
+static size_t bslot(uintptr_t p) { return (size_t)((p >> 4) * 2654435761u) & (cblocks - 1); }
+
+static blockrec *bfind(uintptr_t p) {
+  if (!cblocks) return NULL;
+  for (size_t i = bslot(p);; i = (i + 1) & (cblocks - 1)) {
+    if (blocks[i].p == p) return &blocks[i];
+    if (blocks[i].p == 0) return NULL;
+  }
+}
+
+static void binsert(uintptr_t p, size_t n) {
+  if ((nblocks + 1) * 2 > cblocks) {
+    blockrec *old = blocks;
+    size_t oc = cblocks;
+    cblocks = cblocks ? cblocks * 2 : 1024;
+    blocks = calloc(cblocks, sizeof *blocks);
+    if (!blocks) {
+      fprintf(stderr, "*** out of memory\n");
+      exit(4);
+    }
+    nblocks = 0;
+    for (size_t i = 0; i < oc; i++)
+      if (old[i].p > DEAD_BLOCK) binsert(old[i].p, old[i].n);
+    free(old);
+  }
+  size_t i = bslot(p);
+  while (blocks[i].p > DEAD_BLOCK) i = (i + 1) & (cblocks - 1);
+  blocks[i].p = p;
+  blocks[i].n = n;
+  blocks[i].mark = 0;
+  nblocks++;
+}
+
+void *rt_salloc(size_t n) {
+  void *p = rt_alloc(n ? n : 1);
+  binsert((uintptr_t)p, n ? n : 1);
+  return p;
+}
+
+typedef struct { void *p; size_t n; } range;
+static range *roots;
+static size_t nroots, croots;
+
+static void push_range(range **a, size_t *len, size_t *cap, void *p, size_t n) {
+  if (*len == *cap) {
+    *cap = *cap ? *cap * 2 : 64;
+    *a = realloc(*a, *cap * sizeof **a);
+    if (!*a) {
+      fprintf(stderr, "*** out of memory\n");
+      exit(4);
+    }
+  }
+  (*a)[(*len)++] = (range){p, n};
+}
+
+void rt_add_root(void *p, size_t n) { push_range(&roots, &nroots, &croots, p, n); }
+
+/* the frames of the active subprograms of one task */
+struct rt_fstack {
+  range *f;
+  size_t depth, cap;
+  rt_fstack *next;
+};
+__thread rt_fstack *rt_fs;
+static rt_fstack *all_fstacks;
+
+int rt_fdepth(void) { return rt_fs ? (int)rt_fs->depth : 0; }
+void rt_set_fdepth(int d) {
+  if (rt_fs) rt_fs->depth = (size_t)d;
+}
+
+void rt_fpush(void *f, size_t n) {
+  if (!rt_fs) {
+    rt_fs = calloc(1, sizeof *rt_fs);
+    rt_fs->next = all_fstacks;
+    all_fstacks = rt_fs;
+  }
+  push_range(&rt_fs->f, &rt_fs->depth, &rt_fs->cap, f, n);
+}
+
+void rt_fpop(void) {
+  if (rt_fs && rt_fs->depth > 0) rt_fs->depth--;
+}
+
 __thread int rt_xcur;
 
 static const char *exc_names[4096];
@@ -471,7 +565,7 @@ int rt_set_le(rset a, rset b) {
 
 /* ---- tasks ------------------------------------------------------------- */
 
-enum { T_READY, T_RUNNING, T_BLOCKED, T_DONE };
+enum { T_READY, T_RUNNING, T_BLOCKED, T_DONE, T_HELD };
 
 struct rt_waiter {
   rt_task *t;
@@ -480,6 +574,7 @@ struct rt_waiter {
   rt_waiter **queue;       /* list it sits in */
   rt_waiter *next;         /* next in that list */
   rt_waiter *tnext;        /* next record of the same task */
+  int armed;               /* waited for through SYNC_WAIT (RED 14.3) */
 };
 
 struct rt_task {
@@ -505,6 +600,16 @@ struct rt_task {
   rt_waiter *callw;        /* its own record in an entry queue, while calling */
   rt_task *all_next;
   rt_act self_act;
+  /* RED chapter 14 */
+  int suspended;           /* not eligible to run (14.2.1) */
+  int critical;            /* never preempted, EXTERMINATE deferred (14.2.2) */
+  int signalled;           /* SYNC_SIGNAL since the last SYNC_RESET (14.3.2) */
+  int sync_waiting;        /* inside LOW_SYNC_WAIT */
+  int in_hook;             /* running its user-defined scheduler */
+  int armed, satisfied;    /* waiting through SYNC_WAIT, and done */
+  rt_waiter *awl;          /* the records armed for that wait */
+  int atimed, atimer_alt;
+  rt_int awake;
 };
 
 static pthread_mutex_t G = PTHREAD_MUTEX_INITIALIZER;
@@ -540,9 +645,36 @@ static void drop_waiters(rt_task *t) {
   t->term_alt = -1;
 }
 
+static void drop_armed(rt_task *t) {
+  for (rt_waiter *w = t->awl; w; w = w->tnext) {
+    for (rt_waiter **p = w->queue; *p; p = &(*p)->next)
+      if (*p == w) {
+        *p = w->next;
+        break;
+      }
+  }
+  t->awl = NULL;
+  t->atimed = 0;
+}
+
+/* an armed wait completed: the task learns it as a SYNC_SIGNAL, and runs
+ * again only if it is inside LOW_SYNC_WAIT (it may be blocked on something
+ * else while its scheduler works) */
+static void satisfy_armed(rt_task *t, int alt) {
+  t->result = alt;
+  drop_armed(t);
+  t->satisfied = 1;
+  t->signalled = 1;
+  if (t->sync_waiting && t->state == T_BLOCKED) make_ready(t);
+}
+
 /* complete the wait of w's task with w's alternative */
 static void satisfy(rt_waiter *w) {
   rt_task *t = w->t;
+  if (w->armed) {
+    satisfy_armed(t, w->alt);
+    return;
+  }
   t->result = w->alt;
   drop_waiters(t);
   make_ready(t);
@@ -564,28 +696,72 @@ static rt_waiter *add_waiter(rt_waiter **q, int alt, void *data) {
 static rt_task *pick_ready(void) {
   rt_task *best = NULL;
   for (rt_task *t = all_tasks; t; t = t->all_next)
-    if (t->state == T_READY &&
+    if (t->state == T_READY && !t->suspended &&
         (!best || t->prio > best->prio || (t->prio == best->prio && t->seq < best->seq)))
       best = t;
   return best;
 }
 
+/* RED 14.1.4: interrupts arrive as messages in the mailbox located at them.
+ * The simulated machine's teletype keyboard raises interrupt 16 for each
+ * character of the standard input, one every 100 ms (10 characters a
+ * second), when a mailbox of characters is located there; a program may
+ * raise any interrupt through LOW_IO on device 2 */
+#define RT_INTERRUPTS 4096
+#define RT_KEYBOARD 16
+static rt_mbox *interrupts[RT_INTERRUPTS];
+static rt_int kb_next = -1;
+static int try_send(rt_mbox *m, const void *msg);
+
+static void post_interrupt(rt_int n, rt_int data) {
+  rt_mbox *m = n >= 0 && n < RT_INTERRUPTS ? interrupts[n] : NULL;
+  if (!m) return;
+  /* the data is collected and sent; with no room left it is lost (overrun) */
+  if (m->esz == sizeof(rt_int)) {
+    rt_int v = data;
+    try_send(m, &v);
+  } else {
+    int v = (int)data;
+    try_send(m, &v);
+  }
+}
+
 static int advance_clock(void) {
   int any = 0;
   rt_int next = 0;
-  for (rt_task *t = all_tasks; t; t = t->all_next)
+  if (kb_next >= 0) {
+    next = kb_next;
+    any = 1;
+  }
+  for (rt_task *t = all_tasks; t; t = t->all_next) {
     if (t->state == T_BLOCKED && t->timed && (!any || t->wake < next)) {
       next = t->wake;
       any = 1;
     }
+    if (t->atimed && t->state != T_DONE && (!any || t->awake < next)) {
+      next = t->awake;
+      any = 1;
+    }
+  }
   if (!any) return 0;
   if (next > now) now = next;
-  for (rt_task *t = all_tasks; t; t = t->all_next)
+  for (rt_task *t = all_tasks; t; t = t->all_next) {
     if (t->state == T_BLOCKED && t->timed && t->wake <= now) {
       t->result = t->timer_alt;
       drop_waiters(t);
       make_ready(t);
     }
+    if (t->atimed && t->state != T_DONE && t->awake <= now) satisfy_armed(t, t->atimer_alt);
+  }
+  if (kb_next >= 0 && kb_next <= now) {
+    int c = rt_getc();
+    if (c < 0) {
+      kb_next = -1;
+    } else {
+      kb_next = now + 100 * RT_MILLISECONDS;
+      post_interrupt(RT_KEYBOARD, c);
+    }
+  }
   return 1;
 }
 
@@ -616,7 +792,7 @@ static void switch_to(rt_task *n) {
 }
 
 static void check_terminate(void) {
-  if (cur->term_pending) {
+  if (cur->term_pending && !cur->critical) {
     cur->term_pending = 0;
     rt_raise(RT_X_TERMINATE);
   }
@@ -641,7 +817,47 @@ static void reschedule(void) {
   }
 }
 
+static void run_hook(int op) {
+  rt_task *me = cur;
+  int was = me->in_hook;
+  me->in_hook = 1;
+  me->act->hook(op, me->act);
+  me->in_hook = was;
+}
+
+/* the registered waiter records and timer become an armed wait */
+static void arm(rt_task *t) {
+  for (rt_waiter *w = t->wl; w; w = w->tnext) w->armed = 1;
+  t->awl = t->wl;
+  t->wl = NULL;
+  t->atimed = t->timed;
+  t->awake = t->wake;
+  t->atimer_alt = t->timer_alt;
+  t->timed = 0;
+  t->armed = 1;
+  t->satisfied = 0;
+}
+
+/* RED 14.3.3: an activation of a user-defined scheduler waits through that
+ * scheduler's SYNC_RESET and SYNC_WAIT, which end in LOW_SYNC_WAIT */
+static void hooked_block(void) {
+  rt_task *me = cur;
+  arm(me);
+  while (!me->satisfied) {
+    run_hook(RT_HOOK_RESET);
+    if (me->satisfied) break;
+    run_hook(RT_HOOK_WAIT);
+  }
+  me->armed = 0;
+  me->satisfied = 0;
+  check_terminate();
+}
+
 static void block(void) {
+  if (cur->act && cur->act->hook && !cur->in_hook) {
+    hooked_block();
+    return;
+  }
   cur->state = T_BLOCKED;
   trace("block", cur);
   reschedule();
@@ -650,6 +866,7 @@ static void block(void) {
 
 /* a higher-priority task became eligible: let it run first */
 static void maybe_preempt(void) {
+  if (cur->critical) return;
   rt_task *n = pick_ready();
   if (n && n->prio > cur->prio) {
     uint64_t keep = cur->seq;
@@ -687,12 +904,22 @@ static void *task_main(void *arg) {
       if (getenv("PALEO_TRACE"))
         fprintf(stderr, "task %d ended by %s\n", t->id, rt_exc_name(rt_xcur));
   }
+  /* its subprograms are over, however the task ended */
+  if (rt_fs) rt_fs->depth = 0;
+  /* RED 14.5.3: TASK_END(ME) lets the scheduler drop the activation */
+  if (t->act && t->act->hook) {
+    rt_frame f2;
+    if (RT_TRY(f2)) {
+      run_hook(RT_HOOK_END);
+      RT_POP(f2);
+    } else {
+      RT_POP(f2);
+    }
+  } else if (t->act) {
+    rt_low_task_end(t->act);
+  }
   t->state = T_DONE;
   trace("done", t);
-  if (t->act) {
-    t->act->active = 0;
-    while (t->act->waiters) satisfy(t->act->waiters);
-  }
   if (t->decl && --t->decl->live == 0)
     while (t->decl->waiters) satisfy(t->decl->waiters);
   reschedule();
@@ -700,12 +927,12 @@ static void *task_main(void *arg) {
   return NULL;
 }
 
-void rt_create(rt_act *a, rt_taskdecl *d, void (*fn)(void *), void *frame) {
+static void create_task(rt_act *a, rt_taskdecl *d, void (*fn)(void *), void *frame, int held) {
   if (a->active) rt_raise(RT_X_CREATE);
   rt_task *t = rt_alloc(sizeof *t);
   pthread_cond_init(&t->cv, NULL);
   t->id = ++task_ids;
-  t->prio = cur->prio;
+  t->prio = a->has_prio ? a->prio : cur->prio;
   t->fn = fn;
   t->frame = frame;
   t->act = a;
@@ -716,7 +943,10 @@ void rt_create(rt_act *a, rt_taskdecl *d, void (*fn)(void *), void *frame) {
   d->live++;
   t->all_next = all_tasks;
   all_tasks = t;
-  make_ready(t);
+  if (held)
+    t->state = T_HELD;
+  else
+    make_ready(t);
   pthread_attr_t attr;
   pthread_attr_init(&attr);
 #ifdef __wasi__
@@ -731,6 +961,24 @@ void rt_create(rt_act *a, rt_taskdecl *d, void (*fn)(void *), void *frame) {
   }
   pthread_detach(t->th);
   trace("create", t);
+  if (!held) maybe_preempt();
+}
+
+void rt_create(rt_act *a, rt_taskdecl *d, void (*fn)(void *), void *frame) {
+  create_task(a, d, fn, frame, 0);
+}
+
+/* RED 14.5.3: an activation of a user-defined scheduler exists before its
+ * scheduler's TASK_START lets it run */
+void rt_create_held(rt_act *a, rt_taskdecl *d, void (*fn)(void *), void *frame) {
+  create_task(a, d, fn, frame, 1);
+}
+
+void rt_task_start(rt_act *av, rt_act *aa) {
+  (void)av;
+  rt_task *t = aa->t;
+  if (!t || t->state != T_HELD) return;
+  make_ready(t);
   maybe_preempt();
 }
 
@@ -745,6 +993,8 @@ rt_int rt_priority(rt_act *a) { return a->t ? a->t->prio : 0; }
 
 void rt_set_priority(rt_act *a, rt_int p) {
   if (p < 0 || p > 255) rt_raise(RT_X_RANGE);
+  a->prio = p;
+  a->has_prio = 1;
   if (!a->t) return;
   a->t->prio = p;
   maybe_preempt();
@@ -753,10 +1003,14 @@ void rt_set_priority(rt_act *a, rt_int p) {
 void rt_exterminate(rt_act *a) {
   rt_task *t = a->t;
   if (!a->active || !t || t->state == T_DONE) return;
-  if (t == cur) rt_raise(RT_X_TERMINATE);
+  if (t == cur && !t->critical) rt_raise(RT_X_TERMINATE);
   t->term_pending = 1;
+  /* a critical activation learns of it when it becomes noncritical (14.2.2) */
+  if (t->critical) return;
   if (t->state == T_BLOCKED) {
     drop_waiters(t);
+    drop_armed(t);
+    t->satisfied = 1;
     if (t->callw) {
       /* a queued entry call is cancelled (RM79 9.10) */
       for (rt_waiter **p = t->callw->queue; *p; p = &(*p)->next)
@@ -810,7 +1064,8 @@ void rt_mbox_init(rt_mbox *m, rt_int cap, size_t esz, rt_copyfn copy) {
   m->cap = cap;
   m->esz = esz;
   m->copy = copy;
-  m->buf = cap ? rt_alloc((size_t)cap * esz) : NULL;
+  /* messages may hold pointers that FREE must see */
+  m->buf = cap ? rt_salloc((size_t)cap * esz) : NULL;
   m->head = m->count = 0;
   m->senders = m->receivers = NULL;
 }
@@ -835,6 +1090,8 @@ static int try_send(rt_mbox *m, const void *msg) {
 static int try_receive(rt_mbox *m, void *dst) {
   if (m->count > 0) {
     m->copy(dst, slot(m, 0));
+    /* a received message leaves no copy behind for FREE to find */
+    memset(slot(m, 0), 0, m->esz);
     m->head = (m->head + 1) % m->cap;
     m->count--;
     if (m->senders) {
@@ -874,6 +1131,19 @@ void rt_receive(rt_mbox *m, void *dst) {
 
 rt_int rt_mbox_count(rt_mbox *m) { return m->count; }
 
+/* RED 14.1.1: buffers plus the requests already waiting on the other side */
+rt_int rt_empty_slots(rt_mbox *m) {
+  rt_int n = m->cap - m->count;
+  for (rt_waiter *w = m->receivers; w; w = w->next) n++;
+  return n;
+}
+
+rt_int rt_full_slots(rt_mbox *m) {
+  rt_int n = m->count;
+  for (rt_waiter *w = m->senders; w; w = w->next) n++;
+  return n;
+}
+
 int rt_cond_send(rt_mbox *m, const void *msg) {
   int ok = try_send(m, msg);
   if (ok) maybe_preempt();
@@ -912,6 +1182,171 @@ void rt_region_leave(rt_lock *l) {
   } else {
     l->owner = NULL;
   }
+}
+
+int rt_cond_lock(rt_lock *l) {
+  if (l->owner) return 0;
+  l->owner = cur;
+  return 1;
+}
+
+/* LOCKs invoked minus UNLOCKs: the holder and everyone waiting (14.4.2) */
+rt_int rt_excess_locks(rt_lock *l) {
+  rt_int n = l->owner ? 1 : 0;
+  for (rt_waiter *w = l->q; w; w = w->next) n++;
+  return n;
+}
+
+static rt_act *act_of(rt_task *t) {
+  if (t->act) return t->act;
+  t->self_act.t = t;
+  t->self_act.active = 1;
+  return &t->self_act;
+}
+
+rt_act *rt_lock_owner(rt_lock *l) { return l->owner ? act_of(l->owner) : NULL; }
+
+/* ---- RED chapter 14: the ACT scheduler's low-level operations ------------ */
+
+int rt_is_waiting(rt_act *a) { return a && a->t && a->t->state == T_BLOCKED; }
+
+int rt_is_suspended(rt_act *a) { return a && a->t && a->t->suspended; }
+
+void rt_suspend(rt_act *a) {
+  rt_task *t = a ? a->t : NULL;
+  if (!t || t->state == T_DONE) return;
+  t->suspended = 1;
+  if (t == cur) {
+    cur->state = T_READY;
+    reschedule();
+    check_terminate();
+  }
+}
+
+void rt_unsuspend(rt_act *a) {
+  rt_task *t = a ? a->t : NULL;
+  if (!t || !t->suspended) return;
+  t->suspended = 0;
+  if (t->state == T_READY) t->seq = ++seq_counter;
+  maybe_preempt();
+}
+
+void rt_critical(void) { cur->critical = 1; }
+
+void rt_noncritical(void) {
+  cur->critical = 0;
+  check_terminate();
+  maybe_preempt();
+}
+
+int rt_critical_save(void) {
+  int was = cur->critical;
+  cur->critical = 1;
+  return was;
+}
+
+void rt_critical_restore(int was) {
+  if (was) return;
+  rt_noncritical();
+}
+
+void rt_low_sync_reset(void) { cur->signalled = 0; }
+
+void rt_low_sync_wait(void) {
+  if (cur->signalled) return;
+  cur->sync_waiting = 1;
+  cur->state = T_BLOCKED;
+  trace("sync wait", cur);
+  reschedule();
+  cur->sync_waiting = 0;
+  check_terminate();
+}
+
+void rt_low_sync_signal(rt_act *a) {
+  rt_task *t = a ? a->t : NULL;
+  if (!t || t->state == T_DONE) return;
+  t->signalled = 1;
+  if (t->sync_waiting && t->state == T_BLOCKED) {
+    make_ready(t);
+    maybe_preempt();
+  }
+}
+
+void rt_low_task_end(rt_act *a) {
+  if (!a || !a->active) return;
+  a->active = 0;
+  while (a->waiters) satisfy(a->waiters);
+}
+
+/* SYNC_RESET, SYNC_WAIT, SYNC_SIGNAL and TASK_END go to the scheduler of the
+ * activation: its own operations for a user-defined one (14.5.2) */
+void rt_sync_reset(void) {
+  if (cur->act && cur->act->hook)
+    run_hook(RT_HOOK_RESET);
+  else
+    rt_low_sync_reset();
+}
+
+void rt_sync_wait(void) {
+  if (cur->act && cur->act->hook)
+    run_hook(RT_HOOK_WAIT);
+  else
+    rt_low_sync_wait();
+}
+
+void rt_sync_signal(rt_act *a) {
+  if (a && a->hook) {
+    int was = cur->in_hook;
+    cur->in_hook = 1;
+    a->hook(RT_HOOK_SIGNAL, a);
+    cur->in_hook = was;
+  } else {
+    rt_low_sync_signal(a);
+  }
+}
+
+void rt_task_end(rt_act *a) {
+  if (a && a->hook) {
+    int was = cur->in_hook;
+    cur->in_hook = 1;
+    a->hook(RT_HOOK_END, a);
+    cur->in_hook = was;
+  } else {
+    rt_low_task_end(a);
+  }
+}
+
+void rt_interrupt_bind(rt_mbox *m, rt_int n, int chars) {
+  if (n < 0 || n >= RT_INTERRUPTS) rt_raise_msg(RT_X_RANGE, "no such interrupt");
+  interrupts[n] = m;
+  if (n == RT_KEYBOARD && chars && kb_next < 0) kb_next = now + 100 * RT_MILLISECONDS;
+}
+
+void *rt_me_high(const char *utype) {
+  rt_act *a = cur->act;
+  if (!a || !a->utype || strcmp(a->utype, utype) != 0) rt_raise(rt_exc("X_SCHED"));
+  return a->ua;
+}
+
+/* LOW_IO (14.6) is implementation-dependent. Here device 1 is the operator's
+ * teletype: command 1 types the character whose code is data, command 2
+ * reads one into data (-1 at the end of input). Device 2 is the interrupt
+ * controller: command n raises interrupt n with data */
+void rt_low_io(rt_int device, rt_int command, rt_int *data) {
+  if (device == 1 && command == 1) {
+    rt_putc((int)*data);
+    return;
+  }
+  if (device == 1 && command == 2) {
+    *data = rt_getc();
+    return;
+  }
+  if (device == 2) {
+    post_interrupt(command, *data);
+    maybe_preempt();
+    return;
+  }
+  rt_raise_msg(RT_X_RANGE, "LOW_IO: no such device or command");
 }
 
 /* ---- GREEN rendezvous ---------------------------------------------------- */
@@ -1050,6 +1485,124 @@ int rt_wait(int n, rt_alt *alts) {
   if (!any) rt_raise_msg(RT_X_TASKING, "no open alternative");
   block();
   return cur->result;
+}
+
+int rt_wait_poll(int n, rt_alt *alts) {
+  int else_alt = -1;
+  for (int i = 0; i < n; i++) {
+    rt_alt *a = &alts[i];
+    if (!a->open) continue;
+    switch (a->kind) {
+    case RT_ALT_SEND:
+      if (((rt_mbox *)a->obj)->cap == 0) rt_raise(RT_X_EMPTY_MAILBOX);
+      if (try_send(a->obj, a->data)) {
+        maybe_preempt();
+        return i;
+      }
+      break;
+    case RT_ALT_RECEIVE:
+      if (try_receive(a->obj, a->data)) {
+        maybe_preempt();
+        return i;
+      }
+      break;
+    case RT_ALT_DELAY_UNTIL:
+      if (a->t <= now) return i;
+      break;
+    case RT_ALT_INACTIVE:
+      if (!((rt_act *)a->obj)->active) return i;
+      break;
+    case RT_ALT_ELSE:
+      else_alt = i;
+      break;
+    }
+  }
+  return else_alt;
+}
+
+void rt_wait_arm(int n, rt_alt *alts) {
+  for (int i = 0; i < n; i++) {
+    rt_alt *a = &alts[i];
+    if (!a->open) continue;
+    switch (a->kind) {
+    case RT_ALT_SEND:
+      add_waiter(&((rt_mbox *)a->obj)->senders, i, a->data);
+      break;
+    case RT_ALT_RECEIVE:
+      add_waiter(&((rt_mbox *)a->obj)->receivers, i, a->data);
+      break;
+    case RT_ALT_DELAY_UNTIL:
+      if (!cur->timed || a->t < cur->wake) {
+        cur->timed = 1;
+        cur->wake = a->t;
+        cur->timer_alt = i;
+      }
+      break;
+    case RT_ALT_INACTIVE:
+      add_waiter(&((rt_act *)a->obj)->waiters, i, NULL);
+      break;
+    }
+  }
+  arm(cur);
+}
+
+int rt_wait_disarm(void) {
+  int r = cur->satisfied ? cur->result : -1;
+  if (!cur->satisfied) drop_armed(cur);
+  cur->armed = 0;
+  cur->satisfied = 0;
+  return r;
+}
+
+/* ---- FREE (RED 4.4.3) ---------------------------------------------------- */
+
+/* Everything reachable from the globals, the active frames of every task and
+ * the frames of activations not yet started is scanned word by word; a word
+ * equal to the start of a block makes that block reachable, and a word inside
+ * the freed variable is another pointer to it. Values held only in C
+ * temporaries of the translated code are not seen. */
+static range *work;
+static size_t nwork, cwork;
+
+static void scan_word(uintptr_t w) {
+  blockrec *b = bfind(w);
+  if (b && b->mark != mark_epoch) {
+    b->mark = mark_epoch;
+    push_range(&work, &nwork, &cwork, (void *)b->p, b->n);
+  }
+}
+
+void rt_free(void **v) {
+  uintptr_t target = (uintptr_t)*v;
+  blockrec *tb;
+  size_t refs = 0;
+  if (!target) return;
+  tb = bfind(target);
+  if (!tb) rt_raise_msg(RT_X_FREE, "not a dynamic variable");
+  size_t tn = tb->n;
+  mark_epoch++;
+  nwork = 0;
+  for (size_t i = 0; i < nroots; i++) push_range(&work, &nwork, &cwork, roots[i].p, roots[i].n);
+  for (rt_fstack *s = all_fstacks; s; s = s->next)
+    for (size_t i = 0; i < s->depth; i++) push_range(&work, &nwork, &cwork, s->f[i].p, s->f[i].n);
+  for (rt_task *t = all_tasks; t; t = t->all_next)
+    if (t->state != T_DONE && t->frame) scan_word((uintptr_t)t->frame);
+  tb->mark = mark_epoch; /* the variable's own contents do not count */
+  while (nwork > 0) {
+    range r = work[--nwork];
+    uintptr_t a = ((uintptr_t)r.p + sizeof(void *) - 1) & ~(uintptr_t)(sizeof(void *) - 1);
+    uintptr_t end = (uintptr_t)r.p + r.n;
+    for (; a + sizeof(void *) <= end; a += sizeof(void *)) {
+      if (a == (uintptr_t)v) continue;
+      uintptr_t w = *(uintptr_t *)a;
+      if (w >= target && w < target + tn) refs++;
+      scan_word(w);
+    }
+  }
+  if (refs > 0) rt_raise(RT_X_FREE);
+  tb->p = DEAD_BLOCK; /* stays counted in the load until the table grows */
+  free((void *)target);
+  *v = NULL;
 }
 
 /* ---- start-up and shutdown ----------------------------------------------- */

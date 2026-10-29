@@ -1,0 +1,32 @@
+NIL_ACT = ME: no
+after a delay, suspended yes, flag 0
+worker ran
+after UNSUSPEND, flag 1
+sleeper waits
+sleeper waiting yes
+sleeper signalled at 4
+careful enters its critical area
+main asked to exterminate at 5
+careful leaves it
+careful is gone at 9
+excess locks while held: 1
+owner is the holder: yes
+excess locks after main got it: 1
+owner is main: yes
+excess locks when free: 0
+first COND_LOCK yes
+second COND_LOCK no
+a region on a latch
+counted LOCK, entry 1
+inside the counted region
+counted UNLOCK
+counted LOCK, entry 2
+counted UNLOCK
+X_RANGE left the region, lock free: yes
+empty slots: 1
+full slots: 1
+m = m2 before: no
+m = m2 after: yes
+received through m2: 1
+full slots of m now: 0
+OK

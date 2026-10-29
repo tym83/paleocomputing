@@ -1,0 +1,10 @@
+another variable refers to it: X_FREE
+no other pointer: freed, p is NIL
+a list node refers to it: X_FREE
+while a procedure holds a copy: X_FREE
+after that procedure returned: freed, p is NIL
+a procedure holding a copy ended by X_RANGE
+after it ended by an exception: freed, p is NIL
+a message in a mailbox refers to it: X_FREE
+a waiting task holds it as a parameter: X_FREE
+after that task ended: freed, p is NIL

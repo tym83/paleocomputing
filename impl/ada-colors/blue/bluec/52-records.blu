@@ -312,9 +312,11 @@ PROCEDURE COMPLETE_RECORD (T: TYP);
    VAR F: FIELD := T@.FIELDS;
    VAR BODY: TEXT := MK ('');
    VAR ASSIGN: TEXT := MK ('');
+   VAR COPY: TEXT := MK ('');
    VAR EQ: TEXT := MK ('1');
    LOOP UNTIL F = NIL DO
       BODY := FMT3 ('@ @ @;', BODY, CTYPE (F@.T), F@.CNAME);
+      COPY := FMT3 ('@ d.@ = @;', COPY, F@.CNAME, COPY_OF (F@.T, FMT1 ('s.@', F@.CNAME)));
       IF F@.KIND = 1 THEN                           % constant fields are part of the type
          ASSIGN := FMT3 ('@ if (d->@ != s.@) rt_raise(RT_B_TYPE_MISMATCH);', ASSIGN,
                          F@.CNAME, F@.CNAME);
@@ -338,6 +340,9 @@ PROCEDURE COMPLETE_RECORD (T: TYP);
    EMIT (O_PROTOS, FMT3 ('static int E_@(@ a, @ b);', C, C, C));
    EMIT (O_HELPERS, FMT4 ('static void S_@(@ *d, @ s, int any) { @ }', C, C, C, ASSIGN));
    EMIT (O_HELPERS, FMT4 ('static int E_@(@ a, @ b) { return @; }', C, C, C, EQ));
+   EMIT (O_PROTOS, FMT3 ('static @ C_@(@ s);', C, C, C));
+   EMIT (O_HELPERS, FMT4 ('static @ C_@(@ s) { @ d = s;', C, C, C, C));
+   EMIT (O_HELPERS, FMT1 ('@ return d; }', COPY));
 END PROCEDURE COMPLETE_RECORD;
 
 % the struct for arrays of DIMS dimensions of ELEM, made once
@@ -373,6 +378,11 @@ FUNCTION ARRAY_STRUCT (ELEM: TYP, DIMS: INTEGER) RETURNS (TEXT);
       EMIT (O_HELPERS, FMT2 ('if (!rt_b_same_extents(@, a.lo, a.hi, b.lo, b.hi)) return 0; '
                              'for (rt_int i = 0; i < n; i++) if (!@) return 0; return 1; }', D,
                              EQUAL_CODE (ELEM, MK ('a.p[i]'), MK ('b.p[i]'))));
+      EMIT (O_PROTOS, FMT3 ('static @ C_@(@ s);', C, C, C));
+      EMIT (O_HELPERS, FMT4 ('static @ C_@(@ s) { @ d = s; ', C, C, C, C));
+      EMIT (O_HELPERS, FMT2 ('rt_int n = rt_b_extent(@, s.lo, s.hi); d.p = rt_alloc((n > 0 ? n : 1) * sizeof *d.p); '
+                             'for (rt_int i = 0; i < n; i++) d.p[i] = @; return d; }', D,
+                             COPY_OF (ELEM, MK ('s.p[i]'))));
    END BLOCK;
    RETURN Y@.ACCESS;
 END FUNCTION ARRAY_STRUCT;
@@ -464,6 +474,20 @@ FUNCTION NEEDS_INIT (T: TYP) RETURNS (BOOLEAN);
    END IF;
    RETURN FALSE;
 END FUNCTION NEEDS_INIT;
+
+% a value of type T equal to V that shares no storage with it: the starting
+% value of an output's local object (4.3.2)
+FUNCTION COPY_OF (T: TYP, V: TEXT) RETURNS (TEXT);
+   CONST K: INTEGER := T@.KIND;
+   IF K = T_STR ! K = T_BITS THEN
+      RETURN FMT1 ('rt_str_copy(@)', V);
+   ORIF K = T_ABS THEN
+      RETURN COPY_OF (T@.BASE, V);
+   ORIF K = T_ARR ! K = T_REC THEN
+      RETURN FMT2 ('C_@(@)', T@.CNAME, V);
+   END IF;
+   RETURN V;
+END FUNCTION COPY_OF;
 
 % the statement that assigns the value RV to the object LV of type T
 FUNCTION ASSIGN_CODE (T: TYP, LV, RV: TEXT) RETURNS (TEXT);

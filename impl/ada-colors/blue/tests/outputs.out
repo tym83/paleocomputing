@@ -1,0 +1,5 @@
+after the exception A = 1
+the inout during the call = 1
+after the call A = 10
+after the exception S = old
+after a normal return S = new

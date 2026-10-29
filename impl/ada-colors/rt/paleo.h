@@ -24,6 +24,31 @@ typedef int64_t rt_int;
 /* ---- memory ---------------------------------------------------------- */
 void *rt_alloc(size_t n);
 
+/* RED 4.4.3: FREE(v) reclaims a dynamic variable only when no other pointer
+ * refers to it, else it raises X_FREE. A program that uses FREE is translated
+ * with RT_SCAN: its storage is allocated where the runtime can find it again,
+ * each task keeps a stack of the frames of its active subprograms, and the
+ * globals are registered, so FREE can look through everything reachable. */
+void *rt_salloc(size_t n);                     /* storage that can be scanned */
+void rt_add_root(void *p, size_t n);
+typedef struct rt_fstack rt_fstack;
+extern __thread rt_fstack *rt_fs;
+int rt_fdepth(void);
+void rt_set_fdepth(int d);
+void rt_fpush(void *f, size_t n);
+void rt_fpop(void);
+void rt_free(void **v);
+#ifdef RT_SCAN
+#define rt_alloc rt_salloc
+#define RT_FPUSH(f) rt_fpush((f), sizeof *(f))
+#define RT_FPOP() rt_fpop()
+#define RT_ROOT(g) rt_add_root(&(g), sizeof (g))
+#else
+#define RT_FPUSH(f) ((void)0)
+#define RT_FPOP() ((void)0)
+#define RT_ROOT(g) ((void)0)
+#endif
+
 /* ---- strings: a value is a length and a buffer the value owns ---------- */
 typedef struct {
   rt_int len;
@@ -56,6 +81,7 @@ const char *rt_cstr(rstr s);                   /* NUL-terminated copy */
 typedef struct rt_frame {
   jmp_buf jb;
   struct rt_frame *prev;
+  int fdepth;                                  /* frames active at the TRY */
 } rt_frame;
 
 extern __thread rt_frame *rt_xtop;
@@ -67,7 +93,9 @@ _Noreturn void rt_raise(int id);
 _Noreturn void rt_raise_msg(int id, const char *msg);
 void *rt_nil_check(void *p);                   /* raises RT_X_NIL */
 
-#define RT_TRY(f) ((f).prev = rt_xtop, rt_xtop = &(f), setjmp((f).jb) == 0)
+/* an exception caught here ends the frames above the TRY */
+#define RT_TRY(f) ((f).prev = rt_xtop, rt_xtop = &(f), (f).fdepth = rt_fs ? rt_fdepth() : 0, \
+                   setjmp((f).jb) == 0 || (rt_fs && (rt_set_fdepth((f).fdepth), 0)))
 #define RT_POP(f) (rt_xtop = (f).prev)
 
 /* Exceptions the runtime itself raises. Front ends map their own names
@@ -132,11 +160,21 @@ typedef struct rt_task rt_task;
 
 typedef struct rt_waiter rt_waiter;
 
-typedef struct {
+typedef struct rt_act rt_act;                  /* RED ACT variable */
+struct rt_act {
   rt_task *t;
   int active;
   rt_waiter *waiters;                          /* DELAY_UNTIL_INACTIVE */
-} rt_act;                                      /* RED ACT variable */
+  rt_int prio;                                 /* SET_PRIORITY before CREATE */
+  int has_prio;
+  /* RED 14.5: an activation run by a user-defined scheduler reaches its
+   * high-level operations through hook, with ua its high-level variable */
+  void (*hook)(int op, rt_act *aa);
+  void *env;                                   /* frame of the CREATE */
+  void *ua;
+  const char *utype;
+};
+enum { RT_HOOK_RESET, RT_HOOK_WAIT, RT_HOOK_SIGNAL, RT_HOOK_END };
 
 typedef struct {
   int live;                                    /* activations still running */
@@ -152,6 +190,28 @@ void rt_await_decl(rt_taskdecl *d);            /* leaving a task's scope */
 void rt_delay_until_inactive(rt_act *a);
 int rt_is_active(rt_act *a);
 void rt_yield(void);
+
+/* RED chapter 14: the low-level facilities */
+void rt_create_held(rt_act *a, rt_taskdecl *d, void (*fn)(void *), void *frame);
+void rt_task_start(rt_act *av, rt_act *aa);
+int rt_is_waiting(rt_act *a);
+int rt_is_suspended(rt_act *a);
+void rt_suspend(rt_act *a);
+void rt_unsuspend(rt_act *a);
+void rt_critical(void);
+void rt_noncritical(void);
+int rt_critical_save(void);                    /* LOCK and UNLOCK of a region */
+void rt_critical_restore(int was);
+void rt_sync_reset(void);                      /* dispatch to the scheduler */
+void rt_sync_wait(void);
+void rt_sync_signal(rt_act *a);
+void rt_task_end(rt_act *a);
+void rt_low_sync_reset(void);                  /* the ACT scheduler itself */
+void rt_low_sync_wait(void);
+void rt_low_sync_signal(rt_act *a);
+void rt_low_task_end(rt_act *a);
+void *rt_me_high(const char *utype);           /* ME[T] */
+void rt_low_io(rt_int device, rt_int command, rt_int *data);
 
 /* virtual clock */
 extern rt_int RT_MILLISECONDS, RT_SECONDS, RT_MINUTES, RT_HOURS;
@@ -176,6 +236,9 @@ void rt_receive(rt_mbox *m, void *dst);
 rt_int rt_mbox_count(rt_mbox *m);
 int rt_cond_send(rt_mbox *m, const void *msg);   /* RED C.11: never waits */
 int rt_cond_receive(rt_mbox *m, void *dst);
+rt_int rt_empty_slots(rt_mbox *m);             /* RED 14.1.1 */
+rt_int rt_full_slots(rt_mbox *m);
+void rt_interrupt_bind(rt_mbox *m, rt_int n, int chars); /* LOCATION (INTERRUPT n), 14.1.4 */
 
 /* the WAIT statement: try alternatives, else block on all of them */
 enum { RT_ALT_SEND = 1, RT_ALT_RECEIVE, RT_ALT_DELAY, RT_ALT_DELAY_UNTIL,
@@ -188,6 +251,13 @@ typedef struct {
   rt_int t;
 } rt_alt;
 int rt_wait(int n, rt_alt *alts);              /* index of the one taken */
+/* a WAIT with user-defined waiting invocations (RED 14.3.3): their tests are
+ * the program's, the built-in alternatives are tried, armed while the
+ * activation waits through SYNC_WAIT, and disarmed */
+enum { RT_ALT_USER = 100 };
+int rt_wait_poll(int n, rt_alt *alts);         /* -1 when none is ready */
+void rt_wait_arm(int n, rt_alt *alts);
+int rt_wait_disarm(void);                      /* -1 when none completed */
 
 /* data locks and the region statement */
 typedef struct {
@@ -197,6 +267,9 @@ typedef struct {
 void rt_lock_init(rt_lock *l);
 void rt_region_enter(rt_lock *l);
 void rt_region_leave(rt_lock *l);
+int rt_cond_lock(rt_lock *l);                  /* RED 14.4.3 */
+rt_int rt_excess_locks(rt_lock *l);            /* RED 14.4.2 */
+rt_act *rt_lock_owner(rt_lock *l);
 
 /* GREEN rendezvous */
 typedef struct {

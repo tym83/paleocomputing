@@ -1,0 +1,6 @@
+signal at 10
+waiter 1 continues at 10
+waiter 2 continues at 10
+waiter 3 continues at 10
+signal at 20
+waiter 4 continues at 20
