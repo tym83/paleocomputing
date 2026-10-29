@@ -70,6 +70,7 @@ ty_void := new_typ(t_void);
 ty_file := new_typ(t_file);
 ty_nil := new_typ(t_nil);
 ty_lock := new_typ(t_lock);
+ty_latch := new_typ(t_lock);
 ty_act := new_typ(t_act);
 GUARD
    init_ascii;

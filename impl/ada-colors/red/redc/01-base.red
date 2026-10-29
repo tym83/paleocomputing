@@ -203,5 +203,5 @@ VAR trial : INT := 0;
 VAR mcopies : lines;
 
 VAR ty_int, ty_bool, ty_float, ty_ascii, ty_string, ty_void, ty_file, ty_nil : typ;
-VAR ty_lock, ty_act : typ;
+VAR ty_lock, ty_latch, ty_act : typ;
 VAR no_cons : cons;

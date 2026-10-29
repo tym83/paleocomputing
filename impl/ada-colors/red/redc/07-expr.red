@@ -123,6 +123,11 @@ PROC lvalue(CONST e : node, OUT code : text, OUT t : typ, OUT c : cons, OUT ro :
       END IF;
    ELSEIF e.kind = n_paren THEN
       lvalue(e.a, code, t, c, ro);
+   ELSEIF e.kind = n_ttapply AND e.a.kind = n_name AND e.a.name.ALL = "ME" AND lookup("ME") = NIL THEN
+      % ME[T], the high-level activation variable (14.5.2)
+      code := mk(me_high(e.b, e.line, t));
+      c := no_cons;
+      ro := FALSE;
    ELSEIF e.kind = n_select THEN
       lvalue(e.a, base, bt, bc, ro);
       select_on(base.ALL, bt, e, ro, code, t, c);
@@ -314,6 +319,15 @@ ABNORMAL FUNC gexpr(CONST e : node, CONST want : typ, OUT t : typ) => STRING[ASC
          IF e.name.ALL = "ME" THEN
             t := ty_act;
             RETURN "rt_me()";
+         END IF;
+         IF e.name.ALL = "NIL_ACT" THEN
+            t := ty_act;
+            RETURN "((rt_act *)NULL)";
+         END IF;
+         IF e.name.ALL = "CRITICAL" OR e.name.ALL = "NONCRITICAL" OR e.name.ALL = "SYNC_RESET"
+               OR e.name.ALL = "SYNC_WAIT" OR e.name.ALL = "LOW_SYNC_RESET"
+               OR e.name.ALL = "LOW_SYNC_WAIT" THEN
+            RETURN gcall(wrap_apply(e), FALSE, t);
          END IF;
          IF e.name.ALL = "SIZELN" OR e.name.ALL = "EOF" OR e.name.ALL = "SYS_IN"
                OR e.name.ALL = "SYS_OUT" OR e.name.ALL = "TIME" OR e.name.ALL = "MILLISECONDS"
@@ -833,8 +847,49 @@ END FUNC resolve_overload;
 FUNC is_builtin(READONLY n : STRING[ASCII]) => BOOL;
    RETURN n = "ABS" OR n = "POS" OR n = "SUCC" OR n = "PRED" OR n = "SQRT" OR n = "FLOOR"
        OR n = "WRITELN" OR n = "WRITE" OR n = "READLN" OR n = "SEND" OR n = "RECEIVE"
-       OR n = "DELAY" OR n = "TIME" OR n = "CNVT" OR n = "FORMAT";
+       OR n = "DELAY" OR n = "TIME" OR n = "CNVT" OR n = "FORMAT" OR is_low_level(n);
 END FUNC is_builtin;
+
+% the operations of chapter 14, which a user-defined scheduler or
+% synchronization type may overload for its own types
+FUNC is_low_level(READONLY n : STRING[ASCII]) => BOOL;
+   RETURN n = "SYNC_RESET" OR n = "SYNC_WAIT" OR n = "SYNC_SIGNAL" OR n = "TASK_START"
+       OR n = "TASK_END" OR n = "LOCK" OR n = "UNLOCK" OR n = "COND_LOCK" OR n = "SUSPEND"
+       OR n = "UNSUSPEND" OR n = "WAITING" OR n = "SUSPENDED" OR n = "ACTIVE"
+       OR n = "EMPTY_SLOTS" OR n = "FULL_SLOTS" OR n = "COND_SEND" OR n = "COND_RECEIVE"
+       OR n = "EXCESS_LOCKS" OR n = "OWNER";
+END FUNC is_low_level;
+
+% ME[T] (14.5.2): the activation variable of type T that the running
+% activation was created with; X_SCHED if it was created with another
+ABNORMAL FUNC me_high(CONST tt : node, CONST line : INT, OUT t : typ) => STRING[ASCII] IMPORTS ALL;
+   VAR c : cons;
+   IF tt = NIL THEN
+      fail(line, "ME[...] needs the type of an activation variable");
+   END IF;
+   t := resolve_subtype(tt, c);
+   RETURN "(*(" & ctype(t) & " *)rt_me_high(" & q & type_tag(t) & q & "))";
+END FUNC me_high;
+
+FUNC type_tag(CONST t : typ) => STRING[ASCII];
+   IF t.name /= NIL THEN
+      RETURN t.name.ALL;
+   END IF;
+   RETURN "?";
+END FUNC type_tag;
+
+% a DATA_LOCK or a LATCH (14.4)
+ABNORMAL FUNC lock_ref(CONST e : node, READONLY name : STRING[ASCII]) => STRING[ASCII] IMPORTS ALL;
+   VAR lv : text;
+   VAR t : typ;
+   VAR c : cons;
+   VAR ro : BOOL;
+   lvalue(e, lv, t, c, ro);
+   IF t.kind /= t_lock THEN
+      fail(e.line, name & " needs a DATA_LOCK or a LATCH");
+   END IF;
+   RETURN "&" & lv.ALL;
+END FUNC lock_ref;
 
 % is there a user definition of this operator symbol that fits? (13.2)
 ABNORMAL FUNC user_op(READONLY op : STRING[ASCII], CONST args : node) => sym IMPORTS ALL;
@@ -1062,12 +1117,12 @@ ABNORMAL FUNC builtin(READONLY name : STRING[ASCII], CONST tt : node, CONST args
       IF name = "RECEIVE" THEN
          lvalue(args.next, dv, dt, lc, ro);
          check_type(dt, mt.elem, line);
-         RETURN "rt_receive(&" & lv.ALL & ", &" & dv.ALL & ")";
+         RETURN "rt_receive(" & lv.ALL & ", &" & dv.ALL & ")";
       END IF;
       BEGIN
          CONST v := gexpr(args.next, mt.elem, at);
          check_type(at, mt.elem, line);
-         RETURN "({ " & ctype(mt.elem) & " m_ = " & v & "; rt_send(&" & lv.ALL & ", &m_); })";
+         RETURN "({ " & ctype(mt.elem) & " m_ = " & v & "; rt_send(" & lv.ALL & ", &m_); })";
       END;
    ELSEIF name = "FULL_SLOTS" OR name = "EMPTY_SLOTS" THEN
       VAR lv : text;
@@ -1079,10 +1134,7 @@ ABNORMAL FUNC builtin(READONLY name : STRING[ASCII], CONST tt : node, CONST args
          fail(line, name & " needs a mailbox");
       END IF;
       t := ty_int;
-      IF name = "FULL_SLOTS" THEN
-         RETURN "rt_mbox_count(&" & lv.ALL & ")";
-      END IF;
-      RETURN "(" & lv.ALL & ".cap - rt_mbox_count(&" & lv.ALL & "))";
+      RETURN "rt_" & lower_s(name) & "(" & lv.ALL & ")";
    ELSEIF name = "COND_SEND" OR name = "COND_RECEIVE" THEN
       VAR lv, dv, bv : text;
       VAR lc : cons;
@@ -1097,12 +1149,12 @@ ABNORMAL FUNC builtin(READONLY name : STRING[ASCII], CONST tt : node, CONST args
       IF name = "COND_RECEIVE" THEN
          lvalue(args.next, dv, dt, lc, ro);
          check_type(dt, mt.elem, line);
-         RETURN bv.ALL & " = rt_cond_receive(&" & lv.ALL & ", &" & dv.ALL & ")";
+         RETURN bv.ALL & " = rt_cond_receive(" & lv.ALL & ", &" & dv.ALL & ")";
       END IF;
       BEGIN
          CONST v := gexpr(args.next, mt.elem, at);
          check_type(at, mt.elem, line);
-         RETURN "({ " & ctype(mt.elem) & " m_ = " & v & "; " & bv.ALL & " = rt_cond_send(&" & lv.ALL & ", &m_); })";
+         RETURN "({ " & ctype(mt.elem) & " m_ = " & v & "; " & bv.ALL & " = rt_cond_send(" & lv.ALL & ", &m_); })";
       END;
    ELSEIF name = "PRIORITY" THEN
       t := ty_int;
@@ -1132,6 +1184,59 @@ ABNORMAL FUNC builtin(READONLY name : STRING[ASCII], CONST tt : node, CONST args
    ELSEIF name = "HALT" THEN
       CONST a := gexpr(args, ty_int, at);
       RETURN "rt_exit(" & a & ")";
+   ELSEIF name = "ME" AND tt /= NIL THEN
+      RETURN me_high(tt, line, t);
+   ELSEIF name = "WAITING" OR name = "SUSPENDED" THEN
+      t := ty_bool;
+      RETURN "rt_is_" & lower_s(name) & "(" & act_ref(args) & ")";
+   ELSEIF name = "SUSPEND" OR name = "UNSUSPEND" OR name = "LOW_SYNC_SIGNAL" OR name = "LOW_TASK_END"
+         OR name = "SYNC_SIGNAL" OR name = "TASK_END" THEN
+      RETURN "rt_" & lower_s(name) & "(" & act_ref(args) & ")";
+   ELSEIF name = "TASK_START" THEN
+      IF n /= 2 THEN
+         fail(line, "TASK_START needs two activation variables");
+      END IF;
+      RETURN "rt_task_start(" & act_ref(args) & ", " & act_ref(args.next) & ")";
+   ELSEIF name = "CRITICAL" OR name = "NONCRITICAL" OR name = "SYNC_RESET" OR name = "SYNC_WAIT"
+         OR name = "LOW_SYNC_RESET" OR name = "LOW_SYNC_WAIT" THEN
+      IF n /= 0 THEN
+         fail(line, name & " takes no actual parameters here");
+      END IF;
+      RETURN "rt_" & lower_s(name) & "()";
+   ELSEIF name = "LOCK" THEN
+      RETURN "rt_region_enter(" & lock_ref(args, name) & ")";
+   ELSEIF name = "UNLOCK" THEN
+      RETURN "rt_region_leave(" & lock_ref(args, name) & ")";
+   ELSEIF name = "COND_LOCK" THEN
+      VAR bv : text;
+      VAR bc : cons;
+      VAR ro : BOOL;
+      VAR bt : typ;
+      CONST l := lock_ref(args, name);
+      lvalue(args.next, bv, bt, bc, ro);
+      check_type(bt, ty_bool, line);
+      RETURN bv.ALL & " = rt_cond_lock(" & l & ")";
+   ELSEIF name = "EXCESS_LOCKS" THEN
+      t := ty_int;
+      RETURN "rt_excess_locks(" & lock_ref(args, name) & ")";
+   ELSEIF name = "OWNER" THEN
+      t := ty_act;
+      RETURN "rt_lock_owner(" & lock_ref(args, name) & ")";
+   ELSEIF name = "LOW_IO" THEN
+      CONST dev := gexpr(args, ty_int, at);
+      CONST cmd := gexpr(args.next, ty_int, at);
+      IF n = 2 THEN
+         RETURN "({ rt_int d_ = 0; rt_low_io(" & dev & ", " & cmd & ", &d_); })";
+      END IF;
+      BEGIN
+         VAR dv : text;
+         VAR dc : cons;
+         VAR ro : BOOL;
+         VAR dt : typ;
+         lvalue(args.next.next, dv, dt, dc, ro);
+         check_type(dt, ty_int, line);
+         RETURN "rt_low_io(" & dev & ", " & cmd & ", &" & dv.ALL & ")";
+      END;
    END IF;
    fail(line, name & " is not defined");
    RETURN "";

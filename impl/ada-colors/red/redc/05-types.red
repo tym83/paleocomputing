@@ -205,7 +205,7 @@ ABNORMAL FUNC ctype(CONST t : typ) => STRING[ASCII] IMPORTS ALL;
       WHEN t_float => RETURN "double";
       WHEN t_string => RETURN "rstr";
       WHEN t_void => RETURN "void";
-      WHEN t_mbox => RETURN "rt_mbox";
+      WHEN t_mbox => RETURN "rt_mbox *";
       WHEN t_lock => RETURN "rt_lock";
       WHEN t_act => RETURN "rt_act *";
       WHEN t_set => RETURN "rset";
@@ -460,6 +460,8 @@ ABNORMAL FUNC resolve_subtype(CONST st : node, OUT c : cons) => typ IMPORTS ALL;
             RETURN ty_ascii;
          ELSEIF st.name.ALL = "DATA_LOCK" THEN
             RETURN ty_lock;
+         ELSEIF st.name.ALL = "LATCH" THEN
+            RETURN ty_latch;
          ELSEIF st.name.ALL = "ACT" THEN
             RETURN ty_act;
          END IF;
@@ -608,7 +610,9 @@ PROC init_storage(READONLY lval : STRING[ASCII], CONST t : typ, CONST c : cons) 
       IF c.lo = NIL THEN
          fail(0, "a mailbox variable needs a size");
       END IF;
-      emit("rt_mbox_init(&" & lval & ", " & subst(c.lo.ALL) & ", sizeof(" & ctype(t.elem) & "), "
+      % a mailbox is an indirect type (14.1.3): the variable refers to it
+      emit(lval & " = rt_alloc(sizeof(rt_mbox));");
+      emit("rt_mbox_init(" & lval & ", " & subst(c.lo.ALL) & ", sizeof(" & ctype(t.elem) & "), "
            & mcopy(t.elem) & ");");
    ELSEIF t.kind = t_lock THEN
       emit("rt_lock_init(&" & lval & ");");
@@ -755,8 +759,12 @@ ABNORMAL FUNC eq_code(CONST t : typ, READONLY a : STRING[ASCII], READONLY b : ST
       % two ACT values are equal when they are the same activation variable (C.10)
       RETURN "(" & a & " == " & b & ")";
    END IF;
-   IF t.kind = t_mbox OR t.kind = t_lock THEN
-      % not comparable (C.11, C.12); only the generated helpers ask
+   IF t.kind = t_mbox THEN
+      % two mailboxes are equal when they are the same mailbox (14.1.3)
+      RETURN "(" & a & " == " & b & ")";
+   END IF;
+   IF t.kind = t_lock THEN
+      % not comparable (C.12); only the generated helpers ask
       RETURN "0";
    END IF;
    IF t.kind = t_string THEN

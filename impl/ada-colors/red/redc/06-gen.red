@@ -1062,14 +1062,14 @@ ABNORMAL FUNC wait_alt(CONST inv : node, READONLY arr : STRING[ASCII], CONST i :
          VAR dt : typ;
          lvalue(args.next, dv, dt, c, ro);
          check_type(dt, t.elem, inv.line);
-         RETURN slot & " = (rt_alt){RT_ALT_RECEIVE, 1, &" & lv.ALL & ", &" & dv.ALL & ", 0};";
+         RETURN slot & " = (rt_alt){RT_ALT_RECEIVE, 1, " & lv.ALL & ", &" & dv.ALL & ", 0};";
       END IF;
       BEGIN
          CONST tmp := new_name("msg");
          CONST v := gexpr(args.next, t.elem, vt);
          check_type(vt, t.elem, inv.line);
          emit(ctype(t.elem) & " " & tmp & " = " & v & ";");
-         RETURN slot & " = (rt_alt){RT_ALT_SEND, 1, &" & lv.ALL & ", &" & tmp & ", 0};";
+         RETURN slot & " = (rt_alt){RT_ALT_SEND, 1, " & lv.ALL & ", &" & tmp & ", 0};";
       END;
    ELSEIF fn.name.ALL = "DELAY" OR fn.name.ALL = "DELAY_UNTIL" THEN
       CONST v := gexpr(args, ty_int, vt);
