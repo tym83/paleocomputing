@@ -3114,6 +3114,131 @@ rt_int y_fmt_fixed(double v, rt_int decimals, unsigned char *buf, rt_int cap) {
   return y_fmt(b, snprintf(b, sizeof b, "%.*f", (int)decimals, v), buf, cap);
 }
 
+/* ---- fixed point (VI.A.1.b, VIII.C): exact, as scaled integers ------------ */
+/* A FIXED value of a representation of scale s is held as the integer k
+ * with value k * s; the translator knows every scale, a manifest rational,
+ * and passes the factors between two scales. Arithmetic is exact (VIII.C):
+ * an operation that the integers cannot hold raises OVERFLOW, a value that
+ * is not a multiple of the scale it is assigned to FIXED_NOT_REPRESENTABLE. */
+
+const ydesc y_d_fix = {YK_FIX, sizeof(yfix), 0, 0, {0}, {0}, NULL, 0, NULL, NULL};
+
+yfix y_fix_add(yfix a, yfix b) {
+  yfix r;
+  if (__builtin_add_overflow(a, b, &r)) rt_raise(RT_X_OVERFLOW);
+  return r;
+}
+
+yfix y_fix_sub(yfix a, yfix b) {
+  yfix r;
+  if (__builtin_sub_overflow(a, b, &r)) rt_raise(RT_X_OVERFLOW);
+  return r;
+}
+
+yfix y_fix_mul(yfix a, yfix b) {
+  yfix r;
+  if (__builtin_mul_overflow(a, b, &r)) rt_raise(RT_X_OVERFLOW);
+  return r;
+}
+
+yfix y_fix_neg(yfix a) { return y_fix_sub(0, a); }
+
+/* k * p / q, which must be a whole number */
+yfix y_fix_conv(yfix k, yfix p, yfix q) {
+  yfix t = y_fix_mul(k, p);
+  if (q == 1) return t;
+  if (t % q != 0) rt_raise(Y_X_FIXED);
+  return t / q;
+}
+
+yfix y_fix_range(yfix k, yfix lo, yfix hi) {
+  if (k < lo || k > hi) rt_raise(RT_X_RANGE);
+  return k;
+}
+
+static yfix fix_floordiv(yfix a, yfix b) {
+  yfix q = a / b;
+  if ((a % b != 0) && ((a < 0) != (b < 0))) q--;
+  return q;
+}
+
+/* a bound of a range in units of a scale: the multiples of the scale that
+ * lie in the range (up: the smallest at or above, else the largest below) */
+yfix y_fix_bound(yfix k, yfix p, yfix q, int up) {
+  yfix t = y_fix_mul(k, p);
+  yfix f = fix_floordiv(t, q);
+  if (up && f * q != t) f++;
+  return f;
+}
+
+/* FIXED_DIV (XI): the largest multiple of the result scale not above the
+ * quotient n / d, the factors p / q bringing the quotient of the integers
+ * to that scale */
+yfix y_fix_div(yfix n, yfix d, yfix p, yfix q) {
+  if (d == 0) rt_raise(Y_X_ZERO_DENOM);
+  return fix_floordiv(y_fix_mul(n, p), y_fix_mul(d, q));
+}
+
+/* rounded to the nearest whole number, halves away from zero (XI) */
+static yfix fix_round(yfix a, yfix b) {
+  if (b < 0) { a = -a; b = -b; }
+  yfix q = a / b, r = a % b;
+  if (r < 0) r = -r;
+  if (2 * r >= b) q += a < 0 ? -1 : 1;
+  return q;
+}
+
+/* NEAR_FIXED of a FIXED value: k * p / q rounded */
+yfix y_fix_near(yfix k, yfix p, yfix q) { return fix_round(y_fix_mul(k, p), q); }
+
+/* NEAR_FIXED of a floating-point value: x / (sn / sd) rounded */
+yfix y_fix_of_float(double x, rt_int sn, rt_int sd) {
+  double v = x * (double)sd / (double)sn;
+  if (!(v > -1.7e38 && v < 1.7e38)) rt_raise(RT_X_OVERFLOW);
+  return (yfix)round(v);
+}
+
+double y_fix_float(yfix k, rt_int sn, rt_int sd) { return (double)k * (double)sn / (double)sd; }
+
+static rt_int fix_int(yfix v) {
+  if (v > INT64_MAX || v < -INT64_MAX) rt_raise(RT_X_OVERFLOW);
+  return (rt_int)v;
+}
+
+rt_int y_fix_floor(yfix k, rt_int sn, rt_int sd) { return fix_int(fix_floordiv(y_fix_mul(k, sn), sd)); }
+rt_int y_fix_ceiling(yfix k, rt_int sn, rt_int sd) { return -fix_int(fix_floordiv(-y_fix_mul(k, sn), sd)); }
+rt_int y_fix_near_integer(yfix k, rt_int sn, rt_int sd) { return fix_int(fix_round(y_fix_mul(k, sn), sd)); }
+
+/* the value k * sn / sd in decimal, rounded to the given number of decimals,
+ * halves away from zero */
+rt_int y_fmt_fix(yfix k, rt_int sn, rt_int sd, rt_int decimals, unsigned char *buf, rt_int cap) {
+  char b[96], *e = b + sizeof b;
+  int n = 0;
+  if (decimals < 0) decimals = 0;
+  if (decimals > 30) decimals = 30;
+  yfix p = 1;
+  for (rt_int i = 0; i < decimals; i++) p *= 10;
+  yfix v = fix_round(y_fix_mul(y_fix_mul(k, sn), p), sd);
+  int neg = v < 0;
+  unsigned __int128 u = neg ? -(unsigned __int128)v : (unsigned __int128)v;
+  char *s = e;
+  rt_int d = 0;
+  do {
+    if (decimals > 0 && d == decimals) *--s = '.';
+    *--s = (char)('0' + (int)(u % 10));
+    u /= 10;
+    d++;
+  } while (u || d <= decimals);
+  if (neg) *--s = '-';
+  n = (int)(e - s);
+  return y_fmt(s, n, buf, cap);
+}
+
+double y_fchk(double v) {
+  if (isinf(v)) rt_raise(RT_X_OVERFLOW);
+  return v;
+}
+
 /* a descriptor for a one-dimensional array of elem, to compare the values
  * of a length-unresolved array parameter (X.A.3) */
 const ydesc *y_desc_vector(const ydesc *elem) {

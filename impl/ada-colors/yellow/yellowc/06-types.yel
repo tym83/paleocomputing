@@ -14,7 +14,7 @@
     NEW(r);
     r^ := RepRec(kind, tid, tid, 0, 0, 0, 0, FALSE, 0, 0, Rep NIL, Rep NIL, 0, Rep NIL,
                  Node NIL, 0, Field NIL, Field NIL, 0, 0, 0, FALSE, FALSE, FALSE, 0, FALSE, 0, 0,
-                 Sym NIL, 0, 0);
+                 Sym NIL, 0, 0, 0, 0);
     r^.serial := NewSerial();
     RETURN r
   ENDPROCEDURE NewRep;
@@ -66,7 +66,8 @@
     VAR k: INT := r^.kind;
     IF (k = R_INT) OR (k = R_BOOL) OR (k = R_ENUM) THEN RETURN T("rt_int") ENDIF;
     IF k = R_ALPHA THEN RETURN T("unsigned char") ENDIF;
-    IF (k = R_FLOAT) OR (k = R_FIXED) THEN RETURN T("double") ENDIF;
+    IF k = R_FLOAT THEN RETURN T("double") ENDIF;
+    IF k = R_FIXED THEN RETURN T("yfix") ENDIF;
     IF (k = R_ARRAY) OR (k = R_UARRAY) OR (k = R_STR) THEN RETURN T("yarr") ENDIF;
     IF k = R_RECORD THEN RETURN r^.cname ENDIF;
     IF (k = R_PTR) OR (k = R_NIL) THEN RETURN T("void *") ENDIF;
@@ -82,7 +83,8 @@
     VAR k: INT := r^.kind;
     IF (k = R_INT) OR (k = R_BOOL) OR (k = R_ENUM) THEN RETURN T("&y_d_int") ENDIF;
     IF k = R_ALPHA THEN RETURN T("&y_d_byte") ENDIF;
-    IF (k = R_FLOAT) OR (k = R_FIXED) THEN RETURN T("&y_d_float") ENDIF;
+    IF k = R_FLOAT THEN RETURN T("&y_d_float") ENDIF;
+    IF k = R_FIXED THEN RETURN T("&y_d_fix") ENDIF;
     IF (k = R_PTR) OR (k = R_NIL) THEN RETURN T("&y_d_ptr") ENDIF;
     IF k = R_SET THEN RETURN T("&y_d_set") ENDIF;
     IF (k = R_ARRAY) OR (k = R_RECORD) THEN
@@ -171,7 +173,9 @@
       ENDIF;
       IF k = R_FIXED THEN
         SA("S");
-        ST(r^.scale)
+        SI(r^.fsn);
+        SA("/");
+        SI(r^.fsd)
       ENDIF
     ELSIF k = R_ARRAY THEN
       SA("(");
@@ -264,32 +268,157 @@
     RETURN r^.hi
   ENDPROCEDURE HiText;
 
-  (* the bounds [lo..hi] of a discrete representation *)
+  (* an unqualified numeric literal in the range of a representation of a *)
+  (* type made from INTEGER, FIXED or FLOATING is of that type: the Report's *)
+  (* own Feet = Foot_Type [1..5280] (VII.G) *)
+  PROCEDURE AdoptLiteral RETURNS Rep (CONST n: Node; CONST lr, r: Rep)
+    VAR c: Rep;
+    IF NOT IsLiteralNode(n) OR (lr^.kind # r^.kind) OR NOT IsNumeric(r) THEN RETURN lr ENDIF;
+    IF HasQualifier(n) THEN RETURN lr ENDIF;
+    c := CopyRep(lr);
+    c^.tid := r^.tid;
+    c^.tname := r^.tname;
+    RETURN c
+  ENDPROCEDURE AdoptLiteral;
+
+  FUNCTION HasQualifier RETURNS BOOLEAN (CONST n: Node)
+    IF (n^.kind = N_NEG) OR (n^.kind = N_PAREN) THEN RETURN HasQualifier(n^.a) ENDIF;
+    RETURN n^.d # Node NIL
+  ENDFUNCTION HasQualifier;
+
+  (* ---- rationals, for the scales of FIXED (VI.A.1.b) ---------------------- *)
+
+  FUNCTION Gcd RETURNS INT (CONST a, b: INT)
+    VAR x, y, t: INT;
+    x := a;
+    y := b;
+    IF x < 0 THEN x := -x ENDIF;
+    IF y < 0 THEN y := -y ENDIF;
+    WHILE y # 0 DO
+      t := x MOD y;
+      x := y;
+      y := t
+    ENDWHILE;
+    IF x = 0 THEN RETURN 1 ENDIF;
+    RETURN x
+  ENDFUNCTION Gcd;
+
+  PROCEDURE MulChk RETURNS INT (CONST a, b, line: INT)
+    VAR x, y: INT;
+    x := a;
+    y := b;
+    IF x < 0 THEN x := -x ENDIF;
+    IF y < 0 THEN y := -y ENDIF;
+    IF (x # 0) AND (y > (LARGEST DIV x)) THEN
+      FailS(line, "a scale beyond this implementation: fixed-point scales are fractions of 64-bit integers")
+    ENDIF;
+    RETURN a * b
+  ENDPROCEDURE MulChk;
+
+  (* b to the power e, e >= 0 *)
+  PROCEDURE PowChk RETURNS INT (CONST b, e, line: INT)
+    VAR v: INT := 1;
+    FOR i: INTEGER [1..e] DO v := MulChk(v, b, line) ENDFOR;
+    RETURN v
+  ENDPROCEDURE PowChk;
+
+  (* the scale of a to that of b, as p / q in lowest terms, each the C text *)
+  (* of a product of two 64-bit numbers, which the 128 bits of a FIXED value *)
+  (* hold; one when the scales are equal *)
+  PROCEDURE ScaleRatio (CONST a, b: Rep; OUT p, q: Txt; OUT one: BOOLEAN)
+    VAR g1, g2, p1, p2, q1, q2: INT;
+    p := T("1");
+    q := T("1");
+    one := TRUE;
+    IF (a^.fsd = 0) OR (b^.fsd = 0) THEN RETURN ENDIF;
+    g1 := Gcd(a^.fsn, b^.fsn);
+    g2 := Gcd(a^.fsd, b^.fsd);
+    p1 := a^.fsn DIV g1;
+    p2 := b^.fsd DIV g2;
+    q1 := a^.fsd DIV g2;
+    q2 := b^.fsn DIV g1;
+    one := (p1 = 1) AND (p2 = 1) AND (q1 = 1) AND (q2 = 1);
+    p := Factor(p1, p2);
+    q := Factor(q1, q2);
+    RETURN
+  ENDPROCEDURE ScaleRatio;
+
+  PROCEDURE Factor RETURNS Txt (CONST x, y: INT)
+    SB();
+    SA("((yfix)INT64_C(");
+    SI(x);
+    SA(")");
+    IF y # 1 THEN
+      SA(" * INT64_C(");
+      SI(y);
+      SA(")")
+    ENDIF;
+    SA(")");
+    RETURN SE()
+  ENDPROCEDURE Factor;
+
+  PROCEDURE SetScale (CONST r: Rep; CONST n, d: INT)
+    VAR g: INT := Gcd(n, d);
+    r^.fsn := n DIV g;
+    r^.fsd := d DIV g;
+    IF r^.fsd < 0 THEN
+      r^.fsn := -r^.fsn;
+      r^.fsd := -r^.fsd
+    ENDIF;
+    RETURN
+  ENDPROCEDURE SetScale;
+
+  (* the bounds [lo..hi] of a representation; FIXED keeps them as whole *)
+  (* numbers of its scale, the multiples of the scale within the range *)
   PROCEDURE Qualify (CONST r: Rep; CONST q: Node)
-    VAR lo, hi: Txt;
+    VAR lo, hi, p, pq: Txt;
         lr, hr: Rep;
-        ok: BOOLEAN;
-        v: INT;
+        ok, one: BOOLEAN;
+        v, sn, sd: INT;
+    IF r^.kind = R_FIXED THEN
+      IF q^.c = Node NIL THEN FailS(q^.line, "FIXED needs SCALE (VI.A.1.b)") ENDIF;
+      ManifestFix(q^.c, ok, sn, sd);
+      IF NOT ok OR (sn <= 0) THEN FailS(q^.line, "SCALE is a positive manifest constant (VI.A.1.b, VI.C)") ENDIF;
+      r^.fsn := sn;
+      r^.fsd := sd;
+      SB();
+      SI(sn);
+      SA("/");
+      SI(sd);
+      r^.scale := SE()
+    ENDIF;
     Expr(q^.a, r, lo, lr);
     Expr(q^.b, r, hi, hr);
-    IF (r^.kind = R_FLOAT) OR (r^.kind = R_FIXED) THEN
+    lr := AdoptLiteral(q^.a, lr, r);
+    hr := AdoptLiteral(q^.b, hr, r);
+    IF r^.kind = R_FIXED THEN
+      CheckType(q^.line, r, lr);
+      CheckType(q^.line, r, hr);
+      ScaleRatio(lr, r, p, pq, one);
+      r^.lo := Join(T("y_fix_bound("), lo, Join(T(", "), p, Join(T(", "), pq, T(", 1)"))));
+      ScaleRatio(hr, r, p, pq, one);
+      r^.hi := Join(T("y_fix_bound("), hi, Join(T(", "), p, Join(T(", "), pq, T(", 0)"))));
+      r^.dname := 0;
+      StoreBounds(r, "yfix");
+      r^.abstract := FALSE;
+      RETURN
+    ENDIF;
+    IF r^.kind = R_FLOAT THEN
       CheckType(q^.line, r, lr);
       CheckType(q^.line, r, hr);
       r^.lo := lo;
       r^.hi := hi;
       r^.dname := 0;
       IF NOT (IsLiteralNode(q^.a) AND IsLiteralNode(q^.b)) THEN StoreBounds(r, "double") ENDIF;
-      IF r^.kind = R_FLOAT THEN
-        IF q^.d = Node NIL THEN FailS(q^.line, "FLOATING needs PRECISION (VI.A.1.c)") ENDIF;
-        Manifest(q^.d, ok, v);
-        IF NOT ok THEN FailS(q^.line, "PRECISION is a manifest constant") ENDIF;
-        SB();
-        SI(v);
-        r^.prec := SE()
-      ELSE
-        IF q^.c = Node NIL THEN FailS(q^.line, "FIXED needs SCALE (VI.A.1.b)") ENDIF;
-        Expr(q^.c, r, r^.scale, lr)
+      IF q^.d = Node NIL THEN FailS(q^.line, "FLOATING needs PRECISION (VI.A.1.c)") ENDIF;
+      Manifest(q^.d, ok, v);
+      IF NOT ok THEN FailS(q^.line, "PRECISION is a manifest constant") ENDIF;
+      IF (v < 1) OR (v > 15) THEN
+        FailS(q^.line, "PRECISION beyond this implementation: its floating point holds 15 decimal digits (Appendix C)")
       ENDIF;
+      SB();
+      SI(v);
+      r^.prec := SE();
       r^.abstract := FALSE;
       RETURN
     ENDIF;

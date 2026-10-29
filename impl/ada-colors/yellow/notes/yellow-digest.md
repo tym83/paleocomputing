@@ -18,7 +18,8 @@ exception handling.
   says "must begin with a letter"; yellowc follows L-9). Upper and lower case are distinct
   (p.994). Reserved words are upper case (Appendix A, p.1081).
 - Comment: `(*` ... `*)`, closed on its own line (p.994, D-3).
-- Numbers: integer `[Base] [-] digits`; floating `[+|-] digits . {digits} [E [+|-] digits]`
+- Numbers: integer `[Base] [-] digits`, the digits consistent with the Base (`BASE8 9` is an
+  error); floating `[+|-] digits . {digits} [E [+|-] digits]`
   (a digit before the point is required, E-12); fixed `[Base] [+|-] mantissa P [[+|-] digits]`,
   the value being mantissa times base to the power (L-10). Base words BASE2, BASE8, BASE10,
   BASE16 precede the number with a space. A sign belongs to a literal only where no operand
@@ -61,7 +62,11 @@ The rule numbers of the Appendix are used in yellowc's comments. Points that nee
 ## 3. Types and representations (VI, VII, pp.1000-1028)
 
 - A type is a set of values; a representation is a type with a range, scale, precision or
-  layout. `INTEGER`, `FIXED`, `FLOATING` are types: a variable needs a representation
+  layout. FIXED is exact (VIII.C): a value is held as a whole number of its scale (128 bits),
+  sums are taken at the common scale of the operands, products at the product of the scales;
+  assigning to a scale the value is not a multiple of raises FIXED_NOT_REPRESENTABLE. Scales
+  are manifest fractions of 64-bit integers. FLOATING is the machine's double: a PRECISION
+  above 15 is an error, an overflowing result raises OVERFLOW. `INTEGER`, `FIXED`, `FLOATING` are types: a variable needs a representation
   (`INTEGER [1..10]`, `FIXED [0.0P..10P5] SCALE 0.01P`, `FLOATING [-1.0E3..1.0E3] PRECISION 7`).
 - **Type identity (VII.G, p.1024)**: two declarations have the same type when their
   representations derive from the same type identifier. `INTEGER [1..5]` and `INTEGER [0..9]`
@@ -201,6 +206,4 @@ other than the prelude are not provided.
   processes.
 - A FUNCTION's purity is checked for its own assignments and VAR/OUT actuals, not for the
   procedures it calls.
-- FIXED values are held in doubles (p.1001 allows floating-point to implement them), checked
-  to be multiples of their scale.
 - Modules importing from each other in a circle (allowed by X.G for routines) are refused.

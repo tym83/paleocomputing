@@ -1,0 +1,49 @@
+(* fixed point is exact (VIII.C): a value is a whole number of its scale; a *)
+(* value assigned to a coarser scale must be a multiple of it, *)
+(* FIXED_NOT_REPRESENTABLE otherwise *)
+MODULE Fixed
+  IMPORT TextIO, StandardImplementationPrelude;
+  REPRESENTATION
+    Fine = FIXED [0P..1P10] SCALE 1P-10;
+    Half = FIXED [-10P2..10P2] SCALE 0.5P;
+    Cents = FIXED [-1P6..1P6] SCALE 0.01P;
+    Eighths = FIXED [0P..10P] SCALE BASE2 1P-3;
+  VAR f, g: Fine; h: Half; c, d: Cents; e: Eighths; x: REAL64;
+  f := 1P9 + 1P-10; g := f - 1P9;
+  IF g = 1P-10 THEN Write("exact ") ENDIF;
+  c := 0.1P + 0.2P; IF c = 0.3P THEN Write("0.1+0.2=0.3 ") ENDIF;
+  d := 0.0P;
+  FOR i: INTEGER [1..10] DO d := d + 0.1P ENDFOR;
+  IF d = 1P THEN Write("ten dimes ") ENDIF;
+  WriteLn();
+  h := 1.5P; c := h; WriteFixed(c, 2); Write(" ");
+  c := h * 3P; WriteFixed(c, 2); Write(" ");
+  e := BASE2 0.011P; WriteFixed(e, 3); Write(" ");
+  IF h > 1.25P THEN Write(">") ENDIF;
+  IF 1.25P < h THEN Write("<") ENDIF;
+  WriteLn();
+  c := FIXED_DIV(10.0P, 3.0P, 0.01P); WriteFixed(c, 2); Write(" ");
+  c := FIXED_DIV(-10.0P, 3.0P, 0.01P); WriteFixed(c, 2); Write(" ");
+  h := NEAR_FIXED(1.25P, 0.5P); WriteFixed(h, 1); Write(" ");
+  h := NEAR_FIXED(-1.25P, 0.5P); WriteFixed(h, 1); Write(" ");
+  h := NEAR_FIXED(7, 0.5P); WriteFixed(h, 1); Write(" ");
+  c := NEAR_FIXED(2.0 / 3.0, 0.01P); WriteFixed(c, 2); WriteLn();
+  c := 2.75P;
+  Write(FLOOR(c)); Write(" "); Write(CEILING(c)); Write(" "); Write(NEAR_INTEGER(c)); Write(" ");
+  c := -2.5P;
+  Write(FLOOR(c)); Write(" "); Write(CEILING(c)); Write(" "); Write(NEAR_INTEGER(c)); Write(" ");
+  x := NEAR_FLOATING(c); WriteFloat(x, 2); Write(" ");
+  x := 1.0P / 4.0P; WriteFloat(x, 3); WriteLn();
+  BEGIN
+    EXCEPTION CASE FIXED_NOT_REPRESENTABLE => Write("0.25 is not a multiple of 0.5"); WriteLn() ENDEXCEPTION;
+    h := 0.25P
+  END;
+  BEGIN
+    EXCEPTION CASE OUT_OF_RANGE => Write("2000 is out of range"); WriteLn() ENDEXCEPTION;
+    h := 2000P
+  END;
+  BEGIN
+    EXCEPTION CASE ZERO_DENOMINATOR => Write("FIXED_DIV by zero"); WriteLn() ENDEXCEPTION;
+    c := FIXED_DIV(1.0P, 0.0P, 0.01P)
+  END
+ENDMODULE Fixed

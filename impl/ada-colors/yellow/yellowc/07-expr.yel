@@ -240,7 +240,10 @@
       IF to^.lo = 0 THEN RETURN FALSE ENDIF;
       RETURN NOT (to^.hasm AND from^.hasm AND (to^.mlo <= from^.mlo) AND (from^.mhi <= to^.mhi))
     ENDIF;
-    IF (to^.kind = R_FLOAT) OR (to^.kind = R_FIXED) THEN RETURN to^.lo # 0 ENDIF;
+    IF to^.kind = R_FLOAT THEN RETURN to^.lo # 0 ENDIF;
+    IF to^.kind = R_FIXED THEN
+      RETURN (to^.lo # 0) OR (to^.fsn # from^.fsn) OR (to^.fsd # from^.fsd)
+    ENDIF;
     IF to^.kind = R_RECORD THEN
       RETURN (from^.kind = R_RECORD) AND (to^.cname # from^.cname)
     ENDIF;
@@ -372,9 +375,101 @@
     RETURN SE()
   ENDPROCEDURE ConvertArray;
 
+  (* a FIXED value, the whole number of its scale, as a number of the scale *)
+  (* of to: FIXED_NOT_REPRESENTABLE when it is not a multiple of it *)
+  PROCEDURE RescaleCode RETURNS Txt (CONST code: Txt; CONST from, to: Rep)
+    VAR p, q: Txt;
+        one: BOOLEAN;
+    ScaleRatio(from, to, p, q, one);
+    IF one THEN RETURN code ENDIF;
+    SB();
+    SA("y_fix_conv(");
+    ST(code);
+    SA(", ");
+    ST(p);
+    SA(", ");
+    ST(q);
+    SA(")");
+    RETURN SE()
+  ENDPROCEDURE RescaleCode;
+
+  (* two FIXED operands brought to their common scale, the largest of which *)
+  (* both scales are multiples (VIII.C: fixed-point arithmetic is exact) *)
+  PROCEDURE CommonScale (VAR a: Txt; CONST ra: Rep; VAR b: Txt; CONST rb: Rep; CONST r: Rep;
+                         CONST line: INT)
+    VAR gn, gd: INT;
+    gn := Gcd(ra^.fsn, rb^.fsn);
+    gd := MulChk(ra^.fsd DIV Gcd(ra^.fsd, rb^.fsd), rb^.fsd, line);
+    SetScale(r, gn, gd);
+    a := RescaleCode(a, ra, r);
+    b := RescaleCode(b, rb, r);
+    RETURN
+  ENDPROCEDURE CommonScale;
+
+  (* a fixed-point literal: mantissa times its base to the power of the *)
+  (* last digit; its scale is that power *)
+  PROCEDURE FixLiteral (CONST n: Node; OUT code: Txt; OUT r: Rep)
+    VAR k: INT := n^.ival;
+        e: INT := FixE[k];
+    r := CopyRep(RFixed);
+    r^.abstract := FALSE;
+    IF e >= 0 THEN SetScale(r, PowChk(FixB[k], e, n^.line), 1)
+    ELSE SetScale(r, 1, PowChk(FixB[k], -e, n^.line))
+    ENDIF;
+    SB();
+    SA("((yfix)INT64_C(");
+    SI(FixV[k]);
+    SA("))");
+    code := SE();
+    RETURN
+  ENDPROCEDURE FixLiteral;
+
+  (* a manifest FIXED value (VI.C), as the fraction num / den *)
+  PROCEDURE ManifestFix (CONST n: Node; OUT ok: BOOLEAN; OUT num, den: INT)
+    VAR k, e, g, n2, d2: INT;
+        ok2: BOOLEAN;
+    ok := FALSE;
+    num := 0;
+    den := 1;
+    IF n^.kind = N_FIXED THEN
+      k := n^.ival;
+      e := FixE[k];
+      num := FixV[k];
+      IF e >= 0 THEN num := MulChk(num, PowChk(FixB[k], e, n^.line), n^.line)
+      ELSE den := PowChk(FixB[k], -e, n^.line)
+      ENDIF;
+      ok := TRUE
+    ELSIF n^.kind = N_INT THEN
+      num := n^.ival;
+      ok := TRUE
+    ELSIF n^.kind = N_PAREN THEN
+      ManifestFix(n^.a, ok, num, den)
+    ELSIF n^.kind = N_NEG THEN
+      ManifestFix(n^.a, ok, num, den);
+      num := -num
+    ELSIF (n^.kind = N_BIN) AND (n^.name = P_STAR) THEN
+      ManifestFix(n^.a, ok, num, den);
+      ManifestFix(n^.b, ok2, n2, d2);
+      ok := ok AND ok2;
+      num := MulChk(num, n2, n^.line);
+      den := MulChk(den, d2, n^.line)
+    ENDIF;
+    g := Gcd(num, den);
+    num := num DIV g;
+    den := den DIV g;
+    RETURN
+  ENDPROCEDURE ManifestFix;
+
+  (* a floating-point result: an overflow is OVERFLOW, not a value out of *)
+  (* range (VIII.C, Appendix C) *)
+  PROCEDURE FloatChk RETURNS Txt (CONST code: Txt)
+    RETURN Join(T("y_fchk("), code, T(")"))
+  ENDPROCEDURE FloatChk;
+
   (* the C text of value code (of representation from) held in to: ranges are *)
   (* checked unless the manifest bounds show there is no need *)
   PROCEDURE Convert RETURNS Txt (CONST code: Txt; CONST to, from: Rep)
+    VAR c: Txt;
     IF NOT NeedsConv(to, from) THEN RETURN code ENDIF;
     IF to^.kind = R_RECORD THEN RETURN ConvertRecord(code, to, from) ENDIF;
     IF (to^.kind = R_ARRAY) OR (to^.kind = R_UARRAY) THEN RETURN ConvertArray(code, to, from) ENDIF;
@@ -401,15 +496,16 @@
       RETURN SE()
     ENDIF;
     IF to^.kind = R_FIXED THEN
+      (* to the scale of the target, exactly, then its range (VIII.C) *)
+      c := RescaleCode(code, from, to);
+      IF to^.lo = 0 THEN RETURN c ENDIF;
       SB();
-      SA("y_fixed(");
-      ST(code);
+      SA("y_fix_range(");
+      ST(c);
       SA(", ");
       ST(LoText(to));
       SA(", ");
       ST(HiText(to));
-      SA(", ");
-      ST(to^.scale);
       SA(")");
       RETURN SE()
     ENDIF;
@@ -585,9 +681,13 @@
       IF n^.d # Node NIL THEN r := Qualifier(n) ENDIF;
       code := Paren(n^.text)
     ELSIF k = N_FIXED THEN
-      r := RFixed;
-      IF n^.d # Node NIL THEN r := Qualifier(n) ENDIF;
-      code := n^.text
+      FixLiteral(n, code, r);
+      IF n^.d # Node NIL THEN
+        a := Qualifier(n);
+        IF a^.kind # R_FIXED THEN FailS(n^.line, "a fixed-point literal qualified by a type that is not FIXED") ENDIF;
+        r^.tid := a^.tid;
+        r^.tname := a^.tname
+      ENDIF
     ELSIF k = N_NIL THEN
       IF n^.d = Node NIL THEN FailS(n^.line, "NIL is qualified by the name of a pointer type (VI.B.4)") ENDIF;
       r := Qualifier(n);
@@ -789,10 +889,16 @@
       SA("rt_neg(");
       ST(c);
       SA(")")
-    ELSIF (a^.kind = R_FLOAT) OR (a^.kind = R_FIXED) THEN
+    ELSIF a^.kind = R_FLOAT THEN
       r := CopyRep(a);
       r^.lo := 0;
       SA("(-");
+      ST(c);
+      SA(")")
+    ELSIF a^.kind = R_FIXED THEN
+      r := CopyRep(a);
+      r^.lo := 0;
+      SA("y_fix_neg(");
       ST(c);
       SA(")")
     ELSIF a^.kind = R_SET THEN
@@ -887,6 +993,19 @@
     RETURN (r^.kind = R_ENUM) AND r^.ordered
   ENDPROCEDURE IsOrdered;
 
+  (* the value of a FIXED number as a floating-point one *)
+  PROCEDURE FixToFloat RETURNS Txt (CONST c: Txt; CONST r: Rep)
+    SB();
+    SA("y_fix_float(");
+    ST(c);
+    SA(", INT64_C(");
+    SI(r^.fsn);
+    SA("), INT64_C(");
+    SI(r^.fsd);
+    SA("))");
+    RETURN SE()
+  ENDPROCEDURE FixToFloat;
+
   PROCEDURE BinExpr (CONST n: Node; CONST want: Rep; OUT code: Txt; OUT r: Rep)
     VAR op: Txt := n^.name;
         a, b, t: Txt;
@@ -928,6 +1047,7 @@
         FailN(n^.line, ra^.tname, " is opaque here: = is not exported (X.B.3)")
       ENDIF;
       r := RBool;
+      IF ra^.kind = R_FIXED THEN CommonScale(a, ra, b, rb, Unbounded(ra), n^.line) ENDIF;
       code := EqCode(a, ra, b, rb);
       IF op = P_NE THEN
         SB();
@@ -942,6 +1062,7 @@
       CheckType(n^.line, ra, rb);
       IF NOT IsOrdered(ra) THEN FailS(n^.line, "< <= > >= apply to ordered values (VIII.A.1)") ENDIF;
       r := RBool;
+      IF ra^.kind = R_FIXED THEN CommonScale(a, ra, b, rb, Unbounded(ra), n^.line) ENDIF;
       IF op = P_LT THEN code := Infix(a, "<", b)
       ELSIF op = P_LE THEN code := Infix(a, "<=", b)
       ELSIF op = P_GT THEN code := Infix(a, ">", b)
@@ -995,14 +1116,32 @@
       ENDIF;
       RETURN
     ENDIF;
-    IF (k = R_FLOAT) OR (k = R_FIXED) THEN
+    IF k = R_FLOAT THEN
       r := Unbounded(ra);
-      IF op = P_PLUS THEN code := Infix(a, "+", b)
-      ELSIF op = P_MINUS THEN code := Infix(a, "-", b)
-      ELSIF op = P_STAR THEN code := Infix(a, "*", b)
+      IF op = P_PLUS THEN code := FloatChk(Infix(a, "+", b))
+      ELSIF op = P_MINUS THEN code := FloatChk(Infix(a, "-", b))
+      ELSIF op = P_STAR THEN code := FloatChk(Infix(a, "*", b))
       ELSIF op = P_SLASH THEN
         r := RFloat;
-        code := Call2("rt_fdiv", a, b)
+        code := FloatChk(Call2("rt_fdiv", a, b))
+      ELSE
+        FailN(n^.line, op, " does not apply to these numbers")
+      ENDIF;
+      RETURN
+    ENDIF;
+    IF k = R_FIXED THEN
+      (* exact (VIII.C): the result has the common scale of a sum, the *)
+      (* product of the scales of a product; / gives FLOATING *)
+      r := Unbounded(ra);
+      IF (op = P_PLUS) OR (op = P_MINUS) THEN
+        CommonScale(a, ra, b, rb, r, n^.line);
+        IF op = P_PLUS THEN code := Call2("y_fix_add", a, b) ELSE code := Call2("y_fix_sub", a, b) ENDIF
+      ELSIF op = P_STAR THEN
+        SetScale(r, MulChk(ra^.fsn, rb^.fsn, n^.line), MulChk(ra^.fsd, rb^.fsd, n^.line));
+        code := Call2("y_fix_mul", a, b)
+      ELSIF op = P_SLASH THEN
+        r := RFloat;
+        code := FloatChk(Call2("rt_fdiv", FixToFloat(a, ra), FixToFloat(b, rb)))
       ELSE
         FailN(n^.line, op, " does not apply to these numbers")
       ENDIF;

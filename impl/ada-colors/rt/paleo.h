@@ -417,7 +417,7 @@ typedef struct {
  * compare values of it. Structured representations get one when they are
  * elaborated, since their bounds are scope-entry constants (L-34). */
 typedef struct ydesc ydesc;
-enum { YK_INT, YK_BYTE, YK_FLOAT, YK_PTR, YK_SET, YK_ARRAY, YK_RECORD, YK_OPAQUE };
+enum { YK_INT, YK_BYTE, YK_FLOAT, YK_PTR, YK_SET, YK_ARRAY, YK_RECORD, YK_OPAQUE, YK_FIX };
 struct ydesc {
   int kind;
   size_t size;                                 /* bytes of one value */
@@ -520,6 +520,26 @@ extern int Y_X_FIXED, Y_X_ZERO_DENOM, Y_X_NO_RETURN;
 const ydesc *y_desc_vector(const ydesc *elem);
 void y_device(ysig *s, rt_int address);   /* a SIGNAL AT a device location */
 extern const ydesc y_d_str;
+
+/* ---- fixed point (VI.A.1.b, VIII.C): a value is a whole number of its scale */
+typedef __int128 yfix;
+extern const ydesc y_d_fix;
+yfix y_fix_add(yfix a, yfix b);                /* OVERFLOW */
+yfix y_fix_sub(yfix a, yfix b);
+yfix y_fix_mul(yfix a, yfix b);
+yfix y_fix_neg(yfix a);
+yfix y_fix_conv(yfix k, yfix p, yfix q);   /* k * p / q, FIXED_NOT_REPRESENTABLE */
+yfix y_fix_range(yfix k, yfix lo, yfix hi);    /* OUT_OF_RANGE */
+yfix y_fix_bound(yfix k, yfix p, yfix q, int up);
+yfix y_fix_div(yfix n, yfix d, yfix p, yfix q); /* FIXED_DIV, ZERO_DENOMINATOR */
+yfix y_fix_near(yfix k, yfix p, yfix q);   /* NEAR_FIXED */
+yfix y_fix_of_float(double x, rt_int sn, rt_int sd);
+double y_fix_float(yfix k, rt_int sn, rt_int sd);
+rt_int y_fix_floor(yfix k, rt_int sn, rt_int sd);
+rt_int y_fix_ceiling(yfix k, rt_int sn, rt_int sd);
+rt_int y_fix_near_integer(yfix k, rt_int sn, rt_int sd);
+rt_int y_fmt_fix(yfix k, rt_int sn, rt_int sd, rt_int decimals, unsigned char *buf, rt_int cap);
+double y_fchk(double v);                       /* a floating-point overflow is OVERFLOW */
 extern const ydesc y_d_sig;                  /* a SIGNAL as an array component */
 
 #endif

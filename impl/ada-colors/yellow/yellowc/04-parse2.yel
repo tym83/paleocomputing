@@ -309,7 +309,7 @@
       n^.ival := TV()
     ELSIF kind = K_FIXED THEN
       n := NewNode(N_FIXED, line);
-      n^.text := TV()
+      n^.ival := TV()
     ELSIF kind = K_FLOAT THEN
       n := NewNode(N_FLOAT, line);
       n^.text := TV()

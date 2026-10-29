@@ -63,7 +63,8 @@ MODULE yellowc
       VAR fwdscope: INT;
       VAR monitor: Sym;           (* signals: the monitor they belong to *)
       VAR serial: INT;
-      VAR sig: Txt                (* the representation spelled out, for VII.G *)
+      VAR sig: Txt;               (* the representation spelled out, for VII.G *)
+      VAR fsn, fsd: INT           (* FIXED: the scale, a rational fsn / fsd *)
     ENDRECORD;
 
     FieldRec = RECORD

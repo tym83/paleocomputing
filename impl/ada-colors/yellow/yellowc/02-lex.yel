@@ -9,6 +9,9 @@
     Pos: INT := 0;
     LineNo: INT := 1;
     Base: INT := 0;                 (* a BASE word was just read *)
+    (* fixed-point literals: mantissa, base and exponent of the last digit *)
+    FixV, FixB, FixE: ARRAY (INTEGER [1..200000] OF INT);
+    NFix: INT := 0;
 
   (* the reserved words and punctuation marks are interned first, so a word *)
   (* is reserved when its Txt is at most NKW *)
@@ -91,25 +94,49 @@
     RETURN
   ENDPROCEDURE LexError;
 
+  (* the digits of a number at Pos: decimal, or of the BASE written before *)
+  (* it, which they must be consistent with (IV.B) *)
+  PROCEDURE LexDigits (CONST b: INT; CONST based: BOOLEAN)
+    VAR t: Txt;
+    WHILE IsDigit(At(Pos)) OR (based AND (DigitVal(At(Pos)) < 16)) DO
+      IF DigitVal(At(Pos)) >= b THEN
+        SB();
+        SC('SQ');
+        SC(At(Pos));
+        SA("'SQ' is not a digit of BASE");
+        SI(b);
+        SA(" (IV.B)");
+        t := SE();
+        Fail(LineNo, t)
+      ENDIF;
+      Pos := Pos + 1
+    ENDWHILE;
+    RETURN
+  ENDPROCEDURE LexDigits;
+
   (* a number at Pos (VI.B): integer, fixed (with P) or floating (with a point) *)
   PROCEDURE LexNumber (CONST neg: BOOLEAN)
     VAR b: INT := 10;
         mstart, mend, fstart, fend: INT;
-        hasfrac: BOOLEAN := FALSE;
+        hasfrac, based: BOOLEAN := FALSE;
         v, d, exp, esign, nfrac: INT := 0;
         t: Txt;
-    IF Base # 0 THEN b := Base ENDIF;
+    IF Base # 0 THEN
+      b := Base;
+      based := TRUE
+    ENDIF;
     Base := 0;
     mstart := Pos;
-    WHILE DigitVal(At(Pos)) < b DO Pos := Pos + 1 ENDWHILE;
+    LexDigits(b, based);
     mend := Pos;
+    IF mend = mstart THEN LexError("a number has at least one digit (IV.B)") ENDIF;
     fstart := Pos;
     fend := Pos;
     IF (At(Pos) = '.') AND (At(Pos + 1) # '.') THEN
       hasfrac := TRUE;
       Pos := Pos + 1;
       fstart := Pos;
-      WHILE DigitVal(At(Pos)) < b DO Pos := Pos + 1 ENDWHILE;
+      LexDigits(b, based);
       fend := Pos
     ENDIF;
     IF At(Pos) = 'P' THEN
@@ -122,26 +149,29 @@
       ENDIF;
       exp := 0;
       WHILE IsDigit(At(Pos)) DO
+        IF exp > 1000 THEN LexError("a fixed-point exponent beyond this implementation") ENDIF;
         exp := (exp * 10) + DigitVal(At(Pos));
         Pos := Pos + 1
       ENDWHILE;
       exp := exp * esign;
       v := 0;
-      FOR i: INTEGER [mstart..mend - 1] DO v := (v * b) + DigitVal(Pool[i]) ENDFOR;
       nfrac := fend - fstart;
-      FOR i: INTEGER [fstart..fend - 1] DO v := (v * b) + DigitVal(Pool[i]) ENDFOR;
-      SB();
-      SA("(");
-      IF neg THEN SA("-") ENDIF;
-      SA("(double)");
-      SI(v);
-      SA(" * pow(");
-      SI(b);
-      SA(", ");
-      SI(exp - nfrac);
-      SA("))");
-      t := SE();
-      AddTok(K_FIXED, t);
+      FOR i: INTEGER [mstart..fend - 1] DO
+        IF (i < mend) OR (i >= fstart) THEN
+          d := DigitVal(Pool[i]);
+          IF v > ((LARGEST - d) DIV b) THEN
+            LexError("a fixed-point literal with more digits than this implementation holds")
+          ENDIF;
+          v := (v * b) + d
+        ENDIF
+      ENDFOR;
+      IF neg THEN v := -v ENDIF;
+      IF NFix >= 200000 THEN LexError("too many fixed-point literals") ENDIF;
+      NFix := NFix + 1;
+      FixV[NFix] := v;
+      FixB[NFix] := b;
+      FixE[NFix] := exp - nfrac;
+      AddTok(K_FIXED, NFix);
       RETURN
     ENDIF;
     IF hasfrac THEN
@@ -237,6 +267,8 @@
             (IsDigit(At(Pos + 1)) OR ((Base = 16) AND (DigitVal(At(Pos + 1)) < 16))) THEN
         Pos := Pos + 1;
         LexNumber(c = '-')
+      ELSIF Base # 0 THEN
+        LexError("a BASE word is followed by a number (IV.B)")
       ELSIF IsLetter(c) THEN
         start := Pos;
         WHILE IsLetter(At(Pos)) OR IsDigit(At(Pos)) DO Pos := Pos + 1 ENDWHILE;

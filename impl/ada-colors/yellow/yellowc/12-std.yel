@@ -117,6 +117,20 @@
     RETURN
   ENDPROCEDURE CodeInsert;
 
+  (* the scale argument of NEAR_FIXED and FIXED_DIV, a manifest constant: *)
+  (* the FIXED representation of the result, without a range *)
+  PROCEDURE ManifestScale RETURNS Rep (CONST a, n: Node)
+    VAR ok: BOOLEAN;
+        sn, sd: INT;
+        r: Rep;
+    ManifestFix(a, ok, sn, sd);
+    IF NOT ok OR (sn <= 0) THEN FailN(n^.line, n^.name, ": the scale is a positive manifest constant (XI)") ENDIF;
+    r := CopyRep(RFixed);
+    r^.abstract := FALSE;
+    SetScale(r, sn, sd);
+    RETURN r
+  ENDPROCEDURE ManifestScale;
+
   PROCEDURE StdCall (CONST f: INT; CONST n: Node; CONST statement: BOOLEAN;
                      OUT code: Txt; OUT r: Rep)
     VAR a, b, c, d, t: Txt;
@@ -368,6 +382,19 @@
       NumArg(Arg(n, 1), a, ra);
       r := Unbounded(RInt);
       IF ra^.kind = R_INT THEN code := a
+      ELSIF ra^.kind = R_FIXED THEN
+        (* exact on the scaled whole number *)
+        SB();
+        IF f = F_FLOOR THEN SA("y_fix_floor(") ELSIF f = F_CEILING THEN SA("y_fix_ceiling(")
+        ELSE SA("y_fix_near_integer(")
+        ENDIF;
+        ST(a);
+        SA(", INT64_C(");
+        SI(ra^.fsn);
+        SA("), INT64_C(");
+        SI(ra^.fsd);
+        SA("))");
+        code := SE()
       ELSIF f = F_FLOOR THEN code := Call1("y_floor", a)
       ELSIF f = F_CEILING THEN code := Call1("y_ceiling", a)
       ELSE code := Call1("y_near_integer", a)
@@ -378,24 +405,72 @@
       NArgs(n, 1);
       NumArg(Arg(n, 1), a, ra);
       r := RFloat;
-      code := Join(T("((double)("), a, T("))"));
+      IF ra^.kind = R_FIXED THEN code := FixToFloat(a, ra)
+      ELSE code := Join(T("((double)("), a, T("))"))
+      ENDIF;
       RETURN
     ENDIF;
     IF f = F_NEAR_FIXED THEN
+      (* the nearest multiple of a manifest scale, halves away from zero *)
       NArgs(n, 2);
       NumArg(Arg(n, 1), a, ra);
-      NumArg(Arg(n, 2), b, rb);
-      r := RFixed;
-      code := Call2("y_near_fixed", Join(T("(double)("), a, T(")")), b);
+      r := ManifestScale(Arg(n, 2), n);
+      IF ra^.kind = R_FLOAT THEN
+        SB();
+        SA("y_fix_of_float(");
+        ST(a);
+        SA(", INT64_C(");
+        SI(r^.fsn);
+        SA("), INT64_C(");
+        SI(r^.fsd);
+        SA("))");
+        code := SE()
+      ELSE
+        IF ra^.kind = R_INT THEN
+          rc := CopyRep(RFixed);
+          SetScale(rc, 1, 1);
+          a := Join(T("((yfix)("), a, T("))"))
+        ELSE
+          rc := ra
+        ENDIF;
+        ScaleRatio(rc, r, d, t, ok);
+        SB();
+        SA("y_fix_near(");
+        ST(a);
+        SA(", ");
+        ST(d);
+        SA(", ");
+        ST(t);
+        SA(")");
+        code := SE()
+      ENDIF;
       RETURN
     ENDIF;
     IF f = F_FIXED_DIV THEN
+      (* the largest multiple of the result scale not above the quotient *)
       NArgs(n, 3);
       NumArg(Arg(n, 1), a, ra);
       NumArg(Arg(n, 2), b, rb);
-      NumArg(Arg(n, 3), c, rc);
-      r := RFixed;
-      code := Join(T("y_fixed_div("), a, Join(T(", "), b, Join(T(", "), c, T(")"))));
+      IF (ra^.kind # R_FIXED) OR (rb^.kind # R_FIXED) THEN FailS(n^.line, "FIXED_DIV divides fixed-point numbers (XI)") ENDIF;
+      CheckType(n^.line, ra, rb);
+      r := ManifestScale(Arg(n, 3), n);
+      r^.tid := ra^.tid;
+      r^.tname := ra^.tname;
+      (* n * sn / (d * sd * rs) = (n * p) / (d * q), with p / q = sn / (sd * rs) *)
+      rc := CopyRep(RFixed);
+      SetScale(rc, MulChk(rb^.fsn, r^.fsn, n^.line), MulChk(rb^.fsd, r^.fsd, n^.line));
+      ScaleRatio(ra, rc, d, t, ok);
+      SB();
+      SA("y_fix_div(");
+      ST(a);
+      SA(", ");
+      ST(b);
+      SA(", ");
+      ST(d);
+      SA(", ");
+      ST(t);
+      SA(")");
+      code := SE();
       RETURN
     ENDIF;
     IF (f = F_CLAIM) OR (f = F_RELEASE) OR (f = F_COND_CLAIM) THEN

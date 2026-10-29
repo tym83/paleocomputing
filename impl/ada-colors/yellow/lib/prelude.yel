@@ -128,11 +128,11 @@ MODULE TextIO
     RETURN
   ENDPROCEDURE WriteFloat;
 
-  (* a fixed-point value is held as a multiple of its scale *)
-  PROCEDURE WriteFixed (CONST x: FIXED [-1P15..1P15] SCALE 1P-6; CONST decimals: INTEGER64)
+  (* a fixed-point value is held as a whole number of its scale, here 1P-18 *)
+  PROCEDURE WriteFixed (CONST x: FIXED [-1P15..1P15] SCALE 1P-18; CONST decimals: INTEGER64)
     VAR buf: ARRAY (INTEGER [1..64] OF ASCII);
         len: INTEGER64;
-    C_CODE_INSERT("$len = y_fmt_fixed($x, $decimals, (unsigned char *)$buf.p, 64);");
+    C_CODE_INSERT("$len = y_fmt_fix($x, 1, INT64_C(1000000000000000000), $decimals, (unsigned char *)$buf.p, 64);");
     FOR i: INTEGER [1..len] DO PUT(Out, buf[i]) ENDFOR;
     RETURN
   ENDPROCEDURE WriteFixed;

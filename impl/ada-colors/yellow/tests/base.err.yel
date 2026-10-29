@@ -1,0 +1,5 @@
+(* the digits of a number are consistent with its BASE (IV.B) *)
+MODULE Base
+  IMPORT StandardImplementationPrelude;
+  CONST n: INTEGER64 = BASE8 179;
+ENDMODULE Base

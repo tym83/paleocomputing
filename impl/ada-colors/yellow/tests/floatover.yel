@@ -1,0 +1,14 @@
+(* a floating-point result beyond the machine is OVERFLOW (Appendix C); a *)
+(* value beyond a representation's range is OUT_OF_RANGE *)
+MODULE FloatOver
+  IMPORT TextIO, StandardImplementationPrelude;
+  VAR x: REAL64; y: FLOATING [-1.0E3..1.0E3] PRECISION 7;
+  BEGIN
+    EXCEPTION CASE OVERFLOW => Write("overflow"); WriteLn() ENDEXCEPTION;
+    x := 1.0E308; x := x * 10.0
+  END;
+  BEGIN
+    EXCEPTION CASE OUT_OF_RANGE => Write("out of range"); WriteLn() ENDEXCEPTION;
+    y := 999.0; y := y * 2.0
+  END
+ENDMODULE FloatOver
