@@ -409,6 +409,7 @@ PROC gen_subprogram(CONST d : node, CONST y : sym) IMPORTS ALL;
    VAR head : text;
    VAR frame : text := mk(y.cname.ALL & "fr");
    VAR parent : text;
+   VAR copy_back : text := mk("");
    IF in_func THEN
       parent := mk(func_sym.cname.ALL & "fr");
    END IF;
@@ -459,6 +460,17 @@ PROC gen_subprogram(CONST d : node, CONST y : sym) IMPORTS ALL;
          IF y.kind /= y_task THEN
             emit("F->" & f & " = " & f & ";");
          END IF;
+         % an OUT formal is a local variable assigned (via :=) to the actual on
+         % normal completion only (7.3), so an unhandled exception leaves the
+         % actual as it was. The local starts as a copy of the actual, which
+         % gives it the actual's subtype; its value is not meant to be read
+         IF pm.mode = m_out AND y.kind /= y_task THEN
+            put(fields_buf, " " & ct & " " & f & "v;");
+            emit("F->" & f & "v = " & copy_code(pm.t, "*F->" & f) & ";");
+            copy_back := mk(copy_back.ALL & "  " & assign_code("(*F->" & f & ")", pm.t, "F->" & f & "v", pm.c));
+            p.access := mk(f & "v");
+            p.byref := FALSE;
+         END IF;
       END IF;
       p.t := pm.t;
       p.c := pm.c;
@@ -496,9 +508,15 @@ PROC gen_subprogram(CONST d : node, CONST y : sym) IMPORTS ALL;
    IF y.result.kind /= t_void THEN
       put(out_funcs, "  rt_raise_msg(RT_X_ASSERT, " & q & "function ended without RETURN" & q & ");");
       put(out_funcs, "ret_:");
+      IF copy_back.LEN > 0 THEN
+         put(out_funcs, copy_back.ALL);
+      END IF;
       put(out_funcs, "  return F->result_;");
    ELSE
       put(out_funcs, "ret_:");
+      IF copy_back.LEN > 0 THEN
+         put(out_funcs, copy_back.ALL);
+      END IF;
       put(out_funcs, "  return;");
    END IF;
    put(out_funcs, "}");

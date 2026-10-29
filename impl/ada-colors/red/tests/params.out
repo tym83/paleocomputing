@@ -1,0 +1,9 @@
+17 / 5 = 3 rem 2
+after the exception a = 1
+recovered inside
+after recovery a = 7
+y during the call: 1
+after the call a = 10
+g during the call: 0
+after the call g = 3
+s = done, n = 1
