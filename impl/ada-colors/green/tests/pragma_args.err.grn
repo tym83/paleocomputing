@@ -1,0 +1,5 @@
+procedure MAIN is
+   pragma LIST(MAYBE);
+begin
+   null;
+end MAIN;

@@ -1,12 +1,88 @@
    -- ---- declarative parts (RM79 6.1) ------------------------------------------------
 
-   procedure SKIP_PRAGMA is
+   -- pragma identifier [(argument {, argument})]; an argument is an
+   -- identifier, a string or a number (RM79 2.7)
+   procedure PRAGMA_P(RES : out NODE) is
+      X, A, HEAD, TAIL : NODE;
    begin
-      while not AT_OP(";") loop
+      X := NN(N_PRAGMA, CUR_LINE);
+      EXPECT_KW("PRAGMA");
+      EXPECT_ID(X.NAME);
+      if AT_OP("(") then
          SKIP;
-      end loop;
-      SKIP;
-   end SKIP_PRAGMA;
+         loop
+            if AT_KIND(K_ID) then
+               NAME_NODE(A);
+            elsif AT_KIND(K_STR) or AT_KIND(K_INT) or AT_KIND(K_FLOAT) then
+               PRIMARY(A);
+            else
+               PERROR("a pragma argument is an identifier, a string or a number (RM79 2.7)");
+            end if;
+            APPEND(HEAD, TAIL, A);
+            exit when not AT_OP(",");
+            SKIP;
+         end loop;
+         EXPECT_OP(")");
+      end if;
+      EXPECT_OP(";");
+      X.A := HEAD;
+      CHECK_PRAGMA(X);
+      RES := X;
+   end PRAGMA_P;
+
+   -- the pragmas of RM79 App. B have their arguments checked; the
+   -- configuration pragmas take effect at once (RM79 13.7); a pragma not
+   -- known here has no effect
+   procedure CHECK_PRAGMA(X : NODE) is
+      P : STRING := X.NAME.all;
+      N : INTEGER := LIST_LEN(X.A);
+      A : NODE := X.A;
+   begin
+      if P = "PAGE" or P = "INLINE" then
+         if N /= 0 then
+            FAIL(X.LINE, "pragma " & P & " takes no argument (RM79 App. B)");
+         end if;
+      elsif P = "LIST" or P = "OPTIMIZE" or P = "CREATION" or P = "INTERFACE" or P = "SYSTEM" then
+         if N /= 1 or else A.KIND /= N_NAME then
+            FAIL(X.LINE, "pragma " & P & " takes one identifier (RM79 App. B)");
+         end if;
+         if P = "LIST" and then A.NAME.all /= "ON" and then A.NAME.all /= "OFF" then
+            FAIL(X.LINE, "pragma LIST(ON) or LIST(OFF) (RM79 App. B)");
+         elsif P = "OPTIMIZE" and then A.NAME.all /= "TIME" and then A.NAME.all /= "SPACE" then
+            FAIL(X.LINE, "pragma OPTIMIZE(TIME) or OPTIMIZE(SPACE) (RM79 App. B)");
+         elsif P = "CREATION" and then A.NAME.all /= "STATIC" and then A.NAME.all /= "DYNAMIC" then
+            FAIL(X.LINE, "pragma CREATION(STATIC) or CREATION(DYNAMIC) (RM79 9.2)");
+         end if;
+         if P = "OPTIMIZE" then
+            CONF_OPTIMIZE := A.NAME;
+         elsif P = "SYSTEM" then
+            CONF_SYSTEM := A.NAME;
+         end if;
+      elsif P = "STORAGE_UNIT" or P = "MEMORY_SIZE" then
+         if N /= 1 or else A.KIND /= N_INT then
+            FAIL(X.LINE, "pragma " & P & " takes a number (RM79 13.7)");
+         end if;
+         if P = "STORAGE_UNIT" then
+            CONF_STORAGE_UNIT := A.IVAL;
+         else
+            CONF_MEMORY_SIZE := A.IVAL;
+         end if;
+      elsif P = "SUPPRESS" or P = "ENVIRONMENT" then
+         if N = 0 then
+            FAIL(X.LINE, "pragma " & P & " names at least one " & "unit or exception (RM79 App. B)");
+         end if;
+         while A /= null loop
+            if A.KIND /= N_NAME then
+               FAIL(X.LINE, "pragma " & P & " takes names (RM79 App. B)");
+            end if;
+            A := A.NEXT;
+         end loop;
+      elsif P = "INCLUDE" then
+         if N /= 1 or else A.KIND /= N_STR then
+            FAIL(X.LINE, "pragma INCLUDE takes the name of a file (RM79 App. B)");
+         end if;
+      end if;
+   end CHECK_PRAGMA;
 
    procedure SKIP_VISIBILITY is
       NAMES : NODE;
@@ -46,7 +122,8 @@
    begin
       loop
          if AT_KW("PRAGMA") then
-            SKIP_PRAGMA;
+            PRAGMA_P(X);
+            APPEND(HEAD, TAIL, X);
          elsif AT_KW("USE") then
             SKIP;
             X := NN(N_USE, CUR_LINE);
@@ -416,10 +493,10 @@
    begin
       while not AT_STATEMENTS_END loop
          if AT_KW("PRAGMA") then
-            if KIND_AT(1) = K_ID and then TEXT_AT(1) = "INTERFACE" then
+            PRAGMA_P(X);
+            if X.NAME.all = "INTERFACE" then
                SAW_INTERFACE := TRUE;
             end if;
-            SKIP_PRAGMA;
          else
             STATEMENT(X);
             APPEND(HEAD, TAIL, X);
@@ -700,7 +777,7 @@
    begin
       while not AT_KIND(K_EOF) loop
          if AT_KW("PRAGMA") then
-            SKIP_PRAGMA;
+            PRAGMA_P(X);
          else
             if AT_KW("RESTRICTED") then
                SKIP_VISIBILITY;

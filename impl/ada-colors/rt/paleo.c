@@ -1798,6 +1798,24 @@ int rt_g_exc_new(const char *name) {
 
 static int g_exc_id(const char *name) { return rt_exc(name); }
 
+/* the text of a file for pragma INCLUDE (RM79 App. B); null if it cannot be
+ * read */
+void rt_g_read_file_text(rstr name, rstr **res) {
+  FILE *f = fopen(rt_cstr(name), "rb");
+  if (!f) {
+    *res = NULL;
+    return;
+  }
+  fseek(f, 0, SEEK_END);
+  long n = ftell(f);
+  fseek(f, 0, SEEK_SET);
+  rstr *r = rt_alloc(sizeof *r);
+  *r = rt_str_new(n);
+  if (n && fread(r->p, 1, (size_t)n, f) != (size_t)n) *res = NULL;
+  else *res = r;
+  fclose(f);
+}
+
 /* T'REP and T'VAL(S) of enumeration types: the literals' images, upper case;
  * a character literal is shown in quotes (RM79 App. A) */
 rstr rt_g_enum_rep(rt_int v, const char *const *names, rt_int n) {

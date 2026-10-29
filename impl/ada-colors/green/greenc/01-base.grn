@@ -80,6 +80,7 @@ procedure GREENC is
    N_INST     : constant INTEGER := 53;
    N_GENERIC  : constant INTEGER := 54;
    N_USE      : constant INTEGER := 55;
+   N_PRAGMA   : constant INTEGER := 56;
 
    -- parts of constructs
    N_ARM     : constant INTEGER := 60;
@@ -322,3 +323,9 @@ procedure GREENC is
    IN_LV_PATH : BOOLEAN := FALSE;
    LAST_DEREF : BOOLEAN := FALSE;
    MAIN_NAME : TEXT;
+   -- the configuration (RM79 13.7): pragmas SYSTEM, STORAGE_UNIT, MEMORY_SIZE
+   -- and OPTIMIZE set what SYSTEM'NAME, ... and OPTION'TIME report
+   CONF_SYSTEM : TEXT;
+   CONF_STORAGE_UNIT : INTEGER := 8;
+   CONF_MEMORY_SIZE : INTEGER := 1048576;
+   CONF_OPTIMIZE : TEXT;

@@ -307,6 +307,7 @@ void rt_g_move_bytes(rt_int from, rt_int to, rt_int n);
 
 /* ---- GREEN: the rest of RM79 ------------------------------------------ */
 int rt_g_exc_new(const char *name);            /* a distinct declared exception */
+void rt_g_read_file_text(rstr name, rstr **res); /* pragma INCLUDE */
 rstr rt_g_enum_rep(rt_int v, const char *const *names, rt_int n);  /* T'REP */
 rt_int rt_g_enum_val(rstr s, const char *const *names, rt_int n);  /* T'VAL(S) */
 rstr rt_g_char_rep(rt_int v);

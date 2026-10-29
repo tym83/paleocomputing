@@ -273,10 +273,18 @@
             end if;
          when 55 =>
             USE_CLAUSE(E);
+         when 56 =>
+            PRAGMA_DECL(E);
          when others =>
             OTHER_DECL(E);
       end case;
    end DECL_ELEMENT;
+
+   -- a pragma among the declarations (RM79 2.7, App. B)
+   procedure PRAGMA_DECL(E : NODE) is
+   begin
+      null;
+   end PRAGMA_DECL;
 
    -- packages are in 09-units, tasks and generics in 10-tasks and 11-generics
    procedure OTHER_DECL(E : NODE) is

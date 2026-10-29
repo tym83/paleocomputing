@@ -1,0 +1,5 @@
+procedure MAIN is
+   X : INTEGER := 0;
+begin
+   X := 20#JJ;
+end MAIN;
