@@ -188,6 +188,30 @@ PROC select_on(READONLY base : STRING[ASCII], CONST bt : typ, CONST e : node, VA
       select_on(base & ".all", bt.under, e, ro, code, t, c);
       RETURN;
    END IF;
+   IF bt.kind = t_union THEN
+      VAR f : field := bt.fields;
+      VAR i : INT := 0;
+      IF e.name.ALL = "TAG" THEN
+         % the name of the component present (C.6)
+         code := mk("rt_r_tag((" & base & ").tag)");
+         t := bt.elem;
+         ro := TRUE;
+         RETURN;
+      END IF;
+      WHILE f /= NIL REPEAT
+         IF f.name.ALL = e.name.ALL THEN
+            % X_TAG unless that component is present (C.6)
+            CONST fn := "(" & base & ").u." & field_c(e.name.ALL);
+            c := f.c;
+            code := mk("(*((" & base & ").tag == " & itos(i) & " ? &" & fn & " : (rt_r_xtag(), &" & fn & ")))");
+            t := f.t;
+            RETURN;
+         END IF;
+         i := i + 1;
+         f := f.next;
+      END REPEAT;
+      fail(e.line, "no component " & e.name.ALL);
+   END IF;
    IF bt.kind = t_record THEN
       VAR f : field := bt.fields;
       WHILE f /= NIL REPEAT
@@ -203,6 +227,44 @@ PROC select_on(READONLY base : STRING[ASCII], CONST bt : typ, CONST e : node, VA
    END IF;
    fail(e.line, "cannot select " & e.name.ALL & " here");
 END PROC select_on;
+
+FUNC has_call(READONLY s : STRING[ASCII]) => BOOL;
+   FOR i : INT(1 .. s.LEN) REPEAT
+      IF s(i) = 'LPAREN THEN
+         RETURN TRUE;
+      END IF;
+   END REPEAT;
+   RETURN FALSE;
+END FUNC has_call;
+
+% the helpers for slices and catenation of a one-dimensional array type
+PROC need_slice(CONST t : typ) IMPORTS ALL;
+   CONST c := ctype(t);
+   CONST n := "rt_r_aslice_" & c;
+   VAR l : lines;
+   IF seen_name(mcopies, n) THEN
+      RETURN;
+   END IF;
+   ALLOC l PTR;
+   l.s := mk(n);
+   l.next := mcopies;
+   mcopies := l;
+   put(out_protos, "static " & c & " " & n & "(" & c & " a, rt_int l, rt_int h);");
+   put(out_funcs, "static " & c & " " & n & "(" & c & " a, rt_int l, rt_int h) {");
+   put(out_funcs, "  if (h >= l && (l < a.lo || h > a.hi)) rt_raise(RT_X_SUBSCRIPT);");
+   put(out_funcs, "  if (h >= l) a.p += l - a.lo;");
+   put(out_funcs, "  a.lo = l; a.hi = h; return a;");
+   put(out_funcs, "}");
+   % & (C.7): the result has index subtype INT(1 .. m + n)
+   put(out_protos, "static " & c & " rt_r_acat_" & c & "(" & c & " a, " & c & " b);");
+   put(out_funcs, "static " & c & " rt_r_acat_" & c & "(" & c & " a, " & c & " b) {");
+   put(out_funcs, "  rt_int m = RT_R_EXT(a.lo, a.hi), n = RT_R_EXT(b.lo, b.hi); " & c & " r;");
+   put(out_funcs, "  r.lo = 1; r.hi = m + n; r.lo2 = r.hi2 = 1; r.p = rt_alloc(sizeof *r.p * (size_t)(m + n) + 1);");
+   put(out_funcs, "  for (rt_int i = 0; i < m; i++) r.p[i] = " & copy_code(t.elem, "a.p[i]") & ";");
+   put(out_funcs, "  for (rt_int i = 0; i < n; i++) r.p[m + i] = " & copy_code(t.elem, "b.p[i]") & ";");
+   put(out_funcs, "  return r;");
+   put(out_funcs, "}");
+END PROC need_slice;
 
 % a subscript, checked unless X_SUBSCRIPT is suppressed (B)
 ABNORMAL FUNC ix(READONLY i : STRING[ASCII], READONLY lo : STRING[ASCII], READONLY hi : STRING[ASCII])
@@ -235,19 +297,57 @@ PROC index_on(READONLY base : STRING[ASCII], CONST bt : typ, CONST e : node, VAR
       END IF;
       RETURN;
    END IF;
-   IF bt.kind = t_array AND bt.idx2 /= NIL THEN
-      IF list_len(a) /= 2 THEN
-         fail(e.line, "two subscripts expected");
+   IF bt.kind = t_array AND a /= NIL AND a.kind = n_range THEN
+      % a subarray (C.7) of a one-dimensional array: it shares the components
+      IF bt.ndim /= 1 OR a.next /= NIL THEN
+         fail(e.line, "only a one-dimensional array can be sliced");
       END IF;
       BEGIN
-         CONST i := gexpr(a, bt.idx, it);
-         CONST j := gexpr(a.next, bt.idx2, it);
-         code := mk(base & ".p[(" & ix(i, base & ".lo", base & ".hi") & " - " & base
-                    & ".lo) * (" & base & ".hi2 - " & base & ".lo2 + 1) + " & ix(j, base & ".lo2", base & ".hi2")
-                    & " - " & base & ".lo2]");
-         t := bt.elem;
-         c := bt.elemcons;
+         CONST lo := gexpr(a.a, bt.idx, it);
+         CONST hi := gexpr(a.b, bt.idx, it);
+         code := mk("rt_r_aslice_" & ctype(bt) & "(" & base & ", " & lo & ", " & hi & ")");
+         need_slice(bt);
+         t := bt;
+         ro := TRUE;
       END;
+      RETURN;
+   END IF;
+   IF bt.kind = t_array THEN
+      % the components are kept in row-major order (C.7)
+      VAR off : text;
+      VAR k : INT := 0;
+      VAR b : text := mk(base);
+      VAR pre : text := mk("");
+      IF list_len(a) /= bt.ndim THEN
+         fail(e.line, itos(bt.ndim) & " subscripts expected");
+      END IF;
+      IF NOT lv AND has_call(base) THEN
+         % the array is computed once
+         pre := mk("({ " & ctype(bt) & " b_ = " & base & "; ");
+         b := mk("b_");
+      END IF;
+      WHILE a /= NIL REPEAT
+         k := k + 1;
+         BEGIN
+            CONST i := gexpr(a, idx_type(bt, k), it);
+            CONST l := b.ALL & "." & dim_lo(k);
+            CONST h := b.ALL & "." & dim_hi(k);
+            check_type(it, idx_type(bt, k), e.line);
+            IF off = NIL THEN
+               off := mk("(" & ix(i, l, h) & " - " & l & ")");
+            ELSE
+               off := mk("(" & off.ALL & " * RT_R_EXT(" & l & ", " & h & ") + " & ix(i, l, h) & " - " & l & ")");
+            END IF;
+         END;
+         a := a.next;
+      END REPEAT;
+      IF pre.LEN > 0 THEN
+         code := mk(pre.ALL & b.ALL & ".p[" & off.ALL & "]; })");
+      ELSE
+         code := mk(b.ALL & ".p[" & off.ALL & "]");
+      END IF;
+      t := bt.elem;
+      c := bt.elemcons;
       RETURN;
    END IF;
    IF list_len(a) /= 1 THEN
@@ -272,13 +372,6 @@ PROC index_on(READONLY base : STRING[ASCII], CONST bt : typ, CONST e : node, VAR
             ro := TRUE;
          END IF;
       END;
-      RETURN;
-   END IF;
-   IF bt.kind = t_array THEN
-      CONST i := gexpr(a, bt.idx, it);
-      code := mk(base & ".p[" & ix(i, base & ".lo", base & ".hi") & " - " & base & ".lo]");
-      t := bt.elem;
-      c := bt.elemcons;
       RETURN;
    END IF;
    fail(e.line, "cannot subscript this");
@@ -324,6 +417,10 @@ ABNORMAL FUNC gexpr(CONST e : node, CONST want : typ, OUT t : typ) => STRING[ASC
    VAR c : cons;
    VAR ro : BOOL;
    VAR bt : typ;
+   % the subtype the context resolves a constructor to (5.7), for this
+   % expression only
+   VAR ctx : cons := cons_ctx;
+   cons_ctx := NIL;
    t := ty_int;
    IF k = n_int THEN
       IF want /= NIL AND want.kind = t_float THEN
@@ -357,6 +454,7 @@ ABNORMAL FUNC gexpr(CONST e : node, CONST want : typ, OUT t : typ) => STRING[ASC
          RETURN itos(i);
       END;
    ELSEIF k = n_paren THEN
+      cons_ctx := ctx;
       RETURN gexpr(e.a, want, t);
    ELSEIF k = n_name THEN
       VAR y : sym := lookup(e.name.ALL);
@@ -452,7 +550,7 @@ ABNORMAL FUNC gexpr(CONST e : node, CONST want : typ, OUT t : typ) => STRING[ASC
    ELSEIF k = n_ttapply THEN
       RETURN gcall(wrap_apply(e), FALSE, t);
    ELSEIF k = n_cons THEN
-      RETURN constructor(e, want, t);
+      RETURN constructor(e, want, ctx, t);
    ELSEIF k = n_resolve THEN
       RETURN resolved(e, t);
    END IF;
@@ -482,11 +580,17 @@ ABNORMAL FUNC resolved(CONST e : node, OUT t : typ) => STRING[ASCII] IMPORTS ALL
    END IF;
    t := resolve_subtype(e.b, c);
    BEGIN
-      CONST v := gexpr(e.a, t, vt);
+      CONST v := gexpr_in(e.a, t, c, vt);
       check_type(vt, t, e.line);
       RETURN checked(t, c, v);
    END;
 END FUNC resolved;
+
+% an expression whose context gives the subtype c (5.7)
+ABNORMAL FUNC gexpr_in(CONST e : node, CONST want : typ, CONST c : cons, OUT t : typ) => STRING[ASCII] IMPORTS ALL;
+   cons_ctx := c;
+   RETURN gexpr(e, want, t);
+END FUNC gexpr_in;
 
 % a node used in an argument list needs its own next link
 ABNORMAL FUNC copy_node(CONST e : node) => node;
@@ -656,6 +760,20 @@ ABNORMAL FUNC gbinop(CONST e : node, CONST want : typ, OUT t : typ) => STRING[AS
       END IF;
       RETURN "(" & a & " != " & b & ")";
    END IF;
+   IF op.ALL = "&" AND want /= NIL AND base_of(want).kind = t_array THEN
+      % catenation of one-dimensional arrays indexed by INT (C.7)
+      VAR at : typ := base_of(want);
+      CONST a := gexpr(e.a, at, ta);
+      CONST b := gexpr(e.b, at, tb);
+      check_type(ta, at, e.line);
+      check_type(tb, at, e.line);
+      IF at.ndim /= 1 OR base_of(at.idx).kind /= t_int THEN
+         fail(e.line, "& catenates one-dimensional arrays indexed by INT");
+      END IF;
+      need_slice(at);
+      t := at;
+      RETURN "rt_r_acat_" & ctype(at) & "(" & a & ", " & b & ")";
+   END IF;
    IF op.ALL = "&" THEN
       VAR wa, wb : typ;
       IF e.a.kind = n_enum THEN
@@ -771,7 +889,10 @@ ABNORMAL FUNC gbinop(CONST e : node, CONST want : typ, OUT t : typ) => STRING[AS
    RETURN "";
 END FUNC gbinop;
 
-ABNORMAL FUNC constructor(CONST e : node, CONST want : typ, OUT t : typ) => STRING[ASCII] IMPORTS ALL;
+% constructors (5.6): of the type and subtype the context resolves them to
+% (5.7); ctx is the subtype when the context knows it
+ABNORMAL FUNC constructor(CONST e : node, CONST want : typ, CONST ctx : cons, OUT t : typ) => STRING[ASCII]
+      IMPORTS ALL;
    VAR it : node := e.a;
    VAR f : field;
    VAR vt : typ;
@@ -781,7 +902,7 @@ ABNORMAL FUNC constructor(CONST e : node, CONST want : typ, OUT t : typ) => STRI
       WHILE it /= NIL REPEAT
          CONST v := gexpr(it.b, want.elem, vt);
          check_type(vt, want.elem, e.line);
-         s := mk("rt_set_add(" & s.ALL & ", " & v & ")");
+         s := mk("rt_set_add(" & s.ALL & ", " & set_elem(want, v) & ")");
          it := it.next;
       END REPEAT;
       RETURN s.ALL;
@@ -789,68 +910,307 @@ ABNORMAL FUNC constructor(CONST e : node, CONST want : typ, OUT t : typ) => STRI
    IF want /= NIL AND want.kind = t_new THEN
       fail(e.line, "a constructor for " & want.name.ALL & " needs the underlying type");
    END IF;
-   IF want /= NIL AND want.kind = t_array AND want.idx2 = NIL THEN
-      CONST tmp := new_name("ac");
-      CONST ct := ctype(want);
-      CONST et := ctype(want.elem);
-      VAR parts : text;
-      t := want;
-      IF it /= NIL AND it.a /= NIL AND it.a.b /= NIL AND it.next = NIL THEN
-         % [lo .. hi : value]
-         CONST lo := gexpr(it.a.a, want.idx, vt);
-         CONST hi := gexpr(it.a.b, want.idx, vt);
-         CONST v := gexpr(it.b, want.elem, vt);
-         check_type(vt, want.elem, e.line);
-         RETURN "({ " & ct & " " & tmp & "; " & tmp & ".lo = " & lo & "; " & tmp & ".hi = " & hi
-                & "; " & tmp & ".lo2 = " & tmp & ".hi2 = 1; " & tmp & ".p = rt_alloc(sizeof(" & et
-                & ") * (size_t)RT_CNT(" & tmp & ")); for (rt_int i_ = 0; i_ < RT_CNT(" & tmp
-                & "); i_++) " & tmp & ".p[i_] = " & copy_code(want.elem, v) & "; " & tmp & "; })";
+   IF want /= NIL AND want.kind = t_array THEN
+      RETURN array_cons(e, want, ctx, t);
+   END IF;
+   IF want /= NIL AND want.kind = t_union THEN
+      % one component (5.6)
+      IF it = NIL OR it.next /= NIL OR it.a = NIL OR it.a.next /= NIL OR it.a.a.kind /= n_name THEN
+         fail(e.line, "a union constructor gives one named component");
       END IF;
-      parts := mk("({ " & ct & " " & tmp & "; " & tmp & ".lo = 1; " & tmp & ".hi = " & itos(list_len(it))
-                  & "; " & tmp & ".lo2 = " & tmp & ".hi2 = 1; " & tmp & ".p = rt_alloc(sizeof(" & et & ") * "
-                  & itos(list_len(it) + 1) & ");");
-      FOR i : INT(0 .. list_len(e.a) - 1) REPEAT
-         IF it.a /= NIL THEN
-            fail(e.line, "only positional array constructors are handled");
+      f := want.fields;
+      BEGIN
+         VAR i : INT := 0;
+         CONST tmp := new_name("uc");
+         WHILE f /= NIL AND f.name.ALL /= it.a.a.name.ALL REPEAT
+            i := i + 1;
+            f := f.next;
+         END REPEAT;
+         IF f = NIL THEN
+            fail(e.line, "no component " & it.a.a.name.ALL);
          END IF;
+         t := want;
+         cons_ctx := f.c;
          BEGIN
-            CONST v := gexpr(it.b, want.elem, vt);
-            check_type(vt, want.elem, e.line);
-            parts := mk(parts.ALL & " " & tmp & ".p[" & itos(i) & "] = " & copy_code(want.elem, v) & ";");
+            CONST v := gexpr(it.b, f.t, vt);
+            check_type(vt, f.t, e.line);
+            RETURN "({ " & ctype(want) & " " & tmp & "; " & tmp & ".tag = " & itos(i) & "; " & tmp & ".u."
+                   & field_c(f.name.ALL) & " = " & comp_value(f.t, f.c, v) & "; " & tmp & "; })";
          END;
-         it := it.next;
-      END REPEAT;
-      RETURN parts.ALL & " " & tmp & "; })";
+      END;
    END IF;
    IF want = NIL OR want.kind /= t_record THEN
       fail(e.line, "the type of this constructor is not known here");
    END IF;
+   % a value for each component, in order; names may share a value (5.6)
    t := want;
    f := want.fields;
    BEGIN
       CONST tmp := new_name("rc");
       VAR parts : text := mk("({ " & ctype(want) & " " & tmp & ";");
-      IF list_len(it) /= 0 AND list_len(it) /= 0 THEN
-         WHILE it /= NIL AND f /= NIL REPEAT
-            IF it.a = NIL OR it.a.a.kind /= n_name OR it.a.a.name.ALL /= f.name.ALL THEN
+      WHILE it /= NIL REPEAT
+         VAR k : node := it.a;
+         VAR shared : text;
+         IF k = NIL THEN
+            fail(e.line, "a record constructor names its components");
+         END IF;
+         WHILE k /= NIL REPEAT
+            IF f = NIL OR k.a.kind /= n_name OR k.b /= NIL OR k.a.name.ALL /= f.name.ALL THEN
+               IF f = NIL THEN
+                  fail(e.line, "a record constructor has a value for each component, in order");
+               END IF;
                fail(e.line, "component " & f.name.ALL & " expected in the constructor");
             END IF;
-            BEGIN
-               CONST v := gexpr(it.b, f.t, vt);
+            IF it.a.next = NIL THEN
+               cons_ctx := f.c;
+               BEGIN
+                  CONST v := gexpr(it.b, f.t, vt);
+                  check_type(vt, f.t, e.line);
+                  parts := mk(parts.ALL & " " & tmp & "." & field_c(f.name.ALL) & " = " & comp_value(f.t, f.c, v) & ";");
+               END;
+            ELSE
+               IF shared = NIL THEN
+                  CONST v := gexpr(it.b, f.t, vt);
+                  shared := mk(new_name("sv"));
+                  check_type(vt, f.t, e.line);
+                  parts := mk(parts.ALL & " " & ctype(f.t) & " " & shared.ALL & " = " & v & ";");
+               END IF;
                check_type(vt, f.t, e.line);
                parts := mk(parts.ALL & " " & tmp & "." & field_c(f.name.ALL) & " = "
-                           & copy_code(f.t, v) & ";");
-            END;
-            it := it.next;
+                           & comp_value(f.t, f.c, copy_code(f.t, shared.ALL)) & ";");
+            END IF;
             f := f.next;
+            k := k.next;
          END REPEAT;
-      END IF;
-      IF it /= NIL OR f /= NIL THEN
+         it := it.next;
+      END REPEAT;
+      IF f /= NIL THEN
          fail(e.line, "a record constructor needs every component");
       END IF;
       RETURN parts.ALL & " " & tmp & "; })";
    END;
 END FUNC constructor;
+
+% a component value checked against the component's subtype
+ABNORMAL FUNC comp_value(CONST t : typ, CONST c : cons, READONLY v : STRING[ASCII]) => STRING[ASCII] IMPORTS ALL;
+   IF c = NIL OR (c.lo /= NIL AND has_at(c.lo.ALL)) THEN
+      RETURN copy_code(t, v);
+   ELSEIF t.kind = t_string AND c.slen /= NIL AND NOT has_at(c.slen.ALL) THEN
+      RETURN copy_code(t, "rt_r_strsub(" & v & ", " & c.slen.ALL & ")");
+   END IF;
+   RETURN checked(t, c, copy_code(t, v));
+END FUNC comp_value;
+
+FUNC has_at(READONLY s : STRING[ASCII]) => BOOL;
+   FOR i : INT(1 .. s.LEN) REPEAT
+      IF s(i) = 'AT THEN
+         RETURN TRUE;
+      END IF;
+   END REPEAT;
+   RETURN FALSE;
+END FUNC has_at;
+
+% an element of a set (C.9): sets hold the values 0 .. 255
+ABNORMAL FUNC set_elem(CONST st : typ, READONLY v : STRING[ASCII]) => STRING[ASCII] IMPORTS ALL;
+   RETURN v;
+END FUNC set_elem;
+
+% an array constructor (5.6, diagram 33): a value for each component, given
+% by position, or for keys: in n dimensions a key gives n indexes or ranges;
+% a key may also give a row whose value is a constructor of the rest
+ABNORMAL FUNC array_cons(CONST e : node, CONST at : typ, CONST ctx : cons, OUT t : typ) => STRING[ASCII]
+      IMPORTS ALL;
+   CONST tmp := new_name("ac");
+   VAR parts : text := mk("({ " & ctype(at) & " " & tmp & ";");
+   VAR it : node := e.a;
+   VAR positional : BOOL := TRUE;
+   t := at;
+   WHILE it /= NIL REPEAT
+      IF it.a /= NIL THEN
+         positional := FALSE;
+      END IF;
+      it := it.next;
+   END REPEAT;
+   FOR k : INT(1 .. at.ndim) REPEAT
+      VAR lo, hi : text;
+      IF ctx /= NIL AND cons_lo(ctx, k) /= NIL AND NOT has_at(cons_lo(ctx, k).ALL) THEN
+         lo := cons_lo(ctx, k);
+         hi := cons_hi(ctx, k);
+      ELSEIF at.ndim = 1 AND positional THEN
+         % positions count from the first value of the index type
+         IF base_of(at.idx).kind = t_enum THEN
+            lo := mk("0");
+         ELSE
+            lo := mk("1");
+         END IF;
+         hi := mk("(" & lo.ALL & " + " & itos(list_len(e.a)) & " - 1)");
+      ELSE
+         fail(e.line, "the subtype of this array constructor is not known here (use #)");
+      END IF;
+      parts := mk(parts.ALL & " " & tmp & "." & dim_lo(k) & " = " & lo.ALL & "; " & tmp & "." & dim_hi(k) & " = "
+                  & hi.ALL & ";");
+   END REPEAT;
+   IF at.ndim = 1 THEN
+      parts := mk(parts.ALL & " " & tmp & ".lo2 = " & tmp & ".hi2 = 1;");
+   END IF;
+   parts := mk(parts.ALL & " rt_int n_" & tmp & " = " & acnt(at, tmp) & "; " & tmp & ".p = rt_alloc(sizeof("
+               & ctype(at.elem) & ") * (size_t)n_" & tmp & " + 1); unsigned char *seen_" & tmp & " = rt_alloc((size_t)n_"
+               & tmp & " + 1);");
+   parts := mk(parts.ALL & fill_items(e.a, at, tmp, NIL, 1));
+   % a single value for each component (5.6)
+   parts := mk(parts.ALL & " for (rt_int i_ = 0; i_ < n_" & tmp & "; i_++) if (seen_" & tmp
+               & "[i_] != 1) rt_raise_msg(rt_exc(" & q & "X_ARRAY" & q & "), " & q & "constructor" & q & "); "
+               & tmp & "; })");
+   RETURN parts.ALL;
+END FUNC array_cons;
+
+% the C that fills the components for constructor items, with the indexes of
+% the dimensions before dim already chosen (prefix)
+ABNORMAL FUNC fill_items(CONST items : node, CONST at : typ, READONLY tmp : STRING[ASCII], CONST prefix : lines,
+                         CONST dim : INT) => STRING[ASCII] IMPORTS ALL;
+   VAR it : node := items;
+   VAR pos : INT := 0;
+   VAR r : text := mk("");
+   VAR vt : typ;
+   WHILE it /= NIL REPEAT
+      IF it.a = NIL THEN
+         % by position
+         IF dim < at.ndim AND it.b.kind = n_cons THEN
+            r := mk(r.ALL & " { rt_int x_" & itos(dim) & " = " & tmp & "." & dim_lo(dim) & " + " & itos(pos) & "; "
+                    & fill_items(it.b.a, at, tmp, add_line(prefix, "x_" & itos(dim)), dim + 1) & " }");
+         ELSE
+            CONST v := item_value(it.b, at, e_line(it), vt);
+            IF dim = 1 AND at.ndim > 1 THEN
+               % all the components, in row-major order
+               r := mk(r.ALL & " { " & v & " if (" & itos(pos) & " >= n_" & tmp & ") rt_raise_msg(rt_exc(" & q
+                       & "X_ARRAY" & q & "), " & q & "constructor" & q & "); " & tmp & ".p[" & itos(pos) & "] = "
+                       & copy_code(at.elem, "v_") & "; seen_" & tmp & "[" & itos(pos) & "]++; }");
+            ELSE
+               r := mk(r.ALL & " { " & v & " rt_int x_" & itos(dim) & " = " & tmp & "." & dim_lo(dim) & " + " & itos(pos)
+                       & "; " & store_at(at, tmp, add_line(prefix, "x_" & itos(dim)), dim) & " }");
+            END IF;
+         END IF;
+         pos := pos + 1;
+      ELSEIF dim + list_len(it.a) - 1 = at.ndim THEN
+         % each key gives the indexes of the remaining dimensions
+         VAR k : node := it.a;
+         VAR d : INT := dim;
+         VAR pre : lines := prefix;
+         VAR loops, ends : text := mk("");
+         CONST v := item_value(it.b, at, it.line, vt);
+         WHILE k /= NIL REPEAT
+            CONST xv := "x_" & itos(d);
+            loops := mk(loops.ALL & key_loop(k, at, d, xv));
+            ends := mk(ends.ALL & " }");
+            pre := add_line(pre, xv);
+            d := d + 1;
+            k := k.next;
+         END REPEAT;
+         r := mk(r.ALL & " { " & v & loops.ALL & " " & store_at(at, tmp, pre, at.ndim) & ends.ALL & " }");
+      ELSEIF dim = at.ndim OR it.b.kind = n_cons THEN
+         % keys that are alternatives for this dimension
+         VAR k : node := it.a;
+         WHILE k /= NIL REPEAT
+            CONST xv := "x_" & itos(dim);
+            IF dim < at.ndim THEN
+               r := mk(r.ALL & " {" & key_loop(k, at, dim, xv) & " "
+                       & fill_items(it.b.a, at, tmp, add_line(prefix, xv), dim + 1) & " } }");
+            ELSE
+               CONST v := item_value(it.b, at, it.line, vt);
+               r := mk(r.ALL & " { " & v & key_loop(k, at, dim, xv) & " " & store_at(at, tmp, add_line(prefix, xv), dim)
+                       & " } }");
+            END IF;
+            k := k.next;
+         END REPEAT;
+      ELSE
+         fail(it.line, "a key of this array constructor gives " & itos(at.ndim - dim + 1) & " indexes");
+      END IF;
+      it := it.next;
+   END REPEAT;
+   RETURN r.ALL;
+END FUNC fill_items;
+
+FUNC e_line(CONST e : node) => INT;
+   RETURN e.line;
+END FUNC e_line;
+
+ABNORMAL FUNC add_line(CONST l : lines, READONLY s : STRING[ASCII]) => lines;
+   VAR r, tail, x : lines;
+   VAR p : lines := l;
+   WHILE p /= NIL REPEAT
+      ALLOC x PTR;
+      x.s := p.s;
+      IF tail = NIL THEN
+         r := x;
+      ELSE
+         tail.next := x;
+      END IF;
+      tail := x;
+      p := p.next;
+   END REPEAT;
+   ALLOC x PTR;
+   x.s := mk(s);
+   IF tail = NIL THEN
+      r := x;
+   ELSE
+      tail.next := x;
+   END IF;
+   RETURN r;
+END FUNC add_line;
+
+% the value of a constructor item, held in v_, as C declaring it
+ABNORMAL FUNC item_value(CONST e : node, CONST at : typ, CONST line : INT, OUT vt : typ) => STRING[ASCII]
+      IMPORTS ALL;
+   cons_ctx := at.elemcons;
+   BEGIN
+      CONST v := gexpr(e, at.elem, vt);
+      check_type(vt, at.elem, line);
+      RETURN ctype(at.elem) & " v_ = " & comp_value(at.elem, at.elemcons, v) & ";";
+   END;
+END FUNC item_value;
+
+% a loop of xv over the values of a key (an index or a range) of dimension d
+ABNORMAL FUNC key_loop(CONST k : node, CONST at : typ, CONST d : INT, READONLY xv : STRING[ASCII]) => STRING[ASCII]
+      IMPORTS ALL;
+   VAR it : typ;
+   CONST lo := gexpr(k.a, idx_type(at, d), it);
+   check_type(it, idx_type(at, d), k.line);
+   IF k.b = NIL THEN
+      RETURN " { rt_int " & xv & " = " & lo & ";";
+   END IF;
+   BEGIN
+      CONST hi := gexpr(k.b, idx_type(at, d), it);
+      check_type(it, idx_type(at, d), k.line);
+      RETURN " for (rt_int " & xv & " = " & lo & ", h" & xv & " = " & hi & "; " & xv & " <= h" & xv & "; " & xv & "++) {";
+   END;
+END FUNC key_loop;
+
+% v_ stored at the indexes in xs: X_SUBSCRIPT outside the bounds
+ABNORMAL FUNC store_at(CONST at : typ, READONLY tmp : STRING[ASCII], CONST xs : lines, CONST n : INT) => STRING[ASCII]
+      IMPORTS ALL;
+   VAR off : text;
+   VAR x : lines := xs;
+   VAR k : INT := 0;
+   WHILE x /= NIL REPEAT
+      k := k + 1;
+      BEGIN
+         CONST l := tmp & "." & dim_lo(k);
+         CONST h := tmp & "." & dim_hi(k);
+         IF off = NIL THEN
+            off := mk("(rt_index(" & x.s.ALL & ", " & l & ", " & h & ") - " & l & ")");
+         ELSE
+            off := mk("(" & off.ALL & " * RT_R_EXT(" & l & ", " & h & ") + rt_index(" & x.s.ALL & ", " & l & ", " & h
+                      & ") - " & l & ")");
+         END IF;
+      END;
+      x := x.next;
+   END REPEAT;
+   IF k /= at.ndim THEN
+      fail(0, "a constructor component needs " & itos(at.ndim) & " indexes");
+   END IF;
+   RETURN "{ rt_int o_ = " & off.ALL & "; " & tmp & ".p[o_] = " & copy_code(at.elem, "v_") & "; seen_" & tmp
+          & "[o_]++; }";
+END FUNC store_at;
 
 % ---- invocations -------------------------------------------------------------------------
 
@@ -1109,7 +1469,7 @@ ABNORMAL FUNC gcall(CONST e : node, CONST is_stmt : BOOL, OUT t : typ) => STRING
          check_type(lt, pm.t, e.line);
          args := mk(args.ALL & "&" & lv.ALL & actual_bounds(pm.t, lt, lc));
       ELSEIF pm.mode = m_readonly THEN
-         CONST v := gexpr(a, pm.t, vt);
+         CONST v := gexpr_in(a, pm.t, pm.c, vt);
          CONST ct := ctype(pm.t);
          check_type(vt, pm.t, e.line);
          args := mk(args.ALL & "({ " & ct & " *b_ = rt_alloc(sizeof(" & ct & ")); *b_ = " & v & "; b_; })");
@@ -1118,7 +1478,7 @@ ABNORMAL FUNC gcall(CONST e : node, CONST is_stmt : BOOL, OUT t : typ) => STRING
             args := mk(args.ALL & ", 1, 0");
          END IF;
       ELSE
-         CONST v := gexpr(a, pm.t, vt);
+         CONST v := gexpr_in(a, pm.t, pm.c, vt);
          check_type(vt, pm.t, e.line);
          args := mk(args.ALL & v);
       END IF;

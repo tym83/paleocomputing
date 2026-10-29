@@ -3167,3 +3167,10 @@ void rt_r_nonrec_leave(rt_r_nonrec *n) {
       return;
     }
 }
+
+void rt_r_xtag(void) { rt_raise(RT_X_TAG); }
+
+rt_int rt_r_tag(rt_int tag) {
+  if (tag < 0) rt_raise(RT_X_INIT);
+  return tag;
+}

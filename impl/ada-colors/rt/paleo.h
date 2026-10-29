@@ -535,9 +535,13 @@ extern const ydesc y_d_sig;                  /* a SIGNAL as an array component *
 #define RT_IMAX INT64_MAX
 #define RT_IMIN (-INT64_MAX)
 #define RT_FMAX 1.7976931348623157e308
+/* the number of values of an index subtype lo .. hi (C.7) */
+#define RT_R_EXT(l, h) ((h) >= (l) ? (h) - (l) + 1 : 0)
 int rt_r_active(rt_act *a);                    /* NIL_ACT is always active */
 rstr rt_r_strsub(rstr s, rt_int len);          /* X_SUBTYPE unless s has len characters */
-void rt_r_free_unchecked(void **v);            /* FREE under SUPPRESS(X_FREE) */
+void rt_r_free_unchecked(void **v);
+void rt_r_xtag(void);                          /* raises X_TAG (C.6) */
+rt_int rt_r_tag(rt_int tag);                   /* U.TAG: X_INIT if no component */            /* FREE under SUPPRESS(X_FREE) */
 /* PRAG(NONRECURSIVE) and PRAG(NONREENTRANT): the activations inside a
  * subprogram; entering it again where the pragmat forbids it is an error */
 typedef struct rt_r_inside rt_r_inside;

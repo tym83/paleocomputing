@@ -661,7 +661,7 @@ PROC var_decl(CONST d : node) IMPORTS ALL;
    END IF;
    IF d.b /= NIL THEN
       VAR vt : typ;
-      CONST v := gexpr(d.b, t, vt);
+      CONST v := gexpr_in(d.b, t, c, vt);
       check_type(vt, t, d.line);
       emit(assign_code(access, t, v, c));
    END IF;
@@ -705,7 +705,7 @@ PROC const_decl(CONST d : node) IMPORTS ALL;
       t := resolve_subtype(d.a, c);
    END IF;
    BEGIN
-      CONST v := gexpr(d.b, t, vt);
+      CONST v := gexpr_in(d.b, t, c, vt);
       IF t /= NIL THEN
          check_type(vt, t, d.line);
       ELSE
@@ -1244,8 +1244,30 @@ PROC st_assign(CONST s : node) IMPORTS ALL;
    IF s.a.kind = n_apply AND s.a.b /= NIL AND s.a.b.kind = n_range THEN
       % assignment to a substring (C.8): the lengths must agree
       lvalue(s.a.a, lv, t, c, ro);
+      WHILE t.kind = t_ptr REPEAT
+         finish_ptr(t);
+         lv := mk(deref(lv.ALL, t));
+         t := t.target;
+      END REPEAT;
+      IF t.kind = t_new AND t.tparams = NIL THEN
+         t := t.under;
+      ELSEIF t.kind = t_new THEN
+         lv := mk(lv.ALL & ".all");
+         t := t.under;
+      END IF;
+      IF NOT ro AND t.kind = t_array AND t.ndim = 1 THEN
+         % assignment to a subarray (C.7): its components are those of the array
+         CONST lo := gexpr(s.a.b.a, t.idx, vt);
+         CONST hi := gexpr(s.a.b.b, t.idx, vt);
+         CONST v := gexpr(s.b, t, vt);
+         need_slice(t);
+         check_type(vt, t, s.line);
+         emit("{ " & ctype(t) & " sl_ = rt_r_aslice_" & ctype(t) & "(" & lv.ALL & ", " & lo & ", " & hi & "); as_"
+              & ctype(t) & "(&sl_, " & v & "); }");
+         RETURN;
+      END IF;
       IF ro OR t.kind /= t_string THEN
-         fail(s.line, "slice assignment needs a string variable");
+         fail(s.line, "slice assignment needs a string or a one-dimensional array variable");
       END IF;
       BEGIN
          CONST lo := gexpr(s.a.b.a, ty_int, vt);
@@ -1264,7 +1286,7 @@ PROC st_assign(CONST s : node) IMPORTS ALL;
       fail(s.line, ":= for " & t.name.ALL & " is not exported by its capsule");
    END IF;
    BEGIN
-      CONST v := gexpr(s.b, t, vt);
+      CONST v := gexpr_in(s.b, t, c, vt);
       check_type(vt, t, s.line);
       emit(assign_code(lv.ALL, t, v, c));
    END;
@@ -1465,7 +1487,7 @@ PROC st_return(CONST s : node) IMPORTS ALL;
       fail(s.line, "RETURN needs a value in a function");
    END IF;
    BEGIN
-      CONST v := gexpr(s.a, func_sym.result, vt);
+      CONST v := gexpr_in(s.a, func_sym.result, func_rc, vt);
       check_type(vt, func_sym.result, s.line);
       emit("F->result_ = " & result_checked(func_sym.result, func_rc, v) & ";");
       pop_frames(0);
@@ -1481,8 +1503,7 @@ ABNORMAL FUNC result_checked(CONST t : typ, CONST c : cons, READONLY v : STRING[
    ELSEIF t.kind = t_string AND c.slen /= NIL THEN
       RETURN "rt_r_strsub(" & v & ", " & c.slen.ALL & ")";
    ELSEIF t.kind = t_array AND c.lo /= NIL THEN
-      RETURN "({ " & ctype(t) & " r_ = " & v & "; if (RT_CNT(r_) != (" & c.hi.ALL & ") - (" & c.lo.ALL
-             & ") + 1) rt_raise_msg(RT_X_SUBTYPE, " & q & "array length" & q & "); r_; })";
+      RETURN "({ " & ctype(t) & " r_ = " & v & "; if (RT_R_EXT(r_.lo, r_.hi) != RT_R_EXT(" & c.lo.ALL & ", " & c.hi.ALL & ")) rt_raise_msg(rt_exc(" & q & "X_ARRAY" & q & "), " & q & "array length" & q & "); r_; })";
    END IF;
    RETURN checked(t, c, v);
 END FUNC result_checked;
@@ -1611,7 +1632,7 @@ PROC st_alloc(CONST s : node) IMPORTS ALL;
       init_storage("(*" & cell & ")", target, tc);
       close_scope;
       IF s.c /= NIL THEN
-         CONST v := gexpr(s.c, target, vt);
+         CONST v := gexpr_in(s.c, target, tc, vt);
          check_type(vt, target, s.line);
          emit(assign_code("(*" & cell & ")", target, v, tc));
       END IF;
@@ -1683,7 +1704,7 @@ PROC st_create(CONST s : node) IMPORTS ALL;
       END IF;
       WHILE a /= NIL AND pm /= NIL REPEAT
          IF pm.mode = m_const THEN
-            CONST v := gexpr(a, pm.t, vt);
+            CONST v := gexpr_in(a, pm.t, pm.c, vt);
             check_type(vt, pm.t, s.line);
             emit(nf & "->" & pm.cfield.ALL & " = " & copy_code(pm.t, v) & ";");
          ELSE

@@ -109,6 +109,7 @@ CONST t_lock := 13;
 CONST t_act := 14;
 CONST t_new := 15;
 CONST t_set := 16;
+CONST t_union := 17;
 
 % ---- symbol kinds -------------------------------------------------------------
 CONST y_var := 1;
@@ -137,14 +138,18 @@ TYPE node : PTR RECORD[kind : INT, line : INT, ival : INT, flag : INT,
 % a constraint: its bounds as C; dyn when the bounds were kept in storage of
 % the subprogram at level lvl when the subtype was elaborated (4.1.4)
 TYPE cons : PTR RECORD[lo, hi, lo2, hi2, slen : text, mlo, mhi : INT, hasm : BOOL, args : node,
-                       dyn : BOOL, lvl : INT, prec : text];
+                       dyn : BOOL, lvl : INT, prec : text, bnds : lines];
 
 TYPE typ : PTR RECORD[kind : INT, name : text, lits : node,
                       elem : typ, idx, idx2 : typ, elemcons : cons, elemst : node,
                       under : typ, tparams : node, ocap : node,
                       fields : field, target : typ, decl : node,
                       cname : text, forward, defined, helpers : BOOL,
-                      initp, finalp, tpsyms : sym, gen, gbinds : sym, next : typ];
+                      initp, finalp, tpsyms : sym, gen, gbinds : sym, next : typ,
+                      ndim : INT, idxs : tlist];
+
+% the index types of an array, one for each dimension (C.7)
+TYPE tlist : PTR RECORD[t : typ, next : tlist];
 
 TYPE field : PTR RECORD[name : text, t : typ, c : cons, st : node, next : field];
 
@@ -230,6 +235,8 @@ VAR gdepth : INT := 0;
 % the exceptions a SUPPRESS pragmat names for the scope being translated (B),
 % each with a blank on either side
 VAR suppress : text;
+% the subtype the context resolves the next constructor to (5.7)
+VAR cons_ctx : cons;
 VAR exits : exitrec;
 % the goto labels known in the scope being translated (6.8); depth -1 until
 % the statements of their body begin

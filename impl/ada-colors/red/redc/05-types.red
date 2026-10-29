@@ -302,15 +302,21 @@ FUNC same(CONST a : typ, CONST b : typ) => BOOL;
       RETURN same_lits(a.lits, b.lits);
    END IF;
    IF a.kind = t_array THEN
-      IF (a.idx2 = NIL) /= (b.idx2 = NIL) THEN
-         RETURN FALSE;
-      END IF;
-      RETURN same(a.elem, b.elem) AND same(a.idx, b.idx);
+      VAR x : tlist := a.idxs;
+      VAR y : tlist := b.idxs;
+      WHILE x /= NIL AND y /= NIL REPEAT
+         IF NOT same(x.t, y.t) THEN
+            RETURN FALSE;
+         END IF;
+         x := x.next;
+         y := y.next;
+      END REPEAT;
+      RETURN x = NIL AND y = NIL AND same(a.elem, b.elem);
    END IF;
    IF a.kind = t_set OR a.kind = t_mbox THEN
       RETURN same(a.elem, b.elem);
    END IF;
-   IF a.kind = t_record THEN
+   IF a.kind = t_record OR a.kind = t_union THEN
       VAR f : field := a.fields;
       VAR g : field := b.fields;
       WHILE f /= NIL AND g /= NIL REPEAT
@@ -350,6 +356,7 @@ FUNC kind_name(CONST t : typ) => STRING[ASCII];
       WHEN t_string => RETURN "STRING";
       WHEN t_array => RETURN "ARRAY";
       WHEN t_record => RETURN "RECORD";
+      WHEN t_union => RETURN "UNION";
       WHEN t_ptr => RETURN "indirect type " & t.name.ALL;
       WHEN t_nil => RETURN "NIL";
       ELSE => RETURN "this type";
@@ -384,13 +391,22 @@ ABNORMAL FUNC ctype(CONST t : typ) => STRING[ASCII] IMPORTS ALL;
       ELSE =>
          IF t.cname = NIL THEN
             declare_ctype(t);
-         ELSEIF t.kind = t_record AND t.forward AND NOT t.defined THEN
+         ELSEIF (t.kind = t_record OR t.kind = t_union) AND t.forward AND NOT t.defined THEN
             t.defined := TRUE;
-            put(out_types, "struct " & t.cname.ALL & " { " & field_decls(t) & " };");
+            put(out_types, "struct " & t.cname.ALL & " " & struct_body(t) & ";");
          END IF;
          RETURN t.cname.ALL;
    END CASE;
 END FUNC ctype;
+
+% a union holds its tag, the position of the component present (-1: none),
+% and the components overlaid (C.6)
+ABNORMAL FUNC struct_body(CONST t : typ) => STRING[ASCII] IMPORTS ALL;
+   IF t.kind = t_union THEN
+      RETURN "{ int tag; union { " & field_decls(t) & " } u; }";
+   END IF;
+   RETURN "{ " & field_decls(t) & " }";
+END FUNC struct_body;
 
 ABNORMAL FUNC field_decls(CONST t : typ) => STRING[ASCII] IMPORTS ALL;
    VAR f : field := t.fields;
@@ -427,7 +443,7 @@ PROC declare_ctype(CONST t : typ) IMPORTS ALL;
       t.cname := mk(new_name("A"));
    ELSEIF t.kind = t_new THEN
       t.cname := mk(new_name("N"));
-   ELSEIF t.kind = t_record THEN
+   ELSEIF t.kind = t_record OR t.kind = t_union THEN
       t.cname := mk(new_name("R"));
    ELSE
       t.cname := mk(new_name("P"));
@@ -436,7 +452,7 @@ PROC declare_ctype(CONST t : typ) IMPORTS ALL;
    all_types := t;
    IF t.kind = t_ptr THEN
       VAR target : typ := t.target;
-      IF target.kind = t_record THEN
+      IF target.kind = t_record OR target.kind = t_union THEN
          IF target.cname = NIL THEN
             target.cname := mk(new_name("R"));
             target.next := all_types;
@@ -450,7 +466,8 @@ PROC declare_ctype(CONST t : typ) IMPORTS ALL;
       END IF;
    ELSEIF t.kind = t_array THEN
       put(out_types, "typedef struct " & t.cname.ALL & " " & t.cname.ALL & ";");
-      put(out_types, "struct " & t.cname.ALL & " { rt_int lo, hi, lo2, hi2; " & ctype(t.elem) & " *p; };");
+      put(out_types, "struct " & t.cname.ALL & " { rt_int lo, hi, lo2, hi2; " & ctype(t.elem) & " *p;"
+          & more_dims(t) & " };");
    ELSEIF t.kind = t_new THEN
       % a new type with parameters keeps them: they are its attributes (4.5.3)
       VAR p : node := t.tparams;
@@ -464,9 +481,91 @@ PROC declare_ctype(CONST t : typ) IMPORTS ALL;
    ELSE
       put(out_types, "typedef struct " & t.cname.ALL & " " & t.cname.ALL & ";");
       t.defined := TRUE;
-      put(out_types, "struct " & t.cname.ALL & " { " & field_decls(t) & " };");
+      put(out_types, "struct " & t.cname.ALL & " " & struct_body(t) & ";");
    END IF;
 END PROC declare_ctype;
+
+% ---- arrays of any number of dimensions (C.7) ------------------------------------
+% a descriptor holds lo, hi (dimension 1), lo2, hi2 (dimension 2, 1 .. 1 for
+% one dimension), the components in row-major order, then lo3, hi3, ...
+
+FUNC dim_lo(CONST k : INT) => STRING[ASCII];
+   IF k = 1 THEN
+      RETURN "lo";
+   END IF;
+   RETURN "lo" & itos(k);
+END FUNC dim_lo;
+
+FUNC dim_hi(CONST k : INT) => STRING[ASCII];
+   IF k = 1 THEN
+      RETURN "hi";
+   END IF;
+   RETURN "hi" & itos(k);
+END FUNC dim_hi;
+
+FUNC more_dims(CONST t : typ) => STRING[ASCII];
+   VAR r : text := mk("");
+   FOR k : INT(3 .. t.ndim) REPEAT
+      r := mk(r.ALL & " rt_int " & dim_lo(k) & ", " & dim_hi(k) & ";");
+   END REPEAT;
+   RETURN r.ALL;
+END FUNC more_dims;
+
+% the number of components of the array base of type t
+FUNC acnt(CONST t : typ, READONLY base : STRING[ASCII]) => STRING[ASCII];
+   VAR r : text := mk("RT_CNT(" & base & ")");
+   FOR k : INT(3 .. t.ndim) REPEAT
+      r := mk(r.ALL & " * RT_R_EXT(" & base & "." & dim_lo(k) & ", " & base & "." & dim_hi(k) & ")");
+   END REPEAT;
+   RETURN "(" & r.ALL & ")";
+END FUNC acnt;
+
+% the bounds of dimension k of an array constraint, NIL when not known
+FUNC cons_lo(CONST c : cons, CONST k : INT) => text;
+   VAR l : lines;
+   IF k = 1 THEN
+      RETURN c.lo;
+   ELSEIF k = 2 THEN
+      RETURN c.lo2;
+   END IF;
+   l := c.bnds;
+   FOR i : INT(1 .. k + k - 6) REPEAT
+      IF l /= NIL THEN
+         l := l.next;
+      END IF;
+   END REPEAT;
+   IF l = NIL THEN
+      RETURN NIL;
+   END IF;
+   RETURN l.s;
+END FUNC cons_lo;
+
+FUNC cons_hi(CONST c : cons, CONST k : INT) => text;
+   VAR l : lines;
+   IF k = 1 THEN
+      RETURN c.hi;
+   ELSEIF k = 2 THEN
+      RETURN c.hi2;
+   END IF;
+   l := c.bnds;
+   FOR i : INT(1 .. k + k - 5) REPEAT
+      IF l /= NIL THEN
+         l := l.next;
+      END IF;
+   END REPEAT;
+   IF l = NIL THEN
+      RETURN NIL;
+   END IF;
+   RETURN l.s;
+END FUNC cons_hi;
+
+FUNC idx_type(CONST t : typ, CONST k : INT) => typ;
+   VAR l : tlist := t.idxs;
+   FOR i : INT(2 .. k) REPEAT
+      l := l.next;
+   END REPEAT;
+   RETURN l.t;
+END FUNC idx_type;
 
 % ---- ASCII (Appendix C.15) ----------------------------------------------------------
 
@@ -560,38 +659,70 @@ ABNORMAL FUNC resolve_subtype(CONST st : node, OUT c : cons) => typ IMPORTS ALL;
          END IF;
          RETURN ty_string;
       WHEN s_array =>
-         IF list_len(st.a) > 2 THEN
-            fail(st.line, "arrays of more than two dimensions are not handled");
-         END IF;
+         % ARRAY index1, ..., indexn OF comp (C.7)
          BEGIN
-            VAR ic, ic2, ec : cons;
-            VAR it : typ := resolve_subtype(st.a, ic);
+            VAR ec : cons;
             VAR et : typ := resolve_subtype(st.b, ec);
-            ic := base_cons(it, ic);
+            VAR ix : node := st.a;
+            VAR k : INT := 0;
+            VAR tail : tlist;
+            VAR btail : lines;
             t := new_typ(t_array);
-            t.idx := it;
             t.elem := et;
             t.elemcons := ec;
             t.elemst := st.b;
-            IF ic.lo /= NIL THEN
-               c.lo := ic.lo;
-               c.hi := ic.hi;
-            ELSEIF base_of(it).kind = t_enum THEN
-               c.lo := mk("0");
-               c.hi := mk(itos(list_len(base_of(it).lits) - 1));
-            END IF;
             c.lo2 := mk("1");
             c.hi2 := mk("1");
-            IF st.a.next /= NIL THEN
-               t.idx2 := resolve_subtype(st.a.next, ic2);
-               IF ic2.lo /= NIL THEN
-                  c.lo2 := ic2.lo;
-                  c.hi2 := ic2.hi;
-               ELSEIF t.idx2.kind = t_enum THEN
-                  c.lo2 := mk("0");
-                  c.hi2 := mk(itos(list_len(t.idx2.lits) - 1));
+            WHILE ix /= NIL REPEAT
+               VAR ic : cons;
+               VAR it : typ := resolve_subtype(ix, ic);
+               VAR lo, hi : text;
+               VAR tl : tlist;
+               IF base_of(it).kind /= t_int AND base_of(it).kind /= t_enum THEN
+                  fail(st.line, "an index subtype is an INT or ENUM subtype");
                END IF;
-            END IF;
+               ic := base_cons(it, ic);
+               k := k + 1;
+               ALLOC tl PTR;
+               tl.t := it;
+               IF tail = NIL THEN
+                  t.idxs := tl;
+               ELSE
+                  tail.next := tl;
+               END IF;
+               tail := tl;
+               IF ic /= NIL AND ic.lo /= NIL THEN
+                  lo := mk(clo(ic));
+                  hi := mk(chi(ic));
+               ELSEIF base_of(it).kind = t_enum THEN
+                  lo := mk("0");
+                  hi := mk(itos(list_len(base_of(it).lits) - 1));
+               END IF;
+               IF k = 1 THEN
+                  t.idx := it;
+                  c.lo := lo;
+                  c.hi := hi;
+               ELSEIF k = 2 THEN
+                  t.idx2 := it;
+                  c.lo2 := lo;
+                  c.hi2 := hi;
+               ELSEIF lo /= NIL THEN
+                  VAR l1, l2 : lines;
+                  ALLOC l1 PTR;
+                  ALLOC l2 PTR;
+                  l1.s := lo;
+                  l2.s := hi;
+                  l1.next := l2;
+                  IF btail = NIL THEN
+                     c.bnds := l1;
+                  ELSE
+                     btail.next := l1;
+                  END IF;
+                  btail := l2;
+               END IF;
+               ix := ix.next;
+            END REPEAT;
+            t.ndim := k;
          END;
          RETURN t;
       WHEN s_set =>
@@ -602,8 +733,12 @@ ABNORMAL FUNC resolve_subtype(CONST st : node, OUT c : cons) => typ IMPORTS ALL;
             t.elemcons := ec;
          END;
          RETURN t;
-      WHEN s_record =>
-         t := new_typ(t_record);
+      WHEN s_record, s_union =>
+         IF st.kind = s_union THEN
+            t := new_typ(t_union);
+         ELSE
+            t := new_typ(t_record);
+         END IF;
          BEGIN
             VAR comp : node := st.a;
             VAR tail : field;
@@ -624,6 +759,25 @@ ABNORMAL FUNC resolve_subtype(CONST st : node, OUT c : cons) => typ IMPORTS ALL;
                comp := comp.next;
             END REPEAT;
          END;
+         IF t.kind = t_union THEN
+            % .TAG has subtype ENUM['id1, ..., 'idn] (C.6)
+            VAR lits, ltail : node;
+            VAR f : field := t.fields;
+            WHILE f /= NIL REPEAT
+               VAR l : node := nn(n_enum, st.line);
+               IF f.name.ALL = "TAG" THEN
+                  fail(st.line, "no component of a union may be named TAG");
+               END IF;
+               l.name := f.name;
+               append(lits, ltail, l);
+               f := f.next;
+            END REPEAT;
+            t.elem := new_typ(t_enum);
+            t.elem.lits := lits;
+            IF st.b /= NIL THEN
+               tag_constraint(t, st.b, c);
+            END IF;
+         END IF;
          RETURN t;
       WHEN s_file =>
          RETURN ty_file;
@@ -694,6 +848,19 @@ FUNC float_lit(CONST e : node) => BOOL;
    END IF;
    RETURN e.kind = n_float OR e.kind = n_int;
 END FUNC float_lit;
+
+% UNION[...](exp): only the component named by exp may be present (C.6)
+PROC tag_constraint(CONST t : typ, CONST e : node, CONST c : cons) IMPORTS ALL;
+   VAR dummy : typ;
+   c.lo := mk(gexpr(e, t.elem, dummy));
+   check_type(dummy, t.elem, e.line);
+   c.hi := c.lo;
+   IF e.kind = n_enum THEN
+      c.mlo := lit_index(t.elem.lits, e.name.ALL);
+      c.mhi := c.mlo;
+      c.hasm := TRUE;
+   END IF;
+END PROC tag_constraint;
 
 % outside the capsule that declares a new type, its components, .ALL and :=
 % are known only if the capsule exports them, i.e. exports ALL (8.2)
@@ -805,7 +972,7 @@ FUNC needs_fin(CONST t : typ) => BOOL;
       RETURN needs_fin(t.under);
    ELSEIF t.kind = t_array THEN
       RETURN needs_fin(t.elem);
-   ELSEIF t.kind = t_record THEN
+   ELSEIF t.kind = t_record OR t.kind = t_union THEN
       VAR f : field := t.fields;
       WHILE f /= NIL REPEAT
          IF needs_fin(f.t) THEN
@@ -830,7 +997,7 @@ ABNORMAL FUNC fin_code(READONLY lval : STRING[ASCII], CONST t : typ) => STRING[A
       RETURN r.ALL & fin_code(lval & ".all", t.under);
    ELSEIF t.kind = t_array AND needs_fin(t.elem) THEN
       CONST i := new_name("fi");
-      RETURN r.ALL & "for (rt_int " & i & " = 0; " & i & " < RT_CNT(" & lval & "); " & i & "++) { "
+      RETURN r.ALL & "for (rt_int " & i & " = 0; " & i & " < " & acnt(t, lval) & "; " & i & "++) { "
              & fin_code(lval & ".p[" & i & "]", t.elem) & " }";
    ELSEIF t.kind = t_record THEN
       VAR f : field := t.fields;
@@ -840,6 +1007,19 @@ ABNORMAL FUNC fin_code(READONLY lval : STRING[ASCII], CONST t : typ) => STRING[A
          END IF;
          f := f.next;
       END REPEAT;
+   ELSEIF t.kind = t_union THEN
+      % only the component present
+      VAR f : field := t.fields;
+      VAR i : INT := 0;
+      r := mk(r.ALL & "switch (" & lval & ".tag) {");
+      WHILE f /= NIL REPEAT
+         IF needs_fin(f.t) THEN
+            r := mk(r.ALL & " case " & itos(i) & ": " & fin_code(lval & ".u." & field_c(f.name.ALL), f.t) & " break;");
+         END IF;
+         i := i + 1;
+         f := f.next;
+      END REPEAT;
+      r := mk(r.ALL & " }");
    END IF;
    RETURN r.ALL;
 END FUNC fin_code;
@@ -922,14 +1102,22 @@ PROC make_storage(READONLY lval : STRING[ASCII], CONST t : typ, CONST c : cons) 
       IF c.lo = NIL THEN
          fail(0, "an array variable needs index bounds");
       END IF;
-      emit(lval & ".lo = " & subst(c.lo.ALL) & "; " & lval & ".hi = " & subst(c.hi.ALL) & "; "
-           & lval & ".lo2 = " & subst(c.lo2.ALL) & "; " & lval & ".hi2 = " & subst(c.hi2.ALL) & ";");
-      emit(lval & ".p = rt_alloc(sizeof(" & ctype(t.elem) & ") * (size_t)RT_CNT(" & lval & "));");
+      FOR k : INT(1 .. t.ndim) REPEAT
+         IF cons_lo(c, k) = NIL THEN
+            fail(0, "an array variable needs index bounds");
+         END IF;
+         emit(lval & "." & dim_lo(k) & " = " & subst(cons_lo(c, k).ALL) & "; " & lval & "." & dim_hi(k) & " = "
+              & subst(cons_hi(c, k).ALL) & ";");
+      END REPEAT;
+      IF t.ndim = 1 THEN
+         emit(lval & ".lo2 = " & lval & ".hi2 = 1;");
+      END IF;
+      emit(lval & ".p = rt_alloc(sizeof(" & ctype(t.elem) & ") * (size_t)" & acnt(t, lval) & " + 1);");
       IF t.elem.kind = t_string OR t.elem.kind = t_array OR t.elem.kind = t_record
             OR t.elem.kind = t_new OR t.elem.kind = t_ptr OR t.elem.kind = t_mbox
             OR t.elem.kind = t_lock OR t.elem.kind = t_act THEN
          CONST i := new_name("i");
-         emit("for (rt_int " & i & " = 0; " & i & " < RT_CNT(" & lval & "); " & i & "++) {");
+         emit("for (rt_int " & i & " = 0; " & i & " < " & acnt(t, lval) & "; " & i & "++) {");
          init_storage(lval & ".p[" & i & "]", t.elem, t.elemcons);
          emit("}");
       END IF;
@@ -939,6 +1127,18 @@ PROC make_storage(READONLY lval : STRING[ASCII], CONST t : typ, CONST c : cons) 
          init_storage(lval & "." & field_c(f.name.ALL), f.t, f.c);
          f := f.next;
       END REPEAT;
+   ELSEIF t.kind = t_union THEN
+      % no component yet, unless the subtype names the only one possible
+      IF c /= NIL AND c.hasm THEN
+         VAR f : field := t.fields;
+         FOR i : INT(1 .. c.mlo) REPEAT
+            f := f.next;
+         END REPEAT;
+         emit(lval & ".tag = " & itos(c.mlo) & ";");
+         init_storage(lval & ".u." & field_c(f.name.ALL), f.t, f.c);
+      ELSE
+         emit(lval & ".tag = -1;");
+      END IF;
    END IF;
 END PROC make_storage;
 
@@ -1164,13 +1364,18 @@ ABNORMAL FUNC mcopy(CONST t : typ) => STRING[ASCII] IMPORTS ALL;
 END FUNC mcopy;
 
 FUNC composite(CONST t : typ) => BOOL;
-   RETURN t.kind = t_array OR t.kind = t_record OR (t.kind = t_new AND t.tparams /= NIL);
+   RETURN t.kind = t_array OR t.kind = t_record OR t.kind = t_union OR (t.kind = t_new AND t.tparams /= NIL);
 END FUNC composite;
 
 ABNORMAL FUNC assign_code(READONLY lval : STRING[ASCII], CONST t : typ, READONLY v : STRING[ASCII],
                           CONST c : cons) => STRING[ASCII] IMPORTS ALL;
    IF t.kind = t_new AND t.tparams = NIL THEN
       RETURN assign_code(lval, t.under, v, c);
+   END IF;
+   IF t.kind = t_union AND c /= NIL AND c.lo /= NIL THEN
+      % X_RANGE unless the value has the one component the subtype allows (C.6)
+      RETURN "{ " & ctype(t) & " u_ = " & v & "; if (u_.tag != (" & c.lo.ALL & ")) rt_raise(RT_X_RANGE); as_"
+             & ctype(t) & "(&" & lval & ", u_); }";
    END IF;
    IF composite(t) THEN
       RETURN "as_" & ctype(t) & "(&" & lval & ", " & v & ");";
@@ -1272,33 +1477,85 @@ PROC helper_bodies(CONST t : typ) IMPORTS ALL;
    VAR b : buffer := out_funcs;
    IF t.kind = t_array THEN
       VAR e : typ := t.elem;
+      VAR sizes, bounds : text := mk("0");
+      FOR k : INT(1 .. t.ndim) REPEAT
+         CONST l := dim_lo(k);
+         CONST h := dim_hi(k);
+         sizes := mk(sizes.ALL & " || RT_R_EXT(d->" & l & ", d->" & h & ") != RT_R_EXT(s." & l & ", s." & h & ")");
+         bounds := mk(bounds.ALL & " || a." & l & " != b." & l & " || a." & h & " != b." & h);
+      END REPEAT;
+      % X_ARRAY unless each index subtype has as many values in both; a
+      % source overlapping its target is read before it is written (C.7)
       put(b, "static void as_" & c & "(" & c & " *d, " & c & " s) {");
-      put(b, "  if (d->hi - d->lo != s.hi - s.lo || d->hi2 - d->lo2 != s.hi2 - s.lo2) rt_raise_msg(RT_X_SUBTYPE, " & q & "array length" & q & ");");
-      put(b, "  for (rt_int i = 0; i < RT_CNT(s); i++) { " & elem_assign("d->p[i]", e, "s.p[i]") & " }");
+      put(b, "  if (" & sizes.ALL & ") rt_raise_msg(rt_exc(" & q & "X_ARRAY" & q & "), " & q & "array length" & q & ");");
+      put(b, "  rt_int n_ = " & acnt(t, "s") & ";");
+      put(b, "  if (d->p > s.p && d->p < s.p + n_) { for (rt_int i = n_ - 1; i >= 0; i--) { " & elem_assign("d->p[i]", e, "s.p[i]") & " } return; }");
+      put(b, "  for (rt_int i = 0; i < n_; i++) { " & elem_assign("d->p[i]", e, "s.p[i]") & " }");
       put(b, "}");
       put(b, "static " & c & " cp_" & c & "(" & c & " s) {");
-      put(b, "  " & c & " d = s; d.p = rt_alloc(sizeof(" & ctype(e) & ") * (size_t)RT_CNT(s));");
-      put(b, "  for (rt_int i = 0; i < RT_CNT(s); i++) d.p[i] = " & copy_code(e, "s.p[i]") & ";");
+      put(b, "  " & c & " d = s; d.p = rt_alloc(sizeof(" & ctype(e) & ") * (size_t)" & acnt(t, "s") & " + 1);");
+      put(b, "  for (rt_int i = 0; i < " & acnt(t, "s") & "; i++) d.p[i] = " & copy_code(e, "s.p[i]") & ";");
       put(b, "  return d;");
       put(b, "}");
+      % equal when the index subtypes are equal and so are the components
       put(b, "static int eq_" & c & "(" & c & " a, " & c & " b) {");
-      put(b, "  if (a.hi - a.lo != b.hi - b.lo || a.hi2 - a.lo2 != b.hi2 - b.lo2) return 0;");
-      put(b, "  for (rt_int i = 0; i < RT_CNT(a); i++) if (!(" & eq_code(e, "a.p[i]", "b.p[i]") & ")) return 0;");
+      put(b, "  if (" & bounds.ALL & ") return 0;");
+      put(b, "  for (rt_int i = 0; i < " & acnt(t, "a") & "; i++) if (!(" & eq_code(e, "a.p[i]", "b.p[i]") & ")) return 0;");
       put(b, "  return 1;");
       put(b, "}");
    ELSEIF t.kind = t_new THEN
-      VAR p : node := t.tparams;
-      VAR pc : text := mk("0");
-      WHILE p /= NIL REPEAT
-         pc := mk(pc.ALL & " || d->p_" & lower_s(p.name.ALL) & " != s.p_" & lower_s(p.name.ALL));
-         p := p.next;
-      END REPEAT;
+      % assignment of the underlying variable (4.4.2): the target keeps its
+      % subtype, whose constraints are in terms of its own parameters
       put(b, "static void as_" & c & "(" & c & " *d, " & c & " s) {");
-      put(b, "  if (" & pc.ALL & ") rt_raise_msg(RT_X_SUBTYPE, " & q & "constraint" & q & ");");
-      put(b, "  " & elem_assign("d->all", t.under, "s.all"));
+      IF scalar_kind(t.under) AND t.elemcons /= NIL AND t.elemcons.lo /= NIL THEN
+         VAR saved : lines := psub;
+         VAR p : node := t.tparams;
+         WHILE p /= NIL REPEAT
+            VAR l1, l2 : lines;
+            ALLOC l1 PTR;
+            ALLOC l2 PTR;
+            l1.s := mk("@P_" & lower_s(p.name.ALL) & "@");
+            l2.s := mk("d->p_" & lower_s(p.name.ALL));
+            l1.next := l2;
+            l2.next := psub;
+            psub := l1;
+            p := p.next;
+         END REPEAT;
+         IF t.under.kind = t_float THEN
+            put(b, "  d->all = rt_frange(s.all, " & subst(t.elemcons.lo.ALL) & ", " & subst(t.elemcons.hi.ALL) & ");");
+         ELSE
+            put(b, "  d->all = rt_range(s.all, " & subst(t.elemcons.lo.ALL) & ", " & subst(t.elemcons.hi.ALL) & ");");
+         END IF;
+         psub := saved;
+      ELSE
+         put(b, "  " & elem_assign("d->all", t.under, "s.all"));
+      END IF;
       put(b, "}");
       put(b, "static " & c & " cp_" & c & "(" & c & " s) { s.all = " & copy_code(t.under, "s.all") & "; return s; }");
       put(b, "static int eq_" & c & "(" & c & " a, " & c & " b) { return " & eq_code(t.under, "a.all", "b.all") & "; }");
+   ELSEIF t.kind = t_union THEN
+      VAR f : field := t.fields;
+      VAR i : INT := 0;
+      VAR cases_as, cases_cp, cases_eq : text := mk("");
+      WHILE f /= NIL REPEAT
+         CONST fn := "u." & field_c(f.name.ALL);
+         cases_as := mk(cases_as.ALL & " case " & itos(i) & ": d->" & fn & " = " & copy_code(f.t, "s." & fn) & "; break;");
+         cases_cp := mk(cases_cp.ALL & " case " & itos(i) & ": d." & fn & " = " & copy_code(f.t, "s." & fn) & "; break;");
+         cases_eq := mk(cases_eq.ALL & " case " & itos(i) & ": return " & eq_code(f.t, "a." & fn, "b." & fn) & ";");
+         i := i + 1;
+         f := f.next;
+      END REPEAT;
+      % the component present is the one assigned, of whatever tag (C.6)
+      put(b, "static void as_" & c & "(" & c & " *d, " & c & " s) {");
+      put(b, "  if (s.tag < 0) rt_raise(RT_X_INIT);");
+      put(b, "  d->tag = s.tag; switch (s.tag) {" & cases_as.ALL & " }");
+      put(b, "}");
+      put(b, "static " & c & " cp_" & c & "(" & c & " s) {");
+      put(b, "  " & c & " d = s; switch (s.tag) {" & cases_cp.ALL & " } return d;");
+      put(b, "}");
+      put(b, "static int eq_" & c & "(" & c & " a, " & c & " b) {");
+      put(b, "  if (a.tag != b.tag) return 0; switch (a.tag) {" & cases_eq.ALL & " } return 1;");
+      put(b, "}");
    ELSE
       VAR f : field := t.fields;
       VAR conds : text := mk("1");

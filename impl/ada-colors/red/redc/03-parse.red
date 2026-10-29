@@ -519,8 +519,8 @@ ABNORMAL FUNC constructor_item => node IMPORTS ALL;
    lab.a := first;
    IF accept_op("..") THEN
       lab.b := expr;
-      append(keys, ktail, lab);
-   ELSEIF at_op(":") THEN
+   END IF;
+   IF at_op(":") THEN
       append(keys, ktail, lab);
    ELSEIF at_op(",") THEN
       % maybe a list of keys followed by ':'
@@ -548,6 +548,9 @@ ABNORMAL FUNC constructor_item => node IMPORTS ALL;
       ELSE
          tpos := save;
       END IF;
+   END IF;
+   IF keys = NIL AND lab.b /= NIL THEN
+      perror("a range in a constructor is followed by :");
    END IF;
    IF keys /= NIL THEN
       expect_op(":");
