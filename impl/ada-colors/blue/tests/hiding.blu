@@ -1,0 +1,59 @@
+MAIN SEGMENT HIDING
+   USES (TERMINAL);
+% a local routine hides a global one of the same signature (4.1); a routine
+% invokes the operations of a module declared in it by importing them (4.1.1);
+% the STREAM of 3.9.2 has a field BUFFER in two variants; T.SIZE of an array type
+TYPE STREAM (TAG DEV: ENUM (\DISPLAY, \TAPE, \DISK, \KEYBOARD)) = RECORD
+   VAR UNIT: INTEGER [0:7];
+   SELECT DEV FROM
+      \DISPLAY --> VAR NLINES: INTEGER [0:24]; END;
+      \TAPE, \DISK -->
+         VAR POSITION: INTEGER [0:4095];
+         VAR BUFFER: ARRAY [0:255] OF ASCII;
+      END;
+      \KEYBOARD -->
+         VAR BUFFER: ASCII_STR (20);
+         VAR BUF_FIRST, BUF_LAST: INTEGER [0:20];
+      END;
+   END SELECT;
+END RECORD;
+TYPE AT = ARRAY [1:3, 5:9] OF INTEGER;
+VAR X: STREAM (\KEYBOARD);
+VAR Y: STREAM (ANY);
+VAR T: STREAM (\TAPE);
+Q ();
+COUNTER ();
+COUNTER ();
+X := (UNIT: 5, BUFFER: '01234567890123456789', BUF_FIRST: 0, BUF_LAST: 0);
+Y := X;
+T.BUFFER (3) := \'Q';
+PUT_LINE (TO_CHAR (X.BUFFER.LENGTH) !! ' ' !! TO_CHAR (Y.DEV) !! ' ' !! TO_CHAR (T.BUFFER (3)));
+PUT_LINE (TO_CHAR (AT.DIMENSIONS) !! ' ' !! TO_CHAR (AT.EXTENT (1)));
+PROCEDURE P (A: INTEGER);
+   PUT_LINE ('global P');
+END PROCEDURE P;
+PROCEDURE Q ();
+   P (1);
+   P (TRUE);
+   PROCEDURE P (A: INTEGER);
+      PUT_LINE ('local P');
+   END PROCEDURE P;
+   PROCEDURE P (A: BOOLEAN);
+      PUT_LINE ('local P of a boolean');
+   END PROCEDURE P;
+END PROCEDURE Q;
+PROCEDURE COUNTER () IMPORTS (ROUTINES: (BUMP, GET));
+   BUMP ();
+   BUMP ();
+   PUT_LINE (TO_CHAR (GET ()));
+   MODULE M EXPORTS (BUMP, GET);
+      VAR C: INTEGER := 0;
+      PROCEDURE BUMP () IMPORTS (DATA: (# C));
+         C := C + 1;
+      END PROCEDURE BUMP;
+      FUNCTION GET () RETURNS (INTEGER) IMPORTS (DATA: (C));
+         RETURN C;
+      END FUNCTION GET;
+   END MODULE M;
+END PROCEDURE COUNTER;
+END SEGMENT HIDING;

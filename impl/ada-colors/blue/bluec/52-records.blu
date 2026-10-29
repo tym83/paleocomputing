@@ -24,6 +24,33 @@ FUNCTION FIND_FIELD (T: TYP, NAME: TEXT) RETURNS (FIELD);
    RETURN NIL;
 END FUNCTION FIND_FIELD;
 
+% the field NAME of the record type T; of the variant its tag selects when several
+% variants have a field of that name (the STREAM of 3.9.2 has two BUFFERs)
+FUNCTION FIND_VFIELD (T: TYP, NAME: TEXT) RETURNS (FIELD);
+   VAR F: FIELD := T@.FIELDS;
+   VAR FIRST: FIELD := NIL;
+   LOOP UNTIL F = NIL DO
+      IF TEQ (F@.NAME, NAME) THEN
+         IF FIRST = NIL THEN
+            FIRST := F;
+         END IF;
+         IF F@.TAGF.LEN = 0 THEN
+            RETURN F;
+         END IF;
+         BLOCK
+            CONST TAGV: MVAL := TAG_VALUE (T, F@.TAGF);
+            IF TAGV.OK THEN
+               IF LABELS_HAVE (F@.LABELS, TAGV.V, FIND_FIELD (T, F@.TAGF)@.T) THEN
+                  RETURN F;
+               END IF;
+            END IF;
+         END BLOCK;
+      END IF;
+      F := F@.NEXT;
+   END LOOP;
+   RETURN FIRST;
+END FUNCTION FIND_VFIELD;
+
 PROCEDURE ADD_FIELD (T: TYP, F: FIELD # TAIL: FIELD);
    VAR P: FIELD := T@.FIELDS;
    VAR N: INTEGER := 0;

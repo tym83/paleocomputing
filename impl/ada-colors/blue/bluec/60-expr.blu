@@ -633,7 +633,7 @@ FUNCTION FIELD_EXPR (E: NODE) RETURNS (ET);
    IF A@.KIND = N_INDEX THEN                         % A.BOUNDS(I).MIN, .MAX (3.8.1)
       IF A@.A@.KIND = N_FIELD & TEQS (A@.A@.NAME, 'BOUNDS') THEN
          BLOCK
-            CONST B: ET := EXPR (A@.A@.A, NIL);
+            CONST B: ET := VALUE_OR_TYPE (A@.A@.A);
             CONST I: TEXT := INT_EXPR (A@.B);
             IF REAL_TYPE (B.T)@.KIND <> T_ARR THEN
                FAIL (E@.LINE, 'BOUNDS of something not an array');
@@ -675,7 +675,7 @@ FUNCTION FIELD_EXPR (E: NODE) RETURNS (ET);
       CONST BT: TYP := B.T;
       IF BT@.KIND = T_REC THEN
          BLOCK
-            CONST F: FIELD := FIND_FIELD (BT, E@.NAME);
+            CONST F: FIELD := FIND_VFIELD (BT, E@.NAME);
             IF F <> NIL THEN
                CHECK_VARIANT (F, BT, A, E@.LINE);
                RETURN MKLV (FMT2 ('(@).@', B.C, F@.CNAME), F@.T, B.LVAL & F@.KIND = 0, B.C);
@@ -747,11 +747,19 @@ FUNCTION LABELS_HAVE (L: NODE, V: INTEGER, T: TYP) RETURNS (BOOLEAN);
    RETURN FALSE;
 END FUNCTION LABELS_HAVE;
 
+% the value E, or a stand-in value of the type E names (for attribute queries)
+FUNCTION VALUE_OR_TYPE (E: NODE) RETURNS (ET);
+   IF IS_TYPE_NAME (E) THEN
+      RETURN TYPE_VALUE (E@.NAME, E@.LINE);
+   END IF;
+   RETURN EXPR (E, NIL);
+END FUNCTION VALUE_OR_TYPE;
+
 % a subscripted variable or constant [3-156]
 FUNCTION INDEX_EXPR (E: NODE) RETURNS (ET);
    IF E@.A@.KIND = N_FIELD & TEQS (E@.A@.NAME, 'EXTENT') THEN    % A.EXTENT(I) (3.8.1)
       BLOCK
-         CONST A: ET := EXPR (E@.A@.A, NIL);
+         CONST A: ET := VALUE_OR_TYPE (E@.A@.A);
          CONST I: TEXT := INT_EXPR (E@.B);
          IF REAL_TYPE (A.T)@.KIND = T_ARR THEN
             RETURN MKET (FMT4 ('rt_b_dim_extent((@).lo, (@).hi, @, @)', A.C, A.C, I,

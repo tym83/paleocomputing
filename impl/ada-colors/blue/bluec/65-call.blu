@@ -170,7 +170,7 @@ FUNCTION FIND_ROUTINE (NAME: TEXT, ARGS: ARG, LINE: INTEGER, MUST: BOOLEAN) RETU
             CONST R: SYM := ORIGINAL (Y);
             VAR SCORE: INTEGER;
             ROUTINE_HEADER (R);
-            IF PARAM_COUNT (R) = N & NOT SEEN_ROUTINE (R, NAME, Y) THEN
+            IF PARAM_COUNT (R) = N & NOT SEEN_ROUTINE (R, NAME, Y) & NOT HIDDEN_ROUTINE (R, NAME, Y) THEN
                COUNT := COUNT + 1;
                SCORE := MATCH_SCORE (R, ARGS);
                IF SCORE > BEST_SCORE THEN
@@ -205,6 +205,51 @@ FUNCTION SEEN_ROUTINE (R: SYM, NAME: TEXT, STOP: SYM) RETURNS (BOOLEAN);
    RETURN FALSE;
 END FUNCTION SEEN_ROUTINE;
 
+% is the routine R (met as Y) hidden by a routine of the same signature declared
+% in an inner scope (4.1: "the global routine will not be known in the scope")?
+FUNCTION HIDDEN_ROUTINE (R: SYM, NAME: TEXT, STOP: SYM) RETURNS (BOOLEAN);
+   VAR Y: SYM := LOOKUP (NAME);
+   LOOP UNTIL Y = STOP ! Y = NIL DO
+      IF Y@.KIND = Y_ROUTINE & Y@.DEPTH > STOP@.DEPTH THEN
+         BLOCK
+            CONST O: SYM := ORIGINAL (Y);
+            IF O <> R THEN
+               ROUTINE_HEADER (O);
+               IF SAME_SIGNATURE (O, R) THEN
+                  RETURN TRUE;
+               END IF;
+            END IF;
+         END BLOCK;
+      END IF;
+      Y := LOOKUP_NEXT (Y);
+   END LOOP;
+   RETURN FALSE;
+END FUNCTION HIDDEN_ROUTINE;
+
+% the same signature: the same parameter types and modes, in order (4.1)
+FUNCTION SAME_SIGNATURE (A, B: SYM) RETURNS (BOOLEAN);
+   VAR P: PARM := A@.PARAMS;
+   VAR Q: PARM := B@.PARAMS;
+   IF A@.GENERIC ! B@.GENERIC THEN
+      RETURN FALSE;
+   END IF;
+   LOOP UNTIL P = NIL ! Q = NIL DO
+      IF P@.MODE <> Q@.MODE THEN
+         RETURN FALSE;
+      END IF;
+      IF P@.T = NIL ! Q@.T = NIL THEN
+         IF P@.T <> Q@.T THEN
+            RETURN FALSE;
+         END IF;
+      ORIF NOT SAME_TYPE (P@.T, Q@.T) THEN
+         RETURN FALSE;
+      END IF;
+      P := P@.NEXT;
+      Q := Q@.NEXT;
+   END LOOP;
+   RETURN P = NIL & Q = NIL;
+END FUNCTION SAME_SIGNATURE;
+
 FUNCTION PARAM_COUNT (R: SYM) RETURNS (INTEGER);
    VAR N: INTEGER := 0;
    VAR P: PARM := R@.PARAMS;
@@ -221,7 +266,9 @@ FUNCTION MATCH_SCORE (R: SYM, ARGS: ARG) RETURNS (INTEGER);
    VAR A: ARG := ARGS;
    VAR EXACT: BOOLEAN := TRUE;
    CONST BS: BIND := NEW_BINDS ();                   % one unification for all parameters
+   VAR PT: TYP;
    LOOP UNTIL P = NIL DO
+      PT := FORMAL_VIEW (R, P);
       IF P@.MODE <> A@.MODE THEN
          RETURN 0;
       END IF;
@@ -229,35 +276,35 @@ FUNCTION MATCH_SCORE (R: SYM, ARGS: ARG) RETURNS (INTEGER);
          IF NOT GENERIC_FITS (P, A, BS) THEN
             RETURN 0;
          END IF;
-      ORIF P@.T = NIL THEN                            % a TYPE parameter: a type argument
+      ORIF PT = NIL THEN                            % a TYPE parameter: a type argument
          IF A@.HAVE THEN
             IF A@.V.T <> W@.TY_TYPE THEN              % (a WHERE template says TYPE)
                RETURN 0;
             END IF;
          END IF;
       ORIF WANT_SENSITIVE (A) THEN
-         IF NOT LITERAL_FITS (A@.E, P@.T) THEN
+         IF NOT LITERAL_FITS (A@.E, PT) THEN
             RETURN 0;
          END IF;
       ELSE
          TYPE_ARG (A);
          BLOCK
             CONST AT: TYP := A@.V.T;
-            IF NOT (SAME_CLASS (P@.T, AT) ! (AT@.KIND = T_NIL & REAL_TYPE (P@.T)@.KIND = T_PTR)) THEN
+            IF NOT (SAME_CLASS (PT, AT) ! (AT@.KIND = T_NIL & REAL_TYPE (PT)@.KIND = T_PTR)) THEN
                RETURN 0;
             END IF;
-            IF NOT SAME_TYPE (P@.T, AT) THEN
+            IF NOT SAME_TYPE (PT, AT) THEN
                IF P@.MODE = M_INOUT THEN               % an inout matches exactly (4.3.2)
                   RETURN 0;
                END IF;
                EXACT := FALSE;
             END IF;
-            IF REAL_TYPE (AT)@.KIND = T_INT & REAL_TYPE (P@.T)@.KIND = T_INT THEN
+            IF REAL_TYPE (AT)@.KIND = T_INT & REAL_TYPE (PT)@.KIND = T_INT THEN
                % no implicit approximation: an input's scale may not exceed the
                % formal's, the formal's of an output may not exceed the argument's
-               IF P@.MODE = M_IN & AT@.SCALE > P@.T@.SCALE THEN
+               IF P@.MODE = M_IN & AT@.SCALE > PT@.SCALE THEN
                   RETURN 0;
-               ORIF P@.MODE = M_OUT & P@.T@.SCALE > AT@.SCALE THEN
+               ORIF P@.MODE = M_OUT & PT@.SCALE > AT@.SCALE THEN
                   RETURN 0;
                END IF;
             END IF;
@@ -305,6 +352,7 @@ FUNCTION CALL_SYM (Y0: SYM, ARGS: ARG, LINE: INTEGER) RETURNS (ET);
    VAR PRE: TEXT := MK ('');                         % temporaries of output arguments
    VAR POST: TEXT := MK ('');                        % ... copied into them afterwards
    VAR SHARED: BOOLEAN := FALSE;                     % may an input share an inout?
+   VAR PT: TYP;                                      % the formal's type, seen from here
    IF Y@.GENERIC THEN
       Y := INSTANCE (Y, ARGS, LINE);
    END IF;
@@ -330,10 +378,11 @@ FUNCTION CALL_SYM (Y0: SYM, ARGS: ARG, LINE: INTEGER) RETURNS (ET);
       IF A = NIL THEN
          FAIL (LINE, 'too few arguments');
       END IF;
-      IF P@.T = NIL THEN                              % a TYPE argument: nothing at run time
+      PT := FORMAL_VIEW (Y, P);
+      IF PT = NIL THEN                              % a TYPE argument: nothing at run time
          ;
       ORIF P@.MODE = M_IN THEN
-         IF REAL_TYPE (P@.T)@.KIND = T_VOID THEN      % a routine argument
+         IF REAL_TYPE (PT)@.KIND = T_VOID THEN      % a routine argument
             ;
          ELSE
             BLOCK
@@ -342,13 +391,13 @@ FUNCTION CALL_SYM (Y0: SYM, ARGS: ARG, LINE: INTEGER) RETURNS (ET);
                IF A@.HAVE & NOT WANT_SENSITIVE (A) THEN
                   V := A@.V;
                ELSE
-                  V := EXPR (A@.E, P@.T);
+                  V := EXPR (A@.E, PT);
                END IF;
-               CV := CONVERT (V, P@.T, LINE, NO_TEXT ());
+               CV := CONVERT (V, PT, LINE, NO_TEXT ());
                % an input is a copy: when the variable may also be reached as an inout
                % (argument or import), it is copied at the invocation (4.3.2, p.4-18)
-               IF SHARED & V.LVAL & IS_STRUCTURED (P@.T) THEN
-                  CV := COPY_OF (P@.T, CV);
+               IF SHARED & V.LVAL & IS_STRUCTURED (PT) THEN
+                  CV := COPY_OF (PT, CV);
                END IF;
                C := FMT3 ('@@@', C, SEP, CV);
                SEP := MK (', ');
@@ -360,7 +409,7 @@ FUNCTION CALL_SYM (Y0: SYM, ARGS: ARG, LINE: INTEGER) RETURNS (ET);
             IF A@.HAVE THEN
                V := A@.V;
             ELSE
-               V := EXPR (A@.E, P@.T);
+               V := EXPR (A@.E, PT);
             END IF;
             IF A@.E <> NIL & NOT V.LVAL THEN
                IF A@.E@.KIND = N_SUBSTR THEN
@@ -377,24 +426,24 @@ FUNCTION CALL_SYM (Y0: SYM, ARGS: ARG, LINE: INTEGER) RETURNS (ET);
             IF NOT V.LVAL THEN
                FAIL (LINE, 'an inout or output argument must be a variable (4.3.2)');
             END IF;
-            IF NOT SAME_CLASS (P@.T, V.T) THEN
+            IF NOT SAME_CLASS (PT, V.T) THEN
                FAILT (LINE, 'the inout or output argument is not of the type of the parameter: ',
-                      TYPE_NAME (P@.T));
+                      TYPE_NAME (PT));
             END IF;
-            IF P@.MODE = M_INOUT & NOT (SAME_TYPE (P@.T, V.T) & SAME_RANGE (P@.T, V.T)) THEN
+            IF P@.MODE = M_INOUT & NOT (SAME_TYPE (PT, V.T) & SAME_RANGE (PT, V.T)) THEN
                FAIL (LINE, 'an inout argument must match the parameter exactly (4.3.2)');
             END IF;
-            IF P@.MODE = M_OUT & NOT (SAME_TYPE (P@.T, V.T) & SAME_RANGE (P@.T, V.T)) THEN
+            IF P@.MODE = M_OUT & NOT (SAME_TYPE (PT, V.T) & SAME_RANGE (PT, V.T)) THEN
                % the output is stored into the argument as by assignment: a temporary
                % of the formal's type, then STORE_ with its conversions and checks
                BLOCK
                   CONST TMP: TEXT := NEW_NAME ('oa');
                   CONST AP: TEXT := NEW_NAME ('op');
                   PRE := FMT4 ('@ @ *@ = &@;', PRE, CTYPE (V.T), AP, V.C);
-                  PRE := FMT4 ('@ @ @ = @;', PRE, CTYPE (P@.T), TMP,
+                  PRE := FMT4 ('@ @ @ = @;', PRE, CTYPE (PT), TMP,
                                COPY_OF (V.T, FMT1 ('(*@)', AP)));
                   POST := FMT2 ('@ @', POST, STORE_CODE (V.T, FMT1 ('(*@)', AP),
-                                                        MKET (TMP, P@.T), LINE, NO_TEXT ()));
+                                                        MKET (TMP, PT), LINE, NO_TEXT ()));
                   C := FMT3 ('@@&@', C, SEP, TMP);
                END BLOCK;
             ELSE
@@ -410,10 +459,82 @@ FUNCTION CALL_SYM (Y0: SYM, ARGS: ARG, LINE: INTEGER) RETURNS (ET);
       FAIL (LINE, 'too many arguments');
    END IF;
    IF PRE.LEN > 0 THEN
-      RETURN MKET (FMT4 ('({ @ @(@); @ })', PRE, Y@.ACCESS, C, POST), Y@.RESULT);
+      RETURN MKET (FMT4 ('({ @ @(@); @ })', PRE, Y@.ACCESS, C, POST), RESULT_VIEW (Y));
    END IF;
-   RETURN MKET (FMT2 ('@(@)', Y@.ACCESS, C), Y@.RESULT);
+   RETURN MKET (FMT2 ('@(@)', Y@.ACCESS, C), RESULT_VIEW (Y));
 END FUNCTION CALL_SYM;
+
+% the type of the formal P of the routine R seen where R is invoked: outside the
+% module that declares R, a type the module exports is abstract (4.4), so the
+% operations of two abstract types with the same underlying type stay apart
+FUNCTION FORMAL_VIEW (R: SYM, P: PARM) RETURNS (TYP);
+   IF P@.T = NIL ! P@.TS = NIL THEN
+      RETURN P@.T;
+   END IF;
+   RETURN OUTSIDE_VIEW (R, P@.TS, P@.T);
+END FUNCTION FORMAL_VIEW;
+
+FUNCTION RESULT_VIEW (R: SYM) RETURNS (TYP);
+   IF R@.DECL = NIL ! R@.RESULT = NIL THEN
+      RETURN R@.RESULT;
+   END IF;
+   IF R@.DECL@.KIND <> N_ROUTINE ! R@.DECL@.B = NIL THEN
+      RETURN R@.RESULT;
+   END IF;
+   RETURN OUTSIDE_VIEW (R, R@.DECL@.B, R@.RESULT);
+END FUNCTION RESULT_VIEW;
+
+FUNCTION OUTSIDE_VIEW (R: SYM, TS: NODE, T: TYP) RETURNS (TYP);
+   IF R@.MODL = NIL ! T@.KIND = T_ABS ! TS@.KIND <> TS_NAME THEN
+      RETURN T;
+   END IF;
+   IF IN_MODULE (R@.MODL) THEN
+      RETURN T;
+   END IF;
+   BLOCK
+      VAR M: SYM := R@.MODL;
+      LOOP UNTIL M = NIL DO                          % the module or one around it
+         BLOCK
+            CONST Y: SYM := MEMBER_TYPE (M, TS@.NAME);
+            IF Y <> NIL THEN
+               IF Y@.EXPORTED THEN
+                  RETURN ABSTRACT_VIEW (Y, T);
+               END IF;
+               RETURN T;
+            END IF;
+         END BLOCK;
+         IF IN_MODULE (M@.MODL) THEN
+            EXIT;
+         END IF;
+         M := M@.MODL;
+      END LOOP;
+   END BLOCK;
+   RETURN T;
+END FUNCTION OUTSIDE_VIEW;
+
+% the type NAME declared in the module M, if any
+FUNCTION MEMBER_TYPE (M: SYM, NAME: TEXT) RETURNS (SYM);
+   VAR Y: SYM := M@.MEMBERS;
+   IF M@.BUSY THEN                                    % entered: its names are visible
+      BLOCK
+         VAR Z: SYM := LOOKUP (NAME);
+         LOOP UNTIL Z = NIL DO
+            IF Z@.KIND = Y_TYPE & Z@.MODL = M & Z@.ORIG = NIL THEN
+               RETURN Z;
+            END IF;
+            Z := LOOKUP_NEXT (Z);
+         END LOOP;
+      END BLOCK;
+      RETURN NIL;
+   END IF;
+   LOOP UNTIL Y = NIL DO
+      IF Y@.KIND = Y_TYPE & TEQ (Y@.NAME, NAME) THEN
+         RETURN Y;
+      END IF;
+      Y := Y@.SNEXT;
+   END LOOP;
+   RETURN NIL;
+END FUNCTION MEMBER_TYPE;
 
 % a value that holds storage of its own: a copy shares none of it
 FUNCTION IS_STRUCTURED (T: TYP) RETURNS (BOOLEAN);

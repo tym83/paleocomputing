@@ -193,11 +193,38 @@ FUNCTION TYPE_ATTRIBUTE (TNAME, NAME: TEXT, LINE: INTEGER) RETURNS (ET);
    IF IS_TYPE_WORD (TNAME) THEN
       FAILT (LINE, 'an attribute of a type class needs a member: ', TNAME);
    END IF;
-   BLOCK
-      CONST T: TYP := RESOLVE_USER_NAME (TNAME, LINE);
-      RETURN ATTRIBUTE (MKET (FMT1 ('(*(@ *)0)', CTYPE (T)), T), NAME, LINE);
-   END BLOCK;
+   RETURN ATTRIBUTE (TYPE_VALUE (TNAME, LINE), NAME, LINE);
 END FUNCTION TYPE_ATTRIBUTE;
+
+% a stand-in value of the type TNAME for its attribute queries: for an array or
+% record type, a value with the bounds and parameters of the type
+FUNCTION TYPE_VALUE (TNAME: TEXT, LINE: INTEGER) RETURNS (ET);
+   CONST T: TYP := RESOLVE_USER_NAME (TNAME, LINE);
+   CONST RT: TYP := REAL_TYPE (T);
+   IF RT@.KIND = T_ARR ! RT@.KIND = T_REC THEN
+      BLOCK
+         CONST TMP: TEXT := NEW_NAME ('tq');
+         VAR C: TEXT := FMT4 ('({ @ @; memset(&@, 0, sizeof @); ', CTYPE (T), TMP, TMP, TMP);
+         C := FMT3 ('@@ @; })', C, INIT_CODE (RT, TMP), TMP);
+         RETURN MKET (C, T);
+      END BLOCK;
+   END IF;
+   RETURN MKET (FMT1 ('(*(@ *)0)', CTYPE (T)), T);
+END FUNCTION TYPE_VALUE;
+
+% is E the name of a type (not of a value)?
+FUNCTION IS_TYPE_NAME (E: NODE) RETURNS (BOOLEAN);
+   IF E@.KIND <> N_NAME THEN
+      RETURN FALSE;
+   END IF;
+   BLOCK
+      CONST Y: SYM := LOOKUP (E@.NAME);
+      IF Y = NIL THEN
+         RETURN FALSE;
+      END IF;
+      RETURN Y@.KIND = Y_TYPE;
+   END BLOCK;
+END FUNCTION IS_TYPE_NAME;
 
 % (A.B).C: the attribute C of the attribute B of A; for the maxima of the
 % implementation (3.6.1, 3.7.1, 3.3.1)
@@ -255,7 +282,7 @@ FUNCTION RECORD_CONSTRUCTOR (E: NODE, WANT: TYP) RETURNS (ET);
          VAR P: NODE := E@.A;
          LOOP UNTIL P = NIL DO
             BLOCK
-               CONST G: FIELD := FIND_FIELD (T, P@.NAME);
+               CONST G: FIELD := FIND_VFIELD (T, P@.NAME);
                IF G = NIL THEN
                   FAILT (P@.LINE, 'no such field: ', P@.NAME);
                END IF;

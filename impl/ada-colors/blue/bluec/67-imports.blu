@@ -59,7 +59,7 @@ PROCEDURE COMPUTE_USES (Y: SYM);
       LOOP UNTIL R = NIL DO
          BLOCK
             VAR Z: SYM := LOOKUP (R@.NAME);
-            IF Z = NIL THEN
+            IF Z = NIL & NOT LOCAL_MODULE_EXPORTS (Y@.DECL@.C, R@.NAME) THEN
                FAILT (R@.LINE, 'an imported routine is not visible: ', R@.NAME);
             END IF;
             LOOP UNTIL Z = NIL DO
@@ -91,6 +91,26 @@ PROCEDURE COMPUTE_USES (Y: SYM);
    Y@.USES := HEAD;
    Y@.MV := 1;
 END PROCEDURE COMPUTE_USES;
+
+% does a module declared in the closed-scope-body B export NAME? The names a module
+% exports are local to the scope around it (4.1.2), and a routine that invokes an
+% exported routine using the module's own variables imports that routine (4.1.1)
+FUNCTION LOCAL_MODULE_EXPORTS (B: NODE, NAME: TEXT) RETURNS (BOOLEAN);
+   VAR M: NODE;
+   IF B = NIL THEN
+      RETURN FALSE;
+   END IF;
+   M := B@.C;
+   LOOP UNTIL M = NIL DO
+      IF M@.KIND = N_MODULE THEN
+         IF M@.FL = 1 ! IN_IDENTS (M@.B, NAME) ! LOCAL_MODULE_EXPORTS (M@.C, NAME) THEN
+            RETURN TRUE;
+         END IF;
+      END IF;
+      M := M@.NEXT;
+   END LOOP;
+   RETURN FALSE;
+END FUNCTION LOCAL_MODULE_EXPORTS;
 
 % the uses of the routines of a body, once its objects are declared
 PROCEDURE ROUTINE_USES (RS: NODE);
