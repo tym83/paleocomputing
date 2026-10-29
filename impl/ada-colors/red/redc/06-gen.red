@@ -47,6 +47,18 @@ PROC declare_body(CONST elems : node) IMPORTS ALL;
       END IF;
       e := e.next;
    END REPEAT;
+   % INITIALIZE with a single parameter of a new type of this scope (13.3)
+   e := elems;
+   WHILE e /= NIL REPEAT
+      IF e.kind = n_proc AND e.name.ALL = "INITIALIZE" THEN
+         VAR y : sym := lookup_decl(e);
+         IF y /= NIL AND y.params /= NIL AND y.params.next = NIL
+               AND (y.params.t.kind = t_new OR y.params.t.kind = t_ptr) THEN
+            y.params.t.initp := y;
+         END IF;
+      END IF;
+      e := e.next;
+   END REPEAT;
 END PROC declare_body;
 
 % a constant whose value is a manifest INT expression is known during
@@ -246,7 +258,9 @@ PROC elaborate_capsule(CONST d : node, CONST y : sym, CONST args : node, CONST o
       m := m.stack;
    END REPEAT;
    WHILE p /= NIL REPEAT
-      IF lookup(p.name.ALL) = NIL OR lookup(p.name.ALL).depth /= depth THEN
+      % := and = of the capsule's new types are defined automatically (13.2)
+      IF p.name.ALL /= ":=" AND p.name.ALL /= "="
+            AND (lookup(p.name.ALL) = NIL OR lookup(p.name.ALL).depth /= depth) THEN
          fail(d.line, p.name.ALL & " is exported but not defined in capsule " & d.name.ALL);
       END IF;
       p := p.next;
@@ -256,6 +270,22 @@ PROC elaborate_capsule(CONST d : node, CONST y : sym, CONST args : node, CONST o
 END PROC elaborate_capsule;
 
 % EXPOSE visible-list FROM capsule (8.1, 8.2)
+% does the capsule export this operator symbol? (8.1)
+FUNC exports_op(CONST d : node, READONLY op : STRING[ASCII]) => BOOL;
+   VAR p : node;
+   IF d = NIL THEN
+      RETURN FALSE;
+   END IF;
+   p := d.a;
+   WHILE p /= NIL REPEAT
+      IF p.name.ALL = op THEN
+         RETURN TRUE;
+      END IF;
+      p := p.next;
+   END REPEAT;
+   RETURN FALSE;
+END FUNC exports_op;
+
 % the name a definition is known by after RENAMING (8.1)
 FUNC renamed(CONST d : node, CONST z : sym) => text;
    VAR r : node := d.c;
@@ -800,7 +830,7 @@ PROC st_assign(CONST s : node) IMPORTS ALL;
    IF ro THEN
       fail(s.line, "assignment to a readonly data item");
    END IF;
-   IF NOT opened(t) THEN
+   IF NOT opened(t) AND NOT exports_op(t.ocap, ":=") THEN
       fail(s.line, ":= for " & t.name.ALL & " is not exported by its capsule");
    END IF;
    BEGIN

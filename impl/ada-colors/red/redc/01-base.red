@@ -139,7 +139,7 @@ TYPE typ : PTR RECORD[kind : INT, name : text, lits : node,
                       under : typ, tparams : node, ocap : node,
                       fields : field, target : typ, decl : node,
                       cname : text, forward, defined, helpers : BOOL,
-                      next : typ];
+                      initp, tpsyms : sym, next : typ];
 
 TYPE field : PTR RECORD[name : text, t : typ, c : cons, st : node, next : field];
 

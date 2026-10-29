@@ -175,7 +175,7 @@ PROC select_on(READONLY base : STRING[ASCII], CONST bt : typ, CONST e : node, VA
       WHILE p /= NIL REPEAT
          IF p.name.ALL = e.name.ALL THEN
             code := mk(base & ".p_" & lower_s(p.name.ALL));
-            t := ty_int;
+            t := tparam_type(bt, p.name.ALL);
             ro := TRUE;
             RETURN;
          END IF;
@@ -921,6 +921,15 @@ ABNORMAL FUNC gcall(CONST e : node, CONST is_stmt : BOOL, OUT t : typ) => STRING
    y := lookup(fn.name.ALL);
    IF y = NIL THEN
       RETURN builtin(fn.name.ALL, tt, e.b, e.line, is_stmt, t);
+   END IF;
+   IF y.kind /= y_func AND y.kind /= y_proc AND y.kind /= y_generic THEN
+      % a data item may share its name with visible deferred units (11.1)
+      VAR alt : sym := resolve_overload(fn.name.ALL, e.b, is_stmt, e.line);
+      IF alt /= NIL THEN
+         y := alt;
+      ELSEIF is_builtin(fn.name.ALL) THEN
+         RETURN builtin(fn.name.ALL, tt, e.b, e.line, is_stmt, t);
+      END IF;
    END IF;
    IF y.kind = y_generic THEN
       y := instantiate(y, tt, e.b, e.line);
