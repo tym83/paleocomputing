@@ -137,7 +137,7 @@
             else
                EXPR(A);
             end if;
-            A.TAG := FORMAL;
+            A.FORMAL := FORMAL;
             A.FLAG := MARK;
             APPEND(HEAD, TAIL, A);
             MORE := AT_OP(",");
@@ -223,13 +223,13 @@
       I : INTEGER := 1;
    begin
       while A /= null loop
-         if A.TAG = null and I = NTH then
+         if A.FORMAL = null and I = NTH then
             return A;
          end if;
-         if A.TAG /= null and then A.TAG.all = NAME then
+         if A.FORMAL /= null and then A.FORMAL.all = NAME then
             return A;
          end if;
-         if A.TAG = null then
+         if A.FORMAL = null then
             I := I + 1;
          end if;
          A := A.NEXT;

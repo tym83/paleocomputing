@@ -988,7 +988,7 @@
       A : NODE := ARGS;
       P : PARM := FIRST;
    begin
-      while A /= null and then A.TAG = null loop
+      while A /= null and then A.FORMAL = null loop
          if P = PM then
             return A;
          end if;
@@ -996,7 +996,7 @@
          A := A.NEXT;
       end loop;
       while A /= null loop
-         if A.TAG /= null and then A.TAG.all = PM.NAME.all then
+         if A.FORMAL /= null and then A.FORMAL.all = PM.NAME.all then
             return A;
          end if;
          A := A.NEXT;

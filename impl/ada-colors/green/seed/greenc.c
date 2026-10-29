@@ -26,7 +26,7 @@ typedef struct R171 *P170;
 struct R120 { int dummy_; P144 head_; P144 tail_; };
 struct R145 { int dummy_; P133 s_; P144 next_; };
 struct R104 { int dummy_; rt_int kind_; rt_int line_; rt_int ival_; P133 s_; };
-struct R164 { int dummy_; rt_int kind_; rt_int line_; rt_int ival_; rt_int flag_; P133 name_; P133 tag_; P163 a_; P163 b_; P163 c_; P163 d_; P163 e_; P163 next_; };
+struct R164 { int dummy_; rt_int kind_; rt_int line_; rt_int ival_; rt_int flag_; P133 name_; P133 tag_; P163 a_; P163 b_; P163 c_; P163 d_; P163 e_; P163 next_; P133 formal_; };
 typedef struct R1042 R1042;
 typedef struct R1042 *P1041;
 struct R111 { int dummy_; rt_int kind_; P133 name_; P115 t_; P170 c_; P133 access_path_; P133 cname_; int ro_; rt_int mvalue_; int hasmv_; P163 decl_; P1041 params_; P115 result_; rt_int depth_; rt_int level_; int byref_; int vrp_; int hidden_; int from_use_; P110 members_; P110 mnext_; P110 chain_; P110 stack_; };
@@ -2747,7 +2747,7 @@ static P163 f_nn_227(struct f_greenc_1fr *up_, rt_int kind_225, rt_int line_226)
 F->up = up_;
 F->kind_225 = kind_225;
 F->line_226 = line_226;
-F->result_ = ({ R164 *cell856 = rt_alloc(sizeof(R164)); *cell856 = cp_R164(({ R164 ag857; ag857.kind_ = F->kind_225; ag857.line_ = F->line_226; ag857.ival_ = ((rt_int)0LL); ag857.flag_ = ((rt_int)0LL); ag857.name_ = NULL; ag857.tag_ = NULL; ag857.a_ = NULL; ag857.b_ = NULL; ag857.c_ = NULL; ag857.d_ = NULL; ag857.e_ = NULL; ag857.next_ = NULL; ag857; })); (P163)cell856; });
+F->result_ = ({ R164 *cell856 = rt_alloc(sizeof(R164)); *cell856 = cp_R164(({ R164 ag857; ag857.kind_ = F->kind_225; ag857.line_ = F->line_226; ag857.ival_ = ((rt_int)0LL); ag857.flag_ = ((rt_int)0LL); ag857.name_ = NULL; ag857.tag_ = NULL; ag857.a_ = NULL; ag857.b_ = NULL; ag857.c_ = NULL; ag857.d_ = NULL; ag857.e_ = NULL; ag857.next_ = NULL; ag857.formal_ = NULL; ag857; })); (P163)cell856; });
 goto ret_;
   rt_raise(RT_X_INIT);
 ret_:
@@ -3325,9 +3325,9 @@ F->formal_920 = (*(P103)rt_nil_check(F->up->toks_105.p[rt_index(F->up->tpos_107,
 if (rt_str_eq(f_text_at_244(F->up, ((rt_int)1LL)), rt_str(":=", 2))) {
 F->mark_921 = ((rt_int)1LL);
 } else if (rt_str_eq(f_text_at_244(F->up, ((rt_int)1LL)), rt_str("=:", 2))) {
-F->mark_921 = ((rt_int)2LL);
-} else if (rt_str_eq(f_text_at_244(F->up, ((rt_int)1LL)), rt_str(":=:", 3))) {
 F->mark_921 = ((rt_int)3LL);
+} else if (rt_str_eq(f_text_at_244(F->up, ((rt_int)1LL)), rt_str(":=:", 3))) {
+F->mark_921 = ((rt_int)2LL);
 } else {
 F->mark_921 = ((rt_int)4LL);
 }
@@ -3342,7 +3342,7 @@ F->r_914 = f_nn_227(F->up, ((rt_int)14LL), F->line_915);
 f_simple_expr_270(F->up, &(*(P163)rt_nil_check(F->r_914)).b_);
 F->lo_913 = F->r_914;
 }
-(*(P163)rt_nil_check(F->lo_913)).tag_ = F->formal_920;
+(*(P163)rt_nil_check(F->lo_913)).formal_ = F->formal_920;
 (*(P163)rt_nil_check(F->lo_913)).flag_ = F->mark_921;
 f_append_231(F->up, &F->args_911, &F->atail_912, F->lo_913);
 
@@ -7594,7 +7594,7 @@ F->a_1367 = NULL;
 F->a_1367 = F->args_568;
 F->p_1368 = NULL;
 F->p_1368 = F->first_570;
-while (((F->a_1367 != NULL) && ((*(P163)rt_nil_check(F->a_1367)).tag_ == NULL))) {
+while (((F->a_1367 != NULL) && ((*(P163)rt_nil_check(F->a_1367)).formal_ == NULL))) {
 if ((F->p_1368 == F->pm_569)) {
 F->result_ = F->a_1367;
 goto ret_;
@@ -7604,7 +7604,7 @@ F->a_1367 = (*(P163)rt_nil_check(F->a_1367)).next_;
 }
 L_end_1369: ;
 while ((F->a_1367 != NULL)) {
-if ((((*(P163)rt_nil_check(F->a_1367)).tag_ != NULL) && rt_str_eq((*(P133)rt_nil_check((*(P163)rt_nil_check(F->a_1367)).tag_)), (*(P133)rt_nil_check((*(P1041)rt_nil_check(F->pm_569)).name_))))) {
+if ((((*(P163)rt_nil_check(F->a_1367)).formal_ != NULL) && rt_str_eq((*(P133)rt_nil_check((*(P163)rt_nil_check(F->a_1367)).formal_)), (*(P133)rt_nil_check((*(P1041)rt_nil_check(F->pm_569)).name_))))) {
 F->result_ = F->a_1367;
 goto ret_;
 }
@@ -8328,13 +8328,13 @@ goto ret_;
 F->l_1477 = f_nn_227(F->up, (*(P163)rt_nil_check((*(P163)rt_nil_check(F->e_634)).a_)).kind_, (*(P163)rt_nil_check((*(P163)rt_nil_check(F->e_634)).a_)).line_);
 as_R164(&(*(P163)rt_nil_check(F->l_1477)), (*(P163)rt_nil_check((*(P163)rt_nil_check(F->e_634)).a_)));
 (*(P163)rt_nil_check(F->l_1477)).next_ = NULL;
-(*(P163)rt_nil_check(F->l_1477)).tag_ = NULL;
+(*(P163)rt_nil_check(F->l_1477)).formal_ = NULL;
 (*(P163)rt_nil_check(F->l_1477)).flag_ = ((rt_int)0LL);
 if (((*(P163)rt_nil_check(F->e_634)).kind_ == ((rt_int)7LL))) {
 F->rt_1478 = f_nn_227(F->up, (*(P163)rt_nil_check((*(P163)rt_nil_check(F->e_634)).b_)).kind_, (*(P163)rt_nil_check((*(P163)rt_nil_check(F->e_634)).b_)).line_);
 as_R164(&(*(P163)rt_nil_check(F->rt_1478)), (*(P163)rt_nil_check((*(P163)rt_nil_check(F->e_634)).b_)));
 (*(P163)rt_nil_check(F->rt_1478)).next_ = NULL;
-(*(P163)rt_nil_check(F->rt_1478)).tag_ = NULL;
+(*(P163)rt_nil_check(F->rt_1478)).formal_ = NULL;
 (*(P163)rt_nil_check(F->rt_1478)).flag_ = ((rt_int)0LL);
 (*(P163)rt_nil_check(F->l_1477)).next_ = F->rt_1478;
 }
@@ -10011,7 +10011,7 @@ f_designator_299(F->up, &(*(P163)rt_nil_check(F->a_1666)).name_);
 } else {
 f_expr_264(F->up, &F->a_1666);
 }
-(*(P163)rt_nil_check(F->a_1666)).tag_ = F->formal_1667;
+(*(P163)rt_nil_check(F->a_1666)).formal_ = F->formal_1667;
 (*(P163)rt_nil_check(F->a_1666)).flag_ = F->mark_1668;
 f_append_231(F->up, &F->head_1664, &F->tail_1665, F->a_1666);
 F->more_1669 = f_at_op_238(F->up, rt_str(",", 1));
@@ -10127,15 +10127,15 @@ F->a_1683 = NULL;
 F->a_1683 = F->args_784;
 F->i_1684 = ((rt_int)1LL);
 while ((F->a_1683 != NULL)) {
-if ((((*(P163)rt_nil_check(F->a_1683)).tag_ == NULL) && (F->i_1684 == F->nth_785))) {
+if ((((*(P163)rt_nil_check(F->a_1683)).formal_ == NULL) && (F->i_1684 == F->nth_785))) {
 F->result_ = F->a_1683;
 goto ret_;
 }
-if ((((*(P163)rt_nil_check(F->a_1683)).tag_ != NULL) && rt_str_eq((*(P133)rt_nil_check((*(P163)rt_nil_check(F->a_1683)).tag_)), F->name_786))) {
+if ((((*(P163)rt_nil_check(F->a_1683)).formal_ != NULL) && rt_str_eq((*(P133)rt_nil_check((*(P163)rt_nil_check(F->a_1683)).formal_)), F->name_786))) {
 F->result_ = F->a_1683;
 goto ret_;
 }
-if (((*(P163)rt_nil_check(F->a_1683)).tag_ == NULL)) {
+if (((*(P163)rt_nil_check(F->a_1683)).formal_ == NULL)) {
 F->i_1684 = rt_add(F->i_1684, ((rt_int)1LL));
 }
 F->a_1683 = (*(P163)rt_nil_check(F->a_1683)).next_;
@@ -10776,6 +10776,7 @@ static void as_R164(R164 *d, R164 s) {
   d->d_ = s.d_;
   d->e_ = s.e_;
   d->next_ = s.next_;
+  d->formal_ = s.formal_;
 }
 static R164 cp_R164(R164 s) {
   R164 d = s;
@@ -10791,10 +10792,11 @@ static R164 cp_R164(R164 s) {
   d.d_ = s.d_;
   d.e_ = s.e_;
   d.next_ = s.next_;
+  d.formal_ = s.formal_;
   return d;
 }
 static int eq_R164(R164 a, R164 b) {
-  return 1 && (a.kind_ == b.kind_) && (a.line_ == b.line_) && (a.ival_ == b.ival_) && (a.flag_ == b.flag_) && (a.name_ == b.name_) && (a.tag_ == b.tag_) && (a.a_ == b.a_) && (a.b_ == b.b_) && (a.c_ == b.c_) && (a.d_ == b.d_) && (a.e_ == b.e_) && (a.next_ == b.next_);
+  return 1 && (a.kind_ == b.kind_) && (a.line_ == b.line_) && (a.ival_ == b.ival_) && (a.flag_ == b.flag_) && (a.name_ == b.name_) && (a.tag_ == b.tag_) && (a.a_ == b.a_) && (a.b_ == b.b_) && (a.c_ == b.c_) && (a.d_ == b.d_) && (a.e_ == b.e_) && (a.next_ == b.next_) && (a.formal_ == b.formal_);
 }
 static void as_R145(R145 *d, R145 s) {
   d->s_ = s.s_;

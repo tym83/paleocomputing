@@ -5,7 +5,7 @@
 
    procedure NN(KIND, LINE : INTEGER) return NODE is
    begin
-      return new NODE_REC(KIND, LINE, 0, 0, null, null, null, null, null, null, null, null);
+      return new NODE_REC(KIND, LINE, 0, 0, null, null, null, null, null, null, null, null, null);
    end NN;
 
    procedure APPEND(HEAD, TAIL : in out NODE; X : NODE) is
@@ -414,9 +414,9 @@
                         if TEXT_AT(1) = ":=" then
                            MARK := 1;
                         elsif TEXT_AT(1) = "=:" then
-                           MARK := 2;
+                           MARK := M_OUT;
                         elsif TEXT_AT(1) = ":=:" then
-                           MARK := 3;
+                           MARK := M_INOUT;
                         else
                            MARK := 4;
                         end if;
@@ -431,7 +431,7 @@
                         SIMPLE_EXPR(R.B);
                         LO := R;
                      end if;
-                     LO.TAG := FORMAL;
+                     LO.FORMAL := FORMAL;
                      LO.FLAG := MARK;
                      APPEND(ARGS, ATAIL, LO);
                   end;

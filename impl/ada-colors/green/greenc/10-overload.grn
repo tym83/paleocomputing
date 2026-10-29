@@ -157,13 +157,13 @@
       L := NN(E.A.KIND, E.A.LINE);
       L.all := E.A.all;
       L.NEXT := null;
-      L.TAG := null;
+      L.FORMAL := null;
       L.FLAG := 0;
       if E.KIND = N_BINOP then
          RT := NN(E.B.KIND, E.B.LINE);
          RT.all := E.B.all;
          RT.NEXT := null;
-         RT.TAG := null;
+         RT.FORMAL := null;
          RT.FLAG := 0;
          L.NEXT := RT;
       end if;

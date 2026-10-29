@@ -151,6 +151,8 @@ procedure GREENC is
       KIND, LINE, IVAL, FLAG : INTEGER;
       NAME, TAG : TEXT;
       A, B, C, D, E, NEXT : NODE;
+      -- the formal parameter named by an association F := X (RM79 5.2.1, 12.2)
+      FORMAL : TEXT;
    end record;
 
    type CONS_REC;
