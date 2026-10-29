@@ -15,6 +15,11 @@
     LTop: INT := 0;
     LoopBase: INT := 0;
     CurRoutine: Sym := Sym NIL;      (* the routine or process being written *)
+    (* the SELECT statements around: their expressions and the labels of *)
+    (* the case being written, for the components of variants (VIII.B) *)
+    SelExpr, SelLabels: ARRAY (INTEGER [1..1000] OF Node);
+    STop: INT := 0;
+    LabelSeen: ARRAY (INTEGER [1..4096] OF INT);
     HasHandler: BOOLEAN := FALSE;    (* it has an exception handler *)
 
   PROCEDURE Emit2 (CONST a: ARRAY (1 DIMENSIONS OF ASCII); CONST b: Txt)
@@ -149,6 +154,100 @@
     RETURN
   ENDPROCEDURE BlockStatements;
 
+  (* do two designators name the same variable: the same names, components *)
+  (* and pointers, subscripts that are the same constants or names *)
+  PROCEDURE SameDesig RETURNS BOOLEAN (CONST a, b: Node)
+    VAR p, q: Node;
+        oa, ob: BOOLEAN;
+        va, vb: INT;
+    IF a^.kind = N_PAREN THEN RETURN SameDesig(a^.a, b) ENDIF;
+    IF b^.kind = N_PAREN THEN RETURN SameDesig(a, b^.a) ENDIF;
+    IF a^.kind # b^.kind THEN RETURN FALSE ENDIF;
+    IF a^.kind = N_NAME THEN RETURN (a^.name = b^.name) AND (a^.d = Node NIL) AND (b^.d = Node NIL) ENDIF;
+    IF a^.kind = N_SEL THEN RETURN (a^.name = b^.name) AND SameDesig(a^.a, b^.a) ENDIF;
+    IF a^.kind = N_DEREF THEN RETURN SameDesig(a^.a, b^.a) ENDIF;
+    IF a^.kind = N_INDEX THEN
+      IF NOT SameDesig(a^.a, b^.a) THEN RETURN FALSE ENDIF;
+      p := a^.b;
+      q := b^.b;
+      WHILE (p # Node NIL) AND (q # Node NIL) DO
+        Manifest(p, oa, va);
+        Manifest(q, ob, vb);
+        IF oa AND ob THEN
+          IF va # vb THEN RETURN FALSE ENDIF
+        ELSIF NOT SameDesig(p, q) THEN
+          RETURN FALSE
+        ENDIF;
+        p := p^.next;
+        q := q^.next
+      ENDWHILE;
+      RETURN (p = Node NIL) AND (q = Node NIL)
+    ENDIF;
+    RETURN FALSE
+  ENDPROCEDURE SameDesig;
+
+  (* "the designation of a variant record component must be lexically *)
+  (* embedded in a SELECT statement that verifies whether the record value *)
+  (* has assumed the proper variant structure" (VIII.B): a case of a SELECT *)
+  (* on the case-selection component of the same record, whose labels all *)
+  (* belong to the component's variant *)
+  PROCEDURE CheckVariantSelected (CONST n: Node; CONST r: Rep; CONST f: Field)
+    VAR i: INT := STop;
+        e, l, fl: Node;
+        v, fv: INT;
+        ok, found: BOOLEAN;
+    WHILE i > 0 DO
+      e := SelExpr[i];
+      WHILE e^.kind = N_PAREN DO e := e^.a ENDWHILE;
+      IF (e^.kind = N_SEL) AND (e^.name = r^.selector^.name) AND SameDesig(e^.a, n^.a) THEN
+        l := SelLabels[i];
+        IF l = Node NIL THEN
+          FailN(n^.line, n^.name, " is a component of a variant: the ELSE of a SELECT does not say which variant the record has (VIII.B)")
+        ENDIF;
+        WHILE l # Node NIL DO
+          v := Label(l, r^.selector^.rep);
+          found := FALSE;
+          fl := f^.labels;
+          WHILE fl # Node NIL DO
+            Manifest(fl, ok, fv);
+            IF ok AND (fv = v) THEN found := TRUE ENDIF;
+            fl := fl^.next
+          ENDWHILE;
+          IF NOT found THEN
+            FailN(n^.line, n^.name, " is not a component of the variant this CASE selects (VIII.B)")
+          ENDIF;
+          l := l^.next
+        ENDWHILE;
+        RETURN
+      ENDIF;
+      i := i - 1
+    ENDWHILE;
+    FailN(n^.line, n^.name, " is a component of a variant: it is used inside a SELECT on the case-selection component (VIII.B)");
+    RETURN
+  ENDPROCEDURE CheckVariantSelected;
+
+  (* the CASE labels of a SELECT are distinct values (IX.B.1) *)
+  PROCEDURE CheckCaseLabels (CONST s: Node; CONST r: Rep)
+    VAR arm, l: Node := s^.b;
+        n, v: INT := 0;
+    WHILE arm # Node NIL DO
+      l := arm^.a;
+      WHILE l # Node NIL DO
+        v := Label(l, r);
+        FOR j: INTEGER [1..n] DO
+          IF LabelSeen[j] = v THEN FailS(l^.line, "a CASE label appears twice in this SELECT (IX.B.1)") ENDIF
+        ENDFOR;
+        IF n < 4096 THEN
+          n := n + 1;
+          LabelSeen[n] := v
+        ENDIF;
+        l := l^.next
+      ENDWHILE;
+      arm := arm^.next
+    ENDWHILE;
+    RETURN
+  ENDPROCEDURE CheckCaseLabels;
+
   PROCEDURE Statements (CONST list: Node)
     VAR s: Node := list;
     WHILE s # Node NIL DO
@@ -224,8 +323,8 @@
       IF (r^.kind = R_SIGNAL) OR HoldsSignal(r) THEN
         FailS(s^.line, "assignment is not defined for signals (VI.A.1.d)")
       ENDIF;
-      IF (r^.kind = R_FILE) OR (r^.kind = R_SEM) THEN
-        FailS(s^.line, "assignment is not defined for files and semaphores (VII.B)")
+      IF NonAssignable(r) THEN
+        FailS(s^.line, "assignment is not defined for files and semaphores, nor what holds them (VII.B)")
       ENDIF;
       Expr(s^.b, r, c2, er);
       t := UserAssign(c, r, c2, er, s^.line);
@@ -299,6 +398,7 @@
     ELSIF k = N_SELECT THEN
       Expr(s^.a, Rep NIL, c, r);
       IF NOT IsDiscrete(r) THEN FailS(s^.line, "SELECT on a value that is not integer or scalar") ENDIF;
+      CheckCaseLabels(s, r);
       Emit3("switch (", c, ") {");
       arm := s^.b;
       WHILE arm # Node NIL DO
@@ -314,13 +414,21 @@
           l := l^.next
         ENDWHILE;
         EmitS("{");
+        STop := STop + 1;
+        SelExpr[STop] := s^.a;
+        SelLabels[STop] := arm^.a;
         Statements(arm^.b);
+        STop := STop - 1;
         EmitS("} break;");
         arm := arm^.next
       ENDWHILE;
       (* no case and no ELSE: nothing is done (IX.B.1) *)
       EmitS("default: {");
+      STop := STop + 1;
+      SelExpr[STop] := s^.a;
+      SelLabels[STop] := Node NIL;
       IF s^.flag = 1 THEN Statements(s^.c) ENDIF;
+      STop := STop - 1;
       EmitS("} break;");
       EmitS("}")
     ELSIF k = N_RETURN THEN

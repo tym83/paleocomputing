@@ -3283,5 +3283,19 @@ void y_device(ysig *s, rt_int address) {
   y_create(&devices, 0, 1, 255, y_device_loop, d);
 }
 
-/* a SIGNAL as a component of an array: tied to its monitor by y_sig_init */
-const ydesc y_d_sig = {YK_OPAQUE, sizeof(ysig), 0, 0, {0}, {0}, NULL, 0, NULL, NULL};
+/* a SIGNAL as a component of an array or a record: tied to its monitor by
+ * y_sig_init_all when the structure is declared */
+const ydesc y_d_sig = {YK_SIG, sizeof(ysig), 0, 0, {0}, {0}, NULL, 0, NULL, NULL};
+const ydesc y_d_sem = {YK_OPAQUE, sizeof(rt_lock), 0, 0, {0}, {0}, NULL, 0, NULL, NULL};
+
+void y_sig_init_all(const ydesc *d, void *v, ymon *m) {
+  if (d->kind == YK_SIG) {
+    y_sig_init(v, m);
+  } else if (d->kind == YK_ARRAY) {
+    yarr *a = v;
+    rt_int n = y_count(*a, d->nd);
+    for (rt_int i = 0; i < n; i++) y_sig_init_all(d->elem, (char *)a->p + i * d->elem->size, m);
+  } else if (d->kind == YK_RECORD) {
+    for (int i = 0; i < d->nf; i++) y_sig_init_all(d->fd[i], (char *)v + d->off[i], m);
+  }
+}

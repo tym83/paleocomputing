@@ -1,0 +1,40 @@
+(* files and signals as components of records, and signals at any depth *)
+(* of arrays and records (VII.B, VI.A.1.d) *)
+MODULE Components
+  IMPORT TextIO, StandardImplementationPrelude;
+  REPRESENTATION
+    Log = RECORD VAR lines: INTEGER64; VAR f: FILE (ASCII) ENDRECORD;
+  VAR log: Log;
+
+  MONITOR Desk
+    IMPORT Write, WriteLn, INTEGER64;
+    EXPORT Await, Wake;
+    REPRESENTATION
+      Slot = RECORD VAR waiting: INTEGER64; VAR ready: SIGNAL ENDRECORD;
+      Row = ARRAY (INTEGER [1..2] OF Slot);
+    VAR rows: ARRAY (INTEGER [1..2] OF Row);
+    PROCEDURE Await (CONST i, j: INTEGER64)
+      rows[i][j].waiting := rows[i][j].waiting + 1;
+      WAIT(rows[i][j].ready);
+      Write("woken "); Write(i); Write(j); WriteLn();
+      RETURN
+    ENDPROCEDURE Await;
+    PROCEDURE Wake (CONST i, j: INTEGER64)
+      IF AWAITED(rows[i][j].ready) THEN SEND(rows[i][j].ready) ENDIF;
+      RETURN
+    ENDPROCEDURE Wake;
+    FOR i: INTEGER [1..2] DO
+      FOR j: INTEGER [1..2] DO rows[i][j].waiting := 0 ENDFOR
+    ENDFOR
+  ENDMONITOR Desk;
+
+  log.lines := 0;
+  OPEN(log.f, "OUTPUT", WRITE);
+  PUT(log.f, 'x'); PUT(log.f, 'LF');
+  BEGIN
+    PROCESS Sleeper (CONST i, j: INTEGER64) Await(i, j); TERMINATE_PROCESS ENDPROCESS Sleeper;
+    Sleeper(2, 1); Sleeper(1, 2);
+    DELAY(10);
+    Wake(1, 2); Wake(2, 1)
+  END
+ENDMODULE Components

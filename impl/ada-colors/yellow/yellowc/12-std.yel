@@ -167,34 +167,36 @@
       NArgs(n, 1);
       Expr(Arg(n, 1), Rep NIL, a, ra);
       IF NOT IsDiscrete(ra) THEN FailN(n^.line, n^.name, " of something that is not integer or scalar") ENDIF;
+      IF (ra^.kind = R_BOOL) OR ((ra^.kind = R_ENUM) AND NOT ra^.ordered) THEN
+        FailN(n^.line, n^.name, " applies to integers, ordered enumerations and alphabets, not UNORDERED ones (XI)")
+      ENDIF;
       IF ra^.elem # Rep NIL THEN ra := ra^.elem ENDIF;
       IF ((f = F_FIRST) OR (f = F_LAST)) AND (ra^.kind = R_INT) THEN
         FailS(n^.line, "FIRST and LAST apply to ordered enumerations and alphabets (XI)")
       ENDIF;
-      IF (ra^.kind = R_ENUM) AND NOT ra^.ordered THEN
-        FailN(n^.line, n^.name, " applies to ordered enumerations (XI)")
-      ENDIF;
-      r := Unbounded(ra);
       IF f = F_FIRST THEN
+        (* the first and last members of the representation (XI) *)
+        r := ra;
         code := LoText(ra)
       ELSIF f = F_LAST THEN
+        r := ra;
         code := HiText(ra)
       ELSE
+        (* the result is of the type: an integer has no end but overflow, an *)
+        (* enumeration ends at its first and last literal (XI) *)
+        r := Unbounded(ra);
         SB();
-        IF ra^.lo # 0 THEN SA("rt_range(") ENDIF;
+        IF ra^.kind # R_INT THEN SA("rt_range(") ENDIF;
         IF f = F_SUCC THEN SA("rt_add(") ELSE SA("rt_sub(") ENDIF;
         ST(a);
         SA(", 1)");
-        IF ra^.lo # 0 THEN
-          SA(", ");
-          ST(LoText(ra));
-          SA(", ");
-          ST(HiText(ra));
+        IF ra^.kind # R_INT THEN
+          SA(", 0, ");
+          SI(ra^.nlits - 1);
           SA(")")
         ENDIF;
         code := SE()
       ENDIF;
-      IF ra^.kind # R_INT THEN r := ra ENDIF;
       RETURN
     ENDIF;
     IF f = F_NEW THEN

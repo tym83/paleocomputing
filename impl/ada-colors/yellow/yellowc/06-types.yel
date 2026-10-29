@@ -54,12 +54,32 @@
     RETURN (r^.kind = R_RECORD) AND r^.deep
   ENDPROCEDURE Deep;
 
-  (* an array whose components are signals, at any depth *)
+  (* a structure with a component of the given kind, at any depth: signals *)
+  (* and files may be components of arrays and records (VII.B) *)
+  PROCEDURE Holds RETURNS BOOLEAN (CONST r: Rep; CONST kind: INT)
+    VAR f: Field;
+    IF r^.kind = R_ARRAY THEN RETURN (r^.elem^.kind = kind) OR Holds(r^.elem, kind) ENDIF;
+    IF r^.kind = R_RECORD THEN
+      f := r^.fields;
+      WHILE f # Field NIL DO
+        IF (f^.rep^.kind = kind) OR Holds(f^.rep, kind) THEN RETURN TRUE ENDIF;
+        f := f^.next
+      ENDWHILE
+    ENDIF;
+    RETURN FALSE
+  ENDPROCEDURE Holds;
+
   PROCEDURE HoldsSignal RETURNS BOOLEAN (CONST r: Rep)
-    IF r^.kind # R_ARRAY THEN RETURN FALSE ENDIF;
-    IF r^.elem^.kind = R_SIGNAL THEN RETURN TRUE ENDIF;
-    RETURN HoldsSignal(r^.elem)
+    RETURN Holds(r, R_SIGNAL)
   ENDPROCEDURE HoldsSignal;
+
+  (* files, signals and semaphores, and the structures that hold them, have *)
+  (* no assignment, equality or inequality (VII.B, VI.A.1.d) *)
+  PROCEDURE NonAssignable RETURNS BOOLEAN (CONST r: Rep)
+    VAR k: INT := r^.kind;
+    IF (k = R_SIGNAL) OR (k = R_FILE) OR (k = R_SEM) THEN RETURN TRUE ENDIF;
+    RETURN Holds(r, R_SIGNAL) OR Holds(r, R_FILE) OR Holds(r, R_SEM)
+  ENDPROCEDURE NonAssignable;
 
   (* the C type of a value *)
   PROCEDURE CType RETURNS Txt (CONST r: Rep)
@@ -95,6 +115,7 @@
     ENDIF;
     IF k = R_STR THEN RETURN T("&y_d_str") ENDIF;
     IF k = R_SIGNAL THEN RETURN T("&y_d_sig") ENDIF;
+    IF k = R_SEM THEN RETURN T("&y_d_sem") ENDIF;
     RETURN T("&y_d_opaque")
   ENDPROCEDURE DescOf;
 
@@ -486,8 +507,68 @@
   ENDPROCEDURE NewTid;
 
   (* elaborate the representation n; name is the declared name or 0, and *)
-  (* typeonly is set for a TYPE declaration (rules 63-71) *)
+  (* typeonly is set for a TYPE declaration (rules 63-71). A type named *)
+  (* before a concrete type must be the type it represents (rule 61) *)
   PROCEDURE MakeRep RETURNS Rep (CONST n: Node; CONST name: Txt; CONST typeonly: BOOLEAN)
+    VAR r: Rep := MakeRep1(n, name, typeonly);
+        s: Sym;
+    IF n^.text # 0 THEN
+      s := Real(Lookup(n^.text, n^.line));
+      IF NOT Conforms(s^.rep, r) OR ((n^.kind = N_RNAME) AND (r^.tid # s^.rep^.tid)) THEN
+        FailN(n^.line, s^.rep^.tname, ": the concrete type is not a representation of this type (rule 61, VII.G)")
+      ENDIF
+    ENDIF;
+    RETURN r
+  ENDPROCEDURE MakeRep;
+
+  (* does r have the structure of the type t: the same components, with *)
+  (* the same types, or the same literals, or indices *)
+  PROCEDURE Conforms RETURNS BOOLEAN (CONST t, r: Rep)
+    VAR f, g: Field;
+        a, b: Rep;
+        p, q: Node;
+    IF t^.kind # r^.kind THEN RETURN FALSE ENDIF;
+    IF t^.kind = R_RECORD THEN
+      f := t^.fields;
+      g := r^.fields;
+      WHILE (f # Field NIL) AND (g # Field NIL) DO
+        IF (f^.name # g^.name) OR (f^.isconst # g^.isconst) OR (f^.variant # g^.variant) THEN RETURN FALSE ENDIF;
+        IF NOT SameType(f^.rep, g^.rep) THEN RETURN FALSE ENDIF;
+        f := f^.next;
+        g := g^.next
+      ENDWHILE;
+      RETURN (f = Field NIL) AND (g = Field NIL)
+    ENDIF;
+    IF t^.kind = R_ARRAY THEN
+      IF t^.nidx # r^.nidx THEN RETURN FALSE ENDIF;
+      a := t^.idx;
+      b := r^.idx;
+      WHILE a # Rep NIL DO
+        IF NOT Identical(a, b) THEN RETURN FALSE ENDIF;
+        a := a^.link;
+        b := b^.link
+      ENDWHILE;
+      RETURN SameType(t^.elem, r^.elem)
+    ENDIF;
+    IF (t^.kind = R_ENUM) OR (t^.kind = R_ALPHA) THEN
+      IF t^.nlits # r^.nlits THEN RETURN FALSE ENDIF;
+      p := t^.lits;
+      q := r^.lits;
+      WHILE (p # Node NIL) AND (q # Node NIL) DO
+        IF (p^.name # q^.name) OR NOT TEq(p^.text, q^.text) THEN RETURN FALSE ENDIF;
+        p := p^.next;
+        q := q^.next
+      ENDWHILE;
+      RETURN TRUE
+    ENDIF;
+    IF (t^.kind = R_SET) OR (t^.kind = R_FILE) OR (t^.kind = R_PTR) THEN
+      IF (t^.elem = Rep NIL) OR (r^.elem = Rep NIL) THEN RETURN TRUE ENDIF;
+      RETURN SameType(t^.elem, r^.elem)
+    ENDIF;
+    RETURN TRUE
+  ENDPROCEDURE Conforms;
+
+  PROCEDURE MakeRep1 RETURNS Rep (CONST n: Node; CONST name: Txt; CONST typeonly: BOOLEAN)
     VAR r, b, ix, last: Rep;
         s: Sym;
         k: INT := n^.kind;
@@ -603,7 +684,7 @@
     ENDIF;
     FailS(n^.line, "this representation is not translated");
     RETURN Rep NIL
-  ENDPROCEDURE MakeRep;
+  ENDPROCEDURE MakeRep1;
 
   (* a pointer named before its base: the base is now declared *)
   PROCEDURE ResolvePending (CONST name: Txt; CONST r: Rep)
@@ -698,9 +779,6 @@
     WHILE g # Node NIL DO
       fr := MakeRep(g^.b, 0, typeonly);
       IF NOT typeonly THEN CheckRepresented(fr, g^.line) ENDIF;
-      IF (fr^.kind = R_SIGNAL) OR (fr^.kind = R_FILE) THEN
-        FailS(g^.line, "this implementation does not keep signals or files in records")
-      ENDIF;
       nm := g^.a;
       WHILE nm # Node NIL DO
         AddField(r, last, nm^.name, fr, g^.ival = W_CONST, variant, labels, nm^.line);

@@ -48,7 +48,8 @@ The rule numbers of the Appendix are used in yellowc's comments. Points that nee
 - Rule 87 separates parameter groups by `;`; the examples also use `,` (E-9, E-23): both read.
 - Rule 16 says the actuals of INSTANCE are identifiers, but the Report's instances pass
   numbers (`StackTemplate(100, INT)`, p.1162; `getBufferRing(3,64)`, p.1123): numbers accepted.
-- Rule 61 `[Type] ConcreteType`: the optional Type is taken to be a type identifier.
+- Rule 61 `[Type] ConcreteType`: the optional Type is taken to be a type identifier, and the
+  concrete type must have its structure (the same components and types, literals, indices).
 - A VAR or CONST list continues after `;` while an identifier is followed by `,`, `:` or `AT`.
 - Expressions (rules 34-54, p.1030): five levels — NOT, multiplying, adding, prefix minus,
   relational. `* AND + OR` are associative; `/ DIV MOD - XOR` and all free operators are not:
@@ -79,9 +80,16 @@ The rule numbers of the Appendix are used in yellowc's comments. Points that nee
   alike), for a length-unresolved formal the same component representation; an OUT actual of
   another representation gets a temporary of the formal's, assigned after the call.
 - UNORDERED enumerations have = and #; ORDERED and ALPHABET also < <= > >= SUCC PRED FIRST LAST.
-  BOOLEAN is UNORDERED(FALSE, TRUE).
+  BOOLEAN is UNORDERED(FALSE, TRUE), so it has no SUCC. SUCC and PRED give a value of the
+  type: of an integer an INTEGER (only overflow stops it), of an enumeration a value that
+  raises OUT_OF_RANGE past its first or last literal (XI); FIRST and LAST are the bounds of
+  the argument's representation.
 - Arrays are indexed by integer or scalar representations; records have CONST and VAR
-  components and one optional variant part with a CONST case-selection component. Values are
+  components and one optional variant part with a CONST case-selection component. A component
+  of a variant is designated only inside a SELECT on the case-selection component of the same
+  record, in a case of that variant (VIII.B); it is checked again when the program runs, since
+  the case may change inside the SELECT. Files, signals and semaphores may be components of
+  records and arrays at any depth; what holds them has no :=, = or #. Values are
   denoted by the representation's name: `Date(Mar, 4, 1977)`, `bits(FALSE)` (every component),
   `IntegerSet(3, 5)`, `IntegerSet()`.
 - Pointers: `POINTER(R)`, `NEW(p)`, `p^`, `T NIL`. FREE_POINTER is the low-level dual (XIV).
@@ -89,6 +97,11 @@ The rule numbers of the Appendix are used in yellowc's comments. Points that nee
   range of more than 65536 values (`SET (INTEGER64)`) is held as a sorted list of members, or
   of non-members after a complement.
 - Bounds are scope-entry constants: computed once where the representation is elaborated.
+  Manifest constants (VI.C) are literals, manifest CONSTs and what standard operators and
+  functions make of them: SUCC, PRED, FIRST, LAST, LOW, HIGH (where the bounds are known),
+  AND, OR, XOR, NOT. A string literal assigned to an array of manifest bounds must have its
+  length; a TYPE made from INTEGER takes plain literals in a range (`Feet = Foot_Type
+  [1..5280]`, VII.G).
 - **Literal disambiguation (VI.A.3, p.1012)**: an enumeration literal of two visible types,
   and a character of two visible alphabets, must be qualified; a string in a scope with two
   alphabets must always be qualified. ASCII is this implementation's standard alphabet and is
@@ -145,9 +158,8 @@ ENDLOOP name, [SIMULATED_TIME] BEGIN block END.
   instance; the scope where it is declared and activated ends only when it ends (processes of
   a module hold the scope around the module).
 - MONITOR: a module whose procedures exclude each other; a process declared in a monitor runs
-  inside it. SIGNAL variables, and arrays of them, live in monitors and are not exported;
-  every component of an array of signals belongs to the monitor (signals in records are not
-  kept). `WAIT(s[, rank])` lets
+  inside it. SIGNAL variables, and structures holding them, live in monitors and are not
+  exported; every signal of such a structure belongs to the monitor. `WAIT(s[, rank])` lets
   the monitor go; `SEND(s)` passes the monitor to the waiter with the smallest rank (first
   come first served within a rank) and delays the sender (Hoare semantics, p.1057);
   `AWAITED(s)`. Nested monitors add no exclusion.

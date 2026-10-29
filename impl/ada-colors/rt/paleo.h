@@ -417,7 +417,7 @@ typedef struct {
  * compare values of it. Structured representations get one when they are
  * elaborated, since their bounds are scope-entry constants (L-34). */
 typedef struct ydesc ydesc;
-enum { YK_INT, YK_BYTE, YK_FLOAT, YK_PTR, YK_SET, YK_ARRAY, YK_RECORD, YK_OPAQUE, YK_FIX };
+enum { YK_INT, YK_BYTE, YK_FLOAT, YK_PTR, YK_SET, YK_ARRAY, YK_RECORD, YK_OPAQUE, YK_FIX, YK_SIG };
 struct ydesc {
   int kind;
   size_t size;                                 /* bytes of one value */
@@ -540,6 +540,8 @@ rt_int y_fix_ceiling(yfix k, rt_int sn, rt_int sd);
 rt_int y_fix_near_integer(yfix k, rt_int sn, rt_int sd);
 rt_int y_fmt_fix(yfix k, rt_int sn, rt_int sd, rt_int decimals, unsigned char *buf, rt_int cap);
 double y_fchk(double v);                       /* a floating-point overflow is OVERFLOW */
-extern const ydesc y_d_sig;                  /* a SIGNAL as an array component */
+extern const ydesc y_d_sig;                  /* a SIGNAL as a component */
+extern const ydesc y_d_sem;                  /* a SEMAPHORE as a component */
+void y_sig_init_all(const ydesc *d, void *v, ymon *m); /* the signals of a structure */
 
 #endif

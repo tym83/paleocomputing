@@ -508,25 +508,11 @@
     RETURN
   ENDPROCEDURE DeclareSignal;
 
-  (* an array of signals (VI.A.1.d puts no limit on them): every component *)
-  (* is tied to the monitor, so that a WAIT on one lets the monitor go *)
+  (* signals in arrays and records, at any depth (VI.A.1.d, VII.B): every *)
+  (* one is tied to the monitor, so that a WAIT on it lets the monitor go *)
   PROCEDURE DeclareSignalArray (CONST s: Sym; CONST line: INT)
-    VAR t: Txt;
     IF CurMonitor = Sym NIL THEN FailS(line, "signal variables are declared in a monitor (X.E.4)") ENDIF;
-    SB();
-    SA("{ rt_int yk, yn = y_count(");
-    ST(SymPath(s));
-    SA(", ");
-    SI(s^.rep^.nidx);
-    SA("); for (yk = 0; yk < yn; yk++) y_sig_init((ysig *)y_elem_at(");
-    ST(SymPath(s));
-    SA(", ");
-    ST(DescOf(s^.rep));
-    SA(", yk), ");
-    ST(MonitorPath(CurMonitor));
-    SA("); }");
-    t := SE();
-    Emit(t);
+    Emit(Join(T("y_sig_init_all("), DescOf(s^.rep), Join(T(", &"), SymPath(s), Join(T(", "), MonitorPath(CurMonitor), T(");")))));
     RETURN
   ENDPROCEDURE DeclareSignalArray;
 

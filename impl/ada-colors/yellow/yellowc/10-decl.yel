@@ -312,12 +312,7 @@
       Emit(Join(SymPath(s), T(" = y_set_new("), Join(LoText(r^.elem), T(", "), Join(HiText(r^.elem), T(");"), 0))))
     ENDIF;
     IF r^.kind = R_SIGNAL THEN DeclareSignal(s, line) ENDIF;
-    IF HoldsSignal(r) THEN
-      IF r^.elem^.kind # R_SIGNAL THEN
-        FailS(line, "this implementation keeps signals in arrays whose components are signals")
-      ENDIF;
-      DeclareSignalArray(s, line)
-    ENDIF;
+    IF HoldsSignal(r) THEN DeclareSignalArray(s, line) ENDIF;
     IF r^.kind = R_SEM THEN Emit(Join(T("rt_lock_init(&"), SymPath(s), T(");"))) ENDIF;
     RETURN
   ENDPROCEDURE DeclareStorage;
@@ -333,8 +328,8 @@
     IF (k = N_CONST) OR (k = N_VAR) THEN
       r := MakeRep(d^.b, 0, FALSE);
       CheckRepresented(r, d^.line);
-      IF (k = N_CONST) AND ((r^.kind = R_SIGNAL) OR (r^.kind = R_FILE) OR (r^.kind = R_SEM)) THEN
-        FailS(d^.line, "signals, files and semaphores are variables (VII.B)")
+      IF (k = N_CONST) AND NonAssignable(r) THEN
+        FailS(d^.line, "signals, files and semaphores, and what holds them, are variables (VII.B)")
       ENDIF;
       nm := d^.a;
       WHILE nm # Node NIL DO

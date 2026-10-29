@@ -26,9 +26,14 @@ MODULE Variants
   Write(Area2(f)); Write(" "); Write(Area2(g)); Write(" "); Write(Area2(h)); WriteLn();
   f := g;
   Write(Area2(f)); Write(" "); Write(f = g); WriteLn();
+  (* the case can change inside the SELECT that verified it: the component *)
+  (* is checked again when the program runs *)
+  f := Figure(1, 2, RightTriangle, 5, 24);
   BEGIN
     EXCEPTION CASE INVALID_VARIANT => Write("no such component in this variant"); WriteLn()
     ENDEXCEPTION;
-    Write(f.base)
+    SELECT f.s
+      CASE RightTriangle => f := g; Write(f.base)
+    ENDSELECT
   END
 ENDMODULE Variants

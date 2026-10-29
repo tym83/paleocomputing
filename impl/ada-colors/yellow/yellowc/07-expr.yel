@@ -222,12 +222,76 @@
       ELSIF op = P_STAR THEN v := a * b
       ELSIF (op = W_DIV) AND (b # 0) THEN v := a DIV b
       ELSIF (op = W_MOD) AND (b # 0) THEN v := a MOD b
+      ELSIF op = W_AND THEN v := a * b
+      ELSIF op = W_OR THEN v := (a + b) - (a * b)
+      ELSIF op = W_XOR THEN v := (a + b) MOD 2
       ELSE ok := FALSE
       ENDIF;
       RETURN
     ENDIF;
+    IF n^.kind = N_NOT THEN
+      Manifest(n^.a, ok, v);
+      v := 1 - v;
+      RETURN
+    ENDIF;
+    IF n^.kind = N_CALL THEN
+      ManifestStd(n, ok, v);
+      RETURN
+    ENDIF;
     RETURN
   ENDPROCEDURE Manifest;
+
+  (* standard functions of manifest constants are manifest (VI.C): SUCC, *)
+  (* PRED, FIRST, LAST, LOW and HIGH where the bounds are known *)
+  PROCEDURE ManifestStd (CONST n: Node; OUT ok: BOOLEAN; OUT v: INT)
+    VAR s: Sym;
+        f, d: INT;
+        oa, od: BOOLEAN;
+        c: Txt;
+        r, ix: Rep;
+    ok := FALSE;
+    v := 0;
+    s := Find(n^.name);
+    IF s = Sym NIL THEN RETURN ENDIF;
+    s := Real(s);
+    IF s^.kind # S_STD THEN RETURN ENDIF;
+    f := s^.mval;
+    IF (f = F_SUCC) OR (f = F_PRED) OR (f = F_FIRST) OR (f = F_LAST) THEN
+      IF Count(n^.a) # 1 THEN RETURN ENDIF;
+      Expr(n^.a, Rep NIL, c, r);
+      IF NOT IsDiscrete(r) THEN RETURN ENDIF;
+      IF (f = F_FIRST) OR (f = F_LAST) THEN
+        IF r^.elem # Rep NIL THEN r := r^.elem ENDIF;
+        IF NOT r^.hasm THEN RETURN ENDIF;
+        ok := TRUE;
+        IF f = F_FIRST THEN v := r^.mlo ELSE v := r^.mhi ENDIF;
+        RETURN
+      ENDIF;
+      Manifest(n^.a, oa, v);
+      IF NOT oa THEN RETURN ENDIF;
+      IF f = F_SUCC THEN v := v + 1 ELSE v := v - 1 ENDIF;
+      IF r^.elem # Rep NIL THEN r := r^.elem ENDIF;
+      IF (r^.kind # R_INT) AND ((v < 0) OR (v >= r^.nlits)) THEN
+        FailN(n^.line, n^.name, " goes beyond the end of the enumeration (XI)")
+      ENDIF;
+      ok := TRUE;
+      RETURN
+    ENDIF;
+    IF (f = F_LOW) OR (f = F_HIGH) THEN
+      IF Count(n^.a) # 2 THEN RETURN ENDIF;
+      Manifest(n^.a^.next, od, d);
+      IF NOT od THEN RETURN ENDIF;
+      Expr(n^.a, Rep NIL, c, r);
+      IF (r^.kind # R_ARRAY) OR (d < 1) OR (d > r^.nidx) THEN RETURN ENDIF;
+      ix := r^.idx;
+      FOR k: INTEGER [2..d] DO ix := ix^.link ENDFOR;
+      IF NOT ix^.hasm THEN RETURN ENDIF;
+      ok := TRUE;
+      IF f = F_LOW THEN v := ix^.mlo ELSE v := ix^.mhi ENDIF;
+      RETURN
+    ENDIF;
+    RETURN
+  ENDPROCEDURE ManifestStd;
 
   (* ---- conversions between representations of one type (IX.A.1) ------------------- *)
 
@@ -470,6 +534,18 @@
   (* checked unless the manifest bounds show there is no need *)
   PROCEDURE Convert RETURNS Txt (CONST code: Txt; CONST to, from: Rep)
     VAR c: Txt;
+    IF (from^.kind = R_STR) AND (to^.kind = R_ARRAY) AND (to^.nidx = 1) THEN
+      IF to^.idx^.hasm AND (from^.nlits # ((to^.idx^.mhi - to^.idx^.mlo) + 1)) THEN
+        SB();
+        SA("a string of ");
+        SI(from^.nlits);
+        SA(" characters for an array of ");
+        SI((to^.idx^.mhi - to^.idx^.mlo) + 1);
+        SA(" (VI.B.1)");
+        c := SE();
+        Fail(CurLine, c)
+      ENDIF
+    ENDIF;
     IF NOT NeedsConv(to, from) THEN RETURN code ENDIF;
     IF to^.kind = R_RECORD THEN RETURN ConvertRecord(code, to, from) ENDIF;
     IF (to^.kind = R_ARRAY) OR (to^.kind = R_UARRAY) THEN RETURN ConvertArray(code, to, from) ENDIF;
@@ -713,8 +789,10 @@
       IF f = Field NIL THEN FailN(n^.line, n^.name, " is not a component of this record") ENDIF;
       r := f^.rep;
       IF f^.variant # 0 THEN
-        (* a component of a variant: checked against the case-selection *)
-        (* component when the program runs *)
+        (* a component of a variant: inside a SELECT on its case (VIII.B), *)
+        (* and checked against the case-selection component when the *)
+        (* program runs, since the case may have changed since *)
+        CheckVariantSelected(n, a, f);
         c2 := Fresh("vr");
         SB();
         SA("(*({ ");
@@ -1040,8 +1118,8 @@
     Expr(n^.b, ra, b, rb);
     IF (op = P_EQ) OR (op = P_NE) THEN
       CheckType(n^.line, ra, rb);
-      IF (ra^.kind = R_SIGNAL) OR (ra^.kind = R_FILE) OR (ra^.kind = R_SEM) THEN
-        FailS(n^.line, "= and # are not defined for signals, files and semaphores")
+      IF NonAssignable(ra) THEN
+        FailS(n^.line, "= and # are not defined for signals, files and semaphores, nor what holds them (VII.B)")
       ENDIF;
       IF ra^.opaque AND ((ra^.opaqueops DIV 2) = 0) THEN
         FailN(n^.line, ra^.tname, " is opaque here: = is not exported (X.B.3)")
