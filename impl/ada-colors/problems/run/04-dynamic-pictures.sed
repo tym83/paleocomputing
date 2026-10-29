@@ -33,20 +33,16 @@ s/^PROC do_reset;/PROC do_reset IMPORTS objs;/
 s/^        SET_PRIORITY (objs(o).a, PRIORITY(ME) - 1);//
 s/^        CREATE move_object (o) NAMED obs(o).a;/        CREATE move_object (o) NAMED objs(o).a;\
         SET_PRIORITY (objs(o).a, PRIORITY(ME) - 1);/
-# areset and awatch are never declared; the button mailboxes are moved out
-# where the simulated buttons can reach them
-s/^PROC simulate_objects   IMPORTS areset,awatch,crash_mailbox;/PROC simulate_objects IMPORTS crash_mailbox, reset_mailbox, start_mailbox, delay_time;/
-s/^VAR reset_mailbox: MAILBOX\[BOOL\](1) LOCATION (INTERRUPT reset_int_addr);//
-s/^VAR start_mailbox: MAILBOX\[BOOL\](1) LOCATION (INTERRUPT start_int_addr);//
+# areset and awatch are never declared
+s/^PROC simulate_objects   IMPORTS areset,awatch,crash_mailbox;/PROC simulate_objects IMPORTS crash_mailbox, delay_time;/
 # a reset message is a BOOL and a crash message an object: the two RECEIVEs
 # have their variables swapped
 s/^            WHEN RECEIVE (reset_mailbox,o)/            WHEN RECEIVE (reset_mailbox,i)/
 s/^            WHEN RECEIVE (crash_mailbox,i)/            WHEN RECEIVE (crash_mailbox,o)/
-# the simulated screen, joysticks and buttons, before their first use
-s/^VAR d:DATA_LOCK;$/VAR reset_mailbox: MAILBOX[BOOL](1);\
-VAR start_mailbox: MAILBOX[BOOL](1);\
-\
-FUNC name_of (o: OBJECTS) => STRING[ASCII];\
+# the simulated screen and joysticks, and the buttons, which raise their
+# interrupts (reset_int_addr and start_int_addr, 100 and 102) through the
+# interrupt controller, device 2 of LOW_IO
+s/^VAR d:DATA_LOCK;$/FUNC name_of (o: OBJECTS) => STRING[ASCII];\
     IF o = 'o1 THEN RETURN "o1"; END IF;\
     RETURN "o2";\
     END FUNC name_of;\
@@ -66,8 +62,8 @@ PROC set_joy_stick (o: OBJECTS, hd, hs, vd, vs: INT) IMPORTS joy_sticks;\
     joy_sticks(o).v_speed := vs;\
     END PROC set_joy_stick;\
 \
-PROC press_reset IMPORTS reset_mailbox; SEND (reset_mailbox, TRUE); END PROC press_reset;\
-PROC press_start IMPORTS start_mailbox; SEND (start_mailbox, TRUE); END PROC press_start;\
+PROC press_reset; VAR x: INT := 1; LOW_IO (2, 100, x); END PROC press_reset;\
+PROC press_start; VAR x: INT := 1; LOW_IO (2, 102, x); END PROC press_start;\
 \
 &/
 # the objects are never allocated and have no starting positions (their

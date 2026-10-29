@@ -21,8 +21,10 @@ All twenty solutions and C1 run: `problems/run/run.sh` makes each original
 translatable with its sed file, adds what the problem assumes to be present
 (`*-units`), drives it (`*-main`) and compares the output with the expected
 one. Every line of a sed file is a change a translator forced, with the reason
-next to it, so the sed files list the errors of the 1979 texts. Interrupts,
-devices and the network are tasks on the virtual clock.
+next to it, so the sed files list the errors of the 1979 texts. Devices and
+the network are tasks on the virtual clock; the devices raise RED interrupts
+through the interrupt controller, device 2 of `LOW_IO`, into the mailboxes
+the solutions locate at their interrupts.
 
 ## Sources and rights
 

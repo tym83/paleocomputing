@@ -273,6 +273,38 @@ END PROC index_on;
 
 % ---- expressions (chapter 5): C code and the type ------------------------------------------
 
+% x.name where x's type has a parameter of that name (4.5.3), not one of the
+% attributes of the built-in types
+ABNORMAL FUNC own_attribute(CONST e : node) => BOOL IMPORTS ALL;
+   VAR saved : buffer := code;
+   VAR bt : typ;
+   VAR ok : BOOL := FALSE;
+   trial := trial + 1;
+   code := new_buffer;
+   GUARD
+      CONST base := gexpr(e.a, NIL, bt);
+      WHILE bt /= NIL AND bt.kind = t_ptr REPEAT
+         finish_ptr(bt);
+         bt := bt.target;
+      END REPEAT;
+      IF bt /= NIL AND bt.kind = t_new THEN
+         VAR p : node := bt.tparams;
+         WHILE p /= NIL REPEAT
+            IF p.name.ALL = e.name.ALL THEN
+               ok := TRUE;
+            END IF;
+            p := p.next;
+         END REPEAT;
+      END IF;
+   BY
+      WHEN compile_error =>
+         ok := FALSE;
+   END GUARD;
+   trial := trial - 1;
+   code := saved;
+   RETURN ok;
+END FUNC own_attribute;
+
 ABNORMAL FUNC gexpr(CONST e : node, CONST want : typ, OUT t : typ) => STRING[ASCII] IMPORTS ALL;
    VAR k : INT := e.kind;
    VAR code : text;
@@ -395,7 +427,7 @@ ABNORMAL FUNC gexpr(CONST e : node, CONST want : typ, OUT t : typ) => STRING[ASC
          RETURN code.ALL;
       END;
    ELSEIF k = n_select THEN
-      IF e.name.ALL = "LEN" OR e.name.ALL = "MIN" OR e.name.ALL = "MAX" THEN
+      IF (e.name.ALL = "LEN" OR e.name.ALL = "MIN" OR e.name.ALL = "MAX") AND NOT own_attribute(e) THEN
          RETURN attribute(e, t);
       END IF;
       BEGIN

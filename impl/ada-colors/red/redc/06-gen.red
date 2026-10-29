@@ -47,6 +47,26 @@ PROC declare_body(CONST elems : node) IMPORTS ALL;
       END IF;
       e := e.next;
    END REPEAT;
+   % the generics of this scope remember what is visible here (11.3)
+   e := elems;
+   BEGIN
+      VAR snap : buckets;
+      WHILE e /= NIL REPEAT
+         IF e.kind = n_generic THEN
+            IF snap = NIL THEN
+               ALLOC snap PTR (nbuckets);
+               FOR i : INT(0 .. nbuckets) REPEAT
+                  snap(i) := table(i);
+               END REPEAT;
+            END IF;
+            BEGIN
+               VAR g : sym := lookup(e.name.ALL);
+               g.env := snap;
+            END;
+         END IF;
+         e := e.next;
+      END REPEAT;
+   END;
    % INITIALIZE with a single parameter of a new type of this scope (13.3)
    e := elems;
    WHILE e /= NIL REPEAT
@@ -123,11 +143,10 @@ ABNORMAL FUNC copy_sym(CONST y : sym) => sym;
    z.level := y.level;
    z.byref := y.byref;
    z.members := y.members;
+   z.env := y.env;
    RETURN z;
 END FUNC copy_sym;
 
-% a capsule invoked as old (8.1): its body is elaborated once, on entry to the
-% scope where it is declared; the exported definitions are kept for EXPOSE
 % a capsule declaration (8.1); one with formal parameters is elaborated only
 % where it is invoked as NEW
 PROC gen_capsule(CONST d : node) IMPORTS ALL;
@@ -493,6 +512,20 @@ PROC var_decl(CONST d : node) IMPORTS ALL;
    VAR y : sym := new_sym(y_var, d.name);
    CONST access := storage(d.name.ALL, t);
    init_storage(access, t, c);
+   IF d.ival = 1 THEN
+      VAR it : typ;
+      CONST n := gexpr(d.c, ty_int, it);
+      IF t.kind /= t_mbox THEN
+         fail(d.line, "only a mailbox can be located at an interrupt");
+      END IF;
+      IF same(t.elem, ty_ascii) THEN
+         emit("rt_interrupt_bind(" & access & ", " & n & ", 1);");
+      ELSE
+         emit("rt_interrupt_bind(" & access & ", " & n & ", 0);");
+      END IF;
+   ELSEIF d.ival = 2 THEN
+      fail(d.line, "the simulated machine has no addressable memory: LOCATION takes INTERRUPT n only");
+   END IF;
    IF d.b /= NIL THEN
       VAR vt : typ;
       CONST v := gexpr(d.b, t, vt);
@@ -1131,6 +1164,14 @@ ABNORMAL FUNC act_ref(CONST e : node) => STRING[ASCII] IMPORTS ALL;
    IF e.kind = n_name AND e.name.ALL = "ME" AND lookup("ME") = NIL THEN
       RETURN "rt_me()";
    END IF;
+   IF NOT is_lvalue(e) THEN
+      % an ACT value computed by an expression, such as FIRST(queue)
+      CONST v := gexpr(e, ty_act, t);
+      IF t.kind /= t_act THEN
+         fail(e.line, "an activation variable (ACT) is required");
+      END IF;
+      RETURN v;
+   END IF;
    lvalue(e, lv, t, c, ro);
    IF t.kind /= t_act THEN
       fail(e.line, "an activation variable (ACT) is required");
@@ -1574,25 +1615,15 @@ FUNC same_binding(CONST a : sym, CONST b : sym) => BOOL;
    RETURN a.cname /= NIL AND b.cname /= NIL AND a.cname.ALL = b.cname.ALL;
 END FUNC same_binding;
 
-% the instance of generic g for the actual properties tt and actual parameters
-% args; replacement elements come from [..] and from the types of the actuals
-ABNORMAL FUNC instantiate(CONST g : sym, CONST tt : node, CONST args : node, CONST line : INT) => sym
+% the bindings of a generic's parameters to the actual translation time
+% properties f (formal names, or NIL for positional) and a
+ABNORMAL FUNC tt_binds(CONST gd : node, CONST formals : node, CONST actuals : node, CONST line : INT) => sym
       IMPORTS ALL;
-   VAR gd : node := g.decl;
-   VAR pat : node := gd.b;
+   VAR f : node := formals;
+   VAR a : node := actuals;
    VAR binds : sym;
-   VAR f : node := pat.e;
-   VAR a : node := tt;
-   VAR fp : node := pat.a;
-   VAR inst : sym;
-   VAR at : typ;
    VAR c : cons;
-   VAR saved_fctx : fctxrec := fctx;
-   VAR saved_in : BOOL := in_func;
-   VAR saved_level : INT := cur_level;
-   VAR saved_sym : sym := func_sym;
-   VAR saved_code : buffer := code;
-   % from the actual translation time property list
+   VAR at : typ;
    WHILE f /= NIL AND a /= NIL REPEAT
       VAR p : node := gparam(gd, f.name.ALL);
       VAR b : sym;
@@ -1627,10 +1658,158 @@ ABNORMAL FUNC instantiate(CONST g : sym, CONST tt : node, CONST args : node, CON
       f := f.next;
       a := a.next;
    END REPEAT;
+   RETURN binds;
+END FUNC tt_binds;
+
+% is this subtype a use of a generic type, X[...]?
+FUNC generic_use(CONST st : node) => BOOL IMPORTS ALL;
+   IF st.kind = s_mailbox THEN
+      RETURN lookup("MAILBOX") /= NIL AND lookup("MAILBOX").kind = y_generic;
+   END IF;
+   RETURN st.kind = s_name AND st.a /= NIL AND lookup(st.name.ALL) /= NIL
+          AND lookup(st.name.ALL).kind = y_generic;
+END FUNC generic_use;
+
+% bind the generic parameters named in pattern X[p1, ...] to the properties
+% that the instance type t of X was made with
+ABNORMAL FUNC infer_from(CONST gd : node, CONST pat : node, CONST t : typ, CONST known : sym) => sym IMPORTS ALL;
+   VAR binds : sym := known;
+   VAR e : node := pat.a;
+   VAR tp : node;
+   IF t = NIL OR t.gen = NIL THEN
+      RETURN binds;
+   END IF;
+   tp := t.gen.decl.a;
+   IF pat.kind = s_mailbox THEN
+      e := copy_node(pat.a);
+      e.next := NIL;
+   END IF;
+   WHILE e /= NIL AND tp /= NIL REPEAT
+      VAR nm : text;
+      IF e.kind = n_name OR e.kind = s_name THEN
+         nm := e.name;
+      END IF;
+      IF nm /= NIL AND gparam(gd, nm.ALL) /= NIL AND gparam(gd, nm.ALL).ival <= 2 THEN
+         VAR q : sym := binds;
+         VAR have : BOOL := FALSE;
+         WHILE q /= NIL REPEAT
+            IF q.name.ALL = nm.ALL THEN
+               have := TRUE;
+            END IF;
+            q := q.mnext;
+         END REPEAT;
+         IF NOT have THEN
+            VAR g : sym := t.gbinds;
+            WHILE g /= NIL REPEAT
+               IF g.name.ALL = tp.name.ALL THEN
+                  VAR b : sym := bind_sym(gparam(gd, nm.ALL));
+                  b.t := g.t;
+                  b.c := g.c;
+                  b.mnext := binds;
+                  binds := b;
+               END IF;
+               g := g.mnext;
+            END REPEAT;
+         END IF;
+      END IF;
+      e := e.next;
+      tp := tp.next;
+   END REPEAT;
+   RETURN binds;
+END FUNC infer_from;
+
+% the instance of a generic type for the actual properties tt (11.3), the
+% same type for the same properties; args are the constraint's actuals
+ABNORMAL FUNC instantiate_type(CONST g : sym, CONST tt : node, CONST args : node, OUT c : cons,
+                               CONST line : INT) => typ IMPORTS ALL;
+   VAR gd : node := g.decl;
+   VAR pat : node := gd.b;
+   VAR binds : sym := tt_binds(gd, pat.e, tt, line);
+   VAR inst : sym := all_insts;
+   VAR t : typ;
+   VAR saved_caps : caprec := caps;
+   VAR saved_env : buckets := genv;
+   c := new_cons;
+   c.args := args;
+   WHILE inst /= NIL REPEAT
+      IF inst.decl = pat AND same_binds(inst.members, binds) THEN
+         RETURN inst.t;
+      END IF;
+      inst := inst.insts;
+   END REPEAT;
+   open_scope;
+   BEGIN
+      VAR b : sym := binds;
+      WHILE b /= NIL REPEAT
+         define(b, line);
+         b := b.mnext;
+      END REPEAT;
+   END;
+   % an instance belongs to no capsule: its components are known where it is
+   caps := NIL;
+   genv := g.env;
+   BEGIN
+      VAR y : sym := new_sym(y_type, pat.name);
+      VAR yc : cons;
+      y.decl := pat;
+      IF pat.kind = n_ptrtype THEN
+         t := new_typ(t_ptr);
+         t.name := pat.name;
+         t.decl := pat;
+         y.t := t;
+         define(y, line);
+         finish_ptr(t);
+      ELSE
+         define(y, line);
+         t := new_type(y, nn(s_name, line), yc);
+      END IF;
+   END;
+   caps := saved_caps;
+   genv := saved_env;
+   t.gen := g;
+   t.gbinds := binds;
+   close_scope;
+   ALLOC inst PTR;
+   inst.kind := y_type;
+   inst.name := g.name;
+   inst.decl := pat;
+   inst.t := t;
+   inst.members := binds;
+   inst.insts := all_insts;
+   all_insts := inst;
+   RETURN t;
+END FUNC instantiate_type;
+
+% the instance of generic g for the actual properties tt and actual parameters
+% args; replacement elements come from [..] and from the types of the actuals
+ABNORMAL FUNC instantiate(CONST g : sym, CONST tt : node, CONST args : node, CONST line : INT) => sym
+      IMPORTS ALL;
+   VAR gd : node := g.decl;
+   VAR pat : node := gd.b;
+   VAR binds : sym;
+   VAR f : node := pat.e;
+   VAR a : node := tt;
+   VAR fp : node := pat.a;
+   VAR inst : sym;
+   VAR at : typ;
+   VAR c : cons;
+   VAR saved_fctx : fctxrec := fctx;
+   VAR saved_in : BOOL := in_func;
+   VAR saved_level : INT := cur_level;
+   VAR saved_sym : sym := func_sym;
+   VAR saved_code : buffer := code;
+   VAR saved_env : buckets := genv;
+   % from the actual translation time property list
+   binds := tt_binds(gd, f, a, line);
    % from the types of the actual parameters
    a := args;
    WHILE fp /= NIL AND a /= NIL REPEAT
-      IF fp.a.kind = s_name AND gparam(gd, fp.a.name.ALL) /= NIL AND gparam(gd, fp.a.name.ALL).ival <= 2 THEN
+      IF generic_use(fp.a) THEN
+         % a formal of a generic type, MAILBOX[t]: t is the property the
+         % actual's type was made with
+         CONST v := gexpr(a, NIL, at);
+         binds := infer_from(gd, fp.a, at, binds);
+      ELSEIF fp.a.kind = s_name AND gparam(gd, fp.a.name.ALL) /= NIL AND gparam(gd, fp.a.name.ALL).ival <= 2 THEN
          VAR known : BOOL := FALSE;
          VAR q : sym := binds;
          WHILE q /= NIL REPEAT
@@ -1652,9 +1831,9 @@ ABNORMAL FUNC instantiate(CONST g : sym, CONST tt : node, CONST args : node, CON
       a := a.next;
    END REPEAT;
    % an earlier instance with the same replacement elements?
-   inst := g.insts;
+   inst := all_insts;
    WHILE inst /= NIL REPEAT
-      IF same_binds(inst.members, binds) THEN
+      IF inst.decl = pat AND same_binds(inst.members, binds) THEN
          RETURN inst;
       END IF;
       inst := inst.insts;
@@ -1673,10 +1852,11 @@ ABNORMAL FUNC instantiate(CONST g : sym, CONST tt : node, CONST args : node, CON
          b := b.mnext;
       END REPEAT;
    END;
+   genv := g.env;
    inst := build_subprogram(pat);
    inst.members := binds;
-   inst.insts := g.insts;
-   g.insts := inst;
+   inst.insts := all_insts;
+   all_insts := inst;
    define(inst, line);
    gen_subprogram(pat, inst);
    close_scope;
@@ -1685,5 +1865,6 @@ ABNORMAL FUNC instantiate(CONST g : sym, CONST tt : node, CONST args : node, CON
    cur_level := saved_level;
    func_sym := saved_sym;
    code := saved_code;
+   genv := saved_env;
    RETURN inst;
 END FUNC instantiate;

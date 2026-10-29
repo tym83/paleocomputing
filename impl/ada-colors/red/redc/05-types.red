@@ -3,12 +3,12 @@
 FUNC hash(READONLY s : STRING[ASCII]) => INT;
    VAR h : INT := 0;
    FOR i : INT(1 .. s.LEN) REPEAT
-      h := (h * 31 + POS(s(i))) MOD 4093;
+      h := (h * 31 + POS(s(i))) MOD nbuckets;
    END REPEAT;
    RETURN h;
 END FUNC hash;
 
-ABNORMAL FUNC lookup(READONLY name : STRING[ASCII]) => sym IMPORTS table;
+ABNORMAL FUNC lookup(READONLY name : STRING[ASCII]) => sym IMPORTS table, genv;
    VAR y : sym := table(hash(name));
    WHILE y /= NIL REPEAT
       IF y.name.ALL = name THEN
@@ -16,6 +16,15 @@ ABNORMAL FUNC lookup(READONLY name : STRING[ASCII]) => sym IMPORTS table;
       END IF;
       y := y.chain;
    END REPEAT;
+   IF genv /= NIL THEN
+      y := genv(hash(name));
+      WHILE y /= NIL REPEAT
+         IF y.name.ALL = name THEN
+            RETURN y;
+         END IF;
+         y := y.chain;
+      END REPEAT;
+   END IF;
    RETURN NIL;
 END FUNC lookup;
 
@@ -442,7 +451,13 @@ ABNORMAL FUNC resolve_subtype(CONST st : node, OUT c : cons) => typ IMPORTS ALL;
       WHEN s_file =>
          RETURN ty_file;
       WHEN s_mailbox =>
-         % MAILBOX[message subtype](size) (10.3)
+         % MAILBOX[message subtype](size) (10.3), unless the program defines
+         % its own generic MAILBOX type, as in 14.3.1
+         IF lookup("MAILBOX") /= NIL AND lookup("MAILBOX").kind = y_generic THEN
+            VAR gt : node := copy_node(st.a);
+            gt.next := NIL;
+            RETURN instantiate_type(lookup("MAILBOX"), gt, st.b, c, st.line);
+         END IF;
          BEGIN
             VAR ec : cons;
             t := new_typ(t_mbox);
@@ -469,6 +484,9 @@ ABNORMAL FUNC resolve_subtype(CONST st : node, OUT c : cons) => typ IMPORTS ALL;
             VAR y : sym := lookup(st.name.ALL);
             IF y = NIL THEN
                fail(st.line, "unknown type " & st.name.ALL);
+            END IF;
+            IF y.kind = y_generic AND (y.decl.b.kind = n_newtype OR y.decl.b.kind = n_ptrtype) THEN
+               RETURN instantiate_type(y, st.a, st.b, c, st.line);
             END IF;
             IF y.kind = y_type AND y.t /= NIL AND y.t.kind = t_new THEN
                RETURN new_type(y, st, c);

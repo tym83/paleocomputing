@@ -210,6 +210,7 @@ int rt_cond_send(rt_mbox *m, const void *msg);   /* RED C.11: never waits */
 int rt_cond_receive(rt_mbox *m, void *dst);
 rt_int rt_empty_slots(rt_mbox *m);             /* RED 14.1.1 */
 rt_int rt_full_slots(rt_mbox *m);
+void rt_interrupt_bind(rt_mbox *m, rt_int n, int chars); /* LOCATION (INTERRUPT n), 14.1.4 */
 
 /* the WAIT statement: try alternatives, else block on all of them */
 enum { RT_ALT_SEND = 1, RT_ALT_RECEIVE, RT_ALT_DELAY, RT_ALT_DELAY_UNTIL,

@@ -608,9 +608,37 @@ static rt_task *pick_ready(void) {
   return best;
 }
 
+/* RED 14.1.4: interrupts arrive as messages in the mailbox located at them.
+ * The simulated machine's teletype keyboard raises interrupt 16 for each
+ * character of the standard input, one every 100 ms (10 characters a
+ * second), when a mailbox of characters is located there; a program may
+ * raise any interrupt through LOW_IO on device 2 */
+#define RT_INTERRUPTS 4096
+#define RT_KEYBOARD 16
+static rt_mbox *interrupts[RT_INTERRUPTS];
+static rt_int kb_next = -1;
+static int try_send(rt_mbox *m, const void *msg);
+
+static void post_interrupt(rt_int n, rt_int data) {
+  rt_mbox *m = n >= 0 && n < RT_INTERRUPTS ? interrupts[n] : NULL;
+  if (!m) return;
+  /* the data is collected and sent; with no room left it is lost (overrun) */
+  if (m->esz == sizeof(rt_int)) {
+    rt_int v = data;
+    try_send(m, &v);
+  } else {
+    int v = (int)data;
+    try_send(m, &v);
+  }
+}
+
 static int advance_clock(void) {
   int any = 0;
   rt_int next = 0;
+  if (kb_next >= 0) {
+    next = kb_next;
+    any = 1;
+  }
   for (rt_task *t = all_tasks; t; t = t->all_next) {
     if (t->state == T_BLOCKED && t->timed && (!any || t->wake < next)) {
       next = t->wake;
@@ -630,6 +658,15 @@ static int advance_clock(void) {
       make_ready(t);
     }
     if (t->atimed && t->state != T_DONE && t->awake <= now) satisfy_armed(t, t->atimer_alt);
+  }
+  if (kb_next >= 0 && kb_next <= now) {
+    int c = rt_getc();
+    if (c < 0) {
+      kb_next = -1;
+    } else {
+      kb_next = now + 100 * RT_MILLISECONDS;
+      post_interrupt(RT_KEYBOARD, c);
+    }
   }
   return 1;
 }
@@ -1180,6 +1217,12 @@ void rt_task_end(rt_act *a) {
   }
 }
 
+void rt_interrupt_bind(rt_mbox *m, rt_int n, int chars) {
+  if (n < 0 || n >= RT_INTERRUPTS) rt_raise_msg(RT_X_RANGE, "no such interrupt");
+  interrupts[n] = m;
+  if (n == RT_KEYBOARD && chars && kb_next < 0) kb_next = now + 100 * RT_MILLISECONDS;
+}
+
 void *rt_me_high(const char *utype) {
   rt_act *a = cur->act;
   if (!a || !a->utype || strcmp(a->utype, utype) != 0) rt_raise(rt_exc("X_SCHED"));
@@ -1188,7 +1231,8 @@ void *rt_me_high(const char *utype) {
 
 /* LOW_IO (14.6) is implementation-dependent. Here device 1 is the operator's
  * teletype: command 1 types the character whose code is data, command 2
- * reads one into data (-1 at the end of input) */
+ * reads one into data (-1 at the end of input). Device 2 is the interrupt
+ * controller: command n raises interrupt n with data */
 void rt_low_io(rt_int device, rt_int command, rt_int *data) {
   if (device == 1 && command == 1) {
     rt_putc((int)*data);
@@ -1196,6 +1240,11 @@ void rt_low_io(rt_int device, rt_int command, rt_int *data) {
   }
   if (device == 1 && command == 2) {
     *data = rt_getc();
+    return;
+  }
+  if (device == 2) {
+    post_interrupt(command, *data);
+    maybe_preempt();
     return;
   }
   rt_raise_msg(RT_X_RANGE, "LOW_IO: no such device or command");

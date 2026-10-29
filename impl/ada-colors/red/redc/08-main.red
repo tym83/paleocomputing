@@ -51,7 +51,7 @@ END PROC print_program;
 % ---- start ---------------------------------------------------------------------
 
 ALLOC toks PTR (1000000);
-ALLOC table PTR (4093);
+ALLOC table PTR (nbuckets);
 out_types := new_buffer;
 out_helpers := new_buffer;
 out_protos := new_buffer;

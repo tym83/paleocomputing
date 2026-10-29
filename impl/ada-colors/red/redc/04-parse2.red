@@ -70,13 +70,26 @@ END FUNC declaration;
 ABNORMAL FUNC object_decl => node IMPORTS ALL;
    VAR line : INT := cur_line;
    VAR is_var : BOOL := at_kw("VAR");
-   VAR names, st, init : node;
+   VAR names, st, init, loc : node;
+   VAR loc_kind : INT := 0;
    VAR head, tail : node;
    tpos := tpos + 1;
    names := id_list;
    IF is_var THEN
       expect_op(":");
       st := p_subtype;
+      IF accept_kw("LOCATION") THEN
+         % LOCATION (INTERRUPT n) binds a mailbox to an interrupt (14.1.4); ival 1
+         expect_op("(");
+         IF at_kind(k_id) AND toks(tpos).s.ALL = "INTERRUPT" THEN
+            tpos := tpos + 1;
+            loc_kind := 1;
+         ELSE
+            loc_kind := 2;
+         END IF;
+         loc := expr;
+         expect_op(")");
+      END IF;
       IF accept_op(":=") THEN
          init := expr;
       END IF;
@@ -97,6 +110,8 @@ ABNORMAL FUNC object_decl => node IMPORTS ALL;
       x.name := names.name;
       x.a := st;
       x.b := init;
+      x.c := loc;
+      x.ival := loc_kind;
       append(head, tail, x);
       names := names.next;
    END REPEAT;
@@ -135,9 +150,13 @@ END PROC skip_rep;
 ABNORMAL FUNC type_decl => node IMPORTS ALL;
    VAR line : INT := cur_line;
    VAR name : text;
-   VAR params, x : node;
+   VAR params, x, tts : node;
    tpos := tpos + 1;
    name := expect_id;
+   IF at_op("[") THEN
+      % a generic type (11.3): its formal translation time properties
+      tts := formal_tt;
+   END IF;
    IF at_op("(") THEN
       params := formal_params;
    END IF;
@@ -153,6 +172,7 @@ ABNORMAL FUNC type_decl => node IMPORTS ALL;
       x.b := params;
    END IF;
    x.name := name;
+   x.e := tts;
    x.a := p_subtype;
    skip_rep;
    RETURN x;
