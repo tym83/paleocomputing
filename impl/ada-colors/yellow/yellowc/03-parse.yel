@@ -2,11 +2,6 @@
   (* ---- the parser: Appendix B of the Report (pp.1084-1089) --------------- *)
   (* Rule numbers in comments are those of the Appendix. *)
 
-  VAR
-    TPos: INT := 1;
-    Labels: Node := Node NIL;       (* the LABEL names of the blocks being read *)
-    FromWord, DimensionWord: Txt := 0;
-
   PROCEDURE NewNode RETURNS Node (CONST kind, line: INT)
     VAR n: Node;
     NEW(n);

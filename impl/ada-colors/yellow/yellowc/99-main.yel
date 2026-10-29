@@ -1,10 +1,6 @@
 
   (* ---- the standard environment (Sections VI, XI, XII, XIV) -------------------- *)
 
-  VAR
-    ROpenMode: Rep;
-    Program: Node;
-
   PROCEDURE StdRep (CONST name: ARRAY (1 DIMENSIONS OF ASCII); CONST r: Rep)
     VAR s: Sym := NewSym(S_TYPE, N(name));
     s^.rep := r;
@@ -127,6 +123,8 @@
       IF m^.ival = 0 THEN CompileModule(m) ENDIF;
       m := m^.next
     ENDWHILE;
+    ResolveLater(Depth);
+    RunDeferred(0, 0);
     AwaitProcesses();
     RETURN
   ENDPROCEDURE Translate;

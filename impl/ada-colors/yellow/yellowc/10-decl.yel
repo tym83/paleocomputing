@@ -212,6 +212,9 @@
     CurRoutine := s;
     HasHandler := FALSE;
     OpenScope(FALSE);
+    OTop := OTop + 1;
+    OrderDepth[OTop] := s^.depth;
+    OrderSerial[OTop] := s^.serial;
     (* the parameters live in the frame *)
     p := s^.params;
     WHILE p # Param NIL DO
@@ -255,6 +258,7 @@
     ENDIF;
     AwaitProcesses();
     CloseScope();
+    OTop := OTop - 1;
     (* the frame *)
     SB();
     SA("struct ");
@@ -433,19 +437,93 @@
     RETURN
   ENDPROCEDURE AtLocation;
 
+  (* ---- the order of declarations (VII.I, X.G) ---------------------------------- *)
+  (* The bodies of the routines and processes of a scope, of those of the *)
+  (* modules declared in it, and the initializations of those modules wait *)
+  (* until every declaration of the scope has been read: a body may use any *)
+  (* composite declaration of its scope, and modules may import from each *)
+  (* other in a circle. A module's initialization is written later but *)
+  (* placed where the module is, so it runs in the order of the modules. *)
+
+  (* put d off until the declarations of the nearest scope that is not a *)
+  (* module are read, with the module scopes to open again then *)
+  PROCEDURE Defer (CONST d: Node; CONST kind: INT; CONST mark: Line; CONST here: BOOLEAN)
+    VAR k: INT := Depth;
+    IF QTop >= 20000 THEN FailS(d^.line, "too many routines for this implementation") ENDIF;
+    QTop := QTop + 1;
+    QNode[QTop] := d;
+    QKind[QTop] := kind;
+    QVis[QTop] := VisibleFrom;
+    QMon[QTop] := CurMonitor;
+    QMark[QTop] := mark;
+    QHere[QTop] := here;
+    WHILE Scopes[k]^.closed DO k := k - 1 ENDWHILE;
+    QScope0[QTop] := QSTop + 1;
+    QScopeN[QTop] := Depth - k;
+    FOR i: INTEGER [k + 1..Depth] DO
+      QSTop := QSTop + 1;
+      QScopes[QSTop] := Scopes[i]
+    ENDFOR;
+    RETURN
+  ENDPROCEDURE Defer;
+
+  (* the bodies put off since start, in their scopes *)
+  PROCEDURE RunDeferred (CONST start, sstart: INT)
+    VAR i: INT := start + 1;
+        saveVis: INT;
+        saveMon: Sym;
+    WHILE i <= QTop DO
+      FOR j: INTEGER [QScope0[i]..(QScope0[i] + QScopeN[i]) - 1] DO ReopenScope(QScopes[j]) ENDFOR;
+      saveVis := VisibleFrom;
+      saveMon := CurMonitor;
+      VisibleFrom := QVis[i];
+      CurMonitor := QMon[i];
+      IF QKind[i] = 1 THEN RoutineBody(QNode[i]) ELSE ModuleInit(i) ENDIF;
+      VisibleFrom := saveVis;
+      CurMonitor := saveMon;
+      FOR j: INTEGER [1..QScopeN[i]] DO CloseScope() ENDFOR;
+      i := i + 1
+    ENDWHILE;
+    QTop := start;
+    QSTop := sstart;
+    RETURN
+  ENDPROCEDURE RunDeferred;
+
+  (* the statements of a module, inside the monitor if it is one, written *)
+  (* where the module was declared *)
+  PROCEDURE ModuleInit (CONST i: INT)
+    VAR d: Node := QNode[i];
+        saved: Buf := Body;
+        mark: Line := QMark[i];
+    Body := Buf(Line NIL, Line NIL);
+    IF QHere[i] THEN Emit(Join(T("y_mon_enter("), MonitorPath(CurMonitor), T(");"))) ENDIF;
+    BTop := BTop + 1;
+    BlockFrame[BTop] := 0;
+    BlockXs[BTop] := 0;
+    BlockStatements(d^.c);
+    BTop := BTop - 1;
+    IF QHere[i] THEN Emit(Join(T("y_mon_leave("), MonitorPath(CurMonitor), T(");"))) ENDIF;
+    IF Body.head # Line NIL THEN
+      Body.tail^.next := mark^.next;
+      mark^.next := Body.head;
+      IF saved.tail = mark THEN saved.tail := Body.tail ENDIF
+    ENDIF;
+    Body := saved;
+    RETURN
+  ENDPROCEDURE ModuleInit;
+
   PROCEDURE Declarations (CONST list: Node)
     VAR d: Node := list;
-        deferred, dtail, n: Node := Node NIL;
         saveList: Node := DeclList[Depth];
+        start: INT := QTop;
+        sstart: INT := QSTop;
     DeclList[Depth] := list;
     WHILE d # Node NIL DO
       CurLine := d^.line;
+      DeclCursor[Depth] := d;
       IF (d^.kind = N_ROUTINE) OR (d^.kind = N_PROCESS) THEN
-        IF d^.kind = N_ROUTINE THEN RoutineHeader(d, S_ROUTINE) ELSE RoutineHeader(d, S_PROCESS) ENDIF;
-        n := NewNode(N_NAMEL, d^.line);
-        n^.a := d;
-        Link(deferred, dtail, n);
-        IF d^.kind = N_PROCESS THEN DeclareProcess(d) ENDIF
+        (* unless a module's import has had its header read already *)
+        IF d^.sym = Sym NIL THEN DeclareRoutine(d) ENDIF
       ELSIF (d^.kind = N_MODULE) THEN
         (* unless an earlier module's import had it translated already *)
         IF d^.ival = 0 THEN CompileModule(d) ENDIF
@@ -458,12 +536,17 @@
       ENDIF;
       d := d^.next
     ENDWHILE;
+    DeclCursor[Depth] := Node NIL;
     DeclList[Depth] := saveList;
     CheckPending();
-    n := deferred;
-    WHILE n # Node NIL DO
-      RoutineBody(n^.a);
-      n := n^.next
-    ENDWHILE;
+    ResolveLater(Depth);
+    IF NOT Scopes[Depth]^.closed THEN RunDeferred(start, sstart) ENDIF;
     RETURN
   ENDPROCEDURE Declarations;
+
+  PROCEDURE DeclareRoutine (CONST d: Node)
+    IF d^.kind = N_ROUTINE THEN RoutineHeader(d, S_ROUTINE) ELSE RoutineHeader(d, S_PROCESS) ENDIF;
+    IF d^.kind = N_PROCESS THEN DeclareProcess(d) ENDIF;
+    Defer(d, 1, Line NIL, FALSE);
+    RETURN
+  ENDPROCEDURE DeclareRoutine;

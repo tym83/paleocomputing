@@ -2,17 +2,6 @@
   (* ---- lexical analysis: Sections III and IV of the Report (pp.992-998) ---- *)
   (* The source is read into the pool, so names are interned in place. *)
 
-  VAR
-    TKind, TVal, TLine: TokTable;
-    NTok: INT := 0;
-    SrcStart, SrcEnd: INT := 0;
-    Pos: INT := 0;
-    LineNo: INT := 1;
-    Base: INT := 0;                 (* a BASE word was just read *)
-    (* fixed-point literals: mantissa, base and exponent of the last digit *)
-    FixV, FixB, FixE: ARRAY (INTEGER [1..200000] OF INT);
-    NFix: INT := 0;
-
   (* the reserved words and punctuation marks are interned first, so a word *)
   (* is reserved when its Txt is at most NKW *)
   PROCEDURE InitWords ()

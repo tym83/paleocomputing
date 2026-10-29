@@ -5,14 +5,6 @@
   (* one, and a definition with neither hides all others. The alternatives *)
   (* of a name are chained by alt, newest first. *)
 
-  (* the compiled actuals of the calls being compiled, as a stack: the *)
-  (* actuals of a call inside an actual go above those of the outer call *)
-  VAR
-    ArgCode: ARRAY (INTEGER [1..4096] OF Txt);
-    ArgRep: ARRAY (INTEGER [1..4096] OF Rep);
-    ArgNode: ARRAY (INTEGER [1..4096] OF Node);
-    ArgTop: INT := 0;
-
   (* does an actual of representation a fit a formal of representation f *)
   PROCEDURE Fits RETURNS BOOLEAN (CONST f, a: Rep)
     IF f^.kind = R_UARRAY THEN

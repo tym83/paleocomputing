@@ -1,27 +1,6 @@
 
   (* ---- statements (Section IX) --------------------------------------------- *)
 
-  VAR
-    XFrames: ARRAY (INTEGER [1..1000] OF Txt);  (* the handler frames entered *)
-    XTop: INT := 0;
-    XBase: INT := 0;                 (* the first frame of the routine being written *)
-    BlockFrame: ARRAY (INTEGER [1..1000] OF Txt);  (* per block: its handler frame or 0 *)
-    BlockXs: ARRAY (INTEGER [1..1000] OF Txt);     (* per block with labels: rt_xtop at its start *)
-    BTop: INT := 0;
-    HandlerXc: ARRAY (INTEGER [1..1000] OF Txt);   (* the exception a handler handles *)
-    HTop: INT := 0;
-    LoopName, LoopLabel: ARRAY (INTEGER [1..1000] OF Txt);
-    LoopFrames: ARRAY (INTEGER [1..1000] OF INT);
-    LTop: INT := 0;
-    LoopBase: INT := 0;
-    CurRoutine: Sym := Sym NIL;      (* the routine or process being written *)
-    (* the SELECT statements around: their expressions and the labels of *)
-    (* the case being written, for the components of variants (VIII.B) *)
-    SelExpr, SelLabels: ARRAY (INTEGER [1..1000] OF Node);
-    STop: INT := 0;
-    LabelSeen: ARRAY (INTEGER [1..4096] OF INT);
-    HasHandler: BOOLEAN := FALSE;    (* it has an exception handler *)
-
   PROCEDURE Emit2 (CONST a: ARRAY (1 DIMENSIONS OF ASCII); CONST b: Txt)
     VAR t: Txt;
     SB();

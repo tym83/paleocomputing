@@ -1,0 +1,8 @@
+(* the body of a routine depends only on the simple declarations of its *)
+(* scope that precede it (X.G) *)
+MODULE Later
+  IMPORT StandardImplementationPrelude;
+  PROCEDURE A () v := 1; RETURN ENDPROCEDURE A;
+  VAR v: INTEGER64 := 3;
+  A()
+ENDMODULE Later

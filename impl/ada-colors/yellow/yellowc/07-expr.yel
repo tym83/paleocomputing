@@ -4,22 +4,6 @@
   (* VI, p.1132): literals of an enumeration named in two visible types, NIL, *)
   (* and strings in a scope with two alphabets carry the name of their type. *)
 
-  CONST
-    (* the standard operations of Sections XI, XII and XIV *)
-    F_LOW: INT = 1; F_HIGH: INT = 2; F_SUCC: INT = 3; F_PRED: INT = 4; F_FIRST: INT = 5;
-    F_LAST: INT = 6; F_NEW: INT = 7; F_OPEN: INT = 8; F_CLOSE: INT = 9; F_GET: INT = 10;
-    F_PUT: INT = 11; F_CHECK_EOF: INT = 12; F_MOVE: INT = 13; F_AND_LONG: INT = 14;
-    F_OR_LONG: INT = 15; F_DELAY: INT = 16; F_CLOCK_TIME: INT = 17; F_WAIT: INT = 18;
-    F_SEND: INT = 19; F_AWAITED: INT = 20; F_FLOOR: INT = 21; F_CEILING: INT = 22;
-    F_NEAR_INTEGER: INT = 23; F_NEAR_FIXED: INT = 24; F_NEAR_FLOATING: INT = 25;
-    F_FIXED_DIV: INT = 26; F_CLAIM: INT = 27; F_RELEASE: INT = 28; F_COND_CLAIM: INT = 29;
-    F_PROCESS_IDENTITY: INT = 30; F_CHANGE_PRIORITY: INT = 31; F_RAISE_TERM: INT = 32;
-    F_FREE_POINTER: INT = 33; F_CODE_INSERT: INT = 34; F_ADDR: INT = 35; F_EXTENT: INT = 36;
-
-  VAR
-    CharNames: Txt := 0;             (* the mnemonics of ASCII, in order *)
-    Alphabets: Node := Node NIL;     (* the alphabets declared with a name *)
-
   (* ---- characters of an alphabet ----------------------------------------------- *)
 
   (* the position of character literal text in the alphabet a, or -1 *)

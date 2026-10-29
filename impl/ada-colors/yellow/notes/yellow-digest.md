@@ -144,11 +144,17 @@ ENDLOOP name, [SIMULATED_TIME] BEGIN block END.
   without declaring them gives the standard ones with the opaque types (D-33). An
   initialization is an assignment: a variable of an opaque type is initialized outside its
   module only when `:=` is exported.
-- Composite declarations may refer to each other in any order; simple ones are declared
-  before use (pointer bases excepted). A module may import from a module declared later in
-  its scope (X.G: the program is valid if an order exists): yellowc then translates that
-  module first, and its initialization runs first. Modules that import from each other in a
-  circle are refused, since yellowc needs that order to exist.
+- Composite declarations may refer to each other in any order; simple ones are declared before
+  use (pointer bases excepted). A name a declaration uses that a later declaration of the same
+  sequence declares is that later entity, used too early (VII.I); the body of a routine or
+  process uses only the simple declarations of its scope that precede it (X.G). yellowc reads
+  every declaration of a scope, and the declarations of the modules in it, before it writes
+  the bodies of their routines and the initializations of the modules (each written where its
+  module is, so modules initialize in order). A module may import from a module declared
+  later (that module is translated first, and initializes first), a routine or process
+  declared later, or a module that imports from it in turn: such an import is resolved when
+  its provider has been read, and until then only bodies may use it. An import of a simple
+  declaration that comes after the module is an error (X.G).
 - TEMPLATE T(formals) MODULE ... ENDTEMPLATE T; INSTANCE T(actuals) writes the module with
   the actuals for the formals (X.C-D): yellowc copies the tokens with the names replaced.
 
@@ -218,4 +224,3 @@ other than the prelude are not provided.
   processes.
 - A FUNCTION's purity is checked for its own assignments and VAR/OUT actuals, not for the
   procedures it calls.
-- Modules importing from each other in a circle (allowed by X.G for routines) are refused.

@@ -5,10 +5,6 @@
   (* identifier (VII.G, p.1039): INTEGER [1..5] and INTEGER [0..9] are both *)
   (* INTEGER, but two RECORD ... ENDRECORD written apart are different types. *)
 
-  VAR
-    RInt, RBool, RAscii, RVoid, RNil, RStr, RFloat, RFixed, RSignal, RSem, RAny: Rep;
-    Pending: Node := Node NIL;       (* pointer representations waiting for their base *)
-
   PROCEDURE NewRep RETURNS Rep (CONST kind: INT; CONST tid: Txt)
     VAR r: Rep;
     NEW(r);
