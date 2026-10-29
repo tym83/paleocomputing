@@ -526,3 +526,15 @@ extern const ydesc y_d_str;
 extern const ydesc y_d_sig;                  /* a SIGNAL as an array component */
 
 #endif
+
+/* RED additions (Intermetrics, 1979): what the RED translator needs beyond the
+ * shared runtime above. Nothing above is changed. */
+#ifndef PALEO_RED_H
+#define PALEO_RED_H
+/* the declared limits of INT and FLOAT (C.3, C.4) */
+#define RT_IMAX INT64_MAX
+#define RT_IMIN (-INT64_MAX)
+#define RT_FMAX 1.7976931348623157e308
+int rt_r_active(rt_act *a);                    /* NIL_ACT is always active */
+rstr rt_r_strsub(rstr s, rt_int len);          /* X_SUBTYPE unless s has len characters */
+#endif

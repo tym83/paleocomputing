@@ -3108,3 +3108,12 @@ void y_device(ysig *s, rt_int address) {
 
 /* a SIGNAL as a component of an array: tied to its monitor by y_sig_init */
 const ydesc y_d_sig = {YK_OPAQUE, sizeof(ysig), 0, 0, {0}, {0}, NULL, 0, NULL, NULL};
+
+/* ---- RED additions ------------------------------------------------------- */
+
+int rt_r_active(rt_act *a) { return a == NULL || a->active; }
+
+rstr rt_r_strsub(rstr s, rt_int len) {
+  if (s.len != len) rt_raise_msg(RT_X_SUBTYPE, "string length");
+  return s;
+}

@@ -8,15 +8,17 @@ FUNC hash(READONLY s : STRING[ASCII]) => INT;
    RETURN h;
 END FUNC hash;
 
-ABNORMAL FUNC lookup(READONLY name : STRING[ASCII]) => sym IMPORTS table, genv;
+ABNORMAL FUNC lookup(READONLY name : STRING[ASCII]) => sym IMPORTS table, genv, gdepth;
    VAR y : sym := table(hash(name));
-   WHILE y /= NIL REPEAT
-      IF y.name.ALL = name THEN
-         RETURN y;
-      END IF;
-      y := y.chain;
-   END REPEAT;
    IF genv /= NIL THEN
+      % in an instance: its own names, then those of the generic's definition
+      % environment (11.3), then the rest
+      WHILE y /= NIL REPEAT
+         IF y.depth >= gdepth AND y.name.ALL = name THEN
+            RETURN y;
+         END IF;
+         y := y.chain;
+      END REPEAT;
       y := genv(hash(name));
       WHILE y /= NIL REPEAT
          IF y.name.ALL = name THEN
@@ -24,7 +26,14 @@ ABNORMAL FUNC lookup(READONLY name : STRING[ASCII]) => sym IMPORTS table, genv;
          END IF;
          y := y.chain;
       END REPEAT;
+      y := table(hash(name));
    END IF;
+   WHILE y /= NIL REPEAT
+      IF y.name.ALL = name THEN
+         RETURN y;
+      END IF;
+      y := y.chain;
+   END REPEAT;
    RETURN NIL;
 END FUNC lookup;
 
@@ -109,6 +118,142 @@ ABNORMAL FUNC new_cons => cons;
    ALLOC c PTR;
    RETURN c;
 END FUNC new_cons;
+
+% ---- bounds of scalar subtypes (4.1.4, C.3 - C.5) ------------------------------
+
+FUNC scalar_kind(CONST t : typ) => BOOL;
+   RETURN t /= NIL AND (t.kind = t_int OR t.kind = t_float OR t.kind = t_enum);
+END FUNC scalar_kind;
+
+FUNC bound_ctype(CONST t : typ) => STRING[ASCII];
+   IF t.kind = t_float THEN
+      RETURN "double";
+   END IF;
+   RETURN "rt_int";
+END FUNC bound_ctype;
+
+% a bound kept in storage is reached from the current subprogram like a variable
+ABNORMAL FUNC cbound(CONST c : cons, READONLY b : STRING[ASCII]) => STRING[ASCII] IMPORTS cur_level;
+   VAR p : text := mk("F");
+   IF NOT c.dyn OR c.lvl <= 0 THEN
+      RETURN b;
+   END IF;
+   FOR i : INT(1 .. cur_level - c.lvl) REPEAT
+      p := mk(p.ALL & "->up");
+   END REPEAT;
+   RETURN p.ALL & "->" & b;
+END FUNC cbound;
+
+ABNORMAL FUNC clo(CONST c : cons) => STRING[ASCII] IMPORTS cur_level;
+   RETURN cbound(c, c.lo.ALL);
+END FUNC clo;
+
+ABNORMAL FUNC chi(CONST c : cons) => STRING[ASCII] IMPORTS cur_level;
+   RETURN cbound(c, c.hi.ALL);
+END FUNC chi;
+
+% the bounds of a scalar subtype: its constraint, or the whole type
+ABNORMAL FUNC sub_lo(CONST t : typ, CONST c : cons) => STRING[ASCII] IMPORTS cur_level;
+   IF c /= NIL AND c.lo /= NIL THEN
+      RETURN clo(c);
+   ELSEIF t.kind = t_float THEN
+      RETURN "(-RT_FMAX)";
+   ELSEIF t.kind = t_enum THEN
+      RETURN "0";
+   END IF;
+   RETURN "RT_IMIN";
+END FUNC sub_lo;
+
+ABNORMAL FUNC sub_hi(CONST t : typ, CONST c : cons) => STRING[ASCII] IMPORTS cur_level;
+   IF c /= NIL AND c.lo /= NIL THEN
+      RETURN chi(c);
+   ELSEIF t.kind = t_float THEN
+      RETURN "RT_FMAX";
+   ELSEIF t.kind = t_enum THEN
+      RETURN itos(list_len(t.lits) - 1);
+   END IF;
+   RETURN "RT_IMAX";
+END FUNC sub_hi;
+
+% storage for a value made by the translator, of C type ct
+ABNORMAL FUNC raw_storage(READONLY name : STRING[ASCII], READONLY ct : STRING[ASCII]) => STRING[ASCII] IMPORTS ALL;
+   IF NOT in_func THEN
+      CONST g := new_name("g_" & name & "_");
+      put(out_globals, "static " & ct & " " & g & ";");
+      st_field := mk(g);
+      RETURN g;
+   END IF;
+   BEGIN
+      CONST f := new_name(name & "_");
+      put(fields_buf, " " & ct & " " & f & ";");
+      st_field := mk(f);
+      RETURN "F->" & f;
+   END;
+END FUNC raw_storage;
+
+ABNORMAL FUNC copy_cons(CONST c : cons) => cons;
+   VAR r : cons;
+   ALLOC r PTR;
+   r.lo := c.lo;
+   r.hi := c.hi;
+   r.lo2 := c.lo2;
+   r.hi2 := c.hi2;
+   r.slen := c.slen;
+   r.mlo := c.mlo;
+   r.mhi := c.mhi;
+   r.hasm := c.hasm;
+   r.args := c.args;
+   r.dyn := c.dyn;
+   r.lvl := c.lvl;
+   r.prec := c.prec;
+   RETURN r;
+END FUNC copy_cons;
+
+% a constraint whose bounds are not manifest is evaluated once, when the
+% subtype is elaborated (4.1.4), and kept: later changes to the variables in
+% its expressions do not change it
+ABNORMAL FUNC freeze(CONST c : cons, CONST t : typ) => cons IMPORTS ALL;
+   VAR r : cons;
+   VAR saved_field : text := st_field;
+   IF c = NIL OR c.lo = NIL OR c.hasm OR c.dyn OR NOT scalar_kind(t) THEN
+      RETURN c;
+   END IF;
+   r := copy_cons(c);
+   BEGIN
+      CONST ct := bound_ctype(t);
+      CONST la := raw_storage("blo", ct);
+      CONST lf := st_field.ALL;
+      CONST ha := raw_storage("bhi", ct);
+      CONST hf := st_field.ALL;
+      emit(la & " = " & clo(c) & "; " & ha & " = " & chi(c) & ";");
+      IF in_func THEN
+         r.lo := mk(lf);
+         r.hi := mk(hf);
+         r.dyn := TRUE;
+         r.lvl := cur_level;
+      ELSE
+         r.lo := mk(la);
+         r.hi := mk(ha);
+         r.dyn := FALSE;
+      END IF;
+   END;
+   st_field := saved_field;
+   RETURN r;
+END FUNC freeze;
+
+% a scalar value checked against the subtype it is assigned to (4.1.4)
+ABNORMAL FUNC checked(CONST t : typ, CONST c : cons, READONLY v : STRING[ASCII]) => STRING[ASCII] IMPORTS ALL;
+   IF c = NIL OR NOT scalar_kind(t) THEN
+      RETURN v;
+   ELSEIF t.kind /= t_float AND c.hasm THEN
+      RETURN "rt_range(" & v & ", " & itos(c.mlo) & ", " & itos(c.mhi) & ")";
+   ELSEIF c.lo = NIL THEN
+      RETURN v;
+   ELSEIF t.kind = t_float THEN
+      RETURN "rt_frange(" & v & ", " & clo(c) & ", " & chi(c) & ")";
+   END IF;
+   RETURN "rt_range(" & v & ", " & clo(c) & ", " & chi(c) & ")";
+END FUNC checked;
 
 FUNC same_lits(CONST a : node, CONST b : node) => BOOL;
    VAR x : node := a;
@@ -363,6 +508,15 @@ ABNORMAL FUNC resolve_subtype(CONST st : node, OUT c : cons) => typ IMPORTS ALL;
          END IF;
          RETURN ty_int;
       WHEN s_float =>
+         % FLOAT(precision, lo .. hi) (C.4)
+         IF st.a /= NIL THEN
+            c.prec := mk(gexpr(st.a, ty_int, dummy));
+         END IF;
+         IF st.b /= NIL THEN
+            c.lo := mk(gexpr(st.b, ty_float, dummy));
+            c.hi := mk(gexpr(st.c, ty_float, dummy));
+            c.hasm := float_lit(st.b) AND float_lit(st.c);
+         END IF;
          RETURN ty_float;
       WHEN s_enum =>
          t := new_typ(t_enum);
@@ -370,6 +524,11 @@ ABNORMAL FUNC resolve_subtype(CONST st : node, OUT c : cons) => typ IMPORTS ALL;
          IF st.b /= NIL THEN
             c.lo := mk(gexpr(st.b, t, dummy));
             c.hi := mk(gexpr(st.c, t, dummy));
+            IF st.b.kind = n_enum AND st.c.kind = n_enum THEN
+               c.mlo := lit_index(t.lits, st.b.name.ALL);
+               c.mhi := lit_index(t.lits, st.c.name.ALL);
+               c.hasm := TRUE;
+            END IF;
          END IF;
          RETURN t;
       WHEN s_string =>
@@ -510,6 +669,13 @@ ABNORMAL FUNC resolve_subtype(CONST st : node, OUT c : cons) => typ IMPORTS ALL;
    END CASE;
    RETURN NIL;
 END FUNC resolve_subtype;
+
+FUNC float_lit(CONST e : node) => BOOL;
+   IF e.kind = n_unop AND (e.name.ALL = "-" OR e.name.ALL = "+") THEN
+      RETURN float_lit(e.a);
+   END IF;
+   RETURN e.kind = n_float OR e.kind = n_int;
+END FUNC float_lit;
 
 % outside the capsule that declares a new type, its components, .ALL and :=
 % are known only if the capsule exports them, i.e. exports ALL (8.2)
@@ -760,39 +926,198 @@ END PROC make_storage;
 
 % manifest expressions (5.5)
 ABNORMAL FUNC manifest(CONST e : node, OUT ok : BOOL) => INT IMPORTS ALL;
-   VAR a, b : INT;
-   VAR ok2 : BOOL;
-   ok := FALSE;
-   IF e.kind = n_int THEN
-      ok := TRUE;
-      RETURN e.ival;
-   ELSEIF e.kind = n_paren THEN
-      RETURN manifest(e.a, ok);
-   ELSEIF e.kind = n_unop AND e.name.ALL = "-" THEN
-      a := manifest(e.a, ok);
-      RETURN -a;
-   ELSEIF e.kind = n_binop AND (e.name.ALL = "+" OR e.name.ALL = "-" OR e.name.ALL = "*") THEN
-      a := manifest(e.a, ok);
-      b := manifest(e.b, ok2);
-      ok := ok AND ok2;
-      IF NOT ok THEN
-         RETURN 0;
-      END IF;
-      IF e.name.ALL = "+" THEN
-         RETURN a + b;
-      ELSEIF e.name.ALL = "-" THEN
-         RETURN a - b;
-      END IF;
-      RETURN a * b;
-   ELSEIF e.kind = n_name THEN
-      VAR y : sym := lookup(e.name.ALL);
-      IF y /= NIL AND y.kind = y_const AND y.hasmv THEN
-         ok := TRUE;
-         RETURN y.mvalue;
-      END IF;
+   VAR v : mval := meval(e, ok);
+   IF ok AND v.kind = t_int THEN
+      RETURN v.i;
    END IF;
+   ok := FALSE;
    RETURN 0;
 END FUNC manifest;
+
+ABNORMAL FUNC mk_mval(CONST kind : INT, CONST i : INT) => mval;
+   VAR v : mval;
+   ALLOC v PTR;
+   v.kind := kind;
+   v.i := i;
+   RETURN v;
+END FUNC mk_mval;
+
+FUNC ipow(CONST a : INT, CONST b : INT) => INT;
+   VAR r : INT := 1;
+   FOR i : INT(1 .. b) REPEAT
+      r := r * a;
+   END REPEAT;
+   RETURN r;
+END FUNC ipow;
+
+% the value of a manifest expression: literals, constants defined with
+% manifest values, and the built-in operations of 5.5 on them; ok is FALSE
+% for any other expression
+ABNORMAL FUNC meval(CONST e : node, OUT ok : BOOL) => mval IMPORTS ALL;
+   VAR a, b : mval;
+   VAR ok2 : BOOL;
+   VAR op : text;
+   ok := FALSE;
+   IF e = NIL THEN
+      RETURN NIL;
+   ELSEIF e.kind = n_int THEN
+      ok := TRUE;
+      RETURN mk_mval(t_int, e.ival);
+   ELSEIF e.kind = n_bool THEN
+      ok := TRUE;
+      RETURN mk_mval(t_bool, e.ival);
+   ELSEIF e.kind = n_float THEN
+      % a FLOAT is computed by the C translator from the same expression
+      ok := TRUE;
+      RETURN mk_mval(t_float, 0);
+   ELSEIF e.kind = n_str THEN
+      ok := TRUE;
+      a := mk_mval(t_string, 0);
+      a.s := e.name;
+      RETURN a;
+   ELSEIF e.kind = n_enum THEN
+      IF lit_index(ty_ascii.lits, e.name.ALL) >= 0 THEN
+         ok := TRUE;
+         a := mk_mval(t_enum, lit_index(ty_ascii.lits, e.name.ALL));
+         a.t := ty_ascii;
+         a.s := e.name;
+         RETURN a;
+      END IF;
+      a := mk_mval(t_enum, -1);
+      a.s := e.name;
+      ok := TRUE;
+      RETURN a;
+   ELSEIF e.kind = n_paren THEN
+      RETURN meval(e.a, ok);
+   ELSEIF e.kind = n_name THEN
+      VAR y : sym := lookup(e.name.ALL);
+      IF y /= NIL AND y.kind = y_const AND y.mv /= NIL THEN
+         ok := TRUE;
+         RETURN y.mv;
+      ELSEIF y /= NIL AND y.kind = y_const AND y.hasmv THEN
+         ok := TRUE;
+         RETURN mk_mval(t_int, y.mvalue);
+      END IF;
+      RETURN NIL;
+   ELSEIF e.kind = n_unop THEN
+      a := meval(e.a, ok);
+      IF NOT ok THEN
+         RETURN NIL;
+      ELSEIF e.name.ALL = "NOT" AND a.kind = t_bool THEN
+         RETURN mk_mval(t_bool, 1 - a.i);
+      ELSEIF e.name.ALL = "-" AND a.kind = t_int THEN
+         RETURN mk_mval(t_int, -a.i);
+      ELSEIF (e.name.ALL = "+" OR e.name.ALL = "-") AND (a.kind = t_int OR a.kind = t_float) THEN
+         RETURN a;
+      END IF;
+      ok := FALSE;
+      RETURN NIL;
+   ELSEIF e.kind /= n_binop OR user_defined(e.name.ALL) THEN
+      RETURN NIL;
+   END IF;
+   op := e.name;
+   a := meval(e.a, ok);
+   b := meval(e.b, ok2);
+   ok := ok AND ok2;
+   IF NOT ok THEN
+      RETURN NIL;
+   END IF;
+   ok := FALSE;
+   IF a.kind = t_int AND b.kind = t_int THEN
+      ok := TRUE;
+      IF op.ALL = "+" THEN
+         RETURN mk_mval(t_int, a.i + b.i);
+      ELSEIF op.ALL = "-" THEN
+         RETURN mk_mval(t_int, a.i - b.i);
+      ELSEIF op.ALL = "*" THEN
+         RETURN mk_mval(t_int, a.i * b.i);
+      ELSEIF op.ALL = "DIV" AND b.i /= 0 THEN
+         RETURN mk_mval(t_int, a.i DIV b.i);
+      ELSEIF op.ALL = "MOD" AND b.i /= 0 THEN
+         RETURN mk_mval(t_int, a.i MOD b.i);
+      ELSEIF op.ALL = "**" AND b.i >= 0 THEN
+         RETURN mk_mval(t_int, ipow(a.i, b.i));
+      ELSEIF op.ALL = "=" THEN
+         RETURN mk_mval(t_bool, bool_i(a.i = b.i));
+      ELSEIF op.ALL = "/=" THEN
+         RETURN mk_mval(t_bool, bool_i(a.i /= b.i));
+      ELSEIF op.ALL = "<" THEN
+         RETURN mk_mval(t_bool, bool_i(a.i < b.i));
+      ELSEIF op.ALL = "<=" THEN
+         RETURN mk_mval(t_bool, bool_i(a.i <= b.i));
+      ELSEIF op.ALL = ">" THEN
+         RETURN mk_mval(t_bool, bool_i(a.i > b.i));
+      ELSEIF op.ALL = ">=" THEN
+         RETURN mk_mval(t_bool, bool_i(a.i >= b.i));
+      END IF;
+   ELSEIF a.kind = t_float AND b.kind = t_float AND (op.ALL = "+" OR op.ALL = "-" OR op.ALL = "*"
+         OR op.ALL = "/") THEN
+      ok := TRUE;
+      RETURN a;
+   ELSEIF a.kind = t_float AND b.kind = t_int AND op.ALL = "**" THEN
+      ok := TRUE;
+      RETURN a;
+   ELSEIF a.kind = t_bool AND b.kind = t_bool THEN
+      ok := TRUE;
+      IF op.ALL = "AND" THEN
+         RETURN mk_mval(t_bool, a.i * b.i);
+      ELSEIF op.ALL = "OR" THEN
+         RETURN mk_mval(t_bool, bool_i(a.i + b.i > 0));
+      ELSEIF op.ALL = "XOR" OR op.ALL = "/=" THEN
+         RETURN mk_mval(t_bool, bool_i(a.i /= b.i));
+      ELSEIF op.ALL = "=" THEN
+         RETURN mk_mval(t_bool, bool_i(a.i = b.i));
+      END IF;
+   ELSEIF a.kind = t_enum AND b.kind = t_enum AND (op.ALL = "=" OR op.ALL = "/=") THEN
+      ok := TRUE;
+      IF op.ALL = "=" THEN
+         RETURN mk_mval(t_bool, bool_i(a.s.ALL = b.s.ALL));
+      END IF;
+      RETURN mk_mval(t_bool, bool_i(a.s.ALL /= b.s.ALL));
+   ELSEIF a.kind = t_string AND b.kind = t_string AND (op.ALL = "=" OR op.ALL = "/=") THEN
+      ok := TRUE;
+      IF op.ALL = "=" THEN
+         RETURN mk_mval(t_bool, bool_i(a.s.ALL = b.s.ALL));
+      END IF;
+      RETURN mk_mval(t_bool, bool_i(a.s.ALL /= b.s.ALL));
+   ELSEIF op.ALL = "&" AND (a.kind = t_string OR a.t = ty_ascii) AND (b.kind = t_string OR b.t = ty_ascii) THEN
+      VAR r : mval := mk_mval(t_string, 0);
+      ok := TRUE;
+      r.s := mk(mstr(a) & mstr(b));
+      RETURN r;
+   END IF;
+   ok := FALSE;
+   RETURN NIL;
+END FUNC meval;
+
+FUNC bool_i(CONST b : BOOL) => INT;
+   IF b THEN
+      RETURN 1;
+   END IF;
+   RETURN 0;
+END FUNC bool_i;
+
+% a manifest string, or a manifest ASCII character as a string
+FUNC mstr(CONST v : mval) => STRING[ASCII];
+   IF v.kind = t_string THEN
+      RETURN v.s.ALL;
+   END IF;
+   RETURN chs(ascii_char(v.i));
+END FUNC mstr;
+
+FUNC ascii_char(CONST i : INT) => ASCII;
+   CONST printable := " !" & chs('QUOTE) & "#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\]^_`abcdefghijklmnopqrstuvwxyz{|}~";
+   IF i >= 32 AND i <= 126 THEN
+      RETURN printable(i - 31);
+   END IF;
+   RETURN 'SP;
+END FUNC ascii_char;
+
+% is there a user definition of this operator symbol? (13.2)
+ABNORMAL FUNC user_defined(READONLY op : STRING[ASCII]) => BOOL IMPORTS ALL;
+   VAR y : sym := lookup(op);
+   RETURN y /= NIL AND (y.kind = y_func OR y.kind = y_proc);
+END FUNC user_defined;
 
 % ---- assignment, copy and equality --------------------------------------------------
 
@@ -829,10 +1154,8 @@ ABNORMAL FUNC assign_code(READONLY lval : STRING[ASCII], CONST t : typ, READONLY
       RETURN "rt_str_assign(&" & lval & ", " & v & ");";
    ELSEIF t.kind = t_array OR t.kind = t_record THEN
       RETURN "as_" & ctype(t) & "(&" & lval & ", " & v & ");";
-   ELSEIF t.kind = t_int AND c /= NIL AND c.hasm THEN
-      RETURN lval & " = rt_range(" & v & ", " & itos(c.mlo) & ", " & itos(c.mhi) & ");";
    END IF;
-   RETURN lval & " = " & v & ";";
+   RETURN lval & " = " & checked(t, c, v) & ";";
 END FUNC assign_code;
 
 ABNORMAL FUNC copy_code(CONST t : typ, READONLY v : STRING[ASCII]) => STRING[ASCII] IMPORTS ALL;

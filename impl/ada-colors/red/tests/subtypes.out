@@ -1,0 +1,13 @@
+a VAR formal by type takes the subtype of the actual
+v = 2
+w = 9
+X_SUBTYPE: VAR actual of another subtype
+OUT copied back into a narrower actual: X_RANGE
+READONLY of an equal subtype: 2
+result outside the result subtype: X_RANGE
+XXX
+result of the wrong length: X_SUBTYPE
+INT(1 .. m) keeps the m of its elaboration
+10 DIV 3 is manifest
+conditional translation
+NIL_ACT is active

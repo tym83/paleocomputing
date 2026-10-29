@@ -88,7 +88,8 @@ END FUNC deref;
 FUNC is_lvalue(CONST e : node) => BOOL IMPORTS ALL;
    IF e.kind = n_name THEN
       VAR y : sym := lookup(e.name.ALL);
-      RETURN y /= NIL AND (y.kind = y_var OR y.kind = y_const);
+      % a manifest constant is a value, not a data item with an address
+      RETURN y /= NIL AND (y.kind = y_var OR (y.kind = y_const AND y.mv = NIL AND NOT y.hasmv));
    ELSEIF e.kind = n_paren THEN
       RETURN is_lvalue(e.a);
    ELSEIF e.kind = n_select THEN
@@ -852,20 +853,24 @@ END FUNC fits;
 % the visible deferred unit of this name whose interface matches the actuals
 ABNORMAL FUNC resolve_overload(READONLY name : STRING[ASCII], CONST args : node, CONST is_stmt : BOOL,
                                CONST line : INT) => sym IMPORTS ALL;
-   VAR y : sym := table(hash(name));
+   VAR y : sym;
    VAR first : sym;
    VAR n : INT := 0;
-   WHILE y /= NIL REPEAT
-      IF y.name.ALL = name AND (y.kind = y_func OR y.kind = y_proc) THEN
-         n := n + 1;
-         IF first = NIL THEN
-            first := y;
+   FOR pass : INT(1 .. 3) REPEAT
+      y := overload_chain(name, pass);
+      WHILE y /= NIL REPEAT
+         IF y.name.ALL = name AND (y.kind = y_func OR y.kind = y_proc)
+               AND (pass /= 1 OR y.depth >= gdepth) THEN
+            n := n + 1;
+            IF first = NIL THEN
+               first := y;
+            END IF;
+            IF ((y.kind = y_proc) = is_stmt) AND fits(y, args) THEN
+               RETURN y;
+            END IF;
          END IF;
-         IF ((y.kind = y_proc) = is_stmt) AND fits(y, args) THEN
-            RETURN y;
-         END IF;
-      END IF;
-      y := y.chain;
+         y := y.chain;
+      END REPEAT;
    END REPEAT;
    IF is_builtin(name) THEN
       RETURN NIL;
@@ -875,6 +880,18 @@ ABNORMAL FUNC resolve_overload(READONLY name : STRING[ASCII], CONST args : node,
    END IF;
    RETURN first;
 END FUNC resolve_overload;
+
+% the definitions of a name to try, in order (11.3): in an instance, its own
+% (pass 1), those of the generic's definition environment (2), then the rest
+% (3); elsewhere just the scope's (3)
+ABNORMAL FUNC overload_chain(READONLY name : STRING[ASCII], CONST pass : INT) => sym IMPORTS table, genv;
+   IF genv = NIL AND pass < 3 THEN
+      RETURN NIL;
+   ELSEIF pass = 2 THEN
+      RETURN genv(hash(name));
+   END IF;
+   RETURN table(hash(name));
+END FUNC overload_chain;
 
 FUNC is_builtin(READONLY n : STRING[ASCII]) => BOOL;
    RETURN n = "ABS" OR n = "POS" OR n = "SUCC" OR n = "PRED" OR n = "SQRT" OR n = "FLOOR"
@@ -925,12 +942,15 @@ END FUNC lock_ref;
 
 % is there a user definition of this operator symbol that fits? (13.2)
 ABNORMAL FUNC user_op(READONLY op : STRING[ASCII], CONST args : node) => sym IMPORTS ALL;
-   VAR y : sym := table(hash(op));
-   WHILE y /= NIL REPEAT
-      IF y.name.ALL = op AND y.kind = y_func AND fits(y, args) THEN
-         RETURN y;
-      END IF;
-      y := y.chain;
+   VAR y : sym;
+   FOR pass : INT(1 .. 3) REPEAT
+      y := overload_chain(op, pass);
+      WHILE y /= NIL REPEAT
+         IF y.name.ALL = op AND y.kind = y_func AND (pass /= 1 OR y.depth >= gdepth) AND fits(y, args) THEN
+            RETURN y;
+         END IF;
+         y := y.chain;
+      END REPEAT;
    END REPEAT;
    RETURN NIL;
 END FUNC user_op;
@@ -997,24 +1017,24 @@ ABNORMAL FUNC gcall(CONST e : node, CONST is_stmt : BOOL, OUT t : typ) => STRING
             fail(e.line, pm.name.ALL & " needs a variable");
          END IF;
          check_type(lt, pm.t, e.line);
-         args := mk(args.ALL & "&" & lv.ALL);
+         args := mk(args.ALL & "&" & lv.ALL & actual_bounds(pm.t, lt, lc));
       ELSEIF pm.mode = m_readonly AND is_lvalue(a) THEN
          lvalue(a, lv, lt, lc, ro);
          check_type(lt, pm.t, e.line);
-         args := mk(args.ALL & "&" & lv.ALL);
+         args := mk(args.ALL & "&" & lv.ALL & actual_bounds(pm.t, lt, lc));
       ELSEIF pm.mode = m_readonly THEN
          CONST v := gexpr(a, pm.t, vt);
          CONST ct := ctype(pm.t);
          check_type(vt, pm.t, e.line);
          args := mk(args.ALL & "({ " & ct & " *b_ = rt_alloc(sizeof(" & ct & ")); *b_ = " & v & "; b_; })");
+         IF scalar_kind(pm.t) THEN
+            % a value has no subtype to compare with the formal's
+            args := mk(args.ALL & ", 1, 0");
+         END IF;
       ELSE
          CONST v := gexpr(a, pm.t, vt);
          check_type(vt, pm.t, e.line);
-         IF pm.t.kind = t_int AND pm.c /= NIL AND pm.c.hasm THEN
-            args := mk(args.ALL & "rt_range(" & v & ", " & itos(pm.c.mlo) & ", " & itos(pm.c.mhi) & ")");
-         ELSE
-            args := mk(args.ALL & v);
-         END IF;
+         args := mk(args.ALL & v);
       END IF;
       a := a.next;
       pm := pm.next;
@@ -1025,6 +1045,14 @@ ABNORMAL FUNC gcall(CONST e : node, CONST is_stmt : BOOL, OUT t : typ) => STRING
    t := y.result;
    RETURN y.cname.ALL & "(" & args.ALL & ")";
 END FUNC gcall;
+
+% the subtype of an actual bound to a VAR, OUT or READONLY scalar formal (7.3)
+ABNORMAL FUNC actual_bounds(CONST ft : typ, CONST t : typ, CONST c : cons) => STRING[ASCII] IMPORTS ALL;
+   IF NOT scalar_kind(ft) THEN
+      RETURN "";
+   END IF;
+   RETURN ", " & sub_lo(t, c) & ", " & sub_hi(t, c);
+END FUNC actual_bounds;
 
 ABNORMAL FUNC builtin(READONLY name : STRING[ASCII], CONST tt : node, CONST args : node,
                       CONST line : INT, CONST is_stmt : BOOL, OUT t : typ) => STRING[ASCII] IMPORTS ALL;
@@ -1206,8 +1234,9 @@ ABNORMAL FUNC builtin(READONLY name : STRING[ASCII], CONST tt : node, CONST args
    ELSEIF name = "EXTERMINATE" THEN
       RETURN "rt_exterminate(" & act_ref(args) & ")";
    ELSEIF name = "ACTIVE" THEN
+      % NIL_ACT is always active (C.10)
       t := ty_bool;
-      RETURN "rt_is_active(" & act_ref(args) & ")";
+      RETURN "rt_r_active(" & act_ref(args) & ")";
    ELSEIF name = "DELAY" THEN
       CONST v := gexpr(args, ty_int, at);
       RETURN "rt_delay(" & v & ")";

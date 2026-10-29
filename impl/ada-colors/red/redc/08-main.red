@@ -7,7 +7,8 @@ PROC translate(CONST units : node) IMPORTS ALL;
          ALLOC caps PTR;
          caps.d := u;
          declare_body(u.c);
-         body_elements(u.c);
+         capsule_body(u.c);
+         await_tasks(u.c);
          % the library capsules are declared in the scope of the program
          BEGIN
             VAR l : node := units;

@@ -43,6 +43,8 @@ PROC declare_body(CONST elems : node) IMPORTS ALL;
          VAR g : sym := new_sym(y_generic, e.name);
          g.decl := e;
          g.level := cur_level;
+         g.owner := func_sym;
+         g.gctx := fctx;
          define(g, e.line);
       END IF;
       e := e.next;
@@ -85,30 +87,56 @@ PROC declare_body(CONST elems : node) IMPORTS ALL;
    END REPEAT;
 END PROC declare_body;
 
-% a constant whose value is a manifest INT expression is known during
-% translation (5.5), so it can be used before the body is elaborated
+% a constant whose value is a manifest expression is known during translation
+% (5.5), so it can be used before the body is elaborated
 PROC manifest_const(CONST d : node) IMPORTS ALL;
    VAR ok : BOOL;
-   VAR v : INT;
+   VAR v : mval;
    VAR y : sym;
-   VAR c : cons;
+   VAR t : typ;
+   VAR ctext : text;
    IF d.a /= NIL THEN
       IF d.a.kind /= s_int OR d.a.a /= NIL THEN
          RETURN;
       END IF;
    END IF;
-   v := manifest(d.b, ok);
+   v := meval(d.b, ok);
    IF NOT ok THEN
       RETURN;
    END IF;
+   % its C, which does not depend on where it is used
+   BEGIN
+      VAR saved : buffer := code;
+      code := new_buffer;
+      trial := trial + 1;
+      GUARD
+         ctext := mk("(" & gexpr(d.b, NIL, t) & ")");
+      BY
+         WHEN compile_error =>
+            ok := FALSE;
+      END GUARD;
+      trial := trial - 1;
+      ok := ok AND code.head = NIL;
+      code := saved;
+   END;
+   IF NOT ok OR (d.a /= NIL AND t.kind /= t_int) THEN
+      RETURN;
+   END IF;
+   IF v.kind = t_enum THEN
+      v.t := t;
+      v.i := lit_index(base_of(t).lits, v.s.ALL);
+   END IF;
    d.flag := 1;
    y := new_sym(y_const, d.name);
-   y.t := ty_int;
+   y.t := t;
    y.c := new_cons;
-   y.mvalue := v;
-   y.hasmv := TRUE;
+   y.mv := v;
+   IF v.kind = t_int THEN
+      y.mvalue := v.i;
+      y.hasmv := TRUE;
+   END IF;
    y.ro_flag := TRUE;
-   y.access := mk("((rt_int)" & itos(v) & "LL)");
+   y.access := ctext;
    define(y, d.line);
 END PROC manifest_const;
 
@@ -247,7 +275,7 @@ PROC elaborate_capsule(CONST d : node, CONST y : sym, CONST args : node, CONST o
    ctx.next := fctx;
    fctx := ctx;
    declare_body(d.c);
-   capsule_elements(d.c);
+   capsule_body(d.c);
    BEGIN
       VAR w : waitrec;
       ALLOC w PTR;
@@ -444,8 +472,23 @@ ABNORMAL FUNC build_subprogram(CONST d : node) => sym IMPORTS ALL;
    END REPEAT;
    y.result := ty_void;
    IF d.b /= NIL THEN
+      % only the type matters here; the formals stand for themselves
       VAR rc : cons;
+      VAR pm : parm := y.params;
+      VAR saved : buffer := code;
+      code := new_buffer;
+      open_scope;
+      WHILE pm /= NIL REPEAT
+         VAR z : sym := new_sym(y_const, pm.name);
+         z.t := pm.t;
+         z.c := pm.c;
+         z.access := mk("0");
+         define(z, d.line);
+         pm := pm.next;
+      END REPEAT;
       y.result := resolve_subtype(d.b, rc);
+      close_scope;
+      code := saved;
    END IF;
    y.cname := mk(new_name("f_" & c_ident(d.name.ALL) & "_"));
    y.decl := d;
@@ -463,8 +506,16 @@ PROC element(CONST e : node) IMPORTS ALL;
       gen_expose(e);
    ELSEIF k = n_proc OR k = n_func OR k = n_task THEN
       subprogram(e);
-   ELSEIF k = n_exception OR k = n_abbrev OR k = n_newtype OR k = n_capsule OR k = n_expose
-         OR k = n_generic THEN
+   ELSEIF k = n_generic THEN
+      % the names the generic's body may use are those visible here (11.3)
+      VAR g : sym := lookup_decl(e);
+      IF g /= NIL THEN
+         ALLOC g.env PTR (nbuckets);
+         FOR i : INT(0 .. nbuckets) REPEAT
+            g.env(i) := table(i);
+         END REPEAT;
+      END IF;
+   ELSEIF k = n_exception OR k = n_abbrev OR k = n_newtype OR k = n_capsule OR k = n_expose THEN
       RETURN;
    ELSEIF k = n_ptrtype THEN
       finish_ptr(lookup(e.name.ALL).t);
@@ -517,6 +568,7 @@ PROC var_decl(CONST d : node) IMPORTS ALL;
    VAR t : typ := resolve_subtype(d.a, c);
    VAR y : sym := new_sym(y_var, d.name);
    CONST access := storage(d.name.ALL, t);
+   c := freeze(c, t);
    init_storage(access, t, c);
    IF d.ival = 1 THEN
       VAR it : typ;
@@ -593,7 +645,7 @@ PROC const_decl(CONST d : node) IMPORTS ALL;
          IF t.initp /= NIL THEN
             emit(init_call(t.initp, access));
          END IF;
-         emit(access & " = " & copy_code(t, v) & ";");
+         emit(access & " = " & checked(t, c, copy_code(t, v)) & ";");
          bind(y, access);
          IF needs_fin(t) THEN
             open_fin(fin_code(access, t));
@@ -630,10 +682,17 @@ PROC gen_subprogram(CONST d : node, CONST y : sym) IMPORTS ALL;
    VAR copy_back : text := mk("");
    VAR pfin : text := mk("");
    VAR saved_fins : lines := fins;
+   VAR saved_rc : cons := func_rc;
+   VAR saved_ret : text := cap_ret;
+   VAR saved_rflag : text := cap_rflag;
+   VAR pn : node := d.a;
    IF in_func THEN
       parent := mk(func_sym.cname.ALL & "fr");
    END IF;
    fins := NIL;
+   func_rc := NIL;
+   cap_ret := NIL;
+   cap_rflag := NIL;
    code := new_buffer;
    fields_buf := new_buffer;
    in_func := TRUE;
@@ -661,8 +720,16 @@ PROC gen_subprogram(CONST d : node, CONST y : sym) IMPORTS ALL;
       CONST ct := ctype(pm.t);
       CONST f := pm.cfield.ALL;
       VAR p : sym;
+      VAR pc : cons := pm.c;
+      VAR ac : cons;
       IF args.LEN > 0 THEN
          args := mk(args.ALL & ", ");
+      END IF;
+      IF scalar_kind(pm.t) THEN
+         % the formal's subtype, elaborated with the invocation (7.3)
+         VAR fc : cons;
+         VAR ft : typ := resolve_subtype(pn.a, fc);
+         pc := freeze(fc, pm.t);
       END IF;
       IF pm.mode = m_const THEN
          p := new_sym(y_const, pm.name);
@@ -674,7 +741,7 @@ PROC gen_subprogram(CONST d : node, CONST y : sym) IMPORTS ALL;
             IF pm.t.initp /= NIL THEN
                emit(init_call(pm.t.initp, "F->" & f));
             END IF;
-            emit("F->" & f & " = " & copy_code(pm.t, f) & ";");
+            emit("F->" & f & " = " & checked(pm.t, pc, copy_code(pm.t, f)) & ";");
             IF needs_fin(pm.t) THEN
                pfin := mk(pfin.ALL & fin_code("F->" & f, pm.t) & " ");
             END IF;
@@ -688,6 +755,29 @@ PROC gen_subprogram(CONST d : node, CONST y : sym) IMPORTS ALL;
          IF y.kind /= y_task THEN
             emit("F->" & f & " = " & f & ";");
          END IF;
+         IF scalar_kind(pm.t) THEN
+            % the subtype of the actual comes with it (7.3): a formal that
+            % specifies a type takes it; one that specifies a subtype must
+            % have an equal one when it is VAR or READONLY
+            CONST bt := bound_ctype(pm.t);
+            put(fields_buf, " " & bt & " " & f & "lo, " & f & "hi;");
+            args := mk(args.ALL & ", " & bt & " " & f & "lo, " & bt & " " & f & "hi");
+            IF y.kind /= y_task THEN
+               emit("F->" & f & "lo = " & f & "lo; F->" & f & "hi = " & f & "hi;");
+            END IF;
+            ac := new_cons;
+            ac.lo := mk(f & "lo");
+            ac.hi := mk(f & "hi");
+            ac.dyn := TRUE;
+            ac.lvl := cur_level;
+            IF pc = NIL OR pc.lo = NIL THEN
+               pc := ac;
+            ELSEIF pm.mode /= m_out THEN
+               emit("if (F->" & f & "lo <= F->" & f & "hi && (F->" & f & "lo != " & sub_lo(pm.t, pc)
+                    & " || F->" & f & "hi != " & sub_hi(pm.t, pc) & ")) rt_raise_msg(RT_X_SUBTYPE, "
+                    & q & "subtype of the actual" & q & ");");
+            END IF;
+         END IF;
          % an OUT formal is a local variable assigned (via :=) to the actual on
          % normal completion only (7.3), so an unhandled exception leaves the
          % actual as it was. The local starts as a copy of the actual, which
@@ -699,7 +789,10 @@ PROC gen_subprogram(CONST d : node, CONST y : sym) IMPORTS ALL;
             IF pm.t.initp /= NIL THEN
                emit(init_call(pm.t.initp, "F->" & f & "v"));
             END IF;
-            copy_back := mk(copy_back.ALL & "  " & assign_code("(*F->" & f & ")", pm.t, "F->" & f & "v", pm.c));
+            IF ac = NIL THEN
+               ac := pm.c;
+            END IF;
+            copy_back := mk(copy_back.ALL & "  " & assign_code("(*F->" & f & ")", pm.t, "F->" & f & "v", ac));
             IF needs_fin(pm.t) THEN
                pfin := mk(pfin.ALL & fin_code("F->" & f & "v", pm.t) & " ");
             END IF;
@@ -708,13 +801,20 @@ PROC gen_subprogram(CONST d : node, CONST y : sym) IMPORTS ALL;
          END IF;
       END IF;
       p.t := pm.t;
-      p.c := pm.c;
+      p.c := pc;
       p.level := cur_level;
       p.ro_flag := pm.mode = m_const OR pm.mode = m_readonly;
       define(p, d.line);
       pm := pm.next;
+      pn := pn.next;
    END REPEAT;
    IF y.result.kind /= t_void THEN
+      % the result subtype may depend on the actual parameters (7.2)
+      IF d.b /= NIL THEN
+         VAR rc : cons;
+         VAR rt : typ := resolve_subtype(d.b, rc);
+         func_rc := freeze(rc, y.result);
+      END IF;
       put(fields_buf, " " & ctype(y.result) & " result_;");
       % and so is the result of a function (13.3)
       IF y.result.initp /= NIL THEN
@@ -783,6 +883,9 @@ PROC gen_subprogram(CONST d : node, CONST y : sym) IMPORTS ALL;
    handlers := saved_handlers;
    cleanups := saved_cleanups;
    fins := saved_fins;
+   func_rc := saved_rc;
+   cap_ret := saved_ret;
+   cap_rflag := saved_rflag;
 END PROC gen_subprogram;
 
 % ---- statements --------------------------------------------------------------------------
@@ -829,6 +932,60 @@ PROC capsule_elements(CONST elems : node) IMPORTS ALL;
       e := e.next;
    END REPEAT;
 END PROC capsule_elements;
+
+% does a capsule body have a RETURN of its own (6.7)? Bodies of the compound
+% declarations in it do not count
+FUNC has_return(CONST e : node) => BOOL;
+   VAR x : node := e;
+   WHILE x /= NIL REPEAT
+      IF x.kind = n_return THEN
+         RETURN TRUE;
+      END IF;
+      IF x.kind /= n_proc AND x.kind /= n_func AND x.kind /= n_task AND x.kind /= n_capsule
+            AND x.kind /= n_generic THEN
+         IF (x.a /= NIL AND has_return(x.a)) OR (x.b /= NIL AND has_return(x.b))
+               OR (x.c /= NIL AND has_return(x.c)) THEN
+            RETURN TRUE;
+         END IF;
+      END IF;
+      x := x.next;
+   END REPEAT;
+   RETURN FALSE;
+END FUNC has_return;
+
+% the elements of a capsule body; after a RETURN the statements that follow
+% are not elaborated
+PROC capsule_body(CONST elems : node) IMPORTS ALL;
+   VAR saved_ret : text := cap_ret;
+   VAR saved_flag : text := cap_rflag;
+   VAR saved_frames : INT := ret_frames;
+   VAR e : node := elems;
+   IF NOT has_return(elems) THEN
+      cap_ret := NIL;
+      cap_rflag := NIL;
+      capsule_elements(elems);
+   ELSE
+      cap_rflag := mk(raw_storage("capret", "int"));
+      emit(cap_rflag.ALL & " = 0;");
+      WHILE e /= NIL REPEAT
+         VAR stmt : BOOL := e.kind >= n_assign AND e.kind <= n_region;
+         cap_ret := mk(new_name("L_capret_"));
+         ret_frames := frames;
+         IF stmt THEN
+            emit("if (!" & cap_rflag.ALL & ") {");
+         END IF;
+         element(e);
+         IF stmt THEN
+            emit("}");
+         END IF;
+         emit(cap_ret.ALL & ": ;");
+         e := e.next;
+      END REPEAT;
+   END IF;
+   cap_ret := saved_ret;
+   cap_rflag := saved_flag;
+   ret_frames := saved_frames;
+END PROC capsule_body;
 
 PROC body_elements(CONST elems : node) IMPORTS ALL;
    capsule_elements(elems);
@@ -962,27 +1119,53 @@ PROC st_call(CONST s : node) IMPORTS ALL;
    emit(gcall(c, TRUE, t) & ";");
 END PROC st_call;
 
+% conditional translation (5.5): an alternative whose condition is manifest
+% FALSE is not translated, nor anything after one whose condition is TRUE
 PROC st_if(CONST s : node) IMPORTS ALL;
    VAR a : node := s.a;
    VAR first : BOOL := TRUE;
    VAR t : typ;
-   WHILE a /= NIL REPEAT
-      CONST c := gexpr(a.a, ty_bool, t);
-      check_type(t, ty_bool, s.line);
-      IF first THEN
-         emit("if (" & c & ") {");
+   VAR taken : BOOL := FALSE;
+   VAR ok : BOOL;
+   VAR mv : mval;
+   WHILE a /= NIL AND NOT taken REPEAT
+      mv := meval(a.a, ok);
+      IF ok AND mv.kind = t_bool AND mv.i = 0 THEN
+         a := a.next;
       ELSE
-         emit("} else if (" & c & ") {");
+         IF ok AND mv.kind = t_bool THEN
+            taken := TRUE;
+            IF first THEN
+               emit("{");
+            ELSE
+               emit("} else {");
+            END IF;
+         ELSE
+            CONST c := gexpr(a.a, ty_bool, t);
+            check_type(t, ty_bool, s.line);
+            IF first THEN
+               emit("if (" & c & ") {");
+            ELSE
+               emit("} else if (" & c & ") {");
+            END IF;
+         END IF;
+         first := FALSE;
+         gen_body(a.b);
+         a := a.next;
+      END IF;
+   END REPEAT;
+   IF s.flag = 1 AND NOT taken THEN
+      IF first THEN
+         emit("{");
+      ELSE
+         emit("} else {");
       END IF;
       first := FALSE;
-      gen_body(a.b);
-      a := a.next;
-   END REPEAT;
-   IF s.flag = 1 THEN
-      emit("} else {");
       gen_body(s.b);
    END IF;
-   emit("}");
+   IF NOT first THEN
+      emit("}");
+   END IF;
 END PROC st_if;
 
 PROC st_case(CONST s : node) IMPORTS ALL;
@@ -1090,6 +1273,16 @@ END PROC st_exit;
 
 PROC st_return(CONST s : node) IMPORTS ALL;
    VAR vt : typ;
+   IF cap_ret /= NIL THEN
+      % the smallest enclosing compound declaration is a capsule (6.7): the
+      % rest of its body is not elaborated
+      IF s.a /= NIL THEN
+         fail(s.line, "RETURN in a capsule body takes no value");
+      END IF;
+      pop_frames(ret_frames);
+      emit(cap_rflag.ALL & " = 1; goto " & cap_ret.ALL & ";");
+      RETURN;
+   END IF;
    IF NOT in_func THEN
       pop_frames(0);
       emit("rt_main_done();");
@@ -1109,11 +1302,25 @@ PROC st_return(CONST s : node) IMPORTS ALL;
    BEGIN
       CONST v := gexpr(s.a, func_sym.result, vt);
       check_type(vt, func_sym.result, s.line);
-      emit("F->result_ = " & v & ";");
+      emit("F->result_ = " & result_checked(func_sym.result, func_rc, v) & ";");
       pop_frames(0);
       emit("goto ret_;");
    END;
 END PROC st_return;
+
+% the result is assigned to a temporary of the result subtype (7.2)
+ABNORMAL FUNC result_checked(CONST t : typ, CONST c : cons, READONLY v : STRING[ASCII]) => STRING[ASCII]
+      IMPORTS ALL;
+   IF c = NIL THEN
+      RETURN v;
+   ELSEIF t.kind = t_string AND c.slen /= NIL THEN
+      RETURN "rt_r_strsub(" & v & ", " & c.slen.ALL & ")";
+   ELSEIF t.kind = t_array AND c.lo /= NIL THEN
+      RETURN "({ " & ctype(t) & " r_ = " & v & "; if (RT_CNT(r_) != (" & c.hi.ALL & ") - (" & c.lo.ALL
+             & ") + 1) rt_raise_msg(RT_X_SUBTYPE, " & q & "array length" & q & "); r_; })";
+   END IF;
+   RETURN checked(t, c, v);
+END FUNC result_checked;
 
 ABNORMAL FUNC exc_id(READONLY name : STRING[ASCII], CONST line : INT) => STRING[ASCII] IMPORTS ALL;
    VAR y : sym := lookup(name);
@@ -1318,6 +1525,10 @@ PROC st_create(CONST s : node) IMPORTS ALL;
             lvalue(a, lv, lt, lc, ro);
             check_type(lt, pm.t, s.line);
             emit(nf & "->" & pm.cfield.ALL & " = &" & lv.ALL & ";");
+            IF scalar_kind(pm.t) THEN
+               emit(nf & "->" & pm.cfield.ALL & "lo = " & sub_lo(lt, lc) & "; " & nf & "->" & pm.cfield.ALL
+                    & "hi = " & sub_hi(lt, lc) & ";");
+            END IF;
          END IF;
          a := a.next;
          pm := pm.next;
@@ -1825,6 +2036,7 @@ ABNORMAL FUNC instantiate_type(CONST g : sym, CONST tt : node, CONST args : node
    VAR t : typ;
    VAR saved_caps : caprec := caps;
    VAR saved_env : buckets := genv;
+   VAR saved_gdepth : INT := gdepth;
    c := new_cons;
    c.args := args;
    WHILE inst /= NIL REPEAT
@@ -1844,6 +2056,7 @@ ABNORMAL FUNC instantiate_type(CONST g : sym, CONST tt : node, CONST args : node
    % an instance belongs to no capsule: its components are known where it is
    caps := NIL;
    genv := g.env;
+   gdepth := depth;
    BEGIN
       VAR y : sym := new_sym(y_type, pat.name);
       VAR yc : cons;
@@ -1862,6 +2075,7 @@ ABNORMAL FUNC instantiate_type(CONST g : sym, CONST tt : node, CONST args : node
    END;
    caps := saved_caps;
    genv := saved_env;
+   gdepth := saved_gdepth;
    t.gen := g;
    t.gbinds := binds;
    close_scope;
@@ -1895,6 +2109,7 @@ ABNORMAL FUNC instantiate(CONST g : sym, CONST tt : node, CONST args : node, CON
    VAR saved_sym : sym := func_sym;
    VAR saved_code : buffer := code;
    VAR saved_env : buckets := genv;
+   VAR saved_gdepth : INT := gdepth;
    % from the actual translation time property list
    binds := tt_binds(gd, f, a, line);
    % from the types of the actual parameters
@@ -1934,13 +2149,15 @@ ABNORMAL FUNC instantiate(CONST g : sym, CONST tt : node, CONST args : node, CON
       END IF;
       inst := inst.insts;
    END REPEAT;
-   % a new instance, translated at the outermost level so any invoker can call it
-   fctx := NIL;
-   in_func := FALSE;
-   cur_level := 0;
-   func_sym := NIL;
+   % a new instance, translated where the generic is declared (11.3): it may
+   % use what is visible there, the variables of an enclosing subprogram too
+   fctx := g.gctx;
+   in_func := g.level > 0;
+   cur_level := g.level;
+   func_sym := g.owner;
    code := new_buffer;
    open_scope;
+   gdepth := depth;
    BEGIN
       VAR b : sym := binds;
       WHILE b /= NIL REPEAT
@@ -1962,5 +2179,6 @@ ABNORMAL FUNC instantiate(CONST g : sym, CONST tt : node, CONST args : node, CON
    func_sym := saved_sym;
    code := saved_code;
    genv := saved_env;
+   gdepth := saved_gdepth;
    RETURN inst;
 END FUNC instantiate;

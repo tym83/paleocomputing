@@ -132,7 +132,10 @@ TYPE node : PTR RECORD[kind : INT, line : INT, ival : INT, flag : INT,
                        name : text, tag : text,
                        a, b, c, d, e : node, next : node];
 
-TYPE cons : PTR RECORD[lo, hi, lo2, hi2, slen : text, mlo, mhi : INT, hasm : BOOL, args : node];
+% a constraint: its bounds as C; dyn when the bounds were kept in storage of
+% the subprogram at level lvl when the subtype was elaborated (4.1.4)
+TYPE cons : PTR RECORD[lo, hi, lo2, hi2, slen : text, mlo, mhi : INT, hasm : BOOL, args : node,
+                       dyn : BOOL, lvl : INT, prec : text];
 
 TYPE typ : PTR RECORD[kind : INT, name : text, lits : node,
                       elem : typ, idx, idx2 : typ, elemcons : cons, elemst : node,
@@ -151,7 +154,11 @@ TYPE sym : PTR RECORD[kind : INT, name : text, t : typ, c : cons,
                       params : parm, result : typ, depth : INT,
                       level : INT, byref : BOOL, members, mnext : sym,
                       binds : node, insts : sym, env : buckets,
-                      chain, stack : sym];
+                      chain, stack : sym, owner : sym, gctx : fctxrec, mv : mval];
+
+% a value known during translation (5.5): kind is t_int, t_bool, t_enum or
+% t_string; i holds an INT, a BOOL (0, 1) or the position of a literal
+TYPE mval : PTR RECORD[kind : INT, i : INT, s : text, t : typ];
 
 TYPE lines : PTR RECORD[s : text, next : lines];
 TYPE buffer : PTR RECORD[head, tail : lines];
@@ -208,6 +215,14 @@ VAR uses_free : BOOL := FALSE;
 VAR fins : lines;
 VAR uses_findyn : BOOL := FALSE;
 VAR func_sym : sym;
+% the result subtype of the function being translated (7.2)
+VAR func_rc : cons;
+% RETURN in a capsule body ends the capsule's elaboration (6.7): the flag it
+% sets, the label after the current element, the frames open at its start
+VAR cap_ret, cap_rflag : text;
+VAR ret_frames : INT := 0;
+% while a generic is instantiated: the scope depth of the instance itself
+VAR gdepth : INT := 0;
 VAR exits : exitrec;
 VAR frames : INT := 0;
 VAR handlers : lines;
