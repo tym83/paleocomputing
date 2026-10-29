@@ -12,6 +12,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 /* ---- memory ---------------------------------------------------------- */
 
@@ -1700,6 +1701,10 @@ void rt_g_put_bool(int v, rt_int width) {
 rstr rt_g_image_float(double v) {
   char b[64], m[48];
   int e = 0;
+  if (isinf(v) || isnan(v)) {
+    const char *t = isnan(v) ? "NAN" : v < 0 ? "-INF" : "INF";
+    return rt_str_copy(rt_str(t, (rt_int)strlen(t)));
+  }
   if (v != 0.0) {
     snprintf(m, sizeof m, "%.5e", v);
     char *x = strchr(m, 'e');
@@ -1777,6 +1782,130 @@ double rt_g_get_float(void) {
 void rt_g_move_bytes(rt_int from, rt_int to, rt_int n) {
   if (n > 0) memmove((void *)(intptr_t)to, (const void *)(intptr_t)from, (size_t)n);
 }
+
+/* ---- GREEN: the rest of RM79 (attributes, real arithmetic, exceptions) ---- */
+
+/* a declared exception is one exception, even when another one somewhere
+ * else has the same name (RM79 11.1) */
+int rt_g_exc_new(const char *name) {
+  if (exc_count >= 4096) {
+    fprintf(stderr, "*** too many exceptions\n");
+    exit(4);
+  }
+  exc_names[exc_count] = name;
+  return exc_count++;
+}
+
+static int g_exc_id(const char *name) { return rt_exc(name); }
+
+/* T'REP and T'VAL(S) of enumeration types: the literals' images, upper case;
+ * a character literal is shown in quotes (RM79 App. A) */
+rstr rt_g_enum_rep(rt_int v, const char *const *names, rt_int n) {
+  if (v < 0 || v >= n) rt_raise(RT_X_RANGE);
+  return rt_str_copy(rt_str(names[v], (rt_int)strlen(names[v])));
+}
+
+static void g_trim(rstr s, rt_int *a, rt_int *b) {
+  *a = 0;
+  *b = s.len;
+  while (*a < *b && (s.p[*a] == ' ' || s.p[*a] == '\t')) (*a)++;
+  while (*b > *a && (s.p[*b - 1] == ' ' || s.p[*b - 1] == '\t')) (*b)--;
+}
+
+rt_int rt_g_enum_val(rstr s, const char *const *names, rt_int n) {
+  rt_int a, b;
+  g_trim(s, &a, &b);
+  for (rt_int i = 0; i < n; i++) {
+    const char *x = names[i];
+    rt_int len = (rt_int)strlen(x);
+    if (len != b - a) continue;
+    int quoted = x[0] == '"', same = 1;
+    for (rt_int k = 0; k < len && same; k++) {
+      int c = s.p[a + k];
+      if (!quoted && c >= 'a' && c <= 'z') c -= 32;
+      same = c == (unsigned char)x[k];
+    }
+    if (same) return i;
+  }
+  rt_raise(RT_X_RANGE);
+}
+
+static const char *const g_ctl[] = {
+  "NUL", "SOH", "STX", "ETX", "EOT", "ENQ", "ACK", "BEL", "BS", "HT", "LF", "VT", "FF", "CR", "SO", "SI",
+  "DLE", "DC1", "DC2", "DC3", "DC4", "NAK", "SYN", "ETB", "CAN", "EM", "SUB", "ESC", "FS", "GS", "RS", "US"};
+
+/* CHARACTER'REP: a graphic character in quotes, a control character by name */
+rstr rt_g_char_rep(rt_int v) {
+  char b[8];
+  if (v < 0 || v > 127) rt_raise(RT_X_RANGE);
+  if (v < 32) return rt_str_copy(rt_str(g_ctl[v], (rt_int)strlen(g_ctl[v])));
+  if (v == 127) return rt_str_copy(rt_str("DEL", 3));
+  b[0] = '"';
+  b[1] = (char)v;
+  b[2] = '"';
+  return rt_str_copy(rt_str(b, 3));
+}
+
+rt_int rt_g_char_val(rstr s) {
+  rt_int a, b;
+  g_trim(s, &a, &b);
+  if (b - a == 3 && s.p[a] == '"' && s.p[a + 2] == '"') return s.p[a + 1];
+  if (b - a == 1 && s.p[a] > ' ' && s.p[a] < 127) return s.p[a];
+  for (int i = 0; i < 32; i++)
+    if ((rt_int)strlen(g_ctl[i]) == b - a && strncasecmp((const char *)s.p + a, g_ctl[i], (size_t)(b - a)) == 0)
+      return i;
+  if (b - a == 3 && strncasecmp((const char *)s.p + a, "DEL", 3) == 0) return 127;
+  rt_raise(RT_X_RANGE);
+}
+
+rstr rt_g_bool_rep(rt_int v) { return v ? rt_str_copy(rt_str("TRUE", 4)) : rt_str_copy(rt_str("FALSE", 5)); }
+
+rt_int rt_g_bool_val(rstr s) {
+  static const char *const names[] = {"FALSE", "TRUE"};
+  return rt_g_enum_val(s, names, 2);
+}
+
+/* FLOAT'VAL(S): a real literal, underscores allowed (RM79 2.4) */
+double rt_g_float_val(rstr s) {
+  char b[128], *end;
+  rt_int a, e, n = 0;
+  g_trim(s, &a, &e);
+  for (rt_int i = a; i < e && n < 120; i++)
+    if (s.p[i] != '_') b[n++] = (char)s.p[i];
+  b[n] = 0;
+  if (n == 0) rt_raise(RT_X_RANGE);
+  double v = strtod(b, &end);
+  if (*end) rt_raise(RT_X_RANGE);
+  return v;
+}
+
+/* real arithmetic: a result beyond the machine's range raises OVERFLOW, a
+ * nonzero result too small to be represented raises UNDERFLOW (RM79 4.5);
+ * k = 1 for the single precision of SHORT_FLOAT */
+static double g_fres(double r, double a, double b, int k, int mul) {
+  double big = k ? 3.40282347e+38 : 1.7976931348623157e+308;
+  double tiny = k ? 1.17549435e-38 : 2.2250738585072014e-308;
+  if (isnan(r) || isinf(r) || fabs(r) > big) rt_raise(RT_X_OVERFLOW);
+  if (r != 0.0 && fabs(r) < tiny) rt_raise(g_exc_id("UNDERFLOW"));
+  if (mul && r == 0.0 && a != 0.0 && b != 0.0) rt_raise(g_exc_id("UNDERFLOW"));
+  return k ? (double)(float)r : r;
+}
+
+double rt_g_fadd(double a, double b, int k) { return g_fres(a + b, a, b, k, 0); }
+double rt_g_fsub(double a, double b, int k) { return g_fres(a - b, a, b, k, 0); }
+double rt_g_fmul(double a, double b, int k) { return g_fres(a * b, a, b, k, 1); }
+double rt_g_fdiv(double a, double b, int k) {
+  if (b == 0.0) rt_raise(RT_X_ZERO_DIVIDE);
+  return g_fres(a / b, a, 1.0, k, 1);
+}
+double rt_g_fpow(double a, rt_int b, int k) {
+  if (a == 0.0 && b < 0) rt_raise(RT_X_ZERO_DIVIDE);
+  double r = 1.0;
+  rt_int n = b < 0 ? -b : b;
+  while (n-- > 0) r = g_fres(r * a, r, a, k, 1);
+  return b < 0 ? g_fres(1.0 / r, 1.0, r, k, 1) : r;
+}
+double rt_g_fneg(double a, int k) { return g_fres(-a, a, 1.0, k, 0); }
 
 /* BLUE additions */
 /* ---- BLUE (SofTech, 15 Feb 1978) --------------------------------------- */

@@ -1,0 +1,34 @@
+-- T'REP and T'VAL of scalar types (RM79 3.5, App. A); a FOR loop over characters
+restricted (TEXT_IO)
+procedure MAIN is
+   use TEXT_IO;
+   type COLOR is (RED, GREEN, BLUE);
+   subtype RG is COLOR range RED .. GREEN;
+   type HEXA is ("A", "B", "C");
+   C : COLOR;
+begin
+   PUT(COLOR'REP(BLUE)); PUT(NEWLINE);
+   PUT(COLOR'VAL("GREEN") = GREEN); PUT(COLOR'VAL(" blue ") = BLUE); PUT(COLOR'VAL(1) = RED);
+   PUT(NEWLINE);
+   PUT(BOOLEAN'REP(TRUE)); PUT(BOOLEAN'VAL("FALSE")); PUT(NEWLINE);
+   PUT(CHARACTER'REP("A")); PUT(CHARACTER'REP(LF)); PUT(CHARACTER'VAL("""Q""")); PUT(NEWLINE);
+   PUT(HEXA'REP("B")); PUT(NEWLINE);
+   PUT(INTEGER'REP(-42)); PUT(INTEGER'VAL("17") + 1); PUT(NEWLINE);
+   PUT(FLOAT'REP(1.5)); PUT(FLOAT'VAL("2.5") * 2.0); PUT(NEWLINE);
+   for CH in "A" .. "E" loop
+      PUT(CH);
+   end loop;
+   PUT(NEWLINE);
+   begin
+      C := RG'VAL("BLUE");
+      PUT("no check");
+   exception
+      when RANGE_ERROR => PUT("RANGE_ERROR");
+   end;
+   begin
+      C := COLOR'VAL("PURPLE");
+   exception
+      when RANGE_ERROR => PUT(" RANGE_ERROR");
+   end;
+   PUT(NEWLINE);
+end MAIN;

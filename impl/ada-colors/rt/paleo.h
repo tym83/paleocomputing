@@ -305,6 +305,23 @@ int rt_g_aborted(void);
  * N bytes between two addresses in linear memory */
 void rt_g_move_bytes(rt_int from, rt_int to, rt_int n);
 
+/* ---- GREEN: the rest of RM79 ------------------------------------------ */
+int rt_g_exc_new(const char *name);            /* a distinct declared exception */
+rstr rt_g_enum_rep(rt_int v, const char *const *names, rt_int n);  /* T'REP */
+rt_int rt_g_enum_val(rstr s, const char *const *names, rt_int n);  /* T'VAL(S) */
+rstr rt_g_char_rep(rt_int v);
+rt_int rt_g_char_val(rstr s);
+rstr rt_g_bool_rep(rt_int v);
+rt_int rt_g_bool_val(rstr s);
+double rt_g_float_val(rstr s);
+/* real arithmetic with OVERFLOW and UNDERFLOW; k = 1: SHORT_FLOAT */
+double rt_g_fadd(double a, double b, int k);
+double rt_g_fsub(double a, double b, int k);
+double rt_g_fmul(double a, double b, int k);
+double rt_g_fdiv(double a, double b, int k);
+double rt_g_fpow(double a, rt_int b, int k);
+double rt_g_fneg(double a, int k);
+
 #endif
 
 /* BLUE additions */

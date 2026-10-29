@@ -43,6 +43,23 @@
       return R;
    end LOWER_S;
 
+   function UPPER_S(S : STRING) return STRING is
+      R : STRING := S;
+   begin
+      for I in 1 .. S'LENGTH loop
+         R(I) := UPPER(R(I));
+      end loop;
+      return R;
+   end UPPER_S;
+
+   -- the operators that a function may overload (RM79 4.5, 6.6.1)
+   function IS_OPERATOR(S : STRING) return BOOLEAN is
+   begin
+      return S = "+" or S = "-" or S = "*" or S = "/" or S = "**" or S = "&" or S = "=" or S = "<"
+         or S = "<=" or S = ">" or S = ">=" or S = "MOD" or S = "AND" or S = "OR" or S = "XOR"
+         or S = "NOT";
+   end IS_OPERATOR;
+
    -- a record component in C: the suffix keeps clear of C keywords
    function C_FIELD(S : STRING) return STRING is
    begin

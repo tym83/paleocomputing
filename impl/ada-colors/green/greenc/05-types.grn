@@ -134,7 +134,7 @@
    procedure NEW_TYP(KIND : INTEGER) return TYP is
    begin
       return new TYP_REC(KIND, null, null, null, null, null, null, null, null, null, null,
-                         FALSE, FALSE, FALSE, null, null);
+                         FALSE, FALSE, FALSE, null, null, null, null, 0, null, null, 0, FALSE);
    end NEW_TYP;
 
    procedure NEW_CONS return CONS is

@@ -240,9 +240,16 @@
    procedure DESIGNATOR(RES : out TEXT) is
    begin
       if AT_KIND(K_STR) then
-         -- an operator designator such as "*" (RM79 6.6.1)
+         -- an operator designator such as "*" (RM79 6.6.1); "/=" follows "="
+         -- and cannot be declared
          SKIP;
-         RES := MK(TOKS(TPOS - 1).S.all);
+         RES := MK(UPPER_S(TOKS(TPOS - 1).S.all));
+         if RES.all = "/=" then
+            PERROR("""/="" cannot be declared: it follows the declaration of ""="" (RM79 6.6.1)");
+         end if;
+         if not IS_OPERATOR(RES.all) then
+            PERROR(RES.all & " is not an operator symbol (RM79 6.6.1)");
+         end if;
          return;
       end if;
       EXPECT_ID(RES);

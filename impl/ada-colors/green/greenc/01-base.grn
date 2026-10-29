@@ -182,6 +182,17 @@ procedure GREENC is
       FORWARD, DEFINED, PRIV : BOOLEAN;
       NEXT : TYP;
       IDX2 : TYP;
+      -- the C table of the literals' images, for T'REP and T'VAL (RM79 App. A)
+      LITTAB : TEXT;
+      -- the parent of a derived type (RM79 3.4)
+      PARENT : TYP;
+      -- floating point: the digits; fixed point: delta and small (RM79 3.5.5)
+      NDIGITS : INTEGER;
+      FDELTA, FSMALL : TEXT;
+      -- the number of indexes of an array type (RM79 3.6)
+      DIMS : INTEGER;
+      -- a restricted type has neither assignment nor equality (RM79 7.4)
+      IS_RESTRICTED : BOOLEAN;
    end record;
    type FIELD_REC is record
       NAME : TEXT;

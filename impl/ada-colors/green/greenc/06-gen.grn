@@ -750,14 +750,15 @@
          R := S.A;
          C := NEW_CONS;
          if R.KIND = N_RANGE then
-            GEXPR(R.A, null, T, C.LO);
-            GEXPR(R.B, T, VT, C.HI);
-            CHECK_TYPE(VT, T, S.LINE);
+            RANGE_BOUNDS(R.A, R.B, null, S.LINE, T, C.LO, C.HI);
          else
             RESOLVE(R, T, C);
             if C.LO = null then
                FAIL(S.LINE, "a FOR loop needs a discrete range");
             end if;
+         end if;
+         if T.KIND /= T_INT and T.KIND /= T_ENUM and T.KIND /= T_CHAR and T.KIND /= T_BOOL then
+            FAIL(S.LINE, "a FOR loop needs a discrete range (RM79 5.6)");
          end if;
          STORAGE(S.NAME.all, T, ACC);
          NEW_NAME("lo", LOV);

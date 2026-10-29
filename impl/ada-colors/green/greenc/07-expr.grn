@@ -288,6 +288,40 @@
       end;
    end C_STRING;
 
+   -- a literal, alone or under a sign: its type comes from the context
+   function IS_LITERAL(E : NODE) return BOOLEAN is
+   begin
+      if E.KIND = N_INT or E.KIND = N_FLOAT or IS_CHAR_LIT(E) then
+         return TRUE;
+      elsif E.KIND = N_PAREN or (E.KIND = N_UNOP and then E.NAME.all /= "NOT") then
+         return IS_LITERAL(E.A);
+      elsif E.KIND = N_BINOP and then (E.NAME.all = "+" or E.NAME.all = "-" or E.NAME.all = "*"
+         or E.NAME.all = "/" or E.NAME.all = "**" or E.NAME.all = "MOD") then
+         return IS_LITERAL(E.A) and IS_LITERAL(E.B);
+      end if;
+      return FALSE;
+   end IS_LITERAL;
+
+   -- the bounds of a range L .. H: both of one type; a literal bound takes
+   -- the type of the other one (RM79 3.5)
+   procedure RANGE_BOUNDS(L, H : NODE; WANT : TYP; LINE : INTEGER; T : out TYP; LO, HI : out TEXT) is
+      W : TYP := WANT;
+      T2 : TYP;
+   begin
+      if W = null and IS_CHAR_LIT(L) and IS_CHAR_LIT(H) then
+         W := TY_CHAR;
+      end if;
+      if W = null and IS_LITERAL(L) and not IS_LITERAL(H) then
+         GEXPR(H, null, T, HI);
+         GEXPR(L, T, T2, LO);
+         CHECK_TYPE(T2, T, LINE);
+      else
+         GEXPR(L, W, T, LO);
+         GEXPR(H, T, T2, HI);
+         CHECK_TYPE(T2, T, LINE);
+      end if;
+   end RANGE_BOUNDS;
+
    procedure GEXPR(E : NODE; WANT : TYP; T : out TYP; R : out TEXT) is
       Y : SYM;
       BT : TYP;
@@ -594,12 +628,17 @@
       GEXPR(E.B, TA, TB, B);
       if TA.KIND = T_FLOAT or TB.KIND = T_FLOAT then
          T := TY_FLOAT;
-         if OP = "+" or OP = "-" or OP = "*" then
-            R := MK("(" & A.all & " " & OP & " " & B.all & ")");
+         -- OVERFLOW and UNDERFLOW are raised by the operation (RM79 4.5)
+         if OP = "+" then
+            R := MK("rt_g_fadd(" & A.all & ", " & B.all & ", 0)");
+         elsif OP = "-" then
+            R := MK("rt_g_fsub(" & A.all & ", " & B.all & ", 0)");
+         elsif OP = "*" then
+            R := MK("rt_g_fmul(" & A.all & ", " & B.all & ", 0)");
          elsif OP = "/" then
-            R := MK("rt_fdiv(" & A.all & ", " & B.all & ")");
+            R := MK("rt_g_fdiv(" & A.all & ", " & B.all & ", 0)");
          elsif OP = "**" then
-            R := MK("rt_fpow(" & A.all & ", " & B.all & ")");
+            R := MK("rt_g_fpow(" & A.all & ", " & B.all & ", 0)");
          else
             FAIL(E.LINE, "operator " & OP & " is not defined for FLOAT");
          end if;
@@ -722,25 +761,8 @@
             T := TY_INT;
             R := MK("((rt_int)(" & V.all & ") + 1)");
             return;
-         elsif A = "VAL" and TT.KIND = T_INT then
-            GEXPR(E.B, TY_STRING, ATY, V);
-            T := TY_INT;
-            R := MK("rt_int_of_str(" & V.all & ")");
-            return;
-         elsif A = "VAL" then
-            GEXPR(E.B, TY_INT, ATY, V);
-            T := TT;
-            R := MK("rt_range(" & V.all & " - 1, " & C.LO.all & ", " & C.HI.all & ")");
-            return;
-         elsif A = "REP" and TT.KIND = T_INT then
-            GEXPR(E.B, TY_INT, ATY, V);
-            T := TY_STRING;
-            R := MK("rt_str_of_int(" & V.all & ")");
-            return;
-         elsif A = "REP" and TT.KIND = T_FLOAT then
-            GEXPR(E.B, TY_FLOAT, ATY, V);
-            T := TY_STRING;
-            R := MK("rt_g_image_float(" & V.all & ")");
+         elsif A = "VAL" or A = "REP" then
+            VAL_REP(E, TT, C, T, R);
             return;
          elsif A = "SUCC" or A = "PRED" then
             GEXPR(E.B, TT, ATY, V);
@@ -819,6 +841,92 @@
       FAIL(E.LINE, "attribute " & A & " is not handled here");
    end GEN_ATTR;
 
+
+   -- the C table of the images of the literals of an enumeration type
+   procedure LIT_TABLE(T : TYP; R : out TEXT) is
+      L : NODE := T.LITS;
+      S : TEXT := MK("");
+   begin
+      if T.LITTAB = null then
+         NEW_NAME("lits", T.LITTAB);
+         while L /= null loop
+            if S'LENGTH > 0 then
+               S := MK(S.all & ", ");
+            end if;
+            if L.KIND = N_STR then
+               S := MK(S.all & C_STRING(Q & L.NAME.all & Q));
+            else
+               S := MK(S.all & C_STRING(L.NAME.all));
+            end if;
+            L := L.NEXT;
+         end loop;
+         PUT_TO(OUT_TYPES, "static const char *const " & T.LITTAB.all & "[] = {" & S.all & "};");
+      end if;
+      R := T.LITTAB;
+   end LIT_TABLE;
+
+   -- T'REP(X): the image of a scalar value; T'VAL(S) the value of an image,
+   -- T'VAL(I) the I-th value of a discrete type (RM79 3.5, App. A)
+   procedure VAL_REP(E : NODE; TT : TYP; C : CONS; T : out TYP; R : out TEXT) is
+      ATY : TYP;
+      V, LT : TEXT;
+      N : INTEGER;
+   begin
+      if E.B = null then
+         FAIL(E.LINE, "attribute " & E.NAME.all & " takes an argument");
+      end if;
+      if E.NAME.all = "REP" then
+         GEXPR(E.B, TT, ATY, V);
+         CHECK_TYPE(ATY, TT, E.LINE);
+         T := TY_STRING;
+         if TT.KIND = T_INT then
+            R := MK("rt_str_of_int(" & V.all & ")");
+         elsif TT.KIND = T_FLOAT then
+            R := MK("rt_g_image_float(" & V.all & ")");
+         elsif TT.KIND = T_BOOL then
+            R := MK("rt_g_bool_rep(" & V.all & ")");
+         elsif TT.KIND = T_CHAR then
+            R := MK("rt_g_char_rep(" & V.all & ")");
+         elsif TT.KIND = T_ENUM then
+            LIT_TABLE(TT, LT);
+            R := MK("rt_g_enum_rep(" & V.all & ", " & LT.all & ", " & INTEGER'REP(LIST_LEN(TT.LITS)) & ")");
+         else
+            FAIL(E.LINE, "REP is an attribute of scalar types");
+         end if;
+         return;
+      end if;
+      T := TT;
+      if TT.KIND = T_INT then
+         GEXPR(E.B, TY_STRING, ATY, V);
+         CHECK_TYPE(ATY, TY_STRING, E.LINE);
+         R := MK("rt_int_of_str(" & V.all & ")");
+         if C /= null and then C.LO /= null then
+            R := MK("rt_range(" & R.all & ", " & C.LO.all & ", " & C.HI.all & ")");
+         end if;
+      elsif TT.KIND = T_FLOAT then
+         GEXPR(E.B, TY_STRING, ATY, V);
+         CHECK_TYPE(ATY, TY_STRING, E.LINE);
+         R := MK("rt_g_float_val(" & V.all & ")");
+      elsif TT.KIND = T_BOOL or TT.KIND = T_CHAR or TT.KIND = T_ENUM then
+         GEXPR(E.B, null, ATY, V);
+         if ATY.KIND = T_STRING then
+            if TT.KIND = T_BOOL then
+               V := MK("rt_g_bool_val(" & V.all & ")");
+            elsif TT.KIND = T_CHAR then
+               V := MK("rt_g_char_val(" & V.all & ")");
+            else
+               LIT_TABLE(TT, LT);
+               V := MK("rt_g_enum_val(" & V.all & ", " & LT.all & ", " & INTEGER'REP(LIST_LEN(TT.LITS)) & ")");
+            end if;
+         else
+            CHECK_TYPE(ATY, TY_INT, E.LINE);
+            V := MK("(" & V.all & " - 1)");
+         end if;
+         R := MK("rt_range(" & V.all & ", " & C.LO.all & ", " & C.HI.all & ")");
+      else
+         FAIL(E.LINE, "VAL is an attribute of scalar types");
+      end if;
+   end VAL_REP;
 
    -- allocator ::= new qualified_expression (RM79 4.7)
    procedure ALLOCATOR(E : NODE; WANT : TYP; T : out TYP; R : out TEXT) is
