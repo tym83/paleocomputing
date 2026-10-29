@@ -23,6 +23,13 @@ teletype, and `*.out` is the expected output.
 | 14.4.1 | Monitors: `MONITOR_LOCK` and `MONITOR_QUEUE` from data locks, used for a line buffer | Hoare's semantics: `CONTINUE` hands the monitor to the awakened activation at once |
 | 14.5.3 | A round robin scheduler as a user-defined scheduler | three activations get the processor in turns of 10 ms |
 
+## Sources and rights
+
+The examples come from the *RED Reference Manual* (Intermetrics, March 1979;
+the RED documents carry "Copyright © 1979 Intermetrics, Inc."), as reprinted by
+Mary Van Deusen at iment.com, where the code is printed as images. They are
+transcribed here for study and comparison.
+
 ## Errors in the printed examples
 
 - 14.5.3: `REGION dlock;` has `;` where `DO` belongs, and the scheduler calls a
