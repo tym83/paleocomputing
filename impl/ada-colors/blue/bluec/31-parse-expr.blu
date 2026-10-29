@@ -255,6 +255,9 @@ FUNCTION PARSE_POSTFIX () RETURNS (NODE);
    LOOP
       BLOCK
          CONST LINE: INTEGER := LINE_NOW ();
+         IF IS ('(') & E@.KIND = N_ENUMLIT THEN        % \P (...): an identifier [2-10]
+            E@.KIND := N_NAME;
+         END IF;
          IF IS ('(') & E@.KIND = N_NAME THEN          % a call or a subscript
             E@.KIND := N_APPLY;
             E := PARSE_ARGS (E);
@@ -445,7 +448,8 @@ FUNCTION PARSE_ATOM () RETURNS (NODE);
    IF T.KIND = K_ID THEN
       N := NEW_NODE (N_NAME, T.LINE);
       N@.NAME := ROUTINE_NAME_NODE ()@.NAME;
-      IF TEQS (N@.NAME, 'NEW') ! TEQS (N@.NAME, 'PTR$NEW') ! TEQS (N@.NAME, 'SEMAPHORE$NEW') THEN
+      IF (TEQS (N@.NAME, 'NEW') ! TEQS (N@.NAME, 'PTR$NEW') ! TEQS (N@.NAME, 'SEMAPHORE$NEW'))
+         & IS ('(') THEN
          N@.KIND := N_NEW;                          % [3-198] [3-206]
          EXPECT ('(');
          N@.A := PARSE_TYPE_ARG ();

@@ -68,12 +68,24 @@ END PROCEDURE EXPECT;
 
 FUNCTION IDENT () RETURNS (TEXT);
    CONST T: TOKEN := CUR ();
-   IF T.KIND <> K_ID THEN
+   IF T.KIND <> K_ID & NOT IDENT_TOKEN (T) THEN
       FAILT (T.LINE, 'an identifier expected, not ', T.TX);
    END IF;
    SKIP;
    RETURN T.TX;
 END FUNCTION IDENT;
+
+% an identifier may begin with \ or ? [2-10]: that it names an enumerated value or
+% a derived generic parameter is only a convention (2.1.3); \'C' is no identifier
+FUNCTION IDENT_TOKEN (T: TOKEN) RETURNS (BOOLEAN);
+   IF (T.KIND = K_ENUM ! T.KIND = K_GEN) & T.TX.LEN >= 2 THEN
+      BLOCK
+         CONST S: ASCII_STR(2) := STR (T.TX, 2);
+         RETURN S[1:1] <> '''' & S[1:1] <> '[' & S[1:1] <> ']';
+      END BLOCK;
+   END IF;
+   RETURN FALSE;
+END FUNCTION IDENT_TOKEN;
 
 % a trailer must repeat the name of its construct
 PROCEDURE EXPECT_NAME (NAME: TEXT);
@@ -322,7 +334,7 @@ FUNCTION PARSE_DECLARATIONS () RETURNS (NODE);
          ADD_LIST (PARSE_OBJECT_DECL () # HEAD, TAIL);
       ORIF IS ('TYPE') THEN
          ADD_LIST (PARSE_TYPE_DECL () # HEAD, TAIL);
-      ORIF IS ('REPTYPE') THEN
+      ORIF IS ('REPTYPE') & AHEAD (1).KIND = K_ID THEN  % REPTYPE is a key word (2.1.7)
          ADD_LIST (PARSE_REPTYPE_DECL () # HEAD, TAIL);
       ELSE
          EXIT;

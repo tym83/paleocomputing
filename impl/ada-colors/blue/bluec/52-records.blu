@@ -8,7 +8,7 @@
 
 FUNCTION NEW_FIELD (NAME: TEXT, T: TYP, KIND: INTEGER) RETURNS (FIELD);
    VAR F: FIELD := NEW (FIELD_REC);
-   F@ := (NAME: NAME, CNAME: FMT1 ('f_@', NAME), T: T, KIND: KIND, TAGF: NO_TEXT (),
+   F@ := (NAME: NAME, CNAME: FMT1 ('f_@', CID (NAME)), T: T, KIND: KIND, TAGF: NO_TEXT (),
           LABELS: NIL, NEXT: NIL);
    RETURN F;
 END FUNCTION NEW_FIELD;
@@ -259,7 +259,7 @@ FUNCTION RECORD_INSTANCE (Y: SYM, TS: NODE) RETURNS (TYP);
                      BLOCK
                         VAR P: SYM := NEW_SYM (Y_CONST, N@.NAME);
                         P@.T := RESOLVE (F@.B);
-                        P@.ACCESS := FMT1 ('$S.f_@', N@.NAME);
+                        P@.ACCESS := FMT1 ('$S.f_@', CID (N@.NAME));
                         P@.INPUT := TRUE;
                         P@.LEVEL := -1;
                         DEFINE (P, F@.LINE);

@@ -93,7 +93,7 @@ PROCEDURE ACTIVATE_PATH (P: NODE, TD: TEXT);
    END IF;
    CODE (FMT2 ('@ *f = rt_alloc(sizeof *f); f->up = @;', FT, UP_FRAME ()));
    IF P@.FL = 1 THEN
-      CODE (FMT2 ('f->l_@ = @;', P@.E@.NAME, IT));
+      CODE (FMT2 ('f->l_@ = @;', CID (P@.E@.NAME), IT));
    END IF;
    IF P@.D <> NIL THEN                                % CONNECT (interrupt)
       BLOCK
@@ -163,9 +163,9 @@ PROCEDURE PATH_BODY (P: NODE, FN, FT: TEXT, LT: TYP);
          VAR I: SYM := NEW_SYM (Y_CONST, P@.E@.NAME);
          I@.T := LT;
          I@.INPUT := TRUE;
-         I@.FIELD := FMT1 ('l_@', P@.E@.NAME);
-         I@.ACCESS := FMT1 ('F->l_@', P@.E@.NAME);
-         APPEND (FMT1 (' rt_int l_@;', P@.E@.NAME) # CS@.FIELDS);
+         I@.FIELD := FMT1 ('l_@', CID (P@.E@.NAME));
+         I@.ACCESS := FMT1 ('F->l_@', CID (P@.E@.NAME));
+         APPEND (FMT1 (' rt_int l_@;', CID (P@.E@.NAME)) # CS@.FIELDS);
          DEFINE (I, P@.LINE);
       END BLOCK;
    END IF;

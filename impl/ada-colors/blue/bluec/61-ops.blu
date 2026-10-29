@@ -385,7 +385,8 @@ END FUNCTION UNARY;
 % ---- infix operators -----------------------------------------------------------------------
 
 FUNCTION IS_LITERALISH (E: NODE) RETURNS (BOOLEAN);
-   RETURN E@.KIND = N_ENUMLIT ! E@.KIND = N_NIL ! E@.KIND = N_RECCONS ! E@.KIND = N_ARRCONS
+   RETURN (E@.KIND = N_ENUMLIT & NOT NAMES_OBJECT (E@.NAME)) ! E@.KIND = N_NIL
+      ! E@.KIND = N_RECCONS ! E@.KIND = N_ARRCONS
       ! (E@.KIND = N_NAME & LITERAL_CLASSES (E@.NAME) > 0);
 END FUNCTION IS_LITERALISH;
 

@@ -137,7 +137,7 @@ FUNCTION RESULT_TYPE (Y: SYM) RETURNS (TYP);
             BLOCK
                VAR V: SYM := NEW_SYM (Y_CONST, P@.NAME);
                V@.T := P@.T;
-               V@.ACCESS := FMT1 ('p_@', P@.NAME);
+               V@.ACCESS := FMT1 ('p_@', CID (P@.NAME));
                V@.INPUT := TRUE;
                DEFINE (V, R@.LINE);
                DEFINE_PARAM_GENS (P@.T, V@.ACCESS, R@.LINE, FALSE);
@@ -165,10 +165,10 @@ FUNCTION C_HEADER (Y: SYM) RETURNS (TEXT);
       ORIF REAL_TYPE (P@.T)@.KIND = T_VOID THEN
          ;
       ORIF P@.MODE = M_IN THEN
-         PS := FMT4 ('@@@ p_@', PS, SEP, CTYPE (P@.T), P@.NAME);
+         PS := FMT4 ('@@@ p_@', PS, SEP, CTYPE (P@.T), CID (P@.NAME));
          SEP := MK (', ');
       ELSE
-         PS := FMT4 ('@@@ *p_@', PS, SEP, CTYPE (P@.T), P@.NAME);
+         PS := FMT4 ('@@@ *p_@', PS, SEP, CTYPE (P@.T), CID (P@.NAME));
          SEP := MK (', ');
       END IF;
       P := P@.NEXT;

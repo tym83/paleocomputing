@@ -50,15 +50,15 @@ FUNCTION NEW_OBJECT (Y: SYM, BASE: ASCII_STR(?L)) RETURNS (TEXT);
    VAR CN: TEXT;
    IF CS@.LEVEL = 0 THEN
       IF W@.DEPTH <= 2 & W@.MODL = NIL THEN
-         CN := FMT2 ('g@_@', MK (BASE), Y@.NAME);
+         CN := FMT2 ('g@_@', MK (BASE), CID (Y@.NAME));
       ELSE
-         CN := FMT3 ('g@_@_@', MK (BASE), Y@.NAME, NEW_NAME (''));
+         CN := FMT3 ('g@_@_@', MK (BASE), CID (Y@.NAME), NEW_NAME (''));
       END IF;
       EMIT (O_GLOBALS, FMT2 ('static @ @;', CTYPE (T), CN));
       Y@.ACCESS := CN;
       RETURN CN;
    END IF;
-   CN := FMT3 ('l@_@_@', MK (BASE), Y@.NAME, NEW_NAME (''));
+   CN := FMT3 ('l@_@_@', MK (BASE), CID (Y@.NAME), NEW_NAME (''));
    Y@.FIELD := CN;
    IF CS@.FRAMED THEN
       APPEND (FMT2 (' @ @;', CTYPE (T), CN) # CS@.FIELDS);

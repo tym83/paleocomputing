@@ -51,7 +51,7 @@ FUNCTION EXC_NAME (NAME: TEXT) RETURNS (TEXT);
    VAR N: NODE := W@.EXCS;
    LOOP UNTIL N = NIL DO
       IF TEQ (N@.NAME, NAME) THEN
-         RETURN FMT1 ('x_@', NAME);
+         RETURN FMT1 ('x_@', CID (NAME));
       END IF;
       N := N@.NEXT;
    END LOOP;
@@ -59,7 +59,7 @@ FUNCTION EXC_NAME (NAME: TEXT) RETURNS (TEXT);
    N@.NAME := NAME;
    N@.NEXT := W@.EXCS;
    W@.EXCS := N;
-   RETURN FMT1 ('x_@', NAME);
+   RETURN FMT1 ('x_@', CID (NAME));
 END FUNCTION EXC_NAME;
 
 PROCEDURE DECLARE_TYPES (DECLS: NODE);
@@ -88,7 +88,7 @@ PROCEDURE DECLARE_LABELS (S0: NODE);
          LOOP UNTIL L@.KIND <> N_LABELED DO
             BLOCK
                VAR Y: SYM := NEW_SYM (Y_LABEL, L@.NAME);
-               Y@.ACCESS := FMT1 ('L_@_', NEW_NAME (STR (L@.NAME, L@.NAME.LEN)));
+               Y@.ACCESS := FMT1 ('L_@_', NEW_NAME (STR (CID (L@.NAME), CID (L@.NAME).LEN)));
                Y@.MV := GUARDS ();
                DEFINE (Y, L@.LINE);
             END BLOCK;

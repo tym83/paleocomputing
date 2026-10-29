@@ -150,7 +150,7 @@ FUNCTION PARSE_UNLABELED () RETURNS (NODE);
       RETURN S;
    END IF;
    EXPECT (';');                                   % [4-37]
-   IF T@.KIND = N_NAME ! T@.KIND = N_APPLY THEN
+   IF T@.KIND = N_NAME ! T@.KIND = N_APPLY ! T@.KIND = N_ENUMLIT THEN
       T@.KIND := N_CALL;
    ELSE
       FAIL (LINE, 'a statement expected');

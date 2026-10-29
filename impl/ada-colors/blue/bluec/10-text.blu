@@ -127,6 +127,27 @@ FUNCTION NUM (V: INTEGER) RETURNS (TEXT);
    RETURN MK (TO_CHAR (V));
 END FUNCTION NUM;
 
+% the name T as a C identifier: an identifier may begin with \ or ? [2-10]
+FUNCTION CID (T: TEXT) RETURNS (TEXT);
+   CONST S: ASCII_STR(T.LEN) := STR (T, T.LEN);
+   VAR R: TEXT;
+   IF T.LEN = 0 THEN
+      RETURN T;
+   END IF;
+   IF S[0:0] <> '\' & S[0:0] <> '?' THEN
+      RETURN T;
+   END IF;
+   IF S[0:0] = '\' THEN
+      R := MK ('bs_');
+   ELSE
+      R := MK ('qm_');
+   END IF;
+   IF T.LEN = 1 THEN
+      RETURN R;
+   END IF;
+   RETURN CATS (R, S[1 : T.LEN - 1]);
+END FUNCTION CID;
+
 % a fresh C name: the base and a serial number
 FUNCTION NEW_NAME (BASE: ASCII_STR(?L)) RETURNS (TEXT);
    W@.SERIAL := W@.SERIAL + 1;

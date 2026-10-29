@@ -224,6 +224,9 @@ FUNCTION EXPR (E: NODE, WANT: TYP) RETURNS (ET);
       RETURN MKET (FMT2 ('rt_str(@, @)', CSTRING (E@.NAME), NUM (E@.NAME.LEN)),
                    BITS_TYPE (E@.NAME.LEN));
    ORIF K = N_ENUMLIT THEN
+      IF NAMES_OBJECT (E@.NAME) THEN                 % \X declared as an identifier
+         RETURN NAME_EXPR (E, WANT);
+      END IF;
       RETURN ENUM_LITERAL (E, WANT);
    ORIF K = N_RECCONS THEN
       RETURN RECORD_CONSTRUCTOR (E, WANT);
@@ -251,6 +254,14 @@ FUNCTION EXPR (E: NODE, WANT: TYP) RETURNS (ET);
          RETURN V;
       END BLOCK;
    ORIF K = N_NEW THEN                              % [3-198] [3-206]
+      IF NAMES_OBJECT (E@.NAME) THEN                 % NEW redeclared (a key word, 2.1.7)
+         BLOCK
+            VAR N: NODE := NEW_NODE (N_APPLY, E@.LINE);
+            N@.NAME := E@.NAME;
+            N@.A := E@.A;
+            RETURN EXPR (N, WANT);
+         END BLOCK;
+      END IF;
       RETURN NEW_EXPR (E, WANT);
    ORIF K = N_NAME THEN
       RETURN NAME_EXPR (E, WANT);
@@ -328,7 +339,16 @@ FUNCTION EXPR (E: NODE, WANT: TYP) RETURNS (ET);
       RETURN IN_EXPR (E);
    ORIF K = N_ANY ! K = N_DONTCARE THEN
       FAIL (E@.LINE, 'ANY and ? are not values');
-   ORIF K = TS_NAME ! K = TS_ARRAY ! K = TS_RECORD ! K = TS_ENUM ! K = TS_GEN THEN
+   ORIF K = TS_GEN THEN                             % ?X declared as an identifier
+      BLOCK
+         VAR N: NODE := NEW_NODE (N_NAME, E@.LINE);
+         N@.NAME := MKN ('?' !! STR (E@.NAME, E@.NAME.LEN));
+         IF NAMES_OBJECT (N@.NAME) THEN
+            RETURN NAME_EXPR (N, WANT);
+         END IF;
+      END BLOCK;
+      FAIL (E@.LINE, 'a type is not a value');
+   ORIF K = TS_NAME ! K = TS_ARRAY ! K = TS_RECORD ! K = TS_ENUM THEN
       FAIL (E@.LINE, 'a type is not a value');
    END IF;
    FAIL (E@.LINE, 'this expression cannot be translated');
@@ -602,6 +622,16 @@ FUNCTION ENUM_RESULT (Y: SYM, WANT: TYP) RETURNS (TYP);
    END IF;
    RETURN Y@.T;
 END FUNCTION ENUM_RESULT;
+
+% does the innermost declaration of NAME declare something other than an
+% enumerated literal (a variable, constant or routine named \X, ?X or NEW)?
+FUNCTION NAMES_OBJECT (NAME: TEXT) RETURNS (BOOLEAN);
+   CONST Y: SYM := LOOKUP (NAME);
+   IF Y = NIL THEN
+      RETURN FALSE;
+   END IF;
+   RETURN Y@.KIND = Y_VAR ! Y@.KIND = Y_CONST ! Y@.KIND = Y_ROUTINE;
+END FUNCTION NAMES_OBJECT;
 
 FUNCTION NAME_EXPR (E: NODE, WANT: TYP) RETURNS (ET);
    CONST Y: SYM := LOOKUP (E@.NAME);

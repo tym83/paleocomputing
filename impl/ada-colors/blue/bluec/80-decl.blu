@@ -18,7 +18,7 @@ END PROCEDURE LEAVE_ISCOPE;
 
 % a C name for a routine, unique in the program
 FUNCTION ROUTINE_CNAME (NAME: TEXT) RETURNS (TEXT);
-   VAR BASE: TEXT := FMT1 ('r_@', NAME);
+   VAR BASE: TEXT := FMT1 ('r_@', CID (NAME));
    CONST S: ASCII_STR(BASE.LEN) := STR (BASE, BASE.LEN);
    VAR N: NODE := W@.CNAMES;
    LOOP FOR I IN [0 : BASE.LEN - 1] DO                % T$NAME
@@ -527,20 +527,20 @@ PROCEDURE ROUTINE_BODY (Y: SYM);
                   V@.T := P@.T;
                   V@.INPUT := P@.MODE = M_IN;
                   V@.BYREF := P@.MODE <> M_IN;
-                  V@.FIELD := FMT1 ('p_@', P@.NAME);
+                  V@.FIELD := FMT1 ('p_@', CID (P@.NAME));
                   IF Y@.FRAMED THEN
                      IF V@.BYREF THEN
-                        APPEND (FMT2 (' @ *p_@;', CTYPE (P@.T), P@.NAME) # CS@.FIELDS);
-                        V@.ACCESS := FMT1 ('(*F->p_@)', P@.NAME);
+                        APPEND (FMT2 (' @ *p_@;', CTYPE (P@.T), CID (P@.NAME)) # CS@.FIELDS);
+                        V@.ACCESS := FMT1 ('(*F->p_@)', CID (P@.NAME));
                      ELSE
-                        APPEND (FMT2 (' @ p_@;', CTYPE (P@.T), P@.NAME) # CS@.FIELDS);
-                        V@.ACCESS := FMT1 ('F->p_@', P@.NAME);
+                        APPEND (FMT2 (' @ p_@;', CTYPE (P@.T), CID (P@.NAME)) # CS@.FIELDS);
+                        V@.ACCESS := FMT1 ('F->p_@', CID (P@.NAME));
                      END IF;
-                     PROLOGUE := FMT3 ('@ F->p_@ = p_@;', PROLOGUE, P@.NAME, P@.NAME);
+                     PROLOGUE := FMT3 ('@ F->p_@ = p_@;', PROLOGUE, CID (P@.NAME), CID (P@.NAME));
                   ORIF V@.BYREF THEN
-                     V@.ACCESS := FMT1 ('(*p_@)', P@.NAME);
+                     V@.ACCESS := FMT1 ('(*p_@)', CID (P@.NAME));
                   ELSE
-                     V@.ACCESS := FMT1 ('p_@', P@.NAME);
+                     V@.ACCESS := FMT1 ('p_@', CID (P@.NAME));
                   END IF;
                   IF P@.MODE = M_OUT THEN
                      % an output is a local object, stored into the argument only
@@ -550,11 +550,11 @@ PROCEDURE ROUTINE_BODY (Y: SYM);
                         DEFINE_PARAM_GENS (P@.T, ARGA, R@.LINE, TRUE);
                         V@.BYREF := FALSE;
                         IF Y@.FRAMED THEN
-                           APPEND (FMT2 (' @ o_@;', CTYPE (P@.T), P@.NAME) # CS@.FIELDS);
-                           V@.ACCESS := FMT1 ('F->o_@', P@.NAME);
+                           APPEND (FMT2 (' @ o_@;', CTYPE (P@.T), CID (P@.NAME)) # CS@.FIELDS);
+                           V@.ACCESS := FMT1 ('F->o_@', CID (P@.NAME));
                         ELSE
-                           PROLOGUE := FMT3 ('@ @ o_@;', PROLOGUE, CTYPE (P@.T), P@.NAME);
-                           V@.ACCESS := FMT1 ('o_@', P@.NAME);
+                           PROLOGUE := FMT3 ('@ @ o_@;', PROLOGUE, CTYPE (P@.T), CID (P@.NAME));
+                           V@.ACCESS := FMT1 ('o_@', CID (P@.NAME));
                         END IF;
                         PROLOGUE := FMT3 ('@ @ = @;', PROLOGUE, V@.ACCESS, ARGA);
                         IF NEEDS_INIT (P@.T) THEN
@@ -725,8 +725,8 @@ PROCEDURE TRANSLATE (SEGS: NODE);
    BLOCK
       VAR X: NODE := W@.EXCS;
       LOOP UNTIL X = NIL DO
-         EMIT (O_GLOBALS, FMT1 ('static int x_@;', X@.NAME));
-         EMIT (O_STARTUP, FMT2 ('x_@ = rt_exc(@);', X@.NAME, CSTRING (X@.NAME)));
+         EMIT (O_GLOBALS, FMT1 ('static int x_@;', CID (X@.NAME)));
+         EMIT (O_STARTUP, FMT2 ('x_@ = rt_exc(@);', CID (X@.NAME), CSTRING (X@.NAME)));
          X := X@.NEXT;
       END LOOP;
    END BLOCK;
