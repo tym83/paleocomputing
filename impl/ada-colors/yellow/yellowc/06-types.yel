@@ -14,7 +14,7 @@
     NEW(r);
     r^ := RepRec(kind, tid, tid, 0, 0, 0, 0, FALSE, 0, 0, Rep NIL, Rep NIL, 0, Rep NIL,
                  Node NIL, 0, Field NIL, Field NIL, 0, 0, 0, FALSE, FALSE, FALSE, 0, FALSE, 0, 0,
-                 Sym NIL, 0);
+                 Sym NIL, 0, 0);
     r^.serial := NewSerial();
     RETURN r
   ENDPROCEDURE NewRep;
@@ -25,6 +25,7 @@
     NEW(c);
     c^ := r^;
     c^.serial := NewSerial();
+    c^.sig := 0;
     RETURN c
   ENDPROCEDURE CopyRep;
 
@@ -138,6 +139,87 @@
     IF r^.abstract THEN FailN(line, r^.tname, " is a type, not a representation (VI.A.1)") ENDIF;
     RETURN
   ENDPROCEDURE CheckRepresented;
+
+  (* ---- identical representations (VII.G) ---------------------------------------- *)
+  (* Two representations are the same when they derive from one type and *)
+  (* their concrete forms are spelled alike; a VAR actual must have the *)
+  (* representation of its formal (X.A.2). The spelling is built from the *)
+  (* elaborated representation: its type, its bounds (by value when they *)
+  (* are manifest), precision, scale and components. *)
+
+  PROCEDURE SigText RETURNS Txt (CONST r: Rep)
+    VAR k: INT := r^.kind;
+        ix: Rep;
+        f: Field;
+    SB();
+    ST(r^.tid);
+    IF IsDiscrete(r) OR (k = R_FLOAT) OR (k = R_FIXED) THEN
+      SA("[");
+      IF r^.hasm THEN
+        SI(r^.mlo);
+        SA("..");
+        SI(r^.mhi)
+      ELSE
+        ST(r^.lo);
+        SA("..");
+        ST(r^.hi)
+      ENDIF;
+      SA("]");
+      IF k = R_FLOAT THEN
+        SA("P");
+        ST(r^.prec)
+      ENDIF;
+      IF k = R_FIXED THEN
+        SA("S");
+        ST(r^.scale)
+      ENDIF
+    ELSIF k = R_ARRAY THEN
+      SA("(");
+      ix := r^.idx;
+      WHILE ix # Rep NIL DO
+        ST(RepSig(ix));
+        SA(",");
+        ix := ix^.link
+      ENDWHILE;
+      SA("OF ");
+      ST(RepSig(r^.elem));
+      SA(")")
+    ELSIF k = R_UARRAY THEN
+      SA("(");
+      SI(r^.nidx);
+      SA("D ");
+      ST(RepSig(r^.elem));
+      SA(")")
+    ELSIF k = R_RECORD THEN
+      SA("{");
+      f := r^.fields;
+      WHILE f # Field NIL DO
+        IF f^.isconst THEN SA("C ") ELSE SA("V ") ENDIF;
+        ST(f^.name);
+        SA(":");
+        ST(RepSig(f^.rep));
+        SA(";");
+        f := f^.next
+      ENDWHILE;
+      SA("}")
+    ELSIF (k = R_SET) OR (k = R_FILE) THEN
+      SA("(");
+      ST(RepSig(r^.elem));
+      SA(")")
+    ENDIF;
+    RETURN SE()
+  ENDPROCEDURE SigText;
+
+  PROCEDURE RepSig RETURNS Txt (CONST r: Rep)
+    IF r^.sig = 0 THEN r^.sig := Name(SigText(r)) ENDIF;
+    RETURN r^.sig
+  ENDPROCEDURE RepSig;
+
+  PROCEDURE Identical RETURNS BOOLEAN (CONST a, b: Rep)
+    IF a = b THEN RETURN TRUE ENDIF;
+    IF NOT SameType(a, b) THEN RETURN FALSE ENDIF;
+    RETURN RepSig(a) = RepSig(b)
+  ENDPROCEDURE Identical;
 
   (* ---- elaborating a representation from its tree ------------------------------- *)
 

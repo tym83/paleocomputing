@@ -231,13 +231,154 @@
 
   (* ---- conversions between representations of one type (IX.A.1) ------------------- *)
 
+  (* do values of representation from need code to become values of *)
+  (* representation to (of the same type): a range to check, or a layout *)
+  (* that differs component by component (IX.A.1, VII.G) *)
+  PROCEDURE NeedsConv RETURNS BOOLEAN (CONST to, from: Rep)
+    IF to = from THEN RETURN FALSE ENDIF;
+    IF IsDiscrete(to) THEN
+      IF to^.lo = 0 THEN RETURN FALSE ENDIF;
+      RETURN NOT (to^.hasm AND from^.hasm AND (to^.mlo <= from^.mlo) AND (from^.mhi <= to^.mhi))
+    ENDIF;
+    IF (to^.kind = R_FLOAT) OR (to^.kind = R_FIXED) THEN RETURN to^.lo # 0 ENDIF;
+    IF to^.kind = R_RECORD THEN
+      RETURN (from^.kind = R_RECORD) AND (to^.cname # from^.cname)
+    ENDIF;
+    IF (to^.kind = R_ARRAY) OR (to^.kind = R_UARRAY) THEN
+      IF (from^.kind # R_ARRAY) AND (from^.kind # R_UARRAY) THEN RETURN FALSE ENDIF;
+      RETURN NeedsConv(to^.elem, from^.elem)
+    ENDIF;
+    RETURN FALSE
+  ENDPROCEDURE NeedsConv;
+
+  (* a record value of representation from, component by component in to *)
+  PROCEDURE ConvertRecord RETURNS Txt (CONST code: Txt; CONST to, from: Rep)
+    VAR s, d: Txt;
+        f, g: Field;
+    s := Fresh("cs");
+    d := Fresh("cd");
+    SB();
+    SA("({ ");
+    ST(CType(from));
+    SA(" ");
+    ST(s);
+    SA(" = ");
+    ST(code);
+    SA("; ");
+    ST(CType(to));
+    SA(" ");
+    ST(d);
+    SA("; memset(&");
+    ST(d);
+    SA(", 0, sizeof ");
+    ST(d);
+    SA(");");
+    f := to^.fields;
+    WHILE f # Field NIL DO
+      g := FindField(from, f^.name);
+      IF g # Field NIL THEN
+        SA(" ");
+        IF g^.variant # 0 THEN
+          (* only the components of the variant the value has *)
+          SA("if (");
+          ST(VariantTest(from, g, Join(T("(&"), s, T(")"))));
+          SA(") ")
+        ENDIF;
+        ST(d);
+        SA(".f_");
+        ST(f^.name);
+        SA(" = ");
+        ST(Convert(Join(s, T(".f_"), f^.name), f^.rep, g^.rep));
+        SA(";")
+      ENDIF;
+      f := f^.next
+    ENDWHILE;
+    SA(" ");
+    ST(d);
+    SA("; })");
+    RETURN SE()
+  ENDPROCEDURE ConvertRecord;
+
+  (* an array value of representation from, component by component in to: *)
+  (* the bounds of to, or of the value for a length-unresolved formal *)
+  PROCEDURE ConvertArray RETURNS Txt (CONST code: Txt; CONST to, from: Rep)
+    VAR s, d, k, n, te, fe: Txt;
+    s := Fresh("cs");
+    d := Fresh("cd");
+    k := Fresh("ck");
+    n := Fresh("cn");
+    te := CType(to^.elem);
+    fe := CType(from^.elem);
+    SB();
+    SA("({ yarr ");
+    ST(s);
+    SA(" = ");
+    ST(code);
+    SA(", ");
+    ST(d);
+    SA("; rt_int ");
+    ST(n);
+    SA(" = y_count(");
+    ST(s);
+    SA(", ");
+    SI(from^.nidx);
+    SA(");");
+    IF to^.kind = R_ARRAY THEN
+      SA(" y_init(");
+      ST(DescOf(to));
+      SA(", &");
+      ST(d);
+      SA("); if (y_count(");
+      ST(d);
+      SA(", ");
+      SI(to^.nidx);
+      SA(") != ");
+      ST(n);
+      SA(") rt_raise_msg(RT_X_RANGE, ");
+      SC('DQ');
+      SA("array lengths differ");
+      SC('DQ');
+      SA(");")
+    ELSE
+      SA(" ");
+      ST(d);
+      SA(" = y_like(");
+      ST(s);
+      SA(", ");
+      SI(from^.nidx);
+      SA(", ");
+      ST(DescOf(to^.elem));
+      SA(");")
+    ENDIF;
+    SA(" for (rt_int ");
+    ST(k);
+    SA(" = 0; ");
+    ST(k);
+    SA(" < ");
+    ST(n);
+    SA("; ");
+    ST(k);
+    SA("++) ((");
+    ST(te);
+    SA(" *)");
+    ST(d);
+    SA(".p)[");
+    ST(k);
+    SA("] = ");
+    ST(Convert(Join(T("(("), fe, Join(T(" *)"), s, Join(T(".p)["), k, T("]")))), to^.elem, from^.elem));
+    SA("; ");
+    ST(d);
+    SA("; })");
+    RETURN SE()
+  ENDPROCEDURE ConvertArray;
+
   (* the C text of value code (of representation from) held in to: ranges are *)
   (* checked unless the manifest bounds show there is no need *)
   PROCEDURE Convert RETURNS Txt (CONST code: Txt; CONST to, from: Rep)
-    IF IsDiscrete(to) AND (to^.lo # 0) THEN
-      IF to^.hasm AND from^.hasm AND (to^.mlo <= from^.mlo) AND (from^.mhi <= to^.mhi) THEN
-        RETURN code
-      ENDIF;
+    IF NOT NeedsConv(to, from) THEN RETURN code ENDIF;
+    IF to^.kind = R_RECORD THEN RETURN ConvertRecord(code, to, from) ENDIF;
+    IF (to^.kind = R_ARRAY) OR (to^.kind = R_UARRAY) THEN RETURN ConvertArray(code, to, from) ENDIF;
+    IF IsDiscrete(to) THEN
       SB();
       SA("rt_range(");
       ST(code);
@@ -248,7 +389,7 @@
       SA(")");
       RETURN SE()
     ENDIF;
-    IF (to^.kind = R_FLOAT) AND (to^.lo # 0) THEN
+    IF to^.kind = R_FLOAT THEN
       SB();
       SA("rt_frange(");
       ST(code);
@@ -259,7 +400,7 @@
       SA(")");
       RETURN SE()
     ENDIF;
-    IF (to^.kind = R_FIXED) AND (to^.lo # 0) THEN
+    IF to^.kind = R_FIXED THEN
       SB();
       SA("y_fixed(");
       ST(code);
@@ -275,9 +416,11 @@
     RETURN code
   ENDPROCEDURE Convert;
 
-  (* assignment of code (of representation er) to dst (of representation r) *)
-  PROCEDURE Store (CONST dst: Txt; CONST r: Rep; CONST code: Txt; CONST er: Rep; CONST line: INT)
-    VAR t, tmp: Txt;
+  (* the C statement assigning code (of representation er) to dst (of *)
+  (* representation r) *)
+  PROCEDURE StoreText RETURNS Txt (CONST dst: Txt; CONST r: Rep; CONST code: Txt; CONST er: Rep;
+                                   CONST line: INT)
+    VAR tmp: Txt;
     CheckType(line, r, er);
     IF Deep(r) THEN
       tmp := Fresh("t");
@@ -287,7 +430,7 @@
       SA(" ");
       ST(tmp);
       SA(" = ");
-      ST(code);
+      ST(Convert(code, r, er));
       SA("; y_store(");
       ST(DescOf(r));
       SA(", &");
@@ -295,17 +438,19 @@
       SA(", &");
       ST(tmp);
       SA("); }");
-      t := SE();
-      Emit(t);
-      RETURN
+      RETURN SE()
     ENDIF;
     SB();
     ST(dst);
     SA(" = ");
     ST(Convert(code, r, er));
     SA(";");
-    t := SE();
-    Emit(t);
+    RETURN SE()
+  ENDPROCEDURE StoreText;
+
+  (* assignment of code (of representation er) to dst (of representation r) *)
+  PROCEDURE Store (CONST dst: Txt; CONST r: Rep; CONST code: Txt; CONST er: Rep; CONST line: INT)
+    Emit(StoreText(dst, r, code, er, line));
     RETURN
   ENDPROCEDURE Store;
 
@@ -510,6 +655,9 @@
       code := SE()
     ELSIF k = N_INDEX THEN
       IndexExpr(n, code, r)
+    ELSIF (k = N_NOT) AND UserOp(n, W_NOT, n^.a, Node NIL, code, r) THEN
+      (* NOT is an extended identifier too (rule 56) *)
+      r := r
     ELSIF k = N_NOT THEN
       Expr(n^.a, RBool, c, a);
       CheckType(n^.line, RBool, a);

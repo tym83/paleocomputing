@@ -68,8 +68,9 @@ numbered fragments of section II, the not-equal sign written `#` and the up-arro
   only: the module's tables are local and "the mechanism for initializing" is left out. Note
   also that every path of `schedule` returns before `enable(tickinterrupt)`.
 - **E22 search tree.** `SearchKey: Zodiac`; `newTree` for the undeclared `newKey`; the export
-  `NewTree` is `newTree`. The module exports `=` and `#` but not `:=`: a user can initialize a
-  Tree and compare Trees, never assign one.
+  `NewTree` is `newTree`. The module exports `=` and `#` but not `:=`; an initialization is an
+  assignment, so a user could not even start a Tree as `newTree` (X.B.3): `:=` is added to the
+  export list.
 - **E24 hash tables.** Representation for `CONST index`; `tablesize` (printed `tableSize`);
   0 means "none" but `tableRange` starts at 1, so as printed the first `Scan` raises
   `OUT_OF_RANGE` — slot and the IndexSlot components get `INTEGER [0..tablesize]`; `MOD

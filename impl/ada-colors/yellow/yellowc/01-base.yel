@@ -62,7 +62,8 @@ MODULE yellowc
       VAR forward: Txt;           (* pointers: the base named before it is declared *)
       VAR fwdscope: INT;
       VAR monitor: Sym;           (* signals: the monitor they belong to *)
-      VAR serial: INT
+      VAR serial: INT;
+      VAR sig: Txt                (* the representation spelled out, for VII.G *)
     ENDRECORD;
 
     FieldRec = RECORD
@@ -106,7 +107,8 @@ MODULE yellowc
       VAR stack: Sym;             (* the next declared in the same scope *)
       VAR alt: Sym;               (* overloaded routines: the next definition *)
       VAR monitor: Sym;           (* routines and processes declared in a monitor *)
-      VAR serial: INT
+      VAR serial: INT;
+      VAR calls: Node             (* routines: the routines and processes it calls *)
     ENDRECORD;
 
     ScopeRec = RECORD

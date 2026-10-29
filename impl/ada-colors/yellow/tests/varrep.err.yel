@@ -1,0 +1,7 @@
+(* a VAR actual has the representation of its formal (VII.G, X.A.2) *)
+MODULE VarRep
+  IMPORT StandardImplementationPrelude;
+  VAR x: INTEGER [1..10];
+  PROCEDURE Inc (VAR v: INTEGER [1..100]) v := v + 50; RETURN ENDPROCEDURE Inc;
+  x := 5; Inc(x)
+ENDMODULE VarRep

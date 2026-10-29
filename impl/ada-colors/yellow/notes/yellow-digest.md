@@ -68,8 +68,11 @@ The rule numbers of the Appendix are used in yellowc's comments. Points that nee
   are one type; two RECORD...ENDRECORD written apart are two. `TYPE T = INTEGER` makes a new
   type with INTEGER's operations; its literals are written `T 50`.
 - Assignment and CONST binding need the same type; the representation is converted with a
-  range check (`OUT_OF_RANGE`). VAR binding needs the same representation (yellowc checks the
-  type only).
+  range check (`OUT_OF_RANGE`), component by component for records and arrays whose
+  representations of one type differ (`Polar2` to `Polar3`). VAR binding needs the same
+  representation (VII.G Case 2: the representation identifiers expanded, the concrete forms
+  alike), for a length-unresolved formal the same component representation; an OUT actual of
+  another representation gets a temporary of the formal's, assigned after the call.
 - UNORDERED enumerations have = and #; ORDERED and ALPHABET also < <= > >= SUCC PRED FIRST LAST.
   BOOLEAN is UNORDERED(FALSE, TRUE).
 - Arrays are indexed by integer or scalar representations; records have CONST and VAR
@@ -77,7 +80,9 @@ The rule numbers of the Appendix are used in yellowc's comments. Points that nee
   denoted by the representation's name: `Date(Mar, 4, 1977)`, `bits(FALSE)` (every component),
   `IntegerSet(3, 5)`, `IntegerSet()`.
 - Pointers: `POINTER(R)`, `NEW(p)`, `p^`, `T NIL`. FREE_POINTER is the low-level dual (XIV).
-- Sets of any integer or scalar range; `+ - * XOR IN`, prefix `-` is the complement.
+- Sets of any integer or scalar range; `+ - * XOR IN`, prefix `-` is the complement. A base
+  range of more than 65536 values (`SET (INTEGER64)`) is held as a sorted list of members, or
+  of non-members after a complement.
 - Bounds are scope-entry constants: computed once where the representation is elaborated.
 - **Literal disambiguation (VI.A.3, p.1012)**: an enumeration literal of two visible types,
   and a character of two visible alphabets, must be qualified; a string in a scope with two
@@ -108,14 +113,19 @@ ENDLOOP name, [SIMULATED_TIME] BEGIN block END.
   `ARRAY (n DIMENSIONS OF R)` with LOW and HIGH.
 - Overloading by the types (not representations) of the parameters: EXTENDS adds a
   definition, REPLACES overrides one, a declaration with neither hides all others (X.A.1).
-  Operators and `:=` are names too (`FUNCTION EXTENDS + ...`, `DerefRpointer AS ^`).
+  Operators, `NOT` and `:=` are names too (`FUNCTION EXTENDS + ...`, `DerefRpointer AS ^`).
+  A definition of `:=` (`PROCEDURE REPLACES := (OUT a: V; CONST b: V)`) is called by every
+  assignment of its type: assignment statements, initializations, the copy of OUT parameters;
+  inside its own body the standard assignment applies, or it could not be written.
 - Modules are closed scopes: only their own names, their imports and the standard names are
   visible inside. IMPORT M stands for M's exports; yellowc also brings M itself, so that a
   module nested inside can import it (the convex-hull template of p.1108 imports
   MyStandardConventions wherever it is instantiated). Exports: OPAQUE (default for types and
   representations), TRANSPARENT, READONLY (default for variables), VAR; FROM and AS. Two
   sibling modules may export one name, usable only through FROM. Exporting `:=`, `=`, `#`
-  without declaring them gives the standard ones with the opaque types (D-33).
+  without declaring them gives the standard ones with the opaque types (D-33). An
+  initialization is an assignment: a variable of an opaque type is initialized outside its
+  module only when `:=` is exported.
 - Composite declarations may refer to each other in any order; simple ones are declared
   before use (pointer bases excepted). A module may import from a module declared later in
   its scope (X.G: the program is valid if an order exists): yellowc then translates that
@@ -193,7 +203,4 @@ other than the prelude are not provided.
   procedures it calls.
 - FIXED values are held in doubles (p.1001 allows floating-point to implement them), checked
   to be multiples of their scale.
-- Representations of one type with different structured layouts are converted by copying.
-- The `:=` of a user definition (exporting a redefined `:=`) is not called by assignment.
-- Initialization of a variable of an opaque type is allowed though `:=` is not exported.
 - Modules importing from each other in a circle (allowed by X.G for routines) are refused.

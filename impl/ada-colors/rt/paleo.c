@@ -2667,26 +2667,73 @@ void y_move(yarr *dst, rt_int at, yarr src, rt_int i, rt_int j, const ydesc *ele
   }
 }
 
+/* a fresh array with the bounds of a and components of elem: a temporary
+ * for a length-unresolved formal whose components another representation */
+yarr y_like(yarr a, int nd, const ydesc *elem) {
+  yarr t = a;
+  rt_int n = y_count(a, nd);
+  t.p = rt_alloc((size_t)n * elem->size);
+  if (elem->deep)
+    for (rt_int i = 0; i < n; i++) y_init(elem, (char *)t.p + i * elem->size);
+  return t;
+}
+
 /* ---- sets ------------------------------------------------------------ */
+/* A set over a base range of at most Y_SET_DENSE values is a bit map; over a
+ * larger range (SET (INTEGER64), L-33 puts no limit on the base) it is a
+ * sorted list of members, or with neg the list of the values left out, so
+ * that the complement of a small set stays small. */
+
+#define Y_SET_DENSE 65536
+
+static int set_sparse(rt_int lo, rt_int hi) {
+  return hi >= lo && (uint64_t)hi - (uint64_t)lo >= (uint64_t)Y_SET_DENSE;
+}
 
 static size_t set_words(rt_int lo, rt_int hi) { return (size_t)((y_n(lo, hi) + 63) / 64); }
 
 yset y_set_new(rt_int lo, rt_int hi) {
   yset s;
+  memset(&s, 0, sizeof s);
   s.lo = lo;
   s.hi = hi;
-  s.w = rt_alloc(set_words(lo, hi) * sizeof(uint64_t));
+  if (!set_sparse(lo, hi)) s.w = rt_alloc(set_words(lo, hi) * sizeof(uint64_t));
   return s;
 }
 
 static yset set_clone(yset s) {
   yset r = y_set_new(s.lo, s.hi);
-  if (s.w) memcpy(r.w, s.w, set_words(s.lo, s.hi) * sizeof(uint64_t));
+  if (set_sparse(s.lo, s.hi)) {
+    r.n = s.n;
+    r.neg = s.neg;
+    r.e = rt_alloc((size_t)(s.n ? s.n : 1) * sizeof(rt_int));
+    if (s.n) memcpy(r.e, s.e, (size_t)s.n * sizeof(rt_int));
+  } else if (s.w) {
+    memcpy(r.w, s.w, set_words(s.lo, s.hi) * sizeof(uint64_t));
+  }
   return r;
 }
 
+/* the position of e in the sorted list, or where it would go */
+static rt_int set_find(const yset *s, rt_int e, int *found) {
+  rt_int a = 0, b = s->n;
+  while (a < b) {
+    rt_int m = a + (b - a) / 2;
+    if (s->e[m] < e) a = m + 1;
+    else b = m;
+  }
+  *found = a < s->n && s->e[a] == e;
+  return a;
+}
+
 int y_set_in(rt_int e, yset s) {
-  if (!s.w || e < s.lo || e > s.hi) return 0;
+  if (e < s.lo || e > s.hi) return 0;
+  if (set_sparse(s.lo, s.hi)) {
+    int f;
+    set_find(&s, e, &f);
+    return f != s.neg;
+  }
+  if (!s.w) return 0;
   rt_int b = e - s.lo;
   return (int)((s.w[b >> 6] >> (b & 63)) & 1);
 }
@@ -2694,15 +2741,79 @@ int y_set_in(rt_int e, yset s) {
 yset y_set_add(yset s, rt_int e) {
   if (e < s.lo || e > s.hi) rt_raise(RT_X_RANGE);
   yset r = set_clone(s);
+  if (set_sparse(s.lo, s.hi)) {
+    int f;
+    rt_int at = set_find(&r, e, &f);
+    if (!r.neg && !f) {
+      rt_int *ne = rt_alloc((size_t)(r.n + 1) * sizeof(rt_int));
+      memcpy(ne, r.e, (size_t)at * sizeof(rt_int));
+      ne[at] = e;
+      memcpy(ne + at + 1, r.e + at, (size_t)(r.n - at) * sizeof(rt_int));
+      r.e = ne;
+      r.n++;
+    } else if (r.neg && f) {
+      memmove(r.e + at, r.e + at + 1, (size_t)(r.n - at - 1) * sizeof(rt_int));
+      r.n--;
+    }
+    return r;
+  }
   rt_int b = e - s.lo;
   r.w[b >> 6] |= 1ULL << (b & 63);
   return r;
 }
 
+/* two sorted lists merged by op: 0 a or b, 1 a and not b, 2 a and b, 3 a xor b */
+static yset list_op(yset a, const rt_int *x, rt_int nx, const rt_int *y, rt_int ny, int op) {
+  yset r = y_set_new(a.lo, a.hi);
+  r.e = rt_alloc((size_t)(nx + ny + 1) * sizeof(rt_int));
+  rt_int i = 0, j = 0;
+  while (i < nx || j < ny) {
+    int inx, iny;
+    rt_int v;
+    if (j >= ny || (i < nx && x[i] < y[j])) { v = x[i++]; inx = 1; iny = 0; }
+    else if (i >= nx || y[j] < x[i]) { v = y[j++]; inx = 0; iny = 1; }
+    else { v = x[i++]; j++; inx = iny = 1; }
+    int z = op == 0 ? (inx || iny) : op == 1 ? (inx && !iny) : op == 2 ? (inx && iny) : (inx != iny);
+    if (z) r.e[r.n++] = v;
+  }
+  return r;
+}
+
 /* both operands have the same type, so normally the same base range; an
- * operand that was never set has no words and counts as empty */
+ * operand that was never set has no storage and counts as empty */
 static yset set_op(yset a, yset b, int op) {
-  if (!a.w && b.w) a = y_set_new(b.lo, b.hi);
+  if (!a.w && !a.e && !a.neg && (b.w || b.e || b.neg)) a = y_set_new(b.lo, b.hi);
+  if (set_sparse(a.lo, a.hi)) {
+    /* a set is its list, or the complement of it with neg (De Morgan) */
+    const rt_int *x = a.e, *y = b.e;
+    rt_int nx = a.n, ny = b.n;
+    int na = a.neg, nb = b.neg;
+    yset r;
+    switch (op) {
+    case 0:   /* union */
+      if (!na && !nb) r = list_op(a, x, nx, y, ny, 0);
+      else if (na && nb) { r = list_op(a, x, nx, y, ny, 2); r.neg = 1; }
+      else if (na) { r = list_op(a, x, nx, y, ny, 1); r.neg = 1; }
+      else { r = list_op(a, y, ny, x, nx, 1); r.neg = 1; }
+      break;
+    case 2:   /* intersection */
+      if (!na && !nb) r = list_op(a, x, nx, y, ny, 2);
+      else if (na && nb) { r = list_op(a, x, nx, y, ny, 0); r.neg = 1; }
+      else if (na) r = list_op(a, y, ny, x, nx, 1);
+      else r = list_op(a, x, nx, y, ny, 1);
+      break;
+    case 1: { /* difference: a and the complement of b */
+      yset nbs = b;
+      nbs.neg = !b.neg;
+      return set_op(a, nbs, 2);
+    }
+    default:  /* symmetric difference */
+      r = list_op(a, x, nx, y, ny, 3);
+      r.neg = na != nb;
+      break;
+    }
+    return r;
+  }
   yset r = y_set_new(a.lo, a.hi);
   for (rt_int e = a.lo; e <= a.hi; e++) {
     int x = y_set_in(e, a), y = y_set_in(e, b), z;
@@ -2726,6 +2837,11 @@ yset y_set_inter(yset a, yset b) { return set_op(a, b, 2); }
 yset y_set_xor(yset a, yset b) { return set_op(a, b, 3); }
 
 yset y_set_compl(yset a) {
+  if (set_sparse(a.lo, a.hi)) {
+    yset r = set_clone(a);
+    r.neg = !a.neg;
+    return r;
+  }
   yset r = y_set_new(a.lo, a.hi);
   for (rt_int e = a.lo; e <= a.hi; e++)
     if (!y_set_in(e, a)) {
@@ -2736,6 +2852,18 @@ yset y_set_compl(yset a) {
 }
 
 int y_set_eq(yset a, yset b) {
+  if (set_sparse(a.lo, a.hi) || set_sparse(b.lo, b.hi)) {
+    if (a.neg == b.neg) {
+      if (a.n != b.n) return 0;
+      for (rt_int i = 0; i < a.n; i++)
+        if (a.e[i] != b.e[i]) return 0;
+      return 1;
+    }
+    /* a list and the complement of another: equal only when the two lists
+     * are disjoint and cover the whole base range */
+    yset x = list_op(a, a.e, a.n, b.e, b.n, 2);
+    return x.n == 0 && (uint64_t)(a.n + b.n) == (uint64_t)a.hi - (uint64_t)a.lo + 1;
+  }
   rt_int lo = a.lo < b.lo ? a.lo : b.lo, hi = a.hi > b.hi ? a.hi : b.hi;
   if (!a.w) { lo = b.lo; hi = b.hi; }
   if (!b.w) { lo = a.lo; hi = a.hi; }

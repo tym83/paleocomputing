@@ -6,3 +6,6 @@ s/t^ := Node(SearchKey,newKey,newKey);/t^ := Node(SearchKey,newTree,newTree);/
 # 3. the export list names NewTree, the constant is newTree (names are case
 #    sensitive, p.994)
 s/EXPORT NewTree,Search,=,#;/EXPORT newTree,Search,=,#;/
+# 4. the user's tree must start as newTree, and an initialization is an
+#    assignment: an opaque Tree is initialized only with an exported := (X.B.3)
+s/EXPORT newTree,Search,=,#;/EXPORT newTree,Search,=,#,:=;/

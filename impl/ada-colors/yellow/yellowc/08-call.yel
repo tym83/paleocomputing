@@ -82,11 +82,39 @@
     RETURN
   ENDPROCEDURE CompileArgs;
 
-  (* the C call of routine s with the compiled actuals *)
+  (* a length-unresolved array always has integer indices (X.A.3) *)
+  PROCEDURE CheckUnresolved (CONST f, a: Rep; CONST line: INT)
+    VAR ix: Rep;
+    IF (f^.kind # R_UARRAY) OR (a^.kind # R_ARRAY) THEN RETURN ENDIF;
+    ix := a^.idx;
+    WHILE ix # Rep NIL DO
+      IF ix^.kind # R_INT THEN
+        FailS(line, "a length-unresolved array formal takes arrays with integer indices only (X.A.3)")
+      ENDIF;
+      ix := ix^.link
+    ENDWHILE;
+    RETURN
+  ENDPROCEDURE CheckUnresolved;
+
+  (* a VAR actual has the representation of its formal (VII.G, X.A.2); for *)
+  (* a length-unresolved formal, its components have *)
+  PROCEDURE SameAsFormal RETURNS BOOLEAN (CONST f, a: Rep)
+    IF f^.kind = R_SPACE THEN RETURN TRUE ENDIF;
+    IF f^.kind = R_UARRAY THEN
+      IF NOT ((a^.kind = R_ARRAY) OR (a^.kind = R_UARRAY)) THEN RETURN FALSE ENDIF;
+      RETURN Identical(f^.elem, a^.elem)
+    ENDIF;
+    RETURN Identical(f, a)
+  ENDPROCEDURE SameAsFormal;
+
+  (* the C call of routine s with the compiled actuals. An OUT actual of *)
+  (* another representation than its formal gets a temporary of the *)
+  (* formal's, assigned to the actual after the call (X.A.2) *)
   PROCEDURE CallCode RETURNS Txt (CONST s: Sym; CONST base, nargs: INT; CONST line: INT)
     VAR p: Param := s^.params;
         i: INT := base + 1;
         first: BOOLEAN := TRUE;
+        pre, post, tmp, call, rv: Txt := 0;
     IF nargs # s^.nparams THEN FailN(line, s^.name, ": the number of actual parameters is wrong") ENDIF;
     SB();
     ST(s^.cname);
@@ -102,6 +130,7 @@
         Building := FALSE;
         TypeClash(ArgNode[i]^.line, p^.rep, ArgRep[i])
       ENDIF;
+      CheckUnresolved(p^.rep, ArgRep[i], ArgNode[i]^.line);
       IF p^.cls = C_CONST THEN
         ST(Convert(ArgCode[i], p^.rep, ArgRep[i]))
       ELSE
@@ -111,16 +140,65 @@
           FailN(ArgNode[i]^.line, p^.name, ": the actual of a VAR or OUT parameter must be a variable")
         ENDIF;
         CheckPure(ArgNode[i]);
-        SA("&");
-        ST(ArgCode[i])
+        IF SameAsFormal(p^.rep, ArgRep[i]) THEN
+          SA("&");
+          ST(ArgCode[i])
+        ELSIF p^.cls = C_VAR THEN
+          FailN(ArgNode[i]^.line, p^.name, ": a VAR actual has the representation of its formal (VII.G, X.A.2)")
+        ELSE
+          tmp := Fresh("yo");
+          pre := Join(pre, Join(CType(p^.rep), T(" "), tmp), T(";"));
+          IF p^.rep^.kind = R_UARRAY THEN
+            pre := Join(pre, Join(T(" "), tmp, T(" = y_like(")),
+                        Join(ArgCode[i], Join(T(", "), Num(ArgRep[i]^.nidx), T(", ")),
+                             Join(DescOf(p^.rep^.elem), T(");"), 0)))
+          ELSIF Deep(p^.rep) THEN
+            pre := Join(pre, Join(T(" y_init("), DescOf(p^.rep), T(", &")), Join(tmp, T(");"), 0))
+          ENDIF;
+          post := Join(post, T(" "), StoreText(ArgCode[i], ArgRep[i], tmp, p^.rep, ArgNode[i]^.line));
+          SA("&");
+          ST(tmp)
+        ENDIF
       ENDIF;
       i := i + 1;
       p := p^.next
     ENDWHILE;
     SA(")");
     ArgTop := base;
+    call := SE();
+    IF pre = 0 THEN RETURN call ENDIF;
+    SB();
+    SA("({ ");
+    ST(pre);
+    IF s^.ret^.kind = R_VOID THEN
+      SA(" ");
+      ST(call);
+      SA(";");
+      ST(post);
+      SA(" })")
+    ELSE
+      rv := Fresh("yv");
+      SA(" ");
+      ST(CType(s^.ret));
+      SA(" ");
+      ST(rv);
+      SA(" = ");
+      ST(call);
+      SA(";");
+      ST(post);
+      SA(" ");
+      ST(rv);
+      SA("; })")
+    ENDIF;
     RETURN SE()
   ENDPROCEDURE CallCode;
+
+  (* the decimal text of a number *)
+  PROCEDURE Num RETURNS Txt (CONST n: INT)
+    SB();
+    SI(n);
+    RETURN SE()
+  ENDPROCEDURE Num;
 
   (* an operator with user definitions visible: a call, when one fits *)
   PROCEDURE UserOp RETURNS BOOLEAN (CONST n: Node; CONST op: Txt; CONST x, y: Node;
@@ -140,10 +218,101 @@
       IF HidesStandard(s) THEN FailN(n^.line, op, ": no definition takes operands of these types") ENDIF;
       RETURN FALSE
     ENDIF;
+    NoteCall(c, n^.line);
     code := CallCode(c, base, nargs, n^.line);
     r := c^.ret;
     RETURN TRUE
   ENDPROCEDURE UserOp;
+
+  (* the routine being written calls s: the calls are kept for the checks *)
+  (* that need every body (X.A.4-6) *)
+  PROCEDURE NoteCall (CONST s: Sym; CONST line: INT)
+    VAR n: Node;
+    IF CurRoutine = Sym NIL THEN RETURN ENDIF;
+    n := NewNode(N_NAMEL, line);
+    n^.sym := s;
+    n^.next := CurRoutine^.calls;
+    CurRoutine^.calls := n;
+    RETURN
+  ENDPROCEDURE NoteCall;
+
+  (* := defined by the program for the type of a target (VII.B, X.A.1): the *)
+  (* statement that calls it, or 0 when the standard assignment applies. *)
+  (* Inside that definition its own type is assigned by the standard *)
+  (* assignment, or no definition of := could be written. *)
+  PROCEDURE UserAssign RETURNS Txt (CONST dst: Txt; CONST r: Rep; CONST code: Txt; CONST er: Rep;
+                                    CONST line: INT)
+    VAR s, a: Sym;
+        p, q: Param;
+        tmp: Txt;
+    s := Find(P_ASSIGN);
+    IF s = Sym NIL THEN RETURN 0 ENDIF;
+    s := Real(s);
+    IF s^.kind # S_ROUTINE THEN RETURN 0 ENDIF;
+    a := s;
+    WHILE a # Sym NIL DO
+      IF a^.nparams = 2 THEN
+        p := a^.params;
+        q := p^.next;
+        IF (p^.cls # C_CONST) AND (q^.cls = C_CONST) AND SameType(p^.rep, r) AND SameType(q^.rep, er) THEN
+          IF CurRoutine = a THEN RETURN 0 ENDIF;
+          NoteCall(a, line);
+          SB();
+          IF Identical(p^.rep, r) THEN
+            ST(a^.cname);
+            SA("(");
+            IF a^.level > 1 THEN
+              ST(FramePtr(a^.level - 1));
+              SA(", ")
+            ENDIF;
+            SA("&");
+            ST(dst)
+          ELSE
+            tmp := Fresh("yo");
+            SA("{ ");
+            ST(CType(p^.rep));
+            SA(" ");
+            ST(tmp);
+            SA(";");
+            IF Deep(p^.rep) THEN
+              SA(" y_init(");
+              ST(DescOf(p^.rep));
+              SA(", &");
+              ST(tmp);
+              SA(");")
+            ENDIF;
+            SA(" ");
+            ST(a^.cname);
+            SA("(");
+            IF a^.level > 1 THEN
+              ST(FramePtr(a^.level - 1));
+              SA(", ")
+            ENDIF;
+            SA("&");
+            ST(tmp)
+          ENDIF;
+          SA(", ");
+          ST(Convert(code, q^.rep, er));
+          SA(");");
+          IF NOT Identical(p^.rep, r) THEN
+            SA(" ");
+            ST(StoreText(dst, r, tmp, p^.rep, line));
+            SA(" }")
+          ENDIF;
+          RETURN SE()
+        ENDIF
+      ENDIF;
+      a := a^.alt
+    ENDWHILE;
+    RETURN 0
+  ENDPROCEDURE UserAssign;
+
+  (* an assignment, by a definition of := when the program has one *)
+  PROCEDURE Assign (CONST dst: Txt; CONST r: Rep; CONST code: Txt; CONST er: Rep; CONST line: INT)
+    VAR t: Txt := UserAssign(dst, r, code, er, line);
+    IF t # 0 THEN Emit(t) ELSE Store(dst, r, code, er, line) ENDIF;
+    RETURN
+  ENDPROCEDURE Assign;
 
   (* Id ( args ): a function or value-returning procedure, a standard *)
   (* operation, or the denotation of a structured value (VIII.B) *)
@@ -170,6 +339,7 @@
       c := Choose(s, base, nargs);
       IF c = Sym NIL THEN FailN(n^.line, n^.name, ": no definition takes actuals of these types") ENDIF
     ENDIF;
+    NoteCall(c, n^.line);
     code := CallCode(c, base, nargs, n^.line);
     r := c^.ret;
     IF statement AND (r^.kind # R_VOID) THEN

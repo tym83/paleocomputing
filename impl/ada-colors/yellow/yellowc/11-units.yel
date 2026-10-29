@@ -396,13 +396,17 @@
     WHILE p # Param NIL DO
       IF NOT Fits(p^.rep, ArgRep[i]) THEN TypeClash(ArgNode[i]^.line, p^.rep, ArgRep[i]) ENDIF;
       pc := Join(pf, T("->"), p^.cname);
+      CheckUnresolved(p^.rep, ArgRep[i], ArgNode[i]^.line);
       IF p^.cls = C_VAR THEN
         IF NOT IsVariable(ArgNode[i]) THEN FailN(ArgNode[i]^.line, p^.name, ": the actual of a VAR parameter must be a variable") ENDIF;
+        IF NOT SameAsFormal(p^.rep, ArgRep[i]) THEN
+          FailN(ArgNode[i]^.line, p^.name, ": a VAR actual has the representation of its formal (VII.G, X.A.2)")
+        ENDIF;
         Emit(Join(pc, T(" = &"), Join(ArgCode[i], T(";"), 0)))
       ELSIF Deep(p^.rep) THEN
         (* the process may outlive the value: it gets its own copy *)
         t := Fresh("t");
-        Emit(Join(T("{ "), CType(p^.rep), Join(T(" "), t, Join(T(" = "), ArgCode[i], T(";")))));
+        Emit(Join(T("{ "), CType(p^.rep), Join(T(" "), t, Join(T(" = "), Convert(ArgCode[i], p^.rep, ArgRep[i]), T(";")))));
         IF p^.rep^.kind = R_UARRAY THEN
           Emit(Join(T("y_copy(y_desc_vector("), DescOf(p^.rep^.elem), Join(T("), &"), pc, Join(T(", &"), t, T("); }")))))
         ELSE

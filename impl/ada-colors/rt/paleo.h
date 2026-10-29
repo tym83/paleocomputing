@@ -447,11 +447,15 @@ rt_int y_ix4(yarr a, rt_int i, rt_int j, rt_int k, rt_int l);
 rt_int y_low(yarr a, rt_int dim);
 rt_int y_high(yarr a, rt_int dim);
 void y_move(yarr *dst, rt_int at, yarr src, rt_int i, rt_int j, const ydesc *elem);
+yarr y_like(yarr a, int nd, const ydesc *elem); /* fresh, with a's bounds */
 
 /* ---- sets over any integer or scalar range (L-33) ---------------------- */
 typedef struct {
-  rt_int lo, hi;
-  uint64_t *w;
+  rt_int lo, hi;                               /* the base range */
+  uint64_t *w;                                 /* a bit per value of a small range */
+  rt_int *e;                                   /* a large range: members, ascending */
+  rt_int n;
+  int neg;                                     /* ... or the values left out */
 } yset;
 yset y_set_new(rt_int lo, rt_int hi);          /* the empty set */
 yset y_set_add(yset s, rt_int e);              /* a new set with e */

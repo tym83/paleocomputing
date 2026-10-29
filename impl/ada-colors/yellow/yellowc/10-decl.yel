@@ -327,7 +327,7 @@
         r, er: Rep;
         nm: Node;
         s: Sym;
-        c: Txt;
+        c, c2: Txt;
         ok: BOOLEAN;
         v: INT;
     IF (k = N_CONST) OR (k = N_VAR) THEN
@@ -342,7 +342,21 @@
         DeclareStorage(s, r, d^.line);
         IF d^.c # Node NIL THEN
           Expr(d^.c, r, c, er);
-          Store(SymPath(s), r, c, er, d^.line);
+          IF k = N_CONST THEN
+            Store(SymPath(s), r, c, er, d^.line)
+          ELSE
+            (* an initialization is an assignment (VII.B): of an opaque *)
+            (* type only with its exported := (X.B.3) *)
+            c2 := UserAssign(SymPath(s), r, c, er, d^.line);
+            IF c2 # 0 THEN
+              Emit(c2)
+            ELSE
+              IF r^.opaque AND ((r^.opaqueops MOD 2) = 0) THEN
+                FailN(d^.line, r^.tname, " is opaque here: := is not exported to initialize it (X.B.3)")
+              ENDIF;
+              Store(SymPath(s), r, c, er, d^.line)
+            ENDIF
+          ENDIF;
           IF k = N_CONST THEN
             Manifest(d^.c, ok, v);
             IF ok AND IsDiscrete(r) THEN
