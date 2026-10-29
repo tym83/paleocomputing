@@ -36,10 +36,6 @@ MODULE Exceptions
     RETURN
   ENDPROCEDURE Reraise;
 
-  PROCEDURE NoReturn ()
-    n := 1
-  ENDPROCEDURE NoReturn;
-
   Write(Try(0)); Write(" "); Write(Try(1)); Write(" "); Write(Try(2)); WriteLn();
   BEGIN
     EXCEPTION CASE mine => Write("mine reached the caller"); WriteLn()
@@ -72,11 +68,6 @@ MODULE Exceptions
     EXCEPTION CASE OVERFLOW => Write("overflow"); WriteLn()
     ENDEXCEPTION;
     Write(LARGESTINTEGER + 1)
-  END;
-  BEGIN
-    EXCEPTION CASE NO_RETURN => Write("fell out of a procedure"); WriteLn()
-    ENDEXCEPTION;
-    NoReturn()
   END;
   BEGIN
     (* a second exception in a handler is handled by the handler's own block *)

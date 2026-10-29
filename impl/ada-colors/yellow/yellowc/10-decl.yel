@@ -97,6 +97,14 @@
     (* overrides one of them, and neither hides them all (X.A.1) *)
     old := Find(d^.name);
     IF old # Sym NIL THEN old := Real(old) ENDIF;
+    IF (d^.ival = 0) AND (old # Sym NIL) THEN
+      IF old^.kind = S_STD THEN
+        (* "a warning during program translation will alert the programmer *)
+        (* to the possibility of a conflict between the names of a system *)
+        (* routine and the user routine" (X.A.1) *)
+        Warn(d^.line, Join(d^.name, T(" hides the system routine of that name (X.A.1)"), 0))
+      ENDIF
+    ENDIF;
     IF (d^.ival # 0) AND (old # Sym NIL) AND (old^.kind = S_ROUTINE) THEN
       s^.alt := old;
       IF (d^.ival = W_EXTENDS) AND (SameSignature(s, old) # Sym NIL) THEN
@@ -250,6 +258,13 @@
     ENDWHILE;
     EnterMonitor(s);
     Declarations(d^.c^.a);
+    IF BlockFalls(d^.c) THEN
+      IF s^.kind = S_PROCESS THEN
+        FailN(d^.line, d^.name, ": control reaches the end of the process, which ends with TERMINATE_PROCESS (IX.A.7)")
+      ELSE
+        FailN(d^.line, d^.name, ": control reaches the end of the routine, which ends with RETURN (IX.A.6)")
+      ENDIF
+    ENDIF;
     BlockStatements(d^.c);
     IF s^.kind = S_PROCESS THEN
       EmitS("rt_raise(Y_X_NO_RETURN);")

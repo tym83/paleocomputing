@@ -220,6 +220,7 @@
   (* that need every body (X.A.4-6) *)
   PROCEDURE NoteCall (CONST s: Sym; CONST line: INT)
     VAR n: Node;
+    IF NOT s^.func THEN ImpureCalls := ImpureCalls + 1 ENDIF;
     IF CurRoutine = Sym NIL THEN RETURN ENDIF;
     n := NewNode(N_NAMEL, line);
     n^.sym := s;

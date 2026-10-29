@@ -113,11 +113,17 @@ The rule numbers of the Appendix are used in yellowc's comments. Points that nee
 
 Assignment, procedure call or process activation, ASSERT, GOTO, EXIT (names its LOOP), RETURN,
 TERMINATE_PROCESS, PROPAGATE_EXCEPTION, IF/ELSIF/ELSE/ENDIF, SELECT/CASE/ELSE/ENDSELECT (no
-matching case and no ELSE: nothing is done), WHILE, FOR over a representation, LOOP name ...
-ENDLOOP name, [SIMULATED_TIME] BEGIN block END.
+matching case and no ELSE: nothing is done; the labels are distinct), WHILE, FOR over an
+ordered scalar or integer representation, LOOP name ... ENDLOOP name, [SIMULATED_TIME] BEGIN
+block END.
 
-- Falling out of the bottom of a routine or process "is an error" (IX.A.6-7). Not decidable
-  at translation in general: yellowc raises the trap `NO_RETURN`.
+- Falling out of the bottom of a routine or process "is an error" (IX.A.6-7): yellowc refuses
+  a body whose end control can reach, by a conservative reading of its statements (a LOOP
+  without an EXIT for it, a WHILE TRUE, and IF and SELECT with an ELSE whose every part ends
+  otherwise do not complete). The trap `NO_RETURN` remains as a guard.
+- Warnings, on the standard error and in a comment heading the C program: an ASSERT whose
+  expression calls a procedure (IX.A.3), a routine declared without EXTENDS or REPLACES that
+  hides a standard routine (X.A.1).
 - Labels are declared by LABEL and label only top-level statements of a block.
 
 ## 5. Routines, modules, templates (X, pp.1043-1059)

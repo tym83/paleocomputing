@@ -2888,6 +2888,7 @@ void y_open(yfile **fp, yarr name, rt_int mode) {
   /* the implementation's names for the two streams a program is given */
   if (strcmp(c, "INPUT") == 0 && mode == 0) y->f = stdin;
   else if (strcmp(c, "OUTPUT") == 0 && mode != 0) y->f = stdout;
+  else if (strcmp(c, "ERROR") == 0 && mode != 0) y->f = stderr;
   else y->f = fopen(c, mode == 0 ? "rb" : mode == 1 ? "wb" : "ab");
   if (!y->f) rt_raise_msg(Y_X_FILE, c);
   *fp = y;

@@ -140,6 +140,7 @@
     PutS(OInit, "rt_main_done();");
     PutS(OInit, "return 0;");
     PutS(OInit, "}");
+    WriteBuf(OWarn);
     WriteTxt(T("#include 'DQ'paleo.h'DQ'"));
     PUT(Output, 'LF');
     WriteTxt(T("#include <math.h>"));
@@ -166,6 +167,7 @@
   DimensionWord := N("DIMENSION");
   CharNames := T("NUL SOH STX ETX EOT ENQ ACK BEL BS HT LF VT FF CR SO SI DLE DC1 DC2 DC3 DC4 NAK SYN ETB CAN EM SUB ESC FS GS RS US SP DEL SQ DQ ");
   OPEN(Output, "OUTPUT", WRITE);
+  OPEN(Errors, "ERROR", WRITE);
   ReadSource();
   Lex();
   Program := ParseProgram();

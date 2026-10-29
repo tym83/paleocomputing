@@ -25,8 +25,8 @@ numbered fragments of section II, the not-equal sign written `#` and the up-arro
 | E14 real time | 1107 | `Clock is closed with another name` | `ENDPROCESS clock` (names are case sensitive, p.994) |
 | E15 convex hull | 1108-1109 | `expected a representation` | `ARRAY([1..(size+1)] OF point)` has no index type |
 | E17 exception handling | 1110 | `expected a statement` | label `overflowscope:` inside a WHILE; labels are for top-level statements of a block and must be declared (IX.A.4, VII.C) |
-| E18 line input | 1111 | `' ' is a character of two alphabets here: qualify it (VI.A.3)` | the blank is in ASCII and in pdp11chars |
-| E19 track reservation | 1112 | accepted (but see below) | |
+| E18 line input | 1111 | `newfile: control reaches the end of the routine, which ends with RETURN (IX.A.6)` | three procedures fall out of their bottom; then the blank is in ASCII and in pdp11chars |
+| E19 track reservation | 1112 | `returntrack: control reaches the end of the routine, which ends with RETURN (IX.A.6)` | falling out of the bottom of a routine is an error (IX.A.6) |
 | E20 SIFT scheduler | 1113-1114 | `expected =, found ;` | `CONST period: ARRAY(levels OF INT);` has no value (rule 7) |
 | E22 search tree | 1115-1116 | `key is not declared here` | `CONST SearchKey: key` — key is a component, the representation is Zodiac |
 | E24 hash tables | 1117-1118 | `expected :, found =` | `CONST index = ...` without a representation (rule 7) |
@@ -62,7 +62,7 @@ numbered fragments of section II, the not-equal sign written `#` and the up-arro
 - **E18 line input.** The blank qualified `pdp11chars ' '` (three places); the three
   procedures get their RETURN.
 - **E19 track reservation.** `returntrack` falls out of its bottom, which "is an error"
-  (IX.A.6): as printed its first call raises `NO_RETURN`. RETURN added.
+  (IX.A.6), seen at translation. RETURN added.
 - **E20 SIFT scheduler.** `period` made a VAR; `(ept > 0) AND enabled[pri]` (twice: as printed
   it is `ept > (0 AND enabled[pri])`); the IF inside the loop gets its own ENDIF. Translated
   only: the module's tables are local and "the mechanism for initializing" is left out. Note

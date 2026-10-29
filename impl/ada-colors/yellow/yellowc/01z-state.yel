@@ -93,6 +93,7 @@
     STop: INT := 0;
     LabelSeen: ARRAY (INTEGER [1..4096] OF INT);
     HasHandler: BOOLEAN := FALSE;    (* it has an exception handler *)
+    ImpureCalls: INT := 0;           (* calls of procedures in expressions so far *)
 
   (* 10-decl *)
   VAR

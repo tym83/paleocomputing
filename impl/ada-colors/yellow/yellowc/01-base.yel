@@ -227,6 +227,8 @@ MODULE yellowc
 
     (* sections of the C program *)
     OTypes, OStructs, OFrames, OGlobals, OProtos, OFuncs, OInit: Buf;
+    OWarn: Buf;                      (* the warnings, at the head of the C program *)
+    Errors: Text;                    (* the standard error stream, for warnings *)
     Body: Buf;                       (* the routine being written *)
     Locals: Buf;                     (* the fields of its frame *)
 
@@ -463,6 +465,36 @@ MODULE yellowc
     CLOSE(Output);
     PROPAGATE_EXCEPTION translation_error
   ENDPROCEDURE Fail;
+
+  (* a warning the Report asks for (IX.A.3, X.A.1): on the standard error *)
+  (* and in a comment at the head of the C program; translation goes on *)
+  PROCEDURE Warn (CONST line: INT; CONST msg: Txt)
+    VAR t: Txt;
+    SB();
+    SA("line ");
+    SI(line);
+    SA(": warning: ");
+    ST(msg);
+    t := SE();
+    WriteTo(Errors, t);
+    PUT(Errors, 'LF');
+    SB();
+    SA("/* ");
+    ST(t);
+    SA(" */");
+    t := SE();
+    Put(OWarn, t);
+    RETURN
+  ENDPROCEDURE Warn;
+
+  PROCEDURE WriteTo (VAR f: Text; CONST t: Txt)
+    VAR i: INT := TS[t];
+    WHILE i < (TS[t] + TL[t]) DO
+      PUT(f, Pool[i]);
+      i := i + 1
+    ENDWHILE;
+    RETURN
+  ENDPROCEDURE WriteTo;
 
   PROCEDURE FailS (CONST line: INT; CONST msg: ARRAY (1 DIMENSIONS OF ASCII))
     Fail(line, T(msg));

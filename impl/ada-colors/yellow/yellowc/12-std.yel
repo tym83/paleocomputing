@@ -475,6 +475,7 @@
       code := SE();
       RETURN
     ENDIF;
+    IF f = F_COND_CLAIM THEN ImpureCalls := ImpureCalls + 1 ENDIF;
     IF (f = F_CLAIM) OR (f = F_RELEASE) OR (f = F_COND_CLAIM) THEN
       NArgs(n, 1);
       StdVar(Arg(n, 1), R_SEM, a, ra);

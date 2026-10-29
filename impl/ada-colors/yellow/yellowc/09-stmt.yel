@@ -227,6 +227,112 @@
     RETURN
   ENDPROCEDURE CheckCaseLabels;
 
+  (* ---- falling out of the bottom (IX.A.6-7) ---------------------------------- *)
+  (* "It is an error to fall out the bottom of a routine": the end of a body *)
+  (* that control can reach is an error where the translator sees it. *)
+  (* Control reaches the end of a statement sequence unless its last *)
+  (* reachable statement ends otherwise: RETURN, TERMINATE_PROCESS, *)
+  (* PROPAGATE_EXCEPTION, GOTO, EXIT, a LOOP no EXIT leaves, a WHILE TRUE, *)
+  (* and IF and SELECT statements with an ELSE all of whose parts end so. *)
+
+  PROCEDURE Falls RETURNS BOOLEAN (CONST list: Node)
+    VAR s: Node := list;
+        reach: BOOLEAN := TRUE;
+    WHILE s # Node NIL DO
+      IF s^.text # 0 THEN reach := TRUE ENDIF;
+      IF reach THEN reach := Completes(s) ENDIF;
+      s := s^.next
+    ENDWHILE;
+    RETURN reach
+  ENDPROCEDURE Falls;
+
+  PROCEDURE BlockFalls RETURNS BOOLEAN (CONST b: Node)
+    VAR c: Node;
+    IF Falls(b^.c) THEN RETURN TRUE ENDIF;
+    IF b^.b = Node NIL THEN RETURN FALSE ENDIF;
+    (* the cases of a handler are terminal sequences of the block (X.F) *)
+    c := b^.b^.a;
+    WHILE c # Node NIL DO
+      IF Falls(c^.b) THEN RETURN TRUE ENDIF;
+      c := c^.next
+    ENDWHILE;
+    IF b^.b^.flag = 1 THEN RETURN Falls(b^.b^.b) ENDIF;
+    RETURN FALSE
+  ENDPROCEDURE BlockFalls;
+
+  PROCEDURE Completes RETURNS BOOLEAN (CONST s: Node)
+    VAR k: INT := s^.kind;
+        arm: Node;
+        ok: BOOLEAN;
+        v: INT;
+    IF (k = N_RETURN) OR (k = N_TERMINATE) OR (k = N_PROPAGATE) OR (k = N_GOTO) OR (k = N_EXIT) THEN
+      RETURN FALSE
+    ENDIF;
+    IF k = N_IF THEN
+      IF s^.flag # 1 THEN RETURN TRUE ENDIF;
+      arm := s^.a;
+      WHILE arm # Node NIL DO
+        IF Falls(arm^.b) THEN RETURN TRUE ENDIF;
+        arm := arm^.next
+      ENDWHILE;
+      RETURN Falls(s^.b)
+    ENDIF;
+    IF k = N_SELECT THEN
+      IF s^.flag # 1 THEN RETURN TRUE ENDIF;
+      arm := s^.b;
+      WHILE arm # Node NIL DO
+        IF Falls(arm^.b) THEN RETURN TRUE ENDIF;
+        arm := arm^.next
+      ENDWHILE;
+      RETURN Falls(s^.c)
+    ENDIF;
+    IF k = N_WHILE THEN
+      Manifest(s^.a, ok, v);
+      RETURN NOT (ok AND (v = 1))
+    ENDIF;
+    IF k = N_LOOP THEN RETURN Exits(s^.b, s^.name) ENDIF;
+    IF k = N_BEGIN THEN RETURN BlockFalls(s^.a) ENDIF;
+    RETURN TRUE
+  ENDPROCEDURE Completes;
+
+  (* does an EXIT name appear in the statements *)
+  PROCEDURE Exits RETURNS BOOLEAN (CONST list: Node; CONST name: Txt)
+    VAR s: Node := list;
+        arm: Node;
+    WHILE s # Node NIL DO
+      IF (s^.kind = N_EXIT) AND (s^.name = name) THEN RETURN TRUE ENDIF;
+      IF s^.kind = N_IF THEN
+        arm := s^.a;
+        WHILE arm # Node NIL DO
+          IF Exits(arm^.b, name) THEN RETURN TRUE ENDIF;
+          arm := arm^.next
+        ENDWHILE;
+        IF Exits(s^.b, name) THEN RETURN TRUE ENDIF
+      ELSIF s^.kind = N_SELECT THEN
+        arm := s^.b;
+        WHILE arm # Node NIL DO
+          IF Exits(arm^.b, name) THEN RETURN TRUE ENDIF;
+          arm := arm^.next
+        ENDWHILE;
+        IF Exits(s^.c, name) THEN RETURN TRUE ENDIF
+      ELSIF (s^.kind = N_WHILE) OR (s^.kind = N_FOR) OR (s^.kind = N_LOOP) THEN
+        IF Exits(s^.b, name) THEN RETURN TRUE ENDIF
+      ELSIF s^.kind = N_BEGIN THEN
+        IF Exits(s^.a^.c, name) THEN RETURN TRUE ENDIF;
+        IF s^.a^.b # Node NIL THEN
+          arm := s^.a^.b^.a;
+          WHILE arm # Node NIL DO
+            IF Exits(arm^.b, name) THEN RETURN TRUE ENDIF;
+            arm := arm^.next
+          ENDWHILE;
+          IF Exits(s^.a^.b^.b, name) THEN RETURN TRUE ENDIF
+        ENDIF
+      ENDIF;
+      s := s^.next
+    ENDWHILE;
+    RETURN FALSE
+  ENDPROCEDURE Exits;
+
   PROCEDURE Statements (CONST list: Node)
     VAR s: Node := list;
     WHILE s # Node NIL DO
@@ -421,7 +527,13 @@
         Emit(RaiseCode(s^.name))
       ENDIF
     ELSIF k = N_ASSERT THEN
+      i := ImpureCalls;
       c := Cond(s^.a);
+      IF ImpureCalls # i THEN
+        (* "translators shall give warning if the expression in an *)
+        (* assertion statement might have side-effects" (IX.A.3) *)
+        Warn(s^.line, T("the expression of this ASSERT calls a procedure: it might have side effects (IX.A.3)"))
+      ENDIF;
       Emit3("if (!(", c, ")) {");
       LeaveBlock();
       EmitS("rt_raise(RT_X_ASSERT); }")
@@ -444,7 +556,9 @@
         v, hi, t: Txt;
         sym: Sym;
     r := MakeRep(s^.a, 0, FALSE);
-    IF NOT IsDiscrete(r) THEN FailS(s^.line, "FOR goes over an integer or scalar representation") ENDIF;
+    IF NOT IsDiscrete(r) OR (r^.kind = R_BOOL) OR ((r^.kind = R_ENUM) AND NOT r^.ordered) THEN
+      FailS(s^.line, "FOR goes over an ordered scalar or integer representation (IX.B.2)")
+    ENDIF;
     CheckRepresented(r, s^.line);
     OpenScope(FALSE);
     sym := NewSym(S_CONST, s^.name);
