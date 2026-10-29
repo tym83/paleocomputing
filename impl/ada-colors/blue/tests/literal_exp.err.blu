@@ -1,0 +1,5 @@
+MAIN SEGMENT LITERAL_EXP
+   USES (TERMINAL);
+% the number of an exponent-spec must not exceed 1000 (3.2.2)
+PUT_LINE (TO_CHAR (1E-2000));
+END SEGMENT LITERAL_EXP;

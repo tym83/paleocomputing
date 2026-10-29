@@ -19,8 +19,9 @@ MAIN SEGMENT KUBE_BLUE
 %   * kinds of objects and write operations are enumerations (\POD, \UPDATE);
 %     the watch table is indexed by kind.
 %
-% Time is virtual; every process is a path of one parallel block started at 0,
-% so CLOCK is the system's time, in ms here.
+% Time is virtual; the system's time is the simulated machine's real-time clock,
+% REAL_TIME of the implementation's TERMINAL segment (CLOCK is processing time),
+% in ms here.
 
 CONST NOBJ: INTEGER := 64;
 CONST NNODES: INTEGER := 3;
@@ -225,7 +226,7 @@ END PAR_BLOCK;
 
 % ==== time =============================================================================
 FUNCTION NOW () RETURNS (INTEGER);
-   RETURN TO_FIXED (CLOCK * 1000, 0, ROUNDED);
+   RETURN TO_FIXED (REAL_TIME * 1000, 0, ROUNDED);
 END FUNCTION NOW;
 
 PROCEDURE PAUSE (MS: INTEGER);

@@ -41,6 +41,10 @@ code and prints. Nothing in `orig/` is ever edited to make a program pass.
 - **Appendix C's closed scopes import nothing** where 4.1.1 asks for it: the SYSTEM
   paths invoke `OUTPUT_DRIVER` and `INPUT_DRIVER`, which use own variables of
   TELETYPE, and pass the global `LT33_PS`, `LT33_KS`. Imports are added.
+- **Appendix C assigns BUFFER values outside the module that exports BUFFER**
+  (C-10: `IN_BUF` and `OUT_BUF := BUF_INIT ( )`). Outside its module an abstract
+  type is assigned only through its STORE_ operation (4.4), and the BUFFER of
+  4.6.8 has none: the driver's copy of that module adds `BUFFER$STORE_`.
 - **`REM`, `MAX` and `INTEGER_MAX` are used but defined nowhere.** `REM` becomes
   `MOD` (the operands are positive); MAX and INTEGER_MAX come from the drivers.
 - **Elided parts**: the `...` and lower-case placeholders are filled by the sed

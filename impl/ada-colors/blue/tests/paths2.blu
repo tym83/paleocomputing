@@ -1,0 +1,78 @@
+MAIN SEGMENT PATHS2
+   USES (TERMINAL);
+% TERMINATE reaches a ready path at once (4.6.3); processing takes time, so a WAIT
+% expires while another path computes (4.6.2); a loop prefix has the type of its
+% range (4.6.1); the paths of a block that fails to activate never run, and their
+% interrupt connections end with the block
+TYPE COLOR = ENUM (\RED, \GREEN, \BLUE);
+VAR S: SEMAPHORE (SYNCH) := NEW (0);
+VAR D: SEMAPHORE (SYNCH) := NEW (1);
+BLOCK
+   PAR_BLOCK
+      PATH H PRIORITY 5 IMPORTS (DATA: (# S));
+         REQUEST (# S);
+         PUT_LINE ('H terminates the preempted L');
+         TERMINATE (L);
+      END PATH H;
+      PATH L IMPORTS (DATA: (# S));
+         VAR K: INTEGER := 0;
+         LOOP UNTIL K = 100000 DO
+            K := K + 1;
+            IF K = 10 THEN
+               RELEASE (# S);
+            END IF;
+         END LOOP;
+         PUT_LINE ('L was not terminated');
+      END PATH L;
+   END PAR_BLOCK;
+END BLOCK
+EXCEPT
+   TERMINATED --> PUT_LINE ('TERMINATED'); END;
+END EXCEPT;
+BLOCK
+   PAR_BLOCK
+      PATH WAKER PRIORITY 5;
+         WAIT (.001\S10);
+         PUT_LINE ('WAKER wakes while BUSY computes, and terminates it');
+         TERMINATE (BUSY);
+      END PATH WAKER;
+      PATH BUSY;
+         VAR K: INTEGER := 0;
+         LOOP
+            K := K + 1;
+         END LOOP;
+      END PATH BUSY;
+   END PAR_BLOCK;
+END BLOCK
+EXCEPT
+   TERMINATED --> PUT_LINE ('TERMINATED after ' !! TO_CHAR (TO_FIXED (REAL_TIME * 1000, 0, ROUNDED))
+                            !! ' ms'); END;
+END EXCEPT;
+PAR_BLOCK
+   PATH A FOR C IN [\RED : \BLUE];
+      PUT_LINE ('path ' !! TO_CHAR (C));
+   END PATH A;
+END PAR_BLOCK;
+BLOCK
+   PAR_BLOCK
+      PATH ORPHAN IMPORTS (DATA: (# S));
+         PUT_LINE ('ORPHAN runs although its block failed to activate');
+      END PATH ORPHAN;
+      PATH BAD PRIORITY 1000;
+         PUT_LINE ('BAD');
+      END PATH BAD;
+   END PAR_BLOCK;
+END BLOCK
+EXCEPT
+   RANGE --> PUT_LINE ('RANGE: no path of the block ran'); END;
+END EXCEPT;
+LOOP FOR K IN [1:2] DO
+   PAR_BLOCK
+      PATH HANDLER CONNECT (D) IMPORTS (DATA: (# D));
+         REQUEST (# D);
+         PUT_LINE ('handler ' !! TO_CHAR (K));
+         RELEASE (# D);
+      END PATH HANDLER;
+   END PAR_BLOCK;
+END LOOP K;
+END SEGMENT PATHS2;

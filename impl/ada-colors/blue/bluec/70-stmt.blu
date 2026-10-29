@@ -223,6 +223,7 @@ PROCEDURE STMT (S: NODE);
          PUSH_CTX (2, END_L);
          OPEN_BODY (S@.B);
          POP_CTX;
+         CODES ('RT_B_TICK();');                    % an iteration takes time
          IF S@.C <> NIL THEN
             CODE (FMT2 ('if (@) goto @;', BOOL_EXPR (S@.C), END_L));
          END IF;
@@ -380,6 +381,8 @@ PROCEDURE FOR_STMT (S: NODE);
    OPEN_BODY (S@.B);
    POP_CTX;
    CLOSE_SCOPE;
+   CODES ('RT_B_TICK();');                       % an iteration takes time
+   CODE (FMT2 ('if (@ == @_hi) break;', IT, IT));  % the last value may be INTEGER.MAX
    CODE (FMT1 ('} } @: ;', END_L));
 END PROCEDURE FOR_STMT;
 

@@ -132,7 +132,14 @@ FUNCTION CONVERT (V: ET, T: TYP, LINE: INTEGER, SELF: TEXT) RETURNS (TEXT);
             !! STR (TYPE_NAME (RT), TYPE_NAME (RT).LEN) !! ' is required');
    END IF;
    IF RT@.KIND = T_INT THEN
-      RETURN RANGE_CHECK (RT, RESCALE (V, RT@.SCALE, LINE), SELF);
+      IF V.T@.SCALE > RT@.SCALE THEN
+         FAIL (LINE, 'the scale of the value exceeds the scale of the variable (3.2.5)');
+      END IF;
+      IF V.T@.SCALE = RT@.SCALE THEN
+         RETURN RANGE_CHECK (RT, V.C, SELF);
+      END IF;
+      RETURN RANGE_CHECK (RT, FMT3 ('rt_b_conv(@, @, @)', V.C, NUM (V.T@.SCALE), NUM (RT@.SCALE)),
+                          SELF);
    ORIF RT@.KIND = T_FLOAT ! RT@.KIND = T_ENUM THEN
       RETURN RANGE_CHECK (RT, V.C, SELF);
    ORIF RT@.KIND = T_STR ! RT@.KIND = T_BITS THEN
@@ -177,8 +184,166 @@ FUNCTION STORE_CODE (T: TYP, LV: TEXT, V: ET, LINE: INTEGER, SELF: TEXT) RETURNS
          RETURN CATS (CALL_SYM (Y, ARGS, LINE).C, ';');
       END BLOCK;
    END IF;
+   IF T@.KIND = T_ARR ! T@.KIND = T_REC THEN
+      IF HAS_ABS_PART (T) ! ELEMENTS_NEED_CHECK (T, V.T) THEN
+         RETURN COMPONENT_STORE (T, V.T, LV, CONVERT (V, T, LINE, SELF), LINE);
+      END IF;
+   END IF;
    RETURN ASSIGN_CODE (T, LV, CONVERT (V, T, LINE, SELF));
 END FUNCTION STORE_CODE;
+
+% does a value of type T have a component of an abstract type (seen outside its
+% module)? Its assignment and equality are then those of the abstract type, STORE_
+% and EQUAL_, component by component (3.8.4.1, 3.8.5, 3.9.4.1, 3.9.5, D.4)
+FUNCTION HAS_ABS_PART (T: TYP) RETURNS (BOOLEAN);
+   IF T@.KIND = T_ABS THEN
+      RETURN TRUE;
+   ORIF T@.KIND = T_ARR THEN
+      RETURN HAS_ABS_PART (T@.ELEM);
+   ORIF T@.KIND = T_REC THEN
+      BLOCK
+         VAR F: FIELD := T@.FIELDS;
+         LOOP UNTIL F = NIL DO
+            IF F@.KIND = 0 THEN
+               IF HAS_ABS_PART (F@.T) THEN
+                  RETURN TRUE;
+               END IF;
+            END IF;
+            F := F@.NEXT;
+         END LOOP;
+      END BLOCK;
+   END IF;
+   RETURN FALSE;
+END FUNCTION HAS_ABS_PART;
+
+% must the elements of an array value of type VT be checked against the range of
+% the elements of T (3.8.5: each element is assigned as by its own assignment)?
+FUNCTION ELEMENTS_NEED_CHECK (T, VT: TYP) RETURNS (BOOLEAN);
+   IF T@.KIND <> T_ARR ! REAL_TYPE (VT)@.KIND <> T_ARR THEN
+      RETURN FALSE;
+   END IF;
+   IF NOT IS_NUMERIC_OR_ENUM (REAL_TYPE (T@.ELEM)) THEN
+      RETURN FALSE;
+   END IF;
+   IF REAL_TYPE (T@.ELEM)@.LO_C.LEN = 0 THEN
+      RETURN FALSE;
+   END IF;
+   RETURN NOT SAME_RANGE (T@.ELEM, REAL_TYPE (VT)@.ELEM);
+END FUNCTION ELEMENTS_NEED_CHECK;
+
+% the statement that stores RV, of type VT, into LV of type T component by component
+FUNCTION COMPONENT_STORE (T, VT: TYP, LV, RV: TEXT, LINE: INTEGER) RETURNS (TEXT);
+   IF T@.KIND = T_ABS THEN
+      RETURN STORE_CODE (T, LV, MKET (RV, VT), LINE, NO_TEXT ());
+   ORIF T@.KIND = T_ARR & (HAS_ABS_PART (T) ! ELEMENTS_NEED_CHECK (T, VT)) THEN
+      BLOCK
+         CONST D: TEXT := NEW_NAME ('ad');
+         CONST S: TEXT := NEW_NAME ('as');
+         CONST I: TEXT := NEW_NAME ('ai');
+         CONST N: TEXT := NUM (T@.DIMS);
+         CONST VE: TYP := REAL_TYPE (VT)@.ELEM;
+         VAR R: TEXT := FMT4 ('{ @ *@ = &@; @ ', T@.CNAME, D, LV, T@.CNAME);
+         R := FMT3 ('@@ = @; if (!rt_b_same_extents(', R, S, RV);
+         R := FMT4 ('@@, @->lo, @->hi, ', R, N, D, D);
+         R := FMT3 ('@@.lo, @.hi)) rt_raise(RT_B_SIZE); ', R, S, S);
+         R := FMT4 ('@rt_int @n = rt_b_extent(@, @->lo, ', R, I, N, D);
+         R := FMT2 ('@@->hi);', R, D);
+         IF ELEMENTS_NEED_CHECK (T, VT) THEN         % all are checked before any is stored
+            R := FMT4 ('@ for (rt_int @ = 0; @ < @n; ', R, I, I, I);
+            R := FMT3 ('@@++) (void)@;', R, I, RANGE_CHECK (T@.ELEM, FMT2 ('@.p[@]', S, I),
+                                                          NO_TEXT ()));
+         END IF;
+         R := FMT4 ('@ for (rt_int @ = 0; @ < @n; ', R, I, I, I);
+         IF HAS_ABS_PART (T@.ELEM) ! T@.ELEM@.KIND = T_REC ! T@.ELEM@.KIND = T_ARR THEN
+            R := FMT3 ('@@++) { @ } }', R, I,
+                       COMPONENT_STORE (T@.ELEM, VE, FMT2 ('@->p[@]', D, I),
+                                        FMT2 ('@.p[@]', S, I), LINE));
+         ELSE
+            R := FMT3 ('@@++) { @ } }', R, I,
+                       ASSIGN_CODE (T@.ELEM, FMT2 ('@->p[@]', D, I), FMT2 ('@.p[@]', S, I)));
+         END IF;
+         RETURN R;
+      END BLOCK;
+   ORIF T@.KIND = T_REC & HAS_ABS_PART (T) THEN
+      BLOCK
+         CONST D: TEXT := NEW_NAME ('rd');
+         CONST S: TEXT := NEW_NAME ('rs');
+         VAR F: FIELD := T@.FIELDS;
+         VAR R: TEXT := FMT4 ('{ @ *@ = &@; @ ', T@.CNAME, D, LV, T@.CNAME);
+         R := FMT3 ('@@ = @;', R, S, RV);
+         LOOP UNTIL F = NIL DO
+            BLOCK
+               CONST DF: TEXT := FMT2 ('@->@', D, F@.CNAME);
+               CONST SF: TEXT := FMT2 ('@.@', S, F@.CNAME);
+               IF F@.KIND = 1 ! (F@.KIND = 2 & NOT HAS_ANY (T)) THEN
+                  R := FMT3 ('@ if (@ != @) rt_raise(RT_B_TYPE_MISMATCH);', R, DF, SF);
+               ORIF F@.KIND = 2 THEN
+                  R := FMT3 ('@ @ = @;', R, DF, SF);
+               ELSE
+                  R := FMT2 ('@ @', R, COMPONENT_STORE (F@.T, F@.T, DF, SF, LINE));
+               END IF;
+            END BLOCK;
+            F := F@.NEXT;
+         END LOOP;
+         RETURN CATS (R, ' }');
+      END BLOCK;
+   END IF;
+   RETURN ASSIGN_CODE (T, LV, RV);
+END FUNCTION COMPONENT_STORE;
+
+% the C that compares A and B of type T component by component (see HAS_ABS_PART)
+FUNCTION COMPONENT_EQUAL (T: TYP, A, B: TEXT, LINE: INTEGER) RETURNS (TEXT);
+   IF T@.KIND = T_ABS THEN
+      BLOCK
+         CONST ARGS: ARG := VAL_ARG (MKET (A, T), VAL_ARG (MKET (B, T), NIL));
+         CONST Y: SYM := USER_OPERATOR (MKN ('EQUAL_'), ARGS, LINE);
+         IF Y = NIL THEN
+            FAILT (LINE, 'no EQUAL_ for the abstract type ', TYPE_NAME (T));
+         END IF;
+         RETURN CALL_SYM (Y, ARGS, LINE).C;
+      END BLOCK;
+   ORIF T@.KIND = T_ARR & HAS_ABS_PART (T) THEN
+      BLOCK
+         CONST X: TEXT := NEW_NAME ('ea');
+         CONST Z: TEXT := NEW_NAME ('eb');
+         CONST I: TEXT := NEW_NAME ('ei');
+         CONST N: TEXT := NUM (T@.DIMS);
+         VAR R: TEXT := FMT4 ('({ @ @ = @, @ = ', T@.CNAME, X, A, Z);
+         R := FMT4 ('@@; int @r = rt_b_same_extents(@, ', R, B, I, N);
+         R := FMT4 ('@@.lo, @.hi, @.lo, ', R, X, X, Z);
+         R := FMT4 ('@@.hi); rt_int @n = rt_b_extent(@, ', R, Z, I, N);
+         R := FMT3 ('@@.lo, @.hi);', R, X, X);
+         R := FMT4 ('@ for (rt_int @ = 0; @r && @ < ', R, I, I, I);
+         R := FMT4 ('@@n; @++) @r = ', R, I, I, I);
+         R := FMT2 ('@@;', R, COMPONENT_EQUAL (T@.ELEM, FMT2 ('@.p[@]', X, I), FMT2 ('@.p[@]', Z, I),
+                                              LINE));
+         RETURN FMT2 ('@ @r; })', R, I);
+      END BLOCK;
+   ORIF T@.KIND = T_REC & HAS_ABS_PART (T) THEN
+      BLOCK
+         CONST X: TEXT := NEW_NAME ('ra');
+         CONST Z: TEXT := NEW_NAME ('rb');
+         VAR F: FIELD := T@.FIELDS;
+         VAR R: TEXT := FMT4 ('({ @ @ = @, @ = ', T@.CNAME, X, A, Z);
+         VAR EQ: TEXT := MK ('1');
+         R := FMT2 ('@@;', R, B);
+         LOOP UNTIL F = NIL DO
+            BLOCK
+               CONST C: TEXT := COMPONENT_EQUAL (F@.T, FMT2 ('@.@', X, F@.CNAME),
+                                                 FMT2 ('@.@', Z, F@.CNAME), LINE);
+               IF F@.TAGF.LEN > 0 THEN
+                  EQ := FMT3 ('@ && (!@ || @)', EQ, VARIANT_COND (F, T, X), C);
+               ELSE
+                  EQ := FMT2 ('@ && @', EQ, C);
+               END IF;
+            END BLOCK;
+            F := F@.NEXT;
+         END LOOP;
+         RETURN FMT2 ('@ @; })', R, EQ);
+      END BLOCK;
+   END IF;
+   RETURN EQUAL_CODE (T, A, B);
+END FUNCTION COMPONENT_EQUAL;
 
 % ---- prefix operators ----------------------------------------------------------------------
 FUNCTION UNARY (E: NODE) RETURNS (ET);
@@ -287,12 +452,8 @@ FUNCTION APPLY_OPERATOR (E: NODE, OP: TEXT, A, B: ET) RETURNS (ET);
       RETURN EQUALITY (E, OP, A, B);
    END IF;
    IF TEQS (OP, '<') ! TEQS (OP, '>') ! TEQS (OP, '<=') ! TEQS (OP, '>=') THEN
-      IF AT@.KIND = T_INT & BT@.KIND = T_INT THEN    % 3.2.4.6: at the larger scale
-         BLOCK
-            CONST S: INTEGER := MAX_INT (AT@.SCALE, BT@.SCALE);
-            RETURN MKET (FMT3 ('(@ @ @)', RESCALE_C (A.C, AT@.SCALE, S), OP,
-                               RESCALE_C (B.C, BT@.SCALE, S)), W@.TY_BOOL);
-         END BLOCK;
+      IF AT@.KIND = T_INT & BT@.KIND = T_INT THEN    % 3.2.4.6: exactly, at any scales
+         RETURN MKET (FIXED_COMPARE (A, B, OP), W@.TY_BOOL);
       ORIF AT@.KIND = T_FLOAT & BT@.KIND = T_FLOAT THEN
          RETURN MKET (FMT3 ('(@ @ @)', A.C, OP, B.C), W@.TY_BOOL);
       ORIF AT@.KIND = T_ENUM & SAME_CLASS (AT, BT) THEN
@@ -358,6 +519,15 @@ FUNCTION MAX_INT (A, B: INTEGER) RETURNS (INTEGER);
    RETURN B;
 END FUNCTION MAX_INT;
 
+% the comparison A OP B of fixed point values, exact whatever their scales (3.2.4.6)
+FUNCTION FIXED_COMPARE (A, B: ET, OP: TEXT) RETURNS (TEXT);
+   IF A.T@.SCALE = B.T@.SCALE THEN
+      RETURN FMT3 ('(@ @ @)', A.C, OP, B.C);
+   END IF;
+   RETURN CAT (FMT3 ('(rt_b_cmp(@, @, @', A.C, NUM (A.T@.SCALE), B.C),
+               FMT2 (', @) @ 0)', NUM (B.T@.SCALE), OP));
+END FUNCTION FIXED_COMPARE;
+
 % = and <> for every predefined type (3.x.4)
 FUNCTION EQUALITY (E: NODE, OP: TEXT, A, B: ET) RETURNS (ET);
    CONST AT: TYP := REAL_TYPE (A.T);
@@ -369,10 +539,7 @@ FUNCTION EQUALITY (E: NODE, OP: TEXT, A, B: ET) RETURNS (ET);
       END IF;
       R := FMT2 ('(@ == @)', A.C, B.C);
    ORIF AT@.KIND = T_INT & BT@.KIND = T_INT THEN
-      BLOCK
-         CONST S: INTEGER := MAX_INT (AT@.SCALE, BT@.SCALE);
-         R := FMT2 ('(@ == @)', RESCALE_C (A.C, AT@.SCALE, S), RESCALE_C (B.C, BT@.SCALE, S));
-      END BLOCK;
+      R := FIXED_COMPARE (A, B, MK ('=='));
    ELSE
       IF NOT SAME_CLASS (AT, BT) THEN
          FAIL (E@.LINE, 'comparing values of different types');
@@ -383,7 +550,11 @@ FUNCTION EQUALITY (E: NODE, OP: TEXT, A, B: ET) RETURNS (ET);
       IF AT@.KIND = T_REC & (HAS_ANY (AT) ! HAS_ANY (BT)) THEN
          FAIL (E@.LINE, 'a T(ANY) record cannot be compared (3.9.4.1)');
       END IF;
-      R := EQUAL_CODE (AT, A.C, B.C);
+      IF HAS_ABS_PART (AT) THEN
+         R := COMPONENT_EQUAL (AT, A.C, B.C, E@.LINE);
+      ELSE
+         R := EQUAL_CODE (AT, A.C, B.C);
+      END IF;
    END IF;
    IF TEQS (OP, '<>') THEN
       R := FMT1 ('(!@)', R);
@@ -469,7 +640,8 @@ FUNCTION SCALED_OPERATOR (E: NODE, OP: TEXT, A, B: ET) RETURNS (ET);
    FAIL (E@.LINE, 'there are no !MOD!, !**! or !/s! operators (3.1.4.1)');
 END FUNCTION SCALED_OPERATOR;
 
-% E IN range-spec (3.2.4.6, 3.3.4.6, 3.4.4.1): E is evaluated once
+% E IN range-spec (3.2.4.6, 3.3.4.6, 3.4.4.1): E is evaluated once; fixed point
+% values are compared at the larger scale, exactly
 FUNCTION IN_EXPR (E: NODE) RETURNS (ET);
    CONST V: ET := EXPR (E@.A, NIL);
    CONST T: TYP := REAL_TYPE (V.T);
@@ -487,19 +659,27 @@ FUNCTION IN_EXPR (E: NODE) RETURNS (ET);
    IF NOT (T@.KIND = T_INT ! T@.KIND = T_FLOAT ! T@.KIND = T_ENUM) THEN
       FAIL (E@.LINE, 'IN is for fixed, float and enumerated values');
    END IF;
-   LOC := CONVERT_TO_SCALE (LO, T, E@.LINE);
-   HIC := CONVERT_TO_SCALE (HI, T, E@.LINE);
+   IF NOT SAME_CLASS (REAL_TYPE (LO.T), T) ! NOT SAME_CLASS (REAL_TYPE (HI.T), T) THEN
+      FAIL (E@.LINE, 'the bounds of the range are not of the type of the value');
+   END IF;
    IF R@.IV = 1 ! R@.IV = 3 THEN
       LO_OP := MK ('<');
    END IF;
    IF R@.IV >= 2 THEN
       HI_OP := MK ('<');
    END IF;
-   BLOCK
-      CONST P1: TEXT := FMT4 ('({ @ @ = @; (@) ', CTYPE (T), TMP, V.C, LOC);
-      CONST P2: TEXT := FMT4 ('@@ @ && @ ', P1, LO_OP, TMP, TMP);
-      RETURN MKET (FMT3 ('@@ (@); })', P2, HI_OP, HIC), W@.TY_BOOL);
-   END BLOCK;
+   IF T@.KIND = T_INT THEN
+      BLOCK
+         CONST X: ET := MKET (TMP, V.T);
+         LOC := FIXED_COMPARE (LO, X, LO_OP);
+         HIC := FIXED_COMPARE (X, HI, HI_OP);
+      END BLOCK;
+   ELSE
+      LOC := FMT3 ('(@ @ @)', LO.C, LO_OP, TMP);
+      HIC := FMT3 ('(@ @ @)', TMP, HI_OP, HI.C);
+   END IF;
+   RETURN MKET (CAT (FMT4 ('({ @ @ = @; @ && ', CTYPE (T), TMP, V.C, LOC), FMT1 ('@; })', HIC)),
+                W@.TY_BOOL);
 END FUNCTION IN_EXPR;
 
 % a bound of a range of the type T (a fixed bound at the scale of T)

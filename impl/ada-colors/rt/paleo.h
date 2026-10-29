@@ -399,6 +399,18 @@ void rt_b_priority(rt_b_act *a, rt_int p);
 rt_int rt_b_clock(rt_b_act *a);                /* seconds, scale 20 */
 void rt_b_wait(rt_int v, rt_int scale);        /* seconds at the scale */
 
+/* BLUE additions: the rest of the 1978 specification */
+int rt_b_cmp(rt_int a, rt_int sa, rt_int b, rt_int sb);  /* order of a*2**-sa, b*2**-sb */
+rt_int rt_b_conv(rt_int v, rt_int from, rt_int to);    /* to a larger scale; RANGE */
+rt_int rt_b_fix_val(const char *s, rt_int scale, int rounded);  /* TO_FIXED of a literal */
+void rt_b_par_abandon(rt_b_par *par);              /* activation failed */
+void rt_b_path_begin(void);
+rt_int rt_b_real_time(void);                     /* seconds since the start, scale 20 */
+#define RT_B_STEPS_PER_US 1000
+extern rt_int rt_b_ticks, rt_b_quantum;
+void rt_b_charge(void);
+#define RT_B_TICK() do { if (++rt_b_ticks >= rt_b_quantum) rt_b_charge(); } while (0)
+
 
 /* YELLOW additions */
 /* Runtime support for the YELLOW translator (SRI International, 1978). Nothing

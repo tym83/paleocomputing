@@ -590,6 +590,9 @@ FUNCTION SAME_STATIC_BINDS (A, B: BIND) RETURNS (BOOLEAN);
             IF NOT SAME_LENGTH (P@.T, Q@.T) THEN       % an instance per string length:
                RETURN FALSE;                          % T stands for its whole type
             END IF;
+            IF NOT SAME_REPS (P@.T, Q@.T) THEN         % and per representation (?T REP ?R)
+               RETURN FALSE;
+            END IF;
          END IF;
          IF P@.HASMV <> Q@.HASMV ! P@.MV <> Q@.MV ! P@.R <> Q@.R THEN
             RETURN FALSE;
@@ -612,6 +615,43 @@ FUNCTION SAME_LENGTH (A, B: TYP) RETURNS (BOOLEAN);
    END IF;
    RETURN RA@.MLEN.OK = RB@.MLEN.OK;
 END FUNCTION SAME_LENGTH;
+
+% do two types have the same representation (reptype-spec, 3.1.3)?
+FUNCTION SAME_REPS (A, B: TYP) RETURNS (BOOLEAN);
+   CONST RA: NODE := A@.REPS;
+   CONST RB: NODE := B@.REPS;
+   IF RA = NIL ! RB = NIL THEN
+      RETURN RA = RB;
+   END IF;
+   IF RA = RB THEN
+      RETURN TRUE;
+   END IF;
+   IF NOT TEQ (RA@.NAME, RB@.NAME) THEN
+      RETURN FALSE;
+   END IF;
+   BLOCK
+      VAR X: NODE := RA@.A;
+      VAR Y: NODE := RB@.A;
+      LOOP UNTIL X = NIL ! Y = NIL DO
+         IF (X@.KIND = N_NAME ! X@.KIND = N_ENUMLIT) & (Y@.KIND = N_NAME ! Y@.KIND = N_ENUMLIT) THEN
+            IF NOT TEQ (X@.NAME, Y@.NAME) THEN
+               RETURN FALSE;
+            END IF;
+         ELSE
+            BLOCK
+               CONST MX: MVAL := MANIFEST (X);
+               CONST MY: MVAL := MANIFEST (Y);
+               IF MX.OK <> MY.OK ! MX.V <> MY.V THEN
+                  RETURN FALSE;
+               END IF;
+            END BLOCK;
+         END IF;
+         X := X@.NEXT;
+         Y := Y@.NEXT;
+      END LOOP;
+      RETURN X = NIL & Y = NIL & RA@.B = NIL & RB@.B = NIL;
+   END BLOCK;
+END FUNCTION SAME_REPS;
 
 % the routine passed for a routine parameter whose template is TS [5-8]
 FUNCTION ROUTINE_ARGUMENT (TS: NODE, E: NODE, LINE: INTEGER) RETURNS (SYM);

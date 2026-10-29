@@ -180,11 +180,14 @@ PROCEDURE LEX ();
             VAR KIND: INTEGER := K_NUM;
             VAR SCALE: INTEGER := 0;
             VAR NEG: BOOLEAN := FALSE;
+            VAR BIG: BOOLEAN := FALSE;             % beyond INTEGER.MAX
             J := I;
             V := 0;
             LOOP UNTIL NOT IS_DIGIT (AT_SRC (J)) DO
-               IF V < 100000000000000000 THEN
-                  V := V * 10 + AT_SRC (J) - 48;
+               IF V > (INTEGER.MAX - (AT_SRC (J) - 48)) // 10 THEN
+                  BIG := TRUE;
+               ELSE
+                  V := V * 10 + (AT_SRC (J) - 48);
                END IF;
                J := J + 1;
             END LOOP;
@@ -215,13 +218,18 @@ PROCEDURE LEX ();
                      J := J + 1;
                   END IF;
                   LOOP UNTIL NOT IS_DIGIT (AT_SRC (J)) DO
-                     SCALE := SCALE * 10 + AT_SRC (J) - 48;
+                     IF SCALE <= 100000 THEN
+                        SCALE := SCALE * 10 + (AT_SRC (J) - 48);
+                     END IF;
                      J := J + 1;
                   END LOOP;
                   IF NEG THEN
                      SCALE := -SCALE;
                   END IF;
                   V := SCALE;
+               END IF;
+               IF KIND = K_NUM & BIG THEN
+                  FAIL (LINE, 'an integer literal exceeds the largest INTEGER (3.2.2)');
                END IF;
                ADD_TOKEN (KIND, LINE, V, T);
             END BLOCK;

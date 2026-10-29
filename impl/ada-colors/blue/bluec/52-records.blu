@@ -268,7 +268,7 @@ FUNCTION SAME_BINDS (A, B: BIND) RETURNS (BOOLEAN);
    VAR P: BIND := A;
    VAR Q: BIND := B;
    LOOP UNTIL P = NIL ! Q = NIL DO
-      IF NOT SAME_TYPE (P@.T, Q@.T) THEN
+      IF NOT SAME_TYPE (P@.T, Q@.T) ! NOT SAME_LENGTH (P@.T, Q@.T) ! NOT SAME_REPS (P@.T, Q@.T) THEN
          RETURN FALSE;
       END IF;
       P := P@.NEXT;

@@ -1,0 +1,69 @@
+MAIN SEGMENT COPIES
+   USES (TERMINAL);
+% outputs are stored as by assignment, inputs are copies (4.3.2); the assignment
+% and equality of arrays and records of an abstract type are its STORE_ and EQUAL_
+% component by component (3.8.4, 3.8.5, 3.9.5, D.4); elements are range checked
+VAR X: INTEGER [1:10] := 1;
+VAR F: FIXED (2, 2, STD) := 0;
+VAR A: ARRAY [1:3] OF INTEGER;
+VAR S: ASCII_STR (3) := 'abc';
+VAR AA, AB: ARRAY [1:2] OF MOD3;
+VAR R1, R2: RECORD VAR F: MOD3; END RECORD;
+VAR E: ARRAY [1:3] OF INTEGER [0:10] := (1, 2, 3);
+VAR G: ARRAY [1:3] OF INTEGER := (4, 20, 6);
+BLOCK
+   P (# # X);
+END BLOCK
+EXCEPT
+   RANGE --> PUT_LINE ('the output 50 does not fit [1:10]'); END;
+END EXCEPT;
+P (# # F);
+PUT_LINE (TO_CHAR (X) !! ' ' !! TO_CHAR (F));
+A(1) := 1;
+Q (A # A);
+QS (S # S);
+AA (1) := MK (1);
+AA (2) := MK (2);
+AB := AA;
+AB (1) := MK (4);
+R1.F := MK (1);
+R2 := R1;
+R2.F := MK (7);
+PUT_LINE (TO_CHAR (AA = AB) !! ' ' !! TO_CHAR (R1 = R2) !! ' ' !! TO_CHAR (AA <> AB)
+          !! ' stores ' !! TO_CHAR (COUNT ()));
+BLOCK
+   E := G;
+END BLOCK
+EXCEPT
+   RANGE --> PUT_LINE ('element 20 does not fit [0:10]; E unchanged: '
+                       !! TO_CHAR (E (1)) !! TO_CHAR (E (2)) !! TO_CHAR (E (3))); END;
+END EXCEPT;
+PROCEDURE P (# # O: INTEGER);
+   O := 50;
+END PROCEDURE P;
+PROCEDURE Q (X: ARRAY [1:3] OF INTEGER # Y: ARRAY [1:3] OF INTEGER);
+   Y(1) := 99;
+   PUT_LINE ('input copied: ' !! TO_CHAR (X(1)));
+END PROCEDURE Q;
+PROCEDURE QS (X: ASCII_STR (3) # Y: ASCII_STR (3));
+   Y := 'xyz';
+   PUT_LINE ('input copied: ' !! X);
+END PROCEDURE QS;
+MODULE M EXPORTS (MOD3, MK, COUNT);
+   VAR N: INTEGER := 0;
+   TYPE MOD3 = RECORD VAR V: INTEGER; END RECORD;
+   FUNCTION MK (X: INTEGER) RETURNS (MOD3);
+      RETURN (V: X);
+   END FUNCTION MK;
+   PROCEDURE MOD3$STORE_ (A: MOD3 ## B: MOD3) IMPORTS (DATA: (# N));
+      B.V := A.V;
+      N := N + 1;
+   END PROCEDURE MOD3$STORE_;
+   FUNCTION MOD3$EQUAL_ (A, B: MOD3) RETURNS (BOOLEAN);
+      RETURN A.V MOD 3 = B.V MOD 3;
+   END FUNCTION MOD3$EQUAL_;
+   FUNCTION COUNT () RETURNS (INTEGER) IMPORTS (DATA: (N));
+      RETURN N;
+   END FUNCTION COUNT;
+END MODULE M;
+END SEGMENT COPIES;

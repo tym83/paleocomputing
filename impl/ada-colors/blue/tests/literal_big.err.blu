@@ -1,0 +1,5 @@
+MAIN SEGMENT LITERAL_BIG
+   USES (TERMINAL);
+% the value of a fixed-literal must lie in FIXED_MIN .. FIXED_MAX (3.2.2)
+VAR X: INTEGER := 1E128;
+END SEGMENT LITERAL_BIG;

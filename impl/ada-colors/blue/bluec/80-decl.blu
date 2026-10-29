@@ -583,7 +583,7 @@ PROCEDURE ROUTINE_BODY (Y: SYM);
    IF Y@.FRAMED THEN
       EMIT (O_STRUCTS, FMT2 ('struct @ {@ };', CS@.FTYPE, JOIN_BUF (CS@.FIELDS)));
    END IF;
-   EMIT (O_FUNCS, FMT2 ('@ { @', Y@.FWD, PROLOGUE));
+   EMIT (O_FUNCS, FMT2 ('@ { RT_B_TICK(); @', Y@.FWD, PROLOGUE));
    APPEND_BUF (W@.CODE # W@.OUT(O_FUNCS));
    IF Y@.RESULT@.KIND <> T_VOID THEN                 % 4.3.2: no value to return
       EMITS (O_FUNCS, 'rt_raise(RT_X_INIT);');

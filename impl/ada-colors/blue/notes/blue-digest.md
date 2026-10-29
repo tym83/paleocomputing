@@ -113,6 +113,14 @@ body END PATH P; ... END PAR_BLOCK;` — `WAIT (seconds);` `TERMINATE [(path)];`
 `PRIORITY (e [, path]);` `CLOCK [(path)]` `REQUEST (# s);` `RELEASE (# s);`.
 bluec runs paths on the rt scheduler of this repository: highest priority first,
 FIFO within a priority, virtual clock in microseconds, so every run prints the same.
+Processing takes time: every loop iteration and every routine invocation is a step,
+and 1000 steps take one virtual microsecond of the executing activation; the clock
+moves with them, so a WAIT expires while another path computes and the scheduler
+preempts it then (4.6.2). CLOCK is that processing time (4.6.5). The activations of a
+block are made held and put in the ready state together once all are activated
+(4.6.1); an exception during the activation (PRIORITY out of range, a second CONNECT)
+leaves none of them. TERMINATE reaches a ready or preempted activation when it next
+runs, before anything else (4.6.3). An interrupt connection ends with the block.
 
 ## 7. Generics (§5, PDF 1622–1638)
 
@@ -141,8 +149,12 @@ unreadable; the decision is bluec's.
 
 1. **Unhandled exceptions.** §4.5.7 calls an unhandled exception an error with
    undefined behaviour. bluec stops the program with `*** unhandled exception X`.
-2. **CLOCK** is the elapsed virtual time (bluec's reading of §4.6.5); its fixed
-   point scale is 20.
+2. **CLOCK** is the cumulative processing time of the activation (§4.6.5), counted
+   in steps (above); its fixed point scale is 20. The time of day, which the
+   language does not have, is `REAL_TIME` of the implementation's TERMINAL
+   segment: the simulated machine's real-time clock since the program began, in
+   seconds at scale 20. (Until October 2026 CLOCK was the elapsed time; the
+   programs of `../os`, `../kube` and `../labs/blue` now read REAL_TIME.)
 3. **ASCII** is the character set of §3.7.2 example 1 (p.3-92). Its `\EXT` (for
    ETX) is kept as printed. Quoted strings may contain any printable character.
 4. **An enumerated literal of several visible classes** with nothing wanted from
@@ -233,11 +245,12 @@ what it said another way, and what it could not say:
    outside one arrives after the race was decided. The kubelet of
    `kube/kube_blue.blu` reads a note (`POWERED`) left by the user before the
    TERMINATE.
-5. **No time of day.** CLOCK is the time of one path activation (4.6.5; the
-   specification says processing time, bluec gives elapsed time, decision 2).
-   The programs log time by making every process a path of one parallel block
-   started at 0, so that CLOCK is the system's time. Under the specification's
-   reading no program here could print a timestamp at all.
+5. **No time of day.** CLOCK is the processing time of one path activation
+   (4.6.5, decision 2). The language has no other clock, so the programs read the
+   simulated machine's real-time clock, `REAL_TIME` of the implementation's
+   TERMINAL segment, as an operating system would read its line clock. Until
+   October 2026 bluec gave CLOCK as the elapsed time and the programs made every
+   process a path of one parallel block started at 0 to log with it.
 6. **WAIT takes seconds in binary fixed point.** A millisecond is no binary
    fraction; `PAUSE` rounds it down at scale 30 and the runtime rounds up to the
    microsecond tick, so the runs keep the whole milliseconds of RED's.

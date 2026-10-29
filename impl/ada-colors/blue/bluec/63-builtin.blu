@@ -95,6 +95,9 @@ FUNCTION BUILTIN (E: NODE, WANT: TYP) RETURNS (ET);
    ORIF TEQS (NAME, 'STOP') THEN
       NEED_ARGS (E, 1, 1);
       RETURN MKET (FMT1 ('rt_exit(@)', INT_EXPR (E@.A)), W@.TY_VOID);
+   ORIF TEQS (NAME, 'REAL_TIME') THEN               % the machine's real-time clock
+      NEED_ARGS (E, 0, 0);
+      RETURN MKET (MK ('rt_b_real_time()'), INT_TYPE (20));
    END IF;
    % ---- conversions ----
    IF TEQS (NAME, 'TO_CHAR') THEN
@@ -277,6 +280,11 @@ FUNCTION TO_FIXED_CALL (E: NODE) RETURNS (ET);
             END IF;
          END IF;
       END BLOCK;
+   END IF;
+   IF T@.KIND = T_INT & (ARG_EXPR (E@.A)@.KIND = N_REAL ! ARG_EXPR (E@.A)@.KIND = N_INT) THEN
+      % a fixed-literal: its mathematical value, not first rounded to its own scale
+      RETURN MKET (FMT3 ('rt_b_fix_val(@, @, @)', CSTRING (ARG_EXPR (E@.A)@.NAME), NUM (S), RND),
+                   INT_TYPE (S));
    END IF;
    IF T@.KIND = T_INT THEN
       BLOCK

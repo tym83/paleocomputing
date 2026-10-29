@@ -35,11 +35,15 @@ PROCEDURE PARALLEL_BLOCK (S: NODE);
    END LOOP;
    CODE (FMT1 ('rt_b_par @ = {0};', TD));
    CODES ('rt_b_par_begin();');
+   % an exception while the paths are activated leaves none of them (4.6.1)
+   CODE (FMT2 ('{ rt_frame @a; if (RT_TRY(@a)) {', TD, TD));
    P := S@.A;
    LOOP UNTIL P = NIL DO
       ACTIVATE_PATH (P, TD);
       P := P@.NEXT;
    END LOOP;
+   CODE (FMT3 ('RT_POP(@a); } else { RT_POP(@a); rt_b_par_abandon(&@);', TD, TD, TD));
+   CODES ('rt_raise(rt_xcur); } }');
    CODE (FMT1 ('rt_b_par_end(&@);', TD));
    CLOSE_SCOPE;
    CODES ('}');
@@ -54,6 +58,7 @@ PROCEDURE ACTIVATE_PATH (P: NODE, TD: TEXT);
    CONST IT: TEXT := NEW_NAME ('pi');
    VAR PRIO: TEXT := MK ('0');
    VAR START: TEXT;
+   VAR LT: TYP := W@.TY_INT;                         % the type of the loop identifier
    EMIT (O_TYPEDEFS, FMT2 ('typedef struct @ @;', FT, FT));
    IF P@.C <> NIL THEN                               % PRIORITY priority-expr
       PRIO := FMT1 ('rt_b_check_priority(@)', INT_EXPR (P@.C));
@@ -61,8 +66,19 @@ PROCEDURE ACTIVATE_PATH (P: NODE, TD: TEXT);
    IF P@.FL = 1 THEN                                  % FOR I IN range
       BLOCK
          CONST R: NODE := P@.A;
-         VAR LO: TEXT := INT_EXPR (R@.A);
-         VAR HI: TEXT := INT_EXPR (R@.B);
+         CONST LV: ET := EXPR (R@.A, NIL);
+         VAR LO: TEXT := LV.C;
+         VAR HI: TEXT := EXPR (R@.B, LV.T).C;
+         CONST RT: TYP := REAL_TYPE (LV.T);
+         IF RT@.KIND = T_ENUM THEN                    % an integer or ordered enumerated
+            IF RT@.BASE@.UNORDERED THEN               % range, as for a loop (4.5.6.3)
+               FAIL (P@.LINE, 'a loop prefix over an UNORDERED type (4.6.1)');
+            END IF;
+            LT := RT@.BASE;
+            HI := EXPR (R@.B, LT).C;
+         ORIF RT@.KIND <> T_INT ! RT@.SCALE <> 0 THEN
+            FAIL (P@.LINE, 'the range of a loop prefix is integer or enumerated (4.6.1)');
+         END IF;
          IF R@.IV = 1 ! R@.IV = 3 THEN
             LO := FMT1 ('(@) + 1', LO);
          END IF;
@@ -88,7 +104,7 @@ PROCEDURE ACTIVATE_PATH (P: NODE, TD: TEXT);
          IF P@.FL = 1 THEN
             BLOCK
                VAR I: SYM := NEW_SYM (Y_CONST, P@.E@.NAME);
-               I@.T := W@.TY_INT;
+               I@.T := LT;
                I@.INPUT := TRUE;
                I@.ACCESS := IT;
                I@.LEVEL := -1;
@@ -104,8 +120,13 @@ PROCEDURE ACTIVATE_PATH (P: NODE, TD: TEXT);
       END BLOCK;
    END IF;
    START := FMT4 ('rt_b_path_start(&@, @, @, f, &', H, IT, FN, TD);
-   CODE (FMT3 ('@@, @); }', START, TD, PRIO));
-   PATH_BODY (P, FN, FT);
+   IF P@.FL = 1 THEN                                  % the last value may be INTEGER.MAX
+      CODE (FMT4 ('@@, @); if (@ == ', START, TD, PRIO, IT));
+      CODE (FMT1 ('@.hi) break; }', H));
+   ELSE
+      CODE (FMT3 ('@@, @); }', START, TD, PRIO));
+   END IF;
+   PATH_BODY (P, FN, FT, LT);
 END PROCEDURE ACTIVATE_PATH;
 
 % the C of the frame a path's frame points up to
@@ -117,7 +138,7 @@ FUNCTION UP_FRAME () RETURNS (TEXT);
 END FUNCTION UP_FRAME;
 
 % the C function of a path: its closed scope at the next level [4-88]
-PROCEDURE PATH_BODY (P: NODE, FN, FT: TEXT);
+PROCEDURE PATH_BODY (P: NODE, FN, FT: TEXT, LT: TYP);
    CONST SAVED_CODE: BUF := W@.CODE;
    CONST SAVED_CTXS: CTX := W@.CTXS;
    CONST OUTER: CSCOPE := W@.CS;
@@ -140,7 +161,7 @@ PROCEDURE PATH_BODY (P: NODE, FN, FT: TEXT);
    IF P@.FL = 1 THEN
       BLOCK
          VAR I: SYM := NEW_SYM (Y_CONST, P@.E@.NAME);
-         I@.T := W@.TY_INT;
+         I@.T := LT;
          I@.INPUT := TRUE;
          I@.FIELD := FMT1 ('l_@', P@.E@.NAME);
          I@.ACCESS := FMT1 ('F->l_@', P@.E@.NAME);
@@ -153,7 +174,7 @@ PROCEDURE PATH_BODY (P: NODE, FN, FT: TEXT);
    LEAVE_ISCOPE;
    EMIT (O_PROTOS, FMT1 ('static void @(void *arg);', FN));
    EMIT (O_FUNCS, FMT2 ('static void @(void *arg) { @ *F = arg; (void)F;', FN, FT));
-   EMIT (O_FUNCS, MK ('rt_frame pf; if (RT_TRY(pf)) {'));
+   EMIT (O_FUNCS, MK ('rt_frame pf; if (RT_TRY(pf)) { rt_b_path_begin();'));
    APPEND_BUF (W@.CODE # W@.OUT(O_FUNCS));
    EMIT (O_FUNCS, MK ('RT_POP(pf); } else { RT_POP(pf); rt_b_path_failed(rt_xcur, '));
    BLOCK                                             % the exceptions it may signal

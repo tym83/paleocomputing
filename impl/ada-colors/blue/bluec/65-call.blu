@@ -56,7 +56,18 @@ FUNCTION CALL_ARGS (E: NODE) RETURNS (ARG);
    RETURN HEAD;
 END FUNCTION CALL_ARGS;
 
+% a rounding mode applies to the operators of its expression, not to the arguments
+% of the routines invoked in it (3.1.4.1, p.3-16)
 FUNCTION CALL_EXPR (E: NODE, WANT: TYP) RETURNS (ET);
+   CONST SAVED: BOOLEAN := W@.ROUNDED;
+   VAR V: ET;
+   W@.ROUNDED := FALSE;
+   V := CALL_EXPR1 (E, WANT);
+   W@.ROUNDED := SAVED;
+   RETURN V;
+END FUNCTION CALL_EXPR;
+
+FUNCTION CALL_EXPR1 (E: NODE, WANT: TYP) RETURNS (ET);
    CONST ARGS: ARG := CALL_ARGS (E);
    VAR Y: SYM;
    IF TEQS (E@.NAME, 'START_IO') THEN               % a start-io-stmt [4-104]
@@ -97,7 +108,7 @@ FUNCTION CALL_EXPR (E: NODE, WANT: TYP) RETURNS (ET);
       FAILT (E@.LINE, 'unknown routine ', E@.NAME);
    END IF;
    RETURN CALL_SYM (Y, ARGS, E@.LINE);
-END FUNCTION CALL_EXPR;
+END FUNCTION CALL_EXPR1;
 
 FUNCTION BOUND_ROUTINE (NAME: TEXT) RETURNS (SYM);
    VAR B: BIND := W@.BINDS;
@@ -236,10 +247,17 @@ FUNCTION MATCH_SCORE (R: SYM, ARGS: ARG) RETURNS (INTEGER);
                RETURN 0;
             END IF;
             IF NOT SAME_TYPE (P@.T, AT) THEN
+               IF P@.MODE = M_INOUT THEN               % an inout matches exactly (4.3.2)
+                  RETURN 0;
+               END IF;
                EXACT := FALSE;
             END IF;
             IF REAL_TYPE (AT)@.KIND = T_INT & REAL_TYPE (P@.T)@.KIND = T_INT THEN
-               IF AT@.SCALE > P@.T@.SCALE THEN
+               % no implicit approximation: an input's scale may not exceed the
+               % formal's, the formal's of an output may not exceed the argument's
+               IF P@.MODE = M_IN & AT@.SCALE > P@.T@.SCALE THEN
+                  RETURN 0;
+               ORIF P@.MODE = M_OUT & P@.T@.SCALE > AT@.SCALE THEN
                   RETURN 0;
                END IF;
             END IF;
@@ -284,6 +302,9 @@ FUNCTION CALL_SYM (Y0: SYM, ARGS: ARG, LINE: INTEGER) RETURNS (ET);
    VAR A: ARG := ARGS;
    VAR C: TEXT := MK ('');
    VAR SEP: TEXT := MK ('');
+   VAR PRE: TEXT := MK ('');                         % temporaries of output arguments
+   VAR POST: TEXT := MK ('');                        % ... copied into them afterwards
+   VAR SHARED: BOOLEAN := FALSE;                     % may an input share an inout?
    IF Y@.GENERIC THEN
       Y := INSTANCE (Y, ARGS, LINE);
    END IF;
@@ -292,6 +313,18 @@ FUNCTION CALL_SYM (Y0: SYM, ARGS: ARG, LINE: INTEGER) RETURNS (ET);
       C := FRAME_OF (Y@.LEVEL);
       SEP := MK (', ');
    END IF;
+   BLOCK
+      VAR Q: ARG := ARGS;
+      LOOP UNTIL Q = NIL DO
+         IF Q@.MODE <> M_IN THEN
+            SHARED := TRUE;
+         END IF;
+         Q := Q@.NEXT;
+      END LOOP;
+      IF Y@.USES <> NIL THEN
+         SHARED := TRUE;
+      END IF;
+   END BLOCK;
    P := Y@.PARAMS;
    LOOP UNTIL P = NIL DO
       IF A = NIL THEN
@@ -305,12 +338,19 @@ FUNCTION CALL_SYM (Y0: SYM, ARGS: ARG, LINE: INTEGER) RETURNS (ET);
          ELSE
             BLOCK
                VAR V: ET;
+               VAR CV: TEXT;
                IF A@.HAVE & NOT WANT_SENSITIVE (A) THEN
                   V := A@.V;
                ELSE
                   V := EXPR (A@.E, P@.T);
                END IF;
-               C := FMT3 ('@@@', C, SEP, CONVERT (V, P@.T, LINE, NO_TEXT ()));
+               CV := CONVERT (V, P@.T, LINE, NO_TEXT ());
+               % an input is a copy: when the variable may also be reached as an inout
+               % (argument or import), it is copied at the invocation (4.3.2, p.4-18)
+               IF SHARED & V.LVAL & IS_STRUCTURED (P@.T) THEN
+                  CV := COPY_OF (P@.T, CV);
+               END IF;
+               C := FMT3 ('@@@', C, SEP, CV);
                SEP := MK (', ');
             END BLOCK;
          END IF;
@@ -341,10 +381,25 @@ FUNCTION CALL_SYM (Y0: SYM, ARGS: ARG, LINE: INTEGER) RETURNS (ET);
                FAILT (LINE, 'the inout or output argument is not of the type of the parameter: ',
                       TYPE_NAME (P@.T));
             END IF;
-            IF P@.MODE = M_INOUT & NOT SAME_TYPE (P@.T, V.T) THEN
+            IF P@.MODE = M_INOUT & NOT (SAME_TYPE (P@.T, V.T) & SAME_RANGE (P@.T, V.T)) THEN
                FAIL (LINE, 'an inout argument must match the parameter exactly (4.3.2)');
             END IF;
-            C := FMT3 ('@@&@', C, SEP, V.C);
+            IF P@.MODE = M_OUT & NOT (SAME_TYPE (P@.T, V.T) & SAME_RANGE (P@.T, V.T)) THEN
+               % the output is stored into the argument as by assignment: a temporary
+               % of the formal's type, then STORE_ with its conversions and checks
+               BLOCK
+                  CONST TMP: TEXT := NEW_NAME ('oa');
+                  CONST AP: TEXT := NEW_NAME ('op');
+                  PRE := FMT4 ('@ @ *@ = &@;', PRE, CTYPE (V.T), AP, V.C);
+                  PRE := FMT4 ('@ @ @ = @;', PRE, CTYPE (P@.T), TMP,
+                               COPY_OF (V.T, FMT1 ('(*@)', AP)));
+                  POST := FMT2 ('@ @', POST, STORE_CODE (V.T, FMT1 ('(*@)', AP),
+                                                        MKET (TMP, P@.T), LINE, NO_TEXT ()));
+                  C := FMT3 ('@@&@', C, SEP, TMP);
+               END BLOCK;
+            ELSE
+               C := FMT3 ('@@&@', C, SEP, V.C);
+            END IF;
             SEP := MK (', ');
          END BLOCK;
       END IF;
@@ -354,5 +409,35 @@ FUNCTION CALL_SYM (Y0: SYM, ARGS: ARG, LINE: INTEGER) RETURNS (ET);
    IF A <> NIL THEN
       FAIL (LINE, 'too many arguments');
    END IF;
+   IF PRE.LEN > 0 THEN
+      RETURN MKET (FMT4 ('({ @ @(@); @ })', PRE, Y@.ACCESS, C, POST), Y@.RESULT);
+   END IF;
    RETURN MKET (FMT2 ('@(@)', Y@.ACCESS, C), Y@.RESULT);
 END FUNCTION CALL_SYM;
+
+% a value that holds storage of its own: a copy shares none of it
+FUNCTION IS_STRUCTURED (T: TYP) RETURNS (BOOLEAN);
+   CONST K: INTEGER := REAL_TYPE (T)@.KIND;
+   RETURN K = T_STR ! K = T_BITS ! K = T_ARR ! K = T_REC;
+END FUNCTION IS_STRUCTURED;
+
+% the same range, where the types have one (an inout must match it exactly, 4.3.2)
+FUNCTION SAME_RANGE (A, B: TYP) RETURNS (BOOLEAN);
+   CONST RA: TYP := REAL_TYPE (A);
+   CONST RB: TYP := REAL_TYPE (B);
+   IF NOT IS_NUMERIC_OR_ENUM (RA) THEN
+      RETURN TRUE;
+   END IF;
+   IF IS_GEN_TEXT (RA@.LO_C) ! IS_GEN_TEXT (RA@.HI_C) ! IS_GEN_TEXT (RB@.LO_C)
+      ! IS_GEN_TEXT (RB@.HI_C) THEN
+      RETURN TRUE;                                    % [?L : ?U]: any range
+   END IF;
+   IF RA@.LO_C.LEN = 0 ! RB@.LO_C.LEN = 0 THEN
+      RETURN RA@.LO_C.LEN = RB@.LO_C.LEN;
+   END IF;
+   IF RA@.MLO.OK & RB@.MLO.OK & RA@.MHI.OK & RB@.MHI.OK THEN
+      RETURN RA@.MLO.V = RB@.MLO.V & RA@.MHI.V = RB@.MHI.V;
+   END IF;
+   RETURN TEQ (RA@.LO_C, RB@.LO_C) & TEQ (RA@.HI_C, RB@.HI_C);
+END FUNCTION SAME_RANGE;
+

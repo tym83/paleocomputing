@@ -1,6 +1,7 @@
 MAIN SEGMENT PATHS
    USES (TERMINAL);
-% parallel processing (4.6): paths, priorities, semaphores, WAIT, TERMINATE, CLOCK
+% parallel processing (4.6): paths, priorities, semaphores, WAIT, TERMINATE, CLOCK;
+% REAL_TIME is the simulated machine's clock (TERMINAL)
 VAR S: SEMAPHORE (SYNCH) := NEW (0);
 VAR MUTEX: SEMAPHORE (REGION) := NEW (1);
 VAR LOG: INTEGER := 0;
@@ -37,7 +38,9 @@ BLOCK
       END PATH SPINNER;
       PATH KILLER;
          WAIT (3);
-         PUT_LINE ('KILLER: SPINNER ran ' !! TO_CHAR (TO_FIXED (CLOCK (SPINNER), 0)) !! ' s');
+         % CLOCK is processing time (4.6.5): the SPINNER only waited
+         PUT_LINE ('KILLER at ' !! TO_CHAR (TO_FIXED (REAL_TIME, 0)) !! ' s: SPINNER computed '
+                   !! TO_CHAR (TO_FIXED (CLOCK (SPINNER), 0)) !! ' s');
          TERMINATE (SPINNER);
       END PATH KILLER;
    END PAR_BLOCK;

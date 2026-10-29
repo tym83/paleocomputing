@@ -1946,28 +1946,173 @@ rt_int rt_b_div_sc(rt_int a, rt_int b, rt_int k, int rounded) {
   return b_narrow(b_divide(a, (b_wide)b * b_pow2(-k), rounded));
 }
 
-/* a decimal literal [+-]ddd[.ddd][E[+-]ee] as a mantissa at the scale, rounded */
-rt_int rt_b_fix_lit(const char *s, rt_int scale) {
-  b_wide num = 0, den = 1;
-  int neg = 0, frac = 0;
+/* exact decimal values (3.2.2, 3.2.6.1): natural numbers of 32-bit limbs */
+typedef struct {
+  int n, cap;
+  uint32_t *d;
+} b_big;
+
+static void big_init(b_big *a, uint32_t v) {
+  a->cap = 16;
+  a->d = rt_alloc(sizeof *a->d * (size_t)a->cap);
+  a->d[0] = v;
+  a->n = v != 0;
+}
+
+static void big_room(b_big *a, int n) {
+  if (n <= a->cap) return;
+  uint32_t *d = rt_alloc(sizeof *d * (size_t)(n * 2));
+  if (a->n) memcpy(d, a->d, sizeof *d * (size_t)a->n);
+  a->d = d;
+  a->cap = n * 2;
+}
+
+static void big_mul_add(b_big *a, uint32_t m, uint32_t c) {
+  uint64_t carry = c;
+  for (int i = 0; i < a->n; i++) {
+    uint64_t t = (uint64_t)a->d[i] * m + carry;
+    a->d[i] = (uint32_t)t;
+    carry = t >> 32;
+  }
+  if (carry) {
+    big_room(a, a->n + 1);
+    a->d[a->n++] = (uint32_t)carry;
+  }
+}
+
+static void big_shl(b_big *a, rt_int k) {
+  if (!a->n || !k) return;
+  int w = (int)(k / 32), b = (int)(k % 32);
+  big_room(a, a->n + w + 1);
+  a->d[a->n + w] = 0;
+  for (int i = a->n - 1; i >= 0; i--) {
+    uint64_t t = (uint64_t)a->d[i] << b;
+    a->d[i + w + 1] |= (uint32_t)(t >> 32);
+    a->d[i + w] = (uint32_t)t;
+  }
+  for (int i = 0; i < w; i++) a->d[i] = 0;
+  a->n += w + 1;
+  while (a->n && !a->d[a->n - 1]) a->n--;
+}
+
+static int big_cmp(const b_big *a, const b_big *b) {
+  if (a->n != b->n) return a->n > b->n ? 1 : -1;
+  for (int i = a->n - 1; i >= 0; i--)
+    if (a->d[i] != b->d[i]) return a->d[i] > b->d[i] ? 1 : -1;
+  return 0;
+}
+
+static void big_sub(b_big *a, const b_big *b) {      /* a >= b */
+  int64_t borrow = 0;
+  for (int i = 0; i < a->n; i++) {
+    int64_t t = (int64_t)a->d[i] - (i < b->n ? b->d[i] : 0) - borrow;
+    borrow = t < 0;
+    a->d[i] = (uint32_t)(t + (borrow ? ((int64_t)1 << 32) : 0));
+  }
+  while (a->n && !a->d[a->n - 1]) a->n--;
+}
+
+static void big_copy(b_big *dst, const b_big *src) {
+  big_init(dst, 0);
+  big_room(dst, src->n + 1);
+  memcpy(dst->d, src->d, sizeof *dst->d * (size_t)src->n);
+  dst->n = src->n;
+}
+
+/* the digits DIG (n of them) times 10**e times 2**scale, as a mantissa: rounded to
+ * the nearest (ties to even) or truncated; *ovf when it exceeds 2**63 */
+static unsigned __int128 b_exact(const char *dig, int n, long e, rt_int scale, int rounded,
+                                 int *ovf) {
+  b_big num, den, t;
+  big_init(&num, 0);
+  big_init(&den, 1);
+  *ovf = 0;
+  for (int i = 0; i < n; i++) big_mul_add(&num, 10, (uint32_t)(dig[i] - '0'));
+  if (!num.n) return 0;
+  if (e > 5000) {
+    *ovf = 1;
+    return 0;
+  }
+  if (e < -5000) return 0;
+  for (; e > 0; e--) big_mul_add(&num, 10, 0);
+  for (; e < 0; e++) big_mul_add(&den, 10, 0);
+  if (scale > 5000) {
+    *ovf = 1;
+    return 0;
+  }
+  if (scale < -5000) return 0;
+  if (scale >= 0) big_shl(&num, scale);
+  else big_shl(&den, -scale);
+  big_copy(&t, &den);
+  big_shl(&t, 64);
+  if (big_cmp(&num, &t) >= 0) {
+    *ovf = 1;
+    return 0;
+  }
+  unsigned __int128 q = 0;
+  for (int j = 63; j >= 0; j--) {
+    big_copy(&t, &den);
+    big_shl(&t, j);
+    if (big_cmp(&num, &t) >= 0) {
+      big_sub(&num, &t);
+      q |= (unsigned __int128)1 << j;
+    }
+  }
+  if (rounded && num.n) {
+    big_shl(&num, 1);
+    int c = big_cmp(&num, &den);
+    if (c > 0 || (c == 0 && (q & 1))) q++;
+  }
+  return q;
+}
+
+/* a literal [+-]digits[.digits][E[+-]digits] as a mantissa at the scale; FALSE when
+ * it does not have that form */
+static int b_parse_lit(const char *s, rt_int scale, int rounded, rt_int *v) {
+  int neg = 0, nd = 0, frac = 0, point = 0;
   long e = 0;
+  char *dig = rt_alloc(strlen(s) + 1);
   if (*s == '+' || *s == '-') neg = *s++ == '-';
   for (; *s && *s != 'E'; s++) {
     if (*s == '.') {
-      frac = 1;
+      if (point) return 0;
+      point = 1;
       continue;
     }
-    if (num > ((b_wide)1 << 100)) rt_raise(RT_X_OVERFLOW);
-    num = num * 10 + (*s - '0');
-    if (frac) den *= 10;
+    if (*s < '0' || *s > '9') return 0;
+    if (nd || *s != '0') dig[nd++] = *s;
+    if (point) frac++;
   }
-  if (*s == 'E') e = strtol(s + 1, NULL, 10);
-  for (; e > 0; e--) num *= 10;
-  for (; e < 0; e++) den *= 10;
-  if (scale >= 0) num *= b_pow2(scale);
-  else den *= b_pow2(-scale);
-  b_wide q = b_divide(num, den, 1);
-  return b_narrow(neg ? -q : q);
+  if (*s == 'E') {
+    const char *x = ++s;
+    if (*x == '+' || *x == '-') x++;
+    if (!*x) return 0;
+    for (const char *y = x; *y; y++)
+      if (*y < '0' || *y > '9') return 0;
+    e = strtol(s, NULL, 10);
+    if (e > 100000) e = 100000;
+    if (e < -100000) e = -100000;
+  }
+  int ovf;
+  unsigned __int128 q = b_exact(dig, nd, e - frac, scale, rounded, &ovf);
+  if (ovf || q > ((unsigned __int128)1 << 63) || (!neg && q == ((unsigned __int128)1 << 63)))
+    rt_raise(RT_X_OVERFLOW);
+  *v = neg ? (rt_int)(-(b_wide)q) : (rt_int)q;
+  return 1;
+}
+
+/* a decimal literal [+-]ddd[.ddd][E[+-]ee] as a mantissa at the scale, rounded */
+rt_int rt_b_fix_lit(const char *s, rt_int scale) {
+  rt_int v = 0;
+  b_parse_lit(s, scale, 1, &v);
+  return v;
+}
+
+/* TO_FIXED of a literal: its mathematical value at the scale (3.2.6.1) */
+rt_int rt_b_fix_val(const char *s, rt_int scale, int rounded) {
+  rt_int v = 0;
+  b_parse_lit(s, scale, rounded, &v);
+  return v;
 }
 
 rstr rt_b_md(int op, rt_int a, rt_int b) {
@@ -2154,24 +2299,34 @@ rt_int rt_b_fix_of_float(double v, rt_int scale, int rounded) {
   return (rt_int)t;
 }
 
-/* a fixed-literal with blanks around it (3.2.6.1) */
+/* a fixed-literal with blanks around it (3.2.6.1): ddd[.ddd]\Sss, [+-]ddd[E[+-]ee]
+ * or [+-]ddd.ddd...\Sss; its value is converted exactly, then rounded or truncated */
 rt_int rt_b_fix_of_str(rstr s, rt_int scale, int rounded) {
-  char b[256];
   rt_int i = 0, n = 0;
-  (void)rounded;
+  char *b = rt_alloc((size_t)s.len + 1);
   while (i < s.len && s.p[i] == ' ') i++;
-  while (i < s.len && s.p[i] != ' ' && n < 255) b[n++] = (char)s.p[i++];
+  while (i < s.len && s.p[i] != ' ') b[n++] = (char)s.p[i++];
   while (i < s.len && s.p[i] == ' ') i++;
   b[n] = 0;
-  int ok = n > 0 && i == s.len, digits = 0;
-  for (int k = 0; ok && k < n; k++) {
-    char c = b[k];
-    if (c >= '0' && c <= '9') digits++;
-    else if (!((c == '+' || c == '-') && (k == 0 || b[k - 1] == 'E')) && c != '.' && c != 'E')
-      ok = 0;
+  if (n == 0 || i != s.len) rt_raise(RT_B_CONVERSION);
+  /* a scale-spec \S[+-]ddd ends a decimal-literal; without one there is no point */
+  char *sc = strstr(b, "\\S");
+  int point = strchr(b, '.') != NULL;
+  if (sc) {
+    const char *x = sc + 2;
+    if (*x == '+' || *x == '-') x++;
+    if (!*x) rt_raise(RT_B_CONVERSION);
+    for (; *x; x++)
+      if (*x < '0' || *x > '9') rt_raise(RT_B_CONVERSION);
+    *sc = 0;
+  } else if (point) {
+    rt_raise(RT_B_CONVERSION);
   }
-  if (!ok || !digits) rt_raise(RT_B_CONVERSION);
-  return rt_b_fix_lit(b, scale);
+  int digits = 0;
+  for (char *x = b; *x && *x != 'E'; x++) digits += *x >= '0' && *x <= '9';
+  rt_int v = 0;
+  if (!digits || !b_parse_lit(b, scale, rounded, &v)) rt_raise(RT_B_CONVERSION);
+  return v;
 }
 
 double rt_b_float_of_fix(rt_int v, rt_int scale) { return ldexp((double)v, (int)-scale); }
@@ -2221,6 +2376,9 @@ struct rt_b_act {
   int done, exc;
   rt_b_sem *holds[B_HOLDS];   /* REGION semaphores requested and not released */
   int nholds;
+  rt_b_sem *connected;        /* the interrupt semaphore of its CONNECT clause */
+  rt_int cpu;                 /* processing time, in virtual microseconds (4.6.5) */
+  rt_b_act *order;            /* the activations of a block, in the order made */
 };
 
 static rt_b_act b_main;
@@ -2283,11 +2441,17 @@ void rt_b_release(rt_b_sem *s) {
   }
   satisfy(best);
   maybe_preempt();
+  check_terminate();          /* TERMINATEd while it was preempted (4.6.3) */
 }
+
+/* the connection is made when the activation is (4.6.1); the path started next
+ * takes it */
+static __thread rt_b_sem *b_connecting;
 
 void rt_b_connect(rt_b_sem *s) {
   if (s->connected) rt_raise(rt_exc("INTERRUPT"));
   s->connected = 1;
+  b_connecting = s;
 }
 
 rt_b_paths rt_b_paths_new(void) {
@@ -2324,6 +2488,8 @@ void rt_b_path_start(rt_b_paths *p, rt_int i, void (*fn)(void *), void *frame, r
   a->frame = frame;
   a->par = par;
   a->start = rt_time();
+  a->connected = b_connecting;
+  b_connecting = NULL;
   a->sibling = par->children;
   par->children = a;
   p->a[i - p->lo] = a;
@@ -2341,7 +2507,7 @@ void rt_b_path_start(rt_b_paths *p, rt_int i, void (*fn)(void *), void *frame, r
   par->td.live++;
   t->all_next = all_tasks;
   all_tasks = t;
-  make_ready(t);
+  t->state = T_HELD;          /* ready when all the block's paths are activated */
   pthread_attr_t attr;
   pthread_attr_init(&attr);
 #ifdef __wasi__
@@ -2357,13 +2523,59 @@ void rt_b_path_start(rt_b_paths *p, rt_int i, void (*fn)(void *), void *frame, r
   trace("create", t);
 }
 
+/* the activations of a block, in the order they were made */
+static int b_activations(rt_b_par *par, rt_b_act ***v) {
+  int n = 0;
+  for (rt_b_act *c = par->children; c; c = c->sibling) n++;
+  *v = rt_alloc(sizeof **v * (size_t)(n ? n : 1));
+  int k = n;
+  for (rt_b_act *c = par->children; c; c = c->sibling) (*v)[--k] = c;
+  return n;
+}
+
+/* the paths are deactivated: their interrupt connections end */
+static void b_disconnect(rt_b_par *par) {
+  for (rt_b_act *c = par->children; c; c = c->sibling)
+    if (c->connected) {
+      c->connected->connected = 0;
+      c->connected = NULL;
+    }
+}
+
+/* all the activations are put in the ready state together (4.6.1) */
 void rt_b_par_end(rt_b_par *par) {
-  rt_b_act *me = b_me();
+  rt_b_act *me = b_me(), **v;
+  int n = b_activations(par, &v);
+  for (int i = 0; i < n; i++)
+    if (v[i]->act.t->state == T_HELD) make_ready(v[i]->act.t);
   me->waiting = par;
   rt_await_decl(&par->td);
   me->waiting = NULL;
+  b_disconnect(par);
   if (par->exc) rt_raise(par->exc);
 }
+
+/* an exception while the paths were activated (a PRIORITY out of range, a second
+ * CONNECT to an interrupt): the activations made so far never run */
+void rt_b_par_abandon(rt_b_par *par) {
+  for (rt_b_act *c = par->children; c; c = c->sibling) {
+    rt_task *t = c->act.t;
+    if (t->state == T_HELD) {
+      t->state = T_DONE;
+      c->done = 1;
+      par->td.live--;
+    }
+  }
+  b_disconnect(par);
+  if (b_connecting) {
+    b_connecting->connected = 0;
+    b_connecting = NULL;
+  }
+}
+
+/* the first thing a path activation does: it may have been TERMINATEd before it
+ * ever ran (4.6.3) */
+void rt_b_path_begin(void) { check_terminate(); }
 
 /* an exception ended the path: one it may signal, or TERMINATED, is raised by the
  * block (4.6.1); its REGION semaphores are released */
@@ -2394,6 +2606,7 @@ void rt_b_terminate(rt_b_act *a) {
   }
   if (a == b_me()) rt_raise(RT_X_TERMINATE);
   rt_exterminate(&a->act);
+  check_terminate();
 }
 
 void rt_b_priority(rt_b_act *a, rt_int p) {
@@ -2405,13 +2618,36 @@ void rt_b_priority(rt_b_act *a, rt_int p) {
     return;
   }
   rt_set_priority(&a->act, p);
+  check_terminate();
 }
 
-/* the virtual time since the activation began: a deviation, see blue/notes */
+/* the cumulative processing time of the activation, in seconds at scale 20 (4.6.5) */
 rt_int rt_b_clock(rt_b_act *a) {
   if (!a) a = b_me();
-  rt_int us = (a->done ? a->end : rt_time()) - a->start;
-  return (rt_int)(((b_wide)us << 20) / 1000000);
+  return (rt_int)(((b_wide)a->cpu << 20) / 1000000);
+}
+
+/* the time of the simulated machine's real-time clock since the program began, in
+ * seconds at scale 20: REAL_TIME of the TERMINAL segment */
+rt_int rt_b_real_time(void) { return (rt_int)(((b_wide)rt_time() << 20) / 1000000); }
+
+/* Processing takes time (4.6.2, 4.6.5): every loop iteration and every routine
+ * invocation of a BLUE program is a step, and RT_B_STEPS_PER_US steps take one
+ * virtual microsecond of the executing activation. The clock moves with them, so a
+ * WAIT expires while another activation computes, and the scheduler preempts it then. */
+rt_int rt_b_ticks, rt_b_quantum = RT_B_STEPS_PER_US;
+void rt_b_charge(void) {
+  rt_b_ticks = 0;
+  now++;
+  b_me()->cpu++;
+  for (rt_task *t = all_tasks; t; t = t->all_next)
+    if (t->state == T_BLOCKED && t->timed && t->wake <= now) {
+      t->result = t->timer_alt;
+      drop_waiters(t);
+      make_ready(t);
+    }
+  maybe_preempt();
+  check_terminate();
 }
 
 void rt_b_wait(rt_int v, rt_int scale) {
@@ -2423,6 +2659,56 @@ void rt_b_wait(rt_int v, rt_int scale) {
   b_wide us = (b_wide)v * 1000000;
   b_wide ticks = scale >= 0 ? (us + b_pow2(scale) - 1) / b_pow2(scale) : us * b_pow2(-scale);
   rt_delay(b_narrow(ticks));
+}
+
+
+/* ---- BLUE: the rest of the language (coverage of the 1978 specification) ---- */
+
+/* the number of significant bits of a magnitude */
+static int b_bits(unsigned __int128 m) {
+  int n = 0;
+  while (m) {
+    n++;
+    m >>= 1;
+  }
+  return n;
+}
+
+/* the order of a * 2**-sa and b * 2**-sb, exactly, whatever the scales (3.2.4.6) */
+int rt_b_cmp(rt_int a, rt_int sa, rt_int b, rt_int sb) {
+  if ((a < 0) != (b < 0)) return a < 0 ? -1 : 1;
+  if (a == 0 || b == 0) return a == b ? 0 : (a == 0 ? (b > 0 ? -1 : 1) : (a > 0 ? 1 : -1));
+  int neg = a < 0;
+  unsigned __int128 ma = neg ? -(b_wide)a : (b_wide)a, mb = neg ? -(b_wide)b : (b_wide)b;
+  rt_int d = sb - sa;              /* compare ma * 2**d with mb */
+  int r;
+  if (d >= 0) {
+    if (b_bits(ma) + d > 126) r = 1;
+    else {
+      unsigned __int128 x = ma << d;
+      r = x > mb ? 1 : x < mb ? -1 : 0;
+    }
+  } else {
+    if (b_bits(mb) - d > 126) r = -1;
+    else {
+      unsigned __int128 y = mb << -d;
+      r = ma > y ? 1 : ma < y ? -1 : 0;
+    }
+  }
+  return neg ? -r : r;
+}
+
+/* a value of scale FROM stored in an object of scale TO >= FROM: RANGE if it does not
+ * fit (3.2.5) */
+rt_int rt_b_conv(rt_int v, rt_int from, rt_int to) {
+  if (to <= from) return v;
+  if (v == 0) return 0;
+  rt_int k = to - from;
+  unsigned __int128 m = v < 0 ? -(b_wide)v : (b_wide)v;
+  if (b_bits(m) + k > 64) rt_raise(RT_X_RANGE);
+  b_wide r = (b_wide)v * ((b_wide)1 << k);
+  if (r > INT64_MAX || r < INT64_MIN) rt_raise(RT_X_RANGE);
+  return (rt_int)r;
 }
 
 

@@ -171,6 +171,13 @@ SEGMENT MONITORED_BUFFER_SEG
              RELEASE (# B.MUTEX);
         END PROCEDURE BUFFER$REMOVE;
 
+        % not in 4.6.8: Appendix C assigns BUFFER values outside the module (C-10,
+        % IN_BUF and OUT_BUF := BUF_INIT ( )), which 4.4 permits only through the
+        % type's STORE_ operation
+        PROCEDURE BUFFER$STORE_ (A: BUFFER (?N) ## B: BUFFER (?N));
+             B := A;
+        END PROCEDURE BUFFER$STORE_;
+
         END MODULE BOUNDED_BUFFER_MONITOR;
 
 END SEGMENT MONITORED_BUFFER_SEG;

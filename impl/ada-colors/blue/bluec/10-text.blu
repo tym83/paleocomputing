@@ -1,34 +1,32 @@
 
 % ==== texts, the arena and the output ====================================================
 
-% the character with code C, as a string of length one
+% the character with code C, as a string of length one. The printable characters
+% are looked up; the others are made from their representation, which only a
+% machine-dependent part may do (3.6.6.1, 4.5.5.2)
 FUNCTION CHAR_OF (C: INTEGER) RETURNS (ASCII_STR(1));
    IF C IN [32:126] THEN
       RETURN GRAPHIC[C - 32 : C - 32];
-   ORIF C = 9 THEN
-      RETURN ''\HT;
-   ORIF C = 10 THEN
-      RETURN ''\LF;
-   ORIF C = 13 THEN
-      RETURN ''\CR;
    END IF;
+   BLOCK
+      VAR B: BIT(8) := BIN '00000000';
+      VAR V: INTEGER := C MOD 256;
+      LOOP FOR K IN [0:7] DO
+         IF V MOD 2 = 1 THEN
+            B[7 - K : 7 - K] := BIN '1';
+         END IF;
+         V := V // 2;
+      END LOOP K;
+      SELECT OBJECT_MACHINE FROM
+         PDP_11 --> RETURN [ASCII_STR(1)]$$(B); END;
+      END SELECT;
+   END BLOCK;
    RETURN '?';
 END FUNCTION CHAR_OF;
 
-% the code of a character; the language gives no way to ask but through the
-% machine-dependent TO_BIT (3.6.6.1), so the printable characters are looked up
+% the code of a character: the value of its representation (3.6.6.1)
 FUNCTION CODE_OF (S: ASCII_STR(1)) RETURNS (INTEGER);
-   LOOP FOR I IN [0:94] DO
-      IF GRAPHIC[I:I] = S THEN
-         RETURN I + 32;
-      END IF;
-   END LOOP I;
-   IF S = ''\HT THEN
-      RETURN 9;
-   ORIF S = ''\LF THEN
-      RETURN 10;
-   END IF;
-   RETURN 13;
+   RETURN TO_FIXED (TO_BIT (S));
 END FUNCTION CODE_OF;
 
 % the hash of a name: its length and three of its characters
