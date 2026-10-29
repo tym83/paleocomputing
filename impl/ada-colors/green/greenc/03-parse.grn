@@ -521,13 +521,17 @@
          X.A := ARGS;
          X.FLAG := 2;
       elsif AT_KW("DIGITS") or AT_KW("DELTA") then
+         -- an accuracy constraint (RM79 3.5.5): B the digits or delta, A the range
          SKIP;
-         SIMPLE_EXPR(R);
+         SIMPLE_EXPR(X.B);
+         X.FLAG := 3;
          if AT_KW("RANGE") then
             SKIP;
-            SIMPLE_EXPR(R);
+            R := NN(N_RANGE, LINE);
+            SIMPLE_EXPR(R.A);
             EXPECT_OP("..");
-            SIMPLE_EXPR(R);
+            SIMPLE_EXPR(R.B);
+            X.A := R;
          end if;
       end if;
       RES := X;
@@ -539,7 +543,8 @@
    procedure TYPE_SPEC(RES : out NODE) is
       X : NODE;
    begin
-      if AT_OP("(") or AT_KW("ARRAY") or AT_KW("RECORD") or AT_KW("ACCESS") or AT_KW("RANGE") then
+      if AT_OP("(") or AT_KW("ARRAY") or AT_KW("RECORD") or AT_KW("ACCESS") or AT_KW("RANGE")
+         or AT_KW("DIGITS") or AT_KW("DELTA") or AT_KW("NEW") then
          TYPE_DEF(X);
       else
          SUBTYPE_IND(X);
@@ -586,14 +591,21 @@
          return;
       end if;
       if AT_KW("DIGITS") or AT_KW("DELTA") then
-         SKIP;
+         -- real types (RM79 3.5.5): FLAG 1 digits, 2 delta; A the accuracy, B the range
          X := NN(D_FLOAT, LINE);
-         SIMPLE_EXPR(R);
+         X.FLAG := 1;
+         if AT_KW("DELTA") then
+            X.FLAG := 2;
+         end if;
+         SKIP;
+         SIMPLE_EXPR(X.A);
          if AT_KW("RANGE") then
             SKIP;
-            SIMPLE_EXPR(R);
+            R := NN(N_RANGE, LINE);
+            SIMPLE_EXPR(R.A);
             EXPECT_OP("..");
-            SIMPLE_EXPR(R);
+            SIMPLE_EXPR(R.B);
+            X.B := R;
          end if;
          RES := X;
          return;

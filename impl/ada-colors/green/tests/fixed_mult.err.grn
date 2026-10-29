@@ -1,0 +1,6 @@
+procedure MAIN is
+   type VOLT is delta 0.125 range 0.0 .. 10.0;
+   V : VOLT := 1.0;
+begin
+   V := V * V;
+end MAIN;

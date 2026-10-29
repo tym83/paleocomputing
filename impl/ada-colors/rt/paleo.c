@@ -1925,6 +1925,33 @@ double rt_g_fpow(double a, rt_int b, int k) {
 }
 double rt_g_fneg(double a, int k) { return g_fres(-a, a, 1.0, k, 0); }
 
+/* conversion of a real value to an integer type rounds (RM79 4.6) */
+rt_int rt_g_round(double v) {
+  if (isnan(v) || v >= 9223372036854775807.0 || v <= -9223372036854775808.0) rt_raise(RT_X_OVERFLOW);
+  return (rt_int)llround(v);
+}
+
+/* SHORT_INTEGER: a half word of the simulated machine (RM79 3.5.4) */
+rt_int rt_g_short(rt_int v) {
+  if (v < -2147483648LL || v > 2147483647LL) rt_raise(RT_X_OVERFLOW);
+  return v;
+}
+
+/* fixed point (RM79 3.5.5): SMALL is the largest power of two not above the
+ * delta; a value is a multiple of SMALL */
+double rt_g_small(double delta) {
+  if (!(delta > 0.0)) rt_raise(RT_X_RANGE);
+  double s = 1.0;
+  while (s > delta) s /= 2.0;
+  while (s * 2.0 <= delta) s *= 2.0;
+  return s;
+}
+
+double rt_g_fix(double v, double small) {
+  if (isnan(v) || isinf(v)) rt_raise(RT_X_OVERFLOW);
+  return nearbyint(v / small) * small;
+}
+
 /* BLUE additions */
 /* ---- BLUE (SofTech, 15 Feb 1978) --------------------------------------- */
 

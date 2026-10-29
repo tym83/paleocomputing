@@ -68,15 +68,41 @@
       -- type equivalence is by name, applied strictly (RM79 3.3): every type
       -- definition is a distinct type; the predefined scalar types and STRING
       -- are each one type
-      if A = B then
-         return TRUE;
-      end if;
-      if A = null or B = null or else A.KIND /= B.KIND then
-         return FALSE;
-      end if;
-      return A.KIND = T_INT or A.KIND = T_BOOL or A.KIND = T_FLOAT or A.KIND = T_CHAR
-         or A.KIND = T_STRING or A.KIND = T_VOID;
+      return A = B;
    end SAME;
+
+   -- the predefined type a numeric type derives from (RM79 3.4, 3.5.4)
+   function ROOT(T : TYP) return TYP is
+      R : TYP := T;
+   begin
+      while R.PARENT /= null loop
+         R := R.PARENT;
+      end loop;
+      return R;
+   end ROOT;
+
+   -- explicit conversion is allowed between a type and its ancestors (RM79 4.6)
+   function DERIVED_FROM(A, B : TYP) return BOOLEAN is
+      R : TYP := A;
+   begin
+      while R /= null loop
+         if R = B then
+            return TRUE;
+         end if;
+         R := R.PARENT;
+      end loop;
+      return FALSE;
+   end DERIVED_FROM;
+
+   function IS_NUMERIC(T : TYP) return BOOLEAN is
+   begin
+      return T.KIND = T_INT or T.KIND = T_FLOAT or T.KIND = T_FIXED;
+   end IS_NUMERIC;
+
+   function IS_DISCRETE(T : TYP) return BOOLEAN is
+   begin
+      return T.KIND = T_INT or T.KIND = T_ENUM or T.KIND = T_CHAR or T.KIND = T_BOOL;
+   end IS_DISCRETE;
 
    function SAME_SIGNATURE(A, B : PARM) return BOOLEAN is
       X : PARM := A;
@@ -139,7 +165,7 @@
 
    procedure NEW_CONS return CONS is
    begin
-      return new CONS_REC(null, null, null, 0, 0, FALSE, null, null);
+      return new CONS_REC(null, null, null, 0, 0, FALSE, null, null, null);
    end NEW_CONS;
 
    function KIND_NAME(T : TYP) return STRING is
@@ -154,6 +180,7 @@
          when 5 => return "STRING";
          when 10 => return "null";
          when 11 => return "CHARACTER";
+         when 16 => return "a fixed point type";
          when others => return "an anonymous type";
       end case;
    end KIND_NAME;
@@ -190,7 +217,7 @@
       case T.KIND of
          when 1 => R := MK("rt_int");
          when 2 | 4 | 11 => R := MK("int");
-         when 3 => R := MK("double");
+         when 3 | 16 => R := MK("double");
          when 5 => R := MK("rstr");
          when 9 => R := MK("void");
          when 13 => R := MK("rt_act");
@@ -313,9 +340,26 @@
          end if;
       elsif E.KIND = N_NAME then
          Y := LOOKUP(E.NAME.all);
-         if Y /= null and then Y.KIND = Y_CONST and then Y.HASMV then
+         if Y /= null and then (Y.KIND = Y_CONST or Y.KIND = Y_ENUMLIT) and then Y.HASMV then
             OK := TRUE;
             V := Y.MVALUE;
+         end if;
+      elsif E.KIND = N_ATTR and then E.A.KIND = N_NAME and then (E.NAME.all = "FIRST" or E.NAME.all = "LAST") then
+         -- T'FIRST and T'LAST of a type with static bounds (RM79 4.8)
+         Y := LOOKUP(E.A.NAME.all);
+         if Y /= null and then Y.KIND = Y_TYPE and then Y.C /= null and then Y.C.HASM then
+            OK := TRUE;
+            if E.NAME.all = "FIRST" then
+               V := Y.C.MLO;
+            else
+               V := Y.C.MHI;
+            end if;
+         end if;
+      elsif E.KIND = N_APPLY and then E.A.KIND = N_NAME and then LIST_LEN(E.B) = 1 then
+         -- a qualified or converted static integer (RM79 4.8)
+         Y := LOOKUP(E.A.NAME.all);
+         if Y /= null and then Y.KIND = Y_TYPE and then Y.T /= null and then Y.T.KIND = T_INT then
+            MANIFEST(E.B, V, OK);
          end if;
       end if;
    end MANIFEST;
@@ -353,19 +397,25 @@
          C.HASM := Y.C.HASM;
          C.LO2 := Y.C.LO2;
          C.HI2 := Y.C.HI2;
+         C.ACC := Y.C.ACC;
       end if;
       if T = null then
          FAIL(ST.LINE, "the type " & ST.NAME.all & " is used before its full declaration");
       end if;
-      if ST.FLAG = 1 then
+      if ST.FLAG = 3 then
+         -- an accuracy constraint, digits or delta, and perhaps a range (RM79 3.5.5)
+         if T.KIND /= T_FLOAT and T.KIND /= T_FIXED then
+            FAIL(ST.LINE, "an accuracy constraint applies to a real type (RM79 3.5.5)");
+         end if;
+         GEXPR(ST.B, null, DUMMY, C.ACC);
+      end if;
+      if ST.FLAG = 1 or (ST.FLAG = 3 and ST.A /= null) then
          -- range constraint (RM79 3.5)
          R := ST.A;
-         GEXPR(R.A, T, DUMMY, C.LO);
-         GEXPR(R.B, T, DUMMY, C.HI);
-         MANIFEST(R.A, C.MLO, OK);
-         C.HASM := OK;
-         MANIFEST(R.B, C.MHI, OK);
-         C.HASM := C.HASM and OK;
+         if not IS_NUMERIC(T) and not IS_DISCRETE(T) then
+            FAIL(ST.LINE, "a range constraint applies to a scalar type (RM79 3.5)");
+         end if;
+         RANGE_OF(R, T, C);
       elsif ST.FLAG = 2 then
          -- index constraint (RM79 3.6); STRING objects count from 1
          R := ST.A;
@@ -385,6 +435,113 @@
       end if;
    end RESOLVE;
 
+   -- the bounds of a range constraint of type T, checked against T
+   procedure RANGE_OF(R : NODE; T : TYP; C : CONS) is
+      DUMMY : TYP;
+      OK : BOOLEAN;
+   begin
+      GEXPR(R.A, T, DUMMY, C.LO);
+      CHECK_TYPE(DUMMY, T, R.LINE);
+      GEXPR(R.B, T, DUMMY, C.HI);
+      CHECK_TYPE(DUMMY, T, R.LINE);
+      if T.KIND = T_FIXED then
+         C.LO := MK("(" & C.LO.all & ")");
+         C.HI := MK("(" & C.HI.all & ")");
+      end if;
+      MANIFEST(R.A, C.MLO, OK);
+      C.HASM := OK;
+      MANIFEST(R.B, C.MHI, OK);
+      C.HASM := C.HASM and OK;
+   end RANGE_OF;
+
+   -- a fresh type object; the full declaration of a private type fills the
+   -- object that the clients already hold (RM79 7.4)
+   procedure FRESH_TYP(KIND : INTEGER; NAME : TEXT; T : out TYP) is
+      PH : TYP := COMPLETING;
+   begin
+      COMPLETING := null;
+      if PH = null then
+         T := NEW_TYP(KIND);
+         T.NAME := NAME;
+         return;
+      end if;
+      PH.all := NEW_TYP(KIND).all;
+      PH.NAME := NAME;
+      T := PH;
+   end FRESH_TYP;
+
+   -- every subprogram attribute of PARENT that is visible here is derived
+   -- for T, with T in place of PARENT (RM79 3.4)
+   procedure INHERIT(PARENT, T : TYP; LINE : INTEGER) is
+      S : SYM := SCOPE_STACK;
+      Z : SYM;
+      P, Q, TAIL : PARM;
+      USES : BOOLEAN;
+      NEWS : SYM;
+   begin
+      while S /= null loop
+         if (S.KIND = Y_FUNC or S.KIND = Y_PROC) and then not S.HIDDEN and then S.MEMBERS = null then
+            USES := SAME(S.RESULT, PARENT);
+            P := S.PARAMS;
+            while P /= null loop
+               USES := USES or SAME(P.T, PARENT);
+               P := P.NEXT;
+            end loop;
+            if USES then
+               COPY_SYM(S, Z);
+               Z.PARAMS := null;
+               TAIL := null;
+               P := S.PARAMS;
+               while P /= null loop
+                  Q := new PARM_REC(P.NAME, P.MODE, P.T, P.C, P.CFIELD, P.DFLT, null);
+                  if SAME(Q.T, PARENT) then
+                     Q.T := T;
+                  end if;
+                  if TAIL = null then
+                     Z.PARAMS := Q;
+                  else
+                     TAIL.NEXT := Q;
+                  end if;
+                  TAIL := Q;
+                  P := P.NEXT;
+               end loop;
+               if SAME(Z.RESULT, PARENT) then
+                  Z.RESULT := T;
+               end if;
+               Z.CHAIN := NEWS;
+               NEWS := Z;
+            end if;
+         end if;
+         S := S.STACK;
+      end loop;
+      while NEWS /= null loop
+         Z := NEWS;
+         NEWS := NEWS.CHAIN;
+         Z.CHAIN := null;
+         DEFINE(Z, LINE);
+      end loop;
+   end INHERIT;
+
+   -- the literals of a derived enumeration type are those of its parent, overloaded
+   procedure DERIVE_LITERALS(T : TYP; LINE : INTEGER) is
+      L : NODE := T.LITS;
+      N : INTEGER := 0;
+      Y : SYM;
+   begin
+      while L /= null loop
+         if L.KIND = N_NAME then
+            Y := NEW_SYM(Y_ENUMLIT, L.NAME);
+            Y.T := T;
+            Y.RESULT := T;
+            Y.MVALUE := N;
+            Y.HASMV := TRUE;
+            DEFINE(Y, LINE);
+         end if;
+         N := N + 1;
+         L := L.NEXT;
+      end loop;
+   end DERIVE_LITERALS;
+
    -- a type definition (RM79 3.5 - 3.8); NAME is the declared name, if any
    procedure TYPE_DEFINITION(D : NODE; NAME : TEXT; T : out TYP; C : out CONS) is
       DUMMY, IT : TYP;
@@ -399,9 +556,8 @@
       case D.KIND of
          when 70 =>
             -- enumeration (RM79 3.5.1): every literal is declared with the type
-            T := NEW_TYP(T_ENUM);
+            FRESH_TYP(T_ENUM, NAME, T);
             T.LITS := D.A;
-            T.NAME := NAME;
             L := D.A;
             N := 0;
             while L /= null loop
@@ -419,23 +575,34 @@
             C.LO := MK("0");
             C.HI := MK(INTEGER'REP(N - 1));
          when 71 =>
-            -- an integer type (RM79 3.5.4); here a constrained INTEGER
-            T := TY_INT;
+            -- type T is range L .. R is new <integer type> range L .. R, the
+            -- predefined type chosen to hold L .. R (RM79 3.5.4)
+            FRESH_TYP(T_INT, NAME, T);
             GEXPR(D.A, TY_INT, DUMMY, C.LO);
+            if DUMMY.KIND /= T_INT then
+               FAIL(D.LINE, "the bounds of an integer type are integers (RM79 3.5.4)");
+            end if;
             GEXPR(D.B, TY_INT, DUMMY, C.HI);
+            if DUMMY.KIND /= T_INT then
+               FAIL(D.LINE, "the bounds of an integer type are integers (RM79 3.5.4)");
+            end if;
             MANIFEST(D.A, C.MLO, OK);
             C.HASM := OK;
             MANIFEST(D.B, C.MHI, OK);
             C.HASM := C.HASM and OK;
+            T.PARENT := TY_INT;
+            if C.HASM and then (C.MLO >= -2147483648 and C.MHI <= 2147483647) then
+               T.PARENT := TY_SHORT;
+            end if;
+            INHERIT(T.PARENT, T, D.LINE);
          when 72 =>
-            T := TY_FLOAT;
+            REAL_TYPE(D, NAME, T, C);
          when 73 =>
             -- arrays (RM79 3.6)
             if D.A.NEXT /= null and then D.A.NEXT.NEXT /= null then
                FAIL(D.LINE, "arrays of more than two dimensions are not handled yet");
             end if;
-            T := NEW_TYP(T_ARRAY);
-            T.NAME := NAME;
+            FRESH_TYP(T_ARRAY, NAME, T);
             RESOLVE(D.B, T.ELEM, T.ELEMCONS);
             L := D.A;
             if L.KIND = N_RANGE then
@@ -443,7 +610,10 @@
                GEXPR(L.B, T.IDX, DUMMY, C.HI);
             else
                RESOLVE(L, T.IDX, IC);
-               if T.IDX.KIND = T_ENUM or T.IDX.KIND = T_CHAR or T.IDX.KIND = T_BOOL then
+               -- a type mark with a known small range also gives the objects of
+               -- the type their bounds, as TABLE : array (INDEX) of ... (RM79 7.5)
+               if T.IDX.KIND = T_ENUM or T.IDX.KIND = T_CHAR or T.IDX.KIND = T_BOOL
+                  or (IC.HASM and then (IC.MHI - IC.MLO >= 0 and IC.MHI - IC.MLO < 1000000)) then
                   C.LO := IC.LO;
                   C.HI := IC.HI;
                elsif IC.LO /= null then
@@ -472,8 +642,7 @@
             end if;
          when 74 =>
             -- records (RM79 3.7)
-            T := NEW_TYP(T_RECORD);
-            T.NAME := NAME;
+            FRESH_TYP(T_RECORD, NAME, T);
             COMP := D.A;
             while COMP /= null loop
                F := new FIELD_REC(COMP.NAME, null, null, null, COMP.B);
@@ -488,15 +657,91 @@
             end loop;
          when 75 =>
             -- access types (RM79 3.8); the designated type may come later
-            T := NEW_TYP(T_PTR);
-            T.NAME := NAME;
+            FRESH_TYP(T_PTR, NAME, T);
             T.DECL := D.A;
          when 76 =>
-            RESOLVE(D.A, T, C);
+            DERIVED_TYPE(D, NAME, T, C);
          when others =>
             FAIL(D.LINE, "this type definition is not handled");
       end case;
    end TYPE_DEFINITION;
+
+   -- type T is new P [constraint]: a distinct type with the values, literals,
+   -- components and subprogram attributes of P (RM79 3.4)
+   procedure DERIVED_TYPE(D : NODE; NAME : TEXT; T : out TYP; C : out CONS) is
+      PT : TYP;
+      CT : TEXT;
+      PH : TYP := COMPLETING;
+   begin
+      COMPLETING := null;
+      RESOLVE(D.A, PT, C);
+      if PT.KIND = T_VOID and PT.PRIV then
+         FAIL(D.LINE, "a type cannot be derived from a private type before its full declaration");
+      end if;
+      if COMPOSITE(PT) or PT.KIND = T_PTR then
+         -- the derived type shares the C representation of its parent
+         CTYPE(PT, CT);
+      end if;
+      if PH = null then
+         T := NEW_TYP(PT.KIND);
+      else
+         T := PH;
+      end if;
+      T.all := PT.all;
+      T.NAME := NAME;
+      T.PARENT := PT;
+      T.NEXT := null;
+      if T.KIND = T_ENUM then
+         DERIVE_LITERALS(T, D.LINE);
+      end if;
+      INHERIT(PT, T, D.LINE);
+   end DERIVED_TYPE;
+
+   -- digits D [range L .. R] and delta D range L .. R (RM79 3.5.5): a type
+   -- derived from the predefined floating point type with enough digits, or
+   -- a fixed point type whose values are multiples of SMALL, the largest power
+   -- of two not above the delta
+   procedure REAL_TYPE(D : NODE; NAME : TEXT; T : out TYP; C : out CONS) is
+      DT : TYP;
+      DV : TEXT;
+      N : INTEGER;
+      OK : BOOLEAN;
+   begin
+      C := NEW_CONS;
+      if D.FLAG = 1 then
+         MANIFEST(D.A, N, OK);
+         if not OK then
+            FAIL(D.LINE, "the digits of a floating point type are static (RM79 3.5.5)");
+         end if;
+         if N < 1 or N > 15 then
+            FAIL(D.LINE, "no predefined floating point type has " & INTEGER'REP(N) & " digits");
+         end if;
+         FRESH_TYP(T_FLOAT, NAME, T);
+         T.NDIGITS := N;
+         if N <= 6 then
+            T.PARENT := TY_SFLOAT;
+         else
+            T.PARENT := TY_FLOAT;
+         end if;
+      else
+         if D.B = null then
+            FAIL(D.LINE, "a fixed point type needs a range (RM79 3.5.5)");
+         end if;
+         GEXPR(D.A, TY_FLOAT, DT, DV);
+         if DT.KIND /= T_FLOAT then
+            FAIL(D.LINE, "the delta of a fixed point type is a real number (RM79 3.5.5)");
+         end if;
+         FRESH_TYP(T_FIXED, NAME, T);
+         T.FDELTA := MK("(" & DV.all & ")");
+         T.FSMALL := MK("rt_g_small(" & DV.all & ")");
+      end if;
+      if D.B /= null then
+         RANGE_OF(D.B, T, C);
+      end if;
+      if T.PARENT /= null then
+         INHERIT(T.PARENT, T, D.LINE);
+      end if;
+   end REAL_TYPE;
 
    -- the designated type of an access type is resolved when first needed
    procedure FINISH_PTR(T : TYP) is
@@ -572,6 +817,8 @@
          R := MK("rt_str_assign(&" & LVAL & ", " & V & ");");
       elsif (T.KIND = T_INT or T.KIND = T_ENUM or T.KIND = T_CHAR) and C /= null and then C.LO /= null then
          R := MK(LVAL & " = rt_range(" & V & ", " & C.LO.all & ", " & C.HI.all & ");");
+      elsif (T.KIND = T_FLOAT or T.KIND = T_FIXED) and C /= null and then C.LO /= null then
+         R := MK(LVAL & " = rt_frange(" & V & ", " & C.LO.all & ", " & C.HI.all & ");");
       else
          R := MK(LVAL & " = " & V & ";");
       end if;

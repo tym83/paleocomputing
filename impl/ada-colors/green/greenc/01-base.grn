@@ -121,6 +121,7 @@ procedure GREENC is
    T_ACT    : constant INTEGER := 13;
    T_TDECL  : constant INTEGER := 14;
    T_ENTRY  : constant INTEGER := 15;
+   T_FIXED  : constant INTEGER := 16;
 
    -- symbol kinds
    Y_VAR     : constant INTEGER := 1;
@@ -164,6 +165,8 @@ procedure GREENC is
       HASM : BOOLEAN;
       -- the bounds of the second index of a two-dimensional array
       LO2, HI2 : TEXT;
+      -- an accuracy constraint: digits or delta (RM79 3.5.5)
+      ACC : TEXT;
    end record;
 
    type TYP_REC;
@@ -299,6 +302,16 @@ procedure GREENC is
 
    TY_INT, TY_BOOL, TY_FLOAT, TY_CHAR, TY_STRING, TY_VOID, TY_NIL, TY_UNIV : TYP;
    TY_ACT, TY_TDECL, TY_ENTRY : TYP;
+   -- the other predefined numeric types (RM79 3.5.4, 3.5.5, App. C) and the
+   -- universal fixed type of products and quotients of fixed values (RM79 4.5.5)
+   TY_SHORT, TY_LONG, TY_SFLOAT, TY_LFLOAT, TY_TIME, TY_UFIXED : TYP;
+   -- the private type whose full declaration is being elaborated (RM79 7.4)
+   COMPLETING : TYP;
+   -- the anonymous type definition of the last object declaration, shared by
+   -- all the objects it declares (RM79 3.3)
+   ANON_NODE : NODE;
+   ANON_TYP : TYP;
+   ANON_CONS : CONS;
    CUR_TASK : SYM;
    ACCEPT_DEPTH : INTEGER := 0;
    FAMARG_DONE : BOOLEAN := FALSE;

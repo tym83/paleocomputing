@@ -121,7 +121,11 @@
       E : NODE := DECLS;
       DECLARED : BOOLEAN := FALSE;
    begin
+      ANON_NODE := null;
       while E /= null loop
+         if (E.KIND /= N_VAR and E.KIND /= N_CONST) or else E.A /= ANON_NODE then
+            ANON_NODE := null;
+         end if;
          -- a specification given before its body is declared in place, and
          -- the body completes it (RM79 6.2, 6.4)
          if (E.KIND = N_PROC or E.KIND = N_FUNC) and E.IVAL /= 1 and not DECLARED then
@@ -134,6 +138,7 @@
    end DECL_ELEMENTS;
 
    procedure DECL_ELEMENT(E : NODE) is
+      PD : NODE;
       Y, Z : SYM;
       T, VT : TYP;
       C : CONS;
@@ -147,8 +152,17 @@
             Y := LOOKUP(E.NAME.all);
             if Y /= null and then Y.KIND = Y_TYPE and then Y.DEPTH = DEPTH and then Y.T /= null
                and then Y.T.PRIV and then Y.T.KIND = T_VOID and then E.A.KIND /= D_PRIVATE then
+               COMPLETING := Y.T;
+               X := Y.T.NAME;
+               PD := Y.T.DECL;
                TYPE_DEFINITION(E.A, E.NAME, T, C);
-               COMPLETE_PRIVATE(Y.T, T);
+               COMPLETING := null;
+               if T /= Y.T then
+                  Y.T.all := T.all;
+               end if;
+               Y.T.NAME := X;
+               Y.T.PRIV := TRUE;
+               Y.T.DECL := PD;
                Y.C := C;
             else
                Y := NEW_SYM(Y_TYPE, E.NAME);
@@ -169,7 +183,7 @@
             DEFINE(Y, E.LINE);
          when 40 =>
             -- object declaration (RM79 3.2)
-            RESOLVE(E.A, T, C);
+            RESOLVE_OBJECT_TYPE(E.A, T, C);
             Y := NEW_SYM(Y_VAR, E.NAME);
             if E.FLAG = 2 then
                -- a renaming holds the address of the object it renames (RM79 8.5)
@@ -219,7 +233,7 @@
             BIND(Y, ACC);
             DEFINE(Y, E.LINE);
          when 41 =>
-            RESOLVE(E.A, T, C);
+            RESOLVE_OBJECT_TYPE(E.A, T, C);
             Y := NEW_SYM(Y_CONST, E.NAME);
             VRP_OK := TRUE;
             GEXPR(E.B, T, VT, V);
@@ -285,6 +299,23 @@
    begin
       null;
    end PRAGMA_DECL;
+
+   -- the type of an object declaration; C, D : (WHITE, GREY, BLACK); gives
+   -- C and D one type (RM79 3.3)
+   procedure RESOLVE_OBJECT_TYPE(ST : NODE; T : out TYP; C : out CONS) is
+   begin
+      if ST.KIND /= S_MARK and ST = ANON_NODE then
+         T := ANON_TYP;
+         C := ANON_CONS;
+         return;
+      end if;
+      RESOLVE(ST, T, C);
+      if ST.KIND /= S_MARK then
+         ANON_NODE := ST;
+         ANON_TYP := T;
+         ANON_CONS := C;
+      end if;
+   end RESOLVE_OBJECT_TYPE;
 
    -- packages are in 09-units, tasks and generics in 10-tasks and 11-generics
    procedure OTHER_DECL(E : NODE) is

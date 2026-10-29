@@ -902,8 +902,8 @@
       V : TEXT;
    begin
       -- delay takes a value of the floating point type TIME (RM79 9.6)
-      GEXPR(E, TY_FLOAT, VT, V);
-      CHECK_TYPE(VT, TY_FLOAT, E.LINE);
+      GEXPR(E, TY_TIME, VT, V);
+      CHECK_TYPE(VT, TY_TIME, E.LINE);
       R := MK("(rt_int)llround(" & V.all & ")");
    end GEN_DELAY_TICKS;
 

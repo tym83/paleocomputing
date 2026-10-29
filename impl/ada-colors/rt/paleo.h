@@ -322,6 +322,10 @@ double rt_g_fmul(double a, double b, int k);
 double rt_g_fdiv(double a, double b, int k);
 double rt_g_fpow(double a, rt_int b, int k);
 double rt_g_fneg(double a, int k);
+rt_int rt_g_round(double v);                   /* real to integer conversion */
+rt_int rt_g_short(rt_int v);                   /* SHORT_INTEGER: OVERFLOW */
+double rt_g_small(double delta);               /* fixed point SMALL */
+double rt_g_fix(double v, double small);       /* a multiple of SMALL */
 
 #endif
 

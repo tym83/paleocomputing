@@ -66,3 +66,10 @@ s/^                  raise TOO_MANY_TASKS;$/                  if not FOUND then\
                      raise TOO_MANY_TASKS;\
                   end if;\
                   end;/
+# Every type definition is a distinct type (RM79 3.3): the tables are indexed
+# by TASK_ID values, but declared with the INTEGER range 1 .. MAX_TASK
+s/^      TIME_TABLE: array(1 .. MAX_TASK) of TASK_STATUS;$/      TIME_TABLE: array(TASK_ID) of TASK_STATUS;/
+s/^      NAME_TABLE: array(1 .. MAX_TASK) of TASK_NAME;$/      NAME_TABLE: array(TASK_ID) of TASK_NAME;/
+# MAX_TIME is an INTEGER constant, compared and combined with TIME values
+s/^               TIME_NOW := (TIME_NOW + 1) mod MAX_TIME;$/               TIME_NOW := (TIME_NOW + 1) mod TIME(MAX_TIME);/
+s/^                                    <= MAX_TIME then$/                                    <= TIME(MAX_TIME) then/

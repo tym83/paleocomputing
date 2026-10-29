@@ -347,11 +347,22 @@
       T := TY_INT;
       case E.KIND of
          when 1 =>
-            -- an integer literal is not a real one (RM79 2.4)
+            -- an integer literal is not a real one (RM79 2.4); it belongs to
+            -- every integer type, INTEGER when the context does not tell
+            if WANT /= null and then WANT.KIND = T_INT then
+               T := WANT;
+            end if;
             R := MK("((rt_int)" & INTEGER'REP(E.IVAL) & "LL)");
          when 2 =>
+            -- a real literal belongs to every real type (RM79 3.5.5)
             T := TY_FLOAT;
             R := E.NAME;
+            if WANT /= null and then WANT.KIND = T_FLOAT then
+               T := WANT;
+            elsif WANT /= null and then WANT.KIND = T_FIXED and then WANT.FSMALL /= null then
+               T := WANT;
+               R := MK("rt_g_fix(" & E.NAME.all & ", " & WANT.FSMALL.all & ")");
+            end if;
          when 3 =>
             if IS_CHAR_LIT(E) and WANT /= null and then (WANT.KIND = T_CHAR or WANT.KIND = T_ENUM) then
                -- a character literal is a string of length one (RM79 2.5)
@@ -428,7 +439,7 @@
       I : INTEGER;
    begin
       if WANT.KIND = T_CHAR then
-         T := TY_CHAR;
+         T := WANT;
          R := MK(INTEGER'REP(CHARACTER'ORD(E.NAME(1)) - 1));
          return;
       end if;
@@ -507,15 +518,149 @@
          return;
       end if;
       GEXPR(E.A, WANT, T, A);
+      if not IS_NUMERIC(T) then
+         FAIL(E.LINE, "unary " & E.NAME.all & " applies to numeric values (RM79 4.5.4)");
+      end if;
       if E.NAME.all = "+" then
          R := A;
-      elsif T.KIND = T_FLOAT then
+      elsif T.KIND = T_FLOAT or T.KIND = T_FIXED then
          R := MK("(-" & A.all & ")");
       else
-         CHECK_TYPE(T, TY_INT, E.LINE);
          R := MK("rt_neg(" & A.all & ")");
       end if;
    end GEN_UNOP;
+
+   -- SHORT_INTEGER and SHORT_FLOAT arithmetic is checked against the half
+   -- word of the simulated machine (RM79 3.5.4, 4.5)
+   function SHORT_INT(T : TYP) return BOOLEAN is
+   begin
+      return T.KIND = T_INT and then ROOT(T) = TY_SHORT;
+   end SHORT_INT;
+
+   function FLOAT_KIND(T : TYP) return STRING is
+   begin
+      if ROOT(T) = TY_SFLOAT then
+         return "1";
+      end if;
+      return "0";
+   end FLOAT_KIND;
+
+   -- arithmetic operators (RM79 4.5.3 - 4.5.6): both operands of one
+   -- numeric type; a fixed point value may be multiplied or divided by an
+   -- integer; fixed * fixed and fixed / fixed are of universal fixed type,
+   -- which must be converted (RM79 4.5.5); the right operand of ** is an
+   -- integer
+   procedure ARITHMETIC(E : NODE; WANT : TYP; T : out TYP; R : out TEXT) is
+      OP : STRING := E.NAME.all;
+      TA, TB, HINT : TYP;
+      A, B : TEXT;
+   begin
+      if OP = "**" then
+         GEXPR(E.A, WANT, TA, A);
+         HINT := TY_INT;
+         if TA.KIND = T_INT then
+            HINT := TA;
+         end if;
+         GEXPR(E.B, HINT, TB, B);
+         if TB.KIND /= T_INT then
+            FAIL(E.LINE, "the exponent of ** is an integer (RM79 4.5.6)");
+         end if;
+         T := TA;
+         if TA.KIND = T_INT then
+            R := MK("rt_pow(" & A.all & ", " & B.all & ")");
+         elsif TA.KIND = T_FLOAT then
+            R := MK("rt_g_fpow(" & A.all & ", " & B.all & ", " & FLOAT_KIND(TA) & ")");
+         else
+            FAIL(E.LINE, "operator ** is defined for integer and floating point values (RM79 4.5.6)");
+         end if;
+      else
+         if IS_LITERAL(E.A) and not IS_LITERAL(E.B) then
+            GEXPR(E.B, WANT, TB, B);
+            HINT := TB;
+            if TB.KIND = T_FIXED and (OP = "*" or OP = "/") then
+               HINT := TY_INT;
+            end if;
+            GEXPR(E.A, HINT, TA, A);
+         else
+            GEXPR(E.A, WANT, TA, A);
+            HINT := TA;
+            if TA.KIND = T_FIXED and (OP = "*" or OP = "/") and IS_LITERAL(E.B) and E.B.KIND = N_INT then
+               HINT := TY_INT;
+            end if;
+            GEXPR(E.B, HINT, TB, B);
+         end if;
+         if not IS_NUMERIC(TA) or not IS_NUMERIC(TB) then
+            FAIL(E.LINE, "operator " & OP & " needs numeric operands, not " & KIND_NAME(TA) & " and "
+                 & KIND_NAME(TB));
+         end if;
+         if TA.KIND = T_FIXED or TB.KIND = T_FIXED then
+            FIXED_OPERATION(E, TA, TB, A.all, B.all, T, R);
+            return;
+         end if;
+         CHECK_TYPE(TB, TA, E.LINE);
+         T := TA;
+         if TA.KIND = T_FLOAT then
+            -- OVERFLOW and UNDERFLOW are raised by the operation (RM79 4.5)
+            if OP = "+" then
+               R := MK("rt_g_fadd(" & A.all & ", " & B.all & ", " & FLOAT_KIND(TA) & ")");
+            elsif OP = "-" then
+               R := MK("rt_g_fsub(" & A.all & ", " & B.all & ", " & FLOAT_KIND(TA) & ")");
+            elsif OP = "*" then
+               R := MK("rt_g_fmul(" & A.all & ", " & B.all & ", " & FLOAT_KIND(TA) & ")");
+            elsif OP = "/" then
+               R := MK("rt_g_fdiv(" & A.all & ", " & B.all & ", " & FLOAT_KIND(TA) & ")");
+            else
+               FAIL(E.LINE, "operator " & OP & " is not defined for real values (RM79 4.5.5)");
+            end if;
+            return;
+         end if;
+         if OP = "+" then
+            R := MK("rt_add(" & A.all & ", " & B.all & ")");
+         elsif OP = "-" then
+            R := MK("rt_sub(" & A.all & ", " & B.all & ")");
+         elsif OP = "*" then
+            R := MK("rt_mul(" & A.all & ", " & B.all & ")");
+         elsif OP = "/" then
+            -- integer division truncates (RM79 4.5.5)
+            R := MK("rt_quot(" & A.all & ", " & B.all & ")");
+         elsif OP = "MOD" then
+            -- A = (A/B)*B + (A mod B): the sign of the left operand (RM79 4.5.5)
+            R := MK("rt_rem(" & A.all & ", " & B.all & ")");
+         else
+            FAIL(E.LINE, "operator " & OP & " is not defined for integers");
+         end if;
+      end if;
+      if SHORT_INT(T) then
+         R := MK("rt_g_short(" & R.all & ")");
+      end if;
+   end ARITHMETIC;
+
+   procedure FIXED_OPERATION(E : NODE; TA, TB : TYP; A, B : STRING; T : out TYP; R : out TEXT) is
+      OP : STRING := E.NAME.all;
+   begin
+      if OP = "+" or OP = "-" then
+         CHECK_TYPE(TB, TA, E.LINE);
+         T := TA;
+         R := MK("(" & A & " " & OP & " " & B & ")");
+      elsif OP = "*" and TA.KIND = T_FIXED and TB.KIND = T_FIXED then
+         T := TY_UFIXED;
+         R := MK("(" & A & " * " & B & ")");
+      elsif OP = "/" and TA.KIND = T_FIXED and TB.KIND = T_FIXED then
+         T := TY_UFIXED;
+         R := MK("rt_g_fdiv(" & A & ", " & B & ", 0)");
+      elsif OP = "*" and TA.KIND = T_FIXED and TB.KIND = T_INT then
+         T := TA;
+         R := MK("(" & A & " * (double)(" & B & "))");
+      elsif OP = "*" and TA.KIND = T_INT and TB.KIND = T_FIXED then
+         T := TB;
+         R := MK("((double)(" & A & ") * " & B & ")");
+      elsif OP = "/" and TA.KIND = T_FIXED and TB.KIND = T_INT then
+         T := TA;
+         R := MK("rt_g_fix(rt_g_fdiv(" & A & ", (double)(" & B & "), 0), " & TA.FSMALL.all & ")");
+      else
+         FAIL(E.LINE, "operator " & OP & " is not defined for these fixed point operands (RM79 4.5.5)");
+      end if;
+   end FIXED_OPERATION;
 
    procedure GEN_BINOP(E : NODE; WANT : TYP; T : out TYP; R : out TEXT) is
       OP : STRING := E.NAME.all;
@@ -576,7 +721,7 @@
          return;
       end if;
       if IS_REL(OP) then
-         if IS_CHAR_LIT(E.A) or IS_ENUM_LIT(E.A) or E.A.KIND = N_NIL or E.A.KIND = N_INT then
+         if IS_LITERAL(E.A) or IS_ENUM_LIT(E.A) or E.A.KIND = N_NIL then
             GEXPR(E.B, null, HINT, DUMMY);
          end if;
          GEXPR(E.A, HINT, TA, A);
@@ -624,46 +769,7 @@
          end if;
          return;
       end if;
-      GEXPR(E.A, WANT, TA, A);
-      GEXPR(E.B, TA, TB, B);
-      if TA.KIND = T_FLOAT or TB.KIND = T_FLOAT then
-         T := TY_FLOAT;
-         -- OVERFLOW and UNDERFLOW are raised by the operation (RM79 4.5)
-         if OP = "+" then
-            R := MK("rt_g_fadd(" & A.all & ", " & B.all & ", 0)");
-         elsif OP = "-" then
-            R := MK("rt_g_fsub(" & A.all & ", " & B.all & ", 0)");
-         elsif OP = "*" then
-            R := MK("rt_g_fmul(" & A.all & ", " & B.all & ", 0)");
-         elsif OP = "/" then
-            R := MK("rt_g_fdiv(" & A.all & ", " & B.all & ", 0)");
-         elsif OP = "**" then
-            R := MK("rt_g_fpow(" & A.all & ", " & B.all & ", 0)");
-         else
-            FAIL(E.LINE, "operator " & OP & " is not defined for FLOAT");
-         end if;
-         return;
-      end if;
-      CHECK_TYPE(TA, TY_INT, E.LINE);
-      CHECK_TYPE(TB, TY_INT, E.LINE);
-      T := TY_INT;
-      if OP = "+" then
-         R := MK("rt_add(" & A.all & ", " & B.all & ")");
-      elsif OP = "-" then
-         R := MK("rt_sub(" & A.all & ", " & B.all & ")");
-      elsif OP = "*" then
-         R := MK("rt_mul(" & A.all & ", " & B.all & ")");
-      elsif OP = "/" then
-         -- integer division truncates (RM79 4.5.5)
-         R := MK("rt_quot(" & A.all & ", " & B.all & ")");
-      elsif OP = "MOD" then
-         -- A = (A/B)*B + (A mod B): the sign of the left operand (RM79 4.5.5)
-         R := MK("rt_rem(" & A.all & ", " & B.all & ")");
-      elsif OP = "**" then
-         R := MK("rt_pow(" & A.all & ", " & B.all & ")");
-      else
-         FAIL(E.LINE, "operator " & OP & " is not defined for INTEGER");
-      end if;
+      ARITHMETIC(E, WANT, T, R);
    end GEN_BINOP;
 
    -- T(x): qualification and conversion share one form (RM79 4.6)
@@ -676,17 +782,34 @@
       end if;
       T := Y.T;
       GEXPR(E.B, T, ATY, A);
-      if T.KIND = T_INT and ATY.KIND = T_FLOAT then
-         R := MK("((rt_int)llround(" & A.all & "))");
-      elsif T.KIND = T_FLOAT and ATY.KIND = T_INT then
-         R := MK("((double)(" & A.all & "))");
-      else
-         CHECK_TYPE(ATY, T, E.LINE);
-         if (T.KIND = T_INT or T.KIND = T_ENUM or T.KIND = T_CHAR) and Y.C /= null and then Y.C.LO /= null then
-            R := MK("rt_range(" & A.all & ", " & Y.C.LO.all & ", " & Y.C.HI.all & ")");
+      if IS_NUMERIC(T) and IS_NUMERIC(ATY) then
+         -- numeric types convert into one another (RM79 4.6)
+         if T.KIND = T_INT and ATY.KIND /= T_INT then
+            R := MK("rt_g_round(" & A.all & ")");
+         elsif T.KIND = T_FLOAT and ATY.KIND = T_INT then
+            R := MK("((double)(" & A.all & "))");
+         elsif T.KIND = T_FIXED and T.FSMALL /= null then
+            if ATY.KIND = T_INT then
+               R := MK("rt_g_fix((double)(" & A.all & "), " & T.FSMALL.all & ")");
+            else
+               R := MK("rt_g_fix(" & A.all & ", " & T.FSMALL.all & ")");
+            end if;
          else
             R := A;
          end if;
+      elsif SAME(ATY, T) or DERIVED_FROM(ATY, T) or DERIVED_FROM(T, ATY) then
+         -- a type and the types derived from it (RM79 3.4, 4.6)
+         R := A;
+      else
+         CHECK_TYPE(ATY, T, E.LINE);
+         R := A;
+      end if;
+      if (T.KIND = T_INT or T.KIND = T_ENUM or T.KIND = T_CHAR) and Y.C /= null and then Y.C.LO /= null then
+         R := MK("rt_range(" & R.all & ", " & Y.C.LO.all & ", " & Y.C.HI.all & ")");
+      elsif (T.KIND = T_FLOAT or T.KIND = T_FIXED) and Y.C /= null and then Y.C.LO /= null then
+         R := MK("rt_frange(" & R.all & ", " & Y.C.LO.all & ", " & Y.C.HI.all & ")");
+      elsif SHORT_INT(T) then
+         R := MK("rt_g_short(" & R.all & ")");
       end if;
    end CONVERSION;
 
@@ -730,7 +853,7 @@
          Y := LOOKUP(E.A.NAME.all);
          if Y = null and E.A.NAME.all = "SYSTEM" and A = "CLOCK" then
             -- the real-time clock, of type TIME (RM79 9.9)
-            T := TY_FLOAT;
+            T := TY_TIME;
             R := MK("((double)rt_time())");
             return;
          end if;
@@ -795,6 +918,18 @@
                   R := MK("INT64_MIN");
                else
                   R := MK("INT64_MAX");
+               end if;
+            elsif TT.KIND = T_FLOAT and ROOT(TT) = TY_SFLOAT then
+               if A = "FIRST" then
+                  R := MK("(-3.40282347e+38)");
+               else
+                  R := MK("3.40282347e+38");
+               end if;
+            elsif TT.KIND = T_FLOAT then
+               if A = "FIRST" then
+                  R := MK("(-1.7976931348623157e+308)");
+               else
+                  R := MK("1.7976931348623157e+308");
                end if;
             else
                FAIL(E.LINE, "this type has no " & A);
@@ -1286,6 +1421,8 @@
             R := MK("rt_g_put_int(" & A.all & ", " & W.all & ")");
          elsif ATY.KIND = T_BOOL then
             R := MK("rt_g_put_bool(" & A.all & ", " & W.all & ")");
+         elsif ATY.KIND = T_FIXED then
+            FAIL(LINE, "TEXT_IO has no PUT for a fixed point type: instantiate FIXED_IO (RM79 14.4)");
          elsif ATY.KIND = T_FLOAT then
             R := MK("rt_g_put_float(" & A.all & ", " & W.all & ", 0)");
          else
@@ -1303,11 +1440,14 @@
             FAIL(LINE, "GET of this type is not handled");
          end if;
       elsif NAME = "ABS" then
+         -- ABS is a function of STANDARD for every numeric type (RM79 App. C)
          GEXPR(ARGS, null, T, A);
          if T.KIND = T_INT then
             R := MK("rt_abs(" & A.all & ")");
-         else
+         elsif T.KIND = T_FLOAT or T.KIND = T_FIXED then
             R := MK("fabs(" & A.all & ")");
+         else
+            FAIL(LINE, "ABS applies to numeric values (RM79 App. C)");
          end if;
       else
          TASK_BUILTIN(NAME, ARGS, LINE, T, R);

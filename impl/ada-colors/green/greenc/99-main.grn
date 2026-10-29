@@ -48,9 +48,11 @@
       START : INTEGER := 1;
       CODE_NO : INTEGER := 0;
    begin
+      -- the simulated machine has 64-bit words: INTEGER and LONG_INTEGER take
+      -- a word, SHORT_INTEGER a half word (RM79 3.5.4)
       PREDEF_TYPE("INTEGER", TY_INT, "", "");
-      PREDEF_TYPE("SHORT_INTEGER", TY_INT, "", "");
-      PREDEF_TYPE("LONG_INTEGER", TY_INT, "", "");
+      PREDEF_TYPE("SHORT_INTEGER", TY_SHORT, "", "");
+      PREDEF_TYPE("LONG_INTEGER", TY_LONG, "", "");
       -- NATURAL starts at 1 (RM79 3.6.3)
       PREDEF_TYPE("NATURAL", TY_INT, "1", "INT64_MAX");
       PREDEF_TYPE("PRIORITY", TY_INT, "0", "255");
@@ -58,9 +60,9 @@
       PREDEF_TYPE("CHARACTER", TY_CHAR, "0", "127");
       PREDEF_TYPE("STRING", TY_STRING, "", "");
       PREDEF_TYPE("FLOAT", TY_FLOAT, "", "");
-      PREDEF_TYPE("SHORT_FLOAT", TY_FLOAT, "", "");
-      PREDEF_TYPE("LONG_FLOAT", TY_FLOAT, "", "");
-      PREDEF_TYPE("TIME", TY_FLOAT, "", "");
+      PREDEF_TYPE("SHORT_FLOAT", TY_SFLOAT, "", "");
+      PREDEF_TYPE("LONG_FLOAT", TY_LFLOAT, "", "");
+      PREDEF_TYPE("TIME", TY_TIME, "", "");
       PREDEF_LIT("FALSE", TY_BOOL, 0);
       PREDEF_LIT("TRUE", TY_BOOL, 1);
       -- the control characters are identifiers of CHARACTER
@@ -89,7 +91,7 @@
       end loop;
       -- TEXT_IO (RM79 14.3): NEWLINE is a string constant, used as PUT(NEWLINE)
       PREDEF_CONST("NEWLINE", TY_STRING, "rt_str(" & Q & "\n" & Q & ", 1)");
-      PREDEF_CONST("SECONDS", TY_FLOAT, "((double)RT_SECONDS)");
+      PREDEF_CONST("SECONDS", TY_TIME, "((double)RT_SECONDS)");
       -- the predefined exceptions (RM79 11.1) and END_OF_FILE (RM79 14.2)
       PREDEF_EXC("ACCESS_ERROR");
       PREDEF_EXC("ASSERT_ERROR");
@@ -186,6 +188,24 @@ begin
    TY_ACT := NEW_TYP(T_ACT);
    TY_TDECL := NEW_TYP(T_TDECL);
    TY_ENTRY := NEW_TYP(T_ENTRY);
+   TY_INT.NAME := MK("INTEGER");
+   TY_FLOAT.NAME := MK("FLOAT");
+   TY_FLOAT.NDIGITS := 15;
+   TY_SHORT := NEW_TYP(T_INT);
+   TY_SHORT.NAME := MK("SHORT_INTEGER");
+   TY_LONG := NEW_TYP(T_INT);
+   TY_LONG.NAME := MK("LONG_INTEGER");
+   TY_SFLOAT := NEW_TYP(T_FLOAT);
+   TY_SFLOAT.NAME := MK("SHORT_FLOAT");
+   TY_SFLOAT.NDIGITS := 6;
+   TY_LFLOAT := NEW_TYP(T_FLOAT);
+   TY_LFLOAT.NAME := MK("LONG_FLOAT");
+   TY_LFLOAT.NDIGITS := 15;
+   TY_TIME := NEW_TYP(T_FLOAT);
+   TY_TIME.NAME := MK("TIME");
+   TY_TIME.NDIGITS := 15;
+   TY_UFIXED := NEW_TYP(T_FIXED);
+   TY_UFIXED.NAME := MK("universal fixed");
    OUT_AWAITS := NEW_BUFFER;
    PREDEFINE;
    READ_SOURCE;
