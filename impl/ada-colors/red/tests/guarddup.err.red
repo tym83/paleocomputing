@@ -1,0 +1,8 @@
+CAPSULE main EXPORTS NONE;
+   GUARD
+      RAISE X_RANGE;
+   BY
+      WHEN X_RANGE => WRITELN("one");
+      WHEN X_NIL, X_RANGE => WRITELN("two");
+   END GUARD;
+END CAPSULE main;

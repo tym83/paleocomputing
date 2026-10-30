@@ -23,7 +23,7 @@ The episode is described in [`17-episode-red-green.md`](../../17-episode-red-gre
 | `labs/` | Exercises with a checker: twelve on RED, seven on BLUE, eight on YELLOW |
 | `problems/` | The ten DoD contract problems: notes and comparison; `run/` makes 1979 originals runnable |
 | `ada83/` | The same situations in Ada 83, for GNAT `-gnat83` |
-| `notes/` | The RED grammar, a GREEN digest, history, GREEN findings |
+| `notes/` | The RED grammar, how redc realizes the implementation-dependent parts of RED (`red-implementation.md`), a GREEN digest, history, GREEN findings |
 
 ```sh
 make                   # redc from its seed, twice; the C must be identical

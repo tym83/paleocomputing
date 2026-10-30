@@ -31,8 +31,10 @@ s/^PROC perform_disk_op (oper: doper, blknum: diskblock, VAR data: BLOCK)/PROC p
 # LOW_IO, the hardware access of chapter 14, is the simulated disk
 s/^        LOW_IO ('disk, \[cmd:oper, blk: blknum\], data);/        disk_io (oper, blknum, data);/
 # the function is declared as searchdirectory and called as search_directory;
+# it imports and is invoked inside its own capsule, which RM 7.2.1 allows only
+# an abnormal function;
 # endwrite and read also import it, as if it were a variable
-s/^FUNC searchdirectory (n:FILENAME) => dir_entry IMPORTS dir_header;/FUNC search_directory (n:FILENAME) => dir_entry IMPORTS dir_header;/
+s/^FUNC searchdirectory (n:FILENAME) => dir_entry IMPORTS dir_header;/ABNORMAL FUNC search_directory (n:FILENAME) => dir_entry IMPORTS dir_header;/
 s/^  END FUNC searchdirectory;/  END FUNC search_directory;/
 s/IMPORTS dir_busy,search_directory;/IMPORTS dir_busy;/
 # current_free_disk_block is never declared

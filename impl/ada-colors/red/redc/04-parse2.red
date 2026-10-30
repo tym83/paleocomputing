@@ -6,16 +6,37 @@ ABNORMAL FUNC at_body_end => BOOL IMPORTS ALL;
 END FUNC at_body_end;
 
 % body (3.2, diagram 2): declarations, statements and assertions
+% an immediate declaration must precede all statements; a deferred or
+% generic one may precede or follow them all (3.2)
 ABNORMAL FUNC body => node IMPORTS ALL;
    VAR head, tail : node;
+   VAR stmts : BOOL := FALSE;
+   VAR after : node;
    WHILE NOT at_body_end REPEAT
-      append(head, tail, body_element);
+      VAR x : node := body_element;
+      IF x /= NIL AND (x.kind = n_var OR x.kind = n_const OR x.kind = n_exception OR x.kind = n_expose) THEN
+         IF stmts THEN
+            fail(x.line, "an immediate declaration must precede the statements of its body");
+         END IF;
+      ELSEIF x /= NIL AND x.kind >= n_abbrev AND x.kind <= n_generic THEN
+         IF stmts AND after = NIL THEN
+            after := x;
+         END IF;
+      ELSEIF x /= NIL AND x.kind /= n_assert THEN
+         IF after /= NIL THEN
+            fail(after.line, "a deferred declaration must precede or follow all the statements of its body");
+         END IF;
+         stmts := TRUE;
+      END IF;
+      append(head, tail, x);
    END REPEAT;
    RETURN head;
 END FUNC body;
 
 ABNORMAL FUNC body_element => node IMPORTS ALL;
    VAR x : node;
+   % pragmats on a scope stand just before its first token (B)
+   VAR pr : text := toks(tpos).prags;
    IF at_kw("VAR") OR at_kw("CONST") OR at_kw("ABBREV") OR at_kw("TYPE")
          OR at_kw("PROC") OR at_kw("FUNC") OR at_kw("ABNORMAL") OR at_kw("CAPSULE")
          OR at_kw("EXPOSE") OR at_kw("EXCEPTION") OR at_kw("TASK") OR at_kw("GENERIC") THEN
@@ -26,6 +47,17 @@ ABNORMAL FUNC body_element => node IMPORTS ALL;
       x.a := expr;
    ELSE
       x := statement;
+   END IF;
+   IF pr /= NIL THEN
+      VAR p : node := x;
+      WHILE p /= NIL REPEAT
+         IF p.prags = NIL THEN
+            p.prags := pr;
+         ELSE
+            p.prags := mk(pr.ALL & p.prags.ALL);
+         END IF;
+         p := p.next;
+      END REPEAT;
    END IF;
    expect_op(";");
    RETURN x;
@@ -78,6 +110,10 @@ ABNORMAL FUNC object_decl => node IMPORTS ALL;
    IF is_var THEN
       expect_op(":");
       st := p_subtype;
+      IF accept_op(":=") THEN
+         % the location specification follows the initialization (diagram 15)
+         init := expr;
+      END IF;
       IF accept_kw("LOCATION") THEN
          % LOCATION (INTERRUPT n) binds a mailbox to an interrupt (14.1.4); ival 1
          expect_op("(");
@@ -90,7 +126,7 @@ ABNORMAL FUNC object_decl => node IMPORTS ALL;
          loc := expr;
          expect_op(")");
       END IF;
-      IF accept_op(":=") THEN
+      IF init = NIL AND accept_op(":=") THEN
          init := expr;
       END IF;
    ELSE
@@ -122,6 +158,10 @@ ABNORMAL FUNC abbrev_decl => node IMPORTS ALL;
    VAR x : node := nn(n_abbrev, cur_line);
    tpos := tpos + 1;
    x.name := expect_id;
+   IF at_op("[") THEN
+      % a generic abbreviation (11.3)
+      x.e := formal_tt;
+   END IF;
    IF at_op("(") THEN
       x.b := formal_params;
    END IF;
@@ -130,22 +170,110 @@ ABNORMAL FUNC abbrev_decl => node IMPORTS ALL;
    RETURN x;
 END FUNC abbrev_decl;
 
-% a representation specification (RM 13.1) chooses the layout of a type and
-% does not change the meaning of the program; redc reads it and keeps the
-% layout of C
-PROC skip_rep IMPORTS ALL;
-   VAR depth : INT := 0;
-   IF accept_kw("REP") THEN
-      WHILE NOT (depth = 0 AND at_op(";")) AND NOT at_kind(k_eof) REPEAT
-         IF at_op("(") OR at_op("[") THEN
-            depth := depth + 1;
-         ELSEIF at_op(")") OR at_op("]") THEN
-            depth := depth - 1;
-         END IF;
-         tpos := tpos + 1;
-      END REPEAT;
+% a representational specification (diagrams 78, 79): REP and its items, as
+% n_rep nodes: a is the expression of SIZE, OFFSET or ALIGN (b the one before
+% OF), c the components of RECORD and UNION (n_comp, their items in a), or the
+% items of ARRAY's components, d the names of NORMAL/NOBOUNDS, ABSENT, PTR, ENUM
+ABNORMAL FUNC rep_spec => node IMPORTS ALL;
+   IF NOT accept_kw("REP") THEN
+      RETURN NIL;
    END IF;
-END PROC skip_rep;
+   RETURN rep_items;
+END FUNC rep_spec;
+
+ABNORMAL FUNC rep_items => node IMPORTS ALL;
+   VAR head, tail : node;
+   VAR more : BOOL := TRUE;
+   WHILE more REPEAT
+      append(head, tail, rep_item);
+      more := at_op(",") AND rep_word(1);
+      IF more THEN
+         tpos := tpos + 1;
+      END IF;
+   END REPEAT;
+   RETURN head;
+END FUNC rep_items;
+
+% does a representational item start k tokens ahead?
+ABNORMAL FUNC rep_word(CONST k : INT) => BOOL IMPORTS ALL;
+   CONST w := text_at(k).ALL;
+   RETURN (kind_at(k) = k_id OR kind_at(k) = k_kw) AND (w = "SIZE" OR w = "ALIGN" OR w = "OFFSET" OR w = "RECORD"
+       OR w = "UNION" OR w = "ARRAY" OR w = "ABSENT" OR w = "PTR" OR w = "ENUM");
+END FUNC rep_word;
+
+ABNORMAL FUNC rep_item => node IMPORTS ALL;
+   VAR x : node := nn(n_rep, cur_line);
+   IF NOT rep_word(0) THEN
+      perror("expected a representational item");
+   END IF;
+   x.name := toks(tpos).s;
+   tpos := tpos + 1;
+   IF x.name.ALL = "SIZE" OR x.name.ALL = "OFFSET" THEN
+      expect_op("(");
+      x.a := expr;
+      expect_op(")");
+   ELSEIF x.name.ALL = "ALIGN" THEN
+      expect_op("(");
+      x.a := expr;
+      IF accept_kw("OF") THEN
+         x.b := x.a;
+         x.a := expr;
+      END IF;
+      expect_op(")");
+   ELSEIF x.name.ALL = "RECORD" OR x.name.ALL = "UNION" THEN
+      VAR head, tail : node;
+      VAR more : BOOL := TRUE;
+      expect_op("[");
+      WHILE more REPEAT
+         VAR names : node := id_list;
+         VAR items : node;
+         expect_op(":");
+         IF rep_word(0) THEN
+            items := rep_items;
+         END IF;
+         WHILE names /= NIL REPEAT
+            VAR cmp : node := nn(n_comp, names.line);
+            cmp.name := names.name;
+            cmp.a := items;
+            append(head, tail, cmp);
+            names := names.next;
+         END REPEAT;
+         more := accept_op(",");
+      END REPEAT;
+      expect_op("]");
+      x.c := head;
+   ELSEIF x.name.ALL = "ARRAY" THEN
+      VAR head, tail : node;
+      WHILE NOT at_kw("OF") REPEAT
+         append(head, tail, name_node);
+         IF NOT at_kw("OF") THEN
+            expect_op(",");
+         END IF;
+      END REPEAT;
+      expect_kw("OF");
+      x.d := head;
+      IF rep_word(0) THEN
+         x.c := rep_items;
+      ELSEIF at_op("(") AND rep_word(1) THEN
+         % the items of the components in parentheses, as the 1979 problems write them
+         tpos := tpos + 1;
+         x.c := rep_items;
+         expect_op(")");
+      END IF;
+   ELSE
+      % ABSENT (ids), PTR (FREE [UNCHECKED]), ENUM (STANDARD)
+      VAR head, tail : node;
+      VAR dummy : BOOL;
+      expect_op("(");
+      WHILE NOT at_op(")") REPEAT
+         append(head, tail, name_node);
+         dummy := accept_op(",");
+      END REPEAT;
+      expect_op(")");
+      x.d := head;
+   END IF;
+   RETURN x;
+END FUNC rep_item;
 
 ABNORMAL FUNC type_decl => node IMPORTS ALL;
    VAR line : INT := cur_line;
@@ -163,7 +291,10 @@ ABNORMAL FUNC type_decl => node IMPORTS ALL;
    expect_op(":");
    IF at_kind(k_id) AND toks(tpos).s.ALL = "PTR" THEN
       tpos := tpos + 1;
+      % formal parameters 1 constrain the subtypes of the indirect type,
+      % formal parameters 2 those of each dynamic variable (diagram 23)
       x := nn(n_ptrtype, line);
+      x.d := params;
       IF at_op("(") THEN
          x.b := formal_params;
       END IF;
@@ -174,7 +305,7 @@ ABNORMAL FUNC type_decl => node IMPORTS ALL;
    x.name := name;
    x.e := tts;
    x.a := p_subtype;
-   skip_rep;
+   x.c := rep_spec;
    RETURN x;
 END FUNC type_decl;
 
@@ -255,6 +386,28 @@ FUNC is_definable(READONLY w : STRING[ASCII]) => BOOL;
 END FUNC is_definable;
 
 ABNORMAL FUNC definable_name => text IMPORTS ALL;
+   IF at_op(".") AND kind_at(1) = k_id THEN
+      % a dot selector .id (13.4)
+      tpos := tpos + 2;
+      RETURN mk("." & toks(tpos - 1).s.ALL);
+   ELSEIF at_op("(") AND kind_at(1) = k_op AND text_at(1).ALL = "*" THEN
+      % a subscripting selector such as (*) or (*, *..*) (13.4)
+      VAR r : text := mk("(");
+      tpos := tpos + 1;
+      WHILE NOT at_op(")") REPEAT
+         IF accept_op("*") THEN
+            r := mk(r.ALL & "*");
+         ELSEIF accept_op("..") THEN
+            r := mk(r.ALL & "..");
+         ELSEIF accept_op(",") THEN
+            r := mk(r.ALL & ",");
+         ELSE
+            perror("a subscripting selector is made of *, .. and ,");
+         END IF;
+      END REPEAT;
+      tpos := tpos + 1;
+      RETURN mk(r.ALL & ")");
+   END IF;
    IF at_kind(k_id) OR (at_kind(k_op) AND is_definable(toks(tpos).s.ALL)) THEN
       tpos := tpos + 1;
       RETURN toks(tpos - 1).s;
@@ -282,6 +435,10 @@ ABNORMAL FUNC subprogram_decl => node IMPORTS ALL;
       x.flag := 1;
    END IF;
    x.name := definable_name;
+   IF x.name.ALL = ">" OR x.name.ALL = "<=" OR x.name.ALL = ">=" OR x.name.ALL = "/=" THEN
+      % they follow from = and < (13.1, 13.2)
+      fail(line, x.name.ALL & " is not a definable symbol");
+   END IF;
    IF at_op("[") THEN
       x.e := formal_tt;
    END IF;
@@ -293,6 +450,14 @@ ABNORMAL FUNC subprogram_decl => node IMPORTS ALL;
       x.b := p_subtype;
    END IF;
    dummy := imports_list(x);
+   % pragmats on a deferred declaration stand before the ; of its header (B)
+   IF toks(tpos).prags /= NIL THEN
+      IF x.prags = NIL THEN
+         x.prags := toks(tpos).prags;
+      ELSE
+         x.prags := mk(x.prags.ALL & toks(tpos).prags.ALL);
+      END IF;
+   END IF;
    expect_op(";");
    x.c := body;
    expect_kw("END");
@@ -312,6 +477,11 @@ ABNORMAL FUNC capsule_decl => node IMPORTS ALL;
    VAR dummy : BOOL;
    tpos := tpos + 1;
    x.name := expect_id;
+   IF at_op("[") THEN
+      % the translation time property list of a generic capsule (11.3), or
+      % values, as for the configuration capsules of 12.1
+      x.e := actual_tt;
+   END IF;
    IF at_op("(") THEN
       x.b := formal_params;
    END IF;
@@ -340,6 +510,7 @@ ABNORMAL FUNC capsule_decl => node IMPORTS ALL;
    x.c := body;
    expect_kw("END");
    expect_kw("CAPSULE");
+   x.eline := cur_line;
    IF expect_id.ALL /= x.name.ALL THEN
       fail(cur_line, "END CAPSULE name does not match");
    END IF;
@@ -367,10 +538,14 @@ ABNORMAL FUNC generic_decl => node IMPORTS ALL;
    VAR head, tail : node;
    VAR more : BOOL := TRUE;
    tpos := tpos + 1;
+   % generic parameters (diagrams 70 - 75): ival is the kind of constraint:
+   % 1 TYPE, 2 SUBTYPE, 3 PROC, 4 FUNC, 5 TASK, 6 a value of subtype a,
+   % 7 a STRING value, 8 an ENUM value; b lists the types of TYPE (...) and
+   % SUBTYPE (...) or the formals of an operation, a is a FUNC's result
    WHILE more REPEAT
       VAR names : node := id_list;
       VAR kind : INT := 6;
-      VAR st : node;
+      VAR st, items : node;
       expect_op(":");
       IF accept_kw("TYPE") THEN
          kind := 1;
@@ -382,64 +557,87 @@ ABNORMAL FUNC generic_decl => node IMPORTS ALL;
          kind := 4;
       ELSEIF accept_kw("TASK") THEN
          kind := 5;
+      ELSEIF at_kind(k_id) AND toks(tpos).s.ALL = "STRING" AND NOT (kind_at(1) = k_op AND text_at(1).ALL = "[") THEN
+         tpos := tpos + 1;
+         kind := 7;
+      ELSEIF at_kind(k_id) AND toks(tpos).s.ALL = "ENUM" AND NOT (kind_at(1) = k_op AND text_at(1).ALL = "[") THEN
+         tpos := tpos + 1;
+         kind := 8;
       ELSE
          st := p_subtype;
       END IF;
-      IF kind <= 2 AND at_op("(") THEN
-         % TYPE (INT, ENUM): the allowed categories; kept as names
-         x.e := actual_params;
-      ELSEIF kind >= 3 AND kind <= 5 THEN
-         IF at_op("(") THEN
-            tpos := tpos + 1;
-            WHILE NOT at_op(")") REPEAT
-               st := p_subtype;
-               IF NOT at_op(")") THEN
-                  expect_op(",");
-               END IF;
-            END REPEAT;
-            tpos := tpos + 1;
-         END IF;
-         IF kind = 4 AND accept_op("=>") THEN
-            st := p_subtype;
-         END IF;
+      IF kind <= 5 AND at_op("(") THEN
+         items := type_list;
+      END IF;
+      IF kind = 4 AND accept_op("=>") THEN
+         st := p_subtype;
       END IF;
       WHILE names /= NIL REPEAT
          VAR p : node := nn(n_param, names.line);
          p.name := names.name;
          p.ival := kind;
          p.a := st;
+         p.b := items;
          append(head, tail, p);
          names := names.next;
       END REPEAT;
       more := accept_op(",");
    END REPEAT;
    IF accept_kw("NEEDS") THEN
-      % the needed definitions are taken from the scope of each invocation (11.4)
+      % needed items (diagram 77): taken from the scope of each invocation
+      % (11.4); ival 3 PROC, 4 FUNC, 5 TASK, 0 a definable symbol
+      VAR nhead, ntail : node;
       more := TRUE;
       WHILE more REPEAT
-         VAR nm : text := definable_name;
-         VAR st : node;
+         VAR it : node := nn(n_param, cur_line);
+         IF accept_kw("PROC") THEN
+            it.ival := 3;
+         ELSEIF accept_kw("FUNC") THEN
+            it.ival := 4;
+         ELSEIF accept_kw("TASK") THEN
+            it.ival := 5;
+         END IF;
+         it.name := definable_name;
+         IF at_op("[") THEN
+            it.e := formal_tt;
+         END IF;
          IF at_op("(") THEN
-            tpos := tpos + 1;
-            WHILE NOT at_op(")") REPEAT
-               st := p_subtype;
-               IF NOT at_op(")") THEN
-                  expect_op(",");
-               END IF;
-            END REPEAT;
-            tpos := tpos + 1;
+            it.b := type_list;
          END IF;
          IF accept_op("=>") THEN
-            st := p_subtype;
+            it.a := p_subtype;
          END IF;
+         append(nhead, ntail, it);
          more := accept_op(",");
       END REPEAT;
+      x.d := nhead;
    END IF;
    x.a := head;
    x.b := declaration;
    x.name := x.b.name;
    RETURN x;
 END FUNC generic_decl;
+
+% ( type or subtype or identifier, ... ) in generic constraints and needed items
+ABNORMAL FUNC type_list => node IMPORTS ALL;
+   VAR head, tail : node;
+   expect_op("(");
+   IF NOT at_op(")") THEN
+      VAR more : BOOL := TRUE;
+      WHILE more REPEAT
+         IF at_kind(k_id) AND kind_at(1) = k_op AND (text_at(1).ALL = "," OR text_at(1).ALL = ")") THEN
+            VAR n : node := nn(s_name, cur_line);
+            n.name := expect_id;
+            append(head, tail, n);
+         ELSE
+            append(head, tail, p_subtype);
+         END IF;
+         more := accept_op(",");
+      END REPEAT;
+   END IF;
+   expect_op(")");
+   RETURN head;
+END FUNC type_list;
 
 % TASK (diagram 61)
 ABNORMAL FUNC task_decl => node IMPORTS ALL;
@@ -492,6 +690,9 @@ ABNORMAL FUNC expose_decl => node IMPORTS ALL;
       x.flag := x.flag + 2;
    END IF;
    x.name := expect_id;
+   IF at_op("[") THEN
+      x.e := actual_tt;
+   END IF;
    IF at_op("(") THEN
       x.b := actual_params;
    END IF;
@@ -544,9 +745,7 @@ ABNORMAL FUNC statement => node IMPORTS ALL;
       END IF;
       s.tag := match;
    END IF;
-   IF labels /= NIL THEN
-      fail(s.line, "goto labels are not handled yet");
-   END IF;
+   s.labels := labels;
    RETURN s;
 END FUNC statement;
 
@@ -578,6 +777,11 @@ ABNORMAL FUNC unlabeled_statement => node IMPORTS ALL;
       IF NOT at_op(";") THEN
          x.a := expr;
       END IF;
+      RETURN x;
+   ELSEIF at_kw("GOTO") THEN
+      x := nn(n_goto, line);
+      tpos := tpos + 1;
+      x.name := expect_id;
       RETURN x;
    ELSEIF at_kw("RAISE") THEN
       x := nn(n_raise, line);
@@ -781,7 +985,12 @@ ABNORMAL FUNC program => node IMPORTS ALL;
       IF NOT at_kw("CAPSULE") THEN
          perror("a translation unit is a capsule declaration");
       END IF;
-      append(head, tail, capsule_decl);
+      BEGIN
+         VAR pr : text := toks(tpos).prags;
+         VAR u : node := capsule_decl;
+         u.prags := pr;
+         append(head, tail, u);
+      END;
       expect_op(";");
    END REPEAT;
    RETURN head;

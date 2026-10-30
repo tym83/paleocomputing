@@ -5,10 +5,17 @@ set -u
 cd "$(dirname "$0")/../.."
 pass=0; failn=0
 tmp=$(mktemp -d)
+# files and the library of translated units (*.lib.red, translated first) live
+# in the temporary directory
+RED_FILES=$tmp; export RED_FILES
+for lib in red/tests/*.lib.red; do
+  build/redc < "$lib" > /dev/null || { echo "FAIL $(basename "$lib")"; failn=$((failn+1)); }
+done
 for src in red/tests/*.red; do
   name=$(basename "$src" .red)
   exp="red/tests/$name.out"
   case "$name" in
+    *.lib) continue;;
     *.err)
       if build/redc < "$src" > "$tmp/out.c"; then
         echo "FAIL $name: accepted"; failn=$((failn+1)); continue

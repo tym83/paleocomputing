@@ -1,0 +1,7 @@
+PDP11, 16-bit words, 1000 ticks a second
+156 65 0 14 
+after LOW_IO wrote byte 8: a = 10, b = FALSE
+2 1 are bytes of plain
+plain = 1
+PTR(FREE UNCHECKED): FREE does not look for other pointers
+X_MAXRANGE: FLOAT(16, ...)

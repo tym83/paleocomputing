@@ -1,0 +1,3 @@
+i = 3
+left the guarded body by GOTO
+the guard still works after the GOTO

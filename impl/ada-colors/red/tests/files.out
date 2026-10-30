@@ -1,0 +1,20 @@
+random file: size 3, read 2 2.50000E+0, now at 3
+X_FILEPOS
+X_EOF: READ at the end
+EOF(f)
+X_FILE: the file is closed
+X_NOFILE: deleted
+X_FILENAME
+X_FILE: an input file is not written
+SIZELN 5
+READLN hello
+then world and X
+X_EOF: READLN at the end
+SYS_OUT is the teletype
+3.7265E+2 -5.00E+1 'GREEN [    42]
+conversions from strings
+X_RANGE: not a literal
+372.650 -050.000 000.000
+X_FORMAT
+372.650E+000 -500.000E-001 100.500E+002 100.000E-012
+X_FORMAT: the exponent does not fit

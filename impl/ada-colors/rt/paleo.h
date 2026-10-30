@@ -38,6 +38,13 @@ void rt_set_fdepth(int d);
 void rt_fpush(void *f, size_t n);
 void rt_fpop(void);
 void rt_free(void **v);
+void rt_free_check(void **v);                  /* X_FREE if another pointer refers */
+/* RED 13.3: a dynamic variable of a type with FINALIZE is finalized when it
+ * is FREEd, when a collection finds it unreachable, or when the program ends */
+typedef void (*rt_finfn)(void *cell, void *env);
+void *rt_salloc_fin(size_t n, rt_finfn fin, void *env);
+void rt_collect(void);
+void rt_finalize_all(void);
 #ifdef RT_SCAN
 #define rt_alloc rt_salloc
 #define RT_FPUSH(f) rt_fpush((f), sizeof *(f))
@@ -667,4 +674,134 @@ static inline yfix y_vchk_X(yfix v) { return *y_chk_x(&v); }
 static inline void *y_vchk_P(void *v) { return *y_chk_p(&v); }
 static inline yset y_vchk_S(yset v) { return *y_chk_s(&v); }
 
+#endif
+
+/* RED additions (Intermetrics, 1979): what the RED translator needs beyond the
+ * shared runtime above. Nothing above is changed. */
+#ifndef PALEO_RED_H
+#define PALEO_RED_H
+/* the declared limits of INT and FLOAT (C.3, C.4) */
+#define RT_IMAX INT64_MAX
+#define RT_IMIN (-INT64_MAX)
+#define RT_FMAX 1.7976931348623157e308
+/* the number of values of an index subtype lo .. hi (C.7) */
+#define RT_R_EXT(l, h) ((h) >= (l) ? (h) - (l) + 1 : 0)
+int rt_r_active(rt_act *a);                    /* NIL_ACT is always active */
+rstr rt_r_strsub(rstr s, rt_int len);          /* X_SUBTYPE unless s has len characters */
+void rt_r_free_unchecked(void **v);
+/* an uninitialized scalar holds a value outside its type (5.1): reading it
+ * raises X_INIT */
+#define RT_R_IUNDEF INT64_MIN
+#define RT_R_EUNDEF (-0x7fffffff - 1)
+double rt_r_fundef(void);
+static inline rt_int rt_r_ichk(rt_int v) {
+  if (v == RT_R_IUNDEF) rt_raise(RT_X_INIT);
+  return v;
+}
+static inline int rt_r_echk(int v) {
+  if (v == RT_R_EUNDEF) rt_raise(RT_X_INIT);
+  return v;
+}
+double rt_r_fchk(double v);
+rstr rt_r_str_undef(rt_int len);                /* characters not yet given (0xFF) */
+rstr rt_r_schk(rstr s);
+static inline int rt_r_cchk(int c) {
+  if (c == 0xFF) rt_raise(RT_X_INIT);
+  return c;
+}
+int rt_r_undef_FLOAT(double v);
+static inline int rt_r_undef_INT(rt_int v) { return v == RT_R_IUNDEF; }
+static inline int rt_r_undef_ENUM(int v) { return v == RT_R_EUNDEF; }
+static inline int rt_r_undef_BOOL(int v) { return v == RT_R_EUNDEF; }
+rt_int rt_r_act_time(rt_act *a);               /* TIME(a) */
+void rt_r_delay_act(rt_int t, rt_act *a);       /* DELAY_UNTIL(t, a) */
+rt_int rt_r_act_deadline(rt_int t, rt_act *a);  /* its real time, for WAIT */
+double rt_r_fovf(double v);                     /* X_OVERFLOW for FLOAT (C.4) */
+double rt_r_fpow(double a, rt_int b);           /* X_NEG_EXP for b < 0 */
+rt_int rt_r_floor(double v);                    /* FLOOR(FLOAT) => INT */
+void rt_r_unlock(rt_lock *l);                   /* X_LOCK if not locked (C.12) */
+rt_act *rt_r_owner(rt_lock *l);
+int rt_r_can_send(rt_mbox *m);                  /* SEND_TEST, RECEIVE_TEST (C.11) */
+int rt_r_can_receive(rt_mbox *m);
+/* files (RED App. A, C.14): a physical file name is a file of the host's
+ * current directory (or of $RED_FILES); SYS_IN and SYS_OUT are the teletype */
+typedef struct rt_r_file rt_r_file;
+rt_r_file *rt_r_file_new(int access, int use, size_t esz, int text);
+rt_r_file *rt_r_sys_in(void);
+rt_r_file *rt_r_sys_out(void);
+int rt_r_file_access(rt_r_file *f);
+int rt_r_file_use(rt_r_file *f);
+void rt_r_open(rt_r_file *f, rstr name, int is_new);
+void rt_r_close(rt_r_file *f, int del);
+rt_int rt_r_fsize(rt_r_file *f);
+rt_int rt_r_fpos(rt_r_file *f);
+void rt_r_fsetpos(rt_r_file *f, rt_int p);
+int rt_r_feof(rt_r_file *f);
+void rt_r_fread(rt_r_file *f, void *dst);
+void rt_r_fwrite(rt_r_file *f, const void *src);
+int rt_r_fgetc(rt_r_file *f);
+void rt_r_fputc(rt_r_file *f, int c);
+void rt_r_fputs(rt_r_file *f, rstr s);
+void rt_r_freadln(rt_r_file *f, rstr *dst);
+void rt_r_fwriteln(rt_r_file *f, rstr s);
+rt_int rt_r_fsizeln(rt_r_file *f);
+void rt_r_rename(rstr from, rstr to);
+typedef struct {
+  unsigned char *p;
+  size_t n, cap;
+} rt_r_buf;
+void rt_r_buf_put(rt_r_buf *b, const void *p, size_t n);
+void rt_r_buf_get(const unsigned char **q, void *p, size_t n);
+void rt_r_buf_yset(rt_r_buf *b, yset s);
+yset rt_r_buf_get_yset(const unsigned char **q);
+void rt_r_fwrite_rec(rt_r_file *f, const unsigned char *p, size_t n);
+const unsigned char *rt_r_fread_rec(rt_r_file *f);
+void rt_r_readln(rstr *dst);                    /* READLN(s): X_EOF, X_LN */
+/* conversions (A.3) */
+rstr rt_r_str_of_float(double v, rt_int prec);  /* n.nnnE+m */
+rstr rt_r_format(double v, rt_int n, rt_int m);  /* X_FORMAT */
+rstr rt_r_format_e(double v, rt_int n, rt_int m, rt_int o);
+rstr rt_r_str_pad(rstr s, rt_int len);           /* padded on the left */
+rstr rt_r_enum_image(const char *const *names, rt_int v);
+rt_int rt_r_enum_of_str(const char *const *names, rt_int n, rstr s);
+int rt_r_bool_of_str(rstr s);
+double rt_r_float_of_str(rstr s);
+/* the simulated memory (12.3): bit 0 is the high-order bit of byte 0 */
+void *rt_r_mem_at(rt_int bitaddr, size_t size);
+void rt_r_mem_put(rt_int bitaddr, rt_int nbits, rt_int v);
+rt_int rt_r_mem_get(rt_int bitaddr, rt_int nbits, int is_signed);
+void rt_r_mem_putf(rt_int bitaddr, rt_int nbits, double v);
+double rt_r_mem_getf(rt_int bitaddr, rt_int nbits);
+rt_int rt_r_fits(rt_int v, rt_int nbits, int is_signed);
+void rt_r_low_io(rt_int device, rt_int command, rt_int *data); /* + memory devices 3, 4 */
+void rt_r_maxprec(rt_int prec);                 /* X_MAXRANGE (C.3, C.4) */
+void rt_r_maxrange_f(double lo, double hi);
+void rt_r_maxrange_i(rt_int lo, rt_int hi);
+/* SET[INT] without a range (C.9): the sorted elements, or with neg the sorted
+ * elements it lacks */
+typedef struct {
+  int neg;
+  rt_int n;
+  rt_int *e;
+} rt_r_iset;
+rt_r_iset rt_r_iset_empty(void);
+rt_r_iset rt_r_iset_add(rt_r_iset s, rt_int v);
+int rt_r_iset_in(rt_int v, rt_r_iset s);
+rt_r_iset rt_r_iset_union(rt_r_iset a, rt_r_iset b);
+rt_r_iset rt_r_iset_inter(rt_r_iset a, rt_r_iset b);
+rt_r_iset rt_r_iset_xor(rt_r_iset a, rt_r_iset b);
+rt_r_iset rt_r_iset_compl(rt_r_iset a);
+int rt_r_iset_eq(rt_r_iset a, rt_r_iset b);
+int rt_r_iset_le(rt_r_iset a, rt_r_iset b);
+int rt_r_iset_lt(rt_r_iset a, rt_r_iset b);
+int rt_r_set_le(yset a, yset b);               /* subset (C.9) */
+int rt_r_set_lt(yset a, yset b);               /* strict subset */
+void rt_r_xtag(void);                          /* raises X_TAG (C.6) */
+rt_int rt_r_tag(rt_int tag);                   /* U.TAG: X_INIT if no component */            /* FREE under SUPPRESS(X_FREE) */
+/* PRAG(NONRECURSIVE) and PRAG(NONREENTRANT): the activations inside a
+ * subprogram; entering it again where the pragmat forbids it is an error */
+typedef struct rt_r_inside rt_r_inside;
+typedef struct { rt_r_inside *in; } rt_r_nonrec;
+void rt_r_nonrec_enter(rt_r_nonrec *n, int nonrec, int nonreent, const char *name);
+void rt_r_nonrec_leave(rt_r_nonrec *n);
 #endif

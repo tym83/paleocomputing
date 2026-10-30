@@ -250,13 +250,35 @@ ABNORMAL FUNC p_subtype => node IMPORTS ALL;
             x.a := actual_tt;
          END IF;
          IF at_op("(") THEN
-            x.b := actual_params;
+            x.b := constraint_list;
             x.flag := 1;
          END IF;
       END IF;
    END;
    RETURN x;
 END FUNC p_subtype;
+
+% a constraint property list (diagram 12): expressions and ranges
+ABNORMAL FUNC constraint_list => node IMPORTS ALL;
+   VAR head, tail : node;
+   VAR more : BOOL := TRUE;
+   expect_op("(");
+   WHILE more REPEAT
+      VAR line : INT := cur_line;
+      VAR lo : node := expr;
+      IF accept_op("..") THEN
+         VAR r : node := nn(n_range, line);
+         r.a := lo;
+         r.b := expr;
+         append(head, tail, r);
+      ELSE
+         append(head, tail, lo);
+      END IF;
+      more := accept_op(",");
+   END REPEAT;
+   expect_op(")");
+   RETURN head;
+END FUNC constraint_list;
 
 ABNORMAL FUNC actual_params => node IMPORTS tpos;
    VAR head, tail : node;
@@ -280,8 +302,8 @@ END FUNC is_type_word;
 % actual translation time properties (diagram 67): types or manifest values
 ABNORMAL FUNC actual_tt => node IMPORTS ALL;
    VAR head, tail : node;
-   expect_op("[");
    VAR more : BOOL := TRUE;
+   expect_op("[");
    WHILE more REPEAT
       IF at_kind(k_id) AND is_type_word(toks(tpos).s.ALL) THEN
          append(head, tail, p_subtype);
@@ -343,12 +365,13 @@ END FUNC is_rel;
 
 ABNORMAL FUNC expr_rel => node IMPORTS ALL;
    VAR l : node := expr_add;
-   IF at_kind(k_op) AND is_rel(toks(tpos).s.ALL) THEN
+   % relations associate left to right like the other levels (5.2)
+   WHILE at_kind(k_op) AND is_rel(toks(tpos).s.ALL) REPEAT
       VAR op : text := toks(tpos).s;
       VAR line : INT := cur_line;
       tpos := tpos + 1;
       l := binop(op, l, expr_add, line);
-   END IF;
+   END REPEAT;
    RETURN l;
 END FUNC expr_rel;
 
@@ -519,8 +542,8 @@ ABNORMAL FUNC constructor_item => node IMPORTS ALL;
    lab.a := first;
    IF accept_op("..") THEN
       lab.b := expr;
-      append(keys, ktail, lab);
-   ELSEIF at_op(":") THEN
+   END IF;
+   IF at_op(":") THEN
       append(keys, ktail, lab);
    ELSEIF at_op(",") THEN
       % maybe a list of keys followed by ':'
@@ -548,6 +571,9 @@ ABNORMAL FUNC constructor_item => node IMPORTS ALL;
       ELSE
          tpos := save;
       END IF;
+   END IF;
+   IF keys = NIL AND lab.b /= NIL THEN
+      perror("a range in a constructor is followed by :");
    END IF;
    IF keys /= NIL THEN
       expect_op(":");

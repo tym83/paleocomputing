@@ -1,0 +1,3 @@
+CAPSULE main EXPORTS NONE;
+   VAR x__y : INT := 1;
+END CAPSULE main;
