@@ -250,13 +250,35 @@ ABNORMAL FUNC p_subtype => node IMPORTS ALL;
             x.a := actual_tt;
          END IF;
          IF at_op("(") THEN
-            x.b := actual_params;
+            x.b := constraint_list;
             x.flag := 1;
          END IF;
       END IF;
    END;
    RETURN x;
 END FUNC p_subtype;
+
+% a constraint property list (diagram 12): expressions and ranges
+ABNORMAL FUNC constraint_list => node IMPORTS ALL;
+   VAR head, tail : node;
+   VAR more : BOOL := TRUE;
+   expect_op("(");
+   WHILE more REPEAT
+      VAR line : INT := cur_line;
+      VAR lo : node := expr;
+      IF accept_op("..") THEN
+         VAR r : node := nn(n_range, line);
+         r.a := lo;
+         r.b := expr;
+         append(head, tail, r);
+      ELSE
+         append(head, tail, lo);
+      END IF;
+      more := accept_op(",");
+   END REPEAT;
+   expect_op(")");
+   RETURN head;
+END FUNC constraint_list;
 
 ABNORMAL FUNC actual_params => node IMPORTS tpos;
    VAR head, tail : node;

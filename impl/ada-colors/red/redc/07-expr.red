@@ -81,7 +81,21 @@ FUNC c_ident(READONLY s : STRING[ASCII]) => STRING[ASCII];
    RETURN lower_s(s);
 END FUNC c_ident;
 
+% the dynamic variable a non-NIL pointer refers to
+ABNORMAL FUNC cell_deref(CONST t : typ, READONLY p : STRING[ASCII]) => STRING[ASCII] IMPORTS ALL;
+   IF t.decl /= NIL AND t.decl.b /= NIL THEN
+      RETURN "((" & p & ")->all)";
+   END IF;
+   RETURN "(*" & p & ")";
+END FUNC cell_deref;
+
 ABNORMAL FUNC deref(READONLY base : STRING[ASCII], CONST t : typ) => STRING[ASCII] IMPORTS ALL;
+   IF t.decl /= NIL AND t.decl.b /= NIL THEN
+      IF suppressed("X_NIL") THEN
+         RETURN "((" & base & ")->all)";
+      END IF;
+      RETURN "(((" & ctype(t) & ")rt_nil_check(" & base & "))->all)";
+   END IF;
    IF suppressed("X_NIL") THEN
       RETURN "(*(" & ctype(t) & ")(" & base & "))";
    END IF;
@@ -149,6 +163,20 @@ PROC select_on(READONLY base : STRING[ASCII], CONST bt : typ, CONST e : node, VA
    IF bt.kind = t_ptr THEN
       finish_ptr(bt);
       ro := FALSE;
+      IF bt.decl /= NIL THEN
+         % a formal parameter 2 is an attribute of the dynamic variable
+         VAR p : node := bt.decl.b;
+         WHILE p /= NIL REPEAT
+            IF p.name.ALL = e.name.ALL THEN
+               VAR pc : cons;
+               code := mk("(((" & ctype(bt) & ")rt_nil_check(" & base & "))->p_" & lower_s(p.name.ALL) & ")");
+               t := resolve_subtype(p.a, pc);
+               ro := TRUE;
+               RETURN;
+            END IF;
+            p := p.next;
+         END REPEAT;
+      END IF;
       IF e.name.ALL = "ALL" THEN
          code := mk(deref(base, bt));
          t := bt.target;
@@ -393,6 +421,9 @@ ABNORMAL FUNC own_attribute(CONST e : node) => BOOL IMPORTS ALL;
          finish_ptr(bt);
          bt := bt.target;
       END REPEAT;
+      WHILE bt /= NIL AND bt.kind = t_new AND bt.tparams = NIL REPEAT
+         bt := bt.under;
+      END REPEAT;
       IF bt /= NIL AND bt.kind = t_new THEN
          VAR p : node := bt.tparams;
          WHILE p /= NIL REPEAT
@@ -400,6 +431,17 @@ ABNORMAL FUNC own_attribute(CONST e : node) => BOOL IMPORTS ALL;
                ok := TRUE;
             END IF;
             p := p.next;
+         END REPEAT;
+         bt := bt.under;
+      END IF;
+      IF bt /= NIL AND (bt.kind = t_record OR bt.kind = t_union) THEN
+         % a component of that name
+         VAR f : field := bt.fields;
+         WHILE f /= NIL REPEAT
+            IF f.name.ALL = e.name.ALL THEN
+               ok := TRUE;
+            END IF;
+            f := f.next;
          END REPEAT;
       END IF;
    BY
@@ -538,7 +580,11 @@ ABNORMAL FUNC gexpr(CONST e : node, CONST want : typ, OUT t : typ) => STRING[ASC
          RETURN code.ALL;
       END;
    ELSEIF k = n_select THEN
-      IF (e.name.ALL = "LEN" OR e.name.ALL = "MIN" OR e.name.ALL = "MAX") AND NOT own_attribute(e) THEN
+      IF (e.name.ALL = "LEN" OR e.name.ALL = "MIN" OR e.name.ALL = "MAX" OR e.name.ALL = "PREC"
+            OR e.name.ALL = "ACCESS" OR e.name.ALL = "USE") AND NOT own_attribute(e) THEN
+         RETURN attribute(e, t);
+      ELSEIF as_subtype(e.a) /= NIL OR ptr_attribute(e) THEN
+         % a parameter of a user-defined subtype (4.5.3)
          RETURN attribute(e, t);
       END IF;
       BEGIN
@@ -663,45 +709,207 @@ ABNORMAL FUNC enum_type_of(READONLY lit : STRING[ASCII], CONST line : INT) => ty
    RETURN NIL;
 END FUNC enum_type_of;
 
+% x.name where name is a formal parameter 1 of x's indirect type (4.5.3)
+ABNORMAL FUNC ptr_attribute(CONST e : node) => BOOL IMPORTS ALL;
+   VAR lv : text;
+   VAR t : typ;
+   VAR c : cons;
+   VAR ro : BOOL;
+   VAR p : node;
+   VAR saved : buffer := code;
+   IF NOT is_lvalue(e.a) THEN
+      RETURN FALSE;
+   END IF;
+   code := new_buffer;
+   lvalue(e.a, lv, t, c, ro);
+   code := saved;
+   IF t.kind /= t_ptr OR t.decl = NIL THEN
+      RETURN FALSE;
+   END IF;
+   p := t.decl.d;
+   WHILE p /= NIL REPEAT
+      IF p.name.ALL = e.name.ALL THEN
+         RETURN TRUE;
+      END IF;
+      p := p.next;
+   END REPEAT;
+   RETURN FALSE;
+END FUNC ptr_attribute;
+
+% attribute inquiry (4.5.3, diagram 25): of a subtype, or of the subtype of
+% an expression; the attributes of the built-in types are those of App. C
 ABNORMAL FUNC attribute(CONST e : node, OUT t : typ) => STRING[ASCII] IMPORTS ALL;
    VAR bt : typ;
    VAR c : cons;
+   VAR base : text;
+   VAR sub : node := as_subtype(e.a);
+   CONST name := e.name.ALL;
+   IF sub /= NIL THEN
+      bt := resolve_subtype(sub, c);
+   ELSE
+      bt := value_subtype(e.a, c, base);
+   END IF;
+   IF bt.kind = t_ptr AND c /= NIL AND c.args /= NIL AND bt.decl /= NIL THEN
+      % a formal parameter 1 of an indirect type (4.5.3)
+      VAR p : node := bt.decl.d;
+      VAR a : node := c.args;
+      WHILE p /= NIL AND a /= NIL REPEAT
+         IF p.name.ALL = name THEN
+            VAR pc : cons;
+            CONST v := gexpr(a, resolve_subtype(p.a, pc), t);
+            RETURN v;
+         END IF;
+         p := p.next;
+         a := a.next;
+      END REPEAT;
+   END IF;
+   WHILE bt.kind = t_ptr AND base /= NIL REPEAT
+      finish_ptr(bt);
+      base := mk(deref(base.ALL, bt));
+      bt := bt.target;
+      c := NIL;
+      IF bt.kind = t_string THEN
+         c := new_cons;
+         c.slen := mk("(" & base.ALL & ").len");
+      END IF;
+   END REPEAT;
+   IF bt.kind = t_new AND bt.tparams /= NIL AND c /= NIL AND c.args /= NIL THEN
+      % a parameter of a user-defined type is an attribute (4.5.3)
+      VAR p : node := bt.tparams;
+      VAR a : node := c.args;
+      WHILE p /= NIL AND a /= NIL REPEAT
+         IF p.name.ALL = name THEN
+            CONST pt := tparam_type(bt, name);
+            CONST v := gexpr(a, pt, t);
+            RETURN v;
+         END IF;
+         p := p.next;
+         a := a.next;
+      END REPEAT;
+   END IF;
+   IF bt.kind = t_new AND bt.tparams = NIL THEN
+      c := base_cons(bt, c);
+      bt := base_of(bt);
+   END IF;
    t := ty_int;
-   IF e.name.ALL = "LEN" THEN
-      VAR base : text := mk(gexpr(e.a, NIL, bt));
-      IF bt.kind = t_ptr THEN
-         finish_ptr(bt);
-         base := mk(deref(base.ALL, bt));
-         bt := bt.target;
+   IF name = "LEN" AND bt.kind = t_string THEN
+      IF c /= NIL AND c.slen /= NIL THEN
+         RETURN "((rt_int)(" & c.slen.ALL & "))";
       END IF;
-      IF bt.kind /= t_string THEN
-         fail(e.line, "LEN applies to strings");
+      fail(e.line, "the length of this string subtype is not known");
+   ELSEIF name = "LEN" AND bt.kind = t_mbox THEN
+      % MAILBOX[S](len).LEN (C.11)
+      IF c /= NIL AND c.lo /= NIL THEN
+         RETURN "((rt_int)(" & c.lo.ALL & "))";
       END IF;
-      RETURN "(" & base.ALL & ").len";
+      fail(e.line, "the size of this mailbox subtype is not known");
+   ELSEIF (name = "MIN" OR name = "MAX") AND scalar_kind(bt) THEN
+      t := bt;
+      IF name = "MIN" THEN
+         RETURN sub_lo(bt, c);
+      END IF;
+      RETURN sub_hi(bt, c);
+   ELSEIF name = "PREC" AND bt.kind = t_float THEN
+      % FLOAT(prec, min .. max).PREC (C.4); the declared precision of FLOAT
+      IF c /= NIL AND c.prec /= NIL THEN
+         RETURN "((rt_int)(" & c.prec.ALL & "))";
+      END IF;
+      RETURN "((rt_int)15)";
+   ELSEIF (name = "ACCESS" OR name = "USE") AND bt.kind = t_file THEN
+      RETURN file_attribute(e, bt, c, base, t);
    END IF;
-   IF e.a.kind = n_name THEN
-      VAR y : sym := lookup(e.a.name.ALL);
-      IF y /= NIL AND (y.kind = y_abbrev OR y.kind = y_type) THEN
-         VAR st : node := nn(s_name, e.line);
-         st.name := e.a.name;
-         t := resolve_subtype(st, c);
-         IF t.kind = t_enum THEN
-            IF e.name.ALL = "MIN" THEN
-               RETURN "0";
-            END IF;
-            RETURN itos(list_len(t.lits) - 1);
-         END IF;
-         IF c.lo /= NIL THEN
-            IF e.name.ALL = "MIN" THEN
-               RETURN c.lo.ALL;
-            END IF;
-            RETURN c.hi.ALL;
-         END IF;
-      END IF;
-   END IF;
-   fail(e.line, "attribute " & e.name.ALL & " is not handled yet");
+   fail(e.line, name & " is not an attribute of this subtype");
    RETURN "";
 END FUNC attribute;
+
+% type comparison (diagram 11) when either side is a TYPEOF, otherwise
+% subtype comparison (diagram 13): the same type and equal constraints (4.1.6)
+ABNORMAL FUNC subtype_compare(CONST sa : node, CONST sb : node, READONLY op : STRING[ASCII], CONST line : INT)
+      => STRING[ASCII] IMPORTS ALL;
+   VAR ca, cb : cons;
+   VAR ta : typ := resolve_subtype(sa, ca);
+   VAR tb : typ := resolve_subtype(sb, cb);
+   VAR r : text := mk("1");
+   VAR yes : STRING[ASCII](1) := "1";
+   VAR no : STRING[ASCII](1) := "0";
+   IF op = "/=" THEN
+      yes := "0";
+      no := "1";
+   END IF;
+   IF NOT same(ta, tb) THEN
+      RETURN no;
+   ELSEIF (sa.kind = s_name AND sa.name.ALL = "TYPEOF") OR (sb.kind = s_name AND sb.name.ALL = "TYPEOF") THEN
+      RETURN yes;
+   END IF;
+   IF scalar_kind(ta) THEN
+      r := mk("(" & sub_lo(ta, ca) & ") == (" & sub_lo(tb, cb) & ") && (" & sub_hi(ta, ca) & ") == ("
+              & sub_hi(tb, cb) & ")");
+      IF ta.kind = t_float THEN
+         r := mk(r.ALL & " && " & float_prec(ca) & " == " & float_prec(cb));
+      END IF;
+   ELSEIF ta.kind = t_string THEN
+      IF ca /= NIL AND cb /= NIL AND ca.slen /= NIL AND cb.slen /= NIL THEN
+         r := mk("(" & ca.slen.ALL & ") == (" & cb.slen.ALL & ")");
+      ELSEIF NOT ((ca = NIL OR ca.slen = NIL) AND (cb = NIL OR cb.slen = NIL)) THEN
+         r := mk("0");
+      END IF;
+   ELSEIF ta.kind = t_array THEN
+      FOR k : INT(1 .. ta.ndim) REPEAT
+         IF ca /= NIL AND cb /= NIL AND cons_lo(ca, k) /= NIL AND cons_lo(cb, k) /= NIL THEN
+            r := mk(r.ALL & " && (" & cons_lo(ca, k).ALL & ") == (" & cons_lo(cb, k).ALL & ") && (" & cons_hi(ca, k).ALL
+                    & ") == (" & cons_hi(cb, k).ALL & ")");
+         END IF;
+      END REPEAT;
+   ELSEIF ta.kind = t_new AND ta.tparams /= NIL AND ca /= NIL AND cb /= NIL THEN
+      VAR a : node := ca.args;
+      VAR b : node := cb.args;
+      VAR at, bt2 : typ;
+      WHILE a /= NIL AND b /= NIL REPEAT
+         CONST x := gexpr(a, NIL, at);
+         CONST y := gexpr(b, at, bt2);
+         r := mk(r.ALL & " && " & eq_code(at, x, y));
+         a := a.next;
+         b := b.next;
+      END REPEAT;
+   ELSEIF ta.kind = t_union AND ca /= NIL AND cb /= NIL THEN
+      IF ca.lo /= NIL AND cb.lo /= NIL THEN
+         r := mk("(" & ca.lo.ALL & ") == (" & cb.lo.ALL & ")");
+      ELSEIF ca.lo /= NIL OR cb.lo /= NIL THEN
+         r := mk("0");
+      END IF;
+   END IF;
+   IF op = "/=" THEN
+      RETURN "(!(" & r.ALL & "))";
+   END IF;
+   RETURN "(" & r.ALL & ")";
+END FUNC subtype_compare;
+
+FUNC float_prec(CONST c : cons) => STRING[ASCII];
+   IF c /= NIL AND c.prec /= NIL THEN
+      RETURN "(" & c.prec.ALL & ")";
+   END IF;
+   RETURN "15";
+END FUNC float_prec;
+
+% FILE[S](access, use) .ACCESS and .USE (C.14): ENUM['INPUT, 'OUTPUT, 'UPDATE]
+ABNORMAL FUNC file_attribute(CONST e : node, CONST bt : typ, CONST c : cons, CONST base : text, OUT t : typ)
+      => STRING[ASCII] IMPORTS ALL;
+   t := file_mode_type;
+   IF base /= NIL THEN
+      IF e.name.ALL = "ACCESS" THEN
+         RETURN "rt_r_file_access(" & base.ALL & ")";
+      END IF;
+      RETURN "rt_r_file_use(" & base.ALL & ")";
+   ELSEIF c /= NIL AND c.args /= NIL THEN
+      IF e.name.ALL = "ACCESS" THEN
+         RETURN gexpr(c.args, t, t);
+      ELSEIF c.args.next /= NIL THEN
+         RETURN gexpr(c.args.next, t, t);
+      END IF;
+   END IF;
+   fail(e.line, "the " & e.name.ALL & " of this file subtype is not known");
+   RETURN "";
+END FUNC file_attribute;
 
 ABNORMAL FUNC gbinop(CONST e : node, CONST want : typ, OUT t : typ) => STRING[ASCII] IMPORTS ALL;
    VAR op : text := e.name;
@@ -797,6 +1005,10 @@ ABNORMAL FUNC gbinop(CONST e : node, CONST want : typ, OUT t : typ) => STRING[AS
          END IF;
          fail(e.line, "& needs strings or characters");
       END;
+   END IF;
+   IF (op.ALL = "=" OR op.ALL = "/=") AND as_subtype(e.a) /= NIL AND as_subtype(e.b) /= NIL THEN
+      t := ty_bool;
+      RETURN subtype_compare(as_subtype(e.a), as_subtype(e.b), op.ALL, e.line);
    END IF;
    IF is_rel(op.ALL) AND op.ALL /= "IN" THEN
       IF e.a.kind = n_enum OR e.a.kind = n_nil OR e.a.kind = n_int THEN
@@ -1845,14 +2057,14 @@ ABNORMAL FUNC builtin(READONLY name : STRING[ASCII], CONST tt : node, CONST args
       IF suppressed("X_FREE") THEN
          % no look for other pointers to the variable (B)
          IF needs_fin(pt.target) THEN
-            RETURN "({ if (" & pv.ALL & ") { " & fin_code("(*" & pv.ALL & ")", pt.target)
+            RETURN "({ if (" & pv.ALL & ") { " & fin_code(cell_deref(pt, pv.ALL), pt.target)
                    & " } rt_r_free_unchecked((void **)&" & pv.ALL & "); })";
          END IF;
          RETURN "rt_r_free_unchecked((void **)&" & pv.ALL & ")";
       ELSEIF needs_fin(pt.target) THEN
          % the variable ceases to exist: finalized once FREE may reclaim it (13.3)
          RETURN "({ rt_free_check((void **)&" & pv.ALL & "); if (" & pv.ALL & ") { "
-                & fin_code("(*" & pv.ALL & ")", pt.target) & " } rt_free((void **)&" & pv.ALL & "); })";
+                & fin_code(cell_deref(pt, pv.ALL), pt.target) & " } rt_free((void **)&" & pv.ALL & "); })";
       END IF;
       RETURN "rt_free((void **)&" & pv.ALL & ")";
    ELSEIF name = "LOW_IO" THEN

@@ -450,7 +450,19 @@ PROC declare_ctype(CONST t : typ) IMPORTS ALL;
    END IF;
    t.next := all_types;
    all_types := t;
-   IF t.kind = t_ptr THEN
+   IF t.kind = t_ptr AND t.decl /= NIL AND t.decl.b /= NIL THEN
+      % the dynamic variables keep their formal parameters 2 (4.4.3)
+      VAR p : node := t.decl.b;
+      VAR fs : text := mk("");
+      CONST sn := new_name("Pc");
+      WHILE p /= NIL REPEAT
+         VAR pc : cons;
+         fs := mk(fs.ALL & " " & ctype(resolve_subtype(p.a, pc)) & " p_" & lower_s(p.name.ALL) & ";");
+         p := p.next;
+      END REPEAT;
+      put(out_types, "typedef struct " & sn & " *" & t.cname.ALL & ";");
+      put(out_helpers, "struct " & sn & " {" & fs.ALL & " " & ctype(t.target) & " all; };");
+   ELSEIF t.kind = t_ptr THEN
       VAR target : typ := t.target;
       IF target.kind = t_record OR target.kind = t_union THEN
          IF target.cname = NIL THEN
@@ -591,6 +603,20 @@ PROC init_ascii IMPORTS ALL;
    ty_ascii := new_typ(t_enum);
    ty_ascii.lits := head;
    ty_ascii.name := mk("ASCII");
+   BEGIN
+      VAR h2, t2 : node;
+      VAR l1 : node := nn(n_enum, 0);
+      VAR l2 : node := nn(n_enum, 0);
+      VAR l3 : node := nn(n_enum, 0);
+      l1.name := mk("INPUT");
+      l2.name := mk("OUTPUT");
+      l3.name := mk("UPDATE");
+      append(h2, t2, l1);
+      append(h2, t2, l2);
+      append(h2, t2, l3);
+      file_mode_type := new_typ(t_enum);
+      file_mode_type.lits := h2;
+   END;
 END PROC init_ascii;
 
 FUNC lit_index(CONST lits : node, READONLY name : STRING[ASCII]) => INT;
@@ -800,41 +826,12 @@ ABNORMAL FUNC resolve_subtype(CONST st : node, OUT c : cons) => typ IMPORTS ALL;
          END;
          RETURN t;
       WHEN s_name =>
-         IF st.name.ALL = "BOOL" THEN
-            RETURN ty_bool;
-         ELSEIF st.name.ALL = "ASCII" THEN
-            RETURN ty_ascii;
-         ELSEIF st.name.ALL = "DATA_LOCK" THEN
-            RETURN ty_lock;
-         ELSEIF st.name.ALL = "LATCH" THEN
-            RETURN ty_latch;
-         ELSEIF st.name.ALL = "ACT" THEN
-            RETURN ty_act;
-         END IF;
+         RETURN named_subtype(st, c);
+      WHEN s_of =>
+         % SUBTYPE(exp), the subtype of an expression (4.5.1)
          BEGIN
-            VAR y : sym := lookup(st.name.ALL);
-            IF y = NIL THEN
-               fail(st.line, "unknown type " & st.name.ALL);
-            END IF;
-            IF y.kind = y_generic AND (y.decl.b.kind = n_newtype OR y.decl.b.kind = n_ptrtype) THEN
-               RETURN instantiate_type(y, st.a, st.b, c, st.line);
-            END IF;
-            IF y.kind = y_type AND y.t /= NIL AND y.t.kind = t_new THEN
-               RETURN new_type(y, st, c);
-            END IF;
-            IF (y.kind = y_abbrev OR y.kind = y_type) AND y.t /= NIL THEN
-               IF y.c /= NIL THEN
-                  c := y.c;
-               END IF;
-               RETURN y.t;
-            END IF;
-            IF y.kind = y_type AND y.decl /= NIL AND y.decl.kind = n_newtype THEN
-               RETURN new_type(y, st, c);
-            END IF;
-            IF y.kind = y_abbrev OR y.kind = y_type THEN
-               RETURN resolve_subtype(y.st, c);
-            END IF;
-            fail(st.line, st.name.ALL & " is not a type");
+            VAR base : text;
+            RETURN value_subtype(st.a, c, base);
          END;
       ELSE =>
          fail(st.line, "this subtype form is not handled yet");
@@ -861,6 +858,356 @@ PROC tag_constraint(CONST t : typ, CONST e : node, CONST c : cons) IMPORTS ALL;
       c.hasm := TRUE;
    END IF;
 END PROC tag_constraint;
+
+% a subtype named by an identifier (diagram 12), with its constraint list
+ABNORMAL FUNC named_subtype(CONST st : node, OUT c : cons) => typ IMPORTS ALL;
+   VAR t : typ;
+   VAR y : sym := lookup(st.name.ALL);
+   CONST name := st.name.ALL;
+   c := new_cons;
+   IF y = NIL AND (name = "SUBTYPEOF" OR name = "INDEXOF" OR name = "TYPEOF") THEN
+      RETURN inquiry(st, c);
+   END IF;
+   IF y = NIL THEN
+      IF name = "BOOL" THEN
+         t := ty_bool;
+      ELSEIF name = "ASCII" THEN
+         t := ty_ascii;
+      ELSEIF name = "DATA_LOCK" THEN
+         t := ty_lock;
+      ELSEIF name = "LATCH" THEN
+         t := ty_latch;
+      ELSEIF name = "ACT" THEN
+         t := ty_act;
+      ELSEIF name = "INT" THEN
+         t := ty_int;
+      ELSEIF name = "FLOAT" THEN
+         t := ty_float;
+      ELSE
+         fail(st.line, "unknown type " & name);
+      END IF;
+      IF st.b /= NIL THEN
+         apply_constraint(t, st.b, c, st.line);
+      END IF;
+      RETURN t;
+   END IF;
+   IF y.kind = y_generic AND (y.decl.b.kind = n_newtype OR y.decl.b.kind = n_ptrtype) THEN
+      RETURN instantiate_type(y, st.a, st.b, c, st.line);
+   END IF;
+   IF y.kind = y_type AND y.t /= NIL AND y.t.kind = t_new THEN
+      RETURN new_type(y, st, c);
+   END IF;
+   IF y.kind = y_type AND y.t /= NIL AND y.t.kind = t_ptr THEN
+      % an indirect subtype: its constraint is the actual parameter list
+      c.args := st.b;
+      RETURN y.t;
+   END IF;
+   IF y.kind = y_abbrev AND y.decl /= NIL AND y.decl.b /= NIL THEN
+      RETURN invoke_abbrev(y, st, c);
+   END IF;
+   IF (y.kind = y_abbrev OR y.kind = y_type) AND y.t /= NIL THEN
+      IF y.c /= NIL THEN
+         c := y.c;
+      END IF;
+      t := y.t;
+   ELSEIF y.kind = y_type AND y.decl /= NIL AND y.decl.kind = n_newtype THEN
+      RETURN new_type(y, st, c);
+   ELSEIF y.kind = y_abbrev OR y.kind = y_type THEN
+      t := resolve_subtype(y.st, c);
+   ELSE
+      fail(st.line, name & " is not a type");
+   END IF;
+   IF st.b /= NIL THEN
+      % a constraint list after an abbreviation (diagram 12)
+      c := copy_cons(c);
+      apply_constraint(t, st.b, c, st.line);
+   END IF;
+   RETURN t;
+END FUNC named_subtype;
+
+% an abbreviation with formal parameters (4.4.1): its subtype elaborated with
+% the actuals bound to the formals
+ABNORMAL FUNC invoke_abbrev(CONST y : sym, CONST st : node, OUT c : cons) => typ IMPORTS ALL;
+   VAR p : node := y.decl.b;
+   VAR a : node := st.b;
+   VAR t : typ;
+   IF list_len(p) /= list_len(a) THEN
+      fail(st.line, y.name.ALL & " needs " & itos(list_len(p)) & " actual parameters");
+   END IF;
+   open_scope;
+   WHILE p /= NIL REPEAT
+      VAR z : sym := new_sym(y_const, p.name);
+      VAR pc : cons;
+      VAR at : typ;
+      VAR ok : BOOL;
+      IF p.ival /= m_const THEN
+         fail(st.line, "an abbreviation has only CONST formal parameters");
+      END IF;
+      z.t := resolve_subtype(p.a, pc);
+      z.access := mk("(" & gexpr(a, z.t, at) & ")");
+      check_type(at, z.t, st.line);
+      z.mvalue := manifest(a, ok);
+      z.hasmv := ok;
+      z.mv := meval(a, ok);
+      IF NOT ok THEN
+         z.mv := NIL;
+      END IF;
+      z.ro_flag := TRUE;
+      define(z, st.line);
+      p := p.next;
+      a := a.next;
+   END REPEAT;
+   t := resolve_subtype(y.st, c);
+   close_scope;
+   RETURN t;
+END FUNC invoke_abbrev;
+
+% a constraint list applied to a subtype that takes one (C.2 - C.11)
+PROC apply_constraint(CONST t : typ, CONST args : node, CONST c : cons, CONST line : INT) IMPORTS ALL;
+   VAR dummy : typ;
+   VAR ok : BOOL;
+   IF t.kind = t_int OR t.kind = t_enum THEN
+      IF args.kind /= n_range OR args.next /= NIL THEN
+         fail(line, "this subtype takes a range");
+      END IF;
+      c.lo := mk(gexpr(args.a, t, dummy));
+      check_type(dummy, t, line);
+      c.hi := mk(gexpr(args.b, t, dummy));
+      check_type(dummy, t, line);
+      c.hasm := FALSE;
+      IF t.kind = t_int THEN
+         c.mlo := manifest(args.a, ok);
+         c.hasm := ok;
+         c.mhi := manifest(args.b, ok);
+         c.hasm := c.hasm AND ok;
+      ELSEIF args.a.kind = n_enum AND args.b.kind = n_enum THEN
+         c.mlo := lit_index(base_of(t).lits, args.a.name.ALL);
+         c.mhi := lit_index(base_of(t).lits, args.b.name.ALL);
+         c.hasm := TRUE;
+      END IF;
+   ELSEIF t.kind = t_float THEN
+      c.prec := mk(gexpr(args, ty_int, dummy));
+      IF args.next /= NIL THEN
+         IF args.next.kind /= n_range THEN
+            fail(line, "FLOAT takes (precision, min .. max)");
+         END IF;
+         c.lo := mk(gexpr(args.next.a, ty_float, dummy));
+         c.hi := mk(gexpr(args.next.b, ty_float, dummy));
+         c.hasm := float_lit(args.next.a) AND float_lit(args.next.b);
+      END IF;
+   ELSEIF t.kind = t_string THEN
+      c.slen := mk(gexpr(args, ty_int, dummy));
+   ELSEIF t.kind = t_mbox THEN
+      c.lo := mk(gexpr(args, ty_int, dummy));
+   ELSEIF t.kind = t_union THEN
+      tag_constraint(t, args, c);
+   ELSE
+      fail(line, "this subtype takes no constraint list");
+   END IF;
+END PROC apply_constraint;
+
+% the subtype of an expression: the declared one, with the bounds an array
+% or a string actually has (4.5.1)
+ABNORMAL FUNC value_subtype(CONST e : node, OUT c : cons, OUT base : text) => typ IMPORTS ALL;
+   VAR t : typ;
+   VAR c0 : cons;
+   VAR ro : BOOL;
+   IF is_lvalue(e) THEN
+      lvalue(e, base, t, c0, ro);
+   ELSE
+      base := mk(gexpr(e, NIL, t));
+   END IF;
+   IF c0 = NIL THEN
+      c := new_cons;
+   ELSE
+      c := copy_cons(c0);
+   END IF;
+   IF t.kind = t_string THEN
+      c.slen := mk("(" & base.ALL & ").len");
+   ELSEIF t.kind = t_array THEN
+      c.bnds := NIL;
+      FOR k : INT(1 .. t.ndim) REPEAT
+         CONST lo := "(" & base.ALL & ")." & dim_lo(k);
+         CONST hi := "(" & base.ALL & ")." & dim_hi(k);
+         IF k = 1 THEN
+            c.lo := mk(lo);
+            c.hi := mk(hi);
+         ELSEIF k = 2 THEN
+            c.lo2 := mk(lo);
+            c.hi2 := mk(hi);
+         ELSE
+            VAR l1, l2 : lines;
+            ALLOC l1 PTR;
+            ALLOC l2 PTR;
+            l1.s := mk(lo);
+            l2.s := mk(hi);
+            l1.next := l2;
+            l2.next := c.bnds;
+            c.bnds := l1;
+         END IF;
+      END REPEAT;
+      c.bnds := reverse_pairs(c.bnds);
+   ELSEIF t.kind = t_mbox THEN
+      c.lo := mk("(" & base.ALL & ")->cap");
+   ELSEIF t.kind = t_new AND t.tparams /= NIL THEN
+      VAR p : node := t.tparams;
+      VAR head, tail : node;
+      WHILE p /= NIL REPEAT
+         VAR sel : node := nn(n_select, e.line);
+         sel.a := e;
+         sel.name := p.name;
+         append(head, tail, sel);
+         p := p.next;
+      END REPEAT;
+      c.args := head;
+   END IF;
+   RETURN t;
+END FUNC value_subtype;
+
+ABNORMAL FUNC reverse_pairs(CONST l : lines) => lines;
+   VAR r : lines;
+   VAR p : lines := l;
+   WHILE p /= NIL REPEAT
+      VAR a : lines := p;
+      VAR b : lines := p.next;
+      p := b.next;
+      b.next := r;
+      r := a;
+   END REPEAT;
+   RETURN r;
+END FUNC reverse_pairs;
+
+% SUBTYPEOF(exp), INDEXOF(exp, i), TYPEOF(subtype or exp) (4.5.1, 4.5.2)
+ABNORMAL FUNC inquiry(CONST st : node, OUT c : cons) => typ IMPORTS ALL;
+   VAR base : text;
+   VAR t : typ;
+   CONST name := st.name.ALL;
+   IF st.b = NIL THEN
+      fail(st.line, name & " needs an expression");
+   END IF;
+   IF name = "TYPEOF" THEN
+      VAR sub : node := as_subtype(st.b);
+      VAR c2 : cons;
+      IF sub /= NIL THEN
+         t := resolve_subtype(sub, c2);
+      ELSE
+         t := value_subtype(st.b, c2, base);
+      END IF;
+      c := new_cons;
+      RETURN t;
+   END IF;
+   t := value_subtype(st.b, c, base);
+   IF name = "SUBTYPEOF" THEN
+      RETURN t;
+   END IF;
+   BEGIN
+      VAR k : INT := 1;
+      VAR ok : BOOL := TRUE;
+      VAR ac : cons := c;
+      IF st.b.next /= NIL THEN
+         k := manifest(st.b.next, ok);
+      END IF;
+      WHILE t.kind = t_new AND t.tparams = NIL REPEAT
+         t := t.under;
+      END REPEAT;
+      IF t.kind /= t_array OR NOT ok OR k < 1 OR k > t.ndim THEN
+         fail(st.line, "INDEXOF needs an array and the manifest number of one of its dimensions");
+      END IF;
+      c := new_cons;
+      c.lo := cons_lo(ac, k);
+      c.hi := cons_hi(ac, k);
+      RETURN idx_type(t, k);
+   END;
+END FUNC inquiry;
+
+% an expression that stands for a subtype (diagrams 12, 25): a type name, a
+% built-in type with its properties and constraints, or an inquiry
+ABNORMAL FUNC as_subtype(CONST e : node) => node IMPORTS ALL;
+   VAR st : node;
+   IF e = NIL THEN
+      RETURN NIL;
+   ELSEIF e.kind = n_paren THEN
+      RETURN as_subtype(e.a);
+   ELSEIF e.kind = n_name THEN
+      IF NOT type_name(e.name.ALL) THEN
+         RETURN NIL;
+      END IF;
+      st := nn(s_name, e.line);
+      st.name := e.name;
+      RETURN st;
+   ELSEIF e.kind = n_ttapply AND e.a.kind = n_name THEN
+      RETURN tt_subtype(e.a.name, e.b, NIL, e.line);
+   ELSEIF e.kind /= n_apply THEN
+      RETURN NIL;
+   ELSEIF e.a.kind = n_ttapply AND e.a.a.kind = n_name THEN
+      RETURN tt_subtype(e.a.a.name, e.a.b, e.b, e.line);
+   ELSEIF e.a.kind /= n_name THEN
+      RETURN NIL;
+   END IF;
+   BEGIN
+      CONST name := e.a.name.ALL;
+      VAR y : sym := lookup(name);
+      IF name = "INT" AND y = NIL THEN
+         IF e.b = NIL OR e.b.kind /= n_range OR e.b.next /= NIL THEN
+            RETURN NIL;
+         END IF;
+         st := nn(s_int, e.line);
+         st.a := e.b.a;
+         st.b := e.b.b;
+         RETURN st;
+      ELSEIF name = "FLOAT" AND y = NIL THEN
+         st := nn(s_float, e.line);
+         st.a := e.b;
+         IF e.b.next /= NIL AND e.b.next.kind = n_range THEN
+            st.b := e.b.next.a;
+            st.c := e.b.next.b;
+         END IF;
+         RETURN st;
+      ELSEIF NOT type_name(name) AND NOT (y = NIL AND (name = "SUBTYPEOF" OR name = "INDEXOF" OR name = "TYPEOF")) THEN
+         RETURN NIL;
+      END IF;
+      st := nn(s_name, e.line);
+      st.name := e.a.name;
+      st.b := e.b;
+      st.flag := 1;
+      RETURN st;
+   END;
+END FUNC as_subtype;
+
+ABNORMAL FUNC tt_subtype(CONST name : text, CONST tt : node, CONST args : node, CONST line : INT) => node
+      IMPORTS ALL;
+   VAR st : node;
+   IF name.ALL = "STRING" THEN
+      st := nn(s_string, line);
+   ELSEIF name.ALL = "SET" THEN
+      st := nn(s_set, line);
+   ELSEIF name.ALL = "MAILBOX" AND (lookup("MAILBOX") = NIL OR lookup("MAILBOX").kind /= y_generic) THEN
+      st := nn(s_mailbox, line);
+   ELSEIF name.ALL = "FILE" THEN
+      st := nn(s_file, line);
+   ELSEIF type_name(name.ALL) THEN
+      st := nn(s_name, line);
+      st.name := name;
+      st.a := tt;
+      st.b := args;
+      RETURN st;
+   ELSE
+      RETURN NIL;
+   END IF;
+   st.a := tt;
+   st.b := args;
+   RETURN st;
+END FUNC tt_subtype;
+
+ABNORMAL FUNC type_name(READONLY name : STRING[ASCII]) => BOOL IMPORTS ALL;
+   VAR y : sym := lookup(name);
+   IF y = NIL THEN
+      RETURN name = "INT" OR name = "BOOL" OR name = "FLOAT" OR name = "ASCII" OR name = "ACT"
+          OR name = "DATA_LOCK" OR name = "LATCH";
+   END IF;
+   RETURN y.kind = y_type OR y.kind = y_abbrev
+       OR (y.kind = y_generic AND (y.decl.b.kind = n_newtype OR y.decl.b.kind = n_ptrtype));
+END FUNC type_name;
 
 % outside the capsule that declares a new type, its components, .ALL and :=
 % are known only if the capsule exports them, i.e. exports ALL (8.2)

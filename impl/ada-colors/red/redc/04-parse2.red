@@ -195,7 +195,10 @@ ABNORMAL FUNC type_decl => node IMPORTS ALL;
    expect_op(":");
    IF at_kind(k_id) AND toks(tpos).s.ALL = "PTR" THEN
       tpos := tpos + 1;
+      % formal parameters 1 constrain the subtypes of the indirect type,
+      % formal parameters 2 those of each dynamic variable (diagram 23)
       x := nn(n_ptrtype, line);
+      x.d := params;
       IF at_op("(") THEN
          x.b := formal_params;
       END IF;

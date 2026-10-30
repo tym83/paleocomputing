@@ -19,6 +19,7 @@ PROC declare_body(CONST elems : node) IMPORTS ALL;
       ELSEIF e.kind = n_abbrev THEN
          VAR y : sym := new_sym(y_abbrev, e.name);
          y.st := e.a;
+         y.decl := e;
          define(y, e.line);
       ELSEIF e.kind = n_ptrtype THEN
          VAR y : sym := new_sym(y_type, e.name);
@@ -437,19 +438,173 @@ PROC finish_ptr(CONST t : typ) IMPORTS ALL;
       RETURN;
    END IF;
    open_scope;
-   p := d.b;
-   WHILE p /= NIL REPEAT
-      VAR y : sym := new_sym(y_const, p.name);
-      y.t := ty_int;
-      y.access := mk("0");
-      define(y, d.line);
-      p := p.next;
+   FOR pass : INT(1 .. 2) REPEAT
+      IF pass = 1 THEN
+         p := d.d;
+      ELSE
+         p := d.b;
+      END IF;
+      WHILE p /= NIL REPEAT
+         VAR y : sym := new_sym(y_const, p.name);
+         VAR pc : cons;
+         y.t := resolve_subtype(p.a, pc);
+         y.access := mk("0");
+         define(y, d.line);
+         p := p.next;
+      END REPEAT;
    END REPEAT;
    t.target := resolve_subtype(d.a, c);
    close_scope;
    dummy(1) := ctype(t)(1);
    dummy(1) := ctype(t.target)(1);
 END PROC finish_ptr;
+
+% the actual parameters of an indirect subtype (diagram 23), NIL if none
+FUNC ptr_args(CONST c : cons) => node;
+   IF c = NIL THEN
+      RETURN NIL;
+   END IF;
+   RETURN c.args;
+END FUNC ptr_args;
+
+% formals of an indirect type bound to the actuals, in a scope opened by the
+% caller; with a cell, each is kept in the dynamic variable as its attribute
+PROC bind_ptr_params(CONST formals : node, CONST actuals : node, READONLY cell : STRING[ASCII], CONST line : INT)
+      IMPORTS ALL;
+   VAR p : node := formals;
+   VAR a : node := actuals;
+   VAR vt : typ;
+   IF list_len(formals) /= list_len(actuals) THEN
+      fail(line, "the indirect subtype needs " & itos(list_len(formals)) & " actual parameters");
+   END IF;
+   WHILE p /= NIL REPEAT
+      VAR pc : cons;
+      VAR y : sym := new_sym(y_const, p.name);
+      y.t := resolve_subtype(p.a, pc);
+      BEGIN
+         CONST v := gexpr(a, y.t, vt);
+         CONST pv := new_name("pv");
+         check_type(vt, y.t, line);
+         emit(ctype(y.t) & " " & pv & " = " & checked(y.t, pc, v) & ";");
+         IF cell /= "" THEN
+            emit(cell & "->p_" & lower_s(p.name.ALL) & " = " & pv & ";");
+         END IF;
+         y.access := mk(pv);
+      END;
+      define(y, line);
+      p := p.next;
+      a := a.next;
+   END REPEAT;
+END PROC bind_ptr_params;
+
+% ALLOC v PTR (actuals) for an indirect type with formal parameters 2: the
+% cell holds them, then the dynamic variable (4.4.3)
+PROC alloc_cell(CONST s : node, READONLY lv : STRING[ASCII], CONST t : typ, CONST c : cons) IMPORTS ALL;
+   VAR d : node := t.decl;
+   VAR tc : cons;
+   VAR vt : typ;
+   CONST pt := ctype(t);
+   CONST cell := new_name("cell");
+   IF needs_fin(t.target) THEN
+      CONST fn := new_name("fin");
+      uses_free := TRUE;
+      uses_findyn := TRUE;
+      put(out_protos, "static void " & fn & "(void *cell_, void *env_);");
+      put(out_funcs, "static void " & fn & "(void *cell_, void *env_) {");
+      IF in_func THEN
+         put(out_funcs, "  struct " & func_sym.cname.ALL & "fr *F = env_;");
+      ELSE
+         put(out_funcs, "  (void)env_;");
+      END IF;
+      put(out_funcs, "  " & fin_code("(((" & pt & ")cell_)->all)", t.target));
+      put(out_funcs, "}");
+      IF in_func THEN
+         emit("rt_collect(); { " & pt & " " & cell & " = rt_salloc_fin(sizeof *" & cell & ", " & fn & ", F);");
+      ELSE
+         emit("rt_collect(); { " & pt & " " & cell & " = rt_salloc_fin(sizeof *" & cell & ", " & fn & ", NULL);");
+      END IF;
+   ELSE
+      emit("{ " & pt & " " & cell & " = rt_alloc(sizeof *" & cell & ");");
+   END IF;
+   open_scope;
+   bind_ptr_params(d.d, ptr_args(c), "", s.line);
+   bind_ptr_params(d.b, s.b, cell, s.line);
+   vt := resolve_subtype(d.a, tc);
+   init_storage(cell & "->all", t.target, tc);
+   close_scope;
+   IF s.c /= NIL THEN
+      CONST v := gexpr_in(s.c, t.target, tc, vt);
+      check_type(vt, t.target, s.line);
+      emit(assign_code(cell & "->all", t.target, v, tc));
+   END IF;
+   emit(lv & " = " & cell & ";");
+   emit("}");
+END PROC alloc_cell;
+
+% the actual parameters of an indirect subtype are kept with the variable
+% when it is created, as hidden constants (4.4.3)
+ABNORMAL FUNC freeze_args(CONST c : cons, CONST t : typ, CONST line : INT) => cons IMPORTS ALL;
+   VAR r : cons := copy_cons(c);
+   VAR p : node := t.decl.d;
+   VAR a : node := c.args;
+   VAR head, tail : node;
+   VAR saved : text := st_field;
+   IF list_len(p) /= list_len(a) THEN
+      fail(line, t.name.ALL & " needs " & itos(list_len(p)) & " actual parameters");
+   END IF;
+   WHILE a /= NIL REPEAT
+      VAR pc : cons;
+      VAR vt : typ;
+      VAR pt : typ := resolve_subtype(p.a, pc);
+      CONST nm := new_name("PTR_ARG_");
+      VAR y : sym := new_sym(y_const, mk(nm));
+      VAR n : node := nn(n_name, line);
+      CONST v := gexpr(a, pt, vt);
+      CONST access := raw_storage("pa", ctype(pt));
+      check_type(vt, pt, line);
+      emit(access & " = " & checked(pt, pc, v) & ";");
+      y.t := pt;
+      y.ro_flag := TRUE;
+      bind(y, access);
+      define(y, line);
+      n.name := mk(nm);
+      append(head, tail, n);
+      a := a.next;
+      p := p.next;
+   END REPEAT;
+   r.args := head;
+   st_field := saved;
+   RETURN r;
+END FUNC freeze_args;
+
+% sharing assignment between indirect subtypes raises X_SUBTYPE unless they
+% are equal (4.4.3)
+PROC ptr_subtype_check(CONST t : typ, CONST c : cons, CONST src : node) IMPORTS ALL;
+   VAR lv : text;
+   VAR st : typ;
+   VAR sc : cons;
+   VAR ro : BOOL;
+   VAR cond : text := mk("0");
+   VAR a, b : node;
+   VAR at, bt : typ;
+   IF t.kind /= t_ptr OR c = NIL OR c.args = NIL OR src = NIL OR NOT is_lvalue(src) THEN
+      RETURN;
+   END IF;
+   lvalue(src, lv, st, sc, ro);
+   IF sc = NIL OR sc.args = NIL THEN
+      RETURN;
+   END IF;
+   a := c.args;
+   b := sc.args;
+   WHILE a /= NIL AND b /= NIL REPEAT
+      CONST x := gexpr(a, NIL, at);
+      CONST y := gexpr(b, at, bt);
+      cond := mk(cond.ALL & " || !" & eq_code(at, x, y));
+      a := a.next;
+      b := b.next;
+   END REPEAT;
+   emit("if (" & cond.ALL & ") rt_raise_msg(RT_X_SUBTYPE, " & q & "indirect subtype" & q & ");");
+END PROC ptr_subtype_check;
 
 PROC declare_subprogram(CONST d : node) IMPORTS ALL;
    define(build_subprogram(d), d.line);
@@ -644,6 +799,9 @@ PROC var_decl(CONST d : node) IMPORTS ALL;
    VAR y : sym := new_sym(y_var, d.name);
    CONST access := storage(d.name.ALL, t);
    c := freeze(c, t);
+   IF t.kind = t_ptr AND c /= NIL AND c.args /= NIL THEN
+      c := freeze_args(c, t, d.line);
+   END IF;
    init_storage(access, t, c);
    IF d.ival = 1 THEN
       VAR it : typ;
@@ -663,6 +821,7 @@ PROC var_decl(CONST d : node) IMPORTS ALL;
       VAR vt : typ;
       CONST v := gexpr_in(d.b, t, c, vt);
       check_type(vt, t, d.line);
+      ptr_subtype_check(t, c, d.b);
       emit(assign_code(access, t, v, c));
    END IF;
    y.t := t;
@@ -1288,6 +1447,7 @@ PROC st_assign(CONST s : node) IMPORTS ALL;
    BEGIN
       CONST v := gexpr_in(s.b, t, c, vt);
       check_type(vt, t, s.line);
+      ptr_subtype_check(t, c, s.b);
       emit(assign_code(lv.ALL, t, v, c));
    END;
 END PROC st_assign;
@@ -1589,6 +1749,10 @@ PROC st_alloc(CONST s : node) IMPORTS ALL;
    IF list_len(s.b) /= list_len(d.b) THEN
       fail(s.line, "ALLOC needs " & itos(list_len(d.b)) & " actual parameters");
    END IF;
+   IF d.b /= NIL THEN
+      alloc_cell(s, lv.ALL, t, c);
+      RETURN;
+   END IF;
    BEGIN
       CONST tcn := ctype(target);
       CONST cell := new_name("cell");
@@ -1615,19 +1779,7 @@ PROC st_alloc(CONST s : node) IMPORTS ALL;
          emit("{ " & tcn & " *" & cell & " = rt_alloc(sizeof(" & tcn & "));");
       END IF;
       open_scope;
-      p := d.b;
-      a := s.b;
-      WHILE p /= NIL REPEAT
-         CONST v := gexpr(a, ty_int, vt);
-         CONST pv := new_name("pv");
-         VAR y : sym := new_sym(y_const, p.name);
-         emit("rt_int " & pv & " = " & v & ";");
-         y.t := ty_int;
-         y.access := mk(pv);
-         define(y, s.line);
-         p := p.next;
-         a := a.next;
-      END REPEAT;
+      bind_ptr_params(d.d, ptr_args(c), "", s.line);
       vt := resolve_subtype(d.a, tc);
       init_storage("(*" & cell & ")", target, tc);
       close_scope;
