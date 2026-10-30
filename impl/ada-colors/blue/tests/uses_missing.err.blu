@@ -1,0 +1,5 @@
+% segments and USES item lists (4.2): audit probe g18_usesmissing
+MAIN SEGMENT T0
+   USES (TERMINAL, NOSUCH);
+PUT_LINE ('x');
+END SEGMENT T0;

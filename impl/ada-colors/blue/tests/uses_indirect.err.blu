@@ -1,0 +1,11 @@
+% segments and USES item lists (4.2): audit probe g12_indirect
+SEGMENT A DEFINES (V);
+VAR V: INTEGER := 10;
+END SEGMENT A;
+SEGMENT B USES (A) DEFINES (W);
+VAR W: INTEGER := 1;
+END SEGMENT B;
+MAIN SEGMENT T0
+   USES (TERMINAL, B);
+PUT_LINE (TO_CHAR (V));
+END SEGMENT T0;

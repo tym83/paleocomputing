@@ -82,3 +82,9 @@ s/^             IMPORTS (ROUTINES:(GET_IN));$/             IMPORTS (ROUTINES:(GE
 s/^             IMPORTS (ROUTINES: (GET_IN, POSITION));$/             IMPORTS (ROUTINES: (GET_IN, POSITION)) WHERE T NEEDS (STORE_(T##T));/
 s/^             IMPORTS (ROUTINES: (PUT_OUT));$/             IMPORTS (ROUTINES: (PUT_OUT)) WHERE T NEEDS (TO_BIT (T REP R) RETURNS (BIT(?)));/
 s/^             IMPORTS (ROUTINES: (PUT_OUT, POSITION));$/             IMPORTS (ROUTINES: (PUT_OUT, POSITION)) WHERE T NEEDS (TO_BIT (T REP R) RETURNS (BIT(?)));/
+# 4.2: a segment sees only the names of the segments its USES clause names; the
+# names "built into a given implementation" (C-9: LT33_PS, LT33_KS, START_IO, the
+# device types) are the driver's segment PDP_11_LT33, which SYSTEM and STANDARD_IO
+# name in their USES clauses here
+s/^              APPLICATION);$/              APPLICATION, PDP_11_LT33);/
+s/^        USES (MONITORED_BUFFER_SEG,$/        USES (MONITORED_BUFFER_SEG, PDP_11_LT33,/

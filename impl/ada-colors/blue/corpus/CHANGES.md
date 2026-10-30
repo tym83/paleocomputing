@@ -49,6 +49,10 @@ code and prints. Nothing in `orig/` is ever edited to make a program pass.
   (C-17 .. C-19) without a WHERE clause; 5.2 lets a generic routine invoke another
   with objects of its type only if the other's WHERE routines are among its own.
   GET and PUT take the WHERE clauses of GET_IN and PUT_OUT.
+- **The names "built into a given implementation"** (C-9: LT33_PS, LT33_KS,
+  START_IO, the device types) are the driver's segment PDP_11_LT33; a segment
+  sees another's names only through its USES clause (4.2), so SYSTEM and
+  STANDARD_IO name PDP_11_LT33 there.
 - **`REM`, `MAX` and `INTEGER_MAX` are used but defined nowhere.** `REM` becomes
   `MOD` (the operands are positive); MAX and INTEGER_MAX come from the drivers.
 - **Elided parts**: the `...` and lower-case placeholders are filled by the sed

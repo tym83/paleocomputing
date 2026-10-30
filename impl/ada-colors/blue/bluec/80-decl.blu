@@ -526,7 +526,12 @@ PROCEDURE PENDING_BODIES ();
                   PREV@.MEMBERS := P@.MEMBERS;
                END IF;
                ENTER_MODULE_OF (P);
-               ROUTINE_BODY (P);
+               BLOCK                                  % an instance is its generic's
+                  CONST SAVED_SEG: SYM := W@.CURSEG;  % code: no USES check
+                  W@.CURSEG := NIL;
+                  ROUTINE_BODY (P);
+                  W@.CURSEG := SAVED_SEG;
+               END BLOCK;
                LEAVE_MODULE_OF (P);
                MORE := TRUE;
                EXIT;
@@ -806,6 +811,7 @@ PROCEDURE TRANSLATE (SEGS: NODE);
          FAIL (S@.LINE, 'only the MAIN segment has statements (4.2)');
       END IF;
       OPEN_SCOPE;
+      BEGIN_SEGMENT (S);
       IF USES_SEGMENT (S, 'TERMINAL') THEN
          PREDEFINE_TERMINAL;
       END IF;
@@ -852,10 +858,13 @@ FUNCTION FROM_DEFINED_MODULE (S: NODE, Y: SYM) RETURNS (BOOLEAN);
    RETURN FALSE;
 END FUNCTION FROM_DEFINED_MODULE;
 
-% a segment's DEFINES names stay visible to the segments after it (4.2); the others go
+% a segment's DEFINES names stay visible to the segments after it (4.2), which see
+% them only as their USES clauses select them (SEG_VISIBLE); the others go
 PROCEDURE SEGMENT_EXPORTS (S: NODE);
    VAR MARK: SYM := W@.SCOPE;
    VAR TAKEN: SYM;
+   CONST SEG: SYM := W@.CURSEG;
+   VAR NAMES: NODE := NIL;
    LOOP UNTIL MARK = NIL DO
       IF MARK@.DEPTH < W@.DEPTH THEN
          EXIT;
@@ -864,16 +873,169 @@ PROCEDURE SEGMENT_EXPORTS (S: NODE);
    END LOOP;
    TAKEN := TAKE_SCOPE (MARK);
    W@.DEPTH := W@.DEPTH - 1;
+   BLOCK                                             % only names local to the segment or
+      VAR X: NODE := S@.C;                           % imported into it (4.2)
+      LOOP UNTIL X = NIL DO
+         BLOCK
+            VAR Y: SYM := TAKEN;
+            VAR FOUND: BOOLEAN := LOOKUP (X@.NAME) <> NIL;
+            LOOP UNTIL Y = NIL DO
+               IF TEQ (Y@.NAME, X@.NAME) ! TEQ (Y@.PREFIX, X@.NAME) THEN
+                  FOUND := TRUE;
+               ORIF Y@.KIND = Y_ROUTINE THEN
+                  IF TEQ (BASE_NAME (Y), X@.NAME) THEN
+                     FOUND := TRUE;
+                  END IF;
+               END IF;
+               Y := Y@.SNEXT;
+            END LOOP;
+            IF NOT FOUND THEN
+               FAILT (X@.LINE, 'DEFINES names a name local to the segment or imported into it (4.2): ',
+                      X@.NAME);
+            END IF;
+            NAMES := NAME_REF (X@.NAME, 0, NIL, NAMES);
+         END BLOCK;
+         X := X@.NEXT;
+      END LOOP;
+   END BLOCK;
    LOOP UNTIL TAKEN = NIL DO
       BLOCK
          CONST NEXT: SYM := TAKEN@.SNEXT;
-         IF S@.FL = 1 ! IN_IDENTS (S@.C, TAKEN@.NAME) ! IN_IDENTS (S@.C, TAKEN@.PREFIX)
-            ! TAKEN@.KIND = Y_ENUMLIT ! FROM_DEFINED_MODULE (S, TAKEN)
-            ! (TAKEN@.KIND = Y_ROUTINE & IN_IDENTS (S@.C, BASE_NAME (TAKEN))) THEN
+         IF TAKEN@.KIND <> Y_BUILTIN
+            & (S@.FL = 1 ! IN_IDENTS (S@.C, TAKEN@.NAME) ! IN_IDENTS (S@.C, TAKEN@.PREFIX)
+               ! TAKEN@.KIND = Y_ENUMLIT ! FROM_DEFINED_MODULE (S, TAKEN)
+               ! (TAKEN@.KIND = Y_ROUTINE & IN_IDENTS (S@.C, BASE_NAME (TAKEN)))) THEN
             % (DEFINES (NEW) also defines T$NEW: "T$NEW for device-types T", C-5)
+            TAKEN@.SEGM := SEG;
+            NAMES := NAME_REF (TAKEN@.NAME, 0, NIL, NAMES);
             DEFINE (TAKEN, S@.LINE);
          END IF;
          TAKEN := NEXT;
       END BLOCK;
    END LOOP;
+   SEG@.USES := NAMES;                               % what it defines, by name
+   W@.CURSEG := NIL;
 END PROCEDURE SEGMENT_EXPORTS;
+
+% the segment S begins: USES names segments of the program (4.2)
+PROCEDURE BEGIN_SEGMENT (S: NODE);
+   VAR SEG: SYM := NEW_SYM (Y_SEGMENT, S@.NAME);
+   VAR U: NODE := S@.A;
+   SEG@.DECL := S;
+   SEG@.INSTANCES := W@.SEGS;
+   W@.SEGS := SEG;
+   LOOP UNTIL U = NIL DO
+      IF NOT TEQS (U@.NAME, 'TERMINAL') THEN
+         BLOCK
+            CONST T: SYM := FIND_SEGMENT (U@.NAME);
+            IF T = NIL THEN
+               FAILT (U@.LINE, 'USES names a segment of the program (4.2): ', U@.NAME);
+            END IF;
+            IF U@.A <> NIL THEN                       % each item defined by the segment
+               CHECK_ITEMS_DEFINED (T, U@.A@.A);
+               CHECK_ITEMS_DEFINED (T, U@.A@.B);
+               CHECK_ITEMS_DEFINED (T, U@.A@.C);
+               CHECK_ITEMS_DEFINED (T, U@.A@.D);
+               CHECK_ITEMS_DEFINED (T, U@.A@.E);
+            END IF;
+         END BLOCK;
+      END IF;
+      U := U@.NEXT;
+   END LOOP;
+   W@.CURSEG := SEG;
+   U := S@.A;
+   LOOP UNTIL U = NIL DO
+      IF U@.A <> NIL THEN
+         INPUT_IMPORT_CONFLICT (U@.A, U@.LINE);
+      END IF;
+      U := U@.NEXT;
+   END LOOP;
+END PROCEDURE BEGIN_SEGMENT;
+
+FUNCTION FIND_SEGMENT (NAME: TEXT) RETURNS (SYM);
+   VAR T: SYM := W@.SEGS;
+   LOOP UNTIL T = NIL DO
+      IF TEQ (T@.NAME, NAME) THEN
+         RETURN T;
+      END IF;
+      T := T@.INSTANCES;
+   END LOOP;
+   RETURN NIL;
+END FUNCTION FIND_SEGMENT;
+
+PROCEDURE CHECK_ITEMS_DEFINED (T: SYM, L: NODE);
+   VAR N: NODE := L;
+   LOOP UNTIL N = NIL DO
+      IF NOT IN_IDENTS (T@.USES, N@.NAME) THEN
+         FAILT (N@.LINE, 'the segment does not define ', N@.NAME);
+      END IF;
+      N := N@.NEXT;
+   END LOOP;
+END PROCEDURE CHECK_ITEMS_DEFINED;
+
+% may the segment being translated use Y, a name another segment defines (4.2)?
+% FALSE: only for input (a DATA input item); an error if its USES clause does not
+% select it
+FUNCTION SEG_VISIBLE (Y: SYM, LINE: INTEGER) RETURNS (BOOLEAN);
+   VAR U: NODE;
+   VAR INPUT_ONLY: BOOLEAN := FALSE;
+   IF W@.CURSEG = NIL ! Y@.SEGM = NIL THEN
+      RETURN TRUE;
+   END IF;
+   IF Y@.SEGM = W@.CURSEG THEN
+      RETURN TRUE;
+   END IF;
+   U := W@.CURSEG@.DECL@.A;
+   LOOP UNTIL U = NIL DO
+      BLOCK
+         CONST T: SYM := FIND_SEGMENT (U@.NAME);
+         IF T <> NIL THEN
+            IF IN_IDENTS (T@.USES, Y@.NAME) THEN
+               IF U@.A = NIL THEN
+                  RETURN TRUE;                        % all it defines, variables inout
+               END IF;
+               BLOCK
+                  CONST I: NODE := U@.A;
+                  IF Y@.KIND = Y_VAR ! Y@.KIND = Y_CONST THEN
+                     IF IN_IDENTS (I@.B, Y@.NAME) THEN
+                        RETURN TRUE;
+                     ORIF IN_IDENTS (I@.A, Y@.NAME) THEN
+                        INPUT_ONLY := TRUE;
+                     END IF;
+                  ORIF Y@.KIND = Y_ROUTINE THEN
+                     IF IN_IDENTS (I@.C, Y@.NAME) ! IN_IDENTS (I@.C, BASE_NAME (Y))
+                        ! IN_IDENTS (I@.D, Y@.PREFIX) ! FROM_MODULES (I@.E, Y) THEN
+                        RETURN TRUE;
+                     END IF;
+                  ORIF Y@.KIND = Y_TYPE THEN
+                     IF IN_IDENTS (I@.D, Y@.NAME) ! FROM_MODULES (I@.E, Y) THEN
+                        RETURN TRUE;
+                     END IF;
+                  ELSE
+                     RETURN TRUE;
+                  END IF;
+               END BLOCK;
+            END IF;
+         END IF;
+      END BLOCK;
+      U := U@.NEXT;
+   END LOOP;
+   IF INPUT_ONLY THEN
+      RETURN FALSE;
+   END IF;
+   FAILT (LINE, 'not imported by the USES clause of the segment (4.2): ', Y@.NAME);
+END FUNCTION SEG_VISIBLE;
+
+FUNCTION FROM_MODULES (MODS: NODE, Y: SYM) RETURNS (BOOLEAN);
+   VAR M: SYM := Y@.MODL;
+   IF MODS = NIL THEN
+      RETURN FALSE;
+   END IF;
+   LOOP UNTIL M = NIL DO
+      IF IN_IDENTS (MODS, M@.NAME) THEN
+         RETURN TRUE;
+      END IF;
+      M := M@.MODL;
+   END LOOP;
+   RETURN FALSE;
+END FUNCTION FROM_MODULES;

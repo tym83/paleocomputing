@@ -210,6 +210,16 @@ unreadable; the decision is bluec's.
     SYSTEM, which uses STANDARD_IO, first.
 12. **DEFINES**: naming a module carries what it exports (§4.2, p.4-9); naming a
     routine `NEW` also carries `T$NEW` (the comment at C-5).
+    The segments are one merged scope (p.4-9: "all names are known to the
+    translator"), and a segment's own code may use a name another segment
+    defines only as its USES clause selects it: the whole DEFINES list of a
+    segment named without items (variables inout), else the DATA items (input
+    ones read only), ROUTINES by name, TYPES with their operations and MODULES
+    with what they export. USES names segments of the program, items are names
+    the segment defines, DEFINES names local or imported names, and the
+    input/inout conflict of 4.3.1 holds for segments too. The code of a generic
+    instance is its generic's and is not checked again. (Until October 2026
+    DEFINES names were visible to every later segment.)
 13. **The headers of routines** may use the constants of their scope; objects are
     declared before headers, and a call resolves the header it needs.
 14. **Substrings as output arguments** (C-8, C-31; [4-41] says variable): the

@@ -1,0 +1,8 @@
+% segments and USES item lists (4.2): audit probe g17_nouses
+SEGMENT LIB DEFINES (V);
+VAR V: INTEGER := 10;
+END SEGMENT LIB;
+MAIN SEGMENT T0
+   USES (TERMINAL);
+PUT_LINE (TO_CHAR (V));
+END SEGMENT T0;

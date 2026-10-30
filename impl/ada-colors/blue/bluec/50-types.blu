@@ -1126,6 +1126,9 @@ FUNCTION RESOLVE_USER (TS: NODE) RETURNS (TYP);
    IF Y@.KIND <> Y_TYPE THEN
       FAILT (TS@.LINE, 'not a type: ', TS@.NAME);
    END IF;
+   IF NOT SEG_VISIBLE (Y, TS@.LINE) THEN             % USES (4.2)
+      ;
+   END IF;
    IF Y@.DECL = NIL THEN                              % predefined, or bound
       IF TS@.A <> NIL THEN
          FAILT (TS@.LINE, 'this type has no parameters: ', TS@.NAME);

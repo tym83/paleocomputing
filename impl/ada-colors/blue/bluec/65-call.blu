@@ -596,6 +596,7 @@ END FUNCTION INLINE_INSTANCE;
 % the invocation of R with ARGS: inputs by value after the conversions of assignment,
 % inouts and outputs by reference (4.3.2)
 FUNCTION CALL_SYM (Y0: SYM, ARGS: ARG, LINE: INTEGER) RETURNS (ET);
+   CONST VISIBLE: BOOLEAN := SEG_VISIBLE (Y0, LINE);  % USES (4.2)
    VAR Y: SYM := ORIGINAL (Y0);
    VAR P: PARM;
    VAR A: ARG := ARGS;

@@ -1,0 +1,12 @@
+% segments and USES item lists (4.2): audit probe g07_inputvs_routine
+SEGMENT LIB DEFINES (V, P);
+VAR V: INTEGER := 10;
+PROCEDURE P () IMPORTS (DATA: (# V));
+   V := V + 1;
+END PROCEDURE P;
+END SEGMENT LIB;
+MAIN SEGMENT T0
+   USES (TERMINAL, LIB (DATA: (V), ROUTINES: (P)));
+P ();
+PUT_LINE (TO_CHAR (V));
+END SEGMENT T0;
