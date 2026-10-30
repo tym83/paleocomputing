@@ -1,0 +1,26 @@
+MAIN SEGMENT CHARSETS
+   USES (TERMINAL);
+% character sets (3.7.2): with two available a literal names its own; the CHARSET
+% attribute (3.7.1); strings of enumerated literals; the largest lengths (3.6.1,
+% 3.7.1, 3.7.4.1)
+TYPE MINI = ENUM (\'X', \'Y', \'Z', \NL);
+VAR A: CHAR_STR (3, MINI) := MINI 'XYZ';
+VAR B: CHAR_STR (3, A.CHARSET);
+VAR T: ASCII_STR (2) := ASCII \CR \LF;
+VAR N: INTEGER := 200000000;
+B := A;
+PUT_LINE (TO_CHAR (B = MINI 'XY' \'Z') !! ASCII ' ' !! TO_CHAR (T.LENGTH) !! ASCII ' '
+          !! TO_CHAR ((MINI \NL \NL).LENGTH));
+BLOCK
+   VAR S: BIT (N);
+END BLOCK
+EXCEPT
+   SIZE --> PUT_LINE (ASCII 'BIT (200000000): SIZE'); END;
+END EXCEPT;
+BLOCK
+   PUT_LINE (BLANKS (N));
+END BLOCK
+EXCEPT
+   INVALID_SIZE --> PUT_LINE (ASCII 'BLANKS (200000000): INVALID_SIZE'); END;
+END EXCEPT;
+END SEGMENT CHARSETS;

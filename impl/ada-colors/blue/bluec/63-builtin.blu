@@ -244,6 +244,7 @@ FUNCTION BUILTIN (E: NODE, WANT: TYP) RETURNS (ET);
          IF REAL_TYPE (V.T)@.KIND <> T_STR THEN
             FAIL (LINE, 'PUT writes character strings; use TO_CHAR');
          END IF;
+         ASCII_ONLY (V.T, 'the terminal', LINE);
          IF TEQS (NAME, 'PUT') THEN
             RETURN MKET (FMT1 ('rt_put(@)', V.C), W@.TY_VOID);
          END IF;
@@ -383,7 +384,14 @@ FUNCTION BUILTIN (E: NODE, WANT: TYP) RETURNS (ET);
          ORIF TEQS (NAME, 'HEX_OF') THEN
             BITS := MK ('4');
          END IF;
-         RETURN MKET (FMT2 ('rt_b_bits_of_digits(@, @)', EXPR (E@.A, NIL).C, BITS), BITS_TYPE (-1));
+         BLOCK
+            CONST V: ET := EXPR (E@.A, NIL);
+            IF REAL_TYPE (V.T)@.KIND <> T_STR THEN
+               FAILT (LINE, 'a character string expected by ', NAME);
+            END IF;
+            ASCII_ONLY (V.T, STR (NAME, NAME.LEN), LINE);
+            RETURN MKET (FMT2 ('rt_b_bits_of_digits(@, @)', V.C, BITS), BITS_TYPE (-1));
+         END BLOCK;
       END BLOCK;
    ORIF TEQS (NAME, 'FIXED_MIN') ! TEQS (NAME, 'FIXED_MAX') THEN   % 3.2.6.3
       NEED_ARGS (E, 3, 3);
@@ -519,6 +527,7 @@ FUNCTION TO_FIXED_CALL (E: NODE) RETURNS (ET);
    ORIF T@.KIND = T_BITS THEN
       RETURN MKET (RESCALE_C (FMT1 ('rt_b_int_of_bits(@)', V.C), 0, S), INT_TYPE (S));
    ORIF T@.KIND = T_STR THEN
+      ASCII_ONLY (T, 'TO_FIXED', E@.LINE);
       RETURN MKET (FMT3 ('rt_b_fix_of_str(@, @, @)', V.C, NUM (S), RND), INT_TYPE (S));
    END IF;
    FAILT (E@.LINE, 'no TO_FIXED for ', TYPE_NAME (V.T));

@@ -775,7 +775,9 @@ FUNCTION STRING_LITERAL (E: NODE) RETURNS (ET);
    VAR CS: TYP := W@.TY_ASCII;
    VAR P: NODE := E@.A;
    VAR S: TEXT := MK ('');                         % the codes of the characters
-   IF E@.NAME.LEN > 0 THEN
+   IF E@.NAME.LEN = 0 THEN
+      CS := DEFAULT_CHARSET (E@.LINE);
+   ELSE
       BLOCK
          CONST Y: SYM := LOOKUP (E@.NAME);
          IF Y = NIL THEN
@@ -789,6 +791,9 @@ FUNCTION STRING_LITERAL (E: NODE) RETURNS (ET);
             FAILT (E@.LINE, 'not a character set: ', E@.NAME);
          END IF;
          CS := REAL_TYPE (CS)@.BASE;
+         IF NOT HAS_PRINTING_CHAR (CS@.LITS) THEN
+            FAILT (E@.LINE, 'a character set has a literal of the form \''C'' (3.7.2): ', E@.NAME);
+         END IF;
       END BLOCK;
    END IF;
    LOOP UNTIL P = NIL DO

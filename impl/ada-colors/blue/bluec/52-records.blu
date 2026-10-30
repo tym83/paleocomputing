@@ -423,12 +423,12 @@ FUNCTION INIT_CODE (T: TYP, LV: TEXT) RETURNS (TEXT);
       IF T@.LEN_C.LEN = 0 THEN
          RETURN FMT1 ('@ = rt_str_new(0);', LV);
       END IF;
-      RETURN FMT2 ('@ = rt_str_new(@);', LV, T@.LEN_C);
+      RETURN FMT2 ('@ = rt_b_str_new(@, 0);', LV, T@.LEN_C);
    ORIF K = T_BITS THEN
       IF T@.LEN_C.LEN = 0 THEN
          RETURN FMT1 ('@ = rt_b_zeros(0);', LV);
       END IF;
-      RETURN FMT2 ('@ = rt_b_zeros(@);', LV, T@.LEN_C);
+      RETURN FMT2 ('@ = rt_b_str_new(@, 1);', LV, T@.LEN_C);
    ORIF K = T_SEM THEN
       RETURN FMT2 ('@ = rt_b_sem_new(@);', LV, NUM (T@.SCALE));
    ORIF K = T_ABS THEN

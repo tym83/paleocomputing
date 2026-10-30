@@ -73,11 +73,105 @@ PROCEDURE DECLARE_TYPES (DECLS: NODE);
             END IF;
             Y@.DECL := D;
             DEFINE (Y, D@.LINE);
+            IF D@.KIND = N_TYPE THEN
+               IF D@.B@.KIND = TS_ENUM & HAS_PRINTING_CHAR (D@.B@.A) THEN
+                  W@.CHARSETS := W@.CHARSETS + 1;
+               END IF;
+            END IF;
          END BLOCK;
       END IF;
       D := D@.NEXT;
    END LOOP;
 END PROCEDURE DECLARE_TYPES;
+
+% does a list of enumerated literals have a printing-char-id, \'C' (3.4.2)? It is
+% then a character set (3.7.2)
+FUNCTION HAS_PRINTING_CHAR (L: NODE) RETURNS (BOOLEAN);
+   VAR P: NODE := L;
+   LOOP UNTIL P = NIL DO
+      IF P@.NAME.LEN >= 3 THEN
+         IF STR (P@.NAME, 2) = '\''' THEN
+            RETURN TRUE;
+         END IF;
+      END IF;
+      P := P@.NEXT;
+   END LOOP;
+   RETURN FALSE;
+END FUNCTION HAS_PRINTING_CHAR;
+
+% the character set of a literal without a charset-name: the only one available here
+% (3.7.2); ASCII unless a program declares another or redefines the name ASCII
+FUNCTION DEFAULT_CHARSET (LINE: INTEGER) RETURNS (TYP);
+   CONST A: SYM := LOOKUP (MKN ('ASCII'));
+   VAR FOUND: TYP := NIL;
+   VAR N: INTEGER := 0;
+   VAR Y: SYM := W@.SCOPE;
+   IF W@.CHARSETS = 0 & A <> NIL THEN
+      IF A@.KIND = Y_TYPE & A@.DECL = NIL THEN
+         RETURN W@.TY_ASCII;
+      END IF;
+   END IF;
+   LOOP UNTIL Y = NIL DO
+      IF Y@.KIND = Y_TYPE & Y@.NAME.LEN > 0 THEN
+         IF LOOKUP (Y@.NAME) = Y THEN                 % visible, not hidden
+            BLOCK
+               VAR T: TYP := NIL;
+               IF Y@.DECL = NIL THEN
+                  T := Y@.T;
+               ORIF Y@.DECL@.KIND = N_TYPE & Y@.DECL@.A = NIL THEN
+                  IF Y@.DECL@.B@.KIND = TS_ENUM & HAS_PRINTING_CHAR (Y@.DECL@.B@.A) THEN
+                     T := RESOLVE_USER_NAME (Y@.NAME, LINE);
+                  END IF;
+               END IF;
+               IF T <> NIL THEN
+                  T := REAL_TYPE (T);
+                  IF T@.KIND = T_ENUM THEN
+                     IF HAS_PRINTING_CHAR (T@.BASE@.LITS) & T@.BASE <> FOUND THEN
+                        IF FOUND <> NIL THEN
+                           FAIL (LINE, 'two character sets are available here: the literal needs '
+                                       !! 'a charset-name (3.7.2)');
+                        END IF;
+                        FOUND := T@.BASE;
+                     END IF;
+                  END IF;
+               END IF;
+            END BLOCK;
+         END IF;
+      END IF;
+      Y := Y@.SNEXT;
+   END LOOP;
+   IF FOUND = NIL THEN
+      FAIL (LINE, 'no character set is available for the literal (3.7.2)');
+   END IF;
+   RETURN FOUND;
+END FUNCTION DEFAULT_CHARSET;
+
+% the character set of a string type (3.7.1): ASCII when nothing else is known
+FUNCTION CHARSET_OF (T: TYP) RETURNS (TYP);
+   CONST R: TYP := REAL_TYPE (T);
+   IF R@.BASE = NIL THEN
+      RETURN W@.TY_ASCII;
+   END IF;
+   RETURN R@.BASE;
+END FUNCTION CHARSET_OF;
+
+% the same character set for two strings (3.7.4.1, 3.7.5)
+PROCEDURE SAME_CHARSET (A, B: TYP, LINE: INTEGER);
+   IF REAL_TYPE (A)@.KIND = T_STR & REAL_TYPE (B)@.KIND = T_STR THEN
+      IF CHARSET_OF (A) <> CHARSET_OF (B) THEN
+         FAIL (LINE, 'the strings are of different character sets (3.7.4.1, 3.7.5)');
+      END IF;
+   END IF;
+END PROCEDURE SAME_CHARSET;
+
+% an operation predefined for ASCII strings only (3.2.6.1, 3.3.6.1, 3.6.6.4)
+PROCEDURE ASCII_ONLY (T: TYP, WHAT: ASCII_STR(?L), LINE: INTEGER);
+   IF REAL_TYPE (T)@.KIND = T_STR THEN
+      IF CHARSET_OF (T) <> W@.TY_ASCII THEN
+         FAIL (LINE, WHAT !! ' is predefined for ASCII strings only');
+      END IF;
+   END IF;
+END PROCEDURE ASCII_ONLY;
 
 % the labels of a statement list are known in all of it (4.5.1)
 PROCEDURE DECLARE_LABELS (S0: NODE);

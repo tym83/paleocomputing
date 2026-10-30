@@ -447,18 +447,39 @@ FUNCTION RESOLVE_PREDEFINED (TS: NODE) RETURNS (TYP);
    ORIF TEQS (NAME, 'CHAR_STR') ! TEQS (NAME, 'ASCII_STR') THEN   % [3-131]
       T := NEW_TYP (T_STR);
       STRING_LENGTH (T, NTH_ARG (TS, 0));
+      T@.BASE := W@.TY_ASCII;
       IF TEQS (NAME, 'CHAR_STR') THEN
+         TYPE_ARG_COUNT (TS, 2);
          BLOCK
             CONST CS: NODE := NTH_ARG (TS, 1);
+            VAR C: TYP;
             IF CS@.KIND = TS_GEN ! CS@.KIND = N_DONTCARE THEN
+               T@.BASE := NIL;
                RETURN T;                            % CHAR_STR (?L, ?C) in a formal
             END IF;
-            IF NOT TEQS (CS@.NAME, 'ASCII') THEN
-               IF ARG_TYPE (CS)@.KIND <> T_ENUM THEN
-                  FAIL (TS@.LINE, 'a charset must be an enumerated type (3.7.1)');
-               END IF;
+            IF CS@.KIND = N_FIELD & TEQS (CS@.NAME, 'CHARSET') THEN   % S.CHARSET [3-134]
+               BLOCK
+                  CONST SAVED_CODE: BUF := W@.CODE;
+                  CONST V: ET := VALUE_OR_TYPE (CS@.A);
+                  W@.CODE := SAVED_CODE;
+                  IF REAL_TYPE (V.T)@.KIND <> T_STR THEN
+                     FAIL (TS@.LINE, 'CHARSET is an attribute of character strings (3.7.1)');
+                  END IF;
+                  T@.BASE := CHARSET_OF (V.T);
+               END BLOCK;
+               RETURN T;
             END IF;
+            C := REAL_TYPE (ARG_TYPE (CS));
+            IF C@.KIND <> T_ENUM THEN
+               FAIL (TS@.LINE, 'a charset must be an enumerated type (3.7.1)');
+            END IF;
+            IF C@.BASE@.UNORDERED ! NOT HAS_PRINTING_CHAR (C@.BASE@.LITS) THEN
+               FAIL (TS@.LINE, 'a charset is an ordered enumerated type with a literal \''C'' (3.7.1, 3.7.2)');
+            END IF;
+            T@.BASE := C@.BASE;
          END BLOCK;
+      ELSE
+         TYPE_ARG_COUNT (TS, 1);
       END IF;
       RETURN T;
    ORIF TEQS (NAME, 'PTR') THEN                     % [3-195]

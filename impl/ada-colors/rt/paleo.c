@@ -1837,8 +1837,11 @@ int rt_b_eq(rstr a, rstr b) {
   return a.len == 0 || memcmp(a.p, b.p, (size_t)a.len) == 0;
 }
 
+#define B_MAXLEN 100000000             /* (BIT.LENGTH).MAX, (CHAR_STR.LENGTH).MAX */
+
 rstr rt_b_dup(rstr c, rt_int n) {
   if (n < 0) rt_raise(RT_B_INVALID_LENGTH);
+  if (n > B_MAXLEN || n * c.len > B_MAXLEN) rt_raise(RT_B_INVALID_SIZE);
   rstr r = rt_str_new(n * c.len);
   for (rt_int i = 0; i < n; i++) memcpy(r.p + i * c.len, c.p, (size_t)c.len);
   return r;
@@ -2144,6 +2147,7 @@ double rt_b_fchk(double v) {
 
 rstr rt_b_zeros(rt_int n) {
   if (n < 0) rt_raise(RT_B_INVALID_LENGTH);
+  if (n > B_MAXLEN) rt_raise(RT_B_INVALID_SIZE);
   rstr r = rt_str_new(n);
   memset(r.p, '0', (size_t)n);
   return r;
@@ -2228,6 +2232,7 @@ rstr rt_b_str_of_bits(rstr b) {
 }
 
 rstr rt_b_bits_of_digits(rstr s, int bits) {
+  if (s.len * bits > B_MAXLEN) rt_raise(RT_B_INVALID_SIZE);
   rstr r = rt_str_new(s.len * bits);
   for (rt_int i = 0; i < s.len; i++) {
     int c = s.p[i], v = c >= '0' && c <= '9' ? c - '0' : c >= 'A' && c <= 'F' ? c - 'A' + 10 : 99;
@@ -2672,6 +2677,20 @@ void rt_b_wait(rt_int v, rt_int scale) {
 /* ---- BLUE: the rest of the language (coverage of the 1978 specification) ---- */
 
 int RT_B_INVALID_TYPE, RT_B_INVALID_REP, RT_B_UNDERFLOW;
+
+/* a string or bitstring object of a length its type gives (3.6.1, 3.7.1): SIZE
+ * (bitstrings) or INVALID_SIZE (charstrings) beyond the largest length */
+rstr rt_b_str_new(rt_int n, int bits) {
+  if (n > B_MAXLEN) rt_raise(bits ? RT_B_SIZE : RT_B_INVALID_SIZE);
+  if (n < 0) rt_raise(RT_B_INVALID_LENGTH);
+  return bits ? rt_b_zeros(n) : rt_str_new(n);
+}
+
+/* E !! F: INVALID_SIZE beyond the largest length (3.6.4.1, 3.7.4.1) */
+rstr rt_b_cat(rstr a, rstr b) {
+  if (a.len + b.len > B_MAXLEN) rt_raise(RT_B_INVALID_SIZE);
+  return rt_str_cat(a, b);
+}
 
 /* floating point (3.3): two implemented precisions, single (7 digits) and double
  * (15); a result is rounded to nearest even (ROUNDED, NATIVE_R) or toward zero

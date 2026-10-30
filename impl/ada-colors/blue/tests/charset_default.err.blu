@@ -1,0 +1,7 @@
+MAIN SEGMENT CHARSET_DEFAULT
+   USES (TERMINAL);
+% with ASCII and MINI available, a charstring-literal must name its character set
+% (3.7.2)
+TYPE MINI = ENUM (\'X', \'Y');
+PUT_LINE ('AB');
+END SEGMENT CHARSET_DEFAULT;

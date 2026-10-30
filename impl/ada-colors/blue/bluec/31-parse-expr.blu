@@ -387,7 +387,8 @@ FUNCTION PARSE_ATOM () RETURNS (NODE);
    IF T.KIND = K_STR ! T.KIND = K_ENUM THEN       % [3-135]
       RETURN PARSE_CHARSTRING (NO_TEXT ());
    END IF;
-   IF T.KIND = K_ID & AHEAD (1).KIND = K_STR THEN  % CHARSET 'STRING'
+   IF T.KIND = K_ID & (AHEAD (1).KIND = K_STR ! (AHEAD (1).KIND = K_ENUM
+         & NOT TOK_IS (AHEAD (2), '(') & NOT TOK_IS (AHEAD (2), ':='))) THEN   % CHARSET 'STRING'
       SKIP;
       RETURN PARSE_CHARSTRING (T.TX);
    END IF;
@@ -492,11 +493,8 @@ FUNCTION PARSE_CHARSTRING (CHARSET: TEXT) RETURNS (NODE);
       SKIP;
       ADD_LIST (N # HEAD, TAIL);
    END LOOP;
-   IF STRINGS = 0 & CHARSET.LEN = 0 THEN
-      IF HEAD@.NEXT <> NIL THEN
-         FAIL (LINE, 'two enumerated literals in a row');
-      END IF;
-      HEAD@.KIND := N_ENUMLIT;
+   IF STRINGS = 0 & CHARSET.LEN = 0 & HEAD@.NEXT = NIL THEN
+      HEAD@.KIND := N_ENUMLIT;                       % \CR alone; \CR \LF is a string
       RETURN HEAD;
    END IF;
    N := NEW_NODE (N_STR, LINE);

@@ -402,6 +402,8 @@ void rt_b_wait(rt_int v, rt_int scale);        /* seconds at the scale */
 /* BLUE additions: the rest of the 1978 specification */
 extern int RT_B_INVALID_TYPE, RT_B_INVALID_REP, RT_B_UNDERFLOW;
 double rt_b_fop(int op, double a, double b, int single, int trunc);   /* 3.3.4.2 */
+rstr rt_b_str_new(rt_int n, int bits);            /* SIZE, INVALID_SIZE */
+rstr rt_b_cat(rstr a, rstr b);                    /* !!: INVALID_SIZE */
 double rt_b_fconv(double v, int single, int trunc, int range);
 double rt_b_float_of_fix_r(rt_int v, rt_int scale, int single, int trunc);
 rt_int rt_b_trange(rt_int v, rt_int lo, rt_int hi);       /* INVALID_TYPE */

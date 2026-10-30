@@ -1,0 +1,8 @@
+MAIN SEGMENT CHARSET_MIX
+   USES (TERMINAL);
+% the target and the value of an assignment have the same CHARSET (3.7.5)
+TYPE MINI = ENUM (\'X', \'Y');
+VAR A: CHAR_STR (1, MINI);
+VAR B: ASCII_STR (1) := ASCII 'X';
+A := B;
+END SEGMENT CHARSET_MIX;

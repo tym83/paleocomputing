@@ -191,6 +191,7 @@ FUNCTION CONVERT (V: ET, T: TYP, LINE: INTEGER, SELF: TEXT) RETURNS (TEXT);
       END IF;
       RETURN RANGE_CHECK (RT, V.C, SELF);
    ORIF RT@.KIND = T_STR ! RT@.KIND = T_BITS THEN
+      SAME_CHARSET (RT, VT, LINE);
       IF RT@.MLEN.OK & VT@.MLEN.OK THEN
          IF RT@.MLEN.V <> VT@.MLEN.V THEN
             FAIL (LINE, 'the lengths of the strings differ (3.7.5: SIZE)');
@@ -574,6 +575,7 @@ FUNCTION APPLY_OPERATOR (E: NODE, OP: TEXT, A, B: ET) RETURNS (ET);
    END IF;
    IF TEQS (OP, '!!') THEN                           % 3.6.4.1, 3.7.4.1
       IF (AT@.KIND = T_STR & BT@.KIND = T_STR) ! (AT@.KIND = T_BITS & BT@.KIND = T_BITS) THEN
+         SAME_CHARSET (AT, BT, LINE);
          BLOCK
             VAR T: TYP := NEW_TYP (AT@.KIND);
             T@.BASE := AT@.BASE;
@@ -581,7 +583,7 @@ FUNCTION APPLY_OPERATOR (E: NODE, OP: TEXT, A, B: ET) RETURNS (ET);
                T@.MLEN := SOME (AT@.MLEN.V + BT@.MLEN.V);
                T@.LEN_C := NUM (T@.MLEN.V);
             END IF;
-            RETURN MKET (FMT2 ('rt_str_cat(@, @)', A.C, B.C), T);
+            RETURN MKET (FMT2 ('rt_b_cat(@, @)', A.C, B.C), T);
          END BLOCK;
       END IF;
       FAIL (LINE, '!! concatenates strings and bitstrings');
@@ -704,6 +706,7 @@ FUNCTION EQUALITY (E: NODE, OP: TEXT, A, B: ET) RETURNS (ET);
       IF AT@.KIND = T_SEM THEN
          FAIL (E@.LINE, 'semaphores have no equality (3.11.4)');
       END IF;
+      SAME_CHARSET (AT, BT, E@.LINE);
       IF AT@.KIND = T_REC & (HAS_ANY (AT) ! HAS_ANY (BT)) THEN
          FAIL (E@.LINE, 'a T(ANY) record cannot be compared (3.9.4.1)');
       END IF;
