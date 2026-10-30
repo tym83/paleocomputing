@@ -1,13 +1,14 @@
 MAIN SEGMENT CONNECT_KNOWN
-   USES (TERMINAL);
-% the semaphore of a CONNECT clause is known in the path (4.6.1, example 1)
-VAR DISK: ARRAY [1:2] OF SEMAPHORE (SYNCH);
-DISK(1) := NEW (0);
-DISK(2) := NEW (1);
+   USES (TERMINAL, PDP_11_LT33);
+% the semaphore of a CONNECT clause is known in the path (4.6.1, example 1); it
+% is an interrupt semaphore of the machine (the keyboards of PDP_11_LT33, which
+% have nothing to type here)
+LT33_KS (1) := NEW (0);
+LT33_KS (2) := NEW (1);
 PAR_BLOCK
-   PATH DRIVER FOR I IN [1:2] CONNECT (DISK(I));
+   PATH DRIVER FOR I IN [1:2] CONNECT (LT33_KS (I));
       BLOCK
-         REQUEST (#DISK(I));
+         REQUEST (# LT33_KS (I));
          PUT_LINE ('interrupt ' !! TO_CHAR (I));
       END BLOCK
    EXCEPT

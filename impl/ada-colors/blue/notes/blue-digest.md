@@ -225,7 +225,10 @@ unreadable; the decision is bluec's.
 14. **Substrings as output arguments** (C-8, C-31; [4-41] says variable): the
     formal is a view of the variable's characters.
 15. **CONNECT (LT33_PS(I))** with the path's loop identifier (C-5; [4-93] says
-    semaphore-name); the variable it names is known in the path without
+    semaphore-name); the semaphore must be implementation-defined (4.6.1): a
+    variable of a segment of bluec's library, the machine's PDP_11_LT33. NEW
+    redeclared by a routine (LT33_DEVICE_$NEW, which PDP_11_LT33 defines) still
+    constructs where a pointer or semaphore is wanted; the variable it names is known in the path without
     an import (4.6.1).
 16. **Literals typed by a parameter**: `OPEN (..., \OLD, ...)` names a literal of a
     parameter type declared inside a module (C-17).

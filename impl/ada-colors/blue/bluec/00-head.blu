@@ -387,6 +387,7 @@ TYPE WORLD = RECORD
    VAR NSRC: INTEGER;
    VAR LEXED, LEXLINE: INTEGER;     % how far LEX has read the source, and its line
    VAR LIBDIR: TEXT;                % -L directory: library segments NAME.blu (4.7)
+   VAR LIBSEGS: NODE;               % the segments read from it: the implementation's
    VAR SUPPRESS: BOOLEAN;           % -suppress: no RANGE checks, ASSERT not evaluated
    VAR WORD: INTEGER;               % bits of STD and of a machine word: 64, -pdp11 16
    VAR TOKS: ARRAY [0:MAX_TOKENS] OF TOKEN;

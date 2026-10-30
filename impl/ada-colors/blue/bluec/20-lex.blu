@@ -281,6 +281,12 @@ PROCEDURE LOAD_LIBRARY (NAME: TEXT);
       FAILT (0, 'USES names a segment that is neither in the program nor in the library: ', NAME);
    END IF;
    BLOCK
+      VAR N: NODE := NEW_NODE (N_IDENT, 0);
+      N@.NAME := NAME;
+      N@.NEXT := W@.LIBSEGS;
+      W@.LIBSEGS := N;
+   END BLOCK;
+   BLOCK
       CONST T: ASCII_STR (READ_FILE (FNAME).LENGTH) := READ_FILE (FNAME);
       IF W@.NSRC + T.LENGTH + 1 >= MAX_SOURCE THEN
          FAIL (0, 'the source is too long');

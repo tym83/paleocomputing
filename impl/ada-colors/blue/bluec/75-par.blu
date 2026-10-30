@@ -116,6 +116,10 @@ PROCEDURE ACTIVATE_PATH (P: NODE, TD: TEXT);
          IF REAL_TYPE (V.T)@.KIND <> T_SEM THEN
             FAIL (P@.LINE, 'CONNECT names a semaphore (4.6.1)');
          END IF;
+         IF NOT IMPLEMENTATION_SEMAPHORE (P@.D) THEN
+            FAIL (P@.LINE, 'CONNECT names an implementation-defined semaphore, of the machine''s '
+                           !! 'library segment (4.6.1)');
+         END IF;
          CODE (FMT1 ('rt_b_connect(@);', V.C));
       END BLOCK;
    END IF;
@@ -128,6 +132,28 @@ PROCEDURE ACTIVATE_PATH (P: NODE, TD: TEXT);
    END IF;
    PATH_BODY (P, FN, FT, LT);
 END PROCEDURE ACTIVATE_PATH;
+
+% the interrupt of a CONNECT clause is an implementation-defined semaphore (4.6.1):
+% a variable of a segment of bluec's library (PDP_11_LT33)
+FUNCTION IMPLEMENTATION_SEMAPHORE (E: NODE) RETURNS (BOOLEAN);
+   VAR R: NODE := E;
+   LOOP UNTIL R@.KIND = N_NAME ! R@.KIND = N_APPLY DO
+      IF R@.KIND <> N_INDEX & R@.KIND <> N_FIELD THEN
+         RETURN FALSE;
+      END IF;
+      R := R@.A;
+   END LOOP;
+   BLOCK
+      CONST Y: SYM := ORIG_LOOKUP (R@.NAME);
+      IF Y = NIL THEN
+         RETURN FALSE;
+      END IF;
+      IF Y@.HOME = NIL THEN
+         RETURN FALSE;
+      END IF;
+      RETURN IN_IDENTS (W@.LIBSEGS, Y@.HOME@.NAME);
+   END BLOCK;
+END FUNCTION IMPLEMENTATION_SEMAPHORE;
 
 % the C of the frame a path's frame points up to
 FUNCTION UP_FRAME () RETURNS (TEXT);

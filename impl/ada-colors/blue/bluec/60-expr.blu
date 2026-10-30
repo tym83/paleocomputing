@@ -436,7 +436,8 @@ FUNCTION EXPR (E: NODE, WANT: TYP) RETURNS (ET);
          RETURN V;
       END BLOCK;
    ORIF K = N_NEW THEN                              % [3-198] [3-206]
-      IF NAMES_OBJECT (E@.NAME) THEN                 % NEW redeclared (a key word, 2.1.7)
+      IF NAMES_OBJECT (E@.NAME) & NOT CONSTRUCTOR_WANTED (WANT) THEN   % NEW redeclared
+         % (a key word, 2.1.7) by a routine, unless a pointer or semaphore is wanted
          BLOCK
             VAR N: NODE := NEW_NODE (N_APPLY, E@.LINE);
             N@.NAME := E@.NAME;
@@ -917,6 +918,13 @@ FUNCTION ENUM_RESULT (Y: SYM, WANT: TYP) RETURNS (TYP);
    END IF;
    RETURN Y@.T;
 END FUNCTION ENUM_RESULT;
+
+FUNCTION CONSTRUCTOR_WANTED (WANT: TYP) RETURNS (BOOLEAN);
+   IF WANT = NIL THEN
+      RETURN FALSE;
+   END IF;
+   RETURN REAL_TYPE (WANT)@.KIND = T_PTR ! REAL_TYPE (WANT)@.KIND = T_SEM;
+END FUNCTION CONSTRUCTOR_WANTED;
 
 % does the innermost declaration of NAME declare something other than an
 % enumerated literal (a variable, constant or routine named \X, ?X or NEW)?
