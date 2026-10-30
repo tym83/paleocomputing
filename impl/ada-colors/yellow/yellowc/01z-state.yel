@@ -81,6 +81,7 @@
   (* 09-stmt *)
   VAR
     XFrames: ARRAY (INTEGER [1..1000] OF Txt);  (* the handler frames entered *)
+    XRestore: ARRAY (INTEGER [1..1000] OF Txt); (* what leaving one restores, or 0 *)
     XTop: INT := 0;
     XBase: INT := 0;                 (* the first frame of the routine being written *)
     BlockFrame: ARRAY (INTEGER [1..1000] OF Txt);  (* per block: its handler frame or 0 *)

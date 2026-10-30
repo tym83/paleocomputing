@@ -315,3 +315,18 @@ puts C text in the program, `$name` standing for a variable, constant or paramet
 
 ## 11. Not done, or done approximately
 
+What remains approximate, with the reason:
+
+- PACKED, ALIGNMENT and AT offsets of components set sizes, limits and errors on the simulated
+  machine, but values are still stored as C stores them: a packed array of BOOLEAN takes a word
+  per component in the C program. Nothing a program can observe depends on it except through
+  MAIN_STORE_ARRAY and MAKE_POINTER, whose words are those of the C storage.
+- The line clock does not consult its status register in the I/O page; it runs from the
+  moment a signal is declared at its vector (the Report's own example arms it, so nothing
+  differs).
+- There is no mode in which statements take real time: the clock is virtual everywhere, so
+  that runs repeat. Preemption by time slices is counted in backward branches.
+- The suppression of INDEX_TRAP, POINTER_TRAP and ZERO_DIVIDE_TRAP is accepted and not acted
+  upon, so that a program never reaches storage it does not own.
+- Across separately translated segments the aliasing rules and the life-scope rule of
+  processes are not checked, and a FUNCTION may not call a procedure of another segment.

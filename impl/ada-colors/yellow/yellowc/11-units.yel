@@ -686,6 +686,7 @@
     Emit(SE());
     XTop := XTop + 1;
     XFrames[XTop] := f;
+    XRestore[XTop] := 0;
     RETURN
   ENDPROCEDURE EnterMonitor;
 

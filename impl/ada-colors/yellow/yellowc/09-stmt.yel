@@ -26,6 +26,10 @@
   (* leave the handler frames entered after the first depth of them *)
   PROCEDURE PopTo (CONST depth: INT)
     IF XTop > depth THEN Emit3("rt_xtop = ", XFrames[depth + 1], ".prev;") ENDIF;
+    (* a SIMULATED_TIME block left: the simulation ends *)
+    FOR i: INTEGER [depth + 1..XTop] DO
+      IF XRestore[i] # 0 THEN Emit(XRestore[i]) ENDIF
+    ENDFOR;
     RETURN
   ENDPROCEDURE PopTo;
 
@@ -86,6 +90,7 @@
     Emit3("if (RT_TRY(", f, ")) {");
     XTop := XTop + 1;
     XFrames[XTop] := f;
+    XRestore[XTop] := 0;
     BTop := BTop + 1;
     BlockFrame[BTop] := f;
     BlockXs[BTop] := xs;
@@ -682,7 +687,8 @@
       Emit(Join(T("rt_frame "), f, T(";")));
       Emit(Join(T("if (!RT_TRY("), f, Join(T(")) { RT_POP("), f, Join(T("); y_sim_depth = "), ys, T("; rt_raise(rt_xcur); }")))));
       XTop := XTop + 1;
-      XFrames[XTop] := f
+      XFrames[XTop] := f;
+      XRestore[XTop] := Join(T("y_sim_depth = "), ys, T(";"))
     ENDIF;
     OpenScope(FALSE);
     Declarations(s^.a^.a);

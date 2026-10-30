@@ -92,7 +92,7 @@ numbered fragments of section II, the not-equal sign written `#` and the up-arro
 
 ## Patterns
 
-Of fifteen programs of Part Three, five are accepted as printed. The errors a translator
+Of fifteen programs of Part Three, four are accepted as printed. The errors a translator
 finds are of the kinds a document typed but never compiled collects: closing names that drift
 (`complexhull`), names in two spellings (`tableSize`, `clocksignal`, `NewTree`), words of other
 languages (`IMPORTS`, `LENGTH`, `Tag`), and the language's own rules forgotten by its authors —
