@@ -467,7 +467,7 @@
       NEW_NAME("e_" & LOWER_S(E.NAME.all) & "_", Y.CNAME);
       FIELDS := MK(" int dummy_;");
       while P /= null loop
-         PM := new PARM_REC(P.NAME, P.IVAL, null, null, null, null, null);
+         PM := new PARM_REC(P.NAME, P.IVAL, null, null, null, P.B, null, null);
          RESOLVE(P.A, PM.T, PM.C);
          PM.CFIELD := MK(C_FIELD(P.NAME.all));
          CTYPE(PM.T, CT);
@@ -539,7 +539,7 @@
       B.LEVEL := CUR_LEVEL;
       B.DECL := E;
       if Y.C /= null then
-         B.PARAMS := new PARM_REC(MK("INDEX_"), M_IN, TY_INT, null, MK("index_"), null, null);
+         B.PARAMS := new PARM_REC(MK("INDEX_"), M_IN, TY_INT, null, MK("index_"), null, null, null);
       end if;
       OPEN_SCOPE;
       M := Y.MEMBERS;

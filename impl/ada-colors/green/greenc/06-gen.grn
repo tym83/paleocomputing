@@ -77,7 +77,37 @@
          end loop;
       end if;
       DEFINE(Y, E.LINE);
+      ELABORATE_DEFAULTS(Y);
    end DECLARE_ONE;
+
+   -- the defaults of the in parameters of Y are evaluated where its
+   -- specification is elaborated (RM79 6.3); only in parameters take one
+   -- (RM79 5.2.2)
+   procedure ELABORATE_DEFAULTS(Y : SYM) is
+      PM : PARM := Y.PARAMS;
+      VT : TYP;
+      V, ACC, X : TEXT;
+      Z : SYM;
+   begin
+      while PM /= null loop
+         if PM.DFLT /= null then
+            if PM.MODE /= M_IN then
+               FAIL(PM.DFLT.LINE, "only an in parameter takes a default (RM79 6.3)");
+            end if;
+            GEXPR(PM.DFLT, PM.T, VT, V);
+            CHECK_TYPE(VT, PM.T, PM.DFLT.LINE);
+            Z := NEW_SYM(Y_CONST, MK("dflt"));
+            STORAGE("dflt", PM.T, ACC);
+            Z.T := PM.T;
+            Z.C := PM.C;
+            BIND(Z, ACC);
+            COPY_CODE(PM.T, V.all, X);
+            EMIT(ACC.all & " = " & X.all & ";");
+            PM.DSYM := Z;
+         end if;
+         PM := PM.NEXT;
+      end loop;
+   end ELABORATE_DEFAULTS;
 
    procedure BUILD_SUBPROGRAM(D : NODE; Y : out SYM) is
       P : NODE := D.A;
@@ -90,7 +120,7 @@
       end if;
       Y := NEW_SYM(K, D.NAME);
       while P /= null loop
-         PM := new PARM_REC(P.NAME, P.IVAL, null, null, null, P.B, null);
+         PM := new PARM_REC(P.NAME, P.IVAL, null, null, null, P.B, null, null);
          RESOLVE(P.A, PM.T, PM.C);
          NEW_NAME(LOWER_S(P.NAME.all) & "_", PM.CFIELD);
          if D.KIND = N_FUNC and PM.MODE /= M_IN then
@@ -110,6 +140,12 @@
       Y.RESULT := TY_VOID;
       if D.B /= null then
          RESOLVE(D.B, Y.RESULT, RC);
+         -- the result subtype constrains the value returned (RM79 6.5)
+         Y.C := RC;
+      end if;
+      if IS_REL(D.NAME.all) and then Y.RESULT /= TY_BOOL then
+         -- a relational operator returns BOOLEAN (RM79 6.6.1)
+         FAIL(D.LINE, "the relational operator " & D.NAME.all & " returns BOOLEAN (RM79 6.6.1)");
       end if;
       Y.VRP := D.FLAG = 1;
       NEW_NAME("f_" & C_IDENT(D.NAME.all) & "_", Y.CNAME);
@@ -318,6 +354,7 @@
             elsif E.IVAL = 1 then
                BUILD_SUBPROGRAM(E, Y);
                DEFINE(Y, E.LINE);
+               ELABORATE_DEFAULTS(Y);
             else
                SUBPROGRAM_BODY(E, LOOKUP_DECL(E));
             end if;
@@ -604,8 +641,8 @@
          CTYPE(Y.RESULT, CT);
          PUT_TO(FIELDS_BUF, " " & CT.all & " result_;");
       end if;
-      DECL_ELEMENTS(D.C);
       if IS_FOREIGN(D) and Y.RESULT.KIND = T_VOID then
+         DECL_ELEMENTS(D.C);
          -- the foreign body is the runtime's rt_g_<name> (RM79 13.9)
          X := MK("");
          PM := Y.PARAMS;
@@ -623,7 +660,7 @@
          EMIT("rt_g_" & LOWER_S(D.NAME.all) & "(" & X.all & ");");
       else
          LABEL_BODY(D.D, D.E);
-         GUARDED(D.D, D.E, D.LINE);
+         GUARDED(D.C, D.D, D.E, D.LINE);
       end if;
       TASK_AWAITS(D.C, AW);
       NUNITS := NUNITS - 1;
@@ -712,7 +749,9 @@
    end POP_CLEANUP;
 
    -- statements with exception handlers (RM79 11.2)
-   procedure GUARDED(STMTS, HS : NODE; LINE : INTEGER) is
+   -- exceptions raised by the elaboration of the declarations DECLS go to
+   -- the handlers of the unit too (RM79 11.2)
+   procedure GUARDED(DECLS, STMTS, HS : NODE; LINE : INTEGER) is
       SAVED_HX : EXITS_T;
       F, X : TEXT;
       H, N : NODE;
@@ -721,6 +760,7 @@
       CONDS : TEXT;
    begin
       if HS = null then
+         DECL_ELEMENTS(DECLS);
          GEN_STATEMENTS(STMTS);
          return;
       end if;
@@ -729,6 +769,7 @@
       PUSH_CLEANUP("RT_POP(" & F.all & ");");
       EMIT("{ rt_frame " & F.all & ";");
       EMIT("if (RT_TRY(" & F.all & ")) {");
+      DECL_ELEMENTS(DECLS);
       GEN_STATEMENTS(STMTS);
       EMIT("RT_POP(" & F.all & ");");
       EMIT("} else {");
@@ -1175,8 +1216,7 @@
       if S.TAG /= null then
          PUSH_UNIT(S.TAG);
       end if;
-      DECL_ELEMENTS(S.A);
-      GUARDED(S.B, S.C, S.LINE);
+      GUARDED(S.A, S.B, S.C, S.LINE);
       TASK_AWAITS(S.A, AW);
       EMIT(AW.all);
       if S.TAG /= null then
@@ -1238,7 +1278,7 @@
 
    procedure GEN_RETURN(S : NODE) is
       VT : TYP;
-      V : TEXT;
+      V, X : TEXT;
    begin
       if not IN_FUNC then
          FAIL(S.LINE, "return outside a subprogram");
@@ -1259,7 +1299,12 @@
       end if;
       GEXPR(S.A, FUNC_SYM.RESULT, VT, V);
       CHECK_TYPE(VT, FUNC_SYM.RESULT, S.LINE);
-      EMIT("F->result_ = " & V.all & ";");
+      if (IS_NUMERIC(VT) or IS_DISCRETE(VT)) and BOUNDED(FUNC_SYM.C) then
+         ASSIGN_CODE("F->result_", VT, V.all, FUNC_SYM.C, X);
+         EMIT(X.all);
+      else
+         EMIT("F->result_ = " & V.all & ";");
+      end if;
       POP_FRAMES(0);
       EMIT("goto ret_;");
    end GEN_RETURN;

@@ -198,7 +198,7 @@
       end loop;
       SAVED_LABELS := BODY_LABELS;
       LABEL_BODY(E.D, E.E);
-      GUARDED(E.D, E.E, E.LINE);
+      GUARDED(null, E.D, E.E, E.LINE);
       BODY_LABELS := SAVED_LABELS;
       CLOSE_SCOPE;
       PKG_STACK := PKG_STACK.NEXT;

@@ -65,7 +65,7 @@ begin
    SHOW(2 * V);
    SHOW(42);
    SHOW("hello");
-   SHOW(ZERO);
+   SHOW(STRING(ZERO));
    declare
       S : STRING(1 .. 4) := ZERO;
    begin

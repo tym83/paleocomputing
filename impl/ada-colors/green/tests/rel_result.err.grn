@@ -1,0 +1,11 @@
+procedure MAIN is
+   type T is record
+      X : INTEGER;
+   end record;
+   function "<" (A, B : T) return INTEGER is
+   begin
+      return 1;
+   end "<";
+begin
+   null;
+end MAIN;

@@ -254,7 +254,7 @@
       if Y.NAME.all /= NAME or (Y.KIND /= Y_FUNC and Y.KIND /= Y_PROC) then
          return FALSE;
       end if;
-      return SAME_SIGNATURE(Y.PARAMS, FS.PARAMS) and SAME(Y.RESULT, FS.RESULT);
+      return SAME_TYPES(Y.PARAMS, FS.PARAMS) and SAME(Y.RESULT, FS.RESULT);
    end MATCHES_FORMAL;
 
    procedure INSTANTIATE(E : NODE) is

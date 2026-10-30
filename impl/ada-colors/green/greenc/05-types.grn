@@ -134,12 +134,30 @@
       return T.KIND = T_INT or T.KIND = T_ENUM or T.KIND = T_CHAR or T.KIND = T_BOOL;
    end IS_DISCRETE;
 
-   function SAME_SIGNATURE(A, B : PARM) return BOOLEAN is
+   -- the same parameter types and modes, in order; names and defaults
+   -- are not compared (RM79 12.2)
+   function SAME_TYPES(A, B : PARM) return BOOLEAN is
       X : PARM := A;
       Y : PARM := B;
    begin
       while X /= null and Y /= null loop
          if not SAME(X.T, Y.T) or X.MODE /= Y.MODE then
+            return FALSE;
+         end if;
+         X := X.NEXT;
+         Y := Y.NEXT;
+      end loop;
+      return X = null and Y = null;
+   end SAME_TYPES;
+
+   -- the same order, names, modes and types of parameters: a subprogram
+   -- with another name for a parameter is another overloading (RM79 6.6)
+   function SAME_SIGNATURE(A, B : PARM) return BOOLEAN is
+      X : PARM := A;
+      Y : PARM := B;
+   begin
+      while X /= null and Y /= null loop
+         if not SAME(X.T, Y.T) or X.MODE /= Y.MODE or X.NAME.all /= Y.NAME.all then
             return FALSE;
          end if;
          X := X.NEXT;
@@ -679,7 +697,7 @@
                TAIL := null;
                P := S.PARAMS;
                while P /= null loop
-                  Q := new PARM_REC(P.NAME, P.MODE, P.T, P.C, P.CFIELD, P.DFLT, null);
+                  Q := new PARM_REC(P.NAME, P.MODE, P.T, P.C, P.CFIELD, P.DFLT, null, P.DSYM);
                   if SAME(Q.T, PARENT) then
                      Q.T := T;
                   end if;

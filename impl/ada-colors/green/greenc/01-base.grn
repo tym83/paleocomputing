@@ -252,6 +252,8 @@ procedure GREENC is
       CFIELD : TEXT;
       DFLT : NODE;
       NEXT : PARM;
+      -- the default, evaluated when the specification is elaborated (RM79 6.3)
+      DSYM : SYM;
    end record;
 
    type SYM_REC is record

@@ -669,6 +669,17 @@
             if Z = null then
                Z := Y;
             end if;
+         else
+            -- without a context an overloaded literal is ambiguous (RM79 3.5.1)
+            Z := Y.CHAIN;
+            while Z /= null loop
+               if Z.NAME.all = E.NAME.all and then Z.KIND = Y_ENUMLIT and then not SAME(Z.T, Y.T) then
+                  FAIL(E.LINE, "the literal " & E.NAME.all & " is ambiguous: qualify it, T(" & E.NAME.all
+                       & ") (RM79 3.5.1, 4.6)");
+               end if;
+               Z := Z.CHAIN;
+            end loop;
+            Z := Y;
          end if;
          T := Z.T;
          R := MK(INTEGER'REP(Z.MVALUE));
@@ -2616,8 +2627,15 @@
             if PM.DFLT = null or PM.MODE /= M_IN then
                FAIL(E.LINE, "no actual parameter for " & PM.NAME.all);
             end if;
-            -- a default is used only for in parameters (RM79 5.2.2)
-            GEXPR(PM.DFLT, PM.T, VT, V);
+            -- a default is used only for in parameters (RM79 5.2.2); it was
+            -- evaluated with the specification (RM79 6.3)
+            if PM.DSYM /= null then
+               ACCESS_OF(PM.DSYM, V);
+               COPY_CODE(PM.T, V.all, X1);
+               V := X1;
+            else
+               GEXPR(PM.DFLT, PM.T, VT, V);
+            end if;
             ARGS := MK(ARGS.all & V.all);
          else
             if A.FLAG /= 0 and A.FLAG /= 4 and A.FLAG /= PM.MODE then

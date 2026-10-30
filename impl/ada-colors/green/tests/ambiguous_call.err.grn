@@ -1,0 +1,12 @@
+procedure MAIN is
+   procedure P(X : INTEGER; Y : INTEGER := 0) is
+   begin
+      null;
+   end P;
+   procedure P(X : INTEGER) is
+   begin
+      null;
+   end P;
+begin
+   P(1);
+end MAIN;

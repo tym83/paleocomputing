@@ -56,55 +56,93 @@
       return N = "PUT" or N = "GET" or N = "ABS" or N = "SET_PRIORITY";
    end IS_BUILTIN;
 
-   -- the visible subprogram of this name that fits; null means the predefined one
+   -- the visible subprograms of this name that fit the call: with the
+   -- wanted result type first, then without it; one declaration hides
+   -- another with the same profile; two that fit make the call ambiguous
+   -- (RM79 6.6); null means the predefined one
    procedure RESOLVE_OVERLOAD(NAME : STRING; ARGS : NODE; IS_STMT : BOOLEAN; WANT : TYP;
                               LINE : INTEGER; Y : in out SYM) is
-      Z : SYM := TABLE(HASH(NAME));
-      FIRST : SYM;
+      Z, W, FIRST, FOUND : SYM;
       N : INTEGER := 0;
-      OK : BOOLEAN;
+      OK, HIDDEN : BOOLEAN;
    begin
-      -- with the wanted result type first, then without it
       for PASS in 1 .. 2 loop
          Z := TABLE(HASH(NAME));
          N := 0;
+         FOUND := null;
          while Z /= null loop
             if Z.NAME.all = NAME and then (Z.KIND = Y_FUNC or Z.KIND = Y_PROC) then
-               N := N + 1;
                if FIRST = null then
                   FIRST := Z;
                end if;
-               if (Z.RESULT.KIND = T_VOID) = IS_STMT then
+               HIDDEN := FALSE;
+               W := TABLE(HASH(NAME));
+               while W /= Z loop
+                  if W.NAME.all = NAME and then (W.KIND = Y_FUNC or W.KIND = Y_PROC) then
+                     if SAME_PROFILE(W, Z) then
+                        HIDDEN := TRUE;
+                     end if;
+                  end if;
+                  W := W.CHAIN;
+               end loop;
+               if not HIDDEN and then (Z.RESULT.KIND = T_VOID) = IS_STMT then
                   if PASS = 1 then
                      FITS(Z, ARGS, WANT, OK);
                   else
                      FITS(Z, ARGS, null, OK);
                   end if;
                   if OK then
-                     Y := Z;
-                     return;
+                     if FOUND /= null then
+                        FAIL(LINE, "the call of " & NAME & " is ambiguous: several declarations fit (RM79 6.6)");
+                     end if;
+                     FOUND := Z;
                   end if;
                end if;
             end if;
             Z := Z.CHAIN;
          end loop;
+         if FOUND /= null then
+            Y := FOUND;
+            return;
+         end if;
       end loop;
       if IS_BUILTIN(NAME) then
          Y := null;
          return;
       end if;
+      Z := TABLE(HASH(NAME));
+      while Z /= null loop
+         if Z.NAME.all = NAME and then (Z.KIND = Y_FUNC or Z.KIND = Y_PROC) then
+            N := N + 1;
+         end if;
+         Z := Z.CHAIN;
+      end loop;
       if N > 1 then
          FAIL(LINE, "no declaration of " & NAME & " fits these actual parameters");
       end if;
       Y := FIRST;
    end RESOLVE_OVERLOAD;
 
+   -- one subprogram seen twice, or two whose profiles are the same: the
+   -- inner one hides the outer (RM79 6.6, 8.2)
+   function SAME_PROFILE(A, B : SYM) return BOOLEAN is
+   begin
+      if not SAME_TYPES(A.PARAMS, B.PARAMS) or not SAME(A.RESULT, B.RESULT) then
+         return FALSE;
+      elsif A.CNAME /= null and B.CNAME /= null then
+         if A.CNAME.all = B.CNAME.all then
+            return TRUE;
+         end if;
+      end if;
+      return SAME_SIGNATURE(A.PARAMS, B.PARAMS);
+   end SAME_PROFILE;
+
    -- P.NAME(...): the overloaded declarations are those of the visible part of
    -- module P
    procedure RESOLVE_MEMBER_OVERLOAD(P, NAME : STRING; ARGS : NODE; IS_STMT : BOOLEAN; WANT : TYP;
                                      LINE : INTEGER; Y : in out SYM) is
       PK : SYM := LOOKUP_PATH(P);
-      Z : SYM;
+      Z, FOUND : SYM;
       N : INTEGER := 0;
       OK : BOOLEAN;
    begin
@@ -114,6 +152,7 @@
       for PASS in 1 .. 2 loop
          Z := PK.MEMBERS;
          N := 0;
+         FOUND := null;
          while Z /= null loop
             if Z.NAME.all = NAME and then (Z.KIND = Y_FUNC or Z.KIND = Y_PROC) and then not Z.HIDDEN then
                N := N + 1;
@@ -124,13 +163,19 @@
                      FITS(Z, ARGS, null, OK);
                   end if;
                   if OK then
-                     Y := Z;
-                     return;
+                     if FOUND /= null and then not SAME_PROFILE(FOUND, Z) then
+                        FAIL(LINE, "the call of " & NAME & " is ambiguous: several declarations fit (RM79 6.6)");
+                     end if;
+                     FOUND := Z;
                   end if;
                end if;
             end if;
             Z := Z.MNEXT;
          end loop;
+         if FOUND /= null then
+            Y := FOUND;
+            return;
+         end if;
       end loop;
       if N > 1 then
          FAIL(LINE, "no declaration of " & NAME & " fits these actual parameters");

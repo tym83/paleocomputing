@@ -1,0 +1,14 @@
+procedure MAIN is
+   type COLOR is (RED, GREEN);
+   type LIGHT is (RED, AMBER);
+   procedure P(C : COLOR) is
+   begin
+      null;
+   end P;
+   procedure P(L : LIGHT) is
+   begin
+      null;
+   end P;
+begin
+   P(RED);
+end MAIN;
