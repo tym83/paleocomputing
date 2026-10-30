@@ -59,6 +59,7 @@
     F_FIXED_DIV: INT = 26; F_CLAIM: INT = 27; F_RELEASE: INT = 28; F_COND_CLAIM: INT = 29;
     F_PROCESS_IDENTITY: INT = 30; F_CHANGE_PRIORITY: INT = 31; F_RAISE_TERM: INT = 32;
     F_FREE_POINTER: INT = 33; F_CODE_INSERT: INT = 34; F_ADDR: INT = 35; F_EXTENT: INT = 36;
+    F_MAKE_POINTER: INT = 37; F_MAIN_STORE: INT = 38;
 
   VAR
     CharNames: Txt := 0;             (* the mnemonics of ASCII, in order *)
@@ -129,4 +130,5 @@
   (* 99-main *)
   VAR
     ROpenMode: Rep;
+    RAddress, RWord: Rep;            (* the simulated machine (XIV.VI.2) *)
     Program: Node;

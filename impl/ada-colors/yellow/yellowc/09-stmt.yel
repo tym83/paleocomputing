@@ -385,7 +385,9 @@
         ST(p^.cname);
         SA("_o)");
         t := SE();
-        Assign(t, p^.rep, Path(Level, p^.cname), p^.rep, 0)
+        IF p^.path # 0 THEN Assign(t, p^.rep, p^.path, p^.rep, 0)
+        ELSE Assign(t, p^.rep, Path(Level, p^.cname), p^.rep, 0)
+        ENDIF
       ENDIF;
       p := p^.next
     ENDWHILE;

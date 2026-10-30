@@ -10,7 +10,7 @@
     NEW(s);
     s^ := SymRec(kind, name, Rep NIL, 0, 0, FALSE, FALSE, 0, FALSE, Param NIL, 0, Rep NIL,
                  FALSE, Node NIL, 0, Sym NIL, Sym NIL, Sym NIL, Sym NIL, Sym NIL, Sym NIL,
-                 Sym NIL, 0, Node NIL, Node NIL, Node NIL, 0, 0);
+                 Sym NIL, 0, Node NIL, Node NIL, Node NIL, 0, 0, -1);
     s^.serial := NewSerial();
     RETURN s
   ENDPROCEDURE NewSym;

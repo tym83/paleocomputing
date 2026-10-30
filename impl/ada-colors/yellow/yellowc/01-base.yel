@@ -32,7 +32,7 @@ MODULE yellowc
       VAR a, b, c, d, e, next: Node;
       VAR rep: Rep;
       VAR sym: Sym;
-      VAR x: Node                 (* processes: SIZE *)
+      VAR x: Node                 (* processes: SIZE; representations: PACKED, ALIGNMENT *)
     ENDRECORD;
 
     (* a representation (VI): a type with what the C needs to hold it *)
@@ -65,7 +65,11 @@ MODULE yellowc
       VAR monitor: Sym;           (* signals: the monitor they belong to *)
       VAR serial: INT;
       VAR sig: Txt;               (* the representation spelled out, for VII.G *)
-      VAR fsn, fsd: INT           (* FIXED: the scale, a rational fsn / fsd *)
+      VAR fsn, fsd: INT;          (* FIXED: the scale, a rational fsn / fsd *)
+      (* the simulated machine (XIV.VI): PACKED, its limit in bits, ALIGNMENT *)
+      (* in bits, the size in bits once known (-1 not manifest, 0 not yet) *)
+      VAR packed: BOOLEAN;
+      VAR pbits, align, bits: INT
     ENDRECORD;
 
     FieldRec = RECORD
@@ -74,7 +78,8 @@ MODULE yellowc
       VAR isconst: BOOLEAN;
       VAR variant: INT;           (* 0 in the common part, else the case it belongs to *)
       VAR labels: Node;           (* the case labels of its variant *)
-      VAR next: Field
+      VAR next: Field;
+      VAR at: INT                 (* its offset in bits, given by AT, or -1 *)
     ENDRECORD;
 
     ParamRec = RECORD
@@ -82,7 +87,9 @@ MODULE yellowc
       VAR cls: INT;               (* CONST OUT VAR *)
       VAR rep: Rep;
       VAR cname: Txt;
-      VAR next: Param
+      VAR next: Param;
+      VAR at: INT;                (* the word it is passed in, given by AT, or -1 *)
+      VAR path: Txt               (* then the C text of that word *)
     ENDRECORD;
 
     (* a declared entity *)
@@ -112,7 +119,8 @@ MODULE yellowc
       VAR serial: INT;
       VAR calls: Node;            (* routines: the routines and processes it calls *)
       VAR writes, frees: Node;    (* routines: the variables of other scopes it assigns, uses *)
-      VAR seen, vix: INT          (* the last routine that noted it; its index in the checks *)
+      VAR seen, vix: INT;         (* the last routine that noted it; its index in the checks *)
+      VAR at: INT                 (* variables: the word of the store given by AT, or -1 *)
     ENDRECORD;
 
     ScopeRec = RECORD

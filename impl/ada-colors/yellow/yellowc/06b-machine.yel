@@ -1,0 +1,278 @@
+  (* ---- the simulated machine (XIV) ----------------------------------------- *)
+  (* The implementation-dependent parts of YELLOW are defined on a simulated *)
+  (* machine: words of 64 bits, addressed by word; a physical store of 65536 *)
+  (* words, MAIN_STORE_ARRAY, whose top 8192 words (BASE8 160000 on) are the *)
+  (* PDP-11 I/O page of the Report's examples; ADDRESS = INTEGER *)
+  (* [0..16777215]. A variable declared AT an address lives in that store; *)
+  (* any other variable gets an address above the store when ADDR first *)
+  (* asks for it, and MAKE_POINTER and MAIN_STORE_ARRAY reach it there. *)
+  (* Sizes are counted in bits: unpacked, every scalar takes a word (FIXED *)
+  (* two) and components start on word boundaries; PACKED takes the bits *)
+  (* the range needs; AT on a record component gives its offset in bits; *)
+  (* ALIGNMENT n starts the values on multiples of n bits. EXTENT counts *)
+  (* words. *)
+
+  (* the bits that hold 0..n *)
+  FUNCTION BitsFor RETURNS INT (CONST n: INT)
+    VAR k: INT := 1;
+        v: INT := 2;
+    WHILE (v <= n) AND (k < 63) DO
+      k := k + 1;
+      v := v * 2
+    ENDWHILE;
+    RETURN k
+  ENDFUNCTION BitsFor;
+
+  FUNCTION RoundUp RETURNS INT (CONST v, m: INT)
+    IF m <= 1 THEN RETURN v ENDIF;
+    RETURN (((v + m) - 1) DIV m) * m
+  ENDFUNCTION RoundUp;
+
+  (* the size of a value of r in bits, packed or not; -1 when its bounds *)
+  (* are not manifest *)
+  PROCEDURE Bits RETURNS INT (CONST r: Rep; CONST pk: BOOLEAN)
+    VAR k: INT := r^.kind;
+        packed: BOOLEAN := pk OR r^.packed;
+        b, n, lo, hi: INT;
+        ix: Rep;
+    IF NOT packed AND (r^.bits # 0) THEN RETURN r^.bits ENDIF;
+    b := 64;
+    IF IsDiscrete(r) THEN
+      IF packed THEN
+        IF (k = R_ENUM) OR (k = R_ALPHA) OR (k = R_BOOL) THEN
+          b := BitsFor(r^.nlits - 1)
+        ELSIF r^.hasm THEN
+          lo := r^.mlo;
+          hi := r^.mhi;
+          IF lo >= 0 THEN b := BitsFor(hi)
+          ELSIF (-1 - lo) > hi THEN b := 1 + BitsFor(-1 - lo)
+          ELSE b := 1 + BitsFor(hi)
+          ENDIF
+        ENDIF
+      ENDIF
+    ELSIF k = R_FIXED THEN
+      b := 128
+    ELSIF (k = R_PTR) OR (k = R_NIL) THEN
+      IF packed THEN b := 24 ENDIF
+    ELSIF k = R_SET THEN
+      IF r^.elem^.hasm THEN
+        n := (r^.elem^.mhi - r^.elem^.mlo) + 1;
+        IF n > (LARGEST DIV 2) THEN b := -1
+        ELSIF packed THEN b := n
+        ELSE b := RoundUp(n, 64)
+        ENDIF
+      ELSE
+        b := -1
+      ENDIF
+    ELSIF k = R_ARRAY THEN
+      n := 1;
+      ix := r^.idx;
+      WHILE ix # Rep NIL DO
+        IF NOT ix^.hasm THEN RETURN -1 ENDIF;
+        n := n * ((ix^.mhi - ix^.mlo) + 1);
+        IF n > 100000000000 THEN RETURN -1 ENDIF;
+        ix := ix^.link
+      ENDWHILE;
+      b := Bits(r^.elem, packed);
+      IF b < 0 THEN RETURN -1 ENDIF;
+      IF NOT packed AND NOT r^.elem^.packed THEN b := RoundUp(b, 64) ENDIF;
+      b := RoundUp(b, r^.elem^.align);
+      b := b * n
+    ELSIF k = R_RECORD THEN
+      b := RecordBits(r, packed, FALSE)
+    ELSIF (k = R_UARRAY) OR (k = R_STR) OR (k = R_SPACE) THEN
+      b := -1
+    ENDIF;
+    IF (b > 0) AND NOT packed THEN b := RoundUp(b, 64) ENDIF;
+    IF NOT packed THEN r^.bits := b ENDIF;
+    RETURN b
+  ENDPROCEDURE Bits;
+
+  (* the layout of a record: components in order, each where AT puts it or *)
+  (* after the one before (on a word unless packed, on its ALIGNMENT); the *)
+  (* components of different variants overlay; with check, components *)
+  (* placed by AT that overlap are an error (XIV.VI.1) *)
+  PROCEDURE RecordBits RETURNS INT (CONST r: Rep; CONST packed, check: BOOLEAN)
+    VAR f: Field;
+        off, total, b, start, vstart, n: INT := 0;
+        starts, ends: ARRAY (INTEGER [1..512] OF INT);
+        fs: ARRAY (INTEGER [1..512] OF Field);
+    f := r^.fields;
+    WHILE f # Field NIL DO
+      b := Bits(f^.rep, packed);
+      IF b < 0 THEN RETURN -1 ENDIF;
+      IF NOT packed AND NOT f^.rep^.packed THEN b := RoundUp(b, 64) ENDIF;
+      IF f^.variant # 0 THEN
+        (* every variant starts where the common part ends *)
+        IF vstart = 0 THEN vstart := off ENDIF;
+        IF FirstOfVariant(r, f) THEN off := vstart ENDIF
+      ENDIF;
+      IF f^.at >= 0 THEN
+        start := f^.at
+      ELSIF packed OR f^.rep^.packed THEN
+        start := RoundUp(off, f^.rep^.align)
+      ELSE
+        start := RoundUp(off, 64)
+      ENDIF;
+      IF check AND (n < 512) THEN
+        n := n + 1;
+        starts[n] := start;
+        ends[n] := start + b;
+        fs[n] := f
+      ENDIF;
+      off := start + b;
+      IF off > total THEN total := off ENDIF;
+      f := f^.next
+    ENDWHILE;
+    IF check THEN
+      FOR i: INTEGER [1..n] DO
+        FOR j: INTEGER [i + 1..n] DO
+          IF ((fs[i]^.at >= 0) OR (fs[j]^.at >= 0)) AND (starts[i] < ends[j]) AND (starts[j] < ends[i]) AND
+             ((fs[i]^.variant = 0) OR (fs[j]^.variant = 0) OR (fs[i]^.variant = fs[j]^.variant)) THEN
+            Fail(CurLine, Join(fs[j]^.name, Join(T(" overlaps "), fs[i]^.name, 0), T(" in the record (XIV.VI.1)")))
+          ENDIF
+        ENDFOR
+      ENDFOR
+    ENDIF;
+    RETURN total
+  ENDPROCEDURE RecordBits;
+
+  (* is f the first component of its variant *)
+  PROCEDURE FirstOfVariant RETURNS BOOLEAN (CONST r: Rep; CONST f: Field)
+    VAR g: Field := r^.fields;
+    WHILE g # f DO
+      IF g^.variant = f^.variant THEN RETURN FALSE ENDIF;
+      g := g^.next
+    ENDWHILE;
+    RETURN TRUE
+  ENDPROCEDURE FirstOfVariant;
+
+  (* PACKED [n] and ALIGNMENT n written after a concrete type (rule 72): *)
+  (* no more than n bits may be needed (XIV.VI.1) *)
+  PROCEDURE ApplyStorage RETURNS Rep (CONST r0: Rep; CONST x: Node)
+    VAR r: Rep := CopyRep(r0);
+        ok: BOOLEAN;
+        v, b: INT;
+    IF x^.flag = 1 THEN
+      r^.packed := TRUE;
+      IF x^.a # Node NIL THEN
+        Manifest(x^.a, ok, v);
+        IF NOT ok OR (v < 1) THEN FailS(x^.line, "PACKED takes a positive manifest number of bits (XIV.VI.1)") ENDIF;
+        r^.pbits := v
+      ENDIF
+    ENDIF;
+    IF x^.b # Node NIL THEN
+      Manifest(x^.b, ok, v);
+      IF NOT ok OR (v < 1) OR (v > 64) THEN FailS(x^.line, "ALIGNMENT takes a manifest number of bits from 1 to 64 (XIV.VI.1)") ENDIF;
+      r^.align := v
+    ENDIF;
+    IF r^.pbits > 0 THEN
+      b := Bits(r, TRUE);
+      IF b < 0 THEN FailS(x^.line, "PACKED n takes a representation of manifest bounds (XIV.VI.1)") ENDIF;
+      IF b > r^.pbits THEN
+        SB();
+        SA("this representation needs ");
+        SI(b);
+        SA(" bits, more than PACKED ");
+        SI(r^.pbits);
+        SA(" allows (XIV.VI.1)");
+        Fail(x^.line, SE())
+      ENDIF
+    ENDIF;
+    RETURN r
+  ENDPROCEDURE ApplyStorage;
+
+  (* a manifest address of AT *)
+  PROCEDURE AtAddress RETURNS INT (CONST n: Node)
+    VAR ok: BOOLEAN;
+        v: INT;
+    Manifest(n, ok, v);
+    IF NOT ok OR (v < 0) THEN FailS(n^.line, "an AT location is a manifest constant, not negative (XIV.VII)") ENDIF;
+    RETURN v
+  ENDPROCEDURE AtAddress;
+
+  (* the C storage of a value of CType ct at word address a of the store *)
+  PROCEDURE StoreAt RETURNS Txt (CONST ct: Txt; CONST a: INT)
+    SB();
+    SA("(*(");
+    ST(ct);
+    SA(" *)y_mem_at(INT64_C(");
+    SI(a);
+    SA("), sizeof(");
+    ST(ct);
+    SA(")))");
+    RETURN SE()
+  ENDPROCEDURE StoreAt;
+
+  (* EXTENT of a value of r held in code, in words (XIV.XI.2) *)
+  PROCEDURE ExtentCode RETURNS Txt (CONST code: Txt; CONST r: Rep)
+    VAR b, eb: INT;
+    IF r^.kind = R_SPACE THEN RETURN Join(T("("), code, T(").words")) ENDIF;
+    b := Bits(r, FALSE);
+    IF b >= 0 THEN RETURN Num((b + 63) DIV 64) ENDIF;
+    IF IsArrayLike(r) THEN
+      eb := Bits(r^.elem, r^.packed);
+      IF eb >= 0 THEN
+        IF NOT r^.packed THEN eb := RoundUp(eb, 64) ENDIF;
+        SB();
+        SA("((y_count(");
+        ST(code);
+        SA(", ");
+        SI(r^.nidx);
+        SA(") * INT64_C(");
+        SI(eb);
+        SA(") + 63) / 64)");
+        RETURN SE()
+      ENDIF
+    ENDIF;
+    RETURN Join(T("((rt_int)((sizeof("), code, T(") + 7) / 8))"))
+  ENDPROCEDURE ExtentCode;
+
+  (* a SPACE actual: the place and extent of a value of any representation *)
+  (* (XIV.X.1); a value that is not a variable is copied to a place of its *)
+  (* own *)
+  PROCEDURE SpaceArg RETURNS Txt (CONST n: Node; CONST code: Txt; CONST r: Rep)
+    VAR t: Txt;
+    IF r^.kind = R_SPACE THEN RETURN code ENDIF;
+    IF IsVariable(n) OR ((n^.kind = N_NAME) AND (r^.kind # R_STR)) THEN
+      RETURN Join(T("((yspace){ (void *)&("), code, Join(T("), "), ExtentCode(code, r), T(" })")))
+    ENDIF;
+    t := Fresh("sp");
+    SB();
+    SA("({ ");
+    ST(CType(r));
+    SA(" ");
+    ST(t);
+    SA(" = ");
+    ST(code);
+    SA("; void *");
+    ST(t);
+    SA("c = rt_alloc(sizeof ");
+    ST(t);
+    SA("); memcpy(");
+    ST(t);
+    SA("c, &");
+    ST(t);
+    SA(", sizeof ");
+    ST(t);
+    SA("); (yspace){ ");
+    ST(t);
+    SA("c, ");
+    ST(ExtentCode(t, r));
+    SA(" }; })");
+    RETURN SE()
+  ENDPROCEDURE SpaceArg;
+
+  (* is n a component of a PACKED array or record: not a VAR actual (XIV.VI.1) *)
+  PROCEDURE PackedComponent RETURNS BOOLEAN (CONST n: Node)
+    VAR d: Node := n;
+    WHILE (d^.kind = N_SEL) OR (d^.kind = N_INDEX) OR (d^.kind = N_PAREN) DO
+      IF d^.kind # N_PAREN THEN
+        IF d^.a^.rep # Rep NIL THEN
+          IF d^.a^.rep^.packed THEN RETURN TRUE ENDIF
+        ENDIF
+      ENDIF;
+      d := d^.a
+    ENDWHILE;
+    RETURN FALSE
+  ENDPROCEDURE PackedComponent;

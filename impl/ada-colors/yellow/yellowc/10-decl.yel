@@ -29,7 +29,7 @@
     IF n^.kind = N_RUARRAY THEN
       (* a length-unresolved array: integer indices, bounds of the actual *)
       Manifest(n^.a, ok, v);
-      IF NOT ok OR (v < 1) OR (v > 4) THEN FailS(n^.line, "DIMENSIONS is a manifest constant from 1 to 4") ENDIF;
+      IF NOT ok OR (v < 1) OR (v > 8) THEN FailS(n^.line, "DIMENSIONS is a manifest constant from 1 to 8 here") ENDIF;
       r := NewRep(R_UARRAY, T("length-unresolved array"));
       r^.nidx := v;
       r^.elem := MakeRep(n^.b, 0, FALSE);
@@ -45,12 +45,18 @@
 
   PROCEDURE ParamCType RETURNS Txt (CONST p: Param)
     VAR t: Txt := CType(p^.rep);
-    IF p^.cls = C_CONST THEN RETURN t ENDIF;
+    IF (p^.cls = C_CONST) OR (p^.rep^.kind = R_SPACE) THEN RETURN t ENDIF;
     SB();
     ST(t);
     SA(" *");
     RETURN SE()
   ENDPROCEDURE ParamCType;
+
+  (* the C type of the storage of a parameter in its frame *)
+  PROCEDURE DeclType RETURNS Txt (CONST p: Param)
+    IF p^.cls = C_OUT THEN RETURN CType(p^.rep) ENDIF;
+    RETURN ParamCType(p)
+  ENDPROCEDURE DeclType;
 
   (* the header of a routine or process: its parameters and C prototype *)
   PROCEDURE RoutineHeader (CONST d: Node; CONST kind: INT)
@@ -85,7 +91,8 @@
       nm := g^.a;
       WHILE nm # Node NIL DO
         NEW(p);
-        p^ := ParamRec(nm^.name, g^.ival, r, Fresh("p"), Param NIL);
+        p^ := ParamRec(nm^.name, g^.ival, r, Fresh("p"), Param NIL, -1, 0);
+        IF nm^.a # Node NIL THEN p^.at := AtAddress(nm^.a) ENDIF;
         IF last = Param NIL THEN s^.params := p ELSE last^.next := p ENDIF;
         last := p;
         s^.nparams := s^.nparams + 1;
@@ -239,8 +246,12 @@
       ps^.cname := p^.cname;
       IF s^.kind = S_PROCESS THEN
         (* the activation has filled the frame already *)
-        ps^.byref := p^.cls = C_VAR;
+        ps^.byref := (p^.cls = C_VAR) AND (p^.rep^.kind # R_SPACE);
         DeclStorage(ParamCType(p), p^.cname)
+      ELSIF p^.rep^.kind = R_SPACE THEN
+        (* a SPACE: the place and extent of the actual, of any class *)
+        DeclStorage(T("yspace"), p^.cname);
+        Emit(Join(T("F."), p^.cname, Join(T(" = a_"), p^.cname, T(";"))))
       ELSIF p^.cls = C_VAR THEN
         ps^.byref := TRUE;
         DeclStorage(ParamCType(p), p^.cname);
@@ -259,6 +270,15 @@
       ELSE
         DeclStorage(CType(p^.rep), p^.cname);
         Emit(Join(T("F."), p^.cname, Join(T(" = a_"), p^.cname, T(";"))))
+      ENDIF;
+      IF p^.at >= 0 THEN
+        (* AT: the actual is passed in that word of the store (XIV.VII) *)
+        t := StoreAt(DeclType(p), p^.at);
+        Emit(Join(t, T(" = F."), Join(p^.cname, T(";"), 0)));
+        ps^.level := 0;
+        ps^.cname := t;
+        ps^.at := p^.at;
+        p^.path := t
       ENDIF;
       Define(ps, d^.line);
       p := p^.next
@@ -336,6 +356,21 @@
     s^.level := Level;
     s^.cname := Fresh("v");
     DeclStorage(CType(r), s^.cname);
+    InitStorage(s, r, line);
+    RETURN
+  ENDPROCEDURE DeclareStorage;
+
+  (* a variable or constant AT a word of the simulated store (XIV.VII) *)
+  PROCEDURE DeclareAt (CONST s: Sym; CONST r: Rep; CONST a: INT; CONST line: INT)
+    s^.rep := r;
+    s^.level := 0;
+    s^.at := a;
+    s^.cname := StoreAt(CType(r), a);
+    InitStorage(s, r, line);
+    RETURN
+  ENDPROCEDURE DeclareAt;
+
+  PROCEDURE InitStorage (CONST s: Sym; CONST r: Rep; CONST line: INT)
     IF Deep(r) THEN Emit(Join(T("y_init("), DescOf(r), Join(T(", &"), SymPath(s), T(");")))) ENDIF;
     IF r^.kind = R_SET THEN
       Emit(Join(SymPath(s), T(" = y_set_new("), Join(LoText(r^.elem), T(", "), Join(HiText(r^.elem), T(");"), 0))))
@@ -344,7 +379,7 @@
     IF HoldsSignal(r) THEN DeclareSignalArray(s, line) ENDIF;
     IF r^.kind = R_SEM THEN Emit(Join(T("rt_lock_init(&"), SymPath(s), T(");"))) ENDIF;
     RETURN
-  ENDPROCEDURE DeclareStorage;
+  ENDPROCEDURE InitStorage;
 
   PROCEDURE SimpleDecl (CONST d: Node)
     VAR k: INT := d^.kind;
@@ -363,7 +398,11 @@
       nm := d^.a;
       WHILE nm # Node NIL DO
         IF k = N_CONST THEN s := NewSym(S_CONST, nm^.name) ELSE s := NewSym(S_VAR, nm^.name) ENDIF;
-        DeclareStorage(s, r, d^.line);
+        IF (nm^.a # Node NIL) AND (r^.kind # R_SIGNAL) THEN
+          DeclareAt(s, r, AtAddress(nm^.a), d^.line)
+        ELSE
+          DeclareStorage(s, r, d^.line)
+        ENDIF;
         IF d^.c # Node NIL THEN
           Expr(d^.c, r, c, er);
           IF k = N_CONST THEN
@@ -452,8 +491,7 @@
     RETURN
   ENDPROCEDURE NoteAlphabet;
 
-  (* AT: the location of a variable is implementation-dependent (XIV.VII); *)
-  (* this implementation takes it for device signals only *)
+  (* AT on a signal: a device signal (XIV.VII) *)
   PROCEDURE AtLocation (CONST s: Sym; CONST at: Node)
     IF s^.rep^.kind = R_SIGNAL THEN
       DeviceSignal(s, at);

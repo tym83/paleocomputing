@@ -407,7 +407,7 @@ void rt_b_wait(rt_int v, rt_int scale);        /* seconds at the scale */
 #define PALEO_YELLOW_H
 
 /* ---- arrays: a value is a descriptor of its bounds and a buffer it owns ---- */
-#define Y_MAXD 4
+#define Y_MAXD 8
 typedef struct {
   rt_int lo[Y_MAXD], hi[Y_MAXD];
   void *p;
@@ -444,6 +444,10 @@ rt_int y_ix1(yarr a, rt_int i);
 rt_int y_ix2(yarr a, rt_int i, rt_int j);
 rt_int y_ix3(yarr a, rt_int i, rt_int j, rt_int k);
 rt_int y_ix4(yarr a, rt_int i, rt_int j, rt_int k, rt_int l);
+rt_int y_ix5(yarr a, rt_int i, rt_int j, rt_int k, rt_int l, rt_int m);
+rt_int y_ix6(yarr a, rt_int i, rt_int j, rt_int k, rt_int l, rt_int m, rt_int n);
+rt_int y_ix7(yarr a, rt_int i, rt_int j, rt_int k, rt_int l, rt_int m, rt_int n, rt_int o);
+rt_int y_ix8(yarr a, rt_int i, rt_int j, rt_int k, rt_int l, rt_int m, rt_int n, rt_int o, rt_int q);
 rt_int y_low(yarr a, rt_int dim);
 rt_int y_high(yarr a, rt_int dim);
 void y_move(yarr *dst, rt_int at, yarr src, rt_int i, rt_int j, const ydesc *elem);
@@ -526,6 +530,21 @@ void *y_new(size_t n);
 void *y_deref(void *p);                       /* INVALID_POINTER */
 void y_free_pointer(void **p);
 void *y_cell(void *body);                      /* MAKE_POINTER */
+
+/* ---- the simulated machine (XIV.VI-VII, XIV.XI.2) ---------------------------
+ * Words of 64 bits addressed by word; a store of Y_STORE words, the top of it
+ * the PDP-11 I/O page; variables declared AT live in it; other storage gets an
+ * address above it when ADDR asks */
+#define Y_STORE 65536
+typedef struct {
+  void *p;                                     /* a SPACE formal: the actual's place */
+  rt_int words;                                /* and its extent */
+} yspace;
+void *y_mem_at(rt_int a, size_t bytes);        /* the store at word a */
+rt_int y_addr(void *p, rt_int words);          /* ADDR */
+void *y_mem_ptr(rt_int a);                     /* what address a names */
+rt_int *y_mem_word(rt_int a);                  /* MAIN_STORE_ARRAY [a] */
+extern int Y_X_ADDRESS;
 
 /* ---- conversions and text helpers ---------------------------------------- */
 rt_int y_floor(double v);

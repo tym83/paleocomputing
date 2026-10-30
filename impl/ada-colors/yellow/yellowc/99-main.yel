@@ -73,6 +73,17 @@
     StdRep("ASCII", RAscii);
     StdRep("STANDARD_ALPHABET", RAscii);
     StdRep("OPEN_MODE", ROpenMode);
+    (* the simulated machine: word addresses, words, the store (XIV.VI.2) *)
+    RAddress := NewRep(R_INT, RInt^.tid);
+    RAddress^.tname := N("ADDRESS");
+    SetRange(RAddress, 0, 16777215);
+    RWord := NewRep(R_INT, RInt^.tid);
+    RWord^.tname := N("WORD");
+    SetRange(RWord, -9223372036854775807, 9223372036854775807);
+    StdRep("ADDRESS", RAddress);
+    StdRep("WORD", RWord);
+    StdOp("MAKE_POINTER", F_MAKE_POINTER);
+    StdOp("MAIN_STORE_ARRAY", F_MAIN_STORE);
     StdOp("LOW", F_LOW);
     StdOp("HIGH", F_HIGH);
     StdOp("SUCC", F_SUCC);

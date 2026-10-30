@@ -124,7 +124,13 @@
         TypeClash(ArgNode[i]^.line, p^.rep, ArgRep[i])
       ENDIF;
       CheckUnresolved(p^.rep, ArgRep[i], ArgNode[i]^.line);
-      IF p^.cls = C_CONST THEN
+      IF p^.rep^.kind = R_SPACE THEN
+        (* any representation: its place and extent (XIV.X.1) *)
+        IF (p^.cls # C_CONST) AND NOT IsVariable(ArgNode[i]) AND (ArgRep[i]^.kind # R_SPACE) THEN
+          FailN(ArgNode[i]^.line, p^.name, ": the actual of a VAR or OUT parameter must be a variable")
+        ENDIF;
+        ST(SpaceArg(ArgNode[i], ArgCode[i], ArgRep[i]))
+      ELSIF p^.cls = C_CONST THEN
         ST(Convert(ArgCode[i], p^.rep, ArgRep[i]))
       ELSE
         (* VAR and OUT actuals are variables (X.A.2) *)
@@ -134,6 +140,9 @@
         ENDIF;
         CheckPure(ArgNode[i]);
         NoteWrite(ArgNode[i]);
+        IF (p^.cls = C_VAR) AND PackedComponent(ArgNode[i]) THEN
+          FailN(ArgNode[i]^.line, p^.name, ": a component of a PACKED object is not a VAR actual (XIV.VI.1)")
+        ENDIF;
         IF SameAsFormal(p^.rep, ArgRep[i]) THEN
           SA("&");
           ST(ArgCode[i])

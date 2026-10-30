@@ -2466,6 +2466,7 @@ void y_lang(void) {
   Y_X_ZERO_DENOM = rt_exc("ZERO_DENOMINATOR"); /* FIXED_DIV, p.1062 */
   Y_X_NO_RETURN = rt_exc("NO_RETURN");         /* fell out of a routine, IX.A.6 */
   Y_X_STORAGE = rt_exc("TOO_LITTLE_LOCAL_STORAGE"); /* XIV.X.2 */
+  Y_X_ADDRESS = rt_exc("ADDRESS_VIOLATION");   /* "addressing protection violation" */
   rt_deadlock_hook = y_deadlock;
 }
 
@@ -2647,6 +2648,18 @@ rt_int y_ix3(yarr a, rt_int i, rt_int j, rt_int k) {
 }
 rt_int y_ix4(yarr a, rt_int i, rt_int j, rt_int k, rt_int l) {
   return y_ix3(a, i, j, k) * y_n(a.lo[3], a.hi[3]) + y_ix(a, 3, l);
+}
+rt_int y_ix5(yarr a, rt_int i, rt_int j, rt_int k, rt_int l, rt_int m) {
+  return y_ix4(a, i, j, k, l) * y_n(a.lo[4], a.hi[4]) + y_ix(a, 4, m);
+}
+rt_int y_ix6(yarr a, rt_int i, rt_int j, rt_int k, rt_int l, rt_int m, rt_int n) {
+  return y_ix5(a, i, j, k, l, m) * y_n(a.lo[5], a.hi[5]) + y_ix(a, 5, n);
+}
+rt_int y_ix7(yarr a, rt_int i, rt_int j, rt_int k, rt_int l, rt_int m, rt_int n, rt_int o) {
+  return y_ix6(a, i, j, k, l, m, n) * y_n(a.lo[6], a.hi[6]) + y_ix(a, 6, o);
+}
+rt_int y_ix8(yarr a, rt_int i, rt_int j, rt_int k, rt_int l, rt_int m, rt_int n, rt_int o, rt_int q) {
+  return y_ix7(a, i, j, k, l, m, n, o) * y_n(a.lo[7], a.hi[7]) + y_ix(a, 7, q);
 }
 
 rt_int y_low(yarr a, rt_int dim) {
@@ -3236,6 +3249,56 @@ void *y_cell(void *body) {
   ncells++;
   return c;
 }
+
+/* ---- the simulated machine ------------------------------------------------ */
+
+int Y_X_ADDRESS;
+static rt_int y_mem_store[Y_STORE];
+
+/* storage that ADDR has given an address above the store: a window */
+static struct {
+  char *c;
+  rt_int base, words;
+} *windows;
+static rt_int nwindows, cwindows, next_window = Y_STORE;
+
+void *y_mem_at(rt_int a, size_t bytes) {
+  if (a < 0 || (uint64_t)a * 8 + bytes > (uint64_t)Y_STORE * 8) rt_raise(Y_X_ADDRESS);
+  return &y_mem_store[a];
+}
+
+rt_int y_addr(void *p, rt_int words) {
+  char *c = p;
+  if (c >= (char *)y_mem_store && c < (char *)(y_mem_store + Y_STORE)) return (c - (char *)y_mem_store) / 8;
+  for (rt_int i = 0; i < nwindows; i++)
+    if (c >= windows[i].c && c < windows[i].c + windows[i].words * 8)
+      return windows[i].base + (c - windows[i].c) / 8;
+  if (nwindows == cwindows) {
+    cwindows = cwindows ? cwindows * 2 : 32;
+    windows = realloc(windows, (size_t)cwindows * sizeof *windows);
+    if (!windows) {
+      fprintf(stderr, "*** out of memory\n");
+      exit(4);
+    }
+  }
+  if (words < 1) words = 1;
+  windows[nwindows].c = c;
+  windows[nwindows].base = next_window;
+  windows[nwindows].words = words;
+  nwindows++;
+  next_window += words;
+  return next_window - words;
+}
+
+void *y_mem_ptr(rt_int a) {
+  if (a >= 0 && a < Y_STORE) return &y_mem_store[a];
+  for (rt_int i = 0; i < nwindows; i++)
+    if (a >= windows[i].base && a < windows[i].base + windows[i].words)
+      return windows[i].c + (a - windows[i].base) * 8;
+  rt_raise(Y_X_ADDRESS);
+}
+
+rt_int *y_mem_word(rt_int a) { return y_mem_ptr(a); }
 
 int y_cond_claim(rt_lock *l) {
   if (l->owner) return 0;

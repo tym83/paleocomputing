@@ -10,7 +10,7 @@
     NEW(r);
     r^ := RepRec(kind, tid, tid, 0, 0, 0, 0, FALSE, 0, 0, Rep NIL, Rep NIL, 0, Rep NIL,
                  Node NIL, 0, Field NIL, Field NIL, 0, 0, 0, FALSE, FALSE, FALSE, 0, FALSE, 0, 0,
-                 Sym NIL, 0, 0, 0, 0);
+                 Sym NIL, 0, 0, 0, 0, FALSE, 0, 0, 0);
     r^.serial := NewSerial();
     RETURN r
   ENDPROCEDURE NewRep;
@@ -22,6 +22,7 @@
     c^ := r^;
     c^.serial := NewSerial();
     c^.sig := 0;
+    c^.bits := 0;
     RETURN c
   ENDPROCEDURE CopyRep;
 
@@ -91,6 +92,7 @@
     IF k = R_SET THEN RETURN T("yset") ENDIF;
     IF k = R_SIGNAL THEN RETURN T("ysig") ENDIF;
     IF k = R_SEM THEN RETURN T("rt_lock") ENDIF;
+    IF k = R_SPACE THEN RETURN T("yspace") ENDIF;
     RETURN T("void")
   ENDPROCEDURE CType;
 
@@ -227,6 +229,14 @@
       SA("(");
       ST(RepSig(r^.elem));
       SA(")")
+    ENDIF;
+    IF r^.packed THEN
+      SA(" PACKED ");
+      SI(r^.pbits)
+    ENDIF;
+    IF r^.align # 0 THEN
+      SA(" ALIGNMENT ");
+      SI(r^.align)
     ENDIF;
     RETURN SE()
   ENDPROCEDURE SigText;
@@ -508,6 +518,7 @@
   PROCEDURE MakeRep RETURNS Rep (CONST n: Node; CONST name: Txt; CONST typeonly: BOOLEAN)
     VAR r: Rep := MakeRep1(n, name, typeonly);
         s: Sym;
+    IF n^.x # Node NIL THEN r := ApplyStorage(r, n^.x) ENDIF;
     IF n^.text # 0 THEN
       s := Real(Lookup(n^.text, n^.line));
       IF NOT Conforms(s^.rep, r) OR ((n^.kind = N_RNAME) AND (r^.tid # s^.rep^.tid)) THEN
@@ -630,7 +641,7 @@
         r^.nidx := r^.nidx + 1;
         p := p^.next
       ENDWHILE;
-      IF r^.nidx > 4 THEN FailS(n^.line, "this implementation takes arrays of up to 4 dimensions") ENDIF;
+      IF r^.nidx > 8 THEN FailS(n^.line, "this implementation takes arrays of up to 8 dimensions") ENDIF;
       r^.elem := MakeRep(n^.b, 0, typeonly);
       IF NOT typeonly THEN
         CheckRepresented(r^.elem, n^.line);
@@ -760,7 +771,7 @@
       f := f^.next
     ENDWHILE;
     NEW(f);
-    f^ := FieldRec(name, fr, isconst, variant, labels, Field NIL);
+    f^ := FieldRec(name, fr, isconst, variant, labels, Field NIL, -1);
     IF last = Field NIL THEN r^.fields := f ELSE last^.next := f ENDIF;
     last := f;
     IF Deep(fr) THEN r^.deep := TRUE ENDIF;
@@ -778,6 +789,8 @@
       nm := g^.a;
       WHILE nm # Node NIL DO
         AddField(r, last, nm^.name, fr, g^.ival = W_CONST, variant, labels, nm^.line);
+        (* AT: the offset of the component in bits (XIV.VI.1) *)
+        IF nm^.a # Node NIL THEN last^.at := AtAddress(nm^.a) ENDIF;
         nm := nm^.next
       ENDWHILE;
       g := g^.next
@@ -810,6 +823,9 @@
     ENDIF;
     IF typeonly AND r^.abstract THEN RETURN ENDIF;
     r^.abstract := FALSE;
+    CurLine := n^.line;
+    i := RecordBits(r, FALSE, TRUE);
+    i := 0;
     r^.cname := Fresh("yR");
     SB();
     SA("typedef struct ");

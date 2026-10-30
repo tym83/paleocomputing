@@ -86,7 +86,12 @@
       c := TChar(text, i);
       IF c = 'SQ' THEN
         j := i + 1;
-        WHILE TChar(text, j) # 'SQ' DO j := j + 1 ENDWHILE;
+        WHILE (j <= TL[text]) AND (TChar(text, j) # 'SQ') DO j := j + 1 ENDWHILE;
+        IF j > TL[text] THEN
+          ScTop := 0;
+          SbDepth := 0;
+          FailS(n^.line, "an apostrophe in a string begins a mnemonic, closed by another (IV.C)")
+        ENDIF;
         w := Intern(TS[text] + i, (j - i) - 1);
         SC(Chr[CharValue(RAscii, w, n^.line)]);
         i := j + 1
@@ -134,7 +139,8 @@
 
   PROCEDURE StdCall (CONST f: INT; CONST n: Node; CONST statement: BOOLEAN;
                      OUT code: Txt; OUT r: Rep)
-    VAR a, b, c, d, t: Txt;
+    VAR sy: Sym;
+        a, b, c, d, t: Txt;
         ra, rb, rc, el: Rep;
         nargs, i, dim: INT;
         ok: BOOLEAN;
@@ -145,7 +151,7 @@
     isproc := (f = F_NEW) OR (f = F_OPEN) OR (f = F_CLOSE) OR (f = F_GET) OR (f = F_PUT) OR
               (f = F_MOVE) OR (f = F_DELAY) OR (f = F_WAIT) OR (f = F_SEND) OR (f = F_CLAIM) OR
               (f = F_RELEASE) OR (f = F_CHANGE_PRIORITY) OR (f = F_RAISE_TERM) OR
-              (f = F_FREE_POINTER) OR (f = F_CODE_INSERT);
+              (f = F_FREE_POINTER) OR (f = F_CODE_INSERT) OR (f = F_MAKE_POINTER);
     IF statement AND NOT isproc THEN FailN(n^.line, n^.name, " returns a value: it is called in an expression") ENDIF;
     IF NOT statement AND isproc THEN FailN(n^.line, n^.name, " returns no value") ENDIF;
     IF (f = F_LOW) OR (f = F_HIGH) THEN
@@ -522,13 +528,49 @@
       RETURN
     ENDIF;
     IF (f = F_ADDR) OR (f = F_EXTENT) THEN
+      (* in words of the simulated machine (XIV.XI.2) *)
       NArgs(n, 1);
-      Expr(Arg(n, 1), Rep NIL, a, ra);
-      r := Unbounded(RInt);
-      IF f = F_ADDR THEN code := Join(T("((rt_int)(intptr_t)&("), a, T("))"))
-      ELSE code := Join(T("((rt_int)sizeof("), a, T("))"))
+      p := Arg(n, 1);
+      Expr(p, Rep NIL, a, ra);
+      IF f = F_EXTENT THEN
+        r := Unbounded(RInt);
+        code := ExtentCode(a, ra);
+        RETURN
       ENDIF;
+      r := RAddress;
+      IF ra^.kind = R_SPACE THEN
+        code := Join(T("y_addr(("), a, Join(T(").p, ("), a, T(").words)")));
+        RETURN
+      ENDIF;
+      IF p^.kind = N_NAME THEN
+        sy := Find(p^.name);
+        IF sy # Sym NIL THEN
+          IF Resolved(sy) THEN
+            sy := Real(sy);
+            IF ((sy^.kind = S_VAR) OR (sy^.kind = S_CONST)) AND (sy^.at >= 0) THEN
+              code := Num(sy^.at);
+              RETURN
+            ENDIF
+          ENDIF
+        ENDIF
+      ENDIF;
+      IF NOT ((p^.kind = N_NAME) OR (p^.kind = N_SEL) OR (p^.kind = N_INDEX) OR (p^.kind = N_DEREF)) OR
+         (ra^.kind = R_STR) THEN
+        FailS(n^.line, "ADDR takes a variable or constant (XIV.XI.2)")
+      ENDIF;
+      code := Join(T("y_addr((void *)&("), a, Join(T("), "), ExtentCode(a, ra), T(")")));
       RETURN
+    ENDIF;
+    IF f = F_MAKE_POINTER THEN
+      (* MAKE_POINTER (OUT p; CONST a: ADDRESS) (XIV.XI.2) *)
+      NArgs(n, 2);
+      StdVar(Arg(n, 1), R_PTR, a, ra);
+      b := IntArg(Arg(n, 2));
+      code := Join(T("("), a, Join(T(" = y_cell(y_mem_ptr("), b, T(")))")));
+      RETURN
+    ENDIF;
+    IF f = F_MAIN_STORE THEN
+      FailS(n^.line, "MAIN_STORE_ARRAY is subscripted by an ADDRESS (XIV.VI.2)")
     ENDIF;
     FailN(n^.line, n^.name, " is not translated");
     RETURN

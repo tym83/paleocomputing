@@ -108,7 +108,7 @@
   (* a C string; n gets their number *)
   PROCEDURE StringCodes RETURNS Txt (CONST a: Rep; CONST text: Txt; OUT n: INT; CONST line: INT)
     VAR i, j, v: INT;
-        codes: ARRAY (INTEGER [1..4096] OF INT);
+        codes: ARRAY (INTEGER [1..65536] OF INT);
         c: ASCII;
         w: Txt;
     n := 0;
@@ -117,7 +117,12 @@
       c := TChar(text, i);
       IF c = 'SQ' THEN
         j := i + 1;
-        WHILE TChar(text, j) # 'SQ' DO j := j + 1 ENDWHILE;
+        WHILE (j <= TL[text]) AND (TChar(text, j) # 'SQ') DO j := j + 1 ENDWHILE;
+        IF j > TL[text] THEN
+          ScTop := 0;
+          SbDepth := 0;
+          FailS(line, "an apostrophe in a string begins a mnemonic, closed by another (IV.C)")
+        ENDIF;
         w := Intern(TS[text] + i, (j - i) - 1);
         v := CharValue(a, w, line);
         i := j + 1
@@ -126,7 +131,7 @@
         v := CharValue(a, w, line);
         i := i + 1
       ENDIF;
-      IF n >= 4096 THEN FailS(line, "string literal too long") ENDIF;
+      IF n >= 65536 THEN FailS(line, "this implementation takes string literals of up to 65536 characters") ENDIF;
       n := n + 1;
       codes[n] := v
     ENDWHILE;
@@ -623,7 +628,7 @@
       RETURN Real(s)^.kind = S_VAR
     ENDIF;
     IF n^.kind = N_DEREF THEN RETURN n^.flag = 0 ENDIF;
-    IF n^.kind = N_INDEX THEN RETURN IsVariable(n^.a) ENDIF;
+    IF n^.kind = N_INDEX THEN RETURN IsMainStore(n^.a) OR IsVariable(n^.a) ENDIF;
     IF n^.kind = N_SEL THEN
       IF NOT IsVariable(n^.a) THEN RETURN FALSE ENDIF;
       f := FindField(n^.a^.rep, n^.name);
@@ -887,12 +892,32 @@
     RETURN
   ENDPROCEDURE NameExpr;
 
+  (* is n the name MAIN_STORE_ARRAY, the store of the simulated machine *)
+  PROCEDURE IsMainStore RETURNS BOOLEAN (CONST n: Node)
+    VAR s: Sym;
+    IF (n^.kind # N_NAME) OR (n^.d # Node NIL) THEN RETURN FALSE ENDIF;
+    s := Find(n^.name);
+    IF s = Sym NIL THEN RETURN FALSE ENDIF;
+    IF NOT Resolved(s) THEN RETURN FALSE ENDIF;
+    s := Real(s);
+    RETURN (s^.kind = S_STD) AND (s^.mval = F_MAIN_STORE)
+  ENDPROCEDURE IsMainStore;
+
   PROCEDURE IndexExpr (CONST n: Node; OUT code: Txt; OUT r: Rep)
     VAR c, ic, arr: Txt;
         a, ir, ix: Rep;
         p: Node;
         nd: INT;
         simple: BOOLEAN;
+    IF IsMainStore(n^.a) THEN
+      (* MAIN_STORE_ARRAY [a]: the word at address a (XIV.VI.2) *)
+      IF Count(n^.b) # 1 THEN FailS(n^.line, "MAIN_STORE_ARRAY has one subscript") ENDIF;
+      Expr(n^.b, RAddress, ic, ir);
+      CheckType(n^.line, RAddress, ir);
+      r := RWord;
+      code := Join(T("(*y_mem_word("), ic, T("))"));
+      RETURN
+    ENDIF;
     Expr(n^.a, Rep NIL, c, a);
     IF NOT IsArrayLike(a) THEN FailS(n^.line, "[] of something that is not an array") ENDIF;
     nd := Count(n^.b);

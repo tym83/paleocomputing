@@ -245,12 +245,33 @@ used for separate compilation.
 
 ## 10. Implementation-dependent parts (XIV)
 
-PACKED, ALIGNMENT and AT on record components are read and ignored; AT on variables is kept
-only for device signals. SPACE formals, ADDR and EXTENT are accepted (ADDR gives the C
-address). Code inserts: the machine of this implementation is C, so `C_CODE_INSERT("...")`
-puts C text in the program, `$name` standing for a variable, constant or parameter. Trap
-handlers, numeric inquiries other than the prelude's constants, and configuration modules
-other than the prelude are not provided.
+They are defined on a simulated machine: words of 64 bits addressed by word, a store of 65536
+words (`MAIN_STORE_ARRAY`, indexed by `ADDRESS = INTEGER [0..16777215]`, components `WORD`),
+whose top 8192 words (BASE8 160000 on) are the PDP-11 I/O page of the Report's examples.
+
+- Sizes are counted in bits. Unpacked, a scalar takes a word (FIXED two), components start on
+  words; PACKED takes the bits the range needs (BOOLEAN 1, `INTEGER [0..262143]` 18, a
+  pointer 24) and PACKED n refuses a representation that needs more than n (XIV.VI.1).
+  ALIGNMENT n starts values on multiples of n bits; AT on a record component gives its offset
+  in bits, and components placed so that they overlap are an error. A component of a PACKED
+  object is not a VAR actual. EXTENT counts words, of the representation (of the actual for
+  arrays of bounds known only when the program runs).
+- AT on a VAR or CONST puts it in the store at that word address (`VAR ClockStatus AT BASE8
+  177546: WORD`); AT on a formal passes the actual in that word. ADDR gives that address; for
+  other storage an address above the store, given when ADDR first asks. MAKE_POINTER(p, a)
+  makes a pointer to what address a names; MAIN_STORE_ARRAY[a] is the word there. An address
+  that names nothing raises ADDRESS_VIOLATION ("addressing protection violation", App. C).
+- The line clock is simulated: a SIGNAL AT BASE8 100 is sent every 20 ms of virtual time. Its
+  status register is a word of the I/O page like any other; the clock does not consult it.
+- SPACE formals take an actual of any representation as its place and extent, for ADDR and
+  EXTENT only; a SPACE formal may be passed on to another.
+- Numeric enquiries (StandardImplementationPrelude): REAL_PRECISION 15, RADIX 2,
+  UPPER_EXPONENT 1024, LOWER_EXPONENT -1021, for both PRECISION_DESCRIPTOR values.
+- Arrays take up to 8 dimensions, alphabets up to 256 characters, string literals up to
+  65536 characters: beyond, a translation error.
+
+Code inserts: the machine of this implementation is C, so `C_CODE_INSERT("...")`
+puts C text in the program, `$name` standing for a variable, constant or parameter.
 
 ## 11. Not done, or done approximately
 
