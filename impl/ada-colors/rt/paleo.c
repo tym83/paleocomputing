@@ -1868,16 +1868,21 @@ rstr rt_g_fixed_image(double v, double small) {
   return rt_str_copy(rt_str(b, n));
 }
 
-/* the digits after the point that the image of DELTA needs */
+/* DEFAULT_DECIMALS of FIXED_IO (RM79 14.4, page 14-11):
+ * DELTA_REP'LENGTH - 2 with DELTA_REP = REP(DECIMALS - INTEGER(DECIMALS));
+ * IMAGE is REP(DECIMALS), whose digits after the point are those of the
+ * type's images */
 rt_int rt_g_decimals(rstr image) {
-  char t[64];
-  rt_int n = image.len < 63 ? image.len : 63;
+  char t[64], b[96];
+  rt_int n = image.len < 63 ? image.len : 63, d = 0;
   memcpy(t, image.p, (size_t)n);
   t[n] = 0;
-  double d = fabs(strtod(t, NULL));
-  rt_int k = 0;
-  while (k < 18 && d > 0 && d * pow(10, (double)k) < 0.9999999) k++;
-  return k;
+  char *pt = strchr(t, '.');
+  if (pt) d = (rt_int)strlen(pt + 1);
+  double v = strtod(t, NULL), f = v - nearbyint(v);
+  if (fabs(f) < 0.5 * pow(10, -(double)d)) f = 0;
+  int k = snprintf(b, sizeof b, "%.*f", (int)d, f);
+  return k - 2;
 }
 
 int rt_g_fgetc(rt_int h) {

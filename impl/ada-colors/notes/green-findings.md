@@ -89,9 +89,11 @@ Sources: Preliminary Ada Reference Manual (RM79, DTIC ADA071761), Informal Intro
   SET_COL backwards on a sequential file raises FILE_USE_ERROR; SET_COL backwards on output
   writes BS, which 14.3.2 counts back.
 - DEFAULT_MANTISSA is FLOAT'DIGITS - 1 (page 14-11 of the scan); FLOAT has DIGITS 15. In
-  FIXED_IO, DEFAULT_DECIMALS is the number of digits the image of DECIMALS (by default the
-  DELTA) has after the point, which is what `DELTA_REP'LENGTH - 2` gives for
-  `REP(DECIMALS - INTEGER(DECIMALS))`.
+  FIXED_IO, DEFAULT_DECIMALS is `DELTA_REP'LENGTH - 2` with
+  `DELTA_REP = REP(DECIMALS - INTEGER(DECIMALS))`, as on that page. The image of a fixed
+  value has the digits its SMALL needs (SMALL is a power of two, RM79 3.5.5), so a type
+  with DELTA 0.01 (SMALL 2**-7) is written with 7 decimals by default; the subtraction on
+  the formal type is done by the runtime on the image.
 
 ## Implementation decisions the RM leaves open
 - pragma SUPPRESS: 11.8 says "no run time checks need be provided ... the pragma is merely
