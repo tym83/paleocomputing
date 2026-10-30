@@ -1,0 +1,8 @@
+procedure MAIN is
+   I : INTEGER := 0;
+begin
+   goto INSIDE;
+   if I = 0 then
+      <<INSIDE>> null;
+   end if;
+end MAIN;

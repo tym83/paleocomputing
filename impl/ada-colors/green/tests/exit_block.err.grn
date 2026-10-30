@@ -1,0 +1,6 @@
+procedure MAIN is
+begin
+   <<B>> begin
+      exit B;
+   end B;
+end MAIN;

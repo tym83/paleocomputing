@@ -156,6 +156,7 @@
    -- package body P is ... [begin ...] [exception ...] end P; its statements
    -- run when the body is elaborated (RM79 7.3)
    procedure PACKAGE_BODY(E : NODE) is
+      SAVED_LABELS : LABEL_LIST;
       Y : SYM := LOOKUP(E.NAME.all);
       M, Z : SYM;
       SAVED : NODE := CUR_PKG;
@@ -195,7 +196,10 @@
          end if;
          M := M.MNEXT;
       end loop;
+      SAVED_LABELS := BODY_LABELS;
+      LABEL_BODY(E.D, E.E);
       GUARDED(E.D, E.E, E.LINE);
+      BODY_LABELS := SAVED_LABELS;
       CLOSE_SCOPE;
       PKG_STACK := PKG_STACK.NEXT;
       CUR_PKG := SAVED;

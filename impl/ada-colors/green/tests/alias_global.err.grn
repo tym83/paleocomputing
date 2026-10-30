@@ -1,0 +1,9 @@
+procedure MAIN is
+   G : INTEGER := 1;
+   procedure Q(R : out INTEGER) is
+   begin
+      R := G + 1;
+   end Q;
+begin
+   Q(G);
+end MAIN;

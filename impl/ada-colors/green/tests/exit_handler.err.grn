@@ -1,0 +1,10 @@
+procedure MAIN is
+begin
+   loop
+      begin
+         raise RANGE_ERROR;
+      exception
+         when RANGE_ERROR => exit;
+      end;
+   end loop;
+end MAIN;

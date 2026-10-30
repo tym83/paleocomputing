@@ -780,6 +780,7 @@
             MANIFEST(D.B, C.MHI, OK);
             C.HASM := C.HASM and OK;
             T.PARENT := TY_INT;
+            T.TCONS := C;
             if C.HASM and then (C.MLO >= -2147483648 and C.MHI <= 2147483647) then
                T.PARENT := TY_SHORT;
             end if;

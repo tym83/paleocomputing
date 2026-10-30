@@ -2417,6 +2417,163 @@
       GCALL_WITH(E, Y, T, R);
    end GCALL;
 
+   -- after the call, an out or in out actual satisfies its own constraint
+   -- (RM79 6.3)
+   procedure OUT_CHECK(LV : STRING; T : TYP; C : CONS) is
+   begin
+      if not BOUNDED(C) then
+         return;
+      end if;
+      if POST_CHECKS = null then
+         POST_CHECKS := MK("");
+      end if;
+      if T.KIND = T_FLOAT or T.KIND = T_FIXED then
+         POST_CHECKS := MK(POST_CHECKS.all & " (void)rt_frange(" & LV & ", " & C.LO.all & ", " & C.HI.all & ");");
+      elsif IS_DISCRETE(T) then
+         POST_CHECKS := MK(POST_CHECKS.all & " (void)rt_range(" & LV & ", " & C.LO.all & ", " & C.HI.all & ");");
+      end if;
+   end OUT_CHECK;
+
+   -- the name of a variable as a path: X, X.C, X(3), X(*) for an index that
+   -- is not static; "?" for what is not a variable or lies behind an access
+   -- value (another object)
+   procedure VAR_PATH(E : NODE; R : out TEXT) is
+      PT : TYP;
+      V : TEXT;
+      SAVED : BUFFER := CODE;
+   begin
+      if E.KIND = N_NAME then
+         R := E.NAME;
+         return;
+      elsif E.KIND = N_PAREN then
+         VAR_PATH(E.A, R);
+         return;
+      elsif (E.KIND /= N_SELECT and E.KIND /= N_APPLY) or else (E.KIND = N_SELECT and E.NAME.all = "ALL") then
+         R := MK("?");
+         return;
+      end if;
+      -- through an access value the path names another object
+      PT := null;
+      TRIAL := TRIAL + 1;
+      CODE := NEW_BUFFER;
+      begin
+         GEXPR(E.A, null, PT, V);
+      exception
+         when COMPILE_ERROR =>
+            PT := null;
+      end;
+      TRIAL := TRIAL - 1;
+      CODE := SAVED;
+      if PT = null or else PT.KIND = T_PTR then
+         R := MK("?");
+         return;
+      end if;
+      VAR_PATH(E.A, R);
+      if R.all = "?" then
+         return;
+      elsif E.KIND = N_SELECT then
+         R := MK(R.all & "." & E.NAME.all);
+      elsif LIST_LEN(E.B) = 1 and then E.B.KIND = N_INT then
+         R := MK(R.all & "(" & INTEGER'REP(E.B.IVAL) & ")");
+      else
+         R := MK(R.all & "(*)");
+      end if;
+   end VAR_PATH;
+
+   -- do two variables share a part: one path a prefix of the other, an index
+   -- that is not static matching any
+   function PATHS_OVERLAP(P, R : STRING) return BOOLEAN is
+      I : INTEGER := P'FIRST;
+      J : INTEGER := R'FIRST;
+   begin
+      loop
+         if I > P'LAST or J > R'LAST then
+            if I > P'LAST and J > R'LAST then
+               return TRUE;
+            elsif I > P'LAST then
+               return R(J) = "." or R(J) = "(";
+            end if;
+            return P(I) = "." or P(I) = "(";
+         end if;
+         if P(I) = "(" and R(J) = "(" and (P(I + 1) = "*" or R(J + 1) = "*") then
+            while P(I) /= ")" loop
+               I := I + 1;
+            end loop;
+            while R(J) /= ")" loop
+               J := J + 1;
+            end loop;
+         elsif P(I) /= R(J) then
+            return FALSE;
+         end if;
+         I := I + 1;
+         J := J + 1;
+      end loop;
+   end PATHS_OVERLAP;
+
+   -- does the tree N mention NAME?
+   function MENTIONS(N : NODE; NAME : STRING) return BOOLEAN is
+      P : NODE := N;
+   begin
+      while P /= null loop
+         if P.KIND = N_NAME and then P.NAME.all = NAME then
+            return TRUE;
+         end if;
+         if MENTIONS(P.A, NAME) or else MENTIONS(P.B, NAME) then
+            return TRUE;
+         elsif MENTIONS(P.C, NAME) or else MENTIONS(P.D, NAME) then
+            return TRUE;
+         elsif MENTIONS(P.E, NAME) then
+            return TRUE;
+         end if;
+         P := P.NEXT;
+      end loop;
+      return FALSE;
+   end MENTIONS;
+
+   -- does the expression N, without the ones after it, mention NAME?
+   function MENTIONS_ONE(N : NODE; NAME : STRING) return BOOLEAN is
+   begin
+      if N.KIND = N_NAME and then N.NAME.all = NAME then
+         return TRUE;
+      elsif MENTIONS(N.A, NAME) or else MENTIONS(N.B, NAME) then
+         return TRUE;
+      end if;
+      return MENTIONS(N.C, NAME) or MENTIONS(N.D, NAME) or MENTIONS(N.E, NAME);
+   end MENTIONS_ONE;
+
+   -- a variable given as an out or in out actual is no other actual of the
+   -- call, and no global variable that the subprogram uses (RM79 5.2.3)
+   procedure CHECK_ALIASING(E : NODE; Y : SYM; A : NODE) is
+      B : NODE := E.B;
+      P, Q : TEXT;
+      R : NODE := ROOT_NAME(A);
+      V : SYM;
+   begin
+      if R = null then
+         return;
+      end if;
+      VAR_PATH(A, P);
+      while B /= null loop
+         if B /= A and P.all /= "?" then
+            VAR_PATH(B, Q);
+            if Q.all /= "?" and then PATHS_OVERLAP(P.all, Q.all) then
+               FAIL(E.LINE, R.NAME.all & " is an out or in out actual and another actual of the same call (RM79 5.2.3)");
+            end if;
+         end if;
+         B := B.NEXT;
+      end loop;
+      V := LOOKUP(R.NAME.all);
+      if V /= null and then V.KIND = Y_VAR and then Y.DECL /= null and then (Y.DECL.KIND = N_PROC or Y.DECL.KIND = N_FUNC) then
+         if Y.DECL.IVAL = 0 and then not DECLARES(Y.DECL, R.NAME.all) then
+            if MENTIONS(Y.DECL.C, R.NAME.all) or else MENTIONS(Y.DECL.D, R.NAME.all)
+               or else MENTIONS(Y.DECL.E, R.NAME.all) then
+               FAIL(E.LINE, R.NAME.all & " is an out or in out actual of " & Y.NAME.all
+                    & ", which also uses it as a global variable (RM79 5.2.3)");
+            end if;
+         end if;
+      end if;
+   end CHECK_ALIASING;
+
    -- the C call of subprogram Y with the actuals of E (RM79 5.2)
    procedure GCALL_WITH(E : NODE; Y : SYM; T : out TYP; R : out TEXT) is
       ARGS, LV, V, X1, X2 : TEXT;
@@ -2482,6 +2639,8 @@
                CHECK_PURE_TARGET(A, E.LINE);
                CHECK_TYPE(LT, PM.T, E.LINE);
                ARGS := MK(ARGS.all & "&" & LV.all);
+               CHECK_ALIASING(E, Y, A);
+               OUT_CHECK(LV.all, LT, LC);
             end if;
          end if;
          PM := PM.NEXT;

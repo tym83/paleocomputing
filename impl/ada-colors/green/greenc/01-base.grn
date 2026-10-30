@@ -81,6 +81,8 @@ procedure GREENC is
    N_GENERIC  : constant INTEGER := 54;
    N_USE      : constant INTEGER := 55;
    N_PRAGMA   : constant INTEGER := 56;
+   N_SLABEL   : constant INTEGER := 57;
+   N_GOTO     : constant INTEGER := 58;
 
    -- parts of constructs
    N_ARM     : constant INTEGER := 60;
@@ -305,6 +307,17 @@ procedure GREENC is
       NEXT : EXITS_T;
    end record;
 
+   -- the labels of the body being translated (RM79 5, 5.8): the C label,
+   -- the exception frames open where it stands, the compound statements
+   -- around it; a goto is checked against them
+   type LABEL_REC;
+   type LABEL_LIST is access LABEL_REC;
+   type LABEL_REC is record
+      NAME, CNAME, PATH : TEXT;
+      FRAMES, LINE : INTEGER;
+      NEXT : LABEL_LIST;
+   end record;
+
    COMPILE_ERROR : exception;
 
    TOKS : TOKEN_ARRAY(1 .. 1000000);
@@ -357,6 +370,14 @@ procedure GREENC is
    UNIT_NAMES : array (1 .. 1000) of TEXT;
    UNIT_DEPTHS : array (1 .. 1000) of INTEGER;
    NUNITS : INTEGER := 0;
+   BODY_LABELS, BODY_GOTOS : LABEL_LIST;
+   SEGMENTS : INTEGER := 0;
+   -- the loops around the innermost exception handler: an exit cannot
+   -- reach them (RM79 5.7)
+   HANDLER_EXITS : EXITS_T;
+   HANDLER_DEPTH : INTEGER := 0;
+   -- the checks of out and in out actuals after a call (RM79 6.3)
+   POST_CHECKS : TEXT;
    CUR_TASK : SYM;
    ACCEPT_DEPTH : INTEGER := 0;
    FAMARG_DONE : BOOLEAN := FALSE;

@@ -1,0 +1,8 @@
+procedure MAIN is
+   X, Y : INTEGER := 2;
+begin
+   case X of
+      when Y => null;
+      when others => null;
+   end case;
+end MAIN;

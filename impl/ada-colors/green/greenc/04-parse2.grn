@@ -508,17 +508,34 @@
       return;
    end STATEMENTS;
 
+   -- << identifier >> statement: a label serves both goto and exit (RM79 5);
+   -- the label is an N_SLABEL before the statement
    procedure STATEMENT(RES : out NODE) is
-      X, T : NODE;
-      LINE : INTEGER := CUR_LINE;
+      L, X : NODE;
       LABEL : TEXT;
    begin
       if AT_OP("<<") then
-         -- a label serves both goto and exit (RM79 5)
+         L := NN(N_SLABEL, CUR_LINE);
          SKIP;
          EXPECT_ID(LABEL);
          EXPECT_OP(">>");
+         L.NAME := LABEL;
+         if AT_OP("<<") then
+            STATEMENT(X);
+         else
+            LABELLED_STATEMENT(LABEL, X);
+         end if;
+         L.NEXT := X;
+         RES := L;
+         return;
       end if;
+      LABELLED_STATEMENT(null, RES);
+   end STATEMENT;
+
+   procedure LABELLED_STATEMENT(LABEL : TEXT; RES : out NODE) is
+      X, T : NODE;
+      LINE : INTEGER := CUR_LINE;
+   begin
       if AT_KW("NULL") then
          SKIP;
          EXPECT_OP(";");
@@ -541,6 +558,9 @@
                PERROR("the name after END LOOP does not match the label");
             end if;
             SKIP;
+         elsif LABEL /= null then
+            -- a labelled loop repeats its label after end loop (RM79 5.6)
+            PERROR("the loop labelled " & LABEL.all & " ends with end loop " & LABEL.all & " (RM79 5.6)");
          end if;
          EXPECT_OP(";");
          RES := X;
@@ -559,7 +579,13 @@
          end if;
          EXPECT_KW("END");
          if AT_KIND(K_ID) then
+            if LABEL = null or else TOKS(TPOS).S.all /= LABEL.all then
+               PERROR("the name after END does not match the label of the block (RM79 6.7)");
+            end if;
             SKIP;
+         elsif LABEL /= null then
+            -- a labelled block repeats its label after end (RM79 6.7)
+            PERROR("the block labelled " & LABEL.all & " ends with end " & LABEL.all & " (RM79 6.7)");
          end if;
          EXPECT_OP(";");
          RES := X;
@@ -618,7 +644,13 @@
          RES := X;
          return;
       elsif AT_KW("GOTO") then
-         PERROR("goto is not handled");
+         -- goto identifier; (RM79 5.8)
+         SKIP;
+         X := NN(N_GOTO, LINE);
+         EXPECT_ID(X.NAME);
+         EXPECT_OP(";");
+         RES := X;
+         return;
       end if;
       TASK_STATEMENT(X);
       if X /= null then
@@ -638,7 +670,7 @@
       EXPECT_OP(";");
       RES := X;
       return;
-   end STATEMENT;
+   end LABELLED_STATEMENT;
 
    -- initiate, accept, select, delay, abort: in 10-tasks
    procedure TASK_STATEMENT(RES : out NODE) is
@@ -716,6 +748,9 @@
          if OTHERS_ARM then
             X.FLAG := 1;
             STATEMENTS(X.C);
+            if not AT_KW("END") then
+               PERROR("others is the last choice of a case statement (RM79 5.5)");
+            end if;
          else
             ARM := NN(N_ARM, CUR_LINE);
             ARM.A := LABS;

@@ -367,6 +367,156 @@
 
    -- ---- subprogram bodies (RM79 6.4) ------------------------------------------------
 
+   -- the labels and gotos of a body: labels are distinct (RM79 5); a goto
+   -- does not enter a compound statement and does not leave a handler or an
+   -- accept statement (RM79 5.8). PATH names the compound statements around
+   -- a statement: g a guarded sequence, h a handler, a an accept body.
+   procedure SCAN_LABELS(STMTS : NODE; PATH : STRING) is
+      S : NODE := STMTS;
+      A : NODE;
+      L : LABEL_LIST;
+      C : TEXT;
+   begin
+      while S /= null loop
+         if S.KIND = N_SLABEL then
+            L := BODY_LABELS;
+            while L /= null loop
+               if L.NAME.all = S.NAME.all then
+                  FAIL(S.LINE, "label " & S.NAME.all & " is already used in this body (RM79 5)");
+               end if;
+               L := L.NEXT;
+            end loop;
+            NEW_NAME("lbl_" & LOWER_S(S.NAME.all) & "_", C);
+            BODY_LABELS := new LABEL_REC(S.NAME, C, MK(PATH), 0, S.LINE, BODY_LABELS);
+         elsif S.KIND = N_GOTO then
+            BODY_GOTOS := new LABEL_REC(S.NAME, null, MK(PATH), 0, S.LINE, BODY_GOTOS);
+         elsif S.KIND = N_IF then
+            A := S.A;
+            while A /= null loop
+               SEGMENTS := SEGMENTS + 1;
+               SCAN_LABELS(A.B, PATH & "c" & INTEGER'REP(SEGMENTS) & "/");
+               A := A.NEXT;
+            end loop;
+            SEGMENTS := SEGMENTS + 1;
+            SCAN_LABELS(S.B, PATH & "c" & INTEGER'REP(SEGMENTS) & "/");
+         elsif S.KIND = N_CASE then
+            A := S.B;
+            while A /= null loop
+               SEGMENTS := SEGMENTS + 1;
+               SCAN_LABELS(A.B, PATH & "c" & INTEGER'REP(SEGMENTS) & "/");
+               A := A.NEXT;
+            end loop;
+            SEGMENTS := SEGMENTS + 1;
+            SCAN_LABELS(S.C, PATH & "c" & INTEGER'REP(SEGMENTS) & "/");
+         elsif S.KIND = N_LOOP then
+            SEGMENTS := SEGMENTS + 1;
+            SCAN_LABELS(S.B, PATH & "c" & INTEGER'REP(SEGMENTS) & "/");
+         elsif S.KIND = N_BLOCK then
+            SCAN_GUARDED(S.B, S.C, PATH);
+         elsif S.KIND = N_ACCEPT then
+            SEGMENTS := SEGMENTS + 1;
+            SCAN_LABELS(S.B, PATH & "a" & INTEGER'REP(SEGMENTS) & "/");
+         elsif S.KIND = N_SELECTS then
+            A := S.A;
+            while A /= null loop
+               SEGMENTS := SEGMENTS + 1;
+               if A.B.KIND = N_ACCEPT then
+                  SCAN_LABELS(A.B.B, PATH & "c" & INTEGER'REP(SEGMENTS) & "/a" & INTEGER'REP(SEGMENTS) & "/");
+               end if;
+               SCAN_LABELS(A.C, PATH & "c" & INTEGER'REP(SEGMENTS) & "/");
+               A := A.NEXT;
+            end loop;
+            SEGMENTS := SEGMENTS + 1;
+            SCAN_LABELS(S.B, PATH & "c" & INTEGER'REP(SEGMENTS) & "/");
+         end if;
+         S := S.NEXT;
+      end loop;
+   end SCAN_LABELS;
+
+   procedure SCAN_GUARDED(STMTS, HS : NODE; PATH : STRING) is
+      H : NODE := HS;
+   begin
+      SEGMENTS := SEGMENTS + 1;
+      if HS = null then
+         SCAN_LABELS(STMTS, PATH & "c" & INTEGER'REP(SEGMENTS) & "/");
+      else
+         SCAN_LABELS(STMTS, PATH & "g" & INTEGER'REP(SEGMENTS) & "/");
+      end if;
+      while H /= null loop
+         SEGMENTS := SEGMENTS + 1;
+         SCAN_LABELS(H.B, PATH & "h" & INTEGER'REP(SEGMENTS) & "/");
+         H := H.NEXT;
+      end loop;
+   end SCAN_GUARDED;
+
+   function COUNT_G(P : STRING) return INTEGER is
+      N : INTEGER := 0;
+   begin
+      for I in P'FIRST .. P'LAST loop
+         if P(I) = "g" then
+            N := N + 1;
+         end if;
+      end loop;
+      return N;
+   end COUNT_G;
+
+   -- the labels of a body whose statements are STMTS and handlers HS, the
+   -- exception frames FRAMES open outside it
+   procedure LABEL_BODY(STMTS, HS : NODE) is
+      L, G : LABEL_LIST;
+      GP, LP : TEXT;
+   begin
+      BODY_LABELS := null;
+      BODY_GOTOS := null;
+      SEGMENTS := 0;
+      SCAN_GUARDED(STMTS, HS, "/");
+      L := BODY_LABELS;
+      while L /= null loop
+         L.FRAMES := FRAMES + COUNT_G(L.PATH.all);
+         L := L.NEXT;
+      end loop;
+      G := BODY_GOTOS;
+      while G /= null loop
+         L := BODY_LABELS;
+         while L /= null and then L.NAME.all /= G.NAME.all loop
+            L := L.NEXT;
+         end loop;
+         if L = null then
+            FAIL(G.LINE, "goto " & G.NAME.all & ": no such label in this body (RM79 5.8)");
+         end if;
+         GP := G.PATH;
+         LP := L.PATH;
+         if LP.all'LENGTH > GP.all'LENGTH then
+            FAIL(G.LINE, "a goto cannot transfer control into a compound statement (RM79 5.8)");
+         elsif GP.all(1 .. LP.all'LENGTH) /= LP.all then
+            FAIL(G.LINE, "a goto cannot transfer control into a compound statement (RM79 5.8)");
+         end if;
+         for I in LP.all'LENGTH + 1 .. GP.all'LENGTH loop
+            if GP.all(I) = "h" or GP.all(I) = "a" then
+               FAIL(G.LINE, "a goto cannot leave an exception handler or an accept statement (RM79 5.8)");
+            end if;
+         end loop;
+         G := G.NEXT;
+      end loop;
+   end LABEL_BODY;
+
+   procedure GEN_LABEL(S : NODE; GOTO_IT : BOOLEAN) is
+      L : LABEL_LIST := BODY_LABELS;
+   begin
+      while L /= null and then L.NAME.all /= S.NAME.all loop
+         L := L.NEXT;
+      end loop;
+      if L = null then
+         FAIL(S.LINE, "label " & S.NAME.all & " is not in this body (RM79 5.8)");
+      end if;
+      if GOTO_IT then
+         POP_FRAMES(L.FRAMES);
+         EMIT("goto " & L.CNAME.all & ";");
+      else
+         EMIT(L.CNAME.all & ": ;");
+      end if;
+   end GEN_LABEL;
+
    -- a body whose statements are only pragma INTERFACE (RM79 13.9)
    function IS_FOREIGN(D : NODE) return BOOLEAN is
    begin
@@ -385,6 +535,9 @@
       SAVED_FRAMES : INTEGER := FRAMES;
       SAVED_HANDLERS : LINES := HANDLERS;
       SAVED_CLEANUPS : LINES := CLEANUPS;
+      SAVED_LABELS : LABEL_LIST := BODY_LABELS;
+      SAVED_HX : EXITS_T := HANDLER_EXITS;
+      SAVED_HD : INTEGER := HANDLER_DEPTH;
       SAVED_PURE : SYM := PURE_SYM;
       AW : TEXT;
       SAVED_PDEPTH : INTEGER := PURE_DEPTH;
@@ -404,6 +557,8 @@
       FRAMES := 0;
       HANDLERS := null;
       CLEANUPS := null;
+      HANDLER_EXITS := null;
+      HANDLER_DEPTH := 0;
       CUR_LEVEL := CUR_LEVEL + 1;
       ARGS := MK("");
       OPEN_SCOPE;
@@ -467,6 +622,7 @@
          end loop;
          EMIT("rt_g_" & LOWER_S(D.NAME.all) & "(" & X.all & ");");
       else
+         LABEL_BODY(D.D, D.E);
          GUARDED(D.D, D.E, D.LINE);
       end if;
       TASK_AWAITS(D.C, AW);
@@ -513,6 +669,9 @@
       CLEANUPS := SAVED_CLEANUPS;
       PURE_SYM := SAVED_PURE;
       PURE_DEPTH := SAVED_PDEPTH;
+      BODY_LABELS := SAVED_LABELS;
+      HANDLER_EXITS := SAVED_HX;
+      HANDLER_DEPTH := SAVED_HD;
    end SUBPROGRAM_BODY;
 
    -- ---- statements (RM79 5) -----------------------------------------------------------
@@ -554,6 +713,7 @@
 
    -- statements with exception handlers (RM79 11.2)
    procedure GUARDED(STMTS, HS : NODE; LINE : INTEGER) is
+      SAVED_HX : EXITS_T;
       F, X : TEXT;
       H, N : NODE;
       FIRST : BOOLEAN := TRUE;
@@ -599,7 +759,12 @@
             EMIT("} else if (" & CONDS.all & ") {");
          end if;
          FIRST := FALSE;
+         SAVED_HX := HANDLER_EXITS;
+         HANDLER_EXITS := EXITS;
+         HANDLER_DEPTH := HANDLER_DEPTH + 1;
          GEN_STATEMENTS(H.B);
+         HANDLER_DEPTH := HANDLER_DEPTH - 1;
+         HANDLER_EXITS := SAVED_HX;
          H := H.NEXT;
       end loop;
       if not HAS_OTHERS then
@@ -696,6 +861,10 @@
             EMIT("if (!(" & V.all & ")) rt_raise(RT_X_ASSERT);");
          when 31 =>
             null;
+         when 57 =>
+            GEN_LABEL(S, FALSE);
+         when 58 =>
+            GEN_LABEL(S, TRUE);
          when others =>
             TASK_STATEMENT_GEN(S);
       end case;
@@ -739,8 +908,13 @@
       if C.KIND /= N_APPLY then
          FAIL(S.LINE, "not a procedure call");
       end if;
+      POST_CHECKS := null;
       GCALL(C, TRUE, T, V);
       EMIT(V.all & ";");
+      if POST_CHECKS /= null then
+         EMIT(POST_CHECKS.all);
+         POST_CHECKS := null;
+      end if;
    end GEN_CALL;
 
    procedure GEN_IF(S : NODE) is
@@ -768,14 +942,25 @@
       EMIT("}");
    end GEN_IF;
 
+   -- the case statement (RM79 5.5): the choices are static, of the type of
+   -- the expression, and cover each of its values exactly once unless others
+   -- is given last
    procedure GEN_CASE(S : NODE) is
       ST, VT : TYP;
       FIRST : BOOLEAN := TRUE;
       A : NODE := S.B;
       LAB : NODE;
       SEL, TMP, CT, CONDS, V, LO, HI : TEXT;
+      CLO, CHI : array (1 .. 2000) of INTEGER;
+      NC : INTEGER := 0;
+      VLO, VHI, TOTAL : INTEGER;
+      OK, OK2 : BOOLEAN;
+      Y : SYM;
    begin
       GEXPR(S.A, null, ST, SEL);
+      if not IS_DISCRETE(ST) then
+         FAIL(S.LINE, "the expression of a case statement is of a discrete type (RM79 5.5)");
+      end if;
       NEW_NAME("sel", TMP);
       CTYPE(ST, CT);
       EMIT("{ " & CT.all & " " & TMP.all & " = " & SEL.all & ";");
@@ -783,15 +968,56 @@
          LAB := A.A;
          CONDS := MK("0");
          while LAB /= null loop
-            if LAB.B = null then
+            Y := null;
+            if LAB.B = null and LAB.A.KIND = N_NAME then
+               Y := LOOKUP(LAB.A.NAME.all);
+               if Y /= null and then Y.KIND /= Y_TYPE then
+                  Y := null;
+               end if;
+            end if;
+            if Y /= null then
+               -- a subtype as a choice: its range
+               CHECK_TYPE(Y.T, ST, S.LINE);
+               if not STATIC_BOUNDS(Y.C) then
+                  FAIL(S.LINE, "a choice is static: " & LAB.A.NAME.all & " has no static range (RM79 5.5)");
+               end if;
+               VLO := Y.C.MLO;
+               VHI := Y.C.MHI;
+               CONDS := MK(CONDS.all & " || (" & TMP.all & " >= " & Y.C.LO.all & " && " & TMP.all
+                           & " <= " & Y.C.HI.all & ")");
+            elsif LAB.B = null then
                GEXPR(LAB.A, ST, VT, V);
                CHECK_TYPE(VT, ST, S.LINE);
+               STATIC_CHOICE(LAB.A, VLO, OK);
+               if not OK then
+                  FAIL(S.LINE, "a choice of a case statement is static (RM79 5.5)");
+               end if;
+               VHI := VLO;
                CONDS := MK(CONDS.all & " || " & TMP.all & " == " & V.all);
             else
                GEXPR(LAB.A, ST, VT, LO);
+               CHECK_TYPE(VT, ST, S.LINE);
                GEXPR(LAB.B, ST, VT, HI);
+               CHECK_TYPE(VT, ST, S.LINE);
+               STATIC_CHOICE(LAB.A, VLO, OK);
+               STATIC_CHOICE(LAB.B, VHI, OK2);
+               if not (OK and OK2) then
+                  FAIL(S.LINE, "a choice of a case statement is static (RM79 5.5)");
+               end if;
                CONDS := MK(CONDS.all & " || (" & TMP.all & " >= " & LO.all & " && " & TMP.all
                            & " <= " & HI.all & ")");
+            end if;
+            if VLO <= VHI then
+               for K in 1 .. NC loop
+                  if VLO <= CHI(K) and CLO(K) <= VHI then
+                     FAIL(S.LINE, "a value is covered by two choices of a case statement (RM79 5.5)");
+                  end if;
+               end loop;
+               if NC < 2000 then
+                  NC := NC + 1;
+                  CLO(NC) := VLO;
+                  CHI(NC) := VHI;
+               end if;
             end if;
             LAB := LAB.NEXT;
          end loop;
@@ -804,6 +1030,26 @@
          GEN_STATEMENTS(A.B);
          A := A.NEXT;
       end loop;
+      if S.FLAG /= 1 then
+         -- without others the choices cover every value of the type
+         SELECTOR_RANGE(S.A, ST, VLO, VHI, OK);
+         if not OK then
+            FAIL(S.LINE, "a case statement on " & KIND_NAME(ST) & " needs others: its values are not static "
+                 & "(RM79 5.5)");
+         end if;
+         TOTAL := 0;
+         for K in 1 .. NC loop
+            if CLO(K) < VLO or CHI(K) > VHI then
+               FAIL(S.LINE, "a choice of the case statement is outside the values of " & KIND_NAME(ST)
+                    & " (RM79 5.5)");
+            end if;
+            TOTAL := TOTAL + (CHI(K) - CLO(K) + 1);
+         end loop;
+         if TOTAL /= VHI - VLO + 1 then
+            FAIL(S.LINE, "the choices of the case statement do not cover every value of " & KIND_NAME(ST)
+                 & " (RM79 5.5)");
+         end if;
+      end if;
       if FIRST then
          EMIT("{");
       else
@@ -817,6 +1063,39 @@
       EMIT("}");
       EMIT("}");
    end GEN_CASE;
+
+   -- the static values a case expression can take: those of the subtype of
+   -- the variable named, else those of its type
+   procedure SELECTOR_RANGE(E : NODE; T : TYP; LO, HI : out INTEGER; OK : out BOOLEAN) is
+      Y : SYM;
+   begin
+      OK := FALSE;
+      LO := 0;
+      HI := 0;
+      if E.KIND = N_NAME then
+         Y := LOOKUP(E.NAME.all);
+         if Y /= null and then (Y.KIND = Y_VAR or Y.KIND = Y_CONST) and then STATIC_BOUNDS(Y.C) then
+            LO := Y.C.MLO;
+            HI := Y.C.MHI;
+            OK := TRUE;
+            return;
+         end if;
+      end if;
+      if T.KIND = T_BOOL then
+         HI := 1;
+         OK := TRUE;
+      elsif T.KIND = T_CHAR and then T.TCONS = null then
+         HI := 127;
+         OK := TRUE;
+      elsif T.KIND = T_ENUM then
+         HI := LIST_LEN(T.LITS) - 1;
+         OK := TRUE;
+      elsif STATIC_BOUNDS(T.TCONS) then
+         LO := T.TCONS.MLO;
+         HI := T.TCONS.MHI;
+         OK := TRUE;
+      end if;
+   end SELECTOR_RANGE;
 
    procedure PUSH_EXIT(MATCH : TEXT; IS_LOOP : BOOLEAN; LABEL : out TEXT) is
    begin
@@ -919,6 +1198,7 @@
       return X.MATCH.all = S.NAME.all;
    end EXIT_MATCHES;
 
+
    -- exit [loop name] [when condition] (RM79 5.7)
    procedure GEN_EXIT(S : NODE) is
       X : EXITS_T := EXITS;
@@ -929,7 +1209,13 @@
          if ACCEPT_DEPTH > 0 and X = ACCEPT_EXITS then
             FAIL(S.LINE, "an exit statement cannot leave an accept statement (RM79 5.7)");
          end if;
+         if HANDLER_DEPTH > 0 and X = HANDLER_EXITS then
+            FAIL(S.LINE, "an exit statement cannot leave an exception handler (RM79 5.7)");
+         end if;
          if EXIT_MATCHES(S, X) then
+            if not X.IS_LOOP then
+               FAIL(S.LINE, "exit " & S.NAME.all & ": an exit names a loop, not a block (RM79 5.7)");
+            end if;
             if S.A /= null then
                CONDITION(S.A, TY_BOOL, T, V);
                CHECK_TYPE(T, TY_BOOL, S.LINE);

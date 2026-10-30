@@ -1,0 +1,5 @@
+procedure MAIN is
+begin
+   <<L>> null;
+   <<L>> null;
+end MAIN;
