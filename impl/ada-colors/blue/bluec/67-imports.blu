@@ -214,8 +214,8 @@ PROCEDURE CHECK_CALL_IMPORTS (Y: SYM, LINE: INTEGER);
    LOOP UNTIL U = NIL DO
       IF U@.IV <> IS@.ID THEN
          IF IS@.IMPORTS = NIL THEN
-            FAIL (LINE, 'the routine ' !! STR (Y@.NAME, Y@.NAME.LEN) !! ' uses the variable '
-                  !! STR (U@.NAME, U@.NAME.LEN) !! ': import one of them (4.1.1)');
+            FAIL2 (LINE, 'the routine ', Y@.NAME, ' uses the variable ', U@.NAME,
+                   ': import one of them (4.1.1)');
          END IF;
          IF NOT (IN_IDENTS (IS@.IMPORTS@.A, U@.NAME) ! IN_IDENTS (IS@.IMPORTS@.B, U@.NAME)
                ! IN_IDENTS (IS@.IMPORTS@.C, Y@.NAME) ! IN_IDENTS (IS@.IMPORTS@.C, BASE_NAME (Y))
@@ -223,8 +223,8 @@ PROCEDURE CHECK_CALL_IMPORTS (Y: SYM, LINE: INTEGER);
                ! (Y@.PREFIX.LEN > 0 & IN_IDENTS (IS@.IMPORTS@.D, Y@.PREFIX))   % its type
                ! IMPORTED_ROUTINE_USES (IS@.IMPORTS@.C, U@.NAME))
             THEN
-            FAIL (LINE, 'the routine ' !! STR (Y@.NAME, Y@.NAME.LEN) !! ' uses the variable '
-                  !! STR (U@.NAME, U@.NAME.LEN) !! ': import one of them (4.1.1)');
+            FAIL2 (LINE, 'the routine ', Y@.NAME, ' uses the variable ', U@.NAME,
+                   ': import one of them (4.1.1)');
          END IF;
       END IF;
       U := U@.NEXT;
@@ -271,12 +271,16 @@ FUNCTION MODULE_IMPORTED (MODS: NODE, Y: SYM) RETURNS (BOOLEAN);
    RETURN FALSE;
 END FUNCTION MODULE_IMPORTED;
 
+FUNCTION BASE_PART (N: TEXT, P: INTEGER) RETURNS (TEXT);
+   RETURN MKN (STR (N, N.LEN)[P + 1 : N.LEN - 1]);
+END FUNCTION BASE_PART;
+
 % NAME of T$NAME
 FUNCTION BASE_NAME (Y: SYM) RETURNS (TEXT);
    IF Y@.PREFIX.LEN = 0 ! Y@.NAME.LEN <= Y@.PREFIX.LEN + 1 THEN
       RETURN Y@.NAME;                                 % no prefix, or the short alias
    END IF;
-   RETURN MKN (STR (Y@.NAME, Y@.NAME.LEN)[Y@.PREFIX.LEN + 1 : Y@.NAME.LEN - 1]);
+   RETURN BASE_PART (Y@.NAME, Y@.PREFIX.LEN);
 END FUNCTION BASE_NAME;
 
 % is there a handler for the exception NAME around here, in this closed scope, or does

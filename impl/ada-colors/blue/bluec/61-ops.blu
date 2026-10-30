@@ -104,7 +104,7 @@ FUNCTION QUAL_ARGS (LINE: INTEGER) RETURNS (ARG);
       RETURN NIL;
    END IF;
    IF Q@.NAME.LEN > 0 THEN
-      R := VAL_ARG (ENUM_LITERAL (LIT_NODE (STR (Q@.NAME, Q@.NAME.LEN), LINE), ROUNDINGS_TYPE ()), NIL);
+      R := VAL_ARG (ENUM_LITERAL (LIT_NODE_T (Q@.NAME, LINE), ROUNDINGS_TYPE ()), NIL);
    END IF;
    IF Q@.B <> NIL THEN
       R := VAL_ARG (EXPR (Q@.B, W@.TY_INT), R);
@@ -532,7 +532,7 @@ FUNCTION APPLY_OPERATOR (E: NODE, OP: TEXT, A, B: ET) RETURNS (ET);
    BLOCK
       VAR NAME: TEXT := OP_NAME (OP, FALSE);
       IF E@.FL = 2 THEN                              % !op!: MD_ADD_, MD_MULTIPLY_ ...
-         NAME := MKN ('MD_' !! STR (NAME, NAME.LEN));
+         NAME := QMKN ('MD_', NAME);
       END IF;
       IF AT@.GENP.LEN > 0 ! BT@.GENP.LEN > 0 THEN    % objects of a TYPE parameter (5.2)
          REQUIRE_WHERE (NAME, LINE);

@@ -551,7 +551,7 @@ FUNCTION EXPR (E: NODE, WANT: TYP) RETURNS (ET);
    ORIF K = TS_GEN THEN                             % ?X declared as an identifier
       BLOCK
          VAR N: NODE := NEW_NODE (N_NAME, E@.LINE);
-         N@.NAME := MKN ('?' !! STR (E@.NAME, E@.NAME.LEN));
+         N@.NAME := QMKN ('?', E@.NAME);
          IF NAMES_OBJECT (N@.NAME) THEN
             RETURN NAME_EXPR (N, WANT);
          END IF;
@@ -1111,7 +1111,8 @@ FUNCTION IS_FIXED_LITERAL (A: NODE) RETURNS (BOOLEAN);
          RETURN TRUE;
       END IF;
       BLOCK
-         CONST S: ASCII_STR(A@.NAME.LEN) := STR (A@.NAME, A@.NAME.LEN);
+         CONST NM: TEXT := A@.NAME;
+         CONST S: ASCII_STR(NM.LEN) := STR (NM, NM.LEN);
          LOOP FOR I IN [0 : A@.NAME.LEN - 1] DO
             IF S[I:I] = '.' THEN
                RETURN FALSE;

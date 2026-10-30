@@ -141,7 +141,7 @@ FUNCTION ROUTINE_NAME_NODE () RETURNS (NODE);
    VAR N: NODE := IDENT_NODE ();
    IF IS ('$') & AHEAD (1).KIND = K_ID THEN
       SKIP;
-      N@.NAME := MKN (STR (N@.NAME, N@.NAME.LEN) !! '$' !! STR (CUR ().TX, CUR ().TX.LEN));
+      N@.NAME := JOINN (N@.NAME, '$', CUR ().TX);
       SKIP;
    END IF;
    RETURN N;

@@ -347,7 +347,7 @@ FUNCTION BUILTIN (E: NODE, WANT: TYP) RETURNS (ET);
                   R := E@.A@.NEXT;
                END IF;
                IF R@.KIND = N_QUAL THEN
-                  R := LIT_NODE (STR (R@.NAME, R@.NAME.LEN), LINE);
+                  R := LIT_NODE_T (R@.NAME, LINE);
                END IF;
                IF TEQS (R@.NAME, 'TRUNCATED') THEN
                   TR := MK ('1');

@@ -252,10 +252,10 @@ FUNCTION WITH_RANGE (T: TYP, R: NODE) RETURNS (TYP);
       N := COPY_TYP (T);                            % [?LB : ?UB] in a formal: any range
       N@.NAME := NO_TEXT ();
       IF R@.A@.KIND = TS_GEN & R@.A@.NAME.LEN > 0 THEN
-         N@.LO_C := MK ('?' !! STR (R@.A@.NAME, R@.A@.NAME.LEN));
+         N@.LO_C := QMK ('?', R@.A@.NAME);
       END IF;
       IF R@.B@.KIND = TS_GEN & R@.B@.NAME.LEN > 0 THEN
-         N@.HI_C := MK ('?' !! STR (R@.B@.NAME, R@.B@.NAME.LEN));
+         N@.HI_C := QMK ('?', R@.B@.NAME);
       END IF;
       RETURN N;
    END IF;
@@ -1057,12 +1057,12 @@ FUNCTION RESOLVE_ARRAY (TS: NODE) RETURNS (TYP);
          VAR B: BND := NEW (BND_REC);
          VAR LO, HI: ET;
          IF IS_GENERIC_NODE (R@.A) THEN             % [?L : ?U] of a formal parameter
-            LO := MKET (MK ('?' !! STR (R@.A@.NAME, R@.A@.NAME.LEN)), W@.TY_INT);
+            LO := MKET (QMK ('?', R@.A@.NAME), W@.TY_INT);
          ELSE
             LO := EXPR (R@.A, NIL);
          END IF;
          IF IS_GENERIC_NODE (R@.B) THEN
-            HI := MKET (MK ('?' !! STR (R@.B@.NAME, R@.B@.NAME.LEN)), W@.TY_INT);
+            HI := MKET (QMK ('?', R@.B@.NAME), W@.TY_INT);
          ELSE
             HI := EXPR (R@.B, LO.T);
          END IF;
@@ -1308,7 +1308,7 @@ PROCEDURE BIND_FORMALS (FORMALS: NODE, TS: NODE);
                   ORIF A@.KIND = TS_GEN ! A@.KIND = N_DONTCARE THEN
                      % ?N in a formal parameter: a value known from the argument, which
                      % the bounds of an array (for one) will give: a marker for now
-                     C := MK ('?' !! STR (A@.NAME, A@.NAME.LEN));
+                     C := QMK ('?', A@.NAME);
                      M := NO_MVAL ();
                   ELSE
                      ATTR_VALUE (A # C, M);

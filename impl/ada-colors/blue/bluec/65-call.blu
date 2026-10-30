@@ -372,7 +372,7 @@ FUNCTION MATCH_SCORE (R: SYM, ARGS: ARG) RETURNS (INTEGER);
             END IF;
             IF REAL_TYPE (PT)@.GEN.LEN > 0 & REAL_TYPE (AT)@.MLEN.OK THEN
                BLOCK                                  % ?L repeated: one length (5)
-                  CONST KEY: TEXT := MKN ('%' !! STR (REAL_TYPE (PT)@.GEN, REAL_TYPE (PT)@.GEN.LEN));
+                  CONST KEY: TEXT := QMKN ('%', REAL_TYPE (PT)@.GEN);
                   CONST B: BIND := FIND_BIND (BS@.NEXT, KEY);
                   IF B <> NIL THEN
                      IF B@.MV <> REAL_TYPE (AT)@.MLEN.V THEN
@@ -674,7 +674,7 @@ FUNCTION INLINE_INSTANCE (G: SYM, ARGS: ARG, LINE: INTEGER) RETURNS (SYM);
                M := ENUM_MANIFEST (A@.E, RT);
             END IF;
             IF M.OK THEN
-               ADD_BIND (MKN ('=' !! STR (P@.NAME, P@.NAME.LEN)), NIL, M, NIL, BS);
+               ADD_BIND (QMKN ('=', P@.NAME), NIL, M, NIL, BS);
                SOME_M := TRUE;
             END IF;
          END BLOCK;
@@ -780,8 +780,8 @@ FUNCTION CALL_SYM (Y0: SYM, ARGS: ARG, LINE: INTEGER) RETURNS (ET);
             CONST H: SYM := LOOKUP (U@.NAME);
             IF H <> NIL THEN
                IF H@.WITHV = 2 & H@.OWNER = U@.IV THEN
-                  FAIL (LINE, 'the routine ' !! STR (Y@.NAME, Y@.NAME.LEN) !! ' imports '
-                        !! STR (U@.NAME, U@.NAME.LEN) !! ', which a WITH NAMING hides (4.5.4)');
+                  FAIL2 (LINE, 'the routine ', Y@.NAME, ' imports ', U@.NAME,
+                         ', which a WITH NAMING hides (4.5.4)');
                END IF;
             END IF;
          END BLOCK;

@@ -658,7 +658,7 @@ FUNCTION SAME_DERIVED_LENGTH (A: NODE, RT: TYP, BS: BIND) RETURNS (BOOLEAN);
       RETURN TRUE;
    END IF;
    BLOCK
-      CONST KEY: TEXT := MKN ('%' !! STR (A@.NAME, A@.NAME.LEN));
+      CONST KEY: TEXT := QMKN ('%', A@.NAME);
       CONST B: BIND := FIND_BIND (BS@.NEXT, KEY);
       IF B <> NIL THEN
          RETURN B@.MV = RT@.MLEN.V;
@@ -811,7 +811,7 @@ FUNCTION INSTANCE (G: SYM, ARGS: ARG, LINE: INTEGER) RETURNS (SYM);
             FAILT (LINE, 'the argument does not fit the generic parameter ', P@.NAME);
          END IF;
          IF DONTCARE_TYPE_ARG (P@.TS) THEN             % its type tells the instances apart
-            ADD_BIND (MKN ('?' !! STR (P@.NAME, P@.NAME.LEN)), A@.V.T, NO_MVAL (), NIL, BS);
+            ADD_BIND (QMKN ('?', P@.NAME), A@.V.T, NO_MVAL (), NIL, BS);
          END IF;
       END IF;
       P := P@.NEXT;

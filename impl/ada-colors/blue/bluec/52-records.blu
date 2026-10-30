@@ -645,7 +645,7 @@ FUNCTION RECORD_INSTANCE (Y: SYM, TS: NODE) RETURNS (TYP);
                      V@.HI := MK ('?');
                   ORIF A@.KIND = TS_GEN THEN           % ?N: the value of the argument
                      V@.ANYARG := TRUE;
-                     V@.HI := MK ('?' !! STR (A@.NAME, A@.NAME.LEN));
+                     V@.HI := QMK ('?', A@.NAME);
                   ELSE
                      BLOCK
                         CONST FT: TYP := RESOLVE (F@.B);
@@ -1096,7 +1096,7 @@ FUNCTION IS_GEN_ARG (B: BND) RETURNS (BOOLEAN);
    IF B@.HI.LEN = 0 THEN
       RETURN FALSE;
    END IF;
-   RETURN STR (B@.HI, B@.HI.LEN)[0:0] = '?';
+   RETURN IS_GEN_TEXT (B@.HI);
 END FUNCTION IS_GEN_ARG;
 
 FUNCTION SAME_ARGS (A, B: BND) RETURNS (BOOLEAN);

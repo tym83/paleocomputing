@@ -18,8 +18,9 @@ END PROCEDURE LEAVE_ISCOPE;
 
 % a C name for a routine, unique in the program
 FUNCTION ROUTINE_CNAME (NAME: TEXT) RETURNS (TEXT);
-   VAR BASE: TEXT := FMT1 ('r_@', CID (NAME));
-   CONST S: ASCII_STR(BASE.LEN) := STR (BASE, BASE.LEN);
+   CONST BASE0: TEXT := FMT1 ('r_@', CID (NAME));
+   CONST S: ASCII_STR(BASE0.LEN) := STR (BASE0, BASE0.LEN);
+   VAR BASE: TEXT := BASE0;
    VAR N: NODE := W@.CNAMES;
    LOOP FOR I IN [0 : BASE.LEN - 1] DO                % T$NAME
       IF S[I:I] = '$' THEN
@@ -105,7 +106,8 @@ END FUNCTION HAS_HANDLERS;
 % the symbol of a routine declaration, and of its short name if it is T$NAME (4.4)
 PROCEDURE DECLARE_ROUTINE_SYM (R: NODE);
    VAR Y: SYM := NEW_SYM (Y_ROUTINE, R@.NAME);
-   CONST S: ASCII_STR(R@.NAME.LEN) := STR (R@.NAME, R@.NAME.LEN);
+   CONST RN: TEXT := R@.NAME;
+   CONST S: ASCII_STR(RN.LEN) := STR (RN, RN.LEN);
    Y@.DECL := R;
    Y@.ACCESS := ROUTINE_CNAME (R@.NAME);
    IF W@.CS@.LEVEL = 0 & W@.SEPSEG.LEN > 0 & R@.FL <> 1 THEN   % linked between units
@@ -623,7 +625,7 @@ PROCEDURE ROUTINE_BODY (Y: SYM);
             IF REAL_TYPE (P@.T)@.KIND <> T_VOID THEN
                BLOCK
                   VAR V: SYM := NEW_SYM (Y_VAR, P@.NAME);
-                  CONST MB: BIND := FIND_BIND (Y@.BINDINGS, MKN ('=' !! STR (P@.NAME, P@.NAME.LEN)));
+                  CONST MB: BIND := FIND_BIND (Y@.BINDINGS, QMKN ('=', P@.NAME));
                   V@.T := P@.T;
                   V@.INPUT := P@.MODE = M_IN;
                   IF MB <> NIL THEN                    % an INLINE expansion's manifest
@@ -928,8 +930,7 @@ PROCEDURE TRANSLATE (SEGS: NODE);
          CONST FP: INTEGER := TEXT_PRINT (STR (T, T.LEN));
          EMITS (O_MAIN, '}');
          EMIT (O_GLOBALS, FMT2 ('int bs_@_iface_@ = 1;', CID (NAME), NUM (FP)));
-         WRITE_FILE (STR (LIB_FILE (W@.LIBDIR, NAME, '.bif'), LIB_FILE (W@.LIBDIR, NAME, '.bif').LEN),
-                     STR (T, T.LEN));
+         WRITE_FILE_T (LIB_FILE (W@.LIBDIR, NAME, '.bif'), T);
       END BLOCK;
       RETURN;
    END IF;

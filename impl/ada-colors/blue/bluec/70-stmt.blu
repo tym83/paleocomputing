@@ -374,7 +374,7 @@ PROCEDURE DECLARE_LABELS (S0: NODE);
          LOOP UNTIL L@.KIND <> N_LABELED DO
             BLOCK
                VAR Y: SYM := NEW_SYM (Y_LABEL, L@.NAME);
-               Y@.ACCESS := FMT1 ('L_@_', NEW_NAME (STR (CID (L@.NAME), CID (L@.NAME).LEN)));
+               Y@.ACCESS := FMT1 ('L_@_', NEW_NAME_T (CID (L@.NAME)));
                Y@.MV := GUARDS ();
                DEFINE (Y, L@.LINE);
             END BLOCK;

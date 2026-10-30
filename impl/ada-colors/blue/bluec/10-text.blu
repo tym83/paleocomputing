@@ -131,6 +131,25 @@ FUNCTION NUM (V: INTEGER) RETURNS (TEXT);
 END FUNCTION NUM;
 
 % the name T as a C identifier: an identifier may begin with \ or ? [2-10]
+% texts made of a string and a text; the text is an input parameter, a constant,
+% as the argument of an explicit generic parameter must be (section 5)
+FUNCTION QMK (P: ASCII_STR(?L), T: TEXT) RETURNS (TEXT);
+   RETURN MK (P !! STR (T, T.LEN));
+END FUNCTION QMK;
+
+FUNCTION QMKN (P: ASCII_STR(?L), T: TEXT) RETURNS (TEXT);
+   RETURN MKN (P !! STR (T, T.LEN));
+END FUNCTION QMKN;
+
+FUNCTION JOINN (A: TEXT, S: ASCII_STR(?L), B: TEXT) RETURNS (TEXT);
+   RETURN MKN (STR (A, A.LEN) !! S !! STR (B, B.LEN));
+END FUNCTION JOINN;
+
+PROCEDURE FAIL2 (LINE: INTEGER, A: ASCII_STR(?LA), X: TEXT, B: ASCII_STR(?LB), Y: TEXT,
+                 C: ASCII_STR(?LC));
+   FAIL (LINE, A !! STR (X, X.LEN) !! B !! STR (Y, Y.LEN) !! C);
+END PROCEDURE FAIL2;
+
 FUNCTION CID (T: TEXT) RETURNS (TEXT);
    CONST S: ASCII_STR(T.LEN) := STR (T, T.LEN);
    VAR R: TEXT;
@@ -152,6 +171,10 @@ FUNCTION CID (T: TEXT) RETURNS (TEXT);
 END FUNCTION CID;
 
 % a fresh C name: the base and a serial number
+FUNCTION NEW_NAME_T (BASE: TEXT) RETURNS (TEXT);
+   RETURN NEW_NAME (STR (BASE, BASE.LEN));
+END FUNCTION NEW_NAME_T;
+
 FUNCTION NEW_NAME (BASE: ASCII_STR(?L)) RETURNS (TEXT);
    W@.SERIAL := W@.SERIAL + 1;
    RETURN MK (BASE !! TO_CHAR (W@.SERIAL));

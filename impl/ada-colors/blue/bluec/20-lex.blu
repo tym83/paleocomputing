@@ -279,25 +279,41 @@ END PROCEDURE OPTIONS;
 % file NAME.blu of the library directory (4.2, 4.7)
 PROCEDURE LOAD_LIBRARY (NAME: TEXT);
    VAR FILE: TEXT := LIB_FILE (W@.LIBDIR, NAME, '.bif');
-   IF NOT FILE_EXISTS (STR (FILE, FILE.LEN)) THEN
+   IF NOT FILE_EXISTS_T (FILE) THEN
       FILE := LIB_FILE (W@.LIBDIR, NAME, '.blu');
    ELSE                                              % a segment translated with -c:
       BLOCK                                          % its interface, which this unit
          VAR N: NODE := NEW_NODE (N_IDENT, 0);       % links against (4.2, 4.7)
          N@.NAME := NAME;
-         N@.IV := FILE_PRINT (STR (FILE, FILE.LEN));
+         N@.IV := FILE_PRINT_T (FILE);
          N@.NEXT := W@.EXTS;
          W@.EXTS := N;
       END BLOCK;
    END IF;
-   IF NOT FILE_EXISTS (STR (FILE, FILE.LEN)) & NOT TEQS (W@.LIBDIR, 'lib') THEN
+   IF NOT FILE_EXISTS_T (FILE) & NOT TEQS (W@.LIBDIR, 'lib') THEN
       FILE := LIB_FILE (MK ('lib'), NAME, '.blu');  % then the implementation's library
    END IF;
-   IF NOT FILE_EXISTS (STR (FILE, FILE.LEN)) THEN
+   IF NOT FILE_EXISTS_T (FILE) THEN
       FAILT (0, 'USES names a segment that is neither in the program nor in the library: ', NAME);
    END IF;
-   LOAD_TEXT (NAME, STR (FILE, FILE.LEN));
+   LOAD_TEXT_T (NAME, FILE);
 END PROCEDURE LOAD_LIBRARY;
+
+FUNCTION FILE_EXISTS_T (F: TEXT) RETURNS (BOOLEAN);
+   RETURN FILE_EXISTS (STR (F, F.LEN));
+END FUNCTION FILE_EXISTS_T;
+
+FUNCTION FILE_PRINT_T (F: TEXT) RETURNS (INTEGER);
+   RETURN FILE_PRINT (STR (F, F.LEN));
+END FUNCTION FILE_PRINT_T;
+
+PROCEDURE LOAD_TEXT_T (NAME, F: TEXT);
+   LOAD_TEXT (NAME, STR (F, F.LEN));
+END PROCEDURE LOAD_TEXT_T;
+
+PROCEDURE WRITE_FILE_T (F, T: TEXT);
+   WRITE_FILE (STR (F, F.LEN), STR (T, T.LEN));
+END PROCEDURE WRITE_FILE_T;
 
 FUNCTION LIB_FILE (DIR, NAME: TEXT, EXT: ASCII_STR(?L)) RETURNS (TEXT);
    RETURN CAT (CATS (DIR, '/'), CATS (NAME, EXT));
