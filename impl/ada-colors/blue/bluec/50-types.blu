@@ -576,13 +576,27 @@ FUNCTION RESOLVE_PREDEFINED (TS: NODE) RETURNS (TYP);
       RETURN T;
    ORIF TEQS (NAME, 'SEMAPHORE') THEN               % [3-203]
       T := NEW_TYP (T_SEM);
-      BLOCK
-         CONST U: NODE := NTH_ARG (TS, 0);
-         IF TEQS (U@.NAME, 'REGION') THEN
-            T@.SCALE := 1;
-         ORIF NOT TEQS (U@.NAME, 'SYNCH') THEN
-            FAIL (TS@.LINE, 'the use mode is SYNCH or REGION (3.11.1)');
+      TYPE_ARG_COUNT (TS, 1);
+      BLOCK                                          % a manifest value of USAGE
+         CONST U: NODE := NTH_ARG (TS, 0);           % (SYNCH, REGION) [3-204]
+         CONST UT: TYP := RESOLVE_USER_NAME (MK ('USAGE'), TS@.LINE);
+         VAR M: MVAL := NO_MVAL ();
+         IF (U@.KIND = N_NAME ! U@.KIND = N_ENUMLIT) & FIND_LITERAL (U@.NAME, UT) <> NIL THEN
+            M := ENUM_MANIFEST (U, UT);
+         ELSE
+            BLOCK
+               CONST SAVED_CODE: BUF := W@.CODE;
+               CONST V: ET := EXPR (U, UT);
+               W@.CODE := SAVED_CODE;
+               IF SAME_CLASS (REAL_TYPE (V.T), REAL_TYPE (UT)) THEN
+                  M := MANIFEST (U);
+               END IF;
+            END BLOCK;
          END IF;
+         IF NOT M.OK THEN
+            FAIL (TS@.LINE, 'the use mode is a manifest value of USAGE, SYNCH or REGION (3.11.1)');
+         END IF;
+         T@.SCALE := M.V;
       END BLOCK;
       RETURN T;
    END IF;

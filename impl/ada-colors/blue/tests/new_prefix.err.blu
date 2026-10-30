@@ -1,0 +1,7 @@
+MAIN SEGMENT NEW_PREFIX
+   USES (TERMINAL);
+% PTR$ is required except in a declaration or as an assignment source (3.10.2)
+TYPE NODE = RECORD VAR VALUE: INTEGER; END RECORD;
+VAR P: PTR (NODE);
+IF NEW (NODE) = P THEN PUT_LINE ('x'); END IF;
+END SEGMENT NEW_PREFIX;

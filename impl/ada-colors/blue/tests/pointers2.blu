@@ -1,0 +1,43 @@
+MAIN SEGMENT POINTERS2
+   USES (TERMINAL);
+% NEW of a constrained type-spec, the ELEMENT_TYPE (3.10.2); TYPE_MISMATCH on a
+% pointer to a record whose argument is known only at run time (3.10.5);
+% SPACE_EXHAUSTED (3.10.2); a use mode given by a constant of USAGE (3.11.1)
+TYPE V (N: INTEGER [1:100]) = RECORD VAR A: INTEGER; END RECORD;
+TYPE HUGE = RECORD VAR A: ARRAY [1:250000000] OF INTEGER; END RECORD;
+CONST U: USAGE := REGION;
+VAR P: PTR (INTEGER [0:9]) := NEW (INTEGER [0:9]);
+VAR K: INTEGER := 4;
+VAR R: PTR (V (3)) := NEW (V (3));
+VAR S: SEMAPHORE (U) := NEW (1);
+VAR H: PTR (HUGE);
+VAR N: INTEGER := 0;
+P@ := 7;
+PUT_LINE (TO_CHAR ((P.ELEMENT_TYPE).MAX) !! ' ' !! TO_CHAR (P@));
+K := 3;
+BLOCK
+   VAR Q: PTR (V (K)) := NEW (V (K));
+   R := Q;
+   PUT_LINE ('same argument ' !! TO_CHAR (R@.N));
+END BLOCK;
+K := 4;
+BLOCK
+   VAR Q: PTR (V (K)) := NEW (V (K));
+   R := Q;
+   PUT_LINE ('no TYPE_MISMATCH');
+END BLOCK
+EXCEPT
+   TYPE_MISMATCH --> PUT_LINE ('TYPE_MISMATCH ' !! TO_CHAR (R@.N)); END;
+END EXCEPT;
+BLOCK
+   LOOP UNTIL N = 100 DO
+      H := NEW (HUGE);
+      N := N + 1;
+   END LOOP;
+END BLOCK
+EXCEPT
+   SPACE_EXHAUSTED --> PUT_LINE ('SPACE_EXHAUSTED after ' !! TO_CHAR (N)); END;
+END EXCEPT;
+REQUEST (# S);
+PUT_LINE (TO_CHAR (S.USAGE));
+END SEGMENT POINTERS2;

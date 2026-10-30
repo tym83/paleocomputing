@@ -531,6 +531,16 @@ FUNCTION EXPR_TO_TS (E: NODE) RETURNS (NODE);
       N@.E := E;
       RETURN N;
    END IF;
+   IF E@.KIND = N_SUBSTR THEN                       % T [L:U] read as a substring
+      N := EXPR_TO_TS (E@.A);
+      IF N@.KIND <> TS_NAME ! N@.B <> NIL THEN
+         FAIL (E@.LINE, 'a type specification expected');
+      END IF;
+      N@.B := NEW_NODE (N_RANGE, E@.LINE);
+      N@.B@.A := E@.B;
+      N@.B@.B := E@.C;
+      RETURN N;
+   END IF;
    FAIL (E@.LINE, 'a type specification expected');
 END FUNCTION EXPR_TO_TS;
 

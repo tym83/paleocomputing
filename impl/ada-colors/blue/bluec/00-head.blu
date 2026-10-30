@@ -393,6 +393,7 @@ TYPE WORLD = RECORD
    VAR TYPECHECK: BOOLEAN;          % a type-specifier checks its value (INVALID_TYPE)
    VAR CHARSETS: INTEGER;           % the character sets the program declares
    VAR IN_RECORD: INTEGER;          % translating a record-spec, a closed scope (3.9.1)
+   VAR NEW_OK: NODE;                % the NEW that may go without PTR$ or SEMAPHORE$
    VAR START_IO: BOOLEAN;           % translating a start-io-stmt (4.8.1)
    VAR MACHINE: BOOLEAN;            % in a machine-dependent part (4.5.5.2, 4.8)
    VAR SERIAL: INTEGER;

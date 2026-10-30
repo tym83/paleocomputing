@@ -629,6 +629,10 @@ END FUNCTION REP_TABLE;
 % NEW(T) for a pointer, NEW(n) for a semaphore [3-198] [3-206]
 FUNCTION NEW_EXPR (E: NODE, WANT: TYP) RETURNS (ET);
    VAR SEM: BOOLEAN := TEQS (E@.NAME, 'SEMAPHORE$NEW');
+   IF TEQS (E@.NAME, 'NEW') & W@.NEW_OK <> E THEN
+      FAIL (E@.LINE, 'NEW without PTR$ or SEMAPHORE$ only initializes a declaration or is the source '
+                     !! 'of an assignment (3.10.2, 3.11.2)');
+   END IF;
    IF TEQS (E@.NAME, 'NEW') & WANT <> NIL THEN
       SEM := REAL_TYPE (WANT)@.KIND = T_SEM;
    END IF;
@@ -649,9 +653,9 @@ FUNCTION NEW_EXPR (E: NODE, WANT: TYP) RETURNS (ET);
       P@.TARGET := T;
       P@.TARGET_TS := E@.A;
       IF NEEDS_INIT (T) THEN
-         RETURN MKET (FMT2 ('({ @ *p = rt_alloc(sizeof *p); @ p; })', CTYPE (T),
+         RETURN MKET (FMT2 ('({ @ *p = rt_b_new(sizeof *p); @ p; })', CTYPE (T),
                             INIT_CODE (T, MK ('(*p)'))), P);
       END IF;
-      RETURN MKET (FMT2 ('((@ *)rt_alloc(sizeof (@)))', CTYPE (T), CTYPE (T)), P);
+      RETURN MKET (FMT2 ('((@ *)rt_b_new(sizeof (@)))', CTYPE (T), CTYPE (T)), P);
    END BLOCK;
 END FUNCTION NEW_EXPR;

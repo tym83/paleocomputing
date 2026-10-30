@@ -102,7 +102,9 @@ PROCEDURE DECLARE_OBJECTS (D: NODE);
          END IF;
          IF D@.C <> NIL THEN
             IF NOT HAVE_V THEN
+               W@.NEW_OK := D@.C;
                V := EXPR (D@.C, T);
+               W@.NEW_OK := NIL;
                HAVE_V := TRUE;
             END IF;
             CODE (STORE_CODE (T, CN, V, D@.C@.LINE, NO_TEXT ()));

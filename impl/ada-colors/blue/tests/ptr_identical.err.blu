@@ -1,0 +1,9 @@
+MAIN SEGMENT PTR_IDENTICAL
+   USES (TERMINAL);
+% the ELEMENT_TYPEs of a pointer assignment are identical (3.10.5)
+TYPE S5 = INTEGER [0:5];
+TYPE S9 = INTEGER [0:9];
+VAR P: PTR (S5);
+VAR Q: PTR (S9) := NEW (S9);
+P := Q;
+END SEGMENT PTR_IDENTICAL;

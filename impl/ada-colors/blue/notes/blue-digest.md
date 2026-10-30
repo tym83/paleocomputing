@@ -231,6 +231,14 @@ unreadable; the decision is bluec's.
 27. **A float-literal outside the range of single precision** (1.0E-300 has two
     digits, and so a single implemented precision) is given the nominal precision
     8, so that it is represented in double precision rather than rejected.
+28. **Dynamic storage.** The simulated machine has 8 GiB for NEW and arrays,
+    and nothing is reclaimed (no garbage collector): SPACE_EXHAUSTED once it is
+    used (3.10.2). A pointer assignment whose ELEMENT_TYPEs differ in an
+    attribute known at translation is rejected; a record argument known only at
+    run time is compared then, raising TYPE_MISMATCH (3.10.5).
+29. **Use modes.** USAGE is UNORDERED (SYNCH, REGION) (3.11.1); `\SYNCH` is a
+    different identifier ([2-10]: the backslash is only a convention), so
+    `SEMAPHORE (\SYNCH)` is rejected, while a constant of USAGE is accepted.
 
 The misprints of the program examples and the rules they break are in
 `../corpus/CHANGES.md`.

@@ -198,9 +198,10 @@ FUNCTION CONVERT (V: ET, T: TYP, LINE: INTEGER, SELF: TEXT) RETURNS (TEXT);
          END IF;
       END IF;
    ORIF RT@.KIND = T_PTR THEN
-      IF NOT SAME_TYPE (TARGET (RT), TARGET (VT)) THEN
-         FAIL (LINE, 'the pointers are to different types (3.10.5)');
+      IF NOT IDENTICAL_TYPE (TARGET (RT), TARGET (VT)) THEN
+         FAIL (LINE, 'the ELEMENT_TYPE of the pointers are not identical (3.10.5)');
       END IF;
+      RETURN TARGET_ARGS_CHECK (TARGET (RT), TARGET (VT), V.C);
    ORIF RT@.KIND = T_REC THEN
       IF NOT HAS_ANY (RT) & NOT HAS_ANY (VT) THEN
          IF NOT SAME_ARGS (RT@.ARGS, VT@.ARGS) THEN
@@ -617,6 +618,58 @@ FUNCTION APPLY_OPERATOR (E: NODE, OP: TEXT, A, B: ET) RETURNS (ET);
 END FUNCTION APPLY_OPERATOR;
 
 % may two array types have the same extents? FALSE only when they are known to differ
+% the identical types a pointer assignment requires of the ELEMENT_TYPEs (3.10.5):
+% the same class and every attribute the same where it is known
+FUNCTION IDENTICAL_TYPE (A, B: TYP) RETURNS (BOOLEAN);
+   CONST RA: TYP := REAL_TYPE (A);
+   CONST RB: TYP := REAL_TYPE (B);
+   IF A = B THEN
+      RETURN TRUE;
+   END IF;
+   IF NOT SAME_TYPE (A, B) ! NOT SAME_RANGE (A, B) THEN
+      RETURN FALSE;
+   END IF;
+   IF RA@.KIND = T_STR ! RA@.KIND = T_BITS THEN
+      IF RA@.MLEN.OK & RB@.MLEN.OK THEN
+         RETURN RA@.MLEN.V = RB@.MLEN.V;
+      END IF;
+   ORIF RA@.KIND = T_ARR THEN
+      RETURN SAME_EXTENTS (RA, RB) & IDENTICAL_TYPE (RA@.ELEM, RB@.ELEM);
+   END IF;
+   RETURN TRUE;
+END FUNCTION IDENTICAL_TYPE;
+
+% the pointer value C to a record of type VT stored where one to RT is expected:
+% TYPE_MISMATCH when an argument known only at run time differs (3.10.5)
+FUNCTION TARGET_ARGS_CHECK (RT, VT: TYP, C: TEXT) RETURNS (TEXT);
+   CONST A: TYP := REAL_TYPE (RT);
+   CONST B: TYP := REAL_TYPE (VT);
+   VAR R: TEXT := MK ('');
+   IF A@.KIND <> T_REC ! B@.KIND <> T_REC THEN
+      RETURN C;
+   END IF;
+   BLOCK
+      VAR F: FIELD := A@.FIELDS;
+      VAR P: BND := A@.ARGS;
+      VAR Q: BND := B@.ARGS;
+      LOOP UNTIL F = NIL ! P = NIL ! Q = NIL DO
+         IF F@.KIND <> 0 THEN
+            IF NOT P@.ANYARG & NOT IS_GEN_ARG (P) & NOT IS_GEN_ARG (Q)
+               & NOT (P@.MLO.OK & Q@.MLO.OK) THEN
+               R := FMT3 ('@ if (p && p->@ != (@)) rt_raise(RT_B_TYPE_MISMATCH);', R, F@.CNAME, P@.LO);
+            END IF;
+            P := P@.NEXT;
+            Q := Q@.NEXT;
+         END IF;
+         F := F@.NEXT;
+      END LOOP;
+   END BLOCK;
+   IF R.LEN = 0 THEN
+      RETURN C;
+   END IF;
+   RETURN FMT3 ('({ __typeof__(@) p = (@);@ p; })', C, C, R);
+END FUNCTION TARGET_ARGS_CHECK;
+
 FUNCTION SAME_EXTENTS (A, B: TYP) RETURNS (BOOLEAN);
    VAR P: BND := REAL_TYPE (A)@.BOUNDS;
    VAR Q: BND := REAL_TYPE (B)@.BOUNDS;

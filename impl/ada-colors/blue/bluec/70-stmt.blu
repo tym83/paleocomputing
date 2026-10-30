@@ -615,7 +615,12 @@ PROCEDURE ASSIGN_STMT (S: NODE);
       IF S@.B@.KIND = N_QUAL THEN                 % STORE_ (Y, PREC, RND ## X) (D.5)
          W@.SQUAL := S@.B;
       END IF;
-      CODE (STORE_CODE (LV.T, LV.C, EXPR (S@.B, LV.T), S@.LINE, LV.SELF));
+      W@.NEW_OK := S@.B;
+      BLOCK
+         CONST V: ET := EXPR (S@.B, LV.T);
+         W@.NEW_OK := NIL;
+         CODE (STORE_CODE (LV.T, LV.C, V, S@.LINE, LV.SELF));
+      END BLOCK;
       W@.SQUAL := SAVED_Q;
    END BLOCK;
 END PROCEDURE ASSIGN_STMT;

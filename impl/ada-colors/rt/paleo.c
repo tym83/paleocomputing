@@ -2377,7 +2377,6 @@ struct rt_b_sem {
   int region, connected;
 };
 
-#define B_HOLDS 32
 struct rt_b_act {
   rt_act act;
   void (*fn)(void *);
@@ -2387,8 +2386,8 @@ struct rt_b_act {
   rt_b_act *sibling;
   rt_int start, end;
   int done, exc;
-  rt_b_sem *holds[B_HOLDS];   /* REGION semaphores requested and not released */
-  int nholds;
+  rt_b_sem **holds;           /* REGION semaphores requested and not released */
+  int nholds, maxholds;
   rt_b_sem *connected;        /* the interrupt semaphore of its CONNECT clause */
   rt_int cpu;                 /* processing time, in virtual microseconds (4.6.5) */
   rt_b_act *order;            /* the activations of a block, in the order made */
@@ -2420,7 +2419,14 @@ void rt_b_sem_assign(rt_b_sem *dst, rt_b_sem *src) {
 
 static void b_hold(rt_b_sem *s) {
   rt_b_act *a = b_me();
-  if (s->region && a->nholds < B_HOLDS) a->holds[a->nholds++] = s;
+  if (s->region) {
+    if (a->nholds == a->maxholds) {
+      a->maxholds = a->maxholds ? 2 * a->maxholds : 8;
+      a->holds = realloc(a->holds, sizeof *a->holds * (size_t)a->maxholds);
+      if (!a->holds) rt_raise(RT_X_FREE);
+    }
+    a->holds[a->nholds++] = s;
+  }
 }
 
 /* a path TERMINATEd before it first ran has had no blocking point yet: REQUEST and
@@ -2822,10 +2828,22 @@ rstr rt_b_fmd(int op, double a, double b) {
 /* the storage of an array: ARRAY_TOO_BIG beyond the largest array of the simulated
  * machine, 2**34 bits (3.8.1) */
 int RT_B_ARRAY_TOO_BIG;
+static size_t b_heap_used;
 void *rt_b_array_alloc(rt_int n, size_t esize) {
   if (n < 0) n = 0;
   if ((unsigned __int128)n * esize * 8 > ((unsigned __int128)1 << 34)) rt_raise(RT_B_ARRAY_TOO_BIG);
-  return rt_alloc(esize * (size_t)(n ? n : 1));
+  size_t sz = esize * (size_t)(n ? n : 1);
+  if (sz > ((size_t)1 << 33) - b_heap_used) rt_raise(RT_X_FREE);      /* SPACE_EXHAUSTED */
+  b_heap_used += sz;
+  return rt_alloc(sz);
+}
+
+/* NEW (T): SPACE_EXHAUSTED once the simulated machine's store of 8 GiB is used by
+ * NEW and arrays (3.10.2); nothing is ever reclaimed */
+void *rt_b_new(size_t n) {
+  if (n > ((size_t)1 << 33) - b_heap_used) rt_raise(RT_X_FREE);
+  b_heap_used += n;
+  return rt_alloc(n);
 }
 
 /* the tag of a T(ANY) record not yet assigned (3.9.1, p.3-134) */
