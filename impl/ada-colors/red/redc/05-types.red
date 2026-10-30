@@ -67,7 +67,7 @@ PROC define(CONST y : sym, CONST line : INT) IMPORTS table, depth, scope_stack;
 END PROC define;
 
 FUNC overloadable(CONST y : sym) => BOOL;
-   RETURN y.kind = y_func OR y.kind = y_proc OR y.kind = y_task;
+   RETURN y.kind = y_func OR y.kind = y_proc OR y.kind = y_task OR y.kind = y_capsule;
 END FUNC overloadable;
 
 % signatures match when they have the same length and the same types (11.1.1)

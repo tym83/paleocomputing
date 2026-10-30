@@ -162,7 +162,8 @@ TYPE sym : PTR RECORD[kind : INT, name : text, t : typ, c : cons,
                       level : INT, byref : BOOL, members, mnext : sym,
                       binds : node, insts : sym, env : buckets,
                       chain, stack : sym, owner : sym, gctx : fctxrec, mv : mval,
-                      reqs : lines, reqdone : BOOL, home : node, capn : node];
+                      reqs : lines, reqdone : BOOL, home : node, capn : node,
+                      tbinds : sym];
 
 % a value known during translation (5.5): kind is t_int, t_bool, t_enum or
 % t_string; i holds an INT, a BOOL (0, 1) or the position of a literal

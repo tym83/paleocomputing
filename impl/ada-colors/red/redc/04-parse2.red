@@ -355,6 +355,10 @@ ABNORMAL FUNC capsule_decl => node IMPORTS ALL;
    VAR dummy : BOOL;
    tpos := tpos + 1;
    x.name := expect_id;
+   IF at_op("[") THEN
+      % a generic capsule (11.3): its formal translation time properties
+      x.e := formal_tt;
+   END IF;
    IF at_op("(") THEN
       x.b := formal_params;
    END IF;
@@ -535,6 +539,9 @@ ABNORMAL FUNC expose_decl => node IMPORTS ALL;
       x.flag := x.flag + 2;
    END IF;
    x.name := expect_id;
+   IF at_op("[") THEN
+      x.e := actual_tt;
+   END IF;
    IF at_op("(") THEN
       x.b := actual_params;
    END IF;

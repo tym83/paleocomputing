@@ -3,6 +3,19 @@
 % first pass over a body: deferred declarations may be used before they appear (3.6)
 PROC declare_body(CONST elems : node) IMPORTS ALL;
    VAR e : node := elems;
+   % generics first: a capsule invocation in this body may name one
+   WHILE e /= NIL REPEAT
+      IF e.kind = n_generic THEN
+         VAR g : sym := new_sym(y_generic, e.name);
+         g.decl := e;
+         g.level := cur_level;
+         g.owner := func_sym;
+         g.gctx := fctx;
+         define(g, e.line);
+      END IF;
+      e := e.next;
+   END REPEAT;
+   e := elems;
    WHILE e /= NIL REPEAT
       IF e.kind = n_const AND e.flag = 0 THEN
          manifest_const(e);
@@ -44,13 +57,6 @@ PROC declare_body(CONST elems : node) IMPORTS ALL;
          y := lookup_decl(e);
          y.home := elems;
          normal_function(e, y);
-      ELSEIF e.kind = n_generic THEN
-         VAR g : sym := new_sym(y_generic, e.name);
-         g.decl := e;
-         g.level := cur_level;
-         g.owner := func_sym;
-         g.gctx := fctx;
-         define(g, e.line);
       END IF;
       e := e.next;
    END REPEAT;
@@ -189,7 +195,24 @@ END FUNC copy_sym;
 PROC gen_capsule(CONST d : node) IMPORTS ALL;
    VAR y : sym := new_sym(y_capsule, d.name);
    VAR saved : text := suppress;
+   VAR p : node := d.b;
+   VAR tail : parm;
    y.decl := d;
+   % capsules may be overloaded (11.2): their formals are their signature
+   WHILE p /= NIL REPEAT
+      VAR pm : parm;
+      ALLOC pm PTR;
+      pm.name := p.name;
+      pm.mode := p.ival;
+      pm.t := resolve_subtype(p.a, pm.c);
+      IF tail = NIL THEN
+         y.params := pm;
+      ELSE
+         tail.next := pm;
+      END IF;
+      tail := pm;
+      p := p.next;
+   END REPEAT;
    IF d.b = NIL THEN
       suppress := suppressing(d.prags);
       elaborate_capsule(d, y, NIL, d);
@@ -364,15 +387,97 @@ FUNC renamed(CONST d : node, CONST z : sym) => text;
    RETURN z.name;
 END FUNC renamed;
 
+% the capsule an invocation names: of the overloaded ones, the one whose
+% formals fit the actuals (11.2)
+ABNORMAL FUNC pick_capsule(CONST d : node) => sym IMPORTS ALL;
+   VAR y : sym := table(hash(d.name.ALL));
+   VAR first, fit : sym;
+   VAR n : INT := 0;
+   WHILE y /= NIL REPEAT
+      IF y.name.ALL = d.name.ALL AND y.kind = y_capsule THEN
+         n := n + 1;
+         IF first = NIL THEN
+            first := y;
+         END IF;
+         IF fit = NIL AND fits(y, d.b) THEN
+            fit := y;
+         END IF;
+      END IF;
+      y := y.chain;
+   END REPEAT;
+   IF n > 1 THEN
+      IF fit = NIL THEN
+         fail(d.line, "no capsule " & d.name.ALL & " has formals that fit these actual parameters");
+      END IF;
+      RETURN fit;
+   END IF;
+   IF first = NIL THEN
+      RETURN lookup(d.name.ALL);
+   END IF;
+   RETURN first;
+END FUNC pick_capsule;
+
+% an instance of a generic capsule (11.3) for the actual translation time
+% properties of an invocation: a new invocation elaborates a new one, an
+% old one the same one for the same properties
+ABNORMAL FUNC capsule_instance(CONST g : sym, CONST d : node) => sym IMPORTS ALL;
+   VAR gd : node := g.decl;
+   VAR pat : node := gd.b;
+   VAR binds : sym := tt_binds(gd, pat.e, d.e, d.line);
+   VAR inst : sym := g.insts;
+   VAR saved_env : buckets := genv;
+   VAR saved_gdepth : INT := gdepth;
+   IF d.flag /= 1 AND d.flag /= 3 THEN
+      WHILE inst /= NIL REPEAT
+         IF same_binds(inst.tbinds, binds) THEN
+            RETURN inst;
+         END IF;
+         inst := inst.insts;
+      END REPEAT;
+   END IF;
+   inst := new_sym(y_capsule, pat.name);
+   inst.decl := pat;
+   inst.tbinds := binds;
+   open_scope;
+   BEGIN
+      VAR b : sym := binds;
+      WHILE b /= NIL REPEAT
+         define(b, d.line);
+         b := b.mnext;
+      END REPEAT;
+   END;
+   genv := g.env;
+   gdepth := depth;
+   elaborate_capsule(pat, inst, d.b, d);
+   genv := saved_env;
+   gdepth := saved_gdepth;
+   close_scope;
+   IF d.flag /= 1 AND d.flag /= 3 THEN
+      inst.insts := g.insts;
+      g.insts := inst;
+   END IF;
+   RETURN inst;
+END FUNC capsule_instance;
+
 PROC gen_expose(CONST d : node) IMPORTS ALL;
    VAR y : sym := lookup(d.name.ALL);
    VAR m : sym;
    VAR p : node := d.a;
    VAR r : node := d.c;
-   IF y = NIL OR y.kind /= y_capsule THEN
-      fail(d.line, d.name.ALL & " is not a capsule");
+   IF y /= NIL AND y.kind = y_generic AND y.decl.b.kind = n_capsule THEN
+      y := capsule_instance(y, d);
+   ELSE
+      y := pick_capsule(d);
+      IF y = NIL OR y.kind /= y_capsule THEN
+         fail(d.line, d.name.ALL & " is not a capsule");
+      END IF;
+      IF d.e /= NIL THEN
+         fail(d.line, d.name.ALL & " is not a generic capsule");
+      END IF;
    END IF;
-   IF d.flag = 1 OR d.flag = 3 THEN
+   IF y.tbinds /= NIL OR (y.decl /= NIL AND y.decl.e /= NIL) THEN
+      % an instance of a generic capsule, elaborated already
+   ELSEIF d.flag = 1 OR d.flag = 3 THEN
       % a new invocation elaborates the capsule again, here (8.1)
       VAR inst : sym := new_sym(y_capsule, y.name);
       inst.decl := y.decl;

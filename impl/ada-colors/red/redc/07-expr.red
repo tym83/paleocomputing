@@ -187,6 +187,18 @@ PROC select_on(READONLY base : STRING[ASCII], CONST bt : typ, CONST e : node, VA
    END IF;
    IF bt.kind = t_new THEN
       VAR p : node := bt.tparams;
+      % the parameters of an exported type are its attributes, known
+      % wherever the type is (4.5.3)
+      WHILE p /= NIL REPEAT
+         IF p.name.ALL = e.name.ALL THEN
+            code := mk(base & ".p_" & lower_s(p.name.ALL));
+            t := tparam_type(bt, p.name.ALL);
+            ro := TRUE;
+            RETURN;
+         END IF;
+         p := p.next;
+      END REPEAT;
+      p := bt.tparams;
       IF NOT opened(bt) THEN
          fail(e.line, "the components of " & bt.name.ALL & " are not exported by its capsule");
       END IF;
