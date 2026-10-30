@@ -1748,6 +1748,7 @@ ABNORMAL FUNC user_op(READONLY op : STRING[ASCII], CONST args : node) => sym IMP
 END FUNC user_op;
 
 ABNORMAL FUNC gcall(CONST e : node, CONST is_stmt : BOOL, OUT t : typ) => STRING[ASCII] IMPORTS ALL;
+   VAR gd : node;
    VAR fn : node := e.a;
    VAR tt : node;
    VAR y : sym;
@@ -1776,6 +1777,7 @@ ABNORMAL FUNC gcall(CONST e : node, CONST is_stmt : BOOL, OUT t : typ) => STRING
       END IF;
    END IF;
    IF y.kind = y_generic THEN
+      gd := y.decl;
       y := instantiate(y, tt, e.b, e.line);
    ELSEIF y.kind = y_func OR y.kind = y_proc THEN
       y := resolve_overload(fn.name.ALL, tt, e.b, is_stmt, e.line);
@@ -1846,6 +1848,14 @@ ABNORMAL FUNC gcall(CONST e : node, CONST is_stmt : BOOL, OUT t : typ) => STRING
       fail(e.line, fn.name.ALL & " needs " & itos(list_len(e.b) - list_len(a)) & " more or fewer actual parameters");
    END IF;
    t := y.result;
+   IF gd /= NIL THEN
+      % one SUBTYPE generic parameter stands for one subtype (11.3.2)
+      CONST chk := same_subtypes(gd, e.b);
+      IF chk /= "" THEN
+         RETURN "({ if (" & chk & ") rt_raise_msg(RT_X_SUBTYPE, " & q & "generic subtype" & q & "); "
+                & y.cname.ALL & "(" & args.ALL & "); })";
+      END IF;
+   END IF;
    RETURN y.cname.ALL & "(" & args.ALL & ")";
 END FUNC gcall;
 
@@ -1957,6 +1967,49 @@ ABNORMAL FUNC act_delay_args(CONST args : node) => STRING[ASCII] IMPORTS ALL;
       RETURN v & ", " & act_ref(args.next);
    END;
 END FUNC act_delay_args;
+
+% C that is true when actuals of formals declared by the same SUBTYPE generic
+% parameter have different subtypes, "" when there is nothing to check
+ABNORMAL FUNC same_subtypes(CONST gd : node, CONST args : node) => STRING[ASCII] IMPORTS ALL;
+   VAR p : node := gd.a;
+   VAR r : text := mk("");
+   WHILE p /= NIL REPEAT
+      IF p.ival = 2 THEN
+         VAR fp : node := gd.b.a;
+         VAR a : node := args;
+         VAR flo, fhi : text;
+         WHILE fp /= NIL AND a /= NIL REPEAT
+            IF fp.a /= NIL AND fp.a.kind = s_name AND fp.a.name.ALL = p.name.ALL AND fp.a.b = NIL THEN
+               VAR st : typ;
+               VAR c : cons;
+               VAR base : text;
+               VAR lo, hi : text;
+               st := value_subtype(a, c, base);
+               IF scalar_kind(st) THEN
+                  lo := mk(sub_lo(st, c));
+                  hi := mk(sub_hi(st, c));
+               ELSEIF st.kind = t_string AND c.slen /= NIL THEN
+                  lo := c.slen;
+                  hi := c.slen;
+               END IF;
+               IF lo /= NIL AND flo /= NIL THEN
+                  IF r.LEN > 0 THEN
+                     r := mk(r.ALL & " || ");
+                  END IF;
+                  r := mk(r.ALL & "(" & flo.ALL & ") != (" & lo.ALL & ") || (" & fhi.ALL & ") != (" & hi.ALL & ")");
+               ELSEIF lo /= NIL THEN
+                  flo := lo;
+                  fhi := hi;
+               END IF;
+            END IF;
+            fp := fp.next;
+            a := a.next;
+         END REPEAT;
+      END IF;
+      p := p.next;
+   END REPEAT;
+   RETURN r.ALL;
+END FUNC same_subtypes;
 
 % the subtype of an actual bound to a VAR, OUT or READONLY scalar formal (7.3)
 ABNORMAL FUNC actual_bounds(CONST ft : typ, CONST t : typ, CONST c : cons) => STRING[ASCII] IMPORTS ALL;

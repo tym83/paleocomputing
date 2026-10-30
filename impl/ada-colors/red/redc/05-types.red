@@ -920,6 +920,29 @@ ABNORMAL FUNC named_subtype(CONST st : node, OUT c : cons) => typ IMPORTS ALL;
    IF y.kind = y_generic AND (y.decl.b.kind = n_newtype OR y.decl.b.kind = n_ptrtype) THEN
       RETURN instantiate_type(y, st.a, st.b, c, st.line);
    END IF;
+   IF y.kind = y_generic AND y.decl.b.kind = n_abbrev THEN
+      % a generic abbreviation (11.3): its subtype with the properties bound
+      VAR binds : sym := tt_binds(y.decl, y.decl.b.e, st.a, st.line);
+      VAR saved_env : buckets := genv;
+      VAR saved_gdepth : INT := gdepth;
+      open_scope;
+      WHILE binds /= NIL REPEAT
+         VAR nb : sym := binds.mnext;
+         define(binds, st.line);
+         binds := nb;
+      END REPEAT;
+      genv := y.env;
+      gdepth := depth;
+      t := resolve_subtype(y.decl.b.a, c);
+      genv := saved_env;
+      gdepth := saved_gdepth;
+      close_scope;
+      IF st.b /= NIL THEN
+         c := copy_cons(c);
+         apply_constraint(t, st.b, c, st.line);
+      END IF;
+      RETURN t;
+   END IF;
    IF y.kind = y_type AND y.t /= NIL AND y.t.kind = t_new THEN
       RETURN new_type(y, st, c);
    END IF;
@@ -1232,7 +1255,8 @@ ABNORMAL FUNC type_name(READONLY name : STRING[ASCII]) => BOOL IMPORTS ALL;
           OR name = "DATA_LOCK" OR name = "LATCH";
    END IF;
    RETURN y.kind = y_type OR y.kind = y_abbrev
-       OR (y.kind = y_generic AND (y.decl.b.kind = n_newtype OR y.decl.b.kind = n_ptrtype));
+       OR (y.kind = y_generic AND (y.decl.b.kind = n_newtype OR y.decl.b.kind = n_ptrtype
+                                   OR y.decl.b.kind = n_abbrev));
 END FUNC type_name;
 
 % sets (C.9) hold the values of their component subtype, any range of them

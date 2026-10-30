@@ -154,6 +154,10 @@ ABNORMAL FUNC abbrev_decl => node IMPORTS ALL;
    VAR x : node := nn(n_abbrev, cur_line);
    tpos := tpos + 1;
    x.name := expect_id;
+   IF at_op("[") THEN
+      % a generic abbreviation (11.3)
+      x.e := formal_tt;
+   END IF;
    IF at_op("(") THEN
       x.b := formal_params;
    END IF;
@@ -414,10 +418,14 @@ ABNORMAL FUNC generic_decl => node IMPORTS ALL;
    VAR head, tail : node;
    VAR more : BOOL := TRUE;
    tpos := tpos + 1;
+   % generic parameters (diagrams 70 - 75): ival is the kind of constraint:
+   % 1 TYPE, 2 SUBTYPE, 3 PROC, 4 FUNC, 5 TASK, 6 a value of subtype a,
+   % 7 a STRING value, 8 an ENUM value; b lists the types of TYPE (...) and
+   % SUBTYPE (...) or the formals of an operation, a is a FUNC's result
    WHILE more REPEAT
       VAR names : node := id_list;
       VAR kind : INT := 6;
-      VAR st : node;
+      VAR st, items : node;
       expect_op(":");
       IF accept_kw("TYPE") THEN
          kind := 1;
@@ -429,64 +437,87 @@ ABNORMAL FUNC generic_decl => node IMPORTS ALL;
          kind := 4;
       ELSEIF accept_kw("TASK") THEN
          kind := 5;
+      ELSEIF at_kind(k_id) AND toks(tpos).s.ALL = "STRING" AND NOT (kind_at(1) = k_op AND text_at(1).ALL = "[") THEN
+         tpos := tpos + 1;
+         kind := 7;
+      ELSEIF at_kind(k_id) AND toks(tpos).s.ALL = "ENUM" AND NOT (kind_at(1) = k_op AND text_at(1).ALL = "[") THEN
+         tpos := tpos + 1;
+         kind := 8;
       ELSE
          st := p_subtype;
       END IF;
-      IF kind <= 2 AND at_op("(") THEN
-         % TYPE (INT, ENUM): the allowed categories; kept as names
-         x.e := actual_params;
-      ELSEIF kind >= 3 AND kind <= 5 THEN
-         IF at_op("(") THEN
-            tpos := tpos + 1;
-            WHILE NOT at_op(")") REPEAT
-               st := p_subtype;
-               IF NOT at_op(")") THEN
-                  expect_op(",");
-               END IF;
-            END REPEAT;
-            tpos := tpos + 1;
-         END IF;
-         IF kind = 4 AND accept_op("=>") THEN
-            st := p_subtype;
-         END IF;
+      IF kind <= 5 AND at_op("(") THEN
+         items := type_list;
+      END IF;
+      IF kind = 4 AND accept_op("=>") THEN
+         st := p_subtype;
       END IF;
       WHILE names /= NIL REPEAT
          VAR p : node := nn(n_param, names.line);
          p.name := names.name;
          p.ival := kind;
          p.a := st;
+         p.b := items;
          append(head, tail, p);
          names := names.next;
       END REPEAT;
       more := accept_op(",");
    END REPEAT;
    IF accept_kw("NEEDS") THEN
-      % the needed definitions are taken from the scope of each invocation (11.4)
+      % needed items (diagram 77): taken from the scope of each invocation
+      % (11.4); ival 3 PROC, 4 FUNC, 5 TASK, 0 a definable symbol
+      VAR nhead, ntail : node;
       more := TRUE;
       WHILE more REPEAT
-         VAR nm : text := definable_name;
-         VAR st : node;
+         VAR it : node := nn(n_param, cur_line);
+         IF accept_kw("PROC") THEN
+            it.ival := 3;
+         ELSEIF accept_kw("FUNC") THEN
+            it.ival := 4;
+         ELSEIF accept_kw("TASK") THEN
+            it.ival := 5;
+         END IF;
+         it.name := definable_name;
+         IF at_op("[") THEN
+            it.e := formal_tt;
+         END IF;
          IF at_op("(") THEN
-            tpos := tpos + 1;
-            WHILE NOT at_op(")") REPEAT
-               st := p_subtype;
-               IF NOT at_op(")") THEN
-                  expect_op(",");
-               END IF;
-            END REPEAT;
-            tpos := tpos + 1;
+            it.b := type_list;
          END IF;
          IF accept_op("=>") THEN
-            st := p_subtype;
+            it.a := p_subtype;
          END IF;
+         append(nhead, ntail, it);
          more := accept_op(",");
       END REPEAT;
+      x.d := nhead;
    END IF;
    x.a := head;
    x.b := declaration;
    x.name := x.b.name;
    RETURN x;
 END FUNC generic_decl;
+
+% ( type or subtype or identifier, ... ) in generic constraints and needed items
+ABNORMAL FUNC type_list => node IMPORTS ALL;
+   VAR head, tail : node;
+   expect_op("(");
+   IF NOT at_op(")") THEN
+      VAR more : BOOL := TRUE;
+      WHILE more REPEAT
+         IF at_kind(k_id) AND kind_at(1) = k_op AND (text_at(1).ALL = "," OR text_at(1).ALL = ")") THEN
+            VAR n : node := nn(s_name, cur_line);
+            n.name := expect_id;
+            append(head, tail, n);
+         ELSE
+            append(head, tail, p_subtype);
+         END IF;
+         more := accept_op(",");
+      END REPEAT;
+   END IF;
+   expect_op(")");
+   RETURN head;
+END FUNC type_list;
 
 % TASK (diagram 61)
 ABNORMAL FUNC task_decl => node IMPORTS ALL;

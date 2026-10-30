@@ -423,7 +423,7 @@ END FUNC pick_capsule;
 ABNORMAL FUNC capsule_instance(CONST g : sym, CONST d : node) => sym IMPORTS ALL;
    VAR gd : node := g.decl;
    VAR pat : node := gd.b;
-   VAR binds : sym := tt_binds(gd, pat.e, d.e, d.line);
+   VAR binds : sym := need_binds(gd, tt_binds(gd, pat.e, d.e, d.line), d.line);
    VAR inst : sym := g.insts;
    VAR saved_env : buckets := genv;
    VAR saved_gdepth : INT := gdepth;
@@ -2476,6 +2476,14 @@ FUNC same_binding(CONST a : sym, CONST b : sym) => BOOL;
    IF a.kind = y_const AND a.hasmv THEN
       RETURN b.hasmv AND a.mvalue = b.mvalue;
    END IF;
+   IF a.kind = y_const AND a.mv /= NIL THEN
+      IF b.mv = NIL OR a.mv.kind /= b.mv.kind OR NOT same(a.t, b.t) THEN
+         RETURN FALSE;
+      ELSEIF a.mv.kind = t_string THEN
+         RETURN a.mv.s.ALL = b.mv.s.ALL;
+      END IF;
+      RETURN a.mv.i = b.mv.i;
+   END IF;
    RETURN a.cname /= NIL AND b.cname /= NIL AND a.cname.ALL = b.cname.ALL;
 END FUNC same_binding;
 
@@ -2504,18 +2512,42 @@ ABNORMAL FUNC tt_binds(CONST gd : node, CONST formals : node, CONST actuals : no
             b.t := resolve_subtype(st, c);
          END IF;
          b.c := c;
+         % TYPE (...) and SUBTYPE (...) name the types allowed (11.3.1, 11.3.2)
+         IF p.b /= NIL AND NOT type_allowed(b.t, p.b, binds) THEN
+            fail(line, "this type is not allowed for the generic parameter " & p.name.ALL);
+         END IF;
       ELSEIF p.ival <= 5 THEN
-         IF a.kind /= n_name OR lookup(a.name.ALL) = NIL THEN
+         IF a.kind /= n_name THEN
             fail(line, "a procedure, function or task is required for " & p.name.ALL);
          END IF;
-         b := copy_sym(lookup(a.name.ALL));
+         b := copy_sym(pick_operation(p.ival, a.name.ALL, p.b, p.a, binds, line));
          b.name := p.name;
+      ELSEIF p.ival = 7 OR p.ival = 8 THEN
+         % a value of a STRING or ENUM type, which the value itself tells (11.3.4)
+         VAR ok : BOOL;
+         b.access := mk("(" & gexpr(a, NIL, at) & ")");
+         b.t := at;
+         IF (p.ival = 7 AND at.kind /= t_string) OR (p.ival = 8 AND base_of(at).kind /= t_enum) THEN
+            fail(line, "the value for " & p.name.ALL & " is not of the kind its constraint requires");
+         END IF;
+         b.mv := meval(a, ok);
+         IF NOT ok THEN
+            fail(line, "the value for " & p.name.ALL & " must be manifest");
+         END IF;
+         IF b.mv.kind = t_enum THEN
+            b.mv.i := lit_index(base_of(at).lits, b.mv.s.ALL);
+         END IF;
       ELSE
          VAR ok : BOOL;
          b.t := resolve_subtype(p.a, c);
-         b.access := mk(gexpr(a, b.t, at));
+         b.access := mk("(" & checked(b.t, c, gexpr(a, b.t, at)) & ")");
+         check_type(at, b.t, line);
          b.mvalue := manifest(a, ok);
          b.hasmv := ok;
+         b.mv := meval(a, ok);
+         IF NOT ok THEN
+            fail(line, "the value for " & p.name.ALL & " must be manifest");
+         END IF;
       END IF;
       b.mnext := binds;
       binds := b;
@@ -2524,6 +2556,129 @@ ABNORMAL FUNC tt_binds(CONST gd : node, CONST formals : node, CONST actuals : no
    END REPEAT;
    RETURN binds;
 END FUNC tt_binds;
+
+% the types a list of a TYPE or SUBTYPE constraint allows: named types, or
+% the categories INT, FLOAT, BOOL, ENUM, STRING, ARRAY, RECORD, UNION, SET
+ABNORMAL FUNC type_allowed(CONST t : typ, CONST items : node, CONST binds : sym) => BOOL IMPORTS ALL;
+   VAR it : node := items;
+   VAR b : typ := base_of(t);
+   WHILE it /= NIL REPEAT
+      IF it.kind = s_name AND it.b = NIL AND lookup(it.name.ALL) = NIL THEN
+         CONST w := it.name.ALL;
+         IF (w = "INT" AND b.kind = t_int) OR (w = "FLOAT" AND b.kind = t_float) OR (w = "BOOL" AND b.kind = t_bool)
+               OR (w = "ENUM" AND b.kind = t_enum) OR (w = "STRING" AND b.kind = t_string)
+               OR (w = "ARRAY" AND b.kind = t_array) OR (w = "RECORD" AND b.kind = t_record)
+               OR (w = "UNION" AND b.kind = t_union) OR (w = "SET" AND b.kind = t_set)
+               OR (w = "ASCII" AND same(t, ty_ascii)) THEN
+            RETURN TRUE;
+         END IF;
+      ELSE
+         VAR c : cons;
+         IF same(resolve_in_binds(it, binds, c), t) THEN
+            RETURN TRUE;
+         END IF;
+      END IF;
+      it := it.next;
+   END REPEAT;
+   RETURN FALSE;
+END FUNC type_allowed;
+
+% a subtype written in a generic constraint, which may name the generic
+% parameters bound so far
+ABNORMAL FUNC resolve_in_binds(CONST st : node, CONST binds : sym, OUT c : cons) => typ IMPORTS ALL;
+   VAR b : sym := binds;
+   VAR t : typ;
+   open_scope;
+   WHILE b /= NIL REPEAT
+      VAR z : sym := copy_sym(b);
+      define(z, st.line);
+      b := b.mnext;
+   END REPEAT;
+   t := resolve_subtype(st, c);
+   close_scope;
+   RETURN t;
+END FUNC resolve_in_binds;
+
+% the procedure, function or task named for an operation generic constraint,
+% or for a needed item: of the visible ones of that name, one whose formals
+% have the types the constraint lists, and the result type (11.3.3, 11.4);
+% kind 0 accepts any deferred unit
+ABNORMAL FUNC pick_operation(CONST kind : INT, READONLY name : STRING[ASCII], CONST sig : node, CONST res : node,
+                             CONST binds : sym, CONST line : INT) => sym IMPORTS ALL;
+   VAR y : sym;
+   VAR c : cons;
+   VAR want : INT := y_proc;
+   IF kind = 4 THEN
+      want := y_func;
+   ELSEIF kind = 5 THEN
+      want := y_task;
+   END IF;
+   FOR pass : INT(1 .. 3) REPEAT
+      y := overload_chain(name, pass);
+      WHILE y /= NIL REPEAT
+         IF y.name.ALL = name AND (y.kind = want OR (kind = 0 AND (y.kind = y_proc OR y.kind = y_func)))
+               AND (pass /= 1 OR y.depth >= gdepth) THEN
+            VAR ok : BOOL := TRUE;
+            IF sig /= NIL OR kind = 0 THEN
+               VAR s : node := sig;
+               VAR pm : parm := y.params;
+               WHILE ok AND s /= NIL AND pm /= NIL REPEAT
+                  ok := same(resolve_in_binds(s, binds, c), pm.t);
+                  s := s.next;
+                  pm := pm.next;
+               END REPEAT;
+               ok := ok AND s = NIL AND pm = NIL;
+            END IF;
+            IF ok AND res /= NIL THEN
+               ok := y.kind = y_func AND same(resolve_in_binds(res, binds, c), y.result);
+            END IF;
+            IF ok THEN
+               RETURN y;
+            END IF;
+         END IF;
+         y := y.chain;
+      END REPEAT;
+   END REPEAT;
+   fail(line, "no " & kind_word(kind) & name & " has the interface the generic requires");
+   RETURN NIL;
+END FUNC pick_operation;
+
+FUNC kind_word(CONST kind : INT) => STRING[ASCII];
+   IF kind = 3 THEN
+      RETURN "procedure ";
+   ELSEIF kind = 4 THEN
+      RETURN "function ";
+   ELSEIF kind = 5 THEN
+      RETURN "task ";
+   END IF;
+   RETURN "definition of ";
+END FUNC kind_word;
+
+% the needed items of a generic (11.4), resolved where it is invoked, added to
+% its bindings; an operator the types have built in needs no definition
+ABNORMAL FUNC need_binds(CONST gd : node, CONST binds : sym, CONST line : INT) => sym IMPORTS ALL;
+   VAR it : node := gd.d;
+   VAR r : sym := binds;
+   WHILE it /= NIL REPEAT
+      VAR found : BOOL := FALSE;
+      VAR y : sym := table(hash(it.name.ALL));
+      WHILE y /= NIL AND NOT found REPEAT
+         IF y.name.ALL = it.name.ALL AND (y.kind = y_proc OR y.kind = y_func OR y.kind = y_task) THEN
+            found := TRUE;
+         END IF;
+         y := y.chain;
+      END REPEAT;
+      IF found THEN
+         VAR z : sym := copy_sym(pick_operation(it.ival, it.name.ALL, it.b, it.a, r, line));
+         z.mnext := r;
+         r := z;
+      ELSEIF NOT is_definable(it.name.ALL) THEN
+         fail(line, "the generic needs " & it.name.ALL & ", which is not known where it is invoked");
+      END IF;
+      it := it.next;
+   END REPEAT;
+   RETURN r;
+END FUNC need_binds;
 
 % is this subtype a use of a generic type, X[...]?
 ABNORMAL FUNC generic_use(CONST st : node) => BOOL IMPORTS ALL;
@@ -2691,6 +2846,9 @@ ABNORMAL FUNC instantiate(CONST g : sym, CONST tt : node, CONST args : node, CON
             CONST v := gexpr(a, NIL, at);
             b.t := at;
             b.c := no_cons;
+            IF gparam(gd, fp.a.name.ALL).b /= NIL AND NOT type_allowed(at, gparam(gd, fp.a.name.ALL).b, binds) THEN
+               fail(line, "this type is not allowed for the generic parameter " & fp.a.name.ALL);
+            END IF;
             b.mnext := binds;
             binds := b;
          END IF;
@@ -2698,6 +2856,8 @@ ABNORMAL FUNC instantiate(CONST g : sym, CONST tt : node, CONST args : node, CON
       fp := fp.next;
       a := a.next;
    END REPEAT;
+   % the needed items, from the scope of this invocation (11.4)
+   binds := need_binds(gd, binds, line);
    % an earlier instance with the same replacement elements?
    inst := all_insts;
    WHILE inst /= NIL REPEAT

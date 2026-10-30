@@ -1,0 +1,12 @@
+dbl: 42 3.00000E+00
+say: hi
+place: 68
+times: 15
+print: 42
+print: yes
+apply: 2
+two subtypes alike: 9
+X_SUBTYPE: one SUBTYPE parameter, two subtypes
+pair[INT]: 2
+p[BOOL]
+p[INT]
