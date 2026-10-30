@@ -1,5 +1,7 @@
 -- overloading (RM79 6.6): by parameter types, by result type, operators
+restricted (TEXT_IO)
 procedure MAIN is
+   use TEXT_IO;
    type VECTOR is array (1 .. 3) of INTEGER;
    type COLOR is (RED, GREEN, BLUE);
    type LIGHT is (RED, AMBER, GREEN);
@@ -65,7 +67,7 @@ begin
    SHOW(2 * V);
    SHOW(42);
    SHOW("hello");
-   SHOW(ZERO);
+   SHOW(STRING(ZERO));
    declare
       S : STRING(1 .. 4) := ZERO;
    begin

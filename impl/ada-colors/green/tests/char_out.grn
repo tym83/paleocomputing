@@ -1,0 +1,25 @@
+-- a CHARACTER component of a STRING as an out and in out actual, and as an
+-- out parameter of an entry: the byte is copied through a temporary
+restricted (TEXT_IO)
+procedure MAIN is
+   use TEXT_IO;
+   S : STRING(1 .. 4) := "abcd";
+   procedure UP(C : in out CHARACTER) is
+   begin
+      C := CHARACTER'VAL(CHARACTER'ORD(C) - 32);
+   end UP;
+   procedure SET(C : out CHARACTER) is
+   begin
+      C := "z";
+   end SET;
+   task T is entry GIVE(C : out CHARACTER); end T;
+   task body T is
+   begin
+      accept GIVE(C : out CHARACTER) do C := "!"; end GIVE;
+   end T;
+begin
+   UP(S(2)); SET(S(3));
+   initiate T;
+   T.GIVE(S(4));
+   PUT(S); PUT(NEWLINE);
+end MAIN;

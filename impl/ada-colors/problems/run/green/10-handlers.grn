@@ -26,11 +26,13 @@ package body LINE_HANDLER is
    end GET_A_PACKET;
 
 begin
+   -- the literal PRIORITY, made visible by use, does not hide the subtype
+   -- PRIORITY of STANDARD (RM79 8.4): it is named PACKET_TYPE.PRIORITY
    BUFFER_POOL(3)   := (TOP_SECRET,   FLASH,    1023, 200);
    BUFFER_POOL(7)   := (SECRET,       ROUTINE,  5,    12);
    BUFFER_POOL(10)  := (UNKNOWN_6,    UNKNOWN,  513,  255);
-   BUFFER_POOL(11)  := (UNCLASSIFIED, PRIORITY, 0,    1);
-   BUFFER_POOL(200) := (CONFIDENTIAL, PRIORITY, 77,   64);
+   BUFFER_POOL(11)  := (UNCLASSIFIED, PACKET_TYPE.PRIORITY, 0,    1);
+   BUFFER_POOL(200) := (CONFIDENTIAL, PACKET_TYPE.PRIORITY, 77,   64);
 end LINE_HANDLER;
 
 restricted(PACKET_FORMATS, TEXT_IO)

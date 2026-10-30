@@ -1,0 +1,5 @@
+procedure MAIN is
+   function TO_INT is new UNSAFE_PROGRAMMING.UNSAFE_CONVERSION(S is FLOAT, T is INTEGER);
+begin
+   null;
+end MAIN;

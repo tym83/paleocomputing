@@ -1,0 +1,9 @@
+procedure MAIN is
+   procedure Q(Z : in out INTEGER) is
+   begin
+      Z := Z + 5;
+   end Q;
+   B : INTEGER := 1;
+begin
+   Q(Z =: B);
+end MAIN;

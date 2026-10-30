@@ -1,0 +1,9 @@
+procedure MAIN is
+   type INSTR is record OP, ARG : INTEGER; end record;
+   procedure NOP is
+   begin
+      INSTR(OP => 0, ARG => 0);
+   end NOP;
+begin
+   NOP;
+end MAIN;

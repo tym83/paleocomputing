@@ -1,0 +1,6 @@
+procedure MAIN is
+   T : TIME := 1.0;
+   F : FLOAT := 2.0;
+begin
+   T := F;
+end MAIN;

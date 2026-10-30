@@ -1,0 +1,22 @@
+-- lexical units (RM79 2): replacement characters, numbers, pragmas
+pragma LIST(OFF);
+pragma INCLUDE("tests/lexical.inc");
+restricted (TEXT_IO, INCLUDED)
+procedure MAIN is
+   use INCLUDED;
+   use TEXT_IO;
+   pragma OPTIMIZE(TIME);
+   X : INTEGER := 2;
+   F : FLOAT := 1E-3;
+   ONE_TWO_3 : INTEGER := 1_000_000;
+begin
+   pragma PAGE;
+   case X of
+      when 1 ! 2 => PUT(%bang and percent%);
+      when others => null;
+   end case;
+   PUT(16:FF); PUT(16#ff); PUT(2#1011_0101); PUT(8:777); PUT(NEWLINE);
+   PUT(F); PUT(2.5E+2); PUT(1E2); PUT(ONE_TWO_3); PUT(NEWLINE);
+   PUT(%a %% b%); PUT("quote "" here"); PUT(NEWLINE);
+   PUT(INCLUDED_X); PUT(NEWLINE);
+end MAIN;

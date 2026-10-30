@@ -1,10 +1,12 @@
 -- INTRO 1979 Section 6.5 (a delay alternative as a timeout); changes marked CHANGE n, see CHANGES.md
+restricted (TEXT_IO)  -- CHANGE 3
 task PRINTER_DRIVER is
    subtype LINE_IMAGE is STRING(1 .. 120);
    entry LINE_PRINT(L : LINE_IMAGE);
 end;
 
 task body PRINTER_DRIVER is
+   use TEXT_IO;  -- CHANGE 3
    BUFFER : LINE_IMAGE;
    CHAIN_GOING : BOOLEAN := FALSE;
 begin
@@ -30,6 +32,7 @@ begin
 end;
 
 -- CHANGE 2: a main program that uses the driver
+restricted (PRINTER_DRIVER)  -- CHANGE 3
 procedure PRINT_THREE is
    L : STRING(1 .. 120);
 begin

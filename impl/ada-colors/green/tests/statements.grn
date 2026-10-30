@@ -1,0 +1,52 @@
+-- statements (RM79 5): goto and labels, case choices, exits, out actuals
+restricted (TEXT_IO)
+procedure MAIN is
+   use TEXT_IO;
+   type COLOR is (RED, GREEN, BLUE);
+   subtype SMALL is INTEGER range 1 .. 5;
+   I : INTEGER := 0;
+   C : COLOR := BLUE;
+   A : INTEGER range 1 .. 10 := 1;
+   procedure Q(R : out INTEGER) is
+   begin
+      R := 100;
+   end Q;
+begin
+   <<AGAIN>> I := I + 1;
+   if I < 3 then
+      goto AGAIN;
+   end if;
+   PUT(I);
+   begin
+      for K in 1 .. 10 loop
+         if K = 4 then
+            goto DONE;
+         end if;
+      end loop;
+   exception
+      when others => null;
+   end;
+   <<DONE>> PUT(" done");
+   case I of
+      when SMALL => PUT(" small");
+      when others => PUT(" large");
+   end case;
+   case C of
+      when RED | GREEN => PUT(" warm");
+      when BLUE => PUT(" cold");
+   end case;
+   <<OUTER>> for K in 1 .. 3 loop
+      for L in 1 .. 3 loop
+         exit OUTER when K * L = 4;
+         PUT(K * L);
+      end loop;
+   end loop OUTER;
+   PUT(NEWLINE);
+   begin
+      Q(A);
+      PUT("no check");
+   exception
+      when RANGE_ERROR => PUT("RANGE_ERROR");
+   end;
+   PUT(NEWLINE);
+end MAIN;

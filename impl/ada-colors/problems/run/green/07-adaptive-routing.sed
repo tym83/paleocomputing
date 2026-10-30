@@ -46,3 +46,17 @@ s/LIBRARY\.READ_NEIGHBOR_NODE/LIBRARY.READ_NEIGHBOR_TABLE/
 s/^begin  -- MAIN$/begin  -- NODE_PROGRAM/
 s/^end;$/end NODE_PROGRAM;\
 end NETWORK;/
+# The choices of an array aggregate are static (RM79 3.6.2): ME, the node's
+# own index, is not; its entries are set when TABLE starts
+/^            (ME => (DEL => 0, DIST => 0),$/d
+s/^             others => (DEL => INFINITY, DIST => NODE'LAST));$/            (others => (DEL => INFINITY, DIST => NODE'LAST));/
+s/^            (ME => ME, others => NULL_NODE);$/            (others => NULL_NODE);/
+s/^   begin  -- TABLE$/&\
+      NODE_TABLE(ME) := (DEL => 0, DIST => 0);\
+      NODE_ROUTE(ME) := ME;/
+/^               (ME => (DEL => 0, DIST => 0),$/d
+s/^                others => (DEL => INFINITY, DIST => NODE'LAST));$/               (others => (DEL => INFINITY, DIST => NODE'LAST));/
+s/^               (ME => ME, others => NULL_NODE);$/               (others => NULL_NODE);/
+s/^   begin -- UPDATE_TABLE$/&\
+      MY_TABLE(ME) := (DEL => 0, DIST => 0);\
+      ROUTE(ME) := ME;/

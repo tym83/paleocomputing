@@ -1,0 +1,6 @@
+procedure MAIN is
+   type V is array (1 .. 3) of INTEGER;
+   X : V := (1 => 1, 2 => 2);
+begin
+   null;
+end MAIN;

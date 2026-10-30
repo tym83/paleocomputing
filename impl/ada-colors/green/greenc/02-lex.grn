@@ -3,8 +3,10 @@
    -- an allocator may not appear in a function body (RM79 6.5): MK is a
    -- value-returning procedure
    procedure MK(S : STRING) return TEXT is
+      -- the text counts from 1 whatever the bounds of S (RM79 3.6)
+      R : STRING(1 .. S'LENGTH) := S;
    begin
-      return new STRING(S);
+      return new STRING(R);
    end MK;
 
    procedure NEW_NAME(BASE : STRING; RES : out TEXT) is
@@ -35,13 +37,30 @@
    function LOWER_S(S : STRING) return STRING is
       R : STRING := S;
    begin
-      for I in 1 .. S'LENGTH loop
+      for I in R'FIRST .. R'LAST loop
          if R(I) >= "A" and R(I) <= "Z" then
             R(I) := CHARACTER'VAL(CHARACTER'ORD(R(I)) + 32);
          end if;
       end loop;
       return R;
    end LOWER_S;
+
+   function UPPER_S(S : STRING) return STRING is
+      R : STRING := S;
+   begin
+      for I in R'FIRST .. R'LAST loop
+         R(I) := UPPER(R(I));
+      end loop;
+      return R;
+   end UPPER_S;
+
+   -- the operators that a function may overload (RM79 4.5, 6.6.1)
+   function IS_OPERATOR(S : STRING) return BOOLEAN is
+   begin
+      return S = "+" or S = "-" or S = "*" or S = "/" or S = "**" or S = "&" or S = "=" or S = "<"
+         or S = "<=" or S = ">" or S = ">=" or S = "MOD" or S = "AND" or S = "OR" or S = "XOR"
+         or S = "NOT";
+   end IS_OPERATOR;
 
    -- a record component in C: the suffix keeps clear of C keywords
    function C_FIELD(S : STRING) return STRING is
@@ -165,12 +184,38 @@
       return CHARACTER'ORD(UPPER(C)) - CHARACTER'ORD("A") + 10;
    end DIGIT_VALUE;
 
+   -- the value of digit C in BASE, or -1 (RM79 2.4)
+   function DIGIT_IN(C : CHARACTER; BASE : INTEGER) return INTEGER is
+      D : INTEGER;
+   begin
+      if IS_DIGIT(C) then
+         D := CHARACTER'ORD(C) - CHARACTER'ORD("0");
+      elsif UPPER(C) >= "A" and UPPER(C) <= "F" then
+         D := CHARACTER'ORD(UPPER(C)) - CHARACTER'ORD("A") + 10;
+      else
+         return -1;
+      end if;
+      if D >= BASE then
+         return -1;
+      end if;
+      return D;
+   end DIGIT_IN;
+
+   -- V * BASE + D, a diagnostic if the literal is too large for INTEGER
+   procedure ACCUMULATE(V : in out INTEGER; BASE, D : INTEGER) is
+   begin
+      if V > (INTEGER'LAST - D) / BASE then
+         FAIL(SRC_LINE, "this integer literal is too large (RM79 2.4)");
+      end if;
+      V := V * BASE + D;
+   end ACCUMULATE;
+
    procedure LEX_LINE(LINE : STRING) is
       I : INTEGER := 1;
       J : INTEGER := 0;
       N : INTEGER := LINE'LENGTH;
-      C : CHARACTER;
-      V : INTEGER;
+      C, QUOTE : CHARACTER;
+      V, D : INTEGER;
       BUF : STRING(1 .. 1000);
       BL : INTEGER;
    begin
@@ -178,12 +223,23 @@
          C := LINE(I);
          if C = " " or C = HT or C = CR or C = FF then
             I := I + 1;
-         elsif C = "-" and I < N and then LINE(I + 1) = "-" then
+         elsif (C = "-" and I < N) and then LINE(I + 1) = "-" then
             I := N + 1;                              -- a comment (RM79 2.6)
-         elsif IS_LETTER(C) then
+         elsif IS_LETTER(C) or (C = "$" and PRELUDE_LEX) then
+            -- identifier ::= letter {[underscore] letter_or_digit} (RM79 2.3)
             J := I;
             BL := 0;
+            if C = "$" then
+               BL := 1;
+               BUF(1) := "$";
+               J := I + 1;
+            end if;
             while J <= N and then (IS_LETTER(LINE(J)) or IS_DIGIT(LINE(J)) or LINE(J) = "_") loop
+               if LINE(J) = "_" then
+                  if J = N or else not (IS_LETTER(LINE(J + 1)) or IS_DIGIT(LINE(J + 1))) then
+                     FAIL(SRC_LINE, "an underscore in an identifier stands between two letters or digits (RM79 2.3)");
+                  end if;
+               end if;
                BL := BL + 1;
                BUF(BL) := UPPER(LINE(J));
                J := J + 1;
@@ -195,31 +251,48 @@
             end if;
             I := J;
          elsif IS_DIGIT(C) then
-            -- integers, based integers without a closing #, reals (RM79 2.4)
+            -- integer ::= digit {[underscore] digit}; based integers without a
+            -- closing #, where : may replace #; approximate numbers (RM79 2.1, 2.4)
             J := I;
             V := 0;
             BL := 0;
             while J <= N and then (IS_DIGIT(LINE(J)) or LINE(J) = "_") loop
-               if LINE(J) /= "_" then
-                  V := V * 10 + DIGIT_VALUE(LINE(J));
+               if LINE(J) = "_" then
+                  if J = N or else not IS_DIGIT(LINE(J + 1)) then
+                     FAIL(SRC_LINE, "an underscore in a number stands between two digits (RM79 2.4)");
+                  end if;
+               else
+                  ACCUMULATE(V, 10, CHARACTER'ORD(LINE(J)) - CHARACTER'ORD("0"));
                   BL := BL + 1;
                   BUF(BL) := LINE(J);
                end if;
                J := J + 1;
             end loop;
-            if J <= N and then LINE(J) = "#" then
+            if J < N and then (LINE(J) = "#" or (LINE(J) = ":" and (IS_DIGIT(LINE(J + 1))
+               or IS_LETTER(LINE(J + 1))))) then
                declare
                   BASE : INTEGER := V;
                begin
+                  if BASE < 2 or BASE > 16 then
+                     FAIL(SRC_LINE, "the base of a number is between 2 and 16 (RM79 2.4)");
+                  end if;
                   V := 0;
                   J := J + 1;
+                  if J > N or else DIGIT_IN(LINE(J), 16) < 0 then
+                     FAIL(SRC_LINE, "a based number needs digits (RM79 2.4)");
+                  end if;
                   while J <= N and then (IS_LETTER(LINE(J)) or IS_DIGIT(LINE(J)) or LINE(J) = "_") loop
-                     if LINE(J) /= "_" then
-                        if DIGIT_VALUE(LINE(J)) >= BASE then
+                     if LINE(J) = "_" then
+                        if J = N or else DIGIT_IN(LINE(J + 1), 16) < 0 then
+                           FAIL(SRC_LINE, "an underscore in a number stands between two digits (RM79 2.4)");
+                        end if;
+                     else
+                        D := DIGIT_IN(LINE(J), BASE);
+                        if D < 0 then
                            FAIL(SRC_LINE, "digit " & LINE(J) & " is not valid in base "
                                 & INTEGER'REP(BASE) & " (RM79 2.4)");
                         end if;
-                        V := V * BASE + DIGIT_VALUE(LINE(J));
+                        ACCUMULATE(V, BASE, D);
                      end if;
                      J := J + 1;
                   end loop;
@@ -233,46 +306,38 @@
                   if LINE(J) /= "_" then
                      BL := BL + 1;
                      BUF(BL) := LINE(J);
+                  elsif J = N or else not IS_DIGIT(LINE(J + 1)) then
+                     FAIL(SRC_LINE, "an underscore in a number stands between two digits (RM79 2.4)");
                   end if;
                   J := J + 1;
                end loop;
-               if J <= N and then (LINE(J) = "E" or LINE(J) = "e") then
-                  BL := BL + 1;
-                  BUF(BL) := "E";
-                  J := J + 1;
-                  while J <= N and then (IS_DIGIT(LINE(J)) or LINE(J) = "+" or LINE(J) = "-") loop
-                     BL := BL + 1;
-                     BUF(BL) := LINE(J);
-                     J := J + 1;
-                  end loop;
+               if EXPONENT_AHEAD(LINE, J) then
+                  EXPONENT(LINE, J, BUF, BL);
                end if;
                ADD_TOKEN(K_FLOAT, BUF(1 .. BL), 0);
-            elsif J < N and then ((LINE(J) = "E" or LINE(J) = "e") and IS_DIGIT(LINE(J + 1))) then
-               -- 1E6 is an approximate number (RM79 2.4)
-               BL := BL + 1;
-               BUF(BL) := "E";
-               J := J + 1;
-               while J <= N and then IS_DIGIT(LINE(J)) loop
-                  BL := BL + 1;
-                  BUF(BL) := LINE(J);
-                  J := J + 1;
-               end loop;
+            elsif EXPONENT_AHEAD(LINE, J) then
+               -- 1E6 and 1E-3 are approximate numbers (RM79 2.4)
+               EXPONENT(LINE, J, BUF, BL);
                ADD_TOKEN(K_FLOAT, BUF(1 .. BL), 0);
             else
                ADD_TOKEN(K_INT, BUF(1 .. BL), V);
             end if;
             I := J;
-         elsif C = """" then
-            -- a character string; a doubled quote stands for one (RM79 2.5)
+         elsif C = """" or C = "%" then
+            -- a character string; a doubled bracket stands for one; % may
+            -- replace " as the bracket (RM79 2.1, 2.5)
+            QUOTE := C;
             J := I + 1;
             BL := 0;
             loop
                if J > N then
                   FAIL(SRC_LINE, "unterminated string");
                end if;
-               if LINE(J) = """" then
-                  exit when J = N or else LINE(J + 1) /= """";
+               if LINE(J) = QUOTE then
+                  exit when J = N or else LINE(J + 1) /= QUOTE;
                   J := J + 1;
+               elsif QUOTE = "%" and LINE(J) = """" then
+                  FAIL(SRC_LINE, "a string bracketed by % cannot contain a quote (RM79 2.1)");
                end if;
                BL := BL + 1;
                BUF(BL) := LINE(J);
@@ -300,11 +365,18 @@
                   or TWO(1 .. 2) = ">>" then
                   ADD_TOKEN(K_OP, TWO(1 .. 2), 0);
                   I := I + 2;
+               elsif C = "!" then
+                  -- ! may replace | (RM79 2.1)
+                  ADD_TOKEN(K_OP, "|", 0);
+                  I := I + 1;
                elsif C = "&" or C = "'" or C = "(" or C = ")" or C = "*" or C = "+"
                   or C = "," or C = "-" or C = "." or C = "/" or C = ":" or C = ";"
                   or C = "<" or C = "=" or C = ">" or C = "|" then
                   ADD_TOKEN(K_OP, TWO(1 .. 1), 0);
                   I := I + 1;
+                  if C = ";" then
+                     CHECK_INCLUDE;
+                  end if;
                else
                   FAIL(SRC_LINE, "unexpected character");
                end if;
@@ -312,6 +384,109 @@
          end if;
       end loop;
    end LEX_LINE;
+
+   -- does an exponent E [+|-] digit begin at LINE(J)?
+   function EXPONENT_AHEAD(LINE : STRING; J : INTEGER) return BOOLEAN is
+   begin
+      if J >= LINE'LENGTH then
+         return FALSE;
+      elsif LINE(J) /= "E" and LINE(J) /= "e" then
+         return FALSE;
+      elsif IS_DIGIT(LINE(J + 1)) then
+         return TRUE;
+      elsif J + 1 >= LINE'LENGTH then
+         return FALSE;
+      end if;
+      return (LINE(J + 1) = "+" or LINE(J + 1) = "-") and IS_DIGIT(LINE(J + 2));
+   end EXPONENT_AHEAD;
+
+   -- E [+|-] integer, appended to the approximate number in BUF
+   procedure EXPONENT(LINE : STRING; J : in out INTEGER; BUF : in out STRING; BL : in out INTEGER) is
+   begin
+      BL := BL + 1;
+      BUF(BL) := "E";
+      J := J + 1;
+      if LINE(J) = "+" or LINE(J) = "-" then
+         BL := BL + 1;
+         BUF(BL) := LINE(J);
+         J := J + 1;
+      end if;
+      while J <= LINE'LENGTH and then (IS_DIGIT(LINE(J)) or LINE(J) = "_") loop
+         if LINE(J) /= "_" then
+            BL := BL + 1;
+            BUF(BL) := LINE(J);
+         elsif J = LINE'LENGTH or else not IS_DIGIT(LINE(J + 1)) then
+            FAIL(SRC_LINE, "an underscore in a number stands between two digits (RM79 2.4)");
+         end if;
+         J := J + 1;
+      end loop;
+   end EXPONENT;
+
+   -- the length of a file, read for inclusion, -1 if it cannot be read, and
+   -- its characters: bodies in C (RM79 13.9)
+   procedure INCLUDE_OPEN(NAME : STRING; LENGTH : out INTEGER) is
+   begin
+      pragma INTERFACE(C);
+   end INCLUDE_OPEN;
+
+   procedure INCLUDE_CHAR(I : INTEGER; C : out CHARACTER) is
+   begin
+      pragma INTERFACE(C);
+   end INCLUDE_CHAR;
+
+   -- pragma INCLUDE("file"); the text of the file stands in place of the
+   -- pragma (RM79 App. B)
+   procedure CHECK_INCLUDE is
+      N : INTEGER;
+   begin
+      if NTOKS < 6 then
+         return;
+      end if;
+      if TOKS(NTOKS - 5).KIND /= K_KW or TOKS(NTOKS - 2).KIND /= K_STR then
+         return;
+      elsif TOKS(NTOKS - 5).S.all /= "PRAGMA" or TOKS(NTOKS - 4).S.all /= "INCLUDE"
+         or TOKS(NTOKS - 3).S.all /= "(" or TOKS(NTOKS - 1).S.all /= ")" then
+         return;
+      end if;
+      INCLUDE_OPEN(TOKS(NTOKS - 2).S.all, N);
+      if N < 0 then
+         FAIL(SRC_LINE, "pragma INCLUDE: the file " & TOKS(NTOKS - 2).S.all & " cannot be read");
+      end if;
+      NTOKS := NTOKS - 6;
+      INCLUDE_TEXT(N);
+   end CHECK_INCLUDE;
+
+   procedure INCLUDE_TEXT(N : INTEGER) is
+      T : STRING(1 .. N + 1);
+      SAVED_LINE : INTEGER := SRC_LINE;
+      FROM : INTEGER := 1;
+   begin
+      for K in 1 .. N loop
+         INCLUDE_CHAR(K, T(K));
+      end loop;
+      SRC_LINE := 0;
+      for K in 1 .. N loop
+         if T(K) = LF then
+            SRC_LINE := SRC_LINE + 1;
+            INCLUDE_LINE(T, FROM, K - 1);
+            FROM := K + 1;
+         end if;
+      end loop;
+      if FROM <= N then
+         SRC_LINE := SRC_LINE + 1;
+         INCLUDE_LINE(T, FROM, N);
+      end if;
+      SRC_LINE := SAVED_LINE;
+   end INCLUDE_TEXT;
+
+   procedure INCLUDE_LINE(T : STRING; FROM, TO : INTEGER) is
+      L : STRING(1 .. TO - FROM + 1);
+   begin
+      for K in FROM .. TO loop
+         L(K - FROM + 1) := T(K);
+      end loop;
+      LEX_LINE(L);
+   end INCLUDE_LINE;
 
    -- GET reads characters, the line ends included, until END_OF_FILE (RM79 14.3)
    procedure READ_SOURCE is
@@ -323,6 +498,9 @@
          GET(C);
          if C = LF then
             SRC_LINE := SRC_LINE + 1;
+            if SRC_LINE <= 300000 then
+               SRC_LINES(SRC_LINE) := MK(BUF(1 .. BL));
+            end if;
             LEX_LINE(BUF(1 .. BL));
             BL := 0;
          else
@@ -334,6 +512,9 @@
       when END_OF_FILE =>
          if BL > 0 then
             SRC_LINE := SRC_LINE + 1;
+            if SRC_LINE <= 300000 then
+               SRC_LINES(SRC_LINE) := MK(BUF(1 .. BL));
+            end if;
             LEX_LINE(BUF(1 .. BL));
          end if;
          ADD_TOKEN(K_EOF, "<end>", 0);

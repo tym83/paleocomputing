@@ -1,0 +1,5 @@
+restricted (TEXT_IO)
+procedure MAIN is
+begin
+   PUT(1);
+end MAIN;

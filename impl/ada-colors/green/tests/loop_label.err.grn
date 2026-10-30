@@ -1,0 +1,6 @@
+procedure MAIN is
+begin
+   <<L>> for I in 1 .. 2 loop
+      null;
+   end loop;
+end MAIN;

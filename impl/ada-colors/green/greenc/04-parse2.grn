@@ -1,62 +1,256 @@
    -- ---- declarative parts (RM79 6.1) ------------------------------------------------
 
-   procedure SKIP_PRAGMA is
+   -- pragma identifier [(argument {, argument})]; an argument is an
+   -- identifier, a string or a number (RM79 2.7)
+   procedure PRAGMA_P(RES : out NODE) is
+      X, A, HEAD, TAIL : NODE;
    begin
-      while not AT_OP(";") loop
+      X := NN(N_PRAGMA, CUR_LINE);
+      EXPECT_KW("PRAGMA");
+      EXPECT_ID(X.NAME);
+      if AT_OP("(") then
          SKIP;
-      end loop;
-      SKIP;
-   end SKIP_PRAGMA;
+         loop
+            if AT_KIND(K_ID) then
+               NAME_NODE(A);
+            elsif AT_KIND(K_STR) or AT_KIND(K_INT) or AT_KIND(K_FLOAT) then
+               PRIMARY(A);
+            else
+               PERROR("a pragma argument is an identifier, a string or a number (RM79 2.7)");
+            end if;
+            APPEND(HEAD, TAIL, A);
+            exit when not AT_OP(",");
+            SKIP;
+         end loop;
+         EXPECT_OP(")");
+      end if;
+      EXPECT_OP(";");
+      X.A := HEAD;
+      CHECK_PRAGMA(X);
+      RES := X;
+   end PRAGMA_P;
 
-   procedure SKIP_VISIBILITY is
-      NAMES : NODE;
+   -- the pragmas of RM79 App. B have their arguments checked; the
+   -- configuration pragmas take effect at once (RM79 13.7); a pragma not
+   -- known here has no effect
+   -- a change of the listing at a line of the source: N (on), F (off), P (page)
+   procedure LISTING_MARK(LINE : INTEGER; WHAT : CHARACTER) is
    begin
-      -- restricted [(unit, ...)] (RM79 8.3)
-      SKIP;
+      if COMPILING_SOURCE and NLISTING < 10000 then
+         NLISTING := NLISTING + 1;
+         LISTING_LINES(NLISTING) := LINE;
+         LISTING_WHAT(NLISTING) := WHAT;
+      end if;
+   end LISTING_MARK;
+
+   procedure CHECK_PRAGMA(X : NODE) is
+      P : STRING := X.NAME.all;
+      N : INTEGER := LIST_LEN(X.A);
+      A : NODE := X.A;
+   begin
+      if P = "PAGE" or P = "INLINE" then
+         if N /= 0 then
+            FAIL(X.LINE, "pragma " & P & " takes no argument (RM79 App. B)");
+         end if;
+         if P = "PAGE" then
+            LISTING_MARK(X.LINE, "P");
+         end if;
+      elsif P = "LIST" or P = "OPTIMIZE" or P = "CREATION" or P = "INTERFACE" or P = "SYSTEM" then
+         if N /= 1 or else A.KIND /= N_NAME then
+            FAIL(X.LINE, "pragma " & P & " takes one identifier (RM79 App. B)");
+         end if;
+         if P = "LIST" and then A.NAME.all /= "ON" and then A.NAME.all /= "OFF" then
+            FAIL(X.LINE, "pragma LIST(ON) or LIST(OFF) (RM79 App. B)");
+         elsif P = "OPTIMIZE" and then A.NAME.all /= "TIME" and then A.NAME.all /= "SPACE" then
+            FAIL(X.LINE, "pragma OPTIMIZE(TIME) or OPTIMIZE(SPACE) (RM79 App. B)");
+         elsif P = "CREATION" and then A.NAME.all /= "STATIC" and then A.NAME.all /= "DYNAMIC" then
+            FAIL(X.LINE, "pragma CREATION(STATIC) or CREATION(DYNAMIC) (RM79 9.2)");
+         end if;
+         if P = "LIST" then
+            LISTING_MARK(X.LINE, A.NAME.all(2));
+         end if;
+         if P = "OPTIMIZE" then
+            CONF_OPTIMIZE := A.NAME;
+         elsif P = "SYSTEM" then
+            CONF_SYSTEM := A.NAME;
+         end if;
+      elsif P = "STORAGE_UNIT" or P = "MEMORY_SIZE" then
+         if N /= 1 or else A.KIND /= N_INT then
+            FAIL(X.LINE, "pragma " & P & " takes a number (RM79 13.7)");
+         end if;
+         if P = "STORAGE_UNIT" and then (A.IVAL /= 8 and A.IVAL /= 16 and A.IVAL /= 32 and A.IVAL /= 64) then
+            FAIL(X.LINE, "the storage units of this machine have 8, 16, 32 or 64 bits (RM79 13.7)");
+         elsif P = "STORAGE_UNIT" then
+            CONF_STORAGE_UNIT := A.IVAL;
+         else
+            CONF_MEMORY_SIZE := A.IVAL;
+         end if;
+      elsif P = "SUPPRESS" or P = "ENVIRONMENT" then
+         if N = 0 then
+            FAIL(X.LINE, "pragma " & P & " names at least one " & "unit or exception (RM79 App. B)");
+         end if;
+         while A /= null loop
+            if A.KIND /= N_NAME then
+               FAIL(X.LINE, "pragma " & P & " takes names (RM79 App. B)");
+            end if;
+            A := A.NEXT;
+         end loop;
+      elsif P = "INCLUDE" then
+         if N /= 1 or else A.KIND /= N_STR then
+            FAIL(X.LINE, "pragma INCLUDE takes the name of a file (RM79 App. B)");
+         end if;
+      end if;
+   end CHECK_PRAGMA;
+
+   -- restricted [(unit {, unit})] (RM79 8.3): the names, as ",A,B,"
+   procedure VISIBILITY_P(RES : out TEXT) is
+      NAMES : NODE;
+      V : TEXT := MK(",");
+   begin
+      EXPECT_KW("RESTRICTED");
       if AT_OP("(") then
          SKIP;
          ID_LIST(NAMES);
          EXPECT_OP(")");
+         while NAMES /= null loop
+            V := MK(V.all & NAMES.NAME.all & ",");
+            NAMES := NAMES.NEXT;
+         end loop;
       end if;
-   end SKIP_VISIBILITY;
+      RES := V;
+   end VISIBILITY_P;
+
+   -- a module or subprogram, possibly under a visibility restriction
+   procedure UNIT_P(RES : out NODE) is
+      V : TEXT;
+      X : NODE;
+   begin
+      if AT_KW("RESTRICTED") then
+         VISIBILITY_P(V);
+      end if;
+      if AT_KW("SEPARATE") then
+         -- a subunit: the body of a stub of an enclosing unit, named first in
+         -- its visibility list (RM79 10.2)
+         SKIP;
+         if V = null or else V.all'LENGTH < 2 then
+            PERROR("a subunit names its enclosing unit first in its visibility list (RM79 10.2)");
+         end if;
+         UNIT_P(X);
+         if X.KIND /= N_PROC and X.KIND /= N_FUNC and X.KIND /= N_PKGBODY and X.KIND /= N_TASKBODY then
+            PERROR("a subunit is a subprogram body or a module body (RM79 10.2)");
+         end if;
+         X.FORMAL := MK("!" & V.all);
+         RES := X;
+         return;
+      end if;
+      if AT_KW("PROCEDURE") or AT_KW("FUNCTION") then
+         SUBPROGRAM(X);
+      elsif AT_KW("PACKAGE") then
+         PACKAGE_P(X);
+      elsif AT_KW("TASK") then
+         TASK_P(X);
+      elsif AT_KW("GENERIC") then
+         GENERIC_P(X);
+      else
+         PERROR("a restricted unit is a subprogram, a package or a task (RM79 8.3)");
+      end if;
+      if X /= null then
+         X.FORMAL := V;
+      end if;
+      RES := X;
+   end UNIT_P;
 
    -- representation specifications (RM79 13) do not change the meaning of a
    -- program here: they are read and ignored
-   procedure SKIP_REPRESENTATION is
+   -- representation specifications (RM79 13.1 - 13.5):
+   --    for T use packing;                  FLAG 1
+   --    for N use static_expression;        FLAG 2, the length in B
+   --    for T use aggregate;                FLAG 3, the codes in B
+   --    for T use record [at mod N;]        FLAG 4, the alignment in C,
+   --       C at U range L .. H; ...                 the components in D
+   --    end record;
+   --    for N use at static_expression;     FLAG 5, the address in B
+   procedure REP_SPEC(RES : out NODE) is
+      X, P, TAIL : NODE;
    begin
-      while not AT_KW("USE") loop
+      X := NN(N_REP, CUR_LINE);
+      EXPECT_KW("FOR");
+      EXPECT_ID(X.NAME);
+      EXPECT_KW("USE");
+      if AT_KW("PACKING") then
          SKIP;
-      end loop;
-      SKIP;
-      if AT_KW("RECORD") then
-         while not (AT_KW("END") and KIND_AT(1) = K_KW and TEXT_AT(1) = "RECORD") loop
+         X.FLAG := 1;
+      elsif AT_KW("AT") then
+         SKIP;
+         X.FLAG := 5;
+         EXPR(X.B);
+      elsif AT_KW("RECORD") then
+         SKIP;
+         X.FLAG := 4;
+         if AT_KW("AT") then
             SKIP;
+            EXPECT_KW("MOD");
+            EXPR(X.C);
+            EXPECT_OP(";");
+         end if;
+         while not AT_KW("END") loop
+            P := NN(N_COMP, CUR_LINE);
+            EXPECT_ID(P.NAME);
+            EXPECT_KW("AT");
+            EXPR(P.A);
+            EXPECT_KW("RANGE");
+            SIMPLE_EXPR(P.B);
+            EXPECT_OP("..");
+            SIMPLE_EXPR(P.C);
+            EXPECT_OP(";");
+            if TAIL = null then
+               X.D := P;
+            else
+               TAIL.NEXT := P;
+            end if;
+            TAIL := P;
          end loop;
-         SKIP;
-         SKIP;
+         EXPECT_KW("END");
+         EXPECT_KW("RECORD");
+      elsif AT_OP("(") then
+         X.FLAG := 3;
+         PRIMARY(X.B);
+      else
+         X.FLAG := 2;
+         EXPR(X.B);
       end if;
-      while not AT_OP(";") loop
-         SKIP;
-      end loop;
-      SKIP;
-   end SKIP_REPRESENTATION;
+      EXPECT_OP(";");
+      RES := X;
+   end REP_SPEC;
 
    procedure DECL_PART(RES : out NODE) is
       HEAD, TAIL, X, NAMES : NODE;
    begin
       loop
          if AT_KW("PRAGMA") then
-            SKIP_PRAGMA;
+            PRAGMA_P(X);
+            APPEND(HEAD, TAIL, X);
          elsif AT_KW("USE") then
             SKIP;
             X := NN(N_USE, CUR_LINE);
             ID_LIST(X.A);
             EXPECT_OP(";");
             APPEND(HEAD, TAIL, X);
+         elsif AT_KW("RESTRICTED") and KIND_AT(1) = K_KW and TEXT_AT(1) = "TYPE" then
+            -- restricted type T is private: no assignment, no equality (RM79 7.4)
+            SKIP;
+            TYPE_DECL(X);
+            if X = null or else X.A.KIND /= D_PRIVATE then
+               PERROR("only a private type is restricted (RM79 7.4)");
+            end if;
+            X.FLAG := 9;
+            APPEND(HEAD, TAIL, X);
          elsif AT_KW("RESTRICTED") then
-            SKIP_VISIBILITY;
+            UNIT_P(X);
+            APPEND(HEAD, TAIL, X);
          elsif AT_KW("FOR") then
-            SKIP_REPRESENTATION;
+            REP_SPEC(X);
+            APPEND(HEAD, TAIL, X);
          elsif AT_KW("TYPE") or AT_KW("SUBTYPE") then
             TYPE_DECL(X);
             APPEND(HEAD, TAIL, X);
@@ -147,9 +341,7 @@
          X.NAME := NAMES.NAME;
          X.A := ST;
          X.B := INIT;
-         if not (IS_CONST and INIT = null) then
-            APPEND(HEAD, TAIL, X);
-         end if;
+         APPEND(HEAD, TAIL, X);
          NAMES := NAMES.NEXT;
       end loop;
       RES := HEAD;
@@ -240,9 +432,16 @@
    procedure DESIGNATOR(RES : out TEXT) is
    begin
       if AT_KIND(K_STR) then
-         -- an operator designator such as "*" (RM79 6.6.1)
+         -- an operator designator such as "*" (RM79 6.6.1); "/=" follows "="
+         -- and cannot be declared
          SKIP;
-         RES := MK(TOKS(TPOS - 1).S.all);
+         RES := MK(UPPER_S(TOKS(TPOS - 1).S.all));
+         if RES.all = "/=" then
+            PERROR("""/="" cannot be declared: it follows the declaration of ""="" (RM79 6.6.1)");
+         end if;
+         if not IS_OPERATOR(RES.all) then
+            PERROR(RES.all & " is not an operator symbol (RM79 6.6.1)");
+         end if;
          return;
       end if;
       EXPECT_ID(RES);
@@ -281,6 +480,15 @@
       elsif not IS_PROC then
          PERROR("a function needs a RETURN clause");
       end if;
+      if AT_KW("RENAMES") then
+         -- another name for a subprogram, or for an entry (RM79 8.5)
+         SKIP;
+         X.IVAL := 2;
+         NAME_P(X.C);
+         EXPECT_OP(";");
+         RES := X;
+         return;
+      end if;
       if AT_OP(";") then
          -- a subprogram declaration (RM79 6.2), completed by a body later
          SKIP;
@@ -290,7 +498,12 @@
       end if;
       EXPECT_KW("IS");
       if AT_KW("SEPARATE") then
-         PERROR("separate bodies are not handled");
+         -- a body stub: the body is a subunit (RM79 10.2)
+         SKIP;
+         EXPECT_OP(";");
+         X.IVAL := 3;
+         RES := X;
+         return;
       end if;
       BODY_PART(X);
       if AT_KIND(K_ID) or AT_KIND(K_STR) then
@@ -314,7 +527,7 @@
          STATEMENTS(X.D);
          if SAW_INTERFACE and X.D = null then
             -- a body written in another language: only pragma INTERFACE (RM79 13.9)
-            X.TAG := MK("INTERFACE");
+            X.TAG := MK("INTERFACE " & SAW_LANG.all);
          end if;
          SAW_INTERFACE := FALSE;
       end if;
@@ -343,7 +556,11 @@
                NAME_NODE(N);
                while AT_OP(".") loop
                   SKIP;
-                  N.TAG := N.NAME;
+                  if N.TAG = null then
+                     N.TAG := N.NAME;
+                  else
+                     N.TAG := MK(N.TAG.all & "." & N.NAME.all);
+                  end if;
                   EXPECT_ID(N.NAME);
                end loop;
             end if;
@@ -372,12 +589,29 @@
          X := NN(N_PKGBODY, LINE);
          EXPECT_ID(X.NAME);
          EXPECT_KW("IS");
+         if AT_KW("SEPARATE") then
+            -- package body D is separate; (RM79 10.2)
+            SKIP;
+            EXPECT_OP(";");
+            X.FLAG := 4;
+            RES := X;
+            return;
+         end if;
          BODY_PART(X);
       else
          X := NN(N_PKGSPEC, LINE);
          EXPECT_ID(X.NAME);
          if AT_KW("IS") and KIND_AT(1) = K_KW and TEXT_AT(1) = "NEW" then
             INSTANTIATION(X, RES);
+            return;
+         end if;
+         if AT_KW("RENAMES") then
+            -- package L renames P; (RM79 8.5)
+            SKIP;
+            X.FLAG := 3;
+            NAME_P(X.A);
+            EXPECT_OP(";");
+            RES := X;
             return;
          end if;
          EXPECT_KW("IS");
@@ -409,10 +643,13 @@
    begin
       while not AT_STATEMENTS_END loop
          if AT_KW("PRAGMA") then
-            if KIND_AT(1) = K_ID and then TEXT_AT(1) = "INTERFACE" then
+            PRAGMA_P(X);
+            if X.NAME.all = "SUPPRESS" then
+               FAIL(X.LINE, "pragma SUPPRESS stands in a declarative part (RM79 11.8, App. B)");
+            elsif X.NAME.all = "INTERFACE" then
                SAW_INTERFACE := TRUE;
+               SAW_LANG := X.A.NAME;
             end if;
-            SKIP_PRAGMA;
          else
             STATEMENT(X);
             APPEND(HEAD, TAIL, X);
@@ -422,17 +659,34 @@
       return;
    end STATEMENTS;
 
+   -- << identifier >> statement: a label serves both goto and exit (RM79 5);
+   -- the label is an N_SLABEL before the statement
    procedure STATEMENT(RES : out NODE) is
-      X, T : NODE;
-      LINE : INTEGER := CUR_LINE;
+      L, X : NODE;
       LABEL : TEXT;
    begin
       if AT_OP("<<") then
-         -- a label serves both goto and exit (RM79 5)
+         L := NN(N_SLABEL, CUR_LINE);
          SKIP;
          EXPECT_ID(LABEL);
          EXPECT_OP(">>");
+         L.NAME := LABEL;
+         if AT_OP("<<") then
+            STATEMENT(X);
+         else
+            LABELLED_STATEMENT(LABEL, X);
+         end if;
+         L.NEXT := X;
+         RES := L;
+         return;
       end if;
+      LABELLED_STATEMENT(null, RES);
+   end STATEMENT;
+
+   procedure LABELLED_STATEMENT(LABEL : TEXT; RES : out NODE) is
+      X, T : NODE;
+      LINE : INTEGER := CUR_LINE;
+   begin
       if AT_KW("NULL") then
          SKIP;
          EXPECT_OP(";");
@@ -455,6 +709,9 @@
                PERROR("the name after END LOOP does not match the label");
             end if;
             SKIP;
+         elsif LABEL /= null then
+            -- a labelled loop repeats its label after end loop (RM79 5.6)
+            PERROR("the loop labelled " & LABEL.all & " ends with end loop " & LABEL.all & " (RM79 5.6)");
          end if;
          EXPECT_OP(";");
          RES := X;
@@ -473,7 +730,13 @@
          end if;
          EXPECT_KW("END");
          if AT_KIND(K_ID) then
+            if LABEL = null or else TOKS(TPOS).S.all /= LABEL.all then
+               PERROR("the name after END does not match the label of the block (RM79 6.7)");
+            end if;
             SKIP;
+         elsif LABEL /= null then
+            -- a labelled block repeats its label after end (RM79 6.7)
+            PERROR("the block labelled " & LABEL.all & " ends with end " & LABEL.all & " (RM79 6.7)");
          end if;
          EXPECT_OP(";");
          RES := X;
@@ -532,7 +795,13 @@
          RES := X;
          return;
       elsif AT_KW("GOTO") then
-         PERROR("goto is not handled");
+         -- goto identifier; (RM79 5.8)
+         SKIP;
+         X := NN(N_GOTO, LINE);
+         EXPECT_ID(X.NAME);
+         EXPECT_OP(";");
+         RES := X;
+         return;
       end if;
       TASK_STATEMENT(X);
       if X /= null then
@@ -552,7 +821,7 @@
       EXPECT_OP(";");
       RES := X;
       return;
-   end STATEMENT;
+   end LABELLED_STATEMENT;
 
    -- initiate, accept, select, delay, abort: in 10-tasks
    procedure TASK_STATEMENT(RES : out NODE) is
@@ -630,6 +899,9 @@
          if OTHERS_ARM then
             X.FLAG := 1;
             STATEMENTS(X.C);
+            if not AT_KW("END") then
+               PERROR("others is the last choice of a case statement (RM79 5.5)");
+            end if;
          else
             ARM := NN(N_ARM, CUR_LINE);
             ARM.A := LABS;
@@ -663,15 +935,7 @@
          if AT_KIND(K_ID) and KIND_AT(1) = K_KW and TEXT_AT(1) = "LOOP" then
             SUBTYPE_IND(X.A);
          else
-            R := NN(N_RANGE, LINE);
-            SIMPLE_EXPR(R.A);
-            if AT_OP("..") then
-               SKIP;
-               SIMPLE_EXPR(R.B);
-               X.A := R;
-            else
-               X.A := R.A;
-            end if;
+            DISCRETE_RANGE_P(X.A);
          end if;
       elsif AT_KW("WHILE") then
          SKIP;
@@ -689,26 +953,36 @@
    -- ---- compilation (RM79 10.1) ------------------------------------------------------
 
    procedure COMPILATION(RES : out NODE) is
+      FIRST : INTEGER;
       HEAD, TAIL, X : NODE;
    begin
       while not AT_KIND(K_EOF) loop
          if AT_KW("PRAGMA") then
-            SKIP_PRAGMA;
-         else
-            if AT_KW("RESTRICTED") then
-               SKIP_VISIBILITY;
+            PRAGMA_P(X);
+            if X.NAME.all = "ENVIRONMENT" then
+               -- the modules named join the default environment (RM79 8.6)
+               X := X.A;
+               while X /= null loop
+                  ENV_NAMES := MK(ENV_NAMES.all & X.NAME.all & ",");
+                  X := X.NEXT;
+               end loop;
             end if;
-            if AT_KW("PROCEDURE") or AT_KW("FUNCTION") then
-               SUBPROGRAM(X);
-            elsif AT_KW("PACKAGE") then
-               PACKAGE_P(X);
-            elsif AT_KW("TASK") then
-               TASK_P(X);
-            elsif AT_KW("GENERIC") then
-               GENERIC_P(X);
-            else
+         else
+            if not (AT_KW("PROCEDURE") or AT_KW("FUNCTION") or AT_KW("PACKAGE") or AT_KW("TASK")
+               or AT_KW("GENERIC") or AT_KW("RESTRICTED")) then
                PERROR("a compilation unit is a subprogram, a package or a task");
             end if;
+            FIRST := TOKS(TPOS).LINE;
+            UNIT_P(X);
+            if X.FORMAL = null then
+               -- a compilation unit is restricted, with an empty list by default (RM79 10.1)
+               X.FORMAL := MK(",");
+            end if;
+            if COMPILING_SOURCE then
+               SPANS := new SPAN_REC(X, FIRST, TOKS(TPOS - 1).LINE, ENV_NAMES, SPANS);
+            end if;
+            -- the environment named so far by pragma ENVIRONMENT
+            X.FORMAL := MK(X.FORMAL.all & ENV_NAMES.all);
             APPEND(HEAD, TAIL, X);
          end if;
       end loop;

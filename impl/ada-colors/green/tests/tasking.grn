@@ -1,5 +1,7 @@
 -- GREEN tasking (RM79 9): initiate, rendezvous, select, delay, abort
+restricted (TEXT_IO)
 procedure MAIN is
+   use TEXT_IO;
    task BUFFER is
       entry PUT_ITEM(X : in INTEGER);
       entry GET_ITEM(X : out INTEGER);

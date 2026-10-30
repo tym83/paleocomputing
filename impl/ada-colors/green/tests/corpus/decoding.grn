@@ -1,5 +1,7 @@
 -- INTRO 1979 Example 6.3 (message decoding); the changes are marked CHANGE n and listed in CHANGES.md
+restricted (TEXT_IO)  -- CHANGE 5
 procedure MESSAGE_DECODING is
+   use TEXT_IO;  -- CHANGE 5
    -- CHANGE 1: END_OF_TRANSMISSION, PRINT and the message are "declared
    -- elsewhere" in the original; here they are given
    END_OF_TRANSMISSION : constant CHARACTER := EOT;

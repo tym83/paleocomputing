@@ -1,0 +1,8 @@
+procedure MAIN is
+   function GAUSS(X : FLOAT) return FLOAT is
+   begin
+      pragma INTERFACE(FORTRAN);
+   end GAUSS;
+begin
+   null;
+end MAIN;

@@ -1,0 +1,17 @@
+procedure MAIN is
+   package K is
+      restricted type R is private;
+   private
+      type R is record
+         N : INTEGER;
+      end record;
+   end K;
+   generic (type T) procedure COPY(A : T; B : out T);
+   procedure COPY(A : T; B : out T) is
+   begin
+      B := A;
+   end COPY;
+   procedure C2 is new COPY(T is K.R);
+begin
+   null;
+end MAIN;

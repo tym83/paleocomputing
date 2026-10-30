@@ -1,0 +1,13 @@
+procedure MAIN is
+   type REG is record
+      A : INTEGER range 0 .. 7;
+      B : BOOLEAN;
+   end record;
+   for REG use
+      record
+         A at 0 range 0 .. 2;
+         B at 0 range 2 .. 2;
+      end record;
+begin
+   null;
+end MAIN;

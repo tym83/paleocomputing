@@ -1,0 +1,8 @@
+package LIB is
+   X : INTEGER := 1;
+end LIB;
+procedure MAIN is
+   use LIB;
+begin
+   null;
+end MAIN;

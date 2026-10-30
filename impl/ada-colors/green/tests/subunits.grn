@@ -1,0 +1,52 @@
+-- subunits (RM79 10.2): body stubs of a procedure, a package body and a
+-- task body, their bodies compiled as subunits that see what TOP sees
+restricted (TEXT_IO)
+procedure TOP is
+   use TEXT_IO;
+   type REAL is digits 10;
+   R : REAL := 2.0;
+   package D is
+      PI : constant REAL := 3.14159_26536;
+      function F(X : REAL) return REAL;
+      procedure G(Y : REAL);
+   end D;
+   package body D is separate;
+   procedure Q(U : in out REAL) is separate;
+   task T is
+      entry E(X : INTEGER);
+   end T;
+   task body T is separate;
+begin
+   Q(R);
+   D.G(R);
+   initiate T;
+   T.E(7);
+end TOP;
+restricted (TOP)
+separate procedure Q(U : in out REAL) is
+   use D;
+begin
+   U := F(U);
+end Q;
+restricted (TOP)
+separate package body D is
+   function F(X : REAL) return REAL is
+   begin
+      return X * PI;
+   end F;
+   procedure G(Y : REAL) is separate;
+end D;
+restricted (TOP, TEXT_IO)
+separate procedure G(Y : REAL) is
+   use TEXT_IO;
+begin
+   PUT(FLOAT(Y)); PUT(FLOAT(R)); PUT(NEWLINE);
+end G;
+restricted (TOP, TEXT_IO)
+separate task body T is
+   use TEXT_IO;
+begin
+   accept E(X : INTEGER) do
+      PUT(X); PUT(NEWLINE);
+   end E;
+end T;

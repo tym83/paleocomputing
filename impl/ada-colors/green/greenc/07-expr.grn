@@ -83,7 +83,10 @@
    begin
       if E.KIND = N_NAME then
          Y := LOOKUP(E.NAME.all);
-         return Y /= null and then (Y.KIND = Y_VAR or Y.KIND = Y_CONST);
+         if not (Y /= null) then
+            return FALSE;
+         end if;
+         return (Y.KIND = Y_VAR or Y.KIND = Y_CONST);
       elsif E.KIND = N_SELECT then
          return IS_OBJECT(E.A);
       elsif E.KIND = N_APPLY then
@@ -95,21 +98,49 @@
       return FALSE;
    end IS_OBJECT;
 
+   -- a constant of an access type, declared as such (RM79 3.8)
+   function IS_CONST_ACCESS(E : NODE) return BOOLEAN is
+      Y : SYM;
+   begin
+      if E.KIND /= N_NAME then
+         return FALSE;
+      end if;
+      Y := LOOKUP(E.NAME.all);
+      if Y = null then
+         return FALSE;
+      elsif Y.KIND /= Y_CONST or Y.FLAGS mod 2 /= 1 or Y.T = null then
+         return FALSE;
+      end if;
+      return Y.T.KIND = T_PTR;
+   end IS_CONST_ACCESS;
+
    procedure LVALUE(E : NODE; CODE_OUT : out TEXT; T : out TYP; C : out CONS; RO : out BOOLEAN) is
+      CP : BOOLEAN;
+      EX : NODE;
       Y : SYM;
       BASE : TEXT;
       BT : TYP;
       BC : CONS;
    begin
-      if E.KIND = N_NAME or (E.KIND = N_SELECT and then IS_PACKAGE(E.A)) then
-         if E.KIND = N_SELECT then
+      EXPANDED(E, EX);
+      if EX /= null then
+         LVALUE(EX, CODE_OUT, T, C, RO);
+         return;
+      end if;
+      if E.KIND = N_NAME or else (E.KIND = N_SELECT and IS_PACKAGE(E.A)) then
+         if E.IVAL > 0 then
+            Y := LOOKUP_AT(E.NAME.all, E.IVAL - 1);
+         elsif E.KIND = N_SELECT then
             -- P.X: a variable of the visible part of package P (RM79 4.1.2)
-            Y := MEMBER_OF(E.A.NAME.all, E.NAME.all, E.LINE);
+            Y := MEMBER_OF(PATH_OF(E.A), E.NAME.all, E.LINE);
          else
             Y := LOOKUP(E.NAME.all);
          end if;
          if Y = null then
             FAIL(E.LINE, E.NAME.all & " is not declared");
+         end if;
+         if Y.KIND = Y_CONFLICT then
+            FAIL(E.LINE, E.NAME.all & " is declared in two used modules: name it P." & E.NAME.all & " (RM79 8.4)");
          end if;
          if Y.KIND /= Y_VAR and Y.KIND /= Y_CONST then
             FAIL(E.LINE, E.NAME.all & " is not an object");
@@ -122,20 +153,25 @@
          LVALUE(E.A, CODE_OUT, T, C, RO);
       elsif E.KIND = N_SELECT then
          LVALUE(E.A, BASE, BT, BC, RO);
-         SELECT_ON(BASE.all, BT, E, RO, CODE_OUT, T, C);
+         CP := BT.KIND = T_PTR and IS_CONST_ACCESS(E.A);
+         SELECT_ON(BASE.all, BT, E, RO, TRUE, CODE_OUT, T, C);
+         -- the object designated by a constant cannot be changed (RM79 3.8)
+         RO := RO or CP;
       elsif E.KIND = N_APPLY then
          LVALUE(E.A, BASE, BT, BC, RO);
+         CP := BT.KIND = T_PTR and IS_CONST_ACCESS(E.A);
          INDEX_ON(BASE.all, BT, E, RO, TRUE, CODE_OUT, T, C);
+         RO := RO or CP;
       else
          FAIL(E.LINE, "not an object");
       end if;
    end LVALUE;
 
    -- selected components (RM79 4.1.2); dereferencing is implicit (RM79 4.3)
-   procedure SELECT_ON(BASE : STRING; BT : TYP; E : NODE; RO : in out BOOLEAN;
+   procedure SELECT_ON(BASE : STRING; BT : TYP; E : NODE; RO : in out BOOLEAN; LV : BOOLEAN;
                        CODE_OUT : out TEXT; T : out TYP; C : out CONS) is
       F : FIELD;
-      D : TEXT;
+      D, CT, TMP : TEXT;
    begin
       C := NO_CONS;
       if BT.KIND = T_PTR then
@@ -147,7 +183,7 @@
             T := BT.TARGET;
             return;
          end if;
-         SELECT_ON(D.all, BT.TARGET, E, RO, CODE_OUT, T, C);
+         SELECT_ON(D.all, BT.TARGET, E, RO, TRUE, CODE_OUT, T, C);
          return;
       end if;
       if BT.KIND = T_RECORD then
@@ -158,9 +194,27 @@
          F := BT.FIELDS;
          while F /= null loop
             if F.NAME.all = E.NAME.all then
-               C := F.C;
+               SUBST_CONS(F.C, BASE, C);
                CODE_OUT := MK(BASE & "." & C_FIELD(E.NAME.all));
                T := F.T;
+               if F.IS_CONST then
+                  -- a constant component changes only with the whole record (RM79 3.7.1)
+                  RO := TRUE;
+               end if;
+               if F.COND /= null then
+                  -- the component of a variant that is not present: DISCRIMINANT_ERROR (RM79 4.1.2)
+                  CTYPE(BT, CT);
+                  NEW_NAME("vr", TMP);
+                  if LV then
+                     CODE_OUT := MK("(*({ " & CT.all & " *" & TMP.all & " = &(" & BASE & "); if (!("
+                                    & SUBST(F.COND.all, "(*" & TMP.all & ")") & ")) rt_raise(RT_X_TAG); &"
+                                    & TMP.all & "->" & C_FIELD(E.NAME.all) & "; }))");
+                  else
+                     CODE_OUT := MK("({ " & CT.all & " " & TMP.all & " = " & BASE & "; if (!("
+                                    & SUBST(F.COND.all, TMP.all) & ")) rt_raise(RT_X_TAG); " & TMP.all & "."
+                                    & C_FIELD(E.NAME.all) & "; })");
+                  end if;
+               end if;
                return;
             end if;
             F := F.NEXT;
@@ -170,12 +224,16 @@
       FAIL(E.LINE, "cannot select " & E.NAME.all & " here");
    end SELECT_ON;
 
-   -- indexed components and slices (RM79 4.1.1, 4.3)
+   -- indexed components and slices (RM79 4.1.1, 4.3): one index for each
+   -- dimension, applied to the array and then to its subarrays; a slice of a
+   -- one-dimensional array shares its components
    procedure INDEX_ON(BASE : STRING; BT : TYP; E : NODE; RO : in out BOOLEAN; LV : BOOLEAN;
                       CODE_OUT : out TEXT; T : out TYP; C : out CONS) is
       A : NODE := E.B;
+      ARRT : TYP := BT;
+      ACC : TEXT := MK(BASE);
       IT : TYP;
-      I, LO, HI, D : TEXT;
+      I, LO, HI, D, CT, TMP : TEXT;
    begin
       C := NO_CONS;
       if BT.KIND = T_PTR then
@@ -185,70 +243,94 @@
          INDEX_ON(D.all, BT.TARGET, E, RO, LV, CODE_OUT, T, C);
          return;
       end if;
-      if LIST_LEN(A) = 2 and BT.KIND = T_ARRAY and then BT.IDX2 /= null then
-         -- A(I, J): row-major in one block of components
-         GEXPR(A, BT.IDX, IT, I);
+      if BT.KIND /= T_ARRAY then
+         FAIL(E.LINE, "cannot index this");
+      end if;
+      if A = null then
+         FAIL(E.LINE, "an index is required");
+      end if;
+      if A.KIND = N_RANGE or A.KIND = S_MARK or (A.KIND = N_NAME and IS_TYPE_NAME(A.NAME.all)) then
+         -- a slice (RM79 4.3)
+         if A.NEXT /= null or BT.DIMS /= 1 then
+            FAIL(E.LINE, "a slice is taken of a one-dimensional array (RM79 4.3)");
+         end if;
+         DISCRETE_BOUNDS(A, BT.IDX, IT, LO, HI);
          CHECK_TYPE(IT, BT.IDX, E.LINE);
-         GEXPR(A.NEXT, BT.IDX2, IT, D);
-         CHECK_TYPE(IT, BT.IDX2, E.LINE);
-         CODE_OUT := MK(BASE & ".p[(rt_index(" & I.all & ", " & BASE & ".lo, " & BASE & ".hi) - " & BASE
-                        & ".lo) * (" & BASE & ".hi2 - " & BASE & ".lo2 + 1) + rt_index(" & D.all & ", "
-                        & BASE & ".lo2, " & BASE & ".hi2) - " & BASE & ".lo2]");
-         T := BT.ELEM;
-         C := BT.ELEMCONS;
-         return;
-      end if;
-      if LIST_LEN(A) /= 1 then
-         FAIL(E.LINE, "one index expected");
-      end if;
-      if BT.KIND = T_STRING then
-         if A.KIND = N_RANGE then
-            GEXPR(A.A, TY_INT, IT, LO);
-            GEXPR(A.B, TY_INT, IT, HI);
-            CODE_OUT := MK("rt_str_slice(" & BASE & ", " & LO.all & ", " & HI.all & ")");
-            T := TY_STRING;
-            RO := TRUE;
-            return;
-         end if;
-         GEXPR(A, TY_INT, IT, I);
-         T := TY_CHAR;
-         if LV then
-            CODE_OUT := MK("(*rt_str_at(&" & BASE & ", " & I.all & "))");
-         else
-            CODE_OUT := MK("rt_str_get(" & BASE & ", " & I.all & ")");
-            RO := TRUE;
-         end if;
-         return;
-      end if;
-      if BT.KIND = T_ARRAY and A.KIND = N_RANGE then
-         -- a slice shares the components of the array (RM79 4.1.2)
-         GEXPR(A.A, BT.IDX, IT, LO);
-         GEXPR(A.B, BT.IDX, IT, HI);
          CTYPE(BT, D);
-         CODE_OUT := MK("({ " & D.all & " s_ = " & BASE & "; rt_int l_ = " & LO.all & ", h_ = " & HI.all
-                        & "; if (l_ <= h_) { rt_index(l_, s_.lo, s_.hi); rt_index(h_, s_.lo, s_.hi); }"
-                        & " s_.p += l_ - s_.lo; s_.lo = l_; s_.hi = h_; s_; })");
+         NEW_NAME("sl", TMP);
+         CODE_OUT := MK("({ " & D.all & " " & TMP.all & " = " & BASE & "; rt_int l_ = " & LO.all & ", h_ = "
+                        & HI.all & "; if (l_ <= h_) { rt_index(l_, " & TMP.all & ".lo, " & TMP.all & ".hi); "
+                        & "rt_index(h_, " & TMP.all & ".lo, " & TMP.all & ".hi); } " & TMP.all & ".p += l_ - "
+                        & TMP.all & ".lo; " & TMP.all & ".lo = l_; " & TMP.all & ".hi = h_; " & TMP.all & "; })");
          T := BT;
          RO := TRUE;
          return;
       end if;
-      if BT.KIND = T_ARRAY then
-         GEXPR(A, BT.IDX, IT, I);
-         CHECK_TYPE(IT, BT.IDX, E.LINE);
-         CODE_OUT := MK(BASE & ".p[rt_index(" & I.all & ", " & BASE & ".lo, " & BASE & ".hi) - "
-                        & BASE & ".lo]");
-         T := BT.ELEM;
-         C := BT.ELEMCONS;
-         return;
+      if LIST_LEN(A) > BT.DIMS then
+         FAIL(E.LINE, "too many indexes for " & KIND_NAME(BT) & " (RM79 4.1.1)");
       end if;
-      FAIL(E.LINE, "cannot index this");
+      while A /= null loop
+         GEXPR(A, ARRT.IDX, IT, I);
+         CHECK_TYPE(IT, ARRT.IDX, E.LINE);
+         CTYPE(ARRT, CT);
+         NEW_NAME("ix", TMP);
+         if LV then
+            ACC := MK("(*({ " & CT.all & " *" & TMP.all & " = &(" & ACC.all & "); &" & TMP.all & "->p[rt_index("
+                      & I.all & ", " & TMP.all & "->lo, " & TMP.all & "->hi) - " & TMP.all & "->lo]; }))");
+         else
+            ACC := MK("({ " & CT.all & " " & TMP.all & " = " & ACC.all & "; " & TMP.all & ".p[rt_index("
+                      & I.all & ", " & TMP.all & ".lo, " & TMP.all & ".hi) - " & TMP.all & ".lo]; })");
+         end if;
+         C := ARRT.ELEMCONS;
+         ARRT := ARRT.ELEM;
+         A := A.NEXT;
+      end loop;
+      CODE_OUT := ACC;
+      T := ARRT;
+      if not LV then
+         RO := TRUE;
+      end if;
    end INDEX_ON;
+
+   function TYPE_ATTRIBUTE(T : TYP; NAME : STRING) return BOOLEAN is
+      Y : SYM := TABLE(HASH(NAME));
+      P : PARM;
+   begin
+      while Y /= null loop
+         if Y.NAME.all = NAME and then (Y.KIND = Y_FUNC or Y.KIND = Y_PROC) then
+            if SAME(Y.RESULT, T) then
+               return TRUE;
+            end if;
+            P := Y.PARAMS;
+            while P /= null loop
+               if SAME(P.T, T) then
+                  return TRUE;
+               end if;
+               P := P.NEXT;
+            end loop;
+         end if;
+         Y := Y.CHAIN;
+      end loop;
+      return FALSE;
+   end TYPE_ATTRIBUTE;
+
+   function IS_TYPE_NAME(N : STRING) return BOOLEAN is
+      Y : SYM := LOOKUP(N);
+   begin
+      if not (Y /= null) then
+         return FALSE;
+      end if;
+      return Y.KIND = Y_TYPE;
+   end IS_TYPE_NAME;
 
    -- ---- expressions (RM79 4.4) -------------------------------------------------------------
 
    function IS_CHAR_LIT(E : NODE) return BOOLEAN is
    begin
-      return E.KIND = N_STR and then E.NAME'LENGTH = 1;
+      if not (E.KIND = N_STR) then
+         return FALSE;
+      end if;
+      return E.NAME'LENGTH = 1;
    end IS_CHAR_LIT;
 
    function IS_ENUM_LIT(E : NODE) return BOOLEAN is
@@ -258,7 +340,10 @@
          return FALSE;
       end if;
       Y := LOOKUP(E.NAME.all);
-      return Y /= null and then Y.KIND = Y_ENUMLIT;
+      if not (Y /= null) then
+         return FALSE;
+      end if;
+      return Y.KIND = Y_ENUMLIT;
    end IS_ENUM_LIT;
 
    -- a string as a C string literal
@@ -288,17 +373,50 @@
       end;
    end C_STRING;
 
+   -- a literal, alone or under a sign: its type comes from the context
+   function IS_LITERAL(E : NODE) return BOOLEAN is
+   begin
+      if E.KIND = N_INT or E.KIND = N_FLOAT or IS_CHAR_LIT(E) then
+         return TRUE;
+      elsif E.KIND = N_PAREN or (E.KIND = N_UNOP and E.NAME.all /= "NOT") then
+         return IS_LITERAL(E.A);
+      elsif E.KIND = N_BINOP and then (E.NAME.all = "+" or E.NAME.all = "-" or E.NAME.all = "*"
+         or E.NAME.all = "/" or E.NAME.all = "**" or E.NAME.all = "MOD") then
+         return IS_LITERAL(E.A) and IS_LITERAL(E.B);
+      end if;
+      return FALSE;
+   end IS_LITERAL;
+
+   -- the bounds of a range L .. H: both of one type; a literal bound takes
+   -- the type of the other one (RM79 3.5)
+   procedure RANGE_BOUNDS(L, H : NODE; WANT : TYP; LINE : INTEGER; T : out TYP; LO, HI : out TEXT) is
+      W : TYP := WANT;
+      T2 : TYP;
+   begin
+      if W = null and IS_CHAR_LIT(L) and IS_CHAR_LIT(H) then
+         W := TY_CHAR;
+      end if;
+      if W = null and IS_LITERAL(L) and not IS_LITERAL(H) then
+         GEXPR(H, null, T, HI);
+         GEXPR(L, T, T2, LO);
+         CHECK_TYPE(T2, T, LINE);
+      else
+         GEXPR(L, W, T, LO);
+         GEXPR(H, T, T2, HI);
+         CHECK_TYPE(T2, T, LINE);
+      end if;
+   end RANGE_BOUNDS;
+
    procedure GEXPR(E : NODE; WANT : TYP; T : out TYP; R : out TEXT) is
-      Y : SYM;
-      BT : TYP;
-      C : CONS;
-      RO : BOOLEAN;
-      BASE, A : TEXT;
-      NM : NODE;
       SAVED_LV : BOOLEAN := IN_LV_PATH;
+      W : TYP := WANT;
    begin
       IN_LV_PATH := FALSE;
-      GEXPR_1(E, WANT, T, R);
+      if W /= null and then (W.VIEW_OF /= null and IN_INSTANCE = 0) then
+         -- outside the generic body a formal type is its actual
+         W := BASE_VIEW(W);
+      end if;
+      GEXPR_1(E, W, T, R);
       IN_LV_PATH := SAVED_LV;
    end GEXPR;
 
@@ -308,23 +426,43 @@
       C : CONS;
       RO : BOOLEAN;
       BASE, A : TEXT;
-      NM : NODE;
+      NM, C2 : NODE;
    begin
       T := TY_INT;
       case E.KIND of
          when 1 =>
-            -- an integer literal is not a real one (RM79 2.4)
+            -- an integer literal is not a real one (RM79 2.4); it belongs to
+            -- every integer type, INTEGER when the context does not tell
+            if WANT /= null and then (WANT.KIND = T_INT and WANT.VIEW_OF = null) then
+               T := WANT;
+            end if;
             R := MK("((rt_int)" & INTEGER'REP(E.IVAL) & "LL)");
          when 2 =>
+            -- a real literal belongs to every real type (RM79 3.5.5)
             T := TY_FLOAT;
             R := E.NAME;
+            if WANT /= null and then (WANT.KIND = T_FLOAT and WANT.VIEW_OF = null) then
+               T := WANT;
+            elsif WANT /= null and then WANT.KIND = T_FIXED and then WANT.FSMALL /= null then
+               T := WANT;
+               R := MK("rt_g_fix(" & E.NAME.all & ", " & WANT.FSMALL.all & ")");
+            end if;
          when 3 =>
-            if IS_CHAR_LIT(E) and WANT /= null and then (WANT.KIND = T_CHAR or WANT.KIND = T_ENUM) then
+            if (IS_CHAR_LIT(E) and WANT /= null) and then ((WANT.KIND = T_CHAR or WANT.KIND = T_ENUM)
+               and WANT.VIEW_OF = null) then
                -- a character literal is a string of length one (RM79 2.5)
                CHAR_LITERAL(E, WANT, T, R);
+            elsif WANT /= null and then WANT.KIND = T_ARRAY and then WANT.DIMS = 1
+               and then (WANT.ELEM.KIND = T_CHAR or WANT.ELEM.KIND = T_ENUM) and then not IS_STRING(WANT) then
+               -- a string is an aggregate of characters for any array of a
+               -- character type (RM79 3.6.3)
+               STRING_AGGREGATE(E, WANT, T, R);
             else
                T := TY_STRING;
-               R := MK("rt_str(" & C_STRING(E.NAME.all) & ", " & INTEGER'REP(E.NAME'LENGTH) & ")");
+               if WANT /= null and then IS_STRING(WANT) then
+                  T := WANT;
+               end if;
+               R := MK("rt_g_lit(" & C_STRING(E.NAME.all) & ", " & INTEGER'REP(E.NAME'LENGTH) & ")");
             end if;
          when 4 =>
             T := TY_NIL;
@@ -338,6 +476,14 @@
          when 7 =>
             GEN_BINOP(E, WANT, T, R);
          when 8 =>
+            EXPANDED(E.A, NM);
+            if NM /= null then
+               C2 := NN(N_APPLY, E.LINE);
+               C2.all := E.all;
+               C2.A := NM;
+               GEXPR(C2, WANT, T, R);
+               return;
+            end if;
             if E.A.KIND = N_NAME then
                Y := LOOKUP(E.A.NAME.all);
                if Y = null or else (Y.KIND = Y_FUNC or Y.KIND = Y_PROC or Y.KIND = Y_ENTRY) then
@@ -355,9 +501,14 @@
                CALL_WANT := WANT;
                GCALL(E, FALSE, T, R);
                return;
+            elsif E.A.KIND = N_SELECT and then E.A.A.KIND = N_NAME and then IS_TYPE_NAME(E.A.A.NAME.all) then
+               -- T.F(...): a subprogram attribute of type T (RM79 3.3, 4.1.2)
+               CALL_WANT := WANT;
+               GCALL(E, FALSE, T, R);
+               return;
             elsif E.A.KIND = N_SELECT and then IS_PACKAGE(E.A.A) then
                -- P.F(...) calls a function of the visible part of P
-               Y := MEMBER_OF(E.A.A.NAME.all, E.A.NAME.all, E.LINE);
+               Y := MEMBER_OF(PATH_OF(E.A.A), E.A.NAME.all, E.LINE);
                if Y /= null and then (Y.KIND = Y_FUNC or Y.KIND = Y_PROC or Y.KIND = Y_ENTRY) then
                   CALL_WANT := WANT;
                   GCALL(E, FALSE, T, R);
@@ -367,18 +518,36 @@
             GEXPR(E.A, null, BT, BASE);
             RO := TRUE;
             INDEX_ON(BASE.all, BT, E, RO, FALSE, R, T, C);
+            if IS_NUMERIC(T) or IS_DISCRETE(T) then
+               R := MK("G_NV(" & R.all & ")");
+            end if;
          when 9 =>
+            EXPANDED(E, NM);
+            if NM /= null then
+               GEN_NAME(NM, WANT, T, R);
+               return;
+            end if;
+            if E.A.KIND = N_NAME and then IS_TYPE_NAME(E.A.NAME.all) then
+               NM := NN(N_APPLY, E.LINE);
+               NM.A := E;
+               CALL_WANT := WANT;
+               GCALL(NM, FALSE, T, R);
+               return;
+            end if;
             if IS_PACKAGE(E.A) then
                -- P.X names a declaration of the visible part of P (RM79 4.1.2)
                NM := NN(N_NAME, E.LINE);
                NM.NAME := E.NAME;
-               NM.TAG := E.A.NAME;
+               NM.TAG := MK(PATH_OF(E.A));
                GEN_NAME(NM, WANT, T, R);
                return;
             end if;
             GEXPR(E.A, null, BT, BASE);
             RO := TRUE;
-            SELECT_ON(BASE.all, BT, E, RO, R, T, C);
+            SELECT_ON(BASE.all, BT, E, RO, FALSE, R, T, C);
+            if IS_NUMERIC(T) or IS_DISCRETE(T) then
+               R := MK("G_NV(" & R.all & ")");
+            end if;
          when 10 =>
             GEN_ATTR(E, WANT, T, R);
          when 11 =>
@@ -390,11 +559,35 @@
       end case;
    end GEXPR_1;
 
+   -- "ABC" for an array of characters other than STRING: a positional
+   -- aggregate of character literals
+   procedure STRING_AGGREGATE(E : NODE; WANT : TYP; T : out TYP; R : out TEXT) is
+      AG, IT, TAIL, L : NODE;
+   begin
+      AG := NN(N_AGG, E.LINE);
+      for K in 1 .. E.NAME'LENGTH loop
+         L := NN(N_STR, E.LINE);
+         L.NAME := MK(E.NAME.all(K .. K));
+         IT := NN(N_CITEM, E.LINE);
+         IT.B := L;
+         if TAIL = null then
+            AG.A := IT;
+         else
+            TAIL.NEXT := IT;
+         end if;
+         TAIL := IT;
+      end loop;
+      if AG.A = null then
+         FAIL(E.LINE, "an empty string is not an aggregate of " & KIND_NAME(WANT));
+      end if;
+      AGGREGATE(AG, WANT, T, R);
+   end STRING_AGGREGATE;
+
    procedure CHAR_LITERAL(E : NODE; WANT : TYP; T : out TYP; R : out TEXT) is
       I : INTEGER;
    begin
       if WANT.KIND = T_CHAR then
-         T := TY_CHAR;
+         T := WANT;
          R := MK(INTEGER'REP(CHARACTER'ORD(E.NAME(1)) - 1));
          return;
       end if;
@@ -407,11 +600,40 @@
       R := MK(INTEGER'REP(I));
    end CHAR_LITERAL;
 
+   -- M.X where M is an enclosing subprogram or named block: the X declared
+   -- in M (RM79 4.1.2); null if E is not such a name
+   procedure EXPANDED(E : NODE; R : out NODE) is
+      Y : SYM;
+      D : INTEGER;
+   begin
+      R := null;
+      if E.KIND /= N_SELECT or else E.A.KIND /= N_NAME then
+         return;
+      end if;
+      D := ENCLOSING_DEPTH(E.A.NAME.all);
+      if D < 0 then
+         return;
+      end if;
+      Y := LOOKUP(E.A.NAME.all);
+      if Y /= null and then (Y.KIND = Y_VAR or Y.KIND = Y_CONST or Y.KIND = Y_PACKAGE or Y.KIND = Y_TASK) then
+         return;
+      end if;
+      if LOOKUP_AT(E.NAME.all, D) = null then
+         FAIL(E.LINE, E.NAME.all & " is not declared in " & E.A.NAME.all);
+      end if;
+      R := NN(N_NAME, E.LINE);
+      R.NAME := E.NAME;
+      R.IVAL := D + 1;
+   end EXPANDED;
+
    procedure GEN_NAME(E : NODE; WANT : TYP; T : out TYP; R : out TEXT) is
       Y : SYM := LOOKUP(E.NAME.all);
       Z : SYM;
       CALL : NODE;
    begin
+      if E.IVAL > 0 then
+         Y := LOOKUP_AT(E.NAME.all, E.IVAL - 1);
+      end if;
       if E.TAG /= null then
          Y := MEMBER_OF(E.TAG.all, E.NAME.all, E.LINE);
       end if;
@@ -421,15 +643,25 @@
          end if;
          FAIL(E.LINE, E.NAME.all & " is not declared");
       end if;
+      if Y.KIND = Y_CONFLICT then
+         FAIL(E.LINE, E.NAME.all & " is declared in two used modules: name it P." & E.NAME.all & " (RM79 8.4)");
+      end if;
       if Y.KIND = Y_CONST and Y.HASMV then
          -- a manifest integer constant is its value, wherever it is used
          T := Y.T;
          R := MK("((rt_int)" & INTEGER'REP(Y.MVALUE) & "LL)");
          return;
       end if;
+      if Y.KIND = Y_CONST and Y.FLAGS = F_CONST_OBJ + F_DEFERRED then
+         FAIL(E.LINE, "deferred constant " & Y.NAME.all & " is used before its full declaration (RM79 7.4)");
+      end if;
       if Y.KIND = Y_VAR or Y.KIND = Y_CONST then
          T := Y.T;
          ACCESS_OF(Y, R);
+         if Y.KIND = Y_VAR and (IS_NUMERIC(T) or IS_DISCRETE(T)) then
+            -- a variable without a value raises NO_VALUE_ERROR (RM79 11.1)
+            R := MK("G_NV(" & R.all & ")");
+         end if;
          return;
       end if;
       if Y.KIND = Y_ENUMLIT then
@@ -443,6 +675,17 @@
             if Z = null then
                Z := Y;
             end if;
+         else
+            -- without a context an overloaded literal is ambiguous (RM79 3.5.1)
+            Z := Y.CHAIN;
+            while Z /= null loop
+               if Z.NAME.all = E.NAME.all and then Z.KIND = Y_ENUMLIT and then not SAME(Z.T, Y.T) then
+                  FAIL(E.LINE, "the literal " & E.NAME.all & " is ambiguous: qualify it, T(" & E.NAME.all
+                       & ") (RM79 3.5.1, 4.6)");
+               end if;
+               Z := Z.CHAIN;
+            end loop;
+            Z := Y;
          end if;
          T := Z.T;
          R := MK(INTEGER'REP(Z.MVALUE));
@@ -459,7 +702,7 @@
    end GEN_NAME;
 
    procedure GEN_UNOP(E : NODE; WANT : TYP; T : out TYP; R : out TEXT) is
-      A : TEXT;
+      A, X : TEXT;
       DONE : BOOLEAN;
    begin
       USER_OPERATOR(E, WANT, T, R, DONE);
@@ -467,21 +710,281 @@
          return;
       end if;
       if E.NAME.all = "NOT" then
-         GEXPR(E.A, TY_BOOL, T, A);
-         CHECK_TYPE(T, TY_BOOL, E.LINE);
+         GEXPR(E.A, WANT, T, A);
+         if T.KIND = T_ARRAY and then (T.DIMS = 1 and T.ELEM.KIND = T_BOOL) then
+            CTYPE(T, X);
+            R := MK("not_" & X.all & "(" & A.all & ")");
+            return;
+         end if;
+         if T.KIND /= T_BOOL then
+            FAIL(E.LINE, "operator not applies to boolean values and arrays (RM79 4.5.1)");
+         end if;
          R := MK("(!" & A.all & ")");
          return;
       end if;
       GEXPR(E.A, WANT, T, A);
+      if not IS_NUMERIC(T) then
+         FAIL(E.LINE, "unary " & E.NAME.all & " applies to numeric values (RM79 4.5.4)");
+      end if;
       if E.NAME.all = "+" then
          R := A;
-      elsif T.KIND = T_FLOAT then
+      elsif T.KIND = T_FLOAT or T.KIND = T_FIXED then
          R := MK("(-" & A.all & ")");
       else
-         CHECK_TYPE(T, TY_INT, E.LINE);
          R := MK("rt_neg(" & A.all & ")");
       end if;
    end GEN_UNOP;
+
+   -- SHORT_INTEGER and SHORT_FLOAT arithmetic is checked against the half
+   -- word of the simulated machine (RM79 3.5.4, 4.5)
+   function SHORT_INT(T : TYP) return BOOLEAN is
+   begin
+      if not (T.KIND = T_INT) then
+         return FALSE;
+      end if;
+      return ROOT(T) = TY_SHORT;
+   end SHORT_INT;
+
+   function FLOAT_KIND(T : TYP) return STRING is
+   begin
+      if ROOT(T) = TY_SFLOAT then
+         return "1";
+      end if;
+      return "0";
+   end FLOAT_KIND;
+
+   -- x in L .. H, x in T [constraint] (RM79 4.5.2)
+   procedure MEMBERSHIP(E : NODE; R : out TEXT) is
+      TA, TB, TT : TYP;
+      A, LO, HI, CT : TEXT;
+      C : CONS;
+      D : DVAL;
+   begin
+      if E.B.KIND = N_RANGE then
+         if IS_LITERAL(E.A) then
+            RANGE_BOUNDS(E.B.A, E.B.B, null, E.LINE, TT, LO, HI);
+            GEXPR(E.A, TT, TA, A);
+         else
+            GEXPR(E.A, null, TA, A);
+            RANGE_BOUNDS(E.B.A, E.B.B, TA, E.LINE, TT, LO, HI);
+         end if;
+         CHECK_TYPE(TT, TA, E.LINE);
+         if not IS_NUMERIC(TA) and not IS_DISCRETE(TA) then
+            FAIL(E.LINE, "a range applies to scalar values (RM79 4.5.2)");
+         end if;
+         CTYPE(TA, CT);
+         R := MK("({ " & CT.all & " m_ = " & A.all & "; m_ >= " & LO.all & " && m_ <= " & HI.all & "; })");
+         return;
+      end if;
+      RESOLVE(E.B, TT, C);
+      GEXPR(E.A, TT, TA, A);
+      CHECK_TYPE(TA, TT, E.LINE);
+      CTYPE(TA, CT);
+      if (IS_NUMERIC(TA) or IS_DISCRETE(TA)) and then C.LO /= null then
+         R := MK("({ " & CT.all & " m_ = " & A.all & "; m_ >= " & C.LO.all & " && m_ <= " & C.HI.all & "; })");
+      elsif TA.KIND = T_ARRAY and then C.LO /= null then
+         R := MK("({ " & CT.all & " m_ = " & A.all & "; m_.lo == " & C.LO.all & " && m_.hi == " & C.HI.all & "; })");
+      elsif TA.KIND = T_RECORD and DISCRIMINATED(C) then
+         R := MK("({ " & CT.all & " m_ = " & A.all & "; 1");
+         D := C.DV;
+         while D /= null loop
+            R := MK(R.all & " && m_." & C_FIELD(D.NAME.all) & " == (" & D.V.all & ")");
+            D := D.NEXT;
+         end loop;
+         R := MK(R.all & "; })");
+      else
+         R := MK("({ (void)(" & A.all & "); 1; })");
+      end if;
+   end MEMBERSHIP;
+
+   -- a condition: an expression, or expressions joined by and then or or
+   -- else, evaluated from left to right (RM79 5.4.1)
+   procedure CONDITION(E : NODE; WANT : TYP; T : out TYP; R : out TEXT) is
+      A, B : TEXT;
+      TB : TYP;
+   begin
+      if E.KIND = N_BINOP and then E.IVAL = 1 then
+         CONDITION(E.A, TY_BOOL, T, A);
+         CHECK_TYPE(T, TY_BOOL, E.LINE);
+         GEXPR(E.B, TY_BOOL, TB, B);
+         CHECK_TYPE(TB, TY_BOOL, E.LINE);
+         T := TY_BOOL;
+         if E.NAME.all = "AND" then
+            R := MK("(" & A.all & " && " & B.all & ")");
+         else
+            R := MK("(" & A.all & " || " & B.all & ")");
+         end if;
+         return;
+      end if;
+      GEXPR(E, TY_BOOL, T, R);
+   end CONDITION;
+
+   -- catenation (RM79 4.5.3): of two one-dimensional arrays of one type; a
+   -- component counts as an array of one component
+   procedure CATENATION(E : NODE; WANT : TYP; T : out TYP; R : out TEXT) is
+      ARRT, TA, TB : TYP;
+      A, B, CT : TEXT;
+   begin
+      if WANT /= null and then WANT.KIND = T_ARRAY and then WANT.DIMS = 1 then
+         ARRT := WANT;
+      else
+         GEXPR(E.A, null, TA, A);
+         if TA.KIND = T_ARRAY and then TA.DIMS = 1 then
+            ARRT := TA;
+         else
+            GEXPR(E.B, null, TB, B);
+            if TB.KIND = T_ARRAY and then TB.DIMS = 1 then
+               ARRT := TB;
+            elsif TA.KIND = T_CHAR and TB.KIND = T_CHAR then
+               ARRT := TY_STRING;
+            else
+               FAIL(E.LINE, "& catenates one-dimensional arrays and their components (RM79 4.5.3)");
+            end if;
+         end if;
+      end if;
+      CTYPE(ARRT, CT);
+      CAT_OPERAND(E.A, ARRT, E.LINE, A);
+      CAT_OPERAND(E.B, ARRT, E.LINE, B);
+      T := ARRT;
+      R := MK("cat_" & CT.all & "(" & A.all & ", " & B.all & ")");
+   end CATENATION;
+
+   procedure CAT_OPERAND(X : NODE; ARRT : TYP; LINE : INTEGER; R : out TEXT) is
+      TX : TYP;
+      CT : TEXT;
+   begin
+      if IS_CHAR_LIT(X) and ARRT.ELEM.KIND = T_CHAR then
+         GEXPR(X, ARRT.ELEM, TX, R);
+      else
+         GEXPR(X, ARRT, TX, R);
+      end if;
+      if SAME(TX, ARRT) then
+         return;
+      end if;
+      if SAME(TX, ARRT.ELEM) then
+         CTYPE(ARRT, CT);
+         R := MK("one_" & CT.all & "(" & R.all & ")");
+         return;
+      end if;
+      FAIL(LINE, "type mismatch: " & KIND_NAME(TX) & " in a catenation of " & KIND_NAME(ARRT) & " (RM79 4.5.3)");
+   end CAT_OPERAND;
+
+   -- arithmetic operators (RM79 4.5.3 - 4.5.6): both operands of one
+   -- numeric type; a fixed point value may be multiplied or divided by an
+   -- integer; fixed * fixed and fixed / fixed are of universal fixed type,
+   -- which must be converted (RM79 4.5.5); the right operand of ** is an
+   -- integer
+   procedure ARITHMETIC(E : NODE; WANT : TYP; T : out TYP; R : out TEXT) is
+      OP : STRING := E.NAME.all;
+      TA, TB, HINT : TYP;
+      A, B : TEXT;
+   begin
+      if OP = "**" then
+         GEXPR(E.A, WANT, TA, A);
+         HINT := TY_INT;
+         if TA.KIND = T_INT then
+            HINT := TA;
+         end if;
+         GEXPR(E.B, HINT, TB, B);
+         if TB.KIND /= T_INT then
+            FAIL(E.LINE, "the exponent of ** is an integer (RM79 4.5.6)");
+         end if;
+         T := TA;
+         if TA.KIND = T_INT then
+            R := MK("rt_pow(" & A.all & ", " & B.all & ")");
+         elsif TA.KIND = T_FLOAT then
+            R := MK("rt_g_fpow(" & A.all & ", " & B.all & ", " & FLOAT_KIND(TA) & ")");
+         else
+            FAIL(E.LINE, "operator ** is defined for integer and floating point values (RM79 4.5.6)");
+         end if;
+      else
+         if IS_LITERAL(E.A) and not IS_LITERAL(E.B) then
+            GEXPR(E.B, WANT, TB, B);
+            HINT := TB;
+            if TB.KIND = T_FIXED and (OP = "*" or OP = "/") then
+               HINT := TY_INT;
+            end if;
+            GEXPR(E.A, HINT, TA, A);
+         else
+            GEXPR(E.A, WANT, TA, A);
+            HINT := TA;
+            if TA.KIND = T_FIXED and (OP = "*" or OP = "/") and IS_LITERAL(E.B) and E.B.KIND = N_INT then
+               HINT := TY_INT;
+            end if;
+            GEXPR(E.B, HINT, TB, B);
+         end if;
+         if not IS_NUMERIC(TA) or not IS_NUMERIC(TB) then
+            FAIL(E.LINE, "operator " & OP & " needs numeric operands, not " & KIND_NAME(TA) & " and "
+                 & KIND_NAME(TB));
+         end if;
+         if TA.KIND = T_FIXED or TB.KIND = T_FIXED then
+            FIXED_OPERATION(E, TA, TB, A.all, B.all, T, R);
+            return;
+         end if;
+         CHECK_TYPE(TB, TA, E.LINE);
+         T := TA;
+         if TA.KIND = T_FLOAT then
+            -- OVERFLOW and UNDERFLOW are raised by the operation (RM79 4.5)
+            if OP = "+" then
+               R := MK("rt_g_fadd(" & A.all & ", " & B.all & ", " & FLOAT_KIND(TA) & ")");
+            elsif OP = "-" then
+               R := MK("rt_g_fsub(" & A.all & ", " & B.all & ", " & FLOAT_KIND(TA) & ")");
+            elsif OP = "*" then
+               R := MK("rt_g_fmul(" & A.all & ", " & B.all & ", " & FLOAT_KIND(TA) & ")");
+            elsif OP = "/" then
+               R := MK("rt_g_fdiv(" & A.all & ", " & B.all & ", " & FLOAT_KIND(TA) & ")");
+            else
+               FAIL(E.LINE, "operator " & OP & " is not defined for real values (RM79 4.5.5)");
+            end if;
+            return;
+         end if;
+         if OP = "+" then
+            R := MK("rt_add(" & A.all & ", " & B.all & ")");
+         elsif OP = "-" then
+            R := MK("rt_sub(" & A.all & ", " & B.all & ")");
+         elsif OP = "*" then
+            R := MK("rt_mul(" & A.all & ", " & B.all & ")");
+         elsif OP = "/" then
+            -- integer division truncates (RM79 4.5.5)
+            R := MK("rt_quot(" & A.all & ", " & B.all & ")");
+         elsif OP = "MOD" then
+            -- A = (A/B)*B + (A mod B): the sign of the left operand (RM79 4.5.5)
+            R := MK("rt_rem(" & A.all & ", " & B.all & ")");
+         else
+            FAIL(E.LINE, "operator " & OP & " is not defined for integers");
+         end if;
+      end if;
+      if SHORT_INT(T) then
+         R := MK("rt_g_short(" & R.all & ")");
+      end if;
+   end ARITHMETIC;
+
+   procedure FIXED_OPERATION(E : NODE; TA, TB : TYP; A, B : STRING; T : out TYP; R : out TEXT) is
+      OP : STRING := E.NAME.all;
+   begin
+      if OP = "+" or OP = "-" then
+         CHECK_TYPE(TB, TA, E.LINE);
+         T := TA;
+         R := MK("(" & A & " " & OP & " " & B & ")");
+      elsif OP = "*" and TA.KIND = T_FIXED and TB.KIND = T_FIXED then
+         T := TY_UFIXED;
+         R := MK("(" & A & " * " & B & ")");
+      elsif OP = "/" and TA.KIND = T_FIXED and TB.KIND = T_FIXED then
+         T := TY_UFIXED;
+         R := MK("rt_g_fdiv(" & A & ", " & B & ", 0)");
+      elsif OP = "*" and TA.KIND = T_FIXED and TB.KIND = T_INT then
+         T := TA;
+         R := MK("(" & A & " * (double)(" & B & "))");
+      elsif OP = "*" and TA.KIND = T_INT and TB.KIND = T_FIXED then
+         T := TB;
+         R := MK("((double)(" & A & ") * " & B & ")");
+      elsif OP = "/" and TA.KIND = T_FIXED and TB.KIND = T_INT then
+         T := TA;
+         R := MK("rt_g_fix(rt_g_fdiv(" & A & ", (double)(" & B & "), 0), " & TA.FSMALL.all & ")");
+      else
+         FAIL(E.LINE, "operator " & OP & " is not defined for these fixed point operands (RM79 4.5.5)");
+      end if;
+   end FIXED_OPERATION;
 
    procedure GEN_BINOP(E : NODE; WANT : TYP; T : out TYP; R : out TEXT) is
       OP : STRING := E.NAME.all;
@@ -494,11 +997,24 @@
       if DONE then
          return;
       end if;
+      if E.IVAL = 1 then
+         FAIL(E.LINE, "and then and or else are allowed only in conditions (RM79 5.4.1)");
+      end if;
       if OP = "AND" or OP = "OR" or OP = "XOR" then
-         GEXPR(E.A, TY_BOOL, TA, A);
-         GEXPR(E.B, TY_BOOL, TB, B);
-         CHECK_TYPE(TA, TY_BOOL, E.LINE);
-         CHECK_TYPE(TB, TY_BOOL, E.LINE);
+         GEXPR(E.A, WANT, TA, A);
+         GEXPR(E.B, TA, TB, B);
+         CHECK_TYPE(TB, TA, E.LINE);
+         T := TA;
+         if TA.KIND = T_ARRAY and then (TA.DIMS = 1 and TA.ELEM.KIND = T_BOOL) then
+            -- the logical operators apply to one-dimensional arrays of booleans,
+            -- component by component (RM79 4.5.1)
+            CTYPE(TA, X);
+            R := MK(LOWER_S(OP) & "_" & X.all & "(" & A.all & ", " & B.all & ")");
+            return;
+         end if;
+         if TA.KIND /= T_BOOL then
+            FAIL(E.LINE, "operator " & OP & " applies to boolean values and arrays (RM79 4.5.1)");
+         end if;
          if OP = "AND" then
             R := MK("(" & A.all & " && " & B.all & ")");
          elsif OP = "OR" then
@@ -509,40 +1025,15 @@
          return;
       end if;
       if OP = "IN" then
-         -- membership in a range (RM79 4.5.2)
-         GEXPR(E.A, null, TA, A);
-         GEXPR(E.B.A, TA, TB, B);
-         GEXPR(E.B.B, TA, TB, X);
-         R := MK("({ rt_int m_ = " & A.all & "; m_ >= " & B.all & " && m_ <= " & X.all & "; })");
+         MEMBERSHIP(E, R);
          return;
       end if;
       if OP = "&" then
-         -- catenation of strings and characters (RM79 4.5.3)
-         if IS_CHAR_LIT(E.A) then
-            HINT := TY_CHAR;
-         end if;
-         GEXPR(E.A, HINT, TA, A);
-         HINT := null;
-         if IS_CHAR_LIT(E.B) then
-            HINT := TY_CHAR;
-         end if;
-         GEXPR(E.B, HINT, TB, B);
-         T := TY_STRING;
-         if TA.KIND = T_STRING and TB.KIND = T_STRING then
-            R := MK("rt_str_cat(" & A.all & ", " & B.all & ")");
-         elsif TA.KIND = T_STRING and TB.KIND = T_CHAR then
-            R := MK("rt_str_catc(" & A.all & ", " & B.all & ")");
-         elsif TA.KIND = T_CHAR and TB.KIND = T_STRING then
-            R := MK("rt_str_ccat(" & A.all & ", " & B.all & ")");
-         elsif TA.KIND = T_CHAR and TB.KIND = T_CHAR then
-            R := MK("rt_str_cc(" & A.all & ", " & B.all & ")");
-         else
-            FAIL(E.LINE, "& catenates strings and characters");
-         end if;
+         CATENATION(E, WANT, T, R);
          return;
       end if;
       if IS_REL(OP) then
-         if IS_CHAR_LIT(E.A) or IS_ENUM_LIT(E.A) or E.A.KIND = N_NIL or E.A.KIND = N_INT then
+         if IS_LITERAL(E.A) or IS_ENUM_LIT(E.A) or E.A.KIND = N_NIL or E.A.KIND = N_STR or E.A.KIND = N_AGG then
             GEXPR(E.B, null, HINT, DUMMY);
          end if;
          GEXPR(E.A, HINT, TA, A);
@@ -554,21 +1045,13 @@
          if TA.KIND = T_NIL then
             CT := TB;
          end if;
-         if CT.KIND = T_STRING then
-            if OP = "=" then
-               R := MK("rt_str_eq(" & A.all & ", " & B.all & ")");
-            elsif OP = "/=" then
-               R := MK("(!rt_str_eq(" & A.all & ", " & B.all & "))");
-            elsif OP = "<" then
-               R := MK("rt_str_lt(" & A.all & ", " & B.all & ")");
-            elsif OP = "<=" then
-               R := MK("rt_str_le(" & A.all & ", " & B.all & ")");
-            elsif OP = ">" then
-               R := MK("rt_str_lt(" & B.all & ", " & A.all & ")");
-            else
-               R := MK("rt_str_le(" & B.all & ", " & A.all & ")");
-            end if;
-            return;
+         if (OP = "=" or OP = "/=") and then RESTRICTED_HERE(CT) then
+            FAIL(E.LINE, "a restricted type has no predefined equality (RM79 7.4)");
+         end if;
+         if OP /= "=" and OP /= "/=" and not IS_NUMERIC(CT) and not IS_DISCRETE(CT) then
+            -- the ordering operators are defined for scalar types (RM79 4.5.2)
+            FAIL(E.LINE, "operator " & OP & " is defined for scalar types, not for " & KIND_NAME(CT)
+                 & " (RM79 4.5.2)");
          end if;
          if COMPOSITE(CT) then
             EQ_CODE(CT, A.all, B.all, X);
@@ -590,66 +1073,163 @@
          end if;
          return;
       end if;
-      GEXPR(E.A, WANT, TA, A);
-      GEXPR(E.B, TA, TB, B);
-      if TA.KIND = T_FLOAT or TB.KIND = T_FLOAT then
-         T := TY_FLOAT;
-         if OP = "+" or OP = "-" or OP = "*" then
-            R := MK("(" & A.all & " " & OP & " " & B.all & ")");
-         elsif OP = "/" then
-            R := MK("rt_fdiv(" & A.all & ", " & B.all & ")");
-         elsif OP = "**" then
-            R := MK("rt_fpow(" & A.all & ", " & B.all & ")");
-         else
-            FAIL(E.LINE, "operator " & OP & " is not defined for FLOAT");
-         end if;
-         return;
-      end if;
-      CHECK_TYPE(TA, TY_INT, E.LINE);
-      CHECK_TYPE(TB, TY_INT, E.LINE);
-      T := TY_INT;
-      if OP = "+" then
-         R := MK("rt_add(" & A.all & ", " & B.all & ")");
-      elsif OP = "-" then
-         R := MK("rt_sub(" & A.all & ", " & B.all & ")");
-      elsif OP = "*" then
-         R := MK("rt_mul(" & A.all & ", " & B.all & ")");
-      elsif OP = "/" then
-         -- integer division truncates (RM79 4.5.5)
-         R := MK("rt_quot(" & A.all & ", " & B.all & ")");
-      elsif OP = "MOD" then
-         -- A = (A/B)*B + (A mod B): the sign of the left operand (RM79 4.5.5)
-         R := MK("rt_rem(" & A.all & ", " & B.all & ")");
-      elsif OP = "**" then
-         R := MK("rt_pow(" & A.all & ", " & B.all & ")");
-      else
-         FAIL(E.LINE, "operator " & OP & " is not defined for INTEGER");
-      end if;
+      ARITHMETIC(E, WANT, T, R);
    end GEN_BINOP;
+
+   -- a code statement: an instruction of the simulated machine, an
+   -- aggregate of type MACHINE_CODE.INSTRUCTION (RM79 13.8)
+   procedure CODE_STATEMENT(E : NODE; Y : SYM; R : out TEXT) is
+      I : SYM;
+      T : TYP;
+      V, CT : TEXT;
+   begin
+      if LOOKUP("MACHINE_CODE") /= null then
+         I := MEMBER_OF("MACHINE_CODE", "INSTRUCTION", E.LINE);
+      end if;
+      if I = null or else I.T /= Y.T then
+         FAIL(E.LINE, "a code statement is an aggregate of type MACHINE_CODE.INSTRUCTION, an instruction "
+              & "of this machine (RM79 13.8)");
+      end if;
+      if CUR_BODY = null or FUNC_SYM = null then
+         FAIL(E.LINE, "a code statement stands in a procedure body of code statements only (RM79 13.8)");
+      end if;
+      CHECK_CODE_BODY(CUR_BODY, FUNC_SYM);
+      CONVERSION(E, Y, T, V);
+      CTYPE(Y.T, CT);
+      R := MK("({ " & CT.all & " i_ = " & V.all & "; rt_g_machine(i_." & C_FIELD("OP") & ", i_."
+              & C_FIELD("R") & ", i_." & C_FIELD("A") & "); })");
+   end CODE_STATEMENT;
 
    -- T(x): qualification and conversion share one form (RM79 4.6)
    procedure CONVERSION(E : NODE; Y : SYM; T : out TYP; R : out TEXT) is
       ATY : TYP;
       A : TEXT;
+      AG, IT, TAIL, ARG : NODE;
    begin
-      if LIST_LEN(E.B) /= 1 then
-         FAIL(E.LINE, "a conversion takes one expression");
-      end if;
       T := Y.T;
+      if E.FLAG = 9 or LIST_LEN(E.B) > 1 then
+         -- T aggregate: a qualified aggregate (RM79 4.6)
+         if E.FLAG = 9 then
+            AG := E.B;
+         else
+            AG := NN(N_AGG, E.LINE);
+            ARG := E.B;
+            while ARG /= null loop
+               IT := NN(N_CITEM, E.LINE);
+               IT.B := ARG;
+               if ARG.FORMAL /= null then
+                  FAIL(E.LINE, "a named component of an aggregate is given with => (RM79 3.6.2)");
+               end if;
+               if TAIL = null then
+                  AG.A := IT;
+               else
+                  TAIL.NEXT := IT;
+               end if;
+               TAIL := IT;
+               ARG := ARG.NEXT;
+            end loop;
+         end if;
+         if AG.KIND /= N_AGG then
+            GEXPR(AG, T, ATY, R);
+            CHECK_TYPE(ATY, T, E.LINE);
+         else
+            AGGREGATE(AG, T, ATY, R);
+         end if;
+         CONSTRAIN(Y, T, R);
+         return;
+      end if;
       GEXPR(E.B, T, ATY, A);
-      if T.KIND = T_INT and ATY.KIND = T_FLOAT then
-         R := MK("((rt_int)llround(" & A.all & "))");
-      elsif T.KIND = T_FLOAT and ATY.KIND = T_INT then
-         R := MK("((double)(" & A.all & "))");
-      else
-         CHECK_TYPE(ATY, T, E.LINE);
-         if (T.KIND = T_INT or T.KIND = T_ENUM or T.KIND = T_CHAR) and Y.C /= null and then Y.C.LO /= null then
-            R := MK("rt_range(" & A.all & ", " & Y.C.LO.all & ", " & Y.C.HI.all & ")");
+      if T.KIND = T_ARRAY and ATY.KIND = T_ARRAY and not SAME(T, ATY) then
+         ARRAY_CONVERSION(E, T, ATY, Y.C, A.all, R);
+         return;
+      end if;
+      if IS_NUMERIC(T) and IS_NUMERIC(ATY) then
+         -- numeric types convert into one another (RM79 4.6)
+         if T.KIND = T_INT and ATY.KIND /= T_INT then
+            R := MK("rt_g_round(" & A.all & ")");
+         elsif T.KIND = T_FLOAT and ATY.KIND = T_INT then
+            R := MK("((double)(" & A.all & "))");
+         elsif T.KIND = T_FIXED and T.FSMALL /= null then
+            if ATY.KIND = T_INT then
+               R := MK("rt_g_fix((double)(" & A.all & "), " & T.FSMALL.all & ")");
+            else
+               R := MK("rt_g_fix(" & A.all & ", " & T.FSMALL.all & ")");
+            end if;
          else
             R := A;
          end if;
+      elsif SAME(ATY, T) or DERIVED_FROM(ATY, T) or DERIVED_FROM(T, ATY) then
+         -- a type and the types derived from it (RM79 3.4, 4.6)
+         R := A;
+      else
+         CHECK_TYPE(ATY, T, E.LINE);
+         R := A;
+      end if;
+      if (T.KIND = T_INT or T.KIND = T_ENUM or T.KIND = T_CHAR) and BOUNDED(Y.C) then
+         R := MK("rt_range(" & R.all & ", " & Y.C.LO.all & ", " & Y.C.HI.all & ")");
+      elsif (T.KIND = T_FLOAT or T.KIND = T_FIXED) and BOUNDED(Y.C) then
+         R := MK("rt_frange(" & R.all & ", " & Y.C.LO.all & ", " & Y.C.HI.all & ")");
+      elsif SHORT_INT(T) then
+         R := MK("rt_g_short(" & R.all & ")");
       end if;
    end CONVERSION;
+
+   -- qualification by a subtype checks its constraint (RM79 4.6)
+   procedure CONSTRAIN(Y : SYM; T : TYP; R : in out TEXT) is
+      CT, TMP : TEXT;
+   begin
+      if Y.C = null or else Y.C.LO = null then
+         return;
+      end if;
+      if T.KIND = T_ARRAY and not BOUNDED_HI(T.TCONS) then
+         -- a constrained array subtype: the value has its bounds (sliding)
+         CTYPE(T, CT);
+         NEW_NAME("q", TMP);
+         R := MK("({ " & CT.all & " " & TMP.all & " = " & R.all & "; rt_int l_ = " & Y.C.LO.all & ", h_ = "
+                 & Y.C.HI.all & "; if (G_CNT(" & TMP.all & ") != (h_ >= l_ ? h_ - l_ + 1 : 0)) "
+                 & "rt_raise_msg(RT_X_SUBTYPE, " & Q & "array length" & Q & "); " & TMP.all & ".lo = l_; "
+                 & TMP.all & ".hi = h_; " & TMP.all & "; })");
+      end if;
+   end CONSTRAIN;
+
+   -- conversion between array types of the same dimensions whose index types
+   -- and component types are the same or derived from one another (RM79 4.6)
+   procedure ARRAY_CONVERSION(E : NODE; T, ATY : TYP; C : CONS; A : STRING; R : out TEXT) is
+      X, Y : TYP;
+      CT, ACT, ET, TMP, S : TEXT;
+   begin
+      X := T;
+      Y := ATY;
+      if T.DIMS /= ATY.DIMS then
+         FAIL(E.LINE, "no conversion between arrays of different dimensions (RM79 4.6)");
+      end if;
+      for K in 1 .. T.DIMS loop
+         if not (SAME(X.IDX, Y.IDX) or DERIVED_FROM(X.IDX, Y.IDX) or DERIVED_FROM(Y.IDX, X.IDX)) then
+            FAIL(E.LINE, "no conversion from " & KIND_NAME(ATY) & " to " & KIND_NAME(T)
+                 & ": the index types differ (RM79 4.6)");
+         end if;
+         X := X.ELEM;
+         Y := Y.ELEM;
+      end loop;
+      if not (SAME(X, Y) or DERIVED_FROM(X, Y) or DERIVED_FROM(Y, X)) then
+         FAIL(E.LINE, "no conversion from " & KIND_NAME(ATY) & " to " & KIND_NAME(T)
+              & ": the component types differ (RM79 4.6)");
+      end if;
+      CTYPE(T, CT);
+      CTYPE(ATY, ACT);
+      ELEM_CTYPE(T.ELEM, ET);
+      NEW_NAME("cv", TMP);
+      R := MK("({ " & ACT.all & " s_ = " & A & "; " & CT.all & " " & TMP.all & "; " & TMP.all & ".lo = s_.lo; "
+              & TMP.all & ".hi = s_.hi; " & TMP.all & ".lo2 = s_.lo2; " & TMP.all & ".hi2 = s_.hi2; " & TMP.all
+              & ".p = (" & ET.all & " *)s_.p; " & TMP.all & "; })");
+      if T.TCONS /= null and then T.TCONS.HI /= null then
+         -- the bounds of the target type (RM79 4.6)
+         R := MK("({ " & CT.all & " " & TMP.all & "x = " & R.all & "; rt_int l_ = " & T.TCONS.LO.all & ", h_ = "
+                 & T.TCONS.HI.all & "; if (G_CNT(" & TMP.all & "x) != (h_ >= l_ ? h_ - l_ + 1 : 0)) "
+                 & "rt_raise_msg(RT_X_SUBTYPE, " & Q & "array length" & Q & "); " & TMP.all & "x.lo = l_; "
+                 & TMP.all & "x.hi = h_; " & TMP.all & "x; })");
+      end if;
+   end ARRAY_CONVERSION;
 
    -- attributes (RM79 App. A); positions count from 1: T'ORD(T'FIRST) = 1
    procedure GEN_ATTR(E : NODE; WANT : TYP; T : out TYP; R : out TEXT) is
@@ -665,11 +1245,23 @@
          MEMBER_ATTR(E, T, R);
          return;
       end if;
-      if A = "ADDRESS" then
-         -- the address of an object, an integer in linear memory (RM79 App. A)
-         LVALUE(E.A, V, ATY, C, RO);
+      if A = "ADDRESS" and E.A.KIND = N_NAME then
+         -- an address given by an address specification (RM79 13.5)
+         Y := LOOKUP(E.A.NAME.all);
+         if Y /= null then
+            V := ADDRESS_OF(Y);
+            if V /= null then
+               T := TY_INT;
+               R := V;
+               return;
+            end if;
+         end if;
+      end if;
+      if A = "ADDRESS" and IS_OBJECT(E.A) then
+         -- the address of an object, in storage units of the simulated
+         -- machine (RM79 13.5, 13.7, App. A)
+         OBJECT_ADDRESS(E.A, R);
          T := TY_INT;
-         R := MK("((rt_int)(intptr_t)&(" & V.all & "))");
          return;
       end if;
       if A = "COUNT" and then E.A.KIND = N_APPLY and then E.A.A.KIND = N_NAME then
@@ -687,11 +1279,27 @@
             return;
          end if;
       end if;
+      if E.A.KIND = N_SELECT and then IS_PACKAGE(E.A.A) then
+         -- P.T'A: an attribute of a type of a package or a task (RM79 4.1.3)
+         Y := MEMBER_OF(PATH_OF(E.A.A), E.A.NAME.all, E.LINE);
+      end if;
       if E.A.KIND = N_NAME then
          Y := LOOKUP(E.A.NAME.all);
+         if Y = null and (E.A.NAME.all = "SYSTEM" or E.A.NAME.all = "OPTION") then
+            CONFIG_ATTR(E, T, R);
+            return;
+         end if;
+         if (A = "ADDRESS" and Y /= null) and then (Y.KIND = Y_PROC or Y.KIND = Y_FUNC or Y.KIND = Y_PACKAGE
+            or Y.KIND = Y_TASK) then
+            -- the address of the code of a subprogram or a module (RM79 13.5):
+            -- an address in the code space of the simulated machine
+            T := TY_INT;
+            R := MK("((rt_int)" & INTEGER'REP(65536 + 16 * HASH(Y.NAME.all & INTEGER'REP(Y.DEPTH))) & ")");
+            return;
+         end if;
          if Y = null and E.A.NAME.all = "SYSTEM" and A = "CLOCK" then
             -- the real-time clock, of type TIME (RM79 9.9)
-            T := TY_FLOAT;
+            T := TY_TIME;
             R := MK("((double)rt_time())");
             return;
          end if;
@@ -709,11 +1317,22 @@
       if Y /= null and then Y.KIND = Y_TYPE then
          TT := Y.T;
          C := Y.C;
-         if A = "SIZE" then
-            -- the size of a value of the type, in bits (RM79 App. A)
-            CTYPE(TT, D);
+         if A = "$LAYOUT" then
+            -- for INPUT_OUTPUT: the layout of its elements, for the runtime
+            LAYOUT_OF(TT, C, FALSE, FALSE, V);
             T := TY_INT;
-            R := MK("((rt_int)(sizeof(" & D.all & ") * 8))");
+            R := MK("((rt_int)(intptr_t)&" & V.all & ")");
+            return;
+         end if;
+         if A = "SIZE" then
+            -- the number of bits of an object of the type (RM79 13.2, App. A)
+            T := TY_INT;
+            TYPE_BITS(TT, C, R);
+            return;
+         end if;
+         if A = "DIGITS" or A = "SMALL" or A = "LARGE" or A = "EXPONENT_MIN" or A = "EXPONENT_MAX"
+            or A = "BITS" or A = "RADIX" or A = "DELTA" or A = "ACCESS_SIZE" then
+            NUMERIC_ATTR(E, TT, C, T, R);
             return;
          end if;
          if A = "ORD" then
@@ -722,25 +1341,8 @@
             T := TY_INT;
             R := MK("((rt_int)(" & V.all & ") + 1)");
             return;
-         elsif A = "VAL" and TT.KIND = T_INT then
-            GEXPR(E.B, TY_STRING, ATY, V);
-            T := TY_INT;
-            R := MK("rt_int_of_str(" & V.all & ")");
-            return;
-         elsif A = "VAL" then
-            GEXPR(E.B, TY_INT, ATY, V);
-            T := TT;
-            R := MK("rt_range(" & V.all & " - 1, " & C.LO.all & ", " & C.HI.all & ")");
-            return;
-         elsif A = "REP" and TT.KIND = T_INT then
-            GEXPR(E.B, TY_INT, ATY, V);
-            T := TY_STRING;
-            R := MK("rt_str_of_int(" & V.all & ")");
-            return;
-         elsif A = "REP" and TT.KIND = T_FLOAT then
-            GEXPR(E.B, TY_FLOAT, ATY, V);
-            T := TY_STRING;
-            R := MK("rt_g_image_float(" & V.all & ")");
+         elsif A = "VAL" or A = "REP" then
+            VAL_REP(E, TT, C, T, R);
             return;
          elsif A = "SUCC" or A = "PRED" then
             GEXPR(E.B, TT, ATY, V);
@@ -757,12 +1359,13 @@
                R := MK("rt_range(" & V.all & " - 1, " & C.LO.all & ", " & C.HI.all & ")");
             end if;
             return;
+         elsif TT.KIND = T_ARRAY and (A = "FIRST" or A = "LAST" or A = "LENGTH") then
+            -- an array type with bounds (RM79 3.6)
+            TYPE_ARRAY_ATTR(E, TT, C, T, R);
+            return;
          elsif A = "FIRST" or A = "LAST" then
             T := TT;
-            if TT.KIND = T_ARRAY then
-               T := TT.IDX;
-            end if;
-            if C /= null and then C.LO /= null then
+            if BOUNDED(C) then
                if A = "FIRST" then
                   R := C.LO;
                else
@@ -770,9 +1373,21 @@
                end if;
             elsif TT.KIND = T_INT then
                if A = "FIRST" then
-                  R := MK("INT64_MIN");
+                  R := MK("(-INT64_MAX)");
                else
                   R := MK("INT64_MAX");
+               end if;
+            elsif TT.KIND = T_FLOAT and ROOT(TT) = TY_SFLOAT then
+               if A = "FIRST" then
+                  R := MK("(-3.40282347e+38)");
+               else
+                  R := MK("3.40282347e+38");
+               end if;
+            elsif TT.KIND = T_FLOAT then
+               if A = "FIRST" then
+                  R := MK("(-1.7976931348623157e+308)");
+               else
+                  R := MK("1.7976931348623157e+308");
                end if;
             else
                FAIL(E.LINE, "this type has no " & A);
@@ -786,7 +1401,25 @@
          OTHER_ATTR(E, Y, T, R);
          return;
       end if;
+      if A = "POSITION" or A = "FIRST_BIT" or A = "LAST_BIT" then
+         COMPONENT_ATTR(E, T, R);
+         return;
+      end if;
       GEXPR(E.A, null, TT, V);
+      if A = "ACCESS_SIZE" then
+         if TT.KIND /= T_PTR then
+            FAIL(E.LINE, "ACCESS_SIZE is an attribute of access types and objects (RM79 App. A)");
+         end if;
+         T := TY_INT;
+         R := MK("((rt_int)(sizeof(void *) * 8))");
+         return;
+      end if;
+      if A = "SIZE" then
+         -- the number of bits of the object (RM79 App. A)
+         T := TY_INT;
+         OBJECT_BITS(TT, V.all, R);
+         return;
+      end if;
       if TT.KIND = T_PTR then
          FINISH_PTR(TT);
          DEREF(V.all, TT, D);
@@ -794,37 +1427,433 @@
          TT := TT.TARGET;
       end if;
       T := TY_INT;
-      if TT.KIND = T_STRING then
-         if A = "LENGTH" or A = "LAST" then
-            R := MK("(" & V.all & ").len");
-            return;
-         elsif A = "FIRST" then
-            R := MK("((rt_int)1)");
-            return;
-         end if;
-      elsif TT.KIND = T_ARRAY then
-         T := TT.IDX;
-         if A = "FIRST" then
-            R := MK("(" & V.all & ").lo");
-            return;
-         elsif A = "LAST" then
-            R := MK("(" & V.all & ").hi");
-            return;
-         elsif A = "LENGTH" then
-            T := TY_INT;
-            R := MK("RT_CNT(" & V.all & ")");
-            return;
-         end if;
+      if TT.KIND = T_ARRAY and (A = "FIRST" or A = "LAST" or A = "LENGTH") then
+         OBJECT_ARRAY_ATTR(E, TT, V.all, T, R);
+         return;
       end if;
       FAIL(E.LINE, "attribute " & A & " is not handled here");
    end GEN_ATTR;
 
 
+   -- the bits of an object of type T: those of its representation
+   -- T'SIZE: the bits of a value of the type in storage, as its layout
+   -- gives them (RM79 13.2, App. A)
+   procedure TYPE_BITS(T : TYP; C : CONS; R : out TEXT) is
+      CT, L : TEXT;
+   begin
+      if T.KIND = T_ARRAY and not BOUNDED(C) then
+         FAIL(0, "SIZE of an array type needs its bounds (RM79 App. A)");
+      end if;
+      LAYOUT_OF(T, C, FALSE, FALSE, L);
+      if T.KIND = T_ARRAY then
+         CTYPE(T, CT);
+         R := MK("({ " & CT.all & " d_; d_.lo = " & C.LO.all & "; d_.hi = " & C.HI.all & "; d_.lo2 = d_.hi2 = 1; "
+                 & "d_.p = NULL; rt_g_lay_bits(&" & L.all & ", &d_); })");
+      else
+         R := MK("rt_g_lay_bits(&" & L.all & ", NULL)");
+      end if;
+   end TYPE_BITS;
+
+   -- X'SIZE: the bits of the object in storage
+   procedure OBJECT_BITS(T : TYP; V : STRING; R : out TEXT) is
+      CT, L : TEXT;
+   begin
+      LAYOUT_OF(T, null, FALSE, FALSE, L);
+      CTYPE(T, CT);
+      R := MK("({ " & CT.all & " o_ = " & V & "; rt_g_lay_bits(&" & L.all & ", &o_); })");
+   end OBJECT_BITS;
+
+   -- DIGITS, SMALL, LARGE, EXPONENT_MIN, EXPONENT_MAX, BITS, RADIX, DELTA of
+   -- numeric types, ACCESS_SIZE of access types (RM79 3.5.5, App. A); the
+   -- floating point types of the machine are IEEE single (SHORT_FLOAT) and
+   -- double (FLOAT, LONG_FLOAT, TIME)
+   procedure NUMERIC_ATTR(E : NODE; TT : TYP; C : CONS; T : out TYP; R : out TEXT) is
+      A : STRING := E.NAME.all;
+      SHORT : BOOLEAN := ROOT(TT) = TY_SFLOAT;
+   begin
+      T := TY_INT;
+      if A = "ACCESS_SIZE" then
+         if TT.KIND /= T_PTR then
+            FAIL(E.LINE, "ACCESS_SIZE is an attribute of access types (RM79 App. A)");
+         end if;
+         R := MK("((rt_int)(sizeof(void *) * 8))");
+      elsif A = "RADIX" then
+         if not IS_NUMERIC(TT) then
+            FAIL(E.LINE, "RADIX is an attribute of numeric types (RM79 App. A)");
+         end if;
+         R := MK("((rt_int)2)");
+      elsif TT.KIND = T_FLOAT then
+         if A = "DIGITS" then
+            if C /= null and then C.ACC /= null then
+               R := MK("((rt_int)(" & C.ACC.all & "))");
+            else
+               R := MK("((rt_int)" & INTEGER'REP(TT.NDIGITS) & ")");
+            end if;
+         elsif A = "BITS" then
+            if SHORT then
+               R := MK("((rt_int)24)");
+            else
+               R := MK("((rt_int)53)");
+            end if;
+         elsif A = "EXPONENT_MIN" then
+            if SHORT then
+               R := MK("((rt_int)-125)");
+            else
+               R := MK("((rt_int)-1021)");
+            end if;
+         elsif A = "EXPONENT_MAX" then
+            if SHORT then
+               R := MK("((rt_int)128)");
+            else
+               R := MK("((rt_int)1024)");
+            end if;
+         elsif A = "SMALL" then
+            T := TT;
+            if SHORT then
+               R := MK("1.17549435e-38");
+            else
+               R := MK("2.2250738585072014e-308");
+            end if;
+         elsif A = "LARGE" then
+            T := TT;
+            if SHORT then
+               R := MK("3.40282347e+38");
+            else
+               R := MK("1.7976931348623157e+308");
+            end if;
+         else
+            FAIL(E.LINE, "DELTA is an attribute of fixed point types (RM79 App. A)");
+         end if;
+      elsif TT.KIND = T_FIXED and TT.FSMALL /= null then
+         if A = "DELTA" then
+            T := TT;
+            if C /= null and then C.ACC /= null then
+               R := MK("(" & C.ACC.all & ")");
+            else
+               R := TT.FDELTA;
+            end if;
+         elsif A = "SMALL" then
+            T := TT;
+            R := TT.FSMALL;
+         elsif A = "LARGE" then
+            T := TT;
+            R := MK("rt_g_fix_large(" & TT.FSMALL.all & ", " & C.LO.all & ", " & C.HI.all & ")");
+         elsif A = "BITS" then
+            R := MK("rt_g_fix_bits(" & TT.FSMALL.all & ", " & C.LO.all & ", " & C.HI.all & ")");
+         else
+            FAIL(E.LINE, A & " is not an attribute of fixed point types (RM79 App. A)");
+         end if;
+      else
+         FAIL(E.LINE, A & " is an attribute of real types (RM79 App. A)");
+      end if;
+   end NUMERIC_ATTR;
+
+   -- X'ADDRESS of an object or a component: in the window of the whole
+   -- object, in its layout, so that the storage a program reaches there is
+   -- the object as its representation declares it (RM79 13.5, 13.7)
+   procedure OBJECT_ADDRESS(X : NODE; R : out TEXT) is
+      ROOT : NODE := X;
+      V, RV, CTX, L : TEXT;
+      VT, RT, PT : TYP;
+      C, RC : CONS;
+      RO, DONE : BOOLEAN := FALSE;
+   begin
+      LVALUE(X, V, VT, C, RO);
+      while not DONE loop
+         if ROOT.KIND = N_PAREN then
+            ROOT := ROOT.A;
+         elsif ROOT.KIND = N_SELECT or ROOT.KIND = N_APPLY then
+            if ROOT.KIND = N_SELECT and then ROOT.NAME.all = "ALL" then
+               DONE := TRUE;
+            elsif IS_OBJECT(ROOT.A) then
+               GEXPR(ROOT.A, null, PT, CTX);
+               if PT.KIND = T_PTR then
+                  -- a component of a designated object: that object is the whole
+                  FINISH_PTR(PT);
+                  RV := MK("(*" & CTX.all & ")");
+                  RT := PT.TARGET;
+                  DONE := TRUE;
+               else
+                  ROOT := ROOT.A;
+               end if;
+            else
+               DONE := TRUE;
+            end if;
+         else
+            DONE := TRUE;
+         end if;
+      end loop;
+      if RV = null then
+         LVALUE(ROOT, RV, RT, RC, RO);
+      end if;
+      LAYOUT_OF(RT, RC, FALSE, FALSE, L);
+      R := MK("rt_g_address((void *)&(" & RV.all & "), &" & L.all & ", (void *)&(" & V.all & "))");
+   end OBJECT_ADDRESS;
+
+   -- X.C'POSITION, X.C'FIRST_BIT, X.C'LAST_BIT: where component C lies in
+   -- the record, in storage units and bits (RM79 13.4, 13.7)
+   procedure COMPONENT_ATTR(E : NODE; T : out TYP; R : out TEXT) is
+      BT : TYP;
+      V, CT : TEXT;
+      F : FIELD;
+   begin
+      if E.A.KIND /= N_SELECT then
+         FAIL(E.LINE, E.NAME.all & " is an attribute of a record component, X.C'" & E.NAME.all & " (RM79 13.7)");
+      end if;
+      GEXPR(E.A.A, null, BT, V);
+      if BT.KIND = T_PTR then
+         FINISH_PTR(BT);
+         BT := BT.TARGET;
+         V := MK("(*" & V.all & ")");
+      end if;
+      if BT.KIND /= T_RECORD then
+         FAIL(E.LINE, E.NAME.all & " is an attribute of a record component (RM79 13.7)");
+      end if;
+      F := BT.FIELDS;
+      while F /= null and then F.NAME.all /= E.A.NAME.all loop
+         F := F.NEXT;
+      end loop;
+      if F = null then
+         FAIL(E.LINE, KIND_NAME(BT) & " has no component " & E.A.NAME.all);
+      end if;
+      CTYPE(BT, CT);
+      T := TY_INT;
+      COMPONENT_PLACE(BT, F, E.NAME.all, CT.all, V.all, R);
+   end COMPONENT_ATTR;
+
+   -- SYSTEM'NAME, ..., OPTION'TIME (RM79 13.7): the configuration of the
+   -- simulated machine, set by pragmas SYSTEM, STORAGE_UNIT, MEMORY_SIZE, OPTIMIZE
+   procedure CONFIG_ATTR(E : NODE; T : out TYP; R : out TEXT) is
+      A : STRING := E.NAME.all;
+      P : STRING := E.A.NAME.all;
+      NM : TEXT := CONF_SYSTEM;
+   begin
+      T := TY_INT;
+      if P = "OPTION" then
+         T := TY_BOOL;
+         if A = "TIME" then
+            if CONF_OPTIMIZE /= null and then CONF_OPTIMIZE.all = "TIME" then
+               R := MK("1");
+            else
+               R := MK("0");
+            end if;
+         elsif A = "SPACE" then
+            if CONF_OPTIMIZE /= null and then CONF_OPTIMIZE.all = "SPACE" then
+               R := MK("1");
+            else
+               R := MK("0");
+            end if;
+         else
+            FAIL(E.LINE, "OPTION has the attributes TIME and SPACE (RM79 13.7)");
+         end if;
+      elsif A = "CLOCK" then
+         -- the real-time clock, of type TIME (RM79 9.9)
+         T := TY_TIME;
+         R := MK("((double)rt_time())");
+      elsif A = "MAX_PRIORITY" then
+         R := MK("((rt_int)255)");
+      elsif A = "MIN_PRIORITY" then
+         R := MK("((rt_int)0)");
+      elsif A = "NAME" then
+         if NM = null then
+            NM := MK("PALEO");
+         end if;
+         T := TY_STRING;
+         R := MK("rt_g_lit(" & C_STRING(NM.all) & ", " & INTEGER'REP(NM.all'LENGTH) & ")");
+      elsif A = "STORAGE_UNIT" then
+         R := MK("((rt_int)" & INTEGER'REP(CONF_STORAGE_UNIT) & ")");
+      elsif A = "MEMORY_SIZE" then
+         R := MK("((rt_int)" & INTEGER'REP(CONF_MEMORY_SIZE) & ")");
+      elsif A = "MAX_INT" then
+         R := MK("INT64_MAX");
+      elsif A = "MIN_INT" then
+         R := MK("(-INT64_MAX)");
+      else
+         FAIL(E.LINE, "SYSTEM has no attribute " & A & " (RM79 13.7)");
+      end if;
+   end CONFIG_ATTR;
+
+   -- the dimension N of A'FIRST(N), A'LAST(N), A'LENGTH(N): a static integer
+   procedure ATTR_DIM(E : NODE; ARRT : TYP; N : out INTEGER) is
+      OK : BOOLEAN;
+   begin
+      N := 1;
+      if E.B /= null then
+         MANIFEST(E.B, N, OK);
+         if not OK then
+            FAIL(E.LINE, "the index number of " & E.NAME.all & "(N) is static (RM79 App. A)");
+         end if;
+      end if;
+      if N < 1 or N > ARRT.DIMS then
+         FAIL(E.LINE, KIND_NAME(ARRT) & " has no index " & INTEGER'REP(N));
+      end if;
+   end ATTR_DIM;
+
+   -- A'FIRST(N), A'LAST(N), A'LENGTH(N) of an array object: the bounds of
+   -- the second index are kept with the array, the others with its rows
+   procedure OBJECT_ARRAY_ATTR(E : NODE; ARRT : TYP; V : STRING; T : out TYP; R : out TEXT) is
+      N : INTEGER;
+      IT : TYP := ARRT;
+      CT, TMP, P, LO, HI : TEXT;
+   begin
+      ATTR_DIM(E, ARRT, N);
+      CTYPE(ARRT, CT);
+      NEW_NAME("at", TMP);
+      P := TMP;
+      for K in 2 .. N loop
+         IT := IT.ELEM;
+      end loop;
+      if N = 1 then
+         LO := MK(P.all & ".lo");
+         HI := MK(P.all & ".hi");
+      else
+         for K in 3 .. N loop
+            P := MK(P.all & ".p[0]");
+         end loop;
+         LO := MK(P.all & ".lo2");
+         HI := MK(P.all & ".hi2");
+      end if;
+      T := IT.IDX;
+      if E.NAME.all = "FIRST" then
+         R := MK("({ " & CT.all & " " & TMP.all & " = " & V & "; " & LO.all & "; })");
+      elsif E.NAME.all = "LAST" then
+         R := MK("({ " & CT.all & " " & TMP.all & " = " & V & "; " & HI.all & "; })");
+      else
+         T := TY_INT;
+         R := MK("({ " & CT.all & " " & TMP.all & " = " & V & "; " & HI.all & " >= " & LO.all & " ? "
+                 & HI.all & " - " & LO.all & " + 1 : (rt_int)0; })");
+      end if;
+   end OBJECT_ARRAY_ATTR;
+
+   -- T'FIRST(N), T'LAST(N), T'LENGTH(N) of an array type with bounds
+   procedure TYPE_ARRAY_ATTR(E : NODE; ARRT : TYP; C : CONS; T : out TYP; R : out TEXT) is
+      N : INTEGER;
+      IT : TYP := ARRT;
+      CC : CONS := C;
+   begin
+      ATTR_DIM(E, ARRT, N);
+      for K in 2 .. N loop
+         IT := IT.ELEM;
+         if CC /= null then
+            CC := CC.INNER;
+         end if;
+      end loop;
+      if CC = null or else CC.LO = null then
+         FAIL(E.LINE, "the bounds of " & KIND_NAME(ARRT) & " are not known here: "
+              & E.NAME.all & " applies to an array type with bounds (RM79 3.6)");
+      end if;
+      T := IT.IDX;
+      if E.NAME.all = "FIRST" then
+         R := CC.LO;
+      elsif E.NAME.all = "LAST" then
+         R := CC.HI;
+      else
+         T := TY_INT;
+         R := MK("({ rt_int l_ = " & CC.LO.all & ", h_ = " & CC.HI.all & "; h_ >= l_ ? h_ - l_ + 1 : (rt_int)0; })");
+      end if;
+   end TYPE_ARRAY_ATTR;
+
+   -- the C table of the images of the literals of an enumeration type
+   procedure LIT_TABLE(T : TYP; R : out TEXT) is
+      L : NODE := T.LITS;
+      S : TEXT := MK("");
+   begin
+      if T.LITTAB = null then
+         NEW_NAME("lits", T.LITTAB);
+         while L /= null loop
+            if S'LENGTH > 0 then
+               S := MK(S.all & ", ");
+            end if;
+            if L.KIND = N_STR then
+               S := MK(S.all & C_STRING(Q & L.NAME.all & Q));
+            else
+               S := MK(S.all & C_STRING(L.NAME.all));
+            end if;
+            L := L.NEXT;
+         end loop;
+         PUT_TO(OUT_TYPES, "static const char *const " & T.LITTAB.all & "[] = {" & S.all & "};");
+      end if;
+      R := T.LITTAB;
+   end LIT_TABLE;
+
+   -- T'REP(X): the image of a scalar value; T'VAL(S) the value of an image,
+   -- T'VAL(I) the I-th value of a discrete type (RM79 3.5, App. A)
+   procedure VAL_REP(E : NODE; TT : TYP; C : CONS; T : out TYP; R : out TEXT) is
+      ATY : TYP;
+      V, LT : TEXT;
+      N : INTEGER;
+   begin
+      if E.B = null then
+         FAIL(E.LINE, "attribute " & E.NAME.all & " takes an argument");
+      end if;
+      if E.NAME.all = "REP" then
+         GEXPR(E.B, TT, ATY, V);
+         CHECK_TYPE(ATY, TT, E.LINE);
+         T := TY_STRING;
+         if TT.KIND = T_INT then
+            R := MK("rt_str_of_int(" & V.all & ")");
+         elsif TT.KIND = T_FLOAT then
+            R := MK("rt_g_image_float(" & V.all & ")");
+         elsif TT.KIND = T_BOOL then
+            R := MK("rt_g_bool_rep(" & V.all & ")");
+         elsif TT.KIND = T_CHAR then
+            R := MK("rt_g_char_rep(" & V.all & ")");
+         elsif TT.KIND = T_ENUM then
+            LIT_TABLE(TT, LT);
+            R := MK("rt_g_enum_rep(" & V.all & ", " & LT.all & ", " & INTEGER'REP(LIST_LEN(TT.LITS)) & ")");
+         elsif TT.KIND = T_FIXED and TT.FSMALL /= null then
+            -- a fixed value: in decimal, with the digits its SMALL needs
+            R := MK("rt_g_fixed_image(" & V.all & ", " & TT.FSMALL.all & ")");
+         else
+            FAIL(E.LINE, "REP is an attribute of scalar types");
+         end if;
+         R := MK("rt_g_s2g(" & R.all & ")");
+         return;
+      end if;
+      T := TT;
+      if TT.KIND = T_INT then
+         GEXPR(E.B, TY_STRING, ATY, V);
+         CHECK_TYPE(ATY, TY_STRING, E.LINE);
+         R := MK("rt_int_of_str(rt_g_g2s(" & V.all & "))");
+         if BOUNDED(C) then
+            R := MK("rt_range(" & R.all & ", " & C.LO.all & ", " & C.HI.all & ")");
+         end if;
+      elsif TT.KIND = T_FLOAT then
+         GEXPR(E.B, TY_STRING, ATY, V);
+         CHECK_TYPE(ATY, TY_STRING, E.LINE);
+         R := MK("rt_g_float_val(rt_g_g2s(" & V.all & "))");
+      elsif TT.KIND = T_FIXED and TT.FSMALL /= null then
+         GEXPR(E.B, TY_STRING, ATY, V);
+         CHECK_TYPE(ATY, TY_STRING, E.LINE);
+         R := MK("rt_g_fix(rt_g_float_val(rt_g_g2s(" & V.all & ")), " & TT.FSMALL.all & ")");
+      elsif TT.KIND = T_BOOL or TT.KIND = T_CHAR or TT.KIND = T_ENUM then
+         GEXPR(E.B, null, ATY, V);
+         if IS_STRING(ATY) then
+            V := MK("rt_g_g2s(" & V.all & ")");
+            if TT.KIND = T_BOOL then
+               V := MK("rt_g_bool_val(" & V.all & ")");
+            elsif TT.KIND = T_CHAR then
+               V := MK("rt_g_char_val(" & V.all & ")");
+            else
+               LIT_TABLE(TT, LT);
+               V := MK("rt_g_enum_val(" & V.all & ", " & LT.all & ", " & INTEGER'REP(LIST_LEN(TT.LITS)) & ")");
+            end if;
+         else
+            CHECK_TYPE(ATY, TY_INT, E.LINE);
+            V := MK("(" & V.all & " - 1)");
+         end if;
+         R := MK("rt_range(" & V.all & ", " & C.LO.all & ", " & C.HI.all & ")");
+      else
+         FAIL(E.LINE, "VAL is an attribute of scalar types");
+      end if;
+   end VAL_REP;
+
    -- allocator ::= new qualified_expression (RM79 4.7)
    procedure ALLOCATOR(E : NODE; WANT : TYP; T : out TYP; R : out TEXT) is
       Y : SYM := LOOKUP(E.NAME.all);
       TARGET, VT : TYP;
-      CT, PT, CELL, V, X : TEXT;
+      CT, PT, CELL, V, X, B : TEXT;
+      P : REP;
    begin
       if WANT = null or else WANT.KIND /= T_PTR then
          FAIL(E.LINE, "the access type of this allocator is not known here");
@@ -856,130 +1885,541 @@
       CHECK_TYPE(VT, TARGET, E.LINE);
       COPY_CODE(TARGET, V.all, X);
       T := WANT;
+      P := REP_OF(WANT);
+      if P /= null and then P.COLL /= null then
+         -- the collection has the bits its length specification gives (RM79 13.2)
+         OBJECT_BITS(TARGET, "(*" & CELL.all & ")", B);
+         X := MK(X.all & "; rt_g_collect(&" & P.COLL.all & ", " & B.all & ", " & INTEGER'REP(P.BITS) & ")");
+      end if;
       R := MK("({ " & CT.all & " *" & CELL.all & " = rt_alloc(sizeof(" & CT.all & ")); *" & CELL.all
               & " = " & X.all & "; (" & PT.all & ")" & CELL.all & "; })");
    end ALLOCATOR;
 
-   -- aggregates (RM79 3.6.2): records, positional or named; arrays,
-   -- positional, with choices and others
+   -- aggregates (RM79 3.6.2): positional associations first, then named
+   -- ones, others last; every component gets exactly one value
    procedure AGGREGATE(E : NODE; WANT : TYP; T : out TYP; R : out TEXT) is
-      IT : NODE := E.A;
-      F : FIELD;
-      VT : TYP;
-      CT, TMP, V, X, PARTS, ET, LO, HI, KEY : TEXT;
-      -- the others choice fills the array before the named choices are stored
-      FILL : TEXT := MK("");
-      N : INTEGER;
-      LAB : NODE;
+      B : TEXT := AGG_BOUNDS;
    begin
+      AGG_BOUNDS := null;
       if WANT = null then
-         FAIL(E.LINE, "the type of this aggregate is not known here");
+         FAIL(E.LINE, "the type of this aggregate is not known here: qualify it, T(...) (RM79 4.6)");
       end if;
       T := WANT;
-      CTYPE(WANT, CT);
-      NEW_NAME("ag", TMP);
       if WANT.KIND = T_RECORD then
-         PARTS := MK("({ " & CT.all & " " & TMP.all & ";");
-         if LIST_LEN(IT) /= FIELD_COUNT(WANT) then
-            FAIL(E.LINE, "an aggregate gives every component of " & KIND_NAME(WANT));
-         end if;
-         F := WANT.FIELDS;
-         while IT /= null loop
-            if IT.A /= null then
-               -- named: find the component
-               F := WANT.FIELDS;
-               while F /= null and then not (IT.A.A.KIND = N_NAME and then F.NAME.all = IT.A.A.NAME.all) loop
-                  F := F.NEXT;
-               end loop;
-               if F = null then
-                  FAIL(E.LINE, "no such component in the aggregate");
-               end if;
-            end if;
-            GEXPR(IT.B, F.T, VT, V);
-            CHECK_TYPE(VT, F.T, E.LINE);
-            COPY_CODE(F.T, V.all, X);
-            PARTS := MK(PARTS.all & " " & TMP.all & "." & C_FIELD(F.NAME.all) & " = " & X.all & ";");
-            IT := IT.NEXT;
-            if F /= null then
-               F := F.NEXT;
-            end if;
-         end loop;
-         R := MK(PARTS.all & " " & TMP.all & "; })");
-         return;
-      end if;
-      if WANT.KIND /= T_ARRAY then
-         FAIL(E.LINE, "an aggregate builds a record or an array");
-      end if;
-      CTYPE(WANT.ELEM, ET);
-      if IT.A = null then
-         -- positional: from the first index value onward
-         if WANT.TCONS /= null and then WANT.TCONS.LO /= null then
-            LO := WANT.TCONS.LO;
-         else
-            LO := MK("1");
-         end if;
-         N := LIST_LEN(IT);
-         PARTS := MK("({ " & CT.all & " " & TMP.all & "; " & TMP.all & ".lo = " & LO.all & "; "
-                     & TMP.all & ".hi = " & LO.all & " + " & INTEGER'REP(N - 1) & "; " & TMP.all
-                     & ".lo2 = " & TMP.all & ".hi2 = 1; " & TMP.all & ".p = rt_alloc(sizeof(" & ET.all
-                     & ") * " & INTEGER'REP(N + 1) & ");");
-         N := 0;
-         while IT /= null loop
-            if IT.A /= null then
-               FAIL(E.LINE, "named associations follow the positional ones");
-            end if;
-            GEXPR(IT.B, WANT.ELEM, VT, V);
-            CHECK_TYPE(VT, WANT.ELEM, E.LINE);
-            COPY_CODE(WANT.ELEM, V.all, X);
-            PARTS := MK(PARTS.all & " " & TMP.all & ".p[" & INTEGER'REP(N) & "] = " & X.all & ";");
-            N := N + 1;
-            IT := IT.NEXT;
-         end loop;
-         R := MK(PARTS.all & " " & TMP.all & "; })");
-         return;
-      end if;
-      -- named choices: the bounds are those of the type, or of the one range given
-      if WANT.TCONS /= null and then WANT.TCONS.HI /= null then
-         LO := WANT.TCONS.LO;
-         HI := WANT.TCONS.HI;
-      elsif IT.NEXT = null and IT.A.FLAG /= 1 and IT.A.B /= null then
-         GEXPR(IT.A.A, WANT.IDX, VT, LO);
-         GEXPR(IT.A.B, WANT.IDX, VT, HI);
+         RECORD_AGGREGATE(E, WANT, R);
+      elsif WANT.KIND = T_ARRAY then
+         ARRAY_AGGREGATE(E, WANT, B, R);
       else
-         FAIL(E.LINE, "the bounds of this aggregate are not known");
+         FAIL(E.LINE, "an aggregate builds a record or an array, not " & KIND_NAME(WANT));
       end if;
-      PARTS := MK("({ " & CT.all & " " & TMP.all & "; " & TMP.all & ".lo = " & LO.all & "; "
-                  & TMP.all & ".hi = " & HI.all & "; " & TMP.all & ".lo2 = " & TMP.all & ".hi2 = 1; "
-                  & TMP.all & ".p = rt_alloc(sizeof(" & ET.all & ") * (size_t)(RT_CNT(" & TMP.all
-                  & ") + 1));");
-      N := PARTS.all'LENGTH;
+   end AGGREGATE;
+
+   -- statements EMITted by STEP, as one line for a C statement expression
+   procedure CAPTURED(B : BUFFER; R : out TEXT) is
+      L : LINES := B.HEAD;
+   begin
+      R := MK("");
+      while L /= null loop
+         R := MK(R.all & " " & L.S.all);
+         L := L.NEXT;
+      end loop;
+   end CAPTURED;
+
+   function FIELD_AT(RT : TYP; K : INTEGER) return FIELD is
+      F : FIELD := RT.FIELDS;
+   begin
+      for I in 2 .. K loop
+         F := F.NEXT;
+      end loop;
+      return F;
+   end FIELD_AT;
+
+   function NAMES_FIELD(X : NODE; F : FIELD) return BOOLEAN is
+   begin
+      if X.KIND /= N_NAME then
+         return FALSE;
+      end if;
+      return X.NAME.all = F.NAME.all;
+   end NAMES_FIELD;
+
+   -- the value of the item of a record aggregate for component K: the
+   -- positional item at position P, or the named one
+   function ITEM_FOR(E : NODE; RT : TYP; K, P : INTEGER) return NODE is
+      IT : NODE := E.A;
+      LAB : NODE;
+      N : INTEGER := 0;
+   begin
       while IT /= null loop
-         GEXPR(IT.B, WANT.ELEM, VT, V);
-         CHECK_TYPE(VT, WANT.ELEM, E.LINE);
-         COPY_CODE(WANT.ELEM, V.all, X);
-         LAB := IT.A;
-         while LAB /= null loop
-            if LAB.FLAG = 1 then
-               FILL := MK(" for (rt_int k_ = 0; k_ < RT_CNT(" & TMP.all & "); k_++) "
-                          & TMP.all & ".p[k_] = " & X.all & ";");
-            elsif LAB.B /= null then
-               GEXPR(LAB.A, WANT.IDX, VT, KEY);
-               GEXPR(LAB.B, WANT.IDX, VT, HI);
-               PARTS := MK(PARTS.all & " for (rt_int k_ = " & KEY.all & "; k_ <= " & HI.all & "; k_++) "
-                           & TMP.all & ".p[rt_index(k_, " & TMP.all & ".lo, " & TMP.all & ".hi) - "
-                           & TMP.all & ".lo] = " & X.all & ";");
-            else
-               GEXPR(LAB.A, WANT.IDX, VT, KEY);
-               PARTS := MK(PARTS.all & " " & TMP.all & ".p[rt_index(" & KEY.all & ", " & TMP.all
-                           & ".lo, " & TMP.all & ".hi) - " & TMP.all & ".lo] = " & X.all & ";");
+         if IT.A = null then
+            N := N + 1;
+            if N = P then
+               return IT.B;
             end if;
-            LAB := LAB.NEXT;
-         end loop;
+         else
+            LAB := IT.A;
+            while LAB /= null loop
+               if LAB.FLAG = 1 or else NAMES_FIELD(LAB.A, FIELD_AT(RT, K)) then
+                  return IT.B;
+               end if;
+               LAB := LAB.NEXT;
+            end loop;
+         end if;
          IT := IT.NEXT;
       end loop;
-      R := MK(PARTS.all(1 .. N) & FILL.all & PARTS.all(N + 1 .. PARTS.all'LENGTH) & " " & TMP.all
-              & "; })");
-   end AGGREGATE;
+      return null;
+   end ITEM_FOR;
+
+   -- does the static value V of a discriminant select alternative ARM?
+   procedure ARM_HOLDS(ARM : NODE; V : INTEGER; RES : out BOOLEAN) is
+      L : NODE := ARM.A;
+      LO, HI : INTEGER;
+      OK : BOOLEAN;
+   begin
+      RES := FALSE;
+      while L /= null loop
+         STATIC_CHOICE(L.A, LO, OK);
+         HI := LO;
+         if L.B /= null then
+            STATIC_CHOICE(L.B, HI, OK);
+         end if;
+         if V >= LO and V <= HI then
+            RES := TRUE;
+         end if;
+         L := L.NEXT;
+      end loop;
+   end ARM_HOLDS;
+
+   -- the components of a record aggregate: the discriminants are static
+   -- and come before the components of the variant they select, which are
+   -- the only ones present (RM79 3.7.3)
+   procedure RECORD_AGGREGATE(E : NODE; RT : TYP; R : out TEXT) is
+      IT : NODE := E.A;
+      LAB, VN, A : NODE;
+      F : FIELD;
+      G : GUARD;
+      N : INTEGER := FIELD_COUNT(RT);
+      DONE, ACTIVE : array (1 .. 200) of BOOLEAN;
+      DVS : array (1 .. 200) of INTEGER;
+      ORDER : array (1 .. 200) of INTEGER;
+      NORDER, NUNG, K, D, NPOS : INTEGER := 0;
+      SAVED : BUFFER := CODE;
+      CT, TMP, PARTS : TEXT;
+      NAMED, OK, HOLDS : BOOLEAN := FALSE;
+   begin
+      if RT.PRIV and then not INSIDE_PACKAGE(RT.DECL) then
+         FAIL(E.LINE, "an aggregate of private type " & KIND_NAME(RT) & " is not allowed here (RM79 7.4)");
+      end if;
+      if N > 200 then
+         FAIL(E.LINE, "a record of more than 200 components");
+      end if;
+      -- the components outside variants come first
+      F := RT.FIELDS;
+      for I in 1 .. N loop
+         DONE(I) := FALSE;
+         ACTIVE(I) := F.GUARD = null;
+         if ACTIVE(I) then
+            NORDER := NORDER + 1;
+            ORDER(NORDER) := I;
+         end if;
+         F := F.NEXT;
+      end loop;
+      NUNG := NORDER;
+      -- the static values of the discriminants select the variants
+      for P in 1 .. NUNG loop
+         F := FIELD_AT(RT, ORDER(P));
+         if F.IS_DISCR then
+            VN := ITEM_FOR(E, RT, ORDER(P), P);
+            if VN = null then
+               FAIL(E.LINE, "no value for discriminant " & F.NAME.all & " (RM79 3.7.3)");
+            end if;
+            STATIC_CHOICE(VN, DVS(ORDER(P)), OK);
+            if not OK and IS_ENUM_LIT(VN) then
+               OK := TRUE;
+               DVS(ORDER(P)) := LOOKUP(VN.NAME.all).MVALUE;
+            end if;
+            if not OK and RT.FIELDS /= null then
+               G := null;
+               D := 0;
+               -- a dynamic discriminant is allowed when no variant depends on it
+               A := null;
+               F := RT.FIELDS;
+               while F /= null loop
+                  G := F.GUARD;
+                  while G /= null loop
+                     if G.DISC.all = FIELD_AT(RT, ORDER(P)).NAME.all then
+                        FAIL(E.LINE, "the value of discriminant " & G.DISC.all
+                             & " in an aggregate is static (RM79 3.7.3)");
+                     end if;
+                     G := G.NEXT;
+                  end loop;
+                  F := F.NEXT;
+               end loop;
+            end if;
+         end if;
+      end loop;
+      F := RT.FIELDS;
+      for I in 1 .. N loop
+         if F.GUARD /= null then
+            HOLDS := TRUE;
+            G := F.GUARD;
+            while G /= null loop
+               D := FIELD_INDEX(RT, G.DISC.all);
+               if G.ARM.FLAG = 1 then
+                  A := G.VARIANT.B;
+                  while A /= null loop
+                     if A /= G.ARM then
+                        ARM_HOLDS(A, DVS(D), OK);
+                        if OK then
+                           HOLDS := FALSE;
+                        end if;
+                     end if;
+                     A := A.NEXT;
+                  end loop;
+               else
+                  ARM_HOLDS(G.ARM, DVS(D), OK);
+                  if not OK then
+                     HOLDS := FALSE;
+                  end if;
+               end if;
+               G := G.NEXT;
+            end loop;
+            if HOLDS then
+               ACTIVE(I) := TRUE;
+               NORDER := NORDER + 1;
+               ORDER(NORDER) := I;
+            end if;
+         end if;
+         F := F.NEXT;
+      end loop;
+      CTYPE(RT, CT);
+      NEW_NAME("ag", TMP);
+      CODE := NEW_BUFFER;
+      while IT /= null loop
+         if IT.A = null then
+            -- positional: the next component present
+            if NAMED then
+               FAIL(E.LINE, "positional associations come before named ones (RM79 3.6.2)");
+            end if;
+            NPOS := NPOS + 1;
+            if NPOS > NORDER then
+               FAIL(E.LINE, "too many components in an aggregate of " & KIND_NAME(RT));
+            end if;
+            K := ORDER(NPOS);
+            AGG_COMPONENT(TMP.all, RT, K, IT.B, E.LINE);
+            DONE(K) := TRUE;
+         else
+            NAMED := TRUE;
+            LAB := IT.A;
+            while LAB /= null loop
+               if LAB.FLAG = 1 then
+                  -- others: every component present not yet given
+                  if IT.NEXT /= null then
+                     FAIL(E.LINE, "others comes last in an aggregate (RM79 3.6.2)");
+                  end if;
+                  for I in 1 .. N loop
+                     if ACTIVE(I) and not DONE(I) then
+                        AGG_COMPONENT(TMP.all, RT, I, IT.B, E.LINE);
+                        DONE(I) := TRUE;
+                     end if;
+                  end loop;
+               else
+                  if LAB.A.KIND /= N_NAME or LAB.B /= null then
+                     FAIL(E.LINE, "a choice in a record aggregate names a component (RM79 3.6.2)");
+                  end if;
+                  K := FIELD_INDEX(RT, LAB.A.NAME.all);
+                  if K = 0 then
+                     FAIL(E.LINE, KIND_NAME(RT) & " has no component " & LAB.A.NAME.all);
+                  end if;
+                  if not ACTIVE(K) then
+                     FAIL(E.LINE, "component " & LAB.A.NAME.all & " is not in the variant selected (RM79 3.7.3)");
+                  end if;
+                  if DONE(K) then
+                     FAIL(E.LINE, "component " & LAB.A.NAME.all & " is given twice in an aggregate (RM79 3.6.2)");
+                  end if;
+                  AGG_COMPONENT(TMP.all, RT, K, IT.B, E.LINE);
+                  DONE(K) := TRUE;
+               end if;
+               LAB := LAB.NEXT;
+            end loop;
+         end if;
+         IT := IT.NEXT;
+      end loop;
+      F := RT.FIELDS;
+      for I in 1 .. N loop
+         if ACTIVE(I) and not DONE(I) then
+            FAIL(E.LINE, "an aggregate gives every component of " & KIND_NAME(RT) & ": " & F.NAME.all
+                 & " is missing (RM79 3.6.2)");
+         end if;
+         F := F.NEXT;
+      end loop;
+      CAPTURED(CODE, PARTS);
+      CODE := SAVED;
+      R := MK("({ " & CT.all & " " & TMP.all & ";" & PARTS.all & " " & TMP.all & "; })");
+   end RECORD_AGGREGATE;
+
+   function FIELD_INDEX(RT : TYP; NAME : STRING) return INTEGER is
+      F : FIELD := RT.FIELDS;
+      K : INTEGER := 1;
+   begin
+      while F /= null loop
+         if F.NAME.all = NAME then
+            return K;
+         end if;
+         K := K + 1;
+         F := F.NEXT;
+      end loop;
+      return 0;
+   end FIELD_INDEX;
+
+   -- component K of the record aggregate in TMP gets the value V, checked
+   -- against the component's constraint
+   procedure AGG_COMPONENT(TMP : STRING; RT : TYP; K : INTEGER; V : NODE; LINE : INTEGER) is
+      F : FIELD := RT.FIELDS;
+      VT : TYP;
+      X, Y : TEXT;
+   begin
+      for I in 2 .. K loop
+         F := F.NEXT;
+      end loop;
+      GEXPR(V, F.T, VT, X);
+      CHECK_TYPE(VT, F.T, LINE);
+      if F.T.KIND = T_ARRAY and not BOUNDED(F.C) then
+         COPY_CODE(F.T, X.all, Y);
+         EMIT(TMP & "." & C_FIELD(F.NAME.all) & " = " & Y.all & ";");
+      else
+         if COMPOSITE(F.T) then
+            INIT_STORAGE(TMP & "." & C_FIELD(F.NAME.all), F.T, F.C);
+         end if;
+         ASSIGN_CODE(TMP & "." & C_FIELD(F.NAME.all), F.T, X.all, F.C, Y);
+         EMIT(Y.all);
+      end if;
+   end AGG_COMPONENT;
+
+   -- the static value of a choice: an integer, an enumeration or a character
+   -- literal, a static expression (RM79 3.6.2, 4.8)
+   procedure STATIC_CHOICE(X : NODE; V : out INTEGER; OK : out BOOLEAN) is
+   begin
+      if IS_CHAR_LIT(X) then
+         OK := TRUE;
+         V := CHARACTER'ORD(X.NAME(1)) - 1;
+         return;
+      end if;
+      MANIFEST(X, V, OK);
+   end STATIC_CHOICE;
+
+   -- array aggregates: the bounds are those of the type when it has them,
+   -- else those of the positional components counted from the first index,
+   -- else those of the choices; others takes the bounds of the context
+   procedure ARRAY_AGGREGATE(E : NODE; ARRT : TYP; BOUNDS : TEXT; R : out TEXT) is
+      IT : NODE := E.A;
+      LAB, OTHERS_IT : NODE;
+      NP, NNAMED, CLO, CHI, V1, V2 : INTEGER := 0;
+      ALL_STATIC : BOOLEAN := TRUE;
+      OK, OK2, FIRST_CHOICE : BOOLEAN := TRUE;
+      VT : TYP;
+      CT, ET, TMP, LO, HI, V, X, PARTS, FILL, ROWB, KEY, KHI : TEXT;
+      SAVED : BUFFER := CODE;
+   begin
+      CTYPE(ARRT, CT);
+      ELEM_CTYPE(ARRT.ELEM, ET);
+      NEW_NAME("ag", TMP);
+      -- the shape: positional ones, named ones, others
+      while IT /= null loop
+         if IT.A = null then
+            if NNAMED > 0 or OTHERS_IT /= null then
+               FAIL(E.LINE, "positional associations come before named ones (RM79 3.6.2)");
+            end if;
+            NP := NP + 1;
+         elsif IT.A.FLAG = 1 then
+            if IT.NEXT /= null or IT.A.NEXT /= null then
+               FAIL(E.LINE, "others comes last in an aggregate (RM79 3.6.2)");
+            end if;
+            OTHERS_IT := IT;
+         else
+            NNAMED := NNAMED + 1;
+            LAB := IT.A;
+            while LAB /= null loop
+               -- every choice is static (RM79 3.6.2)
+               STATIC_CHOICE(LAB.A, V1, OK);
+               V2 := V1;
+               if LAB.B /= null then
+                  STATIC_CHOICE(LAB.B, V2, OK2);
+                  OK := OK and OK2;
+               end if;
+               if not OK then
+                  FAIL(E.LINE, "a choice in an array aggregate is static (RM79 3.6.2)");
+               end if;
+               if FIRST_CHOICE or V1 < CLO then
+                  CLO := V1;
+               end if;
+               if FIRST_CHOICE or V2 > CHI then
+                  CHI := V2;
+               end if;
+               FIRST_CHOICE := FALSE;
+               LAB := LAB.NEXT;
+            end loop;
+         end if;
+         IT := IT.NEXT;
+      end loop;
+      if NP > 0 and NNAMED > 0 then
+         FAIL(E.LINE, "an array aggregate is positional or named, with others last (RM79 3.6.2)");
+      end if;
+      if NNAMED > 0 then
+         CHECK_CHOICES(E, ARRT, OTHERS_IT /= null);
+      end if;
+      -- the bounds
+      if OTHERS_IT = null and NP > 0 then
+         FIRST_INDEX(ARRT, LO);
+         HI := MK("(" & LO.all & " + " & INTEGER'REP(NP - 1) & ")");
+      elsif OTHERS_IT = null and NNAMED > 0 then
+         LO := MK("((rt_int)" & INTEGER'REP(CLO) & "LL)");
+         HI := MK("((rt_int)" & INTEGER'REP(CHI) & "LL)");
+      elsif ARRT.TCONS /= null and then ARRT.TCONS.HI /= null then
+         LO := ARRT.TCONS.LO;
+         HI := ARRT.TCONS.HI;
+      elsif BOUNDS /= null then
+         LO := MK("(" & BOUNDS.all & ").lo");
+         HI := MK("(" & BOUNDS.all & ").hi");
+      else
+         FAIL(E.LINE, "an aggregate with others needs bounds from its context (RM79 3.6.2)");
+      end if;
+      -- the rows of a multi-dimensional array take their bounds from the
+      -- target's second index
+      if ARRT.DIMS > 1 and BOUNDS /= null then
+         ROWB := MK("((struct { rt_int lo, hi; }){ (" & BOUNDS.all & ").lo2, (" & BOUNDS.all & ").hi2 })");
+      end if;
+      CODE := NEW_BUFFER;
+      EMIT(TMP.all & ".lo = " & LO.all & "; " & TMP.all & ".hi = " & HI.all & "; " & TMP.all & ".lo2 = "
+           & TMP.all & ".hi2 = 1;");
+      EMIT(TMP.all & ".p = rt_alloc(sizeof(" & ET.all & ") * (size_t)(G_CNT(" & TMP.all & ") + 1));");
+      if NP > 0 and OTHERS_IT = null then
+         EMIT("if (G_CNT(" & TMP.all & ") != " & INTEGER'REP(NP) & ") rt_raise(RT_X_SUBSCRIPT);");
+      elsif NP > 0 then
+         EMIT("if (G_CNT(" & TMP.all & ") < " & INTEGER'REP(NP) & ") rt_raise(RT_X_SUBSCRIPT);");
+      end if;
+      if OTHERS_IT /= null then
+         AGG_BOUNDS := ROWB;
+         GEXPR(OTHERS_IT.B, ARRT.ELEM, VT, V);
+         AGG_BOUNDS := null;
+         CHECK_TYPE(VT, ARRT.ELEM, E.LINE);
+         CTYPE(ARRT.ELEM, X);
+         EMIT("{ " & X.all & " o_ = " & V.all & "; for (rt_int k_ = 0; k_ < G_CNT(" & TMP.all & "); k_++) {");
+         COPY_CODE(ARRT.ELEM, "o_", X);
+         ELEMENT_STORE(TMP.all & ".p[k_]", ARRT, X.all);
+         EMIT("} }");
+      end if;
+      IT := E.A;
+      NP := 0;
+      while IT /= null and then IT /= OTHERS_IT loop
+         AGG_BOUNDS := ROWB;
+         GEXPR(IT.B, ARRT.ELEM, VT, V);
+         AGG_BOUNDS := null;
+         CHECK_TYPE(VT, ARRT.ELEM, E.LINE);
+         COPY_CODE(ARRT.ELEM, V.all, X);
+         if IT.A = null then
+            ELEMENT_STORE(TMP.all & ".p[" & INTEGER'REP(NP) & "]", ARRT, X.all);
+            NP := NP + 1;
+         else
+            NEW_NAME("av", V);
+            CTYPE(ARRT.ELEM, PARTS);
+            EMIT("{ " & PARTS.all & " " & V.all & " = " & X.all & ";");
+            LAB := IT.A;
+            while LAB /= null loop
+               GEXPR(LAB.A, ARRT.IDX, VT, KEY);
+               CHECK_TYPE(VT, ARRT.IDX, E.LINE);
+               KHI := KEY;
+               if LAB.B /= null then
+                  GEXPR(LAB.B, ARRT.IDX, VT, KHI);
+                  CHECK_TYPE(VT, ARRT.IDX, E.LINE);
+               end if;
+               EMIT("for (rt_int k_ = " & KEY.all & "; k_ <= " & KHI.all & "; k_++) {");
+               COPY_CODE(ARRT.ELEM, V.all, X);
+               ELEMENT_STORE(TMP.all & ".p[rt_index(k_, " & TMP.all & ".lo, " & TMP.all & ".hi) - " & TMP.all
+                             & ".lo]", ARRT, X.all);
+               EMIT("}");
+               LAB := LAB.NEXT;
+            end loop;
+            EMIT("}");
+         end if;
+         IT := IT.NEXT;
+      end loop;
+      if ARRT.DIMS > 1 then
+         EMIT("if (G_CNT(" & TMP.all & ") > 0) { " & TMP.all & ".lo2 = " & TMP.all & ".p[0].lo; " & TMP.all
+              & ".hi2 = " & TMP.all & ".p[0].hi; }");
+      end if;
+      CAPTURED(CODE, PARTS);
+      CODE := SAVED;
+      R := MK("({ " & CT.all & " " & TMP.all & ";" & PARTS.all & " " & TMP.all & "; })");
+   end ARRAY_AGGREGATE;
+
+   -- a component of an aggregate: the subarrays of a multi-dimensional
+   -- array all have the same bounds; a component is checked against the
+   -- component subtype
+   procedure ELEMENT_STORE(LV : STRING; ARRT : TYP; V : STRING) is
+      X : TEXT;
+   begin
+      if ARRT.ELEMCONS /= null and then ARRT.ELEMCONS.LO /= null and then not COMPOSITE(ARRT.ELEM) then
+         ASSIGN_CODE(LV, ARRT.ELEM, V, ARRT.ELEMCONS, X);
+         EMIT(X.all);
+      else
+         EMIT(LV & " = " & V & ";");
+      end if;
+   end ELEMENT_STORE;
+
+   -- the choices of an array aggregate cover each index once; without
+   -- others, every index of a type with static bounds (RM79 3.6.2)
+   procedure CHECK_CHOICES(E : NODE; ARRT : TYP; HAS_OTHERS : BOOLEAN) is
+      A, B, LAB, LAB2 : NODE;
+      LO1, HI1, LO2, HI2, COUNT : INTEGER := 0;
+      OK : BOOLEAN;
+   begin
+      A := E.A;
+      while A /= null loop
+         if A.A /= null and then A.A.FLAG /= 1 then
+            LAB := A.A;
+            while LAB /= null loop
+               STATIC_CHOICE(LAB.A, LO1, OK);
+               HI1 := LO1;
+               if LAB.B /= null then
+                  STATIC_CHOICE(LAB.B, HI1, OK);
+               end if;
+               if HI1 >= LO1 then
+                  COUNT := COUNT + (HI1 - LO1 + 1);
+               end if;
+               B := A;
+               LAB2 := LAB.NEXT;
+               while B /= null loop
+                  if B.A /= null and then B.A.FLAG /= 1 then
+                     if B /= A then
+                        LAB2 := B.A;
+                     end if;
+                     while LAB2 /= null loop
+                        STATIC_CHOICE(LAB2.A, LO2, OK);
+                        HI2 := LO2;
+                        if LAB2.B /= null then
+                           STATIC_CHOICE(LAB2.B, HI2, OK);
+                        end if;
+                        if LO1 <= HI1 and LO2 <= HI2 and LO1 <= HI2 and LO2 <= HI1 then
+                           FAIL(E.LINE, "an index is given twice in an aggregate (RM79 3.6.2)");
+                        end if;
+                        LAB2 := LAB2.NEXT;
+                     end loop;
+                  end if;
+                  B := B.NEXT;
+                  LAB2 := null;
+               end loop;
+               LAB := LAB.NEXT;
+            end loop;
+         end if;
+         A := A.NEXT;
+      end loop;
+      if not HAS_OTHERS and STATIC_BOUNDS(ARRT.TCONS) then
+         if COUNT /= ARRT.TCONS.MHI - ARRT.TCONS.MLO + 1 then
+            FAIL(E.LINE, "the choices of an aggregate cover every index of " & KIND_NAME(ARRT)
+                 & " once, or others is given (RM79 3.6.2)");
+         end if;
+      end if;
+   end CHECK_CHOICES;
 
    -- ---- subprogram calls (RM79 5.2) -----------------------------------------------------
 
@@ -988,7 +2428,7 @@
       A : NODE := ARGS;
       P : PARM := FIRST;
    begin
-      while A /= null and then A.TAG = null loop
+      while A /= null and then A.FORMAL = null loop
          if P = PM then
             return A;
          end if;
@@ -996,7 +2436,7 @@
          A := A.NEXT;
       end loop;
       while A /= null loop
-         if A.TAG /= null and then A.TAG.all = PM.NAME.all then
+         if A.FORMAL /= null and then A.FORMAL.all = PM.NAME.all then
             return A;
          end if;
          A := A.NEXT;
@@ -1015,10 +2455,22 @@
       LC : CONS;
       RO : BOOLEAN;
    begin
-      if FN.KIND = N_SELECT and then IS_PACKAGE(FN.A) then
+      EXPANDED(FN, NM);
+      if NM /= null then
+         FN := NM;
+      elsif FN.KIND = N_SELECT and then FN.A.KIND = N_NAME and then IS_TYPE_NAME(FN.A.NAME.all) then
+         -- T.F: a subprogram with a parameter or result of type T is an
+         -- attribute of T (RM79 3.3, 4.1.2)
+         if not TYPE_ATTRIBUTE(LOOKUP(FN.A.NAME.all).T, FN.NAME.all) then
+            FAIL(E.LINE, FN.NAME.all & " is not a subprogram attribute of " & FN.A.NAME.all & " (RM79 3.3)");
+         end if;
          NM := NN(N_NAME, FN.LINE);
          NM.NAME := FN.NAME;
-         NM.TAG := FN.A.NAME;
+         FN := NM;
+      elsif FN.KIND = N_SELECT and then IS_PACKAGE(FN.A) then
+         NM := NN(N_NAME, FN.LINE);
+         NM.NAME := FN.NAME;
+         NM.TAG := MK(PATH_OF(FN.A));
          FN := NM;
       elsif FN.KIND = N_SELECT and then FN.A.KIND = N_APPLY and then FN.A.A.KIND = N_NAME
          and then IS_TASK_NAME(FN.A.A.NAME.all) then
@@ -1043,7 +2495,11 @@
          Y := MEMBER_OF(FN.TAG.all, FN.NAME.all, FN.LINE);
       end if;
       if Y = null then
+         if FN.TAG /= null then
+            TEXT_IO_QUALIFIED := FN.TAG.all = "TEXT_IO";
+         end if;
          BUILTIN(FN.NAME.all, E.B, E.LINE, IS_STMT, T, R);
+         TEXT_IO_QUALIFIED := FALSE;
          return;
       end if;
       if (Y.KIND = Y_FUNC or Y.KIND = Y_PROC) and FN.TAG = null then
@@ -1059,6 +2515,11 @@
          OTHER_CALL(E, IS_STMT, T, R);
          return;
       end if;
+      if Y.KIND = Y_TYPE and IS_STMT then
+         CODE_STATEMENT(E, Y, R);
+         T := TY_VOID;
+         return;
+      end if;
       if Y.KIND /= Y_FUNC and Y.KIND /= Y_PROC then
          FAIL(E.LINE, FN.NAME.all & " cannot be called");
       end if;
@@ -1071,9 +2532,166 @@
       GCALL_WITH(E, Y, T, R);
    end GCALL;
 
+   -- after the call, an out or in out actual satisfies its own constraint
+   -- (RM79 6.3)
+   procedure OUT_CHECK(LV : STRING; T : TYP; C : CONS) is
+   begin
+      if not BOUNDED(C) then
+         return;
+      end if;
+      if POST_CHECKS = null then
+         POST_CHECKS := MK("");
+      end if;
+      if T.KIND = T_FLOAT or T.KIND = T_FIXED then
+         POST_CHECKS := MK(POST_CHECKS.all & " (void)rt_frange(" & LV & ", " & C.LO.all & ", " & C.HI.all & ");");
+      elsif IS_DISCRETE(T) then
+         POST_CHECKS := MK(POST_CHECKS.all & " (void)rt_range(" & LV & ", " & C.LO.all & ", " & C.HI.all & ");");
+      end if;
+   end OUT_CHECK;
+
+   -- the name of a variable as a path: X, X.C, X(3), X(*) for an index that
+   -- is not static; "?" for what is not a variable or lies behind an access
+   -- value (another object)
+   procedure VAR_PATH(E : NODE; R : out TEXT) is
+      PT : TYP;
+      V : TEXT;
+      SAVED : BUFFER := CODE;
+   begin
+      if E.KIND = N_NAME then
+         R := E.NAME;
+         return;
+      elsif E.KIND = N_PAREN then
+         VAR_PATH(E.A, R);
+         return;
+      elsif (E.KIND /= N_SELECT and E.KIND /= N_APPLY) or else (E.KIND = N_SELECT and E.NAME.all = "ALL") then
+         R := MK("?");
+         return;
+      end if;
+      -- through an access value the path names another object
+      PT := null;
+      TRIAL := TRIAL + 1;
+      CODE := NEW_BUFFER;
+      begin
+         GEXPR(E.A, null, PT, V);
+      exception
+         when COMPILE_ERROR =>
+            PT := null;
+      end;
+      TRIAL := TRIAL - 1;
+      CODE := SAVED;
+      if PT = null or else PT.KIND = T_PTR then
+         R := MK("?");
+         return;
+      end if;
+      VAR_PATH(E.A, R);
+      if R.all = "?" then
+         return;
+      elsif E.KIND = N_SELECT then
+         R := MK(R.all & "." & E.NAME.all);
+      elsif LIST_LEN(E.B) = 1 and then E.B.KIND = N_INT then
+         R := MK(R.all & "(" & INTEGER'REP(E.B.IVAL) & ")");
+      else
+         R := MK(R.all & "(*)");
+      end if;
+   end VAR_PATH;
+
+   -- do two variables share a part: one path a prefix of the other, an index
+   -- that is not static matching any
+   function PATHS_OVERLAP(P, R : STRING) return BOOLEAN is
+      I : INTEGER := P'FIRST;
+      J : INTEGER := R'FIRST;
+   begin
+      loop
+         if I > P'LAST or J > R'LAST then
+            if I > P'LAST and J > R'LAST then
+               return TRUE;
+            elsif I > P'LAST then
+               return R(J) = "." or R(J) = "(";
+            end if;
+            return P(I) = "." or P(I) = "(";
+         end if;
+         if P(I) = "(" and R(J) = "(" and (P(I + 1) = "*" or R(J + 1) = "*") then
+            while P(I) /= ")" loop
+               I := I + 1;
+            end loop;
+            while R(J) /= ")" loop
+               J := J + 1;
+            end loop;
+         elsif P(I) /= R(J) then
+            return FALSE;
+         end if;
+         I := I + 1;
+         J := J + 1;
+      end loop;
+   end PATHS_OVERLAP;
+
+   -- does the tree N mention NAME?
+   function MENTIONS(N : NODE; NAME : STRING) return BOOLEAN is
+      P : NODE := N;
+   begin
+      while P /= null loop
+         if P.KIND = N_NAME and then P.NAME.all = NAME then
+            return TRUE;
+         end if;
+         if MENTIONS(P.A, NAME) or else MENTIONS(P.B, NAME) then
+            return TRUE;
+         elsif MENTIONS(P.C, NAME) or else MENTIONS(P.D, NAME) then
+            return TRUE;
+         elsif MENTIONS(P.E, NAME) then
+            return TRUE;
+         end if;
+         P := P.NEXT;
+      end loop;
+      return FALSE;
+   end MENTIONS;
+
+   -- does the expression N, without the ones after it, mention NAME?
+   function MENTIONS_ONE(N : NODE; NAME : STRING) return BOOLEAN is
+   begin
+      if N.KIND = N_NAME and then N.NAME.all = NAME then
+         return TRUE;
+      elsif MENTIONS(N.A, NAME) or else MENTIONS(N.B, NAME) then
+         return TRUE;
+      end if;
+      return MENTIONS(N.C, NAME) or MENTIONS(N.D, NAME) or MENTIONS(N.E, NAME);
+   end MENTIONS_ONE;
+
+   -- a variable given as an out or in out actual is no other actual of the
+   -- call, and no global variable that the subprogram uses (RM79 5.2.3)
+   procedure CHECK_ALIASING(E : NODE; Y : SYM; A : NODE) is
+      B : NODE := E.B;
+      P, Q : TEXT;
+      R : NODE := ROOT_NAME(A);
+      V : SYM;
+   begin
+      if R = null then
+         return;
+      end if;
+      VAR_PATH(A, P);
+      while B /= null loop
+         if B /= A and P.all /= "?" then
+            VAR_PATH(B, Q);
+            if Q.all /= "?" and then PATHS_OVERLAP(P.all, Q.all) then
+               FAIL(E.LINE, R.NAME.all & " is an out or in out actual and another actual of the same call (RM79 5.2.3)");
+            end if;
+         end if;
+         B := B.NEXT;
+      end loop;
+      V := LOOKUP(R.NAME.all);
+      if V /= null and then V.KIND = Y_VAR and then Y.DECL /= null and then (Y.DECL.KIND = N_PROC or Y.DECL.KIND = N_FUNC) then
+         if Y.DECL.IVAL = 0 and then not DECLARES(Y.DECL, R.NAME.all) then
+            if MENTIONS(Y.DECL.C, R.NAME.all) or else MENTIONS(Y.DECL.D, R.NAME.all)
+               or else MENTIONS(Y.DECL.E, R.NAME.all) then
+               FAIL(E.LINE, R.NAME.all & " is an out or in out actual of " & Y.NAME.all
+                    & ", which also uses it as a global variable (RM79 5.2.3)");
+            end if;
+         end if;
+      end if;
+   end CHECK_ALIASING;
+
    -- the C call of subprogram Y with the actuals of E (RM79 5.2)
    procedure GCALL_WITH(E : NODE; Y : SYM; T : out TYP; R : out TEXT) is
-      ARGS, LV, V, X1, X2 : TEXT;
+      ARGS, LV, V, X1, X2, TMP : TEXT;
       A : NODE;
       PM : PARM;
       LT, VT : TYP;
@@ -1094,12 +2712,18 @@
          PATH_AT(Y.MEMBERS.LEVEL, Y.MEMBERS.CNAME.all & "lo", X1);
          PATH_AT(Y.MEMBERS.LEVEL, Y.MEMBERS.CNAME.all & "hi", X2);
          LV := MK(LV.all & "[rt_index(" & V.all & ", " & X1.all & ", " & X2.all & ") - " & X1.all & "]");
-         ARGS := MK("(" & LV.all & " ? " & LV.all & " : (rt_raise(RT_X_TASKING), (void *)0))");
+         ACT_PATH_I(Y.MEMBERS, V.all, X1);
+         ARGS := MK("rt_g_task_frame((void **)&" & LV.all & ", &" & X1.all & ")");
       elsif (Y.KIND = Y_FUNC or Y.KIND = Y_PROC) and then Y.ACCESS_PATH /= null then
          -- a visible subprogram of a task: the task body's frame; before the
          -- task runs there is none
          PATH_AT(Y.MEMBERS.LEVEL, Y.ACCESS_PATH.all, LV);
-         ARGS := MK("(" & LV.all & " ? " & LV.all & " : (rt_raise(RT_X_TASKING), (void *)0))");
+         if SAME_TASK(Y.MEMBERS, CUR_TASK) then
+            ARGS := LV;
+         else
+            ACT_PATH(Y.MEMBERS, X1);
+            ARGS := MK("rt_g_task_frame((void **)&" & LV.all & ", &" & X1.all & ")");
+         end if;
       elsif Y.LEVEL > 0 then
          LINK_TO(Y.LEVEL, ARGS);
       end if;
@@ -1113,8 +2737,15 @@
             if PM.DFLT = null or PM.MODE /= M_IN then
                FAIL(E.LINE, "no actual parameter for " & PM.NAME.all);
             end if;
-            -- a default is used only for in parameters (RM79 5.2.2)
-            GEXPR(PM.DFLT, PM.T, VT, V);
+            -- a default is used only for in parameters (RM79 5.2.2); it was
+            -- evaluated with the specification (RM79 6.3)
+            if PM.DSYM /= null then
+               ACCESS_OF(PM.DSYM, V);
+               COPY_CODE(PM.T, V.all, X1);
+               V := X1;
+            else
+               GEXPR(PM.DFLT, PM.T, VT, V);
+            end if;
             ARGS := MK(ARGS.all & V.all);
          else
             if A.FLAG /= 0 and A.FLAG /= 4 and A.FLAG /= PM.MODE then
@@ -1135,7 +2766,21 @@
                end if;
                CHECK_PURE_TARGET(A, E.LINE);
                CHECK_TYPE(LT, PM.T, E.LINE);
-               ARGS := MK(ARGS.all & "&" & LV.all);
+               if LT.KIND = T_CHAR then
+                  -- a character may be a byte of a string, the formal is an int:
+                  -- passed through a temporary, copied back after the call
+                  NEW_NAME("ch", TMP);
+                  EMIT("int " & TMP.all & " = " & LV.all & ";");
+                  ARGS := MK(ARGS.all & "&" & TMP.all);
+                  if POST_CHECKS = null then
+                     POST_CHECKS := MK("");
+                  end if;
+                  POST_CHECKS := MK(POST_CHECKS.all & " " & LV.all & " = " & TMP.all & ";");
+               else
+                  ARGS := MK(ARGS.all & "&" & LV.all);
+               end if;
+               CHECK_ALIASING(E, Y, A);
+               OUT_CHECK(LV.all, LT, LC);
             end if;
          end if;
          PM := PM.NEXT;
@@ -1149,6 +2794,135 @@
 
 
 
+   -- the file of TEXT_IO an argument of type T names, as the C text of its
+   -- handle; null if T is not a file type of TEXT_IO (RM79 14.3)
+   procedure TEXT_FILE(T : TYP; V : STRING; WANT_OUT : BOOLEAN; LINE : INTEGER; H : out TEXT) is
+      P, F : SYM;
+   begin
+      H := null;
+      if T = null then
+         return;
+      elsif T.KIND /= T_RECORD and T.KIND /= T_VOID then
+         return;
+      end if;
+      P := LOOKUP_PATH("TEXT_IO");
+      if P = null then
+         return;
+      end if;
+      F := MEMBER_OF("TEXT_IO", "IN_FILE", LINE);
+      if F /= null and then F.T = T then
+         if WANT_OUT then
+            FAIL(LINE, "PUT writes to an OUT_FILE (RM79 14.4)");
+         end if;
+         H := MK("(" & V & ")." & C_FIELD("H"));
+         return;
+      end if;
+      F := MEMBER_OF("TEXT_IO", "OUT_FILE", LINE);
+      if F /= null and then F.T = T then
+         if not WANT_OUT then
+            FAIL(LINE, "GET reads from an IN_FILE (RM79 14.4)");
+         end if;
+         H := MK("(" & V & ")." & C_FIELD("H"));
+      end if;
+   end TEXT_FILE;
+
+   -- GET and PUT of TEXT_IO for CHARACTER, STRING, INTEGER, FLOAT and BOOLEAN,
+   -- with or without a file first (RM79 14.3, 14.4)
+   procedure TEXT_IO_CALL(NAME : STRING; ARGS : NODE; LINE : INTEGER; R : out TEXT) is
+      ATY, LT : TYP;
+      A, W, FR, LV, H : TEXT;
+      LC : CONS;
+      RO : BOOLEAN;
+      ITEM : NODE := ARGS;
+   begin
+      if ARGS = null then
+         FAIL(LINE, NAME & " needs an item");
+      end if;
+      if ARGS.NEXT /= null then
+         GEXPR(ARGS, null, ATY, A);
+         TEXT_FILE(ATY, A.all, NAME = "PUT", LINE, H);
+         if H /= null then
+            ITEM := ARGS.NEXT;
+         end if;
+      end if;
+      if NAME = "PUT" then
+         GEXPR(ITEM, null, ATY, A);
+         W := MK("0");
+         -- DEFAULT_MANTISSA = FLOAT'DIGITS - 1 (RM79 14.4)
+         FR := MK(INTEGER'REP(TY_FLOAT.NDIGITS - 1));
+         if ITEM.NEXT /= null then
+            GEXPR(ITEM.NEXT, TY_INT, LT, W);
+            if ITEM.NEXT.NEXT /= null then
+               GEXPR(ITEM.NEXT.NEXT, TY_INT, LT, FR);
+            end if;
+         end if;
+         if H = null then
+            if IS_STRING(ATY) then
+               R := MK("rt_g_put(rt_g_g2s(" & A.all & "))");
+            elsif ATY.KIND = T_CHAR then
+               R := MK("rt_g_putc(" & A.all & ")");
+            elsif ATY.KIND = T_INT then
+               R := MK("rt_g_put_int(" & A.all & ", " & W.all & ")");
+            elsif ATY.KIND = T_BOOL then
+               R := MK("rt_g_put_bool(" & A.all & ", " & W.all & ")");
+            else
+               H := MK("rt_g_cur_out()");
+            end if;
+         end if;
+         if R /= null then
+            return;
+         end if;
+         if IS_STRING(ATY) then
+            R := MK("rt_g_fput(" & H.all & ", rt_g_g2s(" & A.all & "))");
+         elsif ATY.KIND = T_CHAR then
+            R := MK("rt_g_fputc(" & H.all & ", " & A.all & ")");
+         elsif ATY.KIND = T_INT then
+            R := MK("rt_g_fput_int(" & H.all & ", " & A.all & ", " & W.all & ")");
+         elsif ATY.KIND = T_BOOL then
+            R := MK("rt_g_fput_bool(" & H.all & ", " & A.all & ", " & W.all & ")");
+         elsif ATY.KIND = T_FIXED then
+            FAIL(LINE, "TEXT_IO has no PUT for a fixed point type: instantiate FIXED_IO (RM79 14.4)");
+         elsif ATY.KIND = T_FLOAT then
+            R := MK("rt_g_fput_float(" & H.all & ", " & A.all & ", " & W.all & ", " & FR.all & ")");
+         elsif ATY.KIND = T_ENUM then
+            FAIL(LINE, "TEXT_IO has no PUT for an enumeration type: instantiate ENUM_IO (RM79 14.4)");
+         else
+            FAIL(LINE, "PUT of this type is not handled");
+         end if;
+         return;
+      end if;
+      LVALUE(ITEM, LV, LT, LC, RO);
+      if H = null then
+         if LT.KIND = T_CHAR then
+            R := MK("(" & LV.all & " = rt_g_getc())");
+         elsif LT.KIND = T_INT then
+            R := MK("(" & LV.all & " = rt_g_get_int())");
+         elsif LT.KIND = T_FLOAT then
+            R := MK("(" & LV.all & " = rt_g_get_float())");
+         else
+            H := MK("rt_g_cur_in()");
+         end if;
+      end if;
+      if R /= null then
+         return;
+      end if;
+      if IS_STRING(LT) then
+         R := MK("rt_g_fget_str(" & H.all & ", &(" & LV.all & "))");
+      elsif LT.KIND = T_CHAR then
+         R := MK("(" & LV.all & " = rt_g_fgetc(" & H.all & "))");
+      elsif LT.KIND = T_INT then
+         R := MK("(" & LV.all & " = rt_g_fget_int(" & H.all & "))");
+      elsif LT.KIND = T_FLOAT then
+         R := MK("(" & LV.all & " = rt_g_fget_float(" & H.all & "))");
+      elsif LT.KIND = T_BOOL then
+         R := MK("(" & LV.all & " = rt_g_fget_bool(" & H.all & "))");
+      elsif LT.KIND = T_ENUM then
+         FAIL(LINE, "TEXT_IO has no GET for an enumeration type: instantiate ENUM_IO (RM79 14.4)");
+      else
+         FAIL(LINE, "GET of this type is not handled");
+      end if;
+   end TEXT_IO_CALL;
+
    -- TEXT_IO (RM79 14.3) and the subprograms of STANDARD
    procedure BUILTIN(NAME : STRING; ARGS : NODE; LINE : INTEGER; IS_STMT : BOOLEAN;
                      T : out TYP; R : out TEXT) is
@@ -1158,48 +2932,24 @@
       RO : BOOLEAN;
    begin
       T := TY_VOID;
+      if (NAME = "PUT" or NAME = "GET") and not TEXT_IO_QUALIFIED and LOOKUP("$TEXT_IO") = null then
+         FAIL(LINE, NAME & " is an operation of TEXT_IO: use TEXT_IO or name TEXT_IO." & NAME
+              & " (RM79 8.4, 14.3)");
+      end if;
       if PURE_SYM /= null and (NAME = "PUT" or NAME = "GET") then
          FAIL(LINE, "a function cannot do input-output: " & NAME & " has side effects (RM79 6.5)");
       end if;
-      if NAME = "PUT" then
-         if ARGS = null then
-            FAIL(LINE, "PUT needs an item");
-         end if;
-         GEXPR(ARGS, null, ATY, A);
-         W := MK("0");
-         if ARGS.NEXT /= null then
-            GEXPR(ARGS.NEXT, TY_INT, LT, W);
-         end if;
-         if ATY.KIND = T_STRING then
-            R := MK("rt_g_put(" & A.all & ")");
-         elsif ATY.KIND = T_CHAR then
-            R := MK("rt_g_putc(" & A.all & ")");
-         elsif ATY.KIND = T_INT then
-            R := MK("rt_g_put_int(" & A.all & ", " & W.all & ")");
-         elsif ATY.KIND = T_BOOL then
-            R := MK("rt_g_put_bool(" & A.all & ", " & W.all & ")");
-         elsif ATY.KIND = T_FLOAT then
-            R := MK("rt_g_put_float(" & A.all & ", " & W.all & ", 0)");
-         else
-            FAIL(LINE, "PUT of this type is not handled");
-         end if;
-      elsif NAME = "GET" then
-         LVALUE(ARGS, LV, LT, LC, RO);
-         if LT.KIND = T_CHAR then
-            R := MK("(" & LV.all & " = rt_g_getc())");
-         elsif LT.KIND = T_INT then
-            R := MK("(" & LV.all & " = rt_g_get_int())");
-         elsif LT.KIND = T_FLOAT then
-            R := MK("(" & LV.all & " = rt_g_get_float())");
-         else
-            FAIL(LINE, "GET of this type is not handled");
-         end if;
+      if NAME = "PUT" or NAME = "GET" then
+         TEXT_IO_CALL(NAME, ARGS, LINE, R);
       elsif NAME = "ABS" then
+         -- ABS is a function of STANDARD for every numeric type (RM79 App. C)
          GEXPR(ARGS, null, T, A);
          if T.KIND = T_INT then
             R := MK("rt_abs(" & A.all & ")");
-         else
+         elsif T.KIND = T_FLOAT or T.KIND = T_FIXED then
             R := MK("fabs(" & A.all & ")");
+         else
+            FAIL(LINE, "ABS applies to numeric values (RM79 App. C)");
          end if;
       else
          TASK_BUILTIN(NAME, ARGS, LINE, T, R);

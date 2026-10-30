@@ -103,7 +103,7 @@ restricted(TEXT_IO) procedure THE_GREEN is
    begin
       U := PROGRAM'INDEX;
       for I in 1 .. ITEMS loop
-         delay 0.001 * SECONDS * U;
+         delay 0.001 * SECONDS * TIME(U);
          P(EMPTY);
          P(MUTEX);
          IN_SLOT := IN_SLOT mod SLOTS + 1;

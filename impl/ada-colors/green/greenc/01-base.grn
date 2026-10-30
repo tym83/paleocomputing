@@ -62,6 +62,9 @@ procedure GREENC is
    N_ACCEPT   : constant INTEGER := 34;
    N_SELECTS  : constant INTEGER := 35;
    N_ABORT    : constant INTEGER := 36;
+   -- a representation specification (RM79 13): FLAG 1 packing, 2 length,
+   -- 3 enumeration codes, 4 record layout, 5 address
+   N_REP      : constant INTEGER := 38;
 
    -- declarations
    N_VAR      : constant INTEGER := 40;
@@ -80,6 +83,9 @@ procedure GREENC is
    N_INST     : constant INTEGER := 53;
    N_GENERIC  : constant INTEGER := 54;
    N_USE      : constant INTEGER := 55;
+   N_PRAGMA   : constant INTEGER := 56;
+   N_SLABEL   : constant INTEGER := 57;
+   N_GOTO     : constant INTEGER := 58;
 
    -- parts of constructs
    N_ARM     : constant INTEGER := 60;
@@ -120,6 +126,7 @@ procedure GREENC is
    T_ACT    : constant INTEGER := 13;
    T_TDECL  : constant INTEGER := 14;
    T_ENTRY  : constant INTEGER := 15;
+   T_FIXED  : constant INTEGER := 16;
 
    -- symbol kinds
    Y_VAR     : constant INTEGER := 1;
@@ -133,6 +140,10 @@ procedure GREENC is
    Y_TASK    : constant INTEGER := 9;
    Y_ENTRY   : constant INTEGER := 10;
    Y_GENERIC : constant INTEGER := 11;
+   -- a name that two used modules declare: not directly visible (RM79 8.4)
+   Y_CONFLICT : constant INTEGER := 12;
+   F_CONST_OBJ : constant INTEGER := 1;
+   F_DEFERRED  : constant INTEGER := 2;
 
    -- the data
    type TEXT is access STRING;
@@ -151,6 +162,16 @@ procedure GREENC is
       KIND, LINE, IVAL, FLAG : INTEGER;
       NAME, TAG : TEXT;
       A, B, C, D, E, NEXT : NODE;
+      -- the formal parameter named by an association F := X (RM79 5.2.1, 12.2)
+      FORMAL : TEXT;
+   end record;
+
+   -- the values of the discriminants given by a discriminant constraint (RM79 3.7.3)
+   type DVAL_REC;
+   type DVAL is access DVAL_REC;
+   type DVAL_REC is record
+      NAME, V : TEXT;
+      NEXT : DVAL;
    end record;
 
    type CONS_REC;
@@ -161,12 +182,23 @@ procedure GREENC is
       HASM : BOOLEAN;
       -- the bounds of the second index of a two-dimensional array
       LO2, HI2 : TEXT;
+      -- an accuracy constraint: digits or delta (RM79 3.5.5)
+      ACC : TEXT;
+      -- the bounds of the other indexes of a multi-dimensional array: the
+      -- constraint of its subarrays (RM79 3.6, 4.1.1)
+      INNER : CONS;
+      DV : DVAL;
    end record;
 
    type TYP_REC;
    type TYP is access TYP_REC;
+   type SYM_REC;
+   type SYM is access SYM_REC;
    type FIELD_REC;
    type FIELD is access FIELD_REC;
+   -- the alternative of a variant part a component belongs to (RM79 3.7.2)
+   type GUARD_REC;
+   type GUARD is access GUARD_REC;
    type TYP_REC is record
       KIND : INTEGER;
       NAME : TEXT;
@@ -180,6 +212,20 @@ procedure GREENC is
       FORWARD, DEFINED, PRIV : BOOLEAN;
       NEXT : TYP;
       IDX2 : TYP;
+      -- the C table of the literals' images, for T'REP and T'VAL (RM79 App. A)
+      LITTAB : TEXT;
+      -- the parent of a derived type (RM79 3.4)
+      PARENT : TYP;
+      -- floating point: the digits; fixed point: delta and small (RM79 3.5.5)
+      NDIGITS : INTEGER;
+      FDELTA, FSMALL : TEXT;
+      -- the number of indexes of an array type (RM79 3.6)
+      DIMS : INTEGER;
+      -- a restricted type has neither assignment nor equality (RM79 7.4)
+      IS_RESTRICTED : BOOLEAN;
+      -- a generic formal type: the actual type, seen as private in the
+      -- generic body (RM79 12.1)
+      VIEW_OF : TYP;
    end record;
    type FIELD_REC is record
       NAME : TEXT;
@@ -187,6 +233,21 @@ procedure GREENC is
       C : CONS;
       NEXT : FIELD;
       DFLT : NODE;  -- the initial value of the component, if any (RM79 3.7)
+      -- a constant component; one without a value is a discriminant (RM79 3.7.1)
+      IS_CONST, IS_DISCR : BOOLEAN;
+      -- the initial value, evaluated with the type definition (RM79 3.7)
+      DSYM : SYM;
+      -- the variant the component belongs to, and the C test that it is
+      -- present, @@ standing for the record
+      GUARD : GUARD;
+      COND : TEXT;
+      -- an array whose bounds are discriminants (RM79 3.7.1)
+      DYN : BOOLEAN;
+   end record;
+   type GUARD_REC is record
+      DISC : TEXT;
+      ARM, VARIANT : NODE;
+      NEXT : GUARD;
    end record;
 
    type PARM_REC;
@@ -199,10 +260,10 @@ procedure GREENC is
       CFIELD : TEXT;
       DFLT : NODE;
       NEXT : PARM;
+      -- the default, evaluated when the specification is elaborated (RM79 6.3)
+      DSYM : SYM;
    end record;
 
-   type SYM_REC;
-   type SYM is access SYM_REC;
    type SYM_REC is record
       KIND : INTEGER;
       NAME : TEXT;
@@ -221,8 +282,63 @@ procedure GREENC is
       FROM_USE : BOOLEAN;
       MEMBERS, MNEXT : SYM;
       CHAIN, STACK : SYM;
+      -- F_CONST_OBJ: a declared constant (RM79 3.8); F_DEFERRED: a deferred
+      -- constant not yet completed (RM79 7.4)
+      FLAGS : INTEGER;
    end record;
    type SYM_ARRAY is array (INTEGER) of SYM;
+
+   -- the representation given to a type (RM79 13.1 - 13.4): packing, a
+   -- length in bits, the codes of an enumeration type, a record layout;
+   -- for an access type the length is that of its collection, whose use
+   -- the C counter COLL holds
+   type PLACE_REC;
+   type PLACE is access PLACE_REC;
+   type PLACE_REC is record
+      NAME : TEXT;
+      UNIT, FIRST_BIT, LAST_BIT : INTEGER;
+      NEXT : PLACE;
+   end record;
+   type REP_REC;
+   type REP is access REP_REC;
+   type REP_REC is record
+      T : TYP;
+      PACKED : BOOLEAN;
+      BITS : INTEGER;
+      CODES : TEXT;
+      MAX_CODE : INTEGER;
+      HAS_LAYOUT : BOOLEAN;
+      LAYOUT : PLACE;
+      LAYOUT_BITS : INTEGER;
+      COLL : TEXT;
+      NEXT : REP;
+      -- a length specification shorter than the signed values need: the
+      -- values are stored less BIAS (RM79 13.2); the alignment at mod N
+      BIASED : BOOLEAN;
+      BIAS : INTEGER;
+      ALIGN : INTEGER;
+   end record;
+   -- the C layouts given to the runtime (g_lay), one per type, constraint
+   -- and context
+   type LAYC_REC;
+   type LAYC is access LAYC_REC;
+   type LAYC_REC is record
+      T : TYP;
+      C : CONS;
+      PK, EL : BOOLEAN;
+      NAME : TEXT;
+      NEXT : LAYC;
+   end record;
+   -- an object, a subprogram or a module at an address (RM79 13.5)
+   type ADDR_REC;
+   type ADDR is access ADDR_REC;
+   type ADDR_REC is record
+      Y : SYM;
+      NAME : TEXT;
+      DEPTH : INTEGER;
+      E : NODE;
+      NEXT : ADDR;
+   end record;
 
    type LINES_REC;
    type LINES is access LINES_REC;
@@ -251,6 +367,17 @@ procedure GREENC is
       DEPTH : INTEGER;
       IS_LOOP : BOOLEAN;
       NEXT : EXITS_T;
+   end record;
+
+   -- the labels of the body being translated (RM79 5, 5.8): the C label,
+   -- the exception frames open where it stands, the compound statements
+   -- around it; a goto is checked against them
+   type LABEL_REC;
+   type LABEL_LIST is access LABEL_REC;
+   type LABEL_REC is record
+      NAME, CNAME, PATH : TEXT;
+      FRAMES, LINE : INTEGER;
+      NEXT : LABEL_LIST;
    end record;
 
    COMPILE_ERROR : exception;
@@ -285,6 +412,64 @@ procedure GREENC is
 
    TY_INT, TY_BOOL, TY_FLOAT, TY_CHAR, TY_STRING, TY_VOID, TY_NIL, TY_UNIV : TYP;
    TY_ACT, TY_TDECL, TY_ENTRY : TYP;
+   -- the other predefined numeric types (RM79 3.5.4, 3.5.5, App. C) and the
+   -- universal fixed type of products and quotients of fixed values (RM79 4.5.5)
+   TY_SHORT, TY_LONG, TY_SFLOAT, TY_LFLOAT, TY_TIME, TY_UFIXED : TYP;
+   -- the private type whose full declaration is being elaborated (RM79 7.4)
+   COMPLETING : TYP;
+   -- the anonymous type definition of the last object declaration, shared by
+   -- all the objects it declares (RM79 3.3)
+   ANON_NODE : NODE;
+   ANON_TYP : TYP;
+   ANON_CONS : CONS;
+   -- an array value whose bounds an aggregate with others takes: the target
+   -- of the assignment or the object being initialized (RM79 3.6.2)
+   AGG_BOUNDS : TEXT;
+   -- the discriminants visible while a record type definition is elaborated
+   DISC_SYMS : SYM;
+   -- the enclosing subprograms and named blocks and the depth of their
+   -- declarations, for expanded names M.X (RM79 4.1.2)
+   UNIT_NAMES : array (1 .. 1000) of TEXT;
+   UNIT_DEPTHS : array (1 .. 1000) of INTEGER;
+   NUNITS : INTEGER := 0;
+   BODY_LABELS, BODY_GOTOS : LABEL_LIST;
+   SEGMENTS : INTEGER := 0;
+   -- the loops around the innermost exception handler: an exit cannot
+   -- reach them (RM79 5.7)
+   HANDLER_EXITS : EXITS_T;
+   HANDLER_DEPTH : INTEGER := 0;
+   -- the checks of out and in out actuals after a call (RM79 6.3)
+   POST_CHECKS : TEXT;
+   -- the modules added to the default environment by pragma ENVIRONMENT (RM79 8.6)
+   ENV_NAMES : TEXT;
+   -- visibility restrictions in force (RM79 8.3): declarations at depths up
+   -- to LIMIT are hidden, except the names ALLOWED and those declared at KEEP
+   type BARRIER_REC;
+   type BARRIER is access BARRIER_REC;
+   type BARRIER_REC is record
+      LIMIT, KEEP : INTEGER;
+      ALLOWED : TEXT;
+      NEXT : BARRIER;
+   end record;
+   BARRIERS : BARRIER;
+   TEXT_IO_QUALIFIED : BOOLEAN := FALSE;
+   -- the program library (RM79 10.4): the lines of the source, where each
+   -- compilation unit stands in them, units loaded from the library
+   SRC_LINES : array (1 .. 300000) of TEXT;
+   type SPAN_REC;
+   type SPAN is access SPAN_REC;
+   type SPAN_REC is record
+      U : NODE;
+      FIRST, LAST : INTEGER;
+      ENV : TEXT;
+      NEXT : SPAN;
+   end record;
+   SPANS : SPAN;
+   COMPILING_SOURCE : BOOLEAN := FALSE;
+   LOADED : TEXT;
+   CUR_COMP_UNIT : TEXT;
+   -- inside the translation of an instance, formal types are private
+   IN_INSTANCE : INTEGER := 0;
    CUR_TASK : SYM;
    ACCEPT_DEPTH : INTEGER := 0;
    FAMARG_DONE : BOOLEAN := FALSE;
@@ -293,12 +478,30 @@ procedure GREENC is
    CALL_TASK_IX : NODE;
    -- pragma INTERFACE seen in the statements of the body being parsed (RM79 13.9)
    SAW_INTERFACE : BOOLEAN := FALSE;
+   REPS : REP;
+   LAYS : LAYC;
+   STRING_REP : REP;
+   OUT_LAYDECLS, OUT_LAYS : BUFFER;
+   -- the program has address specifications: views are kept in agreement
+   HAS_VIEWS : BOOLEAN := FALSE;
+   -- the listing (RM79 App. B): pragma LIST turns it off and on, PAGE starts
+   -- a page, at these lines of the source
+   LISTING_LINES : array (1 .. 10000) of INTEGER;
+   LISTING_WHAT : array (1 .. 10000) of CHARACTER;
+   NLISTING : INTEGER := 0;
+   -- the predefined units may name the runtime's helpers $NAME
+   PRELUDE_LEX : BOOLEAN := FALSE;
+   ADDRS : ADDR;
+   -- the subprogram body being translated
+   CUR_BODY : NODE;
+   -- the language it names
+   SAW_LANG : TEXT;
    -- in a task specification the parameter structs of the entries wait until
    -- the private part has completed the private types (RM79 7.4)
    DEFER_ENTRY_STRUCTS : BOOLEAN := FALSE;
    OUT_AWAITS : BUFFER;
    NO_CONS : CONS;
-   UNITS : NODE;
+   UNITS, PRELUDE_UNITS : NODE;
    PKG_STACK : LINES;
    CUR_PKG : NODE;
    PREFIX_HINT : TEXT;
@@ -309,3 +512,9 @@ procedure GREENC is
    IN_LV_PATH : BOOLEAN := FALSE;
    LAST_DEREF : BOOLEAN := FALSE;
    MAIN_NAME : TEXT;
+   -- the configuration (RM79 13.7): pragmas SYSTEM, STORAGE_UNIT, MEMORY_SIZE
+   -- and OPTIMIZE set what SYSTEM'NAME, ... and OPTION'TIME report
+   CONF_SYSTEM : TEXT;
+   CONF_STORAGE_UNIT : INTEGER := 8;
+   CONF_MEMORY_SIZE : INTEGER := 1048576;
+   CONF_OPTIMIZE : TEXT;

@@ -1,0 +1,12 @@
+42
+    1  restricted (TEXT_IO)
+    2  procedure MAIN is
+    3     use TEXT_IO;
+    4     pragma LIST(OFF);
+   10     pragma LIST(ON);
+   11     pragma PAGE;
+#
+   12  begin
+   13     PUT(TWICE(21)); PUT(NEWLINE);
+   14  end MAIN;
+TWICE expanded

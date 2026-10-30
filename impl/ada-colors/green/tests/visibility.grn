@@ -1,0 +1,94 @@
+-- modules and visibility (RM79 7, 8): restricted private types, visibility
+-- restrictions, use clauses, renaming of subprograms, entries, packages
+-- and tasks
+package KEYS is
+   restricted type KEY is private;
+   procedure NEW_KEY(K : out KEY);
+   function VALUE(K : KEY) return INTEGER;
+   function "=" (A, B : KEY) return BOOLEAN;
+private
+   type KEY is record
+      N : INTEGER;
+   end record;
+end KEYS;
+
+package body KEYS is
+   NEXT : INTEGER := 0;
+   procedure NEW_KEY(K : out KEY) is
+   begin
+      NEXT := NEXT + 1;
+      K := (N => NEXT);
+   end NEW_KEY;
+   function VALUE(K : KEY) return INTEGER is
+   begin
+      return K.N;
+   end VALUE;
+   function "=" (A, B : KEY) return BOOLEAN is
+   begin
+      return A.N = B.N;
+   end "=";
+end KEYS;
+
+restricted (KEYS, TEXT_IO)
+procedure MAIN is
+   use TEXT_IO, KEYS;
+   G : INTEGER := 5;
+   package A is
+      X : INTEGER := 1;
+      function F return INTEGER;
+   end A;
+   package body A is
+      function F return INTEGER is
+      begin
+         return 2;
+      end F;
+   end A;
+   package B is
+      X : INTEGER := 3;
+   end B;
+   function F return INTEGER is
+   begin
+      return 10;
+   end F;
+   task T is
+      entry E(V : INTEGER);
+   end T;
+   task body T is
+   begin
+      accept E(V : INTEGER) do
+         PUT(V);
+      end E;
+   end T;
+   task FAM(1 .. 2) is
+      entry E(V : INTEGER);
+   end FAM;
+   task body FAM is
+   begin
+      accept E(V : INTEGER) do
+         PUT(V + 100 * FAM'INDEX);
+      end E;
+   end FAM;
+   restricted (MAIN, TEXT_IO)
+   procedure SHOW is
+      use TEXT_IO;
+   begin
+      PUT(G);
+   end SHOW;
+   procedure TWICE(N : INTEGER) renames SHOW_TWO;
+   procedure SHOW_TWO(N : INTEGER) is
+   begin
+      PUT(2 * N);
+   end SHOW_TWO;
+   package LONG renames B;
+   procedure SEND(V : INTEGER) renames T.E;
+   task SECOND renames FAM(2);
+   K1, K2 : KEY;
+   use A, B;
+begin
+   NEW_KEY(K1); NEW_KEY(K2);
+   PUT(VALUE(K2)); PUT(K1 = K2); PUT(NEWLINE);
+   SHOW; PUT(A.X + B.X); PUT(F); PUT(LONG.X); PUT(NEWLINE);
+   initiate T, FAM;
+   SEND(7); SECOND.E(5); FAM(1).E(6);
+   PUT(NEWLINE);
+end MAIN;

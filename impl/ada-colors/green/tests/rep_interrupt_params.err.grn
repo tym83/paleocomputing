@@ -1,0 +1,12 @@
+procedure MAIN is
+   task T is
+      entry E(X : out INTEGER);
+      for E use at 8#40;
+   end T;
+   task body T is
+   begin
+      accept E(X : out INTEGER) do X := 1; end E;
+   end T;
+begin
+   null;
+end MAIN;

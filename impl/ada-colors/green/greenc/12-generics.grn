@@ -13,19 +13,27 @@
       X, P, HEAD, TAIL, NAMES, ST, DEF, SUB : NODE;
       DEF_NAME_TEXT : TEXT;
       MORE : BOOLEAN := TRUE;
+      RESTR : BOOLEAN;
+      MODE : INTEGER;
    begin
       EXPECT_KW("GENERIC");
       X := NN(N_GENERIC, CUR_LINE);
       if AT_OP("(") then
          SKIP;
          while MORE loop
+            RESTR := FALSE;
             if AT_KW("RESTRICTED") then
                SKIP;
+               RESTR := TRUE;
             end if;
             if AT_KW("TYPE") then
+               -- [restricted] type T: a private type in the body (RM79 12.1)
                SKIP;
                P := NN(N_PARAM, CUR_LINE);
                P.IVAL := 10;
+               if RESTR then
+                  P.FLAG := 9;
+               end if;
                EXPECT_ID(P.NAME);
                APPEND(HEAD, TAIL, P);
             elsif AT_KW("PROCEDURE") or AT_KW("FUNCTION") then
@@ -62,8 +70,16 @@
             else
                ID_LIST(NAMES);
                EXPECT_OP(":");
+               MODE := M_IN;
                if AT_KW("IN") then
                   SKIP;
+                  if AT_KW("OUT") then
+                     SKIP;
+                     MODE := M_INOUT;
+                  end if;
+               elsif AT_KW("OUT") then
+                  SKIP;
+                  MODE := M_OUT;
                end if;
                SUBTYPE_IND(ST);
                DEF := null;
@@ -74,6 +90,7 @@
                while NAMES /= null loop
                   P := NN(N_PARAM, NAMES.LINE);
                   P.IVAL := 1;
+                  P.FLAG := MODE;
                   P.NAME := NAMES.NAME;
                   P.A := ST;
                   P.B := DEF;
@@ -116,6 +133,12 @@
       I.NAME := X.NAME;
       I.IVAL := X.KIND;
       EXPECT_ID(I.TAG);
+      while AT_OP(".") loop
+         -- new P.G: a generic unit of a package (RM79 12.2)
+         SKIP;
+         EXPECT_ID(FORMAL);
+         I.TAG := MK(I.TAG.all & "." & FORMAL.all);
+      end loop;
       if AT_OP("(") then
          SKIP;
          while MORE loop
@@ -128,8 +151,14 @@
             elsif AT_KIND(K_ID) and KIND_AT(1) = K_OP and (TEXT_AT(1) = ":=" or TEXT_AT(1) = "=:"
                or TEXT_AT(1) = ":=:") then
                EXPECT_ID(FORMAL);
+               if AT_OP("=:") then
+                  MARK := M_OUT;
+               elsif AT_OP(":=:") then
+                  MARK := M_INOUT;
+               else
+                  MARK := M_IN;
+               end if;
                SKIP;
-               MARK := 1;
             end if;
             if AT_KIND(K_STR) and MARK = 5 then
                A := NN(N_NAME, CUR_LINE);
@@ -137,7 +166,7 @@
             else
                EXPR(A);
             end if;
-            A.TAG := FORMAL;
+            A.FORMAL := FORMAL;
             A.FLAG := MARK;
             APPEND(HEAD, TAIL, A);
             MORE := AT_OP(",");
@@ -169,24 +198,55 @@
    end GENERIC_DECL;
 
    -- a body for a generic unit declared earlier is kept for its instantiations
+   -- the body of a generic unit declared in the same declarative part
    function IS_GENERIC_NAME(N : STRING) return BOOLEAN is
       Y : SYM := LOOKUP(N);
    begin
-      return Y /= null and then Y.KIND = Y_GENERIC;
+      if Y = null then
+         return FALSE;
+      elsif Y.DEPTH /= DEPTH then
+         return FALSE;
+      end if;
+      if not (Y /= null) then
+         return FALSE;
+      end if;
+      return Y.KIND = Y_GENERIC;
    end IS_GENERIC_NAME;
 
    -- the declarations visible at the body are kept too: an instance's body
    -- sees them, wherever the instantiation is (RM79 12.3)
+   -- does the tree N hold an instantiation of NAME?
+   function INSTANTIATES(N : NODE; NAME : STRING) return BOOLEAN is
+      P : NODE := N;
+   begin
+      while P /= null loop
+         if P.KIND = N_INST and then P.TAG.all = NAME then
+            return TRUE;
+         elsif INSTANTIATES(P.A, NAME) or else INSTANTIATES(P.B, NAME) then
+            return TRUE;
+         elsif INSTANTIATES(P.C, NAME) or else INSTANTIATES(P.D, NAME) then
+            return TRUE;
+         elsif INSTANTIATES(P.E, NAME) then
+            return TRUE;
+         end if;
+         P := P.NEXT;
+      end loop;
+      return FALSE;
+   end INSTANTIATES;
+
    procedure ATTACH_GENERIC_BODY(E : NODE) is
       Y : SYM := LOOKUP(E.NAME.all);
    begin
+      if INSTANTIATES(E.C, E.NAME.all) or else INSTANTIATES(E.D, E.NAME.all) then
+         FAIL(E.LINE, "generic " & E.NAME.all & " cannot be instantiated in its own body (RM79 12.2)");
+      end if;
       Y.DECL.C := E;
       GENERIC_CONTEXTS := new GCTX_REC(E, SCOPE_STACK, GENERIC_CONTEXTS);
    end ATTACH_GENERIC_BODY;
 
    -- make visible again what the generic body saw, inner declarations first;
    -- only what lives in static storage can be reached from the instance
-   procedure RESTORE_GENERIC_CONTEXT(BODY_NODE : NODE; LINE : INTEGER) is
+   procedure RESTORE_GENERIC_CONTEXT(BODY_NODE : NODE; LINE : INTEGER; INST : STRING) is
       CTX : GCTX := GENERIC_CONTEXTS;
       M, Z : SYM;
       SEEN : BOOLEAN;
@@ -197,14 +257,18 @@
       if CTX = null then
          return;
       end if;
+      -- the names visible at the generic body, at any level: the instance
+      -- is within their scope (RM79 12.1)
       M := CTX.VISIBLE;
       while M /= null loop
-         if M.LEVEL <= 0 and M.KIND /= Y_GENERIC then
+         if M.DEPTH > 0 and M.KIND /= Y_GENERIC and M.NAME.all /= INST then
             Z := TABLE(HASH(M.NAME.all));
             SEEN := FALSE;
             while Z /= null loop
                if Z.DEPTH = DEPTH and then Z.NAME.all = M.NAME.all then
-                  SEEN := TRUE;
+                  if not DISTINCT_OVERLOAD(Z, M) then
+                     SEEN := TRUE;
+                  end if;
                end if;
                Z := Z.CHAIN;
             end loop;
@@ -223,13 +287,13 @@
       I : INTEGER := 1;
    begin
       while A /= null loop
-         if A.TAG = null and I = NTH then
+         if A.FORMAL = null and I = NTH then
             return A;
          end if;
-         if A.TAG /= null and then A.TAG.all = NAME then
+         if A.FORMAL /= null and then A.FORMAL.all = NAME then
             return A;
          end if;
-         if A.TAG = null then
+         if A.FORMAL = null then
             I := I + 1;
          end if;
          A := A.NEXT;
@@ -245,9 +309,152 @@
       R.NEXT := null;
    end COPY_NODE;
 
+   -- a subprogram that matches a generic formal subprogram (RM79 12.2)
+   function MATCHES_FORMAL(Y : SYM; NAME : STRING; FS : SYM) return BOOLEAN is
+   begin
+      if Y.NAME.all /= NAME or (Y.KIND /= Y_FUNC and Y.KIND /= Y_PROC) then
+         return FALSE;
+      end if;
+      return SAME_TYPES(Y.PARAMS, FS.PARAMS) and SAME(Y.RESULT, FS.RESULT);
+   end MATCHES_FORMAL;
+
+   -- the actual of a generic formal type: T or P.T
+   procedure ACTUAL_TYPE(A : NODE; Y : out SYM) is
+   begin
+      Y := null;
+      if A.KIND = N_NAME then
+         Y := LOOKUP(A.NAME.all);
+      elsif A.KIND = N_SELECT and then IS_PACKAGE(A.A) then
+         Y := MEMBER_OF(PATH_OF(A.A), A.NAME.all, A.LINE);
+      end if;
+      if Y /= null and then Y.KIND /= Y_TYPE then
+         Y := null;
+      end if;
+   end ACTUAL_TYPE;
+
+   -- the actual of a generic formal subprogram: a subprogram, a subprogram
+   -- of a package P.F, an operator "*" or T."*", an attribute T.SUCC; an
+   -- operator or an attribute is wrapped in a function (RM79 12.1, 12.2)
+   procedure ACTUAL_SUBPROGRAM(F, A : NODE; LINE : INTEGER; R : out SYM) is
+      FS, Y : SYM;
+      NAME : TEXT;
+      M : SYM;
+   begin
+      R := null;
+      BUILD_SUBPROGRAM(F.A, FS);
+      if A.KIND = N_STR then
+         -- an operator symbol, as "*"
+         NAME := MK(UPPER_S(A.NAME.all));
+         Y := TABLE(HASH(NAME.all));
+         while Y /= null and then not MATCHES_FORMAL(Y, NAME.all, FS) loop
+            Y := Y.CHAIN;
+         end loop;
+         R := Y;
+         if R = null and then IS_OPERATOR(NAME.all) then
+            WRAP_OPERATION(F, NAME.all, null, LINE, R);
+         end if;
+      elsif A.KIND = N_NAME then
+         NAME := A.NAME;
+         Y := TABLE(HASH(A.NAME.all));
+         while Y /= null and then not MATCHES_FORMAL(Y, A.NAME.all, FS) loop
+            Y := Y.CHAIN;
+         end loop;
+         R := Y;
+         if R = null and then IS_OPERATOR(A.NAME.all) then
+            WRAP_OPERATION(F, A.NAME.all, null, LINE, R);
+         end if;
+      elsif A.KIND = N_SELECT and then IS_PACKAGE(A.A) then
+         M := LOOKUP_PATH(PATH_OF(A.A)).MEMBERS;
+         while M /= null and then not (MATCHES_FORMAL(M, A.NAME.all, FS) and not M.HIDDEN) loop
+            M := M.MNEXT;
+         end loop;
+         R := M;
+      elsif A.KIND = N_SELECT and then A.A.KIND = N_NAME then
+         -- T."*", T.SUCC: an operator or an attribute of a type
+         if IS_OPERATOR(A.NAME.all) then
+            WRAP_OPERATION(F, A.NAME.all, null, LINE, R);
+         else
+            WRAP_OPERATION(F, A.NAME.all, A.A.NAME, LINE, R);
+         end if;
+      end if;
+      if R = null then
+         FAIL(LINE, "no subprogram matches generic parameter " & F.NAME.all & " (RM79 12.2)");
+      end if;
+   end ACTUAL_SUBPROGRAM;
+
+   -- a function whose body applies the operator OP, or the attribute OP of
+   -- type TYPE_NAME, to its parameters: it gives a formal subprogram an
+   -- operator or an attribute of the actual types
+   procedure WRAP_OPERATION(F : NODE; OP : STRING; TYPE_NAME : TEXT; LINE : INTEGER; R : out SYM) is
+      W, P, Q, QT, RET, X, A1, A2 : NODE;
+      WNAME : TEXT;
+      N : INTEGER := 0;
+      Y : SYM;
+   begin
+      NEW_NAME("$W", WNAME);
+      COPY_NODE(F.A, WNAME, W);
+      if W.KIND /= N_FUNC then
+         FAIL(LINE, "an operator or an attribute is the actual of a formal function (RM79 12.2)");
+      end if;
+      -- the parameters, of the actual types
+      P := F.A.A;
+      while P /= null loop
+         COPY_NODE(P, P.NAME, Q);
+         ACTUAL_MARK(P.A, Q.A);
+         if QT = null then
+            W.A := Q;
+         else
+            QT.NEXT := Q;
+         end if;
+         QT := Q;
+         N := N + 1;
+         P := P.NEXT;
+      end loop;
+      ACTUAL_MARK(F.A.B, W.B);
+      A1 := NN(N_NAME, LINE);
+      A1.NAME := W.A.NAME;
+      if TYPE_NAME /= null then
+         X := NN(N_ATTR, LINE);
+         X.A := NN(N_NAME, LINE);
+         X.A.NAME := MK("$T_" & TYPE_NAME.all);
+         X.NAME := MK(OP);
+         X.B := A1;
+      elsif N = 2 then
+         A2 := NN(N_NAME, LINE);
+         A2.NAME := W.A.NEXT.NAME;
+         X := BINOP(MK(OP), A1, A2, LINE);
+      else
+         X := NN(N_UNOP, LINE);
+         X.NAME := MK(OP);
+         X.A := A1;
+      end if;
+      RET := NN(N_RETURN, LINE);
+      RET.A := X;
+      W.D := RET;
+      W.C := null;
+      W.E := null;
+      W.IVAL := 0;
+      BUILD_SUBPROGRAM(W, Y);
+      DEFINE(Y, LINE);
+      SUBPROGRAM_BODY(W, Y);
+      R := Y;
+   end WRAP_OPERATION;
+
+   -- a type mark of a formal subprogram's specification, the actual type
+   -- in place of a formal one
+   procedure ACTUAL_MARK(ST : NODE; R : out NODE) is
+   begin
+      R := ST;
+      if ST /= null and then ST.KIND = S_MARK and then ST.TAG = null then
+         if LOOKUP("$T_" & ST.NAME.all) /= null then
+            COPY_NODE(ST, MK("$T_" & ST.NAME.all), R);
+         end if;
+      end if;
+   end ACTUAL_MARK;
+
    procedure INSTANTIATE(E : NODE) is
       G : SYM := LOOKUP(E.TAG.all);
-      GD, PAT, F, A, CN : NODE;
+      GD, PAT, F, A, CN, RN : NODE;
       Y, Z, FS : SYM;
       NTH : INTEGER := 1;
       T, VT : TYP;
@@ -255,48 +462,69 @@
       V, ACC, X : TEXT;
       OK : BOOLEAN;
    begin
+      G := LOOKUP_PATH(E.TAG.all);
       if G = null or else G.KIND /= Y_GENERIC then
          FAIL(E.LINE, E.TAG.all & " is not a generic unit");
       end if;
       GD := G.DECL;
       PAT := GD.B;
       OPEN_SCOPE;
+      IN_INSTANCE := IN_INSTANCE + 1;
       F := GD.A;
       while F /= null loop
          A := GACTUAL(E.A, NTH, F.NAME.all);
          NTH := NTH + 1;
          if F.IVAL = 10 then
-            -- a type: the formal names the actual type
-            if A = null or else A.KIND /= N_NAME then
+            -- a type: the formal names the actual type, seen as a private
+            -- type in the body (RM79 12.1, 12.2)
+            if A = null then
                FAIL(E.LINE, "a type is required for generic parameter " & F.NAME.all);
             end if;
-            Y := LOOKUP(A.NAME.all);
-            if Y = null or else Y.KIND /= Y_TYPE then
-               FAIL(E.LINE, A.NAME.all & " is not a type");
+            ACTUAL_TYPE(A, Y);
+            if Y = null then
+               FAIL(E.LINE, "a type is required for generic parameter " & F.NAME.all);
+            end if;
+            if Y.T.IS_RESTRICTED and F.FLAG /= 9 then
+               FAIL(E.LINE, "a restricted type does not match the formal type " & F.NAME.all
+                    & ", which is not restricted (RM79 12.2)");
             end if;
             COPY_SYM(Y, Z);
+            Z.NAME := MK("$T_" & F.NAME.all);
+            DEFINE(Z, E.LINE);
+            COPY_SYM(Y, Z);
             Z.NAME := F.NAME;
+            Z.T := NEW_TYP(Y.T.KIND);
+            Z.T.all := Y.T.all;
+            Z.T.VIEW_OF := Y.T;
+            Z.T.NAME := F.NAME;
+            Z.T.IS_RESTRICTED := F.FLAG = 9;
             DEFINE(Z, E.LINE);
          elsif F.IVAL = 11 then
             -- a subprogram matching the formal's specification (RM79 12.2)
             if A = null then
                A := F.B;
             end if;
-            if A = null or else A.KIND /= N_NAME then
+            if A = null then
                FAIL(E.LINE, "a subprogram is required for generic parameter " & F.NAME.all);
             end if;
-            BUILD_SUBPROGRAM(F.A, FS);
-            Y := TABLE(HASH(A.NAME.all));
-            while Y /= null and then not (Y.NAME.all = A.NAME.all and then (Y.KIND = Y_FUNC or Y.KIND = Y_PROC)
-               and then SAME_SIGNATURE(Y.PARAMS, FS.PARAMS) and then SAME(Y.RESULT, FS.RESULT)) loop
-               Y := Y.CHAIN;
-            end loop;
-            if Y = null then
-               FAIL(E.LINE, "no subprogram " & A.NAME.all & " matches generic parameter " & F.NAME.all);
-            end if;
+            ACTUAL_SUBPROGRAM(F, A, E.LINE, Y);
             COPY_SYM(Y, Z);
             Z.NAME := F.NAME;
             DEFINE(Z, E.LINE);
+         elsif F.FLAG = M_OUT or F.FLAG = M_INOUT then
+            -- an out or in out object: another name for the actual variable
+            if A = null then
+               FAIL(E.LINE, "no actual variable for generic parameter " & F.NAME.all);
+            end if;
+            if A.FLAG /= 0 and A.FLAG /= F.FLAG then
+               FAIL(E.LINE, "the association of " & F.NAME.all & " does not match its mode (RM79 12.2)");
+            end if;
+            RN := NN(N_VAR, E.LINE);
+            RN.NAME := F.NAME;
+            RN.A := F.A;
+            RN.FLAG := 2;
+            RN.B := A;
+            DECL_ELEMENT(RN);
          else
             -- an object: a constant holding the actual value
             if A = null then
@@ -327,7 +555,7 @@
       -- the formals are bound in the context of the instantiation; the body
       -- then also sees what was visible at the generic body
       if GD.C /= null then
-         RESTORE_GENERIC_CONTEXT(GD.C, E.LINE);
+         RESTORE_GENERIC_CONTEXT(GD.C, E.LINE, E.NAME.all);
       end if;
       if PAT.KIND = N_PROC or PAT.KIND = N_FUNC then
          if PAT.IVAL = 1 then
@@ -358,6 +586,7 @@
          COPY_NODE(GD.C, E.NAME, CN);
          TASK_BODY(CN);
       end if;
+      IN_INSTANCE := IN_INSTANCE - 1;
       CLOSE_SCOPE;
       DEFINE(Y, E.LINE);
    end INSTANTIATE;

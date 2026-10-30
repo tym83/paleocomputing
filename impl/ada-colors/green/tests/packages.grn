@@ -14,7 +14,7 @@ private
    end record;
    type STACK is record
       TOP : LINK;
-      COUNT : INTEGER;
+      COUNT : INTEGER := 0;
    end record;
 end STACKS;
 

@@ -1,0 +1,9 @@
+procedure MAIN is
+begin
+   null;
+end MAIN;
+restricted (MAIN)
+separate procedure Q is
+begin
+   null;
+end Q;

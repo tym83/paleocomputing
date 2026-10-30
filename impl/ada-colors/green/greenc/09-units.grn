@@ -1,18 +1,50 @@
    -- ---- packages (RM79 7) -------------------------------------------------------------
 
+   -- the module named by P or P.Q.R (RM79 4.1.2)
+   function LOOKUP_PATH(P : STRING) return SYM is
+      Y, M : SYM;
+   begin
+      for I in reverse P'FIRST .. P'LAST loop
+         if P(I) = "." then
+            Y := LOOKUP_PATH(P(P'FIRST .. I - 1));
+            if Y = null then
+               return null;
+            elsif Y.KIND /= Y_PACKAGE and Y.KIND /= Y_TASK then
+               return null;
+            end if;
+            M := Y.MEMBERS;
+            while M /= null loop
+               if M.NAME.all = P(I + 1 .. P'LAST) and not M.HIDDEN then
+                  return M;
+               end if;
+               M := M.MNEXT;
+            end loop;
+            return null;
+         end if;
+      end loop;
+      return LOOKUP(P);
+   end LOOKUP_PATH;
+
    function IS_PACKAGE(E : NODE) return BOOLEAN is
       Y : SYM;
    begin
-      if E.KIND /= N_NAME then
+      if E.KIND /= N_NAME and E.KIND /= N_SELECT then
+         return FALSE;
+      elsif E.KIND = N_SELECT then
+         if E.A.KIND /= N_NAME and E.A.KIND /= N_SELECT then
+            return FALSE;
+         end if;
+      end if;
+      Y := LOOKUP_PATH(PATH_OF(E));
+      if not (Y /= null) then
          return FALSE;
       end if;
-      Y := LOOKUP(E.NAME.all);
-      return Y /= null and then (Y.KIND = Y_PACKAGE or Y.KIND = Y_TASK);
+      return (Y.KIND = Y_PACKAGE or Y.KIND = Y_TASK);
    end IS_PACKAGE;
 
    -- a declaration of the visible part of package P
    function MEMBER_OF(P, NAME : STRING; LINE : INTEGER) return SYM is
-      Y : SYM := LOOKUP(P);
+      Y : SYM := LOOKUP_PATH(P);
       M : SYM;
    begin
       if Y = null or else (Y.KIND /= Y_PACKAGE and Y.KIND /= Y_TASK) then
@@ -54,7 +86,7 @@
    begin
       Z := new SYM_REC(Y.KIND, Y.NAME, Y.T, Y.C, Y.ACCESS_PATH, Y.CNAME, Y.RO, Y.MVALUE, Y.HASMV,
                        Y.DECL, Y.PARAMS, Y.RESULT, 0, Y.LEVEL, Y.BYREF, Y.VRP, Y.HIDDEN,
-                       FALSE, Y.MEMBERS, null, null, null);
+                       FALSE, Y.MEMBERS, null, null, null, Y.FLAGS);
    end COPY_SYM;
 
    -- the full declaration of a private type is copied into the type object
@@ -86,6 +118,9 @@
       -- every declaration of the spec; those of the private part are hidden
       M := SCOPE_STACK;
       while M /= null and then M.DEPTH = DEPTH loop
+         if M.KIND = Y_CONST and M.FLAGS = F_CONST_OBJ + F_DEFERRED then
+            FAIL(E.LINE, "deferred constant " & M.NAME.all & " has no full declaration in the private part (RM79 7.4)");
+         end if;
          -- what a use clause of the specification made visible stays visible
          -- in the body, but is not offered to the clients
          COPY_SYM(M, Z);
@@ -121,11 +156,16 @@
    -- package body P is ... [begin ...] [exception ...] end P; its statements
    -- run when the body is elaborated (RM79 7.3)
    procedure PACKAGE_BODY(E : NODE) is
+      SAVED_LABELS : LABEL_LIST;
       Y : SYM := LOOKUP(E.NAME.all);
       M, Z : SYM;
       SAVED : NODE := CUR_PKG;
    begin
-      if Y /= null and then Y.KIND = Y_GENERIC then
+      if E.FLAG = 4 then
+         STUB(E);
+         return;
+      end if;
+      if IS_GENERIC_NAME(E.NAME.all) then
          ATTACH_GENERIC_BODY(E);
          return;
       end if;
@@ -135,6 +175,7 @@
       PKG_STACK := new LINES_REC(E.NAME, PKG_STACK);
       CUR_PKG := Y.DECL;
       OPEN_SCOPE;
+      PUSH_UNIT(E.NAME);
       M := Y.MEMBERS;
       while M /= null loop
          COPY_SYM(M, Z);
@@ -160,36 +201,80 @@
          end if;
          M := M.MNEXT;
       end loop;
-      GUARDED(E.D, E.E, E.LINE);
+      SAVED_LABELS := BODY_LABELS;
+      LABEL_BODY(E.D, E.E);
+      GUARDED(null, E.D, E.E, E.LINE);
+      BODY_LABELS := SAVED_LABELS;
+      NUNITS := NUNITS - 1;
       CLOSE_SCOPE;
       PKG_STACK := PKG_STACK.NEXT;
       CUR_PKG := SAVED;
    end PACKAGE_BODY;
 
-   -- use M; the visible declarations of module M become directly visible, but never
-   -- hide another declaration (RM79 8.4)
+   function USE_VISIBLE(OLD : SYM) return BOOLEAN is
+   begin
+      if OLD = null then
+         return TRUE;
+      end if;
+      return OLD.DEPTH < DEPTH and OLD.KIND /= Y_VAR and OLD.KIND /= Y_CONST;
+   end USE_VISIBLE;
+
+   -- use M; the visible declarations of module M become directly visible, but
+   -- never hide another declaration; a name that two used modules declare is
+   -- not visible at all (RM79 8.4)
    procedure USE_CLAUSE(E : NODE) is
       N : NODE := E.A;
       Y, M, Z, OLD : SYM;
+      CLASH : BOOLEAN;
    begin
       while N /= null loop
          Y := LOOKUP(N.NAME.all);
          if Y = null then
-            if N.NAME.all /= "TEXT_IO" then
-               FAIL(N.LINE, N.NAME.all & " is not a package");
-            end if;
+            FAIL(N.LINE, N.NAME.all & " is not a visible module (RM79 8.3, 8.4)");
          elsif Y.KIND /= Y_PACKAGE and Y.KIND /= Y_TASK then
             -- a use clause names modules: packages and tasks (RM79 8.4)
             FAIL(N.LINE, N.NAME.all & " is not a package or a task");
          else
+            if Y.NAME.all = "TEXT_IO" and LOOKUP("$TEXT_IO") = null then
+               -- GET and PUT of TEXT_IO are predefined (RM79 14.3)
+               Z := NEW_SYM(Y_CONST, MK("$TEXT_IO"));
+               Z.T := TY_VOID;
+               DEFINE(Z, N.LINE);
+            end if;
             M := Y.MEMBERS;
             while M /= null loop
-               OLD := LOOKUP(M.NAME.all);
-               if not M.HIDDEN and then (OLD = null or else (OLD.DEPTH < DEPTH
-                  and then OLD.KIND /= Y_VAR and then OLD.KIND /= Y_CONST)) then
-                  COPY_SYM(M, Z);
-                  Z.FROM_USE := TRUE;
-                  DEFINE(Z, N.LINE);
+               if not M.HIDDEN then
+                  OLD := LOOKUP(M.NAME.all);
+                  if not OVERLOADABLE(M) then
+                     if OLD = null then
+                        COPY_SYM(M, Z);
+                        Z.FROM_USE := TRUE;
+                        DEFINE(Z, N.LINE);
+                     elsif OLD.FROM_USE and OLD.DEPTH = DEPTH and not SAME_ENTITY(OLD, M) then
+                        OLD.KIND := Y_CONFLICT;
+                     end if;
+                  else
+                     -- an overloadable name is used unless a visible
+                     -- declaration has the same profile
+                     CLASH := FALSE;
+                     Z := TABLE(HASH(M.NAME.all));
+                     while Z /= null loop
+                        if Z.NAME.all = M.NAME.all and then OVERLOADABLE(Z) and then VISIBLE_SYM(Z) then
+                           if SAME_ENTITY(Z, M) then
+                              CLASH := TRUE;
+                           elsif not Z.FROM_USE and then SAME_TYPES(Z.PARAMS, M.PARAMS) and then SAME(Z.RESULT, M.RESULT)
+                              and then (Z.KIND /= Y_ENUMLIT or SAME(Z.T, M.T)) then
+                              CLASH := TRUE;
+                           end if;
+                        end if;
+                        Z := Z.CHAIN;
+                     end loop;
+                     if not CLASH and then USABLE_OVER(OLD) then
+                        COPY_SYM(M, Z);
+                        Z.FROM_USE := TRUE;
+                        DEFINE(Z, N.LINE);
+                     end if;
+                  end if;
                end if;
                M := M.MNEXT;
             end loop;
@@ -197,4 +282,27 @@
          N := N.NEXT;
       end loop;
    end USE_CLAUSE;
+
+   -- an overloadable name made visible by use does not hide a visible
+   -- declaration that is not overloadable (RM79 8.4)
+   function USABLE_OVER(OLD : SYM) return BOOLEAN is
+   begin
+      if OLD = null then
+         return TRUE;
+      end if;
+      return OVERLOADABLE(OLD) or OLD.FROM_USE;
+   end USABLE_OVER;
+
+   -- two symbols for one declaration
+   function SAME_ENTITY(A, B : SYM) return BOOLEAN is
+   begin
+      if A.KIND /= B.KIND then
+         return FALSE;
+      elsif A.CNAME /= null and B.CNAME /= null then
+         return A.CNAME.all = B.CNAME.all;
+      elsif A.ACCESS_PATH /= null and B.ACCESS_PATH /= null then
+         return A.ACCESS_PATH.all = B.ACCESS_PATH.all;
+      end if;
+      return A.T = B.T and A.DECL = B.DECL;
+   end SAME_ENTITY;
 

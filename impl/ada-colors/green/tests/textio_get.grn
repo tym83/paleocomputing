@@ -1,0 +1,46 @@
+-- RM79 14.3.4 - 14.3.7: GET of lexical units, INVALID_DATA, END_OF_FILE
+restricted (TEXT_IO)
+procedure MAIN is
+   use TEXT_IO;
+   type COLOR is (RED, GREEN, BLUE);
+   package COLOR_IO is new ENUM_IO(COLOR);
+   use COLOR_IO;
+   I : INTEGER;
+   B : BOOLEAN;
+   C : COLOR;
+   X : FLOAT;
+   S : STRING(1 .. 4);
+   CH : CHARACTER;
+begin
+   for K in 1 .. 4 loop
+      GET(I); PUT(I);
+   end loop;
+   GET(B); PUT(B); GET(B); PUT(B);
+   GET(C); PUT(C); GET(C); PUT(C);
+   GET(X); PUT(X); GET(X); PUT(X, 0, 2);
+   GET(CH); GET(S); PUT("["); PUT(S); PUT("]");
+   begin
+      GET(I);
+   exception
+      when INVALID_DATA => PUT(" INVALID_DATA");
+   end;
+   GET(S); PUT(S);
+   begin
+      GET(I);
+   exception
+      when OVERFLOW => PUT(" OVERFLOW");
+   end;
+   begin
+      GET(C);
+   exception
+      when INVALID_DATA => PUT(" INVALID_DATA");
+   end;
+   begin
+      loop
+         GET(CH);
+      end loop;
+   exception
+      when END_OF_FILE => PUT(" END_OF_FILE");
+   end;
+   PUT(NEWLINE);
+end MAIN;
