@@ -385,7 +385,7 @@
          LEX_LINE("   procedure SET_NEXT(FILE : in OUT_FILE; POS : in INTEGER := 1);");
          LEX_LINE("   DEFAULT_WIDTH : constant INTEGER := 0;");
          LEX_LINE("   DEFAULT_FLOAT_WIDTH : constant INTEGER := 0;");
-         LEX_LINE("   DEFAULT_MANTISSA : constant INTEGER := 5;");
+         LEX_LINE("   DEFAULT_MANTISSA : constant INTEGER := FLOAT'DIGITS - 1;");
          LEX_LINE("   DEFAULT_ENUM_WIDTH : constant INTEGER := 0;");
          LEX_LINE("   generic (type FIXED_TYPE;");
          LEX_LINE("            function REP(X : FIXED_TYPE) return STRING is FIXED_TYPE.REP;");

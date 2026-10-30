@@ -15972,7 +15972,7 @@ F->item_3303 = (*(P408)rt_nil_check(F->args_1326)).next_;
 if (eq_rt_gstr(F->name_1325, rt_g_lit("PUT", 3))) {
 f_gexpr_1086(F->up, F->item_3303, NULL, &F->aty_3294, &F->a_3296);
 F->w_3297 = f_mk_480(F->up, rt_g_lit("0", 1));
-F->fr_3298 = f_mk_480(F->up, rt_g_lit("5", 1));
+F->fr_3298 = f_mk_480(F->up, rt_g_s2g(rt_str_of_int(rt_sub(G_NV((*(P356)rt_nil_check(F->up->ty_float_392)).ndigits_), ((rt_int)1LL)))));
 if (((*(P408)rt_nil_check(F->item_3303)).next_ != NULL)) {
 f_gexpr_1086(F->up, (*(P408)rt_nil_check(F->item_3303)).next_, F->up->ty_int_390, &F->lt_3295, &F->w_3297);
 if (((*(P408)rt_nil_check((*(P408)rt_nil_check(F->item_3303)).next_)).next_ != NULL)) {
@@ -20444,7 +20444,7 @@ f_lex_line_529(F->up, rt_g_lit("   procedure SET_NEXT(FILE : in IN_FILE; POS : i
 f_lex_line_529(F->up, rt_g_lit("   procedure SET_NEXT(FILE : in OUT_FILE; POS : in INTEGER := 1);", 65));
 f_lex_line_529(F->up, rt_g_lit("   DEFAULT_WIDTH : constant INTEGER := 0;", 41));
 f_lex_line_529(F->up, rt_g_lit("   DEFAULT_FLOAT_WIDTH : constant INTEGER := 0;", 47));
-f_lex_line_529(F->up, rt_g_lit("   DEFAULT_MANTISSA : constant INTEGER := 5;", 44));
+f_lex_line_529(F->up, rt_g_lit("   DEFAULT_MANTISSA : constant INTEGER := FLOAT'DIGITS - 1;", 59));
 f_lex_line_529(F->up, rt_g_lit("   DEFAULT_ENUM_WIDTH : constant INTEGER := 0;", 46));
 f_lex_line_529(F->up, rt_g_lit("   generic (type FIXED_TYPE;", 28));
 f_lex_line_529(F->up, rt_g_lit("            function REP(X : FIXED_TYPE) return STRING is FIXED_TYPE.REP;", 73));
@@ -22182,7 +22182,7 @@ g_dflt_43 = ((rt_int)1LL);
 g_dflt_47 = ((rt_int)1LL);
 g_default_width_48 = ((rt_int)0LL);
 g_default_float_width_49 = ((rt_int)0LL);
-g_default_mantissa_50 = ((rt_int)5LL);
+g_default_mantissa_50 = rt_sub(((rt_int)15), ((rt_int)1LL));
 g_default_enum_width_51 = ((rt_int)0LL);
 g_newline_78 = cp_rt_gstr(cat_rt_gstr(rt_g_lit("", 0), one_rt_gstr(10)));
 g_dflt_100 = INT64_MIN;

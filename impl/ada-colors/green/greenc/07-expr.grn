@@ -2830,7 +2830,8 @@
       if NAME = "PUT" then
          GEXPR(ITEM, null, ATY, A);
          W := MK("0");
-         FR := MK("5");
+         -- DEFAULT_MANTISSA = FLOAT'DIGITS - 1 (RM79 14.4)
+         FR := MK(INTEGER'REP(TY_FLOAT.NDIGITS - 1));
          if ITEM.NEXT /= null then
             GEXPR(ITEM.NEXT, TY_INT, LT, W);
             if ITEM.NEXT.NEXT /= null then
