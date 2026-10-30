@@ -23,7 +23,6 @@ code and prints. Nothing in `orig/` is ever edited to make a program pass.
 | appendix-c | C-8 | `BIN('')` | `BIN ''` ([3-111]) |
 | appendix-c | C-11, C-20 | `;` before `IMPORTS` | moved after it |
 | appendix-c | C-14 | record fields separated by `,` | `;` |
-| appendix-c | C-15 .. C-17 | `(\NEW, \OLD)` as a parameter type | `ENUM (\NEW, \OLD)` ([3-83]) |
 | appendix-c | C-15, C-16 | `IO-ERROR`, `FYS_CHECK` | `IO_ERROR`, `FSYS_CHECK` |
 | appendix-c | C-26 | `SIGNAL IO_ERROR` without `;`; `''`, `''LF`, `''CR LF` | `;`; `' '`, `''\LF`, `''\CR\LF` |
 | appendix-c | C-29 | `then` | `THEN` |
@@ -40,7 +39,8 @@ code and prints. Nothing in `orig/` is ever edited to make a program pass.
   the module"). The constant moves to the segment.
 - **Appendix C's closed scopes import nothing** where 4.1.1 asks for it: the SYSTEM
   paths invoke `OUTPUT_DRIVER` and `INPUT_DRIVER`, which use own variables of
-  TELETYPE, and pass the global `LT33_PS`, `LT33_KS`. Imports are added.
+  TELETYPE. Imports are added (the semaphores `LT33_PS`, `LT33_KS` they pass are
+  known through the CONNECT clause, 4.6.1).
 - **Appendix C assigns BUFFER values outside the module that exports BUFFER**
   (C-10: `IN_BUF` and `OUT_BUF := BUF_INIT ( )`). Outside its module an abstract
   type is assigned only through its STORE_ operation (4.4), and the BUFFER of

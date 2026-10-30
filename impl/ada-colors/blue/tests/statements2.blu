@@ -1,0 +1,42 @@
+MAIN SEGMENT STATEMENTS2
+   USES (TERMINAL);
+% case statements on floating and scaled fixed point values (4.5.5.2: any type
+% with equality); a with-clause naming a component and discriminating a variant
+TYPE T (TAG B: BOOLEAN) =
+     RECORD
+          SELECT B FROM
+               TRUE --> VAR X: INTEGER; END;
+               FALSE --> VAR Y: FLOAT (8); END;
+          END SELECT;
+     END RECORD;
+VAR V: ARRAY [1:5] OF T (ANY);
+VAR F: FLOAT (8) := 1.5;
+VAR D: FIXED (2, 2, STD) := 2.25\S2;
+VAR I: INTEGER := 0;
+LOOP UNTIL I = 4 DO
+   SELECT F FROM
+      1.5 --> PUT_LINE ('one and a half'); END;
+      [2.0 : 3.0), 7.25 --> PUT_LINE ('two to three, or 7.25'); END;
+      ELSE --> PUT_LINE ('else'); END;
+   END SELECT;
+   SELECT D FROM
+      2.25\S2 --> PUT_LINE ('D is 2.25'); END;
+      (2.25\S2 : 4.5\S2] --> PUT_LINE ('D above 2.25'); END;
+   END SELECT;
+   F := F + 1.0;
+   D := D + .75\S2;
+   I := I + 1;
+END LOOP;
+V(2) := [T (FALSE)]$$ (Y: 0.5);
+WITH W NAMING V(2)
+   SELECT W.B FROM
+      TRUE --> W.X := W.X + 2; END;
+      FALSE --> W.Y := W.Y * 4.0; END;
+   END SELECT;
+WITH W NAMING V(2)
+   BLOCK
+      SELECT W.B FROM
+         FALSE --> PUT_LINE (TO_CHAR (W.Y)); END;
+      END SELECT;
+   END BLOCK;
+END SEGMENT STATEMENTS2;

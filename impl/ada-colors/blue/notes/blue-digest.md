@@ -104,7 +104,10 @@ machine-dependent parts; on `W.TAG` of a variant record it discriminates) —
 `LOOP [UNTIL p DO] ... END LOOP [WHEN p];` — `LOOP FOR I IN range DO ... END LOOP I;`
 — `EXIT;` — `BLOCK ... END BLOCK;` — `WITH W NAMING expr stmt` — `GO TO L;` —
 `ASSERT p;` — `SIGNAL [name];` — `RETURN [e];`. Any statement may be followed by
-`EXCEPT name --> body END; ... END EXCEPT;` (§4.5.7, [4-80]).
+`EXCEPT name --> body END; ... END EXCEPT;` (§4.5.7, [4-80]). A case statement selects on
+any predefined type, floating and scaled fixed point by comparisons; its label
+values are distinct, and `W.TAG` discriminates only for a bound-var of an enclosing
+with-clause, which prefixes only a structured statement (4.5.3-4.5.5).
 
 ## 6. Parallel processing (§4.6, PDF 1600–1616)
 
@@ -175,7 +178,10 @@ unreadable; the decision is bluec's.
    variables it uses, also when called through the scope's own local routines
    (FORMPRINT, C-28); `IMPORTS (MODULES: (M))` imports M's exported routines (§4.2).
 8. **Recursion** needs no import of itself.
-9. **WITH NAMING** does not hide the named variable.
+9. **WITH NAMING** hides the named variable (or the aggregate containing it,
+   unless it is reached through a pointer) in its structured statement, and
+   rejects invoking a routine that imports it (4.5.4). The variable is named
+   through other pointers unchecked. (Until October 2026 nothing was hidden.)
 10. **TRUNCATED/ROUNDED** apply to fixed and floating point alike (fixed point
     defaults to TRUNCATED, floating point to ROUNDED, 3.3.4.1); NATIVE_R and
     NATIVE_T, in machine-dependent parts only, are the hardware's rounding and
@@ -196,7 +202,8 @@ unreadable; the decision is bluec's.
 14. **Substrings as output arguments** (C-8, C-31; [4-41] says variable): the
     formal is a view of the variable's characters.
 15. **CONNECT (LT33_PS(I))** with the path's loop identifier (C-5; [4-93] says
-    semaphore-name).
+    semaphore-name); the variable it names is known in the path without
+    an import (4.6.1).
 16. **Literals typed by a parameter**: `OPEN (..., \OLD, ...)` names a literal of a
     parameter type declared inside a module (C-17).
 17. **TO_BIT of a charstring** outside machine-dependent parts (J3.6-6's reason
@@ -207,8 +214,8 @@ unreadable; the decision is bluec's.
     and MIN are key words for attributes only. The drivers define what they need.
 20. **TARGET** is a key word, not a reserved word; it starts a declaration only
     before PROCEDURE, FUNCTION or INLINE.
-21. **`(\A, \B)` as a type** (Appendix C) is accepted as `ENUM (\A, \B)`; the
-    corpus fix files still note it as a misprint.
+21. **`(\A, \B)` as a type** (Appendix C) is accepted as `ENUM (\A, \B)`, so
+    the Appendix C parameter types are read as printed.
 22. **Derived range bounds** `[?LB : ?UB]` are the widest values (ranges do not
     travel with values); derived bounds of array parameters `[1:?M]` are extents.
 23. **The machine**: OBJECT_MACHINE = PDP_11 but STD is 64 bits; the PDP-11 of
@@ -239,6 +246,12 @@ unreadable; the decision is bluec's.
 29. **Use modes.** USAGE is UNORDERED (SYNCH, REGION) (3.11.1); `\SYNCH` is a
     different identifier ([2-10]: the backslash is only a convention), so
     `SEMAPHORE (\SYNCH)` is rejected, while a constant of USAGE is accepted.
+30. **TARGET INLINE.** 4.8.2 says in a note that INLINE target routines "can
+    be declared, since INLINE is permitted in procedure and function headers",
+    and in its constraints that "Target routines cannot be INLINE". The
+    constraint is normative and the note only reasons from the syntax: bluec
+    rejects TARGET INLINE. The stack-size of DYNSIZE is a manifest integer
+    expression, at least zero ([4-111]).
 
 The misprints of the program examples and the rules they break are in
 `../corpus/CHANGES.md`.

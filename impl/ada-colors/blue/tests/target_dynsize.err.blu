@@ -1,0 +1,9 @@
+MAIN SEGMENT TARGET_DYNSIZEERR
+   USES (TERMINAL);
+% the stack-size is a manifest integer, not negative (4.8.2)
+PUT_LINE ('ok');
+TARGET PROCEDURE P (X: INTEGER);
+   DYNSIZE (-1);
+   MOV R0, R1
+END PROCEDURE P;
+END SEGMENT TARGET_DYNSIZEERR;

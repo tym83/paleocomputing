@@ -1,0 +1,13 @@
+MAIN SEGMENT NAMING_ROUTINEERR
+   USES (TERMINAL);
+% nor are routines importing it invoked there (4.5.4)
+VAR V: ARRAY [1:5] OF INTEGER;
+WITH W NAMING V(2)
+  BLOCK
+     W := 7;
+     P ();
+  END BLOCK;
+PROCEDURE P () IMPORTS (DATA: (# V));
+   V(2) := 9;
+END PROCEDURE P;
+END SEGMENT NAMING_ROUTINEERR;

@@ -1,0 +1,11 @@
+MAIN SEGMENT HANDLER_DUPERR
+   USES (TERMINAL);
+% the handler names of an exceptions clause are distinct (4.5.7)
+BLOCK
+   SIGNAL E1;
+EXCEPT
+   E1 --> END;
+   E1 --> END;
+END EXCEPT;
+END BLOCK;
+END SEGMENT HANDLER_DUPERR;

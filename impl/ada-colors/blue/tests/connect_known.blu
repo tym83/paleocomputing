@@ -1,0 +1,23 @@
+MAIN SEGMENT CONNECT_KNOWN
+   USES (TERMINAL);
+% the semaphore of a CONNECT clause is known in the path (4.6.1, example 1)
+VAR DISK: ARRAY [1:2] OF SEMAPHORE (SYNCH);
+DISK(1) := NEW (0);
+DISK(2) := NEW (1);
+PAR_BLOCK
+   PATH DRIVER FOR I IN [1:2] CONNECT (DISK(I));
+      BLOCK
+         REQUEST (#DISK(I));
+         PUT_LINE ('interrupt ' !! TO_CHAR (I));
+      END BLOCK
+   EXCEPT
+      TERMINATED --> PUT_LINE ('driver ' !! TO_CHAR (I) !! ' terminated'); END;
+   END EXCEPT;
+   END PATH DRIVER;
+   PATH DEVICE;
+      WAIT (1);
+      TERMINATE (DRIVER(1));
+   END PATH DEVICE;
+END PAR_BLOCK;
+PUT_LINE ('done');
+END SEGMENT CONNECT_KNOWN;

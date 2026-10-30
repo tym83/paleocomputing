@@ -260,7 +260,7 @@ PROCEDURE GUARDED (S: NODE, BODY_NODE: NODE, HANDLERS: NODE);
          VAR N: NODE := H@.A;
          VAR COND: TEXT := MK ('0');
          LOOP UNTIL N = NIL DO
-            IF IN_IDENTS (N@.NEXT, N@.NAME) THEN
+            IF IN_IDENTS (N@.NEXT, N@.NAME) ! IN_HANDLERS (H@.NEXT, N@.NAME) THEN
                FAILT (N@.LINE, 'the handler names must be distinct (4.5.7): ', N@.NAME);
             END IF;
             COND := FMT3 ('@ || @x == @', COND, F, EXC_NAME (N@.NAME));
@@ -276,6 +276,38 @@ PROCEDURE GUARDED (S: NODE, BODY_NODE: NODE, HANDLERS: NODE);
    END LOOP;
    CODE (FMT1 ('else rt_raise(@x); } }', F));
 END PROCEDURE GUARDED;
+
+% is NAME among the names of the handlers HS?
+FUNCTION IN_HANDLERS (HS: NODE, NAME: TEXT) RETURNS (BOOLEAN);
+   VAR H: NODE := HS;
+   LOOP UNTIL H = NIL DO
+      IF IN_IDENTS (H@.A, NAME) THEN
+         RETURN TRUE;
+      END IF;
+      H := H@.NEXT;
+   END LOOP;
+   RETURN FALSE;
+END FUNCTION IN_HANDLERS;
+
+% [4-58]: a structured-stmt, which a with-clause prefixes
+FUNCTION IS_STRUCTURED_STMT (S: NODE) RETURNS (BOOLEAN);
+   CONST K: INTEGER := S@.KIND;
+   IF K = N_EXCEPT THEN
+      RETURN IS_STRUCTURED_STMT (S@.A);
+   END IF;
+   RETURN K = N_BLOCK ! K = N_IF ! K = N_CASE ! K = N_LOOP ! K = N_FOR ! K = N_PAR ! K = N_WITH;
+END FUNCTION IS_STRUCTURED_STMT;
+
+% the variable a NAMING clause names, unless it is reached through a pointer
+FUNCTION NAMED_ROOT (E: NODE) RETURNS (NODE);
+   CONST K: INTEGER := E@.KIND;
+   IF K = N_NAME ! K = N_APPLY THEN
+      RETURN E;
+   ORIF K = N_INDEX ! K = N_FIELD ! K = N_SUBSTR THEN
+      RETURN NAMED_ROOT (E@.A);
+   END IF;
+   RETURN NIL;
+END FUNCTION NAMED_ROOT;
 
 PROCEDURE STMT (S: NODE);
    CONST K: INTEGER := S@.KIND;
@@ -627,12 +659,16 @@ END PROCEDURE ASSIGN_STMT;
 
 % WITH bound-var := expression / NAMING variable structured-stmt [4-60]
 PROCEDURE WITH_STMT (S: NODE);
+   IF NOT IS_STRUCTURED_STMT (S@.B) THEN
+      FAIL (S@.LINE, 'a with-clause prefixes a structured statement (4.5.3 [4-58])');
+   END IF;
    CODES ('{');
    OPEN_SCOPE;
    BLOCK
       VAR Y: SYM := NEW_SYM (Y_VAR, S@.NAME);
       CONST V: ET := EXPR (S@.A, NIL);
       Y@.T := V.T;
+      Y@.WITHV := 1;
       IF S@.IV = 0 THEN                               % a copy of the value
          BLOCK
             CONST CN: TEXT := NEW_OBJECT (Y, '');
@@ -653,6 +689,27 @@ PROCEDURE WITH_STMT (S: NODE);
             Y@.LEVEL := 0;
             Y@.OWNER := -1;
          END BLOCK;
+         BLOCK                                        % the named variable is not known
+            CONST R: NODE := NAMED_ROOT (S@.A);       % in the statement (4.5.4)
+            IF R <> NIL THEN
+               IF NOT TEQ (R@.NAME, S@.NAME) THEN
+                  BLOCK
+                     CONST OLD: SYM := LOOKUP (R@.NAME);
+                     IF OLD <> NIL THEN
+                        IF OLD@.KIND = Y_VAR THEN
+                           BLOCK
+                              VAR H: SYM := NEW_SYM (Y_VAR, R@.NAME);
+                              H@.T := OLD@.T;
+                              H@.WITHV := 2;
+                              H@.OWNER := OLD@.OWNER;
+                              DEFINE (H, S@.LINE);
+                           END BLOCK;
+                        END IF;
+                     END IF;
+                  END BLOCK;
+               END IF;
+            END IF;
+         END BLOCK;
       END IF;
       DEFINE (Y, S@.LINE);
    END BLOCK;
@@ -665,6 +722,7 @@ END PROCEDURE WITH_STMT;
 % on strings; OBJECT_MACHINE selects a machine-dependent element (4.5.5.2)
 PROCEDURE CASE_STMT (S: NODE);
    VAR ARM: NODE := S@.B;
+   VAR SEEN: BND := NIL;
    IF S@.A@.KIND = N_NAME & TEQS (S@.A@.NAME, 'OBJECT_MACHINE') THEN
       MACHINE_CASE (S);
       RETURN;
@@ -702,6 +760,10 @@ PROCEDURE CASE_STMT (S: NODE);
          END BLOCK;
          RETURN;
       END IF;
+      IF T@.KIND = T_FLOAT ! (T@.KIND = T_INT & T@.SCALE <> 0) THEN
+         VALUE_CASE (S, CH);                         % any predefined type (4.5.5.2)
+         RETURN;
+      END IF;
       IF NOT (T@.KIND = T_INT & T@.SCALE = 0) & T@.KIND <> T_ENUM & T@.KIND <> T_BOOL THEN
          FAILT (S@.LINE, 'a case statement cannot select on ', TYPE_NAME (T));
       END IF;
@@ -729,6 +791,7 @@ PROCEDURE CASE_STMT (S: NODE);
                      IF NOT FIRST.OK THEN
                         FIRST := SOME (A);
                      END IF;
+                     SEEN := DISTINCT_LABEL (SEEN, A, B, L@.LINE);
                      CODE (FMT2 ('case @ ... @:', NUM (A), NUM (B)));
                   END BLOCK;
                ELSE
@@ -740,6 +803,7 @@ PROCEDURE CASE_STMT (S: NODE);
                      IF NOT FIRST.OK THEN
                         FIRST := M;
                      END IF;
+                     SEEN := DISTINCT_LABEL (SEEN, M.V, M.V, L@.LINE);
                      CODE (FMT1 ('case @:', NUM (M.V)));
                   END BLOCK;
                END IF;
@@ -768,6 +832,86 @@ PROCEDURE CASE_STMT (S: NODE);
    END BLOCK;
 END PROCEDURE CASE_STMT;
 
+% the choice-label values must be distinct (4.5.5.2): [A:B] against those SEEN
+FUNCTION DISTINCT_LABEL (SEEN: BND, A, B: INTEGER, LINE: INTEGER) RETURNS (BND);
+   VAR P: BND := SEEN;
+   IF A > B THEN
+      RETURN SEEN;
+   END IF;
+   LOOP UNTIL P = NIL DO
+      IF A <= P@.MHI.V & P@.MLO.V <= B THEN
+         FAIL (LINE, 'the choice-label values must be distinct (4.5.5.2)');
+      END IF;
+      P := P@.NEXT;
+   END LOOP;
+   P := NEW (BND_REC);
+   P@ := (LO: NO_TEXT (), HI: NO_TEXT (), MLO: SOME (A), MHI: SOME (B), ANYARG: FALSE, NEXT: SEEN);
+   RETURN P;
+END FUNCTION DISTINCT_LABEL;
+
+% a case statement on floating point or scaled fixed point values: a chain of
+% comparisons with the labels, values of the type of the choice (4.5.5.2)
+PROCEDURE VALUE_CASE (S: NODE, CH: ET);
+   CONST TMP: TEXT := NEW_NAME ('cs');
+   CONST X: ET := MKET (TMP, CH.T);
+   VAR ARM: NODE := S@.B;
+   VAR WORD: TEXT := MK ('if');
+   CODE (FMT3 ('{ @ @ = @;', CTYPE (REAL_TYPE (CH.T)), TMP, CH.C));
+   LOOP UNTIL ARM = NIL DO
+      BLOCK
+         VAR L: NODE := ARM@.A;
+         VAR COND: TEXT := MK ('0');
+         LOOP UNTIL L = NIL DO
+            IF L@.KIND = N_RANGE THEN
+               BLOCK
+                  CONST LO: ET := CASE_LABEL (L@.A, CH.T);
+                  CONST HI: ET := CASE_LABEL (L@.B, CH.T);
+                  VAR GE: ASCII_STR (2) := '>=';
+                  VAR LE: ASCII_STR (2) := '<=';
+                  IF L@.IV = 1 ! L@.IV = 3 THEN
+                     GE := '> ';
+                  END IF;
+                  IF L@.IV >= 2 THEN
+                     LE := '< ';
+                  END IF;
+                  COND := FMT3 ('@ || (@ && @)', COND, VALUE_COMPARE (X, LO, MK (GE)),
+                                VALUE_COMPARE (X, HI, MK (LE)));
+               END BLOCK;
+            ELSE
+               COND := FMT2 ('@ || @', COND, VALUE_COMPARE (X, CASE_LABEL (L, CH.T), MK ('==')));
+            END IF;
+            L := L@.NEXT;
+         END LOOP;
+         CODE (FMT2 ('@ (@)', WORD, COND));
+         WORD := MK ('else if');
+         CASE_ELEMENT (ARM@.B, ARM@.C);
+      END BLOCK;
+      ARM := ARM@.NEXT;
+   END LOOP;
+   IF S@.C <> NIL THEN
+      IF NOT TEQS (WORD, 'if') THEN
+         CODES ('else');
+      END IF;
+      CASE_ELEMENT (S@.C, S@.D);
+   END IF;
+   CODES ('}');
+END PROCEDURE VALUE_CASE;
+
+FUNCTION CASE_LABEL (L: NODE, T: TYP) RETURNS (ET);
+   CONST V: ET := EXPR (L, T);
+   IF NOT SAME_CLASS (REAL_TYPE (V.T), REAL_TYPE (T)) THEN
+      FAIL (L@.LINE, 'a case label is a value of the type of the choice (4.5.5.2)');
+   END IF;
+   RETURN V;
+END FUNCTION CASE_LABEL;
+
+FUNCTION VALUE_COMPARE (A, B: ET, OP: TEXT) RETURNS (TEXT);
+   IF REAL_TYPE (A.T)@.KIND = T_FLOAT THEN
+      RETURN FMT3 ('(@ @ @)', A.C, OP, B.C);
+   END IF;
+   RETURN FIXED_COMPARE (A, B, OP);
+END FUNCTION VALUE_COMPARE;
+
 % the open-scope-body of a case element and its exceptions clause [4-70]
 PROCEDURE CASE_ELEMENT (B: NODE, HANDLERS: NODE);
    IF HANDLERS = NIL THEN
@@ -792,6 +936,9 @@ FUNCTION DISCRIMINATED (CH: NODE) RETURNS (SYM);
       END IF;
       IF Y@.KIND <> Y_VAR THEN
          RETURN NIL;
+      END IF;
+      IF Y@.WITHV <> 1 THEN                         % bound-var.tag-name, in the scope
+         RETURN NIL;                                % of the with-clause (4.5.5.2)
       END IF;
       IF REAL_TYPE (Y@.T)@.KIND <> T_REC THEN
          RETURN NIL;

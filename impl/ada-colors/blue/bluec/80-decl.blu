@@ -574,6 +574,19 @@ PROCEDURE ROUTINE_BODY (Y: SYM);
       END LOOP;
    END BLOCK;
    IF R@.FL >= 2 THEN                                % TARGET: no machine code here (4.8.2)
+      BLOCK                                          % the stack-size: a manifest integer
+         CONST N: NODE := R@.D@.C;                   % >= 0 [4-111]
+         CONST SAVED_CODE: BUF := W@.CODE;
+         CONST V: ET := EXPR (N, W@.TY_INT);
+         CONST M: MVAL := MANIFEST (N);
+         W@.CODE := SAVED_CODE;
+         IF REAL_TYPE (V.T)@.KIND <> T_INT ! REAL_TYPE (V.T)@.SCALE <> 0 ! NOT M.OK THEN
+            FAIL (N@.LINE, 'the stack-size is a manifest integer expression (4.8.2 [4-111])');
+         END IF;
+         IF M.V < 0 THEN
+            FAIL (N@.LINE, 'the stack-size must be greater than or equal to zero (4.8.2)');
+         END IF;
+      END BLOCK;
       CODE (FMT1 ('rt_b_no_target_code(@);', CSTRING (R@.NAME)));
    ELSE
       CLOSED_BODY (R@.C);

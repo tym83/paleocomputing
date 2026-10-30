@@ -1,0 +1,6 @@
+MAIN SEGMENT WITH_SIMPLEERR
+   USES (TERMINAL);
+% a with-clause prefixes a structured statement (4.5.3 [4-58])
+VAR X: INTEGER := 5;
+WITH W := X PUT_LINE (TO_CHAR (W));
+END SEGMENT WITH_SIMPLEERR;

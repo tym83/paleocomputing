@@ -24,8 +24,6 @@ s/TYPE DEVICE_NAME = ENUM (\\LT33, \\CR11,\\RP03,\.\.\.);/TYPE DEVICE_NAME = ENU
 /TYPE FILE (ELEMENT_TYPE : TYPE) =/,/END RECORD;/s/^\( *VAR .*\),$/\1;/
 /TYPE FILE (ELEMENT_TYPE : TYPE) =/,/END RECORD;/s/VAR LOCKED: BOOLEAN$/VAR LOCKED: BOOLEAN;/
 s/VAR BODY: FILE (ELEMENT_TYPE)$/VAR BODY: FILE (ELEMENT_TYPE);/
-# an enumerated-spec starts with ENUM ([3-83]); the parameter types print without it
-s/: *(\\\([A-Z]\)/: ENUM (\\\1/g
 # misprints: IO-ERROR, FYS_CHECK
 s/SIGNAL IO-ERROR;/SIGNAL IO_ERROR;/
 s/FYS_CHECK (PATHNAME,/FSYS_CHECK (PATHNAME,/
@@ -70,10 +68,10 @@ s/^            CONST NUM_OF_LT33 : INTEGER := \.\.\.;$//
 /^        \\CR11 -->$/,/^                  END;$/d
 # 4.1.1: a closed scope that invokes a routine exported from a module, which uses an
 # own variable of the module, must import the routine; a path is a closed scope and
-# imports the global variables it uses (LT33_PS, LT33_KS). The SYSTEM paths and
-# APPLICATION_ROUTINE print no imports
-s/FOR I IN \[1:NUM_OF_LT33\] CONNECT (LT33_PS(I));/FOR I IN [1:NUM_OF_LT33] CONNECT (LT33_PS(I)) IMPORTS (DATA: (# LT33_PS), ROUTINES: (OUTPUT_DRIVER));/
-s/FOR I IN \[1:NUM_OF_LT33\] CONNECT (LT33_KS(I));/FOR I IN [1:NUM_OF_LT33] CONNECT (LT33_KS(I)) IMPORTS (DATA: (# LT33_KS), ROUTINES: (INPUT_DRIVER));/
+# imports the routines it invokes (the semaphore of its CONNECT clause is known
+# without importing it). The SYSTEM paths and APPLICATION_ROUTINE print no imports
+s/FOR I IN \[1:NUM_OF_LT33\] CONNECT (LT33_PS(I));/FOR I IN [1:NUM_OF_LT33] CONNECT (LT33_PS(I)) IMPORTS (ROUTINES: (OUTPUT_DRIVER));/
+s/FOR I IN \[1:NUM_OF_LT33\] CONNECT (LT33_KS(I));/FOR I IN [1:NUM_OF_LT33] CONNECT (LT33_KS(I)) IMPORTS (ROUTINES: (INPUT_DRIVER));/
 s/^             PATH SCHEDULE_APPLICATION;$/             PATH SCHEDULE_APPLICATION IMPORTS (ROUTINES: (APPLICATION_ROUTINE));/
 s/^        PROCEDURE APPLICATION_ROUTINE ( );$/        PROCEDURE APPLICATION_ROUTINE ( ) IMPORTS (ROUTINES: (APPLICATION_BODY));/
 # a comma before RETURNS in the WHERE clause of FORMREAD (C-34; C-36 has none)

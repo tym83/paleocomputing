@@ -1,0 +1,11 @@
+MAIN SEGMENT NAMING_HIDEERR
+   USES (TERMINAL);
+% the variable a NAMING names is not known in the statement (4.5.4, example 1)
+VAR V: ARRAY [1:5] OF INTEGER;
+VAR I: INTEGER := 1;
+WITH W NAMING V(I+1)
+  BLOCK
+     W := 7;
+     PUT_LINE (TO_CHAR (V(2)));
+  END BLOCK;
+END SEGMENT NAMING_HIDEERR;

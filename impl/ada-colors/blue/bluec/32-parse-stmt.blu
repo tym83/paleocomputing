@@ -307,6 +307,9 @@ FUNCTION PARSE_PAR () RETURNS (NODE);
                EXIT;
             END IF;
          END LOOP;
+         IF P@.D <> NIL THEN                          % CONNECT makes the semaphore
+            CONNECT_KNOWN (P@.D, H);                  % known in the path (4.6.1)
+         END IF;
          EXPECT (';');
          P@.B := PARSE_CLOSED_BODY ();
          EXPECT ('END');
@@ -322,3 +325,40 @@ FUNCTION PARSE_PAR () RETURNS (NODE);
    EXPECT (';');
    RETURN S;
 END FUNCTION PARSE_PAR;
+
+% the interrupt of a CONNECT clause is known within the path (4.6.1): the
+% variable it names is imported for change unless the imports-clause names it
+PROCEDURE CONNECT_KNOWN (E: NODE, H: NODE);
+   VAR R: NODE := E;
+   LOOP UNTIL R@.KIND = N_NAME ! R@.KIND = N_APPLY DO
+      IF R@.KIND <> N_INDEX & R@.KIND <> N_FIELD THEN
+         RETURN;
+      END IF;
+      R := R@.A;
+   END LOOP;
+   IF H@.B = NIL THEN
+      H@.B := NEW_NODE (N_ITEMS, E@.LINE);
+   END IF;
+   BLOCK
+      VAR P: NODE := H@.B@.A;
+      LOOP UNTIL P = NIL DO
+         IF TEQ (P@.NAME, R@.NAME) THEN
+            RETURN;
+         END IF;
+         P := P@.NEXT;
+      END LOOP;
+      P := H@.B@.B;
+      LOOP UNTIL P = NIL DO
+         IF TEQ (P@.NAME, R@.NAME) THEN
+            RETURN;
+         END IF;
+         P := P@.NEXT;
+      END LOOP;
+   END BLOCK;
+   BLOCK
+      VAR N: NODE := NEW_NODE (N_IDENT, E@.LINE);
+      N@.NAME := R@.NAME;
+      N@.NEXT := H@.B@.B;
+      H@.B@.B := N;
+   END BLOCK;
+END PROCEDURE CONNECT_KNOWN;

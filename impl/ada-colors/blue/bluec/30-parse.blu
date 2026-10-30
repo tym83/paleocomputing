@@ -891,6 +891,9 @@ FUNCTION PARSE_ROUTINE () RETURNS (NODE);
       R@.FL := 2;
    END IF;
    IF ACCEPT ('INLINE') THEN
+      IF R@.FL = 2 THEN                             % the constraint of 4.8.2 (decision 30)
+         FAIL (R@.LINE, 'target routines cannot be INLINE (4.8.2)');
+      END IF;
       R@.FL := R@.FL + 1;
    END IF;
    IF ACCEPT ('FUNCTION') THEN
@@ -926,7 +929,9 @@ FUNCTION PARSE_ROUTINE () RETURNS (NODE);
    EXPECT (';');
    IF R@.FL >= 2 THEN                                % [4-109]: DYNSIZE and machine code
       EXPECT ('DYNSIZE');
-      SKIP_PARENS;
+      EXPECT ('(');
+      H@.C := PARSE_EXPR ();                        % stack-size [4-111]
+      EXPECT (')');
       EXPECT (';');
       LOOP UNTIL IS ('END') & (TOK_IS (AHEAD (1), 'PROCEDURE') ! TOK_IS (AHEAD (1), 'FUNCTION')) DO
          SKIP;

@@ -398,6 +398,21 @@ FUNCTION CALL_SYM (Y0: SYM, ARGS: ARG, LINE: INTEGER) RETURNS (ET);
       Y := INSTANCE (Y, ARGS, LINE);
    END IF;
    CHECK_CALL_IMPORTS (Y, LINE);
+   BLOCK                                             % not a variable a NAMING hides
+      VAR U: NODE := Y@.USES;                        % (4.5.4)
+      LOOP UNTIL U = NIL DO
+         BLOCK
+            CONST H: SYM := LOOKUP (U@.NAME);
+            IF H <> NIL THEN
+               IF H@.WITHV = 2 & H@.OWNER = U@.IV THEN
+                  FAIL (LINE, 'the routine ' !! STR (Y@.NAME, Y@.NAME.LEN) !! ' imports '
+                        !! STR (U@.NAME, U@.NAME.LEN) !! ', which a WITH NAMING hides (4.5.4)');
+               END IF;
+            END IF;
+         END BLOCK;
+         U := U@.NEXT;
+      END LOOP;
+   END BLOCK;
    IF W@.IN_RECORD > 0 & Y@.USES <> NIL THEN
       FAILT (LINE, 'a record-spec is a closed scope: no function importing a variable (3.9.1): ',
              Y@.NAME);

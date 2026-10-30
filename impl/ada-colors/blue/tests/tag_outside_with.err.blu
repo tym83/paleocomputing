@@ -1,0 +1,16 @@
+MAIN SEGMENT TAG_OUTSIDE_WITHERR
+   USES (TERMINAL);
+% bound-var.tag-name: the case statement is in the scope of the with-clause (4.5.5.2)
+TYPE T (TAG B: BOOLEAN) =
+     RECORD
+          SELECT B FROM
+               TRUE --> VAR X: INTEGER; END;
+               FALSE --> VAR Y: FLOAT (8); END;
+          END SELECT;
+     END RECORD;
+VAR V: T (ANY);
+SELECT V.B FROM
+     TRUE --> V.X := 1; END;
+     FALSE --> V.Y := 3.5; END;
+END SELECT;
+END SEGMENT TAG_OUTSIDE_WITHERR;
