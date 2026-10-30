@@ -243,9 +243,28 @@ overloaded on strings, characters, integers and BOOLEAN, `WriteFloat`, `WriteFix
 ## 9. Programs and separate compilation (XIII)
 
 A program is a sequence of segments, each a module, behaving as the modules of one BEGIN
-block in link order (XIII.A). yellowc reads the segments of a program together (the prelude
-first); a synopsis is a module whose routines have empty bodies and parses as one, but is not
-used for separate compilation.
+block in link order (XIII.A). Without options yellowc reads the segments of a program together
+(the prelude first); a synopsis followed by its segment in that input is checked and the
+segment translated. Segments are also translated separately, against a library directory of
+translated interfaces:
+
+- `yellowc -i LIB < prelude + synopsis` checks a synopsis (no statements; routines and
+  processes without bodies but INLINE routines, XIII.B, E; import lists that name segments,
+  XIII.C; every name resolved, XIII.D) and keeps it in LIB as S.ysyn with its fingerprint S.yfp.
+- `yellowc -c LIB < prelude + segment` checks the segment against its synopsis (the same
+  import and export lists, each declaration of the synopsis token for token in the segment,
+  nested modules and templates in turn, XIII.C-G), translates it with the synopses of the
+  segments it imports, and writes S.yuse, the fingerprints of the synopses used. The C defines
+  `ys_S_init`, `ys_S_await` and, for each variable, constant, routine and process at the top
+  of the segment's modules, a pointer the other segments reach it by (a process through an
+  activation routine).
+- `yellowc -l LIB S1 ... Sk` writes the main program: the segments initialized in that order,
+  then awaited. A segment translated with a synopsis that has changed since, or importing a
+  segment that is not linked, is an error naming it; the program checks again when it starts
+  that each segment's C is the one translated with those synopses (XIII.I).
+
+A FUNCTION may not call a procedure of another segment, whose assignments are not known when
+it is translated (X.A.4); the aliasing rules are checked within a segment.
 
 ## 10. Implementation-dependent parts (XIV)
 

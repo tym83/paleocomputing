@@ -1,0 +1,13 @@
+(* the synopsis of the segment Counter (XIII.B): its interface only *)
+MODULE Counter
+  IMPORT StandardImplementationPrelude, TextIO;
+  EXPORT Bump, Value, Twice, Ticker, Limit;
+  EXPORT READONLY count;
+  CONST Limit: INTEGER64 = 100;
+  VAR count: INTEGER64;
+  PROCEDURE Bump (CONST by: INTEGER64) ENDPROCEDURE Bump;
+  FUNCTION Value RETURNS INTEGER64 () ENDFUNCTION Value;
+  (* an INLINE routine keeps its body in the synopsis (XIII.E) *)
+  FUNCTION Twice RETURNS INTEGER64 (CONST x: INTEGER64) INLINE RETURN x + x ENDFUNCTION Twice;
+  PROCESS Ticker (CONST n: INTEGER64) ENDPROCESS Ticker
+ENDMODULE Counter

@@ -126,6 +126,7 @@
   (* the program: its segments, as the modules of one block (XIII.A) *)
   PROCEDURE Translate ()
     VAR m: Node := Program;
+        saved: Buf;
     OpenScope(FALSE);
     ProcList[Depth] := Node NIL;
     Level := 0;
@@ -137,7 +138,16 @@
     ResolveLater(Depth);
     RunDeferred(0, 0);
     CheckEffects();
-    AwaitProcesses();
+    IF Mode = M_SEGMENT THEN
+      (* a segment awaits its processes once every segment has started *)
+      saved := Body;
+      Body := Buf(Line NIL, Line NIL);
+      AwaitProcesses();
+      AwaitBuf := Body;
+      Body := saved
+    ELSE
+      AwaitProcesses()
+    ENDIF;
     RETURN
   ENDPROCEDURE Translate;
 
@@ -152,6 +162,13 @@
     PutS(OInit, "rt_main_done();");
     PutS(OInit, "return 0;");
     PutS(OInit, "}");
+    WriteHead();
+    WriteBuf(OInit);
+    RETURN
+  ENDPROCEDURE WriteProgram;
+
+  (* the C program but its initialization *)
+  PROCEDURE WriteHead ()
     WriteBuf(OWarn);
     WriteTxt(T("#include 'DQ'paleo.h'DQ'"));
     PUT(Output, 'LF');
@@ -167,9 +184,9 @@
     WriteBuf(OGlobals);
     WriteBuf(OProtos);
     WriteBuf(OFuncs);
-    WriteBuf(OInit);
+    WriteBuf(OExports);
     RETURN
-  ENDPROCEDURE WriteProgram;
+  ENDPROCEDURE WriteHead;
 
   (* ---- the translator --------------------------------------------------------- *)
 
@@ -190,6 +207,8 @@
   OFuncs := OTypes;
   OInit := OTypes;
   OWarn := OTypes;
+  OExports := OTypes;
+  AwaitBuf := OTypes;
   Body := OTypes;
   Locals := OTypes;
   InitChars();
@@ -199,11 +218,23 @@
   CharNames := T("NUL SOH STX ETX EOT ENQ ACK BEL BS HT LF VT FF CR SO SI DLE DC1 DC2 DC3 DC4 NAK SYN ETB CAN EM SUB ESC FS GS RS US SP DEL SQ DQ ");
   OPEN(Output, "OUTPUT", WRITE);
   OPEN(Errors, "ERROR", WRITE);
-  ReadSource();
-  Lex();
-  Program := ParseProgram();
-  Predefine();
-  Translate();
-  WriteProgram();
+  ReadArgs();
+  IF Mode = M_LINK THEN
+    LinkProgram()
+  ELSE
+    ReadSource();
+    Lex();
+    Program := ParseProgram();
+    Predefine();
+    IF Mode = M_INTERFACE THEN
+      Interface()
+    ELSIF Mode = M_SEGMENT THEN
+      Segment()
+    ELSE
+      PairInInput();
+      Translate();
+      WriteProgram()
+    ENDIF
+  ENDIF;
   CLOSE(Output)
 ENDMODULE yellowc

@@ -219,6 +219,7 @@
     t := Join(t, T(")"), 0);
     s^.mnext := NewSym(S_STD, t);
     Put(OProtos, Join(t, T(";"), 0));
+    SegRoutine(s, d, kind);
     RETURN
   ENDPROCEDURE RoutineHeader;
 
@@ -447,10 +448,21 @@
         IF k = N_CONST THEN s := NewSym(S_CONST, nm^.name) ELSE s := NewSym(S_VAR, nm^.name) ENDIF;
         IF (nm^.a # Node NIL) AND (r^.kind # R_SIGNAL) THEN
           DeclareAt(s, r, AtAddress(nm^.a), d^.line)
+        ELSIF (ExtDepth > 0) AND (Level = 0) THEN
+          (* declared by a synopsis of another segment: its storage is there *)
+          s^.rep := r;
+          SegStorage(s, r, k)
         ELSE
-          DeclareStorage(s, r, d^.line)
+          DeclareStorage(s, r, d^.line);
+          IF nm^.a = Node NIL THEN SegStorage(s, r, k) ENDIF
         ENDIF;
-        IF d^.c # Node NIL THEN
+        IF (d^.c # Node NIL) AND (ExtDepth > 0) AND (Level = 0) THEN
+          Manifest(d^.c, ok, v);
+          IF (k = N_CONST) AND ok AND IsDiscrete(r) THEN
+            s^.hasmv := TRUE;
+            s^.mval := v
+          ENDIF
+        ELSIF d^.c # Node NIL THEN
           Expr(d^.c, r, c, er);
           IF k = N_CONST THEN
             Store(SymPath(s), r, c, er, d^.line)
@@ -661,6 +673,7 @@
   PROCEDURE DeclareRoutine (CONST d: Node)
     IF d^.kind = N_ROUTINE THEN RoutineHeader(d, S_ROUTINE) ELSE RoutineHeader(d, S_PROCESS) ENDIF;
     IF d^.kind = N_PROCESS THEN DeclareProcess(d) ENDIF;
-    Defer(d, 1, Line NIL, FALSE);
+    (* a routine of a synopsis of another segment has no body here (XIII.E) *)
+    IF NOT d^.sym^.hasmv THEN Defer(d, 1, Line NIL, FALSE) ENDIF;
     RETURN
   ENDPROCEDURE DeclareRoutine;

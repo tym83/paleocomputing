@@ -1,0 +1,7 @@
+(* the main segment, linked last (XIII.A) *)
+MODULE User
+  IMPORT Counter, TextIO, StandardImplementationPrelude;
+  Bump(5); Bump(Twice(3));
+  Write(count); Write(" "); Write(Value()); Write(" "); Write(Limit); WriteLn();
+  Ticker(2)
+ENDMODULE User

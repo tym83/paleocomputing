@@ -435,7 +435,11 @@
     ELSIF k = N_CALLST THEN
       sym := Find(s^.a^.name);
       IF sym # Sym NIL THEN sym := Real(sym) ENDIF;
-      IF (sym # Sym NIL) AND (sym^.kind = S_PROCESS) THEN
+      IF (sym # Sym NIL) AND (sym^.kind = S_PROCESS) AND sym^.hasmv THEN
+        (* a process of another segment, activated there (XIII) *)
+        CompileArgs(s^.a^.a, sym, i, val);
+        Emit(Join(CallCode(sym, i, val, s^.line), T(";"), 0))
+      ELSIF (sym # Sym NIL) AND (sym^.kind = S_PROCESS) THEN
         Activate(s^.a, sym)
       ELSE
         CallExpr(s^.a, Rep NIL, TRUE, c, r);

@@ -419,10 +419,17 @@
   (* ---- the program: a sequence of segments (XIII.A) ----------------------------- *)
 
   PROCEDURE ParseProgram RETURNS Node ()
-    VAR head, tail: Node := Node NIL;
+    VAR head, tail, m: Node := Node NIL;
+        start: INT;
     WHILE TK() # K_EOF DO
       IF NOT (Is(W_MODULE) OR Is(W_MONITOR)) THEN FailS(TLn(), "a segment is a module (XIII.A)") ENDIF;
-      Link(head, tail, ParseModule());
+      start := TPos;
+      m := ParseModule();
+      (* its tokens, for a synopsis kept in a library *)
+      m^.x := NewNode(N_NAMEL, m^.line);
+      m^.x^.ival := start;
+      m^.x^.flag := TPos;
+      Link(head, tail, m);
       WHILE Accept(P_SEMI) DO ENDWHILE
     ENDWHILE;
     RETURN head

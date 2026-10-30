@@ -1,0 +1,772 @@
+  (* ---- programs of separately translated segments (Section XIII) ---------- *)
+  (* A segment is translated against the synopses of the segments it *)
+  (* imports, kept in a library directory, the "library of translated *)
+  (* interfaces":                                                          *)
+  (*   yellowc -i LIB  < prelude + synopsis   checks the synopsis (XIII.B-G) *)
+  (*                                          and keeps it as LIB/S.ysyn, its *)
+  (*                                          fingerprint as LIB/S.yfp       *)
+  (*   yellowc -c LIB  < prelude + segment    checks the segment against its *)
+  (*                                          synopsis and translates it to C *)
+  (*                                          with the synopses it imports; *)
+  (*                                          LIB/S.yuse names them          *)
+  (*   yellowc -l LIB S1 ... Sk               the main program: the segments *)
+  (*                                          initialized in that order, once *)
+  (*                                          every one is checked against the *)
+  (*                                          synopses it was translated with *)
+  (* Each variable, constant, routine and process declared at the top of a *)
+  (* segment's modules is reached from the other segments through a C *)
+  (* pointer named by the module path and, for routines, a hash of the *)
+  (* header. Without options a whole program is translated as before; a *)
+  (* synopsis followed by its segment in one input is checked against it. *)
+
+  PROCEDURE ArgCount RETURNS INT ()
+    VAR n: INT;
+    C_CODE_INSERT("$n = rt_argc();");
+    RETURN n
+  ENDPROCEDURE ArgCount;
+
+  PROCEDURE ArgTxt RETURNS Txt (CONST i: INT)
+    VAR buf: ARRAY (INTEGER [1..4096] OF ASCII);
+        len: INT;
+    C_CODE_INSERT("{ rstr s = rt_arg($i); $len = s.len > 4096 ? 4096 : s.len; memcpy($buf.p, s.p, (size_t)$len); }");
+    SB();
+    FOR k: INTEGER [1..len] DO SC(buf[k]) ENDFOR;
+    RETURN SE()
+  ENDPROCEDURE ArgTxt;
+
+  PROCEDURE ReadArgs ()
+    VAR n: INT := ArgCount();
+        a: Txt;
+        p, tail: Node := Node NIL;
+    IF n = 1 THEN RETURN ENDIF;
+    IF n < 3 THEN FailS(0, "usage: yellowc [-i LIB | -c LIB | -l LIB SEGMENT ...]") ENDIF;
+    a := ArgTxt(1);
+    LibDir := ArgTxt(2);
+    IF TEq(a, T("-i")) THEN Mode := M_INTERFACE
+    ELSIF TEq(a, T("-c")) THEN Mode := M_SEGMENT
+    ELSIF TEq(a, T("-l")) THEN
+      Mode := M_LINK;
+      FOR i: INTEGER [3..n - 1] DO
+        p := NewNode(N_NAMEL, 0);
+        p^.name := Name(ArgTxt(i));
+        Link(LinkNames, tail, p)
+      ENDFOR
+    ELSE
+      FailS(0, "usage: yellowc [-i LIB | -c LIB | -l LIB SEGMENT ...]")
+    ENDIF;
+    RETURN
+  ENDPROCEDURE ReadArgs;
+
+  (* LIB/name.ext *)
+  PROCEDURE LibPath RETURNS Txt (CONST name: Txt; CONST ext: ARRAY (1 DIMENSIONS OF ASCII))
+    SB();
+    ST(LibDir);
+    SA("/");
+    ST(name);
+    SA(ext);
+    RETURN SE()
+  ENDPROCEDURE LibPath;
+
+  (* the text of a file appended to the pool, between SrcStart and SrcEnd; *)
+  (* FALSE when there is no such file *)
+  PROCEDURE ReadInto RETURNS BOOLEAN (CONST path: Txt)
+    VAR ok: BOOLEAN := TRUE;
+    BEGIN
+      VAR nm: ARRAY (INTEGER [1..TL[path]] OF ASCII);
+          f: Text;
+          c: ASCII;
+      EXCEPTION CASE FILE_ERROR => ok := FALSE ENDEXCEPTION;
+      FOR i: INTEGER [1..TL[path]] DO nm[i] := TChar(path, i) ENDFOR;
+      OPEN(f, nm, READ);
+      SrcStart := PoolTop + 1;
+      WHILE NOT CHECK_EOF(f) DO
+        GET(f, c);
+        PoolAdd(c)
+      ENDWHILE;
+      SrcEnd := PoolTop;
+      CLOSE(f)
+    END;
+    RETURN ok
+  ENDPROCEDURE ReadInto;
+
+  (* a file made of the lines of b *)
+  PROCEDURE WriteFile (CONST path: Txt; CONST b: Buf)
+    VAR l: Line := b.head;
+    BEGIN
+      VAR nm: ARRAY (INTEGER [1..TL[path]] OF ASCII);
+          f: Text;
+      EXCEPTION CASE FILE_ERROR => FailN(0, path, " cannot be written") ENDEXCEPTION;
+      FOR i: INTEGER [1..TL[path]] DO nm[i] := TChar(path, i) ENDFOR;
+      OPEN(f, nm, WRITE);
+      WHILE l # Line NIL DO
+        WriteTo(f, l^.t);
+        PUT(f, 'LF');
+        l := l^.next
+      ENDWHILE;
+      CLOSE(f)
+    END;
+    RETURN
+  ENDPROCEDURE WriteFile;
+
+  (* the first line of a file in the library, or 0 *)
+  PROCEDURE ReadLibLine RETURNS Txt (CONST path: Txt)
+    VAR k: INT;
+    IF NOT ReadInto(path) THEN RETURN 0 ENDIF;
+    k := SrcStart;
+    WHILE (k <= SrcEnd) AND (Pool[k] # 'LF') DO k := k + 1 ENDWHILE;
+    RETURN Intern(SrcStart, k - SrcStart)
+  ENDPROCEDURE ReadLibLine;
+
+  (* ---- tokens as text, and their fingerprint ------------------------------- *)
+
+  PROCEDURE DigitsIn (CONST v0, b: INT)
+    VAR v: INT := v0;
+        d: ARRAY (INTEGER [1..70] OF ASCII);
+        k: INT := 0;
+    IF v < 0 THEN
+      SC('-');
+      v := -v
+    ENDIF;
+    LOOP more
+      k := k + 1;
+      IF (v MOD b) < 10 THEN d[k] := Chr[(v MOD b) + 48] ELSE d[k] := Chr[(v MOD b) + 55] ENDIF;
+      v := v DIV b;
+      IF v = 0 THEN EXIT more ENDIF
+    ENDLOOP more;
+    WHILE k > 0 DO
+      SC(d[k]);
+      k := k - 1
+    ENDWHILE;
+    RETURN
+  ENDPROCEDURE DigitsIn;
+
+  (* the text of token i *)
+  PROCEDURE TokenText (CONST i: INT)
+    VAR k: INT := TKind[i];
+        v: INT := TVal[i];
+    IF (k = K_ID) OR (k = K_KW) OR (k = K_OP) OR (k = K_FLOAT) THEN
+      ST(v)
+    ELSIF k = K_INT THEN
+      SI(v)
+    ELSIF k = K_FIXED THEN
+      IF FixB[v] # 10 THEN
+        SA("BASE");
+        SI(FixB[v]);
+        SA(" ")
+      ENDIF;
+      DigitsIn(FixV[v], FixB[v]);
+      SA("P");
+      SI(FixE[v])
+    ELSIF k = K_CHAR THEN
+      SC('SQ');
+      ST(v);
+      SC('SQ')
+    ELSIF k = K_STR THEN
+      SC('DQ');
+      ST(v);
+      SC('DQ')
+    ENDIF;
+    RETURN
+  ENDPROCEDURE TokenText;
+
+  (* the tokens a .. b - 1 as lines of text, a line of the source a line *)
+  PROCEDURE TokensText RETURNS Buf (CONST a, b: INT)
+    VAR out: Buf := Buf(Line NIL, Line NIL);
+        i: INT := a;
+        line: INT;
+    WHILE i < b DO
+      line := TLine[i];
+      SB();
+      WHILE (i < b) AND (TLine[i] = line) DO
+        TokenText(i);
+        SA(" ");
+        i := i + 1
+      ENDWHILE;
+      Put(out, SE())
+    ENDWHILE;
+    RETURN out
+  ENDPROCEDURE TokensText;
+
+  PROCEDURE Fingerprint RETURNS INT (CONST b: Buf)
+    VAR h: INT := 7;
+        l: Line := b.head;
+    WHILE l # Line NIL DO
+      FOR i: INTEGER [1..TL[l^.t]] DO h := ((h * 131) + Code[TChar(l^.t, i)]) MOD 1099511627776 ENDFOR;
+      h := ((h * 131) + 10) MOD 1099511627776;
+      l := l^.next
+    ENDWHILE;
+    RETURN h
+  ENDPROCEDURE Fingerprint;
+
+  (* are the tokens a0 .. a1 - 1 and b0 .. b1 - 1 the same *)
+  PROCEDURE TokEq RETURNS BOOLEAN (CONST a0, a1, b0, b1: INT)
+    VAR i, j: INT;
+    IF (a1 - a0) # (b1 - b0) THEN RETURN FALSE ENDIF;
+    i := a0;
+    j := b0;
+    WHILE i < a1 DO
+      IF TKind[i] # TKind[j] THEN RETURN FALSE ENDIF;
+      IF TKind[i] = K_FIXED THEN
+        IF (FixV[TVal[i]] # FixV[TVal[j]]) OR (FixB[TVal[i]] # FixB[TVal[j]]) OR (FixE[TVal[i]] # FixE[TVal[j]]) THEN
+          RETURN FALSE
+        ENDIF
+      ELSIF (TKind[i] = K_STR) OR (TKind[i] = K_FLOAT) OR (TKind[i] = K_CHAR) THEN
+        IF NOT TEq(TVal[i], TVal[j]) THEN RETURN FALSE ENDIF
+      ELSIF TVal[i] # TVal[j] THEN
+        RETURN FALSE
+      ENDIF;
+      i := i + 1;
+      j := j + 1
+    ENDWHILE;
+    RETURN TRUE
+  ENDPROCEDURE TokEq;
+
+  (* ---- synopses (XIII.B-G) ------------------------------------------------- *)
+
+  (* a synopsis has no statements; its routines and processes no bodies, *)
+  (* except INLINE routines; its import lists name segments (XIII.B-E) *)
+  PROCEDURE CheckSynopsis (CONST m: Node; CONST top: BOOLEAN)
+    VAR d, it: Node;
+        b: Node := m^.c;
+    IF (b^.c # Node NIL) OR (b^.b # Node NIL) THEN
+      FailN(m^.line, m^.name, ": a synopsis has declarations only, no statements (XIII.B)")
+    ENDIF;
+    IF top THEN
+      it := m^.a;
+      WHILE it # Node NIL DO
+        IF (it^.text = 0) AND NOT IsSegment(it^.name) THEN
+          FailN(it^.line, it^.name, " is not a segment: a synopsis imports segments and what they export (XIII.C)")
+        ENDIF;
+        it := it^.next
+      ENDWHILE
+    ENDIF;
+    d := b^.a;
+    WHILE d # Node NIL DO
+      IF ((d^.kind = N_ROUTINE) AND (d^.e = Node NIL)) OR (d^.kind = N_PROCESS) THEN
+        IF (d^.c^.a # Node NIL) OR (d^.c^.b # Node NIL) OR (d^.c^.c # Node NIL) THEN
+          FailN(d^.line, d^.name, ": a synopsis gives the header of a routine, not its body (XIII.E)")
+        ENDIF
+      ELSIF d^.kind = N_MODULE THEN
+        CheckSynopsis(d, FALSE)
+      ELSIF d^.kind = N_TEMPLATE THEN
+        CheckSynopsis(d^.b, FALSE)
+      ENDIF;
+      d := d^.next
+    ENDWHILE;
+    RETURN
+  ENDPROCEDURE CheckSynopsis;
+
+  PROCEDURE IsSegment RETURNS BOOLEAN (CONST name: Txt)
+    VAR m: Node := Program;
+    WHILE m # Node NIL DO
+      IF m^.name = name THEN RETURN TRUE ENDIF;
+      m := m^.next
+    ENDWHILE;
+    RETURN FALSE
+  ENDPROCEDURE IsSegment;
+
+  (* the segment has the declarations of its synopsis, token for token, *)
+  (* and its import and export lists (XIII.C-G, XIII.I) *)
+  PROCEDURE CheckPairing (CONST syn, seg: Node)
+    VAR d, e: Node;
+        found: BOOLEAN;
+    IF (syn^.flag # seg^.flag) OR NOT TokEq(syn^.t0, syn^.t1, seg^.t0, seg^.t1) THEN
+      FailN(seg^.line, seg^.name, ": the segment imports and exports what its synopsis does, and nothing else (XIII.C)")
+    ENDIF;
+    d := syn^.c^.a;
+    WHILE d # Node NIL DO
+      found := FALSE;
+      e := seg^.c^.a;
+      WHILE (e # Node NIL) AND NOT found DO
+        IF e^.kind = d^.kind THEN
+          IF d^.kind = N_MODULE THEN
+            IF e^.name = d^.name THEN
+              CheckPairing(d, e);
+              found := TRUE
+            ENDIF
+          ELSIF d^.kind = N_TEMPLATE THEN
+            IF e^.name = d^.name THEN
+              CheckPairing(d^.b, e^.b);
+              found := TRUE
+            ENDIF
+          ELSIF TokEq(d^.t0, d^.t1, e^.t0, e^.t1) THEN
+            found := TRUE
+          ENDIF
+        ENDIF;
+        e := e^.next
+      ENDWHILE;
+      IF NOT found THEN
+        SB();
+        SA("the declaration of line ");
+        SI(d^.line);
+        SA(" of the synopsis of ");
+        ST(seg^.name);
+        SA(" is not in the segment as it is there (XIII.I)");
+        Fail(seg^.line, SE())
+      ENDIF;
+      d := d^.next
+    ENDWHILE;
+    RETURN
+  ENDPROCEDURE CheckPairing;
+
+  (* a synopsis and then its segment in one input: checked, and only the *)
+  (* segment translated *)
+  PROCEDURE PairInInput ()
+    VAR m, n, prev: Node;
+    prev := Node NIL;
+    m := Program;
+    WHILE m # Node NIL DO
+      n := m^.next;
+      WHILE (n # Node NIL) AND (n^.name # m^.name) DO n := n^.next ENDWHILE;
+      IF n # Node NIL THEN
+        CheckSynopsis(m, TRUE);
+        CheckPairing(m, n);
+        IF prev = Node NIL THEN Program := m^.next ELSE prev^.next := m^.next ENDIF
+      ELSE
+        prev := m
+      ENDIF;
+      m := m^.next
+    ENDWHILE;
+    RETURN
+  ENDPROCEDURE PairInInput;
+
+  (* the synopsis of segment name from the library, parsed and marked *)
+  (* external, with those of the segments it imports; first in the program *)
+  PROCEDURE LoadSynopsis (CONST name: Txt; CONST line: INT)
+    VAR first, saveT, saveLine: INT;
+        n, it, u: Node;
+        fp: Txt;
+    IF IsSegment(name) THEN RETURN ENDIF;
+    fp := ReadLibLine(LibPath(name, ".yfp"));
+    IF (fp = 0) OR NOT ReadInto(LibPath(name, ".ysyn")) THEN
+      FailN(line, name, " is not a segment of the library: no synopsis of it there (XIII.I)")
+    ENDIF;
+    first := NTok + 1;
+    saveLine := LineNo;
+    LineNo := 1;
+    Lex();
+    LineNo := saveLine;
+    saveT := TPos;
+    TPos := first;
+    n := ParseModule();
+    TPos := saveT;
+    IF n^.name # name THEN FailN(line, name, ": its synopsis in the library is of another module") ENDIF;
+    n^.d := NewNode(N_NAMEL, line);
+    n^.next := Program;
+    Program := n;
+    u := NewNode(N_NAMEL, line);
+    u^.name := name;
+    u^.text := fp;
+    u^.next := Uses;
+    Uses := u;
+    LoadImports(n);
+    RETURN
+  ENDPROCEDURE LoadSynopsis;
+
+  PROCEDURE LoadImports (CONST m: Node)
+    VAR it: Node := m^.a;
+    WHILE it # Node NIL DO
+      IF it^.text # 0 THEN LoadSynopsis(it^.text, it^.line)
+      ELSIF NOT IsSegment(it^.name) THEN LoadSynopsis(it^.name, it^.line)
+      ENDIF;
+      it := it^.next
+    ENDWHILE;
+    RETURN
+  ENDPROCEDURE LoadImports;
+
+  (* the last module of the input: the segment or synopsis translated *)
+  PROCEDURE LastSegment RETURNS Node ()
+    VAR m: Node := Program;
+    IF m = Node NIL THEN FailS(0, "no segment") ENDIF;
+    WHILE m^.next # Node NIL DO m := m^.next ENDWHILE;
+    RETURN m
+  ENDPROCEDURE LastSegment;
+
+  (* -i: the synopsis checked and kept in the library *)
+  PROCEDURE Interface ()
+    VAR m: Node := LastSegment();
+        text: Buf;
+        fp: INT;
+        b: Buf := Buf(Line NIL, Line NIL);
+    LoadImports(m);
+    CheckSynopsis(m, TRUE);
+    m^.d := NewNode(N_NAMEL, m^.line);
+    Translate();
+    text := TokensText(m^.x^.ival, m^.x^.flag);
+    fp := Fingerprint(text);
+    WriteFile(LibPath(m^.name, ".ysyn"), text);
+    SB();
+    SI(fp);
+    Put(b, SE());
+    WriteFile(LibPath(m^.name, ".yfp"), b);
+    SB();
+    SA("/* the synopsis of ");
+    ST(m^.name);
+    SA(", fingerprint ");
+    SI(fp);
+    SA(" */");
+    WriteTxt(SE());
+    PUT(Output, 'LF');
+    RETURN
+  ENDPROCEDURE Interface;
+
+  (* -c: the segment against its synopsis, translated with the synopses *)
+  (* it imports *)
+  PROCEDURE Segment ()
+    VAR m: Node := LastSegment();
+        syn: Node;
+        fp: Txt;
+        first, saveT, saveLine: INT;
+        b: Buf := Buf(Line NIL, Line NIL);
+        u: Node;
+    OwnSeg := m^.name;
+    fp := ReadLibLine(LibPath(m^.name, ".yfp"));
+    IF (fp = 0) OR NOT ReadInto(LibPath(m^.name, ".ysyn")) THEN
+      FailN(m^.line, m^.name, ": its synopsis is not in the library; translate it with -i first (XIII.I)")
+    ENDIF;
+    first := NTok + 1;
+    saveLine := LineNo;
+    LineNo := 1;
+    Lex();
+    LineNo := saveLine;
+    saveT := TPos;
+    TPos := first;
+    syn := ParseModule();
+    TPos := saveT;
+    CheckPairing(syn, m);
+    u := NewNode(N_NAMEL, m^.line);
+    u^.name := m^.name;
+    u^.text := fp;
+    u^.next := Uses;
+    Uses := u;
+    LoadImports(m);
+    Translate();
+    u := Uses;
+    WHILE u # Node NIL DO
+      Put(b, Join(u^.name, T(" "), u^.text));
+      u := u^.next
+    ENDWHILE;
+    WriteFile(LibPath(m^.name, ".yuse"), b);
+    WriteSegment(m^.name);
+    RETURN
+  ENDPROCEDURE Segment;
+
+  (* the uses of a segment as one C string *)
+  PROCEDURE UsesText RETURNS Txt (CONST l: Line)
+    VAR p: Line := l;
+    SB();
+    WHILE p # Line NIL DO
+      ST(p^.t);
+      SA(";");
+      p := p^.next
+    ENDWHILE;
+    RETURN SE()
+  ENDPROCEDURE UsesText;
+
+  PROCEDURE WriteSegment (CONST name: Txt)
+    VAR u: Node := Uses;
+        t: Txt;
+    PutS(OInit, "static void y_elaborate(void) {");
+    Append(OInit, Body);
+    PutS(OInit, "}");
+    Put(OInit, Join(T("void ys_"), name, T("_init(void) { y_elaborate(); }")));
+    Put(OInit, Join(T("void ys_"), name, T("_await(void) {")));
+    Append(OInit, AwaitBuf);
+    PutS(OInit, "}");
+    SB();
+    SA("const char ys_");
+    ST(name);
+    SA("_uses[] = ");
+    SC('DQ');
+    WHILE u # Node NIL DO
+      ST(u^.name);
+      SA(" ");
+      ST(u^.text);
+      SA(";");
+      u := u^.next
+    ENDWHILE;
+    SC('DQ');
+    SA(";");
+    Put(OInit, SE());
+    WriteHead();
+    WriteBuf(OInit);
+    RETURN
+  ENDPROCEDURE WriteSegment;
+
+  (* -l: the main program of segments, once the library says every one of *)
+  (* them was translated with the synopses it holds now (XIII.I) *)
+  PROCEDURE LinkProgram ()
+    VAR s, l: Node;
+        uses, fp, now, t: Txt;
+        start, k, fin: INT;
+        out: Buf := Buf(Line NIL, Line NIL);
+    PutS(out, "#include <stdio.h>");
+    PutS(out, "#include <stdlib.h>");
+    PutS(out, "#include <string.h>");
+    PutS(out, "#include " "'DQ'paleo.h'DQ'");
+    s := LinkNames;
+    WHILE s # Node NIL DO
+      Put(out, Join(T("void ys_"), s^.name, T("_init(void);")));
+      Put(out, Join(T("void ys_"), s^.name, T("_await(void);")));
+      Put(out, Join(T("extern const char ys_"), s^.name, T("_uses[];")));
+      s := s^.next
+    ENDWHILE;
+    PutS(out, "int main(int argc, char **argv) {");
+    PutS(out, "y_lang();");
+    PutS(out, "rt_init(argc, argv);");
+    s := LinkNames;
+    WHILE s # Node NIL DO
+      IF NOT ReadInto(LibPath(s^.name, ".yuse")) THEN
+        FailN(0, s^.name, " has not been translated as a segment of this library (XIII.I)")
+      ENDIF;
+      (* each line: a synopsis and the fingerprint it had *)
+      SB();
+      k := SrcStart;
+      start := k;
+      fin := SrcEnd;
+      WHILE k <= fin DO
+        IF Pool[k] = 'LF' THEN
+          t := Intern(start, k - start);
+          CheckUse(s^.name, t);
+          ST(t);
+          SA(";");
+          start := k + 1
+        ENDIF;
+        k := k + 1
+      ENDWHILE;
+      uses := SE();
+      SB();
+      SA("if (strcmp(ys_");
+      ST(s^.name);
+      SA("_uses, ");
+      SC('DQ');
+      ST(uses);
+      SC('DQ');
+      SA(") != 0) { fprintf(stderr, ");
+      SC('DQ');
+      SA("*** segment ");
+      ST(s^.name);
+      SA(" is out of date: translate it again (XIII.I)\n");
+      SC('DQ');
+      SA("); exit(2); }");
+      Put(out, SE());
+      s := s^.next
+    ENDWHILE;
+    s := LinkNames;
+    WHILE s # Node NIL DO
+      Put(out, Join(T("ys_"), s^.name, T("_init();")));
+      s := s^.next
+    ENDWHILE;
+    s := LinkNames;
+    WHILE s # Node NIL DO
+      Put(out, Join(T("ys_"), s^.name, T("_await();")));
+      s := s^.next
+    ENDWHILE;
+    PutS(out, "rt_main_done();");
+    PutS(out, "return 0;");
+    PutS(out, "}");
+    WriteBuf(out);
+    RETURN
+  ENDPROCEDURE LinkProgram;
+
+  (* "M fingerprint": the synopsis of M in the library must still have it, *)
+  (* and M must be linked *)
+  PROCEDURE CheckUse (CONST seg, use: Txt)
+    VAR k: INT := 1;
+        m, fp, now: Txt;
+        l: Node := LinkNames;
+        found: BOOLEAN := FALSE;
+    WHILE (k <= TL[use]) AND (TChar(use, k) # ' ') DO k := k + 1 ENDWHILE;
+    m := Intern(TS[use], k - 1);
+    fp := Intern(TS[use] + k, TL[use] - k);
+    now := ReadLibLine(LibPath(m, ".yfp"));
+    IF (now = 0) OR (now # fp) THEN
+      Fail(0, Join(seg, Join(T(" was translated with an outdated synopsis of "), m, 0), T(": translate it again (XIII.I)")))
+    ENDIF;
+    WHILE l # Node NIL DO
+      IF l^.name = m THEN found := TRUE ENDIF;
+      l := l^.next
+    ENDWHILE;
+    IF NOT found THEN Fail(0, Join(seg, T(" imports the segment "), Join(m, T(", which is not linked (XIII.A)"), 0))) ENDIF;
+    RETURN
+  ENDPROCEDURE CheckUse;
+
+  (* ---- the entities of segments in C ----------------------------------------- *)
+
+  (* the C name of what a segment declares at the top of its modules *)
+  PROCEDURE SegKey RETURNS Txt (CONST name: Txt; CONST hash: INT)
+    VAR c: ASCII;
+    SB();
+    SA("ys");
+    FOR i: INTEGER [1..MTop] DO
+      SA("_");
+      ST(ModPath[i])
+    ENDFOR;
+    SA("__");
+    FOR i: INTEGER [1..TL[name]] DO
+      c := TChar(name, i);
+      IF IsLetter(c) OR IsDigit(c) THEN SC(c)
+      ELSE
+        SA("_x");
+        SI(Code[c])
+      ENDIF
+    ENDFOR;
+    IF hash # 0 THEN
+      SA("__");
+      SI(hash)
+    ENDIF;
+    RETURN SE()
+  ENDPROCEDURE SegKey;
+
+  (* the header of a routine, by the text of the tokens of its declaration *)
+  PROCEDURE HeaderHash RETURNS INT (CONST d: Node)
+    RETURN Fingerprint(TokensText(d^.t0, d^.t1))
+  ENDPROCEDURE HeaderHash;
+
+  (* the parameters of a routine as in its C prototype *)
+  PROCEDURE ParamList RETURNS Txt (CONST s: Sym)
+    VAR p: Param := s^.params;
+        first: BOOLEAN := TRUE;
+    SB();
+    SA("(");
+    WHILE p # Param NIL DO
+      IF NOT first THEN SA(", ") ENDIF;
+      first := FALSE;
+      ST(ParamCType(p));
+      SA(" a_");
+      ST(p^.cname);
+      p := p^.next
+    ENDWHILE;
+    IF first THEN SA("void") ENDIF;
+    SA(")");
+    RETURN SE()
+  ENDPROCEDURE ParamList;
+
+  (* a variable or constant at the top of a segment's module: in a synopsis *)
+  (* imported, the pointer the segment gives; in the segment, that pointer *)
+  PROCEDURE SegStorage (CONST s: Sym; CONST r: Rep; CONST k: INT)
+    VAR key: Txt;
+    IF (Level # 0) OR (MTop = 0) THEN RETURN ENDIF;
+    key := SegKey(s^.name, 0);
+    IF ExtDepth > 0 THEN
+      Put(OGlobals, Join(T("extern "), CType(r), Join(T(" *"), key, T(";"))));
+      s^.cname := Join(T("(*"), key, T(")"));
+      s^.level := 0
+    ELSIF InOwn > 0 THEN
+      Put(OExports, Join(CType(r), Join(T(" *"), key, T(" = &")), Join(s^.cname, T(";"), 0)))
+    ENDIF;
+    RETURN
+  ENDPROCEDURE SegStorage;
+
+  (* a routine or process at the top of a segment's module: in a synopsis *)
+  (* imported it has no body here and is called through the segment's *)
+  (* pointer; in the segment the pointer is given, and for a process an *)
+  (* activation routine *)
+  PROCEDURE SegRoutine (CONST s: Sym; CONST d: Node; CONST kind: INT)
+    VAR key: Txt;
+    IF (s^.level # 1) OR (MTop = 0) OR (d^.e # Node NIL) THEN RETURN ENDIF;
+    IF (ExtDepth = 0) AND (InOwn = 0) THEN RETURN ENDIF;
+    key := SegKey(s^.name, HeaderHash(d));
+    IF kind = S_PROCESS THEN key := Join(key, T("_act"), 0) ENDIF;
+    IF ExtDepth > 0 THEN
+      s^.hasmv := TRUE;
+      SB();
+      SA("extern ");
+      IF kind = S_PROCESS THEN SA("void") ELSE ST(CType(s^.ret)) ENDIF;
+      SA(" (*");
+      ST(key);
+      SA(")");
+      ST(ParamList(s));
+      SA(";");
+      Put(OProtos, SE());
+      s^.cname := key;
+      (* what it assigns is not known here: no FUNCTION may call it unless *)
+      (* it is one (X.A.4) *)
+      IF NOT s^.func THEN
+        s^.writes := NewNode(N_NAMEL, d^.line)
+      ENDIF
+    ELSIF kind = S_ROUTINE THEN
+      SB();
+      ST(CType(s^.ret));
+      SA(" (*");
+      ST(key);
+      SA(")");
+      ST(ParamList(s));
+      SA(" = ");
+      ST(s^.cname);
+      SA(";");
+      Put(OExports, SE())
+    ENDIF;
+    RETURN
+  ENDPROCEDURE SegRoutine;
+
+  (* the activation routine of a process of the segment: a frame filled *)
+  (* with the actuals and a new process on it (X.E.2) *)
+  PROCEDURE SegActivation (CONST s: Sym; CONST d: Node)
+    VAR key, fn, pf, lim, pr, c: Txt;
+        p: Param;
+        r: Rep;
+        ok: BOOLEAN;
+        size: INT := 0;
+        out: Buf := Buf(Line NIL, Line NIL);
+    IF (s^.level # 1) OR (MTop = 0) OR (InOwn = 0) THEN RETURN ENDIF;
+    key := Join(SegKey(s^.name, HeaderHash(d)), T("_act"), 0);
+    fn := Fresh("ysa");
+    Put(out, Join(T("static void "), fn, ParamList(s)));
+    pf := T("pf");
+    PutS(out, "{");
+    Put(out, Join(T("struct "), s^.members^.name, Join(T(" *pf = rt_alloc(sizeof *pf);"), 0, 0)));
+    p := s^.params;
+    WHILE p # Param NIL DO
+      IF (p^.cls = C_CONST) AND Deep(p^.rep) THEN
+        IF p^.rep^.kind = R_UARRAY THEN
+          Put(out, Join(T("y_copy(y_desc_vector("), DescOf(p^.rep^.elem), Join(T("), &pf->"), p^.cname, Join(T(", &a_"), p^.cname, T(");")))))
+        ELSE
+          Put(out, Join(T("y_copy("), DescOf(p^.rep), Join(T(", &pf->"), p^.cname, Join(T(", &a_"), p^.cname, T(");")))))
+        ENDIF
+      ELSE
+        Put(out, Join(T("pf->"), p^.cname, Join(T(" = a_"), p^.cname, T(";"))))
+      ENDIF;
+      p := p^.next
+    ENDWHILE;
+    lim := T("0");
+    IF d^.e # Node NIL THEN
+      Expr(d^.e, RInt, lim, r);
+      CheckType(d^.line, RInt, r)
+    ENDIF;
+    pr := T("0, 0");
+    IF d^.d # Node NIL THEN
+      Expr(d^.d, RInt, c, r);
+      CheckType(d^.line, RInt, r);
+      pr := Join(T("1, "), c, 0)
+    ENDIF;
+    IF d^.x # Node NIL THEN
+      Manifest(d^.x, ok, size);
+      IF NOT ok OR (size < 1) THEN FailS(d^.line, "SIZE is a positive manifest constant (XIV.X.2)") ENDIF
+    ENDIF;
+    SB();
+    SA("y_create(&");
+    ST(s^.cname);
+    SA("_d, ");
+    ST(lim);
+    SA(", ");
+    ST(pr);
+    SA(", ");
+    SI(size);
+    SA(", ");
+    ST(s^.cname);
+    SA(", pf);");
+    Put(out, SE());
+    PutS(out, "}");
+    Append(OFuncs, out);
+    SB();
+    SA("void (*");
+    ST(key);
+    SA(")");
+    ST(ParamList(s));
+    SA(" = ");
+    ST(fn);
+    SA(";");
+    Put(OExports, SE());
+    RETURN
+  ENDPROCEDURE SegActivation;

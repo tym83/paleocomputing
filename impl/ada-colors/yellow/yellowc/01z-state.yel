@@ -63,6 +63,7 @@
     (* the traps a program may suppress (XIV.XIII.2), as bits of Supp, and *)
     (* the directives of the compiler status module *)
     T_RANGE: INT = 1; T_OVERFLOW: INT = 2; T_ASSERTION: INT = 4; T_UNINIT: INT = 8;
+    M_WHOLE: INT = 0; M_INTERFACE: INT = 1; M_SEGMENT: INT = 2; M_LINK: INT = 3;
     D_SUPPRESS: INT = 1; D_RESTORE: INT = 2; D_SUPPRESSED: INT = 3;
 
   VAR
@@ -101,6 +102,15 @@
     ImpureCalls: INT := 0;           (* calls of procedures in expressions so far *)
     Supp: INT := 0;                  (* the traps suppressed here *)
     LvNode: Node := Node NIL;        (* the designator of the variable being assigned *)
+    (* separate compilation (XIII): what is translated, the library, the *)
+    (* segments to link, the synopses used, the modules around a declaration *)
+    Mode: INT := 0;
+    LibDir: Txt := 0;
+    LinkNames, Uses: Node := Node NIL;
+    OwnSeg: Txt := 0;
+    ExtDepth, InOwn, MTop: INT := 0;
+    ModPath: ARRAY (INTEGER [1..64] OF Txt);
+    OExports, AwaitBuf: Buf;
     CurModName: Txt := 0;            (* the module whose declarations are read *)
     (* for the checks of X.A.4-6: every routine, the calls with VAR actuals, *)
     (* the pointer types reached freely *)

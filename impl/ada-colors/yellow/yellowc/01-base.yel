@@ -32,7 +32,8 @@ MODULE yellowc
       VAR a, b, c, d, e, next: Node;
       VAR rep: Rep;
       VAR sym: Sym;
-      VAR x: Node                 (* processes: SIZE; representations: PACKED, ALIGNMENT *)
+      VAR x: Node;                (* processes: SIZE; representations: PACKED, ALIGNMENT *)
+      VAR t0, t1: INT             (* declarations: their tokens, for synopses (XIII) *)
     ENDRECORD;
 
     (* a representation (VI): a type with what the C needs to hold it *)

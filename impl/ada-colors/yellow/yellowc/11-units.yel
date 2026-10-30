@@ -368,6 +368,13 @@
     ENDIF;
     OpenScope(TRUE);
     CurModName := d^.name;
+    (* the modules around, and whether this is a synopsis of another *)
+    (* segment or the segment translated (XIII) *)
+    IF MTop >= 64 THEN FailS(d^.line, "modules nested too deeply") ENDIF;
+    MTop := MTop + 1;
+    ModPath[MTop] := d^.name;
+    IF d^.d # Node NIL THEN ExtDepth := ExtDepth + 1 ENDIF;
+    IF (MTop = 1) AND (OwnSeg # 0) AND (d^.name = OwnSeg) THEN InOwn := InOwn + 1 ENDIF;
     ProcList[Depth] := Node NIL;
     saveVis := VisibleFrom;
     VisibleFrom := Depth;
@@ -382,7 +389,7 @@
     (* the body initializes the module, inside the monitor if it is one: *)
     (* written with the bodies of the routines, here *)
     Emit(Join(T("/* "), d^.name, T(" */")));
-    Defer(d, 2, Body.tail, monitorHere);
+    IF ExtDepth = 0 THEN Defer(d, 2, Body.tail, monitorHere) ENDIF;
     (* exports are names of the module; := = # first, as they apply to *)
     (* every opaque type exported with them *)
     ExportOps := 0;
@@ -405,6 +412,9 @@
     p := ProcList[Depth];
     VisibleFrom := saveVis;
     CurModName := saveName;
+    IF d^.d # Node NIL THEN ExtDepth := ExtDepth - 1 ENDIF;
+    IF (MTop = 1) AND (OwnSeg # 0) AND (d^.name = OwnSeg) THEN InOwn := InOwn - 1 ENDIF;
+    MTop := MTop - 1;
     CloseScope();
     (* processes of a module hold the scope around it (X.E.1) *)
     WHILE p # Node NIL DO
@@ -524,7 +534,10 @@
     VAR s: Sym := d^.sym;
         p: Node;
     s^.monitor := CurMonitor;
+    (* a process of another segment: activated through that segment *)
+    IF s^.hasmv THEN RETURN ENDIF;
     DeclStorage(T("rt_taskdecl"), Join(s^.cname, T("_d"), 0));
+    SegActivation(s, d);
     p := NewNode(N_NAMEL, d^.line);
     p^.sym := s;
     p^.next := ProcList[Depth];

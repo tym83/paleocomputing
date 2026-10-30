@@ -43,6 +43,9 @@ for src in tests/*.yel tests/corpus/*.yel; do
   if diff -u "$exp" "$tmp/$name.txt" > "$tmp/diff.txt"; then pass=$((pass+1)); else
     echo "FAIL $name"; cat "$tmp/diff.txt"; failn=$((failn+1)); fi
 done
+# separate compilation (XIII): several translations and a link
+if tests/separate.sh > "$tmp/sep.txt" 2>&1; then pass=$((pass+1)); else
+  failn=$((failn+1)); cat "$tmp/sep.txt"; fi
 rm -rf "$tmp"
 echo "yellow tests: $pass passed, $failn failed"
 [ "$failn" -eq 0 ]
