@@ -349,7 +349,7 @@ FUNCTION BUILTIN (E: NODE, WANT: TYP) RETURNS (ET);
          IF T@.KIND <> T_ENUM THEN
             FAILT (LINE, 'an enumerated value expected by ', NAME);
          END IF;
-         IF T@.BASE@.UNORDERED THEN
+         IF IS_UNORDERED (T) THEN
             FAILT (LINE, 'not defined for an UNORDERED type (3.4.6.1): ', NAME);
          END IF;
          IF TEQS (NAME, 'SUCC') THEN
@@ -514,7 +514,7 @@ FUNCTION TO_FIXED_CALL (E: NODE) RETURNS (ET);
       RETURN MKET (FMT3 ('rt_b_fix_of_float(@, @, @)', V.C, NUM (S), RND), INT_TYPE (S));
    ORIF T@.KIND = T_ENUM ! T@.KIND = T_BOOL THEN
       IF T@.KIND = T_ENUM THEN
-         IF T@.BASE@.UNORDERED THEN
+         IF IS_UNORDERED (T) THEN
             FAIL (E@.LINE, 'TO_FIXED is not defined for an UNORDERED type (3.2.6.1)');
          END IF;
          IF T@.REPS <> NIL THEN

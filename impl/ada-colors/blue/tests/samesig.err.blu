@@ -1,0 +1,9 @@
+MAIN SEGMENT SAMESIGERR
+   USES (TERMINAL);
+% the routines of a scope have distinct signatures, invoked or not (4.1)
+PUT_LINE ('x');
+PROCEDURE P (A: INTEGER);
+END PROCEDURE P;
+PROCEDURE P (B: INTEGER);
+END PROCEDURE P;
+END SEGMENT SAMESIGERR;

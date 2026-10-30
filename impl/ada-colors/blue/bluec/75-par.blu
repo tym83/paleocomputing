@@ -71,7 +71,7 @@ PROCEDURE ACTIVATE_PATH (P: NODE, TD: TEXT);
          VAR HI: TEXT := EXPR (R@.B, LV.T).C;
          CONST RT: TYP := REAL_TYPE (LV.T);
          IF RT@.KIND = T_ENUM THEN                    % an integer or ordered enumerated
-            IF RT@.BASE@.UNORDERED THEN               % range, as for a loop (4.5.6.3)
+            IF IS_UNORDERED (RT) THEN                 % range, as for a loop (4.5.6.3)
                FAIL (P@.LINE, 'a loop prefix over an UNORDERED type (4.6.1)');
             END IF;
             LT := RT@.BASE;

@@ -162,6 +162,35 @@ PROCEDURE ROUTINE_HEADERS (RS: NODE);
 END PROCEDURE ROUTINE_HEADERS;
 
 % the symbol declared by the declaration D, visible here
+% two routines declared in one scope with one name have different signatures
+% (4.1, p.4-4), whether or not they are invoked
+PROCEDURE DISTINCT_SIGNATURES (RS: NODE);
+   VAR R: NODE := RS;
+   LOOP UNTIL R = NIL DO
+      IF R@.KIND = N_ROUTINE THEN
+         BLOCK
+            VAR Q: NODE := R@.NEXT;
+            LOOP UNTIL Q = NIL DO
+               IF Q@.KIND = N_ROUTINE & TEQ (Q@.NAME, R@.NAME) THEN
+                  BLOCK
+                     CONST A: SYM := FIND_DECL (R);
+                     CONST B: SYM := FIND_DECL (Q);
+                     ROUTINE_HEADER (A);
+                     ROUTINE_HEADER (B);
+                     IF SAME_SIGNATURE (A, B) THEN
+                        FAILT (Q@.LINE, 'two routines of one scope with the same signature (4.1): ',
+                               Q@.NAME);
+                     END IF;
+                  END BLOCK;
+               END IF;
+               Q := Q@.NEXT;
+            END LOOP;
+         END BLOCK;
+      END IF;
+      R := R@.NEXT;
+   END LOOP;
+END PROCEDURE DISTINCT_SIGNATURES;
+
 FUNCTION FIND_DECL (D: NODE) RETURNS (SYM);
    VAR Y: SYM := LOOKUP (D@.NAME);
    LOOP UNTIL Y = NIL DO
@@ -306,10 +335,59 @@ PROCEDURE EXPORT_MODULE (M: SYM);
          IF NOT MEMBER_NAMED (M, X@.NAME) THEN
             FAILT (X@.LINE, 'the module does not declare ', X@.NAME);
          END IF;
+         CHECK_EXPORT_ITEM (M, X);
          X := X@.NEXT;
       END LOOP;
    END BLOCK;
 END PROCEDURE EXPORT_MODULE;
+
+% only type and routine names are exported, and only a type-name takes a WITH
+% clause, listing operations of the type (4.4)
+PROCEDURE CHECK_EXPORT_ITEM (M: SYM, X: NODE);
+   VAR Y: SYM := M@.MEMBERS;
+   VAR IS_TYPE, IS_ROUTINE: BOOLEAN := FALSE;
+   LOOP UNTIL Y = NIL DO
+      IF TEQ (Y@.NAME, X@.NAME) THEN
+         IF Y@.KIND = Y_TYPE THEN
+            IS_TYPE := TRUE;
+         ORIF Y@.KIND = Y_ROUTINE ! Y@.KIND = Y_MODULE ! Y@.KIND = Y_ENUMLIT THEN
+            IS_ROUTINE := TRUE;
+         END IF;
+      ORIF TEQ (Y@.PREFIX, X@.NAME) THEN
+         IS_ROUTINE := TRUE;
+      END IF;
+      Y := Y@.SNEXT;
+   END LOOP;
+   IF NOT IS_TYPE & NOT IS_ROUTINE THEN
+      FAILT (X@.LINE, 'only type and routine names are exported (4.4): ', X@.NAME);
+   END IF;
+   IF X@.A <> NIL THEN
+      IF NOT IS_TYPE THEN
+         FAILT (X@.LINE, 'only a type-name is followed by a WITH clause (4.4): ', X@.NAME);
+      END IF;
+      BLOCK
+         VAR OP: NODE := X@.A;
+         LOOP UNTIL OP = NIL DO
+            BLOCK
+               VAR FOUND: BOOLEAN := FALSE;
+               Y := M@.MEMBERS;
+               LOOP UNTIL Y = NIL DO
+                  IF Y@.KIND = Y_ROUTINE & TEQ (Y@.PREFIX, X@.NAME) THEN
+                     IF TEQ (BASE_NAME (ORIGINAL (Y)), OP@.NAME) THEN
+                        FOUND := TRUE;
+                     END IF;
+                  END IF;
+                  Y := Y@.SNEXT;
+               END LOOP;
+               IF NOT FOUND THEN
+                  FAILT (OP@.LINE, 'a WITH clause lists operations of the type (4.4): ', OP@.NAME);
+               END IF;
+            END BLOCK;
+            OP := OP@.NEXT;
+         END LOOP;
+      END BLOCK;
+   END IF;
+END PROCEDURE CHECK_EXPORT_ITEM;
 
 FUNCTION MEMBER_NAMED (M: SYM, NAME: TEXT) RETURNS (BOOLEAN);
    VAR Y: SYM := M@.MEMBERS;
@@ -397,6 +475,7 @@ PROCEDURE MODULE_DATA (RS: NODE);
                D := D@.NEXT;
             END LOOP;
             MODULE_DATA (R@.C@.C);
+            DISTINCT_SIGNATURES (R@.C@.C);
             ROUTINE_USES (R@.C@.C);
             LEAVE_MODULE (M);
          END BLOCK;
@@ -474,6 +553,7 @@ PROCEDURE CLOSED_BODY (B: NODE);
    END LOOP;
    MODULE_DATA (B@.C);
    ROUTINE_HEADERS (B@.C);
+   DISTINCT_SIGNATURES (B@.C);
    ROUTINE_USES (B@.C);
    DECLARE_LABELS (B@.B);
    LOOP UNTIL S = NIL DO

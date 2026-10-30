@@ -118,10 +118,34 @@ PROCEDURE ROUTINE_USES (RS: NODE);
    LOOP UNTIL R = NIL DO
       IF R@.KIND = N_ROUTINE THEN
          COMPUTE_USES (FIND_DECL (R));
+         IF R@.E <> NIL THEN                          % the data a routine imports are
+            IMPORTS_KNOWN (R@.E@.A, FALSE);           % known in the scope around it
+            IMPORTS_KNOWN (R@.E@.B, TRUE);            % (4.1.1)
+         END IF;
       END IF;
       R := R@.NEXT;
    END LOOP;
 END PROCEDURE ROUTINE_USES;
+
+% the variables of an imports-clause are known, and for an inout item changeable,
+% in the immediately enclosing scope (4.1.1)
+PROCEDURE IMPORTS_KNOWN (L: NODE, INOUT: BOOLEAN);
+   VAR P: NODE := L;
+   LOOP UNTIL P = NIL DO
+      BLOCK
+         CONST V: SYM := LOOKUP (P@.NAME);
+         IF V <> NIL THEN
+            IF V@.KIND = Y_VAR THEN
+               IF NOT CHECK_IMPORTED (V, P@.LINE) & INOUT & NOT V@.INPUT THEN
+                  FAILT (P@.LINE, 'imported for change, but only for input in the enclosing scope (4.1.1): ',
+                         P@.NAME);
+               END IF;
+            END IF;
+         END IF;
+      END BLOCK;
+      P := P@.NEXT;
+   END LOOP;
+END PROCEDURE IMPORTS_KNOWN;
 
 PROCEDURE ADD_USES (L: NODE # HEAD, TAIL: NODE);
    VAR P: NODE := L;

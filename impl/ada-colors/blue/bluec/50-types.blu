@@ -930,8 +930,14 @@ FUNCTION ABSTRACT_VIEW (Y: SYM, T: TYP) RETURNS (TYP);
    IF IN_MODULE (Y@.MODL) THEN
       RETURN T;
    END IF;
-   IF T@.KIND = T_ENUM THEN                          % its literals are exported too
-      RETURN T;
+   IF T@.KIND = T_ENUM THEN                          % its literals are exported too;
+      IF EXPORTS_ORDER (Y) THEN                      % it is UNORDERED outside unless
+         RETURN T;                                   % the module exports the ordering
+      END IF;                                        % operations (4.4)
+      A := COPY_TYP (T);
+      A@.MODL := Y@.MODL;
+      A@.DECL := Y;
+      RETURN A;
    END IF;
    A := NEW_TYP (T_ABS);
    A@.BASE := T;
@@ -941,6 +947,42 @@ FUNCTION ABSTRACT_VIEW (Y: SYM, T: TYP) RETURNS (TYP);
    A@.ARGS := T@.ARGS;
    RETURN A;
 END FUNCTION ABSTRACT_VIEW;
+
+% does the module of the exported enumerated type Y export <, <=, >, >=, SUCC
+% and PRED for it (4.4)?
+FUNCTION EXPORTS_ORDER (Y: SYM) RETURNS (BOOLEAN);
+   RETURN EXPORTS_OP (Y, 'LESS_THAN_') & EXPORTS_OP (Y, 'LESS_EQUAL_')
+      & EXPORTS_OP (Y, 'GREATER_THAN_') & EXPORTS_OP (Y, 'GREATER_EQUAL_')
+      & EXPORTS_OP (Y, 'SUCC') & EXPORTS_OP (Y, 'PRED');
+END FUNCTION EXPORTS_ORDER;
+
+FUNCTION EXPORTS_OP (Y: SYM, OP: ASCII_STR(?L)) RETURNS (BOOLEAN);
+   VAR R: SYM := Y@.MODL@.MEMBERS;
+   LOOP UNTIL R = NIL DO
+      IF R@.KIND = Y_ROUTINE & R@.EXPORTED & TEQ (R@.PREFIX, Y@.NAME) THEN
+         IF TEQS (BASE_NAME (ORIGINAL (R)), OP) THEN
+            RETURN TRUE;
+         END IF;
+      END IF;
+      R := R@.SNEXT;
+   END LOOP;
+   RETURN FALSE;
+END FUNCTION EXPORTS_OP;
+
+% is T an enumerated type to be treated as UNORDERED here: declared so, or an
+% exported type outside its module without the ordering operations (4.4)?
+FUNCTION IS_UNORDERED (T: TYP) RETURNS (BOOLEAN);
+   IF T@.KIND <> T_ENUM THEN
+      RETURN FALSE;
+   END IF;
+   IF T@.BASE@.UNORDERED THEN
+      RETURN TRUE;
+   END IF;
+   IF T@.DECL <> NIL & T@.MODL <> NIL THEN
+      RETURN NOT IN_MODULE (T@.MODL);
+   END IF;
+   RETURN FALSE;
+END FUNCTION IS_UNORDERED;
 
 % is the module M the one being translated, or one that encloses it?
 FUNCTION IN_MODULE (M: SYM) RETURNS (BOOLEAN);

@@ -490,7 +490,7 @@ PROCEDURE FOR_STMT (S: NODE);
    CONST T: TYP := REAL_TYPE (LO.T);
    VAR LOC, HIC: TEXT;
    IF T@.KIND = T_ENUM THEN
-      IF T@.BASE@.UNORDERED THEN
+      IF IS_UNORDERED (T) THEN
          FAIL (S@.LINE, 'a loop over an UNORDERED type (4.5.6.3)');
       END IF;
    ORIF T@.KIND <> T_INT ! T@.SCALE <> 0 THEN

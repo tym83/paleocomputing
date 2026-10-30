@@ -94,7 +94,13 @@ bits, FLOAT 64, BOOLEAN 1, characters 8, enumerations the smallest that fits
   back on normal completion (§4.3.2, p.4-16).
 - Modules: `MODULE M IMPORTS (...) EXPORTS (T WITH (ops), routine, ...)`. Outside,
   T is abstract; `T$NAME` routines are its operations, callable as `NAME` when
-  unambiguous. Only types and routines are exported (p.4-26).
+  unambiguous. Only types and routines are exported, and only a type takes a WITH
+  list, of its operations (p.4-26). An exported enumerated type keeps its literals
+  and equality outside, and is unordered there unless the module exports <, <=,
+  >, >=, SUCC and PRED for it (p.4-25).
+- The routines of one scope have distinct signatures, checked at the declaration
+  (§4.1); the data a routine imports must be known in the immediately enclosing
+  scope, for change if imported for change (§4.1.1).
 
 ## 5. Statements (§4.5, PDF 1575–1597)
 

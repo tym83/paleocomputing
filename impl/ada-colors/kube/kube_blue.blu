@@ -449,7 +449,7 @@ END PROCEDURE RECONCILE_NODES;
 % Its store is its own; a REGION semaphore lets one caller in at a time, and a
 % caller that dies inside gives it back. Every change goes to the mailboxes of
 % the ports that watch its kind.
-MODULE API EXPORTS (WATCH, WRITE, BEAT, READ_OBJ, SHOW);
+MODULE API IMPORTS (DATA: (# PORTS)) EXPORTS (WATCH, WRITE, BEAT, READ_OBJ, SHOW);
    VAR STORE: CACHE;
    VAR WANTS: ARRAY [1:NPORTS, \DEPLOYMENT : \LEASE] OF BOOLEAN;
    VAR NEXT_ID, NEXT_RV, CONFLICTS: INTEGER := 0;

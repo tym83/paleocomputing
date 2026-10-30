@@ -570,7 +570,7 @@ FUNCTION APPLY_OPERATOR (E: NODE, OP: TEXT, A, B: ET) RETURNS (ET);
       ORIF AT@.KIND = T_FLOAT & BT@.KIND = T_FLOAT THEN
          RETURN MKET (FMT3 ('(@ @ @)', A.C, OP, B.C), W@.TY_BOOL);
       ORIF AT@.KIND = T_ENUM & SAME_CLASS (AT, BT) THEN
-         IF AT@.BASE@.UNORDERED THEN
+         IF IS_UNORDERED (AT) ! IS_UNORDERED (BT) THEN
             FAIL (LINE, 'an UNORDERED type has no ordering (3.4.4.1)');
          END IF;
          RETURN MKET (FMT3 ('(@ @ @)', A.C, OP, B.C), W@.TY_BOOL);
@@ -906,7 +906,7 @@ FUNCTION IN_EXPR (E: NODE) RETURNS (ET);
    VAR HI_OP: TEXT := MK ('<=');
    LO := EXPR (R@.A, T);
    HI := EXPR (R@.B, T);
-   IF T@.KIND = T_ENUM & T@.BASE@.UNORDERED THEN
+   IF IS_UNORDERED (T) THEN
       FAIL (E@.LINE, 'IN needs an ordered type (3.4.4.1)');
    END IF;
    IF NOT (T@.KIND = T_INT ! T@.KIND = T_FLOAT ! T@.KIND = T_ENUM) THEN
