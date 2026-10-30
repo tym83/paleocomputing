@@ -3633,3 +3633,109 @@ double rt_r_float_of_str(rstr s) {
   if (!ok || *p) rt_raise_msg(RT_X_RANGE, "not a FLOAT literal");
   return rt_r_fovf(strtod(b, NULL));
 }
+
+/* ---- the simulated memory (RED 12.3) ---------------------------------------- */
+
+#define R_MEM_BYTES (1 << 20)
+static unsigned char r_mem[R_MEM_BYTES];
+
+static void r_mem_check(rt_int bitaddr, rt_int nbits) {
+  if (bitaddr < 0 || nbits < 0 || bitaddr + nbits > (rt_int)R_MEM_BYTES * 8)
+    rt_raise_msg(RT_X_RANGE, "outside the memory of the simulated machine");
+}
+
+void *rt_r_mem_at(rt_int bitaddr, size_t size) {
+  r_mem_check(bitaddr, (rt_int)size * 8);
+  if (bitaddr % 8) rt_raise_msg(RT_X_RANGE, "a variable without a representation starts at a byte");
+  return r_mem + bitaddr / 8;
+}
+
+static void r_bit_put(rt_int b, int v) {
+  unsigned char m = (unsigned char)(0x80 >> (b % 8));
+  if (v) r_mem[b / 8] |= m;
+  else r_mem[b / 8] &= (unsigned char)~m;
+}
+
+static int r_bit_get(rt_int b) { return (r_mem[b / 8] >> (7 - b % 8)) & 1; }
+
+/* nbits of v, high-order first */
+void rt_r_mem_put(rt_int bitaddr, rt_int nbits, rt_int v) {
+  r_mem_check(bitaddr, nbits);
+  uint64_t u = (uint64_t)v;
+  for (rt_int i = 0; i < nbits; i++) r_bit_put(bitaddr + i, nbits - 1 - i < 64 ? (int)((u >> (nbits - 1 - i)) & 1) : 0);
+}
+
+rt_int rt_r_mem_get(rt_int bitaddr, rt_int nbits, int is_signed) {
+  r_mem_check(bitaddr, nbits);
+  uint64_t u = 0;
+  for (rt_int i = 0; i < nbits; i++) u = (u << 1) | (uint64_t)r_bit_get(bitaddr + i);
+  if (is_signed && nbits > 0 && nbits < 64 && (u >> (nbits - 1)) & 1) u |= ~(uint64_t)0 << nbits;
+  return (rt_int)u;
+}
+
+void rt_r_mem_putf(rt_int bitaddr, rt_int nbits, double v) {
+  if (nbits >= 64) {
+    uint64_t u;
+    memcpy(&u, &v, sizeof u);
+    rt_r_mem_put(bitaddr, 64, (rt_int)u);
+  } else if (nbits >= 32) {
+    float f = (float)v;
+    uint32_t u;
+    memcpy(&u, &f, sizeof u);
+    rt_r_mem_put(bitaddr, 32, (rt_int)u);
+  } else {
+    rt_raise_msg(RT_X_RANGE, "a FLOAT needs 32 or 64 bits");
+  }
+}
+
+double rt_r_mem_getf(rt_int bitaddr, rt_int nbits) {
+  if (nbits >= 64) {
+    uint64_t u = (uint64_t)rt_r_mem_get(bitaddr, 64, 0);
+    double d;
+    memcpy(&d, &u, sizeof d);
+    return d;
+  }
+  if (nbits >= 32) {
+    uint32_t u = (uint32_t)rt_r_mem_get(bitaddr, 32, 0);
+    float f;
+    memcpy(&f, &u, sizeof f);
+    return f;
+  }
+  rt_raise_msg(RT_X_RANGE, "a FLOAT needs 32 or 64 bits");
+}
+
+rt_int rt_r_fits(rt_int v, rt_int nbits, int is_signed) {
+  if (nbits >= 64) return v;
+  if (is_signed ? (v < -((rt_int)1 << (nbits - 1)) || v >= ((rt_int)1 << (nbits - 1)))
+                : (v < 0 || v >= ((rt_int)1 << nbits)))
+    rt_raise_msg(RT_X_RANGE, "the value does not fit its representation");
+  return v;
+}
+
+/* LOW_IO device 3 reads, device 4 writes the byte of the simulated memory at
+ * the command's address */
+void rt_r_low_io(rt_int device, rt_int command, rt_int *data) {
+  if (device == 3) {
+    *data = *(unsigned char *)rt_r_mem_at(command * 8, 1);
+    return;
+  }
+  if (device == 4) {
+    *(unsigned char *)rt_r_mem_at(command * 8, 1) = (unsigned char)*data;
+    return;
+  }
+  rt_low_io(device, command, data);
+}
+
+static int x_maxrange(void) { return rt_exc("X_MAXRANGE"); }
+
+void rt_r_maxprec(rt_int prec) {
+  if (prec < 1 || prec > 15) rt_raise_msg(x_maxrange(), "FLOAT precision");
+}
+
+void rt_r_maxrange_f(double lo, double hi) {
+  if (isinf(lo) || isinf(hi) || isnan(lo) || isnan(hi)) rt_raise(x_maxrange());
+}
+
+void rt_r_maxrange_i(rt_int lo, rt_int hi) {
+  if (lo < RT_IMIN || hi < RT_IMIN) rt_raise(x_maxrange());
+}

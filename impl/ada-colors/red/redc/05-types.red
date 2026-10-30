@@ -1370,11 +1370,227 @@ ABNORMAL FUNC new_type(CONST y : sym, CONST st : node, OUT c : cons) => typ IMPO
       END REPEAT;
       y.t.under := resolve_subtype(d.a, uc);
       y.t.elemcons := uc;
+      IF d.c /= NIL THEN
+         check_rep(d.c, y.t.under, uc, TRUE, FALSE, d);
+         y.t.repn := d.c;
+      END IF;
       close_scope;
    END IF;
    c.args := st.b;
    RETURN y.t;
 END FUNC new_type;
+
+% ---- representations (12.2) -----------------------------------------------------
+
+% the bits a value of a subtype needs: -1 when that is not known here
+ABNORMAL FUNC needed_bits(CONST t : typ, CONST c : cons) => INT IMPORTS ALL;
+   VAR n : INT := 0;
+   VAR v : INT;
+   IF t.kind = t_bool THEN
+      RETURN 1;
+   ELSEIF t.kind = t_enum THEN
+      v := list_len(t.lits) - 1;
+      IF c /= NIL AND c.hasm THEN
+         v := c.mhi;
+      END IF;
+   ELSEIF t.kind = t_int AND c /= NIL AND c.hasm THEN
+      IF c.mlo < 0 THEN
+         % two's complement
+         v := c.mhi;
+         IF -c.mlo - 1 > v THEN
+            v := -c.mlo - 1;
+         END IF;
+         n := 1;
+      ELSE
+         v := c.mhi;
+      END IF;
+   ELSEIF t.kind = t_int THEN
+      RETURN 64;
+   ELSEIF t.kind = t_float THEN
+      IF c /= NIL AND c.prec /= NIL AND has_digits_only(c.prec.ALL) AND CNVT[INT](c.prec.ALL) <= 6 THEN
+         RETURN 32;
+      END IF;
+      RETURN 64;
+   ELSE
+      RETURN -1;
+   END IF;
+   WHILE v > 0 REPEAT
+      n := n + 1;
+      v := v DIV 2;
+   END REPEAT;
+   IF n = 0 THEN
+      n := 1;
+   END IF;
+   RETURN n;
+END FUNC needed_bits;
+
+FUNC has_digits_only(READONLY s : STRING[ASCII]) => BOOL;
+   IF s.LEN = 0 THEN
+      RETURN FALSE;
+   END IF;
+   FOR i : INT(1 .. s.LEN) REPEAT
+      IF NOT is_digit(s(i)) THEN
+         RETURN FALSE;
+      END IF;
+   END REPEAT;
+   RETURN TRUE;
+END FUNC has_digits_only;
+
+% only built-in types underlie a representation; a component of a new type
+% that has a representation of its own is taken as laid out by it
+FUNC built_in_only(CONST t : typ) => BOOL;
+   IF t.kind = t_new THEN
+      RETURN t.repn /= NIL;
+   ELSEIF t.kind = t_ptr THEN
+      RETURN FALSE;
+   ELSEIF t.kind = t_record OR t.kind = t_union THEN
+      VAR f : field := t.fields;
+      WHILE f /= NIL REPEAT
+         IF NOT built_in_only(f.t) THEN
+            RETURN FALSE;
+         END IF;
+         f := f.next;
+      END REPEAT;
+   ELSEIF t.kind = t_array OR t.kind = t_set OR t.kind = t_string THEN
+      RETURN t.elem = NIL OR built_in_only(t.elem);
+   END IF;
+   RETURN TRUE;
+END FUNC built_in_only;
+
+% the representational items for an underlying subtype t, or a component of
+% it, are checked as far as their values are known during translation (12.2)
+PROC check_rep(CONST items : node, CONST t : typ, CONST c : cons, CONST top : BOOL, CONST indirect : BOOL,
+               CONST d : node) IMPORTS ALL;
+   VAR it : node := items;
+   VAR ok : BOOL;
+   VAR at : typ;
+   IF top AND NOT indirect AND NOT built_in_only(t) THEN
+      fail(d.line, "only built-in types may underlie a representation");
+   END IF;
+   WHILE it /= NIL REPEAT
+      CONST w := it.name.ALL;
+      IF w = "SIZE" THEN
+         VAR v : INT := manifest(it.a, ok);
+         CONST dummy := gexpr(it.a, ty_int, at);
+         check_type(at, ty_int, it.line);
+         IF ok AND v < 0 THEN
+            fail(it.line, "a SIZE is not negative");
+         ELSEIF ok AND needed_bits(t, c) > v AND NOT indirect THEN
+            fail(it.line, "SIZE(" & itos(v) & ") is too small for this subtype, which needs "
+                 & itos(needed_bits(t, c)) & " bits");
+         END IF;
+      ELSEIF w = "ALIGN" THEN
+         VAR m : INT := manifest(it.a, ok);
+         IF NOT top THEN
+            fail(it.line, "ALIGN is for the whole underlying subtype only");
+         END IF;
+         IF ok AND m <= 0 THEN
+            fail(it.line, "the modulus of ALIGN is greater than zero");
+         END IF;
+         IF ok AND it.b /= NIL THEN
+            VAR ok2 : BOOL;
+            VAR r : INT := manifest(it.b, ok2);
+            IF ok2 AND (r < 0 OR r >= m) THEN
+               fail(it.line, "ALIGN(e1 OF e2) needs e1 in 0 .. e2 - 1");
+            END IF;
+         END IF;
+      ELSEIF w = "OFFSET" THEN
+         VAR o : INT := manifest(it.a, ok);
+         IF top THEN
+            fail(it.line, "OFFSET is for components of records and unions only");
+         ELSEIF ok AND o < 0 THEN
+            fail(it.line, "an OFFSET is not negative");
+         END IF;
+      ELSEIF w = "RECORD" OR w = "UNION" THEN
+         VAR comp : node := it.c;
+         IF (w = "RECORD" AND t.kind /= t_record) OR (w = "UNION" AND t.kind /= t_union) THEN
+            fail(it.line, w & " is a representation for " & w & " types only");
+         END IF;
+         WHILE comp /= NIL REPEAT
+            VAR f : field := t.fields;
+            WHILE f /= NIL AND f.name.ALL /= comp.name.ALL REPEAT
+               f := f.next;
+            END REPEAT;
+            IF f /= NIL THEN
+               check_rep(comp.a, f.t, f.c, FALSE, FALSE, d);
+            ELSEIF NOT (w = "UNION" AND comp.name.ALL = "TAG") AND NOT (top AND formal_named(d, comp.name.ALL)) THEN
+               % a formal parameter is an attribute kept with the data
+               fail(comp.line, comp.name.ALL & " is not a component");
+            END IF;
+            comp := comp.next;
+         END REPEAT;
+      ELSEIF w = "ARRAY" THEN
+         VAR k : node := it.d;
+         IF t.kind /= t_array OR list_len(it.d) /= t.ndim THEN
+            fail(it.line, "ARRAY names NORMAL or NOBOUNDS for each index of an array");
+         END IF;
+         WHILE k /= NIL REPEAT
+            IF k.name.ALL /= "NORMAL" AND k.name.ALL /= "NOBOUNDS" THEN
+               fail(k.line, "NORMAL or NOBOUNDS expected");
+            END IF;
+            k := k.next;
+         END REPEAT;
+         check_rep(it.c, t.elem, t.elemcons, FALSE, FALSE, d);
+      ELSEIF w = "ENUM" THEN
+         IF t.kind /= t_enum OR it.d = NIL OR it.d.name.ALL /= "STANDARD" THEN
+            fail(it.line, "ENUM(STANDARD) is for enumeration subtypes");
+         END IF;
+      ELSEIF w = "PTR" THEN
+         IF NOT indirect OR NOT top OR it.d = NIL OR it.d.name.ALL /= "FREE"
+               OR (it.d.next /= NIL AND it.d.next.name.ALL /= "UNCHECKED") THEN
+            fail(it.line, "PTR(FREE) or PTR(FREE UNCHECKED) is for indirect types");
+         END IF;
+      ELSEIF w = "ABSENT" THEN
+         VAR a : node := it.d;
+         IF NOT top THEN
+            fail(it.line, "ABSENT is for the whole type");
+         END IF;
+         WHILE a /= NIL REPEAT
+            IF NOT formal_named(d, a.name.ALL) THEN
+               fail(a.line, a.name.ALL & " is not a formal parameter of the type");
+            END IF;
+            a := a.next;
+         END REPEAT;
+      END IF;
+      it := it.next;
+   END REPEAT;
+END PROC check_rep;
+
+FUNC formal_named(CONST d : node, READONLY name : STRING[ASCII]) => BOOL;
+   VAR p : node := d.b;
+   WHILE p /= NIL REPEAT
+      IF p.name.ALL = name THEN
+         RETURN TRUE;
+      END IF;
+      p := p.next;
+   END REPEAT;
+   p := d.d;
+   IF d.kind = n_ptrtype THEN
+      WHILE p /= NIL REPEAT
+         IF p.name.ALL = name THEN
+            RETURN TRUE;
+         END IF;
+         p := p.next;
+      END REPEAT;
+   END IF;
+   RETURN FALSE;
+END FUNC formal_named;
+
+% PTR(FREE UNCHECKED): FREE need not look for other pointers (12.2)
+FUNC unchecked_free(CONST t : typ) => BOOL;
+   VAR it : node;
+   IF t.decl = NIL OR t.decl.kind /= n_ptrtype THEN
+      RETURN FALSE;
+   END IF;
+   it := t.decl.c;
+   WHILE it /= NIL REPEAT
+      IF it.name.ALL = "PTR" AND it.d /= NIL AND it.d.next /= NIL THEN
+         RETURN TRUE;
+      END IF;
+      it := it.next;
+   END REPEAT;
+   RETURN FALSE;
+END FUNC unchecked_free;
 
 % give a fresh variable its storage (strings, arrays and records own buffers)
 % a fresh data item: its storage, then its type's INITIALIZE (13.3)

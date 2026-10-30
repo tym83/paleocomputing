@@ -110,6 +110,10 @@ ABNORMAL FUNC object_decl => node IMPORTS ALL;
    IF is_var THEN
       expect_op(":");
       st := p_subtype;
+      IF accept_op(":=") THEN
+         % the location specification follows the initialization (diagram 15)
+         init := expr;
+      END IF;
       IF accept_kw("LOCATION") THEN
          % LOCATION (INTERRUPT n) binds a mailbox to an interrupt (14.1.4); ival 1
          expect_op("(");
@@ -122,7 +126,7 @@ ABNORMAL FUNC object_decl => node IMPORTS ALL;
          loc := expr;
          expect_op(")");
       END IF;
-      IF accept_op(":=") THEN
+      IF init = NIL AND accept_op(":=") THEN
          init := expr;
       END IF;
    ELSE
@@ -166,22 +170,110 @@ ABNORMAL FUNC abbrev_decl => node IMPORTS ALL;
    RETURN x;
 END FUNC abbrev_decl;
 
-% a representation specification (RM 13.1) chooses the layout of a type and
-% does not change the meaning of the program; redc reads it and keeps the
-% layout of C
-PROC skip_rep IMPORTS ALL;
-   VAR depth : INT := 0;
-   IF accept_kw("REP") THEN
-      WHILE NOT (depth = 0 AND at_op(";")) AND NOT at_kind(k_eof) REPEAT
-         IF at_op("(") OR at_op("[") THEN
-            depth := depth + 1;
-         ELSEIF at_op(")") OR at_op("]") THEN
-            depth := depth - 1;
-         END IF;
-         tpos := tpos + 1;
-      END REPEAT;
+% a representational specification (diagrams 78, 79): REP and its items, as
+% n_rep nodes: a is the expression of SIZE, OFFSET or ALIGN (b the one before
+% OF), c the components of RECORD and UNION (n_comp, their items in a), or the
+% items of ARRAY's components, d the names of NORMAL/NOBOUNDS, ABSENT, PTR, ENUM
+ABNORMAL FUNC rep_spec => node IMPORTS ALL;
+   IF NOT accept_kw("REP") THEN
+      RETURN NIL;
    END IF;
-END PROC skip_rep;
+   RETURN rep_items;
+END FUNC rep_spec;
+
+ABNORMAL FUNC rep_items => node IMPORTS ALL;
+   VAR head, tail : node;
+   VAR more : BOOL := TRUE;
+   WHILE more REPEAT
+      append(head, tail, rep_item);
+      more := at_op(",") AND rep_word(1);
+      IF more THEN
+         tpos := tpos + 1;
+      END IF;
+   END REPEAT;
+   RETURN head;
+END FUNC rep_items;
+
+% does a representational item start k tokens ahead?
+ABNORMAL FUNC rep_word(CONST k : INT) => BOOL IMPORTS ALL;
+   CONST w := text_at(k).ALL;
+   RETURN (kind_at(k) = k_id OR kind_at(k) = k_kw) AND (w = "SIZE" OR w = "ALIGN" OR w = "OFFSET" OR w = "RECORD"
+       OR w = "UNION" OR w = "ARRAY" OR w = "ABSENT" OR w = "PTR" OR w = "ENUM");
+END FUNC rep_word;
+
+ABNORMAL FUNC rep_item => node IMPORTS ALL;
+   VAR x : node := nn(n_rep, cur_line);
+   IF NOT rep_word(0) THEN
+      perror("expected a representational item");
+   END IF;
+   x.name := toks(tpos).s;
+   tpos := tpos + 1;
+   IF x.name.ALL = "SIZE" OR x.name.ALL = "OFFSET" THEN
+      expect_op("(");
+      x.a := expr;
+      expect_op(")");
+   ELSEIF x.name.ALL = "ALIGN" THEN
+      expect_op("(");
+      x.a := expr;
+      IF accept_kw("OF") THEN
+         x.b := x.a;
+         x.a := expr;
+      END IF;
+      expect_op(")");
+   ELSEIF x.name.ALL = "RECORD" OR x.name.ALL = "UNION" THEN
+      VAR head, tail : node;
+      VAR more : BOOL := TRUE;
+      expect_op("[");
+      WHILE more REPEAT
+         VAR names : node := id_list;
+         VAR items : node;
+         expect_op(":");
+         IF rep_word(0) THEN
+            items := rep_items;
+         END IF;
+         WHILE names /= NIL REPEAT
+            VAR cmp : node := nn(n_comp, names.line);
+            cmp.name := names.name;
+            cmp.a := items;
+            append(head, tail, cmp);
+            names := names.next;
+         END REPEAT;
+         more := accept_op(",");
+      END REPEAT;
+      expect_op("]");
+      x.c := head;
+   ELSEIF x.name.ALL = "ARRAY" THEN
+      VAR head, tail : node;
+      WHILE NOT at_kw("OF") REPEAT
+         append(head, tail, name_node);
+         IF NOT at_kw("OF") THEN
+            expect_op(",");
+         END IF;
+      END REPEAT;
+      expect_kw("OF");
+      x.d := head;
+      IF rep_word(0) THEN
+         x.c := rep_items;
+      ELSEIF at_op("(") AND rep_word(1) THEN
+         % the items of the components in parentheses, as the 1979 problems write them
+         tpos := tpos + 1;
+         x.c := rep_items;
+         expect_op(")");
+      END IF;
+   ELSE
+      % ABSENT (ids), PTR (FREE [UNCHECKED]), ENUM (STANDARD)
+      VAR head, tail : node;
+      VAR dummy : BOOL;
+      expect_op("(");
+      WHILE NOT at_op(")") REPEAT
+         append(head, tail, name_node);
+         dummy := accept_op(",");
+      END REPEAT;
+      expect_op(")");
+      x.d := head;
+   END IF;
+   RETURN x;
+END FUNC rep_item;
 
 ABNORMAL FUNC type_decl => node IMPORTS ALL;
    VAR line : INT := cur_line;
@@ -213,7 +305,7 @@ ABNORMAL FUNC type_decl => node IMPORTS ALL;
    x.name := name;
    x.e := tts;
    x.a := p_subtype;
-   skip_rep;
+   x.c := rep_spec;
    RETURN x;
 END FUNC type_decl;
 
@@ -386,8 +478,9 @@ ABNORMAL FUNC capsule_decl => node IMPORTS ALL;
    tpos := tpos + 1;
    x.name := expect_id;
    IF at_op("[") THEN
-      % a generic capsule (11.3): its formal translation time properties
-      x.e := formal_tt;
+      % the translation time property list of a generic capsule (11.3), or
+      % values, as for the configuration capsules of 12.1
+      x.e := actual_tt;
    END IF;
    IF at_op("(") THEN
       x.b := formal_params;

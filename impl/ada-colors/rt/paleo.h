@@ -601,6 +601,17 @@ rstr rt_r_enum_image(const char *const *names, rt_int v);
 rt_int rt_r_enum_of_str(const char *const *names, rt_int n, rstr s);
 int rt_r_bool_of_str(rstr s);
 double rt_r_float_of_str(rstr s);
+/* the simulated memory (12.3): bit 0 is the high-order bit of byte 0 */
+void *rt_r_mem_at(rt_int bitaddr, size_t size);
+void rt_r_mem_put(rt_int bitaddr, rt_int nbits, rt_int v);
+rt_int rt_r_mem_get(rt_int bitaddr, rt_int nbits, int is_signed);
+void rt_r_mem_putf(rt_int bitaddr, rt_int nbits, double v);
+double rt_r_mem_getf(rt_int bitaddr, rt_int nbits);
+rt_int rt_r_fits(rt_int v, rt_int nbits, int is_signed);
+void rt_r_low_io(rt_int device, rt_int command, rt_int *data); /* + memory devices 3, 4 */
+void rt_r_maxprec(rt_int prec);                 /* X_MAXRANGE (C.3, C.4) */
+void rt_r_maxrange_f(double lo, double hi);
+void rt_r_maxrange_i(rt_int lo, rt_int hi);
 int rt_r_set_le(yset a, yset b);               /* subset (C.9) */
 int rt_r_set_lt(yset a, yset b);               /* strict subset */
 void rt_r_xtag(void);                          /* raises X_TAG (C.6) */

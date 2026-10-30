@@ -72,6 +72,9 @@ CONST n_arm := 60;
 CONST n_label := 61;
 CONST n_handler := 62;
 CONST n_comp := 63;
+% a representational item (12.2): name SIZE, ALIGN, OFFSET, RECORD, UNION,
+% ARRAY, ABSENT, PTR or ENUM
+CONST n_rep := 64;
 
 CONST s_int := 70;
 CONST s_float := 71;
@@ -146,7 +149,7 @@ TYPE typ : PTR RECORD[kind : INT, name : text, lits : node,
                       fields : field, target : typ, decl : node,
                       cname : text, forward, defined, helpers : BOOL,
                       initp, finalp, tpsyms : sym, gen, gbinds : sym, next : typ,
-                      ndim : INT, idxs : tlist, assignp, eqp, ltp : sym];
+                      ndim : INT, idxs : tlist, assignp, eqp, ltp : sym, repn : node];
 
 % the index types of an array, one for each dimension (C.7)
 TYPE tlist : PTR RECORD[t : typ, next : tlist];
@@ -163,7 +166,7 @@ TYPE sym : PTR RECORD[kind : INT, name : text, t : typ, c : cons,
                       binds : node, insts : sym, env : buckets,
                       chain, stack : sym, owner : sym, gctx : fctxrec, mv : mval,
                       reqs : lines, reqdone : BOOL, home : node, capn : node,
-                      tbinds : sym];
+                      tbinds : sym, loc : text, reqs_sym : sym, decl_line : INT];
 
 % a value known during translation (5.5): kind is t_int, t_bool, t_enum or
 % t_string; i holds an INT, a BOOL (0, 1) or the position of a literal

@@ -405,6 +405,30 @@ FUNC renamed(CONST d : node, CONST z : sym) => text;
    RETURN z.name;
 END FUNC renamed;
 
+% the properties of a capsule declaration, such as configuration ["PDP11"],
+% match those of an invocation when their values are equal (11.1.2)
+ABNORMAL FUNC cap_tt_match(CONST f : node, CONST a : node) => BOOL IMPORTS ALL;
+   VAR x : node := f;
+   VAR y : node := a;
+   WHILE x /= NIL AND y /= NIL REPEAT
+      VAR ok1, ok2 : BOOL;
+      VAR v1 : mval := meval(x, ok1);
+      VAR v2 : mval := meval(y, ok2);
+      IF NOT ok1 OR NOT ok2 OR v1.kind /= v2.kind THEN
+         RETURN FALSE;
+      ELSEIF v1.kind = t_string OR v1.kind = t_enum THEN
+         IF v1.s.ALL /= v2.s.ALL THEN
+            RETURN FALSE;
+         END IF;
+      ELSEIF v1.i /= v2.i THEN
+         RETURN FALSE;
+      END IF;
+      x := x.next;
+      y := y.next;
+   END REPEAT;
+   RETURN x = NIL AND y = NIL;
+END FUNC cap_tt_match;
+
 % the capsule an invocation names: of the overloaded ones, the one whose
 % formals fit the actuals (11.2)
 ABNORMAL FUNC pick_capsule(CONST d : node) => sym IMPORTS ALL;
@@ -417,7 +441,7 @@ ABNORMAL FUNC pick_capsule(CONST d : node) => sym IMPORTS ALL;
          IF first = NIL THEN
             first := y;
          END IF;
-         IF fit = NIL AND fits(y, d.b) THEN
+         IF fit = NIL AND fits(y, d.b) AND cap_tt_match(y.decl.e, d.e) THEN
             fit := y;
          END IF;
       END IF;
@@ -477,6 +501,19 @@ ABNORMAL FUNC capsule_instance(CONST g : sym, CONST d : node) => sym IMPORTS ALL
    RETURN inst;
 END FUNC capsule_instance;
 
+% the configuration capsule (12.1) sets the ticks of the clock: MILLISECONDS,
+% SECONDS, MINUTES and HOURS, when it defines them
+PROC configure(CONST y : sym) IMPORTS ALL;
+   VAR m : sym := y.members;
+   WHILE m /= NIL REPEAT
+      CONST n := m.name.ALL;
+      IF m.kind = y_const AND m.hasmv AND (n = "MILLISECONDS" OR n = "SECONDS" OR n = "MINUTES" OR n = "HOURS") THEN
+         put(out_excs, "  RT_" & n & " = " & itos(m.mvalue) & ";");
+      END IF;
+      m := m.mnext;
+   END REPEAT;
+END PROC configure;
+
 PROC gen_expose(CONST d : node) IMPORTS ALL;
    VAR y : sym := lookup(d.name.ALL);
    VAR m : sym;
@@ -489,11 +526,14 @@ PROC gen_expose(CONST d : node) IMPORTS ALL;
       IF y = NIL OR y.kind /= y_capsule THEN
          fail(d.line, d.name.ALL & " is not a capsule");
       END IF;
-      IF d.e /= NIL THEN
-         fail(d.line, d.name.ALL & " is not a generic capsule");
+      IF d.e /= NIL AND (y.decl = NIL OR y.decl.e = NIL) THEN
+         fail(d.line, d.name.ALL & " has no translation time property list");
       END IF;
    END IF;
-   IF y.tbinds /= NIL OR (y.decl /= NIL AND y.decl.e /= NIL) THEN
+   IF y.name.ALL = "CONFIGURATION" THEN
+      configure(y);
+   END IF;
+   IF y.tbinds /= NIL OR (y.decl /= NIL AND y.decl.e /= NIL AND y.kind = y_generic) THEN
       % an instance of a generic capsule, elaborated already
    ELSEIF d.flag = 1 OR d.flag = 3 THEN
       % a new invocation elaborates the capsule again, here (8.1)
@@ -579,6 +619,10 @@ PROC finish_ptr(CONST t : typ) IMPORTS ALL;
       END REPEAT;
    END REPEAT;
    t.target := resolve_subtype(d.a, c);
+   IF d.c /= NIL THEN
+      check_rep(d.c, t.target, c, TRUE, TRUE, d);
+      t.repn := d.c;
+   END IF;
    close_scope;
    dummy(1) := ctype(t)(1);
    dummy(1) := ctype(t.target)(1);
@@ -909,6 +953,13 @@ PROC element1(CONST e : node) IMPORTS ALL;
             g.env(i) := table(i);
          END REPEAT;
       END IF;
+   ELSEIF k = n_newtype AND e.c /= NIL AND e.b = NIL THEN
+      % a representation is checked where the type is declared (12.2)
+      VAR c : cons;
+      VAR st : node := nn(s_name, e.line);
+      VAR t : typ;
+      st.name := e.name;
+      t := resolve_subtype(st, c);
    ELSEIF k = n_exception OR k = n_abbrev OR k = n_newtype OR k = n_capsule OR k = n_expose THEN
       RETURN;
    ELSEIF k = n_ptrtype THEN
@@ -958,11 +1009,293 @@ PROC bind(CONST y : sym, READONLY access : STRING[ASCII]) IMPORTS ALL;
 END PROC bind;
 
 PROC var_decl(CONST d : node) IMPORTS ALL;
+   IF d.ival = 2 THEN
+      located_var(d);
+   ELSE
+      var_decl2(d);
+   END IF;
+END PROC var_decl;
+
+% VAR x : s LOCATION (e) (12.3): x is kept at bit e of the simulated memory,
+% which LOW_IO devices 3 and 4 read and write a byte at a time. A type with a
+% representation (12.2) is laid out bit by bit as it says; any other is the
+% host's layout of the value, at a byte boundary
+PROC located_var(CONST d : node) IMPORTS ALL;
+   VAR c : cons;
+   VAR at : typ;
+   VAR t : typ := resolve_subtype(d.a, c);
+   VAR y : sym := new_sym(y_var, d.name);
+   CONST addr := gexpr(d.c, ty_int, at);
+   CONST av := raw_storage("loc", "rt_int");
+   CONST af := st_field.ALL;
+   check_type(at, ty_int, d.line);
+   c := freeze(c, t);
+   emit(av & " = " & addr & ";");
+   IF t.kind = t_new AND t.repn /= NIL THEN
+      CONST access := storage(d.name.ALL, t);
+      mark_uninit := TRUE;
+      init_storage(access, t, c);
+      mark_uninit := FALSE;
+      y.t := t;
+      y.c := c;
+      bind(y, access);
+      IF in_func THEN
+         y.loc := mk(af);
+      ELSE
+         y.loc := mk(av);
+      END IF;
+      define(y, d.line);
+      IF d.b /= NIL THEN
+         VAR vt : typ;
+         CONST v := gexpr_in(d.b, t, c, vt);
+         check_type(vt, t, d.line);
+         emit(assign_code(access, t, v, c));
+         emit(rep_sync(y, TRUE));
+      END IF;
+      RETURN;
+   END IF;
+   BEGIN
+      CONST pv := raw_storage(lower_s(d.name.ALL), ctype(t) & " *");
+      CONST pf := st_field.ALL;
+      emit(pv & " = (" & ctype(t) & " *)rt_r_mem_at(" & av & ", sizeof(" & ctype(t) & "));");
+      y.t := t;
+      y.c := c;
+      IF in_func THEN
+         y.level := cur_level;
+         y.access := mk(pf);
+         y.byref := TRUE;
+      ELSE
+         y.level := 0;
+         y.access := mk("(*" & pv & ")");
+      END IF;
+      mark_uninit := TRUE;
+      init_storage("(*" & pv & ")", t, c);
+      mark_uninit := FALSE;
+      define(y, d.line);
+      IF d.b /= NIL THEN
+         VAR vt : typ;
+         CONST v := gexpr_in(d.b, t, c, vt);
+         check_type(vt, t, d.line);
+         emit(assign_code("(*" & pv & ")", t, v, c));
+      END IF;
+   END;
+END PROC located_var;
+
+% the memory image of a located variable with a representation: written
+% from the variable (pack) or read into it, around each statement naming it
+ABNORMAL FUNC rep_sync(CONST y : sym, CONST pack : BOOL) => STRING[ASCII] IMPORTS ALL;
+   CONST lv := access_of(y);
+   CONST base := cbound_access(y);
+   VAR saved : lines := psub;
+   VAR p : node := y.t.tparams;
+   VAR r : text;
+   VAR inner : text := mk(lv);
+   IF y.t.tparams /= NIL THEN
+      inner := mk(lv & ".all");
+   END IF;
+   % the representation's expressions may name the type's parameters
+   open_scope;
+   WHILE p /= NIL REPEAT
+      VAR z : sym := new_sym(y_const, p.name);
+      z.t := tparam_type(y.t, p.name.ALL);
+      z.access := mk("(" & lv & ".p_" & lower_s(p.name.ALL) & ")");
+      define(z, y.decl_line);
+      p := p.next;
+   END REPEAT;
+   r := mk(rep_code(y.t.under, y.t.elemcons, y.t.repn, inner.ALL, base, pack));
+   close_scope;
+   psub := saved;
+   RETURN "{ " & r.ALL & " }";
+END FUNC rep_sync;
+
+ABNORMAL FUNC cbound_access(CONST y : sym) => STRING[ASCII] IMPORTS ALL;
+   VAR c : cons := new_cons;
+   c.dyn := y.level > 0;
+   c.lvl := y.level;
+   RETURN cbound(c, y.loc.ALL);
+END FUNC cbound_access;
+
+% the size in bits an item gives, else what the subtype needs
+ABNORMAL FUNC rep_size(CONST items : node, CONST t : typ, CONST c : cons) => STRING[ASCII] IMPORTS ALL;
+   VAR it : node := rep_find(items, "SIZE");
+   VAR at : typ;
+   IF it /= NIL THEN
+      RETURN "(" & gexpr(it.a, ty_int, at) & ")";
+   END IF;
+   RETURN itos(default_bits(t, c));
+END FUNC rep_size;
+
+FUNC rep_find(CONST items : node, READONLY w : STRING[ASCII]) => node;
+   VAR it : node := items;
+   WHILE it /= NIL REPEAT
+      IF it.name.ALL = w THEN
+         RETURN it;
+      END IF;
+      it := it.next;
+   END REPEAT;
+   RETURN NIL;
+END FUNC rep_find;
+
+FUNC rep_comp(CONST items : node, READONLY name : STRING[ASCII]) => node;
+   VAR r : node := rep_find(items, "RECORD");
+   VAR comp : node;
+   IF r = NIL THEN
+      r := rep_find(items, "UNION");
+   END IF;
+   IF r = NIL THEN
+      RETURN NIL;
+   END IF;
+   comp := r.c;
+   WHILE comp /= NIL REPEAT
+      IF comp.name.ALL = name THEN
+         RETURN comp.a;
+      END IF;
+      comp := comp.next;
+   END REPEAT;
+   RETURN NIL;
+END FUNC rep_comp;
+
+% the default size of a subtype in bits, where no SIZE is given
+ABNORMAL FUNC default_bits(CONST t : typ, CONST c : cons) => INT IMPORTS ALL;
+   IF t.kind = t_record OR t.kind = t_union THEN
+      VAR f : field := t.fields;
+      VAR n : INT := 0;
+      IF t.kind = t_union THEN
+         n := needed_bits(t.elem, NIL);
+      END IF;
+      WHILE f /= NIL REPEAT
+         n := n + default_bits(f.t, f.c);
+         f := f.next;
+      END REPEAT;
+      RETURN n;
+   ELSEIF t.kind = t_enum AND same(t, ty_ascii) THEN
+      RETURN 8;
+   ELSEIF needed_bits(t, c) > 0 THEN
+      RETURN needed_bits(t, c);
+   END IF;
+   RETURN 64;
+END FUNC default_bits;
+
+% the C that moves a value between lval and the memory at bit address addr
+ABNORMAL FUNC rep_code(CONST t : typ, CONST c : cons, CONST items : node, READONLY lval : STRING[ASCII],
+                       READONLY addr : STRING[ASCII], CONST pack : BOOL) => STRING[ASCII] IMPORTS ALL;
+   CONST size := rep_size(items, t, c);
+   IF t.kind = t_record OR t.kind = t_union THEN
+      VAR f : field := t.fields;
+      VAR r : text := mk("");
+      VAR off : text := mk("0");
+      VAR i : INT := 0;
+      IF t.kind = t_union THEN
+         % the tag first, unless placed elsewhere
+         VAR ti : node := rep_comp(items, "TAG");
+         VAR tsize : text := mk(itos(needed_bits(t.elem, NIL)));
+         VAR toff : text := mk("0");
+         IF ti /= NIL AND rep_find(ti, "SIZE") /= NIL THEN
+            tsize := mk(rep_size(ti, t.elem, NIL));
+         END IF;
+         IF ti /= NIL AND rep_find(ti, "OFFSET") /= NIL THEN
+            VAR at : typ;
+            toff := mk("(" & gexpr(rep_find(ti, "OFFSET").a, ty_int, at) & ")");
+         END IF;
+         IF pack THEN
+            r := mk("rt_r_mem_put(" & addr & " + " & toff.ALL & ", " & tsize.ALL & ", (uint64_t)" & lval & ".tag);");
+         ELSE
+            r := mk(lval & ".tag = (int)rt_r_mem_get(" & addr & " + " & toff.ALL & ", " & tsize.ALL & ", 0);");
+         END IF;
+         off := mk("(" & toff.ALL & " + " & tsize.ALL & ")");
+      END IF;
+      WHILE f /= NIL REPEAT
+         VAR ci : node := rep_comp(items, f.name.ALL);
+         VAR fo : text := off;
+         CONST fl := lval & "." & union_part(t) & field_c(f.name.ALL);
+         IF ci /= NIL AND rep_find(ci, "OFFSET") /= NIL THEN
+            VAR at : typ;
+            fo := mk("(" & gexpr(rep_find(ci, "OFFSET").a, ty_int, at) & ")");
+         END IF;
+         BEGIN
+            CONST part := rep_code(f.t, f.c, ci, fl, addr & " + " & fo.ALL, pack);
+            IF t.kind = t_union THEN
+               r := mk(r.ALL & " if (" & lval & ".tag == " & itos(i) & ") { " & part & " }");
+            ELSE
+               r := mk(r.ALL & " " & part);
+            END IF;
+         END;
+         IF t.kind = t_record THEN
+            off := mk("(" & fo.ALL & " + " & rep_size(ci, f.t, f.c) & ")");
+         END IF;
+         i := i + 1;
+         f := f.next;
+      END REPEAT;
+      RETURN r.ALL;
+   ELSEIF t.kind = t_array THEN
+      VAR ai : node := rep_find(items, "ARRAY");
+      VAR ei : node;
+      IF ai /= NIL THEN
+         ei := ai.c;
+      END IF;
+      BEGIN
+         CONST es := rep_size(ei, t.elem, t.elemcons);
+         CONST iv := new_name("ri");
+         RETURN "for (rt_int " & iv & " = 0; " & iv & " < " & acnt(t, lval) & "; " & iv & "++) { "
+                & rep_code(t.elem, t.elemcons, ei, lval & ".p[" & iv & "]", addr & " + " & iv & " * " & es, pack) & " }";
+      END;
+   ELSEIF t.kind = t_string THEN
+      CONST iv := new_name("ri");
+      RETURN "for (rt_int " & iv & " = 0; " & iv & " < " & lval & ".len; " & iv & "++) { "
+             & rep_scalar(str_elem(t), NIL, lval & ".p[" & iv & "]", addr & " + " & iv & " * 8", "8", pack) & " }";
+   END IF;
+   RETURN rep_scalar(t, c, lval, addr, size, pack);
+END FUNC rep_code;
+
+FUNC union_part(CONST t : typ) => STRING[ASCII];
+   IF t.kind = t_union THEN
+      RETURN "u.";
+   END IF;
+   RETURN "";
+END FUNC union_part;
+
+ABNORMAL FUNC rep_scalar(CONST t : typ, CONST c : cons, READONLY lval : STRING[ASCII], READONLY addr : STRING[ASCII],
+                         READONLY size : STRING[ASCII], CONST pack : BOOL) => STRING[ASCII] IMPORTS ALL;
+   VAR signed : STRING[ASCII](1) := "0";
+   IF t.kind = t_int AND NOT (c /= NIL AND c.hasm AND c.mlo >= 0) THEN
+      signed := "1";
+   END IF;
+   IF t.kind = t_float THEN
+      IF pack THEN
+         RETURN "rt_r_mem_putf(" & addr & ", " & size & ", " & lval & ");";
+      END IF;
+      RETURN lval & " = rt_r_mem_getf(" & addr & ", " & size & ");";
+   ELSEIF pack THEN
+      % a value that does not fit its SIZE is an error of the program (12.2);
+      % one never given leaves the memory as it is
+      RETURN "if (!rt_r_undef_" & kind_name(base_of(t)) & "(" & lval & ")) rt_r_mem_put(" & addr & ", " & size
+             & ", rt_r_fits((rt_int)(" & lval & "), " & size & ", " & signed & "));";
+   END IF;
+   RETURN lval & " = rt_r_mem_get(" & addr & ", " & size & ", " & signed & ");";
+END FUNC rep_scalar;
+
+% X_MAXRANGE when a subtype exceeds the declared limits of the machine:
+% 64-bit INT, FLOAT of at most 15 digits (C.3, C.4)
+PROC max_range(CONST t : typ, CONST c : cons) IMPORTS ALL;
+   IF c = NIL THEN
+      RETURN;
+   ELSEIF t.kind = t_float AND c.prec /= NIL THEN
+      emit("rt_r_maxprec(" & c.prec.ALL & ");");
+   END IF;
+   IF t.kind = t_float AND c.lo /= NIL THEN
+      emit("rt_r_maxrange_f(" & clo(c) & ", " & chi(c) & ");");
+   ELSEIF t.kind = t_int AND c.lo /= NIL AND NOT c.hasm THEN
+      emit("rt_r_maxrange_i(" & clo(c) & ", " & chi(c) & ");");
+   END IF;
+END PROC max_range;
+
+PROC var_decl2(CONST d : node) IMPORTS ALL;
    VAR c : cons;
    VAR t : typ := resolve_subtype(d.a, c);
    VAR y : sym := new_sym(y_var, d.name);
    CONST access := storage(d.name.ALL, t);
    c := freeze(c, t);
+   max_range(t, c);
    IF t.kind = t_ptr AND c /= NIL AND c.args /= NIL THEN
       c := freeze_args(c, t, d.line);
    END IF;
@@ -980,8 +1313,6 @@ PROC var_decl(CONST d : node) IMPORTS ALL;
       ELSE
          emit("rt_interrupt_bind(" & access & ", " & n & ", 0);");
       END IF;
-   ELSEIF d.ival = 2 THEN
-      fail(d.line, "the simulated machine has no addressable memory: LOCATION takes INTERRUPT n only");
    END IF;
    IF d.b /= NIL THEN
       VAR vt : typ;
@@ -997,7 +1328,7 @@ PROC var_decl(CONST d : node) IMPORTS ALL;
    IF needs_fin(t) THEN
       open_fin(fin_code(access, t));
    END IF;
-END PROC var_decl;
+END PROC var_decl2;
 
 % from here to the end of the scope, a data item will be finalized however
 % the scope is left (13.3): normally, by EXIT or RETURN, or by an exception
@@ -1556,6 +1887,61 @@ PROC pop_cleanup IMPORTS frames, cleanups;
 END PROC pop_cleanup;
 
 PROC gen_statement(CONST s : node) IMPORTS ALL;
+   VAR located : sym := located_in(copy_node(s), NIL);
+   VAR l : sym := located;
+   WHILE l /= NIL REPEAT
+      emit(rep_sync(l, FALSE));
+      l := l.reqs_sym;
+   END REPEAT;
+   gen_statement2(s);
+   l := located;
+   WHILE l /= NIL REPEAT
+      emit(rep_sync(l, TRUE));
+      l := l.reqs_sym;
+   END REPEAT;
+END PROC gen_statement;
+
+% the located variables with representations a statement names, each once,
+% linked through reqs_sym
+ABNORMAL FUNC located_in(CONST e : node, CONST found : sym) => sym IMPORTS ALL;
+   VAR x : node := e;
+   VAR r : sym := found;
+   WHILE x /= NIL REPEAT
+      IF x.kind = n_name THEN
+         VAR y : sym := lookup(x.name.ALL);
+         IF y /= NIL AND y.kind = y_var AND y.loc /= NIL AND NOT sym_in(r, y) THEN
+            y.reqs_sym := r;
+            r := y;
+         END IF;
+      ELSEIF x.kind = n_proc OR x.kind = n_func OR x.kind = n_task OR x.kind = n_capsule OR x.kind = n_generic THEN
+         RETURN r;
+      END IF;
+      IF x.a /= NIL THEN
+         r := located_in(x.a, r);
+      END IF;
+      IF x.b /= NIL THEN
+         r := located_in(x.b, r);
+      END IF;
+      IF x.c /= NIL THEN
+         r := located_in(x.c, r);
+      END IF;
+      x := x.next;
+   END REPEAT;
+   RETURN r;
+END FUNC located_in;
+
+FUNC sym_in(CONST l : sym, CONST y : sym) => BOOL;
+   VAR p : sym := l;
+   WHILE p /= NIL REPEAT
+      IF p = y THEN
+         RETURN TRUE;
+      END IF;
+      p := p.reqs_sym;
+   END REPEAT;
+   RETURN FALSE;
+END FUNC sym_in;
+
+PROC gen_statement2(CONST s : node) IMPORTS ALL;
    VAR label : text;
    VAR gl : node := s.labels;
    WHILE gl /= NIL REPEAT
@@ -1611,7 +1997,7 @@ PROC gen_statement(CONST s : node) IMPORTS ALL;
       exits := exits.next;
       emit(label.ALL & ": ;");
    END IF;
-END PROC gen_statement;
+END PROC gen_statement2;
 
 PROC st_assign(CONST s : node) IMPORTS ALL;
    VAR lv : text;

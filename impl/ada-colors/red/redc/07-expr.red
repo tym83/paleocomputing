@@ -1936,6 +1936,10 @@ ABNORMAL FUNC gcall(CONST e : node, CONST is_stmt : BOOL, OUT t : typ) => STRING
       IF args.LEN > 0 THEN
          args := mk(args.ALL & ", ");
       END IF;
+      IF (pm.mode = m_var OR pm.mode = m_readonly) AND explicit_rep(a) THEN
+         % a component of a type with a representation (12.2)
+         fail(e.line, "data with an explicit representation may not be bound to a VAR or READONLY formal");
+      END IF;
       IF pm.mode = m_var OR pm.mode = m_out THEN
          lvalue(a, lv, lt, lc, ro);
          IF ro THEN
@@ -2296,6 +2300,24 @@ ABNORMAL FUNC enum_names(CONST t : typ) => STRING[ASCII] IMPORTS ALL;
    RETURN t.cname.ALL;
 END FUNC enum_names;
 
+% is e a component (.ALL too) of a data item whose user-defined type has a
+% representation, or of such a component? (12.2)
+ABNORMAL FUNC explicit_rep(CONST e : node) => BOOL IMPORTS ALL;
+   VAR bt : typ;
+   IF e.kind /= n_select AND NOT (e.kind = n_apply AND is_lvalue(e)) THEN
+      RETURN FALSE;
+   END IF;
+   bt := peek_type(e.a);
+   WHILE bt /= NIL AND bt.kind = t_ptr AND bt.repn = NIL REPEAT
+      finish_ptr(bt);
+      bt := bt.target;
+   END REPEAT;
+   IF bt /= NIL AND bt.repn /= NIL THEN
+      RETURN TRUE;
+   END IF;
+   RETURN explicit_rep(e.a);
+END FUNC explicit_rep;
+
 % the subtype of an actual bound to a VAR, OUT or READONLY scalar formal (7.3)
 ABNORMAL FUNC actual_bounds(CONST ft : typ, CONST t : typ, CONST c : cons) => STRING[ASCII] IMPORTS ALL;
    IF NOT scalar_kind(ft) THEN
@@ -2639,8 +2661,8 @@ ABNORMAL FUNC builtin(READONLY name : STRING[ASCII], CONST tt : node, CONST args
       END IF;
       uses_free := TRUE;
       finish_ptr(pt);
-      IF suppressed("X_FREE") THEN
-         % no look for other pointers to the variable (B)
+      IF suppressed("X_FREE") OR unchecked_free(pt) THEN
+         % no look for other pointers to the variable (B, 12.2)
          IF needs_fin(pt.target) THEN
             RETURN "({ if (" & pv.ALL & ") { " & fin_code(cell_deref(pt, pv.ALL), pt.target)
                    & " } rt_r_free_unchecked((void **)&" & pv.ALL & "); })";
@@ -2656,7 +2678,11 @@ ABNORMAL FUNC builtin(READONLY name : STRING[ASCII], CONST tt : node, CONST args
       CONST dev := gexpr(args, ty_int, at);
       CONST cmd := gexpr(args.next, ty_int, at);
       IF n = 2 THEN
-         RETURN "({ rt_int d_ = 0; rt_low_io(" & dev & ", " & cmd & ", &d_); })";
+         RETURN "({ rt_int d_ = 0; rt_r_low_io(" & dev & ", " & cmd & ", &d_); })";
+      ELSEIF NOT is_lvalue(args.next.next) THEN
+         % a value given to the device
+         CONST v := gexpr(args.next.next, ty_int, at);
+         RETURN "({ rt_int d_ = " & v & "; rt_r_low_io(" & dev & ", " & cmd & ", &d_); })";
       END IF;
       BEGIN
          VAR dv : text;
@@ -2665,7 +2691,7 @@ ABNORMAL FUNC builtin(READONLY name : STRING[ASCII], CONST tt : node, CONST args
          VAR dt : typ;
          lvalue(args.next.next, dv, dt, dc, ro);
          check_type(dt, ty_int, line);
-         RETURN "rt_low_io(" & dev & ", " & cmd & ", &" & dv.ALL & ")";
+         RETURN "rt_r_low_io(" & dev & ", " & cmd & ", &" & dv.ALL & ")";
       END;
    END IF;
    fail(line, name & " is not defined");
