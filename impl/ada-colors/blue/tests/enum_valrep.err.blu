@@ -1,0 +1,6 @@
+MAIN SEGMENT ENUM_VALREP
+   USES (TERMINAL);
+% two literals may not have the same representation (3.4.3)
+VAR X: UNORDERED (\A, \B, \C) REP ENUM_VAL_REP (2, VALUES (\A AS BIN '00', \B AS BIN '00',
+                                                          \C AS BIN '10'));
+END SEGMENT ENUM_VALREP;

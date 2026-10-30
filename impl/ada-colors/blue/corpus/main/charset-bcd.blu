@@ -10,7 +10,9 @@ END LOOP;
 EXCEPT
    RANGE --> NEW_LINE; END;
 END EXCEPT;
-IF \'I' < \'J' & \'R' <= \'S' & \'Z' > \'A' & PRED (\'S') = \'R' THEN
+% the literals are of ASCII and of BCD: a type-specifier says which (3.4.5)
+IF [BCD]$$(\'I') < \'J' & [BCD]$$(\'R') <= \'S' & [BCD]$$(\'Z') > \'A'
+   & PRED ([BCD]$$(\'S')) = \'R' THEN
    PUT_LINE ('I < J, R <= S, Z > A, PRED (S) = R');
 END IF;
 %%ORIGINAL%%

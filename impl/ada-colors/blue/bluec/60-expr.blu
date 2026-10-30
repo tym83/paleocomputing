@@ -83,16 +83,24 @@ FUNCTION MANIFEST (E: NODE) RETURNS (MVAL);
          CONST A: MVAL := MANIFEST (E@.A);
          CONST B: MVAL := MANIFEST (E@.B);
          CONST OP: TEXT := E@.NAME;
-         IF TEQS (OP, '&') & A.OK THEN                 % 3.5.4.1
-            IF A.V = 0 THEN
-               RETURN A;
+         % E & F is manifest when E or F is manifestly FALSE, E ! F when either is
+         % manifestly TRUE, or when both are manifest (3.5.4.1)
+         IF TEQS (OP, '&') THEN
+            IF (A.OK & A.V = 0) ! (B.OK & B.V = 0) THEN
+               RETURN (OK: TRUE, V: 0);
             END IF;
-            RETURN B;
-         ORIF TEQS (OP, '!') & A.OK THEN
-            IF A.V = 1 THEN
-               RETURN A;
+            IF A.OK & B.OK THEN
+               RETURN (OK: TRUE, V: 1);
             END IF;
-            RETURN B;
+            RETURN NO;
+         ORIF TEQS (OP, '!') THEN
+            IF (A.OK & A.V = 1) ! (B.OK & B.V = 1) THEN
+               RETURN (OK: TRUE, V: 1);
+            END IF;
+            IF A.OK & B.OK THEN
+               RETURN (OK: TRUE, V: 0);
+            END IF;
+            RETURN NO;
          END IF;
          IF NOT (A.OK & B.OK) THEN
             RETURN NO;
@@ -853,14 +861,12 @@ FUNCTION ENUM_LITERAL (E: NODE, WANT: TYP) RETURNS (ET);
    BLOCK
       VAR FOUND: SYM := NIL;
       VAR N: INTEGER := 0;
-      LOOP UNTIL Y = NIL DO
-         IF Y@.KIND = Y_ENUMLIT THEN
-            IF Y@.T@.BASE <> W@.TY_ASCII ! FOUND = NIL THEN
-               IF FOUND = NIL ! FOUND@.T@.BASE = W@.TY_ASCII THEN
-                  FOUND := Y;
-               ELSE
-                  N := N + 1;
-               END IF;
+      LOOP UNTIL Y = NIL DO                         % a literal of several visible
+         IF Y@.KIND = Y_ENUMLIT THEN                 % classes is ambiguous (3.4.5)
+            IF FOUND = NIL THEN
+               FOUND := Y;
+            ORIF FOUND@.T@.BASE <> Y@.T@.BASE THEN
+               N := N + 1;
             END IF;
          END IF;
          Y := LOOKUP_NEXT (Y);
@@ -876,9 +882,18 @@ FUNCTION ENUM_LITERAL (E: NODE, WANT: TYP) RETURNS (ET);
 END FUNCTION ENUM_LITERAL;
 
 % a literal of an abstract enumerated type keeps the abstract type
+% and the representation of the type wanted: a literal is "automatically considered"
+% to be of the variable's type (3.4.5)
 FUNCTION ENUM_RESULT (Y: SYM, WANT: TYP) RETURNS (TYP);
    IF WANT@.KIND = T_ABS THEN
       RETURN WANT;
+   END IF;
+   IF WANT@.REPS <> NIL THEN
+      BLOCK
+         VAR T: TYP := COPY_TYP (Y@.T);
+         T@.REPS := WANT@.REPS;
+         RETURN T;
+      END BLOCK;
    END IF;
    RETURN Y@.T;
 END FUNCTION ENUM_RESULT;

@@ -184,6 +184,11 @@ FUNCTION CONVERT (V: ET, T: TYP, LINE: INTEGER, SELF: TEXT) RETURNS (TEXT);
       END IF;
       RETURN RANGE_CHECK (RT, V.C, SELF);
    ORIF RT@.KIND = T_ENUM THEN
+      % an UNORDERED value with ENUM_VAL_REP is assigned only between the same
+      % reptypes (3.4.5)
+      IF RT@.BASE@.UNORDERED & (HAS_VALUES (RT) ! HAS_VALUES (VT)) & NOT SAME_REPS (RT, VT) THEN
+         FAIL (LINE, 'an UNORDERED value with ENUM_VAL_REP is assigned only with the same reptype (3.4.5)');
+      END IF;
       RETURN RANGE_CHECK (RT, V.C, SELF);
    ORIF RT@.KIND = T_STR ! RT@.KIND = T_BITS THEN
       IF RT@.MLEN.OK & VT@.MLEN.OK THEN
@@ -605,6 +610,13 @@ FUNCTION APPLY_OPERATOR (E: NODE, OP: TEXT, A, B: ET) RETURNS (ET);
    END IF;
    FAIL (LINE, 'no operator ' !! STR (OP, OP.LEN) !! ' for ' !! STR (TYPE_NAME (AT), TYPE_NAME (AT).LEN));
 END FUNCTION APPLY_OPERATOR;
+
+FUNCTION HAS_VALUES (T: TYP) RETURNS (BOOLEAN);
+   IF T@.REPS = NIL THEN
+      RETURN FALSE;
+   END IF;
+   RETURN T@.REPS@.B <> NIL;
+END FUNCTION HAS_VALUES;
 
 % ---- floating point (3.3): single precision for at most 7 digits, double for more
 

@@ -290,6 +290,9 @@ PROCEDURE IF_STMT (ARMS: NODE, ELSE_BODY: NODE);
                OPEN := OPEN + 1;
                WORD := MK ('if');
             END IF;
+            % a manifest condition may still invoke functions: they are evaluated
+            % (3.5.4.1, Efficiency Considerations: A & 3 > 5 with a function A)
+            CODE (FMT1 ('(void)(@);', BOOL_EXPR (ARM@.A)));
             IF M.V = 1 THEN
                OPEN_BODY (ARM@.B);
                CHOSEN := TRUE;

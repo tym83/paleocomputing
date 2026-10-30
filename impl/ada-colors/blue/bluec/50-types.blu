@@ -106,6 +106,15 @@ END FUNCTION SAME_LITERALS;
 FUNCTION ENUM_CLASS (LITS: NODE, UNORDERED: BOOLEAN, LINE: INTEGER) RETURNS (TYP);
    VAR Y: SYM := W@.ENUMS;
    VAR T: TYP;
+   BLOCK                                             % each literal once (3.4.1)
+      VAR P: NODE := LITS;
+      LOOP UNTIL P = NIL DO
+         IF IN_IDENTS (P@.NEXT, P@.NAME) THEN
+            FAILT (LINE, 'an enumerated literal must be unique in its list (3.4.1): ', P@.NAME);
+         END IF;
+         P := P@.NEXT;
+      END LOOP;
+   END BLOCK;
    LOOP UNTIL Y = NIL DO
       IF Y@.T@.UNORDERED = UNORDERED & SAME_LITERALS (Y@.T@.LITS, LITS) THEN
          DECLARE_LITERALS (Y@.T, LINE);
@@ -356,6 +365,7 @@ FUNCTION RESOLVE_NAMED (TS: NODE, CNAME: TEXT) RETURNS (TYP);
       IF TS@.C <> NIL THEN
          T := COPY_TYP (T);
          T@.REPS := TS@.C;
+         CHECK_ENUM_REP (T, TS@.LINE);
       END IF;
       RETURN T;
    ORIF K = TS_GEN THEN
@@ -371,10 +381,10 @@ FUNCTION RESOLVE_NAMED (TS: NODE, CNAME: TEXT) RETURNS (TYP);
    IF TS@.C <> NIL THEN
       T := COPY_TYP (T);
       T@.REPS := TS@.C;
-      IF TS@.C@.B <> NIL THEN                        % ENUM_VAL_REP: check the VALUES
-         IF T@.KIND <> T_ENUM ! NOT T@.UNORDERED THEN
-            FAIL (TS@.LINE, 'ENUM_VAL_REP is only for UNORDERED types (3.4.3)');
-         END IF;
+      IF T@.KIND = T_ENUM THEN
+         CHECK_ENUM_REP (T, TS@.LINE);
+      ORIF TS@.C@.B <> NIL THEN
+         FAIL (TS@.LINE, 'ENUM_VAL_REP is only for UNORDERED types (3.4.3)');
       END IF;
    END IF;
    RETURN T;
@@ -533,6 +543,107 @@ PROCEDURE CHECK_PRECISION_ARG (P: NODE, LINE: INTEGER);
    END IF;
    FAIL (LINE, 'the precision of a fixed point type is a value of FIXED_PRECISIONS (3.2.1)');
 END PROCEDURE CHECK_PRECISION_ARG;
+
+% an enumerated reptype (3.4.3): ENUM_REP (N) or ENUM_VAL_REP (N, VALUES (...)) with N
+% large enough, every literal once, bitstrings of N bits all different, the latter
+% for UNORDERED types only
+PROCEDURE CHECK_ENUM_REP (T: TYP, LINE: INTEGER);
+   CONST R: NODE := T@.REPS;
+   CONST NAME: TEXT := R@.NAME;
+   IF R@.KIND = TS_GEN THEN
+      RETURN;
+   END IF;
+   IF TEQS (NAME, 'ENUM_STD') THEN
+      RETURN;
+   END IF;
+   IF NOT (TEQS (NAME, 'ENUM_REP') ! TEQS (NAME, 'ENUM_VAL_REP')) THEN
+      IF ORIG_LOOKUP (NAME) <> NIL THEN
+         IF ORIG_LOOKUP (NAME)@.KIND = Y_REPTYPE THEN
+            RETURN;                                    % a reptype-reference (3.12)
+         END IF;
+      END IF;
+      FAILT (LINE, 'not a representation of an enumerated type (3.4.3): ', NAME);
+   END IF;
+   IF R@.A = NIL THEN
+      FAILT (LINE, 'the size of the representation is missing: ', NAME);
+   END IF;
+   BLOCK
+      CONST N: MVAL := MANIFEST (R@.A);
+      CONST NL: INTEGER := T@.BASE@.NLITS;
+      IF NOT N.OK THEN
+         FAIL (LINE, 'the size of an enumerated representation is manifest (3.4.3)');
+      END IF;
+      IF N.V > 64 ! N.V < 0 THEN
+         FAIL (LINE, 'the size of an enumerated representation is in [0:(FIXED.SIZE).MAX] (3.4.3)');
+      END IF;
+      IF TEQS (NAME, 'ENUM_REP') THEN
+         IF R@.B <> NIL THEN
+            FAIL (LINE, 'VALUES belong to ENUM_VAL_REP (3.4.3)');
+         END IF;
+         IF N.V < BITS_FOR (NL) THEN
+            FAIL (LINE, 'the size cannot represent every literal (3.4.3)');
+         END IF;
+         RETURN;
+      END IF;
+      IF NOT T@.UNORDERED THEN
+         FAIL (LINE, 'ENUM_VAL_REP is only for UNORDERED types (3.4.3)');
+      END IF;
+      BLOCK                                          % every literal once, N bits each,
+         VAR L: NODE := T@.BASE@.LITS;              % no two the same
+         LOOP UNTIL L = NIL DO
+            BLOCK
+               VAR V: NODE := R@.B;
+               VAR FOUND: INTEGER := 0;
+               LOOP UNTIL V = NIL DO
+                  IF TEQ (V@.NAME, L@.NAME) THEN
+                     FOUND := FOUND + 1;
+                  END IF;
+                  V := V@.NEXT;
+               END LOOP;
+               IF FOUND <> 1 THEN
+                  FAILT (LINE, 'VALUES must give every literal once (3.4.3): ', L@.NAME);
+               END IF;
+            END BLOCK;
+            L := L@.NEXT;
+         END LOOP;
+      END BLOCK;
+      BLOCK
+         VAR V: NODE := R@.B;
+         LOOP UNTIL V = NIL DO
+            IF FIND_LITERAL (V@.NAME, T@.BASE) = NIL THEN
+               FAILT (LINE, 'not a literal of the type: ', V@.NAME);
+            END IF;
+            BLOCK
+               CONST SAVED_CODE: BUF := W@.CODE;
+               CONST B: ET := EXPR (V@.A, NIL);
+               W@.CODE := SAVED_CODE;
+               IF B.T@.KIND <> T_BITS THEN
+                  FAIL (LINE, 'a representation in VALUES is a bitstring (3.4.3)');
+               END IF;
+               IF B.T@.MLEN.OK THEN
+                  IF B.T@.MLEN.V <> N.V THEN
+                     FAILT (LINE, 'the representation must have SIZE bits (3.4.3): ', V@.NAME);
+                  END IF;
+               END IF;
+               IF V@.A@.KIND = N_BITS THEN
+                  BLOCK
+                     VAR U: NODE := V@.NEXT;
+                     LOOP UNTIL U = NIL DO
+                        IF U@.A@.KIND = N_BITS THEN
+                           IF TEQ (U@.A@.NAME, V@.A@.NAME) THEN
+                              FAILT (LINE, 'two literals have the same representation (3.4.3): ', U@.NAME);
+                           END IF;
+                        END IF;
+                        U := U@.NEXT;
+                     END LOOP;
+                  END BLOCK;
+               END IF;
+            END BLOCK;
+            V := V@.NEXT;
+         END LOOP;
+      END BLOCK;
+   END BLOCK;
+END PROCEDURE CHECK_ENUM_REP;
 
 % the length of a string or bitstring type: an expression, ?L or ?
 PROCEDURE STRING_LENGTH (T: TYP, A: NODE);

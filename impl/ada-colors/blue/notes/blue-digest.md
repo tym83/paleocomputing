@@ -158,8 +158,11 @@ unreadable; the decision is bluec's.
 3. **ASCII** is the character set of §3.7.2 example 1 (p.3-92). Its `\EXT` (for
    ETX) is kept as printed. Quoted strings may contain any printable character.
 4. **An enumerated literal of several visible classes** with nothing wanted from
-   the context: §3.4.5 asks for a type specifier; bluec takes the class that is not
-   ASCII.
+   the context needs a type specifier (§3.4.5), ASCII included: `\'I'` is a
+   literal of ASCII and of a program's character set. (Until October 2026 bluec
+   took the class that is not ASCII; the charset-bcd driver now writes
+   `[BCD]$$(\'I')`.) A literal wanted as a value of a type takes that type,
+   with its representation (§3.4.5: "automatically considered").
 5. **Operator routines**: the BCD example (p.3-160) writes `LESS_THAN` without the
    underscore; operator routines are also found by that name.
 6. **Uninitialized variables** start as zero. The language has the exception

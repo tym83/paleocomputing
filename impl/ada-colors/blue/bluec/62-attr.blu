@@ -184,8 +184,9 @@ FUNCTION ATTRIBUTE (B: ET, NAME: TEXT, LINE: INTEGER) RETURNS (ET);
          END IF;
          RETURN MKET (NUM (T@.BASE@.NLITS - 1), T@.BASE);
       ORIF TEQS (NAME, 'EXTENT') THEN
-         IF T@.LO_C.LEN > 0 THEN
-            RETURN MKET (FMT2 ('((@) - (@) + 1)', T@.HI_C, T@.LO_C), W@.TY_INT);
+         IF T@.LO_C.LEN > 0 THEN                    % 0 for an empty range
+            RETURN MKET (FMT4 ('((@) >= (@) ? (@) - (@) + 1 : 0)', T@.HI_C, T@.LO_C, T@.HI_C,
+                               T@.LO_C), W@.TY_INT);
          END IF;
          RETURN INT_ET (T@.BASE@.NLITS);
       END IF;
