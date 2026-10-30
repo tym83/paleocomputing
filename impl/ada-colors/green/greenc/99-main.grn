@@ -206,6 +206,7 @@
       SAVED_LINE : INTEGER := SRC_LINE;
       SAVED_POS : INTEGER := TPOS;
       FROM : INTEGER;
+      SAVED_ENV : TEXT;
    begin
       R := null;
       LIB_OPEN(KEY, N);
@@ -216,7 +217,11 @@
       INCLUDE_TEXT(N);
       ADD_TOKEN(K_EOF, "<end>", 0);
       TPOS := FROM;
+      -- the environment of the program is not that of the unit
+      SAVED_ENV := ENV_NAMES;
+      ENV_NAMES := MK("");
       COMPILATION(R);
+      ENV_NAMES := SAVED_ENV;
       TPOS := SAVED_POS;
       SRC_LINE := SAVED_LINE;
    end LIB_LOAD;
@@ -316,6 +321,7 @@
       SAVED_POS : INTEGER := TPOS;
       SAVED_LINE : INTEGER := SRC_LINE;
       FROM : INTEGER := NTOKS + 1;
+      SAVED_ENV : TEXT;
    begin
       R := null;
       PRELUDE_LEX := TRUE;
@@ -648,7 +654,11 @@
       SRC_LINE := SAVED_LINE;
       ADD_TOKEN(K_EOF, "<end>", 0);
       TPOS := FROM;
+      -- the environment of the program is not that of the unit
+      SAVED_ENV := ENV_NAMES;
+      ENV_NAMES := MK("");
       COMPILATION(R);
+      ENV_NAMES := SAVED_ENV;
       TPOS := SAVED_POS;
    end PREDEFINED_UNIT;
 
@@ -717,7 +727,7 @@
 
    procedure TRANSLATE(U : NODE) is
       P : NODE := PRELUDE_UNITS;
-      USED : TEXT;
+      USED, ENV : TEXT;
       Y : SYM;
    begin
       while P /= null loop
@@ -754,6 +764,12 @@
             MAIN_NAME := Y.CNAME;
          elsif LISTED(USED, P.NAME.all) then
             DECL_ELEMENT(P);
+            ENV := MK("," & ENV_NAMES.all);
+            if (P.KIND = N_PKGSPEC or P.KIND = N_PKGBODY or P.KIND = N_TASKSPEC) and then LISTED(ENV, P.NAME.all)
+               and then not BODY_FOLLOWS(P) then
+               -- after the body: the body completes the declarations
+               ENVIRONMENT_MODULE(P);
+            end if;
          else
             -- a library unit the main program does not use is not
             -- elaborated (RM79 10.5)
@@ -771,6 +787,36 @@
          P := P.NEXT;
       end loop;
    end TRANSLATE;
+
+   -- pragma ENVIRONMENT (RM79 8.6): the identifiers of the visible part of
+   -- the module are declared at the outermost level of the program, where
+   -- visibility restrictions do not reach
+   procedure ENVIRONMENT_MODULE(P : NODE) is
+      U : NODE := NN(N_USE, P.LINE);
+      SAVED : INTEGER := DEPTH;
+   begin
+      U.A := NN(N_NAME, P.LINE);
+      U.A.NAME := P.NAME;
+      DEPTH := 0;
+      USE_CLAUSE(U);
+      DEPTH := SAVED;
+   end ENVIRONMENT_MODULE;
+
+   -- a body of module P comes later in the compilation
+   function BODY_FOLLOWS(P : NODE) return BOOLEAN is
+      Q : NODE := P.NEXT;
+   begin
+      if P.KIND = N_PKGBODY then
+         return FALSE;
+      end if;
+      while Q /= null loop
+         if (Q.KIND = N_PKGBODY or Q.KIND = N_TASKBODY) and then Q.NAME.all = P.NAME.all then
+            return TRUE;
+         end if;
+         Q := Q.NEXT;
+      end loop;
+      return FALSE;
+   end BODY_FOLLOWS;
 
    -- the main program is the last unit that is not a subunit
    function LAST_UNIT(P : NODE) return BOOLEAN is
