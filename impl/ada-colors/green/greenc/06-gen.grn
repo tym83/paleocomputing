@@ -792,11 +792,118 @@
    begin
       if D.TAG = null then
          return FALSE;
+      elsif D.TAG.all'LENGTH < 10 then
+         return FALSE;
       end if;
-      return D.TAG.all = "INTERFACE";
+      return D.TAG.all(1 .. 10) = "INTERFACE ";
    end IS_FOREIGN;
 
+   -- the call of the foreign body of Y: a routine of the runtime for C, a
+   -- routine of the host's mathematical library for FORTRAN (RM79 13.9)
+   procedure FOREIGN_CALL(D : NODE; Y : SYM; R : out TEXT) is
+      LANG : STRING := D.TAG.all(11 .. D.TAG.all'LENGTH);
+      N : STRING := D.NAME.all;
+      PM : PARM := Y.PARAMS;
+      X, CT : TEXT;
+      ALL_REAL : BOOLEAN := Y.RESULT.KIND = T_FLOAT;
+   begin
+      X := MK("");
+      while PM /= null loop
+         if X'LENGTH > 0 then
+            X := MK(X.all & ", ");
+         end if;
+         if PM.T.KIND /= T_FLOAT or PM.MODE /= M_IN then
+            ALL_REAL := FALSE;
+         end if;
+         if IS_STRING(PM.T) and PM.MODE = M_IN then
+            X := MK(X.all & "rt_g_g2s(F->" & PM.CFIELD.all & ")");
+         else
+            X := MK(X.all & "F->" & PM.CFIELD.all);
+         end if;
+         PM := PM.NEXT;
+      end loop;
+      if LANG = "UNSAFE_CONVERSION" and then (Y.PARAMS /= null and Y.RESULT.KIND /= T_VOID) then
+         -- the body of UNSAFE_PROGRAMMING.UNSAFE_CONVERSION: the bits of the
+         -- value, seen as a value of the other type (RM79 13.10)
+         CTYPE(Y.RESULT, CT);
+         UNSAFE_BITS(Y.PARAMS.T, Y.RESULT, "F->" & Y.PARAMS.CFIELD.all, CT.all, R);
+      elsif LANG = "C" then
+         R := MK("rt_g_" & LOWER_S(N) & "(" & X.all & ")");
+      elsif LANG = "FORTRAN" then
+         if not ALL_REAL then
+            FAIL(D.LINE, "the FORTRAN routines of this implementation take and return real values (RM79 13.9)");
+         elsif N = "SQRT" or N = "SIN" or N = "COS" or N = "TAN" or N = "ASIN" or N = "ACOS" or N = "ATAN"
+            or N = "EXP" or N = "SINH" or N = "COSH" or N = "TANH" or N = "ATAN2" then
+            R := MK(LOWER_S(N) & "(" & X.all & ")");
+         elsif N = "ALOG" or N = "LOG" then
+            R := MK("log(" & X.all & ")");
+         elsif N = "ALOG10" or N = "LOG10" then
+            R := MK("log10(" & X.all & ")");
+         elsif N = "ABS" or N = "FABS" then
+            R := MK("fabs(" & X.all & ")");
+         else
+            FAIL(D.LINE, "the FORTRAN library of this implementation has no routine " & N
+                 & "; it has SQRT, SIN, COS, TAN, ASIN, ACOS, ATAN, ATAN2, EXP, ALOG, ALOG10, SINH, COSH, "
+                 & "TANH and ABS (RM79 13.9)");
+         end if;
+      else
+         FAIL(D.LINE, "pragma INTERFACE(" & LANG & "): this implementation calls C and FORTRAN (RM79 13.9)");
+      end if;
+   end FOREIGN_CALL;
+
+   -- UNSAFE_CONVERSION (RM79 13.10): the storage of a value of type S read
+   -- as a value of type T; the bits that T has more than S are zero
+   procedure UNSAFE_BITS(S, T : TYP; V, CT : STRING; R : out TEXT) is
+   begin
+      R := MK("({ " & CT & " r_; memset(&r_, 0, sizeof r_); __typeof__(" & V & ") s_ = " & V
+              & "; memcpy(&r_, &s_, sizeof r_ < sizeof s_ ? sizeof r_ : sizeof s_); r_; })");
+   end UNSAFE_BITS;
+
+   -- the type a statement T(...) names, if T is a type: a code statement
+   -- (RM79 13.8); null otherwise
+   function CODE_TYPE(S : NODE) return SYM is
+      C : NODE;
+      Y : SYM;
+   begin
+      if S.KIND /= N_CALL then
+         return null;
+      end if;
+      C := S.A;
+      if C.KIND /= N_APPLY then
+         return null;
+      end if;
+      C := C.A;
+      if C.KIND = N_NAME then
+         Y := LOOKUP(C.NAME.all);
+      elsif C.KIND = N_SELECT and then C.A.KIND = N_NAME then
+         Y := MEMBER_OF(C.A.NAME.all, C.NAME.all, 0);
+      end if;
+      if Y /= null and then Y.KIND = Y_TYPE then
+         return Y;
+      end if;
+      return null;
+   end CODE_TYPE;
+
+   -- a procedure that contains a code statement contains only code
+   -- statements (RM79 13.8)
+   procedure CHECK_CODE_BODY(D : NODE; Y : SYM) is
+      S : NODE := D.D;
+      N, K : INTEGER := 0;
+   begin
+      while S /= null loop
+         N := N + 1;
+         if CODE_TYPE(S) /= null then
+            K := K + 1;
+         end if;
+         S := S.NEXT;
+      end loop;
+      if K > 0 and (K /= N or D.E /= null or Y.KIND /= Y_PROC) then
+         FAIL(D.LINE, "a procedure that contains a code statement contains only code statements (RM79 13.8)");
+      end if;
+   end CHECK_CODE_BODY;
+
    procedure SUBPROGRAM_BODY(D : NODE; Y : SYM) is
+      SAVED_BODY : NODE := CUR_BODY;
       SAVED_CODE : BUFFER := CODE;
       SAVED_FIELDS : BUFFER := FIELDS_BUF;
       SAVED_IN : BOOLEAN := IN_FUNC;
@@ -874,24 +981,17 @@
          CTYPE(Y.RESULT, CT);
          PUT_TO(FIELDS_BUF, " " & CT.all & " result_;");
       end if;
-      if IS_FOREIGN(D) and Y.RESULT.KIND = T_VOID then
+      if IS_FOREIGN(D) then
          DECL_ELEMENTS(D.C);
-         -- the foreign body is the runtime's rt_g_<name> (RM79 13.9)
-         X := MK("");
-         PM := Y.PARAMS;
-         while PM /= null loop
-            if X'LENGTH > 0 then
-               X := MK(X.all & ", ");
-            end if;
-            if IS_STRING(PM.T) and PM.MODE = M_IN then
-               X := MK(X.all & "rt_g_g2s(F->" & PM.CFIELD.all & ")");
-            else
-               X := MK(X.all & "F->" & PM.CFIELD.all);
-            end if;
-            PM := PM.NEXT;
-         end loop;
-         EMIT("rt_g_" & LOWER_S(D.NAME.all) & "(" & X.all & ");");
+         FOREIGN_CALL(D, Y, X);
+         if Y.RESULT.KIND = T_VOID then
+            EMIT(X.all & ";");
+         else
+            EMIT("F->result_ = " & X.all & ";");
+            EMIT("goto ret_;");
+         end if;
       else
+         CUR_BODY := D;
          LABEL_BODY(D.D, D.E);
          GUARDED(D.C, D.D, D.E, D.LINE);
       end if;
@@ -942,6 +1042,7 @@
       BODY_LABELS := SAVED_LABELS;
       HANDLER_EXITS := SAVED_HX;
       HANDLER_DEPTH := SAVED_HD;
+      CUR_BODY := SAVED_BODY;
    end SUBPROGRAM_BODY;
 
    -- ---- statements (RM79 5) -----------------------------------------------------------

@@ -3310,3 +3310,117 @@ void y_device(ysig *s, rt_int address) {
 
 /* a SIGNAL as a component of an array: tied to its monitor by y_sig_init */
 const ydesc y_d_sig = {YK_OPAQUE, sizeof(ysig), 0, 0, {0}, {0}, NULL, 0, NULL, NULL};
+
+/* ---- GREEN: the simulated machine (RM79 13.5, 13.5.1, 13.8, 14.6) ----------
+ * The memory has SYSTEM'MEMORY_SIZE storage units of 8 bits; objects with an
+ * address specification live in it. Code statements run on eight registers
+ * of one word (8 storage units). Device 0 is the interrupt controller: an
+ * interrupt at an address is an entry call by a hardware task of the highest
+ * priority, so interrupts queue on their entry. Device 1 is the console,
+ * device 2 the clock; devices 3 to 15 hold the last word sent to them. */
+
+static unsigned char *g_mem;
+static rt_int g_mem_size = 1048576;
+static rt_int g_reg[8];
+static rt_int g_dev[16];
+static rt_int g_nirq;
+
+void rt_g_set_memory(rt_int n) {
+  if (n > 0 && !g_mem) g_mem_size = n;
+}
+
+unsigned char *rt_g_mem(rt_int addr, rt_int n) {
+  if (addr < 0 || n < 0 || addr > g_mem_size - n) rt_raise(RT_X_RANGE);
+  if (!g_mem) g_mem = calloc((size_t)g_mem_size, 1);
+  return g_mem + addr;
+}
+
+static rt_int g_word(rt_int a) {
+  rt_int v;
+  memcpy(&v, rt_g_mem(a, 8), 8);
+  return v;
+}
+
+static void g_set_word(rt_int a, rt_int v) { memcpy(rt_g_mem(a, 8), &v, 8); }
+
+typedef struct g_irq {
+  rt_int addr;
+  rt_entry *e;
+  rt_act *owner;
+  struct g_irq *next;
+} g_irq;
+static g_irq *g_irqs;
+
+void rt_g_bind_interrupt(rt_int addr, rt_entry *e, rt_act *owner) {
+  g_irq *q;
+  for (q = g_irqs; q; q = q->next)
+    if (q->addr == addr) break;
+  if (!q) {
+    q = rt_alloc(sizeof *q);
+    q->addr = addr;
+    q->next = g_irqs;
+    g_irqs = q;
+  }
+  q->e = e;
+  q->owner = owner;
+}
+
+static void g_irq_call(void *arg) {
+  g_irq *q = arg;
+  char params[16];
+  if (rt_is_active(q->owner)) rt_entry_call(q->e, params);
+}
+
+void rt_g_interrupt(rt_int addr) {
+  static rt_taskdecl hardware;
+  g_nirq++;
+  for (g_irq *q = g_irqs; q; q = q->next)
+    if (q->addr == addr) {
+      if (!rt_is_active(q->owner)) return;   /* nobody listens: it is lost */
+      rt_act *a = rt_alloc(sizeof *a);
+      memset(a, 0, sizeof *a);
+      a->prio = 255;
+      a->has_prio = 1;
+      rt_create(a, &hardware, g_irq_call, q);
+      return;
+    }
+}
+
+void rt_g_machine(int op, rt_int r, rt_int a) {
+  rt_int *x = &g_reg[r & 7], v;
+  if (r < 0 || r > 7) rt_raise(RT_X_RANGE);
+  switch (op) {
+  case 0: break;                                           /* NOP */
+  case 1: *x = a; break;                                   /* LDI */
+  case 2: *x = g_word(a); break;                           /* LD */
+  case 3: g_set_word(a, *x); break;                        /* ST */
+  case 4: if (__builtin_add_overflow(*x, g_word(a), &v)) rt_raise(RT_X_OVERFLOW); *x = v; break;
+  case 5: if (__builtin_sub_overflow(*x, g_word(a), &v)) rt_raise(RT_X_OVERFLOW); *x = v; break;
+  case 6: if (__builtin_mul_overflow(*x, g_word(a), &v)) rt_raise(RT_X_OVERFLOW); *x = v; break;
+  case 7:                                                  /* DIV */
+    v = g_word(a);
+    if (v == 0) rt_raise(RT_X_ZERO_DIVIDE);
+    *x = *x / v;
+    break;
+  case 8: *x = -*x; break;                                 /* NEG */
+  case 9: rt_g_putc((int)(*x & 127)); break;               /* OUTC */
+  case 10: rt_g_put_int(*x, 0); break;                     /* OUTN */
+  case 11: rt_g_interrupt(a); break;                       /* INTR */
+  default: rt_raise(RT_X_RANGE);
+  }
+}
+
+void rt_g_send_control(rt_int device, rt_int *data) {
+  if (device < 0 || device > 15) rt_raise(RT_X_RANGE);
+  if (device == 0) rt_g_interrupt(*data);
+  else if (device == 1) rt_g_putc((int)(*data & 255));
+  else if (device > 2) g_dev[device] = *data;
+}
+
+void rt_g_receive_control(rt_int device, rt_int *data) {
+  if (device < 0 || device > 15) rt_raise(RT_X_RANGE);
+  if (device == 0) *data = g_nirq;
+  else if (device == 1) *data = rt_getc();
+  else if (device == 2) *data = rt_time();
+  else *data = g_dev[device];
+}

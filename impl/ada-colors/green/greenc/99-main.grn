@@ -268,6 +268,9 @@
                   if LOOKUP(N.all) = null and then not DEFINED_UNIT(N.all, P) then
                      LOAD_UNIT(N.all, L);
                      if L = null then
+                        PREDEFINED_UNIT(N.all, L);
+                     end if;
+                     if L = null then
                         FAIL(P.LINE, N.all & ", named by " & P.NAME.all & ", is neither compiled before it nor in "
                              & "the program library (RM79 10.3)");
                      end if;
@@ -310,6 +313,53 @@
       T.NEXT := B;
       R := S;
    end LOAD_UNIT;
+
+   -- the predefined library units written in GREEN, translated when a unit
+   -- names them (RM79 13.8, 13.10, 14.6)
+   procedure PREDEFINED_UNIT(NAME : STRING; R : out NODE) is
+      SAVED_POS : INTEGER := TPOS;
+      FROM : INTEGER := NTOKS + 1;
+   begin
+      R := null;
+      if NAME = "UNSAFE_PROGRAMMING" then
+         LEX_LINE("package UNSAFE_PROGRAMMING is");
+         LEX_LINE("   generic (type S; type T) function UNSAFE_CONVERSION(X : S) return T;");
+         LEX_LINE("end UNSAFE_PROGRAMMING;");
+         LEX_LINE("package body UNSAFE_PROGRAMMING is");
+         LEX_LINE("   function UNSAFE_CONVERSION(X : S) return T is");
+         LEX_LINE("   begin pragma INTERFACE(UNSAFE_CONVERSION); end UNSAFE_CONVERSION;");
+         LEX_LINE("end UNSAFE_PROGRAMMING;");
+      elsif NAME = "MACHINE_CODE" then
+         -- the simulated machine: eight one-word registers, and a memory of
+         -- SYSTEM'MEMORY_SIZE storage units; a word is eight storage units
+         LEX_LINE("package MACHINE_CODE is");
+         LEX_LINE("   type OPCODE is (NOP, LDI, LD, ST, ADD, SUB, MUL, DIV, NEG, OUTC, OUTN, INTR);");
+         LEX_LINE("   subtype REGISTER is INTEGER range 0 .. 7;");
+         LEX_LINE("   type INSTRUCTION is record OP : OPCODE; R : REGISTER; A : INTEGER; end record;");
+         LEX_LINE("end MACHINE_CODE;");
+      elsif NAME = "LOW_LEVEL_IO" then
+         LEX_LINE("package LOW_LEVEL_IO is");
+         LEX_LINE("   subtype DEVICE_NUMBER is INTEGER range 0 .. 15;");
+         LEX_LINE("   INTERRUPT_CONTROLLER : constant DEVICE_NUMBER := 0;");
+         LEX_LINE("   CONSOLE : constant DEVICE_NUMBER := 1;");
+         LEX_LINE("   CLOCK : constant DEVICE_NUMBER := 2;");
+         LEX_LINE("   procedure SEND_CONTROL(DEVICE : DEVICE_NUMBER; DATA : in out INTEGER);");
+         LEX_LINE("   procedure RECEIVE_CONTROL(DEVICE : DEVICE_NUMBER; DATA : in out INTEGER);");
+         LEX_LINE("end LOW_LEVEL_IO;");
+         LEX_LINE("package body LOW_LEVEL_IO is");
+         LEX_LINE("   procedure SEND_CONTROL(DEVICE : DEVICE_NUMBER; DATA : in out INTEGER) is");
+         LEX_LINE("   begin pragma INTERFACE(C); end SEND_CONTROL;");
+         LEX_LINE("   procedure RECEIVE_CONTROL(DEVICE : DEVICE_NUMBER; DATA : in out INTEGER) is");
+         LEX_LINE("   begin pragma INTERFACE(C); end RECEIVE_CONTROL;");
+         LEX_LINE("end LOW_LEVEL_IO;");
+      else
+         return;
+      end if;
+      ADD_TOKEN(K_EOF, "<end>", 0);
+      TPOS := FROM;
+      COMPILATION(R);
+      TPOS := SAVED_POS;
+   end PREDEFINED_UNIT;
 
    -- predefined units in GREEN (RM79 9.11)
    procedure PRELUDE is
@@ -462,6 +512,8 @@
       PUT("  rt_init(argc, argv);");
       PUT(NEWLINE);
       PUT("  rt_set_lang(1);");
+      PUT(NEWLINE);
+      PUT("  rt_g_set_memory(" & INTEGER'REP(CONF_MEMORY_SIZE) & ");");
       PUT(NEWLINE);
       PRINT_BUFFER(OUT_EXCS);
       PRINT_BUFFER(OUT_INIT);

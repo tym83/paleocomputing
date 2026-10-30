@@ -1076,6 +1076,30 @@
       ARITHMETIC(E, WANT, T, R);
    end GEN_BINOP;
 
+   -- a code statement: an instruction of the simulated machine, an
+   -- aggregate of type MACHINE_CODE.INSTRUCTION (RM79 13.8)
+   procedure CODE_STATEMENT(E : NODE; Y : SYM; R : out TEXT) is
+      I : SYM;
+      T : TYP;
+      V, CT : TEXT;
+   begin
+      if LOOKUP("MACHINE_CODE") /= null then
+         I := MEMBER_OF("MACHINE_CODE", "INSTRUCTION", E.LINE);
+      end if;
+      if I = null or else I.T /= Y.T then
+         FAIL(E.LINE, "a code statement is an aggregate of type MACHINE_CODE.INSTRUCTION, an instruction "
+              & "of this machine (RM79 13.8)");
+      end if;
+      if CUR_BODY = null or FUNC_SYM = null then
+         FAIL(E.LINE, "a code statement stands in a procedure body of code statements only (RM79 13.8)");
+      end if;
+      CHECK_CODE_BODY(CUR_BODY, FUNC_SYM);
+      CONVERSION(E, Y, T, V);
+      CTYPE(Y.T, CT);
+      R := MK("({ " & CT.all & " i_ = " & V.all & "; rt_g_machine(i_." & C_FIELD("OP") & ", i_."
+              & C_FIELD("R") & ", i_." & C_FIELD("A") & "); })");
+   end CODE_STATEMENT;
+
    -- T(x): qualification and conversion share one form (RM79 4.6)
    procedure CONVERSION(E : NODE; Y : SYM; T : out TYP; R : out TEXT) is
       ATY : TYP;
@@ -2427,6 +2451,11 @@
       end if;
       if Y.KIND = Y_ENTRY then
          OTHER_CALL(E, IS_STMT, T, R);
+         return;
+      end if;
+      if Y.KIND = Y_TYPE and IS_STMT then
+         CODE_STATEMENT(E, Y, R);
+         T := TY_VOID;
          return;
       end if;
       if Y.KIND /= Y_FUNC and Y.KIND /= Y_PROC then

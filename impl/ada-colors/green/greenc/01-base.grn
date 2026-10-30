@@ -423,6 +423,10 @@ procedure GREENC is
    CALL_TASK_IX : NODE;
    -- pragma INTERFACE seen in the statements of the body being parsed (RM79 13.9)
    SAW_INTERFACE : BOOLEAN := FALSE;
+   -- the subprogram body being translated
+   CUR_BODY : NODE;
+   -- the language it names
+   SAW_LANG : TEXT;
    -- in a task specification the parameter structs of the entries wait until
    -- the private part has completed the private types (RM79 7.4)
    DEFER_ENTRY_STRUCTS : BOOLEAN := FALSE;

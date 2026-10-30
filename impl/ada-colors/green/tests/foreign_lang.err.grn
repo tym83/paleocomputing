@@ -1,0 +1,8 @@
+procedure MAIN is
+   procedure P(X : INTEGER) is
+   begin
+      pragma INTERFACE(COBOL);
+   end P;
+begin
+   P(1);
+end MAIN;

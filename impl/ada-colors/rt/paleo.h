@@ -359,6 +359,17 @@ double rt_g_fix(double v, double small);       /* a multiple of SMALL */
 double rt_g_fix_large(double small, double lo, double hi);
 rt_int rt_g_fix_bits(double small, double lo, double hi);
 
+/* ---- GREEN: the simulated machine (RM79 13.5, 13.8, 14.6) -------------- */
+/* a memory of SYSTEM'MEMORY_SIZE storage units of 8 bits, eight one-word
+ * registers, an interrupt controller and a few devices */
+void rt_g_set_memory(rt_int n);
+unsigned char *rt_g_mem(rt_int addr, rt_int n);  /* RANGE_ERROR outside */
+void rt_g_machine(int op, rt_int r, rt_int a);   /* one code statement */
+void rt_g_bind_interrupt(rt_int addr, rt_entry *e, rt_act *owner);
+void rt_g_interrupt(rt_int addr);
+void rt_g_send_control(rt_int device, rt_int *data);
+void rt_g_receive_control(rt_int device, rt_int *data);
+
 #endif
 
 /* BLUE additions */
