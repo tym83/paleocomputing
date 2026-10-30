@@ -21,8 +21,9 @@ PROC declare_body(CONST elems : node) IMPORTS ALL;
          manifest_const(e);
       ELSEIF e.kind = n_capsule THEN
          gen_capsule(e);
-      ELSEIF e.kind = n_expose AND e.flag /= 1 AND e.flag /= 3 THEN
+      ELSEIF e.kind = n_expose AND e.flag /= 1 AND e.flag /= 3 AND NOT pending_capsule(e.name.ALL) THEN
          gen_expose(e);
+         e.eline := 1;
       ELSEIF e.kind = n_exception THEN
          VAR y : sym := new_sym(y_exc, e.name);
          y.cname := mk(new_name("ex_" & lower_s(e.name.ALL) & "_"));
@@ -231,13 +232,37 @@ PROC gen_capsule(CONST d : node) IMPORTS ALL;
       tail := pm;
       p := p.next;
    END REPEAT;
-   IF d.b = NIL THEN
+   IF d.b = NIL AND imports_variables(d) THEN
+      % a capsule that imports variables is elaborated where it is declared,
+      % after the declarations before it (3.6, 8.1)
+      y.pending := TRUE;
+   ELSEIF d.b = NIL THEN
       suppress := suppressing(d.prags);
       elaborate_capsule(d, y, NIL, d);
       suppress := saved;
    END IF;
    define(y, d.line);
 END PROC gen_capsule;
+
+FUNC imports_variables(CONST d : node) => BOOL;
+   RETURN d.d /= NIL OR d.flag >= 2;
+END FUNC imports_variables;
+
+% elaborate a capsule held back for its imports, once
+PROC elaborate_pending(CONST y : sym) IMPORTS ALL;
+   VAR saved : text := suppress;
+   IF y.pending THEN
+      y.pending := FALSE;
+      suppress := suppressing(y.decl.prags);
+      elaborate_capsule(y.decl, y, NIL, y.decl);
+      suppress := saved;
+   END IF;
+END PROC elaborate_pending;
+
+ABNORMAL FUNC pending_capsule(READONLY name : STRING[ASCII]) => BOOL IMPORTS ALL;
+   VAR y : sym := lookup(name);
+   RETURN y /= NIL AND y.kind = y_capsule AND y.pending;
+END FUNC pending_capsule;
 
 % the formal parameters of a capsule invoked as NEW, bound to the actuals (7.3)
 PROC capsule_params(CONST d : node, CONST args : node, CONST line : INT) IMPORTS ALL;
@@ -526,6 +551,7 @@ PROC gen_expose(CONST d : node) IMPORTS ALL;
       IF y = NIL OR y.kind /= y_capsule THEN
          fail(d.line, d.name.ALL & " is not a capsule");
       END IF;
+      elaborate_pending(y);
       IF d.e /= NIL AND (y.decl = NIL OR y.decl.e = NIL) THEN
          fail(d.line, d.name.ALL & " has no translation time property list");
       END IF;
@@ -976,7 +1002,12 @@ END PROC element;
 
 PROC element1(CONST e : node) IMPORTS ALL;
    VAR k : INT := e.kind;
-   IF k = n_expose AND (e.flag = 1 OR e.flag = 3) THEN
+   IF k = n_capsule AND lookup_decl(e) /= NIL THEN
+      elaborate_pending(lookup_decl(e));
+   ELSEIF k = n_expose AND e.flag /= 1 AND e.flag /= 3 AND e.eline = 0 THEN
+      % an old invocation of a capsule elaborated in order
+      gen_expose(e);
+   ELSEIF k = n_expose AND (e.flag = 1 OR e.flag = 3) THEN
       % a new invocation is elaborated in order with the declarations (8.1)
       gen_expose(e);
    ELSEIF k = n_proc OR k = n_func OR k = n_task THEN

@@ -115,6 +115,7 @@ PROC translate(CONST units : node) IMPORTS ALL;
          END IF;
       ELSE
          gen_capsule(u);
+         elaborate_pending(lookup_decl(u));
       END IF;
       u := u.next;
    END REPEAT;
