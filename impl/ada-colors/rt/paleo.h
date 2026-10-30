@@ -321,6 +321,17 @@ rt_gstr rt_g_lit(const char *s, rt_int n);     /* a string literal, from 1 */
 rt_gstr rt_g_s2g(rstr s);                      /* the runtime's string, from 1 */
 rstr rt_g_g2s(rt_gstr a);
 _Noreturn void rt_g_overlap(void);             /* OVERLAP_ERROR (RM79 5.1.1) */
+/* a scalar without a value holds a mark; reading it raises NO_VALUE_ERROR
+ * (RM79 11.1) */
+#include <limits.h>
+#include <string.h>
+_Noreturn void rt_g_novalue(void);
+#define RT_G_NOVALUE_F (__builtin_nan("0x6e76"))
+static inline rt_int rt_g_nvl(rt_int v) { if (v == INT64_MIN) rt_g_novalue(); return v; }
+static inline int rt_g_nvi(int v) { if (v == INT_MIN) rt_g_novalue(); return v; }
+static inline unsigned char rt_g_nvc(unsigned char v) { if (v == 0xFF) rt_g_novalue(); return v; }
+static inline double rt_g_nvf(double v) { if (v != v) rt_g_novalue(); return v; }
+#define G_NV(x) _Generic((x), double: rt_g_nvf, int: rt_g_nvi, unsigned char: rt_g_nvc, default: rt_g_nvl)(x)
 rstr rt_g_enum_rep(rt_int v, const char *const *names, rt_int n);  /* T'REP */
 rt_int rt_g_enum_val(rstr s, const char *const *names, rt_int n);  /* T'VAL(S) */
 rstr rt_g_char_rep(rt_int v);
@@ -339,6 +350,8 @@ rt_int rt_g_round(double v);                   /* real to integer conversion */
 rt_int rt_g_short(rt_int v);                   /* SHORT_INTEGER: OVERFLOW */
 double rt_g_small(double delta);               /* fixed point SMALL */
 double rt_g_fix(double v, double small);       /* a multiple of SMALL */
+double rt_g_fix_large(double small, double lo, double hi);
+rt_int rt_g_fix_bits(double small, double lo, double hi);
 
 #endif
 

@@ -1814,6 +1814,7 @@ rstr rt_g_g2s(rt_gstr a) {
 }
 
 void rt_g_overlap(void) { rt_raise(g_exc_id("OVERLAP_ERROR")); }
+void rt_g_novalue(void) { rt_raise(RT_X_INIT); }
 
 /* the text of a file, null if it cannot be read: the form of pragma INCLUDE
  * that the first GREEN seed with INCLUDE calls */
@@ -1980,6 +1981,22 @@ double rt_g_small(double delta) {
   while (s > delta) s /= 2.0;
   while (s * 2.0 <= delta) s *= 2.0;
   return s;
+}
+
+/* T'LARGE and T'BITS of a fixed point type (RM79 App. A) */
+double rt_g_fix_large(double small, double lo, double hi) {
+  double m = fabs(lo) > fabs(hi) ? fabs(lo) : fabs(hi);
+  return floor(m / small) * small;
+}
+
+rt_int rt_g_fix_bits(double small, double lo, double hi) {
+  double n = rt_g_fix_large(small, lo, hi) / small;
+  rt_int b = 0;
+  while (n >= 1.0) {
+    n /= 2.0;
+    b++;
+  }
+  return b;
 }
 
 double rt_g_fix(double v, double small) {

@@ -46,6 +46,36 @@
       return LOOKUP(NAME);
    end LOOKUP_ENTRY;
 
+   -- the declaration of NAME at depth D
+   function LOOKUP_AT(NAME : STRING; D : INTEGER) return SYM is
+      Y : SYM := TABLE(HASH(NAME));
+   begin
+      while Y /= null loop
+         if Y.NAME.all = NAME and Y.DEPTH = D then
+            return Y;
+         end if;
+         Y := Y.CHAIN;
+      end loop;
+      return null;
+   end LOOKUP_AT;
+
+   function ENCLOSING_DEPTH(NAME : STRING) return INTEGER is
+   begin
+      for I in reverse 1 .. NUNITS loop
+         if UNIT_NAMES(I).all = NAME then
+            return UNIT_DEPTHS(I);
+         end if;
+      end loop;
+      return -1;
+   end ENCLOSING_DEPTH;
+
+   procedure PUSH_UNIT(NAME : TEXT) is
+   begin
+      NUNITS := NUNITS + 1;
+      UNIT_NAMES(NUNITS) := NAME;
+      UNIT_DEPTHS(NUNITS) := DEPTH;
+   end PUSH_UNIT;
+
    function LOOKUP_DECL(D : NODE) return SYM is
       Y : SYM := TABLE(HASH(D.NAME.all));
    begin
@@ -118,14 +148,23 @@
       return X = null and Y = null;
    end SAME_SIGNATURE;
 
+   -- two overloadable declarations that may coexist (RM79 6.6)
+   function DISTINCT_OVERLOAD(Y, Z : SYM) return BOOLEAN is
+   begin
+      if not (OVERLOADABLE(Y) and OVERLOADABLE(Z)) then
+         return FALSE;
+      elsif Y.KIND /= Z.KIND then
+         return TRUE;
+      end if;
+      return not SAME_SIGNATURE(Y.PARAMS, Z.PARAMS) or not SAME(Y.RESULT, Z.RESULT);
+   end DISTINCT_OVERLOAD;
+
    procedure DEFINE(Y : SYM; LINE : INTEGER) is
       H : INTEGER := HASH(Y.NAME.all);
       Z : SYM := TABLE(H);
    begin
       while Z /= null loop
-         if Z.DEPTH = DEPTH and then Z.NAME.all = Y.NAME.all and then not (OVERLOADABLE(Y)
-            and OVERLOADABLE(Z) and (Y.KIND /= Z.KIND or else not SAME_SIGNATURE(Y.PARAMS, Z.PARAMS)
-               or else not SAME(Y.RESULT, Z.RESULT))) then
+         if Z.DEPTH = DEPTH and then Z.NAME.all = Y.NAME.all and then not DISTINCT_OVERLOAD(Y, Z) then
             FAIL(LINE, Y.NAME.all & " is already declared in this declarative part");
          end if;
          Z := Z.CHAIN;
@@ -167,6 +206,39 @@
    begin
       return new CONS_REC(null, null, null, 0, 0, FALSE, null, null, null, null, null);
    end NEW_CONS;
+
+   -- a constraint with bounds; with discriminant values
+   function BOUNDED(C : CONS) return BOOLEAN is
+   begin
+      if C = null then
+         return FALSE;
+      end if;
+      return C.LO /= null;
+   end BOUNDED;
+
+   function BOUNDED_HI(C : CONS) return BOOLEAN is
+   begin
+      if C = null then
+         return FALSE;
+      end if;
+      return C.HI /= null;
+   end BOUNDED_HI;
+
+   function STATIC_BOUNDS(C : CONS) return BOOLEAN is
+   begin
+      if C = null then
+         return FALSE;
+      end if;
+      return C.HASM;
+   end STATIC_BOUNDS;
+
+   function DISCRIMINATED(C : CONS) return BOOLEAN is
+   begin
+      if C = null then
+         return FALSE;
+      end if;
+      return C.DV /= null;
+   end DISCRIMINATED;
 
    function KIND_NAME(T : TYP) return STRING is
    begin
@@ -344,9 +416,9 @@
             OK := TRUE;
             V := Y.MVALUE;
          end if;
-      elsif E.KIND = N_SELECT and then E.A.KIND = N_NAME and then IS_PACKAGE(E.A) then
+      elsif E.KIND = N_SELECT and then IS_PACKAGE(E.A) then
          -- P.C, a static constant of a package (RM79 4.8)
-         Y := MEMBER_OF(E.A.NAME.all, E.NAME.all, E.LINE);
+         Y := MEMBER_OF(PATH_OF(E.A), E.NAME.all, E.LINE);
          if Y /= null and then (Y.KIND = Y_CONST or Y.KIND = Y_ENUMLIT) and then Y.HASMV then
             OK := TRUE;
             V := Y.MVALUE;
@@ -773,7 +845,7 @@
          -- a type mark with a known small range also gives the objects of
          -- the type their bounds, as TABLE : array (INDEX) of ... (RM79 7.5)
          if T.IDX.KIND = T_ENUM or T.IDX.KIND = T_CHAR or T.IDX.KIND = T_BOOL
-            or (IC.HASM and then (IC.MHI - IC.MLO >= 0 and IC.MHI - IC.MLO < 1000000)) then
+            or (IC.HASM and (IC.MHI - IC.MLO >= 0 and IC.MHI - IC.MLO < 1000000)) then
             C.LO := IC.LO;
             C.HI := IC.HI;
             C.MLO := IC.MLO;
@@ -817,6 +889,30 @@
       C.HASM := OK and OK2;
    end STATIC_RANGE;
 
+   -- POSITION, FIRST_BIT and LAST_BIT of component F of record type RT
+   procedure COMPONENT_PLACE(RT : TYP; F : FIELD; A, CT : STRING; R : out TEXT) is
+      BITS : TEXT;
+   begin
+      if A = "POSITION" then
+         R := MK("((rt_int)offsetof(" & CT & ", " & C_FIELD(F.NAME.all) & "))");
+      elsif A = "FIRST_BIT" then
+         R := MK("((rt_int)0)");
+      else
+         R := MK("((rt_int)(sizeof(((" & CT & " *)0)->" & C_FIELD(F.NAME.all) & ") * 8 - 1))");
+      end if;
+   end COMPONENT_PLACE;
+
+   -- the representation of "no value" of a scalar type (RM79 11.1)
+   function NO_VALUE(T : TYP) return STRING is
+   begin
+      if T.KIND = T_FLOAT or T.KIND = T_FIXED then
+         return "RT_G_NOVALUE_F";
+      elsif T.KIND = T_INT then
+         return "INT64_MIN";
+      end if;
+      return "INT_MIN";
+   end NO_VALUE;
+
    -- the C type of the components of an array: characters are packed in
    -- bytes, as STRING is (RM79 3.6.3, 13.1)
    procedure ELEM_CTYPE(T : TYP; R : out TEXT) is
@@ -844,7 +940,13 @@
    -- STRING and the types derived from it (RM79 3.6.3)
    function IS_STRING(T : TYP) return BOOLEAN is
    begin
-      return T /= null and then T.KIND = T_ARRAY and then DERIVED_FROM(T, TY_STRING);
+      if not (T /= null) then
+         return FALSE;
+      end if;
+      if not (T.KIND = T_ARRAY) then
+         return FALSE;
+      end if;
+      return DERIVED_FROM(T, TY_STRING);
    end IS_STRING;
 
    -- S with every @@ replaced by R: the record a component's constraint or
@@ -995,7 +1097,7 @@
                Y.T := F.T;
                Y.C := F.C;
                BIND(Y, ACC);
-               if COMPOSITE(F.T) and (F.C = null or else F.C.LO = null) then
+               if COMPOSITE(F.T) and not BOUNDED(F.C) then
                   COPY_CODE(F.T, V.all, X);
                   EMIT(ACC.all & " = " & X.all & ";");
                else
@@ -1185,6 +1287,9 @@
    begin
       if T.KIND = T_PTR then
          EMIT(LVAL & " = NULL;");
+      elsif IS_NUMERIC(T) or IS_DISCRETE(T) then
+         -- no value yet: reading it raises NO_VALUE_ERROR (RM79 11.1)
+         EMIT(LVAL & " = " & NO_VALUE(T) & ";");
       elsif T.KIND = T_ARRAY then
          if C = null or else C.LO = null then
             FAIL(0, "an array object needs an index constraint (RM79 3.6)");
@@ -1192,17 +1297,25 @@
          ELEM_CTYPE(T.ELEM, CT);
          EMIT(LVAL & ".lo = " & C.LO.all & "; " & LVAL & ".hi = " & C.HI.all & ";");
          EC := T.ELEMCONS;
-         if T.DIMS > 1 and C.INNER /= null and then C.INNER.LO /= null then
+         if T.DIMS > 1 and BOUNDED(C.INNER) then
             EC := C.INNER;
          end if;
-         if T.DIMS > 1 and EC /= null and then EC.LO /= null then
+         if T.DIMS > 1 and BOUNDED(EC) then
             -- the bounds of the second index, also known when there is no row
             EMIT(LVAL & ".lo2 = " & EC.LO.all & "; " & LVAL & ".hi2 = " & EC.HI.all & ";");
          else
             EMIT(LVAL & ".lo2 = 1; " & LVAL & ".hi2 = 1;");
          end if;
          EMIT(LVAL & ".p = rt_alloc(sizeof(" & CT.all & ") * (size_t)G_CNT(" & LVAL & "));");
-         if T.ELEM.KIND = T_ARRAY or T.ELEM.KIND = T_RECORD then
+         if IS_NUMERIC(T.ELEM) or IS_DISCRETE(T.ELEM) then
+            NEW_NAME("i", I);
+            if T.ELEM.KIND = T_CHAR then
+               EMIT("memset(" & LVAL & ".p, 0xFF, (size_t)G_CNT(" & LVAL & "));");
+            else
+               EMIT("for (rt_int " & I.all & " = 0; " & I.all & " < G_CNT(" & LVAL & "); " & I.all & "++) "
+                    & LVAL & ".p[" & I.all & "] = " & NO_VALUE(T.ELEM) & ";");
+            end if;
+         elsif T.ELEM.KIND = T_ARRAY or T.ELEM.KIND = T_RECORD then
             NEW_NAME("i", I);
             EMIT("for (rt_int " & I.all & " = 0; " & I.all & " < G_CNT(" & LVAL & "); " & I.all & "++) {");
             INIT_STORAGE(LVAL & ".p[" & I.all & "]", T.ELEM, EC);
@@ -1225,7 +1338,7 @@
          F := T.FIELDS;
          while F /= null loop
             SUBST_CONS(F.C, LVAL, FC);
-            if F.DYN and (C = null or else C.DV = null) then
+            if F.DYN and not DISCRIMINATED(C) then
                -- an unconstrained object: the arrays that depend on its
                -- discriminants are empty until it is assigned as a whole
                EMIT(LVAL & "." & C_FIELD(F.NAME.all) & ".lo = 1; " & LVAL & "." & C_FIELD(F.NAME.all)
@@ -1255,7 +1368,7 @@
       CT, X : TEXT;
       D : DVAL;
    begin
-      if T.KIND = T_RECORD and C /= null and then C.DV /= null then
+      if T.KIND = T_RECORD and DISCRIMINATED(C) then
          -- the discriminants of a constrained record do not change (RM79 3.7.3, 5.1)
          CTYPE(T, CT);
          X := MK("{ " & CT.all & " dv_ = " & V & ";");
@@ -1268,9 +1381,9 @@
       elsif COMPOSITE(T) then
          CTYPE(T, CT);
          R := MK("as_" & T.CNAME.all & "(&" & LVAL & ", " & V & ");");
-      elsif (T.KIND = T_INT or T.KIND = T_ENUM or T.KIND = T_CHAR) and C /= null and then C.LO /= null then
+      elsif (T.KIND = T_INT or T.KIND = T_ENUM or T.KIND = T_CHAR) and BOUNDED(C) then
          R := MK(LVAL & " = rt_range(" & V & ", " & C.LO.all & ", " & C.HI.all & ");");
-      elsif (T.KIND = T_FLOAT or T.KIND = T_FIXED) and C /= null and then C.LO /= null then
+      elsif (T.KIND = T_FLOAT or T.KIND = T_FIXED) and BOUNDED(C) then
          R := MK(LVAL & " = rt_frange(" & V & ", " & C.LO.all & ", " & C.HI.all & ");");
       else
          R := MK(LVAL & " = " & V & ";");
@@ -1332,6 +1445,15 @@
                PUT_TO(OUT_HELPERS, "static " & T.CNAME.all & " cat_" & T.CNAME.all & "(" & T.CNAME.all & " a, "
                       & T.CNAME.all & " b);");
                PUT_TO(OUT_HELPERS, "static " & T.CNAME.all & " one_" & T.CNAME.all & "(" & ET.all & " e);");
+               if T.ELEM.KIND = T_BOOL then
+                  PUT_TO(OUT_HELPERS, "static " & T.CNAME.all & " and_" & T.CNAME.all & "(" & T.CNAME.all & " a, "
+                         & T.CNAME.all & " b);");
+                  PUT_TO(OUT_HELPERS, "static " & T.CNAME.all & " or_" & T.CNAME.all & "(" & T.CNAME.all & " a, "
+                         & T.CNAME.all & " b);");
+                  PUT_TO(OUT_HELPERS, "static " & T.CNAME.all & " xor_" & T.CNAME.all & "(" & T.CNAME.all & " a, "
+                         & T.CNAME.all & " b);");
+                  PUT_TO(OUT_HELPERS, "static " & T.CNAME.all & " not_" & T.CNAME.all & "(" & T.CNAME.all & " a);");
+               end if;
             end if;
             HELPER_BODIES(T);
          end if;
@@ -1367,6 +1489,20 @@
          PUT_TO(B, "  for (rt_int i = 0; i < G_CNT(a); i++) if (!(" & X.all & ")) return 0;");
          PUT_TO(B, "  return 1;");
          PUT_TO(B, "}");
+         if T.DIMS = 1 and T.ELEM.KIND = T_BOOL then
+            -- and, or, xor, not of boolean arrays (RM79 4.5.1)
+            PUT_TO(B, "static " & C.all & " and_" & C.all & "(" & C.all & " a, " & C.all & " b) { " & C.all
+                   & " r = cp_" & C.all & "(a); if (G_CNT(a) != G_CNT(b)) rt_raise_msg(RT_X_SUBTYPE, "
+                   & Q & "array length" & Q & "); for (rt_int i = 0; i < G_CNT(a); i++) r.p[i] = a.p[i] && b.p[i]; return r; }");
+            PUT_TO(B, "static " & C.all & " or_" & C.all & "(" & C.all & " a, " & C.all & " b) { " & C.all
+                   & " r = cp_" & C.all & "(a); if (G_CNT(a) != G_CNT(b)) rt_raise_msg(RT_X_SUBTYPE, "
+                   & Q & "array length" & Q & "); for (rt_int i = 0; i < G_CNT(a); i++) r.p[i] = a.p[i] || b.p[i]; return r; }");
+            PUT_TO(B, "static " & C.all & " xor_" & C.all & "(" & C.all & " a, " & C.all & " b) { " & C.all
+                   & " r = cp_" & C.all & "(a); if (G_CNT(a) != G_CNT(b)) rt_raise_msg(RT_X_SUBTYPE, "
+                   & Q & "array length" & Q & "); for (rt_int i = 0; i < G_CNT(a); i++) r.p[i] = a.p[i] != b.p[i]; return r; }");
+            PUT_TO(B, "static " & C.all & " not_" & C.all & "(" & C.all & " a) { " & C.all & " r = cp_" & C.all
+                   & "(a); for (rt_int i = 0; i < G_CNT(a); i++) r.p[i] = !a.p[i]; return r; }");
+         end if;
          if T.DIMS = 1 then
             -- catenation (RM79 4.5.3): the lower bound is that of the left
             -- operand, unless it is empty; a component is an array of one

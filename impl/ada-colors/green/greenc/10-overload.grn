@@ -103,7 +103,7 @@
    -- module P
    procedure RESOLVE_MEMBER_OVERLOAD(P, NAME : STRING; ARGS : NODE; IS_STMT : BOOLEAN; WANT : TYP;
                                      LINE : INTEGER; Y : in out SYM) is
-      PK : SYM := LOOKUP(P);
+      PK : SYM := LOOKUP_PATH(P);
       Z : SYM;
       N : INTEGER := 0;
       OK : BOOLEAN;

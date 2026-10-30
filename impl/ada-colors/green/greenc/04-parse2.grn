@@ -425,7 +425,11 @@
                NAME_NODE(N);
                while AT_OP(".") loop
                   SKIP;
-                  N.TAG := N.NAME;
+                  if N.TAG = null then
+                     N.TAG := N.NAME;
+                  else
+                     N.TAG := MK(N.TAG.all & "." & N.NAME.all);
+                  end if;
                   EXPECT_ID(N.NAME);
                end loop;
             end if;

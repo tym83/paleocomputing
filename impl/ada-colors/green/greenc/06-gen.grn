@@ -208,7 +208,7 @@
                DEFINE(Y, E.LINE);
                return;
             end if;
-            if T.KIND = T_ARRAY and (C = null or else C.LO = null) and E.B /= null then
+            if (T.KIND = T_ARRAY and not BOUNDED(C)) and E.B /= null then
                -- the bounds come from the initial value (RM79 3.6)
                VRP_OK := TRUE;
                GEXPR(E.B, T, VT, V);
@@ -291,7 +291,7 @@
             if E.A /= null then
                -- a renaming is the same exception under another name (RM79 8.5)
                if E.A.KIND = N_SELECT and then IS_PACKAGE(E.A.A) then
-                  Y := MEMBER_OF(E.A.A.NAME.all, E.A.NAME.all, E.LINE);
+                  Y := MEMBER_OF(PATH_OF(E.A.A), E.A.NAME.all, E.LINE);
                elsif E.A.KIND = N_NAME then
                   Y := LOOKUP(E.A.NAME.all);
                else
@@ -367,6 +367,15 @@
 
    -- ---- subprogram bodies (RM79 6.4) ------------------------------------------------
 
+   -- a body whose statements are only pragma INTERFACE (RM79 13.9)
+   function IS_FOREIGN(D : NODE) return BOOLEAN is
+   begin
+      if D.TAG = null then
+         return FALSE;
+      end if;
+      return D.TAG.all = "INTERFACE";
+   end IS_FOREIGN;
+
    procedure SUBPROGRAM_BODY(D : NODE; Y : SYM) is
       SAVED_CODE : BUFFER := CODE;
       SAVED_FIELDS : BUFFER := FIELDS_BUF;
@@ -398,6 +407,7 @@
       CUR_LEVEL := CUR_LEVEL + 1;
       ARGS := MK("");
       OPEN_SCOPE;
+      PUSH_UNIT(D.NAME);
       if Y.KIND = Y_FUNC and not Y.VRP then
          -- a function has no side effects (RM79 6.5)
          PURE_SYM := Y;
@@ -440,7 +450,7 @@
          PUT_TO(FIELDS_BUF, " " & CT.all & " result_;");
       end if;
       DECL_ELEMENTS(D.C);
-      if D.TAG /= null and then D.TAG.all = "INTERFACE" and Y.RESULT.KIND = T_VOID then
+      if IS_FOREIGN(D) and Y.RESULT.KIND = T_VOID then
          -- the foreign body is the runtime's rt_g_<name> (RM79 13.9)
          X := MK("");
          PM := Y.PARAMS;
@@ -460,6 +470,7 @@
          GUARDED(D.D, D.E, D.LINE);
       end if;
       TASK_AWAITS(D.C, AW);
+      NUNITS := NUNITS - 1;
       CLOSE_SCOPE;
       CUR_LEVEL := CUR_LEVEL - 1;
       if ARGS'LENGTH = 0 then
@@ -680,7 +691,7 @@
             EMIT("rt_raise(" & HANDLERS.S.all & ");");
          when 30 =>
             -- assert raises ASSERT_ERROR (RM79 5.9)
-            GEXPR(S.A, TY_BOOL, VT, V);
+            CONDITION(S.A, TY_BOOL, VT, V);
             CHECK_TYPE(VT, TY_BOOL, S.LINE);
             EMIT("if (!(" & V.all & ")) rt_raise(RT_X_ASSERT);");
          when 31 =>
@@ -739,7 +750,7 @@
       V : TEXT;
    begin
       while A /= null loop
-         GEXPR(A.A, TY_BOOL, T, V);
+         CONDITION(A.A, TY_BOOL, T, V);
          CHECK_TYPE(T, TY_BOOL, S.LINE);
          if FIRST then
             EMIT("if (" & V.all & ") {");
@@ -828,7 +839,7 @@
          GEN_STATEMENTS(S.B);
          EMIT("}");
       elsif S.FLAG = 1 then
-         GEXPR(S.A, TY_BOOL, VT, COND);
+         CONDITION(S.A, TY_BOOL, VT, COND);
          CHECK_TYPE(VT, TY_BOOL, S.LINE);
          EMIT("while (" & COND.all & ") {");
          GEN_STATEMENTS(S.B);
@@ -882,15 +893,31 @@
       PUSH_EXIT(S.TAG, FALSE, LABEL);
       EMIT("{");
       OPEN_SCOPE;
+      if S.TAG /= null then
+         PUSH_UNIT(S.TAG);
+      end if;
       DECL_ELEMENTS(S.A);
       GUARDED(S.B, S.C, S.LINE);
       TASK_AWAITS(S.A, AW);
       EMIT(AW.all);
+      if S.TAG /= null then
+         NUNITS := NUNITS - 1;
+      end if;
       CLOSE_SCOPE;
       EMIT("}");
       EXITS := EXITS.NEXT;
       EMIT(LABEL.all & ": ;");
    end GEN_BLOCK;
+
+   function EXIT_MATCHES(S : NODE; X : EXITS_T) return BOOLEAN is
+   begin
+      if S.NAME = null then
+         return X.IS_LOOP;
+      elsif X.MATCH = null then
+         return FALSE;
+      end if;
+      return X.MATCH.all = S.NAME.all;
+   end EXIT_MATCHES;
 
    -- exit [loop name] [when condition] (RM79 5.7)
    procedure GEN_EXIT(S : NODE) is
@@ -902,10 +929,9 @@
          if ACCEPT_DEPTH > 0 and X = ACCEPT_EXITS then
             FAIL(S.LINE, "an exit statement cannot leave an accept statement (RM79 5.7)");
          end if;
-         if (S.NAME = null and X.IS_LOOP) or else (S.NAME /= null and then X.MATCH /= null
-            and then X.MATCH.all = S.NAME.all) then
+         if EXIT_MATCHES(S, X) then
             if S.A /= null then
-               GEXPR(S.A, TY_BOOL, T, V);
+               CONDITION(S.A, TY_BOOL, T, V);
                CHECK_TYPE(T, TY_BOOL, S.LINE);
                EMIT("if (" & V.all & ") {");
             end if;

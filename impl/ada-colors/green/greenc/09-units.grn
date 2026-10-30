@@ -1,18 +1,50 @@
    -- ---- packages (RM79 7) -------------------------------------------------------------
 
+   -- the module named by P or P.Q.R (RM79 4.1.2)
+   function LOOKUP_PATH(P : STRING) return SYM is
+      Y, M : SYM;
+   begin
+      for I in reverse P'FIRST .. P'LAST loop
+         if P(I) = "." then
+            Y := LOOKUP_PATH(P(P'FIRST .. I - 1));
+            if Y = null then
+               return null;
+            elsif Y.KIND /= Y_PACKAGE and Y.KIND /= Y_TASK then
+               return null;
+            end if;
+            M := Y.MEMBERS;
+            while M /= null loop
+               if M.NAME.all = P(I + 1 .. P'LAST) and not M.HIDDEN then
+                  return M;
+               end if;
+               M := M.MNEXT;
+            end loop;
+            return null;
+         end if;
+      end loop;
+      return LOOKUP(P);
+   end LOOKUP_PATH;
+
    function IS_PACKAGE(E : NODE) return BOOLEAN is
       Y : SYM;
    begin
-      if E.KIND /= N_NAME then
+      if E.KIND /= N_NAME and E.KIND /= N_SELECT then
+         return FALSE;
+      elsif E.KIND = N_SELECT then
+         if E.A.KIND /= N_NAME and E.A.KIND /= N_SELECT then
+            return FALSE;
+         end if;
+      end if;
+      Y := LOOKUP_PATH(PATH_OF(E));
+      if not (Y /= null) then
          return FALSE;
       end if;
-      Y := LOOKUP(E.NAME.all);
-      return Y /= null and then (Y.KIND = Y_PACKAGE or Y.KIND = Y_TASK);
+      return (Y.KIND = Y_PACKAGE or Y.KIND = Y_TASK);
    end IS_PACKAGE;
 
    -- a declaration of the visible part of package P
    function MEMBER_OF(P, NAME : STRING; LINE : INTEGER) return SYM is
-      Y : SYM := LOOKUP(P);
+      Y : SYM := LOOKUP_PATH(P);
       M : SYM;
    begin
       if Y = null or else (Y.KIND /= Y_PACKAGE and Y.KIND /= Y_TASK) then
@@ -169,6 +201,14 @@
       CUR_PKG := SAVED;
    end PACKAGE_BODY;
 
+   function USE_VISIBLE(OLD : SYM) return BOOLEAN is
+   begin
+      if OLD = null then
+         return TRUE;
+      end if;
+      return OLD.DEPTH < DEPTH and OLD.KIND /= Y_VAR and OLD.KIND /= Y_CONST;
+   end USE_VISIBLE;
+
    -- use M; the visible declarations of module M become directly visible, but never
    -- hide another declaration (RM79 8.4)
    procedure USE_CLAUSE(E : NODE) is
@@ -188,8 +228,7 @@
             M := Y.MEMBERS;
             while M /= null loop
                OLD := LOOKUP(M.NAME.all);
-               if not M.HIDDEN and then (OLD = null or else (OLD.DEPTH < DEPTH
-                  and then OLD.KIND /= Y_VAR and then OLD.KIND /= Y_CONST)) then
+               if not M.HIDDEN and then USE_VISIBLE(OLD) then
                   COPY_SYM(M, Z);
                   Z.FROM_USE := TRUE;
                   DEFINE(Z, N.LINE);

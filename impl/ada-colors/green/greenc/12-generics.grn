@@ -172,7 +172,10 @@
    function IS_GENERIC_NAME(N : STRING) return BOOLEAN is
       Y : SYM := LOOKUP(N);
    begin
-      return Y /= null and then Y.KIND = Y_GENERIC;
+      if not (Y /= null) then
+         return FALSE;
+      end if;
+      return Y.KIND = Y_GENERIC;
    end IS_GENERIC_NAME;
 
    -- the declarations visible at the body are kept too: an instance's body
@@ -245,6 +248,15 @@
       R.NEXT := null;
    end COPY_NODE;
 
+   -- a subprogram that matches a generic formal subprogram (RM79 12.2)
+   function MATCHES_FORMAL(Y : SYM; NAME : STRING; FS : SYM) return BOOLEAN is
+   begin
+      if Y.NAME.all /= NAME or (Y.KIND /= Y_FUNC and Y.KIND /= Y_PROC) then
+         return FALSE;
+      end if;
+      return SAME_SIGNATURE(Y.PARAMS, FS.PARAMS) and SAME(Y.RESULT, FS.RESULT);
+   end MATCHES_FORMAL;
+
    procedure INSTANTIATE(E : NODE) is
       G : SYM := LOOKUP(E.TAG.all);
       GD, PAT, F, A, CN : NODE;
@@ -287,8 +299,7 @@
             end if;
             BUILD_SUBPROGRAM(F.A, FS);
             Y := TABLE(HASH(A.NAME.all));
-            while Y /= null and then not (Y.NAME.all = A.NAME.all and then (Y.KIND = Y_FUNC or Y.KIND = Y_PROC)
-               and then SAME_SIGNATURE(Y.PARAMS, FS.PARAMS) and then SAME(Y.RESULT, FS.RESULT)) loop
+            while Y /= null and then not MATCHES_FORMAL(Y, A.NAME.all, FS) loop
                Y := Y.CHAIN;
             end loop;
             if Y = null then

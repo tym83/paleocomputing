@@ -14,8 +14,9 @@ s/^      end record;$/&\
    -- the memory the channel writes (for BUFFER use at 8#500)\
    subtype INDEX is INTEGER range 0 .. 63;\
    BUFFER: array (INDEX'FIRST .. INDEX'LAST) of ITEM;\
-   HEAD, TAIL: INTEGER range 8#500 .. 8#677;\
-      -- initialized to 8#500 by I\/O channel\
+   HEAD, TAIL: INTEGER range 8#500 .. 8#677 := 8#500;\
+      -- initialized to 8#500 by I\/O channel, before POLLING can read\
+      -- them (a variable without a value raises NO_VALUE_ERROR, RM79 11.1)\
    KEYBOARD_ENABLED : BOOLEAN := TRUE;/
 # ENABLE and DISABLE are "separate" and their subunits are not given
 s/^      procedure ENABLE  is separate; -- restore keyboard input$/      procedure ENABLE is  -- restore keyboard input\

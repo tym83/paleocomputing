@@ -352,6 +352,11 @@ procedure GREENC is
    AGG_BOUNDS : TEXT;
    -- the discriminants visible while a record type definition is elaborated
    DISC_SYMS : SYM;
+   -- the enclosing subprograms and named blocks and the depth of their
+   -- declarations, for expanded names M.X (RM79 4.1.2)
+   UNIT_NAMES : array (1 .. 1000) of TEXT;
+   UNIT_DEPTHS : array (1 .. 1000) of INTEGER;
+   NUNITS : INTEGER := 0;
    CUR_TASK : SYM;
    ACCEPT_DEPTH : INTEGER := 0;
    FAMARG_DONE : BOOLEAN := FALSE;

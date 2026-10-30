@@ -223,15 +223,17 @@
          C := LINE(I);
          if C = " " or C = HT or C = CR or C = FF then
             I := I + 1;
-         elsif C = "-" and I < N and then LINE(I + 1) = "-" then
+         elsif (C = "-" and I < N) and then LINE(I + 1) = "-" then
             I := N + 1;                              -- a comment (RM79 2.6)
          elsif IS_LETTER(C) then
             -- identifier ::= letter {[underscore] letter_or_digit} (RM79 2.3)
             J := I;
             BL := 0;
             while J <= N and then (IS_LETTER(LINE(J)) or IS_DIGIT(LINE(J)) or LINE(J) = "_") loop
-               if LINE(J) = "_" and then (J = N or else not (IS_LETTER(LINE(J + 1)) or IS_DIGIT(LINE(J + 1)))) then
-                  FAIL(SRC_LINE, "an underscore in an identifier stands between two letters or digits (RM79 2.3)");
+               if LINE(J) = "_" then
+                  if J = N or else not (IS_LETTER(LINE(J + 1)) or IS_DIGIT(LINE(J + 1))) then
+                     FAIL(SRC_LINE, "an underscore in an identifier stands between two letters or digits (RM79 2.3)");
+                  end if;
                end if;
                BL := BL + 1;
                BUF(BL) := UPPER(LINE(J));
@@ -304,13 +306,11 @@
                   end if;
                   J := J + 1;
                end loop;
-               if J < N and then ((LINE(J) = "E" or LINE(J) = "e") and (IS_DIGIT(LINE(J + 1))
-                  or (J + 1 < N and then ((LINE(J + 1) = "+" or LINE(J + 1) = "-") and IS_DIGIT(LINE(J + 2)))))) then
+               if EXPONENT_AHEAD(LINE, J) then
                   EXPONENT(LINE, J, BUF, BL);
                end if;
                ADD_TOKEN(K_FLOAT, BUF(1 .. BL), 0);
-            elsif J < N and then ((LINE(J) = "E" or LINE(J) = "e") and (IS_DIGIT(LINE(J + 1))
-               or (J + 1 < N and then ((LINE(J + 1) = "+" or LINE(J + 1) = "-") and IS_DIGIT(LINE(J + 2)))))) then
+            elsif EXPONENT_AHEAD(LINE, J) then
                -- 1E6 and 1E-3 are approximate numbers (RM79 2.4)
                EXPONENT(LINE, J, BUF, BL);
                ADD_TOKEN(K_FLOAT, BUF(1 .. BL), 0);
@@ -380,6 +380,21 @@
       end loop;
    end LEX_LINE;
 
+   -- does an exponent E [+|-] digit begin at LINE(J)?
+   function EXPONENT_AHEAD(LINE : STRING; J : INTEGER) return BOOLEAN is
+   begin
+      if J >= LINE'LENGTH then
+         return FALSE;
+      elsif LINE(J) /= "E" and LINE(J) /= "e" then
+         return FALSE;
+      elsif IS_DIGIT(LINE(J + 1)) then
+         return TRUE;
+      elsif J + 1 >= LINE'LENGTH then
+         return FALSE;
+      end if;
+      return (LINE(J + 1) = "+" or LINE(J + 1) = "-") and IS_DIGIT(LINE(J + 2));
+   end EXPONENT_AHEAD;
+
    -- E [+|-] integer, appended to the approximate number in BUF
    procedure EXPONENT(LINE : STRING; J : in out INTEGER; BUF : in out STRING; BL : in out INTEGER) is
    begin
@@ -422,9 +437,10 @@
       if NTOKS < 6 then
          return;
       end if;
-      if not (TOKS(NTOKS - 5).KIND = K_KW and then TOKS(NTOKS - 5).S.all = "PRAGMA"
-         and then TOKS(NTOKS - 4).S.all = "INCLUDE" and then TOKS(NTOKS - 3).S.all = "("
-         and then TOKS(NTOKS - 2).KIND = K_STR and then TOKS(NTOKS - 1).S.all = ")") then
+      if TOKS(NTOKS - 5).KIND /= K_KW or TOKS(NTOKS - 2).KIND /= K_STR then
+         return;
+      elsif TOKS(NTOKS - 5).S.all /= "PRAGMA" or TOKS(NTOKS - 4).S.all /= "INCLUDE"
+         or TOKS(NTOKS - 3).S.all /= "(" or TOKS(NTOKS - 1).S.all /= ")" then
          return;
       end if;
       INCLUDE_OPEN(TOKS(NTOKS - 2).S.all, N);

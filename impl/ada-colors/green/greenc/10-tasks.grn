@@ -205,7 +205,10 @@
    function IS_TASK_NAME(N : STRING) return BOOLEAN is
       Y : SYM := LOOKUP(N);
    begin
-      return Y /= null and then Y.KIND = Y_TASK;
+      if not (Y /= null) then
+         return FALSE;
+      end if;
+      return Y.KIND = Y_TASK;
    end IS_TASK_NAME;
 
    -- a task designator: T, a family F (all members), F(I), or F(lo .. hi)
@@ -543,7 +546,7 @@
       while M /= null loop
          COPY_SYM(M, Z);
          DEFINE(Z, E.LINE);
-         if (M.KIND = Y_FUNC or M.KIND = Y_PROC) and M.ACCESS_PATH /= null and then SAME_TASK(M.MEMBERS, Y) then
+         if ((M.KIND = Y_FUNC or M.KIND = Y_PROC) and M.ACCESS_PATH /= null) and then SAME_TASK(M.MEMBERS, Y) then
             -- the statement runs in the body, whose frame is linked to the
             -- frame where the task is declared
             if Y.LEVEL > 0 then
@@ -585,7 +588,7 @@
    begin
       AW := MK("");
       while E /= null loop
-         if E.KIND = N_TASKSPEC or (E.KIND = N_INST and then E.IVAL = N_TASKSPEC) then
+         if E.KIND = N_TASKSPEC or (E.KIND = N_INST and E.IVAL = N_TASKSPEC) then
             Y := LOOKUP(E.NAME.all);
             PATH_AT(Y.LEVEL, Y.CNAME.all & "decl", P);
             AW := MK(AW.all & " rt_await_decl(&" & P.all & ");");
@@ -641,7 +644,7 @@
             Y := MEMBER_OF(E.TAG.all, E.NAME.all, E.LINE);
          end if;
       elsif E.KIND = N_SELECT and then IS_PACKAGE(E.A) then
-         Y := MEMBER_OF(E.A.NAME.all, E.NAME.all, E.LINE);
+         Y := MEMBER_OF(PATH_OF(E.A), E.NAME.all, E.LINE);
       else
          Y := null;
       end if;
@@ -923,7 +926,7 @@
       while ALT /= null loop
          G := MK("1");
          if ALT.A /= null then
-            GEXPR(ALT.A, TY_BOOL, VT, G);
+            CONDITION(ALT.A, TY_BOOL, VT, G);
             CHECK_TYPE(VT, TY_BOOL, ALT.LINE);
          end if;
          if ALT.B.KIND = N_ACCEPT then
