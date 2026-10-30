@@ -270,6 +270,23 @@ whose top 8192 words (BASE8 160000 on) are the PDP-11 I/O page of the Report's e
 - Arrays take up to 8 dimensions, alphabets up to 256 characters, string literals up to
   65536 characters: beyond, a translation error.
 
+- Trap handlers (XIV.X.3): a procedure without parameters named TRAP_ and the exception, declared
+  with REPLACES in the outermost scope of a segment (`PROCEDURE REPLACES TRAP_OVERFLOW ()`),
+  replaces the standard handler, which propagates the exception. It is called where the trap
+  happens; it may propagate an exception there, or RETURN to resume the operation: a value out
+  of range becomes the nearest bound (a subscript too), an integer overflow wraps, a division
+  by zero gives 0, a fixed-point value not representable is rounded to its scale, an
+  activation beyond INSTANCES is not made, storage beyond SIZE is used; an invalid pointer and
+  an address that names nothing cannot be resumed, and the exception follows the handler.
+  Traps: OUT_OF_RANGE, OVERFLOW, ZERO_DIVIDE, INVALID_POINTER, FIXED_NOT_REPRESENTABLE,
+  TOO_MANY_PROCESS_INSTANCES, TOO_LITTLE_LOCAL_STORAGE, ADDRESS_VIOLATION, UNINITIALIZED.
+- The compiler status module of the prelude, CompilerStatus (XIV.XIII.2): SUPPRESS_TRAP(t)
+  and RESTORE_TRAP(t) are directives to the translator from the call to the end of the
+  block (and the bodies declared there); TRAP_SUPPRESSED(t) tells the state. Suppressing
+  RANGE_TRAP, OVERFLOW_TRAP or ASSERTION_TRAP leaves out the code that detects them (an
+  ASSERT then has no effect, IX.A.3); INDEX_TRAP, POINTER_TRAP and ZERO_DIVIDE_TRAP are kept,
+  since leaving them out would let a program reach storage it does not own.
+
 Code inserts: the machine of this implementation is C, so `C_CODE_INSERT("...")`
 puts C text in the program, `$name` standing for a variable, constant or parameter.
 

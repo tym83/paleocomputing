@@ -193,8 +193,8 @@
         (* enumeration ends at its first and last literal (XI) *)
         r := Unbounded(ra);
         SB();
-        IF ra^.kind # R_INT THEN SA("rt_range(") ENDIF;
-        IF f = F_SUCC THEN SA("rt_add(") ELSE SA("rt_sub(") ENDIF;
+        IF ra^.kind # R_INT THEN SA("y_range(") ENDIF;
+        IF f = F_SUCC THEN SA("y_add(") ELSE SA("y_sub(") ENDIF;
         ST(a);
         SA(", 1)");
         IF ra^.kind # R_INT THEN

@@ -162,3 +162,18 @@ MODULE TextIO
 
   OPEN(Out, "OUTPUT", WRITE)
 ENDMODULE TextIO;
+
+(* the compiler status module (XIV.XIII.2): directives to the translator, *)
+(* in effect from the call to the end of the enclosing block. Suppressing *)
+(* RANGE_TRAP, OVERFLOW_TRAP or ASSERTION_TRAP leaves out the code that *)
+(* detects the trap; the other traps are always detected here, since *)
+(* leaving them out would let a program reach storage it does not own *)
+MODULE CompilerStatus
+  EXPORT TRANSPARENT TRAP_KIND;
+  EXPORT SUPPRESS_TRAP, RESTORE_TRAP, TRAP_SUPPRESSED;
+  REPRESENTATION TRAP_KIND = UNORDERED (RANGE_TRAP, OVERFLOW_TRAP, ASSERTION_TRAP, INDEX_TRAP,
+                                        POINTER_TRAP, ZERO_DIVIDE_TRAP);
+  PROCEDURE SUPPRESS_TRAP (CONST t: TRAP_KIND) RETURN ENDPROCEDURE SUPPRESS_TRAP;
+  PROCEDURE RESTORE_TRAP (CONST t: TRAP_KIND) RETURN ENDPROCEDURE RESTORE_TRAP;
+  FUNCTION TRAP_SUPPRESSED RETURNS BOOLEAN (CONST t: TRAP_KIND) RETURN FALSE ENDFUNCTION TRAP_SUPPRESSED
+ENDMODULE CompilerStatus;

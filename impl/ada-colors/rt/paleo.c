@@ -2635,7 +2635,11 @@ yarr y_fill(const ydesc *d, const void *v) {
 void *y_elem_at(yarr a, const ydesc *d, rt_int k) { return (char *)a.p + k * d->elem->size; }
 
 static rt_int y_ix(yarr a, int k, rt_int i) {
-  if (i < a.lo[k] || i > a.hi[k]) rt_raise(RT_X_SUBSCRIPT);
+  if (i < a.lo[k] || i > a.hi[k]) {
+    if (a.hi[k] < a.lo[k]) rt_raise(RT_X_SUBSCRIPT);
+    y_trap(RT_X_SUBSCRIPT);                /* resumed: the nearest bound */
+    i = i < a.lo[k] ? a.lo[k] : a.hi[k];
+  }
   return i - a.lo[k];
 }
 
@@ -3131,7 +3135,10 @@ static void y_task_start(void *arg) {
 
 void y_create(rt_taskdecl *d, rt_int limit, int has_prio, rt_int prio, rt_int size,
               void (*fn)(void *), void *frame) {
-  if (limit > 0 && d->live >= limit) rt_raise(Y_X_INSTANCES);
+  if (limit > 0 && d->live >= limit) {
+    y_trap(Y_X_INSTANCES);
+    return;                                /* resumed: no new instance */
+  }
   rt_act *a = rt_alloc(sizeof *a);
   ystart *s = rt_alloc(sizeof *s);
   s->fn = fn;
@@ -3157,7 +3164,7 @@ void y_slice(void) {
   check_terminate();
 }
 
-void y_storage_trap(void) { rt_raise(Y_X_STORAGE); }
+void y_storage_trap(void) { y_trap(Y_X_STORAGE); }
 
 /* every process waits: the trap Deadlock (Appendix C) is raised in the main
  * process, which may handle it, instead of ending the program */
@@ -3211,7 +3218,10 @@ void *y_new(size_t n) {
 
 void *y_deref(void *p) {
   ycell *c = p;
-  if (!c || !c->body) rt_raise(RT_X_NIL);
+  if (!c || !c->body) {
+    y_trap(RT_X_NIL);
+    rt_raise(RT_X_NIL);                    /* no resuming: nothing to follow */
+  }
   return c->body;
 }
 
@@ -3248,6 +3258,108 @@ void *y_cell(void *body) {
   cells[ncells].c = c;
   ncells++;
   return c;
+}
+
+/* ---- trap handlers (XIV.X.3) ----------------------------------------------- */
+
+static struct {
+  int id;
+  void (*h)(void);
+} traps[64];
+static int ntraps;
+
+void y_trap_install(int id, void (*handler)(void)) {
+  for (int i = 0; i < ntraps; i++)
+    if (traps[i].id == id) {
+      traps[i].h = handler;
+      return;
+    }
+  if (ntraps < 64) {
+    traps[ntraps].id = id;
+    traps[ntraps].h = handler;
+    ntraps++;
+  }
+}
+
+/* a trap: the program's handler for it, or the standard one, which
+ * propagates the exception */
+int y_trap(int id) {
+  for (int i = 0; i < ntraps; i++)
+    if (traps[i].id == id) {
+      traps[i].h();
+      return 1;
+    }
+  rt_raise(id);
+}
+
+rt_int y_range(rt_int v, rt_int lo, rt_int hi) {
+  if (v < lo || v > hi) {
+    y_trap(RT_X_RANGE);
+    return v < lo ? lo : hi;
+  }
+  return v;
+}
+
+double y_frange(double v, double lo, double hi) {
+  if (v < lo || v > hi) {
+    y_trap(RT_X_RANGE);
+    return v < lo ? lo : hi;
+  }
+  return v;
+}
+
+rt_int y_add(rt_int a, rt_int b) {
+  rt_int r;
+  if (__builtin_add_overflow(a, b, &r)) y_trap(RT_X_OVERFLOW);
+  return r;
+}
+
+rt_int y_sub(rt_int a, rt_int b) {
+  rt_int r;
+  if (__builtin_sub_overflow(a, b, &r)) y_trap(RT_X_OVERFLOW);
+  return r;
+}
+
+rt_int y_mul(rt_int a, rt_int b) {
+  rt_int r;
+  if (__builtin_mul_overflow(a, b, &r)) y_trap(RT_X_OVERFLOW);
+  return r;
+}
+
+rt_int y_neg(rt_int a) { return y_sub(0, a); }
+
+/* DIV is the floor of the quotient, MOD what is left (VIII.C) */
+rt_int y_div(rt_int a, rt_int b) {
+  if (b == 0) {
+    y_trap(RT_X_ZERO_DIVIDE);
+    return 0;
+  }
+  if (a == INT64_MIN && b == -1) {
+    y_trap(RT_X_OVERFLOW);
+    return a;
+  }
+  rt_int q = a / b;
+  if ((a % b != 0) && ((a < 0) != (b < 0))) q -= 1;
+  return q;
+}
+
+rt_int y_mod(rt_int a, rt_int b) {
+  if (b == 0) {
+    y_trap(RT_X_ZERO_DIVIDE);
+    return 0;
+  }
+  if (b == -1) return 0;
+  rt_int r = a % b;
+  if (r != 0 && ((r < 0) != (b < 0))) r += b;
+  return r;
+}
+
+double y_fdiv(double a, double b) {
+  if (b == 0) {
+    y_trap(RT_X_ZERO_DIVIDE);
+    return 0;
+  }
+  return a / b;
 }
 
 /* ---- the simulated machine ------------------------------------------------ */
@@ -3370,34 +3482,42 @@ const ydesc y_d_fix = {YK_FIX, sizeof(yfix), 0, 0, {0}, {0}, NULL, 0, NULL, NULL
 
 yfix y_fix_add(yfix a, yfix b) {
   yfix r;
-  if (__builtin_add_overflow(a, b, &r)) rt_raise(RT_X_OVERFLOW);
+  if (__builtin_add_overflow(a, b, &r)) y_trap(RT_X_OVERFLOW);
   return r;
 }
 
 yfix y_fix_sub(yfix a, yfix b) {
   yfix r;
-  if (__builtin_sub_overflow(a, b, &r)) rt_raise(RT_X_OVERFLOW);
+  if (__builtin_sub_overflow(a, b, &r)) y_trap(RT_X_OVERFLOW);
   return r;
 }
 
 yfix y_fix_mul(yfix a, yfix b) {
   yfix r;
-  if (__builtin_mul_overflow(a, b, &r)) rt_raise(RT_X_OVERFLOW);
+  if (__builtin_mul_overflow(a, b, &r)) y_trap(RT_X_OVERFLOW);
   return r;
 }
 
 yfix y_fix_neg(yfix a) { return y_fix_sub(0, a); }
 
 /* k * p / q, which must be a whole number */
+static yfix fix_round(yfix a, yfix b);
+
 yfix y_fix_conv(yfix k, yfix p, yfix q) {
   yfix t = y_fix_mul(k, p);
   if (q == 1) return t;
-  if (t % q != 0) rt_raise(Y_X_FIXED);
+  if (t % q != 0) {
+    y_trap(Y_X_FIXED);                     /* resumed: the nearest multiple */
+    return fix_round(t, q);
+  }
   return t / q;
 }
 
 yfix y_fix_range(yfix k, yfix lo, yfix hi) {
-  if (k < lo || k > hi) rt_raise(RT_X_RANGE);
+  if (k < lo || k > hi) {
+    y_trap(RT_X_RANGE);
+    return k < lo ? lo : hi;
+  }
   return k;
 }
 
@@ -3480,7 +3600,7 @@ rt_int y_fmt_fix(yfix k, rt_int sn, rt_int sd, rt_int decimals, unsigned char *b
 }
 
 double y_fchk(double v) {
-  if (isinf(v)) rt_raise(RT_X_OVERFLOW);
+  if (isinf(v)) y_trap(RT_X_OVERFLOW);
   return v;
 }
 

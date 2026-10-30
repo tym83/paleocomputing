@@ -546,6 +546,28 @@ void *y_mem_ptr(rt_int a);                     /* what address a names */
 rt_int *y_mem_word(rt_int a);                  /* MAIN_STORE_ARRAY [a] */
 extern int Y_X_ADDRESS;
 
+/* ---- trap handlers (XIV.X.3) ---------------------------------------------------
+ * The checks of compiled code go through these: a trap whose handler a program
+ * has replaced (PROCEDURE REPLACES TRAP_OVERFLOW ...) calls it where the trap
+ * happened; when it returns, the operation goes on with the result given
+ * below; the standard handler propagates the exception */
+void y_trap_install(int id, void (*handler)(void));
+int y_trap(int id);                            /* returns when resumed */
+rt_int y_range(rt_int v, rt_int lo, rt_int hi);  /* resumes with the nearest bound */
+double y_frange(double v, double lo, double hi);
+rt_int y_add(rt_int a, rt_int b);              /* overflow resumes wrapped */
+rt_int y_sub(rt_int a, rt_int b);
+rt_int y_mul(rt_int a, rt_int b);
+rt_int y_neg(rt_int a);
+rt_int y_div(rt_int a, rt_int b);              /* by zero resumes with 0 */
+rt_int y_mod(rt_int a, rt_int b);
+double y_fdiv(double a, double b);
+/* with the overflow trap suppressed: two's complement, no check */
+#define Y_ADDW(a, b) ((rt_int)((uint64_t)(a) + (uint64_t)(b)))
+#define Y_SUBW(a, b) ((rt_int)((uint64_t)(a) - (uint64_t)(b)))
+#define Y_MULW(a, b) ((rt_int)((uint64_t)(a) * (uint64_t)(b)))
+#define Y_NEGW(a) ((rt_int)(0 - (uint64_t)(a)))
+
 /* ---- conversions and text helpers ---------------------------------------- */
 rt_int y_floor(double v);
 rt_int y_ceiling(double v);

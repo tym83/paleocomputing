@@ -60,6 +60,10 @@
     F_PROCESS_IDENTITY: INT = 30; F_CHANGE_PRIORITY: INT = 31; F_RAISE_TERM: INT = 32;
     F_FREE_POINTER: INT = 33; F_CODE_INSERT: INT = 34; F_ADDR: INT = 35; F_EXTENT: INT = 36;
     F_MAKE_POINTER: INT = 37; F_MAIN_STORE: INT = 38;
+    (* the traps a program may suppress (XIV.XIII.2), as bits of Supp, and *)
+    (* the directives of the compiler status module *)
+    T_RANGE: INT = 1; T_OVERFLOW: INT = 2; T_ASSERTION: INT = 4;
+    D_SUPPRESS: INT = 1; D_RESTORE: INT = 2; D_SUPPRESSED: INT = 3;
 
   VAR
     CharNames: Txt := 0;             (* the mnemonics of ASCII, in order *)
@@ -95,6 +99,8 @@
     LabelSeen: ARRAY (INTEGER [1..4096] OF INT);
     HasHandler: BOOLEAN := FALSE;    (* it has an exception handler *)
     ImpureCalls: INT := 0;           (* calls of procedures in expressions so far *)
+    Supp: INT := 0;                  (* the traps suppressed here *)
+    CurModName: Txt := 0;            (* the module whose declarations are read *)
     (* for the checks of X.A.4-6: every routine, the calls with VAR actuals, *)
     (* the pointer types reached freely *)
     AllRoutines, Sites: Node := Node NIL;
@@ -110,6 +116,7 @@
     QMon: ARRAY (INTEGER [1..20000] OF Sym);
     QMark: ARRAY (INTEGER [1..20000] OF Line);
     QHere: ARRAY (INTEGER [1..20000] OF BOOLEAN);
+    QSupp: ARRAY (INTEGER [1..20000] OF INT);
     QScope0, QScopeN: ARRAY (INTEGER [1..20000] OF INT);
     QScopes: ARRAY (INTEGER [1..100000] OF Scope);
     QTop, QSTop: INT := 0;

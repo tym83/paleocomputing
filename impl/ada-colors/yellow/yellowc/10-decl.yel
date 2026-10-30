@@ -52,6 +52,42 @@
     RETURN SE()
   ENDPROCEDURE ParamCType;
 
+  (* PROCEDURE REPLACES TRAP_name (): the handler of the trap that raises *)
+  (* the exception name, declared in the outermost scope of the program *)
+  (* (XIV.X.3); it is called where the trap happens, and its RETURN *)
+  (* resumes the operation with the result the runtime gives *)
+  PROCEDURE InstallTrap (CONST s: Sym; CONST d: Node)
+    VAR x: Txt;
+        ok: BOOLEAN := FALSE;
+        names: Txt;
+        start: INT := 1;
+    x := Intern(TS[d^.name] + 5, TL[d^.name] - 5);
+    names := T("OUT_OF_RANGE OVERFLOW ZERO_DIVIDE INVALID_POINTER FIXED_NOT_REPRESENTABLE TOO_MANY_PROCESS_INSTANCES TOO_LITTLE_LOCAL_STORAGE ADDRESS_VIOLATION UNINITIALIZED ");
+    FOR j: INTEGER [1..TL[names]] DO
+      IF TChar(names, j) = ' ' THEN
+        IF Intern(TS[names] + (start - 1), j - start) = x THEN ok := TRUE ENDIF;
+        start := j + 1
+      ENDIF
+    ENDFOR;
+    IF NOT ok THEN FailN(d^.line, x, " is not a trap of this implementation (XIV.X.3)") ENDIF;
+    IF (Level # 0) OR (Depth # 2) THEN
+      FailN(d^.line, d^.name, ": a trap handler is declared in the outermost scope of a program (XIV.X.3)")
+    ENDIF;
+    IF (s^.nparams # 0) OR (s^.ret^.kind # R_VOID) THEN
+      FailN(d^.line, d^.name, ": a trap handler of this implementation is a procedure without parameters (XIV.X.3)")
+    ENDIF;
+    SB();
+    SA("y_trap_install(rt_exc(");
+    SC('DQ');
+    ST(x);
+    SC('DQ');
+    SA("), ");
+    ST(s^.cname);
+    SA(");");
+    Emit(SE());
+    RETURN
+  ENDPROCEDURE InstallTrap;
+
   (* the C type of the storage of a parameter in its frame *)
   PROCEDURE DeclType RETURNS Txt (CONST p: Param)
     IF p^.cls = C_OUT THEN RETURN CType(p^.rep) ENDIF;
@@ -126,6 +162,15 @@
     ENDIF;
     d^.sym := s;
     Define(s, d^.line);
+    (* the directives of the compiler status module (XIV.XIII.2) *)
+    IF (CurModName # 0) AND TEq(CurModName, T("CompilerStatus")) THEN
+      IF TEq(d^.name, T("SUPPRESS_TRAP")) THEN s^.mval := D_SUPPRESS
+      ELSIF TEq(d^.name, T("RESTORE_TRAP")) THEN s^.mval := D_RESTORE
+      ELSIF TEq(d^.name, T("TRAP_SUPPRESSED")) THEN s^.mval := D_SUPPRESSED
+      ENDIF
+    ENDIF;
+    (* a trap handler replaces the standard one (XIV.X.3) *)
+    IF (d^.ival = W_REPLACES) AND TStarts(d^.name, "TRAP_") THEN InstallTrap(s, d) ENDIF;
     g := NewNode(N_NAMEL, d^.line);
     g^.sym := s;
     g^.next := AllRoutines;
@@ -520,6 +565,7 @@
     QMon[QTop] := CurMonitor;
     QMark[QTop] := mark;
     QHere[QTop] := here;
+    QSupp[QTop] := Supp;
     WHILE Scopes[k]^.closed DO k := k - 1 ENDWHILE;
     QScope0[QTop] := QSTop + 1;
     QScopeN[QTop] := Depth - k;
@@ -533,17 +579,20 @@
   (* the bodies put off since start, in their scopes *)
   PROCEDURE RunDeferred (CONST start, sstart: INT)
     VAR i: INT := start + 1;
-        saveVis: INT;
+        saveVis, saveSupp: INT;
         saveMon: Sym;
     WHILE i <= QTop DO
       FOR j: INTEGER [QScope0[i]..(QScope0[i] + QScopeN[i]) - 1] DO ReopenScope(QScopes[j]) ENDFOR;
       saveVis := VisibleFrom;
       saveMon := CurMonitor;
+      saveSupp := Supp;
       VisibleFrom := QVis[i];
       CurMonitor := QMon[i];
+      Supp := QSupp[i];
       IF QKind[i] = 1 THEN RoutineBody(QNode[i]) ELSE ModuleInit(i) ENDIF;
       VisibleFrom := saveVis;
       CurMonitor := saveMon;
+      Supp := saveSupp;
       FOR j: INTEGER [1..QScopeN[i]] DO CloseScope() ENDFOR;
       i := i + 1
     ENDWHILE;

@@ -523,6 +523,7 @@
   (* checked unless the manifest bounds show there is no need *)
   PROCEDURE Convert RETURNS Txt (CONST code: Txt; CONST to, from: Rep)
     VAR c: Txt;
+        save: INT;
     IF (from^.kind = R_STR) AND (to^.kind = R_ARRAY) AND (to^.nidx = 1) THEN
       IF to^.idx^.hasm AND (from^.nlits # ((to^.idx^.mhi - to^.idx^.mlo) + 1)) THEN
         SB();
@@ -538,9 +539,14 @@
     IF NOT NeedsConv(to, from) THEN RETURN code ENDIF;
     IF to^.kind = R_RECORD THEN RETURN ConvertRecord(code, to, from) ENDIF;
     IF (to^.kind = R_ARRAY) OR (to^.kind = R_UARRAY) THEN RETURN ConvertArray(code, to, from) ENDIF;
+    IF Suppressed(T_RANGE) THEN
+      (* the range trap suppressed (XIV.XIII.2): only the scale of FIXED *)
+      IF to^.kind = R_FIXED THEN RETURN RescaleCode(code, from, to) ENDIF;
+      RETURN code
+    ENDIF;
     IF IsDiscrete(to) THEN
       SB();
-      SA("rt_range(");
+      SA("y_range(");
       ST(code);
       SA(", ");
       ST(LoText(to));
@@ -551,7 +557,7 @@
     ENDIF;
     IF to^.kind = R_FLOAT THEN
       SB();
-      SA("rt_frange(");
+      SA("y_frange(");
       ST(code);
       SA(", ");
       ST(LoText(to));
@@ -975,7 +981,7 @@
       r := CopyRep(a);
       r^.lo := 0;
       r^.hasm := FALSE;
-      SA("rt_neg(");
+      IF Suppressed(T_OVERFLOW) THEN SA("Y_NEGW(") ELSE SA("y_neg(") ENDIF;
       ST(c);
       SA(")")
     ELSIF a^.kind = R_FLOAT THEN
@@ -1185,16 +1191,22 @@
     ENDIF;
     IF k = R_INT THEN
       r := Unbounded(ra);
-      IF op = P_PLUS THEN code := Call2("rt_add", a, b)
-      ELSIF op = P_MINUS THEN code := Call2("rt_sub", a, b)
-      ELSIF op = P_STAR THEN code := Call2("rt_mul", a, b)
-      ELSIF op = W_DIV THEN code := Call2("rt_div", a, b)
-      ELSIF op = W_MOD THEN code := Call2("rt_mod", a, b)
+      IF Suppressed(T_OVERFLOW) AND ((op = P_PLUS) OR (op = P_MINUS) OR (op = P_STAR)) THEN
+        (* the overflow trap suppressed: no code detects it (XIV.XIII.2) *)
+        IF op = P_PLUS THEN code := Call2("Y_ADDW", a, b)
+        ELSIF op = P_MINUS THEN code := Call2("Y_SUBW", a, b)
+        ELSE code := Call2("Y_MULW", a, b)
+        ENDIF
+      ELSIF op = P_PLUS THEN code := Call2("y_add", a, b)
+      ELSIF op = P_MINUS THEN code := Call2("y_sub", a, b)
+      ELSIF op = P_STAR THEN code := Call2("y_mul", a, b)
+      ELSIF op = W_DIV THEN code := Call2("y_div", a, b)
+      ELSIF op = W_MOD THEN code := Call2("y_mod", a, b)
       ELSIF op = P_SLASH THEN
         (* integer / gives a floating-point result (VIII.C) *)
         r := RFloat;
         SB();
-        SA("rt_fdiv((double)(");
+        SA("y_fdiv((double)(");
         ST(a);
         SA("), (double)(");
         ST(b);
@@ -1212,7 +1224,7 @@
       ELSIF op = P_STAR THEN code := FloatChk(Infix(a, "*", b))
       ELSIF op = P_SLASH THEN
         r := RFloat;
-        code := FloatChk(Call2("rt_fdiv", a, b))
+        code := FloatChk(Call2("y_fdiv", a, b))
       ELSE
         FailN(n^.line, op, " does not apply to these numbers")
       ENDIF;
@@ -1230,7 +1242,7 @@
         code := Call2("y_fix_mul", a, b)
       ELSIF op = P_SLASH THEN
         r := RFloat;
-        code := FloatChk(Call2("rt_fdiv", FixToFloat(a, ra), FixToFloat(b, rb)))
+        code := FloatChk(Call2("y_fdiv", FixToFloat(a, ra), FixToFloat(b, rb)))
       ELSE
         FailN(n^.line, op, " does not apply to these numbers")
       ENDIF;

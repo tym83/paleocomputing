@@ -340,11 +340,13 @@
 
   PROCEDURE CompileModule (CONST d: Node)
     VAR imports, exports, it, m, s, saveMon, mon, next, old: Sym;
+        saveName: Txt;
         item, p: Node;
         saveVis: INT;
         t: Txt;
         monitorHere: BOOLEAN := FALSE;
     d^.ival := 1;
+    saveName := CurModName;
     (* imports are names of the scope around the module *)
     imports := Sym NIL;
     item := d^.a;
@@ -365,6 +367,7 @@
       monitorHere := TRUE
     ENDIF;
     OpenScope(TRUE);
+    CurModName := d^.name;
     ProcList[Depth] := Node NIL;
     saveVis := VisibleFrom;
     VisibleFrom := Depth;
@@ -401,6 +404,7 @@
     ENDWHILE;
     p := ProcList[Depth];
     VisibleFrom := saveVis;
+    CurModName := saveName;
     CloseScope();
     (* processes of a module hold the scope around it (X.E.1) *)
     WHILE p # Node NIL DO

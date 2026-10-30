@@ -50,6 +50,13 @@
 
   (* the statements of a block and its exception handler (X.F) *)
   PROCEDURE BlockStatements (CONST b: Node)
+    VAR saveSupp: INT := Supp;
+    BlockStatements1(b);
+    Supp := saveSupp;
+    RETURN
+  ENDPROCEDURE BlockStatements;
+
+  PROCEDURE BlockStatements1 (CONST b: Node)
     VAR f, xc, t: Txt;
         c, nm: Node;
         first: BOOLEAN;
@@ -132,7 +139,7 @@
     BTop := BTop - 1;
     EmitS("}}");
     RETURN
-  ENDPROCEDURE BlockStatements;
+  ENDPROCEDURE BlockStatements1;
 
   (* do two designators name the same variable: the same names, components *)
   (* and pointers, subscripts that are the same constants or names *)
@@ -532,6 +539,10 @@
         LeaveBlock();
         Emit(RaiseCode(s^.name))
       ENDIF
+    ELSIF (k = N_ASSERT) AND Suppressed(T_ASSERTION) THEN
+      (* "if the detection of this exception is suppressed, then the *)
+      (* assertion has no effect" (IX.A.3) *)
+      i := 0
     ELSIF k = N_ASSERT THEN
       i := ImpureCalls;
       c := Cond(s^.a);

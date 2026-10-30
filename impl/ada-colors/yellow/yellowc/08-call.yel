@@ -243,6 +243,36 @@
     RETURN
   ENDPROCEDURE NoteCall;
 
+  (* SUPPRESS_TRAP (t), RESTORE_TRAP (t), TRAP_SUPPRESSED (t) of the *)
+  (* compiler status module: directives to the translator (XIV.XIII.2), *)
+  (* from here to the end of the block; t is a manifest TRAP_KIND *)
+  PROCEDURE Directive (CONST s: Sym; CONST n: Node; CONST base, nargs: INT; OUT code: Txt; OUT r: Rep)
+    VAR ok: BOOLEAN;
+        v, bit: INT;
+    ArgTop := base;
+    Manifest(n^.a, ok, v);
+    IF NOT ok OR (nargs # 1) THEN FailN(n^.line, n^.name, " takes a manifest TRAP_KIND (XIV.XIII.2)") ENDIF;
+    (* RANGE_TRAP, OVERFLOW_TRAP, ASSERTION_TRAP; the others are kept *)
+    bit := 0;
+    IF v = 0 THEN bit := T_RANGE ELSIF v = 1 THEN bit := T_OVERFLOW ELSIF v = 2 THEN bit := T_ASSERTION ENDIF;
+    r := RVoid;
+    code := T("((void)0)");
+    IF s^.mval = D_SUPPRESS THEN
+      IF NOT Suppressed(bit) THEN Supp := Supp + bit ENDIF
+    ELSIF s^.mval = D_RESTORE THEN
+      IF Suppressed(bit) THEN Supp := Supp - bit ENDIF
+    ELSE
+      r := RBool;
+      IF Suppressed(bit) AND (bit # 0) THEN code := T("1") ELSE code := T("0") ENDIF
+    ENDIF;
+    RETURN
+  ENDPROCEDURE Directive;
+
+  PROCEDURE Suppressed RETURNS BOOLEAN (CONST bit: INT)
+    IF bit = 0 THEN RETURN FALSE ENDIF;
+    RETURN ((Supp DIV bit) MOD 2) = 1
+  ENDPROCEDURE Suppressed;
+
   (* := defined by the program for the type of a target (VII.B, X.A.1): the *)
   (* statement that calls it, or 0 when the standard assignment applies. *)
   (* Inside that definition its own type is assigned by the standard *)
@@ -345,6 +375,10 @@
       CompileArgs(n^.a, Sym NIL, base, nargs);
       c := Choose(s, base, nargs);
       IF c = Sym NIL THEN FailN(n^.line, n^.name, ": no definition takes actuals of these types") ENDIF
+    ENDIF;
+    IF Real(c)^.mval # 0 THEN
+      Directive(Real(c), n, base, nargs, code, r);
+      RETURN
     ENDIF;
     NoteCall(c, n^.line);
     code := CallCode(c, base, nargs, n^.line);
