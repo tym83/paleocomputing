@@ -1,0 +1,31 @@
+(* the implementation-dependent parts on this implementation's simulated *)
+(* machine (XIV): words of 64 bits addressed by word, sizes in bits, the *)
+(* store MAIN_STORE_ARRAY with the PDP-11 I/O page at its top *)
+MODULE Machine
+  IMPORT TextIO, StandardImplementationPrelude;
+  REPRESENTATION
+    HALFWORD = ARRAY (INTEGER [1..18] OF BOOLEAN) PACKED 18;
+    SIXBIT = ARRAY (INTEGER [1..6] OF INTEGER [0..63]) PACKED 36;
+    Header = RECORD VAR status AT 0: HALFWORD; VAR name AT 18: SIXBIT; VAR link AT 64: ADDRESS ENDRECORD;
+    Plain = RECORD VAR a, b: INTEGER64; VAR c: BOOLEAN ENDRECORD;
+    Small = INTEGER [0..1000] PACKED;
+    P = POINTER (INTEGER64);
+  VAR status AT BASE8 177546: INTEGER64;
+      h: Header; pl: Plain; x: INTEGER64 := 5; p: P; w: WORD;
+  PROCEDURE Size RETURNS INTEGER64 (CONST s: SPACE) RETURN EXTENT(s) ENDPROCEDURE Size;
+  PROCEDURE Where RETURNS ADDRESS (CONST s: SPACE) RETURN ADDR(s) ENDPROCEDURE Where;
+  PROCEDURE Put (CONST v AT 100: INTEGER64) Write(MAIN_STORE_ARRAY[100]); RETURN ENDPROCEDURE Put;
+  Write(EXTENT(h)); Write(" "); Write(EXTENT(pl)); Write(" "); Write(Size(pl)); Write(" ");
+  Write(Size(3)); WriteLn();
+  status := 64;
+  Write(ADDR(status)); Write(" "); Write(MAIN_STORE_ARRAY[BASE8 177546]); WriteLn();
+  MAIN_STORE_ARRAY[BASE8 177546] := 192; Write(status); WriteLn();
+  IF ADDR(x) = Where(x) THEN Write("ADDR of a SPACE is that of the actual") ENDIF; WriteLn();
+  MAKE_POINTER(p, ADDR(x)); p^ := 7; Write(x); Write(" ");
+  w := MAIN_STORE_ARRAY[ADDR(x)]; Write(w); WriteLn();
+  Put(42); WriteLn();
+  BEGIN
+    EXCEPTION CASE ADDRESS_VIOLATION => Write("no storage at that address"); WriteLn() ENDEXCEPTION;
+    w := MAIN_STORE_ARRAY[16000000]
+  END
+ENDMODULE Machine

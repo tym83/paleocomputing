@@ -1,0 +1,6 @@
+(* trap handlers are routines of the outermost scope of a program (XIV.X.3) *)
+MODULE TrapScope
+  BEGIN
+    PROCEDURE REPLACES TRAP_OVERFLOW () RETURN ENDPROCEDURE TRAP_OVERFLOW;
+  END
+ENDMODULE TrapScope

@@ -35,6 +35,7 @@
   PROCEDURE StdVar (CONST n: Node; CONST kind: INT; OUT code: Txt; OUT r: Rep)
     VAR t: Txt;
     LValue(n, code, r);
+    NoteWrite(n);
     IF (kind # R_ANY) AND (r^.kind # kind) THEN
       SB();
       SA("a ");
@@ -85,7 +86,12 @@
       c := TChar(text, i);
       IF c = 'SQ' THEN
         j := i + 1;
-        WHILE TChar(text, j) # 'SQ' DO j := j + 1 ENDWHILE;
+        WHILE (j <= TL[text]) AND (TChar(text, j) # 'SQ') DO j := j + 1 ENDWHILE;
+        IF j > TL[text] THEN
+          ScTop := 0;
+          SbDepth := 0;
+          FailS(n^.line, "an apostrophe in a string begins a mnemonic, closed by another (IV.C)")
+        ENDIF;
         w := Intern(TS[text] + i, (j - i) - 1);
         SC(Chr[CharValue(RAscii, w, n^.line)]);
         i := j + 1
@@ -117,9 +123,24 @@
     RETURN
   ENDPROCEDURE CodeInsert;
 
+  (* the scale argument of NEAR_FIXED and FIXED_DIV, a manifest constant: *)
+  (* the FIXED representation of the result, without a range *)
+  PROCEDURE ManifestScale RETURNS Rep (CONST a, n: Node)
+    VAR ok: BOOLEAN;
+        sn, sd: INT;
+        r: Rep;
+    ManifestFix(a, ok, sn, sd);
+    IF NOT ok OR (sn <= 0) THEN FailN(n^.line, n^.name, ": the scale is a positive manifest constant (XI)") ENDIF;
+    r := CopyRep(RFixed);
+    r^.abstract := FALSE;
+    SetScale(r, sn, sd);
+    RETURN r
+  ENDPROCEDURE ManifestScale;
+
   PROCEDURE StdCall (CONST f: INT; CONST n: Node; CONST statement: BOOLEAN;
                      OUT code: Txt; OUT r: Rep)
-    VAR a, b, c, d, t: Txt;
+    VAR sy: Sym;
+        a, b, c, d, t: Txt;
         ra, rb, rc, el: Rep;
         nargs, i, dim: INT;
         ok: BOOLEAN;
@@ -130,7 +151,7 @@
     isproc := (f = F_NEW) OR (f = F_OPEN) OR (f = F_CLOSE) OR (f = F_GET) OR (f = F_PUT) OR
               (f = F_MOVE) OR (f = F_DELAY) OR (f = F_WAIT) OR (f = F_SEND) OR (f = F_CLAIM) OR
               (f = F_RELEASE) OR (f = F_CHANGE_PRIORITY) OR (f = F_RAISE_TERM) OR
-              (f = F_FREE_POINTER) OR (f = F_CODE_INSERT);
+              (f = F_FREE_POINTER) OR (f = F_CODE_INSERT) OR (f = F_MAKE_POINTER);
     IF statement AND NOT isproc THEN FailN(n^.line, n^.name, " returns a value: it is called in an expression") ENDIF;
     IF NOT statement AND isproc THEN FailN(n^.line, n^.name, " returns no value") ENDIF;
     IF (f = F_LOW) OR (f = F_HIGH) THEN
@@ -153,34 +174,36 @@
       NArgs(n, 1);
       Expr(Arg(n, 1), Rep NIL, a, ra);
       IF NOT IsDiscrete(ra) THEN FailN(n^.line, n^.name, " of something that is not integer or scalar") ENDIF;
+      IF (ra^.kind = R_BOOL) OR ((ra^.kind = R_ENUM) AND NOT ra^.ordered) THEN
+        FailN(n^.line, n^.name, " applies to integers, ordered enumerations and alphabets, not UNORDERED ones (XI)")
+      ENDIF;
       IF ra^.elem # Rep NIL THEN ra := ra^.elem ENDIF;
       IF ((f = F_FIRST) OR (f = F_LAST)) AND (ra^.kind = R_INT) THEN
         FailS(n^.line, "FIRST and LAST apply to ordered enumerations and alphabets (XI)")
       ENDIF;
-      IF (ra^.kind = R_ENUM) AND NOT ra^.ordered THEN
-        FailN(n^.line, n^.name, " applies to ordered enumerations (XI)")
-      ENDIF;
-      r := Unbounded(ra);
       IF f = F_FIRST THEN
+        (* the first and last members of the representation (XI) *)
+        r := ra;
         code := LoText(ra)
       ELSIF f = F_LAST THEN
+        r := ra;
         code := HiText(ra)
       ELSE
+        (* the result is of the type: an integer has no end but overflow, an *)
+        (* enumeration ends at its first and last literal (XI) *)
+        r := Unbounded(ra);
         SB();
-        IF ra^.lo # 0 THEN SA("rt_range(") ENDIF;
-        IF f = F_SUCC THEN SA("rt_add(") ELSE SA("rt_sub(") ENDIF;
+        IF ra^.kind # R_INT THEN SA("y_range(") ENDIF;
+        IF f = F_SUCC THEN SA("y_add(") ELSE SA("y_sub(") ENDIF;
         ST(a);
         SA(", 1)");
-        IF ra^.lo # 0 THEN
-          SA(", ");
-          ST(LoText(ra));
-          SA(", ");
-          ST(HiText(ra));
+        IF ra^.kind # R_INT THEN
+          SA(", 0, ");
+          SI(ra^.nlits - 1);
           SA(")")
         ENDIF;
         code := SE()
       ENDIF;
-      IF ra^.kind # R_INT THEN r := ra ENDIF;
       RETURN
     ENDIF;
     IF f = F_NEW THEN
@@ -191,15 +214,28 @@
       SB();
       SA("({ ");
       ST(a);
-      SA(" = rt_alloc(sizeof(");
+      SA(" = y_new_l(sizeof(");
       ST(CType(el));
-      SA("));");
-      IF Deep(el) THEN
-        SA(" y_init(");
+      SA("), ");
+      ST(LayLit(el));
+      SA(", ");
+      ST(DescOf(el));
+      SA(");");
+      IF Deep(el) OR (el^.kind = R_RECORD) THEN
+        SA(" y_initu(");
         ST(DescOf(el));
-        SA(", ");
+        SA(", y_deref(");
         ST(a);
-        SA(");")
+        SA("));")
+      ELSIF UndefValue(el) # 0 THEN
+        (* the new dynamic variable is undefined *)
+        SA(" *(");
+        ST(CType(el));
+        SA(" *)y_deref(");
+        ST(a);
+        SA(") = ");
+        ST(UndefValue(el));
+        SA(";")
       ENDIF;
       SA(" })");
       code := SE();
@@ -208,7 +244,7 @@
     IF f = F_FREE_POINTER THEN
       NArgs(n, 1);
       StdVar(Arg(n, 1), R_PTR, a, ra);
-      code := Join(T("({ free("), a, Join(T("); "), a, T(" = 0; })")));
+      code := Join(T("y_free_pointer((void **)&("), a, T("))"));
       RETURN
     ENDIF;
     IF f = F_OPEN THEN
@@ -240,38 +276,50 @@
       RETURN
     ENDIF;
     IF f = F_GET THEN
+      (* a value of any representation: components one after another, as *)
+      (* its descriptor describes them (XII.B) *)
       NArgs(n, 2);
       StdVar(Arg(n, 1), R_FILE, a, ra);
       StdVar(Arg(n, 2), R_ANY, b, rb);
-      CheckType(n^.line, ra^.elem, rb);
-      IF Deep(rb) OR (rb^.kind = R_PTR) THEN FailS(n^.line, "files of this implementation hold no arrays or pointers") ENDIF;
+      el := ra^.elem;
+      CheckType(n^.line, el, rb);
+      IF NonAssignable(el) THEN FailS(n^.line, "a file holds no files, signals or semaphores (XII)") ENDIF;
       SB();
       SA("({ ");
-      ST(CType(rb));
-      SA(" g; y_get(&");
+      ST(CType(el));
+      SA(" g; ");
+      IF Deep(el) THEN
+        SA("y_init(");
+        ST(DescOf(el));
+        SA(", &g); ")
+      ENDIF;
+      SA("y_get_value(&");
       ST(a);
-      SA(", &g, sizeof g); ");
-      ST(b);
-      SA(" = ");
-      ST(Convert(T("g"), rb, ra^.elem));
-      SA("; })");
+      SA(", ");
+      ST(DescOf(el));
+      SA(", &g); ");
+      ST(StoreText(b, rb, T("g"), el, n^.line));
+      SA(" })");
       code := SE();
       RETURN
     ENDIF;
     IF f = F_PUT THEN
       NArgs(n, 2);
       StdVar(Arg(n, 1), R_FILE, a, ra);
-      Expr(Arg(n, 2), ra^.elem, b, rb);
-      CheckType(n^.line, ra^.elem, rb);
-      IF Deep(rb) OR (rb^.kind = R_PTR) THEN FailS(n^.line, "files of this implementation hold no arrays or pointers") ENDIF;
+      el := ra^.elem;
+      Expr(Arg(n, 2), el, b, rb);
+      CheckType(n^.line, el, rb);
+      IF NonAssignable(el) THEN FailS(n^.line, "a file holds no files, signals or semaphores (XII)") ENDIF;
       SB();
       SA("({ ");
-      ST(CType(ra^.elem));
+      ST(CType(el));
       SA(" pv = ");
-      ST(Convert(b, ra^.elem, rb));
-      SA("; y_put(&");
+      ST(Convert(b, el, rb));
+      SA("; y_put_value(&");
       ST(a);
-      SA(", &pv, sizeof pv); })");
+      SA(", ");
+      ST(DescOf(el));
+      SA(", &pv); })");
       code := SE();
       RETURN
     ENDIF;
@@ -368,6 +416,19 @@
       NumArg(Arg(n, 1), a, ra);
       r := Unbounded(RInt);
       IF ra^.kind = R_INT THEN code := a
+      ELSIF ra^.kind = R_FIXED THEN
+        (* exact on the scaled whole number *)
+        SB();
+        IF f = F_FLOOR THEN SA("y_fix_floor(") ELSIF f = F_CEILING THEN SA("y_fix_ceiling(")
+        ELSE SA("y_fix_near_integer(")
+        ENDIF;
+        ST(a);
+        SA(", INT64_C(");
+        SI(ra^.fsn);
+        SA("), INT64_C(");
+        SI(ra^.fsd);
+        SA("))");
+        code := SE()
       ELSIF f = F_FLOOR THEN code := Call1("y_floor", a)
       ELSIF f = F_CEILING THEN code := Call1("y_ceiling", a)
       ELSE code := Call1("y_near_integer", a)
@@ -378,26 +439,75 @@
       NArgs(n, 1);
       NumArg(Arg(n, 1), a, ra);
       r := RFloat;
-      code := Join(T("((double)("), a, T("))"));
+      IF ra^.kind = R_FIXED THEN code := FixToFloat(a, ra)
+      ELSE code := Join(T("((double)("), a, T("))"))
+      ENDIF;
       RETURN
     ENDIF;
     IF f = F_NEAR_FIXED THEN
+      (* the nearest multiple of a manifest scale, halves away from zero *)
       NArgs(n, 2);
       NumArg(Arg(n, 1), a, ra);
-      NumArg(Arg(n, 2), b, rb);
-      r := RFixed;
-      code := Call2("y_near_fixed", Join(T("(double)("), a, T(")")), b);
+      r := ManifestScale(Arg(n, 2), n);
+      IF ra^.kind = R_FLOAT THEN
+        SB();
+        SA("y_fix_of_float(");
+        ST(a);
+        SA(", INT64_C(");
+        SI(r^.fsn);
+        SA("), INT64_C(");
+        SI(r^.fsd);
+        SA("))");
+        code := SE()
+      ELSE
+        IF ra^.kind = R_INT THEN
+          rc := CopyRep(RFixed);
+          SetScale(rc, 1, 1);
+          a := Join(T("((yfix)("), a, T("))"))
+        ELSE
+          rc := ra
+        ENDIF;
+        ScaleRatio(rc, r, d, t, ok);
+        SB();
+        SA("y_fix_near(");
+        ST(a);
+        SA(", ");
+        ST(d);
+        SA(", ");
+        ST(t);
+        SA(")");
+        code := SE()
+      ENDIF;
       RETURN
     ENDIF;
     IF f = F_FIXED_DIV THEN
+      (* the largest multiple of the result scale not above the quotient *)
       NArgs(n, 3);
       NumArg(Arg(n, 1), a, ra);
       NumArg(Arg(n, 2), b, rb);
-      NumArg(Arg(n, 3), c, rc);
-      r := RFixed;
-      code := Join(T("y_fixed_div("), a, Join(T(", "), b, Join(T(", "), c, T(")"))));
+      IF (ra^.kind # R_FIXED) OR (rb^.kind # R_FIXED) THEN FailS(n^.line, "FIXED_DIV divides fixed-point numbers (XI)") ENDIF;
+      CheckType(n^.line, ra, rb);
+      r := ManifestScale(Arg(n, 3), n);
+      r^.tid := ra^.tid;
+      r^.tname := ra^.tname;
+      (* n * sn / (d * sd * rs) = (n * p) / (d * q), with p / q = sn / (sd * rs) *)
+      rc := CopyRep(RFixed);
+      SetScale(rc, MulChk(rb^.fsn, r^.fsn, n^.line), MulChk(rb^.fsd, r^.fsd, n^.line));
+      ScaleRatio(ra, rc, d, t, ok);
+      SB();
+      SA("y_fix_div(");
+      ST(a);
+      SA(", ");
+      ST(b);
+      SA(", ");
+      ST(d);
+      SA(", ");
+      ST(t);
+      SA(")");
+      code := SE();
       RETURN
     ENDIF;
+    IF f = F_COND_CLAIM THEN ImpureCalls := ImpureCalls + 1 ENDIF;
     IF (f = F_CLAIM) OR (f = F_RELEASE) OR (f = F_COND_CLAIM) THEN
       NArgs(n, 1);
       StdVar(Arg(n, 1), R_SEM, a, ra);
@@ -431,13 +541,61 @@
       RETURN
     ENDIF;
     IF (f = F_ADDR) OR (f = F_EXTENT) THEN
+      (* in words of the simulated machine (XIV.XI.2) *)
       NArgs(n, 1);
-      Expr(Arg(n, 1), Rep NIL, a, ra);
-      r := Unbounded(RInt);
-      IF f = F_ADDR THEN code := Join(T("((rt_int)(intptr_t)&("), a, T("))"))
-      ELSE code := Join(T("((rt_int)sizeof("), a, T("))"))
+      p := Arg(n, 1);
+      Expr(p, Rep NIL, a, ra);
+      IF f = F_EXTENT THEN
+        r := Unbounded(RInt);
+        code := ExtentCode(a, ra);
+        RETURN
       ENDIF;
+      r := RAddress;
+      IF ra^.kind = R_SPACE THEN
+        code := Join(T("y_addr_s("), a, T(")"));
+        RETURN
+      ENDIF;
+      IF p^.kind = N_NAME THEN
+        sy := Find(p^.name);
+        IF sy # Sym NIL THEN
+          IF Resolved(sy) THEN
+            sy := Real(sy);
+            IF ((sy^.kind = S_VAR) OR (sy^.kind = S_CONST)) AND (sy^.at >= 0) THEN
+              code := Num(sy^.at);
+              RETURN
+            ENDIF
+          ENDIF
+        ENDIF
+      ENDIF;
+      IF NOT ((p^.kind = N_NAME) OR (p^.kind = N_SEL) OR (p^.kind = N_INDEX) OR (p^.kind = N_DEREF)) OR
+         (ra^.kind = R_STR) THEN
+        FailS(n^.line, "ADDR takes a variable or constant (XIV.XI.2)")
+      ENDIF;
+      code := AddrCode(p, a, ra);
       RETURN
+    ENDIF;
+    IF f = F_MAKE_POINTER THEN
+      (* MAKE_POINTER (OUT p; CONST a: ADDRESS) (XIV.XI.2) *)
+      NArgs(n, 2);
+      StdVar(Arg(n, 1), R_PTR, a, ra);
+      b := IntArg(Arg(n, 2));
+      IF ra^.elem = Rep NIL THEN FailN(n^.line, ra^.forward, " is not declared") ENDIF;
+      el := ra^.elem;
+      SB();
+      SA("(");
+      ST(a);
+      SA(" = y_make_ptr(");
+      ST(b);
+      SA(", ");
+      ST(LayLit(el));
+      SA(", ");
+      ST(DescOf(el));
+      IF WordExact(el) THEN SA(", 1))") ELSE SA(", 0))") ENDIF;
+      code := SE();
+      RETURN
+    ENDIF;
+    IF f = F_MAIN_STORE THEN
+      FailS(n^.line, "MAIN_STORE_ARRAY is subscripted by an ADDRESS (XIV.VI.2)")
     ENDIF;
     FailN(n^.line, n^.name, " is not translated");
     RETURN

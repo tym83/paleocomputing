@@ -1,0 +1,4 @@
+(* PACKED n: no more than n bits (XIV.VI.1) *)
+MODULE Packed
+  REPRESENTATION H = ARRAY (INTEGER [1..18] OF BOOLEAN) PACKED 1;
+ENDMODULE Packed

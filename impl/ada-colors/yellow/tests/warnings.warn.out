@@ -1,0 +1,2 @@
+warning: the expression of this ASSERT calls a procedure: it might have side effects (IX.A.3)
+warning: DELAY hides the system routine of that name (X.A.1)

@@ -1,0 +1,46 @@
+(* representations of one type (VII.G): assignment converts component by *)
+(* component, with the checks of the target; an OUT actual of another *)
+(* representation is assigned after the call (X.A.2) *)
+MODULE Reps
+  IMPORT TextIO, StandardImplementationPrelude;
+  TYPE
+    PolarType = RECORD VAR A, B: FLOATING ENDRECORD;
+    RT = RECORD VAR A: INTEGER ENDRECORD;
+    ArrT = ARRAY (INTEGER [1..3] OF INTEGER);
+  REPRESENTATION
+    Polar2 = PolarType RECORD VAR A, B: FLOATING [0.0..1.0] PRECISION 4 ENDRECORD;
+    Polar3 = PolarType RECORD VAR A, B: FLOATING [0.0..1.0] PRECISION 6 ENDRECORD;
+    R1 = RT RECORD VAR A: INTEGER [0..9] ENDRECORD;
+    R2 = RT RECORD VAR A: INTEGER [0..999] ENDRECORD;
+    A1 = ArrT ARRAY (INTEGER [1..3] OF INTEGER [0..9]);
+    A2 = ArrT ARRAY (INTEGER [1..3] OF INTEGER [0..999]);
+  VAR i: Polar2; j: Polar3; a: R1; b: R2; x: A1; y: A2; small: INTEGER [0..9];
+
+  PROCEDURE Big (OUT r: R2; OUT n: INTEGER64; CONST v: INTEGER64)
+    r := R2(v); n := v;
+    RETURN
+  ENDPROCEDURE Big;
+
+  PROCEDURE Sum RETURNS INTEGER64 (CONST v: ARRAY (1 DIMENSIONS OF INTEGER64))
+    VAR t: INTEGER64 := 0;
+    FOR k: INTEGER [LOW(v, 1)..HIGH(v, 1)] DO t := t + v[k] ENDFOR;
+    RETURN t
+  ENDPROCEDURE Sum;
+
+  i := Polar2(0.5, 0.25); j := i; WriteFloat(j.A, 2); Write(" "); WriteFloat(j.B, 2); WriteLn();
+  b := R2(7); a := b; Write(a.A); WriteLn();
+  y := A2(1, 5, 3); x := y; Write(x[2]); Write(" "); Write(Sum(x)); WriteLn();
+  Big(a, small, 4); Write(a.A); Write(small); WriteLn();
+  BEGIN
+    EXCEPTION CASE OUT_OF_RANGE => Write("500 does not fit"); WriteLn() ENDEXCEPTION;
+    b := R2(500); a := b
+  END;
+  BEGIN
+    EXCEPTION CASE OUT_OF_RANGE => Write("nor here"); WriteLn() ENDEXCEPTION;
+    y := A2(1, 500, 3); x := y
+  END;
+  BEGIN
+    EXCEPTION CASE OUT_OF_RANGE => Write("nor in an OUT actual"); WriteLn() ENDEXCEPTION;
+    Big(a, small, 40)
+  END
+ENDMODULE Reps

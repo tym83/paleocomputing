@@ -37,7 +37,7 @@ representation of it); overloading only by `EXTENDS` and `REPLACES`; module temp
 instantiated by substitution; exceptions handled per block, where PROPAGATE_EXCEPTION leaves
 the block it is in. Two printed symbols have no ASCII form: `≠` is written `#`, `↑` is `^`.
 
-Of the fifteen programs of the tutorial, five are accepted as printed; the others show the
+Of the fifteen programs of the tutorial, four are accepted as printed; the others show the
 slips of a text never put through a translator, and three that compile are wrong when run.
 
 YELLOW also runs the operating-system programs of `../os/` and `../kube/`: Dijkstra's THE

@@ -1,0 +1,18 @@
+(* a set over a base range of any size (L-33): SET (INTEGER64) *)
+MODULE BigSets
+  IMPORT TextIO, StandardImplementationPrelude;
+  REPRESENTATION IS = SET (INTEGER64);
+  VAR a, b, c: IS;
+  a := IS(1, 1000000000000, -5); b := IS(1, 7);
+  IF 1000000000000 IN a THEN Write("in ") ENDIF;
+  c := a + b; IF 7 IN c THEN Write("union ") ENDIF;
+  c := a * b; IF (1 IN c) AND NOT (7 IN c) THEN Write("intersection ") ENDIF;
+  c := a - b; IF (-5 IN c) AND NOT (1 IN c) THEN Write("difference ") ENDIF;
+  c := a XOR b; IF (7 IN c) AND NOT (1 IN c) THEN Write("xor ") ENDIF;
+  c := -a; IF (2 IN c) AND NOT (1 IN c) THEN Write("complement ") ENDIF;
+  c := (-a) * (-b); IF (2 IN c) AND NOT (7 IN c) THEN Write("de-morgan ") ENDIF;
+  IF -(-a) = a THEN Write("equal ") ENDIF;
+  IF a # b THEN Write("unequal ") ENDIF;
+  c := (-a) + a; IF c = -IS() THEN Write("everything") ENDIF;
+  WriteLn()
+ENDMODULE BigSets

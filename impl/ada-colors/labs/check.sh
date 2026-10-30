@@ -92,7 +92,7 @@ case "$lab/$task" in
   y4/break)  want "apply to ordered values" "The template was fine until an instance put an UNORDERED type where Largest uses <." "instantiate StackTemplate for Fruit" ;;
   y5/look)   want "B got 1" "SEND woke the smallest rank, and the waiter ran before the sender went on." "run it unchanged" ;;
   y5/change) want "A got 1" "Within one rank, the first who waited is the first woken." "give A and B the same rank" ;;
-  y5/break)  want "deadlock" "Without SEND nobody wakes the consumers: a signal is not a state, and WAIT waits for ever." "remove SEND(arrived) from Give" ;;
+  y5/break)  want "DEADLOCK" "Without SEND nobody wakes the consumers: a signal is not a state, and WAIT waits for ever; the trap Deadlock is raised in the main process." "remove SEND(arrived) from Give" ;;
   y6/look)   want "calls 0" "Square is a FUNCTION: it cannot count its calls." "run it unchanged" ;;
   y6/change) want "calls 2" "A value-returning PROCEDURE may have side effects; a FUNCTION may not." "make Square a PROCEDURE ... RETURNS that adds 1 to calls" ;;
   y6/break)  want "is not local" "A FUNCTION assigns only to its own locals (D-33)." "write calls := calls + 1 inside the FUNCTION Square" ;;
@@ -101,6 +101,6 @@ case "$lab/$task" in
   y7/break)  want "components are hidden" "An OPAQUE representation hides its components outside its module (X.B.3)." "write st.top := 0 in the main part" ;;
   y8/look)   want "no circle of waiting" "Every process waits only for processes below it; the society finishes." "run it unchanged" ;;
   y8/change) want "drum transfers 0" "With a core page per segment the segment controller never touches the drum." "set ncore to 8" ;;
-  y8/break)  want "deadlock" "The segment controller waited for the console, whose interpreter needed the segment controller to read its vocabulary." "set reportDumps to TRUE" ;;
+  y8/break)  want "DEADLOCK" "The segment controller waited for the console, whose interpreter needed the segment controller to read its vocabulary." "set reportDumps to TRUE" ;;
   *)         [ $rc -eq 0 ] && { cat "$tmp/out"; exit 0; } || { cat "$tmp/out"; exit 1; } ;;
 esac

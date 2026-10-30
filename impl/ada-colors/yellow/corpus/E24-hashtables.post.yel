@@ -2,10 +2,10 @@
 (* a user of the module of p.1117 *)
 MODULE UseTable
   IMPORT NumberTableImplementation, TextIO, MyStandardConventions;
-  (* the module exports no way to make an empty table, and NumberTable is *)
-  (* opaque; this implementation starts every variable at zero, which is *)
-  (* the case "fresh" of every entry *)
+  (* the table starts empty through Clear, added to the module: a variable *)
+  (* is undefined until it is assigned *)
   VAR t: NumberTable;
+  Clear(t);
   FOR i: INTEGER [1..5] DO
     IF NOT Insert(i * 1000, t) THEN Write("full") ENDIF
   ENDFOR;

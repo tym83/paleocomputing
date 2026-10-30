@@ -5,24 +5,12 @@
   (* the names it imports and the standard names are visible (X.B.2), so *)
   (* the search stops at the module and goes on in the standard scope. *)
 
-  VAR
-    Table: SymTable;
-    Scopes: ARRAY (INTEGER [0..400] OF Scope);
-    Depth: INT := -1;
-    VisibleFrom: INT := 0;          (* scopes below this one are hidden *)
-    Level: INT := 0;                (* the frame being written: 0 is global *)
-    FrameName: ARRAY (INTEGER [0..400] OF Txt);  (* C struct of the frame of each level *)
-    (* per scope: the list of declarations being read, so that a module *)
-    (* importing from a module declared later can have it translated first *)
-    (* (X.G); a module node's ival is 0 unread, 1 being read, 2 read *)
-    DeclList: ARRAY (INTEGER [0..400] OF Node);
-
   PROCEDURE NewSym RETURNS Sym (CONST kind: INT; CONST name: Txt)
     VAR s: Sym;
     NEW(s);
     s^ := SymRec(kind, name, Rep NIL, 0, 0, FALSE, FALSE, 0, FALSE, Param NIL, 0, Rep NIL,
                  FALSE, Node NIL, 0, Sym NIL, Sym NIL, Sym NIL, Sym NIL, Sym NIL, Sym NIL,
-                 Sym NIL, 0);
+                 Sym NIL, 0, Node NIL, Node NIL, Node NIL, 0, 0, -1, 0);
     s^.serial := NewSerial();
     RETURN s
   ENDPROCEDURE NewSym;
@@ -34,8 +22,35 @@
     IF Depth >= 0 THEN s^.up := Scopes[Depth] ENDIF;
     Depth := Depth + 1;
     Scopes[Depth] := s;
+    DeclCursor[Depth] := Node NIL;
     RETURN
   ENDPROCEDURE OpenScope;
+
+  (* put a closed scope back, its names visible again: the bodies of the *)
+  (* routines of a module are written after the declarations of the scope *)
+  (* around it (X.G) *)
+  PROCEDURE ReopenScope (CONST sc: Scope)
+    VAR p: Sym := sc^.syms;
+        n: INT := 0;
+        h: INT;
+    Depth := Depth + 1;
+    Scopes[Depth] := sc;
+    DeclCursor[Depth] := Node NIL;
+    WHILE p # Sym NIL DO
+      n := n + 1;
+      ReopenBuf[n] := p;
+      p := p^.stack
+    ENDWHILE;
+    (* the oldest first, so that the newest of a name is found first *)
+    WHILE n > 0 DO
+      p := ReopenBuf[n];
+      h := p^.name MOD 8192;
+      p^.chain := Table[h];
+      Table[h] := p;
+      n := n - 1
+    ENDWHILE;
+    RETURN
+  ENDPROCEDURE ReopenScope;
 
   (* take the names of the innermost scope out of the table *)
   PROCEDURE CloseScope ()
@@ -88,11 +103,27 @@
   PROCEDURE Lookup RETURNS Sym (CONST name: Txt; CONST line: INT)
     VAR s: Sym := Find(name);
         p: Sym;
+    (* a name declared later in the declarations being read is that *)
+    (* declaration, used before it is declared (VII.I) *)
+    IF DeclCursor[Depth] # Node NIL THEN
+      IF (s = Sym NIL) OR (s^.depth # Depth) THEN
+        IF DeclaredFrom(DeclCursor[Depth], name) THEN
+          FailN(line, name, " is used before its declaration in this scope (VII.I)")
+        ENDIF
+      ENDIF
+    ENDIF;
     IF s = Sym NIL THEN FailN(line, name, " is not declared here") ENDIF;
+    (* the body of a routine depends only on the simple declarations of its *)
+    (* scope that precede it (X.G) *)
+    FOR i: INTEGER [1..OTop] DO
+      IF (s^.depth = OrderDepth[i]) AND (s^.serial > OrderSerial[i]) AND IsSimple(s^.kind) THEN
+        FailN(line, name, " is declared after the routine that uses it: a simple declaration precedes the routines that use it (X.G)")
+      ENDIF
+    ENDFOR;
     IF s^.kind = S_EXPORT THEN
       p := s^.chain;
       WHILE p # Sym NIL DO
-        IF (p^.name = name) AND (p^.depth = s^.depth) AND (p^.kind = S_EXPORT) AND
+        IF (p^.name = name) AND (p^.depth = s^.depth) AND (p^.kind = S_EXPORT) AND Resolved(p) AND
            (Real(p) # Real(s)) AND (Real(s)^.kind # S_LIT) THEN
           FailN(line, name, " is exported here by two modules: name it with FROM (X.B.4)")
         ENDIF;
@@ -101,6 +132,111 @@
     ENDIF;
     RETURN s
   ENDPROCEDURE Lookup;
+
+  (* is o among the alternatives that s extends *)
+  PROCEDURE AltOf RETURNS BOOLEAN (CONST s, o: Sym)
+    VAR a: Sym := s^.alt;
+    WHILE a # Sym NIL DO
+      IF a = o THEN RETURN TRUE ENDIF;
+      a := a^.alt
+    ENDWHILE;
+    RETURN FALSE
+  ENDPROCEDURE AltOf;
+
+  FUNCTION IsSimple RETURNS BOOLEAN (CONST k: INT)
+    RETURN (k = S_VAR) OR (k = S_CONST) OR (k = S_REP) OR (k = S_TYPE) OR (k = S_LIT) OR (k = S_LABEL)
+  ENDFUNCTION IsSimple;
+
+  (* is name declared by one of the declarations from d on: names of *)
+  (* constants, variables, labels, types, representations, routines, *)
+  (* modules and what they export, enumeration literals *)
+  PROCEDURE DeclaredFrom RETURNS BOOLEAN (CONST d0: Node; CONST name: Txt)
+    VAR d, nm: Node := d0;
+        k: INT;
+    WHILE d # Node NIL DO
+      k := d^.kind;
+      IF (k = N_CONST) OR (k = N_VAR) OR (k = N_LABEL) THEN
+        nm := d^.a;
+        WHILE nm # Node NIL DO
+          IF nm^.name = name THEN RETURN TRUE ENDIF;
+          nm := nm^.next
+        ENDWHILE
+      ENDIF;
+      IF (k = N_TYPE) OR (k = N_REPDECL) OR (k = N_ROUTINE) OR (k = N_PROCESS) OR (k = N_MODULE) OR
+         (k = N_TEMPLATE) THEN
+        IF d^.name = name THEN RETURN TRUE ENDIF
+      ENDIF;
+      IF (k = N_CONST) OR (k = N_VAR) OR (k = N_TYPE) OR (k = N_REPDECL) THEN
+        IF LiteralIn(d^.b, name) THEN RETURN TRUE ENDIF
+      ENDIF;
+      IF k = N_MODULE THEN
+        nm := d^.b;
+        WHILE nm # Node NIL DO
+          IF (nm^.ival = name) OR ((nm^.ival = 0) AND (nm^.name = name)) THEN RETURN TRUE ENDIF;
+          nm := nm^.next
+        ENDWHILE
+      ENDIF;
+      d := d^.next
+    ENDWHILE;
+    RETURN FALSE
+  ENDPROCEDURE DeclaredFrom;
+
+  (* is name a literal of an enumeration written in the representation n *)
+  PROCEDURE LiteralIn RETURNS BOOLEAN (CONST n: Node; CONST name: Txt)
+    VAR p: Node;
+    IF n = Node NIL THEN RETURN FALSE ENDIF;
+    IF n^.kind = N_RENUM THEN
+      p := n^.a;
+      WHILE p # Node NIL DO
+        IF p^.name = name THEN RETURN TRUE ENDIF;
+        p := p^.next
+      ENDWHILE;
+      RETURN FALSE
+    ENDIF;
+    IF n^.kind = N_RARRAY THEN
+      p := n^.a;
+      WHILE p # Node NIL DO
+        IF LiteralIn(p, name) THEN RETURN TRUE ENDIF;
+        p := p^.next
+      ENDWHILE;
+      RETURN LiteralIn(n^.b, name)
+    ENDIF;
+    IF n^.kind = N_RRECORD THEN
+      p := n^.a;
+      WHILE p # Node NIL DO
+        IF LiteralIn(p^.b, name) THEN RETURN TRUE ENDIF;
+        p := p^.next
+      ENDWHILE;
+      IF n^.b # Node NIL THEN
+        IF LiteralIn(n^.b^.b, name) THEN RETURN TRUE ENDIF;
+        p := n^.b^.a;
+        WHILE p # Node NIL DO
+          IF LiteralInGroups(p^.b, name) THEN RETURN TRUE ENDIF;
+          p := p^.next
+        ENDWHILE
+      ENDIF;
+      RETURN FALSE
+    ENDIF;
+    IF (n^.kind = N_RFILE) OR (n^.kind = N_RSET) THEN RETURN LiteralIn(n^.a, name) ENDIF;
+    RETURN FALSE
+  ENDPROCEDURE LiteralIn;
+
+  PROCEDURE LiteralInGroups RETURNS BOOLEAN (CONST g0: Node; CONST name: Txt)
+    VAR g: Node := g0;
+    WHILE g # Node NIL DO
+      IF LiteralIn(g^.b, name) THEN RETURN TRUE ENDIF;
+      g := g^.next
+    ENDWHILE;
+    RETURN FALSE
+  ENDPROCEDURE LiteralInGroups;
+
+  (* an import of a name that a declaration translated later provides: *)
+  (* known by its alias without a target until then (X.G) *)
+  FUNCTION Resolved RETURNS BOOLEAN (CONST s: Sym)
+    IF s^.kind # S_EXPORT THEN RETURN TRUE ENDIF;
+    IF s^.target = Sym NIL THEN RETURN FALSE ENDIF;
+    RETURN Resolved(s^.target)
+  ENDFUNCTION Resolved;
 
   (* an enumeration literal named in more than one visible type must be *)
   (* qualified by its type (VI.A.3) *)
@@ -119,7 +255,7 @@
   PROCEDURE FindLit RETURNS Sym (CONST name: Txt; CONST r: Rep)
     VAR s: Sym := Table[name MOD 8192];
     WHILE s # Sym NIL DO
-      IF s^.name = name THEN
+      IF (s^.name = name) AND Resolved(s) THEN
         IF (Real(s)^.kind = S_LIT) AND (Real(s)^.rep^.tid = r^.tid) THEN RETURN s ENDIF
       ENDIF;
       s := s^.chain
@@ -131,7 +267,7 @@
     VAR old: Sym := FindHere(s^.name);
         h: INT := s^.name MOD 8192;
     IF (old # Sym NIL) AND NOT ((old^.kind = S_LIT) AND (s^.kind = S_LIT)) AND
-       NOT ((s^.kind = S_ROUTINE) AND (s^.alt # Sym NIL) AND (s^.alt = Real(old))) AND
+       NOT ((s^.kind = S_ROUTINE) AND Resolved(old) AND AltOf(s, Real(old))) AND
        NOT ((s^.kind = S_EXPORT) AND (old^.kind = S_EXPORT)) THEN
       FailN(line, s^.name, " is declared twice in this scope")
     ENDIF;
@@ -209,6 +345,11 @@
   (* follow imports and renamings to the entity itself *)
   PROCEDURE Real RETURNS Sym (CONST s: Sym)
     VAR p: Sym := s;
-    WHILE p^.kind = S_EXPORT DO p := p^.target ENDWHILE;
+    WHILE p^.kind = S_EXPORT DO
+      IF p^.target = Sym NIL THEN
+        FailN(CurLine, p^.name, " is imported from a declaration translated later: until then only the bodies of routines may use it (X.G)")
+      ENDIF;
+      p := p^.target
+    ENDWHILE;
     RETURN p
   ENDPROCEDURE Real;

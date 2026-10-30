@@ -1,22 +1,6 @@
 
   (* ---- statements (Section IX) --------------------------------------------- *)
 
-  VAR
-    XFrames: ARRAY (INTEGER [1..1000] OF Txt);  (* the handler frames entered *)
-    XTop: INT := 0;
-    XBase: INT := 0;                 (* the first frame of the routine being written *)
-    BlockFrame: ARRAY (INTEGER [1..1000] OF Txt);  (* per block: its handler frame or 0 *)
-    BlockXs: ARRAY (INTEGER [1..1000] OF Txt);     (* per block with labels: rt_xtop at its start *)
-    BTop: INT := 0;
-    HandlerXc: ARRAY (INTEGER [1..1000] OF Txt);   (* the exception a handler handles *)
-    HTop: INT := 0;
-    LoopName, LoopLabel: ARRAY (INTEGER [1..1000] OF Txt);
-    LoopFrames: ARRAY (INTEGER [1..1000] OF INT);
-    LTop: INT := 0;
-    LoopBase: INT := 0;
-    CurRoutine: Sym := Sym NIL;      (* the routine or process being written *)
-    HasHandler: BOOLEAN := FALSE;    (* it has an exception handler *)
-
   PROCEDURE Emit2 (CONST a: ARRAY (1 DIMENSIONS OF ASCII); CONST b: Txt)
     VAR t: Txt;
     SB();
@@ -42,6 +26,10 @@
   (* leave the handler frames entered after the first depth of them *)
   PROCEDURE PopTo (CONST depth: INT)
     IF XTop > depth THEN Emit3("rt_xtop = ", XFrames[depth + 1], ".prev;") ENDIF;
+    (* a SIMULATED_TIME block left: the simulation ends *)
+    FOR i: INTEGER [depth + 1..XTop] DO
+      IF XRestore[i] # 0 THEN Emit(XRestore[i]) ENDIF
+    ENDFOR;
     RETURN
   ENDPROCEDURE PopTo;
 
@@ -66,6 +54,13 @@
 
   (* the statements of a block and its exception handler (X.F) *)
   PROCEDURE BlockStatements (CONST b: Node)
+    VAR saveSupp: INT := Supp;
+    BlockStatements1(b);
+    Supp := saveSupp;
+    RETURN
+  ENDPROCEDURE BlockStatements;
+
+  PROCEDURE BlockStatements1 (CONST b: Node)
     VAR f, xc, t: Txt;
         c, nm: Node;
         first: BOOLEAN;
@@ -95,6 +90,7 @@
     Emit3("if (RT_TRY(", f, ")) {");
     XTop := XTop + 1;
     XFrames[XTop] := f;
+    XRestore[XTop] := 0;
     BTop := BTop + 1;
     BlockFrame[BTop] := f;
     BlockXs[BTop] := xs;
@@ -105,6 +101,7 @@
     Emit3("RT_POP(", f, ");");
     EmitS("} else {");
     Emit3("RT_POP(", f, ");");
+    IF Level > 0 THEN EmitS("y_use = F.yu + (rt_int)((sizeof F + 7) / 8);") ELSE EmitS("y_use = 0;") ENDIF;
     xc := Fresh("xc");
     Emit3("int ", xc, " = rt_xcur;");
     BTop := BTop + 1;
@@ -147,7 +144,207 @@
     BTop := BTop - 1;
     EmitS("}}");
     RETURN
-  ENDPROCEDURE BlockStatements;
+  ENDPROCEDURE BlockStatements1;
+
+  (* do two designators name the same variable: the same names, components *)
+  (* and pointers, subscripts that are the same constants or names *)
+  PROCEDURE SameDesig RETURNS BOOLEAN (CONST a, b: Node)
+    VAR p, q: Node;
+        oa, ob: BOOLEAN;
+        va, vb: INT;
+    IF a^.kind = N_PAREN THEN RETURN SameDesig(a^.a, b) ENDIF;
+    IF b^.kind = N_PAREN THEN RETURN SameDesig(a, b^.a) ENDIF;
+    IF a^.kind # b^.kind THEN RETURN FALSE ENDIF;
+    IF a^.kind = N_NAME THEN RETURN (a^.name = b^.name) AND (a^.d = Node NIL) AND (b^.d = Node NIL) ENDIF;
+    IF a^.kind = N_SEL THEN RETURN (a^.name = b^.name) AND SameDesig(a^.a, b^.a) ENDIF;
+    IF a^.kind = N_DEREF THEN RETURN SameDesig(a^.a, b^.a) ENDIF;
+    IF a^.kind = N_INDEX THEN
+      IF NOT SameDesig(a^.a, b^.a) THEN RETURN FALSE ENDIF;
+      p := a^.b;
+      q := b^.b;
+      WHILE (p # Node NIL) AND (q # Node NIL) DO
+        Manifest(p, oa, va);
+        Manifest(q, ob, vb);
+        IF oa AND ob THEN
+          IF va # vb THEN RETURN FALSE ENDIF
+        ELSIF NOT SameDesig(p, q) THEN
+          RETURN FALSE
+        ENDIF;
+        p := p^.next;
+        q := q^.next
+      ENDWHILE;
+      RETURN (p = Node NIL) AND (q = Node NIL)
+    ENDIF;
+    RETURN FALSE
+  ENDPROCEDURE SameDesig;
+
+  (* "the designation of a variant record component must be lexically *)
+  (* embedded in a SELECT statement that verifies whether the record value *)
+  (* has assumed the proper variant structure" (VIII.B): a case of a SELECT *)
+  (* on the case-selection component of the same record, whose labels all *)
+  (* belong to the component's variant *)
+  PROCEDURE CheckVariantSelected (CONST n: Node; CONST r: Rep; CONST f: Field)
+    VAR i: INT := STop;
+        e, l, fl: Node;
+        v, fv: INT;
+        ok, found: BOOLEAN;
+    WHILE i > 0 DO
+      e := SelExpr[i];
+      WHILE e^.kind = N_PAREN DO e := e^.a ENDWHILE;
+      IF (e^.kind = N_SEL) AND (e^.name = r^.selector^.name) AND SameDesig(e^.a, n^.a) THEN
+        l := SelLabels[i];
+        IF l = Node NIL THEN
+          FailN(n^.line, n^.name, " is a component of a variant: the ELSE of a SELECT does not say which variant the record has (VIII.B)")
+        ENDIF;
+        WHILE l # Node NIL DO
+          v := Label(l, r^.selector^.rep);
+          found := FALSE;
+          fl := f^.labels;
+          WHILE fl # Node NIL DO
+            Manifest(fl, ok, fv);
+            IF ok AND (fv = v) THEN found := TRUE ENDIF;
+            fl := fl^.next
+          ENDWHILE;
+          IF NOT found THEN
+            FailN(n^.line, n^.name, " is not a component of the variant this CASE selects (VIII.B)")
+          ENDIF;
+          l := l^.next
+        ENDWHILE;
+        RETURN
+      ENDIF;
+      i := i - 1
+    ENDWHILE;
+    FailN(n^.line, n^.name, " is a component of a variant: it is used inside a SELECT on the case-selection component (VIII.B)");
+    RETURN
+  ENDPROCEDURE CheckVariantSelected;
+
+  (* the CASE labels of a SELECT are distinct values (IX.B.1) *)
+  PROCEDURE CheckCaseLabels (CONST s: Node; CONST r: Rep)
+    VAR arm, l: Node := s^.b;
+        n, v: INT := 0;
+    WHILE arm # Node NIL DO
+      l := arm^.a;
+      WHILE l # Node NIL DO
+        v := Label(l, r);
+        FOR j: INTEGER [1..n] DO
+          IF LabelSeen[j] = v THEN FailS(l^.line, "a CASE label appears twice in this SELECT (IX.B.1)") ENDIF
+        ENDFOR;
+        IF n < 4096 THEN
+          n := n + 1;
+          LabelSeen[n] := v
+        ENDIF;
+        l := l^.next
+      ENDWHILE;
+      arm := arm^.next
+    ENDWHILE;
+    RETURN
+  ENDPROCEDURE CheckCaseLabels;
+
+  (* ---- falling out of the bottom (IX.A.6-7) ---------------------------------- *)
+  (* "It is an error to fall out the bottom of a routine": the end of a body *)
+  (* that control can reach is an error where the translator sees it. *)
+  (* Control reaches the end of a statement sequence unless its last *)
+  (* reachable statement ends otherwise: RETURN, TERMINATE_PROCESS, *)
+  (* PROPAGATE_EXCEPTION, GOTO, EXIT, a LOOP no EXIT leaves, a WHILE TRUE, *)
+  (* and IF and SELECT statements with an ELSE all of whose parts end so. *)
+
+  PROCEDURE Falls RETURNS BOOLEAN (CONST list: Node)
+    VAR s: Node := list;
+        reach: BOOLEAN := TRUE;
+    WHILE s # Node NIL DO
+      IF s^.text # 0 THEN reach := TRUE ENDIF;
+      IF reach THEN reach := Completes(s) ENDIF;
+      s := s^.next
+    ENDWHILE;
+    RETURN reach
+  ENDPROCEDURE Falls;
+
+  PROCEDURE BlockFalls RETURNS BOOLEAN (CONST b: Node)
+    VAR c: Node;
+    IF Falls(b^.c) THEN RETURN TRUE ENDIF;
+    IF b^.b = Node NIL THEN RETURN FALSE ENDIF;
+    (* the cases of a handler are terminal sequences of the block (X.F) *)
+    c := b^.b^.a;
+    WHILE c # Node NIL DO
+      IF Falls(c^.b) THEN RETURN TRUE ENDIF;
+      c := c^.next
+    ENDWHILE;
+    IF b^.b^.flag = 1 THEN RETURN Falls(b^.b^.b) ENDIF;
+    RETURN FALSE
+  ENDPROCEDURE BlockFalls;
+
+  PROCEDURE Completes RETURNS BOOLEAN (CONST s: Node)
+    VAR k: INT := s^.kind;
+        arm: Node;
+        ok: BOOLEAN;
+        v: INT;
+    IF (k = N_RETURN) OR (k = N_TERMINATE) OR (k = N_PROPAGATE) OR (k = N_GOTO) OR (k = N_EXIT) THEN
+      RETURN FALSE
+    ENDIF;
+    IF k = N_IF THEN
+      IF s^.flag # 1 THEN RETURN TRUE ENDIF;
+      arm := s^.a;
+      WHILE arm # Node NIL DO
+        IF Falls(arm^.b) THEN RETURN TRUE ENDIF;
+        arm := arm^.next
+      ENDWHILE;
+      RETURN Falls(s^.b)
+    ENDIF;
+    IF k = N_SELECT THEN
+      IF s^.flag # 1 THEN RETURN TRUE ENDIF;
+      arm := s^.b;
+      WHILE arm # Node NIL DO
+        IF Falls(arm^.b) THEN RETURN TRUE ENDIF;
+        arm := arm^.next
+      ENDWHILE;
+      RETURN Falls(s^.c)
+    ENDIF;
+    IF k = N_WHILE THEN
+      Manifest(s^.a, ok, v);
+      RETURN NOT (ok AND (v = 1))
+    ENDIF;
+    IF k = N_LOOP THEN RETURN Exits(s^.b, s^.name) ENDIF;
+    IF k = N_BEGIN THEN RETURN BlockFalls(s^.a) ENDIF;
+    RETURN TRUE
+  ENDPROCEDURE Completes;
+
+  (* does an EXIT name appear in the statements *)
+  PROCEDURE Exits RETURNS BOOLEAN (CONST list: Node; CONST name: Txt)
+    VAR s: Node := list;
+        arm: Node;
+    WHILE s # Node NIL DO
+      IF (s^.kind = N_EXIT) AND (s^.name = name) THEN RETURN TRUE ENDIF;
+      IF s^.kind = N_IF THEN
+        arm := s^.a;
+        WHILE arm # Node NIL DO
+          IF Exits(arm^.b, name) THEN RETURN TRUE ENDIF;
+          arm := arm^.next
+        ENDWHILE;
+        IF Exits(s^.b, name) THEN RETURN TRUE ENDIF
+      ELSIF s^.kind = N_SELECT THEN
+        arm := s^.b;
+        WHILE arm # Node NIL DO
+          IF Exits(arm^.b, name) THEN RETURN TRUE ENDIF;
+          arm := arm^.next
+        ENDWHILE;
+        IF Exits(s^.c, name) THEN RETURN TRUE ENDIF
+      ELSIF (s^.kind = N_WHILE) OR (s^.kind = N_FOR) OR (s^.kind = N_LOOP) THEN
+        IF Exits(s^.b, name) THEN RETURN TRUE ENDIF
+      ELSIF s^.kind = N_BEGIN THEN
+        IF Exits(s^.a^.c, name) THEN RETURN TRUE ENDIF;
+        IF s^.a^.b # Node NIL THEN
+          arm := s^.a^.b^.a;
+          WHILE arm # Node NIL DO
+            IF Exits(arm^.b, name) THEN RETURN TRUE ENDIF;
+            arm := arm^.next
+          ENDWHILE;
+          IF Exits(s^.a^.b^.b, name) THEN RETURN TRUE ENDIF
+        ENDIF
+      ENDIF;
+      s := s^.next
+    ENDWHILE;
+    RETURN FALSE
+  ENDPROCEDURE Exits;
 
   PROCEDURE Statements (CONST list: Node)
     VAR s: Node := list;
@@ -200,7 +397,9 @@
         ST(p^.cname);
         SA("_o)");
         t := SE();
-        Store(t, p^.rep, Path(Level, p^.cname), p^.rep, 0)
+        IF p^.path # 0 THEN Assign(t, p^.rep, p^.path, p^.rep, 0)
+        ELSE Assign(t, p^.rep, Path(Level, p^.cname), p^.rep, 0)
+        ENDIF
       ENDIF;
       p := p^.next
     ENDWHILE;
@@ -218,24 +417,49 @@
         sym: Sym;
     CurLine := s^.line;
     IF s^.text # 0 THEN PlaceLabel(s) ENDIF;
-    IF k = N_ASSIGN THEN
+    IF (k = N_ASSIGN) AND (s^.a^.kind = N_INDEX) AND IsMainStore(s^.a^.a) THEN
+      (* MAIN_STORE_ARRAY [a] := w: the word, as the store shows it (XIV.VI.2) *)
+      IF Count(s^.a^.b) # 1 THEN FailS(s^.line, "MAIN_STORE_ARRAY has one subscript") ENDIF;
+      CheckPure(s^.a);
+      NoteWrite(s^.a);
+      Expr(s^.a^.b, RAddress, c, r);
+      CheckType(s^.line, RAddress, r);
+      Expr(s^.b, RWord, c2, er);
+      CheckType(s^.line, RWord, er);
+      Emit(Join(T("y_mem_set("), c, Join(T(", "), c2, T(");"))));
+      EmitS("Y_FLUSH();")
+    ELSIF k = N_ASSIGN THEN
       LValue(s^.a, c, r);
       CheckPure(s^.a);
+      NoteWrite(s^.a);
       IF (r^.kind = R_SIGNAL) OR HoldsSignal(r) THEN
         FailS(s^.line, "assignment is not defined for signals (VI.A.1.d)")
       ENDIF;
-      IF (r^.kind = R_FILE) OR (r^.kind = R_SEM) THEN
-        FailS(s^.line, "assignment is not defined for files and semaphores (VII.B)")
-      ENDIF;
-      IF r^.opaque AND ((r^.opaqueops MOD 2) = 0) THEN
-        FailN(s^.line, r^.tname, " is opaque here: := is not exported (X.B.3)")
+      IF NonAssignable(r) THEN
+        FailS(s^.line, "assignment is not defined for files and semaphores, nor what holds them (VII.B)")
       ENDIF;
       Expr(s^.b, r, c2, er);
-      Store(c, r, c2, er, s^.line)
+      t := UserAssign(c, r, c2, er, s^.line);
+      IF t # 0 THEN
+        Emit(t)
+      ELSE
+        IF r^.opaque AND ((r^.opaqueops MOD 2) = 0) THEN
+          FailN(s^.line, r^.tname, " is opaque here: := is not exported (X.B.3)")
+        ENDIF;
+        Store(c, r, c2, er, s^.line)
+      ENDIF;
+      (* views of the store agree with it again (XIV.VI) *)
+      EmitS("Y_FLUSH();")
     ELSIF k = N_CALLST THEN
       sym := Find(s^.a^.name);
       IF sym # Sym NIL THEN sym := Real(sym) ENDIF;
-      IF (sym # Sym NIL) AND (sym^.kind = S_PROCESS) THEN
+      IF (sym # Sym NIL) AND (sym^.kind = S_PROCESS) AND sym^.hasmv THEN
+        (* a process of another segment, activated there (XIII); its VAR *)
+        (* actuals live as long as it, at the top of a segment (X.E.2) *)
+        CompileArgs(s^.a^.a, sym, i, val);
+        CheckLifeScope(sym, i, val);
+        Emit(Join(CallCode(sym, i, val, s^.line), T(";"), 0))
+      ELSIF (sym # Sym NIL) AND (sym^.kind = S_PROCESS) THEN
         Activate(s^.a, sym)
       ELSE
         CallExpr(s^.a, Rep NIL, TRUE, c, r);
@@ -244,7 +468,8 @@
         ST(c);
         SA(";");
         t := SE();
-        Body.tail^.t := t
+        Body.tail^.t := t;
+        EmitS("Y_FLUSH();")
       ENDIF
     ELSIF k = N_IF THEN
       first := TRUE;
@@ -264,6 +489,7 @@
     ELSIF k = N_WHILE THEN
       c := Cond(s^.a);
       Emit3("while (", c, ") {");
+      EmitS("Y_TICK();");
       Statements(s^.b);
       EmitS("}")
     ELSIF k = N_LOOP THEN
@@ -273,6 +499,7 @@
       LoopLabel[LTop] := lab;
       LoopFrames[LTop] := XTop;
       EmitS("for (;;) {");
+      EmitS("Y_TICK();");
       Statements(s^.b);
       EmitS("}");
       Emit3("", lab, ": ;");
@@ -294,6 +521,7 @@
     ELSIF k = N_SELECT THEN
       Expr(s^.a, Rep NIL, c, r);
       IF NOT IsDiscrete(r) THEN FailS(s^.line, "SELECT on a value that is not integer or scalar") ENDIF;
+      CheckCaseLabels(s, r);
       Emit3("switch (", c, ") {");
       arm := s^.b;
       WHILE arm # Node NIL DO
@@ -309,13 +537,21 @@
           l := l^.next
         ENDWHILE;
         EmitS("{");
+        STop := STop + 1;
+        SelExpr[STop] := s^.a;
+        SelLabels[STop] := arm^.a;
         Statements(arm^.b);
+        STop := STop - 1;
         EmitS("} break;");
         arm := arm^.next
       ENDWHILE;
       (* no case and no ELSE: nothing is done (IX.B.1) *)
       EmitS("default: {");
+      STop := STop + 1;
+      SelExpr[STop] := s^.a;
+      SelLabels[STop] := Node NIL;
       IF s^.flag = 1 THEN Statements(s^.c) ENDIF;
+      STop := STop - 1;
       EmitS("} break;");
       EmitS("}")
     ELSIF k = N_RETURN THEN
@@ -328,8 +564,18 @@
         LeaveBlock();
         Emit(RaiseCode(s^.name))
       ENDIF
+    ELSIF (k = N_ASSERT) AND Suppressed(T_ASSERTION) THEN
+      (* "if the detection of this exception is suppressed, then the *)
+      (* assertion has no effect" (IX.A.3) *)
+      i := 0
     ELSIF k = N_ASSERT THEN
+      i := ImpureCalls;
       c := Cond(s^.a);
+      IF ImpureCalls # i THEN
+        (* "translators shall give warning if the expression in an *)
+        (* assertion statement might have side-effects" (IX.A.3) *)
+        Warn(s^.line, T("the expression of this ASSERT calls a procedure: it might have side effects (IX.A.3)"))
+      ENDIF;
       Emit3("if (!(", c, ")) {");
       LeaveBlock();
       EmitS("rt_raise(RT_X_ASSERT); }")
@@ -352,7 +598,9 @@
         v, hi, t: Txt;
         sym: Sym;
     r := MakeRep(s^.a, 0, FALSE);
-    IF NOT IsDiscrete(r) THEN FailS(s^.line, "FOR goes over an integer or scalar representation") ENDIF;
+    IF NOT IsDiscrete(r) OR (r^.kind = R_BOOL) OR ((r^.kind = R_ENUM) AND NOT r^.ordered) THEN
+      FailS(s^.line, "FOR goes over an ordered scalar or integer representation (IX.B.2)")
+    ENDIF;
     CheckRepresented(r, s^.line);
     OpenScope(FALSE);
     sym := NewSym(S_CONST, s^.name);
@@ -386,7 +634,7 @@
     ST(SymPath(sym));
     SA(" = ");
     ST(v);
-    SA(";");
+    SA("; Y_TICK();");
     t := SE();
     Emit(t);
     Statements(s^.b);
@@ -416,7 +664,7 @@
       CopyOut();
       LeaveMonitor();
       PopTo(XBase);
-      EmitS("return;");
+      EmitS("y_use = F.yu; return;");
       RETURN
     ENDIF;
     IF ret^.kind = R_VOID THEN FailS(s^.line, "this routine returns no value (IX.A.6)") ENDIF;
@@ -436,17 +684,40 @@
     CopyOut();
     LeaveMonitor();
     PopTo(XBase);
-    Emit3("return ", tmp, "; }");
+    Emit3("y_use = F.yu; return ", tmp, "; }");
     RETURN
   ENDPROCEDURE ReturnStatement;
 
+  (* SIMULATED_TIME BEGIN ... END: the block runs as one sequential *)
+  (* process, its processes quasi-parallel: none is preempted by a time *)
+  (* slice, and only DELAY makes time pass (IX.B.3, X.E.5); an exception *)
+  (* that leaves the block leaves the simulation too *)
   PROCEDURE BeginStatement (CONST s: Node)
+    VAR f, ys: Txt;
     EmitS("{");
+    IF s^.flag = 1 THEN
+      f := Fresh("sf");
+      ys := Fresh("ys");
+      HasHandler := TRUE;
+      Emit(Join(T("int "), ys, T(" = y_sim_depth; y_sim_depth++;")));
+      Emit(Join(T("rt_frame "), f, T(";")));
+      Emit(Join(T("if (!RT_TRY("), f, Join(T(")) { RT_POP("), f, Join(T("); y_sim_depth = "), ys, T("; rt_raise(rt_xcur); }")))));
+      XTop := XTop + 1;
+      XFrames[XTop] := f;
+      XRestore[XTop] := Join(T("y_sim_depth = "), ys, T(";"));
+      SimTop := SimTop + 1;
+      SimYs[SimTop] := ys
+    ENDIF;
     OpenScope(FALSE);
     Declarations(s^.a^.a);
     BlockStatements(s^.a);
     AwaitProcesses();
     CloseScope();
+    IF s^.flag = 1 THEN
+      SimTop := SimTop - 1;
+      XTop := XTop - 1;
+      Emit(Join(T("RT_POP("), f, Join(T("); y_sim_depth = "), ys, T(";"))))
+    ENDIF;
     EmitS("}");
     RETURN
   ENDPROCEDURE BeginStatement;
@@ -479,6 +750,9 @@
       FailN(s^.line, s^.name, ": GOTO does not leave a routine or process (IX.A.4)")
     ENDIF;
     sym^.readonly := TRUE;
+    EmitS("Y_TICK();");
+    (* a GOTO out of a SIMULATED_TIME block ends the simulation too *)
+    IF SimTop > sym^.mval THEN Emit3("y_sim_depth = ", SimYs[sym^.mval + 1], ";") ENDIF;
     Emit3("goto ", sym^.cname, ";");
     RETURN
   ENDPROCEDURE GotoStatement;

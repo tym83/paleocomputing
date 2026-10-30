@@ -1,0 +1,29 @@
+(* composite declarations in any order (X.G): modules that import from each *)
+(* other in a circle, a module importing a procedure declared after it; *)
+(* the bodies, and the initializations, may use them all *)
+MODULE Circle
+  IMPORT TextIO, StandardImplementationPrelude;
+  MODULE One
+    IMPORT Two, Write, INTEGER64;
+    EXPORT A, Count;
+    VAR n: INTEGER64 := 0;
+    PROCEDURE A (CONST k: INTEGER64)
+      n := n + 1;
+      IF k > 0 THEN B(k - 1) ENDIF;
+      RETURN
+    ENDPROCEDURE A;
+    FUNCTION Count RETURNS INTEGER64 () RETURN n ENDFUNCTION Count;
+    Write("One ")
+  ENDMODULE One;
+  MODULE Two
+    IMPORT A FROM One, Write, Later, INTEGER64;
+    EXPORT B;
+    PROCEDURE B (CONST k: INTEGER64)
+      Write("b"); A(k);
+      RETURN
+    ENDPROCEDURE B;
+    Write("Two "); Later()
+  ENDMODULE Two;
+  PROCEDURE Later () Write("later "); RETURN ENDPROCEDURE Later;
+  A(3); Write(" "); Write(Count()); WriteLn()
+ENDMODULE Circle

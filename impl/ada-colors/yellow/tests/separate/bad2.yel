@@ -1,0 +1,4 @@
+MODULE User
+  IMPORT Counter, TextIO, StandardImplementationPrelude;
+  AddTo(total)
+ENDMODULE User

@@ -1,0 +1,6 @@
+[range trap] 9
+[zero divide trap] 0
+overflow became too_big
+range checks off: 12
+[range trap] 
+20 0 99 99

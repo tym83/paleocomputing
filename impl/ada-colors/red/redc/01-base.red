@@ -5,7 +5,9 @@
 % name order before translation. This file holds the shared data: token and
 % node kinds, the tree, types, symbols and the output buffers.
 
-CAPSULE redc EXPORTS NONE;
+% redc reads the components of its dynamic variables as zeroed: it is
+% translated without X_INIT checks (B)
+PRAG(SUPPRESS(X_INIT)) CAPSULE redc EXPORTS NONE;
 
 % ---- token kinds ---------------------------------------------------------
 CONST k_eof := 0;
@@ -72,6 +74,9 @@ CONST n_arm := 60;
 CONST n_label := 61;
 CONST n_handler := 62;
 CONST n_comp := 63;
+% a representational item (12.2): name SIZE, ALIGN, OFFSET, RECORD, UNION,
+% ARRAY, ABSENT, PTR or ENUM
+CONST n_rep := 64;
 
 CONST s_int := 70;
 CONST s_float := 71;
@@ -109,6 +114,7 @@ CONST t_lock := 13;
 CONST t_act := 14;
 CONST t_new := 15;
 CONST t_set := 16;
+CONST t_union := 17;
 
 % ---- symbol kinds -------------------------------------------------------------
 CONST y_var := 1;
@@ -125,21 +131,30 @@ CONST y_generic := 10;
 % ---- the data ---------------------------------------------------------------
 TYPE text : PTR (n : INT) STRING[ASCII](n);
 
-TYPE token : PTR RECORD[kind : INT, line : INT, ival : INT, s : text];
+% prags: the pragmats written just before the token (2.4.2, B), as
+% NAME(ARG,...); items each ended by a semicolon
+TYPE token : PTR RECORD[kind : INT, line : INT, ival : INT, s : text, prags : text];
 TYPE tokens : PTR (n : INT) ARRAY INT(1 .. n) OF token;
 
 TYPE node : PTR RECORD[kind : INT, line : INT, ival : INT, flag : INT,
-                       name : text, tag : text,
+                       name : text, tag : text, prags : text, labels : node, eline : INT,
                        a, b, c, d, e : node, next : node];
 
-TYPE cons : PTR RECORD[lo, hi, lo2, hi2, slen : text, mlo, mhi : INT, hasm : BOOL, args : node];
+% a constraint: its bounds as C; dyn when the bounds were kept in storage of
+% the subprogram at level lvl when the subtype was elaborated (4.1.4)
+TYPE cons : PTR RECORD[lo, hi, lo2, hi2, slen : text, mlo, mhi : INT, hasm : BOOL, args : node,
+                       dyn : BOOL, lvl : INT, prec : text, bnds : lines];
 
 TYPE typ : PTR RECORD[kind : INT, name : text, lits : node,
                       elem : typ, idx, idx2 : typ, elemcons : cons, elemst : node,
                       under : typ, tparams : node, ocap : node,
                       fields : field, target : typ, decl : node,
                       cname : text, forward, defined, helpers : BOOL,
-                      initp, tpsyms : sym, gen, gbinds : sym, next : typ];
+                      initp, finalp, tpsyms : sym, gen, gbinds : sym, next : typ,
+                      ndim : INT, idxs : tlist, assignp, eqp, ltp : sym, repn : node];
+
+% the index types of an array, one for each dimension (C.7)
+TYPE tlist : PTR RECORD[t : typ, next : tlist];
 
 TYPE field : PTR RECORD[name : text, t : typ, c : cons, st : node, next : field];
 
@@ -151,7 +166,13 @@ TYPE sym : PTR RECORD[kind : INT, name : text, t : typ, c : cons,
                       params : parm, result : typ, depth : INT,
                       level : INT, byref : BOOL, members, mnext : sym,
                       binds : node, insts : sym, env : buckets,
-                      chain, stack : sym];
+                      chain, stack : sym, owner : sym, gctx : fctxrec, mv : mval,
+                      reqs : lines, reqdone : BOOL, home : node, capn : node,
+                      tbinds : sym, loc : text, reqs_sym : sym, decl_line : INT, pending : BOOL];
+
+% a value known during translation (5.5): kind is t_int, t_bool, t_enum or
+% t_string; i holds an INT, a BOOL (0, 1) or the position of a literal
+TYPE mval : PTR RECORD[kind : INT, i : INT, s : text, t : typ, f : FLOAT];
 
 TYPE lines : PTR RECORD[s : text, next : lines];
 TYPE buffer : PTR RECORD[head, tail : lines];
@@ -162,7 +183,7 @@ TYPE exitrec : PTR RECORD[match, label : text, depth : INT, next : exitrec];
 
 % a closed scope being translated: subprogram or capsule (3.5, 3.7)
 % the capsules being translated, innermost first
-TYPE caprec : PTR RECORD[d : node, next : caprec];
+TYPE caprec : PTR RECORD[d : node, next : caprec, depth : INT];
 
 % what leaving the scope of a capsule's declaration waits for (10.1, 8.1)
 TYPE waitrec : PTR RECORD[d : node, w : text, next : waitrec];
@@ -175,6 +196,11 @@ VAR toks : tokens;
 VAR ntoks : INT := 0;
 VAR tpos : INT := 1;
 VAR src_line : INT := 0;
+VAR pending_prag : text;
+% the lines of the program read, for the library of translated units (3.1)
+VAR src_head, src_tail : lines;
+VAR ntoks_before_library : INT := 0;
+VAR library_tried : lines;
 
 CONST nbuckets := 4093;
 VAR table : buckets;
@@ -203,8 +229,32 @@ VAR out_frames : buffer;
 % the globals, registered for FREE (4.4.3), and whether FREE is used
 VAR out_roots : buffer;
 VAR uses_free : BOOL := FALSE;
+% data items to be finalized when their scope is left (13.3): the code that
+% closes each, the most recent first; and whether dynamic ones exist
+VAR fins : lines;
+VAR uses_findyn : BOOL := FALSE;
 VAR func_sym : sym;
+% the result subtype of the function being translated (7.2)
+VAR func_rc : cons;
+% RETURN in a capsule body ends the capsule's elaboration (6.7): the flag it
+% sets, the label after the current element, the frames open at its start
+VAR cap_ret, cap_rflag : text;
+VAR ret_frames : INT := 0;
+% while a generic is instantiated: the scope depth of the instance itself
+VAR gdepth : INT := 0;
+% the exceptions a SUPPRESS pragmat names for the scope being translated (B),
+% each with a blank on either side
+VAR suppress : text;
+% the subtype the context resolves the next constructor to (5.7)
+VAR cons_ctx : cons;
+% while a declared variable is created: its scalars start uninitialized (5.1)
+VAR mark_uninit : BOOL := FALSE;
+% the next variable named is the base of a component, not read as a whole
+VAR skip_chk : BOOL := FALSE;
 VAR exits : exitrec;
+% the goto labels known in the scope being translated (6.8); depth -1 until
+% the statements of their body begin
+VAR gotos : exitrec;
 VAR frames : INT := 0;
 VAR handlers : lines;
 VAR cleanups : lines;
@@ -213,4 +263,9 @@ VAR mcopies : lines;
 
 VAR ty_int, ty_bool, ty_float, ty_ascii, ty_string, ty_void, ty_file, ty_nil : typ;
 VAR ty_lock, ty_latch, ty_act : typ;
+% ENUM['INPUT, 'OUTPUT, 'UPDATE], the access and use of a file (C.14)
+VAR file_mode_type : typ;
+VAR ty_send_st, ty_receive_st : typ;
+% FILE[ASCII], and the enumerations of OPEN, CLOSE and .ACCESS (C.14)
+VAR ty_text_file, file_state_type, file_disp_type, file_access_type : typ;
 VAR no_cons : cons;

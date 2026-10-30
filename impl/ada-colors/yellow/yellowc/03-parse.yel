@@ -2,16 +2,11 @@
   (* ---- the parser: Appendix B of the Report (pp.1084-1089) --------------- *)
   (* Rule numbers in comments are those of the Appendix. *)
 
-  VAR
-    TPos: INT := 1;
-    Labels: Node := Node NIL;       (* the LABEL names of the blocks being read *)
-    FromWord, DimensionWord: Txt := 0;
-
   PROCEDURE NewNode RETURNS Node (CONST kind, line: INT)
     VAR n: Node;
     NEW(n);
     n^ := NodeRec(kind, line, 0, 0, 0, 0, Node NIL, Node NIL, Node NIL, Node NIL, Node NIL,
-                  Node NIL, Rep NIL, Sym NIL);
+                  Node NIL, Rep NIL, Sym NIL, Node NIL, 0, 0);
     RETURN n
   ENDPROCEDURE NewNode;
 
@@ -177,6 +172,7 @@
         attr: INT;
     IF Accept(W_MONITOR) THEN n^.flag := 1 ELSE Expect(W_MODULE) ENDIF;
     n^.name := Ident();
+    n^.t0 := TPos;
     WHILE Accept(W_IMPORT) DO
       LOOP items
         it := ImportItem();
@@ -199,6 +195,7 @@
       ENDLOOP items;
       Expect(P_SEMI)
     ENDWHILE;
+    n^.t1 := TPos;
     n^.c := ParseBlock();
     IF n^.flag = 1 THEN Expect(W_ENDMONITOR) ELSE Expect(W_ENDMODULE) ENDIF;
     CloseName(n^.name, n^.line);
@@ -279,6 +276,7 @@
 
   PROCEDURE SimpleEntry RETURNS Node (CONST w: INT)
     VAR n: Node;
+        t0: INT := TPos;
     IF w = W_CONST THEN
       n := NewNode(N_CONST, TLn());
       n^.a := ParseNames();
@@ -303,6 +301,8 @@
       Expect(P_EQ);
       n^.b := ParseRep()
     ENDIF;
+    n^.t0 := t0;
+    n^.t1 := TPos;
     RETURN n
   ENDPROCEDURE SimpleEntry;
 
@@ -355,6 +355,17 @@
   ENDPROCEDURE ParseDeclGroup;
 
   PROCEDURE ParseDecl RETURNS Node ()
+    VAR n: Node;
+        t0: INT := TPos;
+    n := ParseDecl1();
+    IF n^.kind # N_MODULE THEN
+      n^.t0 := t0;
+      IF n^.t1 = 0 THEN n^.t1 := TPos ENDIF
+    ENDIF;
+    RETURN n
+  ENDPROCEDURE ParseDecl;
+
+  PROCEDURE ParseDecl1 RETURNS Node ()
     VAR n, f, ftail: Node;
         w: INT := TV();
         line: INT := TLn();
@@ -370,9 +381,12 @@
       n^.name := ExtendedId();
       ParseFormals(n);
       IF Accept(W_INLINE) THEN n^.e := NewNode(N_NAMEL, line) ENDIF;
+      n^.t1 := TPos;
       n^.c := ParseBlock();
       IF w = W_FUNCTION THEN Expect(W_ENDFUNCTION) ELSE Expect(W_ENDPROCEDURE) ENDIF;
       CloseName(n^.name, line);
+      (* the header, and the body of an INLINE routine (XIII.E) *)
+      IF n^.e # Node NIL THEN n^.t1 := TPos ENDIF;
       RETURN n
     ENDIF;
     IF (w = W_MODULE) OR (w = W_MONITOR) THEN RETURN ParseModule() ENDIF;
@@ -428,7 +442,8 @@
       IF n^.b # Node NIL THEN FailS(line, "a process returns no value") ENDIF;
       IF Accept(W_PRIORITY) THEN n^.d := ParseExpr() ENDIF;
       IF Accept(W_INSTANCES) THEN n^.e := ParseExpr() ENDIF;
-      IF Accept(W_SIZE) THEN f := ParseExpr() ENDIF;
+      IF Accept(W_SIZE) THEN n^.x := ParseExpr() ENDIF;
+      n^.t1 := TPos;
       n^.c := ParseBlock();
       Expect(W_ENDPROCESS);
       CloseName(n^.name, line);
@@ -436,7 +451,7 @@
     ENDIF;
     FailS(line, "expected a declaration");
     RETURN Node NIL
-  ENDPROCEDURE ParseDecl;
+  ENDPROCEDURE ParseDecl1;
 
   (* rule 87: [RETURNS Representation] ( {(CONST|OUT|VAR) {Names : FormalRep ;}} [;] ) *)
   (* into n^.a (the parameters) and n^.b (the result) *)
@@ -520,10 +535,15 @@
   PROCEDURE ParseConcrete RETURNS Node ()
     VAR n, x: Node;
     n := ParseConcrete1();
-    IF Accept(W_PACKED) THEN
-      IF (TK() = K_INT) OR (TK() = K_ID) OR Is(P_LPAR) THEN x := ParseSimple() ENDIF
+    IF Is(W_PACKED) OR Is(W_ALIGNMENT) THEN
+      x := NewNode(N_NAMEL, TLn());
+      IF Accept(W_PACKED) THEN
+        x^.flag := 1;
+        IF (TK() = K_INT) OR (TK() = K_ID) OR Is(P_LPAR) THEN x^.a := ParseSimple() ENDIF
+      ENDIF;
+      IF Accept(W_ALIGNMENT) THEN x^.b := ParseSimple() ENDIF;
+      n^.x := x
     ENDIF;
-    IF Accept(W_ALIGNMENT) THEN x := ParseSimple() ENDIF;
     RETURN n
   ENDPROCEDURE ParseConcrete;
 

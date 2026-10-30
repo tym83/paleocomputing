@@ -1,0 +1,13 @@
+(* a component of a variant is designated inside a SELECT that verifies *)
+(* the variant (VIII.B) *)
+MODULE Variant
+  IMPORT StandardImplementationPrelude;
+  REPRESENTATION Shape = UNORDERED (Tri, Circle);
+    Fig = RECORD VAR x: REAL64; SELECT s: Shape
+       CASE Tri => VAR base, height: REAL64;
+       CASE Circle => VAR diameter: REAL64;
+     ENDSELECT ENDRECORD;
+  VAR f: Fig;
+  f := Fig(1.0, Circle, 25.0);
+  f.base := 2.0
+ENDMODULE Variant

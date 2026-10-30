@@ -29,7 +29,7 @@
     IF n^.kind = N_RUARRAY THEN
       (* a length-unresolved array: integer indices, bounds of the actual *)
       Manifest(n^.a, ok, v);
-      IF NOT ok OR (v < 1) OR (v > 4) THEN FailS(n^.line, "DIMENSIONS is a manifest constant from 1 to 4") ENDIF;
+      IF NOT ok OR (v < 1) OR (v > 8) THEN FailS(n^.line, "DIMENSIONS is a manifest constant from 1 to 8 here") ENDIF;
       r := NewRep(R_UARRAY, T("length-unresolved array"));
       r^.nidx := v;
       r^.elem := MakeRep(n^.b, 0, FALSE);
@@ -45,12 +45,54 @@
 
   PROCEDURE ParamCType RETURNS Txt (CONST p: Param)
     VAR t: Txt := CType(p^.rep);
-    IF p^.cls = C_CONST THEN RETURN t ENDIF;
+    IF (p^.cls = C_CONST) OR (p^.rep^.kind = R_SPACE) THEN RETURN t ENDIF;
     SB();
     ST(t);
     SA(" *");
     RETURN SE()
   ENDPROCEDURE ParamCType;
+
+  (* PROCEDURE REPLACES TRAP_name (): the handler of the trap that raises *)
+  (* the exception name, declared in the outermost scope of the program *)
+  (* (XIV.X.3); it is called where the trap happens, and its RETURN *)
+  (* resumes the operation with the result the runtime gives *)
+  PROCEDURE InstallTrap (CONST s: Sym; CONST d: Node)
+    VAR x: Txt;
+        ok: BOOLEAN := FALSE;
+        names: Txt;
+        start: INT := 1;
+    x := Intern(TS[d^.name] + 5, TL[d^.name] - 5);
+    names := T("OUT_OF_RANGE OVERFLOW ZERO_DIVIDE INVALID_POINTER FIXED_NOT_REPRESENTABLE TOO_MANY_PROCESS_INSTANCES TOO_LITTLE_LOCAL_STORAGE ADDRESS_VIOLATION UNINITIALIZED ");
+    FOR j: INTEGER [1..TL[names]] DO
+      IF TChar(names, j) = ' ' THEN
+        IF Intern(TS[names] + (start - 1), j - start) = x THEN ok := TRUE ENDIF;
+        start := j + 1
+      ENDIF
+    ENDFOR;
+    IF NOT ok THEN FailN(d^.line, x, " is not a trap of this implementation (XIV.X.3)") ENDIF;
+    IF (Level # 0) OR (Depth # 2) THEN
+      FailN(d^.line, d^.name, ": a trap handler is declared in the outermost scope of a program (XIV.X.3)")
+    ENDIF;
+    IF (s^.nparams # 0) OR (s^.ret^.kind # R_VOID) THEN
+      FailN(d^.line, d^.name, ": a trap handler of this implementation is a procedure without parameters (XIV.X.3)")
+    ENDIF;
+    SB();
+    SA("y_trap_install(rt_exc(");
+    SC('DQ');
+    ST(x);
+    SC('DQ');
+    SA("), ");
+    ST(s^.cname);
+    SA(");");
+    Emit(SE());
+    RETURN
+  ENDPROCEDURE InstallTrap;
+
+  (* the C type of the storage of a parameter in its frame *)
+  PROCEDURE DeclType RETURNS Txt (CONST p: Param)
+    IF p^.cls = C_OUT THEN RETURN CType(p^.rep) ENDIF;
+    RETURN ParamCType(p)
+  ENDPROCEDURE DeclType;
 
   (* the header of a routine or process: its parameters and C prototype *)
   PROCEDURE RoutineHeader (CONST d: Node; CONST kind: INT)
@@ -85,7 +127,8 @@
       nm := g^.a;
       WHILE nm # Node NIL DO
         NEW(p);
-        p^ := ParamRec(nm^.name, g^.ival, r, Fresh("p"), Param NIL);
+        p^ := ParamRec(nm^.name, g^.ival, r, Fresh("p"), Param NIL, -1, 0);
+        IF nm^.a # Node NIL THEN p^.at := AtAddress(nm^.a) ENDIF;
         IF last = Param NIL THEN s^.params := p ELSE last^.next := p ENDIF;
         last := p;
         s^.nparams := s^.nparams + 1;
@@ -97,8 +140,19 @@
     (* overrides one of them, and neither hides them all (X.A.1) *)
     old := Find(d^.name);
     IF old # Sym NIL THEN old := Real(old) ENDIF;
+    IF (d^.ival = 0) AND (old # Sym NIL) THEN
+      IF old^.kind = S_STD THEN
+        (* "a warning during program translation will alert the programmer *)
+        (* to the possibility of a conflict between the names of a system *)
+        (* routine and the user routine" (X.A.1) *)
+        Warn(d^.line, Join(d^.name, T(" hides the system routine of that name (X.A.1)"), 0))
+      ENDIF
+    ENDIF;
     IF (d^.ival # 0) AND (old # Sym NIL) AND (old^.kind = S_ROUTINE) THEN
       s^.alt := old;
+      IF (old^.ret^.kind = R_VOID) # (s^.ret^.kind = R_VOID) THEN
+        FailN(d^.line, d^.name, ": a value-returning routine is extended or replaced only by one, a procedure only by a procedure (X.A.1)")
+      ENDIF;
       IF (d^.ival = W_EXTENDS) AND (SameSignature(s, old) # Sym NIL) THEN
         FailN(d^.line, d^.name, " EXTENDS a definition for the same parameter types: use REPLACES")
       ENDIF;
@@ -108,6 +162,19 @@
     ENDIF;
     d^.sym := s;
     Define(s, d^.line);
+    (* the directives of the compiler status module (XIV.XIII.2) *)
+    IF (CurModName # 0) AND TEq(CurModName, T("CompilerStatus")) THEN
+      IF TEq(d^.name, T("SUPPRESS_TRAP")) THEN s^.mval := D_SUPPRESS
+      ELSIF TEq(d^.name, T("RESTORE_TRAP")) THEN s^.mval := D_RESTORE
+      ELSIF TEq(d^.name, T("TRAP_SUPPRESSED")) THEN s^.mval := D_SUPPRESSED
+      ENDIF
+    ENDIF;
+    (* a trap handler replaces the standard one (XIV.X.3) *)
+    IF (d^.ival = W_REPLACES) AND TStarts(d^.name, "TRAP_") THEN InstallTrap(s, d) ENDIF;
+    g := NewNode(N_NAMEL, d^.line);
+    g^.sym := s;
+    g^.next := AllRoutines;
+    AllRoutines := g;
     (* the frame struct is declared now and written with the body *)
     FrameName[s^.level] := Fresh("yf");
     s^.members := NewSym(S_STD, FrameName[s^.level]);
@@ -152,6 +219,7 @@
     t := Join(t, T(")"), 0);
     s^.mnext := NewSym(S_STD, t);
     Put(OProtos, Join(t, T(";"), 0));
+    SegRoutine(s, d, kind);
     RETURN
   ENDPROCEDURE RoutineHeader;
 
@@ -212,6 +280,9 @@
     CurRoutine := s;
     HasHandler := FALSE;
     OpenScope(FALSE);
+    OTop := OTop + 1;
+    OrderDepth[OTop] := s^.depth;
+    OrderSerial[OTop] := s^.serial;
     (* the parameters live in the frame *)
     p := s^.params;
     WHILE p # Param NIL DO
@@ -221,8 +292,12 @@
       ps^.cname := p^.cname;
       IF s^.kind = S_PROCESS THEN
         (* the activation has filled the frame already *)
-        ps^.byref := p^.cls = C_VAR;
+        ps^.byref := (p^.cls = C_VAR) AND (p^.rep^.kind # R_SPACE);
         DeclStorage(ParamCType(p), p^.cname)
+      ELSIF p^.rep^.kind = R_SPACE THEN
+        (* a SPACE: the place and extent of the actual, of any class *)
+        DeclStorage(T("yspace"), p^.cname);
+        Emit(Join(T("F."), p^.cname, Join(T(" = a_"), p^.cname, T(";"))))
       ELSIF p^.cls = C_VAR THEN
         ps^.byref := TRUE;
         DeclStorage(ParamCType(p), p^.cname);
@@ -242,11 +317,58 @@
         DeclStorage(CType(p^.rep), p^.cname);
         Emit(Join(T("F."), p^.cname, Join(T(" = a_"), p^.cname, T(";"))))
       ENDIF;
+      IF (p^.at >= 0) AND ((p^.cls = C_VAR) OR (p^.cls = C_OUT)) THEN
+        (* AT: the address of the actual is passed in that word of the *)
+        (* store (XIV.VII) *)
+        IF p^.cls = C_OUT THEN t := Join(T("F."), p^.cname, T("_o")) ELSE t := Join(T("F."), p^.cname, 0) ENDIF;
+        SB();
+        SA("y_mem_set(INT64_C(");
+        SI(p^.at);
+        SA("), y_addr_v((void *)");
+        ST(t);
+        SA(", ");
+        ST(LayLit(p^.rep));
+        SA(", ");
+        ST(LayDesc(p^.rep));
+        SA(", (void *)");
+        ST(t);
+        SA(", NULL, 0));");
+        Emit(SE())
+      ELSIF (p^.at >= 0) AND NOT WordExact(p^.rep) THEN
+        (* AT: the actual is passed in the store from that word, in its *)
+        (* layout (XIV.VII) *)
+        SB();
+        SA("y_view_put(&F.");
+        ST(p^.cname);
+        SA(", ");
+        ST(LayLit(p^.rep));
+        SA(", ");
+        ST(LayDesc(p^.rep));
+        SA(", INT64_C(");
+        SI(p^.at);
+        SA("));");
+        Emit(SE())
+      ELSIF p^.at >= 0 THEN
+        (* AT: the actual is passed in that word of the store (XIV.VII) *)
+        t := StoreAt(DeclType(p), p^.at);
+        Emit(Join(t, T(" = F."), Join(p^.cname, T(";"), 0)));
+        ps^.level := 0;
+        ps^.cname := t;
+        ps^.at := p^.at;
+        p^.path := t
+      ENDIF;
       Define(ps, d^.line);
       p := p^.next
     ENDWHILE;
     EnterMonitor(s);
     Declarations(d^.c^.a);
+    IF BlockFalls(d^.c) THEN
+      IF s^.kind = S_PROCESS THEN
+        FailN(d^.line, d^.name, ": control reaches the end of the process, which ends with TERMINATE_PROCESS (IX.A.7)")
+      ELSE
+        FailN(d^.line, d^.name, ": control reaches the end of the routine, which ends with RETURN (IX.A.6)")
+      ENDIF
+    ENDIF;
     BlockStatements(d^.c);
     IF s^.kind = S_PROCESS THEN
       EmitS("rt_raise(Y_X_NO_RETURN);")
@@ -255,6 +377,7 @@
     ENDIF;
     AwaitProcesses();
     CloseScope();
+    OTop := OTop - 1;
     (* the frame *)
     SB();
     SA("struct ");
@@ -270,6 +393,7 @@
     t := SE();
     Put(OFrames, t);
     Append(OFrames, Locals);
+    PutS(OFrames, "rt_int yu;");
     PutS(OFrames, "};");
     (* the function *)
     Put(fn, Join(s^.mnext^.name, T(" {"), 0));
@@ -281,6 +405,8 @@
     ELSIF Level > 1 THEN
       PutS(fn, "F.up = up;")
     ENDIF;
+    (* the frame counts against the SIZE of a process (XIV.X.2) *)
+    PutS(fn, "F.yu = y_use; Y_USE((rt_int)((sizeof F + 7) / 8));");
     Append(fn, Body);
     PutS(fn, "}");
     Append(OFuncs, fn);
@@ -307,42 +433,116 @@
     s^.level := Level;
     s^.cname := Fresh("v");
     DeclStorage(CType(r), s^.cname);
-    IF Deep(r) THEN Emit(Join(T("y_init("), DescOf(r), Join(T(", &"), SymPath(s), T(");")))) ENDIF;
-    IF r^.kind = R_SET THEN
-      Emit(Join(SymPath(s), T(" = y_set_new("), Join(LoText(r^.elem), T(", "), Join(HiText(r^.elem), T(");"), 0))))
-    ENDIF;
-    IF r^.kind = R_SIGNAL THEN DeclareSignal(s, line) ENDIF;
-    IF HoldsSignal(r) THEN
-      IF r^.elem^.kind # R_SIGNAL THEN
-        FailS(line, "this implementation keeps signals in arrays whose components are signals")
-      ENDIF;
-      DeclareSignalArray(s, line)
-    ENDIF;
-    IF r^.kind = R_SEM THEN Emit(Join(T("rt_lock_init(&"), SymPath(s), T(");"))) ENDIF;
+    InitStorage(s, r, line);
     RETURN
   ENDPROCEDURE DeclareStorage;
+
+  (* a variable or constant AT a word of the simulated store (XIV.VII) *)
+  PROCEDURE DeclareAt (CONST s: Sym; CONST r: Rep; CONST a: INT; CONST line: INT)
+    VAR v, w, t: Txt;
+    s^.rep := r;
+    s^.level := 0;
+    s^.at := a;
+    IF WordExact(r) OR (r^.kind = R_SEM) OR HoldsSignal(r) THEN
+      s^.cname := StoreAt(CType(r), a);
+      InitStorage(s, r, line);
+      RETURN
+    ENDIF;
+    (* a layout other than one plain word: a view of the store, which *)
+    (* holds what the store holds there (XIV.VI-VII) *)
+    v := Fresh("yat");
+    w := Fresh("yvw");
+    SB();
+    SA("static ");
+    ST(CType(r));
+    SA(" ");
+    ST(v);
+    SA("; static yview *");
+    ST(w);
+    SA(";");
+    t := SE();
+    Put(OGlobals, t);
+    SB();
+    SA("(*(");
+    ST(CType(r));
+    SA(" *)y_view(&");
+    ST(w);
+    SA(", &");
+    ST(v);
+    SA(", ");
+    ST(LayLit(r));
+    SA(", ");
+    ST(LayDesc(r));
+    SA(", INT64_C(");
+    SI(a);
+    SA(")))");
+    s^.cname := SE();
+    RETURN
+  ENDPROCEDURE DeclareAt;
+
+  (* a fresh variable is undefined until it is assigned (VII.B) *)
+  PROCEDURE InitStorage (CONST s: Sym; CONST r: Rep; CONST line: INT)
+    IF Deep(r) OR (r^.kind = R_RECORD) THEN
+      Emit(Join(T("y_initu("), DescOf(r), Join(T(", &"), SymPath(s), T(");"))))
+    ELSIF UndefValue(r) # 0 THEN
+      Emit(Join(SymPath(s), T(" = "), Join(UndefValue(r), T(";"), 0)))
+    ENDIF;
+    IF r^.kind = R_SIGNAL THEN DeclareSignal(s, line) ENDIF;
+    IF HoldsSignal(r) THEN DeclareSignalArray(s, line) ENDIF;
+    IF r^.kind = R_SEM THEN Emit(Join(T("rt_lock_init(&"), SymPath(s), T(");"))) ENDIF;
+    RETURN
+  ENDPROCEDURE InitStorage;
 
   PROCEDURE SimpleDecl (CONST d: Node)
     VAR k: INT := d^.kind;
         r, er: Rep;
         nm: Node;
         s: Sym;
-        c: Txt;
+        c, c2: Txt;
         ok: BOOLEAN;
         v: INT;
     IF (k = N_CONST) OR (k = N_VAR) THEN
       r := MakeRep(d^.b, 0, FALSE);
       CheckRepresented(r, d^.line);
-      IF (k = N_CONST) AND ((r^.kind = R_SIGNAL) OR (r^.kind = R_FILE) OR (r^.kind = R_SEM)) THEN
-        FailS(d^.line, "signals, files and semaphores are variables (VII.B)")
+      IF (k = N_CONST) AND NonAssignable(r) THEN
+        FailS(d^.line, "signals, files and semaphores, and what holds them, are variables (VII.B)")
       ENDIF;
       nm := d^.a;
       WHILE nm # Node NIL DO
         IF k = N_CONST THEN s := NewSym(S_CONST, nm^.name) ELSE s := NewSym(S_VAR, nm^.name) ENDIF;
-        DeclareStorage(s, r, d^.line);
-        IF d^.c # Node NIL THEN
+        IF (nm^.a # Node NIL) AND (r^.kind # R_SIGNAL) THEN
+          DeclareAt(s, r, AtAddress(nm^.a), d^.line)
+        ELSIF (ExtDepth > 0) AND (Level = 0) THEN
+          (* declared by a synopsis of another segment: its storage is there *)
+          s^.rep := r;
+          SegStorage(s, r, k)
+        ELSE
+          DeclareStorage(s, r, d^.line);
+          IF nm^.a = Node NIL THEN SegStorage(s, r, k) ENDIF
+        ENDIF;
+        IF (d^.c # Node NIL) AND (ExtDepth > 0) AND (Level = 0) THEN
+          Manifest(d^.c, ok, v);
+          IF (k = N_CONST) AND ok AND IsDiscrete(r) THEN
+            s^.hasmv := TRUE;
+            s^.mval := v
+          ENDIF
+        ELSIF d^.c # Node NIL THEN
           Expr(d^.c, r, c, er);
-          Store(SymPath(s), r, c, er, d^.line);
+          IF k = N_CONST THEN
+            Store(SymPath(s), r, c, er, d^.line)
+          ELSE
+            (* an initialization is an assignment (VII.B): of an opaque *)
+            (* type only with its exported := (X.B.3) *)
+            c2 := UserAssign(SymPath(s), r, c, er, d^.line);
+            IF c2 # 0 THEN
+              Emit(c2)
+            ELSE
+              IF r^.opaque AND ((r^.opaqueops MOD 2) = 0) THEN
+                FailN(d^.line, r^.tname, " is opaque here: := is not exported to initialize it (X.B.3)")
+              ENDIF;
+              Store(SymPath(s), r, c, er, d^.line)
+            ENDIF
+          ENDIF;
           IF k = N_CONST THEN
             Manifest(d^.c, ok, v);
             IF ok AND IsDiscrete(r) THEN
@@ -390,6 +590,7 @@
       WHILE nm # Node NIL DO
         s := NewSym(S_LABEL, nm^.name);
         s^.level := Level;
+        s^.mval := SimTop;
         s^.cname := Fresh("lab");
         Define(s, nm^.line);
         nm := nm^.next
@@ -414,8 +615,7 @@
     RETURN
   ENDPROCEDURE NoteAlphabet;
 
-  (* AT: the location of a variable is implementation-dependent (XIV.VII); *)
-  (* this implementation takes it for device signals only *)
+  (* AT on a signal: a device signal (XIV.VII) *)
   PROCEDURE AtLocation (CONST s: Sym; CONST at: Node)
     IF s^.rep^.kind = R_SIGNAL THEN
       DeviceSignal(s, at);
@@ -424,19 +624,97 @@
     RETURN
   ENDPROCEDURE AtLocation;
 
+  (* ---- the order of declarations (VII.I, X.G) ---------------------------------- *)
+  (* The bodies of the routines and processes of a scope, of those of the *)
+  (* modules declared in it, and the initializations of those modules wait *)
+  (* until every declaration of the scope has been read: a body may use any *)
+  (* composite declaration of its scope, and modules may import from each *)
+  (* other in a circle. A module's initialization is written later but *)
+  (* placed where the module is, so it runs in the order of the modules. *)
+
+  (* put d off until the declarations of the nearest scope that is not a *)
+  (* module are read, with the module scopes to open again then *)
+  PROCEDURE Defer (CONST d: Node; CONST kind: INT; CONST mark: Line; CONST here: BOOLEAN)
+    VAR k: INT := Depth;
+    IF QTop >= 20000 THEN FailS(d^.line, "too many routines for this implementation") ENDIF;
+    QTop := QTop + 1;
+    QNode[QTop] := d;
+    QKind[QTop] := kind;
+    QVis[QTop] := VisibleFrom;
+    QMon[QTop] := CurMonitor;
+    QMark[QTop] := mark;
+    QHere[QTop] := here;
+    QSupp[QTop] := Supp;
+    WHILE Scopes[k]^.closed DO k := k - 1 ENDWHILE;
+    QScope0[QTop] := QSTop + 1;
+    QScopeN[QTop] := Depth - k;
+    FOR i: INTEGER [k + 1..Depth] DO
+      QSTop := QSTop + 1;
+      QScopes[QSTop] := Scopes[i]
+    ENDFOR;
+    RETURN
+  ENDPROCEDURE Defer;
+
+  (* the bodies put off since start, in their scopes *)
+  PROCEDURE RunDeferred (CONST start, sstart: INT)
+    VAR i: INT := start + 1;
+        saveVis, saveSupp: INT;
+        saveMon: Sym;
+    WHILE i <= QTop DO
+      FOR j: INTEGER [QScope0[i]..(QScope0[i] + QScopeN[i]) - 1] DO ReopenScope(QScopes[j]) ENDFOR;
+      saveVis := VisibleFrom;
+      saveMon := CurMonitor;
+      saveSupp := Supp;
+      VisibleFrom := QVis[i];
+      CurMonitor := QMon[i];
+      Supp := QSupp[i];
+      IF QKind[i] = 1 THEN RoutineBody(QNode[i]) ELSE ModuleInit(i) ENDIF;
+      VisibleFrom := saveVis;
+      CurMonitor := saveMon;
+      Supp := saveSupp;
+      FOR j: INTEGER [1..QScopeN[i]] DO CloseScope() ENDFOR;
+      i := i + 1
+    ENDWHILE;
+    QTop := start;
+    QSTop := sstart;
+    RETURN
+  ENDPROCEDURE RunDeferred;
+
+  (* the statements of a module, inside the monitor if it is one, written *)
+  (* where the module was declared *)
+  PROCEDURE ModuleInit (CONST i: INT)
+    VAR d: Node := QNode[i];
+        saved: Buf := Body;
+        mark: Line := QMark[i];
+    Body := Buf(Line NIL, Line NIL);
+    IF QHere[i] THEN Emit(Join(T("y_mon_enter("), MonitorPath(CurMonitor), T(");"))) ENDIF;
+    BTop := BTop + 1;
+    BlockFrame[BTop] := 0;
+    BlockXs[BTop] := 0;
+    BlockStatements(d^.c);
+    BTop := BTop - 1;
+    IF QHere[i] THEN Emit(Join(T("y_mon_leave("), MonitorPath(CurMonitor), T(");"))) ENDIF;
+    IF Body.head # Line NIL THEN
+      Body.tail^.next := mark^.next;
+      mark^.next := Body.head;
+      IF saved.tail = mark THEN saved.tail := Body.tail ENDIF
+    ENDIF;
+    Body := saved;
+    RETURN
+  ENDPROCEDURE ModuleInit;
+
   PROCEDURE Declarations (CONST list: Node)
     VAR d: Node := list;
-        deferred, dtail, n: Node := Node NIL;
         saveList: Node := DeclList[Depth];
+        start: INT := QTop;
+        sstart: INT := QSTop;
     DeclList[Depth] := list;
     WHILE d # Node NIL DO
       CurLine := d^.line;
+      DeclCursor[Depth] := d;
       IF (d^.kind = N_ROUTINE) OR (d^.kind = N_PROCESS) THEN
-        IF d^.kind = N_ROUTINE THEN RoutineHeader(d, S_ROUTINE) ELSE RoutineHeader(d, S_PROCESS) ENDIF;
-        n := NewNode(N_NAMEL, d^.line);
-        n^.a := d;
-        Link(deferred, dtail, n);
-        IF d^.kind = N_PROCESS THEN DeclareProcess(d) ENDIF
+        (* unless a module's import has had its header read already *)
+        IF d^.sym = Sym NIL THEN DeclareRoutine(d) ENDIF
       ELSIF (d^.kind = N_MODULE) THEN
         (* unless an earlier module's import had it translated already *)
         IF d^.ival = 0 THEN CompileModule(d) ENDIF
@@ -449,12 +727,18 @@
       ENDIF;
       d := d^.next
     ENDWHILE;
+    DeclCursor[Depth] := Node NIL;
     DeclList[Depth] := saveList;
     CheckPending();
-    n := deferred;
-    WHILE n # Node NIL DO
-      RoutineBody(n^.a);
-      n := n^.next
-    ENDWHILE;
+    ResolveLater(Depth);
+    IF NOT Scopes[Depth]^.closed THEN RunDeferred(start, sstart) ENDIF;
     RETURN
   ENDPROCEDURE Declarations;
+
+  PROCEDURE DeclareRoutine (CONST d: Node)
+    IF d^.kind = N_ROUTINE THEN RoutineHeader(d, S_ROUTINE) ELSE RoutineHeader(d, S_PROCESS) ENDIF;
+    IF d^.kind = N_PROCESS THEN DeclareProcess(d) ENDIF;
+    (* a routine of a synopsis of another segment has no body here (XIII.E) *)
+    IF NOT d^.sym^.hasmv THEN Defer(d, 1, Line NIL, FALSE) ENDIF;
+    RETURN
+  ENDPROCEDURE DeclareRoutine;

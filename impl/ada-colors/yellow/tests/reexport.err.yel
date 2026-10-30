@@ -1,0 +1,9 @@
+(* a module may not export what it imports (X.B.1) *)
+MODULE Reexport
+  IMPORT StandardImplementationPrelude;
+  VAR x: INTEGER64 := 1;
+  MODULE M
+    IMPORT x;
+    EXPORT x AS y;
+  ENDMODULE M;
+ENDMODULE Reexport

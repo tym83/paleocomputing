@@ -1,0 +1,6 @@
+(* the labels of a SELECT are distinct (IX.B.1) *)
+MODULE CaseLabel
+  IMPORT StandardImplementationPrelude;
+  VAR i: INTEGER64 := 1;
+  SELECT i CASE 1 => i := 2 CASE 3, 1 => i := 3 ENDSELECT
+ENDMODULE CaseLabel

@@ -1,0 +1,13 @@
+(* a synopsis followed by its segment in one input (XIII.B): the segment *)
+(* is checked against it and translated *)
+MODULE Pairs
+  IMPORT TextIO, StandardImplementationPrelude;
+  EXPORT Half;
+  FUNCTION Half RETURNS INTEGER64 (CONST x: INTEGER64) ENDFUNCTION Half
+ENDMODULE Pairs;
+MODULE Pairs
+  IMPORT TextIO, StandardImplementationPrelude;
+  EXPORT Half;
+  FUNCTION Half RETURNS INTEGER64 (CONST x: INTEGER64) RETURN x DIV 2 ENDFUNCTION Half;
+  Write(Half(9)); WriteLn()
+ENDMODULE Pairs

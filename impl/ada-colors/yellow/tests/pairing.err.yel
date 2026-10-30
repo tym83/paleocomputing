@@ -1,0 +1,11 @@
+(* a segment declares what its synopsis declares, as it is there (XIII.E) *)
+MODULE Pairs
+  IMPORT StandardImplementationPrelude;
+  EXPORT Half;
+  FUNCTION Half RETURNS INTEGER64 (CONST x: INTEGER64) ENDFUNCTION Half
+ENDMODULE Pairs;
+MODULE Pairs
+  IMPORT StandardImplementationPrelude;
+  EXPORT Half;
+  FUNCTION Half RETURNS INTEGER64 (CONST y: INTEGER64) RETURN y DIV 2 ENDFUNCTION Half
+ENDMODULE Pairs

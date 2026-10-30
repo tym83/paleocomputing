@@ -1,7 +1,7 @@
 
 (* a user of the module of p.1116: the signs of Figure 2 go into a tree. *)
-(* The module exports = and # but not :=, so a Tree can be initialized but *)
-(* not assigned (X.B.3); a value-returning procedure is called in an *)
+(* The fixed module exports := too, since initializing a Tree is an *)
+(* assignment (X.B.3); a value-returning procedure is called in an *)
 (* expression only (IX.A.2) *)
 MODULE UseTree
   IMPORT SearchTree, TextIO;
