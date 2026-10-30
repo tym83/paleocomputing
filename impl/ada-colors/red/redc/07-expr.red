@@ -386,13 +386,14 @@ PROC index_on(READONLY base : STRING[ASCII], CONST bt : typ, CONST e : node, VAR
          CONST lo := gexpr(a.a, ty_int, it);
          CONST hi := gexpr(a.b, ty_int, it);
          code := mk("rt_str_slice(" & base & ", " & lo & ", " & hi & ")");
-         t := ty_string;
+         t := bt;
          ro := TRUE;
          RETURN;
       END IF;
       BEGIN
          CONST i := gexpr(a, ty_int, it);
-         t := ty_ascii;
+         t := str_elem(bt);
+         c := bt.elemcons;
          IF lv THEN
             code := mk("(*rt_str_at(&" & base & ", " & i & "))");
          ELSE
@@ -476,6 +477,18 @@ ABNORMAL FUNC gexpr(CONST e : node, CONST want : typ, OUT t : typ) => STRING[ASC
    ELSEIF k = n_bool THEN
       t := ty_bool;
       RETURN itos(e.ival);
+   ELSEIF k = n_str AND want /= NIL AND want.kind = t_string AND NOT same(str_elem(want), ty_ascii) THEN
+      % a string literal stands for its characters' enumeration literals (2.3.8)
+      VAR r : text := mk(q);
+      t := want;
+      FOR i : INT(1 .. e.name.LEN) REPEAT
+         VAR pos : INT := lit_index(base_of(str_elem(want)).lits, ascii_lit(e.name(i)));
+         IF pos < 0 THEN
+            fail(e.line, chs('APOS) & ascii_lit(e.name(i)) & " is not a value of the component type");
+         END IF;
+         r := mk(r.ALL & "\" & octal(pos));
+      END REPEAT;
+      RETURN "rt_str(" & r.ALL & q & ", " & itos(e.name.LEN) & ")";
    ELSEIF k = n_str THEN
       t := ty_string;
       RETURN "rt_str(" & c_string(e.name.ALL) & ", " & itos(e.name.LEN) & ")";
@@ -542,7 +555,7 @@ ABNORMAL FUNC gexpr(CONST e : node, CONST want : typ, OUT t : typ) => STRING[ASC
       RETURN gcall(call, FALSE, t);
    ELSEIF k = n_unop AND e.name.ALL = "NOT" AND want /= NIL AND want.kind = t_set THEN
       CONST a := gexpr(e.a, want, t);
-      RETURN "rt_set_not(" & a & ", 0, " & itos(list_len(want.elem.lits) - 1) & ")";
+      RETURN "y_set_compl(" & a & ")";
    ELSEIF k = n_unop THEN
       IF e.name.ALL = "NOT" THEN
          CONST a := gexpr(e.a, ty_bool, t);
@@ -637,6 +650,68 @@ ABNORMAL FUNC gexpr_in(CONST e : node, CONST want : typ, CONST c : cons, OUT t :
    cons_ctx := c;
    RETURN gexpr(e, want, t);
 END FUNC gexpr_in;
+
+% the enumeration literal of an ASCII character (C.15), without its apostrophe
+ABNORMAL FUNC ascii_lit(CONST ch : ASCII) => STRING[ASCII] IMPORTS ty_ascii;
+   VAR l : node := ty_ascii.lits;
+   FOR i : INT(1 .. POS(ch) - 1) REPEAT
+      l := l.next;
+   END REPEAT;
+   RETURN l.name.ALL;
+END FUNC ascii_lit;
+
+FUNC octal(CONST n : INT) => STRING[ASCII];
+   CONST digits := "01234567";
+   VAR r : STRING[ASCII](3) := "000";
+   r(1) := digits(n DIV 64 MOD 8 + 1);
+   r(2) := digits(n DIV 8 MOD 8 + 1);
+   r(3) := digits(n MOD 8 + 1);
+   RETURN r;
+END FUNC octal;
+
+% the type of the second operand of & with a string: a string or a character
+FUNC str_cat_part(CONST t : typ) => typ;
+   IF t.kind = t_string THEN
+      RETURN str_elem(t);
+   END IF;
+   RETURN t;
+END FUNC str_cat_part;
+
+% the type of an expression, found without translating it for good
+ABNORMAL FUNC peek_type(CONST e : node) => typ IMPORTS ALL;
+   VAR saved : buffer := code;
+   VAR t : typ;
+   trial := trial + 1;
+   code := new_buffer;
+   GUARD
+      CONST v := gexpr(e, NIL, t);
+   BY
+      WHEN compile_error =>
+         t := NIL;
+   END GUARD;
+   trial := trial - 1;
+   code := saved;
+   RETURN t;
+END FUNC peek_type;
+
+% the set type of AND, OR or XOR on sets (C.9), NIL for BOOL
+ABNORMAL FUNC set_operands(CONST e : node, CONST want : typ) => typ IMPORTS ALL;
+   VAR t : typ;
+   IF want /= NIL AND want.kind = t_set THEN
+      RETURN want;
+   ELSEIF want /= NIL THEN
+      RETURN NIL;
+   END IF;
+   IF e.a.kind /= n_cons THEN
+      t := peek_type(e.a);
+   ELSEIF e.b.kind /= n_cons THEN
+      t := peek_type(e.b);
+   END IF;
+   IF t /= NIL AND t.kind = t_set THEN
+      RETURN t;
+   END IF;
+   RETURN NIL;
+END FUNC set_operands;
 
 % a node used in an argument list needs its own next link
 ABNORMAL FUNC copy_node(CONST e : node) => node;
@@ -941,20 +1016,20 @@ ABNORMAL FUNC gbinop(CONST e : node, CONST want : typ, OUT t : typ) => STRING[AS
          CONST a := gexpr(e.a, tb.elem, ta);
          check_type(ta, tb.elem, e.line);
          t := ty_bool;
-         RETURN "rt_set_in(" & a & ", " & s & ")";
+         RETURN "y_set_in(" & a & ", " & s & ")";
       END;
    END IF;
-   IF (op.ALL = "AND" OR op.ALL = "OR" OR op.ALL = "XOR") AND want /= NIL AND want.kind = t_set THEN
-      CONST a := gexpr(e.a, want, ta);
-      CONST b := gexpr(e.b, want, tb);
+   IF (op.ALL = "AND" OR op.ALL = "OR" OR op.ALL = "XOR") AND set_operands(e, want) /= NIL THEN
+      CONST a := gexpr(e.a, set_operands(e, want), ta);
+      CONST b := gexpr(e.b, ta, tb);
       check_type(tb, ta, e.line);
       t := ta;
       IF op.ALL = "AND" THEN
-         RETURN "rt_set_and(" & a & ", " & b & ")";
+         RETURN "y_set_inter(" & a & ", " & b & ")";
       ELSEIF op.ALL = "OR" THEN
-         RETURN "rt_set_or(" & a & ", " & b & ")";
+         RETURN "y_set_union(" & a & ", " & b & ")";
       END IF;
-      RETURN "rt_set_xor(" & a & ", " & b & ")";
+      RETURN "y_set_xor(" & a & ", " & b & ")";
    END IF;
    IF op.ALL = "AND" OR op.ALL = "OR" OR op.ALL = "XOR" THEN
       CONST a := gexpr(e.a, ty_bool, ta);
@@ -983,17 +1058,48 @@ ABNORMAL FUNC gbinop(CONST e : node, CONST want : typ, OUT t : typ) => STRING[AS
       RETURN "rt_r_acat_" & ctype(at) & "(" & a & ", " & b & ")";
    END IF;
    IF op.ALL = "&" THEN
-      VAR wa, wb : typ;
+      VAR wa, wb, ws : typ;
+      VAR ce : typ := ty_ascii;
+      IF want /= NIL AND want.kind = t_string THEN
+         ws := want;
+         ce := str_elem(want);
+      END IF;
       IF e.a.kind = n_enum THEN
-         wa := ty_ascii;
+         wa := ce;
+      ELSE
+         wa := ws;
       END IF;
       IF e.b.kind = n_enum THEN
-         wb := ty_ascii;
+         wb := ce;
+      ELSE
+         wb := ws;
       END IF;
       BEGIN
          CONST a := gexpr(e.a, wa, ta);
          CONST b := gexpr(e.b, wb, tb);
          t := ty_string;
+         IF ta.kind = t_string THEN
+            t := ta;
+         ELSEIF tb.kind = t_string THEN
+            t := tb;
+         ELSEIF NOT same(ta, ty_ascii) THEN
+            % two characters of another character set (C.8)
+            t := new_typ(t_string);
+            t.elem := ta;
+         END IF;
+         IF ta.kind = t_array AND tb.kind = t_array THEN
+            need_slice(ta);
+            check_type(tb, ta, e.line);
+            t := ta;
+            RETURN "rt_r_acat_" & ctype(ta) & "(" & a & ", " & b & ")";
+         END IF;
+         IF ta.kind = t_string THEN
+            check_type(str_cat_part(tb), str_elem(ta), e.line);
+         ELSEIF tb.kind = t_string THEN
+            check_type(ta, str_elem(tb), e.line);
+         ELSE
+            check_type(tb, ta, e.line);
+         END IF;
          IF ta.kind = t_string AND tb.kind = t_string THEN
             RETURN "rt_str_cat(" & a & ", " & b & ")";
          ELSEIF ta.kind = t_string AND tb.kind = t_enum THEN
@@ -1013,6 +1119,8 @@ ABNORMAL FUNC gbinop(CONST e : node, CONST want : typ, OUT t : typ) => STRING[AS
    IF is_rel(op.ALL) AND op.ALL /= "IN" THEN
       IF e.a.kind = n_enum OR e.a.kind = n_nil OR e.a.kind = n_int THEN
          CONST dummy := gexpr(e.b, NIL, hint);
+      ELSEIF e.a.kind = n_cons THEN
+         hint := peek_type(e.b);
       END IF;
       BEGIN
          CONST a := gexpr(e.a, hint, ta);
@@ -1040,16 +1148,24 @@ ABNORMAL FUNC gbinop(CONST e : node, CONST want : typ, OUT t : typ) => STRING[AS
             RETURN "rt_str_le(" & b & ", " & a & ")";
          END IF;
          IF ct.kind = t_set THEN
+            % the relations are the subset relations (C.9)
             IF op.ALL = "=" THEN
-               RETURN "rt_set_eq(" & a & ", " & b & ")";
+               RETURN "y_set_eq(" & a & ", " & b & ")";
             ELSEIF op.ALL = "/=" THEN
-               RETURN "(!rt_set_eq(" & a & ", " & b & "))";
+               RETURN "(!y_set_eq(" & a & ", " & b & "))";
             ELSEIF op.ALL = "<=" THEN
-               RETURN "rt_set_le(" & a & ", " & b & ")";
+               RETURN "rt_r_set_le(" & a & ", " & b & ")";
             ELSEIF op.ALL = ">=" THEN
-               RETURN "rt_set_le(" & b & ", " & a & ")";
+               RETURN "rt_r_set_le(" & b & ", " & a & ")";
+            ELSEIF op.ALL = "<" THEN
+               RETURN "rt_r_set_lt(" & a & ", " & b & ")";
             END IF;
-            fail(e.line, "sets are ordered by <= and >=");
+            RETURN "rt_r_set_lt(" & b & ", " & a & ")";
+         END IF;
+         IF (ct.kind = t_bool OR ct.kind = t_ptr OR ct.kind = t_nil OR ct.kind = t_act OR ct.kind = t_mbox)
+               AND op.ALL /= "=" AND op.ALL /= "/=" THEN
+            % only = and /= are defined for BOOL (C.1) and the reference types
+            fail(e.line, "only = and /= compare values of this type");
          END IF;
          IF composite(ct) THEN
             IF op.ALL = "=" THEN
@@ -1109,12 +1225,12 @@ ABNORMAL FUNC constructor(CONST e : node, CONST want : typ, CONST ctx : cons, OU
    VAR f : field;
    VAR vt : typ;
    IF want /= NIL AND want.kind = t_set THEN
-      VAR s : text := mk("rt_set_empty()");
+      VAR s : text := mk(empty_set(want));
       t := want;
       WHILE it /= NIL REPEAT
          CONST v := gexpr(it.b, want.elem, vt);
          check_type(vt, want.elem, e.line);
-         s := mk("rt_set_add(" & s.ALL & ", " & set_elem(want, v) & ")");
+         s := mk("y_set_add(" & s.ALL & ", " & v & ")");
          it := it.next;
       END REPEAT;
       RETURN s.ALL;

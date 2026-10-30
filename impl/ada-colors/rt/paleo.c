@@ -3174,3 +3174,11 @@ rt_int rt_r_tag(rt_int tag) {
   if (tag < 0) rt_raise(RT_X_INIT);
   return tag;
 }
+
+int rt_r_set_le(yset a, yset b) {
+  for (rt_int e = a.lo; e <= a.hi; e++)
+    if (y_set_in(e, a) && !y_set_in(e, b)) return 0;
+  return 1;
+}
+
+int rt_r_set_lt(yset a, yset b) { return rt_r_set_le(a, b) && !y_set_eq(a, b); }

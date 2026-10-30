@@ -540,6 +540,8 @@ extern const ydesc y_d_sig;                  /* a SIGNAL as an array component *
 int rt_r_active(rt_act *a);                    /* NIL_ACT is always active */
 rstr rt_r_strsub(rstr s, rt_int len);          /* X_SUBTYPE unless s has len characters */
 void rt_r_free_unchecked(void **v);
+int rt_r_set_le(yset a, yset b);               /* subset (C.9) */
+int rt_r_set_lt(yset a, yset b);               /* strict subset */
 void rt_r_xtag(void);                          /* raises X_TAG (C.6) */
 rt_int rt_r_tag(rt_int tag);                   /* U.TAG: X_INIT if no component */            /* FREE under SUPPRESS(X_FREE) */
 /* PRAG(NONRECURSIVE) and PRAG(NONREENTRANT): the activations inside a

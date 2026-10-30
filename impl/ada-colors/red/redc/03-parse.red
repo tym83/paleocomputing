@@ -365,12 +365,13 @@ END FUNC is_rel;
 
 ABNORMAL FUNC expr_rel => node IMPORTS ALL;
    VAR l : node := expr_add;
-   IF at_kind(k_op) AND is_rel(toks(tpos).s.ALL) THEN
+   % relations associate left to right like the other levels (5.2)
+   WHILE at_kind(k_op) AND is_rel(toks(tpos).s.ALL) REPEAT
       VAR op : text := toks(tpos).s;
       VAR line : INT := cur_line;
       tpos := tpos + 1;
       l := binop(op, l, expr_add, line);
-   END IF;
+   END REPEAT;
    RETURN l;
 END FUNC expr_rel;
 

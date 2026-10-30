@@ -286,6 +286,14 @@ FUNC same_lits(CONST a : node, CONST b : node) => BOOL;
    RETURN x = NIL AND y = NIL;
 END FUNC same_lits;
 
+% the component type of a string type
+FUNC str_elem(CONST t : typ) => typ IMPORTS ty_ascii;
+   IF t.elem = NIL THEN
+      RETURN ty_ascii;
+   END IF;
+   RETURN t.elem;
+END FUNC str_elem;
+
 % type equivalence (4.1.5): built-in types by extended name, new types by identity
 FUNC same(CONST a : typ, CONST b : typ) => BOOL;
    IF a = b THEN
@@ -294,7 +302,10 @@ FUNC same(CONST a : typ, CONST b : typ) => BOOL;
    IF a = NIL OR b = NIL OR a.kind /= b.kind THEN
       RETURN FALSE;
    END IF;
-   IF a.kind = t_int OR a.kind = t_bool OR a.kind = t_float OR a.kind = t_string
+   IF a.kind = t_string THEN
+      RETURN same(str_elem(a), str_elem(b));
+   END IF;
+   IF a.kind = t_int OR a.kind = t_bool OR a.kind = t_float
          OR a.kind = t_void OR a.kind = t_file THEN
       RETURN TRUE;
    END IF;
@@ -387,7 +398,7 @@ ABNORMAL FUNC ctype(CONST t : typ) => STRING[ASCII] IMPORTS ALL;
       WHEN t_mbox => RETURN "rt_mbox *";
       WHEN t_lock => RETURN "rt_lock";
       WHEN t_act => RETURN "rt_act *";
-      WHEN t_set => RETURN "rset";
+      WHEN t_set => RETURN "yset";
       ELSE =>
          IF t.cname = NIL THEN
             declare_ctype(t);
@@ -675,15 +686,24 @@ ABNORMAL FUNC resolve_subtype(CONST st : node, OUT c : cons) => typ IMPORTS ALL;
          END IF;
          RETURN t;
       WHEN s_string =>
+         % STRING[S](len) (C.8): the characters are values of the subtype S
          t := resolve_subtype(st.a, c);
-         IF NOT same(t, ty_ascii) THEN
-            fail(st.line, "only STRING[ASCII] is supported");
+         IF base_of(t).kind /= t_enum THEN
+            fail(st.line, "the component type of a string is an enumeration type");
+         END IF;
+         IF same(t, ty_ascii) AND (c = NIL OR c.lo = NIL) THEN
+            t := ty_string;
+         ELSE
+            VAR et : typ := t;
+            t := new_typ(t_string);
+            t.elem := et;
+            t.elemcons := c;
          END IF;
          c := new_cons;
          IF st.b /= NIL THEN
             c.slen := mk(gexpr(st.b, ty_int, dummy));
          END IF;
-         RETURN ty_string;
+         RETURN t;
       WHEN s_array =>
          % ARRAY index1, ..., indexn OF comp (C.7)
          BEGIN
@@ -757,6 +777,12 @@ ABNORMAL FUNC resolve_subtype(CONST st : node, OUT c : cons) => typ IMPORTS ALL;
             VAR ec : cons;
             t.elem := resolve_subtype(st.a, ec);
             t.elemcons := ec;
+            IF base_of(t.elem).kind /= t_int AND base_of(t.elem).kind /= t_enum THEN
+               fail(st.line, "the component subtype of a set is an INT or ENUM subtype");
+            END IF;
+            IF base_of(t.elem).kind = t_int AND (ec = NIL OR ec.lo = NIL) THEN
+               fail(st.line, "SET[INT] needs a range here: a set of every INT cannot be represented");
+            END IF;
          END;
          RETURN t;
       WHEN s_record, s_union =>
@@ -1209,6 +1235,12 @@ ABNORMAL FUNC type_name(READONLY name : STRING[ASCII]) => BOOL IMPORTS ALL;
        OR (y.kind = y_generic AND (y.decl.b.kind = n_newtype OR y.decl.b.kind = n_ptrtype));
 END FUNC type_name;
 
+% sets (C.9) hold the values of their component subtype, any range of them
+ABNORMAL FUNC empty_set(CONST t : typ) => STRING[ASCII] IMPORTS ALL;
+   RETURN "y_set_new(" & sub_lo(base_of(t.elem), base_cons(t.elem, t.elemcons)) & ", "
+          & sub_hi(base_of(t.elem), base_cons(t.elem, t.elemcons)) & ")";
+END FUNC empty_set;
+
 % outside the capsule that declares a new type, its components, .ALL and :=
 % are known only if the capsule exports them, i.e. exports ALL (8.2)
 ABNORMAL FUNC opened(CONST t : typ) => BOOL IMPORTS caps;
@@ -1433,6 +1465,8 @@ PROC make_storage(READONLY lval : STRING[ASCII], CONST t : typ, CONST c : cons) 
            & mcopy(t.elem) & ");");
    ELSEIF t.kind = t_lock THEN
       emit("rt_lock_init(&" & lval & ");");
+   ELSEIF t.kind = t_set THEN
+      emit(lval & " = " & empty_set(t) & ";");
    ELSEIF t.kind = t_act THEN
       % an ACT value is shared by assignment and compared by identity (C.10),
       % so a variable holds a reference to its activation record
@@ -1759,7 +1793,7 @@ ABNORMAL FUNC eq_code(CONST t : typ, READONLY a : STRING[ASCII], READONLY b : ST
       RETURN "eq_" & ctype(t) & "(" & a & ", " & b & ")";
    END IF;
    IF t.kind = t_set THEN
-      RETURN "rt_set_eq(" & a & ", " & b & ")";
+      RETURN "y_set_eq(" & a & ", " & b & ")";
    END IF;
    IF t.kind = t_act THEN
       % two ACT values are equal when they are the same activation variable (C.10)
