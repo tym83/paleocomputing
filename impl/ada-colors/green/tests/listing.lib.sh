@@ -21,8 +21,8 @@ begin
 end MAIN;
 G
 GREEN_LISTING="$DIR/m.lst" "$GREENC" < "$DIR/m.grn" > "$DIR/m.c"
-cc -std=gnu11 -O0 -w -I"$RT" "$DIR/m.c" "$RT/paleo.c" -o "$DIR/m" -lpthread -lm
+cc -std=gnu11 -O0 -Wno-everything -Werror=incompatible-pointer-types -Werror=int-conversion -I"$RT" "$DIR/m.c" "$RT/paleo.c" -o "$DIR/m" -lpthread -lm
 "$DIR/m"
 tr '\014' '#' < "$DIR/m.lst"
-cc -std=gnu11 -O0 -w -I"$RT" -c "$DIR/m.c" -o "$DIR/m.o"
+cc -std=gnu11 -O0 -Wno-everything -Werror=incompatible-pointer-types -Werror=int-conversion -I"$RT" -c "$DIR/m.c" -o "$DIR/m.o"
 if nm "$DIR/m.o" | grep -q twice; then echo "TWICE was not expanded"; else echo "TWICE expanded"; fi

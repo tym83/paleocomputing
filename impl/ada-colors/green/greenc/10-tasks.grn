@@ -750,7 +750,8 @@
       Y, OY : SYM;
       PM : PARM;
       A : NODE;
-      PARTS, V, LV, ENT, ACT, I : TEXT;
+      PARTS, V, LV, ENT, ACT, I, TMP : TEXT;
+      BACK : TEXT := MK("");
       VT, LT : TYP;
       LC : CONS;
       RO : BOOLEAN;
@@ -809,7 +810,15 @@
                FAIL(E.LINE, PM.NAME.all & " needs a variable");
             end if;
             CHECK_TYPE(LT, PM.T, E.LINE);
-            PARTS := MK(PARTS.all & " p_." & PM.CFIELD.all & " = &" & LV.all & ";");
+            if LT.KIND = T_CHAR then
+               -- a byte of a string for an int formal: through a temporary
+               NEW_NAME("ch", TMP);
+               PARTS := MK(PARTS.all & " int " & TMP.all & " = " & LV.all & "; p_." & PM.CFIELD.all & " = &"
+                           & TMP.all & ";");
+               BACK := MK(BACK.all & " " & LV.all & " = " & TMP.all & ";");
+            else
+               PARTS := MK(PARTS.all & " p_." & PM.CFIELD.all & " = &" & LV.all & ";");
+            end if;
          end if;
          PM := PM.NEXT;
       end loop;
@@ -822,7 +831,7 @@
          PARTS := MK(PARTS.all & " if (!rt_is_active(&" & ACT.all & ")) rt_raise(RT_X_TASKING);");
       end if;
       T := TY_VOID;
-      R := MK(PARTS.all & " rt_entry_call(&" & ENT.all & ", &p_); })");
+      R := MK(PARTS.all & " rt_entry_call(&" & ENT.all & ", &p_);" & BACK.all & " })");
    end OTHER_CALL;
 
    -- T'ACTIVE, T'PRIORITY, E'COUNT (RM79 9.9)

@@ -4,7 +4,7 @@
 set -e
 GREENC=$1; DIR=$2; RT=$(dirname "$GREENC")/../../rt
 run() { "$GREENC" < "$1" > "$DIR/p.c" || { cat "$DIR/p.c"; exit 1; }
-        cc -std=gnu11 -O1 -w -I"$RT" "$DIR/p.c" "$RT/paleo.c" -o "$DIR/p" -lpthread -lm; "$DIR/p"; }
+        cc -std=gnu11 -O1 -Wno-everything -Werror=incompatible-pointer-types -Werror=int-conversion -I"$RT" "$DIR/p.c" "$RT/paleo.c" -o "$DIR/p" -lpthread -lm; "$DIR/p"; }
 cat > "$DIR/lib.grn" <<'G'
 package COUNTER is
    procedure TICK;

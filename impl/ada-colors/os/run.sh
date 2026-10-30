@@ -12,7 +12,10 @@ for src in os/*.red os/*.grn os/contrast/*.red os/contrast/*.grn kube/*.red kube
   case "$src" in *.yel) cc=yellowc; name=$(basename "$src" .yel)y;; *.grn) cc=green/build/greenc; name=$(basename "$src" .grn)g;; *.blu) cc=blue/build/bluec; name=$(basename "$src" .blu)b;; *) cc=build/redc; name=$(basename "$src" .red);; esac
   exp="${src%.*}.out"
   $cc < "$src" > "$tmp/$name.c" || { echo "FAIL $src: $(tail -1 "$tmp/$name.c")"; failn=$((failn+1)); continue; }
-  ${CC:-cc} -std=gnu11 -O1 -w -Irt "$tmp/$name.c" rt/paleo.c -o "$tmp/$name" -lpthread -lm || { echo "FAIL $src: C"; failn=$((failn+1)); continue; }
+  flags=-w
+  # GREEN: no incompatible pointer or integer conversions in what greenc makes
+  case "$src" in *.grn) flags="-Wno-everything -Werror=incompatible-pointer-types -Werror=int-conversion";; esac
+  ${CC:-cc} -std=gnu11 -O1 $flags -Irt "$tmp/$name.c" rt/paleo.c -o "$tmp/$name" -lpthread -lm || { echo "FAIL $src: C"; failn=$((failn+1)); continue; }
   perl -e 'alarm shift; exec @ARGV' 60 "$tmp/$name" > "$tmp/$name.txt" 2>&1
   if diff -u "$exp" "$tmp/$name.txt"; then pass=$((pass+1)); else echo "FAIL $src"; failn=$((failn+1)); fi
 done

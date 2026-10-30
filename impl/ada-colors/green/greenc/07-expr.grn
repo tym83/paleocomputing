@@ -2691,7 +2691,7 @@
 
    -- the C call of subprogram Y with the actuals of E (RM79 5.2)
    procedure GCALL_WITH(E : NODE; Y : SYM; T : out TYP; R : out TEXT) is
-      ARGS, LV, V, X1, X2 : TEXT;
+      ARGS, LV, V, X1, X2, TMP : TEXT;
       A : NODE;
       PM : PARM;
       LT, VT : TYP;
@@ -2766,7 +2766,19 @@
                end if;
                CHECK_PURE_TARGET(A, E.LINE);
                CHECK_TYPE(LT, PM.T, E.LINE);
-               ARGS := MK(ARGS.all & "&" & LV.all);
+               if LT.KIND = T_CHAR then
+                  -- a character may be a byte of a string, the formal is an int:
+                  -- passed through a temporary, copied back after the call
+                  NEW_NAME("ch", TMP);
+                  EMIT("int " & TMP.all & " = " & LV.all & ";");
+                  ARGS := MK(ARGS.all & "&" & TMP.all);
+                  if POST_CHECKS = null then
+                     POST_CHECKS := MK("");
+                  end if;
+                  POST_CHECKS := MK(POST_CHECKS.all & " " & LV.all & " = " & TMP.all & ";");
+               else
+                  ARGS := MK(ARGS.all & "&" & LV.all);
+               end if;
                CHECK_ALIASING(E, Y, A);
                OUT_CHECK(LV.all, LT, LC);
             end if;

@@ -5,7 +5,11 @@
 # checks that the two C files are identical; `make seed` refreshes the seed;
 # `make genesis` replays the very first step, from the Python bootstrap.
 CC ?= cc
-CFLAGS ?= -std=gnu11 -O1 -w
+# the C that greenc makes must have agreeing pointer and integer types: a
+# STRING component once went by reference to an int formal (clang for wasm
+# rejects that; natively it wrote four bytes into one)
+STRICT = -Wno-everything -Werror=incompatible-pointer-types -Werror=int-conversion
+CFLAGS ?= -std=gnu11 -O1 $(STRICT)
 B = build
 RTC = ../rt/paleo.c
 INC = -I../rt

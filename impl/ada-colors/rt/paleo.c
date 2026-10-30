@@ -2156,7 +2156,7 @@ void rt_g_open(rt_int *h, rstr name, rt_int mode, int create, rt_int lay) {
   rt_int k = 3;
   while (k < G_FILES && g_files[k].open) k++;
   if (k == G_FILES) g_io("MALFUNCTION");
-  char *n = rt_cstr(name);
+  const char *n = rt_cstr(name);
   FILE *f;
   if (create) {
     if (mode == 1) g_io("FILE_USE_ERROR");
