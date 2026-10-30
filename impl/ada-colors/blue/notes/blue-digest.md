@@ -241,8 +241,13 @@ unreadable; the decision is bluec's.
     the Appendix C parameter types are read as printed.
 22. **Derived range bounds** `[?LB : ?UB]` are the widest values (ranges do not
     travel with values); derived bounds of array parameters `[1:?M]` are extents.
-23. **The machine**: OBJECT_MACHINE = PDP_11 but STD is 64 bits; the PDP-11 of
-    Appendix C would have 16.
+23. **The machine**: OBJECT_MACHINE = PDP_11 but STD is 64 bits by default; the
+    PDP-11 of Appendix C has 16, and `bluec -pdp11` gives that profile: STD
+    fixed point values of 16 bits (INTEGER [-32768:32767], OVERFLOW out of
+    them on every operator result and literal), 16-bit words for the packing
+    and for pointers, and the exponent range of the F and D formats (8 bits,
+    2**-128 .. 2**127) for both floating point precisions, computed in binary32
+    and binary64 (the 56-bit mantissa of D is not modelled).
 24. **`type-name.attribute`.** The syntax of attribute queries [3-2] allows a
     type name only inside `(T.A).B`, and p.3-29 repeats that `T.A` is not
     permitted; yet the examples write `ASCII.SIZE` (3.4.3), `BCD.SIZE` (3.12) and

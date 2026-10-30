@@ -2219,7 +2219,8 @@ double rt_b_float_of_bits(rstr b) {
  * (zeros) before it. DENSE (0): the slot is the element; PACKED (1): the smallest
  * addressable unit of 8, 16, 32 or 64 bits that holds it (a character is a byte);
  * UNPACKED (2): whole words, as a simple variable. */
-#define B_WORD 64
+static rt_int B_WORD = 64;            /* bits of a word: 16 with bluec -pdp11 */
+static int b_pdp11;                   /* bluec -pdp11: the PDP-11's F and D ranges */
 static rt_int b_slot(rt_int es, int mode) {
   if (es <= 0) return mode == 0 ? 0 : 8;
   if (mode == 0) return es;
@@ -2453,6 +2454,24 @@ rt_int rt_b_succ(rt_int v, rt_int n) {
 rt_int rt_b_pred(rt_int v) {
   if (v <= 0) rt_raise(RT_X_RANGE);
   return v - 1;
+}
+
+/* bluec -pdp11: STD fixed point values, words and floating point ranges of the
+ * PDP-11 (16-bit words; F and D formats with an 8-bit exponent) */
+static rt_int b_std_bits = 64;
+void rt_b_machine(int word) {
+  B_WORD = word;
+  b_std_bits = word;
+  b_pdp11 = word == 16;
+}
+
+/* a fixed point value of STD precision: OVERFLOW outside the machine's word */
+rt_int rt_b_std(rt_int v) {
+  if (b_std_bits < 64) {
+    rt_int lim = (rt_int)1 << (b_std_bits - 1);
+    if (v < -lim || v >= lim) rt_raise(RT_X_OVERFLOW);
+  }
+  return v;
 }
 
 /* a TARGET routine (4.8.2): its assembly code is for the object machine, which
@@ -2818,6 +2837,11 @@ static double b_fround(double v, int single, int trunc) {
 
 static double b_fcheck(double r, int single, int exc_over) {
   if (isinf(r) || isnan(r)) rt_raise(exc_over);
+  if (b_pdp11) {
+    if (fabs(r) > 0x1.fffffffffffffp+126) rt_raise(exc_over);
+    if (r != 0 && fabs(r) < 0x1p-128) rt_raise(RT_B_UNDERFLOW);
+    return r;
+  }
   if (r != 0 && fabs(r) < (single ? FLT_MIN : DBL_MIN)) rt_raise(RT_B_UNDERFLOW);
   return r;
 }

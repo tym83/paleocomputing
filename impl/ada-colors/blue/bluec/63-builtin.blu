@@ -457,9 +457,9 @@ FUNCTION BUILTIN (E: NODE, WANT: TYP) RETURNS (ET);
          END IF;
          CHECK_PRECISION_ARG (NTH (E@.A, 2), LINE);
          IF TEQS (NAME, 'FIXED_MIN') THEN
-            RETURN MKET (MK ('INT64_MIN'), INT_TYPE (S.V));
+            RETURN MKET (STD_MIN_C (), INT_TYPE (S.V));
          END IF;
-         RETURN MKET (MK ('INT64_MAX'), INT_TYPE (S.V));
+         RETURN MKET (STD_MAX_C (), INT_TYPE (S.V));
       END BLOCK;
    ORIF TEQS (NAME, 'FLOAT_MIN') ! TEQS (NAME, 'FLOAT_MAX') ! TEQS (NAME, 'EPSILON') THEN
       NEED_ARGS (E, 1, 1);
@@ -469,6 +469,22 @@ FUNCTION BUILTIN (E: NODE, WANT: TYP) RETURNS (ET);
          VAR C: TEXT := MK ('DBL');
          IF IMP_PRECISION_OF (P.V) = 7 THEN
             C := MK ('FLT');
+         END IF;
+         IF W@.WORD = 16 THEN                       % the PDP-11's F and D formats
+            IF TEQS (C, 'FLT') THEN
+               C := MK ('0x1.fffffep+126');
+            ELSE
+               C := MK ('0x1.fffffffffffffp+126');
+            END IF;
+            IF TEQS (NAME, 'FLOAT_MIN') THEN
+               RETURN MKET (FMT1 ('(-@)', C), T);
+            ORIF TEQS (NAME, 'FLOAT_MAX') THEN
+               RETURN MKET (C, T);
+            END IF;
+            C := MK ('DBL');
+            IF IMP_PRECISION_OF (P.V) = 7 THEN
+               C := MK ('FLT');
+            END IF;
          END IF;
          IF TEQS (NAME, 'FLOAT_MIN') THEN
             RETURN MKET (FMT1 ('(-@_MAX)', C), T);
@@ -619,7 +635,7 @@ FUNCTION BITS_OF (V: ET, LINE: INTEGER) RETURNS (ET);
    END IF;
    REQUIRE_MACHINE (LINE);
    IF K = T_INT THEN
-      RETURN MKET (FMT1 ('rt_b_bits_of_int(@, 64)', V.C), BITS_TYPE (64));
+      RETURN MKET (FMT2 ('rt_b_bits_of_int(@, @)', V.C, NUM (W@.WORD)), BITS_TYPE (W@.WORD));
    ORIF K = T_BOOL THEN
       RETURN MKET (FMT1 ('rt_b_bits_of_int(@, 1)', V.C), BITS_TYPE (1));
    ORIF K = T_FLOAT THEN

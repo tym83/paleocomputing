@@ -426,6 +426,10 @@ END FUNCTION COMPONENT_EQUAL;
 
 % ---- prefix operators ----------------------------------------------------------------------
 FUNCTION UNARY (E: NODE) RETURNS (ET);
+   RETURN STD_RESULT (UNARY1 (E));
+END FUNCTION UNARY;
+
+FUNCTION UNARY1 (E: NODE) RETURNS (ET);
    CONST A: ET := EXPR (E@.A, NIL);
    CONST T: TYP := A.T;
    CONST OP: TEXT := E@.NAME;
@@ -474,7 +478,7 @@ FUNCTION UNARY (E: NODE) RETURNS (ET);
       END BLOCK;
    END IF;
    FAILT (E@.LINE, 'a prefix + or - of ', TYPE_NAME (T));
-END FUNCTION UNARY;
+END FUNCTION UNARY1;
 
 % ---- infix operators -----------------------------------------------------------------------
 
@@ -506,8 +510,19 @@ FUNCTION BINARY (E: NODE) RETURNS (ET);
       A := EXPR (E@.A, NIL);
       B := EXPR (E@.B, A.T);
    END IF;
-   RETURN APPLY_OPERATOR (E, OP, A, B);
+   RETURN STD_RESULT (APPLY_OPERATOR (E, OP, A, B));
 END FUNCTION BINARY;
+
+% a fixed point result of STD precision on a machine of shorter words (-pdp11)
+FUNCTION STD_RESULT (V: ET) RETURNS (ET);
+   IF W@.WORD = 64 THEN
+      RETURN V;
+   END IF;
+   IF REAL_TYPE (V.T)@.KIND <> T_INT THEN
+      RETURN V;
+   END IF;
+   RETURN (C: STD_CHECK (V.C), T: V.T, LVAL: FALSE, SELF: V.SELF);
+END FUNCTION STD_RESULT;
 
 FUNCTION APPLY_OPERATOR (E: NODE, OP: TEXT, A, B: ET) RETURNS (ET);
    CONST AT: TYP := A.T;

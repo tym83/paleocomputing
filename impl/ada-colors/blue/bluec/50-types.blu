@@ -599,8 +599,8 @@ PROCEDURE CHECK_FIXED_REP (T: TYP, LINE: INTEGER);
       IF NOT N.OK THEN
          FAIL (LINE, 'the size of FIXED_REP is a manifest integer (3.2.3 [3-56])');
       END IF;
-      IF N.V < 0 ! N.V > 64 THEN
-         FAIL (LINE, 'the size of FIXED_REP is in [0:64], the default size (3.2.3)');
+      IF N.V < 0 ! N.V > W@.WORD THEN
+         FAIL (LINE, 'the size of FIXED_REP is in [0:P], P the default size (3.2.3)');
       END IF;
       IF R@.A@.NEXT <> NIL THEN
          BLOCK

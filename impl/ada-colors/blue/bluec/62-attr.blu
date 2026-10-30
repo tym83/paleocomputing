@@ -78,7 +78,7 @@ END FUNCTION PACKING_LITERAL;
 
 % the SIZE of N elements of ES bits laid out by MODE (rt_b_pack_size): a slot each,
 % the element itself (DENSE), the unit of 8, 16, 32 or 64 bits that holds it
-% (PACKED), or whole 64-bit words (UNPACKED)
+% (PACKED), or whole words (UNPACKED)
 FUNCTION PACK_SLOT (ES, MODE: INTEGER) RETURNS (INTEGER);
    VAR U: INTEGER := 8;
    IF ES <= 0 THEN
@@ -90,14 +90,52 @@ FUNCTION PACK_SLOT (ES, MODE: INTEGER) RETURNS (INTEGER);
    IF MODE = 0 THEN
       RETURN ES;
    END IF;
-   IF MODE = 1 & ES <= 64 THEN
+   IF MODE = 1 & ES <= W@.WORD THEN
       LOOP UNTIL U >= ES DO
          U := U * 2;
       END LOOP;
       RETURN U;
    END IF;
-   RETURN ((ES + 63) // 64) * 64;
+   RETURN ((ES + W@.WORD - 1) // W@.WORD) * W@.WORD;
 END FUNCTION PACK_SLOT;
+
+% the range of STD fixed point values, as stored integers (3.2.1, 3.2.6.3)
+FUNCTION STD_MIN_C () RETURNS (TEXT);
+   IF W@.WORD = 64 THEN
+      RETURN MK ('INT64_MIN');
+   END IF;
+   RETURN FMT1 ('((rt_int)@LL)', NUM (-POW2 (W@.WORD - 1)));
+END FUNCTION STD_MIN_C;
+
+FUNCTION STD_MAX_C () RETURNS (TEXT);
+   IF W@.WORD = 64 THEN
+      RETURN MK ('INT64_MAX');
+   END IF;
+   RETURN FMT1 ('((rt_int)@LL)', NUM (POW2 (W@.WORD - 1) - 1));
+END FUNCTION STD_MAX_C;
+
+FUNCTION STD_MIN () RETURNS (INTEGER);
+   IF W@.WORD = 64 THEN
+      RETURN -INTEGER.MAX - 1;
+   END IF;
+   RETURN -POW2 (W@.WORD - 1);
+END FUNCTION STD_MIN;
+
+FUNCTION STD_MAX () RETURNS (INTEGER);
+   IF W@.WORD = 64 THEN
+      RETURN INTEGER.MAX;
+   END IF;
+   RETURN POW2 (W@.WORD - 1) - 1;
+END FUNCTION STD_MAX;
+
+% a fixed point result checked against STD precision on a machine of shorter words
+% (OVERFLOW, 3.2.1: PRECISION)
+FUNCTION STD_CHECK (C: TEXT) RETURNS (TEXT);
+   IF W@.WORD = 64 THEN
+      RETURN C;
+   END IF;
+   RETURN FMT1 ('rt_b_std(@)', C);
+END FUNCTION STD_CHECK;
 
 FUNCTION PACK_SIZE (N, ES, MODE: INTEGER) RETURNS (INTEGER);
    IF N <= 0 THEN
@@ -146,6 +184,15 @@ END FUNCTION IMP_PRECISION_OF;
 % single and double binary formats; MANTISSA_SIZE counts the sign bit
 FUNCTION FLOAT_FORMAT (P: INTEGER, NAME: TEXT) RETURNS (INTEGER);
    CONST SINGLE: BOOLEAN := IMP_PRECISION_OF (P) = 7;
+   IF W@.WORD = 16 THEN                              % the PDP-11's F and D formats: an
+      IF TEQS (NAME, 'EXPONENT_MIN') THEN            % 8-bit exponent for both (-pdp11)
+         RETURN -127;
+      ORIF TEQS (NAME, 'EXPONENT_MAX') THEN
+         RETURN 127;
+      ORIF TEQS (NAME, 'EXPONENT_SIZE') THEN
+         RETURN 8;
+      END IF;
+   END IF;
    IF TEQS (NAME, 'EXPONENT_MIN') THEN
       IF SINGLE THEN
          RETURN -125;
@@ -186,7 +233,7 @@ FUNCTION STATIC_SIZE (T: TYP) RETURNS (MVAL);
             RETURN MANIFEST (T@.REPS@.A);
          END IF;
       END IF;
-      RETURN SOME (64);
+      RETURN SOME (W@.WORD);
    ORIF K = T_FLOAT THEN
       RETURN SOME (FLOAT_FORMAT (T@.SCALE, MK ('SIZE')));
    ORIF K = T_BOOL THEN
@@ -200,7 +247,7 @@ FUNCTION STATIC_SIZE (T: TYP) RETURNS (MVAL);
          RETURN SOME (PACK_SIZE (T@.MLEN.V, CHAR_SIZE (T), PACKING_OF (T)));
       END IF;
    ORIF K = T_PTR ! K = T_SEM THEN
-      RETURN SOME (64);
+      RETURN SOME (W@.WORD);
    ORIF K = T_ARR THEN                               % 3.8.3: the elements by the packing
       BLOCK
          CONST ES: MVAL := STATIC_SIZE (T@.ELEM);
@@ -251,12 +298,12 @@ FUNCTION ATTRIBUTE (B: ET, NAME: TEXT, LINE: INTEGER) RETURNS (ET);
          IF T@.LO_C.LEN > 0 THEN
             RETURN MKET (SUBST_SELF (T@.LO_C, B.SELF), INT_TYPE (T@.SCALE));
          END IF;
-         RETURN MKET (MK ('INT64_MIN'), INT_TYPE (T@.SCALE));
+         RETURN MKET (STD_MIN_C (), INT_TYPE (T@.SCALE));
       ORIF TEQS (NAME, 'MAX') THEN
          IF T@.HI_C.LEN > 0 THEN
             RETURN MKET (SUBST_SELF (T@.HI_C, B.SELF), INT_TYPE (T@.SCALE));
          END IF;
-         RETURN MKET (MK ('INT64_MAX'), INT_TYPE (T@.SCALE));
+         RETURN MKET (STD_MAX_C (), INT_TYPE (T@.SCALE));
       END IF;
    ORIF K = T_FLOAT THEN                             % 3.3.1, 3.3.3
       IF TEQS (NAME, 'NOM_PRECISION') THEN
@@ -399,7 +446,7 @@ FUNCTION SIZE_OF (T: TYP, C: TEXT) RETURNS (ET);
             RETURN MKET (EXPR (T@.REPS@.A, W@.TY_INT).C, W@.TY_INT);
          END IF;
       END IF;
-      RETURN INT_ET (64);
+      RETURN INT_ET (W@.WORD);
    ORIF K = T_FLOAT THEN
       RETURN INT_ET (FLOAT_FORMAT (T@.SCALE, MK ('SIZE')));
    ORIF K = T_BOOL THEN
@@ -422,7 +469,7 @@ FUNCTION SIZE_OF (T: TYP, C: TEXT) RETURNS (ET);
       RETURN MKET (FMT3 ('rt_b_pack_size((@).len, @, @)', C, NUM (CHAR_SIZE (T)),
                          NUM (PACKING_OF (T))), W@.TY_INT);
    ORIF K = T_PTR ! K = T_SEM THEN
-      RETURN INT_ET (64);
+      RETURN INT_ET (W@.WORD);
    ORIF K = T_ABS THEN
       RETURN SIZE_OF (T@.BASE, C);
    ORIF K = T_REC THEN                               % 3.9.3: the fields by the reptype

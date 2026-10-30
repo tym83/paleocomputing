@@ -253,6 +253,7 @@ END PROCEDURE LEX;
 PROCEDURE OPTIONS ();
    VAR I: INTEGER := 1;
    W@.LIBDIR := MK ('lib');
+   W@.WORD := 64;
    LOOP UNTIL I >= ARGUMENT_COUNT () DO
       BLOCK
          CONST A: TEXT := MK (ARGUMENT (I));
@@ -261,8 +262,10 @@ PROCEDURE OPTIONS ();
             W@.LIBDIR := MK (ARGUMENT (I));
          ORIF TEQS (A, '-suppress') THEN
             W@.SUPPRESS := TRUE;
+         ORIF TEQS (A, '-pdp11') THEN               % the PDP-11's 16-bit words
+            W@.WORD := 16;
          ELSE
-            FAIL (0, 'bluec [-L library-directory] [-suppress] < program.blu > program.c');
+            FAIL (0, 'bluec [-L library-directory] [-suppress] [-pdp11] < program.blu > program.c');
          END IF;
       END BLOCK;
       I := I + 1;

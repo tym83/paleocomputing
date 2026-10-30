@@ -819,6 +819,9 @@ PROCEDURE TRANSLATE (SEGS: NODE);
    EMITS (O_MAINHEAD, 'int main(int argc, char **argv) {');
    EMITS (O_MAINHEAD, 'rt_b_lang();');
    EMITS (O_MAINHEAD, 'rt_init(argc, argv);');
+   IF W@.WORD <> 64 THEN                             % the machine profile (-pdp11)
+      EMIT (O_MAINHEAD, FMT1 ('rt_b_machine(@);', NUM (W@.WORD)));
+   END IF;
    W@.CODE := (HEAD: NIL, TAIL: NIL);
    W@.CTXS := NIL;
    PUSH_CTX (1, NO_TEXT ());
