@@ -1,0 +1,198 @@
+% The simulation package of 4.6.9 (BLUE Language Specification, 15 Feb 1978,
+% p.4-68), a library segment: bluec reads it from its library directory when a
+% program names SIMULATION in a USES clause.
+%
+% The program announces the number of paths with SIM_START before its parallel
+% block. Each path of the simulation is a path of that block. It joins
+% with SIM_INIT, which gives it its handle, delays itself by simulated time with
+% SIM_WAIT, takes and gives back units of a RESOURCE with SIM_REQUEST and
+% SIM_RELEASE, and leaves with SIM_DONE. The module is a monitor: its routines run
+% in the path that invokes them, under a REGION semaphore, and block a path on a
+% SYNCH semaphore of its own. When the last unblocked path is about to block, the
+% simulated clock moves to the earliest wake-up time and the paths due then go
+% on. SIM_DEADLOCK is signalled when no path could go on.
+SEGMENT SIMULATION
+   DEFINES (SIM);
+
+   MODULE SIM
+         EXPORTS (SIM_PATH WITH (SIM_INIT, SIM_WAIT, SIM_DONE, SIM_REQUEST, STORE_),
+                  RESOURCE WITH (SIM_RESOURCE, SIM_RELEASE, SIM_FREE, STORE_),
+                  SIM_START, SIM_TIME);
+
+      CONST MAX_PATHS: INTEGER := 64;
+      TYPE SIM_PATH = INTEGER [1:MAX_PATHS];
+      TYPE RESOURCE = RECORD
+                         VAR FREE: INTEGER [0:1000000];
+                         VAR WAITING: ARRAY [1:MAX_PATHS] OF INTEGER;
+                         VAR FIRST, COUNT: INTEGER [0:MAX_PATHS];
+                      END RECORD;
+
+      VAR MONITOR: SEMAPHORE (REGION) := NEW (1);
+      VAR WAKE: ARRAY [1:MAX_PATHS] OF SEMAPHORE (SYNCH) := ASLEEP ();
+      VAR WAKE_AT: ARRAY [1:MAX_PATHS] OF INTEGER;
+      VAR TIMED: ARRAY [1:MAX_PATHS] OF BOOLEAN;
+      VAR PATHS, RUNNING, NOW, EXPECTED: INTEGER := 0;
+
+      FUNCTION ASLEEP () RETURNS (ARRAY [1:MAX_PATHS] OF SEMAPHORE (SYNCH));
+         VAR S: ARRAY [1:MAX_PATHS] OF SEMAPHORE (SYNCH);
+         LOOP FOR I IN [1:MAX_PATHS] DO
+            S(I) := SEMAPHORE$NEW (0);
+         END LOOP I;
+         RETURN S;
+      END FUNCTION ASLEEP;
+
+      % the number of paths the simulation will have: they count as running until
+      % they join, so that time does not move before they all have
+      PROCEDURE SIM_START (N: INTEGER [0:MAX_PATHS])
+            IMPORTS (DATA: (# MONITOR, EXPECTED, RUNNING));
+         REQUEST (# MONITOR);
+         EXPECTED := EXPECTED + N;
+         RUNNING := RUNNING + N;
+         RELEASE (# MONITOR);
+      END PROCEDURE SIM_START;
+
+      FUNCTION SIM_TIME () RETURNS (INTEGER) IMPORTS (DATA: (NOW));
+         RETURN NOW;
+      END FUNCTION SIM_TIME;
+
+      FUNCTION RESOURCE$SIM_RESOURCE (UNITS: INTEGER [0:1000000]) RETURNS (RESOURCE);
+         VAR R: RESOURCE;
+         R.FREE := UNITS;
+         R.FIRST := 0;
+         R.COUNT := 0;
+         RETURN R;
+      END FUNCTION RESOURCE$SIM_RESOURCE;
+
+      PROCEDURE RESOURCE$STORE_ (Y: RESOURCE ## X: RESOURCE);
+         X := Y;
+      END PROCEDURE RESOURCE$STORE_;
+
+      PROCEDURE SIM_PATH$STORE_ (Y: SIM_PATH ## X: SIM_PATH);
+         X := Y;
+      END PROCEDURE SIM_PATH$STORE_;
+
+      FUNCTION RESOURCE$SIM_FREE (R: RESOURCE) RETURNS (INTEGER);
+         RETURN R.FREE;
+      END FUNCTION RESOURCE$SIM_FREE;
+
+      % a path joins the simulation
+      PROCEDURE SIM_PATH$SIM_INIT (## ME: SIM_PATH)
+            IMPORTS (DATA: (EXPECTED # MONITOR, PATHS, RUNNING, TIMED))
+            SIGNALS (SIM_FULL);
+         REQUEST (# MONITOR);
+         IF PATHS = MAX_PATHS THEN
+            RELEASE (# MONITOR);
+            SIGNAL SIM_FULL;
+         END IF;
+         PATHS := PATHS + 1;
+         IF PATHS > EXPECTED THEN                    % not announced by SIM_START
+            RUNNING := RUNNING + 1;
+         END IF;
+         ME := PATHS;
+         TIMED (ME) := FALSE;
+         RELEASE (# MONITOR);
+      END PROCEDURE SIM_PATH$SIM_INIT;
+
+      % the last running path blocks: simulated time moves to the earliest wake-up,
+      % and every path due then runs again (under the monitor)
+      PROCEDURE ADVANCE ()
+            IMPORTS (DATA: (PATHS # WAKE, WAKE_AT, TIMED, RUNNING, NOW))
+            SIGNALS (SIM_DEADLOCK);
+         VAR EARLIEST: INTEGER := -1;
+         LOOP FOR I IN [1:PATHS] DO
+            IF TIMED (I) THEN
+               IF EARLIEST < 0 ! WAKE_AT (I) < EARLIEST THEN
+                  EARLIEST := WAKE_AT (I);
+               END IF;
+            END IF;
+         END LOOP I;
+         IF EARLIEST < 0 THEN
+            SIGNAL SIM_DEADLOCK;
+         END IF;
+         NOW := EARLIEST;
+         LOOP FOR I IN [1:PATHS] DO
+            IF TIMED (I) & WAKE_AT (I) = EARLIEST THEN
+               TIMED (I) := FALSE;
+               RUNNING := RUNNING + 1;
+               RELEASE (# WAKE (I));
+            END IF;
+         END LOOP I;
+      END PROCEDURE ADVANCE;
+
+      % a path delays itself by DT units of simulated time
+      PROCEDURE SIM_PATH$SIM_WAIT (ME: SIM_PATH, DT: INTEGER [0:1000000000])
+            IMPORTS (DATA: (# MONITOR, WAKE, WAKE_AT, TIMED, RUNNING, NOW),
+                     ROUTINES: (ADVANCE))
+            SIGNALS (SIM_DEADLOCK);
+         REQUEST (# MONITOR);
+         WAKE_AT (ME) := NOW + DT;
+         TIMED (ME) := TRUE;
+         RUNNING := RUNNING - 1;
+         IF RUNNING = 0 THEN
+            ADVANCE ();
+         END IF;
+         RELEASE (# MONITOR);
+         REQUEST (# WAKE (ME));
+      END PROCEDURE SIM_PATH$SIM_WAIT;
+
+      % a path takes a unit of R, or waits for one (IRONMAN 9F's seize)
+      PROCEDURE SIM_PATH$SIM_REQUEST (ME: SIM_PATH # R: RESOURCE)
+            IMPORTS (DATA: (# MONITOR, WAKE, RUNNING), ROUTINES: (ADVANCE))
+            SIGNALS (SIM_DEADLOCK);
+         REQUEST (# MONITOR);
+         IF R.FREE > 0 THEN
+            R.FREE := R.FREE - 1;
+            RELEASE (# MONITOR);
+            RETURN;
+         END IF;
+         R.WAITING ((R.FIRST + R.COUNT) MOD MAX_PATHS + 1) := ME;
+         R.COUNT := R.COUNT + 1;
+         RUNNING := RUNNING - 1;
+         IF RUNNING = 0 THEN
+            ADVANCE ();
+         END IF;
+         RELEASE (# MONITOR);
+         REQUEST (# WAKE (ME));
+      END PROCEDURE SIM_PATH$SIM_REQUEST;
+
+      % a path gives back a unit of R: to the first path waiting for one
+      PROCEDURE RESOURCE$SIM_RELEASE (# R: RESOURCE)
+            IMPORTS (DATA: (# MONITOR, WAKE, RUNNING));
+         REQUEST (# MONITOR);
+         IF R.COUNT > 0 THEN
+            BLOCK
+               CONST P: INTEGER := R.WAITING (R.FIRST + 1);
+               R.FIRST := (R.FIRST + 1) MOD MAX_PATHS;
+               R.COUNT := R.COUNT - 1;
+               RUNNING := RUNNING + 1;
+               RELEASE (# WAKE (P));
+            END BLOCK;
+         ELSE
+            R.FREE := R.FREE + 1;
+         END IF;
+         RELEASE (# MONITOR);
+      END PROCEDURE RESOURCE$SIM_RELEASE;
+
+      % a path leaves the simulation
+      PROCEDURE SIM_PATH$SIM_DONE (ME: SIM_PATH)
+            IMPORTS (DATA: (# MONITOR, RUNNING, PATHS, TIMED), ROUTINES: (ADVANCE))
+            SIGNALS (SIM_DEADLOCK);
+         REQUEST (# MONITOR);
+         RUNNING := RUNNING - 1;
+         IF RUNNING = 0 THEN
+            BLOCK
+               VAR ANY_TIMED: BOOLEAN := FALSE;
+               LOOP FOR I IN [1:PATHS] DO
+                  IF TIMED (I) THEN
+                     ANY_TIMED := TRUE;
+                  END IF;
+               END LOOP I;
+               IF ANY_TIMED THEN
+                  ADVANCE ();
+               END IF;
+            END BLOCK;
+         END IF;
+         RELEASE (# MONITOR);
+      END PROCEDURE SIM_PATH$SIM_DONE;
+   END MODULE SIM;
+END SEGMENT SIMULATION;

@@ -820,7 +820,15 @@ PROCEDURE STMT (S: NODE);
    ORIF K = N_SIGNAL THEN                           % [4-83]
       SIGNAL_STMT (S);
    ORIF K = N_ASSERT THEN                           % [4-84]
-      CODE (FMT1 ('if (!(@)) rt_raise(RT_X_ASSERT);', BOOL_EXPR (S@.A)));
+      IF W@.SUPPRESS THEN                            % suppressed: no need to evaluate it
+         BLOCK                                       % (4.5.8)
+            CONST SAVED_CODE: BUF := W@.CODE;
+            CONST C: TEXT := BOOL_EXPR (S@.A);
+            W@.CODE := SAVED_CODE;
+         END BLOCK;
+      ELSE
+         CODE (FMT1 ('if (!(@)) rt_raise(RT_X_ASSERT);', BOOL_EXPR (S@.A)));
+      END IF;
    ORIF K = N_EXCEPT THEN                           % [4-80]
       GUARDED (S@.A, NIL, S@.B);
    ORIF K = N_WITH THEN                             % [4-60]

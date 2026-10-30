@@ -1,0 +1,24 @@
+MAIN SEGMENT SIMULATE_BANK
+   USES (TERMINAL, SIMULATION);
+% the simulation package of 4.6.9 from the library: two clerks (a RESOURCE of
+% two units) serve four customers who arrive at simulated times 0, 1, 2, 3 and
+% are served for 5 units each
+VAR CLERKS: RESOURCE := SIM_RESOURCE (2);
+VAR LOG: ARRAY [1:4] OF INTEGER;
+SIM_START (4);
+PAR_BLOCK
+   PATH CUSTOMER FOR C IN [1:4] IMPORTS (DATA: (# CLERKS, LOG), MODULES: (SIM));
+      VAR ME: SIM_PATH;
+      SIM_INIT (## ME);
+      SIM_WAIT (ME, C - 1);
+      SIM_REQUEST (ME # CLERKS);
+      SIM_WAIT (ME, 5);
+      LOG (C) := SIM_TIME ();
+      SIM_RELEASE (# CLERKS);
+      SIM_DONE (ME);
+   END PATH CUSTOMER;
+END PAR_BLOCK;
+LOOP FOR C IN [1:4] DO
+   PUT_LINE ('customer ' !! TO_CHAR (C) !! ' leaves at ' !! TO_CHAR (LOG (C)));
+END LOOP C;
+END SEGMENT SIMULATE_BANK;

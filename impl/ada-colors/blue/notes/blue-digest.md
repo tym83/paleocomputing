@@ -344,6 +344,21 @@ unreadable; the decision is bluec's.
     TERMINAL, the implementation's segment, also has ARGUMENT_COUNT,
     ARGUMENT (I), FILE_EXISTS (N), READ_FILE (N) and WRITE_FILE (N, TEXT),
     which bluec itself uses for its options and libraries.
+40. **Libraries and options (4.2, 4.7, 4.6.9, D.7).** `bluec [-L dir]
+    [-suppress]`. A segment named in USES and not in the compilation is read
+    from the library directory (default `lib`, i.e. `blue/lib` for the tests and
+    the corpus) as NAME.blu, its own USES followed in turn: libraries are
+    source segments compiled with the program, not separately compiled
+    objects or interface files. The library holds PDP_11_LT33, the simulated
+    machine's standard segment (LT33 devices, START_IO, interrupt semaphores;
+    the Appendix C driver uses it), and SIMULATION, the package of 4.6.9: a
+    monitor module SIM with RESOURCE, SIM_PATH, SIM_START, SIM_INIT, SIM_WAIT,
+    SIM_REQUEST, SIM_RELEASE, SIM_DONE and SIM_TIME, which moves simulated time
+    when the last running path blocks. `-suppress` suppresses the exceptions
+    (4.5.8): no RANGE checks, ASSERT not evaluated (subscripts stay checked: the
+    C storage depends on them). The parallel operations of D.7 are predefined
+    routines a program may redefine (REQUEST, RELEASE, WAIT, TERMINATE,
+    PRIORITY, CLOCK); PAR_BLOCK_ stays built in.
 37. **Generic instances across segments.** The body of an instance of a generic
     routine is translated in the scope of the segment that declares it, its
     local names visible again, whichever segment invokes it (4.2, 5).
@@ -355,7 +370,8 @@ The misprints of the program examples and the rules they break are in
 
 - Storage of packed values: SIZE and the conversions follow the
   representation, the C storage of values does not.
-- LIBRARIES (§4.7), simulation (§4.6.9).
+- Separately compiled segments: libraries are source segments (decision 40).
+- PAR_BLOCK_ of D.7 as a routine a program may replace.
 
 ---
 

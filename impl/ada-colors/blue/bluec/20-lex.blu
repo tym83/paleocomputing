@@ -97,9 +97,12 @@ FUNCTION SYMBOL_LENGTH (I: INTEGER) RETURNS (INTEGER);
 END FUNCTION SYMBOL_LENGTH;
 
 PROCEDURE LEX ();
-   VAR I: INTEGER := 0;
-   VAR LINE: INTEGER := 1;
+   VAR I: INTEGER := W@.LEXED;
+   VAR LINE: INTEGER := W@.LEXLINE + 1;
    VAR C, J, V: INTEGER;
+   IF W@.NTOKS > 0 THEN                              % more source: past the end mark
+      W@.NTOKS := W@.NTOKS - 1;
+   END IF;
    LOOP UNTIL I >= W@.NSRC DO
       C := W@.SRC(I);
       IF C = 10 THEN
@@ -242,4 +245,49 @@ PROCEDURE LEX ();
       END IF;
    END LOOP;
    ADD_TOKEN (K_EOF, LINE, 0, MK (''));
+   W@.LEXED := I;
+   W@.LEXLINE := LINE;
 END PROCEDURE LEX;
+
+% the options: -L DIR, the library of segments; -suppress (4.5.8)
+PROCEDURE OPTIONS ();
+   VAR I: INTEGER := 1;
+   W@.LIBDIR := MK ('lib');
+   LOOP UNTIL I >= ARGUMENT_COUNT () DO
+      BLOCK
+         CONST A: TEXT := MK (ARGUMENT (I));
+         IF TEQS (A, '-L') & I + 1 < ARGUMENT_COUNT () THEN
+            I := I + 1;
+            W@.LIBDIR := MK (ARGUMENT (I));
+         ORIF TEQS (A, '-suppress') THEN
+            W@.SUPPRESS := TRUE;
+         ELSE
+            FAIL (0, 'bluec [-L library-directory] [-suppress] < program.blu > program.c');
+         END IF;
+      END BLOCK;
+      I := I + 1;
+   END LOOP;
+END PROCEDURE OPTIONS;
+
+% a segment named in USES and not in the compilation is read from the library: the
+% file NAME.blu of the library directory (4.2, 4.7)
+PROCEDURE LOAD_LIBRARY (NAME: TEXT);
+   CONST FILE: TEXT := CAT (CATS (W@.LIBDIR, '/'), CATS (NAME, '.blu'));
+   CONST FNAME: ASCII_STR (FILE.LEN) := STR (FILE, FILE.LEN);
+   IF NOT FILE_EXISTS (FNAME) THEN
+      FAILT (0, 'USES names a segment that is neither in the program nor in the library: ', NAME);
+   END IF;
+   BLOCK
+      CONST T: ASCII_STR (READ_FILE (FNAME).LENGTH) := READ_FILE (FNAME);
+      IF W@.NSRC + T.LENGTH + 1 >= MAX_SOURCE THEN
+         FAIL (0, 'the source is too long');
+      END IF;
+      W@.SRC(W@.NSRC) := 10;
+      W@.NSRC := W@.NSRC + 1;
+      LOOP FOR K IN [0 : T.LENGTH - 1] DO
+         W@.SRC(W@.NSRC) := CODE_OF (T[K:K]);
+         W@.NSRC := W@.NSRC + 1;
+      END LOOP K;
+      W@.SRC(W@.NSRC) := 0;
+   END BLOCK;
+END PROCEDURE LOAD_LIBRARY;

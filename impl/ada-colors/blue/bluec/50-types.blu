@@ -829,7 +829,9 @@ FUNCTION RESOLVE_PREDEFINED (TS: NODE) RETURNS (TYP);
          CONST U: NODE := NTH_ARG (TS, 0);           % (SYNCH, REGION) [3-204]
          CONST UT: TYP := RESOLVE_USER_NAME (MK ('USAGE'), TS@.LINE);
          VAR M: MVAL := NO_MVAL ();
-         IF (U@.KIND = N_NAME ! U@.KIND = N_ENUMLIT) & FIND_LITERAL (U@.NAME, UT) <> NIL THEN
+         IF U@.KIND = TS_GEN ! U@.KIND = N_DONTCARE THEN   % SEMAPHORE (?U): any use mode
+            M := SOME (0);                                % of a formal (D.7)
+         ORIF (U@.KIND = N_NAME ! U@.KIND = N_ENUMLIT) & FIND_LITERAL (U@.NAME, UT) <> NIL THEN
             M := ENUM_MANIFEST (U, UT);
          ELSE
             BLOCK

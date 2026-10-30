@@ -1,0 +1,14 @@
+MAIN SEGMENT SUPPRESS
+   USES (TERMINAL);
+% bluec -suppress: exceptions are suppressed (4.5.8): no RANGE check, and an
+% ASSERT is not evaluated
+VAR X: INTEGER [0:10] := 5;
+VAR Y: INTEGER := 20;
+VAR N: INTEGER := 0;
+X := Y;
+ASSERT COUNT () = 0;
+PUT_LINE (TO_CHAR (X) !! ' ' !! TO_CHAR (N));
+FUNCTION COUNT () RETURNS (INTEGER) IMPORTS (DATA: (N));
+   RETURN N + 1;
+END FUNCTION COUNT;
+END SEGMENT SUPPRESS;

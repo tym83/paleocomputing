@@ -768,6 +768,36 @@ FUNCTION SEGMENT_READY (S, SEGS: NODE) RETURNS (BOOLEAN);
    RETURN TRUE;
 END FUNCTION SEGMENT_READY;
 
+% the first segment named in a USES clause that is not in the compilation
+FUNCTION MISSING_SEGMENT (SEGS: NODE) RETURNS (TEXT);
+   VAR S: NODE := SEGS;
+   LOOP UNTIL S = NIL DO
+      BLOCK
+         VAR U: NODE := S@.A;
+         LOOP UNTIL U = NIL DO
+            IF NOT TEQS (U@.NAME, 'TERMINAL') THEN
+               BLOCK
+                  VAR T: NODE := SEGS;
+                  VAR FOUND: BOOLEAN := FALSE;
+                  LOOP UNTIL T = NIL DO
+                     IF TEQ (T@.NAME, U@.NAME) THEN
+                        FOUND := TRUE;
+                     END IF;
+                     T := T@.NEXT;
+                  END LOOP;
+                  IF NOT FOUND THEN
+                     RETURN U@.NAME;
+                  END IF;
+               END BLOCK;
+            END IF;
+            U := U@.NEXT;
+         END LOOP;
+      END BLOCK;
+      S := S@.NEXT;
+   END LOOP;
+   RETURN NO_TEXT ();
+END FUNCTION MISSING_SEGMENT;
+
 PROCEDURE TRANSLATE (SEGS: NODE);
    VAR S: NODE := SEGS;
    VAR MAINS: INTEGER := 0;

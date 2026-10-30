@@ -1014,9 +1014,9 @@ END FUNCTION EQUAL_CODE;
 
 % the value V checked against the range of T, if T has one (RANGE: 3.2.5, 3.3.5, 3.4.5)
 FUNCTION RANGE_CHECK (T: TYP, V: TEXT, SELF: TEXT) RETURNS (TEXT);
-   IF T@.LO_C.LEN = 0 ! NOT IS_NUMERIC_OR_ENUM (T) THEN
-      RETURN V;
-   END IF;
+   IF T@.LO_C.LEN = 0 ! NOT IS_NUMERIC_OR_ENUM (T) ! W@.SUPPRESS THEN
+      RETURN V;                                      % (-suppress: exceptions suppressed,
+   END IF;                                           % 4.5.8)
    IF IS_GEN_TEXT (T@.LO_C) ! IS_GEN_TEXT (T@.HI_C) THEN
       RETURN V;
    END IF;

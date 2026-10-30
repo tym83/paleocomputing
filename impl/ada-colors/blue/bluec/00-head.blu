@@ -385,6 +385,9 @@ TYPE WORLD = RECORD
    VAR TOP: INTEGER;
    VAR SRC: ARRAY [0:MAX_SOURCE] OF INTEGER;       % character codes
    VAR NSRC: INTEGER;
+   VAR LEXED, LEXLINE: INTEGER;     % how far LEX has read the source, and its line
+   VAR LIBDIR: TEXT;                % -L directory: library segments NAME.blu (4.7)
+   VAR SUPPRESS: BOOLEAN;           % -suppress: no RANGE checks, ASSERT not evaluated
    VAR TOKS: ARRAY [0:MAX_TOKENS] OF TOKEN;
    VAR NTOKS, POS: INTEGER;
    VAR TABLE: ARRAY [0:HASH_SIZE] OF SYM;
