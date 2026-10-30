@@ -224,7 +224,10 @@ FUNCTION RESOLVE_RECORD (TS: NODE, CNAME: TEXT, Y: SYM, FORMALS: NODE) RETURNS (
    VAR TAIL: FIELD := NIL;
    T@.BASE := T;
    T@.DECL := Y;
-   T@.REPS := TS@.D;
+   IF TS@.D <> NIL THEN
+      T@.REPS := EXPAND_REP (TS@.D, T, TS@.LINE);
+      CHECK_REP_CLASS (T, TS@.LINE);
+   END IF;
    IF CNAME.LEN > 0 THEN
       T@.CNAME := CNAME;
    ELSE
@@ -265,6 +268,21 @@ END FUNCTION RESOLVE_RECORD;
 
 % T(arguments) of a parameterized record type Y [3-175]: one class for each set of
 % TYPE arguments, the values of the other arguments kept with the type
+% a TAG formal of a type declaration given ANY, passed on to a record's TAG
+% (TYPE W (TAG C: BOOLEAN) = R (C); W (ANY))
+FUNCTION IS_ANY_TAG (A: NODE) RETURNS (BOOLEAN);
+   IF A@.KIND <> N_NAME THEN
+      RETURN FALSE;
+   END IF;
+   BLOCK
+      CONST Y: SYM := LOOKUP (A@.NAME);
+      IF Y = NIL THEN
+         RETURN FALSE;
+      END IF;
+      RETURN Y@.KIND = Y_CONST & TEQS (Y@.ACCESS, 'ANY');
+   END BLOCK;
+END FUNCTION IS_ANY_TAG;
+
 FUNCTION RECORD_INSTANCE (Y: SYM, TS: NODE) RETURNS (TYP);
    CONST D: NODE := Y@.DECL;
    VAR CLASS: TYP := NIL;
@@ -292,7 +310,7 @@ FUNCTION RECORD_INSTANCE (Y: SYM, TS: NODE) RETURNS (TYP);
                   VAR V: BND := NEW (BND_REC);
                   V@ := (LO: NO_TEXT (), HI: NO_TEXT (), MLO: NO_MVAL (), MHI: NO_MVAL (),
                          ANYARG: FALSE, NEXT: NIL);
-                  IF A@.KIND = N_ANY THEN
+                  IF A@.KIND = N_ANY ! IS_ANY_TAG (A) THEN
                      IF F@.IV <> 1 THEN
                         FAIL (A@.LINE, 'ANY is only for TAG parameters (3.9.1)');
                      END IF;
@@ -461,8 +479,8 @@ PROCEDURE COMPLETE_RECORD (T: TYP);
       BODY := FMT3 ('@ @ @;', BODY, CTYPE (F@.T), F@.CNAME);
       COPY := FMT3 ('@ d.@ = @;', COPY, F@.CNAME, COPY_OF (F@.T, FMT1 ('s.@', F@.CNAME)));
       IF F@.KIND = 1 THEN                           % constant fields are part of the type
-         ASSIGN := FMT3 ('@ if (d->@ != s.@) rt_raise(RT_B_TYPE_MISMATCH);', ASSIGN,
-                         F@.CNAME, F@.CNAME);
+         ASSIGN := FMT2 ('@ if (!(@)) rt_raise(RT_B_TYPE_MISMATCH);', ASSIGN,
+                         EQUAL_CODE (F@.T, FMT1 ('d->@', F@.CNAME), FMT1 ('s.@', F@.CNAME)));
       ORIF F@.KIND = 2 THEN                         % a tag changes only with the record
          ASSIGN := FMT4 ('@ if (any) d->@ = s.@; else if (d->@ != s.@) rt_raise(RT_B_TYPE_MISMATCH);',
                          ASSIGN, F@.CNAME, F@.CNAME, F@.CNAME);

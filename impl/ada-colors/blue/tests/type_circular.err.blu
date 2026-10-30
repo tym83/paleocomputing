@@ -1,0 +1,6 @@
+MAIN SEGMENT TYPE_CIRCULARERR
+   USES (TERMINAL);
+% recursive and circular type declarations are forbidden, used or not (3.12.1)
+TYPE T = RECORD VAR X: T; END RECORD;
+PUT_LINE ('x');
+END SEGMENT TYPE_CIRCULARERR;

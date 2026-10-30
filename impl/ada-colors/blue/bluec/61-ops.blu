@@ -355,7 +355,7 @@ FUNCTION COMPONENT_STORE (T, VT: TYP, LV, RV: TEXT, LINE: INTEGER) RETURNS (TEXT
                CONST DF: TEXT := FMT2 ('@->@', D, F@.CNAME);
                CONST SF: TEXT := FMT2 ('@.@', S, F@.CNAME);
                IF F@.KIND = 1 ! (F@.KIND = 2 & NOT HAS_ANY (T)) THEN
-                  R := FMT3 ('@ if (@ != @) rt_raise(RT_B_TYPE_MISMATCH);', R, DF, SF);
+                  R := FMT2 ('@ if (!(@)) rt_raise(RT_B_TYPE_MISMATCH);', R, EQUAL_CODE (F@.T, DF, SF));
                ORIF F@.KIND = 2 THEN
                   R := FMT3 ('@ @ = @;', R, DF, SF);
                ELSE

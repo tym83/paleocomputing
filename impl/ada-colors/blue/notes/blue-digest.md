@@ -258,6 +258,20 @@ unreadable; the decision is bluec's.
     constraint is normative and the note only reasons from the syntax: bluec
     rejects TARGET INLINE. The stack-size of DYNSIZE is a manifest integer
     expression, at least zero ([4-111]).
+31. **User types and reptypes (3.12).** A type or reptype declaration is a
+    closed scope: no changeable variable from outside, no function importing
+    one (input parameters and imported inputs count as constants). Circular
+    declarations are rejected where declared, through other declarations of
+    the scope and not through PTR. A reptype-reference is expanded where it is
+    used: formals and the OF base type bound, arguments reduced to manifest
+    values, so `FRACTION` of FIXED_BIN(10) is FIXED_REP (10, UNSIGNED) with
+    SIZE 10. The expanded reptype must be a predefined one of the class
+    (FIXED_STD/FIXED_REP, FLOAT_STD, BOOLEAN_STD, ENUM_STD/ENUM_REP/
+    ENUM_VAL_REP, CHAR_STR_STD/CHAR_STR_REP, BIT_STD, ARRAY_STD/ARRAY_REP,
+    RECORD_STD/RECORD_REP, PTR_STD, SEMAPHORE_STD); an abstract type takes no
+    REP. FIXED_REP checks size, signing and the range (3.2.3). The storage of
+    a value stays the C one: SIZE reports the representation, values are not
+    packed.
 
 The misprints of the program examples and the rules they break are in
 `../corpus/CHANGES.md`.

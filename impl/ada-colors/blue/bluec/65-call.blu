@@ -413,7 +413,7 @@ FUNCTION CALL_SYM (Y0: SYM, ARGS: ARG, LINE: INTEGER) RETURNS (ET);
          U := U@.NEXT;
       END LOOP;
    END BLOCK;
-   IF W@.IN_RECORD > 0 & Y@.USES <> NIL THEN
+   IF (W@.IN_RECORD > 0 ! W@.IN_TYPEDECL > 0) & Y@.USES <> NIL THEN
       FAILT (LINE, 'a record-spec is a closed scope: no function importing a variable (3.9.1): ',
              Y@.NAME);
    END IF;

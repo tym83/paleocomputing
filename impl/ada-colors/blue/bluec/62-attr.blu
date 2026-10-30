@@ -130,7 +130,16 @@ FUNCTION ATTRIBUTE (B: ET, NAME: TEXT, LINE: INTEGER) RETURNS (ET);
          RETURN INT_ET (2);
       ORIF TEQS (NAME, 'PRECISION') THEN
          RETURN ENUM_LITERAL (LIT_NODE ('STD', LINE), NIL);
-      ORIF TEQS (NAME, 'SIGNING') THEN
+      ORIF TEQS (NAME, 'SIGNING') THEN               % FIXED_REP (S, U) (3.2.3)
+         IF T@.REPS <> NIL THEN
+            IF TEQS (T@.REPS@.NAME, 'FIXED_REP') & T@.REPS@.A <> NIL THEN
+               IF T@.REPS@.A@.NEXT <> NIL THEN
+                  IF TEQS (T@.REPS@.A@.NEXT@.NAME, 'UNSIGNED') THEN
+                     RETURN ENUM_LITERAL (LIT_NODE ('UNSIGNED', LINE), NIL);
+                  END IF;
+               END IF;
+            END IF;
+         END IF;
          RETURN ENUM_LITERAL (LIT_NODE ('SIGNED', LINE), NIL);
       ORIF TEQS (NAME, 'MIN') THEN
          IF T@.LO_C.LEN > 0 THEN

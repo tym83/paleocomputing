@@ -922,6 +922,10 @@ FUNCTION NAME_EXPR (E: NODE, WANT: TYP) RETURNS (ET);
       FAILT (E@.LINE, 'the variable is named by a WITH NAMING and not known in its statement (4.5.4): ',
              E@.NAME);
    END IF;
+   IF Y@.KIND = Y_VAR & W@.IN_TYPEDECL > 0 & NOT Y@.INPUT THEN
+      FAILT (E@.LINE, 'a type or reptype declaration is a closed scope: no variable from outside (3.12.1, 3.12.3): ',
+             E@.NAME);
+   END IF;
    IF Y@.KIND = Y_VAR & W@.IN_RECORD > 0 THEN
       FAILT (E@.LINE, 'a record-spec is a closed scope: no variable from outside (3.9.1): ', E@.NAME);
    END IF;

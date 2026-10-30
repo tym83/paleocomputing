@@ -82,6 +82,43 @@ PROCEDURE DECLARE_TYPES (DECLS: NODE);
       END IF;
       D := D@.NEXT;
    END LOOP;
+   D := DECLS;                                       % 3.12.1, 3.12.3: no circular
+   LOOP UNTIL D = NIL DO                             % declarations; TAG formals only
+      IF D@.KIND = N_TYPE ! D@.KIND = N_REPTYPE THEN % as tags; formal types manifest
+         BLOCK
+            VAR SEEN: NODE := NIL;
+            VAR FOUND: BOOLEAN := FALSE;
+            REFERS (D@.B, D@.NAME, DECLS # SEEN, FOUND);
+            IF FOUND THEN
+               FAILT (D@.LINE, 'a circular type declaration (3.12.1, 3.12.3): ', D@.NAME);
+            END IF;
+         END BLOCK;
+         BLOCK
+            VAR F: NODE := D@.A;
+            LOOP UNTIL F = NIL DO
+               IF F@.IV = 1 & D@.KIND = N_TYPE THEN
+                  BLOCK
+                     VAR N: NODE := F@.A;
+                     LOOP UNTIL N = NIL DO
+                        IF TAG_MISUSED (D@.B, N@.NAME) THEN
+                           FAILT (D@.LINE, 'a TAG formal is only a tag-name or an argument for a TAG formal (3.12.1): ',
+                                  N@.NAME);
+                        END IF;
+                        N := N@.NEXT;
+                     END LOOP;
+                  END BLOCK;
+               END IF;
+               IF F@.B <> NIL THEN
+                  IF NAMES_VARIABLE (F@.B, DECLS) THEN
+                     FAIL (F@.LINE, 'the type-arguments in the type of a formal must be manifest (3.12.1)');
+                  END IF;
+               END IF;
+               F := F@.NEXT;
+            END LOOP;
+         END BLOCK;
+      END IF;
+      D := D@.NEXT;
+   END LOOP;
    D := DECLS;                                       % a tag's type is integer, boolean
    LOOP UNTIL D = NIL DO                             % or enumerated (3.9.1)
       IF D@.KIND = N_TYPE THEN
@@ -106,6 +143,115 @@ END PROCEDURE DECLARE_TYPES;
 
 % does a list of enumerated literals have a printing-char-id, \'C' (3.4.2)? It is
 % then a character set (3.7.2)
+% does the type-definition L refer to TARGET (FOUND), directly or through the type and
+% reptype declarations of DECLS, other than through a pointer (3.12.1)?
+PROCEDURE REFERS (L: NODE, TARGET: TEXT, DECLS: NODE # SEEN: NODE, FOUND: BOOLEAN);
+   VAR N: NODE := L;
+   LOOP UNTIL N = NIL ! FOUND DO
+      IF N@.KIND = TS_NAME ! N@.KIND = N_REP THEN
+         IF NOT TEQS (N@.NAME, 'PTR') THEN
+            IF TEQ (N@.NAME, TARGET) THEN
+               FOUND := TRUE;
+               RETURN;
+            END IF;
+            IF NOT IN_IDENTS (SEEN, N@.NAME) THEN     % each declaration followed once
+               BLOCK
+                  VAR M: NODE := NEW_NODE (N_IDENT, N@.LINE);
+                  VAR D: NODE := DECLS;
+                  M@.NAME := N@.NAME;
+                  M@.NEXT := SEEN;
+                  SEEN := M;
+                  LOOP UNTIL D = NIL DO
+                     IF (D@.KIND = N_TYPE ! D@.KIND = N_REPTYPE) & TEQ (D@.NAME, N@.NAME) THEN
+                        REFERS (D@.B, TARGET, DECLS # SEEN, FOUND);
+                     END IF;
+                     D := D@.NEXT;
+                  END LOOP;
+               END BLOCK;
+            END IF;
+            REFERS (N@.A, TARGET, DECLS # SEEN, FOUND);
+            REFERS (N@.B, TARGET, DECLS # SEEN, FOUND);
+            REFERS (N@.C, TARGET, DECLS # SEEN, FOUND);
+         END IF;
+      ELSE
+         REFERS (N@.A, TARGET, DECLS # SEEN, FOUND);
+         REFERS (N@.B, TARGET, DECLS # SEEN, FOUND);
+         REFERS (N@.C, TARGET, DECLS # SEEN, FOUND);
+         REFERS (N@.D, TARGET, DECLS # SEEN, FOUND);
+      END IF;
+      N := N@.NEXT;
+   END LOOP;
+END PROCEDURE REFERS;
+
+% is the TAG formal NAME used in the type-definition L other than as an argument
+% of a type-spec or as the tag-name of a variant part (3.12.1)?
+FUNCTION TAG_MISUSED (L: NODE, NAME: TEXT) RETURNS (BOOLEAN);
+   VAR N: NODE := L;
+   LOOP UNTIL N = NIL DO
+      IF N@.KIND = TS_NAME THEN
+         BLOCK
+            VAR A: NODE := N@.A;
+            LOOP UNTIL A = NIL DO
+               IF NOT ((A@.KIND = N_NAME ! A@.KIND = TS_NAME) & TEQ (A@.NAME, NAME) & A@.A = NIL) THEN
+                  IF TAG_MISUSED1 (A, NAME) THEN
+                     RETURN TRUE;
+                  END IF;
+               END IF;
+               A := A@.NEXT;
+            END LOOP;
+         END BLOCK;
+         IF TAG_MISUSED (N@.B, NAME) ! TAG_MISUSED (N@.C, NAME) ! TAG_MISUSED (N@.E, NAME) THEN
+            RETURN TRUE;
+         END IF;
+      ORIF TAG_MISUSED1 (N, NAME) THEN
+         RETURN TRUE;
+      END IF;
+      N := N@.NEXT;
+   END LOOP;
+   RETURN FALSE;
+END FUNCTION TAG_MISUSED;
+
+FUNCTION TAG_MISUSED1 (N: NODE, NAME: TEXT) RETURNS (BOOLEAN);
+   CONST K: INTEGER := N@.KIND;
+   IF K = TS_NAME THEN
+      RETURN TAG_MISUSED (N, NAME) & TRUE;
+   END IF;
+   IF (K = N_NAME ! K = N_ENUMLIT ! K = N_APPLY) & TEQ (N@.NAME, NAME) THEN
+      RETURN TRUE;
+   END IF;
+   RETURN TAG_MISUSED (N@.A, NAME) ! TAG_MISUSED (N@.B, NAME) ! TAG_MISUSED (N@.C, NAME)
+      ! TAG_MISUSED (N@.D, NAME) ! TAG_MISUSED (N@.E, NAME);
+END FUNCTION TAG_MISUSED1;
+
+% does the type-spec L name a variable, of DECLS or visible here (3.12.1)?
+FUNCTION NAMES_VARIABLE (L: NODE, DECLS: NODE) RETURNS (BOOLEAN);
+   VAR N: NODE := L;
+   LOOP UNTIL N = NIL DO
+      IF N@.KIND = N_NAME THEN
+         BLOCK
+            VAR D: NODE := DECLS;
+            CONST Y: SYM := LOOKUP (N@.NAME);
+            LOOP UNTIL D = NIL DO
+               IF D@.KIND = N_VAR & IN_IDENTS (D@.A, N@.NAME) THEN
+                  RETURN TRUE;
+               END IF;
+               D := D@.NEXT;
+            END LOOP;
+            IF Y <> NIL THEN
+               IF Y@.KIND = Y_VAR & NOT Y@.INPUT THEN
+                  RETURN TRUE;
+               END IF;
+            END IF;
+         END BLOCK;
+      ORIF NAMES_VARIABLE (N@.A, DECLS) ! NAMES_VARIABLE (N@.B, DECLS) ! NAMES_VARIABLE (N@.C, DECLS)
+         ! NAMES_VARIABLE (N@.D, DECLS) THEN
+         RETURN TRUE;
+      END IF;
+      N := N@.NEXT;
+   END LOOP;
+   RETURN FALSE;
+END FUNCTION NAMES_VARIABLE;
+
 FUNCTION HAS_PRINTING_CHAR (L: NODE) RETURNS (BOOLEAN);
    VAR P: NODE := L;
    LOOP UNTIL P = NIL DO

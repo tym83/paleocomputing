@@ -1,0 +1,5 @@
+MAIN SEGMENT REP_CLASSERR
+   USES (TERMINAL);
+% the representation suits the type class (3.12.4)
+VAR A: BOOLEAN REP FIXED_REP (8, UNSIGNED);
+END SEGMENT REP_CLASSERR;
