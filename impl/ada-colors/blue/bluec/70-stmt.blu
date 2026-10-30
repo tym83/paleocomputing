@@ -82,6 +82,26 @@ PROCEDURE DECLARE_TYPES (DECLS: NODE);
       END IF;
       D := D@.NEXT;
    END LOOP;
+   D := DECLS;                                       % a tag's type is integer, boolean
+   LOOP UNTIL D = NIL DO                             % or enumerated (3.9.1)
+      IF D@.KIND = N_TYPE THEN
+         BLOCK
+            VAR F: NODE := D@.A;
+            LOOP UNTIL F = NIL DO
+               IF F@.IV = 1 & F@.B <> NIL THEN
+                  BLOCK
+                     CONST FT: TYP := REAL_TYPE (RESOLVE (F@.B));
+                     IF NOT IS_SCALAR (FT) ! FT@.SCALE <> 0 THEN
+                        FAIL (F@.LINE, 'a tag is integer, boolean or enumerated (3.9.1)');
+                     END IF;
+                  END BLOCK;
+               END IF;
+               F := F@.NEXT;
+            END LOOP;
+         END BLOCK;
+      END IF;
+      D := D@.NEXT;
+   END LOOP;
 END PROCEDURE DECLARE_TYPES;
 
 % does a list of enumerated literals have a printing-char-id, \'C' (3.4.2)? It is

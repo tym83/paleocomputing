@@ -407,6 +407,9 @@ rstr rt_b_cat(rstr a, rstr b);                    /* !!: INVALID_SIZE */
 double rt_b_fconv(double v, int single, int trunc, int range);
 double rt_b_float_of_fix_r(rt_int v, rt_int scale, int single, int trunc);
 rt_int rt_b_trange(rt_int v, rt_int lo, rt_int hi);       /* INVALID_TYPE */
+rt_int rt_b_tag(rt_int v);                                  /* UNINITIALIZED_VARIABLE */
+extern int RT_B_ARRAY_TOO_BIG;
+void *rt_b_array_alloc(rt_int n, size_t esize);            /* ARRAY_TOO_BIG */
 double rt_b_tfrange(double v, double lo, double hi);
 rstr rt_b_tlen(rstr s, rt_int len);
 rt_int rt_b_addsc(rt_int a, rt_int sa, rt_int b, rt_int sb, rt_int s, int sub, int rounded);

@@ -211,6 +211,9 @@ FUNCTION CONVERT (V: ET, T: TYP, LINE: INTEGER, SELF: TEXT) RETURNS (TEXT);
       IF NOT SAME_CLASS (RT@.ELEM, VT@.ELEM) THEN
          FAIL (LINE, 'the elements of the arrays are of different types (3.8.5)');
       END IF;
+      IF NOT SAME_EXTENTS (RT, VT) THEN
+         FAIL (LINE, 'the arrays have different EXTENT attributes (3.8.5)');
+      END IF;
    END IF;
    RETURN V.C;
 END FUNCTION CONVERT;
@@ -613,6 +616,23 @@ FUNCTION APPLY_OPERATOR (E: NODE, OP: TEXT, A, B: ET) RETURNS (ET);
    FAIL (LINE, 'no operator ' !! STR (OP, OP.LEN) !! ' for ' !! STR (TYPE_NAME (AT), TYPE_NAME (AT).LEN));
 END FUNCTION APPLY_OPERATOR;
 
+% may two array types have the same extents? FALSE only when they are known to differ
+FUNCTION SAME_EXTENTS (A, B: TYP) RETURNS (BOOLEAN);
+   VAR P: BND := REAL_TYPE (A)@.BOUNDS;
+   VAR Q: BND := REAL_TYPE (B)@.BOUNDS;
+   LOOP UNTIL P = NIL ! Q = NIL DO
+      IF P@.MLO.OK & P@.MHI.OK & Q@.MLO.OK & Q@.MHI.OK & NOT IS_GEN_TEXT (P@.LO)
+         & NOT IS_GEN_TEXT (P@.HI) & NOT IS_GEN_TEXT (Q@.LO) & NOT IS_GEN_TEXT (Q@.HI) THEN
+         IF MAX_INT (P@.MHI.V - P@.MLO.V + 1, 0) <> MAX_INT (Q@.MHI.V - Q@.MLO.V + 1, 0) THEN
+            RETURN FALSE;
+         END IF;
+      END IF;
+      P := P@.NEXT;
+      Q := Q@.NEXT;
+   END LOOP;
+   RETURN TRUE;
+END FUNCTION SAME_EXTENTS;
+
 FUNCTION HAS_VALUES (T: TYP) RETURNS (BOOLEAN);
    IF T@.REPS = NIL THEN
       RETURN FALSE;
@@ -709,6 +729,16 @@ FUNCTION EQUALITY (E: NODE, OP: TEXT, A, B: ET) RETURNS (ET);
       SAME_CHARSET (AT, BT, E@.LINE);
       IF AT@.KIND = T_REC & (HAS_ANY (AT) ! HAS_ANY (BT)) THEN
          FAIL (E@.LINE, 'a T(ANY) record cannot be compared (3.9.4.1)');
+      END IF;
+      IF AT@.KIND = T_ARR THEN
+         IF NOT SAME_EXTENTS (AT, BT) THEN
+            FAIL (E@.LINE, 'arrays of different EXTENT attributes are compared (3.8.4.1)');
+         END IF;
+      END IF;
+      IF AT@.KIND = T_REC THEN
+         IF NOT SAME_ARGS (AT@.ARGS, BT@.ARGS) THEN
+            FAIL (E@.LINE, 'records of different types are compared (3.9.4.1)');
+         END IF;
       END IF;
       IF HAS_ABS_PART (AT) THEN
          R := COMPONENT_EQUAL (AT, A.C, B.C, E@.LINE);

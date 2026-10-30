@@ -526,6 +526,11 @@ FUNCTION EXPR_TO_TS (E: NODE) RETURNS (NODE);
       N@.A := E@.A;
       RETURN N;
    END IF;
+   IF E@.KIND = N_FIELD THEN                        % a type-valued attribute
+      N@.FL := 3;
+      N@.E := E;
+      RETURN N;
+   END IF;
    FAIL (E@.LINE, 'a type specification expected');
 END FUNCTION EXPR_TO_TS;
 
@@ -586,6 +591,24 @@ FUNCTION PARSE_TYPE_SPEC () RETURNS (NODE);
    END IF;
    N := NEW_NODE (TS_NAME, LINE);
    N@.NAME := IDENT ();
+   IF IS ('.') & AHEAD (1).KIND = K_ID THEN          % X.ELEMENT_TYPE: a type-valued
+      BLOCK                                          % attribute (3.8.1, 3.12)
+         VAR X: NODE := NEW_NODE (N_NAME, LINE);
+         X@.NAME := N@.NAME;
+         LOOP UNTIL NOT (IS ('.') & AHEAD (1).KIND = K_ID) DO
+            SKIP;
+            BLOCK
+               VAR F: NODE := NEW_NODE (N_FIELD, LINE);
+               F@.A := X;
+               F@.NAME := IDENT ();
+               X := F;
+            END BLOCK;
+         END LOOP;
+         N@.FL := 3;
+         N@.E := X;
+         RETURN TYPE_SPEC_TAIL (N);
+      END BLOCK;
+   END IF;
    IF TEQS (N@.NAME, 'ENUM') ! TEQS (N@.NAME, 'UNORDERED') THEN    % [3-83]
       IF TEQS (N@.NAME, 'UNORDERED') THEN
          N@.IV := 1;

@@ -56,6 +56,11 @@ PROCEDURE ADD_FIELD (T: TYP, F: FIELD # TAIL: FIELD);
    VAR N: INTEGER := 0;
    LOOP UNTIL P = NIL DO                             % same names in other variants
       IF TEQ (P@.NAME, F@.NAME) THEN
+         % field names are distinct, but for those of different variant-specs of a
+         % variant-part (3.9.1)
+         IF P@.TAGF.LEN = 0 ! F@.TAGF.LEN = 0 ! NOT TEQ (P@.TAGF, F@.TAGF) ! P@.LABELS = F@.LABELS THEN
+            FAILT (0, 'the field names of a record must be distinct (3.9.1): ', F@.NAME);
+         END IF;
          N := N + 1;
       END IF;
       P := P@.NEXT;
@@ -86,6 +91,18 @@ PROCEDURE RECORD_FIELDS (T: TYP, DECLS: NODE, TAGN: TEXT, LABELS: NODE # TAIL: F
                   F@.TAGF := TAGN;
                   F@.LABELS := LABELS;
                   ADD_FIELD (T, F # TAIL);
+                  % a later field-spec may use the attributes of this field (3.9.1)
+                  IF LOOKUP (N@.NAME) = NIL ! LOOKUP (N@.NAME)@.DEPTH <> W@.DEPTH THEN
+                     BLOCK
+                        VAR Y: SYM := NEW_SYM (Y_CONST, N@.NAME);
+                        Y@.T := FT;
+                        Y@.ACCESS := FMT1 ('$S.@', F@.CNAME);
+                        Y@.INPUT := TRUE;
+                        Y@.LEVEL := -1;
+                        Y@.OWNER := -1;
+                        DEFINE (Y, D@.LINE);
+                     END BLOCK;
+                  END IF;
                END BLOCK;
                N := N@.NEXT;
             END LOOP;
@@ -100,8 +117,22 @@ PROCEDURE RECORD_FIELDS (T: TYP, DECLS: NODE, TAGN: TEXT, LABELS: NODE # TAIL: F
             IF TF@.KIND <> 2 THEN
                FAILT (D@.LINE, 'not a TAG parameter: ', D@.NAME);
             END IF;
-            LOOP UNTIL S = NIL DO
+            BLOCK                                    % one variant part a tag (3.9.1)
+               VAR O: NODE := DECLS;
+               LOOP UNTIL O = D DO
+                  IF O@.KIND = N_VARIANT THEN
+                     IF TEQ (O@.NAME, D@.NAME) THEN
+                        FAILT (D@.LINE, 'two variant parts discriminate on the tag ', D@.NAME);
+                     END IF;
+                  END IF;
+                  O := O@.NEXT;
+               END LOOP;
+            END BLOCK;
+            CHECK_VARIANT_NAMES (D, TF@.T);
+            LOOP UNTIL S = NIL DO                    % the fields of one variant-spec
+               OPEN_SCOPE;                          % know one another (3.9.1)
                RECORD_FIELDS (T, S@.B, D@.NAME, S@.A # TAIL);
+               CLOSE_SCOPE;
                S := S@.NEXT;
             END LOOP;
          END BLOCK;
@@ -109,6 +140,82 @@ PROCEDURE RECORD_FIELDS (T: TYP, DECLS: NODE, TAGN: TEXT, LABELS: NODE # TAIL: F
       D := D@.NEXT;
    END LOOP;
 END PROCEDURE RECORD_FIELDS;
+
+% the variant-names of a variant part are values of the tag's type, each at most once
+% (3.9.1)
+PROCEDURE CHECK_VARIANT_NAMES (D: NODE, TT: TYP);
+   VAR S: NODE := D@.A;
+   VAR LOS, HIS: NODE := NIL;                        % the values seen: N_INT pairs
+   VAR LO_LIM, HI_LIM: INTEGER;
+   CONST R: TYP := REAL_TYPE (TT);
+   LO_LIM := -INTEGER.MAX - 1;
+   HI_LIM := INTEGER.MAX;
+   IF R@.KIND = T_ENUM THEN
+      LO_LIM := 0;
+      HI_LIM := R@.BASE@.NLITS - 1;
+   ORIF R@.KIND = T_BOOL THEN
+      LO_LIM := 0;
+      HI_LIM := 1;
+   END IF;
+   IF R@.MLO.OK THEN
+      LO_LIM := R@.MLO.V;
+   END IF;
+   IF R@.MHI.OK THEN
+      HI_LIM := R@.MHI.V;
+   END IF;
+   LOOP UNTIL S = NIL DO
+      BLOCK
+         VAR L: NODE := S@.A;
+         LOOP UNTIL L = NIL DO
+            BLOCK
+               VAR A, B: MVAL;
+               IF L@.KIND = N_RANGE THEN
+                  A := ENUM_MANIFEST (L@.A, TT);
+                  B := ENUM_MANIFEST (L@.B, TT);
+                  IF A.OK & (L@.IV = 1 ! L@.IV = 3) THEN
+                     A.V := A.V + 1;
+                  END IF;
+                  IF B.OK & L@.IV >= 2 THEN
+                     B.V := B.V - 1;
+                  END IF;
+               ELSE
+                  A := ENUM_MANIFEST (L, TT);
+                  B := A;
+               END IF;
+               IF NOT (A.OK & B.OK) THEN
+                  FAIL (L@.LINE, 'a variant-name is manifest (3.9.1)');
+               END IF;
+               IF A.V < LO_LIM ! B.V > HI_LIM ! A.V > B.V THEN
+                  FAIL (L@.LINE, 'a variant-name is a value of the tag type (3.9.1)');
+               END IF;
+               BLOCK
+                  VAR P: NODE := LOS;
+                  VAR Q: NODE := HIS;
+                  LOOP UNTIL P = NIL DO
+                     IF A.V <= Q@.IV & B.V >= P@.IV THEN
+                        FAIL (L@.LINE, 'a value of the tag names two variants (3.9.1)');
+                     END IF;
+                     P := P@.NEXT;
+                     Q := Q@.NEXT;
+                  END LOOP;
+               END BLOCK;
+               BLOCK
+                  VAR P: NODE := NEW_NODE (N_INT, 0);
+                  VAR Q: NODE := NEW_NODE (N_INT, 0);
+                  P@.IV := A.V;
+                  Q@.IV := B.V;
+                  P@.NEXT := LOS;
+                  Q@.NEXT := HIS;
+                  LOS := P;
+                  HIS := Q;
+               END BLOCK;
+            END BLOCK;
+            L := L@.NEXT;
+         END LOOP;
+      END BLOCK;
+      S := S@.NEXT;
+   END LOOP;
+END PROCEDURE CHECK_VARIANT_NAMES;
 
 % a record class [3-160]; Y is the type declaration of a parameterized record type
 % whose formals FORMALS are bound in the current scope
@@ -147,7 +254,11 @@ FUNCTION RESOLVE_RECORD (TS: NODE, CNAME: TEXT, Y: SYM, FORMALS: NODE) RETURNS (
          F := F@.NEXT;
       END LOOP;
    END BLOCK;
+   OPEN_SCOPE;                                       % a closed scope (3.9.1)
+   W@.IN_RECORD := W@.IN_RECORD + 1;
    RECORD_FIELDS (T, TS@.A, NO_TEXT (), NIL # TAIL);
+   W@.IN_RECORD := W@.IN_RECORD - 1;
+   CLOSE_SCOPE;
    COMPLETE_RECORD (T);
    RETURN T;
 END FUNCTION RESOLVE_RECORD;
@@ -195,8 +306,13 @@ FUNCTION RECORD_INSTANCE (Y: SYM, TS: NODE) RETURNS (TYP);
                   ELSE
                      BLOCK
                         CONST FT: TYP := RESOLVE (F@.B);
-                        V@.LO := EXPR (A, FT).C;
+                        V@.LO := CONVERT (EXPR (A, FT), FT, A@.LINE, NO_TEXT ());   % its range
                         V@.MLO := ENUM_MANIFEST (A, FT);
+                        IF V@.MLO.OK & FT@.MLO.OK & FT@.MHI.OK THEN
+                           IF V@.MLO.V < FT@.MLO.V ! V@.MLO.V > FT@.MHI.V THEN
+                              FAIL (A@.LINE, 'the argument is outside the range of the parameter (3.9.1)');
+                           END IF;
+                        END IF;
                         IF F@.IV = 1 & NOT V@.MLO.OK THEN
                            FAIL (A@.LINE, 'a tag argument must be manifest or ANY (3.9.1)');
                         END IF;
@@ -445,7 +561,7 @@ FUNCTION INIT_CODE (T: TYP, LV: TEXT) RETURNS (TEXT);
             B := B@.NEXT;
          END LOOP;
          R := FMT4 ('@ rt_int n = rt_b_extent(@, @.lo, @.hi);', R, NUM (T@.DIMS), LV, LV);
-         R := FMT3 ('@ @.p = rt_alloc(sizeof *@.p * (size_t)(n ? n : 1));', R, LV, LV);
+         R := FMT4 ('@ @.p = rt_b_array_alloc(n, sizeof *@.p);', R, LV, LV, LV);
          IF NEEDS_INIT (T@.ELEM) THEN
             BLOCK
                CONST IV: TEXT := NEW_NAME ('i');
@@ -465,6 +581,8 @@ FUNCTION INIT_CODE (T: TYP, LV: TEXT) RETURNS (TEXT);
                IF A <> NIL THEN
                   IF NOT A@.ANYARG THEN
                      R := FMT4 ('@ @.@ = @;', R, LV, F@.CNAME, A@.LO);
+                  ORIF F@.KIND = 2 & A@.HI.LEN = 0 THEN  % T(ANY) not yet assigned: its
+                     R := FMT3 ('@ @.@ = INT64_MIN;', R, LV, F@.CNAME);   % tag is unset
                   END IF;
                   A := A@.NEXT;
                END IF;

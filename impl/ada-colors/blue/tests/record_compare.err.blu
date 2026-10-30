@@ -1,0 +1,8 @@
+MAIN SEGMENT RECORD_COMPARE
+   USES (TERMINAL);
+% records of different types are not compared (3.9.4.1)
+TYPE T (C: INTEGER) = RECORD VAR A: INTEGER; END RECORD;
+VAR V: T (3);
+VAR W: T (4);
+PUT_LINE (TO_CHAR (V = W));
+END SEGMENT RECORD_COMPARE;

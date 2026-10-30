@@ -1809,6 +1809,7 @@ void rt_b_lang(void) {
   RT_B_INVALID_TYPE = rt_exc("INVALID_TYPE");
   RT_B_INVALID_REP = rt_exc("INVALID_REP");
   RT_B_UNDERFLOW = rt_exc("UNDERFLOW");
+  RT_B_ARRAY_TOO_BIG = rt_exc("ARRAY_TOO_BIG");
 }
 
 rstr rt_b_slice(rstr s, rt_int l, rt_int u) {
@@ -2816,6 +2817,21 @@ rstr rt_b_fmd(int op, double a, double b) {
   }
   rstr h = rt_b_bits_of_float(hi), l = rt_b_bits_of_float(lo);
   return rt_str_cat(h, l);
+}
+
+/* the storage of an array: ARRAY_TOO_BIG beyond the largest array of the simulated
+ * machine, 2**34 bits (3.8.1) */
+int RT_B_ARRAY_TOO_BIG;
+void *rt_b_array_alloc(rt_int n, size_t esize) {
+  if (n < 0) n = 0;
+  if ((unsigned __int128)n * esize * 8 > ((unsigned __int128)1 << 34)) rt_raise(RT_B_ARRAY_TOO_BIG);
+  return rt_alloc(esize * (size_t)(n ? n : 1));
+}
+
+/* the tag of a T(ANY) record not yet assigned (3.9.1, p.3-134) */
+rt_int rt_b_tag(rt_int v) {
+  if (v == INT64_MIN) rt_raise(RT_X_INIT);
+  return v;
 }
 
 /* a type-specifier [T]$$(E): INVALID_TYPE unless the value is one of T (3.1.4.1) */

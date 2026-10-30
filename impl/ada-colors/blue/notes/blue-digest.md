@@ -167,7 +167,9 @@ unreadable; the decision is bluec's.
    underscore; operator routines are also found by that name.
 6. **Uninitialized variables** start as zero. The language has the exception
    UNINITIALIZED_VARIABLE (§4.3.2 raises it when a function ends without RETURN,
-   and bluec does that); reading a variable before it is set is not tracked.
+   and bluec does that); reading a variable before it is set is not tracked,
+   except the tag of a `T(ANY)` record, which has no value until the record is
+   assigned and raises UNINITIALIZED_VARIABLE when read then (p.3-134).
 7. **Aliasing and side-effect rules** (§4.3.3, §4.3.4) are not checked; importing
    is (§4.1.1), with these readings: a routine the scope imports covers the
    variables it uses, also when called through the scope's own local routines

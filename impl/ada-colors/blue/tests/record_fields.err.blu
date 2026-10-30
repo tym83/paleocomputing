@@ -1,0 +1,6 @@
+MAIN SEGMENT RECORD_FIELDS
+   USES (TERMINAL);
+% the field names of a record are distinct (3.9.1)
+TYPE T (A: INTEGER) = RECORD VAR A: INTEGER; END RECORD;
+VAR R: T (1);
+END SEGMENT RECORD_FIELDS;

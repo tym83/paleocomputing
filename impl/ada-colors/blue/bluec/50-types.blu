@@ -373,6 +373,14 @@ FUNCTION RESOLVE_NAMED (TS: NODE, CNAME: TEXT) RETURNS (TYP);
    ORIF K <> TS_NAME THEN
       FAIL (TS@.LINE, 'a type specification expected');
    END IF;
+   IF TS@.FL = 3 THEN                                % X.ELEMENT_TYPE and the like
+      T := WITH_RANGE (TYPE_ATTR_TYPE (TS@.E), TS@.B);
+      IF TS@.C <> NIL THEN
+         T := COPY_TYP (T);
+         T@.REPS := TS@.C;
+      END IF;
+      RETURN T;
+   END IF;
    T := RESOLVE_PREDEFINED (TS);
    IF T = NIL THEN
       T := RESOLVE_USER (TS);
@@ -389,6 +397,86 @@ FUNCTION RESOLVE_NAMED (TS: NODE, CNAME: TEXT) RETURNS (TYP);
    END IF;
    RETURN T;
 END FUNCTION RESOLVE_NAMED;
+
+% the type that an attribute names (X.A where A is a type-valued attribute):
+% ELEMENT_TYPE of arrays and pointers (3.8.1, 3.10.1), CHARSET of character strings
+% (3.7.1), a TYPE parameter of a record or abstract type (3.9.1, 3.12)
+FUNCTION TYPE_ATTR_TYPE (E: NODE) RETURNS (TYP);
+   VAR T: TYP;
+   IF E@.KIND <> N_FIELD THEN
+      FAIL (E@.LINE, 'a type-valued attribute expected');
+   END IF;
+   IF E@.A@.KIND = N_FIELD & IS_TYPE_ATTR (E@.A) THEN
+      T := TYPE_ATTR_TYPE (E@.A);
+   ELSE
+      BLOCK
+         CONST SAVED_CODE: BUF := W@.CODE;
+         T := VALUE_OR_TYPE (E@.A).T;
+         W@.CODE := SAVED_CODE;
+      END BLOCK;
+   END IF;
+   BLOCK
+      CONST R: TYP := REAL_TYPE (T);
+      IF TEQS (E@.NAME, 'ELEMENT_TYPE') THEN
+         IF R@.KIND = T_ARR THEN
+            RETURN R@.ELEM;
+         ORIF R@.KIND = T_PTR THEN
+            RETURN TARGET (R);
+         END IF;
+      ORIF TEQS (E@.NAME, 'CHARSET') & R@.KIND = T_STR THEN
+         RETURN CHARSET_OF (R);
+      END IF;
+      IF R@.KIND = T_REC THEN                        % a TYPE parameter of the record
+         BLOCK
+            CONST C: SYM := RECORD_CLASS_OF (R);
+            IF C <> NIL THEN
+               BLOCK
+                  CONST B: BIND := FIND_BIND (C@.BINDINGS, E@.NAME);
+                  IF B <> NIL THEN
+                     IF B@.T <> NIL THEN
+                        RETURN B@.T;
+                     END IF;
+                  END IF;
+               END BLOCK;
+            END IF;
+         END BLOCK;
+      END IF;
+   END BLOCK;
+   FAILT (E@.LINE, 'not a type-valued attribute: ', E@.NAME);
+END FUNCTION TYPE_ATTR_TYPE;
+
+% does the attribute query E name a type?
+FUNCTION IS_TYPE_ATTR (E: NODE) RETURNS (BOOLEAN);
+   IF E@.KIND <> N_FIELD THEN
+      RETURN FALSE;
+   END IF;
+   IF TEQS (E@.NAME, 'ELEMENT_TYPE') ! TEQS (E@.NAME, 'CHARSET') THEN
+      RETURN TRUE;
+   END IF;
+   IF E@.A@.KIND = N_NAME THEN                       % a TYPE parameter
+      BLOCK
+         CONST Y: SYM := LOOKUP (E@.A@.NAME);
+         IF Y <> NIL THEN
+            IF (Y@.KIND = Y_VAR ! Y@.KIND = Y_CONST) & Y@.T <> NIL THEN
+               BLOCK
+                  CONST R: TYP := REAL_TYPE (Y@.T);
+                  IF R@.KIND = T_REC THEN
+                     BLOCK
+                        CONST C: SYM := RECORD_CLASS_OF (R);
+                        IF C <> NIL THEN
+                           IF FIND_BIND (C@.BINDINGS, E@.NAME) <> NIL THEN
+                              RETURN TRUE;
+                           END IF;
+                        END IF;
+                     END BLOCK;
+                  END IF;
+               END BLOCK;
+            END IF;
+         END IF;
+      END BLOCK;
+   END IF;
+   RETURN FALSE;
+END FUNCTION IS_TYPE_ATTR;
 
 % ?T where a type is expected: what the generic parameter stands for
 FUNCTION GEN_TYPE (TS: NODE) RETURNS (TYP);
@@ -716,9 +804,20 @@ FUNCTION RESOLVE_ARRAY (TS: NODE) RETURNS (TYP);
          END IF;
          B@ := (LO: LO.C, HI: HI.C, MLO: MANIFEST (R@.A), MHI: MANIFEST (R@.B), ANYARG: FALSE,
                 NEXT: NIL);
-         IF LO.T@.KIND = T_ENUM THEN
+         IF NOT IS_GENERIC_NODE (R@.A) & NOT IS_GENERIC_NODE (R@.B) THEN
+            IF NOT SAME_CLASS (REAL_TYPE (LO.T), REAL_TYPE (HI.T)) THEN
+               FAIL (R@.LINE, 'the bounds of an array-bound are of one type class (3.8.1)');
+            END IF;
+            B@.LO := INDEX_OF (LO, R@.LINE);
+            B@.HI := INDEX_OF (HI, R@.LINE);
+         END IF;
+         IF LO.T@.KIND = T_ENUM ! LO.T@.KIND = T_ABS THEN
             B@.MLO := ENUM_MANIFEST (R@.A, LO.T);
             B@.MHI := ENUM_MANIFEST (R@.B, LO.T);
+            IF NOT TEQ (B@.LO, LO.C) THEN           % through a program's TO_FIXED
+               B@.MLO := NO_MVAL ();
+               B@.MHI := NO_MVAL ();
+            END IF;
          ORIF REAL_TYPE (LO.T)@.KIND <> T_INT THEN
             FAIL (R@.LINE, 'array bounds are integer or enumerated (3.8.1)');
          END IF;

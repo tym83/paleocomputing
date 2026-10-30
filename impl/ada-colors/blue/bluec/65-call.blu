@@ -398,6 +398,10 @@ FUNCTION CALL_SYM (Y0: SYM, ARGS: ARG, LINE: INTEGER) RETURNS (ET);
       Y := INSTANCE (Y, ARGS, LINE);
    END IF;
    CHECK_CALL_IMPORTS (Y, LINE);
+   IF W@.IN_RECORD > 0 & Y@.USES <> NIL THEN
+      FAILT (LINE, 'a record-spec is a closed scope: no function importing a variable (3.9.1): ',
+             Y@.NAME);
+   END IF;
    IF Y@.LEVEL >= 1 THEN                             % the frame of its parent
       C := FRAME_OF (Y@.LEVEL);
       SEP := MK (', ');

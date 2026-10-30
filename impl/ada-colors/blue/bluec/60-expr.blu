@@ -918,6 +918,9 @@ FUNCTION NAME_EXPR (E: NODE, WANT: TYP) RETURNS (ET);
    IF Y = NIL THEN
       FAILT (E@.LINE, 'unknown name ', E@.NAME);
    END IF;
+   IF Y@.KIND = Y_VAR & W@.IN_RECORD > 0 THEN
+      FAILT (E@.LINE, 'a record-spec is a closed scope: no variable from outside (3.9.1): ', E@.NAME);
+   END IF;
    IF Y@.KIND = Y_VAR ! Y@.KIND = Y_CONST THEN
       BLOCK
          CONST WRITABLE: BOOLEAN := CHECK_IMPORTED (Y, E@.LINE);
@@ -962,6 +965,11 @@ FUNCTION FIELD_EXPR (E: NODE) RETURNS (ET);
          END BLOCK;
       END IF;
    END IF;
+   IF A@.KIND = N_PAREN THEN                         % (X.ELEMENT_TYPE).ATTRIBUTE
+      IF IS_TYPE_ATTR (A@.A) THEN
+         RETURN ATTRIBUTE (TYPE_VALUE_OF (TYPE_ATTR_TYPE (A@.A)), E@.NAME, E@.LINE);
+      END IF;
+   END IF;
    IF A@.KIND = N_PAREN THEN                         % (T.ATTRIBUTE).ATTRIBUTE
       IF A@.A@.KIND = N_FIELD THEN
          IF A@.A@.A@.KIND = N_NAME THEN
@@ -991,6 +999,9 @@ FUNCTION FIELD_EXPR (E: NODE) RETURNS (ET);
             CONST F: FIELD := FIND_VFIELD (BT, E@.NAME);
             IF F <> NIL THEN
                CHECK_VARIANT (F, BT, A, E@.LINE);
+               IF F@.KIND = 2 & HAS_ANY (BT) THEN   % the tag of a T(ANY) variable before
+                  RETURN MKET (FMT2 ('rt_b_tag((@).@)', B.C, F@.CNAME), F@.T);   % it is
+               END IF;                              % assigned (3.9.1, p.3-134)
                RETURN MKLV (FMT2 ('(@).@', B.C, F@.CNAME), F@.T, B.LVAL & F@.KIND = 0, B.C);
             END IF;
          END BLOCK;
@@ -1115,6 +1126,44 @@ FUNCTION INDEX_EXPR (E: NODE) RETURNS (ET);
    RETURN INDEX_EXPR2 (E);
 END FUNCTION INDEX_EXPR;
 
+% an array bound or subscript as an integer (3.8.1, 3.8.4): an integer, or an
+% enumerated value converted by TO_FIXED: the predefined one for an ordered type of
+% standard representation, a program's own for an UNORDERED type, a type of another
+% representation or an abstract type
+FUNCTION INDEX_VALUE (E: NODE) RETURNS (TEXT);
+   CONST SAVED: BOOLEAN := W@.ROUNDED;
+   CONST SAVED_Q: NODE := W@.QUAL;
+   VAR V: ET;
+   W@.ROUNDED := FALSE;
+   W@.QUAL := NIL;
+   V := EXPR (E, NIL);
+   W@.ROUNDED := SAVED;
+   W@.QUAL := SAVED_Q;
+   RETURN INDEX_OF (V, E@.LINE);
+END FUNCTION INDEX_VALUE;
+
+FUNCTION INDEX_OF (V: ET, LINE: INTEGER) RETURNS (TEXT);
+   CONST T: TYP := REAL_TYPE (V.T);
+   IF V.T@.KIND = T_ABS ! (T@.KIND = T_ENUM & (T@.BASE@.UNORDERED ! T@.REPS <> NIL)) THEN
+      BLOCK
+         CONST ARGS: ARG := VAL_ARG (V, NIL);
+         CONST Y: SYM := FIND_ROUTINE (MKN ('TO_FIXED'), ARGS, LINE, FALSE);
+         IF Y = NIL THEN
+            FAILT (LINE, 'an index of this type needs a TO_FIXED of the program (3.8.1): ',
+                   TYPE_NAME (V.T));
+         END IF;
+         RETURN CALL_SYM (Y, ARGS, LINE).C;
+      END BLOCK;
+   END IF;
+   IF T@.KIND = T_ENUM THEN
+      RETURN V.C;
+   END IF;
+   IF T@.KIND <> T_INT ! T@.SCALE <> 0 THEN
+      FAILT (LINE, 'an integer expected, not ', TYPE_NAME (V.T));
+   END IF;
+   RETURN V.C;
+END FUNCTION INDEX_OF;
+
 FUNCTION INDEX_EXPR2 (E: NODE) RETURNS (ET);
    CONST B: ET := EXPR (E@.A, NIL);
    CONST T: TYP := REAL_TYPE (B.T);
@@ -1128,7 +1177,7 @@ FUNCTION INDEX_EXPR2 (E: NODE) RETURNS (ET);
       IF N > 0 THEN
          IX := CATS (IX, ', ');
       END IF;
-      IX := CAT (IX, INT_EXPR (S));
+      IX := CAT (IX, INDEX_VALUE (S));
       N := N + 1;
       S := S@.NEXT;
    END LOOP;

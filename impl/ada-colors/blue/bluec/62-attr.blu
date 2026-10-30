@@ -134,12 +134,12 @@ FUNCTION ATTRIBUTE (B: ET, NAME: TEXT, LINE: INTEGER) RETURNS (ET);
          RETURN ENUM_LITERAL (LIT_NODE ('SIGNED', LINE), NIL);
       ORIF TEQS (NAME, 'MIN') THEN
          IF T@.LO_C.LEN > 0 THEN
-            RETURN MKET (T@.LO_C, INT_TYPE (T@.SCALE));
+            RETURN MKET (SUBST_SELF (T@.LO_C, B.SELF), INT_TYPE (T@.SCALE));
          END IF;
          RETURN MKET (MK ('INT64_MIN'), INT_TYPE (T@.SCALE));
       ORIF TEQS (NAME, 'MAX') THEN
          IF T@.HI_C.LEN > 0 THEN
-            RETURN MKET (T@.HI_C, INT_TYPE (T@.SCALE));
+            RETURN MKET (SUBST_SELF (T@.HI_C, B.SELF), INT_TYPE (T@.SCALE));
          END IF;
          RETURN MKET (MK ('INT64_MAX'), INT_TYPE (T@.SCALE));
       END IF;
@@ -162,12 +162,12 @@ FUNCTION ATTRIBUTE (B: ET, NAME: TEXT, LINE: INTEGER) RETURNS (ET);
             END IF;
             IF TEQS (NAME, 'MIN') THEN
                IF T@.LO_C.LEN > 0 THEN
-                  RETURN MKET (T@.LO_C, MT);
+                  RETURN MKET (SUBST_SELF (T@.LO_C, B.SELF), MT);
                END IF;
                RETURN MKET (FMT1 ('(-@_MAX)', C), MT);
             END IF;
             IF T@.HI_C.LEN > 0 THEN
-               RETURN MKET (T@.HI_C, MT);
+               RETURN MKET (SUBST_SELF (T@.HI_C, B.SELF), MT);
             END IF;
             RETURN MKET (FMT1 ('@_MAX', C), MT);
          END BLOCK;
@@ -175,18 +175,18 @@ FUNCTION ATTRIBUTE (B: ET, NAME: TEXT, LINE: INTEGER) RETURNS (ET);
    ORIF K = T_ENUM THEN                              % 3.4.1
       IF TEQS (NAME, 'MIN') THEN
          IF T@.LO_C.LEN > 0 THEN
-            RETURN MKET (T@.LO_C, T@.BASE);
+            RETURN MKET (SUBST_SELF (T@.LO_C, B.SELF), T@.BASE);
          END IF;
          RETURN MKET (MK ('0'), T@.BASE);
       ORIF TEQS (NAME, 'MAX') THEN
          IF T@.HI_C.LEN > 0 THEN
-            RETURN MKET (T@.HI_C, T@.BASE);
+            RETURN MKET (SUBST_SELF (T@.HI_C, B.SELF), T@.BASE);
          END IF;
          RETURN MKET (NUM (T@.BASE@.NLITS - 1), T@.BASE);
       ORIF TEQS (NAME, 'EXTENT') THEN
          IF T@.LO_C.LEN > 0 THEN                    % 0 for an empty range
-            RETURN MKET (FMT4 ('((@) >= (@) ? (@) - (@) + 1 : 0)', T@.HI_C, T@.LO_C, T@.HI_C,
-                               T@.LO_C), W@.TY_INT);
+            RETURN MKET (SUBST_SELF (FMT4 ('((@) >= (@) ? (@) - (@) + 1 : 0)', T@.HI_C, T@.LO_C,
+                                           T@.HI_C, T@.LO_C), B.SELF), W@.TY_INT);
          END IF;
          RETURN INT_ET (T@.BASE@.NLITS);
       END IF;
@@ -199,8 +199,8 @@ FUNCTION ATTRIBUTE (B: ET, NAME: TEXT, LINE: INTEGER) RETURNS (ET);
    ORIF K = T_ARR THEN                               % 3.8.1, 3.8.3
       IF TEQS (NAME, 'DIMENSIONS') THEN
          RETURN INT_ET (T@.DIMS);
-      ORIF TEQS (NAME, 'EXTENT') & T@.DIMS = 1 THEN
-         RETURN MKET (FMT1 ('rt_b_extent(1, (@).lo, (@).hi)', B.C), W@.TY_INT);
+      ORIF TEQS (NAME, 'EXTENT') ! TEQS (NAME, 'BOUNDS') THEN
+         RETURN ARRAY_SHAPE (B, NAME);
       ORIF TEQS (NAME, 'PACKING') THEN
          RETURN ENUM_LITERAL (LIT_NODE ('UNPACKED', LINE), NIL);
       END IF;
@@ -231,6 +231,43 @@ FUNCTION ATTRIBUTE (B: ET, NAME: TEXT, LINE: INTEGER) RETURNS (ET);
    END IF;
    FAILT (LINE, 'no such field or attribute: ', NAME);
 END FUNCTION ATTRIBUTE;
+
+% A.BOUNDS, an ARRAY [0:n] OF BOUNDS_DEF (STD), and A.EXTENT, an ARRAY [0:n] OF
+% INTEGER, as values (3.8.1)
+FUNCTION ARRAY_SHAPE (B: ET, NAME: TEXT) RETURNS (ET);
+   CONST T: TYP := REAL_TYPE (B.T);
+   CONST D: TEXT := NUM (T@.DIMS);
+   CONST X: TEXT := NEW_NAME ('sx');
+   CONST R: TEXT := NEW_NAME ('sr');
+   VAR ELEM: TYP := W@.TY_INT;
+   VAR C: TEXT;
+   IF TEQS (NAME, 'BOUNDS') THEN
+      BLOCK
+         VAR TS: NODE := NEW_NODE (TS_NAME, 0);
+         TS@.NAME := MKN ('BOUNDS_DEF');
+         TS@.A := NEW_NODE (N_NAME, 0);
+         TS@.A@.NAME := MKN ('STD');
+         ELEM := RESOLVE (TS);
+      END BLOCK;
+   END IF;
+   BLOCK
+      CONST A: TYP := ARRAY_OF (ELEM, 1);
+      C := FMT4 ('({ @ @ = @; @ ', CTYPE (T), X, B.C, A@.CNAME);
+      C := FMT4 ('@@; memset(&@, 0, sizeof @);', C, R, R, R);
+      C := FMT4 ('@ @.lo[0] = 0; @.hi[0] = @ - 1;', C, R, R, D);
+      C := FMT4 ('@ @.p = rt_alloc(@ * sizeof *@.p);', C, R, D, R);
+      C := FMT2 ('@ for (int i = 0; i < @; i++) {', C, D);
+      IF TEQS (NAME, 'BOUNDS') THEN
+         C := FMT2 ('@ @', C, INIT_CODE (ELEM, FMT1 ('@.p[i]', R)));
+         C := FMT4 ('@ @.p[i].f_MIN = @.lo[i]; @.p[i].f_MAX = ', C, R, X, R);
+         C := FMT2 ('@@.hi[i]; }', C, X);
+      ELSE
+         C := FMT4 ('@ @.p[i] = @.hi[i] >= @.lo[i] ? ', C, R, X, X);
+         C := FMT4 ('@@.hi[i] - @.lo[i] + 1 : 0; }', C, X, X, X);
+      END IF;
+      RETURN MKET (FMT2 ('@ @; })', C, R), A);
+   END BLOCK;
+END FUNCTION ARRAY_SHAPE;
 
 FUNCTION LIT_NODE (NAME: ASCII_STR(?L), LINE: INTEGER) RETURNS (NODE);
    VAR N: NODE := NEW_NODE (N_ENUMLIT, LINE);
@@ -286,7 +323,10 @@ END FUNCTION TYPE_ATTRIBUTE;
 % a stand-in value of the type TNAME for its attribute queries: for an array or
 % record type, a value with the bounds and parameters of the type
 FUNCTION TYPE_VALUE (TNAME: TEXT, LINE: INTEGER) RETURNS (ET);
-   CONST T: TYP := RESOLVE_USER_NAME (TNAME, LINE);
+   RETURN TYPE_VALUE_OF (RESOLVE_USER_NAME (TNAME, LINE));
+END FUNCTION TYPE_VALUE;
+
+FUNCTION TYPE_VALUE_OF (T: TYP) RETURNS (ET);
    CONST RT: TYP := REAL_TYPE (T);
    IF RT@.KIND = T_ARR ! RT@.KIND = T_REC THEN
       BLOCK
@@ -297,7 +337,7 @@ FUNCTION TYPE_VALUE (TNAME: TEXT, LINE: INTEGER) RETURNS (ET);
       END BLOCK;
    END IF;
    RETURN MKET (FMT1 ('(*(@ *)0)', CTYPE (T)), T);
-END FUNCTION TYPE_VALUE;
+END FUNCTION TYPE_VALUE_OF;
 
 % is E the name of a type (not of a value)?
 FUNCTION IS_TYPE_NAME (E: NODE) RETURNS (BOOLEAN);
@@ -416,11 +456,31 @@ FUNCTION ARRAY_CONSTRUCTOR (E: NODE, WANT: TYP) RETURNS (ET);
          ELEM := W@.TY_INT;
       END IF;
    END IF;
+   CHECK_SHAPE (E, DIMS);
    BLOCK
-      CONST A: TYP := ARRAY_OF (ELEM, DIMS);
+      VAR A: TYP := ARRAY_OF (ELEM, DIMS);
       CONST TMP: TEXT := NEW_NAME ('ac');
       VAR R: TEXT := FMT3 ('({ @ @; memset(&@, 0, sizeof ', A@.CNAME, TMP, TMP);
       VAR K: INTEGER := 0;
+      BLOCK                                          % its bounds: [0:N-1] in each
+         VAR Q: NODE := E;                          % dimension (3.8.2)
+         VAR TAIL: BND := NIL;
+         LOOP FOR D IN [1 : DIMS] DO
+            BLOCK
+               VAR B: BND := NEW (BND_REC);
+               CONST N: INTEGER := LIST_LENGTH (Q@.A);
+               B@ := (LO: MK ('0'), HI: NUM (N - 1), MLO: SOME (0), MHI: SOME (N - 1),
+                      ANYARG: FALSE, NEXT: NIL);
+               IF TAIL = NIL THEN
+                  A@.BOUNDS := B;
+               ELSE
+                  TAIL@.NEXT := B;
+               END IF;
+               TAIL := B;
+            END BLOCK;
+            Q := Q@.A;
+         END LOOP D;
+      END BLOCK;
       R := FMT2 ('@@); ', R, TMP);
       P := E;
       LOOP FOR D IN [0 : DIMS - 1] DO
@@ -434,6 +494,34 @@ FUNCTION ARRAY_CONSTRUCTOR (E: NODE, WANT: TYP) RETURNS (ET);
       RETURN MKET (FMT2 ('@ @; })', R, TMP), A);
    END BLOCK;
 END FUNCTION ARRAY_CONSTRUCTOR;
+
+% the components of an array constructor have the same shape (3.8.2)
+PROCEDURE CHECK_SHAPE (E: NODE, DIMS: INTEGER);
+   VAR P: NODE := E@.A;
+   IF DIMS <= 1 THEN
+      RETURN;
+   END IF;
+   LOOP UNTIL P = NIL DO
+      IF P@.KIND <> N_ARRCONS ! E@.A@.KIND <> N_ARRCONS THEN
+         FAIL (E@.LINE, 'the components of an array constructor must have the same shape (3.8.2)');
+      END IF;
+      IF NOT SAME_SHAPE (P, E@.A) THEN
+         FAIL (E@.LINE, 'the components of an array constructor must have the same shape (3.8.2)');
+      END IF;
+      CHECK_SHAPE (P, DIMS - 1);
+      P := P@.NEXT;
+   END LOOP;
+END PROCEDURE CHECK_SHAPE;
+
+FUNCTION SAME_SHAPE (A, B: NODE) RETURNS (BOOLEAN);
+   IF A@.KIND <> N_ARRCONS ! B@.KIND <> N_ARRCONS THEN
+      RETURN A@.KIND <> N_ARRCONS & B@.KIND <> N_ARRCONS;
+   END IF;
+   IF LIST_LENGTH (A@.A) <> LIST_LENGTH (B@.A) THEN
+      RETURN FALSE;
+   END IF;
+   RETURN SAME_SHAPE (A@.A, B@.A);
+END FUNCTION SAME_SHAPE;
 
 % the elements of a constructor, row by row; K counts them
 PROCEDURE ARRAY_ELEMENTS (E: NODE, DIMS: INTEGER, A: TYP, TMP: TEXT # R: TEXT, K: INTEGER);
