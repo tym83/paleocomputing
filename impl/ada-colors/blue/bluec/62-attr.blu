@@ -147,27 +147,30 @@ FUNCTION ATTRIBUTE (B: ET, NAME: TEXT, LINE: INTEGER) RETURNS (ET);
       IF TEQS (NAME, 'NOM_PRECISION') THEN
          RETURN INT_ET (T@.SCALE);
       ORIF TEQS (NAME, 'IMP_PRECISION') THEN
-         RETURN INT_ET (15);
+         RETURN INT_ET (IMP_PRECISION_OF (T@.SCALE));
       ORIF TEQS (NAME, 'RADIX') THEN
          RETURN INT_ET (2);
-      ORIF TEQS (NAME, 'EXPONENT_MIN') THEN
-         RETURN INT_ET (-1022);
-      ORIF TEQS (NAME, 'EXPONENT_MAX') THEN
-         RETURN INT_ET (1023);
-      ORIF TEQS (NAME, 'MANTISSA_SIZE') THEN
-         RETURN INT_ET (53);
-      ORIF TEQS (NAME, 'EXPONENT_SIZE') THEN
-         RETURN INT_ET (11);
-      ORIF TEQS (NAME, 'MIN') THEN
-         IF T@.LO_C.LEN > 0 THEN
-            RETURN MKET (T@.LO_C, T);
-         END IF;
-         RETURN MKET (MK ('(-DBL_MAX)'), T);
-      ORIF TEQS (NAME, 'MAX') THEN
-         IF T@.HI_C.LEN > 0 THEN
-            RETURN MKET (T@.HI_C, T);
-         END IF;
-         RETURN MKET (MK ('DBL_MAX'), T);
+      ORIF TEQS (NAME, 'EXPONENT_MIN') ! TEQS (NAME, 'EXPONENT_MAX') ! TEQS (NAME, 'MANTISSA_SIZE')
+         ! TEQS (NAME, 'EXPONENT_SIZE') THEN
+         RETURN INT_ET (FLOAT_FORMAT (T@.SCALE, NAME));
+      ORIF TEQS (NAME, 'MIN') ! TEQS (NAME, 'MAX') THEN      % of FLOAT (IMP_PRECISION)
+         BLOCK
+            CONST MT: TYP := FLOAT_TYPE (IMP_PRECISION_OF (T@.SCALE));
+            VAR C: TEXT := MK ('DBL');
+            IF IMP_PRECISION_OF (T@.SCALE) = 7 THEN
+               C := MK ('FLT');
+            END IF;
+            IF TEQS (NAME, 'MIN') THEN
+               IF T@.LO_C.LEN > 0 THEN
+                  RETURN MKET (T@.LO_C, MT);
+               END IF;
+               RETURN MKET (FMT1 ('(-@_MAX)', C), MT);
+            END IF;
+            IF T@.HI_C.LEN > 0 THEN
+               RETURN MKET (T@.HI_C, MT);
+            END IF;
+            RETURN MKET (FMT1 ('@_MAX', C), MT);
+         END BLOCK;
       END IF;
    ORIF K = T_ENUM THEN                              % 3.4.1
       IF TEQS (NAME, 'MIN') THEN
@@ -245,7 +248,7 @@ FUNCTION SIZE_OF (T: TYP, C: TEXT) RETURNS (ET);
       END IF;
       RETURN INT_ET (64);
    ORIF K = T_FLOAT THEN
-      RETURN INT_ET (64);
+      RETURN INT_ET (FLOAT_FORMAT (T@.SCALE, MK ('SIZE')));
    ORIF K = T_BOOL THEN
       RETURN INT_ET (1);
    ORIF K = T_ENUM THEN

@@ -171,8 +171,16 @@ unreadable; the decision is bluec's.
    (FORMPRINT, C-28); `IMPORTS (MODULES: (M))` imports M's exported routines (§4.2).
 8. **Recursion** needs no import of itself.
 9. **WITH NAMING** does not hide the named variable.
-10. **TRUNCATED/ROUNDED** apply to fixed point; `WITH PREC` is accepted and
-    ignored; FLOAT is always double.
+10. **TRUNCATED/ROUNDED** apply to fixed and floating point alike (fixed point
+    defaults to TRUNCATED, floating point to ROUNDED, 3.3.4.1); NATIVE_R and
+    NATIVE_T, in machine-dependent parts only, are the hardware's rounding and
+    truncation. Two floating point precisions are implemented: single (IEEE
+    binary32, IMP_PRECISION 7, for nominal precisions 1 to 7) and double
+    (binary64, 15, for 8 to 15); a result is rounded or truncated to the
+    implemented precision of its nominal precision, the larger of the operands'
+    and of `WITH PREC` (3.3.4.4); UNDERFLOW is raised for a non-zero result below
+    the smallest normal value. (Until October 2026 every float was a double and
+    the mode and WITH PREC were ignored.)
 11. **Segments are translated in USES order** (§4.1, p.4-5: a segment's data are
     initialized before those of the segments that use it); Appendix C prints
     SYSTEM, which uses STANDARD_IO, first.
@@ -215,6 +223,9 @@ unreadable; the decision is bluec's.
     header; it must be a value of the ROUNDINGS visible there, which a program
     may redefine with more values (FLOOR ...). A mode the predefined operations
     do not know needs an operator routine of the program that takes it.
+27. **A float-literal outside the range of single precision** (1.0E-300 has two
+    digits, and so a single implemented precision) is given the nominal precision
+    8, so that it is represented in double precision rather than rejected.
 
 The misprints of the program examples and the rules they break are in
 `../corpus/CHANGES.md`.
@@ -225,7 +236,6 @@ The misprints of the program examples and the rules they break are in
   representation converters beyond enumerations, strings, bitstrings and fixed.
 - Aliasing and side-effect enforcement (§4.3.3–4.3.4, Appendix A.3).
 - LIBRARIES (§4.7), simulation (§4.6.9).
-- FLOAT precisions are not modelled (always 15 digits).
 
 ---
 

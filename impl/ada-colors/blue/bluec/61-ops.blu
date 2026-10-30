@@ -177,7 +177,13 @@ FUNCTION CONVERT (V: ET, T: TYP, LINE: INTEGER, SELF: TEXT) RETURNS (TEXT);
       END IF;
       RETURN RANGE_CHECK (RT, FMT3 ('rt_b_conv(@, @, @)', V.C, NUM (V.T@.SCALE), NUM (RT@.SCALE)),
                           SELF);
-   ORIF RT@.KIND = T_FLOAT ! RT@.KIND = T_ENUM THEN
+   ORIF RT@.KIND = T_FLOAT THEN                      % to the variable's implemented
+      IF IMP_PRECISION_OF (RT@.SCALE) < IMP_PRECISION_OF (VT@.SCALE) THEN   % precision
+         RETURN RANGE_CHECK (RT, FMT3 ('rt_b_fconv(@, @, @, 1)', V.C, SINGLE_C (RT@.SCALE),
+                                       FLOAT_TRUNC ()), SELF);           % (3.3.5)
+      END IF;
+      RETURN RANGE_CHECK (RT, V.C, SELF);
+   ORIF RT@.KIND = T_ENUM THEN
       RETURN RANGE_CHECK (RT, V.C, SELF);
    ORIF RT@.KIND = T_STR ! RT@.KIND = T_BITS THEN
       IF RT@.MLEN.OK & VT@.MLEN.OK THEN
@@ -445,11 +451,14 @@ FUNCTION UNARY (E: NODE) RETURNS (ET);
          RETURN MKET (FMT1 ('rt_neg(@)', A.C), INT_TYPE (T@.SCALE));
       END IF;
       RETURN MKET (A.C, INT_TYPE (T@.SCALE));
-   ORIF T@.KIND = T_FLOAT THEN                       % 3.3.4.3
-      IF TEQS (OP, '-') THEN
-         RETURN MKET (FMT1 ('(-@)', A.C), T);
-      END IF;
-      RETURN A;
+   ORIF T@.KIND = T_FLOAT THEN                       % 3.3.4.3: -E is 0. - E
+      BLOCK
+         CONST FT: TYP := FLOAT_TYPE (MAX_INT (T@.SCALE, QUAL_PREC ()));
+         IF TEQS (OP, '-') THEN
+            RETURN MKET (FLOAT_OP (OP, MK ('0.0'), A.C, FT), FT);
+         END IF;
+         RETURN MKET (A.C, FT);
+      END BLOCK;
    END IF;
    FAILT (E@.LINE, 'a prefix + or - of ', TYPE_NAME (T));
 END FUNCTION UNARY;
@@ -581,13 +590,13 @@ FUNCTION APPLY_OPERATOR (E: NODE, OP: TEXT, A, B: ET) RETURNS (ET);
    IF AT@.KIND = T_INT & BT@.KIND = T_INT THEN
       RETURN FIXED_ARITH (E, OP, A, B);
    ORIF AT@.KIND = T_FLOAT & BT@.KIND = T_FLOAT THEN  % 3.3.4.2
-      BLOCK
-         VAR T: TYP := NEW_TYP (T_FLOAT);
-         T@.SCALE := MAX_INT (AT@.SCALE, BT@.SCALE);
-         IF TEQS (OP, '+') ! TEQS (OP, '-') ! TEQS (OP, '*') THEN
-            RETURN MKET (FMT3 ('rt_b_fchk(@ @ @)', A.C, OP, B.C), T);
-         ORIF TEQS (OP, '/') THEN
-            RETURN MKET (FMT2 ('rt_b_fchk(rt_fdiv(@, @))', A.C, B.C), T);
+      BLOCK                                          % the larger precision, at least
+         CONST T: TYP := FLOAT_TYPE (MAX_INT (MAX_INT (AT@.SCALE, BT@.SCALE), QUAL_PREC ()));
+         IF TEQS (OP, '+') ! TEQS (OP, '-') ! TEQS (OP, '*') ! TEQS (OP, '/') THEN
+            RETURN MKET (FLOAT_OP (OP, A.C, B.C, T), T);
+         END IF;                                     % that of WITH PREC (3.3.4.4)
+         IF TEQS (OP, '**') THEN
+            FAIL (LINE, '** has no predefined meaning for floating point values (3.3.4.2)');
          END IF;
       END BLOCK;
    END IF;
@@ -596,6 +605,48 @@ FUNCTION APPLY_OPERATOR (E: NODE, OP: TEXT, A, B: ET) RETURNS (ET);
    END IF;
    FAIL (LINE, 'no operator ' !! STR (OP, OP.LEN) !! ' for ' !! STR (TYPE_NAME (AT), TYPE_NAME (AT).LEN));
 END FUNCTION APPLY_OPERATOR;
+
+% ---- floating point (3.3): single precision for at most 7 digits, double for more
+
+FUNCTION FLOAT_TYPE (P: INTEGER) RETURNS (TYP);
+   VAR T: TYP := NEW_TYP (T_FLOAT);
+   T@.SCALE := P;
+   RETURN T;
+END FUNCTION FLOAT_TYPE;
+
+% is the implemented precision of FLOAT (P) single?
+FUNCTION SINGLE_C (P: INTEGER) RETURNS (TEXT);
+   IF IMP_PRECISION_OF (P) = 7 THEN
+      RETURN MK ('1');
+   END IF;
+   RETURN MK ('0');
+END FUNCTION SINGLE_C;
+
+% does the rounding mode in effect truncate a float result (3.3.4.1)? ROUNDED is the
+% default for floating point
+FUNCTION FLOAT_TRUNC () RETURNS (TEXT);
+   IF W@.QUAL <> NIL THEN
+      IF TEQS (W@.QUAL@.NAME, 'TRUNCATED') ! TEQS (W@.QUAL@.NAME, 'NATIVE_T') THEN
+         RETURN MK ('1');
+      END IF;
+   END IF;
+   RETURN MK ('0');
+END FUNCTION FLOAT_TRUNC;
+
+% the precision of WITH PREC in effect, or 0 (3.3.4.4)
+FUNCTION QUAL_PREC () RETURNS (INTEGER);
+   IF W@.QUAL <> NIL THEN
+      IF W@.QUAL@.B <> NIL THEN
+         RETURN MANIFEST (W@.QUAL@.B).V;
+      END IF;
+   END IF;
+   RETURN 0;
+END FUNCTION QUAL_PREC;
+
+FUNCTION FLOAT_OP (OP, A, B: TEXT, T: TYP) RETURNS (TEXT);
+   RETURN CAT (FMT3 ('rt_b_fop(''@'', @, @, ', OP, A, B),
+               FMT2 ('@, @)', SINGLE_C (T@.SCALE), FLOAT_TRUNC ()));
+END FUNCTION FLOAT_OP;
 
 FUNCTION LOWER_OP (OP: TEXT) RETURNS (TEXT);
    IF TEQS (OP, 'AND') THEN

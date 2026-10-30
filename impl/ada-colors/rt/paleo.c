@@ -7,6 +7,8 @@
 #endif
 #include <unistd.h>
 #include <math.h>
+#include <fenv.h>
+#include <float.h>
 #include <pthread.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -1806,6 +1808,7 @@ void rt_b_lang(void) {
   RT_X_DEADLOCK = rt_exc("DEADLOCK");
   RT_B_INVALID_TYPE = rt_exc("INVALID_TYPE");
   RT_B_INVALID_REP = rt_exc("INVALID_REP");
+  RT_B_UNDERFLOW = rt_exc("UNDERFLOW");
 }
 
 rstr rt_b_slice(rstr s, rt_int l, rt_int u) {
@@ -2668,7 +2671,59 @@ void rt_b_wait(rt_int v, rt_int scale) {
 
 /* ---- BLUE: the rest of the language (coverage of the 1978 specification) ---- */
 
-int RT_B_INVALID_TYPE, RT_B_INVALID_REP;
+int RT_B_INVALID_TYPE, RT_B_INVALID_REP, RT_B_UNDERFLOW;
+
+/* floating point (3.3): two implemented precisions, single (7 digits) and double
+ * (15); a result is rounded to nearest even (ROUNDED, NATIVE_R) or toward zero
+ * (TRUNCATED, NATIVE_T) in its implemented precision; OVERFLOW beyond the range,
+ * UNDERFLOW for a non-zero value below the smallest normal one */
+static double b_fround(double v, int single, int trunc) {
+  if (!single) return v;
+  int old = fegetround();
+  if (trunc) fesetround(FE_TOWARDZERO);
+  volatile float f = (float)v;
+  fesetround(old);
+  return f;
+}
+
+static double b_fcheck(double r, int single, int exc_over) {
+  if (isinf(r) || isnan(r)) rt_raise(exc_over);
+  if (r != 0 && fabs(r) < (single ? FLT_MIN : DBL_MIN)) rt_raise(RT_B_UNDERFLOW);
+  return r;
+}
+
+double rt_b_fop(int op, double a, double b, int single, int trunc) {
+  int old = fegetround();
+  volatile double r;
+  if (op == '/' && b == 0) rt_raise(RT_X_ZERO_DIVIDE);
+  if (trunc) fesetround(FE_TOWARDZERO);
+  switch (op) {
+  case '+': r = a + b; break;
+  case '-': r = a - b; break;
+  case '*': r = a * b; break;
+  default: r = a / b; break;
+  }
+  fesetround(old);
+  r = b_fround(r, single, trunc);
+  if (r == 0 && (op == '*' || op == '/') && a != 0 && (op == '/' || b != 0)) rt_raise(RT_B_UNDERFLOW);
+  return b_fcheck(r, single, RT_X_OVERFLOW);
+}
+
+/* a value converted to an implemented precision: by TO_FLOAT (OVERFLOW) or by an
+ * assignment (RANGE, 3.3.5) */
+double rt_b_fconv(double v, int single, int trunc, int range) {
+  double r = b_fround(v, single, trunc);
+  return b_fcheck(r, single, range ? RT_X_RANGE : RT_X_OVERFLOW);
+}
+
+/* TO_FLOAT of a fixed point value m * 2**-s, rounded or truncated (3.3.6.1) */
+double rt_b_float_of_fix_r(rt_int v, rt_int scale, int single, int trunc) {
+  int old = fegetround();
+  if (trunc) fesetround(FE_TOWARDZERO);
+  volatile double d = (double)v;
+  fesetround(old);
+  return rt_b_fconv(ldexp(d, (int)-scale), single, trunc, 0);
+}
 
 /* the decimal digits of v * 2**k, k >= 0: TO_CHAR of a negative scale (3.2.6) */
 static rstr b_big_image(rt_int v, rt_int k) {

@@ -279,22 +279,50 @@ FUNCTION BUILTIN (E: NODE, WANT: TYP) RETURNS (ET);
       NEED_ARGS (E, 2, 3);
       BLOCK
          CONST V: ET := EXPR (ARG_EXPR (E@.A), NIL);
-         CONST P: MVAL := MANIFEST (ARG_EXPR (E@.A@.NEXT));
+         CONST P: MVAL := MANIFEST_INTEGER_ARG (ARG_EXPR (E@.A@.NEXT), 'precision', 1,
+                                                MAX_FLOAT_PRECISION ());
          CONST VT: TYP := REAL_TYPE (V.T);
-         VAR T: TYP := NEW_TYP (T_FLOAT);
-         IF NOT P.OK THEN
-            FAIL (LINE, 'the precision of TO_FLOAT must be manifest (3.3.6.1)');
+         CONST T: TYP := FLOAT_TYPE (P.V);
+         CONST SINGLE: TEXT := SINGLE_C (P.V);
+         VAR TR: TEXT := MK ('0');
+         IF LIST_LENGTH (E@.A) = 3 ! E@.A@.NEXT@.KIND = N_QUAL THEN   % ROUNDED or TRUNCATED
+            BLOCK
+               VAR R: NODE := NTH (E@.A, 2);
+               IF R = NIL THEN
+                  R := E@.A@.NEXT;
+               END IF;
+               IF R@.KIND = N_QUAL THEN
+                  R := LIT_NODE (STR (R@.NAME, R@.NAME.LEN), LINE);
+               END IF;
+               IF TEQS (R@.NAME, 'TRUNCATED') THEN
+                  TR := MK ('1');
+               ORIF NOT TEQS (R@.NAME, 'ROUNDED') THEN
+                  FAIL (LINE, 'TO_FLOAT is predefined for ROUNDED and TRUNCATED (3.3.6.1)');
+               END IF;
+            END BLOCK;
          END IF;
-         IF P.V < 1 ! P.V > 15 THEN
-            FAIL (LINE, 'precisions from 1 to 15 are implemented (3.3.1)');
-         END IF;
-         T@.SCALE := P.V;
          IF VT@.KIND = T_INT THEN
-            RETURN MKET (FMT2 ('rt_b_float_of_fix(@, @)', V.C, NUM (VT@.SCALE)), T);
+            RETURN MKET (FMT4 ('rt_b_float_of_fix_r(@, @, @, @)', V.C, NUM (VT@.SCALE), SINGLE, TR), T);
          ORIF VT@.KIND = T_FLOAT THEN
-            RETURN MKET (V.C, T);
+            IF ARG_EXPR (E@.A)@.KIND = N_REAL & IMP_PRECISION_OF (P.V) > IMP_PRECISION_OF (VT@.SCALE) THEN
+               % a literal of fewer digits is taken as written with P digits (3.3.6.1)
+               BLOCK
+                  CONST Q: NODE := NEW_NODE (N_QUAL, LINE);
+                  CONST SAVED_Q: NODE := W@.QUAL;
+                  VAR L: ET;
+                  Q@.B := ARG_EXPR (E@.A@.NEXT);
+                  W@.QUAL := Q;
+                  L := EXPR (ARG_EXPR (E@.A), NIL);
+                  W@.QUAL := SAVED_Q;
+                  RETURN MKET (FMT3 ('rt_b_fconv(@, @, @, 0)', L.C, SINGLE, TR), T);
+               END BLOCK;
+            END IF;
+            RETURN MKET (FMT3 ('rt_b_fconv(@, @, @, 0)', V.C, SINGLE, TR), T);
          ORIF VT@.KIND = T_STR THEN
-            RETURN MKET (FMT1 ('rt_b_float_of_str(@)', V.C), T);
+            IF VT@.BASE <> NIL & VT@.BASE <> W@.TY_ASCII THEN
+               FAIL (LINE, 'TO_FLOAT is predefined for ASCII strings only (3.3.6.1)');
+            END IF;
+            RETURN MKET (FMT3 ('rt_b_fconv(rt_b_float_of_str(@), @, @, 0)', V.C, SINGLE, TR), T);
          END IF;
          FAIL (LINE, 'TO_FLOAT converts fixed, float and charstring values (3.3.6.1)');
       END BLOCK;
@@ -374,22 +402,23 @@ FUNCTION BUILTIN (E: NODE, WANT: TYP) RETURNS (ET);
    ORIF TEQS (NAME, 'FLOAT_MIN') ! TEQS (NAME, 'FLOAT_MAX') ! TEQS (NAME, 'EPSILON') THEN
       NEED_ARGS (E, 1, 1);
       BLOCK
-         VAR T: TYP := NEW_TYP (T_FLOAT);
-         CONST P: MVAL := MANIFEST (E@.A);
-         IF NOT P.OK THEN
-            FAIL (LINE, 'the precision must be manifest');
+         CONST P: MVAL := MANIFEST_INTEGER_ARG (E@.A, 'precision', 1, MAX_FLOAT_PRECISION ());
+         CONST T: TYP := FLOAT_TYPE (P.V);
+         VAR C: TEXT := MK ('DBL');
+         IF IMP_PRECISION_OF (P.V) = 7 THEN
+            C := MK ('FLT');
          END IF;
-         T@.SCALE := P.V;
          IF TEQS (NAME, 'FLOAT_MIN') THEN
-            RETURN MKET (MK ('(-DBL_MAX)'), T);
+            RETURN MKET (FMT1 ('(-@_MAX)', C), T);
          ORIF TEQS (NAME, 'FLOAT_MAX') THEN
-            RETURN MKET (MK ('DBL_MAX'), T);
+            RETURN MKET (FMT1 ('@_MAX', C), T);
          END IF;
-         RETURN MKET (MK ('DBL_EPSILON'), T);
+         RETURN MKET (FMT1 ('@_EPSILON', C), T);       % 1.0 + EPSILON > 1.0 (3.3.6.4)
       END BLOCK;
    ORIF TEQS (NAME, 'IMP_PRECISION') THEN           % 3.3.6.5
       NEED_ARGS (E, 1, 1);
-      RETURN INT_ET (15);
+      RETURN INT_ET (IMP_PRECISION_OF (MANIFEST_INTEGER_ARG (E@.A, 'precision', 1,
+                                                             MAX_FLOAT_PRECISION ()).V));
    ORIF TEQS (NAME, 'IS_MANIFEST') THEN             % 3.5.6.2: not evaluated
       NEED_ARGS (E, 1, 1);
       RETURN MKET (NUM (BOOL_INT (MANIFEST (E@.A).OK)), W@.TY_BOOL);

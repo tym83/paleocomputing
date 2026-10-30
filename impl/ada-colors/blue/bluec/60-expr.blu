@@ -417,10 +417,10 @@ FUNCTION EXPR (E: NODE, WANT: TYP) RETURNS (ET);
                REQUIRE_MACHINE (E@.LINE);
             END IF;
          END IF;
-         IF E@.B <> NIL THEN                         % WITH PREC: computed in double
-            IF NOT MANIFEST (E@.B).OK THEN
-               FAIL (E@.LINE, 'WITH PREC needs a manifest precision (3.3.4.4)');
-            END IF;
+         IF E@.B <> NIL THEN                         % WITH PREC p (3.3.4.4)
+            BLOCK
+               CONST P: MVAL := MANIFEST_INTEGER_ARG (E@.B, 'precision', 1, MAX_FLOAT_PRECISION ());
+            END BLOCK;
          END IF;
          V := EXPR (E@.A, WANT);
          W@.ROUNDED := SAVED;
@@ -599,23 +599,97 @@ FUNCTION REAL_LITERAL (E: NODE) RETURNS (ET);
       RETURN MKET (FMT1 ('rt_b_fix_lit(@, 0)', CSTRING (T)), W@.TY_INT);
    END IF;
    BLOCK
+      % the precision of a float-literal is its number of digits, at most the
+      % largest (3.3.2), at least that of WITH PREC (3.3.4.4); it is represented in
+      % its implemented precision
       VAR F: TYP := NEW_TYP (T_FLOAT);
-      F@.SCALE := DIGITS;
-      IF DIGITS > 15 THEN
-         F@.SCALE := 15;
+      VAR C: TEXT := T;
+      F@.SCALE := MAX_INT (DIGITS, QUAL_PREC ());
+      IF F@.SCALE > MAX_FLOAT_PRECISION () THEN
+         F@.SCALE := MAX_FLOAT_PRECISION ();
       END IF;
-      IF DIGITS < 1 THEN
+      IF F@.SCALE < 1 THEN
          F@.SCALE := 1;
       END IF;
+      IF NOT FLOAT_LITERAL_FITS (E, F@.SCALE) THEN  % beyond the range of single
+         F@.SCALE := MAX_INT (F@.SCALE, 8);           % precision: double (decision 27)
+      END IF;
+      IF NOT FLOAT_LITERAL_FITS (E, F@.SCALE) THEN
+         FAIL (E@.LINE, 'the value of the float-literal is outside the range of FLOAT (3.3.2)');
+      END IF;
       IF S[T.LEN - 1 : T.LEN - 1] = '.' THEN
-         RETURN MKET (FMT1 ('(@0)', T), F);
+         C := FMT1 ('@0', T);
+      ORIF S[0:0] = '.' THEN
+         C := FMT1 ('0@', T);
       END IF;
-      IF S[0:0] = '.' THEN
-         RETURN MKET (FMT1 ('(0@)', T), F);
+      IF IMP_PRECISION_OF (F@.SCALE) = 7 THEN
+         RETURN MKET (FMT1 ('((double)(float)@)', C), F);
       END IF;
-      RETURN MKET (FMT1 ('(@)', T), F);
+      RETURN MKET (FMT1 ('(@)', C), F);
    END BLOCK;
 END FUNCTION REAL_LITERAL;
+
+% does a float-literal lie within the range of the implemented precision of P (3.3.2)?
+FUNCTION FLOAT_LITERAL_FITS (E: NODE, P: INTEGER) RETURNS (BOOLEAN);
+   CONST T: TEXT := E@.NAME;
+   CONST S: ASCII_STR(T.LEN) := STR (T, T.LEN);
+   VAR INT: INTEGER := 0;                            % significant digits before the point
+   VAR SIG: BOOLEAN := FALSE;
+   VAR POINT: BOOLEAN := FALSE;
+   VAR LEAD: INTEGER := 0;                           % zeros after the point, before any
+   VAR I: INTEGER := 0;
+   VAR EXP: INTEGER := 0;
+   LOOP UNTIL I >= T.LEN DO
+      IF S[I:I] = 'E' THEN
+         EXIT;
+      ORIF S[I:I] = '.' THEN
+         POINT := TRUE;
+      ORIF S[I:I] <> '0' THEN
+         IF NOT POINT THEN
+            INT := INT + 1;
+         END IF;
+         SIG := TRUE;
+      ORIF SIG & NOT POINT THEN
+         INT := INT + 1;
+      ORIF POINT & NOT SIG THEN
+         LEAD := LEAD + 1;
+      END IF;
+      I := I + 1;
+   END LOOP;
+   IF NOT SIG THEN
+      RETURN TRUE;
+   END IF;
+   IF I < T.LEN THEN
+      BLOCK
+         VAR NEG: BOOLEAN := FALSE;
+         I := I + 1;
+         IF S[I:I] = '-' ! S[I:I] = '+' THEN
+            NEG := S[I:I] = '-';
+            I := I + 1;
+         END IF;
+         LOOP UNTIL I >= T.LEN DO
+            IF EXP <= 100000 THEN
+               EXP := EXP * 10 + (CODE_OF (S[I:I]) - 48);
+            END IF;
+            I := I + 1;
+         END LOOP;
+         IF NEG THEN
+            EXP := -EXP;
+         END IF;
+      END BLOCK;
+   END IF;
+   BLOCK                                             % the decimal exponent of the value
+      VAR D: INTEGER := INT - 1 + EXP;
+      VAR LIM: INTEGER := 308;
+      IF INT = 0 THEN
+         D := -LEAD - 1 + EXP;
+      END IF;
+      IF IMP_PRECISION_OF (P) = 7 THEN
+         LIM := 38;
+      END IF;
+      RETURN D <= LIM & D >= -LIM + 1;
+   END BLOCK;
+END FUNCTION FLOAT_LITERAL_FITS;
 
 % the constraints of a fixed-literal (3.2.2): at most 1000 digits, an exponent and a
 % scale of at most 1000, and a value within FIXED_MIN (S, 2, STD) .. FIXED_MAX
@@ -846,9 +920,9 @@ END FUNCTION NAME_EXPR;
 % a field-reference [3-191], or an attribute-query [3-2]
 FUNCTION FIELD_EXPR (E: NODE) RETURNS (ET);
    CONST A: NODE := E@.A;
-   IF (TEQS (E@.NAME, 'MIN') ! TEQS (E@.NAME, 'MAX')) & IS_FIXED_LITERAL (A) THEN
+   IF (TEQS (E@.NAME, 'MIN') ! TEQS (E@.NAME, 'MAX')) & IS_NUMBER_LITERAL (A) THEN
       RETURN EXPR (A, NIL);                          % the range of a literal L is [L:L]
-   END IF;                                           % (3.2.2)
+   END IF;                                           % (3.2.2, 3.3.2)
    IF A@.KIND = N_INDEX THEN                         % A.BOUNDS(I).MIN, .MAX (3.8.1)
       IF A@.A@.KIND = N_FIELD & TEQS (A@.A@.NAME, 'BOUNDS') THEN
          BLOCK
@@ -929,6 +1003,13 @@ FUNCTION IS_FIXED_LITERAL (A: NODE) RETURNS (BOOLEAN);
    END IF;
    RETURN FALSE;
 END FUNCTION IS_FIXED_LITERAL;
+
+FUNCTION IS_NUMBER_LITERAL (A: NODE) RETURNS (BOOLEAN);
+   IF A@.KIND = N_PAREN ! A@.KIND = N_UNOP THEN
+      RETURN IS_NUMBER_LITERAL (A@.A) & NOT TEQS (A@.NAME, 'NOT');
+   END IF;
+   RETURN A@.KIND = N_INT ! A@.KIND = N_REAL;
+END FUNCTION IS_NUMBER_LITERAL;
 
 FUNCTION IS_TYPE_WORD (NAME: TEXT) RETURNS (BOOLEAN);
    RETURN TEQS (NAME, 'FIXED') ! TEQS (NAME, 'FLOAT') ! TEQS (NAME, 'BIT')
