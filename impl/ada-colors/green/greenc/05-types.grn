@@ -246,7 +246,7 @@
       Z : SYM := TABLE(H);
    begin
       while Z /= null loop
-         if Z.DEPTH = DEPTH and then Z.NAME.all = Y.NAME.all and then not DISTINCT_OVERLOAD(Y, Z) then
+         if Z.DEPTH = DEPTH and then (Z.NAME.all = Y.NAME.all and not Z.FROM_USE) and then not DISTINCT_OVERLOAD(Y, Z) then
             FAIL(LINE, Y.NAME.all & " is already declared in this declarative part");
          end if;
          Z := Z.CHAIN;

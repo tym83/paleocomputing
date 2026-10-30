@@ -234,12 +234,13 @@
          elsif Y.KIND /= Y_PACKAGE and Y.KIND /= Y_TASK then
             -- a use clause names modules: packages and tasks (RM79 8.4)
             FAIL(N.LINE, N.NAME.all & " is not a package or a task");
-         elsif Y.NAME.all = "TEXT_IO" and Y.MEMBERS = null then
-            -- TEXT_IO's operations are the predefined ones
-            Z := NEW_SYM(Y_CONST, MK("$TEXT_IO"));
-            Z.T := TY_VOID;
-            DEFINE(Z, N.LINE);
          else
+            if Y.NAME.all = "TEXT_IO" and LOOKUP("$TEXT_IO") = null then
+               -- GET and PUT of TEXT_IO are predefined (RM79 14.3)
+               Z := NEW_SYM(Y_CONST, MK("$TEXT_IO"));
+               Z.T := TY_VOID;
+               DEFINE(Z, N.LINE);
+            end if;
             M := Y.MEMBERS;
             while M /= null loop
                if not M.HIDDEN then

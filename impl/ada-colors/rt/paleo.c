@@ -1660,44 +1660,134 @@ void rt_main_done(void) {
   exit(0);
 }
 
-/* ---- GREEN TEXT_IO (RM79 14.3-14.4) ------------------------------------- */
+/* ---- GREEN TEXT_IO and INPUT_OUTPUT (RM79 14) ---------------------------------
+ * A file is a handle into a table; 1 and 2 are the standard input and output,
+ * the default files until SET_INPUT and SET_OUTPUT change them. A text file
+ * (TEXT_IO) keeps its line and column (14.3.2); a file of INPUT_OUTPUT holds
+ * elements of ESZ bytes, numbered from 1 (14.1.2). The exceptions are those
+ * of 14.2 and 14.4, one each, whichever instance raises them. */
 
-static rt_int g_col = 1;
+typedef struct {
+  int open;
+  FILE *f;                 /* NULL for the standard files */
+  char *name;
+  int mode;                /* 1 IN_FILE, 2 OUT_FILE, 3 INOUT_FILE */
+  rt_int esz;              /* bytes per element; 0 for a text file */
+  rt_int line, col, len;   /* layout; len 0: no line length */
+  rt_int next;             /* the next element, from 1 */
+  int peek;                /* a character read ahead, or -2 */
+} g_file;
 
-static void g_track(const unsigned char *p, rt_int n) {
-  for (rt_int i = 0; i < n; i++) {
-    if (p[i] == '\n') g_col = 1;
-    else if (p[i] == '\t') g_col = ((g_col - 1) / 8 + 1) * 8 + 1;
-    else g_col++;
+#define G_FILES 256
+static g_file g_files[G_FILES] = {
+  [1] = {1, NULL, "STANDARD_INPUT", 1, 0, 1, 1, 0, 1, -2},
+  [2] = {1, NULL, "STANDARD_OUTPUT", 2, 0, 1, 1, 0, 1, -2},
+};
+static rt_int g_in = 1, g_out = 2;
+
+_Noreturn static void g_io(const char *exc) { rt_raise(rt_exc(exc)); }
+
+static g_file *g_file_of(rt_int h) {
+  if (h <= 0 || h >= G_FILES || !g_files[h].open) g_io("FILE_OPEN_ERROR");
+  return &g_files[h];
+}
+
+static void g_track1(g_file *x, int c) {
+  if (c == '\n') {                       /* NEWLINE is LF: it ends the line */
+    x->line++;
+    x->col = 1;
+  } else if (c == '\r') {
+    x->col = 1;
+  } else if (c == '\b') {
+    if (x->col > 1) x->col--;
+  } else if (c == '\t') {
+    rt_int t = ((x->col - 1) / 8 + 1) * 8 + 1;
+    if (x->len > 0 && t > x->len + 1) t = x->len + 1;
+    x->col = t;
+  } else if (c >= 32) {
+    x->col++;
   }
 }
 
-rt_int rt_g_col(void) { return g_col; }
-
-void rt_g_put(rstr s) {
-  fwrite(s.p, 1, (size_t)s.len, stdout);
-  g_track(s.p, s.len);
+static void g_raw_put(g_file *x, int c) {
+  if (x->f) putc(c, x->f);
+  else putchar(c);
+  x->next++;
+  g_track1(x, c);
 }
 
-void rt_g_putc(int c) {
-  unsigned char b = (unsigned char)c;
-  putchar(c);
-  g_track(&b, 1);
+/* one character: with a line length, a new line starts before a character
+ * that would pass it (14.3.3) */
+static void g_out_char(g_file *x, int c) {
+  if (x->mode == 1) g_io("FILE_USE_ERROR");
+  if (x->len > 0 && c >= 32 && x->col > x->len) g_raw_put(x, '\n');
+  g_raw_put(x, c);
 }
 
-static void g_item(rstr s, rt_int width, int right) {
-  if (g_col > 1) rt_g_putc(' ');
+static void g_out_bytes(g_file *x, const unsigned char *p, rt_int n) {
+  if (x->len == 0 && x->mode != 1) {
+    fwrite(p, 1, (size_t)n, x->f ? x->f : stdout);
+    x->next += n;
+    for (rt_int i = 0; i < n; i++) g_track1(x, p[i]);
+    return;
+  }
+  for (rt_int i = 0; i < n; i++) g_out_char(x, p[i]);
+}
+
+static int g_get(g_file *x) {
+  int c;
+  if (x->mode == 2) g_io("FILE_USE_ERROR");
+  if (x->peek != -2) {
+    c = x->peek;
+    x->peek = -2;
+  } else if (x->f) {
+    c = getc(x->f);
+  } else {
+    c = rt_getc();
+  }
+  if (c >= 0) {
+    x->next++;
+    g_track1(x, c);
+  }
+  return c;
+}
+
+/* a character read ahead goes back; the column it took is given back */
+static void g_unget(g_file *x, int c) {
+  if (c < 0) return;
+  x->peek = c;
+  x->next--;
+  if (c == '\n') x->line--;
+  else if (c >= 32 && x->col > 1) x->col--;
+}
+
+/* an item is preceded by one space except at column 1, and starts a new
+ * line when it does not fit on this one (14.3.4) */
+static void g_item_on(g_file *x, rstr s, rt_int width, int right) {
   rt_int pad = width > s.len ? width - s.len : 0;
-  if (right) while (pad-- > 0) rt_g_putc(' ');
-  rt_g_put(s);
-  if (!right) while (pad-- > 0) rt_g_putc(' ');
+  if (x->len > 0 && x->col > 1 && x->col + 1 + pad + s.len - 1 > x->len) g_raw_put(x, '\n');
+  if (x->col > 1) g_out_char(x, ' ');
+  if (right) while (pad-- > 0) g_out_char(x, ' ');
+  g_out_bytes(x, s.p, s.len);
+  if (!right) while (pad-- > 0) g_out_char(x, ' ');
 }
 
-void rt_g_put_int(rt_int v, rt_int width) { g_item(rt_str_of_int(v), width, 1); }
+rt_int rt_g_col(void) { return g_files[g_out].col; }
+rt_int rt_g_cur_in(void) { return g_in; }
+rt_int rt_g_cur_out(void) { return g_out; }
 
-void rt_g_put_bool(int v, rt_int width) {
-  g_item(v ? rt_str("TRUE", 4) : rt_str("FALSE", 5), width, 0);
+void rt_g_fput(rt_int h, rstr s) { g_out_bytes(g_file_of(h), s.p, s.len); }
+void rt_g_fputc(rt_int h, int c) { g_out_char(g_file_of(h), c); }
+void rt_g_fput_int(rt_int h, rt_int v, rt_int width) { g_item_on(g_file_of(h), rt_str_of_int(v), width, 1); }
+void rt_g_fput_bool(rt_int h, int v, rt_int width) {
+  g_item_on(g_file_of(h), v ? rt_str("TRUE", 4) : rt_str("FALSE", 5), width, 0);
 }
+void rt_g_put_item(rt_int h, rstr s, rt_int width, int right) { g_item_on(g_file_of(h), s, width, right); }
+
+void rt_g_put(rstr s) { rt_g_fput(g_out, s); }
+void rt_g_putc(int c) { rt_g_fputc(g_out, c); }
+void rt_g_put_int(rt_int v, rt_int width) { rt_g_fput_int(g_out, v, width); }
+void rt_g_put_bool(int v, rt_int width) { rt_g_fput_bool(g_out, v, width); }
 
 /* floating output is d.ddd E+ddd with a three-digit exponent (RM79 14.4) */
 rstr rt_g_image_float(double v) {
@@ -1719,15 +1809,397 @@ rstr rt_g_image_float(double v) {
   return rt_str_copy(rt_str(b, n));
 }
 
-void rt_g_put_float(double v, rt_int width, rt_int fract) {
-  (void)fract;
-  g_item(rt_g_image_float(v), width, 1);
+/* d.ddd E+ddd with FRACT digits after the point; without them when FRACT
+ * is not positive (14.3.5) */
+static rstr g_image_fract(double v, rt_int fract) {
+  char b[96], m[80];
+  int e = 0;
+  if (isinf(v) || isnan(v)) return rt_g_image_float(v);
+  if (fract > 40) fract = 40;
+  if (v != 0.0) {
+    snprintf(m, sizeof m, "%.*e", fract > 0 ? (int)fract : 0, v);
+    char *x = strchr(m, 'e');
+    e = atoi(x + 1);
+    *x = 0;
+  } else {
+    snprintf(m, sizeof m, "%.*f", fract > 0 ? (int)fract : 0, 0.0);
+  }
+  int n = snprintf(b, sizeof b, "%sE%c%03d", m, e < 0 ? '-' : '+', e < 0 ? -e : e);
+  return rt_str_copy(rt_str(b, n));
 }
 
-int rt_g_getc(void) {
-  int c = rt_getc();
+void rt_g_fput_float(rt_int h, double v, rt_int width, rt_int fract) {
+  g_item_on(g_file_of(h), g_image_fract(v, fract), width, 1);
+}
+
+/* the old entry: the default number of digits */
+void rt_g_put_float(double v, rt_int width, rt_int fract) {
+  (void)fract;
+  g_item_on(g_file_of(g_out), rt_g_image_float(v), width, 1);
+}
+
+/* fixed point (FIXED_IO): the image of the value with FRACT decimals */
+void rt_g_put_fixed(rt_int h, rstr image, rt_int width, rt_int fract) {
+  char b[96], t[64];
+  rt_int n = image.len < 63 ? image.len : 63;
+  memcpy(t, image.p, (size_t)n);
+  t[n] = 0;
+  double v = strtod(t, NULL);
+  if (fract > 40) fract = 40;
+  if (fract < 0) fract = 0;
+  if (fabs(v) < 0.5 * pow(10, -(double)fract)) v = 0;
+  int k = snprintf(b, sizeof b, "%.*f", (int)fract, v);
+  g_item_on(g_file_of(h), rt_str_copy(rt_str(b, k)), width, 1);
+}
+
+rstr rt_g_fixed_image(double v, double small) {
+  char b[96];
+  int d = 0;
+  while (d < 17) {
+    double x = small * pow(10, d);
+    if (fabs(x - nearbyint(x)) < 1e-9 * (x > 1 ? x : 1)) break;
+    d++;
+  }
+  if (fabs(v) < 0.5 * pow(10, -(double)d)) v = 0;
+  int n = snprintf(b, sizeof b, "%.*f", d, v);
+  return rt_str_copy(rt_str(b, n));
+}
+
+/* the digits after the point that the image of DELTA needs */
+rt_int rt_g_decimals(rstr image) {
+  char t[64];
+  rt_int n = image.len < 63 ? image.len : 63;
+  memcpy(t, image.p, (size_t)n);
+  t[n] = 0;
+  double d = fabs(strtod(t, NULL));
+  rt_int k = 0;
+  while (k < 18 && d > 0 && d * pow(10, (double)k) < 0.9999999) k++;
+  return k;
+}
+
+int rt_g_fgetc(rt_int h) {
+  int c = g_get(g_file_of(h));
   if (c < 0) rt_raise(RT_X_FILE);
   return c;
+}
+
+int rt_g_getc(void) { return rt_g_fgetc(g_in); }
+
+void rt_g_fget_str(rt_int h, rt_gstr *s) {
+  rt_int n = G_CNT(*s);
+  for (rt_int i = 0; i < n; i++) s->p[i] = (unsigned char)rt_g_fgetc(h);
+}
+
+/* ---- the items of text input: lexical units (14.3.4), after blanks ---- */
+
+static int g_first(g_file *x) {
+  int c;
+  do c = g_get(x);
+  while (c == ' ' || c == '\t' || c == '\n' || c == '\r');
+  if (c < 0) rt_raise(RT_X_FILE);
+  return c;
+}
+
+static int g_digit(int c) {
+  if (c >= '0' && c <= '9') return c - '0';
+  if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+  if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+  return 99;
+}
+
+/* digits of BASE with single underscores between them; the value, -1 when
+ * there is none */
+static int g_digits(g_file *x, int *c, int base, rt_int *v, int *ovf) {
+  int any = 0;
+  *v = 0;
+  for (;;) {
+    if (*c == '_' && any) {
+      *c = g_get(x);
+      if (g_digit(*c) >= base) g_io("INVALID_DATA");
+    }
+    int d = g_digit(*c);
+    if (d >= base) break;
+    if (__builtin_mul_overflow(*v, (rt_int)base, v) || __builtin_add_overflow(*v, (rt_int)d, v)) *ovf = 1;
+    any = 1;
+    *c = g_get(x);
+  }
+  return any;
+}
+
+/* integer ::= [sign] digits [# based_digits [#]] [E [+] digits] (2.4, 14.3.5) */
+rt_int rt_g_fget_int(rt_int h) {
+  g_file *x = g_file_of(h);
+  int c = g_first(x), neg = 0, ovf = 0;
+  rt_int v, b, e;
+  if (c == '+' || c == '-') {
+    neg = c == '-';
+    c = g_get(x);
+  }
+  if (!g_digits(x, &c, 10, &v, &ovf)) g_io("INVALID_DATA");
+  rt_int base = 10;
+  if (c == '#' || c == ':') {
+    int close = c;
+    if (ovf || v < 2 || v > 16) g_io("INVALID_DATA");
+    base = v;
+    c = g_get(x);
+    if (!g_digits(x, &c, (int)base, &v, &ovf)) g_io("INVALID_DATA");
+    if (c == close) c = g_get(x);
+  }
+  if (c == 'E' || c == 'e') {
+    c = g_get(x);
+    if (c == '+') c = g_get(x);
+    if (!g_digits(x, &c, 10, &e, &ovf)) g_io("INVALID_DATA");
+    for (b = 0; b < e && !ovf; b++)
+      if (__builtin_mul_overflow(v, base, &v)) ovf = 1;
+  }
+  g_unget(x, c);
+  if (ovf) rt_raise(RT_X_OVERFLOW);
+  return neg ? -v : v;
+}
+
+rt_int rt_g_get_int(void) { return rt_g_fget_int(g_in); }
+
+/* the characters of a real literal: [sign] digits [. digits] [E [sign] digits] */
+static rt_gstr g_real_text(g_file *x) {
+  char b[128];
+  int n = 0, c = g_first(x), any = 0;
+  if (c == '+' || c == '-') {
+    b[n++] = (char)c;
+    c = g_get(x);
+  }
+  while ((c >= '0' && c <= '9') || (c == '_' && any)) {
+    if (c != '_' && n < 120) b[n++] = (char)c;
+    any = 1;
+    c = g_get(x);
+  }
+  if (!any) g_io("INVALID_DATA");
+  if (c == '.') {
+    b[n++] = '.';
+    c = g_get(x);
+    if (!(c >= '0' && c <= '9')) g_io("INVALID_DATA");
+    while ((c >= '0' && c <= '9') || c == '_') {
+      if (c != '_' && n < 120) b[n++] = (char)c;
+      c = g_get(x);
+    }
+  }
+  if (c == 'E' || c == 'e') {
+    b[n++] = 'E';
+    c = g_get(x);
+    if (c == '+' || c == '-') {
+      b[n++] = (char)c;
+      c = g_get(x);
+    }
+    if (!(c >= '0' && c <= '9')) g_io("INVALID_DATA");
+    while (c >= '0' && c <= '9') {
+      if (n < 120) b[n++] = (char)c;
+      c = g_get(x);
+    }
+  }
+  g_unget(x, c);
+  b[n] = 0;
+  rt_gstr r = {1, n, 1, 1, rt_alloc((size_t)n + 1)};
+  memcpy(r.p, b, (size_t)n + 1);
+  return r;
+}
+
+double rt_g_fget_float(rt_int h) {
+  rt_gstr t = g_real_text(g_file_of(h));
+  double v = strtod((char *)t.p, NULL);
+  if (isinf(v)) rt_raise(RT_X_OVERFLOW);
+  return v;
+}
+
+double rt_g_get_float(void) { return rt_g_fget_float(g_in); }
+
+rt_gstr rt_g_get_real(rt_int h) { return g_real_text(g_file_of(h)); }
+
+/* an identifier, or a character literal in quotes (2.3, 2.5) */
+rt_gstr rt_g_get_word(rt_int h) {
+  g_file *x = g_file_of(h);
+  char b[256];
+  int n = 0, c = g_first(x);
+  if (c == '"') {
+    b[n++] = '"';
+    c = g_get(x);
+    if (c < 32) g_io("INVALID_DATA");
+    b[n++] = (char)c;
+    c = g_get(x);
+    if (c != '"') g_io("INVALID_DATA");
+    b[n++] = '"';
+  } else {
+    if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'))) g_io("INVALID_DATA");
+    while ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_') {
+      if (n < 250) b[n++] = (char)(c >= 'a' && c <= 'z' ? c - 32 : c);
+      c = g_get(x);
+    }
+    g_unget(x, c);
+  }
+  rt_gstr r = {1, n, 1, 1, rt_alloc((size_t)n + 1)};
+  memcpy(r.p, b, (size_t)n);
+  return r;
+}
+
+/* TRUE or FALSE, in either case (14.3.6) */
+int rt_g_fget_bool(rt_int h) {
+  rt_gstr w = rt_g_get_word(h);
+  if (G_CNT(w) == 4 && memcmp(w.p, "TRUE", 4) == 0) return 1;
+  if (G_CNT(w) == 5 && memcmp(w.p, "FALSE", 5) == 0) return 0;
+  g_io("INVALID_DATA");
+}
+
+/* ---- files (14.1, 14.2) ---- */
+
+void rt_g_open(rt_int *h, rstr name, rt_int mode, int create, rt_int esz) {
+  if (*h > 0 && *h < G_FILES && g_files[*h].open) g_io("FILE_OPEN_ERROR");
+  rt_int k = 3;
+  while (k < G_FILES && g_files[k].open) k++;
+  if (k == G_FILES) g_io("MALFUNCTION");
+  char *n = rt_cstr(name);
+  FILE *f;
+  if (create) {
+    if (mode == 1) g_io("FILE_USE_ERROR");
+    f = fopen(n, mode == 3 ? "w+b" : "wb");
+  } else if (mode == 1) {
+    f = fopen(n, "rb");
+  } else {
+    f = fopen(n, "r+b");
+  }
+  if (!f) g_io("FILE_NAME_ERROR");
+  g_file *x = &g_files[k];
+  x->open = 1;
+  x->f = f;
+  x->name = strdup(n);
+  x->mode = (int)mode;
+  x->esz = esz;
+  x->line = x->col = 1;
+  x->len = 0;
+  x->next = 1;
+  x->peek = -2;
+  *h = k;
+}
+
+void rt_g_close(rt_int *h, int remove_it) {
+  g_file *x = g_file_of(*h);
+  if (!x->f) g_io("FILE_USE_ERROR");           /* a standard file stays */
+  fclose(x->f);
+  if (remove_it && remove(x->name) != 0) g_io("FILE_USE_ERROR");
+  free(x->name);
+  memset(x, 0, sizeof *x);
+  if (g_in == *h) g_in = 1;
+  if (g_out == *h) g_out = 2;
+  *h = 0;
+}
+
+int rt_g_is_open(rt_int h) { return h > 0 && h < G_FILES && g_files[h].open; }
+
+rt_gstr rt_g_name(rt_int h) {
+  g_file *x = g_file_of(h);
+  return rt_g_s2g(rt_str_copy(rt_str(x->name, (rt_int)strlen(x->name))));
+}
+
+static rt_int g_unit(g_file *x) { return x->esz > 0 ? x->esz : 1; }
+
+rt_int rt_g_size(rt_int h) {
+  g_file *x = g_file_of(h);
+  if (!x->f) g_io("FILE_USE_ERROR");
+  fflush(x->f);
+  long here = ftell(x->f);
+  fseek(x->f, 0, SEEK_END);
+  long n = ftell(x->f);
+  fseek(x->f, here, SEEK_SET);
+  return (rt_int)(n / g_unit(x));
+}
+
+rt_int rt_g_next(rt_int h) { return g_file_of(h)->next; }
+
+void rt_g_set_next(rt_int h, rt_int pos) {
+  g_file *x = g_file_of(h);
+  if (!x->f) g_io("FILE_USE_ERROR");
+  if (pos < 1) g_io("FILE_USE_ERROR");
+  fflush(x->f);
+  x->peek = -2;
+  if (x->esz == 0) {
+    /* a text file: the line and the column of the position */
+    rewind(x->f);
+    x->line = x->col = 1;
+    for (rt_int i = 1; i < pos; i++) {
+      int c = getc(x->f);
+      if (c < 0) break;
+      g_track1(x, c);
+    }
+  }
+  fseek(x->f, (long)((pos - 1) * g_unit(x)), SEEK_SET);
+  x->next = pos;
+}
+
+void rt_g_read_bytes(rt_int h, void *item, size_t n) {
+  g_file *x = g_file_of(h);
+  if (x->mode == 2 || !x->f) g_io("FILE_USE_ERROR");
+  fflush(x->f);
+  fseek(x->f, (long)((x->next - 1) * g_unit(x)), SEEK_SET);
+  if (fread(item, 1, n, x->f) != n) {
+    if (feof(x->f)) rt_raise(RT_X_FILE);
+    g_io("MALFUNCTION");
+  }
+  x->next++;
+}
+
+void rt_g_write_bytes(rt_int h, const void *item, size_t n) {
+  g_file *x = g_file_of(h);
+  if (x->mode == 1 || !x->f) g_io("FILE_USE_ERROR");
+  fseek(x->f, (long)((x->next - 1) * g_unit(x)), SEEK_SET);
+  if (fwrite(item, 1, n, x->f) != n) g_io("MALFUNCTION");
+  x->next++;
+}
+
+void rt_g_read_char(rt_int h, int *c) { *c = rt_g_fgetc(h); }
+void rt_g_write_char(rt_int h, int c) { rt_g_fputc(h, c); }
+
+/* ---- layout (14.3.2) ---- */
+
+rt_int rt_g_line_of(rt_int h) { return g_file_of(h)->line; }
+rt_int rt_g_col_of(rt_int h) { return g_file_of(h)->col; }
+
+void rt_g_set_line(rt_int h, rt_int to) {
+  g_file *x = g_file_of(h);
+  if (to < x->line) g_io("FILE_USE_ERROR");     /* the file is sequential */
+  if (x->mode == 1) {
+    while (x->line < to) {
+      int c = g_get(x);
+      if (c < 0) rt_raise(RT_X_FILE);
+    }
+    return;
+  }
+  while (x->line < to) g_raw_put(x, '\n');
+  if (x->col > 1) g_raw_put(x, '\r');
+}
+
+void rt_g_set_col(rt_int h, rt_int to) {
+  g_file *x = g_file_of(h);
+  if (x->len > 0 && to > x->len) g_io("INVALID_LAYOUT");
+  if (x->mode == 1) {
+    if (to < x->col) g_io("FILE_USE_ERROR");
+    while (x->col < to) {
+      int c = g_get(x);
+      if (c < 0) rt_raise(RT_X_FILE);
+      if (c == '\n') g_io("INVALID_LAYOUT");
+    }
+    return;
+  }
+  while (x->col < to) g_raw_put(x, ' ');
+  while (x->col > to) g_raw_put(x, '\b');
+}
+
+void rt_g_set_line_length(rt_int h, rt_int n) { g_file_of(h)->len = n; }
+
+void rt_g_set_input(rt_int h) {
+  if (g_file_of(h)->mode == 2) g_io("FILE_USE_ERROR");
+  g_in = h;
+}
+
+void rt_g_set_output(rt_int h) {
+  if (g_file_of(h)->mode == 1) g_io("FILE_USE_ERROR");
+  g_out = h;
 }
 
 /* ---- GREEN abort (RM79 9.10) -------------------------------------------------- */
@@ -1750,39 +2222,6 @@ int rt_g_aborted(void) {
   for (int i = 0; i < g_naborted; i++)
     if (g_aborted[i] == cur) return 1;
   return 0;
-}
-
-/* ---- GREEN TEXT_IO GET of numbers (RM79 14.4): an item is a lexical unit,
- * leading blanks and line ends are skipped ----------------------------------- */
-
-static void g_item_text(char *b, size_t cap) {
-  int c;
-  do {
-    c = rt_getc();
-    if (c < 0) rt_raise(RT_X_FILE);
-  } while (c == ' ' || c == '\t' || c == '\n' || c == '\r');
-  size_t n = 0;
-  while (c >= 0 && c != ' ' && c != '\t' && c != '\n' && c != '\r') {
-    if (n + 1 < cap) b[n++] = (char)c;
-    c = rt_getc();
-  }
-  b[n] = 0;
-}
-
-rt_int rt_g_get_int(void) {
-  char b[64], *end;
-  g_item_text(b, sizeof b);
-  long long v = strtoll(b, &end, 10);
-  if (*end) rt_raise(RT_X_RANGE);
-  return (rt_int)v;
-}
-
-double rt_g_get_float(void) {
-  char b[64], *end;
-  g_item_text(b, sizeof b);
-  double v = strtod(b, &end);
-  if (*end) rt_raise(RT_X_RANGE);
-  return v;
 }
 
 void rt_g_move_bytes(rt_int from, rt_int to, rt_int n) {

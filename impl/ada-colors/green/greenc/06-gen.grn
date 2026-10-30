@@ -399,7 +399,14 @@
             Y := NEW_SYM(Y_EXC, E.NAME);
             NEW_NAME("ex_" & LOWER_S(E.NAME.all) & "_", Y.CNAME);
             PUT_TO(OUT_GLOBALS, "static int " & Y.CNAME.all & ";");
-            PUT_TO(OUT_EXCS, "  " & Y.CNAME.all & " = rt_exc(" & Q & E.NAME.all & Q & ");");
+            if E.LINE < 0 then
+               -- an exception of a predefined unit is the one the runtime
+               -- raises under that name (RM79 14.2, 14.4)
+               PUT_TO(OUT_EXCS, "  " & Y.CNAME.all & " = rt_exc(" & Q & E.NAME.all & Q & ");");
+            else
+               -- two declarations are two exceptions, whatever their names (RM79 11.1)
+               PUT_TO(OUT_EXCS, "  " & Y.CNAME.all & " = rt_g_exc_new(" & Q & E.NAME.all & Q & ");");
+            end if;
             DEFINE(Y, E.LINE);
          when 44 | 45 =>
             if E.IVAL = 0 and then IS_GENERIC_NAME(E.NAME.all) then
@@ -831,11 +838,22 @@
       return D.TAG.all(1 .. 10) = "INTERFACE ";
    end IS_FOREIGN;
 
+   -- a helper of the runtime, $NAME in a predefined unit, is rt_g_name
+   function HELPER_NAME(N : STRING) return STRING is
+   begin
+      if N'LENGTH > 1 then
+         if N(N'FIRST) = "$" then
+            return N(N'FIRST + 1 .. N'LAST);
+         end if;
+      end if;
+      return N;
+   end HELPER_NAME;
+
    -- the call of the foreign body of Y: a routine of the runtime for C, a
    -- routine of the host's mathematical library for FORTRAN (RM79 13.9)
    procedure FOREIGN_CALL(D : NODE; Y : SYM; R : out TEXT) is
       LANG : STRING := D.TAG.all(11 .. D.TAG.all'LENGTH);
-      N : STRING := D.NAME.all;
+      N : STRING := HELPER_NAME(D.NAME.all);
       PM : PARM := Y.PARAMS;
       X, CT : TEXT;
       ALL_REAL : BOOLEAN := Y.RESULT.KIND = T_FLOAT;

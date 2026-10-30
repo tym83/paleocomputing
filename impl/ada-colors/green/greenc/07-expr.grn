@@ -1795,6 +1795,9 @@
          elsif TT.KIND = T_ENUM then
             LIT_TABLE(TT, LT);
             R := MK("rt_g_enum_rep(" & V.all & ", " & LT.all & ", " & INTEGER'REP(LIST_LEN(TT.LITS)) & ")");
+         elsif TT.KIND = T_FIXED and TT.FSMALL /= null then
+            -- a fixed value: in decimal, with the digits its SMALL needs
+            R := MK("rt_g_fixed_image(" & V.all & ", " & TT.FSMALL.all & ")");
          else
             FAIL(E.LINE, "REP is an attribute of scalar types");
          end if;
@@ -1813,6 +1816,10 @@
          GEXPR(E.B, TY_STRING, ATY, V);
          CHECK_TYPE(ATY, TY_STRING, E.LINE);
          R := MK("rt_g_float_val(rt_g_g2s(" & V.all & "))");
+      elsif TT.KIND = T_FIXED and TT.FSMALL /= null then
+         GEXPR(E.B, TY_STRING, ATY, V);
+         CHECK_TYPE(ATY, TY_STRING, E.LINE);
+         R := MK("rt_g_fix(rt_g_float_val(rt_g_g2s(" & V.all & ")), " & TT.FSMALL.all & ")");
       elsif TT.KIND = T_BOOL or TT.KIND = T_CHAR or TT.KIND = T_ENUM then
          GEXPR(E.B, null, ATY, V);
          if IS_STRING(ATY) then
@@ -2769,6 +2776,134 @@
 
 
 
+   -- the file of TEXT_IO an argument of type T names, as the C text of its
+   -- handle; null if T is not a file type of TEXT_IO (RM79 14.3)
+   procedure TEXT_FILE(T : TYP; V : STRING; WANT_OUT : BOOLEAN; LINE : INTEGER; H : out TEXT) is
+      P, F : SYM;
+   begin
+      H := null;
+      if T = null then
+         return;
+      elsif T.KIND /= T_RECORD and T.KIND /= T_VOID then
+         return;
+      end if;
+      P := LOOKUP_PATH("TEXT_IO");
+      if P = null then
+         return;
+      end if;
+      F := MEMBER_OF("TEXT_IO", "IN_FILE", LINE);
+      if F /= null and then F.T = T then
+         if WANT_OUT then
+            FAIL(LINE, "PUT writes to an OUT_FILE (RM79 14.4)");
+         end if;
+         H := MK("(" & V & ")." & C_FIELD("H"));
+         return;
+      end if;
+      F := MEMBER_OF("TEXT_IO", "OUT_FILE", LINE);
+      if F /= null and then F.T = T then
+         if not WANT_OUT then
+            FAIL(LINE, "GET reads from an IN_FILE (RM79 14.4)");
+         end if;
+         H := MK("(" & V & ")." & C_FIELD("H"));
+      end if;
+   end TEXT_FILE;
+
+   -- GET and PUT of TEXT_IO for CHARACTER, STRING, INTEGER, FLOAT and BOOLEAN,
+   -- with or without a file first (RM79 14.3, 14.4)
+   procedure TEXT_IO_CALL(NAME : STRING; ARGS : NODE; LINE : INTEGER; R : out TEXT) is
+      ATY, LT : TYP;
+      A, W, FR, LV, H : TEXT;
+      LC : CONS;
+      RO : BOOLEAN;
+      ITEM : NODE := ARGS;
+   begin
+      if ARGS = null then
+         FAIL(LINE, NAME & " needs an item");
+      end if;
+      if ARGS.NEXT /= null then
+         GEXPR(ARGS, null, ATY, A);
+         TEXT_FILE(ATY, A.all, NAME = "PUT", LINE, H);
+         if H /= null then
+            ITEM := ARGS.NEXT;
+         end if;
+      end if;
+      if NAME = "PUT" then
+         GEXPR(ITEM, null, ATY, A);
+         W := MK("0");
+         FR := MK("5");
+         if ITEM.NEXT /= null then
+            GEXPR(ITEM.NEXT, TY_INT, LT, W);
+            if ITEM.NEXT.NEXT /= null then
+               GEXPR(ITEM.NEXT.NEXT, TY_INT, LT, FR);
+            end if;
+         end if;
+         if H = null then
+            if IS_STRING(ATY) then
+               R := MK("rt_g_put(rt_g_g2s(" & A.all & "))");
+            elsif ATY.KIND = T_CHAR then
+               R := MK("rt_g_putc(" & A.all & ")");
+            elsif ATY.KIND = T_INT then
+               R := MK("rt_g_put_int(" & A.all & ", " & W.all & ")");
+            elsif ATY.KIND = T_BOOL then
+               R := MK("rt_g_put_bool(" & A.all & ", " & W.all & ")");
+            else
+               H := MK("rt_g_cur_out()");
+            end if;
+         end if;
+         if R /= null then
+            return;
+         end if;
+         if IS_STRING(ATY) then
+            R := MK("rt_g_fput(" & H.all & ", rt_g_g2s(" & A.all & "))");
+         elsif ATY.KIND = T_CHAR then
+            R := MK("rt_g_fputc(" & H.all & ", " & A.all & ")");
+         elsif ATY.KIND = T_INT then
+            R := MK("rt_g_fput_int(" & H.all & ", " & A.all & ", " & W.all & ")");
+         elsif ATY.KIND = T_BOOL then
+            R := MK("rt_g_fput_bool(" & H.all & ", " & A.all & ", " & W.all & ")");
+         elsif ATY.KIND = T_FIXED then
+            FAIL(LINE, "TEXT_IO has no PUT for a fixed point type: instantiate FIXED_IO (RM79 14.4)");
+         elsif ATY.KIND = T_FLOAT then
+            R := MK("rt_g_fput_float(" & H.all & ", " & A.all & ", " & W.all & ", " & FR.all & ")");
+         elsif ATY.KIND = T_ENUM then
+            FAIL(LINE, "TEXT_IO has no PUT for an enumeration type: instantiate ENUM_IO (RM79 14.4)");
+         else
+            FAIL(LINE, "PUT of this type is not handled");
+         end if;
+         return;
+      end if;
+      LVALUE(ITEM, LV, LT, LC, RO);
+      if H = null then
+         if LT.KIND = T_CHAR then
+            R := MK("(" & LV.all & " = rt_g_getc())");
+         elsif LT.KIND = T_INT then
+            R := MK("(" & LV.all & " = rt_g_get_int())");
+         elsif LT.KIND = T_FLOAT then
+            R := MK("(" & LV.all & " = rt_g_get_float())");
+         else
+            H := MK("rt_g_cur_in()");
+         end if;
+      end if;
+      if R /= null then
+         return;
+      end if;
+      if IS_STRING(LT) then
+         R := MK("rt_g_fget_str(" & H.all & ", &(" & LV.all & "))");
+      elsif LT.KIND = T_CHAR then
+         R := MK("(" & LV.all & " = rt_g_fgetc(" & H.all & "))");
+      elsif LT.KIND = T_INT then
+         R := MK("(" & LV.all & " = rt_g_fget_int(" & H.all & "))");
+      elsif LT.KIND = T_FLOAT then
+         R := MK("(" & LV.all & " = rt_g_fget_float(" & H.all & "))");
+      elsif LT.KIND = T_BOOL then
+         R := MK("(" & LV.all & " = rt_g_fget_bool(" & H.all & "))");
+      elsif LT.KIND = T_ENUM then
+         FAIL(LINE, "TEXT_IO has no GET for an enumeration type: instantiate ENUM_IO (RM79 14.4)");
+      else
+         FAIL(LINE, "GET of this type is not handled");
+      end if;
+   end TEXT_IO_CALL;
+
    -- TEXT_IO (RM79 14.3) and the subprograms of STANDARD
    procedure BUILTIN(NAME : STRING; ARGS : NODE; LINE : INTEGER; IS_STMT : BOOLEAN;
                      T : out TYP; R : out TEXT) is
@@ -2785,41 +2920,8 @@
       if PURE_SYM /= null and (NAME = "PUT" or NAME = "GET") then
          FAIL(LINE, "a function cannot do input-output: " & NAME & " has side effects (RM79 6.5)");
       end if;
-      if NAME = "PUT" then
-         if ARGS = null then
-            FAIL(LINE, "PUT needs an item");
-         end if;
-         GEXPR(ARGS, null, ATY, A);
-         W := MK("0");
-         if ARGS.NEXT /= null then
-            GEXPR(ARGS.NEXT, TY_INT, LT, W);
-         end if;
-         if IS_STRING(ATY) then
-            R := MK("rt_g_put(rt_g_g2s(" & A.all & "))");
-         elsif ATY.KIND = T_CHAR then
-            R := MK("rt_g_putc(" & A.all & ")");
-         elsif ATY.KIND = T_INT then
-            R := MK("rt_g_put_int(" & A.all & ", " & W.all & ")");
-         elsif ATY.KIND = T_BOOL then
-            R := MK("rt_g_put_bool(" & A.all & ", " & W.all & ")");
-         elsif ATY.KIND = T_FIXED then
-            FAIL(LINE, "TEXT_IO has no PUT for a fixed point type: instantiate FIXED_IO (RM79 14.4)");
-         elsif ATY.KIND = T_FLOAT then
-            R := MK("rt_g_put_float(" & A.all & ", " & W.all & ", 0)");
-         else
-            FAIL(LINE, "PUT of this type is not handled");
-         end if;
-      elsif NAME = "GET" then
-         LVALUE(ARGS, LV, LT, LC, RO);
-         if LT.KIND = T_CHAR then
-            R := MK("(" & LV.all & " = rt_g_getc())");
-         elsif LT.KIND = T_INT then
-            R := MK("(" & LV.all & " = rt_g_get_int())");
-         elsif LT.KIND = T_FLOAT then
-            R := MK("(" & LV.all & " = rt_g_get_float())");
-         else
-            FAIL(LINE, "GET of this type is not handled");
-         end if;
+      if NAME = "PUT" or NAME = "GET" then
+         TEXT_IO_CALL(NAME, ARGS, LINE, R);
       elsif NAME = "ABS" then
          -- ABS is a function of STANDARD for every numeric type (RM79 App. C)
          GEXPR(ARGS, null, T, A);

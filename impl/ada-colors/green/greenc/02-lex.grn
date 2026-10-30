@@ -37,7 +37,7 @@
    function LOWER_S(S : STRING) return STRING is
       R : STRING := S;
    begin
-      for I in 1 .. S'LENGTH loop
+      for I in R'FIRST .. R'LAST loop
          if R(I) >= "A" and R(I) <= "Z" then
             R(I) := CHARACTER'VAL(CHARACTER'ORD(R(I)) + 32);
          end if;
@@ -48,7 +48,7 @@
    function UPPER_S(S : STRING) return STRING is
       R : STRING := S;
    begin
-      for I in 1 .. S'LENGTH loop
+      for I in R'FIRST .. R'LAST loop
          R(I) := UPPER(R(I));
       end loop;
       return R;
@@ -225,10 +225,15 @@
             I := I + 1;
          elsif (C = "-" and I < N) and then LINE(I + 1) = "-" then
             I := N + 1;                              -- a comment (RM79 2.6)
-         elsif IS_LETTER(C) then
+         elsif IS_LETTER(C) or (C = "$" and PRELUDE_LEX) then
             -- identifier ::= letter {[underscore] letter_or_digit} (RM79 2.3)
             J := I;
             BL := 0;
+            if C = "$" then
+               BL := 1;
+               BUF(1) := "$";
+               J := I + 1;
+            end if;
             while J <= N and then (IS_LETTER(LINE(J)) or IS_DIGIT(LINE(J)) or LINE(J) = "_") loop
                if LINE(J) = "_" then
                   if J = N or else not (IS_LETTER(LINE(J + 1)) or IS_DIGIT(LINE(J + 1))) then

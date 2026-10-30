@@ -1,0 +1,6 @@
+restricted (TEXT_IO)
+procedure MAIN is
+   use TEXT_IO;
+begin
+   PUT(COL);
+end MAIN;

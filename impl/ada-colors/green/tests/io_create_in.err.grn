@@ -1,0 +1,8 @@
+restricted (INPUT_OUTPUT)
+procedure MAIN is
+   package INT_IO is new INPUT_OUTPUT(INTEGER);
+   use INT_IO;
+   F : IN_FILE;
+begin
+   CREATE(F, "x");
+end MAIN;

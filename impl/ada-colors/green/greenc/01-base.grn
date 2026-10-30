@@ -463,6 +463,8 @@ procedure GREENC is
    -- pragma INTERFACE seen in the statements of the body being parsed (RM79 13.9)
    SAW_INTERFACE : BOOLEAN := FALSE;
    REPS : REP;
+   -- the predefined units may name the runtime's helpers $NAME
+   PRELUDE_LEX : BOOLEAN := FALSE;
    ADDRS : ADDR;
    -- the subprogram body being translated
    CUR_BODY : NODE;

@@ -295,6 +295,43 @@ rt_int rt_g_get_int(void);                     /* next integer item */
 double rt_g_get_float(void);                   /* next real item */
 rstr rt_g_image_float(double v);               /* T'REP for floats */
 rt_int rt_g_col(void);
+/* files: handles; 1 and 2 are the standard input and output (RM79 14) */
+rt_int rt_g_cur_in(void);
+rt_int rt_g_cur_out(void);
+void rt_g_fput(rt_int h, rstr s);
+void rt_g_fputc(rt_int h, int c);
+void rt_g_fput_int(rt_int h, rt_int v, rt_int width);
+void rt_g_fput_bool(rt_int h, int v, rt_int width);
+void rt_g_fput_float(rt_int h, double v, rt_int width, rt_int fract);
+void rt_g_put_item(rt_int h, rstr s, rt_int width, int right);
+void rt_g_put_fixed(rt_int h, rstr image, rt_int width, rt_int fract);
+rt_int rt_g_decimals(rstr image);
+rstr rt_g_fixed_image(double v, double small);  /* T'REP of a fixed type */
+int rt_g_fgetc(rt_int h);
+rt_int rt_g_fget_int(rt_int h);
+double rt_g_fget_float(rt_int h);
+int rt_g_fget_bool(rt_int h);
+void rt_g_open(rt_int *h, rstr name, rt_int mode, int create, rt_int esz);
+void rt_g_close(rt_int *h, int remove_it);
+int rt_g_is_open(rt_int h);
+rt_int rt_g_size(rt_int h);
+rt_int rt_g_next(rt_int h);
+void rt_g_set_next(rt_int h, rt_int pos);
+void rt_g_read_bytes(rt_int h, void *item, size_t n);
+void rt_g_write_bytes(rt_int h, const void *item, size_t n);
+void rt_g_read_char(rt_int h, int *c);
+void rt_g_write_char(rt_int h, int c);
+rt_int rt_g_line_of(rt_int h);
+rt_int rt_g_col_of(rt_int h);
+void rt_g_set_line(rt_int h, rt_int to);
+void rt_g_set_col(rt_int h, rt_int to);
+void rt_g_set_line_length(rt_int h, rt_int n);
+void rt_g_set_input(rt_int h);
+void rt_g_set_output(rt_int h);
+/* the elements of INPUT_OUTPUT: their storage, whatever their type */
+#define rt_g_element_bytes(sample, n) (*(n) = (rt_int)sizeof(*(sample)))
+#define rt_g_read_element(h, item) rt_g_read_bytes((h), (item), sizeof(*(item)))
+#define rt_g_write_element(h, item) rt_g_write_bytes((h), &(item), sizeof(item))
 
 /* GREEN abort (RM79 9.10): the task ends unconditionally; its handlers
  * re-raise at once instead of handling the exception */
@@ -371,6 +408,11 @@ void rt_g_send_control(rt_int device, rt_int *data);
 void rt_g_receive_control(rt_int device, rt_int *data);
 /* the bits used of a collection of LIMIT bits: STORAGE_OVERFLOW beyond (RM79 13.2) */
 void rt_g_collect(rt_int *used, rt_int bits, rt_int limit);
+/* text input items returned as strings, and NAME (RM79 14) */
+rt_gstr rt_g_get_word(rt_int h);
+rt_gstr rt_g_get_real(rt_int h);
+rt_gstr rt_g_name(rt_int h);
+void rt_g_fget_str(rt_int h, rt_gstr *s);
 
 #endif
 
