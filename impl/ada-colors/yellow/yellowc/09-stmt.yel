@@ -405,6 +405,7 @@
     IF k = N_ASSIGN THEN
       LValue(s^.a, c, r);
       CheckPure(s^.a);
+      NoteWrite(s^.a);
       IF (r^.kind = R_SIGNAL) OR HoldsSignal(r) THEN
         FailS(s^.line, "assignment is not defined for signals (VI.A.1.d)")
       ENDIF;

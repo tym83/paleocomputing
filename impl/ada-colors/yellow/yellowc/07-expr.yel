@@ -806,6 +806,7 @@
     ELSIF k = N_DEREF THEN
       Expr(n^.a, Rep NIL, c, a);
       IF a^.kind # R_PTR THEN FailS(n^.line, "^ of something that is not a pointer") ENDIF;
+      NoteFreeDeref(n^.a, a^.tid);
       IF a^.elem = Rep NIL THEN FailN(n^.line, a^.forward, " is not declared") ENDIF;
       r := a^.elem;
       SB();
@@ -876,6 +877,7 @@
       RETURN
     ENDIF;
     IF (s^.kind = S_VAR) OR (s^.kind = S_CONST) THEN
+      NoteFree(s);
       r := s^.rep;
       code := SymPath(s);
       RETURN

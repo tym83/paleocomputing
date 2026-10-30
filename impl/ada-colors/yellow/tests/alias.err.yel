@@ -1,0 +1,8 @@
+(* a VAR actual is not a variable the procedure refers to freely (X.A.6) *)
+MODULE Alias
+  IMPORT StandardImplementationPrelude;
+  VAR g: INTEGER64 := 1;
+  PROCEDURE Show () g := g * 2; RETURN ENDPROCEDURE Show;
+  PROCEDURE Al (VAR a: INTEGER64) a := 5; Show(); RETURN ENDPROCEDURE Al;
+  Al(g)
+ENDMODULE Alias

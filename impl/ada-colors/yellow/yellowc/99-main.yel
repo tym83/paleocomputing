@@ -125,6 +125,7 @@
     ENDWHILE;
     ResolveLater(Depth);
     RunDeferred(0, 0);
+    CheckEffects();
     AwaitProcesses();
     RETURN
   ENDPROCEDURE Translate;

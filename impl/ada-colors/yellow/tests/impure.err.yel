@@ -1,0 +1,10 @@
+(* a FUNCTION assigns to no variable but its own, not even through the *)
+(* procedures it calls (X.A.4, D-33) *)
+MODULE Impure
+  IMPORT StandardImplementationPrelude;
+  VAR g: INTEGER64 := 0;
+  PROCEDURE Bump () g := g + 1; RETURN ENDPROCEDURE Bump;
+  PROCEDURE Twice () Bump(); Bump(); RETURN ENDPROCEDURE Twice;
+  FUNCTION F RETURNS INTEGER64 () Twice(); RETURN g ENDFUNCTION F;
+  g := F()
+ENDMODULE Impure

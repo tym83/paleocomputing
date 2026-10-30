@@ -108,6 +108,7 @@
         first: BOOLEAN := TRUE;
         pre, post, tmp, call, rv: Txt := 0;
     IF nargs # s^.nparams THEN FailN(line, s^.name, ": the number of actual parameters is wrong") ENDIF;
+    CheckActuals(s, base, line);
     SB();
     ST(s^.cname);
     SA("(");
@@ -132,6 +133,7 @@
           FailN(ArgNode[i]^.line, p^.name, ": the actual of a VAR or OUT parameter must be a variable")
         ENDIF;
         CheckPure(ArgNode[i]);
+        NoteWrite(ArgNode[i]);
         IF SameAsFormal(p^.rep, ArgRep[i]) THEN
           SA("&");
           ST(ArgCode[i])

@@ -94,6 +94,12 @@
     LabelSeen: ARRAY (INTEGER [1..4096] OF INT);
     HasHandler: BOOLEAN := FALSE;    (* it has an exception handler *)
     ImpureCalls: INT := 0;           (* calls of procedures in expressions so far *)
+    (* for the checks of X.A.4-6: every routine, the calls with VAR actuals, *)
+    (* the pointer types reached freely *)
+    AllRoutines, Sites: Node := Node NIL;
+    DynTid: ARRAY (INTEGER [1..4096] OF Txt);
+    DynIx: ARRAY (INTEGER [1..4096] OF INT);
+    NDyn: INT := 0;
 
   (* 10-decl *)
   VAR

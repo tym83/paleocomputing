@@ -35,6 +35,7 @@
   PROCEDURE StdVar (CONST n: Node; CONST kind: INT; OUT code: Txt; OUT r: Rep)
     VAR t: Txt;
     LValue(n, code, r);
+    NoteWrite(n);
     IF (kind # R_ANY) AND (r^.kind # kind) THEN
       SB();
       SA("a ");

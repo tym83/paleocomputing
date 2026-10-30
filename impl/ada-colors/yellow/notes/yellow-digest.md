@@ -131,11 +131,22 @@ block END.
 - FUNCTION: CONST parameters only; assigns only to its locals (D-33 is stricter than Ironman:
   "forbidden assignment in a function to any nonlocal variable"). PROCEDURE with RETURNS is a
   value-returning procedure: an impure function, called only in expressions; a plain procedure
-  only as a statement.
+  only as a statement. Once every body is translated, what each routine assigns and refers to
+  outside its scope is closed over its calls: a FUNCTION may not call, at any depth, a routine
+  that assigns to a variable not local to the FUNCTION or to a dynamic variable (X.A.4); an
+  INLINE routine may not reach itself (X.A.5); the aliasing rules of X.A.6 hold for every
+  call and process activation: no two VAR actuals that may share storage (the same variable,
+  one a part of the other, subscripts not known at translation, P^ and a pointer of its
+  type, two dynamic variables of one pointer type), no VAR actual that the routine refers to
+  freely (its root variable among the routine's free variables, or a dynamic variable when the
+  routine reaches one of that pointer type, or a pointer of that type, freely); and the same
+  variable is not the actual of two OUT parameters (IX.A.2). yellowc reads "P^" literally: a
+  pointer variable passed VAR is not in conflict with dynamic variables the routine reaches.
 - Parameters: CONST (by reference or value, never modified), VAR (by reference), OUT (a local
   copied out at RETURN; undefined after an exception). Length-unresolved arrays
   `ARRAY (n DIMENSIONS OF R)` with LOW and HIGH.
-- Overloading by the types (not representations) of the parameters: EXTENDS adds a
+- Overloading by the types (not representations) of the parameters (a value-returning routine
+  is extended only by value-returning ones, a procedure by procedures): EXTENDS adds a
   definition, REPLACES overrides one, a declaration with neither hides all others (X.A.1).
   Operators, `NOT` and `:=` are names too (`FUNCTION EXTENDS + ...`, `DerefRpointer AS ^`).
   A definition of `:=` (`PROCEDURE REPLACES := (OUT a: V; CONST b: V)`) is called by every
@@ -226,7 +237,4 @@ other than the prelude are not provided.
 
 ## 11. Not done, or done approximately
 
-- Aliasing rules (X.A.6) are not checked; neither is the life-scope rule for VAR actuals of
-  processes.
-- A FUNCTION's purity is checked for its own assignments and VAR/OUT actuals, not for the
-  procedures it calls.
+- The life-scope rule for VAR actuals of processes is not checked.

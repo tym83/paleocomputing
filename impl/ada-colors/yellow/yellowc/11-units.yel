@@ -493,6 +493,8 @@
         r: Rep;
     CompileArgs(n^.a, s, base, nargs);
     IF nargs # s^.nparams THEN FailN(n^.line, s^.name, ": the number of actual parameters is wrong") ENDIF;
+    NoteCall(s, n^.line);
+    CheckActuals(s, base, n^.line);
     pf := Fresh("pf");
     Emit(Join(T("{ struct "), s^.members^.name, Join(T(" *"), pf, Join(T(" = rt_alloc(sizeof *"), pf, T(");")))));
     IF s^.level > 1 THEN
@@ -509,6 +511,7 @@
         IF NOT SameAsFormal(p^.rep, ArgRep[i]) THEN
           FailN(ArgNode[i]^.line, p^.name, ": a VAR actual has the representation of its formal (VII.G, X.A.2)")
         ENDIF;
+        NoteWrite(ArgNode[i]);
         Emit(Join(pc, T(" = &"), Join(ArgCode[i], T(";"), 0)))
       ELSIF Deep(p^.rep) THEN
         (* the process may outlive the value: it gets its own copy *)

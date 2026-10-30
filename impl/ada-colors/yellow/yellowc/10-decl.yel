@@ -107,6 +107,9 @@
     ENDIF;
     IF (d^.ival # 0) AND (old # Sym NIL) AND (old^.kind = S_ROUTINE) THEN
       s^.alt := old;
+      IF (old^.ret^.kind = R_VOID) # (s^.ret^.kind = R_VOID) THEN
+        FailN(d^.line, d^.name, ": a value-returning routine is extended or replaced only by one, a procedure only by a procedure (X.A.1)")
+      ENDIF;
       IF (d^.ival = W_EXTENDS) AND (SameSignature(s, old) # Sym NIL) THEN
         FailN(d^.line, d^.name, " EXTENDS a definition for the same parameter types: use REPLACES")
       ENDIF;
@@ -116,6 +119,10 @@
     ENDIF;
     d^.sym := s;
     Define(s, d^.line);
+    g := NewNode(N_NAMEL, d^.line);
+    g^.sym := s;
+    g^.next := AllRoutines;
+    AllRoutines := g;
     (* the frame struct is declared now and written with the body *)
     FrameName[s^.level] := Fresh("yf");
     s^.members := NewSym(S_STD, FrameName[s^.level]);

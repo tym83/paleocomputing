@@ -109,7 +109,9 @@ MODULE yellowc
       VAR alt: Sym;               (* overloaded routines: the next definition *)
       VAR monitor: Sym;           (* routines and processes declared in a monitor *)
       VAR serial: INT;
-      VAR calls: Node             (* routines: the routines and processes it calls *)
+      VAR calls: Node;            (* routines: the routines and processes it calls *)
+      VAR writes, frees: Node;    (* routines: the variables of other scopes it assigns, uses *)
+      VAR seen, vix: INT          (* the last routine that noted it; its index in the checks *)
     ENDRECORD;
 
     ScopeRec = RECORD
@@ -129,6 +131,7 @@ MODULE yellowc
     TokTable = ARRAY (INTEGER [1..2000000] OF INT);
     HashTable = ARRAY (INTEGER [0..262143] OF Txt);
     SymTable = ARRAY (INTEGER [0..8191] OF Sym);
+    Steps = ARRAY (INTEGER [1..64] OF Node);
 
   CONST
     (* token kinds *)
