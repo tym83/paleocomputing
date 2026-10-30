@@ -3182,3 +3182,24 @@ int rt_r_set_le(yset a, yset b) {
 }
 
 int rt_r_set_lt(yset a, yset b) { return rt_r_set_le(a, b) && !y_set_eq(a, b); }
+
+/* a NaN with a payload of its own marks an uninitialized FLOAT */
+double rt_r_fundef(void) {
+  uint64_t b = 0x7ff8000000000bedULL;
+  double d;
+  memcpy(&d, &b, sizeof d);
+  return d;
+}
+
+double rt_r_fchk(double v) {
+  uint64_t b;
+  memcpy(&b, &v, sizeof b);
+  if (b == 0x7ff8000000000bedULL) rt_raise(RT_X_INIT);
+  return v;
+}
+
+int rt_r_undef_FLOAT(double v) {
+  uint64_t b;
+  memcpy(&b, &v, sizeof b);
+  return b == 0x7ff8000000000bedULL;
+}

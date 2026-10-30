@@ -1,0 +1,8 @@
+X_INIT: x
+X_INIT: f
+X_INIT: e
+X_INIT: r.ok, though r.n = 1
+X_INIT: a(3)
+an OUT formal never given a value leaves x uninitialized
+x = 7
+SUPPRESS(X_INIT)

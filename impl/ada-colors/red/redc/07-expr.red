@@ -539,6 +539,7 @@ ABNORMAL FUNC gexpr(CONST e : node, CONST want : typ, OUT t : typ) => STRING[ASC
          t := y.t;
          IF y.kind = y_var THEN
             ro := check_import(y, e.line);
+            RETURN init_chk(y.t, access_of(y));
          END IF;
          RETURN access_of(y);
       END IF;
@@ -590,7 +591,10 @@ ABNORMAL FUNC gexpr(CONST e : node, CONST want : typ, OUT t : typ) => STRING[ASC
          CONST base := gexpr(e.a, NIL, bt);
          ro := TRUE;
          index_on(base, bt, e, ro, FALSE, code, t, c);
-         RETURN code.ALL;
+         IF NOT is_lvalue(e) OR t.kind = t_array OR t.kind = t_string THEN
+            RETURN code.ALL;
+         END IF;
+         RETURN init_chk(t, code.ALL);
       END;
    ELSEIF k = n_select THEN
       IF (e.name.ALL = "LEN" OR e.name.ALL = "MIN" OR e.name.ALL = "MAX" OR e.name.ALL = "PREC"
@@ -604,7 +608,10 @@ ABNORMAL FUNC gexpr(CONST e : node, CONST want : typ, OUT t : typ) => STRING[ASC
          CONST base := gexpr(e.a, NIL, bt);
          ro := TRUE;
          select_on(base, bt, e, ro, code, t, c);
-         RETURN code.ALL;
+         IF e.name.ALL = "TAG" OR NOT is_lvalue(e) THEN
+            RETURN code.ALL;
+         END IF;
+         RETURN init_chk(t, code.ALL);
       END;
    ELSEIF k = n_ttapply THEN
       RETURN gcall(wrap_apply(e), FALSE, t);

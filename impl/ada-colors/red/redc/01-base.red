@@ -237,6 +237,8 @@ VAR gdepth : INT := 0;
 VAR suppress : text;
 % the subtype the context resolves the next constructor to (5.7)
 VAR cons_ctx : cons;
+% while a declared variable is created: its scalars start uninitialized (5.1)
+VAR mark_uninit : BOOL := FALSE;
 VAR exits : exitrec;
 % the goto labels known in the scope being translated (6.8); depth -1 until
 % the statements of their body begin

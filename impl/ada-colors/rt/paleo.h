@@ -540,6 +540,24 @@ extern const ydesc y_d_sig;                  /* a SIGNAL as an array component *
 int rt_r_active(rt_act *a);                    /* NIL_ACT is always active */
 rstr rt_r_strsub(rstr s, rt_int len);          /* X_SUBTYPE unless s has len characters */
 void rt_r_free_unchecked(void **v);
+/* an uninitialized scalar holds a value outside its type (5.1): reading it
+ * raises X_INIT */
+#define RT_R_IUNDEF INT64_MIN
+#define RT_R_EUNDEF (-0x7fffffff - 1)
+double rt_r_fundef(void);
+static inline rt_int rt_r_ichk(rt_int v) {
+  if (v == RT_R_IUNDEF) rt_raise(RT_X_INIT);
+  return v;
+}
+static inline int rt_r_echk(int v) {
+  if (v == RT_R_EUNDEF) rt_raise(RT_X_INIT);
+  return v;
+}
+double rt_r_fchk(double v);
+int rt_r_undef_FLOAT(double v);
+static inline int rt_r_undef_INT(rt_int v) { return v == RT_R_IUNDEF; }
+static inline int rt_r_undef_ENUM(int v) { return v == RT_R_EUNDEF; }
+static inline int rt_r_undef_BOOL(int v) { return v == RT_R_EUNDEF; }
 int rt_r_set_le(yset a, yset b);               /* subset (C.9) */
 int rt_r_set_lt(yset a, yset b);               /* strict subset */
 void rt_r_xtag(void);                          /* raises X_TAG (C.6) */

@@ -802,7 +802,9 @@ PROC var_decl(CONST d : node) IMPORTS ALL;
    IF t.kind = t_ptr AND c /= NIL AND c.args /= NIL THEN
       c := freeze_args(c, t, d.line);
    END IF;
+   mark_uninit := TRUE;
    init_storage(access, t, c);
+   mark_uninit := FALSE;
    IF d.ival = 1 THEN
       VAR it : typ;
       CONST n := gexpr(d.c, ty_int, it);
@@ -1030,7 +1032,13 @@ PROC gen_subprogram(CONST d : node, CONST y : sym) IMPORTS ALL;
             IF ac = NIL THEN
                ac := pm.c;
             END IF;
-            copy_back := mk(copy_back.ALL & "  " & assign_code("(*F->" & f & ")", pm.t, "F->" & f & "v", ac));
+            IF uninit_value(base_of(pm.t)) /= "" THEN
+               % an OUT formal never given a value leaves its actual as it was
+               copy_back := mk(copy_back.ALL & "  if (!rt_r_undef_" & kind_name(base_of(pm.t)) & "(F->" & f & "v)) "
+                               & assign_code("(*F->" & f & ")", pm.t, "F->" & f & "v", ac));
+            ELSE
+               copy_back := mk(copy_back.ALL & "  " & assign_code("(*F->" & f & ")", pm.t, "F->" & f & "v", ac));
+            END IF;
             IF needs_fin(pm.t) THEN
                pfin := mk(pfin.ALL & fin_code("F->" & f & "v", pm.t) & " ");
             END IF;

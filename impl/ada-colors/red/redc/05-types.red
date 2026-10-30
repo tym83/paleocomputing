@@ -1496,7 +1496,8 @@ PROC make_storage(READONLY lval : STRING[ASCII], CONST t : typ, CONST c : cons) 
       emit(lval & ".p = rt_alloc(sizeof(" & ctype(t.elem) & ") * (size_t)" & acnt(t, lval) & " + 1);");
       IF t.elem.kind = t_string OR t.elem.kind = t_array OR t.elem.kind = t_record
             OR t.elem.kind = t_new OR t.elem.kind = t_ptr OR t.elem.kind = t_mbox
-            OR t.elem.kind = t_lock OR t.elem.kind = t_act THEN
+            OR t.elem.kind = t_lock OR t.elem.kind = t_act OR t.elem.kind = t_union
+            OR (mark_uninit AND uninit_value(t.elem) /= "") THEN
          CONST i := new_name("i");
          emit("for (rt_int " & i & " = 0; " & i & " < " & acnt(t, lval) & "; " & i & "++) {");
          init_storage(lval & ".p[" & i & "]", t.elem, t.elemcons);
@@ -1520,8 +1521,37 @@ PROC make_storage(READONLY lval : STRING[ASCII], CONST t : typ, CONST c : cons) 
       ELSE
          emit(lval & ".tag = -1;");
       END IF;
+   ELSEIF mark_uninit AND uninit_value(t) /= "" THEN
+      emit(lval & " = " & uninit_value(t) & ";");
    END IF;
 END PROC make_storage;
+
+% the value an uninitialized scalar holds, which no value of its type has (5.1)
+FUNC uninit_value(CONST t : typ) => STRING[ASCII];
+   IF t.kind = t_int THEN
+      RETURN "RT_R_IUNDEF";
+   ELSEIF t.kind = t_enum OR t.kind = t_bool THEN
+      RETURN "RT_R_EUNDEF";
+   ELSEIF t.kind = t_float THEN
+      RETURN "rt_r_fundef()";
+   END IF;
+   RETURN "";
+END FUNC uninit_value;
+
+% reading a scalar raises X_INIT if it was never given a value (5.1)
+ABNORMAL FUNC init_chk(CONST t : typ, READONLY v : STRING[ASCII]) => STRING[ASCII] IMPORTS ALL;
+   VAR b : typ := base_of(t);
+   IF suppressed("X_INIT") THEN
+      RETURN v;
+   ELSEIF b.kind = t_int THEN
+      RETURN "rt_r_ichk(" & v & ")";
+   ELSEIF b.kind = t_enum OR b.kind = t_bool THEN
+      RETURN "rt_r_echk(" & v & ")";
+   ELSEIF b.kind = t_float THEN
+      RETURN "rt_r_fchk(" & v & ")";
+   END IF;
+   RETURN v;
+END FUNC init_chk;
 
 % manifest expressions (5.5)
 ABNORMAL FUNC manifest(CONST e : node, OUT ok : BOOL) => INT IMPORTS ALL;
