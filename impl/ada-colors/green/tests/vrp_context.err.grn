@@ -9,6 +9,7 @@ package body P is
       return N;
    end GEN;
 end P;
+restricted (P)
 procedure MAIN is
    use P;
 begin

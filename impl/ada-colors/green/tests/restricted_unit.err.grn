@@ -1,0 +1,10 @@
+procedure MAIN is
+   G : INTEGER := 5;
+   restricted procedure P is
+      X : INTEGER := 0;
+   begin
+      X := G;
+   end P;
+begin
+   P;
+end MAIN;

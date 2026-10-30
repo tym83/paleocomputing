@@ -1,0 +1,90 @@
+-- tasks (RM79 9): visible procedures right after initiate, entry defaults,
+-- overloaded entries, entry families in task families, families of
+-- families, SEMAPHORE and SIGNAL (RM79 9.11), T'CLOCK, TASKING_ERROR for
+-- the caller of an aborted acceptor (RM79 11.4)
+restricted (TEXT_IO)
+procedure MAIN is
+   use TEXT_IO;
+   task T is
+      procedure P(X : INTEGER);
+      entry E(X : INTEGER := 7);
+      entry E(X : BOOLEAN);
+   end T;
+   task body T is
+      procedure P(X : INTEGER) is
+      begin
+         E(X);
+      end P;
+   begin
+      accept E(X : INTEGER) do
+         PUT(X);
+      end E;
+      accept E(X : INTEGER) do
+         PUT(X);
+      end E;
+      accept E(X : BOOLEAN) do
+         PUT(X);
+      end E;
+   end T;
+   task F(1 .. 2) is
+      entry G(1 .. 3)(X : INTEGER);
+   end F;
+   task body F is
+      task INNER(1 .. 2) is
+         entry H;
+      end INNER;
+      task body INNER is
+      begin
+         accept H do
+            PUT(10 * F'INDEX + INNER'INDEX);
+         end H;
+      end INNER;
+   begin
+      initiate INNER;
+      accept G(2)(X : INTEGER) do
+         PUT(X);
+      end G;
+      INNER(1).H;
+      INNER(2).H;
+   end F;
+   task SEM is new SEMAPHORE;
+   task SIG is new SIGNAL;
+   task SRV is
+      entry E;
+   end SRV;
+   task body SRV is
+   begin
+      accept E do
+         delay 5.0 * SECONDS;
+      end E;
+   end SRV;
+   task KILLER;
+   task body KILLER is
+   begin
+      delay 0.3 * SECONDS;
+      abort SRV;
+   end KILLER;
+begin
+   initiate T;
+   T.P(5);
+   T.E;
+   T.E(TRUE);
+   PUT(NEWLINE);
+   initiate F;
+   F(1).G(2)(11);
+   F(2).G(2)(22);
+   delay 1.0 * SECONDS;
+   PUT(NEWLINE);
+   initiate SEM, SIG;
+   SEM.P; SEM.V; SIG.SEND; SIG.WAIT;
+   PUT(T'CLOCK >= 0.0);
+   abort SEM, SIG;
+   initiate SRV, KILLER;
+   begin
+      SRV.E;
+      PUT(" returned normally");
+   exception
+      when TASKING_ERROR => PUT(" TASKING_ERROR");
+   end;
+   PUT(NEWLINE);
+end MAIN;

@@ -9,6 +9,11 @@
          Y.C := NEW_CONS;
          Y.C.LO := MK(LO);
          Y.C.HI := MK(HI);
+         if HI'LENGTH < 12 and then IS_DIGIT(HI(HI'FIRST)) then
+            Y.C.MLO := INTEGER'VAL(LO);
+            Y.C.MHI := INTEGER'VAL(HI);
+            Y.C.HASM := TRUE;
+         end if;
       end if;
       DEFINE(Y, 0);
    end PREDEF_TYPE;
@@ -43,14 +48,17 @@
    end PREDEF_LIT;
 
    procedure PREDEFINE is
+      Y : SYM;
       CONTROL : constant STRING := "NUL SOH STX ETX EOT ENQ ACK BEL BS HT LF VT FF CR SO SI DLE "
          & "DC1 DC2 DC3 DC4 NAK SYN ETB CAN EM SUB ESC FS GS RS US ";
       START : INTEGER := 1;
       CODE_NO : INTEGER := 0;
    begin
+      -- the simulated machine has 64-bit words: INTEGER and LONG_INTEGER take
+      -- a word, SHORT_INTEGER a half word (RM79 3.5.4)
       PREDEF_TYPE("INTEGER", TY_INT, "", "");
-      PREDEF_TYPE("SHORT_INTEGER", TY_INT, "", "");
-      PREDEF_TYPE("LONG_INTEGER", TY_INT, "", "");
+      PREDEF_TYPE("SHORT_INTEGER", TY_SHORT, "", "");
+      PREDEF_TYPE("LONG_INTEGER", TY_LONG, "", "");
       -- NATURAL starts at 1 (RM79 3.6.3)
       PREDEF_TYPE("NATURAL", TY_INT, "1", "INT64_MAX");
       PREDEF_TYPE("PRIORITY", TY_INT, "0", "255");
@@ -58,9 +66,9 @@
       PREDEF_TYPE("CHARACTER", TY_CHAR, "0", "127");
       PREDEF_TYPE("STRING", TY_STRING, "", "");
       PREDEF_TYPE("FLOAT", TY_FLOAT, "", "");
-      PREDEF_TYPE("SHORT_FLOAT", TY_FLOAT, "", "");
-      PREDEF_TYPE("LONG_FLOAT", TY_FLOAT, "", "");
-      PREDEF_TYPE("TIME", TY_FLOAT, "", "");
+      PREDEF_TYPE("SHORT_FLOAT", TY_SFLOAT, "", "");
+      PREDEF_TYPE("LONG_FLOAT", TY_LFLOAT, "", "");
+      PREDEF_TYPE("TIME", TY_TIME, "", "");
       PREDEF_LIT("FALSE", TY_BOOL, 0);
       PREDEF_LIT("TRUE", TY_BOOL, 1);
       -- the control characters are identifiers of CHARACTER
@@ -88,8 +96,8 @@
          PREDEF_CONST("LC_" & CHARACTER'VAL(66 + I), TY_CHAR, INTEGER'REP(97 + I));
       end loop;
       -- TEXT_IO (RM79 14.3): NEWLINE is a string constant, used as PUT(NEWLINE)
-      PREDEF_CONST("NEWLINE", TY_STRING, "rt_str(" & Q & "\n" & Q & ", 1)");
-      PREDEF_CONST("SECONDS", TY_FLOAT, "((double)RT_SECONDS)");
+      PREDEF_CONST("NEWLINE", TY_STRING, "rt_g_lit(" & Q & "\n" & Q & ", 1)");
+      PREDEF_CONST("SECONDS", TY_TIME, "((double)RT_SECONDS)");
       -- the predefined exceptions (RM79 11.1) and END_OF_FILE (RM79 14.2)
       PREDEF_EXC("ACCESS_ERROR");
       PREDEF_EXC("ASSERT_ERROR");
@@ -111,13 +119,939 @@
 
    -- ---- compilation units (RM79 10) ---------------------------------------------
 
-   procedure TRANSLATE(U : NODE) is
+   -- ---- the program library (RM79 10.3 - 10.5) ------------------------------
+   --
+   -- The library is the directory GREEN_LIBRARY names: each compilation unit
+   -- compiled without error is kept there as text, under P.spec, P.body or
+   -- T.Q.sub; a unit that names a unit that is not in the compilation finds
+   -- it there, and the unit is translated again with the program.
+
+   procedure LIB_OPEN(KEY : STRING; LENGTH : out INTEGER) is
+   begin
+      pragma INTERFACE(C);
+   end LIB_OPEN;
+
+   procedure LIB_STORE(KEY : STRING; CONTENTS : STRING) is
+   begin
+      pragma INTERFACE(C);
+   end LIB_STORE;
+
+   -- the key of a unit in the library
+   procedure UNIT_KEY(U : NODE; R : out TEXT) is
+      K : INTEGER := 2;
+   begin
+      if U.FORMAL /= null and then (U.FORMAL.all(1) = "!" or U.FORMAL.all(1) = "#") then
+         while K < U.FORMAL.all'LENGTH and then U.FORMAL.all(K + 1) /= "," loop
+            K := K + 1;
+         end loop;
+         R := MK(U.FORMAL.all(3 .. K) & "." & U.NAME.all & ".sub");
+      elsif U.KIND = N_PKGSPEC or U.KIND = N_TASKSPEC or U.KIND = N_GENERIC or U.KIND = N_INST
+         or ((U.KIND = N_PROC or U.KIND = N_FUNC) and U.IVAL = 1) then
+         R := MK(U.NAME.all & ".spec");
+      else
+         R := MK(U.NAME.all & ".body");
+      end if;
+   end UNIT_KEY;
+
+   procedure LIB_ENABLED(YES : out BOOLEAN) is
+   begin
+      pragma INTERFACE(C);
+   end LIB_ENABLED;
+
+   -- the units of the compilation go to the library (RM79 10.4)
+   procedure STORE_UNITS is
+      S : SPAN := SPANS;
+      K : TEXT;
+      YES : BOOLEAN;
+   begin
+      LIB_ENABLED(YES);
+      if not YES then
+         return;
+      end if;
+      while S /= null loop
+         UNIT_KEY(S.U, K);
+         STORE_SPAN(S, K.all);
+         S := S.NEXT;
+      end loop;
+   end STORE_UNITS;
+
+   procedure STORE_SPAN(S : SPAN; KEY : STRING) is
+      N : INTEGER := 0;
+      HEAD : TEXT := MK("");
+   begin
+      if S.ENV.all'LENGTH > 0 then
+         HEAD := MK("pragma ENVIRONMENT(" & S.ENV.all(1 .. S.ENV.all'LENGTH - 1) & ");" & LF);
+      end if;
+      N := HEAD.all'LENGTH;
+      for L in S.FIRST .. S.LAST loop
+         N := N + SRC_LINES(L).all'LENGTH + 1;
+      end loop;
+      declare
+         T : STRING(1 .. N);
+         K : INTEGER := HEAD.all'LENGTH;
+      begin
+         T(1 .. K) := HEAD.all;
+         for L in S.FIRST .. S.LAST loop
+            T(K + 1 .. K + SRC_LINES(L).all'LENGTH) := SRC_LINES(L).all;
+            K := K + SRC_LINES(L).all'LENGTH + 1;
+            T(K) := LF;
+         end loop;
+         LIB_STORE(KEY, T);
+      end;
+   end STORE_SPAN;
+
+   -- the text of a unit of the library, parsed: null if it is not there
+   procedure LIB_LOAD(KEY : STRING; R : out NODE) is
+      N : INTEGER;
+      SAVED_LINE : INTEGER := SRC_LINE;
+      SAVED_POS : INTEGER := TPOS;
+      FROM : INTEGER;
+      SAVED_ENV : TEXT;
+   begin
+      R := null;
+      LIB_OPEN(KEY, N);
+      if N < 0 then
+         return;
+      end if;
+      FROM := NTOKS + 1;
+      INCLUDE_TEXT(N);
+      ADD_TOKEN(K_EOF, "<end>", 0);
+      TPOS := FROM;
+      -- the environment of the program is not that of the unit
+      SAVED_ENV := ENV_NAMES;
+      ENV_NAMES := MK("");
+      COMPILATION(R);
+      ENV_NAMES := SAVED_ENV;
+      TPOS := SAVED_POS;
+      SRC_LINE := SAVED_LINE;
+   end LIB_LOAD;
+
+   function DEFINED_UNIT(NAME : STRING; BEFORE : NODE) return BOOLEAN is
+      U : NODE := UNITS;
+   begin
+      if LISTED(LOADED, NAME) then
+         return TRUE;
+      end if;
+      while U /= null and U /= BEFORE loop
+         if U.NAME.all = NAME and U.FORMAL.all(1) /= "!" then
+            return TRUE;
+         end if;
+         U := U.NEXT;
+      end loop;
+      return FALSE;
+   end DEFINED_UNIT;
+
+   -- the units of the library that the compilation names, put before the
+   -- unit naming them; a unit names only units compiled before it (RM79 10.3)
+   procedure LIBRARY_UNITS is
+      P, PREV, L, LTAIL : NODE;
+      I, J : INTEGER;
+      N, F : TEXT;
+      CHANGED : BOOLEAN := TRUE;
+   begin
+      while CHANGED loop
+         CHANGED := FALSE;
+         P := UNITS;
+         PREV := null;
+         while P /= null and not CHANGED loop
+            F := P.FORMAL;
+            I := 1;
+            if F.all(1) = "!" or F.all(1) = "#" then
+               I := 2;
+            end if;
+            while I < F.all'LENGTH and not CHANGED loop
+               J := I + 1;
+               while J <= F.all'LENGTH and then F.all(J) /= "," loop
+                  J := J + 1;
+               end loop;
+               if J > I + 1 then
+                  N := MK(F.all(I + 1 .. J - 1));
+                  if LOOKUP(N.all) = null and then not DEFINED_UNIT(N.all, P) then
+                     LOAD_UNIT(N.all, L);
+                     if L = null then
+                        PREDEFINED_UNIT(N.all, L);
+                     end if;
+                     if L = null then
+                        FAIL(P.LINE, N.all & ", named by " & P.NAME.all & ", is neither compiled before it nor in "
+                             & "the program library (RM79 10.3)");
+                     end if;
+                     LOADED := MK(LOADED.all & N.all & ",");
+                     LTAIL := L;
+                     while LTAIL.NEXT /= null loop
+                        LTAIL := LTAIL.NEXT;
+                     end loop;
+                     LTAIL.NEXT := P;
+                     if PREV = null then
+                        UNITS := L;
+                     else
+                        PREV.NEXT := L;
+                     end if;
+                     CHANGED := TRUE;
+                  end if;
+               end if;
+               I := J;
+            end loop;
+            PREV := P;
+            P := P.NEXT;
+         end loop;
+      end loop;
+   end LIBRARY_UNITS;
+
+   -- a library unit: its specification and its body, or a subprogram body
+   procedure LOAD_UNIT(NAME : STRING; R : out NODE) is
+      S, B, T : NODE;
+   begin
+      LIB_LOAD(NAME & ".spec", S);
+      LIB_LOAD(NAME & ".body", B);
+      if S = null then
+         R := B;
+         return;
+      end if;
+      T := S;
+      while T.NEXT /= null loop
+         T := T.NEXT;
+      end loop;
+      T.NEXT := B;
+      R := S;
+   end LOAD_UNIT;
+
+   -- the predefined library units written in GREEN, translated when a unit
+   -- names them (RM79 13.8, 13.10, 14.6)
+   procedure PREDEFINED_UNIT(NAME : STRING; R : out NODE) is
+      SAVED_POS : INTEGER := TPOS;
+      SAVED_LINE : INTEGER := SRC_LINE;
+      FROM : INTEGER := NTOKS + 1;
+      SAVED_ENV : TEXT;
+   begin
+      R := null;
+      PRELUDE_LEX := TRUE;
+      -- the lines of a predefined unit are negative
+      SRC_LINE := -1;
+      if NAME = "UNSAFE_PROGRAMMING" then
+         LEX_LINE("package UNSAFE_PROGRAMMING is");
+         LEX_LINE("   generic (type S; type T) function UNSAFE_CONVERSION(X : S) return T;");
+         LEX_LINE("end UNSAFE_PROGRAMMING;");
+         LEX_LINE("package body UNSAFE_PROGRAMMING is");
+         LEX_LINE("   function UNSAFE_CONVERSION(X : S) return T is");
+         LEX_LINE("   begin pragma INTERFACE(UNSAFE_CONVERSION); end UNSAFE_CONVERSION;");
+         LEX_LINE("end UNSAFE_PROGRAMMING;");
+      elsif NAME = "MACHINE_CODE" then
+         -- the simulated machine: eight one-word registers, and a memory of
+         -- SYSTEM'MEMORY_SIZE storage units; a word is eight storage units
+         LEX_LINE("package MACHINE_CODE is");
+         LEX_LINE("   type OPCODE is (NOP, LDI, LD, ST, ADD, SUB, MUL, DIV, NEG, OUTC, OUTN, INTR);");
+         LEX_LINE("   subtype REGISTER is INTEGER range 0 .. 7;");
+         LEX_LINE("   type INSTRUCTION is record OP : OPCODE; R : REGISTER; A : INTEGER; end record;");
+         LEX_LINE("end MACHINE_CODE;");
+      elsif NAME = "LOW_LEVEL_IO" then
+         LEX_LINE("package LOW_LEVEL_IO is");
+         LEX_LINE("   subtype DEVICE_NUMBER is INTEGER range 0 .. 15;");
+         LEX_LINE("   INTERRUPT_CONTROLLER : constant DEVICE_NUMBER := 0;");
+         LEX_LINE("   CONSOLE : constant DEVICE_NUMBER := 1;");
+         LEX_LINE("   CLOCK : constant DEVICE_NUMBER := 2;");
+         LEX_LINE("   MEMORY_ADDRESS : constant DEVICE_NUMBER := 3;");
+         LEX_LINE("   MEMORY_DATA : constant DEVICE_NUMBER := 4;");
+         LEX_LINE("   MEMORY_DUMP : constant DEVICE_NUMBER := 5;");
+         LEX_LINE("   procedure SEND_CONTROL(DEVICE : DEVICE_NUMBER; DATA : in out INTEGER);");
+         LEX_LINE("   procedure RECEIVE_CONTROL(DEVICE : DEVICE_NUMBER; DATA : in out INTEGER);");
+         LEX_LINE("end LOW_LEVEL_IO;");
+         LEX_LINE("package body LOW_LEVEL_IO is");
+         LEX_LINE("   procedure SEND_CONTROL(DEVICE : DEVICE_NUMBER; DATA : in out INTEGER) is");
+         LEX_LINE("   begin pragma INTERFACE(C); end SEND_CONTROL;");
+         LEX_LINE("   procedure RECEIVE_CONTROL(DEVICE : DEVICE_NUMBER; DATA : in out INTEGER) is");
+         LEX_LINE("   begin pragma INTERFACE(C); end RECEIVE_CONTROL;");
+         LEX_LINE("end LOW_LEVEL_IO;");
+      elsif NAME = "TEXT_IO" then
+         -- RM79 14.3, 14.4: GET and PUT for the predefined types are built
+         -- in; the rest is written here, over the runtime's helpers
+         LEX_LINE("package TEXT_IO is");
+         LEX_LINE("   restricted type IN_FILE is private;");
+         LEX_LINE("   restricted type OUT_FILE is private;");
+         LEX_LINE("   procedure CREATE(FILE : in out OUT_FILE; NAME : in STRING);");
+         LEX_LINE("   procedure OPEN(FILE : in out IN_FILE; NAME : in STRING);");
+         LEX_LINE("   procedure OPEN(FILE : in out OUT_FILE; NAME : in STRING);");
+         LEX_LINE("   procedure CLOSE(FILE : in out IN_FILE);");
+         LEX_LINE("   procedure CLOSE(FILE : in out OUT_FILE);");
+         LEX_LINE("   procedure DELETE(FILE : in out IN_FILE);");
+         LEX_LINE("   procedure DELETE(FILE : in out OUT_FILE);");
+         LEX_LINE("   function IS_OPEN(FILE : in IN_FILE) return BOOLEAN;");
+         LEX_LINE("   function IS_OPEN(FILE : in OUT_FILE) return BOOLEAN;");
+         LEX_LINE("   function NAME(FILE : in IN_FILE) return STRING;");
+         LEX_LINE("   function NAME(FILE : in OUT_FILE) return STRING;");
+         LEX_LINE("   function SIZE(FILE : in IN_FILE) return INTEGER;");
+         LEX_LINE("   function SIZE(FILE : in OUT_FILE) return INTEGER;");
+         LEX_LINE("   procedure READ(FILE : in IN_FILE; ITEM : out CHARACTER);");
+         LEX_LINE("   procedure WRITE(FILE : in OUT_FILE; ITEM : in CHARACTER);");
+         LEX_LINE("   function NEXT(FILE : in IN_FILE) return INTEGER;");
+         LEX_LINE("   function NEXT(FILE : in OUT_FILE) return INTEGER;");
+         LEX_LINE("   procedure SET_NEXT(FILE : in IN_FILE; POS : in INTEGER := 1);");
+         LEX_LINE("   procedure SET_NEXT(FILE : in OUT_FILE; POS : in INTEGER := 1);");
+         LEX_LINE("   DEFAULT_WIDTH : constant INTEGER := 0;");
+         LEX_LINE("   DEFAULT_FLOAT_WIDTH : constant INTEGER := 0;");
+         LEX_LINE("   DEFAULT_MANTISSA : constant INTEGER := FLOAT'DIGITS - 1;");
+         LEX_LINE("   DEFAULT_ENUM_WIDTH : constant INTEGER := 0;");
+         LEX_LINE("   generic (type FIXED_TYPE;");
+         LEX_LINE("            function REP(X : FIXED_TYPE) return STRING is FIXED_TYPE.REP;");
+         LEX_LINE("            function VAL(X : STRING) return FIXED_TYPE is FIXED_TYPE.VAL;");
+         LEX_LINE("            DECIMALS : FIXED_TYPE := FIXED_TYPE'DELTA)");
+         LEX_LINE("   package FIXED_IO is");
+         LEX_LINE("      DEFAULT_FIXED_WIDTH : constant INTEGER := 0;");
+         LEX_LINE("      DELTA_REP : constant STRING := REP(DECIMALS);");
+         LEX_LINE("      DEFAULT_DECIMALS : constant INTEGER := $DECIMALS(DELTA_REP);");
+         LEX_LINE("      procedure GET(FILE : in IN_FILE; ITEM : out FIXED_TYPE);");
+         LEX_LINE("      procedure GET(ITEM : out FIXED_TYPE);");
+         LEX_LINE("      procedure PUT(FILE : in OUT_FILE; ITEM : in FIXED_TYPE; WIDTH : in INTEGER := DEFAULT_FIXED_WIDTH;");
+         LEX_LINE("                    FRACT : in INTEGER := DEFAULT_DECIMALS);");
+         LEX_LINE("      procedure PUT(ITEM : in FIXED_TYPE; WIDTH : in INTEGER := DEFAULT_FIXED_WIDTH;");
+         LEX_LINE("                    FRACT : in INTEGER := DEFAULT_DECIMALS);");
+         LEX_LINE("   end FIXED_IO;");
+         LEX_LINE("   generic (type ENUM_TYPE;");
+         LEX_LINE("            function REP(X : ENUM_TYPE) return STRING is ENUM_TYPE.REP;");
+         LEX_LINE("            function VAL(X : STRING) return ENUM_TYPE is ENUM_TYPE.VAL)");
+         LEX_LINE("   package ENUM_IO is");
+         LEX_LINE("      procedure GET(FILE : in IN_FILE; ITEM : out ENUM_TYPE);");
+         LEX_LINE("      procedure GET(ITEM : out ENUM_TYPE);");
+         LEX_LINE("      procedure PUT(FILE : in OUT_FILE; ITEM : in ENUM_TYPE; WIDTH : in INTEGER := DEFAULT_ENUM_WIDTH);");
+         LEX_LINE("      procedure PUT(ITEM : in ENUM_TYPE; WIDTH : in INTEGER := DEFAULT_ENUM_WIDTH);");
+         LEX_LINE("   end ENUM_IO;");
+         LEX_LINE("   function LINE(FILE : in IN_FILE) return NATURAL;");
+         LEX_LINE("   function LINE(FILE : in OUT_FILE) return NATURAL;");
+         LEX_LINE("   function COL(FILE : in IN_FILE) return NATURAL;");
+         LEX_LINE("   function COL(FILE : in OUT_FILE) return NATURAL;");
+         LEX_LINE("   procedure SET_LINE(FILE : in IN_FILE; TO : in NATURAL);");
+         LEX_LINE("   procedure SET_LINE(FILE : in OUT_FILE; TO : in NATURAL);");
+         LEX_LINE("   procedure SET_COL(FILE : in IN_FILE; TO : in NATURAL);");
+         LEX_LINE("   procedure SET_COL(FILE : in OUT_FILE; TO : in NATURAL);");
+         LEX_LINE("   procedure SET_LINE_LENGTH(FILE : in IN_FILE; N : in NATURAL);");
+         LEX_LINE("   procedure SET_LINE_LENGTH(FILE : in OUT_FILE; N : in NATURAL);");
+         LEX_LINE("   NEWLINE : constant STRING := " & Q & "" & Q & " & LF;");
+         LEX_LINE("   function STANDARD_INPUT return IN_FILE;");
+         LEX_LINE("   function STANDARD_OUTPUT return OUT_FILE;");
+         LEX_LINE("   procedure SET_INPUT(FILE : in IN_FILE);");
+         LEX_LINE("   procedure SET_OUTPUT(FILE : in OUT_FILE);");
+         LEX_LINE("   FILE_NAME_ERROR, FILE_USE_ERROR, FILE_OPEN_ERROR, INVALID_DATA, MALFUNCTION, END_OF_FILE,");
+         LEX_LINE("      INVALID_LAYOUT : exception;");
+         LEX_LINE("   -- for the generic units: the handle of a file, the default files");
+         LEX_LINE("   function $H(FILE : IN_FILE) return INTEGER;");
+         LEX_LINE("   function $H(FILE : OUT_FILE) return INTEGER;");
+         LEX_LINE("   function $CUR_IN return INTEGER;");
+         LEX_LINE("   function $CUR_OUT return INTEGER;");
+         LEX_LINE("   function $DECIMALS(IMAGE : STRING) return INTEGER;");
+         LEX_LINE("private");
+         LEX_LINE("   type IN_FILE is record H : INTEGER := 0; end record;");
+         LEX_LINE("   type OUT_FILE is record H : INTEGER := 0; end record;");
+         LEX_LINE("end TEXT_IO;");
+         LEX_LINE("package body TEXT_IO is");
+         LEX_LINE("   procedure $OPEN(H : in out INTEGER; NAME : STRING; MODE : INTEGER; CREATING : BOOLEAN; ESZ : INTEGER) is");
+         LEX_LINE("   begin pragma INTERFACE(C); end $OPEN;");
+         LEX_LINE("   procedure $CLOSE(H : in out INTEGER; REMOVING : BOOLEAN) is begin pragma INTERFACE(C); end $CLOSE;");
+         LEX_LINE("   function $IS_OPEN(H : INTEGER) return BOOLEAN is begin pragma INTERFACE(C); end $IS_OPEN;");
+         LEX_LINE("   function $NAME(H : INTEGER) return STRING is begin pragma INTERFACE(C); end $NAME;");
+         LEX_LINE("   function $SIZE(H : INTEGER) return INTEGER is begin pragma INTERFACE(C); end $SIZE;");
+         LEX_LINE("   function $NEXT(H : INTEGER) return INTEGER is begin pragma INTERFACE(C); end $NEXT;");
+         LEX_LINE("   procedure $SET_NEXT(H : INTEGER; POS : INTEGER) is begin pragma INTERFACE(C); end $SET_NEXT;");
+         LEX_LINE("   procedure $READ_CHAR(H : INTEGER; C : out CHARACTER) is begin pragma INTERFACE(C); end $READ_CHAR;");
+         LEX_LINE("   procedure $WRITE_CHAR(H : INTEGER; C : CHARACTER) is begin pragma INTERFACE(C); end $WRITE_CHAR;");
+         LEX_LINE("   function $LINE_OF(H : INTEGER) return INTEGER is begin pragma INTERFACE(C); end $LINE_OF;");
+         LEX_LINE("   function $COL_OF(H : INTEGER) return INTEGER is begin pragma INTERFACE(C); end $COL_OF;");
+         LEX_LINE("   procedure $SET_LINE(H : INTEGER; TO : INTEGER) is begin pragma INTERFACE(C); end $SET_LINE;");
+         LEX_LINE("   procedure $SET_COL(H : INTEGER; TO : INTEGER) is begin pragma INTERFACE(C); end $SET_COL;");
+         LEX_LINE("   procedure $SET_LINE_LENGTH(H : INTEGER; N : INTEGER) is begin pragma INTERFACE(C); end $SET_LINE_LENGTH;");
+         LEX_LINE("   procedure $SET_INPUT(H : INTEGER) is begin pragma INTERFACE(C); end $SET_INPUT;");
+         LEX_LINE("   procedure $SET_OUTPUT(H : INTEGER) is begin pragma INTERFACE(C); end $SET_OUTPUT;");
+         LEX_LINE("   function $CUR_IN return INTEGER is begin pragma INTERFACE(C); end $CUR_IN;");
+         LEX_LINE("   function $CUR_OUT return INTEGER is begin pragma INTERFACE(C); end $CUR_OUT;");
+         LEX_LINE("   function $DECIMALS(IMAGE : STRING) return INTEGER is begin pragma INTERFACE(C); end $DECIMALS;");
+         LEX_LINE("   function $H(FILE : IN_FILE) return INTEGER is begin return FILE.H; end $H;");
+         LEX_LINE("   function $H(FILE : OUT_FILE) return INTEGER is begin return FILE.H; end $H;");
+         LEX_LINE("   procedure CREATE(FILE : in out OUT_FILE; NAME : in STRING) is");
+         LEX_LINE("   begin $OPEN(FILE.H, NAME, 2, TRUE, 0); end CREATE;");
+         LEX_LINE("   procedure OPEN(FILE : in out IN_FILE; NAME : in STRING) is");
+         LEX_LINE("   begin $OPEN(FILE.H, NAME, 1, FALSE, 0); end OPEN;");
+         LEX_LINE("   procedure OPEN(FILE : in out OUT_FILE; NAME : in STRING) is");
+         LEX_LINE("   begin $OPEN(FILE.H, NAME, 2, FALSE, 0); end OPEN;");
+         LEX_LINE("   procedure CLOSE(FILE : in out IN_FILE) is begin $CLOSE(FILE.H, FALSE); end CLOSE;");
+         LEX_LINE("   procedure CLOSE(FILE : in out OUT_FILE) is begin $CLOSE(FILE.H, FALSE); end CLOSE;");
+         LEX_LINE("   procedure DELETE(FILE : in out IN_FILE) is begin $CLOSE(FILE.H, TRUE); end DELETE;");
+         LEX_LINE("   procedure DELETE(FILE : in out OUT_FILE) is begin $CLOSE(FILE.H, TRUE); end DELETE;");
+         LEX_LINE("   function IS_OPEN(FILE : in IN_FILE) return BOOLEAN is begin return $IS_OPEN(FILE.H); end IS_OPEN;");
+         LEX_LINE("   function IS_OPEN(FILE : in OUT_FILE) return BOOLEAN is begin return $IS_OPEN(FILE.H); end IS_OPEN;");
+         LEX_LINE("   function NAME(FILE : in IN_FILE) return STRING is begin return $NAME(FILE.H); end NAME;");
+         LEX_LINE("   function NAME(FILE : in OUT_FILE) return STRING is begin return $NAME(FILE.H); end NAME;");
+         LEX_LINE("   function SIZE(FILE : in IN_FILE) return INTEGER is begin return $SIZE(FILE.H); end SIZE;");
+         LEX_LINE("   function SIZE(FILE : in OUT_FILE) return INTEGER is begin return $SIZE(FILE.H); end SIZE;");
+         LEX_LINE("   procedure READ(FILE : in IN_FILE; ITEM : out CHARACTER) is begin $READ_CHAR(FILE.H, ITEM); end READ;");
+         LEX_LINE("   procedure WRITE(FILE : in OUT_FILE; ITEM : in CHARACTER) is begin $WRITE_CHAR(FILE.H, ITEM); end WRITE;");
+         LEX_LINE("   function NEXT(FILE : in IN_FILE) return INTEGER is begin return $NEXT(FILE.H); end NEXT;");
+         LEX_LINE("   function NEXT(FILE : in OUT_FILE) return INTEGER is begin return $NEXT(FILE.H); end NEXT;");
+         LEX_LINE("   procedure SET_NEXT(FILE : in IN_FILE; POS : in INTEGER := 1) is begin $SET_NEXT(FILE.H, POS); end SET_NEXT;");
+         LEX_LINE("   procedure SET_NEXT(FILE : in OUT_FILE; POS : in INTEGER := 1) is begin $SET_NEXT(FILE.H, POS); end SET_NEXT;");
+         LEX_LINE("   function LINE(FILE : in IN_FILE) return NATURAL is begin return $LINE_OF(FILE.H); end LINE;");
+         LEX_LINE("   function LINE(FILE : in OUT_FILE) return NATURAL is begin return $LINE_OF(FILE.H); end LINE;");
+         LEX_LINE("   function COL(FILE : in IN_FILE) return NATURAL is begin return $COL_OF(FILE.H); end COL;");
+         LEX_LINE("   function COL(FILE : in OUT_FILE) return NATURAL is begin return $COL_OF(FILE.H); end COL;");
+         LEX_LINE("   procedure SET_LINE(FILE : in IN_FILE; TO : in NATURAL) is begin $SET_LINE(FILE.H, TO); end SET_LINE;");
+         LEX_LINE("   procedure SET_LINE(FILE : in OUT_FILE; TO : in NATURAL) is begin $SET_LINE(FILE.H, TO); end SET_LINE;");
+         LEX_LINE("   procedure SET_COL(FILE : in IN_FILE; TO : in NATURAL) is begin $SET_COL(FILE.H, TO); end SET_COL;");
+         LEX_LINE("   procedure SET_COL(FILE : in OUT_FILE; TO : in NATURAL) is begin $SET_COL(FILE.H, TO); end SET_COL;");
+         LEX_LINE("   procedure SET_LINE_LENGTH(FILE : in IN_FILE; N : in NATURAL) is");
+         LEX_LINE("   begin $SET_LINE_LENGTH(FILE.H, N); end SET_LINE_LENGTH;");
+         LEX_LINE("   procedure SET_LINE_LENGTH(FILE : in OUT_FILE; N : in NATURAL) is");
+         LEX_LINE("   begin $SET_LINE_LENGTH(FILE.H, N); end SET_LINE_LENGTH;");
+         LEX_LINE("   function STANDARD_INPUT return IN_FILE is F : IN_FILE; begin F.H := 1; return F; end STANDARD_INPUT;");
+         LEX_LINE("   function STANDARD_OUTPUT return OUT_FILE is F : OUT_FILE; begin F.H := 2; return F; end STANDARD_OUTPUT;");
+         LEX_LINE("   procedure SET_INPUT(FILE : in IN_FILE) is begin $SET_INPUT(FILE.H); end SET_INPUT;");
+         LEX_LINE("   procedure SET_OUTPUT(FILE : in OUT_FILE) is begin $SET_OUTPUT(FILE.H); end SET_OUTPUT;");
+         LEX_LINE("   package body FIXED_IO is");
+         LEX_LINE("      procedure $PUT_FIXED(H : INTEGER; IMAGE : STRING; WIDTH, FRACT : INTEGER) is");
+         LEX_LINE("      begin pragma INTERFACE(C); end $PUT_FIXED;");
+         LEX_LINE("      function $GET_REAL(H : INTEGER) return STRING is begin pragma INTERFACE(C); end $GET_REAL;");
+         LEX_LINE("      procedure GET(FILE : in IN_FILE; ITEM : out FIXED_TYPE) is");
+         LEX_LINE("      begin");
+         LEX_LINE("         ITEM := VAL($GET_REAL($H(FILE)));");
+         LEX_LINE("      exception");
+         LEX_LINE("         when RANGE_ERROR => raise INVALID_DATA;");
+         LEX_LINE("      end GET;");
+         LEX_LINE("      procedure GET(ITEM : out FIXED_TYPE) is");
+         LEX_LINE("      begin");
+         LEX_LINE("         ITEM := VAL($GET_REAL($CUR_IN));");
+         LEX_LINE("      exception");
+         LEX_LINE("         when RANGE_ERROR => raise INVALID_DATA;");
+         LEX_LINE("      end GET;");
+         LEX_LINE("      procedure PUT(FILE : in OUT_FILE; ITEM : in FIXED_TYPE; WIDTH : in INTEGER := DEFAULT_FIXED_WIDTH;");
+         LEX_LINE("                    FRACT : in INTEGER := DEFAULT_DECIMALS) is");
+         LEX_LINE("      begin");
+         LEX_LINE("         $PUT_FIXED($H(FILE), REP(ITEM), WIDTH, FRACT);");
+         LEX_LINE("      end PUT;");
+         LEX_LINE("      procedure PUT(ITEM : in FIXED_TYPE; WIDTH : in INTEGER := DEFAULT_FIXED_WIDTH;");
+         LEX_LINE("                    FRACT : in INTEGER := DEFAULT_DECIMALS) is");
+         LEX_LINE("      begin");
+         LEX_LINE("         $PUT_FIXED($CUR_OUT, REP(ITEM), WIDTH, FRACT);");
+         LEX_LINE("      end PUT;");
+         LEX_LINE("   end FIXED_IO;");
+         LEX_LINE("   package body ENUM_IO is");
+         LEX_LINE("      procedure $PUT_ITEM(H : INTEGER; S : STRING; WIDTH : INTEGER; RIGHT : BOOLEAN) is");
+         LEX_LINE("      begin pragma INTERFACE(C); end $PUT_ITEM;");
+         LEX_LINE("      function $GET_WORD(H : INTEGER) return STRING is begin pragma INTERFACE(C); end $GET_WORD;");
+         LEX_LINE("      procedure GET(FILE : in IN_FILE; ITEM : out ENUM_TYPE) is");
+         LEX_LINE("      begin");
+         LEX_LINE("         ITEM := VAL($GET_WORD($H(FILE)));");
+         LEX_LINE("      exception");
+         LEX_LINE("         when RANGE_ERROR => raise INVALID_DATA;");
+         LEX_LINE("      end GET;");
+         LEX_LINE("      procedure GET(ITEM : out ENUM_TYPE) is");
+         LEX_LINE("      begin");
+         LEX_LINE("         ITEM := VAL($GET_WORD($CUR_IN));");
+         LEX_LINE("      exception");
+         LEX_LINE("         when RANGE_ERROR => raise INVALID_DATA;");
+         LEX_LINE("      end GET;");
+         LEX_LINE("      procedure PUT(FILE : in OUT_FILE; ITEM : in ENUM_TYPE; WIDTH : in INTEGER := DEFAULT_ENUM_WIDTH) is");
+         LEX_LINE("      begin");
+         LEX_LINE("         $PUT_ITEM($H(FILE), REP(ITEM), WIDTH, FALSE);");
+         LEX_LINE("      end PUT;");
+         LEX_LINE("      procedure PUT(ITEM : in ENUM_TYPE; WIDTH : in INTEGER := DEFAULT_ENUM_WIDTH) is");
+         LEX_LINE("      begin");
+         LEX_LINE("         $PUT_ITEM($CUR_OUT, REP(ITEM), WIDTH, FALSE);");
+         LEX_LINE("      end PUT;");
+         LEX_LINE("   end ENUM_IO;");
+         LEX_LINE("end TEXT_IO;");
+      elsif NAME = "INPUT_OUTPUT" then
+         -- RM79 14.1, 14.2
+         LEX_LINE("generic (type ELEMENT_TYPE) package INPUT_OUTPUT is");
+         LEX_LINE("   restricted type IN_FILE is private;");
+         LEX_LINE("   restricted type OUT_FILE is private;");
+         LEX_LINE("   restricted type INOUT_FILE is private;");
+         LEX_LINE("   procedure CREATE(FILE : in out OUT_FILE; NAME : in STRING);");
+         LEX_LINE("   procedure CREATE(FILE : in out INOUT_FILE; NAME : in STRING);");
+         LEX_LINE("   procedure OPEN(FILE : in out IN_FILE; NAME : in STRING);");
+         LEX_LINE("   procedure OPEN(FILE : in out OUT_FILE; NAME : in STRING);");
+         LEX_LINE("   procedure OPEN(FILE : in out INOUT_FILE; NAME : in STRING);");
+         LEX_LINE("   procedure CLOSE(FILE : in out IN_FILE);");
+         LEX_LINE("   procedure CLOSE(FILE : in out OUT_FILE);");
+         LEX_LINE("   procedure CLOSE(FILE : in out INOUT_FILE);");
+         LEX_LINE("   procedure DELETE(FILE : in out IN_FILE);");
+         LEX_LINE("   procedure DELETE(FILE : in out OUT_FILE);");
+         LEX_LINE("   procedure DELETE(FILE : in out INOUT_FILE);");
+         LEX_LINE("   function IS_OPEN(FILE : in IN_FILE) return BOOLEAN;");
+         LEX_LINE("   function IS_OPEN(FILE : in OUT_FILE) return BOOLEAN;");
+         LEX_LINE("   function IS_OPEN(FILE : in INOUT_FILE) return BOOLEAN;");
+         LEX_LINE("   function NAME(FILE : in IN_FILE) return STRING;");
+         LEX_LINE("   function NAME(FILE : in OUT_FILE) return STRING;");
+         LEX_LINE("   function NAME(FILE : in INOUT_FILE) return STRING;");
+         LEX_LINE("   function SIZE(FILE : in IN_FILE) return INTEGER;");
+         LEX_LINE("   function SIZE(FILE : in OUT_FILE) return INTEGER;");
+         LEX_LINE("   function SIZE(FILE : in INOUT_FILE) return INTEGER;");
+         LEX_LINE("   procedure READ(FILE : in IN_FILE; ITEM : out ELEMENT_TYPE);");
+         LEX_LINE("   procedure READ(FILE : in INOUT_FILE; ITEM : out ELEMENT_TYPE);");
+         LEX_LINE("   procedure WRITE(FILE : in OUT_FILE; ITEM : in ELEMENT_TYPE);");
+         LEX_LINE("   procedure WRITE(FILE : in INOUT_FILE; ITEM : in ELEMENT_TYPE);");
+         LEX_LINE("   function NEXT(FILE : in IN_FILE) return INTEGER;");
+         LEX_LINE("   function NEXT(FILE : in OUT_FILE) return INTEGER;");
+         LEX_LINE("   function NEXT(FILE : in INOUT_FILE) return INTEGER;");
+         LEX_LINE("   procedure SET_NEXT(FILE : in IN_FILE; POS : in INTEGER := 1);");
+         LEX_LINE("   procedure SET_NEXT(FILE : in OUT_FILE; POS : in INTEGER := 1);");
+         LEX_LINE("   procedure SET_NEXT(FILE : in INOUT_FILE; POS : in INTEGER := 1);");
+         LEX_LINE("   FILE_NAME_ERROR, FILE_USE_ERROR, FILE_OPEN_ERROR, INVALID_DATA, MALFUNCTION, END_OF_FILE : exception;");
+         LEX_LINE("private");
+         LEX_LINE("   type IN_FILE is record H : INTEGER := 0; end record;");
+         LEX_LINE("   type OUT_FILE is record H : INTEGER := 0; end record;");
+         LEX_LINE("   type INOUT_FILE is record H : INTEGER := 0; end record;");
+         LEX_LINE("end INPUT_OUTPUT;");
+         LEX_LINE("package body INPUT_OUTPUT is");
+         LEX_LINE("   -- the runtime raises its own exceptions; each instance has its own (RM79 14.2)");
+         LEX_LINE("   $FILE_NAME_ERROR, $FILE_USE_ERROR, $FILE_OPEN_ERROR, $INVALID_DATA, $MALFUNCTION, $END_OF_FILE : exception;");
+         LEX_LINE("   procedure $OPEN(H : in out INTEGER; NAME : STRING; MODE : INTEGER; CREATING : BOOLEAN; LAY : INTEGER) is");
+         LEX_LINE("   begin pragma INTERFACE(C); end $OPEN;");
+         LEX_LINE("   procedure $CLOSE(H : in out INTEGER; REMOVING : BOOLEAN) is begin pragma INTERFACE(C); end $CLOSE;");
+         LEX_LINE("   function $IS_OPEN(H : INTEGER) return BOOLEAN is begin pragma INTERFACE(C); end $IS_OPEN;");
+         LEX_LINE("   function $NAME(H : INTEGER) return STRING is begin pragma INTERFACE(C); end $NAME;");
+         LEX_LINE("   function $SIZE(H : INTEGER) return INTEGER is begin pragma INTERFACE(C); end $SIZE;");
+         LEX_LINE("   function $NEXT(H : INTEGER) return INTEGER is begin pragma INTERFACE(C); end $NEXT;");
+         LEX_LINE("   procedure $SET_NEXT(H : INTEGER; POS : INTEGER) is begin pragma INTERFACE(C); end $SET_NEXT;");
+         LEX_LINE("   procedure $READ_ELEMENT(H : INTEGER; ITEM : out ELEMENT_TYPE; LAY : INTEGER) is");
+         LEX_LINE("   begin pragma INTERFACE(C); end $READ_ELEMENT;");
+         LEX_LINE("   procedure $WRITE_ELEMENT(H : INTEGER; ITEM : ELEMENT_TYPE; LAY : INTEGER) is");
+         LEX_LINE("   begin pragma INTERFACE(C); end $WRITE_ELEMENT;");
+         LEX_LINE("   procedure CREATE(FILE : in out OUT_FILE; NAME : in STRING) is");
+         LEX_LINE("   begin");
+         LEX_LINE("      $OPEN(FILE.H, NAME, 2, TRUE, ELEMENT_TYPE'$LAYOUT);");
+         LEX_LINE("   exception");
+         LEX_LINE("      when $FILE_NAME_ERROR => raise FILE_NAME_ERROR;");
+         LEX_LINE("      when $FILE_USE_ERROR => raise FILE_USE_ERROR;");
+         LEX_LINE("      when $FILE_OPEN_ERROR => raise FILE_OPEN_ERROR;");
+         LEX_LINE("      when $INVALID_DATA => raise INVALID_DATA;");
+         LEX_LINE("      when $MALFUNCTION => raise MALFUNCTION;");
+         LEX_LINE("      when $END_OF_FILE => raise END_OF_FILE;");
+         LEX_LINE("   end CREATE;");
+         LEX_LINE("   procedure CREATE(FILE : in out INOUT_FILE; NAME : in STRING) is");
+         LEX_LINE("   begin");
+         LEX_LINE("      $OPEN(FILE.H, NAME, 3, TRUE, ELEMENT_TYPE'$LAYOUT);");
+         LEX_LINE("   exception");
+         LEX_LINE("      when $FILE_NAME_ERROR => raise FILE_NAME_ERROR;");
+         LEX_LINE("      when $FILE_USE_ERROR => raise FILE_USE_ERROR;");
+         LEX_LINE("      when $FILE_OPEN_ERROR => raise FILE_OPEN_ERROR;");
+         LEX_LINE("      when $INVALID_DATA => raise INVALID_DATA;");
+         LEX_LINE("      when $MALFUNCTION => raise MALFUNCTION;");
+         LEX_LINE("      when $END_OF_FILE => raise END_OF_FILE;");
+         LEX_LINE("   end CREATE;");
+         LEX_LINE("   procedure OPEN(FILE : in out IN_FILE; NAME : in STRING) is");
+         LEX_LINE("   begin");
+         LEX_LINE("      $OPEN(FILE.H, NAME, 1, FALSE, ELEMENT_TYPE'$LAYOUT);");
+         LEX_LINE("   exception");
+         LEX_LINE("      when $FILE_NAME_ERROR => raise FILE_NAME_ERROR;");
+         LEX_LINE("      when $FILE_USE_ERROR => raise FILE_USE_ERROR;");
+         LEX_LINE("      when $FILE_OPEN_ERROR => raise FILE_OPEN_ERROR;");
+         LEX_LINE("      when $INVALID_DATA => raise INVALID_DATA;");
+         LEX_LINE("      when $MALFUNCTION => raise MALFUNCTION;");
+         LEX_LINE("      when $END_OF_FILE => raise END_OF_FILE;");
+         LEX_LINE("   end OPEN;");
+         LEX_LINE("   procedure OPEN(FILE : in out OUT_FILE; NAME : in STRING) is");
+         LEX_LINE("   begin");
+         LEX_LINE("      $OPEN(FILE.H, NAME, 2, FALSE, ELEMENT_TYPE'$LAYOUT);");
+         LEX_LINE("   exception");
+         LEX_LINE("      when $FILE_NAME_ERROR => raise FILE_NAME_ERROR;");
+         LEX_LINE("      when $FILE_USE_ERROR => raise FILE_USE_ERROR;");
+         LEX_LINE("      when $FILE_OPEN_ERROR => raise FILE_OPEN_ERROR;");
+         LEX_LINE("      when $INVALID_DATA => raise INVALID_DATA;");
+         LEX_LINE("      when $MALFUNCTION => raise MALFUNCTION;");
+         LEX_LINE("      when $END_OF_FILE => raise END_OF_FILE;");
+         LEX_LINE("   end OPEN;");
+         LEX_LINE("   procedure OPEN(FILE : in out INOUT_FILE; NAME : in STRING) is");
+         LEX_LINE("   begin");
+         LEX_LINE("      $OPEN(FILE.H, NAME, 3, FALSE, ELEMENT_TYPE'$LAYOUT);");
+         LEX_LINE("   exception");
+         LEX_LINE("      when $FILE_NAME_ERROR => raise FILE_NAME_ERROR;");
+         LEX_LINE("      when $FILE_USE_ERROR => raise FILE_USE_ERROR;");
+         LEX_LINE("      when $FILE_OPEN_ERROR => raise FILE_OPEN_ERROR;");
+         LEX_LINE("      when $INVALID_DATA => raise INVALID_DATA;");
+         LEX_LINE("      when $MALFUNCTION => raise MALFUNCTION;");
+         LEX_LINE("      when $END_OF_FILE => raise END_OF_FILE;");
+         LEX_LINE("   end OPEN;");
+         LEX_LINE("   procedure CLOSE(FILE : in out IN_FILE) is");
+         LEX_LINE("   begin");
+         LEX_LINE("      $CLOSE(FILE.H, FALSE);");
+         LEX_LINE("   exception");
+         LEX_LINE("      when $FILE_NAME_ERROR => raise FILE_NAME_ERROR;");
+         LEX_LINE("      when $FILE_USE_ERROR => raise FILE_USE_ERROR;");
+         LEX_LINE("      when $FILE_OPEN_ERROR => raise FILE_OPEN_ERROR;");
+         LEX_LINE("      when $INVALID_DATA => raise INVALID_DATA;");
+         LEX_LINE("      when $MALFUNCTION => raise MALFUNCTION;");
+         LEX_LINE("      when $END_OF_FILE => raise END_OF_FILE;");
+         LEX_LINE("   end CLOSE;");
+         LEX_LINE("   procedure DELETE(FILE : in out IN_FILE) is");
+         LEX_LINE("   begin");
+         LEX_LINE("      $CLOSE(FILE.H, TRUE);");
+         LEX_LINE("   exception");
+         LEX_LINE("      when $FILE_NAME_ERROR => raise FILE_NAME_ERROR;");
+         LEX_LINE("      when $FILE_USE_ERROR => raise FILE_USE_ERROR;");
+         LEX_LINE("      when $FILE_OPEN_ERROR => raise FILE_OPEN_ERROR;");
+         LEX_LINE("      when $INVALID_DATA => raise INVALID_DATA;");
+         LEX_LINE("      when $MALFUNCTION => raise MALFUNCTION;");
+         LEX_LINE("      when $END_OF_FILE => raise END_OF_FILE;");
+         LEX_LINE("   end DELETE;");
+         LEX_LINE("   function IS_OPEN(FILE : in IN_FILE) return BOOLEAN is");
+         LEX_LINE("   begin");
+         LEX_LINE("      return $IS_OPEN(FILE.H);");
+         LEX_LINE("   exception");
+         LEX_LINE("      when $FILE_NAME_ERROR => raise FILE_NAME_ERROR;");
+         LEX_LINE("      when $FILE_USE_ERROR => raise FILE_USE_ERROR;");
+         LEX_LINE("      when $FILE_OPEN_ERROR => raise FILE_OPEN_ERROR;");
+         LEX_LINE("      when $INVALID_DATA => raise INVALID_DATA;");
+         LEX_LINE("      when $MALFUNCTION => raise MALFUNCTION;");
+         LEX_LINE("      when $END_OF_FILE => raise END_OF_FILE;");
+         LEX_LINE("   end IS_OPEN;");
+         LEX_LINE("   function NAME(FILE : in IN_FILE) return STRING is");
+         LEX_LINE("   begin");
+         LEX_LINE("      return $NAME(FILE.H);");
+         LEX_LINE("   exception");
+         LEX_LINE("      when $FILE_NAME_ERROR => raise FILE_NAME_ERROR;");
+         LEX_LINE("      when $FILE_USE_ERROR => raise FILE_USE_ERROR;");
+         LEX_LINE("      when $FILE_OPEN_ERROR => raise FILE_OPEN_ERROR;");
+         LEX_LINE("      when $INVALID_DATA => raise INVALID_DATA;");
+         LEX_LINE("      when $MALFUNCTION => raise MALFUNCTION;");
+         LEX_LINE("      when $END_OF_FILE => raise END_OF_FILE;");
+         LEX_LINE("   end NAME;");
+         LEX_LINE("   function SIZE(FILE : in IN_FILE) return INTEGER is");
+         LEX_LINE("   begin");
+         LEX_LINE("      return $SIZE(FILE.H);");
+         LEX_LINE("   exception");
+         LEX_LINE("      when $FILE_NAME_ERROR => raise FILE_NAME_ERROR;");
+         LEX_LINE("      when $FILE_USE_ERROR => raise FILE_USE_ERROR;");
+         LEX_LINE("      when $FILE_OPEN_ERROR => raise FILE_OPEN_ERROR;");
+         LEX_LINE("      when $INVALID_DATA => raise INVALID_DATA;");
+         LEX_LINE("      when $MALFUNCTION => raise MALFUNCTION;");
+         LEX_LINE("      when $END_OF_FILE => raise END_OF_FILE;");
+         LEX_LINE("   end SIZE;");
+         LEX_LINE("   function NEXT(FILE : in IN_FILE) return INTEGER is");
+         LEX_LINE("   begin");
+         LEX_LINE("      return $NEXT(FILE.H);");
+         LEX_LINE("   exception");
+         LEX_LINE("      when $FILE_NAME_ERROR => raise FILE_NAME_ERROR;");
+         LEX_LINE("      when $FILE_USE_ERROR => raise FILE_USE_ERROR;");
+         LEX_LINE("      when $FILE_OPEN_ERROR => raise FILE_OPEN_ERROR;");
+         LEX_LINE("      when $INVALID_DATA => raise INVALID_DATA;");
+         LEX_LINE("      when $MALFUNCTION => raise MALFUNCTION;");
+         LEX_LINE("      when $END_OF_FILE => raise END_OF_FILE;");
+         LEX_LINE("   end NEXT;");
+         LEX_LINE("   procedure SET_NEXT(FILE : in IN_FILE; POS : in INTEGER := 1) is");
+         LEX_LINE("   begin");
+         LEX_LINE("      $SET_NEXT(FILE.H, POS);");
+         LEX_LINE("   exception");
+         LEX_LINE("      when $FILE_NAME_ERROR => raise FILE_NAME_ERROR;");
+         LEX_LINE("      when $FILE_USE_ERROR => raise FILE_USE_ERROR;");
+         LEX_LINE("      when $FILE_OPEN_ERROR => raise FILE_OPEN_ERROR;");
+         LEX_LINE("      when $INVALID_DATA => raise INVALID_DATA;");
+         LEX_LINE("      when $MALFUNCTION => raise MALFUNCTION;");
+         LEX_LINE("      when $END_OF_FILE => raise END_OF_FILE;");
+         LEX_LINE("   end SET_NEXT;");
+         LEX_LINE("   procedure CLOSE(FILE : in out OUT_FILE) is");
+         LEX_LINE("   begin");
+         LEX_LINE("      $CLOSE(FILE.H, FALSE);");
+         LEX_LINE("   exception");
+         LEX_LINE("      when $FILE_NAME_ERROR => raise FILE_NAME_ERROR;");
+         LEX_LINE("      when $FILE_USE_ERROR => raise FILE_USE_ERROR;");
+         LEX_LINE("      when $FILE_OPEN_ERROR => raise FILE_OPEN_ERROR;");
+         LEX_LINE("      when $INVALID_DATA => raise INVALID_DATA;");
+         LEX_LINE("      when $MALFUNCTION => raise MALFUNCTION;");
+         LEX_LINE("      when $END_OF_FILE => raise END_OF_FILE;");
+         LEX_LINE("   end CLOSE;");
+         LEX_LINE("   procedure DELETE(FILE : in out OUT_FILE) is");
+         LEX_LINE("   begin");
+         LEX_LINE("      $CLOSE(FILE.H, TRUE);");
+         LEX_LINE("   exception");
+         LEX_LINE("      when $FILE_NAME_ERROR => raise FILE_NAME_ERROR;");
+         LEX_LINE("      when $FILE_USE_ERROR => raise FILE_USE_ERROR;");
+         LEX_LINE("      when $FILE_OPEN_ERROR => raise FILE_OPEN_ERROR;");
+         LEX_LINE("      when $INVALID_DATA => raise INVALID_DATA;");
+         LEX_LINE("      when $MALFUNCTION => raise MALFUNCTION;");
+         LEX_LINE("      when $END_OF_FILE => raise END_OF_FILE;");
+         LEX_LINE("   end DELETE;");
+         LEX_LINE("   function IS_OPEN(FILE : in OUT_FILE) return BOOLEAN is");
+         LEX_LINE("   begin");
+         LEX_LINE("      return $IS_OPEN(FILE.H);");
+         LEX_LINE("   exception");
+         LEX_LINE("      when $FILE_NAME_ERROR => raise FILE_NAME_ERROR;");
+         LEX_LINE("      when $FILE_USE_ERROR => raise FILE_USE_ERROR;");
+         LEX_LINE("      when $FILE_OPEN_ERROR => raise FILE_OPEN_ERROR;");
+         LEX_LINE("      when $INVALID_DATA => raise INVALID_DATA;");
+         LEX_LINE("      when $MALFUNCTION => raise MALFUNCTION;");
+         LEX_LINE("      when $END_OF_FILE => raise END_OF_FILE;");
+         LEX_LINE("   end IS_OPEN;");
+         LEX_LINE("   function NAME(FILE : in OUT_FILE) return STRING is");
+         LEX_LINE("   begin");
+         LEX_LINE("      return $NAME(FILE.H);");
+         LEX_LINE("   exception");
+         LEX_LINE("      when $FILE_NAME_ERROR => raise FILE_NAME_ERROR;");
+         LEX_LINE("      when $FILE_USE_ERROR => raise FILE_USE_ERROR;");
+         LEX_LINE("      when $FILE_OPEN_ERROR => raise FILE_OPEN_ERROR;");
+         LEX_LINE("      when $INVALID_DATA => raise INVALID_DATA;");
+         LEX_LINE("      when $MALFUNCTION => raise MALFUNCTION;");
+         LEX_LINE("      when $END_OF_FILE => raise END_OF_FILE;");
+         LEX_LINE("   end NAME;");
+         LEX_LINE("   function SIZE(FILE : in OUT_FILE) return INTEGER is");
+         LEX_LINE("   begin");
+         LEX_LINE("      return $SIZE(FILE.H);");
+         LEX_LINE("   exception");
+         LEX_LINE("      when $FILE_NAME_ERROR => raise FILE_NAME_ERROR;");
+         LEX_LINE("      when $FILE_USE_ERROR => raise FILE_USE_ERROR;");
+         LEX_LINE("      when $FILE_OPEN_ERROR => raise FILE_OPEN_ERROR;");
+         LEX_LINE("      when $INVALID_DATA => raise INVALID_DATA;");
+         LEX_LINE("      when $MALFUNCTION => raise MALFUNCTION;");
+         LEX_LINE("      when $END_OF_FILE => raise END_OF_FILE;");
+         LEX_LINE("   end SIZE;");
+         LEX_LINE("   function NEXT(FILE : in OUT_FILE) return INTEGER is");
+         LEX_LINE("   begin");
+         LEX_LINE("      return $NEXT(FILE.H);");
+         LEX_LINE("   exception");
+         LEX_LINE("      when $FILE_NAME_ERROR => raise FILE_NAME_ERROR;");
+         LEX_LINE("      when $FILE_USE_ERROR => raise FILE_USE_ERROR;");
+         LEX_LINE("      when $FILE_OPEN_ERROR => raise FILE_OPEN_ERROR;");
+         LEX_LINE("      when $INVALID_DATA => raise INVALID_DATA;");
+         LEX_LINE("      when $MALFUNCTION => raise MALFUNCTION;");
+         LEX_LINE("      when $END_OF_FILE => raise END_OF_FILE;");
+         LEX_LINE("   end NEXT;");
+         LEX_LINE("   procedure SET_NEXT(FILE : in OUT_FILE; POS : in INTEGER := 1) is");
+         LEX_LINE("   begin");
+         LEX_LINE("      $SET_NEXT(FILE.H, POS);");
+         LEX_LINE("   exception");
+         LEX_LINE("      when $FILE_NAME_ERROR => raise FILE_NAME_ERROR;");
+         LEX_LINE("      when $FILE_USE_ERROR => raise FILE_USE_ERROR;");
+         LEX_LINE("      when $FILE_OPEN_ERROR => raise FILE_OPEN_ERROR;");
+         LEX_LINE("      when $INVALID_DATA => raise INVALID_DATA;");
+         LEX_LINE("      when $MALFUNCTION => raise MALFUNCTION;");
+         LEX_LINE("      when $END_OF_FILE => raise END_OF_FILE;");
+         LEX_LINE("   end SET_NEXT;");
+         LEX_LINE("   procedure CLOSE(FILE : in out INOUT_FILE) is");
+         LEX_LINE("   begin");
+         LEX_LINE("      $CLOSE(FILE.H, FALSE);");
+         LEX_LINE("   exception");
+         LEX_LINE("      when $FILE_NAME_ERROR => raise FILE_NAME_ERROR;");
+         LEX_LINE("      when $FILE_USE_ERROR => raise FILE_USE_ERROR;");
+         LEX_LINE("      when $FILE_OPEN_ERROR => raise FILE_OPEN_ERROR;");
+         LEX_LINE("      when $INVALID_DATA => raise INVALID_DATA;");
+         LEX_LINE("      when $MALFUNCTION => raise MALFUNCTION;");
+         LEX_LINE("      when $END_OF_FILE => raise END_OF_FILE;");
+         LEX_LINE("   end CLOSE;");
+         LEX_LINE("   procedure DELETE(FILE : in out INOUT_FILE) is");
+         LEX_LINE("   begin");
+         LEX_LINE("      $CLOSE(FILE.H, TRUE);");
+         LEX_LINE("   exception");
+         LEX_LINE("      when $FILE_NAME_ERROR => raise FILE_NAME_ERROR;");
+         LEX_LINE("      when $FILE_USE_ERROR => raise FILE_USE_ERROR;");
+         LEX_LINE("      when $FILE_OPEN_ERROR => raise FILE_OPEN_ERROR;");
+         LEX_LINE("      when $INVALID_DATA => raise INVALID_DATA;");
+         LEX_LINE("      when $MALFUNCTION => raise MALFUNCTION;");
+         LEX_LINE("      when $END_OF_FILE => raise END_OF_FILE;");
+         LEX_LINE("   end DELETE;");
+         LEX_LINE("   function IS_OPEN(FILE : in INOUT_FILE) return BOOLEAN is");
+         LEX_LINE("   begin");
+         LEX_LINE("      return $IS_OPEN(FILE.H);");
+         LEX_LINE("   exception");
+         LEX_LINE("      when $FILE_NAME_ERROR => raise FILE_NAME_ERROR;");
+         LEX_LINE("      when $FILE_USE_ERROR => raise FILE_USE_ERROR;");
+         LEX_LINE("      when $FILE_OPEN_ERROR => raise FILE_OPEN_ERROR;");
+         LEX_LINE("      when $INVALID_DATA => raise INVALID_DATA;");
+         LEX_LINE("      when $MALFUNCTION => raise MALFUNCTION;");
+         LEX_LINE("      when $END_OF_FILE => raise END_OF_FILE;");
+         LEX_LINE("   end IS_OPEN;");
+         LEX_LINE("   function NAME(FILE : in INOUT_FILE) return STRING is");
+         LEX_LINE("   begin");
+         LEX_LINE("      return $NAME(FILE.H);");
+         LEX_LINE("   exception");
+         LEX_LINE("      when $FILE_NAME_ERROR => raise FILE_NAME_ERROR;");
+         LEX_LINE("      when $FILE_USE_ERROR => raise FILE_USE_ERROR;");
+         LEX_LINE("      when $FILE_OPEN_ERROR => raise FILE_OPEN_ERROR;");
+         LEX_LINE("      when $INVALID_DATA => raise INVALID_DATA;");
+         LEX_LINE("      when $MALFUNCTION => raise MALFUNCTION;");
+         LEX_LINE("      when $END_OF_FILE => raise END_OF_FILE;");
+         LEX_LINE("   end NAME;");
+         LEX_LINE("   function SIZE(FILE : in INOUT_FILE) return INTEGER is");
+         LEX_LINE("   begin");
+         LEX_LINE("      return $SIZE(FILE.H);");
+         LEX_LINE("   exception");
+         LEX_LINE("      when $FILE_NAME_ERROR => raise FILE_NAME_ERROR;");
+         LEX_LINE("      when $FILE_USE_ERROR => raise FILE_USE_ERROR;");
+         LEX_LINE("      when $FILE_OPEN_ERROR => raise FILE_OPEN_ERROR;");
+         LEX_LINE("      when $INVALID_DATA => raise INVALID_DATA;");
+         LEX_LINE("      when $MALFUNCTION => raise MALFUNCTION;");
+         LEX_LINE("      when $END_OF_FILE => raise END_OF_FILE;");
+         LEX_LINE("   end SIZE;");
+         LEX_LINE("   function NEXT(FILE : in INOUT_FILE) return INTEGER is");
+         LEX_LINE("   begin");
+         LEX_LINE("      return $NEXT(FILE.H);");
+         LEX_LINE("   exception");
+         LEX_LINE("      when $FILE_NAME_ERROR => raise FILE_NAME_ERROR;");
+         LEX_LINE("      when $FILE_USE_ERROR => raise FILE_USE_ERROR;");
+         LEX_LINE("      when $FILE_OPEN_ERROR => raise FILE_OPEN_ERROR;");
+         LEX_LINE("      when $INVALID_DATA => raise INVALID_DATA;");
+         LEX_LINE("      when $MALFUNCTION => raise MALFUNCTION;");
+         LEX_LINE("      when $END_OF_FILE => raise END_OF_FILE;");
+         LEX_LINE("   end NEXT;");
+         LEX_LINE("   procedure SET_NEXT(FILE : in INOUT_FILE; POS : in INTEGER := 1) is");
+         LEX_LINE("   begin");
+         LEX_LINE("      $SET_NEXT(FILE.H, POS);");
+         LEX_LINE("   exception");
+         LEX_LINE("      when $FILE_NAME_ERROR => raise FILE_NAME_ERROR;");
+         LEX_LINE("      when $FILE_USE_ERROR => raise FILE_USE_ERROR;");
+         LEX_LINE("      when $FILE_OPEN_ERROR => raise FILE_OPEN_ERROR;");
+         LEX_LINE("      when $INVALID_DATA => raise INVALID_DATA;");
+         LEX_LINE("      when $MALFUNCTION => raise MALFUNCTION;");
+         LEX_LINE("      when $END_OF_FILE => raise END_OF_FILE;");
+         LEX_LINE("   end SET_NEXT;");
+         LEX_LINE("   procedure READ(FILE : in IN_FILE; ITEM : out ELEMENT_TYPE) is");
+         LEX_LINE("   begin");
+         LEX_LINE("      $READ_ELEMENT(FILE.H, ITEM, ELEMENT_TYPE'$LAYOUT);");
+         LEX_LINE("   exception");
+         LEX_LINE("      when $FILE_NAME_ERROR => raise FILE_NAME_ERROR;");
+         LEX_LINE("      when $FILE_USE_ERROR => raise FILE_USE_ERROR;");
+         LEX_LINE("      when $FILE_OPEN_ERROR => raise FILE_OPEN_ERROR;");
+         LEX_LINE("      when $INVALID_DATA => raise INVALID_DATA;");
+         LEX_LINE("      when $MALFUNCTION => raise MALFUNCTION;");
+         LEX_LINE("      when $END_OF_FILE => raise END_OF_FILE;");
+         LEX_LINE("   end READ;");
+         LEX_LINE("   procedure READ(FILE : in INOUT_FILE; ITEM : out ELEMENT_TYPE) is");
+         LEX_LINE("   begin");
+         LEX_LINE("      $READ_ELEMENT(FILE.H, ITEM, ELEMENT_TYPE'$LAYOUT);");
+         LEX_LINE("   exception");
+         LEX_LINE("      when $FILE_NAME_ERROR => raise FILE_NAME_ERROR;");
+         LEX_LINE("      when $FILE_USE_ERROR => raise FILE_USE_ERROR;");
+         LEX_LINE("      when $FILE_OPEN_ERROR => raise FILE_OPEN_ERROR;");
+         LEX_LINE("      when $INVALID_DATA => raise INVALID_DATA;");
+         LEX_LINE("      when $MALFUNCTION => raise MALFUNCTION;");
+         LEX_LINE("      when $END_OF_FILE => raise END_OF_FILE;");
+         LEX_LINE("   end READ;");
+         LEX_LINE("   procedure WRITE(FILE : in OUT_FILE; ITEM : in ELEMENT_TYPE) is");
+         LEX_LINE("   begin");
+         LEX_LINE("      $WRITE_ELEMENT(FILE.H, ITEM, ELEMENT_TYPE'$LAYOUT);");
+         LEX_LINE("   exception");
+         LEX_LINE("      when $FILE_NAME_ERROR => raise FILE_NAME_ERROR;");
+         LEX_LINE("      when $FILE_USE_ERROR => raise FILE_USE_ERROR;");
+         LEX_LINE("      when $FILE_OPEN_ERROR => raise FILE_OPEN_ERROR;");
+         LEX_LINE("      when $INVALID_DATA => raise INVALID_DATA;");
+         LEX_LINE("      when $MALFUNCTION => raise MALFUNCTION;");
+         LEX_LINE("      when $END_OF_FILE => raise END_OF_FILE;");
+         LEX_LINE("   end WRITE;");
+         LEX_LINE("   procedure WRITE(FILE : in INOUT_FILE; ITEM : in ELEMENT_TYPE) is");
+         LEX_LINE("   begin");
+         LEX_LINE("      $WRITE_ELEMENT(FILE.H, ITEM, ELEMENT_TYPE'$LAYOUT);");
+         LEX_LINE("   exception");
+         LEX_LINE("      when $FILE_NAME_ERROR => raise FILE_NAME_ERROR;");
+         LEX_LINE("      when $FILE_USE_ERROR => raise FILE_USE_ERROR;");
+         LEX_LINE("      when $FILE_OPEN_ERROR => raise FILE_OPEN_ERROR;");
+         LEX_LINE("      when $INVALID_DATA => raise INVALID_DATA;");
+         LEX_LINE("      when $MALFUNCTION => raise MALFUNCTION;");
+         LEX_LINE("      when $END_OF_FILE => raise END_OF_FILE;");
+         LEX_LINE("   end WRITE;");
+         LEX_LINE("end INPUT_OUTPUT;");
+      else
+         PRELUDE_LEX := FALSE;
+         SRC_LINE := SAVED_LINE;
+         return;
+      end if;
+      PRELUDE_LEX := FALSE;
+      SRC_LINE := SAVED_LINE;
+      ADD_TOKEN(K_EOF, "<end>", 0);
+      TPOS := FROM;
+      -- the environment of the program is not that of the unit
+      SAVED_ENV := ENV_NAMES;
+      ENV_NAMES := MK("");
+      COMPILATION(R);
+      ENV_NAMES := SAVED_ENV;
+      TPOS := SAVED_POS;
+   end PREDEFINED_UNIT;
+
+   -- predefined units in GREEN (RM79 9.11)
+   procedure PRELUDE is
+   begin
+      LEX_LINE("generic task SIGNAL is entry SEND; entry WAIT; end SIGNAL;");
+      LEX_LINE("task body SIGNAL is RECEIVED : BOOLEAN := FALSE; begin loop select accept SEND;");
+      LEX_LINE("RECEIVED := TRUE; or when RECEIVED => accept WAIT; RECEIVED := FALSE; end select;");
+      LEX_LINE("end loop; end SIGNAL;");
+      LEX_LINE("generic task SEMAPHORE is entry P; entry V; end SEMAPHORE;");
+      LEX_LINE("task body SEMAPHORE is begin loop accept P; accept V; end loop; end SEMAPHORE;");
+   end PRELUDE;
+
+   -- the library units the main program uses: those its visibility list
+   -- and those of the subunits name, and transitively those they name
+   -- (RM79 10.5)
+   procedure USED_UNITS(U : NODE; R : out TEXT) is
       P : NODE := U;
+      MAIN : NODE;
+      CHANGED : BOOLEAN := TRUE;
+   begin
+      while P /= null loop
+         if P.FORMAL.all(1) /= "!" then
+            MAIN := P;
+         end if;
+         P := P.NEXT;
+      end loop;
+      R := MK("," & MAIN.NAME.all & MAIN.FORMAL.all);
+      P := U;
+      while P /= null loop
+         if P.FORMAL.all(1) = "!" then
+            R := MK(R.all & P.FORMAL.all(2 .. P.FORMAL.all'LENGTH));
+         end if;
+         P := P.NEXT;
+      end loop;
+      while CHANGED loop
+         CHANGED := FALSE;
+         P := U;
+         while P /= null loop
+            if P.FORMAL.all(1) /= "!" and then LISTED(R, P.NAME.all) then
+               ADD_NAMES(R, P.FORMAL.all, CHANGED);
+            end if;
+            P := P.NEXT;
+         end loop;
+      end loop;
+   end USED_UNITS;
+
+   procedure ADD_NAMES(R : in out TEXT; LIST : STRING; CHANGED : in out BOOLEAN) is
+      I, J : INTEGER := LIST'FIRST;
+   begin
+      while I < LIST'LAST loop
+         J := I + 1;
+         while J <= LIST'LAST and then LIST(J) /= "," loop
+            J := J + 1;
+         end loop;
+         if J > I + 1 then
+            if not LISTED(R, LIST(I + 1 .. J - 1)) then
+               R := MK(R.all & LIST(I + 1 .. J - 1) & ",");
+               CHANGED := TRUE;
+            end if;
+         end if;
+         I := J;
+      end loop;
+   end ADD_NAMES;
+
+   procedure TRANSLATE(U : NODE) is
+      P : NODE := PRELUDE_UNITS;
+      USED, ENV : TEXT;
       Y : SYM;
    begin
+      while P /= null loop
+         DECL_ELEMENT(P);
+         P := P.NEXT;
+      end loop;
+      USED_UNITS(U, USED);
+      P := U;
       OPEN_SCOPE;
       while P /= null loop
-         if P.NEXT = null then
+         -- every compilation unit is restricted: the library units it names
+         -- are visible in it (RM79 10.1)
+         BARRIERS := null;
+         CUR_COMP_UNIT := P.NAME;
+         -- a body sees what its specification named (RM79 10.2)
+         Y := LOOKUP(P.NAME.all);
+         if (P.KIND = N_PKGBODY or P.KIND = N_TASKBODY or P.KIND = N_PROC or P.KIND = N_FUNC) and Y /= null then
+            if Y.DECL /= null and then Y.DECL.FORMAL /= null then
+               P.FORMAL := MK(P.FORMAL.all & Y.DECL.FORMAL.all);
+            end if;
+         end if;
+         PUSH_BARRIER(P, 1);
+         if P.FORMAL.all(1) = "!" or P.FORMAL.all(1) = "#" then
+            -- a subunit: translated at its stub
+            null;
+         elsif LAST_UNIT(P) then
             -- the main program: a library procedure without parameters
             if P.KIND /= N_PROC or P.A /= null then
                FAIL(P.LINE, "the main program is a procedure without parameters");
@@ -126,12 +1060,131 @@
             DEFINE(Y, P.LINE);
             SUBPROGRAM_BODY(P, Y);
             MAIN_NAME := Y.CNAME;
-         else
+         elsif LISTED(USED, P.NAME.all) then
             DECL_ELEMENT(P);
+            ENV := MK("," & ENV_NAMES.all);
+            if (P.KIND = N_PKGSPEC or P.KIND = N_PKGBODY or P.KIND = N_TASKSPEC) and then LISTED(ENV, P.NAME.all)
+               and then not BODY_FOLLOWS(P) then
+               -- after the body: the body completes the declarations
+               ENVIRONMENT_MODULE(P);
+            end if;
+         else
+            -- a library unit the main program does not use is not
+            -- elaborated (RM79 10.5)
+            CODE := NEW_BUFFER;
+            DECL_ELEMENT(P);
+            CODE := OUT_INIT;
+         end if;
+         P := P.NEXT;
+      end loop;
+      P := U;
+      while P /= null loop
+         if P.FORMAL.all(1) = "!" then
+            FAIL(P.LINE, "subunit " & P.NAME.all & " has no body stub in an enclosing unit (RM79 10.2)");
          end if;
          P := P.NEXT;
       end loop;
    end TRANSLATE;
+
+   -- pragma ENVIRONMENT (RM79 8.6): the identifiers of the visible part of
+   -- the module are declared at the outermost level of the program, where
+   -- visibility restrictions do not reach
+   procedure ENVIRONMENT_MODULE(P : NODE) is
+      U : NODE := NN(N_USE, P.LINE);
+      SAVED : INTEGER := DEPTH;
+   begin
+      U.A := NN(N_NAME, P.LINE);
+      U.A.NAME := P.NAME;
+      DEPTH := 0;
+      USE_CLAUSE(U);
+      DEPTH := SAVED;
+   end ENVIRONMENT_MODULE;
+
+   -- a body of module P comes later in the compilation
+   function BODY_FOLLOWS(P : NODE) return BOOLEAN is
+      Q : NODE := P.NEXT;
+   begin
+      if P.KIND = N_PKGBODY then
+         return FALSE;
+      end if;
+      while Q /= null loop
+         if (Q.KIND = N_PKGBODY or Q.KIND = N_TASKBODY) and then Q.NAME.all = P.NAME.all then
+            return TRUE;
+         end if;
+         Q := Q.NEXT;
+      end loop;
+      return FALSE;
+   end BODY_FOLLOWS;
+
+   -- for X use at N anywhere in the program: objects at addresses are views
+   -- of the memory, kept in agreement with it after each statement (RM79 13.5)
+   procedure FIND_ADDRESS_SPECIFICATIONS is
+   begin
+      for I in 1 .. NTOKS - 1 loop
+         if TOKS(I).KIND = K_KW and then TOKS(I + 1).KIND = K_KW then
+            if TOKS(I).S.all = "USE" and then TOKS(I + 1).S.all = "AT" then
+               HAS_VIEWS := TRUE;
+            end if;
+         end if;
+      end loop;
+   end FIND_ADDRESS_SPECIFICATIONS;
+
+   -- the file GREEN_LISTING names, "" without it
+   function LISTING_FILE return STRING is
+   begin
+      pragma INTERFACE(C);
+   end LISTING_FILE;
+
+   -- the listing of the source, numbered, as pragmas LIST and PAGE ask
+   -- (RM79 App. B), to the file GREEN_LISTING names
+   procedure PRINT_LISTING(LINES : INTEGER) is
+      LNAME : STRING := LISTING_FILE;
+      F : OUT_FILE;
+      ON : BOOLEAN := TRUE;
+      K : INTEGER;
+   begin
+      if LNAME'LENGTH = 0 then
+         return;
+      end if;
+      CREATE(F, LNAME);
+      for L in 1 .. LINES loop
+         for M in 1 .. NLISTING loop
+            if LISTING_LINES(M) = L and LISTING_WHAT(M) = "N" then
+               ON := TRUE;
+            end if;
+         end loop;
+         if ON then
+            PUT(F, L, 5);
+            PUT(F, "  ");
+            if SRC_LINES(L) /= null then
+               PUT(F, SRC_LINES(L).all);
+            end if;
+            PUT(F, NEWLINE);
+         end if;
+         for M in 1 .. NLISTING loop
+            if LISTING_LINES(M) = L and LISTING_WHAT(M) = "F" then
+               ON := FALSE;
+            elsif LISTING_LINES(M) = L and LISTING_WHAT(M) = "P" then
+               PUT(F, FF);
+               PUT(F, NEWLINE);
+            end if;
+         end loop;
+      end loop;
+      CLOSE(F);
+   end PRINT_LISTING;
+
+   -- the main program is the last unit that is not a subunit
+   function LAST_UNIT(P : NODE) return BOOLEAN is
+      Q : NODE := P.NEXT;
+   begin
+      while Q /= null loop
+         if Q.FORMAL.all(1) /= "!" then
+            return FALSE;
+         end if;
+         Q := Q.NEXT;
+      end loop;
+      return TRUE;
+   end LAST_UNIT;
 
    procedure PRINT_PROGRAM is
    begin
@@ -143,6 +1196,8 @@
       PRINT_BUFFER(OUT_TYPES);
       PRINT_BUFFER(OUT_FRAMES);
       PRINT_BUFFER(OUT_HELPERS);
+      PRINT_BUFFER(OUT_LAYDECLS);
+      PRINT_BUFFER(OUT_LAYS);
       PRINT_BUFFER(OUT_PROTOS);
       PRINT_BUFFER(OUT_GLOBALS);
       PRINT_BUFFER(OUT_FUNCS);
@@ -151,6 +1206,10 @@
       PUT("  rt_init(argc, argv);");
       PUT(NEWLINE);
       PUT("  rt_set_lang(1);");
+      PUT(NEWLINE);
+      PUT("  rt_g_set_unit(" & INTEGER'REP(CONF_STORAGE_UNIT) & ");");
+      PUT(NEWLINE);
+      PUT("  rt_g_set_memory(" & INTEGER'REP(CONF_MEMORY_SIZE) & ");");
       PUT(NEWLINE);
       PRINT_BUFFER(OUT_EXCS);
       PRINT_BUFFER(OUT_INIT);
@@ -166,9 +1225,12 @@
    end PRINT_PROGRAM;
 
 begin
+   ENV_NAMES := MK("");
    OUT_TYPES := NEW_BUFFER;
    OUT_FRAMES := NEW_BUFFER;
    OUT_HELPERS := NEW_BUFFER;
+   OUT_LAYDECLS := NEW_BUFFER;
+   OUT_LAYS := NEW_BUFFER;
    OUT_PROTOS := NEW_BUFFER;
    OUT_GLOBALS := NEW_BUFFER;
    OUT_FUNCS := NEW_BUFFER;
@@ -180,19 +1242,66 @@ begin
    TY_BOOL := NEW_TYP(T_BOOL);
    TY_FLOAT := NEW_TYP(T_FLOAT);
    TY_CHAR := NEW_TYP(T_CHAR);
-   TY_STRING := NEW_TYP(T_STRING);
+   -- type STRING is array (NATURAL) of CHARACTER (RM79 3.6.3); its C type
+   -- is the runtime's rt_gstr
+   TY_STRING := NEW_TYP(T_ARRAY);
+   TY_STRING.NAME := MK("STRING");
+   TY_STRING.CNAME := MK("rt_gstr");
+   TY_STRING.DIMS := 1;
+   TY_STRING.ELEM := TY_CHAR;
+   TY_STRING.TCONS := NEW_CONS;
+   TY_STRING.TCONS.LO := MK("1");
    TY_VOID := NEW_TYP(T_VOID);
    TY_NIL := NEW_TYP(T_NIL);
    TY_ACT := NEW_TYP(T_ACT);
    TY_TDECL := NEW_TYP(T_TDECL);
    TY_ENTRY := NEW_TYP(T_ENTRY);
+   TY_INT.NAME := MK("INTEGER");
+   TY_STRING.IDX := TY_INT;
+   TY_STRING.NEXT := ALL_TYPES;
+   ALL_TYPES := TY_STRING;
+   TY_FLOAT.NAME := MK("FLOAT");
+   TY_FLOAT.NDIGITS := 15;
+   TY_SHORT := NEW_TYP(T_INT);
+   TY_SHORT.NAME := MK("SHORT_INTEGER");
+   TY_LONG := NEW_TYP(T_INT);
+   TY_LONG.NAME := MK("LONG_INTEGER");
+   TY_SFLOAT := NEW_TYP(T_FLOAT);
+   TY_SFLOAT.NAME := MK("SHORT_FLOAT");
+   TY_SFLOAT.NDIGITS := 6;
+   TY_LFLOAT := NEW_TYP(T_FLOAT);
+   TY_LFLOAT.NAME := MK("LONG_FLOAT");
+   TY_LFLOAT.NDIGITS := 15;
+   TY_TIME := NEW_TYP(T_FLOAT);
+   TY_TIME.NAME := MK("TIME");
+   TY_TIME.NDIGITS := 15;
+   TY_UFIXED := NEW_TYP(T_FIXED);
+   TY_UFIXED.NAME := MK("universal fixed");
    OUT_AWAITS := NEW_BUFFER;
    PREDEFINE;
+   -- for STRING use packing; (RM79 App. C)
+   OWN_REP(TY_STRING, STRING_REP);
+   STRING_REP.PACKED := TRUE;
+   -- the predefined units written in GREEN (RM79 9.11): lexed and parsed
+   -- first, translated in the environment of STANDARD
+   PRELUDE;
+   ADD_TOKEN(K_EOF, "<end>", 0);
+   COMPILATION(PRELUDE_UNITS);
+   NTOKS := 0;
+   TPOS := 1;
+   SRC_LINE := 0;
    READ_SOURCE;
+   COMPILING_SOURCE := TRUE;
    COMPILATION(UNITS);
+   COMPILING_SOURCE := FALSE;
+   PRINT_LISTING(SRC_LINE);
+   LOADED := MK(",");
+   LIBRARY_UNITS;
    if UNITS = null then
       FAIL(1, "the compilation is empty");
    end if;
+   FIND_ADDRESS_SPECIFICATIONS;
    TRANSLATE(UNITS);
+   STORE_UNITS;
    PRINT_PROGRAM;
 end GREENC;

@@ -1,0 +1,10 @@
+procedure MAIN is
+   type R is record
+      V : INTEGER;
+   end record;
+   type D is new R;
+   X : R := (V => 1);
+   Y : D := (V => 2);
+begin
+   X := Y;
+end MAIN;

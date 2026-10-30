@@ -1,0 +1,73 @@
+-- RM79 14: TEXT_IO with files, layout, ENUM_IO and FIXED_IO; INPUT_OUTPUT
+restricted (TEXT_IO, INPUT_OUTPUT)
+procedure MAIN is
+   use TEXT_IO;
+   type COLOR is (RED, GREEN, BLUE);
+   package COLOR_IO is new ENUM_IO(COLOR);
+   use COLOR_IO;
+   type MONEY is delta 0.01 range -1000.0 .. 1000.0;
+   package MONEY_IO is new FIXED_IO(MONEY);
+   use MONEY_IO;
+   type REC is record N : INTEGER; C : COLOR; end record;
+   package REC_IO is new INPUT_OUTPUT(REC);
+   F : OUT_FILE;
+   G : IN_FILE;
+   B : REC_IO.INOUT_FILE;
+   R : REC;
+   C : COLOR;
+   S : STRING(1 .. 5);
+   M : MONEY := 12.5;
+begin
+   PUT(GREEN); PUT(BLUE, 7); PUT("|"); PUT(M); PUT(M, 10, 1); PUT(NEWLINE);
+   CREATE(F, "build/textio.txt");
+   PUT(F, "hello"); PUT(F, 42); PUT(F, NEWLINE); PUT(F, "red"); PUT(F, TRUE);
+   PUT(F, NEWLINE); PUT(LINE(F)); PUT(COL(F));
+   SET_COL(F, 4); PUT(F, "x"); PUT(COL(F));
+   CLOSE(F);
+   OPEN(G, "build/textio.txt");
+   GET(G, S); PUT(S); GET(G, M); PUT(M);
+   GET(G, C); PUT(C); PUT(LINE(G)); PUT(NAME(G)); PUT(SIZE(G));
+   begin
+      loop
+         GET(G, S(1));
+      end loop;
+   exception
+      when END_OF_FILE => PUT(" eof");
+   end;
+   DELETE(G);
+   PUT(IS_OPEN(G)); PUT(NEWLINE);
+   REC_IO.CREATE(B, "build/textio.bin");
+   for I in 1 .. 3 loop
+      REC_IO.WRITE(B, (I * 10, COLOR'VAL(I)));
+   end loop;
+   PUT(REC_IO.SIZE(B)); PUT(REC_IO.NEXT(B));
+   REC_IO.SET_NEXT(B, 2);
+   REC_IO.READ(B, R); PUT(R.N); PUT(R.C);
+   begin
+      REC_IO.SET_NEXT(B, 4);
+      REC_IO.READ(B, R);
+   exception
+      when REC_IO.END_OF_FILE => PUT(" END_OF_FILE");
+   end;
+   REC_IO.DELETE(B);
+   begin
+      OPEN(G, "no such file");
+   exception
+      when FILE_NAME_ERROR => PUT(" FILE_NAME_ERROR");
+   end;
+   begin
+      CLOSE(G);
+   exception
+      when FILE_OPEN_ERROR => PUT(" FILE_OPEN_ERROR");
+   end;
+   SET_LINE_LENGTH(STANDARD_OUTPUT, 20);
+   PUT(NEWLINE);
+   for I in 1 .. 8 loop PUT(I * 1000); end loop;
+   PUT(NEWLINE);
+   begin
+      SET_COL(STANDARD_OUTPUT, 30);
+   exception
+      when INVALID_LAYOUT => PUT("INVALID_LAYOUT");
+   end;
+   PUT(NEWLINE);
+end MAIN;

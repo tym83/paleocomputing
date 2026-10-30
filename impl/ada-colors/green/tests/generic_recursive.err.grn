@@ -1,0 +1,10 @@
+procedure MAIN is
+   generic procedure G;
+   procedure G is
+      procedure H is new G;
+   begin
+      null;
+   end G;
+begin
+   null;
+end MAIN;

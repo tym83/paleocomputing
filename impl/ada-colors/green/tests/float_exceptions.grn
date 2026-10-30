@@ -1,0 +1,28 @@
+-- OVERFLOW and UNDERFLOW in real arithmetic, DIVIDE_ERROR (RM79 4.5, 11.1)
+restricted (TEXT_IO)
+procedure MAIN is
+   use TEXT_IO;
+   X : FLOAT := 1.0E300;
+   Y : FLOAT := 1.0E-300;
+   Z : FLOAT := 0.0;
+begin
+   begin
+      X := X * X;
+      PUT(X);
+   exception
+      when OVERFLOW => PUT("OVERFLOW");
+   end;
+   begin
+      Y := Y * Y;
+      PUT(Y);
+   exception
+      when UNDERFLOW => PUT(" UNDERFLOW");
+   end;
+   begin
+      Z := 1.0 / Z;
+   exception
+      when DIVIDE_ERROR => PUT(" DIVIDE_ERROR");
+   end;
+   PUT(1.0E300 * 10.0 / 1.0E300);
+   PUT(NEWLINE);
+end MAIN;

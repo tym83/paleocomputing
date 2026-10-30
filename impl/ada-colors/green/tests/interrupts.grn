@@ -1,0 +1,32 @@
+-- RM79 13.5.1: an interrupt with control information, as in parameters
+restricted (TEXT_IO, LOW_LEVEL_IO, MACHINE_CODE)
+procedure MAIN is
+   use TEXT_IO;
+   use LOW_LEVEL_IO;
+   task DEVICE is
+      entry DONE(COUNT : INTEGER; STATUS : CHARACTER);
+      for DONE use at 8#40;
+   end DEVICE;
+   task body DEVICE is
+   begin
+      for I in 1 .. 2 loop
+         accept DONE(COUNT : INTEGER; STATUS : CHARACTER) do
+            PUT(COUNT); PUT(STATUS); PUT(NEWLINE);
+         end DONE;
+      end loop;
+   end DEVICE;
+   procedure RAISE_IT is
+      use MACHINE_CODE;
+   begin
+      INSTRUCTION(OP => LDI, R => 1, A => 7);
+      INSTRUCTION(OP => LDI, R => 2, A => 66);
+      INSTRUCTION(OP => INTR, R => 0, A => 8#40);
+   end RAISE_IT;
+   D : INTEGER;
+begin
+   initiate DEVICE;
+   D := 5; SEND_CONTROL(6, D);
+   D := 65; SEND_CONTROL(7, D);
+   D := 8#40; SEND_CONTROL(INTERRUPT_CONTROLLER, D);
+   RAISE_IT;
+end MAIN;

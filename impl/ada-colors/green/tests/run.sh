@@ -5,6 +5,8 @@
 set -u
 cd "$(dirname "$0")/.."
 pass=0; failn=0
+# no incompatible pointer or integer conversions in the C that greenc makes
+STRICT="-Wno-everything -Werror=incompatible-pointer-types -Werror=int-conversion"
 tmp=$(mktemp -d)
 for src in tests/*.grn tests/corpus/*.grn; do
   [ -f "$src" ] || continue
@@ -22,7 +24,7 @@ for src in tests/*.grn tests/corpus/*.grn; do
   if ! build/greenc < "$src" > "$tmp/$name.c" 2>/dev/null; then
     echo "FAIL $name: $(head -1 "$tmp/$name.c")"; failn=$((failn+1)); continue
   fi
-  if ! ${CC:-cc} -std=gnu11 -O1 -w -I../rt "$tmp/$name.c" ../rt/paleo.c -o "$tmp/$name" -lpthread -lm 2> "$tmp/cc.txt"; then
+  if ! ${CC:-cc} -std=gnu11 -O1 $STRICT -I../rt "$tmp/$name.c" ../rt/paleo.c -o "$tmp/$name" -lpthread -lm 2> "$tmp/cc.txt"; then
     echo "FAIL $name: C compiler"; head -5 "$tmp/cc.txt"; failn=$((failn+1)); continue
   fi
   inp=/dev/null
@@ -30,6 +32,16 @@ for src in tests/*.grn tests/corpus/*.grn; do
   "$tmp/$name" < "$inp" > "$tmp/$name.txt" 2>&1
   if diff -u "$exp" "$tmp/$name.txt" > "$tmp/diff.txt"; then pass=$((pass+1)); else
     echo "FAIL $name"; cat "$tmp/diff.txt"; failn=$((failn+1)); fi
+done
+# a test of several compilations is a script, *.lib.sh, run with the library
+# in a fresh directory (RM79 10.4)
+for t in tests/*.lib.sh; do
+  [ -f "$t" ] || continue
+  name=$(basename "$t" .sh)
+  mkdir -p "$tmp/$name"
+  if GREEN_LIBRARY="$tmp/$name/lib" sh "$t" "$PWD/build/greenc" "$tmp/$name" > "$tmp/$name.txt" 2>&1 \
+     && diff -u "tests/$name.out" "$tmp/$name.txt" > "$tmp/diff.txt"; then pass=$((pass+1)); else
+    echo "FAIL $name"; cat "$tmp/diff.txt" "$tmp/$name.txt" | head -20; failn=$((failn+1)); fi
 done
 rm -rf "$tmp"
 echo "green tests: $pass passed, $failn failed"

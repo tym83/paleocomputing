@@ -1,0 +1,13 @@
+procedure MAIN is
+   task T is
+      entry E(X : INTEGER);
+   end T;
+   task body T is
+   begin
+      accept E(Y : BOOLEAN) do
+         null;
+      end E;
+   end T;
+begin
+   null;
+end MAIN;

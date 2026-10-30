@@ -37,7 +37,10 @@
    -- its text: the names assigned that it does not declare itself
    function ASSIGNS_NONLOCAL(D : NODE; NAME : STRING) return BOOLEAN is
    begin
-      return SCAN_ASSIGNS(D.D, D, NAME) or else SCAN_HANDLERS(D.E, D, NAME);
+      if SCAN_ASSIGNS(D.D, D, NAME) then
+         return TRUE;
+      end if;
+      return SCAN_HANDLERS(D.E, D, NAME);
    end ASSIGNS_NONLOCAL;
 
    function DECLARES(D : NODE; NAME : STRING) return BOOLEAN is

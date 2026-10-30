@@ -1,0 +1,6 @@
+procedure MAIN is
+   type COLOR is (RED, GREEN, BLUE);
+   for COLOR use (1, 9, 4);
+begin
+   null;
+end MAIN;

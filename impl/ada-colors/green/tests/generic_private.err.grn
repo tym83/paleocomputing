@@ -1,0 +1,10 @@
+procedure MAIN is
+   generic (type ELEM) function INC(X : ELEM) return ELEM;
+   function INC(X : ELEM) return ELEM is
+   begin
+      return X + 1;
+   end INC;
+   function I2 is new INC(ELEM is INTEGER);
+begin
+   null;
+end MAIN;

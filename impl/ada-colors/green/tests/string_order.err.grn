@@ -1,0 +1,5 @@
+procedure MAIN is
+   B : BOOLEAN;
+begin
+   B := "ab" < "cd";
+end MAIN;

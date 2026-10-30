@@ -302,6 +302,44 @@ rt_int rt_g_get_int(void);                     /* next integer item */
 double rt_g_get_float(void);                   /* next real item */
 rstr rt_g_image_float(double v);               /* T'REP for floats */
 rt_int rt_g_col(void);
+/* files: handles; 1 and 2 are the standard input and output (RM79 14) */
+rt_int rt_g_cur_in(void);
+rt_int rt_g_cur_out(void);
+void rt_g_fput(rt_int h, rstr s);
+void rt_g_fputc(rt_int h, int c);
+void rt_g_fput_int(rt_int h, rt_int v, rt_int width);
+void rt_g_fput_bool(rt_int h, int v, rt_int width);
+void rt_g_fput_float(rt_int h, double v, rt_int width, rt_int fract);
+void rt_g_put_item(rt_int h, rstr s, rt_int width, int right);
+void rt_g_put_fixed(rt_int h, rstr image, rt_int width, rt_int fract);
+rt_int rt_g_decimals(rstr image);
+rstr rt_g_fixed_image(double v, double small);  /* T'REP of a fixed type */
+int rt_g_fgetc(rt_int h);
+rt_int rt_g_fget_int(rt_int h);
+double rt_g_fget_float(rt_int h);
+int rt_g_fget_bool(rt_int h);
+void rt_g_open(rt_int *h, rstr name, rt_int mode, int create, rt_int lay);
+void rt_g_close(rt_int *h, int remove_it);
+int rt_g_is_open(rt_int h);
+rt_int rt_g_size(rt_int h);
+rt_int rt_g_next(rt_int h);
+void rt_g_set_next(rt_int h, rt_int pos);
+void rt_g_read_bytes(rt_int h, void *item, size_t n);
+void rt_g_write_bytes(rt_int h, const void *item, size_t n);
+void rt_g_read_char(rt_int h, int *c);
+void rt_g_write_char(rt_int h, int c);
+rt_int rt_g_line_of(rt_int h);
+rt_int rt_g_col_of(rt_int h);
+void rt_g_set_line(rt_int h, rt_int to);
+void rt_g_set_col(rt_int h, rt_int to);
+void rt_g_set_line_length(rt_int h, rt_int n);
+void rt_g_set_input(rt_int h);
+void rt_g_set_output(rt_int h);
+/* the elements of INPUT_OUTPUT: their storage, whatever their type */
+/* the elements of INPUT_OUTPUT: their storage in the layout of their type */
+void rt_g_write_lay(rt_int h, const void *item, rt_int lay);
+void rt_g_read_element(rt_int h, void *item, rt_int lay);
+#define rt_g_write_element(h, item, lay) rt_g_write_lay((h), &(item), (lay))
 
 /* GREEN abort (RM79 9.10): the task ends unconditionally; its handlers
  * re-raise at once instead of handling the exception */
@@ -311,6 +349,121 @@ int rt_g_aborted(void);
 /* GREEN foreign body (RM79 13.9) for the 1979 file-handling problem: copy
  * N bytes between two addresses in linear memory */
 void rt_g_move_bytes(rt_int from, rt_int to, rt_int n);
+
+/* ---- GREEN: the rest of RM79 ------------------------------------------ */
+int rt_g_exc_new(const char *name);            /* a distinct declared exception */
+void rt_g_read_file_text(rstr name, rstr **res); /* pragma INCLUDE, older seeds */
+void rt_g_include_open(rstr name, rt_int *len); /* pragma INCLUDE: -1 if absent */
+void rt_g_include_char(rt_int i, int *c);       /* character i, from 1 */
+void rt_g_lib_open(rstr key, rt_int *len);      /* the program library of greenc */
+void rt_g_lib_store(rstr key, rstr text);
+void rt_g_lib_enabled(int *yes);
+/* STRING is array (NATURAL) of CHARACTER (RM79 3.6.3): an array descriptor
+ * like every GREEN array, with the characters packed in bytes */
+typedef struct rt_gstr {
+  rt_int lo, hi, lo2, hi2;
+  unsigned char *p;
+} rt_gstr;
+#define G_CNT(a) ((a).hi >= (a).lo ? (a).hi - (a).lo + 1 : (rt_int)0)
+rt_gstr rt_g_lit(const char *s, rt_int n);     /* a string literal, from 1 */
+rt_gstr rt_g_s2g(rstr s);                      /* the runtime's string, from 1 */
+rstr rt_g_g2s(rt_gstr a);
+_Noreturn void rt_g_overlap(void);             /* OVERLAP_ERROR (RM79 5.1.1) */
+/* a scalar without a value holds a mark; reading it raises NO_VALUE_ERROR
+ * (RM79 11.1) */
+#include <limits.h>
+#include <string.h>
+_Noreturn void rt_g_novalue(void);
+void *rt_g_task_frame(void **slot, rt_act *a);   /* a task's visible subprograms */
+int rt_g_partner_exc(int x);                     /* the caller's exception */
+double rt_g_task_clock(rt_act *a);               /* T'CLOCK */
+#define RT_G_NOVALUE_F (__builtin_nan("0x6e76"))
+static inline rt_int rt_g_nvl(rt_int v) { if (v == INT64_MIN) rt_g_novalue(); return v; }
+static inline int rt_g_nvi(int v) { if (v == INT_MIN) rt_g_novalue(); return v; }
+static inline unsigned char rt_g_nvc(unsigned char v) { if (v == 0xFF) rt_g_novalue(); return v; }
+static inline double rt_g_nvf(double v) { if (v != v) rt_g_novalue(); return v; }
+#define G_NV(x) _Generic((x), double: rt_g_nvf, int: rt_g_nvi, unsigned char: rt_g_nvc, default: rt_g_nvl)(x)
+rstr rt_g_enum_rep(rt_int v, const char *const *names, rt_int n);  /* T'REP */
+rt_int rt_g_enum_val(rstr s, const char *const *names, rt_int n);  /* T'VAL(S) */
+rstr rt_g_char_rep(rt_int v);
+rt_int rt_g_char_val(rstr s);
+rstr rt_g_bool_rep(rt_int v);
+rt_int rt_g_bool_val(rstr s);
+double rt_g_float_val(rstr s);
+/* real arithmetic with OVERFLOW and UNDERFLOW; k = 1: SHORT_FLOAT */
+double rt_g_fadd(double a, double b, int k);
+double rt_g_fsub(double a, double b, int k);
+double rt_g_fmul(double a, double b, int k);
+double rt_g_fdiv(double a, double b, int k);
+double rt_g_fpow(double a, rt_int b, int k);
+double rt_g_fneg(double a, int k);
+rt_int rt_g_round(double v);                   /* real to integer conversion */
+rt_int rt_g_short(rt_int v);                   /* SHORT_INTEGER: OVERFLOW */
+double rt_g_small(double delta);               /* fixed point SMALL */
+double rt_g_fix(double v, double small);       /* a multiple of SMALL */
+double rt_g_fix_large(double small, double lo, double hi);
+rt_int rt_g_fix_bits(double small, double lo, double hi);
+
+/* ---- GREEN: the simulated machine (RM79 13, 14.6) ----------------------- */
+/* The layout of a value in storage: k is i (rt_int, signed), u (rt_int,
+ * unsigned), e (int: enumeration, BOOLEAN, CHARACTER), b (unsigned char: a
+ * CHARACTER component of an array), f (double), h (double held as a 32-bit
+ * float), x (fixed point: a multiple of small), p (access: the address of
+ * what it designates), a (array), r (record), o (nothing the program sees).
+ * Components start on storage units unless packed; a record component may
+ * be placed by a representation (at, width). */
+typedef struct g_lay g_lay;
+typedef struct g_fld {
+  size_t coff;                  /* the component in the C struct */
+  rt_int at, width;             /* its first bit and width; -1: computed */
+  const g_lay *lay;
+  int (*present)(const void *); /* in a variant: is it there */
+  int variant;                  /* 0: the common part */
+} g_fld;
+struct g_lay {
+  char k, packed;
+  rt_int bits;                  /* a scalar's bits; a record's, when given */
+  rt_int bias;                  /* the stored value is value - bias */
+  const rt_int *codes;          /* enumeration codes (RM79 13.3) */
+  rt_int ncodes;
+  double (*small)(void);        /* fixed point */
+  const g_lay *elem;            /* array component, or designated value */
+  rt_int count;                 /* components of a constrained array, -1 */
+  rt_int stride;                /* bits per array component, -1: computed */
+  const g_fld *f;
+  rt_int nf;
+  rt_int align;                 /* storage units */
+  size_t csize;                 /* the C size of a value */
+};
+extern int rt_g_nviews;
+void rt_g_set_memory(rt_int n);
+void rt_g_set_unit(rt_int su);                /* pragma STORAGE_UNIT */
+unsigned char *rt_g_mem(rt_int addr, rt_int n);  /* RANGE_ERROR outside */
+rt_int rt_g_lay_bits(const g_lay *L, const void *v);  /* v may be NULL */
+void rt_g_view(void *c, const g_lay *L, rt_int addr, int keep);
+void rt_g_sync(void);
+rt_int rt_g_window(void *c, const g_lay *L);
+rt_int rt_g_address(void *root, const g_lay *L, void *comp);
+void rt_g_load(rt_int a, rt_int n, unsigned char *buf);
+void rt_g_save(rt_int a, rt_int n, const unsigned char *buf);
+void rt_g_unsafe(const g_lay *LS, const void *s, const g_lay *LT, void *t);
+rt_int rt_g_component(const g_lay *L, const void *v, rt_int i, int what);
+void rt_g_machine(int op, rt_int r, rt_int a);   /* one code statement */
+void rt_g_bind_interrupt(rt_int addr, rt_entry *e, rt_act *owner);
+void rt_g_bind_interrupt_p(rt_int addr, rt_entry *e, rt_act *owner, size_t psize, rt_int np,
+                           const g_lay *const *lays, const size_t *offs);
+void rt_g_interrupt(rt_int addr);
+void rt_g_send_control(rt_int device, rt_int *data);
+void rt_g_receive_control(rt_int device, rt_int *data);
+#define G_SYNC() do { if (rt_g_nviews) rt_g_sync(); } while (0)
+/* the bits used of a collection of LIMIT bits: STORAGE_OVERFLOW beyond (RM79 13.2) */
+void rt_g_collect(rt_int *used, rt_int bits, rt_int limit);
+/* text input items returned as strings, and NAME (RM79 14) */
+rt_gstr rt_g_get_word(rt_int h);
+rt_gstr rt_g_get_real(rt_int h);
+rt_gstr rt_g_name(rt_int h);
+rt_gstr rt_g_listing_file(void);
+void rt_g_fget_str(rt_int h, rt_gstr *s);
 
 #endif
 

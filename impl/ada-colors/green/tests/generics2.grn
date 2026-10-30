@@ -1,0 +1,84 @@
+-- generics (RM79 12): in out formal objects, defaults T."*" and T.SUCC,
+-- operators as actuals, selected actuals P.F and P.T, restricted formals,
+-- non-local names bound where the generic body is, instance names that
+-- predefined names already use
+restricted (TEXT_IO)
+procedure MAIN is
+   use TEXT_IO;
+   COUNT : INTEGER := 0;
+   N : INTEGER := 1;
+   type COLOR is (RED, GREEN, BLUE);
+   package K is
+      function TWICE(X : INTEGER) return INTEGER;
+      restricted type KEY is private;
+      procedure MAKE(X : out KEY; V : INTEGER);
+      function VALUE(X : KEY) return INTEGER;
+   private
+      type KEY is record
+         V : INTEGER;
+      end record;
+   end K;
+   package body K is
+      function TWICE(X : INTEGER) return INTEGER is
+      begin
+         return 2 * X;
+      end TWICE;
+      procedure MAKE(X : out KEY; V : INTEGER) is
+      begin
+         X := (V => V);
+      end MAKE;
+      function VALUE(X : KEY) return INTEGER is
+      begin
+         return X.V;
+      end VALUE;
+   end K;
+   generic (C : in out INTEGER) procedure BUMP;
+   procedure BUMP is
+   begin
+      C := C + 1;
+   end BUMP;
+   generic (type T; function "*"(X, Y : T) return T is T."*") function SQ(X : T) return T;
+   function SQ(X : T) return T is
+   begin
+      return X * X;
+   end SQ;
+   generic (type T; function NEXT(X : T) return T is T.SUCC) function N2(X : T) return T;
+   function N2(X : T) return T is
+   begin
+      return NEXT(NEXT(X));
+   end N2;
+   generic (type T; function F(X : T) return T) function APPLY(X : T) return T;
+   function APPLY(X : T) return T is
+   begin
+      return F(X);
+   end APPLY;
+   generic (restricted type T; with_value : INTEGER := 0) function SHOW(X : T) return INTEGER;
+   function SHOW(X : T) return INTEGER is
+   begin
+      return WITH_VALUE;
+   end SHOW;
+   generic procedure G;
+   procedure G is
+   begin
+      PUT(N);
+   end G;
+   procedure INNER is
+      N : INTEGER := 2;
+      procedure H is new G;
+   begin
+      H;
+   end INNER;
+   procedure B is new BUMP(C :=: COUNT);
+   function SQI is new SQ(T is INTEGER);
+   function SQF is new SQ(FLOAT, "*");
+   function NC is new N2(T is COLOR);
+   function A2 is new APPLY(T is INTEGER, F is K.TWICE);
+   function SK is new SHOW(T is K.KEY, WITH_VALUE := 5);
+   function SI is new SQ(INTEGER);
+   KK : K.KEY;
+begin
+   B; B; PUT(COUNT);
+   PUT(SQI(3)); PUT(SQF(1.5)); PUT(COLOR'ORD(NC(RED))); PUT(A2(4)); PUT(SK(KK)); PUT(SI(5));
+   INNER;
+   PUT(NEWLINE);
+end MAIN;

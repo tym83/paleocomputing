@@ -1,0 +1,36 @@
+-- deferred constants of a private type (RM79 7.4); a subprogram with a
+-- parameter of a type is an attribute of the type, STACK.MAX_SIZE (RM79 3.3)
+restricted (TEXT_IO)
+procedure MAIN is
+   use TEXT_IO;
+   package STACKS is
+      type STACK is private;
+      EMPTY : constant STACK;
+      function MAX_SIZE(S : STACK) return INTEGER;
+      function DEPTH(S : STACK) return INTEGER;
+   private
+      type STACK is record
+         N, MAX : INTEGER;
+      end record;
+      EMPTY : constant STACK := (0, 10);
+   end STACKS;
+   package body STACKS is
+      function MAX_SIZE(S : STACK) return INTEGER is
+      begin
+         return S.MAX;
+      end MAX_SIZE;
+      function DEPTH(S : STACK) return INTEGER is
+      begin
+         return S.N;
+      end DEPTH;
+   end STACKS;
+   use STACKS;
+   S : STACK := EMPTY;
+   type ITEM is record
+      V : INTEGER;
+   end record;
+   type REF is access ITEM;
+   R : constant REF := new REF(V => 1);
+begin
+   PUT(STACK.MAX_SIZE(S)); PUT(STACKS.DEPTH(STACKS.EMPTY)); PUT(R.V); PUT(NEWLINE);
+end MAIN;

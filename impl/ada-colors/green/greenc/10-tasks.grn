@@ -7,7 +7,7 @@
 
    -- task T [is <entries and declarations> end [T]]; | task body T is ... end [T];
    procedure TASK_P(RES : out NODE) is
-      X : NODE;
+      X, R : NODE;
       LINE : INTEGER := CUR_LINE;
    begin
       EXPECT_KW("TASK");
@@ -16,6 +16,14 @@
          X := NN(N_TASKBODY, LINE);
          EXPECT_ID(X.NAME);
          EXPECT_KW("IS");
+         if AT_KW("SEPARATE") then
+            -- task body T is separate; (RM79 10.2)
+            SKIP;
+            EXPECT_OP(";");
+            X.FLAG := 4;
+            RES := X;
+            return;
+         end if;
          BODY_PART(X);
       else
          X := NN(N_TASKSPEC, LINE);
@@ -24,16 +32,24 @@
             INSTANTIATION(X, RES);
             return;
          end if;
+         if AT_KW("RENAMES") then
+            -- task LC renames LINK_CONTROLLER(6); (RM79 8.5)
+            SKIP;
+            X.FLAG := 3;
+            NAME_P(X.B);
+            EXPECT_OP(";");
+            RES := X;
+            return;
+         end if;
          if AT_OP("(") then
             -- a task family: task F(INTEGER range 1 .. N) (RM79 9.2)
             SKIP;
-            if AT_KIND(K_ID) and KIND_AT(1) = K_KW and TEXT_AT(1) = "RANGE" then
-               SUBTYPE_IND(X.A);
-            else
-               X.A := NN(N_RANGE, LINE);
-               SIMPLE_EXPR(X.A.A);
-               EXPECT_OP("..");
-               SIMPLE_EXPR(X.A.B);
+            DISCRETE_RANGE_P(X.A);
+            if X.A.KIND = N_NAME then
+               -- a type mark: task F(COLOR) (RM79 9.1)
+               R := NN(S_MARK, LINE);
+               R.NAME := X.A.NAME;
+               X.A := R;
             end if;
             EXPECT_OP(")");
          end if;
@@ -67,10 +83,7 @@
          if AT_KIND(K_ID) and KIND_AT(1) = K_OP and TEXT_AT(1) = ")" then
             SUBTYPE_IND(X.B);
          else
-            X.B := NN(N_RANGE, CUR_LINE);
-            SIMPLE_EXPR(X.B.A);
-            EXPECT_OP("..");
-            SIMPLE_EXPR(X.B.B);
+            DISCRETE_RANGE_P(X.B);
          end if;
          EXPECT_OP(")");
       end if;
@@ -209,15 +222,27 @@
    function IS_TASK_NAME(N : STRING) return BOOLEAN is
       Y : SYM := LOOKUP(N);
    begin
-      return Y /= null and then Y.KIND = Y_TASK;
+      if not (Y /= null) then
+         return FALSE;
+      end if;
+      return Y.KIND = Y_TASK;
    end IS_TASK_NAME;
 
    -- a task designator: T, a family F (all members), F(I), or F(lo .. hi)
    -- (RM79 9.3); IX is the index expression or range, null for all
    procedure TASK_OF(E : NODE; Y : out SYM; IX : out NODE) is
       N : NODE := E;
+      A : SYM;
    begin
       IX := null;
+      if E.KIND = N_NAME then
+         A := LOOKUP(E.NAME.all);
+         if A /= null and then (A.KIND = Y_TASK and A.FLAGS = 4) then
+            -- a name for a member of a family (RM79 8.5)
+            TASK_OF(A.DECL, Y, IX);
+            return;
+         end if;
+      end if;
       if E.KIND = N_APPLY then
          N := E.A;
          IX := E.B;
@@ -235,8 +260,8 @@
    end TASK_OF;
 
    -- the index of the running member, inside the body of a family (F'INDEX)
-   procedure OWN_INDEX(R : out TEXT) is
-      Y : SYM := LOOKUP("INDEX_");
+   procedure OWN_INDEX(T : SYM; R : out TEXT) is
+      Y : SYM := LOOKUP("INDEX_" & T.CNAME.all);
    begin
       if Y = null then
          FAIL(0, "not inside the body of a task family");
@@ -259,7 +284,7 @@
       PATH_AT(Y.LEVEL, Y.CNAME.all & "act", R);
       if Y.C /= null then
          -- without an index, the running member of the family
-         OWN_INDEX(I);
+         OWN_INDEX(Y, I);
          MEMBER(Y, R.all, I.all, R);
       end if;
    end ACT_PATH;
@@ -277,7 +302,7 @@
       PATH_AT(Y.LEVEL, Y.ACCESS_PATH.all, R);
       if Y.MEMBERS /= null and then Y.MEMBERS.C /= null and then not Y.RO then
          if I'LENGTH = 0 then
-            OWN_INDEX(OWN);
+            OWN_INDEX(Y.MEMBERS, OWN);
             MEMBER(Y.MEMBERS, R.all, OWN.all, R);
          else
             MEMBER(Y.MEMBERS, R.all, I, R);
@@ -317,28 +342,34 @@
    end FAMILY_ARG_STRUCT;
 
    -- the slots of an entry family: E(lo .. hi), or E(T) for a discrete type
-   procedure FAMILY_BOUNDS(B : NODE; Y : SYM; X : TEXT) is
-      LO, HI, V : TEXT;
+   procedure FAMILY_BOUNDS(B : NODE; Y : SYM; X : TEXT; PER_MEMBER : BOOLEAN) is
+      LO, HI, V, D, MLO, MHI : TEXT;
       VT : TYP;
       C : CONS;
    begin
       Y.C := NEW_CONS;
-      DECLARE_SLOT("rt_entry *", Y.ACCESS_PATH.all);
+      if PER_MEMBER then
+         DECLARE_SLOT("rt_entry **", Y.ACCESS_PATH.all);
+      else
+         DECLARE_SLOT("rt_entry *", Y.ACCESS_PATH.all);
+      end if;
       DECLARE_SLOT("rt_int", Y.CNAME.all & "flo");
       DECLARE_SLOT("rt_int", Y.CNAME.all & "fhi");
       PATH_AT(Y.LEVEL, Y.CNAME.all & "flo", LO);
       PATH_AT(Y.LEVEL, Y.CNAME.all & "fhi", HI);
-      if B.KIND = N_RANGE then
-         GEXPR(B.A, null, VT, V);
-         EMIT(LO.all & " = " & V.all & ";");
-         GEXPR(B.B, VT, VT, V);
-         EMIT(HI.all & " = " & V.all & ";");
-      else
-         RESOLVE(B, VT, C);
-         if C.LO = null then
-            FAIL(B.LINE, "an entry family needs a discrete range");
-         end if;
-         EMIT(LO.all & " = " & C.LO.all & "; " & HI.all & " = " & C.HI.all & ";");
+      DISCRETE_BOUNDS(B, null, VT, V, D);
+      Y.T := VT;
+      EMIT(LO.all & " = " & V.all & "; " & HI.all & " = " & D.all & ";");
+      if PER_MEMBER then
+         PATH_AT(CUR_TASK.LEVEL, CUR_TASK.CNAME.all & "lo", MLO);
+         PATH_AT(CUR_TASK.LEVEL, CUR_TASK.CNAME.all & "hi", MHI);
+         EMIT(X.all & " = rt_alloc(sizeof(rt_entry *) * (size_t)(" & MHI.all & " >= " & MLO.all & " ? "
+              & MHI.all & " - " & MLO.all & " + 1 : 1));");
+         EMIT("for (rt_int m_ = 0; m_ <= " & MHI.all & " - " & MLO.all & "; m_++) { " & X.all
+              & "[m_] = rt_alloc(sizeof(rt_entry) * (size_t)(" & HI.all & " >= " & LO.all & " ? "
+              & HI.all & " - " & LO.all & " + 1 : 1)); for (rt_int k_ = 0; k_ <= " & HI.all & " - "
+              & LO.all & "; k_++) rt_entry_init(&" & X.all & "[m_][k_]); }");
+         return;
       end if;
       EMIT(X.all & " = rt_alloc(sizeof(rt_entry) * (size_t)(" & HI.all & " >= " & LO.all & " ? "
            & HI.all & " - " & LO.all & " + 1 : 1));");
@@ -377,22 +408,17 @@
       DECLARE_SLOT("rt_taskdecl", Y.CNAME.all & "decl");
       if E.A /= null then
          -- a family: the bounds are evaluated once; one activation per member
-         R := E.A;
-         if R.KIND = S_MARK then
-            R := R.A;
-         end if;
          Y.C := NEW_CONS;
          DECLARE_SLOT("rt_act *", Y.CNAME.all & "act");
          DECLARE_SLOT("rt_int", Y.CNAME.all & "lo");
          DECLARE_SLOT("rt_int", Y.CNAME.all & "hi");
-         GEXPR(R.A, TY_INT, VT, V);
-         -- the index type of the family: INTEGER or an enumeration (RM79 9.1)
+         -- the index type of the family: a discrete type (RM79 9.1)
+         DISCRETE_BOUNDS(E.A, null, VT, V, D);
          Y.T := VT;
          PATH_AT(Y.LEVEL, Y.CNAME.all & "lo", P);
          EMIT(P.all & " = " & V.all & ";");
-         GEXPR(R.B, TY_INT, VT, V);
          PATH_AT(Y.LEVEL, Y.CNAME.all & "hi", P2);
-         EMIT(P2.all & " = " & V.all & ";");
+         EMIT(P2.all & " = " & D.all & ";");
          PATH_AT(Y.LEVEL, Y.CNAME.all & "act", V);
          EMIT(V.all & " = rt_alloc(sizeof(rt_act) * (size_t)(" & P2.all & " >= " & P.all & " ? "
               & P2.all & " - " & P.all & " + 1 : 1));");
@@ -404,6 +430,14 @@
       if not IN_FUNC then
          PUT_TO(OUT_AWAITS, "  rt_await_decl(&" & Y.CNAME.all & "decl);");
       end if;
+      R := E.C;
+      while R /= null loop
+         if R.KIND = N_VAR or R.KIND = N_PKGSPEC or R.KIND = N_PKGBODY or R.KIND = N_TASKSPEC then
+            FAIL(R.LINE, "the visible part of a task holds entries, subprograms, types, constants and "
+                 & "exceptions, not variables or modules (RM79 9.1)");
+         end if;
+         R := R.NEXT;
+      end loop;
       OPEN_SCOPE;
       CUR_TASK := Y;
       SAVED_DEFER := DEFER_ENTRY_STRUCTS;
@@ -482,7 +516,7 @@
       NEW_NAME("e_" & LOWER_S(E.NAME.all) & "_", Y.CNAME);
       FIELDS := MK(" int dummy_;");
       while P /= null loop
-         PM := new PARM_REC(P.NAME, P.IVAL, null, null, null, null, null);
+         PM := new PARM_REC(P.NAME, P.IVAL, null, null, null, P.B, null, null);
          RESOLVE(P.A, PM.T, PM.C);
          PM.CFIELD := MK(C_FIELD(P.NAME.all));
          CTYPE(PM.T, CT);
@@ -505,6 +539,7 @@
       Y.RESULT := TY_VOID;
       Y.DECL := E;
       Y.MEMBERS := CUR_TASK;
+      ELABORATE_DEFAULTS(Y);
       if IN_FUNC then
          Y.LEVEL := CUR_LEVEL;
       end if;
@@ -514,10 +549,8 @@
       -- member (RM79 9.5): its queue lives in the member's frame (marked RO)
       Y.RO := CUR_TASK.C /= null and IN_FUNC and CUR_LEVEL > CUR_TASK.LEVEL;
       if E.B /= null then
-         if CUR_TASK.C /= null and not Y.RO then
-            FAIL(E.LINE, "an entry family in a task family is not handled");
-         end if;
-         FAMILY_BOUNDS(E.B, Y, X);
+         -- an entry family; in a task family, one per member (RM79 9.2, 9.5)
+         FAMILY_BOUNDS(E.B, Y, X, CUR_TASK.C /= null and not Y.RO);
       elsif CUR_TASK.C /= null and not Y.RO then
          DECLARE_SLOT("rt_entry *", Y.ACCESS_PATH.all);
          PATH_AT(CUR_TASK.LEVEL, CUR_TASK.CNAME.all & "lo", LO);
@@ -541,7 +574,11 @@
       UPP : TEXT;
       SAVED : SYM := CUR_TASK;
    begin
-      if Y /= null and then Y.KIND = Y_GENERIC then
+      if E.FLAG = 4 then
+         STUB(E);
+         return;
+      end if;
+      if IS_GENERIC_NAME(E.NAME.all) then
          ATTACH_GENERIC_BODY(E);
          return;
       end if;
@@ -554,14 +591,14 @@
       B.LEVEL := CUR_LEVEL;
       B.DECL := E;
       if Y.C /= null then
-         B.PARAMS := new PARM_REC(MK("INDEX_"), M_IN, TY_INT, null, MK("index_"), null, null);
+         B.PARAMS := new PARM_REC(MK("INDEX_" & Y.CNAME.all), M_IN, TY_INT, null, MK("index_"), null, null, null);
       end if;
       OPEN_SCOPE;
       M := Y.MEMBERS;
       while M /= null loop
          COPY_SYM(M, Z);
          DEFINE(Z, E.LINE);
-         if (M.KIND = Y_FUNC or M.KIND = Y_PROC) and M.ACCESS_PATH /= null and then SAME_TASK(M.MEMBERS, Y) then
+         if ((M.KIND = Y_FUNC or M.KIND = Y_PROC) and M.ACCESS_PATH /= null) and then SAME_TASK(M.MEMBERS, Y) then
             -- the statement runs in the body, whose frame is linked to the
             -- frame where the task is declared
             if Y.LEVEL > 0 then
@@ -603,7 +640,7 @@
    begin
       AW := MK("");
       while E /= null loop
-         if E.KIND = N_TASKSPEC or (E.KIND = N_INST and then E.IVAL = N_TASKSPEC) then
+         if E.KIND = N_TASKSPEC or (E.KIND = N_INST and E.IVAL = N_TASKSPEC) then
             Y := LOOKUP(E.NAME.all);
             PATH_AT(Y.LEVEL, Y.CNAME.all & "decl", P);
             AW := MK(AW.all & " rt_await_decl(&" & P.all & ");");
@@ -627,6 +664,7 @@
    end TASK_FAILURE;
 
    procedure ENTRY_SYM(E : NODE; Y : out SYM; IX : out NODE) is
+      ALIAS : NODE;
       T : SYM;
    begin
       IX := null;
@@ -639,6 +677,17 @@
          end if;
          FAM_IX := E.B;
          return;
+      end if;
+      if E.KIND = N_SELECT and then E.A.KIND = N_NAME then
+         T := LOOKUP(E.A.NAME.all);
+         if T /= null and then (T.KIND = Y_TASK and T.FLAGS = 4) then
+            -- LC.E where task LC renames F(I) (RM79 8.5)
+            ALIAS := NN(N_SELECT, E.LINE);
+            ALIAS.all := E.all;
+            ALIAS.A := T.DECL;
+            ENTRY_SYM(ALIAS, Y, IX);
+            return;
+         end if;
       end if;
       if E.KIND = N_SELECT and then E.A.KIND = N_APPLY and then E.A.A.KIND = N_NAME then
          -- F(I).E: an entry of a member of a task family (RM79 9.2)
@@ -659,7 +708,7 @@
             Y := MEMBER_OF(E.TAG.all, E.NAME.all, E.LINE);
          end if;
       elsif E.KIND = N_SELECT and then IS_PACKAGE(E.A) then
-         Y := MEMBER_OF(E.A.NAME.all, E.NAME.all, E.LINE);
+         Y := MEMBER_OF(PATH_OF(E.A), E.NAME.all, E.LINE);
       else
          Y := null;
       end if;
@@ -668,13 +717,41 @@
       end if;
    end ENTRY_SYM;
 
+   -- entries of one task may be overloaded (RM79 9.5): the one whose
+   -- parameters the actuals fit
+   procedure ENTRY_OVERLOAD(Y : SYM; ARGS : NODE; LINE : INTEGER; R : out SYM) is
+      Z, FOUND : SYM;
+      OK : BOOLEAN;
+   begin
+      R := Y;
+      if Y.MEMBERS = null then
+         return;
+      end if;
+      Z := Y.MEMBERS.MEMBERS;
+      while Z /= null loop
+         if Z.NAME.all = Y.NAME.all and then Z.KIND = Y_ENTRY then
+            FITS(Z, ARGS, null, OK);
+            if OK and FOUND = null then
+               FOUND := Z;
+            elsif OK and then not SAME_ENTITY(FOUND, Z) then
+               FAIL(LINE, "the entry call of " & Y.NAME.all & " is ambiguous (RM79 9.5, 6.6)");
+            end if;
+         end if;
+         Z := Z.MNEXT;
+      end loop;
+      if FOUND /= null then
+         R := FOUND;
+      end if;
+   end ENTRY_OVERLOAD;
+
    -- an entry call: the caller waits in the entry's queue until the
    -- rendezvous is over; calling an inactive task raises TASKING_ERROR (RM79 11.4)
    procedure OTHER_CALL(E : NODE; IS_STMT : BOOLEAN; T : out TYP; R : out TEXT) is
-      Y : SYM;
+      Y, OY : SYM;
       PM : PARM;
       A : NODE;
-      PARTS, V, LV, ENT, ACT, I : TEXT;
+      PARTS, V, LV, ENT, ACT, I, TMP : TEXT;
+      BACK : TEXT := MK("");
       VT, LT : TYP;
       LC : CONS;
       RO : BOOLEAN;
@@ -683,6 +760,10 @@
       ENTRY_SYM(E.A, Y, IX);
       FIX := FAM_IX;
       ARGS_NODE := E.B;
+      if Y.C = null then
+         ENTRY_OVERLOAD(Y, ARGS_NODE, E.LINE, OY);
+         Y := OY;
+      end if;
       if Y.C /= null and FIX = null then
          -- E(I); with no parameters: the list is the family index
          FIX := E.B;
@@ -712,10 +793,14 @@
       PM := Y.PARAMS;
       while PM /= null loop
          A := ACTUAL_FOR(ARGS_NODE, PM, Y.PARAMS);
-         if A = null then
+         if A = null and PM.DSYM /= null then
+            -- the default of the entry's parameter (RM79 9.5, 6.3)
+            ACCESS_OF(PM.DSYM, V);
+            COPY_CODE(PM.T, V.all, LV);
+            PARTS := MK(PARTS.all & " p_." & PM.CFIELD.all & " = " & LV.all & ";");
+         elsif A = null then
             FAIL(E.LINE, "no actual parameter for " & PM.NAME.all);
-         end if;
-         if PM.MODE = M_IN then
+         elsif PM.MODE = M_IN then
             GEXPR(A, PM.T, VT, V);
             CHECK_TYPE(VT, PM.T, E.LINE);
             PARTS := MK(PARTS.all & " p_." & PM.CFIELD.all & " = " & V.all & ";");
@@ -725,7 +810,15 @@
                FAIL(E.LINE, PM.NAME.all & " needs a variable");
             end if;
             CHECK_TYPE(LT, PM.T, E.LINE);
-            PARTS := MK(PARTS.all & " p_." & PM.CFIELD.all & " = &" & LV.all & ";");
+            if LT.KIND = T_CHAR then
+               -- a byte of a string for an int formal: through a temporary
+               NEW_NAME("ch", TMP);
+               PARTS := MK(PARTS.all & " int " & TMP.all & " = " & LV.all & "; p_." & PM.CFIELD.all & " = &"
+                           & TMP.all & ";");
+               BACK := MK(BACK.all & " " & LV.all & " = " & TMP.all & ";");
+            else
+               PARTS := MK(PARTS.all & " p_." & PM.CFIELD.all & " = &" & LV.all & ";");
+            end if;
          end if;
          PM := PM.NEXT;
       end loop;
@@ -738,7 +831,7 @@
          PARTS := MK(PARTS.all & " if (!rt_is_active(&" & ACT.all & ")) rt_raise(RT_X_TASKING);");
       end if;
       T := TY_VOID;
-      R := MK(PARTS.all & " rt_entry_call(&" & ENT.all & ", &p_); })");
+      R := MK(PARTS.all & " rt_entry_call(&" & ENT.all & ", &p_);" & BACK.all & " })");
    end OTHER_CALL;
 
    -- T'ACTIVE, T'PRIORITY, E'COUNT (RM79 9.9)
@@ -751,7 +844,7 @@
          if Y.C = null then
             FAIL(E.LINE, Y.NAME.all & " is not a task family");
          end if;
-         OWN_INDEX(P);
+         OWN_INDEX(Y, P);
          T := TY_INT;
          if Y.T /= null then
             T := Y.T;
@@ -765,6 +858,11 @@
          ACT_PATH(Y, P);
          T := TY_INT;
          R := MK("rt_priority(&" & P.all & ")");
+      elsif Y.KIND = Y_TASK and A = "CLOCK" then
+         -- the processor time the task has used, of type TIME (RM79 9.9)
+         ACT_PATH(Y, P);
+         T := TY_TIME;
+         R := MK("rt_g_task_clock(&" & P.all & ")");
       elsif Y.KIND = Y_ENTRY and A = "COUNT" then
          if Y.MEMBERS /= CUR_TASK then
             FAIL(E.LINE, "E'COUNT is allowed only in the body of the task (RM79 9.9)");
@@ -795,6 +893,9 @@
       elsif E.NAME.all = "PRIORITY" then
          T := TY_INT;
          R := MK("rt_priority(&" & P.all & ")");
+      elsif E.NAME.all = "CLOCK" then
+         T := TY_TIME;
+         R := MK("rt_g_task_clock(&" & P.all & ")");
       else
          FAIL(E.LINE, "attribute " & E.NAME.all & " is not handled for a family member");
          T := TY_INT;
@@ -819,14 +920,75 @@
 
    -- the accept statement: the parameters are those of the waiting caller;
    -- an exception in the body goes to both partners (RM79 11.4)
+   -- the entry an accept statement names: its formal part repeats that of
+   -- the entry, which chooses among overloaded entries (RM79 9.5); an
+   -- accept is in the body of the task, not in one of its visible
+   -- subprograms (RM79 9.5)
+   procedure ACCEPT_ENTRY(S : NODE; R : out SYM) is
+      Z, FOUND, ANY : SYM;
+      OK : BOOLEAN;
+   begin
+      if FUNC_SYM /= null and CUR_TASK /= null then
+         Z := CUR_TASK.MEMBERS;
+         while Z /= null loop
+            if (Z.KIND = Y_PROC or Z.KIND = Y_FUNC) and then Z.CNAME.all = FUNC_SYM.CNAME.all then
+               FAIL(S.LINE, "an accept statement cannot be in a visible subprogram of the task (RM79 9.5)");
+            end if;
+            Z := Z.MNEXT;
+         end loop;
+      end if;
+      Z := TABLE(HASH(S.NAME.all));
+      while Z /= null loop
+         if Z.NAME.all = S.NAME.all and then Z.KIND = Y_ENTRY and then SAME_TASK(Z.MEMBERS, CUR_TASK) then
+            ANY := Z;
+            ACCEPT_CONFORMS(S, Z, OK);
+            if OK and FOUND = null then
+               FOUND := Z;
+            end if;
+         end if;
+         Z := Z.CHAIN;
+      end loop;
+      if FOUND = null and ANY /= null then
+         FAIL(S.LINE, "the formal part of accept " & S.NAME.all & " does not repeat that of the entry (RM79 9.5)");
+      end if;
+      R := FOUND;
+   end ACCEPT_ENTRY;
+
+   procedure ACCEPT_CONFORMS(S : NODE; Y : SYM; OK : out BOOLEAN) is
+      F : NODE := S.A;
+      PM : PARM := Y.PARAMS;
+      T : TYP;
+      C : CONS;
+   begin
+      OK := TRUE;
+      if F = null then
+         -- without a formal part the parameters are not named (RM79 9.5)
+         return;
+      end if;
+      while F /= null and PM /= null loop
+         RESOLVE(F.A, T, C);
+         if not SAME(T, PM.T) or F.IVAL /= PM.MODE then
+            OK := FALSE;
+            return;
+         end if;
+         F := F.NEXT;
+         PM := PM.NEXT;
+      end loop;
+      OK := F = null and PM = null;
+   end ACCEPT_CONFORMS;
+
    procedure GEN_ACCEPT(S : NODE) is
-      Y : SYM := LOOKUP_ENTRY(S.NAME.all, CUR_TASK);
+      Y : SYM;
       SAVED_AX : EXITS_T;
       ENT, EP, XF, X : TEXT;
       PM : PARM;
       F : NODE := S.A;
       P : SYM;
    begin
+      ACCEPT_ENTRY(S, Y);
+      if Y = null then
+         Y := LOOKUP_ENTRY(S.NAME.all, CUR_TASK);
+      end if;
       if Y = null or else Y.KIND /= Y_ENTRY then
          FAIL(S.LINE, S.NAME.all & " is not an entry");
       end if;
@@ -877,7 +1039,7 @@
       EMIT("RT_POP(" & XF.all & "); rt_accept_end(&" & ENT.all & ", 0, 0);");
       EMIT("} else {");
       EMIT("RT_POP(" & XF.all & "); int " & X.all & " = rt_xcur; rt_accept_end(&" & ENT.all & ", 1, "
-           & X.all & "); rt_raise(" & X.all & ");");
+           & "rt_g_partner_exc(" & X.all & ")); rt_raise(" & X.all & ");");
       EMIT("}");
       EMIT("}");
    end GEN_ACCEPT;
@@ -902,8 +1064,8 @@
       V : TEXT;
    begin
       -- delay takes a value of the floating point type TIME (RM79 9.6)
-      GEXPR(E, TY_FLOAT, VT, V);
-      CHECK_TYPE(VT, TY_FLOAT, E.LINE);
+      GEXPR(E, TY_TIME, VT, V);
+      CHECK_TYPE(VT, TY_TIME, E.LINE);
       R := MK("(rt_int)llround(" & V.all & ")");
    end GEN_DELAY_TICKS;
 
@@ -941,11 +1103,14 @@
       while ALT /= null loop
          G := MK("1");
          if ALT.A /= null then
-            GEXPR(ALT.A, TY_BOOL, VT, G);
+            CONDITION(ALT.A, TY_BOOL, VT, G);
             CHECK_TYPE(VT, TY_BOOL, ALT.LINE);
          end if;
          if ALT.B.KIND = N_ACCEPT then
-            Y := LOOKUP_ENTRY(ALT.B.NAME.all, CUR_TASK);
+            ACCEPT_ENTRY(ALT.B, Y);
+            if Y = null then
+               Y := LOOKUP_ENTRY(ALT.B.NAME.all, CUR_TASK);
+            end if;
             if Y = null or else Y.KIND /= Y_ENTRY then
                FAIL(ALT.LINE, ALT.B.NAME.all & " is not an entry");
             end if;
@@ -1030,6 +1195,11 @@
                   LINK_TO(Y.LEVEL, L);
                else
                   L := MK("NULL");
+               end if;
+               if TASK_LENGTH(Y) > 0 then
+                  -- an activation has the bits its length specification gives (RM79 13.2)
+                  EMIT("if ((rt_int)sizeof(struct " & Y.CNAME.all & "bodyfr) * 8 > " & INTEGER'REP(TASK_LENGTH(Y))
+                       & ") rt_raise(rt_exc(" & Q & "STORAGE_OVERFLOW" & Q & "));");
                end if;
                if Y.C = null then
                   ACT_PATH(Y, A);

@@ -1,0 +1,6 @@
+procedure MAIN is
+   type P is access INTEGER;
+   type PP is access P;
+begin
+   null;
+end MAIN;

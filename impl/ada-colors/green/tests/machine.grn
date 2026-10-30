@@ -1,0 +1,50 @@
+-- RM79 13.8 - 13.10, 14.6: code statements on the simulated machine,
+-- foreign bodies, UNSAFE_CONVERSION, LOW_LEVEL_IO
+restricted (TEXT_IO, MACHINE_CODE, LOW_LEVEL_IO, UNSAFE_PROGRAMMING)
+procedure MAIN is
+   use TEXT_IO;
+   type COLOR is (RED, GREEN, BLUE);
+   function BITS is new UNSAFE_PROGRAMMING.UNSAFE_CONVERSION(S is COLOR, T is INTEGER);
+   function IMAGE is new UNSAFE_PROGRAMMING.UNSAFE_CONVERSION(S is FLOAT, T is INTEGER);
+   function SQRT(X : FLOAT) return FLOAT is
+   begin
+      pragma INTERFACE(FORTRAN);
+   end SQRT;
+   function ATAN2(Y, X : FLOAT) return FLOAT is
+   begin
+      pragma INTERFACE(FORTRAN);
+   end ATAN2;
+   procedure SUM is
+      use MACHINE_CODE;
+      pragma INLINE;
+   begin
+      INSTRUCTION(OP => LDI, R => 1, A => 40);
+      INSTRUCTION(OP => ST, R => 1, A => 0);
+      INSTRUCTION(OP => LDI, R => 2, A => 2);
+      INSTRUCTION(OP => ADD, R => 2, A => 0);
+      MACHINE_CODE.INSTRUCTION(MACHINE_CODE.OUTN, 2, 0);
+   end SUM;
+   procedure FAR is
+      use MACHINE_CODE;
+   begin
+      INSTRUCTION(OP => LD, R => 0, A => -8);
+   end FAR;
+   D : INTEGER;
+begin
+   SUM;
+   begin
+      FAR;
+   exception
+      when RANGE_ERROR => PUT("outside the memory");
+   end;
+   PUT(BITS(BLUE)); PUT(IMAGE(1.0));
+   PUT(SQRT(2.0)); PUT(ATAN2(1.0, 1.0) * 4.0);
+   D := 33;
+   LOW_LEVEL_IO.SEND_CONTROL(LOW_LEVEL_IO.CONSOLE, D);
+   D := 77;
+   LOW_LEVEL_IO.SEND_CONTROL(7, D);
+   D := 0;
+   LOW_LEVEL_IO.RECEIVE_CONTROL(7, D);
+   PUT(D);
+   PUT(NEWLINE);
+end MAIN;

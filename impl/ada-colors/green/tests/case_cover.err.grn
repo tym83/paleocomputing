@@ -1,0 +1,9 @@
+procedure MAIN is
+   type C is (R, G, B);
+   X : C := B;
+begin
+   case X of
+      when R => null;
+      when G => null;
+   end case;
+end MAIN;

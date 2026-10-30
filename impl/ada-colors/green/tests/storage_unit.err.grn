@@ -1,0 +1,5 @@
+pragma STORAGE_UNIT(12);
+procedure MAIN is
+begin
+   null;
+end MAIN;

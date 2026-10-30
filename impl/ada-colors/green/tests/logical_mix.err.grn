@@ -1,0 +1,5 @@
+procedure MAIN is
+   B : BOOLEAN := TRUE;
+begin
+   B := B and B or B;
+end MAIN;

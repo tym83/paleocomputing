@@ -1,0 +1,16 @@
+-- RM79 8.6: the visible identifiers of the modules of pragma ENVIRONMENT are
+-- declared at the outermost level; visibility restrictions do not hide them
+pragma ENVIRONMENT(TEXT_IO);
+package COUNTERS is
+   TOTAL : INTEGER := 3;
+end COUNTERS;
+pragma ENVIRONMENT(COUNTERS);
+procedure MAIN is
+   restricted procedure SHOW is
+   begin
+      PUT(TOTAL); PUT(NEWLINE);
+   end SHOW;
+begin
+   TOTAL := TOTAL + 1;
+   PUT("total"); SHOW;
+end MAIN;

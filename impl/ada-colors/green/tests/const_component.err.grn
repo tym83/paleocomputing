@@ -1,0 +1,8 @@
+procedure MAIN is
+   type REC is record
+      LEN : constant INTEGER := 3;
+   end record;
+   R : REC;
+begin
+   R.LEN := 5;
+end MAIN;

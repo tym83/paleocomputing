@@ -1,0 +1,7 @@
+restricted (MACHINE_CODE)
+procedure MAIN is
+   use MACHINE_CODE;
+begin
+   INSTRUCTION(OP => NOP, R => 0, A => 0);
+   null;
+end MAIN;

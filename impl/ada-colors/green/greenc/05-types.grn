@@ -9,11 +9,46 @@
       return H;
    end HASH;
 
+   -- ",A,B," contains A
+   function LISTED(LIST : TEXT; NAME : STRING) return BOOLEAN is
+      L : STRING := LIST.all;
+      N : INTEGER := NAME'LENGTH;
+   begin
+      for I in L'FIRST .. L'LAST - N - 1 loop
+         if L(I) = "," and then L(I + N + 1) = "," then
+            if L(I + 1 .. I + N) = NAME then
+               return TRUE;
+            end if;
+         end if;
+      end loop;
+      return FALSE;
+   end LISTED;
+
+   -- a declaration hidden by a visibility restriction: declared outside the
+   -- restricted unit, at a depth up to LIMIT, and neither named in its list
+   -- nor declared in the enclosing unit it names first (RM79 8.3)
+   function VISIBLE_SYM(Y : SYM) return BOOLEAN is
+      B : BARRIER := BARRIERS;
+   begin
+      if Y.DEPTH = 0 then
+         return TRUE;
+      end if;
+      while B /= null loop
+         if Y.DEPTH <= B.LIMIT and Y.DEPTH /= B.KEEP then
+            if not LISTED(B.ALLOWED, Y.NAME.all) then
+               return FALSE;
+            end if;
+         end if;
+         B := B.NEXT;
+      end loop;
+      return TRUE;
+   end VISIBLE_SYM;
+
    function LOOKUP(NAME : STRING) return SYM is
       Y : SYM := TABLE(HASH(NAME));
    begin
       while Y /= null loop
-         if Y.NAME.all = NAME then
+         if Y.NAME.all = NAME and then VISIBLE_SYM(Y) then
             return Y;
          end if;
          Y := Y.CHAIN;
@@ -46,6 +81,36 @@
       return LOOKUP(NAME);
    end LOOKUP_ENTRY;
 
+   -- the declaration of NAME at depth D
+   function LOOKUP_AT(NAME : STRING; D : INTEGER) return SYM is
+      Y : SYM := TABLE(HASH(NAME));
+   begin
+      while Y /= null loop
+         if Y.NAME.all = NAME and Y.DEPTH = D then
+            return Y;
+         end if;
+         Y := Y.CHAIN;
+      end loop;
+      return null;
+   end LOOKUP_AT;
+
+   function ENCLOSING_DEPTH(NAME : STRING) return INTEGER is
+   begin
+      for I in reverse 1 .. NUNITS loop
+         if UNIT_NAMES(I).all = NAME then
+            return UNIT_DEPTHS(I);
+         end if;
+      end loop;
+      return -1;
+   end ENCLOSING_DEPTH;
+
+   procedure PUSH_UNIT(NAME : TEXT) is
+   begin
+      NUNITS := NUNITS + 1;
+      UNIT_NAMES(NUNITS) := NAME;
+      UNIT_DEPTHS(NUNITS) := DEPTH;
+   end PUSH_UNIT;
+
    function LOOKUP_DECL(D : NODE) return SYM is
       Y : SYM := TABLE(HASH(D.NAME.all));
    begin
@@ -65,20 +130,77 @@
 
    function SAME(A, B : TYP) return BOOLEAN is
    begin
+      if A = null or B = null then
+         return A = B;
+      elsif A.VIEW_OF /= null or B.VIEW_OF /= null then
+         -- a formal type of a generic is its actual type (RM79 12.2)
+         return BASE_VIEW(A) = BASE_VIEW(B);
+      end if;
       -- type equivalence is by name, applied strictly (RM79 3.3): every type
       -- definition is a distinct type; the predefined scalar types and STRING
       -- are each one type
-      if A = B then
-         return TRUE;
-      end if;
-      if A = null or B = null or else A.KIND /= B.KIND then
-         return FALSE;
-      end if;
-      return A.KIND = T_INT or A.KIND = T_BOOL or A.KIND = T_FLOAT or A.KIND = T_CHAR
-         or A.KIND = T_STRING or A.KIND = T_VOID;
+      return A = B;
    end SAME;
 
-   function SAME_SIGNATURE(A, B : PARM) return BOOLEAN is
+   function BASE_VIEW(T : TYP) return TYP is
+      R : TYP := T;
+   begin
+      while R.VIEW_OF /= null loop
+         R := R.VIEW_OF;
+      end loop;
+      return R;
+   end BASE_VIEW;
+
+   -- the predefined type a numeric type derives from (RM79 3.4, 3.5.4)
+   function ROOT(T : TYP) return TYP is
+      R : TYP := T;
+   begin
+      while R.PARENT /= null loop
+         R := R.PARENT;
+      end loop;
+      return R;
+   end ROOT;
+
+   -- explicit conversion is allowed between a type and its ancestors (RM79 4.6)
+   function DERIVED_FROM(A, B : TYP) return BOOLEAN is
+      R : TYP := A;
+   begin
+      while R /= null loop
+         if R = B then
+            return TRUE;
+         end if;
+         R := R.PARENT;
+      end loop;
+      return FALSE;
+   end DERIVED_FROM;
+
+   -- a formal type is private in the generic body: no arithmetic, no
+   -- order, no literals (RM79 12.1)
+   function IS_NUMERIC(T : TYP) return BOOLEAN is
+   begin
+      if T.VIEW_OF /= null then
+         if IN_INSTANCE > 0 then
+            return FALSE;
+         end if;
+         return IS_NUMERIC(T.VIEW_OF);
+      end if;
+      return T.KIND = T_INT or T.KIND = T_FLOAT or T.KIND = T_FIXED;
+   end IS_NUMERIC;
+
+   function IS_DISCRETE(T : TYP) return BOOLEAN is
+   begin
+      if T.VIEW_OF /= null then
+         if IN_INSTANCE > 0 then
+            return FALSE;
+         end if;
+         return IS_DISCRETE(T.VIEW_OF);
+      end if;
+      return T.KIND = T_INT or T.KIND = T_ENUM or T.KIND = T_CHAR or T.KIND = T_BOOL;
+   end IS_DISCRETE;
+
+   -- the same parameter types and modes, in order; names and defaults
+   -- are not compared (RM79 12.2)
+   function SAME_TYPES(A, B : PARM) return BOOLEAN is
       X : PARM := A;
       Y : PARM := B;
    begin
@@ -90,16 +212,41 @@
          Y := Y.NEXT;
       end loop;
       return X = null and Y = null;
+   end SAME_TYPES;
+
+   -- the same order, names, modes and types of parameters: a subprogram
+   -- with another name for a parameter is another overloading (RM79 6.6)
+   function SAME_SIGNATURE(A, B : PARM) return BOOLEAN is
+      X : PARM := A;
+      Y : PARM := B;
+   begin
+      while X /= null and Y /= null loop
+         if not SAME(X.T, Y.T) or X.MODE /= Y.MODE or X.NAME.all /= Y.NAME.all then
+            return FALSE;
+         end if;
+         X := X.NEXT;
+         Y := Y.NEXT;
+      end loop;
+      return X = null and Y = null;
    end SAME_SIGNATURE;
+
+   -- two overloadable declarations that may coexist (RM79 6.6)
+   function DISTINCT_OVERLOAD(Y, Z : SYM) return BOOLEAN is
+   begin
+      if not (OVERLOADABLE(Y) and OVERLOADABLE(Z)) then
+         return FALSE;
+      elsif Y.KIND /= Z.KIND then
+         return TRUE;
+      end if;
+      return not SAME_SIGNATURE(Y.PARAMS, Z.PARAMS) or not SAME(Y.RESULT, Z.RESULT);
+   end DISTINCT_OVERLOAD;
 
    procedure DEFINE(Y : SYM; LINE : INTEGER) is
       H : INTEGER := HASH(Y.NAME.all);
       Z : SYM := TABLE(H);
    begin
       while Z /= null loop
-         if Z.DEPTH = DEPTH and then Z.NAME.all = Y.NAME.all and then not (OVERLOADABLE(Y)
-            and OVERLOADABLE(Z) and (Y.KIND /= Z.KIND or else not SAME_SIGNATURE(Y.PARAMS, Z.PARAMS)
-               or else not SAME(Y.RESULT, Z.RESULT))) then
+         if Z.DEPTH = DEPTH and then (Z.NAME.all = Y.NAME.all and not Z.FROM_USE) and then not DISTINCT_OVERLOAD(Y, Z) then
             FAIL(LINE, Y.NAME.all & " is already declared in this declarative part");
          end if;
          Z := Z.CHAIN;
@@ -128,19 +275,52 @@
    procedure NEW_SYM(KIND : INTEGER; NAME : TEXT) return SYM is
    begin
       return new SYM_REC(KIND, NAME, null, null, null, null, FALSE, 0, FALSE, null, null, null,
-                         0, 0, FALSE, FALSE, FALSE, FALSE, null, null, null, null);
+                         0, 0, FALSE, FALSE, FALSE, FALSE, null, null, null, null, 0);
    end NEW_SYM;
 
    procedure NEW_TYP(KIND : INTEGER) return TYP is
    begin
       return new TYP_REC(KIND, null, null, null, null, null, null, null, null, null, null,
-                         FALSE, FALSE, FALSE, null, null);
+                         FALSE, FALSE, FALSE, null, null, null, null, 0, null, null, 0, FALSE, null);
    end NEW_TYP;
 
    procedure NEW_CONS return CONS is
    begin
-      return new CONS_REC(null, null, null, 0, 0, FALSE, null, null);
+      return new CONS_REC(null, null, null, 0, 0, FALSE, null, null, null, null, null);
    end NEW_CONS;
+
+   -- a constraint with bounds; with discriminant values
+   function BOUNDED(C : CONS) return BOOLEAN is
+   begin
+      if C = null then
+         return FALSE;
+      end if;
+      return C.LO /= null;
+   end BOUNDED;
+
+   function BOUNDED_HI(C : CONS) return BOOLEAN is
+   begin
+      if C = null then
+         return FALSE;
+      end if;
+      return C.HI /= null;
+   end BOUNDED_HI;
+
+   function STATIC_BOUNDS(C : CONS) return BOOLEAN is
+   begin
+      if C = null then
+         return FALSE;
+      end if;
+      return C.HASM;
+   end STATIC_BOUNDS;
+
+   function DISCRIMINATED(C : CONS) return BOOLEAN is
+   begin
+      if C = null then
+         return FALSE;
+      end if;
+      return C.DV /= null;
+   end DISCRIMINATED;
 
    function KIND_NAME(T : TYP) return STRING is
    begin
@@ -154,6 +334,7 @@
          when 5 => return "STRING";
          when 10 => return "null";
          when 11 => return "CHARACTER";
+         when 16 => return "a fixed point type";
          when others => return "an anonymous type";
       end case;
    end KIND_NAME;
@@ -190,14 +371,18 @@
       case T.KIND of
          when 1 => R := MK("rt_int");
          when 2 | 4 | 11 => R := MK("int");
-         when 3 => R := MK("double");
+         when 3 | 16 => R := MK("double");
          when 5 => R := MK("rstr");
          when 9 => R := MK("void");
          when 13 => R := MK("rt_act");
          when 14 => R := MK("rt_taskdecl");
          when 15 => R := MK("rt_entry");
          when others =>
-            if T.CNAME = null then
+            if T.VIEW_OF /= null then
+               -- a formal type of an instance has the C type of its actual
+               CTYPE(T.VIEW_OF, S);
+               T.CNAME := S;
+            elsif T.CNAME = null then
                DECLARE_CTYPE(T);
             elsif T.KIND = T_RECORD and then T.FORWARD and then not T.DEFINED then
                T.DEFINED := TRUE;
@@ -256,7 +441,7 @@
             PUT_TO(OUT_TYPES, "typedef " & CT.all & " *" & T.CNAME.all & ";");
          end if;
       elsif T.KIND = T_ARRAY then
-         CTYPE(T.ELEM, CT);
+         ELEM_CTYPE(T.ELEM, CT);
          PUT_TO(OUT_TYPES, "typedef struct " & T.CNAME.all & " " & T.CNAME.all & ";");
          PUT_TO(OUT_TYPES, "struct " & T.CNAME.all & " { rt_int lo, hi, lo2, hi2; " & CT.all & " *p; };");
       else
@@ -313,9 +498,33 @@
          end if;
       elsif E.KIND = N_NAME then
          Y := LOOKUP(E.NAME.all);
-         if Y /= null and then Y.KIND = Y_CONST and then Y.HASMV then
+         if Y /= null and then (Y.KIND = Y_CONST or Y.KIND = Y_ENUMLIT) and then Y.HASMV then
             OK := TRUE;
             V := Y.MVALUE;
+         end if;
+      elsif E.KIND = N_SELECT and then IS_PACKAGE(E.A) then
+         -- P.C, a static constant of a package (RM79 4.8)
+         Y := MEMBER_OF(PATH_OF(E.A), E.NAME.all, E.LINE);
+         if Y /= null and then (Y.KIND = Y_CONST or Y.KIND = Y_ENUMLIT) and then Y.HASMV then
+            OK := TRUE;
+            V := Y.MVALUE;
+         end if;
+      elsif E.KIND = N_ATTR and then E.A.KIND = N_NAME and then (E.NAME.all = "FIRST" or E.NAME.all = "LAST") then
+         -- T'FIRST and T'LAST of a type with static bounds (RM79 4.8)
+         Y := LOOKUP(E.A.NAME.all);
+         if Y /= null and then Y.KIND = Y_TYPE and then Y.C /= null and then Y.C.HASM then
+            OK := TRUE;
+            if E.NAME.all = "FIRST" then
+               V := Y.C.MLO;
+            else
+               V := Y.C.MHI;
+            end if;
+         end if;
+      elsif E.KIND = N_APPLY and then E.A.KIND = N_NAME and then LIST_LEN(E.B) = 1 then
+         -- a qualified or converted static integer (RM79 4.8)
+         Y := LOOKUP(E.A.NAME.all);
+         if Y /= null and then Y.KIND = Y_TYPE and then Y.T /= null and then Y.T.KIND = T_INT then
+            MANIFEST(E.B, V, OK);
          end if;
       end if;
    end MANIFEST;
@@ -351,39 +560,259 @@
          C.MLO := Y.C.MLO;
          C.MHI := Y.C.MHI;
          C.HASM := Y.C.HASM;
-         C.LO2 := Y.C.LO2;
-         C.HI2 := Y.C.HI2;
+         C.ACC := Y.C.ACC;
+         C.INNER := Y.C.INNER;
+         C.DV := Y.C.DV;
       end if;
       if T = null then
          FAIL(ST.LINE, "the type " & ST.NAME.all & " is used before its full declaration");
       end if;
-      if ST.FLAG = 1 then
+      if ST.FLAG = 3 then
+         -- an accuracy constraint, digits or delta, and perhaps a range (RM79 3.5.5)
+         if T.KIND /= T_FLOAT and T.KIND /= T_FIXED then
+            FAIL(ST.LINE, "an accuracy constraint applies to a real type (RM79 3.5.5)");
+         end if;
+         GEXPR(ST.B, null, DUMMY, C.ACC);
+      end if;
+      if ST.FLAG = 1 or (ST.FLAG = 3 and ST.A /= null) then
          -- range constraint (RM79 3.5)
          R := ST.A;
-         GEXPR(R.A, T, DUMMY, C.LO);
-         GEXPR(R.B, T, DUMMY, C.HI);
-         MANIFEST(R.A, C.MLO, OK);
-         C.HASM := OK;
-         MANIFEST(R.B, C.MHI, OK);
-         C.HASM := C.HASM and OK;
+         if not IS_NUMERIC(T) and not IS_DISCRETE(T) then
+            FAIL(ST.LINE, "a range constraint applies to a scalar type (RM79 3.5)");
+         end if;
+         RANGE_OF(R, T, C);
       elsif ST.FLAG = 2 then
-         -- index constraint (RM79 3.6); STRING objects count from 1
-         R := ST.A;
-         if R.KIND /= N_RANGE then
-            FAIL(ST.LINE, "an index constraint is a discrete range");
-         end if;
-         if T.KIND = T_STRING then
-            GEXPR(R.A, TY_INT, DUMMY, CODE);
-            GEXPR(R.B, TY_INT, DUMMY, C.SLEN);
-            C.SLEN := MK("(" & C.SLEN.all & " - " & CODE.all & " + 1)");
-         elsif T.KIND = T_ARRAY then
-            GEXPR(R.A, T.IDX, DUMMY, C.LO);
-            GEXPR(R.B, T.IDX, DUMMY, C.HI);
-         else
-            FAIL(ST.LINE, "this type takes no index constraint");
-         end if;
+         CONSTRAINT_LIST(ST, T, C);
       end if;
    end RESOLVE;
+
+   -- (discrete range {, discrete range}): an index constraint gives the
+   -- bounds of every index (RM79 3.6); an aggregate is a discriminant
+   -- constraint (RM79 3.7.3)
+   procedure CONSTRAINT_LIST(ST : NODE; T : TYP; C : CONS) is
+      R : NODE := ST.A;
+      ARRT : TYP := T;
+      CC : CONS := C;
+      IT : TYP;
+   begin
+      if T.KIND = T_RECORD then
+         DISCRIMINANT_CONSTRAINT(ST, T, C);
+         return;
+      end if;
+      if T.KIND /= T_ARRAY then
+         FAIL(ST.LINE, "this type takes no index constraint");
+      end if;
+      if LIST_LEN(R) /= T.DIMS then
+         FAIL(ST.LINE, "an index constraint gives a range for each of the " & INTEGER'REP(T.DIMS)
+              & " indexes (RM79 3.6)");
+      end if;
+      while R /= null loop
+         if R.FORMAL /= null then
+            FAIL(ST.LINE, "an index constraint is a list of discrete ranges (RM79 3.6)");
+         end if;
+         DISCRETE_BOUNDS(R, ARRT.IDX, IT, CC.LO, CC.HI);
+         CHECK_TYPE(IT, ARRT.IDX, ST.LINE);
+         CC.MLO := 0;
+         CC.MHI := 0;
+         CC.HASM := FALSE;
+         R := R.NEXT;
+         if R /= null then
+            CC.INNER := NEW_CONS;
+            CC := CC.INNER;
+            ARRT := ARRT.ELEM;
+         end if;
+      end loop;
+   end CONSTRAINT_LIST;
+
+   -- T(D => V, ...): the values of the discriminants of a record (RM79 3.7.3)
+   procedure DISCRIMINANT_CONSTRAINT(ST : NODE; T : TYP; C : CONS) is
+      A : NODE := ST.A;
+      F : FIELD := T.FIELDS;
+      VT : TYP;
+      V : TEXT;
+      D, TAIL : DVAL;
+   begin
+      C.DV := null;
+      while A /= null loop
+         if A.FORMAL /= null then
+            F := T.FIELDS;
+            while F /= null and then F.NAME.all /= A.FORMAL.all loop
+               F := F.NEXT;
+            end loop;
+         else
+            while F /= null and then not F.IS_DISCR loop
+               F := F.NEXT;
+            end loop;
+         end if;
+         if F = null or else not F.IS_DISCR then
+            FAIL(ST.LINE, "a discriminant constraint gives the values of discriminants of " & KIND_NAME(T)
+                 & " (RM79 3.7.3)");
+         end if;
+         GEXPR(A, F.T, VT, V);
+         CHECK_TYPE(VT, F.T, ST.LINE);
+         D := new DVAL_REC(F.NAME, V, null);
+         if TAIL = null then
+            C.DV := D;
+         else
+            TAIL.NEXT := D;
+         end if;
+         TAIL := D;
+         if A.FORMAL = null then
+            F := F.NEXT;
+         end if;
+         A := A.NEXT;
+      end loop;
+      F := T.FIELDS;
+      while F /= null loop
+         if F.IS_DISCR then
+            D := C.DV;
+            while D /= null and then D.NAME.all /= F.NAME.all loop
+               D := D.NEXT;
+            end loop;
+            if D = null then
+               FAIL(ST.LINE, "no value for discriminant " & F.NAME.all & " (RM79 3.7.3)");
+            end if;
+         end if;
+         F := F.NEXT;
+      end loop;
+   end DISCRIMINANT_CONSTRAINT;
+
+   -- a discrete range: L .. H, T range L .. H, or a type mark T (RM79 3.6)
+   procedure DISCRETE_BOUNDS(R : NODE; WANT : TYP; T : out TYP; LO, HI : out TEXT) is
+      C : CONS;
+      Y : SYM;
+   begin
+      if R.KIND = N_RANGE then
+         RANGE_BOUNDS(R.A, R.B, WANT, R.LINE, T, LO, HI);
+         return;
+      end if;
+      if R.KIND = N_NAME then
+         Y := LOOKUP(R.NAME.all);
+         if Y = null or else Y.KIND /= Y_TYPE then
+            FAIL(R.LINE, "a discrete range is L .. H, T range L .. H or a type mark (RM79 3.6)");
+         end if;
+      elsif R.KIND /= S_MARK then
+         FAIL(R.LINE, "a discrete range is L .. H, T range L .. H or a type mark (RM79 3.6)");
+      end if;
+      if R.KIND = N_NAME then
+         T := Y.T;
+         C := Y.C;
+      else
+         RESOLVE(R, T, C);
+      end if;
+      if C = null or else C.LO = null then
+         FAIL(R.LINE, "this type mark has no bounds to give a discrete range");
+      end if;
+      LO := C.LO;
+      HI := C.HI;
+   end DISCRETE_BOUNDS;
+
+   -- the bounds of a range constraint of type T, checked against T
+   procedure RANGE_OF(R : NODE; T : TYP; C : CONS) is
+      DUMMY : TYP;
+      OK : BOOLEAN;
+   begin
+      GEXPR(R.A, T, DUMMY, C.LO);
+      CHECK_TYPE(DUMMY, T, R.LINE);
+      GEXPR(R.B, T, DUMMY, C.HI);
+      CHECK_TYPE(DUMMY, T, R.LINE);
+      if T.KIND = T_FIXED then
+         C.LO := MK("(" & C.LO.all & ")");
+         C.HI := MK("(" & C.HI.all & ")");
+      end if;
+      MANIFEST(R.A, C.MLO, OK);
+      C.HASM := OK;
+      MANIFEST(R.B, C.MHI, OK);
+      C.HASM := C.HASM and OK;
+   end RANGE_OF;
+
+   -- a fresh type object; the full declaration of a private type fills the
+   -- object that the clients already hold (RM79 7.4)
+   procedure FRESH_TYP(KIND : INTEGER; NAME : TEXT; T : out TYP) is
+      PH : TYP := COMPLETING;
+   begin
+      COMPLETING := null;
+      if PH = null then
+         T := NEW_TYP(KIND);
+         T.NAME := NAME;
+         return;
+      end if;
+      PH.all := NEW_TYP(KIND).all;
+      PH.NAME := NAME;
+      T := PH;
+   end FRESH_TYP;
+
+   -- every subprogram attribute of PARENT that is visible here is derived
+   -- for T, with T in place of PARENT (RM79 3.4)
+   procedure INHERIT(PARENT, T : TYP; LINE : INTEGER) is
+      S : SYM := SCOPE_STACK;
+      Z : SYM;
+      P, Q, TAIL : PARM;
+      USES : BOOLEAN;
+      NEWS : SYM;
+   begin
+      while S /= null loop
+         if (S.KIND = Y_FUNC or S.KIND = Y_PROC) and then not S.HIDDEN and then S.MEMBERS = null then
+            USES := SAME(S.RESULT, PARENT);
+            P := S.PARAMS;
+            while P /= null loop
+               USES := USES or SAME(P.T, PARENT);
+               P := P.NEXT;
+            end loop;
+            if USES then
+               COPY_SYM(S, Z);
+               Z.PARAMS := null;
+               TAIL := null;
+               P := S.PARAMS;
+               while P /= null loop
+                  Q := new PARM_REC(P.NAME, P.MODE, P.T, P.C, P.CFIELD, P.DFLT, null, P.DSYM);
+                  if SAME(Q.T, PARENT) then
+                     Q.T := T;
+                  end if;
+                  if TAIL = null then
+                     Z.PARAMS := Q;
+                  else
+                     TAIL.NEXT := Q;
+                  end if;
+                  TAIL := Q;
+                  P := P.NEXT;
+               end loop;
+               if SAME(Z.RESULT, PARENT) then
+                  Z.RESULT := T;
+               end if;
+               Z.CHAIN := NEWS;
+               NEWS := Z;
+            end if;
+         end if;
+         S := S.STACK;
+      end loop;
+      while NEWS /= null loop
+         Z := NEWS;
+         NEWS := NEWS.CHAIN;
+         Z.CHAIN := null;
+         DEFINE(Z, LINE);
+      end loop;
+   end INHERIT;
+
+   -- the literals of a derived enumeration type are those of its parent, overloaded
+   procedure DERIVE_LITERALS(T : TYP; LINE : INTEGER) is
+      L : NODE := T.LITS;
+      N : INTEGER := 0;
+      Y : SYM;
+   begin
+      while L /= null loop
+         if L.KIND = N_NAME then
+            Y := NEW_SYM(Y_ENUMLIT, L.NAME);
+            Y.T := T;
+            Y.RESULT := T;
+            Y.MVALUE := N;
+            Y.HASMV := TRUE;
+            DEFINE(Y, LINE);
+         end if;
+         N := N + 1;
+         L := L.NEXT;
+      end loop;
+   end DERIVE_LITERALS;
 
    -- a type definition (RM79 3.5 - 3.8); NAME is the declared name, if any
    procedure TYPE_DEFINITION(D : NODE; NAME : TEXT; T : out TYP; C : out CONS) is
@@ -399,9 +828,8 @@
       case D.KIND of
          when 70 =>
             -- enumeration (RM79 3.5.1): every literal is declared with the type
-            T := NEW_TYP(T_ENUM);
+            FRESH_TYP(T_ENUM, NAME, T);
             T.LITS := D.A;
-            T.NAME := NAME;
             L := D.A;
             N := 0;
             while L /= null loop
@@ -418,85 +846,550 @@
             end loop;
             C.LO := MK("0");
             C.HI := MK(INTEGER'REP(N - 1));
+            C.MLO := 0;
+            C.MHI := N - 1;
+            C.HASM := TRUE;
          when 71 =>
-            -- an integer type (RM79 3.5.4); here a constrained INTEGER
-            T := TY_INT;
+            -- type T is range L .. R is new <integer type> range L .. R, the
+            -- predefined type chosen to hold L .. R (RM79 3.5.4)
+            FRESH_TYP(T_INT, NAME, T);
             GEXPR(D.A, TY_INT, DUMMY, C.LO);
+            if DUMMY.KIND /= T_INT then
+               FAIL(D.LINE, "the bounds of an integer type are integers (RM79 3.5.4)");
+            end if;
             GEXPR(D.B, TY_INT, DUMMY, C.HI);
+            if DUMMY.KIND /= T_INT then
+               FAIL(D.LINE, "the bounds of an integer type are integers (RM79 3.5.4)");
+            end if;
             MANIFEST(D.A, C.MLO, OK);
             C.HASM := OK;
             MANIFEST(D.B, C.MHI, OK);
             C.HASM := C.HASM and OK;
+            T.PARENT := TY_INT;
+            T.TCONS := C;
+            if C.HASM and then (C.MLO >= -2147483648 and C.MHI <= 2147483647) then
+               T.PARENT := TY_SHORT;
+            end if;
+            INHERIT(T.PARENT, T, D.LINE);
          when 72 =>
-            T := TY_FLOAT;
+            REAL_TYPE(D, NAME, T, C);
          when 73 =>
-            -- arrays (RM79 3.6)
-            if D.A.NEXT /= null and then D.A.NEXT.NEXT /= null then
-               FAIL(D.LINE, "arrays of more than two dimensions are not handled yet");
-            end if;
-            T := NEW_TYP(T_ARRAY);
-            T.NAME := NAME;
-            RESOLVE(D.B, T.ELEM, T.ELEMCONS);
-            L := D.A;
-            if L.KIND = N_RANGE then
-               GEXPR(L.A, null, T.IDX, C.LO);
-               GEXPR(L.B, T.IDX, DUMMY, C.HI);
-            else
-               RESOLVE(L, T.IDX, IC);
-               if T.IDX.KIND = T_ENUM or T.IDX.KIND = T_CHAR or T.IDX.KIND = T_BOOL then
-                  C.LO := IC.LO;
-                  C.HI := IC.HI;
-               elsif IC.LO /= null then
-                  -- a type-mark index: positional aggregates start at its FIRST
-                  T.TCONS := NEW_CONS;
-                  T.TCONS.LO := IC.LO;
-               end if;
-            end if;
-            if D.A.NEXT /= null then
-               -- a second index (RM79 3.6): bounds known with the type
-               L := D.A.NEXT;
-               if L.KIND = N_RANGE then
-                  GEXPR(L.A, null, T.IDX2, C.LO2);
-                  GEXPR(L.B, T.IDX2, DUMMY, C.HI2);
-               else
-                  RESOLVE(L, T.IDX2, IC);
-                  C.LO2 := IC.LO;
-                  C.HI2 := IC.HI;
-               end if;
-               if C.LO = null or C.LO2 = null then
-                  FAIL(D.LINE, "a two-dimensional array needs the bounds of both indexes here");
-               end if;
-            end if;
-            if C.LO /= null then
-               T.TCONS := C;
-            end if;
+            ARRAY_TYPE(D.A, D.B, NAME, D.LINE, T, C);
          when 74 =>
             -- records (RM79 3.7)
-            T := NEW_TYP(T_RECORD);
-            T.NAME := NAME;
-            COMP := D.A;
-            while COMP /= null loop
-               F := new FIELD_REC(COMP.NAME, null, null, null, COMP.B);
-               RESOLVE(COMP.A, F.T, F.C);
-               if TAIL = null then
-                  T.FIELDS := F;
-               else
-                  TAIL.NEXT := F;
-               end if;
-               TAIL := F;
-               COMP := COMP.NEXT;
+            FRESH_TYP(T_RECORD, NAME, T);
+            DISC_SYMS := null;
+            RECORD_COMPONENTS(D.A, T, null, D.LINE);
+            while DISC_SYMS /= null loop
+               REMOVE_SYM(DISC_SYMS);
+               DISC_SYMS := DISC_SYMS.MNEXT;
             end loop;
          when 75 =>
             -- access types (RM79 3.8); the designated type may come later
-            T := NEW_TYP(T_PTR);
-            T.NAME := NAME;
+            FRESH_TYP(T_PTR, NAME, T);
             T.DECL := D.A;
+            if D.A.KIND = S_MARK and then LOOKUP(D.A.NAME.all) /= null
+               and then LOOKUP(D.A.NAME.all).KIND = Y_TYPE and then LOOKUP(D.A.NAME.all).T /= null then
+               FINISH_PTR(T);
+            end if;
          when 76 =>
-            RESOLVE(D.A, T, C);
+            DERIVED_TYPE(D, NAME, T, C);
          when others =>
             FAIL(D.LINE, "this type definition is not handled");
       end case;
    end TYPE_DEFINITION;
+
+   -- array (index {, index}) of component (RM79 3.6): every index is a
+   -- discrete range, or every index a type mark; an n-dimensional array is an
+   -- array of (n-1)-dimensional subarrays (RM79 4.1.1), its rows
+   procedure ARRAY_TYPE(IDX, COMP : NODE; NAME : TEXT; LINE : INTEGER; T : out TYP; C : out CONS) is
+      L : NODE := IDX;
+      ROWC, IC : CONS;
+      IT : TYP;
+   begin
+      C := NEW_CONS;
+      FRESH_TYP(T_ARRAY, NAME, T);
+      T.DIMS := LIST_LEN(IDX);
+      if IDX.NEXT = null then
+         RESOLVE(COMP, T.ELEM, T.ELEMCONS);
+      else
+         if (IDX.KIND = N_RANGE) /= (IDX.NEXT.KIND = N_RANGE) then
+            FAIL(LINE, "the indexes of an array are all discrete ranges or all type marks (RM79 3.6)");
+         end if;
+         ARRAY_TYPE(IDX.NEXT, COMP, null, LINE, T.ELEM, ROWC);
+         if ROWC.LO /= null then
+            T.ELEMCONS := ROWC;
+         end if;
+      end if;
+      if L.KIND = N_RANGE then
+         DISCRETE_BOUNDS(L, null, T.IDX, C.LO, C.HI);
+         STATIC_RANGE(L.A, L.B, C);
+      elsif L.KIND = S_MARK and L.FLAG = 1 then
+         -- T range L .. H: the index is of type T (RM79 3.6)
+         DISCRETE_BOUNDS(L, null, T.IDX, C.LO, C.HI);
+      else
+         RESOLVE(L, T.IDX, IC);
+         -- a type mark with a known small range also gives the objects of
+         -- the type their bounds, as TABLE : array (INDEX) of ... (RM79 7.5)
+         if T.IDX.KIND = T_ENUM or T.IDX.KIND = T_CHAR or T.IDX.KIND = T_BOOL
+            or (IC.HASM and (IC.MHI - IC.MLO >= 0 and IC.MHI - IC.MLO < 1000000)) then
+            C.LO := IC.LO;
+            C.HI := IC.HI;
+            C.MLO := IC.MLO;
+            C.MHI := IC.MHI;
+            C.HASM := IC.HASM;
+         elsif IC.LO /= null then
+            -- a type-mark index: positional aggregates start at its FIRST
+            T.TCONS := NEW_CONS;
+            T.TCONS.LO := IC.LO;
+         end if;
+      end if;
+      if not IS_DISCRETE(T.IDX) then
+         FAIL(LINE, "an index is of a discrete type (RM79 3.6)");
+      end if;
+      if T.DIMS > 1 then
+         C.INNER := ROWC;
+         if (C.LO = null) /= (ROWC.LO = null) then
+            C.LO := null;
+            C.HI := null;
+            C.INNER := null;
+            T.ELEMCONS := null;
+         end if;
+      end if;
+      if C.LO /= null then
+         T.TCONS := C;
+      end if;
+   end ARRAY_TYPE;
+
+   -- the static bounds of a range, if they are static
+   procedure STATIC_RANGE(L, H : NODE; C : CONS) is
+      OK, OK2 : BOOLEAN;
+   begin
+      MANIFEST(L, C.MLO, OK);
+      MANIFEST(H, C.MHI, OK2);
+      if IS_CHAR_LIT(L) and IS_CHAR_LIT(H) then
+         C.MLO := CHARACTER'ORD(L.NAME(1)) - 1;
+         C.MHI := CHARACTER'ORD(H.NAME(1)) - 1;
+         OK := TRUE;
+         OK2 := TRUE;
+      end if;
+      C.HASM := OK and OK2;
+   end STATIC_RANGE;
+
+   -- POSITION, FIRST_BIT and LAST_BIT of component F of record type RT
+   procedure COMPONENT_PLACE(RT : TYP; F : FIELD; A, CT, V : STRING; R : out TEXT) is
+      BITS, L : TEXT;
+      P : REP := REP_OF(RT);
+      PL : PLACE;
+      K : INTEGER := 0;
+      G : FIELD := RT.FIELDS;
+      WHAT : STRING := "2";
+   begin
+      if P /= null then
+         PL := P.LAYOUT;
+      end if;
+      while PL /= null and then PL.NAME.all /= F.NAME.all loop
+         PL := PL.NEXT;
+      end loop;
+      if PL /= null then
+         -- the place given by the record representation (RM79 13.4)
+         if A = "POSITION" then
+            R := MK("((rt_int)" & INTEGER'REP(PL.UNIT) & ")");
+         elsif A = "FIRST_BIT" then
+            R := MK("((rt_int)" & INTEGER'REP(PL.FIRST_BIT) & ")");
+         else
+            R := MK("((rt_int)" & INTEGER'REP(PL.LAST_BIT) & ")");
+         end if;
+      else
+         -- where the layout of the record puts it (RM79 13.7)
+         while G /= F loop
+            K := K + 1;
+            G := G.NEXT;
+         end loop;
+         if A = "POSITION" then
+            WHAT := "0";
+         elsif A = "FIRST_BIT" then
+            WHAT := "1";
+         end if;
+         LAYOUT_OF(RT, null, FALSE, FALSE, L);
+         R := MK("({ " & CT & " o_ = " & V & "; rt_g_component(&" & L.all & ", &o_, " & INTEGER'REP(K) & ", "
+                 & WHAT & "); })");
+      end if;
+   end COMPONENT_PLACE;
+
+   -- the representation of "no value" of a scalar type (RM79 11.1)
+   function NO_VALUE(T : TYP) return STRING is
+   begin
+      if T.KIND = T_FLOAT or T.KIND = T_FIXED then
+         return "RT_G_NOVALUE_F";
+      elsif T.KIND = T_INT then
+         return "INT64_MIN";
+      end if;
+      return "INT_MIN";
+   end NO_VALUE;
+
+   -- a restricted private type outside its package: no assignment, no
+   -- predefined equality (RM79 7.4)
+   function RESTRICTED_HERE(T : TYP) return BOOLEAN is
+   begin
+      if not T.IS_RESTRICTED then
+         return FALSE;
+      elsif T.VIEW_OF /= null then
+         return TRUE;
+      end if;
+      return not INSIDE_PACKAGE(T.DECL);
+   end RESTRICTED_HERE;
+
+   -- the C type of the components of an array: characters are packed in
+   -- bytes, as STRING is (RM79 3.6.3, 13.1)
+   procedure ELEM_CTYPE(T : TYP; R : out TEXT) is
+   begin
+      if T.KIND = T_CHAR then
+         R := MK("unsigned char");
+      else
+         CTYPE(T, R);
+      end if;
+   end ELEM_CTYPE;
+
+   -- the first index of a type-mark index: positional aggregates and
+   -- catenated components start there (RM79 3.6.2)
+   procedure FIRST_INDEX(T : TYP; R : out TEXT) is
+   begin
+      if T.TCONS /= null and then T.TCONS.LO /= null then
+         R := T.TCONS.LO;
+      elsif T.IDX /= null and then T.IDX.KIND = T_INT then
+         R := MK("1");
+      else
+         R := MK("0");
+      end if;
+   end FIRST_INDEX;
+
+   -- STRING and the types derived from it (RM79 3.6.3)
+   function IS_STRING(T : TYP) return BOOLEAN is
+   begin
+      if not (T /= null) then
+         return FALSE;
+      end if;
+      if not (T.KIND = T_ARRAY) then
+         return FALSE;
+      end if;
+      return DERIVED_FROM(T, TY_STRING);
+   end IS_STRING;
+
+   -- S with every @@ replaced by R: the record a component's constraint or
+   -- presence test refers to
+   function SUBST(S : STRING; R : STRING) return STRING is
+   begin
+      for I in S'FIRST .. S'LAST - 1 loop
+         if S(I) = "@" and then S(I + 1) = "@" then
+            return S(S'FIRST .. I - 1) & R & SUBST(S(I + 2 .. S'LAST), R);
+         end if;
+      end loop;
+      return S;
+   end SUBST;
+
+   function MENTIONS_RECORD(S : TEXT) return BOOLEAN is
+   begin
+      if S = null then
+         return FALSE;
+      end if;
+      for I in 1 .. S.all'LENGTH - 1 loop
+         if S.all(I) = "@" and then S.all(I + 1) = "@" then
+            return TRUE;
+         end if;
+      end loop;
+      return FALSE;
+   end MENTIONS_RECORD;
+
+   -- the constraint of a component of the record R
+   procedure SUBST_CONS(C : CONS; R : STRING; RES : out CONS) is
+   begin
+      if C = null or else not (MENTIONS_RECORD(C.LO) or MENTIONS_RECORD(C.HI)) then
+         RES := C;
+         return;
+      end if;
+      RES := NEW_CONS;
+      RES.all := C.all;
+      RES.LO := MK(SUBST(C.LO.all, R));
+      RES.HI := MK(SUBST(C.HI.all, R));
+   end SUBST_CONS;
+
+   procedure REMOVE_SYM(Y : SYM) is
+      H : INTEGER := HASH(Y.NAME.all);
+      P : SYM;
+   begin
+      if TABLE(H) = Y then
+         TABLE(H) := Y.CHAIN;
+      else
+         P := TABLE(H);
+         while P /= null and then P.CHAIN /= Y loop
+            P := P.CHAIN;
+         end loop;
+         if P /= null then
+            P.CHAIN := Y.CHAIN;
+         end if;
+      end if;
+      if SCOPE_STACK = Y then
+         SCOPE_STACK := Y.STACK;
+      else
+         P := SCOPE_STACK;
+         while P /= null and then P.STACK /= Y loop
+            P := P.STACK;
+         end loop;
+         if P /= null then
+            P.STACK := Y.STACK;
+         end if;
+      end if;
+   end REMOVE_SYM;
+
+   -- the components of a record type (RM79 3.7): an initial value is
+   -- evaluated once, here (RM79 3.7); a constant component without one is a
+   -- discriminant, visible in the bounds of later components (RM79 3.7.1);
+   -- the components of a variant part are present when the discriminant has
+   -- one of the values of their alternative (RM79 3.7.2)
+   procedure RECORD_COMPONENTS(LIST : NODE; T : TYP; G : GUARD; LINE : INTEGER) is
+      COMP : NODE := LIST;
+      F, TAIL, DF : FIELD;
+      PREV : NODE;
+      PT, VT : TYP;
+      PC : CONS;
+      Y : SYM;
+      ACC, V, X : TEXT;
+      ARM : NODE;
+      G2 : GUARD;
+   begin
+      TAIL := T.FIELDS;
+      while TAIL /= null and then TAIL.NEXT /= null loop
+         TAIL := TAIL.NEXT;
+      end loop;
+      while COMP /= null loop
+         if COMP.KIND = N_CASE then
+            -- a variant part: its discriminant is a discriminant of the record
+            DF := T.FIELDS;
+            while DF /= null and then DF.NAME.all /= COMP.A.NAME.all loop
+               DF := DF.NEXT;
+            end loop;
+            if DF = null or else not DF.IS_DISCR then
+               FAIL(COMP.LINE, COMP.A.NAME.all & " is not a discriminant: a constant component "
+                    & "without a value (RM79 3.7.1)");
+            end if;
+            if not IS_DISCRETE(DF.T) then
+               FAIL(COMP.LINE, "the discriminant of a variant part is of a discrete type (RM79 3.7.2)");
+            end if;
+            ARM := COMP.B;
+            while ARM /= null loop
+               G2 := new GUARD_REC(DF.NAME, ARM, COMP, G);
+               RECORD_COMPONENTS(ARM.B, T, G2, LINE);
+               ARM := ARM.NEXT;
+            end loop;
+            TAIL := T.FIELDS;
+            while TAIL /= null and then TAIL.NEXT /= null loop
+               TAIL := TAIL.NEXT;
+            end loop;
+         else
+            if FIELD_INDEX(T, COMP.NAME.all) /= 0 then
+               FAIL(COMP.LINE, "component " & COMP.NAME.all & " is declared twice (RM79 3.7)");
+            end if;
+            F := new FIELD_REC(COMP.NAME, null, null, null, COMP.B, COMP.FLAG = 1, FALSE, null, G,
+                               null, FALSE);
+            if COMP.A = PREV and COMP.A.KIND /= S_MARK then
+               -- X, Y : (A, B); in a record: one anonymous type
+               F.T := PT;
+               F.C := PC;
+            else
+               RESOLVE(COMP.A, F.T, F.C);
+            end if;
+            PREV := COMP.A;
+            PT := F.T;
+            PC := F.C;
+            if F.C /= null and then (MENTIONS_RECORD(F.C.LO) or MENTIONS_RECORD(F.C.HI)) then
+               F.DYN := TRUE;
+               if F.T.KIND /= T_ARRAY then
+                  FAIL(COMP.LINE, "a discriminant is used only as an array bound or a variant selector (RM79 3.7.1)");
+               end if;
+               if F.T.TCONS = F.C then
+                  F.T.TCONS := null;
+               end if;
+            end if;
+            if G /= null then
+               GUARD_COND(G, F.T, X);
+               F.COND := X;
+            end if;
+            if COMP.B /= null then
+               -- the initial value of the component, for every object of the type
+               GEXPR(COMP.B, F.T, VT, V);
+               CHECK_TYPE(VT, F.T, COMP.LINE);
+               Y := NEW_SYM(Y_CONST, MK("dflt"));
+               STORAGE("dflt", F.T, ACC);
+               Y.T := F.T;
+               Y.C := F.C;
+               BIND(Y, ACC);
+               if COMPOSITE(F.T) and not BOUNDED(F.C) then
+                  COPY_CODE(F.T, V.all, X);
+                  EMIT(ACC.all & " = " & X.all & ";");
+               else
+                  INIT_STORAGE(ACC.all, F.T, F.C);
+                  ASSIGN_CODE(ACC.all, F.T, V.all, F.C, X);
+                  EMIT(X.all);
+               end if;
+               F.DSYM := Y;
+            elsif F.IS_CONST then
+               F.IS_DISCR := TRUE;
+               Y := NEW_SYM(Y_CONST, F.NAME);
+               Y.T := F.T;
+               Y.C := F.C;
+               Y.RO := TRUE;
+               Y.ACCESS_PATH := MK("(@@." & C_FIELD(F.NAME.all) & ")");
+               DEPTH := DEPTH + 1;
+               DEFINE(Y, COMP.LINE);
+               DEPTH := DEPTH - 1;
+               Y.MNEXT := DISC_SYMS;
+               DISC_SYMS := Y;
+            end if;
+            if TAIL = null then
+               T.FIELDS := F;
+            else
+               TAIL.NEXT := F;
+            end if;
+            TAIL := F;
+         end if;
+         COMP := COMP.NEXT;
+      end loop;
+   end RECORD_COMPONENTS;
+
+   -- the C test that the alternatives of G hold for the record @@
+   procedure GUARD_COND(G : GUARD; T : TYP; R : out TEXT) is
+      A, L : NODE;
+      DF : FIELD;
+      X, D : TEXT;
+      DT, VT : TYP;
+      LO, HI : TEXT;
+   begin
+      R := MK("1");
+      if G = null then
+         return;
+      end if;
+      D := MK("(@@." & C_FIELD(G.DISC.all) & ")");
+      DF := null;
+      if G.ARM.FLAG = 1 then
+         -- others: none of the other alternatives
+         X := MK("0");
+         A := G.VARIANT.B;
+         while A /= null loop
+            if A /= G.ARM then
+               ARM_TEST(A, G.DISC, D.all, X);
+            end if;
+            A := A.NEXT;
+         end loop;
+         X := MK("!(" & X.all & ")");
+      else
+         X := MK("0");
+         ARM_TEST(G.ARM, G.DISC, D.all, X);
+      end if;
+      GUARD_COND(G.NEXT, T, R);
+      R := MK("(" & R.all & " && (" & X.all & "))");
+   end GUARD_COND;
+
+   -- X or-ed with the test that discriminant D has one of the values of ARM
+   procedure ARM_TEST(ARM : NODE; DNAME : TEXT; D : STRING; X : in out TEXT) is
+      L : NODE := ARM.A;
+      Y : SYM := LOOKUP(DNAME.all);
+      DT, VT : TYP;
+      LO, HI : TEXT;
+   begin
+      DT := Y.T;
+      while L /= null loop
+         if L.B = null then
+            GEXPR(L.A, DT, VT, LO);
+            CHECK_TYPE(VT, DT, L.LINE);
+            X := MK(X.all & " || " & D & " == " & LO.all);
+         else
+            GEXPR(L.A, DT, VT, LO);
+            CHECK_TYPE(VT, DT, L.LINE);
+            GEXPR(L.B, DT, VT, HI);
+            CHECK_TYPE(VT, DT, L.LINE);
+            X := MK(X.all & " || (" & D & " >= " & LO.all & " && " & D & " <= " & HI.all & ")");
+         end if;
+         L := L.NEXT;
+      end loop;
+   end ARM_TEST;
+
+   -- type T is new P [constraint]: a distinct type with the values, literals,
+   -- components and subprogram attributes of P (RM79 3.4)
+   procedure DERIVED_TYPE(D : NODE; NAME : TEXT; T : out TYP; C : out CONS) is
+      PT : TYP;
+      CT : TEXT;
+      PH : TYP := COMPLETING;
+   begin
+      COMPLETING := null;
+      RESOLVE(D.A, PT, C);
+      if PT.KIND = T_VOID and PT.PRIV then
+         FAIL(D.LINE, "a type cannot be derived from a private type before its full declaration");
+      end if;
+      if COMPOSITE(PT) or PT.KIND = T_PTR then
+         -- the derived type shares the C representation of its parent
+         CTYPE(PT, CT);
+      end if;
+      if PH = null then
+         T := NEW_TYP(PT.KIND);
+      else
+         T := PH;
+      end if;
+      T.all := PT.all;
+      T.NAME := NAME;
+      T.PARENT := PT;
+      T.NEXT := null;
+      if T.KIND = T_ENUM then
+         DERIVE_LITERALS(T, D.LINE);
+      end if;
+      INHERIT(PT, T, D.LINE);
+   end DERIVED_TYPE;
+
+   -- digits D [range L .. R] and delta D range L .. R (RM79 3.5.5): a type
+   -- derived from the predefined floating point type with enough digits, or
+   -- a fixed point type whose values are multiples of SMALL, the largest power
+   -- of two not above the delta
+   procedure REAL_TYPE(D : NODE; NAME : TEXT; T : out TYP; C : out CONS) is
+      DT : TYP;
+      DV : TEXT;
+      N : INTEGER;
+      OK : BOOLEAN;
+   begin
+      C := NEW_CONS;
+      if D.FLAG = 1 then
+         MANIFEST(D.A, N, OK);
+         if not OK then
+            FAIL(D.LINE, "the digits of a floating point type are static (RM79 3.5.5)");
+         end if;
+         if N < 1 or N > 15 then
+            FAIL(D.LINE, "no predefined floating point type has " & INTEGER'REP(N) & " digits");
+         end if;
+         FRESH_TYP(T_FLOAT, NAME, T);
+         T.NDIGITS := N;
+         if N <= 6 then
+            T.PARENT := TY_SFLOAT;
+         else
+            T.PARENT := TY_FLOAT;
+         end if;
+      else
+         if D.B = null then
+            FAIL(D.LINE, "a fixed point type needs a range (RM79 3.5.5)");
+         end if;
+         GEXPR(D.A, TY_FLOAT, DT, DV);
+         if DT.KIND /= T_FLOAT then
+            FAIL(D.LINE, "the delta of a fixed point type is a real number (RM79 3.5.5)");
+         end if;
+         FRESH_TYP(T_FIXED, NAME, T);
+         T.FDELTA := MK("(" & DV.all & ")");
+         T.FSMALL := MK("rt_g_small(" & DV.all & ")");
+      end if;
+      if D.B /= null then
+         RANGE_OF(D.B, T, C);
+      end if;
+      if T.PARENT /= null then
+         INHERIT(T.PARENT, T, D.LINE);
+      end if;
+   end REAL_TYPE;
 
    -- the designated type of an access type is resolved when first needed
    procedure FINISH_PTR(T : TYP) is
@@ -504,50 +1397,86 @@
    begin
       if T.TARGET = null and T.DECL /= null then
          RESOLVE(T.DECL, T.TARGET, C);
+         if T.TARGET /= null and then T.TARGET.KIND = T_PTR then
+            FAIL(T.DECL.LINE, "an access type cannot designate another access type (RM79 3.8)");
+         end if;
       end if;
    end FINISH_PTR;
 
    -- give a fresh object its storage: strings and arrays own buffers; access
    -- objects start as null (RM79 3.8)
    procedure INIT_STORAGE(LVAL : STRING; T : TYP; C : CONS) is
+      EC, FC : CONS;
+      D : DVAL;
       CT, I, V, X : TEXT;
       VT : TYP;
       F : FIELD;
    begin
       if T.KIND = T_PTR then
          EMIT(LVAL & " = NULL;");
-      elsif T.KIND = T_STRING then
-         if C.SLEN = null then
-            FAIL(0, "a STRING object needs an index constraint or an initial value");
-         end if;
-         EMIT(LVAL & " = rt_str_new(" & C.SLEN.all & ");");
+      elsif IS_NUMERIC(T) or IS_DISCRETE(T) then
+         -- no value yet: reading it raises NO_VALUE_ERROR (RM79 11.1)
+         EMIT(LVAL & " = " & NO_VALUE(T) & ";");
       elsif T.KIND = T_ARRAY then
-         if C.LO = null then
-            FAIL(0, "an array object needs an index constraint");
+         if C = null or else C.LO = null then
+            FAIL(0, "an array object needs an index constraint (RM79 3.6)");
          end if;
-         CTYPE(T.ELEM, CT);
-         if C.LO2 /= null then
-            EMIT(LVAL & ".lo = " & C.LO.all & "; " & LVAL & ".hi = " & C.HI.all & "; " & LVAL
-                 & ".lo2 = " & C.LO2.all & "; " & LVAL & ".hi2 = " & C.HI2.all & ";");
+         ELEM_CTYPE(T.ELEM, CT);
+         EMIT(LVAL & ".lo = " & C.LO.all & "; " & LVAL & ".hi = " & C.HI.all & ";");
+         EC := T.ELEMCONS;
+         if T.DIMS > 1 and BOUNDED(C.INNER) then
+            EC := C.INNER;
+         end if;
+         if T.DIMS > 1 and BOUNDED(EC) then
+            -- the bounds of the second index, also known when there is no row
+            EMIT(LVAL & ".lo2 = " & EC.LO.all & "; " & LVAL & ".hi2 = " & EC.HI.all & ";");
          else
-            EMIT(LVAL & ".lo = " & C.LO.all & "; " & LVAL & ".hi = " & C.HI.all & "; " & LVAL
-                 & ".lo2 = 1; " & LVAL & ".hi2 = 1;");
+            EMIT(LVAL & ".lo2 = 1; " & LVAL & ".hi2 = 1;");
          end if;
-         EMIT(LVAL & ".p = rt_alloc(sizeof(" & CT.all & ") * (size_t)RT_CNT(" & LVAL & "));");
-         if T.ELEM.KIND = T_STRING or T.ELEM.KIND = T_ARRAY or T.ELEM.KIND = T_RECORD then
+         EMIT(LVAL & ".p = rt_alloc(sizeof(" & CT.all & ") * (size_t)G_CNT(" & LVAL & "));");
+         if IS_NUMERIC(T.ELEM) or IS_DISCRETE(T.ELEM) then
             NEW_NAME("i", I);
-            EMIT("for (rt_int " & I.all & " = 0; " & I.all & " < RT_CNT(" & LVAL & "); " & I.all & "++) {");
-            INIT_STORAGE(LVAL & ".p[" & I.all & "]", T.ELEM, T.ELEMCONS);
+            if T.ELEM.KIND = T_CHAR then
+               EMIT("memset(" & LVAL & ".p, 0xFF, (size_t)G_CNT(" & LVAL & "));");
+            else
+               EMIT("for (rt_int " & I.all & " = 0; " & I.all & " < G_CNT(" & LVAL & "); " & I.all & "++) "
+                    & LVAL & ".p[" & I.all & "] = " & NO_VALUE(T.ELEM) & ";");
+            end if;
+         elsif T.ELEM.KIND = T_ARRAY or T.ELEM.KIND = T_RECORD then
+            NEW_NAME("i", I);
+            EMIT("for (rt_int " & I.all & " = 0; " & I.all & " < G_CNT(" & LVAL & "); " & I.all & "++) {");
+            INIT_STORAGE(LVAL & ".p[" & I.all & "]", T.ELEM, EC);
             EMIT("}");
          end if;
       elsif T.KIND = T_RECORD then
+         -- the discriminants first, from the constraint (RM79 3.7.3)
+         if C /= null then
+            D := C.DV;
+            while D /= null loop
+               F := T.FIELDS;
+               while F.NAME.all /= D.NAME.all loop
+                  F := F.NEXT;
+               end loop;
+               ASSIGN_CODE(LVAL & "." & C_FIELD(F.NAME.all), F.T, D.V.all, F.C, X);
+               EMIT(X.all);
+               D := D.NEXT;
+            end loop;
+         end if;
          F := T.FIELDS;
          while F /= null loop
-            INIT_STORAGE(LVAL & "." & C_FIELD(F.NAME.all), F.T, F.C);
-            if F.DFLT /= null then
-               GEXPR(F.DFLT, F.T, VT, V);
-               CHECK_TYPE(VT, F.T, 0);
-               ASSIGN_CODE(LVAL & "." & C_FIELD(F.NAME.all), F.T, V.all, F.C, X);
+            SUBST_CONS(F.C, LVAL, FC);
+            if F.DYN and not DISCRIMINATED(C) then
+               -- an unconstrained object: the arrays that depend on its
+               -- discriminants are empty until it is assigned as a whole
+               EMIT(LVAL & "." & C_FIELD(F.NAME.all) & ".lo = 1; " & LVAL & "." & C_FIELD(F.NAME.all)
+                    & ".hi = 0; " & LVAL & "." & C_FIELD(F.NAME.all) & ".lo2 = " & LVAL & "."
+                    & C_FIELD(F.NAME.all) & ".hi2 = 1; " & LVAL & "." & C_FIELD(F.NAME.all) & ".p = NULL;");
+            elsif not F.IS_DISCR then
+               INIT_STORAGE(LVAL & "." & C_FIELD(F.NAME.all), F.T, FC);
+            end if;
+            if F.DSYM /= null then
+               ACCESS_OF(F.DSYM, V);
+               ASSIGN_CODE(LVAL & "." & C_FIELD(F.NAME.all), F.T, V.all, FC, X);
                EMIT(X.all);
             end if;
             F := F.NEXT;
@@ -563,15 +1492,26 @@
    end COMPOSITE;
 
    procedure ASSIGN_CODE(LVAL : STRING; T : TYP; V : STRING; C : CONS; R : out TEXT) is
-      CT : TEXT;
+      CT, X : TEXT;
+      D : DVAL;
    begin
-      if COMPOSITE(T) then
+      if T.KIND = T_RECORD and DISCRIMINATED(C) then
+         -- the discriminants of a constrained record do not change (RM79 3.7.3, 5.1)
+         CTYPE(T, CT);
+         X := MK("{ " & CT.all & " dv_ = " & V & ";");
+         D := C.DV;
+         while D /= null loop
+            X := MK(X.all & " if (dv_." & C_FIELD(D.NAME.all) & " != (" & D.V.all & ")) rt_raise(RT_X_TAG);");
+            D := D.NEXT;
+         end loop;
+         R := MK(X.all & " as_" & T.CNAME.all & "(&" & LVAL & ", dv_); }");
+      elsif COMPOSITE(T) then
          CTYPE(T, CT);
          R := MK("as_" & T.CNAME.all & "(&" & LVAL & ", " & V & ");");
-      elsif T.KIND = T_STRING then
-         R := MK("rt_str_assign(&" & LVAL & ", " & V & ");");
-      elsif (T.KIND = T_INT or T.KIND = T_ENUM or T.KIND = T_CHAR) and C /= null and then C.LO /= null then
+      elsif (T.KIND = T_INT or T.KIND = T_ENUM or T.KIND = T_CHAR) and BOUNDED(C) then
          R := MK(LVAL & " = rt_range(" & V & ", " & C.LO.all & ", " & C.HI.all & ");");
+      elsif (T.KIND = T_FLOAT or T.KIND = T_FIXED) and BOUNDED(C) then
+         R := MK(LVAL & " = rt_frange(" & V & ", " & C.LO.all & ", " & C.HI.all & ");");
       else
          R := MK(LVAL & " = " & V & ";");
       end if;
@@ -583,8 +1523,6 @@
       if COMPOSITE(T) then
          CTYPE(T, CT);
          R := MK("cp_" & T.CNAME.all & "(" & V & ")");
-      elsif T.KIND = T_STRING then
-         R := MK("rt_str_copy(" & V & ")");
       else
          R := MK(V);
       end if;
@@ -596,8 +1534,6 @@
       if COMPOSITE(T) then
          CTYPE(T, CT);
          R := MK("eq_" & T.CNAME.all & "(" & A & ", " & B & ")");
-      elsif T.KIND = T_STRING then
-         R := MK("rt_str_eq(" & A & ", " & B & ")");
       else
          R := MK("(" & A & " == " & B & ")");
       end if;
@@ -618,6 +1554,7 @@
    -- assignment, copy and equality for every composite C type
    procedure EMIT_HELPERS is
       T : TYP := ALL_TYPES;
+      ET : TEXT;
       DONE, L : LINES;
    begin
       while T /= null loop
@@ -630,6 +1567,21 @@
                    & " s);");
             PUT_TO(OUT_HELPERS, "static int eq_" & T.CNAME.all & "(" & T.CNAME.all & " a, "
                    & T.CNAME.all & " b);");
+            if T.KIND = T_ARRAY and then T.DIMS = 1 then
+               CTYPE(T.ELEM, ET);
+               PUT_TO(OUT_HELPERS, "static " & T.CNAME.all & " cat_" & T.CNAME.all & "(" & T.CNAME.all & " a, "
+                      & T.CNAME.all & " b);");
+               PUT_TO(OUT_HELPERS, "static " & T.CNAME.all & " one_" & T.CNAME.all & "(" & ET.all & " e);");
+               if T.ELEM.KIND = T_BOOL then
+                  PUT_TO(OUT_HELPERS, "static " & T.CNAME.all & " and_" & T.CNAME.all & "(" & T.CNAME.all & " a, "
+                         & T.CNAME.all & " b);");
+                  PUT_TO(OUT_HELPERS, "static " & T.CNAME.all & " or_" & T.CNAME.all & "(" & T.CNAME.all & " a, "
+                         & T.CNAME.all & " b);");
+                  PUT_TO(OUT_HELPERS, "static " & T.CNAME.all & " xor_" & T.CNAME.all & "(" & T.CNAME.all & " a, "
+                         & T.CNAME.all & " b);");
+                  PUT_TO(OUT_HELPERS, "static " & T.CNAME.all & " not_" & T.CNAME.all & "(" & T.CNAME.all & " a);");
+               end if;
+            end if;
             HELPER_BODIES(T);
          end if;
          T := T.NEXT;
@@ -639,34 +1591,84 @@
    procedure HELPER_BODIES(T : TYP) is
       C : TEXT := T.CNAME;
       B : BUFFER := OUT_FUNCS;
-      CT, X, Y, CONDS : TEXT;
+      CT, ET, X, Y, CONDS : TEXT;
       F : FIELD;
    begin
       if T.KIND = T_ARRAY then
-         CTYPE(T.ELEM, CT);
+         ELEM_CTYPE(T.ELEM, CT);
          ASSIGN_CODE("d->p[i]", T.ELEM, "s.p[i]", null, X);
+         -- the lengths agree; overlapping slices raise OVERLAP_ERROR (RM79 5.1.1)
          PUT_TO(B, "static void as_" & C.all & "(" & C.all & " *d, " & C.all & " s) {");
-         PUT_TO(B, "  if (d->hi - d->lo != s.hi - s.lo) rt_raise_msg(RT_X_SUBTYPE, " & Q
-                & "array length" & Q & ");");
-         PUT_TO(B, "  for (rt_int i = 0; i < RT_CNT(s); i++) { " & X.all & " }");
+         PUT_TO(B, "  rt_int n = G_CNT(s);");
+         PUT_TO(B, "  if (G_CNT(*d) != n) rt_raise_msg(RT_X_SUBTYPE, " & Q & "array length" & Q & ");");
+         PUT_TO(B, "  if (d->p != s.p && n > 0 && d->p < s.p + n && s.p < d->p + n) rt_g_overlap();");
+         PUT_TO(B, "  for (rt_int i = 0; i < n; i++) { " & X.all & " }");
          PUT_TO(B, "}");
          COPY_CODE(T.ELEM, "s.p[i]", X);
          PUT_TO(B, "static " & C.all & " cp_" & C.all & "(" & C.all & " s) {");
-         PUT_TO(B, "  " & C.all & " d = s; d.p = rt_alloc(sizeof(" & CT.all & ") * (size_t)RT_CNT(s));");
-         PUT_TO(B, "  for (rt_int i = 0; i < RT_CNT(s); i++) d.p[i] = " & X.all & ";");
+         PUT_TO(B, "  " & C.all & " d = s; d.p = rt_alloc(sizeof(" & CT.all & ") * (size_t)G_CNT(s));");
+         PUT_TO(B, "  for (rt_int i = 0; i < G_CNT(s); i++) d.p[i] = " & X.all & ";");
          PUT_TO(B, "  return d;");
          PUT_TO(B, "}");
          EQ_CODE(T.ELEM, "a.p[i]", "b.p[i]", X);
          PUT_TO(B, "static int eq_" & C.all & "(" & C.all & " a, " & C.all & " b) {");
-         PUT_TO(B, "  if (a.hi - a.lo != b.hi - b.lo) return 0;");
-         PUT_TO(B, "  for (rt_int i = 0; i < RT_CNT(a); i++) if (!(" & X.all & ")) return 0;");
+         PUT_TO(B, "  if (G_CNT(a) != G_CNT(b)) return 0;");
+         PUT_TO(B, "  for (rt_int i = 0; i < G_CNT(a); i++) if (!(" & X.all & ")) return 0;");
          PUT_TO(B, "  return 1;");
          PUT_TO(B, "}");
+         if T.DIMS = 1 and T.ELEM.KIND = T_BOOL then
+            -- and, or, xor, not of boolean arrays (RM79 4.5.1)
+            PUT_TO(B, "static " & C.all & " and_" & C.all & "(" & C.all & " a, " & C.all & " b) { " & C.all
+                   & " r = cp_" & C.all & "(a); if (G_CNT(a) != G_CNT(b)) rt_raise_msg(RT_X_SUBTYPE, "
+                   & Q & "array length" & Q & "); for (rt_int i = 0; i < G_CNT(a); i++) r.p[i] = a.p[i] && b.p[i]; return r; }");
+            PUT_TO(B, "static " & C.all & " or_" & C.all & "(" & C.all & " a, " & C.all & " b) { " & C.all
+                   & " r = cp_" & C.all & "(a); if (G_CNT(a) != G_CNT(b)) rt_raise_msg(RT_X_SUBTYPE, "
+                   & Q & "array length" & Q & "); for (rt_int i = 0; i < G_CNT(a); i++) r.p[i] = a.p[i] || b.p[i]; return r; }");
+            PUT_TO(B, "static " & C.all & " xor_" & C.all & "(" & C.all & " a, " & C.all & " b) { " & C.all
+                   & " r = cp_" & C.all & "(a); if (G_CNT(a) != G_CNT(b)) rt_raise_msg(RT_X_SUBTYPE, "
+                   & Q & "array length" & Q & "); for (rt_int i = 0; i < G_CNT(a); i++) r.p[i] = a.p[i] != b.p[i]; return r; }");
+            PUT_TO(B, "static " & C.all & " not_" & C.all & "(" & C.all & " a) { " & C.all & " r = cp_" & C.all
+                   & "(a); for (rt_int i = 0; i < G_CNT(a); i++) r.p[i] = !a.p[i]; return r; }");
+         end if;
+         if T.DIMS = 1 then
+            -- catenation (RM79 4.5.3): the lower bound is that of the left
+            -- operand, unless it is empty; a component is an array of one
+            CTYPE(T.ELEM, ET);
+            COPY_CODE(T.ELEM, "a.p[i]", X);
+            COPY_CODE(T.ELEM, "b.p[i]", Y);
+            PUT_TO(B, "static " & C.all & " cat_" & C.all & "(" & C.all & " a, " & C.all & " b) {");
+            PUT_TO(B, "  rt_int na = G_CNT(a), nb = G_CNT(b);");
+            PUT_TO(B, "  " & C.all & " r = na > 0 ? a : b;");
+            PUT_TO(B, "  if (na == 0 && nb == 0) return a;");
+            PUT_TO(B, "  r.hi = r.lo + na + nb - 1; r.lo2 = r.hi2 = 1;");
+            PUT_TO(B, "  r.p = rt_alloc(sizeof(" & CT.all & ") * (size_t)(na + nb));");
+            PUT_TO(B, "  for (rt_int i = 0; i < na; i++) r.p[i] = " & X.all & ";");
+            PUT_TO(B, "  for (rt_int i = 0; i < nb; i++) r.p[na + i] = " & Y.all & ";");
+            PUT_TO(B, "  return r;");
+            PUT_TO(B, "}");
+            COPY_CODE(T.ELEM, "e", X);
+            FIRST_INDEX(T, Y);
+            PUT_TO(B, "static " & C.all & " one_" & C.all & "(" & ET.all & " e) {");
+            PUT_TO(B, "  " & C.all & " r; r.lo = r.hi = " & Y.all & "; r.lo2 = r.hi2 = 1;");
+            PUT_TO(B, "  r.p = rt_alloc(sizeof(" & CT.all & ")); r.p[0] = " & X.all & ";");
+            PUT_TO(B, "  return r;");
+            PUT_TO(B, "}");
+         end if;
       else
+         -- a complete assignment may change the discriminants: the arrays
+         -- that depend on them and the components of variants are copied
          PUT_TO(B, "static void as_" & C.all & "(" & C.all & " *d, " & C.all & " s) {");
          F := T.FIELDS;
          while F /= null loop
-            ASSIGN_CODE("d->" & C_FIELD(F.NAME.all), F.T, "s." & C_FIELD(F.NAME.all), null, X);
+            if F.DYN or F.COND /= null then
+               COPY_CODE(F.T, "s." & C_FIELD(F.NAME.all), X);
+               X := MK("d->" & C_FIELD(F.NAME.all) & " = " & X.all & ";");
+               if F.COND /= null then
+                  X := MK("if (" & SUBST(F.COND.all, "s") & ") " & X.all);
+               end if;
+            else
+               ASSIGN_CODE("d->" & C_FIELD(F.NAME.all), F.T, "s." & C_FIELD(F.NAME.all), null, X);
+            end if;
             PUT_TO(B, "  " & X.all);
             F := F.NEXT;
          end loop;
@@ -677,8 +1679,13 @@
          F := T.FIELDS;
          while F /= null loop
             COPY_CODE(F.T, "s." & C_FIELD(F.NAME.all), X);
-            PUT_TO(B, "  d." & C_FIELD(F.NAME.all) & " = " & X.all & ";");
+            X := MK("d." & C_FIELD(F.NAME.all) & " = " & X.all & ";");
             EQ_CODE(F.T, "a." & C_FIELD(F.NAME.all), "b." & C_FIELD(F.NAME.all), Y);
+            if F.COND /= null then
+               X := MK("if (" & SUBST(F.COND.all, "s") & ") " & X.all);
+               Y := MK("(!(" & SUBST(F.COND.all, "a") & ") || " & Y.all & ")");
+            end if;
+            PUT_TO(B, "  " & X.all);
             CONDS := MK(CONDS.all & " && " & Y.all);
             F := F.NEXT;
          end loop;

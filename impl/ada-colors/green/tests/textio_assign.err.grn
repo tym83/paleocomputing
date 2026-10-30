@@ -1,0 +1,7 @@
+restricted (TEXT_IO)
+procedure MAIN is
+   use TEXT_IO;
+   F, G : OUT_FILE;
+begin
+   F := G;
+end MAIN;

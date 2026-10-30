@@ -1,0 +1,55 @@
+-- RM79 14.1, 14.2: INPUT_OUTPUT of arrays and STRING; each instance has its
+-- own exceptions
+restricted (TEXT_IO, INPUT_OUTPUT)
+procedure MAIN is
+   use TEXT_IO;
+   subtype NAME_TEXT is STRING(1 .. 5);
+   type TABLE is array (1 .. 3) of INTEGER;
+   package NAME_IO is new INPUT_OUTPUT(NAME_TEXT);
+   package LINE_IO is new INPUT_OUTPUT(STRING);
+   package TABLE_IO is new INPUT_OUTPUT(TABLE);
+   F : NAME_IO.INOUT_FILE;
+   G : LINE_IO.INOUT_FILE;
+   H : TABLE_IO.OUT_FILE;
+   I : TABLE_IO.IN_FILE;
+   N : NAME_TEXT;
+   S3 : STRING(1 .. 3);
+   S5 : STRING(1 .. 5);
+   T : TABLE;
+begin
+   NAME_IO.CREATE(F, "build/io_names.dat");
+   NAME_IO.WRITE(F, "alpha"); NAME_IO.WRITE(F, "omega");
+   PUT(NAME_IO.SIZE(F));
+   NAME_IO.SET_NEXT(F, 2); NAME_IO.READ(F, N); PUT(" "); PUT(N);
+   NAME_IO.DELETE(F);
+   LINE_IO.CREATE(G, "build/io_lines.dat");
+   LINE_IO.WRITE(G, "abc"); LINE_IO.WRITE(G, "hello"); LINE_IO.WRITE(G, "xyz");
+   PUT(LINE_IO.SIZE(G));
+   LINE_IO.SET_NEXT(G, 3); LINE_IO.READ(G, S3); PUT(" "); PUT(S3);
+   LINE_IO.SET_NEXT(G, 2); LINE_IO.READ(G, S5); PUT(" "); PUT(S5);
+   begin
+      LINE_IO.SET_NEXT(G, 1); LINE_IO.READ(G, S5);
+   exception
+      when LINE_IO.INVALID_DATA => PUT(" LINE_IO.INVALID_DATA");
+   end;
+   LINE_IO.DELETE(G);
+   TABLE_IO.CREATE(H, "build/io_table.dat");
+   TABLE_IO.WRITE(H, (1, 2, 3));
+   TABLE_IO.CLOSE(H);
+   TABLE_IO.OPEN(I, "build/io_table.dat");
+   TABLE_IO.READ(I, T); PUT(T(3));
+   begin
+      TABLE_IO.READ(I, T);
+   exception
+      when NAME_IO.END_OF_FILE => PUT(" wrong instance");
+      when TABLE_IO.END_OF_FILE => PUT(" TABLE_IO.END_OF_FILE");
+   end;
+   TABLE_IO.DELETE(I);
+   begin
+      TABLE_IO.OPEN(I, "build/no such file");
+   exception
+      when FILE_NAME_ERROR => PUT(" wrong: TEXT_IO's");
+      when TABLE_IO.FILE_NAME_ERROR => PUT(" TABLE_IO.FILE_NAME_ERROR");
+   end;
+   PUT(NEWLINE);
+end MAIN;

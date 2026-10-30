@@ -148,3 +148,6 @@ s/^               PUT("access violation");$/               SAY("access violation
 s/^                        PUT("you have been preempted from data set : ");$/                        SAY("you have been preempted from data set :");/
 s/^                        PUT(X);$/                        PUT(INTEGER(X), 2); PUT(NEWLINE);/
 s/^                     PUT("killed!");$/                     SAY("killed!"); PUT(NEWLINE);/
+# USERS, the set of users of a data set, is read before anything is assigned
+# to it; reading a variable without a value raises NO_VALUE_ERROR (RM79 11.1)
+s/^      USERS   : USER_LIST;$/      USERS   : USER_LIST := (others => FALSE);/

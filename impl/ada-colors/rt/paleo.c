@@ -12,6 +12,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 /* ---- memory ---------------------------------------------------------- */
 
@@ -610,6 +611,7 @@ struct rt_task {
   rt_waiter *awl;          /* the records armed for that wait */
   int atimed, atimer_alt;
   rt_int awake;
+  rt_int runs;             /* GREEN T'CLOCK: the times it was given the processor */
   /* YELLOW: an exception other than termination made pending by a trap of
    * the scheduler (the deadlock trap); 0 for every other language */
   int term_exc;
@@ -795,6 +797,7 @@ static void switch_to(rt_task *n) {
   }
   cur = n;
   n->state = T_RUNNING;
+  n->runs++;
   trace("run", n);
   pthread_cond_signal(&n->cv);
   if (me->state == T_DONE) return;
@@ -1750,49 +1753,146 @@ void rt_main_done(void) {
   exit(0);
 }
 
-/* ---- GREEN TEXT_IO (RM79 14.3-14.4) ------------------------------------- */
+/* ---- GREEN TEXT_IO and INPUT_OUTPUT (RM79 14) ---------------------------------
+ * A file is a handle into a table; 1 and 2 are the standard input and output,
+ * the default files until SET_INPUT and SET_OUTPUT change them. A text file
+ * (TEXT_IO) keeps its line and column (14.3.2); a file of INPUT_OUTPUT holds
+ * elements of ESZ bytes, numbered from 1 (14.1.2). The exceptions are those
+ * of 14.2 and 14.4, one each, whichever instance raises them. */
 
-static rt_int g_col = 1;
+typedef struct {
+  int open;
+  FILE *f;                 /* NULL for the standard files */
+  char *name;
+  int mode;                /* 1 IN_FILE, 2 OUT_FILE, 3 INOUT_FILE */
+  rt_int esz;              /* bytes per element; 0 for a text file */
+  rt_int line, col, len;   /* layout; len 0: no line length */
+  rt_int next;             /* the next element, from 1 */
+  int peek;                /* a character read ahead, or -2 */
+  const g_lay *L;          /* INPUT_OUTPUT: the layout of the elements */
+  int var;                 /* elements of different lengths: each after its length */
+  long boff;               /* var: where the next element starts */
+} g_file;
 
-static void g_track(const unsigned char *p, rt_int n) {
-  for (rt_int i = 0; i < n; i++) {
-    if (p[i] == '\n') g_col = 1;
-    else if (p[i] == '\t') g_col = ((g_col - 1) / 8 + 1) * 8 + 1;
-    else g_col++;
+#define G_FILES 256
+static g_file g_files[G_FILES] = {
+  [1] = {1, NULL, "STANDARD_INPUT", 1, 0, 1, 1, 0, 1, -2},
+  [2] = {1, NULL, "STANDARD_OUTPUT", 2, 0, 1, 1, 0, 1, -2},
+};
+static rt_int g_in = 1, g_out = 2;
+
+_Noreturn static void g_io(const char *exc) { rt_raise(rt_exc(exc)); }
+
+static g_file *g_file_of(rt_int h) {
+  if (h <= 0 || h >= G_FILES || !g_files[h].open) g_io("FILE_OPEN_ERROR");
+  return &g_files[h];
+}
+
+static void g_track1(g_file *x, int c) {
+  if (c == '\n') {                       /* NEWLINE is LF: it ends the line */
+    x->line++;
+    x->col = 1;
+  } else if (c == '\r') {
+    x->col = 1;
+  } else if (c == '\b') {
+    if (x->col > 1) x->col--;
+  } else if (c == '\t') {
+    rt_int t = ((x->col - 1) / 8 + 1) * 8 + 1;
+    if (x->len > 0 && t > x->len + 1) t = x->len + 1;
+    x->col = t;
+  } else if (c >= 32) {
+    x->col++;
   }
 }
 
-rt_int rt_g_col(void) { return g_col; }
-
-void rt_g_put(rstr s) {
-  fwrite(s.p, 1, (size_t)s.len, stdout);
-  g_track(s.p, s.len);
+static void g_raw_put(g_file *x, int c) {
+  if (x->f) putc(c, x->f);
+  else putchar(c);
+  x->next++;
+  g_track1(x, c);
 }
 
-void rt_g_putc(int c) {
-  unsigned char b = (unsigned char)c;
-  putchar(c);
-  g_track(&b, 1);
+/* one character: with a line length, a new line starts before a character
+ * that would pass it (14.3.3) */
+static void g_out_char(g_file *x, int c) {
+  if (x->mode == 1) g_io("FILE_USE_ERROR");
+  if (x->len > 0 && c >= 32 && x->col > x->len) g_raw_put(x, '\n');
+  g_raw_put(x, c);
 }
 
-static void g_item(rstr s, rt_int width, int right) {
-  if (g_col > 1) rt_g_putc(' ');
+static void g_out_bytes(g_file *x, const unsigned char *p, rt_int n) {
+  if (x->len == 0 && x->mode != 1) {
+    fwrite(p, 1, (size_t)n, x->f ? x->f : stdout);
+    x->next += n;
+    for (rt_int i = 0; i < n; i++) g_track1(x, p[i]);
+    return;
+  }
+  for (rt_int i = 0; i < n; i++) g_out_char(x, p[i]);
+}
+
+static int g_get(g_file *x) {
+  int c;
+  if (x->mode == 2) g_io("FILE_USE_ERROR");
+  if (x->peek != -2) {
+    c = x->peek;
+    x->peek = -2;
+  } else if (x->f) {
+    c = getc(x->f);
+  } else {
+    c = rt_getc();
+  }
+  if (c >= 0) {
+    x->next++;
+    g_track1(x, c);
+  }
+  return c;
+}
+
+/* a character read ahead goes back; the column it took is given back */
+static void g_unget(g_file *x, int c) {
+  if (c < 0) return;
+  x->peek = c;
+  x->next--;
+  if (c == '\n') x->line--;
+  else if (c >= 32 && x->col > 1) x->col--;
+}
+
+/* an item is preceded by one space except at column 1, and starts a new
+ * line when it does not fit on this one (14.3.4) */
+static void g_item_on(g_file *x, rstr s, rt_int width, int right) {
   rt_int pad = width > s.len ? width - s.len : 0;
-  if (right) while (pad-- > 0) rt_g_putc(' ');
-  rt_g_put(s);
-  if (!right) while (pad-- > 0) rt_g_putc(' ');
+  if (x->len > 0 && x->col > 1 && x->col + 1 + pad + s.len - 1 > x->len) g_raw_put(x, '\n');
+  if (x->col > 1) g_out_char(x, ' ');
+  if (right) while (pad-- > 0) g_out_char(x, ' ');
+  g_out_bytes(x, s.p, s.len);
+  if (!right) while (pad-- > 0) g_out_char(x, ' ');
 }
 
-void rt_g_put_int(rt_int v, rt_int width) { g_item(rt_str_of_int(v), width, 1); }
+rt_int rt_g_col(void) { return g_files[g_out].col; }
+rt_int rt_g_cur_in(void) { return g_in; }
+rt_int rt_g_cur_out(void) { return g_out; }
 
-void rt_g_put_bool(int v, rt_int width) {
-  g_item(v ? rt_str("TRUE", 4) : rt_str("FALSE", 5), width, 0);
+void rt_g_fput(rt_int h, rstr s) { g_out_bytes(g_file_of(h), s.p, s.len); }
+void rt_g_fputc(rt_int h, int c) { g_out_char(g_file_of(h), c); }
+void rt_g_fput_int(rt_int h, rt_int v, rt_int width) { g_item_on(g_file_of(h), rt_str_of_int(v), width, 1); }
+void rt_g_fput_bool(rt_int h, int v, rt_int width) {
+  g_item_on(g_file_of(h), v ? rt_str("TRUE", 4) : rt_str("FALSE", 5), width, 0);
 }
+void rt_g_put_item(rt_int h, rstr s, rt_int width, int right) { g_item_on(g_file_of(h), s, width, right); }
+
+void rt_g_put(rstr s) { rt_g_fput(g_out, s); }
+void rt_g_putc(int c) { rt_g_fputc(g_out, c); }
+void rt_g_put_int(rt_int v, rt_int width) { rt_g_fput_int(g_out, v, width); }
+void rt_g_put_bool(int v, rt_int width) { rt_g_fput_bool(g_out, v, width); }
 
 /* floating output is d.ddd E+ddd with a three-digit exponent (RM79 14.4) */
 rstr rt_g_image_float(double v) {
   char b[64], m[48];
   int e = 0;
+  if (isinf(v) || isnan(v)) {
+    const char *t = isnan(v) ? "NAN" : v < 0 ? "-INF" : "INF";
+    return rt_str_copy(rt_str(t, (rt_int)strlen(t)));
+  }
   if (v != 0.0) {
     snprintf(m, sizeof m, "%.5e", v);
     char *x = strchr(m, 'e');
@@ -1805,15 +1905,444 @@ rstr rt_g_image_float(double v) {
   return rt_str_copy(rt_str(b, n));
 }
 
-void rt_g_put_float(double v, rt_int width, rt_int fract) {
-  (void)fract;
-  g_item(rt_g_image_float(v), width, 1);
+/* d.ddd E+ddd with FRACT digits after the point; without them when FRACT
+ * is not positive (14.3.5) */
+static rstr g_image_fract(double v, rt_int fract) {
+  char b[96], m[80];
+  int e = 0;
+  if (isinf(v) || isnan(v)) return rt_g_image_float(v);
+  if (fract > 40) fract = 40;
+  if (v != 0.0) {
+    snprintf(m, sizeof m, "%.*e", fract > 0 ? (int)fract : 0, v);
+    char *x = strchr(m, 'e');
+    e = atoi(x + 1);
+    *x = 0;
+  } else {
+    snprintf(m, sizeof m, "%.*f", fract > 0 ? (int)fract : 0, 0.0);
+  }
+  int n = snprintf(b, sizeof b, "%sE%c%03d", m, e < 0 ? '-' : '+', e < 0 ? -e : e);
+  return rt_str_copy(rt_str(b, n));
 }
 
-int rt_g_getc(void) {
-  int c = rt_getc();
+void rt_g_fput_float(rt_int h, double v, rt_int width, rt_int fract) {
+  g_item_on(g_file_of(h), g_image_fract(v, fract), width, 1);
+}
+
+/* the old entry: the default number of digits */
+void rt_g_put_float(double v, rt_int width, rt_int fract) {
+  (void)fract;
+  g_item_on(g_file_of(g_out), rt_g_image_float(v), width, 1);
+}
+
+/* fixed point (FIXED_IO): the image of the value with FRACT decimals */
+void rt_g_put_fixed(rt_int h, rstr image, rt_int width, rt_int fract) {
+  char b[96], t[64];
+  rt_int n = image.len < 63 ? image.len : 63;
+  memcpy(t, image.p, (size_t)n);
+  t[n] = 0;
+  double v = strtod(t, NULL);
+  if (fract > 40) fract = 40;
+  if (fract < 0) fract = 0;
+  if (fabs(v) < 0.5 * pow(10, -(double)fract)) v = 0;
+  int k = snprintf(b, sizeof b, "%.*f", (int)fract, v);
+  g_item_on(g_file_of(h), rt_str_copy(rt_str(b, k)), width, 1);
+}
+
+rstr rt_g_fixed_image(double v, double small) {
+  char b[96];
+  int d = 0;
+  while (d < 17) {
+    double x = small * pow(10, d);
+    if (fabs(x - nearbyint(x)) < 1e-9 * (x > 1 ? x : 1)) break;
+    d++;
+  }
+  if (fabs(v) < 0.5 * pow(10, -(double)d)) v = 0;
+  int n = snprintf(b, sizeof b, "%.*f", d, v);
+  return rt_str_copy(rt_str(b, n));
+}
+
+/* DEFAULT_DECIMALS of FIXED_IO (RM79 14.4, page 14-11):
+ * DELTA_REP'LENGTH - 2 with DELTA_REP = REP(DECIMALS - INTEGER(DECIMALS));
+ * IMAGE is REP(DECIMALS), whose digits after the point are those of the
+ * type's images */
+rt_int rt_g_decimals(rstr image) {
+  char t[64], b[96];
+  rt_int n = image.len < 63 ? image.len : 63, d = 0;
+  memcpy(t, image.p, (size_t)n);
+  t[n] = 0;
+  char *pt = strchr(t, '.');
+  if (pt) d = (rt_int)strlen(pt + 1);
+  double v = strtod(t, NULL), f = v - nearbyint(v);
+  if (fabs(f) < 0.5 * pow(10, -(double)d)) f = 0;
+  int k = snprintf(b, sizeof b, "%.*f", (int)d, f);
+  return k - 2;
+}
+
+int rt_g_fgetc(rt_int h) {
+  int c = g_get(g_file_of(h));
   if (c < 0) rt_raise(RT_X_FILE);
   return c;
+}
+
+int rt_g_getc(void) { return rt_g_fgetc(g_in); }
+
+void rt_g_fget_str(rt_int h, rt_gstr *s) {
+  rt_int n = G_CNT(*s);
+  for (rt_int i = 0; i < n; i++) s->p[i] = (unsigned char)rt_g_fgetc(h);
+}
+
+/* ---- the items of text input: lexical units (14.3.4), after blanks ---- */
+
+static int g_first(g_file *x) {
+  int c;
+  do c = g_get(x);
+  while (c == ' ' || c == '\t' || c == '\n' || c == '\r');
+  if (c < 0) rt_raise(RT_X_FILE);
+  return c;
+}
+
+static int g_digit(int c) {
+  if (c >= '0' && c <= '9') return c - '0';
+  if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+  if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+  return 99;
+}
+
+/* digits of BASE with single underscores between them; the value, -1 when
+ * there is none */
+static int g_digits(g_file *x, int *c, int base, rt_int *v, int *ovf) {
+  int any = 0;
+  *v = 0;
+  for (;;) {
+    if (*c == '_' && any) {
+      *c = g_get(x);
+      if (g_digit(*c) >= base) g_io("INVALID_DATA");
+    }
+    int d = g_digit(*c);
+    if (d >= base) break;
+    if (__builtin_mul_overflow(*v, (rt_int)base, v) || __builtin_add_overflow(*v, (rt_int)d, v)) *ovf = 1;
+    any = 1;
+    *c = g_get(x);
+  }
+  return any;
+}
+
+/* integer ::= [sign] digits [# based_digits [#]] [E [+] digits] (2.4, 14.3.5) */
+rt_int rt_g_fget_int(rt_int h) {
+  g_file *x = g_file_of(h);
+  int c = g_first(x), neg = 0, ovf = 0;
+  rt_int v, b, e;
+  if (c == '+' || c == '-') {
+    neg = c == '-';
+    c = g_get(x);
+  }
+  if (!g_digits(x, &c, 10, &v, &ovf)) g_io("INVALID_DATA");
+  rt_int base = 10;
+  if (c == '#' || c == ':') {
+    int close = c;
+    if (ovf || v < 2 || v > 16) g_io("INVALID_DATA");
+    base = v;
+    c = g_get(x);
+    if (!g_digits(x, &c, (int)base, &v, &ovf)) g_io("INVALID_DATA");
+    if (c == close) c = g_get(x);
+  }
+  if (c == 'E' || c == 'e') {
+    c = g_get(x);
+    if (c == '+') c = g_get(x);
+    if (!g_digits(x, &c, 10, &e, &ovf)) g_io("INVALID_DATA");
+    for (b = 0; b < e && !ovf; b++)
+      if (__builtin_mul_overflow(v, base, &v)) ovf = 1;
+  }
+  g_unget(x, c);
+  if (ovf) rt_raise(RT_X_OVERFLOW);
+  return neg ? -v : v;
+}
+
+rt_int rt_g_get_int(void) { return rt_g_fget_int(g_in); }
+
+/* the characters of a real literal: [sign] digits [. digits] [E [sign] digits] */
+static rt_gstr g_real_text(g_file *x) {
+  char b[128];
+  int n = 0, c = g_first(x), any = 0;
+  if (c == '+' || c == '-') {
+    b[n++] = (char)c;
+    c = g_get(x);
+  }
+  while ((c >= '0' && c <= '9') || (c == '_' && any)) {
+    if (c != '_' && n < 120) b[n++] = (char)c;
+    any = 1;
+    c = g_get(x);
+  }
+  if (!any) g_io("INVALID_DATA");
+  if (c == '.') {
+    b[n++] = '.';
+    c = g_get(x);
+    if (!(c >= '0' && c <= '9')) g_io("INVALID_DATA");
+    while ((c >= '0' && c <= '9') || c == '_') {
+      if (c != '_' && n < 120) b[n++] = (char)c;
+      c = g_get(x);
+    }
+  }
+  if (c == 'E' || c == 'e') {
+    b[n++] = 'E';
+    c = g_get(x);
+    if (c == '+' || c == '-') {
+      b[n++] = (char)c;
+      c = g_get(x);
+    }
+    if (!(c >= '0' && c <= '9')) g_io("INVALID_DATA");
+    while (c >= '0' && c <= '9') {
+      if (n < 120) b[n++] = (char)c;
+      c = g_get(x);
+    }
+  }
+  g_unget(x, c);
+  b[n] = 0;
+  rt_gstr r = {1, n, 1, 1, rt_alloc((size_t)n + 1)};
+  memcpy(r.p, b, (size_t)n + 1);
+  return r;
+}
+
+double rt_g_fget_float(rt_int h) {
+  rt_gstr t = g_real_text(g_file_of(h));
+  double v = strtod((char *)t.p, NULL);
+  if (isinf(v)) rt_raise(RT_X_OVERFLOW);
+  return v;
+}
+
+double rt_g_get_float(void) { return rt_g_fget_float(g_in); }
+
+rt_gstr rt_g_get_real(rt_int h) { return g_real_text(g_file_of(h)); }
+
+/* an identifier, or a character literal in quotes (2.3, 2.5) */
+rt_gstr rt_g_get_word(rt_int h) {
+  g_file *x = g_file_of(h);
+  char b[256];
+  int n = 0, c = g_first(x);
+  if (c == '"') {
+    b[n++] = '"';
+    c = g_get(x);
+    if (c < 32) g_io("INVALID_DATA");
+    b[n++] = (char)c;
+    c = g_get(x);
+    if (c != '"') g_io("INVALID_DATA");
+    b[n++] = '"';
+  } else {
+    if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'))) g_io("INVALID_DATA");
+    while ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_') {
+      if (n < 250) b[n++] = (char)(c >= 'a' && c <= 'z' ? c - 32 : c);
+      c = g_get(x);
+    }
+    g_unget(x, c);
+  }
+  rt_gstr r = {1, n, 1, 1, rt_alloc((size_t)n + 1)};
+  memcpy(r.p, b, (size_t)n);
+  return r;
+}
+
+/* TRUE or FALSE, in either case (14.3.6) */
+int rt_g_fget_bool(rt_int h) {
+  rt_gstr w = rt_g_get_word(h);
+  if (G_CNT(w) == 4 && memcmp(w.p, "TRUE", 4) == 0) return 1;
+  if (G_CNT(w) == 5 && memcmp(w.p, "FALSE", 5) == 0) return 0;
+  g_io("INVALID_DATA");
+}
+
+/* ---- files (14.1, 14.2) ---- */
+
+/* LAY: 0 for a text file, else the layout of the elements (14.2) */
+void rt_g_open(rt_int *h, rstr name, rt_int mode, int create, rt_int lay) {
+  if (*h > 0 && *h < G_FILES && g_files[*h].open) g_io("FILE_OPEN_ERROR");
+  rt_int k = 3;
+  while (k < G_FILES && g_files[k].open) k++;
+  if (k == G_FILES) g_io("MALFUNCTION");
+  const char *n = rt_cstr(name);
+  FILE *f;
+  if (create) {
+    if (mode == 1) g_io("FILE_USE_ERROR");
+    f = fopen(n, mode == 3 ? "w+b" : "wb");
+  } else if (mode == 1) {
+    f = fopen(n, "rb");
+  } else {
+    f = fopen(n, "r+b");
+  }
+  if (!f) g_io("FILE_NAME_ERROR");
+  g_file *x = &g_files[k];
+  x->open = 1;
+  x->f = f;
+  x->name = strdup(n);
+  x->mode = (int)mode;
+  x->esz = 0;
+  x->L = (const g_lay *)(intptr_t)lay;
+  x->var = 0;
+  x->boff = 0;
+  if (x->L) {
+    rt_int bits = rt_g_lay_bits(x->L, NULL);
+    if (bits >= 0) x->esz = bits > 0 ? (bits + 7) / 8 : 1;
+    else x->var = 1, x->esz = 1;
+  }
+  x->line = x->col = 1;
+  x->len = 0;
+  x->next = 1;
+  x->peek = -2;
+  *h = k;
+}
+
+void rt_g_close(rt_int *h, int remove_it) {
+  g_file *x = g_file_of(*h);
+  if (!x->f) g_io("FILE_USE_ERROR");           /* a standard file stays */
+  fclose(x->f);
+  if (remove_it && remove(x->name) != 0) g_io("FILE_USE_ERROR");
+  free(x->name);
+  memset(x, 0, sizeof *x);
+  if (g_in == *h) g_in = 1;
+  if (g_out == *h) g_out = 2;
+  *h = 0;
+}
+
+int rt_g_is_open(rt_int h) { return h > 0 && h < G_FILES && g_files[h].open; }
+
+rt_gstr rt_g_name(rt_int h) {
+  g_file *x = g_file_of(h);
+  return rt_g_s2g(rt_str_copy(rt_str(x->name, (rt_int)strlen(x->name))));
+}
+
+static rt_int g_unit(g_file *x) { return x->esz > 0 ? x->esz : 1; }
+
+rt_int rt_g_size(rt_int h) {
+  g_file *x = g_file_of(h);
+  if (!x->f) g_io("FILE_USE_ERROR");
+  fflush(x->f);
+  long here = ftell(x->f);
+  fseek(x->f, 0, SEEK_END);
+  long n = ftell(x->f);
+  rt_int count = 0;
+  if (x->var) {
+    /* elements of different lengths: count them */
+    long o = 0;
+    while (o + 8 <= n) {
+      rt_int bits;
+      fseek(x->f, o, SEEK_SET);
+      if (fread(&bits, 8, 1, x->f) != 1) break;
+      o += 8 + (bits + 7) / 8;
+      count++;
+    }
+  } else {
+    count = (rt_int)(n / g_unit(x));
+  }
+  fseek(x->f, here, SEEK_SET);
+  return count;
+}
+
+/* var: the byte where element pos starts */
+static long g_var_offset(g_file *x, rt_int pos) {
+  long o = 0;
+  fflush(x->f);
+  for (rt_int i = 1; i < pos; i++) {
+    rt_int bits;
+    fseek(x->f, o, SEEK_SET);
+    if (fread(&bits, 8, 1, x->f) != 1) return -1;
+    o += 8 + (bits + 7) / 8;
+  }
+  return o;
+}
+
+rt_int rt_g_next(rt_int h) { return g_file_of(h)->next; }
+
+void rt_g_set_next(rt_int h, rt_int pos) {
+  g_file *x = g_file_of(h);
+  if (!x->f) g_io("FILE_USE_ERROR");
+  if (pos < 1) g_io("FILE_USE_ERROR");
+  fflush(x->f);
+  x->peek = -2;
+  if (x->esz == 0) {
+    /* a text file: the line and the column of the position */
+    rewind(x->f);
+    x->line = x->col = 1;
+    for (rt_int i = 1; i < pos; i++) {
+      int c = getc(x->f);
+      if (c < 0) break;
+      g_track1(x, c);
+    }
+  }
+  if (x->var) {
+    long o = g_var_offset(x, pos);
+    x->boff = o;                       /* -1: past the end, a READ fails */
+    if (o >= 0) fseek(x->f, o, SEEK_SET);
+  } else {
+    fseek(x->f, (long)((pos - 1) * g_unit(x)), SEEK_SET);
+  }
+  x->next = pos;
+}
+
+void rt_g_read_bytes(rt_int h, void *item, size_t n) {
+  g_file *x = g_file_of(h);
+  if (x->mode == 2 || !x->f) g_io("FILE_USE_ERROR");
+  fflush(x->f);
+  fseek(x->f, (long)((x->next - 1) * g_unit(x)), SEEK_SET);
+  if (fread(item, 1, n, x->f) != n) {
+    if (feof(x->f)) rt_raise(RT_X_FILE);
+    g_io("MALFUNCTION");
+  }
+  x->next++;
+}
+
+void rt_g_write_bytes(rt_int h, const void *item, size_t n) {
+  g_file *x = g_file_of(h);
+  if (x->mode == 1 || !x->f) g_io("FILE_USE_ERROR");
+  fseek(x->f, (long)((x->next - 1) * g_unit(x)), SEEK_SET);
+  if (fwrite(item, 1, n, x->f) != n) g_io("MALFUNCTION");
+  x->next++;
+}
+
+void rt_g_read_char(rt_int h, int *c) { *c = rt_g_fgetc(h); }
+void rt_g_write_char(rt_int h, int c) { rt_g_fputc(h, c); }
+
+/* ---- layout (14.3.2) ---- */
+
+rt_int rt_g_line_of(rt_int h) { return g_file_of(h)->line; }
+rt_int rt_g_col_of(rt_int h) { return g_file_of(h)->col; }
+
+void rt_g_set_line(rt_int h, rt_int to) {
+  g_file *x = g_file_of(h);
+  if (to < x->line) g_io("FILE_USE_ERROR");     /* the file is sequential */
+  if (x->mode == 1) {
+    while (x->line < to) {
+      int c = g_get(x);
+      if (c < 0) rt_raise(RT_X_FILE);
+    }
+    return;
+  }
+  while (x->line < to) g_raw_put(x, '\n');
+  if (x->col > 1) g_raw_put(x, '\r');
+}
+
+void rt_g_set_col(rt_int h, rt_int to) {
+  g_file *x = g_file_of(h);
+  if (x->len > 0 && to > x->len) g_io("INVALID_LAYOUT");
+  if (x->mode == 1) {
+    if (to < x->col) g_io("FILE_USE_ERROR");
+    while (x->col < to) {
+      int c = g_get(x);
+      if (c < 0) rt_raise(RT_X_FILE);
+      if (c == '\n') g_io("INVALID_LAYOUT");
+    }
+    return;
+  }
+  while (x->col < to) g_raw_put(x, ' ');
+  while (x->col > to) g_raw_put(x, '\b');
+}
+
+void rt_g_set_line_length(rt_int h, rt_int n) { g_file_of(h)->len = n; }
+
+void rt_g_set_input(rt_int h) {
+  if (g_file_of(h)->mode == 2) g_io("FILE_USE_ERROR");
+  g_in = h;
+}
+
+void rt_g_set_output(rt_int h) {
+  if (g_file_of(h)->mode == 1) g_io("FILE_USE_ERROR");
+  g_out = h;
 }
 
 /* ---- GREEN abort (RM79 9.10) -------------------------------------------------- */
@@ -1828,47 +2357,293 @@ void rt_g_abort(rt_act *a) {
   rt_exterminate(a);
 }
 
+/* T'CLOCK (RM79 9.9): the processor time of a task; time is virtual here,
+ * so it is counted in the turns the task was given the processor */
+double rt_g_task_clock(rt_act *a) { return a->t ? (double)a->t->runs : 0.0; }
+
 int rt_g_aborted(void) {
   for (int i = 0; i < g_naborted; i++)
     if (g_aborted[i] == cur) return 1;
   return 0;
 }
 
-/* ---- GREEN TEXT_IO GET of numbers (RM79 14.4): an item is a lexical unit,
- * leading blanks and line ends are skipped ----------------------------------- */
+/* addresses are those of the simulated machine (RM79 13.5): the storage
+ * units go through the memory and the windows */
+void rt_g_load(rt_int a, rt_int n, unsigned char *buf);
+void rt_g_save(rt_int a, rt_int n, const unsigned char *buf);
+void rt_g_move_bytes(rt_int from, rt_int to, rt_int n) {
+  if (n <= 0) return;
+  unsigned char *b = rt_alloc((size_t)n * 8);
+  rt_g_load(from, n, b);
+  rt_g_save(to, n, b);
+  free(b);
+}
 
-static void g_item_text(char *b, size_t cap) {
-  int c;
-  do {
-    c = rt_getc();
-    if (c < 0) rt_raise(RT_X_FILE);
-  } while (c == ' ' || c == '\t' || c == '\n' || c == '\r');
-  size_t n = 0;
-  while (c >= 0 && c != ' ' && c != '\t' && c != '\n' && c != '\r') {
-    if (n + 1 < cap) b[n++] = (char)c;
-    c = rt_getc();
+/* ---- GREEN: the rest of RM79 (attributes, real arithmetic, exceptions) ---- */
+
+/* a declared exception is one exception, even when another one somewhere
+ * else has the same name (RM79 11.1) */
+int rt_g_exc_new(const char *name) {
+  if (exc_count >= 4096) {
+    fprintf(stderr, "*** too many exceptions\n");
+    exit(4);
   }
+  exc_names[exc_count] = name;
+  return exc_count++;
+}
+
+static int g_exc_id(const char *name) { return rt_exc(name); }
+
+rt_gstr rt_g_lit(const char *s, rt_int n) {
+  rt_gstr r = {1, n, 1, 1, (unsigned char *)s};
+  return r;
+}
+
+rt_gstr rt_g_s2g(rstr s) {
+  rt_gstr r = {1, s.len, 1, 1, s.p};
+  return r;
+}
+
+rstr rt_g_g2s(rt_gstr a) {
+  rstr r = {G_CNT(a), a.p};
+  return r;
+}
+
+void rt_g_overlap(void) { rt_raise(g_exc_id("OVERLAP_ERROR")); }
+void rt_g_novalue(void) { rt_raise(RT_X_INIT); }
+
+/* a visible subprogram of a task runs on the frame of the task's body: just
+ * after initiate the task may not have reached it yet; an inactive task
+ * raises TASKING_ERROR (RM79 9.1, 11.4) */
+void *rt_g_task_frame(void **slot, rt_act *a) {
+  while (!*slot && rt_is_active(a)) rt_yield();
+  if (!*slot || !rt_is_active(a)) rt_raise(RT_X_TASKING);
+  return *slot;
+}
+
+/* the exception a caller gets when the accept body it waits for ends with
+ * X: FAILURE raised in the acceptor, or its abortion, is TASKING_ERROR for
+ * the caller (RM79 11.4, 11.5) */
+int rt_g_partner_exc(int x) {
+  if (x == RT_X_TERMINATE || rt_g_aborted()) return RT_X_TASKING;
+  return x;
+}
+
+/* the text of a file, null if it cannot be read: the form of pragma INCLUDE
+ * that the first GREEN seed with INCLUDE calls */
+void rt_g_read_file_text(rstr name, rstr **res) {
+  FILE *f = fopen(rt_cstr(name), "rb");
+  *res = NULL;
+  if (!f) return;
+  fseek(f, 0, SEEK_END);
+  long n = ftell(f);
+  fseek(f, 0, SEEK_SET);
+  rstr *r = rt_alloc(sizeof *r);
+  *r = rt_str_new(n);
+  if (n == 0 || fread(r->p, 1, (size_t)n, f) == (size_t)n) *res = r;
+  fclose(f);
+}
+
+/* the text of a file for pragma INCLUDE (RM79 App. B), read by greenc a
+ * character at a time; the length is -1 if the file cannot be read */
+static rstr g_include;
+
+void rt_g_include_open(rstr name, rt_int *len) {
+  FILE *f = fopen(rt_cstr(name), "rb");
+  *len = -1;
+  if (!f) return;
+  fseek(f, 0, SEEK_END);
+  long n = ftell(f);
+  fseek(f, 0, SEEK_SET);
+  g_include = rt_str_new(n);
+  if (n == 0 || fread(g_include.p, 1, (size_t)n, f) == (size_t)n) *len = n;
+  fclose(f);
+}
+
+/* the program library of greenc (RM79 10.4): a directory named by
+ * GREEN_LIBRARY, a file per compilation unit; without it, no library */
+#include <sys/stat.h>
+void rt_g_lib_open(rstr key, rt_int *len) {
+  const char *dir = getenv("GREEN_LIBRARY");
+  *len = -1;
+  if (!dir || !*dir) return;
+  char path[4096];
+  snprintf(path, sizeof path, "%s/%s.grn", dir, rt_cstr(key));
+  rt_g_include_open(rt_str(path, (rt_int)strlen(path)), len);
+}
+
+void rt_g_lib_enabled(int *yes) {
+  const char *dir = getenv("GREEN_LIBRARY");
+  *yes = dir && *dir;
+}
+
+void rt_g_lib_store(rstr key, rstr text) {
+  const char *dir = getenv("GREEN_LIBRARY");
+  if (!dir || !*dir) return;
+  mkdir(dir, 0777);
+  char path[4096];
+  snprintf(path, sizeof path, "%s/%s.grn", dir, rt_cstr(key));
+  FILE *f = fopen(path, "wb");
+  if (!f) return;
+  fwrite(text.p, 1, (size_t)text.len, f);
+  fclose(f);
+}
+
+void rt_g_include_char(rt_int i, int *c) {
+  if (i < 1 || i > g_include.len) rt_raise(RT_X_SUBSCRIPT);
+  *c = g_include.p[i - 1];
+}
+
+/* T'REP and T'VAL(S) of enumeration types: the literals' images, upper case;
+ * a character literal is shown in quotes (RM79 App. A) */
+rstr rt_g_enum_rep(rt_int v, const char *const *names, rt_int n) {
+  if (v < 0 || v >= n) rt_raise(RT_X_RANGE);
+  return rt_str_copy(rt_str(names[v], (rt_int)strlen(names[v])));
+}
+
+static void g_trim(rstr s, rt_int *a, rt_int *b) {
+  *a = 0;
+  *b = s.len;
+  while (*a < *b && (s.p[*a] == ' ' || s.p[*a] == '\t')) (*a)++;
+  while (*b > *a && (s.p[*b - 1] == ' ' || s.p[*b - 1] == '\t')) (*b)--;
+}
+
+rt_int rt_g_enum_val(rstr s, const char *const *names, rt_int n) {
+  rt_int a, b;
+  g_trim(s, &a, &b);
+  for (rt_int i = 0; i < n; i++) {
+    const char *x = names[i];
+    rt_int len = (rt_int)strlen(x);
+    if (len != b - a) continue;
+    int quoted = x[0] == '"', same = 1;
+    for (rt_int k = 0; k < len && same; k++) {
+      int c = s.p[a + k];
+      if (!quoted && c >= 'a' && c <= 'z') c -= 32;
+      same = c == (unsigned char)x[k];
+    }
+    if (same) return i;
+  }
+  rt_raise(RT_X_RANGE);
+}
+
+static const char *const g_ctl[] = {
+  "NUL", "SOH", "STX", "ETX", "EOT", "ENQ", "ACK", "BEL", "BS", "HT", "LF", "VT", "FF", "CR", "SO", "SI",
+  "DLE", "DC1", "DC2", "DC3", "DC4", "NAK", "SYN", "ETB", "CAN", "EM", "SUB", "ESC", "FS", "GS", "RS", "US"};
+
+/* CHARACTER'REP: a graphic character in quotes, a control character by name */
+rstr rt_g_char_rep(rt_int v) {
+  char b[8];
+  if (v < 0 || v > 127) rt_raise(RT_X_RANGE);
+  if (v < 32) return rt_str_copy(rt_str(g_ctl[v], (rt_int)strlen(g_ctl[v])));
+  if (v == 127) return rt_str_copy(rt_str("DEL", 3));
+  b[0] = '"';
+  b[1] = (char)v;
+  b[2] = '"';
+  return rt_str_copy(rt_str(b, 3));
+}
+
+rt_int rt_g_char_val(rstr s) {
+  rt_int a, b;
+  g_trim(s, &a, &b);
+  if (b - a == 3 && s.p[a] == '"' && s.p[a + 2] == '"') return s.p[a + 1];
+  if (b - a == 1 && s.p[a] > ' ' && s.p[a] < 127) return s.p[a];
+  for (int i = 0; i < 32; i++)
+    if ((rt_int)strlen(g_ctl[i]) == b - a && strncasecmp((const char *)s.p + a, g_ctl[i], (size_t)(b - a)) == 0)
+      return i;
+  if (b - a == 3 && strncasecmp((const char *)s.p + a, "DEL", 3) == 0) return 127;
+  rt_raise(RT_X_RANGE);
+}
+
+rstr rt_g_bool_rep(rt_int v) { return v ? rt_str_copy(rt_str("TRUE", 4)) : rt_str_copy(rt_str("FALSE", 5)); }
+
+rt_int rt_g_bool_val(rstr s) {
+  static const char *const names[] = {"FALSE", "TRUE"};
+  return rt_g_enum_val(s, names, 2);
+}
+
+/* FLOAT'VAL(S): a real literal, underscores allowed (RM79 2.4) */
+double rt_g_float_val(rstr s) {
+  char b[128], *end;
+  rt_int a, e, n = 0;
+  g_trim(s, &a, &e);
+  for (rt_int i = a; i < e && n < 120; i++)
+    if (s.p[i] != '_') b[n++] = (char)s.p[i];
   b[n] = 0;
-}
-
-rt_int rt_g_get_int(void) {
-  char b[64], *end;
-  g_item_text(b, sizeof b);
-  long long v = strtoll(b, &end, 10);
-  if (*end) rt_raise(RT_X_RANGE);
-  return (rt_int)v;
-}
-
-double rt_g_get_float(void) {
-  char b[64], *end;
-  g_item_text(b, sizeof b);
+  if (n == 0) rt_raise(RT_X_RANGE);
   double v = strtod(b, &end);
   if (*end) rt_raise(RT_X_RANGE);
   return v;
 }
 
-void rt_g_move_bytes(rt_int from, rt_int to, rt_int n) {
-  if (n > 0) memmove((void *)(intptr_t)to, (const void *)(intptr_t)from, (size_t)n);
+/* real arithmetic: a result beyond the machine's range raises OVERFLOW, a
+ * nonzero result too small to be represented raises UNDERFLOW (RM79 4.5);
+ * k = 1 for the single precision of SHORT_FLOAT */
+static double g_fres(double r, double a, double b, int k, int mul) {
+  double big = k ? 3.40282347e+38 : 1.7976931348623157e+308;
+  double tiny = k ? 1.17549435e-38 : 2.2250738585072014e-308;
+  if (isnan(r) || isinf(r) || fabs(r) > big) rt_raise(RT_X_OVERFLOW);
+  if (r != 0.0 && fabs(r) < tiny) rt_raise(g_exc_id("UNDERFLOW"));
+  if (mul && r == 0.0 && a != 0.0 && b != 0.0) rt_raise(g_exc_id("UNDERFLOW"));
+  return k ? (double)(float)r : r;
+}
+
+double rt_g_fadd(double a, double b, int k) { return g_fres(a + b, a, b, k, 0); }
+double rt_g_fsub(double a, double b, int k) { return g_fres(a - b, a, b, k, 0); }
+double rt_g_fmul(double a, double b, int k) { return g_fres(a * b, a, b, k, 1); }
+double rt_g_fdiv(double a, double b, int k) {
+  if (b == 0.0) rt_raise(RT_X_ZERO_DIVIDE);
+  return g_fres(a / b, a, 1.0, k, 1);
+}
+double rt_g_fpow(double a, rt_int b, int k) {
+  if (a == 0.0 && b < 0) rt_raise(RT_X_ZERO_DIVIDE);
+  double r = 1.0;
+  rt_int n = b < 0 ? -b : b;
+  while (n-- > 0) r = g_fres(r * a, r, a, k, 1);
+  return b < 0 ? g_fres(1.0 / r, 1.0, r, k, 1) : r;
+}
+double rt_g_fneg(double a, int k) { return g_fres(-a, a, 1.0, k, 0); }
+
+/* conversion of a real value to an integer type rounds (RM79 4.6) */
+rt_int rt_g_round(double v) {
+  if (isnan(v) || v >= 9223372036854775807.0 || v <= -9223372036854775808.0) rt_raise(RT_X_OVERFLOW);
+  return (rt_int)llround(v);
+}
+
+/* SHORT_INTEGER: a half word of the simulated machine (RM79 3.5.4) */
+rt_int rt_g_short(rt_int v) {
+  if (v < -2147483648LL || v > 2147483647LL) rt_raise(RT_X_OVERFLOW);
+  return v;
+}
+
+/* fixed point (RM79 3.5.5): SMALL is the largest power of two not above the
+ * delta; a value is a multiple of SMALL */
+double rt_g_small(double delta) {
+  if (!(delta > 0.0)) rt_raise(RT_X_RANGE);
+  double s = 1.0;
+  while (s > delta) s /= 2.0;
+  while (s * 2.0 <= delta) s *= 2.0;
+  return s;
+}
+
+/* T'LARGE and T'BITS of a fixed point type (RM79 App. A) */
+double rt_g_fix_large(double small, double lo, double hi) {
+  double m = fabs(lo) > fabs(hi) ? fabs(lo) : fabs(hi);
+  return floor(m / small) * small;
+}
+
+rt_int rt_g_fix_bits(double small, double lo, double hi) {
+  double n = rt_g_fix_large(small, lo, hi) / small;
+  rt_int b = 0;
+  while (n >= 1.0) {
+    n /= 2.0;
+    b++;
+  }
+  return b;
+}
+
+double rt_g_fix(double v, double small) {
+  if (isnan(v) || isinf(v)) rt_raise(RT_X_OVERFLOW);
+  return nearbyint(v / small) * small;
 }
 
 /* BLUE additions */
@@ -5455,4 +6230,769 @@ const unsigned char *rt_r_fread_rec(rt_r_file *f) {
   if (len && fread(p, 1, (size_t)len, f->fp) != (size_t)len) rt_raise_msg(RT_X_FILE, "the file is damaged");
   f->cur++;
   return p;
+}
+
+/* ---- GREEN: the simulated machine (RM79 13, 14.6) ------------------------------
+ * The memory has SYSTEM'MEMORY_SIZE storage units of 8 bits. Every value has
+ * a layout (g_lay, given by greenc for each type) that says how it lies in
+ * storage: the bits of a scalar, packed or not, the codes of an enumeration
+ * type, where the components of arrays and records start, as the
+ * representation specifications declare them (13.1 - 13.4). A program sees
+ * storage through 'ADDRESS, code statements, LOW_LEVEL_IO, UNSAFE_CONVERSION
+ * and INPUT_OUTPUT, and always in that layout:
+ * - an object with an address specification is a view: its value in the
+ *   program's form, kept in agreement with the memory after every statement
+ *   that may change it (rt_g_sync), so objects at one address overlay;
+ * - any other object gets an address above the memory, a window, when
+ *   'ADDRESS first asks for it; a window shows the object in its layout, and
+ *   what is written there goes back into the object.
+ * Code statements run on eight registers of one word (8 storage units).
+ * Device 0 is the interrupt controller: an interrupt is an entry call by a
+ * hardware task of the highest priority, so interrupts queue on their entry,
+ * and its in parameters are the words of the data registers (devices 6 ..
+ * 15 for LOW_LEVEL_IO, R1 .. R7 for the INTR instruction), in the layouts
+ * of the parameters. Device 1 is the console, 2 the clock; 3 holds an
+ * address in memory, 4 reads and writes the storage unit there (and moves
+ * on), 5 prints storage units from there in hexadecimal. */
+
+static unsigned char *g_mem;
+static rt_int g_mem_size = 1048576;
+static rt_int g_reg[8];
+static rt_int g_dev[16];
+static rt_int g_nirq;
+int rt_g_nviews;
+
+void rt_g_set_memory(rt_int n) {
+  if (n > 0 && !g_mem) g_mem_size = n;
+}
+
+/* pragma STORAGE_UNIT (RM79 13.7): 8, 16, 32 or 64 bits */
+static rt_int g_su = 8, g_ub = 1;
+void rt_g_set_unit(rt_int su) {
+  if ((su == 8 || su == 16 || su == 32 || su == 64) && !g_mem) {
+    g_su = su;
+    g_ub = su / 8;
+  }
+}
+
+/* N storage units of the memory from ADDR */
+unsigned char *rt_g_mem(rt_int addr, rt_int n) {
+  if (addr < 0 || n < 0 || addr > g_mem_size - n) rt_raise(RT_X_RANGE);
+  if (!g_mem) g_mem = calloc((size_t)(g_mem_size * g_ub), 1);
+  return g_mem + addr * g_ub;
+}
+
+/* ---- layouts ---- */
+
+static rt_int g_round(rt_int v, rt_int m) { return m <= 1 ? v : ((v + m - 1) / m) * m; }
+
+static void g_put_bits(unsigned char *img, rt_int off, rt_int n, uint64_t x) {
+  for (rt_int i = 0; i < n; i++) {
+    rt_int b = off + i;
+    int bit = i < 64 ? (int)((x >> i) & 1) : 0;
+    if (bit) img[b >> 3] |= (unsigned char)(1u << (b & 7));
+    else img[b >> 3] &= (unsigned char)~(1u << (b & 7));
+  }
+}
+
+static uint64_t g_get_bits(const unsigned char *img, rt_int off, rt_int n) {
+  uint64_t x = 0;
+  for (rt_int i = 0; i < n && i < 64; i++) {
+    rt_int b = off + i;
+    if ((img[b >> 3] >> (b & 7)) & 1) x |= (uint64_t)1 << i;
+  }
+  return x;
+}
+
+typedef struct { rt_int lo, hi, lo2, hi2; char *p; } g_arr;
+
+static int g_scalar(const g_lay *L) { return L->k != 'a' && L->k != 'r'; }
+
+/* the bits of the place of component i of an array: its layout's, rounded to
+ * a storage unit unless packed */
+static rt_int g_comp_bits(const g_lay *L, const void *e) {
+  if (L->stride >= 0) return L->stride;
+  rt_int b = rt_g_lay_bits(L->elem, e);
+  if (b < 0) return -1;
+  return L->packed ? b : g_round(b, g_su);
+}
+
+typedef struct { rt_int off, vstart, total; } g_walk;
+
+/* where component i of a record starts, in bits; its width in *w */
+static rt_int g_place(const g_lay *L, const void *v, rt_int i, g_walk *k, rt_int *w) {
+  const g_fld *f = &L->f[i];
+  const void *c = v ? (const char *)v + f->coff : NULL;
+  rt_int b = f->width >= 0 ? f->width : rt_g_lay_bits(f->lay, c);
+  if (b < 0) return -1;
+  if (!L->packed && f->width < 0) b = g_round(b, g_su);
+  if (f->variant) {
+    if (k->vstart < 0) k->vstart = k->off;
+    int first = 1;
+    for (rt_int j = 0; j < i; j++)
+      if (L->f[j].variant == f->variant) first = 0;
+    if (first) k->off = k->vstart;
+  }
+  rt_int st = f->at >= 0 ? f->at : (L->packed ? k->off : g_round(k->off, g_su));
+  k->off = st + b;
+  if (k->off > k->total) k->total = k->off;
+  *w = b;
+  return st;
+}
+
+static int g_present(const g_fld *f, const void *v) { return !v || !f->present || f->present(v); }
+
+rt_int rt_g_lay_bits(const g_lay *L, const void *v) {
+  if (g_scalar(L)) return L->bits;
+  if (L->k == 'a') {
+    const g_arr *a = v;
+    rt_int n = a ? (a->hi >= a->lo ? a->hi - a->lo + 1 : 0) : L->count;
+    if (n < 0) return -1;
+    if (L->stride >= 0 || !a || !a->p) {
+      rt_int s = g_comp_bits(L, NULL);
+      return s < 0 ? -1 : n * s;
+    }
+    rt_int t = 0;
+    for (rt_int i = 0; i < n; i++) {
+      rt_int s = g_comp_bits(L, a->p + (size_t)i * L->elem->csize);
+      if (s < 0) return -1;
+      t += s;
+    }
+    return t;
+  }
+  if (L->bits > 0) return L->bits;
+  g_walk k = {0, -1, 0};
+  for (rt_int i = 0; i < L->nf; i++) {
+    rt_int w;
+    if (!g_present(&L->f[i], v)) continue;
+    if (g_place(L, v, i, &k, &w) < 0) return -1;
+  }
+  return L->packed ? k.total : g_round(k.total, g_su);
+}
+
+rt_int rt_g_window(void *c, const g_lay *L);
+static void *g_window_object(rt_int a);
+
+static void g_enc_w(const g_lay *L, const void *v, unsigned char *img, rt_int off, rt_int w);
+static void g_enc(const g_lay *L, const void *v, unsigned char *img, rt_int off) { g_enc_w(L, v, img, off, -1); }
+
+/* W: the bits a record representation gives a scalar component, -1: its own */
+static void g_enc_w(const g_lay *L, const void *v, unsigned char *img, rt_int off, rt_int w) {
+  int64_t x = 0;
+  rt_int nb = w >= 0 && w <= 64 ? w : L->bits;
+  switch (L->k) {
+  case 'i': case 'u': x = *(const rt_int *)v; break;
+  case 'e': x = *(const int *)v; break;
+  case 'b': x = *(const unsigned char *)v; break;
+  case 'f': memcpy(&x, v, 8); g_put_bits(img, off, 64, (uint64_t)x); return;
+  case 'h': {
+    float f = (float)*(const double *)v;
+    uint32_t y;
+    memcpy(&y, &f, 4);
+    g_put_bits(img, off, 32, y);
+    return;
+  }
+  case 'x': x = (int64_t)llround(*(const double *)v / L->small()); break;
+  case 'p': {
+    void *q = *(void *const *)v;
+    x = q ? rt_g_window(q, L->elem) : 0;
+    break;
+  }
+  case 'o': g_put_bits(img, off, L->bits, 0); return;
+  case 'a': {
+    const g_arr *a = v;
+    rt_int n = a->hi >= a->lo ? a->hi - a->lo + 1 : 0;
+    for (rt_int i = 0; i < n; i++) {
+      const char *e = a->p + (size_t)i * L->elem->csize;
+      g_enc(L->elem, e, img, off);
+      off += g_comp_bits(L, e);
+    }
+    return;
+  }
+  case 'r': {
+    g_walk k = {0, -1, 0};
+    for (rt_int i = 0; i < L->nf; i++) {
+      rt_int w;
+      if (!g_present(&L->f[i], v)) continue;
+      rt_int st = g_place(L, v, i, &k, &w);
+      g_enc_w(L->f[i].lay, (const char *)v + L->f[i].coff, img, off + st, L->f[i].width);
+    }
+    return;
+  }
+  }
+  if (L->codes && x >= 0 && x < L->ncodes) x = L->codes[x];
+  x -= L->bias;
+  g_put_bits(img, off, nb, (uint64_t)x);
+}
+
+static void g_dec_w(const g_lay *L, void *v, const unsigned char *img, rt_int off, rt_int w);
+static void g_dec(const g_lay *L, void *v, const unsigned char *img, rt_int off) { g_dec_w(L, v, img, off, -1); }
+
+static void g_dec_w(const g_lay *L, void *v, const unsigned char *img, rt_int off, rt_int w) {
+  uint64_t u;
+  int64_t x;
+  rt_int nb = w >= 0 && w <= 64 ? w : L->bits;
+  switch (L->k) {
+  case 'f': u = g_get_bits(img, off, 64); memcpy(v, &u, 8); return;
+  case 'h': {
+    uint32_t y = (uint32_t)g_get_bits(img, off, 32);
+    float f;
+    memcpy(&f, &y, 4);
+    *(double *)v = f;
+    return;
+  }
+  case 'o': return;
+  case 'a': {
+    g_arr *a = v;
+    if (!a->p) {
+      rt_int n = L->count >= 0 ? L->count : 0;
+      a->lo = 1;
+      a->hi = n;
+      a->lo2 = a->hi2 = 1;
+      a->p = rt_alloc((size_t)(n ? n : 1) * L->elem->csize);
+      memset(a->p, 0, (size_t)(n ? n : 1) * L->elem->csize);
+    }
+    rt_int n = a->hi >= a->lo ? a->hi - a->lo + 1 : 0;
+    for (rt_int i = 0; i < n; i++) {
+      char *e = a->p + (size_t)i * L->elem->csize;
+      g_dec(L->elem, e, img, off);
+      off += g_comp_bits(L, e);
+    }
+    return;
+  }
+  case 'r': {
+    g_walk k = {0, -1, 0};
+    for (rt_int i = 0; i < L->nf; i++) {
+      rt_int w;
+      if (!g_present(&L->f[i], v)) continue;
+      rt_int st = g_place(L, v, i, &k, &w);
+      g_dec_w(L->f[i].lay, (char *)v + L->f[i].coff, img, off + st, L->f[i].width);
+    }
+    return;
+  }
+  }
+  u = g_get_bits(img, off, nb);
+  x = (int64_t)u;
+  if ((L->k == 'i' || L->k == 'x') && nb < 64 && nb > 0 && (u >> (nb - 1)) & 1) x = (int64_t)(u | (~(uint64_t)0 << nb));
+  x += L->bias;
+  if (L->codes) {
+    rt_int i = 0;
+    while (i < L->ncodes && L->codes[i] != x) i++;
+    if (i < L->ncodes) x = i;
+  }
+  switch (L->k) {
+  case 'i': case 'u': *(rt_int *)v = x; break;
+  case 'e': *(int *)v = (int)x; break;
+  case 'b': *(unsigned char *)v = (unsigned char)x; break;
+  case 'x': *(double *)v = (double)x * L->small(); break;
+  case 'p': *(void **)v = x ? g_window_object(x) : NULL; break;
+  }
+}
+
+/* the image of a value: (bits + 7) / 8 storage units, and a spare word */
+static unsigned char *g_image(const g_lay *L, const void *v, rt_int *bits) {
+  rt_int b = rt_g_lay_bits(L, v);
+  if (b < 0) b = 0;
+  unsigned char *img = rt_alloc((size_t)(b + 7) / 8 + 16 + (size_t)g_ub);
+  memset(img, 0, (size_t)(b + 7) / 8 + 16 + (size_t)g_ub);
+  g_enc(L, v, img, 0);
+  *bits = b;
+  return img;
+}
+
+/* the offset in bits of the component at comp in the value at root, -1 */
+static rt_int g_off(const g_lay *L, const char *root, const char *comp) {
+  if (comp == root) return 0;
+  if (L->k == 'a') {
+    const g_arr *a = (const g_arr *)root;
+    rt_int n = a->hi >= a->lo ? a->hi - a->lo + 1 : 0, off = 0;
+    size_t cs = L->elem->csize;
+    if (comp < a->p || comp >= a->p + (size_t)n * cs) {
+      /* a component of a component that holds its own components: a row */
+      if (L->elem->k != 'a' && L->elem->k != 'r') return -1;
+      for (rt_int j = 0; j < n; j++) {
+        rt_int o = g_off(L->elem, a->p + (size_t)j * cs, comp);
+        if (o >= 0) return off + o;
+        off += g_comp_bits(L, a->p + (size_t)j * cs);
+      }
+      return -1;
+    }
+    rt_int i = (rt_int)((comp - a->p) / cs);
+    for (rt_int j = 0; j < i; j++) off += g_comp_bits(L, a->p + (size_t)j * cs);
+    rt_int o = g_off(L->elem, a->p + (size_t)i * cs, comp);
+    return o < 0 ? -1 : off + o;
+  }
+  if (L->k == 'r') {
+    g_walk k = {0, -1, 0};
+    for (rt_int i = 0; i < L->nf; i++) {
+      rt_int w;
+      if (!g_present(&L->f[i], root)) continue;
+      rt_int st = g_place(L, root, i, &k, &w);
+      const char *c = root + L->f[i].coff;
+      if (comp >= c && comp < c + L->f[i].lay->csize) {
+        rt_int o = g_off(L->f[i].lay, c, comp);
+        if (o >= 0) return st + o;
+      }
+      if (L->f[i].lay->k == 'a') {
+        rt_int o = g_off(L->f[i].lay, c, comp);
+        if (o >= 0) return st + o;
+      }
+    }
+  }
+  return -1;
+}
+
+/* ---- views and windows ---- */
+
+typedef struct {
+  char *c;
+  const g_lay *L;
+  rt_int addr, bytes;
+  unsigned char *base;      /* the image last agreed with the memory */
+} g_view;
+static g_view *g_views;
+static rt_int g_cviews;
+
+typedef struct {
+  char *c;
+  const g_lay *L;
+  rt_int base, bytes;
+} g_win;
+static g_win *g_wins;
+static rt_int g_nwins, g_cwins, g_next_win = -1;
+
+/* an object at an address (RM79 13.5): KEEP when it has its value already,
+ * else it takes what the memory holds */
+void rt_g_view(void *c, const g_lay *L, rt_int addr, int keep) {
+  rt_int bits;
+  unsigned char *img = g_image(L, c, &bits);
+  rt_int units = (bits + g_su - 1) / g_su;
+  if (units < 1) units = 1;
+  rt_int n = units * g_ub;
+  unsigned char *m = rt_g_mem(addr, units);
+  if (L->align > 1 && addr % L->align) rt_raise(RT_X_RANGE);
+  if (rt_g_nviews == g_cviews) {
+    g_cviews = g_cviews ? g_cviews * 2 : 16;
+    g_views = realloc(g_views, (size_t)g_cviews * sizeof *g_views);
+  }
+  g_view *V = &g_views[rt_g_nviews++];
+  V->c = c;
+  V->L = L;
+  V->addr = addr;
+  V->bytes = n;
+  V->base = rt_alloc((size_t)n + 16);
+  if (keep) {
+    memcpy(m, img, (size_t)n);
+  } else {
+    memcpy(img, m, (size_t)n);
+    g_dec(L, c, img, 0);
+  }
+  memcpy(V->base, m, (size_t)n);
+  free(img);
+}
+
+/* the views and the memory agree again: what the program changed in a view
+ * since they last agreed goes to the memory, the rest comes from it */
+void rt_g_sync(void) {
+  for (int pass = 0; pass < 2; pass++)
+    for (rt_int i = 0; i < rt_g_nviews; i++) {
+      g_view *V = &g_views[i];
+      rt_int bits;
+      unsigned char *h = g_image(V->L, V->c, &bits);
+      unsigned char *m = rt_g_mem(V->addr, V->bytes / g_ub);
+      int differ = 0;
+      for (rt_int k = 0; k < V->bytes; k++) {
+        unsigned char mask = h[k] ^ V->base[k];
+        unsigned char n = (unsigned char)((m[k] & ~mask) | (h[k] & mask));
+        m[k] = n;
+        V->base[k] = n;
+        if (n != h[k]) differ = 1;
+      }
+      if (differ) g_dec(V->L, V->c, V->base, 0);
+      free(h);
+    }
+}
+
+static g_view *g_view_of(const void *c) {
+  for (rt_int i = 0; i < rt_g_nviews; i++)
+    if (g_views[i].c == c) return &g_views[i];
+  return NULL;
+}
+
+/* the address of an object that has none: a window above the memory */
+rt_int rt_g_window(void *c, const g_lay *L) {
+  g_view *V = g_view_of(c);
+  if (V) return V->addr;
+  for (rt_int i = 0; i < g_nwins; i++)
+    if (g_wins[i].c == c) return g_wins[i].base;
+  if (g_next_win < 0) g_next_win = g_round(g_mem_size, 8);   /* in storage units */
+  if (g_nwins == g_cwins) {
+    g_cwins = g_cwins ? g_cwins * 2 : 32;
+    g_wins = realloc(g_wins, (size_t)g_cwins * sizeof *g_wins);
+  }
+  g_win *w = &g_wins[g_nwins++];
+  rt_int b = rt_g_lay_bits(L, c);
+  w->c = c;
+  w->L = L;
+  rt_int units = b > 0 ? (b + g_su - 1) / g_su : 1;
+  w->bytes = units * g_ub;
+  w->base = g_round(g_next_win, L->align > 1 ? L->align : 1);
+  g_next_win = w->base + units;
+  return w->base;
+}
+
+static void *g_window_object(rt_int a) {
+  for (rt_int i = 0; i < g_nwins; i++)
+    if (g_wins[i].base == a) return g_wins[i].c;
+  rt_raise(rt_exc("ACCESS_ERROR"));
+}
+
+/* X'ADDRESS of the component at comp of the object at root (RM79 13.7) */
+rt_int rt_g_address(void *root, const g_lay *L, void *comp) {
+  rt_int base = rt_g_window(root, L), o = g_off(L, root, comp);
+  return base + (o > 0 ? o / g_su : 0);
+}
+
+/* storage units of the memory or of the windows, by byte: the byte at
+ * B (B = unit address * bytes per unit + byte in the unit) */
+static g_win *g_win_at(rt_int b) {
+  for (rt_int i = 0; i < g_nwins; i++)
+    if (b >= g_wins[i].base * g_ub && b < g_wins[i].base * g_ub + g_wins[i].bytes) return &g_wins[i];
+  return NULL;
+}
+
+/* N storage units from A: N * (STORAGE_UNIT / 8) bytes */
+void rt_g_load(rt_int a, rt_int n, unsigned char *buf) {
+  g_win *last = NULL;
+  unsigned char *img = NULL;
+  rt_int bits;
+  rt_g_sync();
+  for (rt_int k = 0; k < n * g_ub; k++) {
+    rt_int x = a * g_ub + k;
+    if (x >= 0 && x < g_mem_size * g_ub) {
+      rt_g_mem(0, 0);
+      buf[k] = g_mem[x];
+      continue;
+    }
+    g_win *w = g_win_at(x);
+    if (!w) rt_raise(RT_X_RANGE);
+    if (w != last) {
+      free(img);
+      img = g_image(w->L, w->c, &bits);
+      last = w;
+    }
+    buf[k] = img[x - w->base * g_ub];
+  }
+  free(img);
+}
+
+void rt_g_save(rt_int a, rt_int n, const unsigned char *buf) {
+  for (rt_int k = 0; k < n * g_ub; k++) {
+    rt_int x = a * g_ub + k;
+    if (x >= 0 && x < g_mem_size * g_ub) {
+      rt_g_mem(0, 0);
+      g_mem[x] = buf[k];
+      continue;
+    }
+    g_win *w = g_win_at(x);
+    if (!w) rt_raise(RT_X_RANGE);
+    rt_int bits;
+    unsigned char *img = g_image(w->L, w->c, &bits);
+    img[x - w->base * g_ub] = buf[k];
+    g_dec(w->L, w->c, img, 0);
+    free(img);
+  }
+  rt_g_sync();
+}
+
+/* UNSAFE_CONVERSION (RM79 13.10): the storage of a value of type S read as a
+ * value of type T; the bits T has beyond those of S are zero */
+void rt_g_unsafe(const g_lay *LS, const void *s, const g_lay *LT, void *t) {
+  rt_int bs;
+  unsigned char *si = g_image(LS, s, &bs);
+  g_arr *a = (g_arr *)t;
+  if (LT->k == 'a' && !a->p && LT->count < 0) {
+    rt_int cb = g_comp_bits(LT, NULL);
+    rt_int n = cb > 0 ? (bs + cb - 1) / cb : 0;
+    a->lo = 1;
+    a->hi = n;
+    a->lo2 = a->hi2 = 1;
+    a->p = rt_alloc((size_t)(n ? n : 1) * LT->elem->csize);
+    memset(a->p, 0, (size_t)(n ? n : 1) * LT->elem->csize);
+  }
+  rt_int bt = rt_g_lay_bits(LT, LT->k == 'a' && !a->p ? NULL : t);
+  rt_int nb = (bs > bt ? bs : bt) + 7;
+  unsigned char *img = rt_alloc((size_t)nb / 8 + 16);
+  memset(img, 0, (size_t)nb / 8 + 16);
+  memcpy(img, si, (size_t)(bs + 7) / 8);
+  if (bs % 8) img[bs / 8] &= (unsigned char)((1u << (bs % 8)) - 1);
+  g_dec(LT, t, img, 0);
+  free(img);
+  free(si);
+}
+
+/* the place of component i of a record: POSITION, FIRST_BIT or LAST_BIT */
+rt_int rt_g_component(const g_lay *L, const void *v, rt_int i, int what) {
+  g_walk k = {0, -1, 0};
+  rt_int st = 0, w = 0;
+  for (rt_int j = 0; j <= i; j++) {
+    if (!g_present(&L->f[j], v) && j != i) continue;
+    st = g_place(L, v, j, &k, &w);
+  }
+  if (what == 0) return st / g_su;
+  if (what == 1) return st % g_su;
+  return st % g_su + w - 1;
+}
+
+/* ---- interrupts ---- */
+
+typedef struct g_irq {
+  rt_int addr;
+  rt_entry *e;
+  rt_act *owner;
+  size_t psize;
+  rt_int np;
+  const g_lay *const *lays;
+  const size_t *offs;
+  struct g_irq *next;
+} g_irq;
+static g_irq *g_irqs;
+
+void rt_g_bind_interrupt(rt_int addr, rt_entry *e, rt_act *owner) {
+  rt_g_bind_interrupt_p(addr, e, owner, 16, 0, NULL, NULL);
+}
+
+void rt_g_bind_interrupt_p(rt_int addr, rt_entry *e, rt_act *owner, size_t psize, rt_int np,
+                           const g_lay *const *lays, const size_t *offs) {
+  g_irq *q;
+  for (q = g_irqs; q; q = q->next)
+    if (q->addr == addr) break;
+  if (!q) {
+    q = rt_alloc(sizeof *q);
+    q->addr = addr;
+    q->next = g_irqs;
+    g_irqs = q;
+  }
+  q->e = e;
+  q->owner = owner;
+  q->psize = psize;
+  q->np = np;
+  q->lays = lays;
+  q->offs = offs;
+}
+
+typedef struct {
+  g_irq *q;
+  void *params;
+} g_call;
+
+static void g_irq_call(void *arg) {
+  g_call *k = arg;
+  if (rt_is_active(k->q->owner)) rt_entry_call(k->q->e, k->params);
+}
+
+/* an interrupt at an address, with the control information WORDS gives */
+static void g_interrupt(rt_int addr, const rt_int *words, rt_int nwords) {
+  static rt_taskdecl hardware;
+  g_nirq++;
+  for (g_irq *q = g_irqs; q; q = q->next)
+    if (q->addr == addr) {
+      if (!rt_is_active(q->owner)) return;   /* nobody listens: it is lost */
+      g_call *k = rt_alloc(sizeof *k);
+      k->q = q;
+      k->params = rt_alloc(q->psize + 16);
+      memset(k->params, 0, q->psize + 16);
+      /* each in parameter takes the next words, in its layout */
+      rt_int w = 0;
+      for (rt_int i = 0; i < q->np; i++) {
+        rt_int bits = rt_g_lay_bits(q->lays[i], NULL), n = bits > 0 ? (bits + 63) / 64 : 1;
+        unsigned char img[8 * 16 + 16];
+        memset(img, 0, sizeof img);
+        for (rt_int j = 0; j < n && j < 16; j++) {
+          rt_int x = w + j < nwords ? words[w + j] : 0;
+          memcpy(img + 8 * j, &x, 8);
+        }
+        g_dec(q->lays[i], (char *)k->params + q->offs[i], img, 0);
+        w += n;
+      }
+      rt_act *a = rt_alloc(sizeof *a);
+      memset(a, 0, sizeof *a);
+      a->prio = 255;
+      a->has_prio = 1;
+      rt_create(a, &hardware, g_irq_call, k);
+      return;
+    }
+}
+
+void rt_g_interrupt(rt_int addr) { g_interrupt(addr, g_dev + 6, 10); }
+
+/* ---- code statements (RM79 13.8) ---- */
+
+static rt_int g_word(rt_int a) {
+  unsigned char b[8];
+  rt_int v;
+  rt_g_load(a, 8 / g_ub, b);
+  memcpy(&v, b, 8);
+  return v;
+}
+
+static void g_set_word(rt_int a, rt_int v) {
+  unsigned char b[8];
+  memcpy(b, &v, 8);
+  rt_g_save(a, 8 / g_ub, b);
+}
+
+void rt_g_machine(int op, rt_int r, rt_int a) {
+  rt_int *x = &g_reg[r & 7], v;
+  if (r < 0 || r > 7) rt_raise(RT_X_RANGE);
+  switch (op) {
+  case 0: break;                                           /* NOP */
+  case 1: *x = a; break;                                   /* LDI */
+  case 2: *x = g_word(a); break;                           /* LD */
+  case 3: g_set_word(a, *x); break;                        /* ST */
+  case 4: if (__builtin_add_overflow(*x, g_word(a), &v)) rt_raise(RT_X_OVERFLOW); *x = v; break;
+  case 5: if (__builtin_sub_overflow(*x, g_word(a), &v)) rt_raise(RT_X_OVERFLOW); *x = v; break;
+  case 6: if (__builtin_mul_overflow(*x, g_word(a), &v)) rt_raise(RT_X_OVERFLOW); *x = v; break;
+  case 7:                                                  /* DIV */
+    v = g_word(a);
+    if (v == 0) rt_raise(RT_X_ZERO_DIVIDE);
+    *x = *x / v;
+    break;
+  case 8: *x = -*x; break;                                 /* NEG */
+  case 9: rt_g_putc((int)(*x & 127)); break;               /* OUTC */
+  case 10: rt_g_put_int(*x, 0); break;                     /* OUTN */
+  case 11: g_interrupt(a, g_reg + 1, 7); break;            /* INTR */
+  default: rt_raise(RT_X_RANGE);
+  }
+}
+
+/* ---- LOW_LEVEL_IO (RM79 14.6) ---- */
+
+void rt_g_send_control(rt_int device, rt_int *data) {
+  if (device < 0 || device > 15) rt_raise(RT_X_RANGE);
+  if (device == 0) {
+    rt_g_interrupt(*data);
+  } else if (device == 1) {
+    rt_g_putc((int)(*data & 255));
+  } else if (device == 3) {
+    g_dev[3] = *data;
+  } else if (device == 4) {
+    unsigned char b[8];
+    rt_int v = *data;
+    memcpy(b, &v, 8);
+    rt_g_save(g_dev[3], 1, b);
+    g_dev[3]++;
+  } else if (device == 5) {
+    char t[24];
+    for (rt_int k = 0; k < *data; k++) {
+      unsigned char b[8] = {0};
+      uint64_t v = 0;
+      rt_g_load(g_dev[3] + k, 1, b);
+      memcpy(&v, b, (size_t)g_ub);
+      snprintf(t, sizeof t, "%0*llX", (int)(2 * g_ub), (unsigned long long)v);
+      if (k > 0) rt_g_putc(' ');
+      rt_g_put(rt_str(t, (rt_int)strlen(t)));
+    }
+  } else if (device > 5) {
+    g_dev[device] = *data;
+  }
+}
+
+void rt_g_receive_control(rt_int device, rt_int *data) {
+  if (device < 0 || device > 15) rt_raise(RT_X_RANGE);
+  if (device == 0) {
+    *data = g_nirq;
+  } else if (device == 1) {
+    *data = rt_getc();
+  } else if (device == 2) {
+    *data = rt_time();
+  } else if (device == 4) {
+    unsigned char b[8] = {0};
+    rt_int v = 0;
+    rt_g_load(g_dev[3], 1, b);
+    memcpy(&v, b, (size_t)g_ub);
+    *data = v;
+    g_dev[3]++;
+  } else {
+    *data = g_dev[device];
+  }
+}
+
+void rt_g_collect(rt_int *used, rt_int bits, rt_int limit) {
+  if (*used + bits > limit) rt_raise(rt_exc("STORAGE_OVERFLOW"));
+  *used += bits;
+}
+
+/* the listing file of greenc (RM79 App. B, pragma LIST), "" without one */
+rt_gstr rt_g_listing_file(void) {
+  const char *n = getenv("GREEN_LISTING");
+  if (!n) n = "";
+  return rt_g_s2g(rt_str_copy(rt_str(n, (rt_int)strlen(n))));
+}
+
+/* ---- GREEN INPUT_OUTPUT elements in their layout (RM79 14.1.2) ---- */
+
+void rt_g_write_lay(rt_int h, const void *item, rt_int lay) {
+  g_file *x = g_file_of(h);
+  const g_lay *L = (const g_lay *)(intptr_t)lay;
+  if (x->mode == 1 || !x->f) g_io("FILE_USE_ERROR");
+  rt_int bits;
+  unsigned char *img = g_image(L, item, &bits);
+  rt_int n = (bits + 7) / 8;
+  if (x->var) {
+    if (x->boff < 0) g_io("FILE_USE_ERROR");
+    fflush(x->f);
+    fseek(x->f, 0, SEEK_END);
+    long end = ftell(x->f);
+    if (x->boff < end) {
+      /* over an element: only one of the same length fits there */
+      rt_int old;
+      fseek(x->f, x->boff, SEEK_SET);
+      if (fread(&old, 8, 1, x->f) != 1 || old != bits) g_io("FILE_USE_ERROR");
+    }
+    fseek(x->f, x->boff, SEEK_SET);
+    if (fwrite(&bits, 8, 1, x->f) != 1) g_io("MALFUNCTION");
+    x->boff += 8 + n;
+  } else {
+    fseek(x->f, (long)((x->next - 1) * x->esz), SEEK_SET);
+    n = x->esz;
+  }
+  if (n && fwrite(img, 1, (size_t)n, x->f) != (size_t)n) g_io("MALFUNCTION");
+  free(img);
+  x->next++;
+}
+
+void rt_g_read_element(rt_int h, void *item, rt_int lay) {
+  g_file *x = g_file_of(h);
+  const g_lay *L = (const g_lay *)(intptr_t)lay;
+  if (x->mode == 2 || !x->f) g_io("FILE_USE_ERROR");
+  rt_int want = rt_g_lay_bits(L, item), bits = want, n;
+  fflush(x->f);
+  if (x->var) {
+    if (x->boff < 0) rt_raise(RT_X_FILE);
+    fseek(x->f, x->boff, SEEK_SET);
+    if (fread(&bits, 8, 1, x->f) != 1) {
+      if (feof(x->f)) rt_raise(RT_X_FILE);
+      g_io("MALFUNCTION");
+    }
+    n = (bits + 7) / 8;
+    x->boff += 8 + n;
+  } else {
+    fseek(x->f, (long)((x->next - 1) * x->esz), SEEK_SET);
+    n = x->esz;
+  }
+  unsigned char *img = rt_alloc((size_t)n + 16);
+  if (n && fread(img, 1, (size_t)n, x->f) != (size_t)n) {
+    free(img);
+    if (feof(x->f)) rt_raise(RT_X_FILE);
+    g_io("MALFUNCTION");
+  }
+  x->next++;
+  /* an element of another length is not of the proper type (14.1.2) */
+  if (bits != want) {
+    free(img);
+    g_io("INVALID_DATA");
+  }
+  g_dec(L, item, img, 0);
+  free(img);
 }

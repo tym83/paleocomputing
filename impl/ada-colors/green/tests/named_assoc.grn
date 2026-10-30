@@ -1,0 +1,23 @@
+-- named associations carry the mode at the call: := in, =: out, :=: in out (RM79 5.2.1)
+restricted (TEXT_IO)
+procedure MAIN is
+   use TEXT_IO;
+   procedure P(PAGES : INTEGER; HEADER : STRING := "H"; CENTER : BOOLEAN := FALSE) is
+   begin
+      PUT(PAGES); PUT(HEADER); PUT(CENTER); PUT(NEWLINE);
+   end P;
+   procedure Q(N : INTEGER; R : out INTEGER; Z : in out INTEGER) is
+   begin
+      R := N; Z := Z + N;
+   end Q;
+   A, B : INTEGER := 1;
+   N : INTEGER := 4;
+begin
+   P(PAGES := 128, CENTER := TRUE);
+   P(1, CENTER := TRUE);
+   P(PAGES := N, HEADER := "T");
+   Q(2, Z :=: A, R =: B);
+   PUT(A); PUT(B); PUT(NEWLINE);
+   Q(N := N + 1, R =: B, Z :=: A);
+   PUT(A); PUT(B); PUT(NEWLINE);
+end MAIN;
