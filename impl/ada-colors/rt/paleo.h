@@ -456,7 +456,25 @@ rt_int rt_b_tag(rt_int v);                                  /* UNINITIALIZED_VAR
 extern int RT_B_ARRAY_TOO_BIG;
 void *rt_b_array_alloc(rt_int n, size_t esize);            /* ARRAY_TOO_BIG */
 void *rt_b_new(size_t n);                                    /* SPACE_EXHAUSTED */
+void *rt_b_array_alloc_bits(rt_int n, size_t esize, rt_int bits);
+void rt_b_array_check(rt_int bits);
+void *rt_b_new_bits(size_t n, rt_int bits);
+void rt_b_new_more(rt_int bits);
+rt_int rt_b_ptr_addr(const void *p);
+void *rt_b_ptr_at(rt_int addr);
+rt_int rt_b_lay_put(rstr *img, rt_int sz, rstr bits, int mode);
+rstr rt_b_lay_take(rstr img, rt_int *sz, rt_int fs, int mode);
+void rt_b_lay_end(rstr img, rt_int sz);
+rstr rt_b_arr_put(rstr img, rt_int i, rt_int n, rstr bits, int mode);
+rstr rt_b_arr_take(rstr img, rt_int i, rt_int n, rt_int es, int mode);
+rstr rt_b_blank_bits(rt_int n, int mode);
+rt_int rt_b_sint_of_bits(rstr b);
+rt_int rt_b_rep_int_of_bits(rstr b, rt_int n, int unsig);
+rstr rt_b_bits_of_single(double v);
+double rt_b_single_of_bits(rstr b);
+rt_int rt_b_sem_count(rt_b_sem *s);
 double rt_b_tfrange(double v, double lo, double hi);
+rt_int rt_b_rep_fits(rt_int v, rt_int n, int unsig);
 rstr rt_b_tlen(rstr s, rt_int len);
 rt_int rt_b_addsc(rt_int a, rt_int sa, rt_int b, rt_int sb, rt_int s, int sub, int rounded);
 rstr rt_b_fmd(int op, double a, double b);                 /* !op! of floats */

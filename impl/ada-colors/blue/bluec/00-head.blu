@@ -421,6 +421,8 @@ TYPE WORLD = RECORD
    VAR IN_TYPEDECL: INTEGER;        % translating a type or reptype declaration (3.12)
    VAR REPCONV: BOOLEAN;            % checking the reptype of an explicit-rep-converter
    VAR LDONE: NODE;                 % the fields of a record layout so far (3.9.3)
+   VAR LMODE: INTEGER;              % a record layout for: 0 SIZE, 1 TO_BIT, 2 $$
+   VAR LIMG: TEXT;                  % the C bitstring of the layout's image (1, 2)
    VAR NEW_OK: NODE;                % the NEW that may go without PTR$ or SEMAPHORE$
    VAR START_IO: BOOLEAN;           % translating a start-io-stmt (4.8.1)
    VAR MACHINE: BOOLEAN;            % in a machine-dependent part (4.5.5.2, 4.8)

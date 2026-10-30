@@ -1,0 +1,5 @@
+MAIN SEGMENT FIXED_REP_NORANGEERR
+   USES (TERMINAL);
+% without a range the values are those of the precision, more than 8 bits hold (3.2.3)
+VAR A: INTEGER REP FIXED_REP (8, SIGNED);
+END SEGMENT FIXED_REP_NORANGEERR;

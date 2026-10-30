@@ -2555,6 +2555,9 @@ rt_b_sem *rt_b_sem_new(int region) {
   return s;
 }
 
+/* the value of a semaphore: its representation (TO_BIT, [SEMAPHORE]$$, 3.11.3) */
+rt_int rt_b_sem_count(rt_b_sem *s) { return s ? s->value : 0; }
+
 rt_b_sem *rt_b_sem_value(rt_int n, int region) {
   if (n < 0) rt_raise(RT_X_RANGE);
   rt_b_sem *s = rt_b_sem_new(region);
@@ -3067,25 +3070,203 @@ rstr rt_b_fmd(int op, double a, double b) {
   return rt_str_cat(h, l);
 }
 
-/* the storage of an array: ARRAY_TOO_BIG beyond the largest array of the simulated
- * machine, 2**34 bits (3.8.1) */
+/* ---- BLUE: the store of the simulated machine --------------------------------
+ * Values have the layouts their representations declare (3.x.3): an array is as
+ * big as its elements laid out by its packing, ARRAY_TOO_BIG beyond 2**34 bits
+ * (3.8.1); NEW takes the bits of its value from the store, 8 GiB (64 KiB on the
+ * PDP-11 of -pdp11, its address space), SPACE_EXHAUSTED when they are used
+ * (3.10.2); nothing is reclaimed. Each object NEW makes has the address where its
+ * bits begin, in bytes, whole words apart; a pointer is that address (TO_BIT,
+ * [PTR (T)]$$), NIL is 0. The host keeps the program's form of each value. */
 int RT_B_ARRAY_TOO_BIG;
 static size_t b_heap_used;
-void *rt_b_array_alloc(rt_int n, size_t esize) {
+static size_t b_store(void) { return b_pdp11 ? (size_t)1 << 16 : (size_t)1 << 33; }
+static size_t b_word_bytes(void) { return (size_t)B_WORD / 8; }
+
+/* the C storage of n elements (the host's form); bits, the layout's size, or < 0
+ * when the elements' size is known only once they are made (rt_b_array_check) */
+void *rt_b_array_alloc_bits(rt_int n, size_t esize, rt_int bits) {
   if (n < 0) n = 0;
-  if ((unsigned __int128)n * esize * 8 > ((unsigned __int128)1 << 34)) rt_raise(RT_B_ARRAY_TOO_BIG);
-  size_t sz = esize * (size_t)(n ? n : 1);
-  if (sz > ((size_t)1 << 33) - b_heap_used) rt_raise(RT_X_FREE);      /* SPACE_EXHAUSTED */
-  b_heap_used += sz;
-  return rt_alloc(sz);
+  if (bits > ((rt_int)1 << 34)) rt_raise(RT_B_ARRAY_TOO_BIG);
+  return rt_alloc(esize * (size_t)(n ? n : 1));
 }
 
-/* NEW (T): SPACE_EXHAUSTED once the simulated machine's store of 8 GiB is used by
- * NEW and arrays (3.10.2); nothing is ever reclaimed */
-void *rt_b_new(size_t n) {
-  if (n > ((size_t)1 << 33) - b_heap_used) rt_raise(RT_X_FREE);
-  b_heap_used += n;
-  return rt_alloc(n);
+void rt_b_array_check(rt_int bits) {
+  if (bits > ((rt_int)1 << 34)) rt_raise(RT_B_ARRAY_TOO_BIG);
+}
+
+void *rt_b_array_alloc(rt_int n, size_t esize) { return rt_b_array_alloc_bits(n, esize, -1); }
+
+/* the objects NEW made, by address (ascending) and by host pointer */
+typedef struct { uint64_t addr; void *p; } b_obj;
+static b_obj *b_objs;
+static size_t b_nobjs, b_capobjs;
+static b_obj *b_ptrtab;                      /* open addressing on the host pointer */
+static size_t b_ptrcap;
+
+static size_t b_ptrhash(void *p, size_t cap) {
+  return (size_t)(((uintptr_t)p >> 3) * 0x9E3779B97F4A7C15ull) & (cap - 1);
+}
+
+static void b_ptr_put(void *p, uint64_t addr) {
+  if (2 * (b_nobjs + 1) > b_ptrcap) {
+    size_t cap = b_ptrcap ? 2 * b_ptrcap : 1024;
+    b_obj *t = calloc(cap, sizeof *t);
+    if (!t) rt_raise(RT_X_FREE);
+    for (size_t i = 0; i < b_ptrcap; i++)
+      if (b_ptrtab[i].p) {
+        size_t h = b_ptrhash(b_ptrtab[i].p, cap);
+        while (t[h].p) h = (h + 1) & (cap - 1);
+        t[h] = b_ptrtab[i];
+      }
+    free(b_ptrtab);
+    b_ptrtab = t;
+    b_ptrcap = cap;
+  }
+  size_t h = b_ptrhash(p, b_ptrcap);
+  while (b_ptrtab[h].p) h = (h + 1) & (b_ptrcap - 1);
+  b_ptrtab[h].p = p;
+  b_ptrtab[h].addr = addr;
+}
+
+/* NEW: bits of the store for a value whose host form takes n bytes; its address */
+void *rt_b_new_bits(size_t n, rt_int bits) {
+  size_t wb = b_word_bytes();
+  size_t used = ((size_t)(bits > 0 ? bits : 0) + 8 * wb - 1) / (8 * wb) * wb;
+  if (used == 0) used = wb;
+  if (used > b_store() - wb - b_heap_used) rt_raise(RT_X_FREE);     /* SPACE_EXHAUSTED */
+  void *p = rt_alloc(n);
+  uint64_t addr = wb + b_heap_used;
+  b_heap_used += used;
+  if (b_nobjs == b_capobjs) {
+    b_capobjs = b_capobjs ? 2 * b_capobjs : 1024;
+    b_objs = realloc(b_objs, b_capobjs * sizeof *b_objs);
+    if (!b_objs) rt_raise(RT_X_FREE);
+  }
+  b_objs[b_nobjs].addr = addr;
+  b_objs[b_nobjs].p = p;
+  b_ptr_put(p, addr);
+  b_nobjs++;
+  return p;
+}
+
+/* the rest of the bits of the object NEW just made, once its size is known */
+void rt_b_new_more(rt_int bits) {
+  size_t wb = b_word_bytes();
+  size_t used = ((size_t)(bits > 0 ? bits : 0) + 8 * wb - 1) / (8 * wb) * wb;
+  if (used > wb) used -= wb;                    /* rt_b_new_bits took a word */
+  else used = 0;
+  if (used > b_store() - wb - b_heap_used) rt_raise(RT_X_FREE);
+  b_heap_used += used;
+}
+
+void *rt_b_new(size_t n) { return rt_b_new_bits(n, (rt_int)n * 8); }
+
+/* the address of an object, and the object at an address (INVALID_REP if none) */
+rt_int rt_b_ptr_addr(const void *p) {
+  if (!p) return 0;
+  size_t h = b_ptrhash((void *)p, b_ptrcap);
+  while (b_ptrtab[h].p && b_ptrtab[h].p != p) h = (h + 1) & (b_ptrcap - 1);
+  return (rt_int)b_ptrtab[h].addr;
+}
+
+void *rt_b_ptr_at(rt_int addr) {
+  if (addr == 0) return NULL;
+  size_t lo = 0, hi = b_nobjs;
+  while (lo < hi) {
+    size_t mid = (lo + hi) / 2;
+    if (b_objs[mid].addr < (uint64_t)addr) lo = mid + 1;
+    else hi = mid;
+  }
+  if (lo == b_nobjs || b_objs[lo].addr != (uint64_t)addr) rt_raise(RT_B_INVALID_REP);
+  return b_objs[lo].p;
+}
+
+/* TO_BIT and [T]$$ of records (3.9.3) and arrays (3.8.3): each field or element
+ * in its slot of the layout, right-aligned, the filler bits zero (rt_b_layout,
+ * b_pack_pos) */
+rt_int rt_b_lay_put(rstr *img, rt_int sz, rstr bits, int mode) {
+  rt_int end = rt_b_layout(sz, bits.len, mode), slot = b_slot(bits.len, mode);
+  if (end > B_MAXLEN) rt_raise(RT_B_INVALID_SIZE);
+  if (img->len < end) {
+    rstr r = rt_str_new(end);
+    memset(r.p, '0', (size_t)end);
+    memcpy(r.p, img->p, (size_t)img->len);
+    *img = r;
+  }
+  memcpy(img->p + end - bits.len, bits.p, (size_t)bits.len);
+  (void)slot;
+  return end;
+}
+
+rstr rt_b_lay_take(rstr img, rt_int *sz, rt_int fs, int mode) {
+  rt_int end = rt_b_layout(*sz, fs, mode);
+  if (end > img.len) rt_raise(RT_B_INVALID_SIZE);
+  *sz = end;
+  return rt_str_copy(rt_str((const char *)img.p + end - fs, fs));
+}
+
+void rt_b_lay_end(rstr img, rt_int sz) {
+  if (sz != img.len) rt_raise(RT_B_INVALID_SIZE);
+}
+
+rstr rt_b_arr_put(rstr img, rt_int i, rt_int n, rstr bits, int mode) {
+  if (i == 0) {
+    rt_int size = rt_b_pack_size(n, bits.len, mode);
+    if (size > B_MAXLEN) rt_raise(RT_B_INVALID_SIZE);
+    img = rt_str_new(size);
+    memset(img.p, '0', (size_t)size);
+  }
+  memcpy(img.p + b_pack_pos(i, bits.len, mode), bits.p, (size_t)bits.len);
+  return img;
+}
+
+rstr rt_b_arr_take(rstr img, rt_int i, rt_int n, rt_int es, int mode) {
+  if (rt_b_pack_size(n, es, mode) != img.len) rt_raise(RT_B_INVALID_SIZE);
+  return rt_str_copy(rt_str((const char *)img.p + b_pack_pos(i, es, mode), es));
+}
+
+/* N blanks of 7-bit ASCII by a packing: BLANKS (N) of a record-reptype (3.9.3) */
+rstr rt_b_blank_bits(rt_int n, int mode) {
+  rstr s = rt_str_new(n);
+  memset(s.p, ' ', (size_t)n);
+  return rt_b_bits_of_chars(s, 7, mode, NULL, 128);
+}
+
+/* a fixed point value of n bits, two's complement or unsigned (FIXED_REP, 3.2.3) */
+rt_int rt_b_sint_of_bits(rstr b) {
+  if (b.len == 0) return 0;
+  if (b.len > 64) rt_raise(RT_B_INVALID_SIZE);
+  uint64_t u = 0;
+  for (rt_int i = 0; i < b.len; i++) u = u * 2 + (b.p[i] == '1');
+  if (b.p[0] == '1' && b.len < 64) u |= ~(uint64_t)0 << b.len;
+  return (rt_int)u;
+}
+
+/* [T]$$ of a fixed point type stored in n bits: two's complement when they are all
+ * there and signed, otherwise the bits as an unsigned number */
+rt_int rt_b_rep_int_of_bits(rstr b, rt_int n, int unsig) {
+  if (!unsig && b.len == n) return rt_b_sint_of_bits(b);
+  return rt_b_int_of_bits(b);
+}
+
+/* single precision as binary32 (FLOAT (p), p <= 7; 32 bits, 3.3.3) */
+rstr rt_b_bits_of_single(double v) {
+  float f = (float)v;
+  uint32_t u;
+  memcpy(&u, &f, sizeof u);
+  rstr r = rt_str_new(32);
+  for (int i = 31; i >= 0; i--, u >>= 1) r.p[i] = (unsigned char)('0' + (int)(u & 1));
+  return r;
+}
+
+double rt_b_single_of_bits(rstr b) {
+  if (b.len != 32) rt_raise(RT_B_INVALID_SIZE);
+  uint32_t u = 0;
+  for (int i = 0; i < 32; i++) u = u * 2 + (b.p[i] == '1');
+  float f;
+  memcpy(&f, &u, sizeof f);
+  return f;
 }
 
 /* the tag of a T(ANY) record not yet assigned (3.9.1, p.3-134) */
@@ -3097,6 +3278,14 @@ rt_int rt_b_tag(rt_int v) {
 /* a type-specifier [T]$$(E): INVALID_TYPE unless the value is one of T (3.1.4.1) */
 rt_int rt_b_trange(rt_int v, rt_int lo, rt_int hi) {
   if (v < lo || v > hi) rt_raise(RT_B_INVALID_TYPE);
+  return v;
+}
+
+/* a fixed point value stored in the n bits of its FIXED_REP (3.2.3): RANGE outside */
+rt_int rt_b_rep_fits(rt_int v, rt_int n, int unsig) {
+  rt_int lo = unsig ? 0 : -((rt_int)1 << (n > 0 ? n - 1 : 0));
+  rt_int hi = unsig ? ((rt_int)1 << n) - 1 : (n > 0 ? ((rt_int)1 << (n - 1)) - 1 : 0);
+  if (v < lo || v > hi) rt_raise(RT_X_RANGE);
   return v;
 }
 

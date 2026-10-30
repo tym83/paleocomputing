@@ -637,6 +637,11 @@ PROCEDURE CHECK_FIXED_REP (T: TYP, LINE: INTEGER);
             FAIL (LINE, 'UNSIGNED needs a range whose lower bound is non-negative (3.2.3)');
          END IF;
       END IF;
+      % no range: the range of the precision, which N bits hold only when N is
+      % the default size
+      IF T@.LO_C.LEN = 0 & N.V < W@.WORD THEN
+         FAIL (LINE, 'the range of the type exceeds what the size of FIXED_REP represents (3.2.3)');
+      END IF;
       IF T@.MLO.OK & T@.MHI.OK & T@.LO_C.LEN > 0 & N.V < 63 THEN
          BLOCK
             VAR LO, HI: INTEGER := 0;

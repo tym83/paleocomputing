@@ -277,14 +277,18 @@ unreadable; the decision is bluec's.
 27. **A float-literal outside the range of single precision** (1.0E-300 has two
     digits, and so a single implemented precision) is given the nominal precision
     8, so that it is represented in double precision rather than rejected.
-28. **Dynamic storage.** The simulated machine has 8 GiB for NEW and arrays,
-    and nothing is reclaimed (no garbage collector): SPACE_EXHAUSTED once it is
-    used (3.10.2). A pointer assignment whose ELEMENT_TYPEs differ in an
+28. **Dynamic storage.** The simulated machine has a store of 8 GiB (64 KiB,
+    its address space, with `-pdp11`) for NEW, and nothing is reclaimed (no
+    garbage collector): NEW takes the bits of the value's declared layout,
+    whole words, and raises SPACE_EXHAUSTED when they are not there (3.10.2).
+    An array raises ARRAY_TOO_BIG beyond 2**34 bits of its layout (3.8.1). A pointer assignment whose ELEMENT_TYPEs differ in an
     attribute known at translation is rejected; a record argument known only at
     run time is compared then, raising TYPE_MISMATCH (3.10.5).
 29. **Use modes.** USAGE is UNORDERED (SYNCH, REGION) (3.11.1); `\SYNCH` is a
     different identifier ([2-10]: the backslash is only a convention), so
     `SEMAPHORE (\SYNCH)` is rejected, while a constant of USAGE is accepted.
+    An audit asked for `\SYNCH` to be accepted; [2-10] and 3.11.1 decide
+    against it, and the decision stands.
 30. **TARGET INLINE.** 4.8.2 says in a note that INLINE target routines "can
     be declared, since INLINE is permitted in procedure and function headers",
     and in its constraints that "Target routines cannot be INLINE". The
@@ -302,9 +306,10 @@ unreadable; the decision is bluec's.
     (FIXED_STD/FIXED_REP, FLOAT_STD, BOOLEAN_STD, ENUM_STD/ENUM_REP/
     ENUM_VAL_REP, CHAR_STR_STD/CHAR_STR_REP, BIT_STD, ARRAY_STD/ARRAY_REP,
     RECORD_STD/RECORD_REP, PTR_STD, SEMAPHORE_STD); an abstract type takes no
-    REP. FIXED_REP checks size, signing and the range (3.2.3). The storage of
-    a value stays the C one: SIZE reports the representation, values are not
-    packed.
+    REP. FIXED_REP checks size, signing and the range (3.2.3): a type without
+    a range has the range of its precision, which a smaller size cannot hold,
+    and a range known only at run time is checked then (RANGE for a value its
+    bits cannot hold).
 32. **Generics (5, 5.1, 5.2).** In a generic body the objects of a TYPE
     parameter (?T, or E: TYPE) carry it in their type; an operator, an
     assignment (STORE_) or a predefined or program routine invoked with them
@@ -318,7 +323,9 @@ unreadable; the decision is bluec's.
     repeated ?L of known lengths must agree at the call; FIXED (?, ?, ?)
     takes the argument's type; FIXED_REP (?S, SIGNED) binds S. A `#` closing a
     proc-template is rejected (5.1 says so); a `#` closing a formal or argument
-    list is accepted, as [4-21] and [4-38] allow an empty group.
+    list is accepted, as [4-21] and [4-38] allow an empty group (an audit
+    asked for it to be rejected; the syntax rules decide, and the decision
+    stands).
 33. **Components and aliasing.** 4.3.3 forbids a variable "or any of its
     components" as two inout or two output arguments; Appendix C passes three
     fields of the record F as outputs of FSYS_CREATE (C-15). Components that
@@ -342,9 +349,20 @@ unreadable; the decision is bluec's.
     part. Its WHERE clause names TO_BIT (T REP R): inside the generic body it is
     the WHERE routine, an operation of T (5.2), which the program supplies
     where it instantiates PUT_OUT; bluec reads it so.
-38. **Representations on the simulated PDP-11** (3.x.3, 3.12.4). Values keep
-    their C storage; the representation is modelled for SIZE, PACKING, TO_BIT,
-    [T]$$ and the explicit-rep-converters. Words have 64 bits. An element or
+38. **Representations on the simulated PDP-11** (3.x.3, 3.12.4). BLUE has no
+    address operator: a program sees storage through SIZE, PACKING, TO_BIT and
+    [T]$$ (3.6.6.1: TO_BIT has (E).SIZE bits), the explicit-rep-converters,
+    pointers (TO_BIT of a pointer is the address of its object in the store of
+    decision 28, NIL 0, and [PTR (T)]$$ of an address is that object,
+    INVALID_REP if there is none), the devices (a disk transfer takes the
+    storage image of any value as a bitstring) and the limits of decision 28.
+    All of them follow the declared layout: TO_BIT of a record is its fields in
+    their places, of an array its elements in their slots, of a FIXED_REP (N)
+    value N bits, of a single precision float 32 (binary32), of a semaphore
+    its value; [T]$$ is the inverse, INVALID_SIZE for a bitstring of another
+    length, INVALID_TYPE for a type argument the bits contradict. The host
+    keeps the program's form of each value, which no program can observe.
+    Words have 64 bits. An element or
     field takes a slot: itself (DENSE), the byte, half-word, word that holds it
     (PACKED; a character is a byte, its 7 ASCII bits after a 0 filler bit, so
     TO_BIT of a PACKED string is its bytes), or whole words (UNPACKED, the
@@ -397,14 +415,23 @@ unreadable; the decision is bluec's.
 37. **Generic instances across segments.** The body of an instance of a generic
     routine is translated in the scope of the segment that declares it, its
     local names visible again, whichever segment invokes it (4.2, 5).
+41. **Order of evaluation.** The language does not define the order in which
+    the operands of an expression, the arguments of an invocation or the
+    subscripts of an array reference are evaluated (4.3.4; the note of 4.3.3
+    on arguments), except for the Boolean operators & and ! (3.5.4.1),
+    and requires that the result not depend on it where pointers are not
+    involved. bluec checks the side-effect rules that make it so (decision 7)
+    and evaluates in the order of the C translation; E & F and E ! F
+    evaluate E first and F only when it decides the result. A program whose result depends on the order
+    through pointers is outside what 4.3.4 defines.
 
 The misprints of the program examples and the rules they break are in
 `../corpus/CHANGES.md`.
 
 ## 10. Not done
 
-- Storage of packed values: SIZE and the conversions follow the
-  representation, the C storage of values does not.
+Nothing of the specification is left out; the readings where it is ambiguous
+are the decisions of section 9.
 
 ---
 

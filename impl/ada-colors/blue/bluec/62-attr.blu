@@ -490,8 +490,13 @@ FUNCTION SIZE_OF (T: TYP, C: TEXT) RETURNS (ET);
                               FMT2 ('@, @)', NUM (ES.V), NUM (PACKING_OF (T)))), W@.TY_INT);
          END IF;
       END BLOCK;
-      RETURN MKET (FMT4 ('(rt_int)(rt_b_extent(@, (@).lo, (@).hi) * sizeof (@) * 8)',
-                         NUM (T@.DIMS), C, C, CTYPE (T@.ELEM)), W@.TY_INT);
+      BLOCK                                          % elements of a size known at run
+         CONST A: TEXT := NEW_NAME ('sa');           % time: that of the first, as all
+         CONST ES: ET := SIZE_OF (T@.ELEM, FMT1 ('@.p[0]', A));   % have it (3.8.1)
+         RETURN MKET (CAT (FMT4 ('({ @ @ = @; rt_int n_ = rt_b_extent(@, ', CTYPE (T), A, C, NUM (T@.DIMS)),
+                           CAT (FMT3 ('@.lo, @.hi); rt_b_pack_size(n_, n_ ? @ : 0, ', A, A, ES.C),
+                                FMT1 ('@); })', NUM (PACKING_OF (T))))), W@.TY_INT);
+      END BLOCK;
    END IF;
    RETURN MKET (FMT1 ('(rt_int)(sizeof (@) * 8)', CTYPE (T)), W@.TY_INT);
 END FUNCTION SIZE_OF;
@@ -747,23 +752,7 @@ FUNCTION TYPE_SPECIFIER (E: NODE) RETURNS (ET);
    CONST RT: TYP := REAL_TYPE (T);
    IF V.T@.KIND = T_BITS & RT@.KIND <> T_BITS THEN
       REQUIRE_MACHINE (E@.LINE);
-      IF RT@.KIND = T_INT THEN
-         RETURN MKET (RANGE_CHECK (RT, FMT1 ('rt_b_int_of_bits(@)', V.C), NO_TEXT ()), T);
-      ORIF RT@.KIND = T_BOOL THEN
-         RETURN MKET (FMT1 ('rt_b_int_of_bits(@)', V.C), T);
-      ORIF RT@.KIND = T_ENUM THEN
-         RETURN MKET (ENUM_OF_BITS (RT, V.C), T);
-      ORIF IS_D (RT) THEN                         % the PDP-11's D and F (-pdp11)
-         RETURN MKET (FMT1 ('rt_b_d_of_bits(@)', V.C), T);
-      ORIF RT@.KIND = T_FLOAT & W@.WORD = 16 THEN
-         RETURN MKET (FMT1 ('rt_b_f_of_bits(@)', V.C), T);
-      ORIF RT@.KIND = T_FLOAT THEN
-         RETURN MKET (FMT1 ('rt_b_float_of_bits(@)', V.C), T);
-      ORIF RT@.KIND = T_STR THEN                  % the characters by the packing
-         RETURN MKET (FMT4 ('rt_b_chars_of_bits(@, @, @, @)', V.C, NUM (CHAR_SIZE (RT)),
-                            NUM (PACKING_OF (RT)), CHAR_REPS (RT)), T);
-      END IF;
-      FAIL (E@.LINE, 'this type-specifier on a bitstring is not implemented');
+      RETURN MKET (OF_BITS (RT, V.C, E@.LINE), T);
    END IF;
    % the value must be one of the type (INVALID_TYPE, 3.1.4.1)
    BLOCK
@@ -777,6 +766,85 @@ FUNCTION TYPE_SPECIFIER (E: NODE) RETURNS (ET);
       RETURN MKET (C, T);
    END BLOCK;
 END FUNCTION TYPE_SPECIFIER;
+
+% the value of type T whose representation is the bitstring B: the inverse of TO_BIT
+% (BITS_OF), by the declared layout (3.x.3)
+FUNCTION OF_BITS (T: TYP, B: TEXT, LINE: INTEGER) RETURNS (TEXT);
+   CONST RT: TYP := REAL_TYPE (T);
+   CONST K: INTEGER := RT@.KIND;
+   IF K = T_INT THEN                                 % FIXED_REP: N bits, two's
+      BLOCK                                          % complement or unsigned (3.2.3)
+         VAR N: INTEGER := REP_BITS (RT);
+         VAR U: TEXT := MK ('0');
+         IF N >= 63 THEN
+            N := W@.WORD;
+         ORIF REP_UNSIGNED (RT) THEN
+            U := MK ('1');
+         END IF;
+         RETURN RANGE_CHECK (RT, FMT3 ('rt_b_rep_int_of_bits(@, @, @)', B, NUM (N), U), NO_TEXT ());
+      END BLOCK;
+   ORIF K = T_BOOL THEN
+      RETURN FMT1 ('rt_b_int_of_bits(@)', B);
+   ORIF K = T_ENUM THEN
+      RETURN ENUM_OF_BITS (RT, B);
+   ORIF IS_D (RT) THEN                               % the PDP-11's D and F (-pdp11)
+      RETURN FMT1 ('rt_b_d_of_bits(@)', B);
+   ORIF K = T_FLOAT & W@.WORD = 16 THEN
+      RETURN FMT1 ('rt_b_f_of_bits(@)', B);
+   ORIF K = T_FLOAT & IMP_PRECISION_OF (RT@.SCALE) = 7 THEN
+      RETURN FMT1 ('rt_b_single_of_bits(@)', B);
+   ORIF K = T_FLOAT THEN
+      RETURN FMT1 ('rt_b_float_of_bits(@)', B);
+   ORIF K = T_STR THEN                               % the characters by the packing
+      RETURN FMT4 ('rt_b_chars_of_bits(@, @, @, @)', B, NUM (CHAR_SIZE (RT)),
+                   NUM (PACKING_OF (RT)), CHAR_REPS (RT));
+   ORIF K = T_BITS THEN
+      RETURN B;
+   ORIF K = T_PTR THEN                               % the object at that address
+      RETURN FMT2 ('((@)rt_b_ptr_at(rt_b_int_of_bits(@)))', CTYPE (RT), B);
+   ORIF K = T_SEM THEN                               % a semaphore of that value
+      RETURN FMT2 ('rt_b_sem_value(rt_b_int_of_bits(@), @)', B, NUM (RT@.SCALE));
+   ORIF K = T_REC THEN
+      RETURN RECORD_OF_BITS (RT, B);
+   ORIF K = T_ARR THEN
+      RETURN ARRAY_OF_BITS (RT, B);
+   END IF;
+   FAILT (LINE, 'no representation as a bitstring for ', TYPE_NAME (T));
+END FUNCTION OF_BITS;
+
+% TO_BIT of the array C of type T: each element in its slot by the packing (3.8.3)
+FUNCTION ARRAY_BITS (T: TYP, C: TEXT) RETURNS (TEXT);
+   CONST A: TEXT := NEW_NAME ('ab');
+   CONST N: TEXT := NEW_NAME ('an');
+   CONST I: TEXT := NEW_NAME ('ai');
+   CONST IMG: TEXT := NEW_NAME ('im');
+   CONST EB: TEXT := BITS_OF (MKET (FMT2 ('@.p[@]', A, I), T@.ELEM), 0).C;
+   RETURN CAT (CAT (FMT4 ('({ @ @ = @; rt_int @ = ', CTYPE (T), A, C, N),
+                    FMT4 ('rt_b_extent(@, @.lo, @.hi); rstr @ = rt_str_new(0);', NUM (T@.DIMS), A, A, IMG)),
+               CAT (FMT4 (' for (rt_int @ = 0; @ < @; @++)', I, I, N, I),
+                    CAT (FMT4 (' @ = rt_b_arr_put(@, @, @, ', IMG, IMG, I, N),
+                         FMT3 ('@, @); @; })', EB, NUM (PACKING_OF (T)), IMG))));
+END FUNCTION ARRAY_BITS;
+
+% [T]$$(B) of an array type: each element from its slot; INVALID_SIZE unless B is
+% as long as the layout
+FUNCTION ARRAY_OF_BITS (T: TYP, B: TEXT) RETURNS (TEXT);
+   CONST A: TEXT := NEW_NAME ('av');
+   CONST N: TEXT := NEW_NAME ('an');
+   CONST I: TEXT := NEW_NAME ('ai');
+   CONST ES: TEXT := NEW_NAME ('es');
+   CONST IMG: TEXT := NEW_NAME ('im');
+   CONST MODE: TEXT := NUM (PACKING_OF (T));
+   CONST TAKE: TEXT := FMT4 ('rt_b_arr_take(@, @, @, @, ', IMG, I, N, ES);
+   CONST EV: TEXT := OF_BITS (T@.ELEM, FMT2 ('@@)', TAKE, MODE), 0);
+   CONST EST: TEXT := SIZE_OF (T@.ELEM, FMT1 ('@.p[0]', A)).C;
+   RETURN CAT (CAT (FMT4 ('({ rstr @ = @; @ @;', IMG, B, CTYPE (T), A),
+                    CAT (FMT4 (' @ rt_int @ = rt_b_extent(@, @.lo, ', INIT_CODE (T, A), N, NUM (T@.DIMS), A),
+                         FMT4 ('@.hi); rt_int @ = @ ? @ : 0;', A, ES, N, EST))),
+               CAT (CAT (FMT3 (' if (!@) rt_b_lay_end(@, 0); for (rt_int @ = 0; ', N, IMG, I),
+                         FMT4 ('@ < @; @++) @.p', I, N, I, A)),
+                    FMT3 ('[@] = @; @; })', I, EV, A)));
+END FUNCTION ARRAY_OF_BITS;
 
 % the position of the literal whose representation is the bitstring C (3.4.3)
 FUNCTION ENUM_OF_BITS (T: TYP, C: TEXT) RETURNS (TEXT);
@@ -841,10 +909,13 @@ FUNCTION NEW_EXPR (E: NODE, WANT: TYP) RETURNS (ET);
       VAR P: TYP := NEW_TYP (T_PTR);
       P@.TARGET := T;
       P@.TARGET_TS := E@.A;
-      IF NEEDS_INIT (T) THEN
-         RETURN MKET (FMT2 ('({ @ *p = rt_b_new(sizeof *p); @ p; })', CTYPE (T),
-                            INIT_CODE (T, MK ('(*p)'))), P);
+      % the store gives the bits of the declared layout (3.10.2); a value whose size
+      % is known only once it is made takes the rest of them then
+      IF STATIC_SIZE (T).OK THEN
+         RETURN MKET (FMT3 ('({ @ *p = rt_b_new_bits(sizeof *p, @); @ p; })', CTYPE (T),
+                            NUM (STATIC_SIZE (T).V), INIT_CODE (T, MK ('(*p)'))), P);
       END IF;
-      RETURN MKET (FMT2 ('((@ *)rt_b_new(sizeof (@)))', CTYPE (T), CTYPE (T)), P);
+      RETURN MKET (FMT3 ('({ @ *p = rt_b_new_bits(sizeof *p, 0); @ rt_b_new_more(@); p; })', CTYPE (T),
+                         INIT_CODE (T, MK ('(*p)')), SIZE_OF (T, MK ('(*p)')).C), P);
    END BLOCK;
 END FUNCTION NEW_EXPR;

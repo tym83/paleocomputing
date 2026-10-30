@@ -669,7 +669,9 @@ FUNCTION BITS_OF (V: ET, LINE: INTEGER) RETURNS (ET);
                          NUM (PACKING_OF (T)), CHAR_REPS (T)), BITS_TYPE (STATIC_SIZE_OR (T)));
    END IF;
    REQUIRE_MACHINE (LINE);
-   IF K = T_INT THEN
+   IF K = T_INT & REP_BITS (T) < 63 THEN            % the bits of its FIXED_REP (3.2.3)
+      RETURN MKET (FMT2 ('rt_b_bits_of_int(@, @)', V.C, NUM (REP_BITS (T))), BITS_TYPE (REP_BITS (T)));
+   ORIF K = T_INT THEN
       RETURN MKET (FMT2 ('rt_b_bits_of_int(@, @)', V.C, NUM (W@.WORD)), BITS_TYPE (W@.WORD));
    ORIF K = T_BOOL THEN
       RETURN MKET (FMT1 ('rt_b_bits_of_int(@, 1)', V.C), BITS_TYPE (1));
@@ -677,8 +679,18 @@ FUNCTION BITS_OF (V: ET, LINE: INTEGER) RETURNS (ET);
       RETURN MKET (FMT1 ('rt_b_bits_of_d(@)', V.C), BITS_TYPE (64));
    ORIF K = T_FLOAT & W@.WORD = 16 THEN
       RETURN MKET (FMT1 ('rt_b_bits_of_f(@)', V.C), BITS_TYPE (32));
+   ORIF K = T_FLOAT & IMP_PRECISION_OF (T@.SCALE) = 7 THEN   % binary32 (3.3.3)
+      RETURN MKET (FMT1 ('rt_b_bits_of_single(@)', V.C), BITS_TYPE (32));
    ORIF K = T_FLOAT THEN
       RETURN MKET (FMT1 ('rt_b_bits_of_float(@)', V.C), BITS_TYPE (64));
+   ORIF K = T_PTR THEN                              % the address of the object (NIL 0)
+      RETURN MKET (FMT2 ('rt_b_bits_of_int(rt_b_ptr_addr(@), @)', V.C, NUM (W@.WORD)), BITS_TYPE (W@.WORD));
+   ORIF K = T_SEM THEN                              % its value (3.11.3)
+      RETURN MKET (FMT2 ('rt_b_bits_of_int(rt_b_sem_count(@), @)', V.C, NUM (W@.WORD)), BITS_TYPE (W@.WORD));
+   ORIF K = T_REC THEN                              % the fields by the reptype (3.9.3)
+      RETURN MKET (RECORD_BITS (T, V.C), BITS_TYPE (STATIC_SIZE_OR (T)));
+   ORIF K = T_ARR THEN                              % the elements by the packing (3.8.3)
+      RETURN MKET (ARRAY_BITS (T, V.C), BITS_TYPE (STATIC_SIZE_OR (T)));
    END IF;
    FAILT (LINE, 'no TO_BIT for ', TYPE_NAME (T));
 END FUNCTION BITS_OF;

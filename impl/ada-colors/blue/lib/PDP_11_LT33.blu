@@ -6,7 +6,9 @@
 % clock and which paths CONNECT to (4.6.1); and RP03 disk drives, DISK_DEVICE_,
 % whose operations DISK_OP_ read or write a block of BLOCK_WORDS words and interrupt
 % on the drive's semaphore DISK_S when done, after the seek and the rotation on
-% the virtual clock.
+% the virtual clock. A transfer takes the words of a DISK_BLOCK, or the storage
+% image of any value as a bitstring of BLOCK_BITS (TO_BIT, [T]$$: the declared
+% layout, PACKED fields and all), as the drive's DMA would take them from store.
 %
 % Teletype 1 is the console: it prints on standard output and its keyboard reads
 % standard input. Teletype 2 prints on standard output too, each line after "LT33-2|";
@@ -16,7 +18,8 @@
 SEGMENT PDP_11_LT33
    USES (TERMINAL)
    DEFINES (LT33_DEVICE_, LT33_OP_, START_IO, LT33_PS, LT33_KS, MAX_LT33,
-            DISK_DEVICE_, DISK_OP_, DISK_S, MAX_DISK, DISK_BLOCKS, BLOCK_WORDS, DISK_BLOCK);
+            DISK_DEVICE_, DISK_OP_, DISK_S, MAX_DISK, DISK_BLOCKS, BLOCK_WORDS, BLOCK_BITS,
+            DISK_BLOCK);
 
    CONST MAX_LT33: INTEGER := 8;
 
@@ -41,6 +44,7 @@ SEGMENT PDP_11_LT33
    CONST MAX_DISK: INTEGER := 2;
    CONST DISK_BLOCKS: INTEGER := 64;
    CONST BLOCK_WORDS: INTEGER := 8;
+   CONST BLOCK_BITS: INTEGER := BLOCK_WORDS * (0).SIZE;   % words of the machine
    TYPE DISK_OP_ = ENUM (\READ_BLOCK, \WRITE_BLOCK);
    TYPE DISK_BLOCK = ARRAY [0 : BLOCK_WORDS - 1] OF INTEGER;
    VAR DISK_S: ARRAY [1:MAX_DISK] OF SEMAPHORE (SYNCH) := NO_DISK_INTERRUPTS ();
@@ -182,6 +186,38 @@ SEGMENT PDP_11_LT33
          LOOP FOR K IN [0 : BLOCK_WORDS - 1] DO
             DATA (K) := SURFACE (D, B, K);
          END LOOP K;
+         SEEK (D, B);
+      END PROCEDURE START_IO;
+
+      % \WRITE_BLOCK of a storage image: its words, the first bits first
+      PROCEDURE START_IO (D: DISK_DEVICE_, C: DISK_OP_, B: INTEGER [0 : DISK_BLOCKS - 1],
+                          IMAGE: BIT (BLOCK_BITS))
+            IMPORTS (DATA: (# SURFACE), ROUTINES: (SEEK));
+         CONST W: INTEGER := (0).SIZE;
+         SELECT OBJECT_MACHINE FROM
+            PDP_11 -->
+               LOOP FOR K IN [0 : BLOCK_WORDS - 1] DO
+                  SURFACE (D, B, K) := [INTEGER]$$(IMAGE[K * W : K * W + W - 1]);
+               END LOOP K;
+            END;
+         END SELECT;
+         SEEK (D, B);
+      END PROCEDURE START_IO;
+
+      % \READ_BLOCK into a storage image
+      PROCEDURE START_IO (D: DISK_DEVICE_, C: DISK_OP_, B: INTEGER [0 : DISK_BLOCKS - 1]
+                          ## IMAGE: BIT (BLOCK_BITS))
+            IMPORTS (DATA: (SURFACE), ROUTINES: (SEEK));
+         CONST W: INTEGER := (0).SIZE;
+         VAR WORDS: BIT (BLOCK_BITS);
+         SELECT OBJECT_MACHINE FROM
+            PDP_11 -->
+               LOOP FOR K IN [0 : BLOCK_WORDS - 1] DO
+                  WORDS[K * W : K * W + W - 1] := TO_BIT (SURFACE (D, B, K));
+               END LOOP K;
+            END;
+         END SELECT;
+         IMAGE := WORDS;
          SEEK (D, B);
       END PROCEDURE START_IO;
    END MODULE DISK_HARDWARE;

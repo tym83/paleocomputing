@@ -410,27 +410,106 @@ END PROCEDURE CHECK_ELEMENTS;
 % SIZE of the record C of type T (3.9.3): its fields laid out as its reptype says,
 % RECORD_STD being RECORD_REP (UNPACKED); the variants by the value of their tag
 FUNCTION RECORD_SIZE (T: TYP, C: TEXT) RETURNS (TEXT);
-   VAR R: TEXT := MK ('({ rt_int sz = 0;');
+   RETURN FMT1 ('({ rt_int sz = 0;@ sz; })', RECORD_LAYOUT (T, C, 0, NO_TEXT ()));
+END FUNCTION RECORD_SIZE;
+
+% TO_BIT of the record C of type T: its fields in their places of the layout
+FUNCTION RECORD_BITS (T: TYP, C: TEXT) RETURNS (TEXT);
+   CONST V: TEXT := NEW_NAME ('rb');
+   CONST IMG: TEXT := NEW_NAME ('im');
+   CONST BODY: TEXT := RECORD_LAYOUT (T, V, 1, IMG);
+   RETURN CAT (FMT4 ('({ @ @ = @; rstr @ = rt_str_new(0); rt_int sz = 0;', CTYPE (T), V, C, IMG),
+               FMT2 ('@ @; })', BODY, IMG));
+END FUNCTION RECORD_BITS;
+
+% [T]$$(B) of a record type: each field from its place of the layout, the tags
+% before the variants they select; INVALID_SIZE unless B is that long, INVALID_TYPE
+% for a type argument the bits contradict
+FUNCTION RECORD_OF_BITS (T: TYP, B: TEXT) RETURNS (TEXT);
+   CONST V: TEXT := NEW_NAME ('rv');
+   CONST IMG: TEXT := NEW_NAME ('im');
+   CONST BODY: TEXT := RECORD_LAYOUT (T, V, 2, IMG);
+   RETURN CAT (FMT4 ('({ rstr @ = @; @ @;', IMG, B, CTYPE (T), V),
+               CAT (FMT3 (' @ rt_int sz = 0;@ rt_b_lay_end(@, sz);', INIT_CODE (T, V), BODY, IMG),
+                    FMT1 (' @; })', V)));
+END FUNCTION RECORD_OF_BITS;
+
+% the statements that lay out the fields of the record C of type T (3.9.3), with
+% RECORD_STD being RECORD_REP (UNPACKED) and the variants by the value of their tag:
+% for SIZE (MODE 0), TO_BIT (1) or $$ (2) into or from the bitstring IMG
+FUNCTION RECORD_LAYOUT (T: TYP, C: TEXT, MODE: INTEGER, IMG: TEXT) RETURNS (TEXT);
+   VAR R: TEXT := MK ('');
    CONST SAVED: NODE := W@.LDONE;
+   CONST SAVED_MODE: INTEGER := W@.LMODE;
+   CONST SAVED_IMG: TEXT := W@.LIMG;
    W@.LDONE := NIL;
-   IF NOT IS_RECORD_REP (T) THEN
-      R := CAT (R, LAYOUT_ALL (T, C, NO_TEXT (), 2));
-      R := CAT (R, LAYOUT_PARTS (T, C));
-      W@.LDONE := SAVED;
-      RETURN CATS (R, ' sz; })');
+   W@.LMODE := MODE;
+   W@.LIMG := IMG;
+   IF IS_RECORD_REP (T) THEN
+      BLOCK
+         VAR P: NODE := T@.REPS@.A;
+         LOOP UNTIL P = NIL DO
+            R := CAT (R, LAYOUT_SPEC (T, C, P, NO_TEXT ()));
+            P := P@.NEXT;
+         END LOOP;
+      END BLOCK;
    END IF;
-   BLOCK
-      VAR P: NODE := T@.REPS@.A;
-      LOOP UNTIL P = NIL DO
-         R := CAT (R, LAYOUT_SPEC (T, C, P, NO_TEXT ()));
-         P := P@.NEXT;
-      END LOOP;
-   END BLOCK;
    R := CAT (R, LAYOUT_ALL (T, C, NO_TEXT (), 2));     % the rest
    R := CAT (R, LAYOUT_PARTS (T, C));
    W@.LDONE := SAVED;
-   RETURN CATS (R, ' sz; })');
-END FUNCTION RECORD_SIZE;
+   W@.LMODE := SAVED_MODE;
+   W@.LIMG := SAVED_IMG;
+   RETURN R;
+END FUNCTION RECORD_LAYOUT;
+
+% one field of the layout: its size, its bits put in the image, or taken from it
+FUNCTION LAY_FIELD (F: FIELD, T: TYP, C: TEXT, MODE: INTEGER) RETURNS (TEXT);
+   CONST X: TEXT := FMT2 ('(@).@', C, F@.CNAME);
+   IF W@.LMODE = 0 THEN
+      RETURN FMT2 (' sz = rt_b_layout(sz, @, @);', FIELD_SIZE_C (F, C), NUM (MODE));
+   ORIF W@.LMODE = 1 THEN
+      BLOCK
+         CONST IMG: TEXT := W@.LIMG;
+         CONST BITS: TEXT := BITS_OF (MKET (X, F@.T), 0).C;
+         RETURN FMT3 (' sz = rt_b_lay_put(&@, sz, @, @);', IMG, BITS, NUM (MODE));
+      END BLOCK;
+   END IF;
+   BLOCK
+      CONST IMG: TEXT := W@.LIMG;
+      CONST TAKE: TEXT := FMT3 ('rt_b_lay_take(@, &sz, @, @)', IMG, FIELD_SIZE_C (F, C), NUM (MODE));
+      CONST V: TEXT := OF_BITS (F@.T, TAKE, 0);
+      IF F@.KIND = 0 ! IS_ANY_FIELD (T, F) THEN
+         RETURN FMT2 (' @ = @;', X, V);
+      END IF;                                        % an argument of the type: as given
+      RETURN FMT1 (' if (!@) rt_raise(RT_B_INVALID_TYPE);', EQUAL_CODE (REAL_TYPE (F@.T), X, V));
+   END BLOCK;
+END FUNCTION LAY_FIELD;
+
+% a filler of SIZE bits whose bits are BITS
+FUNCTION LAY_FILL (SIZE, BITS: TEXT, MODE: INTEGER) RETURNS (TEXT);
+   IF W@.LMODE = 0 THEN
+      RETURN FMT2 (' sz = rt_b_layout(sz, @, @);', SIZE, NUM (MODE));
+   ORIF W@.LMODE = 1 THEN
+      RETURN FMT3 (' sz = rt_b_lay_put(&@, sz, @, @);', W@.LIMG, BITS, NUM (MODE));
+   END IF;
+   RETURN FMT3 (' (void)rt_b_lay_take(@, &sz, @, @);', W@.LIMG, SIZE, NUM (MODE));
+END FUNCTION LAY_FILL;
+
+% is F a tag of T whose value the type leaves open (T(ANY)), set by $$?
+FUNCTION IS_ANY_FIELD (T: TYP, F: FIELD) RETURNS (BOOLEAN);
+   VAR G: FIELD := T@.FIELDS;
+   VAR A: BND := T@.ARGS;
+   LOOP UNTIL G = NIL ! A = NIL DO
+      IF G@.KIND <> 0 THEN
+         IF G = F THEN
+            RETURN A@.ANYARG;
+         END IF;
+         A := A@.NEXT;
+      END IF;
+      G := G@.NEXT;
+   END LOOP;
+   RETURN TRUE;
+END FUNCTION IS_ANY_FIELD;
 
 FUNCTION FIELD_SIZE_C (F: FIELD, C: TEXT) RETURNS (TEXT);
    RETURN SIZE_OF (F@.T, FMT2 ('(@).@', C, F@.CNAME)).C;
@@ -444,10 +523,9 @@ FUNCTION LAYOUT_ALL (T: TYP, C: TEXT, TAGN: TEXT, MODE: INTEGER) RETURNS (TEXT);
       IF TEQ (F@.TAGF, TAGN) & NOT IN_IDENTS (W@.LDONE, F@.NAME) THEN
          W@.LDONE := NAME_REF (F@.NAME, 0, NIL, W@.LDONE);
          IF TAGN.LEN = 0 THEN
-            R := FMT4 ('@ sz = rt_b_layout(sz, @, @);', R, FIELD_SIZE_C (F, C), NUM (MODE), MK (''));
+            R := CAT (R, LAY_FIELD (F, T, C, MODE));
          ELSE
-            R := CAT (R, FMT4 (' if (@) sz = rt_b_layout(sz, @, @);@', VARIANT_COND (F, T, C),
-                               FIELD_SIZE_C (F, C), NUM (MODE), MK ('')));
+            R := CAT (R, FMT2 (' if (@) {@ }', VARIANT_COND (F, T, C), LAY_FIELD (F, T, C, MODE)));
          END IF;
       END IF;
       F := F@.NEXT;
@@ -494,10 +572,10 @@ FUNCTION LAYOUT_SPEC (T: TYP, C: TEXT, P: NODE, TAGN: TEXT) RETURNS (TEXT);
                      IF E@.FL = 2 & ARG_MANIFEST (T, F) THEN
                         ;                             % OMIT: a manifest argument is
                      ORIF TAGN.LEN = 0 THEN           % not stored
-                        R := FMT3 ('@ sz = rt_b_layout(sz, @, @);', R, FIELD_SIZE_C (F, C), NUM (MODE));
+                        R := CAT (R, LAY_FIELD (F, T, C, MODE));
                      ELSE
-                        R := CAT (R, FMT4 (' if (@) sz = rt_b_layout(sz, @, @);@', VARIANT_COND (F, T, C),
-                                           FIELD_SIZE_C (F, C), NUM (MODE), MK ('')));
+                        R := CAT (R, FMT2 (' if (@) {@ }', VARIANT_COND (F, T, C),
+                                           LAY_FIELD (F, T, C, MODE)));
                      END IF;
                   END IF;
                   F := F@.NEXT;
@@ -506,11 +584,12 @@ FUNCTION LAYOUT_SPEC (T: TYP, C: TEXT, P: NODE, TAGN: TEXT) RETURNS (TEXT);
          ORIF E@.FL = 1 THEN
             R := CAT (R, LAYOUT_VARIANTS (T, C, E@.NAME));
          ORIF E@.FL = 5 THEN                          % BLANKS (N): N blanks, so packed
-            R := FMT3 ('@ sz = rt_b_layout(sz, rt_b_pack_size(@, 7, @), ', R,
-                       NUM (MANIFEST (E@.B).V), NUM (MODE));
-            R := FMT2 ('@@);', R, NUM (MODE));
+            R := CAT (R, LAY_FILL (FMT2 ('rt_b_pack_size(@, 7, @)', NUM (MANIFEST (E@.B).V), NUM (MODE)),
+                                   FMT2 ('rt_b_blank_bits(@, @)', NUM (MANIFEST (E@.B).V), NUM (MODE)),
+                                   MODE));
          ELSE                                        % FILLER (N), ZEROS (N): N bits
-            R := FMT3 ('@ sz = rt_b_layout(sz, @, @);', R, NUM (MANIFEST (E@.B).V), NUM (MODE));
+            R := CAT (R, LAY_FILL (NUM (MANIFEST (E@.B).V), FMT1 ('rt_b_zeros(@)', NUM (MANIFEST (E@.B).V)),
+                                   MODE));
          END IF;
          E := E@.NEXT;
       END LOOP;
@@ -904,13 +983,23 @@ FUNCTION INIT_CODE (T: TYP, LV: TEXT) RETURNS (TEXT);
             B := B@.NEXT;
          END LOOP;
          R := FMT4 ('@ rt_int n = rt_b_extent(@, @.lo, @.hi);', R, NUM (T@.DIMS), LV, LV);
-         R := FMT4 ('@ @.p = rt_b_array_alloc(n, sizeof *@.p);', R, LV, LV, LV);
+         IF STATIC_SIZE (T@.ELEM).OK THEN           % counted in the declared layout
+            R := FMT4 ('@ @.p = rt_b_array_alloc_bits(n, sizeof *@.p, @', R, LV, LV,
+                       FMT2 ('rt_b_pack_size(n, @, @));', NUM (STATIC_SIZE (T@.ELEM).V),
+                             NUM (PACKING_OF (T))));
+         ELSE
+            R := FMT4 ('@ @.p = rt_b_array_alloc(n, sizeof *@.p);', R, LV, LV, LV);
+         END IF;
          IF NEEDS_INIT (T@.ELEM) THEN
             BLOCK
                CONST IV: TEXT := NEW_NAME ('i');
                R := FMT4 ('@ for (rt_int @ = 0; @ < n; @++) {', R, IV, IV, IV);
                R := FMT2 ('@ @ }', R, INIT_CODE (T@.ELEM, FMT2 ('@.p[@]', LV, IV)));
             END BLOCK;
+         END IF;
+         IF NOT STATIC_SIZE (T@.ELEM).OK THEN        % the elements made: their size
+            R := FMT4 ('@ rt_b_array_check(rt_b_pack_size(n, n ? @ : 0, @));', R,
+                       SIZE_OF (T@.ELEM, FMT1 ('@.p[0]', LV)).C, NUM (PACKING_OF (T)), MK (''));
          END IF;
          RETURN CATS (R, ' }');
       END BLOCK;
@@ -1016,6 +1105,22 @@ END FUNCTION EQUAL_CODE;
 
 % the value V checked against the range of T, if T has one (RANGE: 3.2.5, 3.3.5, 3.4.5)
 FUNCTION RANGE_CHECK (T: TYP, V: TEXT, SELF: TEXT) RETURNS (TEXT);
+   IF T@.KIND = T_INT & T@.LO_C.LEN > 0 & NOT (T@.MLO.OK & T@.MHI.OK) & REP_BITS (T) < 63
+      & NOT W@.SUPPRESS THEN
+      % bounds known only at run time: the value must also fit the bits of its
+      % FIXED_REP (3.2.3), the size it is stored in
+      BLOCK
+         VAR U: TEXT := MK ('0');
+         IF REP_UNSIGNED (T) THEN
+            U := MK ('1');
+         END IF;
+         RETURN RANGE_CHECK_IN (T, FMT3 ('rt_b_rep_fits(@, @, @)', V, NUM (REP_BITS (T)), U), SELF);
+      END BLOCK;
+   END IF;
+   RETURN RANGE_CHECK_IN (T, V, SELF);
+END FUNCTION RANGE_CHECK;
+
+FUNCTION RANGE_CHECK_IN (T: TYP, V: TEXT, SELF: TEXT) RETURNS (TEXT);
    IF T@.LO_C.LEN = 0 ! NOT IS_NUMERIC_OR_ENUM (T) ! W@.SUPPRESS THEN
       RETURN V;                                      % (-suppress: exceptions suppressed,
    END IF;                                           % 4.5.8)
@@ -1043,7 +1148,31 @@ FUNCTION RANGE_CHECK (T: TYP, V: TEXT, SELF: TEXT) RETURNS (TEXT);
       RETURN FMT3 ('rt_b_trange(@, @, @)', V, SUBST_SELF (T@.LO_C, SELF), SUBST_SELF (T@.HI_C, SELF));
    END IF;
    RETURN FMT3 ('rt_range(@, @, @)', V, SUBST_SELF (T@.LO_C, SELF), SUBST_SELF (T@.HI_C, SELF));
-END FUNCTION RANGE_CHECK;
+END FUNCTION RANGE_CHECK_IN;
+
+% the size of the FIXED_REP of a fixed point type, or 63 when it has none known
+FUNCTION REP_BITS (T: TYP) RETURNS (INTEGER);
+   IF T@.REPS = NIL THEN
+      RETURN 63;
+   END IF;
+   IF NOT TEQS (T@.REPS@.NAME, 'FIXED_REP') ! T@.REPS@.A = NIL THEN
+      RETURN 63;
+   END IF;
+   BLOCK
+      CONST N: MVAL := MANIFEST (T@.REPS@.A);
+      IF N.OK & N.V >= 0 & N.V < 63 THEN
+         RETURN N.V;
+      END IF;
+   END BLOCK;
+   RETURN 63;
+END FUNCTION REP_BITS;
+
+FUNCTION REP_UNSIGNED (T: TYP) RETURNS (BOOLEAN);
+   IF T@.REPS@.A@.NEXT = NIL THEN
+      RETURN FALSE;
+   END IF;
+   RETURN TEQS (T@.REPS@.A@.NEXT@.NAME, 'UNSIGNED');
+END FUNCTION REP_UNSIGNED;
 
 FUNCTION IS_NUMERIC_OR_ENUM (T: TYP) RETURNS (BOOLEAN);
    RETURN T@.KIND = T_INT ! T@.KIND = T_FLOAT ! T@.KIND = T_ENUM;
