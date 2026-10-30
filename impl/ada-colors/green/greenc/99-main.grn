@@ -123,6 +123,194 @@
 
    -- ---- compilation units (RM79 10) ---------------------------------------------
 
+   -- ---- the program library (RM79 10.3 - 10.5) ------------------------------
+   --
+   -- The library is the directory GREEN_LIBRARY names: each compilation unit
+   -- compiled without error is kept there as text, under P.spec, P.body or
+   -- T.Q.sub; a unit that names a unit that is not in the compilation finds
+   -- it there, and the unit is translated again with the program.
+
+   procedure LIB_OPEN(KEY : STRING; LENGTH : out INTEGER) is
+   begin
+      pragma INTERFACE(C);
+   end LIB_OPEN;
+
+   procedure LIB_STORE(KEY : STRING; CONTENTS : STRING) is
+   begin
+      pragma INTERFACE(C);
+   end LIB_STORE;
+
+   -- the key of a unit in the library
+   procedure UNIT_KEY(U : NODE; R : out TEXT) is
+      K : INTEGER := 2;
+   begin
+      if U.FORMAL /= null and then (U.FORMAL.all(1) = "!" or U.FORMAL.all(1) = "#") then
+         while K < U.FORMAL.all'LENGTH and then U.FORMAL.all(K + 1) /= "," loop
+            K := K + 1;
+         end loop;
+         R := MK(U.FORMAL.all(3 .. K) & "." & U.NAME.all & ".sub");
+      elsif U.KIND = N_PKGSPEC or U.KIND = N_TASKSPEC or U.KIND = N_GENERIC or U.KIND = N_INST
+         or ((U.KIND = N_PROC or U.KIND = N_FUNC) and U.IVAL = 1) then
+         R := MK(U.NAME.all & ".spec");
+      else
+         R := MK(U.NAME.all & ".body");
+      end if;
+   end UNIT_KEY;
+
+   procedure LIB_ENABLED(YES : out BOOLEAN) is
+   begin
+      pragma INTERFACE(C);
+   end LIB_ENABLED;
+
+   -- the units of the compilation go to the library (RM79 10.4)
+   procedure STORE_UNITS is
+      S : SPAN := SPANS;
+      K : TEXT;
+      YES : BOOLEAN;
+   begin
+      LIB_ENABLED(YES);
+      if not YES then
+         return;
+      end if;
+      while S /= null loop
+         UNIT_KEY(S.U, K);
+         STORE_SPAN(S, K.all);
+         S := S.NEXT;
+      end loop;
+   end STORE_UNITS;
+
+   procedure STORE_SPAN(S : SPAN; KEY : STRING) is
+      N : INTEGER := 0;
+      HEAD : TEXT := MK("");
+   begin
+      if S.ENV.all'LENGTH > 0 then
+         HEAD := MK("pragma ENVIRONMENT(" & S.ENV.all(1 .. S.ENV.all'LENGTH - 1) & ");" & LF);
+      end if;
+      N := HEAD.all'LENGTH;
+      for L in S.FIRST .. S.LAST loop
+         N := N + SRC_LINES(L).all'LENGTH + 1;
+      end loop;
+      declare
+         T : STRING(1 .. N);
+         K : INTEGER := HEAD.all'LENGTH;
+      begin
+         T(1 .. K) := HEAD.all;
+         for L in S.FIRST .. S.LAST loop
+            T(K + 1 .. K + SRC_LINES(L).all'LENGTH) := SRC_LINES(L).all;
+            K := K + SRC_LINES(L).all'LENGTH + 1;
+            T(K) := LF;
+         end loop;
+         LIB_STORE(KEY, T);
+      end;
+   end STORE_SPAN;
+
+   -- the text of a unit of the library, parsed: null if it is not there
+   procedure LIB_LOAD(KEY : STRING; R : out NODE) is
+      N : INTEGER;
+      SAVED_LINE : INTEGER := SRC_LINE;
+      SAVED_POS : INTEGER := TPOS;
+      FROM : INTEGER;
+   begin
+      R := null;
+      LIB_OPEN(KEY, N);
+      if N < 0 then
+         return;
+      end if;
+      FROM := NTOKS + 1;
+      INCLUDE_TEXT(N);
+      ADD_TOKEN(K_EOF, "<end>", 0);
+      TPOS := FROM;
+      COMPILATION(R);
+      TPOS := SAVED_POS;
+      SRC_LINE := SAVED_LINE;
+   end LIB_LOAD;
+
+   function DEFINED_UNIT(NAME : STRING; BEFORE : NODE) return BOOLEAN is
+      U : NODE := UNITS;
+   begin
+      if LISTED(LOADED, NAME) then
+         return TRUE;
+      end if;
+      while U /= null and U /= BEFORE loop
+         if U.NAME.all = NAME and U.FORMAL.all(1) /= "!" then
+            return TRUE;
+         end if;
+         U := U.NEXT;
+      end loop;
+      return FALSE;
+   end DEFINED_UNIT;
+
+   -- the units of the library that the compilation names, put before the
+   -- unit naming them; a unit names only units compiled before it (RM79 10.3)
+   procedure LIBRARY_UNITS is
+      P, PREV, L, LTAIL : NODE;
+      I, J : INTEGER;
+      N, F : TEXT;
+      CHANGED : BOOLEAN := TRUE;
+   begin
+      while CHANGED loop
+         CHANGED := FALSE;
+         P := UNITS;
+         PREV := null;
+         while P /= null and not CHANGED loop
+            F := P.FORMAL;
+            I := 1;
+            if F.all(1) = "!" or F.all(1) = "#" then
+               I := 2;
+            end if;
+            while I < F.all'LENGTH and not CHANGED loop
+               J := I + 1;
+               while J <= F.all'LENGTH and then F.all(J) /= "," loop
+                  J := J + 1;
+               end loop;
+               if J > I + 1 then
+                  N := MK(F.all(I + 1 .. J - 1));
+                  if LOOKUP(N.all) = null and then not DEFINED_UNIT(N.all, P) then
+                     LOAD_UNIT(N.all, L);
+                     if L = null then
+                        FAIL(P.LINE, N.all & ", named by " & P.NAME.all & ", is neither compiled before it nor in "
+                             & "the program library (RM79 10.3)");
+                     end if;
+                     LOADED := MK(LOADED.all & N.all & ",");
+                     LTAIL := L;
+                     while LTAIL.NEXT /= null loop
+                        LTAIL := LTAIL.NEXT;
+                     end loop;
+                     LTAIL.NEXT := P;
+                     if PREV = null then
+                        UNITS := L;
+                     else
+                        PREV.NEXT := L;
+                     end if;
+                     CHANGED := TRUE;
+                  end if;
+               end if;
+               I := J;
+            end loop;
+            PREV := P;
+            P := P.NEXT;
+         end loop;
+      end loop;
+   end LIBRARY_UNITS;
+
+   -- a library unit: its specification and its body, or a subprogram body
+   procedure LOAD_UNIT(NAME : STRING; R : out NODE) is
+      S, B, T : NODE;
+   begin
+      LIB_LOAD(NAME & ".spec", S);
+      LIB_LOAD(NAME & ".body", B);
+      if S = null then
+         R := B;
+         return;
+      end if;
+      T := S;
+      while T.NEXT /= null loop
+         T := T.NEXT;
+      end loop;
+      T.NEXT := B;
+      R := S;
+   end LOAD_UNIT;
+
    -- predefined units in GREEN (RM79 9.11)
    procedure PRELUDE is
    begin
@@ -134,20 +322,75 @@
       LEX_LINE("task body SEMAPHORE is begin loop accept P; accept V; end loop; end SEMAPHORE;");
    end PRELUDE;
 
+   -- the library units the main program uses: those its visibility list
+   -- and those of the subunits name, and transitively those they name
+   -- (RM79 10.5)
+   procedure USED_UNITS(U : NODE; R : out TEXT) is
+      P : NODE := U;
+      MAIN : NODE;
+      CHANGED : BOOLEAN := TRUE;
+   begin
+      while P /= null loop
+         if P.FORMAL.all(1) /= "!" then
+            MAIN := P;
+         end if;
+         P := P.NEXT;
+      end loop;
+      R := MK("," & MAIN.NAME.all & MAIN.FORMAL.all);
+      P := U;
+      while P /= null loop
+         if P.FORMAL.all(1) = "!" then
+            R := MK(R.all & P.FORMAL.all(2 .. P.FORMAL.all'LENGTH));
+         end if;
+         P := P.NEXT;
+      end loop;
+      while CHANGED loop
+         CHANGED := FALSE;
+         P := U;
+         while P /= null loop
+            if P.FORMAL.all(1) /= "!" and then LISTED(R, P.NAME.all) then
+               ADD_NAMES(R, P.FORMAL.all, CHANGED);
+            end if;
+            P := P.NEXT;
+         end loop;
+      end loop;
+   end USED_UNITS;
+
+   procedure ADD_NAMES(R : in out TEXT; LIST : STRING; CHANGED : in out BOOLEAN) is
+      I, J : INTEGER := LIST'FIRST;
+   begin
+      while I < LIST'LAST loop
+         J := I + 1;
+         while J <= LIST'LAST and then LIST(J) /= "," loop
+            J := J + 1;
+         end loop;
+         if J > I + 1 then
+            if not LISTED(R, LIST(I + 1 .. J - 1)) then
+               R := MK(R.all & LIST(I + 1 .. J - 1) & ",");
+               CHANGED := TRUE;
+            end if;
+         end if;
+         I := J;
+      end loop;
+   end ADD_NAMES;
+
    procedure TRANSLATE(U : NODE) is
       P : NODE := PRELUDE_UNITS;
+      USED : TEXT;
       Y : SYM;
    begin
       while P /= null loop
          DECL_ELEMENT(P);
          P := P.NEXT;
       end loop;
+      USED_UNITS(U, USED);
       P := U;
       OPEN_SCOPE;
       while P /= null loop
          -- every compilation unit is restricted: the library units it names
          -- are visible in it (RM79 10.1)
          BARRIERS := null;
+         CUR_COMP_UNIT := P.NAME;
          -- a body sees what its specification named (RM79 10.2)
          Y := LOOKUP(P.NAME.all);
          if (P.KIND = N_PKGBODY or P.KIND = N_TASKBODY or P.KIND = N_PROC or P.KIND = N_FUNC) and Y /= null then
@@ -156,7 +399,10 @@
             end if;
          end if;
          PUSH_BARRIER(P, 1);
-         if P.NEXT = null then
+         if P.FORMAL.all(1) = "!" or P.FORMAL.all(1) = "#" then
+            -- a subunit: translated at its stub
+            null;
+         elsif LAST_UNIT(P) then
             -- the main program: a library procedure without parameters
             if P.KIND /= N_PROC or P.A /= null then
                FAIL(P.LINE, "the main program is a procedure without parameters");
@@ -165,12 +411,38 @@
             DEFINE(Y, P.LINE);
             SUBPROGRAM_BODY(P, Y);
             MAIN_NAME := Y.CNAME;
-         else
+         elsif LISTED(USED, P.NAME.all) then
             DECL_ELEMENT(P);
+         else
+            -- a library unit the main program does not use is not
+            -- elaborated (RM79 10.5)
+            CODE := NEW_BUFFER;
+            DECL_ELEMENT(P);
+            CODE := OUT_INIT;
+         end if;
+         P := P.NEXT;
+      end loop;
+      P := U;
+      while P /= null loop
+         if P.FORMAL.all(1) = "!" then
+            FAIL(P.LINE, "subunit " & P.NAME.all & " has no body stub in an enclosing unit (RM79 10.2)");
          end if;
          P := P.NEXT;
       end loop;
    end TRANSLATE;
+
+   -- the main program is the last unit that is not a subunit
+   function LAST_UNIT(P : NODE) return BOOLEAN is
+      Q : NODE := P.NEXT;
+   begin
+      while Q /= null loop
+         if Q.FORMAL.all(1) /= "!" then
+            return FALSE;
+         end if;
+         Q := Q.NEXT;
+      end loop;
+      return TRUE;
+   end LAST_UNIT;
 
    procedure PRINT_PROGRAM is
    begin
@@ -266,10 +538,15 @@ begin
    TPOS := 1;
    SRC_LINE := 0;
    READ_SOURCE;
+   COMPILING_SOURCE := TRUE;
    COMPILATION(UNITS);
+   COMPILING_SOURCE := FALSE;
+   LOADED := MK(",");
+   LIBRARY_UNITS;
    if UNITS = null then
       FAIL(1, "the compilation is empty");
    end if;
    TRANSLATE(UNITS);
+   STORE_UNITS;
    PRINT_PROGRAM;
 end GREENC;

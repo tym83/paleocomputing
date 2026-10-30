@@ -310,6 +310,9 @@ int rt_g_exc_new(const char *name);            /* a distinct declared exception 
 void rt_g_read_file_text(rstr name, rstr **res); /* pragma INCLUDE, older seeds */
 void rt_g_include_open(rstr name, rt_int *len); /* pragma INCLUDE: -1 if absent */
 void rt_g_include_char(rt_int i, int *c);       /* character i, from 1 */
+void rt_g_lib_open(rstr key, rt_int *len);      /* the program library of greenc */
+void rt_g_lib_store(rstr key, rstr text);
+void rt_g_lib_enabled(int *yes);
 /* STRING is array (NATURAL) of CHARACTER (RM79 3.6.3): an array descriptor
  * like every GREEN array, with the characters packed in bytes */
 typedef struct rt_gstr {

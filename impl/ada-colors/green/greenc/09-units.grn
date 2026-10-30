@@ -161,6 +161,10 @@
       M, Z : SYM;
       SAVED : NODE := CUR_PKG;
    begin
+      if E.FLAG = 4 then
+         STUB(E);
+         return;
+      end if;
       if IS_GENERIC_NAME(E.NAME.all) then
          ATTACH_GENERIC_BODY(E);
          return;
@@ -171,6 +175,7 @@
       PKG_STACK := new LINES_REC(E.NAME, PKG_STACK);
       CUR_PKG := Y.DECL;
       OPEN_SCOPE;
+      PUSH_UNIT(E.NAME);
       M := Y.MEMBERS;
       while M /= null loop
          COPY_SYM(M, Z);
@@ -200,6 +205,7 @@
       LABEL_BODY(E.D, E.E);
       GUARDED(null, E.D, E.E, E.LINE);
       BODY_LABELS := SAVED_LABELS;
+      NUNITS := NUNITS - 1;
       CLOSE_SCOPE;
       PKG_STACK := PKG_STACK.NEXT;
       CUR_PKG := SAVED;

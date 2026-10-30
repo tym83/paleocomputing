@@ -1870,6 +1870,35 @@ void rt_g_include_open(rstr name, rt_int *len) {
   fclose(f);
 }
 
+/* the program library of greenc (RM79 10.4): a directory named by
+ * GREEN_LIBRARY, a file per compilation unit; without it, no library */
+#include <sys/stat.h>
+void rt_g_lib_open(rstr key, rt_int *len) {
+  const char *dir = getenv("GREEN_LIBRARY");
+  *len = -1;
+  if (!dir || !*dir) return;
+  char path[4096];
+  snprintf(path, sizeof path, "%s/%s.grn", dir, rt_cstr(key));
+  rt_g_include_open(rt_str(path, (rt_int)strlen(path)), len);
+}
+
+void rt_g_lib_enabled(int *yes) {
+  const char *dir = getenv("GREEN_LIBRARY");
+  *yes = dir && *dir;
+}
+
+void rt_g_lib_store(rstr key, rstr text) {
+  const char *dir = getenv("GREEN_LIBRARY");
+  if (!dir || !*dir) return;
+  mkdir(dir, 0777);
+  char path[4096];
+  snprintf(path, sizeof path, "%s/%s.grn", dir, rt_cstr(key));
+  FILE *f = fopen(path, "wb");
+  if (!f) return;
+  fwrite(text.p, 1, (size_t)text.len, f);
+  fclose(f);
+}
+
 void rt_g_include_char(rt_int i, int *c) {
   if (i < 1 || i > g_include.len) rt_raise(RT_X_SUBSCRIPT);
   *c = g_include.p[i - 1];

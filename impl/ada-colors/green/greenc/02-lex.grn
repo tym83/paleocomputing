@@ -493,6 +493,9 @@
          GET(C);
          if C = LF then
             SRC_LINE := SRC_LINE + 1;
+            if SRC_LINE <= 300000 then
+               SRC_LINES(SRC_LINE) := MK(BUF(1 .. BL));
+            end if;
             LEX_LINE(BUF(1 .. BL));
             BL := 0;
          else
@@ -504,6 +507,9 @@
       when END_OF_FILE =>
          if BL > 0 then
             SRC_LINE := SRC_LINE + 1;
+            if SRC_LINE <= 300000 then
+               SRC_LINES(SRC_LINE) := MK(BUF(1 .. BL));
+            end if;
             LEX_LINE(BUF(1 .. BL));
          end if;
          ADD_TOKEN(K_EOF, "<end>", 0);

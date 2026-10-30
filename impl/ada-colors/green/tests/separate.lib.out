@@ -1,0 +1,4 @@
+library compiled
+first SHOW 42
+new SHOW, recompiled alone 42
+greenc: line 2: NOWHERE, named by BAD, is neither compiled before it nor in the program library (RM79 10.3)

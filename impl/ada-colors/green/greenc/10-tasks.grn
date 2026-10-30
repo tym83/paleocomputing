@@ -16,6 +16,14 @@
          X := NN(N_TASKBODY, LINE);
          EXPECT_ID(X.NAME);
          EXPECT_KW("IS");
+         if AT_KW("SEPARATE") then
+            -- task body T is separate; (RM79 10.2)
+            SKIP;
+            EXPECT_OP(";");
+            X.FLAG := 4;
+            RES := X;
+            return;
+         end if;
          BODY_PART(X);
       else
          X := NN(N_TASKSPEC, LINE);
@@ -566,6 +574,10 @@
       UPP : TEXT;
       SAVED : SYM := CUR_TASK;
    begin
+      if E.FLAG = 4 then
+         STUB(E);
+         return;
+      end if;
       if IS_GENERIC_NAME(E.NAME.all) then
          ATTACH_GENERIC_BODY(E);
          return;

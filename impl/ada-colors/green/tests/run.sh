@@ -31,6 +31,16 @@ for src in tests/*.grn tests/corpus/*.grn; do
   if diff -u "$exp" "$tmp/$name.txt" > "$tmp/diff.txt"; then pass=$((pass+1)); else
     echo "FAIL $name"; cat "$tmp/diff.txt"; failn=$((failn+1)); fi
 done
+# a test of several compilations is a script, *.lib.sh, run with the library
+# in a fresh directory (RM79 10.4)
+for t in tests/*.lib.sh; do
+  [ -f "$t" ] || continue
+  name=$(basename "$t" .sh)
+  mkdir -p "$tmp/$name"
+  if GREEN_LIBRARY="$tmp/$name/lib" sh "$t" "$PWD/build/greenc" "$tmp/$name" > "$tmp/$name.txt" 2>&1 \
+     && diff -u "tests/$name.out" "$tmp/$name.txt" > "$tmp/diff.txt"; then pass=$((pass+1)); else
+    echo "FAIL $name"; cat "$tmp/diff.txt" "$tmp/$name.txt" | head -20; failn=$((failn+1)); fi
+done
 rm -rf "$tmp"
 echo "green tests: $pass passed, $failn failed"
 [ "$failn" -eq 0 ]

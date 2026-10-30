@@ -36,7 +36,7 @@
       E : NODE := FROM;
    begin
       while E /= null loop
-         if (E.KIND = N_PROC or E.KIND = N_FUNC) and E.IVAL = 0 then
+         if (E.KIND = N_PROC or E.KIND = N_FUNC) and (E.IVAL = 0 or E.IVAL = 3) then
             DECLARE_ONE(E);
          end if;
          E := E.NEXT;
@@ -372,6 +372,8 @@
                ATTACH_GENERIC_BODY(E);
             elsif E.IVAL = 2 then
                RENAME_SUBPROGRAM(E);
+            elsif E.IVAL = 3 then
+               STUB(E);
             elsif E.IVAL = 1 then
                BUILD_SUBPROGRAM(E, Y);
                DEFINE(Y, E.LINE);
@@ -412,6 +414,77 @@
    end RESOLVE_OBJECT_TYPE;
 
    -- packages are in 09-units, tasks and generics in 10-tasks and 11-generics
+   -- the subunit for the stub E, in this compilation (RM79 10.2)
+   procedure FIND_SUBUNIT(E : NODE; R : out NODE) is
+      U : NODE := UNITS;
+      K : INTEGER;
+   begin
+      R := null;
+      while U /= null loop
+         if U.FORMAL /= null and then U.FORMAL.all(1) = "!" and then U.NAME.all = E.NAME.all then
+            if U.KIND = E.KIND or ((U.KIND = N_PROC or U.KIND = N_FUNC) and (E.KIND = N_PROC or E.KIND = N_FUNC)) then
+               R := U;
+               return;
+            end if;
+         end if;
+         U := U.NEXT;
+      end loop;
+   end FIND_SUBUNIT;
+
+   -- a body stub: its subunit is translated here, seeing what an enclosing
+   -- unit sees, that unit being named first in its visibility list (RM79 10.2)
+   procedure STUB(E : NODE) is
+      SUB : NODE;
+      SAVED : BARRIER := BARRIERS;
+      K, D : INTEGER;
+      FIRST_NAME, LIST : TEXT;
+      Y : SYM;
+   begin
+      FIND_SUBUNIT(E, SUB);
+      if SUB = null then
+         -- the subunit may be in the program library (RM79 10.4)
+         for I in reverse 1 .. NUNITS loop
+            if SUB = null then
+               LIB_LOAD(UNIT_NAMES(I).all & "." & E.NAME.all & ".sub", SUB);
+            end if;
+         end loop;
+         if SUB = null then
+            LIB_LOAD(CUR_COMP_UNIT.all & "." & E.NAME.all & ".sub", SUB);
+         end if;
+         if SUB /= null then
+            SUB.NEXT := UNITS;
+            UNITS := SUB;
+         end if;
+      end if;
+      if SUB = null then
+         FAIL(E.LINE, "the subunit of " & E.NAME.all & " is neither in this compilation nor in the "
+              & "program library (RM79 10.2)");
+      end if;
+      LIST := MK(SUB.FORMAL.all(2 .. SUB.FORMAL.all'LENGTH));
+      SUB.FORMAL := MK("#" & LIST.all);
+      K := 2;
+      while K <= LIST.all'LENGTH and then LIST.all(K) /= "," loop
+         K := K + 1;
+      end loop;
+      FIRST_NAME := MK(LIST.all(2 .. K - 1));
+      D := ENCLOSING_DEPTH(FIRST_NAME.all);
+      if D < 0 then
+         FAIL(SUB.LINE, "the first name in the visibility list of subunit " & SUB.NAME.all
+              & " is an enclosing unit (RM79 10.2)");
+      end if;
+      -- the subunit's own restriction supersedes those around the stub
+      BARRIERS := new BARRIER_REC(D - 1, -1, MK(LIST.all & SUB.NAME.all & ","), null);
+      if E.KIND = N_PROC or E.KIND = N_FUNC then
+         Y := LOOKUP_DECL(E);
+         SUBPROGRAM_BODY(SUB, Y);
+      elsif E.KIND = N_PKGBODY then
+         PACKAGE_BODY(SUB);
+      else
+         TASK_BODY(SUB);
+      end if;
+      BARRIERS := SAVED;
+   end STUB;
+
    -- procedure P(...) renames Q; function F(...) return T renames P.G;
    -- procedure P(...) renames T.E (an entry): the other name has the
    -- parameter names and defaults of the renaming (RM79 8.5)

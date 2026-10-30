@@ -395,6 +395,21 @@ procedure GREENC is
    end record;
    BARRIERS : BARRIER;
    TEXT_IO_QUALIFIED : BOOLEAN := FALSE;
+   -- the program library (RM79 10.4): the lines of the source, where each
+   -- compilation unit stands in them, units loaded from the library
+   SRC_LINES : array (1 .. 300000) of TEXT;
+   type SPAN_REC;
+   type SPAN is access SPAN_REC;
+   type SPAN_REC is record
+      U : NODE;
+      FIRST, LAST : INTEGER;
+      ENV : TEXT;
+      NEXT : SPAN;
+   end record;
+   SPANS : SPAN;
+   COMPILING_SOURCE : BOOLEAN := FALSE;
+   LOADED : TEXT;
+   CUR_COMP_UNIT : TEXT;
    CUR_TASK : SYM;
    ACCEPT_DEPTH : INTEGER := 0;
    FAMARG_DONE : BOOLEAN := FALSE;

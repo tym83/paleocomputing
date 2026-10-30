@@ -110,6 +110,21 @@
       if AT_KW("RESTRICTED") then
          VISIBILITY_P(V);
       end if;
+      if AT_KW("SEPARATE") then
+         -- a subunit: the body of a stub of an enclosing unit, named first in
+         -- its visibility list (RM79 10.2)
+         SKIP;
+         if V = null or else V.all'LENGTH < 2 then
+            PERROR("a subunit names its enclosing unit first in its visibility list (RM79 10.2)");
+         end if;
+         UNIT_P(X);
+         if X.KIND /= N_PROC and X.KIND /= N_FUNC and X.KIND /= N_PKGBODY and X.KIND /= N_TASKBODY then
+            PERROR("a subunit is a subprogram body or a module body (RM79 10.2)");
+         end if;
+         X.FORMAL := MK("!" & V.all);
+         RES := X;
+         return;
+      end if;
       if AT_KW("PROCEDURE") or AT_KW("FUNCTION") then
          SUBPROGRAM(X);
       elsif AT_KW("PACKAGE") then
@@ -422,7 +437,12 @@
       end if;
       EXPECT_KW("IS");
       if AT_KW("SEPARATE") then
-         PERROR("separate bodies are not handled");
+         -- a body stub: the body is a subunit (RM79 10.2)
+         SKIP;
+         EXPECT_OP(";");
+         X.IVAL := 3;
+         RES := X;
+         return;
       end if;
       BODY_PART(X);
       if AT_KIND(K_ID) or AT_KIND(K_STR) then
@@ -508,6 +528,14 @@
          X := NN(N_PKGBODY, LINE);
          EXPECT_ID(X.NAME);
          EXPECT_KW("IS");
+         if AT_KW("SEPARATE") then
+            -- package body D is separate; (RM79 10.2)
+            SKIP;
+            EXPECT_OP(";");
+            X.FLAG := 4;
+            RES := X;
+            return;
+         end if;
          BODY_PART(X);
       else
          X := NN(N_PKGSPEC, LINE);
@@ -861,6 +889,7 @@
    -- ---- compilation (RM79 10.1) ------------------------------------------------------
 
    procedure COMPILATION(RES : out NODE) is
+      FIRST : INTEGER;
       HEAD, TAIL, X : NODE;
    begin
       while not AT_KIND(K_EOF) loop
@@ -879,10 +908,14 @@
                or AT_KW("GENERIC") or AT_KW("RESTRICTED")) then
                PERROR("a compilation unit is a subprogram, a package or a task");
             end if;
+            FIRST := TOKS(TPOS).LINE;
             UNIT_P(X);
             if X.FORMAL = null then
                -- a compilation unit is restricted, with an empty list by default (RM79 10.1)
                X.FORMAL := MK(",");
+            end if;
+            if COMPILING_SOURCE then
+               SPANS := new SPAN_REC(X, FIRST, TOKS(TPOS - 1).LINE, ENV_NAMES, SPANS);
             end if;
             -- the environment named so far by pragma ENVIRONMENT
             X.FORMAL := MK(X.FORMAL.all & ENV_NAMES.all);
