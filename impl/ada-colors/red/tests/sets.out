@@ -3,4 +3,6 @@ complement of SET[INT(0 .. 9)]
 elements outside 0 .. 255
 X_RANGE: 301 is not in INT(-5 .. 300)
 enumeration sets
+SET[INT] of any INT values, complement included
+SET[INT] operations
 1 = 1 = TRUE is (1 = 1) = TRUE

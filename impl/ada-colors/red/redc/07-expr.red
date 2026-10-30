@@ -591,7 +591,7 @@ ABNORMAL FUNC gexpr(CONST e : node, CONST want : typ, OUT t : typ) => STRING[ASC
       RETURN gcall(call, FALSE, t);
    ELSEIF k = n_unop AND e.name.ALL = "NOT" AND want /= NIL AND want.kind = t_set THEN
       CONST a := gexpr(e.a, want, t);
-      RETURN "y_set_compl(" & a & ")";
+      RETURN set_fn(want, "compl") & "(" & a & ")";
    ELSEIF k = n_unop THEN
       IF e.name.ALL = "NOT" THEN
          CONST a := gexpr(e.a, ty_bool, t);
@@ -1167,7 +1167,7 @@ ABNORMAL FUNC gbinop(CONST e : node, CONST want : typ, OUT t : typ) => STRING[AS
          CONST a := gexpr(e.a, tb.elem, ta);
          check_type(ta, tb.elem, e.line);
          t := ty_bool;
-         RETURN "y_set_in(" & a & ", " & s & ")";
+         RETURN set_fn(tb, "in") & "(" & a & ", " & s & ")";
       END;
    END IF;
    IF (op.ALL = "AND" OR op.ALL = "OR" OR op.ALL = "XOR") AND set_operands(e, want) /= NIL THEN
@@ -1176,11 +1176,11 @@ ABNORMAL FUNC gbinop(CONST e : node, CONST want : typ, OUT t : typ) => STRING[AS
       check_type(tb, ta, e.line);
       t := ta;
       IF op.ALL = "AND" THEN
-         RETURN "y_set_inter(" & a & ", " & b & ")";
+         RETURN set_fn(ta, "inter") & "(" & a & ", " & b & ")";
       ELSEIF op.ALL = "OR" THEN
-         RETURN "y_set_union(" & a & ", " & b & ")";
+         RETURN set_fn(ta, "union") & "(" & a & ", " & b & ")";
       END IF;
-      RETURN "y_set_xor(" & a & ", " & b & ")";
+      RETURN set_fn(ta, "xor") & "(" & a & ", " & b & ")";
    END IF;
    IF op.ALL = "AND" OR op.ALL = "OR" OR op.ALL = "XOR" THEN
       CONST a := gexpr(e.a, ty_bool, ta);
@@ -1301,17 +1301,17 @@ ABNORMAL FUNC gbinop(CONST e : node, CONST want : typ, OUT t : typ) => STRING[AS
          IF ct.kind = t_set THEN
             % the relations are the subset relations (C.9)
             IF op.ALL = "=" THEN
-               RETURN "y_set_eq(" & a & ", " & b & ")";
+               RETURN set_fn(ct, "eq") & "(" & a & ", " & b & ")";
             ELSEIF op.ALL = "/=" THEN
-               RETURN "(!y_set_eq(" & a & ", " & b & "))";
+               RETURN "(!" & set_fn(ct, "eq") & "(" & a & ", " & b & "))";
             ELSEIF op.ALL = "<=" THEN
-               RETURN "rt_r_set_le(" & a & ", " & b & ")";
+               RETURN set_fn(ct, "le") & "(" & a & ", " & b & ")";
             ELSEIF op.ALL = ">=" THEN
-               RETURN "rt_r_set_le(" & b & ", " & a & ")";
+               RETURN set_fn(ct, "le") & "(" & b & ", " & a & ")";
             ELSEIF op.ALL = "<" THEN
-               RETURN "rt_r_set_lt(" & a & ", " & b & ")";
+               RETURN set_fn(ct, "lt") & "(" & a & ", " & b & ")";
             END IF;
-            RETURN "rt_r_set_lt(" & b & ", " & a & ")";
+            RETURN set_fn(ct, "lt") & "(" & b & ", " & a & ")";
          END IF;
          IF (ct.kind = t_bool OR ct.kind = t_ptr OR ct.kind = t_nil OR ct.kind = t_act OR ct.kind = t_mbox)
                AND op.ALL /= "=" AND op.ALL /= "/=" THEN
@@ -1384,7 +1384,7 @@ ABNORMAL FUNC constructor(CONST e : node, CONST want : typ, CONST ctx : cons, OU
       WHILE it /= NIL REPEAT
          CONST v := gexpr(it.b, want.elem, vt);
          check_type(vt, want.elem, e.line);
-         s := mk("y_set_add(" & s.ALL & ", " & v & ")");
+         s := mk(set_fn(want, "add") & "(" & s.ALL & ", " & v & ")");
          it := it.next;
       END REPEAT;
       RETURN s.ALL;

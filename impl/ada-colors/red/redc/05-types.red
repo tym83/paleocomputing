@@ -399,7 +399,11 @@ ABNORMAL FUNC ctype(CONST t : typ) => STRING[ASCII] IMPORTS ALL;
       WHEN t_mbox => RETURN "rt_mbox *";
       WHEN t_lock => RETURN "rt_lock";
       WHEN t_act => RETURN "rt_act *";
-      WHEN t_set => RETURN "yset";
+      WHEN t_set =>
+         IF sparse_set(t) THEN
+            RETURN "rt_r_iset";
+         END IF;
+         RETURN "yset";
       ELSE =>
          IF t.cname = NIL THEN
             declare_ctype(t);
@@ -802,9 +806,7 @@ ABNORMAL FUNC resolve_subtype(CONST st : node, OUT c : cons) => typ IMPORTS ALL;
             IF base_of(t.elem).kind /= t_int AND base_of(t.elem).kind /= t_enum THEN
                fail(st.line, "the component subtype of a set is an INT or ENUM subtype");
             END IF;
-            IF base_of(t.elem).kind = t_int AND (ec = NIL OR ec.lo = NIL) THEN
-               fail(st.line, "SET[INT] needs a range here: a set of every INT cannot be represented");
-            END IF;
+
          END;
          RETURN t;
       WHEN s_record, s_union =>
@@ -1295,9 +1297,28 @@ END FUNC type_name;
 
 % sets (C.9) hold the values of their component subtype, any range of them
 ABNORMAL FUNC empty_set(CONST t : typ) => STRING[ASCII] IMPORTS ALL;
+   IF sparse_set(t) THEN
+      RETURN "rt_r_iset_empty()";
+   END IF;
    RETURN "y_set_new(" & sub_lo(base_of(t.elem), base_cons(t.elem, t.elemcons)) & ", "
           & sub_hi(base_of(t.elem), base_cons(t.elem, t.elemcons)) & ")";
 END FUNC empty_set;
+
+% a set of INT values without a range (C.9) is kept as the sorted list of its
+% elements, or of those it lacks once complemented; other sets as bitmaps
+FUNC sparse_set(CONST t : typ) => BOOL;
+   RETURN t.kind = t_set AND base_of(t.elem).kind = t_int AND (t.elemcons = NIL OR t.elemcons.lo = NIL);
+END FUNC sparse_set;
+
+% the C function for a set operation: eq, le, lt, in, add, union, inter, xor, compl
+FUNC set_fn(CONST t : typ, READONLY op : STRING[ASCII]) => STRING[ASCII];
+   IF sparse_set(t) THEN
+      RETURN "rt_r_iset_" & op;
+   ELSEIF op = "le" OR op = "lt" THEN
+      RETURN "rt_r_set_" & op;
+   END IF;
+   RETURN "y_set_" & op;
+END FUNC set_fn;
 
 % outside the capsule that declares a new type, its components, .ALL and :=
 % are known only if the capsule exports them, i.e. exports ALL (8.2)
@@ -2228,7 +2249,7 @@ ABNORMAL FUNC eq_code(CONST t : typ, READONLY a : STRING[ASCII], READONLY b : ST
       RETURN "eq_" & ctype(t) & "(" & a & ", " & b & ")";
    END IF;
    IF t.kind = t_set THEN
-      RETURN "y_set_eq(" & a & ", " & b & ")";
+      RETURN set_fn(t, "eq") & "(" & a & ", " & b & ")";
    END IF;
    IF t.kind = t_act THEN
       % two ACT values are equal when they are the same activation variable (C.10)

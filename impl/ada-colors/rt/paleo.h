@@ -618,6 +618,23 @@ void rt_r_low_io(rt_int device, rt_int command, rt_int *data); /* + memory devic
 void rt_r_maxprec(rt_int prec);                 /* X_MAXRANGE (C.3, C.4) */
 void rt_r_maxrange_f(double lo, double hi);
 void rt_r_maxrange_i(rt_int lo, rt_int hi);
+/* SET[INT] without a range (C.9): the sorted elements, or with neg the sorted
+ * elements it lacks */
+typedef struct {
+  int neg;
+  rt_int n;
+  rt_int *e;
+} rt_r_iset;
+rt_r_iset rt_r_iset_empty(void);
+rt_r_iset rt_r_iset_add(rt_r_iset s, rt_int v);
+int rt_r_iset_in(rt_int v, rt_r_iset s);
+rt_r_iset rt_r_iset_union(rt_r_iset a, rt_r_iset b);
+rt_r_iset rt_r_iset_inter(rt_r_iset a, rt_r_iset b);
+rt_r_iset rt_r_iset_xor(rt_r_iset a, rt_r_iset b);
+rt_r_iset rt_r_iset_compl(rt_r_iset a);
+int rt_r_iset_eq(rt_r_iset a, rt_r_iset b);
+int rt_r_iset_le(rt_r_iset a, rt_r_iset b);
+int rt_r_iset_lt(rt_r_iset a, rt_r_iset b);
 int rt_r_set_le(yset a, yset b);               /* subset (C.9) */
 int rt_r_set_lt(yset a, yset b);               /* strict subset */
 void rt_r_xtag(void);                          /* raises X_TAG (C.6) */

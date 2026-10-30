@@ -3750,3 +3750,112 @@ rstr rt_r_schk(rstr s) {
   if (s.len && memchr(s.p, 0xFF, (size_t)s.len)) rt_raise(RT_X_INIT);
   return s;
 }
+
+/* ---- sparse INT sets (RED C.9) -------------------------------------------- */
+
+rt_r_iset rt_r_iset_empty(void) {
+  rt_r_iset s = {0, 0, NULL};
+  return s;
+}
+
+static rt_int r_find(const rt_r_iset *s, rt_int v) { /* index of the first element >= v */
+  rt_int lo = 0, hi = s->n;
+  while (lo < hi) {
+    rt_int m = lo + (hi - lo) / 2;
+    if (s->e[m] < v) lo = m + 1;
+    else hi = m;
+  }
+  return lo;
+}
+
+static int r_has(const rt_r_iset *s, rt_int v) {
+  rt_int i = r_find(s, v);
+  return i < s->n && s->e[i] == v;
+}
+
+/* the elements in a (ina), b (inb) by the rule keep(ina, inb) */
+static rt_r_iset r_merge(rt_r_iset a, rt_r_iset b, int op) {
+  rt_r_iset r = {0, 0, rt_alloc(sizeof(rt_int) * (size_t)(a.n + b.n + 1))};
+  rt_int i = 0, j = 0;
+  while (i < a.n || j < b.n) {
+    rt_int v;
+    int x = 0, y = 0;
+    if (j >= b.n || (i < a.n && a.e[i] < b.e[j])) {
+      v = a.e[i++];
+      x = 1;
+    } else if (i >= a.n || b.e[j] < a.e[i]) {
+      v = b.e[j++];
+      y = 1;
+    } else {
+      v = a.e[i++];
+      j++;
+      x = y = 1;
+    }
+    int keep = op == 0 ? (x || y) : op == 1 ? (x && y) : op == 2 ? (x && !y) : (x != y);
+    if (keep) r.e[r.n++] = v;
+  }
+  return r;
+}
+
+rt_r_iset rt_r_iset_add(rt_r_iset s, rt_int v) {
+  rt_r_iset one = {0, 1, NULL};
+  one.e = rt_alloc(sizeof(rt_int));
+  one.e[0] = v;
+  if (s.neg) {
+    rt_r_iset r = r_merge(s, one, 2); /* it lacks one element less */
+    r.neg = 1;
+    return r;
+  }
+  return r_merge(s, one, 0);
+}
+
+int rt_r_iset_in(rt_int v, rt_r_iset s) { return s.neg ^ r_has(&s, v); }
+
+rt_r_iset rt_r_iset_union(rt_r_iset a, rt_r_iset b) {
+  rt_r_iset r;
+  if (!a.neg && !b.neg) return r_merge(a, b, 0);
+  if (a.neg && b.neg) r = r_merge(a, b, 1);
+  else if (a.neg) r = r_merge(a, b, 2);
+  else r = r_merge(b, a, 2);
+  r.neg = 1;
+  return r;
+}
+
+rt_r_iset rt_r_iset_inter(rt_r_iset a, rt_r_iset b) {
+  rt_r_iset r;
+  if (a.neg && b.neg) {
+    r = r_merge(a, b, 0);
+    r.neg = 1;
+    return r;
+  }
+  if (!a.neg && !b.neg) return r_merge(a, b, 1);
+  if (b.neg) return r_merge(a, b, 2);
+  return r_merge(b, a, 2);
+}
+
+rt_r_iset rt_r_iset_xor(rt_r_iset a, rt_r_iset b) {
+  rt_r_iset r = r_merge(a, b, 3);
+  r.neg = a.neg ^ b.neg;
+  return r;
+}
+
+rt_r_iset rt_r_iset_compl(rt_r_iset a) {
+  a.neg = !a.neg;
+  return a;
+}
+
+int rt_r_iset_eq(rt_r_iset a, rt_r_iset b) {
+  if (a.neg != b.neg || a.n != b.n) return 0;
+  for (rt_int i = 0; i < a.n; i++)
+    if (a.e[i] != b.e[i]) return 0;
+  return 1;
+}
+
+int rt_r_iset_le(rt_r_iset a, rt_r_iset b) {
+  if (!a.neg && !b.neg) return r_merge(a, b, 2).n == 0;
+  if (a.neg && b.neg) return r_merge(b, a, 2).n == 0;
+  if (!a.neg) return r_merge(a, b, 1).n == 0;
+  return 0; /* a set lacking finitely many INTs is in no finite set */
+}
+
+int rt_r_iset_lt(rt_r_iset a, rt_r_iset b) { return rt_r_iset_le(a, b) && !rt_r_iset_eq(a, b); }
