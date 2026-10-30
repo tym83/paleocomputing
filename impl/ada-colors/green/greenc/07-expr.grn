@@ -408,16 +408,15 @@
    end RANGE_BOUNDS;
 
    procedure GEXPR(E : NODE; WANT : TYP; T : out TYP; R : out TEXT) is
-      Y : SYM;
-      BT : TYP;
-      C : CONS;
-      RO : BOOLEAN;
-      BASE, A : TEXT;
-      NM : NODE;
       SAVED_LV : BOOLEAN := IN_LV_PATH;
+      W : TYP := WANT;
    begin
       IN_LV_PATH := FALSE;
-      GEXPR_1(E, WANT, T, R);
+      if W /= null and then (W.VIEW_OF /= null and IN_INSTANCE = 0) then
+         -- outside the generic body a formal type is its actual
+         W := BASE_VIEW(W);
+      end if;
+      GEXPR_1(E, W, T, R);
       IN_LV_PATH := SAVED_LV;
    end GEXPR;
 
@@ -434,7 +433,7 @@
          when 1 =>
             -- an integer literal is not a real one (RM79 2.4); it belongs to
             -- every integer type, INTEGER when the context does not tell
-            if WANT /= null and then WANT.KIND = T_INT then
+            if WANT /= null and then (WANT.KIND = T_INT and WANT.VIEW_OF = null) then
                T := WANT;
             end if;
             R := MK("((rt_int)" & INTEGER'REP(E.IVAL) & "LL)");
@@ -442,14 +441,15 @@
             -- a real literal belongs to every real type (RM79 3.5.5)
             T := TY_FLOAT;
             R := E.NAME;
-            if WANT /= null and then WANT.KIND = T_FLOAT then
+            if WANT /= null and then (WANT.KIND = T_FLOAT and WANT.VIEW_OF = null) then
                T := WANT;
             elsif WANT /= null and then WANT.KIND = T_FIXED and then WANT.FSMALL /= null then
                T := WANT;
                R := MK("rt_g_fix(" & E.NAME.all & ", " & WANT.FSMALL.all & ")");
             end if;
          when 3 =>
-            if (IS_CHAR_LIT(E) and WANT /= null) and then (WANT.KIND = T_CHAR or WANT.KIND = T_ENUM) then
+            if (IS_CHAR_LIT(E) and WANT /= null) and then ((WANT.KIND = T_CHAR or WANT.KIND = T_ENUM)
+               and WANT.VIEW_OF = null) then
                -- a character literal is a string of length one (RM79 2.5)
                CHAR_LITERAL(E, WANT, T, R);
             elsif WANT /= null and then WANT.KIND = T_ARRAY and then WANT.DIMS = 1

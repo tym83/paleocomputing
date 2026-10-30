@@ -37,11 +37,26 @@
    begin
       while E /= null loop
          if (E.KIND = N_PROC or E.KIND = N_FUNC) and (E.IVAL = 0 or E.IVAL = 3) then
-            DECLARE_ONE(E);
+            if not GENERIC_BEFORE(FROM, E) then
+               DECLARE_ONE(E);
+            end if;
          end if;
          E := E.NEXT;
       end loop;
    end DECLARE_SUBPROGRAMS;
+
+   -- the body of a generic subprogram declared in the same list
+   function GENERIC_BEFORE(FROM, E : NODE) return BOOLEAN is
+      P : NODE := FROM;
+   begin
+      while P /= null and P /= E loop
+         if P.KIND = N_GENERIC and then P.NAME.all = E.NAME.all then
+            return TRUE;
+         end if;
+         P := P.NEXT;
+      end loop;
+      return FALSE;
+   end GENERIC_BEFORE;
 
    -- a body completes an earlier declaration of the same subprogram, if there
    -- is one (RM79 6.4); otherwise it declares the subprogram

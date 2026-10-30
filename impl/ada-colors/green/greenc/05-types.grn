@@ -130,11 +130,26 @@
 
    function SAME(A, B : TYP) return BOOLEAN is
    begin
+      if A = null or B = null then
+         return A = B;
+      elsif A.VIEW_OF /= null or B.VIEW_OF /= null then
+         -- a formal type of a generic is its actual type (RM79 12.2)
+         return BASE_VIEW(A) = BASE_VIEW(B);
+      end if;
       -- type equivalence is by name, applied strictly (RM79 3.3): every type
       -- definition is a distinct type; the predefined scalar types and STRING
       -- are each one type
       return A = B;
    end SAME;
+
+   function BASE_VIEW(T : TYP) return TYP is
+      R : TYP := T;
+   begin
+      while R.VIEW_OF /= null loop
+         R := R.VIEW_OF;
+      end loop;
+      return R;
+   end BASE_VIEW;
 
    -- the predefined type a numeric type derives from (RM79 3.4, 3.5.4)
    function ROOT(T : TYP) return TYP is
@@ -159,13 +174,27 @@
       return FALSE;
    end DERIVED_FROM;
 
+   -- a formal type is private in the generic body: no arithmetic, no
+   -- order, no literals (RM79 12.1)
    function IS_NUMERIC(T : TYP) return BOOLEAN is
    begin
+      if T.VIEW_OF /= null then
+         if IN_INSTANCE > 0 then
+            return FALSE;
+         end if;
+         return IS_NUMERIC(T.VIEW_OF);
+      end if;
       return T.KIND = T_INT or T.KIND = T_FLOAT or T.KIND = T_FIXED;
    end IS_NUMERIC;
 
    function IS_DISCRETE(T : TYP) return BOOLEAN is
    begin
+      if T.VIEW_OF /= null then
+         if IN_INSTANCE > 0 then
+            return FALSE;
+         end if;
+         return IS_DISCRETE(T.VIEW_OF);
+      end if;
       return T.KIND = T_INT or T.KIND = T_ENUM or T.KIND = T_CHAR or T.KIND = T_BOOL;
    end IS_DISCRETE;
 
@@ -252,7 +281,7 @@
    procedure NEW_TYP(KIND : INTEGER) return TYP is
    begin
       return new TYP_REC(KIND, null, null, null, null, null, null, null, null, null, null,
-                         FALSE, FALSE, FALSE, null, null, null, null, 0, null, null, 0, FALSE);
+                         FALSE, FALSE, FALSE, null, null, null, null, 0, null, null, 0, FALSE, null);
    end NEW_TYP;
 
    procedure NEW_CONS return CONS is
@@ -349,7 +378,11 @@
          when 14 => R := MK("rt_taskdecl");
          when 15 => R := MK("rt_entry");
          when others =>
-            if T.CNAME = null then
+            if T.VIEW_OF /= null then
+               -- a formal type of an instance has the C type of its actual
+               CTYPE(T.VIEW_OF, S);
+               T.CNAME := S;
+            elsif T.CNAME = null then
                DECLARE_CTYPE(T);
             elsif T.KIND = T_RECORD and then T.FORWARD and then not T.DEFINED then
                T.DEFINED := TRUE;
@@ -973,6 +1006,8 @@
    begin
       if not T.IS_RESTRICTED then
          return FALSE;
+      elsif T.VIEW_OF /= null then
+         return TRUE;
       end if;
       return not INSIDE_PACKAGE(T.DECL);
    end RESTRICTED_HERE;

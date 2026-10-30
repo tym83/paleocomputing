@@ -1,0 +1,10 @@
+procedure MAIN is
+   generic (restricted type T) procedure COPY(A : T; B : out T);
+   procedure COPY(A : T; B : out T) is
+   begin
+      B := A;
+   end COPY;
+   procedure C2 is new COPY(T is INTEGER);
+begin
+   null;
+end MAIN;

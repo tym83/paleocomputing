@@ -220,6 +220,9 @@ procedure GREENC is
       DIMS : INTEGER;
       -- a restricted type has neither assignment nor equality (RM79 7.4)
       IS_RESTRICTED : BOOLEAN;
+      -- a generic formal type: the actual type, seen as private in the
+      -- generic body (RM79 12.1)
+      VIEW_OF : TYP;
    end record;
    type FIELD_REC is record
       NAME : TEXT;
@@ -410,6 +413,8 @@ procedure GREENC is
    COMPILING_SOURCE : BOOLEAN := FALSE;
    LOADED : TEXT;
    CUR_COMP_UNIT : TEXT;
+   -- inside the translation of an instance, formal types are private
+   IN_INSTANCE : INTEGER := 0;
    CUR_TASK : SYM;
    ACCEPT_DEPTH : INTEGER := 0;
    FAMARG_DONE : BOOLEAN := FALSE;

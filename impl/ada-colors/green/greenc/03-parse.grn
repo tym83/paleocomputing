@@ -550,6 +550,10 @@
             if AT_KW("ALL") then
                SKIP;
                X.NAME := MK("ALL");
+            elsif AT_KIND(K_STR) then
+               -- T."*": an operator of a type (RM79 12.1)
+               X.NAME := MK(UPPER_S(TOKS(TPOS).S.all));
+               SKIP;
             else
                EXPECT_ID(X.NAME);
             end if;
