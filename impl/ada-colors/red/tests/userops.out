@@ -1,5 +1,7 @@
 user := in assignment: 6
 user := in message passing: 8
+user := for a CONST formal: 9
+user := in a constructor and in record assignment: 10
 /=, <=, >= and > follow from the user = and <
 record = uses the user = of its components
 CASE uses the user =

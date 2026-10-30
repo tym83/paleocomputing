@@ -1902,9 +1902,17 @@ ABNORMAL FUNC meval(CONST e : node, OUT ok : BOOL) => mval IMPORTS ALL;
       ok := TRUE;
       RETURN mk_mval(t_bool, e.ival);
    ELSEIF e.kind = n_float THEN
-      % a FLOAT is computed by the C translator from the same expression
-      ok := TRUE;
-      RETURN mk_mval(t_float, 0);
+      % its value for conditional translation; the C is made from the same
+      % expression
+      a := mk_mval(t_float, 0);
+      GUARD
+         a.f := CNVT[FLOAT](e.name.ALL);
+         ok := TRUE;
+      BY
+         ELSE =>
+            ok := FALSE;
+      END GUARD;
+      RETURN a;
    ELSEIF e.kind = n_str THEN
       ok := TRUE;
       a := mk_mval(t_string, 0);
@@ -1942,6 +1950,10 @@ ABNORMAL FUNC meval(CONST e : node, OUT ok : BOOL) => mval IMPORTS ALL;
          RETURN mk_mval(t_bool, 1 - a.i);
       ELSEIF e.name.ALL = "-" AND a.kind = t_int THEN
          RETURN mk_mval(t_int, -a.i);
+      ELSEIF e.name.ALL = "-" AND a.kind = t_float THEN
+         b := mk_mval(t_float, 0);
+         b.f := -a.f;
+         RETURN b;
       ELSEIF (e.name.ALL = "+" OR e.name.ALL = "-") AND (a.kind = t_int OR a.kind = t_float) THEN
          RETURN a;
       END IF;
@@ -1985,13 +1997,8 @@ ABNORMAL FUNC meval(CONST e : node, OUT ok : BOOL) => mval IMPORTS ALL;
       ELSEIF op.ALL = ">=" THEN
          RETURN mk_mval(t_bool, bool_i(a.i >= b.i));
       END IF;
-   ELSEIF a.kind = t_float AND b.kind = t_float AND (op.ALL = "+" OR op.ALL = "-" OR op.ALL = "*"
-         OR op.ALL = "/") THEN
-      ok := TRUE;
-      RETURN a;
-   ELSEIF a.kind = t_float AND b.kind = t_int AND op.ALL = "**" THEN
-      ok := TRUE;
-      RETURN a;
+   ELSEIF a.kind = t_float AND (b.kind = t_float OR (b.kind = t_int AND op.ALL = "**")) THEN
+      RETURN float_op(op.ALL, a, b, ok);
    ELSEIF a.kind = t_bool AND b.kind = t_bool THEN
       ok := TRUE;
       IF op.ALL = "AND" THEN
@@ -2024,6 +2031,47 @@ ABNORMAL FUNC meval(CONST e : node, OUT ok : BOOL) => mval IMPORTS ALL;
    ok := FALSE;
    RETURN NIL;
 END FUNC meval;
+
+% a built-in FLOAT operation on manifest values (5.5); not manifest when it
+% overflows or divides by zero
+ABNORMAL FUNC float_op(READONLY op : STRING[ASCII], CONST a : mval, CONST b : mval, OUT ok : BOOL) => mval;
+   VAR r : mval := mk_mval(t_float, 0);
+   ok := TRUE;
+   GUARD
+      IF op = "+" THEN
+         r.f := a.f + b.f;
+      ELSEIF op = "-" THEN
+         r.f := a.f - b.f;
+      ELSEIF op = "*" THEN
+         r.f := a.f * b.f;
+      ELSEIF op = "/" THEN
+         r.f := a.f / b.f;
+      ELSEIF op = "**" THEN
+         r.f := a.f ** b.i;
+      ELSE
+         r.kind := t_bool;
+         IF op = "=" THEN
+            r.i := bool_i(a.f = b.f);
+         ELSEIF op = "/=" THEN
+            r.i := bool_i(a.f /= b.f);
+         ELSEIF op = "<" THEN
+            r.i := bool_i(a.f < b.f);
+         ELSEIF op = "<=" THEN
+            r.i := bool_i(a.f <= b.f);
+         ELSEIF op = ">" THEN
+            r.i := bool_i(a.f > b.f);
+         ELSEIF op = ">=" THEN
+            r.i := bool_i(a.f >= b.f);
+         ELSE
+            ok := FALSE;
+         END IF;
+      END IF;
+   BY
+      ELSE =>
+         ok := FALSE;
+   END GUARD;
+   RETURN r;
+END FUNC float_op;
 
 FUNC bool_text(CONST b : BOOL) => STRING[ASCII];
    IF b THEN

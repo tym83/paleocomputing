@@ -1460,7 +1460,12 @@ END FUNC constructor;
 
 % a component value checked against the component's subtype
 ABNORMAL FUNC comp_value(CONST t : typ, CONST c : cons, READONLY v : STRING[ASCII]) => STRING[ASCII] IMPORTS ALL;
-   IF c = NIL OR (c.lo /= NIL AND has_at(c.lo.ALL)) THEN
+   IF t.kind = t_new AND t.assignp /= NIL AND (in_func OR top_level(t.assignp)) THEN
+      % a constructor assigns its components with the user's := (13.2)
+      CONST ct := ctype(t);
+      RETURN "({ " & ct & " s_ = " & v & "; " & ct & " t_ = " & copy_code(t, "s_") & "; "
+             & user_call2(t.assignp, "t_", TRUE, "s_", FALSE) & "; t_; })";
+   ELSEIF c = NIL OR (c.lo /= NIL AND has_at(c.lo.ALL)) THEN
       RETURN copy_code(t, v);
    ELSEIF t.kind = t_string AND c.slen /= NIL AND NOT has_at(c.slen.ALL) THEN
       RETURN copy_code(t, "rt_r_strsub(" & v & ", " & c.slen.ALL & ")");

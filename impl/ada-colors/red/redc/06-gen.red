@@ -1514,6 +1514,10 @@ PROC gen_subprogram(CONST d : node, CONST y : sym) IMPORTS ALL;
                emit(init_call(pm.t.initp, "F->" & f));
             END IF;
             emit("F->" & f & " = " & checked(pm.t, pc, copy_code(pm.t, f)) & ";");
+            IF pm.t.kind = t_new AND pm.t.assignp /= NIL AND pm.t.assignp /= y THEN
+               % a CONST formal is assigned its actual with the user's := (7.3, 13.2)
+               emit(user_call2(pm.t.assignp, "F->" & f, TRUE, f, FALSE) & ";");
+            END IF;
             IF needs_fin(pm.t) THEN
                pfin := mk(pfin.ALL & fin_code("F->" & f, pm.t) & " ");
             END IF;

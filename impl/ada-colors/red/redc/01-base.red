@@ -170,7 +170,7 @@ TYPE sym : PTR RECORD[kind : INT, name : text, t : typ, c : cons,
 
 % a value known during translation (5.5): kind is t_int, t_bool, t_enum or
 % t_string; i holds an INT, a BOOL (0, 1) or the position of a literal
-TYPE mval : PTR RECORD[kind : INT, i : INT, s : text, t : typ];
+TYPE mval : PTR RECORD[kind : INT, i : INT, s : text, t : typ, f : FLOAT];
 
 TYPE lines : PTR RECORD[s : text, next : lines];
 TYPE buffer : PTR RECORD[head, tail : lines];

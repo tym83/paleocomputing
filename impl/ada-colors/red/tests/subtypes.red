@@ -28,6 +28,7 @@ CAPSULE main EXPORTS NONE;
    END FUNC bad;
    CONST three := 10 DIV 3;
    CONST debug := FALSE;
+   CONST eps := 1.0E-5 * 2.0;
    VAR v : INT(1 .. 5) := 2;
    VAR w : INT := 0;
    VAR m : INT := 4;
@@ -78,6 +79,11 @@ CAPSULE main EXPORTS NONE;
       not_declared_anywhere(1, 2);
    ELSE
       WRITELN("conditional translation");
+   END IF;
+   IF eps < 0.0 THEN
+      not_declared_either;
+   ELSEIF eps > 1.0E-5 THEN
+      WRITELN("conditional translation on FLOAT constants");
    END IF;
    IF ACTIVE(NIL_ACT) THEN
       WRITELN("NIL_ACT is active");
