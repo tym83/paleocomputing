@@ -3271,3 +3271,365 @@ static int count_waiters(rt_waiter *w) {
 int rt_r_can_send(rt_mbox *m) { return m->count < m->cap || count_waiters(m->receivers) > 0; }
 
 int rt_r_can_receive(rt_mbox *m) { return m->count > 0 || count_waiters(m->senders) > 0; }
+
+/* ---- RED files (App. A, C.14) ----------------------------------------------- */
+
+struct rt_r_file {
+  FILE *fp;
+  int open, access, use, text, sys;  /* access 0 SEQ 1 RANDOM; use 0 INPUT 1 OUTPUT 2 UPDATE */
+  size_t esz;
+  char *path;
+};
+
+static int r_exc(const char *name) { return rt_exc(name); }
+
+rt_r_file *rt_r_file_new(int access, int use, size_t esz, int text) {
+  rt_r_file *f = calloc(1, sizeof *f);
+  f->access = access;
+  f->use = use;
+  f->esz = text ? 1 : esz;
+  f->text = text;
+  return f;
+}
+
+rt_r_file *rt_r_sys_in(void) {
+  static rt_r_file f = {NULL, 1, 0, 0, 1, 1, 1, NULL};
+  return &f;
+}
+
+rt_r_file *rt_r_sys_out(void) {
+  static rt_r_file f = {NULL, 1, 0, 1, 1, 2, 1, NULL};
+  return &f;
+}
+
+int rt_r_file_access(rt_r_file *f) { return f->access; }
+int rt_r_file_use(rt_r_file *f) { return f->use; }
+
+/* the host path of a physical file name: no directories, no blanks */
+static char *r_path(rstr name) {
+  rt_int b = 0, e = name.len;
+  while (b < e && name.p[b] == ' ') b++;
+  while (e > b && name.p[e - 1] == ' ') e--;
+  if (b == e) rt_raise_msg(r_exc("X_FILENAME"), "empty file name");
+  for (rt_int i = b; i < e; i++)
+    if (name.p[i] == '/' || name.p[i] == '\\' || name.p[i] < ' ' || name.p[i] > '~')
+      rt_raise_msg(r_exc("X_FILENAME"), "not a physical file name");
+  const char *dir = getenv("RED_FILES");
+  if (!dir) dir = ".";
+  size_t n = strlen(dir) + (size_t)(e - b) + 2;
+  char *p = malloc(n);
+  snprintf(p, n, "%s/%.*s", dir, (int)(e - b), (const char *)name.p + b);
+  return p;
+}
+
+static void r_need_open(rt_r_file *f) {
+  if (!f->open) rt_raise_msg(RT_X_FILE, "file not open");
+}
+
+void rt_r_open(rt_r_file *f, rstr name, int is_new) {
+  if (f->sys) return; /* the teletype is always there */
+  if (f->open) rt_raise_msg(RT_X_FILE, "file already open");
+  char *p = r_path(name);
+  FILE *fp;
+  if (is_new) {
+    fp = fopen(p, "w+b");
+    if (!fp) rt_raise_msg(r_exc("X_FILENAME"), "cannot create the file");
+  } else {
+    fp = fopen(p, "r+b");
+    if (!fp) fp = fopen(p, "rb");
+    if (!fp) rt_raise_msg(r_exc("X_NOFILE"), "no such file");
+  }
+  f->fp = fp;
+  f->path = p;
+  f->open = 1;
+}
+
+rt_int rt_r_fsize(rt_r_file *f) {
+  r_need_open(f);
+  if (f->sys) rt_raise_msg(RT_X_FILE, "the teletype has no size");
+  long here = ftell(f->fp);
+  fseek(f->fp, 0, SEEK_END);
+  long end = ftell(f->fp);
+  fseek(f->fp, here, SEEK_SET);
+  return (rt_int)(end / (long)f->esz);
+}
+
+rt_int rt_r_fpos(rt_r_file *f) {
+  r_need_open(f);
+  if (f->sys) rt_raise_msg(RT_X_FILE, "the teletype has no position");
+  return (rt_int)(ftell(f->fp) / (long)f->esz) + 1;
+}
+
+void rt_r_close(rt_r_file *f, int del) {
+  if (f->sys) return;
+  r_need_open(f);
+  /* the current position is the new end of the file */
+  long here = ftell(f->fp);
+  fflush(f->fp);
+  if (ftruncate(fileno(f->fp), here) != 0) {
+  }
+  fclose(f->fp);
+  if (del) remove(f->path);
+  f->fp = NULL;
+  f->open = 0;
+}
+
+void rt_r_fsetpos(rt_r_file *f, rt_int p) {
+  r_need_open(f);
+  if (f->sys) rt_raise_msg(RT_X_FILE, "the teletype cannot be positioned");
+  if (p < 1 || p > rt_r_fsize(f) + 1) rt_raise(r_exc("X_FILEPOS"));
+  fseek(f->fp, (long)(p - 1) * (long)f->esz, SEEK_SET);
+}
+
+int rt_r_feof(rt_r_file *f) {
+  r_need_open(f);
+  if (f->sys == 1) return rt_eof();
+  if (f->sys) return 1;
+  return rt_r_fpos(f) == rt_r_fsize(f) + 1;
+}
+
+static void r_can_read(rt_r_file *f) {
+  r_need_open(f);
+  if (f->use == 1) rt_raise_msg(RT_X_FILE, "an output file is not read");
+}
+
+static void r_can_write(rt_r_file *f) {
+  r_need_open(f);
+  if (f->use == 0) rt_raise_msg(RT_X_FILE, "an input file is not written");
+}
+
+void rt_r_fread(rt_r_file *f, void *dst) {
+  r_can_read(f);
+  if (f->sys) rt_raise_msg(RT_X_FILE, "the teletype holds characters");
+  if (rt_r_feof(f)) rt_raise(r_exc("X_EOF"));
+  if (fread(dst, f->esz, 1, f->fp) != 1) rt_raise(r_exc("X_EOF"));
+  fseek(f->fp, 0, SEEK_CUR);
+}
+
+void rt_r_fwrite(rt_r_file *f, const void *src) {
+  r_can_write(f);
+  if (f->sys) rt_raise_msg(RT_X_FILE, "the teletype holds characters");
+  fwrite(src, f->esz, 1, f->fp);
+  fseek(f->fp, 0, SEEK_CUR);
+}
+
+int rt_r_fgetc(rt_r_file *f) {
+  r_can_read(f);
+  if (f->sys == 1) {
+    int c = rt_getc();
+    if (c < 0) rt_raise(r_exc("X_EOF"));
+    return c;
+  }
+  int c = fgetc(f->fp);
+  if (c == EOF) rt_raise(r_exc("X_EOF"));
+  fseek(f->fp, 0, SEEK_CUR);
+  return c;
+}
+
+void rt_r_fputc(rt_r_file *f, int c) {
+  r_can_write(f);
+  if (f->sys == 2) {
+    rt_putc(c);
+    return;
+  }
+  fputc(c, f->fp);
+  fseek(f->fp, 0, SEEK_CUR);
+}
+
+void rt_r_fputs(rt_r_file *f, rstr s) {
+  for (rt_int i = 0; i < s.len; i++) rt_r_fputc(f, s.p[i]);
+}
+
+/* a line of a text file ends with 'CR 'LF (A.3); a host line may end with
+ * 'LF alone */
+rt_int rt_r_fsizeln(rt_r_file *f) {
+  r_can_read(f);
+  if (f->sys == 1) return rt_sizeln();
+  long here = ftell(f->fp);
+  rt_int n = 0;
+  int c;
+  while ((c = fgetc(f->fp)) != EOF && c != '\n') n++;
+  if (n > 0 && c == '\n') {
+    fseek(f->fp, here + n - 1, SEEK_SET);
+    if (fgetc(f->fp) == '\r') n--;
+  }
+  fseek(f->fp, here, SEEK_SET);
+  return n;
+}
+
+void rt_r_freadln(rt_r_file *f, rstr *dst) {
+  if (f->sys == 1) {
+    rt_r_readln(dst);
+    return;
+  }
+  r_can_read(f);
+  if (rt_r_feof(f)) rt_raise(r_exc("X_EOF"));
+  rt_int n = rt_r_fsizeln(f);
+  long here = ftell(f->fp);
+  int c;
+  rt_int k = 0;
+  while ((c = fgetc(f->fp)) != EOF && c != '\n') k++;
+  if (c != '\n') {
+    fseek(f->fp, here, SEEK_SET);
+    rt_raise_msg(r_exc("X_LN"), "no end of line");
+  }
+  if (n != dst->len) {
+    fseek(f->fp, here, SEEK_SET);
+    rt_raise_msg(r_exc("X_LN"), "line of another length");
+  }
+  fseek(f->fp, here, SEEK_SET);
+  if (n && fread(dst->p, 1, (size_t)n, f->fp) != (size_t)n) rt_raise(r_exc("X_LN"));
+  while ((c = fgetc(f->fp)) != EOF && c != '\n') {
+  }
+  fseek(f->fp, 0, SEEK_CUR);
+}
+
+void rt_r_fwriteln(rt_r_file *f, rstr s) {
+  if (f->sys == 2) {
+    rt_putln(s);
+    return;
+  }
+  r_can_write(f);
+  fwrite(s.p, 1, (size_t)s.len, f->fp);
+  fputs("\r\n", f->fp);
+  fseek(f->fp, 0, SEEK_CUR);
+}
+
+void rt_r_readln(rstr *dst) {
+  if (rt_eof()) rt_raise(r_exc("X_EOF"));
+  if (rt_sizeln() != dst->len) rt_raise_msg(r_exc("X_LN"), "line of another length");
+  rstr line = rt_getln();
+  if (line.len) memcpy(dst->p, line.p, (size_t)line.len);
+}
+
+void rt_r_rename(rstr from, rstr to) {
+  char *a = r_path(from), *b = r_path(to);
+  if (rename(a, b) != 0) rt_raise_msg(r_exc("X_NOFILE"), "no such file");
+}
+
+/* ---- conversions (A.3) ----------------------------------------------------- */
+
+/* an optional minus sign, n.nnn with prec digits, E, the exponent's sign and
+ * its digits */
+rstr rt_r_str_of_float(double v, rt_int prec) {
+  char b[64], m[64];
+  if (prec < 1) prec = 1;
+  if (prec > 17) prec = 17;
+  snprintf(b, sizeof b, "%.*E", (int)prec - 1, v);
+  char *e = strchr(b, 'E');
+  int ex = atoi(e + 1);
+  *e = 0;
+  int n = snprintf(m, sizeof m, "%sE%c%d", b, ex < 0 ? '-' : '+', ex < 0 ? -ex : ex);
+  return rt_str_copy(rt_str(m, n));
+}
+
+/* n characters left of the point, zeros kept, m right; X_FORMAT if the first
+ * significant digit would be lost */
+rstr rt_r_format(double v, rt_int n, rt_int m) {
+  char b[400];
+  double a = fabs(v);
+  double r = floor(a * pow(10.0, (double)m) + 0.5) / pow(10.0, (double)m);
+  if (r >= pow(10.0, (double)n)) rt_raise(r_exc("X_FORMAT"));
+  int len = snprintf(b, sizeof b, "%s%0*.*f", v < 0 ? "-" : "", (int)(n + m + (m > 0)), (int)m, r);
+  return rt_str_copy(rt_str(b, len));
+}
+
+/* with an exponent of o digits: the first significant digit leftmost */
+rstr rt_r_format_e(double v, rt_int n, rt_int m, rt_int o) {
+  char b[400];
+  double a = fabs(v);
+  int ex = 0;
+  if (a != 0.0) {
+    ex = (int)floor(log10(a)) - (int)(n - 1);
+    a = a / pow(10.0, (double)ex);
+    double r = floor(a * pow(10.0, (double)m) + 0.5) / pow(10.0, (double)m);
+    if (r >= pow(10.0, (double)n)) {
+      ex++;
+      a = a / 10.0;
+    }
+  }
+  int ae = ex < 0 ? -ex : ex;
+  if (o < 1 || ae >= pow(10.0, (double)o)) rt_raise(r_exc("X_FORMAT"));
+  int len = snprintf(b, sizeof b, "%s%0*.*fE%c%0*d", v < 0 ? "-" : "", (int)(n + m + (m > 0)), (int)m, a,
+                     ex < 0 ? '-' : '+', (int)o, ae);
+  return rt_str_copy(rt_str(b, len));
+}
+
+rstr rt_r_str_pad(rstr s, rt_int len) {
+  if (s.len > len) rt_raise_msg(RT_X_SUBTYPE, "the string is longer than its target");
+  rstr r = rt_str_new(len);
+  if (s.len) memcpy(r.p + (len - s.len), s.p, (size_t)s.len);
+  return r;
+}
+
+rstr rt_r_enum_image(const char *const *names, rt_int v) {
+  char b[256];
+  int n = snprintf(b, sizeof b, "'%s", names[v]);
+  return rt_str_copy(rt_str(b, n));
+}
+
+static rstr r_trim(rstr s) {
+  rt_int b = 0, e = s.len;
+  while (b < e && s.p[b] == ' ') b++;
+  while (e > b && s.p[e - 1] == ' ') e--;
+  rstr r = {e - b, s.p + b};
+  return r;
+}
+
+static int r_same_word(rstr s, const char *w) {
+  size_t n = strlen(w);
+  if ((size_t)s.len != n) return 0;
+  for (size_t i = 0; i < n; i++) {
+    int c = s.p[i];
+    if (c >= 'a' && c <= 'z') c -= 32;
+    if (c != w[i]) return 0;
+  }
+  return 1;
+}
+
+rt_int rt_r_enum_of_str(const char *const *names, rt_int n, rstr s) {
+  rstr t = r_trim(s);
+  if (t.len > 0 && t.p[0] == '\'') {
+    t.p++;
+    t.len--;
+  }
+  for (rt_int i = 0; i < n; i++)
+    if (r_same_word(t, names[i])) return i;
+  rt_raise_msg(RT_X_RANGE, "not a literal of the type");
+}
+
+int rt_r_bool_of_str(rstr s) {
+  rstr t = r_trim(s);
+  if (r_same_word(t, "TRUE")) return 1;
+  if (r_same_word(t, "FALSE")) return 0;
+  rt_raise_msg(RT_X_RANGE, "not a BOOL literal");
+}
+
+double rt_r_float_of_str(rstr s) {
+  rstr t = r_trim(s);
+  char b[128];
+  if (t.len <= 0 || t.len >= (rt_int)sizeof b) rt_raise_msg(RT_X_RANGE, "not a FLOAT literal");
+  memcpy(b, t.p, (size_t)t.len);
+  b[t.len] = 0;
+  /* sign, digits, a point with digits on both sides, an optional exponent */
+  const char *p = b;
+  if (*p == '+' || *p == '-') p++;
+  const char *d = p;
+  while (*p >= '0' && *p <= '9') p++;
+  int ok = p > d && *p == '.';
+  if (ok) {
+    p++;
+    d = p;
+    while (*p >= '0' && *p <= '9') p++;
+    ok = p > d;
+  }
+  if (ok && (*p == 'E' || *p == 'e')) {
+    p++;
+    if (*p == '+' || *p == '-') p++;
+    d = p;
+    while (*p >= '0' && *p <= '9') p++;
+    ok = p > d;
+  }
+  if (!ok || *p) rt_raise_msg(RT_X_RANGE, "not a FLOAT literal");
+  return rt_r_fovf(strtod(b, NULL));
+}

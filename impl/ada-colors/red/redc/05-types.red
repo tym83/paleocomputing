@@ -302,11 +302,11 @@ FUNC same(CONST a : typ, CONST b : typ) => BOOL;
    IF a = NIL OR b = NIL OR a.kind /= b.kind THEN
       RETURN FALSE;
    END IF;
-   IF a.kind = t_string THEN
+   IF a.kind = t_string OR a.kind = t_file THEN
       RETURN same(str_elem(a), str_elem(b));
    END IF;
    IF a.kind = t_int OR a.kind = t_bool OR a.kind = t_float
-         OR a.kind = t_void OR a.kind = t_file THEN
+         OR a.kind = t_void THEN
       RETURN TRUE;
    END IF;
    IF a.kind = t_enum THEN
@@ -391,7 +391,8 @@ END PROC check_type;
 ABNORMAL FUNC ctype(CONST t : typ) => STRING[ASCII] IMPORTS ALL;
    CASE t.kind
       WHEN t_int => RETURN "rt_int";
-      WHEN t_bool, t_enum, t_file => RETURN "int";
+      WHEN t_bool, t_enum => RETURN "int";
+      WHEN t_file => RETURN "rt_r_file *";
       WHEN t_float => RETURN "double";
       WHEN t_string => RETURN "rstr";
       WHEN t_void => RETURN "void";
@@ -628,12 +629,28 @@ PROC init_ascii IMPORTS ALL;
       file_mode_type := new_typ(t_enum);
       file_mode_type.lits := h2;
    END;
+   file_state_type := enum2("OLD", "NEW");
+   file_disp_type := enum2("SAVE", "DELETE");
+   file_access_type := enum2("SEQ", "RANDOM");
+   ty_text_file := new_typ(t_file);
+   ty_text_file.elem := ty_ascii;
    % SEND_ST and RECEIVE_ST (C.11): the state of a low-level request
    ty_send_st := new_typ(t_int);
    ty_send_st.name := mk("SEND_ST");
    ty_receive_st := new_typ(t_int);
    ty_receive_st.name := mk("RECEIVE_ST");
 END PROC init_ascii;
+
+ABNORMAL FUNC enum2(READONLY a : STRING[ASCII], READONLY b : STRING[ASCII]) => typ;
+   VAR t : typ := new_typ(t_enum);
+   VAR l1 : node := nn(n_enum, 0);
+   VAR l2 : node := nn(n_enum, 0);
+   l1.name := mk(a);
+   l2.name := mk(b);
+   l1.next := l2;
+   t.lits := l1;
+   RETURN t;
+END FUNC enum2;
 
 FUNC lit_index(CONST lits : node, READONLY name : STRING[ASCII]) => INT;
    VAR i : INT := 0;
@@ -837,7 +854,15 @@ ABNORMAL FUNC resolve_subtype(CONST st : node, OUT c : cons) => typ IMPORTS ALL;
          END IF;
          RETURN t;
       WHEN s_file =>
-         RETURN ty_file;
+         % FILE[S](access, use) (C.14)
+         t := new_typ(t_file);
+         BEGIN
+            VAR ec : cons;
+            t.elem := resolve_subtype(st.a, ec);
+            t.elemcons := ec;
+         END;
+         c.args := st.b;
+         RETURN t;
       WHEN s_mailbox =>
          % MAILBOX[message subtype](size) (10.3), unless the program defines
          % its own generic MAILBOX type, as in 14.3.1
@@ -1500,6 +1525,21 @@ PROC make_storage(READONLY lval : STRING[ASCII], CONST t : typ, CONST c : cons) 
       emit("rt_lock_init(&" & lval & ");");
    ELSEIF t.kind = t_set THEN
       emit(lval & " = " & empty_set(t) & ";");
+   ELSEIF t.kind = t_file THEN
+      % a file starts closed (C.14); a standard file keeps flat components
+      VAR at : typ;
+      IF c = NIL OR c.args = NIL OR c.args.next = NIL THEN
+         fail(0, "a file variable needs its access and use: FILE[S](access, use)");
+      END IF;
+      IF NOT text_file(t) AND NOT flat(t.elem) THEN
+         fail(0, "the components of a file on the simulated machine hold no strings, arrays, sets or pointers");
+      END IF;
+      BEGIN
+         CONST acc := gexpr(c.args, file_access_type, at);
+         CONST use := gexpr(c.args.next, file_mode_type, at);
+         emit(lval & " = rt_r_file_new(" & acc & ", " & use & ", sizeof(" & ctype(t.elem) & "), "
+              & bool_text(text_file(t)) & ");");
+      END;
    ELSEIF t.kind = t_act THEN
       % an ACT value is shared by assignment and compared by identity (C.10),
       % so a variable holds a reference to its activation record
@@ -1558,6 +1598,23 @@ PROC make_storage(READONLY lval : STRING[ASCII], CONST t : typ, CONST c : cons) 
       emit(lval & " = " & uninit_value(t) & ";");
    END IF;
 END PROC make_storage;
+
+% a component that a file keeps as its bytes
+FUNC flat(CONST t : typ) => BOOL;
+   IF t.kind = t_new AND t.tparams = NIL THEN
+      RETURN flat(t.under);
+   ELSEIF t.kind = t_record OR t.kind = t_union THEN
+      VAR f : field := t.fields;
+      WHILE f /= NIL REPEAT
+         IF NOT flat(f.t) THEN
+            RETURN FALSE;
+         END IF;
+         f := f.next;
+      END REPEAT;
+      RETURN TRUE;
+   END IF;
+   RETURN t.kind = t_int OR t.kind = t_float OR t.kind = t_enum OR t.kind = t_bool;
+END FUNC flat;
 
 % the value an uninitialized scalar holds, which no value of its type has (5.1)
 FUNC uninit_value(CONST t : typ) => STRING[ASCII];

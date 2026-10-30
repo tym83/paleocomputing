@@ -1100,6 +1100,9 @@ END FUNC float_prec;
 ABNORMAL FUNC file_attribute(CONST e : node, CONST bt : typ, CONST c : cons, CONST base : text, OUT t : typ)
       => STRING[ASCII] IMPORTS ALL;
    t := file_mode_type;
+   IF e.name.ALL = "ACCESS" THEN
+      t := file_access_type;
+   END IF;
    IF base /= NIL THEN
       IF e.name.ALL = "ACCESS" THEN
          RETURN "rt_r_file_access(" & base.ALL & ")";
@@ -2175,6 +2178,124 @@ ABNORMAL FUNC exponent_want(READONLY op : STRING[ASCII], CONST ta : typ) => typ 
    RETURN ta;
 END FUNC exponent_want;
 
+% a file variable as the C pointer to it; text: it must be a text file (A.3)
+ABNORMAL FUNC file_ref(CONST e : node, CONST text : BOOL, CONST line : INT) => STRING[ASCII] IMPORTS ALL;
+   VAR t : typ;
+   CONST f := gexpr(e, NIL, t);
+   IF t.kind /= t_file THEN
+      fail(line, "a file is required");
+   ELSEIF text AND NOT text_file(t) THEN
+      fail(line, "a text file, whose components are characters, is required");
+   END IF;
+   RETURN f;
+END FUNC file_ref;
+
+FUNC text_file(CONST t : typ) => BOOL;
+   RETURN t /= NIL AND t.kind = t_file AND base_of(str_elem(t)).kind = t_enum;
+END FUNC text_file;
+
+% CNVT[target](value) (A.3): strings to and from BOOL, INT, FLOAT and ENUM
+% values; a string target with a length pads on the left with blanks
+ABNORMAL FUNC conversion(CONST tt : node, CONST args : node, CONST line : INT, OUT t : typ) => STRING[ASCII]
+      IMPORTS ALL;
+   VAR c : cons;
+   VAR at : typ;
+   VAR target : typ := resolve_subtype(tt, c);
+   CONST a := gexpr(args, NIL, at);
+   t := target;
+   IF target.kind = t_string AND same(str_elem(target), ty_ascii) THEN
+      VAR r : text;
+      IF at.kind = t_int THEN
+         r := mk("rt_str_of_int(" & a & ")");
+      ELSEIF at.kind = t_float THEN
+         r := mk("rt_r_str_of_float(" & a & ", " & float_digits(args) & ")");
+      ELSEIF at.kind = t_bool THEN
+         r := mk("((" & a & ") ? rt_str(" & q & "TRUE" & q & ", 4) : rt_str(" & q & "FALSE" & q & ", 5))");
+      ELSEIF base_of(at).kind = t_enum THEN
+         r := mk("rt_r_enum_image(" & enum_names(base_of(at)) & ", " & a & ")");
+      ELSEIF at.kind = t_string THEN
+         r := mk(a);
+      ELSE
+         fail(line, "CNVT converts BOOL, INT, FLOAT and ENUM values to strings");
+      END IF;
+      IF c /= NIL AND c.slen /= NIL THEN
+         RETURN "rt_r_str_pad(" & r.ALL & ", " & c.slen.ALL & ")";
+      END IF;
+      RETURN r.ALL;
+   ELSEIF at.kind = t_string THEN
+      IF target.kind = t_int THEN
+         RETURN checked(target, c, "rt_int_of_str(" & a & ")");
+      ELSEIF target.kind = t_float THEN
+         RETURN checked(target, c, "rt_r_float_of_str(" & a & ")");
+      ELSEIF target.kind = t_bool THEN
+         RETURN "rt_r_bool_of_str(" & a & ")";
+      ELSEIF base_of(target).kind = t_enum THEN
+         RETURN checked(target, c, "rt_r_enum_of_str(" & enum_names(base_of(target)) & ", "
+                        & itos(list_len(base_of(target).lits)) & ", " & a & ")");
+      END IF;
+   ELSEIF target.kind = t_float AND at.kind = t_int THEN
+      RETURN checked(target, c, "((double)(" & a & "))");
+   ELSEIF same(target, at) THEN
+      RETURN checked(target, c, a);
+   END IF;
+   fail(line, "CNVT does not convert between these types");
+   RETURN "";
+END FUNC conversion;
+
+% the precision a FLOAT value is printed with (A.3): its subtype's, or the
+% digits of a literal, else 6
+ABNORMAL FUNC float_digits(CONST e : node) => STRING[ASCII] IMPORTS ALL;
+   VAR lv : text;
+   VAR t : typ;
+   VAR c : cons;
+   VAR ro : BOOL;
+   IF e.kind = n_unop OR e.kind = n_paren THEN
+      RETURN float_digits(e.a);
+   ELSEIF e.kind = n_float THEN
+      VAR n : INT := 0;
+      VAR lead : BOOL := TRUE;
+      FOR i : INT(1 .. e.name.LEN) REPEAT
+         IF e.name(i) = 'E OR e.name(i) = 'L_E THEN
+            RETURN itos(n);
+         ELSEIF is_digit(e.name(i)) AND NOT (lead AND e.name(i) = 'N_0) THEN
+            n := n + 1;
+            lead := FALSE;
+         ELSEIF is_digit(e.name(i)) AND NOT lead THEN
+            n := n + 1;
+         END IF;
+      END REPEAT;
+      RETURN itos(n);
+   ELSEIF is_lvalue(e) THEN
+      VAR saved : buffer := code;
+      code := new_buffer;
+      lvalue(e, lv, t, c, ro);
+      code := saved;
+      IF c /= NIL AND c.prec /= NIL THEN
+         RETURN c.prec.ALL;
+      END IF;
+   END IF;
+   RETURN "6";
+END FUNC float_digits;
+
+% the names of an enumeration type's literals, as a C array (A.3)
+ABNORMAL FUNC enum_names(CONST t : typ) => STRING[ASCII] IMPORTS ALL;
+   VAR l : node := t.lits;
+   VAR r : text := mk("");
+   IF t.cname /= NIL THEN
+      RETURN t.cname.ALL;
+   END IF;
+   WHILE l /= NIL REPEAT
+      IF r.LEN > 0 THEN
+         r := mk(r.ALL & ", ");
+      END IF;
+      r := mk(r.ALL & q & l.name.ALL & q);
+      l := l.next;
+   END REPEAT;
+   t.cname := mk(new_name("en_"));
+   put(out_globals, "static const char *const " & t.cname.ALL & "[] = {" & r.ALL & "};");
+   RETURN t.cname.ALL;
+END FUNC enum_names;
+
 % the subtype of an actual bound to a VAR, OUT or READONLY scalar formal (7.3)
 ABNORMAL FUNC actual_bounds(CONST ft : typ, CONST t : typ, CONST c : cons) => STRING[ASCII] IMPORTS ALL;
    IF NOT scalar_kind(ft) THEN
@@ -2244,11 +2365,15 @@ ABNORMAL FUNC builtin(READONLY name : STRING[ASCII], CONST tt : node, CONST args
       t := ty_int;
       RETURN "((rt_int)(" & a & "))";
    ELSEIF name = "FORMAT" THEN
+      % FORMAT(v, n, m) and FORMAT(v, n, m, o) (A.3): X_FORMAT if it does not fit
       CONST a := gexpr(args, ty_float, at);
       CONST n1 := gexpr(args.next, ty_int, at);
       CONST m1 := gexpr(args.next.next, ty_int, at);
       t := ty_string;
-      RETURN "rt_format(" & a & ", " & n1 & ", " & m1 & ")";
+      IF n = 4 THEN
+         RETURN "rt_r_format_e(" & a & ", " & n1 & ", " & m1 & ", " & gexpr(args.next.next.next, ty_int, at) & ")";
+      END IF;
+      RETURN "rt_r_format(" & a & ", " & n1 & ", " & m1 & ")";
    ELSEIF name = "ABS" THEN
       CONST a := gexpr(args, NIL, at);
       t := at;
@@ -2260,67 +2385,116 @@ ABNORMAL FUNC builtin(READONLY name : STRING[ASCII], CONST tt : node, CONST args
       IF tt = NIL THEN
          fail(line, "CNVT needs a target type in [ ]");
       END IF;
-      BEGIN
-         CONST a := gexpr(args, NIL, at);
-         IF tt.kind = s_string AND at.kind = t_int THEN
-            t := ty_string;
-            RETURN "rt_str_of_int(" & a & ")";
-         ELSEIF tt.kind = s_string AND at.kind = t_float THEN
-            t := ty_string;
-            RETURN "rt_str_of_float(" & a & ", 6)";
-         ELSEIF tt.kind = s_string AND at.kind = t_bool THEN
-            t := ty_string;
-            RETURN "((" & a & ") ? rt_str(" & q & "TRUE" & q & ", 4) : rt_str(" & q & "FALSE" & q & ", 5))";
-         ELSEIF tt.kind = s_int AND at.kind = t_string THEN
-            t := ty_int;
-            RETURN "rt_int_of_str(" & a & ")";
-         END IF;
-         fail(line, "this conversion is not handled yet");
-      END;
+      RETURN conversion(tt, args, line, t);
+   ELSEIF name = "WRITELN" AND n = 2 THEN
+      % WRITELN(file, string) (A.3)
+      CONST f := file_ref(args, TRUE, line);
+      CONST a := gexpr(args.next, ty_string, at);
+      check_type(at, ty_string, line);
+      RETURN "rt_r_fwriteln(" & f & ", " & a & ")";
    ELSEIF name = "WRITELN" THEN
       IF n = 0 THEN
          RETURN "rt_newline()";
       END IF;
       BEGIN
-         VAR last : node := args;
-         WHILE last.next /= NIL REPEAT
-            last := last.next;
-         END REPEAT;
-         BEGIN
-            CONST a := gexpr(last, ty_string, at);
-            check_type(at, ty_string, line);
-            RETURN "rt_putln(" & a & ")";
-         END;
+         CONST a := gexpr(args, ty_string, at);
+         check_type(at, ty_string, line);
+         RETURN "rt_putln(" & a & ")";
       END;
-   ELSEIF name = "WRITE" THEN
-      CONST a := gexpr(args.next, NIL, at);
-      IF at.kind = t_string THEN
-         RETURN "rt_put(" & a & ")";
-      ELSEIF at.kind = t_enum THEN
-         RETURN "rt_putc(" & a & ")";
+   ELSEIF name = "WRITE" OR name = "READ" THEN
+      % WRITE(file, component) and READ(file, variable) (A.2)
+      VAR ft : typ;
+      CONST f := file_ref(args, FALSE, line);
+      ft := peek_type(args);
+      IF name = "READ" THEN
+         VAR lv : text;
+         VAR lc : cons;
+         VAR ro : BOOL;
+         lvalue(args.next, lv, at, lc, ro);
+         IF ro THEN
+            fail(line, "READ needs a variable");
+         END IF;
+         check_type(at, str_elem(ft), line);
+         IF text_file(ft) THEN
+            RETURN assign_code(lv.ALL, at, "rt_r_fgetc(" & f & ")", lc);
+         END IF;
+         RETURN "rt_r_fread(" & f & ", &" & lv.ALL & ")";
       END IF;
-      fail(line, "WRITE writes a character or a string");
-   ELSEIF name = "READLN" THEN
+      BEGIN
+         CONST a := gexpr(args.next, str_elem(ft), at);
+         IF text_file(ft) AND at.kind = t_string THEN
+            % a string written to a text file, as its characters
+            RETURN "rt_r_fputs(" & f & ", " & a & ")";
+         END IF;
+         check_type(at, str_elem(ft), line);
+         IF text_file(ft) THEN
+            RETURN "rt_r_fputc(" & f & ", " & a & ")";
+         END IF;
+         RETURN "({ " & ctype(at) & " w_ = " & a & "; rt_r_fwrite(" & f & ", &w_); })";
+      END;
+   ELSEIF name = "READLN" AND n = 2 THEN
       VAR lv : text;
       VAR lc : cons;
       VAR ro : BOOL;
-      VAR last : node := args;
-      WHILE last.next /= NIL REPEAT
-         last := last.next;
-      END REPEAT;
-      lvalue(last, lv, at, lc, ro);
-      RETURN "rt_readln(&" & lv.ALL & ")";
+      CONST f := file_ref(args, TRUE, line);
+      lvalue(args.next, lv, at, lc, ro);
+      check_type(at, ty_string, line);
+      RETURN "rt_r_freadln(" & f & ", &" & lv.ALL & ")";
+   ELSEIF name = "READLN" THEN
+      % READLN(s) reads SYS_IN: X_EOF at its end, X_LN for a line of
+      % another length (C.14)
+      VAR lv : text;
+      VAR lc : cons;
+      VAR ro : BOOL;
+      lvalue(args, lv, at, lc, ro);
+      check_type(at, ty_string, line);
+      RETURN "rt_r_readln(&" & lv.ALL & ")";
+   ELSEIF name = "SIZELN" AND n = 1 THEN
+      t := ty_int;
+      RETURN "rt_r_fsizeln(" & file_ref(args, TRUE, line) & ")";
    ELSEIF name = "SIZELN" THEN
       t := ty_int;
       RETURN "rt_sizeln()";
+   ELSEIF name = "EOF" AND n = 1 THEN
+      t := ty_bool;
+      RETURN "rt_r_feof(" & file_ref(args, FALSE, line) & ")";
    ELSEIF name = "EOF" THEN
       t := ty_bool;
       RETURN "rt_eof()";
-   ELSEIF name = "SYS_IN" OR name = "SYS_OUT" THEN
-      t := ty_file;
-      RETURN "0";
-   ELSEIF name = "OPEN" OR name = "CLOSE" THEN
-      RETURN "(void)0";
+   ELSEIF name = "SYS_IN" THEN
+      t := ty_text_file;
+      RETURN "rt_r_sys_in()";
+   ELSEIF name = "SYS_OUT" THEN
+      t := ty_text_file;
+      RETURN "rt_r_sys_out()";
+   ELSEIF name = "OPEN" THEN
+      % OPEN(file, name, 'OLD or 'NEW) (C.14)
+      CONST f := file_ref(args, FALSE, line);
+      CONST nm := gexpr(args.next, ty_string, at);
+      CONST st := gexpr(args.next.next, file_state_type, at);
+      check_type(at, file_state_type, line);
+      RETURN "rt_r_open(" & f & ", " & nm & ", " & st & ")";
+   ELSEIF name = "CLOSE" THEN
+      % CLOSE(file, 'SAVE or 'DELETE)
+      CONST f := file_ref(args, FALSE, line);
+      CONST d := gexpr(args.next, file_disp_type, at);
+      check_type(at, file_disp_type, line);
+      RETURN "rt_r_close(" & f & ", " & d & ")";
+   ELSEIF name = "SIZE" OR name = "POSITION" THEN
+      t := ty_int;
+      IF name = "SIZE" THEN
+         RETURN "rt_r_fsize(" & file_ref(args, FALSE, line) & ")";
+      END IF;
+      RETURN "rt_r_fpos(" & file_ref(args, FALSE, line) & ")";
+   ELSEIF name = "SET_POSITION" THEN
+      CONST f := file_ref(args, FALSE, line);
+      CONST v := gexpr(args.next, ty_int, at);
+      check_type(at, ty_int, line);
+      RETURN "rt_r_fsetpos(" & f & ", " & v & ")";
+   ELSEIF name = "FILE_RENAME" THEN
+      CONST a := gexpr(args, ty_string, at);
+      CONST b := gexpr(args.next, ty_string, at);
+      RETURN "rt_r_rename(" & a & ", " & b & ")";
    ELSEIF name = "SEND" OR name = "RECEIVE" THEN
       VAR lv, dv : text;
       VAR lc : cons;

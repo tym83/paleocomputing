@@ -568,6 +568,39 @@ void rt_r_unlock(rt_lock *l);                   /* X_LOCK if not locked (C.12) *
 rt_act *rt_r_owner(rt_lock *l);
 int rt_r_can_send(rt_mbox *m);                  /* SEND_TEST, RECEIVE_TEST (C.11) */
 int rt_r_can_receive(rt_mbox *m);
+/* files (RED App. A, C.14): a physical file name is a file of the host's
+ * current directory (or of $RED_FILES); SYS_IN and SYS_OUT are the teletype */
+typedef struct rt_r_file rt_r_file;
+rt_r_file *rt_r_file_new(int access, int use, size_t esz, int text);
+rt_r_file *rt_r_sys_in(void);
+rt_r_file *rt_r_sys_out(void);
+int rt_r_file_access(rt_r_file *f);
+int rt_r_file_use(rt_r_file *f);
+void rt_r_open(rt_r_file *f, rstr name, int is_new);
+void rt_r_close(rt_r_file *f, int del);
+rt_int rt_r_fsize(rt_r_file *f);
+rt_int rt_r_fpos(rt_r_file *f);
+void rt_r_fsetpos(rt_r_file *f, rt_int p);
+int rt_r_feof(rt_r_file *f);
+void rt_r_fread(rt_r_file *f, void *dst);
+void rt_r_fwrite(rt_r_file *f, const void *src);
+int rt_r_fgetc(rt_r_file *f);
+void rt_r_fputc(rt_r_file *f, int c);
+void rt_r_fputs(rt_r_file *f, rstr s);
+void rt_r_freadln(rt_r_file *f, rstr *dst);
+void rt_r_fwriteln(rt_r_file *f, rstr s);
+rt_int rt_r_fsizeln(rt_r_file *f);
+void rt_r_rename(rstr from, rstr to);
+void rt_r_readln(rstr *dst);                    /* READLN(s): X_EOF, X_LN */
+/* conversions (A.3) */
+rstr rt_r_str_of_float(double v, rt_int prec);  /* n.nnnE+m */
+rstr rt_r_format(double v, rt_int n, rt_int m);  /* X_FORMAT */
+rstr rt_r_format_e(double v, rt_int n, rt_int m, rt_int o);
+rstr rt_r_str_pad(rstr s, rt_int len);           /* padded on the left */
+rstr rt_r_enum_image(const char *const *names, rt_int v);
+rt_int rt_r_enum_of_str(const char *const *names, rt_int n, rstr s);
+int rt_r_bool_of_str(rstr s);
+double rt_r_float_of_str(rstr s);
 int rt_r_set_le(yset a, yset b);               /* subset (C.9) */
 int rt_r_set_lt(yset a, yset b);               /* strict subset */
 void rt_r_xtag(void);                          /* raises X_TAG (C.6) */

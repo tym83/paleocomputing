@@ -255,4 +255,6 @@ VAR ty_lock, ty_latch, ty_act : typ;
 % ENUM['INPUT, 'OUTPUT, 'UPDATE], the access and use of a file (C.14)
 VAR file_mode_type : typ;
 VAR ty_send_st, ty_receive_st : typ;
+% FILE[ASCII], and the enumerations of OPEN, CLOSE and .ACCESS (C.14)
+VAR ty_text_file, file_state_type, file_disp_type, file_access_type : typ;
 VAR no_cons : cons;
