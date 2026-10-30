@@ -144,24 +144,66 @@
 
    -- representation specifications (RM79 13) do not change the meaning of a
    -- program here: they are read and ignored
-   procedure SKIP_REPRESENTATION is
+   -- representation specifications (RM79 13.1 - 13.5):
+   --    for T use packing;                  FLAG 1
+   --    for N use static_expression;        FLAG 2, the length in B
+   --    for T use aggregate;                FLAG 3, the codes in B
+   --    for T use record [at mod N;]        FLAG 4, the alignment in C,
+   --       C at U range L .. H; ...                 the components in D
+   --    end record;
+   --    for N use at static_expression;     FLAG 5, the address in B
+   procedure REP_SPEC(RES : out NODE) is
+      X, P, TAIL : NODE;
    begin
-      while not AT_KW("USE") loop
+      X := NN(N_REP, CUR_LINE);
+      EXPECT_KW("FOR");
+      EXPECT_ID(X.NAME);
+      EXPECT_KW("USE");
+      if AT_KW("PACKING") then
          SKIP;
-      end loop;
-      SKIP;
-      if AT_KW("RECORD") then
-         while not (AT_KW("END") and KIND_AT(1) = K_KW and TEXT_AT(1) = "RECORD") loop
+         X.FLAG := 1;
+      elsif AT_KW("AT") then
+         SKIP;
+         X.FLAG := 5;
+         EXPR(X.B);
+      elsif AT_KW("RECORD") then
+         SKIP;
+         X.FLAG := 4;
+         if AT_KW("AT") then
             SKIP;
+            EXPECT_KW("MOD");
+            EXPR(X.C);
+            EXPECT_OP(";");
+         end if;
+         while not AT_KW("END") loop
+            P := NN(N_COMP, CUR_LINE);
+            EXPECT_ID(P.NAME);
+            EXPECT_KW("AT");
+            EXPR(P.A);
+            EXPECT_KW("RANGE");
+            SIMPLE_EXPR(P.B);
+            EXPECT_OP("..");
+            SIMPLE_EXPR(P.C);
+            EXPECT_OP(";");
+            if TAIL = null then
+               X.D := P;
+            else
+               TAIL.NEXT := P;
+            end if;
+            TAIL := P;
          end loop;
-         SKIP;
-         SKIP;
+         EXPECT_KW("END");
+         EXPECT_KW("RECORD");
+      elsif AT_OP("(") then
+         X.FLAG := 3;
+         PRIMARY(X.B);
+      else
+         X.FLAG := 2;
+         EXPR(X.B);
       end if;
-      while not AT_OP(";") loop
-         SKIP;
-      end loop;
-      SKIP;
-   end SKIP_REPRESENTATION;
+      EXPECT_OP(";");
+      RES := X;
+   end REP_SPEC;
 
    procedure DECL_PART(RES : out NODE) is
       HEAD, TAIL, X, NAMES : NODE;
@@ -189,7 +231,8 @@
             UNIT_P(X);
             APPEND(HEAD, TAIL, X);
          elsif AT_KW("FOR") then
-            SKIP_REPRESENTATION;
+            REP_SPEC(X);
+            APPEND(HEAD, TAIL, X);
          elsif AT_KW("TYPE") or AT_KW("SUBTYPE") then
             TYPE_DECL(X);
             APPEND(HEAD, TAIL, X);

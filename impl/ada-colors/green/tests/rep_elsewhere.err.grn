@@ -1,0 +1,10 @@
+procedure MAIN is
+   type BITS is array (1 .. 8) of BOOLEAN;
+   procedure P is
+      for BITS use packing;
+   begin
+      null;
+   end P;
+begin
+   null;
+end MAIN;

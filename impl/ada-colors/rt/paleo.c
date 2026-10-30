@@ -3424,3 +3424,8 @@ void rt_g_receive_control(rt_int device, rt_int *data) {
   else if (device == 2) *data = rt_time();
   else *data = g_dev[device];
 }
+
+void rt_g_collect(rt_int *used, rt_int bits, rt_int limit) {
+  if (*used + bits > limit) rt_raise(rt_exc("STORAGE_OVERFLOW"));
+  *used += bits;
+}

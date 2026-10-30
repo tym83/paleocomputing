@@ -173,6 +173,7 @@
       DECLARED : BOOLEAN := FALSE;
    begin
       ANON_NODE := null;
+      PENDING_ADDRESSES(DECLS);
       while E /= null loop
          if (E.KIND /= N_VAR and E.KIND /= N_CONST) or else E.A /= ANON_NODE then
             ANON_NODE := null;
@@ -208,6 +209,7 @@
       C : CONS;
       ACC, V, X : TEXT;
       OK : BOOLEAN;
+      PA : ADDR;
    begin
       case E.KIND of
          when 42 =>
@@ -284,8 +286,19 @@
                STORAGE(E.NAME.all, T, ACC);
                COPY_CODE(T, V.all, X);
                EMIT(ACC.all & " = " & X.all & ";");
+               PA := PENDING_ADDRESS(E.NAME.all);
+               if PA /= null then
+                  PLACE_OBJECT(PA, Y, T, ACC);
+                  PLACE_COMPONENTS(PA, T, ACC.all, E.LINE);
+               end if;
             else
-               STORAGE(E.NAME.all, T, ACC);
+               PA := PENDING_ADDRESS(E.NAME.all);
+               if PA /= null and T.KIND /= T_ARRAY then
+                  -- the object is a place of the memory of the machine (RM79 13.5)
+                  PLACE_OBJECT(PA, Y, T, ACC);
+               else
+                  STORAGE(E.NAME.all, T, ACC);
+               end if;
                INIT_STORAGE(ACC.all, T, C);
                if E.B /= null then
                   if RESTRICTED_HERE(T) then
@@ -305,10 +318,16 @@
                   ASSIGN_CODE(ACC.all, T, V.all, C, X);
                   EMIT(X.all);
                end if;
+               if PA /= null and T.KIND = T_ARRAY then
+                  PLACE_OBJECT(PA, Y, T, ACC);
+                  PLACE_COMPONENTS(PA, T, ACC.all, E.LINE);
+               end if;
             end if;
             Y.T := T;
             Y.C := C;
-            BIND(Y, ACC);
+            if PA = null or T.KIND = T_ARRAY then
+               BIND(Y, ACC);
+            end if;
             DEFINE(Y, E.LINE);
          when 41 =>
             RESOLVE_OBJECT_TYPE(E.A, T, C);
@@ -400,6 +419,8 @@
             USE_CLAUSE(E);
          when 56 =>
             PRAGMA_DECL(E);
+         when 38 =>
+            REPRESENTATION(E);
          when others =>
             OTHER_DECL(E);
       end case;
@@ -854,9 +875,23 @@
    -- UNSAFE_CONVERSION (RM79 13.10): the storage of a value of type S read
    -- as a value of type T; the bits that T has more than S are zero
    procedure UNSAFE_BITS(S, T : TYP; V, CT : STRING; R : out TEXT) is
+      PS : REP := REP_OF(S);
+      PT : REP := REP_OF(T);
+      SRC, DECODE : TEXT;
    begin
-      R := MK("({ " & CT & " r_; memset(&r_, 0, sizeof r_); __typeof__(" & V & ") s_ = " & V
-              & "; memcpy(&r_, &s_, sizeof r_ < sizeof s_ ? sizeof r_ : sizeof s_); r_; })");
+      -- the codes of an enumeration type are its storage (RM79 13.3)
+      SRC := MK("__typeof__(" & V & ") s_ = " & V & ";");
+      if PS /= null and then PS.CODES /= null then
+         SRC := MK("static const rt_int sc_[] = {" & PS.CODES.all & "}; rt_int s_ = sc_[" & V & "];");
+      end if;
+      DECODE := MK("");
+      if PT /= null and then PT.CODES /= null then
+         DECODE := MK(" { static const rt_int tc_[] = {" & PT.CODES.all & "}; rt_int b_ = 0; memcpy(&b_, &r_, "
+                      & "sizeof r_); for (int k_ = 0; k_ < (int)(sizeof tc_ / sizeof tc_[0]); k_++) if (tc_[k_] == b_) "
+                      & "r_ = (" & CT & ")k_; }");
+      end if;
+      R := MK("({ " & CT & " r_; memset(&r_, 0, sizeof r_); " & SRC.all
+              & " memcpy(&r_, &s_, sizeof r_ < sizeof s_ ? sizeof r_ : sizeof s_);" & DECODE.all & " r_; })");
    end UNSAFE_BITS;
 
    -- the type a statement T(...) names, if T is a type: a code statement

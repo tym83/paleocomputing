@@ -369,6 +369,8 @@ void rt_g_bind_interrupt(rt_int addr, rt_entry *e, rt_act *owner);
 void rt_g_interrupt(rt_int addr);
 void rt_g_send_control(rt_int device, rt_int *data);
 void rt_g_receive_control(rt_int device, rt_int *data);
+/* the bits used of a collection of LIMIT bits: STORAGE_OVERFLOW beyond (RM79 13.2) */
+void rt_g_collect(rt_int *used, rt_int bits, rt_int limit);
 
 #endif
 

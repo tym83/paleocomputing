@@ -1187,6 +1187,11 @@
                else
                   L := MK("NULL");
                end if;
+               if TASK_LENGTH(Y) > 0 then
+                  -- an activation has the bits its length specification gives (RM79 13.2)
+                  EMIT("if ((rt_int)sizeof(struct " & Y.CNAME.all & "bodyfr) * 8 > " & INTEGER'REP(TASK_LENGTH(Y))
+                       & ") rt_raise(rt_exc(" & Q & "STORAGE_OVERFLOW" & Q & "));");
+               end if;
                if Y.C = null then
                   ACT_PATH(Y, A);
                   EMIT("rt_create(&" & A.all & ", &" & D.all & ", " & Y.CNAME.all & "run, " & L.all & ");");

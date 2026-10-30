@@ -1245,6 +1245,18 @@
          MEMBER_ATTR(E, T, R);
          return;
       end if;
+      if A = "ADDRESS" and E.A.KIND = N_NAME then
+         -- an address given by an address specification (RM79 13.5)
+         Y := LOOKUP(E.A.NAME.all);
+         if Y /= null then
+            V := ADDRESS_OF(Y);
+            if V /= null then
+               T := TY_INT;
+               R := V;
+               return;
+            end if;
+         end if;
+      end if;
       if A = "ADDRESS" and IS_OBJECT(E.A) then
          -- the address of an object, an integer in linear memory (RM79 App. A)
          LVALUE(E.A, V, ATY, C, RO);
@@ -1419,7 +1431,27 @@
    -- the bits of an object of type T: those of its representation
    procedure TYPE_BITS(T : TYP; C : CONS; R : out TEXT) is
       CT : TEXT;
+      P : REP := REP_OF(T);
+      N : INTEGER;
    begin
+      if P /= null and T.KIND /= T_PTR then
+         -- a length, a layout or packing (RM79 13.1, 13.2, 13.4)
+         MIN_BITS(T, C, N);
+         if (P.BITS > 0 or P.HAS_LAYOUT) or (P.PACKED and N >= 0) then
+            R := MK("((rt_int)" & INTEGER'REP(N) & ")");
+            return;
+         elsif P.PACKED and T.KIND = T_ARRAY then
+            if not BOUNDED(C) then
+               FAIL(0, "SIZE of an array type needs its bounds (RM79 App. A)");
+            end if;
+            MIN_BITS(T.ELEM, T.ELEMCONS, N);
+            if N >= 0 then
+               R := MK("({ rt_int l_ = " & C.LO.all & ", h_ = " & C.HI.all & "; (h_ >= l_ ? h_ - l_ + 1 : 0) * "
+                       & INTEGER'REP(N) & "; })");
+               return;
+            end if;
+         end if;
+      end if;
       if T.KIND = T_ARRAY then
          if not BOUNDED(C) then
             FAIL(0, "SIZE of an array type needs its bounds (RM79 App. A)");
@@ -1447,8 +1479,18 @@
 
    procedure OBJECT_BITS(T : TYP; V : STRING; R : out TEXT) is
       CT, ET : TEXT;
+      P : REP := REP_OF(T);
+      N : INTEGER := -1;
    begin
-      if T.KIND = T_ARRAY then
+      if P /= null and T.KIND = T_ARRAY then
+         if P.PACKED then
+            MIN_BITS(T.ELEM, T.ELEMCONS, N);
+         end if;
+      end if;
+      if N >= 0 then
+         CTYPE(T, CT);
+         R := MK("({ " & CT.all & " sz_ = " & V & "; G_CNT(sz_) * " & INTEGER'REP(N) & "; })");
+      elsif T.KIND = T_ARRAY then
          CTYPE(T, CT);
          ELEM_CTYPE(T.ELEM, ET);
          R := MK("({ " & CT.all & " sz_ = " & V & "; G_CNT(sz_) * (rt_int)sizeof(" & ET.all & ") * 8; })");
@@ -1797,7 +1839,8 @@
    procedure ALLOCATOR(E : NODE; WANT : TYP; T : out TYP; R : out TEXT) is
       Y : SYM := LOOKUP(E.NAME.all);
       TARGET, VT : TYP;
-      CT, PT, CELL, V, X : TEXT;
+      CT, PT, CELL, V, X, B : TEXT;
+      P : REP;
    begin
       if WANT = null or else WANT.KIND /= T_PTR then
          FAIL(E.LINE, "the access type of this allocator is not known here");
@@ -1829,6 +1872,12 @@
       CHECK_TYPE(VT, TARGET, E.LINE);
       COPY_CODE(TARGET, V.all, X);
       T := WANT;
+      P := REP_OF(WANT);
+      if P /= null and then P.COLL /= null then
+         -- the collection has the bits its length specification gives (RM79 13.2)
+         OBJECT_BITS(TARGET, "(*" & CELL.all & ")", B);
+         X := MK(X.all & "; rt_g_collect(&" & P.COLL.all & ", " & B.all & ", " & INTEGER'REP(P.BITS) & ")");
+      end if;
       R := MK("({ " & CT.all & " *" & CELL.all & " = rt_alloc(sizeof(" & CT.all & ")); *" & CELL.all
               & " = " & X.all & "; (" & PT.all & ")" & CELL.all & "; })");
    end ALLOCATOR;

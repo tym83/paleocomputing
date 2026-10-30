@@ -62,6 +62,9 @@ procedure GREENC is
    N_ACCEPT   : constant INTEGER := 34;
    N_SELECTS  : constant INTEGER := 35;
    N_ABORT    : constant INTEGER := 36;
+   -- a representation specification (RM79 13): FLAG 1 packing, 2 length,
+   -- 3 enumeration codes, 4 record layout, 5 address
+   N_REP      : constant INTEGER := 38;
 
    -- declarations
    N_VAR      : constant INTEGER := 40;
@@ -285,6 +288,42 @@ procedure GREENC is
    end record;
    type SYM_ARRAY is array (INTEGER) of SYM;
 
+   -- the representation given to a type (RM79 13.1 - 13.4): packing, a
+   -- length in bits, the codes of an enumeration type, a record layout;
+   -- for an access type the length is that of its collection, whose use
+   -- the C counter COLL holds
+   type PLACE_REC;
+   type PLACE is access PLACE_REC;
+   type PLACE_REC is record
+      NAME : TEXT;
+      UNIT, FIRST_BIT, LAST_BIT : INTEGER;
+      NEXT : PLACE;
+   end record;
+   type REP_REC;
+   type REP is access REP_REC;
+   type REP_REC is record
+      T : TYP;
+      PACKED : BOOLEAN;
+      BITS : INTEGER;
+      CODES : TEXT;
+      MAX_CODE : INTEGER;
+      HAS_LAYOUT : BOOLEAN;
+      LAYOUT : PLACE;
+      LAYOUT_BITS : INTEGER;
+      COLL : TEXT;
+      NEXT : REP;
+   end record;
+   -- an object, a subprogram or a module at an address (RM79 13.5)
+   type ADDR_REC;
+   type ADDR is access ADDR_REC;
+   type ADDR_REC is record
+      Y : SYM;
+      NAME : TEXT;
+      DEPTH : INTEGER;
+      E : NODE;
+      NEXT : ADDR;
+   end record;
+
    type LINES_REC;
    type LINES is access LINES_REC;
    type LINES_REC is record
@@ -423,6 +462,8 @@ procedure GREENC is
    CALL_TASK_IX : NODE;
    -- pragma INTERFACE seen in the statements of the body being parsed (RM79 13.9)
    SAW_INTERFACE : BOOLEAN := FALSE;
+   REPS : REP;
+   ADDRS : ADDR;
    -- the subprogram body being translated
    CUR_BODY : NODE;
    -- the language it names

@@ -979,8 +979,25 @@
    -- POSITION, FIRST_BIT and LAST_BIT of component F of record type RT
    procedure COMPONENT_PLACE(RT : TYP; F : FIELD; A, CT : STRING; R : out TEXT) is
       BITS : TEXT;
+      P : REP := REP_OF(RT);
+      PL : PLACE;
    begin
-      if A = "POSITION" then
+      if P /= null then
+         PL := P.LAYOUT;
+      end if;
+      while PL /= null and then PL.NAME.all /= F.NAME.all loop
+         PL := PL.NEXT;
+      end loop;
+      if PL /= null then
+         -- the place given by the record representation (RM79 13.4)
+         if A = "POSITION" then
+            R := MK("((rt_int)" & INTEGER'REP(PL.UNIT) & ")");
+         elsif A = "FIRST_BIT" then
+            R := MK("((rt_int)" & INTEGER'REP(PL.FIRST_BIT) & ")");
+         else
+            R := MK("((rt_int)" & INTEGER'REP(PL.LAST_BIT) & ")");
+         end if;
+      elsif A = "POSITION" then
          R := MK("((rt_int)offsetof(" & CT & ", " & C_FIELD(F.NAME.all) & "))");
       elsif A = "FIRST_BIT" then
          R := MK("((rt_int)0)");

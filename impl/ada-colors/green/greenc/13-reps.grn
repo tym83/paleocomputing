@@ -1,0 +1,560 @@
+   -- ---- representation specifications (RM79 13) ---------------------------------------
+   --
+   -- The data keep the C representation of the host; a representation
+   -- specification is checked against the values of the type and gives
+   -- what the attributes SIZE, POSITION, FIRST_BIT and LAST_BIT report, the
+   -- codes UNSAFE_CONVERSION sees, the budget of a collection or of a task
+   -- activation, and the place of an object in the memory of the
+   -- simulated machine (RM79 13.5, 13.8).
+
+   -- the representation of type T: its own, else that of the type it
+   -- derives from (RM79 13.6)
+   function REP_OF(T : TYP) return REP is
+      R : REP := REPS;
+   begin
+      if T = null then
+         return null;
+      end if;
+      while R /= null loop
+         if R.T = T then
+            return R;
+         end if;
+         R := R.NEXT;
+      end loop;
+      if T.VIEW_OF /= null then
+         return REP_OF(T.VIEW_OF);
+      elsif T.PARENT /= null then
+         return REP_OF(T.PARENT);
+      end if;
+      return null;
+   end REP_OF;
+
+   procedure OWN_REP(T : TYP; R : out REP) is
+   begin
+      R := REPS;
+      while R /= null and then R.T /= T loop
+         R := R.NEXT;
+      end loop;
+      if R = null then
+         R := new REP_REC(T, FALSE, 0, null, 0, FALSE, null, 0, null, REPS);
+         REPS := R;
+      end if;
+   end OWN_REP;
+
+   -- the number of bits that N distinct values need
+   function BITS_FOR(N : INTEGER) return INTEGER is
+      B : INTEGER := 0;
+      V : INTEGER := 1;
+   begin
+      while V < N loop
+         if V > INTEGER'LAST / 2 then
+            return B + 1;
+         end if;
+         V := V * 2;
+         B := B + 1;
+      end loop;
+      if B = 0 then
+         return 1;
+      end if;
+      return B;
+   end BITS_FOR;
+
+   -- the fewest bits a value of type T with constraint C needs, -1 when it
+   -- is not known at compile time
+   procedure MIN_BITS(T : TYP; C : CONS; R : out INTEGER) is
+      P : REP := REP_OF(T);
+      F : FIELD;
+      N, E : INTEGER;
+      LO, HI : INTEGER;
+   begin
+      R := -1;
+      if P /= null and T.KIND /= T_PTR then
+         if P.BITS > 0 then
+            R := P.BITS;
+            return;
+         elsif P.HAS_LAYOUT then
+            R := P.LAYOUT_BITS;
+            return;
+         end if;
+      end if;
+      case T.KIND of
+         when 2 =>
+            R := 1;
+         when 11 =>
+            R := 8;
+         when 4 =>
+            if P /= null and then P.CODES /= null then
+               R := BITS_FOR(P.MAX_CODE + 1);
+            else
+               R := BITS_FOR(LIST_LEN(T.LITS));
+            end if;
+         when 1 =>
+            if C /= null and then C.HASM then
+               LO := C.MLO;
+               HI := C.MHI;
+               if LO >= 0 then
+                  R := BITS_FOR(HI + 1);
+               else
+                  -- two's complement: a sign bit and the magnitude
+                  E := HI;
+                  if -LO - 1 > E then
+                     E := -LO - 1;
+                  end if;
+                  R := BITS_FOR(E + 1) + 1;
+               end if;
+            elsif ROOT(T) = TY_SHORT then
+               R := 32;
+            else
+               R := 64;
+            end if;
+         when 3 =>
+            if ROOT(T) = TY_SFLOAT or (T.NDIGITS > 0 and T.NDIGITS <= 6) then
+               R := 32;
+            else
+               R := 64;
+            end if;
+         when 8 =>
+            R := 64;
+         when 7 =>
+            if P /= null and then P.PACKED then
+               F := T.FIELDS;
+               N := 0;
+               while F /= null loop
+                  MIN_BITS(F.T, F.C, E);
+                  if E < 0 then
+                     return;
+                  end if;
+                  N := N + E;
+                  F := F.NEXT;
+               end loop;
+               R := N;
+            end if;
+         when 6 =>
+            if C /= null and then (C.HASM and T.DIMS = 1) then
+               if P /= null and then P.PACKED then
+                  MIN_BITS(T.ELEM, T.ELEMCONS, E);
+               else
+                  ELEM_BITS(T.ELEM, T.ELEMCONS, E);
+               end if;
+               if E >= 0 then
+                  N := C.MHI - C.MLO + 1;
+                  if N < 0 then
+                     N := 0;
+                  end if;
+                  R := N * E;
+               end if;
+            end if;
+         when others =>
+            null;
+      end case;
+   end MIN_BITS;
+
+   -- the bits a component of an array takes unpacked: its C storage
+   procedure ELEM_BITS(T : TYP; C : CONS; R : out INTEGER) is
+   begin
+      if T.KIND = T_CHAR or T.KIND = T_BOOL or T.KIND = T_ENUM then
+         R := 8;
+         if T.KIND = T_ENUM and then LIST_LEN(T.LITS) > 256 then
+            R := 16;
+         end if;
+      elsif T.KIND = T_INT then
+         R := 64;
+      elsif T.KIND = T_FLOAT or T.KIND = T_FIXED or T.KIND = T_PTR then
+         R := 64;
+      else
+         R := -1;
+      end if;
+   end ELEM_BITS;
+
+   -- for A use at N, for each A declared in DECLS: an object is placed in
+   -- the memory of the machine when it is declared (RM79 13.5)
+   procedure PENDING_ADDRESSES(DECLS : NODE) is
+      E : NODE := DECLS;
+   begin
+      while E /= null loop
+         if E.KIND = N_REP and then E.FLAG = 5 then
+            ADDRS := new ADDR_REC(null, E.NAME, DEPTH, E, ADDRS);
+         end if;
+         E := E.NEXT;
+      end loop;
+   end PENDING_ADDRESSES;
+
+   -- the address specification waiting for an object NAME declared here
+   function PENDING_ADDRESS(NAME : STRING) return ADDR is
+      A : ADDR := ADDRS;
+   begin
+      while A /= null loop
+         if A.Y = null and then (A.DEPTH = DEPTH and A.NAME.all = NAME) then
+            return A;
+         end if;
+         A := A.NEXT;
+      end loop;
+      return null;
+   end PENDING_ADDRESS;
+
+   -- the address given to Y, as C text, or null
+   function ADDRESS_OF(Y : SYM) return TEXT is
+      A : ADDR := ADDRS;
+   begin
+      while A /= null loop
+         if (A.Y = Y and Y /= null) and then A.NAME.all /= "$LENGTH" then
+            return A.E.TAG;
+         end if;
+         A := A.NEXT;
+      end loop;
+      return null;
+   end ADDRESS_OF;
+
+   -- the static address of an address specification, kept in its TAG
+   procedure STATIC_ADDRESS(E : NODE) is
+      V : INTEGER;
+      OK : BOOLEAN;
+   begin
+      if E.TAG /= null then
+         return;
+      end if;
+      MANIFEST(E.B, V, OK);
+      if not OK then
+         FAIL(E.LINE, "an address is a static expression (RM79 13.5)");
+      end if;
+      if V < 0 or V >= CONF_MEMORY_SIZE then
+         FAIL(E.LINE, "the address " & INTEGER'REP(V) & " is outside the memory of the machine, 0 .. "
+              & INTEGER'REP(CONF_MEMORY_SIZE - 1) & " (RM79 13.5, 13.7)");
+      end if;
+      E.TAG := MK("((rt_int)" & INTEGER'REP(V) & "LL)");
+   end STATIC_ADDRESS;
+
+   -- an object declared with an address: the storage of a scalar or a
+   -- record is a place of the memory; an array keeps its descriptor and
+   -- has its components there. ACC becomes the object.
+   procedure PLACE_OBJECT(A : ADDR; Y : SYM; T : TYP; ACC : in out TEXT) is
+      CT, X : TEXT;
+   begin
+      STATIC_ADDRESS(A.E);
+      A.Y := Y;
+      if T.KIND = T_ARRAY then
+         return;
+      end if;
+      CTYPE(T, CT);
+      NEW_NAME("at_", X);
+      if IN_FUNC then
+         PUT_TO(FIELDS_BUF, " " & CT.all & " *" & X.all & ";");
+         EMIT("F->" & X.all & " = (" & CT.all & " *)rt_g_mem(" & A.E.TAG.all & ", sizeof(" & CT.all & "));");
+         ACC := MK("(*F->" & X.all & ")");
+         Y.BYREF := TRUE;
+         Y.LEVEL := CUR_LEVEL;
+         Y.ACCESS_PATH := X;
+      else
+         PUT_TO(OUT_GLOBALS, "static " & CT.all & " *g_" & X.all & ";");
+         EMIT("g_" & X.all & " = (" & CT.all & " *)rt_g_mem(" & A.E.TAG.all & ", sizeof(" & CT.all & "));");
+         ACC := MK("(*g_" & X.all & ")");
+         Y.LEVEL := 0;
+         Y.ACCESS_PATH := ACC;
+      end if;
+   end PLACE_OBJECT;
+
+   -- the components of an array object with an address move to the memory
+   procedure PLACE_COMPONENTS(A : ADDR; T : TYP; ACC : STRING; LINE : INTEGER) is
+   begin
+      if T.DIMS > 1 then
+         FAIL(LINE, "an address specification for a multi-dimensional array is not handled here");
+      end if;
+      EMIT("{ size_t n_ = (size_t)G_CNT(" & ACC & ") * sizeof(*" & ACC & ".p); unsigned char *m_ = rt_g_mem("
+           & A.E.TAG.all & ", (rt_int)n_); memcpy(m_, " & ACC & ".p, n_); " & ACC & ".p = (void *)m_; }");
+   end PLACE_COMPONENTS;
+
+   procedure REPRESENTATION(E : NODE) is
+      Y : SYM := LOOKUP(E.NAME.all);
+      P : REP;
+      N, M : INTEGER;
+      OK : BOOLEAN;
+   begin
+      if Y = null then
+         FAIL(E.LINE, E.NAME.all & " is not declared");
+      end if;
+      if Y.KIND = Y_ENTRY and then (CUR_TASK /= null and SAME_TASK(Y.MEMBERS, CUR_TASK)) then
+         -- the body of a task gives the addresses of its entries (RM79 13.5.1)
+         null;
+      elsif Y.DEPTH /= DEPTH or Y.FROM_USE then
+         FAIL(E.LINE, "a representation specification applies to an entity of the same declarative part (RM79 13)");
+      end if;
+      if E.FLAG = 5 then
+         ADDRESS_SPEC(E, Y);
+         return;
+      end if;
+      if E.FLAG = 2 and Y.KIND = Y_TASK then
+         -- the bits of one activation of the task (RM79 13.2)
+         MANIFEST(E.B, N, OK);
+         if not OK or else N <= 0 then
+            FAIL(E.LINE, "a length specification is a positive static expression (RM79 13.2)");
+         end if;
+         ADDRS := new ADDR_REC(Y, MK("$LENGTH"), N, E, ADDRS);
+         return;
+      end if;
+      if Y.KIND /= Y_TYPE then
+         FAIL(E.LINE, "this representation specification applies to a type (RM79 13.1 - 13.4)");
+      end if;
+      OWN_REP(Y.T, P);
+      case E.FLAG of
+         when 1 =>
+            if Y.T.KIND /= T_ARRAY and Y.T.KIND /= T_RECORD then
+               FAIL(E.LINE, "packing applies to array and record types (RM79 13.1)");
+            elsif P.PACKED then
+               FAIL(E.LINE, "a type has one representation: " & E.NAME.all & " is already packed (RM79 13.6)");
+            end if;
+            P.PACKED := TRUE;
+         when 2 =>
+            if P.BITS > 0 then
+               FAIL(E.LINE, "a type has one representation: the length of " & E.NAME.all
+                    & " is already given (RM79 13.6)");
+            end if;
+            MANIFEST(E.B, N, OK);
+            if not OK or else N <= 0 then
+               FAIL(E.LINE, "a length specification is a positive static expression (RM79 13.2)");
+            end if;
+            if Y.T.KIND = T_PTR then
+               -- the bits of the collection of the access type
+               NEW_NAME("coll_", P.COLL);
+               PUT_TO(OUT_GLOBALS, "static rt_int " & P.COLL.all & ";");
+               EMIT(P.COLL.all & " = 0;");
+            else
+               MIN_BITS(Y.T, Y.C, M);
+               if M > N then
+                  FAIL(E.LINE, "the values of " & E.NAME.all & " need " & INTEGER'REP(M) & " bits, more than "
+                       & INTEGER'REP(N) & " (RM79 13.2)");
+               end if;
+            end if;
+            P.BITS := N;
+         when 3 =>
+            if Y.T.KIND /= T_ENUM then
+               FAIL(E.LINE, "codes are given to the literals of an enumeration type (RM79 13.3)");
+            elsif P.CODES /= null then
+               FAIL(E.LINE, "a type has one representation: the codes of " & E.NAME.all
+                    & " are already given (RM79 13.6)");
+            end if;
+            ENUM_CODES(E, Y.T, P);
+         when others =>
+            if Y.T.KIND /= T_RECORD then
+               FAIL(E.LINE, "a record representation applies to a record type (RM79 13.4)");
+            elsif P.HAS_LAYOUT then
+               FAIL(E.LINE, "a type has one representation: the layout of " & E.NAME.all
+                    & " is already given (RM79 13.6)");
+            end if;
+            RECORD_LAYOUT(E, Y.T, P);
+      end case;
+   end REPRESENTATION;
+
+   -- for T use (1, 4, 9): distinct static codes that keep the order of the
+   -- literals (RM79 13.3)
+   procedure ENUM_CODES(E : NODE; T : TYP; P : REP) is
+      IT : NODE;
+      N : INTEGER := LIST_LEN(T.LITS);
+      K, V, POS, PREV : INTEGER := 0;
+      OK : BOOLEAN;
+      S : TEXT := MK("");
+      CODES : array (0 .. N - 1) of INTEGER;
+      SEEN : array (0 .. N - 1) of BOOLEAN;
+   begin
+      for I in 0 .. N - 1 loop
+         SEEN(I) := FALSE;
+      end loop;
+      if E.B.KIND = N_AGG then
+         IT := E.B.A;
+      else
+         FAIL(E.LINE, "the codes of an enumeration type are an aggregate (RM79 13.3)");
+      end if;
+      while IT /= null loop
+         if IT.A = null then
+            POS := K;
+         elsif IT.A.FLAG = 1 or IT.A.NEXT /= null or IT.A.B /= null then
+            FAIL(E.LINE, "each literal of " & E.NAME.all & " gets one code (RM79 13.3)");
+         else
+            STATIC_CHOICE(IT.A.A, POS, OK);
+            if not OK then
+               FAIL(E.LINE, "the choices are the literals of " & E.NAME.all & " (RM79 13.3)");
+            end if;
+         end if;
+         if POS < 0 or POS >= N then
+            FAIL(E.LINE, E.NAME.all & " has " & INTEGER'REP(N) & " literals (RM79 13.3)");
+         elsif SEEN(POS) then
+            FAIL(E.LINE, "a literal gets one code (RM79 13.3)");
+         end if;
+         MANIFEST(IT.B, V, OK);
+         if not OK then
+            FAIL(E.LINE, "the codes are static integers (RM79 13.3)");
+         end if;
+         CODES(POS) := V;
+         SEEN(POS) := TRUE;
+         K := K + 1;
+         IT := IT.NEXT;
+      end loop;
+      if K /= N then
+         FAIL(E.LINE, "every literal of " & E.NAME.all & " gets a code (RM79 13.3)");
+      end if;
+      for I in 0 .. N - 1 loop
+         if CODES(I) < 0 then
+            FAIL(E.LINE, "the codes of an enumeration type are not negative here (RM79 13.3)");
+         elsif I > 0 then
+            if CODES(I) <= PREV then
+               FAIL(E.LINE, "the codes are distinct and in the order of the literals (RM79 13.3)");
+            end if;
+         end if;
+         PREV := CODES(I);
+         if I > 0 then
+            S := MK(S.all & ", ");
+         end if;
+         S := MK(S.all & INTEGER'REP(CODES(I)) & "LL");
+      end loop;
+      P.CODES := S;
+      P.MAX_CODE := PREV;
+   end ENUM_CODES;
+
+   -- for T use record at mod A; C at U range L .. H; ... end record:
+   -- storage units and bits numbered from 0 (RM79 13.4)
+   procedure RECORD_LAYOUT(E : NODE; T : TYP; P : REP) is
+      X : NODE := E.D;
+      F, G : FIELD;
+      U, L, H, M, TOP, AL : INTEGER := 0;
+      OK, OK2, OK3 : BOOLEAN;
+      Q, Q2, TAIL : PLACE;
+      SU : INTEGER := CONF_STORAGE_UNIT;
+   begin
+      if E.C /= null then
+         MANIFEST(E.C, AL, OK);
+         if not OK or else AL <= 0 then
+            FAIL(E.LINE, "the alignment at mod N is a positive static expression (RM79 13.4)");
+         end if;
+      end if;
+      while X /= null loop
+         F := T.FIELDS;
+         while F /= null and then F.NAME.all /= X.NAME.all loop
+            F := F.NEXT;
+         end loop;
+         if F = null then
+            FAIL(X.LINE, E.NAME.all & " has no component " & X.NAME.all & " (RM79 13.4)");
+         end if;
+         Q := P.LAYOUT;
+         while Q /= null loop
+            if Q.NAME.all = X.NAME.all then
+               FAIL(X.LINE, "the place of " & X.NAME.all & " is given twice (RM79 13.4)");
+            end if;
+            Q := Q.NEXT;
+         end loop;
+         MANIFEST(X.A, U, OK);
+         MANIFEST(X.B, L, OK2);
+         MANIFEST(X.C, H, OK3);
+         if not (OK and OK2 and OK3) then
+            FAIL(X.LINE, "the place of a component is given by static expressions (RM79 13.4)");
+         elsif U < 0 or L < 0 or H < L then
+            FAIL(X.LINE, "a component is at a storage unit from 0, over a range of bits from 0 (RM79 13.4)");
+         end if;
+         MIN_BITS(F.T, F.C, M);
+         if M > H - L + 1 then
+            FAIL(X.LINE, "the values of " & X.NAME.all & " need " & INTEGER'REP(M) & " bits, more than "
+                 & INTEGER'REP(H - L + 1) & " (RM79 13.4)");
+         end if;
+         Q := new PLACE_REC(X.NAME, U, L, H, null);
+         -- components overlap only in different variants (RM79 13.4)
+         Q2 := P.LAYOUT;
+         while Q2 /= null loop
+            if U * SU + L <= Q2.UNIT * SU + Q2.LAST_BIT and then Q2.UNIT * SU + Q2.FIRST_BIT <= U * SU + H then
+               G := T.FIELDS;
+               while G.NAME.all /= Q2.NAME.all loop
+                  G := G.NEXT;
+               end loop;
+               if F.GUARD = null or G.GUARD = null then
+                  FAIL(X.LINE, "components " & Q2.NAME.all & " and " & X.NAME.all & " overlap (RM79 13.4)");
+               end if;
+            end if;
+            Q2 := Q2.NEXT;
+         end loop;
+         if TAIL = null then
+            P.LAYOUT := Q;
+         else
+            TAIL.NEXT := Q;
+         end if;
+         TAIL := Q;
+         if U * SU + H + 1 > TOP then
+            TOP := U * SU + H + 1;
+         end if;
+         X := X.NEXT;
+      end loop;
+      -- the other components follow, each from a storage unit of its own
+      F := T.FIELDS;
+      while F /= null loop
+         Q := P.LAYOUT;
+         while Q /= null and then Q.NAME.all /= F.NAME.all loop
+            Q := Q.NEXT;
+         end loop;
+         if Q = null then
+            MIN_BITS(F.T, F.C, M);
+            if M < 0 then
+               M := 64;
+            end if;
+            U := (TOP + SU - 1) / SU;
+            Q := new PLACE_REC(F.NAME, U, 0, M - 1, null);
+            if TAIL = null then
+               P.LAYOUT := Q;
+            else
+               TAIL.NEXT := Q;
+            end if;
+            TAIL := Q;
+            TOP := U * SU + M;
+         end if;
+         F := F.NEXT;
+      end loop;
+      P.HAS_LAYOUT := TRUE;
+      P.LAYOUT_BITS := ((TOP + SU - 1) / SU) * SU;
+   end RECORD_LAYOUT;
+
+   -- for X use at N (RM79 13.5): an object (placed when it was declared),
+   -- the code of a subprogram or a module, or an interrupt for an entry
+   procedure ADDRESS_SPEC(E : NODE; Y : SYM) is
+      A : ADDR := ADDRS;
+      V, ACT : TEXT;
+   begin
+      STATIC_ADDRESS(E);
+      while A /= null and then A.E /= E loop
+         A := A.NEXT;
+      end loop;
+      if A = null then
+         A := new ADDR_REC(null, E.NAME, DEPTH, E, ADDRS);
+         ADDRS := A;
+      end if;
+      if Y.KIND = Y_VAR then
+         if A.Y /= Y then
+            FAIL(E.LINE, "the address of " & E.NAME.all & " is given in the declarative part that declares it (RM79 13.5)");
+         end if;
+      elsif Y.KIND = Y_PROC or Y.KIND = Y_FUNC or Y.KIND = Y_PACKAGE or Y.KIND = Y_TASK then
+         A.Y := Y;
+      elsif Y.KIND = Y_ENTRY then
+         -- an interrupt acts as an entry call (RM79 13.5.1)
+         if Y.PARAMS /= null then
+            FAIL(E.LINE, "the interrupts of this machine supply no control information: an interrupt entry "
+                 & "has no parameters (RM79 13.5.1)");
+         elsif Y.C /= null or Y.MEMBERS = null then
+            FAIL(E.LINE, "an interrupt is linked to a single entry of a single task (RM79 13.5.1)");
+         elsif Y.MEMBERS.C /= null then
+            FAIL(E.LINE, "an interrupt is linked to a single entry of a single task (RM79 13.5.1)");
+         end if;
+         A.Y := Y;
+         ENTRY_PATH(Y, "", V);
+         ACT_PATH(Y.MEMBERS, ACT);
+         EMIT("rt_g_bind_interrupt(" & E.TAG.all & ", &" & V.all & ", &" & ACT.all & ");");
+      else
+         FAIL(E.LINE, "an address is given to a variable, a subprogram, a module or an entry (RM79 13.5)");
+      end if;
+   end ADDRESS_SPEC;
+
+   -- the bits of one activation of task Y given by a length specification, or 0
+   function TASK_LENGTH(Y : SYM) return INTEGER is
+      A : ADDR := ADDRS;
+   begin
+      while A /= null loop
+         if A.Y = Y and then A.NAME.all = "$LENGTH" then
+            return A.DEPTH;
+         end if;
+         A := A.NEXT;
+      end loop;
+      return 0;
+   end TASK_LENGTH;

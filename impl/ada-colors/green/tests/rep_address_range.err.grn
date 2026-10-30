@@ -1,0 +1,6 @@
+procedure MAIN is
+   X : INTEGER;
+   for X use at -1;
+begin
+   null;
+end MAIN;
