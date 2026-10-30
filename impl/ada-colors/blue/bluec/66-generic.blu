@@ -345,6 +345,11 @@ FUNCTION C_HEADER (Y: SYM) RETURNS (TEXT);
    IF PS.LEN = 0 THEN
       PS := MK ('void');
    END IF;
+   IF Y@.LINKAGE = 1 THEN                            % for the units that link it
+      RETURN FMT3 ('@ @(@)', CTYPE (Y@.RESULT), Y@.ACCESS, PS);
+   ORIF Y@.LINKAGE = 2 THEN                          % in the unit of its segment
+      RETURN FMT3 ('extern @ @(@)', CTYPE (Y@.RESULT), Y@.ACCESS, PS);
+   END IF;
    RETURN FMT3 ('static @ @(@)', CTYPE (Y@.RESULT), Y@.ACCESS, PS);
 END FUNCTION C_HEADER;
 
@@ -1202,6 +1207,7 @@ FUNCTION NEW_INSTANCE (G: SYM, BS: BIND, ARGS: ARG) RETURNS (SYM);
    VAR TAIL: PARM := NIL;
    I@ := G@;
    I@.GENERIC := FALSE;
+   I@.LINKAGE := 0;                                  % an instance is of its unit
    I@.BINDINGS := BS;
    I@.PARAMS := NIL;
    I@.ACCESS := FMT2 ('@_@', G@.ACCESS, NEW_NAME ('i'));

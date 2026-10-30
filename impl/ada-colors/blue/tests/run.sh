@@ -34,6 +34,9 @@ for src in tests/*.blu tests/corpus/*.blu; do
   if diff -u "$exp" "$tmp/$name.txt" > "$tmp/diff.txt"; then pass=$((pass+1)); else
     echo "FAIL $name"; cat "$tmp/diff.txt"; failn=$((failn+1)); fi
 done
+for t in tests/*/run.sh; do                 # tests of several translations
+  if out=$(sh "$t" 2>&1); then pass=$((pass+1)); else echo "$out"; failn=$((failn+1)); fi
+done
 rm -rf "$tmp"
 echo "blue tests: $pass passed, $failn failed"
 [ "$failn" -eq 0 ]

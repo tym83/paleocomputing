@@ -12,6 +12,7 @@ PROCEDURE READ_SOURCE ();
       C := GET_CODE ();
    END LOOP;
    W@.SRC(W@.NSRC) := 0;
+   W@.STDINLEN := W@.NSRC;
 END PROCEDURE READ_SOURCE;
 
 FUNCTION AT_SRC (I: INTEGER) RETURNS (INTEGER);
@@ -264,8 +265,10 @@ PROCEDURE OPTIONS ();
             W@.SUPPRESS := TRUE;
          ORIF TEQS (A, '-pdp11') THEN               % the PDP-11's 16-bit words
             W@.WORD := 16;
+         ORIF TEQS (A, '-c') THEN                   % a segment translated separately
+            W@.SEPC := TRUE;
          ELSE
-            FAIL (0, 'bluec [-L library-directory] [-suppress] [-pdp11] < program.blu > program.c');
+            FAIL (0, 'bluec [-L library-directory] [-c] [-suppress] [-pdp11] < program.blu > program.c');
          END IF;
       END BLOCK;
       I := I + 1;
@@ -275,17 +278,59 @@ END PROCEDURE OPTIONS;
 % a segment named in USES and not in the compilation is read from the library: the
 % file NAME.blu of the library directory (4.2, 4.7)
 PROCEDURE LOAD_LIBRARY (NAME: TEXT);
-   CONST FILE: TEXT := CAT (CATS (W@.LIBDIR, '/'), CATS (NAME, '.blu'));
-   CONST FNAME: ASCII_STR (FILE.LEN) := STR (FILE, FILE.LEN);
-   IF NOT FILE_EXISTS (FNAME) THEN
+   VAR FILE: TEXT := LIB_FILE (W@.LIBDIR, NAME, '.bif');
+   IF NOT FILE_EXISTS (STR (FILE, FILE.LEN)) THEN
+      FILE := LIB_FILE (W@.LIBDIR, NAME, '.blu');
+   ELSE                                              % a segment translated with -c:
+      BLOCK                                          % its interface, which this unit
+         VAR N: NODE := NEW_NODE (N_IDENT, 0);       % links against (4.2, 4.7)
+         N@.NAME := NAME;
+         N@.IV := FILE_PRINT (STR (FILE, FILE.LEN));
+         N@.NEXT := W@.EXTS;
+         W@.EXTS := N;
+      END BLOCK;
+   END IF;
+   IF NOT FILE_EXISTS (STR (FILE, FILE.LEN)) & NOT TEQS (W@.LIBDIR, 'lib') THEN
+      FILE := LIB_FILE (MK ('lib'), NAME, '.blu');  % then the implementation's library
+   END IF;
+   IF NOT FILE_EXISTS (STR (FILE, FILE.LEN)) THEN
       FAILT (0, 'USES names a segment that is neither in the program nor in the library: ', NAME);
    END IF;
-   BLOCK
-      VAR N: NODE := NEW_NODE (N_IDENT, 0);
-      N@.NAME := NAME;
-      N@.NEXT := W@.LIBSEGS;
-      W@.LIBSEGS := N;
-   END BLOCK;
+   LOAD_TEXT (NAME, STR (FILE, FILE.LEN));
+END PROCEDURE LOAD_LIBRARY;
+
+FUNCTION LIB_FILE (DIR, NAME: TEXT, EXT: ASCII_STR(?L)) RETURNS (TEXT);
+   RETURN CAT (CATS (DIR, '/'), CATS (NAME, EXT));
+END FUNCTION LIB_FILE;
+
+% the fingerprint of a text: of an interface, so that a unit translated against
+% another interface does not link (4.2)
+FUNCTION TEXT_PRINT (T: ASCII_STR(?L)) RETURNS (INTEGER);
+   VAR H: INTEGER := 7;
+   LOOP FOR K IN [0 : L - 1] DO
+      H := (H * 131 + CODE_OF (T[K:K])) MOD 1099511627776;
+   END LOOP K;
+   RETURN H;
+END FUNCTION TEXT_PRINT;
+
+FUNCTION FILE_PRINT (FNAME: ASCII_STR(?L)) RETURNS (INTEGER);
+   RETURN TEXT_PRINT (READ_FILE (FNAME));
+END FUNCTION FILE_PRINT;
+
+% the input, the interface of the segment translated with -c (4.2)
+FUNCTION INPUT_TEXT () RETURNS (TEXT);
+   RETURN SOURCE_TEXT (0, W@.STDINLEN);
+END FUNCTION INPUT_TEXT;
+
+PROCEDURE LOAD_TEXT (NAME: TEXT, FNAME: ASCII_STR(?FL));
+   IF NOT IN_IDENTS (W@.EXTS, NAME) THEN             % the implementation's library
+      BLOCK
+         VAR N: NODE := NEW_NODE (N_IDENT, 0);
+         N@.NAME := NAME;
+         N@.NEXT := W@.LIBSEGS;
+         W@.LIBSEGS := N;
+      END BLOCK;
+   END IF;
    BLOCK
       CONST T: ASCII_STR (READ_FILE (FNAME).LENGTH) := READ_FILE (FNAME);
       IF W@.NSRC + T.LENGTH + 1 >= MAX_SOURCE THEN
@@ -299,4 +344,4 @@ PROCEDURE LOAD_LIBRARY (NAME: TEXT);
       END LOOP K;
       W@.SRC(W@.NSRC) := 0;
    END BLOCK;
-END PROCEDURE LOAD_LIBRARY;
+END PROCEDURE LOAD_TEXT;

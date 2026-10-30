@@ -5,6 +5,18 @@ OPTIONS;
 LEX;
 BLOCK
    VAR SEGS: NODE := PARSE_COMPILATION ();
+   BLOCK                                             % the segments of the input
+      VAR S: NODE := SEGS;
+      LOOP UNTIL S = NIL DO
+         BLOCK
+            VAR N: NODE := NEW_NODE (N_IDENT, 0);
+            N@.NAME := S@.NAME;
+            N@.NEXT := W@.OWNSEGS;
+            W@.OWNSEGS := N;
+         END BLOCK;
+         S := S@.NEXT;
+      END LOOP;
+   END BLOCK;
    LOOP                                              % the library segments it uses
       BLOCK
          CONST NAME: TEXT := MISSING_SEGMENT (SEGS);

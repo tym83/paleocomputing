@@ -274,6 +274,8 @@ TYPE SYM_REC = RECORD
    VAR OWNER: INTEGER;              % the closed scope it is declared in (4.1)
    VAR WITHV: INTEGER;              % 1: a bound-var; 2: a variable hidden by NAMING (4.5.4)
    VAR LAZY: INTEGER;               % an INLINE routine: 2 once its own body is needed
+   VAR LINKAGE: INTEGER;            % a routine's C: 0 static, 1 defined for other
+                                    % units, 2 defined in another (a compiled segment)
    VAR SEGM: PTR(SYM_REC);          % the segment that defines it, if it is defined
    VAR HOME: PTR(SYM_REC);          % the segment it is declared in
    VAR CHAIN: PTR(SYM_REC);         % next in the hash bucket
@@ -390,6 +392,13 @@ TYPE WORLD = RECORD
    VAR LIBSEGS: NODE;               % the segments read from it: the implementation's
    VAR SUPPRESS: BOOLEAN;           % -suppress: no RANGE checks, ASSERT not evaluated
    VAR WORD: INTEGER;               % bits of STD and of a machine word: 64, -pdp11 16
+   VAR SEPC: BOOLEAN;               % -c: the input's segment translated separately
+   VAR SEPSEG: TEXT;                % the segment whose names are linked between units
+   VAR EXTSEG: BOOLEAN;             % translating the interface of a compiled segment
+   VAR SEPV, SEPR: INTEGER;         % its objects and routines so far
+   VAR OWNSEGS: NODE;               % the segments of the input
+   VAR EXTS: NODE;                  % the compiled segments used: NAME, IV fingerprint
+   VAR STDINLEN: INTEGER;           % the characters of the input
    VAR TOKS: ARRAY [0:MAX_TOKENS] OF TOKEN;
    VAR NTOKS, POS: INTEGER;
    VAR TABLE: ARRAY [0:HASH_SIZE] OF SYM;

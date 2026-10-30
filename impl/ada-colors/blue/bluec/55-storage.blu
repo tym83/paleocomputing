@@ -48,6 +48,17 @@ FUNCTION NEW_OBJECT (Y: SYM, BASE: ASCII_STR(?L)) RETURNS (TEXT);
    CONST CS: CSCOPE := W@.CS;
    CONST T: TYP := Y@.T;
    VAR CN: TEXT;
+   IF CS@.LEVEL = 0 & W@.SEPSEG.LEN > 0 & BASE = '' THEN   % linked between units: a
+      W@.SEPV := W@.SEPV + 1;                        % name of its segment (4.2)
+      CN := FMT3 ('bs_@_v@_@', CID (W@.SEPSEG), NUM (W@.SEPV), CID (Y@.NAME));
+      IF W@.EXTSEG THEN
+         EMIT (O_GLOBALS, FMT2 ('extern @ @;', CTYPE (T), CN));
+      ELSE
+         EMIT (O_GLOBALS, FMT2 ('@ @;', CTYPE (T), CN));
+      END IF;
+      Y@.ACCESS := CN;
+      RETURN CN;
+   END IF;
    IF CS@.LEVEL = 0 THEN
       IF W@.DEPTH <= 2 & W@.MODL = NIL THEN
          CN := FMT2 ('g@_@', MK (BASE), CID (Y@.NAME));

@@ -355,9 +355,17 @@ unreadable; the decision is bluec's.
 40. **Libraries and options (4.2, 4.7, 4.6.9, D.7).** `bluec [-L dir]
     [-suppress]`. A segment named in USES and not in the compilation is read
     from the library directory (default `lib`, i.e. `blue/lib` for the tests and
-    the corpus) as NAME.blu, its own USES followed in turn: libraries are
-    source segments compiled with the program, not separately compiled
-    objects or interface files. The library holds PDP_11_LT33, the simulated
+    the corpus) as NAME.blu, its own USES followed in turn. Segments are also
+    translated separately: `bluec -c -L dir < S.blu > S.c` translates the one
+    segment of its input into a unit whose variables and routines have C names
+    of the segment (`bs_S_v3_TOTAL`, `bs_S_r1_BUMP`), with an initialization
+    routine `bs_S_init`, and writes its interface dir/S.bif (the segment's text:
+    BLUE has no separate synopsis, and generic and INLINE routines are expanded
+    in the units that use them). A unit that USES S finds S.bif before S.blu,
+    translates the interface without code (extern names, no bodies, S's
+    initialization by `bs_S_init`) and refers to the symbol
+    `bs_S_iface_<fingerprint of S.bif>`, which only the unit of that interface
+    defines: a unit translated against an older interface does not link. The library holds PDP_11_LT33, the simulated
     machine's standard segment (LT33 devices, START_IO, interrupt semaphores;
     the Appendix C driver uses it), and SIMULATION, the package of 4.6.9: a
     monitor module SIM with RESOURCE, SIM_PATH, SIM_START, SIM_INIT, SIM_WAIT,
@@ -378,7 +386,6 @@ The misprints of the program examples and the rules they break are in
 
 - Storage of packed values: SIZE and the conversions follow the
   representation, the C storage of values does not.
-- Separately compiled segments: libraries are source segments (decision 40).
 - PAR_BLOCK_ of D.7 as a routine a program may replace.
 
 ---

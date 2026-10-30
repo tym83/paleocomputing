@@ -108,6 +108,14 @@ PROCEDURE DECLARE_ROUTINE_SYM (R: NODE);
    CONST S: ASCII_STR(R@.NAME.LEN) := STR (R@.NAME, R@.NAME.LEN);
    Y@.DECL := R;
    Y@.ACCESS := ROUTINE_CNAME (R@.NAME);
+   IF W@.CS@.LEVEL = 0 & W@.SEPSEG.LEN > 0 & R@.FL <> 1 THEN   % linked between units
+      W@.SEPR := W@.SEPR + 1;                       % (an INLINE routine is expanded
+      Y@.ACCESS := FMT3 ('bs_@_r@_@', CID (W@.SEPSEG), NUM (W@.SEPR), CID (R@.NAME));
+      Y@.LINKAGE := 1;                               % where it is invoked)
+      IF W@.EXTSEG THEN
+         Y@.LINKAGE := 2;
+      END IF;
+   END IF;
    Y@.FRAMED := NEEDS_FRAME (R@.C);
    IF W@.CS@.LEVEL >= 1 THEN
       Y@.FIELD := W@.CS@.FTYPE;
@@ -498,7 +506,9 @@ PROCEDURE ROUTINE_BODIES (RS: NODE);
       ELSE
          BLOCK
             CONST Y: SYM := FIND_DECL (R);
-            IF Y@.DECL@.FL = 1 & NOT Y@.GENERIC THEN  % INLINE: expanded where invoked;
+            IF Y@.LINKAGE = 2 THEN                    % in its compiled segment
+               ;
+            ORIF Y@.DECL@.FL = 1 & NOT Y@.GENERIC THEN  % INLINE: expanded where invoked;
                ;                                      % its own body only when needed
             ORIF NOT Y@.GENERIC THEN
                ROUTINE_BODY (Y);
@@ -816,9 +826,17 @@ PROCEDURE TRANSLATE (SEGS: NODE);
    EMITS (O_TYPEDEFS, '#include <float.h>');
    EMITS (O_TYPEDEFS, '#include <math.h>');
    EMITS (O_TYPEDEFS, '#include <string.h>');
-   EMITS (O_MAINHEAD, 'int main(int argc, char **argv) {');
-   EMITS (O_MAINHEAD, 'rt_b_lang();');
-   EMITS (O_MAINHEAD, 'rt_init(argc, argv);');
+   IF W@.SEPC THEN                                   % -c: the initialization of the
+      IF W@.OWNSEGS = NIL ! W@.OWNSEGS@.NEXT <> NIL THEN   % segment, for the program
+         FAIL (0, 'bluec -c translates one segment');     % that links it (4.2)
+      END IF;
+      EMIT (O_MAINHEAD, FMT1 ('void bs_@_init(void) { static int done_; if (done_) return; done_ = 1;',
+                             CID (W@.OWNSEGS@.NAME)));
+   ELSE
+      EMITS (O_MAINHEAD, 'int main(int argc, char **argv) {');
+      EMITS (O_MAINHEAD, 'rt_b_lang();');
+      EMITS (O_MAINHEAD, 'rt_init(argc, argv);');
+   END IF;
    IF W@.WORD <> 64 THEN                             % the machine profile (-pdp11)
       EMIT (O_MAINHEAD, FMT1 ('rt_b_machine(@);', NUM (W@.WORD)));
    END IF;
@@ -850,8 +868,39 @@ PROCEDURE TRANSLATE (SEGS: NODE);
       IF USES_SEGMENT (S, 'TERMINAL') THEN
          PREDEFINE_TERMINAL;
       END IF;
-      CLOSED_BODY (S@.B);
+      W@.EXTSEG := IN_IDENTS (W@.EXTS, S@.NAME);     % a compiled segment: its interface
+      W@.SEPSEG := NO_TEXT ();                       % here, its code in its own unit
+      W@.SEPV := 0;
+      W@.SEPR := 0;
+      IF W@.EXTSEG ! (W@.SEPC & IN_IDENTS (W@.OWNSEGS, S@.NAME)) THEN
+         W@.SEPSEG := S@.NAME;
+         IF S@.IV = 1 THEN
+            FAIL (S@.LINE, 'a MAIN segment is not translated separately (4.2)');
+         END IF;
+      END IF;
+      IF W@.EXTSEG THEN
+         BLOCK
+            CONST SAVED_CODE: BUF := W@.CODE;
+            CLOSED_BODY (S@.B);
+            W@.CODE := SAVED_CODE;
+            CODE (FMT1 ('bs_@_init();', CID (S@.NAME)));
+            EMIT (O_PROTOS, FMT1 ('void bs_@_init(void);', CID (S@.NAME)));
+            BLOCK                                    % refused at link time when the
+               VAR X: NODE := W@.EXTS;               % segment was translated again
+               LOOP UNTIL TEQ (X@.NAME, S@.NAME) DO  % since (4.2)
+                  X := X@.NEXT;
+               END LOOP;
+               EMIT (O_GLOBALS, FMT2 ('extern int bs_@_iface_@;', CID (S@.NAME), NUM (X@.IV)));
+               EMIT (O_GLOBALS, CAT (FMT2 ('int *bs_needs_@_@ = ', UNIT_NAME (), CID (S@.NAME)),
+                                     FMT2 ('&bs_@_iface_@;', CID (S@.NAME), NUM (X@.IV))));
+            END BLOCK;
+         END BLOCK;
+      ELSE
+         CLOSED_BODY (S@.B);
+      END IF;
       SEGMENT_EXPORTS (S);
+      W@.SEPSEG := NO_TEXT ();
+      W@.EXTSEG := FALSE;
    END LOOP;
    S := SEGS;
    LOOP UNTIL S = NIL DO
@@ -860,7 +909,7 @@ PROCEDURE TRANSLATE (SEGS: NODE);
       END IF;
       S := S@.NEXT;
    END LOOP;
-   IF MAINS <> 1 THEN
+   IF MAINS <> 1 & NOT W@.SEPC THEN
       FAIL (0, 'a program has exactly one MAIN segment (4.2)');
    END IF;
    BLOCK
@@ -872,10 +921,30 @@ PROCEDURE TRANSLATE (SEGS: NODE);
       END LOOP;
    END BLOCK;
    APPEND_BUF (W@.CODE # W@.OUT(O_MAIN));
+   IF W@.SEPC THEN                                   % its interface, by which others
+      BLOCK                                          % translate and link against it
+         CONST T: TEXT := INPUT_TEXT ();
+         CONST NAME: TEXT := W@.OWNSEGS@.NAME;
+         CONST FP: INTEGER := TEXT_PRINT (STR (T, T.LEN));
+         EMITS (O_MAIN, '}');
+         EMIT (O_GLOBALS, FMT2 ('int bs_@_iface_@ = 1;', CID (NAME), NUM (FP)));
+         WRITE_FILE (STR (LIB_FILE (W@.LIBDIR, NAME, '.bif'), LIB_FILE (W@.LIBDIR, NAME, '.bif').LEN),
+                     STR (T, T.LEN));
+      END BLOCK;
+      RETURN;
+   END IF;
    EMITS (O_MAIN, 'rt_main_done();');
    EMITS (O_MAIN, 'return 0;');
    EMITS (O_MAIN, '}');
 END PROCEDURE TRANSLATE;
+
+% the unit being translated: the segment of -c, or the program
+FUNCTION UNIT_NAME () RETURNS (TEXT);
+   IF W@.SEPC THEN
+      RETURN CID (W@.OWNSEGS@.NAME);
+   END IF;
+   RETURN MK ('MAIN');
+END FUNCTION UNIT_NAME;
 
 % what a module named in DEFINES exports comes along with it (Appendix C: STANDARD_IO
 % DEFINES (TEXTUAL_IO, BINARY_IO) and the application uses STREAM_FILE, PRINT ...)
