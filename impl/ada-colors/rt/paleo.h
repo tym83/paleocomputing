@@ -311,7 +311,7 @@ int rt_g_fgetc(rt_int h);
 rt_int rt_g_fget_int(rt_int h);
 double rt_g_fget_float(rt_int h);
 int rt_g_fget_bool(rt_int h);
-void rt_g_open(rt_int *h, rstr name, rt_int mode, int create, rt_int esz);
+void rt_g_open(rt_int *h, rstr name, rt_int mode, int create, rt_int lay);
 void rt_g_close(rt_int *h, int remove_it);
 int rt_g_is_open(rt_int h);
 rt_int rt_g_size(rt_int h);
@@ -329,9 +329,10 @@ void rt_g_set_line_length(rt_int h, rt_int n);
 void rt_g_set_input(rt_int h);
 void rt_g_set_output(rt_int h);
 /* the elements of INPUT_OUTPUT: their storage, whatever their type */
-#define rt_g_element_bytes(sample, n) (*(n) = (rt_int)sizeof(*(sample)))
-#define rt_g_read_element(h, item) rt_g_read_bytes((h), (item), sizeof(*(item)))
-#define rt_g_write_element(h, item) rt_g_write_bytes((h), &(item), sizeof(item))
+/* the elements of INPUT_OUTPUT: their storage in the layout of their type */
+void rt_g_write_lay(rt_int h, const void *item, rt_int lay);
+void rt_g_read_element(rt_int h, void *item, rt_int lay);
+#define rt_g_write_element(h, item, lay) rt_g_write_lay((h), &(item), (lay))
 
 /* GREEN abort (RM79 9.10): the task ends unconditionally; its handlers
  * re-raise at once instead of handling the exception */

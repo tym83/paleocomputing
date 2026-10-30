@@ -1676,6 +1676,9 @@ typedef struct {
   rt_int line, col, len;   /* layout; len 0: no line length */
   rt_int next;             /* the next element, from 1 */
   int peek;                /* a character read ahead, or -2 */
+  const g_lay *L;          /* INPUT_OUTPUT: the layout of the elements */
+  int var;                 /* elements of different lengths: each after its length */
+  long boff;               /* var: where the next element starts */
 } g_file;
 
 #define G_FILES 256
@@ -2049,7 +2052,8 @@ int rt_g_fget_bool(rt_int h) {
 
 /* ---- files (14.1, 14.2) ---- */
 
-void rt_g_open(rt_int *h, rstr name, rt_int mode, int create, rt_int esz) {
+/* LAY: 0 for a text file, else the layout of the elements (14.2) */
+void rt_g_open(rt_int *h, rstr name, rt_int mode, int create, rt_int lay) {
   if (*h > 0 && *h < G_FILES && g_files[*h].open) g_io("FILE_OPEN_ERROR");
   rt_int k = 3;
   while (k < G_FILES && g_files[k].open) k++;
@@ -2070,7 +2074,15 @@ void rt_g_open(rt_int *h, rstr name, rt_int mode, int create, rt_int esz) {
   x->f = f;
   x->name = strdup(n);
   x->mode = (int)mode;
-  x->esz = esz;
+  x->esz = 0;
+  x->L = (const g_lay *)(intptr_t)lay;
+  x->var = 0;
+  x->boff = 0;
+  if (x->L) {
+    rt_int bits = rt_g_lay_bits(x->L, NULL);
+    if (bits >= 0) x->esz = bits > 0 ? (bits + 7) / 8 : 1;
+    else x->var = 1, x->esz = 1;
+  }
   x->line = x->col = 1;
   x->len = 0;
   x->next = 1;
@@ -2106,8 +2118,35 @@ rt_int rt_g_size(rt_int h) {
   long here = ftell(x->f);
   fseek(x->f, 0, SEEK_END);
   long n = ftell(x->f);
+  rt_int count = 0;
+  if (x->var) {
+    /* elements of different lengths: count them */
+    long o = 0;
+    while (o + 8 <= n) {
+      rt_int bits;
+      fseek(x->f, o, SEEK_SET);
+      if (fread(&bits, 8, 1, x->f) != 1) break;
+      o += 8 + (bits + 7) / 8;
+      count++;
+    }
+  } else {
+    count = (rt_int)(n / g_unit(x));
+  }
   fseek(x->f, here, SEEK_SET);
-  return (rt_int)(n / g_unit(x));
+  return count;
+}
+
+/* var: the byte where element pos starts */
+static long g_var_offset(g_file *x, rt_int pos) {
+  long o = 0;
+  fflush(x->f);
+  for (rt_int i = 1; i < pos; i++) {
+    rt_int bits;
+    fseek(x->f, o, SEEK_SET);
+    if (fread(&bits, 8, 1, x->f) != 1) return -1;
+    o += 8 + (bits + 7) / 8;
+  }
+  return o;
 }
 
 rt_int rt_g_next(rt_int h) { return g_file_of(h)->next; }
@@ -2128,7 +2167,13 @@ void rt_g_set_next(rt_int h, rt_int pos) {
       g_track1(x, c);
     }
   }
-  fseek(x->f, (long)((pos - 1) * g_unit(x)), SEEK_SET);
+  if (x->var) {
+    long o = g_var_offset(x, pos);
+    x->boff = o;                       /* -1: past the end, a READ fails */
+    if (o >= 0) fseek(x->f, o, SEEK_SET);
+  } else {
+    fseek(x->f, (long)((pos - 1) * g_unit(x)), SEEK_SET);
+  }
   x->next = pos;
 }
 
@@ -4431,4 +4476,71 @@ rt_gstr rt_g_listing_file(void) {
   const char *n = getenv("GREEN_LISTING");
   if (!n) n = "";
   return rt_g_s2g(rt_str_copy(rt_str(n, (rt_int)strlen(n))));
+}
+
+/* ---- GREEN INPUT_OUTPUT elements in their layout (RM79 14.1.2) ---- */
+
+void rt_g_write_lay(rt_int h, const void *item, rt_int lay) {
+  g_file *x = g_file_of(h);
+  const g_lay *L = (const g_lay *)(intptr_t)lay;
+  if (x->mode == 1 || !x->f) g_io("FILE_USE_ERROR");
+  rt_int bits;
+  unsigned char *img = g_image(L, item, &bits);
+  rt_int n = (bits + 7) / 8;
+  if (x->var) {
+    if (x->boff < 0) g_io("FILE_USE_ERROR");
+    fflush(x->f);
+    fseek(x->f, 0, SEEK_END);
+    long end = ftell(x->f);
+    if (x->boff < end) {
+      /* over an element: only one of the same length fits there */
+      rt_int old;
+      fseek(x->f, x->boff, SEEK_SET);
+      if (fread(&old, 8, 1, x->f) != 1 || old != bits) g_io("FILE_USE_ERROR");
+    }
+    fseek(x->f, x->boff, SEEK_SET);
+    if (fwrite(&bits, 8, 1, x->f) != 1) g_io("MALFUNCTION");
+    x->boff += 8 + n;
+  } else {
+    fseek(x->f, (long)((x->next - 1) * x->esz), SEEK_SET);
+    n = x->esz;
+  }
+  if (n && fwrite(img, 1, (size_t)n, x->f) != (size_t)n) g_io("MALFUNCTION");
+  free(img);
+  x->next++;
+}
+
+void rt_g_read_element(rt_int h, void *item, rt_int lay) {
+  g_file *x = g_file_of(h);
+  const g_lay *L = (const g_lay *)(intptr_t)lay;
+  if (x->mode == 2 || !x->f) g_io("FILE_USE_ERROR");
+  rt_int want = rt_g_lay_bits(L, item), bits = want, n;
+  fflush(x->f);
+  if (x->var) {
+    if (x->boff < 0) rt_raise(RT_X_FILE);
+    fseek(x->f, x->boff, SEEK_SET);
+    if (fread(&bits, 8, 1, x->f) != 1) {
+      if (feof(x->f)) rt_raise(RT_X_FILE);
+      g_io("MALFUNCTION");
+    }
+    n = (bits + 7) / 8;
+    x->boff += 8 + n;
+  } else {
+    fseek(x->f, (long)((x->next - 1) * x->esz), SEEK_SET);
+    n = x->esz;
+  }
+  unsigned char *img = rt_alloc((size_t)n + 16);
+  if (n && fread(img, 1, (size_t)n, x->f) != (size_t)n) {
+    free(img);
+    if (feof(x->f)) rt_raise(RT_X_FILE);
+    g_io("MALFUNCTION");
+  }
+  x->next++;
+  /* an element of another length is not of the proper type (14.1.2) */
+  if (bits != want) {
+    free(img);
+    g_io("INVALID_DATA");
+  }
+  g_dec(L, item, img, 0);
+  free(img);
 }

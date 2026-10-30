@@ -1317,6 +1317,13 @@
       if Y /= null and then Y.KIND = Y_TYPE then
          TT := Y.T;
          C := Y.C;
+         if A = "$LAYOUT" then
+            -- for INPUT_OUTPUT: the layout of its elements, for the runtime
+            LAYOUT_OF(TT, C, FALSE, FALSE, V);
+            T := TY_INT;
+            R := MK("((rt_int)(intptr_t)&" & V.all & ")");
+            return;
+         end if;
          if A = "SIZE" then
             -- the number of bits of an object of the type (RM79 13.2, App. A)
             T := TY_INT;

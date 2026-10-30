@@ -395,11 +395,13 @@
             -- an exception declaration is one exception, even in a recursive
             -- procedure (RM79 11.1)
             Y := NEW_SYM(Y_EXC, E.NAME);
-            NEW_NAME("ex_" & LOWER_S(E.NAME.all) & "_", Y.CNAME);
+            NEW_NAME("ex_" & LOWER_S(HELPER_NAME(E.NAME.all)) & "_", Y.CNAME);
             PUT_TO(OUT_GLOBALS, "static int " & Y.CNAME.all & ";");
-            if E.LINE < 0 then
-               -- an exception of a predefined unit is the one the runtime
-               -- raises under that name (RM79 14.2, 14.4)
+            if E.LINE < 0 and E.NAME.all(1) = "$" then
+               -- $NAME in a predefined unit: the exception the runtime raises
+               PUT_TO(OUT_EXCS, "  " & Y.CNAME.all & " = rt_exc(" & Q & HELPER_NAME(E.NAME.all) & Q & ");");
+            elsif E.LINE < 0 and IN_INSTANCE = 0 then
+               -- the exceptions of TEXT_IO are those the runtime raises (RM79 14.4)
                PUT_TO(OUT_EXCS, "  " & Y.CNAME.all & " = rt_exc(" & Q & E.NAME.all & Q & ");");
             else
                -- two declarations are two exceptions, whatever their names (RM79 11.1)
