@@ -626,7 +626,9 @@
       while not AT_STATEMENTS_END loop
          if AT_KW("PRAGMA") then
             PRAGMA_P(X);
-            if X.NAME.all = "INTERFACE" then
+            if X.NAME.all = "SUPPRESS" then
+               FAIL(X.LINE, "pragma SUPPRESS stands in a declarative part (RM79 11.8, App. B)");
+            elsif X.NAME.all = "INTERFACE" then
                SAW_INTERFACE := TRUE;
                SAW_LANG := X.A.NAME;
             end if;

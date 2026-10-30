@@ -427,9 +427,21 @@
    end DECL_ELEMENT_1;
 
    -- a pragma among the declarations (RM79 2.7, App. B)
+   -- pragma SUPPRESS names exceptions; it permits the omission of checks
+   -- and does not oblige it (RM79 11.8): the checks stay
    procedure PRAGMA_DECL(E : NODE) is
+      A : NODE := E.A;
+      Y : SYM;
    begin
-      null;
+      if E.NAME.all = "SUPPRESS" then
+         while A /= null loop
+            Y := LOOKUP(A.NAME.all);
+            if Y = null or else Y.KIND /= Y_EXC then
+               FAIL(E.LINE, "pragma SUPPRESS names exceptions: " & A.NAME.all & " is not one (RM79 11.8)");
+            end if;
+            A := A.NEXT;
+         end loop;
+      end if;
    end PRAGMA_DECL;
 
    -- the type of an object declaration; C, D : (WHITE, GREY, BLACK); gives

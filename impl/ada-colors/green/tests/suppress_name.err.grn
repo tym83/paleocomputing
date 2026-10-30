@@ -1,0 +1,5 @@
+procedure MAIN is
+   pragma SUPPRESS(RANGE_ERRORS);
+begin
+   null;
+end MAIN;
