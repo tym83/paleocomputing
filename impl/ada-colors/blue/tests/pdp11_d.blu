@@ -1,0 +1,55 @@
+MAIN SEGMENT PDP11_D
+   USES (TERMINAL);
+% bluec -pdp11: FLOAT (16) is the PDP-11's D format, a 56-bit mantissa computed
+% exactly (3.3.1, 3.3.3); !op! gives double words of 16-bit words (3.2.4.5, 3.3.4.5)
+VAR D: FLOAT (16);
+VAR E: FLOAT (16) := TO_FLOAT (1, 16);
+VAR F: FLOAT (6);
+VAR R: FLOAT (16) [0.0 : 1.0];
+VAR B: BIT (128);
+VAR W: BIT (64);
+VAR M: BIT (32);
+D := TO_FLOAT (1, 16) / TO_FLOAT (3, 16);
+PUT_LINE (TO_CHAR (D) !! ' ' !! TO_CHAR (D.MANTISSA_SIZE) !! ' ' !! TO_CHAR (D.IMP_PRECISION)
+          !! ' ' !! TO_CHAR (D.SIZE));
+PUT_LINE (TO_CHAR (FLOAT_MAX (16)) !! ' ' !! TO_CHAR (EPSILON (16)));
+E := E + EPSILON (16);
+PUT_LINE (TO_CHAR (E > TO_FLOAT (1, 16)) !! ' ' !! TO_CHAR (E - TO_FLOAT (1, 16) = EPSILON (16)));
+D := 0.1000000000000000 * TO_FLOAT (3, 16);
+PUT_LINE (TO_CHAR (D) !! ' ' !! TO_CHAR (D = 0.3000000000000000) !! ' ' !! TO_CHAR (TO_FIXED (D * TO_FLOAT (100, 16), 0)));
+F := TO_FLOAT (D, 6);
+PUT_LINE (TO_CHAR (F) !! ' ' !! TO_CHAR (ABS (-D)) !! ' ' !! TO_CHAR (D IN [0.2 : 0.4]));
+R := D;
+BLOCK
+   R := D * TO_FLOAT (4, 16);
+   PUT_LINE ('no RANGE');
+END BLOCK
+EXCEPT
+   RANGE --> PUT_LINE ('RANGE ' !! TO_CHAR (R)); END;
+END EXCEPT;
+BLOCK
+   D := FLOAT_MAX (16) * TO_FLOAT (2, 16);
+   PUT_LINE ('no OVERFLOW');
+END BLOCK
+EXCEPT
+   OVERFLOW --> PUT_LINE ('OVERFLOW'); END;
+END EXCEPT;
+SELECT OBJECT_MACHINE FROM
+   PDP_11 -->
+      W := TO_BIT (TO_FLOAT (1, 16));
+      M := TO_BIT (TO_FLOAT (-2, 6));
+      PUT_LINE (TO_CHAR (W[0:15]) !! ' ' !! TO_CHAR (M));
+      PUT_LINE (TO_CHAR ([FLOAT (16)]$$(W)) !! ' ' !! TO_CHAR ([FLOAT (6)]$$(M)));
+      M := 300 !*! 300;
+      PUT_LINE (TO_CHAR (M) !! ' ' !! TO_CHAR (TO_FIXED (M, 0)));
+      M := 7 !//! 2;
+      PUT_LINE (TO_CHAR (M[0:15]) !! ' ' !! TO_CHAR (M[16:31]));
+      M := 32767 !+! 1;
+      PUT_LINE (TO_CHAR (M));
+      W := 1.0 !/! 3.0;
+      PUT_LINE (TO_CHAR (W));
+      B := TO_FLOAT (1, 16) !/! TO_FLOAT (3, 16);
+      PUT_LINE (TO_CHAR (B[0:15]) !! ' ' !! TO_CHAR (B[16:71]));
+   END;
+END SELECT;
+END SEGMENT PDP11_D;

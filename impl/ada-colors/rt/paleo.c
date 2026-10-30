@@ -2124,7 +2124,10 @@ rt_int rt_b_fix_val(const char *s, rt_int scale, int rounded) {
   return v;
 }
 
+static int b_pdp11;
+static rstr b_md_pdp11(int op, rt_int a, rt_int b);
 rstr rt_b_md(int op, rt_int a, rt_int b) {
+  if (b_pdp11) return b_md_pdp11(op, a, b);
   b_wide r = 0;
   switch (op) {
   case '+': r = (b_wide)a + b; break;
@@ -3050,7 +3053,9 @@ rt_int rt_b_addsc(rt_int a, rt_int sa, rt_int b, rt_int sb, rt_int s, int sub, i
 
 /* the machine-dependent !op! of floating point values (3.3.4.5): the result and the
  * error of its rounding, two doubles, 128 bits */
+static rstr b_fmd_pdp11(int op, double a, double b);
 rstr rt_b_fmd(int op, double a, double b) {
+  if (b_pdp11) return b_fmd_pdp11(op, a, b);
   double hi, lo;
   switch (op) {
   case '+': hi = a + b; { double bb = hi - a; lo = (a - (hi - bb)) + (b - bb); } break;
@@ -3759,3 +3764,490 @@ void y_device(ysig *s, rt_int address) {
 
 /* a SIGNAL as a component of an array: tied to its monitor by y_sig_init */
 const ydesc y_d_sig = {YK_OPAQUE, sizeof(ysig), 0, 0, {0}, {0}, NULL, 0, NULL, NULL};
+
+/* ---- BLUE -pdp11: the PDP-11's D floating point format, computed exactly ----
+ * A value is m * 2**e with m = 0 or 2**55 <= |m| < 2**56: the 56-bit mantissa
+ * of D (hidden bit included). Results are rounded to the nearest (ties to even)
+ * or truncated to 56 bits; the exponent range is that of D: 2**-128 <= |x| <
+ * 2**127 (OVERFLOW, UNDERFLOW). */
+static rt_b_d b_dnorm(__int128 x, int64_t e, int trunc, int exc_over) {
+  rt_b_d r = {0, 0};
+  if (x == 0) return r;
+  int neg = x < 0;
+  unsigned __int128 mag = neg ? (unsigned __int128)(-x) : (unsigned __int128)x;
+  int len = 0;
+  for (unsigned __int128 t = mag; t; t >>= 1) len++;
+  if (len > 56) {
+    int k = len - 56;
+    unsigned __int128 rem = mag & ((((unsigned __int128)1) << k) - 1);
+    unsigned __int128 q = mag >> k;
+    if (!trunc) {
+      unsigned __int128 half = ((unsigned __int128)1) << (k - 1);
+      if (rem > half || (rem == half && (q & 1))) q++;
+    }
+    if (q == ((unsigned __int128)1 << 56)) {
+      q >>= 1;
+      k++;
+    }
+    mag = q;
+    e += k;
+  } else if (len < 56) {
+    mag <<= 56 - len;
+    e -= 56 - len;
+  }
+  if (e + 56 > 127) rt_raise(exc_over);
+  if (e + 56 < -127) rt_raise(RT_B_UNDERFLOW);
+  r.m = neg ? -(int64_t)mag : (int64_t)mag;
+  r.e = (int32_t)e;
+  return r;
+}
+
+rt_b_d rt_b_dop(int op, rt_b_d a, rt_b_d b, int trunc) {
+  if (op == '-') {
+    b.m = -b.m;
+    op = '+';
+  }
+  if (op == '+') {
+    if (a.m == 0) return b;
+    if (b.m == 0) return a;
+    if (b.e > a.e) {
+      rt_b_d t = a;
+      a = b;
+      b = t;
+    }
+    __int128 x = (__int128)a.m << 62;
+    int64_t ea = (int64_t)a.e - 62;
+    int64_t sh = (int64_t)b.e - ea;           /* <= 62 */
+    __int128 y;
+    if (sh >= 0) y = (__int128)b.m << sh;
+    else if (sh > -120) {
+      __int128 bm = b.m;
+      int neg = bm < 0;
+      unsigned __int128 mag = neg ? (unsigned __int128)(-bm) : (unsigned __int128)bm;
+      unsigned __int128 q = mag >> -sh;
+      if ((q << -sh) != mag) q |= 1;          /* sticky */
+      y = neg ? -(__int128)q : (__int128)q;
+    } else
+      y = b.m < 0 ? -1 : 1;
+    return b_dnorm(x + y, ea, trunc, RT_X_OVERFLOW);
+  }
+  if (op == '*') {
+    if (a.m == 0 || b.m == 0) return (rt_b_d){0, 0};
+    return b_dnorm((__int128)a.m * b.m, (int64_t)a.e + b.e, trunc, RT_X_OVERFLOW);
+  }
+  if (b.m == 0) rt_raise(RT_X_ZERO_DIVIDE);
+  if (a.m == 0) return (rt_b_d){0, 0};
+  int neg = (a.m < 0) != (b.m < 0);
+  unsigned __int128 n = (unsigned __int128)(a.m < 0 ? -a.m : a.m) << 64;
+  unsigned __int128 d = (unsigned __int128)(b.m < 0 ? -b.m : b.m);
+  unsigned __int128 q = n / d;
+  if (n % d) q |= 1;                          /* sticky */
+  __int128 s = (__int128)q;
+  return b_dnorm(neg ? -s : s, (int64_t)a.e - 64 - b.e, trunc, RT_X_OVERFLOW);
+}
+
+rt_b_d rt_b_dneg(rt_b_d a) {
+  a.m = -a.m;
+  return a;
+}
+
+rt_b_d rt_b_dabs(rt_b_d a) {
+  if (a.m < 0) a.m = -a.m;
+  return a;
+}
+
+rt_int rt_b_dcmp(rt_b_d a, rt_b_d b) {
+  int sa = (a.m > 0) - (a.m < 0), sb = (b.m > 0) - (b.m < 0);
+  if (sa != sb) return sa < sb ? -1 : 1;
+  if (sa == 0) return 0;
+  int c;
+  if (a.e != b.e) c = a.e < b.e ? -1 : 1;
+  else {
+    int64_t ma = a.m < 0 ? -a.m : a.m, mb = b.m < 0 ? -b.m : b.m;
+    c = ma < mb ? -1 : ma > mb;
+  }
+  return sa > 0 ? c : -c;
+}
+
+rt_b_d rt_b_d_of_double(double x) {
+  if (x == 0) return (rt_b_d){0, 0};
+  int ex;
+  double f = frexp(x, &ex);                   /* exact: 53 bits */
+  return b_dnorm((__int128)(int64_t)ldexp(f, 56), (int64_t)ex - 56, 0, RT_X_OVERFLOW);
+}
+
+/* a double as D without a range check: every double of F range is exact in D */
+static rt_b_d b_d_raw(double x) {
+  if (x == 0) return (rt_b_d){0, 0};
+  int ex;
+  double f = frexp(x, &ex);
+  return (rt_b_d){(int64_t)ldexp(f, 56), (int32_t)(ex - 56)};
+}
+
+double rt_b_double_of_d(rt_b_d d) { return ldexp((double)d.m, d.e); }
+
+/* a fixed point value v * 2**-scale, rounded or truncated: TO_FLOAT (3.3.6.1) */
+rt_b_d rt_b_d_of_fix(rt_int v, rt_int scale, int trunc) {
+  return b_dnorm(v, -(int64_t)scale, trunc, RT_X_OVERFLOW);
+}
+
+/* the value at a scale, rounded or truncated: TO_FIXED (3.2.6.1) */
+rt_int rt_b_fix_of_d(rt_b_d d, rt_int scale, int rounded) {
+  if (d.m == 0) return 0;
+  int64_t sh = (int64_t)d.e + scale;
+  int neg = d.m < 0;
+  unsigned __int128 mag = (unsigned __int128)(neg ? -d.m : d.m);
+  if (sh >= 0) {
+    if (sh > 8) rt_raise(RT_X_OVERFLOW);
+    mag <<= sh;
+  } else {
+    int64_t k = -sh;
+    if (k > 120) mag = 0;
+    else {
+      unsigned __int128 rem = mag & ((((unsigned __int128)1) << k) - 1), q = mag >> k;
+      if (rounded) {
+        unsigned __int128 half = ((unsigned __int128)1) << (k - 1);
+        if (rem > half || (rem == half && (q & 1))) q++;
+      }
+      mag = q;
+    }
+  }
+  if (mag > ((unsigned __int128)1 << 63) - (neg ? 0 : 1)) rt_raise(RT_X_OVERFLOW);
+  return neg ? -(rt_int)mag : (rt_int)mag;
+}
+
+/* the digits of a decimal number, its power of ten: [+-]digits[.digits][E[+-]digits] */
+static int b_dec(const char *s, char *dig, int *nd, long *x, int *neg) {
+  int frac = 0, point = 0;
+  long e = 0;
+  *nd = 0;
+  *neg = 0;
+  if (*s == '+' || *s == '-') *neg = *s++ == '-';
+  for (; *s && *s != 'E' && *s != 'e'; s++) {
+    if (*s == '.') {
+      if (point) return 0;
+      point = 1;
+      continue;
+    }
+    if (*s < '0' || *s > '9') return 0;
+    if (*nd || *s != '0') dig[(*nd)++] = *s;
+    if (point) frac++;
+  }
+  if (*s) e = strtol(s + 1, NULL, 10);
+  if (e > 100000) e = 100000;
+  if (e < -100000) e = -100000;
+  *x = e - frac;
+  return 1;
+}
+
+/* dig * 10**x as a D value, rounded to the nearest or truncated */
+static rt_b_d b_d_of_dec(const char *dig, int nd, long x, int neg, int trunc) {
+  if (nd == 0) return (rt_b_d){0, 0};
+  long s = 55 - (long)floor((double)(nd - 1 + x) * 3.321928094887362);
+  int ovf;
+  unsigned __int128 lo = (unsigned __int128)1 << 55, hi = (unsigned __int128)1 << 56, q;
+  for (int guard = 0; guard < 400; guard++) {
+    if (s > 4000) rt_raise(RT_B_UNDERFLOW);
+    if (s < -4000) rt_raise(RT_X_OVERFLOW);
+    q = b_exact(dig, nd, x, s, 0, &ovf);
+    if (ovf || q >= hi) s--;
+    else if (q < lo) s++;
+    else break;
+  }
+  q = b_exact(dig, nd, x, s, !trunc, &ovf);
+  if (q >= hi) {
+    q >>= 1;
+    s--;
+  }
+  __int128 v = (__int128)q;
+  return b_dnorm(neg ? -v : v, -(int64_t)s, 1, RT_X_OVERFLOW);
+}
+
+rt_b_d rt_b_dlit(const char *s) {
+  char *dig = rt_alloc(strlen(s) + 1);
+  int nd, neg;
+  long x;
+  if (!b_dec(s, dig, &nd, &x, &neg)) rt_raise(RT_B_CONVERSION);
+  return b_d_of_dec(dig, nd, x, neg, 0);
+}
+
+/* TO_FLOAT of a character string, rounded or truncated (3.3.6.1) */
+rt_b_d rt_b_d_of_str(rstr t, int trunc) {
+  char *c = rt_alloc((size_t)t.len + 1), *dig = rt_alloc((size_t)t.len + 1);
+  rt_int i = 0, n = 0;
+  while (i < t.len && t.p[i] == ' ') i++;
+  while (i < t.len && t.p[i] != ' ') c[n++] = (char)t.p[i++];
+  c[n] = 0;
+  int nd, neg;
+  long x;
+  if (n == 0 || !b_dec(c, dig, &nd, &x, &neg)) rt_raise(RT_B_CONVERSION);
+  return b_d_of_dec(dig, nd, x, neg, trunc);
+}
+
+/* TO_CHAR: prec significant digits, exactly rounded, written as %G writes them */
+rstr rt_b_d_image(rt_b_d d, rt_int prec) {
+  char b[96];
+  int n = 0;
+  if (prec < 1) prec = 1;
+  if (prec > 20) prec = 20;
+  if (d.m == 0) return rt_str_copy(rt_str("0.", 2));
+  uint64_t mag = (uint64_t)(d.m < 0 ? -d.m : d.m);
+  char md[32];
+  int mn = snprintf(md, sizeof md, "%llu", (unsigned long long)mag);
+  long e10 = (long)floor(log10((double)mag) + d.e * 0.30102999566398120);
+  unsigned __int128 q = 0, p10 = 1, p11;
+  for (int i = 0; i < prec - 1; i++) p10 *= 10;
+  p11 = p10 * 10;
+  for (int guard = 0; guard < 8; guard++) {
+    int ovf;
+    q = b_exact(md, mn, prec - 1 - e10, d.e, 1, &ovf);
+    if (ovf || q >= p11) e10++;
+    else if (q < p10) e10--;
+    else break;
+  }
+  char dg[48];
+  int dn = 0;
+  {
+    char tmp[48];
+    int tn = 0;
+    unsigned __int128 t = q;
+    do {
+      tmp[tn++] = (char)('0' + (int)(t % 10));
+      t /= 10;
+    } while (t);
+    while (tn) dg[dn++] = tmp[--tn];
+  }
+  while (dn > 1 && dg[dn - 1] == '0') dn--;    /* %G drops trailing zeros */
+  if (d.m < 0) b[n++] = '-';
+  if (e10 < -4 || e10 >= prec) {
+    b[n++] = dg[0];
+    if (dn > 1) {
+      b[n++] = '.';
+      for (int i = 1; i < dn; i++) b[n++] = dg[i];
+    }
+    n += snprintf(b + n, sizeof b - (size_t)n, "E%c%02ld", e10 < 0 ? '-' : '+', e10 < 0 ? -e10 : e10);
+  } else if (e10 >= 0) {
+    for (int i = 0; i <= e10; i++) b[n++] = i < dn ? dg[i] : '0';
+    if (dn > e10 + 1) {
+      b[n++] = '.';
+      for (int i = (int)e10 + 1; i < dn; i++) b[n++] = dg[i];
+    }
+  } else {
+    b[n++] = '0';
+    b[n++] = '.';
+    for (long i = 0; i < -e10 - 1; i++) b[n++] = '0';
+    for (int i = 0; i < dn; i++) b[n++] = dg[i];
+  }
+  if (!memchr(b, '.', (size_t)n) && !memchr(b, 'E', (size_t)n)) b[n++] = '.';
+  return rt_str_copy(rt_str(b, n));
+}
+
+/* the D format of the PDP-11: sign, an 8-bit exponent in excess 128 and 55 bits of
+ * fraction, the leading 1 hidden (TO_BIT, [FLOAT (p)]$$, 3.3.3) */
+rstr rt_b_bits_of_d(rt_b_d d) {
+  rstr r = rt_str_new(64);
+  uint64_t u = 0;
+  if (d.m != 0) {
+    uint64_t mag = (uint64_t)(d.m < 0 ? -d.m : d.m);
+    uint64_t ex = (uint64_t)(d.e + 56 + 128);
+    u = ((uint64_t)(d.m < 0) << 63) | (ex << 55) | (mag & (((uint64_t)1 << 55) - 1));
+  }
+  for (int i = 63; i >= 0; i--, u >>= 1) r.p[i] = (unsigned char)('0' + (int)(u & 1));
+  return r;
+}
+
+rt_b_d rt_b_d_of_bits(rstr b) {
+  if (b.len != 64) rt_raise(RT_B_INVALID_SIZE);
+  uint64_t u = 0;
+  for (int i = 0; i < 64; i++) u = u * 2 + (b.p[i] == '1');
+  uint64_t ex = (u >> 55) & 255;
+  if (ex == 0) return (rt_b_d){0, 0};
+  int64_t mag = (int64_t)((u & (((uint64_t)1 << 55) - 1)) | ((uint64_t)1 << 55));
+  return (rt_b_d){(u >> 63) ? -mag : mag, (int32_t)((int64_t)ex - 128 - 56)};
+}
+
+/* FLOAT_MAX, EPSILON and the neighbours of a value (an open range bound) */
+rt_b_d rt_b_dmax(void) { return (rt_b_d){((int64_t)1 << 56) - 1, 127 - 56}; }
+rt_b_d rt_b_deps(void) { return (rt_b_d){(int64_t)1 << 55, -110}; }   /* 2**-55 */
+rt_b_d rt_b_dnext(rt_b_d d, int up) {
+  if (d.m == 0) return (rt_b_d){up ? ((int64_t)1 << 55) : -((int64_t)1 << 55), -128 - 55};
+  return b_dnorm((__int128)d.m * 2 + (up ? 1 : -1) * 2, (int64_t)d.e - 1, 1, RT_X_OVERFLOW);
+}
+
+/* a magnitude m * 2**e (m > 0) rounded to nb bits, to the nearest, ties to even */
+static unsigned __int128 b_round_to(unsigned __int128 m, int64_t *e, int nb) {
+  int len = 0;
+  for (unsigned __int128 t = m; t; t >>= 1) len++;
+  if (len > nb) {
+    int k = len - nb;
+    unsigned __int128 rem = m & ((((unsigned __int128)1) << k) - 1), q = m >> k;
+    unsigned __int128 half = ((unsigned __int128)1) << (k - 1);
+    if (rem > half || (rem == half && (q & 1))) q++;
+    if (q >> nb) {
+      q >>= 1;
+      k++;
+    }
+    *e += k;
+    return q;
+  }
+  *e -= nb - len;
+  return m << (nb - len);
+}
+
+/* the exact result of a D operation as sign, magnitude and exponent, raising nothing:
+ * the machine-dependent operators (3.3.4.5); a quotient to 114 bits and a sticky bit */
+static void b_dexact(int op, rt_b_d a, rt_b_d b, int *neg, unsigned __int128 *mag, int64_t *e) {
+  *mag = 0;
+  *e = 0;
+  *neg = 0;
+  if (op == '-') {
+    b.m = -b.m;
+    op = '+';
+  }
+  if (op == '*') {
+    __int128 p = (__int128)a.m * b.m;
+    *neg = p < 0;
+    *mag = (unsigned __int128)(p < 0 ? -p : p);
+    *e = (int64_t)a.e + b.e;
+    return;
+  }
+  if (op == '/') {
+    if (a.m == 0 || b.m == 0) return;          /* no quotient: zeros */
+    *neg = (a.m < 0) != (b.m < 0);
+    unsigned __int128 r = (unsigned __int128)(a.m < 0 ? -a.m : a.m);
+    unsigned __int128 d = (unsigned __int128)(b.m < 0 ? -b.m : b.m), q = 0;
+    for (int i = 0; i < 115; i++) {           /* 114 bits by long division */
+      q <<= 1;
+      if (r >= d) {
+        r -= d;
+        q |= 1;
+      }
+      r <<= 1;
+    }
+    *mag = q << 1 | (r != 0);                   /* and a sticky bit */
+    *e = (int64_t)a.e - b.e - 115;
+    return;
+  }
+  if (a.m == 0 || b.m == 0) {
+    rt_b_d c = a.m == 0 ? b : a;
+    *neg = c.m < 0;
+    *mag = (unsigned __int128)(c.m < 0 ? -c.m : c.m);
+    *e = c.e;
+    return;
+  }
+  if (b.e > a.e) {
+    rt_b_d t = a;
+    a = b;
+    b = t;
+  }
+  int64_t d = (int64_t)a.e - b.e;
+  if (d > 70) {                               /* b is below the last bit kept */
+    *neg = a.m < 0;
+    *mag = (unsigned __int128)(a.m < 0 ? -a.m : a.m);
+    *e = a.e;
+    return;
+  }
+  __int128 x = ((__int128)a.m << d) + b.m;
+  *neg = x < 0;
+  *mag = (unsigned __int128)(x < 0 ? -x : x);
+  *e = b.e;
+}
+
+/* !op! of D values: sign, a 15-bit exponent (excess 16384) and 112 bits of the
+ * exact result, the leading 1 included: two D words (3.3.4.5) */
+rstr rt_b_dmd(int op, rt_b_d a, rt_b_d b) {
+  rstr r = rt_str_new(128);
+  memset(r.p, '0', 128);
+  int neg;
+  unsigned __int128 mag;
+  int64_t e;
+  b_dexact(op, a, b, &neg, &mag, &e);
+  if (mag == 0) return r;
+  mag = b_round_to(mag, &e, 112);
+  uint64_t ex = (uint64_t)(e + 112 + 16384) & 0x7fff;
+  r.p[0] = (unsigned char)('0' + neg);
+  for (int i = 0; i < 15; i++) r.p[1 + i] = (unsigned char)('0' + (int)((ex >> (14 - i)) & 1));
+  for (int i = 0; i < 112; i++) r.p[16 + i] = (unsigned char)('0' + (int)((mag >> (111 - i)) & 1));
+  return r;
+}
+
+/* !op! of F values (-pdp11): the result in D, as the FP11 leaves it after OVERFLOW
+ * or UNDERFLOW: the exponent kept modulo 256 (3.3.4.5) */
+static rstr b_fmd_pdp11(int op, double a, double b) {
+  rstr r = rt_str_new(64);
+  memset(r.p, '0', 64);
+  int neg;
+  unsigned __int128 mag;
+  int64_t e;
+  b_dexact(op, b_d_raw(a), b_d_raw(b), &neg, &mag, &e);
+  if (mag == 0) return r;
+  mag = b_round_to(mag, &e, 56);
+  uint64_t u = ((uint64_t)neg << 63) | ((uint64_t)((e + 56 + 128) & 255) << 55)
+               | ((uint64_t)mag & (((uint64_t)1 << 55) - 1));
+  for (int i = 63; i >= 0; i--, u >>= 1) r.p[i] = (unsigned char)('0' + (int)(u & 1));
+  return r;
+}
+
+/* a D value to F (-pdp11), rounded or truncated from its 56 bits once: an assignment
+ * (RANGE) or TO_FLOAT (OVERFLOW) (3.3.5, 3.3.6.1) */
+double rt_b_single_of_d(rt_b_d d, int trunc, int range) {
+  if (d.m == 0) return 0;
+  int neg = d.m < 0;
+  uint64_t mag = (uint64_t)(neg ? -d.m : d.m);
+  uint64_t q = mag >> 32, rem = mag & 0xffffffffu;
+  int64_t e = (int64_t)d.e + 32;
+  if (!trunc && (rem > 0x80000000u || (rem == 0x80000000u && (q & 1)))) q++;
+  double r = ldexp((double)q, (int)e);
+  return b_fcheck(neg ? -r : r, 1, range ? RT_X_RANGE : RT_X_OVERFLOW);
+}
+
+/* the range of a D type (RANGE, or INVALID_TYPE where a value is checked, 3.3.5) */
+rt_b_d rt_b_drange(rt_b_d v, rt_b_d lo, rt_b_d hi, int typecheck) {
+  if (rt_b_dcmp(v, lo) < 0 || rt_b_dcmp(v, hi) > 0)
+    rt_raise(typecheck ? RT_B_INVALID_TYPE : RT_X_RANGE);
+  return v;
+}
+
+/* the F format of the PDP-11 (-pdp11): sign, an 8-bit exponent in excess 128 and 23
+ * bits of fraction, the leading 1 hidden (TO_BIT, [FLOAT (p)]$$, 3.3.3) */
+rstr rt_b_bits_of_f(double v) {
+  rstr r = rt_str_new(32);
+  uint32_t u = 0;
+  if (v != 0) {
+    int ex;
+    double f = frexp(fabs(v), &ex);              /* 0.5 <= f < 1 */
+    uint32_t m = (uint32_t)ldexp(f, 24);
+    u = ((uint32_t)(v < 0) << 31) | ((uint32_t)((ex + 128) & 255) << 23) | (m & 0x7fffff);
+  }
+  for (int i = 31; i >= 0; i--, u >>= 1) r.p[i] = (unsigned char)('0' + (int)(u & 1));
+  return r;
+}
+
+double rt_b_f_of_bits(rstr b) {
+  if (b.len != 32) rt_raise(RT_B_INVALID_SIZE);
+  uint32_t u = 0;
+  for (int i = 0; i < 32; i++) u = u * 2 + (b.p[i] == '1');
+  uint32_t ex = (u >> 23) & 255;
+  if (ex == 0) return 0;
+  double r = ldexp((double)((u & 0x7fffff) | 0x800000), (int)ex - 128 - 24);
+  return (u >> 31) ? -r : r;
+}
+
+/* !op! of STD fixed point values on 16-bit words (-pdp11): a double word, as the
+ * PDP-11 leaves it: MUL the 32-bit product, high word first; DIV the quotient
+ * word and then the remainder word; ADD and SUB the exact sum, the carry in the
+ * high word (3.2.4.5) */
+static rstr b_md_pdp11(int op, rt_int a, rt_int b) {
+  uint32_t u = 0;
+  switch (op) {
+  case '+': u = (uint32_t)(int32_t)(a + b); break;
+  case '-': u = (uint32_t)(int32_t)(a - b); break;
+  case '*': u = (uint32_t)(int32_t)(a * b); break;
+  default:
+    if (b != 0) u = ((uint32_t)(uint16_t)(a / b) << 16) | (uint16_t)(a % b);
+    break;
+  }
+  rstr r = rt_str_new(32);
+  for (int i = 31; i >= 0; i--, u >>= 1) r.p[i] = (unsigned char)('0' + (int)(u & 1));
+  return r;
+}

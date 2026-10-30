@@ -1008,6 +1008,8 @@ FUNCTION EQUAL_CODE (T: TYP, A, B: TEXT) RETURNS (TEXT);
       RETURN FMT3 ('E_@(@, @)', T@.CNAME, A, B);
    ORIF K = T_SEM THEN
       RETURN MK ('0');
+   ORIF IS_D (T) THEN
+      RETURN FMT2 ('(rt_b_dcmp(@, @) == 0)', A, B);
    END IF;
    RETURN FMT2 ('(@ == @)', A, B);
 END FUNCTION EQUAL_CODE;
@@ -1023,7 +1025,15 @@ FUNCTION RANGE_CHECK (T: TYP, V: TEXT, SELF: TEXT) RETURNS (TEXT);
    IF T@.RLEVEL > 0 & T@.RLEVEL <> CUR_LEVEL () & NOT (T@.MLO.OK & T@.MHI.OK) THEN
       RETURN V;                                     % its bounds are not visible here
    END IF;
-   IF T@.KIND = T_FLOAT THEN
+   IF IS_D (T) THEN
+      BLOCK
+         VAR TC: TEXT := MK ('0');
+         IF W@.TYPECHECK THEN
+            TC := MK ('1');
+         END IF;
+         RETURN FMT4 ('rt_b_drange(@, @, @, @)', V, SUBST_SELF (T@.LO_C, SELF), SUBST_SELF (T@.HI_C, SELF), TC);
+      END BLOCK;
+   ORIF T@.KIND = T_FLOAT THEN
       IF W@.TYPECHECK THEN
          RETURN FMT3 ('rt_b_tfrange(@, @, @)', V, SUBST_SELF (T@.LO_C, SELF), SUBST_SELF (T@.HI_C, SELF));
       END IF;

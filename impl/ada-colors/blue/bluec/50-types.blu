@@ -290,9 +290,15 @@ FUNCTION WITH_RANGE (T: TYP, R: NODE) RETURNS (TYP);
             N@.MHI := NO_MVAL ();
          END IF;
       END IF;
+      IF IS_D (T) THEN                               % D bounds (-pdp11)
+         N@.LO_C := AS_D (LO);
+         N@.HI_C := AS_D (HI);
+      END IF;
    END BLOCK;
    IF R@.IV = 1 ! R@.IV = 3 THEN                     % (L: open below
-      IF T@.KIND = T_FLOAT THEN
+      IF IS_D (T) THEN
+         N@.LO_C := FMT1 ('rt_b_dnext(@, 1)', N@.LO_C);
+      ORIF T@.KIND = T_FLOAT THEN
          N@.LO_C := FMT1 ('nextafter(@, INFINITY)', N@.LO_C);
       ELSE
          N@.LO_C := FMT1 ('((@) + 1)', N@.LO_C);
@@ -300,7 +306,9 @@ FUNCTION WITH_RANGE (T: TYP, R: NODE) RETURNS (TYP);
       END IF;
    END IF;
    IF R@.IV >= 2 THEN                                % U) open above
-      IF T@.KIND = T_FLOAT THEN
+      IF IS_D (T) THEN
+         N@.HI_C := FMT1 ('rt_b_dnext(@, 0)', N@.HI_C);
+      ORIF T@.KIND = T_FLOAT THEN
          N@.HI_C := FMT1 ('nextafter(@, -INFINITY)', N@.HI_C);
       ELSE
          N@.HI_C := FMT1 ('((@) - 1)', N@.HI_C);
@@ -1362,6 +1370,9 @@ FUNCTION CTYPE (T: TYP) RETURNS (TEXT);
    IF IS_SCALAR (T) THEN
       RETURN MK ('rt_int');
    ORIF K = T_FLOAT THEN
+      IF IS_D (T) THEN                               % the D format of -pdp11
+         RETURN MK ('rt_b_d');
+      END IF;
       RETURN MK ('double');
    ORIF K = T_STR ! K = T_BITS THEN
       RETURN MK ('rstr');

@@ -169,6 +169,9 @@ END FUNCTION MAX_LENGTH;
 
 % the largest nominal precision of a float: MAX_NOM_PREC (3.3.1, D.6)
 FUNCTION MAX_FLOAT_PRECISION () RETURNS (INTEGER);
+   IF W@.WORD = 16 THEN                              % the D format (-pdp11)
+      RETURN 16;
+   END IF;
    RETURN 15;
 END FUNCTION MAX_FLOAT_PRECISION;
 
@@ -176,6 +179,9 @@ END FUNCTION MAX_FLOAT_PRECISION;
 FUNCTION IMP_PRECISION_OF (P: INTEGER) RETURNS (INTEGER);
    IF P <= 7 THEN
       RETURN 7;
+   END IF;
+   IF W@.WORD = 16 THEN                              % D: a 56-bit mantissa (-pdp11)
+      RETURN 16;
    END IF;
    RETURN 15;
 END FUNCTION IMP_PRECISION_OF;
@@ -191,6 +197,8 @@ FUNCTION FLOAT_FORMAT (P: INTEGER, NAME: TEXT) RETURNS (INTEGER);
          RETURN 127;
       ORIF TEQS (NAME, 'EXPONENT_SIZE') THEN
          RETURN 8;
+      ORIF TEQS (NAME, 'MANTISSA_SIZE') & NOT SINGLE THEN
+         RETURN 57;                                  % D: 56 bits and the sign
       END IF;
    END IF;
    IF TEQS (NAME, 'EXPONENT_MIN') THEN
@@ -318,20 +326,16 @@ FUNCTION ATTRIBUTE (B: ET, NAME: TEXT, LINE: INTEGER) RETURNS (ET);
       ORIF TEQS (NAME, 'MIN') ! TEQS (NAME, 'MAX') THEN      % of FLOAT (IMP_PRECISION)
          BLOCK
             CONST MT: TYP := FLOAT_TYPE (IMP_PRECISION_OF (T@.SCALE));
-            VAR C: TEXT := MK ('DBL');
-            IF IMP_PRECISION_OF (T@.SCALE) = 7 THEN
-               C := MK ('FLT');
-            END IF;
             IF TEQS (NAME, 'MIN') THEN
                IF T@.LO_C.LEN > 0 THEN
                   RETURN MKET (SUBST_SELF (T@.LO_C, B.SELF), MT);
                END IF;
-               RETURN MKET (FMT1 ('(-@_MAX)', C), MT);
+               RETURN MKET (FLOAT_LIMIT (MT, NAME), MT);
             END IF;
             IF T@.HI_C.LEN > 0 THEN
                RETURN MKET (SUBST_SELF (T@.HI_C, B.SELF), MT);
             END IF;
-            RETURN MKET (FMT1 ('@_MAX', C), MT);
+            RETURN MKET (FLOAT_LIMIT (MT, NAME), MT);
          END BLOCK;
       END IF;
    ORIF K = T_ENUM THEN                              % 3.4.1
@@ -749,6 +753,10 @@ FUNCTION TYPE_SPECIFIER (E: NODE) RETURNS (ET);
          RETURN MKET (FMT1 ('rt_b_int_of_bits(@)', V.C), T);
       ORIF RT@.KIND = T_ENUM THEN
          RETURN MKET (ENUM_OF_BITS (RT, V.C), T);
+      ORIF IS_D (RT) THEN                         % the PDP-11's D and F (-pdp11)
+         RETURN MKET (FMT1 ('rt_b_d_of_bits(@)', V.C), T);
+      ORIF RT@.KIND = T_FLOAT & W@.WORD = 16 THEN
+         RETURN MKET (FMT1 ('rt_b_f_of_bits(@)', V.C), T);
       ORIF RT@.KIND = T_FLOAT THEN
          RETURN MKET (FMT1 ('rt_b_float_of_bits(@)', V.C), T);
       ORIF RT@.KIND = T_STR THEN                  % the characters by the packing

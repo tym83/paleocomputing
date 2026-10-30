@@ -648,7 +648,9 @@ FUNCTION REAL_LITERAL (E: NODE) RETURNS (ET);
       ORIF S[0:0] = '.' THEN
          C := FMT1 ('0@', T);
       END IF;
-      IF IMP_PRECISION_OF (F@.SCALE) = 7 THEN
+      IF IS_D (F) THEN                               % exact to D's 56 bits (-pdp11)
+         RETURN MKET (FMT1 ('rt_b_dlit("@")', C), F);
+      ORIF IMP_PRECISION_OF (F@.SCALE) = 7 THEN
          RETURN MKET (FMT1 ('((double)(float)@)', C), F);
       END IF;
       RETURN MKET (FMT1 ('(@)', C), F);
@@ -710,7 +712,7 @@ FUNCTION FLOAT_LITERAL_FITS (E: NODE, P: INTEGER) RETURNS (BOOLEAN);
       IF INT = 0 THEN
          D := -LEAD - 1 + EXP;
       END IF;
-      IF IMP_PRECISION_OF (P) = 7 THEN
+      IF IMP_PRECISION_OF (P) = 7 ! W@.WORD = 16 THEN   % -pdp11: F and D alike
          LIM := 38;
       END IF;
       RETURN D <= LIM & D >= -LIM + 1;

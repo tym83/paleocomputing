@@ -1,6 +1,46 @@
 
 % ==== the predefined functions (3.x.6), the parallel support (D.7) and TERMINAL ===========
 
+% TO_FLOAT of a float value to the type T: OVERFLOW out of its format (3.3.6.1); D
+% (-pdp11) holds every F value exactly
+FUNCTION FLOAT_CONV (V: ET, T: TYP, TR: TEXT) RETURNS (TEXT);
+   IF IS_D (T) THEN
+      RETURN AS_D (V);
+   ORIF IS_D (V.T) THEN
+      RETURN FMT2 ('rt_b_single_of_d(@, @, 0)', V.C, TR);
+   END IF;
+   RETURN FMT3 ('rt_b_fconv(@, @, @, 0)', V.C, SINGLE_C (T@.SCALE), TR);
+END FUNCTION FLOAT_CONV;
+
+% the largest and smallest value and EPSILON of the format of the float type T
+% (3.3.6.3, 3.3.6.4): binary32 and binary64, or the PDP-11's F and D (-pdp11)
+FUNCTION FLOAT_LIMIT (T: TYP, WHICH: TEXT) RETURNS (TEXT);
+   VAR C: TEXT := MK ('DBL');
+   IF IS_D (T) THEN
+      IF TEQS (WHICH, 'MIN') THEN
+         RETURN MK ('rt_b_dneg(rt_b_dmax())');
+      ORIF TEQS (WHICH, 'MAX') THEN
+         RETURN MK ('rt_b_dmax()');
+      END IF;
+      RETURN MK ('rt_b_deps()');
+   END IF;
+   IF IMP_PRECISION_OF (T@.SCALE) = 7 THEN
+      C := MK ('FLT');
+   END IF;
+   IF W@.WORD = 16 & NOT TEQS (WHICH, 'EPSILON') THEN   % F: (1 - 2**-24) * 2**127
+      IF TEQS (WHICH, 'MIN') THEN
+         RETURN MK ('(-0x1.fffffep+126)');
+      END IF;
+      RETURN MK ('0x1.fffffep+126');
+   END IF;
+   IF TEQS (WHICH, 'MIN') THEN
+      RETURN FMT1 ('(-@_MAX)', C);
+   ORIF TEQS (WHICH, 'MAX') THEN
+      RETURN FMT1 ('@_MAX', C);
+   END IF;
+   RETURN FMT1 ('@_EPSILON', C);
+END FUNCTION FLOAT_LIMIT;
+
 FUNCTION NTH (L: NODE, K: INTEGER) RETURNS (NODE);
    VAR P: NODE := L;
    LOOP FOR I IN [1 : K] DO
@@ -356,7 +396,9 @@ FUNCTION BUILTIN (E: NODE, WANT: TYP) RETURNS (ET);
                END IF;
             END BLOCK;
          END IF;
-         IF VT@.KIND = T_INT THEN
+         IF VT@.KIND = T_INT & IS_D (T) THEN
+            RETURN MKET (FMT3 ('rt_b_d_of_fix(@, @, @)', V.C, NUM (VT@.SCALE), TR), T);
+         ORIF VT@.KIND = T_INT THEN
             RETURN MKET (FMT4 ('rt_b_float_of_fix_r(@, @, @, @)', V.C, NUM (VT@.SCALE), SINGLE, TR), T);
          ORIF VT@.KIND = T_FLOAT THEN
             IF ARG_EXPR (E@.A)@.KIND = N_REAL & IMP_PRECISION_OF (P.V) > IMP_PRECISION_OF (VT@.SCALE) THEN
@@ -369,13 +411,16 @@ FUNCTION BUILTIN (E: NODE, WANT: TYP) RETURNS (ET);
                   W@.QUAL := Q;
                   L := EXPR (ARG_EXPR (E@.A), NIL);
                   W@.QUAL := SAVED_Q;
-                  RETURN MKET (FMT3 ('rt_b_fconv(@, @, @, 0)', L.C, SINGLE, TR), T);
+                  RETURN MKET (FLOAT_CONV (L, T, TR), T);
                END BLOCK;
             END IF;
-            RETURN MKET (FMT3 ('rt_b_fconv(@, @, @, 0)', V.C, SINGLE, TR), T);
+            RETURN MKET (FLOAT_CONV (V, T, TR), T);
          ORIF VT@.KIND = T_STR THEN
             IF VT@.BASE <> NIL & VT@.BASE <> W@.TY_ASCII THEN
                FAIL (LINE, 'TO_FLOAT is predefined for ASCII strings only (3.3.6.1)');
+            END IF;
+            IF IS_D (T) THEN
+               RETURN MKET (FMT2 ('rt_b_d_of_str(@, @)', V.C, TR), T);
             END IF;
             RETURN MKET (FMT3 ('rt_b_fconv(rt_b_float_of_str(@), @, @, 0)', V.C, SINGLE, TR), T);
          END IF;
@@ -391,6 +436,9 @@ FUNCTION BUILTIN (E: NODE, WANT: TYP) RETURNS (ET);
          IF REAL_TYPE (V.T)@.KIND = T_INT THEN
             RETURN MKET (FMT1 ('rt_abs(@)', V.C), INT_TYPE (V.T@.SCALE));
          ORIF REAL_TYPE (V.T)@.KIND = T_FLOAT THEN
+            IF IS_D (V.T) THEN
+               RETURN MKET (FMT1 ('rt_b_dabs(@)', V.C), V.T);
+            END IF;
             RETURN MKET (FMT1 ('fabs(@)', V.C), V.T);
          END IF;
          FAIL (LINE, 'ABS of something not a number');
@@ -466,32 +514,12 @@ FUNCTION BUILTIN (E: NODE, WANT: TYP) RETURNS (ET);
       BLOCK
          CONST P: MVAL := MANIFEST_INTEGER_ARG (E@.A, 'precision', 1, MAX_FLOAT_PRECISION ());
          CONST T: TYP := FLOAT_TYPE (P.V);
-         VAR C: TEXT := MK ('DBL');
-         IF IMP_PRECISION_OF (P.V) = 7 THEN
-            C := MK ('FLT');
-         END IF;
-         IF W@.WORD = 16 THEN                       % the PDP-11's F and D formats
-            IF TEQS (C, 'FLT') THEN
-               C := MK ('0x1.fffffep+126');
-            ELSE
-               C := MK ('0x1.fffffffffffffp+126');
-            END IF;
-            IF TEQS (NAME, 'FLOAT_MIN') THEN
-               RETURN MKET (FMT1 ('(-@)', C), T);
-            ORIF TEQS (NAME, 'FLOAT_MAX') THEN
-               RETURN MKET (C, T);
-            END IF;
-            C := MK ('DBL');
-            IF IMP_PRECISION_OF (P.V) = 7 THEN
-               C := MK ('FLT');
-            END IF;
-         END IF;
          IF TEQS (NAME, 'FLOAT_MIN') THEN
-            RETURN MKET (FMT1 ('(-@_MAX)', C), T);
+            RETURN MKET (FLOAT_LIMIT (T, MK ('MIN')), T);
          ORIF TEQS (NAME, 'FLOAT_MAX') THEN
-            RETURN MKET (FMT1 ('@_MAX', C), T);
+            RETURN MKET (FLOAT_LIMIT (T, MK ('MAX')), T);
          END IF;
-         RETURN MKET (FMT1 ('@_EPSILON', C), T);       % 1.0 + EPSILON > 1.0 (3.3.6.4)
+         RETURN MKET (FLOAT_LIMIT (T, MK ('EPSILON')), T);   % 1.0 + EPSILON > 1.0 (3.3.6.4)
       END BLOCK;
    ORIF TEQS (NAME, 'IMP_PRECISION') THEN           % 3.3.6.5
       NEED_ARGS (E, 1, 1);
@@ -521,6 +549,8 @@ FUNCTION IMAGE_OF (V: ET, LINE: INTEGER) RETURNS (ET);
          RETURN MKET (FMT1 ('rt_b_image(@)', V.C), S);
       END IF;
       RETURN MKET (FMT2 ('rt_b_fix_image(@, @)', V.C, NUM (T@.SCALE)), S);
+   ORIF IS_D (T) THEN
+      RETURN MKET (FMT2 ('rt_b_d_image(@, @)', V.C, NUM (T@.SCALE)), S);
    ORIF K = T_FLOAT THEN
       RETURN MKET (FMT2 ('rt_b_float_image(@, @)', V.C, NUM (T@.SCALE)), S);
    ORIF K = T_BOOL THEN
@@ -583,6 +613,8 @@ FUNCTION TO_FIXED_CALL (E: NODE) RETURNS (ET);
          W@.ROUNDED := SAVED;
          RETURN MKET (C, INT_TYPE (S));
       END BLOCK;
+   ORIF IS_D (T) THEN
+      RETURN MKET (FMT3 ('rt_b_fix_of_d(@, @, @)', V.C, NUM (S), RND), INT_TYPE (S));
    ORIF T@.KIND = T_FLOAT THEN
       RETURN MKET (FMT3 ('rt_b_fix_of_float(@, @, @)', V.C, NUM (S), RND), INT_TYPE (S));
    ORIF T@.KIND = T_ENUM ! T@.KIND = T_BOOL THEN
@@ -641,6 +673,10 @@ FUNCTION BITS_OF (V: ET, LINE: INTEGER) RETURNS (ET);
       RETURN MKET (FMT2 ('rt_b_bits_of_int(@, @)', V.C, NUM (W@.WORD)), BITS_TYPE (W@.WORD));
    ORIF K = T_BOOL THEN
       RETURN MKET (FMT1 ('rt_b_bits_of_int(@, 1)', V.C), BITS_TYPE (1));
+   ORIF IS_D (T) THEN                               % the PDP-11's D and F (-pdp11)
+      RETURN MKET (FMT1 ('rt_b_bits_of_d(@)', V.C), BITS_TYPE (64));
+   ORIF K = T_FLOAT & W@.WORD = 16 THEN
+      RETURN MKET (FMT1 ('rt_b_bits_of_f(@)', V.C), BITS_TYPE (32));
    ORIF K = T_FLOAT THEN
       RETURN MKET (FMT1 ('rt_b_bits_of_float(@)', V.C), BITS_TYPE (64));
    END IF;

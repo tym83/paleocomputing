@@ -179,8 +179,14 @@ FUNCTION CONVERT (V: ET, T: TYP, LINE: INTEGER, SELF: TEXT) RETURNS (TEXT);
                           SELF);
    ORIF RT@.KIND = T_FLOAT THEN                      % to the variable's implemented
       IF IMP_PRECISION_OF (RT@.SCALE) < IMP_PRECISION_OF (VT@.SCALE) THEN   % precision
+         IF IS_D (VT) THEN                           % D to F (-pdp11)
+            RETURN RANGE_CHECK (RT, FMT2 ('rt_b_single_of_d(@, @, 1)', V.C, FLOAT_TRUNC ()), SELF);
+         END IF;
          RETURN RANGE_CHECK (RT, FMT3 ('rt_b_fconv(@, @, @, 1)', V.C, SINGLE_C (RT@.SCALE),
                                        FLOAT_TRUNC ()), SELF);           % (3.3.5)
+      END IF;
+      IF IS_D (RT) THEN
+         RETURN RANGE_CHECK (RT, AS_D (V), SELF);
       END IF;
       RETURN RANGE_CHECK (RT, V.C, SELF);
    ORIF RT@.KIND = T_ENUM THEN
@@ -472,7 +478,7 @@ FUNCTION UNARY1 (E: NODE) RETURNS (ET);
       BLOCK
          CONST FT: TYP := FLOAT_TYPE (MAX_INT (T@.SCALE, QUAL_PREC ()));
          IF TEQS (OP, '-') THEN
-            RETURN MKET (FLOAT_OP (OP, MK ('0.0'), A.C, FT), FT);
+            RETURN MKET (FLOAT_OP (OP, MKET (MK ('0.0'), FLOAT_TYPE (1)), A, FT), FT);
          END IF;
          RETURN MKET (A.C, FT);
       END BLOCK;
@@ -589,7 +595,7 @@ FUNCTION APPLY_OPERATOR (E: NODE, OP: TEXT, A, B: ET) RETURNS (ET);
       IF AT@.KIND = T_INT & BT@.KIND = T_INT THEN    % 3.2.4.6: exactly, at any scales
          RETURN MKET (FIXED_COMPARE (A, B, OP), W@.TY_BOOL);
       ORIF AT@.KIND = T_FLOAT & BT@.KIND = T_FLOAT THEN
-         RETURN MKET (FMT3 ('(@ @ @)', A.C, OP, B.C), W@.TY_BOOL);
+         RETURN MKET (FLOAT_COMPARE (A, B, OP), W@.TY_BOOL);
       ORIF AT@.KIND = T_ENUM & SAME_CLASS (AT, BT) THEN
          IF IS_UNORDERED (AT) ! IS_UNORDERED (BT) THEN
             FAIL (LINE, 'an UNORDERED type has no ordering (3.4.4.1)');
@@ -625,7 +631,7 @@ FUNCTION APPLY_OPERATOR (E: NODE, OP: TEXT, A, B: ET) RETURNS (ET);
       BLOCK                                          % the larger precision, at least
          CONST T: TYP := FLOAT_TYPE (MAX_INT (MAX_INT (AT@.SCALE, BT@.SCALE), QUAL_PREC ()));
          IF TEQS (OP, '+') ! TEQS (OP, '-') ! TEQS (OP, '*') ! TEQS (OP, '/') THEN
-            RETURN MKET (FLOAT_OP (OP, A.C, B.C, T), T);
+            RETURN MKET (FLOAT_OP (OP, A, B, T), T);
          END IF;                                     % that of WITH PREC (3.3.4.4)
          IF TEQS (OP, '**') THEN
             FAIL (LINE, '** has no predefined meaning for floating point values (3.3.4.2)');
@@ -722,6 +728,33 @@ FUNCTION FLOAT_TYPE (P: INTEGER) RETURNS (TYP);
    RETURN T;
 END FUNCTION FLOAT_TYPE;
 
+% is a float type of the D format (-pdp11: a 56-bit mantissa beyond single precision),
+% represented as rt_b_d and computed by the runtime exactly?
+FUNCTION IS_D (T: TYP) RETURNS (BOOLEAN);
+   IF W@.WORD <> 16 ! T = NIL THEN
+      RETURN FALSE;
+   END IF;
+   IF REAL_TYPE (T)@.KIND <> T_FLOAT THEN
+      RETURN FALSE;
+   END IF;
+   RETURN IMP_PRECISION_OF (REAL_TYPE (T)@.SCALE) > 7;
+END FUNCTION IS_D;
+
+% a float value as D, or as a C double
+FUNCTION AS_D (V: ET) RETURNS (TEXT);
+   IF IS_D (V.T) THEN
+      RETURN V.C;
+   END IF;
+   RETURN FMT1 ('rt_b_d_of_double(@)', V.C);
+END FUNCTION AS_D;
+
+FUNCTION AS_DOUBLE (V: ET) RETURNS (TEXT);
+   IF IS_D (V.T) THEN
+      RETURN FMT1 ('rt_b_double_of_d(@)', V.C);
+   END IF;
+   RETURN V.C;
+END FUNCTION AS_DOUBLE;
+
 % is the implemented precision of FLOAT (P) single?
 FUNCTION SINGLE_C (P: INTEGER) RETURNS (TEXT);
    IF IMP_PRECISION_OF (P) = 7 THEN
@@ -751,10 +784,30 @@ FUNCTION QUAL_PREC () RETURNS (INTEGER);
    RETURN 0;
 END FUNCTION QUAL_PREC;
 
-FUNCTION FLOAT_OP (OP, A, B: TEXT, T: TYP) RETURNS (TEXT);
-   RETURN CAT (FMT3 ('rt_b_fop(''@'', @, @, ', OP, A, B),
+FUNCTION FLOAT_OP (OP: TEXT, A, B: ET, T: TYP) RETURNS (TEXT);
+   IF IS_D (T) THEN
+      RETURN FMT4 ('rt_b_dop(''@'', @, @, @)', OP, AS_D (A), AS_D (B), FLOAT_TRUNC ());
+   END IF;
+   RETURN CAT (FMT3 ('rt_b_fop(''@'', @, @, ', OP, AS_DOUBLE (A), AS_DOUBLE (B)),
                FMT2 ('@, @)', SINGLE_C (T@.SCALE), FLOAT_TRUNC ()));
 END FUNCTION FLOAT_OP;
+
+% the comparison of two float values, either of them D (-pdp11)
+FUNCTION FLOAT_COMPARE (A, B: ET, OP: TEXT) RETURNS (TEXT);
+   IF IS_D (A.T) ! IS_D (B.T) THEN
+      RETURN FMT3 ('(rt_b_dcmp(@, @) @ 0)', AS_D (A), AS_D (B), C_RELOP (OP));
+   END IF;
+   RETURN FMT3 ('(@ @ @)', A.C, C_RELOP (OP), B.C);
+END FUNCTION FLOAT_COMPARE;
+
+FUNCTION C_RELOP (OP: TEXT) RETURNS (TEXT);
+   IF TEQS (OP, '=') THEN
+      RETURN MK ('==');
+   ORIF TEQS (OP, '<>') THEN
+      RETURN MK ('!=');
+   END IF;
+   RETURN OP;
+END FUNCTION C_RELOP;
 
 FUNCTION LOWER_OP (OP: TEXT) RETURNS (TEXT);
    IF TEQS (OP, 'AND') THEN
@@ -793,6 +846,8 @@ FUNCTION EQUALITY (E: NODE, OP: TEXT, A, B: ET) RETURNS (ET);
       R := FMT2 ('(@ == @)', A.C, B.C);
    ORIF AT@.KIND = T_INT & BT@.KIND = T_INT THEN
       R := FIXED_COMPARE (A, B, MK ('=='));
+   ORIF AT@.KIND = T_FLOAT & BT@.KIND = T_FLOAT THEN
+      R := FLOAT_COMPARE (A, B, MK ('='));
    ELSE
       IF NOT SAME_CLASS (AT, BT) THEN
          FAIL (E@.LINE, 'comparing values of different types');
@@ -871,6 +926,11 @@ FUNCTION SCALED_OPERATOR (E: NODE, OP: TEXT, A, B: ET) RETURNS (ET);
       IF NOT (TEQS (OP, '+') ! TEQS (OP, '-') ! TEQS (OP, '*') ! TEQS (OP, '/')) THEN
          FAILT (E@.LINE, 'no machine-dependent float operator ', OP);
       END IF;
+      IF IS_D (A.T) ! IS_D (B.T) THEN                % two D words (-pdp11)
+         RETURN MKET (FMT3 ('rt_b_dmd(''@'', @, @)', OP, AS_D (A), AS_D (B)), BITS_TYPE (128));
+      ORIF W@.WORD = 16 THEN                         % F operands: a D result
+         RETURN MKET (FMT3 ('rt_b_fmd(''@'', @, @)', OP, A.C, B.C), BITS_TYPE (64));
+      END IF;
       RETURN MKET (FMT3 ('rt_b_fmd(''@'', @, @)', OP, A.C, B.C), BITS_TYPE (128));
    END IF;
    IF A.T@.KIND <> T_INT ! B.T@.KIND <> T_INT THEN
@@ -884,7 +944,8 @@ FUNCTION SCALED_OPERATOR (E: NODE, OP: TEXT, A, B: ET) RETURNS (ET);
       IF NOT (TEQS (OP, '+') ! TEQS (OP, '-') ! TEQS (OP, '*') ! TEQS (OP, '//')) THEN
          FAILT (E@.LINE, 'the machine-dependent fixed point operators are !+! !-! !*! !//! (3.2.4.5), not ', OP);
       END IF;
-      RETURN MKET (FMT3 ('rt_b_md(''@'', @, @)', MK (STR (OP, OP.LEN)[0:0]), A.C, B.C), BITS_TYPE (128));
+      RETURN MKET (FMT3 ('rt_b_md(''@'', @, @)', MK (STR (OP, OP.LEN)[0:0]), A.C, B.C),
+                   BITS_TYPE (2 * W@.WORD));          % a double word (-pdp11: 32 bits)
    END IF;
    BLOCK
       CONST SM: MVAL := MANIFEST (E@.D);
@@ -948,6 +1009,9 @@ FUNCTION IN_EXPR (E: NODE) RETURNS (ET);
          LOC := FIXED_COMPARE (LO, X, LO_OP);
          HIC := FIXED_COMPARE (X, HI, HI_OP);
       END BLOCK;
+   ORIF T@.KIND = T_FLOAT THEN
+      LOC := FLOAT_COMPARE (LO, MKET (TMP, V.T), LO_OP);
+      HIC := FLOAT_COMPARE (MKET (TMP, V.T), HI, HI_OP);
    ELSE
       LOC := FMT3 ('(@ @ @)', LO.C, LO_OP, TMP);
       HIC := FMT3 ('(@ @ @)', TMP, HI_OP, HI.C);

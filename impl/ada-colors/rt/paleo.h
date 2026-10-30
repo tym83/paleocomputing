@@ -422,6 +422,32 @@ rt_int rt_b_fixed_rep(rt_int v, rt_int size, int is_unsigned);   /* INVALID_REP 
 rt_int rt_b_file_exists(rstr name);
 void rt_b_machine(int word);                                 /* bluec -pdp11 */
 void rt_b_interrupt_after(rt_b_sem *s, rt_int us);          /* a device interrupts */
+/* bluec -pdp11: the D floating point format, 56-bit mantissa, computed exactly */
+typedef struct {
+  int64_t m;                                   /* 0, or 2**55 <= |m| < 2**56 */
+  int32_t e;                                   /* the value is m * 2**e */
+} rt_b_d;
+rt_b_d rt_b_dop(int op, rt_b_d a, rt_b_d b, int trunc);
+rt_b_d rt_b_dneg(rt_b_d a);
+rt_b_d rt_b_dabs(rt_b_d a);
+rt_int rt_b_dcmp(rt_b_d a, rt_b_d b);
+rt_b_d rt_b_d_of_double(double x);
+double rt_b_double_of_d(rt_b_d d);
+rt_b_d rt_b_d_of_fix(rt_int v, rt_int scale, int trunc);
+rt_int rt_b_fix_of_d(rt_b_d d, rt_int scale, int rounded);
+rt_b_d rt_b_dlit(const char *s);
+rt_b_d rt_b_d_of_str(rstr t, int trunc);
+rstr rt_b_d_image(rt_b_d d, rt_int prec);
+rstr rt_b_bits_of_d(rt_b_d d);
+rt_b_d rt_b_d_of_bits(rstr b);
+rt_b_d rt_b_dmax(void);
+rt_b_d rt_b_deps(void);
+rt_b_d rt_b_dnext(rt_b_d d, int up);
+rstr rt_b_dmd(int op, rt_b_d a, rt_b_d b);
+double rt_b_single_of_d(rt_b_d d, int trunc, int range);
+rt_b_d rt_b_drange(rt_b_d v, rt_b_d lo, rt_b_d hi, int typecheck);
+rstr rt_b_bits_of_f(double v);
+double rt_b_f_of_bits(rstr b);
 rt_int rt_b_std(rt_int v);                                   /* OVERFLOW (-pdp11) */
 double rt_b_fconv(double v, int single, int trunc, int range);
 double rt_b_float_of_fix_r(rt_int v, rt_int scale, int single, int trunc);
