@@ -296,6 +296,7 @@
     t := SE();
     Put(OFrames, t);
     Append(OFrames, Locals);
+    PutS(OFrames, "rt_int yu;");
     PutS(OFrames, "};");
     (* the function *)
     Put(fn, Join(s^.mnext^.name, T(" {"), 0));
@@ -307,6 +308,8 @@
     ELSIF Level > 1 THEN
       PutS(fn, "F.up = up;")
     ENDIF;
+    (* the frame counts against the SIZE of a process (XIV.X.2) *)
+    PutS(fn, "F.yu = y_use; Y_USE((rt_int)((sizeof F + 7) / 8));");
     Append(fn, Body);
     PutS(fn, "}");
     Append(OFuncs, fn);

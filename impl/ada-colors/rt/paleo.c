@@ -610,6 +610,9 @@ struct rt_task {
   rt_waiter *awl;          /* the records armed for that wait */
   int atimed, atimer_alt;
   rt_int awake;
+  /* YELLOW: an exception other than termination made pending by a trap of
+   * the scheduler (the deadlock trap); 0 for every other language */
+  int term_exc;
 };
 
 static pthread_mutex_t G = PTHREAD_MUTEX_INITIALIZER;
@@ -793,10 +796,16 @@ static void switch_to(rt_task *n) {
 
 static void check_terminate(void) {
   if (cur->term_pending && !cur->critical) {
+    int e = cur->term_exc ? cur->term_exc : RT_X_TERMINATE;   /* YELLOW: term_exc */
     cur->term_pending = 0;
-    rt_raise(RT_X_TERMINATE);
+    cur->term_exc = 0;
+    rt_raise(e);
   }
 }
+
+/* YELLOW: when every task waits, a language may raise a trap instead of
+ * ending the program (Appendix C, "Deadlock"); NULL for the others */
+static int (*rt_deadlock_hook)(void);
 
 /* the running task gave up the processor (its state is already set) */
 static void reschedule(void) {
@@ -808,6 +817,7 @@ static void reschedule(void) {
     }
     if (advance_clock()) continue;
     if (take_terminate_alternatives()) continue;
+    if (rt_deadlock_hook && rt_deadlock_hook()) continue;           /* YELLOW */
     fflush(stdout);
     fprintf(stderr, "*** deadlock: every task is waiting (t=%lld)\n", (long long)now);
     if (getenv("PALEO_SCHED"))
@@ -2434,7 +2444,8 @@ void rt_b_wait(rt_int v, rt_int scale) {
 
 /* ---- exception names (Appendix C, p.1092, and the text of the Report) ---- */
 
-int Y_X_EOF, Y_X_FILE, Y_X_INSTANCES, Y_X_FIXED, Y_X_ZERO_DENOM, Y_X_NO_RETURN;
+int Y_X_EOF, Y_X_FILE, Y_X_INSTANCES, Y_X_FIXED, Y_X_ZERO_DENOM, Y_X_NO_RETURN, Y_X_STORAGE;
+static int y_deadlock(void);
 
 void y_lang(void) {
   RT_X_RANGE = RT_X_SUBSCRIPT = RT_X_SUBTYPE = RT_X_CASE = RT_X_NEG_EXP =
@@ -2454,6 +2465,8 @@ void y_lang(void) {
   Y_X_FIXED = rt_exc("FIXED_NOT_REPRESENTABLE");
   Y_X_ZERO_DENOM = rt_exc("ZERO_DENOMINATOR"); /* FIXED_DIV, p.1062 */
   Y_X_NO_RETURN = rt_exc("NO_RETURN");         /* fell out of a routine, IX.A.6 */
+  Y_X_STORAGE = rt_exc("TOO_LITTLE_LOCAL_STORAGE"); /* XIV.X.2 */
+  rt_deadlock_hook = y_deadlock;
 }
 
 /* ---- descriptors ------------------------------------------------------- */
@@ -3022,12 +3035,66 @@ int y_awaited(ysig *s) { return s->q != NULL; }
 
 /* ---- processes (X.E, XIV.X.2, XIV.XI.3) ------------------------------------ */
 
-void y_create(rt_taskdecl *d, rt_int limit, int has_prio, rt_int prio,
+/* a process starts with the simulation and the storage limit it gets */
+typedef struct {
+  void (*fn)(void *);
+  void *frame;
+  int sim;
+  rt_int size;
+} ystart;
+
+__thread int y_ticks, y_sim_depth;
+__thread rt_int y_use, y_limit;
+
+static void y_task_start(void *arg) {
+  ystart *s = arg;
+  y_sim_depth = s->sim;
+  y_limit = s->size;
+  y_use = 0;
+  y_ticks = 0;
+  s->fn(s->frame);
+}
+
+void y_create(rt_taskdecl *d, rt_int limit, int has_prio, rt_int prio, rt_int size,
               void (*fn)(void *), void *frame) {
   if (limit > 0 && d->live >= limit) rt_raise(Y_X_INSTANCES);
   rt_act *a = rt_alloc(sizeof *a);
-  rt_create(a, d, fn, frame);
-  if (has_prio) rt_set_priority(a, prio);
+  ystart *s = rt_alloc(sizeof *s);
+  s->fn = fn;
+  s->frame = frame;
+  s->sim = y_sim_depth;          /* processes of a simulation are quasi-parallel */
+  s->size = size;
+  if (has_prio) {
+    if (prio < 0 || prio > 255) rt_raise(RT_X_RANGE);
+    a->prio = prio;
+    a->has_prio = 1;
+  }
+  rt_create(a, d, y_task_start, s);
+}
+
+/* a time slice is over (X.E.1): outside SIMULATED_TIME the processes of
+ * the running one's priority take their turn; inside, a process runs until
+ * it waits. The clock stays virtual: it moves when every process waits */
+void y_slice(void) {
+  y_ticks = 0;
+  if (y_sim_depth) return;
+  make_ready(cur);
+  reschedule();
+  check_terminate();
+}
+
+void y_storage_trap(void) { rt_raise(Y_X_STORAGE); }
+
+/* every process waits: the trap Deadlock (Appendix C) is raised in the main
+ * process, which may handle it, instead of ending the program */
+static int y_deadlock(void) {
+  if (main_task.state != T_BLOCKED) return 0;
+  drop_waiters(&main_task);
+  drop_armed(&main_task);
+  main_task.term_pending = 1;
+  main_task.term_exc = RT_X_DEADLOCK;
+  make_ready(&main_task);
+  return 1;
 }
 
 rt_int y_self(void) { return cur->id; }
@@ -3281,7 +3348,7 @@ void y_device(ysig *s, rt_int address) {
   ydevice *d = rt_alloc(sizeof *d);
   d->s = s;
   d->period = 20;
-  y_create(&devices, 0, 1, 255, y_device_loop, d);
+  y_create(&devices, 0, 1, 255, 0, y_device_loop, d);
 }
 
 /* a SIGNAL as a component of an array or a record: tied to its monitor by

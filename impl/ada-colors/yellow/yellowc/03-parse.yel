@@ -6,7 +6,7 @@
     VAR n: Node;
     NEW(n);
     n^ := NodeRec(kind, line, 0, 0, 0, 0, Node NIL, Node NIL, Node NIL, Node NIL, Node NIL,
-                  Node NIL, Rep NIL, Sym NIL);
+                  Node NIL, Rep NIL, Sym NIL, Node NIL);
     RETURN n
   ENDPROCEDURE NewNode;
 
@@ -423,7 +423,7 @@
       IF n^.b # Node NIL THEN FailS(line, "a process returns no value") ENDIF;
       IF Accept(W_PRIORITY) THEN n^.d := ParseExpr() ENDIF;
       IF Accept(W_INSTANCES) THEN n^.e := ParseExpr() ENDIF;
-      IF Accept(W_SIZE) THEN f := ParseExpr() ENDIF;
+      IF Accept(W_SIZE) THEN n^.x := ParseExpr() ENDIF;
       n^.c := ParseBlock();
       Expect(W_ENDPROCESS);
       CloseName(n^.name, line);

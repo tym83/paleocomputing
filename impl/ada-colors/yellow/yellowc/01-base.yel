@@ -31,7 +31,8 @@ MODULE yellowc
       VAR name, text: Txt;
       VAR a, b, c, d, e, next: Node;
       VAR rep: Rep;
-      VAR sym: Sym
+      VAR sym: Sym;
+      VAR x: Node                 (* processes: SIZE *)
     ENDRECORD;
 
     (* a representation (VI): a type with what the C needs to hold it *)

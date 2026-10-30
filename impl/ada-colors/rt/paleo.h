@@ -495,8 +495,19 @@ void y_sig_init(ysig *s, ymon *m);
 void y_wait(ysig *s, rt_int rank);
 void y_send(ysig *s);
 int y_awaited(ysig *s);
-void y_create(rt_taskdecl *d, rt_int limit, int has_prio, rt_int prio,
+void y_create(rt_taskdecl *d, rt_int limit, int has_prio, rt_int prio, rt_int size,
               void (*fn)(void *), void *frame);
+/* time slices: outside SIMULATED_TIME a process is preempted after Y_SLICE
+ * backward branches, each slice one tick of the virtual clock (X.E.1) */
+#define Y_SLICE 10000
+extern __thread int y_ticks, y_sim_depth;
+void y_slice(void);
+#define Y_TICK() do { if (++y_ticks >= Y_SLICE) y_slice(); } while (0)
+/* local storage of a process, in words, against its SIZE (XIV.X.2) */
+extern __thread rt_int y_use, y_limit;
+void y_storage_trap(void);
+#define Y_USE(w) do { y_use += (w); if (y_limit && y_use > y_limit) y_storage_trap(); } while (0)
+extern int Y_X_STORAGE;
 rt_int y_self(void);                           /* PROCESS_IDENTITY */
 void y_change_priority(rt_int id, rt_int p);
 void y_raise_termination(rt_int id);

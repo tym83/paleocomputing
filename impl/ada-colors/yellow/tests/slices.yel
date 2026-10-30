@@ -1,0 +1,32 @@
+(* outside SIMULATED_TIME a process that never waits is preempted by time *)
+(* slices, each a tick of the clock, so the others run (X.E.1); inside it *)
+(* processes are quasi-parallel: one runs until it waits, and only DELAY *)
+(* makes time pass (X.E.5) *)
+MODULE Slices
+  IMPORT TextIO, StandardImplementationPrelude;
+  VAR stop: BOOLEAN := FALSE;
+      n, t0: INTEGER64 := 0;
+  BEGIN
+    PROCESS Spin (VAR stop: BOOLEAN; VAR n: INTEGER64)
+      WHILE NOT stop DO n := n + 1 ENDWHILE;
+      TERMINATE_PROCESS
+    ENDPROCESS Spin;
+    PROCESS Stopper (VAR stop: BOOLEAN)
+      stop := TRUE; Write("stopper ran"); WriteLn();
+      TERMINATE_PROCESS
+    ENDPROCESS Stopper;
+    Spin(stop, n); Stopper(stop)
+  END;
+  IF n > 0 THEN Write("the spinner was preempted") ENDIF; WriteLn();
+  SIMULATED_TIME BEGIN
+    PROCESS Count (CONST name: ASCII)
+      VAR k: INTEGER64 := 0;
+      FOR i: INTEGER [1..50000] DO k := k + 1 ENDFOR;
+      Write(name); Write(" counted "); Write(k); WriteLn();
+      TERMINATE_PROCESS
+    ENDPROCESS Count;
+    t0 := CLOCK_TIME();
+    Count('A'); Count('B')
+  END;
+  Write("simulated time passed: "); Write(CLOCK_TIME() - t0); WriteLn()
+ENDMODULE Slices

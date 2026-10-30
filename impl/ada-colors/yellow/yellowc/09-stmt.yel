@@ -89,6 +89,7 @@
     Emit3("RT_POP(", f, ");");
     EmitS("} else {");
     Emit3("RT_POP(", f, ");");
+    IF Level > 0 THEN EmitS("y_use = F.yu + (rt_int)((sizeof F + 7) / 8);") ELSE EmitS("y_use = 0;") ENDIF;
     xc := Fresh("xc");
     Emit3("int ", xc, " = rt_xcur;");
     BTop := BTop + 1;
@@ -454,6 +455,7 @@
     ELSIF k = N_WHILE THEN
       c := Cond(s^.a);
       Emit3("while (", c, ") {");
+      EmitS("Y_TICK();");
       Statements(s^.b);
       EmitS("}")
     ELSIF k = N_LOOP THEN
@@ -463,6 +465,7 @@
       LoopLabel[LTop] := lab;
       LoopFrames[LTop] := XTop;
       EmitS("for (;;) {");
+      EmitS("Y_TICK();");
       Statements(s^.b);
       EmitS("}");
       Emit3("", lab, ": ;");
@@ -593,7 +596,7 @@
     ST(SymPath(sym));
     SA(" = ");
     ST(v);
-    SA(";");
+    SA("; Y_TICK();");
     t := SE();
     Emit(t);
     Statements(s^.b);
@@ -623,7 +626,7 @@
       CopyOut();
       LeaveMonitor();
       PopTo(XBase);
-      EmitS("return;");
+      EmitS("y_use = F.yu; return;");
       RETURN
     ENDIF;
     IF ret^.kind = R_VOID THEN FailS(s^.line, "this routine returns no value (IX.A.6)") ENDIF;
@@ -643,17 +646,36 @@
     CopyOut();
     LeaveMonitor();
     PopTo(XBase);
-    Emit3("return ", tmp, "; }");
+    Emit3("y_use = F.yu; return ", tmp, "; }");
     RETURN
   ENDPROCEDURE ReturnStatement;
 
+  (* SIMULATED_TIME BEGIN ... END: the block runs as one sequential *)
+  (* process, its processes quasi-parallel: none is preempted by a time *)
+  (* slice, and only DELAY makes time pass (IX.B.3, X.E.5); an exception *)
+  (* that leaves the block leaves the simulation too *)
   PROCEDURE BeginStatement (CONST s: Node)
+    VAR f, ys: Txt;
     EmitS("{");
+    IF s^.flag = 1 THEN
+      f := Fresh("sf");
+      ys := Fresh("ys");
+      HasHandler := TRUE;
+      Emit(Join(T("int "), ys, T(" = y_sim_depth; y_sim_depth++;")));
+      Emit(Join(T("rt_frame "), f, T(";")));
+      Emit(Join(T("if (!RT_TRY("), f, Join(T(")) { RT_POP("), f, Join(T("); y_sim_depth = "), ys, T("; rt_raise(rt_xcur); }")))));
+      XTop := XTop + 1;
+      XFrames[XTop] := f
+    ENDIF;
     OpenScope(FALSE);
     Declarations(s^.a^.a);
     BlockStatements(s^.a);
     AwaitProcesses();
     CloseScope();
+    IF s^.flag = 1 THEN
+      XTop := XTop - 1;
+      Emit(Join(T("RT_POP("), f, Join(T("); y_sim_depth = "), ys, T(";"))))
+    ENDIF;
     EmitS("}");
     RETURN
   ENDPROCEDURE BeginStatement;
@@ -686,6 +708,7 @@
       FailN(s^.line, s^.name, ": GOTO does not leave a routine or process (IX.A.4)")
     ENDIF;
     sym^.readonly := TRUE;
+    EmitS("Y_TICK();");
     Emit3("goto ", sym^.cname, ";");
     RETURN
   ENDPROCEDURE GotoStatement;

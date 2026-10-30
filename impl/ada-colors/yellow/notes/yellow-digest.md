@@ -192,9 +192,20 @@ block END.
   `AWAITED(s)`. Nested monitors add no exclusion.
 - Semaphores (binary): CLAIM, RELEASE, CONDITIONAL_CLAIM. PROCESS_IDENTITY, CHANGE_PRIORITY,
   RAISE_PROCESS_TERMINATION (raises PROCESS_TERMINATION in the target), DELAY, CLOCK_TIME.
-- SIMULATED_TIME: this runtime's clock is virtual everywhere and its scheduler deterministic,
-  so the whole program already runs in simulated time; the prefix is accepted and changes
-  nothing.
+- Time and scheduling. The clock is virtual and the scheduler deterministic. Outside
+  SIMULATED_TIME a process is preempted after a time slice of 10000 backward branches (loop
+  iterations and GOTOs) and the processes of its priority take their turn, so a process that
+  never waits does not starve the others (X.E.1); a higher priority, by PRIORITY or
+  CHANGE_PRIORITY, runs first. Inside a SIMULATED_TIME block the block and the processes
+  activated in it are quasi-parallel (X.E.5): none is preempted. The clock moves only by DELAY,
+  when every process waits, inside and outside simulations alike: a mode in which statements
+  take real time would make runs differ, so this implementation has none (the time of
+  computation is not modelled). When every process waits, the
+  trap Deadlock (Appendix C) is raised in the main process. SIZE n bounds the local storage of
+  an instance to n words (a word is 8 bytes of frame): a call that goes beyond raises
+  TOO_LITTLE_LOCAL_STORAGE (XIV.X.2). A VAR actual of a process activation must live at least
+  as long as the process (X.E.2: its life scope, the nearest routine, process or BEGIN block
+  around its declaration, encloses the process's).
 - Device signals: a SIGNAL AT the PDP-11 line clock vector (BASE8 100) is sent every 20 ms of
   virtual time by a simulated line clock; other locations are not simulated.
 
@@ -241,4 +252,3 @@ other than the prelude are not provided.
 
 ## 11. Not done, or done approximately
 
-- The life-scope rule for VAR actuals of processes is not checked.

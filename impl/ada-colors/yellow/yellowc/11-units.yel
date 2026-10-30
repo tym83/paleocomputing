@@ -542,7 +542,11 @@
   (* a process activation: a new frame, filled with the actuals, and a new *)
   (* process running the body on it (IX.A.2, X.E.2) *)
   PROCEDURE Activate (CONST n: Node; CONST s: Sym)
-    VAR base, nargs, i: INT;
+    VAR base, nargs, i, size: INT;
+        ok: BOOLEAN;
+        root: Sym;
+        dyn: BOOLEAN;
+        tid: Txt;
         p: Param;
         pf, t, c, pc, lim, pr: Txt;
         d: Node := s^.decl;
@@ -568,6 +572,14 @@
           FailN(ArgNode[i]^.line, p^.name, ": a VAR actual has the representation of its formal (VII.G, X.A.2)")
         ENDIF;
         NoteWrite(ArgNode[i]);
+        (* "the life scope of a VAR actual parameter to a process [must] be *)
+        (* greater than or equal to the life scope of the process" (X.E.2) *)
+        DesigBase(ArgNode[i], root, dyn, tid);
+        IF (root # Sym NIL) AND NOT dyn THEN
+          IF LifeDepth(root^.depth) > LifeDepth(s^.depth) THEN
+            FailN(ArgNode[i]^.line, root^.name, " is the VAR actual of a process that may outlive it: its life scope is smaller than that of the process (X.E.2)")
+          ENDIF
+        ENDIF;
         Emit(Join(pc, T(" = &"), Join(ArgCode[i], T(";"), 0)))
       ELSIF Deep(p^.rep) THEN
         (* the process may outlive the value: it gets its own copy *)
@@ -596,6 +608,12 @@
       CheckType(d^.line, RInt, r);
       pr := Join(T("1, "), c, 0)
     ENDIF;
+    (* SIZE: the words of local storage an instance may use (XIV.X.2) *)
+    size := 0;
+    IF d^.x # Node NIL THEN
+      Manifest(d^.x, ok, size);
+      IF NOT ok OR (size < 1) THEN FailS(d^.line, "SIZE is a positive manifest constant (XIV.X.2)") ENDIF
+    ENDIF;
     SB();
     SA("y_create(&");
     ST(Path(s^.level - 1, Join(s^.cname, T("_d"), 0)));
@@ -603,6 +621,8 @@
     ST(lim);
     SA(", ");
     ST(pr);
+    SA(", ");
+    SI(size);
     SA(", ");
     ST(s^.cname);
     SA(", ");
@@ -612,6 +632,14 @@
     Emit(t);
     RETURN
   ENDPROCEDURE Activate;
+
+  (* the life scope of what is declared at depth: the nearest routine, *)
+  (* process or BEGIN block around it (X.E.2) *)
+  PROCEDURE LifeDepth RETURNS INT (CONST depth: INT)
+    VAR k: INT := depth;
+    WHILE (k > 1) AND Scopes[k]^.closed DO k := k - 1 ENDWHILE;
+    RETURN k
+  ENDPROCEDURE LifeDepth;
 
   PROCEDURE MonitorPath RETURNS Txt (CONST m: Sym)
     RETURN Join(T("&"), Path(m^.level, m^.cname), 0)
@@ -660,7 +688,7 @@
     AwaitProcesses();
     LeaveMonitor();
     PopTo(XBase);
-    EmitS("return;");
+    EmitS("y_use = F.yu; return;");
     RETURN
   ENDPROCEDURE TerminateStatement;
 
