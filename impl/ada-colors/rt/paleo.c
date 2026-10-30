@@ -3279,7 +3279,31 @@ struct rt_r_file {
   int open, access, use, text, sys;  /* access 0 SEQ 1 RANDOM; use 0 INPUT 1 OUTPUT 2 UPDATE */
   size_t esz;
   char *path;
+  /* a standard file holds its components each after its length in bytes:
+   * off[i] is where component i starts, off[n] the end; cur the position - 1 */
+  long *off;
+  rt_int n, cap, cur;
 };
+
+static void r_scan(rt_r_file *f) {
+  f->n = 0;
+  f->cur = 0;
+  if (!f->off) {
+    f->cap = 64;
+    f->off = malloc(sizeof(long) * (size_t)f->cap);
+  }
+  long pos = 0;
+  int64_t len;
+  fseek(f->fp, 0, SEEK_SET);
+  for (;;) {
+    if (f->n + 2 > f->cap) f->off = realloc(f->off, sizeof(long) * (size_t)(f->cap *= 2));
+    f->off[f->n] = pos;
+    if (fread(&len, sizeof len, 1, f->fp) != 1) break;
+    pos += (long)sizeof len + (long)len;
+    fseek(f->fp, pos, SEEK_SET);
+    f->n++;
+  }
+}
 
 static int r_exc(const char *name) { return rt_exc(name); }
 
@@ -3342,11 +3366,13 @@ void rt_r_open(rt_r_file *f, rstr name, int is_new) {
   f->fp = fp;
   f->path = p;
   f->open = 1;
+  if (!f->text) r_scan(f);
 }
 
 rt_int rt_r_fsize(rt_r_file *f) {
   r_need_open(f);
   if (f->sys) rt_raise_msg(RT_X_FILE, "the teletype has no size");
+  if (!f->text) return f->n;
   long here = ftell(f->fp);
   fseek(f->fp, 0, SEEK_END);
   long end = ftell(f->fp);
@@ -3357,6 +3383,7 @@ rt_int rt_r_fsize(rt_r_file *f) {
 rt_int rt_r_fpos(rt_r_file *f) {
   r_need_open(f);
   if (f->sys) rt_raise_msg(RT_X_FILE, "the teletype has no position");
+  if (!f->text) return f->cur + 1;
   return (rt_int)(ftell(f->fp) / (long)f->esz) + 1;
 }
 
@@ -3364,7 +3391,7 @@ void rt_r_close(rt_r_file *f, int del) {
   if (f->sys) return;
   r_need_open(f);
   /* the current position is the new end of the file */
-  long here = ftell(f->fp);
+  long here = f->text ? ftell(f->fp) : f->off[f->cur];
   fflush(f->fp);
   if (ftruncate(fileno(f->fp), here) != 0) {
   }
@@ -3378,6 +3405,10 @@ void rt_r_fsetpos(rt_r_file *f, rt_int p) {
   r_need_open(f);
   if (f->sys) rt_raise_msg(RT_X_FILE, "the teletype cannot be positioned");
   if (p < 1 || p > rt_r_fsize(f) + 1) rt_raise(r_exc("X_FILEPOS"));
+  if (!f->text) {
+    f->cur = p - 1;
+    return;
+  }
   fseek(f->fp, (long)(p - 1) * (long)f->esz, SEEK_SET);
 }
 
@@ -3859,3 +3890,85 @@ int rt_r_iset_le(rt_r_iset a, rt_r_iset b) {
 }
 
 int rt_r_iset_lt(rt_r_iset a, rt_r_iset b) { return rt_r_iset_le(a, b) && !rt_r_iset_eq(a, b); }
+
+/* ---- components of standard files, kept deeply (RED A.2, C.14) --------------- */
+
+void rt_r_buf_put(rt_r_buf *b, const void *p, size_t n) {
+  if (b->n + n > b->cap) {
+    b->cap = (b->n + n) * 2 + 64;
+    b->p = realloc(b->p, b->cap);
+  }
+  if (n) memcpy(b->p + b->n, p, n);
+  b->n += n;
+}
+
+void rt_r_buf_get(const unsigned char **q, void *p, size_t n) {
+  if (n) memcpy(p, *q, n);
+  *q += n;
+}
+
+void rt_r_buf_yset(rt_r_buf *b, yset s) {
+  rt_r_buf_put(b, &s.lo, sizeof s.lo);
+  rt_r_buf_put(b, &s.hi, sizeof s.hi);
+  for (rt_int e = s.lo; e <= s.hi; e++) {
+    unsigned char in = (unsigned char)y_set_in(e, s);
+    rt_r_buf_put(b, &in, 1);
+  }
+}
+
+yset rt_r_buf_get_yset(const unsigned char **q) {
+  rt_int lo, hi;
+  rt_r_buf_get(q, &lo, sizeof lo);
+  rt_r_buf_get(q, &hi, sizeof hi);
+  yset s = y_set_new(lo, hi);
+  for (rt_int e = lo; e <= hi; e++) {
+    unsigned char in;
+    rt_r_buf_get(q, &in, 1);
+    if (in) s = y_set_add(s, e);
+  }
+  return s;
+}
+
+/* WRITE: at the end the file grows; inside it the component at the position
+ * is replaced, the ones after it moved if the sizes differ */
+void rt_r_fwrite_rec(rt_r_file *f, const unsigned char *p, size_t n) {
+  r_can_write(f);
+  if (f->sys || f->text) rt_raise_msg(RT_X_FILE, "a text file holds characters");
+  int64_t len = (int64_t)n;
+  long at = f->off[f->cur];
+  long old_end = f->off[f->n];
+  long next = f->cur < f->n ? f->off[f->cur + 1] : at;
+  size_t tail_n = (size_t)(old_end - next);
+  unsigned char *tail = malloc(tail_n + 1);
+  fseek(f->fp, next, SEEK_SET);
+  if (tail_n && fread(tail, 1, tail_n, f->fp) != tail_n) rt_raise_msg(RT_X_FILE, "the file is damaged");
+  fseek(f->fp, at, SEEK_SET);
+  fwrite(&len, sizeof len, 1, f->fp);
+  fwrite(p, 1, n, f->fp);
+  fwrite(tail, 1, tail_n, f->fp);
+  fflush(f->fp);
+  free(tail);
+  long delta = (long)(sizeof len + n) - (next - at);
+  if (f->cur == f->n) {
+    if (f->n + 2 > f->cap) f->off = realloc(f->off, sizeof(long) * (size_t)(f->cap *= 2));
+    f->n++;
+    f->off[f->n] = f->off[f->n - 1];
+  }
+  for (rt_int i = f->cur + 1; i <= f->n; i++) f->off[i] += delta;
+  if (delta < 0 && ftruncate(fileno(f->fp), f->off[f->n]) != 0) {
+  }
+  f->cur++;
+}
+
+const unsigned char *rt_r_fread_rec(rt_r_file *f) {
+  r_can_read(f);
+  if (f->sys || f->text) rt_raise_msg(RT_X_FILE, "a text file holds characters");
+  if (f->cur >= f->n) rt_raise(r_exc("X_EOF"));
+  int64_t len;
+  fseek(f->fp, f->off[f->cur], SEEK_SET);
+  if (fread(&len, sizeof len, 1, f->fp) != 1) rt_raise_msg(RT_X_FILE, "the file is damaged");
+  unsigned char *p = rt_alloc((size_t)len + 1);
+  if (len && fread(p, 1, (size_t)len, f->fp) != (size_t)len) rt_raise_msg(RT_X_FILE, "the file is damaged");
+  f->cur++;
+  return p;
+}

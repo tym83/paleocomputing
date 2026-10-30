@@ -597,6 +597,16 @@ void rt_r_freadln(rt_r_file *f, rstr *dst);
 void rt_r_fwriteln(rt_r_file *f, rstr s);
 rt_int rt_r_fsizeln(rt_r_file *f);
 void rt_r_rename(rstr from, rstr to);
+typedef struct {
+  unsigned char *p;
+  size_t n, cap;
+} rt_r_buf;
+void rt_r_buf_put(rt_r_buf *b, const void *p, size_t n);
+void rt_r_buf_get(const unsigned char **q, void *p, size_t n);
+void rt_r_buf_yset(rt_r_buf *b, yset s);
+yset rt_r_buf_get_yset(const unsigned char **q);
+void rt_r_fwrite_rec(rt_r_file *f, const unsigned char *p, size_t n);
+const unsigned char *rt_r_fread_rec(rt_r_file *f);
 void rt_r_readln(rstr *dst);                    /* READLN(s): X_EOF, X_LN */
 /* conversions (A.3) */
 rstr rt_r_str_of_float(double v, rt_int prec);  /* n.nnnE+m */

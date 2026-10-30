@@ -2460,7 +2460,9 @@ ABNORMAL FUNC builtin(READONLY name : STRING[ASCII], CONST tt : node, CONST args
          IF text_file(ft) THEN
             RETURN assign_code(lv.ALL, at, "rt_r_fgetc(" & f & ")", lc);
          END IF;
-         RETURN "rt_r_fread(" & f & ", &" & lv.ALL & ")";
+         % the component is read and assigned with :=, checking its subtype
+         RETURN "({ const unsigned char *q_ = rt_r_fread_rec(" & f & "); " & assign_code(lv.ALL, at, "fr_" & ser_name(at)
+                & "(&q_)", lc) & " })";
       END IF;
       BEGIN
          CONST a := gexpr(args.next, str_elem(ft), at);
@@ -2472,7 +2474,8 @@ ABNORMAL FUNC builtin(READONLY name : STRING[ASCII], CONST tt : node, CONST args
          IF text_file(ft) THEN
             RETURN "rt_r_fputc(" & f & ", " & a & ")";
          END IF;
-         RETURN "({ " & ctype(at) & " w_ = " & a & "; rt_r_fwrite(" & f & ", &w_); })";
+         RETURN "({ rt_r_buf b_ = {NULL, 0, 0}; fw_" & ser_name(at) & "(&b_, " & a & "); rt_r_fwrite_rec(" & f
+                & ", b_.p, b_.n); })";
       END;
    ELSEIF name = "READLN" AND n = 2 THEN
       VAR lv : text;

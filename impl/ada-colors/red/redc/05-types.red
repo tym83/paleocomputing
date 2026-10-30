@@ -1768,8 +1768,11 @@ PROC make_storage(READONLY lval : STRING[ASCII], CONST t : typ, CONST c : cons) 
       IF c = NIL OR c.args = NIL OR c.args.next = NIL THEN
          fail(0, "a file variable needs its access and use: FILE[S](access, use)");
       END IF;
-      IF NOT text_file(t) AND NOT flat(t.elem) THEN
-         fail(0, "the components of a file on the simulated machine hold no strings, arrays, sets or pointers");
+      IF NOT text_file(t) AND NOT storable(t.elem) THEN
+         % a pointer, an activation, a mailbox or a lock is a reference into
+         % this program's memory: a file outlives it (A.1), and no value read
+         % back could refer to anything
+         fail(0, "the components of a file may not be or contain indirect, ACT, MAILBOX, DATA_LOCK, LATCH or FILE values");
       END IF;
       BEGIN
          CONST acc := gexpr(c.args, file_access_type, at);
@@ -1857,6 +1860,166 @@ FUNC flat(CONST t : typ) => BOOL;
    END IF;
    RETURN t.kind = t_int OR t.kind = t_float OR t.kind = t_enum OR t.kind = t_bool;
 END FUNC flat;
+
+% can values of t be kept in a file? Everything but references (A.1)
+FUNC storable(CONST t : typ) => BOOL;
+   IF t.kind = t_new THEN
+      RETURN storable(t.under);
+   ELSEIF t.kind = t_record OR t.kind = t_union THEN
+      VAR f : field := t.fields;
+      WHILE f /= NIL REPEAT
+         IF NOT storable(f.t) THEN
+            RETURN FALSE;
+         END IF;
+         f := f.next;
+      END REPEAT;
+      RETURN TRUE;
+   ELSEIF t.kind = t_array THEN
+      RETURN storable(t.elem);
+   END IF;
+   RETURN t.kind = t_int OR t.kind = t_float OR t.kind = t_enum OR t.kind = t_bool OR t.kind = t_string
+       OR t.kind = t_set;
+END FUNC storable;
+
+% the C functions that write a value of t into a buffer, and make a fresh
+% one from the bytes, deeply: strings, arrays and sets with their bounds
+ABNORMAL FUNC ser_name(CONST t : typ) => STRING[ASCII] IMPORTS ALL;
+   CONST ct := ctype(t);
+   VAR key : text := mk("");
+   VAR l : lines;
+   FOR i : INT(1 .. ct.LEN) REPEAT
+      IF is_letter(ct(i)) OR is_digit(ct(i)) OR ct(i) = 'UNDERSCORE THEN
+         key := mk(key.ALL & chs(ct(i)));
+      END IF;
+   END REPEAT;
+   IF t.kind = t_new AND t.tparams = NIL THEN
+      RETURN ser_name(t.under);
+   END IF;
+   IF seen_name(mcopies, "fw_" & key.ALL) THEN
+      RETURN key.ALL;
+   END IF;
+   ALLOC l PTR;
+   l.s := mk("fw_" & key.ALL);
+   l.next := mcopies;
+   mcopies := l;
+   put(out_protos, "static void fw_" & key.ALL & "(rt_r_buf *b, " & ct & " v);");
+   put(out_protos, "static " & ct & " fr_" & key.ALL & "(const unsigned char **q);");
+   put(out_funcs, "static void fw_" & key.ALL & "(rt_r_buf *b, " & ct & " v) {");
+   put(out_funcs, "  " & ser_write(t, "v"));
+   put(out_funcs, "}");
+   put(out_funcs, "static " & ct & " fr_" & key.ALL & "(const unsigned char **q) {");
+   put(out_funcs, "  " & ct & " v = {0};");
+   put(out_funcs, "  " & ser_read(t, "v"));
+   put(out_funcs, "  return v;");
+   put(out_funcs, "}");
+   RETURN key.ALL;
+END FUNC ser_name;
+
+ABNORMAL FUNC ser_write(CONST t : typ, READONLY v : STRING[ASCII]) => STRING[ASCII] IMPORTS ALL;
+   IF t.kind = t_new AND t.tparams = NIL THEN
+      RETURN ser_write(t.under, v);
+   ELSEIF t.kind = t_new THEN
+      VAR p : node := t.tparams;
+      VAR r : text := mk("");
+      WHILE p /= NIL REPEAT
+         r := mk(r.ALL & "rt_r_buf_put(b, &" & v & ".p_" & lower_s(p.name.ALL) & ", sizeof " & v & ".p_"
+                 & lower_s(p.name.ALL) & "); ");
+         p := p.next;
+      END REPEAT;
+      RETURN r.ALL & ser_write(t.under, v & ".all");
+   ELSEIF t.kind = t_string THEN
+      RETURN "rt_r_buf_put(b, &" & v & ".len, sizeof(rt_int)); rt_r_buf_put(b, " & v & ".p, (size_t)" & v & ".len);";
+   ELSEIF t.kind = t_set AND sparse_set(t) THEN
+      RETURN "rt_r_buf_put(b, &" & v & ".neg, sizeof(int)); rt_r_buf_put(b, &" & v & ".n, sizeof(rt_int)); "
+             & "rt_r_buf_put(b, " & v & ".e, sizeof(rt_int) * (size_t)" & v & ".n);";
+   ELSEIF t.kind = t_set THEN
+      RETURN "rt_r_buf_yset(b, " & v & ");";
+   ELSEIF t.kind = t_array THEN
+      VAR r : text := mk("");
+      CONST i := new_name("si");
+      FOR k : INT(1 .. t.ndim) REPEAT
+         r := mk(r.ALL & "rt_r_buf_put(b, &" & v & "." & dim_lo(k) & ", sizeof(rt_int)); rt_r_buf_put(b, &" & v
+                 & "." & dim_hi(k) & ", sizeof(rt_int)); ");
+      END REPEAT;
+      RETURN r.ALL & "for (rt_int " & i & " = 0; " & i & " < " & acnt(t, v) & "; " & i & "++) { "
+             & ser_write(t.elem, v & ".p[" & i & "]") & " }";
+   ELSEIF t.kind = t_record THEN
+      VAR f : field := t.fields;
+      VAR r : text := mk("");
+      WHILE f /= NIL REPEAT
+         r := mk(r.ALL & ser_write(f.t, v & "." & field_c(f.name.ALL)) & " ");
+         f := f.next;
+      END REPEAT;
+      RETURN r.ALL;
+   ELSEIF t.kind = t_union THEN
+      VAR f : field := t.fields;
+      VAR i : INT := 0;
+      VAR r : text := mk("rt_r_buf_put(b, &" & v & ".tag, sizeof(int)); switch (" & v & ".tag) {");
+      WHILE f /= NIL REPEAT
+         r := mk(r.ALL & " case " & itos(i) & ": " & ser_write(f.t, v & ".u." & field_c(f.name.ALL)) & " break;");
+         i := i + 1;
+         f := f.next;
+      END REPEAT;
+      RETURN r.ALL & " }";
+   END IF;
+   RETURN "rt_r_buf_put(b, &" & v & ", sizeof " & v & ");";
+END FUNC ser_write;
+
+ABNORMAL FUNC ser_read(CONST t : typ, READONLY v : STRING[ASCII]) => STRING[ASCII] IMPORTS ALL;
+   IF t.kind = t_new AND t.tparams = NIL THEN
+      RETURN ser_read(t.under, v);
+   ELSEIF t.kind = t_new THEN
+      VAR p : node := t.tparams;
+      VAR r : text := mk("");
+      WHILE p /= NIL REPEAT
+         r := mk(r.ALL & "rt_r_buf_get(q, &" & v & ".p_" & lower_s(p.name.ALL) & ", sizeof " & v & ".p_"
+                 & lower_s(p.name.ALL) & "); ");
+         p := p.next;
+      END REPEAT;
+      RETURN r.ALL & ser_read(t.under, v & ".all");
+   ELSEIF t.kind = t_string THEN
+      RETURN "{ rt_int n_; rt_r_buf_get(q, &n_, sizeof n_); " & v & " = rt_str_new(n_); rt_r_buf_get(q, " & v
+             & ".p, (size_t)n_); }";
+   ELSEIF t.kind = t_set AND sparse_set(t) THEN
+      RETURN "rt_r_buf_get(q, &" & v & ".neg, sizeof(int)); rt_r_buf_get(q, &" & v & ".n, sizeof(rt_int)); " & v
+             & ".e = rt_alloc(sizeof(rt_int) * (size_t)" & v & ".n + 1); rt_r_buf_get(q, " & v
+             & ".e, sizeof(rt_int) * (size_t)" & v & ".n);";
+   ELSEIF t.kind = t_set THEN
+      RETURN v & " = rt_r_buf_get_yset(q);";
+   ELSEIF t.kind = t_array THEN
+      VAR r : text := mk("");
+      CONST i := new_name("si");
+      FOR k : INT(1 .. t.ndim) REPEAT
+         r := mk(r.ALL & "rt_r_buf_get(q, &" & v & "." & dim_lo(k) & ", sizeof(rt_int)); rt_r_buf_get(q, &" & v
+                 & "." & dim_hi(k) & ", sizeof(rt_int)); ");
+      END REPEAT;
+      IF t.ndim = 1 THEN
+         r := mk(r.ALL & v & ".lo2 = " & v & ".hi2 = 1; ");
+      END IF;
+      RETURN r.ALL & v & ".p = rt_alloc(sizeof(" & ctype(t.elem) & ") * (size_t)" & acnt(t, v) & " + 1); for (rt_int "
+             & i & " = 0; " & i & " < " & acnt(t, v) & "; " & i & "++) { " & ser_read(t.elem, v & ".p[" & i & "]")
+             & " }";
+   ELSEIF t.kind = t_record THEN
+      VAR f : field := t.fields;
+      VAR r : text := mk("");
+      WHILE f /= NIL REPEAT
+         r := mk(r.ALL & ser_read(f.t, v & "." & field_c(f.name.ALL)) & " ");
+         f := f.next;
+      END REPEAT;
+      RETURN r.ALL;
+   ELSEIF t.kind = t_union THEN
+      VAR f : field := t.fields;
+      VAR i : INT := 0;
+      VAR r : text := mk("rt_r_buf_get(q, &" & v & ".tag, sizeof(int)); switch (" & v & ".tag) {");
+      WHILE f /= NIL REPEAT
+         r := mk(r.ALL & " case " & itos(i) & ": " & ser_read(f.t, v & ".u." & field_c(f.name.ALL)) & " break;");
+         i := i + 1;
+         f := f.next;
+      END REPEAT;
+      RETURN r.ALL & " }";
+   END IF;
+   RETURN "rt_r_buf_get(q, &" & v & ", sizeof " & v & ");";
+END FUNC ser_read;
 
 % the value an uninitialized scalar holds, which no value of its type has (5.1)
 FUNC uninit_value(CONST t : typ) => STRING[ASCII];
