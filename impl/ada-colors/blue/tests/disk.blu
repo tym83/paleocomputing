@@ -1,0 +1,31 @@
+MAIN SEGMENT DISK
+   USES (TERMINAL, PDP_11_LT33);
+% the disk drives of the simulated machine (library segment PDP_11_LT33): a path
+% CONNECTed to a drive's semaphore handles its interrupts (4.6.1, 4.8.1) while the
+% main program writes a block, reads it back and waits for the transfers
+VAR OUT, BACK: DISK_BLOCK;
+VAR DONE: SEMAPHORE (SYNCH) := NEW (0);
+LOOP FOR K IN [0 : BLOCK_WORDS - 1] DO
+   OUT (K) := K * K;
+END LOOP K;
+PAR_BLOCK
+   PATH HANDLER CONNECT (DISK_S (1)) IMPORTS (DATA: (# DONE));
+      LOOP FOR N IN [1:2] DO
+         REQUEST (# DISK_S (1));
+         PUT_LINE ('disk interrupt ' !! TO_CHAR (N) !! ' at ' !! TO_CHAR (TO_FIXED (REAL_TIME () * 1000000, 0)) !! ' us');
+         RELEASE (# DONE);
+      END LOOP N;
+   END PATH HANDLER;
+   PATH USER IMPORTS (DATA: (# OUT, BACK, DONE));
+      SELECT OBJECT_MACHINE FROM
+         PDP_11 -->
+            START_IO (DISK_DEVICE_$NEW (1), \WRITE_BLOCK, 10, OUT);
+            REQUEST (# DONE);
+            START_IO (DISK_DEVICE_$NEW (1), \READ_BLOCK, 10 ## BACK);
+            REQUEST (# DONE);
+         END;
+      END SELECT;
+      PUT_LINE ('word 7 read back: ' !! TO_CHAR (BACK (7)));
+   END PATH USER;
+END PAR_BLOCK;
+END SEGMENT DISK;

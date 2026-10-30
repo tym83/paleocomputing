@@ -1,0 +1,11 @@
+MAIN SEGMENT ENUM_EXPORTERR
+   USES (TERMINAL);
+% outside its module an exported enumerated type is unordered unless the module
+% exports <, <=, >, >=, SUCC and PRED (4.4)
+VAR C: COLOR := \RED;
+VAR D: COLOR := \BLUE;
+IF C < D THEN PUT_LINE ('lt'); END IF;
+MODULE M EXPORTS (COLOR);
+   TYPE COLOR = ENUM (\RED, \BLUE);
+END MODULE M;
+END SEGMENT ENUM_EXPORTERR;

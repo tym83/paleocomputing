@@ -2,126 +2,14 @@
 % machine (LT33_DEVICE_, LT33_OP_, the START_IO cases and the interrupt semaphores
 % LT33_PS and LT33_KS, which "are built into a given implementation", C-9), the
 % BUFFER type of 4.6.8 (MONITORED_BUFFER_SEG), a file system (FILE_SYSTEM_SEG)
-% and the application. They are the segments here; segments are translated
-% after the segments they use, so the order of the text does not matter.
+% and the application. The machine is the library segment PDP_11_LT33; the others
+% are the segments here. Segments are translated after the segments they use, so
+% the order of the text does not matter.
 
-% ---- the simulated machine: a PDP-11 with LT33 teletypes ---------------------------
-% Teletype 1 is the console: it prints on standard output and its keyboard reads
-% standard input. Teletype 2 prints on standard output too, each line after "LT33-2|";
-% its keyboard has nothing to type. CR is not printed (LF ends the line). A printer
-% interrupts when it is enabled and after each byte; a keyboard interrupts when a
-% byte is waiting in its data register.
-SEGMENT PDP_11_LT33
-   USES (TERMINAL)
-   DEFINES (LT33_DEVICE_, LT33_OP_, START_IO, LT33_PS, LT33_KS, MAX_LT33);
-
-   CONST MAX_LT33: INTEGER := 8;
-
-   TYPE LT33_OP_ = ENUM (\READ_BYTE,
-                         \PRINT_BYTE,
-                         \ENABLE_PRINTER_INTERRUPT,
-                         \ENABLE_KEYBOARD_INTERRUPT,
-                         \ENABLE_TAPE_READER,
-                         \ENABLE_PUNCH_MAINTENANCE,
-                         \READER_BUSY,
-                         \READER_DONE,
-                         \KEYBOARD_INTERRUPT_ENABLED,
-                         \TAPE_READER_ENABLED,
-                         \PRINTER_READY,
-                         \PRINTER_INTERRUPT_ENABLED,
-                         \PUNCH_MAINTENANCE_ENABLED);
-
-   VAR LT33_PS: ARRAY [1:MAX_LT33] OF SEMAPHORE (SYNCH) := NO_INTERRUPTS ();
-   VAR LT33_KS: ARRAY [1:MAX_LT33] OF SEMAPHORE (SYNCH) := NO_INTERRUPTS ();
-
-   FUNCTION NO_INTERRUPTS () RETURNS (ARRAY [1:MAX_LT33] OF SEMAPHORE (SYNCH));
-      VAR S: ARRAY [1:MAX_LT33] OF SEMAPHORE (SYNCH);
-      LOOP FOR I IN [1:MAX_LT33] DO
-         S(I) := SEMAPHORE$NEW (0);
-      END LOOP I;
-      RETURN S;
-   END FUNCTION NO_INTERRUPTS;
-
-   MODULE LT33_HARDWARE
-         IMPORTS (DATA: (# LT33_PS, LT33_KS))
-         EXPORTS (LT33_DEVICE_ WITH (NEW), START_IO);
-
-      TYPE LT33_DEVICE_ = INTEGER [1:MAX_LT33];
-
-      VAR AT_LINE_START: ARRAY [1:MAX_LT33] OF BOOLEAN := ALL_TRUE ();
-
-      FUNCTION ALL_TRUE () RETURNS (ARRAY [1:MAX_LT33] OF BOOLEAN);
-         VAR B: ARRAY [1:MAX_LT33] OF BOOLEAN;
-         LOOP FOR I IN [1:MAX_LT33] DO
-            B(I) := TRUE;
-         END LOOP I;
-         RETURN B;
-      END FUNCTION ALL_TRUE;
-
-      FUNCTION LT33_DEVICE_$NEW (N: INTEGER [1:MAX_LT33]) RETURNS (LT33_DEVICE_);
-         RETURN N;
-      END FUNCTION LT33_DEVICE_$NEW;
-
-      % a byte is waiting in the keyboard's data register: the keyboard interrupts
-      PROCEDURE KEY_ARRIVES (D: LT33_DEVICE_) IMPORTS (DATA: (# LT33_KS));
-         IF D = 1 THEN
-            IF NOT END_OF_INPUT () THEN
-               RELEASE (# LT33_KS(D));
-            END IF;
-         END IF;
-      END PROCEDURE KEY_ARRIVES;
-
-      % the control operations [\ENABLE_PRINTER_INTERRUPT : \ENABLE_PUNCH_MAINTENANCE]
-      PROCEDURE START_IO (D: LT33_DEVICE_, C: LT33_OP_)
-            IMPORTS (DATA: (# LT33_PS, LT33_KS));
-         SELECT C FROM
-            \ENABLE_PRINTER_INTERRUPT --> RELEASE (# LT33_PS(D)); END;   % ready
-            \ENABLE_KEYBOARD_INTERRUPT --> KEY_ARRIVES (D); END;
-            ELSE --> END;
-         END SELECT;
-      END PROCEDURE START_IO;
-
-      % \PRINT_BYTE: the byte goes to the printer, which interrupts when it is done
-      PROCEDURE START_IO (D: LT33_DEVICE_, C: LT33_OP_, BS: BIT (8))
-            IMPORTS (DATA: (# LT33_PS, AT_LINE_START));
-         SELECT OBJECT_MACHINE FROM
-            PDP_11 -->
-               BLOCK
-                  CONST CH: ASCII_STR (1) := [ASCII_STR (1)]$$(BS);
-                  IF CH = ''\LF THEN
-                     NEW_LINE;
-                     AT_LINE_START(D) := TRUE;
-                  ORIF CH <> ''\CR THEN
-                     IF D > 1 & AT_LINE_START(D) THEN
-                        PUT ('LT33-' !! TO_CHAR (D) !! '| ');
-                     END IF;
-                     PUT (CH);
-                     AT_LINE_START(D) := FALSE;
-                  END IF;
-               END BLOCK;
-            END;
-         END SELECT;
-         RELEASE (# LT33_PS(D));
-      END PROCEDURE START_IO;
-
-      % \READ_BYTE: the byte in the keyboard's data register
-      PROCEDURE START_IO (D: LT33_DEVICE_, C: LT33_OP_ ## BS: BIT (8))
-            IMPORTS (DATA: (# LT33_KS));
-         SELECT OBJECT_MACHINE FROM
-            PDP_11 --> BS := TO_BIT (GET_CODE ())[56:63]; END;
-         END SELECT;
-         KEY_ARRIVES (D);
-      END PROCEDURE START_IO;
-
-      % the status inquiries [\READER_BUSY : \PUNCH_MAINTENANCE_ENABLED]
-      PROCEDURE START_IO (D: LT33_DEVICE_, C: LT33_OP_ ## F: BOOLEAN);
-         F := C = \PRINTER_READY ! C = \KEYBOARD_INTERRUPT_ENABLED
-              ! C = \PRINTER_INTERRUPT_ENABLED;
-      END PROCEDURE START_IO;
-
-   END MODULE LT33_HARDWARE;
-
-END SEGMENT PDP_11_LT33;
+% ---- the simulated machine: the library segment PDP_11_LT33 (blue/lib) -----------
+% The PDP-11 with its LT33 teletypes, the START_IO cases and the interrupt
+% semaphores is the implementation's standard segment PDP_11_LT33: bluec reads it
+% from its library when a segment names it in USES (4.2, 4.7).
 
 % ---- the BUFFER of 4.6.8, example 2 (pages 4-66, 4-67, the fixes of the corpus
 % entry producer-consumer applied) ----------------------------------------------------
@@ -170,6 +58,13 @@ SEGMENT MONITORED_BUFFER_SEG
                   RELEASE (# B.EMPTY_SLOT);
              RELEASE (# B.MUTEX);
         END PROCEDURE BUFFER$REMOVE;
+
+        % not in 4.6.8: Appendix C assigns BUFFER values outside the module (C-10,
+        % IN_BUF and OUT_BUF := BUF_INIT ( )), which 4.4 permits only through the
+        % type's STORE_ operation
+        PROCEDURE BUFFER$STORE_ (A: BUFFER (?N) ## B: BUFFER (?N));
+             B := A;
+        END PROCEDURE BUFFER$STORE_;
 
         END MODULE BOUNDED_BUFFER_MONITOR;
 
@@ -268,6 +163,15 @@ SEGMENT APPLICATION_CODE
          REWIND (CONSOLE);
       EXCEPT
          IO_ERROR --> PRINT (CONSOLE, 'a teletype does not rewind'); NEWLINE (CONSOLE); END;
+      END EXCEPT;
+      END BLOCK;
+      BLOCK                                       % BINARY_IO: a stream of ASCII_STR (2)
+         VAR BF: STREAM_FILE (ASCII_STR (2));     % elements on the second teletype
+         CLEAR (# BF);
+         OPEN ('TTY2', \OLD, \WRITE, 0, FALSE # BF);
+         PUT (BF, 'OK');
+         PUT (BF, ': ');
+      EXCEPT IO_ERROR --> PRINT (CONSOLE, 'binary io error'); NEWLINE (CONSOLE); END;
       END EXCEPT;
       END BLOCK;
       PRINT (OTHER, 'the second teletype');

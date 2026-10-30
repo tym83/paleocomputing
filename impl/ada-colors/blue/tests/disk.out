@@ -1,0 +1,3 @@
+disk interrupt 1 at 1999 us
+disk interrupt 2 at 2999 us
+word 7 read back: 49

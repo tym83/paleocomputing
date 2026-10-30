@@ -51,7 +51,7 @@ FUNCTION EXC_NAME (NAME: TEXT) RETURNS (TEXT);
    VAR N: NODE := W@.EXCS;
    LOOP UNTIL N = NIL DO
       IF TEQ (N@.NAME, NAME) THEN
-         RETURN FMT1 ('x_@', NAME);
+         RETURN FMT1 ('x_@', CID (NAME));
       END IF;
       N := N@.NEXT;
    END LOOP;
@@ -59,7 +59,7 @@ FUNCTION EXC_NAME (NAME: TEXT) RETURNS (TEXT);
    N@.NAME := NAME;
    N@.NEXT := W@.EXCS;
    W@.EXCS := N;
-   RETURN FMT1 ('x_@', NAME);
+   RETURN FMT1 ('x_@', CID (NAME));
 END FUNCTION EXC_NAME;
 
 PROCEDURE DECLARE_TYPES (DECLS: NODE);
@@ -73,11 +73,297 @@ PROCEDURE DECLARE_TYPES (DECLS: NODE);
             END IF;
             Y@.DECL := D;
             DEFINE (Y, D@.LINE);
+            IF D@.KIND = N_TYPE THEN
+               IF D@.B@.KIND = TS_ENUM & HAS_PRINTING_CHAR (D@.B@.A) THEN
+                  W@.CHARSETS := W@.CHARSETS + 1;
+               END IF;
+            END IF;
+         END BLOCK;
+      END IF;
+      D := D@.NEXT;
+   END LOOP;
+   D := DECLS;                                       % 3.12.1, 3.12.3: no circular
+   LOOP UNTIL D = NIL DO                             % declarations; TAG formals only
+      IF D@.KIND = N_TYPE ! D@.KIND = N_REPTYPE THEN % as tags; formal types manifest
+         BLOCK
+            VAR SEEN: NODE := NIL;
+            VAR FOUND: BOOLEAN := FALSE;
+            REFERS (D@.B, D@.NAME, DECLS # SEEN, FOUND);
+            IF FOUND THEN
+               FAILT (D@.LINE, 'a circular type declaration (3.12.1, 3.12.3): ', D@.NAME);
+            END IF;
+         END BLOCK;
+         BLOCK
+            VAR F: NODE := D@.A;
+            LOOP UNTIL F = NIL DO
+               IF F@.IV = 1 & D@.KIND = N_TYPE THEN
+                  BLOCK
+                     VAR N: NODE := F@.A;
+                     LOOP UNTIL N = NIL DO
+                        IF TAG_MISUSED (D@.B, N@.NAME) THEN
+                           FAILT (D@.LINE, 'a TAG formal is only a tag-name or an argument for a TAG formal (3.12.1): ',
+                                  N@.NAME);
+                        END IF;
+                        N := N@.NEXT;
+                     END LOOP;
+                  END BLOCK;
+               END IF;
+               IF F@.B <> NIL THEN
+                  IF NAMES_VARIABLE (F@.B, DECLS) THEN
+                     FAIL (F@.LINE, 'the type-arguments in the type of a formal must be manifest (3.12.1)');
+                  END IF;
+               END IF;
+               F := F@.NEXT;
+            END LOOP;
+         END BLOCK;
+      END IF;
+      D := D@.NEXT;
+   END LOOP;
+   D := DECLS;                                       % a tag's type is integer, boolean
+   LOOP UNTIL D = NIL DO                             % or enumerated (3.9.1)
+      IF D@.KIND = N_TYPE THEN
+         BLOCK
+            VAR F: NODE := D@.A;
+            LOOP UNTIL F = NIL DO
+               IF F@.IV = 1 & F@.B <> NIL THEN
+                  BLOCK
+                     CONST FT: TYP := REAL_TYPE (RESOLVE (F@.B));
+                     IF NOT IS_SCALAR (FT) ! FT@.SCALE <> 0 THEN
+                        FAIL (F@.LINE, 'a tag is integer, boolean or enumerated (3.9.1)');
+                     END IF;
+                  END BLOCK;
+               END IF;
+               F := F@.NEXT;
+            END LOOP;
          END BLOCK;
       END IF;
       D := D@.NEXT;
    END LOOP;
 END PROCEDURE DECLARE_TYPES;
+
+% does a list of enumerated literals have a printing-char-id, \'C' (3.4.2)? It is
+% then a character set (3.7.2)
+% does the type-definition L refer to TARGET (FOUND), directly or through the type and
+% reptype declarations of DECLS, other than through a pointer (3.12.1)?
+PROCEDURE REFERS (L: NODE, TARGET: TEXT, DECLS: NODE # SEEN: NODE, FOUND: BOOLEAN);
+   VAR N: NODE := L;
+   LOOP UNTIL N = NIL ! FOUND DO
+      IF N@.KIND = TS_NAME ! N@.KIND = N_REP THEN
+         IF NOT TEQS (N@.NAME, 'PTR') THEN
+            IF TEQ (N@.NAME, TARGET) THEN
+               FOUND := TRUE;
+               RETURN;
+            END IF;
+            IF NOT IN_IDENTS (SEEN, N@.NAME) THEN     % each declaration followed once
+               BLOCK
+                  VAR M: NODE := NEW_NODE (N_IDENT, N@.LINE);
+                  VAR D: NODE := DECLS;
+                  M@.NAME := N@.NAME;
+                  M@.NEXT := SEEN;
+                  SEEN := M;
+                  LOOP UNTIL D = NIL DO
+                     IF (D@.KIND = N_TYPE ! D@.KIND = N_REPTYPE) & TEQ (D@.NAME, N@.NAME) THEN
+                        REFERS (D@.B, TARGET, DECLS # SEEN, FOUND);
+                     END IF;
+                     D := D@.NEXT;
+                  END LOOP;
+               END BLOCK;
+            END IF;
+            REFERS (N@.A, TARGET, DECLS # SEEN, FOUND);
+            REFERS (N@.B, TARGET, DECLS # SEEN, FOUND);
+            REFERS (N@.C, TARGET, DECLS # SEEN, FOUND);
+         END IF;
+      ELSE
+         REFERS (N@.A, TARGET, DECLS # SEEN, FOUND);
+         REFERS (N@.B, TARGET, DECLS # SEEN, FOUND);
+         REFERS (N@.C, TARGET, DECLS # SEEN, FOUND);
+         REFERS (N@.D, TARGET, DECLS # SEEN, FOUND);
+      END IF;
+      N := N@.NEXT;
+   END LOOP;
+END PROCEDURE REFERS;
+
+% is the TAG formal NAME used in the type-definition L other than as an argument
+% of a type-spec or as the tag-name of a variant part (3.12.1)?
+FUNCTION TAG_MISUSED (L: NODE, NAME: TEXT) RETURNS (BOOLEAN);
+   VAR N: NODE := L;
+   LOOP UNTIL N = NIL DO
+      IF N@.KIND = TS_NAME THEN
+         BLOCK
+            VAR A: NODE := N@.A;
+            LOOP UNTIL A = NIL DO
+               IF NOT ((A@.KIND = N_NAME ! A@.KIND = TS_NAME) & TEQ (A@.NAME, NAME) & A@.A = NIL) THEN
+                  IF TAG_MISUSED1 (A, NAME) THEN
+                     RETURN TRUE;
+                  END IF;
+               END IF;
+               A := A@.NEXT;
+            END LOOP;
+         END BLOCK;
+         IF TAG_MISUSED (N@.B, NAME) ! TAG_MISUSED (N@.C, NAME) ! TAG_MISUSED (N@.E, NAME) THEN
+            RETURN TRUE;
+         END IF;
+      ORIF TAG_MISUSED1 (N, NAME) THEN
+         RETURN TRUE;
+      END IF;
+      N := N@.NEXT;
+   END LOOP;
+   RETURN FALSE;
+END FUNCTION TAG_MISUSED;
+
+FUNCTION TAG_MISUSED1 (N: NODE, NAME: TEXT) RETURNS (BOOLEAN);
+   CONST K: INTEGER := N@.KIND;
+   IF K = TS_NAME THEN
+      RETURN TAG_MISUSED (N, NAME) & TRUE;
+   END IF;
+   IF (K = N_NAME ! K = N_ENUMLIT ! K = N_APPLY) & TEQ (N@.NAME, NAME) THEN
+      RETURN TRUE;
+   END IF;
+   RETURN TAG_MISUSED (N@.A, NAME) ! TAG_MISUSED (N@.B, NAME) ! TAG_MISUSED (N@.C, NAME)
+      ! TAG_MISUSED (N@.D, NAME) ! TAG_MISUSED (N@.E, NAME);
+END FUNCTION TAG_MISUSED1;
+
+% does the type-spec L name a variable, of DECLS or visible here (3.12.1)? the
+% names of EXCL are the routine's own (formals, derived parameters)
+FUNCTION NAMES_VARIABLE (L: NODE, DECLS: NODE) RETURNS (BOOLEAN);
+   RETURN NAMES_VARIABLE_BUT (L, DECLS, NIL);
+END FUNCTION NAMES_VARIABLE;
+
+PROCEDURE GEN_NAMES (L: NODE # HEAD: NODE);
+   VAR N: NODE := L;
+   LOOP UNTIL N = NIL DO
+      IF (N@.KIND = TS_GEN ! N@.KIND = N_PARAM) & N@.NAME.LEN > 0 THEN
+         BLOCK
+            VAR M: NODE := NEW_NODE (N_IDENT, N@.LINE);
+            M@.NAME := N@.NAME;
+            M@.NEXT := HEAD;
+            HEAD := M;
+         END BLOCK;
+      END IF;
+      GEN_NAMES (N@.A # HEAD);
+      GEN_NAMES (N@.B # HEAD);
+      GEN_NAMES (N@.C # HEAD);
+      GEN_NAMES (N@.D # HEAD);
+      N := N@.NEXT;
+   END LOOP;
+END PROCEDURE GEN_NAMES;
+
+FUNCTION NAMES_VARIABLE_BUT (L: NODE, DECLS: NODE, EXCL: NODE) RETURNS (BOOLEAN);
+   VAR N: NODE := L;
+   LOOP UNTIL N = NIL DO
+      IF N@.KIND = N_NAME & IN_IDENTS (EXCL, N@.NAME) THEN
+         ;
+      ORIF N@.KIND = N_NAME THEN
+         BLOCK
+            VAR D: NODE := DECLS;
+            CONST Y: SYM := LOOKUP (N@.NAME);
+            LOOP UNTIL D = NIL DO
+               IF D@.KIND = N_VAR & IN_IDENTS (D@.A, N@.NAME) THEN
+                  RETURN TRUE;
+               END IF;
+               D := D@.NEXT;
+            END LOOP;
+            IF Y <> NIL THEN
+               IF Y@.KIND = Y_VAR & NOT Y@.INPUT THEN
+                  RETURN TRUE;
+               END IF;
+            END IF;
+         END BLOCK;
+      ORIF NAMES_VARIABLE_BUT (N@.A, DECLS, EXCL) ! NAMES_VARIABLE_BUT (N@.B, DECLS, EXCL)
+         ! NAMES_VARIABLE_BUT (N@.C, DECLS, EXCL) ! NAMES_VARIABLE_BUT (N@.D, DECLS, EXCL) THEN
+         RETURN TRUE;
+      END IF;
+      N := N@.NEXT;
+   END LOOP;
+   RETURN FALSE;
+END FUNCTION NAMES_VARIABLE_BUT;
+
+FUNCTION HAS_PRINTING_CHAR (L: NODE) RETURNS (BOOLEAN);
+   VAR P: NODE := L;
+   LOOP UNTIL P = NIL DO
+      IF P@.NAME.LEN >= 3 THEN
+         IF STR (P@.NAME, 2) = '\''' THEN
+            RETURN TRUE;
+         END IF;
+      END IF;
+      P := P@.NEXT;
+   END LOOP;
+   RETURN FALSE;
+END FUNCTION HAS_PRINTING_CHAR;
+
+% the character set of a literal without a charset-name: the only one available here
+% (3.7.2); ASCII unless a program declares another or redefines the name ASCII
+FUNCTION DEFAULT_CHARSET (LINE: INTEGER) RETURNS (TYP);
+   CONST A: SYM := LOOKUP (MKN ('ASCII'));
+   VAR FOUND: TYP := NIL;
+   VAR N: INTEGER := 0;
+   VAR Y: SYM := W@.SCOPE;
+   IF W@.CHARSETS = 0 & A <> NIL THEN
+      IF A@.KIND = Y_TYPE & A@.DECL = NIL THEN
+         RETURN W@.TY_ASCII;
+      END IF;
+   END IF;
+   LOOP UNTIL Y = NIL DO
+      IF Y@.KIND = Y_TYPE & Y@.NAME.LEN > 0 THEN
+         IF LOOKUP (Y@.NAME) = Y THEN                 % visible, not hidden
+            BLOCK
+               VAR T: TYP := NIL;
+               IF Y@.DECL = NIL THEN
+                  T := Y@.T;
+               ORIF Y@.DECL@.KIND = N_TYPE & Y@.DECL@.A = NIL THEN
+                  IF Y@.DECL@.B@.KIND = TS_ENUM & HAS_PRINTING_CHAR (Y@.DECL@.B@.A) THEN
+                     T := RESOLVE_USER_NAME (Y@.NAME, LINE);
+                  END IF;
+               END IF;
+               IF T <> NIL THEN
+                  T := REAL_TYPE (T);
+                  IF T@.KIND = T_ENUM THEN
+                     IF HAS_PRINTING_CHAR (T@.BASE@.LITS) & T@.BASE <> FOUND THEN
+                        IF FOUND <> NIL THEN
+                           FAIL (LINE, 'two character sets are available here: the literal needs '
+                                       !! 'a charset-name (3.7.2)');
+                        END IF;
+                        FOUND := T@.BASE;
+                     END IF;
+                  END IF;
+               END IF;
+            END BLOCK;
+         END IF;
+      END IF;
+      Y := Y@.SNEXT;
+   END LOOP;
+   IF FOUND = NIL THEN
+      FAIL (LINE, 'no character set is available for the literal (3.7.2)');
+   END IF;
+   RETURN FOUND;
+END FUNCTION DEFAULT_CHARSET;
+
+% the character set of a string type (3.7.1): ASCII when nothing else is known
+FUNCTION CHARSET_OF (T: TYP) RETURNS (TYP);
+   CONST R: TYP := REAL_TYPE (T);
+   IF R@.BASE = NIL THEN
+      RETURN W@.TY_ASCII;
+   END IF;
+   RETURN R@.BASE;
+END FUNCTION CHARSET_OF;
+
+% the same character set for two strings (3.7.4.1, 3.7.5)
+PROCEDURE SAME_CHARSET (A, B: TYP, LINE: INTEGER);
+   IF REAL_TYPE (A)@.KIND = T_STR & REAL_TYPE (B)@.KIND = T_STR THEN
+      IF CHARSET_OF (A) <> CHARSET_OF (B) THEN
+         FAIL (LINE, 'the strings are of different character sets (3.7.4.1, 3.7.5)');
+      END IF;
+   END IF;
+END PROCEDURE SAME_CHARSET;
+
+% an operation predefined for ASCII strings only (3.2.6.1, 3.3.6.1, 3.6.6.4)
+PROCEDURE ASCII_ONLY (T: TYP, WHAT: ASCII_STR(?L), LINE: INTEGER);
+   IF REAL_TYPE (T)@.KIND = T_STR THEN
+      IF CHARSET_OF (T) <> W@.TY_ASCII THEN
+         FAIL (LINE, WHAT !! ' is predefined for ASCII strings only');
+      END IF;
+   END IF;
+END PROCEDURE ASCII_ONLY;
 
 % the labels of a statement list are known in all of it (4.5.1)
 PROCEDURE DECLARE_LABELS (S0: NODE);
@@ -88,7 +374,7 @@ PROCEDURE DECLARE_LABELS (S0: NODE);
          LOOP UNTIL L@.KIND <> N_LABELED DO
             BLOCK
                VAR Y: SYM := NEW_SYM (Y_LABEL, L@.NAME);
-               Y@.ACCESS := FMT1 ('L_@_', NEW_NAME (STR (L@.NAME, L@.NAME.LEN)));
+               Y@.ACCESS := FMT1 ('L_@_', NEW_NAME_T (CID (L@.NAME)));
                Y@.MV := GUARDS ();
                DEFINE (Y, L@.LINE);
             END BLOCK;
@@ -146,7 +432,7 @@ PROCEDURE GUARDED (S: NODE, BODY_NODE: NODE, HANDLERS: NODE);
          VAR N: NODE := H@.A;
          VAR COND: TEXT := MK ('0');
          LOOP UNTIL N = NIL DO
-            IF IN_IDENTS (N@.NEXT, N@.NAME) THEN
+            IF IN_IDENTS (N@.NEXT, N@.NAME) ! IN_HANDLERS (H@.NEXT, N@.NAME) THEN
                FAILT (N@.LINE, 'the handler names must be distinct (4.5.7): ', N@.NAME);
             END IF;
             COND := FMT3 ('@ || @x == @', COND, F, EXC_NAME (N@.NAME));
@@ -163,8 +449,296 @@ PROCEDURE GUARDED (S: NODE, BODY_NODE: NODE, HANDLERS: NODE);
    CODE (FMT1 ('else rt_raise(@x); } }', F));
 END PROCEDURE GUARDED;
 
+% ---- side effects (4.3.4) ----------------------------------------------------------------
+% A variable modified by a function invocation (imported inout into it) is not read
+% or modified anywhere else in the same expression, subscript list or argument
+% list; an assignment's two sides count as one list (the arguments of STORE_).
+
+PROCEDURE INTERFERENCE (S: NODE);
+   CONST K: INTEGER := S@.KIND;
+   IF K = N_ASSIGN THEN
+      BLOCK
+         VAR NAMES, CALLS: NODE := NIL;
+         COLLECT_REFS (S@.A # NAMES, CALLS);
+         COLLECT_REFS (S@.B # NAMES, CALLS);
+         CHECK_INTERFERENCE (NAMES, CALLS, S@.LINE, FALSE);
+      END BLOCK;
+   ORIF K = N_CALL THEN
+      BLOCK
+         VAR NAMES, CALLS: NODE := NIL;
+         COLLECT_LIST (S@.A # NAMES, CALLS);
+         COLLECT_LIST (S@.B # NAMES, CALLS);
+         COLLECT_LIST (S@.C # NAMES, CALLS);
+         CHECK_INTERFERENCE (NAMES, CALLS, S@.LINE, FALSE);
+      END BLOCK;
+   ORIF K = N_RETURN ! K = N_ASSERT THEN
+      IF S@.A <> NIL THEN
+         BLOCK
+            VAR NAMES, CALLS: NODE := NIL;
+            COLLECT_REFS (S@.A # NAMES, CALLS);
+            CHECK_INTERFERENCE (NAMES, CALLS, S@.LINE, K = N_ASSERT);
+         END BLOCK;
+      END IF;
+   ORIF K = N_IF THEN
+      BLOCK
+         VAR ARM: NODE := S@.A;
+         LOOP UNTIL ARM = NIL DO
+            BLOCK
+               VAR NAMES, CALLS: NODE := NIL;
+               COLLECT_REFS (ARM@.A # NAMES, CALLS);
+               CHECK_INTERFERENCE (NAMES, CALLS, ARM@.LINE, FALSE);
+            END BLOCK;
+            ARM := ARM@.NEXT;
+         END LOOP;
+      END BLOCK;
+   END IF;
+END PROCEDURE INTERFERENCE;
+
+PROCEDURE COLLECT_LIST (L: NODE # NAMES, CALLS: NODE);
+   VAR N: NODE := L;
+   LOOP UNTIL N = NIL DO
+      COLLECT_REFS (N # NAMES, CALLS);
+      N := N@.NEXT;
+   END LOOP;
+END PROCEDURE COLLECT_LIST;
+
+% the variables named directly in the expression E and the function invocations in it
+PROCEDURE COLLECT_REFS (E: NODE # NAMES, CALLS: NODE);
+   VAR K: INTEGER;
+   IF E = NIL THEN
+      RETURN;
+   END IF;
+   K := E@.KIND;
+   IF K = N_NAME THEN
+      BLOCK
+         CONST Y: SYM := LOOKUP (E@.NAME);
+         IF Y <> NIL THEN
+            IF Y@.KIND = Y_VAR THEN
+               NAMES := NAME_REF (E@.NAME, Y@.OWNER, NIL, NAMES);
+            END IF;
+         END IF;
+      END BLOCK;
+   ORIF K = N_APPLY THEN
+      BLOCK
+         CONST Y: SYM := LOOKUP (E@.NAME);
+         IF Y <> NIL THEN
+            IF Y@.KIND = Y_VAR THEN
+               NAMES := NAME_REF (E@.NAME, Y@.OWNER, NIL, NAMES);
+            ORIF Y@.KIND = Y_ROUTINE THEN
+               CALLS := NAME_REF (E@.NAME, 0, E, CALLS);
+            END IF;
+         END IF;
+         COLLECT_LIST (E@.A # NAMES, CALLS);
+         COLLECT_LIST (E@.B # NAMES, CALLS);
+         COLLECT_LIST (E@.C # NAMES, CALLS);
+      END BLOCK;
+   ORIF K = N_FIELD ! K = N_DEREF ! K = N_UNOP ! K = N_PAREN ! K = N_QUAL THEN
+      COLLECT_REFS (E@.A # NAMES, CALLS);
+   ORIF K = N_INDEX ! K = N_SUBSTR ! K = N_BINOP ! K = N_IN THEN
+      COLLECT_REFS (E@.A # NAMES, CALLS);
+      IF E@.B <> NIL THEN
+         IF E@.B@.KIND = N_RANGE THEN
+            COLLECT_REFS (E@.B@.A # NAMES, CALLS);
+            COLLECT_REFS (E@.B@.B # NAMES, CALLS);
+         ELSE
+            COLLECT_LIST (E@.B # NAMES, CALLS);
+         END IF;
+      END IF;
+      COLLECT_REFS (E@.C # NAMES, CALLS);
+   ORIF K = N_RECCONS THEN
+      BLOCK
+         VAR F: NODE := E@.A;
+         LOOP UNTIL F = NIL DO
+            COLLECT_REFS (F@.A # NAMES, CALLS);
+            F := F@.NEXT;
+         END LOOP;
+      END BLOCK;
+   ORIF K = N_ARRCONS THEN
+      COLLECT_LIST (E@.A # NAMES, CALLS);
+   END IF;
+END PROCEDURE COLLECT_REFS;
+
+FUNCTION NAME_REF (NAME: TEXT, OWNER: INTEGER, A: NODE, L: NODE) RETURNS (NODE);
+   VAR N: NODE := NEW_NODE (N_IDENT, 0);
+   N@.NAME := NAME;
+   N@.IV := OWNER;
+   N@.A := A;
+   N@.NEXT := L;
+   RETURN N;
+END FUNCTION NAME_REF;
+
+% the variables every routine named NAME imports inout, directly or through the
+% routines it imports (INOUT), or imports at all
+FUNCTION ROUTINE_DATA (NAME: TEXT, INOUT: BOOLEAN) RETURNS (NODE);
+   VAR Y: SYM := LOOKUP (NAME);
+   VAR R: NODE := NIL;
+   VAR FIRST: BOOLEAN := TRUE;
+   LOOP UNTIL Y = NIL DO
+      IF Y@.KIND = Y_ROUTINE THEN
+         BLOCK
+            CONST D: NODE := DATA_OF (ORIGINAL (Y), INOUT, 0);
+            IF FIRST THEN
+               R := D;
+               FIRST := FALSE;
+            ELSE
+               R := INTERSECT_REFS (R, D);
+            END IF;
+         END BLOCK;
+      ORIF Y@.KIND <> Y_ROUTINE & NOT FIRST THEN
+         ;
+      END IF;
+      Y := LOOKUP_NEXT (Y);
+   END LOOP;
+   RETURN R;
+END FUNCTION ROUTINE_DATA;
+
+FUNCTION DATA_OF (Y: SYM, INOUT: BOOLEAN, DEPTH: INTEGER) RETURNS (NODE);
+   VAR R: NODE := NIL;
+   IF Y@.DECL = NIL ! DEPTH > 20 THEN
+      RETURN NIL;
+   END IF;
+   IF Y@.DECL@.KIND <> N_ROUTINE THEN
+      RETURN NIL;
+   END IF;
+   COMPUTE_USES (Y);
+   IF NOT INOUT THEN
+      BLOCK
+         VAR U: NODE := Y@.USES;
+         LOOP UNTIL U = NIL DO
+            R := NAME_REF (U@.NAME, U@.IV, NIL, R);
+            U := U@.NEXT;
+         END LOOP;
+      END BLOCK;
+      RETURN R;
+   END IF;
+   IF Y@.DECL@.E = NIL THEN
+      RETURN NIL;
+   END IF;
+   BLOCK
+      VAR U: NODE := Y@.USES;                        % the inout items among its uses
+      LOOP UNTIL U = NIL DO
+         IF IN_IDENTS (Y@.DECL@.E@.B, U@.NAME) THEN
+            R := NAME_REF (U@.NAME, U@.IV, NIL, R);
+         END IF;
+         U := U@.NEXT;
+      END LOOP;
+   END BLOCK;
+   BLOCK                                             % and through its routines
+      VAR C: NODE := Y@.DECL@.E@.C;
+      LOOP UNTIL C = NIL DO
+         BLOCK
+            VAR Z: SYM := LOOKUP (C@.NAME);
+            LOOP UNTIL Z = NIL DO
+               IF Z@.KIND = Y_ROUTINE THEN
+                  BLOCK
+                     VAR D: NODE := DATA_OF (ORIGINAL (Z), TRUE, DEPTH + 1);
+                     LOOP UNTIL D = NIL DO
+                        IF NOT HAS_REF (R, D@.NAME, D@.IV) THEN
+                           R := NAME_REF (D@.NAME, D@.IV, NIL, R);
+                        END IF;
+                        D := D@.NEXT;
+                     END LOOP;
+                  END BLOCK;
+               END IF;
+               Z := LOOKUP_NEXT (Z);
+            END LOOP;
+         END BLOCK;
+         C := C@.NEXT;
+      END LOOP;
+   END BLOCK;
+   RETURN R;
+END FUNCTION DATA_OF;
+
+FUNCTION HAS_REF (L: NODE, NAME: TEXT, OWNER: INTEGER) RETURNS (BOOLEAN);
+   VAR P: NODE := L;
+   LOOP UNTIL P = NIL DO
+      IF TEQ (P@.NAME, NAME) & P@.IV = OWNER THEN
+         RETURN TRUE;
+      END IF;
+      P := P@.NEXT;
+   END LOOP;
+   RETURN FALSE;
+END FUNCTION HAS_REF;
+
+FUNCTION INTERSECT_REFS (A, B: NODE) RETURNS (NODE);
+   VAR R: NODE := NIL;
+   VAR P: NODE := A;
+   LOOP UNTIL P = NIL DO
+      IF HAS_REF (B, P@.NAME, P@.IV) THEN
+         R := NAME_REF (P@.NAME, P@.IV, NIL, R);
+      END IF;
+      P := P@.NEXT;
+   END LOOP;
+   RETURN R;
+END FUNCTION INTERSECT_REFS;
+
+PROCEDURE CHECK_INTERFERENCE (NAMES, CALLS: NODE, LINE: INTEGER, ASSERTION: BOOLEAN);
+   VAR C: NODE := CALLS;
+   LOOP UNTIL C = NIL DO
+      BLOCK
+         VAR V: NODE := ROUTINE_DATA (C@.NAME, TRUE);
+         IF V <> NIL & ASSERTION THEN
+            FAILT (LINE, 'the expression of ASSERT must be free of side-effects (4.5.8): ', C@.NAME);
+         END IF;
+         LOOP UNTIL V = NIL DO
+            IF HAS_REF (NAMES, V@.NAME, V@.IV) THEN
+               FAILT (LINE, 'a function invocation modifies a variable the expression also names (4.3.4): ',
+                      V@.NAME);
+            END IF;
+            BLOCK
+               VAR D: NODE := CALLS;
+               LOOP UNTIL D = NIL DO
+                  IF D <> C THEN
+                     IF HAS_REF (ROUTINE_DATA (D@.NAME, FALSE), V@.NAME, V@.IV) THEN
+                        FAILT (LINE, 'two function invocations of one expression interfere on (4.3.4): ',
+                               V@.NAME);
+                     END IF;
+                  END IF;
+                  D := D@.NEXT;
+               END LOOP;
+            END BLOCK;
+            V := V@.NEXT;
+         END LOOP;
+      END BLOCK;
+      C := C@.NEXT;
+   END LOOP;
+END PROCEDURE CHECK_INTERFERENCE;
+
+% is NAME among the names of the handlers HS?
+FUNCTION IN_HANDLERS (HS: NODE, NAME: TEXT) RETURNS (BOOLEAN);
+   VAR H: NODE := HS;
+   LOOP UNTIL H = NIL DO
+      IF IN_IDENTS (H@.A, NAME) THEN
+         RETURN TRUE;
+      END IF;
+      H := H@.NEXT;
+   END LOOP;
+   RETURN FALSE;
+END FUNCTION IN_HANDLERS;
+
+% [4-58]: a structured-stmt, which a with-clause prefixes
+FUNCTION IS_STRUCTURED_STMT (S: NODE) RETURNS (BOOLEAN);
+   CONST K: INTEGER := S@.KIND;
+   IF K = N_EXCEPT THEN
+      RETURN IS_STRUCTURED_STMT (S@.A);
+   END IF;
+   RETURN K = N_BLOCK ! K = N_IF ! K = N_CASE ! K = N_LOOP ! K = N_FOR ! K = N_PAR ! K = N_WITH;
+END FUNCTION IS_STRUCTURED_STMT;
+
+% the variable a NAMING clause names, unless it is reached through a pointer
+FUNCTION NAMED_ROOT (E: NODE) RETURNS (NODE);
+   CONST K: INTEGER := E@.KIND;
+   IF K = N_NAME ! K = N_APPLY THEN
+      RETURN E;
+   ORIF K = N_INDEX ! K = N_FIELD ! K = N_SUBSTR THEN
+      RETURN NAMED_ROOT (E@.A);
+   END IF;
+   RETURN NIL;
+END FUNCTION NAMED_ROOT;
+
 PROCEDURE STMT (S: NODE);
    CONST K: INTEGER := S@.KIND;
+   INTERFERENCE (S);
    IF K = N_NULL THEN
       RETURN;
    ORIF K = N_LABELED THEN                          % [4-51]
@@ -223,6 +797,7 @@ PROCEDURE STMT (S: NODE);
          PUSH_CTX (2, END_L);
          OPEN_BODY (S@.B);
          POP_CTX;
+         CODES ('RT_B_TICK();');                    % an iteration takes time
          IF S@.C <> NIL THEN
             CODE (FMT2 ('if (@) goto @;', BOOL_EXPR (S@.C), END_L));
          END IF;
@@ -245,7 +820,15 @@ PROCEDURE STMT (S: NODE);
    ORIF K = N_SIGNAL THEN                           % [4-83]
       SIGNAL_STMT (S);
    ORIF K = N_ASSERT THEN                           % [4-84]
-      CODE (FMT1 ('if (!(@)) rt_raise(RT_X_ASSERT);', BOOL_EXPR (S@.A)));
+      IF W@.SUPPRESS THEN                            % suppressed: no need to evaluate it
+         BLOCK                                       % (4.5.8)
+            CONST SAVED_CODE: BUF := W@.CODE;
+            CONST C: TEXT := BOOL_EXPR (S@.A);
+            W@.CODE := SAVED_CODE;
+         END BLOCK;
+      ELSE
+         CODE (FMT1 ('if (!(@)) rt_raise(RT_X_ASSERT);', BOOL_EXPR (S@.A)));
+      END IF;
    ORIF K = N_EXCEPT THEN                           % [4-80]
       GUARDED (S@.A, NIL, S@.B);
    ORIF K = N_WITH THEN                             % [4-60]
@@ -289,6 +872,9 @@ PROCEDURE IF_STMT (ARMS: NODE, ELSE_BODY: NODE);
                OPEN := OPEN + 1;
                WORD := MK ('if');
             END IF;
+            % a manifest condition may still invoke functions: they are evaluated
+            % (3.5.4.1, Efficiency Considerations: A & 3 > 5 with a function A)
+            CODE (FMT1 ('(void)(@);', BOOL_EXPR (ARM@.A)));
             IF M.V = 1 THEN
                OPEN_BODY (ARM@.B);
                CHOSEN := TRUE;
@@ -340,7 +926,7 @@ PROCEDURE FOR_STMT (S: NODE);
    CONST T: TYP := REAL_TYPE (LO.T);
    VAR LOC, HIC: TEXT;
    IF T@.KIND = T_ENUM THEN
-      IF T@.BASE@.UNORDERED THEN
+      IF IS_UNORDERED (T) THEN
          FAIL (S@.LINE, 'a loop over an UNORDERED type (4.5.6.3)');
       END IF;
    ORIF T@.KIND <> T_INT ! T@.SCALE <> 0 THEN
@@ -380,6 +966,8 @@ PROCEDURE FOR_STMT (S: NODE);
    OPEN_BODY (S@.B);
    POP_CTX;
    CLOSE_SCOPE;
+   CODES ('RT_B_TICK();');                       % an iteration takes time
+   CODE (FMT2 ('if (@ == @_hi) break;', IT, IT));  % the last value may be INTEGER.MAX
    CODE (FMT1 ('} } @: ;', END_L));
 END PROCEDURE FOR_STMT;
 
@@ -487,21 +1075,39 @@ PROCEDURE ASSIGN_STMT (S: NODE);
    END IF;
    BLOCK
       CONST LV: ET := EXPR (TG, NIL);
+      CONST SAVED_Q: NODE := W@.SQUAL;
       IF NOT LV.LVAL THEN
          FAIL (S@.LINE, 'the target of an assignment must be a variable (3.1.5)');
       END IF;
-      CODE (STORE_CODE (LV.T, LV.C, EXPR (S@.B, LV.T), S@.LINE, LV.SELF));
+      W@.SQUAL := NIL;
+      IF S@.B@.KIND = N_QUAL THEN                 % STORE_ (Y, PREC, RND ## X) (D.5)
+         W@.SQUAL := S@.B;
+      END IF;
+      W@.NEW_OK := S@.B;
+      IF LV.T@.GENP.LEN > 0 THEN                     % assignment is STORE_ (D.5, 5.2)
+         REQUIRE_WHERE (MKN ('STORE_'), S@.LINE);
+      END IF;
+      BLOCK
+         CONST V: ET := EXPR (S@.B, LV.T);
+         W@.NEW_OK := NIL;
+         CODE (STORE_CODE (LV.T, LV.C, V, S@.LINE, LV.SELF));
+      END BLOCK;
+      W@.SQUAL := SAVED_Q;
    END BLOCK;
 END PROCEDURE ASSIGN_STMT;
 
 % WITH bound-var := expression / NAMING variable structured-stmt [4-60]
 PROCEDURE WITH_STMT (S: NODE);
+   IF NOT IS_STRUCTURED_STMT (S@.B) THEN
+      FAIL (S@.LINE, 'a with-clause prefixes a structured statement (4.5.3 [4-58])');
+   END IF;
    CODES ('{');
    OPEN_SCOPE;
    BLOCK
       VAR Y: SYM := NEW_SYM (Y_VAR, S@.NAME);
       CONST V: ET := EXPR (S@.A, NIL);
       Y@.T := V.T;
+      Y@.WITHV := 1;
       IF S@.IV = 0 THEN                               % a copy of the value
          BLOCK
             CONST CN: TEXT := NEW_OBJECT (Y, '');
@@ -522,6 +1128,27 @@ PROCEDURE WITH_STMT (S: NODE);
             Y@.LEVEL := 0;
             Y@.OWNER := -1;
          END BLOCK;
+         BLOCK                                        % the named variable is not known
+            CONST R: NODE := NAMED_ROOT (S@.A);       % in the statement (4.5.4)
+            IF R <> NIL THEN
+               IF NOT TEQ (R@.NAME, S@.NAME) THEN
+                  BLOCK
+                     CONST OLD: SYM := LOOKUP (R@.NAME);
+                     IF OLD <> NIL THEN
+                        IF OLD@.KIND = Y_VAR THEN
+                           BLOCK
+                              VAR H: SYM := NEW_SYM (Y_VAR, R@.NAME);
+                              H@.T := OLD@.T;
+                              H@.WITHV := 2;
+                              H@.OWNER := OLD@.OWNER;
+                              DEFINE (H, S@.LINE);
+                           END BLOCK;
+                        END IF;
+                     END IF;
+                  END BLOCK;
+               END IF;
+            END IF;
+         END BLOCK;
       END IF;
       DEFINE (Y, S@.LINE);
    END BLOCK;
@@ -534,6 +1161,7 @@ END PROCEDURE WITH_STMT;
 % on strings; OBJECT_MACHINE selects a machine-dependent element (4.5.5.2)
 PROCEDURE CASE_STMT (S: NODE);
    VAR ARM: NODE := S@.B;
+   VAR SEEN: BND := NIL;
    IF S@.A@.KIND = N_NAME & TEQS (S@.A@.NAME, 'OBJECT_MACHINE') THEN
       MACHINE_CASE (S);
       RETURN;
@@ -571,6 +1199,10 @@ PROCEDURE CASE_STMT (S: NODE);
          END BLOCK;
          RETURN;
       END IF;
+      IF T@.KIND = T_FLOAT ! (T@.KIND = T_INT & T@.SCALE <> 0) THEN
+         VALUE_CASE (S, CH);                         % any predefined type (4.5.5.2)
+         RETURN;
+      END IF;
       IF NOT (T@.KIND = T_INT & T@.SCALE = 0) & T@.KIND <> T_ENUM & T@.KIND <> T_BOOL THEN
          FAILT (S@.LINE, 'a case statement cannot select on ', TYPE_NAME (T));
       END IF;
@@ -598,6 +1230,7 @@ PROCEDURE CASE_STMT (S: NODE);
                      IF NOT FIRST.OK THEN
                         FIRST := SOME (A);
                      END IF;
+                     SEEN := DISTINCT_LABEL (SEEN, A, B, L@.LINE);
                      CODE (FMT2 ('case @ ... @:', NUM (A), NUM (B)));
                   END BLOCK;
                ELSE
@@ -609,6 +1242,7 @@ PROCEDURE CASE_STMT (S: NODE);
                      IF NOT FIRST.OK THEN
                         FIRST := M;
                      END IF;
+                     SEEN := DISTINCT_LABEL (SEEN, M.V, M.V, L@.LINE);
                      CODE (FMT1 ('case @:', NUM (M.V)));
                   END BLOCK;
                END IF;
@@ -637,6 +1271,86 @@ PROCEDURE CASE_STMT (S: NODE);
    END BLOCK;
 END PROCEDURE CASE_STMT;
 
+% the choice-label values must be distinct (4.5.5.2): [A:B] against those SEEN
+FUNCTION DISTINCT_LABEL (SEEN: BND, A, B: INTEGER, LINE: INTEGER) RETURNS (BND);
+   VAR P: BND := SEEN;
+   IF A > B THEN
+      RETURN SEEN;
+   END IF;
+   LOOP UNTIL P = NIL DO
+      IF A <= P@.MHI.V & P@.MLO.V <= B THEN
+         FAIL (LINE, 'the choice-label values must be distinct (4.5.5.2)');
+      END IF;
+      P := P@.NEXT;
+   END LOOP;
+   P := NEW (BND_REC);
+   P@ := (LO: NO_TEXT (), HI: NO_TEXT (), MLO: SOME (A), MHI: SOME (B), ANYARG: FALSE, NEXT: SEEN);
+   RETURN P;
+END FUNCTION DISTINCT_LABEL;
+
+% a case statement on floating point or scaled fixed point values: a chain of
+% comparisons with the labels, values of the type of the choice (4.5.5.2)
+PROCEDURE VALUE_CASE (S: NODE, CH: ET);
+   CONST TMP: TEXT := NEW_NAME ('cs');
+   CONST X: ET := MKET (TMP, CH.T);
+   VAR ARM: NODE := S@.B;
+   VAR WORD: TEXT := MK ('if');
+   CODE (FMT3 ('{ @ @ = @;', CTYPE (REAL_TYPE (CH.T)), TMP, CH.C));
+   LOOP UNTIL ARM = NIL DO
+      BLOCK
+         VAR L: NODE := ARM@.A;
+         VAR COND: TEXT := MK ('0');
+         LOOP UNTIL L = NIL DO
+            IF L@.KIND = N_RANGE THEN
+               BLOCK
+                  CONST LO: ET := CASE_LABEL (L@.A, CH.T);
+                  CONST HI: ET := CASE_LABEL (L@.B, CH.T);
+                  VAR GE: ASCII_STR (2) := '>=';
+                  VAR LE: ASCII_STR (2) := '<=';
+                  IF L@.IV = 1 ! L@.IV = 3 THEN
+                     GE := '> ';
+                  END IF;
+                  IF L@.IV >= 2 THEN
+                     LE := '< ';
+                  END IF;
+                  COND := FMT3 ('@ || (@ && @)', COND, VALUE_COMPARE (X, LO, MK (GE)),
+                                VALUE_COMPARE (X, HI, MK (LE)));
+               END BLOCK;
+            ELSE
+               COND := FMT2 ('@ || @', COND, VALUE_COMPARE (X, CASE_LABEL (L, CH.T), MK ('==')));
+            END IF;
+            L := L@.NEXT;
+         END LOOP;
+         CODE (FMT2 ('@ (@)', WORD, COND));
+         WORD := MK ('else if');
+         CASE_ELEMENT (ARM@.B, ARM@.C);
+      END BLOCK;
+      ARM := ARM@.NEXT;
+   END LOOP;
+   IF S@.C <> NIL THEN
+      IF NOT TEQS (WORD, 'if') THEN
+         CODES ('else');
+      END IF;
+      CASE_ELEMENT (S@.C, S@.D);
+   END IF;
+   CODES ('}');
+END PROCEDURE VALUE_CASE;
+
+FUNCTION CASE_LABEL (L: NODE, T: TYP) RETURNS (ET);
+   CONST V: ET := EXPR (L, T);
+   IF NOT SAME_CLASS (REAL_TYPE (V.T), REAL_TYPE (T)) THEN
+      FAIL (L@.LINE, 'a case label is a value of the type of the choice (4.5.5.2)');
+   END IF;
+   RETURN V;
+END FUNCTION CASE_LABEL;
+
+FUNCTION VALUE_COMPARE (A, B: ET, OP: TEXT) RETURNS (TEXT);
+   IF REAL_TYPE (A.T)@.KIND = T_FLOAT THEN
+      RETURN FLOAT_COMPARE (A, B, OP);
+   END IF;
+   RETURN FIXED_COMPARE (A, B, OP);
+END FUNCTION VALUE_COMPARE;
+
 % the open-scope-body of a case element and its exceptions clause [4-70]
 PROCEDURE CASE_ELEMENT (B: NODE, HANDLERS: NODE);
    IF HANDLERS = NIL THEN
@@ -661,6 +1375,9 @@ FUNCTION DISCRIMINATED (CH: NODE) RETURNS (SYM);
       END IF;
       IF Y@.KIND <> Y_VAR THEN
          RETURN NIL;
+      END IF;
+      IF Y@.WITHV <> 1 THEN                         % bound-var.tag-name, in the scope
+         RETURN NIL;                                % of the with-clause (4.5.5.2)
       END IF;
       IF REAL_TYPE (Y@.T)@.KIND <> T_REC THEN
          RETURN NIL;

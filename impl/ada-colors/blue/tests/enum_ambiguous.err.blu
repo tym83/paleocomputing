@@ -1,0 +1,8 @@
+MAIN SEGMENT ENUM_AMBIGUOUS
+   USES (TERMINAL);
+% a literal of two visible classes with nothing to type it needs a type-specifier
+% (3.4.5): \C is a literal of C and of D
+TYPE C = ENUM (\A, \B, \C);
+TYPE D = ENUM (\C, \D);
+PUT_LINE (TO_CHAR (TO_FIXED (\C)));
+END SEGMENT ENUM_AMBIGUOUS;

@@ -1,0 +1,9 @@
+MAIN SEGMENT CASE_DUPERR
+   USES (TERMINAL);
+% the choice-label values must be distinct (4.5.5.2)
+VAR I: INTEGER := 1;
+SELECT I FROM
+   1, 2 --> PUT_LINE ('a'); END;
+   [2:3] --> PUT_LINE ('b'); END;
+END SELECT;
+END SEGMENT CASE_DUPERR;

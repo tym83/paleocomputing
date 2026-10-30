@@ -48,17 +48,28 @@ FUNCTION NEW_OBJECT (Y: SYM, BASE: ASCII_STR(?L)) RETURNS (TEXT);
    CONST CS: CSCOPE := W@.CS;
    CONST T: TYP := Y@.T;
    VAR CN: TEXT;
+   IF CS@.LEVEL = 0 & W@.SEPSEG.LEN > 0 & BASE = '' THEN   % linked between units: a
+      W@.SEPV := W@.SEPV + 1;                        % name of its segment (4.2)
+      CN := FMT3 ('bs_@_v@_@', CID (W@.SEPSEG), NUM (W@.SEPV), CID (Y@.NAME));
+      IF W@.EXTSEG THEN
+         EMIT (O_GLOBALS, FMT2 ('extern @ @;', CTYPE (T), CN));
+      ELSE
+         EMIT (O_GLOBALS, FMT2 ('@ @;', CTYPE (T), CN));
+      END IF;
+      Y@.ACCESS := CN;
+      RETURN CN;
+   END IF;
    IF CS@.LEVEL = 0 THEN
       IF W@.DEPTH <= 2 & W@.MODL = NIL THEN
-         CN := FMT2 ('g@_@', MK (BASE), Y@.NAME);
+         CN := FMT2 ('g@_@', MK (BASE), CID (Y@.NAME));
       ELSE
-         CN := FMT3 ('g@_@_@', MK (BASE), Y@.NAME, NEW_NAME (''));
+         CN := FMT3 ('g@_@_@', MK (BASE), CID (Y@.NAME), NEW_NAME (''));
       END IF;
       EMIT (O_GLOBALS, FMT2 ('static @ @;', CTYPE (T), CN));
       Y@.ACCESS := CN;
       RETURN CN;
    END IF;
-   CN := FMT3 ('l@_@_@', MK (BASE), Y@.NAME, NEW_NAME (''));
+   CN := FMT3 ('l@_@_@', MK (BASE), CID (Y@.NAME), NEW_NAME (''));
    Y@.FIELD := CN;
    IF CS@.FRAMED THEN
       APPEND (FMT2 (' @ @;', CTYPE (T), CN) # CS@.FIELDS);
@@ -102,7 +113,9 @@ PROCEDURE DECLARE_OBJECTS (D: NODE);
          END IF;
          IF D@.C <> NIL THEN
             IF NOT HAVE_V THEN
+               W@.NEW_OK := D@.C;
                V := EXPR (D@.C, T);
+               W@.NEW_OK := NIL;
                HAVE_V := TRUE;
             END IF;
             CODE (STORE_CODE (T, CN, V, D@.C@.LINE, NO_TEXT ()));

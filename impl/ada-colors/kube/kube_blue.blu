@@ -19,8 +19,9 @@ MAIN SEGMENT KUBE_BLUE
 %   * kinds of objects and write operations are enumerations (\POD, \UPDATE);
 %     the watch table is indexed by kind.
 %
-% Time is virtual; every process is a path of one parallel block started at 0,
-% so CLOCK is the system's time, in ms here.
+% Time is virtual; the system's time is the simulated machine's real-time clock,
+% REAL_TIME of the implementation's TERMINAL segment (CLOCK is processing time),
+% in ms here.
 
 CONST NOBJ: INTEGER := 64;
 CONST NNODES: INTEGER := 3;
@@ -225,7 +226,7 @@ END PAR_BLOCK;
 
 % ==== time =============================================================================
 FUNCTION NOW () RETURNS (INTEGER);
-   RETURN TO_FIXED (CLOCK * 1000, 0, ROUNDED);
+   RETURN TO_FIXED (REAL_TIME * 1000, 0, ROUNDED);
 END FUNCTION NOW;
 
 PROCEDURE PAUSE (MS: INTEGER);
@@ -448,7 +449,7 @@ END PROCEDURE RECONCILE_NODES;
 % Its store is its own; a REGION semaphore lets one caller in at a time, and a
 % caller that dies inside gives it back. Every change goes to the mailboxes of
 % the ports that watch its kind.
-MODULE API EXPORTS (WATCH, WRITE, BEAT, READ_OBJ, SHOW);
+MODULE API IMPORTS (DATA: (# PORTS)) EXPORTS (WATCH, WRITE, BEAT, READ_OBJ, SHOW);
    VAR STORE: CACHE;
    VAR WANTS: ARRAY [1:NPORTS, \DEPLOYMENT : \LEASE] OF BOOLEAN;
    VAR NEXT_ID, NEXT_RV, CONFLICTS: INTEGER := 0;

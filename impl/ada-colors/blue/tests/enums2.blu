@@ -1,0 +1,24 @@
+MAIN SEGMENT ENUMS2
+   USES (TERMINAL);
+% enumerated representations (3.4.3), EXTENT of an empty range, manifest & and !
+% (3.5.4.1), a literal takes the type of its variable (3.4.5)
+TYPE GRADE = UNORDERED (\EXCELLENT, \GOOD, \FAIR, \POOR);
+VAR Q: GRADE REP ENUM_VAL_REP (ASCII.SIZE, VALUES (
+   \EXCELLENT AS TO_BIT ([ASCII]$$(\'E')), \GOOD AS TO_BIT ([ASCII]$$(\'G')),
+   \FAIR AS TO_BIT ([ASCII]$$(\'F')), \POOR AS TO_BIT ([ASCII]$$(\'P'))));
+VAR X: ENUM (\A, \B, \C) [\C : \A];
+VAR Y: ENUM (\A, \B, \C) REP ENUM_REP (8) := \C;
+VAR N: INTEGER := 0;
+Q := \FAIR;
+PUT_LINE (TO_CHAR (Q.SIZE) !! ' ' !! TO_CHAR (TO_BIT (Q)) !! ' ' !! TO_CHAR (X.EXTENT) !! ' '
+          !! TO_CHAR (TO_BIT (Y)));
+IF COUNT () & 3 > 5 THEN
+   PUT_LINE ('not here');
+END IF;
+PUT (TO_CHAR (IS_MANIFEST (COUNT () & 3 > 5)) !! ' ');   % COUNT changes N: not read
+PUT_LINE (TO_CHAR (N));                                  % in the same list (4.3.4)
+FUNCTION COUNT () RETURNS (BOOLEAN) IMPORTS (DATA: (# N));
+   N := N + 1;
+   RETURN TRUE;
+END FUNCTION COUNT;
+END SEGMENT ENUMS2;

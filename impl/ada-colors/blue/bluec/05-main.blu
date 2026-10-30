@@ -1,7 +1,41 @@
 
 % ==== the main program ==================================================================
 READ_SOURCE;
+OPTIONS;
 LEX;
-PREDEFINE;
-TRANSLATE (PARSE_COMPILATION ());
+BLOCK
+   VAR SEGS: NODE := PARSE_COMPILATION ();
+   BLOCK                                             % the segments of the input
+      VAR S: NODE := SEGS;
+      LOOP UNTIL S = NIL DO
+         BLOCK
+            VAR N: NODE := NEW_NODE (N_IDENT, 0);
+            N@.NAME := S@.NAME;
+            N@.NEXT := W@.OWNSEGS;
+            W@.OWNSEGS := N;
+         END BLOCK;
+         S := S@.NEXT;
+      END LOOP;
+   END BLOCK;
+   LOOP                                              % the library segments it uses
+      BLOCK
+         CONST NAME: TEXT := MISSING_SEGMENT (SEGS);
+         IF NAME.LEN = 0 THEN
+            EXIT;
+         END IF;
+         LOAD_LIBRARY (NAME);
+         LEX;
+         BLOCK
+            VAR MORE: NODE := PARSE_COMPILATION ();
+            VAR LAST: NODE := SEGS;
+            LOOP UNTIL LAST@.NEXT = NIL DO
+               LAST := LAST@.NEXT;
+            END LOOP;
+            LAST@.NEXT := MORE;
+         END BLOCK;
+      END BLOCK;
+   END LOOP;
+   PREDEFINE;
+   TRANSLATE (SEGS);
+END BLOCK;
 WRITE_OUTPUT;

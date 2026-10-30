@@ -1,0 +1,51 @@
+MAIN SEGMENT EXACT
+   USES (TERMINAL);
+% control characters in literals (3.7.2), user character sets, exact fixed point
+% comparisons and literals (3.2.2, 3.2.4.6), the scope of ROUNDED (3.1.4.1)
+VAR BEL: ASCII_STR (1) := ''\BEL;
+VAR M: INTEGER := FIXED_MAX (0, 2, STD);
+VAR Z: INTEGER := 0;
+VAR R1: FIXED (1, 2, STD) := 5;
+VAR N: INTEGER := 0;
+VAR BIG: INTEGER := 9223372036854775807;
+VAR V: ARRAY [0:5] OF INTEGER := (0, 10, 20, 30, 40, 50);
+VAR Q: FIXED (4, 2, STD);
+PUT_LINE (TO_CHAR (BEL = ''\NUL) !! ' ' !! TO_CHAR (BEL = '?') !! ' ' !! TO_CHAR (TO_BIT (BEL)));
+BLOCK
+   TYPE MINI = ENUM (\'X', \'Y', \'Z', \NL);
+   PUT_LINE (TO_CHAR ((MINI 'XYZ').LENGTH) !! TO_CHAR ((MINI ''\NL).LENGTH));
+END BLOCK;
+PUT_LINE (TO_CHAR (M > 1.5\S1) !! ' ' !! TO_CHAR (M = 1.5\S1) !! ' ' !! TO_CHAR (M IN [0 : 1.5\S1]));
+PUT_LINE (TO_CHAR (Z IN (-0.5\S1 : 1]) !! ' ' !! TO_CHAR (Z IN [0.5\S1 : 1]));
+BLOCK
+   R1 := M;
+END BLOCK
+EXCEPT
+   RANGE --> PUT_LINE ('RANGE, not OVERFLOW (3.2.5)'); END;
+END EXCEPT;
+LOOP FOR I IN [INTEGER.MAX - 1 : INTEGER.MAX] DO
+   N := N + 1;
+END LOOP I;
+PUT_LINE (TO_CHAR (N) !! ' ' !! TO_CHAR (BIG));
+PUT_LINE (TO_CHAR (ID (7 // 2) ROUNDED) !! ' ' !! TO_CHAR (V (7 // 2) ROUNDED) !! ' '
+          !! TO_CHAR (7 // 2 ROUNDED));
+Q := TO_FIXED (.3\S1, 4);
+PUT_LINE (TO_CHAR (Q) !! ' ' !! TO_CHAR (TO_FIXED (.3\S1, 4, ROUNDED)) !! ' '
+          !! TO_CHAR (TO_FIXED ('2.75\S2', 4)) !! ' ' !! TO_CHAR (TO_FIXED ('2.7\S2', 0, ROUNDED)));
+BLOCK
+   N := TO_FIXED ('1.5', 0);
+END BLOCK
+EXCEPT
+   CONVERSION --> PUT_LINE ('1.5 is not a fixed-literal'); END;
+END EXCEPT;
+BLOCK
+   N := TO_FIXED ('1E200', 0);
+END BLOCK
+EXCEPT
+   OVERFLOW --> PUT_LINE ('1E200: OVERFLOW'); END;
+END EXCEPT;
+PUT_LINE (TO_CHAR (TO_FIXED (' 9E2 ', 0)) !! ' ' !! TO_CHAR (1E-900));
+FUNCTION ID (X: INTEGER) RETURNS (INTEGER);
+   RETURN X;
+END FUNCTION ID;
+END SEGMENT EXACT;

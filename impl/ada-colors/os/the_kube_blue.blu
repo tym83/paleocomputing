@@ -24,8 +24,8 @@ MAIN SEGMENT THE_KUBE_BLUE
 % half-written, as the Justification admits (J3.11-1); a level-triggered
 % controller repairs that on its next pass.
 %
-% Time is virtual; every process is a path of one parallel block started at 0,
-% so CLOCK is the system's time.
+% Time is virtual; the system's time is the simulated machine's real-time clock,
+% REAL_TIME of the implementation's TERMINAL segment (CLOCK is processing time).
 
 CONST P_INTERP: INTEGER := 1;
 CONST P_DEPLOY: INTEGER := 2;
@@ -326,7 +326,7 @@ END PAR_BLOCK;
 
 % ==== time ============================================================================
 FUNCTION NOW () RETURNS (INTEGER);
-   RETURN TO_FIXED (CLOCK * 1000, 0, ROUNDED);
+   RETURN TO_FIXED (REAL_TIME * 1000, 0, ROUNDED);
 END FUNCTION NOW;
 
 PROCEDURE PAUSE (MS: INTEGER);

@@ -1,0 +1,37 @@
+MAIN SEGMENT PAR_BLOCK_D7
+   USES (TERMINAL, PARALLEL_SUPPORT);
+% a program's PAR_BLOCK_ (D.7): it gets the activations a parallel block makes and
+% changes the scheduling discipline -- here the later paths run first, and the
+% activations of index 2 never run -- with RUN_PATHS, the implementation's PAR_BLOCK_
+PAR_BLOCK
+   PATH A FOR I IN [1:3];
+      PUT_LINE ('A' !! TO_CHAR (I));
+   END PATH A;
+   PATH B PRIORITY (7);
+      PUT_LINE ('B');
+   END PATH B;
+END PAR_BLOCK;
+PUT_LINE ('done');
+PROCEDURE PAR_BLOCK_ (PATH_LIST: ARRAY [1:?N] OF PATH_ENTRY);
+   VAR KEEP: INTEGER := 0;
+   LOOP FOR K IN [1:N] DO
+      PUT_LINE ('activation ' !! TO_CHAR (K) !! ' priority '
+                !! TO_CHAR (PATH_LIST (K).PRIORITY_LEVEL));
+      IF PATH_LIST (K).ACTIVATION_ID MOD 4294967296 <> 2 THEN
+         KEEP := KEEP + 1;
+      END IF;
+   END LOOP K;
+   BLOCK
+      VAR L: ARRAY [1:KEEP] OF PATH_ENTRY;
+      VAR J: INTEGER := 0;
+      LOOP FOR K IN [1:N] DO
+         IF PATH_LIST (K).ACTIVATION_ID MOD 4294967296 <> 2 THEN
+            J := J + 1;
+            L (J) := PATH_LIST (K);
+            L (J).PRIORITY_LEVEL := 10 + K;
+         END IF;
+      END LOOP K;
+      RUN_PATHS (L);
+   END BLOCK;
+END PROCEDURE PAR_BLOCK_;
+END SEGMENT PAR_BLOCK_D7;

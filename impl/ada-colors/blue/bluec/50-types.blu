@@ -26,6 +26,9 @@ FUNCTION TYPE_NAME (T: TYP) RETURNS (TEXT);
          RETURN MK ('INTEGER');
       END IF;
       RETURN FMT1 ('FIXED (@, 2, STD)', NUM (T@.SCALE));
+   ORIF K = T_XFIX THEN
+      RETURN CAT (FMT3 ('FIXED (@, @, @', NUM (T@.SCALE), NUM (T@.RADIX), PRECISION_NAME (T@.PREC)),
+                  MK (')'));
    ORIF K = T_BOOL THEN
       RETURN MK ('BOOLEAN');
    ORIF K = T_ENUM THEN
@@ -106,6 +109,15 @@ END FUNCTION SAME_LITERALS;
 FUNCTION ENUM_CLASS (LITS: NODE, UNORDERED: BOOLEAN, LINE: INTEGER) RETURNS (TYP);
    VAR Y: SYM := W@.ENUMS;
    VAR T: TYP;
+   BLOCK                                             % each literal once (3.4.1)
+      VAR P: NODE := LITS;
+      LOOP UNTIL P = NIL DO
+         IF IN_IDENTS (P@.NEXT, P@.NAME) THEN
+            FAILT (LINE, 'an enumerated literal must be unique in its list (3.4.1): ', P@.NAME);
+         END IF;
+         P := P@.NEXT;
+      END LOOP;
+   END BLOCK;
    LOOP UNTIL Y = NIL DO
       IF Y@.T@.UNORDERED = UNORDERED & SAME_LITERALS (Y@.T@.LITS, LITS) THEN
          DECLARE_LITERALS (Y@.T, LINE);
@@ -234,6 +246,58 @@ PROCEDURE ATTR_VALUE (E: NODE # C: TEXT, M: MVAL);
 END PROCEDURE ATTR_VALUE;
 
 % the range-spec R applied to the type T (3.2.1, 3.3.1, 3.4.1)
+% a range of a member of FIXED the program defines: its bounds as values of the type
+% (converted by the program's STORE_), ordered by the program's LESS_THAN_ (D.4)
+FUNCTION XFIX_RANGE (T: TYP, R: NODE) RETURNS (TYP);
+   VAR N: TYP := COPY_TYP (T);
+   CONST LO: ET := EXPR (R@.A, T);
+   CONST HI: ET := EXPR (R@.B, T);
+   N@.NAME := NO_TEXT ();
+   N@.RLEVEL := CUR_LEVEL ();
+   N@.ROPEN := R@.IV;
+   N@.LO_C := XFIX_VALUE (T, LO, R@.LINE);
+   N@.HI_C := XFIX_VALUE (T, HI, R@.LINE);
+   N@.MLO := NO_MVAL ();
+   N@.MHI := NO_MVAL ();
+   IF USER_OPERATOR (MKN ('LESS_THAN_'), VAL_ARG (MKET (N@.LO_C, T), VAL_ARG (MKET (N@.HI_C, T), NIL)),
+                     R@.LINE) = NIL THEN
+      FAILT (R@.LINE, 'a range of this member of FIXED needs the program''s LESS_THAN_ (D.4): ',
+             TYPE_NAME (T));
+   END IF;
+   RETURN N;
+END FUNCTION XFIX_RANGE;
+
+% V as a value of the member T of FIXED the program defines: itself, or converted by
+% the program's STORE_ (D.4)
+FUNCTION XFIX_VALUE (T: TYP, V: ET, LINE: INTEGER) RETURNS (TEXT);
+   IF SAME_XFIX (T, V.T) THEN
+      RETURN V.C;
+   END IF;
+   BLOCK
+      CONST TMP: TEXT := NEW_NAME ('xc');
+      RETURN FMT3 ('({ rstr @; @ @; })', TMP, STORE_CODE (T, TMP, V, LINE, NO_TEXT ()), TMP);
+   END BLOCK;
+END FUNCTION XFIX_VALUE;
+
+% the member T without its range
+FUNCTION XFIX_BASE (T: TYP) RETURNS (TYP);
+   VAR N: TYP := COPY_TYP (REAL_TYPE (T));
+   N@.LO_C := NO_TEXT ();
+   N@.HI_C := NO_TEXT ();
+   N@.NAME := NO_TEXT ();
+   RETURN N;
+END FUNCTION XFIX_BASE;
+
+% are A and B the same member of FIXED the program defines?
+FUNCTION SAME_XFIX (A, B: TYP) RETURNS (BOOLEAN);
+   CONST RA: TYP := REAL_TYPE (A);
+   CONST RB: TYP := REAL_TYPE (B);
+   IF RA@.KIND <> T_XFIX ! RB@.KIND <> T_XFIX THEN
+      RETURN FALSE;
+   END IF;
+   RETURN RA@.SCALE = RB@.SCALE & RA@.RADIX = RB@.RADIX & RA@.PREC = RB@.PREC;
+END FUNCTION SAME_XFIX;
+
 FUNCTION WITH_RANGE (T: TYP, R: NODE) RETURNS (TYP);
    VAR N: TYP;
    IF R = NIL THEN
@@ -243,12 +307,15 @@ FUNCTION WITH_RANGE (T: TYP, R: NODE) RETURNS (TYP);
       N := COPY_TYP (T);                            % [?LB : ?UB] in a formal: any range
       N@.NAME := NO_TEXT ();
       IF R@.A@.KIND = TS_GEN & R@.A@.NAME.LEN > 0 THEN
-         N@.LO_C := MK ('?' !! STR (R@.A@.NAME, R@.A@.NAME.LEN));
+         N@.LO_C := QMK ('?', R@.A@.NAME);
       END IF;
       IF R@.B@.KIND = TS_GEN & R@.B@.NAME.LEN > 0 THEN
-         N@.HI_C := MK ('?' !! STR (R@.B@.NAME, R@.B@.NAME.LEN));
+         N@.HI_C := QMK ('?', R@.B@.NAME);
       END IF;
       RETURN N;
+   END IF;
+   IF T@.KIND = T_XFIX THEN
+      RETURN XFIX_RANGE (T, R);
    END IF;
    IF NOT (T@.KIND = T_INT ! T@.KIND = T_FLOAT ! T@.KIND = T_ENUM) THEN
       FAIL (R@.LINE, 'a range is only for fixed, float and enumerated types (3.12.2)');
@@ -268,15 +335,28 @@ FUNCTION WITH_RANGE (T: TYP, R: NODE) RETURNS (TYP);
          N@.MLO := ENUM_MANIFEST (R@.A, T);
          N@.MHI := ENUM_MANIFEST (R@.B, T);
       END IF;
-      IF T@.KIND = T_INT & T@.SCALE <> 0 THEN
+      % the bounds are of the type class, assignable without approximation
+      % (3.2.1, 3.3.1, 3.4.1)
+      IF NOT SAME_CLASS (REAL_TYPE (LO.T), REAL_TYPE (T)) ! NOT SAME_CLASS (REAL_TYPE (HI.T), REAL_TYPE (T)) THEN
+         FAIL (R@.LINE, 'the bounds of a range must be of the class of the type (3.2.1, 3.3.1, 3.4.1)');
+      END IF;
+      IF T@.KIND = T_INT THEN
          N@.LO_C := RESCALE (LO, T@.SCALE, R@.LINE);
          N@.HI_C := RESCALE (HI, T@.SCALE, R@.LINE);
-         N@.MLO := NO_MVAL ();
-         N@.MHI := NO_MVAL ();
+         IF T@.SCALE <> 0 ! LO.T@.SCALE <> 0 ! HI.T@.SCALE <> 0 THEN
+            N@.MLO := NO_MVAL ();
+            N@.MHI := NO_MVAL ();
+         END IF;
+      END IF;
+      IF IS_D (T) THEN                               % D bounds (-pdp11)
+         N@.LO_C := AS_D (LO);
+         N@.HI_C := AS_D (HI);
       END IF;
    END BLOCK;
    IF R@.IV = 1 ! R@.IV = 3 THEN                     % (L: open below
-      IF T@.KIND = T_FLOAT THEN
+      IF IS_D (T) THEN
+         N@.LO_C := FMT1 ('rt_b_dnext(@, 1)', N@.LO_C);
+      ORIF T@.KIND = T_FLOAT THEN
          N@.LO_C := FMT1 ('nextafter(@, INFINITY)', N@.LO_C);
       ELSE
          N@.LO_C := FMT1 ('((@) + 1)', N@.LO_C);
@@ -284,7 +364,9 @@ FUNCTION WITH_RANGE (T: TYP, R: NODE) RETURNS (TYP);
       END IF;
    END IF;
    IF R@.IV >= 2 THEN                                % U) open above
-      IF T@.KIND = T_FLOAT THEN
+      IF IS_D (T) THEN
+         N@.HI_C := FMT1 ('rt_b_dnext(@, 0)', N@.HI_C);
+      ORIF T@.KIND = T_FLOAT THEN
          N@.HI_C := FMT1 ('nextafter(@, -INFINITY)', N@.HI_C);
       ELSE
          N@.HI_C := FMT1 ('((@) - 1)', N@.HI_C);
@@ -347,8 +429,7 @@ FUNCTION RESOLVE_NAMED (TS: NODE, CNAME: TEXT) RETURNS (TYP);
       END IF;
       T := WITH_RANGE (T, TS@.B);
       IF TS@.C <> NIL THEN
-         T := COPY_TYP (T);
-         T@.REPS := TS@.C;
+         T := APPLY_REP (T, TS@.C, TS@.LINE);
       END IF;
       RETURN T;
    ORIF K = TS_GEN THEN
@@ -356,22 +437,365 @@ FUNCTION RESOLVE_NAMED (TS: NODE, CNAME: TEXT) RETURNS (TYP);
    ORIF K <> TS_NAME THEN
       FAIL (TS@.LINE, 'a type specification expected');
    END IF;
+   IF TS@.FL = 3 THEN                                % X.ELEMENT_TYPE and the like
+      T := WITH_RANGE (TYPE_ATTR_TYPE (TS@.E), TS@.B);
+      IF TS@.C <> NIL THEN
+         T := APPLY_REP (T, TS@.C, TS@.LINE);
+      END IF;
+      RETURN T;
+   END IF;
    T := RESOLVE_PREDEFINED (TS);
    IF T = NIL THEN
       T := RESOLVE_USER (TS);
    END IF;
    T := WITH_RANGE (T, TS@.B);
    IF TS@.C <> NIL THEN
-      T := COPY_TYP (T);
-      T@.REPS := TS@.C;
-      IF TS@.C@.B <> NIL THEN                        % ENUM_VAL_REP: check the VALUES
-         IF T@.KIND <> T_ENUM ! NOT T@.UNORDERED THEN
-            FAIL (TS@.LINE, 'ENUM_VAL_REP is only for UNORDERED types (3.4.3)');
-         END IF;
-      END IF;
+      T := APPLY_REP (T, TS@.C, TS@.LINE);
    END IF;
    RETURN T;
 END FUNCTION RESOLVE_NAMED;
+
+% T REP R (3.12.4): the reptype-reference expanded to a predefined reptype, which
+% must suit the class of T (3.x.3); the type stays of its class
+FUNCTION APPLY_REP (T0: TYP, R0: NODE, LINE: INTEGER) RETURNS (TYP);
+   VAR T: TYP := COPY_TYP (T0);
+   IF T0@.KIND = T_ABS THEN
+      FAIL (LINE, 'a REP clause is only for a member of a predefined type class (3.12.2)');
+   END IF;
+   T@.REPS := EXPAND_REP (R0, T0, LINE);
+   CHECK_REP_CLASS (T, LINE);
+   IF T@.KIND = T_ENUM THEN
+      CHECK_ENUM_REP (T, LINE);
+   ORIF T@.REPS@.B <> NIL THEN
+      FAIL (LINE, 'ENUM_VAL_REP is only for UNORDERED types (3.4.3)');
+   END IF;
+   RETURN T;
+END FUNCTION APPLY_REP;
+
+% a reptype-reference R(args) for a value of type T: the reptype-definition with the
+% formals and the base-formal-id bound, in the closed scope of its declaration,
+% its arguments replaced by their manifest values (3.12.3, 3.12.4)
+FUNCTION EXPAND_REP (R: NODE, T: TYP, LINE: INTEGER) RETURNS (NODE);
+   VAR Y: SYM;
+   IF R = NIL THEN
+      RETURN R;
+   END IF;
+   IF R@.KIND = TS_GEN THEN
+      RETURN R;
+   END IF;
+   Y := ORIG_LOOKUP (R@.NAME);
+   IF Y = NIL THEN
+      RETURN R;
+   END IF;
+   IF Y@.KIND <> Y_REPTYPE THEN
+      RETURN R;
+   END IF;
+   IF Y@.BUSY THEN
+      FAILT (LINE, 'a circular reptype declaration (3.12.3): ', R@.NAME);
+   END IF;
+   BLOCK
+      CONST D: NODE := Y@.DECL;
+      VAR X: NODE := NEW_NODE (N_REP, R@.LINE);
+      VAR HEAD, TAIL: NODE := NIL;
+      Y@.BUSY := TRUE;
+      OPEN_SCOPE;
+      IF D@.A <> NIL ! R@.A <> NIL THEN
+         BIND_FORMALS (D@.A, R);
+      END IF;
+      IF D@.C <> NIL THEN                            % OF base-formal-id: the type
+         BLOCK
+            VAR B: SYM := NEW_SYM (Y_TYPE, D@.C@.NAME);
+            B@.T := T;
+            DEFINE (B, LINE);
+         END BLOCK;
+      END IF;
+      W@.IN_TYPEDECL := W@.IN_TYPEDECL + 1;
+      X@.NAME := D@.B@.NAME;
+      X@.B := D@.B@.B;
+      X@.C := D@.B@.C;
+      IF TEQS (X@.NAME, 'RECORD_REP') THEN           % packing-specs, not values
+         HEAD := D@.B@.A;
+      ELSE
+         BLOCK
+            VAR A: NODE := D@.B@.A;
+            LOOP UNTIL A = NIL DO
+               ADD_LIST (REP_ARG_VALUE (A) # HEAD, TAIL);
+               A := A@.NEXT;
+            END LOOP;
+         END BLOCK;
+      END IF;
+      X@.A := HEAD;
+      W@.IN_TYPEDECL := W@.IN_TYPEDECL - 1;
+      CLOSE_SCOPE;
+      X := EXPAND_REP (X, T, LINE);
+      Y@.BUSY := FALSE;
+      RETURN X;
+   END BLOCK;
+END FUNCTION EXPAND_REP;
+
+% an argument of a reptype-definition where its formals are bound: a literal of
+% its manifest value, a predefined literal (UNSIGNED) as it is
+FUNCTION REP_ARG_VALUE (A: NODE) RETURNS (NODE);
+   VAR N: NODE;
+   VAR M: MVAL;
+   IF A@.KIND = N_NAME ! A@.KIND = N_ENUMLIT THEN
+      BLOCK
+         CONST Y: SYM := LOOKUP (A@.NAME);
+         IF Y = NIL ! (Y <> NIL & Y@.KIND = Y_ENUMLIT) THEN
+            N := NEW_NODE (A@.KIND, A@.LINE);
+            N@.NAME := A@.NAME;
+            RETURN N;
+         END IF;
+         IF Y@.KIND = Y_CONST & Y@.T <> NIL THEN
+            IF REAL_TYPE (Y@.T)@.KIND = T_ENUM & Y@.HASMV THEN
+               BLOCK                                   % a formal of SIGNING: its literal
+                  VAR L: NODE := REAL_TYPE (Y@.T)@.BASE@.LITS;
+                  VAR I: INTEGER := 0;
+                  LOOP UNTIL L = NIL ! I = Y@.MV DO
+                     I := I + 1;
+                     L := L@.NEXT;
+                  END LOOP;
+                  IF L <> NIL THEN
+                     N := NEW_NODE (N_NAME, A@.LINE);
+                     N@.NAME := L@.NAME;
+                     RETURN N;
+                  END IF;
+               END BLOCK;
+            END IF;
+         END IF;
+      END BLOCK;
+   END IF;
+   M := MANIFEST (A);
+   IF NOT M.OK THEN
+      BLOCK                                          % evaluated in the closed scope
+         CONST SAVED_CODE: BUF := W@.CODE;
+         CONST V: ET := EXPR (A, NIL);
+         W@.CODE := SAVED_CODE;
+      END BLOCK;
+      RETURN A;
+   END IF;
+   N := NEW_NODE (N_INT, A@.LINE);
+   IF M.V < 0 THEN
+      N@.IV := -M.V;
+      N@.NAME := NUM (-M.V);
+      BLOCK
+         VAR U: NODE := NEW_NODE (N_UNOP, A@.LINE);
+         U@.NAME := MK ('-');
+         U@.A := N;
+         RETURN U;
+      END BLOCK;
+   END IF;
+   N@.IV := M.V;
+   N@.NAME := NUM (M.V);
+   RETURN N;
+END FUNCTION REP_ARG_VALUE;
+
+% the predefined reptypes of each class (3.2.3, 3.3.3, 3.4.3, 3.5.3, 3.6.3, 3.7.3,
+% 3.8.3, 3.9.3, 3.10.3, 3.11.3) and the constraints of FIXED_REP (3.2.3)
+PROCEDURE CHECK_REP_CLASS (T: TYP, LINE: INTEGER);
+   CONST R: NODE := T@.REPS;
+   CONST K: INTEGER := T@.KIND;
+   VAR OK: BOOLEAN := FALSE;
+   IF R@.KIND = TS_GEN THEN
+      RETURN;
+   END IF;
+   IF FIND_BIND (W@.BINDS, R@.NAME) <> NIL THEN     % a derived ?R of an instance
+      RETURN;
+   END IF;
+   IF LOOKUP (R@.NAME) <> NIL THEN
+      IF LOOKUP (R@.NAME)@.KIND = Y_GEN THEN
+         RETURN;
+      END IF;
+   END IF;
+   BLOCK
+      CONST N: TEXT := R@.NAME;
+      IF K = T_INT THEN
+         OK := TEQS (N, 'FIXED_STD') ! TEQS (N, 'FIXED_REP');
+      ORIF K = T_FLOAT THEN
+         OK := TEQS (N, 'FLOAT_STD');
+      ORIF K = T_BOOL THEN
+         OK := TEQS (N, 'BOOLEAN_STD');
+      ORIF K = T_ENUM THEN
+         OK := TEQS (N, 'ENUM_STD') ! TEQS (N, 'ENUM_REP') ! TEQS (N, 'ENUM_VAL_REP');
+      ORIF K = T_STR THEN
+         OK := TEQS (N, 'CHAR_STR_STD') ! TEQS (N, 'CHAR_STR_REP');
+      ORIF K = T_BITS THEN
+         OK := TEQS (N, 'BIT_STD');
+      ORIF K = T_ARR THEN
+         OK := TEQS (N, 'ARRAY_STD') ! TEQS (N, 'ARRAY_REP');
+      ORIF K = T_REC THEN
+         OK := TEQS (N, 'RECORD_STD') ! TEQS (N, 'RECORD_REP');
+      ORIF K = T_PTR THEN
+         OK := TEQS (N, 'PTR_STD');
+      ORIF K = T_SEM THEN
+         OK := TEQS (N, 'SEMAPHORE_STD');
+      ORIF K = T_TYPE THEN
+         OK := TRUE;
+      END IF;
+      IF NOT OK THEN
+         FAILT (LINE, 'the representation does not suit the type class (3.12.4): ', N);
+      END IF;
+      IF TEQS (N, 'FIXED_REP') THEN
+         CHECK_FIXED_REP (T, LINE);
+      END IF;
+   END BLOCK;
+END PROCEDURE CHECK_REP_CLASS;
+
+FUNCTION POW2 (N: INTEGER) RETURNS (INTEGER);
+   VAR P: INTEGER := 1;
+   LOOP FOR I IN [1:N] DO
+      P := P * 2;
+   END LOOP I;
+   RETURN P;
+END FUNCTION POW2;
+
+% FIXED_REP (size, signing) [3-55]: a manifest size in [0:64], a manifest value of
+% SIGNING; UNSIGNED needs an explicit range not below zero; the range fits (3.2.3)
+PROCEDURE CHECK_FIXED_REP (T: TYP, LINE: INTEGER);
+   CONST R: NODE := T@.REPS;
+   VAR UNSIGNED: BOOLEAN := FALSE;
+   IF R@.A = NIL THEN
+      FAIL (LINE, 'FIXED_REP takes a size and a signing (3.2.3 [3-55])');
+   END IF;
+   IF R@.A@.KIND = TS_GEN ! R@.A@.KIND = N_DONTCARE THEN
+      RETURN;
+   END IF;
+   BLOCK
+      CONST N: MVAL := MANIFEST (R@.A);
+      IF NOT N.OK THEN
+         FAIL (LINE, 'the size of FIXED_REP is a manifest integer (3.2.3 [3-56])');
+      END IF;
+      IF N.V < 0 ! N.V > W@.WORD THEN
+         FAIL (LINE, 'the size of FIXED_REP is in [0:P], P the default size (3.2.3)');
+      END IF;
+      IF R@.A@.NEXT <> NIL THEN
+         BLOCK
+            CONST S: NODE := R@.A@.NEXT;
+            IF S@.KIND = TS_GEN ! S@.KIND = N_DONTCARE THEN
+               RETURN;
+            END IF;
+            IF NOT ((S@.KIND = N_NAME ! S@.KIND = N_ENUMLIT)
+                    & (TEQS (S@.NAME, 'SIGNED') ! TEQS (S@.NAME, 'UNSIGNED'))) THEN
+               FAIL (LINE, 'the signing of FIXED_REP is a manifest value of SIGNING (3.2.3 [3-57])');
+            END IF;
+            UNSIGNED := TEQS (S@.NAME, 'UNSIGNED');
+            IF S@.NEXT <> NIL THEN
+               FAIL (LINE, 'FIXED_REP takes a size and a signing (3.2.3 [3-55])');
+            END IF;
+         END BLOCK;
+      END IF;
+      IF W@.REPCONV THEN                             % a converter: the value's check
+         RETURN;
+      END IF;
+      IF UNSIGNED THEN
+         IF T@.LO_C.LEN = 0 THEN
+            FAIL (LINE, 'UNSIGNED needs an explicitly specified range (3.2.3)');
+         END IF;
+         IF T@.MLO.OK & T@.MLO.V < 0 THEN
+            FAIL (LINE, 'UNSIGNED needs a range whose lower bound is non-negative (3.2.3)');
+         END IF;
+      END IF;
+      % no range: the range of the precision, which N bits hold only when N is
+      % the default size
+      IF T@.LO_C.LEN = 0 & N.V < W@.WORD THEN
+         FAIL (LINE, 'the range of the type exceeds what the size of FIXED_REP represents (3.2.3)');
+      END IF;
+      IF T@.MLO.OK & T@.MHI.OK & T@.LO_C.LEN > 0 & N.V < 63 THEN
+         BLOCK
+            VAR LO, HI: INTEGER := 0;
+            IF UNSIGNED THEN
+               HI := POW2 (N.V) - 1;
+            ORIF N.V > 0 THEN
+               LO := -POW2 (N.V - 1);
+               HI := POW2 (N.V - 1) - 1;
+            END IF;
+            IF T@.MLO.V < LO ! T@.MHI.V > HI THEN
+               FAIL (LINE, 'the range of the type exceeds what the size of FIXED_REP represents (3.2.3)');
+            END IF;
+         END BLOCK;
+      END IF;
+   END BLOCK;
+END PROCEDURE CHECK_FIXED_REP;
+
+% the type that an attribute names (X.A where A is a type-valued attribute):
+% ELEMENT_TYPE of arrays and pointers (3.8.1, 3.10.1), CHARSET of character strings
+% (3.7.1), a TYPE parameter of a record or abstract type (3.9.1, 3.12)
+FUNCTION TYPE_ATTR_TYPE (E: NODE) RETURNS (TYP);
+   VAR T: TYP;
+   IF E@.KIND <> N_FIELD THEN
+      FAIL (E@.LINE, 'a type-valued attribute expected');
+   END IF;
+   IF E@.A@.KIND = N_FIELD & IS_TYPE_ATTR (E@.A) THEN
+      T := TYPE_ATTR_TYPE (E@.A);
+   ELSE
+      BLOCK
+         CONST SAVED_CODE: BUF := W@.CODE;
+         T := VALUE_OR_TYPE (E@.A).T;
+         W@.CODE := SAVED_CODE;
+      END BLOCK;
+   END IF;
+   BLOCK
+      CONST R: TYP := REAL_TYPE (T);
+      IF TEQS (E@.NAME, 'ELEMENT_TYPE') THEN
+         IF R@.KIND = T_ARR THEN
+            RETURN R@.ELEM;
+         ORIF R@.KIND = T_PTR THEN
+            RETURN TARGET (R);
+         END IF;
+      ORIF TEQS (E@.NAME, 'CHARSET') & R@.KIND = T_STR THEN
+         RETURN CHARSET_OF (R);
+      END IF;
+      IF R@.KIND = T_REC THEN                        % a TYPE parameter of the record
+         BLOCK
+            CONST C: SYM := RECORD_CLASS_OF (R);
+            IF C <> NIL THEN
+               BLOCK
+                  CONST B: BIND := FIND_BIND (C@.BINDINGS, E@.NAME);
+                  IF B <> NIL THEN
+                     IF B@.T <> NIL THEN
+                        RETURN B@.T;
+                     END IF;
+                  END IF;
+               END BLOCK;
+            END IF;
+         END BLOCK;
+      END IF;
+   END BLOCK;
+   FAILT (E@.LINE, 'not a type-valued attribute: ', E@.NAME);
+END FUNCTION TYPE_ATTR_TYPE;
+
+% does the attribute query E name a type?
+FUNCTION IS_TYPE_ATTR (E: NODE) RETURNS (BOOLEAN);
+   IF E@.KIND <> N_FIELD THEN
+      RETURN FALSE;
+   END IF;
+   IF TEQS (E@.NAME, 'ELEMENT_TYPE') ! TEQS (E@.NAME, 'CHARSET') THEN
+      RETURN TRUE;
+   END IF;
+   IF E@.A@.KIND = N_NAME THEN                       % a TYPE parameter
+      BLOCK
+         CONST Y: SYM := LOOKUP (E@.A@.NAME);
+         IF Y <> NIL THEN
+            IF (Y@.KIND = Y_VAR ! Y@.KIND = Y_CONST) & Y@.T <> NIL THEN
+               BLOCK
+                  CONST R: TYP := REAL_TYPE (Y@.T);
+                  IF R@.KIND = T_REC THEN
+                     BLOCK
+                        CONST C: SYM := RECORD_CLASS_OF (R);
+                        IF C <> NIL THEN
+                           IF FIND_BIND (C@.BINDINGS, E@.NAME) <> NIL THEN
+                              RETURN TRUE;
+                           END IF;
+                        END IF;
+                     END BLOCK;
+                  END IF;
+               END BLOCK;
+            END IF;
+         END IF;
+      END BLOCK;
+   END IF;
+   RETURN FALSE;
+END FUNCTION IS_TYPE_ATTR;
 
 % ?T where a type is expected: what the generic parameter stands for
 FUNCTION GEN_TYPE (TS: NODE) RETURNS (TYP);
@@ -399,20 +823,21 @@ FUNCTION RESOLVE_PREDEFINED (TS: NODE) RETURNS (TYP);
    VAR T: TYP;
    IF TEQS (NAME, 'FIXED') THEN                     % [3-45]
       BLOCK
-         CONST S: MVAL := MANIFEST (NTH_ARG (TS, 0));
-         CONST R: MVAL := MANIFEST (NTH_ARG (TS, 1));
+         CONST S: MVAL := MANIFEST_INTEGER_ARG (NTH_ARG (TS, 0), 'scale', -1000, 1000);
+         CONST R: MVAL := MANIFEST_INTEGER_ARG (NTH_ARG (TS, 1), 'radix', 2, 1000);
          CONST P: NODE := NTH_ARG (TS, 2);
-         IF NOT S.OK THEN
-            FAIL (TS@.LINE, 'the scale must be manifest (3.2.1)');
-         END IF;
-         IF NOT R.OK ! R.V <> 2 THEN
-            FAIL (TS@.LINE, 'only radix 2 is predefined (3.2.1)');
-         END IF;
-         IF P@.KIND = N_NAME ! P@.KIND = N_ENUMLIT THEN
-            IF FIND_LITERAL (P@.NAME, NIL) <> NIL & NOT TEQS (P@.NAME, 'STD') THEN
-               FAIL (TS@.LINE, 'only STD precision is predefined (3.2.1)');
+         TYPE_ARG_COUNT (TS, 3);
+         CHECK_PRECISION_ARG (P, TS@.LINE);
+         BLOCK                                       % another radix or precision: a
+            CONST PO: INTEGER := PRECISION_ORD (P);  % member the program defines (D.4)
+            IF R.V <> 2 ! PO <> STD_ORD () THEN
+               T := NEW_TYP (T_XFIX);
+               T@.SCALE := S.V;
+               T@.RADIX := R.V;
+               T@.PREC := PO;
+               RETURN T;
             END IF;
-         END IF;
+         END BLOCK;
          IF S.V = 0 THEN
             RETURN W@.TY_INT;
          END IF;
@@ -422,13 +847,9 @@ FUNCTION RESOLVE_PREDEFINED (TS: NODE) RETURNS (TYP);
       END BLOCK;
    ORIF TEQS (NAME, 'FLOAT') THEN                   % [3-68]
       BLOCK
-         CONST P: MVAL := MANIFEST (NTH_ARG (TS, 0));
-         IF NOT P.OK THEN
-            FAIL (TS@.LINE, 'the precision must be manifest (3.3.1)');
-         END IF;
-         IF P.V < 1 ! P.V > 15 THEN
-            FAIL (TS@.LINE, 'precisions from 1 to 15 are implemented (3.3.1)');
-         END IF;
+         CONST P: MVAL := MANIFEST_INTEGER_ARG (NTH_ARG (TS, 0), 'precision', 1,
+                                                MAX_FLOAT_PRECISION ());
+         TYPE_ARG_COUNT (TS, 1);
          T := NEW_TYP (T_FLOAT);
          T@.SCALE := P.V;
          RETURN T;
@@ -440,18 +861,39 @@ FUNCTION RESOLVE_PREDEFINED (TS: NODE) RETURNS (TYP);
    ORIF TEQS (NAME, 'CHAR_STR') ! TEQS (NAME, 'ASCII_STR') THEN   % [3-131]
       T := NEW_TYP (T_STR);
       STRING_LENGTH (T, NTH_ARG (TS, 0));
+      T@.BASE := W@.TY_ASCII;
       IF TEQS (NAME, 'CHAR_STR') THEN
+         TYPE_ARG_COUNT (TS, 2);
          BLOCK
             CONST CS: NODE := NTH_ARG (TS, 1);
+            VAR C: TYP;
             IF CS@.KIND = TS_GEN ! CS@.KIND = N_DONTCARE THEN
+               T@.BASE := NIL;
                RETURN T;                            % CHAR_STR (?L, ?C) in a formal
             END IF;
-            IF NOT TEQS (CS@.NAME, 'ASCII') THEN
-               IF ARG_TYPE (CS)@.KIND <> T_ENUM THEN
-                  FAIL (TS@.LINE, 'a charset must be an enumerated type (3.7.1)');
-               END IF;
+            IF CS@.KIND = N_FIELD & TEQS (CS@.NAME, 'CHARSET') THEN   % S.CHARSET [3-134]
+               BLOCK
+                  CONST SAVED_CODE: BUF := W@.CODE;
+                  CONST V: ET := VALUE_OR_TYPE (CS@.A);
+                  W@.CODE := SAVED_CODE;
+                  IF REAL_TYPE (V.T)@.KIND <> T_STR THEN
+                     FAIL (TS@.LINE, 'CHARSET is an attribute of character strings (3.7.1)');
+                  END IF;
+                  T@.BASE := CHARSET_OF (V.T);
+               END BLOCK;
+               RETURN T;
             END IF;
+            C := REAL_TYPE (ARG_TYPE (CS));
+            IF C@.KIND <> T_ENUM THEN
+               FAIL (TS@.LINE, 'a charset must be an enumerated type (3.7.1)');
+            END IF;
+            IF C@.BASE@.UNORDERED ! NOT HAS_PRINTING_CHAR (C@.BASE@.LITS) THEN
+               FAIL (TS@.LINE, 'a charset is an ordered enumerated type with a literal \''C'' (3.7.1, 3.7.2)');
+            END IF;
+            T@.BASE := C@.BASE;
          END BLOCK;
+      ELSE
+         TYPE_ARG_COUNT (TS, 1);
       END IF;
       RETURN T;
    ORIF TEQS (NAME, 'PTR') THEN                     % [3-195]
@@ -460,18 +902,297 @@ FUNCTION RESOLVE_PREDEFINED (TS: NODE) RETURNS (TYP);
       RETURN T;
    ORIF TEQS (NAME, 'SEMAPHORE') THEN               % [3-203]
       T := NEW_TYP (T_SEM);
-      BLOCK
-         CONST U: NODE := NTH_ARG (TS, 0);
-         IF TEQS (U@.NAME, 'REGION') THEN
-            T@.SCALE := 1;
-         ORIF NOT TEQS (U@.NAME, 'SYNCH') THEN
-            FAIL (TS@.LINE, 'the use mode is SYNCH or REGION (3.11.1)');
+      TYPE_ARG_COUNT (TS, 1);
+      BLOCK                                          % a manifest value of USAGE
+         CONST U: NODE := NTH_ARG (TS, 0);           % (SYNCH, REGION) [3-204]
+         CONST UT: TYP := RESOLVE_USER_NAME (MK ('USAGE'), TS@.LINE);
+         VAR M: MVAL := NO_MVAL ();
+         IF U@.KIND = TS_GEN ! U@.KIND = N_DONTCARE THEN   % SEMAPHORE (?U): any use mode
+            M := SOME (0);                                % of a formal (D.7)
+         ORIF (U@.KIND = N_NAME ! U@.KIND = N_ENUMLIT) & FIND_LITERAL (U@.NAME, UT) <> NIL THEN
+            M := ENUM_MANIFEST (U, UT);
+         ELSE
+            BLOCK
+               CONST SAVED_CODE: BUF := W@.CODE;
+               CONST V: ET := EXPR (U, UT);
+               W@.CODE := SAVED_CODE;
+               IF SAME_CLASS (REAL_TYPE (V.T), REAL_TYPE (UT)) THEN
+                  M := MANIFEST (U);
+               END IF;
+            END BLOCK;
          END IF;
+         IF NOT M.OK THEN
+            FAIL (TS@.LINE, 'the use mode is a manifest value of USAGE, SYNCH or REGION (3.11.1)');
+         END IF;
+         T@.SCALE := M.V;
       END BLOCK;
       RETURN T;
    END IF;
    RETURN NIL;
 END FUNCTION RESOLVE_PREDEFINED;
+
+% a predefined type takes its arguments in number, type and position (3.1.1.4)
+PROCEDURE TYPE_ARG_COUNT (TS: NODE, N: INTEGER);
+   IF LIST_LENGTH (TS@.A) <> N THEN
+      FAILT (TS@.LINE, 'the wrong number of arguments for the type ', TS@.NAME);
+   END IF;
+END PROCEDURE TYPE_ARG_COUNT;
+
+% a manifest integer argument of a type within LO .. HI (3.2.1, 3.3.1)
+FUNCTION MANIFEST_INTEGER_ARG (A: NODE, WHAT: ASCII_STR(?L), LO, HI: INTEGER) RETURNS (MVAL);
+   CONST M: MVAL := MANIFEST (A);
+   IF NOT M.OK THEN
+      FAIL (A@.LINE, 'the ' !! WHAT !! ' must be manifest (3.2.1, 3.3.1)');
+   END IF;
+   IF A@.KIND <> TS_GEN & A@.KIND <> N_DONTCARE & NOT BOUND_NAME (A) THEN
+      BLOCK
+         CONST SAVED_CODE: BUF := W@.CODE;
+         CONST T: TYP := EXPR (A, W@.TY_INT).T;
+         W@.CODE := SAVED_CODE;
+         IF REAL_TYPE (T)@.KIND <> T_INT ! T@.SCALE <> 0 THEN
+            FAIL (A@.LINE, 'the ' !! WHAT !! ' is an integer (3.2.1, 3.3.1)');
+         END IF;
+      END BLOCK;
+   END IF;
+   IF M.V < LO ! M.V > HI THEN
+      FAIL (A@.LINE, 'the ' !! WHAT !! ' is out of the range of the attribute (3.2.1, 3.3.1)');
+   END IF;
+   RETURN M;
+END FUNCTION MANIFEST_INTEGER_ARG;
+
+% a name of a value bound in the generic instance being translated (section 5)
+FUNCTION BOUND_NAME (A: NODE) RETURNS (BOOLEAN);
+   IF A@.KIND <> N_NAME THEN
+      RETURN FALSE;
+   END IF;
+   RETURN FIND_BIND (W@.BINDS, A@.NAME) <> NIL;
+END FUNCTION BOUND_NAME;
+
+% the precision of a fixed point type: a value of FIXED_PRECISIONS, STD (3.2.1)
+PROCEDURE CHECK_PRECISION_ARG (P: NODE, LINE: INTEGER);
+   IF P@.KIND = TS_GEN ! P@.KIND = N_DONTCARE THEN
+      RETURN;
+   END IF;
+   IF (P@.KIND = N_NAME ! P@.KIND = N_ENUMLIT) THEN
+      IF TEQS (P@.NAME, 'STD') THEN
+         RETURN;
+      END IF;
+      BLOCK                                          % a constant or derived ?P: STD,
+         CONST Y: SYM := LOOKUP (P@.NAME);           % the only value there is
+         IF Y <> NIL THEN
+            IF Y@.KIND = Y_GEN ! Y@.KIND = Y_CONST ! (Y@.KIND = Y_TYPE & FIND_BIND (W@.BINDS, P@.NAME) <> NIL) THEN
+               RETURN;
+            END IF;
+         END IF;
+         IF FIND_BIND (W@.BINDS, P@.NAME) <> NIL THEN
+            RETURN;
+         END IF;
+      END BLOCK;
+      IF FIND_LITERAL (P@.NAME, PRECISIONS_TYPE ()) <> NIL THEN
+         RETURN;                                     % a precision the program added
+      END IF;
+   END IF;
+   FAIL (LINE, 'the precision of a fixed point type is a value of FIXED_PRECISIONS (3.2.1)');
+END PROCEDURE CHECK_PRECISION_ARG;
+
+% FIXED_PRECISIONS as visible: the predefined ENUM (STD), or the program's with more
+% precisions (Appendix D.6: "TYPE FIXED_PRECISIONS = ENUM (STD)", extended as the
+% PRELUDE is)
+FUNCTION PRECISIONS_TYPE () RETURNS (TYP);
+   CONST Y: SYM := LOOKUP (MKN ('FIXED_PRECISIONS'));
+   IF Y <> NIL THEN
+      IF Y@.KIND = Y_TYPE THEN
+         BLOCK
+            CONST T: TYP := REAL_TYPE (RESOLVE_USER_NAME (Y@.NAME, 0));
+            IF T@.KIND = T_ENUM THEN
+               RETURN T;
+            END IF;
+         END BLOCK;
+      END IF;
+   END IF;
+   RETURN NIL;
+END FUNCTION PRECISIONS_TYPE;
+
+% the position of STD among the precisions, and that of the precision P
+FUNCTION STD_ORD () RETURNS (INTEGER);
+   CONST T: TYP := PRECISIONS_TYPE ();
+   IF T <> NIL THEN
+      BLOCK
+         CONST Y: SYM := FIND_LITERAL (MKN ('STD'), T);
+         IF Y <> NIL THEN
+            IF Y@.HASMV THEN
+               RETURN Y@.MV;
+            END IF;
+         END IF;
+      END BLOCK;
+   END IF;
+   RETURN 0;
+END FUNCTION STD_ORD;
+
+FUNCTION PRECISION_ORD (P: NODE) RETURNS (INTEGER);
+   IF P@.KIND = TS_GEN ! P@.KIND = N_DONTCARE THEN
+      RETURN STD_ORD ();
+   END IF;
+   IF P@.KIND = N_NAME ! P@.KIND = N_ENUMLIT THEN
+      IF TEQS (P@.NAME, 'STD') THEN
+         RETURN STD_ORD ();
+      END IF;
+      BLOCK
+         CONST Y: SYM := FIND_LITERAL (P@.NAME, PRECISIONS_TYPE ());
+         IF Y <> NIL THEN
+            IF Y@.HASMV & Y@.KIND = Y_ENUMLIT THEN
+               RETURN Y@.MV;
+            END IF;
+         END IF;
+      END BLOCK;
+   END IF;
+   BLOCK
+      CONST M: MVAL := MANIFEST (P);
+      IF M.OK THEN
+         RETURN M.V;
+      END IF;
+   END BLOCK;
+   RETURN STD_ORD ();
+END FUNCTION PRECISION_ORD;
+
+% the name of the precision at position N
+FUNCTION PRECISION_NAME (N: INTEGER) RETURNS (TEXT);
+   CONST T: TYP := PRECISIONS_TYPE ();
+   IF T <> NIL THEN
+      BLOCK
+         VAR L: NODE := T@.BASE@.LITS;
+         VAR I: INTEGER := 0;
+         LOOP UNTIL L = NIL DO
+            IF I = N THEN
+               RETURN L@.NAME;
+            END IF;
+            I := I + 1;
+            L := L@.NEXT;
+         END LOOP;
+      END BLOCK;
+   END IF;
+   RETURN NUM (N);
+END FUNCTION PRECISION_NAME;
+
+% the bits of a value of a member the program defines: STD a word, each precision
+% after it twice the one before, each before it half (Appendix D.4)
+FUNCTION XFIX_SIZE (T: TYP) RETURNS (INTEGER);
+   VAR N: INTEGER := W@.WORD;
+   VAR K: INTEGER := T@.PREC - STD_ORD ();
+   LOOP UNTIL K = 0 DO
+      IF K > 0 THEN
+         N := N * 2;
+         K := K - 1;
+      ELSE
+         IF N > 1 THEN
+            N := N // 2;
+         END IF;
+         K := K + 1;
+      END IF;
+   END LOOP;
+   RETURN N;
+END FUNCTION XFIX_SIZE;
+
+% an enumerated reptype (3.4.3): ENUM_REP (N) or ENUM_VAL_REP (N, VALUES (...)) with N
+% large enough, every literal once, bitstrings of N bits all different, the latter
+% for UNORDERED types only
+PROCEDURE CHECK_ENUM_REP (T: TYP, LINE: INTEGER);
+   CONST R: NODE := T@.REPS;
+   CONST NAME: TEXT := R@.NAME;
+   IF R@.KIND = TS_GEN THEN
+      RETURN;
+   END IF;
+   IF TEQS (NAME, 'ENUM_STD') ! FIND_BIND (W@.BINDS, NAME) <> NIL THEN
+      RETURN;                                        % or a derived ?R of an instance
+   END IF;
+   IF NOT (TEQS (NAME, 'ENUM_REP') ! TEQS (NAME, 'ENUM_VAL_REP')) THEN
+      IF ORIG_LOOKUP (NAME) <> NIL THEN
+         IF ORIG_LOOKUP (NAME)@.KIND = Y_REPTYPE THEN
+            RETURN;                                    % a reptype-reference (3.12)
+         END IF;
+      END IF;
+      FAILT (LINE, 'not a representation of an enumerated type (3.4.3): ', NAME);
+   END IF;
+   IF R@.A = NIL THEN
+      FAILT (LINE, 'the size of the representation is missing: ', NAME);
+   END IF;
+   BLOCK
+      CONST N: MVAL := MANIFEST (R@.A);
+      CONST NL: INTEGER := T@.BASE@.NLITS;
+      IF NOT N.OK THEN
+         FAIL (LINE, 'the size of an enumerated representation is manifest (3.4.3)');
+      END IF;
+      IF N.V > 64 ! N.V < 0 THEN
+         FAIL (LINE, 'the size of an enumerated representation is in [0:(FIXED.SIZE).MAX] (3.4.3)');
+      END IF;
+      IF TEQS (NAME, 'ENUM_REP') THEN
+         IF R@.B <> NIL THEN
+            FAIL (LINE, 'VALUES belong to ENUM_VAL_REP (3.4.3)');
+         END IF;
+         IF N.V < BITS_FOR (NL) THEN
+            FAIL (LINE, 'the size cannot represent every literal (3.4.3)');
+         END IF;
+         RETURN;
+      END IF;
+      IF NOT T@.UNORDERED THEN
+         FAIL (LINE, 'ENUM_VAL_REP is only for UNORDERED types (3.4.3)');
+      END IF;
+      BLOCK                                          % every literal once, N bits each,
+         VAR L: NODE := T@.BASE@.LITS;              % no two the same
+         LOOP UNTIL L = NIL DO
+            BLOCK
+               VAR V: NODE := R@.B;
+               VAR FOUND: INTEGER := 0;
+               LOOP UNTIL V = NIL DO
+                  IF TEQ (V@.NAME, L@.NAME) THEN
+                     FOUND := FOUND + 1;
+                  END IF;
+                  V := V@.NEXT;
+               END LOOP;
+               IF FOUND <> 1 THEN
+                  FAILT (LINE, 'VALUES must give every literal once (3.4.3): ', L@.NAME);
+               END IF;
+            END BLOCK;
+            L := L@.NEXT;
+         END LOOP;
+      END BLOCK;
+      BLOCK
+         VAR V: NODE := R@.B;
+         LOOP UNTIL V = NIL DO
+            IF FIND_LITERAL (V@.NAME, T@.BASE) = NIL THEN
+               FAILT (LINE, 'not a literal of the type: ', V@.NAME);
+            END IF;
+            BLOCK
+               CONST SAVED_CODE: BUF := W@.CODE;
+               CONST B: ET := EXPR (V@.A, NIL);
+               W@.CODE := SAVED_CODE;
+               IF B.T@.KIND <> T_BITS THEN
+                  FAIL (LINE, 'a representation in VALUES is a bitstring (3.4.3)');
+               END IF;
+               IF B.T@.MLEN.OK THEN
+                  IF B.T@.MLEN.V <> N.V THEN
+                     FAILT (LINE, 'the representation must have SIZE bits (3.4.3): ', V@.NAME);
+                  END IF;
+               END IF;
+               IF V@.A@.KIND = N_BITS THEN
+                  BLOCK
+                     VAR U: NODE := V@.NEXT;
+                     LOOP UNTIL U = NIL DO
+                        IF U@.A@.KIND = N_BITS THEN
+                           IF TEQ (U@.A@.NAME, V@.A@.NAME) THEN
+                              FAILT (LINE, 'two literals have the same representation (3.4.3): ', U@.NAME);
+                           END IF;
+                        END IF;
+                        U := U@.NEXT;
+                     END LOOP;
+                  END BLOCK;
+               END IF;
+            END BLOCK;
+            V := V@.NEXT;
+         END LOOP;
+      END BLOCK;
+   END BLOCK;
+END PROCEDURE CHECK_ENUM_REP;
 
 % the length of a string or bitstring type: an expression, ?L or ?
 PROCEDURE STRING_LENGTH (T: TYP, A: NODE);
@@ -512,20 +1233,31 @@ FUNCTION RESOLVE_ARRAY (TS: NODE) RETURNS (TYP);
          VAR B: BND := NEW (BND_REC);
          VAR LO, HI: ET;
          IF IS_GENERIC_NODE (R@.A) THEN             % [?L : ?U] of a formal parameter
-            LO := MKET (MK ('?' !! STR (R@.A@.NAME, R@.A@.NAME.LEN)), W@.TY_INT);
+            LO := MKET (QMK ('?', R@.A@.NAME), W@.TY_INT);
          ELSE
             LO := EXPR (R@.A, NIL);
          END IF;
          IF IS_GENERIC_NODE (R@.B) THEN
-            HI := MKET (MK ('?' !! STR (R@.B@.NAME, R@.B@.NAME.LEN)), W@.TY_INT);
+            HI := MKET (QMK ('?', R@.B@.NAME), W@.TY_INT);
          ELSE
             HI := EXPR (R@.B, LO.T);
          END IF;
          B@ := (LO: LO.C, HI: HI.C, MLO: MANIFEST (R@.A), MHI: MANIFEST (R@.B), ANYARG: FALSE,
                 NEXT: NIL);
-         IF LO.T@.KIND = T_ENUM THEN
+         IF NOT IS_GENERIC_NODE (R@.A) & NOT IS_GENERIC_NODE (R@.B) THEN
+            IF NOT SAME_CLASS (REAL_TYPE (LO.T), REAL_TYPE (HI.T)) THEN
+               FAIL (R@.LINE, 'the bounds of an array-bound are of one type class (3.8.1)');
+            END IF;
+            B@.LO := INDEX_OF (LO, R@.LINE);
+            B@.HI := INDEX_OF (HI, R@.LINE);
+         END IF;
+         IF LO.T@.KIND = T_ENUM ! LO.T@.KIND = T_ABS THEN
             B@.MLO := ENUM_MANIFEST (R@.A, LO.T);
             B@.MHI := ENUM_MANIFEST (R@.B, LO.T);
+            IF NOT TEQ (B@.LO, LO.C) THEN           % through a program's TO_FIXED
+               B@.MLO := NO_MVAL ();
+               B@.MHI := NO_MVAL ();
+            END IF;
          ORIF REAL_TYPE (LO.T)@.KIND <> T_INT THEN
             FAIL (R@.LINE, 'array bounds are integer or enumerated (3.8.1)');
          END IF;
@@ -544,7 +1276,10 @@ FUNCTION RESOLVE_ARRAY (TS: NODE) RETURNS (TYP);
    IF T@.ELEM@.KIND = T_ARR THEN
       FAIL (TS@.LINE, 'ARRAY ... OF ARRAY is forbidden (3.8.1)');
    END IF;
-   T@.REPS := TS@.D;
+   IF TS@.D <> NIL THEN
+      T@.REPS := EXPAND_REP (TS@.D, T, TS@.LINE);
+      CHECK_REP_CLASS (T, TS@.LINE);
+   END IF;
    T@.CNAME := ARRAY_STRUCT (T@.ELEM, T@.DIMS);
    RETURN T;
 END FUNCTION RESOLVE_ARRAY;
@@ -557,6 +1292,11 @@ FUNCTION RESOLVE_USER (TS: NODE) RETURNS (TYP);
          VAR B: BIND := W@.BINDS;
          LOOP UNTIL B = NIL DO
             IF TEQ (B@.NAME, TS@.NAME) & B@.T <> NIL THEN
+               IF CUR_GENERIC () <> NIL THEN          % a TYPE parameter of the generic
+                  IF FIND_BIND (CUR_GENERIC ()@.BINDINGS, TS@.NAME) = B THEN   % body
+                     RETURN MARK_GENP (B@.T, TS@.NAME);
+                  END IF;
+               END IF;
                RETURN B@.T;
             END IF;
             B := B@.NEXT;
@@ -571,6 +1311,9 @@ FUNCTION RESOLVE_USER (TS: NODE) RETURNS (TYP);
    END IF;
    IF Y@.KIND <> Y_TYPE THEN
       FAILT (TS@.LINE, 'not a type: ', TS@.NAME);
+   END IF;
+   IF NOT SEG_VISIBLE (Y, TS@.LINE) THEN             % USES (4.2)
+      ;
    END IF;
    IF Y@.DECL = NIL THEN                              % predefined, or bound
       IF TS@.A <> NIL THEN
@@ -624,8 +1367,14 @@ FUNCTION ABSTRACT_VIEW (Y: SYM, T: TYP) RETURNS (TYP);
    IF IN_MODULE (Y@.MODL) THEN
       RETURN T;
    END IF;
-   IF T@.KIND = T_ENUM THEN                          % its literals are exported too
-      RETURN T;
+   IF T@.KIND = T_ENUM THEN                          % its literals are exported too;
+      IF EXPORTS_ORDER (Y) THEN                      % it is UNORDERED outside unless
+         RETURN T;                                   % the module exports the ordering
+      END IF;                                        % operations (4.4)
+      A := COPY_TYP (T);
+      A@.MODL := Y@.MODL;
+      A@.DECL := Y;
+      RETURN A;
    END IF;
    A := NEW_TYP (T_ABS);
    A@.BASE := T;
@@ -635,6 +1384,42 @@ FUNCTION ABSTRACT_VIEW (Y: SYM, T: TYP) RETURNS (TYP);
    A@.ARGS := T@.ARGS;
    RETURN A;
 END FUNCTION ABSTRACT_VIEW;
+
+% does the module of the exported enumerated type Y export <, <=, >, >=, SUCC
+% and PRED for it (4.4)?
+FUNCTION EXPORTS_ORDER (Y: SYM) RETURNS (BOOLEAN);
+   RETURN EXPORTS_OP (Y, 'LESS_THAN_') & EXPORTS_OP (Y, 'LESS_EQUAL_')
+      & EXPORTS_OP (Y, 'GREATER_THAN_') & EXPORTS_OP (Y, 'GREATER_EQUAL_')
+      & EXPORTS_OP (Y, 'SUCC') & EXPORTS_OP (Y, 'PRED');
+END FUNCTION EXPORTS_ORDER;
+
+FUNCTION EXPORTS_OP (Y: SYM, OP: ASCII_STR(?L)) RETURNS (BOOLEAN);
+   VAR R: SYM := Y@.MODL@.MEMBERS;
+   LOOP UNTIL R = NIL DO
+      IF R@.KIND = Y_ROUTINE & R@.EXPORTED & TEQ (R@.PREFIX, Y@.NAME) THEN
+         IF TEQS (BASE_NAME (ORIGINAL (R)), OP) THEN
+            RETURN TRUE;
+         END IF;
+      END IF;
+      R := R@.SNEXT;
+   END LOOP;
+   RETURN FALSE;
+END FUNCTION EXPORTS_OP;
+
+% is T an enumerated type to be treated as UNORDERED here: declared so, or an
+% exported type outside its module without the ordering operations (4.4)?
+FUNCTION IS_UNORDERED (T: TYP) RETURNS (BOOLEAN);
+   IF T@.KIND <> T_ENUM THEN
+      RETURN FALSE;
+   END IF;
+   IF T@.BASE@.UNORDERED THEN
+      RETURN TRUE;
+   END IF;
+   IF T@.DECL <> NIL & T@.MODL <> NIL THEN
+      RETURN NOT IN_MODULE (T@.MODL);
+   END IF;
+   RETURN FALSE;
+END FUNCTION IS_UNORDERED;
 
 % is the module M the one being translated, or one that encloses it?
 FUNCTION IN_MODULE (M: SYM) RETURNS (BOOLEAN);
@@ -654,11 +1439,16 @@ FUNCTION RESOLVE_IN_DECL (Y: SYM, TS: NODE) RETURNS (TYP);
    CONST D: NODE := Y@.DECL;
    VAR T: TYP;
    IF TS = NIL THEN                                  % the literals stay in this scope
-      RETURN RESOLVE (D@.B);
+      W@.IN_TYPEDECL := W@.IN_TYPEDECL + 1;
+      T := RESOLVE (D@.B);
+      W@.IN_TYPEDECL := W@.IN_TYPEDECL - 1;
+      RETURN T;
    END IF;
    OPEN_SCOPE;
    BIND_FORMALS (D@.A, TS);
+   W@.IN_TYPEDECL := W@.IN_TYPEDECL + 1;
    T := RESOLVE (D@.B);
+   W@.IN_TYPEDECL := W@.IN_TYPEDECL - 1;
    CLOSE_SCOPE;
    RETURN T;
 END FUNCTION RESOLVE_IN_DECL;
@@ -685,18 +1475,26 @@ PROCEDURE BIND_FORMALS (FORMALS: NODE, TS: NODE);
                   VAR C: TEXT;
                   VAR M: MVAL;
                   Y@.T := RESOLVE (F@.B);
-                  IF A@.KIND = N_ANY THEN
+                  IF A@.KIND = N_ANY & F@.IV <> 1 THEN
                      FAIL (A@.LINE, 'ANY is only for TAG formals (3.12.2)');
                   END IF;
-                  IF A@.KIND = TS_GEN ! A@.KIND = N_DONTCARE THEN
+                  IF A@.KIND = N_ANY THEN               % TAG formal: passed on as ANY
+                     C := MK ('ANY');                   % to a record's TAG (3.12.1)
+                     M := NO_MVAL ();
+                  ORIF A@.KIND = TS_GEN ! A@.KIND = N_DONTCARE THEN
                      % ?N in a formal parameter: a value known from the argument, which
                      % the bounds of an array (for one) will give: a marker for now
-                     C := MK ('?' !! STR (A@.NAME, A@.NAME.LEN));
+                     C := QMK ('?', A@.NAME);
                      M := NO_MVAL ();
                   ELSE
                      ATTR_VALUE (A # C, M);
                   END IF;
-                  IF Y@.T@.KIND <> T_INT & NOT IS_GEN_TEXT (C) THEN
+                  IF M.OK & Y@.T@.MLO.OK & Y@.T@.MHI.OK & Y@.T@.SCALE = 0 THEN
+                     IF M.V < Y@.T@.MLO.V ! M.V > Y@.T@.MHI.V THEN
+                        FAIL (A@.LINE, 'the argument is outside the range of the type formal (3.12.2)');
+                     END IF;
+                  END IF;
+                  IF Y@.T@.KIND <> T_INT & NOT IS_GEN_TEXT (C) & A@.KIND <> N_ANY THEN
                      C := EXPR (A, Y@.T).C;
                      M := ENUM_MANIFEST (A, Y@.T);
                   END IF;
@@ -740,8 +1538,11 @@ FUNCTION CTYPE (T: TYP) RETURNS (TEXT);
    IF IS_SCALAR (T) THEN
       RETURN MK ('rt_int');
    ORIF K = T_FLOAT THEN
+      IF IS_D (T) THEN                               % the D format of -pdp11
+         RETURN MK ('rt_b_d');
+      END IF;
       RETURN MK ('double');
-   ORIF K = T_STR ! K = T_BITS THEN
+   ORIF K = T_STR ! K = T_BITS ! K = T_XFIX THEN
       RETURN MK ('rstr');
    ORIF K = T_REC ! K = T_ARR THEN
       RETURN T@.CNAME;

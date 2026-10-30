@@ -1,0 +1,13 @@
+MAIN SEGMENT RECURSIVE_IMPORTERR
+   USES (TERMINAL);
+% a recursive routine imports only statically allocated data (4.3.1)
+P ();
+PROCEDURE P ();
+   VAR L: INTEGER := 0;
+   R (3);
+   PROCEDURE R (N: INTEGER) IMPORTS (DATA: (# L));
+      L := L + 1;
+      IF N > 0 THEN R (N - 1); END IF;
+   END PROCEDURE R;
+END PROCEDURE P;
+END SEGMENT RECURSIVE_IMPORTERR;

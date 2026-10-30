@@ -1,0 +1,5 @@
+MAIN SEGMENT ENUM_DUP
+   USES (TERMINAL);
+% each enumerated literal must be unique in its list (3.4.1)
+VAR X: ENUM (\A, \B, \A);
+END SEGMENT ENUM_DUP;

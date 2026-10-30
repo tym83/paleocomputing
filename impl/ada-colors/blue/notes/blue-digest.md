@@ -48,7 +48,7 @@ set). Conventions:
 
 | Class | Spec | bluec |
 |---|---|---|
-| Fixed point | `FIXED (scale, radix, precision) [L:U]`, `INTEGER = FIXED (0,2,STD)` (§3.2) | int64 mantissa, compile-time scale; STD is 64 bits; radix 2 only |
+| Fixed point | `FIXED (scale, radix, precision) [L:U]`, `INTEGER = FIXED (0,2,STD)` (§3.2) | int64 mantissa, compile-time scale; STD is 64 bits; radix 2 and STD predefined, other radices and precisions the program's (decision 42) |
 | Floating | `FLOAT (digits) [L:U]` (§3.3) | C double, 1..15 digits |
 | Enumerated | `ENUM (\A, ...)`, `UNORDERED (...)` (§3.4) | type classes are structural: same literals in the same order (§3.4.1, p.3-66) |
 | Boolean | (§3.5) | |
@@ -94,7 +94,13 @@ bits, FLOAT 64, BOOLEAN 1, characters 8, enumerations the smallest that fits
   back on normal completion (§4.3.2, p.4-16).
 - Modules: `MODULE M IMPORTS (...) EXPORTS (T WITH (ops), routine, ...)`. Outside,
   T is abstract; `T$NAME` routines are its operations, callable as `NAME` when
-  unambiguous. Only types and routines are exported (p.4-26).
+  unambiguous. Only types and routines are exported, and only a type takes a WITH
+  list, of its operations (p.4-26). An exported enumerated type keeps its literals
+  and equality outside, and is unordered there unless the module exports <, <=,
+  >, >=, SUCC and PRED for it (p.4-25).
+- The routines of one scope have distinct signatures, checked at the declaration
+  (§4.1); the data a routine imports must be known in the immediately enclosing
+  scope, for change if imported for change (§4.1.1).
 
 ## 5. Statements (§4.5, PDF 1575–1597)
 
@@ -104,7 +110,10 @@ machine-dependent parts; on `W.TAG` of a variant record it discriminates) —
 `LOOP [UNTIL p DO] ... END LOOP [WHEN p];` — `LOOP FOR I IN range DO ... END LOOP I;`
 — `EXIT;` — `BLOCK ... END BLOCK;` — `WITH W NAMING expr stmt` — `GO TO L;` —
 `ASSERT p;` — `SIGNAL [name];` — `RETURN [e];`. Any statement may be followed by
-`EXCEPT name --> body END; ... END EXCEPT;` (§4.5.7, [4-80]).
+`EXCEPT name --> body END; ... END EXCEPT;` (§4.5.7, [4-80]). A case statement selects on
+any predefined type, floating and scaled fixed point by comparisons; its label
+values are distinct, and `W.TAG` discriminates only for a bound-var of an enclosing
+with-clause, which prefixes only a structured statement (4.5.3-4.5.5).
 
 ## 6. Parallel processing (§4.6, PDF 1600–1616)
 
@@ -113,6 +122,14 @@ body END PATH P; ... END PAR_BLOCK;` — `WAIT (seconds);` `TERMINATE [(path)];`
 `PRIORITY (e [, path]);` `CLOCK [(path)]` `REQUEST (# s);` `RELEASE (# s);`.
 bluec runs paths on the rt scheduler of this repository: highest priority first,
 FIFO within a priority, virtual clock in microseconds, so every run prints the same.
+Processing takes time: every loop iteration and every routine invocation is a step,
+and 1000 steps take one virtual microsecond of the executing activation; the clock
+moves with them, so a WAIT expires while another path computes and the scheduler
+preempts it then (4.6.2). CLOCK is that processing time (4.6.5). The activations of a
+block are made held and put in the ready state together once all are activated
+(4.6.1); an exception during the activation (PRIORITY out of range, a second CONNECT)
+leaves none of them. TERMINATE reaches a ready or preempted activation when it next
+runs, before anything else (4.6.3). An interrupt connection ends with the block.
 
 ## 7. Generics (§5, PDF 1622–1638)
 
@@ -141,37 +158,78 @@ unreadable; the decision is bluec's.
 
 1. **Unhandled exceptions.** §4.5.7 calls an unhandled exception an error with
    undefined behaviour. bluec stops the program with `*** unhandled exception X`.
-2. **CLOCK** is the elapsed virtual time (bluec's reading of §4.6.5); its fixed
-   point scale is 20.
+2. **CLOCK** is the cumulative processing time of the activation (§4.6.5), counted
+   in steps (above); its fixed point scale is 20. The time of day, which the
+   language does not have, is `REAL_TIME` of the implementation's TERMINAL
+   segment: the simulated machine's real-time clock since the program began, in
+   seconds at scale 20. (Until October 2026 CLOCK was the elapsed time; the
+   programs of `../os`, `../kube` and `../labs/blue` now read REAL_TIME.)
 3. **ASCII** is the character set of §3.7.2 example 1 (p.3-92). Its `\EXT` (for
    ETX) is kept as printed. Quoted strings may contain any printable character.
 4. **An enumerated literal of several visible classes** with nothing wanted from
-   the context: §3.4.5 asks for a type specifier; bluec takes the class that is not
-   ASCII.
+   the context needs a type specifier (§3.4.5), ASCII included: `\'I'` is a
+   literal of ASCII and of a program's character set. (Until October 2026 bluec
+   took the class that is not ASCII; the charset-bcd driver now writes
+   `[BCD]$$(\'I')`.) A literal wanted as a value of a type takes that type,
+   with its representation (§3.4.5: "automatically considered").
 5. **Operator routines**: the BCD example (p.3-160) writes `LESS_THAN` without the
    underscore; operator routines are also found by that name.
 6. **Uninitialized variables** start as zero. The language has the exception
    UNINITIALIZED_VARIABLE (§4.3.2 raises it when a function ends without RETURN,
-   and bluec does that); reading a variable before it is set is not tracked.
-7. **Aliasing and side-effect rules** (§4.3.3, §4.3.4) are not checked; importing
-   is (§4.1.1), with these readings: a routine the scope imports covers the
+   and bluec does that); reading a variable before it is set is not tracked,
+   except the tag of a `T(ANY)` record, which has no value until the record is
+   assigned and raises UNINITIALIZED_VARIABLE when read then (p.3-134).
+7. **Aliasing and side-effect rules** (§4.3.3, §4.3.4) are checked as written:
+   a variable (or a component of it) is at most one inout and one output
+   argument, never an inout argument of a procedure that imports it; a variable
+   a function imports inout (directly or through the routines it imports) is
+   not named, nor used by another function, in the same expression, subscript
+   list, argument list or assignment; ASSERT invokes no such function (4.5.8).
+   Of an overloaded name, the data every candidate imports count. Own data a
+   module routine changes without importing it are not seen. (Until October
+   2026 none of this was checked.) Importing is (§4.1.1), with these readings: a routine the scope imports covers the
    variables it uses, also when called through the scope's own local routines
    (FORMPRINT, C-28); `IMPORTS (MODULES: (M))` imports M's exported routines (§4.2).
 8. **Recursion** needs no import of itself.
-9. **WITH NAMING** does not hide the named variable.
-10. **TRUNCATED/ROUNDED** apply to fixed point; `WITH PREC` is accepted and
-    ignored; FLOAT is always double.
+9. **WITH NAMING** hides the named variable (or the aggregate containing it,
+   unless it is reached through a pointer) in its structured statement, and
+   rejects invoking a routine that imports it (4.5.4). The variable is named
+   through other pointers unchecked. (Until October 2026 nothing was hidden.)
+10. **TRUNCATED/ROUNDED** apply to fixed and floating point alike (fixed point
+    defaults to TRUNCATED, floating point to ROUNDED, 3.3.4.1); NATIVE_R and
+    NATIVE_T, in machine-dependent parts only, are the hardware's rounding and
+    truncation. Two floating point precisions are implemented: single (IEEE
+    binary32, IMP_PRECISION 7, for nominal precisions 1 to 7) and double
+    (binary64, 15, for 8 to 15); a result is rounded or truncated to the
+    implemented precision of its nominal precision, the larger of the operands'
+    and of `WITH PREC` (3.3.4.4); UNDERFLOW is raised for a non-zero result below
+    the smallest normal value. (Until October 2026 every float was a double and
+    the mode and WITH PREC were ignored.)
 11. **Segments are translated in USES order** (§4.1, p.4-5: a segment's data are
     initialized before those of the segments that use it); Appendix C prints
     SYSTEM, which uses STANDARD_IO, first.
 12. **DEFINES**: naming a module carries what it exports (§4.2, p.4-9); naming a
     routine `NEW` also carries `T$NEW` (the comment at C-5).
+    The segments are one merged scope (p.4-9: "all names are known to the
+    translator"), and a segment's own code may use a name another segment
+    defines only as its USES clause selects it: the whole DEFINES list of a
+    segment named without items (variables inout), else the DATA items (input
+    ones read only), ROUTINES by name, TYPES with their operations and MODULES
+    with what they export. USES names segments of the program, items are names
+    the segment defines, DEFINES names local or imported names, and the
+    input/inout conflict of 4.3.1 holds for segments too. The code of a generic
+    instance is its generic's and is not checked again. (Until October 2026
+    DEFINES names were visible to every later segment.)
 13. **The headers of routines** may use the constants of their scope; objects are
     declared before headers, and a call resolves the header it needs.
 14. **Substrings as output arguments** (C-8, C-31; [4-41] says variable): the
     formal is a view of the variable's characters.
 15. **CONNECT (LT33_PS(I))** with the path's loop identifier (C-5; [4-93] says
-    semaphore-name).
+    semaphore-name); the semaphore must be implementation-defined (4.6.1): a
+    variable of a segment of bluec's library, the machine's PDP_11_LT33. NEW
+    redeclared by a routine (LT33_DEVICE_$NEW, which PDP_11_LT33 defines) still
+    constructs where a pointer or semaphore is wanted; the variable it names is known in the path without
+    an import (4.6.1).
 16. **Literals typed by a parameter**: `OPEN (..., \OLD, ...)` names a literal of a
     parameter type declared inside a module (C-17).
 17. **TO_BIT of a charstring** outside machine-dependent parts (J3.6-6's reason
@@ -182,23 +240,217 @@ unreadable; the decision is bluec's.
     and MIN are key words for attributes only. The drivers define what they need.
 20. **TARGET** is a key word, not a reserved word; it starts a declaration only
     before PROCEDURE, FUNCTION or INLINE.
-21. **`(\A, \B)` as a type** (Appendix C) is accepted as `ENUM (\A, \B)`; the
-    corpus fix files still note it as a misprint.
+21. **`(\A, \B)` as a type** (Appendix C) is accepted as `ENUM (\A, \B)`, so
+    the Appendix C parameter types are read as printed.
 22. **Derived range bounds** `[?LB : ?UB]` are the widest values (ranges do not
     travel with values); derived bounds of array parameters `[1:?M]` are extents.
-23. **The machine**: OBJECT_MACHINE = PDP_11 but STD is 64 bits; the PDP-11 of
-    Appendix C would have 16.
+23. **The machine**: OBJECT_MACHINE = PDP_11 but STD is 64 bits by default; the
+    PDP-11 of Appendix C has 16, and `bluec -pdp11` gives that profile: STD
+    fixed point values of 16 bits (INTEGER [-32768:32767], OVERFLOW out of
+    them on every operator result and literal), 16-bit words for the packing
+    and for pointers, and the PDP-11's floating point formats: F (binary32
+    arithmetic in the F range, 2**-128 .. 2**127) for at most 7 digits, and D
+    for 8 to 16 digits, its 56-bit mantissa computed exactly in software
+    (rounded to the nearest, ties to even, or truncated; MANTISSA_SIZE 57).
+    TO_BIT and `[FLOAT (p)]$$` give the F and D layouts (sign, 8-bit exponent
+    in excess 128, the fraction with the leading 1 hidden: 32 and 64 bits).
+    `!op!` gives double words of 16-bit words: for STD fixed point 32 bits (MUL
+    the product, high word first; DIV the quotient word and the remainder word;
+    ADD and SUB the exact sum), for F operands a D value (the exponent kept
+    modulo 256, as the FP11 leaves it after OVERFLOW), for D operands two D
+    words (sign, a 15-bit exponent and 112 bits of the exact result).
+24. **`type-name.attribute`.** The syntax of attribute queries [3-2] allows a
+    type name only inside `(T.A).B`, and p.3-29 repeats that `T.A` is not
+    permitted; yet the examples write `ASCII.SIZE` (3.4.3), `BCD.SIZE` (3.12) and
+    `R.SIZE` (Appendix C). bluec follows the examples for declared types
+    (`INTEGER`, `ASCII` and the program's own) and rejects the type classes
+    (`FIXED.SIZE` is "not well-defined", p.3-29).
+25. **Scaled operators on other types.** The table of 3.1.4.2 maps `!*s!` to
+    MULTIPLY_ and so on but D.5 says nothing of the scale; for a program's own
+    operator routines the scale is passed as a further input argument, before the
+    precision and the rounding mode (D.5 B, C).
+26. **A rounding mode** [3-16] is an identifier right after an expression that
+    is not followed by `(`, `.`, `:=`, `:` or `$`, and is not a clause of a path
+    header; it must be a value of the ROUNDINGS visible there, which a program
+    may redefine with more values (FLOOR ...). A mode the predefined operations
+    do not know needs an operator routine of the program that takes it.
+27. **A float-literal outside the range of single precision** (1.0E-300 has two
+    digits, and so a single implemented precision) is given the nominal precision
+    8, so that it is represented in double precision rather than rejected.
+28. **Dynamic storage.** The simulated machine has a store of 8 GiB (64 KiB,
+    its address space, with `-pdp11`) for NEW, and nothing is reclaimed (no
+    garbage collector): NEW takes the bits of the value's declared layout,
+    whole words, and raises SPACE_EXHAUSTED when they are not there (3.10.2).
+    An array raises ARRAY_TOO_BIG beyond 2**34 bits of its layout (3.8.1). A pointer assignment whose ELEMENT_TYPEs differ in an
+    attribute known at translation is rejected; a record argument known only at
+    run time is compared then, raising TYPE_MISMATCH (3.10.5).
+29. **Use modes.** USAGE is UNORDERED (SYNCH, REGION) (3.11.1); `\SYNCH` is a
+    different identifier ([2-10]: the backslash is only a convention), so
+    `SEMAPHORE (\SYNCH)` is rejected, while a constant of USAGE is accepted.
+    An audit asked for `\SYNCH` to be accepted; [2-10] and 3.11.1 decide
+    against it, and the decision stands.
+30. **TARGET INLINE.** 4.8.2 says in a note that INLINE target routines "can
+    be declared, since INLINE is permitted in procedure and function headers",
+    and in its constraints that "Target routines cannot be INLINE". The
+    constraint is normative and the note only reasons from the syntax: bluec
+    rejects TARGET INLINE. The stack-size of DYNSIZE is a manifest integer
+    expression, at least zero ([4-111]).
+31. **User types and reptypes (3.12).** A type or reptype declaration is a
+    closed scope: no changeable variable from outside, no function importing
+    one (input parameters and imported inputs count as constants). Circular
+    declarations are rejected where declared, through other declarations of
+    the scope and not through PTR. A reptype-reference is expanded where it is
+    used: formals and the OF base type bound, arguments reduced to manifest
+    values, so `FRACTION` of FIXED_BIN(10) is FIXED_REP (10, UNSIGNED) with
+    SIZE 10. The expanded reptype must be a predefined one of the class
+    (FIXED_STD/FIXED_REP, FLOAT_STD, BOOLEAN_STD, ENUM_STD/ENUM_REP/
+    ENUM_VAL_REP, CHAR_STR_STD/CHAR_STR_REP, BIT_STD, ARRAY_STD/ARRAY_REP,
+    RECORD_STD/RECORD_REP, PTR_STD, SEMAPHORE_STD); an abstract type takes no
+    REP. FIXED_REP checks size, signing and the range (3.2.3): a type without
+    a range has the range of its precision, which a smaller size cannot hold,
+    and a range known only at run time is checked then (RANGE for a value its
+    bits cannot hold).
+32. **Generics (5, 5.1, 5.2).** In a generic body the objects of a TYPE
+    parameter (?T, or E: TYPE) carry it in their type; an operator, an
+    assignment (STORE_) or a predefined or program routine invoked with them
+    must be named in the WHERE clause, and a generic routine invoked with them
+    must have its WHERE routines among the caller's. WHERE routines import no
+    data and their templates declare no derived parameters. A routine passed
+    for a routine parameter matches its template exactly (modes, types with
+    their ranges, result, the listed exceptions among its SIGNALS), derived
+    parameters and ? matching real values; `NAME (types) [RETURNS (type)]`
+    picks one of several. ?T alone takes only standard representations; a
+    repeated ?L of known lengths must agree at the call; FIXED (?, ?, ?)
+    takes the argument's type; FIXED_REP (?S, SIGNED) binds S. A `#` closing a
+    proc-template is rejected (5.1 says so); a `#` closing a formal or argument
+    list is accepted, as [4-21] and [4-38] allow an empty group (an audit
+    asked for it to be rejected; the syntax rules decide, and the decision
+    stands).
+33. **Components and aliasing.** 4.3.3 forbids a variable "or any of its
+    components" as two inout or two output arguments; Appendix C passes three
+    fields of the record F as outputs of FSYS_CREATE (C-15). Components that
+    cannot overlap -- different fields at some level of selection -- are
+    accepted; subscripts, as in the spec's M(I), M(J), are not.
+34. **INLINE (4.3.1).** An INLINE routine invoked with manifest input
+    arguments is expanded for them: a separate body in which those formals are
+    manifest, so its conditions select their arms when translated and a
+    formal may stand where a manifest value is needed (3.1.4.1). Its own body
+    is translated only when it is invoked with other arguments or passed as a
+    routine. INLINE routines cannot recurse; a recursive routine imports only
+    static data (variables of no routine).
+35. **Explicit generic arguments (5).** The arguments of explicit generic
+    parameters (inputs a returns-clause uses) "must be constants or constant
+    expressions": no variable (a constant or an input parameter is one, a
+    variable reached through a pointer is not), only functions that import no
+    data. bluec's own STR (T, L) is invoked so (through helpers whose text
+    parameters are inputs).
+36. **TO_BIT (VAL) in PUT_OUT (C-20).** TO_BIT of a value of any type is
+    machine-dependent (3.7.6), yet PUT_OUT applies it outside a machine-dependent
+    part. Its WHERE clause names TO_BIT (T REP R): inside the generic body it is
+    the WHERE routine, an operation of T (5.2), which the program supplies
+    where it instantiates PUT_OUT; bluec reads it so.
+38. **Representations on the simulated PDP-11** (3.x.3, 3.12.4). BLUE has no
+    address operator: a program sees storage through SIZE, PACKING, TO_BIT and
+    [T]$$ (3.6.6.1: TO_BIT has (E).SIZE bits), the explicit-rep-converters,
+    pointers (TO_BIT of a pointer is the address of its object in the store of
+    decision 28, NIL 0, and [PTR (T)]$$ of an address is that object,
+    INVALID_REP if there is none), the devices (a disk transfer takes the
+    storage image of any value as a bitstring) and the limits of decision 28.
+    All of them follow the declared layout: TO_BIT of a record is its fields in
+    their places, of an array its elements in their slots, of a FIXED_REP (N)
+    value N bits, of a single precision float 32 (binary32), of a semaphore
+    its value; [T]$$ is the inverse, INVALID_SIZE for a bitstring of another
+    length, INVALID_TYPE for a type argument the bits contradict. The host
+    keeps the program's form of each value, which no program can observe.
+    Words have 64 bits. An element or
+    field takes a slot: itself (DENSE), the byte, half-word, word that holds it
+    (PACKED; a character is a byte, its 7 ASCII bits after a 0 filler bit, so
+    TO_BIT of a PACKED string is its bytes), or whole words (UNPACKED, the
+    default of arrays and records); SIZE is the sum of the slots, a record's
+    with RECORD_REP's packing-specs, element-specs (fields, VARIANTS, OMIT of
+    a manifest argument, FILLER, ZEROS, BLANKS) and variant packings, the
+    variant of the tag's value. ASCII.SIZE is 7. An explicit-rep-converter
+    reptype-spec (e) checks the value against the representation (FIXED_REP:
+    size and signing), raising INVALID_REP. Only elements of UNPACKED arrays
+    are inout arguments.
+39. **TARGET routines** (4.8.2) hold machine code that the simulated machine
+    does not execute: invoking one raises the implementation's exception
+    TARGET_TRAP, which a handler may take (it used to stop the program).
+    TERMINAL, the implementation's segment, also has ARGUMENT_COUNT,
+    ARGUMENT (I), FILE_EXISTS (N), READ_FILE (N) and WRITE_FILE (N, TEXT),
+    which bluec itself uses for its options and libraries.
+40. **Libraries and options (4.2, 4.7, 4.6.9, D.7).** `bluec [-L dir]
+    [-suppress]`. A segment named in USES and not in the compilation is read
+    from the library directory (default `lib`, i.e. `blue/lib` for the tests and
+    the corpus) as NAME.blu, its own USES followed in turn. Where there is no library directory (the browser page) the segments go in front of the program, each after a comment line `% LIBRARY NAME`, which makes it the implementation's segment as if read from the library. Segments are also
+    translated separately: `bluec -c -L dir < S.blu > S.c` translates the one
+    segment of its input into a unit whose variables and routines have C names
+    of the segment (`bs_S_v3_TOTAL`, `bs_S_r1_BUMP`), with an initialization
+    routine `bs_S_init`, and writes its interface dir/S.bif (the segment's text:
+    BLUE has no separate synopsis, and generic and INLINE routines are expanded
+    in the units that use them). A unit that USES S finds S.bif before S.blu,
+    translates the interface without code (extern names, no bodies, S's
+    initialization by `bs_S_init`) and refers to the symbol
+    `bs_S_iface_<fingerprint of S.bif>`, which only the unit of that interface
+    defines: a unit translated against an older interface does not link. The library holds PDP_11_LT33, the simulated
+    machine's standard segment (LT33 teletypes and RP03 disk drives, their
+    START_IO cases and interrupt semaphores LT33_PS, LT33_KS and DISK_S; a
+    disk transfer interrupts after the seek and the rotation on the virtual
+    clock, by INTERRUPT_AFTER (us # S), the machine-dependent operation the
+    devices use; the Appendix C driver uses the segment), and SIMULATION, the package of 4.6.9: a
+    monitor module SIM with RESOURCE, SIM_PATH, SIM_START, SIM_INIT, SIM_WAIT,
+    SIM_REQUEST, SIM_RELEASE, SIM_DONE and SIM_TIME, which moves simulated time
+    when the last running path blocks. `-suppress` suppresses the exceptions
+    (4.5.8): no RANGE checks, ASSERT not evaluated (subscripts stay checked: the
+    C storage depends on them). The parallel operations of D.7 are predefined
+    routines a program may redefine (REQUEST, RELEASE, WAIT, TERMINATE,
+    PRIORITY, CLOCK), and PAR_BLOCK_ too: a PAR_BLOCK_ visible at a parallel
+    block gets the list of the activations the block made (held, not yet
+    run) as an ARRAY [1:N] OF PATH_ENTRY, the record type of the library
+    segment PARALLEL_SUPPORT (D.7 writes an anonymous RECORD, which no actual
+    could match; PATH_ADDR is BIT (64), CONNECT_NAME has 32 characters).
+    RUN_PATHS (list), the implementation's PAR_BLOCK_, runs the activations a
+    list names with its priorities and waits for them; those it does not name,
+    or all when RUN_PATHS is not invoked, never run.
+37. **Generic instances across segments.** The body of an instance of a generic
+    routine is translated in the scope of the segment that declares it, its
+    local names visible again, whichever segment invokes it (4.2, 5).
+41. **Order of evaluation.** The language does not define the order in which
+    the operands of an expression, the arguments of an invocation or the
+    subscripts of an array reference are evaluated (4.3.4; the note of 4.3.3
+    on arguments), except for the Boolean operators & and ! (3.5.4.1),
+    and requires that the result not depend on it where pointers are not
+    involved. bluec checks the side-effect rules that make it so (decision 7)
+    and evaluates in the order of the C translation; E & F and E ! F
+    evaluate E first and F only when it decides the result. A program whose result depends on the order
+    through pointers is outside what 4.3.4 defines.
+
+42. **Extending the type class FIXED (Appendix D.3, D.4, D.6).** The PRELUDE
+    defines the members FIXED (S, 2, STD); a program extends the class as D.4
+    extends the built-in types, with operations of its own. It may redeclare
+    FIXED_PRECISIONS with more values, STD among them (`ENUM (SHORT, STD,
+    LONG)`, as decision 26 lets it redeclare ROUNDINGS), and then FIXED (S, R,
+    P) with another radix R or precision P is a member of FIXED whose values are
+    bits: a word for STD, twice that for each precision after STD and half for
+    each before it. The program gives it its operations by their operator
+    routines (ADD_, LESS_THAN_, EQUAL_ ..., D.5, for which FIXED (?S, ?R, ?P)
+    unifies with the radix and the precision), its conversions by STORE_ (an
+    assignment between different members of FIXED, D.4) and reaches its bits
+    with TO_BIT and [T]$$ in machine-dependent parts; a range is ordered by
+    its LESS_THAN_, and MIN and MAX without one are its FIXED_MIN and
+    FIXED_MAX. Assignment between values of the same member is the bit-copy
+    of D.1. Literals stay radix 2 STD (D.6 makes them TO_FIXED (..., 2, STD,
+    ROUNDED)), so the program's STORE_ converts them. `tests/typeclass.blu`
+    defines decimal money, FIXED (2, 10, STD), and 128-bit integers,
+    FIXED (0, 2, LONG), so.
 
 The misprints of the program examples and the rules they break are in
 `../corpus/CHANGES.md`.
 
 ## 10. Not done
 
-- Representation clauses for records and arrays (packing); explicit
-  representation converters beyond enumerations, strings, bitstrings and fixed.
-- Aliasing and side-effect enforcement (§4.3.3–4.3.4, Appendix A.3).
-- LIBRARIES (§4.7), simulation (§4.6.9).
-- FLOAT precisions are not modelled (always 15 digits).
+Nothing of the specification is left out; the readings where it is ambiguous
+are the decisions of section 9.
 
 ---
 
@@ -233,11 +485,12 @@ what it said another way, and what it could not say:
    outside one arrives after the race was decided. The kubelet of
    `kube/kube_blue.blu` reads a note (`POWERED`) left by the user before the
    TERMINATE.
-5. **No time of day.** CLOCK is the time of one path activation (4.6.5; the
-   specification says processing time, bluec gives elapsed time, decision 2).
-   The programs log time by making every process a path of one parallel block
-   started at 0, so that CLOCK is the system's time. Under the specification's
-   reading no program here could print a timestamp at all.
+5. **No time of day.** CLOCK is the processing time of one path activation
+   (4.6.5, decision 2). The language has no other clock, so the programs read the
+   simulated machine's real-time clock, `REAL_TIME` of the implementation's
+   TERMINAL segment, as an operating system would read its line clock. Until
+   October 2026 bluec gave CLOCK as the elapsed time and the programs made every
+   process a path of one parallel block started at 0 to log with it.
 6. **WAIT takes seconds in binary fixed point.** A millisecond is no binary
    fraction; `PAUSE` rounds it down at scale 30 and the runtime rounds up to the
    microsecond tick, so the runs keep the whole milliseconds of RED's.

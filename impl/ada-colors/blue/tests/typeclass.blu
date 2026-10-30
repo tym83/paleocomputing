@@ -1,0 +1,228 @@
+MAIN SEGMENT TYPECLASS
+   USES (TERMINAL);
+% Appendix D: the program extends the type class FIXED with radix 10 and with the
+% precisions SHORT and LONG (D.3, D.4, D.6): FIXED_PRECISIONS gets more values and
+% the operations of the new members are the program's routines (D.5)
+TYPE FIXED_PRECISIONS = ENUM (SHORT, STD, LONG);
+TYPE MONEY = FIXED (2, 10, STD);
+TYPE WIDE = FIXED (0, 2, LONG);
+TYPE LIMBS = ARRAY [0:7] OF INTEGER;                % 16 bits each, the high one first
+VAR A, B, C: MONEY;
+VAR X: WIDE;
+VAR PRICE: MONEY [DEC ('0.00') : DEC ('100.00')];
+A := DEC ('12.34');
+B := DEC ('0.66');
+C := A + B;
+PUT_LINE (TO_CHAR (C) !! ' ' !! TO_CHAR (C > A) !! ' ' !! TO_CHAR (C = A + B) !! ' '
+          !! TO_CHAR (C.SIZE) !! ' ' !! TO_CHAR (C.RADIX) !! ' ' !! TO_CHAR (A - B - B));
+C := 7;
+PUT_LINE (TO_CHAR (C) !! ' ' !! TO_CHAR (C * DEC ('0.10')) !! ' ' !! TO_CHAR (B - A) !! ' '
+          !! TO_CHAR (B IN [DEC ('0.50') : A)));
+PRICE := DEC ('99.99');
+BLOCK
+   PRICE := PRICE + DEC ('0.02');
+END BLOCK
+EXCEPT
+   RANGE --> PUT_LINE ('RANGE ' !! TO_CHAR (PRICE)); END;
+END EXCEPT;
+X := WIDEN (FIXED_MAX (0, 2, STD)) * WIDEN (FIXED_MAX (0, 2, STD));
+PUT_LINE (TO_CHAR (X.SIZE) !! ' ' !! TO_CHAR (X));
+X := X + WIDEN (1);
+PUT_LINE (TO_CHAR (X));
+
+% radix 10, STD: the value times 10 ** S, a word in two's complement
+FUNCTION UNITS (A: FIXED (?S, 10, STD)) RETURNS (INTEGER);
+   VAR U: INTEGER := 0;
+   SELECT OBJECT_MACHINE FROM
+      PDP_11 --> U := [INTEGER]$$(TO_BIT (A)); END;
+   END SELECT;
+   RETURN U;
+END FUNCTION UNITS;
+
+FUNCTION MONEY_OF (U: INTEGER) RETURNS (MONEY);
+   VAR M: MONEY;
+   SELECT OBJECT_MACHINE FROM
+      PDP_11 --> M := [MONEY]$$(TO_BIT (U)); END;
+   END SELECT;
+   RETURN M;
+END FUNCTION MONEY_OF;
+
+FUNCTION DEC (S: ASCII_STR (?L)) RETURNS (MONEY);
+   VAR U: INTEGER := 0;
+   VAR FRAC: INTEGER := -1;
+   LOOP FOR I IN [0 : L - 1] DO
+      IF S[I:I] = '.' THEN
+         FRAC := 0;
+      ELSE
+         U := U * 10 + (TO_FIXED (TO_BIT (S[I:I]), 0) - 48);
+         IF FRAC >= 0 THEN
+            FRAC := FRAC + 1;
+         END IF;
+      END IF;
+   END LOOP I;
+   LOOP UNTIL FRAC >= 2 DO
+      U := U * 10;
+      FRAC := FRAC + 1;
+   END LOOP;
+   RETURN MONEY_OF (U);
+END FUNCTION DEC;
+
+FUNCTION ADD_ (A, B: MONEY) RETURNS (MONEY);
+   RETURN MONEY_OF (UNITS (A) + UNITS (B));
+END FUNCTION ADD_;
+
+FUNCTION SUBTRACT_ (A, B: MONEY) RETURNS (MONEY);
+   RETURN MONEY_OF (UNITS (A) - UNITS (B));
+END FUNCTION SUBTRACT_;
+
+FUNCTION MULTIPLY_ (A, B: MONEY) RETURNS (MONEY);    % rounded to cents
+   RETURN MONEY_OF ((UNITS (A) * UNITS (B) + 50) // 100);
+END FUNCTION MULTIPLY_;
+
+FUNCTION EQUAL_ (A, B: MONEY) RETURNS (BOOLEAN);
+   RETURN UNITS (A) = UNITS (B);
+END FUNCTION EQUAL_;
+
+FUNCTION LESS_THAN_ (A, B: MONEY) RETURNS (BOOLEAN);
+   RETURN UNITS (A) < UNITS (B);
+END FUNCTION LESS_THAN_;
+
+FUNCTION GREATER_THAN_ (A, B: MONEY) RETURNS (BOOLEAN);
+   RETURN UNITS (A) > UNITS (B);
+END FUNCTION GREATER_THAN_;
+
+% an integer stored into a radix 10 variable (D.4: STORE_ converts within a class)
+PROCEDURE STORE_ (V: INTEGER ## X: MONEY);
+   X := MONEY_OF (V * 100);
+END PROCEDURE STORE_;
+
+FUNCTION TO_CHAR (A: MONEY) RETURNS (ASCII_STR (?));
+   CONST U: INTEGER := UNITS (A);
+   CONST C: INTEGER := ABS (U) MOD 100;
+   IF U < 0 THEN
+      RETURN '-' !! TO_CHAR (ABS (U) // 100) !! '.' !! TO_CHAR (C // 10) !! TO_CHAR (C MOD 10);
+   END IF;
+   RETURN TO_CHAR (U // 100) !! '.' !! TO_CHAR (C // 10) !! TO_CHAR (C MOD 10);
+END FUNCTION TO_CHAR;
+
+% LONG: two words, the high word first, two's complement
+FUNCTION LIMBS_OF (X: WIDE) RETURNS (LIMBS);
+   VAR L: LIMBS;
+   SELECT OBJECT_MACHINE FROM
+      PDP_11 -->
+         LOOP FOR I IN [0:7] DO
+            L (I) := [INTEGER]$$(TO_BIT (X)[16 * I : 16 * I + 15]);
+         END LOOP I;
+      END;
+   END SELECT;
+   RETURN L;
+END FUNCTION LIMBS_OF;
+
+FUNCTION WIDE_OF (L: LIMBS) RETURNS (WIDE);
+   CONST W: INTEGER := (0).SIZE;
+   VAR B: BIT (128);
+   VAR X: WIDE;
+   SELECT OBJECT_MACHINE FROM
+      PDP_11 -->
+         LOOP FOR I IN [0:7] DO
+            B[16 * I : 16 * I + 15] := TO_BIT (L (I))[W - 16 : W - 1];
+         END LOOP I;
+         X := [WIDE]$$(B);
+      END;
+   END SELECT;
+   RETURN X;
+END FUNCTION WIDE_OF;
+
+FUNCTION ADD_ (A, B: WIDE) RETURNS (WIDE);
+   CONST P: LIMBS := LIMBS_OF (A);
+   CONST Q: LIMBS := LIMBS_OF (B);
+   VAR R: LIMBS;
+   VAR CARRY: INTEGER := 0;
+   LOOP FOR K IN [0:7] DO                         % from the low limb up
+      BLOCK
+         CONST S: INTEGER := P (7 - K) + Q (7 - K) + CARRY;
+         R (7 - K) := S MOD 65536;
+         CARRY := S // 65536;
+      END BLOCK;
+   END LOOP K;
+   RETURN WIDE_OF (R);
+END FUNCTION ADD_;
+
+FUNCTION MULTIPLY_ (A, B: WIDE) RETURNS (WIDE);   % modulo 2 ** 128
+   CONST P: LIMBS := LIMBS_OF (A);
+   CONST Q: LIMBS := LIMBS_OF (B);
+   VAR ACC: LIMBS;                                % low limb first
+   VAR R: LIMBS;
+   VAR CARRY: INTEGER := 0;
+   LOOP FOR I IN [0:7] DO
+      LOOP FOR J IN [0 : 7 - I] DO
+         ACC (I + J) := ACC (I + J) + P (7 - I) * Q (7 - J);
+      END LOOP J;
+   END LOOP I;
+   LOOP FOR K IN [0:7] DO
+      BLOCK
+         CONST S: INTEGER := ACC (K) + CARRY;
+         R (7 - K) := S MOD 65536;
+         CARRY := S // 65536;
+      END BLOCK;
+   END LOOP K;
+   RETURN WIDE_OF (R);
+END FUNCTION MULTIPLY_;
+
+FUNCTION TO_CHAR (X: WIDE) RETURNS (ASCII_STR (?));
+   VAR L: LIMBS := LIMBS_OF (X);
+   CONST NEG: BOOLEAN := L (0) >= 32768;
+   VAR BUF: ASCII_STR (41);
+   VAR P: INTEGER := 40;
+   VAR DONE: BOOLEAN := FALSE;
+   IF NEG THEN                                    % the magnitude: complement, plus 1
+      BLOCK
+         VAR CARRY: INTEGER := 1;
+         LOOP FOR K IN [0:7] DO
+            BLOCK
+               CONST S: INTEGER := 65535 - L (7 - K) + CARRY;
+               L (7 - K) := S MOD 65536;
+               CARRY := S // 65536;
+            END BLOCK;
+         END LOOP K;
+      END BLOCK;
+   END IF;
+   LOOP UNTIL DONE DO                             % digits from the last, by 10
+      BLOCK
+         VAR REM: INTEGER := 0;
+         DONE := TRUE;
+         LOOP FOR I IN [0:7] DO
+            BLOCK
+               CONST CUR: INTEGER := REM * 65536 + L (I);
+               L (I) := CUR // 10;
+               REM := CUR MOD 10;
+               IF L (I) <> 0 THEN
+                  DONE := FALSE;
+               END IF;
+            END BLOCK;
+         END LOOP I;
+         BUF[P:P] := TO_CHAR (REM);
+         P := P - 1;
+      END BLOCK;
+   END LOOP;
+   IF NEG THEN
+      BUF[P:P] := '-';
+      P := P - 1;
+   END IF;
+   RETURN BUF[P + 1 : 40];
+END FUNCTION TO_CHAR;
+
+FUNCTION WIDEN (V: INTEGER) RETURNS (WIDE);
+   VAR X: WIDE;
+   SELECT OBJECT_MACHINE FROM
+      PDP_11 -->
+         IF V < 0 THEN
+            X := [WIDE]$$(NOT ZEROS (V.SIZE) !! TO_BIT (V));
+         ELSE
+            X := [WIDE]$$(ZEROS (V.SIZE) !! TO_BIT (V));
+         END IF;
+      END;
+   END SELECT;
+   RETURN X;
+END FUNCTION WIDEN;
+END SEGMENT TYPECLASS;

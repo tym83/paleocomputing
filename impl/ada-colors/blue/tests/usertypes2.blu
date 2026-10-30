@@ -1,0 +1,22 @@
+MAIN SEGMENT USERTYPES2
+   USES (TERMINAL);
+% reptype declarations with formals and OF (3.12.3, examples), SIGNING, a TAG
+% formal passed ANY (3.12.1), string formals of types and records (3.12.1)
+TYPE FIXED_BIN (S: INTEGER [-1000:1000]) = FIXED (S, 2, STD);
+REPTYPE FRACTION OF T = FIXED_REP (T.SCALE, UNSIGNED);
+REPTYPE NOSIGN (S: INTEGER [0:1000]) = FIXED_REP (S, UNSIGNED);
+TYPE R (TAG B: BOOLEAN) = RECORD SELECT B FROM TRUE --> VAR X: INTEGER; END; END SELECT; END RECORD;
+TYPE W (TAG C: BOOLEAN) = R (C);
+TYPE T1 (S: ASCII_STR (3)) = INTEGER;
+TYPE R1 (S: ASCII_STR (3)) = RECORD VAR X: INTEGER; END RECORD;
+VAR Y: FIXED_BIN (10) [0:1) REP FRACTION;
+VAR K: INTEGER [0:255] REP NOSIGN (8);
+VAR V: W (TRUE) := (X: 3);
+VAR U: W (ANY);
+VAR A: T1 ('abc');
+VAR C: R1 ('xyz');
+U := V;
+A := 3;
+PUT_LINE (TO_CHAR (Y.SIZE) !! ' ' !! TO_CHAR (Y.SIGNING) !! ' ' !! TO_CHAR (K.SIZE) !! ' '
+          !! TO_CHAR (V.X) !! ' ' !! TO_CHAR (A) !! ' ' !! C.S);
+END SEGMENT USERTYPES2;

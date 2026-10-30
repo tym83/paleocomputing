@@ -1,0 +1,96 @@
+MAIN SEGMENT STORAGE
+   USES (TERMINAL, PDP_11_LT33);
+% the declared layout wherever a program sees storage: a DENSE record goes to the
+% disk as its storage image and comes back as words (4.8.1, 3.9.3); a pointer is the
+% address of its object in the store, NEW giving each object the bits of its layout
+% (3.10.2); TO_BIT and $$ of arrays and records (3.6.6.1); an array is as big as its
+% layout (ARRAY_TOO_BIG, 3.8.1); a FIXED_REP holds what its bits hold (3.2.3),
+% checked at run time when the range is known only then
+TYPE DEV = RECORD
+   VAR UNIT: INTEGER [0:7] REP FIXED_REP (3, UNSIGNED);
+   VAR READY: BOOLEAN;
+   VAR COUNT: INTEGER [0:4095] REP FIXED_REP (12, UNSIGNED);
+END RECORD REP RECORD_REP (DENSE);
+VAR R, S: DEV;
+VAR IMAGE, BACK: BIT (BLOCK_BITS);
+VAR WORDS: DISK_BLOCK;
+VAR DONE: SEMAPHORE (SYNCH) := NEW (0);
+VAR N: INTEGER := 1000;
+VAR P, Q, NONE: PTR (DEV);
+VAR CODES: ARRAY [1:3] REP ARRAY_REP (PACKED) OF INTEGER [0:7] REP FIXED_REP (3, UNSIGNED);
+R := (UNIT: 5, READY: TRUE, COUNT: 4095);
+P := NEW (DEV);
+Q := NEW (DEV);
+Q@ := R;
+CODES (1) := 1;
+CODES (2) := 2;
+CODES (3) := 7;
+PUT_LINE ('SIZE ' !! TO_CHAR (R.SIZE));
+PAR_BLOCK
+   PATH HANDLER CONNECT (DISK_S (1)) IMPORTS (DATA: (# DONE));
+      LOOP FOR K IN [1:3] DO
+         REQUEST (# DISK_S (1));
+         RELEASE (# DONE);
+      END LOOP K;
+   END PATH HANDLER;
+   PATH USER IMPORTS (DATA: (R # S, IMAGE, BACK, WORDS, DONE));
+      SELECT OBJECT_MACHINE FROM
+         PDP_11 -->
+            IMAGE := TO_BIT (R) !! ZEROS (BLOCK_BITS - R.SIZE);
+            START_IO (DISK_DEVICE_$NEW (1), \WRITE_BLOCK, 3, IMAGE);
+            REQUEST (# DONE);
+            START_IO (DISK_DEVICE_$NEW (1), \READ_BLOCK, 3 ## WORDS);
+            REQUEST (# DONE);
+            START_IO (DISK_DEVICE_$NEW (1), \READ_BLOCK, 3 ## BACK);
+            REQUEST (# DONE);
+            S := [DEV]$$(BACK[0 : R.SIZE - 1]);
+         END;
+      END SELECT;
+   END PATH USER;
+END PAR_BLOCK;
+SELECT OBJECT_MACHINE FROM
+   PDP_11 -->
+      PUT_LINE ('word 0 on the disk: ' !! TO_CHAR (TO_BIT (WORDS (0))[0:19]) !! '... word 1: '
+                !! TO_CHAR (WORDS (1)));
+      PUT_LINE ('pointers: ' !! TO_CHAR (TO_FIXED (TO_BIT (P), 0)) !! ' ' !! TO_CHAR (TO_FIXED (TO_BIT (Q), 0))
+                !! ' ' !! TO_CHAR ([PTR (DEV)]$$(TO_BIT (Q))@.COUNT) !! ' ' !! TO_CHAR (TO_FIXED (TO_BIT (NONE), 0)));
+      PUT_LINE ('array: ' !! TO_CHAR (TO_BIT (CODES)) !! ' ' !! TO_CHAR ([ARRAY [1:3] REP ARRAY_REP (PACKED) OF INTEGER [0:7] REP FIXED_REP (3, UNSIGNED)]$$(TO_BIT (CODES)) (2)));
+      PUT_LINE ('semaphore: ' !! TO_CHAR (TO_FIXED (TO_BIT (DONE), 0)));
+      BLOCK
+         S := [DEV]$$(TO_BIT (R)[0:14]);
+      END BLOCK
+      EXCEPT
+         INVALID_SIZE --> PUT_LINE ('INVALID_SIZE: 15 bits are no DEV'); END;
+      END EXCEPT;
+   END;
+END SELECT;
+PUT_LINE ('read back: ' !! TO_CHAR (S.UNIT) !! ' ' !! TO_CHAR (S.READY) !! ' ' !! TO_CHAR (S.COUNT));
+BLOCK
+   VAR A: ARRAY [1 : 1048576] OF ASCII_STR (5000);
+   PUT_LINE ('allocated');
+END BLOCK
+EXCEPT
+   ARRAY_TOO_BIG --> PUT_LINE ('ARRAY_TOO_BIG: 2**20 strings of 5000 characters'); END;
+END EXCEPT;
+BLOCK
+   PUT_LINE ('packed: ' !! TO_CHAR (PACKED_STRINGS (1048576)));
+END BLOCK;
+BLOCK
+   STORE (N, 255);
+   STORE (N, 256);
+END BLOCK
+EXCEPT
+   RANGE --> PUT_LINE ('RANGE: 256 does not fit FIXED_REP (8, UNSIGNED)'); END;
+END EXCEPT;
+
+FUNCTION PACKED_STRINGS (K: INTEGER) RETURNS (INTEGER);
+   VAR A: ARRAY [1 : K] REP ARRAY_REP (PACKED) OF ASCII_STR (1) REP CHAR_STR_REP (PACKED);
+   RETURN A.SIZE;
+END FUNCTION PACKED_STRINGS;
+
+PROCEDURE STORE (LIMIT, V: INTEGER);
+   VAR X: INTEGER [0 : LIMIT] REP FIXED_REP (8, UNSIGNED);
+   X := V;
+   PUT_LINE ('stored ' !! TO_CHAR (X));
+END PROCEDURE STORE;
+END SEGMENT STORAGE;

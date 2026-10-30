@@ -1,0 +1,6 @@
+MAIN SEGMENT TYPE_ARGRANGEERR
+   USES (TERMINAL);
+% a type argument lies in the range of its formal (3.12.2)
+TYPE FIXED_BIN (S: INTEGER [-10:10]) = FIXED (S, 2, STD);
+VAR Z: FIXED_BIN (40);
+END SEGMENT TYPE_ARGRANGEERR;

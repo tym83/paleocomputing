@@ -1,0 +1,17 @@
+MAIN SEGMENT ABSTRACT_DISTINCT
+   USES (TERMINAL);
+% outside the module T and V are distinct abstract types (4.4), although both are
+% INTEGER inside: an operation of T does not take a V
+VAR U: V;
+PUT_LINE (TO_CHAR (T$GET (U)));
+MODULE M EXPORTS (T, V);
+   TYPE T = INTEGER;
+   TYPE V = INTEGER;
+   FUNCTION T$GET (X: T) RETURNS (INTEGER);
+      RETURN 1;
+   END FUNCTION T$GET;
+   FUNCTION V$GET (X: V) RETURNS (INTEGER);
+      RETURN 2;
+   END FUNCTION V$GET;
+END MODULE M;
+END SEGMENT ABSTRACT_DISTINCT;

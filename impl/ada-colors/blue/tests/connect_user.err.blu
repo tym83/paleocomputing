@@ -1,0 +1,10 @@
+MAIN SEGMENT CONNECT_USER
+   USES (TERMINAL);
+% the interrupt of a CONNECT clause is an implementation-defined semaphore (4.6.1)
+VAR D: SEMAPHORE (SYNCH) := NEW (1);
+PAR_BLOCK
+   PATH HANDLER CONNECT (D);
+      REQUEST (# D);
+   END PATH HANDLER;
+END PAR_BLOCK;
+END SEGMENT CONNECT_USER;

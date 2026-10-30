@@ -1,0 +1,7 @@
+MAIN SEGMENT TYPECLASS_NOOPERR
+   USES (TERMINAL);
+% a member of FIXED of another radix has the operations the program gives it (D.4)
+TYPE MONEY = FIXED (2, 10, STD);
+VAR A, B: MONEY;
+A := A + B;
+END SEGMENT TYPECLASS_NOOPERR;

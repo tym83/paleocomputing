@@ -28,9 +28,9 @@ MAIN SEGMENT THE
 % variables must be imported by whoever calls it (4.1.1). So the IMPORTS of a
 % path name the levels it calls on: the hierarchy is written in the program.
 %
-% Time: BLUE has no time of day. CLOCK is the time of one path activation
-% (4.6.5); every process of the system is a path of one parallel block that
-% starts at 0, so CLOCK is the system's time. WAIT takes seconds; PAUSE waits
+% Time: CLOCK is the processing time of one path activation (4.6.5); the time of
+% day is the simulated machine's real-time clock, REAL_TIME of the implementation's
+% TERMINAL segment, which starts at 0. WAIT takes seconds; PAUSE waits
 % whole milliseconds. Set REPORT_DUMPS to TRUE (lab B6) and the segment
 % controller calls on level 2: the deadlock THE's order exists to prevent. The
 % call is checked even while it is switched off, so DUMP, a level-1 routine,
@@ -239,7 +239,7 @@ END PAR_BLOCK;
 
 % ==== time =========================================================================
 FUNCTION NOW () RETURNS (INTEGER);
-   RETURN TO_FIXED (CLOCK * 1000, 0, ROUNDED);
+   RETURN TO_FIXED (REAL_TIME * 1000, 0, ROUNDED);
 END FUNCTION NOW;
 
 % WAIT takes seconds at any scale (4.6.2); a millisecond is no binary fraction, so

@@ -1,0 +1,69 @@
+MAIN SEGMENT REPRESENTATIONS
+   USES (TERMINAL);
+% packing and SIZE (3.7.3, 3.8.3, 3.9.3) on the simulated PDP-11 with 64-bit words:
+% DENSE packs the elements, PACKED puts each in the byte, half-word or word that
+% holds it, UNPACKED in whole words; explicit representation converters raise
+% INVALID_REP (3.1.4.1); the record-reptype of the STREAM example (3.9.3)
+TYPE STREAM (TAG DEV: ENUM (\DISPLAY, \TAPE, \DISK, \KEYBOARD)) = RECORD
+     VAR UNIT: INTEGER [0:7] REP FIXED_REP (3, UNSIGNED);
+     SELECT DEV FROM
+        \DISPLAY -->
+           VAR FIRST, LAST: INTEGER;
+           VAR HEIGHT: INTEGER;
+           VAR N_LINES: INTEGER [0:24] REP FIXED_REP (5, UNSIGNED);
+           END;
+        \TAPE, \DISK -->
+           VAR FILE: INTEGER;
+           VAR POSITION: INTEGER [0:4095] REP FIXED_REP (12, UNSIGNED);
+           VAR TBUF: ARRAY [0:255] OF ASCII;
+           END;
+        \KEYBOARD -->
+           VAR BUFFER: ASCII_STR(20);
+           VAR BUF_FIRST, BUF_LAST: INTEGER [0:20] REP FIXED_REP (5, UNSIGNED);
+           END;
+      END SELECT;
+      END RECORD REP RECORD_REP (
+              PACKED (UNIT, DEV, VARIANTS (DEV))
+              SELECT DEV FROM
+                   \DISPLAY -->
+                        DENSE (FIRST, N_LINES, HEIGHT, LAST)
+                        END;
+                   \TAPE, \DISK -->
+                        DENSE(POSITION, FILE), PACKED(TBUF)
+                        END;
+                   \KEYBOARD -->
+                        UNPACKED (BUF_FIRST, BUF_LAST, BUFFER)
+                        END;
+              END SELECT;);
+TYPE R = RECORD VAR A: INTEGER [0:7] REP FIXED_REP (3, UNSIGNED); VAR B: BOOLEAN; END RECORD
+   REP RECORD_REP (DENSE);
+TYPE R2 = RECORD VAR A: INTEGER [0:7] REP FIXED_REP (3, UNSIGNED); VAR B: BOOLEAN; END RECORD;
+VAR X: ARRAY [-10:10] REP ARRAY_REP(DENSE) OF INTEGER [0:63] REP FIXED_REP (6, UNSIGNED);
+VAR XP: ARRAY [-10:10] REP ARRAY_REP(PACKED) OF INTEGER [0:63] REP FIXED_REP (6, UNSIGNED);
+VAR D: ASCII_STR (3) REP CHAR_STR_REP (DENSE) := 'AB?';
+VAR P: ASCII_STR (3) := 'AB?';
+VAR U: ASCII_STR (2) REP CHAR_STR_REP (UNPACKED) := 'AB';
+VAR SD: STREAM (\DISPLAY);
+VAR SK: STREAM (\KEYBOARD);
+VAR RD: R;
+VAR RU: R2;
+VAR I: INTEGER := 20;
+VAR J: INTEGER [0:255] REP FIXED_REP (8, UNSIGNED);
+PUT_LINE ('ARRAY_REP (DENSE): ' !! TO_CHAR (X.SIZE) !! ', PACKED: ' !! TO_CHAR (XP.SIZE)
+          !! ' ' !! TO_CHAR (XP.PACKING));
+PUT_LINE ('strings: ' !! TO_CHAR (D.SIZE) !! ' ' !! TO_CHAR (TO_BIT (D)) !! ' ' !! TO_CHAR (P.SIZE)
+          !! ' ' !! TO_CHAR (U.SIZE) !! ' ' !! TO_CHAR (ASCII.SIZE) !! ' ' !! TO_CHAR (D.PACKING));
+PUT_LINE ('records: ' !! TO_CHAR (SD.SIZE) !! ' ' !! TO_CHAR (SK.SIZE) !! ' ' !! TO_CHAR (RD.SIZE)
+          !! ' ' !! TO_CHAR (RU.SIZE));
+J := FIXED_REP (8, UNSIGNED) (I);
+PUT_LINE ('J ' !! TO_CHAR (J) !! ' ' !! TO_CHAR (J.SIGNING));
+BLOCK
+   J := FIXED_REP (4, UNSIGNED) (I);
+EXCEPT
+   INVALID_REP --> PUT_LINE ('INVALID_REP'); END;
+END EXCEPT;
+END BLOCK;
+SELECT OBJECT_MACHINE FROM
+   PDP_11 --> PUT_LINE ([ASCII_STR (2) REP CHAR_STR_REP (DENSE)]$$(BIN '10000011000010')); END;
+END SELECT;
+END SEGMENT REPRESENTATIONS;

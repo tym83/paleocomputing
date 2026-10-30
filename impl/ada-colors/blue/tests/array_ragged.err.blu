@@ -1,0 +1,5 @@
+MAIN SEGMENT ARRAY_RAGGED
+   USES (TERMINAL);
+% the components of an array constructor have one shape (3.8.2)
+VAR M: ARRAY [0:1, 0:2] OF INTEGER := ((1, 2, 3), (4, 5));
+END SEGMENT ARRAY_RAGGED;

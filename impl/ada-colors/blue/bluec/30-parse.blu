@@ -68,12 +68,24 @@ END PROCEDURE EXPECT;
 
 FUNCTION IDENT () RETURNS (TEXT);
    CONST T: TOKEN := CUR ();
-   IF T.KIND <> K_ID THEN
+   IF T.KIND <> K_ID & NOT IDENT_TOKEN (T) THEN
       FAILT (T.LINE, 'an identifier expected, not ', T.TX);
    END IF;
    SKIP;
    RETURN T.TX;
 END FUNCTION IDENT;
+
+% an identifier may begin with \ or ? [2-10]: that it names an enumerated value or
+% a derived generic parameter is only a convention (2.1.3); \'C' is no identifier
+FUNCTION IDENT_TOKEN (T: TOKEN) RETURNS (BOOLEAN);
+   IF (T.KIND = K_ENUM ! T.KIND = K_GEN) & T.TX.LEN >= 2 THEN
+      BLOCK
+         CONST S: ASCII_STR(2) := STR (T.TX, 2);
+         RETURN S[1:1] <> '''' & S[1:1] <> '[' & S[1:1] <> ']';
+      END BLOCK;
+   END IF;
+   RETURN FALSE;
+END FUNCTION IDENT_TOKEN;
 
 % a trailer must repeat the name of its construct
 PROCEDURE EXPECT_NAME (NAME: TEXT);
@@ -129,7 +141,7 @@ FUNCTION ROUTINE_NAME_NODE () RETURNS (NODE);
    VAR N: NODE := IDENT_NODE ();
    IF IS ('$') & AHEAD (1).KIND = K_ID THEN
       SKIP;
-      N@.NAME := MKN (STR (N@.NAME, N@.NAME.LEN) !! '$' !! STR (CUR ().TX, CUR ().TX.LEN));
+      N@.NAME := JOINN (N@.NAME, '$', CUR ().TX);
       SKIP;
    END IF;
    RETURN N;
@@ -202,6 +214,28 @@ FUNCTION PARSE_ITEMS () RETURNS (NODE);
       END IF;
    END LOOP;
    EXPECT (')');
+   BLOCK                                             % a name appears once explicitly
+      VAR L: NODE := N@.A;                           % in an imports-clause (4.3.1, 4.4)
+      VAR PASS: INTEGER := 0;
+      LOOP UNTIL PASS = 5 DO
+         IF PASS = 1 THEN
+            L := N@.B;
+         ORIF PASS = 2 THEN
+            L := N@.C;
+         ORIF PASS = 3 THEN
+            L := N@.D;
+         ORIF PASS = 4 THEN
+            L := N@.E;
+         END IF;
+         LOOP UNTIL L = NIL DO
+            IF IN_IDENTS (L@.NEXT, L@.NAME) ! (PASS = 0 & IN_IDENTS (N@.B, L@.NAME)) THEN
+               FAILT (L@.LINE, 'a name appears only once in an imports-clause (4.3.1): ', L@.NAME);
+            END IF;
+            L := L@.NEXT;
+         END LOOP;
+         PASS := PASS + 1;
+      END LOOP;
+   END BLOCK;
    RETURN N;
 END FUNCTION PARSE_ITEMS;
 
@@ -322,7 +356,7 @@ FUNCTION PARSE_DECLARATIONS () RETURNS (NODE);
          ADD_LIST (PARSE_OBJECT_DECL () # HEAD, TAIL);
       ORIF IS ('TYPE') THEN
          ADD_LIST (PARSE_TYPE_DECL () # HEAD, TAIL);
-      ORIF IS ('REPTYPE') THEN
+      ORIF IS ('REPTYPE') & AHEAD (1).KIND = K_ID THEN  % REPTYPE is a key word (2.1.7)
          ADD_LIST (PARSE_REPTYPE_DECL () # HEAD, TAIL);
       ELSE
          EXIT;
@@ -418,8 +452,8 @@ FUNCTION PARSE_REP () RETURNS (NODE);
    IF NOT IS ('(') THEN
       RETURN R;
    END IF;
-   IF TEQS (R@.NAME, 'RECORD_REP') THEN
-      SKIP_PARENS;
+   IF TEQS (R@.NAME, 'RECORD_REP') THEN             % [3-181]
+      PARSE_RECORD_REP (R);
       RETURN R;
    END IF;
    SKIP;
@@ -452,6 +486,125 @@ FUNCTION PARSE_REP () RETURNS (NODE);
    R@.A := HEAD;
    RETURN R;
 END FUNCTION PARSE_REP;
+
+% RECORD_REP ([common-packing-spec] [variant-packing]...) [3-181] .. [3-188]
+PROCEDURE PARSE_RECORD_REP (R: NODE);
+   VAR HEAD, TAIL, VH, VT: NODE := NIL;
+   EXPECT ('(');
+   LOOP UNTIL IS (')') DO
+      IF IS ('SELECT') THEN
+         ADD_LIST (PARSE_VARIANT_PACKING () # VH, VT);
+      ELSE
+         ADD_LIST (PARSE_PACKING_SPEC () # HEAD, TAIL);
+      END IF;
+      IF ACCEPT (',') ! ACCEPT (';') THEN
+         ;
+      END IF;
+   END LOOP;
+   EXPECT (')');
+   R@.A := HEAD;
+   R@.C := VH;
+END PROCEDURE PARSE_RECORD_REP;
+
+% [packing-mode] [(element-spec,...)]; a lone element-spec reads as one in a list
+FUNCTION PARSE_PACKING_SPEC () RETURNS (NODE);
+   VAR P: NODE := NEW_NODE (N_PSPEC, LINE_NOW ());
+   VAR HEAD, TAIL: NODE := NIL;
+   IF IS_KIND (K_ID) & (IS ('DENSE') ! IS ('PACKED') ! IS ('UNPACKED')) THEN
+      P@.NAME := IDENT ();
+   END IF;
+   IF ACCEPT ('(') THEN
+      P@.IV := 1;
+      LOOP UNTIL IS (')') DO
+         ADD_LIST (PARSE_ELEMENT_SPEC () # HEAD, TAIL);
+         IF ACCEPT (',') THEN
+            ;
+         END IF;
+      END LOOP;
+      EXPECT (')');
+   ORIF P@.NAME.LEN = 0 THEN
+      P@.IV := 1;
+      ADD_LIST (PARSE_ELEMENT_SPEC () # HEAD, TAIL);
+   END IF;
+   P@.A := HEAD;
+   RETURN P;
+END FUNCTION PARSE_PACKING_SPEC;
+
+% [3-184], [3-185]
+FUNCTION PARSE_ELEMENT_SPEC () RETURNS (NODE);
+   VAR E: NODE := NEW_NODE (N_ELEM, LINE_NOW ());
+   E@.NAME := IDENT ();
+   IF IS ('(') THEN
+      IF TEQS (E@.NAME, 'VARIANTS') ! TEQS (E@.NAME, 'OMIT') THEN
+         IF TEQS (E@.NAME, 'VARIANTS') THEN
+            E@.FL := 1;
+         ELSE
+            E@.FL := 2;
+         END IF;
+         SKIP;
+         E@.NAME := IDENT ();
+         EXPECT (')');
+      ORIF TEQS (E@.NAME, 'FILLER') ! TEQS (E@.NAME, 'ZEROS') ! TEQS (E@.NAME, 'BLANKS') THEN
+         IF TEQS (E@.NAME, 'FILLER') THEN
+            E@.FL := 3;
+         ORIF TEQS (E@.NAME, 'ZEROS') THEN
+            E@.FL := 4;
+         ELSE
+            E@.FL := 5;
+         END IF;
+         SKIP;
+         E@.B := PARSE_EXPR ();
+         EXPECT (')');
+      END IF;
+   END IF;
+   RETURN E;
+END FUNCTION PARSE_ELEMENT_SPEC;
+
+% SELECT tag-name FROM variant-name,... --> [packing-spec,...] END; ...
+% [ELSE --> [packing-mode] END;] END SELECT; [3-186] .. [3-188]
+FUNCTION PARSE_VARIANT_PACKING () RETURNS (NODE);
+   VAR V: NODE := NEW_NODE (N_VPACK, LINE_NOW ());
+   VAR HEAD, TAIL: NODE := NIL;
+   EXPECT ('SELECT');
+   V@.NAME := IDENT ();
+   EXPECT ('FROM');
+   LOOP UNTIL IS ('END') DO
+      IF ACCEPT ('ELSE') THEN
+         EXPECT ('-->');
+         V@.IV := 1;
+         IF NOT IS ('END') THEN
+            V@.B := NEW_NODE (N_IDENT, LINE_NOW ());
+            V@.B@.NAME := IDENT ();
+         END IF;
+         EXPECT ('END');
+         EXPECT (';');
+      ELSE
+         BLOCK
+            VAR S: NODE := NEW_NODE (N_VPSPEC, LINE_NOW ());
+            VAR LH, LT, PH, PT: NODE := NIL;
+            LOOP
+               ADD_LIST (PARSE_CASE_LABEL () # LH, LT);
+            END LOOP WHEN NOT ACCEPT (',');
+            EXPECT ('-->');
+            LOOP UNTIL IS ('END') DO
+               ADD_LIST (PARSE_PACKING_SPEC () # PH, PT);
+               IF ACCEPT (',') THEN
+                  ;
+               END IF;
+            END LOOP;
+            EXPECT ('END');
+            EXPECT (';');
+            S@.A := LH;
+            S@.B := PH;
+            ADD_LIST (S # HEAD, TAIL);
+         END BLOCK;
+      END IF;
+   END LOOP;
+   EXPECT ('END');
+   EXPECT ('SELECT');
+   V@.A := HEAD;
+   RETURN V;
+END FUNCTION PARSE_VARIANT_PACKING;
 
 % the name of ?NAME without the question mark; nothing for ? alone
 FUNCTION GEN_NAME () RETURNS (TEXT);
@@ -514,6 +667,21 @@ FUNCTION EXPR_TO_TS (E: NODE) RETURNS (NODE);
       N@.A := E@.A;
       RETURN N;
    END IF;
+   IF E@.KIND = N_FIELD THEN                        % a type-valued attribute
+      N@.FL := 3;
+      N@.E := E;
+      RETURN N;
+   END IF;
+   IF E@.KIND = N_SUBSTR THEN                       % T [L:U] read as a substring
+      N := EXPR_TO_TS (E@.A);
+      IF N@.KIND <> TS_NAME ! N@.B <> NIL THEN
+         FAIL (E@.LINE, 'a type specification expected');
+      END IF;
+      N@.B := NEW_NODE (N_RANGE, E@.LINE);
+      N@.B@.A := E@.B;
+      N@.B@.B := E@.C;
+      RETURN N;
+   END IF;
    FAIL (E@.LINE, 'a type specification expected');
 END FUNCTION EXPR_TO_TS;
 
@@ -574,6 +742,24 @@ FUNCTION PARSE_TYPE_SPEC () RETURNS (NODE);
    END IF;
    N := NEW_NODE (TS_NAME, LINE);
    N@.NAME := IDENT ();
+   IF IS ('.') & AHEAD (1).KIND = K_ID THEN          % X.ELEMENT_TYPE: a type-valued
+      BLOCK                                          % attribute (3.8.1, 3.12)
+         VAR X: NODE := NEW_NODE (N_NAME, LINE);
+         X@.NAME := N@.NAME;
+         LOOP UNTIL NOT (IS ('.') & AHEAD (1).KIND = K_ID) DO
+            SKIP;
+            BLOCK
+               VAR F: NODE := NEW_NODE (N_FIELD, LINE);
+               F@.A := X;
+               F@.NAME := IDENT ();
+               X := F;
+            END BLOCK;
+         END LOOP;
+         N@.FL := 3;
+         N@.E := X;
+         RETURN TYPE_SPEC_TAIL (N);
+      END BLOCK;
+   END IF;
    IF TEQS (N@.NAME, 'ENUM') ! TEQS (N@.NAME, 'UNORDERED') THEN    % [3-83]
       IF TEQS (N@.NAME, 'UNORDERED') THEN
          N@.IV := 1;
@@ -767,6 +953,9 @@ FUNCTION PARSE_TEMPLATE (FUNC: BOOLEAN) RETURNS (NODE);
    LOOP UNTIL IS (')') DO
       IF ACCEPT ('#') THEN
          MODE := MODE + 1;
+         IF IS (')') THEN
+            FAIL (R@.LINE, 'a # must not be the last symbol of a proc-template (5.1)');
+         END IF;
       ELSE
          BLOCK
             VAR P: NODE := NEW_NODE (N_PARAM, LINE_NOW ());
@@ -846,6 +1035,9 @@ FUNCTION PARSE_ROUTINE () RETURNS (NODE);
       R@.FL := 2;
    END IF;
    IF ACCEPT ('INLINE') THEN
+      IF R@.FL = 2 THEN                             % the constraint of 4.8.2 (decision 30)
+         FAIL (R@.LINE, 'target routines cannot be INLINE (4.8.2)');
+      END IF;
       R@.FL := R@.FL + 1;
    END IF;
    IF ACCEPT ('FUNCTION') THEN
@@ -881,7 +1073,9 @@ FUNCTION PARSE_ROUTINE () RETURNS (NODE);
    EXPECT (';');
    IF R@.FL >= 2 THEN                                % [4-109]: DYNSIZE and machine code
       EXPECT ('DYNSIZE');
-      SKIP_PARENS;
+      EXPECT ('(');
+      H@.C := PARSE_EXPR ();                        % stack-size [4-111]
+      EXPECT (')');
       EXPECT (';');
       LOOP UNTIL IS ('END') & (TOK_IS (AHEAD (1), 'PROCEDURE') ! TOK_IS (AHEAD (1), 'FUNCTION')) DO
          SKIP;

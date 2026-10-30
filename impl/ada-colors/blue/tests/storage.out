@@ -1,0 +1,11 @@
+SIZE 16
+word 0 on the disk: 10111111111111110000... word 1: 0
+pointers: 8 16 4095 0
+array: 000000010000001000000111 2
+semaphore: 0
+INVALID_SIZE: 15 bits are no DEV
+read back: 5 TRUE 4095
+ARRAY_TOO_BIG: 2**20 strings of 5000 characters
+packed: 8388608
+stored 255
+RANGE: 256 does not fit FIXED_REP (8, UNSIGNED)

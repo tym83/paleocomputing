@@ -1,0 +1,27 @@
+SEGMENT LIB DEFINES (V, K, P, T, M, W);
+% USES item lists (4.2): DATA for input or inout, ROUTINES, TYPES, MODULES; a
+% segment re-defines what it imports; names imported are global and may be
+% redefined
+VAR V: INTEGER := 10;
+VAR W: INTEGER := 20;
+CONST K: INTEGER := 3;
+TYPE T = INTEGER [0:100];
+PROCEDURE P (A: INTEGER) IMPORTS (DATA: (# V));
+   V := V + A;
+END PROCEDURE P;
+MODULE M EXPORTS (S);
+   TYPE S = INTEGER;
+   FUNCTION S$GET (X: S) RETURNS (INTEGER);
+      RETURN X + 7;
+   END FUNCTION S$GET;
+END MODULE M;
+END SEGMENT LIB;
+SEGMENT MID USES (LIB) DEFINES (W);
+END SEGMENT MID;
+MAIN SEGMENT SEGMENTS2
+   USES (TERMINAL, LIB (DATA: (K # V), ROUTINES: (P), TYPES: (T), MODULES: (M)), MID);
+VAR X: T := 5;
+VAR Y: S;
+P (K);
+PUT_LINE (TO_CHAR (V + X + GET (Y)) !! ' ' !! TO_CHAR (W));
+END SEGMENT SEGMENTS2;

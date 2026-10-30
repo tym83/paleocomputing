@@ -538,7 +538,17 @@ struct rt_b_par {
   rt_taskdecl td;
   int exc;                                     /* the last exception of a path */
   rt_b_act *children;
+  int ran;                                     /* a program's PAR_BLOCK_ ran it (D.7) */
 };
+void rt_b_path_info(rt_b_par *par, rt_int path, rt_int i, const char *connect);
+void rt_b_par_dispatch_push(rt_b_par *par);
+void rt_b_par_dispatch_pop(void);
+rt_int rt_b_par_count(void);
+rt_int rt_b_par_id(rt_int i);
+rt_int rt_b_par_prio(rt_int i);
+rstr rt_b_par_connect(rt_int i, rt_int len);
+void rt_b_par_select(rt_int addr, rt_int prio);
+void rt_b_par_run(void);
 rt_b_sem *rt_b_sem_new(int region);
 rt_b_sem *rt_b_sem_value(rt_int n, int region);  /* NEW(n) */
 void rt_b_sem_assign(rt_b_sem *dst, rt_b_sem *src);
@@ -558,6 +568,87 @@ void rt_b_terminate(rt_b_act *a);
 void rt_b_priority(rt_b_act *a, rt_int p);
 rt_int rt_b_clock(rt_b_act *a);                /* seconds, scale 20 */
 void rt_b_wait(rt_int v, rt_int scale);        /* seconds at the scale */
+
+/* BLUE additions: the rest of the 1978 specification */
+extern int RT_B_INVALID_TYPE, RT_B_INVALID_REP, RT_B_UNDERFLOW;
+double rt_b_fop(int op, double a, double b, int single, int trunc);   /* 3.3.4.2 */
+rstr rt_b_str_new(rt_int n, int bits);            /* SIZE, INVALID_SIZE */
+rstr rt_b_cat(rstr a, rstr b);                    /* !!: INVALID_SIZE */
+rt_int rt_b_pack_size(rt_int n, rt_int es, int mode);    /* SIZE by PACKING (3.7.3, 3.8.3) */
+rt_int rt_b_layout(rt_int sz, rt_int fs, int mode);      /* a record field (3.9.3) */
+rstr rt_b_bits_of_chars(rstr s, rt_int es, int mode, const rstr *reps, rt_int n);
+rstr rt_b_chars_of_bits(rstr b, rt_int es, int mode, const rstr *reps, rt_int n);
+rt_int rt_b_fixed_rep(rt_int v, rt_int size, int is_unsigned);   /* INVALID_REP */
+rt_int rt_b_file_exists(rstr name);
+void rt_b_machine(int word);                                 /* bluec -pdp11 */
+void rt_b_interrupt_after(rt_b_sem *s, rt_int us);          /* a device interrupts */
+/* bluec -pdp11: the D floating point format, 56-bit mantissa, computed exactly */
+typedef struct {
+  int64_t m;                                   /* 0, or 2**55 <= |m| < 2**56 */
+  int32_t e;                                   /* the value is m * 2**e */
+} rt_b_d;
+rt_b_d rt_b_dop(int op, rt_b_d a, rt_b_d b, int trunc);
+rt_b_d rt_b_dneg(rt_b_d a);
+rt_b_d rt_b_dabs(rt_b_d a);
+rt_int rt_b_dcmp(rt_b_d a, rt_b_d b);
+rt_b_d rt_b_d_of_double(double x);
+double rt_b_double_of_d(rt_b_d d);
+rt_b_d rt_b_d_of_fix(rt_int v, rt_int scale, int trunc);
+rt_int rt_b_fix_of_d(rt_b_d d, rt_int scale, int rounded);
+rt_b_d rt_b_dlit(const char *s);
+rt_b_d rt_b_d_of_str(rstr t, int trunc);
+rstr rt_b_d_image(rt_b_d d, rt_int prec);
+rstr rt_b_bits_of_d(rt_b_d d);
+rt_b_d rt_b_d_of_bits(rstr b);
+rt_b_d rt_b_dmax(void);
+rt_b_d rt_b_deps(void);
+rt_b_d rt_b_dnext(rt_b_d d, int up);
+rstr rt_b_dmd(int op, rt_b_d a, rt_b_d b);
+double rt_b_single_of_d(rt_b_d d, int trunc, int range);
+rt_b_d rt_b_drange(rt_b_d v, rt_b_d lo, rt_b_d hi, int typecheck);
+rstr rt_b_bits_of_f(double v);
+double rt_b_f_of_bits(rstr b);
+rt_int rt_b_std(rt_int v);                                   /* OVERFLOW (-pdp11) */
+double rt_b_fconv(double v, int single, int trunc, int range);
+double rt_b_float_of_fix_r(rt_int v, rt_int scale, int single, int trunc);
+rt_int rt_b_trange(rt_int v, rt_int lo, rt_int hi);       /* INVALID_TYPE */
+rt_int rt_b_tag(rt_int v);                                  /* UNINITIALIZED_VARIABLE */
+extern int RT_B_ARRAY_TOO_BIG;
+void *rt_b_array_alloc(rt_int n, size_t esize);            /* ARRAY_TOO_BIG */
+void *rt_b_new(size_t n);                                    /* SPACE_EXHAUSTED */
+void *rt_b_array_alloc_bits(rt_int n, size_t esize, rt_int bits);
+void rt_b_array_check(rt_int bits);
+void *rt_b_new_bits(size_t n, rt_int bits);
+void rt_b_new_more(rt_int bits);
+rt_int rt_b_ptr_addr(const void *p);
+void *rt_b_ptr_at(rt_int addr);
+rt_int rt_b_lay_put(rstr *img, rt_int sz, rstr bits, int mode);
+rstr rt_b_lay_take(rstr img, rt_int *sz, rt_int fs, int mode);
+void rt_b_lay_end(rstr img, rt_int sz);
+rstr rt_b_arr_put(rstr img, rt_int i, rt_int n, rstr bits, int mode);
+rstr rt_b_arr_take(rstr img, rt_int i, rt_int n, rt_int es, int mode);
+rstr rt_b_blank_bits(rt_int n, int mode);
+rt_int rt_b_sint_of_bits(rstr b);
+rstr rt_b_bits_len(rstr b, rt_int n);
+rt_int rt_b_rep_int_of_bits(rstr b, rt_int n, int unsig);
+rstr rt_b_bits_of_single(double v);
+double rt_b_single_of_bits(rstr b);
+rt_int rt_b_sem_count(rt_b_sem *s);
+double rt_b_tfrange(double v, double lo, double hi);
+rt_int rt_b_rep_fits(rt_int v, rt_int n, int unsig);
+rstr rt_b_tlen(rstr s, rt_int len);
+rt_int rt_b_addsc(rt_int a, rt_int sa, rt_int b, rt_int sb, rt_int s, int sub, int rounded);
+rstr rt_b_fmd(int op, double a, double b);                 /* !op! of floats */
+int rt_b_cmp(rt_int a, rt_int sa, rt_int b, rt_int sb);  /* order of a*2**-sa, b*2**-sb */
+rt_int rt_b_conv(rt_int v, rt_int from, rt_int to);    /* to a larger scale; RANGE */
+rt_int rt_b_fix_val(const char *s, rt_int scale, int rounded);  /* TO_FIXED of a literal */
+void rt_b_par_abandon(rt_b_par *par);              /* activation failed */
+void rt_b_path_begin(void);
+rt_int rt_b_real_time(void);                     /* seconds since the start, scale 20 */
+#define RT_B_STEPS_PER_US 1000
+extern rt_int rt_b_ticks, rt_b_quantum;
+void rt_b_charge(void);
+#define RT_B_TICK() do { if (++rt_b_ticks >= rt_b_quantum) rt_b_charge(); } while (0)
 
 
 /* YELLOW additions */

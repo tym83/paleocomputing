@@ -1,0 +1,16 @@
+MAIN SEGMENT EXPLICIT_GENERIC
+   USES (TERMINAL);
+% the legal invocations of TRUNCATE of section 5, example 7: the argument of the
+% explicit generic parameter L is a constant, though not necessarily manifest
+VAR N: INTEGER := 3;
+CONST LENGTH: INTEGER := N;
+VAR S1: ASCII_STR (10) := 'ABCDEFGHIJ';
+VAR S2: ASCII_STR (5);
+VAR S3: ASCII_STR (2 * LENGTH);
+S2 := TRUNCATE (S1, 5);
+S3 := TRUNCATE (S1, 2 * LENGTH);
+PUT_LINE (S2 !! ' ' !! S3);
+FUNCTION TRUNCATE (C: ASCII_STR(?L1), L: INTEGER) RETURNS (ASCII_STR(L));
+   RETURN C[0 : L - 1];
+END FUNCTION TRUNCATE;
+END SEGMENT EXPLICIT_GENERIC;

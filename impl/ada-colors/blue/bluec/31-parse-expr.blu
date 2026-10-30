@@ -16,7 +16,7 @@ END FUNCTION BIN_NODE;
 % expression [3-15]: simple-expression [rounding-mode] [WITH PREC n]
 FUNCTION PARSE_EXPR () RETURNS (NODE);
    VAR E: NODE := PARSE_SIMPLE ();
-   IF IS ('ROUNDED') ! IS ('TRUNCATED') ! IS ('NATIVE_R') ! IS ('NATIVE_T') THEN
+   IF IS ('ROUNDED') ! IS ('TRUNCATED') ! IS ('NATIVE_R') ! IS ('NATIVE_T') ! ROUNDING_AHEAD () THEN
       BLOCK
          VAR Q: NODE := NEW_NODE (N_QUAL, LINE_NOW ());
          Q@.NAME := IDENT ();
@@ -40,6 +40,21 @@ FUNCTION PARSE_EXPR () RETURNS (NODE);
    END IF;
    RETURN E;
 END FUNCTION PARSE_EXPR;
+
+% an identifier right after an expression is its rounding mode [3-16]: a value of
+% ROUNDINGS, which a program may extend (Appendix D); not the clauses of a path header
+FUNCTION ROUNDING_AHEAD () RETURNS (BOOLEAN);
+   CONST N: TOKEN := AHEAD (1);
+   IF NOT IS_KIND (K_ID) THEN
+      RETURN FALSE;
+   END IF;
+   IF IS ('CONNECT') ! IS ('SIGNALS') ! IS ('IMPORTS') ! IS ('PRIORITY') ! IS ('WHERE')
+      ! IS ('NEEDS') ! IS ('AS') ! IS ('PREC') THEN
+      RETURN FALSE;
+   END IF;
+   RETURN NOT (TOK_IS (N, '(') ! TOK_IS (N, '.') ! TOK_IS (N, ':=') ! TOK_IS (N, ':')
+               ! TOK_IS (N, '$') ! TOK_IS (N, '@') ! TOK_IS (N, '['));
+END FUNCTION ROUNDING_AHEAD;
 
 FUNCTION PARSE_SIMPLE () RETURNS (NODE);
    VAR LEFT: NODE := PARSE_CONJ ();
@@ -232,6 +247,12 @@ FUNCTION PARSE_ARGS (N: NODE) RETURNS (NODE);
       ELSE
          IF GROUP = 0 THEN
             ADD_LIST (PARSE_TYPE_ARG () # HEAD, TAIL);
+            IF IS ('RETURNS') & TAIL@.KIND = N_APPLY THEN   % F (types) RETURNS (type):
+               SKIP;                                         % a function argument with
+               EXPECT ('(');                                 % its template [5-9]
+               TAIL@.E := PARSE_TYPE_SPEC ();
+               EXPECT (')');
+            END IF;
          ELSE
             ADD_LIST (PARSE_EXPR () # HEAD, TAIL);
          END IF;
@@ -255,6 +276,9 @@ FUNCTION PARSE_POSTFIX () RETURNS (NODE);
    LOOP
       BLOCK
          CONST LINE: INTEGER := LINE_NOW ();
+         IF IS ('(') & E@.KIND = N_ENUMLIT THEN        % \P (...): an identifier [2-10]
+            E@.KIND := N_NAME;
+         END IF;
          IF IS ('(') & E@.KIND = N_NAME THEN          % a call or a subscript
             E@.KIND := N_APPLY;
             E := PARSE_ARGS (E);
@@ -369,7 +393,8 @@ FUNCTION PARSE_ATOM () RETURNS (NODE);
    IF T.KIND = K_STR ! T.KIND = K_ENUM THEN       % [3-135]
       RETURN PARSE_CHARSTRING (NO_TEXT ());
    END IF;
-   IF T.KIND = K_ID & AHEAD (1).KIND = K_STR THEN  % CHARSET 'STRING'
+   IF T.KIND = K_ID & (AHEAD (1).KIND = K_STR ! (AHEAD (1).KIND = K_ENUM
+         & NOT TOK_IS (AHEAD (2), '(') & NOT TOK_IS (AHEAD (2), ':='))) THEN   % CHARSET 'STRING'
       SKIP;
       RETURN PARSE_CHARSTRING (T.TX);
    END IF;
@@ -445,7 +470,8 @@ FUNCTION PARSE_ATOM () RETURNS (NODE);
    IF T.KIND = K_ID THEN
       N := NEW_NODE (N_NAME, T.LINE);
       N@.NAME := ROUTINE_NAME_NODE ()@.NAME;
-      IF TEQS (N@.NAME, 'NEW') ! TEQS (N@.NAME, 'PTR$NEW') ! TEQS (N@.NAME, 'SEMAPHORE$NEW') THEN
+      IF (TEQS (N@.NAME, 'NEW') ! TEQS (N@.NAME, 'PTR$NEW') ! TEQS (N@.NAME, 'SEMAPHORE$NEW'))
+         & IS ('(') THEN
          N@.KIND := N_NEW;                          % [3-198] [3-206]
          EXPECT ('(');
          N@.A := PARSE_TYPE_ARG ();
@@ -473,11 +499,8 @@ FUNCTION PARSE_CHARSTRING (CHARSET: TEXT) RETURNS (NODE);
       SKIP;
       ADD_LIST (N # HEAD, TAIL);
    END LOOP;
-   IF STRINGS = 0 & CHARSET.LEN = 0 THEN
-      IF HEAD@.NEXT <> NIL THEN
-         FAIL (LINE, 'two enumerated literals in a row');
-      END IF;
-      HEAD@.KIND := N_ENUMLIT;
+   IF STRINGS = 0 & CHARSET.LEN = 0 & HEAD@.NEXT = NIL THEN
+      HEAD@.KIND := N_ENUMLIT;                       % \CR alone; \CR \LF is a string
       RETURN HEAD;
    END IF;
    N := NEW_NODE (N_STR, LINE);

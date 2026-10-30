@@ -18,6 +18,11 @@ FUNCTION STATIC_GENERIC (TS: NODE) RETURNS (BOOLEAN);
    ORIF TS@.KIND = TS_ARRAY THEN
       RETURN STATIC_GENERIC (TS@.C);
    ORIF TS@.KIND = TS_NAME THEN
+      IF TS@.C <> NIL THEN                           % REP FIXED_REP (?S, SIGNED)
+         IF TS@.C@.KIND = N_REP & HAS_GEN_ARG (TS@.C@.A) THEN
+            RETURN TRUE;
+         END IF;
+      END IF;
       IF TEQS (TS@.NAME, 'FIXED') ! TEQS (TS@.NAME, 'FLOAT') THEN
          RETURN HAS_GEN_ARG (TS@.A);
       ORIF TEQS (TS@.NAME, 'PTR') THEN
@@ -64,6 +69,112 @@ FUNCTION STATIC_GENERIC (TS: NODE) RETURNS (BOOLEAN);
    RETURN FALSE;
 END FUNCTION STATIC_GENERIC;
 
+% the formals and derived generic parameters of the routine declaration R
+FUNCTION OWN_NAMES (R: NODE) RETURNS (NODE);
+   VAR HEAD: NODE := NIL;
+   GEN_NAMES (R@.A # HEAD);
+   RETURN HEAD;
+END FUNCTION OWN_NAMES;
+
+% does the type-spec list L declare a derived ?X (not a don't-care ?)?
+FUNCTION DECLARES_DERIVED (L: NODE) RETURNS (BOOLEAN);
+   VAR N: NODE := L;
+   LOOP UNTIL N = NIL DO
+      IF N@.KIND = TS_GEN & N@.NAME.LEN > 0 THEN
+         RETURN TRUE;
+      END IF;
+      IF N@.KIND = N_PARAM THEN
+         IF DECLARES_DERIVED (N@.B) THEN
+            RETURN TRUE;
+         END IF;
+      ORIF N@.KIND <> TS_GEN THEN
+         IF DECLARES_DERIVED (N@.A) ! DECLARES_DERIVED (N@.C) THEN
+            RETURN TRUE;
+         END IF;
+         IF N@.B <> NIL THEN
+            IF N@.B@.KIND = N_RANGE THEN
+               IF DECLARES_DERIVED (N@.B@.A) ! DECLARES_DERIVED (N@.B@.B) THEN
+                  RETURN TRUE;
+               END IF;
+            ORIF DECLARES_DERIVED (N@.B) THEN
+               RETURN TRUE;
+            END IF;
+         END IF;
+      END IF;
+      N := N@.NEXT;
+   END LOOP;
+   RETURN FALSE;
+END FUNCTION DECLARES_DERIVED;
+
+% the type T as the TYPE parameter NAME in a generic body (5.2)
+FUNCTION MARK_GENP (T: TYP, NAME: TEXT) RETURNS (TYP);
+   VAR C: TYP := COPY_TYP (T);
+   C@.GENP := NAME;
+   RETURN C;
+END FUNCTION MARK_GENP;
+
+% the generic instance whose body is being translated, if any
+FUNCTION CUR_GENERIC () RETURNS (SYM);
+   VAR CS: CSCOPE := W@.CS;
+   LOOP UNTIL CS = NIL DO
+      IF CS@.R <> NIL THEN
+         IF CS@.R@.BINDINGS <> NIL THEN
+            RETURN CS@.R;
+         END IF;
+      END IF;
+      CS := CS@.UP;
+   END LOOP;
+   RETURN NIL;
+END FUNCTION CUR_GENERIC;
+
+% is NAME among the routines of the WHERE clause of the generic routine G?
+FUNCTION IN_WHERE (G: SYM, NAME: TEXT) RETURNS (BOOLEAN);
+   VAR N: NODE := G@.DECL@.D@.B;
+   LOOP UNTIL N = NIL DO
+      IF IN_IDENTS (N@.A, NAME) THEN
+         RETURN TRUE;
+      END IF;
+      N := N@.NEXT;
+   END LOOP;
+   RETURN FALSE;
+END FUNCTION IN_WHERE;
+
+% in a generic body, the routine NAME is invoked with objects of a TYPE parameter:
+% it must be named in the WHERE clause (5.2)
+PROCEDURE REQUIRE_WHERE (NAME: TEXT, LINE: INTEGER);
+   CONST G: SYM := CUR_GENERIC ();
+   IF G = NIL THEN
+      RETURN;
+   END IF;
+   IF NOT IN_WHERE (G, NAME) THEN
+      FAILT (LINE, 'invoked with objects of a TYPE parameter, so named in the WHERE clause (5.2): ',
+             NAME);
+   END IF;
+END PROCEDURE REQUIRE_WHERE;
+
+% a generic routine Y invoked from a generic body with objects of its TYPE
+% parameter: Y's WHERE routines are among the caller's (5.2)
+PROCEDURE REQUIRE_WHERE_SUBSET (Y: SYM, LINE: INTEGER);
+   VAR N: NODE := Y@.DECL@.D@.B;
+   CONST G: SYM := CUR_GENERIC ();
+   IF G = NIL THEN
+      RETURN;
+   END IF;
+   LOOP UNTIL N = NIL DO
+      BLOCK
+         VAR T: NODE := N@.A;
+         LOOP UNTIL T = NIL DO
+            IF NOT IN_WHERE (G, T@.NAME) THEN
+               FAILT (LINE, 'the WHERE routines of the invoked generic routine are among the caller''s (5.2): ',
+                      T@.NAME);
+            END IF;
+            T := T@.NEXT;
+         END LOOP;
+      END BLOCK;
+      N := N@.NEXT;
+   END LOOP;
+END PROCEDURE REQUIRE_WHERE_SUBSET;
+
 FUNCTION HAS_GEN_ARG (A: NODE) RETURNS (BOOLEAN);
    VAR P: NODE := A;
    LOOP UNTIL P = NIL DO
@@ -77,12 +188,28 @@ END FUNCTION HAS_GEN_ARG;
 
 % the parameters, result and C header of a routine [4-18] [4-31]
 PROCEDURE ROUTINE_HEADER (Y: SYM);
-   CONST R: NODE := Y@.DECL;
-   VAR P: NODE;
-   VAR TAIL: PARM := NIL;
+   VAR ENTERED: BOOLEAN;
    IF Y@.BUSY THEN
       RETURN;                                        % done, or being done
    END IF;
+   % the types of the header are those of the routine's module, wherever it is
+   % first needed (an invocation may resolve it before the module's turn)
+   ENTERED := ENTER_MODULE_FOR (Y);
+   BLOCK                                             % the header is the declaration's
+      CONST SAVED_SEG: SYM := W@.CURSEG;             % code, not the invoker's (4.2)
+      W@.CURSEG := Y@.HOME;
+      ROUTINE_HEADER1 (Y);
+      W@.CURSEG := SAVED_SEG;
+   END BLOCK;
+   IF ENTERED THEN
+      LEAVE_MODULE (Y@.MODL);
+   END IF;
+END PROCEDURE ROUTINE_HEADER;
+
+PROCEDURE ROUTINE_HEADER1 (Y: SYM);
+   CONST R: NODE := Y@.DECL;
+   VAR P: NODE;
+   VAR TAIL: PARM := NIL;
    Y@.BUSY := TRUE;
    P := R@.A;
    LOOP UNTIL P = NIL DO
@@ -93,6 +220,22 @@ PROCEDURE ROUTINE_HEADER (Y: SYM);
    END LOOP;
    IF R@.D@.B <> NIL THEN                            % a WHERE clause [5-10]
       Y@.GENERIC := TRUE;
+      BLOCK                                          % its templates declare no derived
+         VAR N: NODE := R@.D@.B;                     % generic parameters (5.2)
+         LOOP UNTIL N = NIL DO
+            BLOCK
+               VAR T: NODE := N@.A;
+               LOOP UNTIL T = NIL DO
+                  IF DECLARES_DERIVED (T@.B@.A) ! DECLARES_DERIVED (T@.B@.B) THEN
+                     FAILT (T@.LINE, 'a WHERE template declares no derived generic parameter (5.2): ',
+                            T@.NAME);
+                  END IF;
+                  T := T@.NEXT;
+               END LOOP;
+            END BLOCK;
+            N := N@.NEXT;
+         END LOOP;
+      END BLOCK;
    END IF;
    P := R@.A;
    LOOP UNTIL P = NIL DO
@@ -101,6 +244,14 @@ PROCEDURE ROUTINE_HEADER (Y: SYM);
          PM@ := (NAME: P@.NAME, MODE: P@.IV, T: NIL, TS: P@.B, NEXT: NIL);
          IF R@.IV = 1 & P@.IV <> M_IN THEN
             FAIL (P@.LINE, 'a function has input parameters only (4.3.1)');
+         END IF;
+         IF P@.B <> NIL THEN
+            IF P@.B@.KIND = TS_ROUTINE & P@.IV <> M_IN THEN
+               FAIL (P@.LINE, 'a routine-spec declares only input parameters (5.1)');
+            END IF;
+            IF NAMES_VARIABLE_BUT (P@.B, NIL, OWN_NAMES (R)) THEN
+               FAIL (P@.LINE, 'the attributes in the type of a formal are manifest (4.3.1)');
+            END IF;
          END IF;
          IF NOT Y@.GENERIC THEN
             PM@.T := RESOLVE (P@.B);
@@ -114,12 +265,30 @@ PROCEDURE ROUTINE_HEADER (Y: SYM);
       END BLOCK;
       P := P@.NEXT;
    END LOOP;
+   IF R@.B <> NIL THEN                               % no variable in the returns-clause
+      IF NAMES_VARIABLE_BUT (R@.B, NIL, OWN_NAMES (R)) THEN
+         FAIL (R@.LINE, 'the returns-clause may not refer to a variable (4.3.1)');
+      END IF;
+   END IF;
+   IF NOT Y@.GENERIC & TEQS (BASE_NAME (Y), 'STORE_') & Y@.PARAMS <> NIL THEN
+      BLOCK                                          % D.4: the source and the target of
+         VAR LAST: PARM := Y@.PARAMS;                % STORE_ are of one type class
+         LOOP UNTIL LAST@.NEXT = NIL DO
+            LAST := LAST@.NEXT;
+         END LOOP;
+         IF LAST <> Y@.PARAMS & Y@.PARAMS@.T <> NIL & LAST@.T <> NIL THEN
+            IF NOT SAME_CLASS (Y@.PARAMS@.T, LAST@.T) THEN
+               FAIL (R@.LINE, 'both arguments of STORE_ belong to the same type class (D.4)');
+            END IF;
+         END IF;
+      END BLOCK;
+   END IF;
    IF NOT Y@.GENERIC THEN
       Y@.RESULT := RESULT_TYPE (Y);
       Y@.FWD := C_HEADER (Y);
       EMIT (O_PROTOS, CATS (Y@.FWD, ';'));
    END IF;
-END PROCEDURE ROUTINE_HEADER;
+END PROCEDURE ROUTINE_HEADER1;
 
 % the type of the returns-clause, where the names of the parameters and of the derived
 % generic parameters stand for their values (4.3.1, section 5)
@@ -137,7 +306,7 @@ FUNCTION RESULT_TYPE (Y: SYM) RETURNS (TYP);
             BLOCK
                VAR V: SYM := NEW_SYM (Y_CONST, P@.NAME);
                V@.T := P@.T;
-               V@.ACCESS := FMT1 ('p_@', P@.NAME);
+               V@.ACCESS := FMT1 ('p_@', CID (P@.NAME));
                V@.INPUT := TRUE;
                DEFINE (V, R@.LINE);
                DEFINE_PARAM_GENS (P@.T, V@.ACCESS, R@.LINE, FALSE);
@@ -165,16 +334,21 @@ FUNCTION C_HEADER (Y: SYM) RETURNS (TEXT);
       ORIF REAL_TYPE (P@.T)@.KIND = T_VOID THEN
          ;
       ORIF P@.MODE = M_IN THEN
-         PS := FMT4 ('@@@ p_@', PS, SEP, CTYPE (P@.T), P@.NAME);
+         PS := FMT4 ('@@@ p_@', PS, SEP, CTYPE (P@.T), CID (P@.NAME));
          SEP := MK (', ');
       ELSE
-         PS := FMT4 ('@@@ *p_@', PS, SEP, CTYPE (P@.T), P@.NAME);
+         PS := FMT4 ('@@@ *p_@', PS, SEP, CTYPE (P@.T), CID (P@.NAME));
          SEP := MK (', ');
       END IF;
       P := P@.NEXT;
    END LOOP;
    IF PS.LEN = 0 THEN
       PS := MK ('void');
+   END IF;
+   IF Y@.LINKAGE = 1 THEN                            % for the units that link it
+      RETURN FMT3 ('@ @(@)', CTYPE (Y@.RESULT), Y@.ACCESS, PS);
+   ORIF Y@.LINKAGE = 2 THEN                          % in the unit of its segment
+      RETURN FMT3 ('extern @ @(@)', CTYPE (Y@.RESULT), Y@.ACCESS, PS);
    END IF;
    RETURN FMT3 ('static @ @(@)', CTYPE (Y@.RESULT), Y@.ACCESS, PS);
 END FUNCTION C_HEADER;
@@ -316,6 +490,9 @@ FUNCTION UNIFY (TS: NODE, T: TYP, BS: BIND) RETURNS (BOOLEAN);
             END IF;
             RETURN SAME_TYPE (B@.T, T);
          END IF;
+         IF TS@.C = NIL & NONSTANDARD_REP (T) THEN    % ?T alone: only a type with its
+            RETURN FALSE;                              % standard representation (5)
+         END IF;
          ADD_BIND (TS@.NAME, T, NO_MVAL (), NIL, BS);
          IF TS@.C <> NIL THEN                        % ?T REP ?R: R names the reptype of
             IF TS@.C@.KIND = TS_GEN & TS@.C@.NAME.LEN > 0 THEN   % the type, here its own
@@ -344,12 +521,23 @@ FUNCTION UNIFY (TS: NODE, T: TYP, BS: BIND) RETURNS (BOOLEAN);
          RETURN FALSE;
       END IF;
    END IF;
+   IF TS@.C <> NIL THEN                              % REP FIXED_REP (?S, SIGNED)
+      IF TS@.C@.KIND = N_REP & NOT UNIFY_REP (TS@.C, RT, BS) THEN
+         RETURN FALSE;
+      END IF;
+   END IF;
    IF TEQS (TS@.NAME, 'FIXED') THEN
+      IF RT@.KIND = T_XFIX THEN                     % a member the program defines
+         RETURN UNIFY_VALUE (NTH_ARG (TS, 0), SOME (RT@.SCALE), BS)
+            & UNIFY_VALUE (NTH_ARG (TS, 1), SOME (RT@.RADIX), BS)
+            & UNIFY_VALUE (NTH_ARG (TS, 2), SOME (RT@.PREC), BS);
+      END IF;
       IF RT@.KIND <> T_INT THEN
          RETURN FALSE;
       END IF;
       RETURN UNIFY_VALUE (NTH_ARG (TS, 0), SOME (RT@.SCALE), BS)
-         & UNIFY_VALUE (NTH_ARG (TS, 1), SOME (2), BS);
+         & UNIFY_VALUE (NTH_ARG (TS, 1), SOME (2), BS)
+         & UNIFY_VALUE (NTH_ARG (TS, 2), SOME (STD_ORD ()), BS);
    ORIF TEQS (TS@.NAME, 'INTEGER') THEN
       RETURN RT@.KIND = T_INT & RT@.SCALE = 0;
    ORIF TEQS (TS@.NAME, 'FLOAT') THEN
@@ -360,7 +548,7 @@ FUNCTION UNIFY (TS: NODE, T: TYP, BS: BIND) RETURNS (BOOLEAN);
    ORIF TEQS (TS@.NAME, 'BOOLEAN') THEN
       RETURN RT@.KIND = T_BOOL;
    ORIF TEQS (TS@.NAME, 'ASCII_STR') THEN
-      RETURN RT@.KIND = T_STR;
+      RETURN RT@.KIND = T_STR & SAME_DERIVED_LENGTH (NTH_ARG (TS, 0), RT, BS);
    ORIF TEQS (TS@.NAME, 'CHAR_STR') THEN
       IF RT@.KIND <> T_STR THEN
          RETURN FALSE;
@@ -373,7 +561,7 @@ FUNCTION UNIFY (TS: NODE, T: TYP, BS: BIND) RETURNS (BOOLEAN);
       END IF;
       RETURN UNIFY (NTH_ARG (TS, 1), W@.TY_ASCII, BS);
    ORIF TEQS (TS@.NAME, 'BIT') THEN
-      RETURN RT@.KIND = T_BITS;
+      RETURN RT@.KIND = T_BITS & SAME_DERIVED_LENGTH (NTH_ARG (TS, 0), RT, BS);
    ORIF TEQS (TS@.NAME, 'SEMAPHORE') THEN
       RETURN RT@.KIND = T_SEM;
    ORIF TEQS (TS@.NAME, 'PTR') THEN
@@ -465,6 +653,79 @@ FUNCTION UNIFY (TS: NODE, T: TYP, BS: BIND) RETURNS (BOOLEAN);
    END BLOCK;
 END FUNCTION UNIFY;
 
+% a ?L repeated in the formals stands for one length: a known length binds it for
+% the comparison (5); a length known only at run time is compared there
+FUNCTION SAME_DERIVED_LENGTH (A: NODE, RT: TYP, BS: BIND) RETURNS (BOOLEAN);
+   IF A = NIL ! NOT RT@.MLEN.OK THEN
+      RETURN TRUE;
+   END IF;
+   IF A@.KIND <> TS_GEN ! A@.NAME.LEN = 0 THEN
+      RETURN TRUE;
+   END IF;
+   BLOCK
+      CONST KEY: TEXT := QMKN ('%', A@.NAME);
+      CONST B: BIND := FIND_BIND (BS@.NEXT, KEY);
+      IF B <> NIL THEN
+         RETURN B@.MV = RT@.MLEN.V;
+      END IF;
+      ADD_BIND (KEY, NIL, RT@.MLEN, NIL, BS);
+      RETURN TRUE;
+   END BLOCK;
+END FUNCTION SAME_DERIVED_LENGTH;
+
+% the representation of an argument against REP R of a formal: FIXED_REP (?S, SIGNED)
+% binds S to the size and needs that signing; FIXED_STD is FIXED_REP (64, SIGNED)
+FUNCTION UNIFY_REP (R: NODE, RT: TYP, BS: BIND) RETURNS (BOOLEAN);
+   CONST A: NODE := RT@.REPS;
+   IF TEQS (R@.NAME, 'FIXED_REP') THEN
+      IF RT@.KIND <> T_INT THEN
+         RETURN FALSE;
+      END IF;
+      BLOCK
+         VAR SIGNING: TEXT := MK ('SIGNED');
+         IF A <> NIL THEN
+            IF NOT (TEQS (A@.NAME, 'FIXED_REP') ! TEQS (A@.NAME, 'FIXED_STD')) THEN
+               RETURN TRUE;                           % a derived ?R: not known here
+            END IF;
+            IF TEQS (A@.NAME, 'FIXED_REP') & A@.A <> NIL THEN
+               IF A@.A@.NEXT <> NIL THEN
+                  SIGNING := A@.A@.NEXT@.NAME;
+               END IF;
+            END IF;
+         END IF;
+         IF NOT UNIFY_VALUE (R@.A, STATIC_SIZE (RT), BS) THEN
+            RETURN FALSE;
+         END IF;
+         IF R@.A <> NIL THEN
+            IF R@.A@.NEXT <> NIL THEN
+               IF (R@.A@.NEXT@.KIND = N_NAME ! R@.A@.NEXT@.KIND = N_ENUMLIT)
+                  & NOT TEQ (R@.A@.NEXT@.NAME, SIGNING) THEN
+                  RETURN FALSE;
+               END IF;
+            END IF;
+         END IF;
+         RETURN TRUE;
+      END BLOCK;
+   END IF;
+   IF A = NIL THEN
+      RETURN TRUE;
+   END IF;
+   RETURN TEQ (R@.NAME, A@.NAME);
+END FUNCTION UNIFY_REP;
+
+% a representation other than the standard one of the class (3.x.3)
+FUNCTION NONSTANDARD_REP (T: TYP) RETURNS (BOOLEAN);
+   CONST R: NODE := T@.REPS;
+   IF R = NIL THEN
+      RETURN FALSE;
+   END IF;
+   IF R@.KIND = TS_GEN THEN
+      RETURN FALSE;
+   END IF;
+   RETURN TEQS (R@.NAME, 'FIXED_REP') ! TEQS (R@.NAME, 'ENUM_REP') ! TEQS (R@.NAME, 'ENUM_VAL_REP')
+      ! TEQS (R@.NAME, 'CHAR_STR_REP') ! TEQS (R@.NAME, 'ARRAY_REP') ! TEQS (R@.NAME, 'RECORD_REP');
+END FUNCTION NONSTANDARD_REP;
+
 % the record class entry (with its TYPE arguments) of a record type
 FUNCTION RECORD_CLASS_OF (T: TYP) RETURNS (SYM);
    VAR R: SYM := W@.RECS;
@@ -518,7 +779,10 @@ FUNCTION GENERIC_FITS (P: PARM, A: ARG, BS: BIND) RETURNS (BOOLEAN);
       IF A@.HAVE THEN
          RETURN FALSE;
       END IF;
-      RETURN A@.E@.KIND = N_NAME;
+      IF A@.E@.KIND <> N_NAME & A@.E@.KIND <> N_APPLY THEN
+         RETURN FALSE;
+      END IF;
+      RETURN FIND_ROUTINE_ARG (P@.TS, A@.E, BS, 0, FALSE) <> NIL;
    END IF;
    IF WANT_SENSITIVE (A) & A@.E@.KIND <> N_INT THEN
       RETURN TRUE;
@@ -552,7 +816,7 @@ FUNCTION INSTANCE (G: SYM, ARGS: ARG, LINE: INTEGER) RETURNS (SYM);
             FAILT (LINE, 'the argument does not fit the generic parameter ', P@.NAME);
          END IF;
          IF DONTCARE_TYPE_ARG (P@.TS) THEN             % its type tells the instances apart
-            ADD_BIND (MKN ('?' !! STR (P@.NAME, P@.NAME.LEN)), A@.V.T, NO_MVAL (), NIL, BS);
+            ADD_BIND (QMKN ('?', P@.NAME), A@.V.T, NO_MVAL (), NIL, BS);
          END IF;
       END IF;
       P := P@.NEXT;
@@ -590,6 +854,9 @@ FUNCTION SAME_STATIC_BINDS (A, B: BIND) RETURNS (BOOLEAN);
             IF NOT SAME_LENGTH (P@.T, Q@.T) THEN       % an instance per string length:
                RETURN FALSE;                          % T stands for its whole type
             END IF;
+            IF NOT SAME_REPS (P@.T, Q@.T) THEN         % and per representation (?T REP ?R)
+               RETURN FALSE;
+            END IF;
          END IF;
          IF P@.HASMV <> Q@.HASMV ! P@.MV <> Q@.MV ! P@.R <> Q@.R THEN
             RETURN FALSE;
@@ -613,20 +880,71 @@ FUNCTION SAME_LENGTH (A, B: TYP) RETURNS (BOOLEAN);
    RETURN RA@.MLEN.OK = RB@.MLEN.OK;
 END FUNCTION SAME_LENGTH;
 
+% do two types have the same representation (reptype-spec, 3.1.3)?
+FUNCTION SAME_REPS (A, B: TYP) RETURNS (BOOLEAN);
+   CONST RA: NODE := A@.REPS;
+   CONST RB: NODE := B@.REPS;
+   IF RA = NIL ! RB = NIL THEN
+      RETURN RA = RB;
+   END IF;
+   IF RA = RB THEN
+      RETURN TRUE;
+   END IF;
+   IF NOT TEQ (RA@.NAME, RB@.NAME) THEN
+      RETURN FALSE;
+   END IF;
+   BLOCK
+      VAR X: NODE := RA@.A;
+      VAR Y: NODE := RB@.A;
+      LOOP UNTIL X = NIL ! Y = NIL DO
+         IF (X@.KIND = N_NAME ! X@.KIND = N_ENUMLIT) & (Y@.KIND = N_NAME ! Y@.KIND = N_ENUMLIT) THEN
+            IF NOT TEQ (X@.NAME, Y@.NAME) THEN
+               RETURN FALSE;
+            END IF;
+         ELSE
+            BLOCK
+               CONST MX: MVAL := MANIFEST (X);
+               CONST MY: MVAL := MANIFEST (Y);
+               IF MX.OK <> MY.OK ! MX.V <> MY.V THEN
+                  RETURN FALSE;
+               END IF;
+            END BLOCK;
+         END IF;
+         X := X@.NEXT;
+         Y := Y@.NEXT;
+      END LOOP;
+      RETURN X = NIL & Y = NIL & RA@.B = NIL & RB@.B = NIL;
+   END BLOCK;
+END FUNCTION SAME_REPS;
+
 % the routine passed for a routine parameter whose template is TS [5-8]
 FUNCTION ROUTINE_ARGUMENT (TS: NODE, E: NODE, LINE: INTEGER) RETURNS (SYM);
+   RETURN FIND_ROUTINE_ARG (TS, E, NIL, LINE, TRUE);
+END FUNCTION ROUTINE_ARGUMENT;
+
+% the routine named by E (NAME, or NAME (types) [RETURNS (type)] [5-8] [5-9]) that
+% fits the template TS exactly (5.1), its derived parameters bound in BS; with
+% STRICT, no fit or more than one is an error, else NIL
+FUNCTION FIND_ROUTINE_ARG (TS: NODE, E: NODE, BS0: BIND, LINE: INTEGER, STRICT: BOOLEAN)
+      RETURNS (SYM);
    VAR Y: SYM := LOOKUP (E@.NAME);
    VAR FOUND: SYM := NIL;
-   IF E@.KIND <> N_NAME THEN
-      FAIL (LINE, 'a routine name is expected as the argument');
+   VAR BS: BIND := BS0;
+   IF BS = NIL THEN
+      BS := NEW_BINDS ();
    END IF;
    LOOP UNTIL Y = NIL DO
       IF Y@.KIND = Y_ROUTINE THEN
          BLOCK
             CONST R: SYM := ORIGINAL (Y);
+            VAR TRY: BIND := NEW_BINDS ();            % bindings of this candidate only
+            TRY@.NEXT := BS@.NEXT;
             ROUTINE_HEADER (R);
-            IF LIST_LENGTH (TS@.A) = PARAM_COUNT (R) & NOT R@.GENERIC THEN
+            IF NOT R@.GENERIC & EXPLICIT_TEMPLATE_FITS (E, R) & TEMPLATE_FITS (TS, R, TRY) THEN
                IF FOUND <> NIL & FOUND <> R THEN
+                  IF NOT STRICT THEN
+                     RETURN NIL;
+                  END IF;
                   FAILT (LINE, 'an overloaded routine argument needs its template: ', E@.NAME);
                END IF;
                FOUND := R;
@@ -636,13 +954,130 @@ FUNCTION ROUTINE_ARGUMENT (TS: NODE, E: NODE, LINE: INTEGER) RETURNS (SYM);
       Y := LOOKUP_NEXT (Y);
    END LOOP;
    IF FOUND = NIL THEN
-      FAILT (LINE, 'no routine fits the routine parameter: ', E@.NAME);
+      IF NOT STRICT THEN
+         RETURN NIL;
+      END IF;
+      FAILT (LINE, 'no routine fits the routine parameter (5.1): ', E@.NAME);
    END IF;
    IF FOUND@.USES <> NIL THEN
+      IF NOT STRICT THEN
+         RETURN NIL;
+      END IF;
       FAILT (LINE, 'a routine passed as an argument may not import data (5.1): ', E@.NAME);
    END IF;
+   IF STRICT THEN
+      IF NOT TEMPLATE_FITS (TS, FOUND, BS) THEN       % its bindings, for good
+         FAILT (LINE, 'no routine fits the routine parameter (5.1): ', E@.NAME);
+      END IF;
+      NEED_BODY (FOUND);
+   END IF;
    RETURN FOUND;
-END FUNCTION ROUTINE_ARGUMENT;
+END FUNCTION FIND_ROUTINE_ARG;
+
+% NAME (types) [RETURNS (type)]: the routine's formals have exactly these types
+FUNCTION EXPLICIT_TEMPLATE_FITS (E: NODE, R: SYM) RETURNS (BOOLEAN);
+   VAR A: NODE := E@.A;
+   VAR Q: PARM := R@.PARAMS;
+   IF E@.KIND <> N_APPLY THEN
+      RETURN TRUE;
+   END IF;
+   IF E@.B <> NIL ! E@.C <> NIL THEN
+      RETURN FALSE;
+   END IF;
+   LOOP UNTIL A = NIL ! Q = NIL DO
+      IF Q@.T = NIL THEN
+         RETURN FALSE;
+      END IF;
+      IF NOT IDENTICAL_TYPE (RESOLVE (EXPR_TO_TS (A)), Q@.T) THEN
+         RETURN FALSE;
+      END IF;
+      A := A@.NEXT;
+      Q := Q@.NEXT;
+   END LOOP;
+   IF A <> NIL ! Q <> NIL THEN
+      RETURN FALSE;
+   END IF;
+   IF E@.E <> NIL THEN
+      RETURN IDENTICAL_TYPE (RESOLVE (E@.E), R@.RESULT);
+   END IF;
+   RETURN TRUE;
+END FUNCTION EXPLICIT_TEMPLATE_FITS;
+
+% does the routine R fit the routine-template TS: the same modes, number and types
+% of parameters and result, derived parameters matching real values, and the
+% exceptions the template lists among those R signals (5.1)?
+FUNCTION TEMPLATE_FITS (TS: NODE, R: SYM, BS: BIND) RETURNS (BOOLEAN);
+   VAR P: NODE := TS@.A;
+   VAR Q: PARM := R@.PARAMS;
+   IF (TS@.IV = 1) <> (R@.DECL@.IV = 1) THEN
+      RETURN FALSE;
+   END IF;
+   LOOP UNTIL P = NIL ! Q = NIL DO
+      IF P@.IV <> Q@.MODE THEN
+         RETURN FALSE;
+      END IF;
+      IF P@.B = NIL ! Q@.T = NIL THEN
+         IF P@.B <> NIL ! Q@.T <> NIL THEN
+            RETURN FALSE;
+         END IF;
+      ORIF P@.B@.KIND = TS_ROUTINE THEN
+         RETURN FALSE;
+      ORIF NOT TYPE_FITS_SPEC (P@.B, Q@.T, BS) THEN
+         RETURN FALSE;
+      END IF;
+      P := P@.NEXT;
+      Q := Q@.NEXT;
+   END LOOP;
+   IF P <> NIL ! Q <> NIL THEN
+      RETURN FALSE;
+   END IF;
+   IF TS@.B <> NIL THEN
+      IF NOT TYPE_FITS_SPEC (TS@.B, R@.RESULT, BS) THEN
+         RETURN FALSE;
+      END IF;
+   END IF;
+   BLOCK
+      VAR X: NODE := TS@.D;
+      LOOP UNTIL X = NIL DO
+         IF NOT IN_IDENTS (R@.DECL@.D@.A, X@.NAME) THEN
+            RETURN FALSE;
+         END IF;
+         X := X@.NEXT;
+      END LOOP;
+   END BLOCK;
+   RETURN TRUE;
+END FUNCTION TEMPLATE_FITS;
+
+% a type of a routine argument against a type-spec of the template: derived
+% parameters and don't-care symbols match real values, the rest exactly (5.1)
+FUNCTION TYPE_FITS_SPEC (TS: NODE, T: TYP, BS: BIND) RETURNS (BOOLEAN);
+   IF STATIC_GENERIC (TS) ! HAS_DERIVED (TS) THEN
+      RETURN UNIFY (TS, T, BS);
+   END IF;
+   RETURN IDENTICAL_TYPE (RESOLVE (TS), T);
+END FUNCTION TYPE_FITS_SPEC;
+
+FUNCTION HAS_DERIVED (TS: NODE) RETURNS (BOOLEAN);
+   IF TS = NIL THEN
+      RETURN FALSE;
+   END IF;
+   IF TS@.KIND = TS_GEN ! TS@.KIND = N_DONTCARE THEN
+      RETURN TRUE;
+   END IF;
+   IF TS@.KIND = TS_NAME THEN
+      IF HAS_GEN_ARG (TS@.A) THEN
+         RETURN TRUE;
+      END IF;
+      IF TS@.B <> NIL THEN
+         IF HAS_DERIVED (TS@.B@.A) ! HAS_DERIVED (TS@.B@.B) THEN
+            RETURN TRUE;
+         END IF;
+      END IF;
+   ORIF TS@.KIND = TS_ARRAY THEN
+      RETURN TRUE;
+   END IF;
+   RETURN FALSE;
+END FUNCTION HAS_DERIVED;
 
 % WHERE T NEEDS (R (types) ...): the routines are those visible where the generic is
 % invoked (5.2)
@@ -697,6 +1132,13 @@ PROCEDURE WHERE_BINDINGS (G: SYM, LINE: INTEGER, BS: BIND);
                      FAILT (LINE, 'no routine for the WHERE clause (5.2): ', T@.NAME);
                   END IF;
                   IF R <> NIL THEN                    % else the predefined operation
+                     IF R@.KIND = Y_ROUTINE THEN
+                        COMPUTE_USES (ORIGINAL (R));
+                        IF ORIGINAL (R)@.USES <> NIL THEN
+                           FAILT (LINE, 'a routine named in a WHERE clause may not import data (5.2): ',
+                                  T@.NAME);
+                        END IF;
+                     END IF;
                      ADD_BIND (T@.NAME, NIL, NO_MVAL (), R, BS);
                   END IF;
                   W@.BINDS := BS@.NEXT;
@@ -715,6 +1157,18 @@ END PROCEDURE WHERE_BINDINGS;
 % a formal type with ? for a TYPE formal of a record type: the argument's type is taken
 FUNCTION DONTCARE_TYPE_ARG (TS: NODE) RETURNS (BOOLEAN);
    IF TS@.KIND <> TS_NAME THEN
+      RETURN FALSE;
+   END IF;
+   IF TEQS (TS@.NAME, 'FIXED') ! TEQS (TS@.NAME, 'FLOAT') THEN   % FIXED (?, ?, ?): the
+      BLOCK                                                        % argument's type (5)
+         VAR A: NODE := TS@.A;
+         LOOP UNTIL A = NIL DO
+            IF A@.KIND = N_DONTCARE THEN
+               RETURN TRUE;
+            END IF;
+            A := A@.NEXT;
+         END LOOP;
+      END BLOCK;
       RETURN FALSE;
    END IF;
    BLOCK
@@ -752,16 +1206,20 @@ FUNCTION NEW_INSTANCE (G: SYM, BS: BIND, ARGS: ARG) RETURNS (SYM);
    VAR A: ARG := ARGS;
    VAR I: SYM := NEW_SYM (Y_ROUTINE, G@.NAME);
    CONST SAVED: BIND := W@.BINDS;
+   CONST SAVED_SEG: SYM := W@.CURSEG;
+   CONST HOME: SYM := ENTER_HOME (G);
    VAR P: PARM := G@.PARAMS;
    VAR TAIL: PARM := NIL;
    I@ := G@;
    I@.GENERIC := FALSE;
+   I@.LINKAGE := 0;                                  % an instance is of its unit
    I@.BINDINGS := BS;
    I@.PARAMS := NIL;
    I@.ACCESS := FMT2 ('@_@', G@.ACCESS, NEW_NAME ('i'));
    I@.INSTANCES := G@.INSTANCES;
    G@.INSTANCES := I;
    W@.BINDS := BS;
+   W@.CURSEG := G@.HOME;
    ENTER_MODULE_OF (G);
    LOOP UNTIL P = NIL DO
       BLOCK
@@ -782,6 +1240,16 @@ FUNCTION NEW_INSTANCE (G: SYM, BS: BIND, ARGS: ARG) RETURNS (SYM);
          ELSE
             PM@.T := RESOLVE (P@.TS);
          END IF;
+         IF P@.TS <> NIL THEN                         % X: ?T, X: E (E: TYPE): objects
+            IF (P@.TS@.KIND = TS_GEN ! (P@.TS@.KIND = TS_NAME & P@.TS@.A = NIL))
+               & P@.TS@.NAME.LEN > 0 THEN             % of the type (5.2)
+               IF FIND_BIND (BS, P@.TS@.NAME) <> NIL THEN
+                  IF FIND_BIND (BS, P@.TS@.NAME)@.T <> NIL THEN
+                     PM@.T := MARK_GENP (PM@.T, P@.TS@.NAME);
+                  END IF;
+               END IF;
+            END IF;
+         END IF;
          PM@.TS := NIL;
          IF TAIL = NIL THEN
             I@.PARAMS := PM;
@@ -796,6 +1264,8 @@ FUNCTION NEW_INSTANCE (G: SYM, BS: BIND, ARGS: ARG) RETURNS (SYM);
    I@.RESULT := RESULT_TYPE (I);
    LEAVE_MODULE_OF (G);
    W@.BINDS := SAVED;
+   W@.CURSEG := SAVED_SEG;
+   LEAVE_HOME (G, HOME);
    I@.FWD := C_HEADER (I);
    EMIT (O_PROTOS, CATS (I@.FWD, ';'));
    I@.MEMBERS := W@.PENDING;                         % its body: when the scope ends

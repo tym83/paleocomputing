@@ -50,7 +50,7 @@ END PAR_BLOCK;
 LOG ('all done: readers overlapped, and reader 3 overtook the waiting writer');
 
 FUNCTION NOW () RETURNS (INTEGER);
-   RETURN TO_FIXED (CLOCK * 1000, 0, ROUNDED);
+   RETURN TO_FIXED (REAL_TIME * 1000, 0, ROUNDED);
 END FUNCTION NOW;
 
 PROCEDURE PAUSE (MS: INTEGER);

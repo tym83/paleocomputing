@@ -1,0 +1,21 @@
+MAIN SEGMENT WHERE_SUBSETERR
+   USES (TERMINAL);
+% a generic invoked with objects of ?T has WHERE routines among the caller's (5.2)
+VAR V: INTEGER := 10;
+Q (# V);
+PROCEDURE P (# X: ?S)
+      WHERE S NEEDS (A (# S), C (# S));
+   A (# X);
+   C (# X);
+END PROCEDURE P;
+PROCEDURE Q (# Y: ?T)
+      WHERE T NEEDS (A (# T));
+   P (# Y);
+END PROCEDURE Q;
+PROCEDURE A (# X: INTEGER);
+   X := X + 1;
+END PROCEDURE A;
+PROCEDURE C (# X: INTEGER);
+   X := X + 100;
+END PROCEDURE C;
+END SEGMENT WHERE_SUBSETERR;

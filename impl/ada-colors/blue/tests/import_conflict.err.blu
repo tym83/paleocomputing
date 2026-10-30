@@ -1,0 +1,12 @@
+MAIN SEGMENT IMPORT_CONFLICTERR
+   USES (TERMINAL);
+% a routine importing a variable for input imports no routine importing it inout (4.3.1)
+VAR V: INTEGER := 1;
+P ();
+PROCEDURE P () IMPORTS (DATA: (V), ROUTINES: (Q));
+   Q ();
+END PROCEDURE P;
+PROCEDURE Q () IMPORTS (DATA: (# V));
+   V := 5;
+END PROCEDURE Q;
+END SEGMENT IMPORT_CONFLICTERR;

@@ -1,0 +1,10 @@
+H terminates the preempted L
+TERMINATED
+WAKER wakes while BUSY computes, and terminates it
+TERMINATED after 1 ms
+path \RED
+path \GREEN
+path \BLUE
+RANGE: no path of the block ran
+handler 1
+handler 2

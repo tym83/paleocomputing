@@ -12,7 +12,43 @@ PROCEDURE READ_SOURCE ();
       C := GET_CODE ();
    END LOOP;
    W@.SRC(W@.NSRC) := 0;
+   W@.STDINLEN := W@.NSRC;
+   MARK_LIBRARY ();
 END PROCEDURE READ_SOURCE;
+
+% A comment line LIBRARY NAME (MARK) says that the segment NAME after it is the
+% implementation's library segment of that name, put in front of the program
+% where there is no library directory to read it from (the browser page; 4.7)
+PROCEDURE MARK_LIBRARY ();
+   CONST MARK: ASCII_STR (10) := '% LIBRARY ';
+   VAR I: INTEGER := 0;
+   LOOP UNTIL I >= W@.NSRC DO
+      IF I = 0 ! AT_SRC (I - 1) = 10 THEN
+         BLOCK
+            VAR K: INTEGER := 0;
+            LOOP UNTIL K >= 10 DO
+               IF AT_SRC (I + K) <> CODE_OF (MARK[K:K]) THEN
+                  EXIT;
+               END IF;
+               K := K + 1;
+            END LOOP;
+            IF K = 10 THEN
+               BLOCK
+                  VAR E: INTEGER := I + 10;
+                  VAR N: NODE := NEW_NODE (N_IDENT, 0);
+                  LOOP UNTIL NOT IS_IDCHAR (AT_SRC (E)) DO
+                     E := E + 1;
+                  END LOOP;
+                  N@.NAME := SOURCE_TEXT (I + 10, E);
+                  N@.NEXT := W@.LIBSEGS;
+                  W@.LIBSEGS := N;
+               END BLOCK;
+            END IF;
+         END BLOCK;
+      END IF;
+      I := I + 1;
+   END LOOP;
+END PROCEDURE MARK_LIBRARY;
 
 FUNCTION AT_SRC (I: INTEGER) RETURNS (INTEGER);
    IF I >= W@.NSRC THEN
@@ -97,9 +133,12 @@ FUNCTION SYMBOL_LENGTH (I: INTEGER) RETURNS (INTEGER);
 END FUNCTION SYMBOL_LENGTH;
 
 PROCEDURE LEX ();
-   VAR I: INTEGER := 0;
-   VAR LINE: INTEGER := 1;
+   VAR I: INTEGER := W@.LEXED;
+   VAR LINE: INTEGER := W@.LEXLINE + 1;
    VAR C, J, V: INTEGER;
+   IF W@.NTOKS > 0 THEN                              % more source: past the end mark
+      W@.NTOKS := W@.NTOKS - 1;
+   END IF;
    LOOP UNTIL I >= W@.NSRC DO
       C := W@.SRC(I);
       IF C = 10 THEN
@@ -180,11 +219,14 @@ PROCEDURE LEX ();
             VAR KIND: INTEGER := K_NUM;
             VAR SCALE: INTEGER := 0;
             VAR NEG: BOOLEAN := FALSE;
+            VAR BIG: BOOLEAN := FALSE;             % beyond INTEGER.MAX
             J := I;
             V := 0;
             LOOP UNTIL NOT IS_DIGIT (AT_SRC (J)) DO
-               IF V < 100000000000000000 THEN
-                  V := V * 10 + AT_SRC (J) - 48;
+               IF V > (INTEGER.MAX - (AT_SRC (J) - 48)) // 10 THEN
+                  BIG := TRUE;
+               ELSE
+                  V := V * 10 + (AT_SRC (J) - 48);
                END IF;
                J := J + 1;
             END LOOP;
@@ -215,13 +257,18 @@ PROCEDURE LEX ();
                      J := J + 1;
                   END IF;
                   LOOP UNTIL NOT IS_DIGIT (AT_SRC (J)) DO
-                     SCALE := SCALE * 10 + AT_SRC (J) - 48;
+                     IF SCALE <= 100000 THEN
+                        SCALE := SCALE * 10 + (AT_SRC (J) - 48);
+                     END IF;
                      J := J + 1;
                   END LOOP;
                   IF NEG THEN
                      SCALE := -SCALE;
                   END IF;
                   V := SCALE;
+               END IF;
+               IF KIND = K_NUM & BIG THEN
+                  FAIL (LINE, 'an integer literal exceeds the largest INTEGER (3.2.2)');
                END IF;
                ADD_TOKEN (KIND, LINE, V, T);
             END BLOCK;
@@ -234,4 +281,118 @@ PROCEDURE LEX ();
       END IF;
    END LOOP;
    ADD_TOKEN (K_EOF, LINE, 0, MK (''));
+   W@.LEXED := I;
+   W@.LEXLINE := LINE;
 END PROCEDURE LEX;
+
+% the options: -L DIR, the library of segments; -suppress (4.5.8)
+PROCEDURE OPTIONS ();
+   VAR I: INTEGER := 1;
+   W@.LIBDIR := MK ('lib');
+   W@.WORD := 64;
+   LOOP UNTIL I >= ARGUMENT_COUNT () DO
+      BLOCK
+         CONST A: TEXT := MK (ARGUMENT (I));
+         IF TEQS (A, '-L') & I + 1 < ARGUMENT_COUNT () THEN
+            I := I + 1;
+            W@.LIBDIR := MK (ARGUMENT (I));
+         ORIF TEQS (A, '-suppress') THEN
+            W@.SUPPRESS := TRUE;
+         ORIF TEQS (A, '-pdp11') THEN               % the PDP-11's 16-bit words
+            W@.WORD := 16;
+         ORIF TEQS (A, '-c') THEN                   % a segment translated separately
+            W@.SEPC := TRUE;
+         ELSE
+            FAIL (0, 'bluec [-L library-directory] [-c] [-suppress] [-pdp11] < program.blu > program.c');
+         END IF;
+      END BLOCK;
+      I := I + 1;
+   END LOOP;
+END PROCEDURE OPTIONS;
+
+% a segment named in USES and not in the compilation is read from the library: the
+% file NAME.blu of the library directory (4.2, 4.7)
+PROCEDURE LOAD_LIBRARY (NAME: TEXT);
+   VAR FILE: TEXT := LIB_FILE (W@.LIBDIR, NAME, '.bif');
+   IF NOT FILE_EXISTS_T (FILE) THEN
+      FILE := LIB_FILE (W@.LIBDIR, NAME, '.blu');
+   ELSE                                              % a segment translated with -c:
+      BLOCK                                          % its interface, which this unit
+         VAR N: NODE := NEW_NODE (N_IDENT, 0);       % links against (4.2, 4.7)
+         N@.NAME := NAME;
+         N@.IV := FILE_PRINT_T (FILE);
+         N@.NEXT := W@.EXTS;
+         W@.EXTS := N;
+      END BLOCK;
+   END IF;
+   IF NOT FILE_EXISTS_T (FILE) & NOT TEQS (W@.LIBDIR, 'lib') THEN
+      FILE := LIB_FILE (MK ('lib'), NAME, '.blu');  % then the implementation's library
+   END IF;
+   IF NOT FILE_EXISTS_T (FILE) THEN
+      FAILT (0, 'USES names a segment that is neither in the program nor in the library: ', NAME);
+   END IF;
+   LOAD_TEXT_T (NAME, FILE);
+END PROCEDURE LOAD_LIBRARY;
+
+FUNCTION FILE_EXISTS_T (F: TEXT) RETURNS (BOOLEAN);
+   RETURN FILE_EXISTS (STR (F, F.LEN));
+END FUNCTION FILE_EXISTS_T;
+
+FUNCTION FILE_PRINT_T (F: TEXT) RETURNS (INTEGER);
+   RETURN FILE_PRINT (STR (F, F.LEN));
+END FUNCTION FILE_PRINT_T;
+
+PROCEDURE LOAD_TEXT_T (NAME, F: TEXT);
+   LOAD_TEXT (NAME, STR (F, F.LEN));
+END PROCEDURE LOAD_TEXT_T;
+
+PROCEDURE WRITE_FILE_T (F, T: TEXT);
+   WRITE_FILE (STR (F, F.LEN), STR (T, T.LEN));
+END PROCEDURE WRITE_FILE_T;
+
+FUNCTION LIB_FILE (DIR, NAME: TEXT, EXT: ASCII_STR(?L)) RETURNS (TEXT);
+   RETURN CAT (CATS (DIR, '/'), CATS (NAME, EXT));
+END FUNCTION LIB_FILE;
+
+% the fingerprint of a text: of an interface, so that a unit translated against
+% another interface does not link (4.2)
+FUNCTION TEXT_PRINT (T: ASCII_STR(?L)) RETURNS (INTEGER);
+   VAR H: INTEGER := 7;
+   LOOP FOR K IN [0 : L - 1] DO
+      H := (H * 131 + CODE_OF (T[K:K])) MOD 1099511627776;
+   END LOOP K;
+   RETURN H;
+END FUNCTION TEXT_PRINT;
+
+FUNCTION FILE_PRINT (FNAME: ASCII_STR(?L)) RETURNS (INTEGER);
+   RETURN TEXT_PRINT (READ_FILE (FNAME));
+END FUNCTION FILE_PRINT;
+
+% the input, the interface of the segment translated with -c (4.2)
+FUNCTION INPUT_TEXT () RETURNS (TEXT);
+   RETURN SOURCE_TEXT (0, W@.STDINLEN);
+END FUNCTION INPUT_TEXT;
+
+PROCEDURE LOAD_TEXT (NAME: TEXT, FNAME: ASCII_STR(?FL));
+   IF NOT IN_IDENTS (W@.EXTS, NAME) THEN             % the implementation's library
+      BLOCK
+         VAR N: NODE := NEW_NODE (N_IDENT, 0);
+         N@.NAME := NAME;
+         N@.NEXT := W@.LIBSEGS;
+         W@.LIBSEGS := N;
+      END BLOCK;
+   END IF;
+   BLOCK
+      CONST T: ASCII_STR (READ_FILE (FNAME).LENGTH) := READ_FILE (FNAME);
+      IF W@.NSRC + T.LENGTH + 1 >= MAX_SOURCE THEN
+         FAIL (0, 'the source is too long');
+      END IF;
+      W@.SRC(W@.NSRC) := 10;
+      W@.NSRC := W@.NSRC + 1;
+      LOOP FOR K IN [0 : T.LENGTH - 1] DO
+         W@.SRC(W@.NSRC) := CODE_OF (T[K:K]);
+         W@.NSRC := W@.NSRC + 1;
+      END LOOP K;
+      W@.SRC(W@.NSRC) := 0;
+   END BLOCK;
+END PROCEDURE LOAD_TEXT;

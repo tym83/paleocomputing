@@ -1,0 +1,12 @@
+% the program: it links the two segments translated before it (4.2)
+MAIN SEGMENT BANK
+   USES (TERMINAL, LEDGER, COUNTERS);
+VAR A, B: COUNTER;
+A := FRESH ();
+B := FRESH ();
+DEPOSIT (5);
+BUMP (1);
+PUT_LINE ('total ' !! TO_CHAR (TOTAL) !! ', counters ' !! TO_CHAR (VALUE (A)) !! ' '
+          !! TO_CHAR (VALUE (B)));
+SHOW (TOTAL);
+END SEGMENT BANK;

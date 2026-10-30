@@ -1,0 +1,9 @@
+% a segment translated by itself that uses another one translated before it
+SEGMENT LEDGER
+   USES (COUNTERS (DATA: (# TOTAL), ROUTINES: (BUMP)))
+   DEFINES (DEPOSIT);
+
+   PROCEDURE DEPOSIT (N: INTEGER) IMPORTS (ROUTINES: (BUMP));
+      BUMP (2 * N);
+   END PROCEDURE DEPOSIT;
+END SEGMENT LEDGER;

@@ -118,6 +118,12 @@ CONST TS_RECORD: INTEGER := 62;    % A: N_VAR and N_VARIANT list, D: N_REP
 CONST TS_ENUM: INTEGER := 63;      % A: list of N_IDENT, B: range, C: N_REP,
                                    % IV 1: UNORDERED
 CONST TS_GEN: INTEGER := 64;       % ?NAME, C: N_REP or TS_GEN of REP ?R
+CONST N_PSPEC: INTEGER := 101;     % packing-spec [3-183]: NAME mode, A: N_ELEM list
+CONST N_ELEM: INTEGER := 102;      % element-spec [3-184]: NAME; FL 0 field, 1 VARIANTS,
+                                   % 2 OMIT, 3 FILLER, 4 ZEROS, 5 BLANKS (B: the count)
+CONST N_VPACK: INTEGER := 103;     % variant-packing [3-186]: NAME tag, A: N_VPSPEC list,
+                                   % B: the ELSE mode (N_IDENT), IV 1 with ELSE
+CONST N_VPSPEC: INTEGER := 104;    % A: variant names, B: N_PSPEC list
 CONST TS_ROUTINE: INTEGER := 77;   % IV 1: function, A: N_PARAM list, B: result,
                                    % D: signals
 
@@ -142,6 +148,8 @@ CONST T_SEM: INTEGER := 12;
 CONST T_ABS: INTEGER := 13;        % an abstract type seen outside its module (3.12.5)
 CONST T_TYPE: INTEGER := 14;       % the type of a TYPE parameter
 CONST T_PATHS: INTEGER := 15;      % the activations of a path (4.6.1)
+CONST T_XFIX: INTEGER := 16;       % FIXED (S, R, P), R not 2 or P not STD: a member
+                                   % of FIXED the program defines (Appendix D.4)
 
 % ---- symbol kinds --------------------------------------------------------------------------
 CONST Y_VAR: INTEGER := 1;
@@ -222,6 +230,9 @@ TYPE TYP_REC = RECORD
    VAR MODL: PTR(SYM_REC);        % the module that defines an abstract type
    VAR REPS: NODE;                   % the reptype-spec
    VAR DECL: PTR(SYM_REC);          % the type declaration of a record class
+   VAR GENP: TEXT;                  % in a generic body: the TYPE parameter it stands for
+   VAR RADIX, PREC: INTEGER;        % of T_XFIX: the radix, the precision's position
+   VAR ROPEN: INTEGER;              % of a T_XFIX range: open below 1, above 2, both 3
 END RECORD;
 TYPE TYP = PTR(TYP_REC);
 
@@ -265,6 +276,12 @@ TYPE SYM_REC = RECORD
    VAR MEMBERS: PTR(SYM_REC);       % the names declared in a module
    VAR SAVED: PTR(SYM_REC);         % the module around an entered module
    VAR OWNER: INTEGER;              % the closed scope it is declared in (4.1)
+   VAR WITHV: INTEGER;              % 1: a bound-var; 2: a variable hidden by NAMING (4.5.4)
+   VAR LAZY: INTEGER;               % an INLINE routine: 2 once its own body is needed
+   VAR LINKAGE: INTEGER;            % a routine's C: 0 static, 1 defined for other
+                                    % units, 2 defined in another (a compiled segment)
+   VAR SEGM: PTR(SYM_REC);          % the segment that defines it, if it is defined
+   VAR HOME: PTR(SYM_REC);          % the segment it is declared in
    VAR CHAIN: PTR(SYM_REC);         % next in the hash bucket
    VAR SNEXT: PTR(SYM_REC);         % next on the scope stack
 END RECORD;
@@ -374,6 +391,18 @@ TYPE WORLD = RECORD
    VAR TOP: INTEGER;
    VAR SRC: ARRAY [0:MAX_SOURCE] OF INTEGER;       % character codes
    VAR NSRC: INTEGER;
+   VAR LEXED, LEXLINE: INTEGER;     % how far LEX has read the source, and its line
+   VAR LIBDIR: TEXT;                % -L directory: library segments NAME.blu (4.7)
+   VAR LIBSEGS: NODE;               % the segments read from it: the implementation's
+   VAR SUPPRESS: BOOLEAN;           % -suppress: no RANGE checks, ASSERT not evaluated
+   VAR WORD: INTEGER;               % bits of STD and of a machine word: 64, -pdp11 16
+   VAR SEPC: BOOLEAN;               % -c: the input's segment translated separately
+   VAR SEPSEG: TEXT;                % the segment whose names are linked between units
+   VAR EXTSEG: BOOLEAN;             % translating the interface of a compiled segment
+   VAR SEPV, SEPR: INTEGER;         % its objects and routines so far
+   VAR OWNSEGS: NODE;               % the segments of the input
+   VAR EXTS: NODE;                  % the compiled segments used: NAME, IV fingerprint
+   VAR STDINLEN: INTEGER;           % the characters of the input
    VAR TOKS: ARRAY [0:MAX_TOKENS] OF TOKEN;
    VAR NTOKS, POS: INTEGER;
    VAR TABLE: ARRAY [0:HASH_SIZE] OF SYM;
@@ -388,6 +417,17 @@ TYPE WORLD = RECORD
    VAR MODL: SYM;                 % the module being translated, if any
    VAR BINDS: BIND;                 % of the generic instance being translated
    VAR ROUNDED: BOOLEAN;            % in an expression qualified ROUNDED (3.2.4.1)
+   VAR QUAL: NODE;                  % the rounding-mode and WITH PREC qualifier in effect
+   VAR SQUAL: NODE;                 % ... of the source of the assignment being translated
+   VAR TYPECHECK: BOOLEAN;          % a type-specifier checks its value (INVALID_TYPE)
+   VAR CHARSETS: INTEGER;           % the character sets the program declares
+   VAR IN_RECORD: INTEGER;          % translating a record-spec, a closed scope (3.9.1)
+   VAR IN_TYPEDECL: INTEGER;        % translating a type or reptype declaration (3.12)
+   VAR REPCONV: BOOLEAN;            % checking the reptype of an explicit-rep-converter
+   VAR LDONE: NODE;                 % the fields of a record layout so far (3.9.3)
+   VAR LMODE: INTEGER;              % a record layout for: 0 SIZE, 1 TO_BIT, 2 $$
+   VAR LIMG: TEXT;                  % the C bitstring of the layout's image (1, 2)
+   VAR NEW_OK: NODE;                % the NEW that may go without PTR$ or SEMAPHORE$
    VAR START_IO: BOOLEAN;           % translating a start-io-stmt (4.8.1)
    VAR MACHINE: BOOLEAN;            % in a machine-dependent part (4.5.5.2, 4.8)
    VAR SERIAL: INTEGER;
@@ -397,6 +437,10 @@ TYPE WORLD = RECORD
    VAR PENDING: SYM;                % instances whose bodies are still to translate
    VAR CNAMES: NODE;                % the C names of routines given so far
    VAR ENUMS: SYM;                  % the enumerated type classes, linked by INSTANCES
+   VAR SEGS: SYM;                   % the segments, linked by INSTANCES; USES: what each
+                                    % DEFINES, by name; DECL: its declaration
+   VAR CURSEG: SYM;                 % the segment being translated (its own code)
+   VAR TRSEG: SYM;                  % the segment whose scope is open
    VAR ARRAYS: SYM;                 % the array structs made so far, likewise
    VAR RECS: SYM;                   % the record classes of parameterized types
 END RECORD;

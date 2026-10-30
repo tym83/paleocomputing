@@ -1,0 +1,24 @@
+MAIN SEGMENT CONNECT_KNOWN
+   USES (TERMINAL, PDP_11_LT33);
+% the semaphore of a CONNECT clause is known in the path (4.6.1, example 1); it
+% is an interrupt semaphore of the machine (the keyboards of PDP_11_LT33, which
+% have nothing to type here)
+LT33_KS (1) := NEW (0);
+LT33_KS (2) := NEW (1);
+PAR_BLOCK
+   PATH DRIVER FOR I IN [1:2] CONNECT (LT33_KS (I));
+      BLOCK
+         REQUEST (# LT33_KS (I));
+         PUT_LINE ('interrupt ' !! TO_CHAR (I));
+      END BLOCK
+   EXCEPT
+      TERMINATED --> PUT_LINE ('driver ' !! TO_CHAR (I) !! ' terminated'); END;
+   END EXCEPT;
+   END PATH DRIVER;
+   PATH DEVICE;
+      WAIT (1);
+      TERMINATE (DRIVER(1));
+   END PATH DEVICE;
+END PAR_BLOCK;
+PUT_LINE ('done');
+END SEGMENT CONNECT_KNOWN;

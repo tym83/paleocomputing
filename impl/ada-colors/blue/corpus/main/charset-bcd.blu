@@ -1,17 +1,20 @@
 MAIN SEGMENT BCD_EXAMPLE
    USES (TERMINAL);
 % a driver for the BCD character set of 3.12.5: the codes are not in the order of
-% the letters, the module gives the order
+% the letters, the module gives the order. With BCD and ASCII both available, a
+% string literal names its character set (3.7.2)
 VAR C: BCD := \'A';
 LOOP
-   PUT (TO_CHAR (TO_FIXED (C)) !! ':' !! TO_CHAR (TO_BIT (C)) !! ' ');
+   PUT (TO_CHAR (TO_FIXED (C)) !! ASCII ':' !! TO_CHAR (TO_BIT (C)) !! ASCII ' ');
    C := SUCC (C);
 END LOOP;
 EXCEPT
    RANGE --> NEW_LINE; END;
 END EXCEPT;
-IF \'I' < \'J' & \'R' <= \'S' & \'Z' > \'A' & PRED (\'S') = \'R' THEN
-   PUT_LINE ('I < J, R <= S, Z > A, PRED (S) = R');
+% the literals are of ASCII and of BCD: a type-specifier says which (3.4.5)
+IF [BCD]$$(\'I') < \'J' & [BCD]$$(\'R') <= \'S' & [BCD]$$(\'Z') > \'A'
+   & PRED ([BCD]$$(\'S')) = \'R' THEN
+   PUT_LINE (ASCII 'I < J, R <= S, Z > A, PRED (S) = R');
 END IF;
 %%ORIGINAL%%
 END SEGMENT BCD_EXAMPLE;

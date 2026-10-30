@@ -1,0 +1,34 @@
+MAIN SEGMENT FLOATS
+   USES (TERMINAL);
+% floating point (3.3): single (7 digits) and double (15) implemented precisions,
+% TRUNCATED and ROUNDED results, WITH PREC, UNDERFLOW and OVERFLOW, attributes
+VAR A: FLOAT (15) := 1.0;
+VAR T: FLOAT (15) := 10.0;
+VAR S: FLOAT (15) := 1.0E-300;
+VAR F: FLOAT (6) := 1.5;
+VAR X: FLOAT (6);
+PUT_LINE (TO_CHAR ((A / T TRUNCATED) < (A / T ROUNDED)) !! ' ' !! TO_CHAR (TO_FLOAT (.1, 15)));
+PUT_LINE (TO_CHAR (F.IMP_PRECISION) !! ' ' !! TO_CHAR (A.IMP_PRECISION) !! ' ' !! TO_CHAR (F.SIZE)
+          !! ' ' !! TO_CHAR (F.MANTISSA_SIZE) !! ' ' !! TO_CHAR (A.MANTISSA_SIZE) !! ' '
+          !! TO_CHAR ((F * F WITH PREC 12).NOM_PRECISION) !! ' ' !! TO_CHAR ((F.MIN).NOM_PRECISION)
+          !! ' ' !! TO_CHAR ((1.5).MAX) !! ' ' !! TO_CHAR (IMP_PRECISION (5)));
+PUT_LINE (TO_CHAR (EPSILON (6)) !! ' ' !! TO_CHAR (EPSILON (15)) !! ' ' !! TO_CHAR (FLOAT_MAX (6)));
+BLOCK
+   A := S * S;
+END BLOCK
+EXCEPT
+   UNDERFLOW --> PUT_LINE ('UNDERFLOW'); END;
+END EXCEPT;
+BLOCK
+   A := 1.0E300 * 1.0E300;
+END BLOCK
+EXCEPT
+   OVERFLOW --> PUT_LINE ('OVERFLOW'); END;
+END EXCEPT;
+BLOCK
+   X := 1.0E300;
+END BLOCK
+EXCEPT
+   RANGE --> PUT_LINE ('RANGE: 1.0E300 does not fit single precision (3.3.5)'); END;
+END EXCEPT;
+END SEGMENT FLOATS;

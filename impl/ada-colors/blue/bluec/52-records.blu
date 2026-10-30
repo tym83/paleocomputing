@@ -8,7 +8,7 @@
 
 FUNCTION NEW_FIELD (NAME: TEXT, T: TYP, KIND: INTEGER) RETURNS (FIELD);
    VAR F: FIELD := NEW (FIELD_REC);
-   F@ := (NAME: NAME, CNAME: FMT1 ('f_@', NAME), T: T, KIND: KIND, TAGF: NO_TEXT (),
+   F@ := (NAME: NAME, CNAME: FMT1 ('f_@', CID (NAME)), T: T, KIND: KIND, TAGF: NO_TEXT (),
           LABELS: NIL, NEXT: NIL);
    RETURN F;
 END FUNCTION NEW_FIELD;
@@ -24,11 +24,43 @@ FUNCTION FIND_FIELD (T: TYP, NAME: TEXT) RETURNS (FIELD);
    RETURN NIL;
 END FUNCTION FIND_FIELD;
 
+% the field NAME of the record type T; of the variant its tag selects when several
+% variants have a field of that name (the STREAM of 3.9.2 has two BUFFERs)
+FUNCTION FIND_VFIELD (T: TYP, NAME: TEXT) RETURNS (FIELD);
+   VAR F: FIELD := T@.FIELDS;
+   VAR FIRST: FIELD := NIL;
+   LOOP UNTIL F = NIL DO
+      IF TEQ (F@.NAME, NAME) THEN
+         IF FIRST = NIL THEN
+            FIRST := F;
+         END IF;
+         IF F@.TAGF.LEN = 0 THEN
+            RETURN F;
+         END IF;
+         BLOCK
+            CONST TAGV: MVAL := TAG_VALUE (T, F@.TAGF);
+            IF TAGV.OK THEN
+               IF LABELS_HAVE (F@.LABELS, TAGV.V, FIND_FIELD (T, F@.TAGF)@.T) THEN
+                  RETURN F;
+               END IF;
+            END IF;
+         END BLOCK;
+      END IF;
+      F := F@.NEXT;
+   END LOOP;
+   RETURN FIRST;
+END FUNCTION FIND_VFIELD;
+
 PROCEDURE ADD_FIELD (T: TYP, F: FIELD # TAIL: FIELD);
    VAR P: FIELD := T@.FIELDS;
    VAR N: INTEGER := 0;
    LOOP UNTIL P = NIL DO                             % same names in other variants
       IF TEQ (P@.NAME, F@.NAME) THEN
+         % field names are distinct, but for those of different variant-specs of a
+         % variant-part (3.9.1)
+         IF P@.TAGF.LEN = 0 ! F@.TAGF.LEN = 0 ! NOT TEQ (P@.TAGF, F@.TAGF) ! P@.LABELS = F@.LABELS THEN
+            FAILT (0, 'the field names of a record must be distinct (3.9.1): ', F@.NAME);
+         END IF;
          N := N + 1;
       END IF;
       P := P@.NEXT;
@@ -59,6 +91,18 @@ PROCEDURE RECORD_FIELDS (T: TYP, DECLS: NODE, TAGN: TEXT, LABELS: NODE # TAIL: F
                   F@.TAGF := TAGN;
                   F@.LABELS := LABELS;
                   ADD_FIELD (T, F # TAIL);
+                  % a later field-spec may use the attributes of this field (3.9.1)
+                  IF LOOKUP (N@.NAME) = NIL ! LOOKUP (N@.NAME)@.DEPTH <> W@.DEPTH THEN
+                     BLOCK
+                        VAR Y: SYM := NEW_SYM (Y_CONST, N@.NAME);
+                        Y@.T := FT;
+                        Y@.ACCESS := FMT1 ('$S.@', F@.CNAME);
+                        Y@.INPUT := TRUE;
+                        Y@.LEVEL := -1;
+                        Y@.OWNER := -1;
+                        DEFINE (Y, D@.LINE);
+                     END BLOCK;
+                  END IF;
                END BLOCK;
                N := N@.NEXT;
             END LOOP;
@@ -73,8 +117,22 @@ PROCEDURE RECORD_FIELDS (T: TYP, DECLS: NODE, TAGN: TEXT, LABELS: NODE # TAIL: F
             IF TF@.KIND <> 2 THEN
                FAILT (D@.LINE, 'not a TAG parameter: ', D@.NAME);
             END IF;
-            LOOP UNTIL S = NIL DO
+            BLOCK                                    % one variant part a tag (3.9.1)
+               VAR O: NODE := DECLS;
+               LOOP UNTIL O = D DO
+                  IF O@.KIND = N_VARIANT THEN
+                     IF TEQ (O@.NAME, D@.NAME) THEN
+                        FAILT (D@.LINE, 'two variant parts discriminate on the tag ', D@.NAME);
+                     END IF;
+                  END IF;
+                  O := O@.NEXT;
+               END LOOP;
+            END BLOCK;
+            CHECK_VARIANT_NAMES (D, TF@.T);
+            LOOP UNTIL S = NIL DO                    % the fields of one variant-spec
+               OPEN_SCOPE;                          % know one another (3.9.1)
                RECORD_FIELDS (T, S@.B, D@.NAME, S@.A # TAIL);
+               CLOSE_SCOPE;
                S := S@.NEXT;
             END LOOP;
          END BLOCK;
@@ -83,6 +141,82 @@ PROCEDURE RECORD_FIELDS (T: TYP, DECLS: NODE, TAGN: TEXT, LABELS: NODE # TAIL: F
    END LOOP;
 END PROCEDURE RECORD_FIELDS;
 
+% the variant-names of a variant part are values of the tag's type, each at most once
+% (3.9.1)
+PROCEDURE CHECK_VARIANT_NAMES (D: NODE, TT: TYP);
+   VAR S: NODE := D@.A;
+   VAR LOS, HIS: NODE := NIL;                        % the values seen: N_INT pairs
+   VAR LO_LIM, HI_LIM: INTEGER;
+   CONST R: TYP := REAL_TYPE (TT);
+   LO_LIM := -INTEGER.MAX - 1;
+   HI_LIM := INTEGER.MAX;
+   IF R@.KIND = T_ENUM THEN
+      LO_LIM := 0;
+      HI_LIM := R@.BASE@.NLITS - 1;
+   ORIF R@.KIND = T_BOOL THEN
+      LO_LIM := 0;
+      HI_LIM := 1;
+   END IF;
+   IF R@.MLO.OK THEN
+      LO_LIM := R@.MLO.V;
+   END IF;
+   IF R@.MHI.OK THEN
+      HI_LIM := R@.MHI.V;
+   END IF;
+   LOOP UNTIL S = NIL DO
+      BLOCK
+         VAR L: NODE := S@.A;
+         LOOP UNTIL L = NIL DO
+            BLOCK
+               VAR A, B: MVAL;
+               IF L@.KIND = N_RANGE THEN
+                  A := ENUM_MANIFEST (L@.A, TT);
+                  B := ENUM_MANIFEST (L@.B, TT);
+                  IF A.OK & (L@.IV = 1 ! L@.IV = 3) THEN
+                     A.V := A.V + 1;
+                  END IF;
+                  IF B.OK & L@.IV >= 2 THEN
+                     B.V := B.V - 1;
+                  END IF;
+               ELSE
+                  A := ENUM_MANIFEST (L, TT);
+                  B := A;
+               END IF;
+               IF NOT (A.OK & B.OK) THEN
+                  FAIL (L@.LINE, 'a variant-name is manifest (3.9.1)');
+               END IF;
+               IF A.V < LO_LIM ! B.V > HI_LIM ! A.V > B.V THEN
+                  FAIL (L@.LINE, 'a variant-name is a value of the tag type (3.9.1)');
+               END IF;
+               BLOCK
+                  VAR P: NODE := LOS;
+                  VAR Q: NODE := HIS;
+                  LOOP UNTIL P = NIL DO
+                     IF A.V <= Q@.IV & B.V >= P@.IV THEN
+                        FAIL (L@.LINE, 'a value of the tag names two variants (3.9.1)');
+                     END IF;
+                     P := P@.NEXT;
+                     Q := Q@.NEXT;
+                  END LOOP;
+               END BLOCK;
+               BLOCK
+                  VAR P: NODE := NEW_NODE (N_INT, 0);
+                  VAR Q: NODE := NEW_NODE (N_INT, 0);
+                  P@.IV := A.V;
+                  Q@.IV := B.V;
+                  P@.NEXT := LOS;
+                  Q@.NEXT := HIS;
+                  LOS := P;
+                  HIS := Q;
+               END BLOCK;
+            END BLOCK;
+            L := L@.NEXT;
+         END LOOP;
+      END BLOCK;
+      S := S@.NEXT;
+   END LOOP;
+END PROCEDURE CHECK_VARIANT_NAMES;
+
 % a record class [3-160]; Y is the type declaration of a parameterized record type
 % whose formals FORMALS are bound in the current scope
 FUNCTION RESOLVE_RECORD (TS: NODE, CNAME: TEXT, Y: SYM, FORMALS: NODE) RETURNS (TYP);
@@ -90,7 +224,10 @@ FUNCTION RESOLVE_RECORD (TS: NODE, CNAME: TEXT, Y: SYM, FORMALS: NODE) RETURNS (
    VAR TAIL: FIELD := NIL;
    T@.BASE := T;
    T@.DECL := Y;
-   T@.REPS := TS@.D;
+   IF TS@.D <> NIL THEN
+      T@.REPS := EXPAND_REP (TS@.D, T, TS@.LINE);
+      CHECK_REP_CLASS (T, TS@.LINE);
+   END IF;
    IF CNAME.LEN > 0 THEN
       T@.CNAME := CNAME;
    ELSE
@@ -120,13 +257,436 @@ FUNCTION RESOLVE_RECORD (TS: NODE, CNAME: TEXT, Y: SYM, FORMALS: NODE) RETURNS (
          F := F@.NEXT;
       END LOOP;
    END BLOCK;
+   OPEN_SCOPE;                                       % a closed scope (3.9.1)
+   W@.IN_RECORD := W@.IN_RECORD + 1;
    RECORD_FIELDS (T, TS@.A, NO_TEXT (), NIL # TAIL);
+   W@.IN_RECORD := W@.IN_RECORD - 1;
+   CLOSE_SCOPE;
+   CHECK_RECORD_REP (T, TS@.LINE);
    COMPLETE_RECORD (T);
    RETURN T;
 END FUNCTION RESOLVE_RECORD;
 
+% ---- record representations (3.9.3) -------------------------------------------------------
+
+FUNCTION IS_RECORD_REP (T: TYP) RETURNS (BOOLEAN);
+   IF T@.REPS = NIL THEN
+      RETURN FALSE;
+   END IF;
+   RETURN T@.REPS@.KIND = N_REP & TEQS (T@.REPS@.NAME, 'RECORD_REP');
+END FUNCTION IS_RECORD_REP;
+
+% the constraints of a record-reptype (3.9.3)
+PROCEDURE CHECK_RECORD_REP (T: TYP, LINE: INTEGER);
+   VAR SEEN: NODE := NIL;
+   VAR LISTED: BOOLEAN := FALSE;
+   IF NOT IS_RECORD_REP (T) THEN
+      RETURN;
+   END IF;
+   BLOCK                                             % the common packing-specs
+      VAR P: NODE := T@.REPS@.A;
+      LOOP UNTIL P = NIL DO
+         IF P@.IV = 1 THEN
+            LISTED := TRUE;
+         END IF;
+         CHECK_ELEMENTS (T, P@.A, NO_TEXT (), NIL # SEEN);
+         P := P@.NEXT;
+      END LOOP;
+   END BLOCK;
+   IF LISTED THEN                                    % then every field and variant part
+      BLOCK                                          % is positioned
+         VAR F: FIELD := T@.FIELDS;
+         LOOP UNTIL F = NIL DO
+            IF F@.TAGF.LEN = 0 & NOT IN_IDENTS (SEEN, F@.NAME) THEN
+               FAILT (LINE, 'a record-reptype with element-specs positions every field (3.9.3): ', F@.NAME);
+            END IF;
+            IF F@.TAGF.LEN > 0 & NOT IN_IDENTS (SEEN, CAT (MK ('|'), F@.TAGF)) THEN
+               FAILT (LINE, 'a record-reptype with element-specs positions every variant part (3.9.3): ',
+                      F@.TAGF);
+            END IF;
+            F := F@.NEXT;
+         END LOOP;
+      END BLOCK;
+   END IF;
+   BLOCK                                             % the variant packings
+      VAR V: NODE := T@.REPS@.C;
+      LOOP UNTIL V = NIL DO
+         BLOCK
+            CONST TF: FIELD := FIND_FIELD (T, V@.NAME);
+            VAR S: NODE := V@.A;
+            IF TF = NIL THEN
+               FAILT (V@.LINE, 'not a tag of the record (3.9.3): ', V@.NAME);
+            END IF;
+            IF TF@.KIND <> 2 THEN
+               FAILT (V@.LINE, 'not a tag of the record (3.9.3): ', V@.NAME);
+            END IF;
+            IF V@.B <> NIL THEN
+               IF PACKING_VALUE (V@.B@.NAME) < 0 THEN
+                  FAILT (V@.LINE, 'a packing-mode is DENSE, PACKED or UNPACKED (3.9.3): ', V@.B@.NAME);
+               END IF;
+            END IF;
+            LOOP UNTIL S = NIL DO
+               BLOCK
+                  VAR L: NODE := S@.A;
+                  VAR P: NODE := S@.B;
+                  VAR VSEEN: NODE := NIL;
+                  LOOP UNTIL L = NIL DO                 % values of the tag type
+                     BLOCK
+                        CONST SAVED_CODE: BUF := W@.CODE;
+                        CONST LV: ET := EXPR (L, TF@.T);
+                        W@.CODE := SAVED_CODE;
+                        IF NOT SAME_CLASS (REAL_TYPE (LV.T), REAL_TYPE (TF@.T)) THEN
+                           FAIL (L@.LINE, 'a variant-name is a value of the tag type (3.9.3)');
+                        END IF;
+                     END BLOCK;
+                     L := L@.NEXT;
+                  END LOOP;
+                  LOOP UNTIL P = NIL DO
+                     CHECK_ELEMENTS (T, P@.A, V@.NAME, S@.A # VSEEN);
+                     P := P@.NEXT;
+                  END LOOP;
+               END BLOCK;
+               S := S@.NEXT;
+            END LOOP;
+         END BLOCK;
+         V := V@.NEXT;
+      END LOOP;
+   END BLOCK;
+END PROCEDURE CHECK_RECORD_REP;
+
+% element-specs of a packing-spec, of the common part (TAGN empty) or of the variants
+% LABELS of the tag TAGN: names of the record accessible there, each once (3.9.3)
+PROCEDURE CHECK_ELEMENTS (T: TYP, L: NODE, TAGN: TEXT, LABELS: NODE # SEEN: NODE);
+   VAR E: NODE := L;
+   LOOP UNTIL E = NIL DO
+      IF E@.FL = 0 ! E@.FL = 2 THEN
+         BLOCK
+            VAR F: FIELD := T@.FIELDS;
+            VAR FOUND: FIELD := NIL;
+            LOOP UNTIL F = NIL DO
+               IF TEQ (F@.NAME, E@.NAME) & TEQ (F@.TAGF, TAGN) THEN
+                  FOUND := F;
+               END IF;
+               F := F@.NEXT;
+            END LOOP;
+            IF FOUND = NIL THEN
+               FAILT (E@.LINE, 'not a field of the record accessible here (3.9.3): ', E@.NAME);
+            END IF;
+            IF E@.FL = 2 & FOUND@.KIND = 0 THEN
+               FAILT (E@.LINE, 'OMIT names a constant or tag field (3.9.3): ', E@.NAME);
+            END IF;
+            IF IN_IDENTS (SEEN, E@.NAME) THEN
+               FAILT (E@.LINE, 'a field is positioned once in a record-reptype (3.9.3): ', E@.NAME);
+            END IF;
+            SEEN := NAME_REF (E@.NAME, 0, NIL, SEEN);
+         END BLOCK;
+      ORIF E@.FL = 1 THEN
+         BLOCK
+            CONST TF: FIELD := FIND_FIELD (T, E@.NAME);
+            CONST KEY: TEXT := CAT (MK ('|'), E@.NAME);
+            IF TF = NIL THEN
+               FAILT (E@.LINE, 'VARIANTS names a tag of the record (3.9.3): ', E@.NAME);
+            END IF;
+            IF TF@.KIND <> 2 THEN
+               FAILT (E@.LINE, 'VARIANTS names a tag of the record (3.9.3): ', E@.NAME);
+            END IF;
+            IF IN_IDENTS (SEEN, KEY) THEN
+               FAILT (E@.LINE, 'a variant part is positioned once in a record-reptype (3.9.3): ', E@.NAME);
+            END IF;
+            SEEN := NAME_REF (KEY, 0, NIL, SEEN);
+         END BLOCK;
+      ELSE
+         BLOCK
+            CONST M: MVAL := MANIFEST (E@.B);
+            IF NOT M.OK ! M.V < 0 THEN
+               FAIL (E@.LINE, 'the length of a filler-spec is a manifest integer, not negative (3.9.3)');
+            END IF;
+         END BLOCK;
+      END IF;
+      E := E@.NEXT;
+   END LOOP;
+END PROCEDURE CHECK_ELEMENTS;
+
+% SIZE of the record C of type T (3.9.3): its fields laid out as its reptype says,
+% RECORD_STD being RECORD_REP (UNPACKED); the variants by the value of their tag
+FUNCTION RECORD_SIZE (T: TYP, C: TEXT) RETURNS (TEXT);
+   RETURN FMT1 ('({ rt_int sz = 0;@ sz; })', RECORD_LAYOUT (T, C, 0, NO_TEXT ()));
+END FUNCTION RECORD_SIZE;
+
+% TO_BIT of the record C of type T: its fields in their places of the layout
+FUNCTION RECORD_BITS (T: TYP, C: TEXT) RETURNS (TEXT);
+   CONST V: TEXT := NEW_NAME ('rb');
+   CONST IMG: TEXT := NEW_NAME ('im');
+   CONST BODY: TEXT := RECORD_LAYOUT (T, V, 1, IMG);
+   RETURN CAT (FMT4 ('({ @ @ = @; rstr @ = rt_str_new(0); rt_int sz = 0;', CTYPE (T), V, C, IMG),
+               FMT2 ('@ @; })', BODY, IMG));
+END FUNCTION RECORD_BITS;
+
+% [T]$$(B) of a record type: each field from its place of the layout, the tags
+% before the variants they select; INVALID_SIZE unless B is that long, INVALID_TYPE
+% for a type argument the bits contradict
+FUNCTION RECORD_OF_BITS (T: TYP, B: TEXT) RETURNS (TEXT);
+   CONST V: TEXT := NEW_NAME ('rv');
+   CONST IMG: TEXT := NEW_NAME ('im');
+   CONST BODY: TEXT := RECORD_LAYOUT (T, V, 2, IMG);
+   RETURN CAT (FMT4 ('({ rstr @ = @; @ @;', IMG, B, CTYPE (T), V),
+               CAT (FMT3 (' @ rt_int sz = 0;@ rt_b_lay_end(@, sz);', INIT_CODE (T, V), BODY, IMG),
+                    FMT1 (' @; })', V)));
+END FUNCTION RECORD_OF_BITS;
+
+% the statements that lay out the fields of the record C of type T (3.9.3), with
+% RECORD_STD being RECORD_REP (UNPACKED) and the variants by the value of their tag:
+% for SIZE (MODE 0), TO_BIT (1) or $$ (2) into or from the bitstring IMG
+FUNCTION RECORD_LAYOUT (T: TYP, C: TEXT, MODE: INTEGER, IMG: TEXT) RETURNS (TEXT);
+   VAR R: TEXT := MK ('');
+   CONST SAVED: NODE := W@.LDONE;
+   CONST SAVED_MODE: INTEGER := W@.LMODE;
+   CONST SAVED_IMG: TEXT := W@.LIMG;
+   W@.LDONE := NIL;
+   W@.LMODE := MODE;
+   W@.LIMG := IMG;
+   IF IS_RECORD_REP (T) THEN
+      BLOCK
+         VAR P: NODE := T@.REPS@.A;
+         LOOP UNTIL P = NIL DO
+            R := CAT (R, LAYOUT_SPEC (T, C, P, NO_TEXT ()));
+            P := P@.NEXT;
+         END LOOP;
+      END BLOCK;
+   END IF;
+   R := CAT (R, LAYOUT_ALL (T, C, NO_TEXT (), 2));     % the rest
+   R := CAT (R, LAYOUT_PARTS (T, C));
+   W@.LDONE := SAVED;
+   W@.LMODE := SAVED_MODE;
+   W@.LIMG := SAVED_IMG;
+   RETURN R;
+END FUNCTION RECORD_LAYOUT;
+
+% one field of the layout: its size, its bits put in the image, or taken from it
+FUNCTION LAY_FIELD (F: FIELD, T: TYP, C: TEXT, MODE: INTEGER) RETURNS (TEXT);
+   CONST X: TEXT := FMT2 ('(@).@', C, F@.CNAME);
+   IF W@.LMODE = 0 THEN
+      RETURN FMT2 (' sz = rt_b_layout(sz, @, @);', FIELD_SIZE_C (F, C), NUM (MODE));
+   ORIF W@.LMODE = 1 THEN
+      BLOCK
+         CONST IMG: TEXT := W@.LIMG;
+         CONST BITS: TEXT := BITS_OF (MKET (X, F@.T), 0).C;
+         RETURN FMT3 (' sz = rt_b_lay_put(&@, sz, @, @);', IMG, BITS, NUM (MODE));
+      END BLOCK;
+   END IF;
+   BLOCK
+      CONST IMG: TEXT := W@.LIMG;
+      CONST TAKE: TEXT := FMT3 ('rt_b_lay_take(@, &sz, @, @)', IMG, FIELD_SIZE_C (F, C), NUM (MODE));
+      CONST V: TEXT := OF_BITS (F@.T, TAKE, 0);
+      IF F@.KIND = 0 ! IS_ANY_FIELD (T, F) THEN
+         RETURN FMT2 (' @ = @;', X, V);
+      END IF;                                        % an argument of the type: as given
+      RETURN FMT1 (' if (!@) rt_raise(RT_B_INVALID_TYPE);', EQUAL_CODE (REAL_TYPE (F@.T), X, V));
+   END BLOCK;
+END FUNCTION LAY_FIELD;
+
+% a filler of SIZE bits whose bits are BITS
+FUNCTION LAY_FILL (SIZE, BITS: TEXT, MODE: INTEGER) RETURNS (TEXT);
+   IF W@.LMODE = 0 THEN
+      RETURN FMT2 (' sz = rt_b_layout(sz, @, @);', SIZE, NUM (MODE));
+   ORIF W@.LMODE = 1 THEN
+      RETURN FMT3 (' sz = rt_b_lay_put(&@, sz, @, @);', W@.LIMG, BITS, NUM (MODE));
+   END IF;
+   RETURN FMT3 (' (void)rt_b_lay_take(@, &sz, @, @);', W@.LIMG, SIZE, NUM (MODE));
+END FUNCTION LAY_FILL;
+
+% is F a tag of T whose value the type leaves open (T(ANY)), set by $$?
+FUNCTION IS_ANY_FIELD (T: TYP, F: FIELD) RETURNS (BOOLEAN);
+   VAR G: FIELD := T@.FIELDS;
+   VAR A: BND := T@.ARGS;
+   LOOP UNTIL G = NIL ! A = NIL DO
+      IF G@.KIND <> 0 THEN
+         IF G = F THEN
+            RETURN A@.ANYARG;
+         END IF;
+         A := A@.NEXT;
+      END IF;
+      G := G@.NEXT;
+   END LOOP;
+   RETURN TRUE;
+END FUNCTION IS_ANY_FIELD;
+
+FUNCTION FIELD_SIZE_C (F: FIELD, C: TEXT) RETURNS (TEXT);
+   RETURN SIZE_OF (F@.T, FMT2 ('(@).@', C, F@.CNAME)).C;
+END FUNCTION FIELD_SIZE_C;
+
+% the fields of the part TAGN (the common part when empty) not yet laid out
+FUNCTION LAYOUT_ALL (T: TYP, C: TEXT, TAGN: TEXT, MODE: INTEGER) RETURNS (TEXT);
+   VAR R: TEXT := MK ('');
+   VAR F: FIELD := T@.FIELDS;
+   LOOP UNTIL F = NIL DO
+      IF TEQ (F@.TAGF, TAGN) & NOT IN_IDENTS (W@.LDONE, F@.NAME) THEN
+         W@.LDONE := NAME_REF (F@.NAME, 0, NIL, W@.LDONE);
+         IF TAGN.LEN = 0 THEN
+            R := CAT (R, LAY_FIELD (F, T, C, MODE));
+         ELSE
+            R := CAT (R, FMT2 (' if (@) {@ }', VARIANT_COND (F, T, C), LAY_FIELD (F, T, C, MODE)));
+         END IF;
+      END IF;
+      F := F@.NEXT;
+   END LOOP;
+   RETURN R;
+END FUNCTION LAYOUT_ALL;
+
+% the variant parts not yet laid out, after the rest
+FUNCTION LAYOUT_PARTS (T: TYP, C: TEXT) RETURNS (TEXT);
+   VAR R: TEXT := MK ('');
+   VAR F: FIELD := T@.FIELDS;
+   LOOP UNTIL F = NIL DO
+      IF F@.TAGF.LEN > 0 & NOT IN_IDENTS (W@.LDONE, CAT (MK ('|'), F@.TAGF)) THEN
+         R := CAT (R, LAYOUT_VARIANTS (T, C, F@.TAGF));
+      END IF;
+      F := F@.NEXT;
+   END LOOP;
+   RETURN R;
+END FUNCTION LAYOUT_PARTS;
+
+% a packing-spec of the common part or of a variant (TAGN)
+FUNCTION LAYOUT_SPEC (T: TYP, C: TEXT, P: NODE, TAGN: TEXT) RETURNS (TEXT);
+   VAR MODE: INTEGER := 2;
+   VAR R: TEXT := MK ('');
+   IF P@.NAME.LEN > 0 THEN
+      MODE := PACKING_VALUE (P@.NAME);
+   END IF;
+   IF P@.IV = 0 THEN                                 % all fields accessible there
+      R := LAYOUT_ALL (T, C, TAGN, MODE);
+      IF TAGN.LEN = 0 THEN
+         R := CAT (R, LAYOUT_PARTS (T, C));
+      END IF;
+      RETURN R;
+   END IF;
+   BLOCK
+      VAR E: NODE := P@.A;
+      LOOP UNTIL E = NIL DO
+         IF E@.FL = 0 ! E@.FL = 2 THEN
+            BLOCK
+               VAR F: FIELD := T@.FIELDS;
+               LOOP UNTIL F = NIL DO
+                  IF TEQ (F@.NAME, E@.NAME) & TEQ (F@.TAGF, TAGN) THEN
+                     W@.LDONE := NAME_REF (F@.NAME, 0, NIL, W@.LDONE);
+                     IF E@.FL = 2 & ARG_MANIFEST (T, F) THEN
+                        ;                             % OMIT: a manifest argument is
+                     ORIF TAGN.LEN = 0 THEN           % not stored
+                        R := CAT (R, LAY_FIELD (F, T, C, MODE));
+                     ELSE
+                        R := CAT (R, FMT2 (' if (@) {@ }', VARIANT_COND (F, T, C),
+                                           LAY_FIELD (F, T, C, MODE)));
+                     END IF;
+                  END IF;
+                  F := F@.NEXT;
+               END LOOP;
+            END BLOCK;
+         ORIF E@.FL = 1 THEN
+            R := CAT (R, LAYOUT_VARIANTS (T, C, E@.NAME));
+         ORIF E@.FL = 5 THEN                          % BLANKS (N): N blanks, so packed
+            R := CAT (R, LAY_FILL (FMT2 ('rt_b_pack_size(@, 7, @)', NUM (MANIFEST (E@.B).V), NUM (MODE)),
+                                   FMT2 ('rt_b_blank_bits(@, @)', NUM (MANIFEST (E@.B).V), NUM (MODE)),
+                                   MODE));
+         ELSE                                        % FILLER (N), ZEROS (N): N bits
+            R := CAT (R, LAY_FILL (NUM (MANIFEST (E@.B).V), FMT1 ('rt_b_zeros(@)', NUM (MANIFEST (E@.B).V)),
+                                   MODE));
+         END IF;
+         E := E@.NEXT;
+      END LOOP;
+   END BLOCK;
+   RETURN R;
+END FUNCTION LAYOUT_SPEC;
+
+% the variant part of the tag TAGN: the packing of its variant-packing for the value
+% of the tag, else of its ELSE, else UNPACKED
+FUNCTION LAYOUT_VARIANTS (T: TYP, C: TEXT, TAGN: TEXT) RETURNS (TEXT);
+   VAR R: TEXT := MK ('');
+   VAR WORD: TEXT := MK (' if');
+   VAR ELSE_MODE: INTEGER := 2;
+   CONST TF: FIELD := FIND_FIELD (T, TAGN);
+   W@.LDONE := NAME_REF (CAT (MK ('|'), TAGN), 0, NIL, W@.LDONE);
+   IF IS_RECORD_REP (T) THEN
+      BLOCK
+         VAR V: NODE := T@.REPS@.C;
+         LOOP UNTIL V = NIL DO
+            IF TEQ (V@.NAME, TAGN) THEN
+               BLOCK
+                  VAR S: NODE := V@.A;
+                  IF V@.B <> NIL THEN
+                     ELSE_MODE := PACKING_VALUE (V@.B@.NAME);
+                  END IF;
+                  LOOP UNTIL S = NIL DO
+                     BLOCK
+                        VAR COND: TEXT := MK ('0');
+                        VAR L: NODE := S@.A;
+                        VAR P: NODE := S@.B;
+                        CONST OUTER: NODE := W@.LDONE;
+                        VAR BODY: TEXT := MK ('');
+                        LOOP UNTIL L = NIL DO
+                           COND := FMT4 ('@ || (@).@ == @', COND, C, TF@.CNAME, EXPR (L, TF@.T).C);
+                           L := L@.NEXT;
+                        END LOOP;
+                        LOOP UNTIL P = NIL DO
+                           BODY := CAT (BODY, LAYOUT_SPEC (T, C, P, TAGN));
+                           P := P@.NEXT;
+                        END LOOP;
+                        BODY := CAT (BODY, LAYOUT_ALL (T, C, TAGN, 2));
+                        W@.LDONE := OUTER;
+                        R := CAT (R, FMT3 ('@ (@) {@ }', WORD, COND, BODY));
+                        WORD := MK (' else if');
+                     END BLOCK;
+                     S := S@.NEXT;
+                  END LOOP;
+               END BLOCK;
+            END IF;
+            V := V@.NEXT;
+         END LOOP;
+      END BLOCK;
+   END IF;
+   BLOCK
+      CONST OUTER: NODE := W@.LDONE;
+      CONST REST: TEXT := LAYOUT_ALL (T, C, TAGN, ELSE_MODE);
+      W@.LDONE := OUTER;
+      IF TEQS (WORD, ' if') THEN
+         RETURN REST;
+      END IF;
+      RETURN FMT2 ('@ else {@ }', R, REST);
+   END BLOCK;
+END FUNCTION LAYOUT_VARIANTS;
+
+% is the argument of the constant or tag field F of T manifest (OMIT, 3.9.3)?
+FUNCTION ARG_MANIFEST (T: TYP, F: FIELD) RETURNS (BOOLEAN);
+   VAR G: FIELD := T@.FIELDS;
+   VAR A: BND := T@.ARGS;
+   LOOP UNTIL G = NIL ! A = NIL DO
+      IF G@.KIND <> 0 THEN
+         IF G = F THEN
+            RETURN A@.MLO.OK & NOT A@.ANYARG;
+         END IF;
+         A := A@.NEXT;
+      END IF;
+      G := G@.NEXT;
+   END LOOP;
+   RETURN FALSE;
+END FUNCTION ARG_MANIFEST;
+
 % T(arguments) of a parameterized record type Y [3-175]: one class for each set of
 % TYPE arguments, the values of the other arguments kept with the type
+% a TAG formal of a type declaration given ANY, passed on to a record's TAG
+% (TYPE W (TAG C: BOOLEAN) = R (C); W (ANY))
+FUNCTION IS_ANY_TAG (A: NODE) RETURNS (BOOLEAN);
+   IF A@.KIND <> N_NAME THEN
+      RETURN FALSE;
+   END IF;
+   BLOCK
+      CONST Y: SYM := LOOKUP (A@.NAME);
+      IF Y = NIL THEN
+         RETURN FALSE;
+      END IF;
+      RETURN Y@.KIND = Y_CONST & TEQS (Y@.ACCESS, 'ANY');
+   END BLOCK;
+END FUNCTION IS_ANY_TAG;
+
 FUNCTION RECORD_INSTANCE (Y: SYM, TS: NODE) RETURNS (TYP);
    CONST D: NODE := Y@.DECL;
    VAR CLASS: TYP := NIL;
@@ -154,7 +714,7 @@ FUNCTION RECORD_INSTANCE (Y: SYM, TS: NODE) RETURNS (TYP);
                   VAR V: BND := NEW (BND_REC);
                   V@ := (LO: NO_TEXT (), HI: NO_TEXT (), MLO: NO_MVAL (), MHI: NO_MVAL (),
                          ANYARG: FALSE, NEXT: NIL);
-                  IF A@.KIND = N_ANY THEN
+                  IF A@.KIND = N_ANY ! IS_ANY_TAG (A) THEN
                      IF F@.IV <> 1 THEN
                         FAIL (A@.LINE, 'ANY is only for TAG parameters (3.9.1)');
                      END IF;
@@ -164,12 +724,17 @@ FUNCTION RECORD_INSTANCE (Y: SYM, TS: NODE) RETURNS (TYP);
                      V@.HI := MK ('?');
                   ORIF A@.KIND = TS_GEN THEN           % ?N: the value of the argument
                      V@.ANYARG := TRUE;
-                     V@.HI := MK ('?' !! STR (A@.NAME, A@.NAME.LEN));
+                     V@.HI := QMK ('?', A@.NAME);
                   ELSE
                      BLOCK
                         CONST FT: TYP := RESOLVE (F@.B);
-                        V@.LO := EXPR (A, FT).C;
+                        V@.LO := CONVERT (EXPR (A, FT), FT, A@.LINE, NO_TEXT ());   % its range
                         V@.MLO := ENUM_MANIFEST (A, FT);
+                        IF V@.MLO.OK & FT@.MLO.OK & FT@.MHI.OK THEN
+                           IF V@.MLO.V < FT@.MLO.V ! V@.MLO.V > FT@.MHI.V THEN
+                              FAIL (A@.LINE, 'the argument is outside the range of the parameter (3.9.1)');
+                           END IF;
+                        END IF;
                         IF F@.IV = 1 & NOT V@.MLO.OK THEN
                            FAIL (A@.LINE, 'a tag argument must be manifest or ANY (3.9.1)');
                         END IF;
@@ -232,7 +797,7 @@ FUNCTION RECORD_INSTANCE (Y: SYM, TS: NODE) RETURNS (TYP);
                      BLOCK
                         VAR P: SYM := NEW_SYM (Y_CONST, N@.NAME);
                         P@.T := RESOLVE (F@.B);
-                        P@.ACCESS := FMT1 ('$S.f_@', N@.NAME);
+                        P@.ACCESS := FMT1 ('$S.f_@', CID (N@.NAME));
                         P@.INPUT := TRUE;
                         P@.LEVEL := -1;
                         DEFINE (P, F@.LINE);
@@ -268,7 +833,7 @@ FUNCTION SAME_BINDS (A, B: BIND) RETURNS (BOOLEAN);
    VAR P: BIND := A;
    VAR Q: BIND := B;
    LOOP UNTIL P = NIL ! Q = NIL DO
-      IF NOT SAME_TYPE (P@.T, Q@.T) THEN
+      IF NOT SAME_TYPE (P@.T, Q@.T) ! NOT SAME_LENGTH (P@.T, Q@.T) ! NOT SAME_REPS (P@.T, Q@.T) THEN
          RETURN FALSE;
       END IF;
       P := P@.NEXT;
@@ -318,8 +883,8 @@ PROCEDURE COMPLETE_RECORD (T: TYP);
       BODY := FMT3 ('@ @ @;', BODY, CTYPE (F@.T), F@.CNAME);
       COPY := FMT3 ('@ d.@ = @;', COPY, F@.CNAME, COPY_OF (F@.T, FMT1 ('s.@', F@.CNAME)));
       IF F@.KIND = 1 THEN                           % constant fields are part of the type
-         ASSIGN := FMT3 ('@ if (d->@ != s.@) rt_raise(RT_B_TYPE_MISMATCH);', ASSIGN,
-                         F@.CNAME, F@.CNAME);
+         ASSIGN := FMT2 ('@ if (!(@)) rt_raise(RT_B_TYPE_MISMATCH);', ASSIGN,
+                         EQUAL_CODE (F@.T, FMT1 ('d->@', F@.CNAME), FMT1 ('s.@', F@.CNAME)));
       ORIF F@.KIND = 2 THEN                         % a tag changes only with the record
          ASSIGN := FMT4 ('@ if (any) d->@ = s.@; else if (d->@ != s.@) rt_raise(RT_B_TYPE_MISMATCH);',
                          ASSIGN, F@.CNAME, F@.CNAME, F@.CNAME);
@@ -392,16 +957,18 @@ END FUNCTION ARRAY_STRUCT;
 % the statements that make the storage of a new object LV of type T
 FUNCTION INIT_CODE (T: TYP, LV: TEXT) RETURNS (TEXT);
    CONST K: INTEGER := T@.KIND;
-   IF K = T_STR THEN
+   IF K = T_XFIX THEN                                % its bits, zero
+      RETURN FMT2 ('@ = rt_b_zeros(@);', LV, NUM (XFIX_SIZE (T)));
+   ORIF K = T_STR THEN
       IF T@.LEN_C.LEN = 0 THEN
          RETURN FMT1 ('@ = rt_str_new(0);', LV);
       END IF;
-      RETURN FMT2 ('@ = rt_str_new(@);', LV, T@.LEN_C);
+      RETURN FMT2 ('@ = rt_b_str_new(@, 0);', LV, T@.LEN_C);
    ORIF K = T_BITS THEN
       IF T@.LEN_C.LEN = 0 THEN
          RETURN FMT1 ('@ = rt_b_zeros(0);', LV);
       END IF;
-      RETURN FMT2 ('@ = rt_b_zeros(@);', LV, T@.LEN_C);
+      RETURN FMT2 ('@ = rt_b_str_new(@, 1);', LV, T@.LEN_C);
    ORIF K = T_SEM THEN
       RETURN FMT2 ('@ = rt_b_sem_new(@);', LV, NUM (T@.SCALE));
    ORIF K = T_ABS THEN
@@ -418,13 +985,23 @@ FUNCTION INIT_CODE (T: TYP, LV: TEXT) RETURNS (TEXT);
             B := B@.NEXT;
          END LOOP;
          R := FMT4 ('@ rt_int n = rt_b_extent(@, @.lo, @.hi);', R, NUM (T@.DIMS), LV, LV);
-         R := FMT3 ('@ @.p = rt_alloc(sizeof *@.p * (size_t)(n ? n : 1));', R, LV, LV);
+         IF STATIC_SIZE (T@.ELEM).OK THEN           % counted in the declared layout
+            R := FMT4 ('@ @.p = rt_b_array_alloc_bits(n, sizeof *@.p, @', R, LV, LV,
+                       FMT2 ('rt_b_pack_size(n, @, @));', NUM (STATIC_SIZE (T@.ELEM).V),
+                             NUM (PACKING_OF (T))));
+         ELSE
+            R := FMT4 ('@ @.p = rt_b_array_alloc(n, sizeof *@.p);', R, LV, LV, LV);
+         END IF;
          IF NEEDS_INIT (T@.ELEM) THEN
             BLOCK
                CONST IV: TEXT := NEW_NAME ('i');
                R := FMT4 ('@ for (rt_int @ = 0; @ < n; @++) {', R, IV, IV, IV);
                R := FMT2 ('@ @ }', R, INIT_CODE (T@.ELEM, FMT2 ('@.p[@]', LV, IV)));
             END BLOCK;
+         END IF;
+         IF NOT STATIC_SIZE (T@.ELEM).OK THEN        % the elements made: their size
+            R := FMT4 ('@ rt_b_array_check(rt_b_pack_size(n, n ? @ : 0, @));', R,
+                       SIZE_OF (T@.ELEM, FMT1 ('@.p[0]', LV)).C, NUM (PACKING_OF (T)), MK (''));
          END IF;
          RETURN CATS (R, ' }');
       END BLOCK;
@@ -438,6 +1015,8 @@ FUNCTION INIT_CODE (T: TYP, LV: TEXT) RETURNS (TEXT);
                IF A <> NIL THEN
                   IF NOT A@.ANYARG THEN
                      R := FMT4 ('@ @.@ = @;', R, LV, F@.CNAME, A@.LO);
+                  ORIF F@.KIND = 2 & A@.HI.LEN = 0 THEN  % T(ANY) not yet assigned: its
+                     R := FMT3 ('@ @.@ = INT64_MIN;', R, LV, F@.CNAME);   % tag is unset
                   END IF;
                   A := A@.NEXT;
                END IF;
@@ -454,7 +1033,7 @@ END FUNCTION INIT_CODE;
 
 FUNCTION NEEDS_INIT (T: TYP) RETURNS (BOOLEAN);
    CONST K: INTEGER := T@.KIND;
-   IF K = T_STR ! K = T_BITS ! K = T_ARR ! K = T_SEM THEN
+   IF K = T_STR ! K = T_BITS ! K = T_ARR ! K = T_SEM ! K = T_XFIX THEN
       RETURN TRUE;
    ORIF K = T_ABS THEN
       RETURN NEEDS_INIT (T@.BASE);
@@ -479,7 +1058,7 @@ END FUNCTION NEEDS_INIT;
 % value of an output's local object (4.3.2)
 FUNCTION COPY_OF (T: TYP, V: TEXT) RETURNS (TEXT);
    CONST K: INTEGER := T@.KIND;
-   IF K = T_STR ! K = T_BITS THEN
+   IF K = T_STR ! K = T_BITS ! K = T_XFIX THEN
       RETURN FMT1 ('rt_str_copy(@)', V);
    ORIF K = T_ABS THEN
       RETURN COPY_OF (T@.BASE, V);
@@ -492,7 +1071,7 @@ END FUNCTION COPY_OF;
 % the statement that assigns the value RV to the object LV of type T
 FUNCTION ASSIGN_CODE (T: TYP, LV, RV: TEXT) RETURNS (TEXT);
    CONST K: INTEGER := T@.KIND;
-   IF K = T_STR ! K = T_BITS THEN
+   IF K = T_STR ! K = T_BITS ! K = T_XFIX THEN
       RETURN FMT2 ('rt_b_assign(&@, @);', LV, RV);
    ORIF K = T_ABS THEN
       RETURN ASSIGN_CODE (T@.BASE, LV, RV);
@@ -512,7 +1091,7 @@ END FUNCTION ASSIGN_CODE;
 % the C that compares A and B of type T
 FUNCTION EQUAL_CODE (T: TYP, A, B: TEXT) RETURNS (TEXT);
    CONST K: INTEGER := T@.KIND;
-   IF K = T_STR ! K = T_BITS THEN
+   IF K = T_STR ! K = T_BITS ! K = T_XFIX THEN
       RETURN FMT2 ('rt_b_eq(@, @)', A, B);
    ORIF K = T_ABS THEN
       RETURN EQUAL_CODE (T@.BASE, A, B);
@@ -520,26 +1099,125 @@ FUNCTION EQUAL_CODE (T: TYP, A, B: TEXT) RETURNS (TEXT);
       RETURN FMT3 ('E_@(@, @)', T@.CNAME, A, B);
    ORIF K = T_SEM THEN
       RETURN MK ('0');
+   ORIF IS_D (T) THEN
+      RETURN FMT2 ('(rt_b_dcmp(@, @) == 0)', A, B);
    END IF;
    RETURN FMT2 ('(@ == @)', A, B);
 END FUNCTION EQUAL_CODE;
 
 % the value V checked against the range of T, if T has one (RANGE: 3.2.5, 3.3.5, 3.4.5)
 FUNCTION RANGE_CHECK (T: TYP, V: TEXT, SELF: TEXT) RETURNS (TEXT);
-   IF T@.LO_C.LEN = 0 ! NOT IS_NUMERIC_OR_ENUM (T) THEN
-      RETURN V;
+   IF T@.KIND = T_XFIX & T@.LO_C.LEN > 0 & NOT W@.SUPPRESS THEN
+      RETURN XFIX_RANGE_CHECK (T, V, SUBST_SELF (T@.LO_C, SELF), SUBST_SELF (T@.HI_C, SELF), T@.ROPEN,
+                               W@.TYPECHECK);
    END IF;
+   IF T@.KIND = T_INT & T@.LO_C.LEN > 0 & NOT (T@.MLO.OK & T@.MHI.OK) & REP_BITS (T) < 63
+      & NOT W@.SUPPRESS THEN
+      % bounds known only at run time: the value must also fit the bits of its
+      % FIXED_REP (3.2.3), the size it is stored in
+      BLOCK
+         VAR U: TEXT := MK ('0');
+         IF REP_UNSIGNED (T) THEN
+            U := MK ('1');
+         END IF;
+         RETURN RANGE_CHECK_IN (T, FMT3 ('rt_b_rep_fits(@, @, @)', V, NUM (REP_BITS (T)), U), SELF);
+      END BLOCK;
+   END IF;
+   RETURN RANGE_CHECK_IN (T, V, SELF);
+END FUNCTION RANGE_CHECK;
+
+FUNCTION RANGE_CHECK_IN (T: TYP, V: TEXT, SELF: TEXT) RETURNS (TEXT);
+   IF T@.LO_C.LEN = 0 ! NOT IS_NUMERIC_OR_ENUM (T) ! W@.SUPPRESS THEN
+      RETURN V;                                      % (-suppress: exceptions suppressed,
+   END IF;                                           % 4.5.8)
    IF IS_GEN_TEXT (T@.LO_C) ! IS_GEN_TEXT (T@.HI_C) THEN
       RETURN V;
    END IF;
    IF T@.RLEVEL > 0 & T@.RLEVEL <> CUR_LEVEL () & NOT (T@.MLO.OK & T@.MHI.OK) THEN
       RETURN V;                                     % its bounds are not visible here
    END IF;
-   IF T@.KIND = T_FLOAT THEN
+   IF IS_D (T) THEN
+      BLOCK
+         VAR TC: TEXT := MK ('0');
+         IF W@.TYPECHECK THEN
+            TC := MK ('1');
+         END IF;
+         RETURN FMT4 ('rt_b_drange(@, @, @, @)', V, SUBST_SELF (T@.LO_C, SELF), SUBST_SELF (T@.HI_C, SELF), TC);
+      END BLOCK;
+   ORIF T@.KIND = T_FLOAT THEN
+      IF W@.TYPECHECK THEN
+         RETURN FMT3 ('rt_b_tfrange(@, @, @)', V, SUBST_SELF (T@.LO_C, SELF), SUBST_SELF (T@.HI_C, SELF));
+      END IF;
       RETURN FMT3 ('rt_frange(@, @, @)', V, SUBST_SELF (T@.LO_C, SELF), SUBST_SELF (T@.HI_C, SELF));
    END IF;
+   IF W@.TYPECHECK THEN
+      RETURN FMT3 ('rt_b_trange(@, @, @)', V, SUBST_SELF (T@.LO_C, SELF), SUBST_SELF (T@.HI_C, SELF));
+   END IF;
    RETURN FMT3 ('rt_range(@, @, @)', V, SUBST_SELF (T@.LO_C, SELF), SUBST_SELF (T@.HI_C, SELF));
-END FUNCTION RANGE_CHECK;
+END FUNCTION RANGE_CHECK_IN;
+
+% V within LO .. HI (OPEN: 1 below, 2 above) by the program's LESS_THAN_: RANGE, or
+% INVALID_TYPE where a value is checked (D.4, 3.2.5)
+FUNCTION XFIX_RANGE_CHECK (T: TYP, V, LO, HI: TEXT, OPEN: INTEGER, TC: BOOLEAN) RETURNS (TEXT);
+   CONST X: TEXT := NEW_NAME ('xr');
+   VAR E: TEXT := MK ('RT_X_RANGE');
+   IF TC THEN
+      E := MK ('RT_B_INVALID_TYPE');
+   END IF;
+   RETURN CAT (FMT3 ('({ rstr @ = @; if (@) ', X, V, XFIX_OUTSIDE (T, X, LO, HI, OPEN)),
+               FMT2 ('rt_raise(@); @; })', E, X));
+END FUNCTION XFIX_RANGE_CHECK;
+
+% is X outside LO .. HI (OPEN: 1 below, 2 above, 3 both), by the program's LESS_THAN_?
+FUNCTION XFIX_OUTSIDE (T: TYP, X, LO, HI: TEXT, OPEN: INTEGER) RETURNS (TEXT);
+   CONST XT: ET := MKET (X, T);
+   VAR BAD_LO: TEXT;
+   VAR BAD_HI: TEXT;
+   IF OPEN = 1 ! OPEN = 3 THEN
+      BAD_LO := FMT1 ('!@', XFIX_LESS (MKET (LO, T), XT));
+   ELSE
+      BAD_LO := XFIX_LESS (XT, MKET (LO, T));
+   END IF;
+   IF OPEN >= 2 THEN
+      BAD_HI := FMT1 ('!@', XFIX_LESS (XT, MKET (HI, T)));
+   ELSE
+      BAD_HI := XFIX_LESS (MKET (HI, T), XT);
+   END IF;
+   RETURN FMT2 ('(@ || @)', BAD_LO, BAD_HI);
+END FUNCTION XFIX_OUTSIDE;
+
+FUNCTION XFIX_LESS (A, B: ET) RETURNS (TEXT);
+   CONST ARGS: ARG := VAL_ARG (A, VAL_ARG (B, NIL));
+   CONST Y: SYM := USER_OPERATOR (MKN ('LESS_THAN_'), ARGS, 0);
+   IF Y = NIL THEN
+      FAILT (0, 'the program defines no LESS_THAN_ for ', TYPE_NAME (A.T));
+   END IF;
+   RETURN CALL_SYM (Y, ARGS, 0).C;
+END FUNCTION XFIX_LESS;
+
+% the size of the FIXED_REP of a fixed point type, or 63 when it has none known
+FUNCTION REP_BITS (T: TYP) RETURNS (INTEGER);
+   IF T@.REPS = NIL THEN
+      RETURN 63;
+   END IF;
+   IF NOT TEQS (T@.REPS@.NAME, 'FIXED_REP') ! T@.REPS@.A = NIL THEN
+      RETURN 63;
+   END IF;
+   BLOCK
+      CONST N: MVAL := MANIFEST (T@.REPS@.A);
+      IF N.OK & N.V >= 0 & N.V < 63 THEN
+         RETURN N.V;
+      END IF;
+   END BLOCK;
+   RETURN 63;
+END FUNCTION REP_BITS;
+
+FUNCTION REP_UNSIGNED (T: TYP) RETURNS (BOOLEAN);
+   IF T@.REPS@.A@.NEXT = NIL THEN
+      RETURN FALSE;
+   END IF;
+   RETURN TEQS (T@.REPS@.A@.NEXT@.NAME, 'UNSIGNED');
+END FUNCTION REP_UNSIGNED;
 
 FUNCTION IS_NUMERIC_OR_ENUM (T: TYP) RETURNS (BOOLEAN);
    RETURN T@.KIND = T_INT ! T@.KIND = T_FLOAT ! T@.KIND = T_ENUM;
@@ -557,6 +1235,9 @@ FUNCTION SAME_CLASS (A, B: TYP) RETURNS (BOOLEAN);
       RETURN SAME_CLASS (A@.BASE, B);
    ORIF B@.KIND = T_ABS & A@.KIND <> T_ABS THEN
       RETURN SAME_CLASS (A, B@.BASE);
+   END IF;
+   IF A@.KIND = T_XFIX ! B@.KIND = T_XFIX THEN      % FIXED, every member (D.3)
+      RETURN (A@.KIND = T_XFIX ! A@.KIND = T_INT) & (B@.KIND = T_XFIX ! B@.KIND = T_INT);
    END IF;
    IF A@.KIND <> B@.KIND THEN
       RETURN FALSE;
@@ -586,7 +1267,9 @@ FUNCTION SAME_TYPE (A, B: TYP) RETURNS (BOOLEAN);
    IF NOT SAME_CLASS (A, B) THEN
       RETURN FALSE;
    END IF;
-   IF A@.KIND = T_INT ! A@.KIND = T_FLOAT THEN
+   IF A@.KIND = T_XFIX ! B@.KIND = T_XFIX THEN
+      RETURN SAME_XFIX (A, B);
+   ORIF A@.KIND = T_INT ! A@.KIND = T_FLOAT THEN
       RETURN A@.SCALE = B@.SCALE;
    ORIF A@.KIND = T_ARR THEN
       RETURN SAME_TYPE (A@.ELEM, B@.ELEM);
@@ -602,7 +1285,7 @@ FUNCTION IS_GEN_ARG (B: BND) RETURNS (BOOLEAN);
    IF B@.HI.LEN = 0 THEN
       RETURN FALSE;
    END IF;
-   RETURN STR (B@.HI, B@.HI.LEN)[0:0] = '?';
+   RETURN IS_GEN_TEXT (B@.HI);
 END FUNCTION IS_GEN_ARG;
 
 FUNCTION SAME_ARGS (A, B: BND) RETURNS (BOOLEAN);

@@ -1,0 +1,9 @@
+% segments and USES item lists (4.2): audit probe g05_notlisted
+SEGMENT LIB DEFINES (V, K);
+VAR V: INTEGER := 10;
+CONST K: INTEGER := 3;
+END SEGMENT LIB;
+MAIN SEGMENT T0
+   USES (TERMINAL, LIB (DATA: (V)));
+PUT_LINE (TO_CHAR (K));
+END SEGMENT T0;

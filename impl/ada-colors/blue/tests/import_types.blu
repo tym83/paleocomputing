@@ -1,0 +1,21 @@
+MAIN SEGMENT IMPORT_TYPES
+   USES (TERMINAL);
+% importing an abstract type imports its operations (4.3.1, 4.1.1)
+R ();
+PROCEDURE R () IMPORTS (TYPES: (T));
+   VAR E: T;
+   P (# E);
+   P (# E);
+   PUT_LINE ('counted ' !! TO_CHAR (COUNT (E)));
+END PROCEDURE R;
+MODULE M EXPORTS (T);
+   VAR C: INTEGER := 0;
+   TYPE T = INTEGER;
+   PROCEDURE T$P (# X: T) IMPORTS (DATA: (# C));
+      C := C + 1;
+   END PROCEDURE T$P;
+   FUNCTION T$COUNT (X: T) RETURNS (INTEGER) IMPORTS (DATA: (C));
+      RETURN C;
+   END FUNCTION T$COUNT;
+END MODULE M;
+END SEGMENT IMPORT_TYPES;

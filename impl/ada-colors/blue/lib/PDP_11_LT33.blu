@@ -1,0 +1,225 @@
+% The standard segment of the simulated machine (bluec's library, 4.7): a PDP-11
+% with LT33 teletypes. Its names are "built into a given implementation" (BLUE
+% Language Specification, Appendix C, C-9): the device type LT33_DEVICE_, the
+% operations LT33_OP_ of START_IO (4.8.1) and the interrupt semaphores LT33_PS
+% (printers) and LT33_KS (keyboards), which the devices RELEASE on the virtual
+% clock and which paths CONNECT to (4.6.1); and RP03 disk drives, DISK_DEVICE_,
+% whose operations DISK_OP_ read or write a block of BLOCK_WORDS words and interrupt
+% on the drive's semaphore DISK_S when done, after the seek and the rotation on
+% the virtual clock. A transfer takes the words of a DISK_BLOCK, or the storage
+% image of any value as a bitstring of BLOCK_BITS (TO_BIT, [T]$$: the declared
+% layout, PACKED fields and all), as the drive's DMA would take them from store.
+%
+% Teletype 1 is the console: it prints on standard output and its keyboard reads
+% standard input. Teletype 2 prints on standard output too, each line after "LT33-2|";
+% its keyboard has nothing to type. CR is not printed (LF ends the line). A printer
+% interrupts when it is enabled and after each byte; a keyboard interrupts when a
+% byte is waiting in its data register.
+SEGMENT PDP_11_LT33
+   USES (TERMINAL)
+   DEFINES (LT33_DEVICE_, LT33_OP_, START_IO, LT33_PS, LT33_KS, MAX_LT33,
+            DISK_DEVICE_, DISK_OP_, DISK_S, MAX_DISK, DISK_BLOCKS, BLOCK_WORDS, BLOCK_BITS,
+            DISK_BLOCK);
+
+   CONST MAX_LT33: INTEGER := 8;
+
+   TYPE LT33_OP_ = ENUM (\READ_BYTE,
+                         \PRINT_BYTE,
+                         \ENABLE_PRINTER_INTERRUPT,
+                         \ENABLE_KEYBOARD_INTERRUPT,
+                         \ENABLE_TAPE_READER,
+                         \ENABLE_PUNCH_MAINTENANCE,
+                         \READER_BUSY,
+                         \READER_DONE,
+                         \KEYBOARD_INTERRUPT_ENABLED,
+                         \TAPE_READER_ENABLED,
+                         \PRINTER_READY,
+                         \PRINTER_INTERRUPT_ENABLED,
+                         \PUNCH_MAINTENANCE_ENABLED);
+
+   VAR LT33_PS: ARRAY [1:MAX_LT33] OF SEMAPHORE (SYNCH) := NO_INTERRUPTS ();
+   VAR LT33_KS: ARRAY [1:MAX_LT33] OF SEMAPHORE (SYNCH) := NO_INTERRUPTS ();
+
+   % the RP03 disk drives
+   CONST MAX_DISK: INTEGER := 2;
+   CONST DISK_BLOCKS: INTEGER := 64;
+   CONST BLOCK_WORDS: INTEGER := 8;
+   CONST BLOCK_BITS: INTEGER := BLOCK_WORDS * (0).SIZE;   % words of the machine
+   TYPE DISK_OP_ = ENUM (\READ_BLOCK, \WRITE_BLOCK);
+   TYPE DISK_BLOCK = ARRAY [0 : BLOCK_WORDS - 1] OF INTEGER;
+   VAR DISK_S: ARRAY [1:MAX_DISK] OF SEMAPHORE (SYNCH) := NO_DISK_INTERRUPTS ();
+
+   FUNCTION NO_INTERRUPTS () RETURNS (ARRAY [1:MAX_LT33] OF SEMAPHORE (SYNCH));
+      VAR S: ARRAY [1:MAX_LT33] OF SEMAPHORE (SYNCH);
+      LOOP FOR I IN [1:MAX_LT33] DO
+         S(I) := SEMAPHORE$NEW (0);
+      END LOOP I;
+      RETURN S;
+   END FUNCTION NO_INTERRUPTS;
+
+   MODULE LT33_HARDWARE
+         IMPORTS (DATA: (# LT33_PS, LT33_KS))
+         EXPORTS (LT33_DEVICE_ WITH (NEW), START_IO);
+
+      TYPE LT33_DEVICE_ = INTEGER [1:MAX_LT33];
+
+      VAR AT_LINE_START: ARRAY [1:MAX_LT33] OF BOOLEAN := ALL_TRUE ();
+
+      FUNCTION ALL_TRUE () RETURNS (ARRAY [1:MAX_LT33] OF BOOLEAN);
+         VAR B: ARRAY [1:MAX_LT33] OF BOOLEAN;
+         LOOP FOR I IN [1:MAX_LT33] DO
+            B(I) := TRUE;
+         END LOOP I;
+         RETURN B;
+      END FUNCTION ALL_TRUE;
+
+      FUNCTION LT33_DEVICE_$NEW (N: INTEGER [1:MAX_LT33]) RETURNS (LT33_DEVICE_);
+         RETURN N;
+      END FUNCTION LT33_DEVICE_$NEW;
+
+      % a byte is waiting in the keyboard's data register: the keyboard interrupts
+      PROCEDURE KEY_ARRIVES (D: LT33_DEVICE_) IMPORTS (DATA: (# LT33_KS));
+         IF D = 1 THEN
+            IF NOT END_OF_INPUT () THEN
+               RELEASE (# LT33_KS(D));
+            END IF;
+         END IF;
+      END PROCEDURE KEY_ARRIVES;
+
+      % the control operations [\ENABLE_PRINTER_INTERRUPT : \ENABLE_PUNCH_MAINTENANCE]
+      PROCEDURE START_IO (D: LT33_DEVICE_, C: LT33_OP_)
+            IMPORTS (DATA: (# LT33_PS, LT33_KS));
+         SELECT C FROM
+            \ENABLE_PRINTER_INTERRUPT --> RELEASE (# LT33_PS(D)); END;   % ready
+            \ENABLE_KEYBOARD_INTERRUPT --> KEY_ARRIVES (D); END;
+            ELSE --> END;
+         END SELECT;
+      END PROCEDURE START_IO;
+
+      % \PRINT_BYTE: the byte goes to the printer, which interrupts when it is done
+      PROCEDURE START_IO (D: LT33_DEVICE_, C: LT33_OP_, BS: BIT (8))
+            IMPORTS (DATA: (# LT33_PS, AT_LINE_START));
+         SELECT OBJECT_MACHINE FROM
+            PDP_11 -->
+               BLOCK
+                  CONST CH: ASCII_STR (1) := [ASCII_STR (1)]$$(BS);
+                  IF CH = ''\LF THEN
+                     NEW_LINE;
+                     AT_LINE_START(D) := TRUE;
+                  ORIF CH <> ''\CR THEN
+                     IF D > 1 & AT_LINE_START(D) THEN
+                        PUT ('LT33-' !! TO_CHAR (D) !! '| ');
+                     END IF;
+                     PUT (CH);
+                     AT_LINE_START(D) := FALSE;
+                  END IF;
+               END BLOCK;
+            END;
+         END SELECT;
+         RELEASE (# LT33_PS(D));
+      END PROCEDURE START_IO;
+
+      % \READ_BYTE: the byte in the keyboard's data register
+      PROCEDURE START_IO (D: LT33_DEVICE_, C: LT33_OP_ ## BS: BIT (8))
+            IMPORTS (DATA: (# LT33_KS));
+         SELECT OBJECT_MACHINE FROM
+            PDP_11 --> BS := TO_BIT (GET_CODE ())[56:63]; END;
+         END SELECT;
+         KEY_ARRIVES (D);
+      END PROCEDURE START_IO;
+
+      % the status inquiries [\READER_BUSY : \PUNCH_MAINTENANCE_ENABLED]
+      PROCEDURE START_IO (D: LT33_DEVICE_, C: LT33_OP_ ## F: BOOLEAN);
+         F := C = \PRINTER_READY ! C = \KEYBOARD_INTERRUPT_ENABLED
+              ! C = \PRINTER_INTERRUPT_ENABLED;
+      END PROCEDURE START_IO;
+
+   END MODULE LT33_HARDWARE;
+
+   % ---- the RP03 disk drives -------------------------------------------------
+
+   FUNCTION NO_DISK_INTERRUPTS () RETURNS (ARRAY [1:MAX_DISK] OF SEMAPHORE (SYNCH));
+      VAR S: ARRAY [1:MAX_DISK] OF SEMAPHORE (SYNCH);
+      LOOP FOR I IN [1:MAX_DISK] DO
+         S(I) := SEMAPHORE$NEW (0);
+      END LOOP I;
+      RETURN S;
+   END FUNCTION NO_DISK_INTERRUPTS;
+
+   MODULE DISK_HARDWARE
+         IMPORTS (DATA: (# DISK_S))
+         EXPORTS (DISK_DEVICE_ WITH (NEW), START_IO);
+
+      TYPE DISK_DEVICE_ = INTEGER [1:MAX_DISK];
+      VAR SURFACE: ARRAY [1:MAX_DISK, 0 : DISK_BLOCKS - 1, 0 : BLOCK_WORDS - 1] OF INTEGER;
+      VAR HEAD_AT: ARRAY [1:MAX_DISK] OF INTEGER;     % the block under the heads
+
+      FUNCTION DISK_DEVICE_$NEW (N: INTEGER [1:MAX_DISK]) RETURNS (DISK_DEVICE_);
+         RETURN N;
+      END FUNCTION DISK_DEVICE_$NEW;
+
+      % the drive moves its heads (100 microseconds a block) and turns (1000): it
+      % interrupts when the transfer is done
+      PROCEDURE SEEK (D: DISK_DEVICE_, B: INTEGER [0 : DISK_BLOCKS - 1])
+            IMPORTS (DATA: (# DISK_S, HEAD_AT));
+         CONST DISTANCE: INTEGER := ABS (B - HEAD_AT (D));
+         HEAD_AT (D) := B;
+         SELECT OBJECT_MACHINE FROM
+            PDP_11 --> INTERRUPT_AFTER (1000 + 100 * DISTANCE # DISK_S (D)); END;
+         END SELECT;
+      END PROCEDURE SEEK;
+
+      % \WRITE_BLOCK: the words of DATA go to block B
+      PROCEDURE START_IO (D: DISK_DEVICE_, C: DISK_OP_, B: INTEGER [0 : DISK_BLOCKS - 1],
+                          DATA: DISK_BLOCK)
+            IMPORTS (DATA: (# SURFACE), ROUTINES: (SEEK));
+         LOOP FOR K IN [0 : BLOCK_WORDS - 1] DO
+            SURFACE (D, B, K) := DATA (K);
+         END LOOP K;
+         SEEK (D, B);
+      END PROCEDURE START_IO;
+
+      % \READ_BLOCK: the words of block B
+      PROCEDURE START_IO (D: DISK_DEVICE_, C: DISK_OP_, B: INTEGER [0 : DISK_BLOCKS - 1]
+                          ## DATA: DISK_BLOCK)
+            IMPORTS (DATA: (SURFACE), ROUTINES: (SEEK));
+         LOOP FOR K IN [0 : BLOCK_WORDS - 1] DO
+            DATA (K) := SURFACE (D, B, K);
+         END LOOP K;
+         SEEK (D, B);
+      END PROCEDURE START_IO;
+
+      % \WRITE_BLOCK of a storage image: its words, the first bits first
+      PROCEDURE START_IO (D: DISK_DEVICE_, C: DISK_OP_, B: INTEGER [0 : DISK_BLOCKS - 1],
+                          IMAGE: BIT (BLOCK_BITS))
+            IMPORTS (DATA: (# SURFACE), ROUTINES: (SEEK));
+         CONST W: INTEGER := (0).SIZE;
+         SELECT OBJECT_MACHINE FROM
+            PDP_11 -->
+               LOOP FOR K IN [0 : BLOCK_WORDS - 1] DO
+                  SURFACE (D, B, K) := [INTEGER]$$(IMAGE[K * W : K * W + W - 1]);
+               END LOOP K;
+            END;
+         END SELECT;
+         SEEK (D, B);
+      END PROCEDURE START_IO;
+
+      % \READ_BLOCK into a storage image
+      PROCEDURE START_IO (D: DISK_DEVICE_, C: DISK_OP_, B: INTEGER [0 : DISK_BLOCKS - 1]
+                          ## IMAGE: BIT (BLOCK_BITS))
+            IMPORTS (DATA: (SURFACE), ROUTINES: (SEEK));
+         CONST W: INTEGER := (0).SIZE;
+         VAR WORDS: BIT (BLOCK_BITS);
+         SELECT OBJECT_MACHINE FROM
+            PDP_11 -->
+               LOOP FOR K IN [0 : BLOCK_WORDS - 1] DO
+                  WORDS[K * W : K * W + W - 1] := TO_BIT (SURFACE (D, B, K));
+               END LOOP K;
+            END;
+         END SELECT;
+         IMAGE := WORDS;
+         SEEK (D, B);
+      END PROCEDURE START_IO;
+   END MODULE DISK_HARDWARE;
+
+END SEGMENT PDP_11_LT33;

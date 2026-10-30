@@ -1,6 +1,46 @@
 
 % ==== the predefined functions (3.x.6), the parallel support (D.7) and TERMINAL ===========
 
+% TO_FLOAT of a float value to the type T: OVERFLOW out of its format (3.3.6.1); D
+% (-pdp11) holds every F value exactly
+FUNCTION FLOAT_CONV (V: ET, T: TYP, TR: TEXT) RETURNS (TEXT);
+   IF IS_D (T) THEN
+      RETURN AS_D (V);
+   ORIF IS_D (V.T) THEN
+      RETURN FMT2 ('rt_b_single_of_d(@, @, 0)', V.C, TR);
+   END IF;
+   RETURN FMT3 ('rt_b_fconv(@, @, @, 0)', V.C, SINGLE_C (T@.SCALE), TR);
+END FUNCTION FLOAT_CONV;
+
+% the largest and smallest value and EPSILON of the format of the float type T
+% (3.3.6.3, 3.3.6.4): binary32 and binary64, or the PDP-11's F and D (-pdp11)
+FUNCTION FLOAT_LIMIT (T: TYP, WHICH: TEXT) RETURNS (TEXT);
+   VAR C: TEXT := MK ('DBL');
+   IF IS_D (T) THEN
+      IF TEQS (WHICH, 'MIN') THEN
+         RETURN MK ('rt_b_dneg(rt_b_dmax())');
+      ORIF TEQS (WHICH, 'MAX') THEN
+         RETURN MK ('rt_b_dmax()');
+      END IF;
+      RETURN MK ('rt_b_deps()');
+   END IF;
+   IF IMP_PRECISION_OF (T@.SCALE) = 7 THEN
+      C := MK ('FLT');
+   END IF;
+   IF W@.WORD = 16 & NOT TEQS (WHICH, 'EPSILON') THEN   % F: (1 - 2**-24) * 2**127
+      IF TEQS (WHICH, 'MIN') THEN
+         RETURN MK ('(-0x1.fffffep+126)');
+      END IF;
+      RETURN MK ('0x1.fffffep+126');
+   END IF;
+   IF TEQS (WHICH, 'MIN') THEN
+      RETURN FMT1 ('(-@_MAX)', C);
+   ORIF TEQS (WHICH, 'MAX') THEN
+      RETURN FMT1 ('@_MAX', C);
+   END IF;
+   RETURN FMT1 ('@_EPSILON', C);
+END FUNCTION FLOAT_LIMIT;
+
 FUNCTION NTH (L: NODE, K: INTEGER) RETURNS (NODE);
    VAR P: NODE := L;
    LOOP FOR I IN [1 : K] DO
@@ -64,9 +104,204 @@ FUNCTION ARG_EXPR (E: NODE) RETURNS (NODE);
    RETURN E;
 END FUNCTION ARG_EXPR;
 
+% the symbol of the predefined operator named NAME (3.1.4.2, D.5), or nothing
+FUNCTION OPERATOR_SYMBOL (NAME: TEXT) RETURNS (TEXT);
+   CONST NAMES: ASCII_STR(299) :=
+      ' ADD_:+ SUBTRACT_:- MULTIPLY_:* DIVIDE_:/ MODULUS_:MOD EXPONENTIATE_:** CONCATENATE_:!!'
+      ' EQUAL_:= UNEQUAL_:<> GREATER_THAN_:> LESS_THAN_:< GREATER_EQUAL_:>= LESS_EQUAL_:<='
+      ' AND_:AND OR_:OR XOR_:XOR IMPLIES_:-> MD_ADD_:+ MD_SUBTRACT_:- MD_MULTIPLY_:* MD_DIVIDE_:/'
+      ' NEGATE_:- MON_PLUS_:+ COMPLEMENT_:NOT ';
+   CONST L: INTEGER := NAME.LEN;
+   LOOP FOR I IN [0 : 299 - L - 2] DO
+      IF NAMES[I:I] = ' ' & NAMES[I + L + 1 : I + L + 1] = ':' THEN
+         IF NAMES[I + 1 : I + L] = STR (NAME, L) THEN
+            BLOCK
+               VAR J: INTEGER := I + L + 2;
+               LOOP UNTIL NAMES[J:J] = ' ' DO
+                  J := J + 1;
+               END LOOP;
+               RETURN MKN (NAMES[I + L + 2 : J - 1]);
+            END BLOCK;
+         END IF;
+      END IF;
+   END LOOP I;
+   RETURN NO_TEXT ();
+END FUNCTION OPERATOR_SYMBOL;
+
+% an operator routine invoked by its name: ADD_ (A, B), MULTIPLY_ (A, B), STORE_ (V ## X),
+% SUBSTRING_ (S, L, U) ... (D.5): the operator applied to the arguments; a further
+% precision and rounding argument stand for WITH PREC and the rounding mode (D.5 B, C)
+FUNCTION OPERATOR_BUILTIN (E: NODE, WANT: TYP) RETURNS (ET);
+   CONST NAME: TEXT := E@.NAME;
+   CONST LINE: INTEGER := E@.LINE;
+   CONST N: INTEGER := LIST_LENGTH (E@.A);
+   IF TEQS (NAME, 'STORE_') ! TEQS (NAME, 'SUBSTRING_STORE_') THEN
+      BLOCK
+         CONST TGT: NODE := FIRST_OUT_ARG (E);
+         VAR S: NODE := NEW_NODE (N_ASSIGN, LINE);
+         VAR SRC: NODE := E@.A;
+         IF TGT = NIL ! SRC = NIL THEN
+            FAILT (LINE, 'the wrong arguments for ', NAME);
+         END IF;
+         IF TEQS (NAME, 'STORE_') THEN
+            S@.A := TGT;
+         ELSE
+            IF N < 3 THEN
+               FAIL (LINE, 'SUBSTRING_STORE_ (V, L, U # X) (D.5)');
+            END IF;
+            S@.A := NEW_NODE (N_SUBSTR, LINE);
+            S@.A@.A := TGT;
+            S@.A@.B := NTH (E@.A, 1);
+            S@.A@.C := NTH (E@.A, 2);
+         END IF;
+         S@.B := QUALIFIED (COPY_NODE (SRC), NTH (E@.A, 1 + 2 * BOOL_INT (TEQS (NAME, 'SUBSTRING_STORE_'))),
+                            LINE);
+         BLOCK
+            CONST SAVED_CODE: BUF := W@.CODE;
+            VAR C: TEXT := MK ('({');
+            VAR P: CHUNK;
+            W@.CODE := (HEAD: NIL, TAIL: NIL);
+            ASSIGN_STMT (S);
+            P := W@.CODE.HEAD;
+            LOOP UNTIL P = NIL DO
+               C := FMT2 ('@ @', C, P@.T);
+               P := P@.NEXT;
+            END LOOP;
+            W@.CODE := SAVED_CODE;
+            RETURN MKET (CATS (C, ' })'), W@.TY_VOID);
+         END BLOCK;
+      END BLOCK;
+   END IF;
+   IF TEQS (NAME, 'SUBSTRING_') THEN
+      NEED_ARGS (E, 3, 3);
+      BLOCK
+         VAR S: NODE := NEW_NODE (N_SUBSTR, LINE);
+         S@.A := E@.A;
+         S@.B := NTH (E@.A, 1);
+         S@.C := NTH (E@.A, 2);
+         S@.A := COPY_NODE (E@.A);
+         RETURN EXPR (S, WANT);
+      END BLOCK;
+   END IF;
+   BLOCK
+      CONST SYM_: TEXT := OPERATOR_SYMBOL (NAME);
+      CONST UNARY_OP: BOOLEAN := TEQS (NAME, 'NEGATE_') ! TEQS (NAME, 'MON_PLUS_')
+                                  ! TEQS (NAME, 'COMPLEMENT_');
+      VAR X: NODE;
+      IF UNARY_OP THEN
+         NEED_ARGS (E, 1, 3);
+         X := NEW_NODE (N_UNOP, LINE);
+         X@.NAME := SYM_;
+         X@.A := COPY_NODE (E@.A);
+         RETURN EXPR (QUALIFIED (X, NTH (E@.A, 1), LINE), WANT);
+      END IF;
+      NEED_ARGS (E, 2, 4);
+      X := BIN_NODE (SYM_, LINE, COPY_NODE (E@.A), COPY_NODE (NTH (E@.A, 1)));
+      IF TEQS (SYM_, '/') THEN                         % DIVIDE_: // for fixed point
+         IF REAL_TYPE (EXPR (E@.A, NIL).T)@.KIND <> T_FLOAT THEN
+            X@.NAME := MK ('//');
+         END IF;
+      END IF;
+      IF STR (NAME, NAME.LEN)[0:2] = 'MD_' THEN
+         X@.FL := 2;
+      END IF;
+      RETURN EXPR (QUALIFIED (X, NTH (E@.A, 2), LINE), WANT);
+   END BLOCK;
+END FUNCTION OPERATOR_BUILTIN;
+
+% the expression X with the precision and rounding arguments that follow from Q on
+% (D.5 B, C): an N_QUAL node, or X itself when there are none
+FUNCTION QUALIFIED (X: NODE, Q: NODE, LINE: INTEGER) RETURNS (NODE);
+   VAR R: NODE := X;
+   VAR P: NODE := Q;
+   LOOP UNTIL P = NIL DO
+      IF R = X THEN
+         R := NEW_NODE (N_QUAL, LINE);
+         R@.A := X;
+      END IF;
+      IF (P@.KIND = N_NAME ! P@.KIND = N_ENUMLIT) & IS_ROUNDING_NAME (P@.NAME) THEN
+         R@.NAME := P@.NAME;
+      ELSE
+         R@.B := P;
+      END IF;
+      P := P@.NEXT;
+   END LOOP;
+   RETURN R;
+END FUNCTION QUALIFIED;
+
+FUNCTION IS_ROUNDING_NAME (NAME: TEXT) RETURNS (BOOLEAN);
+   RETURN FIND_LITERAL (NAME, ROUNDINGS_TYPE ()) <> NIL;
+END FUNCTION IS_ROUNDING_NAME;
+
+% ROUNDINGS as visible here: a program may give it more values (3.1.4.1, Appendix D)
+FUNCTION ROUNDINGS_TYPE () RETURNS (TYP);
+   CONST Y: SYM := LOOKUP (MKN ('ROUNDINGS'));
+   IF Y <> NIL THEN
+      IF Y@.KIND = Y_TYPE THEN
+         BLOCK
+            CONST T: TYP := REAL_TYPE (RESOLVE_USER_NAME (Y@.NAME, 0));
+            IF T@.KIND = T_ENUM THEN
+               RETURN T;
+            END IF;
+         END BLOCK;
+      END IF;
+   END IF;
+   RETURN W@.TY_ROUNDINGS;
+END FUNCTION ROUNDINGS_TYPE;
+
+% is the rounding mode in effect one the predefined operations know (3.2.4.1)?
+FUNCTION PREDEFINED_ROUNDING () RETURNS (BOOLEAN);
+   IF W@.QUAL = NIL THEN
+      RETURN TRUE;
+   END IF;
+   IF W@.QUAL@.NAME.LEN = 0 THEN
+      RETURN TRUE;
+   END IF;
+   RETURN TEQS (W@.QUAL@.NAME, 'ROUNDED') ! TEQS (W@.QUAL@.NAME, 'TRUNCATED')
+      ! TEQS (W@.QUAL@.NAME, 'NATIVE_R') ! TEQS (W@.QUAL@.NAME, 'NATIVE_T');
+END FUNCTION PREDEFINED_ROUNDING;
+
+% the first output (or inout) argument of a procedure invocation
+FUNCTION FIRST_OUT_ARG (E: NODE) RETURNS (NODE);
+   IF E@.C <> NIL THEN
+      RETURN E@.C;
+   END IF;
+   RETURN E@.B;
+END FUNCTION FIRST_OUT_ARG;
+
+% is one of the arguments L a variable or constant of a TYPE parameter (5.2)?
+FUNCTION GENERIC_OBJECT_ARG (L: NODE) RETURNS (BOOLEAN);
+   VAR A: NODE := L;
+   LOOP UNTIL A = NIL DO
+      IF A@.KIND = N_NAME THEN
+         BLOCK
+            CONST Y: SYM := LOOKUP (A@.NAME);
+            IF Y <> NIL THEN
+               IF (Y@.KIND = Y_VAR ! Y@.KIND = Y_CONST) & Y@.T <> NIL THEN
+                  IF Y@.T@.GENP.LEN > 0 THEN
+                     RETURN TRUE;
+                  END IF;
+               END IF;
+            END IF;
+         END BLOCK;
+      END IF;
+      A := A@.NEXT;
+   END LOOP;
+   RETURN FALSE;
+END FUNCTION GENERIC_OBJECT_ARG;
+
 FUNCTION BUILTIN (E: NODE, WANT: TYP) RETURNS (ET);
    CONST NAME: TEXT := E@.NAME;
    CONST LINE: INTEGER := E@.LINE;
+   IF CUR_GENERIC () <> NIL THEN                     % a predefined routine invoked with
+      IF GENERIC_OBJECT_ARG (E@.A) THEN              % objects of a TYPE parameter (5.2)
+         REQUIRE_WHERE (NAME, LINE);
+      END IF;
+   END IF;
+   IF OPERATOR_SYMBOL (NAME).LEN > 0 ! TEQS (NAME, 'STORE_') ! TEQS (NAME, 'SUBSTRING_')
+      ! TEQS (NAME, 'SUBSTRING_STORE_') THEN
+      RETURN OPERATOR_BUILTIN (E, WANT);
+   END IF;
    % ---- TERMINAL (implementation-defined) ----
    IF TEQS (NAME, 'PUT') ! TEQS (NAME, 'PUT_LINE') THEN
       NEED_ARGS (E, 1, 1);
@@ -75,6 +310,7 @@ FUNCTION BUILTIN (E: NODE, WANT: TYP) RETURNS (ET);
          IF REAL_TYPE (V.T)@.KIND <> T_STR THEN
             FAIL (LINE, 'PUT writes character strings; use TO_CHAR');
          END IF;
+         ASCII_ONLY (V.T, 'the terminal', LINE);
          IF TEQS (NAME, 'PUT') THEN
             RETURN MKET (FMT1 ('rt_put(@)', V.C), W@.TY_VOID);
          END IF;
@@ -95,6 +331,37 @@ FUNCTION BUILTIN (E: NODE, WANT: TYP) RETURNS (ET);
    ORIF TEQS (NAME, 'STOP') THEN
       NEED_ARGS (E, 1, 1);
       RETURN MKET (FMT1 ('rt_exit(@)', INT_EXPR (E@.A)), W@.TY_VOID);
+   ORIF TEQS (NAME, 'REAL_TIME') THEN               % the machine's real-time clock
+      NEED_ARGS (E, 0, 0);
+      RETURN MKET (MK ('rt_b_real_time()'), INT_TYPE (20));
+   ORIF TEQS (NAME, 'ARGUMENT_COUNT') THEN          % the program's arguments and files
+      NEED_ARGS (E, 0, 0);
+      RETURN MKET (MK ('rt_argc()'), W@.TY_INT);
+   ORIF TEQS (NAME, 'ARGUMENT') THEN
+      NEED_ARGS (E, 1, 1);
+      RETURN MKET (FMT1 ('rt_arg(@)', INT_EXPR (E@.A)), STR_TYPE (NO_TEXT (), NO_MVAL ()));
+   ORIF TEQS (NAME, 'FILE_EXISTS') ! TEQS (NAME, 'READ_FILE') THEN
+      NEED_ARGS (E, 1, 1);
+      BLOCK
+         CONST V: ET := EXPR (E@.A, NIL);
+         IF REAL_TYPE (V.T)@.KIND <> T_STR THEN
+            FAILT (LINE, 'a file is named by a character string: ', NAME);
+         END IF;
+         IF TEQS (NAME, 'FILE_EXISTS') THEN
+            RETURN MKET (FMT1 ('rt_b_file_exists(@)', V.C), W@.TY_BOOL);
+         END IF;
+         RETURN MKET (FMT1 ('rt_read_file(@)', V.C), STR_TYPE (NO_TEXT (), NO_MVAL ()));
+      END BLOCK;
+   ORIF TEQS (NAME, 'WRITE_FILE') THEN
+      NEED_ARGS (E, 2, 2);
+      BLOCK
+         CONST N: ET := EXPR (E@.A, NIL);
+         CONST V: ET := EXPR (E@.A@.NEXT, NIL);
+         IF REAL_TYPE (N.T)@.KIND <> T_STR ! REAL_TYPE (V.T)@.KIND <> T_STR THEN
+            FAIL (LINE, 'WRITE_FILE (name, text) takes two character strings');
+         END IF;
+         RETURN MKET (FMT2 ('rt_write_file(@, @)', N.C, V.C), W@.TY_VOID);
+      END BLOCK;
    END IF;
    % ---- conversions ----
    IF TEQS (NAME, 'TO_CHAR') THEN
@@ -107,22 +374,55 @@ FUNCTION BUILTIN (E: NODE, WANT: TYP) RETURNS (ET);
       NEED_ARGS (E, 2, 3);
       BLOCK
          CONST V: ET := EXPR (ARG_EXPR (E@.A), NIL);
-         CONST P: MVAL := MANIFEST (ARG_EXPR (E@.A@.NEXT));
+         CONST P: MVAL := MANIFEST_INTEGER_ARG (ARG_EXPR (E@.A@.NEXT), 'precision', 1,
+                                                MAX_FLOAT_PRECISION ());
          CONST VT: TYP := REAL_TYPE (V.T);
-         VAR T: TYP := NEW_TYP (T_FLOAT);
-         IF NOT P.OK THEN
-            FAIL (LINE, 'the precision of TO_FLOAT must be manifest (3.3.6.1)');
+         CONST T: TYP := FLOAT_TYPE (P.V);
+         CONST SINGLE: TEXT := SINGLE_C (P.V);
+         VAR TR: TEXT := MK ('0');
+         IF LIST_LENGTH (E@.A) = 3 ! E@.A@.NEXT@.KIND = N_QUAL THEN   % ROUNDED or TRUNCATED
+            BLOCK
+               VAR R: NODE := NTH (E@.A, 2);
+               IF R = NIL THEN
+                  R := E@.A@.NEXT;
+               END IF;
+               IF R@.KIND = N_QUAL THEN
+                  R := LIT_NODE_T (R@.NAME, LINE);
+               END IF;
+               IF TEQS (R@.NAME, 'TRUNCATED') THEN
+                  TR := MK ('1');
+               ORIF NOT TEQS (R@.NAME, 'ROUNDED') THEN
+                  FAIL (LINE, 'TO_FLOAT is predefined for ROUNDED and TRUNCATED (3.3.6.1)');
+               END IF;
+            END BLOCK;
          END IF;
-         IF P.V < 1 ! P.V > 15 THEN
-            FAIL (LINE, 'precisions from 1 to 15 are implemented (3.3.1)');
-         END IF;
-         T@.SCALE := P.V;
-         IF VT@.KIND = T_INT THEN
-            RETURN MKET (FMT2 ('rt_b_float_of_fix(@, @)', V.C, NUM (VT@.SCALE)), T);
+         IF VT@.KIND = T_INT & IS_D (T) THEN
+            RETURN MKET (FMT3 ('rt_b_d_of_fix(@, @, @)', V.C, NUM (VT@.SCALE), TR), T);
+         ORIF VT@.KIND = T_INT THEN
+            RETURN MKET (FMT4 ('rt_b_float_of_fix_r(@, @, @, @)', V.C, NUM (VT@.SCALE), SINGLE, TR), T);
          ORIF VT@.KIND = T_FLOAT THEN
-            RETURN MKET (V.C, T);
+            IF ARG_EXPR (E@.A)@.KIND = N_REAL & IMP_PRECISION_OF (P.V) > IMP_PRECISION_OF (VT@.SCALE) THEN
+               % a literal of fewer digits is taken as written with P digits (3.3.6.1)
+               BLOCK
+                  CONST Q: NODE := NEW_NODE (N_QUAL, LINE);
+                  CONST SAVED_Q: NODE := W@.QUAL;
+                  VAR L: ET;
+                  Q@.B := ARG_EXPR (E@.A@.NEXT);
+                  W@.QUAL := Q;
+                  L := EXPR (ARG_EXPR (E@.A), NIL);
+                  W@.QUAL := SAVED_Q;
+                  RETURN MKET (FLOAT_CONV (L, T, TR), T);
+               END BLOCK;
+            END IF;
+            RETURN MKET (FLOAT_CONV (V, T, TR), T);
          ORIF VT@.KIND = T_STR THEN
-            RETURN MKET (FMT1 ('rt_b_float_of_str(@)', V.C), T);
+            IF VT@.BASE <> NIL & VT@.BASE <> W@.TY_ASCII THEN
+               FAIL (LINE, 'TO_FLOAT is predefined for ASCII strings only (3.3.6.1)');
+            END IF;
+            IF IS_D (T) THEN
+               RETURN MKET (FMT2 ('rt_b_d_of_str(@, @)', V.C, TR), T);
+            END IF;
+            RETURN MKET (FMT3 ('rt_b_fconv(rt_b_float_of_str(@), @, @, 0)', V.C, SINGLE, TR), T);
          END IF;
          FAIL (LINE, 'TO_FLOAT converts fixed, float and charstring values (3.3.6.1)');
       END BLOCK;
@@ -136,6 +436,9 @@ FUNCTION BUILTIN (E: NODE, WANT: TYP) RETURNS (ET);
          IF REAL_TYPE (V.T)@.KIND = T_INT THEN
             RETURN MKET (FMT1 ('rt_abs(@)', V.C), INT_TYPE (V.T@.SCALE));
          ORIF REAL_TYPE (V.T)@.KIND = T_FLOAT THEN
+            IF IS_D (V.T) THEN
+               RETURN MKET (FMT1 ('rt_b_dabs(@)', V.C), V.T);
+            END IF;
             RETURN MKET (FMT1 ('fabs(@)', V.C), V.T);
          END IF;
          FAIL (LINE, 'ABS of something not a number');
@@ -148,7 +451,7 @@ FUNCTION BUILTIN (E: NODE, WANT: TYP) RETURNS (ET);
          IF T@.KIND <> T_ENUM THEN
             FAILT (LINE, 'an enumerated value expected by ', NAME);
          END IF;
-         IF T@.BASE@.UNORDERED THEN
+         IF IS_UNORDERED (T) THEN
             FAILT (LINE, 'not defined for an UNORDERED type (3.4.6.1): ', NAME);
          END IF;
          IF TEQS (NAME, 'SUCC') THEN
@@ -183,45 +486,54 @@ FUNCTION BUILTIN (E: NODE, WANT: TYP) RETURNS (ET);
          ORIF TEQS (NAME, 'HEX_OF') THEN
             BITS := MK ('4');
          END IF;
-         RETURN MKET (FMT2 ('rt_b_bits_of_digits(@, @)', EXPR (E@.A, NIL).C, BITS), BITS_TYPE (-1));
+         BLOCK
+            CONST V: ET := EXPR (E@.A, NIL);
+            IF REAL_TYPE (V.T)@.KIND <> T_STR THEN
+               FAILT (LINE, 'a character string expected by ', NAME);
+            END IF;
+            ASCII_ONLY (V.T, STR (NAME, NAME.LEN), LINE);
+            RETURN MKET (FMT2 ('rt_b_bits_of_digits(@, @)', V.C, BITS), BITS_TYPE (-1));
+         END BLOCK;
       END BLOCK;
    ORIF TEQS (NAME, 'FIXED_MIN') ! TEQS (NAME, 'FIXED_MAX') THEN   % 3.2.6.3
       NEED_ARGS (E, 3, 3);
       BLOCK
-         CONST S: MVAL := MANIFEST (E@.A);
-         IF NOT S.OK THEN
-            FAIL (LINE, 'the scale must be manifest');
+         CONST S: MVAL := MANIFEST_INTEGER_ARG (E@.A, 'scale', -1000, 1000);
+         CONST R: MVAL := MANIFEST_INTEGER_ARG (NTH (E@.A, 1), 'radix', 2, 1000);
+         IF R.V <> 2 THEN
+            FAIL (LINE, 'only radix 2 is predefined (3.2.6.3)');
          END IF;
+         CHECK_PRECISION_ARG (NTH (E@.A, 2), LINE);
          IF TEQS (NAME, 'FIXED_MIN') THEN
-            RETURN MKET (MK ('INT64_MIN'), INT_TYPE (S.V));
+            RETURN MKET (STD_MIN_C (), INT_TYPE (S.V));
          END IF;
-         RETURN MKET (MK ('INT64_MAX'), INT_TYPE (S.V));
+         RETURN MKET (STD_MAX_C (), INT_TYPE (S.V));
       END BLOCK;
    ORIF TEQS (NAME, 'FLOAT_MIN') ! TEQS (NAME, 'FLOAT_MAX') ! TEQS (NAME, 'EPSILON') THEN
       NEED_ARGS (E, 1, 1);
       BLOCK
-         VAR T: TYP := NEW_TYP (T_FLOAT);
-         CONST P: MVAL := MANIFEST (E@.A);
-         IF NOT P.OK THEN
-            FAIL (LINE, 'the precision must be manifest');
-         END IF;
-         T@.SCALE := P.V;
+         CONST P: MVAL := MANIFEST_INTEGER_ARG (E@.A, 'precision', 1, MAX_FLOAT_PRECISION ());
+         CONST T: TYP := FLOAT_TYPE (P.V);
          IF TEQS (NAME, 'FLOAT_MIN') THEN
-            RETURN MKET (MK ('(-DBL_MAX)'), T);
+            RETURN MKET (FLOAT_LIMIT (T, MK ('MIN')), T);
          ORIF TEQS (NAME, 'FLOAT_MAX') THEN
-            RETURN MKET (MK ('DBL_MAX'), T);
+            RETURN MKET (FLOAT_LIMIT (T, MK ('MAX')), T);
          END IF;
-         RETURN MKET (MK ('DBL_EPSILON'), T);
+         RETURN MKET (FLOAT_LIMIT (T, MK ('EPSILON')), T);   % 1.0 + EPSILON > 1.0 (3.3.6.4)
       END BLOCK;
    ORIF TEQS (NAME, 'IMP_PRECISION') THEN           % 3.3.6.5
       NEED_ARGS (E, 1, 1);
-      RETURN INT_ET (15);
+      RETURN INT_ET (IMP_PRECISION_OF (MANIFEST_INTEGER_ARG (E@.A, 'precision', 1,
+                                                             MAX_FLOAT_PRECISION ()).V));
    ORIF TEQS (NAME, 'IS_MANIFEST') THEN             % 3.5.6.2: not evaluated
       NEED_ARGS (E, 1, 1);
       RETURN MKET (NUM (BOOL_INT (MANIFEST (E@.A).OK)), W@.TY_BOOL);
    ORIF TEQS (NAME, 'HANDLER_EXISTS') THEN          % 3.5.6.1
       NEED_ARGS (E, 1, 1);
       RETURN MKET (NUM (BOOL_INT (HANDLER_EXISTS (E@.A@.NAME))), W@.TY_BOOL);
+   END IF;
+   IF TEQS (NAME, 'RUN_PATHS') THEN                 % the standard PAR_BLOCK_ (D.7)
+      RETURN RUN_PATHS (E);
    END IF;
    RETURN PARALLEL_BUILTIN (E, WANT);
 END FUNCTION BUILTIN;
@@ -237,6 +549,8 @@ FUNCTION IMAGE_OF (V: ET, LINE: INTEGER) RETURNS (ET);
          RETURN MKET (FMT1 ('rt_b_image(@)', V.C), S);
       END IF;
       RETURN MKET (FMT2 ('rt_b_fix_image(@, @)', V.C, NUM (T@.SCALE)), S);
+   ORIF IS_D (T) THEN
+      RETURN MKET (FMT2 ('rt_b_d_image(@, @)', V.C, NUM (T@.SCALE)), S);
    ORIF K = T_FLOAT THEN
       RETURN MKET (FMT2 ('rt_b_float_image(@, @)', V.C, NUM (T@.SCALE)), S);
    ORIF K = T_BOOL THEN
@@ -260,23 +574,35 @@ FUNCTION TO_FIXED_CALL (E: NODE) RETURNS (ET);
    CONST RND: TEXT := ROUNDING_ARG (E, N);
    VAR S: INTEGER := 0;
    IF N >= 2 & NOT IS_ROUNDING (NTH (E@.A, 1)) THEN
-      BLOCK
-         CONST SM: MVAL := MANIFEST (ARG_EXPR (NTH (E@.A, 1)));
-         IF NOT SM.OK THEN
-            FAIL (E@.LINE, 'the scale of TO_FIXED must be manifest (3.2.1)');
-         END IF;
-         S := SM.V;
-      END BLOCK;
+      S := MANIFEST_INTEGER_ARG (ARG_EXPR (NTH (E@.A, 1)), 'scale', -1000, 1000).V;
    END IF;
-   IF N >= 3 THEN
-      BLOCK
-         CONST R: NODE := ARG_EXPR (NTH (E@.A, 2));
-         IF NOT IS_ROUNDING (R) & NOT TEQS (R@.NAME, 'STD') THEN
-            IF MANIFEST (R).V <> 2 THEN
-               FAIL (E@.LINE, 'only radix 2 and STD precision are predefined (3.2.6.1)');
+   % TO_FIXED (V, S [, radix] [, precision] [, rounding]) (3.2.6.1): radix 2, STD
+   BLOCK
+      VAR K: INTEGER := 2;
+      LOOP UNTIL K >= N DO
+         BLOCK
+            CONST R: NODE := ARG_EXPR (NTH (E@.A, K));
+            IF IS_ROUNDING (R) ! (NTH (E@.A, K)@.KIND = N_QUAL & K = N - 1) THEN
+               IF K <> N - 1 THEN
+                  FAIL (E@.LINE, 'the rounding mode is the last argument of TO_FIXED (3.2.6.1)');
+               END IF;
+            ORIF (R@.KIND = N_NAME ! R@.KIND = N_ENUMLIT) & NOT NAMES_OBJECT (R@.NAME) THEN
+               CHECK_PRECISION_ARG (R, E@.LINE);
+            ORIF R@.KIND = N_FIELD & TEQS (R@.NAME, 'PRECISION') THEN
+               ;                                     % X.PRECISION: STD
+            ELSE
+               IF MANIFEST_INTEGER_ARG (R, 'radix', 2, 1000).V <> 2 THEN
+                  FAIL (E@.LINE, 'only radix 2 is predefined (3.2.6.1)');
+               END IF;
             END IF;
-         END IF;
-      END BLOCK;
+         END BLOCK;
+         K := K + 1;
+      END LOOP;
+   END BLOCK;
+   IF T@.KIND = T_INT & (ARG_EXPR (E@.A)@.KIND = N_REAL ! ARG_EXPR (E@.A)@.KIND = N_INT) THEN
+      % a fixed-literal: its mathematical value, not first rounded to its own scale
+      RETURN MKET (FMT3 ('rt_b_fix_val(@, @, @)', CSTRING (ARG_EXPR (E@.A)@.NAME), NUM (S), RND),
+                   INT_TYPE (S));
    END IF;
    IF T@.KIND = T_INT THEN
       BLOCK
@@ -287,11 +613,13 @@ FUNCTION TO_FIXED_CALL (E: NODE) RETURNS (ET);
          W@.ROUNDED := SAVED;
          RETURN MKET (C, INT_TYPE (S));
       END BLOCK;
+   ORIF IS_D (T) THEN
+      RETURN MKET (FMT3 ('rt_b_fix_of_d(@, @, @)', V.C, NUM (S), RND), INT_TYPE (S));
    ORIF T@.KIND = T_FLOAT THEN
       RETURN MKET (FMT3 ('rt_b_fix_of_float(@, @, @)', V.C, NUM (S), RND), INT_TYPE (S));
    ORIF T@.KIND = T_ENUM ! T@.KIND = T_BOOL THEN
       IF T@.KIND = T_ENUM THEN
-         IF T@.BASE@.UNORDERED THEN
+         IF IS_UNORDERED (T) THEN
             FAIL (E@.LINE, 'TO_FIXED is not defined for an UNORDERED type (3.2.6.1)');
          END IF;
          IF T@.REPS <> NIL THEN
@@ -304,10 +632,19 @@ FUNCTION TO_FIXED_CALL (E: NODE) RETURNS (ET);
    ORIF T@.KIND = T_BITS THEN
       RETURN MKET (RESCALE_C (FMT1 ('rt_b_int_of_bits(@)', V.C), 0, S), INT_TYPE (S));
    ORIF T@.KIND = T_STR THEN
+      ASCII_ONLY (T, 'TO_FIXED', E@.LINE);
       RETURN MKET (FMT3 ('rt_b_fix_of_str(@, @, @)', V.C, NUM (S), RND), INT_TYPE (S));
    END IF;
    FAILT (E@.LINE, 'no TO_FIXED for ', TYPE_NAME (V.T));
 END FUNCTION TO_FIXED_CALL;
+
+FUNCTION STATIC_SIZE_OR (T: TYP) RETURNS (INTEGER);
+   CONST M: MVAL := STATIC_SIZE (T);
+   IF M.OK THEN
+      RETURN M.V;
+   END IF;
+   RETURN -1;
+END FUNCTION STATIC_SIZE_OR;
 
 % TO_BIT: the representation (3.6.6.1); machine-dependent but for enumerated values and
 % bitstrings
@@ -326,18 +663,36 @@ FUNCTION BITS_OF (V: ET, LINE: INTEGER) RETURNS (ET);
    ORIF K = T_STR THEN
       % a charstring is a sequence of values of its (enumerated) character set, whose
       % representation the language defines: the reason J3.6-6 gives for enumerated
-      % values holds (Appendix C writes PUT_OUT's TO_BIT outside any machine part)
-      RETURN MKET (FMT1 ('rt_b_bits_of_str(@)', V.C), BITS_TYPE (-1));
+      % values holds (Appendix C writes PUT_OUT's TO_BIT outside any machine part):
+      % each character the representation of its value, by the packing (3.7.3)
+      RETURN MKET (FMT4 ('rt_b_bits_of_chars(@, @, @, @)', V.C, NUM (CHAR_SIZE (T)),
+                         NUM (PACKING_OF (T)), CHAR_REPS (T)), BITS_TYPE (STATIC_SIZE_OR (T)));
    END IF;
    REQUIRE_MACHINE (LINE);
-   IF K = T_INT THEN
-      RETURN MKET (FMT1 ('rt_b_bits_of_int(@, 64)', V.C), BITS_TYPE (64));
+   IF K = T_INT & REP_BITS (T) < 63 THEN            % the bits of its FIXED_REP (3.2.3)
+      RETURN MKET (FMT2 ('rt_b_bits_of_int(@, @)', V.C, NUM (REP_BITS (T))), BITS_TYPE (REP_BITS (T)));
+   ORIF K = T_INT THEN
+      RETURN MKET (FMT2 ('rt_b_bits_of_int(@, @)', V.C, NUM (W@.WORD)), BITS_TYPE (W@.WORD));
    ORIF K = T_BOOL THEN
       RETURN MKET (FMT1 ('rt_b_bits_of_int(@, 1)', V.C), BITS_TYPE (1));
+   ORIF IS_D (T) THEN                               % the PDP-11's D and F (-pdp11)
+      RETURN MKET (FMT1 ('rt_b_bits_of_d(@)', V.C), BITS_TYPE (64));
+   ORIF K = T_FLOAT & W@.WORD = 16 THEN
+      RETURN MKET (FMT1 ('rt_b_bits_of_f(@)', V.C), BITS_TYPE (32));
+   ORIF K = T_FLOAT & IMP_PRECISION_OF (T@.SCALE) = 7 THEN   % binary32 (3.3.3)
+      RETURN MKET (FMT1 ('rt_b_bits_of_single(@)', V.C), BITS_TYPE (32));
    ORIF K = T_FLOAT THEN
       RETURN MKET (FMT1 ('rt_b_bits_of_float(@)', V.C), BITS_TYPE (64));
-   ORIF K = T_STR THEN
-      RETURN MKET (FMT1 ('rt_b_bits_of_str(@)', V.C), BITS_TYPE (-1));
+   ORIF K = T_XFIX THEN                             % its bits (Appendix D.4)
+      RETURN MKET (V.C, BITS_TYPE (XFIX_SIZE (T)));
+   ORIF K = T_PTR THEN                              % the address of the object (NIL 0)
+      RETURN MKET (FMT2 ('rt_b_bits_of_int(rt_b_ptr_addr(@), @)', V.C, NUM (W@.WORD)), BITS_TYPE (W@.WORD));
+   ORIF K = T_SEM THEN                              % its value (3.11.3)
+      RETURN MKET (FMT2 ('rt_b_bits_of_int(rt_b_sem_count(@), @)', V.C, NUM (W@.WORD)), BITS_TYPE (W@.WORD));
+   ORIF K = T_REC THEN                              % the fields by the reptype (3.9.3)
+      RETURN MKET (RECORD_BITS (T, V.C), BITS_TYPE (STATIC_SIZE_OR (T)));
+   ORIF K = T_ARR THEN                              % the elements by the packing (3.8.3)
+      RETURN MKET (ARRAY_BITS (T, V.C), BITS_TYPE (STATIC_SIZE_OR (T)));
    END IF;
    FAILT (LINE, 'no TO_BIT for ', TYPE_NAME (T));
 END FUNCTION BITS_OF;

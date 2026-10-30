@@ -1,0 +1,7 @@
+MAIN SEGMENT TYPE_CLOSEDERR
+   USES (TERMINAL);
+% a type declaration is a closed scope (3.12.1)
+VAR N: INTEGER := 5;
+TYPE T = ARRAY [1:N] OF INTEGER;
+VAR A: T;
+END SEGMENT TYPE_CLOSEDERR;

@@ -7,6 +7,8 @@
 #endif
 #include <unistd.h>
 #include <math.h>
+#include <fenv.h>
+#include <float.h>
 #include <pthread.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -2672,6 +2674,10 @@ void rt_b_lang(void) {
   RT_X_CREATE = RT_X_TASKING = RT_X_EMPTY_MAILBOX = rt_exc("TASKING");
   RT_X_FILE = rt_exc("END_OF_INPUT");
   RT_X_DEADLOCK = rt_exc("DEADLOCK");
+  RT_B_INVALID_TYPE = rt_exc("INVALID_TYPE");
+  RT_B_INVALID_REP = rt_exc("INVALID_REP");
+  RT_B_UNDERFLOW = rt_exc("UNDERFLOW");
+  RT_B_ARRAY_TOO_BIG = rt_exc("ARRAY_TOO_BIG");
 }
 
 rstr rt_b_slice(rstr s, rt_int l, rt_int u) {
@@ -2700,8 +2706,11 @@ int rt_b_eq(rstr a, rstr b) {
   return a.len == 0 || memcmp(a.p, b.p, (size_t)a.len) == 0;
 }
 
+#define B_MAXLEN 100000000             /* (BIT.LENGTH).MAX, (CHAR_STR.LENGTH).MAX */
+
 rstr rt_b_dup(rstr c, rt_int n) {
   if (n < 0) rt_raise(RT_B_INVALID_LENGTH);
+  if (n > B_MAXLEN || n * c.len > B_MAXLEN) rt_raise(RT_B_INVALID_SIZE);
   rstr r = rt_str_new(n * c.len);
   for (rt_int i = 0; i < n; i++) memcpy(r.p + i * c.len, c.p, (size_t)c.len);
   return r;
@@ -2814,31 +2823,179 @@ rt_int rt_b_div_sc(rt_int a, rt_int b, rt_int k, int rounded) {
   return b_narrow(b_divide(a, (b_wide)b * b_pow2(-k), rounded));
 }
 
-/* a decimal literal [+-]ddd[.ddd][E[+-]ee] as a mantissa at the scale, rounded */
-rt_int rt_b_fix_lit(const char *s, rt_int scale) {
-  b_wide num = 0, den = 1;
-  int neg = 0, frac = 0;
+/* exact decimal values (3.2.2, 3.2.6.1): natural numbers of 32-bit limbs */
+typedef struct {
+  int n, cap;
+  uint32_t *d;
+} b_big;
+
+static void big_init(b_big *a, uint32_t v) {
+  a->cap = 16;
+  a->d = rt_alloc(sizeof *a->d * (size_t)a->cap);
+  a->d[0] = v;
+  a->n = v != 0;
+}
+
+static void big_room(b_big *a, int n) {
+  if (n <= a->cap) return;
+  uint32_t *d = rt_alloc(sizeof *d * (size_t)(n * 2));
+  if (a->n) memcpy(d, a->d, sizeof *d * (size_t)a->n);
+  a->d = d;
+  a->cap = n * 2;
+}
+
+static void big_mul_add(b_big *a, uint32_t m, uint32_t c) {
+  uint64_t carry = c;
+  for (int i = 0; i < a->n; i++) {
+    uint64_t t = (uint64_t)a->d[i] * m + carry;
+    a->d[i] = (uint32_t)t;
+    carry = t >> 32;
+  }
+  if (carry) {
+    big_room(a, a->n + 1);
+    a->d[a->n++] = (uint32_t)carry;
+  }
+}
+
+static void big_shl(b_big *a, rt_int k) {
+  if (!a->n || !k) return;
+  int w = (int)(k / 32), b = (int)(k % 32);
+  big_room(a, a->n + w + 1);
+  a->d[a->n + w] = 0;
+  for (int i = a->n - 1; i >= 0; i--) {
+    uint64_t t = (uint64_t)a->d[i] << b;
+    a->d[i + w + 1] |= (uint32_t)(t >> 32);
+    a->d[i + w] = (uint32_t)t;
+  }
+  for (int i = 0; i < w; i++) a->d[i] = 0;
+  a->n += w + 1;
+  while (a->n && !a->d[a->n - 1]) a->n--;
+}
+
+static int big_cmp(const b_big *a, const b_big *b) {
+  if (a->n != b->n) return a->n > b->n ? 1 : -1;
+  for (int i = a->n - 1; i >= 0; i--)
+    if (a->d[i] != b->d[i]) return a->d[i] > b->d[i] ? 1 : -1;
+  return 0;
+}
+
+static void big_sub(b_big *a, const b_big *b) {      /* a >= b */
+  int64_t borrow = 0;
+  for (int i = 0; i < a->n; i++) {
+    int64_t t = (int64_t)a->d[i] - (i < b->n ? b->d[i] : 0) - borrow;
+    borrow = t < 0;
+    a->d[i] = (uint32_t)(t + (borrow ? ((int64_t)1 << 32) : 0));
+  }
+  while (a->n && !a->d[a->n - 1]) a->n--;
+}
+
+static void big_copy(b_big *dst, const b_big *src) {
+  big_init(dst, 0);
+  big_room(dst, src->n + 1);
+  memcpy(dst->d, src->d, sizeof *dst->d * (size_t)src->n);
+  dst->n = src->n;
+}
+
+/* the digits DIG (n of them) times 10**e times 2**scale, as a mantissa: rounded to
+ * the nearest (ties to even) or truncated; *ovf when it exceeds 2**63 */
+static unsigned __int128 b_exact(const char *dig, int n, long e, rt_int scale, int rounded,
+                                 int *ovf) {
+  b_big num, den, t;
+  big_init(&num, 0);
+  big_init(&den, 1);
+  *ovf = 0;
+  for (int i = 0; i < n; i++) big_mul_add(&num, 10, (uint32_t)(dig[i] - '0'));
+  if (!num.n) return 0;
+  if (e > 5000) {
+    *ovf = 1;
+    return 0;
+  }
+  if (e < -5000) return 0;
+  for (; e > 0; e--) big_mul_add(&num, 10, 0);
+  for (; e < 0; e++) big_mul_add(&den, 10, 0);
+  if (scale > 5000) {
+    *ovf = 1;
+    return 0;
+  }
+  if (scale < -5000) return 0;
+  if (scale >= 0) big_shl(&num, scale);
+  else big_shl(&den, -scale);
+  big_copy(&t, &den);
+  big_shl(&t, 64);
+  if (big_cmp(&num, &t) >= 0) {
+    *ovf = 1;
+    return 0;
+  }
+  unsigned __int128 q = 0;
+  for (int j = 63; j >= 0; j--) {
+    big_copy(&t, &den);
+    big_shl(&t, j);
+    if (big_cmp(&num, &t) >= 0) {
+      big_sub(&num, &t);
+      q |= (unsigned __int128)1 << j;
+    }
+  }
+  if (rounded && num.n) {
+    big_shl(&num, 1);
+    int c = big_cmp(&num, &den);
+    if (c > 0 || (c == 0 && (q & 1))) q++;
+  }
+  return q;
+}
+
+/* a literal [+-]digits[.digits][E[+-]digits] as a mantissa at the scale; FALSE when
+ * it does not have that form */
+static int b_parse_lit(const char *s, rt_int scale, int rounded, rt_int *v) {
+  int neg = 0, nd = 0, frac = 0, point = 0;
   long e = 0;
+  char *dig = rt_alloc(strlen(s) + 1);
   if (*s == '+' || *s == '-') neg = *s++ == '-';
   for (; *s && *s != 'E'; s++) {
     if (*s == '.') {
-      frac = 1;
+      if (point) return 0;
+      point = 1;
       continue;
     }
-    if (num > ((b_wide)1 << 100)) rt_raise(RT_X_OVERFLOW);
-    num = num * 10 + (*s - '0');
-    if (frac) den *= 10;
+    if (*s < '0' || *s > '9') return 0;
+    if (nd || *s != '0') dig[nd++] = *s;
+    if (point) frac++;
   }
-  if (*s == 'E') e = strtol(s + 1, NULL, 10);
-  for (; e > 0; e--) num *= 10;
-  for (; e < 0; e++) den *= 10;
-  if (scale >= 0) num *= b_pow2(scale);
-  else den *= b_pow2(-scale);
-  b_wide q = b_divide(num, den, 1);
-  return b_narrow(neg ? -q : q);
+  if (*s == 'E') {
+    const char *x = ++s;
+    if (*x == '+' || *x == '-') x++;
+    if (!*x) return 0;
+    for (const char *y = x; *y; y++)
+      if (*y < '0' || *y > '9') return 0;
+    e = strtol(s, NULL, 10);
+    if (e > 100000) e = 100000;
+    if (e < -100000) e = -100000;
+  }
+  int ovf;
+  unsigned __int128 q = b_exact(dig, nd, e - frac, scale, rounded, &ovf);
+  if (ovf || q > ((unsigned __int128)1 << 63) || (!neg && q == ((unsigned __int128)1 << 63)))
+    rt_raise(RT_X_OVERFLOW);
+  *v = neg ? (rt_int)(-(b_wide)q) : (rt_int)q;
+  return 1;
 }
 
+/* a decimal literal [+-]ddd[.ddd][E[+-]ee] as a mantissa at the scale, rounded */
+rt_int rt_b_fix_lit(const char *s, rt_int scale) {
+  rt_int v = 0;
+  b_parse_lit(s, scale, 1, &v);
+  return v;
+}
+
+/* TO_FIXED of a literal: its mathematical value at the scale (3.2.6.1) */
+rt_int rt_b_fix_val(const char *s, rt_int scale, int rounded) {
+  rt_int v = 0;
+  b_parse_lit(s, scale, rounded, &v);
+  return v;
+}
+
+static int b_pdp11;
+static rstr b_md_pdp11(int op, rt_int a, rt_int b);
 rstr rt_b_md(int op, rt_int a, rt_int b) {
+  if (b_pdp11) return b_md_pdp11(op, a, b);
   b_wide r = 0;
   switch (op) {
   case '+': r = (b_wide)a + b; break;
@@ -2862,6 +3019,7 @@ double rt_b_fchk(double v) {
 
 rstr rt_b_zeros(rt_int n) {
   if (n < 0) rt_raise(RT_B_INVALID_LENGTH);
+  if (n > B_MAXLEN) rt_raise(RT_B_INVALID_SIZE);
   rstr r = rt_str_new(n);
   memset(r.p, '0', (size_t)n);
   return r;
@@ -2927,6 +3085,99 @@ double rt_b_float_of_bits(rstr b) {
   return v;
 }
 
+/* The layout of n elements of es bits on the simulated PDP-11 with 64-bit words
+ * (3.7.3, 3.8.3, 3.9.3): each element in a slot, right-aligned, the filler bits
+ * (zeros) before it. DENSE (0): the slot is the element; PACKED (1): the smallest
+ * addressable unit of 8, 16, 32 or 64 bits that holds it (a character is a byte);
+ * UNPACKED (2): whole words, as a simple variable. */
+static rt_int B_WORD = 64;            /* bits of a word: 16 with bluec -pdp11 */
+static int b_pdp11;                   /* bluec -pdp11: the PDP-11's F and D ranges */
+static rt_int b_slot(rt_int es, int mode) {
+  if (es <= 0) return mode == 0 ? 0 : 8;
+  if (mode == 0) return es;
+  if (mode == 1 && es <= B_WORD) {
+    rt_int u = 8;
+    while (u < es) u *= 2;
+    return u;
+  }
+  return ((es + B_WORD - 1) / B_WORD) * B_WORD;
+}
+rt_int rt_b_pack_size(rt_int n, rt_int es, int mode) {
+  return n <= 0 ? 0 : n * b_slot(es, mode);
+}
+
+/* the bit position of the value of element i (from 0) in that layout */
+static rt_int b_pack_pos(rt_int i, rt_int es, int mode) {
+  rt_int slot = b_slot(es, mode);
+  return i * slot + (slot - es);
+}
+
+/* a field of fs bits after sz bits of a record (3.9.3): the new end; a PACKED field
+ * does not cross a word if it fits in one */
+rt_int rt_b_layout(rt_int sz, rt_int fs, int mode) {
+  rt_int slot = b_slot(fs, mode);
+  if (mode == 1 && slot <= B_WORD) {
+    rt_int start = ((sz + slot - 1) / slot) * slot;
+    if (start % B_WORD + slot > B_WORD) start = ((start + B_WORD - 1) / B_WORD) * B_WORD;
+    return start + slot;
+  }
+  if (mode == 2) return ((sz + B_WORD - 1) / B_WORD) * B_WORD + slot;
+  return sz + slot;
+}
+
+/* TO_BIT of a character string: each character the representation of its value in
+ * the character set (es bits, or reps[code]), laid out by the packing; fillers 0 */
+rstr rt_b_bits_of_chars(rstr s, rt_int es, int mode, const rstr *reps, rt_int n) {
+  rt_int size = rt_b_pack_size(s.len, es, mode);
+  if (size > B_MAXLEN) rt_raise(RT_B_INVALID_SIZE);
+  rstr r = rt_str_new(size);
+  memset(r.p, '0', (size_t)size);
+  for (rt_int i = 0; i < s.len; i++) {
+    rt_int code = (unsigned char)s.p[i], at = b_pack_pos(i, es, mode);
+    if (reps) {
+      if (code >= n || reps[code].len != es) rt_raise(RT_B_INVALID_REP);
+      memcpy(r.p + at, reps[code].p, (size_t)es);
+    } else {
+      if (es < 63 && code >= ((rt_int)1 << es)) rt_raise(RT_B_INVALID_REP);
+      for (rt_int k = 0; k < es; k++) r.p[at + k] = (unsigned char)('0' + ((code >> (es - 1 - k)) & 1));
+    }
+  }
+  return r;
+}
+
+/* [CHAR_STR (n, C)]$$(bits): the characters of that representation; INVALID_SIZE if
+ * no number of characters has it, INVALID_REP for a code not of the character set */
+rstr rt_b_chars_of_bits(rstr b, rt_int es, int mode, const rstr *reps, rt_int n) {
+  rt_int len = 0;
+  while (rt_b_pack_size(len, es, mode) < b.len) len++;
+  if (rt_b_pack_size(len, es, mode) != b.len) rt_raise(RT_B_INVALID_SIZE);
+  rstr r = rt_str_new(len);
+  for (rt_int i = 0; i < len; i++) {
+    rt_int at = b_pack_pos(i, es, mode), code = -1;
+    if (reps) {
+      for (rt_int c = 0; c < n; c++)
+        if (reps[c].len == es && memcmp(reps[c].p, b.p + at, (size_t)es) == 0) { code = c; break; }
+    } else {
+      code = 0;
+      for (rt_int k = 0; k < es; k++) code = code * 2 + (b.p[at + k] == '1');
+      if (code >= n) code = -1;
+    }
+    if (code < 0) rt_raise(RT_B_INVALID_REP);
+    r.p[i] = (unsigned char)code;
+  }
+  return r;
+}
+
+/* FIXED_REP (size, signing) (v): the value if it has that representation (3.1.4.1) */
+rt_int rt_b_fixed_rep(rt_int v, rt_int size, int is_unsigned) {
+  if (size < 64) {
+    rt_int lo = is_unsigned ? 0 : -((rt_int)1 << (size > 0 ? size - 1 : 0));
+    rt_int hi = is_unsigned ? ((rt_int)1 << size) - 1 : size > 0 ? ((rt_int)1 << (size - 1)) - 1 : 0;
+    if (v < lo || v > hi) rt_raise(RT_B_INVALID_REP);
+  } else if (is_unsigned && v < 0) rt_raise(RT_B_INVALID_REP);
+  return v;
+}
+
 rstr rt_b_bits_of_str(rstr s) {
   rstr r = rt_str_new(s.len * 8);
   for (rt_int i = 0; i < s.len; i++)
@@ -2946,6 +3197,7 @@ rstr rt_b_str_of_bits(rstr b) {
 }
 
 rstr rt_b_bits_of_digits(rstr s, int bits) {
+  if (s.len * bits > B_MAXLEN) rt_raise(RT_B_INVALID_SIZE);
   rstr r = rt_str_new(s.len * bits);
   for (rt_int i = 0; i < s.len; i++) {
     int c = s.p[i], v = c >= '0' && c <= '9' ? c - '0' : c >= 'A' && c <= 'F' ? c - 'A' + 10 : 99;
@@ -2968,8 +3220,10 @@ rt_int rt_b_enum_of_rep(rstr b, const rstr *reps, rt_int n) {
 
 /* ---- BLUE: conversions and images ------------------------------------- */
 
+static rstr b_big_image(rt_int v, rt_int k);
+
 rstr rt_b_fix_image(rt_int v, rt_int scale) {
-  if (scale <= 0) return rt_str_of_int(rt_b_shl(v, -scale));
+  if (scale <= 0) return b_big_image(v, -scale);
   /* m * 2**-s has exactly s decimal digits after the point */
   char b[200];
   int n = 0, neg = v < 0;
@@ -3022,24 +3276,34 @@ rt_int rt_b_fix_of_float(double v, rt_int scale, int rounded) {
   return (rt_int)t;
 }
 
-/* a fixed-literal with blanks around it (3.2.6.1) */
+/* a fixed-literal with blanks around it (3.2.6.1): ddd[.ddd]\Sss, [+-]ddd[E[+-]ee]
+ * or [+-]ddd.ddd...\Sss; its value is converted exactly, then rounded or truncated */
 rt_int rt_b_fix_of_str(rstr s, rt_int scale, int rounded) {
-  char b[256];
   rt_int i = 0, n = 0;
-  (void)rounded;
+  char *b = rt_alloc((size_t)s.len + 1);
   while (i < s.len && s.p[i] == ' ') i++;
-  while (i < s.len && s.p[i] != ' ' && n < 255) b[n++] = (char)s.p[i++];
+  while (i < s.len && s.p[i] != ' ') b[n++] = (char)s.p[i++];
   while (i < s.len && s.p[i] == ' ') i++;
   b[n] = 0;
-  int ok = n > 0 && i == s.len, digits = 0;
-  for (int k = 0; ok && k < n; k++) {
-    char c = b[k];
-    if (c >= '0' && c <= '9') digits++;
-    else if (!((c == '+' || c == '-') && (k == 0 || b[k - 1] == 'E')) && c != '.' && c != 'E')
-      ok = 0;
+  if (n == 0 || i != s.len) rt_raise(RT_B_CONVERSION);
+  /* a scale-spec \S[+-]ddd ends a decimal-literal; without one there is no point */
+  char *sc = strstr(b, "\\S");
+  int point = strchr(b, '.') != NULL;
+  if (sc) {
+    const char *x = sc + 2;
+    if (*x == '+' || *x == '-') x++;
+    if (!*x) rt_raise(RT_B_CONVERSION);
+    for (; *x; x++)
+      if (*x < '0' || *x > '9') rt_raise(RT_B_CONVERSION);
+    *sc = 0;
+  } else if (point) {
+    rt_raise(RT_B_CONVERSION);
   }
-  if (!ok || !digits) rt_raise(RT_B_CONVERSION);
-  return rt_b_fix_lit(b, scale);
+  int digits = 0;
+  for (char *x = b; *x && *x != 'E'; x++) digits += *x >= '0' && *x <= '9';
+  rt_int v = 0;
+  if (!digits || !b_parse_lit(b, scale, rounded, &v)) rt_raise(RT_B_CONVERSION);
+  return v;
 }
 
 double rt_b_float_of_fix(rt_int v, rt_int scale) { return ldexp((double)v, (int)-scale); }
@@ -3063,10 +3327,62 @@ rt_int rt_b_pred(rt_int v) {
   return v - 1;
 }
 
+/* a device of the simulated machine interrupts: its semaphore is RELEASEd after
+ * us microseconds of the virtual clock, by a task of the device */
+struct b_irq {
+  rt_act act;
+  rt_b_sem *s;
+  rt_int us;
+};
+static rt_taskdecl b_devices;
+static void b_irq_fn(void *p) {
+  struct b_irq *q = p;
+  rt_delay(q->us);
+  rt_b_release(q->s);
+}
+void rt_b_interrupt_after(rt_b_sem *s, rt_int us) {
+  struct b_irq *q = rt_alloc(sizeof *q);
+  q->s = s;
+  q->us = us < 0 ? 0 : us;
+  q->act.has_prio = 1;
+  q->act.prio = 255;
+  rt_create(&q->act, &b_devices, b_irq_fn, q);
+}
+
+/* bluec -pdp11: STD fixed point values, words and floating point ranges of the
+ * PDP-11 (16-bit words; F and D formats with an 8-bit exponent) */
+static rt_int b_std_bits = 64;
+void rt_b_machine(int word) {
+  B_WORD = word;
+  b_std_bits = word;
+  b_pdp11 = word == 16;
+}
+
+/* a fixed point value of STD precision: OVERFLOW outside the machine's word */
+rt_int rt_b_std(rt_int v) {
+  if (b_std_bits < 64) {
+    rt_int lim = (rt_int)1 << (b_std_bits - 1);
+    if (v < -lim || v >= lim) rt_raise(RT_X_OVERFLOW);
+  }
+  return v;
+}
+
+/* a TARGET routine (4.8.2): its assembly code is for the object machine, which
+ * this implementation simulates without executing machine code; invoking one
+ * raises TARGET_TRAP, which a handler may take */
+int RT_B_TARGET_TRAP;
 void rt_b_no_target_code(const char *name) {
-  fflush(stdout);
-  fprintf(stderr, "*** the TARGET routine %s has no machine code here\n", name);
-  exit(1);
+  (void)name;
+  if (!RT_B_TARGET_TRAP) RT_B_TARGET_TRAP = rt_exc("TARGET_TRAP");
+  rt_raise(RT_B_TARGET_TRAP);
+}
+
+/* the program's arguments and files, for bluec (TERMINAL, implementation-defined) */
+rt_int rt_b_file_exists(rstr name) {
+  FILE *f = fopen(rt_cstr(name), "rb");
+  if (!f) return 0;
+  fclose(f);
+  return 1;
 }
 
 /* ---- BLUE: parallel processing (4.6) ------------------------------------- */
@@ -3077,7 +3393,6 @@ struct rt_b_sem {
   int region, connected;
 };
 
-#define B_HOLDS 32
 struct rt_b_act {
   rt_act act;
   void (*fn)(void *);
@@ -3087,8 +3402,14 @@ struct rt_b_act {
   rt_b_act *sibling;
   rt_int start, end;
   int done, exc;
-  rt_b_sem *holds[B_HOLDS];   /* REGION semaphores requested and not released */
-  int nholds;
+  rt_b_sem **holds;           /* REGION semaphores requested and not released */
+  int nholds, maxholds;
+  rt_b_sem *connected;        /* the interrupt semaphore of its CONNECT clause */
+  rt_int cpu;                 /* processing time, in virtual microseconds (4.6.5) */
+  rt_b_act *order;            /* the activations of a block, in the order made */
+  rt_int pid;                 /* its ACTIVATION_ID (D.7) */
+  const char *cname;          /* the interrupt of its CONNECT clause, by name */
+  int selected;               /* named by the list a PAR_BLOCK_ runs */
 };
 
 static rt_b_act b_main;
@@ -3101,6 +3422,9 @@ rt_b_sem *rt_b_sem_new(int region) {
   s->region = region;
   return s;
 }
+
+/* the value of a semaphore: its representation (TO_BIT, [SEMAPHORE]$$, 3.11.3) */
+rt_int rt_b_sem_count(rt_b_sem *s) { return s ? s->value : 0; }
 
 rt_b_sem *rt_b_sem_value(rt_int n, int region) {
   if (n < 0) rt_raise(RT_X_RANGE);
@@ -3117,7 +3441,14 @@ void rt_b_sem_assign(rt_b_sem *dst, rt_b_sem *src) {
 
 static void b_hold(rt_b_sem *s) {
   rt_b_act *a = b_me();
-  if (s->region && a->nholds < B_HOLDS) a->holds[a->nholds++] = s;
+  if (s->region) {
+    if (a->nholds == a->maxholds) {
+      a->maxholds = a->maxholds ? 2 * a->maxholds : 8;
+      a->holds = realloc(a->holds, sizeof *a->holds * (size_t)a->maxholds);
+      if (!a->holds) rt_raise(RT_X_FREE);
+    }
+    a->holds[a->nholds++] = s;
+  }
 }
 
 /* a path TERMINATEd before it first ran has had no blocking point yet: REQUEST and
@@ -3151,11 +3482,17 @@ void rt_b_release(rt_b_sem *s) {
   }
   satisfy(best);
   maybe_preempt();
+  check_terminate();          /* TERMINATEd while it was preempted (4.6.3) */
 }
+
+/* the connection is made when the activation is (4.6.1); the path started next
+ * takes it */
+static __thread rt_b_sem *b_connecting;
 
 void rt_b_connect(rt_b_sem *s) {
   if (s->connected) rt_raise(rt_exc("INTERRUPT"));
   s->connected = 1;
+  b_connecting = s;
 }
 
 rt_b_paths rt_b_paths_new(void) {
@@ -3192,6 +3529,8 @@ void rt_b_path_start(rt_b_paths *p, rt_int i, void (*fn)(void *), void *frame, r
   a->frame = frame;
   a->par = par;
   a->start = rt_time();
+  a->connected = b_connecting;
+  b_connecting = NULL;
   a->sibling = par->children;
   par->children = a;
   p->a[i - p->lo] = a;
@@ -3209,7 +3548,7 @@ void rt_b_path_start(rt_b_paths *p, rt_int i, void (*fn)(void *), void *frame, r
   par->td.live++;
   t->all_next = all_tasks;
   all_tasks = t;
-  make_ready(t);
+  t->state = T_HELD;          /* ready when all the block's paths are activated */
   pthread_attr_t attr;
   pthread_attr_init(&attr);
 #ifdef __wasi__
@@ -3225,13 +3564,143 @@ void rt_b_path_start(rt_b_paths *p, rt_int i, void (*fn)(void *), void *frame, r
   trace("create", t);
 }
 
+/* the activations of a block, in the order they were made */
+static int b_activations(rt_b_par *par, rt_b_act ***v) {
+  int n = 0;
+  for (rt_b_act *c = par->children; c; c = c->sibling) n++;
+  *v = rt_alloc(sizeof **v * (size_t)(n ? n : 1));
+  int k = n;
+  for (rt_b_act *c = par->children; c; c = c->sibling) (*v)[--k] = c;
+  return n;
+}
+
+/* the paths are deactivated: their interrupt connections end */
+static void b_disconnect(rt_b_par *par) {
+  for (rt_b_act *c = par->children; c; c = c->sibling)
+    if (c->connected) {
+      c->connected->connected = 0;
+      c->connected = NULL;
+    }
+}
+
+/* all the activations are put in the ready state together (4.6.1) */
 void rt_b_par_end(rt_b_par *par) {
-  rt_b_act *me = b_me();
+  rt_b_act *me = b_me(), **v;
+  int n = b_activations(par, &v);
+  for (int i = 0; i < n; i++)
+    if (v[i]->act.t->state == T_HELD) make_ready(v[i]->act.t);
   me->waiting = par;
   rt_await_decl(&par->td);
   me->waiting = NULL;
+  b_disconnect(par);
   if (par->exc) rt_raise(par->exc);
 }
+
+/* ---- PAR_BLOCK_ of a program (D.7): the activations made by a block are handed
+ * to it as a list; RUN_PATHS, the implementation's PAR_BLOCK_, runs those named
+ * in the list it is given, with its priorities, and waits for them ---- */
+static rt_b_par *b_dispatch[64];
+static int b_ndispatch;
+
+void rt_b_path_info(rt_b_par *par, rt_int path, rt_int i, const char *connect) {
+  rt_b_act *a = par->children;              /* the activation just made */
+  a->pid = path * ((rt_int)1 << 32) + (i & 0xffffffff);
+  a->cname = connect;
+}
+
+void rt_b_par_dispatch_push(rt_b_par *par) {
+  if (b_ndispatch == 64) rt_raise(RT_X_FREE);
+  b_dispatch[b_ndispatch++] = par;
+}
+
+static rt_b_par *b_dispatching(void) {
+  if (b_ndispatch == 0) rt_raise(RT_X_TASKING);
+  return b_dispatch[b_ndispatch - 1];
+}
+
+/* the block's PAR_BLOCK_ returned: if it ran no RUN_PATHS, no activation runs */
+void rt_b_par_dispatch_pop(void) {
+  rt_b_par *par = b_dispatching();
+  b_ndispatch--;
+  if (!par->ran) rt_b_par_abandon(par);
+}
+
+static rt_b_act *b_dispatched(rt_int i) {
+  rt_b_act **v;
+  int n = b_activations(b_dispatching(), &v);
+  if (i < 0 || i >= n) rt_raise(RT_X_SUBSCRIPT);
+  return v[i];
+}
+
+rt_int rt_b_par_count(void) {
+  rt_b_act **v;
+  return b_activations(b_dispatching(), &v);
+}
+
+rt_int rt_b_par_id(rt_int i) { return b_dispatched(i)->pid; }
+
+rt_int rt_b_par_prio(rt_int i) { return b_dispatched(i)->act.t->prio; }
+
+/* the name padded with blanks to len characters (the CONNECT_NAME of D.7) */
+rstr rt_b_par_connect(rt_int i, rt_int len) {
+  const char *c = b_dispatched(i)->cname;
+  rstr r = rt_str_new(len);
+  memset(r.p, ' ', (size_t)len);
+  if (c) {
+    size_t n = strlen(c);
+    memcpy(r.p, c, n < (size_t)len ? n : (size_t)len);
+  }
+  return r;
+}
+
+void rt_b_par_select(rt_int addr, rt_int prio) {
+  rt_b_act *a = b_dispatched(addr - 1);
+  if (prio < 0 || prio > 255) rt_raise(RT_X_RANGE);
+  if (a->act.t->state == T_HELD) a->act.t->prio = (int)prio;
+  a->selected = 1;
+}
+
+/* the activations not named never run; the others run, and the block ends */
+void rt_b_par_run(void) {
+  rt_b_par *par = b_dispatching();
+  if (par->ran) rt_raise(RT_X_TASKING);
+  par->ran = 1;
+  for (rt_b_act *c = par->children; c; c = c->sibling) {
+    rt_task *t = c->act.t;
+    if (!c->selected && t->state == T_HELD) {
+      t->state = T_DONE;
+      c->done = 1;
+      par->td.live--;
+      if (c->connected) {
+        c->connected->connected = 0;
+        c->connected = NULL;
+      }
+    }
+  }
+  rt_b_par_end(par);
+}
+
+/* an exception while the paths were activated (a PRIORITY out of range, a second
+ * CONNECT to an interrupt): the activations made so far never run */
+void rt_b_par_abandon(rt_b_par *par) {
+  for (rt_b_act *c = par->children; c; c = c->sibling) {
+    rt_task *t = c->act.t;
+    if (t->state == T_HELD) {
+      t->state = T_DONE;
+      c->done = 1;
+      par->td.live--;
+    }
+  }
+  b_disconnect(par);
+  if (b_connecting) {
+    b_connecting->connected = 0;
+    b_connecting = NULL;
+  }
+}
+
+/* the first thing a path activation does: it may have been TERMINATEd before it
+ * ever ran (4.6.3) */
+void rt_b_path_begin(void) { check_terminate(); }
 
 /* an exception ended the path: one it may signal, or TERMINATED, is raised by the
  * block (4.6.1); its REGION semaphores are released */
@@ -3262,6 +3731,7 @@ void rt_b_terminate(rt_b_act *a) {
   }
   if (a == b_me()) rt_raise(RT_X_TERMINATE);
   rt_exterminate(&a->act);
+  check_terminate();
 }
 
 void rt_b_priority(rt_b_act *a, rt_int p) {
@@ -3273,13 +3743,36 @@ void rt_b_priority(rt_b_act *a, rt_int p) {
     return;
   }
   rt_set_priority(&a->act, p);
+  check_terminate();
 }
 
-/* the virtual time since the activation began: a deviation, see blue/notes */
+/* the cumulative processing time of the activation, in seconds at scale 20 (4.6.5) */
 rt_int rt_b_clock(rt_b_act *a) {
   if (!a) a = b_me();
-  rt_int us = (a->done ? a->end : rt_time()) - a->start;
-  return (rt_int)(((b_wide)us << 20) / 1000000);
+  return (rt_int)(((b_wide)a->cpu << 20) / 1000000);
+}
+
+/* the time of the simulated machine's real-time clock since the program began, in
+ * seconds at scale 20: REAL_TIME of the TERMINAL segment */
+rt_int rt_b_real_time(void) { return (rt_int)(((b_wide)rt_time() << 20) / 1000000); }
+
+/* Processing takes time (4.6.2, 4.6.5): every loop iteration and every routine
+ * invocation of a BLUE program is a step, and RT_B_STEPS_PER_US steps take one
+ * virtual microsecond of the executing activation. The clock moves with them, so a
+ * WAIT expires while another activation computes, and the scheduler preempts it then. */
+rt_int rt_b_ticks, rt_b_quantum = RT_B_STEPS_PER_US;
+void rt_b_charge(void) {
+  rt_b_ticks = 0;
+  now++;
+  b_me()->cpu++;
+  for (rt_task *t = all_tasks; t; t = t->all_next)
+    if (t->state == T_BLOCKED && t->timed && t->wake <= now) {
+      t->result = t->timer_alt;
+      drop_waiters(t);
+      make_ready(t);
+    }
+  maybe_preempt();
+  check_terminate();
 }
 
 void rt_b_wait(rt_int v, rt_int scale) {
@@ -3291,6 +3784,450 @@ void rt_b_wait(rt_int v, rt_int scale) {
   b_wide us = (b_wide)v * 1000000;
   b_wide ticks = scale >= 0 ? (us + b_pow2(scale) - 1) / b_pow2(scale) : us * b_pow2(-scale);
   rt_delay(b_narrow(ticks));
+}
+
+
+/* ---- BLUE: the rest of the language (coverage of the 1978 specification) ---- */
+
+int RT_B_INVALID_TYPE, RT_B_INVALID_REP, RT_B_UNDERFLOW;
+
+/* a string or bitstring object of a length its type gives (3.6.1, 3.7.1): SIZE
+ * (bitstrings) or INVALID_SIZE (charstrings) beyond the largest length */
+rstr rt_b_str_new(rt_int n, int bits) {
+  if (n > B_MAXLEN) rt_raise(bits ? RT_B_SIZE : RT_B_INVALID_SIZE);
+  if (n < 0) rt_raise(RT_B_INVALID_LENGTH);
+  return bits ? rt_b_zeros(n) : rt_str_new(n);
+}
+
+/* E !! F: INVALID_SIZE beyond the largest length (3.6.4.1, 3.7.4.1) */
+rstr rt_b_cat(rstr a, rstr b) {
+  if (a.len + b.len > B_MAXLEN) rt_raise(RT_B_INVALID_SIZE);
+  return rt_str_cat(a, b);
+}
+
+/* floating point (3.3): two implemented precisions, single (7 digits) and double
+ * (15); a result is rounded to nearest even (ROUNDED, NATIVE_R) or toward zero
+ * (TRUNCATED, NATIVE_T) in its implemented precision; OVERFLOW beyond the range,
+ * UNDERFLOW for a non-zero value below the smallest normal one */
+/* Truncation does not use the rounding modes (WASI has none): the result rounded
+ * to nearest, then one step toward zero when its magnitude exceeds the exact one */
+static double b_fround(double v, int single, int trunc) {
+  if (!single) return v;
+  volatile float f = (float)v;
+  if (trunc && fabs((double)f) > fabs(v)) f = nextafterf(f, 0.0f);
+  return f;
+}
+
+static double b_fcheck(double r, int single, int exc_over) {
+  if (isinf(r) || isnan(r)) rt_raise(exc_over);
+  if (b_pdp11) {
+    if (fabs(r) > 0x1.fffffffffffffp+126) rt_raise(exc_over);
+    if (r != 0 && fabs(r) < 0x1p-128) rt_raise(RT_B_UNDERFLOW);
+    return r;
+  }
+  if (r != 0 && fabs(r) < (single ? FLT_MIN : DBL_MIN)) rt_raise(RT_B_UNDERFLOW);
+  return r;
+}
+
+double rt_b_fop(int op, double a, double b, int single, int trunc) {
+  volatile double r;
+  double e = 0;                     /* the sign of exact - r */
+  if (op == '/' && b == 0) rt_raise(RT_X_ZERO_DIVIDE);
+  if (op == '-') b = -b;
+  switch (op) {
+  case '+': case '-': {
+    r = a + b;
+    double bb = r - a;
+    e = (a - (r - bb)) + (b - bb);  /* exact error of the sum (TwoSum) */
+    break;
+  }
+  case '*': r = a * b; e = fma(a, b, -r); break;
+  default: r = a / b; e = fma(-r, b, a) * (b < 0 ? -1 : 1); break;
+  }
+  if (trunc) {
+    if (isinf(r) && isfinite(a) && isfinite(b)) r = copysign(DBL_MAX, r);
+    else if (r != 0 && e != 0 && (e < 0) != (r < 0)) r = nextafter(r, 0.0);
+  }
+  r = b_fround(r, single, trunc);
+  if (r == 0 && (op == '*' || op == '/') && a != 0 && (op == '/' || b != 0)) rt_raise(RT_B_UNDERFLOW);
+  return b_fcheck(r, single, RT_X_OVERFLOW);
+}
+
+/* a value converted to an implemented precision: by TO_FLOAT (OVERFLOW) or by an
+ * assignment (RANGE, 3.3.5) */
+double rt_b_fconv(double v, int single, int trunc, int range) {
+  double r = b_fround(v, single, trunc);
+  return b_fcheck(r, single, range ? RT_X_RANGE : RT_X_OVERFLOW);
+}
+
+/* TO_FLOAT of a fixed point value m * 2**-s, rounded or truncated (3.3.6.1) */
+double rt_b_float_of_fix_r(rt_int v, rt_int scale, int single, int trunc) {
+  volatile double d = (double)v;
+  if (trunc) {
+    int over = d >= 0x1p63 ? 1
+               : (v < 0 ? (rt_int)d < v : (rt_int)d > v);
+    if (over) d = nextafter(d, 0.0);
+  }
+  return rt_b_fconv(ldexp(d, (int)-scale), single, trunc, 0);
+}
+
+/* the decimal digits of v * 2**k, k >= 0: TO_CHAR of a negative scale (3.2.6) */
+static rstr b_big_image(rt_int v, rt_int k) {
+  b_big a;
+  int neg = v < 0;
+  unsigned __int128 m = neg ? -(b_wide)v : (b_wide)v;
+  big_init(&a, (uint32_t)(m >> 32));
+  big_shl(&a, 32);
+  b_big lo;
+  big_init(&lo, (uint32_t)m);
+  /* a += lo */
+  if (lo.n) {
+    big_room(&a, (a.n > 1 ? a.n : 1) + 1);
+    uint64_t c = lo.d[0];
+    for (int i = 0; c; i++) {
+      if (i >= a.n) a.d[a.n++] = 0;
+      c += a.d[i];
+      a.d[i] = (uint32_t)c;
+      c >>= 32;
+    }
+  }
+  big_shl(&a, k);
+  char *d = rt_alloc((size_t)(a.n * 10 + 12));
+  int n = 0;
+  if (!a.n) d[n++] = '0';
+  while (a.n) {                              /* divide by 10 */
+    uint64_t r = 0;
+    for (int i = a.n - 1; i >= 0; i--) {
+      uint64_t t = (r << 32) | a.d[i];
+      a.d[i] = (uint32_t)(t / 10);
+      r = t % 10;
+    }
+    while (a.n && !a.d[a.n - 1]) a.n--;
+    d[n++] = (char)('0' + r);
+  }
+  char *o = rt_alloc((size_t)n + 2);
+  int j = 0;
+  if (neg) o[j++] = '-';
+  while (n) o[j++] = d[--n];
+  return rt_str_copy(rt_str(o, j));
+}
+
+/* E !+s! F and E !-s! F: the exact sum at the larger scale, then the result scale
+ * (3.2.4.4); scales further apart than 60 add each operand at the result scale */
+rt_int rt_b_addsc(rt_int a, rt_int sa, rt_int b, rt_int sb, rt_int s, int sub, int rounded) {
+  rt_int m = sa > sb ? sa : sb;
+  if (m - sa > 60 || m - sb > 60) {
+    rt_int x = rt_b_rescale(a, sa, s, rounded), y = rt_b_rescale(b, sb, s, rounded);
+    return sub ? rt_sub(x, y) : rt_add(x, y);
+  }
+  b_wide x = (b_wide)a * ((b_wide)1 << (m - sa)), y = (b_wide)b * ((b_wide)1 << (m - sb));
+  b_wide r = sub ? x - y : x + y;
+  if (s >= m) {
+    if (s - m > 60 && r != 0) rt_raise(RT_X_OVERFLOW);
+    b_wide q = r * ((b_wide)1 << (s - m));
+    if (s - m > 0 && q / ((b_wide)1 << (s - m)) != r) rt_raise(RT_X_OVERFLOW);
+    return b_narrow(q);
+  }
+  return s - m < -120 ? 0 : b_narrow(b_divide(r, b_pow2(m - s), rounded));
+}
+
+/* the machine-dependent !op! of floating point values (3.3.4.5): the result and the
+ * error of its rounding, two doubles, 128 bits */
+static rstr b_fmd_pdp11(int op, double a, double b);
+rstr rt_b_fmd(int op, double a, double b) {
+  if (b_pdp11) return b_fmd_pdp11(op, a, b);
+  double hi, lo;
+  switch (op) {
+  case '+': hi = a + b; { double bb = hi - a; lo = (a - (hi - bb)) + (b - bb); } break;
+  case '-': hi = a - b; { double bb = hi - a; lo = (a - (hi - bb)) + (-b - bb); } break;
+  case '*': hi = a * b; lo = fma(a, b, -hi); break;
+  default: hi = b == 0 ? 0 : a / b; lo = b == 0 ? 0 : -fma(hi, b, -a) / b; break;
+  }
+  rstr h = rt_b_bits_of_float(hi), l = rt_b_bits_of_float(lo);
+  return rt_str_cat(h, l);
+}
+
+/* ---- BLUE: the store of the simulated machine --------------------------------
+ * Values have the layouts their representations declare (3.x.3): an array is as
+ * big as its elements laid out by its packing, ARRAY_TOO_BIG beyond 2**34 bits
+ * (3.8.1); NEW takes the bits of its value from the store, 8 GiB (64 KiB on the
+ * PDP-11 of -pdp11, its address space), SPACE_EXHAUSTED when they are used
+ * (3.10.2); nothing is reclaimed. Each object NEW makes has the address where its
+ * bits begin, in bytes, whole words apart; a pointer is that address (TO_BIT,
+ * [PTR (T)]$$), NIL is 0. The host keeps the program's form of each value. */
+int RT_B_ARRAY_TOO_BIG;
+static uint64_t b_heap_used;          /* 64 bits on wasm32 as natively */
+static uint64_t b_store(void) { return b_pdp11 ? (uint64_t)1 << 16 : (uint64_t)1 << 33; }
+static uint64_t b_word_bytes(void) { return (uint64_t)B_WORD / 8; }
+
+/* the C storage of n elements (the host's form); bits, the layout's size, or < 0
+ * when the elements' size is known only once they are made (rt_b_array_check) */
+void *rt_b_array_alloc_bits(rt_int n, size_t esize, rt_int bits) {
+  if (n < 0) n = 0;
+  if (bits > ((rt_int)1 << 34)) rt_raise(RT_B_ARRAY_TOO_BIG);
+  if ((uint64_t)esize * (uint64_t)(n ? n : 1) > SIZE_MAX) rt_raise(RT_X_FREE);   /* the host's */
+  return rt_alloc(esize * (size_t)(n ? n : 1));
+}
+
+void rt_b_array_check(rt_int bits) {
+  if (bits > ((rt_int)1 << 34)) rt_raise(RT_B_ARRAY_TOO_BIG);
+}
+
+void *rt_b_array_alloc(rt_int n, size_t esize) { return rt_b_array_alloc_bits(n, esize, -1); }
+
+/* the objects NEW made, by address (ascending) and by host pointer */
+typedef struct { uint64_t addr; void *p; } b_obj;
+static b_obj *b_objs;
+static size_t b_nobjs, b_capobjs;
+static b_obj *b_ptrtab;                      /* open addressing on the host pointer */
+static size_t b_ptrcap;
+
+static size_t b_ptrhash(void *p, size_t cap) {
+  return (size_t)(((uintptr_t)p >> 3) * 0x9E3779B97F4A7C15ull) & (cap - 1);
+}
+
+static void b_ptr_put(void *p, uint64_t addr) {
+  if (2 * (b_nobjs + 1) > b_ptrcap) {
+    size_t cap = b_ptrcap ? 2 * b_ptrcap : 1024;
+    b_obj *t = calloc(cap, sizeof *t);
+    if (!t) rt_raise(RT_X_FREE);
+    for (size_t i = 0; i < b_ptrcap; i++)
+      if (b_ptrtab[i].p) {
+        size_t h = b_ptrhash(b_ptrtab[i].p, cap);
+        while (t[h].p) h = (h + 1) & (cap - 1);
+        t[h] = b_ptrtab[i];
+      }
+    free(b_ptrtab);
+    b_ptrtab = t;
+    b_ptrcap = cap;
+  }
+  size_t h = b_ptrhash(p, b_ptrcap);
+  while (b_ptrtab[h].p) h = (h + 1) & (b_ptrcap - 1);
+  b_ptrtab[h].p = p;
+  b_ptrtab[h].addr = addr;
+}
+
+/* NEW: bits of the store for a value whose host form takes n bytes; its address */
+void *rt_b_new_bits(size_t n, rt_int bits) {
+  uint64_t wb = b_word_bytes();
+  uint64_t used = ((uint64_t)(bits > 0 ? bits : 0) + 8 * wb - 1) / (8 * wb) * wb;
+  if (used == 0) used = wb;
+  if (used > b_store() - wb - b_heap_used) rt_raise(RT_X_FREE);     /* SPACE_EXHAUSTED */
+  void *p = rt_alloc(n);
+  uint64_t addr = wb + b_heap_used;
+  b_heap_used += used;
+  if (b_nobjs == b_capobjs) {
+    b_capobjs = b_capobjs ? 2 * b_capobjs : 1024;
+    b_objs = realloc(b_objs, b_capobjs * sizeof *b_objs);
+    if (!b_objs) rt_raise(RT_X_FREE);
+  }
+  b_objs[b_nobjs].addr = addr;
+  b_objs[b_nobjs].p = p;
+  b_ptr_put(p, addr);
+  b_nobjs++;
+  return p;
+}
+
+/* the rest of the bits of the object NEW just made, once its size is known */
+void rt_b_new_more(rt_int bits) {
+  uint64_t wb = b_word_bytes();
+  uint64_t used = ((uint64_t)(bits > 0 ? bits : 0) + 8 * wb - 1) / (8 * wb) * wb;
+  if (used > wb) used -= wb;                    /* rt_b_new_bits took a word */
+  else used = 0;
+  if (used > b_store() - wb - b_heap_used) rt_raise(RT_X_FREE);
+  b_heap_used += used;
+}
+
+void *rt_b_new(size_t n) { return rt_b_new_bits(n, (rt_int)n * 8); }
+
+/* the address of an object, and the object at an address (INVALID_REP if none) */
+rt_int rt_b_ptr_addr(const void *p) {
+  if (!p) return 0;
+  size_t h = b_ptrhash((void *)p, b_ptrcap);
+  while (b_ptrtab[h].p && b_ptrtab[h].p != p) h = (h + 1) & (b_ptrcap - 1);
+  return (rt_int)b_ptrtab[h].addr;
+}
+
+void *rt_b_ptr_at(rt_int addr) {
+  if (addr == 0) return NULL;
+  size_t lo = 0, hi = b_nobjs;
+  while (lo < hi) {
+    size_t mid = (lo + hi) / 2;
+    if (b_objs[mid].addr < (uint64_t)addr) lo = mid + 1;
+    else hi = mid;
+  }
+  if (lo == b_nobjs || b_objs[lo].addr != (uint64_t)addr) rt_raise(RT_B_INVALID_REP);
+  return b_objs[lo].p;
+}
+
+/* TO_BIT and [T]$$ of records (3.9.3) and arrays (3.8.3): each field or element
+ * in its slot of the layout, right-aligned, the filler bits zero (rt_b_layout,
+ * b_pack_pos) */
+rt_int rt_b_lay_put(rstr *img, rt_int sz, rstr bits, int mode) {
+  rt_int end = rt_b_layout(sz, bits.len, mode), slot = b_slot(bits.len, mode);
+  if (end > B_MAXLEN) rt_raise(RT_B_INVALID_SIZE);
+  if (img->len < end) {
+    rstr r = rt_str_new(end);
+    memset(r.p, '0', (size_t)end);
+    memcpy(r.p, img->p, (size_t)img->len);
+    *img = r;
+  }
+  memcpy(img->p + end - bits.len, bits.p, (size_t)bits.len);
+  (void)slot;
+  return end;
+}
+
+rstr rt_b_lay_take(rstr img, rt_int *sz, rt_int fs, int mode) {
+  rt_int end = rt_b_layout(*sz, fs, mode);
+  if (end > img.len) rt_raise(RT_B_INVALID_SIZE);
+  *sz = end;
+  return rt_str_copy(rt_str((const char *)img.p + end - fs, fs));
+}
+
+void rt_b_lay_end(rstr img, rt_int sz) {
+  if (sz != img.len) rt_raise(RT_B_INVALID_SIZE);
+}
+
+rstr rt_b_arr_put(rstr img, rt_int i, rt_int n, rstr bits, int mode) {
+  if (i == 0) {
+    rt_int size = rt_b_pack_size(n, bits.len, mode);
+    if (size > B_MAXLEN) rt_raise(RT_B_INVALID_SIZE);
+    img = rt_str_new(size);
+    memset(img.p, '0', (size_t)size);
+  }
+  memcpy(img.p + b_pack_pos(i, bits.len, mode), bits.p, (size_t)bits.len);
+  return img;
+}
+
+rstr rt_b_arr_take(rstr img, rt_int i, rt_int n, rt_int es, int mode) {
+  if (rt_b_pack_size(n, es, mode) != img.len) rt_raise(RT_B_INVALID_SIZE);
+  return rt_str_copy(rt_str((const char *)img.p + b_pack_pos(i, es, mode), es));
+}
+
+/* N blanks of 7-bit ASCII by a packing: BLANKS (N) of a record-reptype (3.9.3) */
+rstr rt_b_blank_bits(rt_int n, int mode) {
+  rstr s = rt_str_new(n);
+  memset(s.p, ' ', (size_t)n);
+  return rt_b_bits_of_chars(s, 7, mode, NULL, 128);
+}
+
+/* a fixed point value of n bits, two's complement or unsigned (FIXED_REP, 3.2.3) */
+rt_int rt_b_sint_of_bits(rstr b) {
+  if (b.len == 0) return 0;
+  if (b.len > 64) rt_raise(RT_B_INVALID_SIZE);
+  uint64_t u = 0;
+  for (rt_int i = 0; i < b.len; i++) u = u * 2 + (b.p[i] == '1');
+  if (b.p[0] == '1' && b.len < 64) u |= ~(uint64_t)0 << b.len;
+  return (rt_int)u;
+}
+
+/* [T]$$ of a fixed point type stored in n bits: two's complement when they are all
+ * there and signed, otherwise the bits as an unsigned number */
+rt_int rt_b_rep_int_of_bits(rstr b, rt_int n, int unsig) {
+  if (!unsig && b.len == n) return rt_b_sint_of_bits(b);
+  return rt_b_int_of_bits(b);
+}
+
+/* [T]$$ of a member of FIXED the program defines: its n bits (Appendix D.4) */
+rstr rt_b_bits_len(rstr b, rt_int n) {
+  if (b.len != n) rt_raise(RT_B_INVALID_SIZE);
+  return rt_str_copy(b);
+}
+
+/* single precision as binary32 (FLOAT (p), p <= 7; 32 bits, 3.3.3) */
+rstr rt_b_bits_of_single(double v) {
+  float f = (float)v;
+  uint32_t u;
+  memcpy(&u, &f, sizeof u);
+  rstr r = rt_str_new(32);
+  for (int i = 31; i >= 0; i--, u >>= 1) r.p[i] = (unsigned char)('0' + (int)(u & 1));
+  return r;
+}
+
+double rt_b_single_of_bits(rstr b) {
+  if (b.len != 32) rt_raise(RT_B_INVALID_SIZE);
+  uint32_t u = 0;
+  for (int i = 0; i < 32; i++) u = u * 2 + (b.p[i] == '1');
+  float f;
+  memcpy(&f, &u, sizeof f);
+  return f;
+}
+
+/* the tag of a T(ANY) record not yet assigned (3.9.1, p.3-134) */
+rt_int rt_b_tag(rt_int v) {
+  if (v == INT64_MIN) rt_raise(RT_X_INIT);
+  return v;
+}
+
+/* a type-specifier [T]$$(E): INVALID_TYPE unless the value is one of T (3.1.4.1) */
+rt_int rt_b_trange(rt_int v, rt_int lo, rt_int hi) {
+  if (v < lo || v > hi) rt_raise(RT_B_INVALID_TYPE);
+  return v;
+}
+
+/* a fixed point value stored in the n bits of its FIXED_REP (3.2.3): RANGE outside */
+rt_int rt_b_rep_fits(rt_int v, rt_int n, int unsig) {
+  rt_int lo = unsig ? 0 : -((rt_int)1 << (n > 0 ? n - 1 : 0));
+  rt_int hi = unsig ? ((rt_int)1 << n) - 1 : (n > 0 ? ((rt_int)1 << (n - 1)) - 1 : 0);
+  if (v < lo || v > hi) rt_raise(RT_X_RANGE);
+  return v;
+}
+
+double rt_b_tfrange(double v, double lo, double hi) {
+  if (v < lo || v > hi) rt_raise(RT_B_INVALID_TYPE);
+  return v;
+}
+
+rstr rt_b_tlen(rstr s, rt_int len) {
+  if (s.len != len) rt_raise(RT_B_INVALID_TYPE);
+  return s;
+}
+
+/* the number of significant bits of a magnitude */
+static int b_bits(unsigned __int128 m) {
+  int n = 0;
+  while (m) {
+    n++;
+    m >>= 1;
+  }
+  return n;
+}
+
+/* the order of a * 2**-sa and b * 2**-sb, exactly, whatever the scales (3.2.4.6) */
+int rt_b_cmp(rt_int a, rt_int sa, rt_int b, rt_int sb) {
+  if ((a < 0) != (b < 0)) return a < 0 ? -1 : 1;
+  if (a == 0 || b == 0) return a == b ? 0 : (a == 0 ? (b > 0 ? -1 : 1) : (a > 0 ? 1 : -1));
+  int neg = a < 0;
+  unsigned __int128 ma = neg ? -(b_wide)a : (b_wide)a, mb = neg ? -(b_wide)b : (b_wide)b;
+  rt_int d = sb - sa;              /* compare ma * 2**d with mb */
+  int r;
+  if (d >= 0) {
+    if (b_bits(ma) + d > 126) r = 1;
+    else {
+      unsigned __int128 x = ma << d;
+      r = x > mb ? 1 : x < mb ? -1 : 0;
+    }
+  } else {
+    if (b_bits(mb) - d > 126) r = -1;
+    else {
+      unsigned __int128 y = mb << -d;
+      r = ma > y ? 1 : ma < y ? -1 : 0;
+    }
+  }
+  return neg ? -r : r;
+}
+
+/* a value of scale FROM stored in an object of scale TO >= FROM: RANGE if it does not
+ * fit (3.2.5) */
+rt_int rt_b_conv(rt_int v, rt_int from, rt_int to) {
+  if (to <= from) return v;
+  if (v == 0) return 0;
+  rt_int k = to - from;
+  unsigned __int128 m = v < 0 ? -(b_wide)v : (b_wide)v;
+  if (b_bits(m) + k > 64) rt_raise(RT_X_RANGE);
+  b_wide r = (b_wide)v * ((b_wide)1 << k);
+  if (r > INT64_MAX || r < INT64_MIN) rt_raise(RT_X_RANGE);
+  return (rt_int)r;
 }
 
 
@@ -6230,6 +7167,493 @@ const unsigned char *rt_r_fread_rec(rt_r_file *f) {
   if (len && fread(p, 1, (size_t)len, f->fp) != (size_t)len) rt_raise_msg(RT_X_FILE, "the file is damaged");
   f->cur++;
   return p;
+}
+
+/* ---- BLUE -pdp11: the PDP-11's D floating point format, computed exactly ----
+ * A value is m * 2**e with m = 0 or 2**55 <= |m| < 2**56: the 56-bit mantissa
+ * of D (hidden bit included). Results are rounded to the nearest (ties to even)
+ * or truncated to 56 bits; the exponent range is that of D: 2**-128 <= |x| <
+ * 2**127 (OVERFLOW, UNDERFLOW). */
+static rt_b_d b_dnorm(__int128 x, int64_t e, int trunc, int exc_over) {
+  rt_b_d r = {0, 0};
+  if (x == 0) return r;
+  int neg = x < 0;
+  unsigned __int128 mag = neg ? (unsigned __int128)(-x) : (unsigned __int128)x;
+  int len = 0;
+  for (unsigned __int128 t = mag; t; t >>= 1) len++;
+  if (len > 56) {
+    int k = len - 56;
+    unsigned __int128 rem = mag & ((((unsigned __int128)1) << k) - 1);
+    unsigned __int128 q = mag >> k;
+    if (!trunc) {
+      unsigned __int128 half = ((unsigned __int128)1) << (k - 1);
+      if (rem > half || (rem == half && (q & 1))) q++;
+    }
+    if (q == ((unsigned __int128)1 << 56)) {
+      q >>= 1;
+      k++;
+    }
+    mag = q;
+    e += k;
+  } else if (len < 56) {
+    mag <<= 56 - len;
+    e -= 56 - len;
+  }
+  if (e + 56 > 127) rt_raise(exc_over);
+  if (e + 56 < -127) rt_raise(RT_B_UNDERFLOW);
+  r.m = neg ? -(int64_t)mag : (int64_t)mag;
+  r.e = (int32_t)e;
+  return r;
+}
+
+rt_b_d rt_b_dop(int op, rt_b_d a, rt_b_d b, int trunc) {
+  if (op == '-') {
+    b.m = -b.m;
+    op = '+';
+  }
+  if (op == '+') {
+    if (a.m == 0) return b;
+    if (b.m == 0) return a;
+    if (b.e > a.e) {
+      rt_b_d t = a;
+      a = b;
+      b = t;
+    }
+    __int128 x = (__int128)a.m << 62;
+    int64_t ea = (int64_t)a.e - 62;
+    int64_t sh = (int64_t)b.e - ea;           /* <= 62 */
+    __int128 y;
+    if (sh >= 0) y = (__int128)b.m << sh;
+    else if (sh > -120) {
+      __int128 bm = b.m;
+      int neg = bm < 0;
+      unsigned __int128 mag = neg ? (unsigned __int128)(-bm) : (unsigned __int128)bm;
+      unsigned __int128 q = mag >> -sh;
+      if ((q << -sh) != mag) q |= 1;          /* sticky */
+      y = neg ? -(__int128)q : (__int128)q;
+    } else
+      y = b.m < 0 ? -1 : 1;
+    return b_dnorm(x + y, ea, trunc, RT_X_OVERFLOW);
+  }
+  if (op == '*') {
+    if (a.m == 0 || b.m == 0) return (rt_b_d){0, 0};
+    return b_dnorm((__int128)a.m * b.m, (int64_t)a.e + b.e, trunc, RT_X_OVERFLOW);
+  }
+  if (b.m == 0) rt_raise(RT_X_ZERO_DIVIDE);
+  if (a.m == 0) return (rt_b_d){0, 0};
+  int neg = (a.m < 0) != (b.m < 0);
+  unsigned __int128 n = (unsigned __int128)(a.m < 0 ? -a.m : a.m) << 64;
+  unsigned __int128 d = (unsigned __int128)(b.m < 0 ? -b.m : b.m);
+  unsigned __int128 q = n / d;
+  if (n % d) q |= 1;                          /* sticky */
+  __int128 s = (__int128)q;
+  return b_dnorm(neg ? -s : s, (int64_t)a.e - 64 - b.e, trunc, RT_X_OVERFLOW);
+}
+
+rt_b_d rt_b_dneg(rt_b_d a) {
+  a.m = -a.m;
+  return a;
+}
+
+rt_b_d rt_b_dabs(rt_b_d a) {
+  if (a.m < 0) a.m = -a.m;
+  return a;
+}
+
+rt_int rt_b_dcmp(rt_b_d a, rt_b_d b) {
+  int sa = (a.m > 0) - (a.m < 0), sb = (b.m > 0) - (b.m < 0);
+  if (sa != sb) return sa < sb ? -1 : 1;
+  if (sa == 0) return 0;
+  int c;
+  if (a.e != b.e) c = a.e < b.e ? -1 : 1;
+  else {
+    int64_t ma = a.m < 0 ? -a.m : a.m, mb = b.m < 0 ? -b.m : b.m;
+    c = ma < mb ? -1 : ma > mb;
+  }
+  return sa > 0 ? c : -c;
+}
+
+rt_b_d rt_b_d_of_double(double x) {
+  if (x == 0) return (rt_b_d){0, 0};
+  int ex;
+  double f = frexp(x, &ex);                   /* exact: 53 bits */
+  return b_dnorm((__int128)(int64_t)ldexp(f, 56), (int64_t)ex - 56, 0, RT_X_OVERFLOW);
+}
+
+/* a double as D without a range check: every double of F range is exact in D */
+static rt_b_d b_d_raw(double x) {
+  if (x == 0) return (rt_b_d){0, 0};
+  int ex;
+  double f = frexp(x, &ex);
+  return (rt_b_d){(int64_t)ldexp(f, 56), (int32_t)(ex - 56)};
+}
+
+double rt_b_double_of_d(rt_b_d d) { return ldexp((double)d.m, d.e); }
+
+/* a fixed point value v * 2**-scale, rounded or truncated: TO_FLOAT (3.3.6.1) */
+rt_b_d rt_b_d_of_fix(rt_int v, rt_int scale, int trunc) {
+  return b_dnorm(v, -(int64_t)scale, trunc, RT_X_OVERFLOW);
+}
+
+/* the value at a scale, rounded or truncated: TO_FIXED (3.2.6.1) */
+rt_int rt_b_fix_of_d(rt_b_d d, rt_int scale, int rounded) {
+  if (d.m == 0) return 0;
+  int64_t sh = (int64_t)d.e + scale;
+  int neg = d.m < 0;
+  unsigned __int128 mag = (unsigned __int128)(neg ? -d.m : d.m);
+  if (sh >= 0) {
+    if (sh > 8) rt_raise(RT_X_OVERFLOW);
+    mag <<= sh;
+  } else {
+    int64_t k = -sh;
+    if (k > 120) mag = 0;
+    else {
+      unsigned __int128 rem = mag & ((((unsigned __int128)1) << k) - 1), q = mag >> k;
+      if (rounded) {
+        unsigned __int128 half = ((unsigned __int128)1) << (k - 1);
+        if (rem > half || (rem == half && (q & 1))) q++;
+      }
+      mag = q;
+    }
+  }
+  if (mag > ((unsigned __int128)1 << 63) - (neg ? 0 : 1)) rt_raise(RT_X_OVERFLOW);
+  return neg ? -(rt_int)mag : (rt_int)mag;
+}
+
+/* the digits of a decimal number, its power of ten: [+-]digits[.digits][E[+-]digits] */
+static int b_dec(const char *s, char *dig, int *nd, long *x, int *neg) {
+  int frac = 0, point = 0;
+  long e = 0;
+  *nd = 0;
+  *neg = 0;
+  if (*s == '+' || *s == '-') *neg = *s++ == '-';
+  for (; *s && *s != 'E' && *s != 'e'; s++) {
+    if (*s == '.') {
+      if (point) return 0;
+      point = 1;
+      continue;
+    }
+    if (*s < '0' || *s > '9') return 0;
+    if (*nd || *s != '0') dig[(*nd)++] = *s;
+    if (point) frac++;
+  }
+  if (*s) e = strtol(s + 1, NULL, 10);
+  if (e > 100000) e = 100000;
+  if (e < -100000) e = -100000;
+  *x = e - frac;
+  return 1;
+}
+
+/* dig * 10**x as a D value, rounded to the nearest or truncated */
+static rt_b_d b_d_of_dec(const char *dig, int nd, long x, int neg, int trunc) {
+  if (nd == 0) return (rt_b_d){0, 0};
+  long s = 55 - (long)floor((double)(nd - 1 + x) * 3.321928094887362);
+  int ovf;
+  unsigned __int128 lo = (unsigned __int128)1 << 55, hi = (unsigned __int128)1 << 56, q;
+  for (int guard = 0; guard < 400; guard++) {
+    if (s > 4000) rt_raise(RT_B_UNDERFLOW);
+    if (s < -4000) rt_raise(RT_X_OVERFLOW);
+    q = b_exact(dig, nd, x, s, 0, &ovf);
+    if (ovf || q >= hi) s--;
+    else if (q < lo) s++;
+    else break;
+  }
+  q = b_exact(dig, nd, x, s, !trunc, &ovf);
+  if (q >= hi) {
+    q >>= 1;
+    s--;
+  }
+  __int128 v = (__int128)q;
+  return b_dnorm(neg ? -v : v, -(int64_t)s, 1, RT_X_OVERFLOW);
+}
+
+rt_b_d rt_b_dlit(const char *s) {
+  char *dig = rt_alloc(strlen(s) + 1);
+  int nd, neg;
+  long x;
+  if (!b_dec(s, dig, &nd, &x, &neg)) rt_raise(RT_B_CONVERSION);
+  return b_d_of_dec(dig, nd, x, neg, 0);
+}
+
+/* TO_FLOAT of a character string, rounded or truncated (3.3.6.1) */
+rt_b_d rt_b_d_of_str(rstr t, int trunc) {
+  char *c = rt_alloc((size_t)t.len + 1), *dig = rt_alloc((size_t)t.len + 1);
+  rt_int i = 0, n = 0;
+  while (i < t.len && t.p[i] == ' ') i++;
+  while (i < t.len && t.p[i] != ' ') c[n++] = (char)t.p[i++];
+  c[n] = 0;
+  int nd, neg;
+  long x;
+  if (n == 0 || !b_dec(c, dig, &nd, &x, &neg)) rt_raise(RT_B_CONVERSION);
+  return b_d_of_dec(dig, nd, x, neg, trunc);
+}
+
+/* TO_CHAR: prec significant digits, exactly rounded, written as %G writes them */
+rstr rt_b_d_image(rt_b_d d, rt_int prec) {
+  char b[96];
+  int n = 0;
+  if (prec < 1) prec = 1;
+  if (prec > 20) prec = 20;
+  if (d.m == 0) return rt_str_copy(rt_str("0.", 2));
+  uint64_t mag = (uint64_t)(d.m < 0 ? -d.m : d.m);
+  char md[32];
+  int mn = snprintf(md, sizeof md, "%llu", (unsigned long long)mag);
+  long e10 = (long)floor(log10((double)mag) + d.e * 0.30102999566398120);
+  unsigned __int128 q = 0, p10 = 1, p11;
+  for (int i = 0; i < prec - 1; i++) p10 *= 10;
+  p11 = p10 * 10;
+  for (int guard = 0; guard < 8; guard++) {
+    int ovf;
+    q = b_exact(md, mn, prec - 1 - e10, d.e, 1, &ovf);
+    if (ovf || q >= p11) e10++;
+    else if (q < p10) e10--;
+    else break;
+  }
+  char dg[48];
+  int dn = 0;
+  {
+    char tmp[48];
+    int tn = 0;
+    unsigned __int128 t = q;
+    do {
+      tmp[tn++] = (char)('0' + (int)(t % 10));
+      t /= 10;
+    } while (t);
+    while (tn) dg[dn++] = tmp[--tn];
+  }
+  while (dn > 1 && dg[dn - 1] == '0') dn--;    /* %G drops trailing zeros */
+  if (d.m < 0) b[n++] = '-';
+  if (e10 < -4 || e10 >= prec) {
+    b[n++] = dg[0];
+    if (dn > 1) {
+      b[n++] = '.';
+      for (int i = 1; i < dn; i++) b[n++] = dg[i];
+    }
+    n += snprintf(b + n, sizeof b - (size_t)n, "E%c%02ld", e10 < 0 ? '-' : '+', e10 < 0 ? -e10 : e10);
+  } else if (e10 >= 0) {
+    for (int i = 0; i <= e10; i++) b[n++] = i < dn ? dg[i] : '0';
+    if (dn > e10 + 1) {
+      b[n++] = '.';
+      for (int i = (int)e10 + 1; i < dn; i++) b[n++] = dg[i];
+    }
+  } else {
+    b[n++] = '0';
+    b[n++] = '.';
+    for (long i = 0; i < -e10 - 1; i++) b[n++] = '0';
+    for (int i = 0; i < dn; i++) b[n++] = dg[i];
+  }
+  if (!memchr(b, '.', (size_t)n) && !memchr(b, 'E', (size_t)n)) b[n++] = '.';
+  return rt_str_copy(rt_str(b, n));
+}
+
+/* the D format of the PDP-11: sign, an 8-bit exponent in excess 128 and 55 bits of
+ * fraction, the leading 1 hidden (TO_BIT, [FLOAT (p)]$$, 3.3.3) */
+rstr rt_b_bits_of_d(rt_b_d d) {
+  rstr r = rt_str_new(64);
+  uint64_t u = 0;
+  if (d.m != 0) {
+    uint64_t mag = (uint64_t)(d.m < 0 ? -d.m : d.m);
+    uint64_t ex = (uint64_t)(d.e + 56 + 128);
+    u = ((uint64_t)(d.m < 0) << 63) | (ex << 55) | (mag & (((uint64_t)1 << 55) - 1));
+  }
+  for (int i = 63; i >= 0; i--, u >>= 1) r.p[i] = (unsigned char)('0' + (int)(u & 1));
+  return r;
+}
+
+rt_b_d rt_b_d_of_bits(rstr b) {
+  if (b.len != 64) rt_raise(RT_B_INVALID_SIZE);
+  uint64_t u = 0;
+  for (int i = 0; i < 64; i++) u = u * 2 + (b.p[i] == '1');
+  uint64_t ex = (u >> 55) & 255;
+  if (ex == 0) return (rt_b_d){0, 0};
+  int64_t mag = (int64_t)((u & (((uint64_t)1 << 55) - 1)) | ((uint64_t)1 << 55));
+  return (rt_b_d){(u >> 63) ? -mag : mag, (int32_t)((int64_t)ex - 128 - 56)};
+}
+
+/* FLOAT_MAX, EPSILON and the neighbours of a value (an open range bound) */
+rt_b_d rt_b_dmax(void) { return (rt_b_d){((int64_t)1 << 56) - 1, 127 - 56}; }
+rt_b_d rt_b_deps(void) { return (rt_b_d){(int64_t)1 << 55, -110}; }   /* 2**-55 */
+rt_b_d rt_b_dnext(rt_b_d d, int up) {
+  if (d.m == 0) return (rt_b_d){up ? ((int64_t)1 << 55) : -((int64_t)1 << 55), -128 - 55};
+  return b_dnorm((__int128)d.m * 2 + (up ? 1 : -1) * 2, (int64_t)d.e - 1, 1, RT_X_OVERFLOW);
+}
+
+/* a magnitude m * 2**e (m > 0) rounded to nb bits, to the nearest, ties to even */
+static unsigned __int128 b_round_to(unsigned __int128 m, int64_t *e, int nb) {
+  int len = 0;
+  for (unsigned __int128 t = m; t; t >>= 1) len++;
+  if (len > nb) {
+    int k = len - nb;
+    unsigned __int128 rem = m & ((((unsigned __int128)1) << k) - 1), q = m >> k;
+    unsigned __int128 half = ((unsigned __int128)1) << (k - 1);
+    if (rem > half || (rem == half && (q & 1))) q++;
+    if (q >> nb) {
+      q >>= 1;
+      k++;
+    }
+    *e += k;
+    return q;
+  }
+  *e -= nb - len;
+  return m << (nb - len);
+}
+
+/* the exact result of a D operation as sign, magnitude and exponent, raising nothing:
+ * the machine-dependent operators (3.3.4.5); a quotient to 114 bits and a sticky bit */
+static void b_dexact(int op, rt_b_d a, rt_b_d b, int *neg, unsigned __int128 *mag, int64_t *e) {
+  *mag = 0;
+  *e = 0;
+  *neg = 0;
+  if (op == '-') {
+    b.m = -b.m;
+    op = '+';
+  }
+  if (op == '*') {
+    __int128 p = (__int128)a.m * b.m;
+    *neg = p < 0;
+    *mag = (unsigned __int128)(p < 0 ? -p : p);
+    *e = (int64_t)a.e + b.e;
+    return;
+  }
+  if (op == '/') {
+    if (a.m == 0 || b.m == 0) return;          /* no quotient: zeros */
+    *neg = (a.m < 0) != (b.m < 0);
+    unsigned __int128 r = (unsigned __int128)(a.m < 0 ? -a.m : a.m);
+    unsigned __int128 d = (unsigned __int128)(b.m < 0 ? -b.m : b.m), q = 0;
+    for (int i = 0; i < 115; i++) {           /* 114 bits by long division */
+      q <<= 1;
+      if (r >= d) {
+        r -= d;
+        q |= 1;
+      }
+      r <<= 1;
+    }
+    *mag = q << 1 | (r != 0);                   /* and a sticky bit */
+    *e = (int64_t)a.e - b.e - 115;
+    return;
+  }
+  if (a.m == 0 || b.m == 0) {
+    rt_b_d c = a.m == 0 ? b : a;
+    *neg = c.m < 0;
+    *mag = (unsigned __int128)(c.m < 0 ? -c.m : c.m);
+    *e = c.e;
+    return;
+  }
+  if (b.e > a.e) {
+    rt_b_d t = a;
+    a = b;
+    b = t;
+  }
+  int64_t d = (int64_t)a.e - b.e;
+  if (d > 70) {                               /* b is below the last bit kept */
+    *neg = a.m < 0;
+    *mag = (unsigned __int128)(a.m < 0 ? -a.m : a.m);
+    *e = a.e;
+    return;
+  }
+  __int128 x = ((__int128)a.m << d) + b.m;
+  *neg = x < 0;
+  *mag = (unsigned __int128)(x < 0 ? -x : x);
+  *e = b.e;
+}
+
+/* !op! of D values: sign, a 15-bit exponent (excess 16384) and 112 bits of the
+ * exact result, the leading 1 included: two D words (3.3.4.5) */
+rstr rt_b_dmd(int op, rt_b_d a, rt_b_d b) {
+  rstr r = rt_str_new(128);
+  memset(r.p, '0', 128);
+  int neg;
+  unsigned __int128 mag;
+  int64_t e;
+  b_dexact(op, a, b, &neg, &mag, &e);
+  if (mag == 0) return r;
+  mag = b_round_to(mag, &e, 112);
+  uint64_t ex = (uint64_t)(e + 112 + 16384) & 0x7fff;
+  r.p[0] = (unsigned char)('0' + neg);
+  for (int i = 0; i < 15; i++) r.p[1 + i] = (unsigned char)('0' + (int)((ex >> (14 - i)) & 1));
+  for (int i = 0; i < 112; i++) r.p[16 + i] = (unsigned char)('0' + (int)((mag >> (111 - i)) & 1));
+  return r;
+}
+
+/* !op! of F values (-pdp11): the result in D, as the FP11 leaves it after OVERFLOW
+ * or UNDERFLOW: the exponent kept modulo 256 (3.3.4.5) */
+static rstr b_fmd_pdp11(int op, double a, double b) {
+  rstr r = rt_str_new(64);
+  memset(r.p, '0', 64);
+  int neg;
+  unsigned __int128 mag;
+  int64_t e;
+  b_dexact(op, b_d_raw(a), b_d_raw(b), &neg, &mag, &e);
+  if (mag == 0) return r;
+  mag = b_round_to(mag, &e, 56);
+  uint64_t u = ((uint64_t)neg << 63) | ((uint64_t)((e + 56 + 128) & 255) << 55)
+               | ((uint64_t)mag & (((uint64_t)1 << 55) - 1));
+  for (int i = 63; i >= 0; i--, u >>= 1) r.p[i] = (unsigned char)('0' + (int)(u & 1));
+  return r;
+}
+
+/* a D value to F (-pdp11), rounded or truncated from its 56 bits once: an assignment
+ * (RANGE) or TO_FLOAT (OVERFLOW) (3.3.5, 3.3.6.1) */
+double rt_b_single_of_d(rt_b_d d, int trunc, int range) {
+  if (d.m == 0) return 0;
+  int neg = d.m < 0;
+  uint64_t mag = (uint64_t)(neg ? -d.m : d.m);
+  uint64_t q = mag >> 32, rem = mag & 0xffffffffu;
+  int64_t e = (int64_t)d.e + 32;
+  if (!trunc && (rem > 0x80000000u || (rem == 0x80000000u && (q & 1)))) q++;
+  double r = ldexp((double)q, (int)e);
+  return b_fcheck(neg ? -r : r, 1, range ? RT_X_RANGE : RT_X_OVERFLOW);
+}
+
+/* the range of a D type (RANGE, or INVALID_TYPE where a value is checked, 3.3.5) */
+rt_b_d rt_b_drange(rt_b_d v, rt_b_d lo, rt_b_d hi, int typecheck) {
+  if (rt_b_dcmp(v, lo) < 0 || rt_b_dcmp(v, hi) > 0)
+    rt_raise(typecheck ? RT_B_INVALID_TYPE : RT_X_RANGE);
+  return v;
+}
+
+/* the F format of the PDP-11 (-pdp11): sign, an 8-bit exponent in excess 128 and 23
+ * bits of fraction, the leading 1 hidden (TO_BIT, [FLOAT (p)]$$, 3.3.3) */
+rstr rt_b_bits_of_f(double v) {
+  rstr r = rt_str_new(32);
+  uint32_t u = 0;
+  if (v != 0) {
+    int ex;
+    double f = frexp(fabs(v), &ex);              /* 0.5 <= f < 1 */
+    uint32_t m = (uint32_t)ldexp(f, 24);
+    u = ((uint32_t)(v < 0) << 31) | ((uint32_t)((ex + 128) & 255) << 23) | (m & 0x7fffff);
+  }
+  for (int i = 31; i >= 0; i--, u >>= 1) r.p[i] = (unsigned char)('0' + (int)(u & 1));
+  return r;
+}
+
+double rt_b_f_of_bits(rstr b) {
+  if (b.len != 32) rt_raise(RT_B_INVALID_SIZE);
+  uint32_t u = 0;
+  for (int i = 0; i < 32; i++) u = u * 2 + (b.p[i] == '1');
+  uint32_t ex = (u >> 23) & 255;
+  if (ex == 0) return 0;
+  double r = ldexp((double)((u & 0x7fffff) | 0x800000), (int)ex - 128 - 24);
+  return (u >> 31) ? -r : r;
+}
+
+/* !op! of STD fixed point values on 16-bit words (-pdp11): a double word, as the
+ * PDP-11 leaves it: MUL the 32-bit product, high word first; DIV the quotient
+ * word and then the remainder word; ADD and SUB the exact sum, the carry in the
+ * high word (3.2.4.5) */
+static rstr b_md_pdp11(int op, rt_int a, rt_int b) {
+  uint32_t u = 0;
+  switch (op) {
+  case '+': u = (uint32_t)(int32_t)(a + b); break;
+  case '-': u = (uint32_t)(int32_t)(a - b); break;
+  case '*': u = (uint32_t)(int32_t)(a * b); break;
+  default:
+    if (b != 0) u = ((uint32_t)(uint16_t)(a / b) << 16) | (uint16_t)(a % b);
+    break;
+  }
+  rstr r = rt_str_new(32);
+  for (int i = 31; i >= 0; i--, u >>= 1) r.p[i] = (unsigned char)('0' + (int)(u & 1));
+  return r;
 }
 
 /* ---- GREEN: the simulated machine (RM79 13, 14.6) ------------------------------

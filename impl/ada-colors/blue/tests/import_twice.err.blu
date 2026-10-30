@@ -1,0 +1,9 @@
+MAIN SEGMENT IMPORT_TWICEERR
+   USES (TERMINAL);
+% a name is listed once in an imports-clause (4.3.1)
+VAR V: INTEGER := 1;
+P ();
+PROCEDURE P () IMPORTS (DATA: (V, V));
+   PUT_LINE (TO_CHAR (V));
+END PROCEDURE P;
+END SEGMENT IMPORT_TWICEERR;

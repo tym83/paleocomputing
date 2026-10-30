@@ -1,0 +1,15 @@
+MAIN SEGMENT PARALLEL_SUPPORT
+   USES (TERMINAL);
+% the parallel operations are routines a program may redefine (D.7): its own
+% REQUEST and WAIT replace the predefined ones where they are visible
+VAR S: SEMAPHORE (SYNCH) := NEW (1);
+REQUEST (# S);
+WAIT (2);
+PUT_LINE (TO_CHAR (CLOCK ()));
+PROCEDURE REQUEST (# X: SEMAPHORE (?U));
+   PUT_LINE ('REQUEST of the program');
+END PROCEDURE REQUEST;
+PROCEDURE WAIT (T: FIXED (?S, 2, STD));
+   PUT_LINE ('WAIT of the program');
+END PROCEDURE WAIT;
+END SEGMENT PARALLEL_SUPPORT;

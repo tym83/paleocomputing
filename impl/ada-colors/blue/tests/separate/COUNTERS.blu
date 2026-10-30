@@ -1,0 +1,34 @@
+% a segment translated by itself (bluec -c): its variables, routines, a module with
+% an abstract type and a generic routine, linked by the programs that use it (4.2)
+SEGMENT COUNTERS
+   USES (TERMINAL)
+   DEFINES (TOTAL, BUMP, M, SHOW);
+
+   VAR TOTAL: INTEGER := 100;
+
+   PROCEDURE BUMP (N: INTEGER) IMPORTS (DATA: (# TOTAL));
+      TOTAL := TOTAL + N;
+   END PROCEDURE BUMP;
+
+   PROCEDURE SHOW (X: ?T)
+         WHERE T NEEDS (TO_CHAR (T) RETURNS (ASCII_STR (?)));
+      PUT_LINE ('SHOW ' !! TO_CHAR (X));
+   END PROCEDURE SHOW;
+
+   MODULE M EXPORTS (COUNTER);
+      VAR MADE: INTEGER := 0;
+      TYPE COUNTER = RECORD VAR N: INTEGER; END RECORD;
+      FUNCTION COUNTER$FRESH () RETURNS (COUNTER) IMPORTS (DATA: (# MADE));
+         VAR C: COUNTER;
+         MADE := MADE + 1;
+         C.N := MADE * 10;
+         RETURN C;
+      END FUNCTION COUNTER$FRESH;
+      FUNCTION COUNTER$VALUE (C: COUNTER) RETURNS (INTEGER);
+         RETURN C.N;
+      END FUNCTION COUNTER$VALUE;
+      PROCEDURE COUNTER$STORE_ (Y: COUNTER ## X: COUNTER);
+         X := Y;
+      END PROCEDURE COUNTER$STORE_;
+   END MODULE M;
+END SEGMENT COUNTERS;

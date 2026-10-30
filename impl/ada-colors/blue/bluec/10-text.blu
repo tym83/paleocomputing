@@ -1,34 +1,35 @@
 
 % ==== texts, the arena and the output ====================================================
 
-% the character with code C, as a string of length one
+% the character with code C, as a string of length one. The printable characters
+% are looked up; the others are made from their representation, which only a
+% machine-dependent part may do (3.6.6.1, 4.5.5.2)
 FUNCTION CHAR_OF (C: INTEGER) RETURNS (ASCII_STR(1));
    IF C IN [32:126] THEN
       RETURN GRAPHIC[C - 32 : C - 32];
-   ORIF C = 9 THEN
-      RETURN ''\HT;
-   ORIF C = 10 THEN
-      RETURN ''\LF;
-   ORIF C = 13 THEN
-      RETURN ''\CR;
    END IF;
+   BLOCK                                             % the bits of a character: as many
+      CONST N: INTEGER := TO_BIT (' ').SIZE;         % as the representation has (3.7.3)
+      VAR B: BIT(N) := ZEROS (N);
+      VAR V: INTEGER := C;
+      LOOP FOR K IN [0:N - 1] DO
+         IF V MOD 2 = 1 THEN
+            B[N - 1 - K : N - 1 - K] := BIN '1';
+         END IF;
+         V := V // 2;
+      END LOOP K;
+      IF V = 0 THEN
+         SELECT OBJECT_MACHINE FROM
+            PDP_11 --> RETURN [ASCII_STR(1)]$$(B); END;
+         END SELECT;
+      END IF;
+   END BLOCK;
    RETURN '?';
 END FUNCTION CHAR_OF;
 
-% the code of a character; the language gives no way to ask but through the
-% machine-dependent TO_BIT (3.6.6.1), so the printable characters are looked up
+% the code of a character: the value of its representation (3.6.6.1)
 FUNCTION CODE_OF (S: ASCII_STR(1)) RETURNS (INTEGER);
-   LOOP FOR I IN [0:94] DO
-      IF GRAPHIC[I:I] = S THEN
-         RETURN I + 32;
-      END IF;
-   END LOOP I;
-   IF S = ''\HT THEN
-      RETURN 9;
-   ORIF S = ''\LF THEN
-      RETURN 10;
-   END IF;
-   RETURN 13;
+   RETURN TO_FIXED (TO_BIT (S));
 END FUNCTION CODE_OF;
 
 % the hash of a name: its length and three of its characters
@@ -129,7 +130,51 @@ FUNCTION NUM (V: INTEGER) RETURNS (TEXT);
    RETURN MK (TO_CHAR (V));
 END FUNCTION NUM;
 
+% the name T as a C identifier: an identifier may begin with \ or ? [2-10]
+% texts made of a string and a text; the text is an input parameter, a constant,
+% as the argument of an explicit generic parameter must be (section 5)
+FUNCTION QMK (P: ASCII_STR(?L), T: TEXT) RETURNS (TEXT);
+   RETURN MK (P !! STR (T, T.LEN));
+END FUNCTION QMK;
+
+FUNCTION QMKN (P: ASCII_STR(?L), T: TEXT) RETURNS (TEXT);
+   RETURN MKN (P !! STR (T, T.LEN));
+END FUNCTION QMKN;
+
+FUNCTION JOINN (A: TEXT, S: ASCII_STR(?L), B: TEXT) RETURNS (TEXT);
+   RETURN MKN (STR (A, A.LEN) !! S !! STR (B, B.LEN));
+END FUNCTION JOINN;
+
+PROCEDURE FAIL2 (LINE: INTEGER, A: ASCII_STR(?LA), X: TEXT, B: ASCII_STR(?LB), Y: TEXT,
+                 C: ASCII_STR(?LC));
+   FAIL (LINE, A !! STR (X, X.LEN) !! B !! STR (Y, Y.LEN) !! C);
+END PROCEDURE FAIL2;
+
+FUNCTION CID (T: TEXT) RETURNS (TEXT);
+   CONST S: ASCII_STR(T.LEN) := STR (T, T.LEN);
+   VAR R: TEXT;
+   IF T.LEN = 0 THEN
+      RETURN T;
+   END IF;
+   IF S[0:0] <> '\' & S[0:0] <> '?' THEN
+      RETURN T;
+   END IF;
+   IF S[0:0] = '\' THEN
+      R := MK ('bs_');
+   ELSE
+      R := MK ('qm_');
+   END IF;
+   IF T.LEN = 1 THEN
+      RETURN R;
+   END IF;
+   RETURN CATS (R, S[1 : T.LEN - 1]);
+END FUNCTION CID;
+
 % a fresh C name: the base and a serial number
+FUNCTION NEW_NAME_T (BASE: TEXT) RETURNS (TEXT);
+   RETURN NEW_NAME (STR (BASE, BASE.LEN));
+END FUNCTION NEW_NAME_T;
+
 FUNCTION NEW_NAME (BASE: ASCII_STR(?L)) RETURNS (TEXT);
    W@.SERIAL := W@.SERIAL + 1;
    RETURN MK (BASE !! TO_CHAR (W@.SERIAL));

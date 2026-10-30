@@ -1,0 +1,11 @@
+MAIN SEGMENT IMPORT_IMMEDIATEERR
+   USES (TERMINAL);
+% an imported variable is known in the immediately enclosing scope (4.1.1)
+VAR G: INTEGER := 1;
+PUT_LINE ('x');
+PROCEDURE P ();
+   PROCEDURE Q () IMPORTS (DATA: (# G));
+      G := 2;
+   END PROCEDURE Q;
+END PROCEDURE P;
+END SEGMENT IMPORT_IMMEDIATEERR;

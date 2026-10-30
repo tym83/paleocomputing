@@ -1,0 +1,6 @@
+MAIN SEGMENT USAGE_MODE
+   USES (TERMINAL);
+% the use mode is a manifest expression of USAGE (3.11.1)
+VAR U: USAGE := REGION;
+VAR S: SEMAPHORE (U) := NEW (1);
+END SEGMENT USAGE_MODE;
