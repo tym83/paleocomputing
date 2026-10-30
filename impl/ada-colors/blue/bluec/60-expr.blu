@@ -65,7 +65,10 @@ FUNCTION MANIFEST (E: NODE) RETURNS (MVAL);
       BLOCK
          CONST A: MVAL := MANIFEST (E@.A);
          IF TEQS (E@.NAME, '-') THEN
-            RETURN (OK: A.OK, V: -A.V);
+            IF NOT A.OK THEN
+               RETURN NO;
+            END IF;
+            RETURN (OK: TRUE, V: MANIFEST_ARITH (MK ('-'), 0, A.V, E@.LINE));
          ORIF TEQS (E@.NAME, '+') THEN
             RETURN A;
          ORIF TEQS (E@.NAME, 'NOT') THEN
@@ -97,12 +100,8 @@ FUNCTION MANIFEST (E: NODE) RETURNS (MVAL);
          IF NOT (MANIFEST_INT (E@.A) & MANIFEST_INT (E@.B)) THEN
             RETURN NO;
          END IF;
-         IF TEQS (OP, '+') THEN
-            RETURN (OK: TRUE, V: A.V + B.V);
-         ORIF TEQS (OP, '-') THEN
-            RETURN (OK: TRUE, V: A.V - B.V);
-         ORIF TEQS (OP, '*') THEN
-            RETURN (OK: TRUE, V: A.V * B.V);
+         IF TEQS (OP, '+') ! TEQS (OP, '-') ! TEQS (OP, '*') THEN
+            RETURN (OK: TRUE, V: MANIFEST_ARITH (OP, A.V, B.V, E@.LINE));
          ORIF TEQS (OP, '//') & B.V <> 0 THEN
             RETURN (OK: TRUE, V: A.V // B.V);
          ORIF TEQS (OP, 'MOD') & B.V <> 0 THEN
@@ -339,6 +338,24 @@ FUNCTION TYPE_ATTR_MANIFEST (T0: TYP, NAME: TEXT) RETURNS (MVAL);
    END IF;
    RETURN NO_MVAL ();
 END FUNCTION TYPE_ATTR_MANIFEST;
+
+% A OP B for a manifest expression: an OVERFLOW is the translator's error (3.2.4.2)
+FUNCTION MANIFEST_ARITH (OP: TEXT, A, B: INTEGER, LINE: INTEGER) RETURNS (INTEGER);
+   VAR R: INTEGER := 0;
+   BLOCK
+      IF TEQS (OP, '+') THEN
+         R := A + B;
+      ORIF TEQS (OP, '-') THEN
+         R := A - B;
+      ELSE
+         R := A * B;
+      END IF;
+   END BLOCK
+   EXCEPT
+      OVERFLOW --> FAIL (LINE, 'a manifest expression overflows (3.2.4.2)'); END;
+   END EXCEPT;
+   RETURN R;
+END FUNCTION MANIFEST_ARITH;
 
 % a manifest operand of + - * // is an integer, not a literal of an enumeration
 FUNCTION MANIFEST_INT (E: NODE) RETURNS (BOOLEAN);
@@ -829,6 +846,9 @@ END FUNCTION NAME_EXPR;
 % a field-reference [3-191], or an attribute-query [3-2]
 FUNCTION FIELD_EXPR (E: NODE) RETURNS (ET);
    CONST A: NODE := E@.A;
+   IF (TEQS (E@.NAME, 'MIN') ! TEQS (E@.NAME, 'MAX')) & IS_FIXED_LITERAL (A) THEN
+      RETURN EXPR (A, NIL);                          % the range of a literal L is [L:L]
+   END IF;                                           % (3.2.2)
    IF A@.KIND = N_INDEX THEN                         % A.BOUNDS(I).MIN, .MAX (3.8.1)
       IF A@.A@.KIND = N_FIELD & TEQS (A@.A@.NAME, 'BOUNDS') THEN
          BLOCK
@@ -884,6 +904,31 @@ FUNCTION FIELD_EXPR (E: NODE) RETURNS (ET);
       RETURN ATTRIBUTE (B, E@.NAME, E@.LINE);
    END BLOCK;
 END FUNCTION FIELD_EXPR;
+
+% a fixed point literal, possibly signed or parenthesized
+FUNCTION IS_FIXED_LITERAL (A: NODE) RETURNS (BOOLEAN);
+   IF A@.KIND = N_PAREN ! A@.KIND = N_UNOP THEN
+      RETURN IS_FIXED_LITERAL (A@.A) & NOT TEQS (A@.NAME, 'NOT');
+   END IF;
+   IF A@.KIND = N_INT THEN
+      RETURN TRUE;
+   END IF;
+   IF A@.KIND = N_REAL THEN
+      IF A@.FL = 1 THEN
+         RETURN TRUE;
+      END IF;
+      BLOCK
+         CONST S: ASCII_STR(A@.NAME.LEN) := STR (A@.NAME, A@.NAME.LEN);
+         LOOP FOR I IN [0 : A@.NAME.LEN - 1] DO
+            IF S[I:I] = '.' THEN
+               RETURN FALSE;
+            END IF;
+         END LOOP I;
+      END BLOCK;
+      RETURN TRUE;
+   END IF;
+   RETURN FALSE;
+END FUNCTION IS_FIXED_LITERAL;
 
 FUNCTION IS_TYPE_WORD (NAME: TEXT) RETURNS (BOOLEAN);
    RETURN TEQS (NAME, 'FIXED') ! TEQS (NAME, 'FLOAT') ! TEQS (NAME, 'BIT')

@@ -404,6 +404,8 @@ extern int RT_B_INVALID_TYPE, RT_B_INVALID_REP;
 rt_int rt_b_trange(rt_int v, rt_int lo, rt_int hi);       /* INVALID_TYPE */
 double rt_b_tfrange(double v, double lo, double hi);
 rstr rt_b_tlen(rstr s, rt_int len);
+rt_int rt_b_addsc(rt_int a, rt_int sa, rt_int b, rt_int sb, rt_int s, int sub, int rounded);
+rstr rt_b_fmd(int op, double a, double b);                 /* !op! of floats */
 int rt_b_cmp(rt_int a, rt_int sa, rt_int b, rt_int sb);  /* order of a*2**-sa, b*2**-sb */
 rt_int rt_b_conv(rt_int v, rt_int from, rt_int to);    /* to a larger scale; RANGE */
 rt_int rt_b_fix_val(const char *s, rt_int scale, int rounded);  /* TO_FIXED of a literal */

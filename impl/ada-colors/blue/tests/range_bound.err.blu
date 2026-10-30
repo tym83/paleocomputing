@@ -1,0 +1,5 @@
+MAIN SEGMENT RANGE_BOUND
+   USES (TERMINAL);
+% the bounds of a range are of the type, assignable without approximation (3.2.1)
+VAR X: INTEGER [0 : 1.5\S1];
+END SEGMENT RANGE_BOUND;

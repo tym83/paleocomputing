@@ -695,14 +695,25 @@ FUNCTION SCALED_OPERATOR (E: NODE, OP: TEXT, A, B: ET) RETURNS (ET);
    CONST S1: INTEGER := A.T@.SCALE;
    CONST S2: INTEGER := B.T@.SCALE;
    VAR RND: TEXT := MK ('0');
+   IF E@.FL = 2 & REAL_TYPE (A.T)@.KIND = T_FLOAT & REAL_TYPE (B.T)@.KIND = T_FLOAT THEN
+      % the machine-dependent float operators !+! !-! !*! !/! (3.3.4.5)
+      REQUIRE_MACHINE (E@.LINE);
+      IF NOT (TEQS (OP, '+') ! TEQS (OP, '-') ! TEQS (OP, '*') ! TEQS (OP, '/')) THEN
+         FAILT (E@.LINE, 'no machine-dependent float operator ', OP);
+      END IF;
+      RETURN MKET (FMT3 ('rt_b_fmd(''@'', @, @)', OP, A.C, B.C), BITS_TYPE (128));
+   END IF;
    IF A.T@.KIND <> T_INT ! B.T@.KIND <> T_INT THEN
       FAIL (E@.LINE, 'scaled operators are for fixed point operands');
    END IF;
    IF W@.ROUNDED THEN
       RND := MK ('1');
    END IF;
-   IF E@.FL = 2 THEN                                 % !op!: a bitstring
+   IF E@.FL = 2 THEN                                 % !op!: a bitstring (3.2.4.5)
       REQUIRE_MACHINE (E@.LINE);
+      IF NOT (TEQS (OP, '+') ! TEQS (OP, '-') ! TEQS (OP, '*') ! TEQS (OP, '//')) THEN
+         FAILT (E@.LINE, 'the machine-dependent fixed point operators are !+! !-! !*! !//! (3.2.4.5), not ', OP);
+      END IF;
       RETURN MKET (FMT3 ('rt_b_md(''@'', @, @)', MK (STR (OP, OP.LEN)[0:0]), A.C, B.C), BITS_TYPE (128));
    END IF;
    BLOCK
@@ -719,15 +730,14 @@ FUNCTION SCALED_OPERATOR (E: NODE, OP: TEXT, A, B: ET) RETURNS (ET);
       ORIF TEQS (OP, 'MOD') THEN
          RETURN MKET (FMT4 ('rt_b_rescale(@, @, @, @)', FMT2 ('rt_rem(@, @)', A.C, B.C),
                             NUM (S1), NUM (S), RND), INT_TYPE (S));
-      ORIF TEQS (OP, '+') ! TEQS (OP, '-') THEN
+      ORIF TEQS (OP, '+') ! TEQS (OP, '-') THEN     % exact, then at the scale S
          BLOCK
-            VAR FN: TEXT := MK ('rt_add');
+            VAR SUB: TEXT := MK ('0');
             IF TEQS (OP, '-') THEN
-               FN := MK ('rt_sub');
+               SUB := MK ('1');
             END IF;
-            RETURN MKET (FMT4 ('rt_b_rescale(@, @, @, @)', FMT3 ('@(@, @)', FN,
-                               RESCALE_C (A.C, S1, SR), RESCALE_C (B.C, S2, SR)),
-                               NUM (SR), NUM (S), RND), INT_TYPE (S));
+            RETURN MKET (CAT (FMT4 ('rt_b_addsc(@, @, @, @, ', A.C, NUM (S1), B.C, NUM (S2)),
+                              FMT3 ('@, @, @)', NUM (S), SUB, RND)), INT_TYPE (S));
          END BLOCK;
       END IF;
    END BLOCK;

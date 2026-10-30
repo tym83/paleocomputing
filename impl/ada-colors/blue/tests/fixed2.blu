@@ -1,0 +1,19 @@
+MAIN SEGMENT FIXED2
+   USES (TERMINAL);
+% scaled sums are exact before their result scale (3.2.4.4); TO_CHAR of a negative
+% scale; the range of a literal is [L:L] (3.2.2); a range of a scaled type (3.2.1)
+VAR M: INTEGER := FIXED_MAX (0, 2, STD);
+VAR R: FIXED (-1, 2, STD);
+VAR Y: FIXED (1, 2, STD) [0 : 1.5\S1];
+VAR B: BIT (128);
+R := M !+-1! M;
+PUT_LINE (TO_CHAR (R) !! ' ' !! TO_CHAR (FIXED_MIN (-3, 2, STD)) !! ' ' !! TO_CHAR ((5).MAX)
+          !! ' ' !! TO_CHAR ((-.25\S2).MIN) !! ' ' !! TO_CHAR (Y.MAX));
+PUT_LINE (TO_CHAR (1.75\S2 !+0! .5\S1 ROUNDED) !! ' ' !! TO_CHAR (1.75\S2 !-1! .5\S1));
+SELECT OBJECT_MACHINE FROM
+   PDP_11 -->
+      B := 1.0 !/! 3.0;
+      PUT_LINE (TO_CHAR (B[0:11]) !! ' ' !! TO_CHAR (TO_FIXED (B[64:64], 0)));
+   END;
+END SELECT;
+END SEGMENT FIXED2;

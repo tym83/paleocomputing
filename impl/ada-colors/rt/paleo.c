@@ -2247,8 +2247,10 @@ rt_int rt_b_enum_of_rep(rstr b, const rstr *reps, rt_int n) {
 
 /* ---- BLUE: conversions and images ------------------------------------- */
 
+static rstr b_big_image(rt_int v, rt_int k);
+
 rstr rt_b_fix_image(rt_int v, rt_int scale) {
-  if (scale <= 0) return rt_str_of_int(rt_b_shl(v, -scale));
+  if (scale <= 0) return b_big_image(v, -scale);
   /* m * 2**-s has exactly s decimal digits after the point */
   char b[200];
   int n = 0, neg = v < 0;
@@ -2667,6 +2669,80 @@ void rt_b_wait(rt_int v, rt_int scale) {
 /* ---- BLUE: the rest of the language (coverage of the 1978 specification) ---- */
 
 int RT_B_INVALID_TYPE, RT_B_INVALID_REP;
+
+/* the decimal digits of v * 2**k, k >= 0: TO_CHAR of a negative scale (3.2.6) */
+static rstr b_big_image(rt_int v, rt_int k) {
+  b_big a;
+  int neg = v < 0;
+  unsigned __int128 m = neg ? -(b_wide)v : (b_wide)v;
+  big_init(&a, (uint32_t)(m >> 32));
+  big_shl(&a, 32);
+  b_big lo;
+  big_init(&lo, (uint32_t)m);
+  /* a += lo */
+  if (lo.n) {
+    big_room(&a, (a.n > 1 ? a.n : 1) + 1);
+    uint64_t c = lo.d[0];
+    for (int i = 0; c; i++) {
+      if (i >= a.n) a.d[a.n++] = 0;
+      c += a.d[i];
+      a.d[i] = (uint32_t)c;
+      c >>= 32;
+    }
+  }
+  big_shl(&a, k);
+  char *d = rt_alloc((size_t)(a.n * 10 + 12));
+  int n = 0;
+  if (!a.n) d[n++] = '0';
+  while (a.n) {                              /* divide by 10 */
+    uint64_t r = 0;
+    for (int i = a.n - 1; i >= 0; i--) {
+      uint64_t t = (r << 32) | a.d[i];
+      a.d[i] = (uint32_t)(t / 10);
+      r = t % 10;
+    }
+    while (a.n && !a.d[a.n - 1]) a.n--;
+    d[n++] = (char)('0' + r);
+  }
+  char *o = rt_alloc((size_t)n + 2);
+  int j = 0;
+  if (neg) o[j++] = '-';
+  while (n) o[j++] = d[--n];
+  return rt_str_copy(rt_str(o, j));
+}
+
+/* E !+s! F and E !-s! F: the exact sum at the larger scale, then the result scale
+ * (3.2.4.4); scales further apart than 60 add each operand at the result scale */
+rt_int rt_b_addsc(rt_int a, rt_int sa, rt_int b, rt_int sb, rt_int s, int sub, int rounded) {
+  rt_int m = sa > sb ? sa : sb;
+  if (m - sa > 60 || m - sb > 60) {
+    rt_int x = rt_b_rescale(a, sa, s, rounded), y = rt_b_rescale(b, sb, s, rounded);
+    return sub ? rt_sub(x, y) : rt_add(x, y);
+  }
+  b_wide x = (b_wide)a * ((b_wide)1 << (m - sa)), y = (b_wide)b * ((b_wide)1 << (m - sb));
+  b_wide r = sub ? x - y : x + y;
+  if (s >= m) {
+    if (s - m > 60 && r != 0) rt_raise(RT_X_OVERFLOW);
+    b_wide q = r * ((b_wide)1 << (s - m));
+    if (s - m > 0 && q / ((b_wide)1 << (s - m)) != r) rt_raise(RT_X_OVERFLOW);
+    return b_narrow(q);
+  }
+  return s - m < -120 ? 0 : b_narrow(b_divide(r, b_pow2(m - s), rounded));
+}
+
+/* the machine-dependent !op! of floating point values (3.3.4.5): the result and the
+ * error of its rounding, two doubles, 128 bits */
+rstr rt_b_fmd(int op, double a, double b) {
+  double hi, lo;
+  switch (op) {
+  case '+': hi = a + b; { double bb = hi - a; lo = (a - (hi - bb)) + (b - bb); } break;
+  case '-': hi = a - b; { double bb = hi - a; lo = (a - (hi - bb)) + (-b - bb); } break;
+  case '*': hi = a * b; lo = fma(a, b, -hi); break;
+  default: hi = b == 0 ? 0 : a / b; lo = b == 0 ? 0 : -fma(hi, b, -a) / b; break;
+  }
+  rstr h = rt_b_bits_of_float(hi), l = rt_b_bits_of_float(lo);
+  return rt_str_cat(h, l);
+}
 
 /* a type-specifier [T]$$(E): INVALID_TYPE unless the value is one of T (3.1.4.1) */
 rt_int rt_b_trange(rt_int v, rt_int lo, rt_int hi) {

@@ -268,11 +268,18 @@ FUNCTION WITH_RANGE (T: TYP, R: NODE) RETURNS (TYP);
          N@.MLO := ENUM_MANIFEST (R@.A, T);
          N@.MHI := ENUM_MANIFEST (R@.B, T);
       END IF;
-      IF T@.KIND = T_INT & T@.SCALE <> 0 THEN
+      % the bounds are of the type class, assignable without approximation
+      % (3.2.1, 3.3.1, 3.4.1)
+      IF NOT SAME_CLASS (REAL_TYPE (LO.T), REAL_TYPE (T)) ! NOT SAME_CLASS (REAL_TYPE (HI.T), REAL_TYPE (T)) THEN
+         FAIL (R@.LINE, 'the bounds of a range must be of the class of the type (3.2.1, 3.3.1, 3.4.1)');
+      END IF;
+      IF T@.KIND = T_INT THEN
          N@.LO_C := RESCALE (LO, T@.SCALE, R@.LINE);
          N@.HI_C := RESCALE (HI, T@.SCALE, R@.LINE);
-         N@.MLO := NO_MVAL ();
-         N@.MHI := NO_MVAL ();
+         IF T@.SCALE <> 0 ! LO.T@.SCALE <> 0 ! HI.T@.SCALE <> 0 THEN
+            N@.MLO := NO_MVAL ();
+            N@.MHI := NO_MVAL ();
+         END IF;
       END IF;
    END BLOCK;
    IF R@.IV = 1 ! R@.IV = 3 THEN                     % (L: open below

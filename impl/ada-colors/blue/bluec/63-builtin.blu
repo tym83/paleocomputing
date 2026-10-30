@@ -360,10 +360,12 @@ FUNCTION BUILTIN (E: NODE, WANT: TYP) RETURNS (ET);
    ORIF TEQS (NAME, 'FIXED_MIN') ! TEQS (NAME, 'FIXED_MAX') THEN   % 3.2.6.3
       NEED_ARGS (E, 3, 3);
       BLOCK
-         CONST S: MVAL := MANIFEST (E@.A);
-         IF NOT S.OK THEN
-            FAIL (LINE, 'the scale must be manifest');
+         CONST S: MVAL := MANIFEST_INTEGER_ARG (E@.A, 'scale', -1000, 1000);
+         CONST R: MVAL := MANIFEST_INTEGER_ARG (NTH (E@.A, 1), 'radix', 2, 1000);
+         IF R.V <> 2 THEN
+            FAIL (LINE, 'only radix 2 is predefined (3.2.6.3)');
          END IF;
+         CHECK_PRECISION_ARG (NTH (E@.A, 2), LINE);
          IF TEQS (NAME, 'FIXED_MIN') THEN
             RETURN MKET (MK ('INT64_MIN'), INT_TYPE (S.V));
          END IF;
@@ -432,24 +434,31 @@ FUNCTION TO_FIXED_CALL (E: NODE) RETURNS (ET);
    CONST RND: TEXT := ROUNDING_ARG (E, N);
    VAR S: INTEGER := 0;
    IF N >= 2 & NOT IS_ROUNDING (NTH (E@.A, 1)) THEN
-      BLOCK
-         CONST SM: MVAL := MANIFEST (ARG_EXPR (NTH (E@.A, 1)));
-         IF NOT SM.OK THEN
-            FAIL (E@.LINE, 'the scale of TO_FIXED must be manifest (3.2.1)');
-         END IF;
-         S := SM.V;
-      END BLOCK;
+      S := MANIFEST_INTEGER_ARG (ARG_EXPR (NTH (E@.A, 1)), 'scale', -1000, 1000).V;
    END IF;
-   IF N >= 3 THEN
-      BLOCK
-         CONST R: NODE := ARG_EXPR (NTH (E@.A, 2));
-         IF NOT IS_ROUNDING (R) & NOT TEQS (R@.NAME, 'STD') THEN
-            IF MANIFEST (R).V <> 2 THEN
-               FAIL (E@.LINE, 'only radix 2 and STD precision are predefined (3.2.6.1)');
+   % TO_FIXED (V, S [, radix] [, precision] [, rounding]) (3.2.6.1): radix 2, STD
+   BLOCK
+      VAR K: INTEGER := 2;
+      LOOP UNTIL K >= N DO
+         BLOCK
+            CONST R: NODE := ARG_EXPR (NTH (E@.A, K));
+            IF IS_ROUNDING (R) ! (NTH (E@.A, K)@.KIND = N_QUAL & K = N - 1) THEN
+               IF K <> N - 1 THEN
+                  FAIL (E@.LINE, 'the rounding mode is the last argument of TO_FIXED (3.2.6.1)');
+               END IF;
+            ORIF (R@.KIND = N_NAME ! R@.KIND = N_ENUMLIT) & NOT NAMES_OBJECT (R@.NAME) THEN
+               CHECK_PRECISION_ARG (R, E@.LINE);
+            ORIF R@.KIND = N_FIELD & TEQS (R@.NAME, 'PRECISION') THEN
+               ;                                     % X.PRECISION: STD
+            ELSE
+               IF MANIFEST_INTEGER_ARG (R, 'radix', 2, 1000).V <> 2 THEN
+                  FAIL (E@.LINE, 'only radix 2 is predefined (3.2.6.1)');
+               END IF;
             END IF;
-         END IF;
-      END BLOCK;
-   END IF;
+         END BLOCK;
+         K := K + 1;
+      END LOOP;
+   END BLOCK;
    IF T@.KIND = T_INT & (ARG_EXPR (E@.A)@.KIND = N_REAL ! ARG_EXPR (E@.A)@.KIND = N_INT) THEN
       % a fixed-literal: its mathematical value, not first rounded to its own scale
       RETURN MKET (FMT3 ('rt_b_fix_val(@, @, @)', CSTRING (ARG_EXPR (E@.A)@.NAME), NUM (S), RND),

@@ -1,0 +1,5 @@
+MAIN SEGMENT MANIFEST_OVERFLOW
+   USES (TERMINAL);
+% a manifest expression is computed by the translator: its OVERFLOW is an error
+CONST T: INTEGER := 9223372036854775807 + 1;
+END SEGMENT MANIFEST_OVERFLOW;
