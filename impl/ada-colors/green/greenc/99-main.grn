@@ -1207,6 +1207,8 @@
       PUT(NEWLINE);
       PUT("  rt_set_lang(1);");
       PUT(NEWLINE);
+      PUT("  rt_g_set_unit(" & INTEGER'REP(CONF_STORAGE_UNIT) & ");");
+      PUT(NEWLINE);
       PUT("  rt_g_set_memory(" & INTEGER'REP(CONF_MEMORY_SIZE) & ");");
       PUT(NEWLINE);
       PRINT_BUFFER(OUT_EXCS);
@@ -1277,6 +1279,9 @@ begin
    TY_UFIXED.NAME := MK("universal fixed");
    OUT_AWAITS := NEW_BUFFER;
    PREDEFINE;
+   -- for STRING use packing; (RM79 App. C)
+   OWN_REP(TY_STRING, STRING_REP);
+   STRING_REP.PACKED := TRUE;
    -- the predefined units written in GREEN (RM79 9.11): lexed and parsed
    -- first, translated in the environment of STANDARD
    PRELUDE;

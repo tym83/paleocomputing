@@ -2275,7 +2275,7 @@ void rt_g_load(rt_int a, rt_int n, unsigned char *buf);
 void rt_g_save(rt_int a, rt_int n, const unsigned char *buf);
 void rt_g_move_bytes(rt_int from, rt_int to, rt_int n) {
   if (n <= 0) return;
-  unsigned char *b = rt_alloc((size_t)n);
+  unsigned char *b = rt_alloc((size_t)n * 8);
   rt_g_load(from, n, b);
   rt_g_save(to, n, b);
   free(b);
@@ -3837,10 +3837,20 @@ void rt_g_set_memory(rt_int n) {
   if (n > 0 && !g_mem) g_mem_size = n;
 }
 
+/* pragma STORAGE_UNIT (RM79 13.7): 8, 16, 32 or 64 bits */
+static rt_int g_su = 8, g_ub = 1;
+void rt_g_set_unit(rt_int su) {
+  if ((su == 8 || su == 16 || su == 32 || su == 64) && !g_mem) {
+    g_su = su;
+    g_ub = su / 8;
+  }
+}
+
+/* N storage units of the memory from ADDR */
 unsigned char *rt_g_mem(rt_int addr, rt_int n) {
   if (addr < 0 || n < 0 || addr > g_mem_size - n) rt_raise(RT_X_RANGE);
-  if (!g_mem) g_mem = calloc((size_t)g_mem_size, 1);
-  return g_mem + addr;
+  if (!g_mem) g_mem = calloc((size_t)(g_mem_size * g_ub), 1);
+  return g_mem + addr * g_ub;
 }
 
 /* ---- layouts ---- */
@@ -3875,7 +3885,7 @@ static rt_int g_comp_bits(const g_lay *L, const void *e) {
   if (L->stride >= 0) return L->stride;
   rt_int b = rt_g_lay_bits(L->elem, e);
   if (b < 0) return -1;
-  return L->packed ? b : g_round(b, 8);
+  return L->packed ? b : g_round(b, g_su);
 }
 
 typedef struct { rt_int off, vstart, total; } g_walk;
@@ -3886,7 +3896,7 @@ static rt_int g_place(const g_lay *L, const void *v, rt_int i, g_walk *k, rt_int
   const void *c = v ? (const char *)v + f->coff : NULL;
   rt_int b = f->width >= 0 ? f->width : rt_g_lay_bits(f->lay, c);
   if (b < 0) return -1;
-  if (!L->packed && f->width < 0) b = g_round(b, 8);
+  if (!L->packed && f->width < 0) b = g_round(b, g_su);
   if (f->variant) {
     if (k->vstart < 0) k->vstart = k->off;
     int first = 1;
@@ -3894,7 +3904,7 @@ static rt_int g_place(const g_lay *L, const void *v, rt_int i, g_walk *k, rt_int
       if (L->f[j].variant == f->variant) first = 0;
     if (first) k->off = k->vstart;
   }
-  rt_int st = f->at >= 0 ? f->at : (L->packed ? k->off : g_round(k->off, 8));
+  rt_int st = f->at >= 0 ? f->at : (L->packed ? k->off : g_round(k->off, g_su));
   k->off = st + b;
   if (k->off > k->total) k->total = k->off;
   *w = b;
@@ -3928,7 +3938,7 @@ rt_int rt_g_lay_bits(const g_lay *L, const void *v) {
     if (!g_present(&L->f[i], v)) continue;
     if (g_place(L, v, i, &k, &w) < 0) return -1;
   }
-  return L->packed ? k.total : g_round(k.total, 8);
+  return L->packed ? k.total : g_round(k.total, g_su);
 }
 
 rt_int rt_g_window(void *c, const g_lay *L);
@@ -4054,8 +4064,8 @@ static void g_dec_w(const g_lay *L, void *v, const unsigned char *img, rt_int of
 static unsigned char *g_image(const g_lay *L, const void *v, rt_int *bits) {
   rt_int b = rt_g_lay_bits(L, v);
   if (b < 0) b = 0;
-  unsigned char *img = rt_alloc((size_t)(b + 7) / 8 + 16);
-  memset(img, 0, (size_t)(b + 7) / 8 + 16);
+  unsigned char *img = rt_alloc((size_t)(b + 7) / 8 + 16 + (size_t)g_ub);
+  memset(img, 0, (size_t)(b + 7) / 8 + 16 + (size_t)g_ub);
   g_enc(L, v, img, 0);
   *bits = b;
   return img;
@@ -4127,8 +4137,10 @@ static rt_int g_nwins, g_cwins, g_next_win = -1;
 void rt_g_view(void *c, const g_lay *L, rt_int addr, int keep) {
   rt_int bits;
   unsigned char *img = g_image(L, c, &bits);
-  rt_int n = (bits + 7) / 8;
-  unsigned char *m = rt_g_mem(addr, n ? n : 1);
+  rt_int units = (bits + g_su - 1) / g_su;
+  if (units < 1) units = 1;
+  rt_int n = units * g_ub;
+  unsigned char *m = rt_g_mem(addr, units);
   if (L->align > 1 && addr % L->align) rt_raise(RT_X_RANGE);
   if (rt_g_nviews == g_cviews) {
     g_cviews = g_cviews ? g_cviews * 2 : 16;
@@ -4158,7 +4170,7 @@ void rt_g_sync(void) {
       g_view *V = &g_views[i];
       rt_int bits;
       unsigned char *h = g_image(V->L, V->c, &bits);
-      unsigned char *m = rt_g_mem(V->addr, V->bytes);
+      unsigned char *m = rt_g_mem(V->addr, V->bytes / g_ub);
       int differ = 0;
       for (rt_int k = 0; k < V->bytes; k++) {
         unsigned char mask = h[k] ^ V->base[k];
@@ -4184,7 +4196,7 @@ rt_int rt_g_window(void *c, const g_lay *L) {
   if (V) return V->addr;
   for (rt_int i = 0; i < g_nwins; i++)
     if (g_wins[i].c == c) return g_wins[i].base;
-  if (g_next_win < 0) g_next_win = g_round(g_mem_size, 8);
+  if (g_next_win < 0) g_next_win = g_round(g_mem_size, 8);   /* in storage units */
   if (g_nwins == g_cwins) {
     g_cwins = g_cwins ? g_cwins * 2 : 32;
     g_wins = realloc(g_wins, (size_t)g_cwins * sizeof *g_wins);
@@ -4193,9 +4205,10 @@ rt_int rt_g_window(void *c, const g_lay *L) {
   rt_int b = rt_g_lay_bits(L, c);
   w->c = c;
   w->L = L;
-  w->bytes = b > 0 ? (b + 7) / 8 : 1;
+  rt_int units = b > 0 ? (b + g_su - 1) / g_su : 1;
+  w->bytes = units * g_ub;
   w->base = g_round(g_next_win, L->align > 1 ? L->align : 1);
-  g_next_win = w->base + w->bytes;
+  g_next_win = w->base + units;
   return w->base;
 }
 
@@ -4208,25 +4221,28 @@ static void *g_window_object(rt_int a) {
 /* X'ADDRESS of the component at comp of the object at root (RM79 13.7) */
 rt_int rt_g_address(void *root, const g_lay *L, void *comp) {
   rt_int base = rt_g_window(root, L), o = g_off(L, root, comp);
-  return base + (o > 0 ? o / 8 : 0);
+  return base + (o > 0 ? o / g_su : 0);
 }
 
-/* storage units of the memory or of the windows */
-static g_win *g_win_at(rt_int a) {
+/* storage units of the memory or of the windows, by byte: the byte at
+ * B (B = unit address * bytes per unit + byte in the unit) */
+static g_win *g_win_at(rt_int b) {
   for (rt_int i = 0; i < g_nwins; i++)
-    if (a >= g_wins[i].base && a < g_wins[i].base + g_wins[i].bytes) return &g_wins[i];
+    if (b >= g_wins[i].base * g_ub && b < g_wins[i].base * g_ub + g_wins[i].bytes) return &g_wins[i];
   return NULL;
 }
 
+/* N storage units from A: N * (STORAGE_UNIT / 8) bytes */
 void rt_g_load(rt_int a, rt_int n, unsigned char *buf) {
   g_win *last = NULL;
   unsigned char *img = NULL;
   rt_int bits;
   rt_g_sync();
-  for (rt_int k = 0; k < n; k++) {
-    rt_int x = a + k;
-    if (x >= 0 && x < g_mem_size) {
-      buf[k] = *rt_g_mem(x, 1);
+  for (rt_int k = 0; k < n * g_ub; k++) {
+    rt_int x = a * g_ub + k;
+    if (x >= 0 && x < g_mem_size * g_ub) {
+      rt_g_mem(0, 0);
+      buf[k] = g_mem[x];
       continue;
     }
     g_win *w = g_win_at(x);
@@ -4236,23 +4252,24 @@ void rt_g_load(rt_int a, rt_int n, unsigned char *buf) {
       img = g_image(w->L, w->c, &bits);
       last = w;
     }
-    buf[k] = img[x - w->base];
+    buf[k] = img[x - w->base * g_ub];
   }
   free(img);
 }
 
 void rt_g_save(rt_int a, rt_int n, const unsigned char *buf) {
-  for (rt_int k = 0; k < n; k++) {
-    rt_int x = a + k;
-    if (x >= 0 && x < g_mem_size) {
-      *rt_g_mem(x, 1) = buf[k];
+  for (rt_int k = 0; k < n * g_ub; k++) {
+    rt_int x = a * g_ub + k;
+    if (x >= 0 && x < g_mem_size * g_ub) {
+      rt_g_mem(0, 0);
+      g_mem[x] = buf[k];
       continue;
     }
     g_win *w = g_win_at(x);
     if (!w) rt_raise(RT_X_RANGE);
     rt_int bits;
     unsigned char *img = g_image(w->L, w->c, &bits);
-    img[x - w->base] = buf[k];
+    img[x - w->base * g_ub] = buf[k];
     g_dec(w->L, w->c, img, 0);
     free(img);
   }
@@ -4293,9 +4310,9 @@ rt_int rt_g_component(const g_lay *L, const void *v, rt_int i, int what) {
     if (!g_present(&L->f[j], v) && j != i) continue;
     st = g_place(L, v, j, &k, &w);
   }
-  if (what == 0) return st / 8;
-  if (what == 1) return st % 8;
-  return st % 8 + w - 1;
+  if (what == 0) return st / g_su;
+  if (what == 1) return st % g_su;
+  return st % g_su + w - 1;
 }
 
 /* ---- interrupts ---- */
@@ -4385,7 +4402,7 @@ void rt_g_interrupt(rt_int addr) { g_interrupt(addr, g_dev + 6, 10); }
 static rt_int g_word(rt_int a) {
   unsigned char b[8];
   rt_int v;
-  rt_g_load(a, 8, b);
+  rt_g_load(a, 8 / g_ub, b);
   memcpy(&v, b, 8);
   return v;
 }
@@ -4393,7 +4410,7 @@ static rt_int g_word(rt_int a) {
 static void g_set_word(rt_int a, rt_int v) {
   unsigned char b[8];
   memcpy(b, &v, 8);
-  rt_g_save(a, 8, b);
+  rt_g_save(a, 8 / g_ub, b);
 }
 
 void rt_g_machine(int op, rt_int r, rt_int a) {
@@ -4431,17 +4448,21 @@ void rt_g_send_control(rt_int device, rt_int *data) {
   } else if (device == 3) {
     g_dev[3] = *data;
   } else if (device == 4) {
-    unsigned char b = (unsigned char)*data;
-    rt_g_save(g_dev[3], 1, &b);
+    unsigned char b[8];
+    rt_int v = *data;
+    memcpy(b, &v, 8);
+    rt_g_save(g_dev[3], 1, b);
     g_dev[3]++;
   } else if (device == 5) {
-    char t[4];
+    char t[24];
     for (rt_int k = 0; k < *data; k++) {
-      unsigned char b;
-      rt_g_load(g_dev[3] + k, 1, &b);
-      snprintf(t, sizeof t, "%02X", b);
+      unsigned char b[8] = {0};
+      uint64_t v = 0;
+      rt_g_load(g_dev[3] + k, 1, b);
+      memcpy(&v, b, (size_t)g_ub);
+      snprintf(t, sizeof t, "%0*llX", (int)(2 * g_ub), (unsigned long long)v);
       if (k > 0) rt_g_putc(' ');
-      rt_g_put(rt_str(t, 2));
+      rt_g_put(rt_str(t, (rt_int)strlen(t)));
     }
   } else if (device > 5) {
     g_dev[device] = *data;
@@ -4457,9 +4478,11 @@ void rt_g_receive_control(rt_int device, rt_int *data) {
   } else if (device == 2) {
     *data = rt_time();
   } else if (device == 4) {
-    unsigned char b;
-    rt_g_load(g_dev[3], 1, &b);
-    *data = b;
+    unsigned char b[8] = {0};
+    rt_int v = 0;
+    rt_g_load(g_dev[3], 1, b);
+    memcpy(&v, b, (size_t)g_ub);
+    *data = v;
     g_dev[3]++;
   } else {
     *data = g_dev[device];

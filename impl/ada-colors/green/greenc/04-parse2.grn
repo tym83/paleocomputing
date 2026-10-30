@@ -78,7 +78,9 @@
          if N /= 1 or else A.KIND /= N_INT then
             FAIL(X.LINE, "pragma " & P & " takes a number (RM79 13.7)");
          end if;
-         if P = "STORAGE_UNIT" then
+         if P = "STORAGE_UNIT" and then (A.IVAL /= 8 and A.IVAL /= 16 and A.IVAL /= 32 and A.IVAL /= 64) then
+            FAIL(X.LINE, "the storage units of this machine have 8, 16, 32 or 64 bits (RM79 13.7)");
+         elsif P = "STORAGE_UNIT" then
             CONF_STORAGE_UNIT := A.IVAL;
          else
             CONF_MEMORY_SIZE := A.IVAL;

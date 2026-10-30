@@ -392,7 +392,7 @@
             SCALAR_LAYOUT(T.ELEM, EC, PK, TRUE, EK, EB, EBIAS);
             STRIDE := EB;
             if not PK then
-               STRIDE := ((EB + 7) / 8) * 8;
+               STRIDE := ((EB + CONF_STORAGE_UNIT - 1) / CONF_STORAGE_UNIT) * CONF_STORAGE_UNIT;
             end if;
          end if;
          PUT_TO(OUT_LAYS, "static const g_lay " & NM.all & " = {'a', " & BOOL_C(PK) & ", 0, 0, NULL, 0, NULL, "

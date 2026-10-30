@@ -430,6 +430,7 @@ struct g_lay {
 };
 extern int rt_g_nviews;
 void rt_g_set_memory(rt_int n);
+void rt_g_set_unit(rt_int su);                /* pragma STORAGE_UNIT */
 unsigned char *rt_g_mem(rt_int addr, rt_int n);  /* RANGE_ERROR outside */
 rt_int rt_g_lay_bits(const g_lay *L, const void *v);  /* v may be NULL */
 void rt_g_view(void *c, const g_lay *L, rt_int addr, int keep);

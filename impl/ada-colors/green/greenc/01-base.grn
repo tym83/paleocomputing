@@ -480,6 +480,7 @@ procedure GREENC is
    SAW_INTERFACE : BOOLEAN := FALSE;
    REPS : REP;
    LAYS : LAYC;
+   STRING_REP : REP;
    OUT_LAYDECLS, OUT_LAYS : BUFFER;
    -- the program has address specifications: views are kept in agreement
    HAS_VIEWS : BOOLEAN := FALSE;
