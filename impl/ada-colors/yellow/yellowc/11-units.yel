@@ -652,6 +652,29 @@
     RETURN
   ENDPROCEDURE Activate;
 
+  (* the VAR actuals of an activation of process s live at least as long *)
+  (* as it (X.E.2) *)
+  PROCEDURE CheckLifeScope (CONST s: Sym; CONST base, nargs: INT)
+    VAR p: Param := s^.params;
+        i: INT := base + 1;
+        root: Sym;
+        dyn: BOOLEAN;
+        tid: Txt;
+    WHILE (p # Param NIL) AND (i <= base + nargs) DO
+      IF p^.cls = C_VAR THEN
+        DesigBase(ArgNode[i], root, dyn, tid);
+        IF (root # Sym NIL) AND NOT dyn THEN
+          IF LifeDepth(root^.depth) > LifeDepth(s^.depth) THEN
+            FailN(ArgNode[i]^.line, root^.name, " is the VAR actual of a process that may outlive it: its life scope is smaller than that of the process (X.E.2)")
+          ENDIF
+        ENDIF
+      ENDIF;
+      i := i + 1;
+      p := p^.next
+    ENDWHILE;
+    RETURN
+  ENDPROCEDURE CheckLifeScope;
+
   (* the life scope of what is declared at depth: the nearest routine, *)
   (* process or BEGIN block around it (X.E.2) *)
   PROCEDURE LifeDepth RETURNS INT (CONST depth: INT)

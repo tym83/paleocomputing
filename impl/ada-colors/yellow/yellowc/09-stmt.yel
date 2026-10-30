@@ -441,8 +441,10 @@
       sym := Find(s^.a^.name);
       IF sym # Sym NIL THEN sym := Real(sym) ENDIF;
       IF (sym # Sym NIL) AND (sym^.kind = S_PROCESS) AND sym^.hasmv THEN
-        (* a process of another segment, activated there (XIII) *)
+        (* a process of another segment, activated there (XIII); its VAR *)
+        (* actuals live as long as it, at the top of a segment (X.E.2) *)
         CompileArgs(s^.a^.a, sym, i, val);
+        CheckLifeScope(sym, i, val);
         Emit(Join(CallCode(sym, i, val, s^.line), T(";"), 0))
       ELSIF (sym # Sym NIL) AND (sym^.kind = S_PROCESS) THEN
         Activate(s^.a, sym)
@@ -688,7 +690,9 @@
       Emit(Join(T("if (!RT_TRY("), f, Join(T(")) { RT_POP("), f, Join(T("); y_sim_depth = "), ys, T("; rt_raise(rt_xcur); }")))));
       XTop := XTop + 1;
       XFrames[XTop] := f;
-      XRestore[XTop] := Join(T("y_sim_depth = "), ys, T(";"))
+      XRestore[XTop] := Join(T("y_sim_depth = "), ys, T(";"));
+      SimTop := SimTop + 1;
+      SimYs[SimTop] := ys
     ENDIF;
     OpenScope(FALSE);
     Declarations(s^.a^.a);
@@ -696,6 +700,7 @@
     AwaitProcesses();
     CloseScope();
     IF s^.flag = 1 THEN
+      SimTop := SimTop - 1;
       XTop := XTop - 1;
       Emit(Join(T("RT_POP("), f, Join(T("); y_sim_depth = "), ys, T(";"))))
     ENDIF;
@@ -732,6 +737,8 @@
     ENDIF;
     sym^.readonly := TRUE;
     EmitS("Y_TICK();");
+    (* a GOTO out of a SIMULATED_TIME block ends the simulation too *)
+    IF SimTop > sym^.mval THEN Emit3("y_sim_depth = ", SimYs[sym^.mval + 1], ";") ENDIF;
     Emit3("goto ", sym^.cname, ";");
     RETURN
   ENDPROCEDURE GotoStatement;

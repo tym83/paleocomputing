@@ -826,9 +826,19 @@
       SB();
       SA("(*(");
       ST(CType(r));
-      SA(" *)y_deref(");
-      ST(c);
-      SA("))");
+      IF Suppressed(T_POINTER) THEN
+        (* the pointer trap suppressed: what an invalid pointer designates *)
+        (* is the simulated store from address 0 *)
+        SA(" *)y_derefw(");
+        ST(c);
+        SA(", sizeof(");
+        ST(CType(r));
+        SA(")))")
+      ELSE
+        SA(" *)y_deref(");
+        ST(c);
+        SA("))")
+      ENDIF;
       code := SE()
     ELSIF k = N_INDEX THEN
       IndexExpr(n, code, r)
@@ -1020,6 +1030,8 @@
     SA(" *)(");
     ST(arr);
     SA(").p)[y_ix");
+    (* the index trap suppressed: the subscript wraps round the array *)
+    IF Suppressed(T_INDEX) THEN SA("w") ENDIF;
     SI(nd);
     SA("(");
     ST(arr);
@@ -1104,6 +1116,17 @@
     RETURN SE()
   ENDPROCEDURE Call2;
 
+  PROCEDURE Call2T RETURNS Txt (CONST f, a, b: Txt)
+    SB();
+    ST(f);
+    SA("(");
+    ST(a);
+    SA(", ");
+    ST(b);
+    SA(")");
+    RETURN SE()
+  ENDPROCEDURE Call2T;
+
   PROCEDURE Infix RETURNS Txt (CONST a: Txt; CONST op: ARRAY (1 DIMENSIONS OF ASCII); CONST b: Txt)
     SB();
     SA("(");
@@ -1161,6 +1184,13 @@
     ENDIF;
     RETURN (r^.kind = R_ENUM) AND r^.ordered
   ENDPROCEDURE IsOrdered;
+
+  (* floating-point division, checked for a zero divisor unless that trap is *)
+  (* suppressed (XIV.XIII.2) *)
+  PROCEDURE FDivName RETURNS Txt ()
+    IF Suppressed(T_ZERO) THEN RETURN T("y_fdivw") ENDIF;
+    RETURN T("y_fdiv")
+  ENDPROCEDURE FDivName;
 
   (* the value of a FIXED number as a floating-point one *)
   PROCEDURE FixToFloat RETURNS Txt (CONST c: Txt; CONST r: Rep)
@@ -1274,13 +1304,15 @@
       ELSIF op = P_PLUS THEN code := Call2("y_add", a, b)
       ELSIF op = P_MINUS THEN code := Call2("y_sub", a, b)
       ELSIF op = P_STAR THEN code := Call2("y_mul", a, b)
+      ELSIF (op = W_DIV) AND Suppressed(T_ZERO) THEN code := Call2("y_divw", a, b)
+      ELSIF (op = W_MOD) AND Suppressed(T_ZERO) THEN code := Call2("y_modw", a, b)
       ELSIF op = W_DIV THEN code := Call2("y_div", a, b)
       ELSIF op = W_MOD THEN code := Call2("y_mod", a, b)
       ELSIF op = P_SLASH THEN
         (* integer / gives a floating-point result (VIII.C) *)
         r := RFloat;
         SB();
-        SA("y_fdiv((double)(");
+        IF Suppressed(T_ZERO) THEN SA("y_fdivw((double)(") ELSE SA("y_fdiv((double)(") ENDIF;
         ST(a);
         SA("), (double)(");
         ST(b);
@@ -1298,7 +1330,7 @@
       ELSIF op = P_STAR THEN code := FloatChk(Infix(a, "*", b))
       ELSIF op = P_SLASH THEN
         r := RFloat;
-        code := FloatChk(Call2("y_fdiv", a, b))
+        code := FloatChk(Call2T(FDivName(), a, b))
       ELSE
         FailN(n^.line, op, " does not apply to these numbers")
       ENDIF;
@@ -1316,7 +1348,7 @@
         code := Call2("y_fix_mul", a, b)
       ELSIF op = P_SLASH THEN
         r := RFloat;
-        code := FloatChk(Call2("y_fdiv", FixToFloat(a, ra), FixToFloat(b, rb)))
+        code := FloatChk(Call2T(FDivName(), FixToFloat(a, ra), FixToFloat(b, rb)))
       ELSE
         FailN(n^.line, op, " does not apply to these numbers")
       ENDIF;

@@ -165,9 +165,12 @@ ENDMODULE TextIO;
 
 (* the compiler status module (XIV.XIII.2): directives to the translator, *)
 (* in effect from the call to the end of the enclosing block. Suppressing *)
-(* RANGE_TRAP, OVERFLOW_TRAP or ASSERTION_TRAP leaves out the code that *)
-(* detects the trap; the other traps are always detected here, since *)
-(* leaving them out would let a program reach storage it does not own *)
+(* a trap leaves out the code that detects it; what the program then gets *)
+(* is what the simulated machine does, inside its own storage: a value out *)
+(* of range is kept, an integer overflow wraps, an assertion has no effect, *)
+(* an undefined value is read as it is, a subscript out of bounds wraps *)
+(* round the array, an invalid pointer designates the store from address *)
+(* 0, an integer division by zero gives 0 and a floating one IEEE infinity *)
 MODULE CompilerStatus
   EXPORT TRANSPARENT TRAP_KIND;
   EXPORT SUPPRESS_TRAP, RESTORE_TRAP, TRAP_SUPPRESSED;

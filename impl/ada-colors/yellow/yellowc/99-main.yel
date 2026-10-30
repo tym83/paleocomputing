@@ -137,6 +137,7 @@
     ENDWHILE;
     ResolveLater(Depth);
     RunDeferred(0, 0);
+    ApplyFacts();
     CheckEffects();
     IF Mode = M_SEGMENT THEN
       (* a segment awaits its processes once every segment has started *)

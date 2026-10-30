@@ -3452,6 +3452,52 @@ double y_fdiv(double a, double b) {
   return a / b;
 }
 
+/* ---- suppressed traps (XIV.XIII.2) ----------------------------------------- */
+
+static rt_int ixw(yarr a, int k, rt_int i) {
+  rt_int n = y_n(a.lo[k], a.hi[k]);
+  if (n == 0) rt_raise(RT_X_SUBSCRIPT);    /* no component to wrap round */
+  rt_int d = (i - a.lo[k]) % n;
+  return d < 0 ? d + n : d;
+}
+rt_int y_ixw1(yarr a, rt_int i) { return ixw(a, 0, i); }
+rt_int y_ixw2(yarr a, rt_int i, rt_int j) { return ixw(a, 0, i) * y_n(a.lo[1], a.hi[1]) + ixw(a, 1, j); }
+rt_int y_ixw3(yarr a, rt_int i, rt_int j, rt_int k) {
+  return y_ixw2(a, i, j) * y_n(a.lo[2], a.hi[2]) + ixw(a, 2, k);
+}
+rt_int y_ixw4(yarr a, rt_int i, rt_int j, rt_int k, rt_int l) {
+  return y_ixw3(a, i, j, k) * y_n(a.lo[3], a.hi[3]) + ixw(a, 3, l);
+}
+rt_int y_ixw5(yarr a, rt_int i, rt_int j, rt_int k, rt_int l, rt_int m) {
+  return y_ixw4(a, i, j, k, l) * y_n(a.lo[4], a.hi[4]) + ixw(a, 4, m);
+}
+rt_int y_ixw6(yarr a, rt_int i, rt_int j, rt_int k, rt_int l, rt_int m, rt_int n) {
+  return y_ixw5(a, i, j, k, l, m) * y_n(a.lo[5], a.hi[5]) + ixw(a, 5, n);
+}
+rt_int y_ixw7(yarr a, rt_int i, rt_int j, rt_int k, rt_int l, rt_int m, rt_int n, rt_int o) {
+  return y_ixw6(a, i, j, k, l, m, n) * y_n(a.lo[6], a.hi[6]) + ixw(a, 6, o);
+}
+rt_int y_ixw8(yarr a, rt_int i, rt_int j, rt_int k, rt_int l, rt_int m, rt_int n, rt_int o, rt_int q) {
+  return y_ixw7(a, i, j, k, l, m, n, o) * y_n(a.lo[7], a.hi[7]) + ixw(a, 7, q);
+}
+
+rt_int y_divw(rt_int a, rt_int b) {
+  if (b == 0) return 0;
+  if (a == INT64_MIN && b == -1) return a;
+  rt_int q = a / b;
+  if ((a % b != 0) && ((a < 0) != (b < 0))) q -= 1;
+  return q;
+}
+
+rt_int y_modw(rt_int a, rt_int b) {
+  if (b == 0 || b == -1) return 0;
+  rt_int r = a % b;
+  if (r != 0 && ((r < 0) != (b < 0))) r += b;
+  return r;
+}
+
+double y_fdivw(double a, double b) { return a / b; }
+
 /* ---- the simulated machine ------------------------------------------------ */
 
 int Y_X_ADDRESS;
@@ -3501,6 +3547,13 @@ void *y_mem_ptr(rt_int a) {
 }
 
 rt_int *y_mem_word(rt_int a) { return y_mem_ptr(a); }
+
+void *y_derefw(void *p, size_t size) {
+  ycell *c = p;
+  if (c && c->body) return c->body;
+  if (size > sizeof y_mem_store) rt_raise(Y_X_ADDRESS);
+  return y_mem_store;
+}
 
 int y_cond_claim(rt_lock *l) {
   if (l->owner) return 0;

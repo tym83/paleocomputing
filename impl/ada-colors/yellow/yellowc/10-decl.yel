@@ -526,6 +526,7 @@
       WHILE nm # Node NIL DO
         s := NewSym(S_LABEL, nm^.name);
         s^.level := Level;
+        s^.mval := SimTop;
         s^.cname := Fresh("lab");
         Define(s, nm^.line);
         nm := nm^.next

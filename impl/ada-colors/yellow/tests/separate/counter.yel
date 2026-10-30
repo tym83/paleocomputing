@@ -1,10 +1,12 @@
 (* the segment Counter *)
 MODULE Counter
   IMPORT StandardImplementationPrelude, TextIO;
-  EXPORT Bump, Value, Twice, Ticker, Limit;
+  EXPORT Bump, Value, Twice, Ticker, Limit, Peek, AddTo, Watch;
+  EXPORT VAR total;
   EXPORT READONLY count;
   CONST Limit: INTEGER64 = 100;
   VAR count: INTEGER64;
+  VAR total: INTEGER64;
   VAR calls: INTEGER64 := 0;
   PROCEDURE Bump (CONST by: INTEGER64)
     calls := calls + 1;
@@ -13,11 +15,17 @@ MODULE Counter
   ENDPROCEDURE Bump;
   FUNCTION Value RETURNS INTEGER64 () RETURN count ENDFUNCTION Value;
   FUNCTION Twice RETURNS INTEGER64 (CONST x: INTEGER64) INLINE RETURN x + x ENDFUNCTION Twice;
+  (* a value-returning procedure that assigns to nothing: a FUNCTION of *)
+  (* another segment may call it *)
+  PROCEDURE Peek RETURNS INTEGER64 () RETURN count ENDPROCEDURE Peek;
+  PROCEDURE AddTo (VAR x: INTEGER64) x := x + total; RETURN ENDPROCEDURE AddTo;
+  PROCESS Watch (VAR x: INTEGER64) x := 1; TERMINATE_PROCESS ENDPROCESS Watch;
   PROCESS Ticker (CONST n: INTEGER64)
     FOR i: INTEGER [1..n] DO DELAY(10); Bump(1) ENDFOR;
     Write("ticker done after "); Write(calls); Write(" calls"); WriteLn();
     TERMINATE_PROCESS
   ENDPROCESS Ticker;
   count := 0;
+  total := 0;
   Write("Counter initialized"); WriteLn()
 ENDMODULE Counter

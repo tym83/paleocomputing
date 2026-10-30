@@ -306,6 +306,39 @@
         RETURN FALSE
       ENDPROCEDURE Reaches;
 
+      (* LIB/S.yfx: the facts of the routines this segment gives the others *)
+      PROCEDURE WriteFacts ()
+        VAR b: Buf := Buf(Line NIL, Line NIL);
+            pure, dyn: BOOLEAN;
+            s: Sym;
+        FOR ri: INTEGER [1..nr] DO
+          s := RS[ri];
+          IF (s^.skey # 0) AND NOT s^.hasmv THEN
+            pure := TRUE;
+            dyn := FALSE;
+            FOR vi: INTEGER [1..nv] DO
+              IF W[At(ri, vi)] THEN pure := FALSE ENDIF;
+              IF F[At(ri, vi)] AND (VSym[vi] = Sym NIL) AND (vi # 1) THEN dyn := TRUE ENDIF
+            ENDFOR;
+            SB();
+            ST(s^.skey);
+            IF pure THEN SA(" P") ELSE SA(" I") ENDIF;
+            IF dyn THEN SA(" D") ENDIF;
+            FOR vi: INTEGER [1..nv] DO
+              IF F[At(ri, vi)] AND (VSym[vi] # Sym NIL) THEN
+                IF VSym[vi]^.skey # 0 THEN
+                  SA(" ");
+                  ST(VSym[vi]^.skey)
+                ENDIF
+              ENDIF
+            ENDFOR;
+            Put(b, SE())
+          ENDIF
+        ENDFOR;
+        WriteFile(LibPath(OwnSeg, ".yfx"), b);
+        RETURN
+      ENDPROCEDURE WriteFacts;
+
       PROCEDURE VName RETURNS Txt (CONST v: INT)
         IF VSym[v] = Sym NIL THEN RETURN T("a dynamic variable") ENDIF;
         RETURN VSym[v]^.name
@@ -403,6 +436,7 @@
           ENDIF
         ENDIF
       ENDFOR;
+      IF Mode = M_SEGMENT THEN WriteFacts() ENDIF;
       (* a VAR actual is not a variable the routine refers to freely, nor a *)
       (* dynamic variable it may reach freely (X.A.6) *)
       r := Sites;
@@ -422,7 +456,14 @@
               ENDIF
             ENDIF;
             k := 0;
-            IF f^.flag = 1 THEN k := DynIndex(f^.name, 0, FALSE) ENDIF;
+            IF f^.flag = 1 THEN
+              k := DynIndex(f^.name, 0, FALSE);
+              (* a routine of another segment that reaches dynamic variables *)
+              (* of any type freely *)
+              IF DynIndex(N("*"), 0, FALSE) > 0 THEN
+                IF F[At(ci, DynIndex(N("*"), 0, FALSE))] THEN k := DynIndex(N("*"), 0, FALSE) ENDIF
+              ENDIF
+            ENDIF;
             IF k > 0 THEN
               IF F[At(ci, k)] THEN
                 FailN(f^.line, cs^.name, ": a VAR actual and a dynamic variable it refers to freely may be the same (X.A.6)")

@@ -146,8 +146,12 @@ block END.
   type, two dynamic variables of one pointer type), no VAR actual that the routine refers to
   freely (its root variable among the routine's free variables, or a dynamic variable when the
   routine reaches one of that pointer type, or a pointer of that type, freely); and the same
-  variable is not the actual of two OUT parameters (IX.A.2). yellowc reads "P^" literally: a
-  pointer variable passed VAR is not in conflict with dynamic variables the routine reaches.
+  variable is not the actual of two OUT parameters (IX.A.2). The rule on pointers is read as
+  written, of a VAR actual "of the form P^": a component of a dynamic variable (P^.c) or a
+  pointer variable Q passed VAR is not in conflict with the dynamic variables the routine
+  reaches freely. The reason: the VAR formal then names a field or the pointer itself, not the
+  dynamic variable, and reading the rule wider would forbid passing any pointer of a type
+  that some global structure also uses, which every list-handling program does.
 - Parameters: CONST (by reference or value, never modified), VAR (by reference), OUT (a local
   copied out at RETURN; undefined after an exception). Length-unresolved arrays
   `ARRAY (n DIMENSIONS OF R)` with LOW and HIGH.
@@ -203,10 +207,10 @@ block END.
   iterations and GOTOs) and the processes of its priority take their turn, so a process that
   never waits does not starve the others (X.E.1); a higher priority, by PRIORITY or
   CHANGE_PRIORITY, runs first. Inside a SIMULATED_TIME block the block and the processes
-  activated in it are quasi-parallel (X.E.5): none is preempted. The clock moves only by DELAY,
-  when every process waits, inside and outside simulations alike: a mode in which statements
-  take real time would make runs differ, so this implementation has none (the time of
-  computation is not modelled). When every process waits, the
+  activated in it are quasi-parallel (X.E.5): none is preempted. The clock is the simulated
+  machine's real time, the same inside and outside simulations: computation takes none of
+  it, and it moves to the next wake-up when every process waits; so every run of a program
+  is the same. When every process waits, the
   trap Deadlock (Appendix C) is raised in the main process. SIZE n bounds the local storage of
   an instance to n words (a word is 8 bytes of frame): a call that goes beyond raises
   TOO_LITTLE_LOCAL_STORAGE (XIV.X.2). A VAR actual of a process activation must live at least
@@ -263,8 +267,16 @@ translated interfaces:
   segment that is not linked, is an error naming it; the program checks again when it starts
   that each segment's C is the one translated with those synopses (XIII.I).
 
-A FUNCTION may not call a procedure of another segment, whose assignments are not known when
-it is translated (X.A.4); the aliasing rules are checked within a segment.
+What a segment's routines do is part of its stamp: -c leaves LIB/S.yfx, for each routine,
+process and value-returning procedure it gives the others, whether it assigns to any variable
+not its own, whether it reaches dynamic variables freely, and the variables of segments it
+refers to freely, closed over every call. A segment translated after reads them: a FUNCTION may
+call a procedure of another segment that assigns to nothing (X.A.4), the aliasing rules hold
+for calls across segments (X.A.6), and so does the life-scope rule for the VAR actuals of a
+process of another segment, which lives at the top of its segment (X.E.2). A segment
+translated before the segments it imports has no stamp to read and takes their procedures to
+assign; its uses name the stamps it read, and linking refuses a segment whose imports' stamps
+have changed since (XIII.I).
 
 ## 10. Implementation-dependent parts (XIV)
 
@@ -306,9 +318,15 @@ whose top 8192 words (BASE8 160000 on) are the PDP-11 I/O page of the Report's e
 - The compiler status module of the prelude, CompilerStatus (XIV.XIII.2): SUPPRESS_TRAP(t)
   and RESTORE_TRAP(t) are directives to the translator from the call to the end of the
   block (and the bodies declared there); TRAP_SUPPRESSED(t) tells the state. Suppressing
-  RANGE_TRAP, OVERFLOW_TRAP or ASSERTION_TRAP leaves out the code that detects them (an
-  ASSERT then has no effect, IX.A.3), and so does UNINITIALIZED_TRAP; INDEX_TRAP, POINTER_TRAP and ZERO_DIVIDE_TRAP are kept,
-  since leaving them out would let a program reach storage it does not own.
+  a trap leaves out the code that detects it, and the program gets what the simulated machine
+  does, always inside the machine's own storage: with RANGE_TRAP a value out of range is kept;
+  with OVERFLOW_TRAP integer arithmetic wraps in two's complement; with ASSERTION_TRAP an
+  ASSERT has no effect (IX.A.3); with UNINITIALIZED_TRAP an undefined value is read as it is;
+  with INDEX_TRAP a subscript out of bounds wraps round the array (the component at the
+  subscript's distance from the low bound, modulo the length); with POINTER_TRAP a NIL, freed
+  or undefined pointer designates the simulated store from address 0; with ZERO_DIVIDE_TRAP an
+  integer DIV or MOD by zero gives 0 and a floating-point division by zero gives the IEEE
+  infinity or NaN (which OVERFLOW then reports unless it is suppressed too).
 
 Code inserts: the machine of this implementation is C, so `C_CODE_INSERT("...")`
 puts C text in the program, `$name` standing for a variable, constant or parameter.
@@ -324,9 +342,3 @@ What remains approximate, with the reason:
 - The line clock does not consult its status register in the I/O page; it runs from the
   moment a signal is declared at its vector (the Report's own example arms it, so nothing
   differs).
-- There is no mode in which statements take real time: the clock is virtual everywhere, so
-  that runs repeat. Preemption by time slices is counted in backward branches.
-- The suppression of INDEX_TRAP, POINTER_TRAP and ZERO_DIVIDE_TRAP is accepted and not acted
-  upon, so that a program never reaches storage it does not own.
-- Across separately translated segments the aliasing rules and the life-scope rule of
-  processes are not checked, and a FUNCTION may not call a procedure of another segment.

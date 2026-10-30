@@ -357,6 +357,7 @@
     u := NewNode(N_NAMEL, line);
     u^.name := name;
     u^.text := fp;
+    u^.ival := FactsPrint(name);
     u^.next := Uses;
     Uses := u;
     LoadImports(n);
@@ -437,13 +438,14 @@
     u := NewNode(N_NAMEL, m^.line);
     u^.name := m^.name;
     u^.text := fp;
+    u^.ival := 0;
     u^.next := Uses;
     Uses := u;
     LoadImports(m);
     Translate();
     u := Uses;
     WHILE u # Node NIL DO
-      Put(b, Join(u^.name, T(" "), u^.text));
+      Put(b, UseLine(u));
       u := u^.next
     ENDWHILE;
     WriteFile(LibPath(m^.name, ".yuse"), b);
@@ -479,9 +481,7 @@
     SA("_uses[] = ");
     SC('DQ');
     WHILE u # Node NIL DO
-      ST(u^.name);
-      SA(" ");
-      ST(u^.text);
+      ST(UseLine(u));
       SA(";");
       u := u^.next
     ENDWHILE;
@@ -572,16 +572,23 @@
   (* "M fingerprint": the synopsis of M in the library must still have it, *)
   (* and M must be linked *)
   PROCEDURE CheckUse (CONST seg, use: Txt)
-    VAR k: INT := 1;
-        m, fp, now: Txt;
+    VAR k, j: INT := 1;
+        m, fp, now, ff: Txt;
         l: Node := LinkNames;
         found: BOOLEAN := FALSE;
     WHILE (k <= TL[use]) AND (TChar(use, k) # ' ') DO k := k + 1 ENDWHILE;
     m := Intern(TS[use], k - 1);
-    fp := Intern(TS[use] + k, TL[use] - k);
+    j := k + 1;
+    WHILE (j <= TL[use]) AND (TChar(use, j) # ' ') DO j := j + 1 ENDWHILE;
+    fp := Intern(TS[use] + k, (j - k) - 1);
+    ff := Intern(TS[use] + j, TL[use] - j);
     now := ReadLibLine(LibPath(m, ".yfp"));
     IF (now = 0) OR (now # fp) THEN
       Fail(0, Join(seg, Join(T(" was translated with an outdated synopsis of "), m, 0), T(": translate it again (XIII.I)")))
+    ENDIF;
+    (* what it took to be true of the routines of m (X.A.4-6, X.E.2) *)
+    IF (ff # N("none")) AND (ff # FactsPrint(m)) THEN
+      Fail(0, Join(seg, Join(T(" was translated with what the segment "), m, 0), T(" was then: translate it again (XIII.I)")))
     ENDIF;
     WHILE l # Node NIL DO
       IF l^.name = m THEN found := TRUE ENDIF;
@@ -646,12 +653,18 @@
   (* imported, the pointer the segment gives; in the segment, that pointer *)
   PROCEDURE SegStorage (CONST s: Sym; CONST r: Rep; CONST k: INT)
     VAR key: Txt;
+        n: Node;
     IF (Level # 0) OR (MTop = 0) THEN RETURN ENDIF;
     key := SegKey(s^.name, 0);
+    IF (ExtDepth > 0) OR (InOwn > 0) THEN s^.skey := key ENDIF;
     IF ExtDepth > 0 THEN
       Put(OGlobals, Join(T("extern "), CType(r), Join(T(" *"), key, T(";"))));
       s^.cname := Join(T("(*"), key, T(")"));
-      s^.level := 0
+      s^.level := 0;
+      n := NewNode(N_NAMEL, 0);
+      n^.sym := s;
+      n^.next := ExtVars;
+      ExtVars := n
     ELSIF InOwn > 0 THEN
       Put(OExports, Join(CType(r), Join(T(" *"), key, T(" = &")), Join(s^.cname, T(";"), 0)))
     ENDIF;
@@ -668,6 +681,7 @@
     IF (ExtDepth = 0) AND (InOwn = 0) THEN RETURN ENDIF;
     key := SegKey(s^.name, HeaderHash(d));
     IF kind = S_PROCESS THEN key := Join(key, T("_act"), 0) ENDIF;
+    s^.skey := key;
     IF ExtDepth > 0 THEN
       s^.hasmv := TRUE;
       SB();
@@ -770,3 +784,103 @@
     Put(OExports, SE());
     RETURN
   ENDPROCEDURE SegActivation;
+
+  (* ---- what segments know of each other's routines (X.A.4-6, XIII.I) ------- *)
+  (* A segment translated with -c leaves in LIB/S.yfx, for each routine it *)
+  (* gives the others, whether it assigns to any variable not its own, *)
+  (* whether it reaches dynamic variables freely, and the variables of *)
+  (* segments it refers to freely, closed over every call. A segment *)
+  (* translated later reads them: a FUNCTION may call a pure procedure of *)
+  (* another segment, and the aliasing rules hold across segments. Where *)
+  (* there is no such file yet, a procedure of another segment is taken to *)
+  (* assign and to refer to nothing known; the uses of a segment name the *)
+  (* facts they relied on, and linking refuses facts that have changed. *)
+
+  PROCEDURE UseLine RETURNS Txt (CONST u: Node)
+    SB();
+    ST(u^.name);
+    SA(" ");
+    ST(u^.text);
+    SA(" ");
+    IF u^.ival = 0 THEN SA("none") ELSE ST(u^.ival) ENDIF;
+    RETURN SE()
+  ENDPROCEDURE UseLine;
+
+  (* the fingerprint of LIB/name.yfx as text, or 0 when there is none *)
+  PROCEDURE FactsPrint RETURNS Txt (CONST name: Txt)
+    VAR h: INT := 7;
+    IF NOT ReadInto(LibPath(name, ".yfx")) THEN RETURN 0 ENDIF;
+    FOR i: INTEGER [SrcStart..SrcEnd] DO h := ((h * 131) + Code[Pool[i]]) MOD 1099511627776 ENDFOR;
+    SB();
+    SI(h);
+    RETURN Name(SE())
+  ENDPROCEDURE FactsPrint;
+
+  (* the facts of the segments imported, on their routines here *)
+  PROCEDURE ApplyFacts ()
+    VAR u: Node := Uses;
+    WHILE u # Node NIL DO
+      IF u^.ival # 0 THEN ApplyFile(u^.name) ENDIF;
+      u := u^.next
+    ENDWHILE;
+    RETURN
+  ENDPROCEDURE ApplyFacts;
+
+  PROCEDURE ApplyFile (CONST name: Txt)
+    VAR k, start, fin: INT;
+        words: ARRAY (INTEGER [1..4096] OF Txt);
+        n: INT := 0;
+    IF NOT ReadInto(LibPath(name, ".yfx")) THEN RETURN ENDIF;
+    k := SrcStart;
+    start := k;
+    fin := SrcEnd;
+    WHILE k <= fin DO
+      IF (Pool[k] = ' ') OR (Pool[k] = 'LF') THEN
+        IF (k > start) AND (n < 4096) THEN
+          n := n + 1;
+          words[n] := Intern(start, k - start)
+        ENDIF;
+        IF Pool[k] = 'LF' THEN
+          IF n >= 2 THEN ApplyLine(words, n) ENDIF;
+          n := 0
+        ENDIF;
+        start := k + 1
+      ENDIF;
+      k := k + 1
+    ENDWHILE;
+    RETURN
+  ENDPROCEDURE ApplyFile;
+
+  (* "routine-key P|I [D] variable-key ..." *)
+  PROCEDURE ApplyLine (CONST w: ARRAY (1 DIMENSIONS OF Txt); CONST n: INT)
+    VAR r: Node := AllRoutines;
+        s: Sym := Sym NIL;
+        v: Node;
+        f: Node;
+    WHILE (r # Node NIL) AND (s = Sym NIL) DO
+      IF r^.sym^.hasmv AND (r^.sym^.skey # 0) THEN
+        IF TEq(r^.sym^.skey, w[1]) THEN s := r^.sym ENDIF
+      ENDIF;
+      r := r^.next
+    ENDWHILE;
+    IF s = Sym NIL THEN RETURN ENDIF;
+    IF TEq(w[2], T("P")) THEN s^.writes := Node NIL ENDIF;
+    FOR i: INTEGER [3..n] DO
+      IF TEq(w[i], T("D")) THEN
+        f := Note(Sym NIL, N("*"), 0);
+        f^.next := s^.frees;
+        s^.frees := f
+      ELSE
+        v := ExtVars;
+        WHILE v # Node NIL DO
+          IF TEq(v^.sym^.skey, w[i]) THEN
+            f := Note(v^.sym, 0, 0);
+            f^.next := s^.frees;
+            s^.frees := f
+          ENDIF;
+          v := v^.next
+        ENDWHILE
+      ENDIF
+    ENDFOR;
+    RETURN
+  ENDPROCEDURE ApplyLine;

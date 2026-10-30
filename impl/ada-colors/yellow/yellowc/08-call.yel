@@ -252,9 +252,11 @@
     ArgTop := base;
     Manifest(n^.a, ok, v);
     IF NOT ok OR (nargs # 1) THEN FailN(n^.line, n^.name, " takes a manifest TRAP_KIND (XIV.XIII.2)") ENDIF;
-    (* RANGE_TRAP, OVERFLOW_TRAP, ASSERTION_TRAP; the others are kept *)
     bit := 0;
     IF v = 0 THEN bit := T_RANGE ELSIF v = 1 THEN bit := T_OVERFLOW ELSIF v = 2 THEN bit := T_ASSERTION
+    ELSIF v = 3 THEN bit := T_INDEX
+    ELSIF v = 4 THEN bit := T_POINTER
+    ELSIF v = 5 THEN bit := T_ZERO
     ELSIF v = 6 THEN bit := T_UNINIT
     ENDIF;
     r := RVoid;

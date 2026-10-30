@@ -121,7 +121,8 @@ MODULE yellowc
       VAR calls: Node;            (* routines: the routines and processes it calls *)
       VAR writes, frees: Node;    (* routines: the variables of other scopes it assigns, uses *)
       VAR seen, vix: INT;         (* the last routine that noted it; its index in the checks *)
-      VAR at: INT                 (* variables: the word of the store given by AT, or -1 *)
+      VAR at: INT;                (* variables: the word of the store given by AT, or -1 *)
+      VAR skey: Txt               (* what a segment declares: its C name across segments *)
     ENDRECORD;
 
     ScopeRec = RECORD

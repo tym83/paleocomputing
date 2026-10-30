@@ -28,5 +28,18 @@ MODULE Slices
     t0 := CLOCK_TIME();
     Count('A'); Count('B')
   END;
-  Write("simulated time passed: "); Write(CLOCK_TIME() - t0); WriteLn()
+  Write("simulated time passed: "); Write(CLOCK_TIME() - t0); WriteLn();
+  (* a GOTO out of a SIMULATED_TIME block ends the simulation: the spinner *)
+  (* is preempted again *)
+  stop := FALSE;
+  BEGIN
+    LABEL out;
+    SIMULATED_TIME BEGIN GOTO out END;
+    out: BEGIN
+      PROCESS Spin2 (VAR stop: BOOLEAN) WHILE NOT stop DO ENDWHILE; TERMINATE_PROCESS ENDPROCESS Spin2;
+      PROCESS Stop2 (VAR stop: BOOLEAN) stop := TRUE; TERMINATE_PROCESS ENDPROCESS Stop2;
+      Spin2(stop); Stop2(stop)
+    END
+  END;
+  Write("left by GOTO"); WriteLn()
 ENDMODULE Slices

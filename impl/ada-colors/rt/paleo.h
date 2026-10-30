@@ -563,6 +563,20 @@ rt_int y_neg(rt_int a);
 rt_int y_div(rt_int a, rt_int b);              /* by zero resumes with 0 */
 rt_int y_mod(rt_int a, rt_int b);
 double y_fdiv(double a, double b);
+/* with the index, pointer or zero-divide trap suppressed (XIV.XIII.2): no
+ * check; what the simulated machine does instead stays inside its storage */
+rt_int y_ixw1(yarr a, rt_int i);               /* the subscript wraps round */
+rt_int y_ixw2(yarr a, rt_int i, rt_int j);
+rt_int y_ixw3(yarr a, rt_int i, rt_int j, rt_int k);
+rt_int y_ixw4(yarr a, rt_int i, rt_int j, rt_int k, rt_int l);
+rt_int y_ixw5(yarr a, rt_int i, rt_int j, rt_int k, rt_int l, rt_int m);
+rt_int y_ixw6(yarr a, rt_int i, rt_int j, rt_int k, rt_int l, rt_int m, rt_int n);
+rt_int y_ixw7(yarr a, rt_int i, rt_int j, rt_int k, rt_int l, rt_int m, rt_int n, rt_int o);
+rt_int y_ixw8(yarr a, rt_int i, rt_int j, rt_int k, rt_int l, rt_int m, rt_int n, rt_int o, rt_int q);
+void *y_derefw(void *p, size_t size);          /* invalid: the store from 0 */
+rt_int y_divw(rt_int a, rt_int b);             /* by zero: 0 */
+rt_int y_modw(rt_int a, rt_int b);
+double y_fdivw(double a, double b);            /* IEEE: infinite or NaN */
 /* with the overflow trap suppressed: two's complement, no check */
 #define Y_ADDW(a, b) ((rt_int)((uint64_t)(a) + (uint64_t)(b)))
 #define Y_SUBW(a, b) ((rt_int)((uint64_t)(a) - (uint64_t)(b)))

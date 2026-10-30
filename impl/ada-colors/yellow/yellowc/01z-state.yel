@@ -63,6 +63,7 @@
     (* the traps a program may suppress (XIV.XIII.2), as bits of Supp, and *)
     (* the directives of the compiler status module *)
     T_RANGE: INT = 1; T_OVERFLOW: INT = 2; T_ASSERTION: INT = 4; T_UNINIT: INT = 8;
+    T_INDEX: INT = 16; T_POINTER: INT = 32; T_ZERO: INT = 64;
     M_WHOLE: INT = 0; M_INTERFACE: INT = 1; M_SEGMENT: INT = 2; M_LINK: INT = 3;
     D_SUPPRESS: INT = 1; D_RESTORE: INT = 2; D_SUPPRESSED: INT = 3;
 
@@ -82,6 +83,9 @@
   VAR
     XFrames: ARRAY (INTEGER [1..1000] OF Txt);  (* the handler frames entered *)
     XRestore: ARRAY (INTEGER [1..1000] OF Txt); (* what leaving one restores, or 0 *)
+    (* the SIMULATED_TIME blocks around: the C variable of the depth before each *)
+    SimYs: ARRAY (INTEGER [1..1000] OF Txt);
+    SimTop: INT := 0;
     XTop: INT := 0;
     XBase: INT := 0;                 (* the first frame of the routine being written *)
     BlockFrame: ARRAY (INTEGER [1..1000] OF Txt);  (* per block: its handler frame or 0 *)
@@ -112,6 +116,7 @@
     ExtDepth, InOwn, MTop: INT := 0;
     ModPath: ARRAY (INTEGER [1..64] OF Txt);
     OExports, AwaitBuf: Buf;
+    ExtVars: Node := Node NIL;       (* the variables of synopses of other segments *)
     CurModName: Txt := 0;            (* the module whose declarations are read *)
     (* for the checks of X.A.4-6: every routine, the calls with VAR actuals, *)
     (* the pointer types reached freely *)
