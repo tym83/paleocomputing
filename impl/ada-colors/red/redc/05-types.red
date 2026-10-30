@@ -1767,7 +1767,12 @@ PROC make_storage(READONLY lval : STRING[ASCII], CONST t : typ, CONST c : cons) 
       IF c.slen = NIL THEN
          fail(0, "a string variable needs a length");
       END IF;
-      emit(lval & " = rt_str_new(" & subst(c.slen.ALL) & ");");
+      IF mark_uninit AND list_len(base_of(str_elem(t)).lits) < 256 THEN
+         % characters no character set has: reading them raises X_INIT (5.1)
+         emit(lval & " = rt_r_str_undef(" & subst(c.slen.ALL) & ");");
+      ELSE
+         emit(lval & " = rt_str_new(" & subst(c.slen.ALL) & ");");
+      END IF;
    ELSEIF t.kind = t_array THEN
       IF c.lo = NIL THEN
          fail(0, "an array variable needs index bounds");
@@ -1855,6 +1860,8 @@ ABNORMAL FUNC init_chk(CONST t : typ, READONLY v : STRING[ASCII]) => STRING[ASCI
       RETURN "rt_r_echk(" & v & ")";
    ELSEIF b.kind = t_float THEN
       RETURN "rt_r_fchk(" & v & ")";
+   ELSEIF b.kind = t_string AND list_len(base_of(str_elem(b)).lits) < 256 THEN
+      RETURN "rt_r_schk(" & v & ")";
    END IF;
    RETURN v;
 END FUNC init_chk;

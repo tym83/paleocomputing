@@ -5,7 +5,9 @@
 % name order before translation. This file holds the shared data: token and
 % node kinds, the tree, types, symbols and the output buffers.
 
-CAPSULE redc EXPORTS NONE;
+% redc reads the components of its dynamic variables as zeroed: it is
+% translated without X_INIT checks (B)
+PRAG(SUPPRESS(X_INIT)) CAPSULE redc EXPORTS NONE;
 
 % ---- token kinds ---------------------------------------------------------
 CONST k_eof := 0;
@@ -247,6 +249,8 @@ VAR suppress : text;
 VAR cons_ctx : cons;
 % while a declared variable is created: its scalars start uninitialized (5.1)
 VAR mark_uninit : BOOL := FALSE;
+% the next variable named is the base of a component, not read as a whole
+VAR skip_chk : BOOL := FALSE;
 VAR exits : exitrec;
 % the goto labels known in the scope being translated (6.8); depth -1 until
 % the statements of their body begin

@@ -3739,3 +3739,14 @@ void rt_r_maxrange_f(double lo, double hi) {
 void rt_r_maxrange_i(rt_int lo, rt_int hi) {
   if (lo < RT_IMIN || hi < RT_IMIN) rt_raise(x_maxrange());
 }
+
+rstr rt_r_str_undef(rt_int len) {
+  rstr r = rt_str_new(len);
+  if (r.len) memset(r.p, 0xFF, (size_t)r.len);
+  return r;
+}
+
+rstr rt_r_schk(rstr s) {
+  if (s.len && memchr(s.p, 0xFF, (size_t)s.len)) rt_raise(RT_X_INIT);
+  return s;
+}

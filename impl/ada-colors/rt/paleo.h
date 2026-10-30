@@ -554,6 +554,12 @@ static inline int rt_r_echk(int v) {
   return v;
 }
 double rt_r_fchk(double v);
+rstr rt_r_str_undef(rt_int len);                /* characters not yet given (0xFF) */
+rstr rt_r_schk(rstr s);
+static inline int rt_r_cchk(int c) {
+  if (c == 0xFF) rt_raise(RT_X_INIT);
+  return c;
+}
 int rt_r_undef_FLOAT(double v);
 static inline int rt_r_undef_INT(rt_int v) { return v == RT_R_IUNDEF; }
 static inline int rt_r_undef_ENUM(int v) { return v == RT_R_EUNDEF; }

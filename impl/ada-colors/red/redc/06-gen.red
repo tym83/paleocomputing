@@ -725,7 +725,9 @@ PROC alloc_cell(CONST s : node, READONLY lv : STRING[ASCII], CONST t : typ, CONS
    bind_ptr_params(d.d, ptr_args(c), "", s.line);
    bind_ptr_params(d.b, s.b, cell, s.line);
    vt := resolve_subtype(d.a, tc);
+   mark_uninit := NOT suppressed("X_INIT");
    init_storage(cell & "->all", t.target, tc);
+   mark_uninit := FALSE;
    close_scope;
    IF s.c /= NIL THEN
       CONST v := gexpr_in(s.c, t.target, tc, vt);
@@ -1101,7 +1103,7 @@ PROC located_var(CONST d : node) IMPORTS ALL;
    emit(av & " = " & addr & ";");
    IF t.kind = t_new AND t.repn /= NIL THEN
       CONST access := storage(d.name.ALL, t);
-      mark_uninit := TRUE;
+      mark_uninit := NOT suppressed("X_INIT");
       init_storage(access, t, c);
       mark_uninit := FALSE;
       y.t := t;
@@ -1136,7 +1138,7 @@ PROC located_var(CONST d : node) IMPORTS ALL;
          y.level := 0;
          y.access := mk("(*" & pv & ")");
       END IF;
-      mark_uninit := TRUE;
+      mark_uninit := NOT suppressed("X_INIT");
       init_storage("(*" & pv & ")", t, c);
       mark_uninit := FALSE;
       define(y, d.line);
@@ -1367,7 +1369,7 @@ PROC var_decl2(CONST d : node) IMPORTS ALL;
    IF t.kind = t_ptr AND c /= NIL AND c.args /= NIL THEN
       c := freeze_args(c, t, d.line);
    END IF;
-   mark_uninit := TRUE;
+   mark_uninit := NOT suppressed("X_INIT");
    init_storage(access, t, c);
    mark_uninit := FALSE;
    IF d.ival = 1 THEN
@@ -2598,7 +2600,10 @@ PROC st_alloc(CONST s : node) IMPORTS ALL;
       open_scope;
       bind_ptr_params(d.d, ptr_args(c), "", s.line);
       vt := resolve_subtype(d.a, tc);
+      % a dynamic variable starts uninitialized too (5.1)
+      mark_uninit := NOT suppressed("X_INIT");
       init_storage("(*" & cell & ")", target, tc);
+      mark_uninit := FALSE;
       close_scope;
       IF s.c /= NIL THEN
          CONST v := gexpr_in(s.c, target, tc, vt);

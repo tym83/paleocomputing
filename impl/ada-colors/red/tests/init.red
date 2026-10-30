@@ -10,6 +10,9 @@ CAPSULE main EXPORTS NONE;
    VAR e : ENUM['a, 'b];
    VAR r : RECORD[n : INT, ok : BOOL];
    VAR a : ARRAY INT(1 .. 3) OF INT;
+   TYPE cell : PTR RECORD[n : INT, ok : BOOL];
+   VAR p : cell;
+   VAR s : STRING[ASCII](3);
    GUARD
       y := x + 1;
    BY
@@ -49,6 +52,27 @@ CAPSULE main EXPORTS NONE;
    END GUARD;
    maybe(x, TRUE);
    WRITELN("x = " & CNVT[STRING[ASCII]](x));
+   ALLOC p PTR;
+   p.n := 4;
+   GUARD
+      IF p.ok THEN
+         WRITELN("no");
+      END IF;
+   BY
+      WHEN X_INIT => WRITELN("X_INIT: p.ok of a dynamic variable, though p.n = " & CNVT[STRING[ASCII]](p.n));
+   END GUARD;
+   s(1) := 'A;
+   WRITELN("s(1) = " & s(1 .. 1));
+   GUARD
+      WRITELN(s);
+   BY
+      WHEN X_INIT => WRITELN("X_INIT: s(2) and s(3) have no value");
+   END GUARD;
+   GUARD
+      WRITELN(CNVT[STRING[ASCII]](POS(s(3))));
+   BY
+      WHEN X_INIT => WRITELN("X_INIT: s(3)");
+   END GUARD;
    PRAG(SUPPRESS(X_INIT)) BEGIN
       y := y;
       WRITELN("SUPPRESS(X_INIT)");

@@ -90,6 +90,7 @@ PROC translate(CONST units : node) IMPORTS ALL;
       IF u.next = NIL AND NOT has_pragmat(u.prags, "LIBRARY") THEN
          ALLOC caps PTR;
          caps.d := u;
+         suppress := suppressing(u.prags);
          caps.depth := depth;
          declare_labels(u.c);
          declare_body(u.c);

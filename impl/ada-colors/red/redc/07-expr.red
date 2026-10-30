@@ -423,7 +423,11 @@ PROC index_on(READONLY base : STRING[ASCII], CONST bt : typ, CONST e : node, VAR
          IF lv THEN
             code := mk("(*rt_str_at(&" & base & ", " & i & "))");
          ELSE
-            code := mk("rt_str_get(" & base & ", " & i & ")");
+            IF list_len(base_of(str_elem(bt)).lits) < 256 AND NOT suppressed("X_INIT") THEN
+               code := mk("rt_r_cchk(rt_str_get(" & base & ", " & i & "))");
+            ELSE
+               code := mk("rt_str_get(" & base & ", " & i & ")");
+            END IF;
             ro := TRUE;
          END IF;
       END;
@@ -489,7 +493,9 @@ ABNORMAL FUNC gexpr(CONST e : node, CONST want : typ, OUT t : typ) => STRING[ASC
    % the subtype the context resolves a constructor to (5.7), for this
    % expression only
    VAR ctx : cons := cons_ctx;
+   VAR whole : BOOL := NOT skip_chk;
    cons_ctx := NIL;
+   skip_chk := FALSE;
    t := ty_int;
    IF k = n_int THEN
       IF want /= NIL AND want.kind = t_float THEN
@@ -565,6 +571,9 @@ ABNORMAL FUNC gexpr(CONST e : node, CONST want : typ, OUT t : typ) => STRING[ASC
          t := y.t;
          IF y.kind = y_var THEN
             ro := check_import(y, e.line);
+            IF NOT whole THEN
+               RETURN access_of(y);
+            END IF;
             RETURN init_chk(y.t, access_of(y));
          END IF;
          RETURN access_of(y);
@@ -617,7 +626,7 @@ ABNORMAL FUNC gexpr(CONST e : node, CONST want : typ, OUT t : typ) => STRING[ASC
          RETURN gcall(user_subscript(e), FALSE, t);
       END IF;
       BEGIN
-         CONST base := gexpr(e.a, NIL, bt);
+         CONST base := gexpr_base(e.a, bt);
          ro := TRUE;
          index_on(base, bt, e, ro, FALSE, code, t, c);
          IF NOT is_lvalue(e) OR t.kind = t_array OR t.kind = t_string THEN
@@ -636,7 +645,7 @@ ABNORMAL FUNC gexpr(CONST e : node, CONST want : typ, OUT t : typ) => STRING[ASC
          RETURN attribute(e, t);
       END IF;
       BEGIN
-         CONST base := gexpr(e.a, NIL, bt);
+         CONST base := gexpr_base(e.a, bt);
          ro := TRUE;
          select_on(base, bt, e, ro, code, t, c);
          IF e.name.ALL = "TAG" OR NOT is_lvalue(e) THEN
@@ -682,6 +691,12 @@ ABNORMAL FUNC resolved(CONST e : node, OUT t : typ) => STRING[ASCII] IMPORTS ALL
       RETURN checked(t, c, v);
    END;
 END FUNC resolved;
+
+% the base of a component: not read as a whole, so not checked for X_INIT
+ABNORMAL FUNC gexpr_base(CONST e : node, OUT t : typ) => STRING[ASCII] IMPORTS ALL;
+   skip_chk := TRUE;
+   RETURN gexpr(e, NIL, t);
+END FUNC gexpr_base;
 
 % an expression whose context gives the subtype c (5.7)
 ABNORMAL FUNC gexpr_in(CONST e : node, CONST want : typ, CONST c : cons, OUT t : typ) => STRING[ASCII] IMPORTS ALL;
