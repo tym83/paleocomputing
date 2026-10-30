@@ -294,6 +294,34 @@ FUNCTION BUILTIN (E: NODE, WANT: TYP) RETURNS (ET);
    ORIF TEQS (NAME, 'REAL_TIME') THEN               % the machine's real-time clock
       NEED_ARGS (E, 0, 0);
       RETURN MKET (MK ('rt_b_real_time()'), INT_TYPE (20));
+   ORIF TEQS (NAME, 'ARGUMENT_COUNT') THEN          % the program's arguments and files
+      NEED_ARGS (E, 0, 0);
+      RETURN MKET (MK ('rt_argc()'), W@.TY_INT);
+   ORIF TEQS (NAME, 'ARGUMENT') THEN
+      NEED_ARGS (E, 1, 1);
+      RETURN MKET (FMT1 ('rt_arg(@)', INT_EXPR (E@.A)), STR_TYPE (NO_TEXT (), NO_MVAL ()));
+   ORIF TEQS (NAME, 'FILE_EXISTS') ! TEQS (NAME, 'READ_FILE') THEN
+      NEED_ARGS (E, 1, 1);
+      BLOCK
+         CONST V: ET := EXPR (E@.A, NIL);
+         IF REAL_TYPE (V.T)@.KIND <> T_STR THEN
+            FAILT (LINE, 'a file is named by a character string: ', NAME);
+         END IF;
+         IF TEQS (NAME, 'FILE_EXISTS') THEN
+            RETURN MKET (FMT1 ('rt_b_file_exists(@)', V.C), W@.TY_BOOL);
+         END IF;
+         RETURN MKET (FMT1 ('rt_read_file(@)', V.C), STR_TYPE (NO_TEXT (), NO_MVAL ()));
+      END BLOCK;
+   ORIF TEQS (NAME, 'WRITE_FILE') THEN
+      NEED_ARGS (E, 2, 2);
+      BLOCK
+         CONST N: ET := EXPR (E@.A, NIL);
+         CONST V: ET := EXPR (E@.A@.NEXT, NIL);
+         IF REAL_TYPE (N.T)@.KIND <> T_STR ! REAL_TYPE (V.T)@.KIND <> T_STR THEN
+            FAIL (LINE, 'WRITE_FILE (name, text) takes two character strings');
+         END IF;
+         RETURN MKET (FMT2 ('rt_write_file(@, @)', N.C, V.C), W@.TY_VOID);
+      END BLOCK;
    END IF;
    % ---- conversions ----
    IF TEQS (NAME, 'TO_CHAR') THEN

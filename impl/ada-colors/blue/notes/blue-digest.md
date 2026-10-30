@@ -338,6 +338,12 @@ unreadable; the decision is bluec's.
     reptype-spec (e) checks the value against the representation (FIXED_REP:
     size and signing), raising INVALID_REP. Only elements of UNPACKED arrays
     are inout arguments.
+39. **TARGET routines** (4.8.2) hold machine code that the simulated machine
+    does not execute: invoking one raises the implementation's exception
+    TARGET_TRAP, which a handler may take (it used to stop the program).
+    TERMINAL, the implementation's segment, also has ARGUMENT_COUNT,
+    ARGUMENT (I), FILE_EXISTS (N), READ_FILE (N) and WRITE_FILE (N, TEXT),
+    which bluec itself uses for its options and libraries.
 37. **Generic instances across segments.** The body of an instance of a generic
     routine is translated in the scope of the segment that declares it, its
     local names visible again, whichever segment invokes it (4.2, 5).

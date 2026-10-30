@@ -2455,10 +2455,22 @@ rt_int rt_b_pred(rt_int v) {
   return v - 1;
 }
 
+/* a TARGET routine (4.8.2): its assembly code is for the object machine, which
+ * this implementation simulates without executing machine code; invoking one
+ * raises TARGET_TRAP, which a handler may take */
+int RT_B_TARGET_TRAP;
 void rt_b_no_target_code(const char *name) {
-  fflush(stdout);
-  fprintf(stderr, "*** the TARGET routine %s has no machine code here\n", name);
-  exit(1);
+  (void)name;
+  if (!RT_B_TARGET_TRAP) RT_B_TARGET_TRAP = rt_exc("TARGET_TRAP");
+  rt_raise(RT_B_TARGET_TRAP);
+}
+
+/* the program's arguments and files, for bluec (TERMINAL, implementation-defined) */
+rt_int rt_b_file_exists(rstr name) {
+  FILE *f = fopen(rt_cstr(name), "rb");
+  if (!f) return 0;
+  fclose(f);
+  return 1;
 }
 
 /* ---- BLUE: parallel processing (4.6) ------------------------------------- */

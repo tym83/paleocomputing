@@ -1,0 +1,16 @@
+MAIN SEGMENT TARGET_TRAP
+   USES (TERMINAL);
+% a TARGET routine (4.8.2): the simulated machine executes no machine code, and
+% invoking one raises TARGET_TRAP (decision 39)
+BLOCK
+   P (1);
+   PUT_LINE ('not here');
+END BLOCK
+EXCEPT
+   TARGET_TRAP --> PUT_LINE ('TARGET_TRAP'); END;
+END EXCEPT;
+TARGET PROCEDURE P (X: INTEGER);
+   DYNSIZE (2);
+   MOV R0, R1
+END PROCEDURE P;
+END SEGMENT TARGET_TRAP;
