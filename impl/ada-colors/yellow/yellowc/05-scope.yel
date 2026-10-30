@@ -133,6 +133,16 @@
     RETURN s
   ENDPROCEDURE Lookup;
 
+  (* is o among the alternatives that s extends *)
+  PROCEDURE AltOf RETURNS BOOLEAN (CONST s, o: Sym)
+    VAR a: Sym := s^.alt;
+    WHILE a # Sym NIL DO
+      IF a = o THEN RETURN TRUE ENDIF;
+      a := a^.alt
+    ENDWHILE;
+    RETURN FALSE
+  ENDPROCEDURE AltOf;
+
   FUNCTION IsSimple RETURNS BOOLEAN (CONST k: INT)
     RETURN (k = S_VAR) OR (k = S_CONST) OR (k = S_REP) OR (k = S_TYPE) OR (k = S_LIT) OR (k = S_LABEL)
   ENDFUNCTION IsSimple;
@@ -257,7 +267,7 @@
     VAR old: Sym := FindHere(s^.name);
         h: INT := s^.name MOD 8192;
     IF (old # Sym NIL) AND NOT ((old^.kind = S_LIT) AND (s^.kind = S_LIT)) AND
-       NOT ((s^.kind = S_ROUTINE) AND (s^.alt # Sym NIL) AND Resolved(old) AND (s^.alt = Real(old))) AND
+       NOT ((s^.kind = S_ROUTINE) AND Resolved(old) AND AltOf(s, Real(old))) AND
        NOT ((s^.kind = S_EXPORT) AND (old^.kind = S_EXPORT)) THEN
       FailN(line, s^.name, " is declared twice in this scope")
     ENDIF;

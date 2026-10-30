@@ -156,7 +156,11 @@ block END.
   visible inside. IMPORT M stands for M's exports; yellowc also brings M itself, so that a
   module nested inside can import it (the convex-hull template of p.1108 imports
   MyStandardConventions wherever it is instantiated). Exports: OPAQUE (default for types and
-  representations), TRANSPARENT, READONLY (default for variables), VAR; FROM and AS. Two
+  representations), TRANSPARENT, READONLY (default for variables and constants), VAR; FROM and
+  AS. The attributes restrict and never relax: a constant or a READONLY export is not exported
+  VAR, an opaque one not TRANSPARENT (X.B.3); what a module imports it does not export (X.B.1).
+  Exported routines extend the definitions of their name around the module (X.B.5), an error
+  for parameter types already defined there. Two
   sibling modules may export one name, usable only through FROM. Exporting `:=`, `=`, `#`
   without declaring them gives the standard ones with the opaque types (D-33). An
   initialization is an assignment: a variable of an opaque type is initialized outside its

@@ -220,8 +220,11 @@
 
   (* the routine being written calls s: the calls are kept for the checks *)
   (* that need every body (X.A.4-6) *)
-  PROCEDURE NoteCall (CONST s: Sym; CONST line: INT)
+  PROCEDURE NoteCall (CONST s0: Sym; CONST line: INT)
     VAR n: Node;
+        s: Sym := s0;
+    (* a copy made by an export (X.B.5) stands for its definition *)
+    IF (s^.kind = S_ROUTINE) AND (s^.target # Sym NIL) THEN s := s^.target ENDIF;
     IF NOT s^.func THEN ImpureCalls := ImpureCalls + 1 ENDIF;
     IF CurRoutine = Sym NIL THEN RETURN ENDIF;
     n := NewNode(N_NAMEL, line);

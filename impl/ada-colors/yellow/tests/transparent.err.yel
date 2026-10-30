@@ -1,0 +1,13 @@
+(* an opaque representation is not made TRANSPARENT by an outer export (X.B.3) *)
+MODULE Transparent
+  IMPORT StandardImplementationPrelude;
+  MODULE Outer
+    IMPORT INTEGER64;
+    EXPORT TRANSPARENT R;
+    MODULE Inner
+      IMPORT INTEGER64;
+      EXPORT OPAQUE R;
+      REPRESENTATION R = RECORD VAR x: INTEGER64 ENDRECORD;
+    ENDMODULE Inner;
+  ENDMODULE Outer;
+ENDMODULE Transparent
