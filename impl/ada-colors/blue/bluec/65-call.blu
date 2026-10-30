@@ -60,10 +60,13 @@ END FUNCTION CALL_ARGS;
 % of the routines invoked in it (3.1.4.1, p.3-16)
 FUNCTION CALL_EXPR (E: NODE, WANT: TYP) RETURNS (ET);
    CONST SAVED: BOOLEAN := W@.ROUNDED;
+   CONST SAVED_Q: NODE := W@.QUAL;
    VAR V: ET;
    W@.ROUNDED := FALSE;
+   W@.QUAL := NIL;
    V := CALL_EXPR1 (E, WANT);
    W@.ROUNDED := SAVED;
+   W@.QUAL := SAVED_Q;
    RETURN V;
 END FUNCTION CALL_EXPR;
 
@@ -105,10 +108,48 @@ FUNCTION CALL_EXPR1 (E: NODE, WANT: TYP) RETURNS (ET);
             FAILT (E@.LINE, 'not a routine: ', E@.NAME);
          END IF;
       END BLOCK;
+      BLOCK                                          % FIXED$ADD_: an operation of a
+         CONST BASE: TEXT := CLASS_OPERATION (E@.NAME);   % predefined type class (D.2)
+         IF BASE.LEN > 0 THEN
+            BLOCK
+               VAR N: NODE := COPY_NODE (E);
+               N@.NAME := BASE;
+               RETURN BUILTIN (N, WANT);
+            END BLOCK;
+         END IF;
+      END BLOCK;
       FAILT (E@.LINE, 'unknown routine ', E@.NAME);
    END IF;
    RETURN CALL_SYM (Y, ARGS, E@.LINE);
 END FUNCTION CALL_EXPR1;
+
+% NAME of T$NAME when T is a predefined type or type class and NAME a predefined
+% routine (the operations of the PRELUDE, D.4 - D.6); nothing otherwise
+FUNCTION CLASS_OPERATION (NAME: TEXT) RETURNS (TEXT);
+   CONST S: ASCII_STR (NAME.LEN) := STR (NAME, NAME.LEN);
+   LOOP FOR I IN [1 : NAME.LEN - 2] DO
+      IF S[I:I] = '$' THEN
+         BLOCK
+            CONST P: TEXT := MKN (S[0 : I - 1]);
+            CONST B: TEXT := MKN (S[I + 1 : NAME.LEN - 1]);
+            IF IS_TYPE_WORD (P) ! TEQS (P, 'INTEGER') ! TEQS (P, 'BOOLEAN') ! TEQS (P, 'ENUM')
+               ! TEQS (P, 'ARRAY') ! TEQS (P, 'RECORD') ! TEQS (P, 'PTR') ! TEQS (P, 'SEMAPHORE') THEN
+               BLOCK
+                  VAR Y: SYM := LOOKUP (B);
+                  LOOP UNTIL Y = NIL DO
+                     IF Y@.KIND = Y_BUILTIN THEN
+                        RETURN B;
+                     END IF;
+                     Y := LOOKUP_NEXT (Y);
+                  END LOOP;
+               END BLOCK;
+            END IF;
+         END BLOCK;
+         RETURN NO_TEXT ();
+      END IF;
+   END LOOP I;
+   RETURN NO_TEXT ();
+END FUNCTION CLASS_OPERATION;
 
 FUNCTION BOUND_ROUTINE (NAME: TEXT) RETURNS (SYM);
    VAR B: BIND := W@.BINDS;

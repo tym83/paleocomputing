@@ -77,12 +77,23 @@ END FUNCTION HAS_GEN_ARG;
 
 % the parameters, result and C header of a routine [4-18] [4-31]
 PROCEDURE ROUTINE_HEADER (Y: SYM);
-   CONST R: NODE := Y@.DECL;
-   VAR P: NODE;
-   VAR TAIL: PARM := NIL;
+   VAR ENTERED: BOOLEAN;
    IF Y@.BUSY THEN
       RETURN;                                        % done, or being done
    END IF;
+   % the types of the header are those of the routine's module, wherever it is
+   % first needed (an invocation may resolve it before the module's turn)
+   ENTERED := ENTER_MODULE_FOR (Y);
+   ROUTINE_HEADER1 (Y);
+   IF ENTERED THEN
+      LEAVE_MODULE (Y@.MODL);
+   END IF;
+END PROCEDURE ROUTINE_HEADER;
+
+PROCEDURE ROUTINE_HEADER1 (Y: SYM);
+   CONST R: NODE := Y@.DECL;
+   VAR P: NODE;
+   VAR TAIL: PARM := NIL;
    Y@.BUSY := TRUE;
    P := R@.A;
    LOOP UNTIL P = NIL DO
@@ -119,7 +130,7 @@ PROCEDURE ROUTINE_HEADER (Y: SYM);
       Y@.FWD := C_HEADER (Y);
       EMIT (O_PROTOS, CATS (Y@.FWD, ';'));
    END IF;
-END PROCEDURE ROUTINE_HEADER;
+END PROCEDURE ROUTINE_HEADER1;
 
 % the type of the returns-clause, where the names of the parameters and of the derived
 % generic parameters stand for their values (4.3.1, section 5)
@@ -349,7 +360,8 @@ FUNCTION UNIFY (TS: NODE, T: TYP, BS: BIND) RETURNS (BOOLEAN);
          RETURN FALSE;
       END IF;
       RETURN UNIFY_VALUE (NTH_ARG (TS, 0), SOME (RT@.SCALE), BS)
-         & UNIFY_VALUE (NTH_ARG (TS, 1), SOME (2), BS);
+         & UNIFY_VALUE (NTH_ARG (TS, 1), SOME (2), BS)
+         & UNIFY_VALUE (NTH_ARG (TS, 2), SOME (0), BS);     % STD, the only precision
    ORIF TEQS (TS@.NAME, 'INTEGER') THEN
       RETURN RT@.KIND = T_INT & RT@.SCALE = 0;
    ORIF TEQS (TS@.NAME, 'FLOAT') THEN

@@ -75,6 +75,43 @@ FUNCTION USER_OPERATOR (NAME: TEXT, ARGS: ARG, LINE: INTEGER) RETURNS (SYM);
    RETURN Y;
 END FUNCTION USER_OPERATOR;
 
+% is a routine (not the predefined operation) of the operator name NAME visible, or
+% of that name without its last break (LESS_THAN, 3.12.5)?
+FUNCTION HAS_USER_ROUTINE (NAME: TEXT) RETURNS (BOOLEAN);
+   VAR Y: SYM := LOOKUP (NAME);
+   LOOP UNTIL Y = NIL DO
+      IF Y@.KIND = Y_ROUTINE THEN
+         RETURN TRUE;
+      END IF;
+      Y := LOOKUP_NEXT (Y);
+   END LOOP;
+   Y := LOOKUP (MKN (STR (NAME, NAME.LEN)[0 : NAME.LEN - 2]));
+   LOOP UNTIL Y = NIL DO
+      IF Y@.KIND = Y_ROUTINE THEN
+         RETURN TRUE;
+      END IF;
+      Y := LOOKUP_NEXT (Y);
+   END LOOP;
+   RETURN FALSE;
+END FUNCTION HAS_USER_ROUTINE;
+
+% the precision and the rounding mode of the expression being translated, as the
+% further arguments of an operator routine (D.5 B and C): precision first
+FUNCTION QUAL_ARGS (LINE: INTEGER) RETURNS (ARG);
+   CONST Q: NODE := W@.QUAL;
+   VAR R: ARG := NIL;
+   IF Q = NIL THEN
+      RETURN NIL;
+   END IF;
+   IF Q@.NAME.LEN > 0 THEN
+      R := VAL_ARG (ENUM_LITERAL (LIT_NODE (STR (Q@.NAME, Q@.NAME.LEN), LINE), ROUNDINGS_TYPE ()), NIL);
+   END IF;
+   IF Q@.B <> NIL THEN
+      R := VAL_ARG (EXPR (Q@.B, W@.TY_INT), R);
+   END IF;
+   RETURN R;
+END FUNCTION QUAL_ARGS;
+
 % the operator NAME applied to an abstract (or extended) operand A and expressions B, C
 FUNCTION OPERATOR_CALL3 (NAME: TEXT, A: ET, B, C: NODE, LINE: INTEGER) RETURNS (ET);
    CONST ARGS: ARG := VAL_ARG (A, NODE_ARG (B, M_IN, NODE_ARG (C, M_IN, NIL)));
@@ -170,14 +207,40 @@ END FUNCTION CONVERT;
 FUNCTION STORE_CODE (T: TYP, LV: TEXT, V: ET, LINE: INTEGER, SELF: TEXT) RETURNS (TEXT);
    IF T@.KIND = T_ABS THEN                           % STORE_ of the abstract type (D.4)
       BLOCK
-         CONST ARGS: ARG := VAL_ARG (V, VAL_ARG (MKLV (LV, T, TRUE, NO_TEXT ()), NIL));
+         VAR ARGS: ARG := VAL_ARG (V, VAL_ARG (MKLV (LV, T, TRUE, NO_TEXT ()), NIL));
          VAR Y: SYM;
-         ARGS@.NEXT@.MODE := M_OUT;
-         Y := FIND_ROUTINE (MKN ('STORE_'), ARGS, LINE, FALSE);
-         IF Y = NIL THEN
-            ARGS@.NEXT@.MODE := M_INOUT;
-            Y := FIND_ROUTINE (MKN ('STORE_'), ARGS, LINE, FALSE);
+         % the precision and rounding of the source are further inputs (D.5 B, C)
+         IF W@.SQUAL <> NIL THEN
+            BLOCK
+               CONST SAVED_Q: NODE := W@.QUAL;
+               VAR X: ARG;
+               W@.QUAL := W@.SQUAL;
+               X := QUAL_ARGS (LINE);
+               W@.QUAL := SAVED_Q;
+               IF X <> NIL THEN
+                  BLOCK
+                     VAR P: ARG := X;
+                     LOOP UNTIL P@.NEXT = NIL DO
+                        P := P@.NEXT;
+                     END LOOP;
+                     P@.NEXT := ARGS@.NEXT;
+                     ARGS@.NEXT := X;
+                  END BLOCK;
+               END IF;
+            END BLOCK;
          END IF;
+         BLOCK
+            VAR LAST: ARG := ARGS;
+            LOOP UNTIL LAST@.NEXT = NIL DO
+               LAST := LAST@.NEXT;
+            END LOOP;
+            LAST@.MODE := M_OUT;
+            Y := FIND_ROUTINE (MKN ('STORE_'), ARGS, LINE, FALSE);
+            IF Y = NIL THEN
+               LAST@.MODE := M_INOUT;
+               Y := FIND_ROUTINE (MKN ('STORE_'), ARGS, LINE, FALSE);
+            END IF;
+         END BLOCK;
          IF Y = NIL THEN
             FAILT (LINE, 'no STORE_ for the abstract type ', TYPE_NAME (T));
          END IF;
@@ -350,14 +413,23 @@ FUNCTION UNARY (E: NODE) RETURNS (ET);
    CONST A: ET := EXPR (E@.A, NIL);
    CONST T: TYP := A.T;
    CONST OP: TEXT := E@.NAME;
-   IF T@.KIND = T_ABS THEN
+   IF T@.KIND = T_ABS ! HAS_USER_ROUTINE (OP_NAME (OP, TRUE)) THEN    % (D.5 A5)
       BLOCK
-         CONST ARGS: ARG := VAL_ARG (A, NIL);
-         CONST Y: SYM := USER_OPERATOR (OP_NAME (OP, TRUE), ARGS, E@.LINE);
-         IF Y = NIL THEN
+         VAR ARGS: ARG := VAL_ARG (A, QUAL_ARGS (E@.LINE));
+         VAR Y: SYM := USER_OPERATOR (OP_NAME (OP, TRUE), ARGS, E@.LINE);
+         IF Y = NIL & ARGS@.NEXT <> NIL THEN
+            ARGS@.NEXT := NIL;
+            IF USER_OPERATOR (OP_NAME (OP, TRUE), ARGS, E@.LINE) <> NIL THEN
+               FAILT (E@.LINE, 'no operation takes the precision or rounding of the expression '
+                               !! 'as arguments (D.5): ', OP_NAME (OP, TRUE));
+            END IF;
+         END IF;
+         IF Y <> NIL THEN
+            RETURN CALL_SYM (Y, ARGS, E@.LINE);
+         END IF;
+         IF T@.KIND = T_ABS THEN
             FAILT (E@.LINE, 'no prefix operator for the abstract type ', TYPE_NAME (T));
          END IF;
-         RETURN CALL_SYM (Y, ARGS, E@.LINE);
       END BLOCK;
    END IF;
    IF TEQS (OP, 'NOT') THEN                          % 3.5.4.2, 3.6.4.2
@@ -420,31 +492,52 @@ FUNCTION APPLY_OPERATOR (E: NODE, OP: TEXT, A, B: ET) RETURNS (ET);
    CONST BT: TYP := B.T;
    CONST LINE: INTEGER := E@.LINE;
    % a routine of the operator's name, for abstract and extended types (D.5)
-   IF E@.FL = 0 THEN
-      BLOCK
-         CONST NAME: TEXT := OP_NAME (OP, FALSE);
-         IF LOOKUP (NAME) <> NIL ! LOOKUP (MKN (STR (NAME, NAME.LEN)[0 : NAME.LEN - 2])) <> NIL
-            ! AT@.KIND = T_ABS ! BT@.KIND = T_ABS THEN
-            BLOCK
-               CONST ARGS: ARG := VAL_ARG (A, VAL_ARG (B, NIL));
-               CONST Y: SYM := USER_OPERATOR (NAME, ARGS, LINE);
+   BLOCK
+      VAR NAME: TEXT := OP_NAME (OP, FALSE);
+      IF E@.FL = 2 THEN                              % !op!: MD_ADD_, MD_MULTIPLY_ ...
+         NAME := MKN ('MD_' !! STR (NAME, NAME.LEN));
+      END IF;
+      IF HAS_USER_ROUTINE (NAME) ! AT@.KIND = T_ABS ! BT@.KIND = T_ABS THEN
+         BLOCK
+            VAR ARGS: ARG := VAL_ARG (A, VAL_ARG (B, NIL));
+            VAR EXTRA: ARG := QUAL_ARGS (LINE);
+            VAR Y: SYM;
+            IF E@.FL = 1 THEN                        % !op s!: the result scale follows
+               EXTRA := VAL_ARG (EXPR (E@.D, W@.TY_INT), EXTRA);
+            END IF;
+            IF EXTRA <> NIL THEN                     % the precision and rounding of the
+               ARGS@.NEXT@.NEXT := EXTRA;            % expression are arguments (D.5 B, C)
+               Y := USER_OPERATOR (NAME, ARGS, LINE);
                IF Y <> NIL THEN
                   RETURN CALL_SYM (Y, ARGS, LINE);
                END IF;
-               IF TEQS (OP, '<>') THEN               % <> is NOT (=) (3.8.4.1, 3.9.4.1)
-                  BLOCK
-                     CONST Q: SYM := USER_OPERATOR (MKN ('EQUAL_'), ARGS, LINE);
-                     IF Q <> NIL THEN
-                        RETURN MKET (FMT1 ('(!@)', CALL_SYM (Q, ARGS, LINE).C), W@.TY_BOOL);
-                     END IF;
-                  END BLOCK;
+               ARGS@.NEXT@.NEXT := NIL;
+               IF USER_OPERATOR (NAME, ARGS, LINE) <> NIL THEN
+                  FAILT (LINE, 'no operation takes the scale, precision or rounding of the '
+                               !! 'expression as arguments (D.5): ', NAME);
                END IF;
-               IF AT@.KIND = T_ABS ! BT@.KIND = T_ABS THEN
-                  FAILT (LINE, 'no such operation for the abstract type: ', NAME);
+            ELSE
+               Y := USER_OPERATOR (NAME, ARGS, LINE);
+               IF Y <> NIL THEN
+                  RETURN CALL_SYM (Y, ARGS, LINE);
                END IF;
-            END BLOCK;
-         END IF;
-      END BLOCK;
+            END IF;
+            IF TEQS (OP, '<>') & E@.FL = 0 THEN      % <> is NOT (=) (3.8.4.1, 3.9.4.1)
+               BLOCK
+                  CONST Q: SYM := USER_OPERATOR (MKN ('EQUAL_'), ARGS, LINE);
+                  IF Q <> NIL THEN
+                     RETURN MKET (FMT1 ('(!@)', CALL_SYM (Q, ARGS, LINE).C), W@.TY_BOOL);
+                  END IF;
+               END BLOCK;
+            END IF;
+            IF AT@.KIND = T_ABS ! BT@.KIND = T_ABS THEN
+               FAILT (LINE, 'no such operation for the abstract type: ', NAME);
+            END IF;
+         END BLOCK;
+      END IF;
+   END BLOCK;
+   IF NOT PREDEFINED_ROUNDING () THEN
+      FAILT (LINE, 'no operation is defined for the rounding mode ', W@.QUAL@.NAME);
    END IF;
    IF E@.FL <> 0 THEN
       RETURN SCALED_OPERATOR (E, OP, A, B);

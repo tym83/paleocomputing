@@ -1,0 +1,5 @@
+MAIN SEGMENT FIXED_ARGS
+   USES (TERMINAL);
+% the scale of FIXED is a manifest integer within [-1000:1000] (3.2.1)
+VAR Y: FIXED (TRUE, 2, STD);
+END SEGMENT FIXED_ARGS;

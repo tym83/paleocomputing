@@ -563,7 +563,13 @@ FUNCTION RANGE_CHECK (T: TYP, V: TEXT, SELF: TEXT) RETURNS (TEXT);
       RETURN V;                                     % its bounds are not visible here
    END IF;
    IF T@.KIND = T_FLOAT THEN
+      IF W@.TYPECHECK THEN
+         RETURN FMT3 ('rt_b_tfrange(@, @, @)', V, SUBST_SELF (T@.LO_C, SELF), SUBST_SELF (T@.HI_C, SELF));
+      END IF;
       RETURN FMT3 ('rt_frange(@, @, @)', V, SUBST_SELF (T@.LO_C, SELF), SUBST_SELF (T@.HI_C, SELF));
+   END IF;
+   IF W@.TYPECHECK THEN
+      RETURN FMT3 ('rt_b_trange(@, @, @)', V, SUBST_SELF (T@.LO_C, SELF), SUBST_SELF (T@.HI_C, SELF));
    END IF;
    RETURN FMT3 ('rt_range(@, @, @)', V, SUBST_SELF (T@.LO_C, SELF), SUBST_SELF (T@.HI_C, SELF));
 END FUNCTION RANGE_CHECK;

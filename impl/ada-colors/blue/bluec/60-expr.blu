@@ -165,22 +165,8 @@ FUNCTION MANIFEST (E: NODE) RETURNS (MVAL);
       IF LITERAL_CLASSES (E@.NAME) = 1 THEN
          RETURN (OK: TRUE, V: FIND_LITERAL (E@.NAME, NIL)@.MV);
       END IF;
-   ORIF K = N_FIELD THEN                            % X.SCALE, X.RADIX: of X's type (3.2.1)
-      IF (TEQS (E@.NAME, 'SCALE') ! TEQS (E@.NAME, 'RADIX')) & E@.A@.KIND = N_NAME THEN
-         BLOCK
-            CONST Y: SYM := LOOKUP (E@.A@.NAME);
-            IF Y <> NIL THEN
-               IF (Y@.KIND = Y_VAR ! Y@.KIND = Y_CONST ! Y@.KIND = Y_TYPE) & Y@.T <> NIL THEN
-                  IF REAL_TYPE (Y@.T)@.KIND = T_INT THEN
-                     IF TEQS (E@.NAME, 'RADIX') THEN
-                        RETURN (OK: TRUE, V: 2);
-                     END IF;
-                     RETURN (OK: TRUE, V: REAL_TYPE (Y@.T)@.SCALE);
-                  END IF;
-               END IF;
-            END IF;
-         END BLOCK;
-      END IF;
+   ORIF K = N_FIELD THEN                            % an attribute query (3.1.4.1)
+      RETURN ATTR_MANIFEST (E);
    ORIF K = N_APPLY THEN
       IF TEQS (E@.NAME, 'IS_MANIFEST') THEN
          RETURN (OK: TRUE, V: BOOL_INT (MANIFEST (E@.A).OK));
@@ -188,6 +174,171 @@ FUNCTION MANIFEST (E: NODE) RETURNS (MVAL);
    END IF;
    RETURN NO;
 END FUNCTION MANIFEST;
+
+% the value of an attribute query X.ATTR when the attribute is known at translation:
+% the abstract attributes of X's type, and the representation attributes of a
+% standard representation (3.1.4.1: attribute queries are manifest when they are)
+FUNCTION ATTR_MANIFEST (E: NODE) RETURNS (MVAL);
+   CONST A: NODE := E@.A;
+   CONST NAME: TEXT := E@.NAME;
+   VAR T: TYP := NIL;
+   IF A@.KIND = N_PAREN THEN                        % (X.ATTR).MAX and the like
+      IF A@.A@.KIND = N_FIELD THEN
+         BLOCK
+            CONST INNER: NODE := A@.A;
+            IF TEQS (INNER@.NAME, 'LENGTH') THEN
+               IF TEQS (NAME, 'MAX') THEN
+                  RETURN SOME (MAX_LENGTH);
+               ORIF TEQS (NAME, 'MIN') THEN
+                  RETURN SOME (0);
+               END IF;
+            ORIF TEQS (INNER@.NAME, 'NOM_PRECISION') ! TEQS (INNER@.NAME, 'IMP_PRECISION') THEN
+               IF TEQS (NAME, 'MAX') THEN
+                  RETURN SOME (MAX_FLOAT_PRECISION);
+               ORIF TEQS (NAME, 'MIN') THEN
+                  RETURN SOME (1);
+               END IF;
+            ORIF TEQS (INNER@.NAME, 'SCALE') THEN
+               IF TEQS (NAME, 'MAX') THEN
+                  RETURN SOME (1000);
+               ORIF TEQS (NAME, 'MIN') THEN
+                  RETURN SOME (-1000);
+               END IF;
+            ORIF TEQS (INNER@.NAME, 'RADIX') THEN
+               IF TEQS (NAME, 'MAX') THEN
+                  RETURN SOME (1000);
+               ORIF TEQS (NAME, 'MIN') THEN
+                  RETURN SOME (2);
+               END IF;
+            END IF;
+         END BLOCK;
+      END IF;
+   END IF;
+   IF A@.KIND = N_NAME ! A@.KIND = N_ENUMLIT THEN
+      BLOCK
+         CONST Y: SYM := LOOKUP (A@.NAME);
+         IF Y = NIL THEN
+            RETURN NO_MVAL ();
+         END IF;
+         IF Y@.KIND = Y_TYPE THEN
+            T := RESOLVE_USER_NAME (A@.NAME, A@.LINE);
+         ORIF Y@.KIND = Y_VAR ! Y@.KIND = Y_CONST ! Y@.KIND = Y_GEN THEN
+            T := Y@.T;
+         ELSE
+            RETURN NO_MVAL ();
+         END IF;
+      END BLOCK;
+   ORIF A@.KIND = N_INT THEN
+      IF TEQS (NAME, 'MIN') ! TEQS (NAME, 'MAX') THEN    % the range of a literal is [L:L]
+         RETURN SOME (A@.IV);
+      END IF;
+      T := W@.TY_INT;
+   ORIF A@.KIND = N_PAREN ! A@.KIND = N_BINOP ! A@.KIND = N_UNOP ! A@.KIND = N_FIELD
+      ! A@.KIND = N_INDEX ! A@.KIND = N_APPLY ! A@.KIND = N_REAL ! A@.KIND = N_STR
+      ! A@.KIND = N_SUBSTR ! A@.KIND = N_DEREF ! A@.KIND = N_TYPESPEC THEN
+      IF A@.KIND = N_PAREN THEN
+         IF A@.A@.KIND = N_INT & (TEQS (NAME, 'MIN') ! TEQS (NAME, 'MAX')) THEN
+            RETURN SOME (A@.A@.IV);
+         END IF;
+      END IF;
+      BLOCK                                          % its type, for the attributes it fixes
+         CONST SAVED_CODE: BUF := W@.CODE;
+         W@.CODE := (HEAD: NIL, TAIL: NIL);
+         T := EXPR (A, NIL).T;
+         W@.CODE := SAVED_CODE;
+      END BLOCK;
+   ELSE
+      RETURN NO_MVAL ();
+   END IF;
+   IF T = NIL THEN
+      RETURN NO_MVAL ();
+   END IF;
+   RETURN TYPE_ATTR_MANIFEST (T, NAME);
+END FUNCTION ATTR_MANIFEST;
+
+% the attribute NAME of the type T, if it is known at translation
+FUNCTION TYPE_ATTR_MANIFEST (T0: TYP, NAME: TEXT) RETURNS (MVAL);
+   CONST T: TYP := REAL_TYPE (T0);
+   CONST K: INTEGER := T@.KIND;
+   IF TEQS (NAME, 'SIZE') THEN
+      RETURN STATIC_SIZE (T0);
+   END IF;
+   IF K = T_INT THEN
+      IF TEQS (NAME, 'SCALE') THEN
+         RETURN SOME (T@.SCALE);
+      ORIF TEQS (NAME, 'RADIX') THEN
+         RETURN SOME (2);
+      ORIF TEQS (NAME, 'MIN') & T@.LO_C.LEN > 0 THEN
+         RETURN T@.MLO;
+      ORIF TEQS (NAME, 'MAX') & T@.HI_C.LEN > 0 THEN
+         RETURN T@.MHI;
+      ORIF TEQS (NAME, 'MIN') & T@.SCALE = 0 THEN
+         RETURN SOME (-INTEGER.MAX - 1);
+      ORIF TEQS (NAME, 'MAX') & T@.SCALE = 0 THEN
+         RETURN SOME (INTEGER.MAX);
+      END IF;
+   ORIF K = T_FLOAT THEN
+      IF TEQS (NAME, 'NOM_PRECISION') THEN
+         RETURN SOME (T@.SCALE);
+      ORIF TEQS (NAME, 'IMP_PRECISION') THEN
+         RETURN SOME (IMP_PRECISION_OF (T@.SCALE));
+      ORIF TEQS (NAME, 'RADIX') THEN
+         RETURN SOME (2);
+      ORIF TEQS (NAME, 'EXPONENT_MIN') ! TEQS (NAME, 'EXPONENT_MAX')
+         ! TEQS (NAME, 'MANTISSA_SIZE') ! TEQS (NAME, 'EXPONENT_SIZE') THEN
+         RETURN SOME (FLOAT_FORMAT (T@.SCALE, NAME));
+      END IF;
+   ORIF K = T_ENUM THEN
+      IF TEQS (NAME, 'MIN') THEN
+         IF T@.LO_C.LEN > 0 THEN
+            RETURN T@.MLO;
+         END IF;
+         RETURN SOME (0);
+      ORIF TEQS (NAME, 'MAX') THEN
+         IF T@.HI_C.LEN > 0 THEN
+            RETURN T@.MHI;
+         END IF;
+         RETURN SOME (T@.BASE@.NLITS - 1);
+      ORIF TEQS (NAME, 'EXTENT') THEN
+         IF T@.LO_C.LEN = 0 THEN
+            RETURN SOME (T@.BASE@.NLITS);
+         END IF;
+         IF T@.MLO.OK & T@.MHI.OK THEN
+            RETURN SOME (MAX_INT (T@.MHI.V - T@.MLO.V + 1, 0));
+         END IF;
+      END IF;
+   ORIF K = T_STR ! K = T_BITS THEN
+      IF TEQS (NAME, 'LENGTH') THEN
+         RETURN T@.MLEN;
+      END IF;
+   ORIF K = T_ARR THEN
+      IF TEQS (NAME, 'DIMENSIONS') THEN
+         RETURN SOME (T@.DIMS);
+      ORIF TEQS (NAME, 'EXTENT') & T@.DIMS = 1 THEN
+         IF T@.BOUNDS@.MLO.OK & T@.BOUNDS@.MHI.OK THEN
+            RETURN SOME (MAX_INT (T@.BOUNDS@.MHI.V - T@.BOUNDS@.MLO.V + 1, 0));
+         END IF;
+      END IF;
+   ORIF K = T_REC THEN                               % a constant parameter (3.9.1)
+      BLOCK
+         VAR F: FIELD := T@.FIELDS;
+         VAR B: BND := T@.ARGS;
+         LOOP UNTIL F = NIL ! B = NIL DO
+            IF F@.KIND <> 0 THEN
+               IF TEQ (F@.NAME, NAME) THEN
+                  IF B@.ANYARG THEN
+                     RETURN NO_MVAL ();
+                  END IF;
+                  RETURN B@.MLO;
+               END IF;
+               B := B@.NEXT;
+            END IF;
+            F := F@.NEXT;
+         END LOOP;
+      END BLOCK;
+   END IF;
+   RETURN NO_MVAL ();
+END FUNCTION TYPE_ATTR_MANIFEST;
 
 % a manifest operand of + - * // is an integer, not a literal of an enumeration
 FUNCTION MANIFEST_INT (E: NODE) RETURNS (BOOLEAN);
@@ -237,8 +388,13 @@ FUNCTION EXPR (E: NODE, WANT: TYP) RETURNS (ET);
    ORIF K = N_QUAL THEN                             % [3-15]
       BLOCK
          CONST SAVED: BOOLEAN := W@.ROUNDED;
+         CONST SAVED_Q: NODE := W@.QUAL;
          VAR V: ET;
+         W@.QUAL := E;
          IF E@.NAME.LEN > 0 THEN
+            IF NOT IS_ROUNDING_NAME (E@.NAME) THEN
+               FAILT (E@.LINE, 'a rounding mode is a value of ROUNDINGS (3.1.4.1): ', E@.NAME);
+            END IF;
             W@.ROUNDED := TEQS (E@.NAME, 'ROUNDED') ! TEQS (E@.NAME, 'NATIVE_R');
             IF TEQS (E@.NAME, 'NATIVE_R') ! TEQS (E@.NAME, 'NATIVE_T') THEN
                REQUIRE_MACHINE (E@.LINE);
@@ -251,6 +407,7 @@ FUNCTION EXPR (E: NODE, WANT: TYP) RETURNS (ET);
          END IF;
          V := EXPR (E@.A, WANT);
          W@.ROUNDED := SAVED;
+         W@.QUAL := SAVED_Q;
          RETURN V;
       END BLOCK;
    ORIF K = N_NEW THEN                              % [3-198] [3-206]
@@ -302,10 +459,19 @@ FUNCTION EXPR (E: NODE, WANT: TYP) RETURNS (ET);
          CONST B: ET := EXPR (E@.A, NIL);
          CONST BT: TYP := REAL_TYPE (B.T);
          VAR LO, HI: TEXT;
+         IF B.T@.KIND = T_ABS ! HAS_USER_ROUTINE (MKN ('SUBSTRING_')) THEN
+            BLOCK                                    % SUBSTRING_ (D.5 A3)
+               CONST ARGS: ARG := VAL_ARG (B, NODE_ARG (E@.B, M_IN, NODE_ARG (E@.C, M_IN, NIL)));
+               CONST Y: SYM := USER_OPERATOR (MKN ('SUBSTRING_'), ARGS, E@.LINE);
+               IF Y <> NIL THEN
+                  RETURN CALL_SYM (Y, ARGS, E@.LINE);
+               END IF;
+               IF B.T@.KIND = T_ABS THEN
+                  FAILT (E@.LINE, 'no operation for this abstract type: ', MK ('SUBSTRING_'));
+               END IF;
+            END BLOCK;
+         END IF;
          IF NOT (BT@.KIND = T_STR ! BT@.KIND = T_BITS) THEN
-            IF B.T@.KIND = T_ABS THEN               % SUBSTRING_ of an abstract type (D.5)
-               RETURN OPERATOR_CALL3 (MK ('SUBSTRING_'), B, E@.B, E@.C, E@.LINE);
-            END IF;
             FAIL (E@.LINE, 'a substring of something not a string');
          END IF;
          LO := INT_EXPR (E@.B);
@@ -357,10 +523,13 @@ END FUNCTION EXPR;
 % an integer expression (3.2.4): subscripts, bounds, lengths
 FUNCTION INT_EXPR (E: NODE) RETURNS (TEXT);
    CONST SAVED: BOOLEAN := W@.ROUNDED;
+   CONST SAVED_Q: NODE := W@.QUAL;
    VAR V: ET;
    W@.ROUNDED := FALSE;
+   W@.QUAL := NIL;
    V := EXPR (E, W@.TY_INT);
    W@.ROUNDED := SAVED;
+   W@.QUAL := SAVED_Q;
    IF REAL_TYPE (V.T)@.KIND = T_ENUM THEN
       RETURN V.C;
    END IF;

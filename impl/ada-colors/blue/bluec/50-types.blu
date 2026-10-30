@@ -399,20 +399,14 @@ FUNCTION RESOLVE_PREDEFINED (TS: NODE) RETURNS (TYP);
    VAR T: TYP;
    IF TEQS (NAME, 'FIXED') THEN                     % [3-45]
       BLOCK
-         CONST S: MVAL := MANIFEST (NTH_ARG (TS, 0));
-         CONST R: MVAL := MANIFEST (NTH_ARG (TS, 1));
+         CONST S: MVAL := MANIFEST_INTEGER_ARG (NTH_ARG (TS, 0), 'scale', -1000, 1000);
+         CONST R: MVAL := MANIFEST_INTEGER_ARG (NTH_ARG (TS, 1), 'radix', 2, 1000);
          CONST P: NODE := NTH_ARG (TS, 2);
-         IF NOT S.OK THEN
-            FAIL (TS@.LINE, 'the scale must be manifest (3.2.1)');
-         END IF;
-         IF NOT R.OK ! R.V <> 2 THEN
+         TYPE_ARG_COUNT (TS, 3);
+         IF R.V <> 2 THEN
             FAIL (TS@.LINE, 'only radix 2 is predefined (3.2.1)');
          END IF;
-         IF P@.KIND = N_NAME ! P@.KIND = N_ENUMLIT THEN
-            IF FIND_LITERAL (P@.NAME, NIL) <> NIL & NOT TEQS (P@.NAME, 'STD') THEN
-               FAIL (TS@.LINE, 'only STD precision is predefined (3.2.1)');
-            END IF;
-         END IF;
+         CHECK_PRECISION_ARG (P, TS@.LINE);
          IF S.V = 0 THEN
             RETURN W@.TY_INT;
          END IF;
@@ -422,13 +416,9 @@ FUNCTION RESOLVE_PREDEFINED (TS: NODE) RETURNS (TYP);
       END BLOCK;
    ORIF TEQS (NAME, 'FLOAT') THEN                   % [3-68]
       BLOCK
-         CONST P: MVAL := MANIFEST (NTH_ARG (TS, 0));
-         IF NOT P.OK THEN
-            FAIL (TS@.LINE, 'the precision must be manifest (3.3.1)');
-         END IF;
-         IF P.V < 1 ! P.V > 15 THEN
-            FAIL (TS@.LINE, 'precisions from 1 to 15 are implemented (3.3.1)');
-         END IF;
+         CONST P: MVAL := MANIFEST_INTEGER_ARG (NTH_ARG (TS, 0), 'precision', 1,
+                                                MAX_FLOAT_PRECISION ());
+         TYPE_ARG_COUNT (TS, 1);
          T := NEW_TYP (T_FLOAT);
          T@.SCALE := P.V;
          RETURN T;
@@ -472,6 +462,70 @@ FUNCTION RESOLVE_PREDEFINED (TS: NODE) RETURNS (TYP);
    END IF;
    RETURN NIL;
 END FUNCTION RESOLVE_PREDEFINED;
+
+% a predefined type takes its arguments in number, type and position (3.1.1.4)
+PROCEDURE TYPE_ARG_COUNT (TS: NODE, N: INTEGER);
+   IF LIST_LENGTH (TS@.A) <> N THEN
+      FAILT (TS@.LINE, 'the wrong number of arguments for the type ', TS@.NAME);
+   END IF;
+END PROCEDURE TYPE_ARG_COUNT;
+
+% a manifest integer argument of a type within LO .. HI (3.2.1, 3.3.1)
+FUNCTION MANIFEST_INTEGER_ARG (A: NODE, WHAT: ASCII_STR(?L), LO, HI: INTEGER) RETURNS (MVAL);
+   CONST M: MVAL := MANIFEST (A);
+   IF NOT M.OK THEN
+      FAIL (A@.LINE, 'the ' !! WHAT !! ' must be manifest (3.2.1, 3.3.1)');
+   END IF;
+   IF A@.KIND <> TS_GEN & A@.KIND <> N_DONTCARE & NOT BOUND_NAME (A) THEN
+      BLOCK
+         CONST SAVED_CODE: BUF := W@.CODE;
+         CONST T: TYP := EXPR (A, W@.TY_INT).T;
+         W@.CODE := SAVED_CODE;
+         IF REAL_TYPE (T)@.KIND <> T_INT ! T@.SCALE <> 0 THEN
+            FAIL (A@.LINE, 'the ' !! WHAT !! ' is an integer (3.2.1, 3.3.1)');
+         END IF;
+      END BLOCK;
+   END IF;
+   IF M.V < LO ! M.V > HI THEN
+      FAIL (A@.LINE, 'the ' !! WHAT !! ' is out of the range of the attribute (3.2.1, 3.3.1)');
+   END IF;
+   RETURN M;
+END FUNCTION MANIFEST_INTEGER_ARG;
+
+% a name of a value bound in the generic instance being translated (section 5)
+FUNCTION BOUND_NAME (A: NODE) RETURNS (BOOLEAN);
+   IF A@.KIND <> N_NAME THEN
+      RETURN FALSE;
+   END IF;
+   RETURN FIND_BIND (W@.BINDS, A@.NAME) <> NIL;
+END FUNCTION BOUND_NAME;
+
+% the precision of a fixed point type: a value of FIXED_PRECISIONS, STD (3.2.1)
+PROCEDURE CHECK_PRECISION_ARG (P: NODE, LINE: INTEGER);
+   IF P@.KIND = TS_GEN ! P@.KIND = N_DONTCARE THEN
+      RETURN;
+   END IF;
+   IF (P@.KIND = N_NAME ! P@.KIND = N_ENUMLIT) THEN
+      IF TEQS (P@.NAME, 'STD') THEN
+         RETURN;
+      END IF;
+      BLOCK                                          % a constant or derived ?P: STD,
+         CONST Y: SYM := LOOKUP (P@.NAME);           % the only value there is
+         IF Y <> NIL THEN
+            IF Y@.KIND = Y_GEN ! Y@.KIND = Y_CONST ! (Y@.KIND = Y_TYPE & FIND_BIND (W@.BINDS, P@.NAME) <> NIL) THEN
+               RETURN;
+            END IF;
+         END IF;
+         IF FIND_BIND (W@.BINDS, P@.NAME) <> NIL THEN
+            RETURN;
+         END IF;
+      END BLOCK;
+      IF FIND_LITERAL (P@.NAME, NIL) <> NIL THEN
+         FAIL (LINE, 'only STD precision is predefined (3.2.1)');
+      END IF;
+   END IF;
+   FAIL (LINE, 'the precision of a fixed point type is a value of FIXED_PRECISIONS (3.2.1)');
+END PROCEDURE CHECK_PRECISION_ARG;
 
 % the length of a string or bitstring type: an expression, ?L or ?
 PROCEDURE STRING_LENGTH (T: TYP, A: NODE);

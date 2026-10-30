@@ -33,6 +33,89 @@ FUNCTION ENUM_SIZE (T: TYP) RETURNS (INTEGER);
    RETURN BITS_FOR (T@.BASE@.NLITS);
 END FUNCTION ENUM_SIZE;
 
+% ---- the machine (implementation-dependent values, 3.x.1, 3.x.3) -------------------
+
+% the largest length of a string or bitstring: (CHAR_STR.LENGTH).MAX (3.6.1, 3.7.1)
+FUNCTION MAX_LENGTH () RETURNS (INTEGER);
+   RETURN 100000000;
+END FUNCTION MAX_LENGTH;
+
+% the largest nominal precision of a float: MAX_NOM_PREC (3.3.1, D.6)
+FUNCTION MAX_FLOAT_PRECISION () RETURNS (INTEGER);
+   RETURN 15;
+END FUNCTION MAX_FLOAT_PRECISION;
+
+% the implemented precision for a nominal one (3.3.1): single (7 digits) or double
+FUNCTION IMP_PRECISION_OF (P: INTEGER) RETURNS (INTEGER);
+   IF P <= 7 THEN
+      RETURN 7;
+   END IF;
+   RETURN 15;
+END FUNCTION IMP_PRECISION_OF;
+
+% the representation attributes of the floating point format of precision P (3.3.3):
+% single and double binary formats; MANTISSA_SIZE counts the sign bit
+FUNCTION FLOAT_FORMAT (P: INTEGER, NAME: TEXT) RETURNS (INTEGER);
+   CONST SINGLE: BOOLEAN := IMP_PRECISION_OF (P) = 7;
+   IF TEQS (NAME, 'EXPONENT_MIN') THEN
+      IF SINGLE THEN
+         RETURN -125;
+      END IF;
+      RETURN -1021;
+   ORIF TEQS (NAME, 'EXPONENT_MAX') THEN
+      IF SINGLE THEN
+         RETURN 128;
+      END IF;
+      RETURN 1024;
+   ORIF TEQS (NAME, 'MANTISSA_SIZE') THEN
+      IF SINGLE THEN
+         RETURN 25;
+      END IF;
+      RETURN 54;
+   ORIF TEQS (NAME, 'EXPONENT_SIZE') THEN
+      IF SINGLE THEN
+         RETURN 8;
+      END IF;
+      RETURN 11;
+   ORIF TEQS (NAME, 'SIZE') THEN
+      IF SINGLE THEN
+         RETURN 32;
+      END IF;
+      RETURN 64;
+   END IF;
+   RETURN 0;
+END FUNCTION FLOAT_FORMAT;
+
+% the SIZE of a value of type T when it is known at translation (3.x.3)
+FUNCTION STATIC_SIZE (T: TYP) RETURNS (MVAL);
+   CONST K: INTEGER := T@.KIND;
+   IF K = T_ABS THEN
+      RETURN STATIC_SIZE (T@.BASE);
+   ORIF K = T_INT THEN
+      IF T@.REPS <> NIL THEN
+         IF T@.REPS@.A <> NIL THEN
+            RETURN MANIFEST (T@.REPS@.A);
+         END IF;
+      END IF;
+      RETURN SOME (64);
+   ORIF K = T_FLOAT THEN
+      RETURN SOME (FLOAT_FORMAT (T@.SCALE, MK ('SIZE')));
+   ORIF K = T_BOOL THEN
+      RETURN SOME (1);
+   ORIF K = T_ENUM THEN
+      RETURN SOME (ENUM_SIZE (T));
+   ORIF K = T_BITS THEN
+      RETURN T@.MLEN;
+   ORIF K = T_STR THEN
+      IF T@.MLEN.OK THEN
+         RETURN SOME (T@.MLEN.V * 8);
+      END IF;
+   ORIF K = T_PTR ! K = T_SEM THEN
+      RETURN SOME (64);
+   END IF;
+   RETURN NO_MVAL ();
+END FUNCTION STATIC_SIZE;
+
 % the attribute NAME of the value B (3.x.1, 3.x.3)
 FUNCTION ATTRIBUTE (B: ET, NAME: TEXT, LINE: INTEGER) RETURNS (ET);
    CONST T: TYP := B.T;
@@ -401,7 +484,17 @@ FUNCTION TYPE_SPECIFIER (E: NODE) RETURNS (ET);
       END IF;
       FAIL (E@.LINE, 'this type-specifier on a bitstring is not implemented');
    END IF;
-   RETURN MKET (CONVERT (V, T, E@.LINE, NO_TEXT ()), T);
+   % the value must be one of the type (INVALID_TYPE, 3.1.4.1)
+   BLOCK
+      VAR C: TEXT;
+      W@.TYPECHECK := TRUE;
+      C := CONVERT (V, T, E@.LINE, NO_TEXT ());
+      W@.TYPECHECK := FALSE;
+      IF (RT@.KIND = T_STR ! RT@.KIND = T_BITS) & RT@.LEN_C.LEN > 0 & NOT (RT@.MLEN.OK & V.T@.MLEN.OK) THEN
+         C := FMT2 ('rt_b_tlen(@, @)', C, RT@.LEN_C);
+      END IF;
+      RETURN MKET (C, T);
+   END BLOCK;
 END FUNCTION TYPE_SPECIFIER;
 
 % the position of the literal whose representation is the bitstring C (3.4.3)

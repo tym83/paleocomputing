@@ -1804,6 +1804,8 @@ void rt_b_lang(void) {
   RT_X_CREATE = RT_X_TASKING = RT_X_EMPTY_MAILBOX = rt_exc("TASKING");
   RT_X_FILE = rt_exc("END_OF_INPUT");
   RT_X_DEADLOCK = rt_exc("DEADLOCK");
+  RT_B_INVALID_TYPE = rt_exc("INVALID_TYPE");
+  RT_B_INVALID_REP = rt_exc("INVALID_REP");
 }
 
 rstr rt_b_slice(rstr s, rt_int l, rt_int u) {
@@ -2663,6 +2665,24 @@ void rt_b_wait(rt_int v, rt_int scale) {
 
 
 /* ---- BLUE: the rest of the language (coverage of the 1978 specification) ---- */
+
+int RT_B_INVALID_TYPE, RT_B_INVALID_REP;
+
+/* a type-specifier [T]$$(E): INVALID_TYPE unless the value is one of T (3.1.4.1) */
+rt_int rt_b_trange(rt_int v, rt_int lo, rt_int hi) {
+  if (v < lo || v > hi) rt_raise(RT_B_INVALID_TYPE);
+  return v;
+}
+
+double rt_b_tfrange(double v, double lo, double hi) {
+  if (v < lo || v > hi) rt_raise(RT_B_INVALID_TYPE);
+  return v;
+}
+
+rstr rt_b_tlen(rstr s, rt_int len) {
+  if (s.len != len) rt_raise(RT_B_INVALID_TYPE);
+  return s;
+}
 
 /* the number of significant bits of a magnitude */
 static int b_bits(unsigned __int128 m) {

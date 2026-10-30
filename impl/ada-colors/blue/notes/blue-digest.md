@@ -200,6 +200,21 @@ unreadable; the decision is bluec's.
     travel with values); derived bounds of array parameters `[1:?M]` are extents.
 23. **The machine**: OBJECT_MACHINE = PDP_11 but STD is 64 bits; the PDP-11 of
     Appendix C would have 16.
+24. **`type-name.attribute`.** The syntax of attribute queries [3-2] allows a
+    type name only inside `(T.A).B`, and p.3-29 repeats that `T.A` is not
+    permitted; yet the examples write `ASCII.SIZE` (3.4.3), `BCD.SIZE` (3.12) and
+    `R.SIZE` (Appendix C). bluec follows the examples for declared types
+    (`INTEGER`, `ASCII` and the program's own) and rejects the type classes
+    (`FIXED.SIZE` is "not well-defined", p.3-29).
+25. **Scaled operators on other types.** The table of 3.1.4.2 maps `!*s!` to
+    MULTIPLY_ and so on but D.5 says nothing of the scale; for a program's own
+    operator routines the scale is passed as a further input argument, before the
+    precision and the rounding mode (D.5 B, C).
+26. **A rounding mode** [3-16] is an identifier right after an expression that
+    is not followed by `(`, `.`, `:=`, `:` or `$`, and is not a clause of a path
+    header; it must be a value of the ROUNDINGS visible there, which a program
+    may redefine with more values (FLOOR ...). A mode the predefined operations
+    do not know needs an operator routine of the program that takes it.
 
 The misprints of the program examples and the rules they break are in
 `../corpus/CHANGES.md`.

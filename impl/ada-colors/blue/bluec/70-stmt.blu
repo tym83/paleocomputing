@@ -490,10 +490,16 @@ PROCEDURE ASSIGN_STMT (S: NODE);
    END IF;
    BLOCK
       CONST LV: ET := EXPR (TG, NIL);
+      CONST SAVED_Q: NODE := W@.SQUAL;
       IF NOT LV.LVAL THEN
          FAIL (S@.LINE, 'the target of an assignment must be a variable (3.1.5)');
       END IF;
+      W@.SQUAL := NIL;
+      IF S@.B@.KIND = N_QUAL THEN                 % STORE_ (Y, PREC, RND ## X) (D.5)
+         W@.SQUAL := S@.B;
+      END IF;
       CODE (STORE_CODE (LV.T, LV.C, EXPR (S@.B, LV.T), S@.LINE, LV.SELF));
+      W@.SQUAL := SAVED_Q;
    END BLOCK;
 END PROCEDURE ASSIGN_STMT;
 
