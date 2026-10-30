@@ -495,7 +495,8 @@ FUNCTION DISJOINT_PATHS (A, B: NODE) RETURNS (BOOLEAN);
 END FUNCTION DISJOINT_PATHS;
 
 % the arguments of explicit generic parameters -- inputs the returns-clause uses --
-% invoke only pure functions (5; decision 35: variables are allowed)
+% are constants or constant expressions: no variables (a constant or an input
+% parameter is one), no variable reached through a pointer, only pure functions (5)
 PROCEDURE EXPLICIT_GENERIC_ARGS (Y: SYM, ARGS: ARG, LINE: INTEGER);
    VAR USED: NODE := NIL;
    VAR P: PARM := Y@.PARAMS;
@@ -510,7 +511,7 @@ PROCEDURE EXPLICIT_GENERIC_ARGS (Y: SYM, ARGS: ARG, LINE: INTEGER);
    LOOP UNTIL P = NIL ! A = NIL DO
       IF P@.MODE = M_IN & IN_IDENTS (USED, P@.NAME) & A@.E <> NIL THEN
          IF NOT CONSTANT_EXPR (A@.E) THEN
-            FAILT (LINE, 'the argument of an explicit generic parameter invokes only pure functions (5): ',
+            FAILT (LINE, 'the argument of an explicit generic parameter is a constant or a constant expression (5): ',
                    P@.NAME);
          END IF;
       END IF;
@@ -545,8 +546,14 @@ FUNCTION CONSTANT_EXPR (E: NODE) RETURNS (BOOLEAN);
                   RETURN FALSE;
                END IF;
             END IF;
+            IF Y@.KIND = Y_VAR & NOT Y@.INPUT THEN       % a variable, not a constant
+               RETURN FALSE;
+            END IF;
          END IF;
       END BLOCK;
+   END IF;
+   IF E@.KIND = N_DEREF THEN                          % the variable a pointer refers to
+      RETURN FALSE;
    END IF;
    IF E@.KIND = N_FIELD THEN
       RETURN CONSTANT_EXPR (E@.A);

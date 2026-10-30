@@ -324,10 +324,11 @@ unreadable; the decision is bluec's.
     routine. INLINE routines cannot recurse; a recursive routine imports only
     static data (variables of no routine).
 35. **Explicit generic arguments (5).** The arguments of explicit generic
-    parameters "must be constants or constant expressions". A function that
-    returns a string of a length computed at run time (bluec's own STR (T, L))
-    cannot be written otherwise, so bluec accepts variables there and rejects
-    only invocations of functions that import data.
+    parameters (inputs a returns-clause uses) "must be constants or constant
+    expressions": no variable (a constant or an input parameter is one, a
+    variable reached through a pointer is not), only functions that import no
+    data. bluec's own STR (T, L) is invoked so (through helpers whose text
+    parameters are inputs).
 36. **TO_BIT (VAL) in PUT_OUT (C-20).** TO_BIT of a value of any type is
     machine-dependent (3.7.6), yet PUT_OUT applies it outside a machine-dependent
     part. Its WHERE clause names TO_BIT (T REP R): inside the generic body it is
