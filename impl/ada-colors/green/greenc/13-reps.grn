@@ -756,7 +756,10 @@
    -- the code of a subprogram or a module, or an interrupt for an entry
    procedure ADDRESS_SPEC(E : NODE; Y : SYM) is
       A : ADDR := ADDRS;
-      V, ACT : TEXT;
+      V, ACT, LN, IQ : TEXT;
+      LS, OS : TEXT := MK("");
+      PM : PARM;
+      NP : INTEGER := 0;
    begin
       STATIC_ADDRESS(E);
       while A /= null and then A.E /= E loop
@@ -773,11 +776,21 @@
       elsif Y.KIND = Y_PROC or Y.KIND = Y_FUNC or Y.KIND = Y_PACKAGE or Y.KIND = Y_TASK then
          A.Y := Y;
       elsif Y.KIND = Y_ENTRY then
-         -- an interrupt acts as an entry call (RM79 13.5.1)
-         if Y.PARAMS /= null then
-            FAIL(E.LINE, "the interrupts of this machine supply no control information: an interrupt entry "
-                 & "has no parameters (RM79 13.5.1)");
-         elsif Y.C /= null or Y.MEMBERS = null then
+         -- an interrupt acts as an entry call (RM79 13.5.1); the control
+         -- information it supplies appears as in parameters
+         PM := Y.PARAMS;
+         while PM /= null loop
+            if PM.MODE /= M_IN then
+               FAIL(E.LINE, "the control information of an interrupt appears as an in parameter of the entry "
+                    & "(RM79 13.5.1): " & PM.NAME.all & " is not one");
+            end if;
+            LAYOUT_OF(PM.T, PM.C, FALSE, FALSE, LN);
+            LS := MK(LS.all & "&" & LN.all & ", ");
+            OS := MK(OS.all & "offsetof(struct " & Y.CNAME.all & "p, " & PM.CFIELD.all & "), ");
+            NP := NP + 1;
+            PM := PM.NEXT;
+         end loop;
+         if Y.C /= null or Y.MEMBERS = null then
             FAIL(E.LINE, "an interrupt is linked to a single entry of a single task (RM79 13.5.1)");
          elsif Y.MEMBERS.C /= null then
             FAIL(E.LINE, "an interrupt is linked to a single entry of a single task (RM79 13.5.1)");
@@ -785,7 +798,15 @@
          A.Y := Y;
          ENTRY_PATH(Y, "", V);
          ACT_PATH(Y.MEMBERS, ACT);
-         EMIT("rt_g_bind_interrupt(" & E.TAG.all & ", &" & V.all & ", &" & ACT.all & ");");
+         NEW_NAME("irq", IQ);
+         if NP > 0 then
+            PUT_TO(OUT_LAYS, "static const g_lay *const " & IQ.all & "_l[] = {" & LS.all & "};");
+            PUT_TO(OUT_LAYS, "static const size_t " & IQ.all & "_o[] = {" & OS.all & "};");
+            EMIT("rt_g_bind_interrupt_p(" & E.TAG.all & ", &" & V.all & ", &" & ACT.all & ", sizeof(struct "
+                 & Y.CNAME.all & "p), " & INTEGER'REP(NP) & ", " & IQ.all & "_l, " & IQ.all & "_o);");
+         else
+            EMIT("rt_g_bind_interrupt(" & E.TAG.all & ", &" & V.all & ", &" & ACT.all & ");");
+         end if;
       else
          FAIL(E.LINE, "an address is given to a variable, a subprogram, a module or an entry (RM79 13.5)");
       end if;

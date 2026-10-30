@@ -3590,12 +3590,18 @@ struct f_address_spec_1674fr { int dummy;
  P468 a_3900;
  P374 v_3901;
  P374 act_3902;
+ P374 ln_3903;
+ P374 iq_3904;
+ P374 ls_3905;
+ P374 os_3906;
+ P2299 pm_3907;
+ rt_int np_3908;
 };
 struct f_task_length_1676fr { int dummy;
  struct f_greenc_234fr *up;
  P351 y_1675;
  rt_int result_;
- P468 a_3906;
+ P468 a_3913;
 };
 struct f_predef_type_1681fr { int dummy;
  struct f_greenc_234fr *up;
@@ -3603,35 +3609,35 @@ struct f_predef_type_1681fr { int dummy;
  P356 t_1678;
  rt_gstr lo_1679;
  rt_gstr hi_1680;
- P351 y_3908;
+ P351 y_3915;
 };
 struct f_predef_const_1685fr { int dummy;
  struct f_greenc_234fr *up;
  rt_gstr name_1682;
  P356 t_1683;
  rt_gstr code_text_1684;
- P351 y_3915;
+ P351 y_3922;
 };
 struct f_predef_exc_1687fr { int dummy;
  struct f_greenc_234fr *up;
  rt_gstr name_1686;
- P351 y_3916;
+ P351 y_3923;
 };
 struct f_predef_lit_1691fr { int dummy;
  struct f_greenc_234fr *up;
  rt_gstr name_1688;
  P356 t_1689;
  rt_int v_1690;
- P351 y_3917;
+ P351 y_3924;
 };
 struct f_predefine_1692fr { int dummy;
  struct f_greenc_234fr *up;
- P351 y_3918;
- rt_gstr control_3919;
- rt_int start_3920;
- rt_int code_no_3921;
- rt_int i_3924;
- rt_int i_3932;
+ P351 y_3925;
+ rt_gstr control_3926;
+ rt_int start_3927;
+ rt_int code_no_3928;
+ rt_int i_3931;
+ rt_int i_3939;
 };
 struct f_lib_open_1695fr { int dummy;
  struct f_greenc_234fr *up;
@@ -3647,7 +3653,7 @@ struct f_unit_key_1701fr { int dummy;
  struct f_greenc_234fr *up;
  P408 u_1699;
  P374 *r_1700;
- rt_int k_3936;
+ rt_int k_3943;
 };
 struct f_lib_enabled_1703fr { int dummy;
  struct f_greenc_234fr *up;
@@ -3655,66 +3661,66 @@ struct f_lib_enabled_1703fr { int dummy;
 };
 struct f_store_units_1704fr { int dummy;
  struct f_greenc_234fr *up;
- P438 s_3944;
- P374 k_3945;
- int yes_3946;
+ P438 s_3951;
+ P374 k_3952;
+ int yes_3953;
 };
 struct f_store_span_1707fr { int dummy;
  struct f_greenc_234fr *up;
  P438 s_1705;
  rt_gstr key_1706;
- rt_int n_3948;
- P374 head_3949;
- rt_int l_3957;
- rt_gstr t_3964;
- rt_int k_3966;
- rt_int l_3970;
+ rt_int n_3955;
+ P374 head_3956;
+ rt_int l_3964;
+ rt_gstr t_3971;
+ rt_int k_3973;
+ rt_int l_3977;
 };
 struct f_lib_load_1710fr { int dummy;
  struct f_greenc_234fr *up;
  rt_gstr key_1708;
  P408 *r_1709;
- rt_int n_3981;
- rt_int saved_line_3982;
- rt_int saved_pos_3983;
- rt_int from_3984;
- P374 saved_env_3985;
+ rt_int n_3988;
+ rt_int saved_line_3989;
+ rt_int saved_pos_3990;
+ rt_int from_3991;
+ P374 saved_env_3992;
 };
 struct f_defined_unit_1713fr { int dummy;
  struct f_greenc_234fr *up;
  rt_gstr name_1711;
  P408 before_1712;
  int result_;
- P408 u_3986;
+ P408 u_3993;
 };
 struct f_library_units_1714fr { int dummy;
  struct f_greenc_234fr *up;
- P408 p_3989;
- P408 prev_3990;
- P408 l_3991;
- P408 ltail_3992;
- rt_int i_3993;
- rt_int j_3994;
- P374 n_3995;
- P374 f_3996;
- int changed_3997;
+ P408 p_3996;
+ P408 prev_3997;
+ P408 l_3998;
+ P408 ltail_3999;
+ rt_int i_4000;
+ rt_int j_4001;
+ P374 n_4002;
+ P374 f_4003;
+ int changed_4004;
 };
 struct f_load_unit_1717fr { int dummy;
  struct f_greenc_234fr *up;
  rt_gstr name_1715;
  P408 *r_1716;
- P408 s_4010;
- P408 b_4011;
- P408 t_4012;
+ P408 s_4017;
+ P408 b_4018;
+ P408 t_4019;
 };
 struct f_predefined_unit_1720fr { int dummy;
  struct f_greenc_234fr *up;
  rt_gstr name_1718;
  P408 *r_1719;
- rt_int saved_pos_4014;
- rt_int saved_line_4015;
- rt_int from_4016;
- P374 saved_env_4017;
+ rt_int saved_pos_4021;
+ rt_int saved_line_4022;
+ rt_int from_4023;
+ P374 saved_env_4024;
 };
 struct f_prelude_1721fr { int dummy;
  struct f_greenc_234fr *up;
@@ -3723,41 +3729,41 @@ struct f_used_units_1724fr { int dummy;
  struct f_greenc_234fr *up;
  P408 u_1722;
  P374 *r_1723;
- P408 p_4018;
- P408 main_4019;
- int changed_4020;
+ P408 p_4025;
+ P408 main_4026;
+ int changed_4027;
 };
 struct f_add_names_1728fr { int dummy;
  struct f_greenc_234fr *up;
  P374 *r_1725;
  rt_gstr list_1726;
  int *changed_1727;
- rt_int i_4032;
- rt_int j_4034;
+ rt_int i_4039;
+ rt_int j_4041;
 };
 struct f_translate_1730fr { int dummy;
  struct f_greenc_234fr *up;
  P408 u_1729;
- P408 p_4045;
- P374 used_4046;
- P374 env_4047;
- P351 y_4048;
+ P408 p_4052;
+ P374 used_4053;
+ P374 env_4054;
+ P351 y_4055;
 };
 struct f_environment_module_1732fr { int dummy;
  struct f_greenc_234fr *up;
  P408 p_1731;
- P408 u_4055;
- rt_int saved_4056;
+ P408 u_4062;
+ rt_int saved_4063;
 };
 struct f_body_follows_1734fr { int dummy;
  struct f_greenc_234fr *up;
  P408 p_1733;
  int result_;
- P408 q_4057;
+ P408 q_4064;
 };
 struct f_find_address_specifications_1735fr { int dummy;
  struct f_greenc_234fr *up;
- rt_int i_4060;
+ rt_int i_4067;
 };
 struct f_listing_file_1736fr { int dummy;
  struct f_greenc_234fr *up;
@@ -3766,19 +3772,19 @@ struct f_listing_file_1736fr { int dummy;
 struct f_print_listing_1738fr { int dummy;
  struct f_greenc_234fr *up;
  rt_int lines_1737;
- rt_gstr lname_4068;
- R231 f_4069;
- int on_4070;
- rt_int k_4071;
- rt_int l_4074;
- rt_int m_4079;
- rt_int m_4088;
+ rt_gstr lname_4075;
+ R231 f_4076;
+ int on_4077;
+ rt_int k_4078;
+ rt_int l_4081;
+ rt_int m_4086;
+ rt_int m_4095;
 };
 struct f_last_unit_1740fr { int dummy;
  struct f_greenc_234fr *up;
  P408 p_1739;
  int result_;
- P408 q_4096;
+ P408 q_4103;
 };
 struct f_print_program_1741fr { int dummy;
  struct f_greenc_234fr *up;
@@ -20399,13 +20405,22 @@ F->a_3900 = NULL;
 F->a_3900 = F->up->addrs_470;
 F->v_3901 = NULL;
 F->act_3902 = NULL;
+F->ln_3903 = NULL;
+F->iq_3904 = NULL;
+F->ls_3905 = NULL;
+F->ls_3905 = f_mk_493(F->up, rt_g_lit("", 0));
+F->os_3906 = NULL;
+F->os_3906 = f_mk_493(F->up, rt_g_lit("", 0));
+F->pm_3907 = NULL;
+F->np_3908 = INT64_MIN;
+F->np_3908 = ((rt_int)0LL);
 f_static_address_1637(F->up, F->e_1672);
 while (((F->a_3900 != NULL) && ((*(P468)rt_nil_check(F->a_3900)).e_ != F->e_1672))) {
 F->a_3900 = (*(P468)rt_nil_check(F->a_3900)).next_;
 }
-L_end_3903: ;
+L_end_3909: ;
 if ((F->a_3900 == NULL)) {
-F->a_3900 = ({ R469 *cell3904 = rt_alloc(sizeof(R469)); *cell3904 = cp_R469(({ R469 ag3905; ag3905.y_ = NULL; ag3905.name_ = (*(P408)rt_nil_check(F->e_1672)).name_; ag3905.depth_ = G_NV(F->up->depth_354); ag3905.e_ = F->e_1672; ag3905.next_ = F->up->addrs_470; ag3905; })); (P468)cell3904; });
+F->a_3900 = ({ R469 *cell3910 = rt_alloc(sizeof(R469)); *cell3910 = cp_R469(({ R469 ag3911; ag3911.y_ = NULL; ag3911.name_ = (*(P408)rt_nil_check(F->e_1672)).name_; ag3911.depth_ = G_NV(F->up->depth_354); ag3911.e_ = F->e_1672; ag3911.next_ = F->up->addrs_470; ag3911; })); (P468)cell3910; });
 F->up->addrs_470 = F->a_3900;
 }
 if ((G_NV((*(P351)rt_nil_check(F->y_1673)).kind_) == ((rt_int)1LL))) {
@@ -20415,9 +20430,19 @@ f_fail_514(F->up, G_NV((*(P408)rt_nil_check(F->e_1672)).line_), cat_rt_gstr(cat_
 } else if (((((G_NV((*(P351)rt_nil_check(F->y_1673)).kind_) == ((rt_int)4LL)) || (G_NV((*(P351)rt_nil_check(F->y_1673)).kind_) == ((rt_int)3LL))) || (G_NV((*(P351)rt_nil_check(F->y_1673)).kind_) == ((rt_int)8LL))) || (G_NV((*(P351)rt_nil_check(F->y_1673)).kind_) == ((rt_int)9LL)))) {
 (*(P468)rt_nil_check(F->a_3900)).y_ = F->y_1673;
 } else if ((G_NV((*(P351)rt_nil_check(F->y_1673)).kind_) == ((rt_int)10LL))) {
-if (((*(P351)rt_nil_check(F->y_1673)).params_ != NULL)) {
-f_fail_514(F->up, G_NV((*(P408)rt_nil_check(F->e_1672)).line_), cat_rt_gstr(rt_g_lit("the interrupts of this machine supply no control information: an interrupt entry ", 81), rt_g_lit("has no parameters (RM79 13.5.1)", 31)));
-} else if ((((*(P351)rt_nil_check(F->y_1673)).c_ != NULL) || ((*(P351)rt_nil_check(F->y_1673)).members_ == NULL))) {
+F->pm_3907 = (*(P351)rt_nil_check(F->y_1673)).params_;
+while ((F->pm_3907 != NULL)) {
+if ((G_NV((*(P2299)rt_nil_check(F->pm_3907)).mode_) != ((rt_int)1LL))) {
+f_fail_514(F->up, G_NV((*(P408)rt_nil_check(F->e_1672)).line_), cat_rt_gstr(cat_rt_gstr(cat_rt_gstr(rt_g_lit("the control information of an interrupt appears as an in parameter of the entry ", 80), rt_g_lit("(RM79 13.5.1): ", 15)), (*(P374)rt_nil_check((*(P2299)rt_nil_check(F->pm_3907)).name_))), rt_g_lit(" is not one", 11)));
+}
+f_layout_of_1659(F->up, (*(P2299)rt_nil_check(F->pm_3907)).t_, (*(P2299)rt_nil_check(F->pm_3907)).c_, 0, 0, &F->ln_3903);
+F->ls_3905 = f_mk_493(F->up, cat_rt_gstr(cat_rt_gstr(cat_rt_gstr((*(P374)rt_nil_check(F->ls_3905)), one_rt_gstr(38)), (*(P374)rt_nil_check(F->ln_3903))), rt_g_lit(", ", 2)));
+F->os_3906 = f_mk_493(F->up, cat_rt_gstr(cat_rt_gstr(cat_rt_gstr(cat_rt_gstr(cat_rt_gstr((*(P374)rt_nil_check(F->os_3906)), rt_g_lit("offsetof(struct ", 16)), (*(P374)rt_nil_check((*(P351)rt_nil_check(F->y_1673)).cname_))), rt_g_lit("p, ", 3)), (*(P374)rt_nil_check((*(P2299)rt_nil_check(F->pm_3907)).cfield_))), rt_g_lit("), ", 3)));
+F->np_3908 = rt_add(G_NV(F->np_3908), ((rt_int)1LL));
+F->pm_3907 = (*(P2299)rt_nil_check(F->pm_3907)).next_;
+}
+L_end_3912: ;
+if ((((*(P351)rt_nil_check(F->y_1673)).c_ != NULL) || ((*(P351)rt_nil_check(F->y_1673)).members_ == NULL))) {
 f_fail_514(F->up, G_NV((*(P408)rt_nil_check(F->e_1672)).line_), rt_g_lit("an interrupt is linked to a single entry of a single task (RM79 13.5.1)", 71));
 } else if (((*(P351)rt_nil_check((*(P351)rt_nil_check(F->y_1673)).members_)).c_ != NULL)) {
 f_fail_514(F->up, G_NV((*(P408)rt_nil_check(F->e_1672)).line_), rt_g_lit("an interrupt is linked to a single entry of a single task (RM79 13.5.1)", 71));
@@ -20425,7 +20450,14 @@ f_fail_514(F->up, G_NV((*(P408)rt_nil_check(F->e_1672)).line_), rt_g_lit("an int
 (*(P468)rt_nil_check(F->a_3900)).y_ = F->y_1673;
 f_entry_path_1462(F->up, F->y_1673, rt_g_lit("", 0), &F->v_3901);
 f_act_path_1454(F->up, (*(P351)rt_nil_check(F->y_1673)).members_, &F->act_3902);
+f_new_name_496(F->up, rt_g_lit("irq", 3), &F->iq_3904);
+if ((G_NV(F->np_3908) > ((rt_int)0LL))) {
+f_put_to_518(F->up, F->up->out_lays_458, cat_rt_gstr(cat_rt_gstr(cat_rt_gstr(cat_rt_gstr(rt_g_lit("static const g_lay *const ", 26), (*(P374)rt_nil_check(F->iq_3904))), rt_g_lit("_l[] = {", 8)), (*(P374)rt_nil_check(F->ls_3905))), rt_g_lit("};", 2)));
+f_put_to_518(F->up, F->up->out_lays_458, cat_rt_gstr(cat_rt_gstr(cat_rt_gstr(cat_rt_gstr(rt_g_lit("static const size_t ", 20), (*(P374)rt_nil_check(F->iq_3904))), rt_g_lit("_o[] = {", 8)), (*(P374)rt_nil_check(F->os_3906))), rt_g_lit("};", 2)));
+f_emit_520(F->up, cat_rt_gstr(cat_rt_gstr(cat_rt_gstr(cat_rt_gstr(cat_rt_gstr(cat_rt_gstr(cat_rt_gstr(cat_rt_gstr(cat_rt_gstr(cat_rt_gstr(cat_rt_gstr(cat_rt_gstr(cat_rt_gstr(cat_rt_gstr(rt_g_lit("rt_g_bind_interrupt_p(", 22), (*(P374)rt_nil_check((*(P408)rt_nil_check(F->e_1672)).tag_))), rt_g_lit(", &", 3)), (*(P374)rt_nil_check(F->v_3901))), rt_g_lit(", &", 3)), (*(P374)rt_nil_check(F->act_3902))), rt_g_lit(", sizeof(struct ", 16)), (*(P374)rt_nil_check((*(P351)rt_nil_check(F->y_1673)).cname_))), rt_g_lit("p), ", 4)), rt_g_s2g(rt_str_of_int(G_NV(F->np_3908)))), rt_g_lit(", ", 2)), (*(P374)rt_nil_check(F->iq_3904))), rt_g_lit("_l, ", 4)), (*(P374)rt_nil_check(F->iq_3904))), rt_g_lit("_o);", 4)));
+} else {
 f_emit_520(F->up, cat_rt_gstr(cat_rt_gstr(cat_rt_gstr(cat_rt_gstr(cat_rt_gstr(cat_rt_gstr(rt_g_lit("rt_g_bind_interrupt(", 20), (*(P374)rt_nil_check((*(P408)rt_nil_check(F->e_1672)).tag_))), rt_g_lit(", &", 3)), (*(P374)rt_nil_check(F->v_3901))), rt_g_lit(", &", 3)), (*(P374)rt_nil_check(F->act_3902))), rt_g_lit(");", 2)));
+}
 } else {
 f_fail_514(F->up, G_NV((*(P408)rt_nil_check(F->e_1672)).line_), rt_g_lit("an address is given to a variable, a subprogram, a module or an entry (RM79 13.5)", 81));
 }
@@ -20438,16 +20470,16 @@ static rt_int f_task_length_1676(struct f_greenc_234fr *up_, P351 y_1675) {
   struct f_task_length_1676fr *F = rt_alloc(sizeof *F);
 F->up = up_;
 F->y_1675 = y_1675;
-F->a_3906 = NULL;
-F->a_3906 = F->up->addrs_470;
-while ((F->a_3906 != NULL)) {
-if ((((*(P468)rt_nil_check(F->a_3906)).y_ == F->y_1675) && eq_rt_gstr((*(P374)rt_nil_check((*(P468)rt_nil_check(F->a_3906)).name_)), rt_g_lit("$LENGTH", 7)))) {
-F->result_ = G_NV((*(P468)rt_nil_check(F->a_3906)).depth_);
+F->a_3913 = NULL;
+F->a_3913 = F->up->addrs_470;
+while ((F->a_3913 != NULL)) {
+if ((((*(P468)rt_nil_check(F->a_3913)).y_ == F->y_1675) && eq_rt_gstr((*(P374)rt_nil_check((*(P468)rt_nil_check(F->a_3913)).name_)), rt_g_lit("$LENGTH", 7)))) {
+F->result_ = G_NV((*(P468)rt_nil_check(F->a_3913)).depth_);
 goto ret_;
 }
-F->a_3906 = (*(P468)rt_nil_check(F->a_3906)).next_;
+F->a_3913 = (*(P468)rt_nil_check(F->a_3913)).next_;
 }
-L_end_3907: ;
+L_end_3914: ;
 F->result_ = ((rt_int)0LL);
 goto ret_;
   rt_raise(RT_X_INIT);
@@ -20463,20 +20495,20 @@ F->name_1677 = cp_rt_gstr(name_1677);
 F->t_1678 = t_1678;
 F->lo_1679 = cp_rt_gstr(lo_1679);
 F->hi_1680 = cp_rt_gstr(hi_1680);
-F->y_3908 = NULL;
-F->y_3908 = f_new_sym_741(F->up, ((rt_int)5LL), f_mk_493(F->up, F->name_1677));
-(*(P351)rt_nil_check(F->y_3908)).t_ = F->t_1678;
-if ((({ rt_gstr at3909 = F->lo_1679; at3909.hi >= at3909.lo ? at3909.hi - at3909.lo + 1 : (rt_int)0; }) > ((rt_int)0LL))) {
-(*(P351)rt_nil_check(F->y_3908)).c_ = f_new_cons_744(F->up);
-(*(P412)rt_nil_check((*(P351)rt_nil_check(F->y_3908)).c_)).lo_ = f_mk_493(F->up, F->lo_1679);
-(*(P412)rt_nil_check((*(P351)rt_nil_check(F->y_3908)).c_)).hi_ = f_mk_493(F->up, F->hi_1680);
-if (((({ rt_gstr at3910 = F->hi_1680; at3910.hi >= at3910.lo ? at3910.hi - at3910.lo + 1 : (rt_int)0; }) < ((rt_int)12LL)) && f_is_digit_500(F->up, G_NV(({ rt_gstr ix3914 = F->hi_1680; ix3914.p[rt_index(({ rt_gstr at3913 = F->hi_1680; at3913.lo; }), ix3914.lo, ix3914.hi) - ix3914.lo]; }))))) {
-(*(P412)rt_nil_check((*(P351)rt_nil_check(F->y_3908)).c_)).mlo_ = rt_int_of_str(rt_g_g2s(F->lo_1679));
-(*(P412)rt_nil_check((*(P351)rt_nil_check(F->y_3908)).c_)).mhi_ = rt_int_of_str(rt_g_g2s(F->hi_1680));
-(*(P412)rt_nil_check((*(P351)rt_nil_check(F->y_3908)).c_)).hasm_ = 1;
+F->y_3915 = NULL;
+F->y_3915 = f_new_sym_741(F->up, ((rt_int)5LL), f_mk_493(F->up, F->name_1677));
+(*(P351)rt_nil_check(F->y_3915)).t_ = F->t_1678;
+if ((({ rt_gstr at3916 = F->lo_1679; at3916.hi >= at3916.lo ? at3916.hi - at3916.lo + 1 : (rt_int)0; }) > ((rt_int)0LL))) {
+(*(P351)rt_nil_check(F->y_3915)).c_ = f_new_cons_744(F->up);
+(*(P412)rt_nil_check((*(P351)rt_nil_check(F->y_3915)).c_)).lo_ = f_mk_493(F->up, F->lo_1679);
+(*(P412)rt_nil_check((*(P351)rt_nil_check(F->y_3915)).c_)).hi_ = f_mk_493(F->up, F->hi_1680);
+if (((({ rt_gstr at3917 = F->hi_1680; at3917.hi >= at3917.lo ? at3917.hi - at3917.lo + 1 : (rt_int)0; }) < ((rt_int)12LL)) && f_is_digit_500(F->up, G_NV(({ rt_gstr ix3921 = F->hi_1680; ix3921.p[rt_index(({ rt_gstr at3920 = F->hi_1680; at3920.lo; }), ix3921.lo, ix3921.hi) - ix3921.lo]; }))))) {
+(*(P412)rt_nil_check((*(P351)rt_nil_check(F->y_3915)).c_)).mlo_ = rt_int_of_str(rt_g_g2s(F->lo_1679));
+(*(P412)rt_nil_check((*(P351)rt_nil_check(F->y_3915)).c_)).mhi_ = rt_int_of_str(rt_g_g2s(F->hi_1680));
+(*(P412)rt_nil_check((*(P351)rt_nil_check(F->y_3915)).c_)).hasm_ = 1;
 }
 }
-f_define_736(F->up, F->y_3908, ((rt_int)0LL));
+f_define_736(F->up, F->y_3915, ((rt_int)0LL));
 ret_:
 
   return;
@@ -20488,12 +20520,12 @@ F->up = up_;
 F->name_1682 = cp_rt_gstr(name_1682);
 F->t_1683 = t_1683;
 F->code_text_1684 = cp_rt_gstr(code_text_1684);
-F->y_3915 = NULL;
-F->y_3915 = f_new_sym_741(F->up, ((rt_int)2LL), f_mk_493(F->up, F->name_1682));
-(*(P351)rt_nil_check(F->y_3915)).t_ = F->t_1683;
-(*(P351)rt_nil_check(F->y_3915)).ro_ = 1;
-(*(P351)rt_nil_check(F->y_3915)).access_path_ = f_mk_493(F->up, F->code_text_1684);
-f_define_736(F->up, F->y_3915, ((rt_int)0LL));
+F->y_3922 = NULL;
+F->y_3922 = f_new_sym_741(F->up, ((rt_int)2LL), f_mk_493(F->up, F->name_1682));
+(*(P351)rt_nil_check(F->y_3922)).t_ = F->t_1683;
+(*(P351)rt_nil_check(F->y_3922)).ro_ = 1;
+(*(P351)rt_nil_check(F->y_3922)).access_path_ = f_mk_493(F->up, F->code_text_1684);
+f_define_736(F->up, F->y_3922, ((rt_int)0LL));
 ret_:
 
   return;
@@ -20503,10 +20535,10 @@ static void f_predef_exc_1687(struct f_greenc_234fr *up_, rt_gstr name_1686) {
   struct f_predef_exc_1687fr *F = rt_alloc(sizeof *F);
 F->up = up_;
 F->name_1686 = cp_rt_gstr(name_1686);
-F->y_3916 = NULL;
-F->y_3916 = f_new_sym_741(F->up, ((rt_int)6LL), f_mk_493(F->up, F->name_1686));
-(*(P351)rt_nil_check(F->y_3916)).cname_ = f_mk_493(F->up, cat_rt_gstr(cat_rt_gstr(cat_rt_gstr(cat_rt_gstr(rt_g_lit("rt_exc(", 7), f_q_511(F->up)), F->name_1686), f_q_511(F->up)), one_rt_gstr(41)));
-f_define_736(F->up, F->y_3916, ((rt_int)0LL));
+F->y_3923 = NULL;
+F->y_3923 = f_new_sym_741(F->up, ((rt_int)6LL), f_mk_493(F->up, F->name_1686));
+(*(P351)rt_nil_check(F->y_3923)).cname_ = f_mk_493(F->up, cat_rt_gstr(cat_rt_gstr(cat_rt_gstr(cat_rt_gstr(rt_g_lit("rt_exc(", 7), f_q_511(F->up)), F->name_1686), f_q_511(F->up)), one_rt_gstr(41)));
+f_define_736(F->up, F->y_3923, ((rt_int)0LL));
 ret_:
 
   return;
@@ -20518,13 +20550,13 @@ F->up = up_;
 F->name_1688 = cp_rt_gstr(name_1688);
 F->t_1689 = t_1689;
 F->v_1690 = v_1690;
-F->y_3917 = NULL;
-F->y_3917 = f_new_sym_741(F->up, ((rt_int)7LL), f_mk_493(F->up, F->name_1688));
-(*(P351)rt_nil_check(F->y_3917)).t_ = F->t_1689;
-(*(P351)rt_nil_check(F->y_3917)).result_ = F->t_1689;
-(*(P351)rt_nil_check(F->y_3917)).mvalue_ = F->v_1690;
-(*(P351)rt_nil_check(F->y_3917)).hasmv_ = 1;
-f_define_736(F->up, F->y_3917, ((rt_int)0LL));
+F->y_3924 = NULL;
+F->y_3924 = f_new_sym_741(F->up, ((rt_int)7LL), f_mk_493(F->up, F->name_1688));
+(*(P351)rt_nil_check(F->y_3924)).t_ = F->t_1689;
+(*(P351)rt_nil_check(F->y_3924)).result_ = F->t_1689;
+(*(P351)rt_nil_check(F->y_3924)).mvalue_ = F->v_1690;
+(*(P351)rt_nil_check(F->y_3924)).hasmv_ = 1;
+f_define_736(F->up, F->y_3924, ((rt_int)0LL));
 ret_:
 
   return;
@@ -20533,12 +20565,12 @@ ret_:
 static void f_predefine_1692(struct f_greenc_234fr *up_) {
   struct f_predefine_1692fr *F = rt_alloc(sizeof *F);
 F->up = up_;
-F->y_3918 = NULL;
-F->control_3919 = cp_rt_gstr(cat_rt_gstr(rt_g_lit("NUL SOH STX ETX EOT ENQ ACK BEL BS HT LF VT FF CR SO SI DLE ", 60), rt_g_lit("DC1 DC2 DC3 DC4 NAK SYN ETB CAN EM SUB ESC FS GS RS US ", 55)));
-F->start_3920 = INT64_MIN;
-F->start_3920 = ((rt_int)1LL);
-F->code_no_3921 = INT64_MIN;
-F->code_no_3921 = ((rt_int)0LL);
+F->y_3925 = NULL;
+F->control_3926 = cp_rt_gstr(cat_rt_gstr(rt_g_lit("NUL SOH STX ETX EOT ENQ ACK BEL BS HT LF VT FF CR SO SI DLE ", 60), rt_g_lit("DC1 DC2 DC3 DC4 NAK SYN ETB CAN EM SUB ESC FS GS RS US ", 55)));
+F->start_3927 = INT64_MIN;
+F->start_3927 = ((rt_int)1LL);
+F->code_no_3928 = INT64_MIN;
+F->code_no_3928 = ((rt_int)0LL);
 f_predef_type_1681(F->up, rt_g_lit("INTEGER", 7), F->up->ty_int_390, rt_g_lit("", 0), rt_g_lit("", 0));
 f_predef_type_1681(F->up, rt_g_lit("SHORT_INTEGER", 13), F->up->ty_short_401, rt_g_lit("", 0), rt_g_lit("", 0));
 f_predef_type_1681(F->up, rt_g_lit("LONG_INTEGER", 12), F->up->ty_long_402, rt_g_lit("", 0), rt_g_lit("", 0));
@@ -20553,17 +20585,17 @@ f_predef_type_1681(F->up, rt_g_lit("LONG_FLOAT", 10), F->up->ty_lfloat_404, rt_g
 f_predef_type_1681(F->up, rt_g_lit("TIME", 4), F->up->ty_time_405, rt_g_lit("", 0), rt_g_lit("", 0));
 f_predef_lit_1691(F->up, rt_g_lit("FALSE", 5), F->up->ty_bool_391, ((rt_int)0LL));
 f_predef_lit_1691(F->up, rt_g_lit("TRUE", 4), F->up->ty_bool_391, ((rt_int)1LL));
-{ rt_int lo3925 = ((rt_int)1LL), hi3926 = ({ rt_gstr at3923 = F->control_3919; at3923.hi >= at3923.lo ? at3923.hi - at3923.lo + 1 : (rt_int)0; });
-for (rt_int it3927 = lo3925; it3927 <= hi3926; it3927++) {
-F->i_3924 = it3927;
-if ((G_NV(({ rt_gstr ix3928 = F->control_3919; ix3928.p[rt_index(F->i_3924, ix3928.lo, ix3928.hi) - ix3928.lo]; })) == 32)) {
-f_predef_const_1685(F->up, ({ rt_gstr sl3930 = F->control_3919; rt_int l_ = G_NV(F->start_3920), h_ = rt_sub(F->i_3924, ((rt_int)1LL)); if (l_ <= h_) { rt_index(l_, sl3930.lo, sl3930.hi); rt_index(h_, sl3930.lo, sl3930.hi); } sl3930.p += l_ - sl3930.lo; sl3930.lo = l_; sl3930.hi = h_; sl3930; }), F->up->ty_char_393, rt_g_s2g(rt_str_of_int(G_NV(F->code_no_3921))));
-F->code_no_3921 = rt_add(G_NV(F->code_no_3921), ((rt_int)1LL));
-F->start_3920 = rt_add(F->i_3924, ((rt_int)1LL));
+{ rt_int lo3932 = ((rt_int)1LL), hi3933 = ({ rt_gstr at3930 = F->control_3926; at3930.hi >= at3930.lo ? at3930.hi - at3930.lo + 1 : (rt_int)0; });
+for (rt_int it3934 = lo3932; it3934 <= hi3933; it3934++) {
+F->i_3931 = it3934;
+if ((G_NV(({ rt_gstr ix3935 = F->control_3926; ix3935.p[rt_index(F->i_3931, ix3935.lo, ix3935.hi) - ix3935.lo]; })) == 32)) {
+f_predef_const_1685(F->up, ({ rt_gstr sl3937 = F->control_3926; rt_int l_ = G_NV(F->start_3927), h_ = rt_sub(F->i_3931, ((rt_int)1LL)); if (l_ <= h_) { rt_index(l_, sl3937.lo, sl3937.hi); rt_index(h_, sl3937.lo, sl3937.hi); } sl3937.p += l_ - sl3937.lo; sl3937.lo = l_; sl3937.hi = h_; sl3937; }), F->up->ty_char_393, rt_g_s2g(rt_str_of_int(G_NV(F->code_no_3928))));
+F->code_no_3928 = rt_add(G_NV(F->code_no_3928), ((rt_int)1LL));
+F->start_3927 = rt_add(F->i_3931, ((rt_int)1LL));
 }
 }
 }
-L_end_3922: ;
+L_end_3929: ;
 f_predef_const_1685(F->up, rt_g_lit("DEL", 3), F->up->ty_char_393, rt_g_lit("127", 3));
 f_predef_const_1685(F->up, rt_g_lit("EXCLAM", 6), F->up->ty_char_393, rt_g_lit("33", 2));
 f_predef_const_1685(F->up, rt_g_lit("DOLLAR", 6), F->up->ty_char_393, rt_g_lit("36", 2));
@@ -20577,13 +20609,13 @@ f_predef_const_1685(F->up, rt_g_lit("GRAVE", 5), F->up->ty_char_393, rt_g_lit("9
 f_predef_const_1685(F->up, rt_g_lit("L_BRACE", 7), F->up->ty_char_393, rt_g_lit("123", 3));
 f_predef_const_1685(F->up, rt_g_lit("R_BRACE", 7), F->up->ty_char_393, rt_g_lit("125", 3));
 f_predef_const_1685(F->up, rt_g_lit("TILDE", 5), F->up->ty_char_393, rt_g_lit("126", 3));
-{ rt_int lo3933 = ((rt_int)0LL), hi3934 = ((rt_int)25LL);
-for (rt_int it3935 = lo3933; it3935 <= hi3934; it3935++) {
-F->i_3932 = it3935;
-f_predef_const_1685(F->up, cat_rt_gstr(rt_g_lit("LC_", 3), one_rt_gstr(rt_range((rt_add(((rt_int)66LL), F->i_3932) - 1), 0, 127))), F->up->ty_char_393, rt_g_s2g(rt_str_of_int(rt_add(((rt_int)97LL), F->i_3932))));
+{ rt_int lo3940 = ((rt_int)0LL), hi3941 = ((rt_int)25LL);
+for (rt_int it3942 = lo3940; it3942 <= hi3941; it3942++) {
+F->i_3939 = it3942;
+f_predef_const_1685(F->up, cat_rt_gstr(rt_g_lit("LC_", 3), one_rt_gstr(rt_range((rt_add(((rt_int)66LL), F->i_3939) - 1), 0, 127))), F->up->ty_char_393, rt_g_s2g(rt_str_of_int(rt_add(((rt_int)97LL), F->i_3939))));
 }
 }
-L_end_3931: ;
+L_end_3938: ;
 f_predef_const_1685(F->up, rt_g_lit("NEWLINE", 7), F->up->ty_string_394, cat_rt_gstr(cat_rt_gstr(cat_rt_gstr(cat_rt_gstr(rt_g_lit("rt_g_lit(", 9), f_q_511(F->up)), rt_g_lit("\\n", 2)), f_q_511(F->up)), rt_g_lit(", 1)", 4)));
 f_predef_const_1685(F->up, rt_g_lit("SECONDS", 7), F->up->ty_time_405, rt_g_lit("((double)RT_SECONDS)", 20));
 f_predef_exc_1687(F->up, rt_g_lit("ACCESS_ERROR", 12));
@@ -20634,14 +20666,14 @@ static void f_unit_key_1701(struct f_greenc_234fr *up_, P408 u_1699, P374 *r_170
 F->up = up_;
 F->u_1699 = u_1699;
 F->r_1700 = r_1700;
-F->k_3936 = INT64_MIN;
-F->k_3936 = ((rt_int)2LL);
-if ((((*(P408)rt_nil_check(F->u_1699)).formal_ != NULL) && ((G_NV(({ rt_gstr ix3937 = (*(P374)rt_nil_check((*(P408)rt_nil_check(F->u_1699)).formal_)); ix3937.p[rt_index(((rt_int)1LL), ix3937.lo, ix3937.hi) - ix3937.lo]; })) == 33) || (G_NV(({ rt_gstr ix3938 = (*(P374)rt_nil_check((*(P408)rt_nil_check(F->u_1699)).formal_)); ix3938.p[rt_index(((rt_int)1LL), ix3938.lo, ix3938.hi) - ix3938.lo]; })) == 35)))) {
-while (((G_NV(F->k_3936) < ({ rt_gstr at3940 = (*(P374)rt_nil_check((*(P408)rt_nil_check(F->u_1699)).formal_)); at3940.hi >= at3940.lo ? at3940.hi - at3940.lo + 1 : (rt_int)0; })) && (G_NV(({ rt_gstr ix3941 = (*(P374)rt_nil_check((*(P408)rt_nil_check(F->u_1699)).formal_)); ix3941.p[rt_index(rt_add(G_NV(F->k_3936), ((rt_int)1LL)), ix3941.lo, ix3941.hi) - ix3941.lo]; })) != 44))) {
-F->k_3936 = rt_add(G_NV(F->k_3936), ((rt_int)1LL));
+F->k_3943 = INT64_MIN;
+F->k_3943 = ((rt_int)2LL);
+if ((((*(P408)rt_nil_check(F->u_1699)).formal_ != NULL) && ((G_NV(({ rt_gstr ix3944 = (*(P374)rt_nil_check((*(P408)rt_nil_check(F->u_1699)).formal_)); ix3944.p[rt_index(((rt_int)1LL), ix3944.lo, ix3944.hi) - ix3944.lo]; })) == 33) || (G_NV(({ rt_gstr ix3945 = (*(P374)rt_nil_check((*(P408)rt_nil_check(F->u_1699)).formal_)); ix3945.p[rt_index(((rt_int)1LL), ix3945.lo, ix3945.hi) - ix3945.lo]; })) == 35)))) {
+while (((G_NV(F->k_3943) < ({ rt_gstr at3947 = (*(P374)rt_nil_check((*(P408)rt_nil_check(F->u_1699)).formal_)); at3947.hi >= at3947.lo ? at3947.hi - at3947.lo + 1 : (rt_int)0; })) && (G_NV(({ rt_gstr ix3948 = (*(P374)rt_nil_check((*(P408)rt_nil_check(F->u_1699)).formal_)); ix3948.p[rt_index(rt_add(G_NV(F->k_3943), ((rt_int)1LL)), ix3948.lo, ix3948.hi) - ix3948.lo]; })) != 44))) {
+F->k_3943 = rt_add(G_NV(F->k_3943), ((rt_int)1LL));
 }
-L_end_3939: ;
-(*F->r_1700) = f_mk_493(F->up, cat_rt_gstr(cat_rt_gstr(cat_rt_gstr(({ rt_gstr sl3943 = (*(P374)rt_nil_check((*(P408)rt_nil_check(F->u_1699)).formal_)); rt_int l_ = ((rt_int)3LL), h_ = G_NV(F->k_3936); if (l_ <= h_) { rt_index(l_, sl3943.lo, sl3943.hi); rt_index(h_, sl3943.lo, sl3943.hi); } sl3943.p += l_ - sl3943.lo; sl3943.lo = l_; sl3943.hi = h_; sl3943; }), one_rt_gstr(46)), (*(P374)rt_nil_check((*(P408)rt_nil_check(F->u_1699)).name_))), rt_g_lit(".sub", 4)));
+L_end_3946: ;
+(*F->r_1700) = f_mk_493(F->up, cat_rt_gstr(cat_rt_gstr(cat_rt_gstr(({ rt_gstr sl3950 = (*(P374)rt_nil_check((*(P408)rt_nil_check(F->u_1699)).formal_)); rt_int l_ = ((rt_int)3LL), h_ = G_NV(F->k_3943); if (l_ <= h_) { rt_index(l_, sl3950.lo, sl3950.hi); rt_index(h_, sl3950.lo, sl3950.hi); } sl3950.p += l_ - sl3950.lo; sl3950.lo = l_; sl3950.hi = h_; sl3950; }), one_rt_gstr(46)), (*(P374)rt_nil_check((*(P408)rt_nil_check(F->u_1699)).name_))), rt_g_lit(".sub", 4)));
 } else if ((((((G_NV((*(P408)rt_nil_check(F->u_1699)).kind_) == ((rt_int)48LL)) || (G_NV((*(P408)rt_nil_check(F->u_1699)).kind_) == ((rt_int)50LL))) || (G_NV((*(P408)rt_nil_check(F->u_1699)).kind_) == ((rt_int)54LL))) || (G_NV((*(P408)rt_nil_check(F->u_1699)).kind_) == ((rt_int)53LL))) || (((G_NV((*(P408)rt_nil_check(F->u_1699)).kind_) == ((rt_int)44LL)) || (G_NV((*(P408)rt_nil_check(F->u_1699)).kind_) == ((rt_int)45LL))) && (G_NV((*(P408)rt_nil_check(F->u_1699)).ival_) == ((rt_int)1LL))))) {
 (*F->r_1700) = f_mk_493(F->up, cat_rt_gstr((*(P374)rt_nil_check((*(P408)rt_nil_check(F->u_1699)).name_)), rt_g_lit(".spec", 5)));
 } else {
@@ -20665,21 +20697,21 @@ ret_:
 static void f_store_units_1704(struct f_greenc_234fr *up_) {
   struct f_store_units_1704fr *F = rt_alloc(sizeof *F);
 F->up = up_;
-F->s_3944 = NULL;
-F->s_3944 = F->up->spans_440;
-F->k_3945 = NULL;
-F->yes_3946 = INT_MIN;
-f_lib_enabled_1703(F->up, &F->yes_3946);
- (void)rt_range(F->yes_3946, 0, 1);
-if ((!G_NV(F->yes_3946))) {
+F->s_3951 = NULL;
+F->s_3951 = F->up->spans_440;
+F->k_3952 = NULL;
+F->yes_3953 = INT_MIN;
+f_lib_enabled_1703(F->up, &F->yes_3953);
+ (void)rt_range(F->yes_3953, 0, 1);
+if ((!G_NV(F->yes_3953))) {
 goto ret_;
 }
-while ((F->s_3944 != NULL)) {
-f_unit_key_1701(F->up, (*(P438)rt_nil_check(F->s_3944)).u_, &F->k_3945);
-f_store_span_1707(F->up, F->s_3944, (*(P374)rt_nil_check(F->k_3945)));
-F->s_3944 = (*(P438)rt_nil_check(F->s_3944)).next_;
+while ((F->s_3951 != NULL)) {
+f_unit_key_1701(F->up, (*(P438)rt_nil_check(F->s_3951)).u_, &F->k_3952);
+f_store_span_1707(F->up, F->s_3951, (*(P374)rt_nil_check(F->k_3952)));
+F->s_3951 = (*(P438)rt_nil_check(F->s_3951)).next_;
 }
-L_end_3947: ;
+L_end_3954: ;
 ret_:
 
   return;
@@ -20690,42 +20722,42 @@ static void f_store_span_1707(struct f_greenc_234fr *up_, P438 s_1705, rt_gstr k
 F->up = up_;
 F->s_1705 = s_1705;
 F->key_1706 = cp_rt_gstr(key_1706);
-F->n_3948 = INT64_MIN;
-F->n_3948 = ((rt_int)0LL);
-F->head_3949 = NULL;
-F->head_3949 = f_mk_493(F->up, rt_g_lit("", 0));
-if ((({ rt_gstr at3950 = (*(P374)rt_nil_check((*(P438)rt_nil_check(F->s_1705)).env_)); at3950.hi >= at3950.lo ? at3950.hi - at3950.lo + 1 : (rt_int)0; }) > ((rt_int)0LL))) {
-F->head_3949 = f_mk_493(F->up, cat_rt_gstr(cat_rt_gstr(cat_rt_gstr(rt_g_lit("pragma ENVIRONMENT(", 19), ({ rt_gstr sl3954 = (*(P374)rt_nil_check((*(P438)rt_nil_check(F->s_1705)).env_)); rt_int l_ = ((rt_int)1LL), h_ = rt_sub(({ rt_gstr at3953 = (*(P374)rt_nil_check((*(P438)rt_nil_check(F->s_1705)).env_)); at3953.hi >= at3953.lo ? at3953.hi - at3953.lo + 1 : (rt_int)0; }), ((rt_int)1LL)); if (l_ <= h_) { rt_index(l_, sl3954.lo, sl3954.hi); rt_index(h_, sl3954.lo, sl3954.hi); } sl3954.p += l_ - sl3954.lo; sl3954.lo = l_; sl3954.hi = h_; sl3954; })), rt_g_lit(");", 2)), one_rt_gstr(10)));
+F->n_3955 = INT64_MIN;
+F->n_3955 = ((rt_int)0LL);
+F->head_3956 = NULL;
+F->head_3956 = f_mk_493(F->up, rt_g_lit("", 0));
+if ((({ rt_gstr at3957 = (*(P374)rt_nil_check((*(P438)rt_nil_check(F->s_1705)).env_)); at3957.hi >= at3957.lo ? at3957.hi - at3957.lo + 1 : (rt_int)0; }) > ((rt_int)0LL))) {
+F->head_3956 = f_mk_493(F->up, cat_rt_gstr(cat_rt_gstr(cat_rt_gstr(rt_g_lit("pragma ENVIRONMENT(", 19), ({ rt_gstr sl3961 = (*(P374)rt_nil_check((*(P438)rt_nil_check(F->s_1705)).env_)); rt_int l_ = ((rt_int)1LL), h_ = rt_sub(({ rt_gstr at3960 = (*(P374)rt_nil_check((*(P438)rt_nil_check(F->s_1705)).env_)); at3960.hi >= at3960.lo ? at3960.hi - at3960.lo + 1 : (rt_int)0; }), ((rt_int)1LL)); if (l_ <= h_) { rt_index(l_, sl3961.lo, sl3961.hi); rt_index(h_, sl3961.lo, sl3961.hi); } sl3961.p += l_ - sl3961.lo; sl3961.lo = l_; sl3961.hi = h_; sl3961; })), rt_g_lit(");", 2)), one_rt_gstr(10)));
 }
-F->n_3948 = ({ rt_gstr at3955 = (*(P374)rt_nil_check(F->head_3949)); at3955.hi >= at3955.lo ? at3955.hi - at3955.lo + 1 : (rt_int)0; });
-{ rt_int lo3958 = G_NV((*(P438)rt_nil_check(F->s_1705)).first_), hi3959 = G_NV((*(P438)rt_nil_check(F->s_1705)).last_);
-for (rt_int it3960 = lo3958; it3960 <= hi3959; it3960++) {
-F->l_3957 = it3960;
-F->n_3948 = rt_add(rt_add(G_NV(F->n_3948), ({ rt_gstr at3962 = (*(P374)rt_nil_check(({ A436 ix3961 = F->up->src_lines_437; ix3961.p[rt_index(F->l_3957, ix3961.lo, ix3961.hi) - ix3961.lo]; }))); at3962.hi >= at3962.lo ? at3962.hi - at3962.lo + 1 : (rt_int)0; })), ((rt_int)1LL));
+F->n_3955 = ({ rt_gstr at3962 = (*(P374)rt_nil_check(F->head_3956)); at3962.hi >= at3962.lo ? at3962.hi - at3962.lo + 1 : (rt_int)0; });
+{ rt_int lo3965 = G_NV((*(P438)rt_nil_check(F->s_1705)).first_), hi3966 = G_NV((*(P438)rt_nil_check(F->s_1705)).last_);
+for (rt_int it3967 = lo3965; it3967 <= hi3966; it3967++) {
+F->l_3964 = it3967;
+F->n_3955 = rt_add(rt_add(G_NV(F->n_3955), ({ rt_gstr at3969 = (*(P374)rt_nil_check(({ A436 ix3968 = F->up->src_lines_437; ix3968.p[rt_index(F->l_3964, ix3968.lo, ix3968.hi) - ix3968.lo]; }))); at3969.hi >= at3969.lo ? at3969.hi - at3969.lo + 1 : (rt_int)0; })), ((rt_int)1LL));
 }
-}
-L_end_3956: ;
-{
-F->t_3964.lo = ((rt_int)1LL); F->t_3964.hi = G_NV(F->n_3948);
-F->t_3964.lo2 = 1; F->t_3964.hi2 = 1;
-F->t_3964.p = rt_alloc(sizeof(unsigned char) * (size_t)G_CNT(F->t_3964));
-memset(F->t_3964.p, 0xFF, (size_t)G_CNT(F->t_3964));
-F->k_3966 = INT64_MIN;
-F->k_3966 = ({ rt_gstr at3967 = (*(P374)rt_nil_check(F->head_3949)); at3967.hi >= at3967.lo ? at3967.hi - at3967.lo + 1 : (rt_int)0; });
-{ rt_gstr sl_ = ({ rt_gstr sl3968 = F->t_3964; rt_int l_ = ((rt_int)1LL), h_ = G_NV(F->k_3966); if (l_ <= h_) { rt_index(l_, sl3968.lo, sl3968.hi); rt_index(h_, sl3968.lo, sl3968.hi); } sl3968.p += l_ - sl3968.lo; sl3968.lo = l_; sl3968.hi = h_; sl3968; }); as_rt_gstr(&sl_, (*(P374)rt_nil_check(F->head_3949))); }
-{ rt_int lo3971 = G_NV((*(P438)rt_nil_check(F->s_1705)).first_), hi3972 = G_NV((*(P438)rt_nil_check(F->s_1705)).last_);
-for (rt_int it3973 = lo3971; it3973 <= hi3972; it3973++) {
-F->l_3970 = it3973;
-{ rt_gstr sl_ = ({ rt_gstr sl3976 = F->t_3964; rt_int l_ = rt_add(G_NV(F->k_3966), ((rt_int)1LL)), h_ = rt_add(G_NV(F->k_3966), ({ rt_gstr at3975 = (*(P374)rt_nil_check(({ A436 ix3974 = F->up->src_lines_437; ix3974.p[rt_index(F->l_3970, ix3974.lo, ix3974.hi) - ix3974.lo]; }))); at3975.hi >= at3975.lo ? at3975.hi - at3975.lo + 1 : (rt_int)0; })); if (l_ <= h_) { rt_index(l_, sl3976.lo, sl3976.hi); rt_index(h_, sl3976.lo, sl3976.hi); } sl3976.p += l_ - sl3976.lo; sl3976.lo = l_; sl3976.hi = h_; sl3976; }); as_rt_gstr(&sl_, (*(P374)rt_nil_check(({ A436 ix3977 = F->up->src_lines_437; ix3977.p[rt_index(F->l_3970, ix3977.lo, ix3977.hi) - ix3977.lo]; })))); }
-F->k_3966 = rt_add(rt_add(G_NV(F->k_3966), ({ rt_gstr at3979 = (*(P374)rt_nil_check(({ A436 ix3978 = F->up->src_lines_437; ix3978.p[rt_index(F->l_3970, ix3978.lo, ix3978.hi) - ix3978.lo]; }))); at3979.hi >= at3979.lo ? at3979.hi - at3979.lo + 1 : (rt_int)0; })), ((rt_int)1LL));
-(*({ rt_gstr *ix3980 = &(F->t_3964); &ix3980->p[rt_index(G_NV(F->k_3966), ix3980->lo, ix3980->hi) - ix3980->lo]; })) = 10;
-}
-}
-L_end_3969: ;
-f_lib_store_1698(F->up, F->key_1706, F->t_3964);
-
 }
 L_end_3963: ;
+{
+F->t_3971.lo = ((rt_int)1LL); F->t_3971.hi = G_NV(F->n_3955);
+F->t_3971.lo2 = 1; F->t_3971.hi2 = 1;
+F->t_3971.p = rt_alloc(sizeof(unsigned char) * (size_t)G_CNT(F->t_3971));
+memset(F->t_3971.p, 0xFF, (size_t)G_CNT(F->t_3971));
+F->k_3973 = INT64_MIN;
+F->k_3973 = ({ rt_gstr at3974 = (*(P374)rt_nil_check(F->head_3956)); at3974.hi >= at3974.lo ? at3974.hi - at3974.lo + 1 : (rt_int)0; });
+{ rt_gstr sl_ = ({ rt_gstr sl3975 = F->t_3971; rt_int l_ = ((rt_int)1LL), h_ = G_NV(F->k_3973); if (l_ <= h_) { rt_index(l_, sl3975.lo, sl3975.hi); rt_index(h_, sl3975.lo, sl3975.hi); } sl3975.p += l_ - sl3975.lo; sl3975.lo = l_; sl3975.hi = h_; sl3975; }); as_rt_gstr(&sl_, (*(P374)rt_nil_check(F->head_3956))); }
+{ rt_int lo3978 = G_NV((*(P438)rt_nil_check(F->s_1705)).first_), hi3979 = G_NV((*(P438)rt_nil_check(F->s_1705)).last_);
+for (rt_int it3980 = lo3978; it3980 <= hi3979; it3980++) {
+F->l_3977 = it3980;
+{ rt_gstr sl_ = ({ rt_gstr sl3983 = F->t_3971; rt_int l_ = rt_add(G_NV(F->k_3973), ((rt_int)1LL)), h_ = rt_add(G_NV(F->k_3973), ({ rt_gstr at3982 = (*(P374)rt_nil_check(({ A436 ix3981 = F->up->src_lines_437; ix3981.p[rt_index(F->l_3977, ix3981.lo, ix3981.hi) - ix3981.lo]; }))); at3982.hi >= at3982.lo ? at3982.hi - at3982.lo + 1 : (rt_int)0; })); if (l_ <= h_) { rt_index(l_, sl3983.lo, sl3983.hi); rt_index(h_, sl3983.lo, sl3983.hi); } sl3983.p += l_ - sl3983.lo; sl3983.lo = l_; sl3983.hi = h_; sl3983; }); as_rt_gstr(&sl_, (*(P374)rt_nil_check(({ A436 ix3984 = F->up->src_lines_437; ix3984.p[rt_index(F->l_3977, ix3984.lo, ix3984.hi) - ix3984.lo]; })))); }
+F->k_3973 = rt_add(rt_add(G_NV(F->k_3973), ({ rt_gstr at3986 = (*(P374)rt_nil_check(({ A436 ix3985 = F->up->src_lines_437; ix3985.p[rt_index(F->l_3977, ix3985.lo, ix3985.hi) - ix3985.lo]; }))); at3986.hi >= at3986.lo ? at3986.hi - at3986.lo + 1 : (rt_int)0; })), ((rt_int)1LL));
+(*({ rt_gstr *ix3987 = &(F->t_3971); &ix3987->p[rt_index(G_NV(F->k_3973), ix3987->lo, ix3987->hi) - ix3987->lo]; })) = 10;
+}
+}
+L_end_3976: ;
+f_lib_store_1698(F->up, F->key_1706, F->t_3971);
+
+}
+L_end_3970: ;
 ret_:
 
   return;
@@ -20736,28 +20768,28 @@ static void f_lib_load_1710(struct f_greenc_234fr *up_, rt_gstr key_1708, P408 *
 F->up = up_;
 F->key_1708 = cp_rt_gstr(key_1708);
 F->r_1709 = r_1709;
-F->n_3981 = INT64_MIN;
-F->saved_line_3982 = INT64_MIN;
-F->saved_line_3982 = G_NV(F->up->src_line_349);
-F->saved_pos_3983 = INT64_MIN;
-F->saved_pos_3983 = G_NV(F->up->tpos_348);
-F->from_3984 = INT64_MIN;
-F->saved_env_3985 = NULL;
+F->n_3988 = INT64_MIN;
+F->saved_line_3989 = INT64_MIN;
+F->saved_line_3989 = G_NV(F->up->src_line_349);
+F->saved_pos_3990 = INT64_MIN;
+F->saved_pos_3990 = G_NV(F->up->tpos_348);
+F->from_3991 = INT64_MIN;
+F->saved_env_3992 = NULL;
 (*F->r_1709) = NULL;
-f_lib_open_1695(F->up, F->key_1708, &F->n_3981);
-if ((G_NV(F->n_3981) < ((rt_int)0LL))) {
+f_lib_open_1695(F->up, F->key_1708, &F->n_3988);
+if ((G_NV(F->n_3988) < ((rt_int)0LL))) {
 goto ret_;
 }
-F->from_3984 = rt_add(G_NV(F->up->ntoks_347), ((rt_int)1LL));
-f_include_text_559(F->up, G_NV(F->n_3981));
+F->from_3991 = rt_add(G_NV(F->up->ntoks_347), ((rt_int)1LL));
+f_include_text_559(F->up, G_NV(F->n_3988));
 f_add_token_531(F->up, ((rt_int)0LL), rt_g_lit("<end>", 5), ((rt_int)0LL));
-F->up->tpos_348 = G_NV(F->from_3984);
-F->saved_env_3985 = F->up->env_names_431;
+F->up->tpos_348 = G_NV(F->from_3991);
+F->saved_env_3992 = F->up->env_names_431;
 F->up->env_names_431 = f_mk_493(F->up, rt_g_lit("", 0));
 f_compilation_684(F->up, &(*F->r_1709));
-F->up->env_names_431 = F->saved_env_3985;
-F->up->tpos_348 = G_NV(F->saved_pos_3983);
-F->up->src_line_349 = G_NV(F->saved_line_3982);
+F->up->env_names_431 = F->saved_env_3992;
+F->up->tpos_348 = G_NV(F->saved_pos_3990);
+F->up->src_line_349 = G_NV(F->saved_line_3989);
 ret_:
 
   return;
@@ -20768,20 +20800,20 @@ static int f_defined_unit_1713(struct f_greenc_234fr *up_, rt_gstr name_1711, P4
 F->up = up_;
 F->name_1711 = cp_rt_gstr(name_1711);
 F->before_1712 = before_1712;
-F->u_3986 = NULL;
-F->u_3986 = F->up->units_476;
+F->u_3993 = NULL;
+F->u_3993 = F->up->units_476;
 if (f_listed_689(F->up, F->up->loaded_442, F->name_1711)) {
 F->result_ = 1;
 goto ret_;
 }
-while (((F->u_3986 != NULL) && (F->u_3986 != F->before_1712))) {
-if ((eq_rt_gstr((*(P374)rt_nil_check((*(P408)rt_nil_check(F->u_3986)).name_)), F->name_1711) && (G_NV(({ rt_gstr ix3988 = (*(P374)rt_nil_check((*(P408)rt_nil_check(F->u_3986)).formal_)); ix3988.p[rt_index(((rt_int)1LL), ix3988.lo, ix3988.hi) - ix3988.lo]; })) != 33))) {
+while (((F->u_3993 != NULL) && (F->u_3993 != F->before_1712))) {
+if ((eq_rt_gstr((*(P374)rt_nil_check((*(P408)rt_nil_check(F->u_3993)).name_)), F->name_1711) && (G_NV(({ rt_gstr ix3995 = (*(P374)rt_nil_check((*(P408)rt_nil_check(F->u_3993)).formal_)); ix3995.p[rt_index(((rt_int)1LL), ix3995.lo, ix3995.hi) - ix3995.lo]; })) != 33))) {
 F->result_ = 1;
 goto ret_;
 }
-F->u_3986 = (*(P408)rt_nil_check(F->u_3986)).next_;
+F->u_3993 = (*(P408)rt_nil_check(F->u_3993)).next_;
 }
-L_end_3987: ;
+L_end_3994: ;
 F->result_ = 0;
 goto ret_;
   rt_raise(RT_X_INIT);
@@ -20793,66 +20825,66 @@ ret_:
 static void f_library_units_1714(struct f_greenc_234fr *up_) {
   struct f_library_units_1714fr *F = rt_alloc(sizeof *F);
 F->up = up_;
-F->p_3989 = NULL;
-F->prev_3990 = NULL;
-F->l_3991 = NULL;
-F->ltail_3992 = NULL;
-F->i_3993 = INT64_MIN;
-F->j_3994 = INT64_MIN;
-F->n_3995 = NULL;
-F->f_3996 = NULL;
-F->changed_3997 = INT_MIN;
-F->changed_3997 = 1;
-while (G_NV(F->changed_3997)) {
-F->changed_3997 = 0;
-F->p_3989 = F->up->units_476;
-F->prev_3990 = NULL;
-while (((F->p_3989 != NULL) && (!G_NV(F->changed_3997)))) {
-F->f_3996 = (*(P408)rt_nil_check(F->p_3989)).formal_;
-F->i_3993 = ((rt_int)1LL);
-if (((G_NV(({ rt_gstr ix4000 = (*(P374)rt_nil_check(F->f_3996)); ix4000.p[rt_index(((rt_int)1LL), ix4000.lo, ix4000.hi) - ix4000.lo]; })) == 33) || (G_NV(({ rt_gstr ix4001 = (*(P374)rt_nil_check(F->f_3996)); ix4001.p[rt_index(((rt_int)1LL), ix4001.lo, ix4001.hi) - ix4001.lo]; })) == 35))) {
-F->i_3993 = ((rt_int)2LL);
+F->p_3996 = NULL;
+F->prev_3997 = NULL;
+F->l_3998 = NULL;
+F->ltail_3999 = NULL;
+F->i_4000 = INT64_MIN;
+F->j_4001 = INT64_MIN;
+F->n_4002 = NULL;
+F->f_4003 = NULL;
+F->changed_4004 = INT_MIN;
+F->changed_4004 = 1;
+while (G_NV(F->changed_4004)) {
+F->changed_4004 = 0;
+F->p_3996 = F->up->units_476;
+F->prev_3997 = NULL;
+while (((F->p_3996 != NULL) && (!G_NV(F->changed_4004)))) {
+F->f_4003 = (*(P408)rt_nil_check(F->p_3996)).formal_;
+F->i_4000 = ((rt_int)1LL);
+if (((G_NV(({ rt_gstr ix4007 = (*(P374)rt_nil_check(F->f_4003)); ix4007.p[rt_index(((rt_int)1LL), ix4007.lo, ix4007.hi) - ix4007.lo]; })) == 33) || (G_NV(({ rt_gstr ix4008 = (*(P374)rt_nil_check(F->f_4003)); ix4008.p[rt_index(((rt_int)1LL), ix4008.lo, ix4008.hi) - ix4008.lo]; })) == 35))) {
+F->i_4000 = ((rt_int)2LL);
 }
-while (((G_NV(F->i_3993) < ({ rt_gstr at4003 = (*(P374)rt_nil_check(F->f_3996)); at4003.hi >= at4003.lo ? at4003.hi - at4003.lo + 1 : (rt_int)0; })) && (!G_NV(F->changed_3997)))) {
-F->j_3994 = rt_add(G_NV(F->i_3993), ((rt_int)1LL));
-while (((G_NV(F->j_3994) <= ({ rt_gstr at4005 = (*(P374)rt_nil_check(F->f_3996)); at4005.hi >= at4005.lo ? at4005.hi - at4005.lo + 1 : (rt_int)0; })) && (G_NV(({ rt_gstr ix4006 = (*(P374)rt_nil_check(F->f_3996)); ix4006.p[rt_index(G_NV(F->j_3994), ix4006.lo, ix4006.hi) - ix4006.lo]; })) != 44))) {
-F->j_3994 = rt_add(G_NV(F->j_3994), ((rt_int)1LL));
+while (((G_NV(F->i_4000) < ({ rt_gstr at4010 = (*(P374)rt_nil_check(F->f_4003)); at4010.hi >= at4010.lo ? at4010.hi - at4010.lo + 1 : (rt_int)0; })) && (!G_NV(F->changed_4004)))) {
+F->j_4001 = rt_add(G_NV(F->i_4000), ((rt_int)1LL));
+while (((G_NV(F->j_4001) <= ({ rt_gstr at4012 = (*(P374)rt_nil_check(F->f_4003)); at4012.hi >= at4012.lo ? at4012.hi - at4012.lo + 1 : (rt_int)0; })) && (G_NV(({ rt_gstr ix4013 = (*(P374)rt_nil_check(F->f_4003)); ix4013.p[rt_index(G_NV(F->j_4001), ix4013.lo, ix4013.hi) - ix4013.lo]; })) != 44))) {
+F->j_4001 = rt_add(G_NV(F->j_4001), ((rt_int)1LL));
 }
-L_end_4004: ;
-if ((G_NV(F->j_3994) > rt_add(G_NV(F->i_3993), ((rt_int)1LL)))) {
-F->n_3995 = f_mk_493(F->up, ({ rt_gstr sl4008 = (*(P374)rt_nil_check(F->f_3996)); rt_int l_ = rt_add(G_NV(F->i_3993), ((rt_int)1LL)), h_ = rt_sub(G_NV(F->j_3994), ((rt_int)1LL)); if (l_ <= h_) { rt_index(l_, sl4008.lo, sl4008.hi); rt_index(h_, sl4008.lo, sl4008.hi); } sl4008.p += l_ - sl4008.lo; sl4008.lo = l_; sl4008.hi = h_; sl4008; }));
-if (((f_lookup_693(F->up, (*(P374)rt_nil_check(F->n_3995))) == NULL) && (!f_defined_unit_1713(F->up, (*(P374)rt_nil_check(F->n_3995)), F->p_3989)))) {
-f_load_unit_1717(F->up, (*(P374)rt_nil_check(F->n_3995)), &F->l_3991);
-if ((F->l_3991 == NULL)) {
-f_predefined_unit_1720(F->up, (*(P374)rt_nil_check(F->n_3995)), &F->l_3991);
+L_end_4011: ;
+if ((G_NV(F->j_4001) > rt_add(G_NV(F->i_4000), ((rt_int)1LL)))) {
+F->n_4002 = f_mk_493(F->up, ({ rt_gstr sl4015 = (*(P374)rt_nil_check(F->f_4003)); rt_int l_ = rt_add(G_NV(F->i_4000), ((rt_int)1LL)), h_ = rt_sub(G_NV(F->j_4001), ((rt_int)1LL)); if (l_ <= h_) { rt_index(l_, sl4015.lo, sl4015.hi); rt_index(h_, sl4015.lo, sl4015.hi); } sl4015.p += l_ - sl4015.lo; sl4015.lo = l_; sl4015.hi = h_; sl4015; }));
+if (((f_lookup_693(F->up, (*(P374)rt_nil_check(F->n_4002))) == NULL) && (!f_defined_unit_1713(F->up, (*(P374)rt_nil_check(F->n_4002)), F->p_3996)))) {
+f_load_unit_1717(F->up, (*(P374)rt_nil_check(F->n_4002)), &F->l_3998);
+if ((F->l_3998 == NULL)) {
+f_predefined_unit_1720(F->up, (*(P374)rt_nil_check(F->n_4002)), &F->l_3998);
 }
-if ((F->l_3991 == NULL)) {
-f_fail_514(F->up, G_NV((*(P408)rt_nil_check(F->p_3989)).line_), cat_rt_gstr(cat_rt_gstr(cat_rt_gstr(cat_rt_gstr((*(P374)rt_nil_check(F->n_3995)), rt_g_lit(", named by ", 11)), (*(P374)rt_nil_check((*(P408)rt_nil_check(F->p_3989)).name_))), rt_g_lit(", is neither compiled before it nor in ", 39)), rt_g_lit("the program library (RM79 10.3)", 31)));
+if ((F->l_3998 == NULL)) {
+f_fail_514(F->up, G_NV((*(P408)rt_nil_check(F->p_3996)).line_), cat_rt_gstr(cat_rt_gstr(cat_rt_gstr(cat_rt_gstr((*(P374)rt_nil_check(F->n_4002)), rt_g_lit(", named by ", 11)), (*(P374)rt_nil_check((*(P408)rt_nil_check(F->p_3996)).name_))), rt_g_lit(", is neither compiled before it nor in ", 39)), rt_g_lit("the program library (RM79 10.3)", 31)));
 }
-F->up->loaded_442 = f_mk_493(F->up, cat_rt_gstr(cat_rt_gstr((*(P374)rt_nil_check(F->up->loaded_442)), (*(P374)rt_nil_check(F->n_3995))), one_rt_gstr(44)));
-F->ltail_3992 = F->l_3991;
-while (((*(P408)rt_nil_check(F->ltail_3992)).next_ != NULL)) {
-F->ltail_3992 = (*(P408)rt_nil_check(F->ltail_3992)).next_;
+F->up->loaded_442 = f_mk_493(F->up, cat_rt_gstr(cat_rt_gstr((*(P374)rt_nil_check(F->up->loaded_442)), (*(P374)rt_nil_check(F->n_4002))), one_rt_gstr(44)));
+F->ltail_3999 = F->l_3998;
+while (((*(P408)rt_nil_check(F->ltail_3999)).next_ != NULL)) {
+F->ltail_3999 = (*(P408)rt_nil_check(F->ltail_3999)).next_;
+}
+L_end_4016: ;
+(*(P408)rt_nil_check(F->ltail_3999)).next_ = F->p_3996;
+if ((F->prev_3997 == NULL)) {
+F->up->units_476 = F->l_3998;
+} else {
+(*(P408)rt_nil_check(F->prev_3997)).next_ = F->l_3998;
+}
+F->changed_4004 = 1;
+}
+}
+F->i_4000 = G_NV(F->j_4001);
 }
 L_end_4009: ;
-(*(P408)rt_nil_check(F->ltail_3992)).next_ = F->p_3989;
-if ((F->prev_3990 == NULL)) {
-F->up->units_476 = F->l_3991;
-} else {
-(*(P408)rt_nil_check(F->prev_3990)).next_ = F->l_3991;
+F->prev_3997 = F->p_3996;
+F->p_3996 = (*(P408)rt_nil_check(F->p_3996)).next_;
 }
-F->changed_3997 = 1;
+L_end_4006: ;
 }
-}
-F->i_3993 = G_NV(F->j_3994);
-}
-L_end_4002: ;
-F->prev_3990 = F->p_3989;
-F->p_3989 = (*(P408)rt_nil_check(F->p_3989)).next_;
-}
-L_end_3999: ;
-}
-L_end_3998: ;
+L_end_4005: ;
 ret_:
 
   return;
@@ -20863,22 +20895,22 @@ static void f_load_unit_1717(struct f_greenc_234fr *up_, rt_gstr name_1715, P408
 F->up = up_;
 F->name_1715 = cp_rt_gstr(name_1715);
 F->r_1716 = r_1716;
-F->s_4010 = NULL;
-F->b_4011 = NULL;
-F->t_4012 = NULL;
-f_lib_load_1710(F->up, cat_rt_gstr(F->name_1715, rt_g_lit(".spec", 5)), &F->s_4010);
-f_lib_load_1710(F->up, cat_rt_gstr(F->name_1715, rt_g_lit(".body", 5)), &F->b_4011);
-if ((F->s_4010 == NULL)) {
-(*F->r_1716) = F->b_4011;
+F->s_4017 = NULL;
+F->b_4018 = NULL;
+F->t_4019 = NULL;
+f_lib_load_1710(F->up, cat_rt_gstr(F->name_1715, rt_g_lit(".spec", 5)), &F->s_4017);
+f_lib_load_1710(F->up, cat_rt_gstr(F->name_1715, rt_g_lit(".body", 5)), &F->b_4018);
+if ((F->s_4017 == NULL)) {
+(*F->r_1716) = F->b_4018;
 goto ret_;
 }
-F->t_4012 = F->s_4010;
-while (((*(P408)rt_nil_check(F->t_4012)).next_ != NULL)) {
-F->t_4012 = (*(P408)rt_nil_check(F->t_4012)).next_;
+F->t_4019 = F->s_4017;
+while (((*(P408)rt_nil_check(F->t_4019)).next_ != NULL)) {
+F->t_4019 = (*(P408)rt_nil_check(F->t_4019)).next_;
 }
-L_end_4013: ;
-(*(P408)rt_nil_check(F->t_4012)).next_ = F->b_4011;
-(*F->r_1716) = F->s_4010;
+L_end_4020: ;
+(*(P408)rt_nil_check(F->t_4019)).next_ = F->b_4018;
+(*F->r_1716) = F->s_4017;
 ret_:
 
   return;
@@ -20889,13 +20921,13 @@ static void f_predefined_unit_1720(struct f_greenc_234fr *up_, rt_gstr name_1718
 F->up = up_;
 F->name_1718 = cp_rt_gstr(name_1718);
 F->r_1719 = r_1719;
-F->saved_pos_4014 = INT64_MIN;
-F->saved_pos_4014 = G_NV(F->up->tpos_348);
-F->saved_line_4015 = INT64_MIN;
-F->saved_line_4015 = G_NV(F->up->src_line_349);
-F->from_4016 = INT64_MIN;
-F->from_4016 = rt_add(G_NV(F->up->ntoks_347), ((rt_int)1LL));
-F->saved_env_4017 = NULL;
+F->saved_pos_4021 = INT64_MIN;
+F->saved_pos_4021 = G_NV(F->up->tpos_348);
+F->saved_line_4022 = INT64_MIN;
+F->saved_line_4022 = G_NV(F->up->src_line_349);
+F->from_4023 = INT64_MIN;
+F->from_4023 = rt_add(G_NV(F->up->ntoks_347), ((rt_int)1LL));
+F->saved_env_4024 = NULL;
 (*F->r_1719) = NULL;
 F->up->prelude_lex_467 = 1;
 F->up->src_line_349 = rt_neg(((rt_int)1LL));
@@ -21217,18 +21249,18 @@ f_lex_line_542(F->up, rt_g_lit("   procedure SET_NEXT(FILE : in INOUT_FILE; POS 
 f_lex_line_542(F->up, rt_g_lit("end INPUT_OUTPUT;", 17));
 } else {
 F->up->prelude_lex_467 = 0;
-F->up->src_line_349 = G_NV(F->saved_line_4015);
+F->up->src_line_349 = G_NV(F->saved_line_4022);
 goto ret_;
 }
 F->up->prelude_lex_467 = 0;
-F->up->src_line_349 = G_NV(F->saved_line_4015);
+F->up->src_line_349 = G_NV(F->saved_line_4022);
 f_add_token_531(F->up, ((rt_int)0LL), rt_g_lit("<end>", 5), ((rt_int)0LL));
-F->up->tpos_348 = G_NV(F->from_4016);
-F->saved_env_4017 = F->up->env_names_431;
+F->up->tpos_348 = G_NV(F->from_4023);
+F->saved_env_4024 = F->up->env_names_431;
 F->up->env_names_431 = f_mk_493(F->up, rt_g_lit("", 0));
 f_compilation_684(F->up, &(*F->r_1719));
-F->up->env_names_431 = F->saved_env_4017;
-F->up->tpos_348 = G_NV(F->saved_pos_4014);
+F->up->env_names_431 = F->saved_env_4024;
+F->up->tpos_348 = G_NV(F->saved_pos_4021);
 ret_:
 
   return;
@@ -21253,40 +21285,40 @@ static void f_used_units_1724(struct f_greenc_234fr *up_, P408 u_1722, P374 *r_1
 F->up = up_;
 F->u_1722 = u_1722;
 F->r_1723 = r_1723;
-F->p_4018 = NULL;
-F->p_4018 = F->u_1722;
-F->main_4019 = NULL;
-F->changed_4020 = INT_MIN;
-F->changed_4020 = 1;
-while ((F->p_4018 != NULL)) {
-if ((G_NV(({ rt_gstr ix4022 = (*(P374)rt_nil_check((*(P408)rt_nil_check(F->p_4018)).formal_)); ix4022.p[rt_index(((rt_int)1LL), ix4022.lo, ix4022.hi) - ix4022.lo]; })) != 33)) {
-F->main_4019 = F->p_4018;
+F->p_4025 = NULL;
+F->p_4025 = F->u_1722;
+F->main_4026 = NULL;
+F->changed_4027 = INT_MIN;
+F->changed_4027 = 1;
+while ((F->p_4025 != NULL)) {
+if ((G_NV(({ rt_gstr ix4029 = (*(P374)rt_nil_check((*(P408)rt_nil_check(F->p_4025)).formal_)); ix4029.p[rt_index(((rt_int)1LL), ix4029.lo, ix4029.hi) - ix4029.lo]; })) != 33)) {
+F->main_4026 = F->p_4025;
 }
-F->p_4018 = (*(P408)rt_nil_check(F->p_4018)).next_;
+F->p_4025 = (*(P408)rt_nil_check(F->p_4025)).next_;
 }
-L_end_4021: ;
-(*F->r_1723) = f_mk_493(F->up, cat_rt_gstr(cat_rt_gstr(one_rt_gstr(44), (*(P374)rt_nil_check((*(P408)rt_nil_check(F->main_4019)).name_))), (*(P374)rt_nil_check((*(P408)rt_nil_check(F->main_4019)).formal_))));
-F->p_4018 = F->u_1722;
-while ((F->p_4018 != NULL)) {
-if ((G_NV(({ rt_gstr ix4024 = (*(P374)rt_nil_check((*(P408)rt_nil_check(F->p_4018)).formal_)); ix4024.p[rt_index(((rt_int)1LL), ix4024.lo, ix4024.hi) - ix4024.lo]; })) == 33)) {
-(*F->r_1723) = f_mk_493(F->up, cat_rt_gstr((*(P374)rt_nil_check((*F->r_1723))), ({ rt_gstr sl4028 = (*(P374)rt_nil_check((*(P408)rt_nil_check(F->p_4018)).formal_)); rt_int l_ = ((rt_int)2LL), h_ = ({ rt_gstr at4027 = (*(P374)rt_nil_check((*(P408)rt_nil_check(F->p_4018)).formal_)); at4027.hi >= at4027.lo ? at4027.hi - at4027.lo + 1 : (rt_int)0; }); if (l_ <= h_) { rt_index(l_, sl4028.lo, sl4028.hi); rt_index(h_, sl4028.lo, sl4028.hi); } sl4028.p += l_ - sl4028.lo; sl4028.lo = l_; sl4028.hi = h_; sl4028; })));
+L_end_4028: ;
+(*F->r_1723) = f_mk_493(F->up, cat_rt_gstr(cat_rt_gstr(one_rt_gstr(44), (*(P374)rt_nil_check((*(P408)rt_nil_check(F->main_4026)).name_))), (*(P374)rt_nil_check((*(P408)rt_nil_check(F->main_4026)).formal_))));
+F->p_4025 = F->u_1722;
+while ((F->p_4025 != NULL)) {
+if ((G_NV(({ rt_gstr ix4031 = (*(P374)rt_nil_check((*(P408)rt_nil_check(F->p_4025)).formal_)); ix4031.p[rt_index(((rt_int)1LL), ix4031.lo, ix4031.hi) - ix4031.lo]; })) == 33)) {
+(*F->r_1723) = f_mk_493(F->up, cat_rt_gstr((*(P374)rt_nil_check((*F->r_1723))), ({ rt_gstr sl4035 = (*(P374)rt_nil_check((*(P408)rt_nil_check(F->p_4025)).formal_)); rt_int l_ = ((rt_int)2LL), h_ = ({ rt_gstr at4034 = (*(P374)rt_nil_check((*(P408)rt_nil_check(F->p_4025)).formal_)); at4034.hi >= at4034.lo ? at4034.hi - at4034.lo + 1 : (rt_int)0; }); if (l_ <= h_) { rt_index(l_, sl4035.lo, sl4035.hi); rt_index(h_, sl4035.lo, sl4035.hi); } sl4035.p += l_ - sl4035.lo; sl4035.lo = l_; sl4035.hi = h_; sl4035; })));
 }
-F->p_4018 = (*(P408)rt_nil_check(F->p_4018)).next_;
-}
-L_end_4023: ;
-while (G_NV(F->changed_4020)) {
-F->changed_4020 = 0;
-F->p_4018 = F->u_1722;
-while ((F->p_4018 != NULL)) {
-if (((G_NV(({ rt_gstr ix4031 = (*(P374)rt_nil_check((*(P408)rt_nil_check(F->p_4018)).formal_)); ix4031.p[rt_index(((rt_int)1LL), ix4031.lo, ix4031.hi) - ix4031.lo]; })) != 33) && f_listed_689(F->up, (*F->r_1723), (*(P374)rt_nil_check((*(P408)rt_nil_check(F->p_4018)).name_))))) {
-f_add_names_1728(F->up, &(*F->r_1723), (*(P374)rt_nil_check((*(P408)rt_nil_check(F->p_4018)).formal_)), &F->changed_4020);
- (void)rt_range(F->changed_4020, 0, 1);
-}
-F->p_4018 = (*(P408)rt_nil_check(F->p_4018)).next_;
+F->p_4025 = (*(P408)rt_nil_check(F->p_4025)).next_;
 }
 L_end_4030: ;
+while (G_NV(F->changed_4027)) {
+F->changed_4027 = 0;
+F->p_4025 = F->u_1722;
+while ((F->p_4025 != NULL)) {
+if (((G_NV(({ rt_gstr ix4038 = (*(P374)rt_nil_check((*(P408)rt_nil_check(F->p_4025)).formal_)); ix4038.p[rt_index(((rt_int)1LL), ix4038.lo, ix4038.hi) - ix4038.lo]; })) != 33) && f_listed_689(F->up, (*F->r_1723), (*(P374)rt_nil_check((*(P408)rt_nil_check(F->p_4025)).name_))))) {
+f_add_names_1728(F->up, &(*F->r_1723), (*(P374)rt_nil_check((*(P408)rt_nil_check(F->p_4025)).formal_)), &F->changed_4027);
+ (void)rt_range(F->changed_4027, 0, 1);
 }
-L_end_4029: ;
+F->p_4025 = (*(P408)rt_nil_check(F->p_4025)).next_;
+}
+L_end_4037: ;
+}
+L_end_4036: ;
 ret_:
 
   return;
@@ -21298,25 +21330,25 @@ F->up = up_;
 F->r_1725 = r_1725;
 F->list_1726 = cp_rt_gstr(list_1726);
 F->changed_1727 = changed_1727;
-F->i_4032 = INT64_MIN;
-F->i_4032 = ({ rt_gstr at4033 = F->list_1726; at4033.lo; });
-F->j_4034 = INT64_MIN;
-F->j_4034 = ({ rt_gstr at4035 = F->list_1726; at4035.lo; });
-while ((G_NV(F->i_4032) < ({ rt_gstr at4037 = F->list_1726; at4037.hi; }))) {
-F->j_4034 = rt_add(G_NV(F->i_4032), ((rt_int)1LL));
-while (((G_NV(F->j_4034) <= ({ rt_gstr at4039 = F->list_1726; at4039.hi; })) && (G_NV(({ rt_gstr ix4040 = F->list_1726; ix4040.p[rt_index(G_NV(F->j_4034), ix4040.lo, ix4040.hi) - ix4040.lo]; })) != 44))) {
-F->j_4034 = rt_add(G_NV(F->j_4034), ((rt_int)1LL));
+F->i_4039 = INT64_MIN;
+F->i_4039 = ({ rt_gstr at4040 = F->list_1726; at4040.lo; });
+F->j_4041 = INT64_MIN;
+F->j_4041 = ({ rt_gstr at4042 = F->list_1726; at4042.lo; });
+while ((G_NV(F->i_4039) < ({ rt_gstr at4044 = F->list_1726; at4044.hi; }))) {
+F->j_4041 = rt_add(G_NV(F->i_4039), ((rt_int)1LL));
+while (((G_NV(F->j_4041) <= ({ rt_gstr at4046 = F->list_1726; at4046.hi; })) && (G_NV(({ rt_gstr ix4047 = F->list_1726; ix4047.p[rt_index(G_NV(F->j_4041), ix4047.lo, ix4047.hi) - ix4047.lo]; })) != 44))) {
+F->j_4041 = rt_add(G_NV(F->j_4041), ((rt_int)1LL));
 }
-L_end_4038: ;
-if ((G_NV(F->j_4034) > rt_add(G_NV(F->i_4032), ((rt_int)1LL)))) {
-if ((!f_listed_689(F->up, (*F->r_1725), ({ rt_gstr sl4042 = F->list_1726; rt_int l_ = rt_add(G_NV(F->i_4032), ((rt_int)1LL)), h_ = rt_sub(G_NV(F->j_4034), ((rt_int)1LL)); if (l_ <= h_) { rt_index(l_, sl4042.lo, sl4042.hi); rt_index(h_, sl4042.lo, sl4042.hi); } sl4042.p += l_ - sl4042.lo; sl4042.lo = l_; sl4042.hi = h_; sl4042; })))) {
-(*F->r_1725) = f_mk_493(F->up, cat_rt_gstr(cat_rt_gstr((*(P374)rt_nil_check((*F->r_1725))), ({ rt_gstr sl4044 = F->list_1726; rt_int l_ = rt_add(G_NV(F->i_4032), ((rt_int)1LL)), h_ = rt_sub(G_NV(F->j_4034), ((rt_int)1LL)); if (l_ <= h_) { rt_index(l_, sl4044.lo, sl4044.hi); rt_index(h_, sl4044.lo, sl4044.hi); } sl4044.p += l_ - sl4044.lo; sl4044.lo = l_; sl4044.hi = h_; sl4044; })), one_rt_gstr(44)));
+L_end_4045: ;
+if ((G_NV(F->j_4041) > rt_add(G_NV(F->i_4039), ((rt_int)1LL)))) {
+if ((!f_listed_689(F->up, (*F->r_1725), ({ rt_gstr sl4049 = F->list_1726; rt_int l_ = rt_add(G_NV(F->i_4039), ((rt_int)1LL)), h_ = rt_sub(G_NV(F->j_4041), ((rt_int)1LL)); if (l_ <= h_) { rt_index(l_, sl4049.lo, sl4049.hi); rt_index(h_, sl4049.lo, sl4049.hi); } sl4049.p += l_ - sl4049.lo; sl4049.lo = l_; sl4049.hi = h_; sl4049; })))) {
+(*F->r_1725) = f_mk_493(F->up, cat_rt_gstr(cat_rt_gstr((*(P374)rt_nil_check((*F->r_1725))), ({ rt_gstr sl4051 = F->list_1726; rt_int l_ = rt_add(G_NV(F->i_4039), ((rt_int)1LL)), h_ = rt_sub(G_NV(F->j_4041), ((rt_int)1LL)); if (l_ <= h_) { rt_index(l_, sl4051.lo, sl4051.hi); rt_index(h_, sl4051.lo, sl4051.hi); } sl4051.p += l_ - sl4051.lo; sl4051.lo = l_; sl4051.hi = h_; sl4051; })), one_rt_gstr(44)));
 (*F->changed_1727) = 1;
 }
 }
-F->i_4032 = G_NV(F->j_4034);
+F->i_4039 = G_NV(F->j_4041);
 }
-L_end_4036: ;
+L_end_4043: ;
 ret_:
 
   return;
@@ -21326,60 +21358,60 @@ static void f_translate_1730(struct f_greenc_234fr *up_, P408 u_1729) {
   struct f_translate_1730fr *F = rt_alloc(sizeof *F);
 F->up = up_;
 F->u_1729 = u_1729;
-F->p_4045 = NULL;
-F->p_4045 = F->up->prelude_units_477;
-F->used_4046 = NULL;
-F->env_4047 = NULL;
-F->y_4048 = NULL;
-while ((F->p_4045 != NULL)) {
-f_decl_element_930(F->up, F->p_4045);
-F->p_4045 = (*(P408)rt_nil_check(F->p_4045)).next_;
+F->p_4052 = NULL;
+F->p_4052 = F->up->prelude_units_477;
+F->used_4053 = NULL;
+F->env_4054 = NULL;
+F->y_4055 = NULL;
+while ((F->p_4052 != NULL)) {
+f_decl_element_930(F->up, F->p_4052);
+F->p_4052 = (*(P408)rt_nil_check(F->p_4052)).next_;
 }
-L_end_4049: ;
-f_used_units_1724(F->up, F->u_1729, &F->used_4046);
-F->p_4045 = F->u_1729;
+L_end_4056: ;
+f_used_units_1724(F->up, F->u_1729, &F->used_4053);
+F->p_4052 = F->u_1729;
 f_open_scope_737(F->up);
-while ((F->p_4045 != NULL)) {
+while ((F->p_4052 != NULL)) {
 F->up->barriers_434 = NULL;
-F->up->cur_comp_unit_443 = (*(P408)rt_nil_check(F->p_4045)).name_;
-F->y_4048 = f_lookup_693(F->up, (*(P374)rt_nil_check((*(P408)rt_nil_check(F->p_4045)).name_)));
-if ((((((G_NV((*(P408)rt_nil_check(F->p_4045)).kind_) == ((rt_int)49LL)) || (G_NV((*(P408)rt_nil_check(F->p_4045)).kind_) == ((rt_int)51LL))) || (G_NV((*(P408)rt_nil_check(F->p_4045)).kind_) == ((rt_int)44LL))) || (G_NV((*(P408)rt_nil_check(F->p_4045)).kind_) == ((rt_int)45LL))) && (F->y_4048 != NULL))) {
-if ((((*(P351)rt_nil_check(F->y_4048)).decl_ != NULL) && ((*(P408)rt_nil_check((*(P351)rt_nil_check(F->y_4048)).decl_)).formal_ != NULL))) {
-(*(P408)rt_nil_check(F->p_4045)).formal_ = f_mk_493(F->up, cat_rt_gstr((*(P374)rt_nil_check((*(P408)rt_nil_check(F->p_4045)).formal_)), (*(P374)rt_nil_check((*(P408)rt_nil_check((*(P351)rt_nil_check(F->y_4048)).decl_)).formal_))));
+F->up->cur_comp_unit_443 = (*(P408)rt_nil_check(F->p_4052)).name_;
+F->y_4055 = f_lookup_693(F->up, (*(P374)rt_nil_check((*(P408)rt_nil_check(F->p_4052)).name_)));
+if ((((((G_NV((*(P408)rt_nil_check(F->p_4052)).kind_) == ((rt_int)49LL)) || (G_NV((*(P408)rt_nil_check(F->p_4052)).kind_) == ((rt_int)51LL))) || (G_NV((*(P408)rt_nil_check(F->p_4052)).kind_) == ((rt_int)44LL))) || (G_NV((*(P408)rt_nil_check(F->p_4052)).kind_) == ((rt_int)45LL))) && (F->y_4055 != NULL))) {
+if ((((*(P351)rt_nil_check(F->y_4055)).decl_ != NULL) && ((*(P408)rt_nil_check((*(P351)rt_nil_check(F->y_4055)).decl_)).formal_ != NULL))) {
+(*(P408)rt_nil_check(F->p_4052)).formal_ = f_mk_493(F->up, cat_rt_gstr((*(P374)rt_nil_check((*(P408)rt_nil_check(F->p_4052)).formal_)), (*(P374)rt_nil_check((*(P408)rt_nil_check((*(P351)rt_nil_check(F->y_4055)).decl_)).formal_))));
 }
 }
-f_push_barrier_951(F->up, F->p_4045, ((rt_int)1LL));
-if (((G_NV(({ rt_gstr ix4051 = (*(P374)rt_nil_check((*(P408)rt_nil_check(F->p_4045)).formal_)); ix4051.p[rt_index(((rt_int)1LL), ix4051.lo, ix4051.hi) - ix4051.lo]; })) == 33) || (G_NV(({ rt_gstr ix4052 = (*(P374)rt_nil_check((*(P408)rt_nil_check(F->p_4045)).formal_)); ix4052.p[rt_index(((rt_int)1LL), ix4052.lo, ix4052.hi) - ix4052.lo]; })) == 35))) {
-} else if (f_last_unit_1740(F->up, F->p_4045)) {
-if (((G_NV((*(P408)rt_nil_check(F->p_4045)).kind_) != ((rt_int)44LL)) || ((*(P408)rt_nil_check(F->p_4045)).a_ != NULL))) {
-f_fail_514(F->up, G_NV((*(P408)rt_nil_check(F->p_4045)).line_), rt_g_lit("the main program is a procedure without parameters", 50));
+f_push_barrier_951(F->up, F->p_4052, ((rt_int)1LL));
+if (((G_NV(({ rt_gstr ix4058 = (*(P374)rt_nil_check((*(P408)rt_nil_check(F->p_4052)).formal_)); ix4058.p[rt_index(((rt_int)1LL), ix4058.lo, ix4058.hi) - ix4058.lo]; })) == 33) || (G_NV(({ rt_gstr ix4059 = (*(P374)rt_nil_check((*(P408)rt_nil_check(F->p_4052)).formal_)); ix4059.p[rt_index(((rt_int)1LL), ix4059.lo, ix4059.hi) - ix4059.lo]; })) == 35))) {
+} else if (f_last_unit_1740(F->up, F->p_4052)) {
+if (((G_NV((*(P408)rt_nil_check(F->p_4052)).kind_) != ((rt_int)44LL)) || ((*(P408)rt_nil_check(F->p_4052)).a_ != NULL))) {
+f_fail_514(F->up, G_NV((*(P408)rt_nil_check(F->p_4052)).line_), rt_g_lit("the main program is a procedure without parameters", 50));
 }
-f_build_subprogram_926(F->up, F->p_4045, &F->y_4048);
-f_define_736(F->up, F->y_4048, G_NV((*(P408)rt_nil_check(F->p_4045)).line_));
-f_subprogram_body_992(F->up, F->p_4045, F->y_4048);
-F->up->main_name_487 = (*(P351)rt_nil_check(F->y_4048)).cname_;
-} else if (f_listed_689(F->up, F->used_4046, (*(P374)rt_nil_check((*(P408)rt_nil_check(F->p_4045)).name_)))) {
-f_decl_element_930(F->up, F->p_4045);
-F->env_4047 = f_mk_493(F->up, cat_rt_gstr(one_rt_gstr(44), (*(P374)rt_nil_check(F->up->env_names_431))));
-if ((((((G_NV((*(P408)rt_nil_check(F->p_4045)).kind_) == ((rt_int)48LL)) || (G_NV((*(P408)rt_nil_check(F->p_4045)).kind_) == ((rt_int)49LL))) || (G_NV((*(P408)rt_nil_check(F->p_4045)).kind_) == ((rt_int)50LL))) && f_listed_689(F->up, F->env_4047, (*(P374)rt_nil_check((*(P408)rt_nil_check(F->p_4045)).name_)))) && (!f_body_follows_1734(F->up, F->p_4045)))) {
-f_environment_module_1732(F->up, F->p_4045);
+f_build_subprogram_926(F->up, F->p_4052, &F->y_4055);
+f_define_736(F->up, F->y_4055, G_NV((*(P408)rt_nil_check(F->p_4052)).line_));
+f_subprogram_body_992(F->up, F->p_4052, F->y_4055);
+F->up->main_name_487 = (*(P351)rt_nil_check(F->y_4055)).cname_;
+} else if (f_listed_689(F->up, F->used_4053, (*(P374)rt_nil_check((*(P408)rt_nil_check(F->p_4052)).name_)))) {
+f_decl_element_930(F->up, F->p_4052);
+F->env_4054 = f_mk_493(F->up, cat_rt_gstr(one_rt_gstr(44), (*(P374)rt_nil_check(F->up->env_names_431))));
+if ((((((G_NV((*(P408)rt_nil_check(F->p_4052)).kind_) == ((rt_int)48LL)) || (G_NV((*(P408)rt_nil_check(F->p_4052)).kind_) == ((rt_int)49LL))) || (G_NV((*(P408)rt_nil_check(F->p_4052)).kind_) == ((rt_int)50LL))) && f_listed_689(F->up, F->env_4054, (*(P374)rt_nil_check((*(P408)rt_nil_check(F->p_4052)).name_)))) && (!f_body_follows_1734(F->up, F->p_4052)))) {
+f_environment_module_1732(F->up, F->p_4052);
 }
 } else {
 F->up->code_370 = f_new_buffer_515(F->up);
-f_decl_element_930(F->up, F->p_4045);
+f_decl_element_930(F->up, F->p_4052);
 F->up->code_370 = F->up->out_init_368;
 }
-F->p_4045 = (*(P408)rt_nil_check(F->p_4045)).next_;
+F->p_4052 = (*(P408)rt_nil_check(F->p_4052)).next_;
 }
-L_end_4050: ;
-F->p_4045 = F->u_1729;
-while ((F->p_4045 != NULL)) {
-if ((G_NV(({ rt_gstr ix4054 = (*(P374)rt_nil_check((*(P408)rt_nil_check(F->p_4045)).formal_)); ix4054.p[rt_index(((rt_int)1LL), ix4054.lo, ix4054.hi) - ix4054.lo]; })) == 33)) {
-f_fail_514(F->up, G_NV((*(P408)rt_nil_check(F->p_4045)).line_), cat_rt_gstr(cat_rt_gstr(rt_g_lit("subunit ", 8), (*(P374)rt_nil_check((*(P408)rt_nil_check(F->p_4045)).name_))), rt_g_lit(" has no body stub in an enclosing unit (RM79 10.2)", 50)));
+L_end_4057: ;
+F->p_4052 = F->u_1729;
+while ((F->p_4052 != NULL)) {
+if ((G_NV(({ rt_gstr ix4061 = (*(P374)rt_nil_check((*(P408)rt_nil_check(F->p_4052)).formal_)); ix4061.p[rt_index(((rt_int)1LL), ix4061.lo, ix4061.hi) - ix4061.lo]; })) == 33)) {
+f_fail_514(F->up, G_NV((*(P408)rt_nil_check(F->p_4052)).line_), cat_rt_gstr(cat_rt_gstr(rt_g_lit("subunit ", 8), (*(P374)rt_nil_check((*(P408)rt_nil_check(F->p_4052)).name_))), rt_g_lit(" has no body stub in an enclosing unit (RM79 10.2)", 50)));
 }
-F->p_4045 = (*(P408)rt_nil_check(F->p_4045)).next_;
+F->p_4052 = (*(P408)rt_nil_check(F->p_4052)).next_;
 }
-L_end_4053: ;
+L_end_4060: ;
 ret_:
 
   return;
@@ -21389,15 +21421,15 @@ static void f_environment_module_1732(struct f_greenc_234fr *up_, P408 p_1731) {
   struct f_environment_module_1732fr *F = rt_alloc(sizeof *F);
 F->up = up_;
 F->p_1731 = p_1731;
-F->u_4055 = NULL;
-F->u_4055 = f_nn_567(F->up, ((rt_int)55LL), G_NV((*(P408)rt_nil_check(F->p_1731)).line_));
-F->saved_4056 = INT64_MIN;
-F->saved_4056 = G_NV(F->up->depth_354);
-(*(P408)rt_nil_check(F->u_4055)).a_ = f_nn_567(F->up, ((rt_int)5LL), G_NV((*(P408)rt_nil_check(F->p_1731)).line_));
-(*(P408)rt_nil_check((*(P408)rt_nil_check(F->u_4055)).a_)).name_ = (*(P408)rt_nil_check(F->p_1731)).name_;
+F->u_4062 = NULL;
+F->u_4062 = f_nn_567(F->up, ((rt_int)55LL), G_NV((*(P408)rt_nil_check(F->p_1731)).line_));
+F->saved_4063 = INT64_MIN;
+F->saved_4063 = G_NV(F->up->depth_354);
+(*(P408)rt_nil_check(F->u_4062)).a_ = f_nn_567(F->up, ((rt_int)5LL), G_NV((*(P408)rt_nil_check(F->p_1731)).line_));
+(*(P408)rt_nil_check((*(P408)rt_nil_check(F->u_4062)).a_)).name_ = (*(P408)rt_nil_check(F->p_1731)).name_;
 F->up->depth_354 = ((rt_int)0LL);
-f_use_clause_1385(F->up, F->u_4055);
-F->up->depth_354 = G_NV(F->saved_4056);
+f_use_clause_1385(F->up, F->u_4062);
+F->up->depth_354 = G_NV(F->saved_4063);
 ret_:
 
   return;
@@ -21407,20 +21439,20 @@ static int f_body_follows_1734(struct f_greenc_234fr *up_, P408 p_1733) {
   struct f_body_follows_1734fr *F = rt_alloc(sizeof *F);
 F->up = up_;
 F->p_1733 = p_1733;
-F->q_4057 = NULL;
-F->q_4057 = (*(P408)rt_nil_check(F->p_1733)).next_;
+F->q_4064 = NULL;
+F->q_4064 = (*(P408)rt_nil_check(F->p_1733)).next_;
 if ((G_NV((*(P408)rt_nil_check(F->p_1733)).kind_) == ((rt_int)49LL))) {
 F->result_ = 0;
 goto ret_;
 }
-while ((F->q_4057 != NULL)) {
-if ((((G_NV((*(P408)rt_nil_check(F->q_4057)).kind_) == ((rt_int)49LL)) || (G_NV((*(P408)rt_nil_check(F->q_4057)).kind_) == ((rt_int)51LL))) && eq_rt_gstr((*(P374)rt_nil_check((*(P408)rt_nil_check(F->q_4057)).name_)), (*(P374)rt_nil_check((*(P408)rt_nil_check(F->p_1733)).name_))))) {
+while ((F->q_4064 != NULL)) {
+if ((((G_NV((*(P408)rt_nil_check(F->q_4064)).kind_) == ((rt_int)49LL)) || (G_NV((*(P408)rt_nil_check(F->q_4064)).kind_) == ((rt_int)51LL))) && eq_rt_gstr((*(P374)rt_nil_check((*(P408)rt_nil_check(F->q_4064)).name_)), (*(P374)rt_nil_check((*(P408)rt_nil_check(F->p_1733)).name_))))) {
 F->result_ = 1;
 goto ret_;
 }
-F->q_4057 = (*(P408)rt_nil_check(F->q_4057)).next_;
+F->q_4064 = (*(P408)rt_nil_check(F->q_4064)).next_;
 }
-L_end_4058: ;
+L_end_4065: ;
 F->result_ = 0;
 goto ret_;
   rt_raise(RT_X_INIT);
@@ -21432,17 +21464,17 @@ ret_:
 static void f_find_address_specifications_1735(struct f_greenc_234fr *up_) {
   struct f_find_address_specifications_1735fr *F = rt_alloc(sizeof *F);
 F->up = up_;
-{ rt_int lo4061 = ((rt_int)1LL), hi4062 = rt_sub(G_NV(F->up->ntoks_347), ((rt_int)1LL));
-for (rt_int it4063 = lo4061; it4063 <= hi4062; it4063++) {
-F->i_4060 = it4063;
-if (((G_NV((*(P344)rt_nil_check(({ A343 ix4064 = F->up->toks_346; ix4064.p[rt_index(F->i_4060, ix4064.lo, ix4064.hi) - ix4064.lo]; }))).kind_) == ((rt_int)2LL)) && (G_NV((*(P344)rt_nil_check(({ A343 ix4065 = F->up->toks_346; ix4065.p[rt_index(rt_add(F->i_4060, ((rt_int)1LL)), ix4065.lo, ix4065.hi) - ix4065.lo]; }))).kind_) == ((rt_int)2LL)))) {
-if ((eq_rt_gstr((*(P374)rt_nil_check((*(P344)rt_nil_check(({ A343 ix4066 = F->up->toks_346; ix4066.p[rt_index(F->i_4060, ix4066.lo, ix4066.hi) - ix4066.lo]; }))).s_)), rt_g_lit("USE", 3)) && eq_rt_gstr((*(P374)rt_nil_check((*(P344)rt_nil_check(({ A343 ix4067 = F->up->toks_346; ix4067.p[rt_index(rt_add(F->i_4060, ((rt_int)1LL)), ix4067.lo, ix4067.hi) - ix4067.lo]; }))).s_)), rt_g_lit("AT", 2)))) {
+{ rt_int lo4068 = ((rt_int)1LL), hi4069 = rt_sub(G_NV(F->up->ntoks_347), ((rt_int)1LL));
+for (rt_int it4070 = lo4068; it4070 <= hi4069; it4070++) {
+F->i_4067 = it4070;
+if (((G_NV((*(P344)rt_nil_check(({ A343 ix4071 = F->up->toks_346; ix4071.p[rt_index(F->i_4067, ix4071.lo, ix4071.hi) - ix4071.lo]; }))).kind_) == ((rt_int)2LL)) && (G_NV((*(P344)rt_nil_check(({ A343 ix4072 = F->up->toks_346; ix4072.p[rt_index(rt_add(F->i_4067, ((rt_int)1LL)), ix4072.lo, ix4072.hi) - ix4072.lo]; }))).kind_) == ((rt_int)2LL)))) {
+if ((eq_rt_gstr((*(P374)rt_nil_check((*(P344)rt_nil_check(({ A343 ix4073 = F->up->toks_346; ix4073.p[rt_index(F->i_4067, ix4073.lo, ix4073.hi) - ix4073.lo]; }))).s_)), rt_g_lit("USE", 3)) && eq_rt_gstr((*(P374)rt_nil_check((*(P344)rt_nil_check(({ A343 ix4074 = F->up->toks_346; ix4074.p[rt_index(rt_add(F->i_4067, ((rt_int)1LL)), ix4074.lo, ix4074.hi) - ix4074.lo]; }))).s_)), rt_g_lit("AT", 2)))) {
 F->up->has_views_459 = 1;
 }
 }
 }
 }
-L_end_4059: ;
+L_end_4066: ;
 ret_:
 
   return;
@@ -21463,52 +21495,52 @@ static void f_print_listing_1738(struct f_greenc_234fr *up_, rt_int lines_1737) 
   struct f_print_listing_1738fr *F = rt_alloc(sizeof *F);
 F->up = up_;
 F->lines_1737 = lines_1737;
-F->lname_4068 = cp_rt_gstr(f_listing_file_1736(F->up));
-F->f_4069.h_ = INT64_MIN;
-F->f_4069.h_ = g_dflt_101;
-F->on_4070 = INT_MIN;
-F->on_4070 = 1;
-F->k_4071 = INT64_MIN;
-if ((({ rt_gstr at4072 = F->lname_4068; at4072.hi >= at4072.lo ? at4072.hi - at4072.lo + 1 : (rt_int)0; }) == ((rt_int)0LL))) {
+F->lname_4075 = cp_rt_gstr(f_listing_file_1736(F->up));
+F->f_4076.h_ = INT64_MIN;
+F->f_4076.h_ = g_dflt_101;
+F->on_4077 = INT_MIN;
+F->on_4077 = 1;
+F->k_4078 = INT64_MIN;
+if ((({ rt_gstr at4079 = F->lname_4075; at4079.hi >= at4079.lo ? at4079.hi - at4079.lo + 1 : (rt_int)0; }) == ((rt_int)0LL))) {
 goto ret_;
 }
-f_create_3(&F->f_4069, F->lname_4068);
-{ rt_int lo4075 = ((rt_int)1LL), hi4076 = F->lines_1737;
-for (rt_int it4077 = lo4075; it4077 <= hi4076; it4077++) {
-F->l_4074 = it4077;
-{ rt_int lo4080 = ((rt_int)1LL), hi4081 = G_NV(F->up->nlisting_466);
-for (rt_int it4082 = lo4080; it4082 <= hi4081; it4082++) {
-F->m_4079 = it4082;
-if (((G_NV(({ A460 ix4083 = F->up->listing_lines_461; ix4083.p[rt_index(F->m_4079, ix4083.lo, ix4083.hi) - ix4083.lo]; })) == F->l_4074) && (G_NV(({ A463 ix4084 = F->up->listing_what_464; ix4084.p[rt_index(F->m_4079, ix4084.lo, ix4084.hi) - ix4084.lo]; })) == 78))) {
-F->on_4070 = 1;
+f_create_3(&F->f_4076, F->lname_4075);
+{ rt_int lo4082 = ((rt_int)1LL), hi4083 = F->lines_1737;
+for (rt_int it4084 = lo4082; it4084 <= hi4083; it4084++) {
+F->l_4081 = it4084;
+{ rt_int lo4087 = ((rt_int)1LL), hi4088 = G_NV(F->up->nlisting_466);
+for (rt_int it4089 = lo4087; it4089 <= hi4088; it4089++) {
+F->m_4086 = it4089;
+if (((G_NV(({ A460 ix4090 = F->up->listing_lines_461; ix4090.p[rt_index(F->m_4086, ix4090.lo, ix4090.hi) - ix4090.lo]; })) == F->l_4081) && (G_NV(({ A463 ix4091 = F->up->listing_what_464; ix4091.p[rt_index(F->m_4086, ix4091.lo, ix4091.hi) - ix4091.lo]; })) == 78))) {
+F->on_4077 = 1;
 }
 }
 }
-L_end_4078: ;
-if (G_NV(F->on_4070)) {
-rt_g_fput_int((F->f_4069).h_, F->l_4074, ((rt_int)5LL));
-rt_g_fput((F->f_4069).h_, rt_g_g2s(rt_g_lit("  ", 2)));
-if ((({ A436 ix4085 = F->up->src_lines_437; ix4085.p[rt_index(F->l_4074, ix4085.lo, ix4085.hi) - ix4085.lo]; }) != NULL)) {
-rt_g_fput((F->f_4069).h_, rt_g_g2s((*(P374)rt_nil_check(({ A436 ix4086 = F->up->src_lines_437; ix4086.p[rt_index(F->l_4074, ix4086.lo, ix4086.hi) - ix4086.lo]; })))));
+L_end_4085: ;
+if (G_NV(F->on_4077)) {
+rt_g_fput_int((F->f_4076).h_, F->l_4081, ((rt_int)5LL));
+rt_g_fput((F->f_4076).h_, rt_g_g2s(rt_g_lit("  ", 2)));
+if ((({ A436 ix4092 = F->up->src_lines_437; ix4092.p[rt_index(F->l_4081, ix4092.lo, ix4092.hi) - ix4092.lo]; }) != NULL)) {
+rt_g_fput((F->f_4076).h_, rt_g_g2s((*(P374)rt_nil_check(({ A436 ix4093 = F->up->src_lines_437; ix4093.p[rt_index(F->l_4081, ix4093.lo, ix4093.hi) - ix4093.lo]; })))));
 }
-rt_g_fput((F->f_4069).h_, rt_g_g2s(rt_g_lit("\n", 1)));
+rt_g_fput((F->f_4076).h_, rt_g_g2s(rt_g_lit("\n", 1)));
 }
-{ rt_int lo4089 = ((rt_int)1LL), hi4090 = G_NV(F->up->nlisting_466);
-for (rt_int it4091 = lo4089; it4091 <= hi4090; it4091++) {
-F->m_4088 = it4091;
-if (((G_NV(({ A460 ix4092 = F->up->listing_lines_461; ix4092.p[rt_index(F->m_4088, ix4092.lo, ix4092.hi) - ix4092.lo]; })) == F->l_4074) && (G_NV(({ A463 ix4093 = F->up->listing_what_464; ix4093.p[rt_index(F->m_4088, ix4093.lo, ix4093.hi) - ix4093.lo]; })) == 70))) {
-F->on_4070 = 0;
-} else if (((G_NV(({ A460 ix4094 = F->up->listing_lines_461; ix4094.p[rt_index(F->m_4088, ix4094.lo, ix4094.hi) - ix4094.lo]; })) == F->l_4074) && (G_NV(({ A463 ix4095 = F->up->listing_what_464; ix4095.p[rt_index(F->m_4088, ix4095.lo, ix4095.hi) - ix4095.lo]; })) == 80))) {
-rt_g_fputc((F->f_4069).h_, 12);
-rt_g_fput((F->f_4069).h_, rt_g_g2s(rt_g_lit("\n", 1)));
-}
-}
-}
-L_end_4087: ;
+{ rt_int lo4096 = ((rt_int)1LL), hi4097 = G_NV(F->up->nlisting_466);
+for (rt_int it4098 = lo4096; it4098 <= hi4097; it4098++) {
+F->m_4095 = it4098;
+if (((G_NV(({ A460 ix4099 = F->up->listing_lines_461; ix4099.p[rt_index(F->m_4095, ix4099.lo, ix4099.hi) - ix4099.lo]; })) == F->l_4081) && (G_NV(({ A463 ix4100 = F->up->listing_what_464; ix4100.p[rt_index(F->m_4095, ix4100.lo, ix4100.hi) - ix4100.lo]; })) == 70))) {
+F->on_4077 = 0;
+} else if (((G_NV(({ A460 ix4101 = F->up->listing_lines_461; ix4101.p[rt_index(F->m_4095, ix4101.lo, ix4101.hi) - ix4101.lo]; })) == F->l_4081) && (G_NV(({ A463 ix4102 = F->up->listing_what_464; ix4102.p[rt_index(F->m_4095, ix4102.lo, ix4102.hi) - ix4102.lo]; })) == 80))) {
+rt_g_fputc((F->f_4076).h_, 12);
+rt_g_fput((F->f_4076).h_, rt_g_g2s(rt_g_lit("\n", 1)));
 }
 }
-L_end_4073: ;
-f_close_13(&F->f_4069);
+}
+L_end_4094: ;
+}
+}
+L_end_4080: ;
+f_close_13(&F->f_4076);
 ret_:
 
   return;
@@ -21518,16 +21550,16 @@ static int f_last_unit_1740(struct f_greenc_234fr *up_, P408 p_1739) {
   struct f_last_unit_1740fr *F = rt_alloc(sizeof *F);
 F->up = up_;
 F->p_1739 = p_1739;
-F->q_4096 = NULL;
-F->q_4096 = (*(P408)rt_nil_check(F->p_1739)).next_;
-while ((F->q_4096 != NULL)) {
-if ((G_NV(({ rt_gstr ix4098 = (*(P374)rt_nil_check((*(P408)rt_nil_check(F->q_4096)).formal_)); ix4098.p[rt_index(((rt_int)1LL), ix4098.lo, ix4098.hi) - ix4098.lo]; })) != 33)) {
+F->q_4103 = NULL;
+F->q_4103 = (*(P408)rt_nil_check(F->p_1739)).next_;
+while ((F->q_4103 != NULL)) {
+if ((G_NV(({ rt_gstr ix4105 = (*(P374)rt_nil_check((*(P408)rt_nil_check(F->q_4103)).formal_)); ix4105.p[rt_index(((rt_int)1LL), ix4105.lo, ix4105.hi) - ix4105.lo]; })) != 33)) {
 F->result_ = 0;
 goto ret_;
 }
-F->q_4096 = (*(P408)rt_nil_check(F->q_4096)).next_;
+F->q_4103 = (*(P408)rt_nil_check(F->q_4103)).next_;
 }
-L_end_4097: ;
+L_end_4104: ;
 F->result_ = 1;
 goto ret_;
   rt_raise(RT_X_INIT);
