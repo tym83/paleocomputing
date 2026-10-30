@@ -94,6 +94,24 @@ PROC declare_body(CONST elems : node) IMPORTS ALL;
             END IF;
          END IF;
       END IF;
+      % := , = and < for a new type: used wherever the type assigns or
+      % compares, components of aggregates and CASE included (13.2, 13.6)
+      IF (e.kind = n_proc AND e.name.ALL = ":=") OR (e.kind = n_func AND (e.name.ALL = "=" OR e.name.ALL = "<")) THEN
+         VAR y : sym := lookup_decl(e);
+         IF y /= NIL AND y.params /= NIL AND y.params.next /= NIL AND y.params.next.next = NIL
+               AND y.params.t.kind = t_new AND same(y.params.t, y.params.next.t) THEN
+            IF e.name.ALL = ":=" THEN
+               IF y.params.mode /= m_var THEN
+                  fail(e.line, "the first formal of := is a VAR formal (13.2)");
+               END IF;
+               y.params.t.assignp := y;
+            ELSEIF e.name.ALL = "=" THEN
+               y.params.t.eqp := y;
+            ELSE
+               y.params.t.ltp := y;
+            END IF;
+         END IF;
+      END IF;
       e := e.next;
    END REPEAT;
 END PROC declare_body;
@@ -1715,7 +1733,60 @@ PROC st_if(CONST s : node) IMPORTS ALL;
    END IF;
 END PROC st_if;
 
+% a CASE whose selector and labels are manifest translates only the body
+% selected (5.5)
+ABNORMAL FUNC manifest_case(CONST s : node) => BOOL IMPORTS ALL;
+   VAR ok : BOOL;
+   VAR sv : mval := meval(s.a, ok);
+   VAR a : node := s.b;
+   IF NOT ok OR (sv.kind /= t_int AND sv.kind /= t_bool AND sv.kind /= t_enum) THEN
+      RETURN FALSE;
+   END IF;
+   WHILE a /= NIL REPEAT
+      VAR lab : node := a.a;
+      WHILE lab /= NIL REPEAT
+         VAR lo : mval := meval(lab.a, ok);
+         VAR hi : mval := lo;
+         IF NOT ok OR lo.kind /= sv.kind THEN
+            RETURN FALSE;
+         END IF;
+         IF lab.b /= NIL THEN
+            hi := meval(lab.b, ok);
+            IF NOT ok OR hi.kind /= sv.kind OR sv.kind = t_enum THEN
+               RETURN FALSE;
+            END IF;
+         END IF;
+         IF (sv.kind = t_enum AND sv.s.ALL = lo.s.ALL) OR (sv.kind /= t_enum AND lo.i <= sv.i AND sv.i <= hi.i) THEN
+            emit("{");
+            gen_body(a.b);
+            emit("}");
+            RETURN TRUE;
+         END IF;
+         lab := lab.next;
+      END REPEAT;
+      a := a.next;
+   END REPEAT;
+   IF s.flag = 1 THEN
+      emit("{");
+      gen_body(s.c);
+      emit("}");
+   ELSE
+      emit("rt_raise(RT_X_CASE);");
+   END IF;
+   RETURN TRUE;
+END FUNC manifest_case;
+
 PROC st_case(CONST s : node) IMPORTS ALL;
+   VAR st, vt : typ;
+   VAR first : BOOL := TRUE;
+   VAR a : node := s.b;
+   IF manifest_case(s) THEN
+      RETURN;
+   END IF;
+   st_case2(s);
+END PROC st_case;
+
+PROC st_case2(CONST s : node) IMPORTS ALL;
    VAR st, vt : typ;
    VAR first : BOOL := TRUE;
    VAR a : node := s.b;
@@ -1730,6 +1801,12 @@ PROC st_case(CONST s : node) IMPORTS ALL;
             CONST v := gexpr(lab.a, st, vt);
             check_type(vt, st, s.line);
             conds := mk(conds.ALL & " || " & eq_code(st, tmp, v));
+         ELSEIF st.kind = t_new AND st.ltp /= NIL THEN
+            % a range label with the user's < (13.6)
+            CONST lo := gexpr(lab.a, st, vt);
+            CONST hi := gexpr(lab.b, st, vt);
+            conds := mk(conds.ALL & " || (!" & user_call2(st.ltp, tmp, TRUE, lo, FALSE) & " && !"
+                        & user_call2(st.ltp, hi, FALSE, tmp, TRUE) & ")");
          ELSE
             CONST lo := gexpr(lab.a, st, vt);
             CONST hi := gexpr(lab.b, st, vt);
@@ -1758,7 +1835,66 @@ PROC st_case(CONST s : node) IMPORTS ALL;
    END IF;
    emit("}");
    emit("}");
-END PROC st_case;
+END PROC st_case2;
+
+% FOR i : s REPEAT over a user-defined subtype s (13.7): from s.MIN to s.MAX
+% by the user's SUCC (PRED for REVERSE); MIN and MAX are those of the
+% underlying subtype
+PROC user_for(CONST s : node, CONST t : typ, CONST c : cons) IMPORTS ALL;
+   VAR y : sym := new_sym(y_const, s.name);
+   VAR saved : lines := psub;
+   VAR p : node := t.tparams;
+   VAR iv : node := nn(n_name, s.line);
+   VAR st : typ;
+   CONST access := storage(s.name.ALL, t);
+   VAR uv : text := mk(access);
+   IF t.tparams /= NIL THEN
+      uv := mk(access & ".all");
+   END IF;
+   IF NOT scalar_kind(base_of(t.under)) OR t.elemcons = NIL OR t.elemcons.lo = NIL THEN
+      fail(s.line, "a FOR over " & t.name.ALL & " needs an underlying subtype with a range");
+   END IF;
+   emit("{");
+   init_storage(access, t, c);
+   WHILE p /= NIL REPEAT
+      VAR l1, l2 : lines;
+      ALLOC l1 PTR;
+      ALLOC l2 PTR;
+      l1.s := mk("@P_" & lower_s(p.name.ALL) & "@");
+      l2.s := mk(access & ".p_" & lower_s(p.name.ALL));
+      l1.next := l2;
+      l2.next := psub;
+      psub := l1;
+      p := p.next;
+   END REPEAT;
+   BEGIN
+      CONST lo := subst(t.elemcons.lo.ALL);
+      CONST hi := subst(t.elemcons.hi.ALL);
+      psub := saved;
+      IF s.ival = 1 THEN
+         emit(uv.ALL & " = " & hi & "; if (" & lo & " <= " & uv.ALL & ") for (;;) {");
+      ELSE
+         emit(uv.ALL & " = " & lo & "; if (" & uv.ALL & " <= " & hi & ") for (;;) {");
+      END IF;
+      open_scope;
+      y.t := t;
+      y.c := c;
+      bind(y, access);
+      y.ro_flag := TRUE;
+      define(y, s.line);
+      gen_body(s.b);
+      iv.name := s.name;
+      IF s.ival = 1 THEN
+         emit("if (" & uv.ALL & " == " & lo & ") break;");
+         emit(assign_code(access, t, gcall(call_node("PRED", iv, s.line), FALSE, st), c));
+      ELSE
+         emit("if (" & uv.ALL & " == " & hi & ") break;");
+         emit(assign_code(access, t, gcall(call_node("SUCC", iv, s.line), FALSE, st), c));
+      END IF;
+      close_scope;
+      emit("} }");
+   END;
+END PROC user_for;
 
 PROC st_repeat(CONST s : node) IMPORTS ALL;
    VAR t : typ;
@@ -1771,6 +1907,10 @@ PROC st_repeat(CONST s : node) IMPORTS ALL;
       RETURN;
    END IF;
    t := resolve_subtype(s.a, c);
+   IF t.kind = t_new AND (t.tparams /= NIL OR NOT scalar_kind(base_of(t))) THEN
+      user_for(s, t, c);
+      RETURN;
+   END IF;
    c := base_cons(t, c);
    IF base_of(t).kind = t_enum AND c.lo = NIL THEN
       c := new_cons;
@@ -1785,7 +1925,7 @@ PROC st_repeat(CONST s : node) IMPORTS ALL;
       CONST hiv := new_name("hi");
       CONST it := new_name("it");
       VAR y : sym := new_sym(y_const, s.name);
-      emit("{ rt_int " & lov & " = " & c.lo.ALL & ", " & hiv & " = " & c.hi.ALL & ";");
+      emit("{ rt_int " & lov & " = " & clo(c) & ", " & hiv & " = " & chi(c) & ";");
       IF s.ival = 1 THEN
          emit("for (rt_int " & it & " = " & hiv & "; " & it & " >= " & lov & "; " & it & "--) {");
       ELSE

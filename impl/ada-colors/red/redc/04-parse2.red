@@ -294,6 +294,28 @@ FUNC is_definable(READONLY w : STRING[ASCII]) => BOOL;
 END FUNC is_definable;
 
 ABNORMAL FUNC definable_name => text IMPORTS ALL;
+   IF at_op(".") AND kind_at(1) = k_id THEN
+      % a dot selector .id (13.4)
+      tpos := tpos + 2;
+      RETURN mk("." & toks(tpos - 1).s.ALL);
+   ELSEIF at_op("(") AND kind_at(1) = k_op AND text_at(1).ALL = "*" THEN
+      % a subscripting selector such as (*) or (*, *..*) (13.4)
+      VAR r : text := mk("(");
+      tpos := tpos + 1;
+      WHILE NOT at_op(")") REPEAT
+         IF accept_op("*") THEN
+            r := mk(r.ALL & "*");
+         ELSEIF accept_op("..") THEN
+            r := mk(r.ALL & "..");
+         ELSEIF accept_op(",") THEN
+            r := mk(r.ALL & ",");
+         ELSE
+            perror("a subscripting selector is made of *, .. and ,");
+         END IF;
+      END REPEAT;
+      tpos := tpos + 1;
+      RETURN mk(r.ALL & ")");
+   END IF;
    IF at_kind(k_id) OR (at_kind(k_op) AND is_definable(toks(tpos).s.ALL)) THEN
       tpos := tpos + 1;
       RETURN toks(tpos - 1).s;
@@ -321,6 +343,10 @@ ABNORMAL FUNC subprogram_decl => node IMPORTS ALL;
       x.flag := 1;
    END IF;
    x.name := definable_name;
+   IF x.name.ALL = ">" OR x.name.ALL = "<=" OR x.name.ALL = ">=" OR x.name.ALL = "/=" THEN
+      % they follow from = and < (13.1, 13.2)
+      fail(line, x.name.ALL & " is not a definable symbol");
+   END IF;
    IF at_op("[") THEN
       x.e := formal_tt;
    END IF;

@@ -49,7 +49,21 @@ END FUNC check_import;
 
 % a C identifier for a name that may be an operator symbol (13.2)
 FUNC c_ident(READONLY s : STRING[ASCII]) => STRING[ASCII];
-   IF s = "+" THEN
+   IF s.LEN > 1 AND s(1) = 'PERIOD THEN
+      RETURN "dot_" & lower_s(s(2 .. s.LEN));
+   ELSEIF s.LEN > 1 AND s(1) = 'LPAREN THEN
+      VAR r : text := mk("sel_");
+      FOR i : INT(2 .. s.LEN - 1) REPEAT
+         IF s(i) = 'STAR THEN
+            r := mk(r.ALL & "s");
+         ELSEIF s(i) = 'COMMA THEN
+            r := mk(r.ALL & "_");
+         ELSEIF s(i) = 'PERIOD THEN
+            r := mk(r.ALL & "r");
+         END IF;
+      END REPEAT;
+      RETURN r.ALL;
+   ELSEIF s = "+" THEN
       RETURN "op_plus";
    ELSEIF s = "-" THEN
       RETURN "op_minus";
@@ -599,6 +613,9 @@ ABNORMAL FUNC gexpr(CONST e : node, CONST want : typ, OUT t : typ) => STRING[ASC
             RETURN gcall(e, FALSE, t);
          END IF;
       END IF;
+      IF user_subscript(e) /= NIL THEN
+         RETURN gcall(user_subscript(e), FALSE, t);
+      END IF;
       BEGIN
          CONST base := gexpr(e.a, NIL, bt);
          ro := TRUE;
@@ -608,6 +625,8 @@ ABNORMAL FUNC gexpr(CONST e : node, CONST want : typ, OUT t : typ) => STRING[ASC
          END IF;
          RETURN init_chk(t, code.ALL);
       END;
+   ELSEIF k = n_select AND user_dot(e) /= NIL THEN
+      RETURN gcall(user_dot(e), FALSE, t);
    ELSEIF k = n_select THEN
       IF (e.name.ALL = "LEN" OR e.name.ALL = "MIN" OR e.name.ALL = "MAX" OR e.name.ALL = "PREC"
             OR e.name.ALL = "ACCESS" OR e.name.ALL = "USE") AND NOT own_attribute(e) THEN
@@ -731,6 +750,98 @@ ABNORMAL FUNC set_operands(CONST e : node, CONST want : typ) => typ IMPORTS ALL;
    END IF;
    RETURN NIL;
 END FUNC set_operands;
+
+% primary.id with a user-defined selector .id (13.4): its invocation
+ABNORMAL FUNC user_dot(CONST e : node) => node IMPORTS ALL;
+   VAR arg : node;
+   IF lookup("." & e.name.ALL) = NIL THEN
+      RETURN NIL;
+   END IF;
+   arg := copy_node(e.a);
+   IF user_op("." & e.name.ALL, arg) = NIL THEN
+      RETURN NIL;
+   END IF;
+   RETURN op_call("." & e.name.ALL, arg, e.line);
+END FUNC user_dot;
+
+% primary(exp, lo..hi, ...) with a user-defined selector (*, *..*, ...) (13.4)
+ABNORMAL FUNC user_subscript(CONST e : node) => node IMPORTS ALL;
+   VAR name : text := mk("(");
+   VAR args, tail : node;
+   VAR a : node := e.b;
+   IF e.a.kind = n_name AND lookup(e.a.name.ALL) /= NIL AND lookup(e.a.name.ALL).kind /= y_var
+         AND lookup(e.a.name.ALL).kind /= y_const THEN
+      RETURN NIL;
+   END IF;
+   append(args, tail, copy_node(e.a));
+   WHILE a /= NIL REPEAT
+      IF name.LEN > 1 THEN
+         name := mk(name.ALL & ",");
+      END IF;
+      IF a.kind = n_range THEN
+         name := mk(name.ALL & "*..*");
+         append(args, tail, copy_node(a.a));
+         append(args, tail, copy_node(a.b));
+      ELSE
+         name := mk(name.ALL & "*");
+         append(args, tail, copy_node(a));
+      END IF;
+      a := a.next;
+   END REPEAT;
+   name := mk(name.ALL & ")");
+   IF lookup(name.ALL) = NIL OR user_op(name.ALL, args) = NIL THEN
+      RETURN NIL;
+   END IF;
+   RETURN op_call(name.ALL, args, e.line);
+END FUNC user_subscript;
+
+ABNORMAL FUNC op_call(READONLY name : STRING[ASCII], CONST args : node, CONST line : INT) => node;
+   VAR call : node := nn(n_apply, line);
+   VAR f : node := nn(n_name, line);
+   f.name := mk(name);
+   call.a := f;
+   call.b := args;
+   RETURN call;
+END FUNC op_call;
+
+% /=, >, <= and >= follow from a user-defined = and < (13.2)
+ABNORMAL FUNC derived_relation(CONST e : node) => node IMPORTS ALL;
+   VAR l, r : node;
+   VAR has_eq, has_lt : BOOL := FALSE;
+   l := copy_node(e.a);
+   r := copy_node(e.b);
+   l.next := r;
+   IF lookup("=") /= NIL THEN
+      has_eq := user_op("=", l) /= NIL;
+   END IF;
+   IF lookup("<") /= NIL THEN
+      l := copy_node(e.a);
+      r := copy_node(e.b);
+      l.next := r;
+      has_lt := user_op("<", l) /= NIL;
+   END IF;
+   IF e.name.ALL = "/=" AND has_eq THEN
+      RETURN rel_not(rel_node("=", e.a, e.b, e.line), e.line);
+   ELSEIF e.name.ALL = ">" AND has_lt THEN
+      RETURN rel_node("<", e.b, e.a, e.line);
+   ELSEIF e.name.ALL = "<=" AND has_lt AND has_eq THEN
+      RETURN binop(mk("OR"), rel_node("<", e.a, e.b, e.line), rel_node("=", e.a, e.b, e.line), e.line);
+   ELSEIF e.name.ALL = ">=" AND has_lt AND has_eq THEN
+      RETURN binop(mk("OR"), rel_node("<", e.b, e.a, e.line), rel_node("=", e.a, e.b, e.line), e.line);
+   END IF;
+   RETURN NIL;
+END FUNC derived_relation;
+
+ABNORMAL FUNC rel_node(READONLY op : STRING[ASCII], CONST a : node, CONST b : node, CONST line : INT) => node;
+   RETURN binop(mk(op), copy_node(a), copy_node(b), line);
+END FUNC rel_node;
+
+ABNORMAL FUNC rel_not(CONST x : node, CONST line : INT) => node;
+   VAR n : node := nn(n_unop, line);
+   n.name := mk("NOT");
+   n.a := x;
+   RETURN n;
+END FUNC rel_not;
 
 % a node used in an argument list needs its own next link
 ABNORMAL FUNC copy_node(CONST e : node) => node;
@@ -1010,6 +1121,9 @@ ABNORMAL FUNC gbinop(CONST e : node, CONST want : typ, OUT t : typ) => STRING[AS
    VAR ta, tb, hint : typ;
    VAR uy : sym;
    t := ty_bool;
+   IF (op.ALL = "/=" OR op.ALL = ">" OR op.ALL = "<=" OR op.ALL = ">=") AND derived_relation(e) /= NIL THEN
+      RETURN gexpr(derived_relation(e), ty_bool, t);
+   END IF;
    IF lookup(op.ALL) /= NIL THEN
       VAR l, r : node;
       l := copy_node(e.a);

@@ -146,7 +146,7 @@ TYPE typ : PTR RECORD[kind : INT, name : text, lits : node,
                       fields : field, target : typ, decl : node,
                       cname : text, forward, defined, helpers : BOOL,
                       initp, finalp, tpsyms : sym, gen, gbinds : sym, next : typ,
-                      ndim : INT, idxs : tlist];
+                      ndim : INT, idxs : tlist, assignp, eqp, ltp : sym];
 
 % the index types of an array, one for each dimension (C.7)
 TYPE tlist : PTR RECORD[t : typ, next : tlist];

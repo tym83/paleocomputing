@@ -1792,8 +1792,14 @@ ABNORMAL FUNC mcopy(CONST t : typ) => STRING[ASCII] IMPORTS ALL;
       l.next := mcopies;
       mcopies := l;
       put(out_protos, "static void " & name & "(void *d, const void *s);");
-      put(out_funcs, "static void " & name & "(void *d, const void *s) { *(" & ct & " *)d = "
-          & copy_code(t, "*(const " & ct & " *)s") & "; }");
+      IF t.kind = t_new AND top_level(t.assignp) THEN
+         % message passing assigns with the user's := (13.2)
+         put(out_funcs, "static void " & name & "(void *d, const void *s) { " & user_call2(t.assignp, "*(" & ct
+             & " *)d", TRUE, "*(const " & ct & " *)s", FALSE) & "; }");
+      ELSE
+         put(out_funcs, "static void " & name & "(void *d, const void *s) { *(" & ct & " *)d = "
+             & copy_code(t, "*(const " & ct & " *)s") & "; }");
+      END IF;
    END IF;
    RETURN name;
 END FUNC mcopy;
@@ -1802,8 +1808,43 @@ FUNC composite(CONST t : typ) => BOOL;
    RETURN t.kind = t_array OR t.kind = t_record OR t.kind = t_union OR (t.kind = t_new AND t.tparams /= NIL);
 END FUNC composite;
 
+% an invocation of a user-defined := , = or < (13.2) on C operands; a and b
+% are variables when lv_a, lv_b
+ABNORMAL FUNC user_call2(CONST y : sym, READONLY a : STRING[ASCII], CONST lv_a : BOOL, READONLY b : STRING[ASCII],
+                         CONST lv_b : BOOL) => STRING[ASCII] IMPORTS ALL;
+   VAR args : text := mk("");
+   IF y.level > 0 THEN
+      args := mk("F");
+      FOR i : INT(1 .. cur_level - y.level) REPEAT
+         args := mk(args.ALL & "->up");
+      END REPEAT;
+      args := mk(args.ALL & ", ");
+   END IF;
+   RETURN y.cname.ALL & "(" & args.ALL & user_arg(y.params, a, lv_a) & ", " & user_arg(y.params.next, b, lv_b) & ")";
+END FUNC user_call2;
+
+ABNORMAL FUNC user_arg(CONST pm : parm, READONLY v : STRING[ASCII], CONST lv : BOOL) => STRING[ASCII] IMPORTS ALL;
+   IF pm.mode = m_const THEN
+      RETURN copy_code(pm.t, v);
+   ELSEIF lv THEN
+      RETURN "&(" & v & ")";
+   END IF;
+   BEGIN
+      CONST ct := ctype(pm.t);
+      RETURN "({ " & ct & " *b_ = rt_alloc(sizeof(" & ct & ")); *b_ = " & v & "; b_; })";
+   END;
+END FUNC user_arg;
+
+% can generated helpers, which have no frame, invoke y?
+FUNC top_level(CONST y : sym) => BOOL;
+   RETURN y /= NIL AND y.level = 0;
+END FUNC top_level;
+
 ABNORMAL FUNC assign_code(READONLY lval : STRING[ASCII], CONST t : typ, READONLY v : STRING[ASCII],
                           CONST c : cons) => STRING[ASCII] IMPORTS ALL;
+   IF t.kind = t_new AND t.assignp /= NIL AND (in_func OR top_level(t.assignp)) THEN
+      RETURN user_call2(t.assignp, lval, TRUE, v, FALSE) & ";";
+   END IF;
    IF t.kind = t_new AND t.tparams = NIL THEN
       RETURN assign_code(lval, t.under, v, c);
    END IF;
@@ -1840,6 +1881,9 @@ END FUNC copy_code;
 
 ABNORMAL FUNC eq_code(CONST t : typ, READONLY a : STRING[ASCII], READONLY b : STRING[ASCII])
       => STRING[ASCII] IMPORTS ALL;
+   IF t.kind = t_new AND t.eqp /= NIL AND (in_func OR top_level(t.eqp)) THEN
+      RETURN user_call2(t.eqp, a, FALSE, b, FALSE);
+   END IF;
    IF t.kind = t_new AND t.tparams = NIL THEN
       RETURN eq_code(t.under, a, b);
    END IF;
