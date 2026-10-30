@@ -610,6 +610,7 @@ struct rt_task {
   rt_waiter *awl;          /* the records armed for that wait */
   int atimed, atimer_alt;
   rt_int awake;
+  rt_int aclock;           /* RED activation clock (10.4) */
 };
 
 static pthread_mutex_t G = PTHREAD_MUTEX_INITIALIZER;
@@ -744,6 +745,12 @@ static int advance_clock(void) {
     }
   }
   if (!any) return 0;
+  /* the activation clocks run for activations that are running or delayed
+   * by the clock alone, not for those waiting on other activations */
+  if (next > now)
+    for (rt_task *t = all_tasks; t; t = t->all_next)
+      if (t->state == T_READY || t->state == T_RUNNING || (t->state == T_BLOCKED && t->timed && !t->wl))
+        t->aclock += next - now;
   if (next > now) now = next;
   for (rt_task *t = all_tasks; t; t = t->all_next) {
     if (t->state == T_BLOCKED && t->timed && t->wake <= now) {
@@ -1572,14 +1579,16 @@ static void scan_word(uintptr_t w) {
   }
 }
 
-void rt_free(void **v) {
-  uintptr_t target = (uintptr_t)*v;
-  blockrec *tb;
+/* the dynamic variables of types with FINALIZE, and how to finalize them */
+typedef struct { uintptr_t p; rt_finfn fin; void *env; } finrec;
+static finrec *fins;
+static size_t nfins, cfins;
+
+/* mark everything reachable; count the words that point into [target,
+ * target + tn), skipping the word at skip and the target's own contents */
+static size_t mark_reachable(uintptr_t target, size_t tn, uintptr_t skip) {
   size_t refs = 0;
-  if (!target) return;
-  tb = bfind(target);
-  if (!tb) rt_raise_msg(RT_X_FREE, "not a dynamic variable");
-  size_t tn = tb->n;
+  blockrec *tb = target ? bfind(target) : NULL;
   mark_epoch++;
   nwork = 0;
   for (size_t i = 0; i < nroots; i++) push_range(&work, &nwork, &cwork, roots[i].p, roots[i].n);
@@ -1587,22 +1596,96 @@ void rt_free(void **v) {
     for (size_t i = 0; i < s->depth; i++) push_range(&work, &nwork, &cwork, s->f[i].p, s->f[i].n);
   for (rt_task *t = all_tasks; t; t = t->all_next)
     if (t->state != T_DONE && t->frame) scan_word((uintptr_t)t->frame);
-  tb->mark = mark_epoch; /* the variable's own contents do not count */
+  if (tb) tb->mark = mark_epoch;
   while (nwork > 0) {
     range r = work[--nwork];
     uintptr_t a = ((uintptr_t)r.p + sizeof(void *) - 1) & ~(uintptr_t)(sizeof(void *) - 1);
     uintptr_t end = (uintptr_t)r.p + r.n;
     for (; a + sizeof(void *) <= end; a += sizeof(void *)) {
-      if (a == (uintptr_t)v) continue;
+      if (a == skip) continue;
       uintptr_t w = *(uintptr_t *)a;
-      if (w >= target && w < target + tn) refs++;
+      if (target && w >= target && w < target + tn) refs++;
       scan_word(w);
     }
   }
-  if (refs > 0) rt_raise(RT_X_FREE);
+  return refs;
+}
+
+static void forget_fin(uintptr_t p) {
+  for (size_t i = 0; i < nfins; i++)
+    if (fins[i].p == p) {
+      fins[i] = fins[--nfins];
+      return;
+    }
+}
+
+void rt_free_check(void **v) {
+  uintptr_t target = (uintptr_t)*v;
+  if (!target) return;
+  blockrec *tb = bfind(target);
+  if (!tb) rt_raise_msg(RT_X_FREE, "not a dynamic variable");
+  if (mark_reachable(target, tb->n, (uintptr_t)v) > 0) rt_raise(RT_X_FREE);
+}
+
+void rt_free(void **v) {
+  uintptr_t target = (uintptr_t)*v;
+  if (!target) return;
+  rt_free_check(v);
+  blockrec *tb = bfind(target);
+  forget_fin(target);
   tb->p = DEAD_BLOCK; /* stays counted in the load until the table grows */
   free((void *)target);
   *v = NULL;
+}
+
+void *rt_salloc_fin(size_t n, rt_finfn fin, void *env) {
+  void *p = rt_salloc(n);
+  if (nfins == cfins) {
+    cfins = cfins ? cfins * 2 : 64;
+    fins = realloc(fins, cfins * sizeof *fins);
+    if (!fins) {
+      fprintf(stderr, "*** out of memory\n");
+      exit(4);
+    }
+  }
+  fins[nfins++] = (finrec){(uintptr_t)p, fin, env};
+  return p;
+}
+
+/* a dynamic variable no pointer refers to has ceased to exist (13.3): it is
+ * finalized, and reclaimed unless its FINALIZE made it reachable again */
+void rt_collect(void) {
+  if (!nfins) return;
+  mark_reachable(0, 0, 0);
+  size_t n = 0;
+  finrec *dead = malloc(nfins * sizeof *dead);
+  for (size_t i = 0; i < nfins;) {
+    blockrec *b = bfind(fins[i].p);
+    if (b && b->mark != mark_epoch) {
+      dead[n++] = fins[i];
+      fins[i] = fins[--nfins];
+    } else {
+      i++;
+    }
+  }
+  for (size_t i = 0; i < n; i++) dead[i].fin((void *)dead[i].p, dead[i].env);
+  mark_reachable(0, 0, 0);
+  for (size_t i = 0; i < n; i++) {
+    blockrec *b = bfind(dead[i].p);
+    if (b && b->mark != mark_epoch) {
+      b->p = DEAD_BLOCK;
+      free((void *)dead[i].p);
+    }
+  }
+  free(dead);
+}
+
+/* the program ends: so does every dynamic variable still there */
+void rt_finalize_all(void) {
+  while (nfins > 0) {
+    finrec f = fins[--nfins];
+    f.fin((void *)f.p, f.env);
+  }
 }
 
 /* ---- start-up and shutdown ----------------------------------------------- */
@@ -3032,3 +3115,860 @@ void y_device(ysig *s, rt_int address) {
 
 /* a SIGNAL as a component of an array: tied to its monitor by y_sig_init */
 const ydesc y_d_sig = {YK_OPAQUE, sizeof(ysig), 0, 0, {0}, {0}, NULL, 0, NULL, NULL};
+
+/* ---- RED additions ------------------------------------------------------- */
+
+int rt_r_active(rt_act *a) { return a == NULL || a->active; }
+
+rstr rt_r_strsub(rstr s, rt_int len) {
+  if (s.len != len) rt_raise_msg(RT_X_SUBTYPE, "string length");
+  return s;
+}
+
+void rt_r_free_unchecked(void **v) {
+  uintptr_t target = (uintptr_t)*v;
+  if (!target) return;
+  blockrec *tb = bfind(target);
+  forget_fin(target);
+  if (tb) {
+    tb->p = DEAD_BLOCK;
+    free((void *)target);
+  }
+  *v = NULL;
+}
+
+struct rt_r_inside {
+  rt_act *who;
+  int depth;
+  rt_r_inside *next;
+};
+
+void rt_r_nonrec_enter(rt_r_nonrec *n, int nonrec, int nonreent, const char *name) {
+  rt_act *me = rt_me();
+  rt_r_inside *i;
+  for (i = n->in; i; i = i->next)
+    if (i->depth > 0) {
+      if ((nonrec && i->who == me) || (nonreent && i->who != me)) {
+        fflush(stdout);
+        fprintf(stderr, "*** %s invoked %s against its pragmat\n", name,
+                i->who == me ? "recursively" : "reentrantly");
+        exit(1);
+      }
+    }
+  for (i = n->in; i && i->who != me; i = i->next) {
+  }
+  if (!i) {
+    i = calloc(1, sizeof *i);
+    i->who = me;
+    i->next = n->in;
+    n->in = i;
+  }
+  i->depth++;
+}
+
+void rt_r_nonrec_leave(rt_r_nonrec *n) {
+  rt_act *me = rt_me();
+  for (rt_r_inside *i = n->in; i; i = i->next)
+    if (i->who == me && i->depth > 0) {
+      i->depth--;
+      return;
+    }
+}
+
+void rt_r_xtag(void) { rt_raise(RT_X_TAG); }
+
+rt_int rt_r_tag(rt_int tag) {
+  if (tag < 0) rt_raise(RT_X_INIT);
+  return tag;
+}
+
+int rt_r_set_le(yset a, yset b) {
+  for (rt_int e = a.lo; e <= a.hi; e++)
+    if (y_set_in(e, a) && !y_set_in(e, b)) return 0;
+  return 1;
+}
+
+int rt_r_set_lt(yset a, yset b) { return rt_r_set_le(a, b) && !y_set_eq(a, b); }
+
+/* a NaN with a payload of its own marks an uninitialized FLOAT */
+double rt_r_fundef(void) {
+  uint64_t b = 0x7ff8000000000bedULL;
+  double d;
+  memcpy(&d, &b, sizeof d);
+  return d;
+}
+
+double rt_r_fchk(double v) {
+  uint64_t b;
+  memcpy(&b, &v, sizeof b);
+  if (b == 0x7ff8000000000bedULL) rt_raise(RT_X_INIT);
+  return v;
+}
+
+int rt_r_undef_FLOAT(double v) {
+  uint64_t b;
+  memcpy(&b, &v, sizeof b);
+  return b == 0x7ff8000000000bedULL;
+}
+
+/* TIME(a) and DELAY_UNTIL(t, a): the activation clock (RED 10.4, C.10) */
+rt_int rt_r_act_time(rt_act *a) {
+  if (!a) a = rt_me();
+  return a->t ? a->t->aclock : 0;
+}
+
+void rt_r_delay_act(rt_int t, rt_act *a) {
+  for (;;) {
+    rt_int c = rt_r_act_time(a);
+    if (c >= t) return;
+    if (!a || !a->active) {
+      /* the clock of an inactive activation never reaches t */
+      rt_mbox never;
+      int dummy;
+      rt_mbox_init(&never, 0, sizeof dummy, NULL);
+      rt_receive(&never, &dummy);
+    }
+    rt_delay(t - c);
+  }
+}
+
+rt_int rt_r_act_deadline(rt_int t, rt_act *a) { return rt_time() + (t - rt_r_act_time(a)); }
+
+static int x_lock(void) { return rt_exc("X_LOCK"); }
+
+double rt_r_fovf(double v) {
+  if (isinf(v)) rt_raise(RT_X_OVERFLOW);
+  return v;
+}
+
+double rt_r_fpow(double a, rt_int b) {
+  if (b < 0) rt_raise(RT_X_NEG_EXP);
+  return rt_r_fovf(rt_fpow(a, b));
+}
+
+rt_int rt_r_floor(double v) {
+  double f = floor(v);
+  if (!(f >= -9.2233720368547758e18 && f < 9.2233720368547758e18)) rt_raise(RT_X_OVERFLOW);
+  return (rt_int)f;
+}
+
+void rt_r_unlock(rt_lock *l) {
+  if (!l->owner) rt_raise(x_lock());
+  rt_region_leave(l);
+}
+
+rt_act *rt_r_owner(rt_lock *l) {
+  if (!l->owner) rt_raise(x_lock());
+  return rt_lock_owner(l);
+}
+
+static int count_waiters(rt_waiter *w) {
+  int n = 0;
+  for (; w; w = w->next) n++;
+  return n;
+}
+
+int rt_r_can_send(rt_mbox *m) { return m->count < m->cap || count_waiters(m->receivers) > 0; }
+
+int rt_r_can_receive(rt_mbox *m) { return m->count > 0 || count_waiters(m->senders) > 0; }
+
+/* ---- RED files (App. A, C.14) ----------------------------------------------- */
+
+struct rt_r_file {
+  FILE *fp;
+  int open, access, use, text, sys;  /* access 0 SEQ 1 RANDOM; use 0 INPUT 1 OUTPUT 2 UPDATE */
+  size_t esz;
+  char *path;
+  /* a standard file holds its components each after its length in bytes:
+   * off[i] is where component i starts, off[n] the end; cur the position - 1 */
+  long *off;
+  rt_int n, cap, cur;
+};
+
+static void r_scan(rt_r_file *f) {
+  f->n = 0;
+  f->cur = 0;
+  if (!f->off) {
+    f->cap = 64;
+    f->off = malloc(sizeof(long) * (size_t)f->cap);
+  }
+  long pos = 0;
+  int64_t len;
+  fseek(f->fp, 0, SEEK_SET);
+  for (;;) {
+    if (f->n + 2 > f->cap) f->off = realloc(f->off, sizeof(long) * (size_t)(f->cap *= 2));
+    f->off[f->n] = pos;
+    if (fread(&len, sizeof len, 1, f->fp) != 1) break;
+    pos += (long)sizeof len + (long)len;
+    fseek(f->fp, pos, SEEK_SET);
+    f->n++;
+  }
+}
+
+static int r_exc(const char *name) { return rt_exc(name); }
+
+rt_r_file *rt_r_file_new(int access, int use, size_t esz, int text) {
+  rt_r_file *f = calloc(1, sizeof *f);
+  f->access = access;
+  f->use = use;
+  f->esz = text ? 1 : esz;
+  f->text = text;
+  return f;
+}
+
+rt_r_file *rt_r_sys_in(void) {
+  static rt_r_file f = {NULL, 1, 0, 0, 1, 1, 1, NULL};
+  return &f;
+}
+
+rt_r_file *rt_r_sys_out(void) {
+  static rt_r_file f = {NULL, 1, 0, 1, 1, 2, 1, NULL};
+  return &f;
+}
+
+int rt_r_file_access(rt_r_file *f) { return f->access; }
+int rt_r_file_use(rt_r_file *f) { return f->use; }
+
+/* the host path of a physical file name: no directories, no blanks */
+static char *r_path(rstr name) {
+  rt_int b = 0, e = name.len;
+  while (b < e && name.p[b] == ' ') b++;
+  while (e > b && name.p[e - 1] == ' ') e--;
+  if (b == e) rt_raise_msg(r_exc("X_FILENAME"), "empty file name");
+  for (rt_int i = b; i < e; i++)
+    if (name.p[i] == '/' || name.p[i] == '\\' || name.p[i] < ' ' || name.p[i] > '~')
+      rt_raise_msg(r_exc("X_FILENAME"), "not a physical file name");
+  const char *dir = getenv("RED_FILES");
+  if (!dir) dir = ".";
+  size_t n = strlen(dir) + (size_t)(e - b) + 2;
+  char *p = malloc(n);
+  snprintf(p, n, "%s/%.*s", dir, (int)(e - b), (const char *)name.p + b);
+  return p;
+}
+
+static void r_need_open(rt_r_file *f) {
+  if (!f->open) rt_raise_msg(RT_X_FILE, "file not open");
+}
+
+void rt_r_open(rt_r_file *f, rstr name, int is_new) {
+  if (f->sys) return; /* the teletype is always there */
+  if (f->open) rt_raise_msg(RT_X_FILE, "file already open");
+  char *p = r_path(name);
+  FILE *fp;
+  if (is_new) {
+    fp = fopen(p, "w+b");
+    if (!fp) rt_raise_msg(r_exc("X_FILENAME"), "cannot create the file");
+  } else {
+    fp = fopen(p, "r+b");
+    if (!fp) fp = fopen(p, "rb");
+    if (!fp) rt_raise_msg(r_exc("X_NOFILE"), "no such file");
+  }
+  f->fp = fp;
+  f->path = p;
+  f->open = 1;
+  if (!f->text) r_scan(f);
+}
+
+rt_int rt_r_fsize(rt_r_file *f) {
+  r_need_open(f);
+  if (f->sys) rt_raise_msg(RT_X_FILE, "the teletype has no size");
+  if (!f->text) return f->n;
+  long here = ftell(f->fp);
+  fseek(f->fp, 0, SEEK_END);
+  long end = ftell(f->fp);
+  fseek(f->fp, here, SEEK_SET);
+  return (rt_int)(end / (long)f->esz);
+}
+
+rt_int rt_r_fpos(rt_r_file *f) {
+  r_need_open(f);
+  if (f->sys) rt_raise_msg(RT_X_FILE, "the teletype has no position");
+  if (!f->text) return f->cur + 1;
+  return (rt_int)(ftell(f->fp) / (long)f->esz) + 1;
+}
+
+void rt_r_close(rt_r_file *f, int del) {
+  if (f->sys) return;
+  r_need_open(f);
+  /* the current position is the new end of the file */
+  long here = f->text ? ftell(f->fp) : f->off[f->cur];
+  fflush(f->fp);
+  if (ftruncate(fileno(f->fp), here) != 0) {
+  }
+  fclose(f->fp);
+  if (del) remove(f->path);
+  f->fp = NULL;
+  f->open = 0;
+}
+
+void rt_r_fsetpos(rt_r_file *f, rt_int p) {
+  r_need_open(f);
+  if (f->sys) rt_raise_msg(RT_X_FILE, "the teletype cannot be positioned");
+  if (p < 1 || p > rt_r_fsize(f) + 1) rt_raise(r_exc("X_FILEPOS"));
+  if (!f->text) {
+    f->cur = p - 1;
+    return;
+  }
+  fseek(f->fp, (long)(p - 1) * (long)f->esz, SEEK_SET);
+}
+
+int rt_r_feof(rt_r_file *f) {
+  r_need_open(f);
+  if (f->sys == 1) return rt_eof();
+  if (f->sys) return 1;
+  return rt_r_fpos(f) == rt_r_fsize(f) + 1;
+}
+
+static void r_can_read(rt_r_file *f) {
+  r_need_open(f);
+  if (f->use == 1) rt_raise_msg(RT_X_FILE, "an output file is not read");
+}
+
+static void r_can_write(rt_r_file *f) {
+  r_need_open(f);
+  if (f->use == 0) rt_raise_msg(RT_X_FILE, "an input file is not written");
+}
+
+void rt_r_fread(rt_r_file *f, void *dst) {
+  r_can_read(f);
+  if (f->sys) rt_raise_msg(RT_X_FILE, "the teletype holds characters");
+  if (rt_r_feof(f)) rt_raise(r_exc("X_EOF"));
+  if (fread(dst, f->esz, 1, f->fp) != 1) rt_raise(r_exc("X_EOF"));
+  fseek(f->fp, 0, SEEK_CUR);
+}
+
+void rt_r_fwrite(rt_r_file *f, const void *src) {
+  r_can_write(f);
+  if (f->sys) rt_raise_msg(RT_X_FILE, "the teletype holds characters");
+  fwrite(src, f->esz, 1, f->fp);
+  fseek(f->fp, 0, SEEK_CUR);
+}
+
+int rt_r_fgetc(rt_r_file *f) {
+  r_can_read(f);
+  if (f->sys == 1) {
+    int c = rt_getc();
+    if (c < 0) rt_raise(r_exc("X_EOF"));
+    return c;
+  }
+  int c = fgetc(f->fp);
+  if (c == EOF) rt_raise(r_exc("X_EOF"));
+  fseek(f->fp, 0, SEEK_CUR);
+  return c;
+}
+
+void rt_r_fputc(rt_r_file *f, int c) {
+  r_can_write(f);
+  if (f->sys == 2) {
+    rt_putc(c);
+    return;
+  }
+  fputc(c, f->fp);
+  fseek(f->fp, 0, SEEK_CUR);
+}
+
+void rt_r_fputs(rt_r_file *f, rstr s) {
+  for (rt_int i = 0; i < s.len; i++) rt_r_fputc(f, s.p[i]);
+}
+
+/* a line of a text file ends with 'CR 'LF (A.3); a host line may end with
+ * 'LF alone */
+rt_int rt_r_fsizeln(rt_r_file *f) {
+  r_can_read(f);
+  if (f->sys == 1) return rt_sizeln();
+  long here = ftell(f->fp);
+  rt_int n = 0;
+  int c;
+  while ((c = fgetc(f->fp)) != EOF && c != '\n') n++;
+  if (n > 0 && c == '\n') {
+    fseek(f->fp, here + n - 1, SEEK_SET);
+    if (fgetc(f->fp) == '\r') n--;
+  }
+  fseek(f->fp, here, SEEK_SET);
+  return n;
+}
+
+void rt_r_freadln(rt_r_file *f, rstr *dst) {
+  if (f->sys == 1) {
+    rt_r_readln(dst);
+    return;
+  }
+  r_can_read(f);
+  if (rt_r_feof(f)) rt_raise(r_exc("X_EOF"));
+  rt_int n = rt_r_fsizeln(f);
+  long here = ftell(f->fp);
+  int c;
+  rt_int k = 0;
+  while ((c = fgetc(f->fp)) != EOF && c != '\n') k++;
+  if (c != '\n') {
+    fseek(f->fp, here, SEEK_SET);
+    rt_raise_msg(r_exc("X_LN"), "no end of line");
+  }
+  if (n != dst->len) {
+    fseek(f->fp, here, SEEK_SET);
+    rt_raise_msg(r_exc("X_LN"), "line of another length");
+  }
+  fseek(f->fp, here, SEEK_SET);
+  if (n && fread(dst->p, 1, (size_t)n, f->fp) != (size_t)n) rt_raise(r_exc("X_LN"));
+  while ((c = fgetc(f->fp)) != EOF && c != '\n') {
+  }
+  fseek(f->fp, 0, SEEK_CUR);
+}
+
+void rt_r_fwriteln(rt_r_file *f, rstr s) {
+  if (f->sys == 2) {
+    rt_putln(s);
+    return;
+  }
+  r_can_write(f);
+  fwrite(s.p, 1, (size_t)s.len, f->fp);
+  fputs("\r\n", f->fp);
+  fseek(f->fp, 0, SEEK_CUR);
+}
+
+void rt_r_readln(rstr *dst) {
+  if (rt_eof()) rt_raise(r_exc("X_EOF"));
+  if (rt_sizeln() != dst->len) rt_raise_msg(r_exc("X_LN"), "line of another length");
+  rstr line = rt_getln();
+  if (line.len) memcpy(dst->p, line.p, (size_t)line.len);
+}
+
+void rt_r_rename(rstr from, rstr to) {
+  char *a = r_path(from), *b = r_path(to);
+  if (rename(a, b) != 0) rt_raise_msg(r_exc("X_NOFILE"), "no such file");
+}
+
+/* ---- conversions (A.3) ----------------------------------------------------- */
+
+/* an optional minus sign, n.nnn with prec digits, E, the exponent's sign and
+ * its digits */
+rstr rt_r_str_of_float(double v, rt_int prec) {
+  char b[64], m[64];
+  if (prec < 1) prec = 1;
+  if (prec > 17) prec = 17;
+  snprintf(b, sizeof b, "%.*E", (int)prec - 1, v);
+  char *e = strchr(b, 'E');
+  int ex = atoi(e + 1);
+  *e = 0;
+  int n = snprintf(m, sizeof m, "%sE%c%d", b, ex < 0 ? '-' : '+', ex < 0 ? -ex : ex);
+  return rt_str_copy(rt_str(m, n));
+}
+
+/* n characters left of the point, zeros kept, m right; X_FORMAT if the first
+ * significant digit would be lost */
+rstr rt_r_format(double v, rt_int n, rt_int m) {
+  char b[400];
+  double a = fabs(v);
+  double r = floor(a * pow(10.0, (double)m) + 0.5) / pow(10.0, (double)m);
+  if (r >= pow(10.0, (double)n)) rt_raise(r_exc("X_FORMAT"));
+  int len = snprintf(b, sizeof b, "%s%0*.*f", v < 0 ? "-" : "", (int)(n + m + (m > 0)), (int)m, r);
+  return rt_str_copy(rt_str(b, len));
+}
+
+/* with an exponent of o digits: the first significant digit leftmost */
+rstr rt_r_format_e(double v, rt_int n, rt_int m, rt_int o) {
+  char b[400];
+  double a = fabs(v);
+  int ex = 0;
+  if (a != 0.0) {
+    ex = (int)floor(log10(a)) - (int)(n - 1);
+    a = a / pow(10.0, (double)ex);
+    double r = floor(a * pow(10.0, (double)m) + 0.5) / pow(10.0, (double)m);
+    if (r >= pow(10.0, (double)n)) {
+      ex++;
+      a = a / 10.0;
+    }
+  }
+  int ae = ex < 0 ? -ex : ex;
+  if (o < 1 || ae >= pow(10.0, (double)o)) rt_raise(r_exc("X_FORMAT"));
+  int len = snprintf(b, sizeof b, "%s%0*.*fE%c%0*d", v < 0 ? "-" : "", (int)(n + m + (m > 0)), (int)m, a,
+                     ex < 0 ? '-' : '+', (int)o, ae);
+  return rt_str_copy(rt_str(b, len));
+}
+
+rstr rt_r_str_pad(rstr s, rt_int len) {
+  if (s.len > len) rt_raise_msg(RT_X_SUBTYPE, "the string is longer than its target");
+  rstr r = rt_str_new(len);
+  if (s.len) memcpy(r.p + (len - s.len), s.p, (size_t)s.len);
+  return r;
+}
+
+rstr rt_r_enum_image(const char *const *names, rt_int v) {
+  char b[256];
+  int n = snprintf(b, sizeof b, "'%s", names[v]);
+  return rt_str_copy(rt_str(b, n));
+}
+
+static rstr r_trim(rstr s) {
+  rt_int b = 0, e = s.len;
+  while (b < e && s.p[b] == ' ') b++;
+  while (e > b && s.p[e - 1] == ' ') e--;
+  rstr r = {e - b, s.p + b};
+  return r;
+}
+
+static int r_same_word(rstr s, const char *w) {
+  size_t n = strlen(w);
+  if ((size_t)s.len != n) return 0;
+  for (size_t i = 0; i < n; i++) {
+    int c = s.p[i];
+    if (c >= 'a' && c <= 'z') c -= 32;
+    if (c != w[i]) return 0;
+  }
+  return 1;
+}
+
+rt_int rt_r_enum_of_str(const char *const *names, rt_int n, rstr s) {
+  rstr t = r_trim(s);
+  if (t.len > 0 && t.p[0] == '\'') {
+    t.p++;
+    t.len--;
+  }
+  for (rt_int i = 0; i < n; i++)
+    if (r_same_word(t, names[i])) return i;
+  rt_raise_msg(RT_X_RANGE, "not a literal of the type");
+}
+
+int rt_r_bool_of_str(rstr s) {
+  rstr t = r_trim(s);
+  if (r_same_word(t, "TRUE")) return 1;
+  if (r_same_word(t, "FALSE")) return 0;
+  rt_raise_msg(RT_X_RANGE, "not a BOOL literal");
+}
+
+double rt_r_float_of_str(rstr s) {
+  rstr t = r_trim(s);
+  char b[128];
+  if (t.len <= 0 || t.len >= (rt_int)sizeof b) rt_raise_msg(RT_X_RANGE, "not a FLOAT literal");
+  memcpy(b, t.p, (size_t)t.len);
+  b[t.len] = 0;
+  /* sign, digits, a point with digits on both sides, an optional exponent */
+  const char *p = b;
+  if (*p == '+' || *p == '-') p++;
+  const char *d = p;
+  while (*p >= '0' && *p <= '9') p++;
+  int ok = p > d && *p == '.';
+  if (ok) {
+    p++;
+    d = p;
+    while (*p >= '0' && *p <= '9') p++;
+    ok = p > d;
+  }
+  if (ok && (*p == 'E' || *p == 'e')) {
+    p++;
+    if (*p == '+' || *p == '-') p++;
+    d = p;
+    while (*p >= '0' && *p <= '9') p++;
+    ok = p > d;
+  }
+  if (!ok || *p) rt_raise_msg(RT_X_RANGE, "not a FLOAT literal");
+  return rt_r_fovf(strtod(b, NULL));
+}
+
+/* ---- the simulated memory (RED 12.3) ---------------------------------------- */
+
+#define R_MEM_BYTES (1 << 20)
+static unsigned char r_mem[R_MEM_BYTES];
+
+static void r_mem_check(rt_int bitaddr, rt_int nbits) {
+  if (bitaddr < 0 || nbits < 0 || bitaddr + nbits > (rt_int)R_MEM_BYTES * 8)
+    rt_raise_msg(RT_X_RANGE, "outside the memory of the simulated machine");
+}
+
+void *rt_r_mem_at(rt_int bitaddr, size_t size) {
+  r_mem_check(bitaddr, (rt_int)size * 8);
+  if (bitaddr % 8) rt_raise_msg(RT_X_RANGE, "a variable without a representation starts at a byte");
+  return r_mem + bitaddr / 8;
+}
+
+static void r_bit_put(rt_int b, int v) {
+  unsigned char m = (unsigned char)(0x80 >> (b % 8));
+  if (v) r_mem[b / 8] |= m;
+  else r_mem[b / 8] &= (unsigned char)~m;
+}
+
+static int r_bit_get(rt_int b) { return (r_mem[b / 8] >> (7 - b % 8)) & 1; }
+
+/* nbits of v, high-order first */
+void rt_r_mem_put(rt_int bitaddr, rt_int nbits, rt_int v) {
+  r_mem_check(bitaddr, nbits);
+  uint64_t u = (uint64_t)v;
+  for (rt_int i = 0; i < nbits; i++) r_bit_put(bitaddr + i, nbits - 1 - i < 64 ? (int)((u >> (nbits - 1 - i)) & 1) : 0);
+}
+
+rt_int rt_r_mem_get(rt_int bitaddr, rt_int nbits, int is_signed) {
+  r_mem_check(bitaddr, nbits);
+  uint64_t u = 0;
+  for (rt_int i = 0; i < nbits; i++) u = (u << 1) | (uint64_t)r_bit_get(bitaddr + i);
+  if (is_signed && nbits > 0 && nbits < 64 && (u >> (nbits - 1)) & 1) u |= ~(uint64_t)0 << nbits;
+  return (rt_int)u;
+}
+
+void rt_r_mem_putf(rt_int bitaddr, rt_int nbits, double v) {
+  if (nbits >= 64) {
+    uint64_t u;
+    memcpy(&u, &v, sizeof u);
+    rt_r_mem_put(bitaddr, 64, (rt_int)u);
+  } else if (nbits >= 32) {
+    float f = (float)v;
+    uint32_t u;
+    memcpy(&u, &f, sizeof u);
+    rt_r_mem_put(bitaddr, 32, (rt_int)u);
+  } else {
+    rt_raise_msg(RT_X_RANGE, "a FLOAT needs 32 or 64 bits");
+  }
+}
+
+double rt_r_mem_getf(rt_int bitaddr, rt_int nbits) {
+  if (nbits >= 64) {
+    uint64_t u = (uint64_t)rt_r_mem_get(bitaddr, 64, 0);
+    double d;
+    memcpy(&d, &u, sizeof d);
+    return d;
+  }
+  if (nbits >= 32) {
+    uint32_t u = (uint32_t)rt_r_mem_get(bitaddr, 32, 0);
+    float f;
+    memcpy(&f, &u, sizeof f);
+    return f;
+  }
+  rt_raise_msg(RT_X_RANGE, "a FLOAT needs 32 or 64 bits");
+}
+
+rt_int rt_r_fits(rt_int v, rt_int nbits, int is_signed) {
+  if (nbits >= 64) return v;
+  if (is_signed ? (v < -((rt_int)1 << (nbits - 1)) || v >= ((rt_int)1 << (nbits - 1)))
+                : (v < 0 || v >= ((rt_int)1 << nbits)))
+    rt_raise_msg(RT_X_RANGE, "the value does not fit its representation");
+  return v;
+}
+
+/* LOW_IO device 3 reads, device 4 writes the byte of the simulated memory at
+ * the command's address */
+void rt_r_low_io(rt_int device, rt_int command, rt_int *data) {
+  if (device == 3) {
+    *data = *(unsigned char *)rt_r_mem_at(command * 8, 1);
+    return;
+  }
+  if (device == 4) {
+    *(unsigned char *)rt_r_mem_at(command * 8, 1) = (unsigned char)*data;
+    return;
+  }
+  rt_low_io(device, command, data);
+}
+
+static int x_maxrange(void) { return rt_exc("X_MAXRANGE"); }
+
+void rt_r_maxprec(rt_int prec) {
+  if (prec < 1 || prec > 15) rt_raise_msg(x_maxrange(), "FLOAT precision");
+}
+
+void rt_r_maxrange_f(double lo, double hi) {
+  if (isinf(lo) || isinf(hi) || isnan(lo) || isnan(hi)) rt_raise(x_maxrange());
+}
+
+void rt_r_maxrange_i(rt_int lo, rt_int hi) {
+  if (lo < RT_IMIN || hi < RT_IMIN) rt_raise(x_maxrange());
+}
+
+rstr rt_r_str_undef(rt_int len) {
+  rstr r = rt_str_new(len);
+  if (r.len) memset(r.p, 0xFF, (size_t)r.len);
+  return r;
+}
+
+rstr rt_r_schk(rstr s) {
+  if (s.len && memchr(s.p, 0xFF, (size_t)s.len)) rt_raise(RT_X_INIT);
+  return s;
+}
+
+/* ---- sparse INT sets (RED C.9) -------------------------------------------- */
+
+rt_r_iset rt_r_iset_empty(void) {
+  rt_r_iset s = {0, 0, NULL};
+  return s;
+}
+
+static rt_int r_find(const rt_r_iset *s, rt_int v) { /* index of the first element >= v */
+  rt_int lo = 0, hi = s->n;
+  while (lo < hi) {
+    rt_int m = lo + (hi - lo) / 2;
+    if (s->e[m] < v) lo = m + 1;
+    else hi = m;
+  }
+  return lo;
+}
+
+static int r_has(const rt_r_iset *s, rt_int v) {
+  rt_int i = r_find(s, v);
+  return i < s->n && s->e[i] == v;
+}
+
+/* the elements in a (ina), b (inb) by the rule keep(ina, inb) */
+static rt_r_iset r_merge(rt_r_iset a, rt_r_iset b, int op) {
+  rt_r_iset r = {0, 0, rt_alloc(sizeof(rt_int) * (size_t)(a.n + b.n + 1))};
+  rt_int i = 0, j = 0;
+  while (i < a.n || j < b.n) {
+    rt_int v;
+    int x = 0, y = 0;
+    if (j >= b.n || (i < a.n && a.e[i] < b.e[j])) {
+      v = a.e[i++];
+      x = 1;
+    } else if (i >= a.n || b.e[j] < a.e[i]) {
+      v = b.e[j++];
+      y = 1;
+    } else {
+      v = a.e[i++];
+      j++;
+      x = y = 1;
+    }
+    int keep = op == 0 ? (x || y) : op == 1 ? (x && y) : op == 2 ? (x && !y) : (x != y);
+    if (keep) r.e[r.n++] = v;
+  }
+  return r;
+}
+
+rt_r_iset rt_r_iset_add(rt_r_iset s, rt_int v) {
+  rt_r_iset one = {0, 1, NULL};
+  one.e = rt_alloc(sizeof(rt_int));
+  one.e[0] = v;
+  if (s.neg) {
+    rt_r_iset r = r_merge(s, one, 2); /* it lacks one element less */
+    r.neg = 1;
+    return r;
+  }
+  return r_merge(s, one, 0);
+}
+
+int rt_r_iset_in(rt_int v, rt_r_iset s) { return s.neg ^ r_has(&s, v); }
+
+rt_r_iset rt_r_iset_union(rt_r_iset a, rt_r_iset b) {
+  rt_r_iset r;
+  if (!a.neg && !b.neg) return r_merge(a, b, 0);
+  if (a.neg && b.neg) r = r_merge(a, b, 1);
+  else if (a.neg) r = r_merge(a, b, 2);
+  else r = r_merge(b, a, 2);
+  r.neg = 1;
+  return r;
+}
+
+rt_r_iset rt_r_iset_inter(rt_r_iset a, rt_r_iset b) {
+  rt_r_iset r;
+  if (a.neg && b.neg) {
+    r = r_merge(a, b, 0);
+    r.neg = 1;
+    return r;
+  }
+  if (!a.neg && !b.neg) return r_merge(a, b, 1);
+  if (b.neg) return r_merge(a, b, 2);
+  return r_merge(b, a, 2);
+}
+
+rt_r_iset rt_r_iset_xor(rt_r_iset a, rt_r_iset b) {
+  rt_r_iset r = r_merge(a, b, 3);
+  r.neg = a.neg ^ b.neg;
+  return r;
+}
+
+rt_r_iset rt_r_iset_compl(rt_r_iset a) {
+  a.neg = !a.neg;
+  return a;
+}
+
+int rt_r_iset_eq(rt_r_iset a, rt_r_iset b) {
+  if (a.neg != b.neg || a.n != b.n) return 0;
+  for (rt_int i = 0; i < a.n; i++)
+    if (a.e[i] != b.e[i]) return 0;
+  return 1;
+}
+
+int rt_r_iset_le(rt_r_iset a, rt_r_iset b) {
+  if (!a.neg && !b.neg) return r_merge(a, b, 2).n == 0;
+  if (a.neg && b.neg) return r_merge(b, a, 2).n == 0;
+  if (!a.neg) return r_merge(a, b, 1).n == 0;
+  return 0; /* a set lacking finitely many INTs is in no finite set */
+}
+
+int rt_r_iset_lt(rt_r_iset a, rt_r_iset b) { return rt_r_iset_le(a, b) && !rt_r_iset_eq(a, b); }
+
+/* ---- components of standard files, kept deeply (RED A.2, C.14) --------------- */
+
+void rt_r_buf_put(rt_r_buf *b, const void *p, size_t n) {
+  if (b->n + n > b->cap) {
+    b->cap = (b->n + n) * 2 + 64;
+    b->p = realloc(b->p, b->cap);
+  }
+  if (n) memcpy(b->p + b->n, p, n);
+  b->n += n;
+}
+
+void rt_r_buf_get(const unsigned char **q, void *p, size_t n) {
+  if (n) memcpy(p, *q, n);
+  *q += n;
+}
+
+void rt_r_buf_yset(rt_r_buf *b, yset s) {
+  rt_r_buf_put(b, &s.lo, sizeof s.lo);
+  rt_r_buf_put(b, &s.hi, sizeof s.hi);
+  for (rt_int e = s.lo; e <= s.hi; e++) {
+    unsigned char in = (unsigned char)y_set_in(e, s);
+    rt_r_buf_put(b, &in, 1);
+  }
+}
+
+yset rt_r_buf_get_yset(const unsigned char **q) {
+  rt_int lo, hi;
+  rt_r_buf_get(q, &lo, sizeof lo);
+  rt_r_buf_get(q, &hi, sizeof hi);
+  yset s = y_set_new(lo, hi);
+  for (rt_int e = lo; e <= hi; e++) {
+    unsigned char in;
+    rt_r_buf_get(q, &in, 1);
+    if (in) s = y_set_add(s, e);
+  }
+  return s;
+}
+
+/* WRITE: at the end the file grows; inside it the component at the position
+ * is replaced, the ones after it moved if the sizes differ */
+void rt_r_fwrite_rec(rt_r_file *f, const unsigned char *p, size_t n) {
+  r_can_write(f);
+  if (f->sys || f->text) rt_raise_msg(RT_X_FILE, "a text file holds characters");
+  int64_t len = (int64_t)n;
+  long at = f->off[f->cur];
+  long old_end = f->off[f->n];
+  long next = f->cur < f->n ? f->off[f->cur + 1] : at;
+  size_t tail_n = (size_t)(old_end - next);
+  unsigned char *tail = malloc(tail_n + 1);
+  fseek(f->fp, next, SEEK_SET);
+  if (tail_n && fread(tail, 1, tail_n, f->fp) != tail_n) rt_raise_msg(RT_X_FILE, "the file is damaged");
+  fseek(f->fp, at, SEEK_SET);
+  fwrite(&len, sizeof len, 1, f->fp);
+  fwrite(p, 1, n, f->fp);
+  fwrite(tail, 1, tail_n, f->fp);
+  fflush(f->fp);
+  free(tail);
+  long delta = (long)(sizeof len + n) - (next - at);
+  if (f->cur == f->n) {
+    if (f->n + 2 > f->cap) f->off = realloc(f->off, sizeof(long) * (size_t)(f->cap *= 2));
+    f->n++;
+    f->off[f->n] = f->off[f->n - 1];
+  }
+  for (rt_int i = f->cur + 1; i <= f->n; i++) f->off[i] += delta;
+  if (delta < 0 && ftruncate(fileno(f->fp), f->off[f->n]) != 0) {
+  }
+  f->cur++;
+}
+
+const unsigned char *rt_r_fread_rec(rt_r_file *f) {
+  r_can_read(f);
+  if (f->sys || f->text) rt_raise_msg(RT_X_FILE, "a text file holds characters");
+  if (f->cur >= f->n) rt_raise(r_exc("X_EOF"));
+  int64_t len;
+  fseek(f->fp, f->off[f->cur], SEEK_SET);
+  if (fread(&len, sizeof len, 1, f->fp) != 1) rt_raise_msg(RT_X_FILE, "the file is damaged");
+  unsigned char *p = rt_alloc((size_t)len + 1);
+  if (len && fread(p, 1, (size_t)len, f->fp) != (size_t)len) rt_raise_msg(RT_X_FILE, "the file is damaged");
+  f->cur++;
+  return p;
+}

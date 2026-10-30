@@ -1,0 +1,6 @@
+main at 5: the sleeper clock 5
+main at 15: WAIT on the sleeper clock
+waiter: nothing came
+sleeper ran 20, waiter 0, main 15
+X_UNHANDLED: local left the procedure that defines it
+X_UNHANDLED: inner left its block

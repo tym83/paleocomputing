@@ -1,0 +1,3 @@
+CAPSULE main EXPORTS NONE;
+   VAR z_ : INT := 1;
+END CAPSULE main;

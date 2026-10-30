@@ -1,0 +1,43 @@
+  init 1
+  init 2
+a procedure's variable:
+  init 3
+  init 4
+  final 3
+  using 3
+  final 3
+left by an exception:
+  init 5
+  final 5
+  X_RANGE handled
+left by RETURN:
+  init 6
+  final 6
+a loop body, twice:
+  init 7
+  iteration 1
+  final 7
+  init 8
+  iteration 2
+  final 8
+CONST and OUT formals:
+  init 9
+  init 10
+  in the procedure
+  final 1
+  final 10
+a function result:
+  init 11
+  init 12
+  final 12
+a dynamic variable freed:
+  init 13
+  final 13
+a dynamic variable no longer referenced, collected at the next ALLOC:
+  init 14
+  final 14
+  init 15
+the program ends:
+  final 12
+  final 1
+  final 15

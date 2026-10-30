@@ -13,7 +13,7 @@
 // seq is taken from a shared counter at the moment of the write, so the page
 // can put writes from different workers back into the order they happened.
 
-const ERRNO_BADF = 8, ERRNO_NOENT = 44, ERRNO_SPIPE = 70;
+const ERRNO_BADF = 8, ERRNO_NOENT = 44, ERRNO_NOSYS = 52, ERRNO_SPIPE = 70;
 
 class Exit extends Error {
   constructor(code) { super('exit ' + code); this.code = code; }
@@ -105,7 +105,8 @@ self.onmessage = (ev) => {
 
   const imports = {
     env: { memory },
-    wasi_snapshot_preview1: wasi,
+    // any other file call (truncate, rename, ...) has no file to act on here
+    wasi_snapshot_preview1: new Proxy(wasi, { get: (t, k) => (k in t ? t[k] : () => ERRNO_NOSYS) }),
     wasi: {
       'thread-spawn'(startArg) {
         const id = Atomics.add(c, 0, 1) + 1;

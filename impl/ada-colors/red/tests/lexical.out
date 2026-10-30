@@ -1,0 +1,9 @@
+a string in the 55-character form
+arr(3) = 3
+5
+X_FREE: b refers to the variable
+SUPPRESS(X_FREE): no look for other pointers
+SUPPRESS(X_RANGE): no check
+X_RANGE outside the scope of the pragmat
+4
+*** AGAIN invoked recursively against its pragmat

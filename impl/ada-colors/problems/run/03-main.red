@@ -6,7 +6,8 @@ CAPSULE main EXPORTS NONE;
    EXPOSE ALL FROM EXTERNAL directory;
 
    FUNC name(CONST s : STRING[ASCII]) => STRING[ASCII];
-      VAR r : STRING[ASCII](10);
+      % a string has no value until it is given one (RM 5.1): blanks first
+      VAR r : STRING[ASCII](10) := "          ";
       r(1 .. s.LEN) := s;
       RETURN r;
    END FUNC name;
@@ -17,6 +18,9 @@ CAPSULE main EXPORTS NONE;
 
    TASK producer;
       VAR b : STRING[ASCII](80*100);
+      FOR i : INT(1 .. b.LEN) REPEAT
+         b(i) := 'SP;
+      END REPEAT;
       createfile(name("log"), 3);
       say("producer", "created log");
       FOR i : INT(1 .. 4) REPEAT

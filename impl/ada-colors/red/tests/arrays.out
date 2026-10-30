@@ -1,0 +1,17 @@
+slices: 2 3
+overlapping slice: 123
+catenation: 2
+X_ARRAY: arrays of different length
+keyed: 79
+2-D keyed: 5
+2-D ranges: 10
+rows: 3
+three dimensions: 16
+X_ARRAY: a component without a value
+different index subtypes: not equal
+shared keys: 0
+union: abc
+unions equal
+X_TAG: n is not present
+X_RANGE: the subtype allows only n
+only n: 5
