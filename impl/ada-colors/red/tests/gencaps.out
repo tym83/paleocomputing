@@ -1,0 +1,4 @@
+box[INT]: 3, box[BOOL]: TRUE
+old invocations share one box: 8
+overloaded capsules: 30 FALSE
+a.n outside the capsule: 5

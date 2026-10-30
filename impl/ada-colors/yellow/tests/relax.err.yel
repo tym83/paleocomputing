@@ -1,0 +1,13 @@
+(* an export list restricts and never relaxes (X.B.3) *)
+MODULE Relax
+  IMPORT StandardImplementationPrelude;
+  MODULE Outer
+    IMPORT INTEGER64;
+    EXPORT VAR v;
+    MODULE Inner
+      IMPORT INTEGER64;
+      EXPORT READONLY v;
+      VAR v: INTEGER64 := 1;
+    ENDMODULE Inner;
+  ENDMODULE Outer;
+ENDMODULE Relax

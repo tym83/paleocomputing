@@ -1,0 +1,3 @@
+CAPSULE main EXPORTS NONE;
+   WRITELN("it's");
+END CAPSULE main;

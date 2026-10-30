@@ -19,7 +19,7 @@ MODULE Modules
   MODULE Stack
     IMPORT INTEGER64;
     EXPORT OPAQUE S;
-    EXPORT Push, Pop, Empty, New;
+    EXPORT Push, Pop, Empty, New, :=;   (* := lets a user initialize an S (X.B.3) *)
     REPRESENTATION
       S = RECORD VAR top: INTEGER64; VAR items: ARRAY (INTEGER [1..10] OF INTEGER64) ENDRECORD;
     PROCEDURE New RETURNS S ()

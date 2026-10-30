@@ -1,0 +1,27 @@
+(* manifest constants are made of literals, standard functions and *)
+(* operators (VI.C); SUCC and PRED of an integer give an INTEGER, of an *)
+(* enumeration a value of it that stops at its ends (XI); a TYPE made from *)
+(* INTEGER takes plain literals in its range (VII.G) *)
+MODULE Manifest
+  IMPORT TextIO, StandardImplementationPrelude;
+  TYPE Foot_Type = INTEGER;
+  REPRESENTATION
+    Colors = ORDERED (Red, Green, Blue);
+    Feet = Foot_Type [1..5280];
+  CONST last: Colors = LAST(Red);
+  VAR c: Colors := Green;
+      a: ARRAY (INTEGER [1..10] OF INTEGER64);
+      x: INTEGER [1..10];
+      y: INTEGER64;
+      f: Feet;
+  SELECT c CASE SUCC(Red) => Write("green ") ELSE Write("other ") ENDSELECT;
+  SELECT 3 CASE HIGH(a, 1) - 7 => Write("three ") CASE LOW(a, 1) => Write("one ") ENDSELECT;
+  SELECT Blue CASE last => Write("last ") ENDSELECT;
+  SELECT TRUE CASE NOT (TRUE AND FALSE) => Write("not ") ENDSELECT;
+  x := 10; y := SUCC(x); Write(y); Write(" ");
+  f := Foot_Type 50; Write("feet"); WriteLn();
+  BEGIN
+    EXCEPTION CASE OUT_OF_RANGE => Write("no successor of Blue"); WriteLn() ENDEXCEPTION;
+    c := Blue; c := SUCC(c)
+  END
+ENDMODULE Manifest

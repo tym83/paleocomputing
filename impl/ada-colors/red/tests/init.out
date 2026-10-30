@@ -1,0 +1,12 @@
+X_INIT: x
+X_INIT: f
+X_INIT: e
+X_INIT: r.ok, though r.n = 1
+X_INIT: a(3)
+an OUT formal never given a value leaves x uninitialized
+x = 7
+X_INIT: p.ok of a dynamic variable, though p.n = 4
+s(1) = A
+X_INIT: s(2) and s(3) have no value
+X_INIT: s(3)
+SUPPRESS(X_INIT)

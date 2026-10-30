@@ -6,7 +6,11 @@ CAPSULE main EXPORTS NONE;
    VAR dest : users;
    VAR k : INT := 0;
    FUNC pad(CONST s : STRING[ASCII]) => STRING[ASCII];
+      % a string has no value until it is given one (RM 5.1): blanks first
       VAR r : STRING[ASCII](80);
+      FOR i : INT(1 .. r.LEN) REPEAT
+         r(i) := 'SP;
+      END REPEAT;
       r(1 .. s.LEN) := s;
       RETURN r;
    END FUNC pad;

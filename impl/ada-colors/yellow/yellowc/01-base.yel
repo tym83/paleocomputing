@@ -31,7 +31,9 @@ MODULE yellowc
       VAR name, text: Txt;
       VAR a, b, c, d, e, next: Node;
       VAR rep: Rep;
-      VAR sym: Sym
+      VAR sym: Sym;
+      VAR x: Node;                (* processes: SIZE; representations: PACKED, ALIGNMENT *)
+      VAR t0, t1: INT             (* declarations: their tokens, for synopses (XIII) *)
     ENDRECORD;
 
     (* a representation (VI): a type with what the C needs to hold it *)
@@ -62,7 +64,13 @@ MODULE yellowc
       VAR forward: Txt;           (* pointers: the base named before it is declared *)
       VAR fwdscope: INT;
       VAR monitor: Sym;           (* signals: the monitor they belong to *)
-      VAR serial: INT
+      VAR serial: INT;
+      VAR sig: Txt;               (* the representation spelled out, for VII.G *)
+      VAR fsn, fsd: INT;          (* FIXED: the scale, a rational fsn / fsd *)
+      (* the simulated machine (XIV.VI): PACKED, its limit in bits, ALIGNMENT *)
+      (* in bits, the size in bits once known (-1 not manifest, 0 not yet) *)
+      VAR packed: BOOLEAN;
+      VAR pbits, align, bits: INT
     ENDRECORD;
 
     FieldRec = RECORD
@@ -71,7 +79,8 @@ MODULE yellowc
       VAR isconst: BOOLEAN;
       VAR variant: INT;           (* 0 in the common part, else the case it belongs to *)
       VAR labels: Node;           (* the case labels of its variant *)
-      VAR next: Field
+      VAR next: Field;
+      VAR at: INT                 (* its offset in bits, given by AT, or -1 *)
     ENDRECORD;
 
     ParamRec = RECORD
@@ -79,7 +88,9 @@ MODULE yellowc
       VAR cls: INT;               (* CONST OUT VAR *)
       VAR rep: Rep;
       VAR cname: Txt;
-      VAR next: Param
+      VAR next: Param;
+      VAR at: INT;                (* the word it is passed in, given by AT, or -1 *)
+      VAR path: Txt               (* then the C text of that word *)
     ENDRECORD;
 
     (* a declared entity *)
@@ -106,7 +117,12 @@ MODULE yellowc
       VAR stack: Sym;             (* the next declared in the same scope *)
       VAR alt: Sym;               (* overloaded routines: the next definition *)
       VAR monitor: Sym;           (* routines and processes declared in a monitor *)
-      VAR serial: INT
+      VAR serial: INT;
+      VAR calls: Node;            (* routines: the routines and processes it calls *)
+      VAR writes, frees: Node;    (* routines: the variables of other scopes it assigns, uses *)
+      VAR seen, vix: INT;         (* the last routine that noted it; its index in the checks *)
+      VAR at: INT;                (* variables: the word of the store given by AT, or -1 *)
+      VAR skey: Txt               (* what a segment declares: its C name across segments *)
     ENDRECORD;
 
     ScopeRec = RECORD
@@ -126,6 +142,7 @@ MODULE yellowc
     TokTable = ARRAY (INTEGER [1..2000000] OF INT);
     HashTable = ARRAY (INTEGER [0..262143] OF Txt);
     SymTable = ARRAY (INTEGER [0..8191] OF Sym);
+    Steps = ARRAY (INTEGER [1..64] OF Node);
 
   CONST
     (* token kinds *)
@@ -224,6 +241,8 @@ MODULE yellowc
 
     (* sections of the C program *)
     OTypes, OStructs, OFrames, OGlobals, OProtos, OFuncs, OInit: Buf;
+    OWarn: Buf;                      (* the warnings, at the head of the C program *)
+    Errors: Text;                    (* the standard error stream, for warnings *)
     Body: Buf;                       (* the routine being written *)
     Locals: Buf;                     (* the fields of its frame *)
 
@@ -460,6 +479,36 @@ MODULE yellowc
     CLOSE(Output);
     PROPAGATE_EXCEPTION translation_error
   ENDPROCEDURE Fail;
+
+  (* a warning the Report asks for (IX.A.3, X.A.1): on the standard error *)
+  (* and in a comment at the head of the C program; translation goes on *)
+  PROCEDURE Warn (CONST line: INT; CONST msg: Txt)
+    VAR t: Txt;
+    SB();
+    SA("line ");
+    SI(line);
+    SA(": warning: ");
+    ST(msg);
+    t := SE();
+    WriteTo(Errors, t);
+    PUT(Errors, 'LF');
+    SB();
+    SA("/* ");
+    ST(t);
+    SA(" */");
+    t := SE();
+    Put(OWarn, t);
+    RETURN
+  ENDPROCEDURE Warn;
+
+  PROCEDURE WriteTo (VAR f: Text; CONST t: Txt)
+    VAR i: INT := TS[t];
+    WHILE i < (TS[t] + TL[t]) DO
+      PUT(f, Pool[i]);
+      i := i + 1
+    ENDWHILE;
+    RETURN
+  ENDPROCEDURE WriteTo;
 
   PROCEDURE FailS (CONST line: INT; CONST msg: ARRAY (1 DIMENSIONS OF ASCII))
     Fail(line, T(msg));

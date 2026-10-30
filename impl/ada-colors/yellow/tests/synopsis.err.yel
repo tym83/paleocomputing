@@ -1,0 +1,11 @@
+(* a synopsis has no routine bodies but those of INLINE routines (XIII.E) *)
+MODULE Syn
+  IMPORT StandardImplementationPrelude;
+  EXPORT F;
+  FUNCTION F RETURNS INTEGER64 () RETURN 1 ENDFUNCTION F
+ENDMODULE Syn;
+MODULE Syn
+  IMPORT StandardImplementationPrelude;
+  EXPORT F;
+  FUNCTION F RETURNS INTEGER64 () RETURN 1 ENDFUNCTION F
+ENDMODULE Syn

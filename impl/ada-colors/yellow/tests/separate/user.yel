@@ -1,0 +1,9 @@
+(* the main segment, linked last (XIII.A) *)
+MODULE User
+  IMPORT Counter, TextIO, StandardImplementationPrelude;
+  FUNCTION Doubled RETURNS INTEGER64 () RETURN Peek() * 2 ENDFUNCTION Doubled;
+  Bump(5); Bump(Twice(3));
+  Write(Doubled()); Write(" ");
+  Write(count); Write(" "); Write(Value()); Write(" "); Write(Limit); WriteLn();
+  Ticker(2)
+ENDMODULE User

@@ -1,0 +1,1 @@
+TRAP_OVERFLOW: a trap handler is declared in the outermost scope of a program (XIV.X.3)

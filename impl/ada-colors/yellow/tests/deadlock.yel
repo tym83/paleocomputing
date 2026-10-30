@@ -1,0 +1,15 @@
+(* when every process waits, the trap Deadlock is raised in the main *)
+(* process (Appendix C), which may handle it *)
+MODULE Deadlock
+  IMPORT TextIO, StandardImplementationPrelude;
+  MONITOR Mon
+    EXPORT Go;
+    VAR s: SIGNAL;
+    PROCEDURE Go () WAIT(s); RETURN ENDPROCEDURE Go;
+  ENDMONITOR Mon;
+  BEGIN
+    EXCEPTION CASE DEADLOCK => Write("deadlock trapped"); WriteLn() ENDEXCEPTION;
+    Go()
+  END;
+  Write("main goes on"); WriteLn()
+ENDMODULE Deadlock

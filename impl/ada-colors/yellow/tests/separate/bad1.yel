@@ -1,0 +1,5 @@
+MODULE User
+  IMPORT Counter, TextIO, StandardImplementationPrelude;
+  FUNCTION Bad RETURNS INTEGER64 () Bump(1); RETURN 0 ENDFUNCTION Bad;
+  Write(Bad())
+ENDMODULE User

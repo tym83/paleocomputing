@@ -1,0 +1,8 @@
+(* a length-unresolved array formal has integer indices (X.A.3) *)
+MODULE Unresolved
+  IMPORT StandardImplementationPrelude;
+  REPRESENTATION Colors = ORDERED (Red, Green, Blue);
+  VAR a: ARRAY (Colors OF INTEGER64);
+  PROCEDURE Show (CONST v: ARRAY (1 DIMENSIONS OF INTEGER64)) RETURN ENDPROCEDURE Show;
+  Show(a)
+ENDMODULE Unresolved

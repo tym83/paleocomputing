@@ -1,0 +1,8 @@
+(* the life scope of a VAR actual of a process is at least that of the *)
+(* process (X.E.2) *)
+MODULE LifeScope
+  IMPORT StandardImplementationPrelude;
+  PROCESS Late (VAR x: INTEGER64) DELAY(10); x := 42; TERMINATE_PROCESS ENDPROCESS Late;
+  PROCEDURE Q () VAR loc: INTEGER64 := 0; Late(loc); RETURN ENDPROCEDURE Q;
+  Q()
+ENDMODULE LifeScope

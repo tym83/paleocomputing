@@ -1,0 +1,5 @@
+inner start
+the helper of the generic's definition environment
+a generic in a procedure sees its local: 7
+a generic in a procedure sees its local: 7
+main continues after inner

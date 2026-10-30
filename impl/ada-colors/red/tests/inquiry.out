@@ -1,0 +1,16 @@
+small(5) is INT(0 .. 5)
+upper is an ASCII subrange
+SUBTYPEOF(i) is INT(1 .. 10)
+TYPEOF(i) is INT: 200
+INDEXOF(a): 55 10
+i.MIN, i.MAX: 1 10
+INT(2 .. 7).MIN, r.MAX: 2 7
+f.PREC: 6
+STRING[ASCII](8).LEN: 8
+matrix(5, 8).second: 8
+mb.LEN: 4
+TYPEOF(i) = INT
+subtype comparison
+ABCDE has u = 5
+X_SUBTYPE: str(5) := str(3)
+p.n = 5

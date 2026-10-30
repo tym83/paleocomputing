@@ -1,0 +1,93 @@
+(* values in the simulated store in the layout that PACKED, ALIGNMENT and *)
+(* AT declare (XIV.VI): what ADDR, MAIN_STORE_ARRAY and MAKE_POINTER see *)
+MODULE Layout
+  IMPORT TextIO, StandardImplementationPrelude;
+  REPRESENTATION
+    HALFWORD = ARRAY (INTEGER [1..18] OF BOOLEAN) PACKED 18;
+    SIXBIT = ARRAY (INTEGER [1..6] OF INTEGER [0..63]) PACKED 36;
+    Header = RECORD VAR status AT 0: HALFWORD; VAR name AT 18: SIXBIT; VAR link AT 64: ADDRESS ENDRECORD;
+    Nibbles = RECORD VAR a, b: INTEGER [-8..7]; VAR c: INTEGER [0..15] ENDRECORD PACKED;
+    Aligned = RECORD VAR a: INTEGER [0..7]; VAR b: INTEGER [0..7] ALIGNMENT 8 ENDRECORD PACKED;
+    Word = ARRAY (INTEGER [1..64] OF BOOLEAN) PACKED;
+    Plain = RECORD VAR flag: BOOLEAN; VAR ch: ASCII; VAR n: INTEGER64 ENDRECORD;
+    Digits = SET (INTEGER [0..9]) PACKED;
+    Shape = UNORDERED (Square, Disc);
+    Figure = RECORD
+      VAR x: INTEGER64;
+      SELECT s: Shape
+        CASE Square => VAR side: INTEGER64;
+        CASE Disc => VAR radius: INTEGER64;
+      ENDSELECT;
+    ENDRECORD;
+    PA = POINTER (ADDRESS);
+    PN = POINTER (Nibbles);
+    Link = RECORD VAR p: PA; VAR k: INTEGER64 ENDRECORD;
+    Vec = ARRAY (INTEGER [1..4] OF INTEGER64);
+  VAR h: Header; nb: Nibbles; al: Aligned; pl: Plain; ds: Digits; fg: Figure;
+      reg AT BASE8 160000: Word;
+      pa, pb: PA; pn: PN; lk: Link; v: Vec; a: ADDRESS;
+  PROCEDURE Where RETURNS ADDRESS (CONST s: SPACE) RETURN ADDR(s) ENDPROCEDURE Where;
+  PROCEDURE Bump (VAR w: WORD) w := w + 16; RETURN ENDPROCEDURE Bump;
+
+  (* a packed array and a record placed by AT: two words *)
+  FOR i: INTEGER [1..18] DO h.status[i] := FALSE ENDFOR;
+  h.status[1] := TRUE; h.status[3] := TRUE;
+  FOR i: INTEGER [1..6] DO h.name[i] := i ENDFOR;
+  h.link := 77;
+  a := ADDR(h);
+  Write(EXTENT(h)); Write(" "); Write(MAIN_STORE_ARRAY[a]); Write(" "); Write(MAIN_STORE_ARRAY[a + 1]);
+  Write(" "); Write(ADDR(h.link) - a); WriteLn();
+  MAIN_STORE_ARRAY[a] := 2 + (63 * 262144);
+  Write(h.status[1]); Write(" "); Write(h.status[2]); Write(" "); Write(h.name[1]); Write(" ");
+  Write(h.name[2]); Write(" "); Write(h.link); WriteLn();
+
+  (* packed components take the bits their ranges need; negative values *)
+  (* are two's complement *)
+  nb.a := -3; nb.b := 5; nb.c := 15;
+  Write(EXTENT(nb)); Write(" "); Write(MAIN_STORE_ARRAY[ADDR(nb)]); WriteLn();
+  MAIN_STORE_ARRAY[ADDR(nb)] := 248;
+  Write(nb.a); Write(" "); Write(nb.b); Write(" "); Write(nb.c); WriteLn();
+  Bump(MAIN_STORE_ARRAY[ADDR(nb)]); Write(nb.a); Write(" "); Write(nb.b); Write(" ");
+  Write(Where(nb) = ADDR(nb)); WriteLn();
+  al.a := 1; al.b := 1; Write(MAIN_STORE_ARRAY[ADDR(al)]); WriteLn();
+
+  (* unpacked: a word for each component, a character in the low bits *)
+  pl.flag := TRUE; pl.ch := 'A'; pl.n := -1;
+  a := ADDR(pl);
+  Write(MAIN_STORE_ARRAY[a]); Write(" "); Write(MAIN_STORE_ARRAY[a + 1]); Write(" ");
+  Write(MAIN_STORE_ARRAY[a + 2]); Write(" "); Write(ADDR(pl.n) - a); Write(" "); Write(ADDR(v[3]) - ADDR(v));
+  WriteLn();
+
+  (* a packed set: a bit for each value of its base range *)
+  ds := Digits(1, 3, 9); Write(MAIN_STORE_ARRAY[ADDR(ds)]); Write(" ");
+  MAIN_STORE_ARRAY[ADDR(ds)] := 17; Write(0 IN ds); Write(" "); Write(4 IN ds); Write(" "); Write(9 IN ds);
+  WriteLn();
+
+  (* the variants of a record overlay each other *)
+  fg := Figure(7, Disc, 12);
+  a := ADDR(fg);
+  Write(MAIN_STORE_ARRAY[a + 1]); Write(" "); Write(MAIN_STORE_ARRAY[a + 2]); Write(" ");
+  MAIN_STORE_ARRAY[a + 1] := 0;
+  SELECT fg.s CASE Square => Write("square "); Write(fg.side) CASE Disc => Write("disc") ENDSELECT;
+  WriteLn();
+
+  (* a packed array AT a word of the I/O page: element i is bit i - 1 *)
+  reg[7] := TRUE; Write(MAIN_STORE_ARRAY[BASE8 160000]); Write(" ");
+  MAIN_STORE_ARRAY[BASE8 160000] := 129;
+  Write(reg[1]); Write(" "); Write(reg[7]); Write(" "); Write(reg[8]); Write(" "); Write(ADDR(reg)); WriteLn();
+
+  (* MAKE_POINTER to a component designates it; to a word where no *)
+  (* variable of its type starts, the store there in that layout *)
+  MAKE_POINTER(pa, ADDR(h.link)); pa^ := 99; Write(h.link); Write(" ");
+  MAKE_POINTER(pn, BASE8 160001); pn^.a := -1; pn^.c := 3;
+  Write(MAIN_STORE_ARRAY[BASE8 160001]); Write(" ");
+  MAIN_STORE_ARRAY[BASE8 160001] := 33; Write(pn^.a); Write(" "); Write(pn^.b); WriteLn();
+
+  (* a pointer is held as the address of what it designates *)
+  lk.p := pa; lk.k := 0;
+  Write(MAIN_STORE_ARRAY[ADDR(lk)] = ADDR(h.link)); Write(" ");
+  NEW(pb); pb^ := 5; lk.p := pb;
+  Write(MAIN_STORE_ARRAY[ADDR(lk)] = ADDR(pb^)); Write(" ");
+  MAIN_STORE_ARRAY[ADDR(lk)] := ADDR(h.link); Write(lk.p = pa); Write(" ");
+  lk.p := PA NIL; Write(MAIN_STORE_ARRAY[ADDR(lk)]); WriteLn()
+ENDMODULE Layout

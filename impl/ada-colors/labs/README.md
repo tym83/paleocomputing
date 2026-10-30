@@ -127,7 +127,7 @@ git checkout labs/yellow     # start over
 | | | **break**: instantiate `StackTemplate` for `Fruit` | `apply to ordered values`, from inside the template: it is checked only when an instance is made, and `Largest` uses `<` |
 | Y5 | `y5-monitor.yel` | **look**: A waits first with rank 2, B second with rank 1 | `B got 1`, and the waiter runs before the producer goes on: Hoare's SEND hands the monitor over (X.E.4) |
 | | | **change**: give A and B the same rank | `A got 1`: first come, first served within a rank |
-| | | **break**: remove `SEND(arrived)` from `Give` | `deadlock`: a signal is not a state, and nobody wakes the consumers |
+| | | **break**: remove `SEND(arrived)` from `Give` | `DEADLOCK`, the trap raised in the main process: a signal is not a state, and nobody wakes the consumers |
 | Y6 | `y6-functions.yel` | **look**: a FUNCTION and a value-returning PROCEDURE | `calls 0` |
 | | | **change**: make `Square` a `PROCEDURE ... RETURNS` that adds 1 to `calls` | `calls 2`: a value-returning procedure may have side effects |
 | | | **break**: write `calls := calls + 1` inside the FUNCTION `Square` | `calls is not local`: a FUNCTION assigns only to its own locals (D-33) |

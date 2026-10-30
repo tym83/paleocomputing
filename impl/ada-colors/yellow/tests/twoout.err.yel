@@ -1,0 +1,7 @@
+(* the same actual for two OUT parameters is an error (IX.A.2) *)
+MODULE TwoOut
+  IMPORT StandardImplementationPrelude;
+  PROCEDURE Two (OUT a, b: INTEGER64) a := 1; b := 2; RETURN ENDPROCEDURE Two;
+  VAR x: INTEGER64;
+  Two(x, x)
+ENDMODULE TwoOut

@@ -1,0 +1,14 @@
+(* routines exported from a module extend the definitions of their name *)
+(* around it (X.B.5); READONLY may restrict a constant *)
+MODULE Exports
+  IMPORT TextIO, StandardImplementationPrelude;
+  FUNCTION f RETURNS BOOLEAN (CONST x: INTEGER64) RETURN FALSE ENDFUNCTION f;
+  MODULE M
+    IMPORT INTEGER64;
+    EXPORT f;
+    EXPORT READONLY c;
+    CONST c: INTEGER64 = 5;
+    FUNCTION f RETURNS BOOLEAN (CONST x: BOOLEAN) RETURN NOT x ENDFUNCTION f;
+  ENDMODULE M;
+  Write(f(1)); Write(" "); Write(f(FALSE)); Write(" "); Write(c); WriteLn()
+ENDMODULE Exports

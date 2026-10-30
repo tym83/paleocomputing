@@ -1,0 +1,20 @@
+(* NOT and := are names too (rule 56): a program extends NOT and replaces *)
+(* := for its own type; an assignment, an initialization and the copy of *)
+(* an OUT parameter call it (VII.B, X.A.1) *)
+MODULE UserOps
+  IMPORT TextIO, StandardImplementationPrelude;
+  REPRESENTATION V = RECORD VAR x, y: INTEGER64; VAR n: INTEGER64 ENDRECORD;
+  FUNCTION EXTENDS NOT RETURNS V (CONST a: V) RETURN V(a.y, a.x, a.n) ENDFUNCTION NOT;
+  (* an assignment counts the assignments a value went through *)
+  PROCEDURE REPLACES := (OUT a: V; CONST b: V)
+    a := V(b.x, b.y, b.n + 1);
+    RETURN
+  ENDPROCEDURE :=;
+  PROCEDURE Make (OUT v: V) v := V(5, 6, 0); RETURN ENDPROCEDURE Make;
+  VAR a: V := V(1, 2, 0);
+      b: V;
+  b := a; Write(b.n);
+  b := NOT b; Write(b.x); Write(b.n);
+  Make(b); Write(b.n);
+  Write(NOT FALSE); WriteLn()
+ENDMODULE UserOps

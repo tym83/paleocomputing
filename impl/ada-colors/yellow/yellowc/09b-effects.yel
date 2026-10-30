@@ -1,0 +1,503 @@
+  (* ---- what routines do to the variables of other scopes (X.A.4-6) ---------- *)
+  (* While a body is written, the variables of other scopes it assigns and *)
+  (* uses, and the routines it calls, are noted; once every body is written *)
+  (* their closure over the calls decides the purity of FUNCTIONs (X.A.4), *)
+  (* the recursion of INLINE routines (X.A.5) and the aliasing of VAR *)
+  (* actuals with what the routine refers to freely (X.A.6). *)
+
+  (* the base of a designator: the variable at its root, and whether it *)
+  (* goes through a pointer (dyn), the type of the last pointer it follows *)
+  PROCEDURE DesigBase (CONST n: Node; OUT root: Sym; OUT dyn: BOOLEAN; OUT tid: Txt)
+    VAR d: Node := n;
+        s: Sym;
+    root := Sym NIL;
+    dyn := FALSE;
+    tid := 0;
+    LOOP walk
+      IF (d^.kind = N_PAREN) OR (d^.kind = N_SEL) OR (d^.kind = N_INDEX) THEN
+        d := d^.a
+      ELSIF d^.kind = N_DEREF THEN
+        IF NOT dyn THEN
+          dyn := TRUE;
+          IF d^.a^.rep # Rep NIL THEN tid := d^.a^.rep^.tid ENDIF
+        ENDIF;
+        d := d^.a
+      ELSE
+        EXIT walk
+      ENDIF
+    ENDLOOP walk;
+    IF (d^.kind = N_NAME) AND (d^.d = Node NIL) THEN
+      s := Find(d^.name);
+      IF s # Sym NIL THEN
+        IF Resolved(s) THEN
+          s := Real(s);
+          IF s^.kind = S_VAR THEN root := s ENDIF
+        ENDIF
+      ENDIF
+    ENDIF;
+    RETURN
+  ENDPROCEDURE DesigBase;
+
+  PROCEDURE Note RETURNS Node (CONST s: Sym; CONST tid: Txt; CONST line: INT)
+    VAR n: Node := NewNode(N_NAMEL, line);
+    n^.sym := s;
+    n^.name := tid;
+    RETURN n
+  ENDPROCEDURE Note;
+
+  (* the routine being written assigns to the variable n designates *)
+  PROCEDURE NoteWrite (CONST n: Node)
+    VAR root: Sym;
+        dyn: BOOLEAN;
+        tid: Txt;
+        p, w: Node;
+    IF CurRoutine = Sym NIL THEN RETURN ENDIF;
+    DesigBase(n, root, dyn, tid);
+    IF dyn THEN
+      root := Sym NIL
+    ELSIF (root = Sym NIL) OR (root^.level >= CurRoutine^.level) THEN
+      RETURN
+    ENDIF;
+    p := CurRoutine^.writes;
+    WHILE p # Node NIL DO
+      IF p^.sym = root THEN RETURN ENDIF;
+      p := p^.next
+    ENDWHILE;
+    w := Note(root, 0, n^.line);
+    w^.next := CurRoutine^.writes;
+    CurRoutine^.writes := w;
+    RETURN
+  ENDPROCEDURE NoteWrite;
+
+  (* the routine being written refers to the variable s *)
+  PROCEDURE NoteFree (CONST s: Sym)
+    VAR f: Node;
+    IF CurRoutine = Sym NIL THEN RETURN ENDIF;
+    IF (s^.kind # S_VAR) OR (s^.level >= CurRoutine^.level) THEN RETURN ENDIF;
+    IF s^.seen = CurRoutine^.serial THEN RETURN ENDIF;
+    s^.seen := CurRoutine^.serial;
+    f := Note(s, 0, CurLine);
+    f^.next := CurRoutine^.frees;
+    CurRoutine^.frees := f;
+    RETURN
+  ENDPROCEDURE NoteFree;
+
+  (* ... and through the pointer of type tid that p designates, when p is *)
+  (* rooted in a variable of another scope *)
+  PROCEDURE NoteFreeDeref (CONST p: Node; CONST tid: Txt)
+    VAR root: Sym;
+        dyn: BOOLEAN;
+        t: Txt;
+        f: Node;
+    IF CurRoutine = Sym NIL THEN RETURN ENDIF;
+    DesigBase(p, root, dyn, t);
+    IF (root = Sym NIL) OR (root^.level >= CurRoutine^.level) THEN RETURN ENDIF;
+    f := CurRoutine^.frees;
+    WHILE f # Node NIL DO
+      IF (f^.sym = Sym NIL) AND (f^.name = tid) THEN RETURN ENDIF;
+      f := f^.next
+    ENDWHILE;
+    f := Note(Sym NIL, tid, p^.line);
+    f^.next := CurRoutine^.frees;
+    CurRoutine^.frees := f;
+    RETURN
+  ENDPROCEDURE NoteFreeDeref;
+
+  (* the components, subscripts and pointers of a designator after its base, *)
+  (* the one nearest the base first *)
+  PROCEDURE DSteps RETURNS INT (CONST n: Node; VAR st: Steps)
+    VAR d: Node := n;
+        k: INT := 0;
+        t: Node;
+    WHILE (d^.kind = N_PAREN) OR (d^.kind = N_SEL) OR (d^.kind = N_INDEX) DO
+      IF d^.kind # N_PAREN THEN
+        IF k < 64 THEN
+          k := k + 1;
+          st[k] := d
+        ENDIF
+      ENDIF;
+      d := d^.a
+    ENDWHILE;
+    FOR i: INTEGER [1..k DIV 2] DO
+      t := st[i];
+      st[i] := st[(k + 1) - i];
+      st[(k + 1) - i] := t
+    ENDFOR;
+    RETURN k
+  ENDPROCEDURE DSteps;
+
+  (* may two variable designators share storage (X.A.6): the same variable, *)
+  (* one part of the other, or a subscript not known at translation; *)
+  (* dynamic variables of one pointer type may be the same; P^ and a pointer *)
+  (* of its type *)
+  PROCEDURE Overlaps RETURNS BOOLEAN (CONST a, b: Node)
+    VAR ra, rb: Sym;
+        da, db, oa, ob, allm, differ: BOOLEAN;
+        ta, tb: Txt;
+        sa, sb: Steps;
+        na, nb, va, vb: INT;
+        x, y, p, q: Node;
+    DesigBase(a, ra, da, ta);
+    DesigBase(b, rb, db, tb);
+    IF da # db THEN
+      IF da AND (a^.kind = N_DEREF) AND (b^.rep # Rep NIL) THEN
+        IF (b^.rep^.kind = R_PTR) AND (b^.rep^.tid = ta) THEN RETURN TRUE ENDIF
+      ENDIF;
+      IF db AND (b^.kind = N_DEREF) AND (a^.rep # Rep NIL) THEN
+        IF (a^.rep^.kind = R_PTR) AND (a^.rep^.tid = tb) THEN RETURN TRUE ENDIF
+      ENDIF;
+      RETURN FALSE
+    ENDIF;
+    IF da THEN
+      IF ta # tb THEN RETURN FALSE ENDIF
+    ELSIF (ra = Sym NIL) OR (ra # rb) THEN
+      RETURN FALSE
+    ENDIF;
+    na := DSteps(a, sa);
+    nb := DSteps(b, sb);
+    FOR i: INTEGER [1..na] DO
+      IF i <= nb THEN
+        x := sa[i];
+        y := sb[i];
+        IF x^.kind # y^.kind THEN RETURN TRUE ENDIF;
+        IF x^.kind = N_SEL THEN
+          IF x^.name # y^.name THEN RETURN FALSE ENDIF
+        ELSE
+          allm := TRUE;
+          differ := FALSE;
+          p := x^.b;
+          q := y^.b;
+          WHILE (p # Node NIL) AND (q # Node NIL) DO
+            Manifest(p, oa, va);
+            Manifest(q, ob, vb);
+            IF oa AND ob THEN
+              IF va # vb THEN differ := TRUE ENDIF
+            ELSE
+              allm := FALSE
+            ENDIF;
+            p := p^.next;
+            q := q^.next
+          ENDWHILE;
+          IF NOT allm THEN RETURN TRUE ENDIF;
+          IF differ THEN RETURN FALSE ENDIF
+        ENDIF
+      ENDIF
+    ENDFOR;
+    RETURN TRUE
+  ENDPROCEDURE Overlaps;
+
+  (* the actuals of a call that bind VAR and OUT formals: no two VAR *)
+  (* actuals share storage (X.A.6), no variable is the actual of two OUT *)
+  (* formals (IX.A.2); the VAR actuals are kept for the check against *)
+  (* what the routine refers to freely *)
+  PROCEDURE CheckActuals (CONST s: Sym; CONST base: INT; CONST line: INT)
+    VAR p, q: Param;
+        i, j: INT;
+        site, info: Node;
+        root: Sym;
+        dyn: BOOLEAN;
+        tid: Txt;
+    p := s^.params;
+    i := base + 1;
+    site := Node NIL;
+    WHILE p # Param NIL DO
+      IF (p^.cls # C_CONST) AND (p^.rep^.kind # R_SPACE) THEN
+        q := p^.next;
+        j := i + 1;
+        WHILE q # Param NIL DO
+          IF (p^.cls = C_VAR) AND (q^.cls = C_VAR) THEN
+            IF Overlaps(ArgNode[i], ArgNode[j]) THEN
+              FailN(ArgNode[j]^.line, q^.name, ": its actual and that of another VAR parameter may be the same variable (X.A.6)")
+            ENDIF
+          ENDIF;
+          IF (p^.cls = C_OUT) AND (q^.cls = C_OUT) THEN
+            IF SameDesig(ArgNode[i], ArgNode[j]) THEN
+              FailN(ArgNode[j]^.line, q^.name, ": the same variable is the actual of two OUT parameters (IX.A.2)")
+            ENDIF
+          ENDIF;
+          q := q^.next;
+          j := j + 1
+        ENDWHILE;
+        IF p^.cls = C_VAR THEN
+          DesigBase(ArgNode[i], root, dyn, tid);
+          info := Note(root, tid, ArgNode[i]^.line);
+          IF dyn THEN info^.flag := 1 ENDIF;
+          (* the actual is a whole dynamic variable P^ *)
+          IF ArgNode[i]^.kind = N_DEREF THEN info^.ival := 1 ENDIF;
+          IF site = Node NIL THEN
+            site := Note(s, 0, line);
+            site^.next := Sites;
+            Sites := site
+          ENDIF;
+          info^.next := site^.a;
+          site^.a := info
+        ENDIF
+      ENDIF;
+      i := i + 1;
+      p := p^.next
+    ENDWHILE;
+    RETURN
+  ENDPROCEDURE CheckActuals;
+
+  (* every body is written: the closure of what the routines do over their *)
+  (* calls, and the checks that need it *)
+  PROCEDURE CheckEffects ()
+    VAR r, f, c: Node;
+        nr, nv, ndyn: INT := 0;
+        s: Sym;
+    (* the routines, and the variables noted, numbered *)
+    ndyn := 1;
+    nv := 1;
+    r := AllRoutines;
+    WHILE r # Node NIL DO
+      nr := nr + 1;
+      r^.sym^.vix := nr;
+      f := r^.sym^.writes;
+      WHILE f # Node NIL DO
+        IF (f^.sym # Sym NIL) AND (f^.sym^.vix = 0) THEN
+          nv := nv + 1;
+          f^.sym^.vix := nv
+        ENDIF;
+        f := f^.next
+      ENDWHILE;
+      f := r^.sym^.frees;
+      WHILE f # Node NIL DO
+        IF f^.sym # Sym NIL THEN
+          IF f^.sym^.vix = 0 THEN
+            nv := nv + 1;
+            f^.sym^.vix := nv
+          ENDIF
+        ELSIF DynIndex(f^.name, nv, FALSE) = 0 THEN
+          nv := nv + 1;
+          f^.ival := DynIndex(f^.name, nv, TRUE)
+        ENDIF;
+        f := f^.next
+      ENDWHILE;
+      r := r^.next
+    ENDWHILE;
+    IF nr = 0 THEN RETURN ENDIF;
+    BEGIN
+      VAR W, F: ARRAY (INTEGER [0..(nr + 1) * (nv + 1)] OF BOOLEAN);
+          VLevel: ARRAY (INTEGER [0..nv] OF INT);
+          VSym: ARRAY (INTEGER [0..nv] OF Sym);
+          VTid: ARRAY (INTEGER [0..nv] OF Txt);
+          RS: ARRAY (INTEGER [0..nr] OF Sym);
+          Seen: ARRAY (INTEGER [0..nr] OF BOOLEAN);
+          changed: BOOLEAN := TRUE;
+          k, v, ci: INT;
+          cs: Sym;
+
+      PROCEDURE At RETURNS INT (CONST ri, vi: INT)
+        RETURN (ri * (nv + 1)) + vi
+      ENDPROCEDURE At;
+
+      (* can routine i be reached from the calls of routine j *)
+      PROCEDURE Reaches RETURNS BOOLEAN (CONST i, j: INT)
+        VAR c: Node := RS[j]^.calls;
+        IF Seen[j] THEN RETURN FALSE ENDIF;
+        Seen[j] := TRUE;
+        WHILE c # Node NIL DO
+          IF c^.sym^.vix > 0 THEN
+            IF c^.sym^.vix = i THEN RETURN TRUE ENDIF;
+            IF Reaches(i, c^.sym^.vix) THEN RETURN TRUE ENDIF
+          ENDIF;
+          c := c^.next
+        ENDWHILE;
+        RETURN FALSE
+      ENDPROCEDURE Reaches;
+
+      (* LIB/S.yfx: the facts of the routines this segment gives the others *)
+      PROCEDURE WriteFacts ()
+        VAR b: Buf := Buf(Line NIL, Line NIL);
+            pure, dyn: BOOLEAN;
+            s: Sym;
+        FOR ri: INTEGER [1..nr] DO
+          s := RS[ri];
+          IF (s^.skey # 0) AND NOT s^.hasmv THEN
+            pure := TRUE;
+            dyn := FALSE;
+            FOR vi: INTEGER [1..nv] DO
+              IF W[At(ri, vi)] THEN pure := FALSE ENDIF;
+              IF F[At(ri, vi)] AND (VSym[vi] = Sym NIL) AND (vi # 1) THEN dyn := TRUE ENDIF
+            ENDFOR;
+            SB();
+            ST(s^.skey);
+            IF pure THEN SA(" P") ELSE SA(" I") ENDIF;
+            IF dyn THEN SA(" D") ENDIF;
+            FOR vi: INTEGER [1..nv] DO
+              IF F[At(ri, vi)] AND (VSym[vi] # Sym NIL) THEN
+                IF VSym[vi]^.skey # 0 THEN
+                  SA(" ");
+                  ST(VSym[vi]^.skey)
+                ENDIF
+              ENDIF
+            ENDFOR;
+            Put(b, SE())
+          ENDIF
+        ENDFOR;
+        WriteFile(LibPath(OwnSeg, ".yfx"), b);
+        RETURN
+      ENDPROCEDURE WriteFacts;
+
+      PROCEDURE VName RETURNS Txt (CONST v: INT)
+        IF VSym[v] = Sym NIL THEN RETURN T("a dynamic variable") ENDIF;
+        RETURN VSym[v]^.name
+      ENDPROCEDURE VName;
+
+      FOR i: INTEGER [0..(nr + 1) * (nv + 1)] DO
+        W[i] := FALSE;
+        F[i] := FALSE
+      ENDFOR;
+      FOR i: INTEGER [0..nv] DO
+        VLevel[i] := -1;
+        VSym[i] := Sym NIL;
+        VTid[i] := 0
+      ENDFOR;
+      FOR i: INTEGER [0..nr] DO Seen[i] := FALSE ENDFOR;
+      r := AllRoutines;
+      WHILE r # Node NIL DO
+        s := r^.sym;
+        RS[s^.vix] := s;
+        f := s^.writes;
+        WHILE f # Node NIL DO
+          IF f^.sym = Sym NIL THEN v := 1 ELSE v := f^.sym^.vix ENDIF;
+          W[At(s^.vix, v)] := TRUE;
+          IF f^.sym # Sym NIL THEN
+            VLevel[v] := f^.sym^.level;
+            VSym[v] := f^.sym
+          ENDIF;
+          f := f^.next
+        ENDWHILE;
+        f := s^.frees;
+        WHILE f # Node NIL DO
+          IF f^.sym = Sym NIL THEN
+            v := DynIndex(f^.name, 0, FALSE);
+            VTid[v] := f^.name
+          ELSE
+            v := f^.sym^.vix;
+            VLevel[v] := f^.sym^.level;
+            VSym[v] := f^.sym
+          ENDIF;
+          F[At(s^.vix, v)] := TRUE;
+          f := f^.next
+        ENDWHILE;
+        r := r^.next
+      ENDWHILE;
+      (* the closure over the calls: a callee's variables that are not *)
+      (* local to the caller are the caller's too *)
+      WHILE changed DO
+        changed := FALSE;
+        FOR ri: INTEGER [1..nr] DO
+          c := RS[ri]^.calls;
+          WHILE c # Node NIL DO
+            ci := c^.sym^.vix;
+            IF ci > 0 THEN
+              FOR vi: INTEGER [1..nv] DO
+                IF VLevel[vi] < RS[ri]^.level THEN
+                  IF W[At(ci, vi)] AND NOT W[At(ri, vi)] THEN
+                    W[At(ri, vi)] := TRUE;
+                    changed := TRUE
+                  ENDIF;
+                  IF F[At(ci, vi)] AND NOT F[At(ri, vi)] THEN
+                    F[At(ri, vi)] := TRUE;
+                    changed := TRUE
+                  ENDIF
+                ENDIF
+              ENDFOR
+            ENDIF;
+            c := c^.next
+          ENDWHILE
+        ENDFOR
+      ENDWHILE;
+      FOR ri: INTEGER [1..nr] DO
+        s := RS[ri];
+        (* a FUNCTION calls no routine that assigns to a variable not *)
+        (* local to the FUNCTION (X.A.4) *)
+        IF s^.func THEN
+          c := s^.calls;
+          WHILE c # Node NIL DO
+            ci := c^.sym^.vix;
+            IF ci > 0 THEN
+              FOR vi: INTEGER [1..nv] DO
+                IF W[At(ci, vi)] AND (VLevel[vi] < s^.level) THEN
+                  Fail(c^.line, Join(s^.name, Join(T(" is a FUNCTION: it calls "), c^.sym^.name, 0),
+                       Join(T(", which assigns to "), VName(vi), T(" (X.A.4)"))))
+                ENDIF
+              ENDFOR
+            ENDIF;
+            c := c^.next
+          ENDWHILE
+        ENDIF;
+        (* an INLINE routine is not recursive (X.A.5) *)
+        IF s^.decl # Node NIL THEN
+          IF s^.decl^.e # Node NIL THEN
+            FOR i: INTEGER [0..nr] DO Seen[i] := FALSE ENDFOR;
+            IF Reaches(ri, ri) THEN FailN(s^.decl^.line, s^.name, " is INLINE and calls itself (X.A.5)") ENDIF
+          ENDIF
+        ENDIF
+      ENDFOR;
+      IF Mode = M_SEGMENT THEN WriteFacts() ENDIF;
+      (* a VAR actual is not a variable the routine refers to freely, nor a *)
+      (* dynamic variable it may reach freely (X.A.6) *)
+      r := Sites;
+      WHILE r # Node NIL DO
+        cs := r^.sym;
+        ci := cs^.vix;
+        IF ci > 0 THEN
+          f := r^.a;
+          WHILE f # Node NIL DO
+            IF (f^.flag = 0) AND (f^.sym # Sym NIL) THEN
+              v := f^.sym^.vix;
+              IF v > 0 THEN
+                IF F[At(ci, v)] THEN
+                  Fail(f^.line, Join(f^.sym^.name, Join(T(" is the actual of a VAR parameter of "), cs^.name, 0),
+                       T(", which refers to it freely too (X.A.6)")))
+                ENDIF
+              ENDIF
+            ENDIF;
+            k := 0;
+            IF f^.flag = 1 THEN
+              k := DynIndex(f^.name, 0, FALSE);
+              (* a routine of another segment that reaches dynamic variables *)
+              (* of any type freely *)
+              IF DynIndex(N("*"), 0, FALSE) > 0 THEN
+                IF F[At(ci, DynIndex(N("*"), 0, FALSE))] THEN k := DynIndex(N("*"), 0, FALSE) ENDIF
+              ENDIF
+            ENDIF;
+            IF k > 0 THEN
+              IF F[At(ci, k)] THEN
+                FailN(f^.line, cs^.name, ": a VAR actual and a dynamic variable it refers to freely may be the same (X.A.6)")
+              ENDIF
+            ENDIF;
+            IF (f^.flag = 1) AND (f^.ival = 1) THEN
+              FOR vi: INTEGER [1..nv] DO
+                IF F[At(ci, vi)] AND (VSym[vi] # Sym NIL) THEN
+                  IF (VSym[vi]^.rep^.kind = R_PTR) AND (VSym[vi]^.rep^.tid = f^.name) THEN
+                    Fail(f^.line, Join(cs^.name, Join(T(": a VAR actual is a dynamic variable that "), VSym[vi]^.name, 0),
+                         T(", which it refers to freely, may point to (X.A.6)")))
+                  ENDIF
+                ENDIF
+              ENDFOR
+            ENDIF;
+            f := f^.next
+          ENDWHILE
+        ENDIF;
+        r := r^.next
+      ENDWHILE
+    END;
+    RETURN
+  ENDPROCEDURE CheckEffects;
+
+  (* the index of the dynamic variables of pointer type tid among the *)
+  (* variables noted, 0 when there is none; add gives it index v *)
+  PROCEDURE DynIndex RETURNS INT (CONST tid: Txt; CONST v: INT; CONST add: BOOLEAN)
+    FOR i: INTEGER [1..NDyn] DO
+      IF DynTid[i] = tid THEN RETURN DynIx[i] ENDIF
+    ENDFOR;
+    IF NOT add THEN RETURN 0 ENDIF;
+    IF NDyn >= 4096 THEN FailS(CurLine, "too many pointer types for this implementation") ENDIF;
+    NDyn := NDyn + 1;
+    DynTid[NDyn] := tid;
+    DynIx[NDyn] := v;
+    RETURN v
+  ENDPROCEDURE DynIndex;

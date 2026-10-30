@@ -1,0 +1,6 @@
+(* FOR goes over an ordered scalar or integer range (IX.B.2) *)
+MODULE ForOrdered
+  REPRESENTATION Fruit = UNORDERED (Lemon, Lime);
+  VAR n: INTEGER [0..9] := 0;
+  FOR f: Fruit DO n := n + 1 ENDFOR
+ENDMODULE ForOrdered

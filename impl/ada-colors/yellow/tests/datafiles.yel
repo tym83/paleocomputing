@@ -1,0 +1,28 @@
+(* files of any representation (XII): arrays, records holding arrays and *)
+(* sets, strings, pointers *)
+MODULE DataFiles
+  IMPORT TextIO, StandardImplementationPrelude;
+  REPRESENTATION
+    Name = ARRAY (INTEGER [1..5] OF ASCII);
+    Digits = SET (INTEGER [0..9]);
+    Scores = ARRAY (INTEGER [1..3] OF INTEGER64);
+    Entry = RECORD VAR name: Name; VAR scores: Scores; VAR seen: Digits ENDRECORD;
+    P = POINTER (INTEGER64);
+  VAR f: FILE (Entry); g: FILE (P); e: Entry; p, q: P;
+  OPEN(f, "/tmp/yellow-datafiles.tmp", WRITE);
+  PUT(f, Entry("alpha", Scores(1, 2, 3), Digits(1, 7)));
+  PUT(f, Entry("omega", Scores(7), Digits()));
+  CLOSE(f);
+  OPEN(f, "/tmp/yellow-datafiles.tmp", READ);
+  WHILE NOT CHECK_EOF(f) DO
+    GET(f, e);
+    Write(e.name); Write(" "); Write(e.scores[1] + e.scores[2] + e.scores[3]);
+    IF 7 IN e.seen THEN Write(" saw 7") ENDIF;
+    WriteLn()
+  ENDWHILE;
+  CLOSE(f);
+  NEW(p); p^ := 42;
+  OPEN(g, "/tmp/yellow-datafiles.tmp", WRITE); PUT(g, p); CLOSE(g);
+  OPEN(g, "/tmp/yellow-datafiles.tmp", READ); GET(g, q); CLOSE(g);
+  IF p = q THEN Write(q^) ENDIF; WriteLn()
+ENDMODULE DataFiles

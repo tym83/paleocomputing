@@ -1,0 +1,7 @@
+(* a record that holds a file has no assignment (VII.B) *)
+MODULE RecordFile
+  IMPORT StandardImplementationPrelude;
+  REPRESENTATION Log = RECORD VAR lines: INTEGER64; VAR f: FILE (ASCII) ENDRECORD;
+  VAR a, b: Log;
+  a := b
+ENDMODULE RecordFile

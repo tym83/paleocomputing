@@ -146,16 +146,135 @@ FUNC is_word_op(READONLY w : STRING[ASCII]) => BOOL;
 END FUNC is_word_op;
 
 PROC add_token(CONST kind : INT, READONLY s : STRING[ASCII], CONST ival : INT)
-      IMPORTS toks, ntoks, src_line;
+      IMPORTS toks, ntoks, src_line, pending_prag;
    VAR t : token;
    ALLOC t PTR;
    t.kind := kind;
    t.line := src_line;
    t.ival := ival;
    t.s := mk(s);
+   t.prags := pending_prag;
+   pending_prag := NIL;
    ntoks := ntoks + 1;
    toks(ntoks) := t;
 END PROC add_token;
+
+% the end of an identifier that starts at i (diagram C): letters and digits,
+% single underscores between them
+ABNORMAL FUNC ident_end(READONLY line : STRING[ASCII], CONST i : INT) => INT IMPORTS src_line;
+   VAR j : INT := i + 1;
+   WHILE j <= line.LEN AND (is_letter(line(j)) OR is_digit(line(j)) OR line(j) = 'UNDERSCORE) REPEAT
+      IF line(j) = 'UNDERSCORE AND (j = line.LEN OR NOT (is_letter(line(j + 1)) OR is_digit(line(j + 1)))) THEN
+         fail(src_line, "an underscore in an identifier must stand between letters or digits");
+      END IF;
+      j := j + 1;
+   END REPEAT;
+   RETURN j;
+END FUNC ident_end;
+
+FUNC upper_s(READONLY s : STRING[ASCII]) => STRING[ASCII];
+   VAR w : STRING[ASCII](s.LEN) := s;
+   FOR k : INT(1 .. w.LEN) REPEAT
+      w(k) := upper(w(k));
+   END REPEAT;
+   RETURN w;
+END FUNC upper_s;
+
+FUNC skip_blanks(READONLY line : STRING[ASCII], CONST i : INT) => INT;
+   VAR j : INT := i;
+   WHILE j <= line.LEN AND (line(j) = 'SP OR line(j) = 'HT) REPEAT
+      j := j + 1;
+   END REPEAT;
+   RETURN j;
+END FUNC skip_blanks;
+
+% PRAG ( pragmat, ... ) (diagrams 82, 83): a token separator, kept with the
+% token that follows; j is just after PRAG, the result just after the )
+ABNORMAL FUNC lex_prag(READONLY line : STRING[ASCII], CONST at : INT) => INT IMPORTS src_line, pending_prag;
+   VAR j : INT := skip_blanks(line, at);
+   VAR r : text := mk("");
+   VAR more : BOOL := TRUE;
+   IF j > line.LEN OR line(j) /= 'LPAREN THEN
+      fail(src_line, "PRAG needs ( pragmat, ... )");
+   END IF;
+   j := j + 1;
+   WHILE more REPEAT
+      VAR k : INT;
+      j := skip_blanks(line, j);
+      IF j > line.LEN OR NOT is_letter(line(j)) THEN
+         fail(src_line, "a pragmat is an identifier");
+      END IF;
+      k := ident_end(line, j);
+      r := mk(r.ALL & upper_s(line(j .. k - 1)));
+      j := skip_blanks(line, k);
+      IF j <= line.LEN AND line(j) = 'LPAREN THEN
+         VAR go : BOOL := TRUE;
+         r := mk(r.ALL & "(");
+         j := j + 1;
+         WHILE go REPEAT
+            j := skip_blanks(line, j);
+            IF j > line.LEN OR NOT is_letter(line(j)) THEN
+               fail(src_line, "a pragmat argument is an identifier");
+            END IF;
+            k := ident_end(line, j);
+            r := mk(r.ALL & upper_s(line(j .. k - 1)));
+            j := skip_blanks(line, k);
+            IF j <= line.LEN AND line(j) = 'COMMA THEN
+               r := mk(r.ALL & ",");
+               j := j + 1;
+            ELSEIF j <= line.LEN AND line(j) = 'RPAREN THEN
+               j := j + 1;
+               go := FALSE;
+            ELSE
+               fail(src_line, "a pragmat ends with )");
+            END IF;
+         END REPEAT;
+         r := mk(r.ALL & ")");
+      END IF;
+      r := mk(r.ALL & ";");
+      j := skip_blanks(line, j);
+      IF j <= line.LEN AND line(j) = 'COMMA THEN
+         j := j + 1;
+      ELSEIF j <= line.LEN AND line(j) = 'RPAREN THEN
+         j := j + 1;
+         more := FALSE;
+      ELSE
+         fail(src_line, "PRAG ( ... ) is not closed");
+      END IF;
+   END REPEAT;
+   check_pragmats(r.ALL);
+   IF pending_prag = NIL THEN
+      pending_prag := r;
+   ELSE
+      pending_prag := mk(pending_prag.ALL & r.ALL);
+   END IF;
+   RETURN j;
+END FUNC lex_prag;
+
+% the language-defined pragmats (B) take the arguments shown in diagram 83
+PROC check_pragmats(READONLY r : STRING[ASCII]) IMPORTS src_line;
+   VAR i : INT := 1;
+   VAR k : INT;
+   WHILE i <= r.LEN REPEAT
+      k := i;
+      WHILE r(k) /= 'SEMI REPEAT
+         k := k + 1;
+      END REPEAT;
+      BEGIN
+         CONST p := r(i .. k - 1);
+         CONST ok := p = "OPTIMIZE(SPACE)" OR p = "OPTIMIZE(TIME)" OR p = "OPEN" OR p = "CLOSED"
+            OR p = "LIST(ON)" OR p = "LIST(OFF)" OR p = "NONRECURSIVE" OR p = "NONREENTRANT"
+            OR p = "OK(ALIAS)" OR p = "OK(SHARE)" OR (p.LEN > 10 AND p(1 .. 9) = "SUPPRESS(");
+         CONST known := p.LEN >= 8 AND (p(1 .. 8) = "OPTIMIZE" OR p(1 .. 8) = "SUPPRESS")
+            OR p = "OPEN" OR p = "CLOSED" OR (p.LEN >= 4 AND p(1 .. 4) = "LIST") OR p = "NONRECURSIVE"
+            OR p = "NONREENTRANT" OR (p.LEN >= 2 AND p(1 .. 2) = "OK");
+         IF known AND NOT ok THEN
+            fail(src_line, "malformed pragmat " & p);
+         END IF;
+      END;
+      i := k + 1;
+   END REPEAT;
+END PROC check_pragmats;
 
 PROC lex_line(READONLY line : STRING[ASCII]) IMPORTS src_line;
    VAR i : INT := 1;
@@ -169,10 +288,7 @@ PROC lex_line(READONLY line : STRING[ASCII]) IMPORTS src_line;
       ELSEIF c = 'PERCENT THEN
          i := n + 1;
       ELSEIF is_letter(c) THEN
-         j := i;
-         WHILE j <= n AND (is_letter(line(j)) OR is_digit(line(j)) OR line(j) = 'UNDERSCORE) REPEAT
-            j := j + 1;
-         END REPEAT;
+         j := ident_end(line, i);
          BEGIN
             VAR w : STRING[ASCII](j - i) := line(i .. j - 1);
             FOR k : INT(1 .. w.LEN) REPEAT
@@ -184,6 +300,8 @@ PROC lex_line(READONLY line : STRING[ASCII]) IMPORTS src_line;
                   j := j + 1;
                END REPEAT;
                j := j + 1;
+            ELSEIF w = "PRAG" THEN
+               j := lex_prag(line, j);
             ELSEIF is_reserved(w) THEN
                add_token(k_kw, w, 0);
             ELSEIF is_word_op(w) THEN
@@ -217,14 +335,26 @@ PROC lex_line(READONLY line : STRING[ASCII]) IMPORTS src_line;
             add_token(k_int, line(i .. j - 1), CNVT[INT](line(i .. j - 1)));
          END IF;
          i := j;
+      ELSEIF c = 'APOS AND i < n AND line(i + 1) = 'APOS THEN
+         % '' is the 55-character form of the quote (2.3.8)
+         j := i + 2;
+         WHILE j < n AND NOT (line(j) = 'APOS AND line(j + 1) = 'APOS) REPEAT
+            IF line(j) = 'QUOTE THEN
+               fail(src_line, "a string literal may not contain a quote");
+            END IF;
+            j := j + 1;
+         END REPEAT;
+         IF j >= n THEN
+            fail(src_line, "unterminated string literal");
+         END IF;
+         add_token(k_str, line(i + 2 .. j - 1), 0);
+         i := j + 2;
       ELSEIF c = 'APOS THEN
          j := i + 1;
          IF j > n OR NOT is_letter(line(j)) THEN
             fail(src_line, "bad enumeration literal");
          END IF;
-         WHILE j <= n AND (is_letter(line(j)) OR is_digit(line(j)) OR line(j) = 'UNDERSCORE) REPEAT
-            j := j + 1;
-         END REPEAT;
+         j := ident_end(line, j);
          BEGIN
             VAR w : STRING[ASCII](j - i - 1) := line(i + 1 .. j - 1);
             FOR k : INT(1 .. w.LEN) REPEAT
@@ -236,6 +366,10 @@ PROC lex_line(READONLY line : STRING[ASCII]) IMPORTS src_line;
       ELSEIF c = 'QUOTE THEN
          j := i + 1;
          WHILE j <= n AND line(j) /= 'QUOTE REPEAT
+            IF line(j) = 'APOS THEN
+               % an apostrophe is written 'APOS: '' would end the 55-character form
+               fail(src_line, "a string literal may not contain an apostrophe");
+            END IF;
             j := j + 1;
          END REPEAT;
          IF j > n THEN
@@ -254,6 +388,16 @@ PROC lex_line(READONLY line : STRING[ASCII]) IMPORTS src_line;
                   OR two = "<=" OR two = ">=" THEN
                add_token(k_op, two, 0);
                i := i + 2;
+            ELSEIF two = "<<" OR two = ">>" OR two = "::" THEN
+               % the 55-character forms of [, ] and # (2.3.3)
+               IF two = "<<" THEN
+                  add_token(k_op, "[", 0);
+               ELSEIF two = ">>" THEN
+                  add_token(k_op, "]", 0);
+               ELSE
+                  add_token(k_op, "#", 0);
+               END IF;
+               i := i + 2;
             ELSEIF c = 'LPAREN OR c = 'RPAREN OR c = 'LBRACKET OR c = 'RBRACKET
                   OR c = 'COMMA OR c = 'COLON OR c = 'SEMI OR c = 'PERIOD
                   OR c = 'NUMBER OR c = 'PLUS OR c = 'MINUS OR c = 'STAR
@@ -269,12 +413,62 @@ PROC lex_line(READONLY line : STRING[ASCII]) IMPORTS src_line;
    END REPEAT;
 END PROC lex_line;
 
-PROC read_source IMPORTS src_line;
+PROC read_source IMPORTS src_line, src_head, src_tail;
    WHILE NOT EOF REPEAT
       VAR line : STRING[ASCII](SIZELN);
+      VAR l : lines;
       READLN(line);
       src_line := src_line + 1;
+      ALLOC l PTR;
+      l.s := mk(line);
+      IF src_tail = NIL THEN
+         src_head := l;
+      ELSE
+         src_tail.next := l;
+      END IF;
+      src_tail := l;
       lex_line(line);
    END REPEAT;
    add_token(k_eof, "<end>", 0);
 END PROC read_source;
+
+% the translation units of a file of the library (3.1, 8.1), lexed after
+% what was read before; FALSE when there is no such file
+ABNORMAL FUNC read_library(READONLY name : STRING[ASCII]) => BOOL IMPORTS src_line;
+   VAR f : FILE[ASCII]('SEQ, 'INPUT);
+   VAR found : BOOL := TRUE;
+   GUARD
+      OPEN(f, lower_s(name) & ".red", 'OLD);
+   BY
+      WHEN X_NOFILE, X_FILENAME =>
+         found := FALSE;
+   END GUARD;
+   IF NOT found THEN
+      RETURN FALSE;
+   END IF;
+   WHILE NOT EOF(f) REPEAT
+      VAR line : STRING[ASCII](SIZELN(f));
+      READLN(f, line);
+      src_line := src_line + 1;
+      lex_line(line);
+   END REPEAT;
+   CLOSE(f, 'SAVE);
+   add_token(k_eof, "<end>", 0);
+   RETURN TRUE;
+END FUNC read_library;
+
+% a translation unit kept in the library, as its source text
+PROC write_library(CONST u : node) IMPORTS src_head;
+   VAR f : FILE[ASCII]('SEQ, 'OUTPUT);
+   VAR l : lines := src_head;
+   VAR n : INT := 1;
+   OPEN(f, lower_s(u.name.ALL) & ".red", 'NEW);
+   WHILE l /= NIL AND n <= u.eline REPEAT
+      IF n >= u.line THEN
+         WRITELN(f, l.s.ALL);
+      END IF;
+      n := n + 1;
+      l := l.next;
+   END REPEAT;
+   CLOSE(f, 'SAVE);
+END PROC write_library;

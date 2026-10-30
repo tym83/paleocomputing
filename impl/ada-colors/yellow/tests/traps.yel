@@ -1,0 +1,52 @@
+(* trap handlers (XIV.X.3): a program replaces the standard handler of a *)
+(* trap with a procedure of the outermost scope; it runs where the trap *)
+(* happens, and its RETURN resumes the operation (here: a value out of *)
+(* range becomes the nearest bound, a division by zero gives 0) or it *)
+(* propagates an exception. Traps a program suppresses are not detected *)
+(* (XIV.XIII.2) *)
+MODULE Traps
+  IMPORT TextIO, StandardImplementationPrelude, CompilerStatus;
+  VAR small: INTEGER [0..9];
+      n, zero: INTEGER64 := 0;
+      big: INTEGER64 := 9223372036854775807;
+  PROCEDURE REPLACES TRAP_OUT_OF_RANGE ()
+    Write("[range trap] ");
+    RETURN
+  ENDPROCEDURE TRAP_OUT_OF_RANGE;
+  PROCEDURE REPLACES TRAP_ZERO_DIVIDE ()
+    Write("[zero divide trap] ");
+    RETURN
+  ENDPROCEDURE TRAP_ZERO_DIVIDE;
+  PROCEDURE REPLACES TRAP_OVERFLOW ()
+    PROPAGATE_EXCEPTION too_big
+  ENDPROCEDURE TRAP_OVERFLOW;
+  n := 25; small := n; Write(small); WriteLn();
+  n := 7 DIV zero; Write(n); WriteLn();
+  BEGIN
+    EXCEPTION CASE too_big => Write("overflow became too_big"); WriteLn() ENDEXCEPTION;
+    n := big + 1
+  END;
+  BEGIN
+    SUPPRESS_TRAP(RANGE_TRAP);
+    SUPPRESS_TRAP(ASSERTION_TRAP);
+    IF TRAP_SUPPRESSED(RANGE_TRAP) THEN Write("range checks off: ") ENDIF;
+    n := 12; small := n; Write(small);
+    ASSERT FALSE;
+    WriteLn()
+  END;
+  n := 12; small := n; WriteLn();
+  BEGIN
+    REPRESENTATION P = POINTER (INTEGER64);
+    VAR a: ARRAY (INTEGER [1..3] OF INTEGER64);
+        p: P;
+    SUPPRESS_TRAP(INDEX_TRAP);
+    SUPPRESS_TRAP(POINTER_TRAP);
+    SUPPRESS_TRAP(ZERO_DIVIDE_TRAP);
+    a[1] := 10; a[2] := 20; a[3] := 30;
+    n := 5; Write(a[n]); Write(" ");
+    n := 7 DIV zero; Write(n); Write(" ");
+    p := P NIL;
+    p^ := 99; Write(p^); Write(" ");
+    Write(MAIN_STORE_ARRAY[0]); WriteLn()
+  END
+ENDMODULE Traps

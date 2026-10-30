@@ -1,0 +1,6 @@
+(* a concrete type preceded by a type is a representation of that type *)
+(* (rule 61, VII.G) *)
+MODULE Conforms
+  TYPE PolarType = RECORD VAR A, B: FLOATING ENDRECORD;
+  REPRESENTATION Bad = PolarType RECORD VAR Q: BOOLEAN ENDRECORD;
+ENDMODULE Conforms

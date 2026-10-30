@@ -1,0 +1,5 @@
+CAPSULE main EXPORTS NONE;
+   IF TRUE < FALSE THEN
+      WRITELN("no");
+   END IF;
+END CAPSULE main;

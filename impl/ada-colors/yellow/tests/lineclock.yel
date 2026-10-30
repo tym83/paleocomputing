@@ -1,0 +1,27 @@
+(* the simulated line clock, the KW11-L (XIV.VII): every 20 ms it sets *)
+(* bit 7 of its status register at BASE8 177546, and it sends its signal *)
+(* AT BASE8 100 only when the program has set bit 6, interrupt enable *)
+MODULE LineClock
+  IMPORT TextIO, StandardImplementationPrelude;
+  REPRESENTATION Word = ARRAY (INTEGER [1..64] OF BOOLEAN) PACKED;
+
+  MONITOR Clock
+    IMPORT Word;
+    EXPORT Enable, Done, Clear, Pause;
+    VAR lks AT BASE8 177546: Word;
+        tick AT BASE8 100: SIGNAL;
+    PROCEDURE Enable () lks[7] := TRUE; RETURN ENDPROCEDURE Enable;
+    PROCEDURE Done RETURNS BOOLEAN () RETURN lks[8] ENDPROCEDURE Done;
+    PROCEDURE Clear () lks[8] := FALSE; RETURN ENDPROCEDURE Clear;
+    PROCEDURE Pause () WAIT(tick); RETURN ENDPROCEDURE Pause
+  ENDMONITOR Clock;
+
+  Write(Done()); Write(" ");
+  DELAY(30);
+  Write(Done()); Write(" "); Clear(); Write(Done()); Write(" ");
+  Write(MAIN_STORE_ARRAY[BASE8 177546]); WriteLn();
+  Enable();
+  Pause(); Write("tick at "); Write(CLOCK_TIME()); Write(" ms, ");
+  Write(MAIN_STORE_ARRAY[BASE8 177546]); WriteLn();
+  Pause(); Write("tick at "); Write(CLOCK_TIME()); Write(" ms"); WriteLn()
+ENDMODULE LineClock

@@ -1,0 +1,18 @@
+(* SIZE bounds the local storage of a process instance, in words: a *)
+(* process that uses more raises TOO_LITTLE_LOCAL_STORAGE (XIV.X.2) *)
+MODULE Storage
+  IMPORT TextIO, StandardImplementationPrelude;
+  FUNCTION Depth RETURNS INTEGER64 (CONST n: INTEGER64)
+    IF n = 0 THEN RETURN 0 ENDIF;
+    RETURN Depth(n - 1) + 1
+  ENDFUNCTION Depth;
+  BEGIN
+    PROCESS Small (CONST n: INTEGER64) SIZE 200
+      EXCEPTION CASE TOO_LITTLE_LOCAL_STORAGE => Write("too deep for SIZE 200"); WriteLn(); TERMINATE_PROCESS
+      ENDEXCEPTION;
+      Write(Depth(n)); WriteLn();
+      TERMINATE_PROCESS
+    ENDPROCESS Small;
+    Small(10); Small(1000)
+  END
+ENDMODULE Storage

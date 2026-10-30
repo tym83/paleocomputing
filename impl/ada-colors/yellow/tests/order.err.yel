@@ -1,0 +1,11 @@
+(* a name a declaration uses and a later declaration of the same scope *)
+(* declares is that later entity, used before its declaration (VII.I) *)
+MODULE Order
+  IMPORT StandardImplementationPrelude;
+  CONST n: INTEGER64 = 5;
+  BEGIN
+    VAR a: INTEGER [1..n];
+    CONST n: INTEGER64 = 3;
+    a := 2
+  END
+ENDMODULE Order

@@ -612,6 +612,10 @@ struct rt_task {
   int atimed, atimer_alt;
   rt_int awake;
   rt_int runs;             /* GREEN T'CLOCK: the times it was given the processor */
+  /* YELLOW: an exception other than termination made pending by a trap of
+   * the scheduler (the deadlock trap); 0 for every other language */
+  int term_exc;
+  rt_int aclock;           /* RED activation clock (10.4) */
 };
 
 static pthread_mutex_t G = PTHREAD_MUTEX_INITIALIZER;
@@ -746,6 +750,12 @@ static int advance_clock(void) {
     }
   }
   if (!any) return 0;
+  /* the activation clocks run for activations that are running or delayed
+   * by the clock alone, not for those waiting on other activations */
+  if (next > now)
+    for (rt_task *t = all_tasks; t; t = t->all_next)
+      if (t->state == T_READY || t->state == T_RUNNING || (t->state == T_BLOCKED && t->timed && !t->wl))
+        t->aclock += next - now;
   if (next > now) now = next;
   for (rt_task *t = all_tasks; t; t = t->all_next) {
     if (t->state == T_BLOCKED && t->timed && t->wake <= now) {
@@ -796,10 +806,16 @@ static void switch_to(rt_task *n) {
 
 static void check_terminate(void) {
   if (cur->term_pending && !cur->critical) {
+    int e = cur->term_exc ? cur->term_exc : RT_X_TERMINATE;   /* YELLOW: term_exc */
     cur->term_pending = 0;
-    rt_raise(RT_X_TERMINATE);
+    cur->term_exc = 0;
+    rt_raise(e);
   }
 }
+
+/* YELLOW: when every task waits, a language may raise a trap instead of
+ * ending the program (Appendix C, "Deadlock"); NULL for the others */
+static int (*rt_deadlock_hook)(void);
 
 /* the running task gave up the processor (its state is already set) */
 static void reschedule(void) {
@@ -811,6 +827,7 @@ static void reschedule(void) {
     }
     if (advance_clock()) continue;
     if (take_terminate_alternatives()) continue;
+    if (rt_deadlock_hook && rt_deadlock_hook()) continue;           /* YELLOW */
     fflush(stdout);
     fprintf(stderr, "*** deadlock: every task is waiting (t=%lld)\n", (long long)now);
     if (getenv("PALEO_SCHED"))
@@ -1575,14 +1592,16 @@ static void scan_word(uintptr_t w) {
   }
 }
 
-void rt_free(void **v) {
-  uintptr_t target = (uintptr_t)*v;
-  blockrec *tb;
+/* the dynamic variables of types with FINALIZE, and how to finalize them */
+typedef struct { uintptr_t p; rt_finfn fin; void *env; } finrec;
+static finrec *fins;
+static size_t nfins, cfins;
+
+/* mark everything reachable; count the words that point into [target,
+ * target + tn), skipping the word at skip and the target's own contents */
+static size_t mark_reachable(uintptr_t target, size_t tn, uintptr_t skip) {
   size_t refs = 0;
-  if (!target) return;
-  tb = bfind(target);
-  if (!tb) rt_raise_msg(RT_X_FREE, "not a dynamic variable");
-  size_t tn = tb->n;
+  blockrec *tb = target ? bfind(target) : NULL;
   mark_epoch++;
   nwork = 0;
   for (size_t i = 0; i < nroots; i++) push_range(&work, &nwork, &cwork, roots[i].p, roots[i].n);
@@ -1590,22 +1609,96 @@ void rt_free(void **v) {
     for (size_t i = 0; i < s->depth; i++) push_range(&work, &nwork, &cwork, s->f[i].p, s->f[i].n);
   for (rt_task *t = all_tasks; t; t = t->all_next)
     if (t->state != T_DONE && t->frame) scan_word((uintptr_t)t->frame);
-  tb->mark = mark_epoch; /* the variable's own contents do not count */
+  if (tb) tb->mark = mark_epoch;
   while (nwork > 0) {
     range r = work[--nwork];
     uintptr_t a = ((uintptr_t)r.p + sizeof(void *) - 1) & ~(uintptr_t)(sizeof(void *) - 1);
     uintptr_t end = (uintptr_t)r.p + r.n;
     for (; a + sizeof(void *) <= end; a += sizeof(void *)) {
-      if (a == (uintptr_t)v) continue;
+      if (a == skip) continue;
       uintptr_t w = *(uintptr_t *)a;
-      if (w >= target && w < target + tn) refs++;
+      if (target && w >= target && w < target + tn) refs++;
       scan_word(w);
     }
   }
-  if (refs > 0) rt_raise(RT_X_FREE);
+  return refs;
+}
+
+static void forget_fin(uintptr_t p) {
+  for (size_t i = 0; i < nfins; i++)
+    if (fins[i].p == p) {
+      fins[i] = fins[--nfins];
+      return;
+    }
+}
+
+void rt_free_check(void **v) {
+  uintptr_t target = (uintptr_t)*v;
+  if (!target) return;
+  blockrec *tb = bfind(target);
+  if (!tb) rt_raise_msg(RT_X_FREE, "not a dynamic variable");
+  if (mark_reachable(target, tb->n, (uintptr_t)v) > 0) rt_raise(RT_X_FREE);
+}
+
+void rt_free(void **v) {
+  uintptr_t target = (uintptr_t)*v;
+  if (!target) return;
+  rt_free_check(v);
+  blockrec *tb = bfind(target);
+  forget_fin(target);
   tb->p = DEAD_BLOCK; /* stays counted in the load until the table grows */
   free((void *)target);
   *v = NULL;
+}
+
+void *rt_salloc_fin(size_t n, rt_finfn fin, void *env) {
+  void *p = rt_salloc(n);
+  if (nfins == cfins) {
+    cfins = cfins ? cfins * 2 : 64;
+    fins = realloc(fins, cfins * sizeof *fins);
+    if (!fins) {
+      fprintf(stderr, "*** out of memory\n");
+      exit(4);
+    }
+  }
+  fins[nfins++] = (finrec){(uintptr_t)p, fin, env};
+  return p;
+}
+
+/* a dynamic variable no pointer refers to has ceased to exist (13.3): it is
+ * finalized, and reclaimed unless its FINALIZE made it reachable again */
+void rt_collect(void) {
+  if (!nfins) return;
+  mark_reachable(0, 0, 0);
+  size_t n = 0;
+  finrec *dead = malloc(nfins * sizeof *dead);
+  for (size_t i = 0; i < nfins;) {
+    blockrec *b = bfind(fins[i].p);
+    if (b && b->mark != mark_epoch) {
+      dead[n++] = fins[i];
+      fins[i] = fins[--nfins];
+    } else {
+      i++;
+    }
+  }
+  for (size_t i = 0; i < n; i++) dead[i].fin((void *)dead[i].p, dead[i].env);
+  mark_reachable(0, 0, 0);
+  for (size_t i = 0; i < n; i++) {
+    blockrec *b = bfind(dead[i].p);
+    if (b && b->mark != mark_epoch) {
+      b->p = DEAD_BLOCK;
+      free((void *)dead[i].p);
+    }
+  }
+  free(dead);
+}
+
+/* the program ends: so does every dynamic variable still there */
+void rt_finalize_all(void) {
+  while (nfins > 0) {
+    finrec f = fins[--nfins];
+    f.fin((void *)f.p, f.env);
+  }
 }
 
 /* ---- start-up and shutdown ----------------------------------------------- */
@@ -3209,7 +3302,8 @@ void rt_b_wait(rt_int v, rt_int scale) {
 
 /* ---- exception names (Appendix C, p.1092, and the text of the Report) ---- */
 
-int Y_X_EOF, Y_X_FILE, Y_X_INSTANCES, Y_X_FIXED, Y_X_ZERO_DENOM, Y_X_NO_RETURN;
+int Y_X_EOF, Y_X_FILE, Y_X_INSTANCES, Y_X_FIXED, Y_X_ZERO_DENOM, Y_X_NO_RETURN, Y_X_STORAGE;
+static int y_deadlock(void);
 
 void y_lang(void) {
   RT_X_RANGE = RT_X_SUBSCRIPT = RT_X_SUBTYPE = RT_X_CASE = RT_X_NEG_EXP =
@@ -3229,6 +3323,9 @@ void y_lang(void) {
   Y_X_FIXED = rt_exc("FIXED_NOT_REPRESENTABLE");
   Y_X_ZERO_DENOM = rt_exc("ZERO_DENOMINATOR"); /* FIXED_DIV, p.1062 */
   Y_X_NO_RETURN = rt_exc("NO_RETURN");         /* fell out of a routine, IX.A.6 */
+  Y_X_STORAGE = rt_exc("TOO_LITTLE_LOCAL_STORAGE"); /* XIV.X.2 */
+  Y_X_ADDRESS = rt_exc("ADDRESS_VIOLATION");   /* "addressing protection violation" */
+  rt_deadlock_hook = y_deadlock;
 }
 
 /* ---- descriptors ------------------------------------------------------- */
@@ -3272,6 +3369,27 @@ rt_int y_count(yarr a, int nd) {
   return n;
 }
 
+/* a fresh value is undefined (VIII.B, Appendix C): its scalars hold a value
+ * no representation has, which the checks of compiled code recognize */
+const double Y_UNDEF_F_VALUE = __builtin_nan("0x59454c");
+static ycell_undef y_undef_cell;
+void *const Y_UNDEF_P = &y_undef_cell;
+
+static int is_undef_kind(const ydesc *d) {
+  return d->kind == YK_INT || d->kind == YK_BYTE || d->kind == YK_FLOAT || d->kind == YK_FIX ||
+         d->kind == YK_PTR;
+}
+
+static void undef_one(const ydesc *d, void *v) {
+  switch (d->kind) {
+  case YK_INT: *(rt_int *)v = Y_UNDEF_I; break;
+  case YK_BYTE: *(unsigned char *)v = Y_UNDEF_B; break;
+  case YK_FLOAT: memcpy(v, &Y_UNDEF_F_VALUE, sizeof(double)); break;
+  case YK_FIX: *(yfix *)v = Y_UNDEF_X; break;
+  case YK_PTR: *(void **)v = Y_UNDEF_P; break;
+  }
+}
+
 void y_init(const ydesc *d, void *v) {
   memset(v, 0, d->size);
   if (d->kind == YK_ARRAY) {
@@ -3288,6 +3406,76 @@ void y_init(const ydesc *d, void *v) {
     for (int i = 0; i < d->nf; i++)
       if (d->fd[i]->deep) y_init(d->fd[i], (char *)v + d->off[i]);
   }
+}
+
+/* y_init for a declared variable or a new dynamic one: undefined scalars */
+void y_initu(const ydesc *d, void *v) {
+  memset(v, 0, d->size);
+  if (d->kind == YK_ARRAY) {
+    yarr *a = v;
+    for (int k = 0; k < Y_MAXD; k++) {
+      a->lo[k] = d->lo[k];
+      a->hi[k] = d->hi[k];
+    }
+    rt_int n = y_count(*a, d->nd);
+    size_t esz = d->elem->size;
+    a->p = rt_alloc((size_t)n * esz);
+    if (d->elem->kind == YK_BYTE)
+      memset(a->p, Y_UNDEF_B, (size_t)n);
+    else if (is_undef_kind(d->elem))
+      for (rt_int i = 0; i < n; i++) undef_one(d->elem, (char *)a->p + i * esz);
+    else if (d->elem->deep || d->elem->kind == YK_RECORD)
+      for (rt_int i = 0; i < n; i++) y_initu(d->elem, (char *)a->p + i * esz);
+  } else if (d->kind == YK_RECORD) {
+    for (int i = 0; i < d->nf; i++) y_initu(d->fd[i], (char *)v + d->off[i]);
+  } else {
+    undef_one(d, v);
+  }
+}
+
+/* the checks of a read: the value defined, or the trap UNINITIALIZED; a
+ * handler that returns resumes with the zero of the representation, now the
+ * variable's value */
+rt_int *y_chk_i(rt_int *p) {
+  if (*p == Y_UNDEF_I) {
+    y_trap(RT_X_INIT);
+    *p = 0;
+  }
+  return p;
+}
+unsigned char *y_chk_b(unsigned char *p) {
+  if (*p == Y_UNDEF_B) {
+    y_trap(RT_X_INIT);
+    *p = 0;
+  }
+  return p;
+}
+double *y_chk_f(double *p) {
+  if (memcmp(p, &Y_UNDEF_F_VALUE, sizeof(double)) == 0) {
+    y_trap(RT_X_INIT);
+    *p = 0;
+  }
+  return p;
+}
+yfix *y_chk_x(yfix *p) {
+  if (*p == Y_UNDEF_X) {
+    y_trap(RT_X_INIT);
+    *p = 0;
+  }
+  return p;
+}
+void **y_chk_p(void **p) {
+  if (*p == Y_UNDEF_P) {
+    y_trap(RT_X_INIT);
+    *p = NULL;
+  }
+  return p;
+}
+yset *y_chk_s(yset *p) {
+  if (!p->w && !p->e && !p->lo && !p->hi) {
+    y_trap(RT_X_INIT);
+  }
+  return p;
 }
 
 void y_copy(const ydesc *d, void *dst, const void *src) {
@@ -3396,7 +3584,11 @@ yarr y_fill(const ydesc *d, const void *v) {
 void *y_elem_at(yarr a, const ydesc *d, rt_int k) { return (char *)a.p + k * d->elem->size; }
 
 static rt_int y_ix(yarr a, int k, rt_int i) {
-  if (i < a.lo[k] || i > a.hi[k]) rt_raise(RT_X_SUBSCRIPT);
+  if (i < a.lo[k] || i > a.hi[k]) {
+    if (a.hi[k] < a.lo[k]) rt_raise(RT_X_SUBSCRIPT);
+    y_trap(RT_X_SUBSCRIPT);                /* resumed: the nearest bound */
+    i = i < a.lo[k] ? a.lo[k] : a.hi[k];
+  }
   return i - a.lo[k];
 }
 
@@ -3409,6 +3601,18 @@ rt_int y_ix3(yarr a, rt_int i, rt_int j, rt_int k) {
 }
 rt_int y_ix4(yarr a, rt_int i, rt_int j, rt_int k, rt_int l) {
   return y_ix3(a, i, j, k) * y_n(a.lo[3], a.hi[3]) + y_ix(a, 3, l);
+}
+rt_int y_ix5(yarr a, rt_int i, rt_int j, rt_int k, rt_int l, rt_int m) {
+  return y_ix4(a, i, j, k, l) * y_n(a.lo[4], a.hi[4]) + y_ix(a, 4, m);
+}
+rt_int y_ix6(yarr a, rt_int i, rt_int j, rt_int k, rt_int l, rt_int m, rt_int n) {
+  return y_ix5(a, i, j, k, l, m) * y_n(a.lo[5], a.hi[5]) + y_ix(a, 5, n);
+}
+rt_int y_ix7(yarr a, rt_int i, rt_int j, rt_int k, rt_int l, rt_int m, rt_int n, rt_int o) {
+  return y_ix6(a, i, j, k, l, m, n) * y_n(a.lo[6], a.hi[6]) + y_ix(a, 6, o);
+}
+rt_int y_ix8(yarr a, rt_int i, rt_int j, rt_int k, rt_int l, rt_int m, rt_int n, rt_int o, rt_int q) {
+  return y_ix7(a, i, j, k, l, m, n, o) * y_n(a.lo[7], a.hi[7]) + y_ix(a, 7, q);
 }
 
 rt_int y_low(yarr a, rt_int dim) {
@@ -3442,26 +3646,72 @@ void y_move(yarr *dst, rt_int at, yarr src, rt_int i, rt_int j, const ydesc *ele
   }
 }
 
+/* a fresh array with the bounds of a and components of elem: a temporary
+ * for a length-unresolved formal whose components another representation */
+yarr y_like(yarr a, int nd, const ydesc *elem) {
+  yarr t = a;
+  rt_int n = y_count(a, nd);
+  t.p = rt_alloc((size_t)n * elem->size);
+  for (rt_int i = 0; i < n; i++) y_initu(elem, (char *)t.p + i * elem->size);
+  return t;
+}
+
 /* ---- sets ------------------------------------------------------------ */
+/* A set over a base range of at most Y_SET_DENSE values is a bit map; over a
+ * larger range (SET (INTEGER64), L-33 puts no limit on the base) it is a
+ * sorted list of members, or with neg the list of the values left out, so
+ * that the complement of a small set stays small. */
+
+#define Y_SET_DENSE 65536
+
+static int set_sparse(rt_int lo, rt_int hi) {
+  return hi >= lo && (uint64_t)hi - (uint64_t)lo >= (uint64_t)Y_SET_DENSE;
+}
 
 static size_t set_words(rt_int lo, rt_int hi) { return (size_t)((y_n(lo, hi) + 63) / 64); }
 
 yset y_set_new(rt_int lo, rt_int hi) {
   yset s;
+  memset(&s, 0, sizeof s);
   s.lo = lo;
   s.hi = hi;
-  s.w = rt_alloc(set_words(lo, hi) * sizeof(uint64_t));
+  if (!set_sparse(lo, hi)) s.w = rt_alloc(set_words(lo, hi) * sizeof(uint64_t));
   return s;
 }
 
 static yset set_clone(yset s) {
   yset r = y_set_new(s.lo, s.hi);
-  if (s.w) memcpy(r.w, s.w, set_words(s.lo, s.hi) * sizeof(uint64_t));
+  if (set_sparse(s.lo, s.hi)) {
+    r.n = s.n;
+    r.neg = s.neg;
+    r.e = rt_alloc((size_t)(s.n ? s.n : 1) * sizeof(rt_int));
+    if (s.n) memcpy(r.e, s.e, (size_t)s.n * sizeof(rt_int));
+  } else if (s.w) {
+    memcpy(r.w, s.w, set_words(s.lo, s.hi) * sizeof(uint64_t));
+  }
   return r;
 }
 
+/* the position of e in the sorted list, or where it would go */
+static rt_int set_find(const yset *s, rt_int e, int *found) {
+  rt_int a = 0, b = s->n;
+  while (a < b) {
+    rt_int m = a + (b - a) / 2;
+    if (s->e[m] < e) a = m + 1;
+    else b = m;
+  }
+  *found = a < s->n && s->e[a] == e;
+  return a;
+}
+
 int y_set_in(rt_int e, yset s) {
-  if (!s.w || e < s.lo || e > s.hi) return 0;
+  if (e < s.lo || e > s.hi) return 0;
+  if (set_sparse(s.lo, s.hi)) {
+    int f;
+    set_find(&s, e, &f);
+    return f != s.neg;
+  }
+  if (!s.w) return 0;
   rt_int b = e - s.lo;
   return (int)((s.w[b >> 6] >> (b & 63)) & 1);
 }
@@ -3469,15 +3719,79 @@ int y_set_in(rt_int e, yset s) {
 yset y_set_add(yset s, rt_int e) {
   if (e < s.lo || e > s.hi) rt_raise(RT_X_RANGE);
   yset r = set_clone(s);
+  if (set_sparse(s.lo, s.hi)) {
+    int f;
+    rt_int at = set_find(&r, e, &f);
+    if (!r.neg && !f) {
+      rt_int *ne = rt_alloc((size_t)(r.n + 1) * sizeof(rt_int));
+      memcpy(ne, r.e, (size_t)at * sizeof(rt_int));
+      ne[at] = e;
+      memcpy(ne + at + 1, r.e + at, (size_t)(r.n - at) * sizeof(rt_int));
+      r.e = ne;
+      r.n++;
+    } else if (r.neg && f) {
+      memmove(r.e + at, r.e + at + 1, (size_t)(r.n - at - 1) * sizeof(rt_int));
+      r.n--;
+    }
+    return r;
+  }
   rt_int b = e - s.lo;
   r.w[b >> 6] |= 1ULL << (b & 63);
   return r;
 }
 
+/* two sorted lists merged by op: 0 a or b, 1 a and not b, 2 a and b, 3 a xor b */
+static yset list_op(yset a, const rt_int *x, rt_int nx, const rt_int *y, rt_int ny, int op) {
+  yset r = y_set_new(a.lo, a.hi);
+  r.e = rt_alloc((size_t)(nx + ny + 1) * sizeof(rt_int));
+  rt_int i = 0, j = 0;
+  while (i < nx || j < ny) {
+    int inx, iny;
+    rt_int v;
+    if (j >= ny || (i < nx && x[i] < y[j])) { v = x[i++]; inx = 1; iny = 0; }
+    else if (i >= nx || y[j] < x[i]) { v = y[j++]; inx = 0; iny = 1; }
+    else { v = x[i++]; j++; inx = iny = 1; }
+    int z = op == 0 ? (inx || iny) : op == 1 ? (inx && !iny) : op == 2 ? (inx && iny) : (inx != iny);
+    if (z) r.e[r.n++] = v;
+  }
+  return r;
+}
+
 /* both operands have the same type, so normally the same base range; an
- * operand that was never set has no words and counts as empty */
+ * operand that was never set has no storage and counts as empty */
 static yset set_op(yset a, yset b, int op) {
-  if (!a.w && b.w) a = y_set_new(b.lo, b.hi);
+  if (!a.w && !a.e && !a.neg && (b.w || b.e || b.neg)) a = y_set_new(b.lo, b.hi);
+  if (set_sparse(a.lo, a.hi)) {
+    /* a set is its list, or the complement of it with neg (De Morgan) */
+    const rt_int *x = a.e, *y = b.e;
+    rt_int nx = a.n, ny = b.n;
+    int na = a.neg, nb = b.neg;
+    yset r;
+    switch (op) {
+    case 0:   /* union */
+      if (!na && !nb) r = list_op(a, x, nx, y, ny, 0);
+      else if (na && nb) { r = list_op(a, x, nx, y, ny, 2); r.neg = 1; }
+      else if (na) { r = list_op(a, x, nx, y, ny, 1); r.neg = 1; }
+      else { r = list_op(a, y, ny, x, nx, 1); r.neg = 1; }
+      break;
+    case 2:   /* intersection */
+      if (!na && !nb) r = list_op(a, x, nx, y, ny, 2);
+      else if (na && nb) { r = list_op(a, x, nx, y, ny, 0); r.neg = 1; }
+      else if (na) r = list_op(a, y, ny, x, nx, 1);
+      else r = list_op(a, x, nx, y, ny, 1);
+      break;
+    case 1: { /* difference: a and the complement of b */
+      yset nbs = b;
+      nbs.neg = !b.neg;
+      return set_op(a, nbs, 2);
+    }
+    default:  /* symmetric difference */
+      r = list_op(a, x, nx, y, ny, 3);
+      r.neg = na != nb;
+      break;
+    }
+    return r;
+  }
   yset r = y_set_new(a.lo, a.hi);
   for (rt_int e = a.lo; e <= a.hi; e++) {
     int x = y_set_in(e, a), y = y_set_in(e, b), z;
@@ -3501,6 +3815,11 @@ yset y_set_inter(yset a, yset b) { return set_op(a, b, 2); }
 yset y_set_xor(yset a, yset b) { return set_op(a, b, 3); }
 
 yset y_set_compl(yset a) {
+  if (set_sparse(a.lo, a.hi)) {
+    yset r = set_clone(a);
+    r.neg = !a.neg;
+    return r;
+  }
   yset r = y_set_new(a.lo, a.hi);
   for (rt_int e = a.lo; e <= a.hi; e++)
     if (!y_set_in(e, a)) {
@@ -3511,6 +3830,18 @@ yset y_set_compl(yset a) {
 }
 
 int y_set_eq(yset a, yset b) {
+  if (set_sparse(a.lo, a.hi) || set_sparse(b.lo, b.hi)) {
+    if (a.neg == b.neg) {
+      if (a.n != b.n) return 0;
+      for (rt_int i = 0; i < a.n; i++)
+        if (a.e[i] != b.e[i]) return 0;
+      return 1;
+    }
+    /* a list and the complement of another: equal only when the two lists
+     * are disjoint and cover the whole base range */
+    yset x = list_op(a, a.e, a.n, b.e, b.n, 2);
+    return x.n == 0 && (uint64_t)(a.n + b.n) == (uint64_t)a.hi - (uint64_t)a.lo + 1;
+  }
   rt_int lo = a.lo < b.lo ? a.lo : b.lo, hi = a.hi > b.hi ? a.hi : b.hi;
   if (!a.w) { lo = b.lo; hi = b.hi; }
   if (!b.w) { lo = a.lo; hi = a.hi; }
@@ -3535,6 +3866,7 @@ void y_open(yfile **fp, yarr name, rt_int mode) {
   /* the implementation's names for the two streams a program is given */
   if (strcmp(c, "INPUT") == 0 && mode == 0) y->f = stdin;
   else if (strcmp(c, "OUTPUT") == 0 && mode != 0) y->f = stdout;
+  else if (strcmp(c, "ERROR") == 0 && mode != 0) y->f = stderr;
   else y->f = fopen(c, mode == 0 ? "rb" : mode == 1 ? "wb" : "ab");
   if (!y->f) rt_raise_msg(Y_X_FILE, c);
   *fp = y;
@@ -3564,6 +3896,67 @@ void y_put(yfile **fp, const void *src, size_t n) {
   yfile *y = y_must(fp, 0);
   fwrite(src, 1, n, y->f);
 }
+
+/* a value as its descriptor describes it: arrays and records component by
+ * component, a set as its base range and members, the rest as stored */
+static void put_raw(yfile *y, const void *v, size_t n) { fwrite(v, 1, n, y->f); }
+
+static void get_raw(yfile *y, void *v, size_t n) {
+  if (fread(v, 1, n, y->f) != n) rt_raise(Y_X_EOF);
+}
+
+static void put_value(yfile *y, const ydesc *d, const void *v) {
+  if (d->kind == YK_ARRAY) {
+    const yarr *a = v;
+    rt_int n = y_count(*a, d->nd);
+    for (rt_int i = 0; i < n; i++) put_value(y, d->elem, (const char *)a->p + i * d->elem->size);
+  } else if (d->kind == YK_RECORD) {
+    for (int i = 0; i < d->nf; i++) put_value(y, d->fd[i], (const char *)v + d->off[i]);
+  } else if (d->kind == YK_SET) {
+    const yset *s = v;
+    rt_int head[3] = {s->lo, s->hi, 0}, m = 0;
+    if (set_sparse(s->lo, s->hi)) {
+      head[2] = s->neg;
+      put_raw(y, head, sizeof head);
+      put_raw(y, &s->n, sizeof s->n);
+      put_raw(y, s->e, (size_t)s->n * sizeof(rt_int));
+    } else {
+      put_raw(y, head, sizeof head);
+      for (rt_int e = s->lo; e <= s->hi; e++) m += y_set_in(e, *s);
+      put_raw(y, &m, sizeof m);
+      for (rt_int e = s->lo; e <= s->hi; e++)
+        if (y_set_in(e, *s)) put_raw(y, &e, sizeof e);
+    }
+  } else {
+    put_raw(y, v, d->size);
+  }
+}
+
+static void get_value(yfile *y, const ydesc *d, void *v) {
+  if (d->kind == YK_ARRAY) {
+    yarr *a = v;
+    rt_int n = y_count(*a, d->nd);
+    for (rt_int i = 0; i < n; i++) get_value(y, d->elem, (char *)a->p + i * d->elem->size);
+  } else if (d->kind == YK_RECORD) {
+    for (int i = 0; i < d->nf; i++) get_value(y, d->fd[i], (char *)v + d->off[i]);
+  } else if (d->kind == YK_SET) {
+    rt_int head[3], m, e;
+    get_raw(y, head, sizeof head);
+    get_raw(y, &m, sizeof m);
+    yset s = y_set_new(head[0], head[1]);
+    for (rt_int i = 0; i < m; i++) {
+      get_raw(y, &e, sizeof e);
+      s = y_set_add(s, e);
+    }
+    if (head[2]) s = y_set_compl(s);
+    *(yset *)v = s;
+  } else {
+    get_raw(y, v, d->size);
+  }
+}
+
+void y_put_value(yfile **fp, const ydesc *d, const void *v) { put_value(y_must(fp, 0), d, v); }
+void y_get_value(yfile **fp, const ydesc *d, void *v) { get_value(y_must(fp, 1), d, v); }
 
 int y_check_eof(yfile **fp) {
   yfile *y = y_must(fp, 1);
@@ -3668,12 +4061,69 @@ int y_awaited(ysig *s) { return s->q != NULL; }
 
 /* ---- processes (X.E, XIV.X.2, XIV.XI.3) ------------------------------------ */
 
-void y_create(rt_taskdecl *d, rt_int limit, int has_prio, rt_int prio,
+/* a process starts with the simulation and the storage limit it gets */
+typedef struct {
+  void (*fn)(void *);
+  void *frame;
+  int sim;
+  rt_int size;
+} ystart;
+
+__thread int y_ticks, y_sim_depth;
+__thread rt_int y_use, y_limit;
+
+static void y_task_start(void *arg) {
+  ystart *s = arg;
+  y_sim_depth = s->sim;
+  y_limit = s->size;
+  y_use = 0;
+  y_ticks = 0;
+  s->fn(s->frame);
+}
+
+void y_create(rt_taskdecl *d, rt_int limit, int has_prio, rt_int prio, rt_int size,
               void (*fn)(void *), void *frame) {
-  if (limit > 0 && d->live >= limit) rt_raise(Y_X_INSTANCES);
+  if (limit > 0 && d->live >= limit) {
+    y_trap(Y_X_INSTANCES);
+    return;                                /* resumed: no new instance */
+  }
   rt_act *a = rt_alloc(sizeof *a);
-  rt_create(a, d, fn, frame);
-  if (has_prio) rt_set_priority(a, prio);
+  ystart *s = rt_alloc(sizeof *s);
+  s->fn = fn;
+  s->frame = frame;
+  s->sim = y_sim_depth;          /* processes of a simulation are quasi-parallel */
+  s->size = size;
+  if (has_prio) {
+    if (prio < 0 || prio > 255) rt_raise(RT_X_RANGE);
+    a->prio = prio;
+    a->has_prio = 1;
+  }
+  rt_create(a, d, y_task_start, s);
+}
+
+/* a time slice is over (X.E.1): outside SIMULATED_TIME the processes of
+ * the running one's priority take their turn; inside, a process runs until
+ * it waits. The clock stays virtual: it moves when every process waits */
+void y_slice(void) {
+  y_ticks = 0;
+  if (y_sim_depth) return;
+  make_ready(cur);
+  reschedule();
+  check_terminate();
+}
+
+void y_storage_trap(void) { y_trap(Y_X_STORAGE); }
+
+/* every process waits: the trap Deadlock (Appendix C) is raised in the main
+ * process, which may handle it, instead of ending the program */
+static int y_deadlock(void) {
+  if (main_task.state != T_BLOCKED) return 0;
+  drop_waiters(&main_task);
+  drop_armed(&main_task);
+  main_task.term_pending = 1;
+  main_task.term_exc = RT_X_DEADLOCK;
+  make_ready(&main_task);
+  return 1;
 }
 
 rt_int y_self(void) { return cur->id; }
@@ -3700,6 +4150,967 @@ void y_raise_termination(rt_int id) {
   a.active = 1;
   a.waiters = NULL;
   rt_exterminate(&a);
+}
+
+/* ---- dynamic variables --------------------------------------------------- */
+
+typedef struct {
+  void *body;
+  const struct ylay *L;                        /* its layout in the store, when known */
+  const ydesc *d;
+  struct yview *view;                          /* seen through a view of the store */
+} ycell;
+static void *cell_view(ycell *c);
+
+void *y_new(size_t n) {
+  ycell *c = rt_alloc(sizeof *c);
+  c->body = rt_alloc(n);
+  return c;
+}
+
+void *y_deref(void *p) {
+  ycell *c = p;
+  if (!c || !c->body) {
+    y_trap(RT_X_NIL);
+    rt_raise(RT_X_NIL);                    /* no resuming: nothing to follow */
+  }
+  if (c->view) return cell_view(c);
+  return c->body;
+}
+
+void y_free_pointer(void **p) {
+  ycell *c = *p;
+  if (!c) return;
+  if (!c->body) rt_raise(RT_X_NIL);
+  free(c->body);
+  c->body = NULL;
+  *p = NULL;
+}
+
+/* a pointer to storage that is not a dynamic variable: one cell for each
+ * address, so that two such pointers to one place are equal */
+void *y_cell(void *body) {
+  static struct {
+    void *body;
+    ycell *c;
+  } *cells;
+  static size_t ncells, ccells;
+  for (size_t i = 0; i < ncells; i++)
+    if (cells[i].body == body) return cells[i].c;
+  if (ncells == ccells) {
+    ccells = ccells ? ccells * 2 : 64;
+    cells = realloc(cells, ccells * sizeof *cells);
+    if (!cells) {
+      fprintf(stderr, "*** out of memory\n");
+      exit(4);
+    }
+  }
+  ycell *c = rt_alloc(sizeof *c);
+  c->body = body;
+  cells[ncells].body = body;
+  cells[ncells].c = c;
+  ncells++;
+  return c;
+}
+
+/* ---- trap handlers (XIV.X.3) ----------------------------------------------- */
+
+static struct {
+  int id;
+  void (*h)(void);
+} traps[64];
+static int ntraps;
+
+void y_trap_install(int id, void (*handler)(void)) {
+  for (int i = 0; i < ntraps; i++)
+    if (traps[i].id == id) {
+      traps[i].h = handler;
+      return;
+    }
+  if (ntraps < 64) {
+    traps[ntraps].id = id;
+    traps[ntraps].h = handler;
+    ntraps++;
+  }
+}
+
+/* a trap: the program's handler for it, or the standard one, which
+ * propagates the exception */
+int y_trap(int id) {
+  for (int i = 0; i < ntraps; i++)
+    if (traps[i].id == id) {
+      traps[i].h();
+      return 1;
+    }
+  rt_raise(id);
+}
+
+rt_int y_range(rt_int v, rt_int lo, rt_int hi) {
+  if ((v < lo || v > hi) && v != Y_UNDEF_I) {
+    y_trap(RT_X_RANGE);
+    return v < lo ? lo : hi;
+  }
+  return v;
+}
+
+double y_frange(double v, double lo, double hi) {
+  if (v < lo || v > hi) {
+    y_trap(RT_X_RANGE);
+    return v < lo ? lo : hi;
+  }
+  return v;
+}
+
+rt_int y_add(rt_int a, rt_int b) {
+  rt_int r;
+  if (__builtin_add_overflow(a, b, &r)) y_trap(RT_X_OVERFLOW);
+  return r;
+}
+
+rt_int y_sub(rt_int a, rt_int b) {
+  rt_int r;
+  if (__builtin_sub_overflow(a, b, &r)) y_trap(RT_X_OVERFLOW);
+  return r;
+}
+
+rt_int y_mul(rt_int a, rt_int b) {
+  rt_int r;
+  if (__builtin_mul_overflow(a, b, &r)) y_trap(RT_X_OVERFLOW);
+  return r;
+}
+
+rt_int y_neg(rt_int a) { return y_sub(0, a); }
+
+/* DIV is the floor of the quotient, MOD what is left (VIII.C) */
+rt_int y_div(rt_int a, rt_int b) {
+  if (b == 0) {
+    y_trap(RT_X_ZERO_DIVIDE);
+    return 0;
+  }
+  if (a == INT64_MIN && b == -1) {
+    y_trap(RT_X_OVERFLOW);
+    return a;
+  }
+  rt_int q = a / b;
+  if ((a % b != 0) && ((a < 0) != (b < 0))) q -= 1;
+  return q;
+}
+
+rt_int y_mod(rt_int a, rt_int b) {
+  if (b == 0) {
+    y_trap(RT_X_ZERO_DIVIDE);
+    return 0;
+  }
+  if (b == -1) return 0;
+  rt_int r = a % b;
+  if (r != 0 && ((r < 0) != (b < 0))) r += b;
+  return r;
+}
+
+double y_fdiv(double a, double b) {
+  if (b == 0) {
+    y_trap(RT_X_ZERO_DIVIDE);
+    return 0;
+  }
+  return a / b;
+}
+
+/* ---- suppressed traps (XIV.XIII.2) ----------------------------------------- */
+
+static rt_int ixw(yarr a, int k, rt_int i) {
+  rt_int n = y_n(a.lo[k], a.hi[k]);
+  if (n == 0) rt_raise(RT_X_SUBSCRIPT);    /* no component to wrap round */
+  rt_int d = (i - a.lo[k]) % n;
+  return d < 0 ? d + n : d;
+}
+rt_int y_ixw1(yarr a, rt_int i) { return ixw(a, 0, i); }
+rt_int y_ixw2(yarr a, rt_int i, rt_int j) { return ixw(a, 0, i) * y_n(a.lo[1], a.hi[1]) + ixw(a, 1, j); }
+rt_int y_ixw3(yarr a, rt_int i, rt_int j, rt_int k) {
+  return y_ixw2(a, i, j) * y_n(a.lo[2], a.hi[2]) + ixw(a, 2, k);
+}
+rt_int y_ixw4(yarr a, rt_int i, rt_int j, rt_int k, rt_int l) {
+  return y_ixw3(a, i, j, k) * y_n(a.lo[3], a.hi[3]) + ixw(a, 3, l);
+}
+rt_int y_ixw5(yarr a, rt_int i, rt_int j, rt_int k, rt_int l, rt_int m) {
+  return y_ixw4(a, i, j, k, l) * y_n(a.lo[4], a.hi[4]) + ixw(a, 4, m);
+}
+rt_int y_ixw6(yarr a, rt_int i, rt_int j, rt_int k, rt_int l, rt_int m, rt_int n) {
+  return y_ixw5(a, i, j, k, l, m) * y_n(a.lo[5], a.hi[5]) + ixw(a, 5, n);
+}
+rt_int y_ixw7(yarr a, rt_int i, rt_int j, rt_int k, rt_int l, rt_int m, rt_int n, rt_int o) {
+  return y_ixw6(a, i, j, k, l, m, n) * y_n(a.lo[6], a.hi[6]) + ixw(a, 6, o);
+}
+rt_int y_ixw8(yarr a, rt_int i, rt_int j, rt_int k, rt_int l, rt_int m, rt_int n, rt_int o, rt_int q) {
+  return y_ixw7(a, i, j, k, l, m, n, o) * y_n(a.lo[7], a.hi[7]) + ixw(a, 7, q);
+}
+
+rt_int y_divw(rt_int a, rt_int b) {
+  if (b == 0) return 0;
+  if (a == INT64_MIN && b == -1) return a;
+  rt_int q = a / b;
+  if ((a % b != 0) && ((a < 0) != (b < 0))) q -= 1;
+  return q;
+}
+
+rt_int y_modw(rt_int a, rt_int b) {
+  if (b == 0 || b == -1) return 0;
+  rt_int r = a % b;
+  if (r != 0 && ((r < 0) != (b < 0))) r += b;
+  return r;
+}
+
+double y_fdivw(double a, double b) { return a / b; }
+
+/* ---- the simulated machine ------------------------------------------------ */
+/* Words of 64 bits addressed by word. The store holds Y_STORE words, the top
+ * of it the PDP-11 I/O page. Any variable not declared AT an address gets an
+ * address above the store, a window onto it, when ADDR first asks for it.
+ * The store shows values in the layout their representations declare
+ * (XIV.VI.1): the translator gives each layout as a string (below), which
+ * says how many bits a scalar takes and where the components of arrays and
+ * records start. A window shows its variable in that layout, word by word,
+ * and a word written into a window is read back into the variable. A
+ * variable AT an address whose layout is not one plain word, and what a
+ * pointer made by MAKE_POINTER designates when no variable of its type
+ * starts there, is held in a view: a value in the program's form that is
+ * synchronized with the store when it is used and after each statement. */
+
+int Y_X_ADDRESS;
+static rt_int y_mem_store[Y_STORE];
+
+/* A layout: a scalar is <k><packed>,<align>,<bits> with k one of i (signed,
+ * held as rt_int), u (unsigned, rt_int), c (unsigned char), f (double), x
+ * (FIXED), p (pointer: the address of what it designates, 0 for NIL), o (no
+ * bits the program can see: files, signals, semaphores), and s<packed>,
+ * <align>,<bits>,<lo>,<hi> a set over lo..hi; an array is a<packed>,<align>,
+ * <dimensions>(<component>), with A for an array whose descriptor is its
+ * component's (a length-unresolved formal); a record is r<packed>,<align>,
+ * <components>,<case selector>( <at>,<variant>,<labels>[,<label>...]:
+ * <component>; ... ). packed is that of the context, align the value's own. */
+typedef struct ylay ylay;
+struct ylay {
+  char k;
+  int packed;
+  rt_int align, bits, lo, hi;
+  int nd;
+  ylay *elem;
+  int nf, sel;
+  ylay **fl;
+  rt_int *at, *nlab, **lab;
+  int *variant;
+  const char *src;
+  size_t len;
+};
+
+static rt_int lay_num(const char **s) {
+  char *e;
+  long long v = strtoll(*s, &e, 10);
+  *s = e;
+  if (**s == ',') (*s)++;
+  return (rt_int)v;
+}
+
+static ylay *lay_parse(const char **s) {
+  ylay *L = rt_alloc(sizeof *L);
+  L->src = *s;
+  L->k = *(*s)++;
+  L->packed = (int)lay_num(s);
+  L->align = lay_num(s);
+  if (L->k == 'a' || L->k == 'A') {
+    L->nd = (int)lay_num(s);
+    (*s)++;
+    L->elem = lay_parse(s);
+    (*s)++;
+  } else if (L->k == 'r') {
+    L->nf = (int)lay_num(s);
+    L->sel = (int)lay_num(s);
+    int n = L->nf ? L->nf : 1;
+    L->fl = rt_alloc((size_t)n * sizeof *L->fl);
+    L->at = rt_alloc((size_t)n * sizeof *L->at);
+    L->nlab = rt_alloc((size_t)n * sizeof *L->nlab);
+    L->lab = rt_alloc((size_t)n * sizeof *L->lab);
+    L->variant = rt_alloc((size_t)n * sizeof *L->variant);
+    (*s)++;
+    for (int i = 0; i < L->nf; i++) {
+      L->at[i] = lay_num(s);
+      L->variant[i] = (int)lay_num(s);
+      L->nlab[i] = lay_num(s);
+      L->lab[i] = rt_alloc((size_t)(L->nlab[i] ? L->nlab[i] : 1) * sizeof(rt_int));
+      for (rt_int j = 0; j < L->nlab[i]; j++) L->lab[i][j] = lay_num(s);
+      (*s)++;
+      L->fl[i] = lay_parse(s);
+      (*s)++;
+    }
+    (*s)++;
+  } else {
+    L->bits = lay_num(s);
+    if (L->k == 's') {
+      L->lo = lay_num(s);
+      L->hi = lay_num(s);
+    }
+  }
+  L->len = (size_t)(*s - L->src);
+  return L;
+}
+
+static const ylay *lay_get(const char *text) {
+  static struct {
+    const char *t;
+    const ylay *L;
+  } *cache;
+  static size_t n, cap;
+  for (size_t i = 0; i < n; i++)
+    if (cache[i].t == text || strcmp(cache[i].t, text) == 0) return cache[i].L;
+  const char *s = text;
+  const ylay *L = lay_parse(&s);
+  if (n == cap) {
+    cap = cap ? cap * 2 : 32;
+    cache = realloc(cache, cap * sizeof *cache);
+    if (!cache) {
+      fprintf(stderr, "*** out of memory\n");
+      exit(4);
+    }
+  }
+  cache[n].t = text;
+  cache[n].L = L;
+  n++;
+  return L;
+}
+
+static int lay_same(const ylay *a, const ylay *b) {
+  return a == b || (a->len == b->len && memcmp(a->src, b->src, a->len) == 0);
+}
+
+static rt_int round_up(rt_int v, rt_int m) { return m <= 1 ? v : (v + m - 1) / m * m; }
+
+static const ydesc *elem_desc(const ylay *L, const ydesc *d) { return L->k == 'A' ? d : d->elem; }
+
+static rt_int lay_count(const ylay *L, const ydesc *d, const void *v) {
+  if (v) return y_count(*(const yarr *)v, L->nd);
+  rt_int n = 1;
+  for (int k = 0; k < L->nd; k++) n *= y_n(d->lo[k], d->hi[k]);
+  return n;
+}
+
+static rt_int lay_bits(const ylay *L, const ydesc *d, const void *v);
+
+static rt_int lay_stride(const ylay *L, const ydesc *d, const void *v) {
+  const ydesc *ed = elem_desc(L, d);
+  const void *e0 = v && lay_count(L, d, v) > 0 ? ((const yarr *)v)->p : NULL;
+  return round_up(lay_bits(L->elem, ed, e0), L->elem->align);
+}
+
+/* the start of each component of a record, as RecordBits places them */
+static rt_int rec_layout(const ylay *L, const ydesc *d, const void *v, rt_int *starts) {
+  rt_int off = 0, total = 0, vstart = 0;
+  for (int i = 0; i < L->nf; i++) {
+    const ylay *F = L->fl[i];
+    rt_int b = lay_bits(F, d->fd[i], v ? (const char *)v + d->off[i] : NULL);
+    if (L->variant[i]) {
+      if (!vstart) vstart = off;
+      int first = 1;
+      for (int j = 0; j < i; j++)
+        if (L->variant[j] == L->variant[i]) first = 0;
+      if (first) off = vstart;
+    }
+    rt_int start = L->at[i] >= 0 ? L->at[i] : F->packed ? round_up(off, F->align) : round_up(off, 64);
+    if (starts) starts[i] = start;
+    off = start + b;
+    if (off > total) total = off;
+  }
+  return L->packed ? total : round_up(total, 64);
+}
+
+static rt_int lay_bits(const ylay *L, const ydesc *d, const void *v) {
+  if (L->k == 'a' || L->k == 'A') {
+    rt_int b = lay_stride(L, d, v) * lay_count(L, d, v);
+    return L->packed ? b : round_up(b, 64);
+  }
+  if (L->k == 'r') return rec_layout(L, d, v, NULL);
+  return L->bits;
+}
+
+static rt_int *rec_starts(const ylay *L, const ydesc *d, const void *v) {
+  rt_int *s = rt_alloc((size_t)(L->nf ? L->nf : 1) * sizeof *s);
+  rec_layout(L, d, v, s);
+  return s;
+}
+
+/* is component i of the record v in the variant its case selector names */
+static int variant_on(const ylay *L, const ydesc *d, const void *v, int i) {
+  if (!L->variant[i] || L->sel < 0) return 1;
+  const char *p = (const char *)v + d->off[L->sel];
+  rt_int s = L->fl[L->sel]->k == 'c' ? *(const unsigned char *)p : *(const rt_int *)p;
+  for (rt_int j = 0; j < L->nlab[i]; j++)
+    if (L->lab[i][j] == s) return 1;
+  return 0;
+}
+
+/* ---- images: a value in its layout, bits in an array of words ---- */
+
+static uint64_t img_get(const uint64_t *b, rt_int ba, rt_int w) {
+  uint64_t v = 0;
+  for (rt_int got = 0; got < w;) {
+    rt_int word = (ba + got) / 64, bit = (ba + got) % 64, n = 64 - bit;
+    if (n > w - got) n = w - got;
+    uint64_t x = b[word] >> bit;
+    if (n < 64) x &= ((uint64_t)1 << n) - 1;
+    v |= x << got;
+    got += n;
+  }
+  return v;
+}
+
+static void img_put(uint64_t *b, rt_int ba, rt_int w, uint64_t v) {
+  for (rt_int done = 0; done < w;) {
+    rt_int word = (ba + done) / 64, bit = (ba + done) % 64, n = 64 - bit;
+    if (n > w - done) n = w - done;
+    uint64_t mask = n < 64 ? (((uint64_t)1 << n) - 1) << bit : ~(uint64_t)0;
+    b[word] = (b[word] & ~mask) | (((v >> done) << bit) & mask);
+    done += n;
+  }
+}
+
+static rt_int ptr_addr(void *p);
+static void *addr_ptr(rt_int a);
+
+static void to_img(const ylay *L, const ydesc *d, const void *v, uint64_t *b, rt_int ba) {
+  rt_int w = L->bits < 64 ? L->bits : 64;
+  switch (L->k) {
+  case 'i':
+  case 'u': img_put(b, ba, w, (uint64_t) * (const rt_int *)v); break;
+  case 'c': img_put(b, ba, w, *(const unsigned char *)v); break;
+  case 'f': {
+    uint64_t x;
+    memcpy(&x, v, sizeof x);
+    img_put(b, ba, 64, x);
+    break;
+  }
+  case 'x': {
+    unsigned __int128 x = (unsigned __int128) * (const yfix *)v;
+    img_put(b, ba, 64, (uint64_t)x);
+    img_put(b, ba + 64, 64, (uint64_t)(x >> 64));
+    break;
+  }
+  case 'p': img_put(b, ba, w, (uint64_t)ptr_addr(*(void *const *)v)); break;
+  case 's': {
+    const yset *s = v;
+    for (rt_int e = L->lo; e <= L->hi; e++)
+      if (y_set_in(e, *s)) img_put(b, ba + (e - L->lo), 1, 1);
+    break;
+  }
+  case 'a':
+  case 'A': {
+    const yarr *a = v;
+    const ydesc *ed = elem_desc(L, d);
+    rt_int n = lay_count(L, d, v), st = lay_stride(L, d, v);
+    for (rt_int i = 0; i < n; i++) to_img(L->elem, ed, (const char *)a->p + i * ed->size, b, ba + i * st);
+    break;
+  }
+  case 'r': {
+    rt_int *s = rec_starts(L, d, v);
+    for (int i = 0; i < L->nf; i++)
+      if (variant_on(L, d, v, i)) to_img(L->fl[i], d->fd[i], (const char *)v + d->off[i], b, ba + s[i]);
+    free(s);
+    break;
+  }
+  default: break;
+  }
+}
+
+/* the parts of v whose bits meet lo..hi-1 are read back from the image */
+static void from_img(const ylay *L, const ydesc *d, void *v, const uint64_t *b, rt_int ba, rt_int lo,
+                     rt_int hi) {
+  if (L->k != 'a' && L->k != 'A' && L->k != 'r') {
+    if (ba >= hi || ba + L->bits <= lo) return;
+  }
+  rt_int w = L->bits < 64 ? L->bits : 64;
+  switch (L->k) {
+  case 'i': {
+    uint64_t x = img_get(b, ba, w);
+    if (w < 64 && (x >> (w - 1)) & 1) x |= ~(uint64_t)0 << w;
+    *(rt_int *)v = (rt_int)x;
+    break;
+  }
+  case 'u': *(rt_int *)v = (rt_int)img_get(b, ba, w); break;
+  case 'c': *(unsigned char *)v = (unsigned char)img_get(b, ba, w); break;
+  case 'f': {
+    uint64_t x = img_get(b, ba, 64);
+    memcpy(v, &x, sizeof x);
+    break;
+  }
+  case 'x': {
+    unsigned __int128 x = img_get(b, ba, 64) | ((unsigned __int128)img_get(b, ba + 64, 64) << 64);
+    *(yfix *)v = (yfix)x;
+    break;
+  }
+  case 'p': *(void **)v = addr_ptr((rt_int)img_get(b, ba, w)); break;
+  case 's': {
+    yset s = y_set_new(L->lo, L->hi);
+    for (rt_int e = L->lo; e <= L->hi; e++)
+      if (img_get(b, ba + (e - L->lo), 1)) s = y_set_add(s, e);
+    *(yset *)v = s;
+    break;
+  }
+  case 'a':
+  case 'A': {
+    yarr *a = v;
+    const ydesc *ed = elem_desc(L, d);
+    rt_int n = lay_count(L, d, v), st = lay_stride(L, d, v);
+    for (rt_int i = 0; i < n; i++) {
+      rt_int eb = ba + i * st;
+      if (eb >= hi) break;
+      if (eb + st <= lo) continue;
+      from_img(L->elem, ed, (char *)a->p + i * ed->size, b, eb, lo, hi);
+    }
+    break;
+  }
+  case 'r': {
+    rt_int *s = rec_starts(L, d, v);
+    /* a new case selected: the components of its variant are all read */
+    int seln = L->sel >= 0 && ba + s[L->sel] < hi && ba + s[L->sel] + L->fl[L->sel]->bits > lo;
+    for (int i = 0; i < L->nf; i++)
+      if (variant_on(L, d, v, i)) {
+        rt_int l = lo, h = hi;
+        if (seln && L->variant[i]) {
+          l = ba + s[i];
+          h = INT64_MAX;
+        }
+        from_img(L->fl[i], d->fd[i], (char *)v + d->off[i], b, ba + s[i], l, h);
+      }
+    free(s);
+    break;
+  }
+  default: break;
+  }
+}
+
+/* the component of v that starts at bit off and has the layout want (the
+ * outermost one when want is NULL); its bit offset, or -1 */
+static void *comp_at(const ylay *L, const ydesc *d, void *v, rt_int off, const ylay *want) {
+  if (off == 0 && (!want || lay_same(L, want))) return v;
+  if (L->k == 'a' || L->k == 'A') {
+    yarr *a = v;
+    const ydesc *ed = elem_desc(L, d);
+    rt_int n = lay_count(L, d, v), st = lay_stride(L, d, v);
+    if (st <= 0) return NULL;
+    rt_int i = off / st;
+    if (i < 0 || i >= n) return NULL;
+    return comp_at(L->elem, ed, (char *)a->p + i * ed->size, off - i * st, want);
+  }
+  if (L->k == 'r') {
+    rt_int *s = rec_starts(L, d, v);
+    void *r = NULL;
+    for (int i = 0; i < L->nf && !r; i++) {
+      if (!variant_on(L, d, v, i)) continue;
+      rt_int b = lay_bits(L->fl[i], d->fd[i], (char *)v + d->off[i]);
+      if (off >= s[i] && (off < s[i] + b || (b == 0 && off == s[i])))
+        r = comp_at(L->fl[i], d->fd[i], (char *)v + d->off[i], off - s[i], want);
+    }
+    free(s);
+    return r;
+  }
+  return NULL;
+}
+
+/* the bit offset in v of the component at C address p with layout want,
+ * found by descending depth levels; -1 when it is not there */
+static rt_int off_of(const ylay *L, const ydesc *d, void *v, void *p, const ylay *want, int depth) {
+  if (depth == 0) return v == p && (!want || lay_same(L, want)) ? 0 : -1;
+  if (L->k == 'a' || L->k == 'A') {
+    yarr *a = v;
+    const ydesc *ed = elem_desc(L, d);
+    rt_int n = lay_count(L, d, v), st = lay_stride(L, d, v);
+    char *c = p, *e0 = a->p;
+    if (n > 0 && c >= e0 && c < e0 + n * (rt_int)ed->size) {
+      rt_int i = (c - e0) / (rt_int)ed->size;
+      rt_int r = off_of(L->elem, ed, e0 + i * ed->size, p, want, depth - 1);
+      if (r >= 0) return i * st + r;
+    }
+    /* a component of a component array: its buffer is elsewhere */
+    for (rt_int i = 0; depth > 1 && i < n; i++) {
+      rt_int r = off_of(L->elem, ed, (char *)a->p + i * ed->size, p, want, depth - 1);
+      if (r >= 0) return i * st + r;
+    }
+    return -1;
+  }
+  if (L->k == 'r') {
+    rt_int *s = rec_starts(L, d, v), r = -1;
+    for (int i = 0; i < L->nf && r < 0; i++) {
+      rt_int x = off_of(L->fl[i], d->fd[i], (char *)v + d->off[i], p, want, depth - 1);
+      if (x >= 0) r = s[i] + x;
+    }
+    free(s);
+    return r;
+  }
+  return -1;
+}
+
+/* ---- windows: addresses above the store ---- */
+
+typedef struct {
+  char *c;
+  rt_int base, words;
+  const ylay *L;                               /* NULL: the bytes as they are */
+  const ydesc *d;
+  void *cell;                                  /* the pointer that gave it */
+} ywin;
+static ywin *wins;
+static rt_int nwins, cwins, next_window = Y_STORE;
+
+static ywin *win_new(char *c, rt_int words, const ylay *L, const ydesc *d) {
+  if (nwins == cwins) {
+    cwins = cwins ? cwins * 2 : 32;
+    wins = realloc(wins, (size_t)cwins * sizeof *wins);
+    if (!wins) {
+      fprintf(stderr, "*** out of memory\n");
+      exit(4);
+    }
+  }
+  if (words < 1) words = 1;
+  ywin *w = &wins[nwins++];
+  w->c = c;
+  w->base = next_window;
+  w->words = words;
+  w->L = L;
+  w->d = d;
+  w->cell = NULL;
+  next_window += words;
+  return w;
+}
+
+static ywin *win_at(rt_int a) {
+  for (rt_int i = 0; i < nwins; i++)
+    if (a >= wins[i].base && a < wins[i].base + wins[i].words) return &wins[i];
+  return NULL;
+}
+
+static ywin *win_of(void *p) {
+  for (rt_int i = 0; i < nwins; i++)
+    if (wins[i].c == p) return &wins[i];
+  return NULL;
+}
+
+/* the image of a window, Y_ALLOCATED: words zeroed first */
+static uint64_t *win_image(ywin *w) {
+  uint64_t *b = rt_alloc((size_t)w->words * sizeof *b + 16);
+  to_img(w->L, w->d, w->c, b, 0);
+  return b;
+}
+
+/* ---- views ---- */
+
+struct yview {
+  void *shadow;                                /* the value in the program's form */
+  const ylay *L;
+  const ydesc *d;
+  rt_int addr, words, bits;
+  uint64_t *base;                              /* the image last agreed with the store */
+};
+static yview **views;
+static rt_int nviews, cviews;
+#define Y_TOUCH_MAX 64
+__thread yview *y_touched_v[Y_TOUCH_MAX];
+__thread int y_ntouched;
+
+rt_int y_mem_get(rt_int a);
+void y_mem_set(rt_int a, rt_int x);
+
+/* the view and the store agree again: what the program changed in the view
+ * since they last agreed goes to the store, the rest comes from it */
+static void view_sync(yview *V) {
+  uint64_t *h = rt_alloc((size_t)V->words * sizeof *h + 16);
+  to_img(V->L, V->d, V->shadow, h, 0);
+  int changed = 0;
+  for (rt_int k = 0; k < V->words; k++) {
+    uint64_t s = (uint64_t)y_mem_get(V->addr + k), mask = h[k] ^ V->base[k];
+    uint64_t n = (s & ~mask) | (h[k] & mask);
+    if (n != s) y_mem_set(V->addr + k, (rt_int)n);
+    if (n != V->base[k] || n != h[k]) changed = 1;
+    V->base[k] = n;
+  }
+  if (changed) from_img(V->L, V->d, V->shadow, V->base, 0, 0, V->bits);
+  free(h);
+}
+
+static void touch(yview *V) {
+  for (int i = 0; i < y_ntouched; i++)
+    if (y_touched_v[i] == V) return;
+  if (y_ntouched == Y_TOUCH_MAX) y_flush();
+  y_touched_v[y_ntouched++] = V;
+}
+
+void y_flush(void) {
+  while (y_ntouched > 0) view_sync(y_touched_v[--y_ntouched]);
+}
+
+static yview *view_new(void *shadow, const ylay *L, const ydesc *d, rt_int addr) {
+  yview *V = rt_alloc(sizeof *V);
+  V->shadow = shadow;
+  V->L = L;
+  V->d = d;
+  V->addr = addr;
+  y_init(d, shadow);
+  V->bits = lay_bits(L, d, shadow);
+  V->words = (V->bits + 63) / 64;
+  if (V->words < 1) V->words = 1;
+  V->base = rt_alloc((size_t)V->words * sizeof *V->base + 16);
+  for (rt_int k = 0; k < V->words; k++) V->base[k] = (uint64_t)y_mem_get(addr + k);
+  from_img(L, d, shadow, V->base, 0, 0, V->bits);
+  if (nviews == cviews) {
+    cviews = cviews ? cviews * 2 : 16;
+    views = realloc(views, (size_t)cviews * sizeof *views);
+    if (!views) {
+      fprintf(stderr, "*** out of memory\n");
+      exit(4);
+    }
+  }
+  views[nviews++] = V;
+  return V;
+}
+
+static yview *view_of(void *shadow) {
+  for (rt_int i = 0; i < nviews; i++)
+    if (views[i]->shadow == shadow) return views[i];
+  return NULL;
+}
+
+/* a variable AT address a whose layout is not one plain word */
+void *y_view(yview **slot, void *shadow, const char *lay, const ydesc *d, rt_int a) {
+  if (!*slot) *slot = view_new(shadow, lay_get(lay), d, a);
+  view_sync(*slot);
+  touch(*slot);
+  return shadow;
+}
+
+/* a CONST parameter AT address a: its value is put there */
+void y_view_put(const void *v, const char *lay, const ydesc *d, rt_int a) {
+  const ylay *L = lay_get(lay);
+  rt_int bits = lay_bits(L, d, v), words = (bits + 63) / 64;
+  uint64_t *b = rt_alloc((size_t)(words ? words : 1) * sizeof *b + 16);
+  for (rt_int k = 0; k < words; k++) b[k] = (uint64_t)y_mem_get(a + k);
+  to_img(L, d, v, b, 0);
+  for (rt_int k = 0; k < words; k++) y_mem_set(a + k, (rt_int)b[k]);
+  free(b);
+}
+
+/* ---- dynamic variables seen in the store ---- */
+
+void *y_new_l(size_t n, const char *lay, const ydesc *d) {
+  ycell *c = y_new(n);
+  c->L = lay_get(lay);
+  c->d = d;
+  return c;
+}
+
+static void *cell_view(ycell *c) {
+  view_sync(c->view);
+  touch(c->view);
+  return c->body;
+}
+
+/* the address of what a pointer designates; 0 for NIL */
+static rt_int ptr_addr(void *p) {
+  ycell *c = p;
+  if (!c || !c->body) return 0;
+  if (c->view) return c->view->addr;
+  char *b = c->body;
+  if (b >= (char *)y_mem_store && b < (char *)(y_mem_store + Y_STORE)) return (b - (char *)y_mem_store) / 8;
+  ywin *w = win_of(b);
+  if (w) {
+    if (!w->cell) w->cell = c;
+    return w->base;
+  }
+  /* a component of a variable in a window */
+  for (rt_int i = 0; i < nwins; i++) {
+    if (!wins[i].L) continue;
+    for (int k = 1; k <= 8; k++) {
+      rt_int o = off_of(wins[i].L, wins[i].d, wins[i].c, b, c->L, k);
+      if (o >= 0) return wins[i].base + o / 64;
+    }
+  }
+  if (c->L) {
+    w = win_new(b, (lay_bits(c->L, c->d, b) + 63) / 64, c->L, c->d);
+  } else {
+    w = win_new(b, 1, NULL, NULL);
+  }
+  w->cell = c;
+  return w->base;
+}
+
+static void *addr_ptr(rt_int a) {
+  if (a == 0) return NULL;
+  ywin *w = win_at(a);
+  if (w && w->base == a && w->cell) return w->cell;
+  return y_cell(y_mem_ptr(a));
+}
+
+/* ---- the store, word by word ---- */
+
+void *y_mem_at(rt_int a, size_t bytes) {
+  if (a < 0 || (uint64_t)a * 8 + bytes > (uint64_t)Y_STORE * 8) rt_raise(Y_X_ADDRESS);
+  return &y_mem_store[a];
+}
+
+rt_int y_mem_get(rt_int a) {
+  if (a >= 0 && a < Y_STORE) return y_mem_store[a];
+  ywin *w = win_at(a);
+  if (!w) rt_raise(Y_X_ADDRESS);
+  if (!w->L) {
+    rt_int x;
+    memcpy(&x, w->c + (a - w->base) * 8, sizeof x);
+    return x;
+  }
+  uint64_t *b = win_image(w);
+  rt_int x = (rt_int)b[a - w->base];
+  free(b);
+  return x;
+}
+
+void y_mem_set(rt_int a, rt_int x) {
+  if (a >= 0 && a < Y_STORE) {
+    y_mem_store[a] = x;
+    return;
+  }
+  ywin *w = win_at(a);
+  if (!w) rt_raise(Y_X_ADDRESS);
+  if (!w->L) {
+    memcpy(w->c + (a - w->base) * 8, &x, sizeof x);
+    return;
+  }
+  uint64_t *b = win_image(w);
+  rt_int k = a - w->base;
+  b[k] = (uint64_t)x;
+  from_img(w->L, w->d, w->c, b, 0, k * 64, k * 64 + 64);
+  free(b);
+}
+
+/* MAIN_STORE_ARRAY [a] as a variable: a word of the store, of a window that
+ * shows its variable as it is, or a view of a word of a window */
+rt_int *y_mem_word(rt_int a) {
+  if (a >= 0 && a < Y_STORE) return &y_mem_store[a];
+  ywin *w = win_at(a);
+  if (!w) rt_raise(Y_X_ADDRESS);
+  if (!w->L) return (rt_int *)(w->c + (a - w->base) * 8);
+  for (rt_int i = 0; i < nviews; i++)
+    if (views[i]->addr == a && views[i]->L->k == 'i' && views[i]->L->bits == 64) {
+      view_sync(views[i]);
+      touch(views[i]);
+      return views[i]->shadow;
+    }
+  rt_int *s = rt_alloc(sizeof *s);
+  yview *V = view_new(s, lay_get("i0,0,64"), &y_d_int, a);
+  touch(V);
+  return s;
+}
+
+/* ADDR of a value held in no window yet, of the extent given: its bytes */
+rt_int y_addr(void *p, rt_int words) {
+  char *c = p;
+  if (c >= (char *)y_mem_store && c < (char *)(y_mem_store + Y_STORE)) return (c - (char *)y_mem_store) / 8;
+  yview *V = view_of(p);
+  if (V) return V->addr;
+  for (rt_int i = 0; i < nwins; i++)
+    if (!wins[i].L && c >= wins[i].c && c < wins[i].c + wins[i].words * 8)
+      return wins[i].base + (c - wins[i].c) / 8;
+  ywin *w = win_of(p);
+  if (w) return w->base;
+  return win_new(c, words, NULL, NULL)->base;
+}
+
+/* ADDR of the component comp, depth components down from the variable
+ * root of layout lay: in the window of root, which ADDR makes in that
+ * layout when it first asks */
+rt_int y_addr_v(void *root, const char *lay, const ydesc *d, void *comp, const char *clay, int depth) {
+  const ylay *L = lay_get(lay), *C = clay ? lay_get(clay) : NULL;
+  rt_int base, off;
+  yview *V = view_of(root);
+  if (V) {
+    base = V->addr;
+    off = off_of(V->L, V->d, root, comp, C, depth);
+  } else {
+    ywin *w = win_of(root);
+    if (w && !w->L && w->words >= (lay_bits(L, d, root) + 63) / 64) {
+      w->L = L;
+      w->d = d;
+    }
+    if (!w || !w->L) {
+      /* root may be a component of a variable already in a window */
+      for (rt_int i = 0; i < nwins && !w; i++) {
+        if (!wins[i].L) continue;
+        for (int k = 1; k <= 8 && !w; k++) {
+          rt_int o = off_of(wins[i].L, wins[i].d, wins[i].c, root, L, k);
+          if (o >= 0 && o % 64 == 0) {
+            rt_int x = off_of(L, d, root, comp, C, depth);
+            if (x >= 0) return wins[i].base + (o + x) / 64;
+          }
+        }
+      }
+      w = win_new(root, (lay_bits(L, d, root) + 63) / 64, L, d);
+    }
+    base = w->base;
+    off = off_of(w->L, w->d, root, comp, C, depth);
+  }
+  if (off < 0) off = 0;
+  return base + off / 64;
+}
+
+/* ADDR of a SPACE: of the actual, in the layout it was passed with */
+rt_int y_addr_s(yspace s) {
+  if (!s.lay) return y_addr(s.p, s.words);
+  return y_addr_v(s.p, s.lay, s.d, s.p, NULL, 0);
+}
+
+/* what address a names: a word of the store, or the component of the
+ * variable in a window that starts there */
+void *y_mem_ptr(rt_int a) {
+  if (a >= 0 && a < Y_STORE) return &y_mem_store[a];
+  ywin *w = win_at(a);
+  if (!w) rt_raise(Y_X_ADDRESS);
+  if (!w->L) return w->c + (a - w->base) * 8;
+  void *p = comp_at(w->L, w->d, w->c, (a - w->base) * 64, NULL);
+  if (!p) rt_raise(Y_X_ADDRESS);
+  return p;
+}
+
+/* MAKE_POINTER: a pointer to the variable of layout lay at address a. A
+ * variable of that layout that starts there is designated itself; anything
+ * else is seen through a view. exact: the layout is one plain word, the
+ * program's form of the value, so the store itself is designated */
+void *y_make_ptr(rt_int a, const char *lay, const ydesc *d, int exact) {
+  const ylay *L = lay_get(lay);
+  if (a >= 0 && a < Y_STORE && exact) return y_cell(&y_mem_store[a]);
+  ywin *w = a >= Y_STORE ? win_at(a) : NULL;
+  if (a >= Y_STORE && !w) rt_raise(Y_X_ADDRESS);
+  if (w && !w->L) return y_cell(w->c + (a - w->base) * 8);
+  if (w) {
+    void *p = comp_at(w->L, w->d, w->c, (a - w->base) * 64, L);
+    if (p) {
+      ycell *c = y_cell(p);
+      if (!c->L) {
+        c->L = L;
+        c->d = d;
+      }
+      return c;
+    }
+  }
+  for (rt_int i = 0; i < nviews; i++)
+    if (views[i]->addr == a && lay_same(views[i]->L, L) && views[i]->d == d) {
+      ycell *c = y_cell(views[i]->shadow);
+      c->view = views[i];
+      return c;
+    }
+  void *body = rt_alloc(d->size);
+  ycell *c = y_cell(body);
+  c->view = view_new(body, L, d, a);
+  return c;
+}
+
+void *y_derefw(void *p, const char *lay, const ydesc *d, int exact) {
+  ycell *c = p;
+  if (c && c->body) return c->view ? cell_view(c) : c->body;
+  if (d->size > sizeof y_mem_store) rt_raise(Y_X_ADDRESS);
+  return y_deref(y_make_ptr(0, lay, d, exact));
 }
 
 int y_cond_claim(rt_lock *l) {
@@ -3761,6 +5172,140 @@ rt_int y_fmt_fixed(double v, rt_int decimals, unsigned char *buf, rt_int cap) {
   return y_fmt(b, snprintf(b, sizeof b, "%.*f", (int)decimals, v), buf, cap);
 }
 
+/* ---- fixed point (VI.A.1.b, VIII.C): exact, as scaled integers ------------ */
+/* A FIXED value of a representation of scale s is held as the integer k
+ * with value k * s; the translator knows every scale, a manifest rational,
+ * and passes the factors between two scales. Arithmetic is exact (VIII.C):
+ * an operation that the integers cannot hold raises OVERFLOW, a value that
+ * is not a multiple of the scale it is assigned to FIXED_NOT_REPRESENTABLE. */
+
+const ydesc y_d_fix = {YK_FIX, sizeof(yfix), 0, 0, {0}, {0}, NULL, 0, NULL, NULL};
+
+yfix y_fix_add(yfix a, yfix b) {
+  yfix r;
+  if (__builtin_add_overflow(a, b, &r)) y_trap(RT_X_OVERFLOW);
+  return r;
+}
+
+yfix y_fix_sub(yfix a, yfix b) {
+  yfix r;
+  if (__builtin_sub_overflow(a, b, &r)) y_trap(RT_X_OVERFLOW);
+  return r;
+}
+
+yfix y_fix_mul(yfix a, yfix b) {
+  yfix r;
+  if (__builtin_mul_overflow(a, b, &r)) y_trap(RT_X_OVERFLOW);
+  return r;
+}
+
+yfix y_fix_neg(yfix a) { return y_fix_sub(0, a); }
+
+/* k * p / q, which must be a whole number */
+static yfix fix_round(yfix a, yfix b);
+
+yfix y_fix_conv(yfix k, yfix p, yfix q) {
+  if (k == Y_UNDEF_X) return k;
+  yfix t = y_fix_mul(k, p);
+  if (q == 1) return t;
+  if (t % q != 0) {
+    y_trap(Y_X_FIXED);                     /* resumed: the nearest multiple */
+    return fix_round(t, q);
+  }
+  return t / q;
+}
+
+yfix y_fix_range(yfix k, yfix lo, yfix hi) {
+  if ((k < lo || k > hi) && k != Y_UNDEF_X) {
+    y_trap(RT_X_RANGE);
+    return k < lo ? lo : hi;
+  }
+  return k;
+}
+
+static yfix fix_floordiv(yfix a, yfix b) {
+  yfix q = a / b;
+  if ((a % b != 0) && ((a < 0) != (b < 0))) q--;
+  return q;
+}
+
+/* a bound of a range in units of a scale: the multiples of the scale that
+ * lie in the range (up: the smallest at or above, else the largest below) */
+yfix y_fix_bound(yfix k, yfix p, yfix q, int up) {
+  yfix t = y_fix_mul(k, p);
+  yfix f = fix_floordiv(t, q);
+  if (up && f * q != t) f++;
+  return f;
+}
+
+/* FIXED_DIV (XI): the largest multiple of the result scale not above the
+ * quotient n / d, the factors p / q bringing the quotient of the integers
+ * to that scale */
+yfix y_fix_div(yfix n, yfix d, yfix p, yfix q) {
+  if (d == 0) rt_raise(Y_X_ZERO_DENOM);
+  return fix_floordiv(y_fix_mul(n, p), y_fix_mul(d, q));
+}
+
+/* rounded to the nearest whole number, halves away from zero (XI) */
+static yfix fix_round(yfix a, yfix b) {
+  if (b < 0) { a = -a; b = -b; }
+  yfix q = a / b, r = a % b;
+  if (r < 0) r = -r;
+  if (2 * r >= b) q += a < 0 ? -1 : 1;
+  return q;
+}
+
+/* NEAR_FIXED of a FIXED value: k * p / q rounded */
+yfix y_fix_near(yfix k, yfix p, yfix q) { return fix_round(y_fix_mul(k, p), q); }
+
+/* NEAR_FIXED of a floating-point value: x / (sn / sd) rounded */
+yfix y_fix_of_float(double x, rt_int sn, rt_int sd) {
+  double v = x * (double)sd / (double)sn;
+  if (!(v > -1.7e38 && v < 1.7e38)) rt_raise(RT_X_OVERFLOW);
+  return (yfix)round(v);
+}
+
+double y_fix_float(yfix k, rt_int sn, rt_int sd) { return (double)k * (double)sn / (double)sd; }
+
+static rt_int fix_int(yfix v) {
+  if (v > INT64_MAX || v < -INT64_MAX) rt_raise(RT_X_OVERFLOW);
+  return (rt_int)v;
+}
+
+rt_int y_fix_floor(yfix k, rt_int sn, rt_int sd) { return fix_int(fix_floordiv(y_fix_mul(k, sn), sd)); }
+rt_int y_fix_ceiling(yfix k, rt_int sn, rt_int sd) { return -fix_int(fix_floordiv(-y_fix_mul(k, sn), sd)); }
+rt_int y_fix_near_integer(yfix k, rt_int sn, rt_int sd) { return fix_int(fix_round(y_fix_mul(k, sn), sd)); }
+
+/* the value k * sn / sd in decimal, rounded to the given number of decimals,
+ * halves away from zero */
+rt_int y_fmt_fix(yfix k, rt_int sn, rt_int sd, rt_int decimals, unsigned char *buf, rt_int cap) {
+  char b[96], *e = b + sizeof b;
+  int n = 0;
+  if (decimals < 0) decimals = 0;
+  if (decimals > 30) decimals = 30;
+  yfix p = 1;
+  for (rt_int i = 0; i < decimals; i++) p *= 10;
+  yfix v = fix_round(y_fix_mul(y_fix_mul(k, sn), p), sd);
+  int neg = v < 0;
+  unsigned __int128 u = neg ? -(unsigned __int128)v : (unsigned __int128)v;
+  char *s = e;
+  rt_int d = 0;
+  do {
+    if (decimals > 0 && d == decimals) *--s = '.';
+    *--s = (char)('0' + (int)(u % 10));
+    u /= 10;
+    d++;
+  } while (u || d <= decimals);
+  if (neg) *--s = '-';
+  n = (int)(e - s);
+  return y_fmt(s, n, buf, cap);
+}
+
+double y_fchk(double v) {
+  if (isinf(v)) y_trap(RT_X_OVERFLOW);
+  return v;
+}
+
 /* a descriptor for a one-dimensional array of elem, to compare the values
  * of a length-unresolved array parameter (X.A.3) */
 const ydesc *y_desc_vector(const ydesc *elem) {
@@ -3776,10 +5321,14 @@ const ydesc y_d_str = {YK_ARRAY, sizeof(yarr), 1, 1, {1, 1, 1, 1}, {0, 1, 1, 1},
 /* ---- device signals (XIV.VII) ------------------------------------------------ */
 /* A SIGNAL declared AT a machine location is sent by the device there. This
  * implementation simulates one device of the PDP-11 the Report's examples
- * use: the line clock, interrupt vector 100 (octal), which sends its signal
- * every 20 ms of the virtual clock, as the KW11-L of a 50 Hz machine. It
+ * use: the line clock KW11-L, interrupt vector 100 (octal), status register
+ * 177546 (octal) of the I/O page. Every 20 ms of the clock, as on a 50 Hz
+ * machine, it sets bit 7 of the status register (the monitor bit), and when
+ * bit 6 is set (interrupt enable) it interrupts: it sends the signal. It
  * runs as a process of the highest priority and enters the monitor of the
  * signal to send it, as a monitor procedure would. */
+
+#define Y_LKS 0177546                          /* the line clock status register */
 
 typedef struct {
   ysig *s;
@@ -3790,6 +5339,8 @@ static void y_device_loop(void *arg) {
   ydevice *d = arg;
   for (;;) {
     rt_delay(d->period);
+    y_mem_store[Y_LKS] |= 0200;
+    if (!(y_mem_store[Y_LKS] & 0100)) continue;
     if (d->s->mon) y_mon_enter(d->s->mon);
     y_send(d->s);
     if (d->s->mon) y_mon_leave(d->s->mon);
@@ -3802,11 +5353,884 @@ void y_device(ysig *s, rt_int address) {
   ydevice *d = rt_alloc(sizeof *d);
   d->s = s;
   d->period = 20;
-  y_create(&devices, 0, 1, 255, y_device_loop, d);
+  y_create(&devices, 0, 1, 255, 0, y_device_loop, d);
 }
 
-/* a SIGNAL as a component of an array: tied to its monitor by y_sig_init */
-const ydesc y_d_sig = {YK_OPAQUE, sizeof(ysig), 0, 0, {0}, {0}, NULL, 0, NULL, NULL};
+/* a SIGNAL as a component of an array or a record: tied to its monitor by
+ * y_sig_init_all when the structure is declared */
+const ydesc y_d_sig = {YK_SIG, sizeof(ysig), 0, 0, {0}, {0}, NULL, 0, NULL, NULL};
+const ydesc y_d_sem = {YK_OPAQUE, sizeof(rt_lock), 0, 0, {0}, {0}, NULL, 0, NULL, NULL};
+/* a character of an alphabet of 256: every byte is a character */
+const ydesc y_d_byte256 = {YK_OPAQUE, 1, 0, 0, {0}, {0}, NULL, 0, NULL, NULL};
+
+void y_sig_init_all(const ydesc *d, void *v, ymon *m) {
+  if (d->kind == YK_SIG) {
+    y_sig_init(v, m);
+  } else if (d->kind == YK_ARRAY) {
+    yarr *a = v;
+    rt_int n = y_count(*a, d->nd);
+    for (rt_int i = 0; i < n; i++) y_sig_init_all(d->elem, (char *)a->p + i * d->elem->size, m);
+  } else if (d->kind == YK_RECORD) {
+    for (int i = 0; i < d->nf; i++) y_sig_init_all(d->fd[i], (char *)v + d->off[i], m);
+  }
+}
+
+/* ---- RED additions ------------------------------------------------------- */
+
+int rt_r_active(rt_act *a) { return a == NULL || a->active; }
+
+rstr rt_r_strsub(rstr s, rt_int len) {
+  if (s.len != len) rt_raise_msg(RT_X_SUBTYPE, "string length");
+  return s;
+}
+
+void rt_r_free_unchecked(void **v) {
+  uintptr_t target = (uintptr_t)*v;
+  if (!target) return;
+  blockrec *tb = bfind(target);
+  forget_fin(target);
+  if (tb) {
+    tb->p = DEAD_BLOCK;
+    free((void *)target);
+  }
+  *v = NULL;
+}
+
+struct rt_r_inside {
+  rt_act *who;
+  int depth;
+  rt_r_inside *next;
+};
+
+void rt_r_nonrec_enter(rt_r_nonrec *n, int nonrec, int nonreent, const char *name) {
+  rt_act *me = rt_me();
+  rt_r_inside *i;
+  for (i = n->in; i; i = i->next)
+    if (i->depth > 0) {
+      if ((nonrec && i->who == me) || (nonreent && i->who != me)) {
+        fflush(stdout);
+        fprintf(stderr, "*** %s invoked %s against its pragmat\n", name,
+                i->who == me ? "recursively" : "reentrantly");
+        exit(1);
+      }
+    }
+  for (i = n->in; i && i->who != me; i = i->next) {
+  }
+  if (!i) {
+    i = calloc(1, sizeof *i);
+    i->who = me;
+    i->next = n->in;
+    n->in = i;
+  }
+  i->depth++;
+}
+
+void rt_r_nonrec_leave(rt_r_nonrec *n) {
+  rt_act *me = rt_me();
+  for (rt_r_inside *i = n->in; i; i = i->next)
+    if (i->who == me && i->depth > 0) {
+      i->depth--;
+      return;
+    }
+}
+
+void rt_r_xtag(void) { rt_raise(RT_X_TAG); }
+
+rt_int rt_r_tag(rt_int tag) {
+  if (tag < 0) rt_raise(RT_X_INIT);
+  return tag;
+}
+
+int rt_r_set_le(yset a, yset b) {
+  for (rt_int e = a.lo; e <= a.hi; e++)
+    if (y_set_in(e, a) && !y_set_in(e, b)) return 0;
+  return 1;
+}
+
+int rt_r_set_lt(yset a, yset b) { return rt_r_set_le(a, b) && !y_set_eq(a, b); }
+
+/* a NaN with a payload of its own marks an uninitialized FLOAT */
+double rt_r_fundef(void) {
+  uint64_t b = 0x7ff8000000000bedULL;
+  double d;
+  memcpy(&d, &b, sizeof d);
+  return d;
+}
+
+double rt_r_fchk(double v) {
+  uint64_t b;
+  memcpy(&b, &v, sizeof b);
+  if (b == 0x7ff8000000000bedULL) rt_raise(RT_X_INIT);
+  return v;
+}
+
+int rt_r_undef_FLOAT(double v) {
+  uint64_t b;
+  memcpy(&b, &v, sizeof b);
+  return b == 0x7ff8000000000bedULL;
+}
+
+/* TIME(a) and DELAY_UNTIL(t, a): the activation clock (RED 10.4, C.10) */
+rt_int rt_r_act_time(rt_act *a) {
+  if (!a) a = rt_me();
+  return a->t ? a->t->aclock : 0;
+}
+
+void rt_r_delay_act(rt_int t, rt_act *a) {
+  for (;;) {
+    rt_int c = rt_r_act_time(a);
+    if (c >= t) return;
+    if (!a || !a->active) {
+      /* the clock of an inactive activation never reaches t */
+      rt_mbox never;
+      int dummy;
+      rt_mbox_init(&never, 0, sizeof dummy, NULL);
+      rt_receive(&never, &dummy);
+    }
+    rt_delay(t - c);
+  }
+}
+
+rt_int rt_r_act_deadline(rt_int t, rt_act *a) { return rt_time() + (t - rt_r_act_time(a)); }
+
+static int x_lock(void) { return rt_exc("X_LOCK"); }
+
+double rt_r_fovf(double v) {
+  if (isinf(v)) rt_raise(RT_X_OVERFLOW);
+  return v;
+}
+
+double rt_r_fpow(double a, rt_int b) {
+  if (b < 0) rt_raise(RT_X_NEG_EXP);
+  return rt_r_fovf(rt_fpow(a, b));
+}
+
+rt_int rt_r_floor(double v) {
+  double f = floor(v);
+  if (!(f >= -9.2233720368547758e18 && f < 9.2233720368547758e18)) rt_raise(RT_X_OVERFLOW);
+  return (rt_int)f;
+}
+
+void rt_r_unlock(rt_lock *l) {
+  if (!l->owner) rt_raise(x_lock());
+  rt_region_leave(l);
+}
+
+rt_act *rt_r_owner(rt_lock *l) {
+  if (!l->owner) rt_raise(x_lock());
+  return rt_lock_owner(l);
+}
+
+static int count_waiters(rt_waiter *w) {
+  int n = 0;
+  for (; w; w = w->next) n++;
+  return n;
+}
+
+int rt_r_can_send(rt_mbox *m) { return m->count < m->cap || count_waiters(m->receivers) > 0; }
+
+int rt_r_can_receive(rt_mbox *m) { return m->count > 0 || count_waiters(m->senders) > 0; }
+
+/* ---- RED files (App. A, C.14) ----------------------------------------------- */
+
+struct rt_r_file {
+  FILE *fp;
+  int open, access, use, text, sys;  /* access 0 SEQ 1 RANDOM; use 0 INPUT 1 OUTPUT 2 UPDATE */
+  size_t esz;
+  char *path;
+  /* a standard file holds its components each after its length in bytes:
+   * off[i] is where component i starts, off[n] the end; cur the position - 1 */
+  long *off;
+  rt_int n, cap, cur;
+};
+
+static void r_scan(rt_r_file *f) {
+  f->n = 0;
+  f->cur = 0;
+  if (!f->off) {
+    f->cap = 64;
+    f->off = malloc(sizeof(long) * (size_t)f->cap);
+  }
+  long pos = 0;
+  int64_t len;
+  fseek(f->fp, 0, SEEK_SET);
+  for (;;) {
+    if (f->n + 2 > f->cap) f->off = realloc(f->off, sizeof(long) * (size_t)(f->cap *= 2));
+    f->off[f->n] = pos;
+    if (fread(&len, sizeof len, 1, f->fp) != 1) break;
+    pos += (long)sizeof len + (long)len;
+    fseek(f->fp, pos, SEEK_SET);
+    f->n++;
+  }
+}
+
+static int r_exc(const char *name) { return rt_exc(name); }
+
+rt_r_file *rt_r_file_new(int access, int use, size_t esz, int text) {
+  rt_r_file *f = calloc(1, sizeof *f);
+  f->access = access;
+  f->use = use;
+  f->esz = text ? 1 : esz;
+  f->text = text;
+  return f;
+}
+
+rt_r_file *rt_r_sys_in(void) {
+  static rt_r_file f = {NULL, 1, 0, 0, 1, 1, 1, NULL};
+  return &f;
+}
+
+rt_r_file *rt_r_sys_out(void) {
+  static rt_r_file f = {NULL, 1, 0, 1, 1, 2, 1, NULL};
+  return &f;
+}
+
+int rt_r_file_access(rt_r_file *f) { return f->access; }
+int rt_r_file_use(rt_r_file *f) { return f->use; }
+
+/* the host path of a physical file name: no directories, no blanks */
+static char *r_path(rstr name) {
+  rt_int b = 0, e = name.len;
+  while (b < e && name.p[b] == ' ') b++;
+  while (e > b && name.p[e - 1] == ' ') e--;
+  if (b == e) rt_raise_msg(r_exc("X_FILENAME"), "empty file name");
+  for (rt_int i = b; i < e; i++)
+    if (name.p[i] == '/' || name.p[i] == '\\' || name.p[i] < ' ' || name.p[i] > '~')
+      rt_raise_msg(r_exc("X_FILENAME"), "not a physical file name");
+  const char *dir = getenv("RED_FILES");
+  if (!dir) dir = ".";
+  size_t n = strlen(dir) + (size_t)(e - b) + 2;
+  char *p = malloc(n);
+  snprintf(p, n, "%s/%.*s", dir, (int)(e - b), (const char *)name.p + b);
+  return p;
+}
+
+static void r_need_open(rt_r_file *f) {
+  if (!f->open) rt_raise_msg(RT_X_FILE, "file not open");
+}
+
+void rt_r_open(rt_r_file *f, rstr name, int is_new) {
+  if (f->sys) return; /* the teletype is always there */
+  if (f->open) rt_raise_msg(RT_X_FILE, "file already open");
+  char *p = r_path(name);
+  FILE *fp;
+  if (is_new) {
+    fp = fopen(p, "w+b");
+    if (!fp) rt_raise_msg(r_exc("X_FILENAME"), "cannot create the file");
+  } else {
+    fp = fopen(p, "r+b");
+    if (!fp) fp = fopen(p, "rb");
+    if (!fp) rt_raise_msg(r_exc("X_NOFILE"), "no such file");
+  }
+  f->fp = fp;
+  f->path = p;
+  f->open = 1;
+  if (!f->text) r_scan(f);
+}
+
+rt_int rt_r_fsize(rt_r_file *f) {
+  r_need_open(f);
+  if (f->sys) rt_raise_msg(RT_X_FILE, "the teletype has no size");
+  if (!f->text) return f->n;
+  long here = ftell(f->fp);
+  fseek(f->fp, 0, SEEK_END);
+  long end = ftell(f->fp);
+  fseek(f->fp, here, SEEK_SET);
+  return (rt_int)(end / (long)f->esz);
+}
+
+rt_int rt_r_fpos(rt_r_file *f) {
+  r_need_open(f);
+  if (f->sys) rt_raise_msg(RT_X_FILE, "the teletype has no position");
+  if (!f->text) return f->cur + 1;
+  return (rt_int)(ftell(f->fp) / (long)f->esz) + 1;
+}
+
+void rt_r_close(rt_r_file *f, int del) {
+  if (f->sys) return;
+  r_need_open(f);
+  /* the current position is the new end of the file */
+  long here = f->text ? ftell(f->fp) : f->off[f->cur];
+  fflush(f->fp);
+  if (ftruncate(fileno(f->fp), here) != 0) {
+  }
+  fclose(f->fp);
+  if (del) remove(f->path);
+  f->fp = NULL;
+  f->open = 0;
+}
+
+void rt_r_fsetpos(rt_r_file *f, rt_int p) {
+  r_need_open(f);
+  if (f->sys) rt_raise_msg(RT_X_FILE, "the teletype cannot be positioned");
+  if (p < 1 || p > rt_r_fsize(f) + 1) rt_raise(r_exc("X_FILEPOS"));
+  if (!f->text) {
+    f->cur = p - 1;
+    return;
+  }
+  fseek(f->fp, (long)(p - 1) * (long)f->esz, SEEK_SET);
+}
+
+int rt_r_feof(rt_r_file *f) {
+  r_need_open(f);
+  if (f->sys == 1) return rt_eof();
+  if (f->sys) return 1;
+  return rt_r_fpos(f) == rt_r_fsize(f) + 1;
+}
+
+static void r_can_read(rt_r_file *f) {
+  r_need_open(f);
+  if (f->use == 1) rt_raise_msg(RT_X_FILE, "an output file is not read");
+}
+
+static void r_can_write(rt_r_file *f) {
+  r_need_open(f);
+  if (f->use == 0) rt_raise_msg(RT_X_FILE, "an input file is not written");
+}
+
+void rt_r_fread(rt_r_file *f, void *dst) {
+  r_can_read(f);
+  if (f->sys) rt_raise_msg(RT_X_FILE, "the teletype holds characters");
+  if (rt_r_feof(f)) rt_raise(r_exc("X_EOF"));
+  if (fread(dst, f->esz, 1, f->fp) != 1) rt_raise(r_exc("X_EOF"));
+  fseek(f->fp, 0, SEEK_CUR);
+}
+
+void rt_r_fwrite(rt_r_file *f, const void *src) {
+  r_can_write(f);
+  if (f->sys) rt_raise_msg(RT_X_FILE, "the teletype holds characters");
+  fwrite(src, f->esz, 1, f->fp);
+  fseek(f->fp, 0, SEEK_CUR);
+}
+
+int rt_r_fgetc(rt_r_file *f) {
+  r_can_read(f);
+  if (f->sys == 1) {
+    int c = rt_getc();
+    if (c < 0) rt_raise(r_exc("X_EOF"));
+    return c;
+  }
+  int c = fgetc(f->fp);
+  if (c == EOF) rt_raise(r_exc("X_EOF"));
+  fseek(f->fp, 0, SEEK_CUR);
+  return c;
+}
+
+void rt_r_fputc(rt_r_file *f, int c) {
+  r_can_write(f);
+  if (f->sys == 2) {
+    rt_putc(c);
+    return;
+  }
+  fputc(c, f->fp);
+  fseek(f->fp, 0, SEEK_CUR);
+}
+
+void rt_r_fputs(rt_r_file *f, rstr s) {
+  for (rt_int i = 0; i < s.len; i++) rt_r_fputc(f, s.p[i]);
+}
+
+/* a line of a text file ends with 'CR 'LF (A.3); a host line may end with
+ * 'LF alone */
+rt_int rt_r_fsizeln(rt_r_file *f) {
+  r_can_read(f);
+  if (f->sys == 1) return rt_sizeln();
+  long here = ftell(f->fp);
+  rt_int n = 0;
+  int c;
+  while ((c = fgetc(f->fp)) != EOF && c != '\n') n++;
+  if (n > 0 && c == '\n') {
+    fseek(f->fp, here + n - 1, SEEK_SET);
+    if (fgetc(f->fp) == '\r') n--;
+  }
+  fseek(f->fp, here, SEEK_SET);
+  return n;
+}
+
+void rt_r_freadln(rt_r_file *f, rstr *dst) {
+  if (f->sys == 1) {
+    rt_r_readln(dst);
+    return;
+  }
+  r_can_read(f);
+  if (rt_r_feof(f)) rt_raise(r_exc("X_EOF"));
+  rt_int n = rt_r_fsizeln(f);
+  long here = ftell(f->fp);
+  int c;
+  rt_int k = 0;
+  while ((c = fgetc(f->fp)) != EOF && c != '\n') k++;
+  if (c != '\n') {
+    fseek(f->fp, here, SEEK_SET);
+    rt_raise_msg(r_exc("X_LN"), "no end of line");
+  }
+  if (n != dst->len) {
+    fseek(f->fp, here, SEEK_SET);
+    rt_raise_msg(r_exc("X_LN"), "line of another length");
+  }
+  fseek(f->fp, here, SEEK_SET);
+  if (n && fread(dst->p, 1, (size_t)n, f->fp) != (size_t)n) rt_raise(r_exc("X_LN"));
+  while ((c = fgetc(f->fp)) != EOF && c != '\n') {
+  }
+  fseek(f->fp, 0, SEEK_CUR);
+}
+
+void rt_r_fwriteln(rt_r_file *f, rstr s) {
+  if (f->sys == 2) {
+    rt_putln(s);
+    return;
+  }
+  r_can_write(f);
+  fwrite(s.p, 1, (size_t)s.len, f->fp);
+  fputs("\r\n", f->fp);
+  fseek(f->fp, 0, SEEK_CUR);
+}
+
+void rt_r_readln(rstr *dst) {
+  if (rt_eof()) rt_raise(r_exc("X_EOF"));
+  if (rt_sizeln() != dst->len) rt_raise_msg(r_exc("X_LN"), "line of another length");
+  rstr line = rt_getln();
+  if (line.len) memcpy(dst->p, line.p, (size_t)line.len);
+}
+
+void rt_r_rename(rstr from, rstr to) {
+  char *a = r_path(from), *b = r_path(to);
+  if (rename(a, b) != 0) rt_raise_msg(r_exc("X_NOFILE"), "no such file");
+}
+
+/* ---- conversions (A.3) ----------------------------------------------------- */
+
+/* an optional minus sign, n.nnn with prec digits, E, the exponent's sign and
+ * its digits */
+rstr rt_r_str_of_float(double v, rt_int prec) {
+  char b[64], m[64];
+  if (prec < 1) prec = 1;
+  if (prec > 17) prec = 17;
+  snprintf(b, sizeof b, "%.*E", (int)prec - 1, v);
+  char *e = strchr(b, 'E');
+  int ex = atoi(e + 1);
+  *e = 0;
+  int n = snprintf(m, sizeof m, "%sE%c%d", b, ex < 0 ? '-' : '+', ex < 0 ? -ex : ex);
+  return rt_str_copy(rt_str(m, n));
+}
+
+/* n characters left of the point, zeros kept, m right; X_FORMAT if the first
+ * significant digit would be lost */
+rstr rt_r_format(double v, rt_int n, rt_int m) {
+  char b[400];
+  double a = fabs(v);
+  double r = floor(a * pow(10.0, (double)m) + 0.5) / pow(10.0, (double)m);
+  if (r >= pow(10.0, (double)n)) rt_raise(r_exc("X_FORMAT"));
+  int len = snprintf(b, sizeof b, "%s%0*.*f", v < 0 ? "-" : "", (int)(n + m + (m > 0)), (int)m, r);
+  return rt_str_copy(rt_str(b, len));
+}
+
+/* with an exponent of o digits: the first significant digit leftmost */
+rstr rt_r_format_e(double v, rt_int n, rt_int m, rt_int o) {
+  char b[400];
+  double a = fabs(v);
+  int ex = 0;
+  if (a != 0.0) {
+    ex = (int)floor(log10(a)) - (int)(n - 1);
+    a = a / pow(10.0, (double)ex);
+    double r = floor(a * pow(10.0, (double)m) + 0.5) / pow(10.0, (double)m);
+    if (r >= pow(10.0, (double)n)) {
+      ex++;
+      a = a / 10.0;
+    }
+  }
+  int ae = ex < 0 ? -ex : ex;
+  if (o < 1 || ae >= pow(10.0, (double)o)) rt_raise(r_exc("X_FORMAT"));
+  int len = snprintf(b, sizeof b, "%s%0*.*fE%c%0*d", v < 0 ? "-" : "", (int)(n + m + (m > 0)), (int)m, a,
+                     ex < 0 ? '-' : '+', (int)o, ae);
+  return rt_str_copy(rt_str(b, len));
+}
+
+rstr rt_r_str_pad(rstr s, rt_int len) {
+  if (s.len > len) rt_raise_msg(RT_X_SUBTYPE, "the string is longer than its target");
+  rstr r = rt_str_new(len);
+  if (s.len) memcpy(r.p + (len - s.len), s.p, (size_t)s.len);
+  return r;
+}
+
+rstr rt_r_enum_image(const char *const *names, rt_int v) {
+  char b[256];
+  int n = snprintf(b, sizeof b, "'%s", names[v]);
+  return rt_str_copy(rt_str(b, n));
+}
+
+static rstr r_trim(rstr s) {
+  rt_int b = 0, e = s.len;
+  while (b < e && s.p[b] == ' ') b++;
+  while (e > b && s.p[e - 1] == ' ') e--;
+  rstr r = {e - b, s.p + b};
+  return r;
+}
+
+static int r_same_word(rstr s, const char *w) {
+  size_t n = strlen(w);
+  if ((size_t)s.len != n) return 0;
+  for (size_t i = 0; i < n; i++) {
+    int c = s.p[i];
+    if (c >= 'a' && c <= 'z') c -= 32;
+    if (c != w[i]) return 0;
+  }
+  return 1;
+}
+
+rt_int rt_r_enum_of_str(const char *const *names, rt_int n, rstr s) {
+  rstr t = r_trim(s);
+  if (t.len > 0 && t.p[0] == '\'') {
+    t.p++;
+    t.len--;
+  }
+  for (rt_int i = 0; i < n; i++)
+    if (r_same_word(t, names[i])) return i;
+  rt_raise_msg(RT_X_RANGE, "not a literal of the type");
+}
+
+int rt_r_bool_of_str(rstr s) {
+  rstr t = r_trim(s);
+  if (r_same_word(t, "TRUE")) return 1;
+  if (r_same_word(t, "FALSE")) return 0;
+  rt_raise_msg(RT_X_RANGE, "not a BOOL literal");
+}
+
+double rt_r_float_of_str(rstr s) {
+  rstr t = r_trim(s);
+  char b[128];
+  if (t.len <= 0 || t.len >= (rt_int)sizeof b) rt_raise_msg(RT_X_RANGE, "not a FLOAT literal");
+  memcpy(b, t.p, (size_t)t.len);
+  b[t.len] = 0;
+  /* sign, digits, a point with digits on both sides, an optional exponent */
+  const char *p = b;
+  if (*p == '+' || *p == '-') p++;
+  const char *d = p;
+  while (*p >= '0' && *p <= '9') p++;
+  int ok = p > d && *p == '.';
+  if (ok) {
+    p++;
+    d = p;
+    while (*p >= '0' && *p <= '9') p++;
+    ok = p > d;
+  }
+  if (ok && (*p == 'E' || *p == 'e')) {
+    p++;
+    if (*p == '+' || *p == '-') p++;
+    d = p;
+    while (*p >= '0' && *p <= '9') p++;
+    ok = p > d;
+  }
+  if (!ok || *p) rt_raise_msg(RT_X_RANGE, "not a FLOAT literal");
+  return rt_r_fovf(strtod(b, NULL));
+}
+
+/* ---- the simulated memory (RED 12.3) ---------------------------------------- */
+
+#define R_MEM_BYTES (1 << 20)
+static unsigned char r_mem[R_MEM_BYTES];
+
+static void r_mem_check(rt_int bitaddr, rt_int nbits) {
+  if (bitaddr < 0 || nbits < 0 || bitaddr + nbits > (rt_int)R_MEM_BYTES * 8)
+    rt_raise_msg(RT_X_RANGE, "outside the memory of the simulated machine");
+}
+
+void *rt_r_mem_at(rt_int bitaddr, size_t size) {
+  r_mem_check(bitaddr, (rt_int)size * 8);
+  if (bitaddr % 8) rt_raise_msg(RT_X_RANGE, "a variable without a representation starts at a byte");
+  return r_mem + bitaddr / 8;
+}
+
+static void r_bit_put(rt_int b, int v) {
+  unsigned char m = (unsigned char)(0x80 >> (b % 8));
+  if (v) r_mem[b / 8] |= m;
+  else r_mem[b / 8] &= (unsigned char)~m;
+}
+
+static int r_bit_get(rt_int b) { return (r_mem[b / 8] >> (7 - b % 8)) & 1; }
+
+/* nbits of v, high-order first */
+void rt_r_mem_put(rt_int bitaddr, rt_int nbits, rt_int v) {
+  r_mem_check(bitaddr, nbits);
+  uint64_t u = (uint64_t)v;
+  for (rt_int i = 0; i < nbits; i++) r_bit_put(bitaddr + i, nbits - 1 - i < 64 ? (int)((u >> (nbits - 1 - i)) & 1) : 0);
+}
+
+rt_int rt_r_mem_get(rt_int bitaddr, rt_int nbits, int is_signed) {
+  r_mem_check(bitaddr, nbits);
+  uint64_t u = 0;
+  for (rt_int i = 0; i < nbits; i++) u = (u << 1) | (uint64_t)r_bit_get(bitaddr + i);
+  if (is_signed && nbits > 0 && nbits < 64 && (u >> (nbits - 1)) & 1) u |= ~(uint64_t)0 << nbits;
+  return (rt_int)u;
+}
+
+void rt_r_mem_putf(rt_int bitaddr, rt_int nbits, double v) {
+  if (nbits >= 64) {
+    uint64_t u;
+    memcpy(&u, &v, sizeof u);
+    rt_r_mem_put(bitaddr, 64, (rt_int)u);
+  } else if (nbits >= 32) {
+    float f = (float)v;
+    uint32_t u;
+    memcpy(&u, &f, sizeof u);
+    rt_r_mem_put(bitaddr, 32, (rt_int)u);
+  } else {
+    rt_raise_msg(RT_X_RANGE, "a FLOAT needs 32 or 64 bits");
+  }
+}
+
+double rt_r_mem_getf(rt_int bitaddr, rt_int nbits) {
+  if (nbits >= 64) {
+    uint64_t u = (uint64_t)rt_r_mem_get(bitaddr, 64, 0);
+    double d;
+    memcpy(&d, &u, sizeof d);
+    return d;
+  }
+  if (nbits >= 32) {
+    uint32_t u = (uint32_t)rt_r_mem_get(bitaddr, 32, 0);
+    float f;
+    memcpy(&f, &u, sizeof f);
+    return f;
+  }
+  rt_raise_msg(RT_X_RANGE, "a FLOAT needs 32 or 64 bits");
+}
+
+rt_int rt_r_fits(rt_int v, rt_int nbits, int is_signed) {
+  if (nbits >= 64) return v;
+  if (is_signed ? (v < -((rt_int)1 << (nbits - 1)) || v >= ((rt_int)1 << (nbits - 1)))
+                : (v < 0 || v >= ((rt_int)1 << nbits)))
+    rt_raise_msg(RT_X_RANGE, "the value does not fit its representation");
+  return v;
+}
+
+/* LOW_IO device 3 reads, device 4 writes the byte of the simulated memory at
+ * the command's address */
+void rt_r_low_io(rt_int device, rt_int command, rt_int *data) {
+  if (device == 3) {
+    *data = *(unsigned char *)rt_r_mem_at(command * 8, 1);
+    return;
+  }
+  if (device == 4) {
+    *(unsigned char *)rt_r_mem_at(command * 8, 1) = (unsigned char)*data;
+    return;
+  }
+  rt_low_io(device, command, data);
+}
+
+static int x_maxrange(void) { return rt_exc("X_MAXRANGE"); }
+
+void rt_r_maxprec(rt_int prec) {
+  if (prec < 1 || prec > 15) rt_raise_msg(x_maxrange(), "FLOAT precision");
+}
+
+void rt_r_maxrange_f(double lo, double hi) {
+  if (isinf(lo) || isinf(hi) || isnan(lo) || isnan(hi)) rt_raise(x_maxrange());
+}
+
+void rt_r_maxrange_i(rt_int lo, rt_int hi) {
+  if (lo < RT_IMIN || hi < RT_IMIN) rt_raise(x_maxrange());
+}
+
+rstr rt_r_str_undef(rt_int len) {
+  rstr r = rt_str_new(len);
+  if (r.len) memset(r.p, 0xFF, (size_t)r.len);
+  return r;
+}
+
+rstr rt_r_schk(rstr s) {
+  if (s.len && memchr(s.p, 0xFF, (size_t)s.len)) rt_raise(RT_X_INIT);
+  return s;
+}
+
+/* ---- sparse INT sets (RED C.9) -------------------------------------------- */
+
+rt_r_iset rt_r_iset_empty(void) {
+  rt_r_iset s = {0, 0, NULL};
+  return s;
+}
+
+static rt_int r_find(const rt_r_iset *s, rt_int v) { /* index of the first element >= v */
+  rt_int lo = 0, hi = s->n;
+  while (lo < hi) {
+    rt_int m = lo + (hi - lo) / 2;
+    if (s->e[m] < v) lo = m + 1;
+    else hi = m;
+  }
+  return lo;
+}
+
+static int r_has(const rt_r_iset *s, rt_int v) {
+  rt_int i = r_find(s, v);
+  return i < s->n && s->e[i] == v;
+}
+
+/* the elements in a (ina), b (inb) by the rule keep(ina, inb) */
+static rt_r_iset r_merge(rt_r_iset a, rt_r_iset b, int op) {
+  rt_r_iset r = {0, 0, rt_alloc(sizeof(rt_int) * (size_t)(a.n + b.n + 1))};
+  rt_int i = 0, j = 0;
+  while (i < a.n || j < b.n) {
+    rt_int v;
+    int x = 0, y = 0;
+    if (j >= b.n || (i < a.n && a.e[i] < b.e[j])) {
+      v = a.e[i++];
+      x = 1;
+    } else if (i >= a.n || b.e[j] < a.e[i]) {
+      v = b.e[j++];
+      y = 1;
+    } else {
+      v = a.e[i++];
+      j++;
+      x = y = 1;
+    }
+    int keep = op == 0 ? (x || y) : op == 1 ? (x && y) : op == 2 ? (x && !y) : (x != y);
+    if (keep) r.e[r.n++] = v;
+  }
+  return r;
+}
+
+rt_r_iset rt_r_iset_add(rt_r_iset s, rt_int v) {
+  rt_r_iset one = {0, 1, NULL};
+  one.e = rt_alloc(sizeof(rt_int));
+  one.e[0] = v;
+  if (s.neg) {
+    rt_r_iset r = r_merge(s, one, 2); /* it lacks one element less */
+    r.neg = 1;
+    return r;
+  }
+  return r_merge(s, one, 0);
+}
+
+int rt_r_iset_in(rt_int v, rt_r_iset s) { return s.neg ^ r_has(&s, v); }
+
+rt_r_iset rt_r_iset_union(rt_r_iset a, rt_r_iset b) {
+  rt_r_iset r;
+  if (!a.neg && !b.neg) return r_merge(a, b, 0);
+  if (a.neg && b.neg) r = r_merge(a, b, 1);
+  else if (a.neg) r = r_merge(a, b, 2);
+  else r = r_merge(b, a, 2);
+  r.neg = 1;
+  return r;
+}
+
+rt_r_iset rt_r_iset_inter(rt_r_iset a, rt_r_iset b) {
+  rt_r_iset r;
+  if (a.neg && b.neg) {
+    r = r_merge(a, b, 0);
+    r.neg = 1;
+    return r;
+  }
+  if (!a.neg && !b.neg) return r_merge(a, b, 1);
+  if (b.neg) return r_merge(a, b, 2);
+  return r_merge(b, a, 2);
+}
+
+rt_r_iset rt_r_iset_xor(rt_r_iset a, rt_r_iset b) {
+  rt_r_iset r = r_merge(a, b, 3);
+  r.neg = a.neg ^ b.neg;
+  return r;
+}
+
+rt_r_iset rt_r_iset_compl(rt_r_iset a) {
+  a.neg = !a.neg;
+  return a;
+}
+
+int rt_r_iset_eq(rt_r_iset a, rt_r_iset b) {
+  if (a.neg != b.neg || a.n != b.n) return 0;
+  for (rt_int i = 0; i < a.n; i++)
+    if (a.e[i] != b.e[i]) return 0;
+  return 1;
+}
+
+int rt_r_iset_le(rt_r_iset a, rt_r_iset b) {
+  if (!a.neg && !b.neg) return r_merge(a, b, 2).n == 0;
+  if (a.neg && b.neg) return r_merge(b, a, 2).n == 0;
+  if (!a.neg) return r_merge(a, b, 1).n == 0;
+  return 0; /* a set lacking finitely many INTs is in no finite set */
+}
+
+int rt_r_iset_lt(rt_r_iset a, rt_r_iset b) { return rt_r_iset_le(a, b) && !rt_r_iset_eq(a, b); }
+
+/* ---- components of standard files, kept deeply (RED A.2, C.14) --------------- */
+
+void rt_r_buf_put(rt_r_buf *b, const void *p, size_t n) {
+  if (b->n + n > b->cap) {
+    b->cap = (b->n + n) * 2 + 64;
+    b->p = realloc(b->p, b->cap);
+  }
+  if (n) memcpy(b->p + b->n, p, n);
+  b->n += n;
+}
+
+void rt_r_buf_get(const unsigned char **q, void *p, size_t n) {
+  if (n) memcpy(p, *q, n);
+  *q += n;
+}
+
+void rt_r_buf_yset(rt_r_buf *b, yset s) {
+  rt_r_buf_put(b, &s.lo, sizeof s.lo);
+  rt_r_buf_put(b, &s.hi, sizeof s.hi);
+  for (rt_int e = s.lo; e <= s.hi; e++) {
+    unsigned char in = (unsigned char)y_set_in(e, s);
+    rt_r_buf_put(b, &in, 1);
+  }
+}
+
+yset rt_r_buf_get_yset(const unsigned char **q) {
+  rt_int lo, hi;
+  rt_r_buf_get(q, &lo, sizeof lo);
+  rt_r_buf_get(q, &hi, sizeof hi);
+  yset s = y_set_new(lo, hi);
+  for (rt_int e = lo; e <= hi; e++) {
+    unsigned char in;
+    rt_r_buf_get(q, &in, 1);
+    if (in) s = y_set_add(s, e);
+  }
+  return s;
+}
+
+/* WRITE: at the end the file grows; inside it the component at the position
+ * is replaced, the ones after it moved if the sizes differ */
+void rt_r_fwrite_rec(rt_r_file *f, const unsigned char *p, size_t n) {
+  r_can_write(f);
+  if (f->sys || f->text) rt_raise_msg(RT_X_FILE, "a text file holds characters");
+  int64_t len = (int64_t)n;
+  long at = f->off[f->cur];
+  long old_end = f->off[f->n];
+  long next = f->cur < f->n ? f->off[f->cur + 1] : at;
+  size_t tail_n = (size_t)(old_end - next);
+  unsigned char *tail = malloc(tail_n + 1);
+  fseek(f->fp, next, SEEK_SET);
+  if (tail_n && fread(tail, 1, tail_n, f->fp) != tail_n) rt_raise_msg(RT_X_FILE, "the file is damaged");
+  fseek(f->fp, at, SEEK_SET);
+  fwrite(&len, sizeof len, 1, f->fp);
+  fwrite(p, 1, n, f->fp);
+  fwrite(tail, 1, tail_n, f->fp);
+  fflush(f->fp);
+  free(tail);
+  long delta = (long)(sizeof len + n) - (next - at);
+  if (f->cur == f->n) {
+    if (f->n + 2 > f->cap) f->off = realloc(f->off, sizeof(long) * (size_t)(f->cap *= 2));
+    f->n++;
+    f->off[f->n] = f->off[f->n - 1];
+  }
+  for (rt_int i = f->cur + 1; i <= f->n; i++) f->off[i] += delta;
+  if (delta < 0 && ftruncate(fileno(f->fp), f->off[f->n]) != 0) {
+  }
+  f->cur++;
+}
+
+const unsigned char *rt_r_fread_rec(rt_r_file *f) {
+  r_can_read(f);
+  if (f->sys || f->text) rt_raise_msg(RT_X_FILE, "a text file holds characters");
+  if (f->cur >= f->n) rt_raise(r_exc("X_EOF"));
+  int64_t len;
+  fseek(f->fp, f->off[f->cur], SEEK_SET);
+  if (fread(&len, sizeof len, 1, f->fp) != 1) rt_raise_msg(RT_X_FILE, "the file is damaged");
+  unsigned char *p = rt_alloc((size_t)len + 1);
+  if (len && fread(p, 1, (size_t)len, f->fp) != (size_t)len) rt_raise_msg(RT_X_FILE, "the file is damaged");
+  f->cur++;
+  return p;
+}
 
 /* ---- GREEN: the simulated machine (RM79 13, 14.6) ------------------------------
  * The memory has SYSTEM'MEMORY_SIZE storage units of 8 bits. Every value has
