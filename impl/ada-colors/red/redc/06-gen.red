@@ -765,6 +765,10 @@ ABNORMAL FUNC build_subprogram(CONST d : node) => sym IMPORTS ALL;
    END IF;
    WHILE p /= NIL REPEAT
       VAR pm : parm;
+      IF d.kind = n_task AND p.ival = m_out THEN
+         % a task has no normal completion to copy an OUT formal back on (10.1)
+         fail(d.line, "a task may not have OUT formal parameters");
+      END IF;
       ALLOC pm PTR;
       pm.name := p.name;
       pm.mode := p.ival;
@@ -1229,8 +1233,12 @@ PROC gen_subprogram(CONST d : node, CONST y : sym) IMPORTS ALL;
    END IF;
    declare_labels(d.c);
    declare_body(d.c);
-   body_elements(d.c);
-   close_fins(NIL);
+   BEGIN
+      CONST xu := open_unhandled(d.c);
+      body_elements(d.c);
+      close_fins(NIL);
+      close_unhandled(xu);
+   END;
    IF nonrec_end /= NIL THEN
       emit(nonrec_end.ALL);
       pop_cleanup;
@@ -1456,11 +1464,53 @@ PROC gen_body(CONST elems : node) IMPORTS ALL;
    open_scope;
    declare_labels(elems);
    declare_body(elems);
-   body_elements(elems);
-   close_fins(saved);
+   BEGIN
+      CONST xu := open_unhandled(elems);
+      body_elements(elems);
+      close_fins(saved);
+      close_unhandled(xu);
+   END;
    close_scope;
    gotos := saved_gotos;
 END PROC gen_body;
+
+% an exception whose search for a handler would complete the body that
+% defines it becomes X_UNHANDLED there (9, 9.3)
+ABNORMAL FUNC open_unhandled(CONST elems : node) => STRING[ASCII] IMPORTS ALL;
+   VAR e : node := elems;
+   VAR conds : text := mk("0");
+   WHILE e /= NIL REPEAT
+      IF e.kind = n_exception THEN
+         conds := mk(conds.ALL & " || rt_xcur == " & lookup(e.name.ALL).cname.ALL);
+      END IF;
+      e := e.next;
+   END REPEAT;
+   IF conds.LEN = 1 THEN
+      RETURN "";
+   END IF;
+   BEGIN
+      CONST f := new_name("xu");
+      emit("rt_frame " & f & "; if (RT_TRY(" & f & ")) {");
+      push_cleanup("RT_POP(" & f & ");");
+      RETURN f & ":" & conds.ALL;
+   END;
+END FUNC open_unhandled;
+
+PROC close_unhandled(READONLY xu : STRING[ASCII]) IMPORTS ALL;
+   VAR i : INT := 1;
+   IF xu = "" THEN
+      RETURN;
+   END IF;
+   WHILE xu(i) /= 'COLON REPEAT
+      i := i + 1;
+   END REPEAT;
+   BEGIN
+      CONST f := xu(1 .. i - 1);
+      emit("RT_POP(" & f & "); } else { RT_POP(" & f & "); if (" & xu(i + 1 .. xu.LEN)
+           & ") rt_raise(rt_exc(" & q & "X_UNHANDLED" & q & ")); rt_raise(rt_xcur); }");
+      pop_cleanup;
+   END;
+END PROC close_unhandled;
 
 % leaving open frames by EXIT or RETURN: pop guards, unlock regions (10.7)
 PROC pop_frames(CONST upto : INT) IMPORTS frames, cleanups;
@@ -1850,6 +1900,22 @@ PROC st_guard(CONST s : node) IMPORTS ALL;
       hv.s := mk(x);
       hv.next := handlers;
       handlers := hv;
+      % all the names in a guard statement are distinct (9.2)
+      BEGIN
+         VAR h1 : node := s.b;
+         VAR seen : lines;
+         WHILE h1 /= NIL REPEAT
+            VAR n1 : node := h1.a;
+            WHILE n1 /= NIL REPEAT
+               IF seen_name(seen, n1.name.ALL) THEN
+                  fail(n1.line, n1.name.ALL & " has two handlers in one guard statement");
+               END IF;
+               seen := add_line(seen, n1.name.ALL);
+               n1 := n1.next;
+            END REPEAT;
+            h1 := h1.next;
+         END REPEAT;
+      END;
       WHILE h /= NIL REPEAT
          VAR n : node := h.a;
          VAR conds : text := mk("0");
@@ -2127,6 +2193,9 @@ ABNORMAL FUNC wait_alt(CONST inv : node, READONLY arr : STRING[ASCII], CONST i :
          emit(ctype(t.elem) & " " & tmp & " = " & v & ";");
          RETURN slot & " = (rt_alt){RT_ALT_SEND, 1, " & lv.ALL & ", &" & tmp & ", 0};";
       END;
+   ELSEIF fn.name.ALL = "DELAY_UNTIL" AND list_len(args) = 2 THEN
+      % on the activation clock: the real time it would reach t, fixed once
+      RETURN slot & " = (rt_alt){RT_ALT_DELAY_UNTIL, 1, NULL, NULL, rt_r_act_deadline(" & act_delay_args(args) & ")};";
    ELSEIF fn.name.ALL = "DELAY" OR fn.name.ALL = "DELAY_UNTIL" THEN
       CONST v := gexpr(args, ty_int, vt);
       IF fn.name.ALL = "DELAY" AND mixed THEN

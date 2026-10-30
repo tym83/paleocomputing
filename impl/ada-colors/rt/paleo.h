@@ -558,6 +558,9 @@ int rt_r_undef_FLOAT(double v);
 static inline int rt_r_undef_INT(rt_int v) { return v == RT_R_IUNDEF; }
 static inline int rt_r_undef_ENUM(int v) { return v == RT_R_EUNDEF; }
 static inline int rt_r_undef_BOOL(int v) { return v == RT_R_EUNDEF; }
+rt_int rt_r_act_time(rt_act *a);               /* TIME(a) */
+void rt_r_delay_act(rt_int t, rt_act *a);       /* DELAY_UNTIL(t, a) */
+rt_int rt_r_act_deadline(rt_int t, rt_act *a);  /* its real time, for WAIT */
 int rt_r_set_le(yset a, yset b);               /* subset (C.9) */
 int rt_r_set_lt(yset a, yset b);               /* strict subset */
 void rt_r_xtag(void);                          /* raises X_TAG (C.6) */

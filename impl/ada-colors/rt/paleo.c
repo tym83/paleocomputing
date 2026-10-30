@@ -610,6 +610,7 @@ struct rt_task {
   rt_waiter *awl;          /* the records armed for that wait */
   int atimed, atimer_alt;
   rt_int awake;
+  rt_int aclock;           /* RED activation clock (10.4) */
 };
 
 static pthread_mutex_t G = PTHREAD_MUTEX_INITIALIZER;
@@ -744,6 +745,12 @@ static int advance_clock(void) {
     }
   }
   if (!any) return 0;
+  /* the activation clocks run for activations that are running or delayed
+   * by the clock alone, not for those waiting on other activations */
+  if (next > now)
+    for (rt_task *t = all_tasks; t; t = t->all_next)
+      if (t->state == T_READY || t->state == T_RUNNING || (t->state == T_BLOCKED && t->timed && !t->wl))
+        t->aclock += next - now;
   if (next > now) now = next;
   for (rt_task *t = all_tasks; t; t = t->all_next) {
     if (t->state == T_BLOCKED && t->timed && t->wake <= now) {
@@ -3203,3 +3210,26 @@ int rt_r_undef_FLOAT(double v) {
   memcpy(&b, &v, sizeof b);
   return b == 0x7ff8000000000bedULL;
 }
+
+/* TIME(a) and DELAY_UNTIL(t, a): the activation clock (RED 10.4, C.10) */
+rt_int rt_r_act_time(rt_act *a) {
+  if (!a) a = rt_me();
+  return a->t ? a->t->aclock : 0;
+}
+
+void rt_r_delay_act(rt_int t, rt_act *a) {
+  for (;;) {
+    rt_int c = rt_r_act_time(a);
+    if (c >= t) return;
+    if (!a || !a->active) {
+      /* the clock of an inactive activation never reaches t */
+      rt_mbox never;
+      int dummy;
+      rt_mbox_init(&never, 0, sizeof dummy, NULL);
+      rt_receive(&never, &dummy);
+    }
+    rt_delay(t - c);
+  }
+}
+
+rt_int rt_r_act_deadline(rt_int t, rt_act *a) { return rt_time() + (t - rt_r_act_time(a)); }

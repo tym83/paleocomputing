@@ -1941,6 +1941,23 @@ PROC check_requires(CONST y : sym, CONST line : INT) IMPORTS ALL;
    END REPEAT;
 END PROC check_requires;
 
+% the time and the activation of DELAY_UNTIL(t, a) or DELAY_UNTIL(a, t), as C
+ABNORMAL FUNC act_delay_args(CONST args : node) => STRING[ASCII] IMPORTS ALL;
+   VAR at : typ;
+   VAR t1 : typ := peek_type(args);
+   IF t1 /= NIL AND t1.kind = t_act THEN
+      CONST a := act_ref(args);
+      CONST v := gexpr(args.next, ty_int, at);
+      check_type(at, ty_int, args.line);
+      RETURN v & ", " & a;
+   END IF;
+   BEGIN
+      CONST v := gexpr(args, ty_int, at);
+      check_type(at, ty_int, args.line);
+      RETURN v & ", " & act_ref(args.next);
+   END;
+END FUNC act_delay_args;
+
 % the subtype of an actual bound to a VAR, OUT or READONLY scalar formal (7.3)
 ABNORMAL FUNC actual_bounds(CONST ft : typ, CONST t : typ, CONST c : cons) => STRING[ASCII] IMPORTS ALL;
    IF NOT scalar_kind(ft) THEN
@@ -2135,11 +2152,18 @@ ABNORMAL FUNC builtin(READONLY name : STRING[ASCII], CONST tt : node, CONST args
    ELSEIF name = "DELAY" THEN
       CONST v := gexpr(args, ty_int, at);
       RETURN "rt_delay(" & v & ")";
+   ELSEIF name = "DELAY_UNTIL" AND n = 2 THEN
+      % the activation clock of a (10.4): DELAY_UNTIL(t, a), or (a, t) as in C.10
+      RETURN "rt_r_delay_act(" & act_delay_args(args) & ")";
    ELSEIF name = "DELAY_UNTIL" THEN
       CONST v := gexpr(args, ty_int, at);
       RETURN "rt_delay_until(" & v & ")";
    ELSEIF name = "DELAY_UNTIL_INACTIVE" THEN
       RETURN "rt_delay_until_inactive(" & act_ref(args) & ")";
+   ELSEIF name = "TIME" AND n = 1 THEN
+      % the activation clock of an activation (10.4)
+      t := ty_int;
+      RETURN "rt_r_act_time(" & act_ref(args) & ")";
    ELSEIF name = "TIME" THEN
       t := ty_int;
       RETURN "rt_time()";
