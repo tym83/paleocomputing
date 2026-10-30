@@ -195,7 +195,12 @@ PROCEDURE ROUTINE_HEADER (Y: SYM);
    % the types of the header are those of the routine's module, wherever it is
    % first needed (an invocation may resolve it before the module's turn)
    ENTERED := ENTER_MODULE_FOR (Y);
-   ROUTINE_HEADER1 (Y);
+   BLOCK                                             % the header is the declaration's
+      CONST SAVED_SEG: SYM := W@.CURSEG;             % code, not the invoker's (4.2)
+      W@.CURSEG := Y@.HOME;
+      ROUTINE_HEADER1 (Y);
+      W@.CURSEG := SAVED_SEG;
+   END BLOCK;
    IF ENTERED THEN
       LEAVE_MODULE (Y@.MODL);
    END IF;
@@ -264,6 +269,19 @@ PROCEDURE ROUTINE_HEADER1 (Y: SYM);
       IF NAMES_VARIABLE_BUT (R@.B, NIL, OWN_NAMES (R)) THEN
          FAIL (R@.LINE, 'the returns-clause may not refer to a variable (4.3.1)');
       END IF;
+   END IF;
+   IF NOT Y@.GENERIC & TEQS (BASE_NAME (Y), 'STORE_') & Y@.PARAMS <> NIL THEN
+      BLOCK                                          % D.4: the source and the target of
+         VAR LAST: PARM := Y@.PARAMS;                % STORE_ are of one type class
+         LOOP UNTIL LAST@.NEXT = NIL DO
+            LAST := LAST@.NEXT;
+         END LOOP;
+         IF LAST <> Y@.PARAMS & Y@.PARAMS@.T <> NIL & LAST@.T <> NIL THEN
+            IF NOT SAME_CLASS (Y@.PARAMS@.T, LAST@.T) THEN
+               FAIL (R@.LINE, 'both arguments of STORE_ belong to the same type class (D.4)');
+            END IF;
+         END IF;
+      END BLOCK;
    END IF;
    IF NOT Y@.GENERIC THEN
       Y@.RESULT := RESULT_TYPE (Y);
@@ -1179,6 +1197,7 @@ FUNCTION NEW_INSTANCE (G: SYM, BS: BIND, ARGS: ARG) RETURNS (SYM);
    VAR I: SYM := NEW_SYM (Y_ROUTINE, G@.NAME);
    CONST SAVED: BIND := W@.BINDS;
    CONST SAVED_SEG: SYM := W@.CURSEG;
+   CONST HOME: SYM := ENTER_HOME (G);
    VAR P: PARM := G@.PARAMS;
    VAR TAIL: PARM := NIL;
    I@ := G@;
@@ -1189,7 +1208,7 @@ FUNCTION NEW_INSTANCE (G: SYM, BS: BIND, ARGS: ARG) RETURNS (SYM);
    I@.INSTANCES := G@.INSTANCES;
    G@.INSTANCES := I;
    W@.BINDS := BS;
-   W@.CURSEG := NIL;
+   W@.CURSEG := G@.HOME;
    ENTER_MODULE_OF (G);
    LOOP UNTIL P = NIL DO
       BLOCK
@@ -1235,6 +1254,7 @@ FUNCTION NEW_INSTANCE (G: SYM, BS: BIND, ARGS: ARG) RETURNS (SYM);
    LEAVE_MODULE_OF (G);
    W@.BINDS := SAVED;
    W@.CURSEG := SAVED_SEG;
+   LEAVE_HOME (G, HOME);
    I@.FWD := C_HEADER (I);
    EMIT (O_PROTOS, CATS (I@.FWD, ';'));
    I@.MEMBERS := W@.PENDING;                         % its body: when the scope ends

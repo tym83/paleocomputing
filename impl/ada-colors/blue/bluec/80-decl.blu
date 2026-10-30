@@ -525,14 +525,16 @@ PROCEDURE PENDING_BODIES ();
                ELSE
                   PREV@.MEMBERS := P@.MEMBERS;
                END IF;
-               ENTER_MODULE_OF (P);
                BLOCK                                  % an instance is its generic's
-                  CONST SAVED_SEG: SYM := W@.CURSEG;  % code: no USES check
-                  W@.CURSEG := NIL;
+                  CONST SAVED_SEG: SYM := W@.CURSEG;  % code: no USES check, in the
+                  CONST HOME: SYM := ENTER_HOME (P);  % scope of its segment
+                  W@.CURSEG := P@.HOME;
+                  ENTER_MODULE_OF (P);
                   ROUTINE_BODY (P);
+                  LEAVE_MODULE_OF (P);
                   W@.CURSEG := SAVED_SEG;
+                  LEAVE_HOME (P, HOME);
                END BLOCK;
-               LEAVE_MODULE_OF (P);
                MORE := TRUE;
                EXIT;
             END IF;
@@ -909,12 +911,16 @@ PROCEDURE SEGMENT_EXPORTS (S: NODE);
             TAKEN@.SEGM := SEG;
             NAMES := NAME_REF (TAKEN@.NAME, 0, NIL, NAMES);
             DEFINE (TAKEN, S@.LINE);
+         ORIF TAKEN@.KIND <> Y_BUILTIN THEN          % kept for the generic instances
+            TAKEN@.SNEXT := SEG@.MEMBERS;             % made later of its routines
+            SEG@.MEMBERS := TAKEN;
          END IF;
          TAKEN := NEXT;
       END BLOCK;
    END LOOP;
    SEG@.USES := NAMES;                               % what it defines, by name
    W@.CURSEG := NIL;
+   W@.TRSEG := NIL;
 END PROCEDURE SEGMENT_EXPORTS;
 
 % the segment S begins: USES names segments of the program (4.2)
@@ -943,6 +949,7 @@ PROCEDURE BEGIN_SEGMENT (S: NODE);
       U := U@.NEXT;
    END LOOP;
    W@.CURSEG := SEG;
+   W@.TRSEG := SEG;
    U := S@.A;
    LOOP UNTIL U = NIL DO
       IF U@.A <> NIL THEN
@@ -951,6 +958,47 @@ PROCEDURE BEGIN_SEGMENT (S: NODE);
       U := U@.NEXT;
    END LOOP;
 END PROCEDURE BEGIN_SEGMENT;
+
+% an instance of a generic routine of another segment is translated in the scope
+% of that segment: its local names are made visible again (4.2, section 5)
+FUNCTION ENTER_HOME (Y: SYM) RETURNS (SYM);
+   CONST SAVED: SYM := W@.TRSEG;
+   IF Y@.HOME = NIL ! Y@.HOME = W@.TRSEG THEN
+      RETURN SAVED;
+   END IF;
+   OPEN_SCOPE;
+   BLOCK
+      VAR X: SYM := Y@.HOME@.MEMBERS;
+      LOOP UNTIL X = NIL DO
+         BLOCK
+            VAR A: SYM := NEW_SYM (X@.KIND, X@.NAME);
+            A@ := X@;
+            A@.ORIG := ORIGINAL (X);
+            DEFINE_ALIAS (A);
+         END BLOCK;
+         X := X@.SNEXT;
+      END LOOP;
+   END BLOCK;
+   W@.TRSEG := Y@.HOME;
+   RETURN SAVED;
+END FUNCTION ENTER_HOME;
+
+PROCEDURE DEFINE_ALIAS (A: SYM);
+   CONST B: INTEGER := BUCKET (A@.NAME);
+   A@.DEPTH := W@.DEPTH;
+   A@.CHAIN := W@.TABLE(B);
+   W@.TABLE(B) := A;
+   A@.SNEXT := W@.SCOPE;
+   W@.SCOPE := A;
+END PROCEDURE DEFINE_ALIAS;
+
+PROCEDURE LEAVE_HOME (Y: SYM, SAVED: SYM);
+   IF Y@.HOME = NIL ! Y@.HOME = SAVED THEN
+      RETURN;
+   END IF;
+   CLOSE_SCOPE;
+   W@.TRSEG := SAVED;
+END PROCEDURE LEAVE_HOME;
 
 FUNCTION FIND_SEGMENT (NAME: TEXT) RETURNS (SYM);
    VAR T: SYM := W@.SEGS;
@@ -979,8 +1027,8 @@ END PROCEDURE CHECK_ITEMS_DEFINED;
 FUNCTION SEG_VISIBLE (Y: SYM, LINE: INTEGER) RETURNS (BOOLEAN);
    VAR U: NODE;
    VAR INPUT_ONLY: BOOLEAN := FALSE;
-   IF W@.CURSEG = NIL ! Y@.SEGM = NIL THEN
-      RETURN TRUE;
+   IF W@.CURSEG = NIL ! Y@.SEGM = NIL ! W@.IN_TYPEDECL > 0 ! W@.IN_RECORD > 0 THEN
+      RETURN TRUE;                                   % (a declaration's own code)
    END IF;
    IF Y@.SEGM = W@.CURSEG THEN
       RETURN TRUE;

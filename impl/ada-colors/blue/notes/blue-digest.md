@@ -315,6 +315,19 @@ unreadable; the decision is bluec's.
     is translated only when it is invoked with other arguments or passed as a
     routine. INLINE routines cannot recurse; a recursive routine imports only
     static data (variables of no routine).
+35. **Explicit generic arguments (5).** The arguments of explicit generic
+    parameters "must be constants or constant expressions". A function that
+    returns a string of a length computed at run time (bluec's own STR (T, L))
+    cannot be written otherwise, so bluec accepts variables there and rejects
+    only invocations of functions that import data.
+36. **TO_BIT (VAL) in PUT_OUT (C-20).** TO_BIT of a value of any type is
+    machine-dependent (3.7.6), yet PUT_OUT applies it outside a machine-dependent
+    part. Its WHERE clause names TO_BIT (T REP R): inside the generic body it is
+    the WHERE routine, an operation of T (5.2), which the program supplies
+    where it instantiates PUT_OUT; bluec reads it so.
+37. **Generic instances across segments.** The body of an instance of a generic
+    routine is translated in the scope of the segment that declares it, its
+    local names visible again, whichever segment invokes it (4.2, 5).
 
 The misprints of the program examples and the rules they break are in
 `../corpus/CHANGES.md`.

@@ -494,6 +494,77 @@ FUNCTION DISJOINT_PATHS (A, B: NODE) RETURNS (BOOLEAN);
    RETURN FALSE;
 END FUNCTION DISJOINT_PATHS;
 
+% the arguments of explicit generic parameters -- inputs the returns-clause uses --
+% invoke only pure functions (5; decision 35: variables are allowed)
+PROCEDURE EXPLICIT_GENERIC_ARGS (Y: SYM, ARGS: ARG, LINE: INTEGER);
+   VAR USED: NODE := NIL;
+   VAR P: PARM := Y@.PARAMS;
+   VAR A: ARG := ARGS;
+   IF Y@.DECL = NIL THEN
+      RETURN;
+   END IF;
+   IF Y@.DECL@.KIND <> N_ROUTINE ! Y@.DECL@.B = NIL THEN
+      RETURN;
+   END IF;
+   NAMES_IN (Y@.DECL@.B # USED);
+   LOOP UNTIL P = NIL ! A = NIL DO
+      IF P@.MODE = M_IN & IN_IDENTS (USED, P@.NAME) & A@.E <> NIL THEN
+         IF NOT CONSTANT_EXPR (A@.E) THEN
+            FAILT (LINE, 'the argument of an explicit generic parameter invokes only pure functions (5): ',
+                   P@.NAME);
+         END IF;
+      END IF;
+      P := P@.NEXT;
+      A := A@.NEXT;
+   END LOOP;
+END PROCEDURE EXPLICIT_GENERIC_ARGS;
+
+PROCEDURE NAMES_IN (L: NODE # HEAD: NODE);
+   VAR N: NODE := L;
+   LOOP UNTIL N = NIL DO
+      IF N@.KIND = N_NAME ! (N@.KIND = TS_NAME & N@.A = NIL) THEN
+         HEAD := NAME_REF (N@.NAME, 0, NIL, HEAD);
+      END IF;
+      NAMES_IN (N@.A # HEAD);
+      NAMES_IN (N@.B # HEAD);
+      NAMES_IN (N@.C # HEAD);
+      N := N@.NEXT;
+   END LOOP;
+END PROCEDURE NAMES_IN;
+
+FUNCTION CONSTANT_EXPR (E: NODE) RETURNS (BOOLEAN);
+   IF E = NIL THEN
+      RETURN TRUE;
+   END IF;
+   IF E@.KIND = N_NAME ! E@.KIND = N_APPLY THEN
+      BLOCK
+         CONST Y: SYM := LOOKUP (E@.NAME);
+         IF Y <> NIL THEN
+            IF Y@.KIND = Y_ROUTINE THEN
+               IF ORIGINAL (Y)@.USES <> NIL THEN
+                  RETURN FALSE;
+               END IF;
+            END IF;
+         END IF;
+      END BLOCK;
+   END IF;
+   IF E@.KIND = N_FIELD THEN
+      RETURN CONSTANT_EXPR (E@.A);
+   END IF;
+   RETURN CONSTANT_LIST (E@.A) & CONSTANT_LIST (E@.B) & CONSTANT_LIST (E@.C);
+END FUNCTION CONSTANT_EXPR;
+
+FUNCTION CONSTANT_LIST (L: NODE) RETURNS (BOOLEAN);
+   VAR N: NODE := L;
+   LOOP UNTIL N = NIL DO
+      IF NOT CONSTANT_EXPR (N) THEN
+         RETURN FALSE;
+      END IF;
+      N := N@.NEXT;
+   END LOOP;
+   RETURN TRUE;
+END FUNCTION CONSTANT_LIST;
+
 % aliasing (4.3.3): a variable or its components is not more than one inout
 % argument, not more than one output argument, and not an inout argument of a
 % procedure that imports it
@@ -622,6 +693,7 @@ FUNCTION CALL_SYM (Y0: SYM, ARGS: ARG, LINE: INTEGER) RETURNS (ET);
    END IF;
    CHECK_CALL_IMPORTS (Y, LINE);
    NO_ALIASING (Y, ARGS, LINE);
+   EXPLICIT_GENERIC_ARGS (Y, ARGS, LINE);
    IF W@.CS@.R <> NIL THEN                           % a recursive invocation (4.3.1)
       IF W@.CS@.R@.DECL = Y@.DECL & Y@.DECL <> NIL THEN
          IF Y@.DECL@.FL = 1 THEN

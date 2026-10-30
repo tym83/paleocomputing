@@ -277,6 +277,15 @@ SEGMENT APPLICATION_CODE
          IO_ERROR --> PRINT (CONSOLE, 'a teletype does not rewind'); NEWLINE (CONSOLE); END;
       END EXCEPT;
       END BLOCK;
+      BLOCK                                       % BINARY_IO: a stream of ASCII_STR (2)
+         VAR BF: STREAM_FILE (ASCII_STR (2));     % elements on the second teletype
+         CLEAR (# BF);
+         OPEN ('TTY2', \OLD, \WRITE, 0, FALSE # BF);
+         PUT (BF, 'OK');
+         PUT (BF, ': ');
+      EXCEPT IO_ERROR --> PRINT (CONSOLE, 'binary io error'); NEWLINE (CONSOLE); END;
+      END EXCEPT;
+      END BLOCK;
       PRINT (OTHER, 'the second teletype');
       NEWLINE (OTHER);
       CLOSE (\SAVE, \READ_WRITE # CONSOLE);
