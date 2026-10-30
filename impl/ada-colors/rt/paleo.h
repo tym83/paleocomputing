@@ -421,6 +421,7 @@ rstr rt_b_chars_of_bits(rstr b, rt_int es, int mode, const rstr *reps, rt_int n)
 rt_int rt_b_fixed_rep(rt_int v, rt_int size, int is_unsigned);   /* INVALID_REP */
 rt_int rt_b_file_exists(rstr name);
 void rt_b_machine(int word);                                 /* bluec -pdp11 */
+void rt_b_interrupt_after(rt_b_sem *s, rt_int us);          /* a device interrupts */
 rt_int rt_b_std(rt_int v);                                   /* OVERFLOW (-pdp11) */
 double rt_b_fconv(double v, int single, int trunc, int range);
 double rt_b_float_of_fix_r(rt_int v, rt_int scale, int single, int trunc);

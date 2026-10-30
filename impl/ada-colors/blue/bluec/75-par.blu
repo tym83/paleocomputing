@@ -389,6 +389,18 @@ FUNCTION PARALLEL_BUILTIN (E: NODE, WANT: TYP) RETURNS (ET);
    ORIF TEQS (NAME, 'START_IO') THEN                % [4-104]
       REQUIRE_MACHINE (LINE);
       RETURN START_IO_CALL (E);
+   ORIF TEQS (NAME, 'INTERRUPT_AFTER') THEN         % a device of the simulated machine
+      REQUIRE_MACHINE (LINE);                        % interrupts MICROSECONDS later:
+      IF E@.A = NIL ! E@.A@.NEXT <> NIL ! E@.B = NIL ! E@.C <> NIL THEN   % it RELEASEs S
+         FAIL (LINE, 'INTERRUPT_AFTER (MICROSECONDS # S)');
+      END IF;
+      BLOCK
+         CONST V: ET := EXPR (E@.B, NIL);
+         IF REAL_TYPE (V.T)@.KIND <> T_SEM ! NOT V.LVAL THEN
+            FAIL (LINE, 'INTERRUPT_AFTER (MICROSECONDS # S): S is a semaphore variable');
+         END IF;
+         RETURN MKET (FMT2 ('rt_b_interrupt_after(@, @)', V.C, INT_EXPR (E@.A)), W@.TY_VOID);
+      END BLOCK;
    END IF;
    FAILT (LINE, 'unknown routine ', NAME);
 END FUNCTION PARALLEL_BUILTIN;

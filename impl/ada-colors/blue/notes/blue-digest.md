@@ -367,8 +367,11 @@ unreadable; the decision is bluec's.
     initialization by `bs_S_init`) and refers to the symbol
     `bs_S_iface_<fingerprint of S.bif>`, which only the unit of that interface
     defines: a unit translated against an older interface does not link. The library holds PDP_11_LT33, the simulated
-    machine's standard segment (LT33 devices, START_IO, interrupt semaphores;
-    the Appendix C driver uses it), and SIMULATION, the package of 4.6.9: a
+    machine's standard segment (LT33 teletypes and RP03 disk drives, their
+    START_IO cases and interrupt semaphores LT33_PS, LT33_KS and DISK_S; a
+    disk transfer interrupts after the seek and the rotation on the virtual
+    clock, by INTERRUPT_AFTER (us # S), the machine-dependent operation the
+    devices use; the Appendix C driver uses the segment), and SIMULATION, the package of 4.6.9: a
     monitor module SIM with RESOURCE, SIM_PATH, SIM_START, SIM_INIT, SIM_WAIT,
     SIM_REQUEST, SIM_RELEASE, SIM_DONE and SIM_TIME, which moves simulated time
     when the last running path blocks. `-suppress` suppresses the exceptions

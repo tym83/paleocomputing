@@ -2456,6 +2456,28 @@ rt_int rt_b_pred(rt_int v) {
   return v - 1;
 }
 
+/* a device of the simulated machine interrupts: its semaphore is RELEASEd after
+ * us microseconds of the virtual clock, by a task of the device */
+struct b_irq {
+  rt_act act;
+  rt_b_sem *s;
+  rt_int us;
+};
+static rt_taskdecl b_devices;
+static void b_irq_fn(void *p) {
+  struct b_irq *q = p;
+  rt_delay(q->us);
+  rt_b_release(q->s);
+}
+void rt_b_interrupt_after(rt_b_sem *s, rt_int us) {
+  struct b_irq *q = rt_alloc(sizeof *q);
+  q->s = s;
+  q->us = us < 0 ? 0 : us;
+  q->act.has_prio = 1;
+  q->act.prio = 255;
+  rt_create(&q->act, &b_devices, b_irq_fn, q);
+}
+
 /* bluec -pdp11: STD fixed point values, words and floating point ranges of the
  * PDP-11 (16-bit words; F and D formats with an 8-bit exponent) */
 static rt_int b_std_bits = 64;

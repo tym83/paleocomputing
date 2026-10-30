@@ -3,7 +3,10 @@
 % Language Specification, Appendix C, C-9): the device type LT33_DEVICE_, the
 % operations LT33_OP_ of START_IO (4.8.1) and the interrupt semaphores LT33_PS
 % (printers) and LT33_KS (keyboards), which the devices RELEASE on the virtual
-% clock and which paths CONNECT to (4.6.1).
+% clock and which paths CONNECT to (4.6.1); and RP03 disk drives, DISK_DEVICE_,
+% whose operations DISK_OP_ read or write a block of BLOCK_WORDS words and interrupt
+% on the drive's semaphore DISK_S when done, after the seek and the rotation on
+% the virtual clock.
 %
 % Teletype 1 is the console: it prints on standard output and its keyboard reads
 % standard input. Teletype 2 prints on standard output too, each line after "LT33-2|";
@@ -12,7 +15,8 @@
 % byte is waiting in its data register.
 SEGMENT PDP_11_LT33
    USES (TERMINAL)
-   DEFINES (LT33_DEVICE_, LT33_OP_, START_IO, LT33_PS, LT33_KS, MAX_LT33);
+   DEFINES (LT33_DEVICE_, LT33_OP_, START_IO, LT33_PS, LT33_KS, MAX_LT33,
+            DISK_DEVICE_, DISK_OP_, DISK_S, MAX_DISK, DISK_BLOCKS, BLOCK_WORDS, DISK_BLOCK);
 
    CONST MAX_LT33: INTEGER := 8;
 
@@ -32,6 +36,14 @@ SEGMENT PDP_11_LT33
 
    VAR LT33_PS: ARRAY [1:MAX_LT33] OF SEMAPHORE (SYNCH) := NO_INTERRUPTS ();
    VAR LT33_KS: ARRAY [1:MAX_LT33] OF SEMAPHORE (SYNCH) := NO_INTERRUPTS ();
+
+   % the RP03 disk drives
+   CONST MAX_DISK: INTEGER := 2;
+   CONST DISK_BLOCKS: INTEGER := 64;
+   CONST BLOCK_WORDS: INTEGER := 8;
+   TYPE DISK_OP_ = ENUM (\READ_BLOCK, \WRITE_BLOCK);
+   TYPE DISK_BLOCK = ARRAY [0 : BLOCK_WORDS - 1] OF INTEGER;
+   VAR DISK_S: ARRAY [1:MAX_DISK] OF SEMAPHORE (SYNCH) := NO_DISK_INTERRUPTS ();
 
    FUNCTION NO_INTERRUPTS () RETURNS (ARRAY [1:MAX_LT33] OF SEMAPHORE (SYNCH));
       VAR S: ARRAY [1:MAX_LT33] OF SEMAPHORE (SYNCH);
@@ -119,5 +131,59 @@ SEGMENT PDP_11_LT33
       END PROCEDURE START_IO;
 
    END MODULE LT33_HARDWARE;
+
+   % ---- the RP03 disk drives -------------------------------------------------
+
+   FUNCTION NO_DISK_INTERRUPTS () RETURNS (ARRAY [1:MAX_DISK] OF SEMAPHORE (SYNCH));
+      VAR S: ARRAY [1:MAX_DISK] OF SEMAPHORE (SYNCH);
+      LOOP FOR I IN [1:MAX_DISK] DO
+         S(I) := SEMAPHORE$NEW (0);
+      END LOOP I;
+      RETURN S;
+   END FUNCTION NO_DISK_INTERRUPTS;
+
+   MODULE DISK_HARDWARE
+         IMPORTS (DATA: (# DISK_S))
+         EXPORTS (DISK_DEVICE_ WITH (NEW), START_IO);
+
+      TYPE DISK_DEVICE_ = INTEGER [1:MAX_DISK];
+      VAR SURFACE: ARRAY [1:MAX_DISK, 0 : DISK_BLOCKS - 1, 0 : BLOCK_WORDS - 1] OF INTEGER;
+      VAR HEAD_AT: ARRAY [1:MAX_DISK] OF INTEGER;     % the block under the heads
+
+      FUNCTION DISK_DEVICE_$NEW (N: INTEGER [1:MAX_DISK]) RETURNS (DISK_DEVICE_);
+         RETURN N;
+      END FUNCTION DISK_DEVICE_$NEW;
+
+      % the drive moves its heads (100 microseconds a block) and turns (1000): it
+      % interrupts when the transfer is done
+      PROCEDURE SEEK (D: DISK_DEVICE_, B: INTEGER [0 : DISK_BLOCKS - 1])
+            IMPORTS (DATA: (# DISK_S, HEAD_AT));
+         CONST DISTANCE: INTEGER := ABS (B - HEAD_AT (D));
+         HEAD_AT (D) := B;
+         SELECT OBJECT_MACHINE FROM
+            PDP_11 --> INTERRUPT_AFTER (1000 + 100 * DISTANCE # DISK_S (D)); END;
+         END SELECT;
+      END PROCEDURE SEEK;
+
+      % \WRITE_BLOCK: the words of DATA go to block B
+      PROCEDURE START_IO (D: DISK_DEVICE_, C: DISK_OP_, B: INTEGER [0 : DISK_BLOCKS - 1],
+                          DATA: DISK_BLOCK)
+            IMPORTS (DATA: (# SURFACE), ROUTINES: (SEEK));
+         LOOP FOR K IN [0 : BLOCK_WORDS - 1] DO
+            SURFACE (D, B, K) := DATA (K);
+         END LOOP K;
+         SEEK (D, B);
+      END PROCEDURE START_IO;
+
+      % \READ_BLOCK: the words of block B
+      PROCEDURE START_IO (D: DISK_DEVICE_, C: DISK_OP_, B: INTEGER [0 : DISK_BLOCKS - 1]
+                          ## DATA: DISK_BLOCK)
+            IMPORTS (DATA: (SURFACE), ROUTINES: (SEEK));
+         LOOP FOR K IN [0 : BLOCK_WORDS - 1] DO
+            DATA (K) := SURFACE (D, B, K);
+         END LOOP K;
+         SEEK (D, B);
+      END PROCEDURE START_IO;
+   END MODULE DISK_HARDWARE;
 
 END SEGMENT PDP_11_LT33;
