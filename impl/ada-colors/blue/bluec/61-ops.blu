@@ -158,6 +158,13 @@ FUNCTION CONVERT (V: ET, T: TYP, LINE: INTEGER, SELF: TEXT) RETURNS (TEXT);
    IF VT@.KIND = T_NIL & RT@.KIND = T_PTR THEN
       RETURN V.C;
    END IF;
+   IF RT@.KIND = T_XFIX ! VT@.KIND = T_XFIX THEN     % the same member (D.4)
+      IF NOT SAME_XFIX (RT, VT) THEN
+         FAILT (LINE, 'a value of another member of FIXED, which the program''s STORE_ converts (D.4): ',
+                TYPE_NAME (VT));
+      END IF;
+      RETURN RANGE_CHECK (RT, V.C, SELF);
+   END IF;
    IF T@.KIND = T_ABS ! VT@.KIND = T_ABS THEN
       IF NOT SAME_CLASS (T, VT) THEN
          FAILT (LINE, 'the types do not match: ', TYPE_NAME (T));
@@ -227,6 +234,28 @@ END FUNCTION CONVERT;
 
 % the statement that assigns V to the object LV of type T [3-43]
 FUNCTION STORE_CODE (T: TYP, LV: TEXT, V: ET, LINE: INTEGER, SELF: TEXT) RETURNS (TEXT);
+   % a member of FIXED the program defines: its STORE_ (D.4), a bit-copy between
+   % values of the same member when it has none that fits
+   IF (REAL_TYPE (T)@.KIND = T_XFIX ! REAL_TYPE (V.T)@.KIND = T_XFIX) & T@.KIND <> T_ABS THEN
+      BLOCK
+         VAR ARGS: ARG := VAL_ARG (V, VAL_ARG (MKLV (LV, T, TRUE, NO_TEXT ()), NIL));
+         VAR Y: SYM;
+         ARGS@.NEXT@.MODE := M_OUT;
+         Y := FIND_ROUTINE (MKN ('STORE_'), ARGS, LINE, FALSE);
+         IF Y = NIL THEN
+            ARGS@.NEXT@.MODE := M_INOUT;
+            Y := FIND_ROUTINE (MKN ('STORE_'), ARGS, LINE, FALSE);
+         END IF;
+         IF Y <> NIL THEN
+            RETURN CATS (CALL_SYM (Y, ARGS, LINE).C, ';');
+         END IF;
+         IF NOT SAME_XFIX (T, V.T) THEN
+            FAIL (LINE, 'between members of FIXED of other radices or precisions, assignment is '
+                        !! 'the program''s STORE_ (D.4)');
+         END IF;
+         RETURN ASSIGN_CODE (REAL_TYPE (T), LV, CONVERT (V, T, LINE, SELF));
+      END BLOCK;
+   END IF;
    IF T@.KIND = T_ABS THEN                           % STORE_ of the abstract type (D.4)
       BLOCK
          VAR ARGS: ARG := VAL_ARG (V, VAL_ARG (MKLV (LV, T, TRUE, NO_TEXT ()), NIL));
@@ -281,7 +310,7 @@ END FUNCTION STORE_CODE;
 % module)? Its assignment and equality are then those of the abstract type, STORE_
 % and EQUAL_, component by component (3.8.4.1, 3.8.5, 3.9.4.1, 3.9.5, D.4)
 FUNCTION HAS_ABS_PART (T: TYP) RETURNS (BOOLEAN);
-   IF T@.KIND = T_ABS THEN
+   IF T@.KIND = T_ABS ! T@.KIND = T_XFIX THEN
       RETURN TRUE;
    ORIF T@.KIND = T_ARR THEN
       RETURN HAS_ABS_PART (T@.ELEM);
@@ -318,7 +347,7 @@ END FUNCTION ELEMENTS_NEED_CHECK;
 
 % the statement that stores RV, of type VT, into LV of type T component by component
 FUNCTION COMPONENT_STORE (T, VT: TYP, LV, RV: TEXT, LINE: INTEGER) RETURNS (TEXT);
-   IF T@.KIND = T_ABS THEN
+   IF T@.KIND = T_ABS ! T@.KIND = T_XFIX THEN
       RETURN STORE_CODE (T, LV, MKET (RV, VT), LINE, NO_TEXT ());
    ORIF T@.KIND = T_ARR & (HAS_ABS_PART (T) ! ELEMENTS_NEED_CHECK (T, VT)) THEN
       BLOCK
@@ -378,12 +407,12 @@ END FUNCTION COMPONENT_STORE;
 
 % the C that compares A and B of type T component by component (see HAS_ABS_PART)
 FUNCTION COMPONENT_EQUAL (T: TYP, A, B: TEXT, LINE: INTEGER) RETURNS (TEXT);
-   IF T@.KIND = T_ABS THEN
+   IF T@.KIND = T_ABS ! T@.KIND = T_XFIX THEN
       BLOCK
          CONST ARGS: ARG := VAL_ARG (MKET (A, T), VAL_ARG (MKET (B, T), NIL));
          CONST Y: SYM := USER_OPERATOR (MKN ('EQUAL_'), ARGS, LINE);
          IF Y = NIL THEN
-            FAILT (LINE, 'no EQUAL_ for the abstract type ', TYPE_NAME (T));
+            FAILT (LINE, 'no EQUAL_ for the type ', TYPE_NAME (T));
          END IF;
          RETURN CALL_SYM (Y, ARGS, LINE).C;
       END BLOCK;
@@ -442,7 +471,7 @@ FUNCTION UNARY1 (E: NODE) RETURNS (ET);
    IF T@.GENP.LEN > 0 THEN                           % an object of a TYPE parameter (5.2)
       REQUIRE_WHERE (OP_NAME (OP, TRUE), E@.LINE);
    END IF;
-   IF T@.KIND = T_ABS ! HAS_USER_ROUTINE (OP_NAME (OP, TRUE)) THEN    % (D.5 A5)
+   IF T@.KIND = T_ABS ! REAL_TYPE (T)@.KIND = T_XFIX ! HAS_USER_ROUTINE (OP_NAME (OP, TRUE)) THEN
       BLOCK
          VAR ARGS: ARG := VAL_ARG (A, QUAL_ARGS (E@.LINE));
          VAR Y: SYM := USER_OPERATOR (OP_NAME (OP, TRUE), ARGS, E@.LINE);
@@ -456,8 +485,8 @@ FUNCTION UNARY1 (E: NODE) RETURNS (ET);
          IF Y <> NIL THEN
             RETURN CALL_SYM (Y, ARGS, E@.LINE);
          END IF;
-         IF T@.KIND = T_ABS THEN
-            FAILT (E@.LINE, 'no prefix operator for the abstract type ', TYPE_NAME (T));
+         IF T@.KIND = T_ABS ! REAL_TYPE (T)@.KIND = T_XFIX THEN
+            FAILT (E@.LINE, 'no prefix operator of the program for ', TYPE_NAME (T));
          END IF;
       END BLOCK;
    END IF;
@@ -543,7 +572,8 @@ FUNCTION APPLY_OPERATOR (E: NODE, OP: TEXT, A, B: ET) RETURNS (ET);
       IF AT@.GENP.LEN > 0 ! BT@.GENP.LEN > 0 THEN    % objects of a TYPE parameter (5.2)
          REQUIRE_WHERE (NAME, LINE);
       END IF;
-      IF HAS_USER_ROUTINE (NAME) ! AT@.KIND = T_ABS ! BT@.KIND = T_ABS THEN
+      IF HAS_USER_ROUTINE (NAME) ! AT@.KIND = T_ABS ! BT@.KIND = T_ABS
+         ! REAL_TYPE (AT)@.KIND = T_XFIX ! REAL_TYPE (BT)@.KIND = T_XFIX THEN
          BLOCK
             VAR ARGS: ARG := VAL_ARG (A, VAL_ARG (B, NIL));
             VAR EXTRA: ARG := QUAL_ARGS (LINE);
@@ -578,6 +608,10 @@ FUNCTION APPLY_OPERATOR (E: NODE, OP: TEXT, A, B: ET) RETURNS (ET);
             END IF;
             IF AT@.KIND = T_ABS ! BT@.KIND = T_ABS THEN
                FAILT (LINE, 'no such operation for the abstract type: ', NAME);
+            END IF;
+            IF REAL_TYPE (AT)@.KIND = T_XFIX ! REAL_TYPE (BT)@.KIND = T_XFIX THEN
+               FAILT (LINE, 'the operations of a member of FIXED of another radix or precision '
+                            !! 'are the program''s (D.4, D.6); none fits: ', NAME);
             END IF;
          END BLOCK;
       END IF;
@@ -988,6 +1022,11 @@ FUNCTION IN_EXPR (E: NODE) RETURNS (ET);
    VAR HI_OP: TEXT := MK ('<=');
    LO := EXPR (R@.A, T);
    HI := EXPR (R@.B, T);
+   IF T@.KIND = T_XFIX THEN                          % by the program's LESS_THAN_ (D.4)
+      RETURN MKET (FMT3 ('({ rstr @ = @; !@; })', TMP, V.C,
+                         XFIX_OUTSIDE (T, TMP, XFIX_VALUE (T, LO, E@.LINE), XFIX_VALUE (T, HI, E@.LINE),
+                                       R@.IV)), W@.TY_BOOL);
+   END IF;
    IF IS_UNORDERED (T) THEN
       FAIL (E@.LINE, 'IN needs an ordered type (3.4.4.1)');
    END IF;

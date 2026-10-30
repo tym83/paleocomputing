@@ -3250,6 +3250,12 @@ rt_int rt_b_rep_int_of_bits(rstr b, rt_int n, int unsig) {
   return rt_b_int_of_bits(b);
 }
 
+/* [T]$$ of a member of FIXED the program defines: its n bits (Appendix D.4) */
+rstr rt_b_bits_len(rstr b, rt_int n) {
+  if (b.len != n) rt_raise(RT_B_INVALID_SIZE);
+  return rt_str_copy(b);
+}
+
 /* single precision as binary32 (FLOAT (p), p <= 7; 32 bits, 3.3.3) */
 rstr rt_b_bits_of_single(double v) {
   float f = (float)v;

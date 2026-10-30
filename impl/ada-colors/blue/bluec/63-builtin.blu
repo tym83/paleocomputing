@@ -683,6 +683,8 @@ FUNCTION BITS_OF (V: ET, LINE: INTEGER) RETURNS (ET);
       RETURN MKET (FMT1 ('rt_b_bits_of_single(@)', V.C), BITS_TYPE (32));
    ORIF K = T_FLOAT THEN
       RETURN MKET (FMT1 ('rt_b_bits_of_float(@)', V.C), BITS_TYPE (64));
+   ORIF K = T_XFIX THEN                             % its bits (Appendix D.4)
+      RETURN MKET (V.C, BITS_TYPE (XFIX_SIZE (T)));
    ORIF K = T_PTR THEN                              % the address of the object (NIL 0)
       RETURN MKET (FMT2 ('rt_b_bits_of_int(rt_b_ptr_addr(@), @)', V.C, NUM (W@.WORD)), BITS_TYPE (W@.WORD));
    ORIF K = T_SEM THEN                              % its value (3.11.3)

@@ -957,7 +957,9 @@ END FUNCTION ARRAY_STRUCT;
 % the statements that make the storage of a new object LV of type T
 FUNCTION INIT_CODE (T: TYP, LV: TEXT) RETURNS (TEXT);
    CONST K: INTEGER := T@.KIND;
-   IF K = T_STR THEN
+   IF K = T_XFIX THEN                                % its bits, zero
+      RETURN FMT2 ('@ = rt_b_zeros(@);', LV, NUM (XFIX_SIZE (T)));
+   ORIF K = T_STR THEN
       IF T@.LEN_C.LEN = 0 THEN
          RETURN FMT1 ('@ = rt_str_new(0);', LV);
       END IF;
@@ -1031,7 +1033,7 @@ END FUNCTION INIT_CODE;
 
 FUNCTION NEEDS_INIT (T: TYP) RETURNS (BOOLEAN);
    CONST K: INTEGER := T@.KIND;
-   IF K = T_STR ! K = T_BITS ! K = T_ARR ! K = T_SEM THEN
+   IF K = T_STR ! K = T_BITS ! K = T_ARR ! K = T_SEM ! K = T_XFIX THEN
       RETURN TRUE;
    ORIF K = T_ABS THEN
       RETURN NEEDS_INIT (T@.BASE);
@@ -1056,7 +1058,7 @@ END FUNCTION NEEDS_INIT;
 % value of an output's local object (4.3.2)
 FUNCTION COPY_OF (T: TYP, V: TEXT) RETURNS (TEXT);
    CONST K: INTEGER := T@.KIND;
-   IF K = T_STR ! K = T_BITS THEN
+   IF K = T_STR ! K = T_BITS ! K = T_XFIX THEN
       RETURN FMT1 ('rt_str_copy(@)', V);
    ORIF K = T_ABS THEN
       RETURN COPY_OF (T@.BASE, V);
@@ -1069,7 +1071,7 @@ END FUNCTION COPY_OF;
 % the statement that assigns the value RV to the object LV of type T
 FUNCTION ASSIGN_CODE (T: TYP, LV, RV: TEXT) RETURNS (TEXT);
    CONST K: INTEGER := T@.KIND;
-   IF K = T_STR ! K = T_BITS THEN
+   IF K = T_STR ! K = T_BITS ! K = T_XFIX THEN
       RETURN FMT2 ('rt_b_assign(&@, @);', LV, RV);
    ORIF K = T_ABS THEN
       RETURN ASSIGN_CODE (T@.BASE, LV, RV);
@@ -1089,7 +1091,7 @@ END FUNCTION ASSIGN_CODE;
 % the C that compares A and B of type T
 FUNCTION EQUAL_CODE (T: TYP, A, B: TEXT) RETURNS (TEXT);
    CONST K: INTEGER := T@.KIND;
-   IF K = T_STR ! K = T_BITS THEN
+   IF K = T_STR ! K = T_BITS ! K = T_XFIX THEN
       RETURN FMT2 ('rt_b_eq(@, @)', A, B);
    ORIF K = T_ABS THEN
       RETURN EQUAL_CODE (T@.BASE, A, B);
@@ -1105,6 +1107,10 @@ END FUNCTION EQUAL_CODE;
 
 % the value V checked against the range of T, if T has one (RANGE: 3.2.5, 3.3.5, 3.4.5)
 FUNCTION RANGE_CHECK (T: TYP, V: TEXT, SELF: TEXT) RETURNS (TEXT);
+   IF T@.KIND = T_XFIX & T@.LO_C.LEN > 0 & NOT W@.SUPPRESS THEN
+      RETURN XFIX_RANGE_CHECK (T, V, SUBST_SELF (T@.LO_C, SELF), SUBST_SELF (T@.HI_C, SELF), T@.ROPEN,
+                               W@.TYPECHECK);
+   END IF;
    IF T@.KIND = T_INT & T@.LO_C.LEN > 0 & NOT (T@.MLO.OK & T@.MHI.OK) & REP_BITS (T) < 63
       & NOT W@.SUPPRESS THEN
       % bounds known only at run time: the value must also fit the bits of its
@@ -1150,6 +1156,45 @@ FUNCTION RANGE_CHECK_IN (T: TYP, V: TEXT, SELF: TEXT) RETURNS (TEXT);
    RETURN FMT3 ('rt_range(@, @, @)', V, SUBST_SELF (T@.LO_C, SELF), SUBST_SELF (T@.HI_C, SELF));
 END FUNCTION RANGE_CHECK_IN;
 
+% V within LO .. HI (OPEN: 1 below, 2 above) by the program's LESS_THAN_: RANGE, or
+% INVALID_TYPE where a value is checked (D.4, 3.2.5)
+FUNCTION XFIX_RANGE_CHECK (T: TYP, V, LO, HI: TEXT, OPEN: INTEGER, TC: BOOLEAN) RETURNS (TEXT);
+   CONST X: TEXT := NEW_NAME ('xr');
+   VAR E: TEXT := MK ('RT_X_RANGE');
+   IF TC THEN
+      E := MK ('RT_B_INVALID_TYPE');
+   END IF;
+   RETURN CAT (FMT3 ('({ rstr @ = @; if (@) ', X, V, XFIX_OUTSIDE (T, X, LO, HI, OPEN)),
+               FMT2 ('rt_raise(@); @; })', E, X));
+END FUNCTION XFIX_RANGE_CHECK;
+
+% is X outside LO .. HI (OPEN: 1 below, 2 above, 3 both), by the program's LESS_THAN_?
+FUNCTION XFIX_OUTSIDE (T: TYP, X, LO, HI: TEXT, OPEN: INTEGER) RETURNS (TEXT);
+   CONST XT: ET := MKET (X, T);
+   VAR BAD_LO: TEXT;
+   VAR BAD_HI: TEXT;
+   IF OPEN = 1 ! OPEN = 3 THEN
+      BAD_LO := FMT1 ('!@', XFIX_LESS (MKET (LO, T), XT));
+   ELSE
+      BAD_LO := XFIX_LESS (XT, MKET (LO, T));
+   END IF;
+   IF OPEN >= 2 THEN
+      BAD_HI := FMT1 ('!@', XFIX_LESS (XT, MKET (HI, T)));
+   ELSE
+      BAD_HI := XFIX_LESS (MKET (HI, T), XT);
+   END IF;
+   RETURN FMT2 ('(@ || @)', BAD_LO, BAD_HI);
+END FUNCTION XFIX_OUTSIDE;
+
+FUNCTION XFIX_LESS (A, B: ET) RETURNS (TEXT);
+   CONST ARGS: ARG := VAL_ARG (A, VAL_ARG (B, NIL));
+   CONST Y: SYM := USER_OPERATOR (MKN ('LESS_THAN_'), ARGS, 0);
+   IF Y = NIL THEN
+      FAILT (0, 'the program defines no LESS_THAN_ for ', TYPE_NAME (A.T));
+   END IF;
+   RETURN CALL_SYM (Y, ARGS, 0).C;
+END FUNCTION XFIX_LESS;
+
 % the size of the FIXED_REP of a fixed point type, or 63 when it has none known
 FUNCTION REP_BITS (T: TYP) RETURNS (INTEGER);
    IF T@.REPS = NIL THEN
@@ -1191,6 +1236,9 @@ FUNCTION SAME_CLASS (A, B: TYP) RETURNS (BOOLEAN);
    ORIF B@.KIND = T_ABS & A@.KIND <> T_ABS THEN
       RETURN SAME_CLASS (A, B@.BASE);
    END IF;
+   IF A@.KIND = T_XFIX ! B@.KIND = T_XFIX THEN      % FIXED, every member (D.3)
+      RETURN (A@.KIND = T_XFIX ! A@.KIND = T_INT) & (B@.KIND = T_XFIX ! B@.KIND = T_INT);
+   END IF;
    IF A@.KIND <> B@.KIND THEN
       RETURN FALSE;
    END IF;
@@ -1219,7 +1267,9 @@ FUNCTION SAME_TYPE (A, B: TYP) RETURNS (BOOLEAN);
    IF NOT SAME_CLASS (A, B) THEN
       RETURN FALSE;
    END IF;
-   IF A@.KIND = T_INT ! A@.KIND = T_FLOAT THEN
+   IF A@.KIND = T_XFIX ! B@.KIND = T_XFIX THEN
+      RETURN SAME_XFIX (A, B);
+   ORIF A@.KIND = T_INT ! A@.KIND = T_FLOAT THEN
       RETURN A@.SCALE = B@.SCALE;
    ORIF A@.KIND = T_ARR THEN
       RETURN SAME_TYPE (A@.ELEM, B@.ELEM);

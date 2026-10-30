@@ -370,6 +370,9 @@ FUNCTION MATCH_SCORE (R: SYM, ARGS: ARG) RETURNS (INTEGER);
             IF NOT (SAME_CLASS (PT, AT) ! (AT@.KIND = T_NIL & REAL_TYPE (PT)@.KIND = T_PTR)) THEN
                RETURN 0;
             END IF;
+            IF (REAL_TYPE (PT)@.KIND = T_XFIX ! REAL_TYPE (AT)@.KIND = T_XFIX) & NOT SAME_XFIX (PT, AT) THEN
+               RETURN 0;                              % members of FIXED the program
+            END IF;                                   % defines: the same one (D.4)
             IF REAL_TYPE (PT)@.GEN.LEN > 0 & REAL_TYPE (AT)@.MLEN.OK THEN
                BLOCK                                  % ?L repeated: one length (5)
                   CONST KEY: TEXT := QMKN ('%', REAL_TYPE (PT)@.GEN);

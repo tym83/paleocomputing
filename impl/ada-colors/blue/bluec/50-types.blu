@@ -26,6 +26,9 @@ FUNCTION TYPE_NAME (T: TYP) RETURNS (TEXT);
          RETURN MK ('INTEGER');
       END IF;
       RETURN FMT1 ('FIXED (@, 2, STD)', NUM (T@.SCALE));
+   ORIF K = T_XFIX THEN
+      RETURN CAT (FMT3 ('FIXED (@, @, @', NUM (T@.SCALE), NUM (T@.RADIX), PRECISION_NAME (T@.PREC)),
+                  MK (')'));
    ORIF K = T_BOOL THEN
       RETURN MK ('BOOLEAN');
    ORIF K = T_ENUM THEN
@@ -243,6 +246,58 @@ PROCEDURE ATTR_VALUE (E: NODE # C: TEXT, M: MVAL);
 END PROCEDURE ATTR_VALUE;
 
 % the range-spec R applied to the type T (3.2.1, 3.3.1, 3.4.1)
+% a range of a member of FIXED the program defines: its bounds as values of the type
+% (converted by the program's STORE_), ordered by the program's LESS_THAN_ (D.4)
+FUNCTION XFIX_RANGE (T: TYP, R: NODE) RETURNS (TYP);
+   VAR N: TYP := COPY_TYP (T);
+   CONST LO: ET := EXPR (R@.A, T);
+   CONST HI: ET := EXPR (R@.B, T);
+   N@.NAME := NO_TEXT ();
+   N@.RLEVEL := CUR_LEVEL ();
+   N@.ROPEN := R@.IV;
+   N@.LO_C := XFIX_VALUE (T, LO, R@.LINE);
+   N@.HI_C := XFIX_VALUE (T, HI, R@.LINE);
+   N@.MLO := NO_MVAL ();
+   N@.MHI := NO_MVAL ();
+   IF USER_OPERATOR (MKN ('LESS_THAN_'), VAL_ARG (MKET (N@.LO_C, T), VAL_ARG (MKET (N@.HI_C, T), NIL)),
+                     R@.LINE) = NIL THEN
+      FAILT (R@.LINE, 'a range of this member of FIXED needs the program''s LESS_THAN_ (D.4): ',
+             TYPE_NAME (T));
+   END IF;
+   RETURN N;
+END FUNCTION XFIX_RANGE;
+
+% V as a value of the member T of FIXED the program defines: itself, or converted by
+% the program's STORE_ (D.4)
+FUNCTION XFIX_VALUE (T: TYP, V: ET, LINE: INTEGER) RETURNS (TEXT);
+   IF SAME_XFIX (T, V.T) THEN
+      RETURN V.C;
+   END IF;
+   BLOCK
+      CONST TMP: TEXT := NEW_NAME ('xc');
+      RETURN FMT3 ('({ rstr @; @ @; })', TMP, STORE_CODE (T, TMP, V, LINE, NO_TEXT ()), TMP);
+   END BLOCK;
+END FUNCTION XFIX_VALUE;
+
+% the member T without its range
+FUNCTION XFIX_BASE (T: TYP) RETURNS (TYP);
+   VAR N: TYP := COPY_TYP (REAL_TYPE (T));
+   N@.LO_C := NO_TEXT ();
+   N@.HI_C := NO_TEXT ();
+   N@.NAME := NO_TEXT ();
+   RETURN N;
+END FUNCTION XFIX_BASE;
+
+% are A and B the same member of FIXED the program defines?
+FUNCTION SAME_XFIX (A, B: TYP) RETURNS (BOOLEAN);
+   CONST RA: TYP := REAL_TYPE (A);
+   CONST RB: TYP := REAL_TYPE (B);
+   IF RA@.KIND <> T_XFIX ! RB@.KIND <> T_XFIX THEN
+      RETURN FALSE;
+   END IF;
+   RETURN RA@.SCALE = RB@.SCALE & RA@.RADIX = RB@.RADIX & RA@.PREC = RB@.PREC;
+END FUNCTION SAME_XFIX;
+
 FUNCTION WITH_RANGE (T: TYP, R: NODE) RETURNS (TYP);
    VAR N: TYP;
    IF R = NIL THEN
@@ -258,6 +313,9 @@ FUNCTION WITH_RANGE (T: TYP, R: NODE) RETURNS (TYP);
          N@.HI_C := QMK ('?', R@.B@.NAME);
       END IF;
       RETURN N;
+   END IF;
+   IF T@.KIND = T_XFIX THEN
+      RETURN XFIX_RANGE (T, R);
    END IF;
    IF NOT (T@.KIND = T_INT ! T@.KIND = T_FLOAT ! T@.KIND = T_ENUM) THEN
       FAIL (R@.LINE, 'a range is only for fixed, float and enumerated types (3.12.2)');
@@ -769,10 +827,17 @@ FUNCTION RESOLVE_PREDEFINED (TS: NODE) RETURNS (TYP);
          CONST R: MVAL := MANIFEST_INTEGER_ARG (NTH_ARG (TS, 1), 'radix', 2, 1000);
          CONST P: NODE := NTH_ARG (TS, 2);
          TYPE_ARG_COUNT (TS, 3);
-         IF R.V <> 2 THEN
-            FAIL (TS@.LINE, 'only radix 2 is predefined (3.2.1)');
-         END IF;
          CHECK_PRECISION_ARG (P, TS@.LINE);
+         BLOCK                                       % another radix or precision: a
+            CONST PO: INTEGER := PRECISION_ORD (P);  % member the program defines (D.4)
+            IF R.V <> 2 ! PO <> STD_ORD () THEN
+               T := NEW_TYP (T_XFIX);
+               T@.SCALE := S.V;
+               T@.RADIX := R.V;
+               T@.PREC := PO;
+               RETURN T;
+            END IF;
+         END BLOCK;
          IF S.V = 0 THEN
             RETURN W@.TY_INT;
          END IF;
@@ -923,12 +988,110 @@ PROCEDURE CHECK_PRECISION_ARG (P: NODE, LINE: INTEGER);
             RETURN;
          END IF;
       END BLOCK;
-      IF FIND_LITERAL (P@.NAME, NIL) <> NIL THEN
-         FAIL (LINE, 'only STD precision is predefined (3.2.1)');
+      IF FIND_LITERAL (P@.NAME, PRECISIONS_TYPE ()) <> NIL THEN
+         RETURN;                                     % a precision the program added
       END IF;
    END IF;
    FAIL (LINE, 'the precision of a fixed point type is a value of FIXED_PRECISIONS (3.2.1)');
 END PROCEDURE CHECK_PRECISION_ARG;
+
+% FIXED_PRECISIONS as visible: the predefined ENUM (STD), or the program's with more
+% precisions (Appendix D.6: "TYPE FIXED_PRECISIONS = ENUM (STD)", extended as the
+% PRELUDE is)
+FUNCTION PRECISIONS_TYPE () RETURNS (TYP);
+   CONST Y: SYM := LOOKUP (MKN ('FIXED_PRECISIONS'));
+   IF Y <> NIL THEN
+      IF Y@.KIND = Y_TYPE THEN
+         BLOCK
+            CONST T: TYP := REAL_TYPE (RESOLVE_USER_NAME (Y@.NAME, 0));
+            IF T@.KIND = T_ENUM THEN
+               RETURN T;
+            END IF;
+         END BLOCK;
+      END IF;
+   END IF;
+   RETURN NIL;
+END FUNCTION PRECISIONS_TYPE;
+
+% the position of STD among the precisions, and that of the precision P
+FUNCTION STD_ORD () RETURNS (INTEGER);
+   CONST T: TYP := PRECISIONS_TYPE ();
+   IF T <> NIL THEN
+      BLOCK
+         CONST Y: SYM := FIND_LITERAL (MKN ('STD'), T);
+         IF Y <> NIL THEN
+            IF Y@.HASMV THEN
+               RETURN Y@.MV;
+            END IF;
+         END IF;
+      END BLOCK;
+   END IF;
+   RETURN 0;
+END FUNCTION STD_ORD;
+
+FUNCTION PRECISION_ORD (P: NODE) RETURNS (INTEGER);
+   IF P@.KIND = TS_GEN ! P@.KIND = N_DONTCARE THEN
+      RETURN STD_ORD ();
+   END IF;
+   IF P@.KIND = N_NAME ! P@.KIND = N_ENUMLIT THEN
+      IF TEQS (P@.NAME, 'STD') THEN
+         RETURN STD_ORD ();
+      END IF;
+      BLOCK
+         CONST Y: SYM := FIND_LITERAL (P@.NAME, PRECISIONS_TYPE ());
+         IF Y <> NIL THEN
+            IF Y@.HASMV & Y@.KIND = Y_ENUMLIT THEN
+               RETURN Y@.MV;
+            END IF;
+         END IF;
+      END BLOCK;
+   END IF;
+   BLOCK
+      CONST M: MVAL := MANIFEST (P);
+      IF M.OK THEN
+         RETURN M.V;
+      END IF;
+   END BLOCK;
+   RETURN STD_ORD ();
+END FUNCTION PRECISION_ORD;
+
+% the name of the precision at position N
+FUNCTION PRECISION_NAME (N: INTEGER) RETURNS (TEXT);
+   CONST T: TYP := PRECISIONS_TYPE ();
+   IF T <> NIL THEN
+      BLOCK
+         VAR L: NODE := T@.BASE@.LITS;
+         VAR I: INTEGER := 0;
+         LOOP UNTIL L = NIL DO
+            IF I = N THEN
+               RETURN L@.NAME;
+            END IF;
+            I := I + 1;
+            L := L@.NEXT;
+         END LOOP;
+      END BLOCK;
+   END IF;
+   RETURN NUM (N);
+END FUNCTION PRECISION_NAME;
+
+% the bits of a value of a member the program defines: STD a word, each precision
+% after it twice the one before, each before it half (Appendix D.4)
+FUNCTION XFIX_SIZE (T: TYP) RETURNS (INTEGER);
+   VAR N: INTEGER := W@.WORD;
+   VAR K: INTEGER := T@.PREC - STD_ORD ();
+   LOOP UNTIL K = 0 DO
+      IF K > 0 THEN
+         N := N * 2;
+         K := K - 1;
+      ELSE
+         IF N > 1 THEN
+            N := N // 2;
+         END IF;
+         K := K + 1;
+      END IF;
+   END LOOP;
+   RETURN N;
+END FUNCTION XFIX_SIZE;
 
 % an enumerated reptype (3.4.3): ENUM_REP (N) or ENUM_VAL_REP (N, VALUES (...)) with N
 % large enough, every literal once, bitstrings of N bits all different, the latter
@@ -1379,7 +1542,7 @@ FUNCTION CTYPE (T: TYP) RETURNS (TEXT);
          RETURN MK ('rt_b_d');
       END IF;
       RETURN MK ('double');
-   ORIF K = T_STR ! K = T_BITS THEN
+   ORIF K = T_STR ! K = T_BITS ! K = T_XFIX THEN
       RETURN MK ('rstr');
    ORIF K = T_REC ! K = T_ARR THEN
       RETURN T@.CNAME;

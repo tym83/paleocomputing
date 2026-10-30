@@ -48,7 +48,7 @@ set). Conventions:
 
 | Class | Spec | bluec |
 |---|---|---|
-| Fixed point | `FIXED (scale, radix, precision) [L:U]`, `INTEGER = FIXED (0,2,STD)` (§3.2) | int64 mantissa, compile-time scale; STD is 64 bits; radix 2 only |
+| Fixed point | `FIXED (scale, radix, precision) [L:U]`, `INTEGER = FIXED (0,2,STD)` (§3.2) | int64 mantissa, compile-time scale; STD is 64 bits; radix 2 and STD predefined, other radices and precisions the program's (decision 42) |
 | Floating | `FLOAT (digits) [L:U]` (§3.3) | C double, 1..15 digits |
 | Enumerated | `ENUM (\A, ...)`, `UNORDERED (...)` (§3.4) | type classes are structural: same literals in the same order (§3.4.1, p.3-66) |
 | Boolean | (§3.5) | |
@@ -424,6 +424,25 @@ unreadable; the decision is bluec's.
     and evaluates in the order of the C translation; E & F and E ! F
     evaluate E first and F only when it decides the result. A program whose result depends on the order
     through pointers is outside what 4.3.4 defines.
+
+42. **Extending the type class FIXED (Appendix D.3, D.4, D.6).** The PRELUDE
+    defines the members FIXED (S, 2, STD); a program extends the class as D.4
+    extends the built-in types, with operations of its own. It may redeclare
+    FIXED_PRECISIONS with more values, STD among them (`ENUM (SHORT, STD,
+    LONG)`, as decision 26 lets it redeclare ROUNDINGS), and then FIXED (S, R,
+    P) with another radix R or precision P is a member of FIXED whose values are
+    bits: a word for STD, twice that for each precision after STD and half for
+    each before it. The program gives it its operations by their operator
+    routines (ADD_, LESS_THAN_, EQUAL_ ..., D.5, for which FIXED (?S, ?R, ?P)
+    unifies with the radix and the precision), its conversions by STORE_ (an
+    assignment between different members of FIXED, D.4) and reaches its bits
+    with TO_BIT and [T]$$ in machine-dependent parts; a range is ordered by
+    its LESS_THAN_, and MIN and MAX without one are its FIXED_MIN and
+    FIXED_MAX. Assignment between values of the same member is the bit-copy
+    of D.1. Literals stay radix 2 STD (D.6 makes them TO_FIXED (..., 2, STD,
+    ROUNDED)), so the program's STORE_ converts them. `tests/typeclass.blu`
+    defines decimal money, FIXED (2, 10, STD), and 128-bit integers,
+    FIXED (0, 2, LONG), so.
 
 The misprints of the program examples and the rules they break are in
 `../corpus/CHANGES.md`.

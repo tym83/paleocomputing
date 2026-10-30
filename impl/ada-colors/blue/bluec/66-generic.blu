@@ -527,12 +527,17 @@ FUNCTION UNIFY (TS: NODE, T: TYP, BS: BIND) RETURNS (BOOLEAN);
       END IF;
    END IF;
    IF TEQS (TS@.NAME, 'FIXED') THEN
+      IF RT@.KIND = T_XFIX THEN                     % a member the program defines
+         RETURN UNIFY_VALUE (NTH_ARG (TS, 0), SOME (RT@.SCALE), BS)
+            & UNIFY_VALUE (NTH_ARG (TS, 1), SOME (RT@.RADIX), BS)
+            & UNIFY_VALUE (NTH_ARG (TS, 2), SOME (RT@.PREC), BS);
+      END IF;
       IF RT@.KIND <> T_INT THEN
          RETURN FALSE;
       END IF;
       RETURN UNIFY_VALUE (NTH_ARG (TS, 0), SOME (RT@.SCALE), BS)
          & UNIFY_VALUE (NTH_ARG (TS, 1), SOME (2), BS)
-         & UNIFY_VALUE (NTH_ARG (TS, 2), SOME (0), BS);     % STD, the only precision
+         & UNIFY_VALUE (NTH_ARG (TS, 2), SOME (STD_ORD ()), BS);
    ORIF TEQS (TS@.NAME, 'INTEGER') THEN
       RETURN RT@.KIND = T_INT & RT@.SCALE = 0;
    ORIF TEQS (TS@.NAME, 'FLOAT') THEN

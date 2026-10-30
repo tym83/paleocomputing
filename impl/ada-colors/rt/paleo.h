@@ -469,6 +469,7 @@ rstr rt_b_arr_put(rstr img, rt_int i, rt_int n, rstr bits, int mode);
 rstr rt_b_arr_take(rstr img, rt_int i, rt_int n, rt_int es, int mode);
 rstr rt_b_blank_bits(rt_int n, int mode);
 rt_int rt_b_sint_of_bits(rstr b);
+rstr rt_b_bits_len(rstr b, rt_int n);
 rt_int rt_b_rep_int_of_bits(rstr b, rt_int n, int unsig);
 rstr rt_b_bits_of_single(double v);
 double rt_b_single_of_bits(rstr b);

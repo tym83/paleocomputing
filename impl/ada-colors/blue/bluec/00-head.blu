@@ -148,6 +148,8 @@ CONST T_SEM: INTEGER := 12;
 CONST T_ABS: INTEGER := 13;        % an abstract type seen outside its module (3.12.5)
 CONST T_TYPE: INTEGER := 14;       % the type of a TYPE parameter
 CONST T_PATHS: INTEGER := 15;      % the activations of a path (4.6.1)
+CONST T_XFIX: INTEGER := 16;       % FIXED (S, R, P), R not 2 or P not STD: a member
+                                   % of FIXED the program defines (Appendix D.4)
 
 % ---- symbol kinds --------------------------------------------------------------------------
 CONST Y_VAR: INTEGER := 1;
@@ -229,6 +231,8 @@ TYPE TYP_REC = RECORD
    VAR REPS: NODE;                   % the reptype-spec
    VAR DECL: PTR(SYM_REC);          % the type declaration of a record class
    VAR GENP: TEXT;                  % in a generic body: the TYPE parameter it stands for
+   VAR RADIX, PREC: INTEGER;        % of T_XFIX: the radix, the precision's position
+   VAR ROPEN: INTEGER;              % of a T_XFIX range: open below 1, above 2, both 3
 END RECORD;
 TYPE TYP = PTR(TYP_REC);
 
