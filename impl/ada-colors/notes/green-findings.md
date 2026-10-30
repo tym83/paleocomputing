@@ -51,32 +51,59 @@ Sources: Preliminary Ada Reference Manual (RM79, DTIC ADA071761), Informal Intro
   the highest priority, so interrupts queue on the entry.
 
 ## Chapters 13 and 14 on a simulated machine
-- Representation specifications are checked and reported by SIZE, POSITION, FIRST_BIT and
-  LAST_BIT; the data keep the host's C layout. A length specification of an access type is
-  the budget of its collection (STORAGE_OVERFLOW), of a task the bits of one activation.
-- The machine has SYSTEM'MEMORY_SIZE storage units of 8 bits; an object with an address
-  specification lives there (an array keeps its descriptor and has its components there),
-  and 'ADDRESS gives that address. 'ADDRESS of other objects is a host address.
-- MACHINE_CODE.INSTRUCTION (OP, R, A) on eight one-word registers: NOP, LDI, LD, ST, ADD, SUB,
-  MUL, DIV, NEG, OUTC, OUTN, INTR. LOW_LEVEL_IO: SEND_CONTROL and RECEIVE_CONTROL on device 0
-  (interrupt controller), 1 (console), 2 (clock), 3 .. 15 (registers).
+- Every type has a layout, given to the runtime: the bits of its scalars (unpacked, packed,
+  a length specification, a biased representation when the values need it, enumeration
+  codes), and where the components of arrays and records lie (packing, record
+  representations, variants overlaying one another, `at mod` alignment). STRING is packed,
+  as App. C specifies. SIZE, POSITION, FIRST_BIT and LAST_BIT report that layout.
+- Whatever observes storage sees that layout. The machine has SYSTEM'MEMORY_SIZE storage
+  units of SYSTEM'STORAGE_UNIT bits (pragma STORAGE_UNIT: 8, 16, 32 or 64). An object with
+  an address specification is a view of the memory, kept in agreement with it after every
+  statement that may change it, so objects at one address overlay (an INTEGER and a STRING
+  at 200 show each other's bits). Every other object gets an address above the memory, a
+  window, when 'ADDRESS first asks; a window shows the object in its layout and what is
+  written there goes back into the object. Address specifications take arrays of any rank.
+- Code statements: MACHINE_CODE.INSTRUCTION (OP, R, A) on eight registers of one word (64
+  bits): NOP, LDI, LD, ST, ADD, SUB, MUL, DIV, NEG, OUTC, OUTN, INTR. LOW_LEVEL_IO: device 0
+  the interrupt controller, 1 the console, 2 the clock, 3 a memory address, 4 the storage
+  unit at that address (read and written, the address moving on), 5 a hexadecimal dump
+  from that address, 6 .. 15 data registers.
+- Interrupts (13.5.1): "an interrupt acts as an entry call"; "if control information is
+  supplied by the interrupt, then this must appear as an in parameter of the entry". The
+  hardware task fills the in parameters from the data registers (devices 6 .. 15, or R1 ..
+  R7 for INTR), each in the layout of its type; out and in out parameters are rejected
+  with that rule. Interrupts queue on their entry.
+- UNSAFE_CONVERSION reads the storage of the value, in the layout of S, as a value of T in
+  its layout; access values are stored as the address of what they designate.
 - pragma INTERFACE(C) calls the runtime, INTERFACE(FORTRAN) a table of host mathematical
-  routines (SQRT, SIN, ..., ALOG10); other languages are rejected.
-- UNSAFE_CONVERSION copies the storage of the value; enumeration codes are its storage.
-- pragma SUPPRESS permits omitting checks (RM79 11.8): the checks stay.
-- INPUT_OUTPUT and TEXT_IO files are host files; CREATE replaces an existing file.
-  INPUT_OUTPUT stores the storage of each element, so elements with arrays or access values
-  are not meaningful in another program. A STRING element (unconstrained) cannot be used.
-- TEXT_IO: NEWLINE is LF, which ends the line (RM79 makes CR reset the column and LF advance
-  the line). The layout operations take a file, as in the RM79 specification: `COL` alone
-  is rejected, `COL(STANDARD_OUTPUT)` is not. SET_LINE or SET_COL backwards on a sequential
-  file raises FILE_USE_ERROR; SET_COL backwards on output writes BS.
-- The exceptions of TEXT_IO and of every instance of INPUT_OUTPUT are one set: END_OF_FILE of
-  one instance is END_OF_FILE of all.
+  routines (SQRT, SIN, ..., ALOG10); 13.9 lets an implementation restrict the languages.
+- INPUT_OUTPUT stores each element in the layout of its type, so arrays, STRING and records
+  with arrays are files of their values; for an unconstrained element type each element is
+  kept after its length, and READ of an element of another length raises INVALID_DATA
+  ("not of the proper type", 14.1.2). RM79 14.2 declares the six exceptions inside the
+  generic package, so each instance has its own; TEXT_IO declares its own set (14.4).
+  CREATE replaces an existing file: 14.1.1 raises FILE_NAME_ERROR only when "creation is
+  prohibited", which the host does not do.
+- TEXT_IO: NEWLINE is LF, which ends the line. The layout operations take a file, as in the
+  specification of 14.4: `COL` alone is rejected, `COL(STANDARD_OUTPUT)` is not. SET_LINE or
+  SET_COL backwards on a sequential file raises FILE_USE_ERROR; SET_COL backwards on output
+  writes BS, which 14.3.2 counts back.
+- DEFAULT_MANTISSA is FLOAT'DIGITS - 1 (page 14-11 of the scan); FLOAT has DIGITS 15. In
+  FIXED_IO, DEFAULT_DECIMALS is the number of digits the image of DECIMALS (by default the
+  DELTA) has after the point, which is what `DELTA_REP'LENGTH - 2` gives for
+  `REP(DECIMALS - INTEGER(DECIMALS))`.
 
-## Deviations
-- DEFAULT_MANTISSA is 5, not FLOAT'DIGITS - 1 (the OCR of RM79 14.4 is unclear here, and
-  FLOAT is a double with DIGITS 15): PUT of a FLOAT shows five decimals unless FRACT says.
-- GET of a real accepts an integer literal too.
-- LONG_INTEGER has the range of INTEGER (64 bits); SHORT_INTEGER has 32 bits.
-- pragma CREATION, OPTIMIZE, LIST, PAGE and INLINE are checked and have no effect.
+## Implementation decisions the RM leaves open
+- pragma SUPPRESS: 11.8 says "no run time checks need be provided ... the pragma is merely
+  a recommendation to the compiler". greenc keeps the checks; it checks that the arguments
+  are exceptions and that the pragma stands in a declarative part.
+- pragma CREATION: 9.2 says "it is possible to influence the implementation"; storage of a
+  task is allocated when it is initiated (a fresh frame each time), whatever the pragma.
+  The argument is checked.
+- pragma OPTIMIZE: App. B "specifies whether time or space is the primary optimization
+  criterion"; OPTION'TIME and OPTION'SPACE report it; the C translation is the same.
+- pragma INLINE expands the body at each call (an always-inline C function; a recursive one
+  as far as the C compiler goes). pragma LIST and PAGE shape the listing greenc writes to
+  the file GREEN_LISTING names.
+- LONG_INTEGER has the range of INTEGER (64 bits); SHORT_INTEGER has 32 bits. GET of a real
+  accepts an integer literal too.
