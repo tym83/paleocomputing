@@ -1318,15 +1318,18 @@ ABNORMAL FUNC gbinop(CONST e : node, CONST want : typ, OUT t : typ) => STRING[AS
    END IF;
    BEGIN
       CONST a := gexpr(e.a, want, ta);
-      CONST b := gexpr(e.b, ta, tb);
+      CONST b := gexpr(e.b, exponent_want(op.ALL, ta), tb);
       IF ta.kind = t_float OR tb.kind = t_float THEN
          t := ty_float;
+         % X_OVERFLOW beyond the largest FLOAT, X_NEG_EXP for a negative
+         % exponent (C.4)
          IF op.ALL = "+" OR op.ALL = "-" OR op.ALL = "*" THEN
-            RETURN "(" & a & " " & op.ALL & " " & b & ")";
+            RETURN "rt_r_fovf(" & a & " " & op.ALL & " " & b & ")";
          ELSEIF op.ALL = "/" THEN
-            RETURN "rt_fdiv(" & a & ", " & b & ")";
+            RETURN "rt_r_fovf(rt_fdiv(" & a & ", " & b & "))";
          ELSEIF op.ALL = "**" THEN
-            RETURN "rt_fpow(" & a & ", " & b & ")";
+            check_type(tb, ty_int, e.line);
+            RETURN "rt_r_fpow(" & a & ", " & b & ")";
          END IF;
       END IF;
       check_type(ta, ty_int, e.line);
@@ -2125,6 +2128,53 @@ ABNORMAL FUNC same_subtypes(CONST gd : node, CONST args : node) => STRING[ASCII]
    RETURN r.ALL;
 END FUNC same_subtypes;
 
+% the low-level operations of the built-in MAILBOX (C.11 notes 8 - 11, 14.3.1),
+% with a SEND_ST or RECEIVE_ST variable q: a request is checked by TEST and
+% carried out by COMPLETE without waiting
+ABNORMAL FUNC mailbox_low(READONLY name : STRING[ASCII], CONST args : node, CONST line : INT, OUT t : typ)
+      => STRING[ASCII] IMPORTS ALL;
+   VAR qv, mv, dv : text;
+   VAR qt, mt, dt, at : typ;
+   VAR c : cons;
+   VAR ro : BOOL;
+   VAR send : BOOL := name(1 .. 4) = "SEND";
+   lvalue(args, qv, qt, c, ro);
+   lvalue(args.next, mv, mt, c, ro);
+   IF mt.kind /= t_mbox THEN
+      fail(line, name & " needs a mailbox");
+   END IF;
+   t := ty_void;
+   IF (send AND qt /= ty_send_st) OR (NOT send AND qt /= ty_receive_st) THEN
+      fail(line, name & " needs a variable of subtype " & name(1 .. 4) & "_ST");
+   END IF;
+   IF name = "SEND_TEST" OR name = "RECEIVE_TEST" THEN
+      t := ty_bool;
+      IF send THEN
+         RETURN "rt_r_can_send(" & mv.ALL & ")";
+      END IF;
+      RETURN "rt_r_can_receive(" & mv.ALL & ")";
+   ELSEIF name = "SEND_COMPLETE" THEN
+      CONST v := gexpr(args.next.next, mt.elem, at);
+      check_type(at, mt.elem, line);
+      RETURN "({ " & ctype(mt.elem) & " m_ = " & v & "; if (!rt_cond_send(" & mv.ALL
+             & ", &m_)) rt_raise(RT_X_EMPTY_MAILBOX); })";
+   ELSEIF name = "RECEIVE_COMPLETE" THEN
+      lvalue(args.next.next, dv, dt, c, ro);
+      check_type(dt, mt.elem, line);
+      RETURN "({ if (!rt_cond_receive(" & mv.ALL & ", &" & dv.ALL & ")) rt_raise(RT_X_EMPTY_MAILBOX); })";
+   END IF;
+   % REQUEST and REVOKE: the built-in mailbox keeps no queue of requests
+   RETURN "(" & qv.ALL & " = 1)";
+END FUNC mailbox_low;
+
+% the right operand of ** is an INT (C.3, C.4)
+ABNORMAL FUNC exponent_want(READONLY op : STRING[ASCII], CONST ta : typ) => typ IMPORTS ty_int;
+   IF op = "**" THEN
+      RETURN ty_int;
+   END IF;
+   RETURN ta;
+END FUNC exponent_want;
+
 % the subtype of an actual bound to a VAR, OUT or READONLY scalar formal (7.3)
 ABNORMAL FUNC actual_bounds(CONST ft : typ, CONST t : typ, CONST c : cons) => STRING[ASCII] IMPORTS ALL;
    IF NOT scalar_kind(ft) THEN
@@ -2158,8 +2208,26 @@ ABNORMAL FUNC builtin(READONLY name : STRING[ASCII], CONST tt : node, CONST args
          RETURN "rt_range(" & a & " + 1, 0, " & itos(list_len(base_of(at).lits) - 1) & ")";
       END IF;
       RETURN "rt_range(" & a & " - 1, 0, " & itos(list_len(base_of(at).lits) - 1) & ")";
-   ELSEIF name = "SQRT" OR name = "SIN" OR name = "COS" OR name = "EXP" OR name = "LN"
-         OR name = "FLOOR" THEN
+   ELSEIF name = "FLOOR" THEN
+      % FLOOR(FLOAT) => INT, rounding down (C.4)
+      CONST a := gexpr(args, ty_float, at);
+      check_type(at, ty_float, line);
+      t := ty_int;
+      RETURN "rt_r_floor(" & a & ")";
+   ELSEIF name = "ACTP" OR name = "RADIX" OR name = "EMIN" OR name = "EMAX" THEN
+      % the machine-dependent inquiry functions of C.4: IEEE double precision
+      CONST a := gexpr(args, ty_float, at);
+      check_type(at, ty_float, line);
+      t := ty_int;
+      IF name = "ACTP" THEN
+         RETURN "((rt_int)15)";
+      ELSEIF name = "RADIX" THEN
+         RETURN "((rt_int)2)";
+      ELSEIF name = "EMIN" THEN
+         RETURN "((rt_int)-1021)";
+      END IF;
+      RETURN "((rt_int)1024)";
+   ELSEIF name = "SQRT" OR name = "SIN" OR name = "COS" OR name = "EXP" OR name = "LN" THEN
       % FLOOR is in C.4; the others stand for a mathematical library capsule
       CONST a := gexpr(args, ty_float, at);
       t := ty_float;
@@ -2361,6 +2429,9 @@ ABNORMAL FUNC builtin(READONLY name : STRING[ASCII], CONST tt : node, CONST args
       RETURN "rt_" & lower_s(name) & "()";
    ELSEIF name = "LOCK" THEN
       RETURN "rt_region_enter(" & lock_ref(args, name) & ")";
+   ELSEIF name = "UNLOCK" AND peek_type(args) /= ty_latch THEN
+      % X_LOCK unless the data lock is locked (C.12)
+      RETURN "rt_r_unlock(" & lock_ref(args, name) & ")";
    ELSEIF name = "UNLOCK" THEN
       RETURN "rt_region_leave(" & lock_ref(args, name) & ")";
    ELSEIF name = "COND_LOCK" THEN
@@ -2377,7 +2448,11 @@ ABNORMAL FUNC builtin(READONLY name : STRING[ASCII], CONST tt : node, CONST args
       RETURN "rt_excess_locks(" & lock_ref(args, name) & ")";
    ELSEIF name = "OWNER" THEN
       t := ty_act;
-      RETURN "rt_lock_owner(" & lock_ref(args, name) & ")";
+      RETURN "rt_r_owner(" & lock_ref(args, name) & ")";
+   ELSEIF (name = "SEND_REQUEST" OR name = "SEND_TEST" OR name = "SEND_COMPLETE" OR name = "SEND_REVOKE"
+         OR name = "RECEIVE_REQUEST" OR name = "RECEIVE_TEST" OR name = "RECEIVE_COMPLETE"
+         OR name = "RECEIVE_REVOKE") AND n = 3 THEN
+      RETURN mailbox_low(name, args, line, t);
    ELSEIF name = "FREE" THEN
       % FREE(v) (4.4.3): X_FREE if another pointer refers to the variable
       VAR pv : text;

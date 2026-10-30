@@ -1,0 +1,8 @@
+FLOOR: 2 -3
+X_OVERFLOW: FLOAT
+X_NEG_EXP: FLOAT ** -1
+ACTP, RADIX, EMIN, EMAX: 15 2 -1021 1024
+X_LOCK: UNLOCK of an unlocked data lock
+X_LOCK: OWNER of an unlocked data lock
+OWNER of a locked data lock
+low-level mailbox operations: 5

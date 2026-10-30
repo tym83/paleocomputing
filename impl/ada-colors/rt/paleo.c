@@ -3233,3 +3233,41 @@ void rt_r_delay_act(rt_int t, rt_act *a) {
 }
 
 rt_int rt_r_act_deadline(rt_int t, rt_act *a) { return rt_time() + (t - rt_r_act_time(a)); }
+
+static int x_lock(void) { return rt_exc("X_LOCK"); }
+
+double rt_r_fovf(double v) {
+  if (isinf(v)) rt_raise(RT_X_OVERFLOW);
+  return v;
+}
+
+double rt_r_fpow(double a, rt_int b) {
+  if (b < 0) rt_raise(RT_X_NEG_EXP);
+  return rt_r_fovf(rt_fpow(a, b));
+}
+
+rt_int rt_r_floor(double v) {
+  double f = floor(v);
+  if (!(f >= -9.2233720368547758e18 && f < 9.2233720368547758e18)) rt_raise(RT_X_OVERFLOW);
+  return (rt_int)f;
+}
+
+void rt_r_unlock(rt_lock *l) {
+  if (!l->owner) rt_raise(x_lock());
+  rt_region_leave(l);
+}
+
+rt_act *rt_r_owner(rt_lock *l) {
+  if (!l->owner) rt_raise(x_lock());
+  return rt_lock_owner(l);
+}
+
+static int count_waiters(rt_waiter *w) {
+  int n = 0;
+  for (; w; w = w->next) n++;
+  return n;
+}
+
+int rt_r_can_send(rt_mbox *m) { return m->count < m->cap || count_waiters(m->receivers) > 0; }
+
+int rt_r_can_receive(rt_mbox *m) { return m->count > 0 || count_waiters(m->senders) > 0; }

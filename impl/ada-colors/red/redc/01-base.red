@@ -254,4 +254,5 @@ VAR ty_int, ty_bool, ty_float, ty_ascii, ty_string, ty_void, ty_file, ty_nil : t
 VAR ty_lock, ty_latch, ty_act : typ;
 % ENUM['INPUT, 'OUTPUT, 'UPDATE], the access and use of a file (C.14)
 VAR file_mode_type : typ;
+VAR ty_send_st, ty_receive_st : typ;
 VAR no_cons : cons;

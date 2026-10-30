@@ -628,6 +628,11 @@ PROC init_ascii IMPORTS ALL;
       file_mode_type := new_typ(t_enum);
       file_mode_type.lits := h2;
    END;
+   % SEND_ST and RECEIVE_ST (C.11): the state of a low-level request
+   ty_send_st := new_typ(t_int);
+   ty_send_st.name := mk("SEND_ST");
+   ty_receive_st := new_typ(t_int);
+   ty_receive_st.name := mk("RECEIVE_ST");
 END PROC init_ascii;
 
 FUNC lit_index(CONST lits : node, READONLY name : STRING[ASCII]) => INT;
@@ -907,6 +912,10 @@ ABNORMAL FUNC named_subtype(CONST st : node, OUT c : cons) => typ IMPORTS ALL;
          t := ty_act;
       ELSEIF name = "INT" THEN
          t := ty_int;
+      ELSEIF name = "SEND_ST" THEN
+         t := ty_send_st;
+      ELSEIF name = "RECEIVE_ST" THEN
+         t := ty_receive_st;
       ELSEIF name = "FLOAT" THEN
          t := ty_float;
       ELSE
@@ -1252,7 +1261,7 @@ ABNORMAL FUNC type_name(READONLY name : STRING[ASCII]) => BOOL IMPORTS ALL;
    VAR y : sym := lookup(name);
    IF y = NIL THEN
       RETURN name = "INT" OR name = "BOOL" OR name = "FLOAT" OR name = "ASCII" OR name = "ACT"
-          OR name = "DATA_LOCK" OR name = "LATCH";
+          OR name = "DATA_LOCK" OR name = "LATCH" OR name = "SEND_ST" OR name = "RECEIVE_ST";
    END IF;
    RETURN y.kind = y_type OR y.kind = y_abbrev
        OR (y.kind = y_generic AND (y.decl.b.kind = n_newtype OR y.decl.b.kind = n_ptrtype

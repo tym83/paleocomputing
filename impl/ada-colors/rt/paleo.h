@@ -561,6 +561,13 @@ static inline int rt_r_undef_BOOL(int v) { return v == RT_R_EUNDEF; }
 rt_int rt_r_act_time(rt_act *a);               /* TIME(a) */
 void rt_r_delay_act(rt_int t, rt_act *a);       /* DELAY_UNTIL(t, a) */
 rt_int rt_r_act_deadline(rt_int t, rt_act *a);  /* its real time, for WAIT */
+double rt_r_fovf(double v);                     /* X_OVERFLOW for FLOAT (C.4) */
+double rt_r_fpow(double a, rt_int b);           /* X_NEG_EXP for b < 0 */
+rt_int rt_r_floor(double v);                    /* FLOOR(FLOAT) => INT */
+void rt_r_unlock(rt_lock *l);                   /* X_LOCK if not locked (C.12) */
+rt_act *rt_r_owner(rt_lock *l);
+int rt_r_can_send(rt_mbox *m);                  /* SEND_TEST, RECEIVE_TEST (C.11) */
+int rt_r_can_receive(rt_mbox *m);
 int rt_r_set_le(yset a, yset b);               /* subset (C.9) */
 int rt_r_set_lt(yset a, yset b);               /* strict subset */
 void rt_r_xtag(void);                          /* raises X_TAG (C.6) */
