@@ -3868,3 +3868,10 @@ void rt_g_collect(rt_int *used, rt_int bits, rt_int limit) {
   if (*used + bits > limit) rt_raise(rt_exc("STORAGE_OVERFLOW"));
   *used += bits;
 }
+
+/* the listing file of greenc (RM79 App. B, pragma LIST), "" without one */
+rt_gstr rt_g_listing_file(void) {
+  const char *n = getenv("GREEN_LISTING");
+  if (!n) n = "";
+  return rt_g_s2g(rt_str_copy(rt_str(n, (rt_int)strlen(n))));
+}

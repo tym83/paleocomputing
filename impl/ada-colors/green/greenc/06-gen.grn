@@ -827,6 +827,19 @@
       end if;
    end GEN_LABEL;
 
+   -- the declarations of a body hold pragma INLINE
+   function HAS_INLINE(DECLS : NODE) return BOOLEAN is
+      E : NODE := DECLS;
+   begin
+      while E /= null loop
+         if E.KIND = N_PRAGMA and then E.NAME.all = "INLINE" then
+            return TRUE;
+         end if;
+         E := E.NEXT;
+      end loop;
+      return FALSE;
+   end HAS_INLINE;
+
    -- a body whose statements are only pragma INTERFACE (RM79 13.9)
    function IS_FOREIGN(D : NODE) return BOOLEAN is
    begin
@@ -1068,7 +1081,15 @@
          ARGS := MK("void");
       end if;
       CTYPE(Y.RESULT, CT);
-      HEAD := MK("static " & CT.all & " " & Y.CNAME.all & "(" & ARGS.all & ")");
+      if HAS_INLINE(D.C) and MENTIONS(D.D, D.NAME.all) then
+         -- a recursive body is expanded as far as the C compiler goes
+         HEAD := MK("static inline " & CT.all & " " & Y.CNAME.all & "(" & ARGS.all & ")");
+      elsif HAS_INLINE(D.C) then
+         -- pragma INLINE (RM79 App. B): the body is expanded at each call
+         HEAD := MK("static inline __attribute__((always_inline)) " & CT.all & " " & Y.CNAME.all & "(" & ARGS.all & ")");
+      else
+         HEAD := MK("static " & CT.all & " " & Y.CNAME.all & "(" & ARGS.all & ")");
+      end if;
       PUT_TO(OUT_PROTOS, HEAD.all & ";");
       PUT_TO(OUT_FRAMES, "struct " & FRAME.all & " { int dummy;");
       SPLICE(OUT_FRAMES, FIELDS_BUF);

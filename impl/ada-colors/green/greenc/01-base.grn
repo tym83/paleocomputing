@@ -463,6 +463,11 @@ procedure GREENC is
    -- pragma INTERFACE seen in the statements of the body being parsed (RM79 13.9)
    SAW_INTERFACE : BOOLEAN := FALSE;
    REPS : REP;
+   -- the listing (RM79 App. B): pragma LIST turns it off and on, PAGE starts
+   -- a page, at these lines of the source
+   LISTING_LINES : array (1 .. 10000) of INTEGER;
+   LISTING_WHAT : array (1 .. 10000) of CHARACTER;
+   NLISTING : INTEGER := 0;
    -- the predefined units may name the runtime's helpers $NAME
    PRELUDE_LEX : BOOLEAN := FALSE;
    ADDRS : ADDR;

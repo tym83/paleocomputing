@@ -33,6 +33,16 @@
    -- the pragmas of RM79 App. B have their arguments checked; the
    -- configuration pragmas take effect at once (RM79 13.7); a pragma not
    -- known here has no effect
+   -- a change of the listing at a line of the source: N (on), F (off), P (page)
+   procedure LISTING_MARK(LINE : INTEGER; WHAT : CHARACTER) is
+   begin
+      if COMPILING_SOURCE and NLISTING < 10000 then
+         NLISTING := NLISTING + 1;
+         LISTING_LINES(NLISTING) := LINE;
+         LISTING_WHAT(NLISTING) := WHAT;
+      end if;
+   end LISTING_MARK;
+
    procedure CHECK_PRAGMA(X : NODE) is
       P : STRING := X.NAME.all;
       N : INTEGER := LIST_LEN(X.A);
@@ -41,6 +51,9 @@
       if P = "PAGE" or P = "INLINE" then
          if N /= 0 then
             FAIL(X.LINE, "pragma " & P & " takes no argument (RM79 App. B)");
+         end if;
+         if P = "PAGE" then
+            LISTING_MARK(X.LINE, "P");
          end if;
       elsif P = "LIST" or P = "OPTIMIZE" or P = "CREATION" or P = "INTERFACE" or P = "SYSTEM" then
          if N /= 1 or else A.KIND /= N_NAME then
@@ -52,6 +65,9 @@
             FAIL(X.LINE, "pragma OPTIMIZE(TIME) or OPTIMIZE(SPACE) (RM79 App. B)");
          elsif P = "CREATION" and then A.NAME.all /= "STATIC" and then A.NAME.all /= "DYNAMIC" then
             FAIL(X.LINE, "pragma CREATION(STATIC) or CREATION(DYNAMIC) (RM79 9.2)");
+         end if;
+         if P = "LIST" then
+            LISTING_MARK(X.LINE, A.NAME.all(2));
          end if;
          if P = "OPTIMIZE" then
             CONF_OPTIMIZE := A.NAME;

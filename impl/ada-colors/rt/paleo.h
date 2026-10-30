@@ -412,6 +412,7 @@ void rt_g_collect(rt_int *used, rt_int bits, rt_int limit);
 rt_gstr rt_g_get_word(rt_int h);
 rt_gstr rt_g_get_real(rt_int h);
 rt_gstr rt_g_name(rt_int h);
+rt_gstr rt_g_listing_file(void);
 void rt_g_fget_str(rt_int h, rt_gstr *s);
 
 #endif

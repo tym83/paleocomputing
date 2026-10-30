@@ -818,6 +818,50 @@
       return FALSE;
    end BODY_FOLLOWS;
 
+   -- the file GREEN_LISTING names, "" without it
+   function LISTING_FILE return STRING is
+   begin
+      pragma INTERFACE(C);
+   end LISTING_FILE;
+
+   -- the listing of the source, numbered, as pragmas LIST and PAGE ask
+   -- (RM79 App. B), to the file GREEN_LISTING names
+   procedure PRINT_LISTING(LINES : INTEGER) is
+      LNAME : STRING := LISTING_FILE;
+      F : OUT_FILE;
+      ON : BOOLEAN := TRUE;
+      K : INTEGER;
+   begin
+      if LNAME'LENGTH = 0 then
+         return;
+      end if;
+      CREATE(F, LNAME);
+      for L in 1 .. LINES loop
+         for M in 1 .. NLISTING loop
+            if LISTING_LINES(M) = L and LISTING_WHAT(M) = "N" then
+               ON := TRUE;
+            end if;
+         end loop;
+         if ON then
+            PUT(F, L, 5);
+            PUT(F, "  ");
+            if SRC_LINES(L) /= null then
+               PUT(F, SRC_LINES(L).all);
+            end if;
+            PUT(F, NEWLINE);
+         end if;
+         for M in 1 .. NLISTING loop
+            if LISTING_LINES(M) = L and LISTING_WHAT(M) = "F" then
+               ON := FALSE;
+            elsif LISTING_LINES(M) = L and LISTING_WHAT(M) = "P" then
+               PUT(F, FF);
+               PUT(F, NEWLINE);
+            end if;
+         end loop;
+      end loop;
+      CLOSE(F);
+   end PRINT_LISTING;
+
    -- the main program is the last unit that is not a subunit
    function LAST_UNIT(P : NODE) return BOOLEAN is
       Q : NODE := P.NEXT;
@@ -930,6 +974,7 @@ begin
    COMPILING_SOURCE := TRUE;
    COMPILATION(UNITS);
    COMPILING_SOURCE := FALSE;
+   PRINT_LISTING(SRC_LINE);
    LOADED := MK(",");
    LIBRARY_UNITS;
    if UNITS = null then
