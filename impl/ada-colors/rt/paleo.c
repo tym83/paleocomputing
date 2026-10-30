@@ -2224,8 +2224,16 @@ int rt_g_aborted(void) {
   return 0;
 }
 
+/* addresses are those of the simulated machine (RM79 13.5): the storage
+ * units go through the memory and the windows */
+void rt_g_load(rt_int a, rt_int n, unsigned char *buf);
+void rt_g_save(rt_int a, rt_int n, const unsigned char *buf);
 void rt_g_move_bytes(rt_int from, rt_int to, rt_int n) {
-  if (n > 0) memmove((void *)(intptr_t)to, (const void *)(intptr_t)from, (size_t)n);
+  if (n <= 0) return;
+  unsigned char *b = rt_alloc((size_t)n);
+  rt_g_load(from, n, b);
+  rt_g_save(to, n, b);
+  free(b);
 }
 
 /* ---- GREEN: the rest of RM79 (attributes, real arithmetic, exceptions) ---- */
@@ -3750,19 +3758,35 @@ void y_device(ysig *s, rt_int address) {
 /* a SIGNAL as a component of an array: tied to its monitor by y_sig_init */
 const ydesc y_d_sig = {YK_OPAQUE, sizeof(ysig), 0, 0, {0}, {0}, NULL, 0, NULL, NULL};
 
-/* ---- GREEN: the simulated machine (RM79 13.5, 13.5.1, 13.8, 14.6) ----------
- * The memory has SYSTEM'MEMORY_SIZE storage units of 8 bits; objects with an
- * address specification live in it. Code statements run on eight registers
- * of one word (8 storage units). Device 0 is the interrupt controller: an
- * interrupt at an address is an entry call by a hardware task of the highest
- * priority, so interrupts queue on their entry. Device 1 is the console,
- * device 2 the clock; devices 3 to 15 hold the last word sent to them. */
+/* ---- GREEN: the simulated machine (RM79 13, 14.6) ------------------------------
+ * The memory has SYSTEM'MEMORY_SIZE storage units of 8 bits. Every value has
+ * a layout (g_lay, given by greenc for each type) that says how it lies in
+ * storage: the bits of a scalar, packed or not, the codes of an enumeration
+ * type, where the components of arrays and records start, as the
+ * representation specifications declare them (13.1 - 13.4). A program sees
+ * storage through 'ADDRESS, code statements, LOW_LEVEL_IO, UNSAFE_CONVERSION
+ * and INPUT_OUTPUT, and always in that layout:
+ * - an object with an address specification is a view: its value in the
+ *   program's form, kept in agreement with the memory after every statement
+ *   that may change it (rt_g_sync), so objects at one address overlay;
+ * - any other object gets an address above the memory, a window, when
+ *   'ADDRESS first asks for it; a window shows the object in its layout, and
+ *   what is written there goes back into the object.
+ * Code statements run on eight registers of one word (8 storage units).
+ * Device 0 is the interrupt controller: an interrupt is an entry call by a
+ * hardware task of the highest priority, so interrupts queue on their entry,
+ * and its in parameters are the words of the data registers (devices 6 ..
+ * 15 for LOW_LEVEL_IO, R1 .. R7 for the INTR instruction), in the layouts
+ * of the parameters. Device 1 is the console, 2 the clock; 3 holds an
+ * address in memory, 4 reads and writes the storage unit there (and moves
+ * on), 5 prints storage units from there in hexadecimal. */
 
 static unsigned char *g_mem;
 static rt_int g_mem_size = 1048576;
 static rt_int g_reg[8];
 static rt_int g_dev[16];
 static rt_int g_nirq;
+int rt_g_nviews;
 
 void rt_g_set_memory(rt_int n) {
   if (n > 0 && !g_mem) g_mem_size = n;
@@ -3774,23 +3798,481 @@ unsigned char *rt_g_mem(rt_int addr, rt_int n) {
   return g_mem + addr;
 }
 
-static rt_int g_word(rt_int a) {
-  rt_int v;
-  memcpy(&v, rt_g_mem(a, 8), 8);
-  return v;
+/* ---- layouts ---- */
+
+static rt_int g_round(rt_int v, rt_int m) { return m <= 1 ? v : ((v + m - 1) / m) * m; }
+
+static void g_put_bits(unsigned char *img, rt_int off, rt_int n, uint64_t x) {
+  for (rt_int i = 0; i < n; i++) {
+    rt_int b = off + i;
+    int bit = i < 64 ? (int)((x >> i) & 1) : 0;
+    if (bit) img[b >> 3] |= (unsigned char)(1u << (b & 7));
+    else img[b >> 3] &= (unsigned char)~(1u << (b & 7));
+  }
 }
 
-static void g_set_word(rt_int a, rt_int v) { memcpy(rt_g_mem(a, 8), &v, 8); }
+static uint64_t g_get_bits(const unsigned char *img, rt_int off, rt_int n) {
+  uint64_t x = 0;
+  for (rt_int i = 0; i < n && i < 64; i++) {
+    rt_int b = off + i;
+    if ((img[b >> 3] >> (b & 7)) & 1) x |= (uint64_t)1 << i;
+  }
+  return x;
+}
+
+typedef struct { rt_int lo, hi, lo2, hi2; char *p; } g_arr;
+
+static int g_scalar(const g_lay *L) { return L->k != 'a' && L->k != 'r'; }
+
+/* the bits of the place of component i of an array: its layout's, rounded to
+ * a storage unit unless packed */
+static rt_int g_comp_bits(const g_lay *L, const void *e) {
+  if (L->stride >= 0) return L->stride;
+  rt_int b = rt_g_lay_bits(L->elem, e);
+  if (b < 0) return -1;
+  return L->packed ? b : g_round(b, 8);
+}
+
+typedef struct { rt_int off, vstart, total; } g_walk;
+
+/* where component i of a record starts, in bits; its width in *w */
+static rt_int g_place(const g_lay *L, const void *v, rt_int i, g_walk *k, rt_int *w) {
+  const g_fld *f = &L->f[i];
+  const void *c = v ? (const char *)v + f->coff : NULL;
+  rt_int b = f->width >= 0 ? f->width : rt_g_lay_bits(f->lay, c);
+  if (b < 0) return -1;
+  if (!L->packed && f->width < 0) b = g_round(b, 8);
+  if (f->variant) {
+    if (k->vstart < 0) k->vstart = k->off;
+    int first = 1;
+    for (rt_int j = 0; j < i; j++)
+      if (L->f[j].variant == f->variant) first = 0;
+    if (first) k->off = k->vstart;
+  }
+  rt_int st = f->at >= 0 ? f->at : (L->packed ? k->off : g_round(k->off, 8));
+  k->off = st + b;
+  if (k->off > k->total) k->total = k->off;
+  *w = b;
+  return st;
+}
+
+static int g_present(const g_fld *f, const void *v) { return !v || !f->present || f->present(v); }
+
+rt_int rt_g_lay_bits(const g_lay *L, const void *v) {
+  if (g_scalar(L)) return L->bits;
+  if (L->k == 'a') {
+    const g_arr *a = v;
+    rt_int n = a ? (a->hi >= a->lo ? a->hi - a->lo + 1 : 0) : L->count;
+    if (n < 0) return -1;
+    if (L->stride >= 0 || !a || !a->p) {
+      rt_int s = g_comp_bits(L, NULL);
+      return s < 0 ? -1 : n * s;
+    }
+    rt_int t = 0;
+    for (rt_int i = 0; i < n; i++) {
+      rt_int s = g_comp_bits(L, a->p + (size_t)i * L->elem->csize);
+      if (s < 0) return -1;
+      t += s;
+    }
+    return t;
+  }
+  if (L->bits > 0) return L->bits;
+  g_walk k = {0, -1, 0};
+  for (rt_int i = 0; i < L->nf; i++) {
+    rt_int w;
+    if (!g_present(&L->f[i], v)) continue;
+    if (g_place(L, v, i, &k, &w) < 0) return -1;
+  }
+  return L->packed ? k.total : g_round(k.total, 8);
+}
+
+rt_int rt_g_window(void *c, const g_lay *L);
+static void *g_window_object(rt_int a);
+
+static void g_enc_w(const g_lay *L, const void *v, unsigned char *img, rt_int off, rt_int w);
+static void g_enc(const g_lay *L, const void *v, unsigned char *img, rt_int off) { g_enc_w(L, v, img, off, -1); }
+
+/* W: the bits a record representation gives a scalar component, -1: its own */
+static void g_enc_w(const g_lay *L, const void *v, unsigned char *img, rt_int off, rt_int w) {
+  int64_t x = 0;
+  rt_int nb = w >= 0 && w <= 64 ? w : L->bits;
+  switch (L->k) {
+  case 'i': case 'u': x = *(const rt_int *)v; break;
+  case 'e': x = *(const int *)v; break;
+  case 'b': x = *(const unsigned char *)v; break;
+  case 'f': memcpy(&x, v, 8); g_put_bits(img, off, 64, (uint64_t)x); return;
+  case 'h': {
+    float f = (float)*(const double *)v;
+    uint32_t y;
+    memcpy(&y, &f, 4);
+    g_put_bits(img, off, 32, y);
+    return;
+  }
+  case 'x': x = (int64_t)llround(*(const double *)v / L->small()); break;
+  case 'p': {
+    void *q = *(void *const *)v;
+    x = q ? rt_g_window(q, L->elem) : 0;
+    break;
+  }
+  case 'o': g_put_bits(img, off, L->bits, 0); return;
+  case 'a': {
+    const g_arr *a = v;
+    rt_int n = a->hi >= a->lo ? a->hi - a->lo + 1 : 0;
+    for (rt_int i = 0; i < n; i++) {
+      const char *e = a->p + (size_t)i * L->elem->csize;
+      g_enc(L->elem, e, img, off);
+      off += g_comp_bits(L, e);
+    }
+    return;
+  }
+  case 'r': {
+    g_walk k = {0, -1, 0};
+    for (rt_int i = 0; i < L->nf; i++) {
+      rt_int w;
+      if (!g_present(&L->f[i], v)) continue;
+      rt_int st = g_place(L, v, i, &k, &w);
+      g_enc_w(L->f[i].lay, (const char *)v + L->f[i].coff, img, off + st, L->f[i].width);
+    }
+    return;
+  }
+  }
+  if (L->codes && x >= 0 && x < L->ncodes) x = L->codes[x];
+  x -= L->bias;
+  g_put_bits(img, off, nb, (uint64_t)x);
+}
+
+static void g_dec_w(const g_lay *L, void *v, const unsigned char *img, rt_int off, rt_int w);
+static void g_dec(const g_lay *L, void *v, const unsigned char *img, rt_int off) { g_dec_w(L, v, img, off, -1); }
+
+static void g_dec_w(const g_lay *L, void *v, const unsigned char *img, rt_int off, rt_int w) {
+  uint64_t u;
+  int64_t x;
+  rt_int nb = w >= 0 && w <= 64 ? w : L->bits;
+  switch (L->k) {
+  case 'f': u = g_get_bits(img, off, 64); memcpy(v, &u, 8); return;
+  case 'h': {
+    uint32_t y = (uint32_t)g_get_bits(img, off, 32);
+    float f;
+    memcpy(&f, &y, 4);
+    *(double *)v = f;
+    return;
+  }
+  case 'o': return;
+  case 'a': {
+    g_arr *a = v;
+    if (!a->p) {
+      rt_int n = L->count >= 0 ? L->count : 0;
+      a->lo = 1;
+      a->hi = n;
+      a->lo2 = a->hi2 = 1;
+      a->p = rt_alloc((size_t)(n ? n : 1) * L->elem->csize);
+      memset(a->p, 0, (size_t)(n ? n : 1) * L->elem->csize);
+    }
+    rt_int n = a->hi >= a->lo ? a->hi - a->lo + 1 : 0;
+    for (rt_int i = 0; i < n; i++) {
+      char *e = a->p + (size_t)i * L->elem->csize;
+      g_dec(L->elem, e, img, off);
+      off += g_comp_bits(L, e);
+    }
+    return;
+  }
+  case 'r': {
+    g_walk k = {0, -1, 0};
+    for (rt_int i = 0; i < L->nf; i++) {
+      rt_int w;
+      if (!g_present(&L->f[i], v)) continue;
+      rt_int st = g_place(L, v, i, &k, &w);
+      g_dec_w(L->f[i].lay, (char *)v + L->f[i].coff, img, off + st, L->f[i].width);
+    }
+    return;
+  }
+  }
+  u = g_get_bits(img, off, nb);
+  x = (int64_t)u;
+  if ((L->k == 'i' || L->k == 'x') && nb < 64 && nb > 0 && (u >> (nb - 1)) & 1) x = (int64_t)(u | (~(uint64_t)0 << nb));
+  x += L->bias;
+  if (L->codes) {
+    rt_int i = 0;
+    while (i < L->ncodes && L->codes[i] != x) i++;
+    if (i < L->ncodes) x = i;
+  }
+  switch (L->k) {
+  case 'i': case 'u': *(rt_int *)v = x; break;
+  case 'e': *(int *)v = (int)x; break;
+  case 'b': *(unsigned char *)v = (unsigned char)x; break;
+  case 'x': *(double *)v = (double)x * L->small(); break;
+  case 'p': *(void **)v = x ? g_window_object(x) : NULL; break;
+  }
+}
+
+/* the image of a value: (bits + 7) / 8 storage units, and a spare word */
+static unsigned char *g_image(const g_lay *L, const void *v, rt_int *bits) {
+  rt_int b = rt_g_lay_bits(L, v);
+  if (b < 0) b = 0;
+  unsigned char *img = rt_alloc((size_t)(b + 7) / 8 + 16);
+  memset(img, 0, (size_t)(b + 7) / 8 + 16);
+  g_enc(L, v, img, 0);
+  *bits = b;
+  return img;
+}
+
+/* the offset in bits of the component at comp in the value at root, -1 */
+static rt_int g_off(const g_lay *L, const char *root, const char *comp) {
+  if (comp == root) return 0;
+  if (L->k == 'a') {
+    const g_arr *a = (const g_arr *)root;
+    rt_int n = a->hi >= a->lo ? a->hi - a->lo + 1 : 0, off = 0;
+    size_t cs = L->elem->csize;
+    if (comp < a->p || comp >= a->p + (size_t)n * cs) {
+      /* a component of a component that holds its own components: a row */
+      if (L->elem->k != 'a' && L->elem->k != 'r') return -1;
+      for (rt_int j = 0; j < n; j++) {
+        rt_int o = g_off(L->elem, a->p + (size_t)j * cs, comp);
+        if (o >= 0) return off + o;
+        off += g_comp_bits(L, a->p + (size_t)j * cs);
+      }
+      return -1;
+    }
+    rt_int i = (rt_int)((comp - a->p) / cs);
+    for (rt_int j = 0; j < i; j++) off += g_comp_bits(L, a->p + (size_t)j * cs);
+    rt_int o = g_off(L->elem, a->p + (size_t)i * cs, comp);
+    return o < 0 ? -1 : off + o;
+  }
+  if (L->k == 'r') {
+    g_walk k = {0, -1, 0};
+    for (rt_int i = 0; i < L->nf; i++) {
+      rt_int w;
+      if (!g_present(&L->f[i], root)) continue;
+      rt_int st = g_place(L, root, i, &k, &w);
+      const char *c = root + L->f[i].coff;
+      if (comp >= c && comp < c + L->f[i].lay->csize) {
+        rt_int o = g_off(L->f[i].lay, c, comp);
+        if (o >= 0) return st + o;
+      }
+      if (L->f[i].lay->k == 'a') {
+        rt_int o = g_off(L->f[i].lay, c, comp);
+        if (o >= 0) return st + o;
+      }
+    }
+  }
+  return -1;
+}
+
+/* ---- views and windows ---- */
+
+typedef struct {
+  char *c;
+  const g_lay *L;
+  rt_int addr, bytes;
+  unsigned char *base;      /* the image last agreed with the memory */
+} g_view;
+static g_view *g_views;
+static rt_int g_cviews;
+
+typedef struct {
+  char *c;
+  const g_lay *L;
+  rt_int base, bytes;
+} g_win;
+static g_win *g_wins;
+static rt_int g_nwins, g_cwins, g_next_win = -1;
+
+/* an object at an address (RM79 13.5): KEEP when it has its value already,
+ * else it takes what the memory holds */
+void rt_g_view(void *c, const g_lay *L, rt_int addr, int keep) {
+  rt_int bits;
+  unsigned char *img = g_image(L, c, &bits);
+  rt_int n = (bits + 7) / 8;
+  unsigned char *m = rt_g_mem(addr, n ? n : 1);
+  if (L->align > 1 && addr % L->align) rt_raise(RT_X_RANGE);
+  if (rt_g_nviews == g_cviews) {
+    g_cviews = g_cviews ? g_cviews * 2 : 16;
+    g_views = realloc(g_views, (size_t)g_cviews * sizeof *g_views);
+  }
+  g_view *V = &g_views[rt_g_nviews++];
+  V->c = c;
+  V->L = L;
+  V->addr = addr;
+  V->bytes = n;
+  V->base = rt_alloc((size_t)n + 16);
+  if (keep) {
+    memcpy(m, img, (size_t)n);
+  } else {
+    memcpy(img, m, (size_t)n);
+    g_dec(L, c, img, 0);
+  }
+  memcpy(V->base, m, (size_t)n);
+  free(img);
+}
+
+/* the views and the memory agree again: what the program changed in a view
+ * since they last agreed goes to the memory, the rest comes from it */
+void rt_g_sync(void) {
+  for (int pass = 0; pass < 2; pass++)
+    for (rt_int i = 0; i < rt_g_nviews; i++) {
+      g_view *V = &g_views[i];
+      rt_int bits;
+      unsigned char *h = g_image(V->L, V->c, &bits);
+      unsigned char *m = rt_g_mem(V->addr, V->bytes);
+      int differ = 0;
+      for (rt_int k = 0; k < V->bytes; k++) {
+        unsigned char mask = h[k] ^ V->base[k];
+        unsigned char n = (unsigned char)((m[k] & ~mask) | (h[k] & mask));
+        m[k] = n;
+        V->base[k] = n;
+        if (n != h[k]) differ = 1;
+      }
+      if (differ) g_dec(V->L, V->c, V->base, 0);
+      free(h);
+    }
+}
+
+static g_view *g_view_of(const void *c) {
+  for (rt_int i = 0; i < rt_g_nviews; i++)
+    if (g_views[i].c == c) return &g_views[i];
+  return NULL;
+}
+
+/* the address of an object that has none: a window above the memory */
+rt_int rt_g_window(void *c, const g_lay *L) {
+  g_view *V = g_view_of(c);
+  if (V) return V->addr;
+  for (rt_int i = 0; i < g_nwins; i++)
+    if (g_wins[i].c == c) return g_wins[i].base;
+  if (g_next_win < 0) g_next_win = g_round(g_mem_size, 8);
+  if (g_nwins == g_cwins) {
+    g_cwins = g_cwins ? g_cwins * 2 : 32;
+    g_wins = realloc(g_wins, (size_t)g_cwins * sizeof *g_wins);
+  }
+  g_win *w = &g_wins[g_nwins++];
+  rt_int b = rt_g_lay_bits(L, c);
+  w->c = c;
+  w->L = L;
+  w->bytes = b > 0 ? (b + 7) / 8 : 1;
+  w->base = g_round(g_next_win, L->align > 1 ? L->align : 1);
+  g_next_win = w->base + w->bytes;
+  return w->base;
+}
+
+static void *g_window_object(rt_int a) {
+  for (rt_int i = 0; i < g_nwins; i++)
+    if (g_wins[i].base == a) return g_wins[i].c;
+  rt_raise(rt_exc("ACCESS_ERROR"));
+}
+
+/* X'ADDRESS of the component at comp of the object at root (RM79 13.7) */
+rt_int rt_g_address(void *root, const g_lay *L, void *comp) {
+  rt_int base = rt_g_window(root, L), o = g_off(L, root, comp);
+  return base + (o > 0 ? o / 8 : 0);
+}
+
+/* storage units of the memory or of the windows */
+static g_win *g_win_at(rt_int a) {
+  for (rt_int i = 0; i < g_nwins; i++)
+    if (a >= g_wins[i].base && a < g_wins[i].base + g_wins[i].bytes) return &g_wins[i];
+  return NULL;
+}
+
+void rt_g_load(rt_int a, rt_int n, unsigned char *buf) {
+  g_win *last = NULL;
+  unsigned char *img = NULL;
+  rt_int bits;
+  rt_g_sync();
+  for (rt_int k = 0; k < n; k++) {
+    rt_int x = a + k;
+    if (x >= 0 && x < g_mem_size) {
+      buf[k] = *rt_g_mem(x, 1);
+      continue;
+    }
+    g_win *w = g_win_at(x);
+    if (!w) rt_raise(RT_X_RANGE);
+    if (w != last) {
+      free(img);
+      img = g_image(w->L, w->c, &bits);
+      last = w;
+    }
+    buf[k] = img[x - w->base];
+  }
+  free(img);
+}
+
+void rt_g_save(rt_int a, rt_int n, const unsigned char *buf) {
+  for (rt_int k = 0; k < n; k++) {
+    rt_int x = a + k;
+    if (x >= 0 && x < g_mem_size) {
+      *rt_g_mem(x, 1) = buf[k];
+      continue;
+    }
+    g_win *w = g_win_at(x);
+    if (!w) rt_raise(RT_X_RANGE);
+    rt_int bits;
+    unsigned char *img = g_image(w->L, w->c, &bits);
+    img[x - w->base] = buf[k];
+    g_dec(w->L, w->c, img, 0);
+    free(img);
+  }
+  rt_g_sync();
+}
+
+/* UNSAFE_CONVERSION (RM79 13.10): the storage of a value of type S read as a
+ * value of type T; the bits T has beyond those of S are zero */
+void rt_g_unsafe(const g_lay *LS, const void *s, const g_lay *LT, void *t) {
+  rt_int bs;
+  unsigned char *si = g_image(LS, s, &bs);
+  g_arr *a = (g_arr *)t;
+  if (LT->k == 'a' && !a->p && LT->count < 0) {
+    rt_int cb = g_comp_bits(LT, NULL);
+    rt_int n = cb > 0 ? (bs + cb - 1) / cb : 0;
+    a->lo = 1;
+    a->hi = n;
+    a->lo2 = a->hi2 = 1;
+    a->p = rt_alloc((size_t)(n ? n : 1) * LT->elem->csize);
+    memset(a->p, 0, (size_t)(n ? n : 1) * LT->elem->csize);
+  }
+  rt_int bt = rt_g_lay_bits(LT, LT->k == 'a' && !a->p ? NULL : t);
+  rt_int nb = (bs > bt ? bs : bt) + 7;
+  unsigned char *img = rt_alloc((size_t)nb / 8 + 16);
+  memset(img, 0, (size_t)nb / 8 + 16);
+  memcpy(img, si, (size_t)(bs + 7) / 8);
+  if (bs % 8) img[bs / 8] &= (unsigned char)((1u << (bs % 8)) - 1);
+  g_dec(LT, t, img, 0);
+  free(img);
+  free(si);
+}
+
+/* the place of component i of a record: POSITION, FIRST_BIT or LAST_BIT */
+rt_int rt_g_component(const g_lay *L, const void *v, rt_int i, int what) {
+  g_walk k = {0, -1, 0};
+  rt_int st = 0, w = 0;
+  for (rt_int j = 0; j <= i; j++) {
+    if (!g_present(&L->f[j], v) && j != i) continue;
+    st = g_place(L, v, j, &k, &w);
+  }
+  if (what == 0) return st / 8;
+  if (what == 1) return st % 8;
+  return st % 8 + w - 1;
+}
+
+/* ---- interrupts ---- */
 
 typedef struct g_irq {
   rt_int addr;
   rt_entry *e;
   rt_act *owner;
+  size_t psize;
+  rt_int np;
+  const g_lay *const *lays;
+  const size_t *offs;
   struct g_irq *next;
 } g_irq;
 static g_irq *g_irqs;
 
 void rt_g_bind_interrupt(rt_int addr, rt_entry *e, rt_act *owner) {
+  rt_g_bind_interrupt_p(addr, e, owner, 16, 0, NULL, NULL);
+}
+
+void rt_g_bind_interrupt_p(rt_int addr, rt_entry *e, rt_act *owner, size_t psize, rt_int np,
+                           const g_lay *const *lays, const size_t *offs) {
   g_irq *q;
   for (q = g_irqs; q; q = q->next)
     if (q->addr == addr) break;
@@ -3802,27 +4284,71 @@ void rt_g_bind_interrupt(rt_int addr, rt_entry *e, rt_act *owner) {
   }
   q->e = e;
   q->owner = owner;
+  q->psize = psize;
+  q->np = np;
+  q->lays = lays;
+  q->offs = offs;
 }
+
+typedef struct {
+  g_irq *q;
+  void *params;
+} g_call;
 
 static void g_irq_call(void *arg) {
-  g_irq *q = arg;
-  char params[16];
-  if (rt_is_active(q->owner)) rt_entry_call(q->e, params);
+  g_call *k = arg;
+  if (rt_is_active(k->q->owner)) rt_entry_call(k->q->e, k->params);
 }
 
-void rt_g_interrupt(rt_int addr) {
+/* an interrupt at an address, with the control information WORDS gives */
+static void g_interrupt(rt_int addr, const rt_int *words, rt_int nwords) {
   static rt_taskdecl hardware;
   g_nirq++;
   for (g_irq *q = g_irqs; q; q = q->next)
     if (q->addr == addr) {
       if (!rt_is_active(q->owner)) return;   /* nobody listens: it is lost */
+      g_call *k = rt_alloc(sizeof *k);
+      k->q = q;
+      k->params = rt_alloc(q->psize + 16);
+      memset(k->params, 0, q->psize + 16);
+      /* each in parameter takes the next words, in its layout */
+      rt_int w = 0;
+      for (rt_int i = 0; i < q->np; i++) {
+        rt_int bits = rt_g_lay_bits(q->lays[i], NULL), n = bits > 0 ? (bits + 63) / 64 : 1;
+        unsigned char img[8 * 16 + 16];
+        memset(img, 0, sizeof img);
+        for (rt_int j = 0; j < n && j < 16; j++) {
+          rt_int x = w + j < nwords ? words[w + j] : 0;
+          memcpy(img + 8 * j, &x, 8);
+        }
+        g_dec(q->lays[i], (char *)k->params + q->offs[i], img, 0);
+        w += n;
+      }
       rt_act *a = rt_alloc(sizeof *a);
       memset(a, 0, sizeof *a);
       a->prio = 255;
       a->has_prio = 1;
-      rt_create(a, &hardware, g_irq_call, q);
+      rt_create(a, &hardware, g_irq_call, k);
       return;
     }
+}
+
+void rt_g_interrupt(rt_int addr) { g_interrupt(addr, g_dev + 6, 10); }
+
+/* ---- code statements (RM79 13.8) ---- */
+
+static rt_int g_word(rt_int a) {
+  unsigned char b[8];
+  rt_int v;
+  rt_g_load(a, 8, b);
+  memcpy(&v, b, 8);
+  return v;
+}
+
+static void g_set_word(rt_int a, rt_int v) {
+  unsigned char b[8];
+  memcpy(b, &v, 8);
+  rt_g_save(a, 8, b);
 }
 
 void rt_g_machine(int op, rt_int r, rt_int a) {
@@ -3844,24 +4370,55 @@ void rt_g_machine(int op, rt_int r, rt_int a) {
   case 8: *x = -*x; break;                                 /* NEG */
   case 9: rt_g_putc((int)(*x & 127)); break;               /* OUTC */
   case 10: rt_g_put_int(*x, 0); break;                     /* OUTN */
-  case 11: rt_g_interrupt(a); break;                       /* INTR */
+  case 11: g_interrupt(a, g_reg + 1, 7); break;            /* INTR */
   default: rt_raise(RT_X_RANGE);
   }
 }
 
+/* ---- LOW_LEVEL_IO (RM79 14.6) ---- */
+
 void rt_g_send_control(rt_int device, rt_int *data) {
   if (device < 0 || device > 15) rt_raise(RT_X_RANGE);
-  if (device == 0) rt_g_interrupt(*data);
-  else if (device == 1) rt_g_putc((int)(*data & 255));
-  else if (device > 2) g_dev[device] = *data;
+  if (device == 0) {
+    rt_g_interrupt(*data);
+  } else if (device == 1) {
+    rt_g_putc((int)(*data & 255));
+  } else if (device == 3) {
+    g_dev[3] = *data;
+  } else if (device == 4) {
+    unsigned char b = (unsigned char)*data;
+    rt_g_save(g_dev[3], 1, &b);
+    g_dev[3]++;
+  } else if (device == 5) {
+    char t[4];
+    for (rt_int k = 0; k < *data; k++) {
+      unsigned char b;
+      rt_g_load(g_dev[3] + k, 1, &b);
+      snprintf(t, sizeof t, "%02X", b);
+      if (k > 0) rt_g_putc(' ');
+      rt_g_put(rt_str(t, 2));
+    }
+  } else if (device > 5) {
+    g_dev[device] = *data;
+  }
 }
 
 void rt_g_receive_control(rt_int device, rt_int *data) {
   if (device < 0 || device > 15) rt_raise(RT_X_RANGE);
-  if (device == 0) *data = g_nirq;
-  else if (device == 1) *data = rt_getc();
-  else if (device == 2) *data = rt_time();
-  else *data = g_dev[device];
+  if (device == 0) {
+    *data = g_nirq;
+  } else if (device == 1) {
+    *data = rt_getc();
+  } else if (device == 2) {
+    *data = rt_time();
+  } else if (device == 4) {
+    unsigned char b;
+    rt_g_load(g_dev[3], 1, &b);
+    *data = b;
+    g_dev[3]++;
+  } else {
+    *data = g_dev[device];
+  }
 }
 
 void rt_g_collect(rt_int *used, rt_int bits, rt_int limit) {

@@ -288,18 +288,16 @@
                EMIT(ACC.all & " = " & X.all & ";");
                PA := PENDING_ADDRESS(E.NAME.all);
                if PA /= null then
-                  PLACE_OBJECT(PA, Y, T, ACC);
-                  PLACE_COMPONENTS(PA, T, ACC.all, E.LINE);
+                  PLACE_OBJECT(PA, Y, T, C, ACC.all, TRUE, E.LINE);
                end if;
             else
                PA := PENDING_ADDRESS(E.NAME.all);
-               if PA /= null and T.KIND /= T_ARRAY then
-                  -- the object is a place of the memory of the machine (RM79 13.5)
-                  PLACE_OBJECT(PA, Y, T, ACC);
-               else
-                  STORAGE(E.NAME.all, T, ACC);
-               end if;
+               STORAGE(E.NAME.all, T, ACC);
                INIT_STORAGE(ACC.all, T, C);
+               if PA /= null and E.B = null then
+                  -- the object is a place of the memory of the machine (RM79 13.5)
+                  PLACE_OBJECT(PA, Y, T, C, ACC.all, FALSE, E.LINE);
+               end if;
                if E.B /= null then
                   if RESTRICTED_HERE(T) then
                      FAIL(E.LINE, "a restricted type has no assignment: no initial value (RM79 7.4)");
@@ -318,16 +316,16 @@
                   ASSIGN_CODE(ACC.all, T, V.all, C, X);
                   EMIT(X.all);
                end if;
-               if PA /= null and T.KIND = T_ARRAY then
-                  PLACE_OBJECT(PA, Y, T, ACC);
-                  PLACE_COMPONENTS(PA, T, ACC.all, E.LINE);
+               if PA /= null and E.B /= null then
+                  PLACE_OBJECT(PA, Y, T, C, ACC.all, TRUE, E.LINE);
                end if;
+            end if;
+            if HAS_VIEWS and E.B /= null then
+               EMIT("G_SYNC();");
             end if;
             Y.T := T;
             Y.C := C;
-            if PA = null or T.KIND = T_ARRAY then
-               BIND(Y, ACC);
-            end if;
+            BIND(Y, ACC);
             DEFINE(Y, E.LINE);
          when 41 =>
             RESOLVE_OBJECT_TYPE(E.A, T, C);
@@ -918,23 +916,17 @@
    -- UNSAFE_CONVERSION (RM79 13.10): the storage of a value of type S read
    -- as a value of type T; the bits that T has more than S are zero
    procedure UNSAFE_BITS(S, T : TYP; V, CT : STRING; R : out TEXT) is
-      PS : REP := REP_OF(S);
-      PT : REP := REP_OF(T);
-      SRC, DECODE : TEXT;
+      LS, LT, X : TEXT;
    begin
-      -- the codes of an enumeration type are its storage (RM79 13.3)
-      SRC := MK("__typeof__(" & V & ") s_ = " & V & ";");
-      if PS /= null and then PS.CODES /= null then
-         SRC := MK("static const rt_int sc_[] = {" & PS.CODES.all & "}; rt_int s_ = sc_[" & V & "];");
-      end if;
-      DECODE := MK("");
-      if PT /= null and then PT.CODES /= null then
-         DECODE := MK(" { static const rt_int tc_[] = {" & PT.CODES.all & "}; rt_int b_ = 0; memcpy(&b_, &r_, "
-                      & "sizeof r_); for (int k_ = 0; k_ < (int)(sizeof tc_ / sizeof tc_[0]); k_++) if (tc_[k_] == b_) "
-                      & "r_ = (" & CT & ")k_; }");
-      end if;
-      R := MK("({ " & CT & " r_; memset(&r_, 0, sizeof r_); " & SRC.all
-              & " memcpy(&r_, &s_, sizeof r_ < sizeof s_ ? sizeof r_ : sizeof s_);" & DECODE.all & " r_; })");
+      -- the storage of the value in the layout of S, read in the layout of
+      -- T: packing, record layouts and enumeration codes are seen (RM79 13.10)
+      LAYOUT_OF(S, null, FALSE, FALSE, LS);
+      LAYOUT_OF(T, null, FALSE, FALSE, LT);
+      NEW_NAME("uc", X);
+      EMIT(CT & " " & X.all & "; memset(&" & X.all & ", 0, sizeof " & X.all & ");");
+      EMIT("{ __typeof__(" & V & ") s_ = " & V & "; rt_g_unsafe(&" & LS.all & ", &s_, &" & LT.all & ", &"
+           & X.all & "); }");
+      R := X;
    end UNSAFE_BITS;
 
    -- the type a statement T(...) names, if T is a type: a code statement
@@ -1287,10 +1279,17 @@
             CHECK_TYPE(VT, T, S.LINE);
             ASSIGN_CODE(LV.all, T, V.all, C, X);
             EMIT(X.all);
+            if HAS_VIEWS then
+               EMIT("G_SYNC();");
+            end if;
          when 21 =>
             VRP_OK := TRUE;
             GEN_CALL(S);
             VRP_OK := FALSE;
+            if HAS_VIEWS then
+               -- an object at an address may have changed (RM79 13.5)
+               EMIT("G_SYNC();");
+            end if;
          when 22 =>
             GEN_IF(S);
          when 23 =>

@@ -349,6 +349,9 @@
          LEX_LINE("   INTERRUPT_CONTROLLER : constant DEVICE_NUMBER := 0;");
          LEX_LINE("   CONSOLE : constant DEVICE_NUMBER := 1;");
          LEX_LINE("   CLOCK : constant DEVICE_NUMBER := 2;");
+         LEX_LINE("   MEMORY_ADDRESS : constant DEVICE_NUMBER := 3;");
+         LEX_LINE("   MEMORY_DATA : constant DEVICE_NUMBER := 4;");
+         LEX_LINE("   MEMORY_DUMP : constant DEVICE_NUMBER := 5;");
          LEX_LINE("   procedure SEND_CONTROL(DEVICE : DEVICE_NUMBER; DATA : in out INTEGER);");
          LEX_LINE("   procedure RECEIVE_CONTROL(DEVICE : DEVICE_NUMBER; DATA : in out INTEGER);");
          LEX_LINE("end LOW_LEVEL_IO;");
@@ -818,6 +821,19 @@
       return FALSE;
    end BODY_FOLLOWS;
 
+   -- for X use at N anywhere in the program: objects at addresses are views
+   -- of the memory, kept in agreement with it after each statement (RM79 13.5)
+   procedure FIND_ADDRESS_SPECIFICATIONS is
+   begin
+      for I in 1 .. NTOKS - 1 loop
+         if TOKS(I).KIND = K_KW and then TOKS(I + 1).KIND = K_KW then
+            if TOKS(I).S.all = "USE" and then TOKS(I + 1).S.all = "AT" then
+               HAS_VIEWS := TRUE;
+            end if;
+         end if;
+      end loop;
+   end FIND_ADDRESS_SPECIFICATIONS;
+
    -- the file GREEN_LISTING names, "" without it
    function LISTING_FILE return STRING is
    begin
@@ -885,6 +901,8 @@
       PRINT_BUFFER(OUT_TYPES);
       PRINT_BUFFER(OUT_FRAMES);
       PRINT_BUFFER(OUT_HELPERS);
+      PRINT_BUFFER(OUT_LAYDECLS);
+      PRINT_BUFFER(OUT_LAYS);
       PRINT_BUFFER(OUT_PROTOS);
       PRINT_BUFFER(OUT_GLOBALS);
       PRINT_BUFFER(OUT_FUNCS);
@@ -914,6 +932,8 @@ begin
    OUT_TYPES := NEW_BUFFER;
    OUT_FRAMES := NEW_BUFFER;
    OUT_HELPERS := NEW_BUFFER;
+   OUT_LAYDECLS := NEW_BUFFER;
+   OUT_LAYS := NEW_BUFFER;
    OUT_PROTOS := NEW_BUFFER;
    OUT_GLOBALS := NEW_BUFFER;
    OUT_FUNCS := NEW_BUFFER;
@@ -980,6 +1000,7 @@ begin
    if UNITS = null then
       FAIL(1, "the compilation is empty");
    end if;
+   FIND_ADDRESS_SPECIFICATIONS;
    TRANSLATE(UNITS);
    STORE_UNITS;
    PRINT_PROGRAM;

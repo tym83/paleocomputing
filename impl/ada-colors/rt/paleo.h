@@ -396,16 +396,57 @@ double rt_g_fix(double v, double small);       /* a multiple of SMALL */
 double rt_g_fix_large(double small, double lo, double hi);
 rt_int rt_g_fix_bits(double small, double lo, double hi);
 
-/* ---- GREEN: the simulated machine (RM79 13.5, 13.8, 14.6) -------------- */
-/* a memory of SYSTEM'MEMORY_SIZE storage units of 8 bits, eight one-word
- * registers, an interrupt controller and a few devices */
+/* ---- GREEN: the simulated machine (RM79 13, 14.6) ----------------------- */
+/* The layout of a value in storage: k is i (rt_int, signed), u (rt_int,
+ * unsigned), e (int: enumeration, BOOLEAN, CHARACTER), b (unsigned char: a
+ * CHARACTER component of an array), f (double), h (double held as a 32-bit
+ * float), x (fixed point: a multiple of small), p (access: the address of
+ * what it designates), a (array), r (record), o (nothing the program sees).
+ * Components start on storage units unless packed; a record component may
+ * be placed by a representation (at, width). */
+typedef struct g_lay g_lay;
+typedef struct g_fld {
+  size_t coff;                  /* the component in the C struct */
+  rt_int at, width;             /* its first bit and width; -1: computed */
+  const g_lay *lay;
+  int (*present)(const void *); /* in a variant: is it there */
+  int variant;                  /* 0: the common part */
+} g_fld;
+struct g_lay {
+  char k, packed;
+  rt_int bits;                  /* a scalar's bits; a record's, when given */
+  rt_int bias;                  /* the stored value is value - bias */
+  const rt_int *codes;          /* enumeration codes (RM79 13.3) */
+  rt_int ncodes;
+  double (*small)(void);        /* fixed point */
+  const g_lay *elem;            /* array component, or designated value */
+  rt_int count;                 /* components of a constrained array, -1 */
+  rt_int stride;                /* bits per array component, -1: computed */
+  const g_fld *f;
+  rt_int nf;
+  rt_int align;                 /* storage units */
+  size_t csize;                 /* the C size of a value */
+};
+extern int rt_g_nviews;
 void rt_g_set_memory(rt_int n);
 unsigned char *rt_g_mem(rt_int addr, rt_int n);  /* RANGE_ERROR outside */
+rt_int rt_g_lay_bits(const g_lay *L, const void *v);  /* v may be NULL */
+void rt_g_view(void *c, const g_lay *L, rt_int addr, int keep);
+void rt_g_sync(void);
+rt_int rt_g_window(void *c, const g_lay *L);
+rt_int rt_g_address(void *root, const g_lay *L, void *comp);
+void rt_g_load(rt_int a, rt_int n, unsigned char *buf);
+void rt_g_save(rt_int a, rt_int n, const unsigned char *buf);
+void rt_g_unsafe(const g_lay *LS, const void *s, const g_lay *LT, void *t);
+rt_int rt_g_component(const g_lay *L, const void *v, rt_int i, int what);
 void rt_g_machine(int op, rt_int r, rt_int a);   /* one code statement */
 void rt_g_bind_interrupt(rt_int addr, rt_entry *e, rt_act *owner);
+void rt_g_bind_interrupt_p(rt_int addr, rt_entry *e, rt_act *owner, size_t psize, rt_int np,
+                           const g_lay *const *lays, const size_t *offs);
 void rt_g_interrupt(rt_int addr);
 void rt_g_send_control(rt_int device, rt_int *data);
 void rt_g_receive_control(rt_int device, rt_int *data);
+#define G_SYNC() do { if (rt_g_nviews) rt_g_sync(); } while (0)
 /* the bits used of a collection of LIMIT bits: STORAGE_OVERFLOW beyond (RM79 13.2) */
 void rt_g_collect(rt_int *used, rt_int bits, rt_int limit);
 /* text input items returned as strings, and NAME (RM79 14) */

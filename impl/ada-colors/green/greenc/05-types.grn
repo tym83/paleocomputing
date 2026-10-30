@@ -977,10 +977,13 @@
    end STATIC_RANGE;
 
    -- POSITION, FIRST_BIT and LAST_BIT of component F of record type RT
-   procedure COMPONENT_PLACE(RT : TYP; F : FIELD; A, CT : STRING; R : out TEXT) is
-      BITS : TEXT;
+   procedure COMPONENT_PLACE(RT : TYP; F : FIELD; A, CT, V : STRING; R : out TEXT) is
+      BITS, L : TEXT;
       P : REP := REP_OF(RT);
       PL : PLACE;
+      K : INTEGER := 0;
+      G : FIELD := RT.FIELDS;
+      WHAT : STRING := "2";
    begin
       if P /= null then
          PL := P.LAYOUT;
@@ -997,12 +1000,20 @@
          else
             R := MK("((rt_int)" & INTEGER'REP(PL.LAST_BIT) & ")");
          end if;
-      elsif A = "POSITION" then
-         R := MK("((rt_int)offsetof(" & CT & ", " & C_FIELD(F.NAME.all) & "))");
-      elsif A = "FIRST_BIT" then
-         R := MK("((rt_int)0)");
       else
-         R := MK("((rt_int)(sizeof(((" & CT & " *)0)->" & C_FIELD(F.NAME.all) & ") * 8 - 1))");
+         -- where the layout of the record puts it (RM79 13.7)
+         while G /= F loop
+            K := K + 1;
+            G := G.NEXT;
+         end loop;
+         if A = "POSITION" then
+            WHAT := "0";
+         elsif A = "FIRST_BIT" then
+            WHAT := "1";
+         end if;
+         LAYOUT_OF(RT, null, FALSE, FALSE, L);
+         R := MK("({ " & CT & " o_ = " & V & "; rt_g_component(&" & L.all & ", &o_, " & INTEGER'REP(K) & ", "
+                 & WHAT & "); })");
       end if;
    end COMPONENT_PLACE;
 

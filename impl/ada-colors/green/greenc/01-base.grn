@@ -312,6 +312,22 @@ procedure GREENC is
       LAYOUT_BITS : INTEGER;
       COLL : TEXT;
       NEXT : REP;
+      -- a length specification shorter than the signed values need: the
+      -- values are stored less BIAS (RM79 13.2); the alignment at mod N
+      BIASED : BOOLEAN;
+      BIAS : INTEGER;
+      ALIGN : INTEGER;
+   end record;
+   -- the C layouts given to the runtime (g_lay), one per type, constraint
+   -- and context
+   type LAYC_REC;
+   type LAYC is access LAYC_REC;
+   type LAYC_REC is record
+      T : TYP;
+      C : CONS;
+      PK, EL : BOOLEAN;
+      NAME : TEXT;
+      NEXT : LAYC;
    end record;
    -- an object, a subprogram or a module at an address (RM79 13.5)
    type ADDR_REC;
@@ -463,6 +479,10 @@ procedure GREENC is
    -- pragma INTERFACE seen in the statements of the body being parsed (RM79 13.9)
    SAW_INTERFACE : BOOLEAN := FALSE;
    REPS : REP;
+   LAYS : LAYC;
+   OUT_LAYDECLS, OUT_LAYS : BUFFER;
+   -- the program has address specifications: views are kept in agreement
+   HAS_VIEWS : BOOLEAN := FALSE;
    -- the listing (RM79 App. B): pragma LIST turns it off and on, PAGE starts
    -- a page, at these lines of the source
    LISTING_LINES : array (1 .. 10000) of INTEGER;

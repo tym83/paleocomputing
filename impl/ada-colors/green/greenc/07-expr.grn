@@ -1258,10 +1258,10 @@
          end if;
       end if;
       if A = "ADDRESS" and IS_OBJECT(E.A) then
-         -- the address of an object, an integer in linear memory (RM79 App. A)
-         LVALUE(E.A, V, ATY, C, RO);
+         -- the address of an object, in storage units of the simulated
+         -- machine (RM79 13.5, 13.7, App. A)
+         OBJECT_ADDRESS(E.A, R);
          T := TY_INT;
-         R := MK("((rt_int)(intptr_t)&(" & V.all & "))");
          return;
       end if;
       if A = "COUNT" and then E.A.KIND = N_APPLY and then E.A.A.KIND = N_NAME then
@@ -1429,75 +1429,31 @@
 
 
    -- the bits of an object of type T: those of its representation
+   -- T'SIZE: the bits of a value of the type in storage, as its layout
+   -- gives them (RM79 13.2, App. A)
    procedure TYPE_BITS(T : TYP; C : CONS; R : out TEXT) is
-      CT : TEXT;
-      P : REP := REP_OF(T);
-      N : INTEGER;
+      CT, L : TEXT;
    begin
-      if P /= null and T.KIND /= T_PTR then
-         -- a length, a layout or packing (RM79 13.1, 13.2, 13.4)
-         MIN_BITS(T, C, N);
-         if (P.BITS > 0 or P.HAS_LAYOUT) or (P.PACKED and N >= 0) then
-            R := MK("((rt_int)" & INTEGER'REP(N) & ")");
-            return;
-         elsif P.PACKED and T.KIND = T_ARRAY then
-            if not BOUNDED(C) then
-               FAIL(0, "SIZE of an array type needs its bounds (RM79 App. A)");
-            end if;
-            MIN_BITS(T.ELEM, T.ELEMCONS, N);
-            if N >= 0 then
-               R := MK("({ rt_int l_ = " & C.LO.all & ", h_ = " & C.HI.all & "; (h_ >= l_ ? h_ - l_ + 1 : 0) * "
-                       & INTEGER'REP(N) & "; })");
-               return;
-            end if;
-         end if;
+      if T.KIND = T_ARRAY and not BOUNDED(C) then
+         FAIL(0, "SIZE of an array type needs its bounds (RM79 App. A)");
       end if;
+      LAYOUT_OF(T, C, FALSE, FALSE, L);
       if T.KIND = T_ARRAY then
-         if not BOUNDED(C) then
-            FAIL(0, "SIZE of an array type needs its bounds (RM79 App. A)");
-         end if;
-         ELEM_CTYPE(T.ELEM, CT);
-         R := MK("({ rt_int l_ = " & C.LO.all & ", h_ = " & C.HI.all & "; (h_ >= l_ ? h_ - l_ + 1 : 0) * (rt_int)sizeof("
-                 & CT.all & ") * 8; })");
-      elsif T.KIND = T_CHAR or T.KIND = T_BOOL then
-         R := MK("((rt_int)8)");
-      elsif T.KIND = T_ENUM then
-         if LIST_LEN(T.LITS) <= 256 then
-            R := MK("((rt_int)8)");
-         else
-            R := MK("((rt_int)16)");
-         end if;
-      elsif T.KIND = T_INT and then ROOT(T) = TY_SHORT then
-         R := MK("((rt_int)32)");
-      elsif T.KIND = T_FLOAT and then ROOT(T) = TY_SFLOAT then
-         R := MK("((rt_int)32)");
-      else
          CTYPE(T, CT);
-         R := MK("((rt_int)(sizeof(" & CT.all & ") * 8))");
+         R := MK("({ " & CT.all & " d_; d_.lo = " & C.LO.all & "; d_.hi = " & C.HI.all & "; d_.lo2 = d_.hi2 = 1; "
+                 & "d_.p = NULL; rt_g_lay_bits(&" & L.all & ", &d_); })");
+      else
+         R := MK("rt_g_lay_bits(&" & L.all & ", NULL)");
       end if;
    end TYPE_BITS;
 
+   -- X'SIZE: the bits of the object in storage
    procedure OBJECT_BITS(T : TYP; V : STRING; R : out TEXT) is
-      CT, ET : TEXT;
-      P : REP := REP_OF(T);
-      N : INTEGER := -1;
+      CT, L : TEXT;
    begin
-      if P /= null and T.KIND = T_ARRAY then
-         if P.PACKED then
-            MIN_BITS(T.ELEM, T.ELEMCONS, N);
-         end if;
-      end if;
-      if N >= 0 then
-         CTYPE(T, CT);
-         R := MK("({ " & CT.all & " sz_ = " & V & "; G_CNT(sz_) * " & INTEGER'REP(N) & "; })");
-      elsif T.KIND = T_ARRAY then
-         CTYPE(T, CT);
-         ELEM_CTYPE(T.ELEM, ET);
-         R := MK("({ " & CT.all & " sz_ = " & V & "; G_CNT(sz_) * (rt_int)sizeof(" & ET.all & ") * 8; })");
-      else
-         TYPE_BITS(T, null, R);
-         R := MK("({ (void)(" & V & "); " & R.all & "; })");
-      end if;
+      LAYOUT_OF(T, null, FALSE, FALSE, L);
+      CTYPE(T, CT);
+      R := MK("({ " & CT.all & " o_ = " & V & "; rt_g_lay_bits(&" & L.all & ", &o_); })");
    end OBJECT_BITS;
 
    -- DIGITS, SMALL, LARGE, EXPONENT_MIN, EXPONENT_MAX, BITS, RADIX, DELTA of
@@ -1585,6 +1541,48 @@
       end if;
    end NUMERIC_ATTR;
 
+   -- X'ADDRESS of an object or a component: in the window of the whole
+   -- object, in its layout, so that the storage a program reaches there is
+   -- the object as its representation declares it (RM79 13.5, 13.7)
+   procedure OBJECT_ADDRESS(X : NODE; R : out TEXT) is
+      ROOT : NODE := X;
+      V, RV, CTX, L : TEXT;
+      VT, RT, PT : TYP;
+      C, RC : CONS;
+      RO, DONE : BOOLEAN := FALSE;
+   begin
+      LVALUE(X, V, VT, C, RO);
+      while not DONE loop
+         if ROOT.KIND = N_PAREN then
+            ROOT := ROOT.A;
+         elsif ROOT.KIND = N_SELECT or ROOT.KIND = N_APPLY then
+            if ROOT.KIND = N_SELECT and then ROOT.NAME.all = "ALL" then
+               DONE := TRUE;
+            elsif IS_OBJECT(ROOT.A) then
+               GEXPR(ROOT.A, null, PT, CTX);
+               if PT.KIND = T_PTR then
+                  -- a component of a designated object: that object is the whole
+                  FINISH_PTR(PT);
+                  RV := MK("(*" & CTX.all & ")");
+                  RT := PT.TARGET;
+                  DONE := TRUE;
+               else
+                  ROOT := ROOT.A;
+               end if;
+            else
+               DONE := TRUE;
+            end if;
+         else
+            DONE := TRUE;
+         end if;
+      end loop;
+      if RV = null then
+         LVALUE(ROOT, RV, RT, RC, RO);
+      end if;
+      LAYOUT_OF(RT, RC, FALSE, FALSE, L);
+      R := MK("rt_g_address((void *)&(" & RV.all & "), &" & L.all & ", (void *)&(" & V.all & "))");
+   end OBJECT_ADDRESS;
+
    -- X.C'POSITION, X.C'FIRST_BIT, X.C'LAST_BIT: where component C lies in
    -- the record, in storage units and bits (RM79 13.4, 13.7)
    procedure COMPONENT_ATTR(E : NODE; T : out TYP; R : out TEXT) is
@@ -1599,6 +1597,7 @@
       if BT.KIND = T_PTR then
          FINISH_PTR(BT);
          BT := BT.TARGET;
+         V := MK("(*" & V.all & ")");
       end if;
       if BT.KIND /= T_RECORD then
          FAIL(E.LINE, E.NAME.all & " is an attribute of a record component (RM79 13.7)");
@@ -1612,7 +1611,7 @@
       end if;
       CTYPE(BT, CT);
       T := TY_INT;
-      COMPONENT_PLACE(BT, F, E.NAME.all, CT.all, R);
+      COMPONENT_PLACE(BT, F, E.NAME.all, CT.all, V.all, R);
    end COMPONENT_ATTR;
 
    -- SYSTEM'NAME, ..., OPTION'TIME (RM79 13.7): the configuration of the
