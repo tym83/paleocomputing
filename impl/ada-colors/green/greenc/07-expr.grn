@@ -95,7 +95,20 @@
       return FALSE;
    end IS_OBJECT;
 
+   -- a constant of an access type, declared as such (RM79 3.8)
+   function IS_CONST_ACCESS(E : NODE) return BOOLEAN is
+      Y : SYM;
+   begin
+      if E.KIND /= N_NAME then
+         return FALSE;
+      end if;
+      Y := LOOKUP(E.NAME.all);
+      return Y /= null and then Y.KIND = Y_CONST and then Y.FLAGS mod 2 = 1 and then Y.T /= null
+         and then Y.T.KIND = T_PTR;
+   end IS_CONST_ACCESS;
+
    procedure LVALUE(E : NODE; CODE_OUT : out TEXT; T : out TYP; C : out CONS; RO : out BOOLEAN) is
+      CP : BOOLEAN;
       Y : SYM;
       BASE : TEXT;
       BT : TYP;
@@ -122,10 +135,15 @@
          LVALUE(E.A, CODE_OUT, T, C, RO);
       elsif E.KIND = N_SELECT then
          LVALUE(E.A, BASE, BT, BC, RO);
+         CP := BT.KIND = T_PTR and IS_CONST_ACCESS(E.A);
          SELECT_ON(BASE.all, BT, E, RO, TRUE, CODE_OUT, T, C);
+         -- the object designated by a constant cannot be changed (RM79 3.8)
+         RO := RO or CP;
       elsif E.KIND = N_APPLY then
          LVALUE(E.A, BASE, BT, BC, RO);
+         CP := BT.KIND = T_PTR and IS_CONST_ACCESS(E.A);
          INDEX_ON(BASE.all, BT, E, RO, TRUE, CODE_OUT, T, C);
+         RO := RO or CP;
       else
          FAIL(E.LINE, "not an object");
       end if;
@@ -255,6 +273,28 @@
          RO := TRUE;
       end if;
    end INDEX_ON;
+
+   function TYPE_ATTRIBUTE(T : TYP; NAME : STRING) return BOOLEAN is
+      Y : SYM := TABLE(HASH(NAME));
+      P : PARM;
+   begin
+      while Y /= null loop
+         if Y.NAME.all = NAME and then (Y.KIND = Y_FUNC or Y.KIND = Y_PROC) then
+            if SAME(Y.RESULT, T) then
+               return TRUE;
+            end if;
+            P := Y.PARAMS;
+            while P /= null loop
+               if SAME(P.T, T) then
+                  return TRUE;
+               end if;
+               P := P.NEXT;
+            end loop;
+         end if;
+         Y := Y.CHAIN;
+      end loop;
+      return FALSE;
+   end TYPE_ATTRIBUTE;
 
    function IS_TYPE_NAME(N : STRING) return BOOLEAN is
       Y : SYM := LOOKUP(N);
@@ -426,6 +466,11 @@
                CALL_WANT := WANT;
                GCALL(E, FALSE, T, R);
                return;
+            elsif E.A.KIND = N_SELECT and then E.A.A.KIND = N_NAME and then IS_TYPE_NAME(E.A.A.NAME.all) then
+               -- T.F(...): a subprogram attribute of type T (RM79 3.3, 4.1.2)
+               CALL_WANT := WANT;
+               GCALL(E, FALSE, T, R);
+               return;
             elsif E.A.KIND = N_SELECT and then IS_PACKAGE(E.A.A) then
                -- P.F(...) calls a function of the visible part of P
                Y := MEMBER_OF(E.A.A.NAME.all, E.A.NAME.all, E.LINE);
@@ -439,6 +484,13 @@
             RO := TRUE;
             INDEX_ON(BASE.all, BT, E, RO, FALSE, R, T, C);
          when 9 =>
+            if E.A.KIND = N_NAME and then IS_TYPE_NAME(E.A.NAME.all) then
+               NM := NN(N_APPLY, E.LINE);
+               NM.A := E;
+               CALL_WANT := WANT;
+               GCALL(NM, FALSE, T, R);
+               return;
+            end if;
             if IS_PACKAGE(E.A) then
                -- P.X names a declaration of the visible part of P (RM79 4.1.2)
                NM := NN(N_NAME, E.LINE);
@@ -521,6 +573,9 @@
          T := Y.T;
          R := MK("((rt_int)" & INTEGER'REP(Y.MVALUE) & "LL)");
          return;
+      end if;
+      if Y.KIND = Y_CONST and Y.FLAGS = F_CONST_OBJ + F_DEFERRED then
+         FAIL(E.LINE, "deferred constant " & Y.NAME.all & " is used before its full declaration (RM79 7.4)");
       end if;
       if Y.KIND = Y_VAR or Y.KIND = Y_CONST then
          T := Y.T;
@@ -1878,7 +1933,16 @@
       LC : CONS;
       RO : BOOLEAN;
    begin
-      if FN.KIND = N_SELECT and then IS_PACKAGE(FN.A) then
+      if FN.KIND = N_SELECT and then FN.A.KIND = N_NAME and then IS_TYPE_NAME(FN.A.NAME.all) then
+         -- T.F: a subprogram with a parameter or result of type T is an
+         -- attribute of T (RM79 3.3, 4.1.2)
+         if not TYPE_ATTRIBUTE(LOOKUP(FN.A.NAME.all).T, FN.NAME.all) then
+            FAIL(E.LINE, FN.NAME.all & " is not a subprogram attribute of " & FN.A.NAME.all & " (RM79 3.3)");
+         end if;
+         NM := NN(N_NAME, FN.LINE);
+         NM.NAME := FN.NAME;
+         FN := NM;
+      elsif FN.KIND = N_SELECT and then IS_PACKAGE(FN.A) then
          NM := NN(N_NAME, FN.LINE);
          NM.NAME := FN.NAME;
          NM.TAG := FN.A.NAME;

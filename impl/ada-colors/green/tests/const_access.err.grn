@@ -1,0 +1,9 @@
+procedure MAIN is
+   type ITEM is record
+      V : INTEGER;
+   end record;
+   type REF is access ITEM;
+   R : constant REF := new REF(V => 1);
+begin
+   R.V := 2;
+end MAIN;

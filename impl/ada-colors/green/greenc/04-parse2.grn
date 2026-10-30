@@ -224,9 +224,7 @@
          X.NAME := NAMES.NAME;
          X.A := ST;
          X.B := INIT;
-         if not (IS_CONST and INIT = null) then
-            APPEND(HEAD, TAIL, X);
-         end if;
+         APPEND(HEAD, TAIL, X);
          NAMES := NAMES.NEXT;
       end loop;
       RES := HEAD;

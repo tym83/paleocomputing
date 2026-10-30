@@ -54,7 +54,7 @@
    begin
       Z := new SYM_REC(Y.KIND, Y.NAME, Y.T, Y.C, Y.ACCESS_PATH, Y.CNAME, Y.RO, Y.MVALUE, Y.HASMV,
                        Y.DECL, Y.PARAMS, Y.RESULT, 0, Y.LEVEL, Y.BYREF, Y.VRP, Y.HIDDEN,
-                       FALSE, Y.MEMBERS, null, null, null);
+                       FALSE, Y.MEMBERS, null, null, null, Y.FLAGS);
    end COPY_SYM;
 
    -- the full declaration of a private type is copied into the type object
@@ -86,6 +86,9 @@
       -- every declaration of the spec; those of the private part are hidden
       M := SCOPE_STACK;
       while M /= null and then M.DEPTH = DEPTH loop
+         if M.KIND = Y_CONST and M.FLAGS = F_CONST_OBJ + F_DEFERRED then
+            FAIL(E.LINE, "deferred constant " & M.NAME.all & " has no full declaration in the private part (RM79 7.4)");
+         end if;
          -- what a use clause of the specification made visible stays visible
          -- in the body, but is not offered to the clients
          COPY_SYM(M, Z);

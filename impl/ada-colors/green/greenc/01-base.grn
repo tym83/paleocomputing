@@ -135,6 +135,8 @@ procedure GREENC is
    Y_TASK    : constant INTEGER := 9;
    Y_ENTRY   : constant INTEGER := 10;
    Y_GENERIC : constant INTEGER := 11;
+   F_CONST_OBJ : constant INTEGER := 1;
+   F_DEFERRED  : constant INTEGER := 2;
 
    -- the data
    type TEXT is access STRING;
@@ -268,6 +270,9 @@ procedure GREENC is
       FROM_USE : BOOLEAN;
       MEMBERS, MNEXT : SYM;
       CHAIN, STACK : SYM;
+      -- F_CONST_OBJ: a declared constant (RM79 3.8); F_DEFERRED: a deferred
+      -- constant not yet completed (RM79 7.4)
+      FLAGS : INTEGER;
    end record;
    type SYM_ARRAY is array (INTEGER) of SYM;
 

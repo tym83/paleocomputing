@@ -221,6 +221,9 @@
                STORAGE(E.NAME.all, T, ACC);
                INIT_STORAGE(ACC.all, T, C);
                if E.B /= null then
+                  if IS_CONST_ACCESS(E.B) then
+                     FAIL(E.LINE, "a constant of an access type cannot be assigned to a variable (RM79 3.8)");
+                  end if;
                   VRP_OK := TRUE;
                   if T.KIND = T_ARRAY and E.B.KIND = N_AGG then
                      AGG_BOUNDS := ACC;
@@ -239,7 +242,35 @@
             DEFINE(Y, E.LINE);
          when 41 =>
             RESOLVE_OBJECT_TYPE(E.A, T, C);
+            Z := LOOKUP(E.NAME.all);
+            if E.B = null then
+               -- a deferred constant of a private type, completed in the
+               -- private part (RM79 7.4)
+               if CUR_PKG = null or else not (T.PRIV and T.KIND = T_VOID) then
+                  FAIL(E.LINE, "a constant needs a value; only a constant of a private type is deferred (RM79 7.4)");
+               end if;
+               Y := NEW_SYM(Y_CONST, E.NAME);
+               Y.T := T;
+               Y.C := C;
+               Y.RO := TRUE;
+               Y.FLAGS := F_CONST_OBJ + F_DEFERRED;
+               DEFINE(Y, E.LINE);
+               return;
+            end if;
+            if Z /= null and then Z.DEPTH = DEPTH and then Z.KIND = Y_CONST and then Z.FLAGS = F_CONST_OBJ + F_DEFERRED then
+               -- the full declaration of a deferred constant (RM79 7.4)
+               CHECK_TYPE(T, Z.T, E.LINE);
+               GEXPR(E.B, T, VT, V);
+               CHECK_TYPE(VT, T, E.LINE);
+               STORAGE(E.NAME.all, T, ACC);
+               BIND(Z, ACC);
+               COPY_CODE(T, V.all, X);
+               EMIT(ACC.all & " = " & X.all & ";");
+               Z.FLAGS := F_CONST_OBJ;
+               return;
+            end if;
             Y := NEW_SYM(Y_CONST, E.NAME);
+            Y.FLAGS := F_CONST_OBJ;
             VRP_OK := TRUE;
             GEXPR(E.B, T, VT, V);
             VRP_OK := FALSE;
@@ -603,6 +634,9 @@
                FAIL(S.LINE, "assignment to a constant or an in parameter");
             end if;
             CHECK_PURE_TARGET(S.A, S.LINE);
+            if IS_CONST_ACCESS(S.B) then
+               FAIL(S.LINE, "a constant of an access type cannot be assigned to a variable (RM79 3.8)");
+            end if;
             VRP_OK := TRUE;
             if T.KIND = T_ARRAY and S.B.KIND = N_AGG then
                AGG_BOUNDS := LV;

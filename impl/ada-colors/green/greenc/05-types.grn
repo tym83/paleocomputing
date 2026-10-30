@@ -154,7 +154,7 @@
    procedure NEW_SYM(KIND : INTEGER; NAME : TEXT) return SYM is
    begin
       return new SYM_REC(KIND, NAME, null, null, null, null, FALSE, 0, FALSE, null, null, null,
-                         0, 0, FALSE, FALSE, FALSE, FALSE, null, null, null, null);
+                         0, 0, FALSE, FALSE, FALSE, FALSE, null, null, null, null, 0);
    end NEW_SYM;
 
    procedure NEW_TYP(KIND : INTEGER) return TYP is
@@ -729,6 +729,10 @@
             -- access types (RM79 3.8); the designated type may come later
             FRESH_TYP(T_PTR, NAME, T);
             T.DECL := D.A;
+            if D.A.KIND = S_MARK and then LOOKUP(D.A.NAME.all) /= null
+               and then LOOKUP(D.A.NAME.all).KIND = Y_TYPE and then LOOKUP(D.A.NAME.all).T /= null then
+               FINISH_PTR(T);
+            end if;
          when 76 =>
             DERIVED_TYPE(D, NAME, T, C);
          when others =>
@@ -1164,6 +1168,9 @@
    begin
       if T.TARGET = null and T.DECL /= null then
          RESOLVE(T.DECL, T.TARGET, C);
+         if T.TARGET /= null and then T.TARGET.KIND = T_PTR then
+            FAIL(T.DECL.LINE, "an access type cannot designate another access type (RM79 3.8)");
+         end if;
       end if;
    end FINISH_PTR;
 
