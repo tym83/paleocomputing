@@ -13,7 +13,7 @@ fixed point -> grow (packages, overloading, tasking, generics) -> tests and 1979
 - Predefined library units written in GREEN inside greenc (99-main PREDEFINED_UNIT):
   TEXT_IO, INPUT_OUTPUT, UNSAFE_PROGRAMMING, MACHINE_CODE, LOW_LEVEL_IO; their helpers
   are `$NAME` foreign subprograms, rt_g_name in rt/paleo.c.
-- tests/run.sh: 112 passed.
+- tests/run.sh: 118 passed; layouts, views and windows of the simulated machine in 13-reps.grn and the GREEN machine section of rt/paleo.c.
 
 ## Next step
 Nothing pending from the audit list; see the Deviations of notes/green-findings.md.
