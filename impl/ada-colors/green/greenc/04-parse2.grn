@@ -747,15 +747,7 @@
          if AT_KIND(K_ID) and KIND_AT(1) = K_KW and TEXT_AT(1) = "LOOP" then
             SUBTYPE_IND(X.A);
          else
-            R := NN(N_RANGE, LINE);
-            SIMPLE_EXPR(R.A);
-            if AT_OP("..") then
-               SKIP;
-               SIMPLE_EXPR(R.B);
-               X.A := R;
-            else
-               X.A := R.A;
-            end if;
+            DISCRETE_RANGE_P(X.A);
          end if;
       elsif AT_KW("WHILE") then
          SKIP;

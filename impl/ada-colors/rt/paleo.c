@@ -1798,22 +1798,57 @@ int rt_g_exc_new(const char *name) {
 
 static int g_exc_id(const char *name) { return rt_exc(name); }
 
-/* the text of a file for pragma INCLUDE (RM79 App. B); null if it cannot be
- * read */
+rt_gstr rt_g_lit(const char *s, rt_int n) {
+  rt_gstr r = {1, n, 1, 1, (unsigned char *)s};
+  return r;
+}
+
+rt_gstr rt_g_s2g(rstr s) {
+  rt_gstr r = {1, s.len, 1, 1, s.p};
+  return r;
+}
+
+rstr rt_g_g2s(rt_gstr a) {
+  rstr r = {G_CNT(a), a.p};
+  return r;
+}
+
+void rt_g_overlap(void) { rt_raise(g_exc_id("OVERLAP_ERROR")); }
+
+/* the text of a file, null if it cannot be read: the form of pragma INCLUDE
+ * that the first GREEN seed with INCLUDE calls */
 void rt_g_read_file_text(rstr name, rstr **res) {
   FILE *f = fopen(rt_cstr(name), "rb");
-  if (!f) {
-    *res = NULL;
-    return;
-  }
+  *res = NULL;
+  if (!f) return;
   fseek(f, 0, SEEK_END);
   long n = ftell(f);
   fseek(f, 0, SEEK_SET);
   rstr *r = rt_alloc(sizeof *r);
   *r = rt_str_new(n);
-  if (n && fread(r->p, 1, (size_t)n, f) != (size_t)n) *res = NULL;
-  else *res = r;
+  if (n == 0 || fread(r->p, 1, (size_t)n, f) == (size_t)n) *res = r;
   fclose(f);
+}
+
+/* the text of a file for pragma INCLUDE (RM79 App. B), read by greenc a
+ * character at a time; the length is -1 if the file cannot be read */
+static rstr g_include;
+
+void rt_g_include_open(rstr name, rt_int *len) {
+  FILE *f = fopen(rt_cstr(name), "rb");
+  *len = -1;
+  if (!f) return;
+  fseek(f, 0, SEEK_END);
+  long n = ftell(f);
+  fseek(f, 0, SEEK_SET);
+  g_include = rt_str_new(n);
+  if (n == 0 || fread(g_include.p, 1, (size_t)n, f) == (size_t)n) *len = n;
+  fclose(f);
+}
+
+void rt_g_include_char(rt_int i, int *c) {
+  if (i < 1 || i > g_include.len) rt_raise(RT_X_SUBSCRIPT);
+  *c = g_include.p[i - 1];
 }
 
 /* T'REP and T'VAL(S) of enumeration types: the literals' images, upper case;

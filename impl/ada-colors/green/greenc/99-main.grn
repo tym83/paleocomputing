@@ -9,6 +9,11 @@
          Y.C := NEW_CONS;
          Y.C.LO := MK(LO);
          Y.C.HI := MK(HI);
+         if HI'LENGTH < 12 and then IS_DIGIT(HI(HI'FIRST)) then
+            Y.C.MLO := INTEGER'VAL(LO);
+            Y.C.MHI := INTEGER'VAL(HI);
+            Y.C.HASM := TRUE;
+         end if;
       end if;
       DEFINE(Y, 0);
    end PREDEF_TYPE;
@@ -90,7 +95,7 @@
          PREDEF_CONST("LC_" & CHARACTER'VAL(66 + I), TY_CHAR, INTEGER'REP(97 + I));
       end loop;
       -- TEXT_IO (RM79 14.3): NEWLINE is a string constant, used as PUT(NEWLINE)
-      PREDEF_CONST("NEWLINE", TY_STRING, "rt_str(" & Q & "\n" & Q & ", 1)");
+      PREDEF_CONST("NEWLINE", TY_STRING, "rt_g_lit(" & Q & "\n" & Q & ", 1)");
       PREDEF_CONST("SECONDS", TY_TIME, "((double)RT_SECONDS)");
       -- the predefined exceptions (RM79 11.1) and END_OF_FILE (RM79 14.2)
       PREDEF_EXC("ACCESS_ERROR");
@@ -182,13 +187,24 @@ begin
    TY_BOOL := NEW_TYP(T_BOOL);
    TY_FLOAT := NEW_TYP(T_FLOAT);
    TY_CHAR := NEW_TYP(T_CHAR);
-   TY_STRING := NEW_TYP(T_STRING);
+   -- type STRING is array (NATURAL) of CHARACTER (RM79 3.6.3); its C type
+   -- is the runtime's rt_gstr
+   TY_STRING := NEW_TYP(T_ARRAY);
+   TY_STRING.NAME := MK("STRING");
+   TY_STRING.CNAME := MK("rt_gstr");
+   TY_STRING.DIMS := 1;
+   TY_STRING.ELEM := TY_CHAR;
+   TY_STRING.TCONS := NEW_CONS;
+   TY_STRING.TCONS.LO := MK("1");
    TY_VOID := NEW_TYP(T_VOID);
    TY_NIL := NEW_TYP(T_NIL);
    TY_ACT := NEW_TYP(T_ACT);
    TY_TDECL := NEW_TYP(T_TDECL);
    TY_ENTRY := NEW_TYP(T_ENTRY);
    TY_INT.NAME := MK("INTEGER");
+   TY_STRING.IDX := TY_INT;
+   TY_STRING.NEXT := ALL_TYPES;
+   ALL_TYPES := TY_STRING;
    TY_FLOAT.NAME := MK("FLOAT");
    TY_FLOAT.NDIGITS := 15;
    TY_SHORT := NEW_TYP(T_INT);

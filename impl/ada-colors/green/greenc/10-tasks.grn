@@ -7,7 +7,7 @@
 
    -- task T [is <entries and declarations> end [T]]; | task body T is ... end [T];
    procedure TASK_P(RES : out NODE) is
-      X : NODE;
+      X, R : NODE;
       LINE : INTEGER := CUR_LINE;
    begin
       EXPECT_KW("TASK");
@@ -27,13 +27,12 @@
          if AT_OP("(") then
             -- a task family: task F(INTEGER range 1 .. N) (RM79 9.2)
             SKIP;
-            if AT_KIND(K_ID) and KIND_AT(1) = K_KW and TEXT_AT(1) = "RANGE" then
-               SUBTYPE_IND(X.A);
-            else
-               X.A := NN(N_RANGE, LINE);
-               SIMPLE_EXPR(X.A.A);
-               EXPECT_OP("..");
-               SIMPLE_EXPR(X.A.B);
+            DISCRETE_RANGE_P(X.A);
+            if X.A.KIND = N_NAME then
+               -- a type mark: task F(COLOR) (RM79 9.1)
+               R := NN(S_MARK, LINE);
+               R.NAME := X.A.NAME;
+               X.A := R;
             end if;
             EXPECT_OP(")");
          end if;
@@ -67,10 +66,7 @@
          if AT_KIND(K_ID) and KIND_AT(1) = K_OP and TEXT_AT(1) = ")" then
             SUBTYPE_IND(X.B);
          else
-            X.B := NN(N_RANGE, CUR_LINE);
-            SIMPLE_EXPR(X.B.A);
-            EXPECT_OP("..");
-            SIMPLE_EXPR(X.B.B);
+            DISCRETE_RANGE_P(X.B);
          end if;
          EXPECT_OP(")");
       end if;
@@ -318,7 +314,7 @@
 
    -- the slots of an entry family: E(lo .. hi), or E(T) for a discrete type
    procedure FAMILY_BOUNDS(B : NODE; Y : SYM; X : TEXT) is
-      LO, HI, V : TEXT;
+      LO, HI, V, D : TEXT;
       VT : TYP;
       C : CONS;
    begin
@@ -328,18 +324,9 @@
       DECLARE_SLOT("rt_int", Y.CNAME.all & "fhi");
       PATH_AT(Y.LEVEL, Y.CNAME.all & "flo", LO);
       PATH_AT(Y.LEVEL, Y.CNAME.all & "fhi", HI);
-      if B.KIND = N_RANGE then
-         GEXPR(B.A, null, VT, V);
-         EMIT(LO.all & " = " & V.all & ";");
-         GEXPR(B.B, VT, VT, V);
-         EMIT(HI.all & " = " & V.all & ";");
-      else
-         RESOLVE(B, VT, C);
-         if C.LO = null then
-            FAIL(B.LINE, "an entry family needs a discrete range");
-         end if;
-         EMIT(LO.all & " = " & C.LO.all & "; " & HI.all & " = " & C.HI.all & ";");
-      end if;
+      DISCRETE_BOUNDS(B, null, VT, V, D);
+      Y.T := VT;
+      EMIT(LO.all & " = " & V.all & "; " & HI.all & " = " & D.all & ";");
       EMIT(X.all & " = rt_alloc(sizeof(rt_entry) * (size_t)(" & HI.all & " >= " & LO.all & " ? "
            & HI.all & " - " & LO.all & " + 1 : 1));");
       EMIT("for (rt_int k_ = 0; k_ <= " & HI.all & " - " & LO.all & "; k_++) rt_entry_init(&"
@@ -377,22 +364,17 @@
       DECLARE_SLOT("rt_taskdecl", Y.CNAME.all & "decl");
       if E.A /= null then
          -- a family: the bounds are evaluated once; one activation per member
-         R := E.A;
-         if R.KIND = S_MARK then
-            R := R.A;
-         end if;
          Y.C := NEW_CONS;
          DECLARE_SLOT("rt_act *", Y.CNAME.all & "act");
          DECLARE_SLOT("rt_int", Y.CNAME.all & "lo");
          DECLARE_SLOT("rt_int", Y.CNAME.all & "hi");
-         GEXPR(R.A, TY_INT, VT, V);
-         -- the index type of the family: INTEGER or an enumeration (RM79 9.1)
+         -- the index type of the family: a discrete type (RM79 9.1)
+         DISCRETE_BOUNDS(E.A, null, VT, V, D);
          Y.T := VT;
          PATH_AT(Y.LEVEL, Y.CNAME.all & "lo", P);
          EMIT(P.all & " = " & V.all & ";");
-         GEXPR(R.B, TY_INT, VT, V);
          PATH_AT(Y.LEVEL, Y.CNAME.all & "hi", P2);
-         EMIT(P2.all & " = " & V.all & ";");
+         EMIT(P2.all & " = " & D.all & ";");
          PATH_AT(Y.LEVEL, Y.CNAME.all & "act", V);
          EMIT(V.all & " = rt_alloc(sizeof(rt_act) * (size_t)(" & P2.all & " >= " & P.all & " ? "
               & P2.all & " - " & P.all & " + 1 : 1));");

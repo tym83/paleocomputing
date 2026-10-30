@@ -307,7 +307,20 @@ void rt_g_move_bytes(rt_int from, rt_int to, rt_int n);
 
 /* ---- GREEN: the rest of RM79 ------------------------------------------ */
 int rt_g_exc_new(const char *name);            /* a distinct declared exception */
-void rt_g_read_file_text(rstr name, rstr **res); /* pragma INCLUDE */
+void rt_g_read_file_text(rstr name, rstr **res); /* pragma INCLUDE, older seeds */
+void rt_g_include_open(rstr name, rt_int *len); /* pragma INCLUDE: -1 if absent */
+void rt_g_include_char(rt_int i, int *c);       /* character i, from 1 */
+/* STRING is array (NATURAL) of CHARACTER (RM79 3.6.3): an array descriptor
+ * like every GREEN array, with the characters packed in bytes */
+typedef struct rt_gstr {
+  rt_int lo, hi, lo2, hi2;
+  unsigned char *p;
+} rt_gstr;
+#define G_CNT(a) ((a).hi >= (a).lo ? (a).hi - (a).lo + 1 : (rt_int)0)
+rt_gstr rt_g_lit(const char *s, rt_int n);     /* a string literal, from 1 */
+rt_gstr rt_g_s2g(rstr s);                      /* the runtime's string, from 1 */
+rstr rt_g_g2s(rt_gstr a);
+_Noreturn void rt_g_overlap(void);             /* OVERLAP_ERROR (RM79 5.1.1) */
 rstr rt_g_enum_rep(rt_int v, const char *const *names, rt_int n);  /* T'REP */
 rt_int rt_g_enum_val(rstr s, const char *const *names, rt_int n);  /* T'VAL(S) */
 rstr rt_g_char_rep(rt_int v);

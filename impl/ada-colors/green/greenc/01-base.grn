@@ -157,6 +157,14 @@ procedure GREENC is
       FORMAL : TEXT;
    end record;
 
+   -- the values of the discriminants given by a discriminant constraint (RM79 3.7.3)
+   type DVAL_REC;
+   type DVAL is access DVAL_REC;
+   type DVAL_REC is record
+      NAME, V : TEXT;
+      NEXT : DVAL;
+   end record;
+
    type CONS_REC;
    type CONS is access CONS_REC;
    type CONS_REC is record
@@ -167,12 +175,21 @@ procedure GREENC is
       LO2, HI2 : TEXT;
       -- an accuracy constraint: digits or delta (RM79 3.5.5)
       ACC : TEXT;
+      -- the bounds of the other indexes of a multi-dimensional array: the
+      -- constraint of its subarrays (RM79 3.6, 4.1.1)
+      INNER : CONS;
+      DV : DVAL;
    end record;
 
    type TYP_REC;
    type TYP is access TYP_REC;
+   type SYM_REC;
+   type SYM is access SYM_REC;
    type FIELD_REC;
    type FIELD is access FIELD_REC;
+   -- the alternative of a variant part a component belongs to (RM79 3.7.2)
+   type GUARD_REC;
+   type GUARD is access GUARD_REC;
    type TYP_REC is record
       KIND : INTEGER;
       NAME : TEXT;
@@ -204,6 +221,21 @@ procedure GREENC is
       C : CONS;
       NEXT : FIELD;
       DFLT : NODE;  -- the initial value of the component, if any (RM79 3.7)
+      -- a constant component; one without a value is a discriminant (RM79 3.7.1)
+      IS_CONST, IS_DISCR : BOOLEAN;
+      -- the initial value, evaluated with the type definition (RM79 3.7)
+      DSYM : SYM;
+      -- the variant the component belongs to, and the C test that it is
+      -- present, @@ standing for the record
+      GUARD : GUARD;
+      COND : TEXT;
+      -- an array whose bounds are discriminants (RM79 3.7.1)
+      DYN : BOOLEAN;
+   end record;
+   type GUARD_REC is record
+      DISC : TEXT;
+      ARM, VARIANT : NODE;
+      NEXT : GUARD;
    end record;
 
    type PARM_REC;
@@ -218,8 +250,6 @@ procedure GREENC is
       NEXT : PARM;
    end record;
 
-   type SYM_REC;
-   type SYM is access SYM_REC;
    type SYM_REC is record
       KIND : INTEGER;
       NAME : TEXT;
@@ -312,6 +342,11 @@ procedure GREENC is
    ANON_NODE : NODE;
    ANON_TYP : TYP;
    ANON_CONS : CONS;
+   -- an array value whose bounds an aggregate with others takes: the target
+   -- of the assignment or the object being initialized (RM79 3.6.2)
+   AGG_BOUNDS : TEXT;
+   -- the discriminants visible while a record type definition is elaborated
+   DISC_SYMS : SYM;
    CUR_TASK : SYM;
    ACCEPT_DEPTH : INTEGER := 0;
    FAMARG_DONE : BOOLEAN := FALSE;

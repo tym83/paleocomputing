@@ -208,20 +208,25 @@
                DEFINE(Y, E.LINE);
                return;
             end if;
-            if T.KIND = T_STRING and C.SLEN = null and E.B /= null then
+            if T.KIND = T_ARRAY and (C = null or else C.LO = null) and E.B /= null then
                -- the bounds come from the initial value (RM79 3.6)
                VRP_OK := TRUE;
                GEXPR(E.B, T, VT, V);
                VRP_OK := FALSE;
                CHECK_TYPE(VT, T, E.LINE);
                STORAGE(E.NAME.all, T, ACC);
-               EMIT(ACC.all & " = rt_str_copy(" & V.all & ");");
+               COPY_CODE(T, V.all, X);
+               EMIT(ACC.all & " = " & X.all & ";");
             else
                STORAGE(E.NAME.all, T, ACC);
                INIT_STORAGE(ACC.all, T, C);
                if E.B /= null then
                   VRP_OK := TRUE;
+                  if T.KIND = T_ARRAY and E.B.KIND = N_AGG then
+                     AGG_BOUNDS := ACC;
+                  end if;
                   GEXPR(E.B, T, VT, V);
+                  AGG_BOUNDS := null;
                   VRP_OK := FALSE;
                   CHECK_TYPE(VT, T, E.LINE);
                   ASSIGN_CODE(ACC.all, T, V.all, C, X);
@@ -412,7 +417,11 @@
             if X'LENGTH > 0 then
                X := MK(X.all & ", ");
             end if;
-            X := MK(X.all & "F->" & PM.CFIELD.all);
+            if IS_STRING(PM.T) and PM.MODE = M_IN then
+               X := MK(X.all & "rt_g_g2s(F->" & PM.CFIELD.all & ")");
+            else
+               X := MK(X.all & "F->" & PM.CFIELD.all);
+            end if;
             PM := PM.NEXT;
          end loop;
          EMIT("rt_g_" & LOWER_S(D.NAME.all) & "(" & X.all & ");");
@@ -582,7 +591,7 @@
    begin
       case S.KIND of
          when 20 =>
-            if S.A.KIND = N_APPLY and then S.A.B /= null and then S.A.B.KIND = N_RANGE then
+            if S.A.KIND = N_APPLY and then S.A.B /= null and then (S.A.B.KIND = N_RANGE or S.A.B.KIND = S_MARK) then
                SLICE_ASSIGN(S);
                return;
             end if;
@@ -595,7 +604,11 @@
             end if;
             CHECK_PURE_TARGET(S.A, S.LINE);
             VRP_OK := TRUE;
+            if T.KIND = T_ARRAY and S.B.KIND = N_AGG then
+               AGG_BOUNDS := LV;
+            end if;
             GEXPR(S.B, T, VT, V);
+            AGG_BOUNDS := null;
             VRP_OK := FALSE;
             CHECK_TYPE(VT, T, S.LINE);
             ASSIGN_CODE(LV.all, T, V.all, C, X);
@@ -646,8 +659,8 @@
 
    -- assignment to a slice of a string (RM79 5.1.1): the lengths must agree
    procedure SLICE_ASSIGN(S : NODE) is
-      LV, LO, HI, V : TEXT;
-      T, VT : TYP;
+      LV, V, SL, X : TEXT;
+      T, ST, VT : TYP;
       C : CONS;
       RO : BOOLEAN;
    begin
@@ -655,17 +668,18 @@
       LAST_DEREF := FALSE;
       LVALUE(S.A.A, LV, T, C, RO);
       IN_LV_PATH := FALSE;
-      if RO or T.KIND /= T_STRING then
-         FAIL(S.LINE, "assignment to a slice needs a STRING variable");
+      if RO then
+         FAIL(S.LINE, "assignment to a constant or an in parameter");
       end if;
       CHECK_PURE_TARGET(S.A, S.LINE);
-      GEXPR(S.A.B.A, TY_INT, VT, LO);
-      GEXPR(S.A.B.B, TY_INT, VT, HI);
+      RO := FALSE;
+      INDEX_ON(LV.all, T, S.A, RO, FALSE, SL, ST, C);
       VRP_OK := TRUE;
-      GEXPR(S.B, TY_STRING, VT, V);
+      GEXPR(S.B, ST, VT, V);
       VRP_OK := FALSE;
-      CHECK_TYPE(VT, TY_STRING, S.LINE);
-      EMIT("rt_str_slice_assign(&" & LV.all & ", " & LO.all & ", " & HI.all & ", " & V.all & ");");
+      CHECK_TYPE(VT, ST, S.LINE);
+      CTYPE(ST, X);
+      EMIT("{ " & X.all & " sl_ = " & SL.all & "; as_" & X.all & "(&sl_, " & V.all & "); }");
    end SLICE_ASSIGN;
 
    procedure GEN_CALL(S : NODE) is

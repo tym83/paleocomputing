@@ -3,8 +3,10 @@
    -- an allocator may not appear in a function body (RM79 6.5): MK is a
    -- value-returning procedure
    procedure MK(S : STRING) return TEXT is
+      -- the text counts from 1 whatever the bounds of S (RM79 3.6)
+      R : STRING(1 .. S'LENGTH) := S;
    begin
-      return new STRING(S);
+      return new STRING(R);
    end MK;
 
    procedure NEW_NAME(BASE : STRING; RES : out TEXT) is
@@ -400,18 +402,22 @@
       end loop;
    end EXPONENT;
 
-   -- the text of a file, null if it cannot be read: a body in C (RM79 13.9)
-   procedure READ_FILE_TEXT(NAME : STRING; CONTENTS : out TEXT) is
+   -- the length of a file, read for inclusion, -1 if it cannot be read, and
+   -- its characters: bodies in C (RM79 13.9)
+   procedure INCLUDE_OPEN(NAME : STRING; LENGTH : out INTEGER) is
    begin
       pragma INTERFACE(C);
-   end READ_FILE_TEXT;
+   end INCLUDE_OPEN;
+
+   procedure INCLUDE_CHAR(I : INTEGER; C : out CHARACTER) is
+   begin
+      pragma INTERFACE(C);
+   end INCLUDE_CHAR;
 
    -- pragma INCLUDE("file"); the text of the file stands in place of the
    -- pragma (RM79 App. B)
    procedure CHECK_INCLUDE is
-      T : TEXT;
-      SAVED_LINE : INTEGER := SRC_LINE;
-      FROM : INTEGER := 1;
+      N : INTEGER;
    begin
       if NTOKS < 6 then
          return;
@@ -421,25 +427,36 @@
          and then TOKS(NTOKS - 2).KIND = K_STR and then TOKS(NTOKS - 1).S.all = ")") then
          return;
       end if;
-      READ_FILE_TEXT(TOKS(NTOKS - 2).S.all, T);
-      if T = null then
+      INCLUDE_OPEN(TOKS(NTOKS - 2).S.all, N);
+      if N < 0 then
          FAIL(SRC_LINE, "pragma INCLUDE: the file " & TOKS(NTOKS - 2).S.all & " cannot be read");
       end if;
       NTOKS := NTOKS - 6;
+      INCLUDE_TEXT(N);
+   end CHECK_INCLUDE;
+
+   procedure INCLUDE_TEXT(N : INTEGER) is
+      T : STRING(1 .. N + 1);
+      SAVED_LINE : INTEGER := SRC_LINE;
+      FROM : INTEGER := 1;
+   begin
+      for K in 1 .. N loop
+         INCLUDE_CHAR(K, T(K));
+      end loop;
       SRC_LINE := 0;
-      for K in 1 .. T.all'LENGTH loop
-         if T.all(K) = LF then
+      for K in 1 .. N loop
+         if T(K) = LF then
             SRC_LINE := SRC_LINE + 1;
-            INCLUDE_LINE(T.all, FROM, K - 1);
+            INCLUDE_LINE(T, FROM, K - 1);
             FROM := K + 1;
          end if;
       end loop;
-      if FROM <= T.all'LENGTH then
+      if FROM <= N then
          SRC_LINE := SRC_LINE + 1;
-         INCLUDE_LINE(T.all, FROM, T.all'LENGTH);
+         INCLUDE_LINE(T, FROM, N);
       end if;
       SRC_LINE := SAVED_LINE;
-   end CHECK_INCLUDE;
+   end INCLUDE_TEXT;
 
    procedure INCLUDE_LINE(T : STRING; FROM, TO : INTEGER) is
       L : STRING(1 .. TO - FROM + 1);
