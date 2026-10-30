@@ -161,7 +161,7 @@ END PROC add_token;
 
 % the end of an identifier that starts at i (diagram C): letters and digits,
 % single underscores between them
-FUNC ident_end(READONLY line : STRING[ASCII], CONST i : INT) => INT IMPORTS src_line;
+ABNORMAL FUNC ident_end(READONLY line : STRING[ASCII], CONST i : INT) => INT IMPORTS src_line;
    VAR j : INT := i + 1;
    WHILE j <= line.LEN AND (is_letter(line(j)) OR is_digit(line(j)) OR line(j) = 'UNDERSCORE) REPEAT
       IF line(j) = 'UNDERSCORE AND (j = line.LEN OR NOT (is_letter(line(j + 1)) OR is_digit(line(j + 1)))) THEN

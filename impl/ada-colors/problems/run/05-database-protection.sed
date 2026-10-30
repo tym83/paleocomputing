@@ -57,3 +57,6 @@ s/ sh1(name, pr);.*/ shared(name, pr);/
 s/^        IMPORTS d_lock;$/        IMPORTS delay_time;/
 # set_preemption uses d_lock without importing it
 s/^ PROC set_preemption (name:DATASET_NAME, pre:PREEMPTION);/ PROC set_preemption (name:DATASET_NAME, pre:PREEMPTION) IMPORTS d_lock;/
+# search_for_dataset imports and is invoked inside its own capsule, which
+# RM 7.2.1 allows only an abnormal function
+s/^FUNC search_for_dataset (name:DATASET_NAME) => dataset/ABNORMAL FUNC search_for_dataset (name:DATASET_NAME) => dataset/

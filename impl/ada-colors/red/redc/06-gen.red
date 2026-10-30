@@ -43,6 +43,7 @@ PROC declare_body(CONST elems : node) IMPORTS ALL;
          declare_subprogram(e);
          y := lookup_decl(e);
          y.home := elems;
+         normal_function(e, y);
       ELSEIF e.kind = n_generic THEN
          VAR g : sym := new_sym(y_generic, e.name);
          g.decl := e;
@@ -144,7 +145,7 @@ PROC manifest_const(CONST d : node) IMPORTS ALL;
    define(y, d.line);
 END PROC manifest_const;
 
-FUNC exported(CONST d : node, READONLY name : STRING[ASCII], OUT ro : BOOL) => BOOL;
+ABNORMAL FUNC exported(CONST d : node, READONLY name : STRING[ASCII], OUT ro : BOOL) => BOOL;
    VAR p : node := d.a;
    ro := FALSE;
    IF d.ival = 1 THEN
@@ -273,6 +274,7 @@ PROC elaborate_capsule(CONST d : node, CONST y : sym, CONST args : node, CONST o
    cr.next := caps;
    caps := cr;
    open_scope;
+   cr.depth := depth;
    IF d.b /= NIL THEN
       capsule_params(d, args, owner.line);
    END IF;
@@ -605,6 +607,41 @@ PROC ptr_subtype_check(CONST t : typ, CONST c : cons, CONST src : node) IMPORTS 
    END REPEAT;
    emit("if (" & cond.ALL & ") rt_raise_msg(RT_X_SUBTYPE, " & q & "indirect subtype" & q & ");");
 END PROC ptr_subtype_check;
+
+% the rules for a normal (not ABNORMAL) function (7.2.1): only CONST and
+% READONLY formals; with an imports list, it is local to a capsule body and
+% imports only that body's variables, none of them exported
+PROC normal_function(CONST d : node, CONST y : sym) IMPORTS ALL;
+   VAR p : parm := y.params;
+   VAR imp : node := d.d;
+   IF d.kind /= n_func OR d.flag MOD 2 = 1 THEN
+      RETURN;
+   END IF;
+   WHILE p /= NIL REPEAT
+      IF p.mode = m_var OR p.mode = m_out THEN
+         fail(d.line, "a normal function may have only CONST and READONLY formal parameters: " & d.name.ALL);
+      END IF;
+      p := p.next;
+   END REPEAT;
+   IF d.d = NIL AND d.flag < 2 THEN
+      RETURN;
+   END IF;
+   IF caps = NIL OR depth /= caps.depth THEN
+      fail(d.line, "a normal function with an imports list must be local to a capsule body: " & d.name.ALL);
+   END IF;
+   WHILE imp /= NIL REPEAT
+      VAR ro : BOOL;
+      VAR z : sym := lookup(imp.name.ALL);
+      IF z /= NIL AND z.kind = y_var AND z.depth /= caps.depth THEN
+         fail(d.line, "a normal function imports only variables of its capsule body: " & imp.name.ALL);
+      END IF;
+      IF exported(caps.d, imp.name.ALL, ro) AND caps.d.ival /= 1 THEN
+         fail(d.line, "a normal function may not import an exported variable: " & imp.name.ALL);
+      END IF;
+      imp := imp.next;
+   END REPEAT;
+   y.capn := caps.d;
+END PROC normal_function;
 
 PROC declare_subprogram(CONST d : node) IMPORTS ALL;
    define(build_subprogram(d), d.line);
@@ -1158,7 +1195,7 @@ END PROC gen_subprogram;
 % leaving a scope waits for the activations of its tasks (10.1); the tasks of
 % a capsule live as long as the capsule's declaration (8.1), so they are
 % waited for where the scope that declares the capsule ends
-FUNC waits_of(CONST d : node) => STRING[ASCII] IMPORTS cap_waits;
+ABNORMAL FUNC waits_of(CONST d : node) => STRING[ASCII] IMPORTS cap_waits;
    VAR w : waitrec := cap_waits;
    WHILE w /= NIL REPEAT
       IF w.d = d THEN
@@ -1169,7 +1206,7 @@ FUNC waits_of(CONST d : node) => STRING[ASCII] IMPORTS cap_waits;
    RETURN "";
 END FUNC waits_of;
 
-FUNC task_waits(CONST elems : node) => STRING[ASCII] IMPORTS ALL;
+ABNORMAL FUNC task_waits(CONST elems : node) => STRING[ASCII] IMPORTS ALL;
    VAR e : node := elems;
    VAR r : text := mk("");
    WHILE e /= NIL REPEAT
@@ -1236,7 +1273,7 @@ PROC start_labels IMPORTS ALL;
    END REPEAT;
 END PROC start_labels;
 
-FUNC goto_label(READONLY name : STRING[ASCII]) => exitrec IMPORTS gotos;
+ABNORMAL FUNC goto_label(READONLY name : STRING[ASCII]) => exitrec IMPORTS gotos;
    VAR x : exitrec := gotos;
    WHILE x /= NIL REPEAT
       IF x.match.ALL = name THEN
@@ -2315,7 +2352,7 @@ ABNORMAL FUNC tt_binds(CONST gd : node, CONST formals : node, CONST actuals : no
 END FUNC tt_binds;
 
 % is this subtype a use of a generic type, X[...]?
-FUNC generic_use(CONST st : node) => BOOL IMPORTS ALL;
+ABNORMAL FUNC generic_use(CONST st : node) => BOOL IMPORTS ALL;
    IF st.kind = s_mailbox THEN
       RETURN lookup("MAILBOX") /= NIL AND lookup("MAILBOX").kind = y_generic;
    END IF;

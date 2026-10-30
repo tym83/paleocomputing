@@ -162,7 +162,7 @@ TYPE sym : PTR RECORD[kind : INT, name : text, t : typ, c : cons,
                       level : INT, byref : BOOL, members, mnext : sym,
                       binds : node, insts : sym, env : buckets,
                       chain, stack : sym, owner : sym, gctx : fctxrec, mv : mval,
-                      reqs : lines, reqdone : BOOL, home : node];
+                      reqs : lines, reqdone : BOOL, home : node, capn : node];
 
 % a value known during translation (5.5): kind is t_int, t_bool, t_enum or
 % t_string; i holds an INT, a BOOL (0, 1) or the position of a literal
@@ -177,7 +177,7 @@ TYPE exitrec : PTR RECORD[match, label : text, depth : INT, next : exitrec];
 
 % a closed scope being translated: subprogram or capsule (3.5, 3.7)
 % the capsules being translated, innermost first
-TYPE caprec : PTR RECORD[d : node, next : caprec];
+TYPE caprec : PTR RECORD[d : node, next : caprec, depth : INT];
 
 % what leaving the scope of a capsule's declaration waits for (10.1, 8.1)
 TYPE waitrec : PTR RECORD[d : node, w : text, next : waitrec];

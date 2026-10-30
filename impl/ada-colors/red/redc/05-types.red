@@ -287,7 +287,7 @@ FUNC same_lits(CONST a : node, CONST b : node) => BOOL;
 END FUNC same_lits;
 
 % the component type of a string type
-FUNC str_elem(CONST t : typ) => typ IMPORTS ty_ascii;
+ABNORMAL FUNC str_elem(CONST t : typ) => typ IMPORTS ty_ascii;
    IF t.elem = NIL THEN
       RETURN ty_ascii;
    END IF;
@@ -1327,7 +1327,7 @@ PROC init_storage(READONLY lval : STRING[ASCII], CONST t : typ, CONST c : cons) 
    END IF;
 END PROC init_storage;
 
-FUNC init_call(CONST y : sym, READONLY lval : STRING[ASCII]) => STRING[ASCII] IMPORTS cur_level;
+ABNORMAL FUNC init_call(CONST y : sym, READONLY lval : STRING[ASCII]) => STRING[ASCII] IMPORTS cur_level;
    VAR link : text := mk("");
    IF y.level > 0 THEN
       link := mk("F");
@@ -1404,7 +1404,7 @@ ABNORMAL FUNC fin_code(READONLY lval : STRING[ASCII], CONST t : typ) => STRING[A
 END FUNC fin_code;
 
 % the type of a type parameter (4.5.3)
-FUNC tparam_type(CONST t : typ, READONLY name : STRING[ASCII]) => typ IMPORTS ty_int;
+ABNORMAL FUNC tparam_type(CONST t : typ, READONLY name : STRING[ASCII]) => typ IMPORTS ty_int;
    VAR z : sym := t.tpsyms;
    WHILE z /= NIL REPEAT
       IF z.name.ALL = name THEN

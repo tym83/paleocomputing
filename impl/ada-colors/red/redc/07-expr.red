@@ -102,7 +102,7 @@ ABNORMAL FUNC deref(READONLY base : STRING[ASCII], CONST t : typ) => STRING[ASCI
    RETURN "(*(" & ctype(t) & ")rt_nil_check(" & base & "))";
 END FUNC deref;
 
-FUNC is_lvalue(CONST e : node) => BOOL IMPORTS ALL;
+ABNORMAL FUNC is_lvalue(CONST e : node) => BOOL IMPORTS ALL;
    IF e.kind = n_name THEN
       VAR y : sym := lookup(e.name.ALL);
       % a manifest constant is a value, not a data item with an address
@@ -1775,6 +1775,16 @@ ABNORMAL FUNC gcall(CONST e : node, CONST is_stmt : BOOL, OUT t : typ) => STRING
       fail(e.line, fn.name.ALL & " cannot be invoked");
    END IF;
    check_requires(y, e.line);
+   IF y.capn /= NIL THEN
+      % a normal function with imports is not invoked inside its capsule (7.2.1)
+      VAR cr : caprec := caps;
+      WHILE cr /= NIL REPEAT
+         IF cr.d = y.capn THEN
+            fail(e.line, y.name.ALL & " is a normal function with an imports list: it may not be invoked inside its capsule");
+         END IF;
+         cr := cr.next;
+      END REPEAT;
+   END IF;
    IF is_stmt AND y.kind /= y_proc THEN
       fail(e.line, fn.name.ALL & " is a function, not a procedure");
    END IF;
