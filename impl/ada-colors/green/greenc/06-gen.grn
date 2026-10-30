@@ -368,7 +368,7 @@
             PUT_TO(OUT_EXCS, "  " & Y.CNAME.all & " = rt_exc(" & Q & E.NAME.all & Q & ");");
             DEFINE(Y, E.LINE);
          when 44 | 45 =>
-            if IS_GENERIC_NAME(E.NAME.all) then
+            if E.IVAL = 0 and then IS_GENERIC_NAME(E.NAME.all) then
                ATTACH_GENERIC_BODY(E);
             elsif E.IVAL = 2 then
                RENAME_SUBPROGRAM(E);

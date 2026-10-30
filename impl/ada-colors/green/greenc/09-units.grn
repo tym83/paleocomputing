@@ -161,7 +161,7 @@
       M, Z : SYM;
       SAVED : NODE := CUR_PKG;
    begin
-      if Y /= null and then Y.KIND = Y_GENERIC then
+      if IS_GENERIC_NAME(E.NAME.all) then
          ATTACH_GENERIC_BODY(E);
          return;
       end if;

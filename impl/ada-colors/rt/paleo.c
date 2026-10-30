@@ -611,6 +611,7 @@ struct rt_task {
   rt_waiter *awl;          /* the records armed for that wait */
   int atimed, atimer_alt;
   rt_int awake;
+  rt_int runs;             /* GREEN T'CLOCK: the times it was given the processor */
 };
 
 static pthread_mutex_t G = PTHREAD_MUTEX_INITIALIZER;
@@ -786,6 +787,7 @@ static void switch_to(rt_task *n) {
   }
   cur = n;
   n->state = T_RUNNING;
+  n->runs++;
   trace("run", n);
   pthread_cond_signal(&n->cv);
   if (me->state == T_DONE) return;
@@ -1740,6 +1742,10 @@ void rt_g_abort(rt_act *a) {
   rt_exterminate(a);
 }
 
+/* T'CLOCK (RM79 9.9): the processor time of a task; time is virtual here,
+ * so it is counted in the turns the task was given the processor */
+double rt_g_task_clock(rt_act *a) { return a->t ? (double)a->t->runs : 0.0; }
+
 int rt_g_aborted(void) {
   for (int i = 0; i < g_naborted; i++)
     if (g_aborted[i] == cur) return 1;
@@ -1815,6 +1821,23 @@ rstr rt_g_g2s(rt_gstr a) {
 
 void rt_g_overlap(void) { rt_raise(g_exc_id("OVERLAP_ERROR")); }
 void rt_g_novalue(void) { rt_raise(RT_X_INIT); }
+
+/* a visible subprogram of a task runs on the frame of the task's body: just
+ * after initiate the task may not have reached it yet; an inactive task
+ * raises TASKING_ERROR (RM79 9.1, 11.4) */
+void *rt_g_task_frame(void **slot, rt_act *a) {
+  while (!*slot && rt_is_active(a)) rt_yield();
+  if (!*slot || !rt_is_active(a)) rt_raise(RT_X_TASKING);
+  return *slot;
+}
+
+/* the exception a caller gets when the accept body it waits for ends with
+ * X: FAILURE raised in the acceptor, or its abortion, is TASKING_ERROR for
+ * the caller (RM79 11.4, 11.5) */
+int rt_g_partner_exc(int x) {
+  if (x == RT_X_TERMINATE || rt_g_aborted()) return RT_X_TASKING;
+  return x;
+}
 
 /* the text of a file, null if it cannot be read: the form of pragma INCLUDE
  * that the first GREEN seed with INCLUDE calls */

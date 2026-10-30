@@ -2621,12 +2621,18 @@
          PATH_AT(Y.MEMBERS.LEVEL, Y.MEMBERS.CNAME.all & "lo", X1);
          PATH_AT(Y.MEMBERS.LEVEL, Y.MEMBERS.CNAME.all & "hi", X2);
          LV := MK(LV.all & "[rt_index(" & V.all & ", " & X1.all & ", " & X2.all & ") - " & X1.all & "]");
-         ARGS := MK("(" & LV.all & " ? " & LV.all & " : (rt_raise(RT_X_TASKING), (void *)0))");
+         ACT_PATH_I(Y.MEMBERS, V.all, X1);
+         ARGS := MK("rt_g_task_frame((void **)&" & LV.all & ", &" & X1.all & ")");
       elsif (Y.KIND = Y_FUNC or Y.KIND = Y_PROC) and then Y.ACCESS_PATH /= null then
          -- a visible subprogram of a task: the task body's frame; before the
          -- task runs there is none
          PATH_AT(Y.MEMBERS.LEVEL, Y.ACCESS_PATH.all, LV);
-         ARGS := MK("(" & LV.all & " ? " & LV.all & " : (rt_raise(RT_X_TASKING), (void *)0))");
+         if SAME_TASK(Y.MEMBERS, CUR_TASK) then
+            ARGS := LV;
+         else
+            ACT_PATH(Y.MEMBERS, X1);
+            ARGS := MK("rt_g_task_frame((void **)&" & LV.all & ", &" & X1.all & ")");
+         end if;
       elsif Y.LEVEL > 0 then
          LINK_TO(Y.LEVEL, ARGS);
       end if;

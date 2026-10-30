@@ -123,10 +123,26 @@
 
    -- ---- compilation units (RM79 10) ---------------------------------------------
 
+   -- predefined units in GREEN (RM79 9.11)
+   procedure PRELUDE is
+   begin
+      LEX_LINE("generic task SIGNAL is entry SEND; entry WAIT; end SIGNAL;");
+      LEX_LINE("task body SIGNAL is RECEIVED : BOOLEAN := FALSE; begin loop select accept SEND;");
+      LEX_LINE("RECEIVED := TRUE; or when RECEIVED => accept WAIT; RECEIVED := FALSE; end select;");
+      LEX_LINE("end loop; end SIGNAL;");
+      LEX_LINE("generic task SEMAPHORE is entry P; entry V; end SEMAPHORE;");
+      LEX_LINE("task body SEMAPHORE is begin loop accept P; accept V; end loop; end SEMAPHORE;");
+   end PRELUDE;
+
    procedure TRANSLATE(U : NODE) is
-      P : NODE := U;
+      P : NODE := PRELUDE_UNITS;
       Y : SYM;
    begin
+      while P /= null loop
+         DECL_ELEMENT(P);
+         P := P.NEXT;
+      end loop;
+      P := U;
       OPEN_SCOPE;
       while P /= null loop
          -- every compilation unit is restricted: the library units it names
@@ -241,6 +257,14 @@ begin
    TY_UFIXED.NAME := MK("universal fixed");
    OUT_AWAITS := NEW_BUFFER;
    PREDEFINE;
+   -- the predefined units written in GREEN (RM79 9.11): lexed and parsed
+   -- first, translated in the environment of STANDARD
+   PRELUDE;
+   ADD_TOKEN(K_EOF, "<end>", 0);
+   COMPILATION(PRELUDE_UNITS);
+   NTOKS := 0;
+   TPOS := 1;
+   SRC_LINE := 0;
    READ_SOURCE;
    COMPILATION(UNITS);
    if UNITS = null then

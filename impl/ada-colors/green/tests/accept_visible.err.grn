@@ -1,0 +1,16 @@
+procedure MAIN is
+   task T is
+      procedure P;
+      entry E;
+   end T;
+   task body T is
+      procedure P is
+      begin
+         accept E;
+      end P;
+   begin
+      null;
+   end T;
+begin
+   null;
+end MAIN;

@@ -169,9 +169,15 @@
    end GENERIC_DECL;
 
    -- a body for a generic unit declared earlier is kept for its instantiations
+   -- the body of a generic unit declared in the same declarative part
    function IS_GENERIC_NAME(N : STRING) return BOOLEAN is
       Y : SYM := LOOKUP(N);
    begin
+      if Y = null then
+         return FALSE;
+      elsif Y.DEPTH /= DEPTH then
+         return FALSE;
+      end if;
       if not (Y /= null) then
          return FALSE;
       end if;

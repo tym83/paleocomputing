@@ -326,6 +326,9 @@ _Noreturn void rt_g_overlap(void);             /* OVERLAP_ERROR (RM79 5.1.1) */
 #include <limits.h>
 #include <string.h>
 _Noreturn void rt_g_novalue(void);
+void *rt_g_task_frame(void **slot, rt_act *a);   /* a task's visible subprograms */
+int rt_g_partner_exc(int x);                     /* the caller's exception */
+double rt_g_task_clock(rt_act *a);               /* T'CLOCK */
 #define RT_G_NOVALUE_F (__builtin_nan("0x6e76"))
 static inline rt_int rt_g_nvl(rt_int v) { if (v == INT64_MIN) rt_g_novalue(); return v; }
 static inline int rt_g_nvi(int v) { if (v == INT_MIN) rt_g_novalue(); return v; }
