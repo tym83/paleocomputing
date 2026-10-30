@@ -3034,12 +3034,12 @@ rstr rt_b_cat(rstr a, rstr b) {
  * (15); a result is rounded to nearest even (ROUNDED, NATIVE_R) or toward zero
  * (TRUNCATED, NATIVE_T) in its implemented precision; OVERFLOW beyond the range,
  * UNDERFLOW for a non-zero value below the smallest normal one */
+/* Truncation does not use the rounding modes (WASI has none): the result rounded
+ * to nearest, then one step toward zero when its magnitude exceeds the exact one */
 static double b_fround(double v, int single, int trunc) {
   if (!single) return v;
-  int old = fegetround();
-  if (trunc) fesetround(FE_TOWARDZERO);
   volatile float f = (float)v;
-  fesetround(old);
+  if (trunc && fabs((double)f) > fabs(v)) f = nextafterf(f, 0.0f);
   return f;
 }
 
@@ -3055,17 +3055,24 @@ static double b_fcheck(double r, int single, int exc_over) {
 }
 
 double rt_b_fop(int op, double a, double b, int single, int trunc) {
-  int old = fegetround();
   volatile double r;
+  double e = 0;                     /* the sign of exact - r */
   if (op == '/' && b == 0) rt_raise(RT_X_ZERO_DIVIDE);
-  if (trunc) fesetround(FE_TOWARDZERO);
+  if (op == '-') b = -b;
   switch (op) {
-  case '+': r = a + b; break;
-  case '-': r = a - b; break;
-  case '*': r = a * b; break;
-  default: r = a / b; break;
+  case '+': case '-': {
+    r = a + b;
+    double bb = r - a;
+    e = (a - (r - bb)) + (b - bb);  /* exact error of the sum (TwoSum) */
+    break;
   }
-  fesetround(old);
+  case '*': r = a * b; e = fma(a, b, -r); break;
+  default: r = a / b; e = fma(-r, b, a) * (b < 0 ? -1 : 1); break;
+  }
+  if (trunc) {
+    if (isinf(r) && isfinite(a) && isfinite(b)) r = copysign(DBL_MAX, r);
+    else if (r != 0 && e != 0 && (e < 0) != (r < 0)) r = nextafter(r, 0.0);
+  }
   r = b_fround(r, single, trunc);
   if (r == 0 && (op == '*' || op == '/') && a != 0 && (op == '/' || b != 0)) rt_raise(RT_B_UNDERFLOW);
   return b_fcheck(r, single, RT_X_OVERFLOW);
@@ -3080,10 +3087,12 @@ double rt_b_fconv(double v, int single, int trunc, int range) {
 
 /* TO_FLOAT of a fixed point value m * 2**-s, rounded or truncated (3.3.6.1) */
 double rt_b_float_of_fix_r(rt_int v, rt_int scale, int single, int trunc) {
-  int old = fegetround();
-  if (trunc) fesetround(FE_TOWARDZERO);
   volatile double d = (double)v;
-  fesetround(old);
+  if (trunc) {
+    int over = d >= 0x1p63 ? 1
+               : (v < 0 ? (rt_int)d < v : (rt_int)d > v);
+    if (over) d = nextafter(d, 0.0);
+  }
   return rt_b_fconv(ldexp(d, (int)-scale), single, trunc, 0);
 }
 
@@ -3172,15 +3181,16 @@ rstr rt_b_fmd(int op, double a, double b) {
  * bits begin, in bytes, whole words apart; a pointer is that address (TO_BIT,
  * [PTR (T)]$$), NIL is 0. The host keeps the program's form of each value. */
 int RT_B_ARRAY_TOO_BIG;
-static size_t b_heap_used;
-static size_t b_store(void) { return b_pdp11 ? (size_t)1 << 16 : (size_t)1 << 33; }
-static size_t b_word_bytes(void) { return (size_t)B_WORD / 8; }
+static uint64_t b_heap_used;          /* 64 bits on wasm32 as natively */
+static uint64_t b_store(void) { return b_pdp11 ? (uint64_t)1 << 16 : (uint64_t)1 << 33; }
+static uint64_t b_word_bytes(void) { return (uint64_t)B_WORD / 8; }
 
 /* the C storage of n elements (the host's form); bits, the layout's size, or < 0
  * when the elements' size is known only once they are made (rt_b_array_check) */
 void *rt_b_array_alloc_bits(rt_int n, size_t esize, rt_int bits) {
   if (n < 0) n = 0;
   if (bits > ((rt_int)1 << 34)) rt_raise(RT_B_ARRAY_TOO_BIG);
+  if ((uint64_t)esize * (uint64_t)(n ? n : 1) > SIZE_MAX) rt_raise(RT_X_FREE);   /* the host's */
   return rt_alloc(esize * (size_t)(n ? n : 1));
 }
 
@@ -3224,8 +3234,8 @@ static void b_ptr_put(void *p, uint64_t addr) {
 
 /* NEW: bits of the store for a value whose host form takes n bytes; its address */
 void *rt_b_new_bits(size_t n, rt_int bits) {
-  size_t wb = b_word_bytes();
-  size_t used = ((size_t)(bits > 0 ? bits : 0) + 8 * wb - 1) / (8 * wb) * wb;
+  uint64_t wb = b_word_bytes();
+  uint64_t used = ((uint64_t)(bits > 0 ? bits : 0) + 8 * wb - 1) / (8 * wb) * wb;
   if (used == 0) used = wb;
   if (used > b_store() - wb - b_heap_used) rt_raise(RT_X_FREE);     /* SPACE_EXHAUSTED */
   void *p = rt_alloc(n);
@@ -3245,8 +3255,8 @@ void *rt_b_new_bits(size_t n, rt_int bits) {
 
 /* the rest of the bits of the object NEW just made, once its size is known */
 void rt_b_new_more(rt_int bits) {
-  size_t wb = b_word_bytes();
-  size_t used = ((size_t)(bits > 0 ? bits : 0) + 8 * wb - 1) / (8 * wb) * wb;
+  uint64_t wb = b_word_bytes();
+  uint64_t used = ((uint64_t)(bits > 0 ? bits : 0) + 8 * wb - 1) / (8 * wb) * wb;
   if (used > wb) used -= wb;                    /* rt_b_new_bits took a word */
   else used = 0;
   if (used > b_store() - wb - b_heap_used) rt_raise(RT_X_FREE);

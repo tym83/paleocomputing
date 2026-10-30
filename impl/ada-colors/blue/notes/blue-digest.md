@@ -382,7 +382,7 @@ unreadable; the decision is bluec's.
 40. **Libraries and options (4.2, 4.7, 4.6.9, D.7).** `bluec [-L dir]
     [-suppress]`. A segment named in USES and not in the compilation is read
     from the library directory (default `lib`, i.e. `blue/lib` for the tests and
-    the corpus) as NAME.blu, its own USES followed in turn. Segments are also
+    the corpus) as NAME.blu, its own USES followed in turn. Where there is no library directory (the browser page) the segments go in front of the program, each after a comment line `% LIBRARY NAME`, which makes it the implementation's segment as if read from the library. Segments are also
     translated separately: `bluec -c -L dir < S.blu > S.c` translates the one
     segment of its input into a unit whose variables and routines have C names
     of the segment (`bs_S_v3_TOTAL`, `bs_S_r1_BUMP`), with an initialization

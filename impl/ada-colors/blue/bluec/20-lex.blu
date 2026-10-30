@@ -13,7 +13,42 @@ PROCEDURE READ_SOURCE ();
    END LOOP;
    W@.SRC(W@.NSRC) := 0;
    W@.STDINLEN := W@.NSRC;
+   MARK_LIBRARY ();
 END PROCEDURE READ_SOURCE;
+
+% A comment line LIBRARY NAME (MARK) says that the segment NAME after it is the
+% implementation's library segment of that name, put in front of the program
+% where there is no library directory to read it from (the browser page; 4.7)
+PROCEDURE MARK_LIBRARY ();
+   CONST MARK: ASCII_STR (10) := '% LIBRARY ';
+   VAR I: INTEGER := 0;
+   LOOP UNTIL I >= W@.NSRC DO
+      IF I = 0 ! AT_SRC (I - 1) = 10 THEN
+         BLOCK
+            VAR K: INTEGER := 0;
+            LOOP UNTIL K >= 10 DO
+               IF AT_SRC (I + K) <> CODE_OF (MARK[K:K]) THEN
+                  EXIT;
+               END IF;
+               K := K + 1;
+            END LOOP;
+            IF K = 10 THEN
+               BLOCK
+                  VAR E: INTEGER := I + 10;
+                  VAR N: NODE := NEW_NODE (N_IDENT, 0);
+                  LOOP UNTIL NOT IS_IDCHAR (AT_SRC (E)) DO
+                     E := E + 1;
+                  END LOOP;
+                  N@.NAME := SOURCE_TEXT (I + 10, E);
+                  N@.NEXT := W@.LIBSEGS;
+                  W@.LIBSEGS := N;
+               END BLOCK;
+            END IF;
+         END BLOCK;
+      END IF;
+      I := I + 1;
+   END LOOP;
+END PROCEDURE MARK_LIBRARY;
 
 FUNCTION AT_SRC (I: INTEGER) RETURNS (INTEGER);
    IF I >= W@.NSRC THEN
