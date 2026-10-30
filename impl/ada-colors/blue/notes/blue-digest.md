@@ -272,6 +272,20 @@ unreadable; the decision is bluec's.
     REP. FIXED_REP checks size, signing and the range (3.2.3). The storage of
     a value stays the C one: SIZE reports the representation, values are not
     packed.
+32. **Generics (5, 5.1, 5.2).** In a generic body the objects of a TYPE
+    parameter (?T, or E: TYPE) carry it in their type; an operator, an
+    assignment (STORE_) or a predefined or program routine invoked with them
+    must be named in the WHERE clause, and a generic routine invoked with them
+    must have its WHERE routines among the caller's. WHERE routines import no
+    data and their templates declare no derived parameters. A routine passed
+    for a routine parameter matches its template exactly (modes, types with
+    their ranges, result, the listed exceptions among its SIGNALS), derived
+    parameters and ? matching real values; `NAME (types) [RETURNS (type)]`
+    picks one of several. ?T alone takes only standard representations; a
+    repeated ?L of known lengths must agree at the call; FIXED (?, ?, ?)
+    takes the argument's type; FIXED_REP (?S, SIGNED) binds S. A `#` closing a
+    proc-template is rejected (5.1 says so); a `#` closing a formal or argument
+    list is accepted, as [4-21] and [4-38] allow an empty group.
 
 The misprints of the program examples and the rules they break are in
 `../corpus/CHANGES.md`.

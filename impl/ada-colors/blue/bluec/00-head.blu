@@ -222,6 +222,7 @@ TYPE TYP_REC = RECORD
    VAR MODL: PTR(SYM_REC);        % the module that defines an abstract type
    VAR REPS: NODE;                   % the reptype-spec
    VAR DECL: PTR(SYM_REC);          % the type declaration of a record class
+   VAR GENP: TEXT;                  % in a generic body: the TYPE parameter it stands for
 END RECORD;
 TYPE TYP = PTR(TYP_REC);
 

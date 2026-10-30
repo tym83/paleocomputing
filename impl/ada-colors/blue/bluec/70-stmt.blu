@@ -794,6 +794,9 @@ PROCEDURE ASSIGN_STMT (S: NODE);
          W@.SQUAL := S@.B;
       END IF;
       W@.NEW_OK := S@.B;
+      IF LV.T@.GENP.LEN > 0 THEN                     % assignment is STORE_ (D.5, 5.2)
+         REQUIRE_WHERE (MKN ('STORE_'), S@.LINE);
+      END IF;
       BLOCK
          CONST V: ET := EXPR (S@.B, LV.T);
          W@.NEW_OK := NIL;

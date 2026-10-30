@@ -247,6 +247,12 @@ FUNCTION PARSE_ARGS (N: NODE) RETURNS (NODE);
       ELSE
          IF GROUP = 0 THEN
             ADD_LIST (PARSE_TYPE_ARG () # HEAD, TAIL);
+            IF IS ('RETURNS') & TAIL@.KIND = N_APPLY THEN   % F (types) RETURNS (type):
+               SKIP;                                         % a function argument with
+               EXPECT ('(');                                 % its template [5-9]
+               TAIL@.E := PARSE_TYPE_SPEC ();
+               EXPECT (')');
+            END IF;
          ELSE
             ADD_LIST (PARSE_EXPR () # HEAD, TAIL);
          END IF;

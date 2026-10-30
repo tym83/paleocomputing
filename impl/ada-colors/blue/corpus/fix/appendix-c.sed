@@ -76,3 +76,9 @@ s/^             PATH SCHEDULE_APPLICATION;$/             PATH SCHEDULE_APPLICATI
 s/^        PROCEDURE APPLICATION_ROUTINE ( );$/        PROCEDURE APPLICATION_ROUTINE ( ) IMPORTS (ROUTINES: (APPLICATION_BODY));/
 # a comma before RETURNS in the WHERE clause of FORMREAD (C-34; C-36 has none)
 s/^                                 ASCII_STR(?)),$/                                 ASCII_STR(?))/
+# 5.2: a generic routine that passes objects of its type to another generic names
+# that one's WHERE routines in its own WHERE clause; GET and PUT print none
+s/^             IMPORTS (ROUTINES:(GET_IN));$/             IMPORTS (ROUTINES:(GET_IN)) WHERE T NEEDS (STORE_(T##T));/
+s/^             IMPORTS (ROUTINES: (GET_IN, POSITION));$/             IMPORTS (ROUTINES: (GET_IN, POSITION)) WHERE T NEEDS (STORE_(T##T));/
+s/^             IMPORTS (ROUTINES: (PUT_OUT));$/             IMPORTS (ROUTINES: (PUT_OUT)) WHERE T NEEDS (TO_BIT (T REP R) RETURNS (BIT(?)));/
+s/^             IMPORTS (ROUTINES: (PUT_OUT, POSITION));$/             IMPORTS (ROUTINES: (PUT_OUT, POSITION)) WHERE T NEEDS (TO_BIT (T REP R) RETURNS (BIT(?)));/

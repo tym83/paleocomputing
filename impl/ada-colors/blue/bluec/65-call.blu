@@ -80,11 +80,27 @@ FUNCTION CALL_EXPR1 (E: NODE, WANT: TYP) RETURNS (ET);
    % a routine bound by a WHERE clause or a routine parameter of the instance
    Y := BOUND_ROUTINE (E@.NAME);
    IF Y <> NIL THEN
-      IF Y@.KIND = Y_BUILTIN THEN
-         RETURN BUILTIN (E, WANT);
+      IF Y@.KIND = Y_BUILTIN THEN                    % T$TO_CHAR: TO_CHAR (5.2)
+         BLOCK
+            VAR N: NODE := COPY_NODE (E);
+            N@.NAME := Y@.NAME;
+            N@.NEXT := E@.NEXT;
+            RETURN BUILTIN (N, WANT);
+         END BLOCK;
       END IF;
       RETURN CALL_SYM (Y, ARGS, E@.LINE);
    END IF;
+   BLOCK                                             % T$NAME of a predefined operation
+      CONST SHORT: TEXT := WHERE_SHORT_NAME (E@.NAME);  % named in the WHERE clause (5.2)
+      IF NOT TEQ (SHORT, E@.NAME) THEN
+         BLOCK
+            VAR N: NODE := COPY_NODE (E);
+            N@.NAME := SHORT;
+            N@.NEXT := E@.NEXT;
+            RETURN CALL_EXPR1 (N, WANT);
+         END BLOCK;
+      END IF;
+   END BLOCK;
    Y := FIND_ROUTINE (E@.NAME, ARGS, E@.LINE, TRUE);
    IF Y = NIL THEN
       BLOCK                                          % a predefined routine of the name
@@ -150,6 +166,26 @@ FUNCTION CLASS_OPERATION (NAME: TEXT) RETURNS (TEXT);
    END LOOP I;
    RETURN NO_TEXT ();
 END FUNCTION CLASS_OPERATION;
+
+% T$NAME in a generic body where T is a TYPE parameter and NAME is in the WHERE
+% clause: NAME; else NAME as it is
+FUNCTION WHERE_SHORT_NAME (NAME: TEXT) RETURNS (TEXT);
+   CONST G: SYM := CUR_GENERIC ();
+   CONST S: ASCII_STR (NAME.LEN) := STR (NAME, NAME.LEN);
+   IF G = NIL THEN
+      RETURN NAME;
+   END IF;
+   LOOP FOR I IN [1 : NAME.LEN - 2] DO
+      IF S[I:I] = '$' THEN
+         IF FIND_BIND (G@.BINDINGS, MKN (S[0:I - 1])) <> NIL
+            & IN_WHERE (G, MKN (S[I + 1 : NAME.LEN - 1])) THEN
+            RETURN MKN (S[I + 1 : NAME.LEN - 1]);
+         END IF;
+         RETURN NAME;
+      END IF;
+   END LOOP I;
+   RETURN NAME;
+END FUNCTION WHERE_SHORT_NAME;
 
 FUNCTION BOUND_ROUTINE (NAME: TEXT) RETURNS (SYM);
    VAR B: BIND := W@.BINDS;
@@ -334,6 +370,19 @@ FUNCTION MATCH_SCORE (R: SYM, ARGS: ARG) RETURNS (INTEGER);
             IF NOT (SAME_CLASS (PT, AT) ! (AT@.KIND = T_NIL & REAL_TYPE (PT)@.KIND = T_PTR)) THEN
                RETURN 0;
             END IF;
+            IF REAL_TYPE (PT)@.GEN.LEN > 0 & REAL_TYPE (AT)@.MLEN.OK THEN
+               BLOCK                                  % ?L repeated: one length (5)
+                  CONST KEY: TEXT := MKN ('%' !! STR (REAL_TYPE (PT)@.GEN, REAL_TYPE (PT)@.GEN.LEN));
+                  CONST B: BIND := FIND_BIND (BS@.NEXT, KEY);
+                  IF B <> NIL THEN
+                     IF B@.MV <> REAL_TYPE (AT)@.MLEN.V THEN
+                        RETURN 0;
+                     END IF;
+                  ELSE
+                     ADD_BIND (KEY, NIL, REAL_TYPE (AT)@.MLEN, NIL, BS);
+                  END IF;
+               END BLOCK;
+            END IF;
             IF NOT SAME_TYPE (PT, AT) THEN
                IF P@.MODE = M_INOUT THEN               % an inout matches exactly (4.3.2)
                   RETURN 0;
@@ -398,6 +447,29 @@ FUNCTION CALL_SYM (Y0: SYM, ARGS: ARG, LINE: INTEGER) RETURNS (ET);
       Y := INSTANCE (Y, ARGS, LINE);
    END IF;
    CHECK_CALL_IMPORTS (Y, LINE);
+   IF CUR_GENERIC () <> NIL THEN                     % objects of a TYPE parameter go to
+      BLOCK                                          % WHERE routines and generics (5.2)
+         VAR Q: ARG := ARGS;
+         VAR GEN_ARG: BOOLEAN := FALSE;
+         LOOP UNTIL Q = NIL DO
+            IF Q@.HAVE THEN
+               IF Q@.V.T <> NIL THEN
+                  IF Q@.V.T@.GENP.LEN > 0 THEN
+                     GEN_ARG := TRUE;
+                  END IF;
+               END IF;
+            END IF;
+            Q := Q@.NEXT;
+         END LOOP;
+         IF GEN_ARG THEN
+            IF Y@.BINDINGS <> NIL THEN
+               REQUIRE_WHERE_SUBSET (Y, LINE);
+            ELSE
+               REQUIRE_WHERE (BASE_NAME (Y), LINE);
+            END IF;
+         END IF;
+      END BLOCK;
+   END IF;
    BLOCK                                             % not a variable a NAMING hides
       VAR U: NODE := Y@.USES;                        % (4.5.4)
       LOOP UNTIL U = NIL DO

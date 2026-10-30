@@ -1,0 +1,9 @@
+MAIN SEGMENT WHERE_UNLISTEDERR
+   USES (TERMINAL);
+% only the routines of the WHERE clause are invoked with objects of ?T (5.2)
+SHOW (5);
+PROCEDURE SHOW (X: ?T)
+      WHERE T NEEDS (TO_CHAR (T) RETURNS (ASCII_STR (?)));
+   PUT_LINE (TO_CHAR (X + X));
+END PROCEDURE SHOW;
+END SEGMENT WHERE_UNLISTEDERR;

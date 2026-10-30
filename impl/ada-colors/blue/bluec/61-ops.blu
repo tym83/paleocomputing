@@ -429,6 +429,9 @@ FUNCTION UNARY (E: NODE) RETURNS (ET);
    CONST A: ET := EXPR (E@.A, NIL);
    CONST T: TYP := A.T;
    CONST OP: TEXT := E@.NAME;
+   IF T@.GENP.LEN > 0 THEN                           % an object of a TYPE parameter (5.2)
+      REQUIRE_WHERE (OP_NAME (OP, TRUE), E@.LINE);
+   END IF;
    IF T@.KIND = T_ABS ! HAS_USER_ROUTINE (OP_NAME (OP, TRUE)) THEN    % (D.5 A5)
       BLOCK
          VAR ARGS: ARG := VAL_ARG (A, QUAL_ARGS (E@.LINE));
@@ -515,6 +518,9 @@ FUNCTION APPLY_OPERATOR (E: NODE, OP: TEXT, A, B: ET) RETURNS (ET);
       VAR NAME: TEXT := OP_NAME (OP, FALSE);
       IF E@.FL = 2 THEN                              % !op!: MD_ADD_, MD_MULTIPLY_ ...
          NAME := MKN ('MD_' !! STR (NAME, NAME.LEN));
+      END IF;
+      IF AT@.GENP.LEN > 0 ! BT@.GENP.LEN > 0 THEN    % objects of a TYPE parameter (5.2)
+         REQUIRE_WHERE (NAME, LINE);
       END IF;
       IF HAS_USER_ROUTINE (NAME) ! AT@.KIND = T_ABS ! BT@.KIND = T_ABS THEN
          BLOCK

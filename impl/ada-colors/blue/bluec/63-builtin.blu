@@ -229,9 +229,35 @@ FUNCTION FIRST_OUT_ARG (E: NODE) RETURNS (NODE);
    RETURN E@.B;
 END FUNCTION FIRST_OUT_ARG;
 
+% is one of the arguments L a variable or constant of a TYPE parameter (5.2)?
+FUNCTION GENERIC_OBJECT_ARG (L: NODE) RETURNS (BOOLEAN);
+   VAR A: NODE := L;
+   LOOP UNTIL A = NIL DO
+      IF A@.KIND = N_NAME THEN
+         BLOCK
+            CONST Y: SYM := LOOKUP (A@.NAME);
+            IF Y <> NIL THEN
+               IF (Y@.KIND = Y_VAR ! Y@.KIND = Y_CONST) & Y@.T <> NIL THEN
+                  IF Y@.T@.GENP.LEN > 0 THEN
+                     RETURN TRUE;
+                  END IF;
+               END IF;
+            END IF;
+         END BLOCK;
+      END IF;
+      A := A@.NEXT;
+   END LOOP;
+   RETURN FALSE;
+END FUNCTION GENERIC_OBJECT_ARG;
+
 FUNCTION BUILTIN (E: NODE, WANT: TYP) RETURNS (ET);
    CONST NAME: TEXT := E@.NAME;
    CONST LINE: INTEGER := E@.LINE;
+   IF CUR_GENERIC () <> NIL THEN                     % a predefined routine invoked with
+      IF GENERIC_OBJECT_ARG (E@.A) THEN              % objects of a TYPE parameter (5.2)
+         REQUIRE_WHERE (NAME, LINE);
+      END IF;
+   END IF;
    IF OPERATOR_SYMBOL (NAME).LEN > 0 ! TEQS (NAME, 'STORE_') ! TEQS (NAME, 'SUBSTRING_')
       ! TEQS (NAME, 'SUBSTRING_STORE_') THEN
       RETURN OPERATOR_BUILTIN (E, WANT);

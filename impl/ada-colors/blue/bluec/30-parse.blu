@@ -812,6 +812,9 @@ FUNCTION PARSE_TEMPLATE (FUNC: BOOLEAN) RETURNS (NODE);
    LOOP UNTIL IS (')') DO
       IF ACCEPT ('#') THEN
          MODE := MODE + 1;
+         IF IS (')') THEN
+            FAIL (R@.LINE, 'a # must not be the last symbol of a proc-template (5.1)');
+         END IF;
       ELSE
          BLOCK
             VAR P: NODE := NEW_NODE (N_PARAM, LINE_NOW ());
