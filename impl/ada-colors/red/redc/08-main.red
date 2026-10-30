@@ -1,9 +1,93 @@
 % ---- the main capsule: translate, then print the C program ----------------------
 
+% EXPOSE ... FROM EXTERNAL x where x is no unit of the program: x is taken
+% from the library of translated units (3.1, 8.1), with what it needs in turn
+ABNORMAL FUNC with_library(CONST units : node) => node IMPORTS ALL;
+   VAR r : node := units;
+   VAR more : BOOL := TRUE;
+   WHILE more REPEAT
+      VAR missing : text := external_missing(r, r);
+      more := FALSE;
+      IF missing /= NIL THEN
+         VAR saved : INT := tpos;
+         IF read_library(missing.ALL) THEN
+            VAR lib : node;
+            tpos := ntoks_before_library;
+            lib := program;
+            tpos := saved;
+            % the library units come first: the program is declared after them
+            IF lib /= NIL THEN
+               VAR t : node := lib;
+               WHILE t.next /= NIL REPEAT
+                  t := t.next;
+               END REPEAT;
+               t.next := r;
+               r := lib;
+               more := TRUE;
+            END IF;
+         END IF;
+      END IF;
+      ntoks_before_library := ntoks + 1;
+   END REPEAT;
+   RETURN r;
+END FUNC with_library;
+
+% the name of a capsule exposed as EXTERNAL that no unit declares
+ABNORMAL FUNC external_missing(CONST e : node, CONST units : node) => text IMPORTS ALL;
+   VAR x : node := e;
+   WHILE x /= NIL REPEAT
+      IF x.kind = n_expose AND x.flag >= 2 AND NOT unit_named(units, x.name.ALL) AND NOT tried(x.name.ALL) THEN
+         mark_tried(x.name.ALL);
+         RETURN x.name;
+      END IF;
+      IF x.a /= NIL AND x.kind /= n_expose THEN
+         VAR r : text := external_missing(x.a, units);
+         IF r /= NIL THEN
+            RETURN r;
+         END IF;
+      END IF;
+      IF x.c /= NIL AND x.kind /= n_expose THEN
+         VAR r : text := external_missing(x.c, units);
+         IF r /= NIL THEN
+            RETURN r;
+         END IF;
+      END IF;
+      x := x.next;
+   END REPEAT;
+   RETURN NIL;
+END FUNC external_missing;
+
+FUNC unit_named(CONST units : node, READONLY name : STRING[ASCII]) => BOOL;
+   VAR u : node := units;
+   WHILE u /= NIL REPEAT
+      IF u.name.ALL = name THEN
+         RETURN TRUE;
+      END IF;
+      u := u.next;
+   END REPEAT;
+   RETURN FALSE;
+END FUNC unit_named;
+
+ABNORMAL FUNC tried(READONLY name : STRING[ASCII]) => BOOL IMPORTS library_tried;
+   RETURN seen_name(library_tried, name);
+END FUNC tried;
+
+PROC mark_tried(READONLY name : STRING[ASCII]) IMPORTS library_tried;
+   VAR l : lines;
+   ALLOC l PTR;
+   l.s := mk(name);
+   l.next := library_tried;
+   library_tried := l;
+END PROC mark_tried;
+
 PROC translate(CONST units : node) IMPORTS ALL;
    VAR u : node := units;
    WHILE u /= NIL REPEAT
-      IF u.next = NIL THEN
+      IF has_pragmat(u.prags, "LIBRARY") THEN
+         % PRAG(LIBRARY): a unit translated for the library (3.1)
+         write_library(u);
+      END IF;
+      IF u.next = NIL AND NOT has_pragmat(u.prags, "LIBRARY") THEN
          ALLOC caps PTR;
          caps.d := u;
          caps.depth := depth;
@@ -88,7 +172,8 @@ ty_act := new_typ(t_act);
 GUARD
    init_ascii;
    read_source;
-   translate(program);
+   ntoks_before_library := ntoks + 1;
+   translate(with_library(program));
    print_program;
 BY
    WHEN compile_error =>

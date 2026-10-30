@@ -810,6 +810,43 @@ PROC normal_function(CONST d : node, CONST y : sym) IMPORTS ALL;
    y.capn := caps.d;
 END PROC normal_function;
 
+% PRAG(FOREIGN) on a procedure or function with an empty body (12.4): its
+% body is the C function of the same name, in lower case, which the program
+% is linked with; it takes and returns INT, FLOAT, BOOL and ENUM values
+PROC foreign_body(CONST d : node, CONST y : sym) IMPORTS ALL;
+   VAR pm : parm := y.params;
+   VAR proto, args : text := mk("");
+   CONST cn := lower_s(d.name.ALL);
+   IF d.c /= NIL THEN
+      fail(d.line, "a foreign " & d.name.ALL & " has an empty body");
+   END IF;
+   WHILE pm /= NIL REPEAT
+      IF pm.mode /= m_const OR NOT (scalar_kind(base_of(pm.t)) OR base_of(pm.t).kind = t_bool) THEN
+         fail(d.line, "a foreign subprogram takes CONST INT, FLOAT, BOOL and ENUM formals");
+      END IF;
+      IF proto.LEN > 0 THEN
+         proto := mk(proto.ALL & ", ");
+         args := mk(args.ALL & ", ");
+      END IF;
+      proto := mk(proto.ALL & ctype(pm.t));
+      args := mk(args.ALL & "F->" & pm.cfield.ALL);
+      pm := pm.next;
+   END REPEAT;
+   IF proto.LEN = 0 THEN
+      proto := mk("void");
+   END IF;
+   IF y.result.kind /= t_void AND NOT (scalar_kind(base_of(y.result)) OR base_of(y.result).kind = t_bool) THEN
+      fail(d.line, "a foreign function returns an INT, FLOAT, BOOL or ENUM value");
+   END IF;
+   put(out_protos, "extern " & ctype(y.result) & " " & cn & "(" & proto.ALL & ");");
+   IF y.result.kind = t_void THEN
+      emit(cn & "(" & args.ALL & ");");
+   ELSE
+      emit("F->result_ = " & cn & "(" & args.ALL & ");");
+      emit("goto ret_;");
+   END IF;
+END PROC foreign_body;
+
 PROC declare_subprogram(CONST d : node) IMPORTS ALL;
    define(build_subprogram(d), d.line);
 END PROC declare_subprogram;
@@ -1579,6 +1616,9 @@ PROC gen_subprogram(CONST d : node, CONST y : sym) IMPORTS ALL;
       push_cleanup("RT_POP(nr_);");
       copy_back := mk(copy_back.ALL & "  " & leave.ALL);
       nonrec_end := mk("RT_POP(nr_); } else { RT_POP(nr_); " & leave.ALL & " rt_raise(rt_xcur); }");
+   END IF;
+   IF has_pragmat(d.prags, "FOREIGN") THEN
+      foreign_body(d, y);
    END IF;
    declare_labels(d.c);
    declare_body(d.c);

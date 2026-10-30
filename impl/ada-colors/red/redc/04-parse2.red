@@ -510,6 +510,7 @@ ABNORMAL FUNC capsule_decl => node IMPORTS ALL;
    x.c := body;
    expect_kw("END");
    expect_kw("CAPSULE");
+   x.eline := cur_line;
    IF expect_id.ALL /= x.name.ALL THEN
       fail(cur_line, "END CAPSULE name does not match");
    END IF;

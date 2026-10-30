@@ -413,12 +413,62 @@ PROC lex_line(READONLY line : STRING[ASCII]) IMPORTS src_line;
    END REPEAT;
 END PROC lex_line;
 
-PROC read_source IMPORTS src_line;
+PROC read_source IMPORTS src_line, src_head, src_tail;
    WHILE NOT EOF REPEAT
       VAR line : STRING[ASCII](SIZELN);
+      VAR l : lines;
       READLN(line);
       src_line := src_line + 1;
+      ALLOC l PTR;
+      l.s := mk(line);
+      IF src_tail = NIL THEN
+         src_head := l;
+      ELSE
+         src_tail.next := l;
+      END IF;
+      src_tail := l;
       lex_line(line);
    END REPEAT;
    add_token(k_eof, "<end>", 0);
 END PROC read_source;
+
+% the translation units of a file of the library (3.1, 8.1), lexed after
+% what was read before; FALSE when there is no such file
+ABNORMAL FUNC read_library(READONLY name : STRING[ASCII]) => BOOL IMPORTS src_line;
+   VAR f : FILE[ASCII]('SEQ, 'INPUT);
+   VAR found : BOOL := TRUE;
+   GUARD
+      OPEN(f, lower_s(name) & ".red", 'OLD);
+   BY
+      WHEN X_NOFILE, X_FILENAME =>
+         found := FALSE;
+   END GUARD;
+   IF NOT found THEN
+      RETURN FALSE;
+   END IF;
+   WHILE NOT EOF(f) REPEAT
+      VAR line : STRING[ASCII](SIZELN(f));
+      READLN(f, line);
+      src_line := src_line + 1;
+      lex_line(line);
+   END REPEAT;
+   CLOSE(f, 'SAVE);
+   add_token(k_eof, "<end>", 0);
+   RETURN TRUE;
+END FUNC read_library;
+
+% a translation unit kept in the library, as its source text
+PROC write_library(CONST u : node) IMPORTS src_head;
+   VAR f : FILE[ASCII]('SEQ, 'OUTPUT);
+   VAR l : lines := src_head;
+   VAR n : INT := 1;
+   OPEN(f, lower_s(u.name.ALL) & ".red", 'NEW);
+   WHILE l /= NIL AND n <= u.eline REPEAT
+      IF n >= u.line THEN
+         WRITELN(f, l.s.ALL);
+      END IF;
+      n := n + 1;
+      l := l.next;
+   END REPEAT;
+   CLOSE(f, 'SAVE);
+END PROC write_library;

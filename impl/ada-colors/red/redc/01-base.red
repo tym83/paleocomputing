@@ -135,7 +135,7 @@ TYPE token : PTR RECORD[kind : INT, line : INT, ival : INT, s : text, prags : te
 TYPE tokens : PTR (n : INT) ARRAY INT(1 .. n) OF token;
 
 TYPE node : PTR RECORD[kind : INT, line : INT, ival : INT, flag : INT,
-                       name : text, tag : text, prags : text, labels : node,
+                       name : text, tag : text, prags : text, labels : node, eline : INT,
                        a, b, c, d, e : node, next : node];
 
 % a constraint: its bounds as C; dyn when the bounds were kept in storage of
@@ -195,6 +195,10 @@ VAR ntoks : INT := 0;
 VAR tpos : INT := 1;
 VAR src_line : INT := 0;
 VAR pending_prag : text;
+% the lines of the program read, for the library of translated units (3.1)
+VAR src_head, src_tail : lines;
+VAR ntoks_before_library : INT := 0;
+VAR library_tried : lines;
 
 CONST nbuckets := 4093;
 VAR table : buckets;
