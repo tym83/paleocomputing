@@ -28,22 +28,55 @@ Sources: Preliminary Ada Reference Manual (RM79, DTIC ADA071761), Informal Intro
 ## Errors in the 1979 texts that greenc rejects
 - INTRO 1.4: `NET_RISE > 0` (integer literal against a REAL).
 - INTRO 6.3: `for STOP use at 8#8060;` (digit 8 in base 8).
+- Contract problem 10: both record representations give LGTH the bits 0 .. 7, but LENGTH is
+  0 .. 256 and needs nine bits (RM79 13.4); the run script adds bit 8.
+- Contract problem 1: the representation of ITEM stands in POLLING, not in the declarative
+  part that declares ITEM (RM79 13); the run script moves it next to ITEM.
 - (repaired in the digest's transcription: `;` for `do` after an accept, BUFFER/BUFFER_SIZE
   for STORAGE_AREA/STORAGE_SIZE.)
 
 ## Tasking as implemented
 - No task types: tasks start only on `initiate`; re-initiating an active one raises
   INITIATE_ERROR; a terminated task may be initiated again (fresh frame each time).
-- Rendezvous only; select on the server side with guards, delay, else; no terminate
-  alternative; SELECT_ERROR when every alternative is closed and there is no else.
-- `raise T.FAILURE` is the only exception raised in another task; `abort` cannot be handled.
-- Task families (F(I).E, F'INDEX, initiate F(lo .. hi)) and entry families (E(I)(args)).
+- Rendezvous; select on the server side with guards, delay, else; SELECT_ERROR when every
+  alternative is closed and there is no else. A select needs an accept alternative.
+- `raise T.FAILURE` is the only exception raised in another task; `abort` cannot be handled;
+  a caller whose partner fails or is aborted gets TASKING_ERROR.
+- Task families (F(I).E, F'INDEX, initiate F(lo .. hi)), entry families (E(I)(args)), entry
+  families in task families, families declared in members of families; visible subprograms
+  of tasks; SEMAPHORE and SIGNAL are predefined generic tasks (RM79 9.11).
+- T'CLOCK counts the turns the task was given the processor: time is virtual.
+- An entry with an address is an interrupt (RM79 13.5.1): LOW_LEVEL_IO's interrupt
+  controller (device 0) or the INTR instruction makes an entry call from a hardware task of
+  the highest priority, so interrupts queue on the entry.
+
+## Chapters 13 and 14 on a simulated machine
+- Representation specifications are checked and reported by SIZE, POSITION, FIRST_BIT and
+  LAST_BIT; the data keep the host's C layout. A length specification of an access type is
+  the budget of its collection (STORAGE_OVERFLOW), of a task the bits of one activation.
+- The machine has SYSTEM'MEMORY_SIZE storage units of 8 bits; an object with an address
+  specification lives there (an array keeps its descriptor and has its components there),
+  and 'ADDRESS gives that address. 'ADDRESS of other objects is a host address.
+- MACHINE_CODE.INSTRUCTION (OP, R, A) on eight one-word registers: NOP, LDI, LD, ST, ADD, SUB,
+  MUL, DIV, NEG, OUTC, OUTN, INTR. LOW_LEVEL_IO: SEND_CONTROL and RECEIVE_CONTROL on device 0
+  (interrupt controller), 1 (console), 2 (clock), 3 .. 15 (registers).
+- pragma INTERFACE(C) calls the runtime, INTERFACE(FORTRAN) a table of host mathematical
+  routines (SQRT, SIN, ..., ALOG10); other languages are rejected.
+- UNSAFE_CONVERSION copies the storage of the value; enumeration codes are its storage.
+- pragma SUPPRESS permits omitting checks (RM79 11.8): the checks stay.
+- INPUT_OUTPUT and TEXT_IO files are host files; CREATE replaces an existing file.
+  INPUT_OUTPUT stores the storage of each element, so elements with arrays or access values
+  are not meaningful in another program. A STRING element (unconstrained) cannot be used.
+- TEXT_IO: NEWLINE is LF, which ends the line (RM79 makes CR reset the column and LF advance
+  the line). The layout operations take a file, as in the RM79 specification: `COL` alone
+  is rejected, `COL(STANDARD_OUTPUT)` is not. SET_LINE or SET_COL backwards on a sequential
+  file raises FILE_USE_ERROR; SET_COL backwards on output writes BS.
+- The exceptions of TEXT_IO and of every instance of INPUT_OUTPUT are one set: END_OF_FILE of
+  one instance is END_OF_FILE of all.
 
 ## Deviations
-- Integer types map onto INTEGER and real types onto FLOAT (RM79 3.3 makes each a distinct
-  type), so `PUT(REAL)` (INTRO 1.1) is accepted.
-- STRING objects and slices count from 1 whatever their bounds.
-- Generic bodies bind non-local names at the instantiation, not at the generic body.
-- Representation specifications are read and ignored; no interrupts.
-- Visible procedures of a task, families of families, entry families in task families,
-  `separate`, renaming, record default values, multi-dimensional arrays: not handled.
+- DEFAULT_MANTISSA is 5, not FLOAT'DIGITS - 1 (the OCR of RM79 14.4 is unclear here, and
+  FLOAT is a double with DIGITS 15): PUT of a FLOAT shows five decimals unless FRACT says.
+- GET of a real accepts an integer literal too.
+- LONG_INTEGER has the range of INTEGER (64 bits); SHORT_INTEGER has 32 bits.
+- pragma CREATION, OPTIMIZE, LIST, PAGE and INLINE are checked and have no effect.

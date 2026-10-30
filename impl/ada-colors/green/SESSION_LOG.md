@@ -5,17 +5,18 @@ GREEN (Preliminary Ada, May 1979) like RED: Python bootstrap -> greenc written i
 fixed point -> grow (packages, overloading, tasking, generics) -> tests and 1979 corpus.
 
 ## Current state
-- greenc (~6.4k lines of GREEN in green/greenc/) at its fixed point; seed refreshed;
+- greenc (~13k lines of GREEN in green/greenc/) at its fixed point; seed refreshed;
   `make genesis` replays the bootstrap step (v1 source in genesis/).
-- Features: packages (private types, use, P.X), nested subprograms, overloading incl.
-  operators and result type, RM79 6.5 rules enforced, exceptions, tasking (initiate, entries,
-  accept, select, delay, abort, FAILURE, 'ACTIVE, 'COUNT, SET_PRIORITY), task and entry
-  families, generics with explicit instantiation (subprograms, packages, tasks).
-- tests/run.sh: 19 passed (13 tests + 6 corpus programs from the 1979 introduction).
+- Branch feat/green-coverage: the RM79 audit gaps are closed chapter by chapter (lexical
+  elements to input-output); see notes/green-findings.md for what is simulated and the
+  remaining deviations.
+- Predefined library units written in GREEN inside greenc (99-main PREDEFINED_UNIT):
+  TEXT_IO, INPUT_OUTPUT, UNSAFE_PROGRAMMING, MACHINE_CODE, LOW_LEVEL_IO; their helpers
+  are `$NAME` foreign subprograms, rt_g_name in rt/paleo.c.
+- tests/run.sh: 112 passed.
 
 ## Next step
-Records with defaults, multi-dimensional arrays, visible procedures of tasks, the contract
-problems of 1979 (problems/original/green) with stubs.
+Nothing pending from the audit list; see the Deviations of notes/green-findings.md.
 
 ## Journal
 ### v1
@@ -44,3 +45,14 @@ problems of 1979 (problems/original/green) with stubs.
 - entry E(lo .. hi)(params) / entry E(T)(params); calls E(I)(args), T.E(I)(args), E(I);
   accept E(I)(params) do ... end, also as select alternatives. Not combined with task
   families (error). Test: tests/entry_families.grn.
+### audit gaps (feat/green-coverage)
+- Ch.2-6: lexical rules, distinct numeric and derived types, fixed point, arrays of any rank,
+  aggregates, records with discriminants and variants, attributes, short-circuit and mixing
+  rules, goto, case coverage, exit rules, aliasing, overloading checks.
+- Ch.7-12: restricted types, deferred constants, visibility restrictions, use conflicts,
+  renaming, task rules, SEMAPHORE/SIGNAL, subunits and the program library, generics.
+- Ch.13: representation specifications, the simulated machine (memory, registers, code
+  statements, interrupts, devices), foreign functions, UNSAFE_CONVERSION, SUPPRESS.
+- Ch.14: INPUT_OUTPUT and TEXT_IO with host files, layout, ENUM_IO, FIXED_IO, GET of
+  lexical units; pragma ENVIRONMENT makes a module's identifiers outermost (RM79 8.6).
+- Found: LOWER_S/UPPER_S assumed STRING bounds from 1 (wrong once slices keep their bounds).
