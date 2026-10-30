@@ -2514,6 +2514,9 @@ struct rt_b_act {
   rt_b_sem *connected;        /* the interrupt semaphore of its CONNECT clause */
   rt_int cpu;                 /* processing time, in virtual microseconds (4.6.5) */
   rt_b_act *order;            /* the activations of a block, in the order made */
+  rt_int pid;                 /* its ACTIVATION_ID (D.7) */
+  const char *cname;          /* the interrupt of its CONNECT clause, by name */
+  int selected;               /* named by the list a PAR_BLOCK_ runs */
 };
 
 static rt_b_act b_main;
@@ -2695,6 +2698,90 @@ void rt_b_par_end(rt_b_par *par) {
   me->waiting = NULL;
   b_disconnect(par);
   if (par->exc) rt_raise(par->exc);
+}
+
+/* ---- PAR_BLOCK_ of a program (D.7): the activations made by a block are handed
+ * to it as a list; RUN_PATHS, the implementation's PAR_BLOCK_, runs those named
+ * in the list it is given, with its priorities, and waits for them ---- */
+static rt_b_par *b_dispatch[64];
+static int b_ndispatch;
+
+void rt_b_path_info(rt_b_par *par, rt_int path, rt_int i, const char *connect) {
+  rt_b_act *a = par->children;              /* the activation just made */
+  a->pid = path * ((rt_int)1 << 32) + (i & 0xffffffff);
+  a->cname = connect;
+}
+
+void rt_b_par_dispatch_push(rt_b_par *par) {
+  if (b_ndispatch == 64) rt_raise(RT_X_FREE);
+  b_dispatch[b_ndispatch++] = par;
+}
+
+static rt_b_par *b_dispatching(void) {
+  if (b_ndispatch == 0) rt_raise(RT_X_TASKING);
+  return b_dispatch[b_ndispatch - 1];
+}
+
+/* the block's PAR_BLOCK_ returned: if it ran no RUN_PATHS, no activation runs */
+void rt_b_par_dispatch_pop(void) {
+  rt_b_par *par = b_dispatching();
+  b_ndispatch--;
+  if (!par->ran) rt_b_par_abandon(par);
+}
+
+static rt_b_act *b_dispatched(rt_int i) {
+  rt_b_act **v;
+  int n = b_activations(b_dispatching(), &v);
+  if (i < 0 || i >= n) rt_raise(RT_X_SUBSCRIPT);
+  return v[i];
+}
+
+rt_int rt_b_par_count(void) {
+  rt_b_act **v;
+  return b_activations(b_dispatching(), &v);
+}
+
+rt_int rt_b_par_id(rt_int i) { return b_dispatched(i)->pid; }
+
+rt_int rt_b_par_prio(rt_int i) { return b_dispatched(i)->act.t->prio; }
+
+/* the name padded with blanks to len characters (the CONNECT_NAME of D.7) */
+rstr rt_b_par_connect(rt_int i, rt_int len) {
+  const char *c = b_dispatched(i)->cname;
+  rstr r = rt_str_new(len);
+  memset(r.p, ' ', (size_t)len);
+  if (c) {
+    size_t n = strlen(c);
+    memcpy(r.p, c, n < (size_t)len ? n : (size_t)len);
+  }
+  return r;
+}
+
+void rt_b_par_select(rt_int addr, rt_int prio) {
+  rt_b_act *a = b_dispatched(addr - 1);
+  if (prio < 0 || prio > 255) rt_raise(RT_X_RANGE);
+  if (a->act.t->state == T_HELD) a->act.t->prio = (int)prio;
+  a->selected = 1;
+}
+
+/* the activations not named never run; the others run, and the block ends */
+void rt_b_par_run(void) {
+  rt_b_par *par = b_dispatching();
+  if (par->ran) rt_raise(RT_X_TASKING);
+  par->ran = 1;
+  for (rt_b_act *c = par->children; c; c = c->sibling) {
+    rt_task *t = c->act.t;
+    if (!c->selected && t->state == T_HELD) {
+      t->state = T_DONE;
+      c->done = 1;
+      par->td.live--;
+      if (c->connected) {
+        c->connected->connected = 0;
+        c->connected = NULL;
+      }
+    }
+  }
+  rt_b_par_end(par);
 }
 
 /* an exception while the paths were activated (a PRIORITY out of range, a second

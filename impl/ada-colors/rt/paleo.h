@@ -378,7 +378,17 @@ struct rt_b_par {
   rt_taskdecl td;
   int exc;                                     /* the last exception of a path */
   rt_b_act *children;
+  int ran;                                     /* a program's PAR_BLOCK_ ran it (D.7) */
 };
+void rt_b_path_info(rt_b_par *par, rt_int path, rt_int i, const char *connect);
+void rt_b_par_dispatch_push(rt_b_par *par);
+void rt_b_par_dispatch_pop(void);
+rt_int rt_b_par_count(void);
+rt_int rt_b_par_id(rt_int i);
+rt_int rt_b_par_prio(rt_int i);
+rstr rt_b_par_connect(rt_int i, rt_int len);
+void rt_b_par_select(rt_int addr, rt_int prio);
+void rt_b_par_run(void);
 rt_b_sem *rt_b_sem_new(int region);
 rt_b_sem *rt_b_sem_value(rt_int n, int region);  /* NEW(n) */
 void rt_b_sem_assign(rt_b_sem *dst, rt_b_sem *src);

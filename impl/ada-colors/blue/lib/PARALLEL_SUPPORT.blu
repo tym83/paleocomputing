@@ -1,0 +1,19 @@
+% The PARALLEL_SUPPORT of Appendix D.7 (BLUE Language Specification, 15 Feb 1978,
+% p. D-12): the parallel features are invocations of its routines, and a program
+% or library changes the scheduling discipline by redefining them. REQUEST,
+% RELEASE, WAIT, TERMINATE, PRIORITY and CLOCK are predefined routines a program
+% may redefine; a PAR_BLOCK_ visible at a parallel block is invoked with the list
+% of the activations the block makes, each a PATH_ENTRY, and RUN_PATHS, the
+% implementation's own PAR_BLOCK_, runs those of a list (with the priorities it
+% gives) and returns when they have completed.
+SEGMENT PARALLEL_SUPPORT
+   DEFINES (PATH_ENTRY, ADDR_SIZE);
+
+   CONST ADDR_SIZE: INTEGER := 64;          % PATH_ADDR: the activation's place
+   TYPE PATH_ENTRY = RECORD
+                        VAR PATH_ADDR: BIT (ADDR_SIZE);
+                        VAR ACTIVATION_ID: INTEGER;
+                        VAR PRIORITY_LEVEL: INTEGER [MIN_PRIORITY : MAX_PRIORITY];
+                        VAR CONNECT_NAME: ASCII_STR (32);
+                     END RECORD;
+END SEGMENT PARALLEL_SUPPORT;

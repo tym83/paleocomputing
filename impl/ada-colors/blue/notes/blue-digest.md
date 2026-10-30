@@ -374,7 +374,14 @@ unreadable; the decision is bluec's.
     (4.5.8): no RANGE checks, ASSERT not evaluated (subscripts stay checked: the
     C storage depends on them). The parallel operations of D.7 are predefined
     routines a program may redefine (REQUEST, RELEASE, WAIT, TERMINATE,
-    PRIORITY, CLOCK); PAR_BLOCK_ stays built in.
+    PRIORITY, CLOCK), and PAR_BLOCK_ too: a PAR_BLOCK_ visible at a parallel
+    block gets the list of the activations the block made (held, not yet
+    run) as an ARRAY [1:N] OF PATH_ENTRY, the record type of the library
+    segment PARALLEL_SUPPORT (D.7 writes an anonymous RECORD, which no actual
+    could match; PATH_ADDR is BIT (64), CONNECT_NAME has 32 characters).
+    RUN_PATHS (list), the implementation's PAR_BLOCK_, runs the activations a
+    list names with its priorities and waits for them; those it does not name,
+    or all when RUN_PATHS is not invoked, never run.
 37. **Generic instances across segments.** The body of an instance of a generic
     routine is translated in the scope of the segment that declares it, its
     local names visible again, whichever segment invokes it (4.2, 5).
@@ -386,7 +393,6 @@ The misprints of the program examples and the rules they break are in
 
 - Storage of packed values: SIZE and the conversions follow the
   representation, the C storage of values does not.
-- PAR_BLOCK_ of D.7 as a routine a program may replace.
 
 ---
 

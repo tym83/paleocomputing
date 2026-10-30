@@ -38,19 +38,82 @@ PROCEDURE PARALLEL_BLOCK (S: NODE);
    % an exception while the paths are activated leaves none of them (4.6.1)
    CODE (FMT2 ('{ rt_frame @a; if (RT_TRY(@a)) {', TD, TD));
    P := S@.A;
-   LOOP UNTIL P = NIL DO
-      ACTIVATE_PATH (P, TD);
-      P := P@.NEXT;
-   END LOOP;
+   BLOCK
+      VAR K: INTEGER := 0;
+      LOOP UNTIL P = NIL DO
+         K := K + 1;
+         ACTIVATE_PATH (P, TD, K);
+         P := P@.NEXT;
+      END LOOP;
+   END BLOCK;
    CODE (FMT3 ('RT_POP(@a); } else { RT_POP(@a); rt_b_par_abandon(&@);', TD, TD, TD));
    CODES ('rt_raise(rt_xcur); } }');
-   CODE (FMT1 ('rt_b_par_end(&@);', TD));
+   IF HAS_USER_ROUTINE (MKN ('PAR_BLOCK_')) THEN    % the program's PAR_BLOCK_ (D.7): it
+      BLOCK                                          % gets the list of the activations,
+         VAR C: NODE := NEW_NODE (N_CALL, S@.LINE);  % and RUN_PATHS runs those it gives
+         VAR A: NODE := NEW_NODE (N_APPLY, S@.LINE);
+         C@.NAME := MKN ('PAR_BLOCK_');
+         A@.NAME := MKN ('$PATH_LIST');
+         C@.A := A;
+         CODE (FMT1 ('rt_b_par_dispatch_push(&@);', TD));
+         STMT (C);
+         CODES ('rt_b_par_dispatch_pop();');
+      END BLOCK;
+   ELSE
+      CODE (FMT1 ('rt_b_par_end(&@);', TD));
+   END IF;
    CLOSE_SCOPE;
    CODES ('}');
 END PROCEDURE PARALLEL_BLOCK;
 
+% the list of the activations of the block being dispatched, an ARRAY [1:N] OF
+% PATH_ENTRY (D.7; PATH_ENTRY of the library segment PARALLEL_SUPPORT)
+FUNCTION PATH_LIST (LINE: INTEGER) RETURNS (ET);
+   CONST PE: TYP := RESOLVE_USER_NAME (MK ('PATH_ENTRY'), LINE);
+   CONST R: TYP := REAL_TYPE (PE);
+   CONST AT: TYP := ARRAY_OF (PE, 1);
+   CONST C: TEXT := CTYPE (AT);
+   VAR CODE_: TEXT;
+   IF R@.KIND <> T_REC THEN
+      FAIL (LINE, 'PATH_ENTRY is the record type of PARALLEL_SUPPORT (D.7)');
+   END IF;
+   CODE_ := FMT2 ('({ @ a; rt_int n = rt_b_par_count(); a.lo[0] = 1; a.hi[0] = n; a.p = rt_b_array_alloc(n, sizeof *a.p); memset(a.p, 0, sizeof *a.p * (size_t)(n ? n : 1)); for (rt_int i = 0; i < n; i++) { a.p[i].@ = rt_b_bits_of_int(i + 1, 64);',
+                  C, FIND_FIELD (R, MKN ('PATH_ADDR'))@.CNAME);
+   CODE_ := FMT3 ('@ a.p[i].@ = rt_b_par_id(i); a.p[i].@ = rt_b_par_prio(i);', CODE_,
+                  FIND_FIELD (R, MKN ('ACTIVATION_ID'))@.CNAME, FIND_FIELD (R, MKN ('PRIORITY_LEVEL'))@.CNAME);
+   CODE_ := FMT3 ('@ a.p[i].@ = rt_b_par_connect(i, @); } a; })', CODE_,
+                  FIND_FIELD (R, MKN ('CONNECT_NAME'))@.CNAME, NUM (STATIC_SIZE_OR_LEN (FIND_FIELD (R, MKN ('CONNECT_NAME'))@.T)));
+   RETURN MKET (CODE_, AT);
+END FUNCTION PATH_LIST;
+
+FUNCTION STATIC_SIZE_OR_LEN (T: TYP) RETURNS (INTEGER);
+   IF REAL_TYPE (T)@.MLEN.OK THEN
+      RETURN REAL_TYPE (T)@.MLEN.V;
+   END IF;
+   RETURN 32;
+END FUNCTION STATIC_SIZE_OR_LEN;
+
+% RUN_PATHS (PATH_LIST): the implementation's PAR_BLOCK_ (D.7): the activations the
+% list names are run, with its priorities; the others never run; it returns when
+% they have completed
+FUNCTION RUN_PATHS (E: NODE) RETURNS (ET);
+   CONST V: ET := EXPR (E@.A, NIL);
+   CONST T: TYP := REAL_TYPE (V.T);
+   VAR R: TYP;
+   IF T@.KIND <> T_ARR ! E@.A@.NEXT <> NIL THEN
+      FAIL (E@.LINE, 'RUN_PATHS takes the ARRAY OF PATH_ENTRY its PAR_BLOCK_ was given (D.7)');
+   END IF;
+   R := REAL_TYPE (T@.ELEM);
+   IF R@.KIND <> T_REC THEN
+      FAIL (E@.LINE, 'RUN_PATHS takes the ARRAY OF PATH_ENTRY its PAR_BLOCK_ was given (D.7)');
+   END IF;
+   RETURN MKET (FMT4 ('({ @ l = @; rt_int n = rt_b_extent(1, l.lo, l.hi); for (rt_int k = 0; k < n; k++) rt_b_par_select(rt_b_int_of_bits(l.p[k].@), l.p[k].@); rt_b_par_run(); })',
+                      CTYPE (T), V.C, FIND_FIELD (R, MKN ('PATH_ADDR'))@.CNAME,
+                      FIND_FIELD (R, MKN ('PRIORITY_LEVEL'))@.CNAME), W@.TY_VOID);
+END FUNCTION RUN_PATHS;
+
 % the activations of a path [4-86]: one, or one for each value of its loop identifier
-PROCEDURE ACTIVATE_PATH (P: NODE, TD: TEXT);
+PROCEDURE ACTIVATE_PATH (P: NODE, TD: TEXT, K: INTEGER);
    CONST FN: TEXT := NEW_NAME ('path_');
    CONST FT: TEXT := NEW_NAME ('fr_path');
    CONST Y: SYM := LOOKUP (P@.NAME);
@@ -124,6 +187,7 @@ PROCEDURE ACTIVATE_PATH (P: NODE, TD: TEXT);
       END BLOCK;
    END IF;
    START := FMT4 ('rt_b_path_start(&@, @, @, f, &', H, IT, FN, TD);
+   PRIO := CAT (PRIO, FMT4 ('); rt_b_path_info(&@, @, @, @', TD, NUM (K), IT, CONNECT_NAME (P)));
    IF P@.FL = 1 THEN                                  % the last value may be INTEGER.MAX
       CODE (FMT4 ('@@, @); if (@ == ', START, TD, PRIO, IT));
       CODE (FMT1 ('@.hi) break; }', H));
@@ -154,6 +218,21 @@ FUNCTION IMPLEMENTATION_SEMAPHORE (E: NODE) RETURNS (BOOLEAN);
       RETURN IN_IDENTS (W@.LIBSEGS, Y@.HOME@.NAME);
    END BLOCK;
 END FUNCTION IMPLEMENTATION_SEMAPHORE;
+
+% the name of the interrupt of a path's CONNECT clause, for PAR_BLOCK_ (D.7)
+FUNCTION CONNECT_NAME (P: NODE) RETURNS (TEXT);
+   VAR R: NODE := P@.D;
+   IF R = NIL THEN
+      RETURN MK ('""');
+   END IF;
+   LOOP UNTIL R@.KIND = N_NAME ! R@.KIND = N_APPLY DO
+      IF R@.KIND <> N_INDEX & R@.KIND <> N_FIELD THEN
+         RETURN MK ('""');
+      END IF;
+      R := R@.A;
+   END LOOP;
+   RETURN CSTRING (R@.NAME);
+END FUNCTION CONNECT_NAME;
 
 % the C of the frame a path's frame points up to
 FUNCTION UP_FRAME () RETURNS (TEXT);

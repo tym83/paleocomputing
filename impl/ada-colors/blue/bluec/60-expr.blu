@@ -448,6 +448,8 @@ FUNCTION EXPR (E: NODE, WANT: TYP) RETURNS (ET);
       RETURN NEW_EXPR (E, WANT);
    ORIF K = N_NAME THEN
       RETURN NAME_EXPR (E, WANT);
+   ORIF K = N_APPLY & TEQS (E@.NAME, '$PATH_LIST') THEN   % the activations (D.7)
+      RETURN PATH_LIST (E@.LINE);
    ORIF K = N_APPLY & IS_STD_REPTYPE (E@.NAME) THEN   % FIXED_STD (X) [3-41]
       IF E@.A = NIL ! E@.A@.NEXT <> NIL ! E@.B <> NIL ! E@.C <> NIL THEN
          FAIL (E@.LINE, 'an explicit-rep-converter converts one expression [3-41]');
