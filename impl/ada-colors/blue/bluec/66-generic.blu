@@ -69,6 +69,13 @@ FUNCTION STATIC_GENERIC (TS: NODE) RETURNS (BOOLEAN);
    RETURN FALSE;
 END FUNCTION STATIC_GENERIC;
 
+% the formals and derived generic parameters of the routine declaration R
+FUNCTION OWN_NAMES (R: NODE) RETURNS (NODE);
+   VAR HEAD: NODE := NIL;
+   GEN_NAMES (R@.A # HEAD);
+   RETURN HEAD;
+END FUNCTION OWN_NAMES;
+
 % does the type-spec list L declare a derived ?X (not a don't-care ?)?
 FUNCTION DECLARES_DERIVED (L: NODE) RETURNS (BOOLEAN);
    VAR N: NODE := L;
@@ -237,6 +244,9 @@ PROCEDURE ROUTINE_HEADER1 (Y: SYM);
             IF P@.B@.KIND = TS_ROUTINE & P@.IV <> M_IN THEN
                FAIL (P@.LINE, 'a routine-spec declares only input parameters (5.1)');
             END IF;
+            IF NAMES_VARIABLE_BUT (P@.B, NIL, OWN_NAMES (R)) THEN
+               FAIL (P@.LINE, 'the attributes in the type of a formal are manifest (4.3.1)');
+            END IF;
          END IF;
          IF NOT Y@.GENERIC THEN
             PM@.T := RESOLVE (P@.B);
@@ -250,6 +260,11 @@ PROCEDURE ROUTINE_HEADER1 (Y: SYM);
       END BLOCK;
       P := P@.NEXT;
    END LOOP;
+   IF R@.B <> NIL THEN                               % no variable in the returns-clause
+      IF NAMES_VARIABLE_BUT (R@.B, NIL, OWN_NAMES (R)) THEN
+         FAIL (R@.LINE, 'the returns-clause may not refer to a variable (4.3.1)');
+      END IF;
+   END IF;
    IF NOT Y@.GENERIC THEN
       Y@.RESULT := RESULT_TYPE (Y);
       Y@.FWD := C_HEADER (Y);
@@ -926,6 +941,7 @@ FUNCTION FIND_ROUTINE_ARG (TS: NODE, E: NODE, BS0: BIND, LINE: INTEGER, STRICT: 
       IF NOT TEMPLATE_FITS (TS, FOUND, BS) THEN       % its bindings, for good
          FAILT (LINE, 'no routine fits the routine parameter (5.1): ', E@.NAME);
       END IF;
+      NEED_BODY (FOUND);
    END IF;
    RETURN FOUND;
 END FUNCTION FIND_ROUTINE_ARG;

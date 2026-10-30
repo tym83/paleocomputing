@@ -267,6 +267,7 @@ TYPE SYM_REC = RECORD
    VAR SAVED: PTR(SYM_REC);         % the module around an entered module
    VAR OWNER: INTEGER;              % the closed scope it is declared in (4.1)
    VAR WITHV: INTEGER;              % 1: a bound-var; 2: a variable hidden by NAMING (4.5.4)
+   VAR LAZY: INTEGER;               % an INLINE routine: 2 once its own body is needed
    VAR CHAIN: PTR(SYM_REC);         % next in the hash bucket
    VAR SNEXT: PTR(SYM_REC);         % next on the scope stack
 END RECORD;

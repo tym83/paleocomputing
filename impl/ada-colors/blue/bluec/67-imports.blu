@@ -121,6 +121,7 @@ PROCEDURE ROUTINE_USES (RS: NODE);
          IF R@.E <> NIL THEN                          % the data a routine imports are
             IMPORTS_KNOWN (R@.E@.A, FALSE);           % known in the scope around it
             IMPORTS_KNOWN (R@.E@.B, TRUE);            % (4.1.1)
+            INPUT_IMPORT_CONFLICT (R@.E, R@.LINE);
          END IF;
       END IF;
       R := R@.NEXT;
@@ -146,6 +147,40 @@ PROCEDURE IMPORTS_KNOWN (L: NODE, INOUT: BOOLEAN);
       P := P@.NEXT;
    END LOOP;
 END PROCEDURE IMPORTS_KNOWN;
+
+% a scope that imports a variable for input must not import a routine that
+% imports it inout (4.3.1, 4.4)
+PROCEDURE INPUT_IMPORT_CONFLICT (ITEMS: NODE, LINE: INTEGER);
+   VAR R: NODE := ITEMS@.C;
+   LOOP UNTIL R = NIL DO
+      BLOCK
+         VAR Z: SYM := LOOKUP (R@.NAME);
+         LOOP UNTIL Z = NIL DO
+            IF Z@.KIND = Y_ROUTINE THEN
+               BLOCK
+                  CONST D: NODE := ORIGINAL (Z)@.DECL;
+                  IF D <> NIL THEN
+                     IF D@.KIND = N_ROUTINE & D@.E <> NIL THEN
+                        BLOCK
+                           VAR V: NODE := D@.E@.B;
+                           LOOP UNTIL V = NIL DO
+                              IF IN_IDENTS (ITEMS@.A, V@.NAME) THEN
+                                 FAILT (LINE, 'imported for input, and inout by an imported routine (4.3.1): ',
+                                        V@.NAME);
+                              END IF;
+                              V := V@.NEXT;
+                           END LOOP;
+                        END BLOCK;
+                     END IF;
+                  END IF;
+               END BLOCK;
+            END IF;
+            Z := LOOKUP_NEXT (Z);
+         END LOOP;
+      END BLOCK;
+      R := R@.NEXT;
+   END LOOP;
+END PROCEDURE INPUT_IMPORT_CONFLICT;
 
 PROCEDURE ADD_USES (L: NODE # HEAD, TAIL: NODE);
    VAR P: NODE := L;
@@ -185,6 +220,7 @@ PROCEDURE CHECK_CALL_IMPORTS (Y: SYM, LINE: INTEGER);
          IF NOT (IN_IDENTS (IS@.IMPORTS@.A, U@.NAME) ! IN_IDENTS (IS@.IMPORTS@.B, U@.NAME)
                ! IN_IDENTS (IS@.IMPORTS@.C, Y@.NAME) ! IN_IDENTS (IS@.IMPORTS@.C, BASE_NAME (Y))
                ! MODULE_IMPORTED (IS@.IMPORTS@.E, Y)
+               ! (Y@.PREFIX.LEN > 0 & IN_IDENTS (IS@.IMPORTS@.D, Y@.PREFIX))   % its type
                ! IMPORTED_ROUTINE_USES (IS@.IMPORTS@.C, U@.NAME))
             THEN
             FAIL (LINE, 'the routine ' !! STR (Y@.NAME, Y@.NAME.LEN) !! ' uses the variable '

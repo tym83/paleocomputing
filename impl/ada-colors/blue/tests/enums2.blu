@@ -15,7 +15,8 @@ PUT_LINE (TO_CHAR (Q.SIZE) !! ' ' !! TO_CHAR (TO_BIT (Q)) !! ' ' !! TO_CHAR (X.E
 IF COUNT () & 3 > 5 THEN
    PUT_LINE ('not here');
 END IF;
-PUT_LINE (TO_CHAR (IS_MANIFEST (COUNT () & 3 > 5)) !! ' ' !! TO_CHAR (N));
+PUT (TO_CHAR (IS_MANIFEST (COUNT () & 3 > 5)) !! ' ');   % COUNT changes N: not read
+PUT_LINE (TO_CHAR (N));                                  % in the same list (4.3.4)
 FUNCTION COUNT () RETURNS (BOOLEAN) IMPORTS (DATA: (# N));
    N := N + 1;
    RETURN TRUE;

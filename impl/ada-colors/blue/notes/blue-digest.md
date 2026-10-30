@@ -179,8 +179,15 @@ unreadable; the decision is bluec's.
    and bluec does that); reading a variable before it is set is not tracked,
    except the tag of a `T(ANY)` record, which has no value until the record is
    assigned and raises UNINITIALIZED_VARIABLE when read then (p.3-134).
-7. **Aliasing and side-effect rules** (§4.3.3, §4.3.4) are not checked; importing
-   is (§4.1.1), with these readings: a routine the scope imports covers the
+7. **Aliasing and side-effect rules** (§4.3.3, §4.3.4) are checked as written:
+   a variable (or a component of it) is at most one inout and one output
+   argument, never an inout argument of a procedure that imports it; a variable
+   a function imports inout (directly or through the routines it imports) is
+   not named, nor used by another function, in the same expression, subscript
+   list, argument list or assignment; ASSERT invokes no such function (4.5.8).
+   Of an overloaded name, the data every candidate imports count. Own data a
+   module routine changes without importing it are not seen. (Until October
+   2026 none of this was checked.) Importing is (§4.1.1), with these readings: a routine the scope imports covers the
    variables it uses, also when called through the scope's own local routines
    (FORMPRINT, C-28); `IMPORTS (MODULES: (M))` imports M's exported routines (§4.2).
 8. **Recursion** needs no import of itself.
@@ -286,6 +293,18 @@ unreadable; the decision is bluec's.
     takes the argument's type; FIXED_REP (?S, SIGNED) binds S. A `#` closing a
     proc-template is rejected (5.1 says so); a `#` closing a formal or argument
     list is accepted, as [4-21] and [4-38] allow an empty group.
+33. **Components and aliasing.** 4.3.3 forbids a variable "or any of its
+    components" as two inout or two output arguments; Appendix C passes three
+    fields of the record F as outputs of FSYS_CREATE (C-15). Components that
+    cannot overlap -- different fields at some level of selection -- are
+    accepted; subscripts, as in the spec's M(I), M(J), are not.
+34. **INLINE (4.3.1).** An INLINE routine invoked with manifest input
+    arguments is expanded for them: a separate body in which those formals are
+    manifest, so its conditions select their arms when translated and a
+    formal may stand where a manifest value is needed (3.1.4.1). Its own body
+    is translated only when it is invoked with other arguments or passed as a
+    routine. INLINE routines cannot recurse; a recursive routine imports only
+    static data (variables of no routine).
 
 The misprints of the program examples and the rules they break are in
 `../corpus/CHANGES.md`.
@@ -294,7 +313,6 @@ The misprints of the program examples and the rules they break are in
 
 - Representation clauses for records and arrays (packing); explicit
   representation converters beyond enumerations, strings, bitstrings and fixed.
-- Aliasing and side-effect enforcement (§4.3.3–4.3.4, Appendix A.3).
 - LIBRARIES (§4.7), simulation (§4.6.9).
 
 ---

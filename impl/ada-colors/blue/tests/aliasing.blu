@@ -1,0 +1,40 @@
+MAIN SEGMENT ALIASING
+   USES (TERMINAL);
+% the legal invocations of the aliasing example (4.3.3) and interference-free
+% uses of functions with side effects (4.3.4, example 1); distinct fields of one
+% record as outputs (decision 33)
+TYPE R = RECORD VAR U, V: INTEGER; END RECORD;
+VAR A, B, C, E, F, G, H, L, N: INTEGER := 1;
+VAR M, D: ARRAY [1:3] OF INTEGER;
+VAR I: INTEGER := 1;
+VAR J: INTEGER := 2;
+VAR X, Y: INTEGER [1:10] := 1;
+VAR S: R;
+VAR LL, MM: INTEGER;
+P (E, E # G, H # L, N);
+P (E, F # E, H # L, N);
+P (E, C # G, H # L, N);
+P (E, F # G, H # E, L);
+P (M(I), M(J) # G, H # L, N);
+P (A, E # G, H # L, N);
+TWO (# # S.U, S.V);
+LL := FX (2) + FY (2);
+MM := FX (3) + FY (3);
+PUT_LINE (TO_CHAR (S.U) !! ' ' !! TO_CHAR (S.V) !! ' ' !! TO_CHAR (LL) !! ' ' !! TO_CHAR (MM));
+PUT_LINE (TO_CHAR (X) !! ' ' !! TO_CHAR (Y));
+PROCEDURE P (IN1, IN2: INTEGER # INOUT1, INOUT2: INTEGER # OUT1, OUT2: INTEGER)
+      IMPORTS (DATA: (A, B # C, D));
+END PROCEDURE P;
+PROCEDURE TWO (# # O1, O2: INTEGER);
+   O1 := 1;
+   O2 := 2;
+END PROCEDURE TWO;
+FUNCTION FX (A: INTEGER [1:10]) RETURNS (INTEGER) IMPORTS (DATA: (# X));
+   X := A;
+   RETURN A;
+END FUNCTION FX;
+FUNCTION FY (A: INTEGER [1:10]) RETURNS (INTEGER) IMPORTS (DATA: (# Y));
+   Y := A + 1;
+   RETURN A;
+END FUNCTION FY;
+END SEGMENT ALIASING;

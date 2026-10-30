@@ -158,7 +158,7 @@ FUNCTION MANIFEST (E: NODE) RETURNS (MVAL);
             B := B@.NEXT;
          END LOOP;
          IF Y <> NIL THEN
-            IF (Y@.KIND = Y_CONST ! Y@.KIND = Y_GEN) & Y@.HASMV THEN
+            IF (Y@.KIND = Y_CONST ! Y@.KIND = Y_GEN ! (Y@.KIND = Y_VAR & Y@.INPUT)) & Y@.HASMV THEN
                RETURN (OK: TRUE, V: Y@.MV);
             END IF;
             IF Y@.KIND = Y_ENUMLIT THEN

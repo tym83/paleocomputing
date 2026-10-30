@@ -498,7 +498,9 @@ PROCEDURE ROUTINE_BODIES (RS: NODE);
       ELSE
          BLOCK
             CONST Y: SYM := FIND_DECL (R);
-            IF NOT Y@.GENERIC THEN
+            IF Y@.DECL@.FL = 1 & NOT Y@.GENERIC THEN  % INLINE: expanded where invoked;
+               ;                                      % its own body only when needed
+            ORIF NOT Y@.GENERIC THEN
                ROUTINE_BODY (Y);
             END IF;
          END BLOCK;
@@ -604,8 +606,13 @@ PROCEDURE ROUTINE_BODY (Y: SYM);
             IF REAL_TYPE (P@.T)@.KIND <> T_VOID THEN
                BLOCK
                   VAR V: SYM := NEW_SYM (Y_VAR, P@.NAME);
+                  CONST MB: BIND := FIND_BIND (Y@.BINDINGS, MKN ('=' !! STR (P@.NAME, P@.NAME.LEN)));
                   V@.T := P@.T;
                   V@.INPUT := P@.MODE = M_IN;
+                  IF MB <> NIL THEN                    % an INLINE expansion's manifest
+                     V@.HASMV := MB@.HASMV;            % argument (4.3.1)
+                     V@.MV := MB@.MV;
+                  END IF;
                   V@.BYREF := P@.MODE <> M_IN;
                   V@.FIELD := FMT1 ('p_@', CID (P@.NAME));
                   IF Y@.FRAMED THEN

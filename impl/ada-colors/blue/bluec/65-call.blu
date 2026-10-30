@@ -431,6 +431,168 @@ FUNCTION LITERAL_FITS (E: NODE, T: TYP) RETURNS (BOOLEAN);
    RETURN FALSE;
 END FUNCTION LITERAL_FITS;
 
+% the variable an inout or output argument belongs to, unless reached through a pointer
+FUNCTION ARG_ROOT (E: NODE) RETURNS (SYM);
+   VAR N: NODE := E;
+   LOOP UNTIL N = NIL DO
+      IF N@.KIND = N_NAME ! N@.KIND = N_APPLY THEN
+         BLOCK
+            CONST Y: SYM := LOOKUP (N@.NAME);
+            IF Y = NIL THEN
+               RETURN NIL;
+            END IF;
+            IF Y@.KIND <> Y_VAR THEN
+               RETURN NIL;
+            END IF;
+            RETURN Y;
+         END BLOCK;
+      ORIF N@.KIND = N_INDEX ! N@.KIND = N_FIELD ! N@.KIND = N_SUBSTR ! N@.KIND = N_PAREN THEN
+         N := N@.A;
+      ELSE
+         RETURN NIL;
+      END IF;
+   END LOOP;
+   RETURN NIL;
+END FUNCTION ARG_ROOT;
+
+% the selections from the root variable to the argument E, root first: field names,
+% and * for a subscript or substring
+FUNCTION PATH_OF (E: NODE) RETURNS (NODE);
+   VAR N: NODE := E;
+   VAR P: NODE := NIL;
+   LOOP UNTIL N = NIL DO
+      IF N@.KIND = N_FIELD THEN
+         P := NAME_REF (N@.NAME, 0, NIL, P);
+         N := N@.A;
+      ORIF N@.KIND = N_INDEX ! N@.KIND = N_SUBSTR THEN
+         P := NAME_REF (MKN ('*'), 0, NIL, P);
+         N := N@.A;
+      ORIF N@.KIND = N_APPLY THEN                    % V (I) read as a call
+         P := NAME_REF (MKN ('*'), 0, NIL, P);
+         RETURN P;
+      ORIF N@.KIND = N_PAREN THEN
+         N := N@.A;
+      ELSE
+         RETURN P;
+      END IF;
+   END LOOP;
+   RETURN P;
+END FUNCTION PATH_OF;
+
+% two components of one variable that cannot overlap: different fields at some
+% level (decision 33)
+FUNCTION DISJOINT_PATHS (A, B: NODE) RETURNS (BOOLEAN);
+   VAR P: NODE := A;
+   VAR Q: NODE := B;
+   LOOP UNTIL P = NIL ! Q = NIL DO
+      IF NOT TEQS (P@.NAME, '*') & NOT TEQS (Q@.NAME, '*') & NOT TEQ (P@.NAME, Q@.NAME) THEN
+         RETURN TRUE;
+      END IF;
+      P := P@.NEXT;
+      Q := Q@.NEXT;
+   END LOOP;
+   RETURN FALSE;
+END FUNCTION DISJOINT_PATHS;
+
+% aliasing (4.3.3): a variable or its components is not more than one inout
+% argument, not more than one output argument, and not an inout argument of a
+% procedure that imports it
+PROCEDURE NO_ALIASING (Y: SYM, ARGS: ARG, LINE: INTEGER);
+   VAR A: ARG := ARGS;
+   LOOP UNTIL A = NIL DO
+      IF (A@.MODE = M_INOUT ! A@.MODE = M_OUT) & A@.E <> NIL THEN
+         BLOCK
+            CONST V: SYM := ARG_ROOT (A@.E);
+            VAR B: ARG := A@.NEXT;
+            IF V <> NIL THEN
+               LOOP UNTIL B = NIL DO
+                  IF B@.MODE = A@.MODE & B@.E <> NIL THEN
+                     IF ARG_ROOT (B@.E) = V & NOT DISJOINT_PATHS (PATH_OF (A@.E), PATH_OF (B@.E)) THEN
+                        FAILT (LINE, 'a variable is more than one inout or output argument (4.3.3): ',
+                               V@.NAME);
+                     END IF;
+                  END IF;
+                  B := B@.NEXT;
+               END LOOP;
+               IF A@.MODE = M_INOUT & Y@.USES <> NIL THEN
+                  BLOCK
+                     VAR U: NODE := Y@.USES;
+                     LOOP UNTIL U = NIL DO
+                        IF TEQ (U@.NAME, V@.NAME) & U@.IV = V@.OWNER THEN
+                           FAILT (LINE, 'an inout argument the procedure also imports (4.3.3): ', V@.NAME);
+                        END IF;
+                        U := U@.NEXT;
+                     END LOOP;
+                  END BLOCK;
+               END IF;
+            END IF;
+         END BLOCK;
+      END IF;
+      A := A@.NEXT;
+   END LOOP;
+END PROCEDURE NO_ALIASING;
+
+% the body of an INLINE routine G itself, translated with the pending instances
+PROCEDURE NEED_BODY (G: SYM);
+   IF G@.LAZY <> 2 & G@.DECL@.FL = 1 THEN
+      G@.LAZY := 2;
+      G@.MEMBERS := W@.PENDING;
+      W@.PENDING := G;
+   END IF;
+END PROCEDURE NEED_BODY;
+
+% an INLINE routine invoked with manifest input arguments: its body expanded for
+% them, the formals manifest there, so that its conditions select their arms when
+% translated (4.3.1, 3.1.4.1: conditional compilation)
+FUNCTION INLINE_INSTANCE (G: SYM, ARGS: ARG, LINE: INTEGER) RETURNS (SYM);
+   CONST BS: BIND := NEW_BINDS ();
+   VAR P: PARM := G@.PARAMS;
+   VAR A: ARG := ARGS;
+   VAR SOME_M: BOOLEAN := FALSE;
+   VAR N: INTEGER := 0;
+   LOOP UNTIL P = NIL ! A = NIL DO
+      IF P@.MODE = M_IN & A@.E <> NIL & P@.T <> NIL THEN
+         BLOCK
+            CONST RT: TYP := REAL_TYPE (P@.T);
+            VAR M: MVAL := NO_MVAL ();
+            IF RT@.KIND = T_INT & RT@.SCALE = 0 THEN
+               IF MANIFEST_INT (A@.E) THEN
+                  M := MANIFEST (A@.E);
+               END IF;
+            ORIF RT@.KIND = T_BOOL THEN
+               M := MANIFEST (A@.E);
+            ORIF RT@.KIND = T_ENUM THEN
+               M := ENUM_MANIFEST (A@.E, RT);
+            END IF;
+            IF M.OK THEN
+               ADD_BIND (MKN ('=' !! STR (P@.NAME, P@.NAME.LEN)), NIL, M, NIL, BS);
+               SOME_M := TRUE;
+            END IF;
+         END BLOCK;
+      END IF;
+      P := P@.NEXT;
+      A := A@.NEXT;
+   END LOOP;
+   IF NOT SOME_M THEN
+      NEED_BODY (G);
+      RETURN G;
+   END IF;
+   BLOCK
+      VAR I: SYM := G@.INSTANCES;
+      LOOP UNTIL I = NIL DO
+         IF SAME_STATIC_BINDS (I@.BINDINGS, BS@.NEXT) THEN
+            RETURN I;
+         END IF;
+         N := N + 1;
+         I := I@.INSTANCES;
+      END LOOP;
+   END BLOCK;
+   IF N > 256 THEN
+      FAILT (LINE, 'the INLINE expansions of the routine do not end (4.3.1): ', G@.NAME);
+   END IF;
+   RETURN NEW_INSTANCE (G, BS@.NEXT, ARGS);
+END FUNCTION INLINE_INSTANCE;
+
 % the invocation of R with ARGS: inputs by value after the conversions of assignment,
 % inouts and outputs by reference (4.3.2)
 FUNCTION CALL_SYM (Y0: SYM, ARGS: ARG, LINE: INTEGER) RETURNS (ET);
@@ -443,10 +605,40 @@ FUNCTION CALL_SYM (Y0: SYM, ARGS: ARG, LINE: INTEGER) RETURNS (ET);
    VAR POST: TEXT := MK ('');                        % ... copied into them afterwards
    VAR SHARED: BOOLEAN := FALSE;                     % may an input share an inout?
    VAR PT: TYP;                                      % the formal's type, seen from here
+   IF W@.CS@.R <> NIL THEN                           % a recursive invocation (4.3.1)
+      IF W@.CS@.R@.DECL = Y@.DECL & Y@.DECL <> NIL THEN
+         IF Y@.DECL@.FL = 1 THEN
+            FAILT (LINE, 'an INLINE routine cannot be recursive (4.3.1): ', Y@.NAME);
+         END IF;
+      END IF;
+   END IF;
    IF Y@.GENERIC THEN
       Y := INSTANCE (Y, ARGS, LINE);
+   ORIF Y@.DECL <> NIL & Y@.BINDINGS = NIL THEN
+      IF Y@.DECL@.KIND = N_ROUTINE & Y@.DECL@.FL = 1 THEN
+         Y := INLINE_INSTANCE (Y, ARGS, LINE);
+      END IF;
    END IF;
    CHECK_CALL_IMPORTS (Y, LINE);
+   NO_ALIASING (Y, ARGS, LINE);
+   IF W@.CS@.R <> NIL THEN                           % a recursive invocation (4.3.1)
+      IF W@.CS@.R@.DECL = Y@.DECL & Y@.DECL <> NIL THEN
+         IF Y@.DECL@.FL = 1 THEN
+            FAILT (LINE, 'an INLINE routine cannot be recursive (4.3.1): ', Y@.NAME);
+         END IF;
+         BLOCK
+            VAR U: NODE := Y@.USES;
+            LOOP UNTIL U = NIL DO
+               IF LOOKUP (U@.NAME) <> NIL THEN
+                  IF LOOKUP (U@.NAME)@.LEVEL > 0 THEN
+                     FAILT (LINE, 'a recursive routine imports only static data (4.3.1): ', U@.NAME);
+                  END IF;
+               END IF;
+               U := U@.NEXT;
+            END LOOP;
+         END BLOCK;
+      END IF;
+   END IF;
    IF CUR_GENERIC () <> NIL THEN                     % objects of a TYPE parameter go to
       BLOCK                                          % WHERE routines and generics (5.2)
          VAR Q: ARG := ARGS;

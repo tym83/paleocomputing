@@ -1,0 +1,10 @@
+MAIN SEGMENT SIDE_EFFECT_NAMEDERR
+   USES (TERMINAL);
+% a variable a function modifies is not named in the same expression (4.3.4)
+VAR X: INTEGER := 1;
+VAR L: INTEGER;
+L := F (1) + X;
+FUNCTION F (A: INTEGER) RETURNS (INTEGER) IMPORTS (DATA: (# X));
+   X := X + 1; RETURN X;
+END FUNCTION F;
+END SEGMENT SIDE_EFFECT_NAMEDERR;

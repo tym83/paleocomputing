@@ -214,6 +214,28 @@ FUNCTION PARSE_ITEMS () RETURNS (NODE);
       END IF;
    END LOOP;
    EXPECT (')');
+   BLOCK                                             % a name appears once explicitly
+      VAR L: NODE := N@.A;                           % in an imports-clause (4.3.1, 4.4)
+      VAR PASS: INTEGER := 0;
+      LOOP UNTIL PASS = 5 DO
+         IF PASS = 1 THEN
+            L := N@.B;
+         ORIF PASS = 2 THEN
+            L := N@.C;
+         ORIF PASS = 3 THEN
+            L := N@.D;
+         ORIF PASS = 4 THEN
+            L := N@.E;
+         END IF;
+         LOOP UNTIL L = NIL DO
+            IF IN_IDENTS (L@.NEXT, L@.NAME) ! (PASS = 0 & IN_IDENTS (N@.B, L@.NAME)) THEN
+               FAILT (L@.LINE, 'a name appears only once in an imports-clause (4.3.1): ', L@.NAME);
+            END IF;
+            L := L@.NEXT;
+         END LOOP;
+         PASS := PASS + 1;
+      END LOOP;
+   END BLOCK;
    RETURN N;
 END FUNCTION PARSE_ITEMS;
 
