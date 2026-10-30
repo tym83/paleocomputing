@@ -8,18 +8,21 @@ FUNCTION CHAR_OF (C: INTEGER) RETURNS (ASCII_STR(1));
    IF C IN [32:126] THEN
       RETURN GRAPHIC[C - 32 : C - 32];
    END IF;
-   BLOCK
-      VAR B: BIT(8) := BIN '00000000';
-      VAR V: INTEGER := C MOD 256;
-      LOOP FOR K IN [0:7] DO
+   BLOCK                                             % the bits of a character: as many
+      CONST N: INTEGER := TO_BIT (' ').SIZE;         % as the representation has (3.7.3)
+      VAR B: BIT(N) := ZEROS (N);
+      VAR V: INTEGER := C;
+      LOOP FOR K IN [0:N - 1] DO
          IF V MOD 2 = 1 THEN
-            B[7 - K : 7 - K] := BIN '1';
+            B[N - 1 - K : N - 1 - K] := BIN '1';
          END IF;
          V := V // 2;
       END LOOP K;
-      SELECT OBJECT_MACHINE FROM
-         PDP_11 --> RETURN [ASCII_STR(1)]$$(B); END;
-      END SELECT;
+      IF V = 0 THEN
+         SELECT OBJECT_MACHINE FROM
+            PDP_11 --> RETURN [ASCII_STR(1)]$$(B); END;
+         END SELECT;
+      END IF;
    END BLOCK;
    RETURN '?';
 END FUNCTION CHAR_OF;

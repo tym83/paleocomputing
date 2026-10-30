@@ -565,11 +565,49 @@ FUNCTION CONSTANT_LIST (L: NODE) RETURNS (BOOLEAN);
    RETURN TRUE;
 END FUNCTION CONSTANT_LIST;
 
+% is E an element of an array that is not UNPACKED?
+FUNCTION PACKED_ELEMENT (E: NODE) RETURNS (BOOLEAN);
+   VAR AT: TYP := NIL;
+   IF E@.KIND = N_APPLY THEN
+      BLOCK
+         CONST Y: SYM := LOOKUP (E@.NAME);
+         IF Y = NIL THEN
+            RETURN FALSE;
+         END IF;
+         IF Y@.KIND <> Y_VAR ! Y@.T = NIL THEN
+            RETURN FALSE;
+         END IF;
+         AT := REAL_TYPE (Y@.T);
+      END BLOCK;
+   ORIF E@.KIND = N_INDEX THEN
+      BLOCK
+         CONST SAVED_CODE: BUF := W@.CODE;
+         AT := REAL_TYPE (EXPR (E@.A, NIL).T);
+         W@.CODE := SAVED_CODE;
+      END BLOCK;
+   ELSE
+      RETURN FALSE;
+   END IF;
+   IF AT@.KIND <> T_ARR THEN
+      RETURN FALSE;
+   END IF;
+   RETURN PACKING_OF (AT) <> 2;
+END FUNCTION PACKED_ELEMENT;
+
 % aliasing (4.3.3): a variable or its components is not more than one inout
 % argument, not more than one output argument, and not an inout argument of a
 % procedure that imports it
 PROCEDURE NO_ALIASING (Y: SYM, ARGS: ARG, LINE: INTEGER);
    VAR A: ARG := ARGS;
+   LOOP UNTIL A = NIL DO
+      IF A@.MODE = M_INOUT & A@.E <> NIL THEN         % only elements of ARRAY_STD arrays
+         IF PACKED_ELEMENT (A@.E) THEN                % are inout arguments (3.8.3)
+            FAIL (LINE, 'only elements of ARRAY_STD arrays are inout arguments (3.8.3)');
+         END IF;
+      END IF;
+      A := A@.NEXT;
+   END LOOP;
+   A := ARGS;
    LOOP UNTIL A = NIL DO
       IF (A@.MODE = M_INOUT ! A@.MODE = M_OUT) & A@.E <> NIL THEN
          BLOCK

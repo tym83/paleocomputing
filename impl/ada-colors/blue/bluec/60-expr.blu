@@ -447,6 +447,15 @@ FUNCTION EXPR (E: NODE, WANT: TYP) RETURNS (ET);
       RETURN NEW_EXPR (E, WANT);
    ORIF K = N_NAME THEN
       RETURN NAME_EXPR (E, WANT);
+   ORIF K = N_APPLY & IS_STD_REPTYPE (E@.NAME) THEN   % FIXED_STD (X) [3-41]
+      IF E@.A = NIL ! E@.A@.NEXT <> NIL ! E@.B <> NIL ! E@.C <> NIL THEN
+         FAIL (E@.LINE, 'an explicit-rep-converter converts one expression [3-41]');
+      END IF;
+      BLOCK
+         VAR R: NODE := NEW_NODE (N_NAME, E@.LINE);
+         R@.NAME := E@.NAME;
+         RETURN REP_CONVERTER (R, E@.A, E@.LINE);
+      END BLOCK;
    ORIF K = N_APPLY THEN
       BLOCK
          CONST Y: SYM := LOOKUP (E@.NAME);
@@ -478,6 +487,12 @@ FUNCTION EXPR (E: NODE, WANT: TYP) RETURNS (ET);
          END BLOCK;
       END BLOCK;
    ORIF K = N_INDEX THEN
+      IF (E@.A@.KIND = N_APPLY ! E@.A@.KIND = N_NAME) & IS_REPTYPE_NAME (E@.A@.NAME) THEN
+         IF E@.B = NIL ! E@.B@.NEXT <> NIL THEN
+            FAIL (E@.LINE, 'an explicit-rep-converter converts one expression [3-41]');
+         END IF;
+         RETURN REP_CONVERTER (E@.A, E@.B, E@.LINE);  % FIXED_REP (4, UNSIGNED) (X)
+      END IF;
       RETURN INDEX_EXPR (E);
    ORIF K = N_SUBSTR THEN                           % [3-34]
       BLOCK
@@ -912,6 +927,61 @@ FUNCTION NAMES_OBJECT (NAME: TEXT) RETURNS (BOOLEAN);
    END IF;
    RETURN Y@.KIND = Y_VAR ! Y@.KIND = Y_CONST ! Y@.KIND = Y_ROUTINE;
 END FUNCTION NAMES_OBJECT;
+
+% the predefined reptypes (3.x.3) and the program's reptype names (3.12.3)
+FUNCTION IS_STD_REPTYPE (NAME: TEXT) RETURNS (BOOLEAN);
+   RETURN TEQS (NAME, 'FIXED_STD') ! TEQS (NAME, 'FLOAT_STD') ! TEQS (NAME, 'BOOLEAN_STD')
+      ! TEQS (NAME, 'ENUM_STD') ! TEQS (NAME, 'CHAR_STR_STD') ! TEQS (NAME, 'BIT_STD')
+      ! TEQS (NAME, 'ARRAY_STD') ! TEQS (NAME, 'RECORD_STD') ! TEQS (NAME, 'PTR_STD')
+      ! TEQS (NAME, 'SEMAPHORE_STD');
+END FUNCTION IS_STD_REPTYPE;
+
+FUNCTION IS_REPTYPE_NAME (NAME: TEXT) RETURNS (BOOLEAN);
+   IF IS_STD_REPTYPE (NAME) ! TEQS (NAME, 'FIXED_REP') ! TEQS (NAME, 'ENUM_REP')
+      ! TEQS (NAME, 'ENUM_VAL_REP') ! TEQS (NAME, 'CHAR_STR_REP') ! TEQS (NAME, 'ARRAY_REP')
+      ! TEQS (NAME, 'RECORD_REP') THEN
+      RETURN LOOKUP (NAME) = NIL;
+   END IF;
+   IF ORIG_LOOKUP (NAME) <> NIL THEN
+      RETURN ORIG_LOOKUP (NAME)@.KIND = Y_REPTYPE;
+   END IF;
+   RETURN FALSE;
+END FUNCTION IS_REPTYPE_NAME;
+
+% reptype-spec (expression) [3-41]: the value with that representation, which it
+% must satisfy (INVALID_REP, 3.1.4.1)
+FUNCTION REP_CONVERTER (S: NODE, E: NODE, LINE: INTEGER) RETURNS (ET);
+   CONST V: ET := EXPR (E, NIL);
+   VAR R: NODE := NEW_NODE (N_REP, LINE);
+   VAR T: TYP;
+   R@.NAME := S@.NAME;
+   IF S@.KIND = N_APPLY THEN
+      R@.A := S@.A;
+   END IF;
+   IF REAL_TYPE (V.T)@.KIND = T_ABS ! V.T@.KIND = T_ABS THEN
+      FAIL (LINE, 'a representation is only for a member of a predefined type class (3.12.2)');
+   END IF;
+   T := COPY_TYP (REAL_TYPE (V.T));
+   T@.REPS := EXPAND_REP (R, T, LINE);
+   W@.REPCONV := TRUE;
+   CHECK_REP_CLASS (T, LINE);
+   W@.REPCONV := FALSE;
+   IF TEQS (T@.REPS@.NAME, 'FIXED_REP') & T@.REPS@.A <> NIL THEN
+      BLOCK
+         CONST N: MVAL := MANIFEST (T@.REPS@.A);
+         VAR UNS: INTEGER := 0;
+         IF T@.REPS@.A@.NEXT <> NIL THEN
+            IF TEQS (T@.REPS@.A@.NEXT@.NAME, 'UNSIGNED') THEN
+               UNS := 1;
+            END IF;
+         END IF;
+         IF N.OK THEN
+            RETURN MKET (FMT3 ('rt_b_fixed_rep(@, @, @)', V.C, NUM (N.V), NUM (UNS)), T);
+         END IF;
+      END BLOCK;
+   END IF;
+   RETURN MKET (V.C, T);
+END FUNCTION REP_CONVERTER;
 
 FUNCTION NAME_EXPR (E: NODE, WANT: TYP) RETURNS (ET);
    CONST Y: SYM := LOOKUP (E@.NAME);

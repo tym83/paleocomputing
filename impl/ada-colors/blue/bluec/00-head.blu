@@ -118,6 +118,12 @@ CONST TS_RECORD: INTEGER := 62;    % A: N_VAR and N_VARIANT list, D: N_REP
 CONST TS_ENUM: INTEGER := 63;      % A: list of N_IDENT, B: range, C: N_REP,
                                    % IV 1: UNORDERED
 CONST TS_GEN: INTEGER := 64;       % ?NAME, C: N_REP or TS_GEN of REP ?R
+CONST N_PSPEC: INTEGER := 101;     % packing-spec [3-183]: NAME mode, A: N_ELEM list
+CONST N_ELEM: INTEGER := 102;      % element-spec [3-184]: NAME; FL 0 field, 1 VARIANTS,
+                                   % 2 OMIT, 3 FILLER, 4 ZEROS, 5 BLANKS (B: the count)
+CONST N_VPACK: INTEGER := 103;     % variant-packing [3-186]: NAME tag, A: N_VPSPEC list,
+                                   % B: the ELSE mode (N_IDENT), IV 1 with ELSE
+CONST N_VPSPEC: INTEGER := 104;    % A: variant names, B: N_PSPEC list
 CONST TS_ROUTINE: INTEGER := 77;   % IV 1: function, A: N_PARAM list, B: result,
                                    % D: signals
 
@@ -399,6 +405,8 @@ TYPE WORLD = RECORD
    VAR CHARSETS: INTEGER;           % the character sets the program declares
    VAR IN_RECORD: INTEGER;          % translating a record-spec, a closed scope (3.9.1)
    VAR IN_TYPEDECL: INTEGER;        % translating a type or reptype declaration (3.12)
+   VAR REPCONV: BOOLEAN;            % checking the reptype of an explicit-rep-converter
+   VAR LDONE: NODE;                 % the fields of a record layout so far (3.9.3)
    VAR NEW_OK: NODE;                % the NEW that may go without PTR$ or SEMAPHORE$
    VAR START_IO: BOOLEAN;           % translating a start-io-stmt (4.8.1)
    VAR MACHINE: BOOLEAN;            % in a machine-dependent part (4.5.5.2, 4.8)

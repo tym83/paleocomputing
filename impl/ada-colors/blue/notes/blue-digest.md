@@ -325,6 +325,19 @@ unreadable; the decision is bluec's.
     part. Its WHERE clause names TO_BIT (T REP R): inside the generic body it is
     the WHERE routine, an operation of T (5.2), which the program supplies
     where it instantiates PUT_OUT; bluec reads it so.
+38. **Representations on the simulated PDP-11** (3.x.3, 3.12.4). Values keep
+    their C storage; the representation is modelled for SIZE, PACKING, TO_BIT,
+    [T]$$ and the explicit-rep-converters. Words have 64 bits. An element or
+    field takes a slot: itself (DENSE), the byte, half-word, word that holds it
+    (PACKED; a character is a byte, its 7 ASCII bits after a 0 filler bit, so
+    TO_BIT of a PACKED string is its bytes), or whole words (UNPACKED, the
+    default of arrays and records); SIZE is the sum of the slots, a record's
+    with RECORD_REP's packing-specs, element-specs (fields, VARIANTS, OMIT of
+    a manifest argument, FILLER, ZEROS, BLANKS) and variant packings, the
+    variant of the tag's value. ASCII.SIZE is 7. An explicit-rep-converter
+    reptype-spec (e) checks the value against the representation (FIXED_REP:
+    size and signing), raising INVALID_REP. Only elements of UNPACKED arrays
+    are inout arguments.
 37. **Generic instances across segments.** The body of an instance of a generic
     routine is translated in the scope of the segment that declares it, its
     local names visible again, whichever segment invokes it (4.2, 5).
@@ -334,8 +347,8 @@ The misprints of the program examples and the rules they break are in
 
 ## 10. Not done
 
-- Representation clauses for records and arrays (packing); explicit
-  representation converters beyond enumerations, strings, bitstrings and fixed.
+- Storage of packed values: SIZE and the conversions follow the
+  representation, the C storage of values does not.
 - LIBRARIES (§4.7), simulation (§4.6.9).
 
 ---

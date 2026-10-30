@@ -404,6 +404,11 @@ extern int RT_B_INVALID_TYPE, RT_B_INVALID_REP, RT_B_UNDERFLOW;
 double rt_b_fop(int op, double a, double b, int single, int trunc);   /* 3.3.4.2 */
 rstr rt_b_str_new(rt_int n, int bits);            /* SIZE, INVALID_SIZE */
 rstr rt_b_cat(rstr a, rstr b);                    /* !!: INVALID_SIZE */
+rt_int rt_b_pack_size(rt_int n, rt_int es, int mode);    /* SIZE by PACKING (3.7.3, 3.8.3) */
+rt_int rt_b_layout(rt_int sz, rt_int fs, int mode);      /* a record field (3.9.3) */
+rstr rt_b_bits_of_chars(rstr s, rt_int es, int mode, const rstr *reps, rt_int n);
+rstr rt_b_chars_of_bits(rstr b, rt_int es, int mode, const rstr *reps, rt_int n);
+rt_int rt_b_fixed_rep(rt_int v, rt_int size, int is_unsigned);   /* INVALID_REP */
 double rt_b_fconv(double v, int single, int trunc, int range);
 double rt_b_float_of_fix_r(rt_int v, rt_int scale, int single, int trunc);
 rt_int rt_b_trange(rt_int v, rt_int lo, rt_int hi);       /* INVALID_TYPE */

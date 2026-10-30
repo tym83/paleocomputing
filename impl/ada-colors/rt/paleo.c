@@ -2214,6 +2214,98 @@ double rt_b_float_of_bits(rstr b) {
   return v;
 }
 
+/* The layout of n elements of es bits on the simulated PDP-11 with 64-bit words
+ * (3.7.3, 3.8.3, 3.9.3): each element in a slot, right-aligned, the filler bits
+ * (zeros) before it. DENSE (0): the slot is the element; PACKED (1): the smallest
+ * addressable unit of 8, 16, 32 or 64 bits that holds it (a character is a byte);
+ * UNPACKED (2): whole words, as a simple variable. */
+#define B_WORD 64
+static rt_int b_slot(rt_int es, int mode) {
+  if (es <= 0) return mode == 0 ? 0 : 8;
+  if (mode == 0) return es;
+  if (mode == 1 && es <= B_WORD) {
+    rt_int u = 8;
+    while (u < es) u *= 2;
+    return u;
+  }
+  return ((es + B_WORD - 1) / B_WORD) * B_WORD;
+}
+rt_int rt_b_pack_size(rt_int n, rt_int es, int mode) {
+  return n <= 0 ? 0 : n * b_slot(es, mode);
+}
+
+/* the bit position of the value of element i (from 0) in that layout */
+static rt_int b_pack_pos(rt_int i, rt_int es, int mode) {
+  rt_int slot = b_slot(es, mode);
+  return i * slot + (slot - es);
+}
+
+/* a field of fs bits after sz bits of a record (3.9.3): the new end; a PACKED field
+ * does not cross a word if it fits in one */
+rt_int rt_b_layout(rt_int sz, rt_int fs, int mode) {
+  rt_int slot = b_slot(fs, mode);
+  if (mode == 1 && slot <= B_WORD) {
+    rt_int start = ((sz + slot - 1) / slot) * slot;
+    if (start % B_WORD + slot > B_WORD) start = ((start + B_WORD - 1) / B_WORD) * B_WORD;
+    return start + slot;
+  }
+  if (mode == 2) return ((sz + B_WORD - 1) / B_WORD) * B_WORD + slot;
+  return sz + slot;
+}
+
+/* TO_BIT of a character string: each character the representation of its value in
+ * the character set (es bits, or reps[code]), laid out by the packing; fillers 0 */
+rstr rt_b_bits_of_chars(rstr s, rt_int es, int mode, const rstr *reps, rt_int n) {
+  rt_int size = rt_b_pack_size(s.len, es, mode);
+  if (size > B_MAXLEN) rt_raise(RT_B_INVALID_SIZE);
+  rstr r = rt_str_new(size);
+  memset(r.p, '0', (size_t)size);
+  for (rt_int i = 0; i < s.len; i++) {
+    rt_int code = (unsigned char)s.p[i], at = b_pack_pos(i, es, mode);
+    if (reps) {
+      if (code >= n || reps[code].len != es) rt_raise(RT_B_INVALID_REP);
+      memcpy(r.p + at, reps[code].p, (size_t)es);
+    } else {
+      if (es < 63 && code >= ((rt_int)1 << es)) rt_raise(RT_B_INVALID_REP);
+      for (rt_int k = 0; k < es; k++) r.p[at + k] = (unsigned char)('0' + ((code >> (es - 1 - k)) & 1));
+    }
+  }
+  return r;
+}
+
+/* [CHAR_STR (n, C)]$$(bits): the characters of that representation; INVALID_SIZE if
+ * no number of characters has it, INVALID_REP for a code not of the character set */
+rstr rt_b_chars_of_bits(rstr b, rt_int es, int mode, const rstr *reps, rt_int n) {
+  rt_int len = 0;
+  while (rt_b_pack_size(len, es, mode) < b.len) len++;
+  if (rt_b_pack_size(len, es, mode) != b.len) rt_raise(RT_B_INVALID_SIZE);
+  rstr r = rt_str_new(len);
+  for (rt_int i = 0; i < len; i++) {
+    rt_int at = b_pack_pos(i, es, mode), code = -1;
+    if (reps) {
+      for (rt_int c = 0; c < n; c++)
+        if (reps[c].len == es && memcmp(reps[c].p, b.p + at, (size_t)es) == 0) { code = c; break; }
+    } else {
+      code = 0;
+      for (rt_int k = 0; k < es; k++) code = code * 2 + (b.p[at + k] == '1');
+      if (code >= n) code = -1;
+    }
+    if (code < 0) rt_raise(RT_B_INVALID_REP);
+    r.p[i] = (unsigned char)code;
+  }
+  return r;
+}
+
+/* FIXED_REP (size, signing) (v): the value if it has that representation (3.1.4.1) */
+rt_int rt_b_fixed_rep(rt_int v, rt_int size, int is_unsigned) {
+  if (size < 64) {
+    rt_int lo = is_unsigned ? 0 : -((rt_int)1 << (size > 0 ? size - 1 : 0));
+    rt_int hi = is_unsigned ? ((rt_int)1 << size) - 1 : size > 0 ? ((rt_int)1 << (size - 1)) - 1 : 0;
+    if (v < lo || v > hi) rt_raise(RT_B_INVALID_REP);
+  } else if (is_unsigned && v < 0) rt_raise(RT_B_INVALID_REP);
+  return v;
+}
+
 rstr rt_b_bits_of_str(rstr s) {
   rstr r = rt_str_new(s.len * 8);
   for (rt_int i = 0; i < s.len; i++)

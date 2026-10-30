@@ -452,8 +452,8 @@ FUNCTION PARSE_REP () RETURNS (NODE);
    IF NOT IS ('(') THEN
       RETURN R;
    END IF;
-   IF TEQS (R@.NAME, 'RECORD_REP') THEN
-      SKIP_PARENS;
+   IF TEQS (R@.NAME, 'RECORD_REP') THEN             % [3-181]
+      PARSE_RECORD_REP (R);
       RETURN R;
    END IF;
    SKIP;
@@ -486,6 +486,125 @@ FUNCTION PARSE_REP () RETURNS (NODE);
    R@.A := HEAD;
    RETURN R;
 END FUNCTION PARSE_REP;
+
+% RECORD_REP ([common-packing-spec] [variant-packing]...) [3-181] .. [3-188]
+PROCEDURE PARSE_RECORD_REP (R: NODE);
+   VAR HEAD, TAIL, VH, VT: NODE := NIL;
+   EXPECT ('(');
+   LOOP UNTIL IS (')') DO
+      IF IS ('SELECT') THEN
+         ADD_LIST (PARSE_VARIANT_PACKING () # VH, VT);
+      ELSE
+         ADD_LIST (PARSE_PACKING_SPEC () # HEAD, TAIL);
+      END IF;
+      IF ACCEPT (',') ! ACCEPT (';') THEN
+         ;
+      END IF;
+   END LOOP;
+   EXPECT (')');
+   R@.A := HEAD;
+   R@.C := VH;
+END PROCEDURE PARSE_RECORD_REP;
+
+% [packing-mode] [(element-spec,...)]; a lone element-spec reads as one in a list
+FUNCTION PARSE_PACKING_SPEC () RETURNS (NODE);
+   VAR P: NODE := NEW_NODE (N_PSPEC, LINE_NOW ());
+   VAR HEAD, TAIL: NODE := NIL;
+   IF IS_KIND (K_ID) & (IS ('DENSE') ! IS ('PACKED') ! IS ('UNPACKED')) THEN
+      P@.NAME := IDENT ();
+   END IF;
+   IF ACCEPT ('(') THEN
+      P@.IV := 1;
+      LOOP UNTIL IS (')') DO
+         ADD_LIST (PARSE_ELEMENT_SPEC () # HEAD, TAIL);
+         IF ACCEPT (',') THEN
+            ;
+         END IF;
+      END LOOP;
+      EXPECT (')');
+   ORIF P@.NAME.LEN = 0 THEN
+      P@.IV := 1;
+      ADD_LIST (PARSE_ELEMENT_SPEC () # HEAD, TAIL);
+   END IF;
+   P@.A := HEAD;
+   RETURN P;
+END FUNCTION PARSE_PACKING_SPEC;
+
+% [3-184], [3-185]
+FUNCTION PARSE_ELEMENT_SPEC () RETURNS (NODE);
+   VAR E: NODE := NEW_NODE (N_ELEM, LINE_NOW ());
+   E@.NAME := IDENT ();
+   IF IS ('(') THEN
+      IF TEQS (E@.NAME, 'VARIANTS') ! TEQS (E@.NAME, 'OMIT') THEN
+         IF TEQS (E@.NAME, 'VARIANTS') THEN
+            E@.FL := 1;
+         ELSE
+            E@.FL := 2;
+         END IF;
+         SKIP;
+         E@.NAME := IDENT ();
+         EXPECT (')');
+      ORIF TEQS (E@.NAME, 'FILLER') ! TEQS (E@.NAME, 'ZEROS') ! TEQS (E@.NAME, 'BLANKS') THEN
+         IF TEQS (E@.NAME, 'FILLER') THEN
+            E@.FL := 3;
+         ORIF TEQS (E@.NAME, 'ZEROS') THEN
+            E@.FL := 4;
+         ELSE
+            E@.FL := 5;
+         END IF;
+         SKIP;
+         E@.B := PARSE_EXPR ();
+         EXPECT (')');
+      END IF;
+   END IF;
+   RETURN E;
+END FUNCTION PARSE_ELEMENT_SPEC;
+
+% SELECT tag-name FROM variant-name,... --> [packing-spec,...] END; ...
+% [ELSE --> [packing-mode] END;] END SELECT; [3-186] .. [3-188]
+FUNCTION PARSE_VARIANT_PACKING () RETURNS (NODE);
+   VAR V: NODE := NEW_NODE (N_VPACK, LINE_NOW ());
+   VAR HEAD, TAIL: NODE := NIL;
+   EXPECT ('SELECT');
+   V@.NAME := IDENT ();
+   EXPECT ('FROM');
+   LOOP UNTIL IS ('END') DO
+      IF ACCEPT ('ELSE') THEN
+         EXPECT ('-->');
+         V@.IV := 1;
+         IF NOT IS ('END') THEN
+            V@.B := NEW_NODE (N_IDENT, LINE_NOW ());
+            V@.B@.NAME := IDENT ();
+         END IF;
+         EXPECT ('END');
+         EXPECT (';');
+      ELSE
+         BLOCK
+            VAR S: NODE := NEW_NODE (N_VPSPEC, LINE_NOW ());
+            VAR LH, LT, PH, PT: NODE := NIL;
+            LOOP
+               ADD_LIST (PARSE_CASE_LABEL () # LH, LT);
+            END LOOP WHEN NOT ACCEPT (',');
+            EXPECT ('-->');
+            LOOP UNTIL IS ('END') DO
+               ADD_LIST (PARSE_PACKING_SPEC () # PH, PT);
+               IF ACCEPT (',') THEN
+                  ;
+               END IF;
+            END LOOP;
+            EXPECT ('END');
+            EXPECT (';');
+            S@.A := LH;
+            S@.B := PH;
+            ADD_LIST (S # HEAD, TAIL);
+         END BLOCK;
+      END IF;
+   END LOOP;
+   EXPECT ('END');
+   EXPECT ('SELECT');
+   V@.A := HEAD;
+   RETURN V;
+END FUNCTION PARSE_VARIANT_PACKING;
 
 % the name of ?NAME without the question mark; nothing for ? alone
 FUNCTION GEN_NAME () RETURNS (TEXT);

@@ -559,6 +559,14 @@ FUNCTION TO_FIXED_CALL (E: NODE) RETURNS (ET);
    FAILT (E@.LINE, 'no TO_FIXED for ', TYPE_NAME (V.T));
 END FUNCTION TO_FIXED_CALL;
 
+FUNCTION STATIC_SIZE_OR (T: TYP) RETURNS (INTEGER);
+   CONST M: MVAL := STATIC_SIZE (T);
+   IF M.OK THEN
+      RETURN M.V;
+   END IF;
+   RETURN -1;
+END FUNCTION STATIC_SIZE_OR;
+
 % TO_BIT: the representation (3.6.6.1); machine-dependent but for enumerated values and
 % bitstrings
 FUNCTION BITS_OF (V: ET, LINE: INTEGER) RETURNS (ET);
@@ -576,8 +584,10 @@ FUNCTION BITS_OF (V: ET, LINE: INTEGER) RETURNS (ET);
    ORIF K = T_STR THEN
       % a charstring is a sequence of values of its (enumerated) character set, whose
       % representation the language defines: the reason J3.6-6 gives for enumerated
-      % values holds (Appendix C writes PUT_OUT's TO_BIT outside any machine part)
-      RETURN MKET (FMT1 ('rt_b_bits_of_str(@)', V.C), BITS_TYPE (-1));
+      % values holds (Appendix C writes PUT_OUT's TO_BIT outside any machine part):
+      % each character the representation of its value, by the packing (3.7.3)
+      RETURN MKET (FMT4 ('rt_b_bits_of_chars(@, @, @, @)', V.C, NUM (CHAR_SIZE (T)),
+                         NUM (PACKING_OF (T)), CHAR_REPS (T)), BITS_TYPE (STATIC_SIZE_OR (T)));
    END IF;
    REQUIRE_MACHINE (LINE);
    IF K = T_INT THEN
@@ -586,8 +596,6 @@ FUNCTION BITS_OF (V: ET, LINE: INTEGER) RETURNS (ET);
       RETURN MKET (FMT1 ('rt_b_bits_of_int(@, 1)', V.C), BITS_TYPE (1));
    ORIF K = T_FLOAT THEN
       RETURN MKET (FMT1 ('rt_b_bits_of_float(@)', V.C), BITS_TYPE (64));
-   ORIF K = T_STR THEN
-      RETURN MKET (FMT1 ('rt_b_bits_of_str(@)', V.C), BITS_TYPE (-1));
    END IF;
    FAILT (LINE, 'no TO_BIT for ', TYPE_NAME (T));
 END FUNCTION BITS_OF;

@@ -446,13 +446,18 @@ FUNCTION EXPAND_REP (R: NODE, T: TYP, LINE: INTEGER) RETURNS (NODE);
       W@.IN_TYPEDECL := W@.IN_TYPEDECL + 1;
       X@.NAME := D@.B@.NAME;
       X@.B := D@.B@.B;
-      BLOCK
-         VAR A: NODE := D@.B@.A;
-         LOOP UNTIL A = NIL DO
-            ADD_LIST (REP_ARG_VALUE (A) # HEAD, TAIL);
-            A := A@.NEXT;
-         END LOOP;
-      END BLOCK;
+      X@.C := D@.B@.C;
+      IF TEQS (X@.NAME, 'RECORD_REP') THEN           % packing-specs, not values
+         HEAD := D@.B@.A;
+      ELSE
+         BLOCK
+            VAR A: NODE := D@.B@.A;
+            LOOP UNTIL A = NIL DO
+               ADD_LIST (REP_ARG_VALUE (A) # HEAD, TAIL);
+               A := A@.NEXT;
+            END LOOP;
+         END BLOCK;
+      END IF;
       X@.A := HEAD;
       W@.IN_TYPEDECL := W@.IN_TYPEDECL - 1;
       CLOSE_SCOPE;
@@ -612,6 +617,9 @@ PROCEDURE CHECK_FIXED_REP (T: TYP, LINE: INTEGER);
                FAIL (LINE, 'FIXED_REP takes a size and a signing (3.2.3 [3-55])');
             END IF;
          END BLOCK;
+      END IF;
+      IF W@.REPCONV THEN                             % a converter: the value's check
+         RETURN;
       END IF;
       IF UNSIGNED THEN
          IF T@.LO_C.LEN = 0 THEN

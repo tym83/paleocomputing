@@ -262,9 +262,334 @@ FUNCTION RESOLVE_RECORD (TS: NODE, CNAME: TEXT, Y: SYM, FORMALS: NODE) RETURNS (
    RECORD_FIELDS (T, TS@.A, NO_TEXT (), NIL # TAIL);
    W@.IN_RECORD := W@.IN_RECORD - 1;
    CLOSE_SCOPE;
+   CHECK_RECORD_REP (T, TS@.LINE);
    COMPLETE_RECORD (T);
    RETURN T;
 END FUNCTION RESOLVE_RECORD;
+
+% ---- record representations (3.9.3) -------------------------------------------------------
+
+FUNCTION IS_RECORD_REP (T: TYP) RETURNS (BOOLEAN);
+   IF T@.REPS = NIL THEN
+      RETURN FALSE;
+   END IF;
+   RETURN T@.REPS@.KIND = N_REP & TEQS (T@.REPS@.NAME, 'RECORD_REP');
+END FUNCTION IS_RECORD_REP;
+
+% the constraints of a record-reptype (3.9.3)
+PROCEDURE CHECK_RECORD_REP (T: TYP, LINE: INTEGER);
+   VAR SEEN: NODE := NIL;
+   VAR LISTED: BOOLEAN := FALSE;
+   IF NOT IS_RECORD_REP (T) THEN
+      RETURN;
+   END IF;
+   BLOCK                                             % the common packing-specs
+      VAR P: NODE := T@.REPS@.A;
+      LOOP UNTIL P = NIL DO
+         IF P@.IV = 1 THEN
+            LISTED := TRUE;
+         END IF;
+         CHECK_ELEMENTS (T, P@.A, NO_TEXT (), NIL # SEEN);
+         P := P@.NEXT;
+      END LOOP;
+   END BLOCK;
+   IF LISTED THEN                                    % then every field and variant part
+      BLOCK                                          % is positioned
+         VAR F: FIELD := T@.FIELDS;
+         LOOP UNTIL F = NIL DO
+            IF F@.TAGF.LEN = 0 & NOT IN_IDENTS (SEEN, F@.NAME) THEN
+               FAILT (LINE, 'a record-reptype with element-specs positions every field (3.9.3): ', F@.NAME);
+            END IF;
+            IF F@.TAGF.LEN > 0 & NOT IN_IDENTS (SEEN, CAT (MK ('|'), F@.TAGF)) THEN
+               FAILT (LINE, 'a record-reptype with element-specs positions every variant part (3.9.3): ',
+                      F@.TAGF);
+            END IF;
+            F := F@.NEXT;
+         END LOOP;
+      END BLOCK;
+   END IF;
+   BLOCK                                             % the variant packings
+      VAR V: NODE := T@.REPS@.C;
+      LOOP UNTIL V = NIL DO
+         BLOCK
+            CONST TF: FIELD := FIND_FIELD (T, V@.NAME);
+            VAR S: NODE := V@.A;
+            IF TF = NIL THEN
+               FAILT (V@.LINE, 'not a tag of the record (3.9.3): ', V@.NAME);
+            END IF;
+            IF TF@.KIND <> 2 THEN
+               FAILT (V@.LINE, 'not a tag of the record (3.9.3): ', V@.NAME);
+            END IF;
+            IF V@.B <> NIL THEN
+               IF PACKING_VALUE (V@.B@.NAME) < 0 THEN
+                  FAILT (V@.LINE, 'a packing-mode is DENSE, PACKED or UNPACKED (3.9.3): ', V@.B@.NAME);
+               END IF;
+            END IF;
+            LOOP UNTIL S = NIL DO
+               BLOCK
+                  VAR L: NODE := S@.A;
+                  VAR P: NODE := S@.B;
+                  VAR VSEEN: NODE := NIL;
+                  LOOP UNTIL L = NIL DO                 % values of the tag type
+                     BLOCK
+                        CONST SAVED_CODE: BUF := W@.CODE;
+                        CONST LV: ET := EXPR (L, TF@.T);
+                        W@.CODE := SAVED_CODE;
+                        IF NOT SAME_CLASS (REAL_TYPE (LV.T), REAL_TYPE (TF@.T)) THEN
+                           FAIL (L@.LINE, 'a variant-name is a value of the tag type (3.9.3)');
+                        END IF;
+                     END BLOCK;
+                     L := L@.NEXT;
+                  END LOOP;
+                  LOOP UNTIL P = NIL DO
+                     CHECK_ELEMENTS (T, P@.A, V@.NAME, S@.A # VSEEN);
+                     P := P@.NEXT;
+                  END LOOP;
+               END BLOCK;
+               S := S@.NEXT;
+            END LOOP;
+         END BLOCK;
+         V := V@.NEXT;
+      END LOOP;
+   END BLOCK;
+END PROCEDURE CHECK_RECORD_REP;
+
+% element-specs of a packing-spec, of the common part (TAGN empty) or of the variants
+% LABELS of the tag TAGN: names of the record accessible there, each once (3.9.3)
+PROCEDURE CHECK_ELEMENTS (T: TYP, L: NODE, TAGN: TEXT, LABELS: NODE # SEEN: NODE);
+   VAR E: NODE := L;
+   LOOP UNTIL E = NIL DO
+      IF E@.FL = 0 ! E@.FL = 2 THEN
+         BLOCK
+            VAR F: FIELD := T@.FIELDS;
+            VAR FOUND: FIELD := NIL;
+            LOOP UNTIL F = NIL DO
+               IF TEQ (F@.NAME, E@.NAME) & TEQ (F@.TAGF, TAGN) THEN
+                  FOUND := F;
+               END IF;
+               F := F@.NEXT;
+            END LOOP;
+            IF FOUND = NIL THEN
+               FAILT (E@.LINE, 'not a field of the record accessible here (3.9.3): ', E@.NAME);
+            END IF;
+            IF E@.FL = 2 & FOUND@.KIND = 0 THEN
+               FAILT (E@.LINE, 'OMIT names a constant or tag field (3.9.3): ', E@.NAME);
+            END IF;
+            IF IN_IDENTS (SEEN, E@.NAME) THEN
+               FAILT (E@.LINE, 'a field is positioned once in a record-reptype (3.9.3): ', E@.NAME);
+            END IF;
+            SEEN := NAME_REF (E@.NAME, 0, NIL, SEEN);
+         END BLOCK;
+      ORIF E@.FL = 1 THEN
+         BLOCK
+            CONST TF: FIELD := FIND_FIELD (T, E@.NAME);
+            CONST KEY: TEXT := CAT (MK ('|'), E@.NAME);
+            IF TF = NIL THEN
+               FAILT (E@.LINE, 'VARIANTS names a tag of the record (3.9.3): ', E@.NAME);
+            END IF;
+            IF TF@.KIND <> 2 THEN
+               FAILT (E@.LINE, 'VARIANTS names a tag of the record (3.9.3): ', E@.NAME);
+            END IF;
+            IF IN_IDENTS (SEEN, KEY) THEN
+               FAILT (E@.LINE, 'a variant part is positioned once in a record-reptype (3.9.3): ', E@.NAME);
+            END IF;
+            SEEN := NAME_REF (KEY, 0, NIL, SEEN);
+         END BLOCK;
+      ELSE
+         BLOCK
+            CONST M: MVAL := MANIFEST (E@.B);
+            IF NOT M.OK ! M.V < 0 THEN
+               FAIL (E@.LINE, 'the length of a filler-spec is a manifest integer, not negative (3.9.3)');
+            END IF;
+         END BLOCK;
+      END IF;
+      E := E@.NEXT;
+   END LOOP;
+END PROCEDURE CHECK_ELEMENTS;
+
+% SIZE of the record C of type T (3.9.3): its fields laid out as its reptype says,
+% RECORD_STD being RECORD_REP (UNPACKED); the variants by the value of their tag
+FUNCTION RECORD_SIZE (T: TYP, C: TEXT) RETURNS (TEXT);
+   VAR R: TEXT := MK ('({ rt_int sz = 0;');
+   CONST SAVED: NODE := W@.LDONE;
+   W@.LDONE := NIL;
+   IF NOT IS_RECORD_REP (T) THEN
+      R := CAT (R, LAYOUT_ALL (T, C, NO_TEXT (), 2));
+      R := CAT (R, LAYOUT_PARTS (T, C));
+      W@.LDONE := SAVED;
+      RETURN CATS (R, ' sz; })');
+   END IF;
+   BLOCK
+      VAR P: NODE := T@.REPS@.A;
+      LOOP UNTIL P = NIL DO
+         R := CAT (R, LAYOUT_SPEC (T, C, P, NO_TEXT ()));
+         P := P@.NEXT;
+      END LOOP;
+   END BLOCK;
+   R := CAT (R, LAYOUT_ALL (T, C, NO_TEXT (), 2));     % the rest
+   R := CAT (R, LAYOUT_PARTS (T, C));
+   W@.LDONE := SAVED;
+   RETURN CATS (R, ' sz; })');
+END FUNCTION RECORD_SIZE;
+
+FUNCTION FIELD_SIZE_C (F: FIELD, C: TEXT) RETURNS (TEXT);
+   RETURN SIZE_OF (F@.T, FMT2 ('(@).@', C, F@.CNAME)).C;
+END FUNCTION FIELD_SIZE_C;
+
+% the fields of the part TAGN (the common part when empty) not yet laid out
+FUNCTION LAYOUT_ALL (T: TYP, C: TEXT, TAGN: TEXT, MODE: INTEGER) RETURNS (TEXT);
+   VAR R: TEXT := MK ('');
+   VAR F: FIELD := T@.FIELDS;
+   LOOP UNTIL F = NIL DO
+      IF TEQ (F@.TAGF, TAGN) & NOT IN_IDENTS (W@.LDONE, F@.NAME) THEN
+         W@.LDONE := NAME_REF (F@.NAME, 0, NIL, W@.LDONE);
+         IF TAGN.LEN = 0 THEN
+            R := FMT4 ('@ sz = rt_b_layout(sz, @, @);', R, FIELD_SIZE_C (F, C), NUM (MODE), MK (''));
+         ELSE
+            R := CAT (R, FMT4 (' if (@) sz = rt_b_layout(sz, @, @);@', VARIANT_COND (F, T, C),
+                               FIELD_SIZE_C (F, C), NUM (MODE), MK ('')));
+         END IF;
+      END IF;
+      F := F@.NEXT;
+   END LOOP;
+   RETURN R;
+END FUNCTION LAYOUT_ALL;
+
+% the variant parts not yet laid out, after the rest
+FUNCTION LAYOUT_PARTS (T: TYP, C: TEXT) RETURNS (TEXT);
+   VAR R: TEXT := MK ('');
+   VAR F: FIELD := T@.FIELDS;
+   LOOP UNTIL F = NIL DO
+      IF F@.TAGF.LEN > 0 & NOT IN_IDENTS (W@.LDONE, CAT (MK ('|'), F@.TAGF)) THEN
+         R := CAT (R, LAYOUT_VARIANTS (T, C, F@.TAGF));
+      END IF;
+      F := F@.NEXT;
+   END LOOP;
+   RETURN R;
+END FUNCTION LAYOUT_PARTS;
+
+% a packing-spec of the common part or of a variant (TAGN)
+FUNCTION LAYOUT_SPEC (T: TYP, C: TEXT, P: NODE, TAGN: TEXT) RETURNS (TEXT);
+   VAR MODE: INTEGER := 2;
+   VAR R: TEXT := MK ('');
+   IF P@.NAME.LEN > 0 THEN
+      MODE := PACKING_VALUE (P@.NAME);
+   END IF;
+   IF P@.IV = 0 THEN                                 % all fields accessible there
+      R := LAYOUT_ALL (T, C, TAGN, MODE);
+      IF TAGN.LEN = 0 THEN
+         R := CAT (R, LAYOUT_PARTS (T, C));
+      END IF;
+      RETURN R;
+   END IF;
+   BLOCK
+      VAR E: NODE := P@.A;
+      LOOP UNTIL E = NIL DO
+         IF E@.FL = 0 ! E@.FL = 2 THEN
+            BLOCK
+               VAR F: FIELD := T@.FIELDS;
+               LOOP UNTIL F = NIL DO
+                  IF TEQ (F@.NAME, E@.NAME) & TEQ (F@.TAGF, TAGN) THEN
+                     W@.LDONE := NAME_REF (F@.NAME, 0, NIL, W@.LDONE);
+                     IF E@.FL = 2 & ARG_MANIFEST (T, F) THEN
+                        ;                             % OMIT: a manifest argument is
+                     ORIF TAGN.LEN = 0 THEN           % not stored
+                        R := FMT3 ('@ sz = rt_b_layout(sz, @, @);', R, FIELD_SIZE_C (F, C), NUM (MODE));
+                     ELSE
+                        R := CAT (R, FMT4 (' if (@) sz = rt_b_layout(sz, @, @);@', VARIANT_COND (F, T, C),
+                                           FIELD_SIZE_C (F, C), NUM (MODE), MK ('')));
+                     END IF;
+                  END IF;
+                  F := F@.NEXT;
+               END LOOP;
+            END BLOCK;
+         ORIF E@.FL = 1 THEN
+            R := CAT (R, LAYOUT_VARIANTS (T, C, E@.NAME));
+         ORIF E@.FL = 5 THEN                          % BLANKS (N): N blanks, so packed
+            R := FMT3 ('@ sz = rt_b_layout(sz, rt_b_pack_size(@, 7, @), ', R,
+                       NUM (MANIFEST (E@.B).V), NUM (MODE));
+            R := FMT2 ('@@);', R, NUM (MODE));
+         ELSE                                        % FILLER (N), ZEROS (N): N bits
+            R := FMT3 ('@ sz = rt_b_layout(sz, @, @);', R, NUM (MANIFEST (E@.B).V), NUM (MODE));
+         END IF;
+         E := E@.NEXT;
+      END LOOP;
+   END BLOCK;
+   RETURN R;
+END FUNCTION LAYOUT_SPEC;
+
+% the variant part of the tag TAGN: the packing of its variant-packing for the value
+% of the tag, else of its ELSE, else UNPACKED
+FUNCTION LAYOUT_VARIANTS (T: TYP, C: TEXT, TAGN: TEXT) RETURNS (TEXT);
+   VAR R: TEXT := MK ('');
+   VAR WORD: TEXT := MK (' if');
+   VAR ELSE_MODE: INTEGER := 2;
+   CONST TF: FIELD := FIND_FIELD (T, TAGN);
+   W@.LDONE := NAME_REF (CAT (MK ('|'), TAGN), 0, NIL, W@.LDONE);
+   IF IS_RECORD_REP (T) THEN
+      BLOCK
+         VAR V: NODE := T@.REPS@.C;
+         LOOP UNTIL V = NIL DO
+            IF TEQ (V@.NAME, TAGN) THEN
+               BLOCK
+                  VAR S: NODE := V@.A;
+                  IF V@.B <> NIL THEN
+                     ELSE_MODE := PACKING_VALUE (V@.B@.NAME);
+                  END IF;
+                  LOOP UNTIL S = NIL DO
+                     BLOCK
+                        VAR COND: TEXT := MK ('0');
+                        VAR L: NODE := S@.A;
+                        VAR P: NODE := S@.B;
+                        CONST OUTER: NODE := W@.LDONE;
+                        VAR BODY: TEXT := MK ('');
+                        LOOP UNTIL L = NIL DO
+                           COND := FMT4 ('@ || (@).@ == @', COND, C, TF@.CNAME, EXPR (L, TF@.T).C);
+                           L := L@.NEXT;
+                        END LOOP;
+                        LOOP UNTIL P = NIL DO
+                           BODY := CAT (BODY, LAYOUT_SPEC (T, C, P, TAGN));
+                           P := P@.NEXT;
+                        END LOOP;
+                        BODY := CAT (BODY, LAYOUT_ALL (T, C, TAGN, 2));
+                        W@.LDONE := OUTER;
+                        R := CAT (R, FMT3 ('@ (@) {@ }', WORD, COND, BODY));
+                        WORD := MK (' else if');
+                     END BLOCK;
+                     S := S@.NEXT;
+                  END LOOP;
+               END BLOCK;
+            END IF;
+            V := V@.NEXT;
+         END LOOP;
+      END BLOCK;
+   END IF;
+   BLOCK
+      CONST OUTER: NODE := W@.LDONE;
+      CONST REST: TEXT := LAYOUT_ALL (T, C, TAGN, ELSE_MODE);
+      W@.LDONE := OUTER;
+      IF TEQS (WORD, ' if') THEN
+         RETURN REST;
+      END IF;
+      RETURN FMT2 ('@ else {@ }', R, REST);
+   END BLOCK;
+END FUNCTION LAYOUT_VARIANTS;
+
+% is the argument of the constant or tag field F of T manifest (OMIT, 3.9.3)?
+FUNCTION ARG_MANIFEST (T: TYP, F: FIELD) RETURNS (BOOLEAN);
+   VAR G: FIELD := T@.FIELDS;
+   VAR A: BND := T@.ARGS;
+   LOOP UNTIL G = NIL ! A = NIL DO
+      IF G@.KIND <> 0 THEN
+         IF G = F THEN
+            RETURN A@.MLO.OK & NOT A@.ANYARG;
+         END IF;
+         A := A@.NEXT;
+      END IF;
+      G := G@.NEXT;
+   END LOOP;
+   RETURN FALSE;
+END FUNCTION ARG_MANIFEST;
 
 % T(arguments) of a parameterized record type Y [3-175]: one class for each set of
 % TYPE arguments, the values of the other arguments kept with the type

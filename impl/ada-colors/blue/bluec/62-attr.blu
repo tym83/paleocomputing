@@ -33,6 +33,95 @@ FUNCTION ENUM_SIZE (T: TYP) RETURNS (INTEGER);
    RETURN BITS_FOR (T@.BASE@.NLITS);
 END FUNCTION ENUM_SIZE;
 
+% the packing of strings, arrays and records (3.7.3, 3.8.3, 3.9.3): 0 DENSE, 1 PACKED,
+% 2 UNPACKED; strings are PACKED, arrays and records UNPACKED by default
+FUNCTION PACKING_OF (T: TYP) RETURNS (INTEGER);
+   CONST K: INTEGER := T@.KIND;
+   VAR MODE: INTEGER := 2;
+   IF K = T_STR THEN
+      MODE := 1;
+   END IF;
+   IF T@.REPS <> NIL THEN
+      IF T@.REPS@.KIND = N_REP & T@.REPS@.A <> NIL THEN
+         IF T@.REPS@.A@.KIND = N_NAME ! T@.REPS@.A@.KIND = N_ENUMLIT THEN
+            BLOCK
+               CONST P: INTEGER := PACKING_VALUE (T@.REPS@.A@.NAME);
+               IF P >= 0 THEN
+                  MODE := P;
+               END IF;
+            END BLOCK;
+         END IF;
+      END IF;
+   END IF;
+   RETURN MODE;
+END FUNCTION PACKING_OF;
+
+FUNCTION PACKING_VALUE (NAME: TEXT) RETURNS (INTEGER);
+   IF TEQS (NAME, 'DENSE') THEN
+      RETURN 0;
+   ORIF TEQS (NAME, 'PACKED') THEN
+      RETURN 1;
+   ORIF TEQS (NAME, 'UNPACKED') THEN
+      RETURN 2;
+   END IF;
+   RETURN -1;
+END FUNCTION PACKING_VALUE;
+
+FUNCTION PACKING_LITERAL (MODE: INTEGER, LINE: INTEGER) RETURNS (ET);
+   IF MODE = 0 THEN
+      RETURN ENUM_LITERAL (LIT_NODE ('DENSE', LINE), NIL);
+   ORIF MODE = 1 THEN
+      RETURN ENUM_LITERAL (LIT_NODE ('PACKED', LINE), NIL);
+   END IF;
+   RETURN ENUM_LITERAL (LIT_NODE ('UNPACKED', LINE), NIL);
+END FUNCTION PACKING_LITERAL;
+
+% the SIZE of N elements of ES bits laid out by MODE (rt_b_pack_size): a slot each,
+% the element itself (DENSE), the unit of 8, 16, 32 or 64 bits that holds it
+% (PACKED), or whole 64-bit words (UNPACKED)
+FUNCTION PACK_SLOT (ES, MODE: INTEGER) RETURNS (INTEGER);
+   VAR U: INTEGER := 8;
+   IF ES <= 0 THEN
+      IF MODE = 0 THEN
+         RETURN 0;
+      END IF;
+      RETURN 8;
+   END IF;
+   IF MODE = 0 THEN
+      RETURN ES;
+   END IF;
+   IF MODE = 1 & ES <= 64 THEN
+      LOOP UNTIL U >= ES DO
+         U := U * 2;
+      END LOOP;
+      RETURN U;
+   END IF;
+   RETURN ((ES + 63) // 64) * 64;
+END FUNCTION PACK_SLOT;
+
+FUNCTION PACK_SIZE (N, ES, MODE: INTEGER) RETURNS (INTEGER);
+   IF N <= 0 THEN
+      RETURN 0;
+   END IF;
+   RETURN N * PACK_SLOT (ES, MODE);
+END FUNCTION PACK_SIZE;
+
+% the number of bits of a character of the string type T: of its character set
+FUNCTION CHAR_SIZE (T: TYP) RETURNS (INTEGER);
+   RETURN ENUM_SIZE (CHARSET_OF (T));
+END FUNCTION CHAR_SIZE;
+
+% the representations of the characters of T's set, for the run time: a table or none
+FUNCTION CHAR_REPS (T: TYP) RETURNS (TEXT);
+   CONST C: TYP := CHARSET_OF (T);
+   IF C@.REPS <> NIL THEN
+      IF C@.REPS@.B <> NIL THEN
+         RETURN REP_TABLE (C);
+      END IF;
+   END IF;
+   RETURN FMT1 ('NULL, @', NUM (C@.BASE@.NLITS));
+END FUNCTION CHAR_REPS;
+
 % ---- the machine (implementation-dependent values, 3.x.1, 3.x.3) -------------------
 
 % the largest length of a string or bitstring: (CHAR_STR.LENGTH).MAX (3.6.1, 3.7.1)
@@ -108,10 +197,27 @@ FUNCTION STATIC_SIZE (T: TYP) RETURNS (MVAL);
       RETURN T@.MLEN;
    ORIF K = T_STR THEN
       IF T@.MLEN.OK THEN
-         RETURN SOME (T@.MLEN.V * 8);
+         RETURN SOME (PACK_SIZE (T@.MLEN.V, CHAR_SIZE (T), PACKING_OF (T)));
       END IF;
    ORIF K = T_PTR ! K = T_SEM THEN
       RETURN SOME (64);
+   ORIF K = T_ARR THEN                               % 3.8.3: the elements by the packing
+      BLOCK
+         CONST ES: MVAL := STATIC_SIZE (T@.ELEM);
+         VAR N: INTEGER := 1;
+         VAR B: BND := T@.BOUNDS;
+         IF NOT ES.OK THEN
+            RETURN NO_MVAL ();
+         END IF;
+         LOOP UNTIL B = NIL DO
+            IF NOT (B@.MLO.OK & B@.MHI.OK) ! IS_GEN_TEXT (B@.LO) ! IS_GEN_TEXT (B@.HI) THEN
+               RETURN NO_MVAL ();
+            END IF;
+            N := N * MAX_INT (B@.MHI.V - B@.MLO.V + 1, 0);
+            B := B@.NEXT;
+         END LOOP;
+         RETURN SOME (PACK_SIZE (N, ES.V, PACKING_OF (T)));
+      END BLOCK;
    END IF;
    RETURN NO_MVAL ();
 END FUNCTION STATIC_SIZE;
@@ -203,7 +309,7 @@ FUNCTION ATTRIBUTE (B: ET, NAME: TEXT, LINE: INTEGER) RETURNS (ET);
       IF TEQS (NAME, 'LENGTH') THEN
          RETURN MKET (FMT1 ('(rt_int)(@).len', B.C), W@.TY_INT);
       ORIF TEQS (NAME, 'PACKING') THEN
-         RETURN ENUM_LITERAL (LIT_NODE ('PACKED', LINE), NIL);
+         RETURN PACKING_LITERAL (PACKING_OF (T), LINE);
       END IF;
    ORIF K = T_ARR THEN                               % 3.8.1, 3.8.3
       IF TEQS (NAME, 'DIMENSIONS') THEN
@@ -211,7 +317,7 @@ FUNCTION ATTRIBUTE (B: ET, NAME: TEXT, LINE: INTEGER) RETURNS (ET);
       ORIF TEQS (NAME, 'EXTENT') ! TEQS (NAME, 'BOUNDS') THEN
          RETURN ARRAY_SHAPE (B, NAME);
       ORIF TEQS (NAME, 'PACKING') THEN
-         RETURN ENUM_LITERAL (LIT_NODE ('UNPACKED', LINE), NIL);
+         RETURN PACKING_LITERAL (PACKING_OF (T), LINE);
       END IF;
    ORIF K = T_SEM THEN                               % 3.11.1
       IF TEQS (NAME, 'USAGE') THEN
@@ -305,16 +411,30 @@ FUNCTION SIZE_OF (T: TYP, C: TEXT) RETURNS (ET);
          RETURN MKET (FMT1 ('(rt_int)(@)', T@.LEN_C), W@.TY_INT);
       END IF;
       RETURN MKET (FMT1 ('(rt_int)(@).len', C), W@.TY_INT);
-   ORIF K = T_STR THEN
-      IF T@.LEN_C.LEN > 0 THEN
-         RETURN MKET (FMT1 ('(rt_int)((@) * 8)', T@.LEN_C), W@.TY_INT);
+   ORIF K = T_STR THEN                               % 3.7.3: characters by the packing
+      IF T@.MLEN.OK THEN
+         RETURN INT_ET (STATIC_SIZE (T).V);
       END IF;
-      RETURN MKET (FMT1 ('(rt_int)((@).len * 8)', C), W@.TY_INT);
+      IF T@.LEN_C.LEN > 0 THEN
+         RETURN MKET (FMT3 ('rt_b_pack_size(@, @, @)', T@.LEN_C, NUM (CHAR_SIZE (T)),
+                            NUM (PACKING_OF (T))), W@.TY_INT);
+      END IF;
+      RETURN MKET (FMT3 ('rt_b_pack_size((@).len, @, @)', C, NUM (CHAR_SIZE (T)),
+                         NUM (PACKING_OF (T))), W@.TY_INT);
    ORIF K = T_PTR ! K = T_SEM THEN
       RETURN INT_ET (64);
    ORIF K = T_ABS THEN
       RETURN SIZE_OF (T@.BASE, C);
-   ORIF K = T_ARR THEN
+   ORIF K = T_REC THEN                               % 3.9.3: the fields by the reptype
+      RETURN MKET (RECORD_SIZE (T, C), W@.TY_INT);
+   ORIF K = T_ARR THEN                               % 3.8.3: elements by the packing
+      BLOCK
+         CONST ES: MVAL := STATIC_SIZE (T@.ELEM);
+         IF ES.OK THEN
+            RETURN MKET (CAT (FMT3 ('rt_b_pack_size(rt_b_extent(@, (@).lo, (@).hi), ', NUM (T@.DIMS), C, C),
+                              FMT2 ('@, @)', NUM (ES.V), NUM (PACKING_OF (T)))), W@.TY_INT);
+         END IF;
+      END BLOCK;
       RETURN MKET (FMT4 ('(rt_int)(rt_b_extent(@, (@).lo, (@).hi) * sizeof (@) * 8)',
                          NUM (T@.DIMS), C, C, CTYPE (T@.ELEM)), W@.TY_INT);
    END IF;
@@ -580,8 +700,9 @@ FUNCTION TYPE_SPECIFIER (E: NODE) RETURNS (ET);
          RETURN MKET (ENUM_OF_BITS (RT, V.C), T);
       ORIF RT@.KIND = T_FLOAT THEN
          RETURN MKET (FMT1 ('rt_b_float_of_bits(@)', V.C), T);
-      ORIF RT@.KIND = T_STR THEN
-         RETURN MKET (FMT1 ('rt_b_str_of_bits(@)', V.C), T);
+      ORIF RT@.KIND = T_STR THEN                  % the characters by the packing
+         RETURN MKET (FMT4 ('rt_b_chars_of_bits(@, @, @, @)', V.C, NUM (CHAR_SIZE (RT)),
+                            NUM (PACKING_OF (RT)), CHAR_REPS (RT)), T);
       END IF;
       FAIL (E@.LINE, 'this type-specifier on a bitstring is not implemented');
    END IF;
