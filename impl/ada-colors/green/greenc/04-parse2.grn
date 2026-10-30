@@ -84,17 +84,48 @@
       end if;
    end CHECK_PRAGMA;
 
-   procedure SKIP_VISIBILITY is
+   -- restricted [(unit {, unit})] (RM79 8.3): the names, as ",A,B,"
+   procedure VISIBILITY_P(RES : out TEXT) is
       NAMES : NODE;
+      V : TEXT := MK(",");
    begin
-      -- restricted [(unit, ...)] (RM79 8.3)
-      SKIP;
+      EXPECT_KW("RESTRICTED");
       if AT_OP("(") then
          SKIP;
          ID_LIST(NAMES);
          EXPECT_OP(")");
+         while NAMES /= null loop
+            V := MK(V.all & NAMES.NAME.all & ",");
+            NAMES := NAMES.NEXT;
+         end loop;
       end if;
-   end SKIP_VISIBILITY;
+      RES := V;
+   end VISIBILITY_P;
+
+   -- a module or subprogram, possibly under a visibility restriction
+   procedure UNIT_P(RES : out NODE) is
+      V : TEXT;
+      X : NODE;
+   begin
+      if AT_KW("RESTRICTED") then
+         VISIBILITY_P(V);
+      end if;
+      if AT_KW("PROCEDURE") or AT_KW("FUNCTION") then
+         SUBPROGRAM(X);
+      elsif AT_KW("PACKAGE") then
+         PACKAGE_P(X);
+      elsif AT_KW("TASK") then
+         TASK_P(X);
+      elsif AT_KW("GENERIC") then
+         GENERIC_P(X);
+      else
+         PERROR("a restricted unit is a subprogram, a package or a task (RM79 8.3)");
+      end if;
+      if X /= null then
+         X.FORMAL := V;
+      end if;
+      RES := X;
+   end UNIT_P;
 
    -- representation specifications (RM79 13) do not change the meaning of a
    -- program here: they are read and ignored
@@ -130,8 +161,18 @@
             ID_LIST(X.A);
             EXPECT_OP(";");
             APPEND(HEAD, TAIL, X);
+         elsif AT_KW("RESTRICTED") and KIND_AT(1) = K_KW and TEXT_AT(1) = "TYPE" then
+            -- restricted type T is private: no assignment, no equality (RM79 7.4)
+            SKIP;
+            TYPE_DECL(X);
+            if X = null or else X.A.KIND /= D_PRIVATE then
+               PERROR("only a private type is restricted (RM79 7.4)");
+            end if;
+            X.FLAG := 9;
+            APPEND(HEAD, TAIL, X);
          elsif AT_KW("RESTRICTED") then
-            SKIP_VISIBILITY;
+            UNIT_P(X);
+            APPEND(HEAD, TAIL, X);
          elsif AT_KW("FOR") then
             SKIP_REPRESENTATION;
          elsif AT_KW("TYPE") or AT_KW("SUBTYPE") then
@@ -363,6 +404,15 @@
       elsif not IS_PROC then
          PERROR("a function needs a RETURN clause");
       end if;
+      if AT_KW("RENAMES") then
+         -- another name for a subprogram, or for an entry (RM79 8.5)
+         SKIP;
+         X.IVAL := 2;
+         NAME_P(X.C);
+         EXPECT_OP(";");
+         RES := X;
+         return;
+      end if;
       if AT_OP(";") then
          -- a subprogram declaration (RM79 6.2), completed by a body later
          SKIP;
@@ -464,6 +514,15 @@
          EXPECT_ID(X.NAME);
          if AT_KW("IS") and KIND_AT(1) = K_KW and TEXT_AT(1) = "NEW" then
             INSTANTIATION(X, RES);
+            return;
+         end if;
+         if AT_KW("RENAMES") then
+            -- package L renames P; (RM79 8.5)
+            SKIP;
+            X.FLAG := 3;
+            NAME_P(X.A);
+            EXPECT_OP(";");
+            RES := X;
             return;
          end if;
          EXPECT_KW("IS");
@@ -807,21 +866,26 @@
       while not AT_KIND(K_EOF) loop
          if AT_KW("PRAGMA") then
             PRAGMA_P(X);
-         else
-            if AT_KW("RESTRICTED") then
-               SKIP_VISIBILITY;
+            if X.NAME.all = "ENVIRONMENT" then
+               -- the modules named join the default environment (RM79 8.6)
+               X := X.A;
+               while X /= null loop
+                  ENV_NAMES := MK(ENV_NAMES.all & X.NAME.all & ",");
+                  X := X.NEXT;
+               end loop;
             end if;
-            if AT_KW("PROCEDURE") or AT_KW("FUNCTION") then
-               SUBPROGRAM(X);
-            elsif AT_KW("PACKAGE") then
-               PACKAGE_P(X);
-            elsif AT_KW("TASK") then
-               TASK_P(X);
-            elsif AT_KW("GENERIC") then
-               GENERIC_P(X);
-            else
+         else
+            if not (AT_KW("PROCEDURE") or AT_KW("FUNCTION") or AT_KW("PACKAGE") or AT_KW("TASK")
+               or AT_KW("GENERIC") or AT_KW("RESTRICTED")) then
                PERROR("a compilation unit is a subprogram, a package or a task");
             end if;
+            UNIT_P(X);
+            if X.FORMAL = null then
+               -- a compilation unit is restricted, with an empty list by default (RM79 10.1)
+               X.FORMAL := MK(",");
+            end if;
+            -- the environment named so far by pragma ENVIRONMENT
+            X.FORMAL := MK(X.FORMAL.all & ENV_NAMES.all);
             APPEND(HEAD, TAIL, X);
          end if;
       end loop;

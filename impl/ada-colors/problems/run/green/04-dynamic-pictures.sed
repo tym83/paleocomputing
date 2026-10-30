@@ -41,7 +41,9 @@ s/^   procedure DRAW_OBJECT(WHICH : OBJECT_ID) is separate;$/   procedure DRAW_O
          PUT(NEWLINE);\
       end if;\
    end DRAW_OBJECT;/
-s/^task body DISPLAY is$/restricted(TEXT_IO) task body DISPLAY is\
+# The body of DISPLAY calls JOYSTICK(I).READ: it names JOYSTICK in its
+# visibility list (RM79 8.3, 10.1), as well as TEXT_IO for the trace
+s/^task body DISPLAY is$/restricted(TEXT_IO, JOYSTICK) task body DISPLAY is\
    use TEXT_IO;/
 # An object stops at the border only if it lands exactly on 0 or 1023; at
 # speed 20 the square goes from 1020 to 1040, outside POSITION, and the

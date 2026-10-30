@@ -174,6 +174,19 @@
    end DECL_ELEMENTS;
 
    procedure DECL_ELEMENT(E : NODE) is
+      SAVED : BARRIER := BARRIERS;
+   begin
+      if E.FORMAL /= null and then (E.KIND = N_PROC or E.KIND = N_FUNC or E.KIND = N_PKGSPEC
+         or E.KIND = N_PKGBODY or E.KIND = N_TASKSPEC or E.KIND = N_TASKBODY or E.KIND = N_GENERIC) then
+         PUSH_BARRIER(E, DEPTH);
+         DECL_ELEMENT_1(E);
+         BARRIERS := SAVED;
+         return;
+      end if;
+      DECL_ELEMENT_1(E);
+   end DECL_ELEMENT;
+
+   procedure DECL_ELEMENT_1(E : NODE) is
       PD : NODE;
       Y, Z : SYM;
       T, VT : TYP;
@@ -191,6 +204,7 @@
                COMPLETING := Y.T;
                X := Y.T.NAME;
                PD := Y.T.DECL;
+               OK := Y.T.IS_RESTRICTED;
                TYPE_DEFINITION(E.A, E.NAME, T, C);
                COMPLETING := null;
                if T /= Y.T then
@@ -199,6 +213,7 @@
                Y.T.NAME := X;
                Y.T.PRIV := TRUE;
                Y.T.DECL := PD;
+               Y.T.IS_RESTRICTED := OK;
                Y.C := C;
             else
                Y := NEW_SYM(Y_TYPE, E.NAME);
@@ -209,6 +224,7 @@
                   Y.T.NAME := E.NAME;
                   Y.T.PRIV := TRUE;
                   Y.T.DECL := CUR_PKG;
+                  Y.T.IS_RESTRICTED := E.FLAG = 9;
                else
                   TYPE_DEFINITION(E.A, E.NAME, Y.T, Y.C);
                end if;
@@ -257,6 +273,9 @@
                STORAGE(E.NAME.all, T, ACC);
                INIT_STORAGE(ACC.all, T, C);
                if E.B /= null then
+                  if RESTRICTED_HERE(T) then
+                     FAIL(E.LINE, "a restricted type has no assignment: no initial value (RM79 7.4)");
+                  end if;
                   if IS_CONST_ACCESS(E.B) then
                      FAIL(E.LINE, "a constant of an access type cannot be assigned to a variable (RM79 3.8)");
                   end if;
@@ -351,6 +370,8 @@
          when 44 | 45 =>
             if IS_GENERIC_NAME(E.NAME.all) then
                ATTACH_GENERIC_BODY(E);
+            elsif E.IVAL = 2 then
+               RENAME_SUBPROGRAM(E);
             elsif E.IVAL = 1 then
                BUILD_SUBPROGRAM(E, Y);
                DEFINE(Y, E.LINE);
@@ -365,7 +386,7 @@
          when others =>
             OTHER_DECL(E);
       end case;
-   end DECL_ELEMENT;
+   end DECL_ELEMENT_1;
 
    -- a pragma among the declarations (RM79 2.7, App. B)
    procedure PRAGMA_DECL(E : NODE) is
@@ -391,9 +412,133 @@
    end RESOLVE_OBJECT_TYPE;
 
    -- packages are in 09-units, tasks and generics in 10-tasks and 11-generics
+   -- procedure P(...) renames Q; function F(...) return T renames P.G;
+   -- procedure P(...) renames T.E (an entry): the other name has the
+   -- parameter names and defaults of the renaming (RM79 8.5)
+   procedure RENAME_SUBPROGRAM(E : NODE) is
+      NEWY, Y, Z, CAND : SYM;
+      IX : NODE;
+      P, Q, TAIL : PARM;
+   begin
+      BUILD_SUBPROGRAM(E, NEWY);
+      Y := null;
+      if E.C.KIND = N_NAME or else (E.C.KIND = N_SELECT and IS_PACKAGE(E.C.A)) then
+         if E.C.KIND = N_NAME then
+            CAND := TABLE(HASH(E.C.NAME.all));
+            while CAND /= null loop
+               if CAND.NAME.all = E.C.NAME.all and then (CAND.KIND = Y_FUNC or CAND.KIND = Y_PROC
+                  or CAND.KIND = Y_ENTRY) and then VISIBLE_SYM(CAND) then
+                  if SAME_TYPES(CAND.PARAMS, NEWY.PARAMS) and SAME(CAND.RESULT, NEWY.RESULT) and Y = null then
+                     Y := CAND;
+                  end if;
+               end if;
+               CAND := CAND.CHAIN;
+            end loop;
+         else
+            CAND := LOOKUP_PATH(PATH_OF(E.C.A)).MEMBERS;
+            while CAND /= null loop
+               if CAND.NAME.all = E.C.NAME.all and then (CAND.KIND = Y_FUNC or CAND.KIND = Y_PROC
+                  or CAND.KIND = Y_ENTRY) and then not CAND.HIDDEN then
+                  if SAME_TYPES(CAND.PARAMS, NEWY.PARAMS) and SAME(CAND.RESULT, NEWY.RESULT) and Y = null then
+                     Y := CAND;
+                  end if;
+               end if;
+               CAND := CAND.MNEXT;
+            end loop;
+         end if;
+      end if;
+      if Y = null and E.C.KIND = N_SELECT then
+         ENTRY_SYM(E.C, Y, IX);
+         if IX /= null or Y.C /= null then
+            FAIL(E.LINE, "a renamed entry is an entry of a single task (RM79 8.5)");
+         end if;
+         if not SAME_TYPES(Y.PARAMS, NEWY.PARAMS) or E.KIND /= N_PROC then
+            FAIL(E.LINE, "an entry is renamed as a procedure with the same parameters (RM79 8.5)");
+         end if;
+      end if;
+      if Y = null then
+         FAIL(E.LINE, "no subprogram " & E.C.NAME.all & " with this profile to rename (RM79 8.5)");
+      end if;
+      COPY_SYM(Y, Z);
+      Z.NAME := E.NAME;
+      Z.DECL := Y.DECL;
+      Z.PARAMS := null;
+      P := Y.PARAMS;
+      Q := NEWY.PARAMS;
+      while P /= null loop
+         if TAIL = null then
+            Z.PARAMS := new PARM_REC(Q.NAME, P.MODE, P.T, P.C, P.CFIELD, Q.DFLT, null, null);
+            TAIL := Z.PARAMS;
+         else
+            TAIL.NEXT := new PARM_REC(Q.NAME, P.MODE, P.T, P.C, P.CFIELD, Q.DFLT, null, null);
+            TAIL := TAIL.NEXT;
+         end if;
+         P := P.NEXT;
+         Q := Q.NEXT;
+      end loop;
+      DEFINE(Z, E.LINE);
+      ELABORATE_DEFAULTS(Z);
+   end RENAME_SUBPROGRAM;
+
+   -- package L renames P; task T renames U; task LC renames F(6) (RM79 8.5)
+   procedure RENAME_MODULE(E : NODE; TARGET : NODE) is
+      Y, Z : SYM;
+   begin
+      if TARGET.KIND = N_APPLY then
+         -- a member of a task family: a name for F(I)
+         Y := LOOKUP(TARGET.A.NAME.all);
+         if Y = null or else Y.KIND /= Y_TASK or else Y.C = null then
+            FAIL(E.LINE, TARGET.A.NAME.all & " is not a task family (RM79 8.5)");
+         end if;
+         COPY_SYM(Y, Z);
+         Z.NAME := E.NAME;
+         Z.FLAGS := 4;
+         Z.DECL := TARGET;
+         DEFINE(Z, E.LINE);
+         return;
+      end if;
+      if TARGET.KIND = N_NAME then
+         Y := LOOKUP(TARGET.NAME.all);
+      elsif TARGET.KIND = N_SELECT then
+         Y := LOOKUP_PATH(PATH_OF(TARGET));
+      end if;
+      if Y = null or else (Y.KIND /= Y_PACKAGE and Y.KIND /= Y_TASK) then
+         FAIL(E.LINE, "a module is renamed as a module of the same kind (RM79 8.5)");
+      end if;
+      if (Y.KIND = Y_TASK) /= (E.KIND = N_TASKSPEC) then
+         FAIL(E.LINE, "a package is renamed as a package, a task as a task (RM79 8.5)");
+      end if;
+      COPY_SYM(Y, Z);
+      Z.NAME := E.NAME;
+      DEFINE(Z, E.LINE);
+   end RENAME_MODULE;
+
+   -- the visibility restriction of a unit, if it has one (RM79 8.3); the
+   -- first name may be an enclosing unit, whose declarations stay visible
+   procedure PUSH_BARRIER(E : NODE; LIMIT : INTEGER) is
+      B : BARRIER;
+      FIRST_NAME : TEXT;
+      K : INTEGER;
+   begin
+      B := new BARRIER_REC(LIMIT, -1, MK(E.FORMAL.all & E.NAME.all & ","), BARRIERS);
+      K := 2;
+      while K <= E.FORMAL.all'LENGTH and then E.FORMAL.all(K) /= "," loop
+         K := K + 1;
+      end loop;
+      if K > 2 then
+         FIRST_NAME := MK(E.FORMAL.all(2 .. K - 1));
+         B.KEEP := ENCLOSING_DEPTH(FIRST_NAME.all);
+      end if;
+      BARRIERS := B;
+   end PUSH_BARRIER;
+
    procedure OTHER_DECL(E : NODE) is
    begin
-      if E.KIND = N_PKGSPEC then
+      if E.KIND = N_PKGSPEC and E.FLAG = 3 then
+         RENAME_MODULE(E, E.A);
+      elsif E.KIND = N_TASKSPEC and E.FLAG = 3 then
+         RENAME_MODULE(E, E.B);
+      elsif E.KIND = N_PKGSPEC then
          PACKAGE_SPEC(E);
       elsif E.KIND = N_PKGBODY then
          PACKAGE_BODY(E);
@@ -851,6 +996,9 @@
                FAIL(S.LINE, "assignment to a constant or an in parameter");
             end if;
             CHECK_PURE_TARGET(S.A, S.LINE);
+            if RESTRICTED_HERE(T) then
+               FAIL(S.LINE, "a restricted type has no assignment (RM79 7.4)");
+            end if;
             if IS_CONST_ACCESS(S.B) then
                FAIL(S.LINE, "a constant of an access type cannot be assigned to a variable (RM79 3.8)");
             end if;

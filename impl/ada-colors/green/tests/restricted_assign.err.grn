@@ -1,0 +1,14 @@
+package K is
+   restricted type KEY is private;
+private
+   type KEY is record
+      N : INTEGER;
+   end record;
+end K;
+restricted (K)
+procedure MAIN is
+   use K;
+   A, B : KEY;
+begin
+   A := B;
+end MAIN;

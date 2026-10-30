@@ -48,6 +48,7 @@
    end PREDEF_LIT;
 
    procedure PREDEFINE is
+      Y : SYM;
       CONTROL : constant STRING := "NUL SOH STX ETX EOT ENQ ACK BEL BS HT LF VT FF CR SO SI DLE "
          & "DC1 DC2 DC3 DC4 NAK SYN ETB CAN EM SUB ESC FS GS RS US ";
       START : INTEGER := 1;
@@ -114,6 +115,10 @@
       PREDEF_EXC("TASKING_ERROR");
       PREDEF_EXC("UNDERFLOW");
       PREDEF_EXC("END_OF_FILE");
+      -- TEXT_IO: a library package, visible where a unit names it (RM79 14.3)
+      Y := NEW_SYM(Y_PACKAGE, MK("TEXT_IO"));
+      DEFINE(Y, 0);
+      Y.DEPTH := 1;
    end PREDEFINE;
 
    -- ---- compilation units (RM79 10) ---------------------------------------------
@@ -124,6 +129,17 @@
    begin
       OPEN_SCOPE;
       while P /= null loop
+         -- every compilation unit is restricted: the library units it names
+         -- are visible in it (RM79 10.1)
+         BARRIERS := null;
+         -- a body sees what its specification named (RM79 10.2)
+         Y := LOOKUP(P.NAME.all);
+         if (P.KIND = N_PKGBODY or P.KIND = N_TASKBODY or P.KIND = N_PROC or P.KIND = N_FUNC) and Y /= null then
+            if Y.DECL /= null and then Y.DECL.FORMAL /= null then
+               P.FORMAL := MK(P.FORMAL.all & Y.DECL.FORMAL.all);
+            end if;
+         end if;
+         PUSH_BARRIER(P, 1);
          if P.NEXT = null then
             -- the main program: a library procedure without parameters
             if P.KIND /= N_PROC or P.A /= null then
@@ -173,6 +189,7 @@
    end PRINT_PROGRAM;
 
 begin
+   ENV_NAMES := MK("");
    OUT_TYPES := NEW_BUFFER;
    OUT_FRAMES := NEW_BUFFER;
    OUT_HELPERS := NEW_BUFFER;

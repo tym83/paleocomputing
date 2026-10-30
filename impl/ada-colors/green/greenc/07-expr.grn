@@ -139,6 +139,9 @@
          if Y = null then
             FAIL(E.LINE, E.NAME.all & " is not declared");
          end if;
+         if Y.KIND = Y_CONFLICT then
+            FAIL(E.LINE, E.NAME.all & " is declared in two used modules: name it P." & E.NAME.all & " (RM79 8.4)");
+         end if;
          if Y.KIND /= Y_VAR and Y.KIND /= Y_CONST then
             FAIL(E.LINE, E.NAME.all & " is not an object");
          end if;
@@ -640,6 +643,9 @@
          end if;
          FAIL(E.LINE, E.NAME.all & " is not declared");
       end if;
+      if Y.KIND = Y_CONFLICT then
+         FAIL(E.LINE, E.NAME.all & " is declared in two used modules: name it P." & E.NAME.all & " (RM79 8.4)");
+      end if;
       if Y.KIND = Y_CONST and Y.HASMV then
          -- a manifest integer constant is its value, wherever it is used
          T := Y.T;
@@ -1038,6 +1044,9 @@
          end if;
          if TA.KIND = T_NIL then
             CT := TB;
+         end if;
+         if (OP = "=" or OP = "/=") and then RESTRICTED_HERE(CT) then
+            FAIL(E.LINE, "a restricted type has no predefined equality (RM79 7.4)");
          end if;
          if OP /= "=" and OP /= "/=" and not IS_NUMERIC(CT) and not IS_DISCRETE(CT) then
             -- the ordering operators are defined for scalar types (RM79 4.5.2)
@@ -2400,7 +2409,11 @@
          Y := MEMBER_OF(FN.TAG.all, FN.NAME.all, FN.LINE);
       end if;
       if Y = null then
+         if FN.TAG /= null then
+            TEXT_IO_QUALIFIED := FN.TAG.all = "TEXT_IO";
+         end if;
          BUILTIN(FN.NAME.all, E.B, E.LINE, IS_STMT, T, R);
+         TEXT_IO_QUALIFIED := FALSE;
          return;
       end if;
       if (Y.KIND = Y_FUNC or Y.KIND = Y_PROC) and FN.TAG = null then
@@ -2681,6 +2694,10 @@
       RO : BOOLEAN;
    begin
       T := TY_VOID;
+      if (NAME = "PUT" or NAME = "GET") and not TEXT_IO_QUALIFIED and LOOKUP("$TEXT_IO") = null then
+         FAIL(LINE, NAME & " is an operation of TEXT_IO: use TEXT_IO or name TEXT_IO." & NAME
+              & " (RM79 8.4, 14.3)");
+      end if;
       if PURE_SYM /= null and (NAME = "PUT" or NAME = "GET") then
          FAIL(LINE, "a function cannot do input-output: " & NAME & " has side effects (RM79 6.5)");
       end if;

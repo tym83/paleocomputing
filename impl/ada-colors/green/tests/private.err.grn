@@ -7,6 +7,7 @@ private
 end P;
 package body P is
 end P;
+restricted (P)
 procedure MAIN is
    use P;
    X : T;

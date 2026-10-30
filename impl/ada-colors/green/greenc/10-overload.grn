@@ -71,7 +71,7 @@
          N := 0;
          FOUND := null;
          while Z /= null loop
-            if Z.NAME.all = NAME and then (Z.KIND = Y_FUNC or Z.KIND = Y_PROC) then
+            if Z.NAME.all = NAME and then (Z.KIND = Y_FUNC or Z.KIND = Y_PROC) and then VISIBLE_SYM(Z) then
                if FIRST = null then
                   FIRST := Z;
                end if;
@@ -214,7 +214,7 @@
       end if;
       Y := TABLE(HASH(OP.all));
       while Y /= null loop
-         if Y.NAME.all = OP.all and then Y.KIND = Y_FUNC then
+         if Y.NAME.all = OP.all and then Y.KIND = Y_FUNC and then VISIBLE_SYM(Y) then
             FITS(Y, L, null, OK);
             if OK then
                FNAME := NN(N_NAME, E.LINE);

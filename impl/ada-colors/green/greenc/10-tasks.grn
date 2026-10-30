@@ -24,6 +24,15 @@
             INSTANTIATION(X, RES);
             return;
          end if;
+         if AT_KW("RENAMES") then
+            -- task LC renames LINK_CONTROLLER(6); (RM79 8.5)
+            SKIP;
+            X.FLAG := 3;
+            NAME_P(X.B);
+            EXPECT_OP(";");
+            RES := X;
+            return;
+         end if;
          if AT_OP("(") then
             -- a task family: task F(INTEGER range 1 .. N) (RM79 9.2)
             SKIP;
@@ -215,8 +224,17 @@
    -- (RM79 9.3); IX is the index expression or range, null for all
    procedure TASK_OF(E : NODE; Y : out SYM; IX : out NODE) is
       N : NODE := E;
+      A : SYM;
    begin
       IX := null;
+      if E.KIND = N_NAME then
+         A := LOOKUP(E.NAME.all);
+         if A /= null and then (A.KIND = Y_TASK and A.FLAGS = 4) then
+            -- a name for a member of a family (RM79 8.5)
+            TASK_OF(A.DECL, Y, IX);
+            return;
+         end if;
+      end if;
       if E.KIND = N_APPLY then
          N := E.A;
          IX := E.B;
@@ -612,6 +630,7 @@
    end TASK_FAILURE;
 
    procedure ENTRY_SYM(E : NODE; Y : out SYM; IX : out NODE) is
+      ALIAS : NODE;
       T : SYM;
    begin
       IX := null;
@@ -624,6 +643,17 @@
          end if;
          FAM_IX := E.B;
          return;
+      end if;
+      if E.KIND = N_SELECT and then E.A.KIND = N_NAME then
+         T := LOOKUP(E.A.NAME.all);
+         if T /= null and then (T.KIND = Y_TASK and T.FLAGS = 4) then
+            -- LC.E where task LC renames F(I) (RM79 8.5)
+            ALIAS := NN(N_SELECT, E.LINE);
+            ALIAS.all := E.all;
+            ALIAS.A := T.DECL;
+            ENTRY_SYM(ALIAS, Y, IX);
+            return;
+         end if;
       end if;
       if E.KIND = N_SELECT and then E.A.KIND = N_APPLY and then E.A.A.KIND = N_NAME then
          -- F(I).E: an entry of a member of a task family (RM79 9.2)

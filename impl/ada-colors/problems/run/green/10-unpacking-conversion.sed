@@ -35,3 +35,7 @@ end PACKET_CONVERSION;
 # 0 .. 1023, ten bits; and LENGTH is 0 .. 256, which does not fit the eight
 # bits 0 .. 7 given to LGTH. The character literals "T", "S" ... are right:
 # RM79 writes a character literal in double quotes (2.5).
+# A name made visible by a use clause never hides another declaration (RM79
+# 8.4): the literal PRIORITY of PACKET_TYPE does not hide the subtype PRIORITY
+# of STANDARD, and is named PACKET_TYPE.PRIORITY
+s/^            when PRIORITY => CUR_QE.PREC := "P";$/            when PACKET_TYPE.PRIORITY => CUR_QE.PREC := "P";/

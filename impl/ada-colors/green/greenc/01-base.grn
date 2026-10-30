@@ -137,6 +137,8 @@ procedure GREENC is
    Y_TASK    : constant INTEGER := 9;
    Y_ENTRY   : constant INTEGER := 10;
    Y_GENERIC : constant INTEGER := 11;
+   -- a name that two used modules declare: not directly visible (RM79 8.4)
+   Y_CONFLICT : constant INTEGER := 12;
    F_CONST_OBJ : constant INTEGER := 1;
    F_DEFERRED  : constant INTEGER := 2;
 
@@ -380,6 +382,19 @@ procedure GREENC is
    HANDLER_DEPTH : INTEGER := 0;
    -- the checks of out and in out actuals after a call (RM79 6.3)
    POST_CHECKS : TEXT;
+   -- the modules added to the default environment by pragma ENVIRONMENT (RM79 8.6)
+   ENV_NAMES : TEXT;
+   -- visibility restrictions in force (RM79 8.3): declarations at depths up
+   -- to LIMIT are hidden, except the names ALLOWED and those declared at KEEP
+   type BARRIER_REC;
+   type BARRIER is access BARRIER_REC;
+   type BARRIER_REC is record
+      LIMIT, KEEP : INTEGER;
+      ALLOWED : TEXT;
+      NEXT : BARRIER;
+   end record;
+   BARRIERS : BARRIER;
+   TEXT_IO_QUALIFIED : BOOLEAN := FALSE;
    CUR_TASK : SYM;
    ACCEPT_DEPTH : INTEGER := 0;
    FAMARG_DONE : BOOLEAN := FALSE;

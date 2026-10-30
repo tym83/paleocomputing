@@ -9,11 +9,46 @@
       return H;
    end HASH;
 
+   -- ",A,B," contains A
+   function LISTED(LIST : TEXT; NAME : STRING) return BOOLEAN is
+      L : STRING := LIST.all;
+      N : INTEGER := NAME'LENGTH;
+   begin
+      for I in L'FIRST .. L'LAST - N - 1 loop
+         if L(I) = "," and then L(I + N + 1) = "," then
+            if L(I + 1 .. I + N) = NAME then
+               return TRUE;
+            end if;
+         end if;
+      end loop;
+      return FALSE;
+   end LISTED;
+
+   -- a declaration hidden by a visibility restriction: declared outside the
+   -- restricted unit, at a depth up to LIMIT, and neither named in its list
+   -- nor declared in the enclosing unit it names first (RM79 8.3)
+   function VISIBLE_SYM(Y : SYM) return BOOLEAN is
+      B : BARRIER := BARRIERS;
+   begin
+      if Y.DEPTH = 0 then
+         return TRUE;
+      end if;
+      while B /= null loop
+         if Y.DEPTH <= B.LIMIT and Y.DEPTH /= B.KEEP then
+            if not LISTED(B.ALLOWED, Y.NAME.all) then
+               return FALSE;
+            end if;
+         end if;
+         B := B.NEXT;
+      end loop;
+      return TRUE;
+   end VISIBLE_SYM;
+
    function LOOKUP(NAME : STRING) return SYM is
       Y : SYM := TABLE(HASH(NAME));
    begin
       while Y /= null loop
-         if Y.NAME.all = NAME then
+         if Y.NAME.all = NAME and then VISIBLE_SYM(Y) then
             return Y;
          end if;
          Y := Y.CHAIN;
@@ -931,6 +966,16 @@
       end if;
       return "INT_MIN";
    end NO_VALUE;
+
+   -- a restricted private type outside its package: no assignment, no
+   -- predefined equality (RM79 7.4)
+   function RESTRICTED_HERE(T : TYP) return BOOLEAN is
+   begin
+      if not T.IS_RESTRICTED then
+         return FALSE;
+      end if;
+      return not INSIDE_PACKAGE(T.DECL);
+   end RESTRICTED_HERE;
 
    -- the C type of the components of an array: characters are packed in
    -- bytes, as STRING is (RM79 3.6.3, 13.1)

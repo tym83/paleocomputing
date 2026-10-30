@@ -44,3 +44,10 @@ reject (`;` instead of `do` after `accept RECEIVE_CHAR(...)`, and `BUFFER`/`BUFF
 - `temperature.grn` uses `PUT(REAL)` where TEXT_IO offers only FLOAT. greenc maps every real
   type onto FLOAT (and every integer type onto INTEGER), so it accepts this; under the strict
   name equivalence of RM79 3.3 it is an error.
+
+Later, when greenc came to enforce visibility restrictions (RM79 8.3, 10.1): every compilation
+unit is restricted, with an empty list by default, so a unit that uses TEXT_IO names it and
+says `use TEXT_IO`, as the examples of RM79 10.1 do; the introduction leaves both out:
+- `decoding.grn`: 5. `restricted (TEXT_IO)` and `use TEXT_IO;`.
+- `printer.grn`: 3. `restricted (TEXT_IO)` before the task and `use TEXT_IO;` in its body;
+  `restricted (PRINTER_DRIVER)` before the main program.
