@@ -92,7 +92,9 @@ The rule numbers of the Appendix are used in yellowc's comments. Points that nee
   records and arrays at any depth; what holds them has no :=, = or #. Values are
   denoted by the representation's name: `Date(Mar, 4, 1977)`, `bits(FALSE)` (every component),
   `IntegerSet(3, 5)`, `IntegerSet()`.
-- Pointers: `POINTER(R)`, `NEW(p)`, `p^`, `T NIL`. FREE_POINTER is the low-level dual (XIV).
+- Pointers: `POINTER(R)`, `NEW(p)`, `p^`, `T NIL`. FREE_POINTER is the low-level dual (XIV): it
+  recovers the dynamic variable and leaves its cell dead, so following any other pointer to it
+  raises INVALID_POINTER (a pointer is a cell holding the variable).
 - Sets of any integer or scalar range; `+ - * XOR IN`, prefix `-` is the complement. A base
   range of more than 65536 values (`SET (INTEGER64)`) is held as a sorted list of members, or
   of non-members after a complement.
@@ -230,7 +232,7 @@ block END.
 `FILE(R)`; `OPEN(f, name, READ|WRITE|APPEND)`, `GET`, `PUT`, `CHECK_EOF`, `CLOSE`.
 The Report passes files "as program parameters"; a program here is a module with none, so the
 external names `INPUT` and `OUTPUT` denote the standard streams. Files of characters hold one
-byte per character; other files hold the values' machine images (no arrays or pointers).
+byte per character; other files hold any representation but files, signals and semaphores: arrays and records component by component, sets as their range and members, numbers and pointers as stored.
 Formatted text output is not in the language: the prelude's TextIO provides `Write`,
 overloaded on strings, characters, integers and BOOLEAN, `WriteFloat`, `WriteFixed`, `WriteLn`.
 

@@ -474,6 +474,8 @@ void y_close(yfile **f);
 void y_get(yfile **f, void *dst, size_t n);
 void y_put(yfile **f, const void *src, size_t n);
 int y_check_eof(yfile **f);
+void y_put_value(yfile **f, const ydesc *d, const void *v); /* any representation */
+void y_get_value(yfile **f, const ydesc *d, void *v);
 extern int Y_X_EOF, Y_X_FILE;
 
 /* ---- processes, monitors and signals (Section X.E) ----------------------- */
@@ -515,6 +517,15 @@ extern int Y_X_INSTANCES;
 
 /* ---- semaphores (XIV): binary, CLAIM RELEASE CONDITIONAL_CLAIM ----------- */
 int y_cond_claim(rt_lock *l);
+
+/* ---- dynamic variables (VI.B.4, XIV.XI.2) ------------------------------------ */
+/* A pointer is a cell that holds the dynamic variable: FREE_POINTER recovers
+ * the variable and leaves the cell dead, so that every other pointer to it
+ * raises INVALID_POINTER when it is followed */
+void *y_new(size_t n);
+void *y_deref(void *p);                       /* INVALID_POINTER */
+void y_free_pointer(void **p);
+void *y_cell(void *body);                      /* MAKE_POINTER */
 
 /* ---- conversions and text helpers ---------------------------------------- */
 rt_int y_floor(double v);

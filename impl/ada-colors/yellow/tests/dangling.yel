@@ -1,0 +1,16 @@
+(* FREE_POINTER recovers the dynamic variable and renders undefined every *)
+(* other pointer to it (XIV.XI.2): following one raises INVALID_POINTER *)
+MODULE Dangling
+  IMPORT TextIO, StandardImplementationPrelude;
+  REPRESENTATION L = POINTER (Node);
+    Node = RECORD VAR v: INTEGER64; VAR next: L ENDRECORD;
+  VAR p, q: L;
+  NEW(p); p^ := Node(3, L NIL); q := p;
+  Write(q^.v); WriteLn();
+  FREE_POINTER(p);
+  IF p = L NIL THEN Write("p is NIL") ENDIF; WriteLn();
+  BEGIN
+    EXCEPTION CASE INVALID_POINTER => Write("q points to nothing"); WriteLn() ENDEXCEPTION;
+    Write(q^.v)
+  END
+ENDMODULE Dangling

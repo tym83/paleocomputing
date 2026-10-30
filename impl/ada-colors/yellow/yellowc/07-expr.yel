@@ -812,7 +812,7 @@
       SB();
       SA("(*(");
       ST(CType(r));
-      SA(" *)rt_nil_check(");
+      SA(" *)y_deref(");
       ST(c);
       SA("))");
       code := SE()

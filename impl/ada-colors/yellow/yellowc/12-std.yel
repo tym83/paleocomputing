@@ -208,15 +208,15 @@
       SB();
       SA("({ ");
       ST(a);
-      SA(" = rt_alloc(sizeof(");
+      SA(" = y_new(sizeof(");
       ST(CType(el));
       SA("));");
       IF Deep(el) THEN
         SA(" y_init(");
         ST(DescOf(el));
-        SA(", ");
+        SA(", y_deref(");
         ST(a);
-        SA(");")
+        SA("));")
       ENDIF;
       SA(" })");
       code := SE();
@@ -225,7 +225,7 @@
     IF f = F_FREE_POINTER THEN
       NArgs(n, 1);
       StdVar(Arg(n, 1), R_PTR, a, ra);
-      code := Join(T("({ free("), a, Join(T("); "), a, T(" = 0; })")));
+      code := Join(T("y_free_pointer((void **)&("), a, T("))"));
       RETURN
     ENDIF;
     IF f = F_OPEN THEN
@@ -257,38 +257,50 @@
       RETURN
     ENDIF;
     IF f = F_GET THEN
+      (* a value of any representation: components one after another, as *)
+      (* its descriptor describes them (XII.B) *)
       NArgs(n, 2);
       StdVar(Arg(n, 1), R_FILE, a, ra);
       StdVar(Arg(n, 2), R_ANY, b, rb);
-      CheckType(n^.line, ra^.elem, rb);
-      IF Deep(rb) OR (rb^.kind = R_PTR) THEN FailS(n^.line, "files of this implementation hold no arrays or pointers") ENDIF;
+      el := ra^.elem;
+      CheckType(n^.line, el, rb);
+      IF NonAssignable(el) THEN FailS(n^.line, "a file holds no files, signals or semaphores (XII)") ENDIF;
       SB();
       SA("({ ");
-      ST(CType(rb));
-      SA(" g; y_get(&");
+      ST(CType(el));
+      SA(" g; ");
+      IF Deep(el) THEN
+        SA("y_init(");
+        ST(DescOf(el));
+        SA(", &g); ")
+      ENDIF;
+      SA("y_get_value(&");
       ST(a);
-      SA(", &g, sizeof g); ");
-      ST(b);
-      SA(" = ");
-      ST(Convert(T("g"), rb, ra^.elem));
-      SA("; })");
+      SA(", ");
+      ST(DescOf(el));
+      SA(", &g); ");
+      ST(StoreText(b, rb, T("g"), el, n^.line));
+      SA(" })");
       code := SE();
       RETURN
     ENDIF;
     IF f = F_PUT THEN
       NArgs(n, 2);
       StdVar(Arg(n, 1), R_FILE, a, ra);
-      Expr(Arg(n, 2), ra^.elem, b, rb);
-      CheckType(n^.line, ra^.elem, rb);
-      IF Deep(rb) OR (rb^.kind = R_PTR) THEN FailS(n^.line, "files of this implementation hold no arrays or pointers") ENDIF;
+      el := ra^.elem;
+      Expr(Arg(n, 2), el, b, rb);
+      CheckType(n^.line, el, rb);
+      IF NonAssignable(el) THEN FailS(n^.line, "a file holds no files, signals or semaphores (XII)") ENDIF;
       SB();
       SA("({ ");
-      ST(CType(ra^.elem));
+      ST(CType(el));
       SA(" pv = ");
-      ST(Convert(b, ra^.elem, rb));
-      SA("; y_put(&");
+      ST(Convert(b, el, rb));
+      SA("; y_put_value(&");
       ST(a);
-      SA(", &pv, sizeof pv); })");
+      SA(", ");
+      ST(DescOf(el));
+      SA(", &pv); })");
       code := SE();
       RETURN
     ENDIF;

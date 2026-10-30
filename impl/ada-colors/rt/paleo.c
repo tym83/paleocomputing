@@ -2932,6 +2932,67 @@ void y_put(yfile **fp, const void *src, size_t n) {
   fwrite(src, 1, n, y->f);
 }
 
+/* a value as its descriptor describes it: arrays and records component by
+ * component, a set as its base range and members, the rest as stored */
+static void put_raw(yfile *y, const void *v, size_t n) { fwrite(v, 1, n, y->f); }
+
+static void get_raw(yfile *y, void *v, size_t n) {
+  if (fread(v, 1, n, y->f) != n) rt_raise(Y_X_EOF);
+}
+
+static void put_value(yfile *y, const ydesc *d, const void *v) {
+  if (d->kind == YK_ARRAY) {
+    const yarr *a = v;
+    rt_int n = y_count(*a, d->nd);
+    for (rt_int i = 0; i < n; i++) put_value(y, d->elem, (const char *)a->p + i * d->elem->size);
+  } else if (d->kind == YK_RECORD) {
+    for (int i = 0; i < d->nf; i++) put_value(y, d->fd[i], (const char *)v + d->off[i]);
+  } else if (d->kind == YK_SET) {
+    const yset *s = v;
+    rt_int head[3] = {s->lo, s->hi, 0}, m = 0;
+    if (set_sparse(s->lo, s->hi)) {
+      head[2] = s->neg;
+      put_raw(y, head, sizeof head);
+      put_raw(y, &s->n, sizeof s->n);
+      put_raw(y, s->e, (size_t)s->n * sizeof(rt_int));
+    } else {
+      put_raw(y, head, sizeof head);
+      for (rt_int e = s->lo; e <= s->hi; e++) m += y_set_in(e, *s);
+      put_raw(y, &m, sizeof m);
+      for (rt_int e = s->lo; e <= s->hi; e++)
+        if (y_set_in(e, *s)) put_raw(y, &e, sizeof e);
+    }
+  } else {
+    put_raw(y, v, d->size);
+  }
+}
+
+static void get_value(yfile *y, const ydesc *d, void *v) {
+  if (d->kind == YK_ARRAY) {
+    yarr *a = v;
+    rt_int n = y_count(*a, d->nd);
+    for (rt_int i = 0; i < n; i++) get_value(y, d->elem, (char *)a->p + i * d->elem->size);
+  } else if (d->kind == YK_RECORD) {
+    for (int i = 0; i < d->nf; i++) get_value(y, d->fd[i], (char *)v + d->off[i]);
+  } else if (d->kind == YK_SET) {
+    rt_int head[3], m, e;
+    get_raw(y, head, sizeof head);
+    get_raw(y, &m, sizeof m);
+    yset s = y_set_new(head[0], head[1]);
+    for (rt_int i = 0; i < m; i++) {
+      get_raw(y, &e, sizeof e);
+      s = y_set_add(s, e);
+    }
+    if (head[2]) s = y_set_compl(s);
+    *(yset *)v = s;
+  } else {
+    get_raw(y, v, d->size);
+  }
+}
+
+void y_put_value(yfile **fp, const ydesc *d, const void *v) { put_value(y_must(fp, 0), d, v); }
+void y_get_value(yfile **fp, const ydesc *d, void *v) { get_value(y_must(fp, 1), d, v); }
+
 int y_check_eof(yfile **fp) {
   yfile *y = y_must(fp, 1);
   int c = getc(y->f);
@@ -3121,6 +3182,59 @@ void y_raise_termination(rt_int id) {
   a.active = 1;
   a.waiters = NULL;
   rt_exterminate(&a);
+}
+
+/* ---- dynamic variables --------------------------------------------------- */
+
+typedef struct {
+  void *body;
+} ycell;
+
+void *y_new(size_t n) {
+  ycell *c = rt_alloc(sizeof *c);
+  c->body = rt_alloc(n);
+  return c;
+}
+
+void *y_deref(void *p) {
+  ycell *c = p;
+  if (!c || !c->body) rt_raise(RT_X_NIL);
+  return c->body;
+}
+
+void y_free_pointer(void **p) {
+  ycell *c = *p;
+  if (!c) return;
+  if (!c->body) rt_raise(RT_X_NIL);
+  free(c->body);
+  c->body = NULL;
+  *p = NULL;
+}
+
+/* a pointer to storage that is not a dynamic variable: one cell for each
+ * address, so that two such pointers to one place are equal */
+void *y_cell(void *body) {
+  static struct {
+    void *body;
+    ycell *c;
+  } *cells;
+  static size_t ncells, ccells;
+  for (size_t i = 0; i < ncells; i++)
+    if (cells[i].body == body) return cells[i].c;
+  if (ncells == ccells) {
+    ccells = ccells ? ccells * 2 : 64;
+    cells = realloc(cells, ccells * sizeof *cells);
+    if (!cells) {
+      fprintf(stderr, "*** out of memory\n");
+      exit(4);
+    }
+  }
+  ycell *c = rt_alloc(sizeof *c);
+  c->body = body;
+  cells[ncells].body = body;
+  cells[ncells].c = c;
+  ncells++;
+  return c;
 }
 
 int y_cond_claim(rt_lock *l) {
