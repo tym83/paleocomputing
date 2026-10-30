@@ -828,12 +828,14 @@
       ST(CType(r));
       IF Suppressed(T_POINTER) THEN
         (* the pointer trap suppressed: what an invalid pointer designates *)
-        (* is the simulated store from address 0 *)
+        (* is the simulated store from address 0, in the layout of r *)
         SA(" *)y_derefw(");
         ST(c);
-        SA(", sizeof(");
-        ST(CType(r));
-        SA(")))")
+        SA(", ");
+        ST(LayLit(r));
+        SA(", ");
+        ST(DescOf(r));
+        IF WordExact(r) THEN SA(", 1))") ELSE SA(", 0))") ENDIF
       ELSE
         SA(" *)y_deref(");
         ST(c);
@@ -876,6 +878,9 @@
   PROCEDURE CheckDefined (CONST n: Node; VAR code: Txt; CONST r: Rep)
     VAR k: INT := n^.kind;
         m: Txt := 0;
+    (* a word of the store always holds a value; its text is the word as *)
+    (* a variable *)
+    IF (k = N_INDEX) AND IsMainStore(n^.a) THEN RETURN ENDIF;
     IF (k = N_NAME) OR (k = N_SEL) OR (k = N_INDEX) OR (k = N_DEREF) THEN n^.text := 0 ELSE RETURN ENDIF;
     IF n = LvNode THEN RETURN ENDIF;
     IF (k = N_NAME) AND (n^.ival # 1) THEN RETURN ENDIF;
@@ -1005,7 +1010,10 @@
       Expr(n^.b, RAddress, ic, ir);
       CheckType(n^.line, RAddress, ir);
       r := RWord;
-      code := Join(T("(*y_mem_word("), ic, T("))"));
+      (* the word as the store shows it; as a variable (n^.text), a word *)
+      (* of the store or a view of one *)
+      n^.text := Join(T("(*y_mem_word("), ic, T("))"));
+      IF n = LvNode THEN code := n^.text ELSE code := Join(T("y_mem_get("), ic, T(")")) ENDIF;
       RETURN
     ENDIF;
     Expr(n^.a, Rep NIL, c, a);

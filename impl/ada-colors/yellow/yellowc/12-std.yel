@@ -214,9 +214,13 @@
       SB();
       SA("({ ");
       ST(a);
-      SA(" = y_new(sizeof(");
+      SA(" = y_new_l(sizeof(");
       ST(CType(el));
-      SA("));");
+      SA("), ");
+      ST(LayLit(el));
+      SA(", ");
+      ST(DescOf(el));
+      SA(");");
       IF Deep(el) OR (el^.kind = R_RECORD) THEN
         SA(" y_initu(");
         ST(DescOf(el));
@@ -548,7 +552,7 @@
       ENDIF;
       r := RAddress;
       IF ra^.kind = R_SPACE THEN
-        code := Join(T("y_addr(("), a, Join(T(").p, ("), a, T(").words)")));
+        code := Join(T("y_addr_s("), a, T(")"));
         RETURN
       ENDIF;
       IF p^.kind = N_NAME THEN
@@ -567,7 +571,7 @@
          (ra^.kind = R_STR) THEN
         FailS(n^.line, "ADDR takes a variable or constant (XIV.XI.2)")
       ENDIF;
-      code := Join(T("y_addr((void *)&("), RawCode(p, a), Join(T("), "), ExtentCode(a, ra), T(")")));
+      code := AddrCode(p, a, ra);
       RETURN
     ENDIF;
     IF f = F_MAKE_POINTER THEN
@@ -575,7 +579,19 @@
       NArgs(n, 2);
       StdVar(Arg(n, 1), R_PTR, a, ra);
       b := IntArg(Arg(n, 2));
-      code := Join(T("("), a, Join(T(" = y_cell(y_mem_ptr("), b, T(")))")));
+      IF ra^.elem = Rep NIL THEN FailN(n^.line, ra^.forward, " is not declared") ENDIF;
+      el := ra^.elem;
+      SB();
+      SA("(");
+      ST(a);
+      SA(" = y_make_ptr(");
+      ST(b);
+      SA(", ");
+      ST(LayLit(el));
+      SA(", ");
+      ST(DescOf(el));
+      IF WordExact(el) THEN SA(", 1))") ELSE SA(", 0))") ENDIF;
+      code := SE();
       RETURN
     ENDIF;
     IF f = F_MAIN_STORE THEN

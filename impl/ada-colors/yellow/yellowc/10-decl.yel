@@ -317,7 +317,38 @@
         DeclStorage(CType(p^.rep), p^.cname);
         Emit(Join(T("F."), p^.cname, Join(T(" = a_"), p^.cname, T(";"))))
       ENDIF;
-      IF p^.at >= 0 THEN
+      IF (p^.at >= 0) AND ((p^.cls = C_VAR) OR (p^.cls = C_OUT)) THEN
+        (* AT: the address of the actual is passed in that word of the *)
+        (* store (XIV.VII) *)
+        IF p^.cls = C_OUT THEN t := Join(T("F."), p^.cname, T("_o")) ELSE t := Join(T("F."), p^.cname, 0) ENDIF;
+        SB();
+        SA("y_mem_set(INT64_C(");
+        SI(p^.at);
+        SA("), y_addr_v((void *)");
+        ST(t);
+        SA(", ");
+        ST(LayLit(p^.rep));
+        SA(", ");
+        ST(LayDesc(p^.rep));
+        SA(", (void *)");
+        ST(t);
+        SA(", NULL, 0));");
+        Emit(SE())
+      ELSIF (p^.at >= 0) AND NOT WordExact(p^.rep) THEN
+        (* AT: the actual is passed in the store from that word, in its *)
+        (* layout (XIV.VII) *)
+        SB();
+        SA("y_view_put(&F.");
+        ST(p^.cname);
+        SA(", ");
+        ST(LayLit(p^.rep));
+        SA(", ");
+        ST(LayDesc(p^.rep));
+        SA(", INT64_C(");
+        SI(p^.at);
+        SA("));");
+        Emit(SE())
+      ELSIF p^.at >= 0 THEN
         (* AT: the actual is passed in that word of the store (XIV.VII) *)
         t := StoreAt(DeclType(p), p^.at);
         Emit(Join(t, T(" = F."), Join(p^.cname, T(";"), 0)));
@@ -408,11 +439,44 @@
 
   (* a variable or constant AT a word of the simulated store (XIV.VII) *)
   PROCEDURE DeclareAt (CONST s: Sym; CONST r: Rep; CONST a: INT; CONST line: INT)
+    VAR v, w, t: Txt;
     s^.rep := r;
     s^.level := 0;
     s^.at := a;
-    s^.cname := StoreAt(CType(r), a);
-    InitStorage(s, r, line);
+    IF WordExact(r) OR (r^.kind = R_SEM) OR HoldsSignal(r) THEN
+      s^.cname := StoreAt(CType(r), a);
+      InitStorage(s, r, line);
+      RETURN
+    ENDIF;
+    (* a layout other than one plain word: a view of the store, which *)
+    (* holds what the store holds there (XIV.VI-VII) *)
+    v := Fresh("yat");
+    w := Fresh("yvw");
+    SB();
+    SA("static ");
+    ST(CType(r));
+    SA(" ");
+    ST(v);
+    SA("; static yview *");
+    ST(w);
+    SA(";");
+    t := SE();
+    Put(OGlobals, t);
+    SB();
+    SA("(*(");
+    ST(CType(r));
+    SA(" *)y_view(&");
+    ST(w);
+    SA(", &");
+    ST(v);
+    SA(", ");
+    ST(LayLit(r));
+    SA(", ");
+    ST(LayDesc(r));
+    SA(", INT64_C(");
+    SI(a);
+    SA(")))");
+    s^.cname := SE();
     RETURN
   ENDPROCEDURE DeclareAt;
 

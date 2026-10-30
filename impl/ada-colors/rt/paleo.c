@@ -3298,7 +3298,11 @@ void y_raise_termination(rt_int id) {
 
 typedef struct {
   void *body;
+  const struct ylay *L;                        /* its layout in the store, when known */
+  const ydesc *d;
+  struct yview *view;                          /* seen through a view of the store */
 } ycell;
+static void *cell_view(ycell *c);
 
 void *y_new(size_t n) {
   ycell *c = rt_alloc(sizeof *c);
@@ -3312,6 +3316,7 @@ void *y_deref(void *p) {
     y_trap(RT_X_NIL);
     rt_raise(RT_X_NIL);                    /* no resuming: nothing to follow */
   }
+  if (c->view) return cell_view(c);
   return c->body;
 }
 
@@ -3499,60 +3504,755 @@ rt_int y_modw(rt_int a, rt_int b) {
 double y_fdivw(double a, double b) { return a / b; }
 
 /* ---- the simulated machine ------------------------------------------------ */
+/* Words of 64 bits addressed by word. The store holds Y_STORE words, the top
+ * of it the PDP-11 I/O page. Any variable not declared AT an address gets an
+ * address above the store, a window onto it, when ADDR first asks for it.
+ * The store shows values in the layout their representations declare
+ * (XIV.VI.1): the translator gives each layout as a string (below), which
+ * says how many bits a scalar takes and where the components of arrays and
+ * records start. A window shows its variable in that layout, word by word,
+ * and a word written into a window is read back into the variable. A
+ * variable AT an address whose layout is not one plain word, and what a
+ * pointer made by MAKE_POINTER designates when no variable of its type
+ * starts there, is held in a view: a value in the program's form that is
+ * synchronized with the store when it is used and after each statement. */
 
 int Y_X_ADDRESS;
 static rt_int y_mem_store[Y_STORE];
 
-/* storage that ADDR has given an address above the store: a window */
-static struct {
+/* A layout: a scalar is <k><packed>,<align>,<bits> with k one of i (signed,
+ * held as rt_int), u (unsigned, rt_int), c (unsigned char), f (double), x
+ * (FIXED), p (pointer: the address of what it designates, 0 for NIL), o (no
+ * bits the program can see: files, signals, semaphores), and s<packed>,
+ * <align>,<bits>,<lo>,<hi> a set over lo..hi; an array is a<packed>,<align>,
+ * <dimensions>(<component>), with A for an array whose descriptor is its
+ * component's (a length-unresolved formal); a record is r<packed>,<align>,
+ * <components>,<case selector>( <at>,<variant>,<labels>[,<label>...]:
+ * <component>; ... ). packed is that of the context, align the value's own. */
+typedef struct ylay ylay;
+struct ylay {
+  char k;
+  int packed;
+  rt_int align, bits, lo, hi;
+  int nd;
+  ylay *elem;
+  int nf, sel;
+  ylay **fl;
+  rt_int *at, *nlab, **lab;
+  int *variant;
+  const char *src;
+  size_t len;
+};
+
+static rt_int lay_num(const char **s) {
+  char *e;
+  long long v = strtoll(*s, &e, 10);
+  *s = e;
+  if (**s == ',') (*s)++;
+  return (rt_int)v;
+}
+
+static ylay *lay_parse(const char **s) {
+  ylay *L = rt_alloc(sizeof *L);
+  L->src = *s;
+  L->k = *(*s)++;
+  L->packed = (int)lay_num(s);
+  L->align = lay_num(s);
+  if (L->k == 'a' || L->k == 'A') {
+    L->nd = (int)lay_num(s);
+    (*s)++;
+    L->elem = lay_parse(s);
+    (*s)++;
+  } else if (L->k == 'r') {
+    L->nf = (int)lay_num(s);
+    L->sel = (int)lay_num(s);
+    int n = L->nf ? L->nf : 1;
+    L->fl = rt_alloc((size_t)n * sizeof *L->fl);
+    L->at = rt_alloc((size_t)n * sizeof *L->at);
+    L->nlab = rt_alloc((size_t)n * sizeof *L->nlab);
+    L->lab = rt_alloc((size_t)n * sizeof *L->lab);
+    L->variant = rt_alloc((size_t)n * sizeof *L->variant);
+    (*s)++;
+    for (int i = 0; i < L->nf; i++) {
+      L->at[i] = lay_num(s);
+      L->variant[i] = (int)lay_num(s);
+      L->nlab[i] = lay_num(s);
+      L->lab[i] = rt_alloc((size_t)(L->nlab[i] ? L->nlab[i] : 1) * sizeof(rt_int));
+      for (rt_int j = 0; j < L->nlab[i]; j++) L->lab[i][j] = lay_num(s);
+      (*s)++;
+      L->fl[i] = lay_parse(s);
+      (*s)++;
+    }
+    (*s)++;
+  } else {
+    L->bits = lay_num(s);
+    if (L->k == 's') {
+      L->lo = lay_num(s);
+      L->hi = lay_num(s);
+    }
+  }
+  L->len = (size_t)(*s - L->src);
+  return L;
+}
+
+static const ylay *lay_get(const char *text) {
+  static struct {
+    const char *t;
+    const ylay *L;
+  } *cache;
+  static size_t n, cap;
+  for (size_t i = 0; i < n; i++)
+    if (cache[i].t == text || strcmp(cache[i].t, text) == 0) return cache[i].L;
+  const char *s = text;
+  const ylay *L = lay_parse(&s);
+  if (n == cap) {
+    cap = cap ? cap * 2 : 32;
+    cache = realloc(cache, cap * sizeof *cache);
+    if (!cache) {
+      fprintf(stderr, "*** out of memory\n");
+      exit(4);
+    }
+  }
+  cache[n].t = text;
+  cache[n].L = L;
+  n++;
+  return L;
+}
+
+static int lay_same(const ylay *a, const ylay *b) {
+  return a == b || (a->len == b->len && memcmp(a->src, b->src, a->len) == 0);
+}
+
+static rt_int round_up(rt_int v, rt_int m) { return m <= 1 ? v : (v + m - 1) / m * m; }
+
+static const ydesc *elem_desc(const ylay *L, const ydesc *d) { return L->k == 'A' ? d : d->elem; }
+
+static rt_int lay_count(const ylay *L, const ydesc *d, const void *v) {
+  if (v) return y_count(*(const yarr *)v, L->nd);
+  rt_int n = 1;
+  for (int k = 0; k < L->nd; k++) n *= y_n(d->lo[k], d->hi[k]);
+  return n;
+}
+
+static rt_int lay_bits(const ylay *L, const ydesc *d, const void *v);
+
+static rt_int lay_stride(const ylay *L, const ydesc *d, const void *v) {
+  const ydesc *ed = elem_desc(L, d);
+  const void *e0 = v && lay_count(L, d, v) > 0 ? ((const yarr *)v)->p : NULL;
+  return round_up(lay_bits(L->elem, ed, e0), L->elem->align);
+}
+
+/* the start of each component of a record, as RecordBits places them */
+static rt_int rec_layout(const ylay *L, const ydesc *d, const void *v, rt_int *starts) {
+  rt_int off = 0, total = 0, vstart = 0;
+  for (int i = 0; i < L->nf; i++) {
+    const ylay *F = L->fl[i];
+    rt_int b = lay_bits(F, d->fd[i], v ? (const char *)v + d->off[i] : NULL);
+    if (L->variant[i]) {
+      if (!vstart) vstart = off;
+      int first = 1;
+      for (int j = 0; j < i; j++)
+        if (L->variant[j] == L->variant[i]) first = 0;
+      if (first) off = vstart;
+    }
+    rt_int start = L->at[i] >= 0 ? L->at[i] : F->packed ? round_up(off, F->align) : round_up(off, 64);
+    if (starts) starts[i] = start;
+    off = start + b;
+    if (off > total) total = off;
+  }
+  return L->packed ? total : round_up(total, 64);
+}
+
+static rt_int lay_bits(const ylay *L, const ydesc *d, const void *v) {
+  if (L->k == 'a' || L->k == 'A') {
+    rt_int b = lay_stride(L, d, v) * lay_count(L, d, v);
+    return L->packed ? b : round_up(b, 64);
+  }
+  if (L->k == 'r') return rec_layout(L, d, v, NULL);
+  return L->bits;
+}
+
+static rt_int *rec_starts(const ylay *L, const ydesc *d, const void *v) {
+  rt_int *s = rt_alloc((size_t)(L->nf ? L->nf : 1) * sizeof *s);
+  rec_layout(L, d, v, s);
+  return s;
+}
+
+/* is component i of the record v in the variant its case selector names */
+static int variant_on(const ylay *L, const ydesc *d, const void *v, int i) {
+  if (!L->variant[i] || L->sel < 0) return 1;
+  const char *p = (const char *)v + d->off[L->sel];
+  rt_int s = L->fl[L->sel]->k == 'c' ? *(const unsigned char *)p : *(const rt_int *)p;
+  for (rt_int j = 0; j < L->nlab[i]; j++)
+    if (L->lab[i][j] == s) return 1;
+  return 0;
+}
+
+/* ---- images: a value in its layout, bits in an array of words ---- */
+
+static uint64_t img_get(const uint64_t *b, rt_int ba, rt_int w) {
+  uint64_t v = 0;
+  for (rt_int got = 0; got < w;) {
+    rt_int word = (ba + got) / 64, bit = (ba + got) % 64, n = 64 - bit;
+    if (n > w - got) n = w - got;
+    uint64_t x = b[word] >> bit;
+    if (n < 64) x &= ((uint64_t)1 << n) - 1;
+    v |= x << got;
+    got += n;
+  }
+  return v;
+}
+
+static void img_put(uint64_t *b, rt_int ba, rt_int w, uint64_t v) {
+  for (rt_int done = 0; done < w;) {
+    rt_int word = (ba + done) / 64, bit = (ba + done) % 64, n = 64 - bit;
+    if (n > w - done) n = w - done;
+    uint64_t mask = n < 64 ? (((uint64_t)1 << n) - 1) << bit : ~(uint64_t)0;
+    b[word] = (b[word] & ~mask) | (((v >> done) << bit) & mask);
+    done += n;
+  }
+}
+
+static rt_int ptr_addr(void *p);
+static void *addr_ptr(rt_int a);
+
+static void to_img(const ylay *L, const ydesc *d, const void *v, uint64_t *b, rt_int ba) {
+  rt_int w = L->bits < 64 ? L->bits : 64;
+  switch (L->k) {
+  case 'i':
+  case 'u': img_put(b, ba, w, (uint64_t) * (const rt_int *)v); break;
+  case 'c': img_put(b, ba, w, *(const unsigned char *)v); break;
+  case 'f': {
+    uint64_t x;
+    memcpy(&x, v, sizeof x);
+    img_put(b, ba, 64, x);
+    break;
+  }
+  case 'x': {
+    unsigned __int128 x = (unsigned __int128) * (const yfix *)v;
+    img_put(b, ba, 64, (uint64_t)x);
+    img_put(b, ba + 64, 64, (uint64_t)(x >> 64));
+    break;
+  }
+  case 'p': img_put(b, ba, w, (uint64_t)ptr_addr(*(void *const *)v)); break;
+  case 's': {
+    const yset *s = v;
+    for (rt_int e = L->lo; e <= L->hi; e++)
+      if (y_set_in(e, *s)) img_put(b, ba + (e - L->lo), 1, 1);
+    break;
+  }
+  case 'a':
+  case 'A': {
+    const yarr *a = v;
+    const ydesc *ed = elem_desc(L, d);
+    rt_int n = lay_count(L, d, v), st = lay_stride(L, d, v);
+    for (rt_int i = 0; i < n; i++) to_img(L->elem, ed, (const char *)a->p + i * ed->size, b, ba + i * st);
+    break;
+  }
+  case 'r': {
+    rt_int *s = rec_starts(L, d, v);
+    for (int i = 0; i < L->nf; i++)
+      if (variant_on(L, d, v, i)) to_img(L->fl[i], d->fd[i], (const char *)v + d->off[i], b, ba + s[i]);
+    free(s);
+    break;
+  }
+  default: break;
+  }
+}
+
+/* the parts of v whose bits meet lo..hi-1 are read back from the image */
+static void from_img(const ylay *L, const ydesc *d, void *v, const uint64_t *b, rt_int ba, rt_int lo,
+                     rt_int hi) {
+  if (L->k != 'a' && L->k != 'A' && L->k != 'r') {
+    if (ba >= hi || ba + L->bits <= lo) return;
+  }
+  rt_int w = L->bits < 64 ? L->bits : 64;
+  switch (L->k) {
+  case 'i': {
+    uint64_t x = img_get(b, ba, w);
+    if (w < 64 && (x >> (w - 1)) & 1) x |= ~(uint64_t)0 << w;
+    *(rt_int *)v = (rt_int)x;
+    break;
+  }
+  case 'u': *(rt_int *)v = (rt_int)img_get(b, ba, w); break;
+  case 'c': *(unsigned char *)v = (unsigned char)img_get(b, ba, w); break;
+  case 'f': {
+    uint64_t x = img_get(b, ba, 64);
+    memcpy(v, &x, sizeof x);
+    break;
+  }
+  case 'x': {
+    unsigned __int128 x = img_get(b, ba, 64) | ((unsigned __int128)img_get(b, ba + 64, 64) << 64);
+    *(yfix *)v = (yfix)x;
+    break;
+  }
+  case 'p': *(void **)v = addr_ptr((rt_int)img_get(b, ba, w)); break;
+  case 's': {
+    yset s = y_set_new(L->lo, L->hi);
+    for (rt_int e = L->lo; e <= L->hi; e++)
+      if (img_get(b, ba + (e - L->lo), 1)) s = y_set_add(s, e);
+    *(yset *)v = s;
+    break;
+  }
+  case 'a':
+  case 'A': {
+    yarr *a = v;
+    const ydesc *ed = elem_desc(L, d);
+    rt_int n = lay_count(L, d, v), st = lay_stride(L, d, v);
+    for (rt_int i = 0; i < n; i++) {
+      rt_int eb = ba + i * st;
+      if (eb >= hi) break;
+      if (eb + st <= lo) continue;
+      from_img(L->elem, ed, (char *)a->p + i * ed->size, b, eb, lo, hi);
+    }
+    break;
+  }
+  case 'r': {
+    rt_int *s = rec_starts(L, d, v);
+    /* a new case selected: the components of its variant are all read */
+    int seln = L->sel >= 0 && ba + s[L->sel] < hi && ba + s[L->sel] + L->fl[L->sel]->bits > lo;
+    for (int i = 0; i < L->nf; i++)
+      if (variant_on(L, d, v, i)) {
+        rt_int l = lo, h = hi;
+        if (seln && L->variant[i]) {
+          l = ba + s[i];
+          h = INT64_MAX;
+        }
+        from_img(L->fl[i], d->fd[i], (char *)v + d->off[i], b, ba + s[i], l, h);
+      }
+    free(s);
+    break;
+  }
+  default: break;
+  }
+}
+
+/* the component of v that starts at bit off and has the layout want (the
+ * outermost one when want is NULL); its bit offset, or -1 */
+static void *comp_at(const ylay *L, const ydesc *d, void *v, rt_int off, const ylay *want) {
+  if (off == 0 && (!want || lay_same(L, want))) return v;
+  if (L->k == 'a' || L->k == 'A') {
+    yarr *a = v;
+    const ydesc *ed = elem_desc(L, d);
+    rt_int n = lay_count(L, d, v), st = lay_stride(L, d, v);
+    if (st <= 0) return NULL;
+    rt_int i = off / st;
+    if (i < 0 || i >= n) return NULL;
+    return comp_at(L->elem, ed, (char *)a->p + i * ed->size, off - i * st, want);
+  }
+  if (L->k == 'r') {
+    rt_int *s = rec_starts(L, d, v);
+    void *r = NULL;
+    for (int i = 0; i < L->nf && !r; i++) {
+      if (!variant_on(L, d, v, i)) continue;
+      rt_int b = lay_bits(L->fl[i], d->fd[i], (char *)v + d->off[i]);
+      if (off >= s[i] && (off < s[i] + b || (b == 0 && off == s[i])))
+        r = comp_at(L->fl[i], d->fd[i], (char *)v + d->off[i], off - s[i], want);
+    }
+    free(s);
+    return r;
+  }
+  return NULL;
+}
+
+/* the bit offset in v of the component at C address p with layout want,
+ * found by descending depth levels; -1 when it is not there */
+static rt_int off_of(const ylay *L, const ydesc *d, void *v, void *p, const ylay *want, int depth) {
+  if (depth == 0) return v == p && (!want || lay_same(L, want)) ? 0 : -1;
+  if (L->k == 'a' || L->k == 'A') {
+    yarr *a = v;
+    const ydesc *ed = elem_desc(L, d);
+    rt_int n = lay_count(L, d, v), st = lay_stride(L, d, v);
+    char *c = p, *e0 = a->p;
+    if (n > 0 && c >= e0 && c < e0 + n * (rt_int)ed->size) {
+      rt_int i = (c - e0) / (rt_int)ed->size;
+      rt_int r = off_of(L->elem, ed, e0 + i * ed->size, p, want, depth - 1);
+      if (r >= 0) return i * st + r;
+    }
+    /* a component of a component array: its buffer is elsewhere */
+    for (rt_int i = 0; depth > 1 && i < n; i++) {
+      rt_int r = off_of(L->elem, ed, (char *)a->p + i * ed->size, p, want, depth - 1);
+      if (r >= 0) return i * st + r;
+    }
+    return -1;
+  }
+  if (L->k == 'r') {
+    rt_int *s = rec_starts(L, d, v), r = -1;
+    for (int i = 0; i < L->nf && r < 0; i++) {
+      rt_int x = off_of(L->fl[i], d->fd[i], (char *)v + d->off[i], p, want, depth - 1);
+      if (x >= 0) r = s[i] + x;
+    }
+    free(s);
+    return r;
+  }
+  return -1;
+}
+
+/* ---- windows: addresses above the store ---- */
+
+typedef struct {
   char *c;
   rt_int base, words;
-} *windows;
-static rt_int nwindows, cwindows, next_window = Y_STORE;
+  const ylay *L;                               /* NULL: the bytes as they are */
+  const ydesc *d;
+  void *cell;                                  /* the pointer that gave it */
+} ywin;
+static ywin *wins;
+static rt_int nwins, cwins, next_window = Y_STORE;
+
+static ywin *win_new(char *c, rt_int words, const ylay *L, const ydesc *d) {
+  if (nwins == cwins) {
+    cwins = cwins ? cwins * 2 : 32;
+    wins = realloc(wins, (size_t)cwins * sizeof *wins);
+    if (!wins) {
+      fprintf(stderr, "*** out of memory\n");
+      exit(4);
+    }
+  }
+  if (words < 1) words = 1;
+  ywin *w = &wins[nwins++];
+  w->c = c;
+  w->base = next_window;
+  w->words = words;
+  w->L = L;
+  w->d = d;
+  w->cell = NULL;
+  next_window += words;
+  return w;
+}
+
+static ywin *win_at(rt_int a) {
+  for (rt_int i = 0; i < nwins; i++)
+    if (a >= wins[i].base && a < wins[i].base + wins[i].words) return &wins[i];
+  return NULL;
+}
+
+static ywin *win_of(void *p) {
+  for (rt_int i = 0; i < nwins; i++)
+    if (wins[i].c == p) return &wins[i];
+  return NULL;
+}
+
+/* the image of a window, Y_ALLOCATED: words zeroed first */
+static uint64_t *win_image(ywin *w) {
+  uint64_t *b = rt_alloc((size_t)w->words * sizeof *b + 16);
+  to_img(w->L, w->d, w->c, b, 0);
+  return b;
+}
+
+/* ---- views ---- */
+
+struct yview {
+  void *shadow;                                /* the value in the program's form */
+  const ylay *L;
+  const ydesc *d;
+  rt_int addr, words, bits;
+  uint64_t *base;                              /* the image last agreed with the store */
+};
+static yview **views;
+static rt_int nviews, cviews;
+#define Y_TOUCH_MAX 64
+__thread yview *y_touched_v[Y_TOUCH_MAX];
+__thread int y_ntouched;
+
+rt_int y_mem_get(rt_int a);
+void y_mem_set(rt_int a, rt_int x);
+
+/* the view and the store agree again: what the program changed in the view
+ * since they last agreed goes to the store, the rest comes from it */
+static void view_sync(yview *V) {
+  uint64_t *h = rt_alloc((size_t)V->words * sizeof *h + 16);
+  to_img(V->L, V->d, V->shadow, h, 0);
+  int changed = 0;
+  for (rt_int k = 0; k < V->words; k++) {
+    uint64_t s = (uint64_t)y_mem_get(V->addr + k), mask = h[k] ^ V->base[k];
+    uint64_t n = (s & ~mask) | (h[k] & mask);
+    if (n != s) y_mem_set(V->addr + k, (rt_int)n);
+    if (n != V->base[k] || n != h[k]) changed = 1;
+    V->base[k] = n;
+  }
+  if (changed) from_img(V->L, V->d, V->shadow, V->base, 0, 0, V->bits);
+  free(h);
+}
+
+static void touch(yview *V) {
+  for (int i = 0; i < y_ntouched; i++)
+    if (y_touched_v[i] == V) return;
+  if (y_ntouched == Y_TOUCH_MAX) y_flush();
+  y_touched_v[y_ntouched++] = V;
+}
+
+void y_flush(void) {
+  while (y_ntouched > 0) view_sync(y_touched_v[--y_ntouched]);
+}
+
+static yview *view_new(void *shadow, const ylay *L, const ydesc *d, rt_int addr) {
+  yview *V = rt_alloc(sizeof *V);
+  V->shadow = shadow;
+  V->L = L;
+  V->d = d;
+  V->addr = addr;
+  y_init(d, shadow);
+  V->bits = lay_bits(L, d, shadow);
+  V->words = (V->bits + 63) / 64;
+  if (V->words < 1) V->words = 1;
+  V->base = rt_alloc((size_t)V->words * sizeof *V->base + 16);
+  for (rt_int k = 0; k < V->words; k++) V->base[k] = (uint64_t)y_mem_get(addr + k);
+  from_img(L, d, shadow, V->base, 0, 0, V->bits);
+  if (nviews == cviews) {
+    cviews = cviews ? cviews * 2 : 16;
+    views = realloc(views, (size_t)cviews * sizeof *views);
+    if (!views) {
+      fprintf(stderr, "*** out of memory\n");
+      exit(4);
+    }
+  }
+  views[nviews++] = V;
+  return V;
+}
+
+static yview *view_of(void *shadow) {
+  for (rt_int i = 0; i < nviews; i++)
+    if (views[i]->shadow == shadow) return views[i];
+  return NULL;
+}
+
+/* a variable AT address a whose layout is not one plain word */
+void *y_view(yview **slot, void *shadow, const char *lay, const ydesc *d, rt_int a) {
+  if (!*slot) *slot = view_new(shadow, lay_get(lay), d, a);
+  view_sync(*slot);
+  touch(*slot);
+  return shadow;
+}
+
+/* a CONST parameter AT address a: its value is put there */
+void y_view_put(const void *v, const char *lay, const ydesc *d, rt_int a) {
+  const ylay *L = lay_get(lay);
+  rt_int bits = lay_bits(L, d, v), words = (bits + 63) / 64;
+  uint64_t *b = rt_alloc((size_t)(words ? words : 1) * sizeof *b + 16);
+  for (rt_int k = 0; k < words; k++) b[k] = (uint64_t)y_mem_get(a + k);
+  to_img(L, d, v, b, 0);
+  for (rt_int k = 0; k < words; k++) y_mem_set(a + k, (rt_int)b[k]);
+  free(b);
+}
+
+/* ---- dynamic variables seen in the store ---- */
+
+void *y_new_l(size_t n, const char *lay, const ydesc *d) {
+  ycell *c = y_new(n);
+  c->L = lay_get(lay);
+  c->d = d;
+  return c;
+}
+
+static void *cell_view(ycell *c) {
+  view_sync(c->view);
+  touch(c->view);
+  return c->body;
+}
+
+/* the address of what a pointer designates; 0 for NIL */
+static rt_int ptr_addr(void *p) {
+  ycell *c = p;
+  if (!c || !c->body) return 0;
+  if (c->view) return c->view->addr;
+  char *b = c->body;
+  if (b >= (char *)y_mem_store && b < (char *)(y_mem_store + Y_STORE)) return (b - (char *)y_mem_store) / 8;
+  ywin *w = win_of(b);
+  if (w) {
+    if (!w->cell) w->cell = c;
+    return w->base;
+  }
+  /* a component of a variable in a window */
+  for (rt_int i = 0; i < nwins; i++) {
+    if (!wins[i].L) continue;
+    for (int k = 1; k <= 8; k++) {
+      rt_int o = off_of(wins[i].L, wins[i].d, wins[i].c, b, c->L, k);
+      if (o >= 0) return wins[i].base + o / 64;
+    }
+  }
+  if (c->L) {
+    w = win_new(b, (lay_bits(c->L, c->d, b) + 63) / 64, c->L, c->d);
+  } else {
+    w = win_new(b, 1, NULL, NULL);
+  }
+  w->cell = c;
+  return w->base;
+}
+
+static void *addr_ptr(rt_int a) {
+  if (a == 0) return NULL;
+  ywin *w = win_at(a);
+  if (w && w->base == a && w->cell) return w->cell;
+  return y_cell(y_mem_ptr(a));
+}
+
+/* ---- the store, word by word ---- */
 
 void *y_mem_at(rt_int a, size_t bytes) {
   if (a < 0 || (uint64_t)a * 8 + bytes > (uint64_t)Y_STORE * 8) rt_raise(Y_X_ADDRESS);
   return &y_mem_store[a];
 }
 
+rt_int y_mem_get(rt_int a) {
+  if (a >= 0 && a < Y_STORE) return y_mem_store[a];
+  ywin *w = win_at(a);
+  if (!w) rt_raise(Y_X_ADDRESS);
+  if (!w->L) {
+    rt_int x;
+    memcpy(&x, w->c + (a - w->base) * 8, sizeof x);
+    return x;
+  }
+  uint64_t *b = win_image(w);
+  rt_int x = (rt_int)b[a - w->base];
+  free(b);
+  return x;
+}
+
+void y_mem_set(rt_int a, rt_int x) {
+  if (a >= 0 && a < Y_STORE) {
+    y_mem_store[a] = x;
+    return;
+  }
+  ywin *w = win_at(a);
+  if (!w) rt_raise(Y_X_ADDRESS);
+  if (!w->L) {
+    memcpy(w->c + (a - w->base) * 8, &x, sizeof x);
+    return;
+  }
+  uint64_t *b = win_image(w);
+  rt_int k = a - w->base;
+  b[k] = (uint64_t)x;
+  from_img(w->L, w->d, w->c, b, 0, k * 64, k * 64 + 64);
+  free(b);
+}
+
+/* MAIN_STORE_ARRAY [a] as a variable: a word of the store, of a window that
+ * shows its variable as it is, or a view of a word of a window */
+rt_int *y_mem_word(rt_int a) {
+  if (a >= 0 && a < Y_STORE) return &y_mem_store[a];
+  ywin *w = win_at(a);
+  if (!w) rt_raise(Y_X_ADDRESS);
+  if (!w->L) return (rt_int *)(w->c + (a - w->base) * 8);
+  for (rt_int i = 0; i < nviews; i++)
+    if (views[i]->addr == a && views[i]->L->k == 'i' && views[i]->L->bits == 64) {
+      view_sync(views[i]);
+      touch(views[i]);
+      return views[i]->shadow;
+    }
+  rt_int *s = rt_alloc(sizeof *s);
+  yview *V = view_new(s, lay_get("i0,0,64"), &y_d_int, a);
+  touch(V);
+  return s;
+}
+
+/* ADDR of a value held in no window yet, of the extent given: its bytes */
 rt_int y_addr(void *p, rt_int words) {
   char *c = p;
   if (c >= (char *)y_mem_store && c < (char *)(y_mem_store + Y_STORE)) return (c - (char *)y_mem_store) / 8;
-  for (rt_int i = 0; i < nwindows; i++)
-    if (c >= windows[i].c && c < windows[i].c + windows[i].words * 8)
-      return windows[i].base + (c - windows[i].c) / 8;
-  if (nwindows == cwindows) {
-    cwindows = cwindows ? cwindows * 2 : 32;
-    windows = realloc(windows, (size_t)cwindows * sizeof *windows);
-    if (!windows) {
-      fprintf(stderr, "*** out of memory\n");
-      exit(4);
-    }
-  }
-  if (words < 1) words = 1;
-  windows[nwindows].c = c;
-  windows[nwindows].base = next_window;
-  windows[nwindows].words = words;
-  nwindows++;
-  next_window += words;
-  return next_window - words;
+  yview *V = view_of(p);
+  if (V) return V->addr;
+  for (rt_int i = 0; i < nwins; i++)
+    if (!wins[i].L && c >= wins[i].c && c < wins[i].c + wins[i].words * 8)
+      return wins[i].base + (c - wins[i].c) / 8;
+  ywin *w = win_of(p);
+  if (w) return w->base;
+  return win_new(c, words, NULL, NULL)->base;
 }
 
+/* ADDR of the component comp, depth components down from the variable
+ * root of layout lay: in the window of root, which ADDR makes in that
+ * layout when it first asks */
+rt_int y_addr_v(void *root, const char *lay, const ydesc *d, void *comp, const char *clay, int depth) {
+  const ylay *L = lay_get(lay), *C = clay ? lay_get(clay) : NULL;
+  rt_int base, off;
+  yview *V = view_of(root);
+  if (V) {
+    base = V->addr;
+    off = off_of(V->L, V->d, root, comp, C, depth);
+  } else {
+    ywin *w = win_of(root);
+    if (w && !w->L && w->words >= (lay_bits(L, d, root) + 63) / 64) {
+      w->L = L;
+      w->d = d;
+    }
+    if (!w || !w->L) {
+      /* root may be a component of a variable already in a window */
+      for (rt_int i = 0; i < nwins && !w; i++) {
+        if (!wins[i].L) continue;
+        for (int k = 1; k <= 8 && !w; k++) {
+          rt_int o = off_of(wins[i].L, wins[i].d, wins[i].c, root, L, k);
+          if (o >= 0 && o % 64 == 0) {
+            rt_int x = off_of(L, d, root, comp, C, depth);
+            if (x >= 0) return wins[i].base + (o + x) / 64;
+          }
+        }
+      }
+      w = win_new(root, (lay_bits(L, d, root) + 63) / 64, L, d);
+    }
+    base = w->base;
+    off = off_of(w->L, w->d, root, comp, C, depth);
+  }
+  if (off < 0) off = 0;
+  return base + off / 64;
+}
+
+/* ADDR of a SPACE: of the actual, in the layout it was passed with */
+rt_int y_addr_s(yspace s) {
+  if (!s.lay) return y_addr(s.p, s.words);
+  return y_addr_v(s.p, s.lay, s.d, s.p, NULL, 0);
+}
+
+/* what address a names: a word of the store, or the component of the
+ * variable in a window that starts there */
 void *y_mem_ptr(rt_int a) {
   if (a >= 0 && a < Y_STORE) return &y_mem_store[a];
-  for (rt_int i = 0; i < nwindows; i++)
-    if (a >= windows[i].base && a < windows[i].base + windows[i].words)
-      return windows[i].c + (a - windows[i].base) * 8;
-  rt_raise(Y_X_ADDRESS);
+  ywin *w = win_at(a);
+  if (!w) rt_raise(Y_X_ADDRESS);
+  if (!w->L) return w->c + (a - w->base) * 8;
+  void *p = comp_at(w->L, w->d, w->c, (a - w->base) * 64, NULL);
+  if (!p) rt_raise(Y_X_ADDRESS);
+  return p;
 }
 
-rt_int *y_mem_word(rt_int a) { return y_mem_ptr(a); }
+/* MAKE_POINTER: a pointer to the variable of layout lay at address a. A
+ * variable of that layout that starts there is designated itself; anything
+ * else is seen through a view. exact: the layout is one plain word, the
+ * program's form of the value, so the store itself is designated */
+void *y_make_ptr(rt_int a, const char *lay, const ydesc *d, int exact) {
+  const ylay *L = lay_get(lay);
+  if (a >= 0 && a < Y_STORE && exact) return y_cell(&y_mem_store[a]);
+  ywin *w = a >= Y_STORE ? win_at(a) : NULL;
+  if (a >= Y_STORE && !w) rt_raise(Y_X_ADDRESS);
+  if (w && !w->L) return y_cell(w->c + (a - w->base) * 8);
+  if (w) {
+    void *p = comp_at(w->L, w->d, w->c, (a - w->base) * 64, L);
+    if (p) {
+      ycell *c = y_cell(p);
+      if (!c->L) {
+        c->L = L;
+        c->d = d;
+      }
+      return c;
+    }
+  }
+  for (rt_int i = 0; i < nviews; i++)
+    if (views[i]->addr == a && lay_same(views[i]->L, L) && views[i]->d == d) {
+      ycell *c = y_cell(views[i]->shadow);
+      c->view = views[i];
+      return c;
+    }
+  void *body = rt_alloc(d->size);
+  ycell *c = y_cell(body);
+  c->view = view_new(body, L, d, a);
+  return c;
+}
 
-void *y_derefw(void *p, size_t size) {
+void *y_derefw(void *p, const char *lay, const ydesc *d, int exact) {
   ycell *c = p;
-  if (c && c->body) return c->body;
-  if (size > sizeof y_mem_store) rt_raise(Y_X_ADDRESS);
-  return y_mem_store;
+  if (c && c->body) return c->view ? cell_view(c) : c->body;
+  if (d->size > sizeof y_mem_store) rt_raise(Y_X_ADDRESS);
+  return y_deref(y_make_ptr(0, lay, d, exact));
 }
 
 int y_cond_claim(rt_lock *l) {
@@ -3763,10 +4463,14 @@ const ydesc y_d_str = {YK_ARRAY, sizeof(yarr), 1, 1, {1, 1, 1, 1}, {0, 1, 1, 1},
 /* ---- device signals (XIV.VII) ------------------------------------------------ */
 /* A SIGNAL declared AT a machine location is sent by the device there. This
  * implementation simulates one device of the PDP-11 the Report's examples
- * use: the line clock, interrupt vector 100 (octal), which sends its signal
- * every 20 ms of the virtual clock, as the KW11-L of a 50 Hz machine. It
+ * use: the line clock KW11-L, interrupt vector 100 (octal), status register
+ * 177546 (octal) of the I/O page. Every 20 ms of the clock, as on a 50 Hz
+ * machine, it sets bit 7 of the status register (the monitor bit), and when
+ * bit 6 is set (interrupt enable) it interrupts: it sends the signal. It
  * runs as a process of the highest priority and enters the monitor of the
  * signal to send it, as a monitor procedure would. */
+
+#define Y_LKS 0177546                          /* the line clock status register */
 
 typedef struct {
   ysig *s;
@@ -3777,6 +4481,8 @@ static void y_device_loop(void *arg) {
   ydevice *d = arg;
   for (;;) {
     rt_delay(d->period);
+    y_mem_store[Y_LKS] |= 0200;
+    if (!(y_mem_store[Y_LKS] & 0100)) continue;
     if (d->s->mon) y_mon_enter(d->s->mon);
     y_send(d->s);
     if (d->s->mon) y_mon_leave(d->s->mon);

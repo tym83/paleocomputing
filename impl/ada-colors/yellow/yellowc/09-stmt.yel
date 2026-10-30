@@ -417,7 +417,18 @@
         sym: Sym;
     CurLine := s^.line;
     IF s^.text # 0 THEN PlaceLabel(s) ENDIF;
-    IF k = N_ASSIGN THEN
+    IF (k = N_ASSIGN) AND (s^.a^.kind = N_INDEX) AND IsMainStore(s^.a^.a) THEN
+      (* MAIN_STORE_ARRAY [a] := w: the word, as the store shows it (XIV.VI.2) *)
+      IF Count(s^.a^.b) # 1 THEN FailS(s^.line, "MAIN_STORE_ARRAY has one subscript") ENDIF;
+      CheckPure(s^.a);
+      NoteWrite(s^.a);
+      Expr(s^.a^.b, RAddress, c, r);
+      CheckType(s^.line, RAddress, r);
+      Expr(s^.b, RWord, c2, er);
+      CheckType(s^.line, RWord, er);
+      Emit(Join(T("y_mem_set("), c, Join(T(", "), c2, T(");"))));
+      EmitS("Y_FLUSH();")
+    ELSIF k = N_ASSIGN THEN
       LValue(s^.a, c, r);
       CheckPure(s^.a);
       NoteWrite(s^.a);
@@ -436,7 +447,9 @@
           FailN(s^.line, r^.tname, " is opaque here: := is not exported (X.B.3)")
         ENDIF;
         Store(c, r, c2, er, s^.line)
-      ENDIF
+      ENDIF;
+      (* views of the store agree with it again (XIV.VI) *)
+      EmitS("Y_FLUSH();")
     ELSIF k = N_CALLST THEN
       sym := Find(s^.a^.name);
       IF sym # Sym NIL THEN sym := Real(sym) ENDIF;
@@ -455,7 +468,8 @@
         ST(c);
         SA(";");
         t := SE();
-        Body.tail^.t := t
+        Body.tail^.t := t;
+        EmitS("Y_FLUSH();")
       ENDIF
     ELSIF k = N_IF THEN
       first := TRUE;

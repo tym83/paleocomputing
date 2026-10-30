@@ -509,7 +509,7 @@ void y_create(rt_taskdecl *d, rt_int limit, int has_prio, rt_int prio, rt_int si
 #define Y_SLICE 10000
 extern __thread int y_ticks, y_sim_depth;
 void y_slice(void);
-#define Y_TICK() do { if (++y_ticks >= Y_SLICE) y_slice(); } while (0)
+#define Y_TICK() do { Y_FLUSH(); if (++y_ticks >= Y_SLICE) y_slice(); } while (0)
 /* local storage of a process, in words, against its SIZE (XIV.X.2) */
 extern __thread rt_int y_use, y_limit;
 void y_storage_trap(void);
@@ -540,11 +540,27 @@ void *y_cell(void *body);                      /* MAKE_POINTER */
 typedef struct {
   void *p;                                     /* a SPACE formal: the actual's place */
   rt_int words;                                /* and its extent */
+  const char *lay;                             /* its layout in the store, or NULL */
+  const ydesc *d;
 } yspace;
 void *y_mem_at(rt_int a, size_t bytes);        /* the store at word a */
 rt_int y_addr(void *p, rt_int words);          /* ADDR */
+rt_int y_addr_v(void *root, const char *lay, const ydesc *d, void *comp, const char *clay, int depth);
+rt_int y_addr_s(yspace s);                     /* ADDR of a SPACE */
 void *y_mem_ptr(rt_int a);                     /* what address a names */
-rt_int *y_mem_word(rt_int a);                  /* MAIN_STORE_ARRAY [a] */
+rt_int *y_mem_word(rt_int a);                  /* MAIN_STORE_ARRAY [a] as a variable */
+rt_int y_mem_get(rt_int a);                    /* MAIN_STORE_ARRAY [a] */
+void y_mem_set(rt_int a, rt_int x);            /* MAIN_STORE_ARRAY [a] := x */
+void *y_make_ptr(rt_int a, const char *lay, const ydesc *d, int exact); /* MAKE_POINTER */
+void *y_new_l(size_t n, const char *lay, const ydesc *d); /* NEW, with its layout */
+/* views of the store: a variable AT an address whose layout is not one plain
+ * word, synchronized with the store when it is used and after statements */
+typedef struct yview yview;
+void *y_view(yview **slot, void *shadow, const char *lay, const ydesc *d, rt_int a);
+void y_view_put(const void *v, const char *lay, const ydesc *d, rt_int a);
+extern __thread int y_ntouched;
+void y_flush(void);
+#define Y_FLUSH() do { if (y_ntouched) y_flush(); } while (0)
 extern int Y_X_ADDRESS;
 
 /* ---- trap handlers (XIV.X.3) ---------------------------------------------------
@@ -573,7 +589,7 @@ rt_int y_ixw5(yarr a, rt_int i, rt_int j, rt_int k, rt_int l, rt_int m);
 rt_int y_ixw6(yarr a, rt_int i, rt_int j, rt_int k, rt_int l, rt_int m, rt_int n);
 rt_int y_ixw7(yarr a, rt_int i, rt_int j, rt_int k, rt_int l, rt_int m, rt_int n, rt_int o);
 rt_int y_ixw8(yarr a, rt_int i, rt_int j, rt_int k, rt_int l, rt_int m, rt_int n, rt_int o, rt_int q);
-void *y_derefw(void *p, size_t size);          /* invalid: the store from 0 */
+void *y_derefw(void *p, const char *lay, const ydesc *d, int exact); /* invalid: the store from 0 */
 rt_int y_divw(rt_int a, rt_int b);             /* by zero: 0 */
 rt_int y_modw(rt_int a, rt_int b);
 double y_fdivw(double a, double b);            /* IEEE: infinite or NaN */
@@ -628,7 +644,7 @@ void y_sig_init_all(const ydesc *d, void *v, ymon *m); /* the signals of a struc
 #define Y_UNDEF_I INT64_MIN
 #define Y_UNDEF_B 0xFF
 #define Y_UNDEF_X ((yfix)((unsigned __int128)1 << 127))
-typedef struct { void *body; } ycell_undef;
+typedef struct { void *body; const void *L, *d, *view; } ycell_undef;
 extern void *const Y_UNDEF_P;
 extern const double Y_UNDEF_F_VALUE;
 rt_int *y_chk_i(rt_int *p);

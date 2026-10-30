@@ -216,8 +216,8 @@ block END.
   TOO_LITTLE_LOCAL_STORAGE (XIV.X.2). A VAR actual of a process activation must live at least
   as long as the process (X.E.2: its life scope, the nearest routine, process or BEGIN block
   around its declaration, encloses the process's).
-- Device signals: a SIGNAL AT the PDP-11 line clock vector (BASE8 100) is sent every 20 ms of
-  virtual time by a simulated line clock; other locations are not simulated.
+- Device signals: a SIGNAL AT the PDP-11 line clock vector (BASE8 100) is sent by a simulated
+  KW11-L line clock, as section 10 says; other locations have no device.
 
 ## 7. Exceptions (IX.A.8, X.F, D-41..45)
 
@@ -291,13 +291,29 @@ whose top 8192 words (BASE8 160000 on) are the PDP-11 I/O page of the Report's e
   in bits, and components placed so that they overlap are an error. A component of a PACKED
   object is not a VAR actual. EXTENT counts words, of the representation (of the actual for
   arrays of bounds known only when the program runs).
-- AT on a VAR or CONST puts it in the store at that word address (`VAR ClockStatus AT BASE8
-  177546: WORD`); AT on a formal passes the actual in that word. ADDR gives that address; for
-  other storage an address above the store, given when ADDR first asks. MAKE_POINTER(p, a)
-  makes a pointer to what address a names; MAIN_STORE_ARRAY[a] is the word there. An address
-  that names nothing raises ADDRESS_VIOLATION ("addressing protection violation", App. C).
-- The line clock is simulated: a SIGNAL AT BASE8 100 is sent every 20 ms of virtual time. Its
-  status register is a word of the I/O page like any other; the clock does not consult it.
+- The store shows every value in the layout its representation declares: bit 0 of a word is
+  its lowest; a packed component takes the bits its range needs at the offset the rules above
+  give (element i of `ARRAY (INTEGER [1..64] OF BOOLEAN) PACKED` is bit i - 1), a negative
+  packed integer is two's complement in its bits, a set has a bit per value of its base range
+  from the low end, a character is its code in the low bits of a word, a pointer is the
+  address of what it designates (0 for NIL), and the variants of a record overlay one
+  another; files, signals and semaphores show no bits.
+- AT on a VAR or CONST puts it in the store from that word address (`VAR ClockStatus AT BASE8
+  177546: WORD`), in that layout: the program and the store see the same bits (a value of
+  more than one plain word is synchronized with the store where the program uses it and at
+  the end of each statement). AT on a CONST formal passes the actual's value in the store
+  from that word; on a VAR or OUT formal, the actual's address. ADDR gives that address; for
+  other storage an address above the store, given to the variable when ADDR first asks for
+  it or for a component of it, so that a component's address is the variable's plus its
+  offset. MAIN_STORE_ARRAY[a] is the word at a in the layout; a word written there is read
+  back into the variable it belongs to. MAKE_POINTER(p, a) designates the variable of p's
+  base type that starts at a, or else the store from a seen in that type's layout. An
+  address that names nothing raises ADDRESS_VIOLATION ("addressing protection violation",
+  App. C).
+- The line clock is simulated as the KW11-L of a 50 Hz PDP-11: every 20 ms it sets bit 7
+  (the monitor bit) of its status register at BASE8 177546, and when bit 6 (interrupt
+  enable) is set it interrupts, sending the SIGNAL AT BASE8 100. A program arms it by setting
+  bit 6, as the Report's real-time example does.
 - SPACE formals take an actual of any representation as its place and extent, for ADDR and
   EXTENT only; a SPACE formal may be passed on to another.
 - Numeric enquiries (StandardImplementationPrelude): REAL_PRECISION 15, RADIX 2,
@@ -324,7 +340,8 @@ whose top 8192 words (BASE8 160000 on) are the PDP-11 I/O page of the Report's e
   ASSERT has no effect (IX.A.3); with UNINITIALIZED_TRAP an undefined value is read as it is;
   with INDEX_TRAP a subscript out of bounds wraps round the array (the component at the
   subscript's distance from the low bound, modulo the length); with POINTER_TRAP a NIL, freed
-  or undefined pointer designates the simulated store from address 0; with ZERO_DIVIDE_TRAP an
+  or undefined pointer designates the simulated store from address 0, in the layout of its
+  base type; with ZERO_DIVIDE_TRAP an
   integer DIV or MOD by zero gives 0 and a floating-point division by zero gives the IEEE
   infinity or NaN (which OVERFLOW then reports unless it is suppressed too).
 
@@ -333,12 +350,5 @@ puts C text in the program, `$name` standing for a variable, constant or paramet
 
 ## 11. Not done, or done approximately
 
-What remains approximate, with the reason:
-
-- PACKED, ALIGNMENT and AT offsets of components set sizes, limits and errors on the simulated
-  machine, but values are still stored as C stores them: a packed array of BOOLEAN takes a word
-  per component in the C program. Nothing a program can observe depends on it except through
-  MAIN_STORE_ARRAY and MAKE_POINTER, whose words are those of the C storage.
-- The line clock does not consult its status register in the I/O page; it runs from the
-  moment a signal is declared at its vector (the Report's own example arms it, so nothing
-  differs).
+Nothing. Where the Report leaves a choice to the implementation, sections 6 and 10 state the
+choice made; where it can be read two ways, the text says which reading is taken and why.

@@ -45,8 +45,11 @@ numbered fragments of section II, the not-equal sign written `#` and the up-arro
 - **E11, E12.** None.
 - **E14 real time.** `ENDPROCESS Clock`; `WAIT(clockSignal)` (printed `clocksignal`); `tick`
   removed from the export list (a signal may not be exported, X.E.4); `WORDLENGTH` imported
-  (the monitor is a closed scope); `Pause` gets its RETURN. The line clock is simulated (a
-  signal AT BASE8 100 is sent every 20 virtual ms). Result: under the send semantics of X.E.4
+  (the monitor is a closed scope); `Pause` gets its RETURN; `lcs[6]` becomes `lcs[7]`: the
+  interrupt-enable bit of the KW11-L status register is bit 6, and element i of the packed
+  array `word` (indexed from 1) is bit i - 1. The line clock is simulated: every 20 ms it sets
+  bit 7 of its status register at BASE8 177546 and, when bit 6 is set, sends the signal AT
+  BASE8 100; as printed, `lcs[6]` sets bit 5 and the clock never interrupts. Result: under the send semantics of X.E.4
   (the receiver goes on in the monitor at once, the sender waits) the clock process answers
   every WAIT of `Pause` within the same tick, so `Pause(5)` returns after one tick.
 - **E15 convex hull.** Index type added; closing names (`complexhull`, `ComplexHullFinder`,
