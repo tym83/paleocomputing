@@ -1,0 +1,6 @@
+(* a value-returning routine is extended only by a value-returning one (X.A.1) *)
+MODULE ValueProc
+  IMPORT StandardImplementationPrelude;
+  PROCEDURE Hi RETURNS INTEGER64 (CONST x: INTEGER64) RETURN x ENDPROCEDURE Hi;
+  PROCEDURE EXTENDS Hi (CONST b: BOOLEAN) RETURN ENDPROCEDURE Hi;
+ENDMODULE ValueProc

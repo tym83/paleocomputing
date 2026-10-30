@@ -25,8 +25,8 @@ numbered fragments of section II, the not-equal sign written `#` and the up-arro
 | E14 real time | 1107 | `Clock is closed with another name` | `ENDPROCESS clock` (names are case sensitive, p.994) |
 | E15 convex hull | 1108-1109 | `expected a representation` | `ARRAY([1..(size+1)] OF point)` has no index type |
 | E17 exception handling | 1110 | `expected a statement` | label `overflowscope:` inside a WHILE; labels are for top-level statements of a block and must be declared (IX.A.4, VII.C) |
-| E18 line input | 1111 | `' ' is a character of two alphabets here: qualify it (VI.A.3)` | the blank is in ASCII and in pdp11chars |
-| E19 track reservation | 1112 | accepted (but see below) | |
+| E18 line input | 1111 | `newfile: control reaches the end of the routine, which ends with RETURN (IX.A.6)` | three procedures fall out of their bottom; then the blank is in ASCII and in pdp11chars |
+| E19 track reservation | 1112 | `returntrack: control reaches the end of the routine, which ends with RETURN (IX.A.6)` | falling out of the bottom of a routine is an error (IX.A.6) |
 | E20 SIFT scheduler | 1113-1114 | `expected =, found ;` | `CONST period: ARRAY(levels OF INT);` has no value (rule 7) |
 | E22 search tree | 1115-1116 | `key is not declared here` | `CONST SearchKey: key` — key is a component, the representation is Zodiac |
 | E24 hash tables | 1117-1118 | `expected :, found =` | `CONST index = ...` without a representation (rule 7) |
@@ -45,8 +45,11 @@ numbered fragments of section II, the not-equal sign written `#` and the up-arro
 - **E11, E12.** None.
 - **E14 real time.** `ENDPROCESS Clock`; `WAIT(clockSignal)` (printed `clocksignal`); `tick`
   removed from the export list (a signal may not be exported, X.E.4); `WORDLENGTH` imported
-  (the monitor is a closed scope); `Pause` gets its RETURN. The line clock is simulated (a
-  signal AT BASE8 100 is sent every 20 virtual ms). Result: under the send semantics of X.E.4
+  (the monitor is a closed scope); `Pause` gets its RETURN; `lcs[6]` becomes `lcs[7]`: the
+  interrupt-enable bit of the KW11-L status register is bit 6, and element i of the packed
+  array `word` (indexed from 1) is bit i - 1. The line clock is simulated: every 20 ms it sets
+  bit 7 of its status register at BASE8 177546 and, when bit 6 is set, sends the signal AT
+  BASE8 100; as printed, `lcs[6]` sets bit 5 and the clock never interrupts. Result: under the send semantics of X.E.4
   (the receiver goes on in the monitor at once, the sender waits) the clock process answers
   every WAIT of `Pause` within the same tick, so `Pause(5)` returns after one tick.
 - **E15 convex hull.** Index type added; closing names (`complexhull`, `ComplexHullFinder`,
@@ -62,21 +65,23 @@ numbered fragments of section II, the not-equal sign written `#` and the up-arro
 - **E18 line input.** The blank qualified `pdp11chars ' '` (three places); the three
   procedures get their RETURN.
 - **E19 track reservation.** `returntrack` falls out of its bottom, which "is an error"
-  (IX.A.6): as printed its first call raises `NO_RETURN`. RETURN added.
+  (IX.A.6), seen at translation. RETURN added.
 - **E20 SIFT scheduler.** `period` made a VAR; `(ept > 0) AND enabled[pri]` (twice: as printed
   it is `ept > (0 AND enabled[pri])`); the IF inside the loop gets its own ENDIF. Translated
   only: the module's tables are local and "the mechanism for initializing" is left out. Note
   also that every path of `schedule` returns before `enable(tickinterrupt)`.
 - **E22 search tree.** `SearchKey: Zodiac`; `newTree` for the undeclared `newKey`; the export
-  `NewTree` is `newTree`. The module exports `=` and `#` but not `:=`: a user can initialize a
-  Tree and compare Trees, never assign one.
+  `NewTree` is `newTree`. The module exports `=` and `#` but not `:=`; an initialization is an
+  assignment, so a user could not even start a Tree as `newTree` (X.B.3): `:=` is added to the
+  export list.
 - **E24 hash tables.** Representation for `CONST index`; `tablesize` (printed `tableSize`);
   0 means "none" but `tableRange` starts at 1, so as printed the first `Scan` raises
   `OUT_OF_RANGE` — slot and the IndexSlot components get `INTEGER [0..tablesize]`; `MOD
   tablesize` for `MOD tableRange` (a representation used as a number); `table[probe].flag` for
   the undeclared `Tag(...)`; `table[indexSlot.slot]` for the undeclared `slot`; `Delete` gets its
-  RETURN. The module offers no way to make an empty table (this implementation starts every
-  variable at zero, which is `fresh`).
+  RETURN. The module offers no way to make an empty table, and a variable is undefined until
+  assigned (reading it raises UNINITIALIZED): a procedure `Clear` that makes every entry
+  `fresh` is added and exported.
 - **E26 exchange sort.** IMPORT/EXPORT; `LENGTH` (not a standard operation) written with HIGH
   and LOW; parentheses around the relations of a WHILE; `stringArray` (printed `stringARRAY`
   once); Exchange's parameters CONST (it is called with `i` and `i+1`); the VAR declarations
@@ -90,7 +95,7 @@ numbered fragments of section II, the not-equal sign written `#` and the up-arro
 
 ## Patterns
 
-Of fifteen programs of Part Three, five are accepted as printed. The errors a translator
+Of fifteen programs of Part Three, four are accepted as printed. The errors a translator
 finds are of the kinds a document typed but never compiled collects: closing names that drift
 (`complexhull`), names in two spellings (`tableSize`, `clocksignal`, `NewTree`), words of other
 languages (`IMPORTS`, `LENGTH`, `Tag`), and the language's own rules forgotten by its authors —

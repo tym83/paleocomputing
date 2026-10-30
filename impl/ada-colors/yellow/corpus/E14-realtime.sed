@@ -11,3 +11,6 @@ s/^  EXPORT time, tick, Pause;$/  EXPORT time, Pause;/
 s/^  IMPORT MyStandardConventions;$/  IMPORT MyStandardConventions, WORDLENGTH;/
 # 5. Pause falls out of its bottom (IX.A.6)
 s/^    ENDWHILE;$/    ENDWHILE; RETURN/
+# 6. the interrupt-enable bit of the line clock status register is bit 6;
+#    element i of the packed array is bit i - 1, so it is lcs[7]
+s/^    lcs\[6\] := TRUE;$/    lcs[7] := TRUE;/

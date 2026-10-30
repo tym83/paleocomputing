@@ -4,22 +4,6 @@
   (* VI, p.1132): literals of an enumeration named in two visible types, NIL, *)
   (* and strings in a scope with two alphabets carry the name of their type. *)
 
-  CONST
-    (* the standard operations of Sections XI, XII and XIV *)
-    F_LOW: INT = 1; F_HIGH: INT = 2; F_SUCC: INT = 3; F_PRED: INT = 4; F_FIRST: INT = 5;
-    F_LAST: INT = 6; F_NEW: INT = 7; F_OPEN: INT = 8; F_CLOSE: INT = 9; F_GET: INT = 10;
-    F_PUT: INT = 11; F_CHECK_EOF: INT = 12; F_MOVE: INT = 13; F_AND_LONG: INT = 14;
-    F_OR_LONG: INT = 15; F_DELAY: INT = 16; F_CLOCK_TIME: INT = 17; F_WAIT: INT = 18;
-    F_SEND: INT = 19; F_AWAITED: INT = 20; F_FLOOR: INT = 21; F_CEILING: INT = 22;
-    F_NEAR_INTEGER: INT = 23; F_NEAR_FIXED: INT = 24; F_NEAR_FLOATING: INT = 25;
-    F_FIXED_DIV: INT = 26; F_CLAIM: INT = 27; F_RELEASE: INT = 28; F_COND_CLAIM: INT = 29;
-    F_PROCESS_IDENTITY: INT = 30; F_CHANGE_PRIORITY: INT = 31; F_RAISE_TERM: INT = 32;
-    F_FREE_POINTER: INT = 33; F_CODE_INSERT: INT = 34; F_ADDR: INT = 35; F_EXTENT: INT = 36;
-
-  VAR
-    CharNames: Txt := 0;             (* the mnemonics of ASCII, in order *)
-    Alphabets: Node := Node NIL;     (* the alphabets declared with a name *)
-
   (* ---- characters of an alphabet ----------------------------------------------- *)
 
   (* the position of character literal text in the alphabet a, or -1 *)
@@ -124,7 +108,7 @@
   (* a C string; n gets their number *)
   PROCEDURE StringCodes RETURNS Txt (CONST a: Rep; CONST text: Txt; OUT n: INT; CONST line: INT)
     VAR i, j, v: INT;
-        codes: ARRAY (INTEGER [1..4096] OF INT);
+        codes: ARRAY (INTEGER [1..65536] OF INT);
         c: ASCII;
         w: Txt;
     n := 0;
@@ -133,7 +117,12 @@
       c := TChar(text, i);
       IF c = 'SQ' THEN
         j := i + 1;
-        WHILE TChar(text, j) # 'SQ' DO j := j + 1 ENDWHILE;
+        WHILE (j <= TL[text]) AND (TChar(text, j) # 'SQ') DO j := j + 1 ENDWHILE;
+        IF j > TL[text] THEN
+          ScTop := 0;
+          SbDepth := 0;
+          FailS(line, "an apostrophe in a string begins a mnemonic, closed by another (IV.C)")
+        ENDIF;
         w := Intern(TS[text] + i, (j - i) - 1);
         v := CharValue(a, w, line);
         i := j + 1
@@ -142,7 +131,7 @@
         v := CharValue(a, w, line);
         i := i + 1
       ENDIF;
-      IF n >= 4096 THEN FailS(line, "string literal too long") ENDIF;
+      IF n >= 65536 THEN FailS(line, "this implementation takes string literals of up to 65536 characters") ENDIF;
       n := n + 1;
       codes[n] := v
     ENDWHILE;
@@ -222,24 +211,342 @@
       ELSIF op = P_STAR THEN v := a * b
       ELSIF (op = W_DIV) AND (b # 0) THEN v := a DIV b
       ELSIF (op = W_MOD) AND (b # 0) THEN v := a MOD b
+      ELSIF op = W_AND THEN v := a * b
+      ELSIF op = W_OR THEN v := (a + b) - (a * b)
+      ELSIF op = W_XOR THEN v := (a + b) MOD 2
       ELSE ok := FALSE
       ENDIF;
+      RETURN
+    ENDIF;
+    IF n^.kind = N_NOT THEN
+      Manifest(n^.a, ok, v);
+      v := 1 - v;
+      RETURN
+    ENDIF;
+    IF n^.kind = N_CALL THEN
+      ManifestStd(n, ok, v);
       RETURN
     ENDIF;
     RETURN
   ENDPROCEDURE Manifest;
 
+  (* standard functions of manifest constants are manifest (VI.C): SUCC, *)
+  (* PRED, FIRST, LAST, LOW and HIGH where the bounds are known *)
+  PROCEDURE ManifestStd (CONST n: Node; OUT ok: BOOLEAN; OUT v: INT)
+    VAR s: Sym;
+        f, d: INT;
+        oa, od: BOOLEAN;
+        c: Txt;
+        r, ix: Rep;
+    ok := FALSE;
+    v := 0;
+    s := Find(n^.name);
+    IF s = Sym NIL THEN RETURN ENDIF;
+    s := Real(s);
+    IF s^.kind # S_STD THEN RETURN ENDIF;
+    f := s^.mval;
+    IF (f = F_SUCC) OR (f = F_PRED) OR (f = F_FIRST) OR (f = F_LAST) THEN
+      IF Count(n^.a) # 1 THEN RETURN ENDIF;
+      Expr(n^.a, Rep NIL, c, r);
+      IF NOT IsDiscrete(r) THEN RETURN ENDIF;
+      IF (f = F_FIRST) OR (f = F_LAST) THEN
+        IF r^.elem # Rep NIL THEN r := r^.elem ENDIF;
+        IF NOT r^.hasm THEN RETURN ENDIF;
+        ok := TRUE;
+        IF f = F_FIRST THEN v := r^.mlo ELSE v := r^.mhi ENDIF;
+        RETURN
+      ENDIF;
+      Manifest(n^.a, oa, v);
+      IF NOT oa THEN RETURN ENDIF;
+      IF f = F_SUCC THEN v := v + 1 ELSE v := v - 1 ENDIF;
+      IF r^.elem # Rep NIL THEN r := r^.elem ENDIF;
+      IF (r^.kind # R_INT) AND ((v < 0) OR (v >= r^.nlits)) THEN
+        FailN(n^.line, n^.name, " goes beyond the end of the enumeration (XI)")
+      ENDIF;
+      ok := TRUE;
+      RETURN
+    ENDIF;
+    IF (f = F_LOW) OR (f = F_HIGH) THEN
+      IF Count(n^.a) # 2 THEN RETURN ENDIF;
+      Manifest(n^.a^.next, od, d);
+      IF NOT od THEN RETURN ENDIF;
+      Expr(n^.a, Rep NIL, c, r);
+      IF (r^.kind # R_ARRAY) OR (d < 1) OR (d > r^.nidx) THEN RETURN ENDIF;
+      ix := r^.idx;
+      FOR k: INTEGER [2..d] DO ix := ix^.link ENDFOR;
+      IF NOT ix^.hasm THEN RETURN ENDIF;
+      ok := TRUE;
+      IF f = F_LOW THEN v := ix^.mlo ELSE v := ix^.mhi ENDIF;
+      RETURN
+    ENDIF;
+    RETURN
+  ENDPROCEDURE ManifestStd;
+
   (* ---- conversions between representations of one type (IX.A.1) ------------------- *)
+
+  (* do values of representation from need code to become values of *)
+  (* representation to (of the same type): a range to check, or a layout *)
+  (* that differs component by component (IX.A.1, VII.G) *)
+  PROCEDURE NeedsConv RETURNS BOOLEAN (CONST to, from: Rep)
+    IF to = from THEN RETURN FALSE ENDIF;
+    IF IsDiscrete(to) THEN
+      IF to^.lo = 0 THEN RETURN FALSE ENDIF;
+      RETURN NOT (to^.hasm AND from^.hasm AND (to^.mlo <= from^.mlo) AND (from^.mhi <= to^.mhi))
+    ENDIF;
+    IF to^.kind = R_FLOAT THEN RETURN to^.lo # 0 ENDIF;
+    IF to^.kind = R_FIXED THEN
+      RETURN (to^.lo # 0) OR (to^.fsn # from^.fsn) OR (to^.fsd # from^.fsd)
+    ENDIF;
+    IF to^.kind = R_RECORD THEN
+      RETURN (from^.kind = R_RECORD) AND (to^.cname # from^.cname)
+    ENDIF;
+    IF (to^.kind = R_ARRAY) OR (to^.kind = R_UARRAY) THEN
+      IF (from^.kind # R_ARRAY) AND (from^.kind # R_UARRAY) THEN RETURN FALSE ENDIF;
+      RETURN NeedsConv(to^.elem, from^.elem)
+    ENDIF;
+    RETURN FALSE
+  ENDPROCEDURE NeedsConv;
+
+  (* a record value of representation from, component by component in to *)
+  PROCEDURE ConvertRecord RETURNS Txt (CONST code: Txt; CONST to, from: Rep)
+    VAR s, d: Txt;
+        f, g: Field;
+    s := Fresh("cs");
+    d := Fresh("cd");
+    SB();
+    SA("({ ");
+    ST(CType(from));
+    SA(" ");
+    ST(s);
+    SA(" = ");
+    ST(code);
+    SA("; ");
+    ST(CType(to));
+    SA(" ");
+    ST(d);
+    SA("; memset(&");
+    ST(d);
+    SA(", 0, sizeof ");
+    ST(d);
+    SA(");");
+    f := to^.fields;
+    WHILE f # Field NIL DO
+      g := FindField(from, f^.name);
+      IF g # Field NIL THEN
+        SA(" ");
+        IF g^.variant # 0 THEN
+          (* only the components of the variant the value has *)
+          SA("if (");
+          ST(VariantTest(from, g, Join(T("(&"), s, T(")"))));
+          SA(") ")
+        ENDIF;
+        ST(d);
+        SA(".f_");
+        ST(f^.name);
+        SA(" = ");
+        ST(Convert(Join(s, T(".f_"), f^.name), f^.rep, g^.rep));
+        SA(";")
+      ENDIF;
+      f := f^.next
+    ENDWHILE;
+    SA(" ");
+    ST(d);
+    SA("; })");
+    RETURN SE()
+  ENDPROCEDURE ConvertRecord;
+
+  (* an array value of representation from, component by component in to: *)
+  (* the bounds of to, or of the value for a length-unresolved formal *)
+  PROCEDURE ConvertArray RETURNS Txt (CONST code: Txt; CONST to, from: Rep)
+    VAR s, d, k, n, te, fe: Txt;
+    s := Fresh("cs");
+    d := Fresh("cd");
+    k := Fresh("ck");
+    n := Fresh("cn");
+    te := CType(to^.elem);
+    fe := CType(from^.elem);
+    SB();
+    SA("({ yarr ");
+    ST(s);
+    SA(" = ");
+    ST(code);
+    SA(", ");
+    ST(d);
+    SA("; rt_int ");
+    ST(n);
+    SA(" = y_count(");
+    ST(s);
+    SA(", ");
+    SI(from^.nidx);
+    SA(");");
+    IF to^.kind = R_ARRAY THEN
+      SA(" y_init(");
+      ST(DescOf(to));
+      SA(", &");
+      ST(d);
+      SA("); if (y_count(");
+      ST(d);
+      SA(", ");
+      SI(to^.nidx);
+      SA(") != ");
+      ST(n);
+      SA(") rt_raise_msg(RT_X_RANGE, ");
+      SC('DQ');
+      SA("array lengths differ");
+      SC('DQ');
+      SA(");")
+    ELSE
+      SA(" ");
+      ST(d);
+      SA(" = y_like(");
+      ST(s);
+      SA(", ");
+      SI(from^.nidx);
+      SA(", ");
+      ST(DescOf(to^.elem));
+      SA(");")
+    ENDIF;
+    SA(" for (rt_int ");
+    ST(k);
+    SA(" = 0; ");
+    ST(k);
+    SA(" < ");
+    ST(n);
+    SA("; ");
+    ST(k);
+    SA("++) ((");
+    ST(te);
+    SA(" *)");
+    ST(d);
+    SA(".p)[");
+    ST(k);
+    SA("] = ");
+    ST(Convert(Join(T("(("), fe, Join(T(" *)"), s, Join(T(".p)["), k, T("]")))), to^.elem, from^.elem));
+    SA("; ");
+    ST(d);
+    SA("; })");
+    RETURN SE()
+  ENDPROCEDURE ConvertArray;
+
+  (* a FIXED value, the whole number of its scale, as a number of the scale *)
+  (* of to: FIXED_NOT_REPRESENTABLE when it is not a multiple of it *)
+  PROCEDURE RescaleCode RETURNS Txt (CONST code: Txt; CONST from, to: Rep)
+    VAR p, q: Txt;
+        one: BOOLEAN;
+    ScaleRatio(from, to, p, q, one);
+    IF one THEN RETURN code ENDIF;
+    SB();
+    SA("y_fix_conv(");
+    ST(code);
+    SA(", ");
+    ST(p);
+    SA(", ");
+    ST(q);
+    SA(")");
+    RETURN SE()
+  ENDPROCEDURE RescaleCode;
+
+  (* two FIXED operands brought to their common scale, the largest of which *)
+  (* both scales are multiples (VIII.C: fixed-point arithmetic is exact) *)
+  PROCEDURE CommonScale (VAR a: Txt; CONST ra: Rep; VAR b: Txt; CONST rb: Rep; CONST r: Rep;
+                         CONST line: INT)
+    VAR gn, gd: INT;
+    gn := Gcd(ra^.fsn, rb^.fsn);
+    gd := MulChk(ra^.fsd DIV Gcd(ra^.fsd, rb^.fsd), rb^.fsd, line);
+    SetScale(r, gn, gd);
+    a := RescaleCode(a, ra, r);
+    b := RescaleCode(b, rb, r);
+    RETURN
+  ENDPROCEDURE CommonScale;
+
+  (* a fixed-point literal: mantissa times its base to the power of the *)
+  (* last digit; its scale is that power *)
+  PROCEDURE FixLiteral (CONST n: Node; OUT code: Txt; OUT r: Rep)
+    VAR k: INT := n^.ival;
+        e: INT := FixE[k];
+    r := CopyRep(RFixed);
+    r^.abstract := FALSE;
+    IF e >= 0 THEN SetScale(r, PowChk(FixB[k], e, n^.line), 1)
+    ELSE SetScale(r, 1, PowChk(FixB[k], -e, n^.line))
+    ENDIF;
+    SB();
+    SA("((yfix)INT64_C(");
+    SI(FixV[k]);
+    SA("))");
+    code := SE();
+    RETURN
+  ENDPROCEDURE FixLiteral;
+
+  (* a manifest FIXED value (VI.C), as the fraction num / den *)
+  PROCEDURE ManifestFix (CONST n: Node; OUT ok: BOOLEAN; OUT num, den: INT)
+    VAR k, e, g, n2, d2: INT;
+        ok2: BOOLEAN;
+    ok := FALSE;
+    num := 0;
+    den := 1;
+    IF n^.kind = N_FIXED THEN
+      k := n^.ival;
+      e := FixE[k];
+      num := FixV[k];
+      IF e >= 0 THEN num := MulChk(num, PowChk(FixB[k], e, n^.line), n^.line)
+      ELSE den := PowChk(FixB[k], -e, n^.line)
+      ENDIF;
+      ok := TRUE
+    ELSIF n^.kind = N_INT THEN
+      num := n^.ival;
+      ok := TRUE
+    ELSIF n^.kind = N_PAREN THEN
+      ManifestFix(n^.a, ok, num, den)
+    ELSIF n^.kind = N_NEG THEN
+      ManifestFix(n^.a, ok, num, den);
+      num := -num
+    ELSIF (n^.kind = N_BIN) AND (n^.name = P_STAR) THEN
+      ManifestFix(n^.a, ok, num, den);
+      ManifestFix(n^.b, ok2, n2, d2);
+      ok := ok AND ok2;
+      num := MulChk(num, n2, n^.line);
+      den := MulChk(den, d2, n^.line)
+    ENDIF;
+    g := Gcd(num, den);
+    num := num DIV g;
+    den := den DIV g;
+    RETURN
+  ENDPROCEDURE ManifestFix;
+
+  (* a floating-point result: an overflow is OVERFLOW, not a value out of *)
+  (* range (VIII.C, Appendix C) *)
+  PROCEDURE FloatChk RETURNS Txt (CONST code: Txt)
+    RETURN Join(T("y_fchk("), code, T(")"))
+  ENDPROCEDURE FloatChk;
 
   (* the C text of value code (of representation from) held in to: ranges are *)
   (* checked unless the manifest bounds show there is no need *)
   PROCEDURE Convert RETURNS Txt (CONST code: Txt; CONST to, from: Rep)
-    IF IsDiscrete(to) AND (to^.lo # 0) THEN
-      IF to^.hasm AND from^.hasm AND (to^.mlo <= from^.mlo) AND (from^.mhi <= to^.mhi) THEN
-        RETURN code
-      ENDIF;
+    VAR c: Txt;
+        save: INT;
+    IF (from^.kind = R_STR) AND (to^.kind = R_ARRAY) AND (to^.nidx = 1) THEN
+      IF to^.idx^.hasm AND (from^.nlits # ((to^.idx^.mhi - to^.idx^.mlo) + 1)) THEN
+        SB();
+        SA("a string of ");
+        SI(from^.nlits);
+        SA(" characters for an array of ");
+        SI((to^.idx^.mhi - to^.idx^.mlo) + 1);
+        SA(" (VI.B.1)");
+        c := SE();
+        Fail(CurLine, c)
+      ENDIF
+    ENDIF;
+    IF NOT NeedsConv(to, from) THEN RETURN code ENDIF;
+    IF to^.kind = R_RECORD THEN RETURN ConvertRecord(code, to, from) ENDIF;
+    IF (to^.kind = R_ARRAY) OR (to^.kind = R_UARRAY) THEN RETURN ConvertArray(code, to, from) ENDIF;
+    IF Suppressed(T_RANGE) THEN
+      (* the range trap suppressed (XIV.XIII.2): only the scale of FIXED *)
+      IF to^.kind = R_FIXED THEN RETURN RescaleCode(code, from, to) ENDIF;
+      RETURN code
+    ENDIF;
+    IF IsDiscrete(to) THEN
       SB();
-      SA("rt_range(");
+      SA("y_range(");
       ST(code);
       SA(", ");
       ST(LoText(to));
@@ -248,9 +555,9 @@
       SA(")");
       RETURN SE()
     ENDIF;
-    IF (to^.kind = R_FLOAT) AND (to^.lo # 0) THEN
+    IF to^.kind = R_FLOAT THEN
       SB();
-      SA("rt_frange(");
+      SA("y_frange(");
       ST(code);
       SA(", ");
       ST(LoText(to));
@@ -259,25 +566,28 @@
       SA(")");
       RETURN SE()
     ENDIF;
-    IF (to^.kind = R_FIXED) AND (to^.lo # 0) THEN
+    IF to^.kind = R_FIXED THEN
+      (* to the scale of the target, exactly, then its range (VIII.C) *)
+      c := RescaleCode(code, from, to);
+      IF to^.lo = 0 THEN RETURN c ENDIF;
       SB();
-      SA("y_fixed(");
-      ST(code);
+      SA("y_fix_range(");
+      ST(c);
       SA(", ");
       ST(LoText(to));
       SA(", ");
       ST(HiText(to));
-      SA(", ");
-      ST(to^.scale);
       SA(")");
       RETURN SE()
     ENDIF;
     RETURN code
   ENDPROCEDURE Convert;
 
-  (* assignment of code (of representation er) to dst (of representation r) *)
-  PROCEDURE Store (CONST dst: Txt; CONST r: Rep; CONST code: Txt; CONST er: Rep; CONST line: INT)
-    VAR t, tmp: Txt;
+  (* the C statement assigning code (of representation er) to dst (of *)
+  (* representation r) *)
+  PROCEDURE StoreText RETURNS Txt (CONST dst: Txt; CONST r: Rep; CONST code: Txt; CONST er: Rep;
+                                   CONST line: INT)
+    VAR tmp: Txt;
     CheckType(line, r, er);
     IF Deep(r) THEN
       tmp := Fresh("t");
@@ -287,7 +597,7 @@
       SA(" ");
       ST(tmp);
       SA(" = ");
-      ST(code);
+      ST(Convert(code, r, er));
       SA("; y_store(");
       ST(DescOf(r));
       SA(", &");
@@ -295,17 +605,19 @@
       SA(", &");
       ST(tmp);
       SA("); }");
-      t := SE();
-      Emit(t);
-      RETURN
+      RETURN SE()
     ENDIF;
     SB();
     ST(dst);
     SA(" = ");
     ST(Convert(code, r, er));
     SA(";");
-    t := SE();
-    Emit(t);
+    RETURN SE()
+  ENDPROCEDURE StoreText;
+
+  (* assignment of code (of representation er) to dst (of representation r) *)
+  PROCEDURE Store (CONST dst: Txt; CONST r: Rep; CONST code: Txt; CONST er: Rep; CONST line: INT)
+    Emit(StoreText(dst, r, code, er, line));
     RETURN
   ENDPROCEDURE Store;
 
@@ -322,7 +634,7 @@
       RETURN Real(s)^.kind = S_VAR
     ENDIF;
     IF n^.kind = N_DEREF THEN RETURN n^.flag = 0 ENDIF;
-    IF n^.kind = N_INDEX THEN RETURN IsVariable(n^.a) ENDIF;
+    IF n^.kind = N_INDEX THEN RETURN IsMainStore(n^.a) OR IsVariable(n^.a) ENDIF;
     IF n^.kind = N_SEL THEN
       IF NOT IsVariable(n^.a) THEN RETURN FALSE ENDIF;
       f := FindField(n^.a^.rep, n^.name);
@@ -358,7 +670,10 @@
   ENDPROCEDURE CheckPure;
 
   PROCEDURE LValue (CONST n: Node; OUT code: Txt; OUT r: Rep)
+    VAR save: Node := LvNode;
+    LvNode := n;
     Expr(n, Rep NIL, code, r);
+    LvNode := save;
     IF NOT IsVariable(n) THEN FailS(n^.line, "a variable is needed here (IX.A.1)") ENDIF;
     RETURN
   ENDPROCEDURE LValue;
@@ -440,9 +755,13 @@
       IF n^.d # Node NIL THEN r := Qualifier(n) ENDIF;
       code := Paren(n^.text)
     ELSIF k = N_FIXED THEN
-      r := RFixed;
-      IF n^.d # Node NIL THEN r := Qualifier(n) ENDIF;
-      code := n^.text
+      FixLiteral(n, code, r);
+      IF n^.d # Node NIL THEN
+        a := Qualifier(n);
+        IF a^.kind # R_FIXED THEN FailS(n^.line, "a fixed-point literal qualified by a type that is not FIXED") ENDIF;
+        r^.tid := a^.tid;
+        r^.tname := a^.tname
+      ENDIF
     ELSIF k = N_NIL THEN
       IF n^.d = Node NIL THEN FailS(n^.line, "NIL is qualified by the name of a pointer type (VI.B.4)") ENDIF;
       r := Qualifier(n);
@@ -468,8 +787,10 @@
       IF f = Field NIL THEN FailN(n^.line, n^.name, " is not a component of this record") ENDIF;
       r := f^.rep;
       IF f^.variant # 0 THEN
-        (* a component of a variant: checked against the case-selection *)
-        (* component when the program runs *)
+        (* a component of a variant: inside a SELECT on its case (VIII.B), *)
+        (* and checked against the case-selection component when the *)
+        (* program runs, since the case may have changed since *)
+        CheckVariantSelected(n, a, f);
         c2 := Fresh("vr");
         SB();
         SA("(*({ ");
@@ -499,17 +820,33 @@
     ELSIF k = N_DEREF THEN
       Expr(n^.a, Rep NIL, c, a);
       IF a^.kind # R_PTR THEN FailS(n^.line, "^ of something that is not a pointer") ENDIF;
+      NoteFreeDeref(n^.a, a^.tid);
       IF a^.elem = Rep NIL THEN FailN(n^.line, a^.forward, " is not declared") ENDIF;
       r := a^.elem;
       SB();
       SA("(*(");
       ST(CType(r));
-      SA(" *)rt_nil_check(");
-      ST(c);
-      SA("))");
+      IF Suppressed(T_POINTER) THEN
+        (* the pointer trap suppressed: what an invalid pointer designates *)
+        (* is the simulated store from address 0, in the layout of r *)
+        SA(" *)y_derefw(");
+        ST(c);
+        SA(", ");
+        ST(LayLit(r));
+        SA(", ");
+        ST(DescOf(r));
+        IF WordExact(r) THEN SA(", 1))") ELSE SA(", 0))") ENDIF
+      ELSE
+        SA(" *)y_deref(");
+        ST(c);
+        SA("))")
+      ENDIF;
       code := SE()
     ELSIF k = N_INDEX THEN
       IndexExpr(n, code, r)
+    ELSIF (k = N_NOT) AND UserOp(n, W_NOT, n^.a, Node NIL, code, r) THEN
+      (* NOT is an extended identifier too (rule 56) *)
+      r := r
     ELSIF k = N_NOT THEN
       Expr(n^.a, RBool, c, a);
       CheckType(n^.line, RBool, a);
@@ -530,8 +867,81 @@
       FailS(n^.line, "not an expression")
     ENDIF;
     n^.rep := r;
+    CheckDefined(n, code, r);
     RETURN
   ENDPROCEDURE Expr;
+
+  (* a variable read is defined (VIII.B; Appendix C, "access to *)
+  (* uninitialized variable"): the value of a variable, a component or a *)
+  (* dynamic variable is checked, unless it is the variable being assigned *)
+  (* or passed; the code without the check stays in the node's text *)
+  PROCEDURE CheckDefined (CONST n: Node; VAR code: Txt; CONST r: Rep)
+    VAR k: INT := n^.kind;
+        m: Txt := 0;
+    (* a word of the store always holds a value; its text is the word as *)
+    (* a variable *)
+    IF (k = N_INDEX) AND IsMainStore(n^.a) THEN RETURN ENDIF;
+    IF (k = N_NAME) OR (k = N_SEL) OR (k = N_INDEX) OR (k = N_DEREF) THEN n^.text := 0 ELSE RETURN ENDIF;
+    IF n = LvNode THEN RETURN ENDIF;
+    IF (k = N_NAME) AND (n^.ival # 1) THEN RETURN ENDIF;
+    IF (k = N_DEREF) AND (n^.flag # 0) THEN RETURN ENDIF;
+    IF Suppressed(T_UNINIT) THEN RETURN ENDIF;
+    m := UndefMacro(r);
+    IF m = 0 THEN RETURN ENDIF;
+    n^.text := code;
+    IF NOT Addressable(n) THEN
+      (* a component of a value: checked as a value *)
+      SB();
+      SA("y_vchk_");
+      SC(TChar(m, 6));
+      SA("(");
+      m := SE()
+    ENDIF;
+    code := Join(m, code, T(")"));
+    RETURN
+  ENDPROCEDURE CheckDefined;
+
+  (* is the designator n storage the C program can take the address of: *)
+  (* not a component of the result of a call *)
+  PROCEDURE Addressable RETURNS BOOLEAN (CONST n: Node)
+    VAR d: Node := n;
+    WHILE (d^.kind = N_SEL) OR (d^.kind = N_PAREN) DO d := d^.a ENDWHILE;
+    IF d^.kind = N_CALL THEN RETURN FALSE ENDIF;
+    IF (d^.kind = N_DEREF) AND (d^.flag # 0) THEN RETURN FALSE ENDIF;
+    RETURN TRUE
+  ENDPROCEDURE Addressable;
+
+  (* the check of a scalar of r, or 0 *)
+  PROCEDURE UndefMacro RETURNS Txt (CONST r: Rep)
+    VAR k: INT := r^.kind;
+    IF (k = R_INT) OR (k = R_BOOL) OR (k = R_ENUM) THEN RETURN T("Y_DEFI(") ENDIF;
+    IF (k = R_ALPHA) AND (r^.nlits < 256) THEN RETURN T("Y_DEFB(") ENDIF;
+    IF k = R_FLOAT THEN RETURN T("Y_DEFF(") ENDIF;
+    IF k = R_FIXED THEN RETURN T("Y_DEFX(") ENDIF;
+    IF k = R_PTR THEN RETURN T("Y_DEFP(") ENDIF;
+    IF k = R_SET THEN RETURN T("Y_DEFS(") ENDIF;
+    RETURN 0
+  ENDPROCEDURE UndefMacro;
+
+  (* the value a fresh scalar of r holds, undefined; 0 when it has none *)
+  PROCEDURE UndefValue RETURNS Txt (CONST r: Rep)
+    VAR k: INT := r^.kind;
+    IF (k = R_INT) OR (k = R_BOOL) OR (k = R_ENUM) THEN RETURN T("Y_UNDEF_I") ENDIF;
+    IF (k = R_ALPHA) AND (r^.nlits < 256) THEN RETURN T("Y_UNDEF_B") ENDIF;
+    IF k = R_FLOAT THEN RETURN T("Y_UNDEF_F_VALUE") ENDIF;
+    IF k = R_FIXED THEN RETURN T("Y_UNDEF_X") ENDIF;
+    IF k = R_PTR THEN RETURN T("Y_UNDEF_P") ENDIF;
+    RETURN 0
+  ENDPROCEDURE UndefValue;
+
+  (* the code of a designator without the check of its value *)
+  PROCEDURE RawCode RETURNS Txt (CONST n: Node; CONST code: Txt)
+    IF ((n^.kind = N_NAME) OR (n^.kind = N_SEL) OR (n^.kind = N_INDEX) OR (n^.kind = N_DEREF)) AND
+       (n^.text # 0) THEN
+      RETURN n^.text
+    ENDIF;
+    RETURN code
+  ENDPROCEDURE RawCode;
 
   (* the test that a record held at *p has the variant of field f *)
   PROCEDURE VariantTest RETURNS Txt (CONST r: Rep; CONST f: Field; CONST p: Txt)
@@ -566,6 +976,8 @@
       RETURN
     ENDIF;
     IF (s^.kind = S_VAR) OR (s^.kind = S_CONST) THEN
+      IF s^.kind = S_VAR THEN n^.ival := 1 ELSE n^.ival := 0 ENDIF;
+      NoteFree(s);
       r := s^.rep;
       code := SymPath(s);
       RETURN
@@ -575,12 +987,35 @@
     RETURN
   ENDPROCEDURE NameExpr;
 
+  (* is n the name MAIN_STORE_ARRAY, the store of the simulated machine *)
+  PROCEDURE IsMainStore RETURNS BOOLEAN (CONST n: Node)
+    VAR s: Sym;
+    IF (n^.kind # N_NAME) OR (n^.d # Node NIL) THEN RETURN FALSE ENDIF;
+    s := Find(n^.name);
+    IF s = Sym NIL THEN RETURN FALSE ENDIF;
+    IF NOT Resolved(s) THEN RETURN FALSE ENDIF;
+    s := Real(s);
+    RETURN (s^.kind = S_STD) AND (s^.mval = F_MAIN_STORE)
+  ENDPROCEDURE IsMainStore;
+
   PROCEDURE IndexExpr (CONST n: Node; OUT code: Txt; OUT r: Rep)
     VAR c, ic, arr: Txt;
         a, ir, ix: Rep;
         p: Node;
         nd: INT;
         simple: BOOLEAN;
+    IF IsMainStore(n^.a) THEN
+      (* MAIN_STORE_ARRAY [a]: the word at address a (XIV.VI.2) *)
+      IF Count(n^.b) # 1 THEN FailS(n^.line, "MAIN_STORE_ARRAY has one subscript") ENDIF;
+      Expr(n^.b, RAddress, ic, ir);
+      CheckType(n^.line, RAddress, ir);
+      r := RWord;
+      (* the word as the store shows it; as a variable (n^.text), a word *)
+      (* of the store or a view of one *)
+      n^.text := Join(T("(*y_mem_word("), ic, T("))"));
+      IF n = LvNode THEN code := n^.text ELSE code := Join(T("y_mem_get("), ic, T(")")) ENDIF;
+      RETURN
+    ENDIF;
     Expr(n^.a, Rep NIL, c, a);
     IF NOT IsArrayLike(a) THEN FailS(n^.line, "[] of something that is not an array") ENDIF;
     nd := Count(n^.b);
@@ -603,6 +1038,8 @@
     SA(" *)(");
     ST(arr);
     SA(").p)[y_ix");
+    (* the index trap suppressed: the subscript wraps round the array *)
+    IF Suppressed(T_INDEX) THEN SA("w") ENDIF;
     SI(nd);
     SA("(");
     ST(arr);
@@ -638,13 +1075,19 @@
       r := CopyRep(a);
       r^.lo := 0;
       r^.hasm := FALSE;
-      SA("rt_neg(");
+      IF Suppressed(T_OVERFLOW) THEN SA("Y_NEGW(") ELSE SA("y_neg(") ENDIF;
       ST(c);
       SA(")")
-    ELSIF (a^.kind = R_FLOAT) OR (a^.kind = R_FIXED) THEN
+    ELSIF a^.kind = R_FLOAT THEN
       r := CopyRep(a);
       r^.lo := 0;
       SA("(-");
+      ST(c);
+      SA(")")
+    ELSIF a^.kind = R_FIXED THEN
+      r := CopyRep(a);
+      r^.lo := 0;
+      SA("y_fix_neg(");
       ST(c);
       SA(")")
     ELSIF a^.kind = R_SET THEN
@@ -680,6 +1123,17 @@
     SA(")");
     RETURN SE()
   ENDPROCEDURE Call2;
+
+  PROCEDURE Call2T RETURNS Txt (CONST f, a, b: Txt)
+    SB();
+    ST(f);
+    SA("(");
+    ST(a);
+    SA(", ");
+    ST(b);
+    SA(")");
+    RETURN SE()
+  ENDPROCEDURE Call2T;
 
   PROCEDURE Infix RETURNS Txt (CONST a: Txt; CONST op: ARRAY (1 DIMENSIONS OF ASCII); CONST b: Txt)
     SB();
@@ -739,6 +1193,26 @@
     RETURN (r^.kind = R_ENUM) AND r^.ordered
   ENDPROCEDURE IsOrdered;
 
+  (* floating-point division, checked for a zero divisor unless that trap is *)
+  (* suppressed (XIV.XIII.2) *)
+  PROCEDURE FDivName RETURNS Txt ()
+    IF Suppressed(T_ZERO) THEN RETURN T("y_fdivw") ENDIF;
+    RETURN T("y_fdiv")
+  ENDPROCEDURE FDivName;
+
+  (* the value of a FIXED number as a floating-point one *)
+  PROCEDURE FixToFloat RETURNS Txt (CONST c: Txt; CONST r: Rep)
+    SB();
+    SA("y_fix_float(");
+    ST(c);
+    SA(", INT64_C(");
+    SI(r^.fsn);
+    SA("), INT64_C(");
+    SI(r^.fsd);
+    SA("))");
+    RETURN SE()
+  ENDPROCEDURE FixToFloat;
+
   PROCEDURE BinExpr (CONST n: Node; CONST want: Rep; OUT code: Txt; OUT r: Rep)
     VAR op: Txt := n^.name;
         a, b, t: Txt;
@@ -773,13 +1247,14 @@
     Expr(n^.b, ra, b, rb);
     IF (op = P_EQ) OR (op = P_NE) THEN
       CheckType(n^.line, ra, rb);
-      IF (ra^.kind = R_SIGNAL) OR (ra^.kind = R_FILE) OR (ra^.kind = R_SEM) THEN
-        FailS(n^.line, "= and # are not defined for signals, files and semaphores")
+      IF NonAssignable(ra) THEN
+        FailS(n^.line, "= and # are not defined for signals, files and semaphores, nor what holds them (VII.B)")
       ENDIF;
       IF ra^.opaque AND ((ra^.opaqueops DIV 2) = 0) THEN
         FailN(n^.line, ra^.tname, " is opaque here: = is not exported (X.B.3)")
       ENDIF;
       r := RBool;
+      IF ra^.kind = R_FIXED THEN CommonScale(a, ra, b, rb, Unbounded(ra), n^.line) ENDIF;
       code := EqCode(a, ra, b, rb);
       IF op = P_NE THEN
         SB();
@@ -794,6 +1269,7 @@
       CheckType(n^.line, ra, rb);
       IF NOT IsOrdered(ra) THEN FailS(n^.line, "< <= > >= apply to ordered values (VIII.A.1)") ENDIF;
       r := RBool;
+      IF ra^.kind = R_FIXED THEN CommonScale(a, ra, b, rb, Unbounded(ra), n^.line) ENDIF;
       IF op = P_LT THEN code := Infix(a, "<", b)
       ELSIF op = P_LE THEN code := Infix(a, "<=", b)
       ELSIF op = P_GT THEN code := Infix(a, ">", b)
@@ -827,16 +1303,24 @@
     ENDIF;
     IF k = R_INT THEN
       r := Unbounded(ra);
-      IF op = P_PLUS THEN code := Call2("rt_add", a, b)
-      ELSIF op = P_MINUS THEN code := Call2("rt_sub", a, b)
-      ELSIF op = P_STAR THEN code := Call2("rt_mul", a, b)
-      ELSIF op = W_DIV THEN code := Call2("rt_div", a, b)
-      ELSIF op = W_MOD THEN code := Call2("rt_mod", a, b)
+      IF Suppressed(T_OVERFLOW) AND ((op = P_PLUS) OR (op = P_MINUS) OR (op = P_STAR)) THEN
+        (* the overflow trap suppressed: no code detects it (XIV.XIII.2) *)
+        IF op = P_PLUS THEN code := Call2("Y_ADDW", a, b)
+        ELSIF op = P_MINUS THEN code := Call2("Y_SUBW", a, b)
+        ELSE code := Call2("Y_MULW", a, b)
+        ENDIF
+      ELSIF op = P_PLUS THEN code := Call2("y_add", a, b)
+      ELSIF op = P_MINUS THEN code := Call2("y_sub", a, b)
+      ELSIF op = P_STAR THEN code := Call2("y_mul", a, b)
+      ELSIF (op = W_DIV) AND Suppressed(T_ZERO) THEN code := Call2("y_divw", a, b)
+      ELSIF (op = W_MOD) AND Suppressed(T_ZERO) THEN code := Call2("y_modw", a, b)
+      ELSIF op = W_DIV THEN code := Call2("y_div", a, b)
+      ELSIF op = W_MOD THEN code := Call2("y_mod", a, b)
       ELSIF op = P_SLASH THEN
         (* integer / gives a floating-point result (VIII.C) *)
         r := RFloat;
         SB();
-        SA("rt_fdiv((double)(");
+        IF Suppressed(T_ZERO) THEN SA("y_fdivw((double)(") ELSE SA("y_fdiv((double)(") ENDIF;
         ST(a);
         SA("), (double)(");
         ST(b);
@@ -847,14 +1331,32 @@
       ENDIF;
       RETURN
     ENDIF;
-    IF (k = R_FLOAT) OR (k = R_FIXED) THEN
+    IF k = R_FLOAT THEN
       r := Unbounded(ra);
-      IF op = P_PLUS THEN code := Infix(a, "+", b)
-      ELSIF op = P_MINUS THEN code := Infix(a, "-", b)
-      ELSIF op = P_STAR THEN code := Infix(a, "*", b)
+      IF op = P_PLUS THEN code := FloatChk(Infix(a, "+", b))
+      ELSIF op = P_MINUS THEN code := FloatChk(Infix(a, "-", b))
+      ELSIF op = P_STAR THEN code := FloatChk(Infix(a, "*", b))
       ELSIF op = P_SLASH THEN
         r := RFloat;
-        code := Call2("rt_fdiv", a, b)
+        code := FloatChk(Call2T(FDivName(), a, b))
+      ELSE
+        FailN(n^.line, op, " does not apply to these numbers")
+      ENDIF;
+      RETURN
+    ENDIF;
+    IF k = R_FIXED THEN
+      (* exact (VIII.C): the result has the common scale of a sum, the *)
+      (* product of the scales of a product; / gives FLOATING *)
+      r := Unbounded(ra);
+      IF (op = P_PLUS) OR (op = P_MINUS) THEN
+        CommonScale(a, ra, b, rb, r, n^.line);
+        IF op = P_PLUS THEN code := Call2("y_fix_add", a, b) ELSE code := Call2("y_fix_sub", a, b) ENDIF
+      ELSIF op = P_STAR THEN
+        SetScale(r, MulChk(ra^.fsn, rb^.fsn, n^.line), MulChk(ra^.fsd, rb^.fsd, n^.line));
+        code := Call2("y_fix_mul", a, b)
+      ELSIF op = P_SLASH THEN
+        r := RFloat;
+        code := FloatChk(Call2T(FDivName(), FixToFloat(a, ra), FixToFloat(b, rb)))
       ELSE
         FailN(n^.line, op, " does not apply to these numbers")
       ENDIF;

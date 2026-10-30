@@ -1,0 +1,4 @@
+(* a PRECISION the implementation does not have is an error (Appendix C) *)
+MODULE Precision
+  VAR x: FLOATING [0.0..1.0] PRECISION 30;
+ENDMODULE Precision

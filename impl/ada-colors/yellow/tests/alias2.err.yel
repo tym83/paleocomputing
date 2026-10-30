@@ -1,0 +1,10 @@
+(* two VAR actuals of one call that may be the same variable (X.A.6): a *)
+(* subscript not known at translation *)
+MODULE Alias2
+  IMPORT StandardImplementationPrelude;
+  VAR a: ARRAY (INTEGER [1..3] OF INTEGER64); i: INTEGER64 := 1;
+  PROCEDURE Swap (VAR x, y: INTEGER64) VAR t: INTEGER64 := x; x := y; y := t; RETURN ENDPROCEDURE Swap;
+  FOR k: INTEGER [1..3] DO a[k] := 0 ENDFOR;
+  Swap(a[1], a[2]);
+  Swap(a[1], a[i])
+ENDMODULE Alias2

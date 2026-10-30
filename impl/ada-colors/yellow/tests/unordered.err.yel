@@ -1,0 +1,6 @@
+(* SUCC and PRED are not defined for UNORDERED enumerations, BOOLEAN among *)
+(* them (VI.A.2, XI) *)
+MODULE Unordered
+  VAR b: BOOLEAN;
+  b := SUCC(FALSE)
+ENDMODULE Unordered

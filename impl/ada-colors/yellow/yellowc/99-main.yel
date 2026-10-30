@@ -1,10 +1,6 @@
 
   (* ---- the standard environment (Sections VI, XI, XII, XIV) -------------------- *)
 
-  VAR
-    ROpenMode: Rep;
-    Program: Node;
-
   PROCEDURE StdRep (CONST name: ARRAY (1 DIMENSIONS OF ASCII); CONST r: Rep)
     VAR s: Sym := NewSym(S_TYPE, N(name));
     s^.rep := r;
@@ -77,6 +73,17 @@
     StdRep("ASCII", RAscii);
     StdRep("STANDARD_ALPHABET", RAscii);
     StdRep("OPEN_MODE", ROpenMode);
+    (* the simulated machine: word addresses, words, the store (XIV.VI.2) *)
+    RAddress := NewRep(R_INT, RInt^.tid);
+    RAddress^.tname := N("ADDRESS");
+    SetRange(RAddress, 0, 16777215);
+    RWord := NewRep(R_INT, RInt^.tid);
+    RWord^.tname := N("WORD");
+    SetRange(RWord, -9223372036854775807, 9223372036854775807);
+    StdRep("ADDRESS", RAddress);
+    StdRep("WORD", RWord);
+    StdOp("MAKE_POINTER", F_MAKE_POINTER);
+    StdOp("MAIN_STORE_ARRAY", F_MAIN_STORE);
     StdOp("LOW", F_LOW);
     StdOp("HIGH", F_HIGH);
     StdOp("SUCC", F_SUCC);
@@ -119,6 +126,7 @@
   (* the program: its segments, as the modules of one block (XIII.A) *)
   PROCEDURE Translate ()
     VAR m: Node := Program;
+        saved: Buf;
     OpenScope(FALSE);
     ProcList[Depth] := Node NIL;
     Level := 0;
@@ -127,7 +135,20 @@
       IF m^.ival = 0 THEN CompileModule(m) ENDIF;
       m := m^.next
     ENDWHILE;
-    AwaitProcesses();
+    ResolveLater(Depth);
+    RunDeferred(0, 0);
+    ApplyFacts();
+    CheckEffects();
+    IF Mode = M_SEGMENT THEN
+      (* a segment awaits its processes once every segment has started *)
+      saved := Body;
+      Body := Buf(Line NIL, Line NIL);
+      AwaitProcesses();
+      AwaitBuf := Body;
+      Body := saved
+    ELSE
+      AwaitProcesses()
+    ENDIF;
     RETURN
   ENDPROCEDURE Translate;
 
@@ -142,6 +163,14 @@
     PutS(OInit, "rt_main_done();");
     PutS(OInit, "return 0;");
     PutS(OInit, "}");
+    WriteHead();
+    WriteBuf(OInit);
+    RETURN
+  ENDPROCEDURE WriteProgram;
+
+  (* the C program but its initialization *)
+  PROCEDURE WriteHead ()
+    WriteBuf(OWarn);
     WriteTxt(T("#include 'DQ'paleo.h'DQ'"));
     PUT(Output, 'LF');
     WriteTxt(T("#include <math.h>"));
@@ -156,23 +185,57 @@
     WriteBuf(OGlobals);
     WriteBuf(OProtos);
     WriteBuf(OFuncs);
-    WriteBuf(OInit);
+    WriteBuf(OExports);
     RETURN
-  ENDPROCEDURE WriteProgram;
+  ENDPROCEDURE WriteHead;
 
   (* ---- the translator --------------------------------------------------------- *)
 
+  (* the tables start empty: every variable is defined before it is read *)
+  (* (VIII.B) *)
+  FOR h: INTEGER [0..262143] DO Hash[h] := 0 ENDFOR;
+  FOR h: INTEGER [0..8191] DO Table[h] := Sym NIL ENDFOR;
+  FOR h: INTEGER [0..400] DO
+    DeclList[h] := Node NIL;
+    DeclCursor[h] := Node NIL;
+    ProcList[h] := Node NIL
+  ENDFOR;
+  OTypes := Buf(Line NIL, Line NIL);
+  OStructs := OTypes;
+  OFrames := OTypes;
+  OGlobals := OTypes;
+  OProtos := OTypes;
+  OFuncs := OTypes;
+  OInit := OTypes;
+  OWarn := OTypes;
+  OExports := OTypes;
+  AwaitBuf := OTypes;
+  Body := OTypes;
+  Locals := OTypes;
   InitChars();
   InitWords();
   FromWord := N("FROM");
   DimensionWord := N("DIMENSION");
   CharNames := T("NUL SOH STX ETX EOT ENQ ACK BEL BS HT LF VT FF CR SO SI DLE DC1 DC2 DC3 DC4 NAK SYN ETB CAN EM SUB ESC FS GS RS US SP DEL SQ DQ ");
   OPEN(Output, "OUTPUT", WRITE);
-  ReadSource();
-  Lex();
-  Program := ParseProgram();
-  Predefine();
-  Translate();
-  WriteProgram();
+  OPEN(Errors, "ERROR", WRITE);
+  ReadArgs();
+  IF Mode = M_LINK THEN
+    LinkProgram()
+  ELSE
+    ReadSource();
+    Lex();
+    Program := ParseProgram();
+    Predefine();
+    IF Mode = M_INTERFACE THEN
+      Interface()
+    ELSIF Mode = M_SEGMENT THEN
+      Segment()
+    ELSE
+      PairInInput();
+      Translate();
+      WriteProgram()
+    ENDIF
+  ENDIF;
   CLOSE(Output)
 ENDMODULE yellowc

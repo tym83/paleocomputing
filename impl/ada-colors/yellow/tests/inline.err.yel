@@ -1,0 +1,11 @@
+(* an INLINE routine is not recursive (X.A.5) *)
+MODULE Inline
+  IMPORT StandardImplementationPrelude;
+  FUNCTION Even RETURNS BOOLEAN (CONST n: INTEGER64) INLINE
+    IF n = 0 THEN RETURN TRUE ENDIF; RETURN Odd(n - 1)
+  ENDFUNCTION Even;
+  FUNCTION Odd RETURNS BOOLEAN (CONST n: INTEGER64)
+    IF n = 0 THEN RETURN FALSE ENDIF; RETURN Even(n - 1)
+  ENDFUNCTION Odd;
+  ASSERT Even(4)
+ENDMODULE Inline

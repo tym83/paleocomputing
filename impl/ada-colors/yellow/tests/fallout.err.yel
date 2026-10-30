@@ -1,0 +1,8 @@
+(* "it is an error to fall out the bottom of a routine" (IX.A.6): seen at *)
+(* translation, here past the IF without ELSE *)
+MODULE FallOut
+  IMPORT StandardImplementationPrelude;
+  FUNCTION Sign RETURNS INTEGER64 (CONST x: INTEGER64)
+    IF x < 0 THEN RETURN -1 ELSIF x > 0 THEN RETURN 1 ENDIF
+  ENDFUNCTION Sign;
+ENDMODULE FallOut

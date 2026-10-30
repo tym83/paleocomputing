@@ -1,0 +1,12 @@
+(* outside its module an opaque representation has no := unless the module *)
+(* exports one, and an initialization is an assignment (X.B.3) *)
+MODULE OpaqueInit
+  IMPORT StandardImplementationPrelude;
+  MODULE M
+    IMPORT INTEGER64;
+    EXPORT OPAQUE R; EXPORT Mk;
+    REPRESENTATION R = RECORD VAR x: INTEGER64 ENDRECORD;
+    FUNCTION Mk RETURNS R () RETURN R(1) ENDFUNCTION Mk;
+  ENDMODULE M;
+  VAR r: R := Mk();
+ENDMODULE OpaqueInit

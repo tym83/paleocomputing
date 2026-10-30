@@ -1,0 +1,5 @@
+MODULE User
+  IMPORT Counter, TextIO, StandardImplementationPrelude;
+  PROCEDURE Q () VAR loc: INTEGER64 := 0; Watch(loc); RETURN ENDPROCEDURE Q;
+  Q()
+ENDMODULE User

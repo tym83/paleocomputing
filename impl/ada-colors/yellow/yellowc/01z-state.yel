@@ -1,0 +1,158 @@
+  (* ---- the state of the translator ---------------------------------------- *)
+  (* The variables and constants of every part, declared before the routines *)
+  (* that use them: a routine depends only on the simple declarations that *)
+  (* precede it (X.G). *)
+
+  (* 02-lex *)
+  VAR
+    TKind, TVal, TLine: TokTable;
+    NTok: INT := 0;
+    SrcStart, SrcEnd: INT := 0;
+    Pos: INT := 0;
+    LineNo: INT := 1;
+    Base: INT := 0;                 (* a BASE word was just read *)
+    (* fixed-point literals: mantissa, base and exponent of the last digit *)
+    FixV, FixB, FixE: ARRAY (INTEGER [1..200000] OF INT);
+    NFix: INT := 0;
+
+  (* 03-parse *)
+  VAR
+    TPos: INT := 1;
+    Labels: Node := Node NIL;       (* the LABEL names of the blocks being read *)
+    FromWord, DimensionWord: Txt := 0;
+
+  (* 05-scope *)
+  VAR
+    Table: SymTable;
+    Scopes: ARRAY (INTEGER [0..400] OF Scope);
+    Depth: INT := -1;
+    VisibleFrom: INT := 0;          (* scopes below this one are hidden *)
+    Level: INT := 0;                (* the frame being written: 0 is global *)
+    FrameName: ARRAY (INTEGER [0..400] OF Txt);  (* C struct of the frame of each level *)
+    (* per scope: the list of declarations being read, so that a module *)
+    (* importing from a module declared later can have it translated first *)
+    (* (X.G); a module node's ival is 0 unread, 1 being read, 2 read *)
+    DeclList: ARRAY (INTEGER [0..400] OF Node);
+    (* per scope: the declaration being read, so that a name it uses and a *)
+    (* later declaration of the scope declares is found out (VII.I) *)
+    DeclCursor: ARRAY (INTEGER [0..400] OF Node);
+    (* the routines whose bodies are being written: the scope of their *)
+    (* declaration and their place in it (X.G) *)
+    OrderDepth, OrderSerial: ARRAY (INTEGER [1..1000] OF INT);
+    OTop: INT := 0;
+    ReopenBuf: ARRAY (INTEGER [1..200000] OF Sym);
+
+  (* 06-types *)
+  VAR
+    RInt, RBool, RAscii, RVoid, RNil, RStr, RFloat, RFixed, RSignal, RSem, RAny: Rep;
+    Pending: Node := Node NIL;       (* pointer representations waiting for their base *)
+
+  (* 07-expr *)
+  CONST
+    (* the standard operations of Sections XI, XII and XIV *)
+    F_LOW: INT = 1; F_HIGH: INT = 2; F_SUCC: INT = 3; F_PRED: INT = 4; F_FIRST: INT = 5;
+    F_LAST: INT = 6; F_NEW: INT = 7; F_OPEN: INT = 8; F_CLOSE: INT = 9; F_GET: INT = 10;
+    F_PUT: INT = 11; F_CHECK_EOF: INT = 12; F_MOVE: INT = 13; F_AND_LONG: INT = 14;
+    F_OR_LONG: INT = 15; F_DELAY: INT = 16; F_CLOCK_TIME: INT = 17; F_WAIT: INT = 18;
+    F_SEND: INT = 19; F_AWAITED: INT = 20; F_FLOOR: INT = 21; F_CEILING: INT = 22;
+    F_NEAR_INTEGER: INT = 23; F_NEAR_FIXED: INT = 24; F_NEAR_FLOATING: INT = 25;
+    F_FIXED_DIV: INT = 26; F_CLAIM: INT = 27; F_RELEASE: INT = 28; F_COND_CLAIM: INT = 29;
+    F_PROCESS_IDENTITY: INT = 30; F_CHANGE_PRIORITY: INT = 31; F_RAISE_TERM: INT = 32;
+    F_FREE_POINTER: INT = 33; F_CODE_INSERT: INT = 34; F_ADDR: INT = 35; F_EXTENT: INT = 36;
+    F_MAKE_POINTER: INT = 37; F_MAIN_STORE: INT = 38;
+    (* the traps a program may suppress (XIV.XIII.2), as bits of Supp, and *)
+    (* the directives of the compiler status module *)
+    T_RANGE: INT = 1; T_OVERFLOW: INT = 2; T_ASSERTION: INT = 4; T_UNINIT: INT = 8;
+    T_INDEX: INT = 16; T_POINTER: INT = 32; T_ZERO: INT = 64;
+    M_WHOLE: INT = 0; M_INTERFACE: INT = 1; M_SEGMENT: INT = 2; M_LINK: INT = 3;
+    D_SUPPRESS: INT = 1; D_RESTORE: INT = 2; D_SUPPRESSED: INT = 3;
+
+  VAR
+    CharNames: Txt := 0;             (* the mnemonics of ASCII, in order *)
+    Alphabets: Node := Node NIL;     (* the alphabets declared with a name *)
+
+  (* 08-call: the compiled actuals of the calls being compiled, as a stack: the *)
+  (* actuals of a call inside an actual go above those of the outer call *)
+  VAR
+    ArgCode: ARRAY (INTEGER [1..4096] OF Txt);
+    ArgRep: ARRAY (INTEGER [1..4096] OF Rep);
+    ArgNode: ARRAY (INTEGER [1..4096] OF Node);
+    ArgTop: INT := 0;
+
+  (* 09-stmt *)
+  VAR
+    XFrames: ARRAY (INTEGER [1..1000] OF Txt);  (* the handler frames entered *)
+    XRestore: ARRAY (INTEGER [1..1000] OF Txt); (* what leaving one restores, or 0 *)
+    (* the SIMULATED_TIME blocks around: the C variable of the depth before each *)
+    SimYs: ARRAY (INTEGER [1..1000] OF Txt);
+    SimTop: INT := 0;
+    XTop: INT := 0;
+    XBase: INT := 0;                 (* the first frame of the routine being written *)
+    BlockFrame: ARRAY (INTEGER [1..1000] OF Txt);  (* per block: its handler frame or 0 *)
+    BlockXs: ARRAY (INTEGER [1..1000] OF Txt);     (* per block with labels: rt_xtop at its start *)
+    BTop: INT := 0;
+    HandlerXc: ARRAY (INTEGER [1..1000] OF Txt);   (* the exception a handler handles *)
+    HTop: INT := 0;
+    LoopName, LoopLabel: ARRAY (INTEGER [1..1000] OF Txt);
+    LoopFrames: ARRAY (INTEGER [1..1000] OF INT);
+    LTop: INT := 0;
+    LoopBase: INT := 0;
+    CurRoutine: Sym := Sym NIL;      (* the routine or process being written *)
+    (* the SELECT statements around: their expressions and the labels of *)
+    (* the case being written, for the components of variants (VIII.B) *)
+    SelExpr, SelLabels: ARRAY (INTEGER [1..1000] OF Node);
+    STop: INT := 0;
+    LabelSeen: ARRAY (INTEGER [1..4096] OF INT);
+    HasHandler: BOOLEAN := FALSE;    (* it has an exception handler *)
+    ImpureCalls: INT := 0;           (* calls of procedures in expressions so far *)
+    Supp: INT := 0;                  (* the traps suppressed here *)
+    LvNode: Node := Node NIL;        (* the designator of the variable being assigned *)
+    (* separate compilation (XIII): what is translated, the library, the *)
+    (* segments to link, the synopses used, the modules around a declaration *)
+    Mode: INT := 0;
+    LibDir: Txt := 0;
+    LinkNames, Uses: Node := Node NIL;
+    OwnSeg: Txt := 0;
+    ExtDepth, InOwn, MTop: INT := 0;
+    ModPath: ARRAY (INTEGER [1..64] OF Txt);
+    OExports, AwaitBuf: Buf;
+    ExtVars: Node := Node NIL;       (* the variables of synopses of other segments *)
+    CurModName: Txt := 0;            (* the module whose declarations are read *)
+    (* for the checks of X.A.4-6: every routine, the calls with VAR actuals, *)
+    (* the pointer types reached freely *)
+    AllRoutines, Sites: Node := Node NIL;
+    DynTid: ARRAY (INTEGER [1..4096] OF Txt);
+    DynIx: ARRAY (INTEGER [1..4096] OF INT);
+    NDyn: INT := 0;
+
+  (* 10-decl *)
+  VAR
+    QNode: ARRAY (INTEGER [1..20000] OF Node);
+    QKind: ARRAY (INTEGER [1..20000] OF INT);   (* 1 a body, 2 a module's initialization *)
+    QVis: ARRAY (INTEGER [1..20000] OF INT);
+    QMon: ARRAY (INTEGER [1..20000] OF Sym);
+    QMark: ARRAY (INTEGER [1..20000] OF Line);
+    QHere: ARRAY (INTEGER [1..20000] OF BOOLEAN);
+    QSupp: ARRAY (INTEGER [1..20000] OF INT);
+    QScope0, QScopeN: ARRAY (INTEGER [1..20000] OF INT);
+    QScopes: ARRAY (INTEGER [1..100000] OF Scope);
+    QTop, QSTop: INT := 0;
+
+  (* 11-units *)
+  VAR
+    CurMonitor: Sym := Sym NIL;      (* the monitor around the declarations being read *)
+    ProcList: ARRAY (INTEGER [0..400] OF Node);  (* per scope: processes declared there *)
+
+    ExportOps: INT := 0;          (* := and = exported by the module being closed *)
+    (* imports of what is translated later (X.G) *)
+    LazyAlias: ARRAY (INTEGER [1..10000] OF Sym);
+    LazyName: ARRAY (INTEGER [1..10000] OF Txt);
+    LazyFrom: ARRAY (INTEGER [1..10000] OF Node);
+    LazyDepth, LazyLine: ARRAY (INTEGER [1..10000] OF INT);
+    NLazy: INT := 0;
+
+  (* 99-main *)
+  VAR
+    ROpenMode: Rep;
+    RAddress, RWord: Rep;            (* the simulated machine (XIV.VI.2) *)
+    Program: Node;

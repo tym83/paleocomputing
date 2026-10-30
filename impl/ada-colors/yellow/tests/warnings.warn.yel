@@ -1,0 +1,11 @@
+(* the warnings the Report asks of a translator: an assertion that might *)
+(* have side effects (IX.A.3), a routine that hides a system routine of *)
+(* its name (X.A.1) *)
+MODULE Warnings
+  IMPORT StandardImplementationPrelude;
+  VAR i: INTEGER64 := 0;
+  PROCEDURE Count RETURNS BOOLEAN () i := i + 1; RETURN TRUE ENDPROCEDURE Count;
+  PROCEDURE DELAY (CONST n: INTEGER64) RETURN ENDPROCEDURE DELAY;
+  ASSERT Count();
+  DELAY(3)
+ENDMODULE Warnings

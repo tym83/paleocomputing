@@ -1,0 +1,9 @@
+(* the numeric enquiries of the standard prelude (XIV.XI.4), and arrays of *)
+(* more than four dimensions *)
+MODULE Enquiries
+  IMPORT TextIO, StandardImplementationPrelude;
+  VAR m: ARRAY (INTEGER [1..2], INTEGER [1..2], INTEGER [1..2], INTEGER [1..2], INTEGER [1..3] OF INTEGER64);
+  Write(RADIX()); Write(" "); Write(REAL_PRECISION(STANDARD_PRECISION)); Write(" ");
+  Write(UPPER_EXPONENT(EXTENDED_PRECISION)); Write(" "); Write(LOWER_EXPONENT(STANDARD_PRECISION)); WriteLn();
+  m[2, 1, 2, 1, 3] := 9; Write(m[2, 1, 2, 1, 3]); Write(" "); Write(HIGH(m, 5)); WriteLn()
+ENDMODULE Enquiries

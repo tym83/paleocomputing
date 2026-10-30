@@ -1,0 +1,6 @@
+(* a string literal has as many characters as the array it is assigned to *)
+MODULE StrLen
+  IMPORT StandardImplementationPrelude;
+  VAR s: ARRAY (INTEGER [1..3] OF ASCII);
+  s := "ab"
+ENDMODULE StrLen

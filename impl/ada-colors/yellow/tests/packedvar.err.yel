@@ -1,0 +1,7 @@
+(* a component of a PACKED object is not a VAR actual (XIV.VI.1) *)
+MODULE PackedVar
+  REPRESENTATION H = ARRAY (INTEGER [1..18] OF BOOLEAN) PACKED 18;
+  VAR h: H;
+  PROCEDURE Set (VAR b: BOOLEAN) b := TRUE; RETURN ENDPROCEDURE Set;
+  Set(h[3])
+ENDMODULE PackedVar

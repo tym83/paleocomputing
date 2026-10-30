@@ -5,16 +5,12 @@
   (* identifier (VII.G, p.1039): INTEGER [1..5] and INTEGER [0..9] are both *)
   (* INTEGER, but two RECORD ... ENDRECORD written apart are different types. *)
 
-  VAR
-    RInt, RBool, RAscii, RVoid, RNil, RStr, RFloat, RFixed, RSignal, RSem, RAny: Rep;
-    Pending: Node := Node NIL;       (* pointer representations waiting for their base *)
-
   PROCEDURE NewRep RETURNS Rep (CONST kind: INT; CONST tid: Txt)
     VAR r: Rep;
     NEW(r);
     r^ := RepRec(kind, tid, tid, 0, 0, 0, 0, FALSE, 0, 0, Rep NIL, Rep NIL, 0, Rep NIL,
                  Node NIL, 0, Field NIL, Field NIL, 0, 0, 0, FALSE, FALSE, FALSE, 0, FALSE, 0, 0,
-                 Sym NIL, 0);
+                 Sym NIL, 0, 0, 0, 0, FALSE, 0, 0, 0);
     r^.serial := NewSerial();
     RETURN r
   ENDPROCEDURE NewRep;
@@ -25,6 +21,8 @@
     NEW(c);
     c^ := r^;
     c^.serial := NewSerial();
+    c^.sig := 0;
+    c^.bits := 0;
     RETURN c
   ENDPROCEDURE CopyRep;
 
@@ -53,19 +51,40 @@
     RETURN (r^.kind = R_RECORD) AND r^.deep
   ENDPROCEDURE Deep;
 
-  (* an array whose components are signals, at any depth *)
+  (* a structure with a component of the given kind, at any depth: signals *)
+  (* and files may be components of arrays and records (VII.B) *)
+  PROCEDURE Holds RETURNS BOOLEAN (CONST r: Rep; CONST kind: INT)
+    VAR f: Field;
+    IF r^.kind = R_ARRAY THEN RETURN (r^.elem^.kind = kind) OR Holds(r^.elem, kind) ENDIF;
+    IF r^.kind = R_RECORD THEN
+      f := r^.fields;
+      WHILE f # Field NIL DO
+        IF (f^.rep^.kind = kind) OR Holds(f^.rep, kind) THEN RETURN TRUE ENDIF;
+        f := f^.next
+      ENDWHILE
+    ENDIF;
+    RETURN FALSE
+  ENDPROCEDURE Holds;
+
   PROCEDURE HoldsSignal RETURNS BOOLEAN (CONST r: Rep)
-    IF r^.kind # R_ARRAY THEN RETURN FALSE ENDIF;
-    IF r^.elem^.kind = R_SIGNAL THEN RETURN TRUE ENDIF;
-    RETURN HoldsSignal(r^.elem)
+    RETURN Holds(r, R_SIGNAL)
   ENDPROCEDURE HoldsSignal;
+
+  (* files, signals and semaphores, and the structures that hold them, have *)
+  (* no assignment, equality or inequality (VII.B, VI.A.1.d) *)
+  PROCEDURE NonAssignable RETURNS BOOLEAN (CONST r: Rep)
+    VAR k: INT := r^.kind;
+    IF (k = R_SIGNAL) OR (k = R_FILE) OR (k = R_SEM) THEN RETURN TRUE ENDIF;
+    RETURN Holds(r, R_SIGNAL) OR Holds(r, R_FILE) OR Holds(r, R_SEM)
+  ENDPROCEDURE NonAssignable;
 
   (* the C type of a value *)
   PROCEDURE CType RETURNS Txt (CONST r: Rep)
     VAR k: INT := r^.kind;
     IF (k = R_INT) OR (k = R_BOOL) OR (k = R_ENUM) THEN RETURN T("rt_int") ENDIF;
     IF k = R_ALPHA THEN RETURN T("unsigned char") ENDIF;
-    IF (k = R_FLOAT) OR (k = R_FIXED) THEN RETURN T("double") ENDIF;
+    IF k = R_FLOAT THEN RETURN T("double") ENDIF;
+    IF k = R_FIXED THEN RETURN T("yfix") ENDIF;
     IF (k = R_ARRAY) OR (k = R_UARRAY) OR (k = R_STR) THEN RETURN T("yarr") ENDIF;
     IF k = R_RECORD THEN RETURN r^.cname ENDIF;
     IF (k = R_PTR) OR (k = R_NIL) THEN RETURN T("void *") ENDIF;
@@ -73,6 +92,7 @@
     IF k = R_SET THEN RETURN T("yset") ENDIF;
     IF k = R_SIGNAL THEN RETURN T("ysig") ENDIF;
     IF k = R_SEM THEN RETURN T("rt_lock") ENDIF;
+    IF k = R_SPACE THEN RETURN T("yspace") ENDIF;
     RETURN T("void")
   ENDPROCEDURE CType;
 
@@ -80,8 +100,10 @@
   PROCEDURE DescOf RETURNS Txt (CONST r: Rep)
     VAR k: INT := r^.kind;
     IF (k = R_INT) OR (k = R_BOOL) OR (k = R_ENUM) THEN RETURN T("&y_d_int") ENDIF;
+    IF (k = R_ALPHA) AND (r^.nlits >= 256) THEN RETURN T("&y_d_byte256") ENDIF;
     IF k = R_ALPHA THEN RETURN T("&y_d_byte") ENDIF;
-    IF (k = R_FLOAT) OR (k = R_FIXED) THEN RETURN T("&y_d_float") ENDIF;
+    IF k = R_FLOAT THEN RETURN T("&y_d_float") ENDIF;
+    IF k = R_FIXED THEN RETURN T("&y_d_fix") ENDIF;
     IF (k = R_PTR) OR (k = R_NIL) THEN RETURN T("&y_d_ptr") ENDIF;
     IF k = R_SET THEN RETURN T("&y_d_set") ENDIF;
     IF (k = R_ARRAY) OR (k = R_RECORD) THEN
@@ -92,6 +114,7 @@
     ENDIF;
     IF k = R_STR THEN RETURN T("&y_d_str") ENDIF;
     IF k = R_SIGNAL THEN RETURN T("&y_d_sig") ENDIF;
+    IF k = R_SEM THEN RETURN T("&y_d_sem") ENDIF;
     RETURN T("&y_d_opaque")
   ENDPROCEDURE DescOf;
 
@@ -139,6 +162,97 @@
     RETURN
   ENDPROCEDURE CheckRepresented;
 
+  (* ---- identical representations (VII.G) ---------------------------------------- *)
+  (* Two representations are the same when they derive from one type and *)
+  (* their concrete forms are spelled alike; a VAR actual must have the *)
+  (* representation of its formal (X.A.2). The spelling is built from the *)
+  (* elaborated representation: its type, its bounds (by value when they *)
+  (* are manifest), precision, scale and components. *)
+
+  PROCEDURE SigText RETURNS Txt (CONST r: Rep)
+    VAR k: INT := r^.kind;
+        ix: Rep;
+        f: Field;
+    SB();
+    ST(r^.tid);
+    IF IsDiscrete(r) OR (k = R_FLOAT) OR (k = R_FIXED) THEN
+      SA("[");
+      IF r^.hasm THEN
+        SI(r^.mlo);
+        SA("..");
+        SI(r^.mhi)
+      ELSE
+        ST(r^.lo);
+        SA("..");
+        ST(r^.hi)
+      ENDIF;
+      SA("]");
+      IF k = R_FLOAT THEN
+        SA("P");
+        ST(r^.prec)
+      ENDIF;
+      IF k = R_FIXED THEN
+        SA("S");
+        SI(r^.fsn);
+        SA("/");
+        SI(r^.fsd)
+      ENDIF
+    ELSIF k = R_ARRAY THEN
+      SA("(");
+      ix := r^.idx;
+      WHILE ix # Rep NIL DO
+        ST(RepSig(ix));
+        SA(",");
+        ix := ix^.link
+      ENDWHILE;
+      SA("OF ");
+      ST(RepSig(r^.elem));
+      SA(")")
+    ELSIF k = R_UARRAY THEN
+      SA("(");
+      SI(r^.nidx);
+      SA("D ");
+      ST(RepSig(r^.elem));
+      SA(")")
+    ELSIF k = R_RECORD THEN
+      SA("{");
+      f := r^.fields;
+      WHILE f # Field NIL DO
+        IF f^.isconst THEN SA("C ") ELSE SA("V ") ENDIF;
+        ST(f^.name);
+        SA(":");
+        ST(RepSig(f^.rep));
+        SA(";");
+        f := f^.next
+      ENDWHILE;
+      SA("}")
+    ELSIF (k = R_SET) OR (k = R_FILE) THEN
+      SA("(");
+      ST(RepSig(r^.elem));
+      SA(")")
+    ENDIF;
+    IF r^.packed THEN
+      SA(" PACKED ");
+      SI(r^.pbits)
+    ENDIF;
+    IF r^.align # 0 THEN
+      SA(" ALIGNMENT ");
+      SI(r^.align)
+    ENDIF;
+    RETURN SE()
+  ENDPROCEDURE SigText;
+
+  PROCEDURE RepSig RETURNS Txt (CONST r: Rep)
+    IF r^.sig = 0 THEN r^.sig := Name(SigText(r)) ENDIF;
+    RETURN r^.sig
+  ENDPROCEDURE RepSig;
+
+  PROCEDURE Identical RETURNS BOOLEAN (CONST a, b: Rep)
+    IF a = b THEN RETURN TRUE ENDIF;
+    IF NOT SameType(a, b) THEN RETURN FALSE ENDIF;
+    RETURN RepSig(a) = RepSig(b)
+  ENDPROCEDURE Identical;
+
   (* ---- elaborating a representation from its tree ------------------------------- *)
 
   (* a bound that is not a literal is a scope-entry constant (VI.C): it is *)
@@ -182,32 +296,157 @@
     RETURN r^.hi
   ENDPROCEDURE HiText;
 
-  (* the bounds [lo..hi] of a discrete representation *)
+  (* an unqualified numeric literal in the range of a representation of a *)
+  (* type made from INTEGER, FIXED or FLOATING is of that type: the Report's *)
+  (* own Feet = Foot_Type [1..5280] (VII.G) *)
+  PROCEDURE AdoptLiteral RETURNS Rep (CONST n: Node; CONST lr, r: Rep)
+    VAR c: Rep;
+    IF NOT IsLiteralNode(n) OR (lr^.kind # r^.kind) OR NOT IsNumeric(r) THEN RETURN lr ENDIF;
+    IF HasQualifier(n) THEN RETURN lr ENDIF;
+    c := CopyRep(lr);
+    c^.tid := r^.tid;
+    c^.tname := r^.tname;
+    RETURN c
+  ENDPROCEDURE AdoptLiteral;
+
+  FUNCTION HasQualifier RETURNS BOOLEAN (CONST n: Node)
+    IF (n^.kind = N_NEG) OR (n^.kind = N_PAREN) THEN RETURN HasQualifier(n^.a) ENDIF;
+    RETURN n^.d # Node NIL
+  ENDFUNCTION HasQualifier;
+
+  (* ---- rationals, for the scales of FIXED (VI.A.1.b) ---------------------- *)
+
+  FUNCTION Gcd RETURNS INT (CONST a, b: INT)
+    VAR x, y, t: INT;
+    x := a;
+    y := b;
+    IF x < 0 THEN x := -x ENDIF;
+    IF y < 0 THEN y := -y ENDIF;
+    WHILE y # 0 DO
+      t := x MOD y;
+      x := y;
+      y := t
+    ENDWHILE;
+    IF x = 0 THEN RETURN 1 ENDIF;
+    RETURN x
+  ENDFUNCTION Gcd;
+
+  PROCEDURE MulChk RETURNS INT (CONST a, b, line: INT)
+    VAR x, y: INT;
+    x := a;
+    y := b;
+    IF x < 0 THEN x := -x ENDIF;
+    IF y < 0 THEN y := -y ENDIF;
+    IF (x # 0) AND (y > (LARGEST DIV x)) THEN
+      FailS(line, "a scale beyond this implementation: fixed-point scales are fractions of 64-bit integers")
+    ENDIF;
+    RETURN a * b
+  ENDPROCEDURE MulChk;
+
+  (* b to the power e, e >= 0 *)
+  PROCEDURE PowChk RETURNS INT (CONST b, e, line: INT)
+    VAR v: INT := 1;
+    FOR i: INTEGER [1..e] DO v := MulChk(v, b, line) ENDFOR;
+    RETURN v
+  ENDPROCEDURE PowChk;
+
+  (* the scale of a to that of b, as p / q in lowest terms, each the C text *)
+  (* of a product of two 64-bit numbers, which the 128 bits of a FIXED value *)
+  (* hold; one when the scales are equal *)
+  PROCEDURE ScaleRatio (CONST a, b: Rep; OUT p, q: Txt; OUT one: BOOLEAN)
+    VAR g1, g2, p1, p2, q1, q2: INT;
+    p := T("1");
+    q := T("1");
+    one := TRUE;
+    IF (a^.fsd = 0) OR (b^.fsd = 0) THEN RETURN ENDIF;
+    g1 := Gcd(a^.fsn, b^.fsn);
+    g2 := Gcd(a^.fsd, b^.fsd);
+    p1 := a^.fsn DIV g1;
+    p2 := b^.fsd DIV g2;
+    q1 := a^.fsd DIV g2;
+    q2 := b^.fsn DIV g1;
+    one := (p1 = 1) AND (p2 = 1) AND (q1 = 1) AND (q2 = 1);
+    p := Factor(p1, p2);
+    q := Factor(q1, q2);
+    RETURN
+  ENDPROCEDURE ScaleRatio;
+
+  PROCEDURE Factor RETURNS Txt (CONST x, y: INT)
+    SB();
+    SA("((yfix)INT64_C(");
+    SI(x);
+    SA(")");
+    IF y # 1 THEN
+      SA(" * INT64_C(");
+      SI(y);
+      SA(")")
+    ENDIF;
+    SA(")");
+    RETURN SE()
+  ENDPROCEDURE Factor;
+
+  PROCEDURE SetScale (CONST r: Rep; CONST n, d: INT)
+    VAR g: INT := Gcd(n, d);
+    r^.fsn := n DIV g;
+    r^.fsd := d DIV g;
+    IF r^.fsd < 0 THEN
+      r^.fsn := -r^.fsn;
+      r^.fsd := -r^.fsd
+    ENDIF;
+    RETURN
+  ENDPROCEDURE SetScale;
+
+  (* the bounds [lo..hi] of a representation; FIXED keeps them as whole *)
+  (* numbers of its scale, the multiples of the scale within the range *)
   PROCEDURE Qualify (CONST r: Rep; CONST q: Node)
-    VAR lo, hi: Txt;
+    VAR lo, hi, p, pq: Txt;
         lr, hr: Rep;
-        ok: BOOLEAN;
-        v: INT;
+        ok, one: BOOLEAN;
+        v, sn, sd: INT;
+    IF r^.kind = R_FIXED THEN
+      IF q^.c = Node NIL THEN FailS(q^.line, "FIXED needs SCALE (VI.A.1.b)") ENDIF;
+      ManifestFix(q^.c, ok, sn, sd);
+      IF NOT ok OR (sn <= 0) THEN FailS(q^.line, "SCALE is a positive manifest constant (VI.A.1.b, VI.C)") ENDIF;
+      r^.fsn := sn;
+      r^.fsd := sd;
+      SB();
+      SI(sn);
+      SA("/");
+      SI(sd);
+      r^.scale := SE()
+    ENDIF;
     Expr(q^.a, r, lo, lr);
     Expr(q^.b, r, hi, hr);
-    IF (r^.kind = R_FLOAT) OR (r^.kind = R_FIXED) THEN
+    lr := AdoptLiteral(q^.a, lr, r);
+    hr := AdoptLiteral(q^.b, hr, r);
+    IF r^.kind = R_FIXED THEN
+      CheckType(q^.line, r, lr);
+      CheckType(q^.line, r, hr);
+      ScaleRatio(lr, r, p, pq, one);
+      r^.lo := Join(T("y_fix_bound("), lo, Join(T(", "), p, Join(T(", "), pq, T(", 1)"))));
+      ScaleRatio(hr, r, p, pq, one);
+      r^.hi := Join(T("y_fix_bound("), hi, Join(T(", "), p, Join(T(", "), pq, T(", 0)"))));
+      r^.dname := 0;
+      StoreBounds(r, "yfix");
+      r^.abstract := FALSE;
+      RETURN
+    ENDIF;
+    IF r^.kind = R_FLOAT THEN
       CheckType(q^.line, r, lr);
       CheckType(q^.line, r, hr);
       r^.lo := lo;
       r^.hi := hi;
       r^.dname := 0;
       IF NOT (IsLiteralNode(q^.a) AND IsLiteralNode(q^.b)) THEN StoreBounds(r, "double") ENDIF;
-      IF r^.kind = R_FLOAT THEN
-        IF q^.d = Node NIL THEN FailS(q^.line, "FLOATING needs PRECISION (VI.A.1.c)") ENDIF;
-        Manifest(q^.d, ok, v);
-        IF NOT ok THEN FailS(q^.line, "PRECISION is a manifest constant") ENDIF;
-        SB();
-        SI(v);
-        r^.prec := SE()
-      ELSE
-        IF q^.c = Node NIL THEN FailS(q^.line, "FIXED needs SCALE (VI.A.1.b)") ENDIF;
-        Expr(q^.c, r, r^.scale, lr)
+      IF q^.d = Node NIL THEN FailS(q^.line, "FLOATING needs PRECISION (VI.A.1.c)") ENDIF;
+      Manifest(q^.d, ok, v);
+      IF NOT ok THEN FailS(q^.line, "PRECISION is a manifest constant") ENDIF;
+      IF (v < 1) OR (v > 15) THEN
+        FailS(q^.line, "PRECISION beyond this implementation: its floating point holds 15 decimal digits (Appendix C)")
       ENDIF;
+      SB();
+      SI(v);
+      r^.prec := SE();
       r^.abstract := FALSE;
       RETURN
     ENDIF;
@@ -275,8 +514,69 @@
   ENDPROCEDURE NewTid;
 
   (* elaborate the representation n; name is the declared name or 0, and *)
-  (* typeonly is set for a TYPE declaration (rules 63-71) *)
+  (* typeonly is set for a TYPE declaration (rules 63-71). A type named *)
+  (* before a concrete type must be the type it represents (rule 61) *)
   PROCEDURE MakeRep RETURNS Rep (CONST n: Node; CONST name: Txt; CONST typeonly: BOOLEAN)
+    VAR r: Rep := MakeRep1(n, name, typeonly);
+        s: Sym;
+    IF n^.x # Node NIL THEN r := ApplyStorage(r, n^.x) ENDIF;
+    IF n^.text # 0 THEN
+      s := Real(Lookup(n^.text, n^.line));
+      IF NOT Conforms(s^.rep, r) OR ((n^.kind = N_RNAME) AND (r^.tid # s^.rep^.tid)) THEN
+        FailN(n^.line, s^.rep^.tname, ": the concrete type is not a representation of this type (rule 61, VII.G)")
+      ENDIF
+    ENDIF;
+    RETURN r
+  ENDPROCEDURE MakeRep;
+
+  (* does r have the structure of the type t: the same components, with *)
+  (* the same types, or the same literals, or indices *)
+  PROCEDURE Conforms RETURNS BOOLEAN (CONST t, r: Rep)
+    VAR f, g: Field;
+        a, b: Rep;
+        p, q: Node;
+    IF t^.kind # r^.kind THEN RETURN FALSE ENDIF;
+    IF t^.kind = R_RECORD THEN
+      f := t^.fields;
+      g := r^.fields;
+      WHILE (f # Field NIL) AND (g # Field NIL) DO
+        IF (f^.name # g^.name) OR (f^.isconst # g^.isconst) OR (f^.variant # g^.variant) THEN RETURN FALSE ENDIF;
+        IF NOT SameType(f^.rep, g^.rep) THEN RETURN FALSE ENDIF;
+        f := f^.next;
+        g := g^.next
+      ENDWHILE;
+      RETURN (f = Field NIL) AND (g = Field NIL)
+    ENDIF;
+    IF t^.kind = R_ARRAY THEN
+      IF t^.nidx # r^.nidx THEN RETURN FALSE ENDIF;
+      a := t^.idx;
+      b := r^.idx;
+      WHILE a # Rep NIL DO
+        IF NOT Identical(a, b) THEN RETURN FALSE ENDIF;
+        a := a^.link;
+        b := b^.link
+      ENDWHILE;
+      RETURN SameType(t^.elem, r^.elem)
+    ENDIF;
+    IF (t^.kind = R_ENUM) OR (t^.kind = R_ALPHA) THEN
+      IF t^.nlits # r^.nlits THEN RETURN FALSE ENDIF;
+      p := t^.lits;
+      q := r^.lits;
+      WHILE (p # Node NIL) AND (q # Node NIL) DO
+        IF (p^.name # q^.name) OR NOT TEq(p^.text, q^.text) THEN RETURN FALSE ENDIF;
+        p := p^.next;
+        q := q^.next
+      ENDWHILE;
+      RETURN TRUE
+    ENDIF;
+    IF (t^.kind = R_SET) OR (t^.kind = R_FILE) OR (t^.kind = R_PTR) THEN
+      IF (t^.elem = Rep NIL) OR (r^.elem = Rep NIL) THEN RETURN TRUE ENDIF;
+      RETURN SameType(t^.elem, r^.elem)
+    ENDIF;
+    RETURN TRUE
+  ENDPROCEDURE Conforms;
+
+  PROCEDURE MakeRep1 RETURNS Rep (CONST n: Node; CONST name: Txt; CONST typeonly: BOOLEAN)
     VAR r, b, ix, last: Rep;
         s: Sym;
         k: INT := n^.kind;
@@ -342,7 +642,7 @@
         r^.nidx := r^.nidx + 1;
         p := p^.next
       ENDWHILE;
-      IF r^.nidx > 4 THEN FailS(n^.line, "this implementation takes arrays of up to 4 dimensions") ENDIF;
+      IF r^.nidx > 8 THEN FailS(n^.line, "this implementation takes arrays of up to 8 dimensions") ENDIF;
       r^.elem := MakeRep(n^.b, 0, typeonly);
       IF NOT typeonly THEN
         CheckRepresented(r^.elem, n^.line);
@@ -392,7 +692,7 @@
     ENDIF;
     FailS(n^.line, "this representation is not translated");
     RETURN Rep NIL
-  ENDPROCEDURE MakeRep;
+  ENDPROCEDURE MakeRep1;
 
   (* a pointer named before its base: the base is now declared *)
   PROCEDURE ResolvePending (CONST name: Txt; CONST r: Rep)
@@ -472,7 +772,7 @@
       f := f^.next
     ENDWHILE;
     NEW(f);
-    f^ := FieldRec(name, fr, isconst, variant, labels, Field NIL);
+    f^ := FieldRec(name, fr, isconst, variant, labels, Field NIL, -1);
     IF last = Field NIL THEN r^.fields := f ELSE last^.next := f ENDIF;
     last := f;
     IF Deep(fr) THEN r^.deep := TRUE ENDIF;
@@ -487,12 +787,11 @@
     WHILE g # Node NIL DO
       fr := MakeRep(g^.b, 0, typeonly);
       IF NOT typeonly THEN CheckRepresented(fr, g^.line) ENDIF;
-      IF (fr^.kind = R_SIGNAL) OR (fr^.kind = R_FILE) THEN
-        FailS(g^.line, "this implementation does not keep signals or files in records")
-      ENDIF;
       nm := g^.a;
       WHILE nm # Node NIL DO
         AddField(r, last, nm^.name, fr, g^.ival = W_CONST, variant, labels, nm^.line);
+        (* AT: the offset of the component in bits (XIV.VI.1) *)
+        IF nm^.a # Node NIL THEN last^.at := AtAddress(nm^.a) ENDIF;
         nm := nm^.next
       ENDWHILE;
       g := g^.next
@@ -525,6 +824,9 @@
     ENDIF;
     IF typeonly AND r^.abstract THEN RETURN ENDIF;
     r^.abstract := FALSE;
+    CurLine := n^.line;
+    i := RecordBits(r, FALSE, TRUE);
+    i := 0;
     r^.cname := Fresh("yR");
     SB();
     SA("typedef struct ");

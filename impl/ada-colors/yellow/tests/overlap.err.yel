@@ -1,0 +1,6 @@
+(* AT gives a record component its offset in bits; components may not *)
+(* overlap (XIV.VI.1) *)
+MODULE Overlap
+  IMPORT StandardImplementationPrelude;
+  REPRESENTATION R = RECORD VAR a AT 0: INTEGER64; VAR b AT 36: INTEGER64 ENDRECORD;
+ENDMODULE Overlap

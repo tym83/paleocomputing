@@ -414,7 +414,7 @@ void rt_b_wait(rt_int v, rt_int scale);        /* seconds at the scale */
 #define PALEO_YELLOW_H
 
 /* ---- arrays: a value is a descriptor of its bounds and a buffer it owns ---- */
-#define Y_MAXD 4
+#define Y_MAXD 8
 typedef struct {
   rt_int lo[Y_MAXD], hi[Y_MAXD];
   void *p;
@@ -424,7 +424,7 @@ typedef struct {
  * compare values of it. Structured representations get one when they are
  * elaborated, since their bounds are scope-entry constants (L-34). */
 typedef struct ydesc ydesc;
-enum { YK_INT, YK_BYTE, YK_FLOAT, YK_PTR, YK_SET, YK_ARRAY, YK_RECORD, YK_OPAQUE };
+enum { YK_INT, YK_BYTE, YK_FLOAT, YK_PTR, YK_SET, YK_ARRAY, YK_RECORD, YK_OPAQUE, YK_FIX, YK_SIG };
 struct ydesc {
   int kind;
   size_t size;                                 /* bytes of one value */
@@ -440,6 +440,7 @@ extern const ydesc y_d_int, y_d_byte, y_d_float, y_d_ptr, y_d_set, y_d_opaque;
 void y_desc_array(ydesc *d, int nd, const rt_int *lo, const rt_int *hi, const ydesc *elem);
 void y_desc_record(ydesc *d, size_t size, int nf, const size_t *off, const ydesc *const *fd);
 void y_init(const ydesc *d, void *v);          /* a fresh value: zeros, own buffers */
+void y_initu(const ydesc *d, void *v);         /* ... undefined (y_lang's checks) */
 void y_copy(const ydesc *d, void *dst, const void *src); /* deep copy, dst is fresh */
 void y_store(const ydesc *d, void *dst, const void *src); /* assignment: bounds must agree */
 int y_eq(const ydesc *d, const void *a, const void *b);
@@ -451,14 +452,22 @@ rt_int y_ix1(yarr a, rt_int i);
 rt_int y_ix2(yarr a, rt_int i, rt_int j);
 rt_int y_ix3(yarr a, rt_int i, rt_int j, rt_int k);
 rt_int y_ix4(yarr a, rt_int i, rt_int j, rt_int k, rt_int l);
+rt_int y_ix5(yarr a, rt_int i, rt_int j, rt_int k, rt_int l, rt_int m);
+rt_int y_ix6(yarr a, rt_int i, rt_int j, rt_int k, rt_int l, rt_int m, rt_int n);
+rt_int y_ix7(yarr a, rt_int i, rt_int j, rt_int k, rt_int l, rt_int m, rt_int n, rt_int o);
+rt_int y_ix8(yarr a, rt_int i, rt_int j, rt_int k, rt_int l, rt_int m, rt_int n, rt_int o, rt_int q);
 rt_int y_low(yarr a, rt_int dim);
 rt_int y_high(yarr a, rt_int dim);
 void y_move(yarr *dst, rt_int at, yarr src, rt_int i, rt_int j, const ydesc *elem);
+yarr y_like(yarr a, int nd, const ydesc *elem); /* fresh, with a's bounds */
 
 /* ---- sets over any integer or scalar range (L-33) ---------------------- */
 typedef struct {
-  rt_int lo, hi;
-  uint64_t *w;
+  rt_int lo, hi;                               /* the base range */
+  uint64_t *w;                                 /* a bit per value of a small range */
+  rt_int *e;                                   /* a large range: members, ascending */
+  rt_int n;
+  int neg;                                     /* ... or the values left out */
 } yset;
 yset y_set_new(rt_int lo, rt_int hi);          /* the empty set */
 yset y_set_add(yset s, rt_int e);              /* a new set with e */
@@ -477,6 +486,8 @@ void y_close(yfile **f);
 void y_get(yfile **f, void *dst, size_t n);
 void y_put(yfile **f, const void *src, size_t n);
 int y_check_eof(yfile **f);
+void y_put_value(yfile **f, const ydesc *d, const void *v); /* any representation */
+void y_get_value(yfile **f, const ydesc *d, void *v);
 extern int Y_X_EOF, Y_X_FILE;
 
 /* ---- processes, monitors and signals (Section X.E) ----------------------- */
@@ -498,8 +509,19 @@ void y_sig_init(ysig *s, ymon *m);
 void y_wait(ysig *s, rt_int rank);
 void y_send(ysig *s);
 int y_awaited(ysig *s);
-void y_create(rt_taskdecl *d, rt_int limit, int has_prio, rt_int prio,
+void y_create(rt_taskdecl *d, rt_int limit, int has_prio, rt_int prio, rt_int size,
               void (*fn)(void *), void *frame);
+/* time slices: outside SIMULATED_TIME a process is preempted after Y_SLICE
+ * backward branches, each slice one tick of the virtual clock (X.E.1) */
+#define Y_SLICE 10000
+extern __thread int y_ticks, y_sim_depth;
+void y_slice(void);
+#define Y_TICK() do { Y_FLUSH(); if (++y_ticks >= Y_SLICE) y_slice(); } while (0)
+/* local storage of a process, in words, against its SIZE (XIV.X.2) */
+extern __thread rt_int y_use, y_limit;
+void y_storage_trap(void);
+#define Y_USE(w) do { y_use += (w); if (y_limit && y_use > y_limit) y_storage_trap(); } while (0)
+extern int Y_X_STORAGE;
 rt_int y_self(void);                           /* PROCESS_IDENTITY */
 void y_change_priority(rt_int id, rt_int p);
 void y_raise_termination(rt_int id);
@@ -507,6 +529,82 @@ extern int Y_X_INSTANCES;
 
 /* ---- semaphores (XIV): binary, CLAIM RELEASE CONDITIONAL_CLAIM ----------- */
 int y_cond_claim(rt_lock *l);
+
+/* ---- dynamic variables (VI.B.4, XIV.XI.2) ------------------------------------ */
+/* A pointer is a cell that holds the dynamic variable: FREE_POINTER recovers
+ * the variable and leaves the cell dead, so that every other pointer to it
+ * raises INVALID_POINTER when it is followed */
+void *y_new(size_t n);
+void *y_deref(void *p);                       /* INVALID_POINTER */
+void y_free_pointer(void **p);
+void *y_cell(void *body);                      /* MAKE_POINTER */
+
+/* ---- the simulated machine (XIV.VI-VII, XIV.XI.2) ---------------------------
+ * Words of 64 bits addressed by word; a store of Y_STORE words, the top of it
+ * the PDP-11 I/O page; variables declared AT live in it; other storage gets an
+ * address above it when ADDR asks */
+#define Y_STORE 65536
+typedef struct {
+  void *p;                                     /* a SPACE formal: the actual's place */
+  rt_int words;                                /* and its extent */
+  const char *lay;                             /* its layout in the store, or NULL */
+  const ydesc *d;
+} yspace;
+void *y_mem_at(rt_int a, size_t bytes);        /* the store at word a */
+rt_int y_addr(void *p, rt_int words);          /* ADDR */
+rt_int y_addr_v(void *root, const char *lay, const ydesc *d, void *comp, const char *clay, int depth);
+rt_int y_addr_s(yspace s);                     /* ADDR of a SPACE */
+void *y_mem_ptr(rt_int a);                     /* what address a names */
+rt_int *y_mem_word(rt_int a);                  /* MAIN_STORE_ARRAY [a] as a variable */
+rt_int y_mem_get(rt_int a);                    /* MAIN_STORE_ARRAY [a] */
+void y_mem_set(rt_int a, rt_int x);            /* MAIN_STORE_ARRAY [a] := x */
+void *y_make_ptr(rt_int a, const char *lay, const ydesc *d, int exact); /* MAKE_POINTER */
+void *y_new_l(size_t n, const char *lay, const ydesc *d); /* NEW, with its layout */
+/* views of the store: a variable AT an address whose layout is not one plain
+ * word, synchronized with the store when it is used and after statements */
+typedef struct yview yview;
+void *y_view(yview **slot, void *shadow, const char *lay, const ydesc *d, rt_int a);
+void y_view_put(const void *v, const char *lay, const ydesc *d, rt_int a);
+extern __thread int y_ntouched;
+void y_flush(void);
+#define Y_FLUSH() do { if (y_ntouched) y_flush(); } while (0)
+extern int Y_X_ADDRESS;
+
+/* ---- trap handlers (XIV.X.3) ---------------------------------------------------
+ * The checks of compiled code go through these: a trap whose handler a program
+ * has replaced (PROCEDURE REPLACES TRAP_OVERFLOW ...) calls it where the trap
+ * happened; when it returns, the operation goes on with the result given
+ * below; the standard handler propagates the exception */
+void y_trap_install(int id, void (*handler)(void));
+int y_trap(int id);                            /* returns when resumed */
+rt_int y_range(rt_int v, rt_int lo, rt_int hi);  /* resumes with the nearest bound */
+double y_frange(double v, double lo, double hi);
+rt_int y_add(rt_int a, rt_int b);              /* overflow resumes wrapped */
+rt_int y_sub(rt_int a, rt_int b);
+rt_int y_mul(rt_int a, rt_int b);
+rt_int y_neg(rt_int a);
+rt_int y_div(rt_int a, rt_int b);              /* by zero resumes with 0 */
+rt_int y_mod(rt_int a, rt_int b);
+double y_fdiv(double a, double b);
+/* with the index, pointer or zero-divide trap suppressed (XIV.XIII.2): no
+ * check; what the simulated machine does instead stays inside its storage */
+rt_int y_ixw1(yarr a, rt_int i);               /* the subscript wraps round */
+rt_int y_ixw2(yarr a, rt_int i, rt_int j);
+rt_int y_ixw3(yarr a, rt_int i, rt_int j, rt_int k);
+rt_int y_ixw4(yarr a, rt_int i, rt_int j, rt_int k, rt_int l);
+rt_int y_ixw5(yarr a, rt_int i, rt_int j, rt_int k, rt_int l, rt_int m);
+rt_int y_ixw6(yarr a, rt_int i, rt_int j, rt_int k, rt_int l, rt_int m, rt_int n);
+rt_int y_ixw7(yarr a, rt_int i, rt_int j, rt_int k, rt_int l, rt_int m, rt_int n, rt_int o);
+rt_int y_ixw8(yarr a, rt_int i, rt_int j, rt_int k, rt_int l, rt_int m, rt_int n, rt_int o, rt_int q);
+void *y_derefw(void *p, const char *lay, const ydesc *d, int exact); /* invalid: the store from 0 */
+rt_int y_divw(rt_int a, rt_int b);             /* by zero: 0 */
+rt_int y_modw(rt_int a, rt_int b);
+double y_fdivw(double a, double b);            /* IEEE: infinite or NaN */
+/* with the overflow trap suppressed: two's complement, no check */
+#define Y_ADDW(a, b) ((rt_int)((uint64_t)(a) + (uint64_t)(b)))
+#define Y_SUBW(a, b) ((rt_int)((uint64_t)(a) - (uint64_t)(b)))
+#define Y_MULW(a, b) ((rt_int)((uint64_t)(a) * (uint64_t)(b)))
+#define Y_NEGW(a) ((rt_int)(0 - (uint64_t)(a)))
 
 /* ---- conversions and text helpers ---------------------------------------- */
 rt_int y_floor(double v);
@@ -523,7 +621,58 @@ extern int Y_X_FIXED, Y_X_ZERO_DENOM, Y_X_NO_RETURN;
 const ydesc *y_desc_vector(const ydesc *elem);
 void y_device(ysig *s, rt_int address);   /* a SIGNAL AT a device location */
 extern const ydesc y_d_str;
-extern const ydesc y_d_sig;                  /* a SIGNAL as an array component */
+
+/* ---- fixed point (VI.A.1.b, VIII.C): a value is a whole number of its scale */
+typedef __int128 yfix;
+extern const ydesc y_d_fix;
+yfix y_fix_add(yfix a, yfix b);                /* OVERFLOW */
+yfix y_fix_sub(yfix a, yfix b);
+yfix y_fix_mul(yfix a, yfix b);
+yfix y_fix_neg(yfix a);
+yfix y_fix_conv(yfix k, yfix p, yfix q);   /* k * p / q, FIXED_NOT_REPRESENTABLE */
+yfix y_fix_range(yfix k, yfix lo, yfix hi);    /* OUT_OF_RANGE */
+yfix y_fix_bound(yfix k, yfix p, yfix q, int up);
+yfix y_fix_div(yfix n, yfix d, yfix p, yfix q); /* FIXED_DIV, ZERO_DENOMINATOR */
+yfix y_fix_near(yfix k, yfix p, yfix q);   /* NEAR_FIXED */
+yfix y_fix_of_float(double x, rt_int sn, rt_int sd);
+double y_fix_float(yfix k, rt_int sn, rt_int sd);
+rt_int y_fix_floor(yfix k, rt_int sn, rt_int sd);
+rt_int y_fix_ceiling(yfix k, rt_int sn, rt_int sd);
+rt_int y_fix_near_integer(yfix k, rt_int sn, rt_int sd);
+rt_int y_fmt_fix(yfix k, rt_int sn, rt_int sd, rt_int decimals, unsigned char *buf, rt_int cap);
+double y_fchk(double v);                       /* a floating-point overflow is OVERFLOW */
+extern const ydesc y_d_sig;                  /* a SIGNAL as a component */
+extern const ydesc y_d_sem;                  /* a SEMAPHORE as a component */
+extern const ydesc y_d_byte256;
+void y_sig_init_all(const ydesc *d, void *v, ymon *m); /* the signals of a structure */
+
+/* ---- undefined values (VIII.B, Appendix C "access to uninitialized variable")
+ * A fresh scalar holds a value no representation has; a read checks it */
+#define Y_UNDEF_I INT64_MIN
+#define Y_UNDEF_B 0xFF
+#define Y_UNDEF_X ((yfix)((unsigned __int128)1 << 127))
+typedef struct { void *body; const void *L, *d, *view; } ycell_undef;
+extern void *const Y_UNDEF_P;
+extern const double Y_UNDEF_F_VALUE;
+rt_int *y_chk_i(rt_int *p);
+unsigned char *y_chk_b(unsigned char *p);
+double *y_chk_f(double *p);
+yfix *y_chk_x(yfix *p);
+void **y_chk_p(void **p);
+yset *y_chk_s(yset *p);
+#define Y_DEFI(x) (*y_chk_i(&(x)))
+#define Y_DEFB(x) (*y_chk_b(&(x)))
+#define Y_DEFF(x) (*y_chk_f(&(x)))
+#define Y_DEFX(x) (*y_chk_x(&(x)))
+#define Y_DEFP(x) (*y_chk_p(&(x)))
+#define Y_DEFS(x) (*y_chk_s(&(x)))
+/* the same for a component of a value that is not a variable */
+static inline rt_int y_vchk_I(rt_int v) { return *y_chk_i(&v); }
+static inline unsigned char y_vchk_B(unsigned char v) { return *y_chk_b(&v); }
+static inline double y_vchk_F(double v) { return *y_chk_f(&v); }
+static inline yfix y_vchk_X(yfix v) { return *y_chk_x(&v); }
+static inline void *y_vchk_P(void *v) { return *y_chk_p(&v); }
+static inline yset y_vchk_S(yset v) { return *y_chk_s(&v); }
 
 #endif
 
