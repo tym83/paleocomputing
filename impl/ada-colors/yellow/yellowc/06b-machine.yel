@@ -235,7 +235,7 @@
     VAR t: Txt;
     IF r^.kind = R_SPACE THEN RETURN code ENDIF;
     IF IsVariable(n) OR ((n^.kind = N_NAME) AND (r^.kind # R_STR)) THEN
-      RETURN Join(T("((yspace){ (void *)&("), code, Join(T("), "), ExtentCode(code, r), T(" })")))
+      RETURN Join(T("((yspace){ (void *)&("), RawCode(n, code), Join(T("), "), ExtentCode(code, r), T(" })")))
     ENDIF;
     t := Fresh("sp");
     SB();

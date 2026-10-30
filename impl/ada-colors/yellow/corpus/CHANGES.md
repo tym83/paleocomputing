@@ -76,8 +76,9 @@ numbered fragments of section II, the not-equal sign written `#` and the up-arro
   `OUT_OF_RANGE` — slot and the IndexSlot components get `INTEGER [0..tablesize]`; `MOD
   tablesize` for `MOD tableRange` (a representation used as a number); `table[probe].flag` for
   the undeclared `Tag(...)`; `table[indexSlot.slot]` for the undeclared `slot`; `Delete` gets its
-  RETURN. The module offers no way to make an empty table (this implementation starts every
-  variable at zero, which is `fresh`).
+  RETURN. The module offers no way to make an empty table, and a variable is undefined until
+  assigned (reading it raises UNINITIALIZED): a procedure `Clear` that makes every entry
+  `fresh` is added and exported.
 - **E26 exchange sort.** IMPORT/EXPORT; `LENGTH` (not a standard operation) written with HIGH
   and LOW; parentheses around the relations of a WHILE; `stringArray` (printed `stringARRAY`
   once); Exchange's parameters CONST (it is called with `i` and `i+1`); the VAR declarations

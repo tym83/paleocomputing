@@ -433,6 +433,7 @@ extern const ydesc y_d_int, y_d_byte, y_d_float, y_d_ptr, y_d_set, y_d_opaque;
 void y_desc_array(ydesc *d, int nd, const rt_int *lo, const rt_int *hi, const ydesc *elem);
 void y_desc_record(ydesc *d, size_t size, int nf, const size_t *off, const ydesc *const *fd);
 void y_init(const ydesc *d, void *v);          /* a fresh value: zeros, own buffers */
+void y_initu(const ydesc *d, void *v);         /* ... undefined (y_lang's checks) */
 void y_copy(const ydesc *d, void *dst, const void *src); /* deep copy, dst is fresh */
 void y_store(const ydesc *d, void *dst, const void *src); /* assignment: bounds must agree */
 int y_eq(const ydesc *d, const void *a, const void *b);
@@ -605,6 +606,35 @@ rt_int y_fmt_fix(yfix k, rt_int sn, rt_int sd, rt_int decimals, unsigned char *b
 double y_fchk(double v);                       /* a floating-point overflow is OVERFLOW */
 extern const ydesc y_d_sig;                  /* a SIGNAL as a component */
 extern const ydesc y_d_sem;                  /* a SEMAPHORE as a component */
+extern const ydesc y_d_byte256;
 void y_sig_init_all(const ydesc *d, void *v, ymon *m); /* the signals of a structure */
+
+/* ---- undefined values (VIII.B, Appendix C "access to uninitialized variable")
+ * A fresh scalar holds a value no representation has; a read checks it */
+#define Y_UNDEF_I INT64_MIN
+#define Y_UNDEF_B 0xFF
+#define Y_UNDEF_X ((yfix)((unsigned __int128)1 << 127))
+typedef struct { void *body; } ycell_undef;
+extern void *const Y_UNDEF_P;
+extern const double Y_UNDEF_F_VALUE;
+rt_int *y_chk_i(rt_int *p);
+unsigned char *y_chk_b(unsigned char *p);
+double *y_chk_f(double *p);
+yfix *y_chk_x(yfix *p);
+void **y_chk_p(void **p);
+yset *y_chk_s(yset *p);
+#define Y_DEFI(x) (*y_chk_i(&(x)))
+#define Y_DEFB(x) (*y_chk_b(&(x)))
+#define Y_DEFF(x) (*y_chk_f(&(x)))
+#define Y_DEFX(x) (*y_chk_x(&(x)))
+#define Y_DEFP(x) (*y_chk_p(&(x)))
+#define Y_DEFS(x) (*y_chk_s(&(x)))
+/* the same for a component of a value that is not a variable */
+static inline rt_int y_vchk_I(rt_int v) { return *y_chk_i(&v); }
+static inline unsigned char y_vchk_B(unsigned char v) { return *y_chk_b(&v); }
+static inline double y_vchk_F(double v) { return *y_chk_f(&v); }
+static inline yfix y_vchk_X(yfix v) { return *y_chk_x(&v); }
+static inline void *y_vchk_P(void *v) { return *y_chk_p(&v); }
+static inline yset y_vchk_S(yset v) { return *y_chk_s(&v); }
 
 #endif

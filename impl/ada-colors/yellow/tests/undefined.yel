@@ -1,0 +1,34 @@
+(* a variable is undefined until it is assigned: reading it raises the *)
+(* trap UNINITIALIZED (VIII.B; Appendix C, "access to uninitialized *)
+(* variable"), for components and dynamic variables too; a VAR or OUT *)
+(* actual may be undefined *)
+MODULE Undefined
+  IMPORT TextIO, StandardImplementationPrelude;
+  REPRESENTATION R = RECORD VAR a, b: INTEGER64 ENDRECORD;
+    P = POINTER (INTEGER64);
+  VAR n: INTEGER64; r: R; v: ARRAY (INTEGER [1..3] OF BOOLEAN); p: P; c: ASCII;
+  PROCEDURE Set (OUT x: INTEGER64) x := 4; RETURN ENDPROCEDURE Set;
+  BEGIN
+    EXCEPTION CASE UNINITIALIZED => Write("n is undefined"); WriteLn() ENDEXCEPTION;
+    Write(n)
+  END;
+  Set(n); Write(n); WriteLn();
+  r.a := 1;
+  BEGIN
+    EXCEPTION CASE UNINITIALIZED => Write("r.b is undefined"); WriteLn() ENDEXCEPTION;
+    Write(r.a + r.b)
+  END;
+  BEGIN
+    EXCEPTION CASE UNINITIALIZED => Write("v[2] is undefined"); WriteLn() ENDEXCEPTION;
+    v[1] := TRUE; Write(v[1]); Write(v[2])
+  END;
+  NEW(p);
+  BEGIN
+    EXCEPTION CASE UNINITIALIZED => Write("p^ is undefined"); WriteLn() ENDEXCEPTION;
+    Write(p^)
+  END;
+  BEGIN
+    EXCEPTION CASE UNINITIALIZED => Write("c is undefined"); WriteLn() ENDEXCEPTION;
+    Write(c)
+  END
+ENDMODULE Undefined

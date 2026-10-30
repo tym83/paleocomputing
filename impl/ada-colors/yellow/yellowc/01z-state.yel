@@ -62,7 +62,7 @@
     F_MAKE_POINTER: INT = 37; F_MAIN_STORE: INT = 38;
     (* the traps a program may suppress (XIV.XIII.2), as bits of Supp, and *)
     (* the directives of the compiler status module *)
-    T_RANGE: INT = 1; T_OVERFLOW: INT = 2; T_ASSERTION: INT = 4;
+    T_RANGE: INT = 1; T_OVERFLOW: INT = 2; T_ASSERTION: INT = 4; T_UNINIT: INT = 8;
     D_SUPPRESS: INT = 1; D_RESTORE: INT = 2; D_SUPPRESSED: INT = 3;
 
   VAR
@@ -100,6 +100,7 @@
     HasHandler: BOOLEAN := FALSE;    (* it has an exception handler *)
     ImpureCalls: INT := 0;           (* calls of procedures in expressions so far *)
     Supp: INT := 0;                  (* the traps suppressed here *)
+    LvNode: Node := Node NIL;        (* the designator of the variable being assigned *)
     CurModName: Txt := 0;            (* the module whose declarations are read *)
     (* for the checks of X.A.4-6: every routine, the calls with VAR actuals, *)
     (* the pointer types reached freely *)

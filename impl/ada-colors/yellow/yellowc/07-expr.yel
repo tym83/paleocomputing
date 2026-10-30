@@ -670,7 +670,10 @@
   ENDPROCEDURE CheckPure;
 
   PROCEDURE LValue (CONST n: Node; OUT code: Txt; OUT r: Rep)
+    VAR save: Node := LvNode;
+    LvNode := n;
     Expr(n, Rep NIL, code, r);
+    LvNode := save;
     IF NOT IsVariable(n) THEN FailS(n^.line, "a variable is needed here (IX.A.1)") ENDIF;
     RETURN
   ENDPROCEDURE LValue;
@@ -852,8 +855,78 @@
       FailS(n^.line, "not an expression")
     ENDIF;
     n^.rep := r;
+    CheckDefined(n, code, r);
     RETURN
   ENDPROCEDURE Expr;
+
+  (* a variable read is defined (VIII.B; Appendix C, "access to *)
+  (* uninitialized variable"): the value of a variable, a component or a *)
+  (* dynamic variable is checked, unless it is the variable being assigned *)
+  (* or passed; the code without the check stays in the node's text *)
+  PROCEDURE CheckDefined (CONST n: Node; VAR code: Txt; CONST r: Rep)
+    VAR k: INT := n^.kind;
+        m: Txt := 0;
+    IF (k = N_NAME) OR (k = N_SEL) OR (k = N_INDEX) OR (k = N_DEREF) THEN n^.text := 0 ELSE RETURN ENDIF;
+    IF n = LvNode THEN RETURN ENDIF;
+    IF (k = N_NAME) AND (n^.ival # 1) THEN RETURN ENDIF;
+    IF (k = N_DEREF) AND (n^.flag # 0) THEN RETURN ENDIF;
+    IF Suppressed(T_UNINIT) THEN RETURN ENDIF;
+    m := UndefMacro(r);
+    IF m = 0 THEN RETURN ENDIF;
+    n^.text := code;
+    IF NOT Addressable(n) THEN
+      (* a component of a value: checked as a value *)
+      SB();
+      SA("y_vchk_");
+      SC(TChar(m, 6));
+      SA("(");
+      m := SE()
+    ENDIF;
+    code := Join(m, code, T(")"));
+    RETURN
+  ENDPROCEDURE CheckDefined;
+
+  (* is the designator n storage the C program can take the address of: *)
+  (* not a component of the result of a call *)
+  PROCEDURE Addressable RETURNS BOOLEAN (CONST n: Node)
+    VAR d: Node := n;
+    WHILE (d^.kind = N_SEL) OR (d^.kind = N_PAREN) DO d := d^.a ENDWHILE;
+    IF d^.kind = N_CALL THEN RETURN FALSE ENDIF;
+    IF (d^.kind = N_DEREF) AND (d^.flag # 0) THEN RETURN FALSE ENDIF;
+    RETURN TRUE
+  ENDPROCEDURE Addressable;
+
+  (* the check of a scalar of r, or 0 *)
+  PROCEDURE UndefMacro RETURNS Txt (CONST r: Rep)
+    VAR k: INT := r^.kind;
+    IF (k = R_INT) OR (k = R_BOOL) OR (k = R_ENUM) THEN RETURN T("Y_DEFI(") ENDIF;
+    IF (k = R_ALPHA) AND (r^.nlits < 256) THEN RETURN T("Y_DEFB(") ENDIF;
+    IF k = R_FLOAT THEN RETURN T("Y_DEFF(") ENDIF;
+    IF k = R_FIXED THEN RETURN T("Y_DEFX(") ENDIF;
+    IF k = R_PTR THEN RETURN T("Y_DEFP(") ENDIF;
+    IF k = R_SET THEN RETURN T("Y_DEFS(") ENDIF;
+    RETURN 0
+  ENDPROCEDURE UndefMacro;
+
+  (* the value a fresh scalar of r holds, undefined; 0 when it has none *)
+  PROCEDURE UndefValue RETURNS Txt (CONST r: Rep)
+    VAR k: INT := r^.kind;
+    IF (k = R_INT) OR (k = R_BOOL) OR (k = R_ENUM) THEN RETURN T("Y_UNDEF_I") ENDIF;
+    IF (k = R_ALPHA) AND (r^.nlits < 256) THEN RETURN T("Y_UNDEF_B") ENDIF;
+    IF k = R_FLOAT THEN RETURN T("Y_UNDEF_F_VALUE") ENDIF;
+    IF k = R_FIXED THEN RETURN T("Y_UNDEF_X") ENDIF;
+    IF k = R_PTR THEN RETURN T("Y_UNDEF_P") ENDIF;
+    RETURN 0
+  ENDPROCEDURE UndefValue;
+
+  (* the code of a designator without the check of its value *)
+  PROCEDURE RawCode RETURNS Txt (CONST n: Node; CONST code: Txt)
+    IF ((n^.kind = N_NAME) OR (n^.kind = N_SEL) OR (n^.kind = N_INDEX) OR (n^.kind = N_DEREF)) AND
+       (n^.text # 0) THEN
+      RETURN n^.text
+    ENDIF;
+    RETURN code
+  ENDPROCEDURE RawCode;
 
   (* the test that a record held at *p has the variant of field f *)
   PROCEDURE VariantTest RETURNS Txt (CONST r: Rep; CONST f: Field; CONST p: Txt)
@@ -888,6 +961,7 @@
       RETURN
     ENDIF;
     IF (s^.kind = S_VAR) OR (s^.kind = S_CONST) THEN
+      IF s^.kind = S_VAR THEN n^.ival := 1 ELSE n^.ival := 0 ENDIF;
       NoteFree(s);
       r := s^.rep;
       code := SymPath(s);

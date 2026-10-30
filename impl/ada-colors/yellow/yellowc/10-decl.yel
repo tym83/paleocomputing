@@ -415,10 +415,12 @@
     RETURN
   ENDPROCEDURE DeclareAt;
 
+  (* a fresh variable is undefined until it is assigned (VII.B) *)
   PROCEDURE InitStorage (CONST s: Sym; CONST r: Rep; CONST line: INT)
-    IF Deep(r) THEN Emit(Join(T("y_init("), DescOf(r), Join(T(", &"), SymPath(s), T(");")))) ENDIF;
-    IF r^.kind = R_SET THEN
-      Emit(Join(SymPath(s), T(" = y_set_new("), Join(LoText(r^.elem), T(", "), Join(HiText(r^.elem), T(");"), 0))))
+    IF Deep(r) OR (r^.kind = R_RECORD) THEN
+      Emit(Join(T("y_initu("), DescOf(r), Join(T(", &"), SymPath(s), T(");"))))
+    ELSIF UndefValue(r) # 0 THEN
+      Emit(Join(SymPath(s), T(" = "), Join(UndefValue(r), T(";"), 0)))
     ENDIF;
     IF r^.kind = R_SIGNAL THEN DeclareSignal(s, line) ENDIF;
     IF HoldsSignal(r) THEN DeclareSignalArray(s, line) ENDIF;

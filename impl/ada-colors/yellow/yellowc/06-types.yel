@@ -100,6 +100,7 @@
   PROCEDURE DescOf RETURNS Txt (CONST r: Rep)
     VAR k: INT := r^.kind;
     IF (k = R_INT) OR (k = R_BOOL) OR (k = R_ENUM) THEN RETURN T("&y_d_int") ENDIF;
+    IF (k = R_ALPHA) AND (r^.nlits >= 256) THEN RETURN T("&y_d_byte256") ENDIF;
     IF k = R_ALPHA THEN RETURN T("&y_d_byte") ENDIF;
     IF k = R_FLOAT THEN RETURN T("&y_d_float") ENDIF;
     IF k = R_FIXED THEN RETURN T("&y_d_fix") ENDIF;

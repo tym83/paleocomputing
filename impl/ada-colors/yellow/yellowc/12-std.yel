@@ -217,12 +217,21 @@
       SA(" = y_new(sizeof(");
       ST(CType(el));
       SA("));");
-      IF Deep(el) THEN
-        SA(" y_init(");
+      IF Deep(el) OR (el^.kind = R_RECORD) THEN
+        SA(" y_initu(");
         ST(DescOf(el));
         SA(", y_deref(");
         ST(a);
         SA("));")
+      ELSIF UndefValue(el) # 0 THEN
+        (* the new dynamic variable is undefined *)
+        SA(" *(");
+        ST(CType(el));
+        SA(" *)y_deref(");
+        ST(a);
+        SA(") = ");
+        ST(UndefValue(el));
+        SA(";")
       ENDIF;
       SA(" })");
       code := SE();
@@ -558,7 +567,7 @@
          (ra^.kind = R_STR) THEN
         FailS(n^.line, "ADDR takes a variable or constant (XIV.XI.2)")
       ENDIF;
-      code := Join(T("y_addr((void *)&("), a, Join(T("), "), ExtentCode(a, ra), T(")")));
+      code := Join(T("y_addr((void *)&("), RawCode(p, a), Join(T("), "), ExtentCode(a, ra), T(")")));
       RETURN
     ENDIF;
     IF f = F_MAKE_POINTER THEN

@@ -586,7 +586,7 @@
             FailN(ArgNode[i]^.line, root^.name, " is the VAR actual of a process that may outlive it: its life scope is smaller than that of the process (X.E.2)")
           ENDIF
         ENDIF;
-        Emit(Join(pc, T(" = &"), Join(ArgCode[i], T(";"), 0)))
+        Emit(Join(pc, T(" = &"), Join(RawCode(ArgNode[i], ArgCode[i]), T(";"), 0)))
       ELSIF Deep(p^.rep) THEN
         (* the process may outlive the value: it gets its own copy *)
         t := Fresh("t");

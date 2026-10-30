@@ -145,7 +145,7 @@
         ENDIF;
         IF SameAsFormal(p^.rep, ArgRep[i]) THEN
           SA("&");
-          ST(ArgCode[i])
+          ST(RawCode(ArgNode[i], ArgCode[i]))
         ELSIF p^.cls = C_VAR THEN
           FailN(ArgNode[i]^.line, p^.name, ": a VAR actual has the representation of its formal (VII.G, X.A.2)")
         ELSE
@@ -153,12 +153,12 @@
           pre := Join(pre, Join(CType(p^.rep), T(" "), tmp), T(";"));
           IF p^.rep^.kind = R_UARRAY THEN
             pre := Join(pre, Join(T(" "), tmp, T(" = y_like(")),
-                        Join(ArgCode[i], Join(T(", "), Num(ArgRep[i]^.nidx), T(", ")),
+                        Join(RawCode(ArgNode[i], ArgCode[i]), Join(T(", "), Num(ArgRep[i]^.nidx), T(", ")),
                              Join(DescOf(p^.rep^.elem), T(");"), 0)))
           ELSIF Deep(p^.rep) THEN
             pre := Join(pre, Join(T(" y_init("), DescOf(p^.rep), T(", &")), Join(tmp, T(");"), 0))
           ENDIF;
-          post := Join(post, T(" "), StoreText(ArgCode[i], ArgRep[i], tmp, p^.rep, ArgNode[i]^.line));
+          post := Join(post, T(" "), StoreText(RawCode(ArgNode[i], ArgCode[i]), ArgRep[i], tmp, p^.rep, ArgNode[i]^.line));
           SA("&");
           ST(tmp)
         ENDIF
@@ -254,7 +254,9 @@
     IF NOT ok OR (nargs # 1) THEN FailN(n^.line, n^.name, " takes a manifest TRAP_KIND (XIV.XIII.2)") ENDIF;
     (* RANGE_TRAP, OVERFLOW_TRAP, ASSERTION_TRAP; the others are kept *)
     bit := 0;
-    IF v = 0 THEN bit := T_RANGE ELSIF v = 1 THEN bit := T_OVERFLOW ELSIF v = 2 THEN bit := T_ASSERTION ENDIF;
+    IF v = 0 THEN bit := T_RANGE ELSIF v = 1 THEN bit := T_OVERFLOW ELSIF v = 2 THEN bit := T_ASSERTION
+    ELSIF v = 6 THEN bit := T_UNINIT
+    ENDIF;
     r := RVoid;
     code := T("((void)0)");
     IF s^.mval = D_SUPPRESS THEN

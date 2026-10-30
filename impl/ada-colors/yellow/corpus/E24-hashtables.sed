@@ -16,3 +16,11 @@ s/SELECT Tag(table\[probe\])/SELECT table[probe].flag/
 s/THEN table\[index\] := TableEntry(deleted) ENDIF$/THEN table[index] := TableEntry(deleted) ENDIF; RETURN/
 # 7. slot is a component of indexSlot, not a variable of Insert
 s/THEN table\[slot\]:=TableEntry(full, key); RETURN TRUE/THEN table[indexSlot.slot]:=TableEntry(full, key); RETURN TRUE/
+# 8. a variable is undefined until it is assigned (VIII.B), and the module
+#    offers no way to make an empty table: Clear makes every entry fresh
+s/^  EXPORT NumberTable, Search, Delete, Insert;$/  EXPORT NumberTable, Search, Delete, Insert, Clear;/
+s/^ENDMODULE NumberTableImplementation;$/  PROCEDURE Clear (OUT table: NumberTable)\
+    FOR i: tableRange DO table[i] := TableEntry(fresh) ENDFOR;\
+    RETURN\
+  ENDPROCEDURE Clear;\
+ENDMODULE NumberTableImplementation;/

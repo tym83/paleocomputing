@@ -173,6 +173,25 @@
 
   (* ---- the translator --------------------------------------------------------- *)
 
+  (* the tables start empty: every variable is defined before it is read *)
+  (* (VIII.B) *)
+  FOR h: INTEGER [0..262143] DO Hash[h] := 0 ENDFOR;
+  FOR h: INTEGER [0..8191] DO Table[h] := Sym NIL ENDFOR;
+  FOR h: INTEGER [0..400] DO
+    DeclList[h] := Node NIL;
+    DeclCursor[h] := Node NIL;
+    ProcList[h] := Node NIL
+  ENDFOR;
+  OTypes := Buf(Line NIL, Line NIL);
+  OStructs := OTypes;
+  OFrames := OTypes;
+  OGlobals := OTypes;
+  OProtos := OTypes;
+  OFuncs := OTypes;
+  OInit := OTypes;
+  OWarn := OTypes;
+  Body := OTypes;
+  Locals := OTypes;
   InitChars();
   InitWords();
   FromWord := N("FROM");

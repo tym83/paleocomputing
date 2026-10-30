@@ -2511,6 +2511,27 @@ rt_int y_count(yarr a, int nd) {
   return n;
 }
 
+/* a fresh value is undefined (VIII.B, Appendix C): its scalars hold a value
+ * no representation has, which the checks of compiled code recognize */
+const double Y_UNDEF_F_VALUE = __builtin_nan("0x59454c");
+static ycell_undef y_undef_cell;
+void *const Y_UNDEF_P = &y_undef_cell;
+
+static int is_undef_kind(const ydesc *d) {
+  return d->kind == YK_INT || d->kind == YK_BYTE || d->kind == YK_FLOAT || d->kind == YK_FIX ||
+         d->kind == YK_PTR;
+}
+
+static void undef_one(const ydesc *d, void *v) {
+  switch (d->kind) {
+  case YK_INT: *(rt_int *)v = Y_UNDEF_I; break;
+  case YK_BYTE: *(unsigned char *)v = Y_UNDEF_B; break;
+  case YK_FLOAT: memcpy(v, &Y_UNDEF_F_VALUE, sizeof(double)); break;
+  case YK_FIX: *(yfix *)v = Y_UNDEF_X; break;
+  case YK_PTR: *(void **)v = Y_UNDEF_P; break;
+  }
+}
+
 void y_init(const ydesc *d, void *v) {
   memset(v, 0, d->size);
   if (d->kind == YK_ARRAY) {
@@ -2527,6 +2548,76 @@ void y_init(const ydesc *d, void *v) {
     for (int i = 0; i < d->nf; i++)
       if (d->fd[i]->deep) y_init(d->fd[i], (char *)v + d->off[i]);
   }
+}
+
+/* y_init for a declared variable or a new dynamic one: undefined scalars */
+void y_initu(const ydesc *d, void *v) {
+  memset(v, 0, d->size);
+  if (d->kind == YK_ARRAY) {
+    yarr *a = v;
+    for (int k = 0; k < Y_MAXD; k++) {
+      a->lo[k] = d->lo[k];
+      a->hi[k] = d->hi[k];
+    }
+    rt_int n = y_count(*a, d->nd);
+    size_t esz = d->elem->size;
+    a->p = rt_alloc((size_t)n * esz);
+    if (d->elem->kind == YK_BYTE)
+      memset(a->p, Y_UNDEF_B, (size_t)n);
+    else if (is_undef_kind(d->elem))
+      for (rt_int i = 0; i < n; i++) undef_one(d->elem, (char *)a->p + i * esz);
+    else if (d->elem->deep || d->elem->kind == YK_RECORD)
+      for (rt_int i = 0; i < n; i++) y_initu(d->elem, (char *)a->p + i * esz);
+  } else if (d->kind == YK_RECORD) {
+    for (int i = 0; i < d->nf; i++) y_initu(d->fd[i], (char *)v + d->off[i]);
+  } else {
+    undef_one(d, v);
+  }
+}
+
+/* the checks of a read: the value defined, or the trap UNINITIALIZED; a
+ * handler that returns resumes with the zero of the representation, now the
+ * variable's value */
+rt_int *y_chk_i(rt_int *p) {
+  if (*p == Y_UNDEF_I) {
+    y_trap(RT_X_INIT);
+    *p = 0;
+  }
+  return p;
+}
+unsigned char *y_chk_b(unsigned char *p) {
+  if (*p == Y_UNDEF_B) {
+    y_trap(RT_X_INIT);
+    *p = 0;
+  }
+  return p;
+}
+double *y_chk_f(double *p) {
+  if (memcmp(p, &Y_UNDEF_F_VALUE, sizeof(double)) == 0) {
+    y_trap(RT_X_INIT);
+    *p = 0;
+  }
+  return p;
+}
+yfix *y_chk_x(yfix *p) {
+  if (*p == Y_UNDEF_X) {
+    y_trap(RT_X_INIT);
+    *p = 0;
+  }
+  return p;
+}
+void **y_chk_p(void **p) {
+  if (*p == Y_UNDEF_P) {
+    y_trap(RT_X_INIT);
+    *p = NULL;
+  }
+  return p;
+}
+yset *y_chk_s(yset *p) {
+  if (!p->w && !p->e && !p->lo && !p->hi) {
+    y_trap(RT_X_INIT);
+  }
+  return p;
 }
 
 void y_copy(const ydesc *d, void *dst, const void *src) {
@@ -2703,8 +2794,7 @@ yarr y_like(yarr a, int nd, const ydesc *elem) {
   yarr t = a;
   rt_int n = y_count(a, nd);
   t.p = rt_alloc((size_t)n * elem->size);
-  if (elem->deep)
-    for (rt_int i = 0; i < n; i++) y_init(elem, (char *)t.p + i * elem->size);
+  for (rt_int i = 0; i < n; i++) y_initu(elem, (char *)t.p + i * elem->size);
   return t;
 }
 
@@ -3293,7 +3383,7 @@ int y_trap(int id) {
 }
 
 rt_int y_range(rt_int v, rt_int lo, rt_int hi) {
-  if (v < lo || v > hi) {
+  if ((v < lo || v > hi) && v != Y_UNDEF_I) {
     y_trap(RT_X_RANGE);
     return v < lo ? lo : hi;
   }
@@ -3504,6 +3594,7 @@ yfix y_fix_neg(yfix a) { return y_fix_sub(0, a); }
 static yfix fix_round(yfix a, yfix b);
 
 yfix y_fix_conv(yfix k, yfix p, yfix q) {
+  if (k == Y_UNDEF_X) return k;
   yfix t = y_fix_mul(k, p);
   if (q == 1) return t;
   if (t % q != 0) {
@@ -3514,7 +3605,7 @@ yfix y_fix_conv(yfix k, yfix p, yfix q) {
 }
 
 yfix y_fix_range(yfix k, yfix lo, yfix hi) {
-  if (k < lo || k > hi) {
+  if ((k < lo || k > hi) && k != Y_UNDEF_X) {
     y_trap(RT_X_RANGE);
     return k < lo ? lo : hi;
   }
@@ -3652,6 +3743,8 @@ void y_device(ysig *s, rt_int address) {
  * y_sig_init_all when the structure is declared */
 const ydesc y_d_sig = {YK_SIG, sizeof(ysig), 0, 0, {0}, {0}, NULL, 0, NULL, NULL};
 const ydesc y_d_sem = {YK_OPAQUE, sizeof(rt_lock), 0, 0, {0}, {0}, NULL, 0, NULL, NULL};
+/* a character of an alphabet of 256: every byte is a character */
+const ydesc y_d_byte256 = {YK_OPAQUE, 1, 0, 0, {0}, {0}, NULL, 0, NULL, NULL};
 
 void y_sig_init_all(const ydesc *d, void *v, ymon *m) {
   if (d->kind == YK_SIG) {

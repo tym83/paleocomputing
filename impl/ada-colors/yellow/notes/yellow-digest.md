@@ -98,6 +98,10 @@ The rule numbers of the Appendix are used in yellowc's comments. Points that nee
 - Sets of any integer or scalar range; `+ - * XOR IN`, prefix `-` is the complement. A base
   range of more than 65536 values (`SET (INTEGER64)`) is held as a sorted list of members, or
   of non-members after a complement.
+- A variable is undefined until it is assigned (VII.B, VIII.B): a fresh scalar, in a variable,
+  a component or a dynamic variable, holds a value no representation has, and reading it
+  raises the trap UNINITIALIZED (Appendix C, "access to uninitialized variable"). A VAR or
+  OUT actual may be undefined, and copying a structure copies its undefined components.
 - Bounds are scope-entry constants: computed once where the representation is elaborated.
   Manifest constants (VI.C) are literals, manifest CONSTs and what standard operators and
   functions make of them: SUCC, PRED, FIRST, LAST, LOW, HIGH (where the bounds are known),
@@ -284,7 +288,7 @@ whose top 8192 words (BASE8 160000 on) are the PDP-11 I/O page of the Report's e
   and RESTORE_TRAP(t) are directives to the translator from the call to the end of the
   block (and the bodies declared there); TRAP_SUPPRESSED(t) tells the state. Suppressing
   RANGE_TRAP, OVERFLOW_TRAP or ASSERTION_TRAP leaves out the code that detects them (an
-  ASSERT then has no effect, IX.A.3); INDEX_TRAP, POINTER_TRAP and ZERO_DIVIDE_TRAP are kept,
+  ASSERT then has no effect, IX.A.3), and so does UNINITIALIZED_TRAP; INDEX_TRAP, POINTER_TRAP and ZERO_DIVIDE_TRAP are kept,
   since leaving them out would let a program reach storage it does not own.
 
 Code inserts: the machine of this implementation is C, so `C_CODE_INSERT("...")`
