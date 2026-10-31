@@ -2,7 +2,7 @@
 
 The 1978 reviewers, as the red team remembered it, split the four designs into two pairs: the conservative Blue and Red, and the ambitious, "academic" Yellow and Green. One from each pair went through to the second round. Now that all four languages work, you can see the split was no accident, and the best way to see it is on one and the same task.
 
-The task goes like this. Two workers take turns updating a shared account under a lock. The first one grabs the lock and crashes in the middle of the update. The question: will the second one get in? It's not an academic question. In any system with locks, from an operating system kernel to a database, the first question you ask about a lock is what happens to it when its owner dies. It will come up again in the chapter on Kubernetes.
+The task goes like this. Two workers take turns updating a shared account under a lock, and the first one grabs the lock and crashes in the middle of the update. Will the second one get in? It's far from an academic question. In any system with locks, from an operating system kernel to a database, the first question you ask about a lock is what happens to it when its owner dies. It will come up again in the chapter on Kubernetes.
 
 In the red language the lock is a `REGION`, and it's released however the body ends:
 
@@ -40,7 +40,7 @@ exception
 end;
 ```
 
-In Blue the lock is released by the abnormal termination of the path, if it's a `REGION` semaphore: the full code was in the chapter on the blue language. In Yellow there are two answers, and they're opposite. A monitor is freed if a monitor procedure exits by an exception. A binary semaphore, `CLAIM` and `RELEASE`, is never freed:
+In Blue the lock is released by the abnormal termination of the path, if it's a `REGION` semaphore: the full code was in the chapter on the blue language. In Yellow there are two answers, and they're opposite. A monitor is freed if a monitor procedure exits by an exception. A binary semaphore with `CLAIM` and `RELEASE` is never freed:
 
 ```
 MONITOR Account

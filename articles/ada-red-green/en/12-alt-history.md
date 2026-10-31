@@ -1,6 +1,6 @@
 # If different hands had gone up
 
-Alternative history is a dangerous genre; it's easy to dream up anything at all. So I tried to stick to forks in the road that really existed and to mechanisms that can actually be traced. That gives two scenarios: the red language wins in May 1979, and the green language is frozen in the form it was handed in that March, without four years of polishing.
+Alternative history is a genre where it's easy to dream up anything at all, so I wore the tinfoil hat carefully and stuck to forks in the road that really existed and to mechanisms that can actually be traced. That gives two scenarios: the red language wins in May 1979, and the green language is frozen in the form it was handed in that March, without four years of polishing.
 
 ## A world where RED won
 
@@ -16,7 +16,7 @@ Third, the language industry itself. In his history of C++, Stroustrup writes pl
 
 Fourth, Oracle. Oracle's documentation still says outright that PL/SQL is based on Ada and stores programs in the database as DIANA trees, Ada's intermediate representation. DIANA was devised in January 1981 at a meeting whose participants included Nestor and Brosgol from the Red team. In the red world PL/SQL would have been built on RED, and every Oracle database today would hold procedures with capsules and `EXPOSE`. Maybe even with `DATA_LOCK` for row locking, who knows.
 
-Fifth, VHDL. The Air Force commissioned the hardware description language in 1983 from a consortium of Intermetrics, TI and IBM, and Intermetrics were the language experts there. VHDL ended up looking a lot like Ada. The irony is that the losers' company built a hardware language modeled on the winning Green one. In the red world they would have been copying their own language, and VHDL processes might have communicated through mailboxes rather than signals.
+Fifth, VHDL. The Air Force commissioned the hardware description language in 1983 from a consortium of Intermetrics, TI and IBM, and Intermetrics was the language expert there. VHDL ended up looking a lot like Ada. The irony is that the losers' company built a hardware language modeled on the winning Green one. In the red world they would have been copying their own language, and VHDL processes might have communicated through mailboxes rather than signals.
 
 And sixth, the one I least expected. Erlang. In the mid-eighties Ericsson compared languages for telephone exchanges, and Ada was on the list. Joe Armstrong writes that he tried pipes first, threw them out and built mailboxes. It's tempting to say that in the red world Erlang would never have been needed. But that's not true: Erlang rests on process isolation, asynchronous copying message passing and failure handling, whereas RED has shared variables, and its mailboxes are bounded and blocking. The honest version is more modest: a red Ada would have been closer to Erlang than the green one, and might have shown the military and the railway people sooner that message-based systems outlive shared-memory systems. My three-hundred-line PAIRS operating system is about exactly that.
 

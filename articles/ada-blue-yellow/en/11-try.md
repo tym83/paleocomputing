@@ -1,6 +1,6 @@
 # Labs, and how to get your hands on all this
 
-As in the earlier parts, I wanted readers to be able not just to read about the language but to break something with their own hands. The twelve exercises in the red language are now joined by fifteen new ones, seven in Blue and eight in Yellow. They're about what only these languages have, and the `check.sh` script translates your version of a program, runs it and tells you whether you've completed the task. The lab's number and the level, `look`, `change`, `break` or `build`, are its arguments. Time in the programs is virtual and the scheduler is deterministic, so you can compare your output with someone else's character for character.
+As in the earlier parts, I wanted readers to be able not just to read about the language but to break something with their own hands. The twelve exercises in the red language are now joined by fifteen new ones, seven in Blue and eight in Yellow. They cover what only these languages have. As before, the `check.sh` script translates your version of a program, runs it and tells you whether you've completed the task. The lab's number and the level, `look`, `change`, `break` or `build`, are its arguments. Time in the programs is virtual and the scheduler is deterministic, so you can compare your output with someone else's character for character.
 
 In the blue language:
 

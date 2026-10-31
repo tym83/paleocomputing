@@ -40,7 +40,7 @@ And `WHERE T NEEDS (STORE_ (T ## T))` is the list of what the procedure body nee
 
 `STORE_` in the previous example is not a typo. In the blue language every operation, including assignment, comparison and taking a substring, is a call to a function with a fixed name: `ADD_`, `EQUAL_`, `LESS_THAN_`, `SUBSTRING_`, `STORE_`. An abstract type exported from a module defines its own addition and assignment in exactly the same way, as ordinary subprograms. Ada still has no user-defined assignment: Ada 95's controlled types let you specify actions after copying and before finalization, but not the assignment itself. In C with Classes, the predecessor of C++, on the other hand, you could already overload assignment in 1980.
 
-One of the 1978 reviewers wrote that "Blue is the closest to using the concept of type and type definition facilities as unifying forces in the language." I don't know a better short description. Fixed-point numbers are specified by scale, radix and precision: `FIXED (scale, radix, precision)`, and `INTEGER` is simply fixed point with a zero scale. For the onboard computers of the seventies, which often had no floating point at all, this was the workhorse, and Blue describes it in more detail than anyone. Strings come in different character sets, and a function over strings is generic over the character set. And at the machine level a type can assign its values the codes chosen by the hardware:
+One of the 1978 reviewers wrote that "Blue is the closest to using the concept of type and type definition facilities as unifying forces in the language." I don't know a better short description. Fixed-point numbers are specified by scale, radix and precision: `FIXED (scale, radix, precision)`, and `INTEGER` is simply fixed point with a zero scale. The onboard computers of the seventies often had no floating point at all, so they computed in fixed point, and Blue describes it in more detail than anyone. Strings come in different character sets, and a function over strings is generic over the character set. And at the machine level a type can assign its values the codes chosen by the hardware:
 
 ```
 TYPE STATUS = UNORDERED (\IDLE, \BUSY, \DONE, \FAULT)
@@ -54,7 +54,7 @@ SELECT OBJECT_MACHINE FROM
 END SELECT;
 ```
 
-Two details here. Only an unordered type is allowed to have its own codes: hardware codes can come in any order, and then they couldn't carry the ordering of the values. Ada arrived at the same place from the other side: there any enumeration can be given codes, but they must be ascending. And reading a code from a device register as a value of the type is only possible in the machine-dependent part, inside `SELECT OBJECT_MACHINE`, where the program says plainly which hardware it's doing this on.
+Two details are worth noting here. Only an unordered type is allowed to have its own codes: hardware codes can come in any order, and then they couldn't carry the ordering of the values. Ada arrived at the same place from the other side: there any enumeration can be given codes, but they must be ascending. And reading a code from a device register as a value of the type is only possible in the machine-dependent part, inside `SELECT OBJECT_MACHINE`, where the program says plainly which hardware it's doing this on.
 
 ## Closed scopes and declared exceptions
 
