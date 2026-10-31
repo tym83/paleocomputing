@@ -4,7 +4,7 @@ In February 1978 four teams handed the US Department of Defense preliminary desi
 
 In [the article about the finalists](LINK) I rebuilt the red and green languages: I put them together from the 1979 documents, wrote a self-compiling compiler in each, and grew an operating system and Kubernetes on top of them. Back then Blue and Yellow seemed out of reach. Their documents sat in a volume of four and a half thousand pages that the DoD archive had stopped handing out. Then a copy turned up in a web archive, and I did the same thing with these two languages.
 
-This is the story of the two designs that lost first. Blue is a language in which everything rests on types, even assignment. Yellow is Pascal reworked to meet the military's requirements. Its tasks talk to each other not through the rendezvous, as in the green language and in Ada, where one task waits for another at a "door" and the two meet, but through Hoare's monitors: modules with shared data that only one process can enter at a time. For both languages I wrote compilers in the languages themselves, both ran programs that their authors wrote in 1978 and never saw working, and both now run Dijkstra's THE system with Kubernetes on top of it.
+This is the story of the two designs that lost first. Blue is a language in which everything rests on types, even assignment. Yellow is Pascal reworked to meet the military's requirements. Its tasks talk to each other not through the rendezvous, as in the green language and in Ada, where one task waits for another at a "door" and the two meet, but through Hoare's monitors: modules with shared data that only one process can enter at a time. For both languages I wrote compilers in the languages themselves, both ran programs that their authors wrote in 1978 and never saw working, and both now run THE, the multiprogramming OS that Dijkstra's group built in the 1960s, with Kubernetes on top of it.
 
 <cut />
 
@@ -102,7 +102,7 @@ Two details here. Only an unordered type is allowed to have its own codes: hardw
 
 ## Closed scopes and declared exceptions
 
-As in the red language, a procedure in Blue is a closed scope: it can't see outside variables until it imports them. Blue is stricter than Red here. A procedure that calls another procedure must import either that procedure or all the variables it touches. So the header of any procedure tells you what state it can reach through the whole chain of calls. A hash sign in the import list works the same way as in the parameters: in `IMPORTS (DATA: (# MUTEX, BALANCE))` everything comes after the hash, meaning the variables are imported for modification, and whatever the procedure only reads is written before it.
+As in the red language, a procedure in Blue is a closed scope: it can't see outside variables until it imports them. Blue is stricter than Red here. A procedure that calls another procedure must import either that procedure or all the variables it touches. So the header of any procedure tells you what state it can reach through the whole chain of calls. A hash sign in the import list works the same way as in the parameters: in `IMPORTS (DATA: (# MUTEX, BALANCE))` everything comes after the hash, meaning the variables are imported for modification, and whatever the procedure only reads is written before it. A blue program itself is made of segments, units of translation that list in `USES` what they take from one another.
 
 Exceptions in the blue language are declared in the subprogram header: `SIGNALS (OVERFLOW, INVALID_FORMAT)`. A subprogram cannot let out an exception that isn't on this list. SofTech's justification explains this with exactly the same argument as the import lists: a procedure's interface must be described completely, and what it can throw is as much a part of it as what it can modify. In 1978 practically the only language that did this was Barbara Liskov's CLU, and checked exceptions, the kind the compiler forces you to declare or handle, came into the mainstream with Java. Ada doesn't have them and never did.
 
@@ -110,7 +110,7 @@ An exception handler in the blue language is attached to a statement, not a bloc
 
 ## A parallel block that doesn't lose errors
 
-When it comes to concurrency, Blue is the strictest of the four. There are no tasks in the usual sense. There is a parallel block, `PAR_BLOCK`, with paths, `PATH`, inside it, and the block doesn't finish until all its paths have finished. Such a block isn't new in itself; it's Dijkstra's `parbegin ... parend` from 1965. What's new is something else: if some path dies with an exception it is allowed to let out, the block waits for the others and raises that exception itself:
+When it comes to concurrency, Blue is the strictest of the four. There are no tasks in the usual sense. There is a parallel block, `PAR_BLOCK`, with paths, `PATH`, inside it, and the block doesn't finish until all its paths have finished. Such a block isn't new in itself; it's Dijkstra's `parbegin ... parend` from 1965. What's new is something else: if some path dies with an exception it is allowed to let out, the block waits for the others and raises that exception itself. `REQUEST` and `RELEASE` in the example acquire and release a semaphore; more on them below. For now, look at `SIGNALS (FAILED)` in the path's header and at `EXCEPT` after the block:
 
 ```
 VAR MUTEX: SEMAPHORE (REGION) := NEW (1);
@@ -132,7 +132,7 @@ EXCEPT
 END EXCEPT;
 ```
 
-Today this is called structured concurrency: parallel branches live inside a lexical block, the block doesn't finish before they do, and a branch's error isn't lost but reaches whoever opened the block. For the last eight years or so it has been reintroduced everywhere: the Python library Trio, task groups in Swift, `StructuredTaskScope` in Java. Blue is simpler than they are. A failure in one branch doesn't cancel its neighbours; you write that by hand with `TERMINATE`, and if two branches fail, only one exception comes out. But the essential part is already there.
+Today this is called structured concurrency: parallel branches live inside a lexical block, the block doesn't finish before they do, and a branch's error isn't lost but reaches whoever opened the block. For the last eight years or so it has been reintroduced everywhere: the Python library Trio, task groups in Swift, `StructuredTaskScope` in Java. Blue is simpler than they are. A failure in one branch doesn't cancel its neighbours; you write that by hand with `TERMINATE`, and if two branches fail, only one exception comes out. `TERMINATE` doesn't kill a path on the spot, either: it delivers the exception `TERMINATED` to it as soon as the path next gets the processor, and the path can catch it. And paths have priorities: of two ready paths, the higher-priority one runs first. But the essential part is already there in the blue block.
 
 In Ada 83 a block also waits for its tasks, but a task that dies with an unhandled exception just quietly terminates, and whoever started it never finds out. This is one of Ada's best-known traps. The blue language of 1978 doesn't have it.
 
@@ -150,7 +150,7 @@ Why not release all semaphores when a path dies? SofTech's justification answers
 
 SofTech itself cites an objection that had been put to it: the data under a released lock may be left half-updated. The justification agrees and replies that in an embedded system the data will soon be "refreshed" with a new set of data from an input sensor. Thirty years later the same problem would show up in the POSIX standard, and it would be solved more strictly: a robust mutex whose owner has died goes to the next one with the code `EOWNERDEAD`, and the new owner must declare the data consistent, or the mutex becomes unusable. Blue has no such signal; the lock is handed over silently.
 
-Time in the blue language isn't quite what you'd expect either. `WAIT (30)` puts a path to sleep for thirty seconds, and those seconds are a binary fixed-point number, so you can't write a millisecond in them exactly. And `CLOCK`, in my reading of the specification, shows the running time of the particular path rather than the time of day.
+Time in the blue language isn't quite what you'd expect either. `WAIT (30)` puts a path to sleep for thirty seconds, and those seconds are a binary fixed-point number, so you can't write a millisecond in them exactly. And `CLOCK`, in my reading of the specification, shows the running time of the particular path rather than the time of day, so my programs take the timestamps in their logs from the simulated machine's clock.
 
 # YELLOW: Pascal told to satisfy Ironman
 
@@ -314,7 +314,7 @@ MONITOR Account
 ENDMONITOR Account;
 ```
 
-Here's what these programs print. Red:
+Here's what these programs print. They wait a hundred milliseconds for the second worker, then give up and sum up. Red:
 
 ```
 [1 ms] worker 1 holds the lock
@@ -355,7 +355,7 @@ Yellow:
 
 To be fair: the green worker could call `RELEASE` in its own handler, and the yellow one could do the same for the semaphore. But that's manual discipline, and it's easy to forget. More importantly, it doesn't help when the worker isn't brought down by an exception but killed from outside: in the green language and in Ada an aborted task runs no handlers, and the lock is lost for real. The difference is who is responsible for releasing it, the programmer or the language.
 
-Three languages out of four take it on themselves, each in its own way. Red ties the release to the program text: you've left the `REGION`, the lock is free. Blue ties it to the life of the path: the path has died, its locks are free, but its signals aren't. Yellow ties it to the module boundary: an exception has carried you out of the monitor, the monitor is free. Only in Green, that is, the winner, does the language itself not release the lock, because it has no separate mechanism for shared data. A lock there is a task like any other, and it knows nothing about the death of a client. Ada got such a mechanism only in 1995: the protected object, essentially a monitor whose entries have barriers instead of signals, conditions under which an entry is open.
+Three languages out of four take it on themselves, each in its own way. Red ties the release to the program text: you've left the `REGION`, the lock is free. Blue ties it to the life of the path: the path has died, its locks are free, but its signals aren't. Yellow ties it to the module boundary: an exception has carried you out of the monitor, the monitor is free. Only in Green, that is, the winner, does the language itself not release the lock, because it has no separate mechanism for shared data. A lock there is a task like any other, and it knows nothing about the death of a client. Ada got a separate mechanism for shared data, the protected object, only in 1995; more on it in the chapter on Ada.
 
 And one more detail, visible only in the blue program: the block learned about the death of the first worker and reported it. In the other languages the worker caught the error itself, and had it not, the task would simply have terminated quietly and nobody would ever have known.
 
@@ -376,7 +376,7 @@ This isn't the limit of the languages but the solutions I chose: with semaphores
 
 The third task is to wait for a reply, but no longer than a given time. This is where the differences turned out to hurt the most.
 
-In the red language it's a single construct, `WAIT`, which waits for the first of several events, a timer included. In the 1979 green language only a server can wait with a timeout, through a `select` with a `delay` alternative. A client can't limit its own wait; that kind of call appeared only in Ada. And in the blue and yellow languages no process can wait for two events at once, say, an item in a queue or the expiry of a timer, whichever comes first. Blue solves this with a race between two paths, Yellow with a watchdog that wakes the waiter, or by polling a semaphore with `CONDITIONAL_CLAIM`. More on this in the chapter on Kubernetes, because there are plenty of timeouts there, and the cost of these solutions became visible straight away.
+Tasks in the red language talk through mailboxes, typed message queues of bounded size, and waiting there is a single construct, `WAIT`, which waits for the first of several events, a timer included. In the 1979 green language only a server can wait with a timeout, through a `select` with a `delay` alternative. A client can't limit its own wait; that kind of call appeared only in Ada. And in the blue and yellow languages no process can wait for two events at once, say, an item in a queue or the expiry of a timer, whichever comes first. Blue solves this with a race between two paths, Yellow with a watchdog that wakes the waiter, or by polling a semaphore with `CONDITIONAL_CLAIM`. More on this in the chapter on Kubernetes, because there are plenty of timeouts there, and the cost of these solutions became visible straight away.
 
 ## Summary table
 
@@ -395,7 +395,6 @@ Below is how the four designs differ from each other and from Ada 83. Red and Gr
 | Lock for shared data | `REGION` | server task | `REGION` semaphore | monitor | server task |
 | Waiting with a timeout | `WAIT` with a timer | server only | race of two paths | watchdog or polling | both server and client |
 | Task didn't catch an exception | terminates quietly | terminates quietly | the block raises the exception | terminates quietly | terminates quietly |
-| My compiler in the language itself | about 11,000 lines | about 14,000 lines | about 16,000 lines | about 10,000 lines | — |
 
 Read the table row by row and the pairs show up at once. Blue and Red both require variables to be imported, both create generic instances by themselves, both provide a separate lock for data. Yellow and Green both lean towards side-effect-free functions and a single elegant concurrency mechanism, except that Yellow chose the monitor and Green the rendezvous. And the row about the unhandled exception shows that of the five languages only Blue doesn't lose a task's error.
 
@@ -415,7 +414,7 @@ The blue document has seventeen programs. If you fill in what the original repla
 
 The biggest program is Appendix C, the standard input/output library, thirteen hundred-odd lines, with teletype drivers bound to PDP-11 interrupts. To translate it I had to rename the procedure `IN`, even though that's a reserved word, and remove a constant exported by two modules, even though by the rules a module exports only types and subprograms. Together with the typos that came to about two dozen fixes, seven of them violations of the language's rules, and after that the library worked on a simulated PDP-11 with two LT33 teletypes (that's what DEC called the Teletype Model 33). For thirteen hundred lines that nobody had ever compiled, this is a very good result, and it says more about the blue team than any review.
 
-The yellow tutorial has fifteen programs, and four of them compile as printed. The rest have the kinds of errors any text accumulates when nobody has run it through a translator: `ConvexHullFinder` is closed as `ComplexHullFinder`, and the sorting example writes `IMPORTS` and `EXPORTS` from some other language. But more often the authors forgot the rules of their own language, above all that very rule about comparisons. In the scheduler for SIFT, the condition `ept > 0 AND enabled[pri]` reads as `ept > (0 AND enabled[pri])` and means something quite different from what was intended.
+The yellow tutorial has fifteen programs, and four of them compile as printed. The rest have the kinds of errors any text accumulates when nobody has run it through a translator: `ConvexHullFinder` is closed as `ComplexHullFinder`, and the sorting example writes `IMPORTS` and `EXPORTS` from some other language. But more often the authors forgot the rules of their own language, above all that very rule about comparisons. The tutorial has a task scheduler for that very SIFT, and in it the condition `ept > 0 AND enabled[pri]` reads as `ept > (0 AND enabled[pri])` and means something quite different from what was intended.
 
 Three programs still work incorrectly after the fixes. In the exchange sort, string comparison considers one string greater than another only if each of its letters is greater than the corresponding one, so it never reorders ordinary names; and the convex hull construction for eight points whose hull has five marks only two. At first, of course, I decided the translator was at fault, and the same algorithm was rewritten in Python. It marked the same two points. The bug was in the 1978 algorithm, and for forty-eight years nobody noticed it, because there was nothing to run the program on.
 
@@ -425,7 +424,9 @@ All the fixes are in the repository as separate files, and the sources are kept 
 
 A compiler tests a language on sequential code. To test concurrency, in the article about the finalists I wrote several systems in the red and green languages, and now I repeated them in Blue and Yellow.
 
-The first is THE, the multiprogramming system that Dijkstra's group built in Eindhoven in 1965–1968. It's a society of sequential processes arranged in layers: at the bottom, semaphores and processor allocation; above them the memory controller, which shuttles segments between memory and the magnetic drum, the slow backing store of those years; higher still the single operator console, the input/output buffers and the user programs. A process only calls on the layers below it.
+The first is THE, the multiprogramming system that Dijkstra's group built in Eindhoven in 1965–1968. It's a society of sequential processes arranged in layers: semaphores and processor allocation on level 0; the memory controller, which shuttles segments between memory and the magnetic drum, the slow backing store of those years, on level 1; the single operator console on level 2; the input/output buffers on level 3; the user programs on level 4. A process only calls on the layers below it.
+
+For those who haven't worked with Kubernetes: you write the desired state into a store, say a deployment with three replicas, and a set of controllers compares it with the actual state over and over and closes the gap: they create pods, instances of the application, assign them to nodes and move them off nodes that have gone quiet. Together this is called the control plane.
 
 The second is Kubernetes on top of THE: the Kubernetes controllers run as level-four user programs, the object store lives in segments on the drum, and every node has a kubelet that runs pods. The third is the Kubernetes control plane on its own, without THE, to test exactly what real Kubernetes rests on. It has an API server that itself pushes every object change to its subscribers (in Kubernetes this is called a watch), controllers with their own copies of the state, and leases: records a node must renew regularly to be considered alive.
 
@@ -433,9 +434,9 @@ And straight away it became clear what unites the blue and yellow languages and 
 
 ## Blue: THE feels at home
 
-THE in the blue language turned out to be almost a native. Blue's semaphores are exactly Dijkstra's P and V, and the program prints exactly the same thing as the red-language version, character for character. Each layer of the system is a module, so each process's import list says outright which layers it calls on. Timestamps in the shared log come from the machine's clock, `REAL_TIME` of my implementation's TERMINAL segment: Blue's `CLOCK` shows the path's processing time, not the time of day.
+THE in the blue language turned out to be almost a native. Blue's semaphores are exactly Dijkstra's P and V, and the program prints exactly the same thing as the red-language version, character for character. Each layer of the system is a module, so each process's import list says outright which layers it calls on.
 
-And then came the thing that made rebuilding the whole blue language worth it. Kubernetes on THE has a power-off scenario: a node loses power, its kubelet dies, and the control plane has to notice the node is gone and move the pods. The store in THE is guarded by a semaphore, like everything in this system. In the red language this is a P-and-V semaphore in Dijkstra's spirit, not a `REGION`: a `REGION` is tied to a block of text, whereas in THE one process does P and another V, and acquire and release often live in different places. So a kubelet that died in the middle of writing to the store took the semaphore with it, and the whole control plane froze. Dijkstra wrote that his group's first major mistake was spending too long designing the system for an ideal installation and thinking about failures too late. A process that dies inside a critical section is a special case of that mistake, and I repeated it in five minutes. In the red and green languages I had to move the power-off into the gap between the kubelet's passes, where it holds nothing.
+And then came the thing that made rebuilding the whole blue language worth it. Kubernetes on THE has a power-off scenario: a node loses power, its kubelet dies, and the control plane has to notice the node is gone and move the pods. The store in THE is guarded by a semaphore, like everything in this system. In the red language this is a P-and-V semaphore in Dijkstra's spirit, not a `REGION`: a `REGION` is tied to a block of text, whereas in THE one process does P and another V, and acquire and release often live in different places. So a kubelet that died in the middle of writing to the store took the semaphore with it, and the whole control plane froze: in the article about the finalists, that's exactly where I got caught. In the red and green languages I had to move the power-off into the gap between the kubelet's passes, where it holds nothing.
 
 In the blue language the store's semaphore is declared as `REGION`, and it's still an ordinary P-and-V semaphore, just with an owner. You can acquire it in one procedure and release it in another, and if the path dies, the system releases it by itself. Now the node can lose power in the middle of a kubelet pass, even during a write: the kill reaches the path as soon as it next gets the processor, the path's death releases the semaphore, and the control plane lives on. For this to work, the kubelet, having caught the notice that it's being killed, raises it again; otherwise the path would end normally and keep the lock. The data under the lock may be left half-written, and SofTech's justification answered that it would soon be refreshed with fresh sensor readings. In Kubernetes the same role is played by the controller's next pass, which once again compares the desired with the actual. What the red language got from a lexical block, Blue gives for an ordinary semaphore with an owner, that is, for exactly what THE is built on.
 
@@ -489,7 +490,7 @@ The Pittsburgh panel that pulled the analyses together consisted of David Fisher
 
 ![Summary of the panel's recommendations of April 4, 1978: continue Green, reject Blue, continue at least one of Red and Yellow](../img/scan-pittsburgh.png)
 
-On Blue the panel was the most brief: "Reject Blue." The design "is careful and complete", but "it is overwhelmed by a pervasive complexity; the 'simple underlying semantic model' claimed by the designers is not evident". One team admitted that Blue had suffered from its own presentation and that this had surely affected its assessment, and in its summary table Blue and Yellow got the worst score for how easily a typo changes the meaning of a program. The rebuild confirmed both halves of the verdict. The care is real: the input/output library with its drivers started working after a dozen typos and seven breaches of the language rules were fixed, and the two kinds of semaphores turned out more precise than anything the finalists had. But the complexity is real too: Blue's translator came out the biggest of the four, half as big again as Red's, and the backslashes, hash signs and double exclamation marks read worse than in any of its neighbours.
+On Blue the panel was the most brief: "Reject Blue." The design "is careful and complete", but "it is overwhelmed by a pervasive complexity; the 'simple underlying semantic model' claimed by the designers is not evident". One team admitted that Blue had suffered from its own presentation and that this had surely affected its assessment, and in its summary table Blue and Yellow got the worst score for how easily a typo changes the meaning of a program. The rebuild confirmed both halves of the verdict. The care is real: the input/output library with its drivers started working after a dozen typos and seven breaches of the language rules were fixed, and the two kinds of semaphores turned out more precise than anything the finalists had. But the complexity is real too: Blue's translator came out the biggest of the four, and the backslashes, hash signs and double exclamation marks read worse than in any of its neighbours.
 
 Yellow lost by a hair. The panel wrote that "the choice between Red and Yellow is not clear cut", and "although the margin is very thin, the majority of the panel believes that Red is slightly to be preferred". But in the section on Yellow itself the words are harsh: type and representation are confused, "there is no workable mechanism for process identification", "monitors have not been used for significant systems", and on the whole "the attempt to build on Pascal and its cousin Modula has not been successful". Here my experience agrees with the panel by half. On process identification it's right exactly where I stumbled myself. But monitors turned out to be the most convenient part of the yellow language for THE and Kubernetes, and by 1978 Brinch Hansen had already, two years earlier, described the Solo operating system, written with Concurrent Pascal monitors. The irony is also that the red design, which beat Yellow by a hair, was soon thrown out by the red team itself, which wrote the language anew in the second round.
 
@@ -501,7 +502,7 @@ Ada 83 is the green language after four years of revisions, and it has no direct
 
 ## What matched from the start
 
-Subtypes. The yellow language's representations are Ada's subtypes: `INTEGER [1..10]` and `subtype SMALL is INTEGER range 1 .. 10` mean the same thing. Subtypes came to Ada from the green language, so this is a resemblance, not a borrowing, and the only difference is that in Ada you can do without a subtype.
+Subtypes. The yellow language's representations are Ada's subtypes, which came to Ada from the green language, so this is a resemblance, not a borrowing.
 
 Machine-level representations. The blue language assigned hardware codes to enumerations through `REP`; Ada does the same in chapter 13 of the standard. Blue allowed custom codes only for unordered types; Ada allows them for any, but requires the codes to be ascending. Both teams saw the same problem, the order of values versus the order of codes, and solved it from different sides.
 
@@ -535,9 +536,9 @@ John Goodenough, the head of the blue design, spent twenty years after the compe
 
 # If Blue or Yellow had won
 
-In the article about the finalists I tried to imagine a world where the red language won in May 1979. In short: Ada would have separated messages and shared data from day one, generic instances would have been created without declarations, and PL/SQL in every Oracle database would have been written in a language with mailboxes. Here the fork comes earlier, in April 1978, when Green and Red were taken into the second round. Let's imagine the panel had decided otherwise.
+In the article about the finalists I tried to imagine a world where the red language won in May 1979. In short: Ada would have separated messages and shared data from day one, generic instances would have been created without declarations, and PL/SQL in every Oracle database would have been written in a language with mailboxes. And in our world Stroustrup, designing C++, compared his parameterized types and exceptions with Ada's. Here the fork comes earlier, in April 1978, when Green and Red were taken into the second round. Let's imagine the panel had decided otherwise.
 
-First, what wouldn't have changed in any of the worlds. The DoD's Ada mandate held from 1987 to 1997 and ended not because of rendezvous or monitors but because the commercial market went to C and C++, and the requirement cost more than it gave. Those economics didn't depend on the colour of the language. So any winner would have become the language of avionics, railways and space, and almost certainly not the language of everything else. The differences below are differences inside that niche, and in which ideas leaked from it into the mainstream.
+First, what wouldn't have changed in any of the worlds. As in the article about the finalists, I assume that the 1987–1997 Ada mandate ended because of economics, not the colour of the language: the commercial market went to C and C++. So any winner would have become the language of avionics, railways and space, and almost certainly not the language of everything else. The differences below are differences inside that niche, and in which ideas leaked from it into the mainstream.
 
 ## A world where Blue won
 
@@ -578,30 +579,30 @@ The strangest thing about this table is that every row except the first describe
 
 # Labs, and how to get your hands on all this
 
-As in the earlier parts, I wanted readers to be able not just to read about the language but to break something with their own hands. The twelve exercises in the red language are now joined by fifteen new ones, seven in Blue and eight in Yellow. They're about what only these languages have, and the `check.sh` script translates your version of a program, runs it and tells you whether you've completed the task. Time in the programs is virtual and the scheduler is deterministic, so you can compare your output with someone else's character for character.
+As in the earlier parts, I wanted readers to be able not just to read about the language but to break something with their own hands. The twelve exercises in the red language are now joined by fifteen new ones, seven in Blue and eight in Yellow. They're about what only these languages have, and the `check.sh` script translates your version of a program, runs it and tells you whether you've completed the task. The lab's number and the level, `look`, `change`, `break` or `build`, are its arguments. Time in the programs is virtual and the scheduler is deterministic, so you can compare your output with someone else's character for character.
 
 In the blue language:
 
-- the literal `\GREEN`, which belongs to two enumerations at once and sits at a different position in each;
-- a single `SWAP` procedure for integers, strings and colours, whose instances nobody declared;
-- the import list: remove one procedure from it and find out that Blue requires you to import either it or everything it touches;
-- device status codes as values of an unordered type, read from a register;
-- a `REGION` semaphore released by the death of a path, and then the same thing with a signalling semaphore that isn't released, and a hung second worker;
-- the THE system, in which the bottom layer starts reporting to the operator, that is, calling a layer above itself, and the whole system freezes; you could have spotted this in advance, because the call was in the import list from the start;
-- a timeout as a race of two paths: take the priority away from the waiter and lose an item in the queue.
+- `b1`: the literal `\GREEN`, which belongs to two enumerations at once and sits at a different position in each;
+- `b2`: a single `SWAP` procedure for integers, strings and colours, whose instances nobody declared;
+- `b3`: the import list: remove one procedure from it and find out that Blue requires you to import either it or everything it touches;
+- `b4`: device status codes as values of an unordered type, read from a register;
+- `b5`: a `REGION` semaphore released by the death of a path; a path that caught the exception itself and released the semaphore by hand, that is, ended normally; and the same thing with a signalling semaphore that isn't released, and a hung second worker;
+- `b6`: the THE system, in which the bottom layer starts reporting to the operator, that is, calling a layer above itself, and the whole system freezes; you could have spotted this in advance, because the call was in the import list from the start;
+- `b7`: a timeout as a race of two paths: take the priority away from the waiter and lose an item in the queue.
 
-![Lab B7: the timeout from the 1978 analysis, a race between the `GET` and `TIMER` paths. Two items received, no third one for thirty milliseconds](../img/en-blue-lab.png)
+![Lab b7: the timeout from the 1978 analysis, a race between the `GET` and `TIMER` paths. Two items received, no third one for thirty milliseconds](../img/en-blue-lab.png)
 
 In the yellow language:
 
-- `a - b - c` without parentheses, and the translator's refusal;
-- `CONST`, `VAR` and `OUT` parameters, and an output parameter that doesn't change if the procedure ended with an exception;
-- ordered and unordered enumerations;
-- a module template for a stack, and an instance of the template for a type without ordering, on which the template breaks only in the instance;
-- a monitor with wait ranks, where the woken process gets the monitor handed over directly: remove `SEND` and see that a signal isn't a state, and without it nobody wakes the waiters;
-- a pure function that won't be allowed to change a global variable;
-- a module that exports a variable read-only, and a type whose insides aren't visible from outside;
-- the THE system on monitors, which can be broken by the same call from a lower layer to an upper one.
+- `y1`: `a - b - c` without parentheses, and the translator's refusal;
+- `y2`: `CONST`, `VAR` and `OUT` parameters, and an output parameter that doesn't change if the procedure ended with an exception;
+- `y3`: ordered and unordered enumerations;
+- `y4`: a module template for a stack, and an instance of the template for a type without ordering, on which the template breaks only in the instance;
+- `y5`: a monitor with wait ranks, where the woken process gets the monitor handed over directly: remove `SEND` and see that a signal isn't a state, and without it nobody wakes the waiters;
+- `y6`: a pure function that won't be allowed to change a global variable;
+- `y7`: a module that exports a variable read-only, and a type whose insides aren't visible from outside;
+- `y8`: the THE system on monitors, which can be broken by the same call from a lower layer to an upper one.
 
 ![Readers and writer on Hoare's monitor in the browser: the readers read together, while the third one waits behind the waiting writer](../img/en-yellow-readers.png)
 
@@ -618,7 +619,7 @@ labs/check.sh b5 look        # the REGION semaphore lab
 labs/check.sh y1 break       # check your change in the minus-sign lab
 ```
 
-If you have Cozystack at hand, you don't need to install anything. The application catalog I put together for this series has an environment for languages, and all four languages arrived there as a single image: you specify the `ada-colors-run` image, put in a source file, and the program runs as a one-off job whose output becomes its log. When the image is built, all four compilers go the whole way from their seeds again and check that they reproduce themselves.
+If you have Cozystack at hand, an open platform for building a cloud on Kubernetes, you don't need to install anything. The application catalog I put together for this series has an environment for languages, and all four languages arrived there as a single image: you specify the `ada-colors-run` image, put in a source file, and the program runs as a one-off job whose output becomes its log. When the image is built, all four compilers go the whole way from their seeds again and check that they reproduce themselves.
 
 The easiest way, though, is to open [the page in your browser](https://tym83.github.io/paleocomputing/red/). Everything happens right there on the page, with no server. All four translators, built to WebAssembly from the same C seeds, translate the source to C; then clang, also built to WebAssembly, compiles that C, and the program runs with a thread for every task. The runtime is the same file as on Linux, with the same virtual clock, so the programs print in the browser exactly what they print on an ordinary machine, byte for byte. CI checks it: it runs every example in headless Chrome and compares the output. The first run downloads the C compiler, about twenty megabytes, and after that the browser keeps it.
 

@@ -55,7 +55,7 @@ MONITOR Account
 ENDMONITOR Account;
 ```
 
-Here's what these programs print. Red:
+Here's what these programs print. They wait a hundred milliseconds for the second worker, then give up and sum up. Red:
 
 ```
 [1 ms] worker 1 holds the lock
@@ -96,7 +96,7 @@ Yellow:
 
 To be fair: the green worker could call `RELEASE` in its own handler, and the yellow one could do the same for the semaphore. But that's manual discipline, and it's easy to forget. More importantly, it doesn't help when the worker isn't brought down by an exception but killed from outside: in the green language and in Ada an aborted task runs no handlers, and the lock is lost for real. The difference is who is responsible for releasing it, the programmer or the language.
 
-Three languages out of four take it on themselves, each in its own way. Red ties the release to the program text: you've left the `REGION`, the lock is free. Blue ties it to the life of the path: the path has died, its locks are free, but its signals aren't. Yellow ties it to the module boundary: an exception has carried you out of the monitor, the monitor is free. Only in Green, that is, the winner, does the language itself not release the lock, because it has no separate mechanism for shared data. A lock there is a task like any other, and it knows nothing about the death of a client. Ada got such a mechanism only in 1995: the protected object, essentially a monitor whose entries have barriers instead of signals, conditions under which an entry is open.
+Three languages out of four take it on themselves, each in its own way. Red ties the release to the program text: you've left the `REGION`, the lock is free. Blue ties it to the life of the path: the path has died, its locks are free, but its signals aren't. Yellow ties it to the module boundary: an exception has carried you out of the monitor, the monitor is free. Only in Green, that is, the winner, does the language itself not release the lock, because it has no separate mechanism for shared data. A lock there is a task like any other, and it knows nothing about the death of a client. Ada got a separate mechanism for shared data, the protected object, only in 1995; more on it in the chapter on Ada.
 
 And one more detail, visible only in the blue program: the block learned about the death of the first worker and reported it. In the other languages the worker caught the error itself, and had it not, the task would simply have terminated quietly and nobody would ever have known.
 
@@ -117,7 +117,7 @@ This isn't the limit of the languages but the solutions I chose: with semaphores
 
 The third task is to wait for a reply, but no longer than a given time. This is where the differences turned out to hurt the most.
 
-In the red language it's a single construct, `WAIT`, which waits for the first of several events, a timer included. In the 1979 green language only a server can wait with a timeout, through a `select` with a `delay` alternative. A client can't limit its own wait; that kind of call appeared only in Ada. And in the blue and yellow languages no process can wait for two events at once, say, an item in a queue or the expiry of a timer, whichever comes first. Blue solves this with a race between two paths, Yellow with a watchdog that wakes the waiter, or by polling a semaphore with `CONDITIONAL_CLAIM`. More on this in the chapter on Kubernetes, because there are plenty of timeouts there, and the cost of these solutions became visible straight away.
+Tasks in the red language talk through mailboxes, typed message queues of bounded size, and waiting there is a single construct, `WAIT`, which waits for the first of several events, a timer included. In the 1979 green language only a server can wait with a timeout, through a `select` with a `delay` alternative. A client can't limit its own wait; that kind of call appeared only in Ada. And in the blue and yellow languages no process can wait for two events at once, say, an item in a queue or the expiry of a timer, whichever comes first. Blue solves this with a race between two paths, Yellow with a watchdog that wakes the waiter, or by polling a semaphore with `CONDITIONAL_CLAIM`. More on this in the chapter on Kubernetes, because there are plenty of timeouts there, and the cost of these solutions became visible straight away.
 
 ## Summary table
 
@@ -136,6 +136,5 @@ Below is how the four designs differ from each other and from Ada 83. Red and Gr
 | Lock for shared data | `REGION` | server task | `REGION` semaphore | monitor | server task |
 | Waiting with a timeout | `WAIT` with a timer | server only | race of two paths | watchdog or polling | both server and client |
 | Task didn't catch an exception | terminates quietly | terminates quietly | the block raises the exception | terminates quietly | terminates quietly |
-| My compiler in the language itself | about 11,000 lines | about 14,000 lines | about 16,000 lines | about 10,000 lines | — |
 
 Read the table row by row and the pairs show up at once. Blue and Red both require variables to be imported, both create generic instances by themselves, both provide a separate lock for data. Yellow and Green both lean towards side-effect-free functions and a single elegant concurrency mechanism, except that Yellow chose the monitor and Green the rendezvous. And the row about the unhandled exception shows that of the five languages only Blue doesn't lose a task's error.

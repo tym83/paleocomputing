@@ -1,8 +1,8 @@
 # If Blue or Yellow had won
 
-In the article about the finalists I tried to imagine a world where the red language won in May 1979. In short: Ada would have separated messages and shared data from day one, generic instances would have been created without declarations, and PL/SQL in every Oracle database would have been written in a language with mailboxes. Here the fork comes earlier, in April 1978, when Green and Red were taken into the second round. Let's imagine the panel had decided otherwise.
+In the article about the finalists I tried to imagine a world where the red language won in May 1979. In short: Ada would have separated messages and shared data from day one, generic instances would have been created without declarations, and PL/SQL in every Oracle database would have been written in a language with mailboxes. And in our world Stroustrup, designing C++, compared his parameterized types and exceptions with Ada's. Here the fork comes earlier, in April 1978, when Green and Red were taken into the second round. Let's imagine the panel had decided otherwise.
 
-First, what wouldn't have changed in any of the worlds. The DoD's Ada mandate held from 1987 to 1997 and ended not because of rendezvous or monitors but because the commercial market went to C and C++, and the requirement cost more than it gave. Those economics didn't depend on the colour of the language. So any winner would have become the language of avionics, railways and space, and almost certainly not the language of everything else. The differences below are differences inside that niche, and in which ideas leaked from it into the mainstream.
+First, what wouldn't have changed in any of the worlds. As in the article about the finalists, I assume that the 1987–1997 Ada mandate ended because of economics, not the colour of the language: the commercial market went to C and C++. So any winner would have become the language of avionics, railways and space, and almost certainly not the language of everything else. The differences below are differences inside that niche, and in which ideas leaked from it into the mainstream.
 
 ## A world where Blue won
 

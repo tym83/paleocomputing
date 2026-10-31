@@ -4,7 +4,7 @@ Ada 83 is the green language after four years of revisions, and it has no direct
 
 ## What matched from the start
 
-Subtypes. The yellow language's representations are Ada's subtypes: `INTEGER [1..10]` and `subtype SMALL is INTEGER range 1 .. 10` mean the same thing. Subtypes came to Ada from the green language, so this is a resemblance, not a borrowing, and the only difference is that in Ada you can do without a subtype.
+Subtypes. The yellow language's representations are Ada's subtypes, which came to Ada from the green language, so this is a resemblance, not a borrowing.
 
 Machine-level representations. The blue language assigned hardware codes to enumerations through `REP`; Ada does the same in chapter 13 of the standard. Blue allowed custom codes only for unordered types; Ada allows them for any, but requires the codes to be ascending. Both teams saw the same problem, the order of values versus the order of codes, and solved it from different sides.
 
