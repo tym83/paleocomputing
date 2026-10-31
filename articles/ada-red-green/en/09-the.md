@@ -15,6 +15,6 @@ The most interesting thing in the paper is one passage that's easy to miss. Dijk
 
 The controller waits for the console, and the console waits for the controller to read its vocabulary. One arrow pointing up, and Dijkstra's proof no longer holds.
 
-For comparison I wrote THE's core in GREEN too. It has neither semaphores nor mailboxes, so each semaphore becomes a server task that accepts P only while its count is positive. It works, but nine lines printed by three programs through a shared buffer cost 54 rendezvous, six for every printed line. Where RED takes a token from a mailbox, GREEN wakes a server.
+For comparison I wrote THE's core in GREEN too. It has neither semaphores nor mailboxes, so each semaphore becomes a server task that accepts P only while its count is positive. It works, but nine lines printed by three programs through a shared buffer cost 54 rendezvous, six for every printed line. Where RED simply takes a token from a mailbox, GREEN calls a server task and waits for a rendezvous with it on every P and V.
 
 Now that THE runs, Kubernetes can run on it too. But first, how Kubernetes works on mailboxes.
