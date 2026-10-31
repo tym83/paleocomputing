@@ -1,8 +1,8 @@
 # Four languages side by side
 
-The 1978 reviewers, as the red team remembered it, split the four designs into two pairs: the conservative Blue and Red, and the ambitious, "academic" Yellow and Green. One from each pair went through to the second round. Now that all four languages work, you can see the split was no accident, and the best way to see it is on one and the same task.
+The 1978 reviewers, as the red team remembered it, split the four designs into two pairs: the conservative Blue and Red, and the ambitious, "academic" Yellow and Green. One from each pair went through to the second round. Now that all four languages work, you can see the split was no accident, and the best way to see it is on one and the same example.
 
-The task goes like this. Two workers take turns updating a shared account under a lock, and the first one grabs the lock and crashes in the middle of the update. Will the second one get in? It's far from an academic question. In any system with locks, from an operating system kernel to a database, the first question you ask about a lock is what happens to it when its owner dies. It will come up again in the chapter on Kubernetes.
+The example goes like this. Two workers take turns updating a shared account under a lock, and the first one grabs the lock and crashes in the middle of the update. Will the second one get in? It's far from an academic question. In any system with locks, from an operating system kernel to a database, the first question you ask about a lock is what happens to it when its owner dies. It will come up again in the chapter on Kubernetes.
 
 In the red language the lock is a `REGION`, and it's released however the body ends:
 
@@ -55,7 +55,7 @@ MONITOR Account
 ENDMONITOR Account;
 ```
 
-Here's what these programs print. They wait a hundred milliseconds for the second worker, then give up and sum up. Red:
+Here's what [these programs](https://github.com/tym83/paleocomputing/tree/main/impl/ada-colors/os/contrast) print. They wait a hundred milliseconds for the second worker, then give up and sum up. Red:
 
 ```
 [1 ms] worker 1 holds the lock
@@ -102,7 +102,7 @@ And one more detail, visible only in the blue program: the block learned about t
 
 ## Readers and writer
 
-The second task is readers and writer. Three readers arrive at 0, 1 and 3 milliseconds, the writer at 2. Reading and writing take ten milliseconds each. A good solution lets readers read at the same time and doesn't let a reader who arrived after the writer overtake it, or else, with a steady stream of readers, the writer will never get its turn.
+The second example is readers and writer. Three readers arrive at 0, 1 and 3 milliseconds, the writer at 2. Reading and writing take ten milliseconds each. A good solution lets readers read at the same time and doesn't let a reader who arrived after the writer overtake it, or else, with a steady stream of readers, the writer will never get its turn.
 
 | Solution in the repository | Read concurrently | A late reader overtakes a waiting writer | Everything done by |
 |---|---|---|---|
@@ -115,7 +115,7 @@ This isn't the limit of the languages but the solutions I chose: with semaphores
 
 ## Waiting with a timeout
 
-The third task is to wait for a reply, but no longer than a given time. This is where the differences turned out to hurt the most.
+The third example is to wait for a reply, but no longer than a given time. This is where the differences turned out to hurt the most.
 
 Tasks in the red language talk through mailboxes, typed message queues of bounded size, and waiting there is a single construct, `WAIT`, which waits for the first of several events, a timer included. In the 1979 green language only a server can wait with a timeout, through a `select` with a `delay` alternative. A client can't limit its own wait; that kind of call appeared only in Ada. And in the blue and yellow languages no process can wait for two events at once, say, an item in a queue or the expiry of a timer, whichever comes first. Blue solves this with a race between two paths, Yellow with a watchdog that wakes the waiter, or by polling a semaphore with `CONDITIONAL_CLAIM`. More on this in the chapter on Kubernetes, because there are plenty of timeouts there, and the cost of these solutions became visible straight away.
 

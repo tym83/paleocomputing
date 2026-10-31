@@ -1,6 +1,6 @@
 # BLUE: a language in which everything rests on types
 
-Of the four, the blue language looks the most unfamiliar, so I'll start with a short program from a lab. It swaps two integers, two strings and two colours with one and the same procedure:
+Of the four, the blue language looks the most unfamiliar, so I'll start with a short program from a [lab](https://github.com/tym83/paleocomputing/blob/main/impl/ada-colors/labs/blue/b2-generic.blu). It swaps two integers, two strings and two colours with one and the same procedure:
 
 ```
 TYPE COLOR = ENUM (\RED, \GREEN, \BLUE);
@@ -62,7 +62,7 @@ As in the red language, a procedure in Blue is a closed scope: it can't see outs
 
 Exceptions in the blue language are declared in the subprogram header: `SIGNALS (OVERFLOW, INVALID_FORMAT)`. A subprogram cannot let out an exception that isn't on this list. SofTech's justification explains this with exactly the same argument as the import lists: a procedure's interface must be described completely, and what it can throw is as much a part of it as what it can modify. In 1978 practically the only language that did this was Barbara Liskov's CLU, and checked exceptions, the kind the compiler forces you to declare or handle, came into the mainstream with Java. Ada doesn't have them and never did.
 
-An exception handler in the blue language is attached to a statement, not a block: `EXCEPT` can follow any statement. This seems like a trifle until you write `BLOCK ... EXCEPT ... END BLOCK` and discover that the handler belongs to the last statement of the block rather than the whole block. I fell for it, and it's now a separate item in the compiler notes.
+An exception handler in the blue language is attached to a statement, not a block: `EXCEPT` can follow any statement. This seems like a trifle until you write `BLOCK ... EXCEPT ... END BLOCK` and discover that the handler belongs to the last statement of the block rather than the whole block. I fell for it, and it's now a separate item in the [compiler notes](https://github.com/tym83/paleocomputing/blob/main/impl/ada-colors/blue/notes/blue-digest.md).
 
 ## A parallel block that doesn't lose errors
 
@@ -96,11 +96,11 @@ The strictness has a price too. A parallel block can't be placed inside a subpro
 
 ## Two kinds of semaphores
 
-The blue language has no mailboxes and no rendezvous; paths coordinate with each other through semaphores. Dijkstra's semaphore is a counter with two operations: P waits until the counter is greater than zero and decrements it, V increments the counter and wakes one waiter. In the blue language semaphores come in two kinds, and the difference between them is very subtly thought out. A `SYNCH` semaphore is a classic semaphore without an owner: one path waits for an event, another announces it. A `REGION` semaphore is a lock with an owner around shared data, what today we'd call a mutex. If the path holding such a lock terminates abnormally, the lock releases itself.
+The blue language has no mailboxes, that is, message queues between tasks as in the red language, and no rendezvous; paths coordinate with each other through semaphores. Dijkstra's semaphore is a counter with two operations: P waits until the counter is greater than zero and decrements it, V increments the counter and wakes one waiter. In the blue language semaphores come in two kinds, and the difference between them is very subtly thought out. A `SYNCH` semaphore is a classic semaphore without an owner: one path waits for an event, another announces it. A `REGION` semaphore is a lock with an owner around shared data, what today we'd call a mutex. If the path holding such a lock terminates abnormally, the lock releases itself.
 
 ![Section 3.11 of the SofTech specification: `SYNCH` and `REGION` semaphores. `REGION` semaphores that a path has requested and not released are released automatically when it terminates abnormally](../img/scan-blue-semaphores.png)
 
-In the example above the first worker dies with the semaphore in its hands, and the second one gets in right away, so the balance comes out as 110 instead of the second worker waiting forever. The word "abnormally" matters. A path that caught an exception itself and carried on keeps its locks, and that became one of the labs.
+In the example above the first worker dies with the semaphore in its hands, and the second one gets in right away, so the balance comes out as 110 instead of the second worker waiting forever. The word "abnormally" matters. A path that caught an exception itself and carried on keeps its locks, and that became [one of the labs](https://github.com/tym83/paleocomputing/blob/main/impl/ada-colors/labs/blue/b5-region.blu).
 
 Why not release all semaphores when a path dies? SofTech's justification answers like this. Recording "this path holds the lock" can only be done inside the acquire operation itself, because any flag set afterwards might not get set before the path dies. So it's the system, not the path's handler, that has to release a dead path's lock. But if all semaphores were released, the signalling ones would be too, and the dying path would send false signals to those waiting for a completely different event. That's why there are two kinds, and only locks get released.
 
