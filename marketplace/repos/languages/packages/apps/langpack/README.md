@@ -35,12 +35,15 @@ working directory.
 | `command` / `args` | `[]` | what to run |
 | `host` | `""` | external host name; cannot be set in `job` mode |
 
-## RED and GREEN
+## RED, GREEN, BLUE and YELLOW
 
-The `ada-colors-run` image carries RED and GREEN, the two finalists of the
-DoD-1 competition of 1979, each with a compiler written in the language itself.
-The extension picks the language: `.red` for RED, `.grn` for GREEN. Several
-files of one language are joined in the order given in `args`.
+The `ada-colors-run` image carries all four languages of the DoD-1 competition:
+RED and GREEN, the finalists of 1979, and BLUE and YELLOW, the 1978 designs
+that lost first. Each has a compiler written in the language itself, covering
+the whole language. The extension picks the language: `.red` for RED, `.grn`
+for GREEN, `.blu` for BLUE, `.yel` for YELLOW (YELLOW programs get the standard
+prelude in front). Several files of one language are joined in the order given
+in `args`.
 
 ```yaml
 language: RED

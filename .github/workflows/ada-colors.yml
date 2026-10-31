@@ -113,6 +113,9 @@ jobs:
           grep -q 'sum 150' green.txt
           docker run --rm -v "$PWD/impl/ada-colors/blue/tests:/src:ro" ada-colors-run basics.blu | tee blue.txt
           diff -u impl/ada-colors/blue/tests/basics.out blue.txt
+          # a library segment from the image's lib/blue (USES SIMULATION)
+          docker run --rm -v "$PWD/impl/ada-colors/blue/tests:/src:ro" ada-colors-run simulation.blu | tee bluesim.txt
+          diff -u impl/ada-colors/blue/tests/simulation.out bluesim.txt
           docker run --rm -v "$PWD/impl/ada-colors/yellow/tests:/src:ro" ada-colors-run processes.yel | tee yellow.txt
           diff -u impl/ada-colors/yellow/tests/processes.out yellow.txt
 
