@@ -1,6 +1,6 @@
 # Kubernetes on mailboxes
 
-For those who haven't worked with Kubernetes, three sentences. In Kubernetes you don't command "start three copies of the service"; you write the desired state into a store, a deployment with three replicas, and a set of independent controllers compares desired with actual over and over and closes the gap: they create pods, that is, instances of the application, assign them to nodes, evict pods from nodes that have stopped responding, and during a version upgrade roll out new pods in place of the old ones. All of them read and write through a single API server.
+A word for those who haven't worked with Kubernetes. In Kubernetes you don't command "start three copies of the service"; you write the desired state into a store, a deployment with three replicas, and a set of independent controllers compares desired with actual over and over and closes the gap: they create pods, that is, instances of the application, assign them to nodes, evict pods from nodes that have stopped responding, and during a version upgrade roll out new pods in place of the old ones. All of them read and write through a single API server.
 
 In the previous part of the series I built Kubernetes on Oberon, and the main discovery there was that a Kubernetes controller maps naturally onto a background task of the operating system. In RED the picture is even more fun, because many parts of Kubernetes are already there and simply go by other names.
 
@@ -39,7 +39,7 @@ The problem is that, unlike with the bank, nobody here retries requests. A contr
 ...
 ```
 
-Three pod creation requests and one binding of a pod to a node vanished along with the dead server's mailbox. At 80 milliseconds the replica controller's expectations expire, and it asks for the pods again, but again into the void, because the name still belongs to the dead server (and what is dead may never die). Fifteen milliseconds later the backup takes the name and sends every controller the full list of objects. The scheduler sees that pod 11 isn't actually bound to any node and binds it, and twenty milliseconds after that, at 115, the replica controller creates whatever is still missing. The cluster gets where it's supposed to be, with no consensus and no human involved. It works because Kubernetes controllers compare states rather than react to events: a lost write is just one more discrepancy for the next reconciliation to catch.
+Three pod creation requests and one binding of a pod to a node vanished along with the dead server's mailbox. At 80 milliseconds the replica controller's expectations expire, and it asks for the pods again, but again into the void, because the name still belongs to the dead server (and what is dead may never die). Fifteen milliseconds later the backup takes the name and sends every controller the full list of objects. The scheduler sees that pod 11 isn't actually bound to any node and binds it, and twenty milliseconds after that, at 115 milliseconds, the replica controller creates whatever is still missing. The cluster gets where it's supposed to be, with no consensus and no human involved. It works because Kubernetes controllers compare states rather than react to events: a lost write is just one more discrepancy for the next reconciliation to catch.
 
 ## Two real Kubernetes failures, found by accident
 

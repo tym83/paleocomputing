@@ -12,6 +12,11 @@ Fourth, deterministic time. Almost everything interesting in this article was fo
 
 And fifth, not technical at all. Studying the losers is useful not out of nostalgia but so that you know in advance which ideas will come back, and don't pay for them a second time.
 
-What's next. The reviewers' reports on the 1979 final, which decided between Red and Green, apparently still exist only offline, and Red's translator never turned up. If you have access to either, let me know.
+What's next. The reviewers' reports on the 1979 final, which decided between Red and Green, apparently still exist only on microfiche, cards of photographic film carrying reduced pages that you read through a magnifier, and Red's translator never turned up. If you have access to either, let me know.
 
 The sources, tests, labs and all the notes are in the repository [github.com/tym83/paleocomputing](https://github.com/tym83/paleocomputing), under [`impl/ada-colors`](https://github.com/tym83/paleocomputing/blob/main/impl/ada-colors/README.md). If you find a mistake in my reading of the 1979 manuals, let me know; I'm genuinely curious.
+
+Earlier parts of the paleocomputing series:
+
+- [Part 1. Wirth's processor, Project Oberon, a new architecture in QEMU and KubeVirt, and running it in Cozystack and Kubernetes](https://aenix.io/blog/2026/09/nine-days-of-paleocomputing/)
+- [Part 2. Kubernetes in Oberon, Wirth's radio instead of a network, and a cluster in your browser](https://aenix.io/blog/2026/10/kubernetes-over-wirths-radio/)
