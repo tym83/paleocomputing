@@ -1,6 +1,6 @@
 # A book made for microfiche
 
-First, where the texts came from in the first place. In 2023 a message flashed by on the systemsafety mailing list, where people discuss the reliability of critical software: at the request of one enthusiast, DTIC, the DoD's archive of technical documentation, had scanned the volume "DoD Common High Order Language, Phase 1", number ADB950587, 4575 pages, and it contained all four first-round designs. While I was busy with Red and Green, the DTIC site first went down for maintenance and then started refusing every request, even from an ordinary browser. The Wayback Machine came to the rescue: in September 2023 someone had saved the whole PDF there. It carries the same marking as the RED manual: "approved for public release, distribution unlimited".
+First, where the texts came from in the first place. In 2023 a [message](https://lists.techfak.uni-bielefeld.de/pipermail/systemsafety/2023-September/005936.html) flashed by on the systemsafety mailing list, where people discuss the reliability of critical software: at the request of one enthusiast, DTIC, the DoD's archive of technical documentation, had scanned the volume "DoD Common High Order Language, Phase 1", number ADB950587, 4575 pages, and it contained all four first-round designs. While I was busy with Red and Green, the DTIC site first went down for maintenance and then started refusing every request, even from an ordinary browser. The Wayback Machine came to the rescue: in September 2023 someone had saved the whole PDF there. It carries the same marking as the RED manual: "approved for public release, distribution unlimited".
 
 ![The preface of volume ADB950587](../img/scan-preface.png)
 
@@ -20,6 +20,6 @@ The yellow design was led by Jay Spitzen of SRI International, a research instit
 
 ## What Dijkstra thought of them
 
-Dijkstra spent March 1978 reading all four designs and wrote a review of each. Blue got it for its chapter on types and operations, which, in his words, had grown to 160 (!) pages. Yellow he called a hopeless mess, adding that he sympathized with the consultants who had failed to prevent it. If you remember who are named as the yellow team's consultants, the line stings all the more.
+Dijkstra spent March 1978 reading all four designs and [wrote a review of each](https://www.cs.utexas.edu/~EWD/index06xx.html). Blue got it for its chapter on types and operations, which, in his words, had grown to 160 (!) pages. Yellow he called a hopeless mess, adding that he sympathized with the consultants who had failed to prevent it. If you remember who are named as the yellow team's consultants, the line stings all the more.
 
 He wasn't enthusiastic about Red and Green either, so by Dijkstra you can't tell the losers from the winners. The decision was made by the reviewers and the panel, and I'll come back to their conclusions once I've shown both languages at work.

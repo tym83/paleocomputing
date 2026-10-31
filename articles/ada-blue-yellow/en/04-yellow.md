@@ -1,6 +1,6 @@
 # YELLOW: Pascal told to satisfy Ironman
 
-If the blue language started from types, the yellow one started from Pascal. The DoD's language requirements were written in stages, and the editions were called Strawman, Woodenman, Tinman, Ironman and Steelman, from a man of straw to a man of steel, each more detailed than the last. The first-round designs were submitted against the 1977 Ironman. SRI writes plainly in its report that its task was to design a language by reworking Pascal to meet the Ironman requirements. The description of the yellow language follows the section numbering of Wirth's "Pascal Report", down to an empty section kept only so that the numbers line up. A program in it reads like Pascal with long closing keywords:
+If the blue language started from types, the yellow one started from Pascal. The DoD's language requirements were written in stages, and the editions were called Strawman, Woodenman, Tinman, Ironman and Steelman, from a man of straw to a man of steel, each more detailed than the last. The first-round designs were submitted against the 1977 Ironman. SRI writes plainly in its report that its goal was to design a language by reworking Pascal to meet the Ironman requirements. The description of the yellow language follows the section numbering of Wirth's "Pascal Report", down to an empty section kept only so that the numbers line up. A program in it reads like Pascal with long closing keywords:
 
 ```
 MODULE Enumerations
@@ -55,7 +55,7 @@ PROCEDURE NextTicket RETURNS INTEGER64 ()
 ENDPROCEDURE NextTicket;
 ```
 
-The 1979 green language solved the same problem in almost the same way, and Ada 83 dropped it.
+The 1979 green language settled this in almost the same way, and Ada 83 dropped it.
 
 ## Templates that rewrite the text
 
@@ -103,4 +103,4 @@ And one last thing that genuinely surprised me in the yellow language. Any `BEGI
 
 In other words, simulation with controlled time is built into a 1978 language. The requirement for "a clock for simulation" was in Ironman, and the blue design answered it with a promise to write a simulation module, as in Simula, the Norwegian simulation language that object-oriented programming started from. Yellow turned it into a language construct you can wrap around any piece of a real program. Today people build entire separate systems for the same thing. FoundationDB built all of its testing on deterministic simulation: the program runs on artificial clocks, the network and disks are replaced with models, and any run can be replayed step for step. A whole company grew out of that, selling such an environment for other people's programs. The yellow language doesn't come close to that, of course: the specification doesn't fix the order of processes, and the language doesn't model hardware or failures. But a clock that moves only when the program wants it to is already there.
 
-My project, incidentally, rests on the same trick: the runtime of all four languages runs on a virtual clock with a deterministic scheduler, which is why any failure is reproducible down to the millisecond. Since my clock is virtual everywhere anyway, in my compiler `SIMULATED_TIME` takes care of something else. Inside the block processes are never preempted by a time slice and switch only where someone waits, as the specification asks.
+My project, incidentally, rests on the same trick: the runtime of all four languages runs on a virtual clock with a deterministic scheduler, which is why any failure is reproducible down to the millisecond. Since my clock is virtual everywhere anyway, in [my compiler](https://github.com/tym83/paleocomputing/blob/main/impl/ada-colors/yellow/notes/yellow-digest.md) `SIMULATED_TIME` takes care of something else. Inside the block processes are never preempted by a time slice and switch only where someone waits, as the specification asks.
