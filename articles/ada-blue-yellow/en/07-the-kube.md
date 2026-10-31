@@ -1,6 +1,6 @@
 # THE and Kubernetes without messages
 
-A compiler tests a language on sequential code. To test concurrency, in the article about the finalists I wrote several systems in the red and green languages, and now I repeated them in Blue and Yellow.
+A compiler tests a language on sequential code. To test concurrency, in the article about the finalists I wrote several systems in the red and green languages, and now I've repeated them in Blue and Yellow.
 
 The first is THE, the multiprogramming system that Dijkstra's group built in Eindhoven in 1965–1968. It's a society of sequential processes arranged in layers: semaphores and processor allocation on level 0; the segment controller, which shuttles segments between memory and the magnetic drum, the slow backing store of those years, on level 1; the single operator console on level 2; the input/output buffers on level 3; the user programs on level 4. A process only calls on the layers below it.
 
@@ -12,7 +12,7 @@ And straight away it became clear what unites the blue and yellow languages and 
 
 ## Blue: THE feels at home
 
-[THE in the blue language](https://github.com/tym83/paleocomputing/blob/main/impl/ada-colors/os/the.blu) turned out to be almost a native. Blue's semaphores are exactly Dijkstra's P and V, and the program prints exactly the same thing as the red-language version, character for character. Each layer of the system is a module, so each process's import list says outright which layers it calls on.
+[THE in the blue language](https://github.com/tym83/paleocomputing/blob/main/impl/ada-colors/os/the.blu) felt almost native. Blue's semaphores are exactly Dijkstra's P and V, and the program prints exactly the same thing as the red-language version, character for character. Each layer of the system is a module, so each process's import list says outright which layers it calls on.
 
 And then came the thing that made rebuilding the whole blue language worth it. [Kubernetes on THE](https://github.com/tym83/paleocomputing/blob/main/impl/ada-colors/os/the_kube_blue.blu) has a power-off scenario: a node loses power, its kubelet dies, and the control plane has to notice the node is gone and move the pods. The store in THE is guarded by a semaphore, like everything in this system. In the red language this is a P-and-V semaphore in Dijkstra's spirit, not a `REGION`: a `REGION` is tied to a block of text, whereas in THE one process does P and another V, and acquire and release often live in different places. So a kubelet that died in the middle of writing to the store took the semaphore with it, and the whole control plane froze: in the article about the finalists, that's exactly where I got caught. In the red and green languages I had to move the power-off into the gap between the kubelet's passes, where it holds nothing.
 
@@ -58,7 +58,7 @@ There's a second problem too: a killed path can't tell who exactly killed it, it
 
 What the language lacks shows in the workarounds, and for timeouts I tried several. In the small comparison program, the timeout is a watchdog that wakes the waiter without slipping it anything: the woken process sees the condition is still false and decides by itself to stop waiting. In Kubernetes on THE, a clock process wakes all the controllers every ten milliseconds. And in the [standalone Kubernetes](https://github.com/tym83/paleocomputing/blob/main/impl/ada-colors/kube/kube_yellow.yel) I took a simpler route and set up one clock process that every twenty milliseconds puts an empty tick event into each quiet event stream, essentially the same fake item the watchdog slips in in the semaphore-based THE.
 
-There can't be an array of monitors, because a monitor is a module, not a value. So the standalone Kubernetes's eight event streams, one per subscriber, are eight named instances of a single template, and the right one is picked by a select statement on its number. Starting a process returns neither a name nor a number, and to cut the power to the second node, the kubelet itself writes its identifier where the user will find it. A program with running processes can't finish until they finish, and the eternal controllers have to be asked to stop with a flag and one last signal.
+There can't be an array of monitors, because a monitor is a module, not a value. So the standalone Kubernetes's eight event streams, one per subscriber, are eight named instances of a single template, and the right one is picked by number in a `SELECT` statement. Starting a process returns neither a name nor a number, and to cut the power to the second node, the kubelet itself writes its identifier where the user will find it. A program with running processes can't finish until they finish, and the eternal controllers have to be asked to stop with a flag and one last signal.
 
 ## What came of it
 

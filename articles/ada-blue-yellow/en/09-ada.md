@@ -34,4 +34,4 @@ Ada has no simulated time and never did.
 
 ## Three teams out of four
 
-John Goodenough, the head of the blue design, spent twenty years after the competition making sure Ada compilers conformed to the standard, and the standard to itself. Ada 95, as I told in the article about the finalists, was designed by the Intermetrics team, the authors of the red language. So of the four 1978 teams, three ended up responsible for Ada in one way or another. Only the yellow one was left out.
+John Goodenough, the head of the blue design, spent twenty years after the competition making sure Ada compilers conformed to the standard, and the standard to itself. Ada 95, as I described in the article about the finalists, was designed by the Intermetrics team, the authors of the red language. So of the four 1978 teams, three ended up responsible for Ada in one way or another. Only the yellow one was left out.

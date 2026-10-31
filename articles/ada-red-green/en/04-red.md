@@ -1,6 +1,6 @@
 # A tour of RED
 
-At first glance RED looks like Pascal that has spent a long time at the gym. Here's a fragment from the examples in the Rationale: a matrix arithmetic package from its appendix, whose examples were written by Paul Abrahams, Bruce Knobe, David Levine and others (I've substituted the constants and removed the comments). Look first of all at the types and at the function header:
+At first glance RED looks like Pascal that has spent a long time at the gym. Here's a piece of a matrix arithmetic package from the appendix to the Rationale, whose examples were written by Paul Abrahams, Bruce Knobe, David Levine and others. I've substituted the constants and removed the comments. Look first of all at the types and at the function header:
 
 ```
 CAPSULE matrix_vector_package EXPORTS ALL;
@@ -23,7 +23,7 @@ FUNC *(READONLY b : matrix, READONLY c : vector) => vector(b.m);
 END FUNC *;
 ```
 
-Look closer, though, and these fifteen-odd lines already contain a lot of things the mainstream would only get much later. `ABBREV` here is just a short name for a subtype, and `FLOAT(6, …)` is a floating-point type with precision 6 and the given range. Dimensions live in the type: `vector(n)` is a type with a parameter, and `b.m` and `c.n` read like ordinary attributes of a value. The result type is computed from the arguments: the function promises to return `vector(b.m)`. The `*` operator is overloaded on operand types: scalar times vector, matrix times scalar, matrix times vector, matrix times matrix. And further on in the package the cross product is declared as `*` for `vector(3)`: the constraint on the dimension is written right into the parameter type, and a call with a vector of a different length raises a subtype exception. In Rust you'd express that constraint with const generics, `Vector<3>`. And there's `ASSERT` right in the function body, as part of the language.
+Look closer, though, and these fifteen-odd lines already contain a lot of things the mainstream would only get much later. `ABBREV` here is just a short name for a subtype, and `FLOAT(6, …)` is a floating-point type with precision 6 and the given range. Dimensions live in the type: `vector(n)` is a type with a parameter, and `b.m` and `c.n` read like ordinary attributes of a value. That's why the result type is computed from the arguments, and the function promises up front to return `vector(b.m)`. The `*` operator is overloaded on operand types, so a single sign multiplies scalar times vector, matrix times scalar, matrix times vector, matrix times matrix. And further on in the package the cross product is declared as `*` for `vector(3)`: the constraint on the dimension is written right into the parameter type, and a call with a vector of a different length raises a subtype exception. In Rust you'd express that constraint with const generics, `Vector<3>`. And there's `ASSERT` right in the function body, as part of the language.
 
 Below I'll go through what struck me as most interesting in RED. Almost none of this is a summary of the Reference Manual; it's the stuff I personally tripped over while writing (not with my own hands, admittedly) a compiler, an operating system and Kubernetes in RED.
 
@@ -75,7 +75,7 @@ outer WHILE p /= NIL REPEAT
 END REPEAT outer;
 ```
 
-The justification takes one sentence: if `EXIT` left the nearest loop, then wrapping a new loop around it would silently change the meaning of the program. I've seen that bug in production more times than I'd like.
+The rationale is simple: if `EXIT` left the nearest loop, then wrapping a new loop around it would silently change the meaning of the program. And I've seen that bug in production more times than I'd like.
 
 ## Mailboxes, WAIT and REGION
 
@@ -111,7 +111,7 @@ WAIT
 END WAIT;
 ```
 
-And here's a detail that shows how carefully the language was thought through. A `SEND` to a zero-size mailbox inside `WAIT` is forbidden: the attempt raises the `X_EMPTY_MAILBOX` exception. The reasoning: otherwise tasks waiting on each other to send to zero-size mailboxes could end up in a circular wait, and the only way to prevent it would be global scheduling.
+And here's a detail that shows how carefully the language was thought through. A `SEND` to a zero-size mailbox inside `WAIT` is forbidden: the attempt raises the `X_EMPTY_MAILBOX` exception. Why? Because otherwise tasks waiting on each other to send to zero-size mailboxes could end up in a circular wait, and the only way to prevent it would be global scheduling.
 
 `REGION` acquires a data lock and is guaranteed to release it no matter how the body ends: normally, by an exception, by exiting a loop, or by returning from a procedure. Ada 83 has nothing like it; there a lock is built as a separate task with two entries, and if an exception strikes between acquire and release, the lock simply stays held. More on that in the chapter on Ada 83.
 
@@ -137,7 +137,7 @@ swap(i, j);       % i and j are integers
 swap(s, r);       % s and r are strings
 ```
 
-Notice what isn't there. In Ada you first have to create an instance explicitly, `procedure SWAP_INT is new SWAP(INTEGER)`, and only then call it. RED has no instantiation statement at all: each call tells the translator which types it needs, and the translator creates an instance or reuses one it already has. C++ templates would later work the same way, but RED did it eleven years earlier. And the `NEEDS` list spells out which operations the type parameter must have, assignment in this case. C++ got that in 2020, as concepts. My compiler checks this list at every call: if the operation isn't there or has the wrong header, the call doesn't translate. Generic parameters can be types, values, procedures and even tasks. In its solution to the scheduler contract problem, the Red team passes a task as a parameter to a generic wrapper task that launches it on schedule.
+Notice what isn't there. In Ada you first have to create an instance explicitly, `procedure SWAP_INT is new SWAP(INTEGER)`, and only then call it. RED has no instantiation statement at all: each call tells the translator which types it needs, and the translator creates an instance or reuses one it already has. C++ templates would later work the same way, but RED did it eleven years earlier. And the `NEEDS` list spells out which operations the type parameter must have, assignment in this case. C++ got the same thing only in 2020, under the name of concepts. My compiler checks this list at every call: if the operation isn't there or has the wrong header, the call doesn't translate. Generic parameters can be types, values, procedures and even tasks. In its solution to the scheduler contract problem, the Red team passes a task as a parameter to a generic wrapper task that launches it on schedule.
 
 ## Strings that remember their length
 
