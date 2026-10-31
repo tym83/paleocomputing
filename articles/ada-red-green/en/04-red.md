@@ -25,7 +25,7 @@ END FUNC *;
 
 Look closer, though, and these fifteen-odd lines already contain a lot of things the mainstream would only get much later. `ABBREV` here is just a short name for a subtype, and `FLOAT(6, …)` is a floating-point type with precision 6 and the given range. Dimensions live in the type: `vector(n)` is a type with a parameter, and `b.m` and `c.n` read like ordinary attributes of a value. The result type is computed from the arguments: the function promises to return `vector(b.m)`. The `*` operator is overloaded on operand types: scalar times vector, matrix times scalar, matrix times vector, matrix times matrix. And further on in the package the cross product is declared as `*` for `vector(3)`: the constraint on the dimension is written right into the parameter type, and a call with a vector of a different length raises a subtype exception. In Rust you'd express that constraint with const generics, `Vector<3>`. And there's `ASSERT` right in the function body, as part of the language.
 
-Below I'll go through what struck me as most interesting in RED. Almost none of this is a summary of the Reference Manual; it's the stuff I personally tripped over while writing a compiler, an operating system and Kubernetes in RED.
+Below I'll go through what struck me as most interesting in RED. Almost none of this is a summary of the Reference Manual; it's the stuff I personally tripped over while writing (not with my own hands, admittedly) a compiler, an operating system and Kubernetes in RED.
 
 ## Capsules and abstract types without the word private
 
@@ -79,7 +79,7 @@ The justification takes one sentence: if `EXIT` left the nearest loop, then wrap
 
 ## Mailboxes, WAIT and REGION
 
-The main difference between RED and the future Ada is concurrency, and here a short digression is in order for those who haven't written Ada. In both languages a task is what today we'd call a thread: a piece of the program that runs at the same time as the rest. The question is how tasks come to terms with each other. In Ada, and in the green language before it, the only way is the rendezvous. A server task has entries that look like procedures. The client calls an entry and waits; the server reaches an `accept` statement for that entry in its own code and waits too; and when both are there, the body of the `accept` runs, after which each goes its own way. It's a meeting, hence the name. RED works differently: tasks exchange messages through mailboxes and protect shared data with critical sections:
+The main difference between RED and the future Ada is concurrency, and here a short digression is in order for those who haven't written Ada (which is almost everyone). In both languages a task is what today we'd call a thread: a piece of the program that runs at the same time as the rest. The question is how tasks come to terms with each other. In Ada, and in the green language before it, the only way is the rendezvous. A server task has entries that look like procedures. The client calls an entry and waits; the server reaches an `accept` statement for that entry in its own code and waits too; and when both are there, the body of the `accept` runs, after which each goes its own way. It's a meeting, hence the name. RED works differently: tasks exchange messages through mailboxes and protect shared data with critical sections:
 
 ```
 VAR m : MAILBOX[msg](3);         % a mailbox for three messages
