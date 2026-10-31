@@ -9,7 +9,8 @@
 # Without arguments every source in $SRCDIR (default /src) is taken in name
 # order. Standard input goes to the program. The language is chosen by the
 # extension; languages cannot be mixed in one run. ADA_COLORS (default
-# /opt/ada-colors) holds bin/, rt/paleo.o and lib/prelude.yel.
+# /opt/ada-colors) holds bin/, rt/paleo.o, lib/prelude.yel and lib/blue/, the
+# BLUE library segments.
 set -e
 SRC=${SRCDIR:-/src}
 OPT=${ADA_COLORS:-/opt/ada-colors}
@@ -35,7 +36,7 @@ done
 case "$lang" in
   red) tr=redc ;;
   green) tr=greenc ;;
-  blue) tr=bluec ;;
+  blue) tr="bluec -L $OPT/lib/blue" ;;
   yellow) tr=yellowc ;;
 esac
 
@@ -50,7 +51,8 @@ if [ "$lang" = yellow ]; then
   fi
 else
   cat $files > program.src
-  if ! "$OPT/bin/$tr" < program.src > program.c; then
+  # shellcheck disable=SC2086
+  if ! $OPT/bin/$tr < program.src > program.c; then
     tail -1 program.c >&2
     exit 1
   fi

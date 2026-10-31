@@ -23,6 +23,8 @@ COPY --from=build /src/build/redc /src/green/build/greenc \
 COPY --from=build /src/rt/paleo.c /src/rt/paleo.h /opt/ada-colors/rt/
 # YELLOW programs are translated after the standard prelude
 COPY --from=build /src/yellow/lib/prelude.yel /opt/ada-colors/lib/
+# BLUE library segments a program names in USES (SIMULATION, the PDP-11 machine)
+COPY --from=build /src/blue/lib/ /opt/ada-colors/lib/blue/
 # the runtime is compiled once here, not on every run
 RUN cc -std=gnu11 -O1 -w -c /opt/ada-colors/rt/paleo.c -o /opt/ada-colors/rt/paleo.o
 COPY deploy/ada-colors-run.sh /usr/local/bin/ada-colors-run
