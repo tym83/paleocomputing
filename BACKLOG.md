@@ -110,6 +110,31 @@ Criterion: the idea never caught on or existed only on paper, almost nobody has 
 
 ---
 
+## Other models of computation (2026-10-31)
+
+The radical end: not another machine but another understanding of what computing means. Three layers: other rules at the same power ("a twelve-tone system of computing"), other limits of computability (weaker and stronger than Turing), and other substrates ("life on silicon instead of carbon"). Each model can get a language; the strongest move for the series is to put a Kubernetes control plane on it.
+
+| # | Project | Track | Effort | Artefacts | Outcome | Status |
+|---|---|---|---|---|---|---|
+| 64 | 🎯 **Kubernetes on chemical reactions**: the reconcile loop as chemical equilibrium, the desired replica count as an equilibrium concentration, a surplus pod "decaying" by a reaction; the program is a chemical reaction network (CRN) | paradigms+infra | medium | CRN theory, Visual DSD (compiling CRNs to DNA), stochastic kinetics simulators | a control plane that converges by the laws of chemistry; nobody has done this | idea |
+| 65 | 🎯 **A language for infinite time Turing machines** (Hamkins, Lewis, 2000): the machine reaches step ω and carries on; it solves the halting problem of ordinary machines | paradigms+2 | medium | Hamkins–Lewis "Infinite Time Turing Machines" | a language with an "after infinitely many steps" construct and an honest executor that computes the limit where it is computable | idea |
+| 66 | **FRACTRAN** (Conway, 1987): a program is a list of fractions, the state a single number, memory the exponents of its prime factors | 2 | evening | Conway's paper, the 14-fraction PRIMEGAME | a compiler to FRACTRAN and a Kubernetes reconciler as a list of fractions | idea |
+| 67 | **Markov normal algorithms**: computation as ordered string rewriting; a Soviet model, the root of Refal (#1) | 2 | evening | A. A. Markov, "Theory of Algorithms" (1954) | an executor and a controller in rewriting rules; a rhyme with Refal | idea |
+| 68 | **A total language for controllers** (Turner's total functional programming): every program is guaranteed to terminate | 2+infra | medium | Turner, "Total Functional Programming" (2004) | a controller whose convergence the language itself proves; a Kubernetes dream | idea |
+| 69 | **Blum–Shub–Smale machines**: computation over genuine real numbers, with its own "P vs NP" | paradigms | medium | BCSS, "Complexity and Real Computation" | a language for the real RAM, and what is honestly lost on doubles | idea |
+| 70 | **Interactive computation** (Wegner): computation as an endless dialogue with the world rather than a function; Wegner argued it is more powerful than Turing machines | paradigms+infra | research | Wegner, "Why interaction is more powerful than algorithms" | a Kubernetes controller as an interaction machine; the "super-Turing" debate taken apart | idea |
+| 71 | **Siegelmann's analog nets and Zeno machines**: formally super-Turing; Malament–Hogarth spacetimes give an infinite computation in an observer's finite time | paradigms | research | Siegelmann, "Neural Networks and Analog Computation" | an overview episode on where computability ends and why it is not science fiction | idea |
+| 72 | **Interaction nets** (Lafont): computation as local annihilation of graph nodes, with no central control | 2 | medium | Lafont's papers; HVM as a modern implementation | a reconciler on interaction nets, parallel by nature | idea |
+| 73 | **Post tag systems, SK combinators, Wang tiles**: minimal models, each Turing-complete in its own way | paradigms | evening–weekend | the classic papers | a triptych episode, "three ways to compute with nothing" | idea |
+| 74 | **Computing with time** (race logic): a number is the moment a signal arrives, and the minimum is the first to arrive | 3 | medium | race logic papers (Madhavan, Sherwood) | a calculator made of delays; a rhyme with the parametron (#52) | idea |
+| 75 | **Non-standard number systems in hardware**: base φ (Bergman, 1957), base −2, base i−1, the factorial number system; **Stakhov's Fibonacci computers** (Ukraine, 1970s–80s) with self-checking through redundancy | 3 | medium | Stakhov's papers and patents (to check), Bergman 1957 | a base-φ processor that checks itself; a niche Soviet line of its own | idea |
+| 76 | **Membrane computing** (Păun's P systems): nested "cells" with molecules and transfer rules | paradigms | medium | the P-Lingua language | a cluster as an organism: pods as molecules in node membranes | idea |
+| 77 | **Fredkin's billiard-ball computer**: reversible logic on elastic collisions of balls | 3+paradigms | evening–weekend | Fredkin–Toffoli, "Conservative Logic" (1982) | a simulator and circuits; a rhyme with the reversible processor (#30) | idea |
+| 78 | **Reservoir computing and Physarum**: pattern recognition with waves in a bucket of water (2003); a slime mould reproducing the Tokyo rail map | 3+overview | evening | Fernando–Sojakka 2003, Tero et al. 2010 | a slime-mould Kubernetes scheduler | idea |
+| 79 | **Amorphous computing**: millions of identical cheap "particles" with no addresses or synchronisation, order emerging from local rules | infra+paradigms | medium | MIT Amorphous Computing, the Proto language | a cluster with no names and no control plane | idea |
+
+---
+
 ## Overview episodes (no emulator needed, can be placed between heavy ones)
 
 Priority by the strength of the modern parallel:
