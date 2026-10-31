@@ -20,4 +20,4 @@ Earlier parts of the paleocomputing series:
 
 - [Part 1. Wirth's processor, Project Oberon, a new architecture in QEMU and KubeVirt, and running it in Cozystack and Kubernetes](https://aenix.io/blog/2026/09/nine-days-of-paleocomputing/)
 - [Part 2. Kubernetes in Oberon, Wirth's radio instead of a network, and a cluster in your browser](https://aenix.io/blog/2026/10/kubernetes-over-wirths-radio/)
-- [Part 3. Two Adas: RED and GREEN, the finalists of 1979](LINK)
+- [Part 3. Two Adas: RED and GREEN, the finalists of 1979](https://aenix.io/blog/2026/10/two-adas-red-and-green/)

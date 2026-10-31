@@ -77,6 +77,8 @@ END REPEAT outer;
 
 The rationale is simple: if `EXIT` left the nearest loop, then wrapping a new loop around it would silently change the meaning of the program. And I've seen that bug in production more times than I'd like.
 
+![Diagram 45 from the RED manual (Intermetrics, 1979), as reprinted at iment.com. `EXIT` is followed by an identifier, and the diagram has no way around it](../img/scan-red-exit.png)
+
 ## Mailboxes, WAIT and REGION
 
 The main difference between RED and the future Ada is concurrency, and here a short digression is in order for those who haven't written Ada (which is almost everyone). In both languages a task is what today we'd call a thread: a piece of the program that runs at the same time as the rest. The question is how tasks come to terms with each other. In Ada, and in the green language before it, the only way is the rendezvous. A server task has entries that look like procedures. The client calls an entry and waits; the server reaches an `accept` statement for that entry in its own code and waits too; and when both are there, the body of the `accept` runs, after which each goes its own way. It's a meeting, hence the name. RED works differently: tasks exchange messages through mailboxes, that is, message queues between tasks inside the program, and protect shared data with critical sections:
@@ -114,6 +116,8 @@ END WAIT;
 And here's a detail that shows how carefully the language was thought through. A `SEND` to a zero-size mailbox inside `WAIT` is forbidden: the attempt raises the `X_EMPTY_MAILBOX` exception. Why? Because otherwise tasks waiting on each other to send to zero-size mailboxes could end up in a circular wait, and the only way to prevent it would be global scheduling.
 
 `REGION` acquires a data lock and is guaranteed to release it no matter how the body ends: normally, by an exception, by exiting a loop, or by returning from a procedure. Ada 83 has nothing like it; there a lock is built as a separate task with two entries, and if an exception strikes between acquire and release, the lock simply stays held. More on that in the chapter on Ada 83.
+
+![On the left, RED: tasks pass messages through a mailbox, and `REGION` guards the shared data. On the right, the green language: a client calls an entry of the server task and waits in its queue until the server reaches its `accept`](../img/en-scheme-comm.png)
 
 Tasks are started explicitly, `CREATE task NAMED variable`, and every activation, that is, every running instance of a task, has a name, a variable of type `ACT`. You can ask it whether the task is alive, change its priority, wait for it to finish, or kill it with `EXTERMINATE`. The built-in scheduler is priority-based: higher priority goes first, and among equals whoever has waited longest goes first.
 

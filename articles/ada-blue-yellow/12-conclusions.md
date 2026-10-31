@@ -20,4 +20,4 @@
 
 - [Часть 1. Процессор Вирта, Проект Оберон, новая архитектура в QEMU и KubeVirt и запуск в Cozystack и Kubernetes](https://habr.com/ru/articles/1087928/)
 - [Часть 2. Kubernetes на Обероне, радио Вирта вместо сети и кластер в браузере](https://habr.com/ru/companies/aenix/articles/1091830/)
-- [Часть 3. Две Ады: RED и GREEN, финалисты конкурса 1979 года](ССЫЛКА)
+- [Часть 3. Две Ады: RED и GREEN, финалисты конкурса 1979 года](https://habr.com/ru/companies/aenix/articles/1102128/)
