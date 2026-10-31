@@ -1,0 +1,41 @@
+# Labs, and how to get your hands on all this
+
+As in the earlier parts, I wanted readers to be able not just to read about the language but to break something with their own hands. The `impl/ada-colors/labs` directory holds twelve RED exercises and a `check.sh` script that translates your version of a program, runs it and tells you whether you've completed the task. Each lab has a number and several levels: `look`, `change`, `break` and `build`. The number and the level are the arguments of `check.sh`, for example `labs/check.sh 03 look`. And since time in the programs is virtual and the scheduler is deterministic, you can compare your output with someone else's character for character.
+
+Here's what's there:
+
+- `01`: a capsule with a stack: add an exported function `peek`, then try to reach into the `top` field from outside and watch the compiler explain that the type is exported but its components aren't;
+- `02`: a closed scope: remove a variable from `IMPORTS` and get rejected, then try assigning to a variable imported read-only;
+- `03`: a mailbox: set its size to zero and see that the sender can no longer run ahead; that's a rendezvous;
+- `04`: `WAIT`: lose a race to a timeout, then try waiting on a send to a zero-size mailbox and find out why RED forbids it;
+- `05`: `REGION`: remove the exception handler and see how the runtime reports that all tasks are blocked;
+- `06`: priorities: give tasks equal priorities and see first-come, first-served ordering;
+- `07`: generics: write your own `max` for numbers and strings without instantiating anything by hand;
+- `08`: a process pair: move the primary's death to a different request, then swap the reply and the checkpoint and catch the missing transfer with the audit;
+- `09`: Kubernetes with a process-pair control plane: remove the queue draining in the node controller and get healthy nodes evicted after a failover;
+- `10`: the compiler itself: add a built-in `MAX` function to `redc`, rebuild it and make sure the fixed point still holds;
+- `11`: the 1979 program: drop one fix from the list and see which error in the original stops the translator;
+- `12`: Dijkstra's THE: let the segment controller report every dump to the drum to the operator, and watch the whole system freeze, because the console needs the very controller that is waiting for it.
+
+To run all of this, you only need a C compiler and make:
+
+```sh
+git clone https://github.com/tym83/paleocomputing
+cd paleocomputing/impl/ada-colors
+make                     # builds redc from the seed and checks the fixed point
+red/tests/run.sh         # language tests
+os/run.sh                # the operating systems and every Kubernetes variant in every language
+labs/check.sh 03 look    # the mailbox lab
+```
+
+You can also translate and run a RED program without the labs:
+
+```sh
+build/redc < program.red > program.c
+cc -std=gnu11 -Irt program.c rt/paleo.c -lpthread -lm -o program
+./program
+```
+
+If you have Cozystack at hand, an open platform for building a cloud on Kubernetes, you don't need to install anything. The application catalog I put together for this series has an environment for languages, and the languages arrived there as a separate image: you specify the `ada-colors-run` image, put in a source file, and the program runs as a one-off job whose output becomes its log. When the image is built, the compilers go the whole way from their seeds again and check that they reproduce themselves.
+
+The easiest way, though, is to open [the page in your browser](https://tym83.github.io/paleocomputing/red/). Everything happens right there, with no server. The translators, built to WebAssembly from the same C seeds, translate the source to C. Then clang, also built to WebAssembly, compiles that C, and the program runs so that every task gets its own thread and all the threads share one memory. The runtime is the same file as on Linux, with the same virtual clock, so the labs, the PAIRS kernel, Kubernetes in RED and in GREEN, the process-pair control plane and the examples of chapter fourteen of the manual print in the browser exactly what they print on an ordinary machine, byte for byte. CI checks it: it runs every example in headless Chrome and compares the output. The first run downloads the C compiler, about twenty megabytes, and after that the browser keeps it.

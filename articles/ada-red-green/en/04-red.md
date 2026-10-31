@@ -1,6 +1,6 @@
 # A tour of RED
 
-At first glance RED looks like Pascal that has spent a long time at the gym. Here's a fragment from the examples in the Rationale: a matrix arithmetic package from its appendix, whose examples were written by Paul Abrahams, Bruce Knobe, David Levine and others (I've substituted the constants and removed the comments):
+At first glance RED looks like Pascal that has spent a long time at the gym. Here's a fragment from the examples in the Rationale: a matrix arithmetic package from its appendix, whose examples were written by Paul Abrahams, Bruce Knobe, David Levine and others (I've substituted the constants and removed the comments). Look first of all at the types and at the function header:
 
 ```
 CAPSULE matrix_vector_package EXPORTS ALL;
@@ -23,7 +23,7 @@ FUNC *(READONLY b : matrix, READONLY c : vector) => vector(b.m);
 END FUNC *;
 ```
 
-Look closer, though, and these fifteen-odd lines already contain a lot of things the mainstream would only get much later. Dimensions live in the type: `vector(n)` is a type with a parameter, and `b.m` and `c.n` read like ordinary attributes of a value. The result type is computed from the arguments: the function promises to return `vector(b.m)`. The `*` operator is overloaded on operand types: scalar times vector, matrix times scalar, matrix times vector, matrix times matrix. And the cross product is declared as `*` for `vector(3)`: the constraint on the dimension is written right into the parameter type, and a call with a vector of a different length raises a subtype exception. In Rust you'd express that constraint with const generics, `Vector<3>`. And there's `ASSERT` right in the function body, as part of the language.
+Look closer, though, and these fifteen-odd lines already contain a lot of things the mainstream would only get much later. `ABBREV` here is just a short name for a subtype, and `FLOAT(6, …)` is a floating-point type with precision 6 and the given range. Dimensions live in the type: `vector(n)` is a type with a parameter, and `b.m` and `c.n` read like ordinary attributes of a value. The result type is computed from the arguments: the function promises to return `vector(b.m)`. The `*` operator is overloaded on operand types: scalar times vector, matrix times scalar, matrix times vector, matrix times matrix. And further on in the package the cross product is declared as `*` for `vector(3)`: the constraint on the dimension is written right into the parameter type, and a call with a vector of a different length raises a subtype exception. In Rust you'd express that constraint with const generics, `Vector<3>`. And there's `ASSERT` right in the function body, as part of the language.
 
 Below I'll go through what struck me as most interesting in RED. Almost none of this is a summary of the Reference Manual; it's the stuff I personally tripped over while writing a compiler, an operating system and Kubernetes in RED.
 
@@ -56,11 +56,11 @@ PROC hit IMPORTS hits, READONLY limit;
 END PROC hit;
 ```
 
-An import can be read-only. Essentially it's the same thing as a lambda capture list in C++, except mandatory and for every procedure. For a language meant for maintaining enormous programs over decades, that's sensible: the procedure header tells you at a glance what state it can mess up.
+A variable can also be imported read-only, like `limit` in the example. Essentially it's the same thing as a lambda capture list in C++, except mandatory and for every procedure. For a language meant for maintaining enormous programs over decades, that's sensible: the procedure header tells you at a glance what state it can mess up.
 
 Next to it is the distinction between normal and abnormal functions. A normal function depends only on its arguments, and the translator is allowed to drop a repeated call with the same arguments. If a function's result depends on more than its arguments, say it reads outside variables, you have to put `ABNORMAL` in front of it. A normal function is allowed side effects only on its own capsule's variables, such as a call counter or a memo table. The word looks funny, but the idea is close to what we now call pure functions.
 
-Parameters are passed in four ways: `CONST` copies, `READONLY` passes by reference without the right to modify, `VAR` passes by reference with modification, and `OUT` is a local variable that is assigned to the actual parameter only when the procedure completes normally. If the procedure ends with an exception, the caller's variable stays as it was. The Red team justifies the split between copying and by-reference reading separately: "it doesn't matter how" won't do, because then behavior depends on the implementation, and copying alone is too expensive for large objects.
+Parameters are passed in four ways: `CONST` copies, `READONLY` passes by reference without the right to modify, `VAR` passes by reference with modification, and `OUT` is a local variable whose value goes to the actual parameter only if the procedure completes normally. If the procedure ends with an exception, the caller's variable stays as it was. Why reading by copy and reading by reference must be distinguished, the Red team explains separately. Leaving the choice to the translator won't do, because then the program's behavior depends on the implementation, and always copying is too expensive for large objects.
 
 ## Exiting a loop by name
 
@@ -75,7 +75,7 @@ outer WHILE p /= NIL REPEAT
 END REPEAT outer;
 ```
 
-The justification takes one sentence: if `EXIT` left the nearest loop, then wrapping a new loop around it would silently change the meaning of the program. I've seen that bug in production more times since then than I'd like.
+The justification takes one sentence: if `EXIT` left the nearest loop, then wrapping a new loop around it would silently change the meaning of the program. I've seen that bug in production more times than I'd like.
 
 ## Mailboxes, WAIT and REGION
 
@@ -113,9 +113,13 @@ END WAIT;
 
 And here's a detail that shows how carefully the language was thought through. A `SEND` to a zero-size mailbox inside `WAIT` is forbidden: the attempt raises the `X_EMPTY_MAILBOX` exception. The reasoning: otherwise tasks waiting on each other to send to zero-size mailboxes could end up in a circular wait, and the only way to prevent it would be global scheduling.
 
-`REGION` acquires a data lock and is guaranteed to release it no matter how the body ends: normally, by an exception, by exiting a loop, or by returning from a procedure. Ada 83 has nothing like it; there a lock is built as a separate task with two entries, and if an exception strikes between acquire and release, the lock simply stays held. More on that in the comparison chapter.
+`REGION` acquires a data lock and is guaranteed to release it no matter how the body ends: normally, by an exception, by exiting a loop, or by returning from a procedure. Ada 83 has nothing like it; there a lock is built as a separate task with two entries, and if an exception strikes between acquire and release, the lock simply stays held. More on that in the chapter on Ada 83.
 
-Tasks are started explicitly, `CREATE task NAMED variable`, and every activation has a name, a variable of type `ACT`. You can ask it whether the task is alive, change its priority, wait for it to finish, or kill it with `EXTERMINATE`. The built-in scheduler is priority-based: higher priority goes first, and among equals whoever has waited longest goes first. And at the language's lowest level, in chapter fourteen of the Reference Manual, a systems programmer can describe their own scheduler and their own synchronization mechanisms. The language hands them the operations of the scheduler itself: suspend an activation, wait for a signal, make a stretch of code critical so that it is neither preempted nor killed halfway. The built-in mailboxes, locks and `WAIT` are described in the same chapter as special cases built from these operations. The manual shows it with examples: a round-robin scheduler, Hoare's monitors on top of data locks, and even `MAILBOX` itself, defined in the language. All of these examples run in my compiler, and transcribing them turned up a few more errors in the manual. The scheduler's variable is called `new`, a reserved word, and a record field in the monitor is called `external`, reserved too. The mailbox definition has `SYNCH_SIGNAL` for `SYNC_SIGNAL`, and one condition is copied from the neighbouring procedure, an error no translator would catch. The very fact that a 1979 language invited the user to write schedulers, not just use the one provided, says a lot to me.
+Tasks are started explicitly, `CREATE task NAMED variable`, and every activation has a name, a variable of type `ACT`. You can ask it whether the task is alive, change its priority, wait for it to finish, or kill it with `EXTERMINATE`. The built-in scheduler is priority-based: higher priority goes first, and among equals whoever has waited longest goes first.
+
+## Your own scheduler
+
+At the language's lowest level, in chapter fourteen of the Reference Manual, a systems programmer can describe their own scheduler and their own synchronization mechanisms. The language hands them the operations of the scheduler itself: suspend an activation, wait for a signal, make a stretch of code critical so that it is neither preempted nor killed halfway. The built-in mailboxes, locks and `WAIT` are described in the same chapter as special cases built from these operations. The manual shows it with examples: a round-robin scheduler, Hoare's monitors on top of data locks, and even `MAILBOX` itself, defined in the language. All of these examples run in my compiler. The very fact that a 1979 language invited the user to write schedulers, not just use the one provided, says a lot to me.
 
 ## Generics that instantiate themselves
 
@@ -133,7 +137,7 @@ swap(i, j);       % i and j are integers
 swap(s, r);       % s and r are strings
 ```
 
-Notice what isn't there. In Ada you first have to create an instance explicitly, `procedure SWAP_INT is new SWAP(INTEGER)`, and only then call it. RED has no instantiation statement at all: each call tells the translator which types it needs, and the translator creates an instance or reuses one it already has. That's how C++ templates work, only eleven years earlier. And the `NEEDS` list spells out which operations the type parameter must have, assignment in this case. C++ got that in 2020, as concepts. My compiler checks this list at every call: if the operation isn't there or has the wrong header, the call doesn't translate. Generic parameters can be types, values, procedures and even tasks. In its solution to the scheduler contract problem, the Red team passes a task as a parameter to a generic wrapper task that launches it on schedule.
+Notice what isn't there. In Ada you first have to create an instance explicitly, `procedure SWAP_INT is new SWAP(INTEGER)`, and only then call it. RED has no instantiation statement at all: each call tells the translator which types it needs, and the translator creates an instance or reuses one it already has. C++ templates would later work the same way, but RED did it eleven years earlier. And the `NEEDS` list spells out which operations the type parameter must have, assignment in this case. C++ got that in 2020, as concepts. My compiler checks this list at every call: if the operation isn't there or has the wrong header, the call doesn't translate. Generic parameters can be types, values, procedures and even tasks. In its solution to the scheduler contract problem, the Red team passes a task as a parameter to a generic wrapper task that launches it on schedule.
 
 ## Strings that remember their length
 
@@ -144,8 +148,8 @@ TYPE sym : PTR (len : INT) STRING[ASCII](len);
 ALLOC s.syms(s.top) PTR (val.LEN) := val;
 ```
 
-The RED compiler written in RED stores all its names and chunks of generated code exactly this way. ASCII characters in RED are named enumeration values, so a lowercase a is written `'L_A`, an apostrophe `'APOS`, a double quote `'QUOTE`. You can't put a double quote inside a string literal at all; you can only concatenate the string with the character. In the source of a compiler that generates C, this looks rather funny: `"rt_str(" & q & "TRUE" & q & ", 4)"`, where `q` is a function that returns a double quote.
+`ALLOC` creates a dynamic string of exactly the length of `val` and puts a pointer to it into the table. The RED compiler written in RED stores all its names and chunks of generated code exactly this way. ASCII characters in RED are named enumeration values, so a lowercase a is written `'L_A`, an apostrophe `'APOS`, a double quote `'QUOTE`. You can't put a double quote inside a string literal at all; you can only concatenate the string with the character. In the source of a compiler that generates C, this looks rather funny: `"rt_str(" & q & "TRUE" & q & ", 4)"`, where `q` is a function that returns a double quote.
 
 ## A FREE that refuses to free
 
-One last thing in the Reference Manual impressed me. A dynamic variable in RED lives as long as there are references to it, which means that by default the language assumes garbage collection. But for those who can't afford it, there's a `FREE` procedure. If other pointers to the variable being freed still exist, `FREE` doesn't free it; it raises the `X_FREE` exception. A dangling pointer becomes impossible by construction, and the cost of the check can be switched off with a pragma if you really must. In 1979. In my compiler, `FREE` walks all reachable memory before it frees anything: the globals, the frames of every task's running subprograms, the dynamic variables and the mailbox buffers. A program that doesn't use `FREE` pays nothing for this.
+One last thing in the Reference Manual impressed me. A dynamic variable in RED lives as long as there are references to it, which means that by default the language assumes garbage collection. But for those who can't afford it, there's a `FREE` procedure. If other pointers to the variable being freed still exist, `FREE` doesn't free it; it raises the `X_FREE` exception. A dangling pointer becomes impossible by construction, and the check itself can be switched off with a pragma if it is too expensive. All of this in 1979. In my compiler, `FREE` walks all reachable memory before it frees anything: the globals, the frames of every task's running subprograms, the dynamic variables and the mailbox buffers. A program that doesn't use `FREE` pays nothing for this.

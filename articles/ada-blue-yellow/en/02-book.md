@@ -10,7 +10,7 @@ The book's preface is a small historical document in its own right. The compiler
 
 Inside are the four preliminary designs exactly as they were delivered on February 15, 1978. Red is there in its first edition, the very REDL with monitors that the red team later threw out and started over. After the designs come analyses from eighty teams, from universities to defense contractors, and the report of the so-called Pittsburgh panel. That panel studied the analyses, questioned the authors and boiled everything down into the tables used in April 1978 to decide who would go on.
 
-The OCR text is horrible in places: zero instead of the letter O, a dollar sign instead of S, the letter l instead of a percent sign. So every program was checked against the page image, and the blue ones, whose code is full of backslashes and hash signs, were simply retyped from the pictures.
+The OCR text is horrible in places: zero instead of the letter O, a dollar sign instead of S, the letter l instead of a percent sign. So I checked every program against the page image, and the blue ones, whose code is full of backslashes and hash signs, I simply retyped from the pictures.
 
 ## Who made them
 
@@ -22,4 +22,4 @@ The yellow design was led by Jay Spitzen of SRI International, a research instit
 
 Dijkstra spent March 1978 reading all four designs and wrote a review of each. Blue got it for its chapter on types and operations, which, in his words, had grown to 160 (!) pages. Yellow he called a hopeless mess, adding that he sympathized with the consultants who had failed to prevent it. If you remember who are named as the yellow team's consultants, the line stings all the more.
 
-He wasn't enthusiastic about Red and Green either, so by Dijkstra you can't tell the losers from the winners. The difference was decided by the reviewers and the panel, and I'll come back to their conclusions once I've shown both languages at work.
+He wasn't enthusiastic about Red and Green either, so by Dijkstra you can't tell the losers from the winners. The decision was made by the reviewers and the panel, and I'll come back to their conclusions once I've shown both languages at work.
