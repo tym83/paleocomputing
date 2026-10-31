@@ -16,6 +16,8 @@ You can't build a compiler written in language X until you have a compiler for l
 
 This is where it gets interesting. From then on, all you need to build it is the C file that the latest compiler produced from its own source, and the language grows inside the compiler itself. Every new feature is added to `redc` in such a way that `redc` itself doesn't use it yet; then the compiler is built with the previous version, the fixed point is checked, and only after that may the new feature be used in its own source. That's how capsules, exports and nested procedures with static links, that is, pointers to the frame of the enclosing procedure, arrived first, then multitasking, then overloading with parameterized types, two-dimensional arrays and sets, and finally generics. Today the compiler is about eleven thousand lines of RED and translates itself in a couple of tenths of a second. On every change, CI rebuilds it twice from that C file and compares the results, and a separate build target repeats the very first step, from the Python seed, so the chain can be verified from scratch.
 
+![The bootstrap and growth of the RED compiler. The Python seed is needed only for the first step; after that each version of `redc` is built by the previous one from the stored C file](../img/en-scheme-boot.png)
+
 ## What RED did to me
 
 Eleven thousand lines in a 1979 language are a good test not only of the language but of your patience. Here are the places where headstrong RED argued with me, and almost every time, on reflection, it was right.
