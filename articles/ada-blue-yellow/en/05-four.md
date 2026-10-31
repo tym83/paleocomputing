@@ -111,7 +111,7 @@ The second task is readers and writer. Three readers arrive at 0, 1 and 3 millis
 | BLUE, P and V semaphores | yes | yes | 23 ms |
 | YELLOW, Hoare's monitor | yes | no | 31 ms |
 
-This isn't the limit of the languages but the solutions I chose: with semaphores there is also a writer-priority variant, described by Courtois, Heymans and Parnas back in 1971, it's just noticeably longer. Hoare's monitor gives it in twenty lines, because that's the kind of problem it was invented for. The price is visible too: the third reader dutifully waits for the writer and finishes at 31 milliseconds rather than 23.
+This isn't the limit of the languages but the solutions I chose: with semaphores there is also a writer-priority variant, described by Courtois, Heymans and Parnas back in 1971, it's just noticeably longer. Hoare's monitor gives it in thirty lines, because that's the kind of problem it was invented for. The price is visible too: the third reader dutifully waits for the writer and finishes at 31 milliseconds rather than 23.
 
 ## Waiting with a timeout
 
@@ -136,6 +136,6 @@ Below is how the four designs differ from each other and from Ada 83. Red and Gr
 | Lock for shared data | `REGION` | server task | `REGION` semaphore | monitor | server task |
 | Waiting with a timeout | `WAIT` with a timer | server only | race of two paths | watchdog or polling | both server and client |
 | Task didn't catch an exception | terminates quietly | terminates quietly | the block raises the exception | terminates quietly | terminates quietly |
-| My compiler in the language itself | about 5000 lines | about 7000 lines | about 9600 lines | about 6000 lines | — |
+| My compiler in the language itself | about 11,000 lines | about 14,000 lines | about 16,000 lines | about 10,000 lines | — |
 
 Read the table row by row and the pairs show up at once. Blue and Red both require variables to be imported, both create generic instances by themselves, both provide a separate lock for data. Yellow and Green both lean towards side-effect-free functions and a single elegant concurrency mechanism, except that Yellow chose the monitor and Green the rendezvous. And the row about the unhandled exception shows that of the five languages only Blue doesn't lose a task's error.

@@ -133,7 +133,7 @@ swap(i, j);       % i and j are integers
 swap(s, r);       % s and r are strings
 ```
 
-Notice what isn't there. In Ada you first have to create an instance explicitly, `procedure SWAP_INT is new SWAP(INTEGER)`, and only then call it. RED has no instantiation statement at all: each call tells the translator which types it needs, and the translator creates an instance or reuses one it already has. That's how C++ templates work, only eleven years earlier. And the `NEEDS` list spells out which operations the type parameter must have, assignment in this case. C++ got that in 2020, as concepts. My compiler so far only reads this list and doesn't check it. Generic parameters can be types, values, procedures and even tasks. In its solution to the scheduler contract problem, the Red team passes a task as a parameter to a generic wrapper task that launches it on schedule.
+Notice what isn't there. In Ada you first have to create an instance explicitly, `procedure SWAP_INT is new SWAP(INTEGER)`, and only then call it. RED has no instantiation statement at all: each call tells the translator which types it needs, and the translator creates an instance or reuses one it already has. That's how C++ templates work, only eleven years earlier. And the `NEEDS` list spells out which operations the type parameter must have, assignment in this case. C++ got that in 2020, as concepts. My compiler checks this list at every call: if the operation isn't there or has the wrong header, the call doesn't translate. Generic parameters can be types, values, procedures and even tasks. In its solution to the scheduler contract problem, the Red team passes a task as a parameter to a generic wrapper task that launches it on schedule.
 
 ## Strings that remember their length
 
