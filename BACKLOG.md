@@ -3,7 +3,7 @@
 # Project backlog
 
 Statuses: `idea` / `research` / `in progress` / `done` / `dropped`
-Updated: 2026-10-12
+Updated: 2026-10-31
 
 ---
 
@@ -80,6 +80,33 @@ Selection criterion: looks like a violation of common sense + mathematically hon
 | 43 | **A purely functional OS after Henderson/Stoye**: the OS as a lazy input→output stream; Stoye's "sorting office" against nondeterminism, on a reduction machine | paradigms+3 | medium | Henderson 1982; Stoye's PhD (Cambridge, for SKIM); our SKIM/Reduceron rig (#18) | a double rhyme (functional OS × SKIM); an early, unfinished model, not a NixOS overview | idea |
 | 44 | 🎯 **A reversible BALANCED-TERNARY processor** (Setun × Pendulum): a combination that does NOT exist: ternary reversible gates/adders are described, ternary CPUs and reversible CPUs exist separately, but a "ternary+reversible" machine does not | 3+6 | large | components: balanced-ternary reversible gates (IEEE), a 24-trit ternary RISC on an FPGA; reversibility from PISA/PendVM | be the first: a reversible-ternary ISA + emulator; stitching together two favorite topics | **empty (checked 29.09)** |
 | 45 | **Glushkov: MIR / the recursive machine** (Kyiv, 1965–69): no emulator, poorly digitized; address arithmetic and an ALGOL-like language "in hardware" | 3+1 | large | material from the Institute of Cybernetics (to check); the Russian-Soviet line like Kronos (#10) | an emulator + preserving the heritage; an original contribution | **empty (checked 29.09)** |
+
+---
+
+## The most niche and the craziest (2026-10-31)
+
+Criterion: the idea never caught on or existed only on paper, almost nobody has run it, and the crazier the better. Artefacts are unverified: each needs a reconnaissance first (what is digitised, where the books are, whether the authors are alive). Soviet machines probably need a trip to the Russian State Library and the National Library of Russia, to be combined with the IT-journalism history trip. Already listed above and not repeated here: iAPX 432 (#9), Kronos (#10), Glushkov's MIR (#45), Singularity and EROS (overview episodes).
+
+| # | Project | Track | Effort | Artefacts | Outcome | Status |
+|---|---|---|---|---|---|---|
+| 46 | **SYMBOL** (Fairchild, 1971): a high-level language, editor, compiler and garbage collector built straight into logic, with no software; one machine was built | 3+2 | large | IEEE TC 1971 papers, Iowa State reports (to check) | an emulator of a machine that had no software | idea |
+| 47 | **OGAS as Kubernetes**: Glushkov's and Kitov's never-built national network of computing centres; beside it Stafford Beer's Cybersyn (Chile, 1971–73) | infra+1 | medium (research) | Glushkov's books, B. Peters "How Not to Network a Nation", the Cybersyn archive | a country's control plane as a reconcile loop: what if OGAS had been built on Kubernetes ideas | idea |
+| 48 | **The Synthesis kernel** (Massalin, 1992): an OS that generates and rewrites its own code on the fly for each call; described in a thesis and hardly ever reproduced | 1 | large | Massalin's thesis (Columbia); the 68030 code apparently lost (to check) | a self-modifying kernel running; a rhyme with eBPF and in-kernel JITs | idea |
+| 49 | **Burroughs B1700**: every language had its own instruction set (an "S-language"), and the microcode was reloaded per language on the fly | 3+2 | large | Burroughs docs on bitsavers (to check) | a machine without a native instruction set | idea |
+| 50 | **The Kolmogorov–Uspensky machine** (1953): computation on a mutable graph instead of a tape; theory only | paradigms | evening–week | papers by Kolmogorov, Uspensky, Gurevich | an executable KU machine and programs for it; a Soviet model of computation almost nobody knows | idea |
+| 51 | **Residue arithmetic in hardware** (Akushsky, Yuditsky: T-340A, K-340A, Almaz for missile defence): numbers in a residue number system, with no carries between digits | 3 | medium | papers and books by Akushsky and Yuditsky (library) | an RNS machine emulator; why it was built for missile defence and why it died out | idea |
+| 52 | **The parametron** (Goto, 1954; PC-1): logic on parametric oscillators and majority gates, a Japanese line now returning in coherent Ising machines | 3 | medium | Goto's papers, PC-1 description (to check) | a computer that works with oscillation phases instead of voltage levels | idea |
+| 53 | **Stochastic computing** (Gaines, Poppelbaum, 1960s): a number is the probability of a one in a bit stream, and multiplication is a single AND gate | 3+paradigms | evening–weekend | Gaines's papers 1967–69 | a calculator that gets more precise the longer it runs; a bridge to cheap neural nets | idea |
+| 54 | **Leibniz's marble machine** (1679): a binary computer where numbers are marbles dropping through holes; only a description in a manuscript | overview+3 | evening | the manuscript "De progressione dyadica" | the first binary machine, run for the first time in 350 years | idea |
+| 55 | **Turing's unorganised machines** (B-type, 1948): a neural net before neural nets, a report that sat in a drawer for 20 years | paradigms | evening | the report "Intelligent Machinery" (NPL, 1948) | training a B-machine the way Turing proposed, against a modern net | idea |
+| 56 | **ALGOL Y**: the never-built successor to ALGOL 60, where a program can change itself as data; only the idea remains | 2 | research | WG 2.1 minutes (to check) | a language that never existed, from scraps of discussion | idea |
+| 57 | **The Fifth Generation** (Japan, 1982–92): parallel Prolog KL1 on the PIM machines; ten years and half a billion dollars | 2+3 | medium | KLIC (KL1 to C) published by ICOT (to check) | KL1 running, and Kubernetes on logic processes | idea |
+| 58 | **CSP 1978 literally**: the notation of Hoare's first paper, not occam; almost nobody has implemented exactly that | 2 | evening–week | Hoare's 1978 paper | the language of the paper, run as written; a rhyme with Ada's rendezvous | idea |
+| 59 | **Lucid** (Ashcroft, Wadge, 1976): a variable is an infinite stream in time, a program a system of equations | 2 | medium | the book "Lucid, the Dataflow Programming Language" | a reconciler in Lucid: the desired state as an equation over time | idea |
+| 60 | **Xanadu** (Nelson, since 1960): two-way links and transclusion instead of copying; half a century of development | infra | medium | partly published sources (to check) | "the web that should have been"; a rhyme with content-addressed code (#40) | idea |
+| 61 | **Lukyanov's water integrator** (1936): a water-based analog computer that solved heat equations; FLODAC fluidic logic (1964) | 3+overview | evening | museum descriptions (Polytechnic Museum) | computing with water and air in a browser | idea |
+| 62 | **Rekursiv** (Linn Products, 1988): a turntable maker built an object-oriented processor with object storage in hardware and the Lingo language | 3 | large | Harland's book "Rekursiv" (to check) | a forgotten object machine | idea |
+| 63 | **Plessey System 250 and Cambridge CAP**: the first machines with capabilities in hardware | 3+1 | large | Wilkes's and Needham's CAP papers (to check) | CHERI's ancestor running; a rhyme with descriptors (#3d) and the B5500 | idea |
 
 ---
 
