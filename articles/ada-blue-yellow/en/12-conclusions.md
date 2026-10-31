@@ -14,4 +14,4 @@ And fifth: studying the losers is useful so that you know in advance which ideas
 
 What's next. All four of the competition's designs now work, but something else is left from the first round: REDL, the first edition of the red language, with monitors and events, which the red team threw out. And the reviewers' reports on the 1979 final, which decided between Red and Green, still exist only on microfiche. If you have access to them, let me know.
 
-The sources, tests, labs and all the notes are in the repository [github.com/tym83/paleocomputing](https://github.com/tym83/paleocomputing), under `impl/ada-colors`. If you find a mistake in my reading of the 1978 specifications, let me know; I'm genuinely curious.
+The sources, tests, labs and all the notes are in the repository [github.com/tym83/paleocomputing](https://github.com/tym83/paleocomputing), under [`impl/ada-colors`](https://github.com/tym83/paleocomputing/blob/main/impl/ada-colors/README.md). If you find a mistake in my reading of the 1978 specifications, let me know; I'm genuinely curious.

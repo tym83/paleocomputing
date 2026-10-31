@@ -26,7 +26,7 @@ The yellow world would have had its own traps too. Comparisons that bind more we
 
 The most interesting difference of the yellow world is `SIMULATED_TIME`. Any piece of an onboard system could have been wrapped in a block with artificial time and run reproducibly. That wouldn't have solved every problem: you'd still have had to enumerate different process orderings yourself, as today's deterministic simulation systems do, and the language doesn't model hardware failures. But timing bugs could have been reproduced on the bench from 1980 on, instead of being chased for years at the customer's site. In our world we got there in the 2010s.
 
-And there would have been a different Hoare lecture. In 1980 he received the Turing Award, and in his lecture "The Emperor's Old Clothes" he told how he had been giving advice to the Ada project since 1975, and warned that the language was too complex to be trusted with people's lives. In the yellow world Ada would have grown out of a language that, by all accounts, he himself had advised on.
+And there would have been a different Hoare lecture. In 1980 he received the Turing Award, and in his lecture ["The Emperor's Old Clothes"](https://noncombatant.org/hoare-emperors-old-clothes-turing-award/) he told how he had been giving advice to the Ada project since 1975, and warned that the language was too complex to be trusted with people's lives. In the yellow world Ada would have grown out of a language that, by all accounts, he himself had advised on.
 
 ## Four worlds
 
