@@ -10,7 +10,7 @@ translator written in itself, which reproduces itself byte for byte.
 | Directory | What is there |
 |---|---|
 | `boot/` | The Python bootstrap (genesis only): it translates the first bluec, `genesis/bluec.blu` |
-| `bluec/` | bluec, a BLUE translator written in BLUE (about 9 600 lines), files read in name order. It emits C for the runtime in `../rt` |
+| `bluec/` | bluec, a BLUE translator written in BLUE (about 16 000 lines), files read in name order. It emits C for the runtime in `../rt` |
 | `seed/bluec.c` | What the last bluec made of itself |
 | `tests/` | One program per feature with its expected output; `*.err.blu` must be rejected with the message in `*.err.out` |
 | `corpus/` | 17 programs of the 1978 document, transcribed as printed (`orig/`, with page numbers), the changes a translator forced (`fix/*.sed`, each with its reason), drivers (`main/`). `CHANGES.md` lists the misprints |

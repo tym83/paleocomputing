@@ -1,0 +1,17 @@
+MAIN SEGMENT WHERE_STORE_ABSTRACT
+   USES (TERMINAL);
+% a type without assignment fails the WHERE clause where SWAP is invoked (5.2),
+% not inside the instance: T is exported abstract and M exports no STORE_
+VAR U, W: T;
+SWAP (# U, W);
+PROCEDURE SWAP (# X, Y: ?T)
+      WHERE T NEEDS (STORE_ (T ## T));
+   VAR TMP: T;
+   TMP := X;
+   X := Y;
+   Y := TMP;
+END PROCEDURE SWAP;
+MODULE M EXPORTS (T);
+   TYPE T = INTEGER;
+END MODULE M;
+END SEGMENT WHERE_STORE_ABSTRACT;

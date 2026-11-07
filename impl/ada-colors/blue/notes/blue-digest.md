@@ -315,7 +315,11 @@ unreadable; the decision is bluec's.
     assignment (STORE_) or a predefined or program routine invoked with them
     must be named in the WHERE clause, and a generic routine invoked with them
     must have its WHERE routines among the caller's. WHERE routines import no
-    data and their templates declare no derived parameters. A routine passed
+    data and their templates declare no derived parameters. An operator routine
+    of the clause (STORE_, LESS_THAN_, ...) that the program does not define is the
+    predefined operation, and it must exist for the bound types: an abstract type
+    outside its module has none, an UNORDERED type no ordering. Otherwise the
+    invocation is refused at its own line, not inside the instance. A routine passed
     for a routine parameter matches its template exactly (modes, types with
     their ranges, result, the listed exceptions among its SIGNALS), derived
     parameters and ? matching real values; `NAME (types) [RETURNS (type)]`
