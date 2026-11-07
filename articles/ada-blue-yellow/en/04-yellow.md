@@ -30,6 +30,8 @@ On top of Pascal come modules from Modula, monitors and signals, module template
 
 SRI's main idea of its own is the separation of type and representation. "Representation" here doesn't mean a machine format, like `REP` in the blue language, but a constraint on values. `INTEGER` is a type, a set of values with operations. `INTEGER [1..10]` is a representation of it, with a range. For floating-point numbers the representation also sets the precision, and for fixed-point numbers the step. A variable can only be declared through a representation; a bare `INTEGER` won't do. On the other hand, two representations of the same type are compatible: `INTEGER [1..5]` and `INTEGER [0..9]` are one type, and assignment between them just checks the range. Enumerations are declared as representations too, in a `REPRESENTATION` section, as in the example above.
 
+![Chapter VI of the yellow specification: a type is a set of values, a representation is a subset of it or a way to store it. The type `INTEGER` and the representation `INT`](../img/scan-yellow-types.png)
+
 This is exactly what Ada calls subtypes: `subtype SMALL is INTEGER range 1 .. 10` doesn't create a new type, it only constrains the old one. Except that in Ada a subtype is an optional extra, while in the yellow language you can't do without a representation. A new type is created by a separate declaration, `TYPE T = INTEGER`, and its literals are written with the type name: `T 50`.
 
 Enumerations are ordered or unordered, as in the blue language, and `BOOLEAN` here is unordered: true is not greater than false. Overloading is explicit only. A new definition of a function with the same name is marked with `EXTENDS` if it is added to the old ones, or `REPLACES` if it replaces them. Without a mark, the new declaration hides all the old ones. So in the yellow language you can't overload something by accident, and when reading you see at once where a name has acquired a new meaning.
@@ -60,6 +62,8 @@ The 1979 green language settled this in almost the same way, and Ada 83 dropped 
 ## Templates that rewrite the text
 
 Generics in the yellow language are the simplest of the four. A module template, `TEMPLATE`, is text with parameters, and `INSTANCE` literally rewrites the module afresh, substituting the actual parameters for the formal ones, and only then translates it. Each instance becomes a new module with its own state, and an error in the template body surfaces only in an instance, just like C++ templates with their three-screen error messages. In the blue language, by contrast, the `NEEDS` list is checked at the call site.
+
+![Sections X.C–D of the yellow specification: an instance means exactly what the module would mean if it were written out again with the actuals substituted](../img/scan-yellow-template.png)
 
 ## Hoare's monitors
 
@@ -100,6 +104,8 @@ There are also binary semaphores, `CLAIM` and `RELEASE`, for those who find a mo
 ## Time you can stop
 
 And one last thing that genuinely surprised me in the yellow language. Any `BEGIN ... END` block can be marked with the word `SIMULATED_TIME`. Then everything inside it runs as one sequential program: processes take turns and switch only where someone waits. Inside the block there is its own artificial time. Every statement takes zero units of that time except `DELAY(n)`, which takes exactly `n`, and the clock moves forward only when all the processes inside are blocked.
+
+![Section IX.B.3 of the yellow specification: `SIMULATED_TIME` before `BEGIN`, and every statement takes zero units of time except `DELAY(n)`](../img/scan-yellow-simtime.png)
 
 In other words, simulation with controlled time is built into a 1978 language. The requirement for "a clock for simulation" was in Ironman, and the blue design answered it with a promise to write a simulation module, as in Simula, the Norwegian simulation language that object-oriented programming started from. Yellow turned it into a language construct you can wrap around any piece of a real program. Today people build entire separate systems for the same thing. FoundationDB built all of its testing on deterministic simulation: the program runs on artificial clocks, the network and disks are replaced with models, and any run can be replayed step for step. A whole company grew out of that, selling such an environment for other people's programs. The yellow language doesn't come close to that, of course: the specification doesn't fix the order of processes, and the language doesn't model hardware or failures. But a clock that moves only when the program wants it to is already there.
 

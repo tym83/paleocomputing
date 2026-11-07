@@ -88,6 +88,8 @@ EXCEPT
 END EXCEPT;
 ```
 
+![The same example in the browser: the first worker fails holding the semaphore, the second gets in at once, and the block raises `FAILED`. The output is slowed down; on the virtual clock the program gets through all of it in a fraction of a second.](../img/en-blue-parblock.gif)
+
 Today this is called structured concurrency: parallel branches live inside a lexical block, the block doesn't finish before they do, and a branch's error isn't lost but reaches whoever opened the block. For the last eight years or so it has been reintroduced everywhere: the Python library Trio, task groups in Swift, `StructuredTaskScope` in Java. Blue is simpler than they are. A failure in one branch doesn't cancel its neighbours; you write that by hand with `TERMINATE`, and if two branches fail, only one exception comes out. `TERMINATE` doesn't kill a path on the spot, either: it delivers the exception `TERMINATED` to it as soon as the path next gets the processor, and the path can catch it. And paths have priorities: of two ready paths, the higher-priority one runs first. But the essential part is already there in the blue block.
 
 In Ada 83 a block also waits for its tasks, but a task that dies with an unhandled exception just quietly terminates, and whoever started it never finds out. This is one of Ada's best-known traps. The blue language of 1978 doesn't have it.

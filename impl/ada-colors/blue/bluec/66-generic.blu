@@ -1079,6 +1079,32 @@ FUNCTION HAS_DERIVED (TS: NODE) RETURNS (BOOLEAN);
    RETURN FALSE;
 END FUNCTION HAS_DERIVED;
 
+% does the predefined operation NAME take these arguments? An abstract type outside
+% its module has only the operations it exports (4.4), and only integers, reals and
+% ordered enumerations are ordered (3.2.4.6, 3.3.4, 3.4.4.1): a WHERE clause that
+% needs STORE_ or LESS_THAN_ of a type without it fails where the generic is invoked
+FUNCTION PREDEFINED_FITS (NAME: TEXT, ARGS: ARG) RETURNS (BOOLEAN);
+   CONST ORDER: BOOLEAN := TEQS (NAME, 'LESS_THAN_') ! TEQS (NAME, 'GREATER_THAN_')
+                           ! TEQS (NAME, 'LESS_EQUAL_') ! TEQS (NAME, 'GREATER_EQUAL_');
+   VAR A: ARG := ARGS;
+   LOOP UNTIL A = NIL DO
+      BLOCK
+         CONST T: TYP := A@.V.T;
+         IF T <> W@.TY_TYPE THEN
+            IF T@.KIND = T_ABS THEN
+               RETURN FALSE;
+            END IF;
+            IF ORDER & NOT (T@.KIND = T_INT ! T@.KIND = T_FLOAT
+                            ! (T@.KIND = T_ENUM & NOT IS_UNORDERED (T))) THEN
+               RETURN FALSE;
+            END IF;
+         END IF;
+      END BLOCK;
+      A := A@.NEXT;
+   END LOOP;
+   RETURN TRUE;
+END FUNCTION PREDEFINED_FITS;
+
 % WHERE T NEEDS (R (types) ...): the routines are those visible where the generic is
 % invoked (5.2)
 PROCEDURE WHERE_BINDINGS (G: SYM, LINE: INTEGER, BS: BIND);
@@ -1130,6 +1156,13 @@ PROCEDURE WHERE_BINDINGS (G: SYM, LINE: INTEGER, BS: BIND);
                   END IF;
                   IF R = NIL & NOT IS_OPERATOR_NAME (T@.NAME) THEN
                      FAILT (LINE, 'no routine for the WHERE clause (5.2): ', T@.NAME);
+                  END IF;
+                  IF IS_OPERATOR_NAME (T@.NAME) & NOT PREDEFINED_FITS (T@.NAME, ARGS) THEN
+                     IF R = NIL THEN                  % the predefined operation does not fit
+                        FAILT (LINE, 'no routine for the WHERE clause (5.2): ', T@.NAME);
+                     ORIF R@.KIND = Y_BUILTIN THEN
+                        FAILT (LINE, 'no routine for the WHERE clause (5.2): ', T@.NAME);
+                     END IF;
                   END IF;
                   IF R <> NIL THEN                    % else the predefined operation
                      IF R@.KIND = Y_ROUTINE THEN

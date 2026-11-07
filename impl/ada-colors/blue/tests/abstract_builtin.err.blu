@@ -1,0 +1,10 @@
+MAIN SEGMENT ABSTRACT_BUILTIN
+   USES (TERMINAL);
+% outside its module an abstract type has only what the module exports (3.12):
+% the predefined TO_CHAR of the INTEGER inside is not one of them
+VAR U: T;
+PUT_LINE (TO_CHAR (U));
+MODULE M EXPORTS (T);
+   TYPE T = INTEGER;
+END MODULE M;
+END SEGMENT ABSTRACT_BUILTIN;

@@ -290,6 +290,17 @@ FUNCTION GENERIC_OBJECT_ARG (L: NODE) RETURNS (BOOLEAN);
    RETURN FALSE;
 END FUNCTION GENERIC_OBJECT_ARG;
 
+% outside its module an abstract type has only the operations the module exports
+% (3.12): a predefined routine does not see the type it is made of
+FUNCTION OWN_VALUE (V: ET, NAME: TEXT, LINE: INTEGER) RETURNS (ET);
+   IF V.T <> NIL THEN
+      IF V.T@.KIND = T_ABS THEN
+         FAILT (LINE, 'no such operation for the abstract type: ', NAME);
+      END IF;
+   END IF;
+   RETURN V;
+END FUNCTION OWN_VALUE;
+
 FUNCTION BUILTIN (E: NODE, WANT: TYP) RETURNS (ET);
    CONST NAME: TEXT := E@.NAME;
    CONST LINE: INTEGER := E@.LINE;
@@ -306,7 +317,7 @@ FUNCTION BUILTIN (E: NODE, WANT: TYP) RETURNS (ET);
    IF TEQS (NAME, 'PUT') ! TEQS (NAME, 'PUT_LINE') THEN
       NEED_ARGS (E, 1, 1);
       BLOCK
-         CONST V: ET := EXPR (E@.A, NIL);
+         CONST V: ET := OWN_VALUE (EXPR (E@.A, NIL), NAME, LINE);
          IF REAL_TYPE (V.T)@.KIND <> T_STR THEN
             FAIL (LINE, 'PUT writes character strings; use TO_CHAR');
          END IF;
@@ -343,7 +354,7 @@ FUNCTION BUILTIN (E: NODE, WANT: TYP) RETURNS (ET);
    ORIF TEQS (NAME, 'FILE_EXISTS') ! TEQS (NAME, 'READ_FILE') THEN
       NEED_ARGS (E, 1, 1);
       BLOCK
-         CONST V: ET := EXPR (E@.A, NIL);
+         CONST V: ET := OWN_VALUE (EXPR (E@.A, NIL), NAME, LINE);
          IF REAL_TYPE (V.T)@.KIND <> T_STR THEN
             FAILT (LINE, 'a file is named by a character string: ', NAME);
          END IF;
@@ -366,14 +377,14 @@ FUNCTION BUILTIN (E: NODE, WANT: TYP) RETURNS (ET);
    % ---- conversions ----
    IF TEQS (NAME, 'TO_CHAR') THEN
       NEED_ARGS (E, 1, 1);
-      RETURN IMAGE_OF (EXPR (E@.A, NIL), LINE);
+      RETURN IMAGE_OF (OWN_VALUE (EXPR (E@.A, NIL), NAME, LINE), LINE);
    ORIF TEQS (NAME, 'TO_FIXED') THEN                % 3.2.6.1
       NEED_ARGS (E, 1, 5);
       RETURN TO_FIXED_CALL (E);
    ORIF TEQS (NAME, 'TO_FLOAT') THEN                % 3.3.6.1
       NEED_ARGS (E, 2, 3);
       BLOCK
-         CONST V: ET := EXPR (ARG_EXPR (E@.A), NIL);
+         CONST V: ET := OWN_VALUE (EXPR (ARG_EXPR (E@.A), NIL), NAME, LINE);
          CONST P: MVAL := MANIFEST_INTEGER_ARG (ARG_EXPR (E@.A@.NEXT), 'precision', 1,
                                                 MAX_FLOAT_PRECISION ());
          CONST VT: TYP := REAL_TYPE (V.T);
@@ -432,7 +443,7 @@ FUNCTION BUILTIN (E: NODE, WANT: TYP) RETURNS (ET);
    ORIF TEQS (NAME, 'ABS') THEN                     % 3.2.6.2, 3.3.6.2
       NEED_ARGS (E, 1, 1);
       BLOCK
-         CONST V: ET := EXPR (E@.A, NIL);
+         CONST V: ET := OWN_VALUE (EXPR (E@.A, NIL), NAME, LINE);
          IF REAL_TYPE (V.T)@.KIND = T_INT THEN
             RETURN MKET (FMT1 ('rt_abs(@)', V.C), INT_TYPE (V.T@.SCALE));
          ORIF REAL_TYPE (V.T)@.KIND = T_FLOAT THEN
@@ -446,7 +457,7 @@ FUNCTION BUILTIN (E: NODE, WANT: TYP) RETURNS (ET);
    ORIF TEQS (NAME, 'SUCC') ! TEQS (NAME, 'PRED') THEN    % 3.4.6.1
       NEED_ARGS (E, 1, 1);
       BLOCK
-         CONST V: ET := EXPR (E@.A, NIL);
+         CONST V: ET := OWN_VALUE (EXPR (E@.A, NIL), NAME, LINE);
          CONST T: TYP := REAL_TYPE (V.T);
          IF T@.KIND <> T_ENUM THEN
             FAILT (LINE, 'an enumerated value expected by ', NAME);
@@ -462,7 +473,7 @@ FUNCTION BUILTIN (E: NODE, WANT: TYP) RETURNS (ET);
    ORIF TEQS (NAME, 'DUP') THEN                     % 3.6.6.2, 3.7.6.1
       NEED_ARGS (E, 2, 2);
       BLOCK
-         CONST V: ET := EXPR (E@.A, NIL);
+         CONST V: ET := OWN_VALUE (EXPR (E@.A, NIL), NAME, LINE);
          CONST K: INTEGER := REAL_TYPE (V.T)@.KIND;
          VAR T: TYP := NEW_TYP (K);
          IF K <> T_STR & K <> T_BITS THEN
@@ -487,7 +498,7 @@ FUNCTION BUILTIN (E: NODE, WANT: TYP) RETURNS (ET);
             BITS := MK ('4');
          END IF;
          BLOCK
-            CONST V: ET := EXPR (E@.A, NIL);
+            CONST V: ET := OWN_VALUE (EXPR (E@.A, NIL), NAME, LINE);
             IF REAL_TYPE (V.T)@.KIND <> T_STR THEN
                FAILT (LINE, 'a character string expected by ', NAME);
             END IF;
@@ -568,7 +579,7 @@ END FUNCTION IMAGE_OF;
 
 % TO_FIXED (value, scale [, radix] [, precision] [, rounding]) (3.2.6.1)
 FUNCTION TO_FIXED_CALL (E: NODE) RETURNS (ET);
-   CONST V: ET := EXPR (ARG_EXPR (E@.A), NIL);
+   CONST V: ET := OWN_VALUE (EXPR (ARG_EXPR (E@.A), NIL), E@.NAME, E@.LINE);
    CONST T: TYP := REAL_TYPE (V.T);
    CONST N: INTEGER := LIST_LENGTH (E@.A);
    CONST RND: TEXT := ROUNDING_ARG (E, N);

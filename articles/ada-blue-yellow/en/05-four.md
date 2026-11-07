@@ -2,6 +2,8 @@
 
 The 1978 reviewers, as the red team remembered it, split the four designs into two pairs: the conservative Blue and Red, and the ambitious, "academic" Yellow and Green. One from each pair went through to the second round. Now that all four languages work, you can see the split was no accident, and the best way to see it is on one and the same example.
 
+![The two pairs of 1978: the conservative Blue and Red, the ambitious Yellow and Green, each with its own way to synchronize](../img/en-diagram-pairs.png)
+
 The example goes like this. Two workers take turns updating a shared account under a lock, and the first one grabs the lock and crashes in the middle of the update. Will the second one get in? It's far from an academic question. In any system with locks, from an operating system kernel to a database, the first question you ask about a lock is what happens to it when its owner dies. It will come up again in the chapter on Kubernetes.
 
 In the red language the lock is a `REGION`, and it's released however the body ends:
