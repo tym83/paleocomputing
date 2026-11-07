@@ -1,4 +1,4 @@
-# Two more Adas: I rebuilt the blue and yellow languages the Pentagon rejected in 1978 and wrote Dijkstra's operating system and Kubernetes in them
+Paleocomputing, part 4. Two more Adas: I rebuilt the blue and yellow languages the Pentagon rejected in 1978 and wrote Dijkstra's operating system and Kubernetes in them
 
 In February 1978 four teams handed the US Department of Defense preliminary designs for the language that a year later would be named Ada. The designs were anonymized by colour. Green came from Jean Ichbiah's French-American team, Red from Intermetrics of Boston, Blue from SofTech, Yellow from SRI International. In the spring of 1978 Green and Red went through to the second round, while Blue and Yellow went to the archive. A year later Green won and became Ada.
 
