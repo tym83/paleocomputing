@@ -319,7 +319,10 @@ unreadable; the decision is bluec's.
     of the clause (STORE_, LESS_THAN_, ...) that the program does not define is the
     predefined operation, and it must exist for the bound types: an abstract type
     outside its module has none, an UNORDERED type no ordering. Otherwise the
-    invocation is refused at its own line, not inside the instance. A routine passed
+    invocation is refused at its own line, not inside the instance.
+    Outside its module an abstract type is also closed to the predefined
+    routines (TO_CHAR, TO_FIXED, TO_FLOAT, ABS, SUCC, PRED, DUP, ...) of the
+    type it is made of (3.12): only what the module exports applies. A routine passed
     for a routine parameter matches its template exactly (modes, types with
     their ranges, result, the listed exceptions among its SIGNALS), derived
     parameters and ? matching real values; `NAME (types) [RETURNS (type)]`
