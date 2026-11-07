@@ -2,6 +2,8 @@
 
 Ada 83 is the green language after four years of revisions, and it has no direct inheritance from Blue and Yellow. But if you lay the 1978 designs next to the whole history of Ada up to Ada 2022, you get the same picture as with the red language: much of what the losers offered from the start, Ada picked up over decades, in its own words and, as a rule, without knowing it was repeating someone from 1978. Let me go over the main points.
 
+![Ideas of the blue and yellow designs in the history of Ada: what matched at once, what came decades later, and what never came](../img/en-diagram-ada.png)
+
 ## What matched from the start
 
 The first match is subtypes. The yellow language's representations are Ada's subtypes, which came to Ada from the green language, so this is a resemblance, not a borrowing.

@@ -25,7 +25,7 @@ In the yellow language:
 - `y7`: a module that exports a variable read-only, and a type whose insides aren't visible from outside;
 - `y8`: the THE system on monitors, which can be broken by the same call from a lower layer to an upper one.
 
-![Readers and writer on Hoare's monitor in the browser: the readers read together, while the third one waits behind the waiting writer](../img/en-yellow-readers.png)
+![Readers and writer on Hoare's monitor in the browser: the readers read together, while the third one waits behind the waiting writer. The output is slowed down.](../img/en-yellow-readers.gif)
 
 To run all of this, you only need a C compiler and make:
 
